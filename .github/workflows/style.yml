@@ -1,0 +1,69 @@
+name: Style
+
+on: push
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check-style:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - uses: julia-actions/setup-julia@v1
+        with:
+          version: '1'
+
+      - name: Set up Julia environment
+        run: julia -e 'using Pkg; Pkg.add("JuliaFormatter")'
+
+      # Install more recent clang-format from LLVM (match Homebrew v15)
+      - name: Install clang-format
+        run: |
+          wget -O- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
+          sudo add-apt-repository 'deb http://apt.llvm.org/bullseye/ llvm-toolchain-bullseye-15 main'
+          sudo apt-get update -q
+          sudo apt-get install -y clang-format-15
+
+      - name: Check style
+        run: |
+          ./scripts/format-source --clang-format clang-format-15
+          if [[ `git status -s | wc -l` -ne 0 ]]; then
+            echo 'Error: Commit is not formatted!'
+            echo 'Run '\`'./scripts/format-source'\`' in the source root directory'
+            echo 'Summary of required changes:'
+            echo "`git diff --stat`"
+            echo 'Repository status:'
+            echo "`git status`"
+            exit 1
+          else
+            echo 'Commit is correctly formatted'
+            exit 0
+          fi
+
+  check-config:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - uses: julia-actions/setup-julia@v1
+        with:
+          version: '1'
+
+      - name: Set up Julia environment
+        run: julia -e 'using Pkg; Pkg.add(["JSON", "JSONSchema"])'
+
+      - name: Check JSON Schema
+        run: |
+          OUTPUT=$(find examples -name *.json -exec ./scripts/validate-config {} \;)
+          if echo $OUTPUT | grep -q 'Validation failed'; then
+            echo 'Error: Configuration file validation failed!'
+            echo 'Summary of output:'
+            echo $OUTPUT
+            exit 1
+          else
+            echo 'Configuration file validation passed'
+            exit 0
+          fi
