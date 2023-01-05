@@ -4,6 +4,11 @@ SPDX-License-Identifier: Apache-2.0
 --->
 # Palace: 3D Finite Element Solver for Computational Electromagnetics
 
+[![CI (Linux)](https://github.com/awslabs/palace/actions/workflows/build-and-test-linux.yml/badge.svg)](https://github.com/awslabs/palace/actions/workflows/build-and-test-linux.yml)
+[![CI (macOS)](https://github.com/awslabs/palace/actions/workflows/build-and-test-macos.yml/badge.svg)](https://github.com/awslabs/palace/actions/workflows/build-and-test-macos.yml)
+[![](https://img.shields.io/badge/docs-stable-blue.svg)](https://awslabs.github.io/palace/stable)
+[![](https://img.shields.io/badge/docs-dev-blue.svg)](https://awslabs.github.io/palace/dev)
+
 *Palace*, for **PA**rallel **LA**rge-scale **C**omputational **E**lectromagnetics, is an
 open-source parallel finite element code for full-wave 3D electromagnetic simulations in
 the frequency or time domain, using the [MFEM](http://mfem.org) finite element
