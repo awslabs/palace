@@ -1,0 +1,103 @@
+#!/bin/bash
+
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+help()
+{
+    echo "Usage: format-source [OPTIONS]
+
+Format C++ source code using \`clang-format\`, and Julia and Markdown files using
+JuliaFormatter.jl
+
+Options:
+  -h, --help                       Show this help message and exit
+  -dry-run, --dry-run              Only show changes without making them
+  -no-cpp, --no-cpp                Skip formatting of C++ files
+  -no-jl, --no-jl                  Skip formatting of Julia files
+  --clang-format COMMAND           Executable command for clang-format
+  --julia COMMAND                  Executable command for julia
+"
+}
+
+# Parse arguments
+FORMAT_CPP="true"
+FORMAT_JL="true"
+CLANG_FORMAT="clang-format"
+JULIA="julia"
+POSITIONAL=()
+while [[ $# -gt 0 ]]; do
+    key="$1"
+    case $key in
+        -h|--help)
+        help
+        exit 0
+        ;;
+        -dry-run|--dry-run)
+        DRY_RUN="--dry-run"
+        shift
+        ;;
+        -no-cpp|--no-cpp)
+        FORMAT_CPP="false"
+        shift
+        ;;
+        -no-jl|--no-jl)
+        FORMAT_JL="false"
+        shift
+        ;;
+        --clang-format)
+        CLANG_FORMAT="$2"
+        shift
+        shift
+        ;;
+        --julia)
+        JULIA="$2"
+        shift
+        shift
+        ;;
+        "-"|"--")
+        shift
+        break
+        ;;
+        *)
+        POSITIONAL+=("$1")  # Unknown option, save it in an array for later
+        shift
+        ;;
+    esac
+done
+set -- "${POSITIONAL[@]}"  # Restore positional parameters
+
+# Check arguments
+if [[ ! -z "$@" ]]; then
+    help
+    exit 1
+fi
+
+SOURCE_DIR=$(dirname $(cd "$(dirname "${BASH_SOURCE[0]}")" ; pwd -P ))
+
+if $FORMAT_CPP; then
+    if ! command -v $CLANG_FORMAT &> /dev/null; then
+        echo "Error: Could not locate $CLANG_FORMAT executable"
+        exit 1
+    fi
+    FORMAT_CPP_FILES=$(find $SOURCE_DIR/palace -type f \( -iname \*.hpp -o -iname \*.cpp \))
+    $CLANG_FORMAT $DRY_RUN --style=file --verbose -i $FORMAT_CPP_FILES
+fi
+
+if $FORMAT_JL; then
+    if ! command -v $JULIA &> /dev/null; then
+        echo "Error: Could not locate $JULIA executable"
+        exit 1
+    fi
+    FORMAT_JL_ARGS="verbose=true, format_markdown=true"
+    if [[ ! -z "$DRY_RUN" ]]; then
+        FORMAT_JL_ARGS="$FORMAT_JL_ARGS, overwrite=false"
+    fi
+    FORMAT_JL_FILES=$(find $SOURCE_DIR/.github \
+                           $SOURCE_DIR/docs $SOURCE_DIR/examples \
+                           $SOURCE_DIR/scripts $SOURCE_DIR/test \
+                          -type f \( -iname \*.md -o -iname \*.jl \) -exec echo -n '"{}", ' \;)
+    FORMAT_JL_FILES="$(find $SOURCE_DIR -maxdepth 1 \
+                           -type f -iname \*.md -exec echo -n '"{}", ' \;)$FORMAT_JL_FILES"
+    julia -e "using JuliaFormatter; format([$FORMAT_JL_FILES], $FORMAT_JL_ARGS)"
+fi

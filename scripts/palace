@@ -1,0 +1,183 @@
+#!/bin/bash
+
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+help()
+{
+    echo "Usage: palace [OPTIONS] CONFIG_FILE
+
+Wrapper for launching Palace using MPI
+
+Options:
+  -h, --help                       Show this help message and exit
+  -wdir, --work-dir DIR            Working directory for the simulation, as mpirun's -wdir, for example
+  -dry-run, --dry-run              Parse configuration file for errors and exit
+  -serial, --serial                Call Palace without MPI launcher
+  -np, --np NUM_PROCS              How many MPI processes to use, default is 1
+  -launcher, --launcher LAUNCHER   MPI launcher, default is mpirun
+  -map-by, --map-by                Options to pass with --map-by to MPI launcher, for example :SPAN or :OVERSUBSCRIBE
+  -bindings, --report-bindings     Pass --report-bindings option to MPI launcher
+"
+}
+
+# Parse arguments
+POSITIONAL=()
+while [[ $# -gt 0 ]]; do
+    key="$1"
+    case $key in
+        -h|--help)
+        help
+        exit 0
+        ;;
+        -wdir|--work-dir)
+        WORK_DIR="$2"
+        shift
+        shift
+        ;;
+        -dry-run|--dry-run)
+        DRY_RUN="--dry-run"
+        shift
+        ;;
+        -serial|--serial)
+        SERIAL="true"
+        shift
+        ;;
+        -sequential|--sequential)
+        SERIAL="true"
+        shift
+        ;;
+        -launcher|--launcher)
+        LAUNCHER="$2"
+        shift
+        shift
+        ;;
+        -np|--np)
+        NUM_PROCS="$2"
+        shift
+        shift
+        ;;
+        -map-by|--map-by)
+        MAP_BY="$2"
+        shift
+        shift
+        ;;
+        -bindings|--report-bindings)
+        BINDINGS="--report-bindings"
+        shift
+        ;;
+        "-"|"--")
+        shift
+        break
+        ;;
+        *)
+        POSITIONAL+=("$1")  # Unknown option, save it in an array for later
+        shift
+        ;;
+    esac
+done
+set -- "${POSITIONAL[@]}"  # Restore positional parameters
+
+# Check arguments: Config file and everything remaining is passed to Palace binary
+if [[ -z "$@" ]]; then
+    help
+    exit 1
+else
+    CONFIG="$@"
+fi
+
+# Try to find the Palace executable
+PALACE_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" ; pwd -P )
+PALACE=$(find $PALACE_DIR -type f -name "palace-*.bin" 2> /dev/null)
+if [[ -z "$PALACE" ]]; then
+    echo "Error: Could not locate Palace executable in \"$PALACE_DIR\""
+    exit 1
+elif [[ $(echo "$PALACE" | wc -l) -gt 1 ]]; then
+    TABLE=""
+    while IFS= read -r FILE; do
+        DIR=$(echo $FILE | cut -d "/" -f2)
+        TABLE="  $FILE\n$TABLE"
+    done <<< "$PALACE"
+    echo "Error: Could not locate a single Palace executable in \"$PALACE_DIR\""
+    echo "Possible executable files:"
+    printf "$TABLE"
+    exit 1
+fi
+if [[ $(uname -m) == arm* ]] || [[ $(uname -m) == aarch64 ]]; then
+    ARCH='arm64'
+else
+    ARCH='x86_64'
+fi
+if ! echo $PALACE | grep -q $ARCH; then
+    echo "Error: Palace binary \"$PALACE\" does not match host architecture"
+    exit 1
+fi
+
+# Configure --dry-run
+if [[ ! -z "$DRY_RUN" ]]; then
+    PALACE="$PALACE $DRY_RUN"
+fi
+
+# Run sequential simulation
+if [[ "$SERIAL" ]]; then
+    if [[ ! -z "$WORK_DIR" ]]; then
+        echo ">> cd $WORK_DIR && $PALACE $CONFIG"
+        cd $WORK_DIR && $PALACE $CONFIG
+    else
+        echo ">> $PALACE $CONFIG"
+        $PALACE $CONFIG
+    fi
+    exit $?
+fi
+
+# Configure parallel MPI execution
+LAUNCHER=${LAUNCHER:-mpirun}
+if ! command -v $LAUNCHER &> /dev/null; then
+    echo "Error: Could not locate MPI launcher, try specifying a value for --launcher"
+    exit 1
+fi
+NUM_PROCS=${NUM_PROCS:-1}
+MPIRUN="$(which $LAUNCHER) -n $NUM_PROCS"
+if [[ ! -z "$WORK_DIR" ]]; then
+    MPIRUN="$MPIRUN --wdir $WORK_DIR"
+fi
+if [[ ! -z "$MAP_BY" ]]; then
+    MPIRUN="$MPIRUN --map-by $MAP_BY"
+fi
+if [[ ! -z "$BINDINGS" ]]; then
+    MPIRUN="$MPIRUN $BINDINGS"
+fi
+if [[ ! -z "$PBS_NODEFILE" ]]; then
+    # PBS/Torque job
+    NODE_LIST=$PBS_NODEFILE
+    SUBMIT_DIR=$PBS_O_WORKDIR
+elif [[ ! -z "$SLURM_JOB_NODELIST" ]]; then
+    # Slurm job
+    NODE_LIST=$SLURM_JOB_NODELIST
+    SUBMIT_DIR=$SLURM_SUBMIT_DIR
+else
+    NODE_LIST=""
+    WORKDIR=""
+fi
+
+# Run parallel simulation
+if [[ -z "$NODE_LIST" ]]; then
+    # Local execution
+    echo ">> $MPIRUN $PALACE $CONFIG"
+    $MPIRUN $PALACE $CONFIG
+else
+    NODE_FILE=mpi_nodes
+    cat $NODE_LIST | sort | uniq > $NODE_FILE
+    echo The master node of this job is `hostname`
+    echo The working directory is `echo $SUBMIT_DIR`
+    echo This job runs on the following nodes: && cat $NODE_FILE
+    export OMPI_MCA_mca_base_env_list="PATH;LD_LIBRARY_PATH"
+    MPIRUN="$MPIRUN --hostfile $NODE_FILE"
+    # NUM_NODES=$(wc -l < $NODE_FILE)
+    # NUM_PPN=$(($(($NUM_PROCS + $NUM_NODES - 1)) / $NUM_NODES))
+
+    # Distributed execution
+    echo ">> $MPIRUN $PALACE $CONFIG"
+    $MPIRUN $PALACE $CONFIG
+    rm $NODE_FILE
+fi

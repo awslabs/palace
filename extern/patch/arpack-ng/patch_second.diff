@@ -1,0 +1,31 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index a11e77c..a646634 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -329,7 +329,7 @@ set(arpackutil_STAT_SRCS
+     ${arpack_SOURCE_DIR}/UTIL/iset.f
+     ${arpack_SOURCE_DIR}/UTIL/iswap.f
+     ${arpack_SOURCE_DIR}/UTIL/ivout.f
+-    ${arpack_SOURCE_DIR}/UTIL/second_NONE.f
++    ${arpack_SOURCE_DIR}/UTIL/second.f
+     ${arpack_SOURCE_DIR}/UTIL/svout.f
+     ${arpack_SOURCE_DIR}/UTIL/smout.f
+     ${arpack_SOURCE_DIR}/UTIL/dvout.f
+diff --git a/UTIL/Makefile.am b/UTIL/Makefile.am
+index 0d0f6e3..65100eb 100644
+--- a/UTIL/Makefile.am
++++ b/UTIL/Makefile.am
+@@ -1,11 +1,11 @@
+-SRCS = icnteq.f icopy.f iset.f iswap.f ivout.f second_NONE.f
++SRCS = icnteq.f icopy.f iset.f iswap.f ivout.f second.f
+ 
+ SSRC = svout.f smout.f
+ DSRC = dvout.f dmout.f
+ CSRC = cvout.f cmout.f
+ ZSRC = zvout.f zmout.f
+ 
+-EXTRA_DIST = second.f second.t3d
++EXTRA_DIST = second_NONE.f second.t3d
+ 
+ noinst_LTLIBRARIES = libarpackutil.la
+ libarpackutil_la_SOURCES = $(SRCS) $(SSRC) $(DSRC) $(CSRC) $(ZSRC)

@@ -1,0 +1,38 @@
+diff --git a/Makefile b/Makefile
+index 63364d8..c172cc3 100644
+--- a/Makefile
++++ b/Makefile
+@@ -4,6 +4,7 @@ USREXIT ?= 0
+ NBC ?= 0
+ LIBNAME ?= gs
+ BLAS ?= 0
++MKL ?= 0
+ DEBUG ?= 0
+ CFLAGS ?= -O2
+ FFLAGS ?= -O2
+@@ -70,6 +71,9 @@ endif
+ 
+ ifeq (1,$(BLAS))
+   G+=-DUSE_CBLAS
++  ifeq (1,$(MKL))
++    G+=-DUSE_MKL
++  endif
+ endif
+ 
+ ifneq (0,$(DEBUG))
+diff --git a/src/tensor.h b/src/tensor.h
+index bb65be1..9c8ffb2 100644
+--- a/src/tensor.h
++++ b/src/tensor.h
+@@ -6,7 +6,11 @@
+ #endif
+ 
+ #if defined(USE_CBLAS)
++#if defined(USE_MKL)
++#  include <mkl_cblas.h>
++#else
+ #  include <cblas.h>
++#endif
+ #  define tensor_dot(a,b,n) cblas_ddot((int)(n),a,1,b,1)
+ #  define tensor_mxv(y,ny,A,x,nx) \
+      cblas_dgemv(CblasColMajor,CblasNoTrans,(int)ny,(int)nx, \

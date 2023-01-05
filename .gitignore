@@ -1,0 +1,7 @@
+build*/
+examples/**/postpro*/
+examples/**/log*/
+test/ref/**/*.json
+.gitlab-ci-local
+**/.DS_Store
+**/.*.swp

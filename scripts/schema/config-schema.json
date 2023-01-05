@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Configuration File Schema",
+  "description": "This is the description",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["Problem", "Model", "Domains", "Boundaries", "Solver"],
+  "properties":
+  {
+    "Problem": { "$ref": "./config/problem.json" },
+    "Model": { "$ref": "./config/model.json" },
+    "Domains": { "$ref": "./config/domains.json" },
+    "Boundaries": { "$ref": "./config/boundaries.json" },
+    "Solver": { "$ref": "./config/solver.json" }
+  }
+}

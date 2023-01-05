@@ -1,0 +1,72 @@
+#!/bin/bash
+
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+help()
+{
+    echo "Usage: validate-config [OPTIONS] CONFIG_FILE
+
+Validate the provided Palace configuration file against the JSON schema
+
+Options:
+  -h, --help                       Show this help message and exit
+  --julia COMMAND                  Executable command for julia
+"
+}
+
+# Parse arguments
+JULIA="julia"
+POSITIONAL=()
+while [[ $# -gt 0 ]]; do
+    key="$1"
+    case $key in
+        -h|--help)
+        help
+        exit 0
+        ;;
+        --julia)
+        JULIA="$2"
+        shift
+        shift
+        ;;
+        "-"|"--")
+        shift
+        break
+        ;;
+        *)
+        POSITIONAL+=("$1")  # Unknown option, save it in an array for later
+        shift
+        ;;
+    esac
+done
+set -- "${POSITIONAL[@]}"  # Restore positional parameters
+
+# Check arguments: Everything remaining should be the configuration file
+if [[ -z "$@" ]]; then
+    help
+    exit 1
+else
+    CONFIG="$@"
+fi
+
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" ; pwd -P )
+
+if ! command -v $JULIA &> /dev/null; then
+    echo "Error: Could not locate $JULIA executable"
+    exit 1
+fi
+
+echo "
+include(joinpath(\"$SCRIPT_DIR\", \"schema\", \"ValidateConfig.jl\"))
+using .ValidateConfig
+result = validate_config_file(;
+    config_file=\"$CONFIG\",
+    schema_file=joinpath(\"$SCRIPT_DIR\", \"schema\", \"config-schema.json\")
+)
+if result != nothing
+    println(\"Dry-run: Configuration file \\\"$CONFIG\\\" contains errors!\")
+else
+    println(\"Dry-run: No errors detected in configuration file \\\"$CONFIG\\\"\")
+end
+" | $JULIA

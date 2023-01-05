@@ -1,0 +1,4158 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index c0eaccab1..a1f93fe84 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -10,7 +10,8 @@
+ # CONTRIBUTING.md for details.
+ 
+ # The variable CMAKE_CXX_STANDARD and related were introduced in CMake v3.1
+-cmake_minimum_required(VERSION 3.1)
++# Version 3.8 fixes the handling of CMAKE_CXX_STANDARD for try_compile
++cmake_minimum_required(VERSION 3.8)
+ set(USER_CONFIG "${CMAKE_CURRENT_SOURCE_DIR}/config/user.cmake" CACHE PATH
+   "Path to optional user configuration file.")
+ 
+@@ -77,15 +78,13 @@ if (CMAKE_VERSION VERSION_LESS 3.2 OR
+    #  * find_package(PETSc REQUIRED)
+    set(XSDK_ENABLE_C ON)
+ endif()
+-if (MFEM_USE_STRUMPACK)
++if (MFEM_USE_STRUMPACK OR MFEM_USE_MUMPS)
+   # Just needed to find the MPI_Fortran libraries to link with
+   set(XSDK_ENABLE_Fortran ON)
+ endif()
+-# SUNDIALS >= 6.4.0 requires C++14:
+-if (MFEM_USE_SUNDIALS AND ("${CMAKE_CXX_STANDARD}" LESS "14"))
+-  set(CMAKE_CXX_STANDARD 14)
+-endif()
+-if (MFEM_USE_GINKGO AND ("${CMAKE_CXX_STANDARD}" LESS "14"))
++# SUNDIALS, STRUMPACK, and Ginkgo require C++14:
++if ((MFEM_USE_SUNDIALS OR MFEM_USE_STRUMPACK OR MFEM_USE_GINKGO) AND
++    ("${CMAKE_CXX_STANDARD}" LESS "14"))
+   set(CMAKE_CXX_STANDARD 14)
+ endif()
+ 
+@@ -199,6 +198,27 @@ if (MFEM_USE_HIP)
+   find_package(HIPSPARSE REQUIRED)
+ endif()
+ 
++# OpenMP
++if (MFEM_USE_OPENMP OR MFEM_USE_LEGACY_OPENMP)
++  if (NOT MFEM_THREAD_SAFE AND MFEM_USE_LEGACY_OPENMP)
++    message(FATAL_ERROR " *** MFEM_USE_LEGACY_OPENMP requires MFEM_THREAD_SAFE=ON.")
++  endif()
++  find_package(OpenMP REQUIRED)
++  set(OPENMP_LIBRARIES ${OpenMP_CXX_LIBRARIES})
++  if(APPLE)
++    # On macOS, the compiler needs additional help to find the <omp.h> header.
++    # See issue #2642 for more information.
++    set(OPENMP_INCLUDE_DIRS ${OpenMP_CXX_INCLUDE_DIRS})
++  endif(APPLE)
++  if (OPENMP_FOUND)
++    message(STATUS "MFEM: using package OpenMP")
++    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
++    if (MFEM_USE_CUDA)
++      set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Xcompiler=${OpenMP_CXX_FLAGS}")
++    endif()
++  endif()
++endif()
++
+ # MPI -> hypre; PETSc (optional)
+ if (MFEM_USE_MPI)
+   find_package(MPI REQUIRED)
+@@ -264,20 +284,6 @@ if (MFEM_USE_LAPACK)
+   find_package(LAPACK REQUIRED)
+ endif()
+ 
+-# OpenMP
+-if (MFEM_USE_OPENMP OR MFEM_USE_LEGACY_OPENMP)
+-  if (NOT MFEM_THREAD_SAFE AND MFEM_USE_LEGACY_OPENMP)
+-    message(FATAL_ERROR " *** MFEM_USE_LEGACY_OPENMP requires MFEM_THREAD_SAFE=ON.")
+-  endif()
+-  find_package(OpenMP REQUIRED)
+-  set(OPENMP_LIBRARIES ${OpenMP_CXX_LIBRARIES})
+-  if(APPLE)
+-    # On macOS, the compiler needs additional help to find the <omp.h> header.
+-    # See issue #2642 for more information.
+-    set(OPENMP_INCLUDE_DIRS ${OpenMP_CXX_INCLUDE_DIRS})
+-  endif(APPLE)
+-endif()
+-
+ # SuiteSparse (before SUNDIALS which may depend on KLU)
+ if (MFEM_USE_SUITESPARSE)
+   find_package(SuiteSparse REQUIRED
+@@ -309,6 +315,7 @@ endif()
+ if (MFEM_USE_MUMPS)
+   if (MFEM_USE_MPI)
+     find_package(MUMPS REQUIRED mumps_common pord)
++    set(MFEM_MUMPS_VERSION ${MUMPS_VERSION})
+   else()
+     message(FATAL_ERROR " *** MUMPS requires that MPI be enabled.")
+   endif()
+@@ -506,18 +513,12 @@ foreach(TPL IN LISTS MFEM_TPLS)
+     list(APPEND TPL_INCLUDE_DIRS ${${TPL}_INCLUDE_DIRS})
+   endif()
+ endforeach(TPL)
++list(REVERSE TPL_LIBRARIES)
+ list(REMOVE_DUPLICATES TPL_LIBRARIES)
++list(REVERSE TPL_LIBRARIES)
+ list(REMOVE_DUPLICATES TPL_INCLUDE_DIRS)
+ # message(STATUS "TPL_INCLUDE_DIRS = ${TPL_INCLUDE_DIRS}")
+ 
+-if (OPENMP_FOUND)
+-  message(STATUS "MFEM: using package OpenMP")
+-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
+-  if (MFEM_USE_CUDA)
+-    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Xcompiler=${OpenMP_CXX_FLAGS}")
+-  endif()
+-endif()
+-
+ message(STATUS "MFEM build type: CMAKE_BUILD_TYPE = ${CMAKE_BUILD_TYPE}")
+ message(STATUS "MFEM version: v${MFEM_VERSION_STRING}")
+ message(STATUS "MFEM git string: ${MFEM_GIT_STRING}")
+diff --git a/config/cmake/config.hpp.in b/config/cmake/config.hpp.in
+index f8af98a72..0d4503723 100644
+--- a/config/cmake/config.hpp.in
++++ b/config/cmake/config.hpp.in
+@@ -77,96 +77,101 @@
+ // Internal MFEM option: enable group/batch allocation for some small objects.
+ #cmakedefine MFEM_USE_MEMALLOC
+ 
++// Which library functions to use in class StopWatch for measuring time.
++// For a list of the available options, see INSTALL.
++// If not defined, an option is selected automatically.
++#cmakedefine MFEM_TIMER_TYPE @MFEM_TIMER_TYPE@
++
++// Enable MFEM functionality based on the SUNDIALS libraries.
++#cmakedefine MFEM_USE_SUNDIALS
++
+ // Enable MFEM functionality based on the SuiteSparse library.
+ #cmakedefine MFEM_USE_SUITESPARSE
+ 
+ // Enable MFEM functionality based on the SuperLU_DIST library.
+ #cmakedefine MFEM_USE_SUPERLU
++#cmakedefine MFEM_USE_SUPERLU5
+ 
+ // Enable MFEM functionality based on the MUMPS library.
+ #cmakedefine MFEM_USE_MUMPS
++#cmakedefine MFEM_MUMPS_VERSION @MFEM_MUMPS_VERSION@
+ 
+ // Enable MFEM functionality based on the STRUMPACK library.
+ #cmakedefine MFEM_USE_STRUMPACK
+ 
+-// Enable functionality based on the Ginkgo library
++// Enable functionality based on the Ginkgo library.
+ #cmakedefine MFEM_USE_GINKGO
+ 
+-// Enable MFEM functionality based on the AmgX library
++// Enable MFEM functionality based on the AmgX library.
+ #cmakedefine MFEM_USE_AMGX
+ 
+-// Enable MFEM functionality based on the GnuTLS library
++// Enable secure socket streams based on the GNUTLS library.
+ #cmakedefine MFEM_USE_GNUTLS
+ 
+-// Enable MFEM functionality based on the GSLIB library
+-#cmakedefine MFEM_USE_GSLIB
+-
+-// Enable MFEM functionality based on the NetCDF library
+-#cmakedefine MFEM_USE_NETCDF
+-
+-// Enable MFEM functionality based on the PETSc library
+-#cmakedefine MFEM_USE_PETSC
+-
+-// Enable MFEM functionality based on the SLEPc library
+-#cmakedefine MFEM_USE_SLEPC
+-
+-// Enable MFEM functionality based on the Sidre library
++// Enable Sidre support.
+ #cmakedefine MFEM_USE_SIDRE
+ 
+-// Enable the use of SIMD in the high performance templated classes
++// Enable the use of SIMD in the high performance templated classes.
+ #cmakedefine MFEM_USE_SIMD
+ 
+-// Enable MFEM functionality based on the FMS library
++// Enable FMS support.
+ #cmakedefine MFEM_USE_FMS
+ 
+-// Enable MFEM functionality based on Conduit
++// Enable Conduit support.
+ #cmakedefine MFEM_USE_CONDUIT
+ 
+-// Enable MFEM functionality based on the PUMI library
++// Enable functionality based on the NetCDF library (reading CUBIT files).
++#cmakedefine MFEM_USE_NETCDF
++
++// Enable functionality based on the PETSc library.
++#cmakedefine MFEM_USE_PETSC
++
++// Enable functionality based on the SLEPc library.
++#cmakedefine MFEM_USE_SLEPC
++
++// Enable functionality based on the MPFR library.
++#cmakedefine MFEM_USE_MPFR
++
++// Enable MFEM functionality based on the PUMI library.
+ #cmakedefine MFEM_USE_PUMI
+ 
+-// Enable MFEM functionality based on the Moonolith library
++// Enable Moonolith-based general interpolation between finite element spaces.
+ #cmakedefine MFEM_USE_MOONOLITH
+ 
+-// Enable MFEM functionality based on the HiOp library
++// Enable MFEM functionality based on the HIOP library.
+ #cmakedefine MFEM_USE_HIOP
+ 
+-// Build the GPU/CUDA-enabled version of the MFEM library.
++// Enable MFEM functionality based on the GSLIB library.
++#cmakedefine MFEM_USE_GSLIB
++
++// Build the NVIDIA GPU/CUDA-enabled version of the MFEM library.
+ // Requires a CUDA compiler (nvcc).
+ #cmakedefine MFEM_USE_CUDA
+ 
+-// Build the HIP-enabled version of the MFEM library.
++// Build the AMD GPU/HIP-enabled version of the MFEM library.
+ // Requires a HIP compiler (hipcc).
+ #cmakedefine MFEM_USE_HIP
+ 
+-// Enable MFEM functionality based on the RAJA library
++// Enable functionality based on the RAJA library.
+ #cmakedefine MFEM_USE_RAJA
+ 
+-// Enable MFEM functionality based on the OCCA library
++// Enable functionality based on the OCCA library.
+ #cmakedefine MFEM_USE_OCCA
+ 
+-// Enable MFEM functionality based on the libCEED library
++// Enable functionality based on the libCEED library.
+ #cmakedefine MFEM_USE_CEED
+ 
+-// Enable MFEM functionality based on the Umpire library
+-#cmakedefine MFEM_USE_UMPIRE
+-
+-// Enable MFEM functionality based on the ADIOS2 library
+-#cmakedefine MFEM_USE_ADIOS2
+-
+-// Enable MFEM functionality based on the Caliper library
++// Enable functionality based on the Caliper library.
+ #cmakedefine MFEM_USE_CALIPER
+ 
+-// Enable MFEM functionality based on the Algoim library
++// Enable functionality based on the Algoim library.
+ #cmakedefine MFEM_USE_ALGOIM
+ 
+-// Which library functions to use in class StopWatch for measuring time.
+-// For a list of the available options, see INSTALL.
+-// If not defined, an option is selected automatically.
+-#define MFEM_TIMER_TYPE @MFEM_TIMER_TYPE@
++// Enable functionality based on the Umpire library.
++#cmakedefine MFEM_USE_UMPIRE
+ 
+-// Enable MFEM functionality based on the SUNDIALS libraries.
+-#cmakedefine MFEM_USE_SUNDIALS
++// Enable IO functionality based on the ADIOS2 library.
++#cmakedefine MFEM_USE_ADIOS2
+ 
+ // Version of HYPRE used for building MFEM.
+ #cmakedefine MFEM_HYPRE_VERSION @MFEM_HYPRE_VERSION@
+@@ -178,13 +183,13 @@
+ // Enable interface to the MKL CPardiso library.
+ #cmakedefine MFEM_USE_MKL_CPARDISO
+ 
+-// Use forward mode for automatic differentiation
++// Use forward mode for automatic differentiation.
+ #cmakedefine MFEM_USE_ADFORWARD
+ 
+-// Enable the use of the CoDiPack library for AD
++// Enable the use of the CoDiPack library for AD.
+ #cmakedefine MFEM_USE_CODIPACK
+ 
+-// Enable MFEM functionality based on the Google Benchmark library.
++// Enable functionality based on the Google Benchmark library.
+ #cmakedefine MFEM_USE_BENCHMARK
+ 
+ // Enable Enzyme for AD
+diff --git a/config/cmake/modules/FindButterflyPACK.cmake b/config/cmake/modules/FindButterflyPACK.cmake
+new file mode 100644
+index 000000000..18436df4d
+--- /dev/null
++++ b/config/cmake/modules/FindButterflyPACK.cmake
+@@ -0,0 +1,25 @@
++# Copyright (c) 2010-2022, Lawrence Livermore National Security, LLC. Produced
++# at the Lawrence Livermore National Laboratory. All Rights reserved. See files
++# LICENSE and NOTICE for details. LLNL-CODE-806117.
++#
++# This file is part of the MFEM library. For more information and source code
++# availability visit https://mfem.org.
++#
++# MFEM is free software; you can redistribute it and/or modify it under the
++# terms of the BSD-3 license. We welcome feedback and contributions, see file
++# CONTRIBUTING.md for details.
++
++# Sets the following variables:
++#   - ButterflyPACK_FOUND
++#   - ButterflyPACK_INCLUDE_DIRS
++#   - ButterflyPACK_LIBRARIES
++
++include(MfemCmakeUtilities)
++mfem_find_package(ButterflyPACK ButterflyPACK ButterflyPACK_DIR "" "" "" ""
++  "Paths to headers required by ButterflyPACK."
++  "Libraries required by ButterflyPACK."
++  ADD_COMPONENT "zbutterflypack" "" "" "lib" zbutterflypack
++  ADD_COMPONENT "dbutterflypack" "" "" "lib" dbutterflypack
++  ADD_COMPONENT "cbutterflypack" "" "" "lib" cbutterflypack
++  ADD_COMPONENT "sbutterflypack" "" "" "lib" sbutterflypack
++  )
+diff --git a/config/cmake/modules/FindMUMPS.cmake b/config/cmake/modules/FindMUMPS.cmake
+index 32db499ee..0f83d5bf1 100644
+--- a/config/cmake/modules/FindMUMPS.cmake
++++ b/config/cmake/modules/FindMUMPS.cmake
+@@ -11,8 +11,9 @@
+ 
+ # Sets the following variables:
+ #   - MUMPS_FOUND
+-#   - MUMPS_INCLUDE_DIRS
+ #   - MUMPS_LIBRARIES
++#   - MUMPS_INCLUDE_DIRS
++#   - MUMPS_VERSION
+ 
+ include(MfemCmakeUtilities)
+ mfem_find_package(MUMPS MUMPS MUMPS_DIR
+@@ -21,3 +22,18 @@ mfem_find_package(MUMPS MUMPS MUMPS_DIR
+   "Libraries required by MUMPS."
+   ADD_COMPONENT mumps_common "include" dmumps_c.h "lib" mumps_common
+   ADD_COMPONENT pord "include" dmumps_c.h "lib" pord)
++
++if (MUMPS_FOUND AND (NOT MUMPS_VERSION))
++  try_run(MUMPS_VERSION_RUN_RESULT MUMPS_VERSION_COMPILE_RESULT
++          ${CMAKE_CURRENT_BINARY_DIR}/config
++          ${CMAKE_CURRENT_SOURCE_DIR}/config/get_mumps_version.cpp
++          CMAKE_FLAGS -DINCLUDE_DIRECTORIES:STRING=${MUMPS_INCLUDE_DIRS}
++          RUN_OUTPUT_VARIABLE MUMPS_VERSION_OUTPUT)
++  if ((MUMPS_VERSION_RUN_RESULT EQUAL 0) AND MUMPS_VERSION_OUTPUT)
++    string(STRIP "${MUMPS_VERSION_OUTPUT}" MUMPS_VERSION)
++    set(MUMPS_VERSION ${MUMPS_VERSION} CACHE STRING "MUMPS version." FORCE)
++    message(STATUS "Found MUMPS version ${MUMPS_VERSION}")
++  else()
++    message(FATAL_ERROR "Unable to determine MUMPS version.")
++  endif()
++endif()
+diff --git a/config/cmake/modules/FindScotch.cmake b/config/cmake/modules/FindScotch.cmake
+index 7a22bef4f..f4d1ff52e 100644
+--- a/config/cmake/modules/FindScotch.cmake
++++ b/config/cmake/modules/FindScotch.cmake
+@@ -22,8 +22,13 @@ mfem_find_package(Scotch Scotch Scotch_DIR "" "" "" ""
+   ADD_COMPONENT "scotcherr" "" "" "lib" scotcherr
+   ADD_COMPONENT "scotcherrexit" "" "" "lib" scotcherrexit
+   ADD_COMPONENT "scotchmetis" "include" "metis.h" "lib" scotchmetis
++  ADD_COMPONENT "scotchmetisv3" "include" "metis.h" "lib" scotchmetisv3
++  ADD_COMPONENT "scotchmetisv5" "include" "metis.h" "lib" scotchmetisv5
++  ADD_COMPONENT "esmumps" "" "" "lib" esmumps
+   ADD_COMPONENT "ptscotch" "include" ptscotch.h "lib" ptscotch
+   ADD_COMPONENT "ptscotcherr" "" "" "lib" ptscotcherr
+   ADD_COMPONENT "ptscotcherrexit" "" "" "lib" ptscotcherrexit
+   ADD_COMPONENT "ptscotchparmetis" "include" "parmetis.h" "lib" ptscotchparmetis
++  ADD_COMPONENT "ptscotchparmetisv3" "include" "parmetis.h" "lib" ptscotchparmetisv3
++  ADD_COMPONENT "ptesmumps" "" "" "lib" ptesmumps
+   )
+diff --git a/config/cmake/modules/FindZFP.cmake b/config/cmake/modules/FindZFP.cmake
+new file mode 100644
+index 000000000..5c35c38b5
+--- /dev/null
++++ b/config/cmake/modules/FindZFP.cmake
+@@ -0,0 +1,22 @@
++# Copyright (c) 2010-2022, Lawrence Livermore National Security, LLC. Produced
++# at the Lawrence Livermore National Laboratory. All Rights reserved. See files
++# LICENSE and NOTICE for details. LLNL-CODE-806117.
++#
++# This file is part of the MFEM library. For more information and source code
++# availability visit https://mfem.org.
++#
++# MFEM is free software; you can redistribute it and/or modify it under the
++# terms of the BSD-3 license. We welcome feedback and contributions, see file
++# CONTRIBUTING.md for details.
++
++# Sets the following variables:
++#   - ZFP_FOUND
++#   - ZFP_INCLUDE_DIRS
++#   - ZFP_LIBRARIES
++
++include(MfemCmakeUtilities)
++mfem_find_package(ZFP ZFP ZFP_DIR
++  "" "" "lib" zfp
++  "Paths to headers required by ZFP."
++  "Libraries required by ZFP."
++  )
+diff --git a/config/config.hpp.in b/config/config.hpp.in
+index 69e83db85..0e68416b0 100644
+--- a/config/config.hpp.in
++++ b/config/config.hpp.in
+@@ -30,10 +30,10 @@
+ #define MFEM_VERSION_MINOR (((MFEM_VERSION)/100)%100)
+ #define MFEM_VERSION_PATCH ((MFEM_VERSION)%100)
+ 
+-// The absolute path of the MFEM source prefix
++// The absolute path of the MFEM source prefix.
+ // #define MFEM_SOURCE_DIR "@MFEM_SOURCE_DIR@"
+ 
+-// The absolute path of the MFEM installation prefix
++// The absolute path of the MFEM installation prefix.
+ // #define MFEM_INSTALL_DIR "@MFEM_INSTALL_DIR@"
+ 
+ // Description of the git commit used to build MFEM.
+@@ -88,7 +88,7 @@
+ // Enable MFEM functionality based on the SuiteSparse library.
+ // #define MFEM_USE_SUITESPARSE
+ 
+-// Enable MFEM functionality based on the SuperLU library.
++// Enable MFEM functionality based on the SuperLU_DIST library.
+ // #define MFEM_USE_SUPERLU
+ // #define MFEM_USE_SUPERLU5
+ 
+@@ -99,40 +99,40 @@
+ // Enable MFEM functionality based on the STRUMPACK library.
+ // #define MFEM_USE_STRUMPACK
+ 
+-// Enable MFEM features based on the Ginkgo library
++// Enable MFEM features based on the Ginkgo library.
+ // #define MFEM_USE_GINKGO
+ 
+ // Enable MFEM functionality based on the AmgX library.
+ // #define MFEM_USE_AMGX
+ 
+-// Enable secure socket streams based on the GNUTLS library
++// Enable secure socket streams based on the GNUTLS library.
+ // #define MFEM_USE_GNUTLS
+ 
+-// Enable Sidre support
++// Enable Sidre support.
+ // #define MFEM_USE_SIDRE
+ 
+-// Enable the use of SIMD in the high performance templated classes
++// Enable the use of SIMD in the high performance templated classes.
+ // #define MFEM_USE_SIMD
+ 
+-// Enable FMS support
++// Enable FMS support.
+ // #define MFEM_USE_FMS
+ 
+-// Enable Conduit support
++// Enable Conduit support.
+ // #define MFEM_USE_CONDUIT
+ 
+-// Enable functionality based on the NetCDF library (reading CUBIT files)
++// Enable functionality based on the NetCDF library (reading CUBIT files).
+ // #define MFEM_USE_NETCDF
+ 
+-// Enable functionality based on the PETSc library
++// Enable functionality based on the PETSc library.
+ // #define MFEM_USE_PETSC
+ 
+-// Enable functionality based on the SLEPc library
++// Enable functionality based on the SLEPc library.
+ // #define MFEM_USE_SLEPC
+ 
+ // Enable functionality based on the MPFR library.
+ // #define MFEM_USE_MPFR
+ 
+-// Enable MFEM functionality based on the PUMI library
++// Enable MFEM functionality based on the PUMI library.
+ // #define MFEM_USE_PUMI
+ 
+ // Enable Moonolith-based general interpolation between finite element spaces.
+@@ -141,7 +141,7 @@
+ // Enable MFEM functionality based on the HIOP library.
+ // #define MFEM_USE_HIOP
+ 
+-// Enable MFEM functionality based on the GSLIB library
++// Enable MFEM functionality based on the GSLIB library.
+ // #define MFEM_USE_GSLIB
+ 
+ // Build the NVIDIA GPU/CUDA-enabled version of the MFEM library.
+@@ -183,10 +183,10 @@
+ // Enable interface to the MKL CPardiso library.
+ // #define MFEM_USE_MKL_CPARDISO
+ 
+-// Use forward mode for automatic differentiation
++// Use forward mode for automatic differentiation.
+ // #define MFEM_USE_ADFORWARD
+ 
+-// Enable the use of the CoDiPack library for AD
++// Enable the use of the CoDiPack library for AD.
+ // #define MFEM_USE_CODIPACK
+ 
+ // Enable functionality based on the Google Benchmark library.
+diff --git a/config/defaults.cmake b/config/defaults.cmake
+index 0141ae3fe..d760f5172 100644
+--- a/config/defaults.cmake
++++ b/config/defaults.cmake
+@@ -133,16 +133,17 @@ set(ParMETIS_DIR "${MFEM_DIR}/../parmetis-4.0.3" CACHE PATH
+ set(ParMETIS_REQUIRED_PACKAGES "METIS" CACHE STRING
+     "Additional packages required by ParMETIS.")
+ 
+-set(SuperLUDist_DIR "${MFEM_DIR}/../SuperLU_DIST_6.3.1" CACHE PATH
++set(SuperLUDist_DIR "${MFEM_DIR}/../SuperLU_DIST_7.2.0" CACHE PATH
+     "Path to the SuperLU_DIST library.")
+ # SuperLU_DIST may also depend on "OpenMP", depending on how it was compiled.
+-set(SuperLUDist_REQUIRED_PACKAGES "MPI" "BLAS" "ParMETIS" CACHE STRING
++set(SuperLUDist_REQUIRED_PACKAGES "MPI" "LAPACK" "BLAS" "ParMETIS" "METIS" CACHE STRING
+     "Additional packages required by SuperLU_DIST.")
+ 
+-set(MUMPS_DIR "${MFEM_DIR}/../MUMPS_5.2.0" CACHE PATH
++set(MUMPS_DIR "${MFEM_DIR}/../MUMPS_5.5.0" CACHE PATH
+     "Path to the MUMPS library.")
+-# Packages required by MUMPS, depending on how it was compiled.
+-set(MUMPS_REQUIRED_PACKAGES "MPI" "BLAS" "METIS" "ScaLAPACK" CACHE STRING
++# MUMPS may also depend on "OpenMP", depending on how it was compiled.
++set(MUMPS_REQUIRED_PACKAGES "MPI" "MPI_Fortran" "LAPACK" "BLAS" "ScaLAPACK"
++    "ParMETIS" "METIS" "Scotch/ptscotch/ptscotcherr/scotch/scotcherr/ptesmumps/ptscotchparmetisv3/esmumps" CACHE STRING
+     "Additional packages required by MUMPS.")
+ # If the MPI package does not find all required Fortran libraries:
+ # set(MUMPS_REQUIRED_LIBRARIES "gfortran" "mpi_mpifh" CACHE STRING
+@@ -152,8 +153,8 @@ set(STRUMPACK_DIR "${MFEM_DIR}/../STRUMPACK-build" CACHE PATH
+     "Path to the STRUMPACK library.")
+ # STRUMPACK may also depend on "OpenMP", depending on how it was compiled.
+ # Starting with v2.2.0 of STRUMPACK, ParMETIS and Scotch are optional.
+-set(STRUMPACK_REQUIRED_PACKAGES "MPI" "MPI_Fortran" "ParMETIS" "METIS"
+-    "ScaLAPACK" "Scotch/ptscotch/ptscotcherr/scotch/scotcherr" CACHE STRING
++set(STRUMPACK_REQUIRED_PACKAGES "MPI" "MPI_Fortran" "LAPACK" "BLAS" "ScaLAPACK"
++    "ParMETIS" "METIS" "Scotch/ptscotch/ptscotcherr/scotch/scotcherr/ptesmumps/ptscotchparmetisv3/esmumps" CACHE STRING
+     "Additional packages required by STRUMPACK.")
+ # If the MPI package does not find all required Fortran libraries:
+ # set(STRUMPACK_REQUIRED_LIBRARIES "gfortran" "mpi_mpifh" CACHE STRING
+@@ -170,9 +171,12 @@ set(CMAKE_THREAD_PREFER_PTHREAD TRUE)
+ set(Threads_LIB_VARS CMAKE_THREAD_LIBS_INIT)
+ 
+ # The ScaLAPACK library, required by STRUMPACK
+-set(ScaLAPACK_DIR "${MFEM_DIR}/../scalapack-2.0.2/lib/cmake/scalapack-2.0.2"
+-    CACHE PATH "Path to the configuration file scalapack-config.cmake")
+-set(ScaLAPACK_TARGET_NAMES scalapack)
++set(ScaLAPACK_DIR "${MFEM_DIR}/../scalapack-2.0.2" CACHE PATH
++    "Path to the ScaLAPACK library.")
++# Alternatively, import ScaLAPACK using config mode:
++# set(ScaLAPACK_DIR "${MFEM_DIR}/../scalapack-2.0.2/lib/cmake/scalapack-2.0.2"
++#     CACHE PATH "Path to the configuration file scalapack-config.cmake")
++# set(ScaLAPACK_TARGET_NAMES scalapack)
+ # set(ScaLAPACK_TARGET_FORCE)
+ # set(ScaLAPACK_IMPORT_CONFIG DEBUG)
+ 
+diff --git a/config/defaults.mk b/config/defaults.mk
+index 0975cb99c..4b4974773 100644
+--- a/config/defaults.mk
++++ b/config/defaults.mk
+@@ -226,10 +226,11 @@ ifeq ($(MFEM_USE_SUPERLU)$(MFEM_USE_STRUMPACK)$(MFEM_USE_MUMPS),NONONO)
+      METIS_LIB = -L$(METIS_DIR)/lib -lmetis
+    endif
+ else
+-   # ParMETIS: currently needed by SuperLU or STRUMPACK. We assume that METIS 5
+-   # (included with ParMETIS) is installed in the same location.
++   # ParMETIS: currently needed by SuperLU or STRUMPACK
++   # We assume that METIS 5 (included with ParMETIS) is installed in the same
++   # location
+    # Starting with STRUMPACK v2.2.0, ParMETIS is an optional dependency while
+-   # METIS is still required.
++   # METIS is still required (also an optional dependency for MUMPS)
+    METIS_DIR = @MFEM_DIR@/../parmetis-4.0.3
+    METIS_OPT = -I$(METIS_DIR)/include
+    METIS_LIB = -L$(METIS_DIR)/lib -lparmetis -lmetis
+@@ -284,10 +285,10 @@ ifeq ($(MFEM_USE_SUPERLU5),YES)
+    SUPERLU_LIB = $(XLINKER)-rpath,$(SUPERLU_DIR)/lib -L$(SUPERLU_DIR)/lib\
+       -lsuperlu_dist_5.1.0
+ else
+-   SUPERLU_DIR = @MFEM_DIR@/../SuperLU_DIST_6.3.1
++   SUPERLU_DIR = @MFEM_DIR@/../SuperLU_DIST_7.2.0
+    SUPERLU_OPT = -I$(SUPERLU_DIR)/include
+    SUPERLU_LIB = $(XLINKER)-rpath,$(SUPERLU_DIR)/lib64 -L$(SUPERLU_DIR)/lib64\
+-      -lsuperlu_dist -lblas
++      -lsuperlu_dist $(LAPACK_LIB)
+ endif
+ 
+ # SCOTCH library configuration (required by STRUMPACK <= v2.1.0, optional in
+@@ -311,7 +312,7 @@ MPI_FORTRAN_LIB = -lmpifort
+ # MPI_FORTRAN_LIB += -lgfortran
+ 
+ # MUMPS library configuration
+-MUMPS_DIR = @MFEM_DIR@/../MUMPS_5.2.0
++MUMPS_DIR = @MFEM_DIR@/../MUMPS_5.5.0
+ MUMPS_OPT = -I$(MUMPS_DIR)/include
+ MUMPS_LIB = $(XLINKER)-rpath,$(MUMPS_DIR)/lib -L$(MUMPS_DIR)/lib -ldmumps\
+  -lmumps_common -lpord $(SCALAPACK_LIB) $(LAPACK_LIB) $(MPI_FORTRAN_LIB)
+diff --git a/examples/CMakeLists.txt b/examples/CMakeLists.txt
+index 88b656d03..fabe7b16e 100644
+--- a/examples/CMakeLists.txt
++++ b/examples/CMakeLists.txt
+@@ -161,6 +161,15 @@ if (MFEM_ENABLE_TESTING)
+       $<TARGET_FILE:ex11p> "-no-vis" "--superlu"
+       ${MPIEXEC_POSTFLAGS})
+   endif()
++
++  # If MUMPS is enabled, add a test run that uses it.
++  if (MFEM_USE_MUMPS)
++    add_test(NAME ex25p_mumps_np=${MFEM_MPI_NP}
++      COMMAND ${MPIEXEC} ${MPIEXEC_NUMPROC_FLAG} ${MFEM_MPI_NP}
++      ${MPIEXEC_PREFLAGS}
++      $<TARGET_FILE:ex25p> "-no-vis" "--mumps-solver"
++      ${MPIEXEC_POSTFLAGS})
++  endif()
+ endif()
+ 
+ # Include the examples/amgx directory if AmgX is enabled
+diff --git a/examples/ex11p.cpp b/examples/ex11p.cpp
+index 216a6f443..c88bfddff 100644
+--- a/examples/ex11p.cpp
++++ b/examples/ex11p.cpp
+@@ -262,12 +262,16 @@ int main(int argc, char *argv[])
+ #ifdef MFEM_USE_STRUMPACK
+       if (sp_solver)
+       {
+-         STRUMPACKSolver * strumpack = new STRUMPACKSolver(argc, argv, MPI_COMM_WORLD);
++         STRUMPACKSolver * strumpack = new STRUMPACKSolver(MPI_COMM_WORLD, argc, argv);
+          strumpack->SetPrintFactorStatistics(true);
+          strumpack->SetPrintSolveStatistics(false);
+          strumpack->SetKrylovSolver(strumpack::KrylovSolver::DIRECT);
+          strumpack->SetReorderingStrategy(strumpack::ReorderingStrategy::METIS);
+-         strumpack->DisableMatching();
++#if STRUMPACK_VERSION_MAJOR >= 3
++         strumpack->SetMatching(strumpack::MatchingJob::NONE);
++#else
++         strumpack->SetMatching(strumpack::MC64Job::NONE);
++#endif
+          strumpack->SetOperator(*Arow);
+          strumpack->SetFromCommandLine();
+          precond = strumpack;
+diff --git a/examples/ex25p.cpp b/examples/ex25p.cpp
+index ddd13fd25..03e7e5401 100644
+--- a/examples/ex25p.cpp
++++ b/examples/ex25p.cpp
+@@ -170,6 +170,7 @@ int main(int argc, char *argv[])
+    bool herm_conv = true;
+    bool slu_solver  = false;
+    bool mumps_solver = false;
++   bool strumpack_solver = false;
+    bool visualization = 1;
+    bool pa = false;
+    const char *device_config = "cpu";
+@@ -200,6 +201,11 @@ int main(int argc, char *argv[])
+ #ifdef MFEM_USE_MUMPS
+    args.AddOption(&mumps_solver, "-mumps", "--mumps-solver", "-no-mumps",
+                   "--no-mumps-solver", "Use the MUMPS Solver.");
++#endif
++#ifdef MFEM_USE_STRUMPACK
++   args.AddOption(&strumpack_solver, "-strumpack", "--strumpack-solver",
++                  "-no-strumpack", "--no-strumpack-solver",
++                  "Use the STRUMPACK Solver.");
+ #endif
+    args.AddOption(&visualization, "-vis", "--visualization", "-no-vis",
+                   "--no-visualization",
+@@ -209,13 +215,14 @@ int main(int argc, char *argv[])
+    args.AddOption(&device_config, "-d", "--device",
+                   "Device configuration string, see Device::Configure().");
+    args.Parse();
+-   if (slu_solver && mumps_solver)
++   if (slu_solver + mumps_solver + strumpack_solver > 1)
+    {
+       if (myid == 0)
+-         cout << "WARNING: Both SuperLU and MUMPS have been selected,"
+-              << " please choose either one." << endl
++         cout << "WARNING: More than one of SuperLU, MUMPS, and STRUMPACK have"
++              << " been selected, please choose only one." << endl
+               << "         Defaulting to SuperLU." << endl;
+       mumps_solver = false;
++      strumpack_solver = false;
+    }
+ 
+    if (iprob > 4) { iprob = 4; }
+@@ -474,15 +481,39 @@ int main(int argc, char *argv[])
+       delete A;
+    }
+ #endif
++#ifdef MFEM_USE_STRUMPACK
++   if (!pa && strumpack_solver)
++   {
++      HypreParMatrix *A = Ah.As<ComplexHypreParMatrix>()->GetSystemMatrix();
++      STRUMPACKRowLocMatrix SA(*A);
++      STRUMPACKSolver strumpack(MPI_COMM_WORLD, argc, argv);
++      strumpack.SetPrintFactorStatistics(false);
++      strumpack.SetPrintSolveStatistics(false);
++      strumpack.SetKrylovSolver(strumpack::KrylovSolver::DIRECT);
++      strumpack.SetReorderingStrategy(strumpack::ReorderingStrategy::METIS);
++#if STRUMPACK_VERSION_MAJOR >= 3
++      strumpack.SetMatching(strumpack::MatchingJob::NONE);
++#else
++      strumpack.SetMatching(strumpack::MC64Job::NONE);
++#endif
++#if STRUMPACK_VERSION_MAJOR >= 3
++      strumpack.SetCompression(strumpack::CompressionType::NONE);
++#endif
++      strumpack.SetFromCommandLine();
++      strumpack.SetOperator(SA);
++      strumpack.Mult(B, X);
++      delete A;
++   }
++#endif
+ #ifdef MFEM_USE_MUMPS
+    if (!pa && mumps_solver)
+    {
+       HypreParMatrix *A = Ah.As<ComplexHypreParMatrix>()->GetSystemMatrix();
+-      MUMPSSolver mumps;
++      MUMPSSolver mumps(A->GetComm());
+       mumps.SetPrintLevel(0);
+       mumps.SetMatrixSymType(MUMPSSolver::MatType::UNSYMMETRIC);
+       mumps.SetOperator(*A);
+-      mumps.Mult(B,X);
++      mumps.Mult(B, X);
+       delete A;
+    }
+ #endif
+@@ -493,7 +524,7 @@ int main(int argc, char *argv[])
+    //
+    //    In PML:   1/mu (abs(1/det(J) J^T J) Curl E, Curl F)
+    //              + omega^2 * epsilon (abs(det(J) * (J^T J)^-1) * E, F)
+-   if (pa || (!slu_solver && !mumps_solver))
++   if (pa || (!slu_solver && !mumps_solver && !strumpack_solver))
+    {
+       ConstantCoefficient absomeg(pow(omega, 2) * epsilon);
+       RestrictedCoefficient restr_absomeg(absomeg,attr);
+diff --git a/examples/petsc/ex11p.cpp b/examples/petsc/ex11p.cpp
+index 51238c4d7..379013d40 100644
+--- a/examples/petsc/ex11p.cpp
++++ b/examples/petsc/ex11p.cpp
+@@ -273,12 +273,16 @@ int main(int argc, char *argv[])
+ #ifdef MFEM_USE_STRUMPACK
+          if (sp_solver)
+          {
+-            STRUMPACKSolver * strumpack = new STRUMPACKSolver(argc, argv, MPI_COMM_WORLD);
++            STRUMPACKSolver * strumpack = new STRUMPACKSolver(MPI_COMM_WORLD, argc, argv);
+             strumpack->SetPrintFactorStatistics(true);
+             strumpack->SetPrintSolveStatistics(false);
+             strumpack->SetKrylovSolver(strumpack::KrylovSolver::DIRECT);
+             strumpack->SetReorderingStrategy(strumpack::ReorderingStrategy::METIS);
+-            strumpack->DisableMatching();
++#if STRUMPACK_VERSION_MAJOR >= 3
++            strumpack->SetMatching(strumpack::MatchingJob::NONE);
++#else
++            strumpack->SetMatching(strumpack::MC64Job::NONE);
++#endif
+             strumpack->SetOperator(*Arow);
+             strumpack->SetFromCommandLine();
+             precond = strumpack;
+diff --git a/examples/superlu/ex1p.cpp b/examples/superlu/ex1p.cpp
+index 2bd220b07..8d66b5699 100644
+--- a/examples/superlu/ex1p.cpp
++++ b/examples/superlu/ex1p.cpp
+@@ -67,6 +67,7 @@ int main(int argc, char *argv[])
+    int slu_colperm = 4;
+    int slu_rowperm = 1;
+    int slu_iterref = 2;
++   int slu_npdep = 1;
+ 
+    OptionsParser args(argc, argv);
+    args.AddOption(&mesh_file, "-m", "--mesh",
+@@ -85,9 +86,11 @@ int main(int argc, char *argv[])
+                   "6-ZOLTAN");
+    args.AddOption(&slu_rowperm, "-rp", "--rowperm",
+                   "SuperLU Row Permutation Method:  0-NOROWPERM, 1-LargeDiag");
+-   args.AddOption(&slu_iterref, "-rp", "--rowperm",
++   args.AddOption(&slu_iterref, "-ir", "--iterref",
+                   "SuperLU Iterative Refinement:  0-NOREFINE, 1-Single, "
+                   "2-Double, 3-Extra");
++   args.AddOption(&slu_npdep, "-npdep", "--npdepth",
++                  "Depth of 3D parition for SuperLU (>= 7.2.0)");
+ 
+    args.Parse();
+    if (!args.Good())
+@@ -214,7 +217,7 @@ int main(int argc, char *argv[])
+    a.FormLinearSystem(ess_tdof_list, x, b, A, X, B);
+ 
+    // 13. Solve the linear system A X = B utilizing SuperLU.
+-   SuperLUSolver *superlu = new SuperLUSolver(MPI_COMM_WORLD);
++   SuperLUSolver *superlu = new SuperLUSolver(MPI_COMM_WORLD, slu_npdep);
+    Operator *SLU_A = new SuperLURowLocMatrix(*A.As<HypreParMatrix>());
+    superlu->SetPrintStatistics(true);
+    superlu->SetSymmetricPattern(false);
+@@ -281,7 +284,6 @@ int main(int argc, char *argv[])
+    superlu->SetOperator(*SLU_A);
+    superlu->SetPrintStatistics(true);
+    superlu->Mult(B, X);
+-   superlu->DismantleGrid();
+ 
+    delete SLU_A;
+    delete superlu;
+diff --git a/linalg/mumps.cpp b/linalg/mumps.cpp
+index eae2bd58c..6fd756967 100644
+--- a/linalg/mumps.cpp
++++ b/linalg/mumps.cpp
+@@ -16,58 +16,123 @@
+ 
+ #include "mumps.hpp"
+ 
+-#ifdef HYPRE_BIGINT
+-#error "MUMPSSolver requires HYPRE_Int == int, for now."
++#include <algorithm>
++
++#if MFEM_MUMPS_VERSION >= 530
++#ifdef MUMPS_INTSIZE64
++#error "Full 64-bit MUMPS is not yet supported"
++#endif
++#else
++#ifdef INTSIZE64
++#error "Full 64-bit MUMPS is not yet supported"
++#endif
+ #endif
+ 
+-// macro s.t. indices match MUMPS documentation
++// Macro s.t. indices match MUMPS documentation
+ #define MUMPS_ICNTL(I) icntl[(I) -1]
++#define MUMPS_CNTL(I) cntl[(I) -1]
+ #define MUMPS_INFO(I) info[(I) -1]
++#define MUMPS_INFOG(I) infog[(I) -1]
+ 
+ namespace mfem
+ {
+ 
+-void MUMPSSolver::SetOperator(const Operator &op)
++MUMPSSolver::MUMPSSolver(MPI_Comm comm_)
+ {
+-   auto APtr = dynamic_cast<const HypreParMatrix *>(&op);
+-
+-   MFEM_VERIFY(APtr, "Not compatible matrix type");
++   Init(comm_);
++}
+ 
+-   height = op.Height();
+-   width = op.Width();
++MUMPSSolver::MUMPSSolver(const Operator &op)
++{
++   auto APtr = dynamic_cast<const HypreParMatrix *>(&op);
++   MFEM_VERIFY(APtr, "Not a compatible matrix type");
++   Init(APtr->GetComm());
++   SetOperator(op);
++}
+ 
+-   comm = APtr->GetComm();
++void MUMPSSolver::Init(MPI_Comm comm_)
++{
++   id = nullptr;
++   comm = comm_;
+    MPI_Comm_size(comm, &numProcs);
+    MPI_Comm_rank(comm, &myid);
+ 
+-   auto parcsr_op = (hypre_ParCSRMatrix *) const_cast<HypreParMatrix &>(*APtr);
++   mat_type = MatType::UNSYMMETRIC;
++   print_level = 0;
++   reorder_method = ReorderingStrategy::AUTOMATIC;
++   reorder_reuse = false;
++   blr_tol = 0.0;
++
++#if MFEM_MUMPS_VERSION >= 530
++   irhs_loc = nullptr;
++   rhs_loc = nullptr;
++   isol_loc = nullptr;
++   sol_loc = nullptr;
++#else
++   recv_counts = nullptr;
++   displs = nullptr;
++   rhs_glob = nullptr;
++#endif
++}
++
++MUMPSSolver::~MUMPSSolver()
++{
++#if MFEM_MUMPS_VERSION >= 530
++   delete [] irhs_loc;
++   delete [] rhs_loc;
++   delete [] isol_loc;
++   delete [] sol_loc;
++#else
++   delete [] recv_counts;
++   delete [] displs;
++   delete [] rhs_glob;
++#endif
++   if (id)
++   {
++      id->job = -2;
++      dmumps_c(id);
++      delete id;
++   }
++}
++
++void MUMPSSolver::SetOperator(const Operator &op)
++{
++   auto APtr = dynamic_cast<const HypreParMatrix *>(&op);
++   MFEM_VERIFY(APtr, "Not a compatible matrix type");
++
++   height = op.Height();
++   width = op.Width();
+ 
++   auto parcsr_op = (hypre_ParCSRMatrix *)const_cast<HypreParMatrix &>(*APtr);
+    APtr->HostRead();
+    hypre_CSRMatrix *csr_op = hypre_MergeDiagAndOffd(parcsr_op);
+    APtr->HypreRead();
++   HYPRE_Int       *Iptr   = csr_op->i;
+ #if MFEM_HYPRE_VERSION >= 21600
+-   hypre_CSRMatrixBigJtoJ(csr_op);
++   HYPRE_BigInt    *Jptr   = csr_op->big_j;
++#else
++   HYPRE_Int       *Jptr   = csr_op->j;
+ #endif
+ 
+-   int *Iptr = csr_op->i;
+-   int *Jptr = csr_op->j;
+-   int n_loc = csr_op->num_rows;
+-
+-   row_start = parcsr_op->first_row_index;
++   int n_loc = internal::to_int(csr_op->num_rows);
++   row_start = internal::to_int(parcsr_op->first_row_index);
+ 
+-   MUMPS_INT8 nnz = 0;
++   MUMPS_INT8 nnz = 0, k = 0;
+    if (mat_type)
+    {
+-      // count nnz in case of symmetric mode
+-      int k = 0;
++      // Count nnz in case of symmetric mode
+       for (int i = 0; i < n_loc; i++)
+       {
+-         for (int j = Iptr[i]; j < Iptr[i + 1]; j++)
++         for (HYPRE_Int j = Iptr[i]; j < Iptr[i + 1]; j++)
+          {
+             int ii = row_start + i + 1;
+-            int jj = Jptr[k] + 1;
++#if MFEM_HYPRE_VERSION >= 21600
++            HYPRE_BigInt jj = Jptr[k] + 1;
++#else
++            HYPRE_Int jj = Jptr[k] + 1;
++#endif
++            if (ii >= jj) { nnz++; }
+             k++;
+-            if (ii>=jj) { nnz++; }
+          }
+       }
+    }
+@@ -75,28 +140,31 @@ void MUMPSSolver::SetOperator(const Operator &op)
+    {
+       nnz = csr_op->num_nonzeros;
+    }
+-
+-   int * I = new int[nnz];
+-   int * J = new int[nnz];
++   int *I = new int[nnz];
++   int *J = new int[nnz];
+ 
+    // Fill in I and J arrays for
+    // COO format in 1-based indexing
+-   int k = 0;
+-   double * data;
++   k = 0;
++   double *data;
+    if (mat_type)
+    {
+-      int l = 0;
++      MUMPS_INT8 l = 0;
+       data = new double[nnz];
+       for (int i = 0; i < n_loc; i++)
+       {
+-         for (int j = Iptr[i]; j < Iptr[i + 1]; j++)
++         for (HYPRE_Int j = Iptr[i]; j < Iptr[i + 1]; j++)
+          {
+             int ii = row_start + i + 1;
+-            int jj = Jptr[k] + 1;
++#if MFEM_HYPRE_VERSION >= 21600
++            HYPRE_BigInt jj = Jptr[k] + 1;
++#else
++            HYPRE_Int jj = Jptr[k] + 1;
++#endif
+             if (ii >= jj)
+             {
+                I[l] = ii;
+-               J[l] = jj;
++               J[l] = internal::to_int(jj);
+                data[l++] = csr_op->data[k];
+             }
+             k++;
+@@ -107,84 +175,122 @@ void MUMPSSolver::SetOperator(const Operator &op)
+    {
+       for (int i = 0; i < n_loc; i++)
+       {
+-         for (int j = Iptr[i]; j < Iptr[i + 1]; j++)
++         for (HYPRE_Int j = Iptr[i]; j < Iptr[i + 1]; j++)
+          {
+             I[k] = row_start + i + 1;
+-            J[k] = Jptr[k] + 1;
++            J[k] = internal::to_int(Jptr[k] + 1);
+             k++;
+          }
+       }
+       data = csr_op->data;
+    }
+ 
+-   // new MUMPS object
+-   if (id)
++   // New MUMPS object or reuse the one from a previous matrix
++   if (!id || !reorder_reuse)
+    {
+-      id->job = -2;
+-      dmumps_c(id);
+-      delete id;
+-   }
+-   id = new DMUMPS_STRUC_C;
+-   // C to Fortran communicator
+-   id->comm_fortran = (MUMPS_INT) MPI_Comm_c2f(comm);
+-
+-   // Host is involved in computation
+-   id->par = 1;
+-
+-   id->sym = mat_type;
+-
+-   // MUMPS init
+-   id->job = -1;
+-   dmumps_c(id);
+-
+-   // Set MUMPS default parameters
+-   SetParameters();
++      if (id)
++      {
++         id->job = -2;
++         dmumps_c(id);
++         delete id;
++      }
++      id = new DMUMPS_STRUC_C;
++      id->sym = mat_type;
+ 
+-   id->n = parcsr_op->global_num_rows;
++      // C to Fortran communicator
++      id->comm_fortran = (MUMPS_INT)MPI_Comm_c2f(comm);
+ 
+-   id->nnz_loc = nnz;
++      // Host is involved in computation
++      id->par = 1;
+ 
+-   id->irn_loc = I;
++      // MUMPS init
++      id->job = -1;
++      dmumps_c(id);
+ 
+-   id->jcn_loc = J;
++      // Set MUMPS default parameters
++      SetParameters();
+ 
+-   id->a_loc = data;
++      id->n = internal::to_int(parcsr_op->global_num_rows);
++      id->nnz_loc = nnz;
++      id->irn_loc = I;
++      id->jcn_loc = J;
++      id->a_loc = data;
+ 
+-   // MUMPS Analysis
+-   id->job = 1;
+-   dmumps_c(id);
++      // MUMPS analysis
++      id->job = 1;
++      dmumps_c(id);
++   }
++   else
++   {
++      id->irn_loc = I;
++      id->jcn_loc = J;
++      id->a_loc = data;
++   }
+ 
+-   // MUMPS Factorization
++   // MUMPS factorization
+    id->job = 2;
+-   dmumps_c(id);
++   {
++      const int mem_relax_lim = 200;
++      while (true)
++      {
++         dmumps_c(id);
++         if (id->MUMPS_INFOG(1) < 0)
++         {
++            if (id->MUMPS_INFOG(1) == -8 || id->MUMPS_INFOG(1) == -9)
++            {
++               id->MUMPS_ICNTL(14) += 20;
++               MFEM_VERIFY(id->MUMPS_ICNTL(14) <= mem_relax_lim,
++                           "Memory relaxation limit reached for MUMPS factorization");
++               if (myid == 0 && print_level > 0)
++               {
++                  mfem::out << "Re-running MUMPS factorization with memory relaxation "
++                            << id->MUMPS_ICNTL(14) << '\n';
++               }
++            }
++            else
++            {
++               MFEM_ABORT("Error during MUMPS numerical factorization");
++            }
++         }
++         else { break; }
++      }
++   }
+ 
+    hypre_CSRMatrixDestroy(csr_op);
+    delete [] I;
+    delete [] J;
+    if (mat_type) { delete [] data; }
+ 
++   id->nrhs = -1;  // Set up solution storage on first call to Mult
+ #if MFEM_MUMPS_VERSION >= 530
+    delete [] irhs_loc;
+-   irhs_loc = new int[n_loc];
++   delete [] isol_loc;
++   id->nloc_rhs = n_loc;
++   id->lrhs_loc = n_loc;
++   id->lsol_loc = id->MUMPS_INFO(23);
++   irhs_loc = new int[id->lrhs_loc];
++   isol_loc = new int[id->lsol_loc];
+    for (int i = 0; i < n_loc; i++)
+    {
+       irhs_loc[i] = row_start + i + 1;
+    }
++   id->irhs_loc = irhs_loc;
++   id->isol_loc = isol_loc;
++
+    row_starts.SetSize(numProcs);
+    MPI_Allgather(&row_start, 1, MPI_INT, row_starts, 1, MPI_INT, comm);
+ #else
++   id->lrhs = id->n;
+    if (myid == 0)
+    {
+-      delete [] rhs_glob;
+       delete [] recv_counts;
+-      rhs_glob = new double[parcsr_op->global_num_rows];
++      delete [] displs;
+       recv_counts = new int[numProcs];
++      displs = new int[numProcs];
+    }
+    MPI_Gather(&n_loc, 1, MPI_INT, recv_counts, 1, MPI_INT, 0, comm);
+    if (myid == 0)
+    {
+-      delete [] displs;
+-      displs = new int[numProcs];
+       displs[0] = 0;
+       int s = 0;
+       for (int k = 0; k < numProcs-1; k++)
+@@ -196,54 +302,108 @@ void MUMPSSolver::SetOperator(const Operator &op)
+ #endif
+ }
+ 
+-void MUMPSSolver::Mult(const Vector &x, Vector &y) const
++void MUMPSSolver::InitRhsSol(int nrhs) const
+ {
+-   x.HostRead();
+-   y.HostReadWrite();
++   if (id->nrhs != nrhs)
++   {
+ #if MFEM_MUMPS_VERSION >= 530
++      delete [] rhs_loc;
++      delete [] sol_loc;
++      rhs_loc = (nrhs > 1) ? new double[nrhs * id->lrhs_loc] : nullptr;
++      sol_loc = new double[nrhs * id->lsol_loc];
++      id->rhs_loc = rhs_loc;
++      id->sol_loc = sol_loc;
++#else
++      if (myid == 0)
++      {
++         delete rhs_glob;
++         rhs_glob = new double[nrhs * id->lrhs];
++         id->rhs = rhs_glob;
++      }
++#endif
++   }
++   id->nrhs = nrhs;
++}
+ 
+-   id->nloc_rhs = x.Size();
+-   id->lrhs_loc = x.Size();
+-   id->rhs_loc = x.GetData();
+-   id->irhs_loc = irhs_loc;
++void MUMPSSolver::Mult(const Vector &x, Vector &y) const
++{
++   Array<const Vector *> X(1);
++   Array<Vector *> Y(1);
++   X[0] = &x;
++   Y[0] = &y;
++   Mult(X, Y);
++}
+ 
+-   id->lsol_loc = id->MUMPS_INFO(23);
+-   id->isol_loc = new int[id->MUMPS_INFO(23)];
+-   id->sol_loc = new double[id->MUMPS_INFO(23)];
++void MUMPSSolver::Mult(const Array<const Vector *> &X, Array<Vector *> &Y) const
++{
++   MFEM_ASSERT(X.Size() == Y.Size(),
++               "Number of columns mismatch in MUMPSSolver::Mult!");
++   InitRhsSol(X.Size());
++#if MFEM_MUMPS_VERSION >= 530
++   if (id->nrhs == 1)
++   {
++      MFEM_ASSERT(X.Size() == 1 && X[0], "Missing Vector in MUMPSSolver::Mult!");
++      X[0]->HostRead();
++      id->rhs_loc = X[0]->GetData();
++   }
++   else
++   {
++      for (int i = 0; i < id->nrhs; i++)
++      {
++         MFEM_ASSERT(X[i], "Missing Vector in MUMPSSolver::Mult!");
++         X[i]->HostRead();
++         std::copy(X[i]->GetData(), X[i]->GetData() + X[i]->Size(),
++                   id->rhs_loc + i * id->lrhs_loc);
++      }
++   }
+ 
+    // MUMPS solve
+    id->job = 3;
+    dmumps_c(id);
+ 
+-   RedistributeSol(id->isol_loc, id->sol_loc, y.GetData());
+-
+-   delete [] id->sol_loc;
+-   delete [] id->isol_loc;
++   RedistributeSol(id->isol_loc, id->sol_loc, id->lsol_loc, Y);
+ #else
+-   MPI_Gatherv(x.GetData(), x.Size(), MPI_DOUBLE,
+-               rhs_glob, recv_counts,
+-               displs, MPI_DOUBLE, 0, comm);
+-
+-   if (myid == 0) { id->rhs = rhs_glob; }
++   for (int i = 0; i < id->nrhs; i++)
++   {
++      MFEM_ASSERT(X[i], "Missing Vector in MUMPSSolver::Mult!");
++      X[i]->HostRead();
++      MPI_Gatherv(X[i]->GetData(), X[i]->Size(), MPI_DOUBLE,
++                  id->rhs + i * id->lrhs, recv_counts, displs, MPI_DOUBLE, 0, comm);
++   }
+ 
+    // MUMPS solve
+    id->job = 3;
+    dmumps_c(id);
+ 
+-   MPI_Scatterv(rhs_glob, recv_counts, displs,
+-                MPI_DOUBLE, y.GetData(), y.Size(),
+-                MPI_DOUBLE, 0, comm);
++   for (int i = 0; i < id->nrhs; i++)
++   {
++      MFEM_ASSERT(Y[i], "Missing Vector in MUMPSSolver::Mult!");
++      Y[i]->HostWrite();
++      MPI_Scatterv(id->rhs + i * id->lrhs, recv_counts, displs, MPI_DOUBLE,
++                   Y[i]->GetData(), Y[i]->Size(), MPI_DOUBLE, 0, comm);
++   }
+ #endif
+ }
+ 
+ void MUMPSSolver::MultTranspose(const Vector &x, Vector &y) const
+ {
+-   // Set flag for Transpose Solve
++   // Set flag for transpose solve
+    id->MUMPS_ICNTL(9) = 0;
+-   Mult(x,y);
++   Mult(x, y);
++
+    // Reset the flag
+    id->MUMPS_ICNTL(9) = 1;
++}
+ 
++void MUMPSSolver::MultTranspose(const Array<const Vector *> &X,
++                                Array<Vector *> &Y) const
++{
++   // Set flag for transpose solve
++   id->MUMPS_ICNTL(9) = 0;
++   Mult(X, Y);
++
++   // Reset the flag
++   id->MUMPS_ICNTL(9) = 1;
+ }
+ 
+ void MUMPSSolver::SetPrintLevel(int print_lvl)
+@@ -256,34 +416,34 @@ void MUMPSSolver::SetMatrixSymType(MatType mtype)
+    mat_type = mtype;
+ }
+ 
+-MUMPSSolver::~MUMPSSolver()
++void MUMPSSolver::SetReorderingStrategy(ReorderingStrategy method)
+ {
+-   if (id)
+-   {
+-#if MFEM_MUMPS_VERSION >= 530
+-      delete [] irhs_loc;
+-#else
+-      delete [] recv_counts;
+-      delete [] displs;
+-      delete [] rhs_glob;
+-#endif
+-      id->job = -2;
+-      dmumps_c(id);
+-      delete id;
+-   }
++   reorder_method = method;
++}
++
++void MUMPSSolver::SetReorderingReuse(bool reuse)
++{
++   reorder_reuse = reuse;
+ }
+ 
++#if MFEM_MUMPS_VERSION >= 510
++void MUMPSSolver::SetBLRTol(double tol)
++{
++   blr_tol = tol;
++}
++#endif
++
+ void MUMPSSolver::SetParameters()
+ {
+-   // output stream for error messages
++   // Output stream for error messages
+    id->MUMPS_ICNTL(1) = 6;
+-   // output stream for diagnosting printing local to each proc
+-   id->MUMPS_ICNTL(2) = 6;
+-   // output stream for global info
++   // Output stream for diagnosting printing local to each proc
++   id->MUMPS_ICNTL(2) = 0;
++   // Output stream for global info
+    id->MUMPS_ICNTL(3) = 6;
+    // Level of error printing
+    id->MUMPS_ICNTL(4) = print_level;
+-   //input matrix format (assembled)
++   // Input matrix format (assembled)
+    id->MUMPS_ICNTL(5) = 0;
+    // Use A or A^T
+    id->MUMPS_ICNTL(9) = 1;
+@@ -301,7 +461,6 @@ void MUMPSSolver::SetParameters()
+    id->MUMPS_ICNTL(18) = 3;
+    // Schur complement (no Schur complement matrix returned)
+    id->MUMPS_ICNTL(19) = 0;
+-
+ #if MFEM_MUMPS_VERSION >= 530
+    // Distributed RHS
+    id->MUMPS_ICNTL(20) = 10;
+@@ -317,6 +476,53 @@ void MUMPSSolver::SetParameters()
+    id->MUMPS_ICNTL(22) = 0;
+    // Max size of working memory (default = based on estimates)
+    id->MUMPS_ICNTL(23) = 0;
++   // Configure reordering
++   switch (reorder_method)
++   {
++      case ReorderingStrategy::AUTOMATIC:
++         id->MUMPS_ICNTL(28) = 0;
++         id->MUMPS_ICNTL(7) = 7;
++         id->MUMPS_ICNTL(29) = 0;
++         break;
++      case ReorderingStrategy::AMD:
++         id->MUMPS_ICNTL(28) = 1;
++         id->MUMPS_ICNTL(7) = 0;
++         break;
++      case ReorderingStrategy::AMF:
++         id->MUMPS_ICNTL(28) = 1;
++         id->MUMPS_ICNTL(7) = 2;
++         break;
++      case ReorderingStrategy::PORD:
++         id->MUMPS_ICNTL(28) = 1;
++         id->MUMPS_ICNTL(7) = 4;
++         break;
++      case ReorderingStrategy::METIS:
++         id->MUMPS_ICNTL(28) = 1;
++         id->MUMPS_ICNTL(7) = 5;
++         break;
++      case ReorderingStrategy::PARMETIS:
++         id->MUMPS_ICNTL(28) = 2;
++         id->MUMPS_ICNTL(29) = 2;
++         break;
++      case ReorderingStrategy::SCOTCH:
++         id->MUMPS_ICNTL(28) = 1;
++         id->MUMPS_ICNTL(7) = 3;
++         break;
++      case ReorderingStrategy::PTSCOTCH:
++         id->MUMPS_ICNTL(28) = 2;
++         id->MUMPS_ICNTL(29) = 1;
++         break;
++      default:
++         break; // This should be unreachable
++   }
++   // Option to activate BLR factorization
++#if MFEM_MUMPS_VERSION >= 510
++   if (blr_tol > 0.0)
++   {
++      id->MUMPS_ICNTL(35) = 1;
++      id->MUMPS_CNTL(7) = blr_tol;
++   }
++#endif
+ }
+ 
+ #if MFEM_MUMPS_VERSION >= 530
+@@ -330,24 +536,23 @@ int MUMPSSolver::GetRowRank(int i, const Array<int> &row_starts_) const
+    return std::distance(row_starts_.begin(), up) - 1;
+ }
+ 
+-void MUMPSSolver::RedistributeSol(const int * row_map,
+-                                  const double * x, double * y) const
++void MUMPSSolver::RedistributeSol(const int *rmap, const double *x,
++                                  const int lx_loc, Array<Vector *> &Y) const
+ {
+-   int size = id->MUMPS_INFO(23);
+-   int * send_count = new int[numProcs]();
+-   for (int i = 0; i < size; i++)
++   int *send_count = new int[numProcs]();
++   for (int i = 0; i < lx_loc; i++)
+    {
+-      int j = row_map[i] - 1;
++      int j = rmap[i] - 1;
+       int row_rank = GetRowRank(j, row_starts);
+       if (myid == row_rank) { continue; }
+       send_count[row_rank]++;
+    }
+ 
+-   int * recv_count = new int[numProcs];
++   int *recv_count = new int[numProcs];
+    MPI_Alltoall(send_count, 1, MPI_INT, recv_count, 1, MPI_INT, comm);
+ 
+-   int * send_displ = new int [numProcs]; send_displ[0] = 0;
+-   int * recv_displ = new int [numProcs]; recv_displ[0] = 0;
++   int *send_displ = new int[numProcs]; send_displ[0] = 0;
++   int *recv_displ = new int[numProcs]; recv_displ[0] = 0;
+    int sbuff_size = send_count[numProcs-1];
+    int rbuff_size = recv_count[numProcs-1];
+    for (int k = 0; k < numProcs - 1; k++)
+@@ -358,54 +563,59 @@ void MUMPSSolver::RedistributeSol(const int * row_map,
+       rbuff_size += recv_count[k];
+    }
+ 
+-   int * sendbuf_index = new int[sbuff_size];
+-   double * sendbuf_values = new double[sbuff_size];
+-   int * soffs = new int[numProcs]();
++   int *sendbuf_index = new int[sbuff_size];
++   double *sendbuf_values = new double[sbuff_size];
++   int *recvbuf_index = new int[rbuff_size];
++   double *recvbuf_values = new double[rbuff_size];
++   int *soffs = new int[numProcs]();
+ 
+-   for (int i = 0; i < size; i++)
++   for (int i = 0; i < lx_loc; i++)
+    {
+-      int j = row_map[i] - 1;
++      int j = rmap[i] - 1;
+       int row_rank = GetRowRank(j, row_starts);
+-      if (myid == row_rank)
+-      {
+-         int local_index = j - row_start;
+-         y[local_index] = x[i];
+-      }
+-      else
++      if (myid != row_rank)
+       {
+          int k = send_displ[row_rank] + soffs[row_rank];
+          sendbuf_index[k] = j;
+-         sendbuf_values[k] = x[i];
+          soffs[row_rank]++;
+       }
+    }
+ 
+-   int * recvbuf_index = new int[rbuff_size];
+-   double * recvbuf_values = new double[rbuff_size];
+-   MPI_Alltoallv(sendbuf_index,
+-                 send_count,
+-                 send_displ,
+-                 MPI_INT,
+-                 recvbuf_index,
+-                 recv_count,
+-                 recv_displ,
+-                 MPI_INT,
+-                 comm);
+-   MPI_Alltoallv(sendbuf_values,
+-                 send_count,
+-                 send_displ,
+-                 MPI_DOUBLE,
+-                 recvbuf_values,
+-                 recv_count,
+-                 recv_displ,
+-                 MPI_DOUBLE,
+-                 comm);
+-
+-   // Unpack recv buffer
+-   for (int i = 0; i < rbuff_size; i++)
++   MPI_Alltoallv(sendbuf_index, send_count, send_displ, MPI_INT,
++                 recvbuf_index, recv_count, recv_displ, MPI_INT, comm);
++
++   for (int rhs = 0; rhs < Y.Size(); rhs++)
+    {
+-      int local_index = recvbuf_index[i] - row_start;
+-      y[local_index] = recvbuf_values[i];
++      MFEM_ASSERT(Y[rhs], "Missing Vector in MUMPSSolver::Mult!");
++      Y[rhs]->HostWrite();
++
++      std::fill(soffs, soffs + numProcs, 0);
++      for (int i = 0; i < lx_loc; i++)
++      {
++         int j = rmap[i] - 1;
++         int row_rank = GetRowRank(j, row_starts);
++         if (myid == row_rank)
++         {
++            int local_index = j - row_start;
++            (*Y[rhs])(local_index) = x[rhs * lx_loc + i];
++         }
++         else
++         {
++            int k = send_displ[row_rank] + soffs[row_rank];
++            sendbuf_values[k] = x[rhs * lx_loc + i];
++            soffs[row_rank]++;
++         }
++      }
++
++      MPI_Alltoallv(sendbuf_values, send_count, send_displ, MPI_DOUBLE,
++                    recvbuf_values, recv_count, recv_displ, MPI_DOUBLE, comm);
++
++      // Unpack recv buffer
++      for (int i = 0; i < rbuff_size; i++)
++      {
++         int local_index = recvbuf_index[i] - row_start;
++         (*Y[rhs])(local_index) = recvbuf_values[i];
++      }
+    }
+ 
+    delete [] recvbuf_values;
+diff --git a/linalg/mumps.hpp b/linalg/mumps.hpp
+index 070838d8e..5f8dd6296 100644
+--- a/linalg/mumps.hpp
++++ b/linalg/mumps.hpp
+@@ -16,12 +16,12 @@
+ 
+ #ifdef MFEM_USE_MUMPS
+ #ifdef MFEM_USE_MPI
++
+ #include "operator.hpp"
+ #include "hypre.hpp"
+-
+ #include <mpi.h>
++
+ #include "dmumps_c.h"
+-#include <vector>
+ 
+ namespace mfem
+ {
+@@ -31,20 +31,37 @@ namespace mfem
+  *
+  * Interface for the distributed MUMPS solver
+  */
+-class MUMPSSolver : public mfem::Solver
++class MUMPSSolver : public Solver
+ {
+ public:
+    enum MatType
+    {
+       UNSYMMETRIC = 0,
+-      SYMMETRIC_INDEFINITE = 1,
+-      SYMMETRIC_POSITIVE_DEFINITE = 2
++      SYMMETRIC_POSITIVE_DEFINITE = 1,
++      SYMMETRIC_INDEFINITE = 2
++   };
++
++   enum ReorderingStrategy
++   {
++      AUTOMATIC = 0,
++      AMD,
++      AMF,
++      PORD,
++      METIS,
++      PARMETIS,
++      SCOTCH,
++      PTSCOTCH
+    };
+ 
+    /**
+-    * @brief Default Constructor
++    * @brief Constructor with MPI_Comm parameter.
+     */
+-   MUMPSSolver() {}
++   MUMPSSolver(MPI_Comm comm_);
++
++   /**
++    * @brief Constructor with a HypreParMatrix Operator.
++    */
++   MUMPSSolver(const Operator &op);
+ 
+    /**
+     * @brief Set the Operator and perform factorization
+@@ -62,6 +79,7 @@ public:
+     * @param y Solution vector
+     */
+    void Mult(const Vector &x, Vector &y) const;
++   void Mult(const Array<const Vector *> &X, Array<Vector *> &Y) const;
+ 
+    /**
+     * @brief Transpose Solve y = Op^{-T} x.
+@@ -70,13 +88,14 @@ public:
+     * @param y Solution vector
+     */
+    void MultTranspose(const Vector &x, Vector &y) const;
++   void MultTranspose(const Array<const Vector *> &X, Array<Vector *> &Y) const;
+ 
+    /**
+     * @brief Set the error print level for MUMPS
+     *
+     * @param print_lvl Print level
+     *
+-    * @note This method has to be called before SetOperator.
++    * @note This method has to be called before SetOperator
+     */
+    void SetPrintLevel(int print_lvl);
+ 
+@@ -88,65 +107,109 @@ public:
+     *
+     * @param mtype Matrix type
+     *
+-    * @note This method has to be called before SetOperator.
++    * @note This method has to be called before SetOperator
+     */
+    void SetMatrixSymType(MatType mtype);
+ 
++   /**
++    * @brief Set the reordering strategy
++    *
++    * Supported reorderings are: AUTOMATIC, AMD, AMF, PORD, METIS, PARMETIS,
++    * SCOTCH, and PTSCOTCH
++    *
++    * @param method Reordering method
++    *
++    * @note This method has to be called before SetOperator
++    */
++   void SetReorderingStrategy(ReorderingStrategy method);
++
++   /**
++    * @brief Set the flag controlling reuse of the symbolic factorization
++    * for multiple operators
++    *
++    * @param reuse Flag to reuse symbolic factorization
++    *
++    * @note This method has to be called before repeated calls to SetOperator
++    */
++   void SetReorderingReuse(bool reuse);
++
++   /**
++    * @brief Set the tolerance for activating block low-rank (BLR) approximate
++    * factorization
++    *
++    * @param tol Tolerance
++    *
++    * @note This method has to be called before SetOperator
++    */
++#if MFEM_MUMPS_VERSION >= 510
++   void SetBLRTol(double tol);
++#endif
++
+    // Destructor
+    ~MUMPSSolver();
+ 
+ private:
+-
+    // MPI communicator
+    MPI_Comm comm;
+ 
+    // Number of procs
+    int numProcs;
+ 
+-   // local mpi id
++   // MPI rank
+    int myid;
+ 
+-   // parameter controlling the matrix type
+-   MatType mat_type = MatType::UNSYMMETRIC;
++   // Parameter controlling the matrix type
++   MatType mat_type;
++
++   // Parameter controlling the printing level
++   int print_level;
++
++   // Parameter controlling the reordering strategy
++   ReorderingStrategy reorder_method;
++
++   // Parameter controlling whether or not to reuse the symbolic factorization
++   // for multiple calls to SetOperator
++   bool reorder_reuse;
+ 
+-   // parameter controlling the printing level
+-   int print_level = 0;
++#if MFEM_MUMPS_VERSION >= 510
++   // Parameter controlling the Block Low-Rank (BLR) feature in MUMPS
++   double blr_tol;
++#endif
+ 
+-   // local row offsets
++   // Local row offsets
+    int row_start;
+ 
+    // MUMPS object
+-   DMUMPS_STRUC_C *id=nullptr;
++   DMUMPS_STRUC_C *id;
++
++   // Method for initialization
++   void Init(MPI_Comm comm_);
+ 
+    // Method for setting MUMPS internal parameters
+    void SetParameters();
+ 
+-#if MFEM_MUMPS_VERSION >= 530
++   // Method for configuring storage for distributed/centralized RHS and
++   // solution
++   void InitRhsSol(int nrhs) const;
+ 
+-   // row offsets array on all procs
++#if MFEM_MUMPS_VERSION >= 530
++   // Row offests array on all procs
+    Array<int> row_starts;
+ 
+-   // row map
+-   int * irhs_loc = nullptr;
++   // Row maps and storage for distributed RHS and solution
++   int *irhs_loc, *isol_loc;
++   mutable double *rhs_loc, *sol_loc;
+ 
+    // These two methods are needed to distribute the local solution
+    // vectors returned by MUMPS to the original MFEM parallel partition
+    int GetRowRank(int i, const Array<int> &row_starts_) const;
+-
+-   void RedistributeSol(const int * row_map,
+-                        const double * x,
+-                        double * y) const;
++   void RedistributeSol(const int *rmap, const double *x, const int lx_loc,
++                        Array<Vector *> &Y) const;
+ #else
+-
+-   // Arrays needed for MPI_Gather and MPI_Scatter
+-   int * recv_counts = nullptr;
+-
+-   int * displs = nullptr;
+-
+-   double * rhs_glob = nullptr;
+-
++   // Arrays needed for MPI_Gatherv and MPI_Scatterv
++   int *recv_counts, *displs;
++   mutable double *rhs_glob;
+ #endif
+-
+ }; // mfem::MUMPSSolver class
+ 
+ } // namespace mfem
+diff --git a/linalg/strumpack.cpp b/linalg/strumpack.cpp
+index 30ff09ebe..c94d7f9a3 100644
+--- a/linalg/strumpack.cpp
++++ b/linalg/strumpack.cpp
+@@ -16,234 +16,457 @@
+ 
+ #include "strumpack.hpp"
+ 
+-using namespace std;
+-using namespace strumpack;
+-
+ namespace mfem
+ {
+ 
+ STRUMPACKRowLocMatrix::STRUMPACKRowLocMatrix(MPI_Comm comm,
+-                                             int num_loc_rows, int first_loc_row,
+-                                             int glob_nrows, int glob_ncols,
+-                                             int *I, int *J, double *data)
+-   : comm_(comm), A_(NULL)
++                                             int num_loc_rows,
++                                             HYPRE_BigInt first_loc_row,
++                                             HYPRE_BigInt glob_nrows,
++                                             HYPRE_BigInt glob_ncols,
++                                             int *I, HYPRE_BigInt *J,
++                                             double *data, bool sym_sparse)
+ {
+    // Set mfem::Operator member data
+    height = num_loc_rows;
+    width  = num_loc_rows;
+ 
+-   // Allocate STRUMPACK's CSRMatrixMPI
+-   int nprocs, rank;
+-   MPI_Comm_rank(comm_, &rank);
+-   MPI_Comm_size(comm_, &nprocs);
+-   int * dist = new int[nprocs + 1];
+-   dist[rank + 1] = first_loc_row + num_loc_rows;
++   // Allocate STRUMPACK's CSRMatrixMPI (copies all inputs)
++   int rank, nprocs;
++   MPI_Comm_rank(comm, &rank);
++   MPI_Comm_size(comm, &nprocs);
++   Array<HYPRE_BigInt> dist(nprocs + 1);
+    dist[0] = 0;
+-   MPI_Allgather(MPI_IN_PLACE, 0, MPI_INT, dist + 1, 1, MPI_INT, comm_);
+-   A_ = new CSRMatrixMPI<double,int>(num_loc_rows, I, J, data, dist, comm_, false);
+-   delete[] dist;
++   dist[rank + 1] = first_loc_row + (HYPRE_BigInt)num_loc_rows;
++   MPI_Allgather(MPI_IN_PLACE, 0, MPI_DATATYPE_NULL,
++                 dist.GetData() + 1, 1, HYPRE_MPI_BIG_INT, comm);
++
++#if !(defined(HYPRE_BIGINT) || defined(HYPRE_MIXEDINT))
++   A_ = new strumpack::CSRMatrixMPI<double, HYPRE_BigInt>(
++      (HYPRE_BigInt)num_loc_rows, I, J, data, dist.GetData(),
++      comm, sym_sparse);
++#else
++   Array<HYPRE_BigInt> II(num_loc_rows+1);
++   for (int i = 0; i <= num_loc_rows; i++) { II[i] = (HYPRE_BigInt)I[i]; }
++   A_ = new strumpack::CSRMatrixMPI<double, HYPRE_BigInt>(
++      (HYPRE_BigInt)num_loc_rows, II.GetData(), J, data, dist.GetData(),
++      comm, sym_sparse);
++#endif
+ }
+ 
+-STRUMPACKRowLocMatrix::STRUMPACKRowLocMatrix(const HypreParMatrix & hypParMat)
+-   : comm_(hypParMat.GetComm()),
+-     A_(NULL)
++STRUMPACKRowLocMatrix::STRUMPACKRowLocMatrix(const Operator &op,
++                                             bool sym_sparse)
+ {
+-   // First cast the parameter to a hypre_ParCSRMatrix
+-   hypre_ParCSRMatrix * parcsr_op =
+-      (hypre_ParCSRMatrix *)const_cast<HypreParMatrix&>(hypParMat);
++   const HypreParMatrix *APtr = dynamic_cast<const HypreParMatrix *>(&op);
++   MFEM_VERIFY(APtr, "Not a compatible matrix type");
++   MPI_Comm comm = APtr->GetComm();
+ 
+-   MFEM_ASSERT(parcsr_op != NULL,"STRUMPACK: const_cast failed in SetOperator");
++   // Set mfem::Operator member data
++   height = op.Height();
++   width  = op.Width();
+ 
+-   // Create the CSRMatrixMPI A_ by borrowing the internal data from a
+-   // hypre_CSRMatrix.
+-   hypParMat.HostRead();
+-   hypre_CSRMatrix * csr_op = hypre_MergeDiagAndOffd(parcsr_op);
+-   hypParMat.HypreRead();
+-   hypre_CSRMatrixSetDataOwner(csr_op,0);
++   // First cast the parameter to a hypre_ParCSRMatrix
++   hypre_ParCSRMatrix *parcsr_op =
++      (hypre_ParCSRMatrix *)const_cast<HypreParMatrix &>(*APtr);
++
++   // Create the CSRMatrixMPI A by taking the internal data from a
++   // hypre_CSRMatrix
++   APtr->HostRead();
++   hypre_CSRMatrix *csr_op = hypre_MergeDiagAndOffd(parcsr_op);
++   APtr->HypreRead();
++   HYPRE_Int       *Iptr   = csr_op->i;
+ #if MFEM_HYPRE_VERSION >= 21600
+-   // For now, this method assumes that HYPRE_Int is int. Also, csr_op->num_cols
+-   // is of type HYPRE_Int, so if we want to check for big indices in
+-   // csr_op->big_j, we'll have to check all entries and that check will only be
+-   // necessary in HYPRE_MIXEDINT mode which is not supported at the moment.
+-   hypre_CSRMatrixBigJtoJ(csr_op);
++   HYPRE_BigInt    *Jptr   = csr_op->big_j;
++#else
++   HYPRE_Int       *Jptr   = csr_op->j;
+ #endif
++   double          *data   = csr_op->data;
+ 
+-   height = csr_op->num_rows;
+-   width  = csr_op->num_rows;
++   HYPRE_BigInt fst_row = parcsr_op->first_row_index;
++   HYPRE_Int    m_loc   = csr_op->num_rows;
+ 
+-   int nprocs, rank;
+-   MPI_Comm_rank(comm_, &rank);
+-   MPI_Comm_size(comm_, &nprocs);
+-   int * dist = new int[nprocs + 1];
+-   dist[rank + 1] = parcsr_op->first_row_index + csr_op->num_rows;
++   // Allocate STRUMPACK's CSRMatrixMPI
++   int rank, nprocs;
++   MPI_Comm_rank(comm, &rank);
++   MPI_Comm_size(comm, &nprocs);
++   Array<HYPRE_BigInt> dist(nprocs + 1);
+    dist[0] = 0;
+-   MPI_Allgather(MPI_IN_PLACE, 0, MPI_INT, dist + 1, 1, MPI_INT, comm_);
+-   A_ = new CSRMatrixMPI<double,int>(csr_op->num_rows, csr_op->i, csr_op->j,
+-                                     csr_op->data, dist, comm_, false);
+-   delete[] dist;
++   dist[rank + 1] = fst_row + (HYPRE_BigInt)m_loc;
++   MPI_Allgather(MPI_IN_PLACE, 0, MPI_DATATYPE_NULL,
++                 dist.GetData() + 1, 1, HYPRE_MPI_BIG_INT, comm);
++
++#if !defined(HYPRE_MIXEDINT)
++   A_ = new strumpack::CSRMatrixMPI<double, HYPRE_BigInt>(
++      (HYPRE_BigInt)m_loc, Iptr, Jptr, data, dist.GetData(),
++      comm, sym_sparse);
++#else
++   Array<HYPRE_BigInt> II(m_loc+1);
++   for (int i = 0; i <= m_loc; i++) { II[i] = (HYPRE_BigInt)Iptr[i]; }
++   A_ = new strumpack::CSRMatrixMPI<double, HYPRE_BigInt>(
++      (HYPRE_BigInt)m_loc, II.GetData(), Jptr, data, dist.GetData(),
++      comm, sym_sparse);
++#endif
+ 
+-   // Everything has been copied or abducted so delete the structure
++   // Everything has been copied so delete the structure
+    hypre_CSRMatrixDestroy(csr_op);
+ }
+ 
+ STRUMPACKRowLocMatrix::~STRUMPACKRowLocMatrix()
+ {
+-   // Delete the struct
+-   if ( A_ != NULL ) { delete A_; }
++   delete A_;
+ }
+ 
+-STRUMPACKSolver::STRUMPACKSolver( int argc, char* argv[], MPI_Comm comm )
+-   : comm_(comm),
+-     APtr_(NULL),
+-     solver_(NULL)
++template <typename STRUMPACKSolverType>
++STRUMPACKSolverBase<STRUMPACKSolverType>::
++STRUMPACKSolverBase(MPI_Comm comm, int argc, char *argv[])
++   : APtr_(NULL),
++     factor_verbose_(false),
++     solve_verbose_(false),
++     reorder_reuse_(false),
++     nrhs_(-1)
+ {
+-   this->Init(argc, argv);
++   solver_ = new STRUMPACKSolverType(comm, argc, argv, false);
+ }
+ 
+-STRUMPACKSolver::STRUMPACKSolver( STRUMPACKRowLocMatrix & A )
+-   : comm_(A.GetComm()),
+-     APtr_(&A),
+-     solver_(NULL)
++template <typename STRUMPACKSolverType>
++STRUMPACKSolverBase<STRUMPACKSolverType>::
++STRUMPACKSolverBase(STRUMPACKRowLocMatrix &A, int argc, char *argv[])
++   : APtr_(&A),
++     factor_verbose_(false),
++     solve_verbose_(false),
++     reorder_reuse_(false),
++     nrhs_(-1)
+ {
+-   height = A.Height();
+-   width  = A.Width();
++   solver_ = new STRUMPACKSolverType(A.GetComm(), argc, argv, false);
++   SetOperator(A);
++}
+ 
+-   this->Init(0, NULL);
++template <typename STRUMPACKSolverType>
++STRUMPACKSolverBase<STRUMPACKSolverType>::
++~STRUMPACKSolverBase()
++{
++   delete solver_;
+ }
+ 
+-STRUMPACKSolver::~STRUMPACKSolver()
++template <typename STRUMPACKSolverType>
++void STRUMPACKSolverBase<STRUMPACKSolverType>::
++SetFromCommandLine()
+ {
+-   if ( solver_ != NULL ) { delete solver_; }
++   solver_->options().set_from_command_line();
+ }
+ 
+-void STRUMPACKSolver::Init( int argc, char* argv[] )
++template <typename STRUMPACKSolverType>
++void STRUMPACKSolverBase<STRUMPACKSolverType>::
++SetPrintFactorStatistics(bool print_stat)
+ {
+-   MPI_Comm_size(comm_, &numProcs_);
+-   MPI_Comm_rank(comm_, &myid_);
++   factor_verbose_ = print_stat;
++}
+ 
+-   factor_verbose_ = false;
+-   solve_verbose_ = false;
++template <typename STRUMPACKSolverType>
++void STRUMPACKSolverBase<STRUMPACKSolverType>::
++SetPrintSolveStatistics(bool print_stat)
++{
++   solve_verbose_ = print_stat;
++}
+ 
+-   solver_ = new StrumpackSparseSolverMPIDist<double,int>(comm_, argc, argv,
+-                                                          false);
++template <typename STRUMPACKSolverType>
++void STRUMPACKSolverBase<STRUMPACKSolverType>
++::SetRelTol(double rtol)
++{
++   solver_->options().set_rel_tol(rtol);
+ }
+ 
+-void STRUMPACKSolver::SetFromCommandLine( )
++template <typename STRUMPACKSolverType>
++void STRUMPACKSolverBase<STRUMPACKSolverType>
++::SetAbsTol(double atol)
+ {
+-   solver_->options().set_from_command_line( );
++   solver_->options().set_abs_tol(atol);
+ }
+ 
+-void STRUMPACKSolver::SetPrintFactorStatistics( bool print_stat )
++template <typename STRUMPACKSolverType>
++void STRUMPACKSolverBase<STRUMPACKSolverType>
++::SetMaxIter(int max_it)
+ {
+-   factor_verbose_ = print_stat;
++   solver_->options().set_maxit(max_it);
+ }
+ 
+-void STRUMPACKSolver::SetPrintSolveStatistics( bool print_stat )
++template <typename STRUMPACKSolverType>
++void STRUMPACKSolverBase<STRUMPACKSolverType>
++::SetReorderingReuse(bool reuse)
+ {
+-   solve_verbose_ = print_stat;
++   reorder_reuse_ = reuse;
+ }
+ 
+-void STRUMPACKSolver::SetKrylovSolver( strumpack::KrylovSolver method )
++template <typename STRUMPACKSolverType>
++void STRUMPACKSolverBase<STRUMPACKSolverType>::
++SetKrylovSolver(strumpack::KrylovSolver method)
+ {
+-   solver_->options().set_Krylov_solver( method );
++   solver_->options().set_Krylov_solver(method);
+ }
+ 
+-void STRUMPACKSolver::SetReorderingStrategy( strumpack::ReorderingStrategy
+-                                             method )
++template <typename STRUMPACKSolverType>
++void STRUMPACKSolverBase<STRUMPACKSolverType>::
++SetReorderingStrategy(strumpack::ReorderingStrategy method)
+ {
+-   solver_->options().set_reordering_method( method );
++   solver_->options().set_reordering_method(method);
+ }
+ 
+-void STRUMPACKSolver::DisableMatching( )
++#if STRUMPACK_VERSION_MAJOR >= 3
++template <typename STRUMPACKSolverType>
++void STRUMPACKSolverBase<STRUMPACKSolverType>::
++SetMatching(strumpack::MatchingJob job)
++{
++   solver_->options().set_matching(job);
++}
++#else
++template <typename STRUMPACKSolverType>
++void STRUMPACKSolverBase<STRUMPACKSolverType>::
++SetMatching(strumpack::MC64Job job)
+ {
++   solver_->options().set_mc64job(job);
++}
++#endif
++
+ #if STRUMPACK_VERSION_MAJOR >= 3
+-   solver_->options().set_matching( strumpack::MatchingJob::NONE );
++template <typename STRUMPACKSolverType>
++void STRUMPACKSolverBase<STRUMPACKSolverType>::
++SetCompression(strumpack::CompressionType type)
++{
++#if STRUMPACK_VERSION_MAJOR >= 5
++   solver_->options().set_compression(type);
+ #else
+-   solver_->options().set_mc64job( strumpack::MC64Job::NONE );
++   switch (type)
++   {
++      case strumpack::NONE:
++         solver_->options().disable_BLR();
++         solver_->options().disable_HSS();
++         break;
++      case strumpack::BLR:
++         solver_->options().enable_BLR();
++         break;
++      case strumpack::HSS:
++         solver_->options().enable_HSS();
++         break;
++      default:
++         MFEM_ABORT("Invalid compression type for STRUMPACK version " <<
++                    STRUMPACK_VERSION_MAJOR << "!");
++         break;
++   }
+ #endif
+ }
+ 
+-void STRUMPACKSolver::EnableMatching( )
++template <typename STRUMPACKSolverType>
++void STRUMPACKSolverBase<STRUMPACKSolverType>::
++SetCompressionRelTol(double rtol)
+ {
+-#if STRUMPACK_VERSION_MAJOR >= 3
+-   solver_->options().set_matching
+-   ( strumpack::MatchingJob::MAX_DIAGONAL_PRODUCT_SCALING );
++#if STRUMPACK_VERSION_MAJOR >= 5
++   solver_->options().set_compression_rel_tol(rtol);
+ #else
+-   solver_->options().set_mc64job
+-   ( strumpack::MC64Job::MAX_DIAGONAL_PRODUCT_SCALING );
++   solver_->options().BLR_options().set_rel_tol(rtol);
++   solver_->options().HSS_options().set_rel_tol(rtol);
+ #endif
+ }
+ 
+-#if STRUMPACK_VERSION_MAJOR >= 3
+-void STRUMPACKSolver::EnableParallelMatching( )
++template <typename STRUMPACKSolverType>
++void STRUMPACKSolverBase<STRUMPACKSolverType>::
++SetCompressionAbsTol(double atol)
+ {
+-   solver_->options().set_matching
+-   ( strumpack::MatchingJob::COMBBLAS );
+-}
++#if STRUMPACK_VERSION_MAJOR >= 5
++   solver_->options().set_compression_abs_tol(atol);
++#else
++   solver_->options().BLR_options().set_abs_tol(atol);
++   solver_->options().HSS_options().set_abs_tol(atol);
+ #endif
++}
+ 
+-void STRUMPACKSolver::SetRelTol( double rtol )
++#if STRUMPACK_VERSION_MAJOR >= 5
++template <typename STRUMPACKSolverType>
++void STRUMPACKSolverBase<STRUMPACKSolverType>::
++SetCompressionLossyPrecision(int precision)
+ {
+-   solver_->options().set_rel_tol( rtol );
++   solver_->options().set_lossy_precision(precision);
+ }
+ 
+-void STRUMPACKSolver::SetAbsTol( double atol )
++template <typename STRUMPACKSolverType>
++void STRUMPACKSolverBase<STRUMPACKSolverType>::
++SetCompressionButterflyLevels(int levels)
+ {
+-   solver_->options().set_abs_tol( atol );
++   solver_->options().HODLR_options().set_butterfly_levels(levels);
+ }
++#endif
++#endif
+ 
+-
+-void STRUMPACKSolver::Mult( const Vector & x, Vector & y ) const
++template <typename STRUMPACKSolverType>
++void STRUMPACKSolverBase<STRUMPACKSolverType>::
++SetOperator(const Operator &op)
+ {
+-   MFEM_ASSERT(APtr_ != NULL,
+-               "STRUMPACK Error: The operator must be set before"
+-               " the system can be solved.");
+-   MFEM_ASSERT(x.Size() == Width(), "invalid x.Size() = " << x.Size()
+-               << ", expected size = " << Width());
+-   MFEM_ASSERT(y.Size() == Height(), "invalid y.Size() = " << y.Size()
+-               << ", expected size = " << Height());
++   // Verify that we have a compatible operator
++   bool first_mat = !APtr_;
++   APtr_ = dynamic_cast<const STRUMPACKRowLocMatrix *>(&op);
++   MFEM_VERIFY(APtr_,
++               "STRUMPACK: Operator is not a STRUMPACKRowLocMatrix!");
+ 
+-   double*  yPtr = (double*)y;
+-   double*  xPtr = (double*)(const_cast<Vector&>(x));
++   // Set mfem::Operator member data
++   height = op.Height();
++   width  = op.Width();
+ 
+-   solver_->options().set_verbose( factor_verbose_ );
+-   ReturnCode ret = solver_->factor();
+-   switch (ret)
++   if (first_mat || !reorder_reuse_)
+    {
+-      case ReturnCode::SUCCESS: break;
+-      case ReturnCode::MATRIX_NOT_SET:
+-      {
+-         MFEM_ABORT("STRUMPACK:  Matrix was not set!");
+-      }
+-      break;
+-      case ReturnCode::REORDERING_ERROR:
+-      {
+-         MFEM_ABORT("STRUMPACK:  Matrix reordering failed!");
+-      }
+-      break;
++      solver_->set_matrix(*(APtr_->GetA()));
+    }
+-   solver_->options().set_verbose( solve_verbose_ );
+-   solver_->solve(xPtr, yPtr);
++   else
++   {
++      solver_->update_matrix_values(*(APtr_->GetA()));
++   }
++}
+ 
++template <typename STRUMPACKSolverType>
++void STRUMPACKSolverBase<STRUMPACKSolverType>::
++FactorInternal() const
++{
++   MFEM_ASSERT(APtr_,
++               "STRUMPACK: Operator must be set before the system can be "
++               "solved!");
++   solver_->options().set_verbose(factor_verbose_);
++   strumpack::ReturnCode ret = solver_->factor();
++   if (ret != strumpack::ReturnCode::SUCCESS)
++   {
++      MFEM_ABORT("STRUMPACK: Factor failed with return code " << ret << "!");
++   }
+ }
+ 
+-void STRUMPACKSolver::SetOperator( const Operator & op )
++template <typename STRUMPACKSolverType>
++void STRUMPACKSolverBase<STRUMPACKSolverType>::
++Mult(const Vector &x, Vector &y) const
+ {
+-   // Verify that we have a compatible operator
+-   APtr_ = dynamic_cast<const STRUMPACKRowLocMatrix*>(&op);
+-   if ( APtr_ == NULL )
++   MFEM_ASSERT(x.Size() == Width(),
++               "STRUMPACK: Invalid x.Size() = " << x.Size() <<
++               ", expected size = " << Width() << "!");
++   MFEM_ASSERT(y.Size() == Height(),
++               "STRUMPACK: Invalid y.Size() = " << y.Size() <<
++               ", expected size = " << Height() << "!");
++
++   x.HostRead();
++   y.HostReadWrite();
++   const double *xPtr = (const double *)x;
++   double *yPtr       = (double *)y;
++
++   FactorInternal();
++   solver_->options().set_verbose(solve_verbose_);
++   strumpack::ReturnCode ret = solver_->solve(xPtr, yPtr, false);
++   if (ret != strumpack::ReturnCode::SUCCESS)
+    {
+-      mfem_error("STRUMPACKSolver::SetOperator : not STRUMPACKRowLocMatrix!");
++      MFEM_ABORT("STRUMPACK: Solve failed with return code " << ret << "!");
+    }
++}
+ 
+-   solver_->set_matrix( *(APtr_->getA()) );
++template <typename STRUMPACKSolverType>
++void STRUMPACKSolverBase<STRUMPACKSolverType>::
++Mult(const Array<const Vector *> &X, Array<Vector *> &Y) const
++{
++   MFEM_ASSERT(X.Size() == Y.Size(),
++               "Number of columns mismatch in STRUMPACK solve!");
++   if (X.Size() == 1)
++   {
++      nrhs_ = 1;
++      MFEM_ASSERT(X[0] && Y[0], "Missing Vector in STRUMPACK solve!");
++      Mult(*X[0], *Y[0]);
++      return;
++   }
+ 
+-   // Set mfem::Operator member data
+-   height = op.Height();
+-   width  = op.Width();
++   // Multiple RHS case
++   int ldx = Height();
++   if (nrhs_ != X.Size())
++   {
++      rhs_.SetSize(X.Size() * ldx);
++      sol_.SetSize(X.Size() * ldx);
++      nrhs_ = X.Size();
++   }
++   for (int i = 0; i < nrhs_; i++)
++   {
++      MFEM_ASSERT(X[i] && X[i]->Size() == Width(),
++                  "STRUMPACK: Missing or invalid sized RHS Vector in solve!");
++      Vector s(rhs_, i * ldx, ldx);
++      s = *X[i];
++   }
++   const double *xPtr = (const double *)rhs_;
++   double *yPtr       = (double *)sol_;
++
++   FactorInternal();
++   solver_->options().set_verbose(solve_verbose_);
++   strumpack::ReturnCode ret = solver_->solve(nrhs_, xPtr, ldx, yPtr, ldx,
++                                              false);
++   if (ret != strumpack::ReturnCode::SUCCESS)
++   {
++      MFEM_ABORT("STRUMPACK: Solve failed with return code " << ret << "!");
++   }
+ 
++   for (int i = 0; i < nrhs_; i++)
++   {
++      MFEM_ASSERT(Y[i] && Y[i]->Size() == Width(),
++                  "STRUMPACK: Missing or invalid sized solution Vector in solve!");
++      Vector s(sol_, i * ldx, ldx);
++      *Y[i] = s;
++   }
+ }
+ 
++STRUMPACKSolver::
++STRUMPACKSolver(MPI_Comm comm)
++   : STRUMPACKSolverBase<strumpack::
++     SparseSolverMPIDist<double, HYPRE_BigInt>>
++     (comm, 0, NULL) {}
++
++STRUMPACKSolver::
++STRUMPACKSolver(STRUMPACKRowLocMatrix &A)
++   : STRUMPACKSolverBase<strumpack::
++     SparseSolverMPIDist<double, HYPRE_BigInt>>
++     (A, 0, NULL) {}
++
++STRUMPACKSolver::
++STRUMPACKSolver(MPI_Comm comm, int argc, char *argv[])
++   : STRUMPACKSolverBase<strumpack::
++     SparseSolverMPIDist<double, HYPRE_BigInt>>
++     (comm, argc, argv) {}
++
++STRUMPACKSolver::
++STRUMPACKSolver(STRUMPACKRowLocMatrix &A, int argc, char *argv[])
++   : STRUMPACKSolverBase<strumpack::
++     SparseSolverMPIDist<double, HYPRE_BigInt>>
++     (A, argc, argv) {}
++
++#if STRUMPACK_VERSION_MAJOR >= 6 && STRUMPACK_VERSION_MINOR >= 3 && STRUMPACK_VERSION_PATCH > 1
++STRUMPACKMixedPrecisionSolver::
++STRUMPACKMixedPrecisionSolver(MPI_Comm comm)
++   : STRUMPACKSolverBase<strumpack::
++     SparseSolverMixedPrecisionMPIDist<float, double, HYPRE_BigInt>>
++     (comm, 0, NULL) {}
++
++STRUMPACKMixedPrecisionSolver::
++STRUMPACKMixedPrecisionSolver(STRUMPACKRowLocMatrix &A)
++   : STRUMPACKSolverBase<strumpack::
++     SparseSolverMixedPrecisionMPIDist<float, double, HYPRE_BigInt>>
++     (A, 0, NULL) {}
++
++STRUMPACKMixedPrecisionSolver::
++STRUMPACKMixedPrecisionSolver(MPI_Comm comm, int argc, char *argv[])
++   : STRUMPACKSolverBase<strumpack::
++     SparseSolverMixedPrecisionMPIDist<float, double, HYPRE_BigInt>>
++     (comm, argc, argv) {}
++
++STRUMPACKMixedPrecisionSolver::
++STRUMPACKMixedPrecisionSolver(STRUMPACKRowLocMatrix &A, int argc, char *argv[])
++   : STRUMPACKSolverBase<strumpack::
++     SparseSolverMixedPrecisionMPIDist<float, double, HYPRE_BigInt>>
++     (A, argc, argv) {}
++#endif
++
++template class STRUMPACKSolverBase<strumpack::
++                                   SparseSolverMPIDist<double, HYPRE_BigInt>>;
++#if STRUMPACK_VERSION_MAJOR >= 6 && STRUMPACK_VERSION_MINOR >= 3 && STRUMPACK_VERSION_PATCH > 1
++template class STRUMPACKSolverBase<strumpack::
++                                   SparseSolverMixedPrecisionMPIDist<float, double, HYPRE_BigInt>>;
++#endif
++
+ } // mfem namespace
+ 
+ #endif // MFEM_USE_MPI
+diff --git a/linalg/strumpack.hpp b/linalg/strumpack.hpp
+index 3634706ba..79252e356 100644
+--- a/linalg/strumpack.hpp
++++ b/linalg/strumpack.hpp
+@@ -16,12 +16,14 @@
+ 
+ #ifdef MFEM_USE_STRUMPACK
+ #ifdef MFEM_USE_MPI
++
+ #include "operator.hpp"
+ #include "hypre.hpp"
+-
+ #include <mpi.h>
+ 
++// STRUMPACK headers
+ #include "StrumpackSparseSolverMPIDist.hpp"
++#include "StrumpackSparseSolverMixedPrecisionMPIDist.hpp"
+ 
+ namespace mfem
+ {
+@@ -34,63 +36,75 @@ public:
+        be of size (local) nrows by (global) glob_ncols. The new parallel matrix
+        contains copies of all input arrays (so they can be deleted). */
+    STRUMPACKRowLocMatrix(MPI_Comm comm,
+-                         int num_loc_rows, int first_loc_row,
+-                         int glob_nrows, int glob_ncols,
+-                         int *I, int *J, double *data);
++                         int num_loc_rows, HYPRE_BigInt first_loc_row,
++                         HYPRE_BigInt glob_nrows, HYPRE_BigInt glob_ncols,
++                         int *I, HYPRE_BigInt *J, double *data,
++                         bool sym_sparse = false);
+ 
+    /** Creates a copy of the parallel matrix hypParMat in STRUMPACK's RowLoc
+        format. All data is copied so the original matrix may be deleted. */
+-   STRUMPACKRowLocMatrix(const HypreParMatrix & hypParMat);
++   STRUMPACKRowLocMatrix(const Operator &op, bool sym_sparse = false);
+ 
+    ~STRUMPACKRowLocMatrix();
+ 
+    void Mult(const Vector &x, Vector &y) const
+    {
+-      mfem_error("STRUMPACKRowLocMatrix::Mult(...)\n"
+-                 "  matrix vector products are not supported.");
++      MFEM_ABORT("STRUMPACKRowLocMatrix::Mult: Matrix vector products are not "
++                 "supported!");
+    }
+ 
+-   MPI_Comm GetComm() const { return comm_; }
++   MPI_Comm GetComm() const { return A_->comm(); }
+ 
+-   strumpack::CSRMatrixMPI<double,int>* getA() const { return A_; }
++   strumpack::CSRMatrixMPI<double, HYPRE_BigInt> *GetA() const { return A_; }
+ 
+ private:
+-   MPI_Comm   comm_;
+-   strumpack::CSRMatrixMPI<double,int>* A_;
+-
+-}; // mfem::STRUMPACKRowLocMatrix
++   strumpack::CSRMatrixMPI<double, HYPRE_BigInt> *A_;
++};
+ 
+ /** The MFEM STRUMPACK Direct Solver class.
+ 
+     The mfem::STRUMPACKSolver class uses the STRUMPACK library to perform LU
+     factorization of a parallel sparse matrix. The solver is capable of handling
+-    double precision types. See http://portal.nersc.gov/project/sparse/strumpack
++    double precision types. See
++    http://portal.nersc.gov/project/sparse/strumpack/.
+ */
+-class STRUMPACKSolver : public mfem::Solver
++template <typename STRUMPACKSolverType>
++class STRUMPACKSolverBase : public Solver
+ {
+-public:
+-   // Constructor with MPI_Comm parameter.
+-   STRUMPACKSolver( int argc, char* argv[], MPI_Comm comm );
++protected:
++   // Constructor with MPI_Comm parameter and command line arguments.
++   STRUMPACKSolverBase(MPI_Comm comm, int argc, char *argv[]);
+ 
+-   // Constructor with STRUMPACK Matrix Object.
+-   STRUMPACKSolver( STRUMPACKRowLocMatrix & A);
++   // Constructor with STRUMPACK matrix object and command line arguments.
++   STRUMPACKSolverBase(STRUMPACKRowLocMatrix &A, int argc, char *argv[]);
+ 
++public:
+    // Default destructor.
+-   ~STRUMPACKSolver( void );
++   virtual ~STRUMPACKSolverBase();
+ 
+    // Factor and solve the linear system y = Op^{-1} x.
+-   void Mult( const Vector & x, Vector & y ) const;
++   void Mult(const Vector &x, Vector &y) const;
++   void Mult(const Array<const Vector *> &X, Array<Vector *> &Y) const;
+ 
+    // Set the operator.
+-   void SetOperator( const Operator & op );
++   void SetOperator(const Operator &op);
+ 
+    // Set various solver options. Refer to STRUMPACK documentation for
+    // details.
+-   void SetFromCommandLine( );
+-   void SetPrintFactorStatistics( bool print_stat );
+-   void SetPrintSolveStatistics( bool print_stat );
+-   void SetRelTol( double rtol );
+-   void SetAbsTol( double atol );
++   void SetFromCommandLine();
++   void SetPrintFactorStatistics(bool print_stat);
++   void SetPrintSolveStatistics(bool print_stat);
++
++   // Set tolerances and iterations for iterative solvers. Compression
++   // tolerance is handled below.
++   void SetRelTol(double rtol);
++   void SetAbsTol(double atol);
++   void SetMaxIter(int max_it);
++
++   // Set the flag controlling reuse of the symbolic factorization for multiple
++   // operators. This method has to be called before repeated calls to
++   // SetOperator.
++   void SetReorderingReuse(bool reuse);
+ 
+    /**
+     * STRUMPACK is an (approximate) direct solver. It can be used as a direct
+@@ -100,70 +114,157 @@ public:
+     * used without preconditioner.
+     *
+     * Supported values are:
+-    *    AUTO:           Use iterative refinement if no HSS compression is used,
+-    *                    otherwise use GMRes.
+-    *    DIRECT:         No outer iterative solver, just a single application of
+-    *                    the multifrontal solver.
+-    *    REFINE:         Iterative refinement.
+-    *    PREC_GMRES:     Preconditioned GMRes.
+-    *                    The preconditioner is the (approx) multifrontal solver.
+-    *    GMRES:          UN-preconditioned GMRes. (for testing mainly)
+-    *    PREC_BICGSTAB:  Preconditioned BiCGStab.
+-    *                    The preconditioner is the (approx) multifrontal solver.
++    *    AUTO:           Use iterative refinement if no HSS compression is
++    *                    used, otherwise use GMRes
++    *    DIRECT:         No outer iterative solver, just a single application
++    *                    of the multifrontal solver
++    *    REFINE:         Iterative refinement
++    *    PREC_GMRES:     Preconditioned GMRes
++    *                    The preconditioner is the (approx) multifrontal solver
++    *    GMRES:          UN-preconditioned GMRes (for testing mainly)
++    *    PREC_BICGSTAB:  Preconditioned BiCGStab
++    *                    The preconditioner is the (approx) multifrontal solver
+     *    BICGSTAB:       UN-preconditioned BiCGStab. (for testing mainly)
+     */
+-   void SetKrylovSolver( strumpack::KrylovSolver method );
++   void SetKrylovSolver(strumpack::KrylovSolver method);
+ 
+    /**
+     * Supported reorderings are:
+-    *    METIS, PARMETIS, SCOTCH, PTSCOTCH, RCM
++    *    NATURAL:    Do not reorder the system
++    *    METIS:      Use Metis nested-dissection reordering (default)
++    *    PARMETIS:   Use ParMetis nested-dissection reordering
++    *    SCOTCH:     Use Scotch nested-dissection reordering
++    *    PTSCOTCH:   Use PT-Scotch nested-dissection reordering
++    *    RCM:        Use RCM reordering
++    *    GEOMETRIC:  A simple geometric nested dissection code that
++    *                only works for regular meshes
++    *    AMD:        Approximate minimum degree
++    *    MMD:        Multiple minimum degree
++    *    AND:        Nested dissection
++    *    MLF:        Minimum local fill
++    *    SPECTRAL:   Spectral nested dissection
+     */
+-   void SetReorderingStrategy( strumpack::ReorderingStrategy method );
++   void SetReorderingStrategy(strumpack::ReorderingStrategy method);
+ 
+    /**
+-    * Disable static pivoting for stability. The static pivoting in strumpack
++    * Configure static pivoting for stability. The static pivoting in STRUMPACK
+     * permutes the sparse input matrix in order to get large (nonzero) elements
+     * on the diagonal. If the input matrix is already diagonally dominant, this
+     * reordering can be disabled.
++    *
++    * Supported matching algorithms are:
++    *    NONE:                          Don't do anything
++    *    MAX_CARDINALITY:               Maximum cardinality
++    *    MAX_SMALLEST_DIAGONAL:         Maximum smallest diagonal value
++    *    MAX_SMALLEST_DIAGONAL_2:       Same as MAX_SMALLEST_DIAGONAL
++    *                                   but different algorithm
++    *    MAX_DIAGONAL_SUM:              Maximum sum of diagonal values
++    *    MAX_DIAGONAL_PRODUCT_SCALING:  Maximum product of diagonal values
++    *                                   and row and column scaling (default)
++    *    COMBBLAS:                      Use AWPM from CombBLAS (only with
++    *                                   version >= 3)
+     */
+-   void DisableMatching();
+-
+-   /**
+-    * Enable static pivoting for stability using the MC64 algorithm with
+-    * job=5. Using a matching algorithm, this will permute the sparse input
+-    * matrix in order to get nonzero elements (as large as possible) on the
+-    * diagonal. And will also scale the rows and columns of the matrix.
+-    */
+-   void EnableMatching();
++#if STRUMPACK_VERSION_MAJOR >= 3
++   void SetMatching(strumpack::MatchingJob job);
++#else
++   void SetMatching(strumpack::MC64Job job);
++#endif
+ 
+ #if STRUMPACK_VERSION_MAJOR >= 3
+    /**
+-    * Use the AWPM (approximate weight perfect matching) algorithm from the
+-    * Combinatorial BLAS library for static pivoting, i.e. getting large
+-    * nonzeros on the diagonal. This requires that strumpack was compiled with
+-    * support for Combinatorial BLAS.
++    * Enable support for rank-structured data formats, which can be used
++    * for compression within the sparse solver.
++    *
++    * Supported compression types are:
++    *    NONE:           No compression, purely direct solver (default)
++    *    HSS:            HSS compression of frontal matrices
++    *    BLR:            Block low-rank compression of fronts
++    *    HODLR:          Hierarchically Off-diagonal Low-Rank
++    *                    compression of frontal matrices
++    *    BLR_HODLR:      Block low-rank compression of medium
++    *                    fronts and Hierarchically Off-diagonal
++    *                    Low-Rank compression of large fronts
++    *    ZFP_BLR_HODLR:  ZFP compression for small fronts,
++    *                    Block low-rank compression of medium
++    *                    fronts and Hierarchically Off-diagonal
++    *                    Low-Rank compression of large fronts
++    *    LOSSLESS:       Lossless compression
++    *    LOSSY:          Lossy compression
++    *
++    * For versions of STRUMPACK < 5, we support only NONE, HSS, and BLR.
++    * BLR_HODLR and ZPR_BLR_HODLR are supported in STRUMPACK >= 6.
+     */
+-   void EnableParallelMatching();
++   void SetCompression(strumpack::CompressionType type);
++   void SetCompressionRelTol(double rtol);
++   void SetCompressionAbsTol(double atol);
++#if STRUMPACK_VERSION_MAJOR >= 5
++   void SetCompressionLossyPrecision(int precision);
++   void SetCompressionButterflyLevels(int levels);
++#endif
+ #endif
+ 
+ private:
+-   void Init( int argc, char* argv[] );
++   // Helper method for calling the STRUMPACK factoriation routine.
++   void FactorInternal() const;
+ 
+ protected:
+-
+-   MPI_Comm      comm_;
+-   int           numProcs_;
+-   int           myid_;
++   const STRUMPACKRowLocMatrix *APtr_;
++   STRUMPACKSolverType         *solver_;
+ 
+    bool factor_verbose_;
+    bool solve_verbose_;
++   bool reorder_reuse_;
++
++   mutable Vector rhs_, sol_;
++   mutable int    nrhs_;
++};
++
++class STRUMPACKSolver :
++   public STRUMPACKSolverBase<strumpack::
++   SparseSolverMPIDist<double, HYPRE_BigInt>>
++{
++public:
++   // Constructor with MPI_Comm parameter.
++   STRUMPACKSolver(MPI_Comm comm);
++
++   // Constructor with STRUMPACK matrix object.
++   STRUMPACKSolver(STRUMPACKRowLocMatrix &A);
++
++   // Constructor with MPI_Comm parameter and command line arguments.
++   STRUMPACKSolver(MPI_Comm comm, int argc, char *argv[]);
++
++   // Constructor with STRUMPACK matrix object and command line arguments.
++   STRUMPACKSolver(STRUMPACKRowLocMatrix &A, int argc, char *argv[]);
+ 
+-   const STRUMPACKRowLocMatrix * APtr_;
+-   strumpack::StrumpackSparseSolverMPIDist<double,int> * solver_;
++   // Destructor.
++   ~STRUMPACKSolver() {}
++};
+ 
+-}; // mfem::STRUMPACKSolver class
++#if STRUMPACK_VERSION_MAJOR >= 6 && STRUMPACK_VERSION_MINOR >= 3 && STRUMPACK_VERSION_PATCH > 1
++class STRUMPACKMixedPrecisionSolver :
++   public STRUMPACKSolverBase<strumpack::
++   SparseSolverMixedPrecisionMPIDist<float, double, HYPRE_BigInt>>
++{
++public:
++   // Constructor with MPI_Comm parameter.
++   STRUMPACKMixedPrecisionSolver(MPI_Comm comm);
++
++   // Constructor with STRUMPACK matrix object.
++   STRUMPACKMixedPrecisionSolver(STRUMPACKRowLocMatrix &A);
++
++   // Constructor with MPI_Comm parameter and command line arguments.
++   STRUMPACKMixedPrecisionSolver(MPI_Comm comm, int argc, char *argv[]);
++
++   // Constructor with STRUMPACK matrix object and command line arguments.
++   STRUMPACKMixedPrecisionSolver(STRUMPACKRowLocMatrix &A,
++                                 int argc, char *argv[]);
++
++   // Destructor.
++   ~STRUMPACKMixedPrecisionSolver() {}
++};
++#endif
+ 
+-} // mfem namespace
++} // namespace mfem
+ 
+ #endif // MFEM_USE_MPI
+ #endif // MFEM_USE_STRUMPACK
+diff --git a/linalg/superlu.cpp b/linalg/superlu.cpp
+index fdf6b842e..13a8a7d4e 100644
+--- a/linalg/superlu.cpp
++++ b/linalg/superlu.cpp
+@@ -16,48 +16,50 @@
+ 
+ #include "superlu.hpp"
+ 
+-// SuperLU headers
+-#include "superlu_defs.h"
++// SuperLU header
+ #include "superlu_ddefs.h"
+ 
+-#if XSDK_INDEX_SIZE == 64
+-#error "SuperLUDist has been built with 64bit integers. This is not supported"
++#if XSDK_INDEX_SIZE == 64 && !(defined(HYPRE_BIGINT) || defined(HYPRE_MIXEDINT))
++#error "Mismatch between HYPRE (32bit) and SuperLU (64bit) integer types"
+ #endif
+-
+-// For now, it is assumed that HYPRE_BigInt is int.
+-#if defined(HYPRE_BIGINT) || defined(HYPRE_MIXEDINT)
+-#error "SuperLUDist support requires HYPRE_BigInt == int, for now."
++#if XSDK_INDEX_SIZE == 32 && (defined(HYPRE_BIGINT) || defined(HYPRE_MIXEDINT))
++#error "Mismatch between HYPRE (64bit) and SuperLU (32bit) integer types"
+ #endif
+ 
+-#if SUPERLU_DIST_MAJOR_VERSION > 6 ||                                   \
+-  (SUPERLU_DIST_MAJOR_VERSION == 6 && SUPERLU_DIST_MINOR_VERSION > 2)
++#if SUPERLU_DIST_MAJOR_VERSION > 6 || \
++   (SUPERLU_DIST_MAJOR_VERSION == 6 && SUPERLU_DIST_MINOR_VERSION >= 3)
+ #define ScalePermstruct_t dScalePermstruct_t
+ #define LUstruct_t dLUstruct_t
+ #define SOLVEstruct_t dSOLVEstruct_t
+-#define ScalePermstructFree dScalePermstructFree
++#define ZeroLblocks dZeroLblocks
++#define ZeroUblocks dZeroUblocks
+ #define Destroy_LU dDestroy_LU
++#define SolveFinalize dSolveFinalize
++#define ScalePermstructInit dScalePermstructInit
++#define ScalePermstructFree dScalePermstructFree
+ #define LUstructFree dLUstructFree
+ #define LUstructInit dLUstructInit
+ #endif
+ 
++#if SUPERLU_DIST_MAJOR_VERSION > 7 || \
++   (SUPERLU_DIST_MAJOR_VERSION == 7 && SUPERLU_DIST_MINOR_VERSION >= 2)
++#define DeAllocLlu_3d dDeAllocLlu_3d
++#define DeAllocGlu_3d dDeAllocGlu_3d
++#define Destroy_A3d_gathered_on_2d dDestroy_A3d_gathered_on_2d
++#endif
+ 
+-using namespace std;
+-
+-namespace mfem
+-{
+-unsigned int superlu_internal::sqrti( const unsigned int & a )
++unsigned int sqrti(unsigned int a)
+ {
+-   unsigned int a_ = a;
+-   unsigned int rem = 0;
+-   unsigned int root = 0;
++   unsigned int rem     = 0;
++   unsigned int root    = 0;
+    unsigned short len   = sizeof(int); len <<= 2;
+-   unsigned short shift = (unsigned short)((len<<1) - 2);
++   unsigned short shift = (unsigned short)((len << 1) - 2);
+ 
+-   for (int i=0; i<len; i++)
++   for (int i = 0; i < len; i++)
+    {
+       root <<= 1;
+-      rem = ((rem << 2) + (a_ >> shift));
+-      a_ <<= 2;
++      rem = ((rem << 2) + (a >> shift));
++      a <<= 2;
+       root ++;
+       if (root <= rem)
+       {
+@@ -72,546 +74,707 @@ unsigned int superlu_internal::sqrti( const unsigned int & a )
+    return (root >> 1);
+ }
+ 
++void GetSquare(int np, int &nr, int &nc)
++{
++   nr = (int)sqrti((unsigned int)np);
++   while (np % nr != 0 && nr > 0)
++   {
++      nr--;
++   }
++   nc = (int)(np / nr);
++   MFEM_VERIFY(nr * nc == np, "Impossible processor partition!");
++}
++
++namespace mfem
++{
++
+ SuperLURowLocMatrix::SuperLURowLocMatrix(MPI_Comm comm,
+-                                         int num_loc_rows, int first_loc_row,
+-                                         int glob_nrows, int glob_ncols,
+-                                         int *I, int *J, double *data)
+-   : comm_(comm),
+-     rowLocPtr_(NULL)
++                                         int num_loc_rows,
++                                         HYPRE_BigInt first_loc_row,
++                                         HYPRE_BigInt glob_nrows,
++                                         HYPRE_BigInt glob_ncols,
++                                         int *I, HYPRE_BigInt *J,
++                                         double *data)
++   : comm_(comm)
+ {
+    // Set mfem::Operator member data
+    height = num_loc_rows;
+    width  = num_loc_rows;
+ 
+    // Allocate SuperLU's SuperMatrix struct
+-   rowLocPtr_      = new SuperMatrix;
+-   SuperMatrix * A = (SuperMatrix*)rowLocPtr_;
+-
+-   A->Store = NULL;
++   rowLocPtr_     = new SuperMatrix;
++   SuperMatrix *A = (SuperMatrix *)rowLocPtr_;
++   A->Store       = NULL;
+ 
+-   int m       = glob_nrows;
+-   int n       = glob_ncols;
+-   int nnz_loc = I[num_loc_rows];
+-   int m_loc   = num_loc_rows;
+-   int fst_row = first_loc_row;
++   int_t m       = glob_nrows;
++   int_t n       = glob_ncols;
++   int_t nnz_loc = I[num_loc_rows];
++   int_t m_loc   = num_loc_rows;
++   int_t fst_row = first_loc_row;
+ 
+-   double * nzval  = NULL;
+-   int    * colind = NULL;
+-   int    * rowptr = NULL;
++   double *nzval  = NULL;
++   int_t  *colind = NULL;
++   int_t  *rowptr = NULL;
+ 
+-   if ( !(nzval  = doubleMalloc_dist(nnz_loc)) )
++   if (!(nzval = doubleMalloc_dist(nnz_loc)))
+    {
+-      ABORT("Malloc fails for nzval[].");
++      MFEM_ABORT("SuperLURowLocMatrix: Malloc failed for nzval!");
+    }
+-   for (int i=0; i<nnz_loc; i++)
++   for (int_t i = 0; i < nnz_loc; i++)
+    {
+       nzval[i] = data[i];
+    }
+ 
+-   if ( !(colind = intMalloc_dist(nnz_loc)) )
++   if (!(colind = intMalloc_dist(nnz_loc)))
+    {
+-      ABORT("Malloc fails for colind[].");
++      MFEM_ABORT("SuperLURowLocMatrix: Malloc failed for colind!")
+    }
+-   for (int i=0; i<nnz_loc; i++)
++   for (int_t i = 0; i < nnz_loc; i++)
+    {
+       colind[i] = J[i];
+    }
+ 
+-   if ( !(rowptr = intMalloc_dist(m_loc+1)) )
++   if (!(rowptr = intMalloc_dist(m_loc+1)))
+    {
+-      ABORT("Malloc fails for rowptr[].");
++      MFEM_ABORT("SuperLURowLocMatrix: Malloc failed for rowptr!")
+    }
+-   for (int i=0; i<=m_loc; i++)
++   for (int_t i = 0; i <= m_loc; i++)
+    {
+       rowptr[i] = I[i];
+    }
+ 
+-   // Assign he matrix data to SuperLU's SuperMatrix structure
++   // Assign the matrix data to SuperLU's SuperMatrix structure
+    dCreate_CompRowLoc_Matrix_dist(A, m, n, nnz_loc, m_loc, fst_row,
+                                   nzval, colind, rowptr,
+                                   SLU_NR_loc, SLU_D, SLU_GE);
++
++   // Save global number of rows and columns of the matrix
++   num_global_rows_ = m;
++   num_global_cols_ = n;
+ }
+ 
+-SuperLURowLocMatrix::SuperLURowLocMatrix( const HypreParMatrix & hypParMat )
+-   : comm_(hypParMat.GetComm()),
+-     rowLocPtr_(NULL)
++SuperLURowLocMatrix::SuperLURowLocMatrix(const Operator &op)
+ {
+-   rowLocPtr_      = new SuperMatrix;
+-   SuperMatrix * A = (SuperMatrix*)rowLocPtr_;
+-
+-   A->Store = NULL;
++   const HypreParMatrix *APtr = dynamic_cast<const HypreParMatrix *>(&op);
++   MFEM_VERIFY(APtr, "Not a compatible matrix type");
++   comm_ = APtr->GetComm();
+ 
+-   // First cast the parameter to a hypre_ParCSRMatrix
+-   hypre_ParCSRMatrix * parcsr_op =
+-      (hypre_ParCSRMatrix *)const_cast<HypreParMatrix&>(hypParMat);
++   // Set mfem::Operator member data
++   height = op.Height();
++   width  = op.Width();
+ 
+-   MFEM_ASSERT(parcsr_op != NULL,"SuperLU: const_cast failed in SetOperator");
++   // Allocate SuperLU's SuperMatrix struct
++   rowLocPtr_     = new SuperMatrix;
++   SuperMatrix *A = (SuperMatrix *)rowLocPtr_;
++   A->Store       = NULL;
+ 
+-   // Create the SuperMatrix A by borrowing the internal data from a
+-   // hypre_CSRMatrix.
+-   hypParMat.HostRead();
+-   hypre_CSRMatrix * csr_op = hypre_MergeDiagAndOffd(parcsr_op);
+-   hypParMat.HypreRead();
+-   hypre_CSRMatrixSetDataOwner(csr_op,0);
++   // First cast the parameter to a hypre_ParCSRMatrix
++   hypre_ParCSRMatrix *parcsr_op =
++      (hypre_ParCSRMatrix *)const_cast<HypreParMatrix &>(*APtr);
++
++   // Create the SuperMatrix A by taking the internal data from a
++   // hypre_CSRMatrix
++   APtr->HostRead();
++   hypre_CSRMatrix *csr_op = hypre_MergeDiagAndOffd(parcsr_op);
++   APtr->HypreRead();
++   HYPRE_Int       *Iptr   = csr_op->i;
+ #if MFEM_HYPRE_VERSION >= 21600
+-   // For now, this method assumes that HYPRE_BigInt is int. Also, csr_op->num_cols
+-   // is of type HYPRE_Int, so if we want to check for big indices in
+-   // csr_op->big_j, we'll have to check all entries and that check will only be
+-   // necessary in HYPRE_MIXEDINT mode which is not supported at the moment.
+-   hypre_CSRMatrixBigJtoJ(csr_op);
++   HYPRE_BigInt    *Jptr   = csr_op->big_j;
++#else
++   HYPRE_Int       *Jptr   = csr_op->j;
+ #endif
++   int_t m       = parcsr_op->global_num_rows;
++   int_t n       = parcsr_op->global_num_cols;
++   int_t fst_row = parcsr_op->first_row_index;
++   int_t nnz_loc = csr_op->num_nonzeros;
++   int_t m_loc   = csr_op->num_rows;
+ 
+-   int m         = parcsr_op->global_num_rows;
+-   int n         = parcsr_op->global_num_cols;
+-   int fst_row   = parcsr_op->first_row_index;
+-   int nnz_loc   = csr_op->num_nonzeros;
+-   int m_loc     = csr_op->num_rows;
+-
+-   height = m_loc;
+-   width  = m_loc;
++   double *nzval  = csr_op->data;
++   int_t  *colind = NULL;
++   int_t  *rowptr = NULL;
+ 
+-   double * nzval  = csr_op->data;
+-   int    * colind = csr_op->j;
+-   int    * rowptr = NULL;
++   // Some machines don't like HYPRE_BigInt to int_t
++#if defined(HYPRE_BIGINT) || defined(HYPRE_MIXEDINT)
++   if (!(colind = intMalloc_dist(nnz_loc)))
++   {
++      MFEM_ABORT("SuperLURowLocMatrix: Malloc failed for colind!")
++   }
++   for (int_t i = 0; i < nnz_loc; i++)
++   {
++      colind[i] = Jptr[i];
++   }
++#else
++   colind = Jptr;
++#endif
+ 
+    // The "i" array cannot be stolen from the hypre_CSRMatrix so we'll copy it
+-   if ( !(rowptr = intMalloc_dist(m_loc+1)) )
++   if (!(rowptr = intMalloc_dist(m_loc+1)))
+    {
+-      ABORT("Malloc fails for rowptr[].");
++      MFEM_ABORT("SuperLURowLocMatrix: Malloc failed for rowptr!")
+    }
+-   for (int i=0; i<=m_loc; i++)
++   for (int_t i = 0; i <= m_loc; i++)
+    {
+-      rowptr[i] = (csr_op->i)[i];
++      rowptr[i] = (int_t)Iptr[i];  // Promotion for HYPRE_MIXEDINT
+    }
+ 
+-   // Everything has been copied or abducted so delete the structure
+-   hypre_CSRMatrixDestroy(csr_op);
+-
+    // Assign he matrix data to SuperLU's SuperMatrix structure
+    dCreate_CompRowLoc_Matrix_dist(A, m, n, nnz_loc, m_loc, fst_row,
+                                   nzval, colind, rowptr,
+                                   SLU_NR_loc, SLU_D, SLU_GE);
+ 
+-   // Save global number of columns (width) of the matrix
+-   num_global_cols = n;
++   // SuperLU will free the passed CSR data arrays
++   hypre_CSRMatrixSetDataOwner(csr_op, 0);
++   hypre_CSRMatrixDestroy(csr_op);
++#if defined(HYPRE_BIGINT) || defined(HYPRE_MIXEDINT)
++   delete Jptr;
++#endif
++
++   // Save global number of rows and columns of the matrix
++   num_global_rows_ = m;
++   num_global_cols_ = n;
+ }
+ 
+ SuperLURowLocMatrix::~SuperLURowLocMatrix()
+ {
+-   SuperMatrix * A = (SuperMatrix*)rowLocPtr_;
+-
+-   // Delete the internal data
++   SuperMatrix *A = (SuperMatrix *)rowLocPtr_;
+    Destroy_CompRowLoc_Matrix_dist(A);
+-
+-   // Delete the struct
+-   if ( A != NULL ) { delete A; }
++   delete A;
+ }
+ 
+-SuperLUSolver::SuperLUSolver( MPI_Comm comm )
+-   : comm_(comm),
+-     APtr_(NULL),
+-     optionsPtr_(NULL),
+-     statPtr_(NULL),
+-     ScalePermstructPtr_(NULL),
+-     LUstructPtr_(NULL),
+-     SOLVEstructPtr_(NULL),
+-     gridPtr_(NULL),
+-     berr_(NULL),
+-     perm_r_(NULL),
+-     nrhs_(1),
+-     nprow_(0),
+-     npcol_(0),
+-     firstSolveWithThisA_(false),
+-     gridInitialized_(false),
+-     LUStructInitialized_(false)
++SuperLUSolver::SuperLUSolver(MPI_Comm comm, int npdep)
++   : APtr_(NULL),
++     nrhs_(0),
++     npdep_(npdep)
+ {
+-   this->Init();
++   Init(comm);
+ }
+ 
+-SuperLUSolver::SuperLUSolver( SuperLURowLocMatrix & A )
+-   : comm_(A.GetComm()),
+-     APtr_(&A),
+-     optionsPtr_(NULL),
+-     statPtr_(NULL),
+-     ScalePermstructPtr_(NULL),
+-     LUstructPtr_(NULL),
+-     SOLVEstructPtr_(NULL),
+-     gridPtr_(NULL),
+-     berr_(NULL),
+-     perm_r_(NULL),
+-     nrhs_(1),
+-     nprow_(0),
+-     npcol_(0),
+-     firstSolveWithThisA_(true),
+-     gridInitialized_(false),
+-     LUStructInitialized_(false)
++SuperLUSolver::SuperLUSolver(SuperLURowLocMatrix &A, int npdep)
++   : APtr_(&A),
++     nrhs_(0),
++     npdep_(npdep)
+ {
+-   height = A.Height();
+-   width  = A.Width();
+-
+-   this->Init();
++   Init(A.GetComm());
++   SetOperator(A);
+ }
+ 
+ SuperLUSolver::~SuperLUSolver()
+ {
+-   superlu_dist_options_t * options = (superlu_dist_options_t*)optionsPtr_;
+-   SuperLUStat_t     * stat         = (SuperLUStat_t*)statPtr_;
+-   ScalePermstruct_t * SPstruct     = (ScalePermstruct_t*)ScalePermstructPtr_;
+-   LUstruct_t        * LUstruct     = (LUstruct_t*)LUstructPtr_;
+-   SOLVEstruct_t     * SOLVEstruct  = (SOLVEstruct_t*)SOLVEstructPtr_;
+-   gridinfo_t        * grid         = (gridinfo_t*)gridPtr_;
++   superlu_dist_options_t *options = (superlu_dist_options_t *)optionsPtr_;
+ 
+-   SUPERLU_FREE(berr_);
+-   PStatFree(stat);
++   ScalePermstruct_t *ScalePermstruct = (ScalePermstruct_t *)ScalePermstructPtr_;
++   LUstruct_t        *LUstruct        = (LUstruct_t *)LUstructPtr_;
++   SOLVEstruct_t     *SOLVEstruct     = (SOLVEstruct_t *)SOLVEstructPtr_;
+ 
+-   if ( LUStructInitialized_ )
++#if SUPERLU_DIST_MAJOR_VERSION > 7 || \
++   (SUPERLU_DIST_MAJOR_VERSION == 7 && SUPERLU_DIST_MINOR_VERSION >= 2)
++   if (npdep_ > 1)
+    {
+-      ScalePermstructFree(SPstruct);
+-      Destroy_LU(APtr_->GetGlobalNumColumns(), grid, LUstruct);
+-      LUstructFree(LUstruct);
+-   }
++      gridinfo3d_t *grid3d = (gridinfo3d_t *)gridPtr_;
+ 
+-   if ( options->SolveInitialized )
++      if (APtr_)
++      {
++         if (grid3d->zscp.Iam == 0)
++         {
++            // Process layer 0
++            Destroy_LU(APtr_->GetGlobalNumColumns(), &(grid3d->grid2d),
++                       LUstruct);
++            SolveFinalize(options, SOLVEstruct);
++         }
++         else
++         {
++            // Process layers not equal 0
++            DeAllocLlu_3d(APtr_->GetGlobalNumColumns(), LUstruct, grid3d);
++            DeAllocGlu_3d(LUstruct);
++         }
++         Destroy_A3d_gathered_on_2d(SOLVEstruct, grid3d);
++         ScalePermstructFree(ScalePermstruct);
++         LUstructFree(LUstruct);
++      }
++
++      superlu_gridexit3d(grid3d);
++      delete grid3d;
++   }
++   else
++#endif
+    {
+-      dSolveFinalize(options, SOLVEstruct);
++      gridinfo_t *grid = (gridinfo_t *)gridPtr_;
++
++      if (APtr_)
++      {
++         Destroy_LU(APtr_->GetGlobalNumColumns(), grid, LUstruct);
++         SolveFinalize(options, SOLVEstruct);
++         ScalePermstructFree(ScalePermstruct);
++         LUstructFree(LUstruct);
++      }
++
++      superlu_gridexit(grid);
++      delete grid;
+    }
+ 
+-   if (     options != NULL ) { delete options; }
+-   if (        stat != NULL ) { delete stat; }
+-   if (    SPstruct != NULL ) { delete SPstruct; }
+-   if (    LUstruct != NULL ) { delete LUstruct; }
+-   if ( SOLVEstruct != NULL ) { delete SOLVEstruct; }
+-   if (        grid != NULL ) { delete grid; }
+-   if (     perm_r_ != NULL ) { SUPERLU_FREE(perm_r_); }
++   delete options;
++   delete ScalePermstruct;
++   delete LUstruct;
++   delete SOLVEstruct;
+ }
+ 
+-void SuperLUSolver::Init()
++void SuperLUSolver::Init(MPI_Comm comm)
+ {
+-   MPI_Comm_size(comm_, &numProcs_);
+-   MPI_Comm_rank(comm_, &myid_);
+-
+    optionsPtr_         = new superlu_dist_options_t;
+-   statPtr_            = new SuperLUStat_t;
+    ScalePermstructPtr_ = new ScalePermstruct_t;
+    LUstructPtr_        = new LUstruct_t;
+    SOLVEstructPtr_     = new SOLVEstruct_t;
+-   gridPtr_            = new gridinfo_t;
+-
+-   superlu_dist_options_t * options = (superlu_dist_options_t*)optionsPtr_;
+-   SuperLUStat_t          *    stat = (SuperLUStat_t*)statPtr_;
+-
+-   if ( !(berr_ = doubleMalloc_dist(nrhs_)) )
++#if SUPERLU_DIST_MAJOR_VERSION > 7 || \
++   (SUPERLU_DIST_MAJOR_VERSION == 7 && SUPERLU_DIST_MINOR_VERSION >= 2)
++   if (npdep_ > 1)
+    {
+-      ABORT("Malloc fails for berr[].");
++      gridPtr_         = new gridinfo3d_t;
++   }
++   else
++#endif
++   {
++      gridPtr_         = new gridinfo_t;
+    }
+ 
+-   // Set default options
++   // Initialize process grid
++   SetupGrid(comm);
++
++   // Set default options:
++   //    options.Fact = DOFACT;
++   //    options.Equil = YES;
++   //    options.ColPerm = METIS_AT_PLUS_A;
++   //    options.RowPerm = LargeDiag_MC64;
++   //    options.ReplaceTinyPivot = NO;
++   //    options.Trans = NOTRANS;
++   //    options.IterRefine = SLU_DOUBLE;
++   //    options.SolveInitialized = NO;
++   //    options.RefineInitialized = NO;
++   //    options.PrintStat = YES;
++   superlu_dist_options_t *options = (superlu_dist_options_t *)optionsPtr_;
+    set_default_options_dist(options);
++#if SUPERLU_DIST_MAJOR_VERSION > 7 || \
++   (SUPERLU_DIST_MAJOR_VERSION == 7 && SUPERLU_DIST_MINOR_VERSION >= 2)
++   if (npdep_ > 1)
++   {
++      options->Algo3d = YES;
++   }
++#endif
++}
+ 
+-   // Choose nprow and npcol so that the process grid is as square as possible.
+-   // If the processes cannot be divided evenly, keep the row dimension smaller
+-   // than the column dimension.
++void SuperLUSolver::SetupGrid(MPI_Comm comm)
++{
++   int nprocs;
++   MPI_Comm_size(comm, &nprocs);
+ 
+-   nprow_ = (int)superlu_internal::sqrti((unsigned int)numProcs_);
+-   while (numProcs_ % nprow_ != 0 && nprow_ > 0)
++#if SUPERLU_DIST_MAJOR_VERSION > 7 || \
++   (SUPERLU_DIST_MAJOR_VERSION == 7 && SUPERLU_DIST_MINOR_VERSION >= 2)
++   if (npdep_ > 1)
+    {
+-      nprow_--;
++      gridinfo3d_t *grid3d = (gridinfo3d_t *)gridPtr_;
++
++      int mask = npdep_ - 1;
++      MFEM_VERIFY(!(npdep_ & mask),
++                  "SuperLUSolver::SetupGrid: 3D partition depth must be a power "
++                  "of two!");
++      MFEM_VERIFY(nprocs % npdep_ == 0,
++                  "SuperLUSolver::SetupGrid: Number of processors must be "
++                  "evenly divisible by 3D partition depth!");
++      GetSquare(nprocs / npdep_, nprow_, npcol_);
++
++      superlu_gridinit3d(comm, nprow_, npcol_, npdep_, grid3d);
+    }
++   else
++#endif
++   {
++      gridinfo_t *grid = (gridinfo_t *)gridPtr_;
+ 
+-   npcol_ = (int)(numProcs_ / nprow_);
+-   MFEM_ASSERT(nprow_ * npcol_ == numProcs_, "");
++      MFEM_VERIFY(npdep_ == 1,
++                  "SuperLUSolver::SetupGrid: 3D partitioning is only available for "
++                  "version >= 7.2.0!");
++      GetSquare(nprocs, nprow_, npcol_);
+ 
+-   PStatInit(stat); // Initialize the statistics variables.
++      superlu_gridinit(comm, nprow_, npcol_, grid);
++   }
+ }
+ 
+-void SuperLUSolver::SetPrintStatistics( bool print_stat )
++void SuperLUSolver::SetPrintStatistics(bool print_stat)
+ {
+-   superlu_dist_options_t * options = (superlu_dist_options_t*)optionsPtr_;
+-
+-   yes_no_t opt = print_stat?YES:NO;
+-
++   superlu_dist_options_t *options = (superlu_dist_options_t *)optionsPtr_;
++   yes_no_t opt = print_stat ? YES : NO;
+    options->PrintStat = opt;
+ }
+ 
+-void SuperLUSolver::SetEquilibriate( bool equil )
++void SuperLUSolver::SetEquilibriate(bool equil)
+ {
+-   superlu_dist_options_t * options = (superlu_dist_options_t*)optionsPtr_;
+-
+-   yes_no_t opt = equil?YES:NO;
+-
++   superlu_dist_options_t *options = (superlu_dist_options_t *)optionsPtr_;
++   yes_no_t opt = equil ? YES : NO;
+    options->Equil = opt;
+ }
+ 
+-void SuperLUSolver::SetColumnPermutation( superlu::ColPerm col_perm )
++void SuperLUSolver::SetColumnPermutation(superlu::ColPerm col_perm)
+ {
+-   superlu_dist_options_t * options = (superlu_dist_options_t*)optionsPtr_;
+-
++   superlu_dist_options_t *options = (superlu_dist_options_t *)optionsPtr_;
+    colperm_t opt = (colperm_t)col_perm;
+-
++   if (opt == MY_PERMC)
++   {
++      MFEM_ABORT("SuperLUSolver::SetColumnPermutation does not yet support "
++                 "MY_PERMC!");
++   }
++   else if (opt == PARMETIS)
++   {
++      options->ParSymbFact = YES;
++   }
+    options->ColPerm = opt;
+ }
+ 
+-void SuperLUSolver::SetRowPermutation( superlu::RowPerm row_perm,
+-                                       Array<int> * perm )
++void SuperLUSolver::SetRowPermutation(superlu::RowPerm row_perm)
+ {
+-   superlu_dist_options_t * options = (superlu_dist_options_t*)optionsPtr_;
+-
++   superlu_dist_options_t *options = (superlu_dist_options_t *)optionsPtr_;
+    rowperm_t opt = (rowperm_t)row_perm;
+-
+-   options->RowPerm = opt;
+-
+-   if ( opt == MY_PERMR )
++   if (opt == MY_PERMR)
+    {
+-      if ( perm == NULL )
+-      {
+-         mfem_error("SuperLUSolver::SetRowPermutation :"
+-                    " permutation vector not set!");
+-      }
+-
+-      if ( !(perm_r_ = intMalloc_dist(perm->Size())) )
+-      {
+-         ABORT("Malloc fails for perm_r[].");
+-      }
+-      for (int i=0; i<perm->Size(); i++)
+-      {
+-         perm_r_[i] = (*perm)[i];
+-      }
++      MFEM_ABORT("SuperLUSolver::SetRowPermutation does not yet support "
++                 "MY_PERMR!");
+    }
++   options->RowPerm = opt;
+ }
+ 
+-void SuperLUSolver::SetTranspose( superlu::Trans trans )
+-{
+-   superlu_dist_options_t * options = (superlu_dist_options_t*)optionsPtr_;
+-
+-   trans_t opt = (trans_t)trans;
+-
+-   options->Trans = opt;
+-}
+-
+-void SuperLUSolver::SetIterativeRefine( superlu::IterRefine iter_ref )
++void SuperLUSolver::SetIterativeRefine(superlu::IterRefine iter_ref)
+ {
+-   superlu_dist_options_t * options = (superlu_dist_options_t*)optionsPtr_;
+-
++   superlu_dist_options_t *options = (superlu_dist_options_t *)optionsPtr_;
+    IterRefine_t opt = (IterRefine_t)iter_ref;
+-
+    options->IterRefine = opt;
+ }
+ 
+-void SuperLUSolver::SetReplaceTinyPivot( bool rtp )
++void SuperLUSolver::SetReplaceTinyPivot(bool rtp)
+ {
+-   superlu_dist_options_t * options = (superlu_dist_options_t*)optionsPtr_;
+-
+-   yes_no_t opt = rtp?YES:NO;
+-
++   superlu_dist_options_t *options = (superlu_dist_options_t *)optionsPtr_;
++   yes_no_t opt = rtp ? YES : NO;
+    options->ReplaceTinyPivot = opt;
+ }
+ 
+-void SuperLUSolver::SetNumLookAheads( int num_lookaheads )
++void SuperLUSolver::SetNumLookAheads(int num_lookaheads)
+ {
+-   superlu_dist_options_t * options = (superlu_dist_options_t*)optionsPtr_;
+-
++   superlu_dist_options_t *options = (superlu_dist_options_t *)optionsPtr_;
+    options->num_lookaheads = num_lookaheads;
+ }
+ 
+-void SuperLUSolver::SetLookAheadElimTree( bool etree )
++void SuperLUSolver::SetLookAheadElimTree(bool etree)
+ {
+-   superlu_dist_options_t * options = (superlu_dist_options_t*)optionsPtr_;
+-
+-   yes_no_t opt = etree?YES:NO;
+-
++   superlu_dist_options_t *options = (superlu_dist_options_t *)optionsPtr_;
++   yes_no_t opt = etree ? YES : NO;
+    options->lookahead_etree = opt;
+ }
+ 
+-void SuperLUSolver::SetSymmetricPattern( bool sym )
++void SuperLUSolver::SetSymmetricPattern(bool sym)
+ {
+-   superlu_dist_options_t * options = (superlu_dist_options_t*)optionsPtr_;
+-
+-   yes_no_t opt = sym?YES:NO;
+-
++   superlu_dist_options_t *options = (superlu_dist_options_t *)optionsPtr_;
++   yes_no_t opt = sym ? YES : NO;
+    options->SymPattern = opt;
+ }
+ 
+-void SuperLUSolver::SetParSymbFact( bool par )
++void SuperLUSolver::SetParSymbFact(bool par)
+ {
+-   superlu_dist_options_t * options = (superlu_dist_options_t*)optionsPtr_;
+-
+-   yes_no_t opt = par?YES:NO;
+-
++   superlu_dist_options_t *options = (superlu_dist_options_t *)optionsPtr_;
++   yes_no_t opt = par ? YES : NO;
+    options->ParSymbFact = opt;
+ }
+ 
+-void SuperLUSolver::SetupGrid()
++void SuperLUSolver::SetFact(superlu::Fact fact)
+ {
+-   gridinfo_t * grid = (gridinfo_t*)gridPtr_;
++   superlu_dist_options_t *options = (superlu_dist_options_t *)optionsPtr_;
++   fact_t opt = (fact_t)fact;
++   options->Fact = opt;
++}
+ 
+-   // Make sure the values of nprow and npcol are reasonable
+-   if ( ((nprow_ * npcol_) > numProcs_) || ((nprow_ * npcol_) < 1) )
+-   {
+-      if ( myid_ == 0 )
+-      {
+-         mfem::err << "Warning: User specified nprow and npcol are such that "
+-                   << "(nprow * npcol) > numProcs or (nprow * npcol) < 1.  "
+-                   << "Using default values for nprow and npcol instead."
+-                   << endl;
+-      }
++void SuperLUSolver::SetOperator(const Operator &op)
++{
++   // Verify that we have a compatible operator
++   bool LUStructInitialized = (APtr_ != NULL);
++   APtr_ = dynamic_cast<const SuperLURowLocMatrix *>(&op);
++   MFEM_VERIFY(APtr_, "SuperLUSolver::SetOperator: Not a SuperLURowLocMatrix!");
+ 
+-      nprow_ = (int)superlu_internal::sqrti((unsigned int)numProcs_);
+-      while (numProcs_ % nprow_ != 0 && nprow_ > 0)
+-      {
+-         nprow_--;
+-      }
++   superlu_dist_options_t *options = (superlu_dist_options_t *)optionsPtr_;
+ 
+-      npcol_ = (int)(numProcs_ / nprow_);
+-      MFEM_ASSERT(nprow_ * npcol_ == numProcs_, "");
+-   }
++   ScalePermstruct_t *ScalePermstruct = (ScalePermstruct_t *)ScalePermstructPtr_;
++   LUstruct_t        *LUstruct        = (LUstruct_t *)LUstructPtr_;
+ 
+-   superlu_gridinit(comm_, nprow_, npcol_, grid);
++   gridinfo_t        *grid;
++#if SUPERLU_DIST_MAJOR_VERSION > 7 || \
++   (SUPERLU_DIST_MAJOR_VERSION == 7 && SUPERLU_DIST_MINOR_VERSION >= 2)
++   gridinfo3d_t      *grid3d = NULL;
++   if (npdep_ > 1)
++   {
++      grid3d = (gridinfo3d_t *)gridPtr_;
++      grid = NULL;
++   }
++   else
++#endif
++   {
++      grid = (gridinfo_t *)gridPtr_;
++   }
+ 
+-   gridInitialized_ = true;
+-}
++   // Set mfem::Operator member data
++   MFEM_VERIFY(!LUStructInitialized ||
++               (height == op.Height() && width == op.Width()),
++               "SuperLUSolver::SetOperator: Inconsistent new matrix size!");
++   height = op.Height();
++   width  = op.Width();
+ 
+-void SuperLUSolver::DismantleGrid()
+-{
+-   if ( gridInitialized_ )
++   if (!LUStructInitialized)
+    {
+-      gridinfo_t * grid = (gridinfo_t*)gridPtr_;
+-
+-      superlu_gridexit(grid);
++      // Initialize ScalePermstruct and LUstruct once for all operators (must
++      // have same dimensions)
++      ScalePermstructInit(APtr_->GetGlobalNumRows(),
++                          APtr_->GetGlobalNumColumns(), ScalePermstruct);
++      LUstructInit(APtr_->GetGlobalNumColumns(), LUstruct);
++      options->Fact = DOFACT;
++   }
++   else
++   {
++      // A previous matrix has already been set and factored
++      switch (options->Fact)
++      {
++         case DOFACT:
++            MFEM_ABORT("SuperLUSolver::SetOperator: Previous matrix was never used!");
++            break;
++         case SamePattern_SameRowPerm:
++         {
++            // Just zero the LU factors
++#if SUPERLU_DIST_MAJOR_VERSION > 7 || \
++(SUPERLU_DIST_MAJOR_VERSION == 7 && SUPERLU_DIST_MINOR_VERSION >= 2)
++            if (npdep_ > 1)
++            {
++               if (grid3d->zscp.Iam == 0)
++               {
++                  ZeroLblocks(grid3d->iam, APtr_->GetGlobalNumColumns(),
++                              &(grid3d->grid2d), LUstruct);
++                  ZeroUblocks(grid3d->iam, APtr_->GetGlobalNumColumns(),
++                              &(grid3d->grid2d), LUstruct);
++               }
++            }
++            else
++#endif
++            {
++               ZeroLblocks(grid->iam, APtr_->GetGlobalNumColumns(),
++                           grid, LUstruct);
++               ZeroUblocks(grid->iam, APtr_->GetGlobalNumColumns(),
++                           grid, LUstruct);
++            }
++         }
++         break;
++         case SamePattern:
++         case FACTORED:
++         {
++            // Delete factors from the prior factorization
++#if SUPERLU_DIST_MAJOR_VERSION > 7 || \
++(SUPERLU_DIST_MAJOR_VERSION == 7 && SUPERLU_DIST_MINOR_VERSION >= 2)
++            if (npdep_ > 1)
++            {
++               if (grid3d->zscp.Iam == 0)
++               {
++                  Destroy_LU(APtr_->GetGlobalNumColumns(), &(grid3d->grid2d),
++                             LUstruct);
++               }
++               else
++               {
++                  DeAllocLlu_3d(APtr_->GetGlobalNumColumns(), LUstruct,
++                                grid3d);
++                  DeAllocGlu_3d(LUstruct);
++               }
++            }
++            else
++#endif
++            {
++               Destroy_LU(APtr_->GetGlobalNumColumns(), grid, LUstruct);
++            }
++         }
++         break;
++         default:
++            MFEM_ABORT("SuperLUSolver::SetOperator: Unexpected value for "
++                       "options->Fact!");
++            break;
++      }
++      if (options->Fact == FACTORED) { options->Fact = DOFACT; }
+    }
++}
+ 
+-   gridInitialized_ = false;
++void SuperLUSolver::Mult(const Vector &x, Vector &y) const
++{
++   Array<const Vector *> X(1);
++   Array<Vector *> Y(1);
++   X[0] = &x;
++   Y[0] = &y;
++   Mult(X, Y);
+ }
+ 
+-void SuperLUSolver::Mult( const Vector & x, Vector & y ) const
++void SuperLUSolver::Mult(const Array<const Vector *> &X, Array<Vector *> &Y) const
+ {
+    MFEM_ASSERT(APtr_ != NULL,
+                "SuperLU Error: The operator must be set before"
+                " the system can be solved.");
+-
+-   superlu_dist_options_t * options = (superlu_dist_options_t*)optionsPtr_;
+-   SuperLUStat_t     * stat         = (SuperLUStat_t*)statPtr_;
+-   SuperMatrix       * A            = (SuperMatrix*)APtr_->InternalData();
+-
+-   ScalePermstruct_t * SPstruct     = (ScalePermstruct_t*)ScalePermstructPtr_;
+-   LUstruct_t        * LUstruct     = (LUstruct_t*)LUstructPtr_;
+-   SOLVEstruct_t     * SOLVEstruct  = (SOLVEstruct_t*)SOLVEstructPtr_;
+-   gridinfo_t        * grid         = (gridinfo_t*)gridPtr_;
+-
+-   if (!firstSolveWithThisA_)
++   SuperMatrix            *A       = (SuperMatrix *)APtr_->InternalData();
++   superlu_dist_options_t *options = (superlu_dist_options_t *)optionsPtr_;
++
++   ScalePermstruct_t *ScalePermstruct = (ScalePermstruct_t *)ScalePermstructPtr_;
++   LUstruct_t        *LUstruct        = (LUstruct_t *)LUstructPtr_;
++   SOLVEstruct_t     *SOLVEstruct     = (SOLVEstruct_t *)SOLVEstructPtr_;
++
++   gridinfo_t        *grid;
++#if SUPERLU_DIST_MAJOR_VERSION > 7 || \
++   (SUPERLU_DIST_MAJOR_VERSION == 7 && SUPERLU_DIST_MINOR_VERSION >= 2)
++   gridinfo3d_t      *grid3d = NULL;
++   if (npdep_ > 1)
+    {
+-      options->Fact = FACTORED; // Indicate the factored form of A is supplied.
++      grid3d = (gridinfo3d_t *)gridPtr_;
++      grid = NULL;
+    }
+-   else // This is the first solve with this A
++   else
++#endif
+    {
+-      firstSolveWithThisA_ = false;
+-
+-      // Make sure that the parameters have been initialized The only parameter
+-      // we might have to worry about is ScalePermstruct, if the user is
+-      // supplying a row or column permutation.
+-
+-      // Initialize ScalePermstruct and LUstruct.
+-      SPstruct->DiagScale = NOEQUIL;
++      grid = (gridinfo_t *)gridPtr_;
++   }
+ 
+-      // Transfer ownership of the row permutations if available
+-      if ( perm_r_ != NULL )
++   // SuperLU overwrites x with y, so copy x to y and pass that to the solve
++   // routine. Due to issues with repeated solves and changes in the number
++   // of RHS vectors, this is not supported.
++   MFEM_ASSERT(X.Size() == Y.Size(),
++               "Number of columns mismatch in SuperLUSolver::Mult!");
++   MFEM_VERIFY(nrhs_ < 1 || nrhs_ == X.Size(),
++               "SuperLUSolver does not support multiple solves with different "
++               "numbers of RHS vectors!");
++   int ldx = Height();
++   if (X.Size() == 1)
++   {
++      MFEM_ASSERT(X[0] && Y[0], "Missing Vector in SuperLUSolver::Mult!");
++      sol_.MakeRef(*Y[0], 0, Y[0]->Size());
++      sol_ = *X[0];
++      nrhs_ = 1;
++   }
++   else
++   {
++      if (nrhs_ < 1)
+       {
+-         SPstruct->perm_r = perm_r_;
+-         perm_r_ = NULL;
++         sol_.SetSize(X.Size() * ldx);
++         nrhs_ = X.Size();
+       }
+-      else
++      for (int i = 0; i < nrhs_; i++)
+       {
+-         if ( !(SPstruct->perm_r = intMalloc_dist(A->nrow)) )
+-         {
+-            ABORT("Malloc fails for perm_r[].");
+-         }
++         MFEM_ASSERT(X[i], "Missing Vector in SuperLUSolver::Mult!");
++         Vector s(sol_, i * ldx, ldx);
++         s = *X[i];
+       }
+-      if ( !(SPstruct->perm_c = intMalloc_dist(A->ncol)) )
++   }
++
++   // Solve the system
++   double *B = sol_.HostReadWrite(), *berr;
++   if (!(berr = doubleMalloc_dist(nrhs_)))
++   {
++      MFEM_ABORT("SuperLUSolver::Mult: Malloc failed for berr!");
++   }
++   SuperLUStat_t stat;
++   PStatInit(&stat);
++   int info = -1;
++#if SUPERLU_DIST_MAJOR_VERSION > 7 || \
++   (SUPERLU_DIST_MAJOR_VERSION == 7 && SUPERLU_DIST_MINOR_VERSION >= 2)
++   if (npdep_ > 1)
++   {
++      pdgssvx3d(options, A, ScalePermstruct, B, ldx, nrhs_,
++                grid3d, LUstruct, SOLVEstruct, berr, &stat, &info);
++   }
++   else
++#endif
++   {
++      pdgssvx(options, A, ScalePermstruct, B, ldx, nrhs_,
++              grid, LUstruct, SOLVEstruct, berr, &stat, &info);
++   }
++   HandleError(info);
++   SUPERLU_FREE(berr);
++   PStatFree(&stat);
++   options->Fact = FACTORED;
++
++   // Copy solution into output (no need to do anything for single RHS since
++   // solution is written directly into output Vector)
++   if (nrhs_ > 1)
++   {
++      for (int i = 0; i < nrhs_; i++)
+       {
+-         ABORT("Malloc fails for perm_c[].");
++         MFEM_ASSERT(Y[i], "Missing Vector in SuperLUSolver::Mult!");
++         Vector s(sol_, i * ldx, ldx);
++         *Y[i] = s;
+       }
+-
+-      LUstructInit(A->ncol, LUstruct);
+-      LUStructInitialized_ = true;
+    }
++}
+ 
+-   // SuperLU overwrites x with y, so copy x to y and pass that to the solve
+-   // routine.
++void SuperLUSolver::MultTranspose(const Vector &x, Vector &y) const
++{
++   // Set flag for transpose solve
++   superlu_dist_options_t *options = (superlu_dist_options_t *)optionsPtr_;
++   options->Trans = TRANS;
++   Mult(x, y);
+ 
+-   const double *xPtr = x.HostRead();
+-   y = xPtr;
+-   double * yPtr = y.HostReadWrite();
++   // Reset the flag
++   options->Trans = NOTRANS;
++}
+ 
+-   int      info = -1, locSize = y.Size();
++void SuperLUSolver::MultTranspose(const Array<const Vector *> &X, Array<Vector *> &Y) const
++{
++   // Set flag for transpose solve
++   superlu_dist_options_t *options = (superlu_dist_options_t *)optionsPtr_;
++   options->Trans = TRANS;
++   Mult(X, Y);
+ 
+-   // Solve the system
+-   pdgssvx(options, A, SPstruct, yPtr, locSize, nrhs_, grid,
+-           LUstruct, SOLVEstruct, berr_, stat, &info);
++   // Reset the flag
++   options->Trans = NOTRANS;
++}
+ 
+-   if ( info != 0 )
++void SuperLUSolver::HandleError(int info) const
++{
++   if (info != 0)
+    {
+-      if ( info < 0 )
++      SuperMatrix *A = (SuperMatrix *)APtr_->InternalData();
++      if (info < 0)
+       {
+          switch (-info)
+          {
+             case 1:
+-               MFEM_ABORT("SuperLU:  SuperLU options are invalid.");
++               MFEM_ABORT("SuperLUSolver: SuperLU options are invalid!");
+                break;
+             case 2:
+-               MFEM_ABORT("SuperLU:  Matrix A (in Ax=b) is invalid.");
++               MFEM_ABORT("SuperLUSolver: Matrix A (in Ax=b) is invalid!");
+                break;
+             case 5:
+-               MFEM_ABORT("SuperLU:  Vector b dimension (in Ax=b) is invalid.");
++               MFEM_ABORT("SuperLUSolver: Vector b dimension (in Ax=b) is "
++                          "invalid!");
+                break;
+             case 6:
+-               MFEM_ABORT("SuperLU:  Number of right-hand sides is invalid.");
++               MFEM_ABORT("SuperLUSolver: Number of right-hand sides is "
++                          "invalid!");
+                break;
+             default:
+-               MFEM_ABORT("SuperLU:  Parameter with index "
+-                          << -info << "invalid. (1-indexed)");
++               MFEM_ABORT("SuperLUSolver: Parameter with index "
++                          << -info << "invalid (1-indexed)!");
+                break;
+          }
+       }
+-      else if ( info <= A->ncol )
++      else if (info <= A->ncol)
+       {
+-         MFEM_ABORT("SuperLU:  Found a singular matrix, U("
+-                    << info << "," << info << ") is exactly zero.");
++         MFEM_ABORT("SuperLUSolver: Found a singular matrix, U("
++                    << info << "," << info << ") is exactly zero!");
+       }
+-      else if ( info > A->ncol )
++      else if (info > A->ncol)
+       {
+-         MFEM_ABORT("SuperLU:  Memory allocation error with "
+-                    << info - A->ncol << " bytes already allocated,");
++         MFEM_ABORT("SuperLUSolver: Memory allocation error with "
++                    << info - A->ncol << " bytes already allocated!");
+       }
+       else
+       {
+-         MFEM_ABORT("Unknown SuperLU Error");
++         MFEM_ABORT("Unknown SuperLU error: info = " << info << "!");
+       }
+    }
+ }
+ 
+-void SuperLUSolver::SetOperator( const Operator & op )
+-{
+-   // Verify that we have a compatible operator
+-   APtr_ = dynamic_cast<const SuperLURowLocMatrix*>(&op);
+-   if ( APtr_ == NULL )
+-   {
+-      mfem_error("SuperLUSolver::SetOperator : not SuperLURowLocMatrix!");
+-   }
+-
+-   // Everything is OK so finish setting the operator
+-   firstSolveWithThisA_ = true;
+-
+-   // Set mfem::Operator member data
+-   height = op.Height();
+-   width  = op.Width();
+-
+-   // Initialize the processor grid if necessary
+-   if (!gridInitialized_)
+-   {
+-      this->SetupGrid();
+-   }
+-}
+-
+-} // mfem namespace
++} // namespace mfem
+ 
+ #endif // MFEM_USE_MPI
+ #endif // MFEM_USE_SUPERLU
+diff --git a/linalg/superlu.hpp b/linalg/superlu.hpp
+index 921ee4a4e..fd0e160b3 100644
+--- a/linalg/superlu.hpp
++++ b/linalg/superlu.hpp
+@@ -16,33 +16,30 @@
+ 
+ #ifdef MFEM_USE_SUPERLU
+ #ifdef MFEM_USE_MPI
++
+ #include "operator.hpp"
+ #include "hypre.hpp"
+-
+ #include <mpi.h>
+ 
+ namespace mfem
+ {
+ 
+-namespace superlu_internal
+-{
+-unsigned int sqrti(const unsigned int & a);
+-}
+-
+ namespace superlu
+ {
+-// Copy selected enumerations from SuperLU
++
++// Copy selected enumerations from SuperLU (from superlu_enum_consts.h)
+ #ifdef MFEM_USE_SUPERLU5
+-typedef enum {NOROWPERM, LargeDiag, MY_PERMR}                       RowPerm;
++typedef enum {NOROWPERM, LargeDiag, MY_PERMR}                      RowPerm;
+ #else
+-typedef enum {NOROWPERM, LargeDiag_MC64, LargeDiag_HWPM, MY_PERMR}  RowPerm;
++typedef enum {NOROWPERM, LargeDiag_MC64, LargeDiag_HWPM, MY_PERMR} RowPerm;
+ #endif
+ typedef enum {NATURAL, MMD_ATA, MMD_AT_PLUS_A, COLAMD,
+               METIS_AT_PLUS_A, PARMETIS, ZOLTAN, MY_PERMC
+-             }          ColPerm;
+-typedef enum {NOTRANS, TRANS, CONJ}                                 Trans;
+-typedef enum {NOREFINE, SLU_SINGLE=1, SLU_DOUBLE, SLU_EXTRA}        IterRefine;
+-}
++             } ColPerm;
++typedef enum {NOREFINE, SLU_SINGLE=1, SLU_DOUBLE, SLU_EXTRA} IterRefine;
++typedef enum {DOFACT, SamePattern, SamePattern_SameRowPerm, FACTORED} Fact;
++
++} // namespace superlu
+ 
+ class SuperLURowLocMatrix : public Operator
+ {
+@@ -52,34 +49,35 @@ public:
+        be of size (local) nrows by (global) glob_ncols. The new parallel matrix
+        contains copies of all input arrays (so they can be deleted). */
+    SuperLURowLocMatrix(MPI_Comm comm,
+-                       int num_loc_rows, int first_loc_row,
+-                       int glob_nrows, int glob_ncols,
+-                       int *I, int *J, double *data);
++                       int num_loc_rows, HYPRE_BigInt first_loc_row,
++                       HYPRE_BigInt glob_nrows, HYPRE_BigInt glob_ncols,
++                       int *I, HYPRE_BigInt *J, double *data);
+ 
+    /** Creates a copy of the parallel matrix hypParMat in SuperLU's RowLoc
+        format. All data is copied so the original matrix may be deleted. */
+-   SuperLURowLocMatrix(const HypreParMatrix & hypParMat);
++   SuperLURowLocMatrix(const Operator &op);
+ 
+    ~SuperLURowLocMatrix();
+ 
+    void Mult(const Vector &x, Vector &y) const
+    {
+-      mfem_error("SuperLURowLocMatrix::Mult(...)\n"
+-                 "  matrix vector products are not supported.");
++      MFEM_ABORT("SuperLURowLocMatrix::Mult: Matrix vector products are not "
++                 "supported!");
+    }
+ 
++   void *InternalData() const { return rowLocPtr_; }
++
+    MPI_Comm GetComm() const { return comm_; }
+ 
+-   void * InternalData() const { return rowLocPtr_; }
++   HYPRE_BigInt GetGlobalNumRows() const { return num_global_rows_; }
+ 
+-   HYPRE_BigInt GetGlobalNumColumns() const { return num_global_cols; }
++   HYPRE_BigInt GetGlobalNumColumns() const { return num_global_cols_; }
+ 
+ private:
+-   MPI_Comm   comm_;
+-   void     * rowLocPtr_;
+-   HYPRE_BigInt num_global_cols;
+-
+-}; // mfem::SuperLURowLocMatrix
++   MPI_Comm     comm_;
++   void        *rowLocPtr_;
++   HYPRE_BigInt num_global_rows_, num_global_cols_;
++};
+ 
+ /** The MFEM SuperLU Direct Solver class.
+ 
+@@ -88,80 +86,80 @@ private:
+     double precision types. It is currently maintained by Xiaoye Sherry Li at
+     NERSC, see http://crd-legacy.lbl.gov/~xiaoye/SuperLU/.
+ */
+-class SuperLUSolver : public mfem::Solver
++class SuperLUSolver : public Solver
+ {
+ public:
+    // Constructor with MPI_Comm parameter.
+-   SuperLUSolver( MPI_Comm comm );
++   SuperLUSolver(MPI_Comm comm, int npdep = 1);
+ 
+-   // Constructor with SuperLU Matrix Object.
+-   SuperLUSolver( SuperLURowLocMatrix & A);
++   // Constructor with SuperLU matrix object.
++   SuperLUSolver(SuperLURowLocMatrix &A, int npdep = 1);
+ 
+    // Default destructor.
+-   ~SuperLUSolver( void );
++   ~SuperLUSolver();
+ 
+-   // Allocate and deallocate the MPI communicators. This routine is called
+-   // internally by SetOperator().
+-   void SetupGrid();
+-   // This routing must be called after the solve, but before destruction.
+-   void DismantleGrid();
++   // Set the operator.
++   void SetOperator(const Operator &op);
+ 
+    // Factor and solve the linear system y = Op^{-1} x.
+-   void Mult( const Vector & x, Vector & y ) const;
+-
+-   // Set the operator.
+-   void SetOperator( const Operator & op );
+-
+-   // Set various solver options. Refer to SuperLU documentation for details.
+-   void SetPrintStatistics  ( bool              print_stat );
+-   void SetEquilibriate     ( bool                   equil );
+-   void SetColumnPermutation( superlu::ColPerm    col_perm );
+-   void SetRowPermutation   ( superlu::RowPerm    row_perm,
+-                              Array<int> *     perm = NULL );
+-   void SetTranspose        ( superlu::Trans         trans );
+-   void SetIterativeRefine  ( superlu::IterRefine iter_ref );
+-   void SetReplaceTinyPivot ( bool                     rtp );
+-   void SetNumLookAheads    ( int           num_lookaheads );
+-   void SetLookAheadElimTree( bool                   etree );
+-   void SetSymmetricPattern ( bool                     sym );
+-   void SetParSymbFact      ( bool                     par );
++   // Note: Factorization modifies the operator matrix.
++   void Mult(const Vector &x, Vector &y) const;
++   void Mult(const Array<const Vector *> &X, Array<Vector *> &Y) const;
++
++   // Factor and solve the linear system y = Op^{-T} x.
++   // Note: Factorization modifies the operator matrix.
++   void MultTranspose(const Vector &x, Vector &y) const;
++   void MultTranspose(const Array<const Vector *> &X, Array<Vector *> &Y) const;
++
++   // Set various solver options. Refer to SuperLU_DIST documentation for
++   // details.
++   void SetPrintStatistics(bool print_stat);
++   void SetEquilibriate(bool equil);
++   void SetColumnPermutation(superlu::ColPerm col_perm);
++   void SetRowPermutation(superlu::RowPerm row_perm);
++   void SetIterativeRefine(superlu::IterRefine iter_ref);
++   void SetReplaceTinyPivot(bool rtp);
++   void SetNumLookAheads(int num_lookaheads);
++   void SetLookAheadElimTree(bool etree);
++   void SetSymmetricPattern(bool sym);
++   void SetParSymbFact(bool par);
++   void SetFact(superlu::Fact fact);
+ 
+ private:
+-   void Init();
++   // Initialize the solver.
++   void Init(MPI_Comm comm);
+ 
+-protected:
++   // Allocate the MPI communicators. This routine is called internally by
++   // Init().
++   void SetupGrid(MPI_Comm comm);
++
++   // Handle error message from call to SuperLU solver.
++   void HandleError(int info) const;
+ 
+-   MPI_Comm      comm_;
+-   int           numProcs_;
+-   int           myid_;
+-
+-   const SuperLURowLocMatrix * APtr_;
+-
+-   // The actual types of the following pointers are hidden to avoid exposing
+-   // the SuperLU header files to the entire library. Their types are given in
+-   // the trailing comments. The reason that this is necessary is that SuperLU
+-   // defines these structs differently for use with its real and complex
+-   // solvers. If we want to add support for SuperLU's complex solvers one day
+-   // we will need to hide these types to avoid name conflicts.
+-   void*         optionsPtr_;         // superlu_options_t *
+-   void*         statPtr_;            //     SuperLUStat_t *
+-   void*         ScalePermstructPtr_; //  ScalePermsruct_t *
+-   void*         LUstructPtr_;        //        LUstruct_t *
+-   void*         SOLVEstructPtr_;     //     SOLVEstruct_t *
+-   void*         gridPtr_;            //        gridinfo_t *
+-
+-   double*       berr_;
+-   mutable int*  perm_r_;
+-   int           nrhs_;
+-   int           nprow_;
+-   int           npcol_;
+-   mutable bool  firstSolveWithThisA_;
+-   bool          gridInitialized_;
+-   mutable bool  LUStructInitialized_;
+-
+-}; // mfem::SuperLUSolver class
+-
+-} // mfem namespace
++protected:
++   const SuperLURowLocMatrix *APtr_;
++
++   mutable Vector sol_;
++   mutable int    nrhs_;
++
++   int nprow_;
++   int npcol_;
++   int npdep_;
++
++   /** The actual types of the following pointers are hidden to avoid exposing
++       the SuperLU header files to the entire library. Their types are given in
++       the trailing comments. The reason that this is necessary is that SuperLU
++       defines these structs differently for use with its real and complex
++       solvers. If we want to add support for SuperLU's complex solvers one day
++       we will need to hide these types to avoid name conflicts. */
++   void *optionsPtr_;          // superlu_options_t *
++   void *ScalePermstructPtr_;  //  ScalePermsruct_t *
++   void *LUstructPtr_;         //        LUstruct_t *
++   void *SOLVEstructPtr_;      //     SOLVEstruct_t *
++   void *gridPtr_;             //        gridinfo_t * or gridinfo3d_t *
++};
++
++} // namespace mfem
+ 
+ #endif // MFEM_USE_MPI
+ #endif // MFEM_USE_SUPERLU
+diff --git a/miniapps/nurbs/nurbs_ex11p.cpp b/miniapps/nurbs/nurbs_ex11p.cpp
+index 7b8e3bd2d..851021d7b 100644
+--- a/miniapps/nurbs/nurbs_ex11p.cpp
++++ b/miniapps/nurbs/nurbs_ex11p.cpp
+@@ -281,12 +281,16 @@ int main(int argc, char *argv[])
+ #ifdef MFEM_USE_STRUMPACK
+       if (sp_solver)
+       {
+-         STRUMPACKSolver * strumpack = new STRUMPACKSolver(argc, argv, MPI_COMM_WORLD);
++         STRUMPACKSolver * strumpack = new STRUMPACKSolver(MPI_COMM_WORLD, argc, argv);
+          strumpack->SetPrintFactorStatistics(true);
+          strumpack->SetPrintSolveStatistics(false);
+          strumpack->SetKrylovSolver(strumpack::KrylovSolver::DIRECT);
+          strumpack->SetReorderingStrategy(strumpack::ReorderingStrategy::METIS);
+-         strumpack->DisableMatching();
++#if STRUMPACK_VERSION_MAJOR >= 3
++         strumpack->SetMatching(strumpack::MatchingJob::NONE);
++#else
++         strumpack->SetMatching(strumpack::MC64Job::NONE);
++#endif
+          strumpack->SetOperator(*Arow);
+          strumpack->SetFromCommandLine();
+          precond = strumpack;
+diff --git a/tests/unit/linalg/test_direct_solvers.cpp b/tests/unit/linalg/test_direct_solvers.cpp
+index 0a6f993c2..6043e9200 100644
+--- a/tests/unit/linalg/test_direct_solvers.cpp
++++ b/tests/unit/linalg/test_direct_solvers.cpp
+@@ -23,6 +23,9 @@ using namespace mfem;
+ #ifdef MFEM_USE_SUPERLU
+ #define DIRECT_SOLVE_PARALLEL
+ #endif
++#ifdef MFEM_USE_STRUMPACK
++#define DIRECT_SOLVE_PARALLEL
++#endif
+ 
+ #if defined(DIRECT_SOLVE_SERIAL) || defined(DIRECT_SOLVE_PARALLEL)
+ 
+@@ -217,17 +220,37 @@ TEST_CASE("direct-parallel", "[Parallel], [CUDA]")
+       Vector B, X;
+       a.FormLinearSystem(ess_tdof_list, x, b, A, X, B);
+ 
++      Vector B0(X.Size()), B1(X.Size()), X0(X.Size()), X1(X.Size());
++      B0 = B;
++      B1 = B;
++      B1 *= 2.0;
++      Array<Vector *> BB(2), XX(2);
++      BB[0] = &B0;
++      BB[1] = &B1;
++      XX[0] = &X0;
++      XX[1] = &X1;
++
+ #ifdef MFEM_USE_MUMPS
+       {
+-         MUMPSSolver mumps;
++         MUMPSSolver mumps(MPI_COMM_WORLD);
+          mumps.SetPrintLevel(0);
+          mumps.SetOperator(*A.As<HypreParMatrix>());
+          mumps.Mult(B,X);
++
+          Vector Y(X.Size());
+          A->Mult(X,Y);
+          Y-=B;
+          REQUIRE(Y.Norml2() < 1.e-12);
+ 
++         mumps.Mult(BB,XX);
++
++         for (int i = 0; i < XX.Size(); i++)
++         {
++            A->Mult(*XX[i],Y);
++            Y-=*BB[i];
++            REQUIRE(Y.Norml2() < 1.e-12);
++         }
++
+          a.RecoverFEMSolution(X, b, x);
+          VectorFunctionCoefficient grad(dim,gradexact);
+          double error = x.ComputeH1Error(&uex,&grad);
+@@ -243,11 +266,61 @@ TEST_CASE("direct-parallel", "[Parallel], [CUDA]")
+          superlu.SetSymmetricPattern(false);
+          superlu.SetColumnPermutation(superlu::METIS_AT_PLUS_A);
+          superlu.SetOperator(SA);
+-         superlu.Mult(B, X);
++         superlu.Mult(B,X);
++
++         Vector Y(X.Size());
++         A->Mult(X,Y);
++         Y-=B;
++         REQUIRE(Y.Norml2() < 1.e-12);
++
++         // SuperLUSolver requires constant number of RHS across solves
++         SuperLURowLocMatrix SA2(*A.As<HypreParMatrix>());
++         SuperLUSolver superlu2(MPI_COMM_WORLD);
++         superlu2.SetPrintStatistics(false);
++         superlu2.SetSymmetricPattern(false);
++         superlu2.SetColumnPermutation(superlu::METIS_AT_PLUS_A);
++         superlu2.SetOperator(SA2);
++         superlu2.Mult(BB,XX);
++
++         for (int i = 0; i < XX.Size(); i++)
++         {
++            A->Mult(*XX[i],Y);
++            Y-=*BB[i];
++            REQUIRE(Y.Norml2() < 1.e-12);
++         }
++
++         a.RecoverFEMSolution(X, b, x);
++         VectorFunctionCoefficient grad(dim,gradexact);
++         double error = x.ComputeH1Error(&uex,&grad);
++         REQUIRE(error < 1.e-12);
++      }
++#endif
++#ifdef MFEM_USE_STRUMPACK
++      // Transform to monolithic HypreParMatrix
++      {
++         STRUMPACKRowLocMatrix SA(*A.As<HypreParMatrix>());
++         STRUMPACKSolver strumpack(MPI_COMM_WORLD);
++         strumpack.SetPrintFactorStatistics(false);
++         strumpack.SetPrintSolveStatistics(false);
++         strumpack.SetKrylovSolver(strumpack::KrylovSolver::DIRECT);
++         strumpack.SetReorderingStrategy(strumpack::ReorderingStrategy::METIS);
++         strumpack.SetOperator(SA);
++         strumpack.Mult(B,X);
++
+          Vector Y(X.Size());
+          A->Mult(X,Y);
+          Y-=B;
+          REQUIRE(Y.Norml2() < 1.e-12);
++
++         strumpack.Mult(BB,XX);
++
++         for (int i = 0; i < XX.Size(); i++)
++         {
++            A->Mult(*XX[i],Y);
++            Y-=*BB[i];
++            REQUIRE(Y.Norml2() < 1.e-12);
++         }
++
+          a.RecoverFEMSolution(X, b, x);
+          VectorFunctionCoefficient grad(dim,gradexact);
+          double error = x.ComputeH1Error(&uex,&grad);

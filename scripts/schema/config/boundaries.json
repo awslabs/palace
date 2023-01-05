@@ -1,0 +1,386 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Configuration File Schema -- \"Boundaries\"",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [],
+  "properties":
+  {
+    "PEC":
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["Attributes"],
+      "properties":
+      {
+        "Attributes":
+        {
+          "type": "array",
+          "additionalItems": false,
+          "items": { "type": "integer"}
+        }
+      }
+    },
+    "PMC":
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["Attributes"],
+      "properties":
+      {
+        "Attributes":
+        {
+          "type": "array",
+          "additionalItems": false,
+          "items": { "type": "integer"}
+        }
+      }
+    },
+    "Absorbing":
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["Attributes"],
+      "properties":
+      {
+        "Attributes":
+        {
+          "type": "array",
+          "additionalItems": false,
+          "items": { "type": "integer"}
+        },
+        "Order": { "type": "integer" }
+      }
+    },
+    "Conductivity":
+    {
+      "type": "array",
+      "additionalItems": false,
+      "items":
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["Attributes", "Conductivity"],
+        "properties":
+        {
+          "Attributes":
+          {
+            "type": "array",
+            "additionalItems": false,
+            "items": { "type": "integer"}
+          },
+          "Conductivity": { "type": "number" },
+          "Permeability": { "type": "number" },
+          "Thickness": { "type": "number" },
+          "External": { "type": "boolean" }
+        }
+      }
+    },
+    "Impedance":
+    {
+      "type": "array",
+      "additionalItems": false,
+      "items":
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["Attributes"],
+        "properties":
+        {
+          "Attributes":
+          {
+            "type": "array",
+            "additionalItems": false,
+            "items": { "type": "integer"}
+          },
+          "Rs": { "type": "number" },
+          "Ls": { "type": "number" },
+          "Cs": { "type": "number" }
+        }
+      }
+    },
+    "LumpedPort":
+    {
+      "type": "array",
+      "additionalItems": false,
+      "items":
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["Index"],
+        "properties":
+        {
+          "Index": { "type": "integer" },
+          "Attributes":
+          {
+            "type": "array",
+            "additionalItems": false,
+            "items": { "type": "integer"}
+          },
+          "Direction": { "type": "string" },
+          "R": { "type": "number" },
+          "L": { "type": "number" },
+          "C": { "type": "number" },
+          "Rs": { "type": "number" },
+          "Ls": { "type": "number" },
+          "Cs": { "type": "number" },
+          "Excitation": { "type": "boolean" },
+          "Elements":
+          {
+            "type": "array",
+            "additionalItems": false,
+            "items":
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["Attributes", "Direction"],
+              "properties":
+              {
+                "Attributes":
+                {
+                  "type": "array",
+                  "additionalItems": false,
+                  "items": { "type": "integer"}
+                },
+                "Direction": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "WavePort":
+    {
+      "type": "array",
+      "additionalItems": false,
+      "items":
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["Index", "Attributes"],
+        "properties":
+        {
+          "Index": { "type": "integer" },
+          "Attributes":
+          {
+            "type": "array",
+            "additionalItems": false,
+            "items": { "type": "integer"}
+          },
+          "Mode": { "type": "integer", "exclusiveMinimum": 0 },
+          "Offset": { "type": "number", "minimum": 0.0 },
+          "Excitation": { "type": "boolean" }
+        }
+      }
+    },
+    "WavePortPEC":
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["Attributes"],
+      "properties":
+      {
+        "Attributes":
+        {
+          "type": "array",
+          "additionalItems": false,
+          "items": { "type": "integer"}
+        }
+      }
+    },
+    "SurfaceCurrent":
+    {
+      "type": "array",
+      "additionalItems": false,
+      "items":
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["Index"],
+        "properties":
+        {
+          "Index": { "type": "integer" },
+          "Attributes":
+          {
+            "type": "array",
+            "additionalItems": false,
+            "items": { "type": "integer"}
+          },
+          "Direction": { "type": "string" },
+          "Elements":
+          {
+            "type": "array",
+            "additionalItems": false,
+            "items":
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["Attributes", "Direction"],
+              "properties":
+              {
+                "Attributes":
+                {
+                  "type": "array",
+                  "additionalItems": false,
+                  "items": { "type": "integer"}
+                },
+                "Direction": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "Ground":
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["Attributes"],
+      "properties":
+      {
+        "Attributes":
+        {
+          "type": "array",
+          "additionalItems": false,
+          "items": { "type": "integer"}
+        }
+      }
+    },
+    "ZeroCharge":
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["Attributes"],
+      "properties":
+      {
+        "Attributes":
+        {
+          "type": "array",
+          "additionalItems": false,
+          "items": { "type": "integer"}
+        }
+      }
+    },
+    "Terminal":
+    {
+      "type": "array",
+      "additionalItems": false,
+      "items":
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["Index", "Attributes"],
+        "properties":
+        {
+          "Index": { "type": "integer" },
+          "Attributes":
+          {
+            "type": "array",
+            "additionalItems": false,
+            "items": { "type": "integer"}
+          }
+        }
+      }
+    },
+    "Postprocessing":
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [],
+      "properties":
+      {
+        "Capacitance":
+        {
+          "type": "array",
+          "additionalItems": false,
+          "items":
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["Index", "Attributes"],
+            "properties":
+            {
+              "Index": { "type": "integer" },
+              "Attributes":
+              {
+                "type": "array",
+                "additionalItems": false,
+                "items": { "type": "integer"}
+              }
+            }
+          }
+        },
+        "Inductance":
+        {
+          "type": "array",
+          "additionalItems": false,
+          "items":
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["Index", "Attributes", "Direction"],
+            "properties":
+            {
+              "Index": { "type": "integer" },
+              "Attributes":
+              {
+                "type": "array",
+                "additionalItems": false,
+                "items": { "type": "integer"}
+              },
+              "Direction": { "type": "string", "minLength": 1, "maxLength": 2 }
+            }
+          }
+        },
+        "Dielectric":
+        {
+          "type": "array",
+          "additionalItems": false,
+          "items":
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["Index"],
+            "properties":
+            {
+              "Index": { "type": "integer" },
+              "Attributes":
+              {
+                "type": "array",
+                "additionalItems": false,
+                "items": { "type": "integer"}
+              },
+              "Side": { "type": "string" },
+              "Permittivity": { "type": "number" },
+              "PermittivityMA": { "type": "number" },
+              "PermittivityMS": { "type": "number" },
+              "PermittivitySA": { "type": "number" },
+              "LossTan": { "type": "number" },
+              "Elements":
+              {
+                "type": "array",
+                "additionalItems": false,
+                "items":
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["Attributes"],
+                  "properties":
+                  {
+                    "Attributes":
+                    {
+                      "type": "array",
+                      "additionalItems": false,
+                      "items": { "type": "integer"}
+                    },
+                    "Side": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

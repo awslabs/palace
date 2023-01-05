@@ -1,0 +1,12 @@
+diff --git a/programs/CMakeLists.txt b/programs/CMakeLists.txt
+index 19285d7..e27a809 100644
+--- a/programs/CMakeLists.txt
++++ b/programs/CMakeLists.txt
+@@ -10,5 +10,5 @@ foreach(prog pm_ptest pm_mtest pm_parmetis pm_pometis pm_dglpart)
+   target_link_libraries(${prog} PRIVATE parmetis::parmetis)
+ endforeach(prog)
+ 
+-install(TARGETS pm_ptest pm_mtest pm_parmetis pm_pometis pm_dglpart
+-  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
++# install(TARGETS pm_ptest pm_mtest pm_parmetis pm_pometis pm_dglpart
++#   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})

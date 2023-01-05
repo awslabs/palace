@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Configuration File Schema -- \"Model\"",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["Mesh"],
+  "properties":
+  {
+    "Mesh": { "type": "string" },
+    "L0": { "type": "number", "exclusiveMinimum": 0.0 },
+    "Lc": { "type": "number", "exclusiveMinimum": 0.0 },
+    "Partition": { "type": "string" },
+    "ReorientTetMesh": { "type": "boolean" },
+    "Refinement":
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [],
+      "properties":
+      {
+        "UniformLevels": { "type": "integer", "minimum": 0 },
+        "Boxes":
+        {
+          "type": "array",
+          "additionalItems": false,
+          "items":
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["Levels", "XLimits", "YLimits", "ZLimits"],
+            "properties":
+            {
+              "Levels": { "type": "integer", "minimum": 0 },
+              "XLimits":
+              {
+                "type": "array",
+                "minItems": 2,
+                "maxItems": 2,
+                "additionalItems": false,
+                "items": { "type": "number" }
+              },
+              "YLimits":
+              {
+                "type": "array",
+                "minItems": 2,
+                "maxItems": 2,
+                "additionalItems": false,
+                "items": { "type": "number" }
+              },
+              "ZLimits":
+              {
+                "type": "array",
+                "minItems": 2,
+                "maxItems": 2,
+                "additionalItems": false,
+                "items": { "type": "number" }
+              }
+            }
+          }
+        },
+        "Spheres":
+        {
+          "type": "array",
+          "additionalItems": false,
+          "items":
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["Levels", "Radius", "Center"],
+            "properties":
+            {
+              "Levels": { "type": "integer", "minimum": 0 },
+              "Radius": { "type": "number", "exclusiveMinimum": 0.0 },
+              "Center":
+              {
+                "type": "array",
+                "minItems": 3,
+                "maxItems": 3,
+                "additionalItems": false,
+                "items": { "type": "number" }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

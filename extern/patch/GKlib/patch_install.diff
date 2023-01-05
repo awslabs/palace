@@ -1,0 +1,12 @@
+diff --git a/test/CMakeLists.txt b/test/CMakeLists.txt
+index 04ecac1..3fafee7 100644
+--- a/test/CMakeLists.txt
++++ b/test/CMakeLists.txt
+@@ -19,5 +19,5 @@ if(NOT ${CMAKE_SYSTEM_PROCESSOR} MATCHES "aarch64|arm*")
+   target_link_libraries(gkuniq GKlib)
+ endif()
+ 
+-# Install a subset of them
+-install(TARGETS csrcnv RUNTIME DESTINATION bin)
++# # Install a subset of them
++# install(TARGETS csrcnv RUNTIME DESTINATION bin)

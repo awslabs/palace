@@ -1,0 +1,329 @@
+stages:
+  - build
+  - check
+  - deploy
+
+variables:
+  GIT_SUBMODULE_STRATEGY: recursive
+  CMAKE_BUILD_TYPE: Release
+  NUM_PROC_BUILD_MAX: '32'
+  NUM_PROC_TEST_MAX: '8'
+
+default:
+  interruptible: true
+  image: public.ecr.aws/lts/ubuntu:latest  # Ubuntu 22.04
+  tags:
+    - arch:amd64
+    - size:2xlarge
+  before_script:
+    # Install Julia
+    - |
+      apt-get update -q
+      apt-get install -y wget git
+      if [[ "$(uname -m)" == "x86_64" ]]; then
+        JULIA_URL=https://julialang-s3.julialang.org/bin/linux/x64/1.8/julia-1.8.4-linux-x86_64.tar.gz
+      else
+        JULIA_URL=https://julialang-s3.julialang.org/bin/linux/aarch64/1.8/julia-1.8.4-linux-aarch64.tar.gz
+      fi
+      wget $JULIA_URL
+      mkdir -p /opt/julia && tar -xzf julia-1.8.4-linux-$(uname -m).tar.gz -C /opt/julia
+      rm -rf *.tar.gz
+      export PATH=/opt/julia/julia-1.8.4/bin:$PATH
+    # Install build dependencies, set default number of cores for building and testing
+    - |
+      if [[ "$CI_JOB_STAGE" == "build" ]]; then
+        apt-get install -y build-essential gfortran python3 python-is-python3 cmake pkg-config
+        if [[ "$(nproc)" -gt "$NUM_PROC_BUILD_MAX" ]]; then
+          export NUM_PROC_BUILD=$NUM_PROC_BUILD_MAX
+        else
+          export NUM_PROC_BUILD=$(nproc)
+        fi
+        if [[ "$(nproc)" -gt "$NUM_PROC_TEST_MAX" ]]; then
+          export NUM_PROC_TEST=$NUM_PROC_TEST_MAX
+        else
+          export NUM_PROC_TEST=$(nproc)
+        fi
+      fi
+
+test-build:
+  stage: build
+  script:
+    - apt-get install -y libmpich-dev libopenblas-serial-dev
+    - mkdir build && cd build
+    - cmake ..
+        -DPALACE_WITH_STRUMPACK=ON
+        -DPALACE_WITH_MUMPS=ON
+        -DPALACE_WITH_ARPACK=ON
+    - make -j$NUM_PROC_BUILD
+    - cd ..
+    - export PATH=$(pwd)/build/bin:$PATH
+    - julia --project=test -e 'using Pkg; Pkg.instantiate()'
+    - julia --project=test --color=yes test/runtests.jl
+  artifacts:
+    paths:
+      - build
+    expire_in: 1 day
+
+test-build-clang:
+  stage: build
+  script:
+    - apt-get install -y clang lld libmpich-dev libopenblas-serial-dev
+    - export LDFLAGS='-fuse-ld=lld'
+    - mkdir build && cd build
+    - cmake ..
+        -DCMAKE_CXX_COMPILER=clang++
+        -DCMAKE_C_COMPILER=clang
+        -DPALACE_WITH_STRUMPACK=ON
+        -DPALACE_WITH_MUMPS=ON
+        -DPALACE_WITH_ARPACK=ON
+    - make -j$NUM_PROC_BUILD
+    - cd ..
+    - export PATH=$(pwd)/build/bin:$PATH
+    - julia --project=test -e 'using Pkg; Pkg.instantiate()'
+    - julia --project=test --color=yes test/runtests.jl
+
+test-build-mpicc:
+  stage: build
+  script:
+    - apt-get install -y libmpich-dev libopenblas-serial-dev
+    - mkdir build && cd build
+    - cmake ..
+        -DCMAKE_CXX_COMPILER=mpicxx
+        -DCMAKE_C_COMPILER=mpicc
+        -DCMAKE_Fortran_COMPILER=mpif90
+        -DPALACE_WITH_STRUMPACK=ON
+        -DPALACE_WITH_MUMPS=ON
+        -DPALACE_WITH_ARPACK=ON
+    - make -j$NUM_PROC_BUILD
+    - cd ..
+    - export PATH=$(pwd)/build/bin:$PATH
+    - julia --project=test -e 'using Pkg; Pkg.instantiate()'
+    - julia --project=test --color=yes test/runtests.jl
+
+test-build-shared:
+  stage: build
+  script:
+    - apt-get install -y libmpich-dev libopenblas-serial-dev
+    - mkdir build && cd build
+    - cmake ..
+        -DBUILD_SHARED_LIBS=ON
+        -DPALACE_WITH_STRUMPACK=ON
+        -DPALACE_WITH_MUMPS=ON
+        -DPALACE_WITH_ARPACK=ON
+    - make -j$NUM_PROC_BUILD
+    - cd ..
+    - export PATH=$(pwd)/build/bin:$PATH
+    - export LD_LIBRARY_PATH=$(pwd)/build/lib:$(pwd)/build/lib64:$LD_LIBRARY_PATH
+    - julia --project=test -e 'using Pkg; Pkg.instantiate()'
+    - julia --project=test --color=yes test/runtests.jl
+
+test-build-openmp:
+  stage: build
+  script:
+    - apt-get install -y libmpich-dev libopenblas-serial-dev
+    - mkdir build && cd build
+    - cmake ..
+        -DPALACE_WITH_OPENMP=ON
+    - make -j$NUM_PROC_BUILD
+    - cd ..
+    - export PATH=$(pwd)/build/bin:$PATH
+    - julia --project=test -e 'using Pkg; Pkg.instantiate()'
+    - julia --project=test --color=yes test/runtests.jl
+
+test-build-bigint:
+  stage: build
+  script:
+    - apt-get install -y libmpich-dev libopenblas-serial-dev
+    - mkdir build && cd build
+    - cmake ..
+        -DPALACE_WITH_64BIT_INT=ON
+    - make -j$NUM_PROC_BUILD
+    - cd ..
+    - export PATH=$(pwd)/build/bin:$PATH
+    - julia --project=test -e 'using Pkg; Pkg.instantiate()'
+    - julia --project=test --color=yes test/runtests.jl
+
+test-build-openmpi:
+  stage: build
+  script:
+    - apt-get install -y libopenmpi-dev libopenblas-serial-dev
+    - export OMPI_ALLOW_RUN_AS_ROOT=1 && export OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1
+    - export OMPI_MCA_btl_vader_single_copy_mechanism=none
+    - mkdir build && cd build
+    - cmake ..
+    - make -j$NUM_PROC_BUILD
+    - cd ..
+    - export PATH=$(pwd)/build/bin:$PATH
+    - julia --project=test -e 'using Pkg; Pkg.instantiate()'
+    - julia --project=test --color=yes test/runtests.jl
+
+test-build-intel-oneapi:
+  stage: build
+  image: intel/oneapi-hpckit:latest  # Intel oneAPI image from Docker Hub
+  script:
+    # Image has MKLROOT and environment configured by default
+    - mkdir build && cd build
+    - cmake ..
+        -DCMAKE_CXX_COMPILER=icpx
+        -DCMAKE_C_COMPILER=icx
+    - make -j$NUM_PROC_BUILD
+    - cd ..
+    - export PATH=$(pwd)/build/bin:$PATH
+    - julia --project=test -e 'using Pkg; Pkg.instantiate()'
+    - julia --project=test --color=yes test/runtests.jl
+
+test-build-aocl:
+  stage: build
+  script:
+    # Install AMD Optimizing CPU Libraries (AOCL)
+    - apt-get install -y libmpich-dev
+    - wget https://github.com/amd/blis/archive/refs/tags/3.2.tar.gz
+    - tar -xzf 3.2.tar.gz && cd blis-3.2
+    - ./configure --prefix=/opt/amd
+                  --enable-arg-max-hack
+                  --disable-static --enable-shared
+                  --enable-blas --enable-cblas
+                  --enable-threading=no
+                  auto
+    - make -j$NUM_PROC_BUILD && make install
+    - cd .. && rm -rf 3.2.tar.gz blis-*
+    - wget https://github.com/amd/libflame/archive/refs/tags/3.2.tar.gz
+    - tar -xzf 3.2.tar.gz && cd libflame-3.2
+    - ./configure --prefix=/opt/amd
+                  --enable-max-arg-list-hack
+                  --disable-static-build --enable-dynamic-build
+                  --enable-lapack2flame
+    - make -j$NUM_PROC_BUILD && make install
+    - cd .. && rm -rf 3.2.tar.gz libflame-*
+    - export AOCLROOT=/opt/amd
+    - export LD_LIBRARY_PATH=$AOCLROOT/lib:$LD_LIBRARY_PATH
+    - mkdir build && cd build
+    - cmake ..
+    - make -j$NUM_PROC_BUILD
+    - cd ..
+    - export PATH=$(pwd)/build/bin:$PATH
+    - julia --project=test -e 'using Pkg; Pkg.instantiate()'
+    - julia --project=test --color=yes test/runtests.jl
+
+test-build-arm64:
+  stage: build
+  tags:
+    - arch:arm64
+    - size:2xlarge
+  script:
+    - apt-get install -y libmpich-dev libopenblas-serial-dev
+    - mkdir build && cd build
+    - cmake ..
+    - make -j$NUM_PROC_BUILD
+    - cd ..
+    - export PATH=$(pwd)/build/bin:$PATH
+    - julia --project=test -e 'using Pkg; Pkg.instantiate()'
+    - julia --project=test --color=yes test/runtests.jl
+
+test-build-arm64-shared:
+  stage: build
+  tags:
+    - arch:arm64
+    - size:2xlarge
+  script:
+    - apt-get install -y libmpich-dev libopenblas-serial-dev
+    - mkdir build && cd build
+    - cmake ..
+        -DBUILD_SHARED_LIBS=ON
+    - make -j$NUM_PROC_BUILD
+    - cd ..
+    - export PATH=$(pwd)/build/bin:$PATH
+    - export LD_LIBRARY_PATH=$(pwd)/build/lib:$(pwd)/build/lib64:$LD_LIBRARY_PATH
+    - julia --project=test -e 'using Pkg; Pkg.instantiate()'
+    - julia --project=test --color=yes test/runtests.jl
+
+test-build-arm64-armpl:
+  stage: build
+  tags:
+    - arch:arm64
+    - size:2xlarge
+  script:
+    # Install Arm Performance Libraries
+    - apt-get install -y libmpich-dev
+    - wget https://developer.arm.com/-/media/Files/downloads/hpc/arm-performance-libraries/22-0-2/Ubuntu20.04/arm-performance-libraries_22.0.2_Ubuntu-20.04_gcc-11.2.tar
+    - tar -xf arm-performance-libraries* && rm -rf arm-performance-libraries*.tar
+    - ./arm-performance-libraries*/arm-performance-libraries*.sh -a -i /opt/arm
+    - export ARMPL_DIR=/opt/arm/armpl_22.0.2_gcc-11.2
+    - export LD_LIBRARY_PATH=$ARMPL_DIR/lib:$LD_LIBRARY_PATH
+    - mkdir build && cd build
+    - cmake ..
+    - make -j$NUM_PROC_BUILD
+    - cd ..
+    - export PATH=$(pwd)/build/bin:$PATH
+    - julia --project=test -e 'using Pkg; Pkg.instantiate()'
+    - julia --project=test --color=yes test/runtests.jl
+
+test-format:
+  stage: check
+  tags:
+    - size:medium
+  variables:
+    GIT_SUBMODULE_STRATEGY: none
+  script:
+    # Install more recent clang-format from LLVM (match Homebrew v15)
+    - apt-get install -y gpg
+    - wget -O- https://apt.llvm.org/llvm-snapshot.gpg.key | apt-key add -
+    - |
+      echo "deb http://apt.llvm.org/bullseye/ llvm-toolchain-bullseye-15 main" \
+      | tee /etc/apt/sources.list.d/llvm.list
+    - apt-get update -q && apt-get install -y clang-format-15
+    - julia -e 'using Pkg; Pkg.add("JuliaFormatter")'
+    - ./scripts/format-source --clang-format clang-format-15
+    - |-
+      if [[ `git status -s | wc -l` -ne 0 ]]; then
+        echo 'Error: Commit is not formatted!'
+        echo 'Run '\`'./scripts/format-source'\`' in the source root directory'
+        echo 'Summary of required changes:'
+        echo "`git diff --stat`"
+        echo 'Repository status:'
+        echo "`git status`"
+        exit 1
+      else
+        echo 'Commit is correctly formatted'
+        exit 0
+      fi
+  dependencies: []
+
+test-config:
+  stage: check
+  tags:
+    - size:medium
+  variables:
+    GIT_SUBMODULE_STRATEGY: none
+  script:
+    - julia -e 'using Pkg; Pkg.add(["JSON", "JSONSchema"])'
+    - OUTPUT=$(find examples -name *.json -exec ./scripts/validate-config {} \;)
+    - |-
+      if echo $OUTPUT | grep -q 'Validation failed'; then
+        echo 'Error: Configuration file validation failed!'
+        echo 'Summary of output:'
+        echo $OUTPUT
+        exit 1
+      else
+        echo 'Configuration file validation passed'
+        exit 0
+      fi
+  dependencies: []
+
+pages:
+  stage: deploy
+  tags:
+    - size:medium
+  variables:
+    GIT_SUBMODULE_STRATEGY: none
+  script:
+    - julia --project=docs -e 'using Pkg; Pkg.instantiate()'
+    - julia --project=docs --color=yes docs/make.jl
+    - mv docs/build public
+  dependencies: []
+  artifacts:
+    paths:
+      - public
+    expire_in: never
+  only:
+    - main

@@ -1,0 +1,126 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Configuration File Schema -- \"Solver\"",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [],
+  "properties":
+  {
+    "Order": { "type": "integer", "minimum": 1 },
+    "Eigenmode":
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["Target"],
+      "properties":
+      {
+        "Target": { "type": "number" },
+        "Tol": { "type": "number", "minimum": 0.0 },
+        "MaxIts": { "type": "integer", "exclusiveMinimum": 0 },
+        "MaxSize": { "type": "integer", "exclusiveMinimum": 0 },
+        "N": { "type": "integer" },
+        "Save": { "type": "integer" },
+        "Type": { "type": "string" },
+        "PEPLinear": { "type": "boolean" },
+        "ContourNPoints": { "type": "integer" },
+        "ContourTargetUpper": { "type": "number" },
+        "ContourAspectRatio": { "type": "number" },
+        "ContourMoments": { "type": "integer" },
+        "Scaling": { "type": "boolean" },
+        "StartVector": { "type": "boolean" },
+        "StartVectorConstant": { "type": "boolean" },
+        "MassOrthogonal": { "type": "boolean" }
+      }
+    },
+    "Driven":
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["MinFreq", "MaxFreq", "FreqStep"],
+      "properties":
+      {
+        "MinFreq": { "type": "number" },
+        "MaxFreq": { "type": "number" },
+        "FreqStep": { "type": "number" },
+        "SaveStep": { "type": "integer" },
+        "SaveOnlyPorts": { "type": "boolean" },
+        "AdaptiveTol": { "type": "number", "minimum": 0.0 },
+        "AdaptiveMaxSamples": { "type": "number", "exclusiveMinimum": 0 },
+        "AdaptiveMaxCandidates": { "type": "integer", "exclusiveMinimum": 0 },
+        "AdaptiveAPosterioriError": { "type": "bool" },
+        "Restart": { "type": "integer", "exclusiveMinimum": 0 }
+      }
+    },
+    "Transient":
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["Excitation", "MaxTime", "TimeStep"],
+      "properties":
+      {
+        "Type": { "type": "string" },
+        "Excitation": { "type": "string" },
+        "ExcitationFreq": { "type": "number" },
+        "ExcitationWidth": { "type": "number" },
+        "MaxTime": { "type": "number" },
+        "TimeStep": { "type": "number" },
+        "SaveStep": { "type": "integer" },
+        "SaveOnlyPorts": { "type": "boolean" }
+      }
+    },
+    "Electrostatic":
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [],
+      "properties":
+      {
+        "Save": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "Magnetostatic":
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [],
+      "properties":
+      {
+        "Save": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "Linear":
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [],
+      "properties":
+      {
+        "Type": { "type": "string" },
+        "KSPType": { "type": "string" },
+        "Tol": { "type": "number", "minimum": 0.0 },
+        "MaxIts": { "type": "integer", "exclusiveMinimum": 0 },
+        "MaxSize": { "type": "integer", "exclusiveMinimum": 0 },
+        "UseMGS": { "type": "boolean" },
+        "UseCGS2": { "type": "boolean" },
+        "UseInitialGuess": { "type": "boolean" },
+        "UseKSPPiped": { "type": "boolean" },
+        "UseGMG": { "type": "boolean" },
+        "UseLOR": { "type": "boolean" },
+        "UsePCShifted": { "type": "boolean" },
+        "MGCycleIts": { "type": "integer", "exclusiveMinimum": 0 },
+        "MGSmoothIts": { "type": "integer", "exclusiveMinimum": 0 },
+        "MGSmoothOrder": { "type": "integer", "exclusiveMinimum": 0 },
+        "PrecondSide": { "type": "string" },
+        "Reordering": { "type": "string" },
+        "STRUMPACKCompressionType": { "type": "string" },
+        "STRUMPACKCompressionTol": { "type": "number", "minimum": 0.0 },
+        "STRUMPACKLossyPrecision": { "type": "integer", "minimum": 0 },
+        "STRUMPACKButterflyLevels": { "type": "integer", "minimum": 0 },
+        "SuperLU3D": { "type": "boolean" },
+        "AMSVector": { "type": "boolean" },
+        "DivFreeTol": { "type": "number", "minimum": 0.0 },
+        "DivFreeMaxIts": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}

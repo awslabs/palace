@@ -1,0 +1,145 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Configuration File Schema -- \"Domains\"",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["Materials"],
+  "properties":
+  {
+    "Materials":
+    {
+      "type": "array",
+      "additionalItems": false,
+      "items":
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["Attributes"],
+        "properties":
+        {
+          "Attributes":
+          {
+            "type": "array",
+            "additionalItems": false,
+            "items": { "type": "integer"},
+            "minItems": 1
+          },
+          "Permeability":
+          {
+            "oneOf" :
+            [
+              {"type": "number" },
+              {
+                "type": "array",
+                "items" : { "type" :"number" },
+                "minItems" : 3,
+                "maxItems" : 3
+              }
+            ]
+          },
+          "Permittivity":
+          {
+            "oneOf" :
+            [
+              {"type": "number" },
+              {
+                "type": "array",
+                "items" : { "type" :"number" },
+                "minItems" : 3,
+                "maxItems" : 3
+              }
+            ]
+          },
+          "LossTan":
+          {
+            "oneOf" :
+            [
+              {"type": "number" },
+              {
+                "type": "array",
+                "items" : { "type" :"number" },
+                "minItems" : 3,
+                "maxItems" : 3
+              }
+            ]
+          },
+          "Conductivity":
+          {
+            "oneOf" :
+            [
+              {"type": "number" },
+              {
+                "type": "array",
+                "items" : { "type" :"number" },
+                "minItems" : 3,
+                "maxItems" : 3
+              }
+            ]
+          },
+          "LondonDepth": { "type": "number" },
+          "MaterialAxes":
+          {
+            "type" : "array",
+            "items" :
+            {
+              "type" : "array",
+              "items" : "number",
+              "minItems" : 3,
+              "maxItems" : 3
+            },
+            "minItems" : 3,
+            "maxItems" : 3
+          }
+        }
+      }
+    },
+    "Postprocessing":
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [],
+      "properties":
+      {
+        "Dielectric":
+        {
+          "type": "array",
+          "additionalItems": false,
+          "items":
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["Index", "Attributes"],
+            "properties":
+            {
+              "Index": { "type": "integer" },
+              "Attributes":
+              {
+                "type": "array",
+                "additionalItems": false,
+                "items": { "type": "integer"}
+              }
+            }
+          }
+        },
+        "Probe":
+        {
+          "type": "array",
+          "additionalItems": false,
+          "items":
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["Index", "X", "Y", "Z"],
+            "properties":
+            {
+              "Index": { "type": "integer" },
+              "X": { "type": "number" },
+              "Y": { "type": "number" },
+              "Z": { "type": "number" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

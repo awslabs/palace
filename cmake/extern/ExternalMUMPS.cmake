@@ -1,0 +1,65 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+#
+# Build MUMPS (from scivision, with CMake)
+#
+
+# Force build order
+if(PALACE_WITH_STRUMPACK)
+  set(MUMPS_DEPENDENCIES strumpack)
+else()
+  set(MUMPS_DEPENDENCIES scalapack)
+endif()
+
+set(MUMPS_OPTIONS ${PALACE_SUPERBUILD_DEFAULT_ARGS})
+list(APPEND MUMPS_OPTIONS
+  "-DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}"
+  "-DCMAKE_C_FLAGS=${CMAKE_C_FLAGS}"
+  "-DCMAKE_Fortran_COMPILER=${CMAKE_Fortran_COMPILER}"
+  "-DCMAKE_Fortran_FLAGS=${CMAKE_Fortran_FLAGS}"
+  "-Dparallel=ON"
+  "-Dopenmp=${PALACE_WITH_OPENMP}"
+  "-Dintsize64=OFF"
+  "-DBUILD_SINGLE=ON"
+  "-DBUILD_DOUBLE=ON"
+  "-DBUILD_COMPLEX=ON"
+  "-DBUILD_COMPLEX16=ON"
+  "-Dmetis=ON"
+  "-Dscotch=OFF"
+  "-DMETIS_LIBRARY=${METIS_LIBRARIES}"
+  "-DMETIS_INCLUDE_DIR=${METIS_INCLUDE_DIRS}"
+  "-DSCALAPACK_LIBRARIES=${SCALAPACK_LIBRARIES}"
+  "-DSCALAPACK_INCLUDE_DIRS=${SCALAPACK_INCLUDE_DIRS}"
+)
+
+# Configure LAPACK dependency
+if(NOT "${BLAS_LAPACK_LIBRARIES}" STREQUAL "")
+  list(APPEND MUMPS_OPTIONS
+    "-DLAPACK_LIBRARIES=${BLAS_LAPACK_LIBRARIES}"
+    "-DBLAS_LIBRARIES=${BLAS_LAPACK_LIBRARIES}"
+  )
+endif()
+
+string(REPLACE ";" "; " MUMPS_OPTIONS_PRINT "${MUMPS_OPTIONS}")
+message(STATUS "MUMPS_OPTIONS: ${MUMPS_OPTIONS_PRINT}")
+
+# Fix FindLAPACK and FindScaLAPACK in configuration
+set(MUMPS_PATCH_FILES
+  "${CMAKE_CURRENT_SOURCE_DIR}/patch/mumps/patch_build.diff"
+)
+
+include(ExternalProject)
+ExternalProject_Add(mumps
+  DEPENDS           ${MUMPS_DEPENDENCIES}
+  GIT_REPOSITORY    ${CMAKE_CURRENT_SOURCE_DIR}/mumps
+  GIT_TAG           ${EXTERN_MUMPS_GIT_TAG}
+  SOURCE_DIR        ${CMAKE_CURRENT_BINARY_DIR}/mumps
+  BINARY_DIR        ${CMAKE_CURRENT_BINARY_DIR}/mumps-build
+  INSTALL_DIR       ${CMAKE_INSTALL_PREFIX}
+  PREFIX            ${CMAKE_CURRENT_BINARY_DIR}/mumps-cmake
+  UPDATE_COMMAND    ""
+  PATCH_COMMAND     git apply "${MUMPS_PATCH_FILES}"
+  CONFIGURE_COMMAND cmake <SOURCE_DIR> "${MUMPS_OPTIONS}"
+  TEST_COMMAND      ""
+)

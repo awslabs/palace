@@ -1,0 +1,433 @@
+diff --git a/PARPACK/SRC/BLACS/pzgetv0.f b/PARPACK/SRC/BLACS/pzgetv0.f
+index 17354c1..bcbf552 100644
+--- a/PARPACK/SRC/BLACS/pzgetv0.f
++++ b/PARPACK/SRC/BLACS/pzgetv0.f
+@@ -197,8 +197,8 @@ c
+       Double precision
+      &           pdznorm2 , dlapy2
+       Complex*16
+-     &           zzdotc
+-      external   zzdotc , pdznorm2 , dlapy2
++     &           zzdotc10
++      external   zzdotc10 , pdznorm2 , dlapy2
+ c
+ c     %-----------------%
+ c     | Data Statements |
+@@ -335,7 +335,7 @@ c
+ c
+       first = .FALSE.
+       if (bmat .eq. 'G') then
+-          cnorm = zzdotc  (n, resid, 1, workd, 1)
++          cnorm = zzdotc10  (n, resid, 1, workd, 1)
+           call zgsum2d ( comm, 'All', ' ', 1, 1, cnorm, 1, -1, -1 )
+           rnorm0 = sqrt(dlapy2 (dble (cnorm),dimag (cnorm)))
+       else if (bmat .eq. 'I') then
+@@ -394,7 +394,7 @@ c
+       end if
+ c
+       if (bmat .eq. 'G') then
+-         cnorm = zzdotc  (n, resid, 1, workd, 1)
++         cnorm = zzdotc10  (n, resid, 1, workd, 1)
+          call zgsum2d ( comm, 'All', ' ', 1, 1, cnorm, 1, -1, -1 )
+          rnorm = sqrt(dlapy2 (dble (cnorm),dimag (cnorm)))
+       else if (bmat .eq. 'I') then
+diff --git a/PARPACK/SRC/BLACS/pznaitr.f b/PARPACK/SRC/BLACS/pznaitr.f
+index cd1ba01..a6a3d29 100644
+--- a/PARPACK/SRC/BLACS/pznaitr.f
++++ b/PARPACK/SRC/BLACS/pznaitr.f
+@@ -303,10 +303,10 @@ c     | External Functions |
+ c     %--------------------%
+ c
+       Complex*16
+-     &           zzdotc
++     &           zzdotc10
+       Double precision
+      &           pdlamch, pdznorm2, zlanhs, dlapy2
+-      external   zzdotc, pdznorm2, zlanhs, pdlamch, dlapy2
++      external   zzdotc10, pdznorm2, zlanhs, pdlamch, dlapy2
+ c
+ c     %---------------------%
+ c     | Intrinsic Functions |
+@@ -573,7 +573,7 @@ c        | Compute the B-norm of OP*v_{j}.     |
+ c        %-------------------------------------%
+ c
+          if (bmat .eq. 'G') then
+-             cnorm = zzdotc (n, resid, 1, workd(ipj), 1)
++             cnorm = zzdotc10 (n, resid, 1, workd(ipj), 1)
+              call zgsum2d( comm, 'All', ' ', 1, 1, cnorm, 1, -1, -1 )
+              wnorm = sqrt( dlapy2(dble(cnorm),dimag(cnorm)) )
+          else if (bmat .eq. 'I') then
+@@ -647,7 +647,7 @@ c        | Compute the B-norm of r_{j}. |
+ c        %------------------------------%
+ c
+          if (bmat .eq. 'G') then
+-            cnorm = zzdotc (n, resid, 1, workd(ipj), 1)
++            cnorm = zzdotc10 (n, resid, 1, workd(ipj), 1)
+             call zgsum2d( comm, 'All', ' ', 1, 1, cnorm, 1, -1, -1 )
+             rnorm = sqrt( dlapy2(dble(cnorm),dimag(cnorm)) )
+          else if (bmat .eq. 'I') then
+@@ -749,7 +749,7 @@ c        | Compute the B-norm of the corrected residual r_{j}. |
+ c        %-----------------------------------------------------%
+ c
+          if (bmat .eq. 'G') then
+-             cnorm = zzdotc (n, resid, 1, workd(ipj), 1)
++             cnorm = zzdotc10 (n, resid, 1, workd(ipj), 1)
+              call zgsum2d( comm, 'All', ' ', 1, 1, cnorm, 1, -1, -1 )
+              rnorm1 = sqrt( dlapy2(dble(cnorm),dimag(cnorm)) )
+          else if (bmat .eq. 'I') then
+diff --git a/PARPACK/SRC/BLACS/pznaup2.f b/PARPACK/SRC/BLACS/pznaup2.f
+index 8fff22f..a1af4c2 100644
+--- a/PARPACK/SRC/BLACS/pznaup2.f
++++ b/PARPACK/SRC/BLACS/pznaup2.f
+@@ -254,10 +254,10 @@ c     | External functions |
+ c     %--------------------%
+ c
+       Complex*16
+-     &           zzdotc
++     &           zzdotc10
+       Double precision
+      &           pdznorm2, pdlamch, dlapy2
+-      external   zzdotc, pdznorm2, pdlamch, dlapy2
++      external   zzdotc10, pdznorm2, pdlamch, dlapy2
+ c
+ c     %---------------------%
+ c     | Intrinsic Functions |
+@@ -767,7 +767,7 @@ c
+          end if
+ c
+          if (bmat .eq. 'G') then
+-            cmpnorm = zzdotc (n, resid, 1, workd, 1)
++            cmpnorm = zzdotc10 (n, resid, 1, workd, 1)
+             call zgsum2d( comm, 'All', ' ', 1, 1, cmpnorm, 1, -1, -1 )
+             rnorm = sqrt(dlapy2(dble(cmpnorm),dimag(cmpnorm)))
+          else if (bmat .eq. 'I') then
+diff --git a/PARPACK/SRC/BLACS/pzneupd.f b/PARPACK/SRC/BLACS/pzneupd.f
+index af76f06..4cc4388 100644
+--- a/PARPACK/SRC/BLACS/pzneupd.f
++++ b/PARPACK/SRC/BLACS/pzneupd.f
+@@ -340,8 +340,8 @@ c
+       external   dznrm2,pdlamch,dlapy2
+ c
+       Complex*16
+-     &           zzdotc
+-      external   zzdotc
++     &           zzdotc10
++      external   zzdotc10
+ c
+ c     %---------------------%
+ c     | Intrinsic Functions |
+@@ -743,7 +743,7 @@ c                 | upper triangular, thus the length of the |
+ c                 | inner product can be set to j.           |
+ c                 %------------------------------------------%
+ c
+-                  workev(j) = zzdotc(j, workl(ihbds), 1,
++                  workev(j) = zzdotc10(j, workl(ihbds), 1,
+      &                        workl(invsub+(j-1)*ldq), 1)
+  40         continue
+ c
+diff --git a/PARPACK/SRC/MPI/pzgetv0.f b/PARPACK/SRC/MPI/pzgetv0.f
+index 731fb31..bd36f1d 100644
+--- a/PARPACK/SRC/MPI/pzgetv0.f
++++ b/PARPACK/SRC/MPI/pzgetv0.f
+@@ -200,8 +200,8 @@ c
+       Double precision
+      &           pdznorm2 , dlapy2
+       Complex*16
+-     &           zzdotc
+-      external   zzdotc , pdznorm2 , dlapy2
++     &           zzdotc10
++      external   zzdotc10 , pdznorm2 , dlapy2
+ c
+ c     %-----------------------%
+ c     | Executable Statements |
+@@ -321,7 +321,7 @@ c
+ c
+       first = .FALSE.
+       if (bmat .eq. 'G') then
+-          cnorm_buf = zzdotc  (n, resid, 1, workd, 1)
++          cnorm_buf = zzdotc10  (n, resid, 1, workd, 1)
+           call MPI_ALLREDUCE( [cnorm_buf], buf2, 1,
+      &          MPI_DOUBLE_COMPLEX , MPI_SUM, comm, ierr )
+           cnorm = buf2(1)
+@@ -383,7 +383,7 @@ c
+       end if
+ c
+       if (bmat .eq. 'G') then
+-         cnorm_buf = zzdotc  (n, resid, 1, workd, 1)
++         cnorm_buf = zzdotc10  (n, resid, 1, workd, 1)
+          call MPI_ALLREDUCE( [cnorm_buf], buf2, 1,
+      &            MPI_DOUBLE_COMPLEX , MPI_SUM, comm, ierr )
+          cnorm = buf2(1)
+diff --git a/PARPACK/SRC/MPI/pznaitr.f b/PARPACK/SRC/MPI/pznaitr.f
+index 29a757f..d41407f 100644
+--- a/PARPACK/SRC/MPI/pznaitr.f
++++ b/PARPACK/SRC/MPI/pznaitr.f
+@@ -307,10 +307,10 @@ c     | External Functions |
+ c     %--------------------%
+ c
+       Complex*16
+-     &           zzdotc
++     &           zzdotc10
+       Double precision
+      &           pdlamch10, pdznorm2, zlanhs, dlapy2
+-      external   zzdotc, pdznorm2, zlanhs, pdlamch10, dlapy2
++      external   zzdotc10, pdznorm2, zlanhs, pdlamch10, dlapy2
+ c
+ c     %---------------------%
+ c     | Intrinsic Functions |
+@@ -576,7 +576,7 @@ c        | Compute the B-norm of OP*v_{j}.     |
+ c        %-------------------------------------%
+ c
+          if (bmat .eq. 'G') then
+-             cnorm_buf = zzdotc (n, resid, 1, workd(ipj), 1)
++             cnorm_buf = zzdotc10 (n, resid, 1, workd(ipj), 1)
+             call MPI_ALLREDUCE( [cnorm_buf], buf2, 1,
+      &           MPI_DOUBLE_COMPLEX, MPI_SUM, comm, ierr )
+             cnorm = buf2(1)
+@@ -653,7 +653,7 @@ c        | Compute the B-norm of r_{j}. |
+ c        %------------------------------%
+ c
+          if (bmat .eq. 'G') then
+-            cnorm_buf = zzdotc (n, resid, 1, workd(ipj), 1)
++            cnorm_buf = zzdotc10 (n, resid, 1, workd(ipj), 1)
+             call MPI_ALLREDUCE( [cnorm_buf], buf2, 1,
+      &           MPI_DOUBLE_COMPLEX, MPI_SUM, comm, ierr )
+             cnorm = buf2(1)
+@@ -758,7 +758,7 @@ c        | Compute the B-norm of the corrected residual r_{j}. |
+ c        %-----------------------------------------------------%
+ c
+          if (bmat .eq. 'G') then
+-             cnorm_buf = zzdotc (n, resid, 1, workd(ipj), 1)
++             cnorm_buf = zzdotc10 (n, resid, 1, workd(ipj), 1)
+             call MPI_ALLREDUCE( [cnorm_buf], buf2, 1,
+      &           MPI_DOUBLE_COMPLEX, MPI_SUM, comm, ierr )
+             cnorm = buf2(1)
+diff --git a/PARPACK/SRC/MPI/pznaup2.f b/PARPACK/SRC/MPI/pznaup2.f
+index 7ea1198..e46e31d 100644
+--- a/PARPACK/SRC/MPI/pznaup2.f
++++ b/PARPACK/SRC/MPI/pznaup2.f
+@@ -257,10 +257,10 @@ c     | External functions |
+ c     %--------------------%
+ c
+       Complex*16
+-     &           zzdotc
++     &           zzdotc10
+       Double precision
+      &           pdznorm2, pdlamch10, dlapy2
+-      external   zzdotc, pdznorm2, pdlamch10, dlapy2
++      external   zzdotc10, pdznorm2, pdlamch10, dlapy2
+ c
+ c     %---------------------%
+ c     | Intrinsic Functions |
+@@ -770,7 +770,7 @@ c
+          end if
+ c
+          if (bmat .eq. 'G') then
+-            cmpnorm_buf = zzdotc (n, resid, 1, workd, 1)
++            cmpnorm_buf = zzdotc10 (n, resid, 1, workd, 1)
+             call MPI_ALLREDUCE( [cmpnorm_buf], buf2, 1,
+      &               MPI_DOUBLE_COMPLEX, MPI_SUM, comm, ierr )
+             cmpnorm = buf2(1)
+diff --git a/PARPACK/SRC/MPI/pzneupd.f b/PARPACK/SRC/MPI/pzneupd.f
+index 395cfee..44b9978 100644
+--- a/PARPACK/SRC/MPI/pzneupd.f
++++ b/PARPACK/SRC/MPI/pzneupd.f
+@@ -340,8 +340,8 @@ c
+       external   dznrm2,pdlamch10,dlapy2
+ c
+       Complex*16
+-     &           zzdotc
+-      external   zzdotc
++     &           zzdotc10
++      external   zzdotc10
+ c
+ c     %---------------------%
+ c     | Intrinsic Functions |
+@@ -743,7 +743,7 @@ c                 | upper triangular, thus the length of the |
+ c                 | inner product can be set to j.           |
+ c                 %------------------------------------------%
+ c
+-                  workev(j) = zzdotc(j, workl(ihbds), 1,
++                  workev(j) = zzdotc10(j, workl(ihbds), 1,
+      &                        workl(invsub+(j-1)*ldq), 1)
+  40         continue
+ c
+diff --git a/SRC/Makefile.am b/SRC/Makefile.am
+index afc48c0..d8ad395 100644
+--- a/SRC/Makefile.am
++++ b/SRC/Makefile.am
+@@ -12,7 +12,7 @@ CSRC = cnaitr.f cnapps.f cnaup2.f cnaupd.f cneigh.f cneupd.f cngets.f cstatn.f \
+        cgetv0.f csortc.f ccdotc.f
+ 
+ ZSRC = znaitr.f znapps.f znaup2.f znaupd.f zneigh.f zneupd.f zngets.f zstatn.f \
+-       zgetv0.f zsortc.f zzdotc.f
++       zgetv0.f zsortc.f zzdotc10.f
+ 
+ if ICB
+ SSRC += icbass.F90 icbasn.F90
+diff --git a/SRC/zgetv0.f b/SRC/zgetv0.f
+index cc13c3c..1b3dee8 100644
+--- a/SRC/zgetv0.f
++++ b/SRC/zgetv0.f
+@@ -177,8 +177,8 @@ c
+       Double precision
+      &           dznrm2, dlapy2
+       Complex*16
+-     &           zzdotc
+-      external   zzdotc, dznrm2, dlapy2
++     &           zzdotc10
++      external   zzdotc10, dznrm2, dlapy2
+ c
+ c     %-----------------------%
+ c     | Executable Statements |
+@@ -284,7 +284,7 @@ c
+ c
+       first = .FALSE.
+       if (bmat .eq. 'G') then
+-          cnorm  = zzdotc (n, resid, 1, workd, 1)
++          cnorm  = zzdotc10 (n, resid, 1, workd, 1)
+           rnorm0 = sqrt(dlapy2(dble(cnorm),aimag(cnorm)))
+       else if (bmat .eq. 'I') then
+            rnorm0 = dznrm2(n, resid, 1)
+@@ -341,7 +341,7 @@ c
+       end if
+ c
+       if (bmat .eq. 'G') then
+-         cnorm = zzdotc (n, resid, 1, workd, 1)
++         cnorm = zzdotc10 (n, resid, 1, workd, 1)
+          rnorm = sqrt(dlapy2(dble(cnorm),aimag(cnorm)))
+       else if (bmat .eq. 'I') then
+          rnorm = dznrm2(n, resid, 1)
+diff --git a/SRC/znaitr.f b/SRC/znaitr.f
+index 240412c..55ee683 100644
+--- a/SRC/znaitr.f
++++ b/SRC/znaitr.f
+@@ -280,10 +280,10 @@ c     | External Functions |
+ c     %--------------------%
+ c
+       Complex*16
+-     &           zzdotc
++     &           zzdotc10
+       Double precision
+      &           dlamch,  dznrm2, zlanhs, dlapy2
+-      external   zzdotc, dznrm2, zlanhs, dlamch, dlapy2
++      external   zzdotc10, dznrm2, zlanhs, dlamch, dlapy2
+ c
+ c     %---------------------%
+ c     | Intrinsic Functions |
+@@ -550,7 +550,7 @@ c        | Compute the B-norm of OP*v_{j}.     |
+ c        %-------------------------------------%
+ c
+          if (bmat .eq. 'G') then
+-             cnorm = zzdotc (n, resid, 1, workd(ipj), 1)
++             cnorm = zzdotc10 (n, resid, 1, workd(ipj), 1)
+              wnorm = sqrt( dlapy2(dble(cnorm),aimag(cnorm)) )
+          else if (bmat .eq. 'I') then
+              wnorm = dznrm2(n, resid, 1)
+@@ -622,7 +622,7 @@ c        | Compute the B-norm of r_{j}. |
+ c        %------------------------------%
+ c
+          if (bmat .eq. 'G') then
+-            cnorm = zzdotc (n, resid, 1, workd(ipj), 1)
++            cnorm = zzdotc10 (n, resid, 1, workd(ipj), 1)
+             rnorm = sqrt( dlapy2(dble(cnorm),aimag(cnorm)) )
+          else if (bmat .eq. 'I') then
+             rnorm = dznrm2(n, resid, 1)
+@@ -722,7 +722,7 @@ c        | Compute the B-norm of the corrected residual r_{j}. |
+ c        %-----------------------------------------------------%
+ c
+          if (bmat .eq. 'G') then
+-             cnorm  = zzdotc (n, resid, 1, workd(ipj), 1)
++             cnorm  = zzdotc10 (n, resid, 1, workd(ipj), 1)
+              rnorm1 = sqrt( dlapy2(dble(cnorm),aimag(cnorm)) )
+          else if (bmat .eq. 'I') then
+              rnorm1 = dznrm2(n, resid, 1)
+diff --git a/SRC/znaup2.f b/SRC/znaup2.f
+index 0ab01dd..d3f7f2b 100644
+--- a/SRC/znaup2.f
++++ b/SRC/znaup2.f
+@@ -247,10 +247,10 @@ c     | External functions |
+ c     %--------------------%
+ c
+       Complex*16
+-     &           zzdotc
++     &           zzdotc10
+       Double precision
+      &           dznrm2 , dlamch , dlapy2
+-      external   zzdotc , dznrm2 , dlamch , dlapy2
++      external   zzdotc10 , dznrm2 , dlamch , dlapy2
+ c
+ c     %---------------------%
+ c     | Intrinsic Functions |
+@@ -754,7 +754,7 @@ c
+          end if
+ c
+          if (bmat .eq. 'G') then
+-            cmpnorm = zzdotc  (n, resid, 1, workd, 1)
++            cmpnorm = zzdotc10  (n, resid, 1, workd, 1)
+             rnorm = sqrt(dlapy2 (dble (cmpnorm),aimag (cmpnorm)))
+          else if (bmat .eq. 'I') then
+             rnorm = dznrm2 (n, resid, 1)
+diff --git a/SRC/zneupd.f b/SRC/zneupd.f
+index 92e7dc9..fa78ab7 100644
+--- a/SRC/zneupd.f
++++ b/SRC/zneupd.f
+@@ -325,8 +325,8 @@ c
+       external   dznrm2, dlamch, dlapy2
+ c
+       Complex*16
+-     &           zzdotc
+-      external   zzdotc
++     &           zzdotc10
++      external   zzdotc10
+ c
+ c     %-----------------------%
+ c     | Executable Statements |
+@@ -731,7 +731,7 @@ c                 | upper triangular, thus the length of the |
+ c                 | inner product can be set to j.           |
+ c                 %------------------------------------------%
+ c
+-                  workev(j) = zzdotc(j, workl(ihbds), 1,
++                  workev(j) = zzdotc10(j, workl(ihbds), 1,
+      &                        workl(invsub+(j-1)*ldq), 1)
+  40         continue
+ c
+diff --git a/SRC/zzdotc.f b/SRC/zzdotc10.f
+similarity index 85%
+rename from SRC/zzdotc.f
+rename to SRC/zzdotc10.f
+index a98c342..fc2383b 100644
+--- a/SRC/zzdotc.f
++++ b/SRC/zzdotc10.f
+@@ -1,4 +1,4 @@
+-      double complex function zzdotc(n,zx,incx,zy,incy)
++      double complex function zzdotc10(n,zx,incx,zy,incy)
+ c
+ c     forms the dot product of a vector.
+ c     jack dongarra, 3/11/78.
+@@ -7,7 +7,7 @@ c
+       double complex zx(*),zy(*),ztemp
+       integer i,incx,incy,ix,iy,n
+       ztemp = (0.0d0,0.0d0)
+-      zzdotc = (0.0d0,0.0d0)
++      zzdotc10 = (0.0d0,0.0d0)
+       if(n.le.0)return
+       if(incx.eq.1.and.incy.eq.1)go to 20
+ c
+@@ -23,7 +23,7 @@ c
+         ix = ix + incx
+         iy = iy + incy
+    10 continue
+-      zzdotc = ztemp
++      zzdotc10 = ztemp
+       return
+ c
+ c        code for both increments equal to 1
+@@ -31,6 +31,6 @@ c
+    20 do 30 i = 1,n
+         ztemp = ztemp + conjg(zx(i))*zy(i)
+    30 continue
+-      zzdotc = ztemp
++      zzdotc10 = ztemp
+       return
+       end

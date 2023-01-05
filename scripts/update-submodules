@@ -1,0 +1,57 @@
+#!/bin/bash
+
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+help()
+{
+    echo "Usage: update-submodules [OPTIONS]
+
+Update dependency repositories included as git submodules
+
+Options:
+  -h, --help                       Show this help message and exit
+"
+}
+
+# Parse arguments
+POSITIONAL=()
+while [[ $# -gt 0 ]]; do
+    key="$1"
+    case $key in
+        -h|--help)
+        help
+        exit 0
+        ;;
+        *)
+        POSITIONAL+=("$1")  # Unknown option, save it in an array for later
+        shift
+        ;;
+    esac
+done
+set -- "${POSITIONAL[@]}"  # Restore positional parameters
+
+# Check arguments
+if [[ ! -z "$@" ]]; then
+    help
+    exit 1
+fi
+
+SOURCE_DIR=$(dirname $(cd "$(dirname "${BASH_SOURCE[0]}")" ; pwd -P ))
+
+if ! command -v git &> /dev/null; then
+    echo "Error: Command \`git\` could not be found"
+    exit 1
+fi
+
+if [[ ! -d $SOURCE_DIR/extern/petsc ]]; then
+    git submodule update --init
+fi
+
+for NAME in `ls $SOURCE_DIR/extern/ | sort -f` ; do
+    DIR=$SOURCE_DIR/extern/$NAME
+    if [[ -d $DIR ]] && [[ ! $DIR == */patch ]]; then
+        echo "Updating $(basename $DIR)"
+        cd "$DIR" && git pull && echo "Git hash: $(git log --pretty=tformat:"%H (%cs)" -1)"
+    fi
+done
