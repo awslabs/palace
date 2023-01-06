@@ -1,0 +1,124 @@
+name: Build and Test (macOS)
+
+on: push
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test-macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:  # Pairwise testing
+          - compiler: gcc
+            mpi: mpich
+            math-libs: openblas
+            build-shared: false
+            with-64bit-int: true
+            with-openmp: true
+            with-solver: strumpack
+            with-eigensolver: slepc
+
+          - compiler: clang
+            mpi: openmpi
+            math-libs: openblas
+            build-shared: false
+            with-64bit-int: true
+            with-openmp: false
+            with-solver: superlu
+            with-eigensolver: slepc
+
+          - compiler: gcc
+            mpi: mpich
+            math-libs: openblas
+            build-shared: true
+            with-64bit-int: false
+            with-openmp: false
+            with-solver: superlu
+            with-eigensolver: slepc
+
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          submodules: 'recursive'
+
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - uses: julia-actions/setup-julia@v1
+        with:
+          version: '1'
+
+      - uses: mpi4py/setup-mpi@v1
+        with:
+          mpi: ${{ matrix.mpi }}
+
+      - name: Install math libraries (OpenBLAS)
+        if: matrix.math-libs == 'openblas'
+        run: |
+          brew install openblas
+
+      - name: Build Palace
+        env:
+          CMAKE_BUILD_TYPE: Release
+          NUM_PROC_BUILD_MAX: '32'
+        run: |
+          # Configure environment
+          if [[ "${{ matrix.compiler }}" == 'clang' ]]; then
+            export CC=$(brew --prefix llvm@14)/bin/clang
+            export CXX=$(brew --prefix llvm@14)/bin/clang++
+            export FC=gfortran-11
+          elif [[ "${{ matrix.compiler }}" == 'gcc' ]]; then
+            export CC=gcc-11
+            export CXX=g++-11
+            export FC=gfortran-11
+          fi
+          if [[ "${{ matrix.math-libs }}" == 'openblas' ]]; then
+            export OPENBLAS_DIR=/usr/local/opt/openblas
+          fi
+          export NUM_PROC_BUILD=$(nproc 2> /dev/null || sysctl -n hw.ncpu)
+          if [[ "$NUM_PROC_BUILD" -gt "$NUM_PROC_BUILD_MAX" ]]; then
+            NUM_PROC_BUILD=$NUM_PROC_BUILD_MAX
+          fi
+
+          [[ "${{ matrix.with-solver }}" == 'superlu' ]] && WITH_SUPERLU='ON' || WITH_SUPERLU='OFF'
+          [[ "${{ matrix.with-solver }}" == 'strumpack' ]] && WITH_STRUMPACK='ON' || WITH_STRUMPACK='OFF'
+          [[ "${{ matrix.with-solver }}" == 'mumps' ]] && WITH_MUMPS='ON' || WITH_MUMPS='OFF'
+          [[ "${{ matrix.with-eigensolver }}" == 'slepc' ]] && WITH_SLEPC='ON' || WITH_SLEPC='OFF'
+          [[ "${{ matrix.with-eigensolver }}" == 'arpack' ]] && WITH_ARPACK='ON' || WITH_ARPACK='OFF'
+
+          # Build and install
+          mkdir palace-build && cd palace-build
+          cmake .. \
+            -DCMAKE_INSTALL_PREFIX=$(pwd)/../palace-install \
+            -DBUILD_SHARED_LIBS=${{ matrix.build-shared }} \
+            -DPALACE_WITH_64BIT_INT=${{ matrix.with-64bit-int }} \
+            -DPALACE_WITH_OPENMP=${{ matrix.with-openmp }} \
+            -DPALACE_WITH_SUPERLU=$WITH_SUPERLU \
+            -DPALACE_WITH_STRUMPACK=$WITH_STRUMPACK \
+            -DPALACE_WITH_MUMPS=$WITH_MUMPS \
+            -DPALACE_WITH_SLEPC=$WITH_SLEPC \
+            -DPALACE_WITH_ARPACK=$WITH_ARPACK
+          make -j$NUM_PROC_BUILD
+
+      - name: Run tests
+        env:
+          NUM_PROC_TEST_MAX: '8'
+        run: |
+          # Configure environment
+          export NUM_PROC_TEST=$(nproc 2> /dev/null || sysctl -n hw.ncpu)
+          if [[ "$NUM_PROC_TEST" -gt "$NUM_PROC_TEST_MAX" ]]; then
+            NUM_PROC_TEST=$NUM_PROC_TEST_MAX
+          fi
+          export PATH=$(pwd)/palace-install/bin:$PATH
+          if [[ "${{ matrix.build-shared }}" == 'true' ]]; then
+            export DYLD_LIBRARY_PATH=$(pwd)/palace-install/lib:$DYLD_LIBRARY_PATH
+          fi
+
+          # Run tests
+          julia --project=test -e 'using Pkg; Pkg.instantiate()'
+          julia --project=test --color=yes test/runtests.jl

@@ -1,0 +1,120 @@
+name: Build and Test (Linux, Arm64)
+
+on: push
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test-linux-arm64:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:  # Only a single simple build test for now
+          - compiler: clang
+            mpi: mpich
+            math-libs: openblas
+            build-shared: false
+            with-64bit-int: false
+            with-openmp: false
+            with-solver: superlu
+            with-eigensolver: slepc
+
+    runs-on: palace_ubuntu-latest_16-core
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          submodules: 'recursive'
+
+      - name: Hardware setup, build, and test
+        uses: uraimo/run-on-arch-action@v2
+        id: runcmd
+        with:
+          arch: aarch64
+          distro: ubuntu_latest
+          env: |
+            CMAKE_BUILD_TYPE: Release
+            NUM_PROC_BUILD_MAX: '32'
+            NUM_PROC_TEST_MAX: '8'
+          run: |
+            # Install dependencies
+            apt-get update -q
+            apt-get install -y build-essential clang lld gfortran python3 wget git \
+                               cmake pkg-config libmpich-dev
+
+            # Install Julia
+            wget https://julialang-s3.julialang.org/bin/linux/aarch64/1.8/julia-1.8.4-linux-aarch64.tar.gz
+            mkdir -p /opt/julia && tar -xzf julia-1.8.4-linux-aarch64.tar.gz -C /opt/julia
+            rm -rf *.tar.gz
+
+            # Install math libraries (OpenBLAS)
+            if [[ "${{ matrix.math-libs }}" == 'openblas' ]]; then
+              if [[ "${{ matrix.with-openmp }}" == 'true' ]]; then
+                apt-get install -y libopenblas-openmp-dev
+              else
+                apt-get install -y libopenblas-serial-dev
+              fi
+            fi
+
+            # Install math libraries (Arm Performance Libraries)
+            if [[ "${{ matrix.math-libs }}" == 'armpl' ]]; then
+              wget https://developer.arm.com/-/media/Files/downloads/hpc/arm-performance-libraries/22-0-2/Ubuntu20.04/arm-performance-libraries_22.0.2_Ubuntu-20.04_gcc-11.2.tar
+              tar -xf arm-performance-libraries* && rm -rf arm-performance-libraries*.tar
+              ./arm-performance-libraries*/arm-performance-libraries*.sh -a -i /opt/arm
+              export ARMPL_DIR=/opt/arm/armpl_22.0.2_gcc-11.2
+              export LD_LIBRARY_PATH="${LD_LIBRARY_PATH:+LD_LIBRARY_PATH:}$ARMPL_DIR/lib"
+            fi
+
+            # Configure environment for build
+            if [[ "${{ matrix.compiler }}" == 'clang' ]]; then
+              export CC=clang
+              export CXX=clang++
+              export FC=gfortran-11
+              export LDFLAGS='-fuse-ld=lld'
+            elif [[ "${{ matrix.compiler }}" == 'gcc' ]]; then
+              export CC=gcc-11
+              export CXX=g++-11
+              export FC=gfortran-11
+            fi
+            export NUM_PROC_BUILD=$(nproc 2> /dev/null || sysctl -n hw.ncpu)
+            if [[ "$NUM_PROC_BUILD" -gt "$NUM_PROC_BUILD_MAX" ]]; then
+              NUM_PROC_BUILD=$NUM_PROC_BUILD_MAX
+            fi
+
+            [[ "${{ matrix.with-solver }}" == 'superlu' ]] && WITH_SUPERLU='ON' || WITH_SUPERLU='OFF'
+            [[ "${{ matrix.with-solver }}" == 'strumpack' ]] && WITH_STRUMPACK='ON' || WITH_STRUMPACK='OFF'
+            [[ "${{ matrix.with-solver }}" == 'mumps' ]] && WITH_MUMPS='ON' || WITH_MUMPS='OFF'
+            [[ "${{ matrix.with-eigensolver }}" == 'slepc' ]] && WITH_SLEPC='ON' || WITH_SLEPC='OFF'
+            [[ "${{ matrix.with-eigensolver }}" == 'arpack' ]] && WITH_ARPACK='ON' || WITH_ARPACK='OFF'
+
+            # Build and install
+            mkdir palace-build && cd palace-build
+            cmake .. \
+              -DCMAKE_INSTALL_PREFIX=/opt/palace \
+              -DBUILD_SHARED_LIBS=${{ matrix.build-shared }} \
+              -DPALACE_WITH_64BIT_INT=${{ matrix.with-64bit-int }} \
+              -DPALACE_WITH_OPENMP=${{ matrix.with-openmp }} \
+              -DPALACE_WITH_SUPERLU=$WITH_SUPERLU \
+              -DPALACE_WITH_STRUMPACK=$WITH_STRUMPACK \
+              -DPALACE_WITH_MUMPS=$WITH_MUMPS \
+              -DPALACE_WITH_SLEPC=$WITH_SLEPC \
+              -DPALACE_WITH_ARPACK=$WITH_ARPACK
+            make -j$NUM_PROC_BUILD
+            cd ..
+
+            # XX TODO: Disable tests for now since Julia precompilation fails
+
+            # # Configure environment for tests
+            # export NUM_PROC_TEST=$(nproc 2> /dev/null || sysctl -n hw.ncpu)
+            # if [[ "$NUM_PROC_TEST" -gt "$NUM_PROC_TEST_MAX" ]]; then
+            #   NUM_PROC_TEST=$NUM_PROC_TEST_MAX
+            # fi
+            # export PATH=/opt/palace/bin:/opt/julia/julia-1.8.4/bin:$PATH
+            # if [[ "${{ matrix.build-shared }}" == 'true' ]]; then
+            #   export LD_LIBRARY_PATH="${LD_LIBRARY_PATH:+LD_LIBRARY_PATH:}/opt/palace/lib:/opt/palace/lib64"
+            # fi
+
+            # # Run tests
+            # julia --project=test -e 'using Pkg; Pkg.instantiate()'
+            # julia --project=test --color=yes test/runtests.jl

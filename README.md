@@ -4,6 +4,11 @@ SPDX-License-Identifier: Apache-2.0
 --->
 # Palace: 3D Finite Element Solver for Computational Electromagnetics
 
+[![CI (Linux)](https://github.com/awslabs/palace/actions/workflows/build-and-test-linux.yml/badge.svg)](https://github.com/awslabs/palace/actions/workflows/build-and-test-linux.yml)
+[![CI (macOS)](https://github.com/awslabs/palace/actions/workflows/build-and-test-macos.yml/badge.svg)](https://github.com/awslabs/palace/actions/workflows/build-and-test-macos.yml)
+[![](https://img.shields.io/badge/docs-stable-blue.svg)](https://awslabs.github.io/palace/stable)
+[![](https://img.shields.io/badge/docs-dev-blue.svg)](https://awslabs.github.io/palace/dev)
+
 *Palace*, for **PA**rallel **LA**rge-scale **C**omputational **E**lectromagnetics, is an
 open-source parallel finite element code for full-wave 3D electromagnetic simulations in
 the frequency or time domain, using the [MFEM](http://mfem.org) finite element
@@ -37,7 +42,7 @@ command `spack install palace`. Run `spack info palace` to get more information 
 available configuration options and dependencies.
 
 Instructions for obtaining *Palace* and building from source can be found in the
-[documentation](https://awslabs.github.io/palace/stable/install/). Git submodules are used
+[documentation](https://awslabs.github.io/palace/dev/install/). Git submodules are used
 to manage the builds of most dependencies, so the repository should be cloned using the
 `--recurse-submodules` flag, or alternatively `git submodule update --init` can be run in
 order to download the dependency source code for an existing clone.
@@ -64,7 +69,7 @@ To build a local version of the documentation, run `julia make.jl` from within t
 
 Some example applications including configuration files and meshes can be found in the
 [`examples/`](./examples) directory. Complete tutorials for each example are available in
-the [documentation](https://awslabs.github.io/palace/stable/examples/examples/).
+the [documentation](https://awslabs.github.io/palace/dev/examples/examples/).
 
 ## Changelog
 
