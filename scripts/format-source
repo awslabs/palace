@@ -93,8 +93,7 @@ if $FORMAT_JL; then
     if [[ ! -z "$DRY_RUN" ]]; then
         FORMAT_JL_ARGS="$FORMAT_JL_ARGS, overwrite=false"
     fi
-    FORMAT_JL_FILES=$(find $SOURCE_DIR/.github \
-                           $SOURCE_DIR/docs $SOURCE_DIR/examples \
+    FORMAT_JL_FILES=$(find $SOURCE_DIR/docs $SOURCE_DIR/examples \
                            $SOURCE_DIR/scripts $SOURCE_DIR/test \
                           -type f \( -iname \*.md -o -iname \*.jl \) -exec echo -n '"{}", ' \;)
     FORMAT_JL_FILES="$(find $SOURCE_DIR -maxdepth 1 \

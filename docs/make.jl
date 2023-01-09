@@ -13,7 +13,6 @@ makedocs(
         assets=["assets/favicon.ico"]
     ),
     sitename="Palace",
-    version="0.10.0",
     authors="Sebastian Grimberg, sjg@amazon.com",
     pages=[
         "Home" => "index.md",

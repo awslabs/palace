@@ -1,16 +1,10 @@
-<!---
-Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
-SPDX-License-Identifier: Apache-2.0
---->
-* * *
-
+---
 name: Feature request
 about: Suggest an idea for the project
 title: ''
 labels: 'enhancement'
 assignees: ''
-
-* * *
+---
 
 *Description: A clear and concise description of what the feature is.*
 
