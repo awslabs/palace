@@ -173,7 +173,7 @@ void KspPreconditioner::Mult(const petsc::PetscParVector &x, petsc::PetscParVect
     X[1] = &xi_;
     Y[0] = &yr_;
     Y[1] = &yi_;
-    pc_->Mult(X, Y);
+    pc_->ArrayMult(X, Y);
   }
   y.SetFromVectors(yr_, yi_);
 #else

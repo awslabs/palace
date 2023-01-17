@@ -36,6 +36,37 @@ DistRelaxationSmoother::DistRelaxationSmoother(mfem::ParFiniteElementSpace &nd_f
   B_G->iterative_mode = false;
 }
 
+void DistRelaxationSmoother::InitVectors(int nrhs) const
+{
+  if (nrhs * A->Height() == r.Size())
+  {
+    return;
+  }
+  DestroyVectors();
+  r.SetSize(nrhs * A->Height());
+  x_G.SetSize(nrhs * A_G->Height());
+  y_G.SetSize(nrhs * A_G->Height());
+  R.SetSize(nrhs);
+  X_G.SetSize(nrhs);
+  Y_G.SetSize(nrhs);
+  for (int j = 0; j < nrhs; j++)
+  {
+    R[j] = new mfem::Vector(r, j * A->Height(), A->Height());
+    X_G[j] = new mfem::Vector(x_G, j * A_G->Height(), A_G->Height());
+    Y_G[j] = new mfem::Vector(y_G, j * A_G->Height(), A_G->Height());
+  }
+}
+
+void DistRelaxationSmoother::DestroyVectors() const
+{
+  for (int j = 0; j < R.Size(); j++)
+  {
+    delete R[j];
+    delete X_G[j];
+    delete Y_G[j];
+  }
+}
+
 void DistRelaxationSmoother::SetOperator(const mfem::Operator &op,
                                          const mfem::Operator &op_G)
 {
@@ -50,9 +81,6 @@ void DistRelaxationSmoother::SetOperator(const mfem::Operator &op,
   // Set up smoothers for A and A_G.
   B->SetOperator(*A);
   B_G->SetOperator(*A_G);
-  r.SetSize(G->Height());
-  x_G.SetSize(G->Width());
-  y_G.SetSize(G->Width());
 }
 
 }  // namespace palace

@@ -1,8 +1,8 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 121fbae..2df0b5f 100644
+index 0227ec5..a5efd21 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -70,7 +70,7 @@ function(pexamples list_name)
+@@ -71,7 +71,7 @@ function(pexamples list_name)
      foreach(l ${${list_name}})
          get_filename_component(lwe ${l} NAME_WE)
          add_executable(${lwe} ${parpackexample_DIR}/${l} )
@@ -11,23 +11,23 @@ index 121fbae..2df0b5f 100644
          add_test(NAME "${lwe}_ex" COMMAND mpirun -n 2 ./${lwe} WORKING_DIRECTORY ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})
      endforeach()
  endfunction(pexamples)
-@@ -384,13 +384,11 @@ endif()
+@@ -385,13 +385,11 @@ endif()
  add_library(arpack ${arpackutil_STAT_SRCS} ${arpacksrc_STAT_SRCS} ${arpacksrc_ICB})
  
  target_link_libraries(arpack
 -  PUBLIC
--  $<INSTALL_INTERFACE:$<IF:$<BOOL:${BUILD_SHARED_LIBS}>,,BLAS::BLAS>>
 -  $<INSTALL_INTERFACE:$<IF:$<BOOL:${BUILD_SHARED_LIBS}>,,LAPACK::LAPACK>>
+-  $<INSTALL_INTERFACE:$<IF:$<BOOL:${BUILD_SHARED_LIBS}>,,BLAS::BLAS>>
 +  PRIVATE
-   $<BUILD_INTERFACE:BLAS::BLAS>
    $<BUILD_INTERFACE:LAPACK::LAPACK>
+   $<BUILD_INTERFACE:BLAS::BLAS>
  )
 -target_link_options(arpack PUBLIC "${EXTRA_LDFLAGS}")
 +target_link_options(arpack PRIVATE "${EXTRA_LDFLAGS}")
  set_target_properties(arpack PROPERTIES OUTPUT_NAME arpack${LIBSUFFIX}${ITF64SUFFIX})
  set_target_properties(arpack PROPERTIES VERSION 2.1.0)
  set_target_properties(arpack PROPERTIES SOVERSION 2)
-@@ -409,11 +407,13 @@ if (MPI)
+@@ -410,11 +408,13 @@ if (MPI)
      # use -DBUILD_SHARED_LIBS=ON|OFF to control static/shared
      add_library(parpack ${parpacksrc_STAT_SRCS} ${parpackutil_STAT_SRCS} ${parpacksrc_ICB})
      target_link_libraries(parpack
@@ -35,22 +35,22 @@ index 121fbae..2df0b5f 100644
 +      PRIVATE
        arpack
 -      $<INSTALL_INTERFACE:$<IF:$<BOOL:${BUILD_SHARED_LIBS}>,,MPI::MPI_Fortran>>
-+      $<BUILD_INTERFACE:BLAS::BLAS>
 +      $<BUILD_INTERFACE:LAPACK::LAPACK>
++      $<BUILD_INTERFACE:BLAS::BLAS>
        $<BUILD_INTERFACE:MPI::MPI_Fortran>
      )
 +    target_link_options(parpack PRIVATE "${EXTRA_LDFLAGS}")
      set_target_properties(parpack PROPERTIES OUTPUT_NAME parpack${LIBSUFFIX}${ITF64SUFFIX})
      set_target_properties(parpack PROPERTIES VERSION 2.1.0)
      set_target_properties(parpack PROPERTIES SOVERSION 2)
-@@ -672,7 +672,7 @@ if(MPI)
-   set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/PARPACK/TESTS/MPI)
+@@ -669,7 +669,7 @@ function(build_tests)
+     set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/PARPACK/TESTS/MPI)
  
-   add_executable(issue46 PARPACK/TESTS/MPI/issue46.f)
--  target_link_libraries(issue46 parpack arpack BLAS::BLAS LAPACK::LAPACK ${EXTRA_LDFLAGS})
-+  target_link_libraries(issue46 parpack arpack BLAS::BLAS LAPACK::LAPACK ${EXTRA_LDFLAGS} MPI::MPI_Fortran)
-   add_test(issue46_tst ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/issue46)
- endif()
+     add_executable(issue46 PARPACK/TESTS/MPI/issue46.f)
+-    target_link_libraries(issue46 parpack arpack BLAS::BLAS LAPACK::LAPACK ${EXTRA_LDFLAGS})
++    target_link_libraries(issue46 parpack arpack BLAS::BLAS LAPACK::LAPACK ${EXTRA_LDFLAGS} MPI::MPI_Fortran)
+     add_test(issue46_tst ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/issue46)
+   endif()
  
 diff --git a/cmake/arpackng-config.cmake.in b/cmake/arpackng-config.cmake.in
 index bafa3fe..fe2fa53 100644

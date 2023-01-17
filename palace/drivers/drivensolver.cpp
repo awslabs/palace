@@ -289,7 +289,7 @@ void DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator &postop, i
       sample = iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, sample);
     }
     Mpi::Print("\nAdaptive sampling{} {:d} frequency samples:\n"
-               " n = {:d}, error = {:.2e}, tol = {:.2e}\n",
+               " n = {:d}, error = {:.3e}, tol = {:.3e}\n",
                (iter == nmax) ? " reached maximum" : " converged with", iter,
                prom.GetReducedDimension(), max_error, offline_tol);
     utils::PrettyPrint(samples, " Sampled frequencies (GHz):");

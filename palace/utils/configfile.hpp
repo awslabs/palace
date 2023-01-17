@@ -742,7 +742,7 @@ public:
 
   // Enable modified Gram-Schmidt orthogonalization instead of classical for GMRES/FGMRES
   // Krylov solvers and SLEPc eigenvalue solver.
-  bool orthog_mgs = true;
+  bool orthog_mgs = false;
   bool orthog_cgs2 = false;
 
   // Reuse previous solution as initial guess for Krylov solvers.

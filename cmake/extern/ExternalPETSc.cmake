@@ -74,7 +74,7 @@ endif()
 if(PALACE_WITH_SLEPC)
   list(APPEND PETSC_OPTIONS
     "--download-slepc"
-    "--download-slepc-commit=${EXTERN_SLEPC_GIT_TAG}"
+    "--download-slepc-commit=main"
     "--download-slepc-configure-arguments=\"--with-feast=0\""
     # "--download-slepc-configure-arguments=\"--with-slepc4py=1\""
   )

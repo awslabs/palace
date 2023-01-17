@@ -69,9 +69,9 @@ set(METIS_PATCH_FILES
   "${CMAKE_CURRENT_SOURCE_DIR}/patch/METIS/patch_install.diff"
 )
 
-# Configure 64-bit real and integer values
+# Configure width of real and integer values
 list(APPEND METIS_PATCH_FILES
-  "${CMAKE_CURRENT_SOURCE_DIR}/patch/METIS/patch_real64.diff"
+  "${CMAKE_CURRENT_SOURCE_DIR}/patch/METIS/patch_real32.diff"
 )
 if(PALACE_WITH_64BIT_INT)
   list(APPEND METIS_PATCH_FILES

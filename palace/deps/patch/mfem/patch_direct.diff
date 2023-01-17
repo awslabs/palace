@@ -1,18 +1,8 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index c0eaccab1..a1f93fe84 100644
+index 3ff5b9462..e7e1e8212 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -10,7 +10,8 @@
- # CONTRIBUTING.md for details.
- 
- # The variable CMAKE_CXX_STANDARD and related were introduced in CMake v3.1
--cmake_minimum_required(VERSION 3.1)
-+# Version 3.8 fixes the handling of CMAKE_CXX_STANDARD for try_compile
-+cmake_minimum_required(VERSION 3.8)
- set(USER_CONFIG "${CMAKE_CURRENT_SOURCE_DIR}/config/user.cmake" CACHE PATH
-   "Path to optional user configuration file.")
- 
-@@ -77,15 +78,13 @@ if (CMAKE_VERSION VERSION_LESS 3.2 OR
+@@ -78,7 +78,7 @@ if (MFEM_USE_CONDUIT OR
     #  * find_package(PETSc REQUIRED)
     set(XSDK_ENABLE_C ON)
  endif()
@@ -21,67 +11,7 @@ index c0eaccab1..a1f93fe84 100644
    # Just needed to find the MPI_Fortran libraries to link with
    set(XSDK_ENABLE_Fortran ON)
  endif()
--# SUNDIALS >= 6.4.0 requires C++14:
--if (MFEM_USE_SUNDIALS AND ("${CMAKE_CXX_STANDARD}" LESS "14"))
--  set(CMAKE_CXX_STANDARD 14)
--endif()
--if (MFEM_USE_GINKGO AND ("${CMAKE_CXX_STANDARD}" LESS "14"))
-+# SUNDIALS, STRUMPACK, and Ginkgo require C++14:
-+if ((MFEM_USE_SUNDIALS OR MFEM_USE_STRUMPACK OR MFEM_USE_GINKGO) AND
-+    ("${CMAKE_CXX_STANDARD}" LESS "14"))
-   set(CMAKE_CXX_STANDARD 14)
- endif()
- 
-@@ -199,6 +198,27 @@ if (MFEM_USE_HIP)
-   find_package(HIPSPARSE REQUIRED)
- endif()
- 
-+# OpenMP
-+if (MFEM_USE_OPENMP OR MFEM_USE_LEGACY_OPENMP)
-+  if (NOT MFEM_THREAD_SAFE AND MFEM_USE_LEGACY_OPENMP)
-+    message(FATAL_ERROR " *** MFEM_USE_LEGACY_OPENMP requires MFEM_THREAD_SAFE=ON.")
-+  endif()
-+  find_package(OpenMP REQUIRED)
-+  set(OPENMP_LIBRARIES ${OpenMP_CXX_LIBRARIES})
-+  if(APPLE)
-+    # On macOS, the compiler needs additional help to find the <omp.h> header.
-+    # See issue #2642 for more information.
-+    set(OPENMP_INCLUDE_DIRS ${OpenMP_CXX_INCLUDE_DIRS})
-+  endif(APPLE)
-+  if (OPENMP_FOUND)
-+    message(STATUS "MFEM: using package OpenMP")
-+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
-+    if (MFEM_USE_CUDA)
-+      set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Xcompiler=${OpenMP_CXX_FLAGS}")
-+    endif()
-+  endif()
-+endif()
-+
- # MPI -> hypre; PETSc (optional)
- if (MFEM_USE_MPI)
-   find_package(MPI REQUIRED)
-@@ -264,20 +284,6 @@ if (MFEM_USE_LAPACK)
-   find_package(LAPACK REQUIRED)
- endif()
- 
--# OpenMP
--if (MFEM_USE_OPENMP OR MFEM_USE_LEGACY_OPENMP)
--  if (NOT MFEM_THREAD_SAFE AND MFEM_USE_LEGACY_OPENMP)
--    message(FATAL_ERROR " *** MFEM_USE_LEGACY_OPENMP requires MFEM_THREAD_SAFE=ON.")
--  endif()
--  find_package(OpenMP REQUIRED)
--  set(OPENMP_LIBRARIES ${OpenMP_CXX_LIBRARIES})
--  if(APPLE)
--    # On macOS, the compiler needs additional help to find the <omp.h> header.
--    # See issue #2642 for more information.
--    set(OPENMP_INCLUDE_DIRS ${OpenMP_CXX_INCLUDE_DIRS})
--  endif(APPLE)
--endif()
--
- # SuiteSparse (before SUNDIALS which may depend on KLU)
- if (MFEM_USE_SUITESPARSE)
-   find_package(SuiteSparse REQUIRED
-@@ -309,6 +315,7 @@ endif()
+@@ -313,6 +313,7 @@ endif()
  if (MFEM_USE_MUMPS)
    if (MFEM_USE_MPI)
      find_package(MUMPS REQUIRED mumps_common pord)
@@ -89,27 +19,6 @@ index c0eaccab1..a1f93fe84 100644
    else()
      message(FATAL_ERROR " *** MUMPS requires that MPI be enabled.")
    endif()
-@@ -506,18 +513,12 @@ foreach(TPL IN LISTS MFEM_TPLS)
-     list(APPEND TPL_INCLUDE_DIRS ${${TPL}_INCLUDE_DIRS})
-   endif()
- endforeach(TPL)
-+list(REVERSE TPL_LIBRARIES)
- list(REMOVE_DUPLICATES TPL_LIBRARIES)
-+list(REVERSE TPL_LIBRARIES)
- list(REMOVE_DUPLICATES TPL_INCLUDE_DIRS)
- # message(STATUS "TPL_INCLUDE_DIRS = ${TPL_INCLUDE_DIRS}")
- 
--if (OPENMP_FOUND)
--  message(STATUS "MFEM: using package OpenMP")
--  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
--  if (MFEM_USE_CUDA)
--    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Xcompiler=${OpenMP_CXX_FLAGS}")
--  endif()
--endif()
--
- message(STATUS "MFEM build type: CMAKE_BUILD_TYPE = ${CMAKE_BUILD_TYPE}")
- message(STATUS "MFEM version: v${MFEM_VERSION_STRING}")
- message(STATUS "MFEM git string: ${MFEM_GIT_STRING}")
 diff --git a/config/cmake/config.hpp.in b/config/cmake/config.hpp.in
 index f8af98a72..0d4503723 100644
 --- a/config/cmake/config.hpp.in
@@ -339,24 +248,6 @@ index 32db499ee..0f83d5bf1 100644
 +    message(FATAL_ERROR "Unable to determine MUMPS version.")
 +  endif()
 +endif()
-diff --git a/config/cmake/modules/FindScotch.cmake b/config/cmake/modules/FindScotch.cmake
-index 7a22bef4f..f4d1ff52e 100644
---- a/config/cmake/modules/FindScotch.cmake
-+++ b/config/cmake/modules/FindScotch.cmake
-@@ -22,8 +22,13 @@ mfem_find_package(Scotch Scotch Scotch_DIR "" "" "" ""
-   ADD_COMPONENT "scotcherr" "" "" "lib" scotcherr
-   ADD_COMPONENT "scotcherrexit" "" "" "lib" scotcherrexit
-   ADD_COMPONENT "scotchmetis" "include" "metis.h" "lib" scotchmetis
-+  ADD_COMPONENT "scotchmetisv3" "include" "metis.h" "lib" scotchmetisv3
-+  ADD_COMPONENT "scotchmetisv5" "include" "metis.h" "lib" scotchmetisv5
-+  ADD_COMPONENT "esmumps" "" "" "lib" esmumps
-   ADD_COMPONENT "ptscotch" "include" ptscotch.h "lib" ptscotch
-   ADD_COMPONENT "ptscotcherr" "" "" "lib" ptscotcherr
-   ADD_COMPONENT "ptscotcherrexit" "" "" "lib" ptscotcherrexit
-   ADD_COMPONENT "ptscotchparmetis" "include" "parmetis.h" "lib" ptscotchparmetis
-+  ADD_COMPONENT "ptscotchparmetisv3" "include" "parmetis.h" "lib" ptscotchparmetisv3
-+  ADD_COMPONENT "ptesmumps" "" "" "lib" ptesmumps
-   )
 diff --git a/config/cmake/modules/FindZFP.cmake b/config/cmake/modules/FindZFP.cmake
 new file mode 100644
 index 000000000..5c35c38b5
@@ -485,19 +376,20 @@ index 69e83db85..0e68416b0 100644
  
  // Enable functionality based on the Google Benchmark library.
 diff --git a/config/defaults.cmake b/config/defaults.cmake
-index 0141ae3fe..d760f5172 100644
+index fa76d6cb2..aadd02c7c 100644
 --- a/config/defaults.cmake
 +++ b/config/defaults.cmake
-@@ -133,16 +133,17 @@ set(ParMETIS_DIR "${MFEM_DIR}/../parmetis-4.0.3" CACHE PATH
+@@ -133,16 +133,18 @@ set(ParMETIS_DIR "${MFEM_DIR}/../parmetis-4.0.3" CACHE PATH
  set(ParMETIS_REQUIRED_PACKAGES "METIS" CACHE STRING
      "Additional packages required by ParMETIS.")
  
 -set(SuperLUDist_DIR "${MFEM_DIR}/../SuperLU_DIST_6.3.1" CACHE PATH
-+set(SuperLUDist_DIR "${MFEM_DIR}/../SuperLU_DIST_7.2.0" CACHE PATH
++set(SuperLUDist_DIR "${MFEM_DIR}/../SuperLU_DIST_8.1.2" CACHE PATH
      "Path to the SuperLU_DIST library.")
  # SuperLU_DIST may also depend on "OpenMP", depending on how it was compiled.
 -set(SuperLUDist_REQUIRED_PACKAGES "MPI" "BLAS" "ParMETIS" CACHE STRING
-+set(SuperLUDist_REQUIRED_PACKAGES "MPI" "LAPACK" "BLAS" "ParMETIS" "METIS" CACHE STRING
++set(SuperLUDist_REQUIRED_PACKAGES "MPI" "ParMETIS" "METIS"
++    "LAPACK" "BLAS" CACHE STRING
      "Additional packages required by SuperLU_DIST.")
  
 -set(MUMPS_DIR "${MFEM_DIR}/../MUMPS_5.2.0" CACHE PATH
@@ -506,63 +398,31 @@ index 0141ae3fe..d760f5172 100644
 -# Packages required by MUMPS, depending on how it was compiled.
 -set(MUMPS_REQUIRED_PACKAGES "MPI" "BLAS" "METIS" "ScaLAPACK" CACHE STRING
 +# MUMPS may also depend on "OpenMP", depending on how it was compiled.
-+set(MUMPS_REQUIRED_PACKAGES "MPI" "MPI_Fortran" "LAPACK" "BLAS" "ScaLAPACK"
-+    "ParMETIS" "METIS" "Scotch/ptscotch/ptscotcherr/scotch/scotcherr/ptesmumps/ptscotchparmetisv3/esmumps" CACHE STRING
++set(MUMPS_REQUIRED_PACKAGES "MPI" "MPI_Fortran" "ParMETIS" "METIS"
++    "ScaLAPACK" "LAPACK" "BLAS" CACHE STRING
      "Additional packages required by MUMPS.")
  # If the MPI package does not find all required Fortran libraries:
  # set(MUMPS_REQUIRED_LIBRARIES "gfortran" "mpi_mpifh" CACHE STRING
-@@ -152,8 +153,8 @@ set(STRUMPACK_DIR "${MFEM_DIR}/../STRUMPACK-build" CACHE PATH
-     "Path to the STRUMPACK library.")
+@@ -153,7 +155,8 @@ set(STRUMPACK_DIR "${MFEM_DIR}/../STRUMPACK-build" CACHE PATH
  # STRUMPACK may also depend on "OpenMP", depending on how it was compiled.
  # Starting with v2.2.0 of STRUMPACK, ParMETIS and Scotch are optional.
--set(STRUMPACK_REQUIRED_PACKAGES "MPI" "MPI_Fortran" "ParMETIS" "METIS"
+ set(STRUMPACK_REQUIRED_PACKAGES "MPI" "MPI_Fortran" "ParMETIS" "METIS"
 -    "ScaLAPACK" "Scotch/ptscotch/ptscotcherr/scotch/scotcherr" CACHE STRING
-+set(STRUMPACK_REQUIRED_PACKAGES "MPI" "MPI_Fortran" "LAPACK" "BLAS" "ScaLAPACK"
-+    "ParMETIS" "METIS" "Scotch/ptscotch/ptscotcherr/scotch/scotcherr/ptesmumps/ptscotchparmetisv3/esmumps" CACHE STRING
++    "Scotch/ptscotch/ptscotcherr/scotch/scotcherr"
++    "ScaLAPACK" "LAPACK" "BLAS" CACHE STRING
      "Additional packages required by STRUMPACK.")
  # If the MPI package does not find all required Fortran libraries:
  # set(STRUMPACK_REQUIRED_LIBRARIES "gfortran" "mpi_mpifh" CACHE STRING
-@@ -170,9 +171,12 @@ set(CMAKE_THREAD_PREFER_PTHREAD TRUE)
- set(Threads_LIB_VARS CMAKE_THREAD_LIBS_INIT)
- 
- # The ScaLAPACK library, required by STRUMPACK
--set(ScaLAPACK_DIR "${MFEM_DIR}/../scalapack-2.0.2/lib/cmake/scalapack-2.0.2"
--    CACHE PATH "Path to the configuration file scalapack-config.cmake")
--set(ScaLAPACK_TARGET_NAMES scalapack)
-+set(ScaLAPACK_DIR "${MFEM_DIR}/../scalapack-2.0.2" CACHE PATH
-+    "Path to the ScaLAPACK library.")
-+# Alternatively, import ScaLAPACK using config mode:
-+# set(ScaLAPACK_DIR "${MFEM_DIR}/../scalapack-2.0.2/lib/cmake/scalapack-2.0.2"
-+#     CACHE PATH "Path to the configuration file scalapack-config.cmake")
-+# set(ScaLAPACK_TARGET_NAMES scalapack)
- # set(ScaLAPACK_TARGET_FORCE)
- # set(ScaLAPACK_IMPORT_CONFIG DEBUG)
- 
 diff --git a/config/defaults.mk b/config/defaults.mk
-index 0975cb99c..4b4974773 100644
+index b18ce1ba5..27ea130ac 100644
 --- a/config/defaults.mk
 +++ b/config/defaults.mk
-@@ -226,10 +226,11 @@ ifeq ($(MFEM_USE_SUPERLU)$(MFEM_USE_STRUMPACK)$(MFEM_USE_MUMPS),NONONO)
-      METIS_LIB = -L$(METIS_DIR)/lib -lmetis
-    endif
- else
--   # ParMETIS: currently needed by SuperLU or STRUMPACK. We assume that METIS 5
--   # (included with ParMETIS) is installed in the same location.
-+   # ParMETIS: currently needed by SuperLU or STRUMPACK
-+   # We assume that METIS 5 (included with ParMETIS) is installed in the same
-+   # location
-    # Starting with STRUMPACK v2.2.0, ParMETIS is an optional dependency while
--   # METIS is still required.
-+   # METIS is still required (also an optional dependency for MUMPS)
-    METIS_DIR = @MFEM_DIR@/../parmetis-4.0.3
-    METIS_OPT = -I$(METIS_DIR)/include
-    METIS_LIB = -L$(METIS_DIR)/lib -lparmetis -lmetis
-@@ -284,10 +285,10 @@ ifeq ($(MFEM_USE_SUPERLU5),YES)
+@@ -284,10 +284,10 @@ ifeq ($(MFEM_USE_SUPERLU5),YES)
     SUPERLU_LIB = $(XLINKER)-rpath,$(SUPERLU_DIR)/lib -L$(SUPERLU_DIR)/lib\
        -lsuperlu_dist_5.1.0
  else
 -   SUPERLU_DIR = @MFEM_DIR@/../SuperLU_DIST_6.3.1
-+   SUPERLU_DIR = @MFEM_DIR@/../SuperLU_DIST_7.2.0
++   SUPERLU_DIR = @MFEM_DIR@/../SuperLU_DIST_8.1.2
     SUPERLU_OPT = -I$(SUPERLU_DIR)/include
     SUPERLU_LIB = $(XLINKER)-rpath,$(SUPERLU_DIR)/lib64 -L$(SUPERLU_DIR)/lib64\
 -      -lsuperlu_dist -lblas
@@ -570,7 +430,7 @@ index 0975cb99c..4b4974773 100644
  endif
  
  # SCOTCH library configuration (required by STRUMPACK <= v2.1.0, optional in
-@@ -311,7 +312,7 @@ MPI_FORTRAN_LIB = -lmpifort
+@@ -311,7 +311,7 @@ MPI_FORTRAN_LIB = -lmpifort
  # MPI_FORTRAN_LIB += -lgfortran
  
  # MUMPS library configuration
@@ -781,7 +641,7 @@ index 2bd220b07..8d66b5699 100644
     delete SLU_A;
     delete superlu;
 diff --git a/linalg/mumps.cpp b/linalg/mumps.cpp
-index eae2bd58c..6fd756967 100644
+index eae2bd58c..8ec9a8832 100644
 --- a/linalg/mumps.cpp
 +++ b/linalg/mumps.cpp
 @@ -16,58 +16,123 @@
@@ -1133,7 +993,7 @@ index eae2bd58c..6fd756967 100644
        displs[0] = 0;
        int s = 0;
        for (int k = 0; k < numProcs-1; k++)
-@@ -196,54 +302,108 @@ void MUMPSSolver::SetOperator(const Operator &op)
+@@ -196,54 +302,109 @@ void MUMPSSolver::SetOperator(const Operator &op)
  #endif
  }
  
@@ -1173,13 +1033,14 @@ index eae2bd58c..6fd756967 100644
 +   Array<Vector *> Y(1);
 +   X[0] = &x;
 +   Y[0] = &y;
-+   Mult(X, Y);
++   ArrayMult(X, Y);
 +}
  
 -   id->lsol_loc = id->MUMPS_INFO(23);
 -   id->isol_loc = new int[id->MUMPS_INFO(23)];
 -   id->sol_loc = new double[id->MUMPS_INFO(23)];
-+void MUMPSSolver::Mult(const Array<const Vector *> &X, Array<Vector *> &Y) const
++void MUMPSSolver::ArrayMult(const Array<const Vector *> &X,
++                            Array<Vector *> &Y) const
 +{
 +   MFEM_ASSERT(X.Size() == Y.Size(),
 +               "Number of columns mismatch in MUMPSSolver::Mult!");
@@ -1254,19 +1115,19 @@ index eae2bd58c..6fd756967 100644
     id->MUMPS_ICNTL(9) = 1;
 +}
  
-+void MUMPSSolver::MultTranspose(const Array<const Vector *> &X,
-+                                Array<Vector *> &Y) const
++void MUMPSSolver::ArrayMultTranspose(const Array<const Vector *> &X,
++                                     Array<Vector *> &Y) const
 +{
 +   // Set flag for transpose solve
 +   id->MUMPS_ICNTL(9) = 0;
-+   Mult(X, Y);
++   ArrayMult(X, Y);
 +
 +   // Reset the flag
 +   id->MUMPS_ICNTL(9) = 1;
  }
  
  void MUMPSSolver::SetPrintLevel(int print_lvl)
-@@ -256,34 +416,34 @@ void MUMPSSolver::SetMatrixSymType(MatType mtype)
+@@ -256,34 +417,34 @@ void MUMPSSolver::SetMatrixSymType(MatType mtype)
     mat_type = mtype;
  }
  
@@ -1320,7 +1181,7 @@ index eae2bd58c..6fd756967 100644
     id->MUMPS_ICNTL(5) = 0;
     // Use A or A^T
     id->MUMPS_ICNTL(9) = 1;
-@@ -301,7 +461,6 @@ void MUMPSSolver::SetParameters()
+@@ -301,7 +462,6 @@ void MUMPSSolver::SetParameters()
     id->MUMPS_ICNTL(18) = 3;
     // Schur complement (no Schur complement matrix returned)
     id->MUMPS_ICNTL(19) = 0;
@@ -1328,7 +1189,7 @@ index eae2bd58c..6fd756967 100644
  #if MFEM_MUMPS_VERSION >= 530
     // Distributed RHS
     id->MUMPS_ICNTL(20) = 10;
-@@ -317,6 +476,53 @@ void MUMPSSolver::SetParameters()
+@@ -317,6 +477,53 @@ void MUMPSSolver::SetParameters()
     id->MUMPS_ICNTL(22) = 0;
     // Max size of working memory (default = based on estimates)
     id->MUMPS_ICNTL(23) = 0;
@@ -1382,7 +1243,7 @@ index eae2bd58c..6fd756967 100644
  }
  
  #if MFEM_MUMPS_VERSION >= 530
-@@ -330,24 +536,23 @@ int MUMPSSolver::GetRowRank(int i, const Array<int> &row_starts_) const
+@@ -330,24 +537,23 @@ int MUMPSSolver::GetRowRank(int i, const Array<int> &row_starts_) const
     return std::distance(row_starts_.begin(), up) - 1;
  }
  
@@ -1415,7 +1276,7 @@ index eae2bd58c..6fd756967 100644
     int sbuff_size = send_count[numProcs-1];
     int rbuff_size = recv_count[numProcs-1];
     for (int k = 0; k < numProcs - 1; k++)
-@@ -358,54 +563,59 @@ void MUMPSSolver::RedistributeSol(const int * row_map,
+@@ -358,54 +564,59 @@ void MUMPSSolver::RedistributeSol(const int * row_map,
        rbuff_size += recv_count[k];
     }
  
@@ -1513,7 +1374,7 @@ index eae2bd58c..6fd756967 100644
  
     delete [] recvbuf_values;
 diff --git a/linalg/mumps.hpp b/linalg/mumps.hpp
-index 070838d8e..5f8dd6296 100644
+index 070838d8e..d12683f59 100644
 --- a/linalg/mumps.hpp
 +++ b/linalg/mumps.hpp
 @@ -16,12 +16,12 @@
@@ -1578,15 +1439,16 @@ index 070838d8e..5f8dd6296 100644
      * @param y Solution vector
      */
     void Mult(const Vector &x, Vector &y) const;
-+   void Mult(const Array<const Vector *> &X, Array<Vector *> &Y) const;
++   void ArrayMult(const Array<const Vector *> &X, Array<Vector *> &Y) const;
  
     /**
      * @brief Transpose Solve y = Op^{-T} x.
-@@ -70,13 +88,14 @@ public:
+@@ -70,13 +88,15 @@ public:
      * @param y Solution vector
      */
     void MultTranspose(const Vector &x, Vector &y) const;
-+   void MultTranspose(const Array<const Vector *> &X, Array<Vector *> &Y) const;
++   void ArrayMultTranspose(const Array<const Vector *> &X,
++                           Array<Vector *> &Y) const;
  
     /**
      * @brief Set the error print level for MUMPS
@@ -1598,7 +1460,7 @@ index 070838d8e..5f8dd6296 100644
      */
     void SetPrintLevel(int print_lvl);
  
-@@ -88,65 +107,109 @@ public:
+@@ -88,65 +108,109 @@ public:
      *
      * @param mtype Matrix type
      *
@@ -1735,10 +1597,10 @@ index 070838d8e..5f8dd6296 100644
  
  } // namespace mfem
 diff --git a/linalg/strumpack.cpp b/linalg/strumpack.cpp
-index 30ff09ebe..c94d7f9a3 100644
+index c89ddeb56..9bb0f5045 100644
 --- a/linalg/strumpack.cpp
 +++ b/linalg/strumpack.cpp
-@@ -16,234 +16,457 @@
+@@ -16,238 +16,455 @@
  
  #include "strumpack.hpp"
  
@@ -2022,14 +1884,14 @@ index 30ff09ebe..c94d7f9a3 100644
 +template <typename STRUMPACKSolverType>
 +void STRUMPACKSolverBase<STRUMPACKSolverType>::
 +SetMatching(strumpack::MatchingJob job)
-+{
+ {
 +   solver_->options().set_matching(job);
 +}
 +#else
 +template <typename STRUMPACKSolverType>
 +void STRUMPACKSolverBase<STRUMPACKSolverType>::
 +SetMatching(strumpack::MC64Job job)
- {
++{
 +   solver_->options().set_mc64job(job);
 +}
 +#endif
@@ -2139,8 +2001,8 @@ index 30ff09ebe..c94d7f9a3 100644
 +   MFEM_VERIFY(APtr_,
 +               "STRUMPACK: Operator is not a STRUMPACKRowLocMatrix!");
  
--   double*  yPtr = (double*)y;
--   double*  xPtr = (double*)(const_cast<Vector&>(x));
+-   double*  yPtr = y.HostWrite();
+-   const double*  xPtr = x.HostRead();
 +   // Set mfem::Operator member data
 +   height = op.Height();
 +   width  = op.Width();
@@ -2161,14 +2023,18 @@ index 30ff09ebe..c94d7f9a3 100644
 -         MFEM_ABORT("STRUMPACK:  Matrix reordering failed!");
 -      }
 -      break;
+-      default:
+-      {
+-         MFEM_ABORT("STRUMPACK: 'factor()' error code = " << ret);
+-      }
 +      solver_->set_matrix(*(APtr_->GetA()));
-    }
--   solver_->options().set_verbose( solve_verbose_ );
--   solver_->solve(xPtr, yPtr);
++   }
 +   else
 +   {
 +      solver_->update_matrix_values(*(APtr_->GetA()));
-+   }
+    }
+-   solver_->options().set_verbose( solve_verbose_ );
+-   solver_->solve(xPtr, yPtr);
 +}
  
 +template <typename STRUMPACKSolverType>
@@ -2201,10 +2067,8 @@ index 30ff09ebe..c94d7f9a3 100644
 +               "STRUMPACK: Invalid y.Size() = " << y.Size() <<
 +               ", expected size = " << Height() << "!");
 +
-+   x.HostRead();
-+   y.HostReadWrite();
-+   const double *xPtr = (const double *)x;
-+   double *yPtr       = (double *)y;
++   const double *xPtr = x.HostRead();
++   double *yPtr       = y.HostReadWrite();
 +
 +   FactorInternal();
 +   solver_->options().set_verbose(solve_verbose_);
@@ -2219,7 +2083,7 @@ index 30ff09ebe..c94d7f9a3 100644
 -   solver_->set_matrix( *(APtr_->getA()) );
 +template <typename STRUMPACKSolverType>
 +void STRUMPACKSolverBase<STRUMPACKSolverType>::
-+Mult(const Array<const Vector *> &X, Array<Vector *> &Y) const
++ArrayMult(const Array<const Vector *> &X, Array<Vector *> &Y) const
 +{
 +   MFEM_ASSERT(X.Size() == Y.Size(),
 +               "Number of columns mismatch in STRUMPACK solve!");
@@ -2249,8 +2113,8 @@ index 30ff09ebe..c94d7f9a3 100644
 +      Vector s(rhs_, i * ldx, ldx);
 +      s = *X[i];
 +   }
-+   const double *xPtr = (const double *)rhs_;
-+   double *yPtr       = (double *)sol_;
++   const double *xPtr = rhs_.HostRead();
++   double *yPtr       = sol_.HostReadWrite();
 +
 +   FactorInternal();
 +   solver_->options().set_verbose(solve_verbose_);
@@ -2331,7 +2195,7 @@ index 30ff09ebe..c94d7f9a3 100644
  
  #endif // MFEM_USE_MPI
 diff --git a/linalg/strumpack.hpp b/linalg/strumpack.hpp
-index 3634706ba..79252e356 100644
+index 3634706ba..021e3989a 100644
 --- a/linalg/strumpack.hpp
 +++ b/linalg/strumpack.hpp
 @@ -16,12 +16,14 @@
@@ -2423,7 +2287,7 @@ index 3634706ba..79252e356 100644
     // Factor and solve the linear system y = Op^{-1} x.
 -   void Mult( const Vector & x, Vector & y ) const;
 +   void Mult(const Vector &x, Vector &y) const;
-+   void Mult(const Array<const Vector *> &X, Array<Vector *> &Y) const;
++   void ArrayMult(const Array<const Vector *> &X, Array<Vector *> &Y) const;
  
     // Set the operator.
 -   void SetOperator( const Operator & op );
@@ -2649,7 +2513,7 @@ index 3634706ba..79252e356 100644
  #endif // MFEM_USE_MPI
  #endif // MFEM_USE_STRUMPACK
 diff --git a/linalg/superlu.cpp b/linalg/superlu.cpp
-index fdf6b842e..13a8a7d4e 100644
+index fdf6b842e..e3d946895 100644
 --- a/linalg/superlu.cpp
 +++ b/linalg/superlu.cpp
 @@ -16,48 +16,50 @@
@@ -2726,7 +2590,7 @@ index fdf6b842e..13a8a7d4e 100644
        root ++;
        if (root <= rem)
        {
-@@ -72,546 +74,707 @@ unsigned int superlu_internal::sqrti( const unsigned int & a )
+@@ -72,546 +74,709 @@ unsigned int superlu_internal::sqrti( const unsigned int & a )
     return (root >> 1);
  }
  
@@ -3521,11 +3385,12 @@ index fdf6b842e..13a8a7d4e 100644
 +   Array<Vector *> Y(1);
 +   X[0] = &x;
 +   Y[0] = &y;
-+   Mult(X, Y);
++   ArrayMult(X, Y);
  }
  
 -void SuperLUSolver::Mult( const Vector & x, Vector & y ) const
-+void SuperLUSolver::Mult(const Array<const Vector *> &X, Array<Vector *> &Y) const
++void SuperLUSolver::ArrayMult(const Array<const Vector *> &X,
++                              Array<Vector *> &Y) const
  {
     MFEM_ASSERT(APtr_ != NULL,
                 "SuperLU Error: The operator must be set before"
@@ -3675,12 +3540,13 @@ index fdf6b842e..13a8a7d4e 100644
 +}
  
 -   int      info = -1, locSize = y.Size();
-+void SuperLUSolver::MultTranspose(const Array<const Vector *> &X, Array<Vector *> &Y) const
++void SuperLUSolver::ArrayMultTranspose(const Array<const Vector *> &X,
++                                       Array<Vector *> &Y) const
 +{
 +   // Set flag for transpose solve
 +   superlu_dist_options_t *options = (superlu_dist_options_t *)optionsPtr_;
 +   options->Trans = TRANS;
-+   Mult(X, Y);
++   ArrayMult(X, Y);
  
 -   // Solve the system
 -   pdgssvx(options, A, SPstruct, yPtr, locSize, nrhs_, grid,
@@ -3779,7 +3645,7 @@ index fdf6b842e..13a8a7d4e 100644
  #endif // MFEM_USE_MPI
  #endif // MFEM_USE_SUPERLU
 diff --git a/linalg/superlu.hpp b/linalg/superlu.hpp
-index 921ee4a4e..fd0e160b3 100644
+index 921ee4a4e..16e623c5e 100644
 --- a/linalg/superlu.hpp
 +++ b/linalg/superlu.hpp
 @@ -16,33 +16,30 @@
@@ -3925,12 +3791,12 @@ index 921ee4a4e..fd0e160b3 100644
 -   void SetParSymbFact      ( bool                     par );
 +   // Note: Factorization modifies the operator matrix.
 +   void Mult(const Vector &x, Vector &y) const;
-+   void Mult(const Array<const Vector *> &X, Array<Vector *> &Y) const;
++   void ArrayMult(const Array<const Vector *> &X, Array<Vector *> &Y) const;
 +
 +   // Factor and solve the linear system y = Op^{-T} x.
 +   // Note: Factorization modifies the operator matrix.
 +   void MultTranspose(const Vector &x, Vector &y) const;
-+   void MultTranspose(const Array<const Vector *> &X, Array<Vector *> &Y) const;
++   void ArrayMultTranspose(const Array<const Vector *> &X, Array<Vector *> &Y) const;
 +
 +   // Set various solver options. Refer to SuperLU_DIST documentation for
 +   // details.

@@ -25,6 +25,9 @@ GeometricMultigridSolver::GeometricMultigridSolver(
   // call to Mult. The multigrid operator size is set based on the finest space dimension.
   const int m = GetNumLevels();
   A_.resize(m, nullptr);
+  x_.resize(m, mfem::Vector());
+  y_.resize(m, mfem::Vector());
+  r_.resize(m, mfem::Vector());
   X_.resize(m, mfem::Array<mfem::Vector *>());
   Y_.resize(m, mfem::Array<mfem::Vector *>());
   R_.resize(m, mfem::Array<mfem::Vector *>());
@@ -87,47 +90,39 @@ void GeometricMultigridSolver::SetOperator(
 
 void GeometricMultigridSolver::InitVectors(int nrhs) const
 {
+  if (nrhs * height == x_.back().Size())
+  {
+    return;
+  }
   DestroyVectors();
   for (int l = 0; l < GetNumLevels(); l++)
   {
+    MFEM_VERIFY(A_[l], "Missing operator for geometric multigrid level " << l << "!");
+    x_[l].SetSize(nrhs * A_[l]->Height());
+    y_[l].SetSize(nrhs * A_[l]->Height());
+    r_[l].SetSize(nrhs * A_[l]->Height());
     X_[l].SetSize(nrhs);
     Y_[l].SetSize(nrhs);
     R_[l].SetSize(nrhs);
-    MFEM_VERIFY(A_[l], "Missing operator for geometric multigrid level " << l << "!");
     for (int j = 0; j < nrhs; j++)
     {
-      X_[l][j] = new mfem::Vector(A_[l]->Height());
-      Y_[l][j] = new mfem::Vector(A_[l]->Height());
-      R_[l][j] = new mfem::Vector(A_[l]->Height());
+      X_[l][j] = new mfem::Vector(x_[l], j * A_[l]->Height(), A_[l]->Height());
+      Y_[l][j] = new mfem::Vector(y_[l], j * A_[l]->Height(), A_[l]->Height());
+      R_[l][j] = new mfem::Vector(r_[l], j * A_[l]->Height(), A_[l]->Height());
     }
   }
 }
 
 void GeometricMultigridSolver::DestroyVectors() const
 {
-  for (auto &v : X_)
+  for (int l = 0; l < GetNumLevels(); l++)
   {
-    for (int j = 0; j < v.Size(); j++)
+    for (int j = 0; j < X_[l].Size(); j++)
     {
-      delete v[j];
+      delete X_[l][j];
+      delete Y_[l][j];
+      delete R_[l][j];
     }
-    v.DeleteAll();
-  }
-  for (auto &v : Y_)
-  {
-    for (int j = 0; j < v.Size(); j++)
-    {
-      delete v[j];
-    }
-    v.DeleteAll();
-  }
-  for (auto &v : R_)
-  {
-    for (int j = 0; j < v.Size(); j++)
-    {
-      delete v[j];
-    }
-    v.DeleteAll();
   }
 }
 
@@ -137,33 +132,27 @@ void GeometricMultigridSolver::VCycle(int l, bool initial_guess) const
   // level 0. Important to note that the smoothers must respect the iterative_mode flag
   // correctly (given X, Y, compute Y <- Y + B (X - A Y)) .
   B_[l]->iterative_mode = initial_guess;
-  B_[l]->Mult(X_[l], Y_[l]);
+  B_[l]->ArrayMult(X_[l], Y_[l]);
   if (l == 0)
   {
     return;
   }
 
   // Compute residual and restrict.
-  A_[l]->Mult(Y_[l], R_[l]);
-  for (int j = 0; j < X_[l].Size(); j++)
-  {
-    subtract(*X_[l][j], *R_[l][j], *R_[l][j]);
-  }
-  GetProlongationAtLevel(l - 1).MultTranspose(R_[l], X_[l - 1]);
+  A_[l]->ArrayMult(Y_[l], R_[l]);
+  subtract(x_[l], r_[l], r_[l]);
+  GetProlongationAtLevel(l - 1).ArrayMultTranspose(R_[l], X_[l - 1]);
 
   // Coarse grid correction.
   VCycle(l - 1, false);
 
   // Prolongate and add.
-  GetProlongationAtLevel(l - 1).Mult(Y_[l - 1], R_[l]);
-  for (int j = 0; j < X_[l].Size(); j++)
-  {
-    *Y_[l][j] += *R_[l][j];
-  }
+  GetProlongationAtLevel(l - 1).ArrayMult(Y_[l - 1], R_[l]);
+  y_[l] += r_[l];
 
   // Post-smooth, with nonzero initial guess.
   B_[l]->iterative_mode = true;
-  B_[l]->MultTranspose(X_[l], Y_[l]);
+  B_[l]->ArrayMultTranspose(X_[l], Y_[l]);
 }
 
 }  // namespace palace
