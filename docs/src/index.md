@@ -6,9 +6,9 @@
 # Palace: 3D Finite Element Solver for Computational Electromagnetics
 
 *Palace*, for **PA**rallel **LA**rge-scale **C**omputational **E**lectromagnetics, is an
-open-source parallel finite element code for full-wave 3D electromagnetic simulations in
-the frequency or time domain, using the [MFEM](http://mfem.org) finite element
-discretization library.
+open-source, parallel finite element code for full-wave 3D electromagnetic simulations in
+the frequency or time domain, using the [MFEM finite element discretization library]
+(http://mfem.org).
 
 ## Key features
 
