@@ -11,11 +11,11 @@ endif()
 set(__extern_git_tags YES)
 
 set(EXTERN_ARPACK_GIT_TAG
-  "db55a7ff4180bb440a980d618e302eded0db52f3" CACHE STRING  # 10/27/2022
+  "f4d7302a49509ddaf9984653f0e4858948026d8b" CACHE STRING  # 01/19/2023
   "Git tag for external ARPACK-NG build"
 )
 set(EXTERN_BUTTERFLYPACK_GIT_TAG
-  "4f79c39f359454ccc091f36ebb803f68276f0645" CACHE STRING  # 10/21/2022
+  "06657372bb941d6e0bd099de5a12b076b3dfae27" CACHE STRING  # 01/19/2023
   "Git tag for external ButterflyPACK build"
 )
 set(EXTERN_GKLIB_GIT_TAG
@@ -27,7 +27,7 @@ set(EXTERN_GSLIB_GIT_TAG
   "Git tag for external GSLIB build"
 )
 set(EXTERN_HYPRE_GIT_TAG
-  "9bbdd9799fbb8def6f664eb52df74fa25b81380b" CACHE STRING  # 12/05/2022
+  "d3f6b03c87f12aabc94f8c2c606b6000d50786fc" CACHE STRING  # 01/23/2023
   "Git tag for external HYPRE build"
 )
 set(EXTERN_METIS_GIT_TAG
@@ -35,7 +35,7 @@ set(EXTERN_METIS_GIT_TAG
   "Git tag for external METIS build"
 )
 set(EXTERN_MUMPS_GIT_TAG
-  "d293dfd680523d4d9b72c22df8fc5eddfd846703" CACHE STRING  # 12/01/2022
+  "38bf3b3f598d983a630cb7d62561c140c27e7019" CACHE STRING  # 01/26/2023
   "Git tag for external MUMPS build"
 )
 set(EXTERN_PARMETIS_GIT_TAG
@@ -43,22 +43,18 @@ set(EXTERN_PARMETIS_GIT_TAG
   "Git tag for external ParMETIS build"
 )
 set(EXTERN_PETSC_GIT_TAG
-  "a44db9c6abf53727ac1441d1d480305cab36de07" CACHE STRING  # 12/06/2022
+  "fc0b9b6be2232f473472b55ad745d8ca4e2668e2" CACHE STRING  # 01/26/2023
   "Git tag for external PETSc build"
 )
 set(EXTERN_SCALAPACK_GIT_TAG
   "bb40089771fcbd84140ea35796e70094df0d77d5" CACHE STRING  # 11/29/2022
   "Git tag for external ScaLAPACK build"
 )
-set(EXTERN_SLEPC_GIT_TAG
-  "3ef5a0699975fbf8418b3a969196fe73958e7253" CACHE STRING  # 11/30/2022
-  "Git tag for external SLEPc build"
-)
 set(EXTERN_STRUMPACK_GIT_TAG
-  "e4b110b2d823c51a90575b77ec1531c699097a9f" CACHE STRING  # 12/01/2022
+  "882f7611c1aab9f57cc2e08950530f0efeec6edf" CACHE STRING  # 01/24/2023
   "Git tag for external STRUMPACK build"
 )
 set(EXTERN_SUPERLU_GIT_TAG
-  "72602c56e0fd332e150997f908c7edb314c5e915" CACHE STRING  # 12/05/2022
+  "1aa8e658586abed61bed519aeee2a20bec99e0d7" CACHE STRING  # 01/25/2023
   "Git tag for external SuperLU_DIST build"
 )

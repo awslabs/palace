@@ -12,7 +12,9 @@ namespace palace
 //
 // Matrix-free diagonally-scaled Chebyshev smoothing. This is largely the same as
 // mfem::OperatorChebyshevSmoother allows a nonzero initial guess and uses alternative
-// methods to estimate the largest eigenvalue.
+// methods to estimate the largest eigenvalue. See also Phillips and Fischer, Optimal
+// Chebyshev smoothers and one-sided V-cycles, arXiv:2210.03179v1 (2022) for reference on
+// the 4th-kind Chebyshev polynomial smoother.
 //
 class ChebyshevSmoother : public mfem::Solver
 {
@@ -28,48 +30,45 @@ private:
   // Diagonal scaling of the operator.
   mfem::Vector dinv;
 
-  // Array of coefficients for Chebyshev polynomial smoothing.
-  mfem::Array<double> coeff;
+  // Maximum operator eigenvalue for Chebyshev polynomial smoothing.
+  double lambda_max;
 
   // Temporary vectors for smoother application.
-  mutable mfem::Vector r, z;
+  mutable mfem::Vector r, d;
+  mutable mfem::Array<mfem::Vector *> R, D;
+
+  // Management of temporary vector storage.
+  void InitVectors(int nrhs) const;
+  void DestroyVectors() const;
 
 public:
   ChebyshevSmoother(MPI_Comm c, const mfem::Array<int> &tdof_list, int smooth_it,
                     int poly_order);
+  ~ChebyshevSmoother() { DestroyVectors(); }
 
   void SetOperator(const mfem::Operator &op) override;
 
   void Mult(const mfem::Vector &x, mfem::Vector &y) const override
   {
-    // y = y + p(A) (x - A y)
-    for (int it = 0; it < pc_it; it++)
-    {
-      if (iterative_mode || it > 0)
-      {
-        A->Mult(y, r);
-        subtract(x, r, r);
-      }
-      else
-      {
-        r = x;
-        y = 0.0;
-      }
-      r *= dinv;
-      y.Add(coeff[0], r);
-      for (int k = 1; k < order; k++)
-      {
-        z = r;
-        A->Mult(z, r);
-        r *= dinv;
-        y.Add(coeff[k], r);
-      }
-    }
+    mfem::Array<const mfem::Vector *> X(1);
+    mfem::Array<mfem::Vector *> Y(1);
+    X[0] = &x;
+    Y[0] = &y;
+    ArrayMult(X, Y);
   }
+
+  void ArrayMult(const mfem::Array<const mfem::Vector *> &X,
+                 mfem::Array<mfem::Vector *> &Y) const override;
 
   void MultTranspose(const mfem::Vector &x, mfem::Vector &y) const override
   {
     Mult(x, y);  // Assumes operator symmetry
+  }
+
+  void ArrayMultTranspose(const mfem::Array<const mfem::Vector *> &X,
+                          mfem::Array<mfem::Vector *> &Y) const override
+  {
+    ArrayMult(X, Y);  // Assumes operator symmetry
   }
 };
 

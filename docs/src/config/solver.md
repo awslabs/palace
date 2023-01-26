@@ -386,7 +386,7 @@ preconditioning (when `"UseGMG"` is `true`).
   - `"Type"`: `"STRUMPACK-MP"`
   - `"KSPType"`: `"MINRES"`, `"CGSYM"`, `"FCG"`, `"BCGS"`, `"BCGSL"`, `"FBCGS"`, `"QMRCGS"`,
     `"TFQMR"`
-  - `"UseMGS" [true]`
+  - `"UseMGS" [false]`
   - `"UseCGS2" [false]`
   - `"UseKSPPiped" [false]`
   - `"UseLOR" [false]`

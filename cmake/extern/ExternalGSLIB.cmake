@@ -41,28 +41,33 @@ if(NOT "${CMAKE_C_COMPILER}" STREQUAL "${MPI_C_COMPILER}")
   endforeach()
 endif()
 
+# Don't build GSLIB with external BLAS (default option)
+list(APPEND GSLIB_OPTIONS
+  "BLAS=0"
+)
+
 # Configure BLAS dependency
-if(NOT "${BLAS_LAPACK_LIBRARIES}" STREQUAL "")
-  string(REPLACE "$<SEMICOLON>" " " GSLIB_BLAS_LAPACK_LIBRARIES "${BLAS_LAPACK_LIBRARIES}")
-  set(GSLIB_LDFLAGS "${GSLIB_LDFLAGS} ${GSLIB_BLAS_LAPACK_LIBRARIES}")
-  foreach(INCLUDE_DIR IN LISTS BLAS_LAPACK_INCLUDE_DIRS)
-    set(GSLIB_CFLAGS "${GSLIB_CFLAGS} -I${INCLUDE_DIR}")
-  endforeach()
-  if("${BLA_VENDOR}" MATCHES "Intel")
-    list(APPEND GSLIB_OPTIONS
-      "BLAS=1"
-      "MKL=1"
-    )
-  else()
-    list(APPEND GSLIB_OPTIONS
-      "BLAS=1"
-    )
-  endif()
-else()
-  list(APPEND GSLIB_OPTIONS
-    "BLAS=0"
-  )
-endif()
+# if(NOT "${BLAS_LAPACK_LIBRARIES}" STREQUAL "")
+#   string(REPLACE "$<SEMICOLON>" " " GSLIB_BLAS_LAPACK_LIBRARIES "${BLAS_LAPACK_LIBRARIES}")
+#   set(GSLIB_LDFLAGS "${GSLIB_LDFLAGS} ${GSLIB_BLAS_LAPACK_LIBRARIES}")
+#   foreach(INCLUDE_DIR IN LISTS BLAS_LAPACK_INCLUDE_DIRS)
+#     set(GSLIB_CFLAGS "${GSLIB_CFLAGS} -I${INCLUDE_DIR}")
+#   endforeach()
+#   if("${BLA_VENDOR}" MATCHES "Intel")
+#     list(APPEND GSLIB_OPTIONS
+#       "BLAS=1"
+#       "MKL=1"
+#     )
+#   else()
+#     list(APPEND GSLIB_OPTIONS
+#       "BLAS=1"
+#     )
+#   endif()
+# else()
+#   list(APPEND GSLIB_OPTIONS
+#     "BLAS=0"
+#   )
+# endif()
 
 list(APPEND GSLIB_OPTIONS
   "CFLAGS=${GSLIB_CFLAGS}"
@@ -71,11 +76,6 @@ list(APPEND GSLIB_OPTIONS
 
 string(REPLACE ";" "; " GSLIB_OPTIONS_PRINT "${GSLIB_OPTIONS}")
 message(STATUS "GSLIB_OPTIONS: ${GSLIB_OPTIONS_PRINT}")
-
-# Build fix for MKL
-set(GSLIB_PATCH_FILES
-  "${CMAKE_CURRENT_SOURCE_DIR}/patch/gslib/patch_mkl.diff"
-)
 
 include(ExternalProject)
 ExternalProject_Add(gslib
@@ -87,7 +87,6 @@ ExternalProject_Add(gslib
   PREFIX            ${CMAKE_CURRENT_BINARY_DIR}/gslib-cmake
   BUILD_IN_SOURCE   TRUE
   UPDATE_COMMAND    ""
-  PATCH_COMMAND     git apply "${GSLIB_PATCH_FILES}"
   CONFIGURE_COMMAND ""
   BUILD_COMMAND     ""
   INSTALL_COMMAND   ${CMAKE_MAKE_PROGRAM} ${GSLIB_OPTIONS} install

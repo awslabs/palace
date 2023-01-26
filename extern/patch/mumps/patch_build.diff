@@ -1,8 +1,8 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index e834ed5..93267f2 100644
+index 5a83b9b..037f707 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -42,7 +42,6 @@ include(cmake/lapack.cmake)
+@@ -42,17 +42,9 @@ include(cmake/lapack.cmake)
  
  if(parallel)
    find_package(MPI COMPONENTS C Fortran REQUIRED)
@@ -10,7 +10,17 @@ index e834ed5..93267f2 100644
  
    set(NUMERIC_LIBS ${SCALAPACK_LIBRARIES} ${LAPACK_LIBRARIES})
  
-@@ -79,15 +78,6 @@ if(metis)
+-  if(find_static AND NOT WIN32 AND
+-    MKL IN_LIST LAPACK_COMPONENTS AND
+-    CMAKE_VERSION VERSION_GREATER_EQUAL 3.24
+-    )
+-    set(NUMERIC_LIBS $<LINK_GROUP:RESCAN,${NUMERIC_LIBS}>)
+-  endif()
+-
+   # avoid MPICH -fallow flag leakage
+   set(NUMERIC_INC ${SCALAPACK_INCLUDE_DIRS} ${LAPACK_INCLUDE_DIRS} ${MPI_Fortran_INCLUDE_DIRS})
+   list(APPEND NUMERIC_LIBS ${MPI_Fortran_LIBRARIES} MPI::MPI_C)
+@@ -79,15 +71,6 @@ if(metis)
  endif()
  list(APPEND ORDERING_LIBS pord)
  
@@ -23,21 +33,20 @@ index e834ed5..93267f2 100644
 -DESTINATION cmake
 -)
 -
- # --- download MUMPS source
- include(cmake/mumps_src.cmake)
+ message(STATUS "MUMPS ORDERING_DEFS: ${ORDERING_DEFS}")
+ message(STATUS "MUMPS ORDERING_LIBS: ${ORDERING_LIBS}")
  
-@@ -125,4 +115,4 @@ message(STATUS "Configured MUMPS ${MUMPS_UPSTREAM_VERSION} source in ${mumps_SOU
+@@ -127,4 +110,3 @@ message(STATUS "Configured MUMPS ${MUMPS_UPSTREAM_VERSION} source in ${mumps_SOU
  
  include(cmake/summary.cmake)
  
 -include(cmake/install.cmake)
-+# include(cmake/install.cmake)
 diff --git a/cmake/FindLAPACK.cmake b/cmake/FindLAPACK.cmake
 deleted file mode 100644
-index f8fae16..0000000
+index 2016c7c..0000000
 --- a/cmake/FindLAPACK.cmake
 +++ /dev/null
-@@ -1,524 +0,0 @@
+@@ -1,571 +0,0 @@
 -# Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
 -# file Copyright.txt or https://cmake.org/licensing for details.
 -
@@ -73,13 +82,15 @@ index f8fae16..0000000
 -COMPONENTS default to Netlib LAPACK / LapackE, otherwise:
 -
 -``MKL``
--  Intel MKL for MSVC, ICL, ICC, GCC and PGCC -- sequential by default, or add TBB or MPI as well
+-  Intel MKL -- sequential by default, or add TBB or MPI as well
+-``MKL64``
+-  MKL only: 64-bit integers  (default is 32-bit integers)
 -``OpenMP``
 -  Intel MPI with OpenMP threading addition to MKL
 -``TBB``
 -  Intel MPI + TBB for MKL
--``MKL64``
--  MKL only: 64-bit integers  (default is 32-bit integers)
+-``AOCL``
+-  AMD Optimizing CPU Libraries
 -
 -``LAPACKE``
 -  Netlib LapackE for C / C++
@@ -288,6 +299,48 @@ index f8fae16..0000000
 -
 -endfunction(openblas_libs)
 -
+-
+-function(aocl_libs)
+-
+-find_library(LAPACK_LIBRARY
+-NAMES flame AOCL-LibFLAME-Win-MT-dll AOCL-LibFLAME-Win
+-PATH_SUFFIXES LP64
+-DOC "LAPACK Flame library"
+-)
+-
+-find_library(BLAS_LIBRARY
+-NAMES blis-mt blis AOCL-LibBlis-Win-MT-dll
+-PATH_SUFFIXES LP64
+-DOC "BLAS Blis library"
+-)
+-
+-if(NOT (LAPACK_LIBRARY AND BLAS_LIBRARY))
+-  return()
+-endif()
+-
+-find_path(LAPACK_INCLUDE_DIR
+-NAMES FLAME.h
+-PATH_SUFFIXES LP64
+-DOC "Flame header"
+-)
+-
+-find_path(BLAS_INCLUDE_DIR
+-NAMES blis.h
+-PATH_SUFFIXES LP64
+-DOC "Blis header"
+-)
+-
+-if(NOT (LAPACK_INCLUDE_DIR AND BLAS_INCLUDE_DIR))
+-  return()
+-endif()
+-
+-
+-set(LAPACK_AOCL_FOUND true PARENT_SCOPE)
+-set(LAPACK_LIBRARY ${LAPACK_LIBRARY} ${BLAS_LIBRARY} ${CMAKE_THREAD_LIBS_INIT} PARENT_SCOPE)
+-set(LAPACK_INCLUDE_DIR ${LAPACK_INCLUDE_DIR} ${BLAS_INCLUDE_DIR} PARENT_SCOPE)
+-
+-endfunction(aocl_libs)
+-
 -#===============================
 -
 -function(find_mkl_libs)
@@ -350,7 +403,8 @@ index f8fae16..0000000
 -  OR OpenBLAS IN_LIST LAPACK_FIND_COMPONENTS
 -  OR Netlib IN_LIST LAPACK_FIND_COMPONENTS
 -  OR Atlas IN_LIST LAPACK_FIND_COMPONENTS
--  OR MKL IN_LIST LAPACK_FIND_COMPONENTS))
+-  OR MKL IN_LIST LAPACK_FIND_COMPONENTS
+-  OR AOCL IN_LIST LAPACK_FIND_COMPONENTS))
 -  if(DEFINED ENV{MKLROOT})
 -    list(APPEND LAPACK_FIND_COMPONENTS MKL)
 -  else()
@@ -452,6 +506,8 @@ index f8fae16..0000000
 -  netlib_libs()
 -elseif(OpenBLAS IN_LIST LAPACK_FIND_COMPONENTS)
 -  openblas_libs()
+-elseif(AOCL IN_LIST LAPACK_FIND_COMPONENTS)
+-  aocl_libs()
 -elseif(lapack_cray)
 -  # LAPACK is implicitly part of Cray PE LibSci, use Cray compiler wrapper.
 -endif()
@@ -562,14 +618,368 @@ index f8fae16..0000000
 -endif(LAPACK_FOUND)
 -
 -mark_as_advanced(LAPACK_LIBRARY LAPACK_INCLUDE_DIR)
+diff --git a/cmake/FindSCALAPACK.cmake b/cmake/FindSCALAPACK.cmake
+deleted file mode 100644
+index 47543a1..0000000
+--- a/cmake/FindSCALAPACK.cmake
++++ /dev/null
+@@ -1,301 +0,0 @@
+-# Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
+-# file Copyright.txt or https://cmake.org/licensing for details.
+-
+-#[=======================================================================[.rst:
+-
+-FindSCALAPACK
+--------------
+-
+-authored by SciVision: www.scivision.dev
+-
+-Finds SCALAPACK libraries for MKL, OpenMPI and MPICH.
+-Intel MKL relies on having environment variable MKLROOT set, typically by sourcing
+-mklvars.sh beforehand.
+-
+-This module does NOT find LAPACK.
+-
+-COMPONENTS
+-^^^^^^^^^^
+-
+-``MKL``
+-  Intel MKL for MSVC, oneAPI, GCC.
+-  Working with IntelMPI (default Window, Linux), MPICH (default Mac) or OpenMPI (Linux only).
+-
+-``MKL64``
+-  MKL only: 64-bit integers  (default is 32-bit integers)
+-
+-``STATIC``
+-  Library search default on non-Windows is shared then static. On Windows default search is static only.
+-  Specifying STATIC component searches for static libraries only.
+-
+-Result Variables
+-^^^^^^^^^^^^^^^^
+-
+-``SCALAPACK_FOUND``
+-  SCALapack libraries were found
+-``SCALAPACK_<component>_FOUND``
+-  SCALAPACK <component> specified was found
+-``SCALAPACK_LIBRARIES``
+-  SCALapack library files
+-``SCALAPACK_INCLUDE_DIRS``
+-  SCALapack include directories
+-
+-
+-References
+-^^^^^^^^^^
+-
+-* Pkg-Config and MKL:  https://software.intel.com/en-us/articles/intel-math-kernel-library-intel-mkl-and-pkg-config-tool
+-* MKL for Windows: https://software.intel.com/en-us/mkl-windows-developer-guide-static-libraries-in-the-lib-intel64-win-directory
+-* MKL Windows directories: https://software.intel.com/en-us/mkl-windows-developer-guide-high-level-directory-structure
+-* MKL link-line advisor: https://software.intel.com/en-us/articles/intel-mkl-link-line-advisor
+-#]=======================================================================]
+-
+-include(CheckFortranSourceCompiles)
+-
+-set(SCALAPACK_LIBRARY)  # avoids appending to prior FindScalapack
+-
+-#===== functions
+-
+-function(scalapack_check)
+-
+-if(NOT (MPI_C_FOUND AND MPI_Fortran_FOUND))
+-  find_package(MPI COMPONENTS C Fortran)
+-endif()
+-
+-if(NOT LAPACK_FOUND)
+-  # otherwise can cause 32-bit lapack when 64-bit wanted
+-  find_package(LAPACK)
+-endif()
+-if(NOT (MPI_Fortran_FOUND AND LAPACK_FOUND))
+-  return()
+-endif()
+-
+-# some OpenMPI builds need -pthread
+-find_package(Threads)
+-
+-
+-set(CMAKE_REQUIRED_FLAGS)
+-set(CMAKE_REQUIRED_LINK_OPTIONS)
+-set(CMAKE_REQUIRED_INCLUDES ${SCALAPACK_INCLUDE_DIR} ${LAPACK_INCLUDE_DIRS} ${MPI_Fortran_INCLUDE_DIRS})
+-set(CMAKE_REQUIRED_LIBRARIES ${SCALAPACK_LIBRARY})
+-if(BLACS_LIBRARY)
+-  list(APPEND CMAKE_REQUIRED_LIBRARIES ${BLACS_LIBRARY})
+-endif()
+-list(APPEND CMAKE_REQUIRED_LIBRARIES ${LAPACK_LIBRARIES} ${MPI_Fortran_LIBRARIES} ${CMAKE_THREAD_LIBS_INIT})
+-
+-if(STATIC IN_LIST SCALAPACK_FIND_COMPONENTS AND
+-  NOT WIN32 AND
+-  MKL IN_LIST SCALAPACK_FIND_COMPONENTS AND
+-  CMAKE_VERSION VERSION_GREATER_EQUAL 3.24
+-  )
+-  set(CMAKE_REQUIRED_LIBRARIES $<LINK_GROUP:RESCAN,${CMAKE_REQUIRED_LIBRARIES}>)
+-endif()
+-# MPI needed for IntelLLVM
+-
+-check_fortran_source_compiles(
+-"program test
+-use, intrinsic :: iso_fortran_env, only : real64
+-implicit none
+-real(real64), external :: pdlamch
+-integer :: ictxt
+-print *, pdlamch(ictxt, 'E')
+-end program"
+-SCALAPACK_d_FOUND
+-SRC_EXT f90
+-)
+-
+-check_fortran_source_compiles(
+-"program test
+-use, intrinsic :: iso_fortran_env, only : real32
+-implicit none
+-real(real32), external :: pslamch
+-integer :: ictxt
+-print *, pslamch(ictxt, 'E')
+-end program"
+-SCALAPACK_s_FOUND
+-SRC_EXT f90
+-)
+-
+-if(SCALAPACK_s_FOUND OR SCALAPACK_d_FOUND)
+-  set(SCALAPACK_links true PARENT_SCOPE)
+-endif()
+-
+-endfunction(scalapack_check)
+-
+-
+-function(scalapack_mkl scalapack_name blacs_name)
+-
+-find_library(SCALAPACK_LIBRARY
+-NAMES ${scalapack_name}
+-HINTS ${MKLROOT}
+-PATH_SUFFIXES lib lib/intel64
+-NO_DEFAULT_PATH
+-DOC "SCALAPACK library"
+-)
+-
+-find_library(BLACS_LIBRARY
+-NAMES ${blacs_name}
+-HINTS ${MKLROOT}
+-PATH_SUFFIXES lib lib/intel64
+-NO_DEFAULT_PATH
+-DOCS "BLACS library"
+-)
+-
+-find_path(SCALAPACK_INCLUDE_DIR
+-NAMES mkl_scalapack.h
+-HINTS ${MKLROOT}
+-PATH_SUFFIXES include
+-NO_DEFAULT_PATH
+-DOC "SCALAPACK include directory"
+-)
+-
+-# pc_mkl_INCLUDE_DIRS on Windows injects breaking garbage
+-
+-if(SCALAPACK_LIBRARY AND BLACS_LIBRARY AND SCALAPACK_INCLUDE_DIR)
+-  set(SCALAPACK_MKL_FOUND true)
+-endif()
+-
+-if(MKL64 IN_LIST SCALAPACK_FIND_COMPONENTS)
+-  set(SCALAPACK_MKL64_FOUND ${SCALAPACK_MKL_FOUND})
+-
+-  if(DEFINED ENV{I_MPI_ROOT})
+-    file(TO_CMAKE_PATH "$ENV{I_MPI_ROOT}" I_MPI_ROOT)
+-
+-    if(MSVC)
+-      set(CMAKE_FIND_LIBRARY_PREFIXES lib)
+-    endif()
+-
+-    find_library(SCALAPACK_MPI_LIB64
+-    NAMES mpi_ilp64
+-    HINTS ${I_MPI_ROOT}
+-    NO_DEFAULT_PATH
+-    PATH_SUFFIXES lib lib/release
+-    DOC "MPI 64-bit library"
+-    )
+-
+-    if(NOT SCALAPACK_MPI_LIB64)
+-      set(SCALAPACK_MKL64_FOUND false)
+-    endif()
+-  endif()
+-endif()
+-
+-set(SCALAPACK_MKL_FOUND ${SCALAPACK_MKL_FOUND} PARENT_SCOPE)
+-set(SCALAPACK_MKL64_FOUND ${SCALAPACK_MKL64_FOUND} PARENT_SCOPE)
+-
+-endfunction(scalapack_mkl)
+-
+-# === main
+-
+-set(scalapack_cray false)
+-if(DEFINED ENV{CRAYPE_VERSION})
+-  set(scalapack_cray true)
+-endif()
+-
+-if(NOT scalapack_cray)
+-  if(NOT MKL IN_LIST SCALAPACK_FIND_COMPONENTS AND DEFINED ENV{MKLROOT})
+-    list(APPEND SCALAPACK_FIND_COMPONENTS MKL)
+-  endif()
+-endif()
+-
+-if(STATIC IN_LIST SCALAPACK_FIND_COMPONENTS)
+-  set(_orig_suff ${CMAKE_FIND_LIBRARY_SUFFIXES})
+-  set(CMAKE_FIND_LIBRARY_SUFFIXES ${CMAKE_STATIC_LIBRARY_SUFFIX})
+-endif()
+-
+-if(MKL IN_LIST SCALAPACK_FIND_COMPONENTS OR MKL64 IN_LIST SCALAPACK_FIND_COMPONENTS)
+-  # we have to sanitize MKLROOT if it has Windows backslashes (\) otherwise it will break at build time
+-  # double-quotes are necessary per CMake to_cmake_path docs.
+-  file(TO_CMAKE_PATH "$ENV{MKLROOT}" MKLROOT)
+-
+-  if(MKL64 IN_LIST SCALAPACK_FIND_COMPONENTS)
+-    set(_mkl_bitflag i)
+-  else()
+-    set(_mkl_bitflag)
+-  endif()
+-
+-  # find MKL MPI binding
+-  if(WIN32)
+-    if(BUILD_SHARED_LIBS)
+-      scalapack_mkl(mkl_scalapack_${_mkl_bitflag}lp64_dll mkl_blacs_${_mkl_bitflag}lp64_dll)
+-    else()
+-      scalapack_mkl(mkl_scalapack_${_mkl_bitflag}lp64 mkl_blacs_intelmpi_${_mkl_bitflag}lp64)
+-    endif()
+-  elseif(APPLE)
+-    scalapack_mkl(mkl_scalapack_${_mkl_bitflag}lp64 mkl_blacs_mpich_${_mkl_bitflag}lp64)
+-  else()
+-    scalapack_mkl(mkl_scalapack_${_mkl_bitflag}lp64 mkl_blacs_intelmpi_${_mkl_bitflag}lp64)
+-  endif()
+-
+-elseif(scalapack_cray)
+-  # Cray PE has Scalapack build into LibSci. Use Cray compiler wrapper.
+-else()
+-
+-  find_library(SCALAPACK_LIBRARY
+-  NAMES scalapack scalapack-openmpi scalapack-mpich
+-  NAMES_PER_DIR
+-  PATH_SUFFIXES openmpi/lib mpich/lib
+-  DOC "SCALAPACK library"
+-  )
+-
+-  # some systems have libblacs as a separate file, instead of being subsumed in libscalapack.
+-  get_filename_component(BLACS_ROOT ${SCALAPACK_LIBRARY} DIRECTORY)
+-
+-  find_library(BLACS_LIBRARY
+-  NAMES blacs
+-  NO_DEFAULT_PATH
+-  HINTS ${BLACS_ROOT}
+-  DOC "BLACS library"
+-  )
+-
+-endif()
+-
+-if(STATIC IN_LIST SCALAPACK_FIND_COMPONENTS)
+-  if(SCALAPACK_LIBRARY)
+-    set(SCALAPACK_STATIC_FOUND true)
+-  endif()
+-  set(CMAKE_FIND_LIBRARY_SUFFIXES ${_orig_suff})
+-endif()
+-
+-# --- Check that Scalapack links
+-
+-if(scalapack_cray OR SCALAPACK_LIBRARY)
+-  scalapack_check()
+-endif()
+-
+-# --- Finalize
+-
+-include(FindPackageHandleStandardArgs)
+-
+-if(scalapack_cray)
+-  find_package_handle_standard_args(SCALAPACK HANDLE_COMPONENTS
+-  REQUIRED_VARS SCALAPACK_links
+-  )
+-else()
+-  find_package_handle_standard_args(SCALAPACK HANDLE_COMPONENTS
+-  REQUIRED_VARS SCALAPACK_LIBRARY SCALAPACK_links
+-  )
+-endif()
+-
+-if(SCALAPACK_FOUND)
+-  # need if _FOUND guard as can't overwrite imported target even if bad
+-  set(SCALAPACK_LIBRARIES ${SCALAPACK_LIBRARY})
+-  if(BLACS_LIBRARY)
+-    list(APPEND SCALAPACK_LIBRARIES ${BLACS_LIBRARY})
+-  endif()
+-  if(SCALAPACK_MPI_LIB64)
+-    list(APPEND SCALAPACK_LIBRARIES ${SCALAPACK_MPI_LIB64})
+-  endif()
+-
+-  set(SCALAPACK_INCLUDE_DIRS ${SCALAPACK_INCLUDE_DIR})
+-
+-  message(VERBOSE "Scalapack libraries: ${SCALAPACK_LIBRARIES}
+-Scalapack include directories: ${SCALAPACK_INCLUDE_DIRS}")
+-
+-  if(NOT TARGET SCALAPACK::SCALAPACK)
+-    add_library(SCALAPACK::SCALAPACK INTERFACE IMPORTED)
+-    set_property(TARGET SCALAPACK::SCALAPACK PROPERTY INTERFACE_LINK_LIBRARIES "${SCALAPACK_LIBRARIES}")
+-    set_property(TARGET SCALAPACK::SCALAPACK PROPERTY INTERFACE_INCLUDE_DIRECTORIES "${SCALAPACK_INCLUDE_DIR}")
+-  endif()
+-endif()
+-
+-mark_as_advanced(SCALAPACK_LIBRARY SCALAPACK_INCLUDE_DIR)
+diff --git a/cmake/lapack.cmake b/cmake/lapack.cmake
+index a01dbf9..4e2c75e 100644
+--- a/cmake/lapack.cmake
++++ b/cmake/lapack.cmake
+@@ -2,38 +2,13 @@
+ 
+ include(CheckFortranSourceCompiles)
+ 
+-if(NOT DEFINED LAPACK_COMPONENTS AND DEFINED ENV{MKLROOT})
+-  set(LAPACK_COMPONENTS MKL)
+-endif()
+-
+-if(MKL IN_LIST LAPACK_COMPONENTS)
+-  if(intsize64)
+-    list(APPEND LAPACK_COMPONENTS MKL64)
+-  endif()
+-  if(openmp)
+-    list(APPEND LAPACK_COMPONENTS OpenMP)
+-  endif()
+-endif()
+-
+-if(find_static)
+-  list(APPEND LAPACK_COMPONENTS STATIC)
+-endif()
+-
+-find_package(LAPACK REQUIRED COMPONENTS ${LAPACK_COMPONENTS})
++find_package(LAPACK REQUIRED)
+ 
+ # GEMMT is recommeded in MUMPS User Manual if available
+ if(gemmt)
+ 
+ set(CMAKE_REQUIRED_INCLUDES ${LAPACK_INCLUDE_DIRS})
+-
+-if(find_static AND NOT WIN32 AND
+-  MKL IN_LIST LAPACK_COMPONENTS AND
+-  CMAKE_VERSION VERSION_GREATER_EQUAL 3.24
+-  )
+-  set(CMAKE_REQUIRED_LIBRARIES $<LINK_GROUP:RESCAN,${LAPACK_LIBRARIES}>)
+-else()
+-  set(CMAKE_REQUIRED_LIBRARIES ${LAPACK_LIBRARIES})
+-endif()
++set(CMAKE_REQUIRED_LIBRARIES ${LAPACK_LIBRARIES})
+ 
+ if(BUILD_DOUBLE AND BLAS_HAVE_GEMMT)
+ check_fortran_source_compiles(
 diff --git a/cmake/options.cmake b/cmake/options.cmake
-index eefbf5b..2fad42a 100644
+index 57572cd..29ae9a3 100644
 --- a/cmake/options.cmake
 +++ b/cmake/options.cmake
-@@ -4,13 +4,13 @@ message(STATUS "${PROJECT_NAME} ${PROJECT_VERSION}  CMake ${CMAKE_VERSION}  Tool
+@@ -2,16 +2,6 @@ include(GNUInstallDirs)
  
- option(find_static "Find static libraries for Lapack and Scalapack (default shared then static search)")
+ message(STATUS "${PROJECT_NAME} ${PROJECT_VERSION}  CMake ${CMAKE_VERSION}  Toolchain ${CMAKE_TOOLCHAIN_FILE}")
  
+-option(find_static "Find static libraries for Lapack and Scalapack (default shared then static search)")
+-
 -if(local)
 -  get_filename_component(local ${local} ABSOLUTE)
 -
@@ -577,29 +987,22 @@ index eefbf5b..2fad42a 100644
 -    message(FATAL_ERROR "Local directory ${local} does not exist")
 -  endif()
 -endif()
-+# if(local)
-+#   get_filename_component(local ${local} ABSOLUTE)
-+#
-+#   if(NOT IS_DIRECTORY ${local})
-+#     message(FATAL_ERROR "Local directory ${local} does not exist")
-+#   endif()
-+# endif()
- 
+-
  if(MUMPS_UPSTREAM_VERSION VERSION_GREATER_EQUAL 5.2)
    option(gemmt "GEMMT is recommended in User Manual if available" ON)
-@@ -58,9 +58,9 @@ set(CMAKE_INSTALL_RPATH_USE_LINK_PATH true)
+ endif()
+@@ -57,11 +47,6 @@ set(CMAKE_INSTALL_RPATH_USE_LINK_PATH true)
+ # Necessary for shared library with Visual Studio / Windows oneAPI
  set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS true)
  
- # allow CMAKE_PREFIX_PATH with ~ expand
+-# allow CMAKE_PREFIX_PATH with ~ expand
 -if(CMAKE_PREFIX_PATH)
 -  get_filename_component(CMAKE_PREFIX_PATH ${CMAKE_PREFIX_PATH} ABSOLUTE)
 -endif()
-+# if(CMAKE_PREFIX_PATH)
-+#   get_filename_component(CMAKE_PREFIX_PATH ${CMAKE_PREFIX_PATH} ABSOLUTE)
-+# endif()
- 
+-
  # --- auto-ignore build directory
  if(NOT EXISTS ${PROJECT_BINARY_DIR}/.gitignore)
+   file(WRITE ${PROJECT_BINARY_DIR}/.gitignore "*")
 diff --git a/cmake/scalapack.cmake b/cmake/scalapack.cmake
 deleted file mode 100644
 index a9e9311..0000000

@@ -117,8 +117,8 @@ jobs:
       - name: Install math libraries (AOCL)
         if: matrix.math-libs == 'aocl'
         run: |
-          wget https://github.com/amd/blis/archive/refs/tags/3.2.tar.gz
-          tar -xzf 3.2.tar.gz && cd blis-3.2
+          wget https://github.com/amd/blis/archive/refs/tags/4.0.tar.gz
+          tar -xzf 4.0.tar.gz && cd blis-4.0
           [[ "${{ matrix.with-openmp }}" == 'true' ]] && THREADING='openmp' || THREADING='no'
           ./configure --prefix=/opt/amd \
                       --enable-arg-max-hack \
@@ -127,9 +127,9 @@ jobs:
                       --enable-threading=$THREADING \
                       auto
           make -j && sudo make install
-          cd .. && rm -rf 3.2.tar.gz blis-*
-          wget https://github.com/amd/libflame/archive/refs/tags/3.2.tar.gz
-          tar -xzf 3.2.tar.gz && cd libflame-3.2
+          cd .. && rm -rf 4.0.tar.gz blis-*
+          wget https://github.com/amd/libflame/archive/refs/tags/4.0.tar.gz
+          tar -xzf 4.0.tar.gz && cd libflame-4.0
           ./configure --prefix=/opt/amd \
                       --enable-max-arg-list-hack \
                       --disable-static-build --enable-dynamic-build \

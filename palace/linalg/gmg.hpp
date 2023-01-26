@@ -32,6 +32,7 @@ private:
 
   // Temporary vectors for preconditioner application. The type of these is dictated by the
   // MFEM Operator interface for multiple RHS.
+  mutable std::vector<mfem::Vector> x_, y_, r_;
   mutable std::vector<mfem::Array<mfem::Vector *>> X_, Y_, R_;
 
   // Number of V-cycles per preconditioner application.
@@ -88,20 +89,18 @@ public:
     mfem::Array<mfem::Vector *> Y(1);
     X[0] = &x;
     Y[0] = &y;
-    Mult(X, Y);
+    ArrayMult(X, Y);
   }
 
-  void Mult(const mfem::Array<const mfem::Vector *> &X,
-            mfem::Array<mfem::Vector *> &Y) const override
+  void ArrayMult(const mfem::Array<const mfem::Vector *> &X,
+                 mfem::Array<mfem::Vector *> &Y) const override
   {
     MFEM_VERIFY(!iterative_mode, "Geometric multigrid solver does not use iterative_mode!");
     MFEM_VERIFY(GetNumLevels() > 1 || pc_it == 1,
                 "Single-level geometric multigrid will not work with multiple iterations!");
-    if (X_[0].Size() < X.Size())
-    {
-      InitVectors(X.Size());
-    }
-    for (int j = 0; j < X.Size(); j++)
+    const int nrhs = X.Size();
+    InitVectors(nrhs);
+    for (int j = 0; j < nrhs; j++)
     {
       *X_[GetNumLevels() - 1][j] = *X[j];
     }
@@ -109,7 +108,7 @@ public:
     {
       VCycle(GetNumLevels() - 1, (it > 0));
     }
-    for (int j = 0; j < X.Size(); j++)
+    for (int j = 0; j < nrhs; j++)
     {
       *Y[j] = *Y_[GetNumLevels() - 1][j];
     }

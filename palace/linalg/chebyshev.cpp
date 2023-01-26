@@ -16,76 +16,6 @@ namespace
 
 using mfem::ForallWrap;
 
-void InitializeCoefficients(int order, double max_eig_estimate, mfem::Array<double> &coeff)
-{
-  // Set up Chebyshev coefficients. See mfem::OperatorChebyshevSmoother or Adams et al.,
-  // Parallel multigrid smoothing: polynomial versus Gauss-Seidel, JCP (2003).
-  coeff.SetSize(order);
-  const double upper_bound = 1.1 * max_eig_estimate;
-  const double lower_bound = 0.1 * max_eig_estimate;
-  const double theta = 0.5 * (upper_bound + lower_bound);
-  const double delta = 0.5 * (upper_bound - lower_bound);
-  switch (order - 1)
-  {
-    case 0:
-      {
-        coeff[0] = 1.0 / theta;
-      }
-      break;
-    case 1:
-      {
-        double tmp_0 = 1.0 / (std::pow(delta, 2) - 2.0 * std::pow(theta, 2));
-        coeff[0] = -4.0 * theta * tmp_0;
-        coeff[1] = 2.0 * tmp_0;
-      }
-      break;
-    case 2:
-      {
-        double tmp_0 = 3.0 * std::pow(delta, 2);
-        double tmp_1 = std::pow(theta, 2);
-        double tmp_2 = 1.0 / (-4.0 * std::pow(theta, 3) + theta * tmp_0);
-        coeff[0] = tmp_2 * (tmp_0 - 12.0 * tmp_1);
-        coeff[1] = 12.0 / (tmp_0 - 4.0 * tmp_1);
-        coeff[2] = -4.0 * tmp_2;
-      }
-      break;
-    case 3:
-      {
-        double tmp_0 = std::pow(delta, 2);
-        double tmp_1 = std::pow(theta, 2);
-        double tmp_2 = 8.0 * tmp_0;
-        double tmp_3 =
-            1.0 / (std::pow(delta, 4) + 8.0 * std::pow(theta, 4) - tmp_1 * tmp_2);
-        coeff[0] = tmp_3 * (32.0 * std::pow(theta, 3) - 16.0 * theta * tmp_0);
-        coeff[1] = tmp_3 * (-48.0 * tmp_1 + tmp_2);
-        coeff[2] = 32.0 * theta * tmp_3;
-        coeff[3] = -8.0 * tmp_3;
-      }
-      break;
-    case 4:
-      {
-        double tmp_0 = 5.0 * std::pow(delta, 4);
-        double tmp_1 = std::pow(theta, 4);
-        double tmp_2 = std::pow(theta, 2);
-        double tmp_3 = std::pow(delta, 2);
-        double tmp_4 = 60.0 * tmp_3;
-        double tmp_5 = 20.0 * tmp_3;
-        double tmp_6 =
-            1.0 / (16 * std::pow(theta, 5) - std::pow(theta, 3) * tmp_5 + theta * tmp_0);
-        double tmp_7 = 160.0 * tmp_2;
-        double tmp_8 = 1.0 / (tmp_0 + 16.0 * tmp_1 - tmp_2 * tmp_5);
-        coeff[0] = tmp_6 * (tmp_0 + 80 * tmp_1 - tmp_2 * tmp_4);
-        coeff[1] = tmp_8 * (tmp_4 - tmp_7);
-        coeff[2] = tmp_6 * (-tmp_5 + tmp_7);
-        coeff[3] = -80.0 * tmp_8;
-        coeff[4] = 16.0 * tmp_6;
-      }
-      break;
-    default:
-      MFEM_ABORT("Chebyshev smoother is not implemented for order = " << order);
-  }
-}
-
 class SymmetricScaledOperator : public mfem::Operator
 {
 private:
@@ -132,17 +62,42 @@ ChebyshevSmoother::ChebyshevSmoother(MPI_Comm c, const mfem::Array<int> &tdof_li
 {
 }
 
+void ChebyshevSmoother::InitVectors(int nrhs) const
+{
+  if (nrhs * height == r.Size())
+  {
+    return;
+  }
+  DestroyVectors();
+  r.SetSize(nrhs * height);
+  d.SetSize(nrhs * height);
+  R.SetSize(nrhs);
+  D.SetSize(nrhs);
+  for (int j = 0; j < nrhs; j++)
+  {
+    R[j] = new mfem::Vector(r, j * height, height);
+    D[j] = new mfem::Vector(d, j * height, height);
+  }
+}
+
+void ChebyshevSmoother::DestroyVectors() const
+{
+  for (int j = 0; j < R.Size(); j++)
+  {
+    delete R[j];
+    delete D[j];
+  }
+}
+
 void ChebyshevSmoother::SetOperator(const mfem::Operator &op)
 {
   A = &op;
   height = A->Height();
   width = A->Width();
-  const int N = height;
-  r.SetSize(N);
-  z.SetSize(N);
-  dinv.SetSize(N);
 
   // Configure symmetric diagonal scaling.
+  const int N = height;
+  dinv.SetSize(N);
   mfem::Vector diag(N);
   A->AssembleDiagonal(diag);
   const auto *D = diag.Read();
@@ -156,10 +111,72 @@ void ChebyshevSmoother::SetOperator(const mfem::Operator &op)
     DI[I[i]] = 1.0;  // Assumes operator DiagonalPolicy::ONE
   });
 
-  // Configure coefficients, using the computed maximum eigenvalue estimate.
+  // Set up Chebyshev coefficients using the computed maximum eigenvalue estimate. See
+  // mfem::OperatorChebyshevSmoother or Adams et al., Parallel multigrid smoothing:
+  // polynomial versus Gauss-Seidel, JCP (2003).
   petsc::PetscShellMatrix DinvA(comm, std::make_unique<SymmetricScaledOperator>(*A, dinv));
-  double max_eig_estimate = DinvA.Norm2();
-  InitializeCoefficients(order, max_eig_estimate, coeff);
+  lambda_max = 1.1 * DinvA.Norm2();
+}
+
+void ChebyshevSmoother::ArrayMult(const mfem::Array<const mfem::Vector *> &X,
+                                  mfem::Array<mfem::Vector *> &Y) const
+{
+  // y = y + p(A) (x - A y)
+  const int nrhs = X.Size();
+  InitVectors(nrhs);
+  for (int it = 0; it < pc_it; it++)
+  {
+    if (iterative_mode || it > 0)
+    {
+      A->ArrayMult(Y, R);
+      for (int j = 0; j < nrhs; j++)
+      {
+        subtract(*X[j], *R[j], *R[j]);
+      }
+    }
+    else
+    {
+      for (int j = 0; j < nrhs; j++)
+      {
+        *R[j] = *X[j];
+        *Y[j] = 0.0;
+      }
+    }
+
+    // 4th-kind Chebyshev smoother
+    {
+      const auto *DI = dinv.Read();
+      const auto *RR = r.Read();
+      auto *DD = d.ReadWrite();
+      MFEM_FORALL(i, nrhs * height,
+                  { DD[i] = 4.0 / (3.0 * lambda_max) * DI[i % height] * RR[i]; });
+    }
+    for (int k = 1; k < order; k++)
+    {
+      for (int j = 0; j < nrhs; j++)
+      {
+        *Y[j] += *D[j];
+      }
+      A->ArrayAddMult(D, R, -1.0);
+      {
+        const auto *DI = dinv.Read();
+        const auto *RR = r.Read();
+        auto *DD = d.ReadWrite();
+        MFEM_FORALL(i, nrhs * height, {
+          // DD[i] = (2.0 * k - 3.0) / (2.0 * k + 1.0) * DD[i] +
+          //         (8.0 * k - 4.0) / ((2.0 * k + 1.0) * lambda_max) * DI[i % height] *
+          //             RR[i];  // From Lottes
+          DD[i] = (2.0 * k - 1.0) / (2.0 * k + 3.0) * DD[i] +
+                  (8.0 * k + 4.0) / ((2.0 * k + 3.0) * lambda_max) * DI[i % height] *
+                      RR[i];  // From Phillips and Fischer
+        });
+      }
+    }
+    for (int j = 0; j < nrhs; j++)
+    {
+      *Y[j] += *D[j];
+    }
+  }
 }
 
 }  // namespace palace

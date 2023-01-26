@@ -15,7 +15,7 @@ set(PALACE_INTERNAL_FMT_URL
   "URL for internal fmt build"
 )
 set(PALACE_INTERNAL_MFEM_GIT_TAG
-  "40b577d192e478d18c336001b00e329ef3015178" CACHE STRING  # master @ 12/06/2022
+  "a598682d68e5a21e84bc1c31205a4236e01515d2" CACHE STRING  # master @ 01/11/2022
   "Git tag for internal MFEM build"
 )
 
@@ -92,7 +92,6 @@ if(PALACE_WITH_INTERNAL_MFEM)
     "${CMAKE_CURRENT_SOURCE_DIR}/patch/mfem/patch_integ.diff"
     "${CMAKE_CURRENT_SOURCE_DIR}/patch/mfem/patch_mesh.diff"
     "${CMAKE_CURRENT_SOURCE_DIR}/patch/mfem/patch_part.diff"
-    "${CMAKE_CURRENT_SOURCE_DIR}/patch/mfem/patch_mg.diff"
     "${CMAKE_CURRENT_SOURCE_DIR}/patch/mfem/patch_direct.diff"
   )
 
@@ -101,7 +100,7 @@ if(PALACE_WITH_INTERNAL_MFEM)
     GIT_REPOSITORY https://github.com/mfem/mfem.git
     GIT_TAG        ${PALACE_INTERNAL_MFEM_GIT_TAG}
     PATCH_COMMAND
-      git reset --hard  && git clean -f -d && git apply "${PALACE_MFEM_PATCH_FILES}"
+      git reset --hard && git clean -fd && git apply "${PALACE_MFEM_PATCH_FILES}"
   )
   FetchContent_MakeAvailable(mfem)
 endif()
