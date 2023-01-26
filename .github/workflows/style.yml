@@ -16,9 +16,6 @@ jobs:
         with:
           version: '1'
 
-      - name: Set up Julia environment
-        run: julia -e 'using Pkg; Pkg.add("JuliaFormatter")'
-
       # Install more recent clang-format from LLVM (match Homebrew v15)
       - name: Install clang-format
         run: |
@@ -51,9 +48,6 @@ jobs:
       - uses: julia-actions/setup-julia@v1
         with:
           version: '1'
-
-      - name: Set up Julia environment
-        run: julia -e 'using Pkg; Pkg.add(["JSON", "JSONSchema"])'
 
       - name: Check JSON Schema
         run: |

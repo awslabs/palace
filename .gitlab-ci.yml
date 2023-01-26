@@ -272,7 +272,6 @@ test-format:
       echo "deb http://apt.llvm.org/bullseye/ llvm-toolchain-bullseye-15 main" \
       | tee /etc/apt/sources.list.d/llvm.list
     - apt-get update -q && apt-get install -y clang-format-15
-    - julia -e 'using Pkg; Pkg.add("JuliaFormatter")'
     - ./scripts/format-source --clang-format clang-format-15
     - |-
       if [[ `git status -s | wc -l` -ne 0 ]]; then
@@ -296,7 +295,6 @@ test-config:
   variables:
     GIT_SUBMODULE_STRATEGY: none
   script:
-    - julia -e 'using Pkg; Pkg.add(["JSON", "JSONSchema"])'
     - OUTPUT=$(find examples -name *.json -exec ./scripts/validate-config {} \;)
     - |-
       if echo $OUTPUT | grep -q 'Validation failed'; then

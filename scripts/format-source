@@ -98,5 +98,9 @@ if $FORMAT_JL; then
                           -type f \( -iname \*.md -o -iname \*.jl \) -exec echo -n '"{}", ' \;)
     FORMAT_JL_FILES="$(find $SOURCE_DIR -maxdepth 1 \
                            -type f -iname \*.md -exec echo -n '"{}", ' \;)$FORMAT_JL_FILES"
-    julia -e "using JuliaFormatter; format([$FORMAT_JL_FILES], $FORMAT_JL_ARGS)"
+    echo "
+using Pkg; Pkg.add(\"JuliaFormatter\")
+using JuliaFormatter
+format([$FORMAT_JL_FILES], $FORMAT_JL_ARGS)
+" | $JULIA
 fi
