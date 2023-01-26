@@ -58,6 +58,7 @@ if ! command -v $JULIA &> /dev/null; then
 fi
 
 echo "
+using Pkg; Pkg.add([\"JSON\", \"JSONSchema\"])
 include(joinpath(\"$SCRIPT_DIR\", \"schema\", \"ValidateConfig.jl\"))
 using .ValidateConfig
 result = validate_config_file(;
