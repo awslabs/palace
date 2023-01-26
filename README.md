@@ -10,9 +10,9 @@ SPDX-License-Identifier: Apache-2.0
 [![](https://img.shields.io/badge/docs-dev-blue.svg)](https://awslabs.github.io/palace/dev)
 
 *Palace*, for **PA**rallel **LA**rge-scale **C**omputational **E**lectromagnetics, is an
-open-source parallel finite element code for full-wave 3D electromagnetic simulations in
-the frequency or time domain, using the [MFEM](http://mfem.org) finite element
-discretization library.
+open-source, parallel finite element code for full-wave 3D electromagnetic simulations in
+the frequency or time domain, using the
+[MFEM finite element discretization library](http://mfem.org).
 
 ## Key features
 
@@ -37,7 +37,7 @@ discretization library.
 
 ## Getting started
 
-*Palace* can be installed using the [Spack](https://spack.io/) HPC package manager, with the
+*Palace* can be installed using the [Spack HPC package manager](https://spack.io/), with the
 command `spack install palace`. Run `spack info palace` to get more information about the
 available configuration options and dependencies.
 

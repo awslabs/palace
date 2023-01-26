@@ -140,8 +140,8 @@ The format of this changelog is based on
   - Added finite conductivity surface impedance boundary condition, with optional thickness
     correction.
   - Added dielectric loss calculation specializations for metal-air, metal-substrate, and
-    substrate-air interfaces in accordance with [this paper]
-    (https://aip.scitation.org/doi/10.1063/1.3637047).
+    substrate-air interfaces in accordance with
+    [this paper](https://aip.scitation.org/doi/10.1063/1.3637047).
   - Changed implementation of frequency domain linear algebra to eliminate the use of PETSc
     matrix types, relying instead on wrappers of the real and imaginary Hypre matrices
     making up a complex operator.

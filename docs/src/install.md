@@ -5,8 +5,8 @@
 
 # Installation
 
-*Palace* can be built and installed using the [Spack](https://spack.io/) HPC package
-manager, following the instructions in the [Build using Spack]
+*Palace* can be built and installed using the [Spack HPC package manager]
+(https://spack.io/), following the instructions in the [Build using Spack]
 (#Build-using-Spack) section. Alternatively, compiling from source using [CMake]
 (https://cmake.org/download) is described in [Build from source](#Build-from-source).
 
@@ -146,7 +146,7 @@ as the standard parallelization in approach in *Palace* is to use pure MPI paral
 
 ## Dependencies
 
-*Palace* leverages the [MFEM](http://mfem.org) finite element discretization library. It
+*Palace* leverages the [MFEM finite element discretization library](http://mfem.org). It
 always configures and builds its own installation of MFEM internally in order to support
 the most up to date features and patches. In addition, *Palace* uses:
 
