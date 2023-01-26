@@ -45,10 +45,6 @@ jobs:
         with:
           submodules: 'recursive'
 
-      - uses: maxim-lobanov/setup-xcode@v1
-        with:
-          xcode-version: latest-stable
-
       - uses: julia-actions/setup-julia@v1
         with:
           version: '1'
@@ -69,8 +65,8 @@ jobs:
         run: |
           # Configure environment
           if [[ "${{ matrix.compiler }}" == 'clang' ]]; then
-            export CC=$(brew --prefix llvm@14)/bin/clang
-            export CXX=$(brew --prefix llvm@14)/bin/clang++
+            export CC=$(brew --prefix llvm@15)/bin/clang
+            export CXX=$(brew --prefix llvm@15)/bin/clang++
             export FC=gfortran-11
           elif [[ "${{ matrix.compiler }}" == 'gcc' ]]; then
             export CC=gcc-11
