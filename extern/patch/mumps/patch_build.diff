@@ -43,10 +43,10 @@ index 5a83b9b..037f707 100644
 -include(cmake/install.cmake)
 diff --git a/cmake/FindLAPACK.cmake b/cmake/FindLAPACK.cmake
 deleted file mode 100644
-index 2016c7c..0000000
+index 35395c6..0000000
 --- a/cmake/FindLAPACK.cmake
 +++ /dev/null
-@@ -1,571 +0,0 @@
+@@ -1,591 +0,0 @@
 -# Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
 -# file Copyright.txt or https://cmake.org/licensing for details.
 -
@@ -302,14 +302,34 @@ index 2016c7c..0000000
 -
 -function(aocl_libs)
 -
+-set(_names flame)
+-if(WIN32)
+-  if(BUILD_SHARED_LIBS)
+-    list(APPEND _names AOCL-LibFlame-Win-MT-dll AOCL-LibFlame-Win-dll)
+-  else()
+-    list(APPEND _names AOCL-LibFlame-Win-MT AOCL-LibFlame-Win)
+-  endif()
+-endif()
+-
 -find_library(LAPACK_LIBRARY
--NAMES flame AOCL-LibFLAME-Win-MT-dll AOCL-LibFLAME-Win
+-NAMES ${_names}
+-NAMES_PER_DIR
 -PATH_SUFFIXES LP64
 -DOC "LAPACK Flame library"
 -)
 -
+-set(_names blis-mt blis)
+-if(WIN32)
+-  if(BUILD_SHARED_LIBS)
+-    list(APPEND _names AOCL-LibBlis-Win-MT-dll AOCL-LibBlis-Win-dll)
+-  else()
+-    list(APPEND _names AOCL-LibBlis-Win-MT AOCL-LibBlis-Win)
+-  endif()
+-endif()
+-
 -find_library(BLAS_LIBRARY
--NAMES blis-mt blis AOCL-LibBlis-Win-MT-dll
+-NAMES ${_names}
+-NAMES_PER_DIR
 -PATH_SUFFIXES LP64
 -DOC "BLAS Blis library"
 -)
@@ -620,10 +640,10 @@ index 2016c7c..0000000
 -mark_as_advanced(LAPACK_LIBRARY LAPACK_INCLUDE_DIR)
 diff --git a/cmake/FindSCALAPACK.cmake b/cmake/FindSCALAPACK.cmake
 deleted file mode 100644
-index 47543a1..0000000
+index e93337f..0000000
 --- a/cmake/FindSCALAPACK.cmake
 +++ /dev/null
-@@ -1,301 +0,0 @@
+@@ -1,315 +0,0 @@
 -# Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
 -# file Copyright.txt or https://cmake.org/licensing for details.
 -
@@ -810,6 +830,37 @@ index 47543a1..0000000
 -
 -endfunction(scalapack_mkl)
 -
+-
+-function(scalapack_lib)
+-
+-if(BUILD_SHARED_LIBS)
+-  set(_s shared)
+-else()
+-  set(_s static)
+-endif()
+-list(APPEND _s openmpi/lib mpich/lib)
+-
+-find_library(SCALAPACK_LIBRARY
+-NAMES scalapack scalapack-openmpi scalapack-mpich
+-NAMES_PER_DIR
+-PATH_SUFFIXES ${_s}
+-DOC "SCALAPACK library"
+-)
+-
+-# some systems have libblacs as a separate file, instead of being subsumed in libscalapack.
+-if(NOT DEFINED BLACS_ROOT)
+-  get_filename_component(BLACS_ROOT ${SCALAPACK_LIBRARY} DIRECTORY)
+-endif()
+-
+-find_library(BLACS_LIBRARY
+-NAMES blacs
+-NO_DEFAULT_PATH
+-HINTS ${BLACS_ROOT}
+-DOC "BLACS library"
+-)
+-
+-endfunction(scalapack_lib)
+-
 -# === main
 -
 -set(scalapack_cray false)
@@ -855,24 +906,7 @@ index 47543a1..0000000
 -elseif(scalapack_cray)
 -  # Cray PE has Scalapack build into LibSci. Use Cray compiler wrapper.
 -else()
--
--  find_library(SCALAPACK_LIBRARY
--  NAMES scalapack scalapack-openmpi scalapack-mpich
--  NAMES_PER_DIR
--  PATH_SUFFIXES openmpi/lib mpich/lib
--  DOC "SCALAPACK library"
--  )
--
--  # some systems have libblacs as a separate file, instead of being subsumed in libscalapack.
--  get_filename_component(BLACS_ROOT ${SCALAPACK_LIBRARY} DIRECTORY)
--
--  find_library(BLACS_LIBRARY
--  NAMES blacs
--  NO_DEFAULT_PATH
--  HINTS ${BLACS_ROOT}
--  DOC "BLACS library"
--  )
--
+-  scalapack_lib()
 -endif()
 -
 -if(STATIC IN_LIST SCALAPACK_FIND_COMPONENTS)
@@ -926,7 +960,7 @@ index 47543a1..0000000
 -
 -mark_as_advanced(SCALAPACK_LIBRARY SCALAPACK_INCLUDE_DIR)
 diff --git a/cmake/lapack.cmake b/cmake/lapack.cmake
-index a01dbf9..4e2c75e 100644
+index d4e6336..e565d0e 100644
 --- a/cmake/lapack.cmake
 +++ b/cmake/lapack.cmake
 @@ -2,38 +2,13 @@
@@ -968,7 +1002,7 @@ index a01dbf9..4e2c75e 100644
 -endif()
 +set(CMAKE_REQUIRED_LIBRARIES ${LAPACK_LIBRARIES})
  
- if(BUILD_DOUBLE AND BLAS_HAVE_GEMMT)
+ if(BUILD_DOUBLE)
  check_fortran_source_compiles(
 diff --git a/cmake/options.cmake b/cmake/options.cmake
 index 57572cd..29ae9a3 100644
