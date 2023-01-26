@@ -11,8 +11,9 @@ The format of this changelog is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
-## In progress
+## [0.11.0] - 2023-01-26
 
+  - Initial public release on GitHub.
   - Added support for anisotropic materials through the use of `"MaterialAxes"` under
     `"Materials"`. These material axes allow for specifying symmetric material property
     tensors through a sum of weighted outer products of normal vectors. This can be used in
@@ -43,7 +44,7 @@ The format of this changelog is based on
     to check a provided configuration file against the schema.
   - Added optional interface to GSLIB library which enables `"Probe"` functionality to
     sample the computed electric and magnetic fields at points in space.
-  - Added support for builds using Spack. This includes an option in the build system for
+  - Prepared to support builds using Spack. This includes an option in the build system for
     user-supplied dependencies as an alternative to the superbuild configuration.
   - Updated submodules for superbuild, fixing a bug in SuperLU_DIST solver causing
     communication hangs for certain numbers of processors.
