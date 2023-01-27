@@ -34,6 +34,7 @@ private:
   // MFEM Operator interface for multiple RHS.
   mutable std::vector<mfem::Vector> x_, y_, r_;
   mutable std::vector<mfem::Array<mfem::Vector *>> X_, Y_, R_;
+  mutable std::vector<std::vector<mfem::Vector>> xrefs_, yrefs_, rrefs_;
 
   // Number of V-cycles per preconditioner application.
   const int pc_it;
@@ -46,10 +47,6 @@ private:
 
   // Returns the number of levels.
   int GetNumLevels() const { return fespaces_.GetNumLevels(); }
-
-  // Management of temporary vector storage.
-  void InitVectors(int nrhs) const;
-  void DestroyVectors() const;
 
   // Internal function to perform a single V-cycle iteration.
   void VCycle(int l, bool initial_guess) const;
@@ -71,7 +68,6 @@ public:
                                iodata.solver.linear.mg_smooth_order)
   {
   }
-  ~GeometricMultigridSolver() { DestroyVectors(); }
 
   // Sets the matrices from which to contruct a multilevel preconditioner.
   void SetOperator(const Operator &op) override
@@ -95,22 +91,52 @@ public:
   void ArrayMult(const mfem::Array<const mfem::Vector *> &X,
                  mfem::Array<mfem::Vector *> &Y) const override
   {
+    // Initialize.
+    const int m = GetNumLevels(), nrhs = X.Size();
     MFEM_VERIFY(!iterative_mode, "Geometric multigrid solver does not use iterative_mode!");
-    MFEM_VERIFY(GetNumLevels() > 1 || pc_it == 1,
+    MFEM_VERIFY(m > 1 || pc_it == 1,
                 "Single-level geometric multigrid will not work with multiple iterations!");
-    const int nrhs = X.Size();
-    InitVectors(nrhs);
+    if (nrhs * height != x_[m - 1].Size())
+    {
+      for (int l = 0; l < m; l++)
+      {
+        MFEM_VERIFY(A_[l], "Missing operator for geometric multigrid level " << l << "!");
+        x_[l].SetSize(nrhs * A_[l]->Height());
+        y_[l].SetSize(nrhs * A_[l]->Height());
+        r_[l].SetSize(nrhs * A_[l]->Height());
+      }
+    }
+    for (int l = 0; l < m; l++)
+    {
+      xrefs_[l].resize(nrhs);
+      yrefs_[l].resize(nrhs);
+      rrefs_[l].resize(nrhs);
+      X_[l].SetSize(nrhs);
+      Y_[l].SetSize(nrhs);
+      R_[l].SetSize(nrhs);
+      for (int j = 0; j < nrhs; j++)
+      {
+        xrefs_[l][j].MakeRef(x_[l], j * A_[l]->Height(), A_[l]->Height());
+        yrefs_[l][j].MakeRef(y_[l], j * A_[l]->Height(), A_[l]->Height());
+        rrefs_[l][j].MakeRef(r_[l], j * A_[l]->Height(), A_[l]->Height());
+        X_[l][j] = &xrefs_[l][j];
+        Y_[l][j] = &yrefs_[l][j];
+        R_[l][j] = &rrefs_[l][j];
+      }
+    }
+
+    // Apply V-cycle.
     for (int j = 0; j < nrhs; j++)
     {
-      *X_[GetNumLevels() - 1][j] = *X[j];
+      *X_[m - 1][j] = *X[j];
     }
     for (int it = 0; it < pc_it; it++)
     {
-      VCycle(GetNumLevels() - 1, (it > 0));
+      VCycle(m - 1, (it > 0));
     }
     for (int j = 0; j < nrhs; j++)
     {
-      *Y[j] = *Y_[GetNumLevels() - 1][j];
+      *Y[j] = *Y_[m - 1][j];
     }
   }
 };

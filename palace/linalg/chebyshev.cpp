@@ -3,7 +3,7 @@
 
 #include "chebyshev.hpp"
 
-#include <cmath>
+#include <vector>
 #include <general/forall.hpp>
 #include "linalg/pc.hpp"
 #include "linalg/petsc.hpp"
@@ -62,33 +62,6 @@ ChebyshevSmoother::ChebyshevSmoother(MPI_Comm c, const mfem::Array<int> &tdof_li
 {
 }
 
-void ChebyshevSmoother::InitVectors(int nrhs) const
-{
-  if (nrhs * height == r.Size())
-  {
-    return;
-  }
-  DestroyVectors();
-  r.SetSize(nrhs * height);
-  d.SetSize(nrhs * height);
-  R.SetSize(nrhs);
-  D.SetSize(nrhs);
-  for (int j = 0; j < nrhs; j++)
-  {
-    R[j] = new mfem::Vector(r, j * height, height);
-    D[j] = new mfem::Vector(d, j * height, height);
-  }
-}
-
-void ChebyshevSmoother::DestroyVectors() const
-{
-  for (int j = 0; j < R.Size(); j++)
-  {
-    delete R[j];
-    delete D[j];
-  }
-}
-
 void ChebyshevSmoother::SetOperator(const mfem::Operator &op)
 {
   A = &op;
@@ -121,9 +94,24 @@ void ChebyshevSmoother::SetOperator(const mfem::Operator &op)
 void ChebyshevSmoother::ArrayMult(const mfem::Array<const mfem::Vector *> &X,
                                   mfem::Array<mfem::Vector *> &Y) const
 {
-  // y = y + p(A) (x - A y)
+  // Initialize.
   const int nrhs = X.Size();
-  InitVectors(nrhs);
+  mfem::Array<mfem::Vector *> R(nrhs), D(nrhs);
+  std::vector<mfem::Vector> rrefs(nrhs), drefs(nrhs);
+  if (nrhs * height != r.Size())
+  {
+    r.SetSize(nrhs * height);
+    d.SetSize(nrhs * height);
+  }
+  for (int j = 0; j < nrhs; j++)
+  {
+    rrefs[j].MakeRef(r, j * height, height);
+    drefs[j].MakeRef(d, j * height, height);
+    R[j] = &rrefs[j];
+    D[j] = &drefs[j];
+  }
+
+  // Apply smoother: y = y + p(A) (x - A y) .
   for (int it = 0; it < pc_it; it++)
   {
     if (iterative_mode || it > 0)
@@ -146,10 +134,12 @@ void ChebyshevSmoother::ArrayMult(const mfem::Array<const mfem::Vector *> &X,
     // 4th-kind Chebyshev smoother
     {
       const auto *DI = dinv.Read();
-      const auto *RR = r.Read();
-      auto *DD = d.ReadWrite();
-      MFEM_FORALL(i, nrhs * height,
-                  { DD[i] = 4.0 / (3.0 * lambda_max) * DI[i % height] * RR[i]; });
+      for (int j = 0; j < nrhs; j++)
+      {
+        const auto *RR = R[j]->Read();
+        auto *DD = D[j]->ReadWrite();
+        MFEM_FORALL(i, height, { DD[i] = 4.0 / (3.0 * lambda_max) * DI[i] * RR[i]; });
+      }
     }
     for (int k = 1; k < order; k++)
     {
@@ -160,16 +150,19 @@ void ChebyshevSmoother::ArrayMult(const mfem::Array<const mfem::Vector *> &X,
       A->ArrayAddMult(D, R, -1.0);
       {
         const auto *DI = dinv.Read();
-        const auto *RR = r.Read();
-        auto *DD = d.ReadWrite();
-        MFEM_FORALL(i, nrhs * height, {
-          // DD[i] = (2.0 * k - 3.0) / (2.0 * k + 1.0) * DD[i] +
-          //         (8.0 * k - 4.0) / ((2.0 * k + 1.0) * lambda_max) * DI[i % height] *
-          //             RR[i];  // From Lottes
-          DD[i] = (2.0 * k - 1.0) / (2.0 * k + 3.0) * DD[i] +
-                  (8.0 * k + 4.0) / ((2.0 * k + 3.0) * lambda_max) * DI[i % height] *
-                      RR[i];  // From Phillips and Fischer
-        });
+        for (int j = 0; j < nrhs; j++)
+        {
+          const auto *RR = R[j]->Read();
+          auto *DD = D[j]->ReadWrite();
+          MFEM_FORALL(i, height, {
+            // From Lottes
+            // DD[i] = (2.0 * k - 3.0) / (2.0 * k + 1.0) * DD[i] +
+            //         (8.0 * k - 4.0) / ((2.0 * k + 1.0) * lambda_max) * DI[i] * RR[i];
+            // From Phillips and Fischer
+            DD[i] = (2.0 * k - 1.0) / (2.0 * k + 3.0) * DD[i] +
+                    (8.0 * k + 4.0) / ((2.0 * k + 3.0) * lambda_max) * DI[i] * RR[i];
+          });
+        }
       }
     }
     for (int j = 0; j < nrhs; j++)

@@ -124,10 +124,6 @@ void KspPreconditioner::Init(int n)
   }
   x_.SetSize(2 * n);
   y_.SetSize(2 * n);
-  xr_.MakeRef(x_, 0, n);
-  xi_.MakeRef(x_, n, n);
-  yr_.MakeRef(y_, 0, n);
-  yi_.MakeRef(y_, n, n);
 #else
   if (x_.Size() == n && y_.Size() == n)
   {
@@ -163,18 +159,21 @@ void KspPreconditioner::SetOperator(
 void KspPreconditioner::Mult(const petsc::PetscParVector &x, petsc::PetscParVector &y) const
 {
 #if defined(PETSC_USE_COMPLEX)
+  mfem::Vector xr_, xi_, yr_, yi_;
+  mfem::Array<const mfem::Vector *> X(2);
+  mfem::Array<mfem::Vector *> Y(2);
+  xr_.MakeRef(x_, 0, x_.Size() / 2);
+  xi_.MakeRef(x_, x_.Size() / 2, x_.Size() / 2);
+  yr_.MakeRef(y_, 0, y_.Size() / 2);
+  yi_.MakeRef(y_, y_.Size() / 2, y_.Size() / 2);
+  X[0] = &xr_;
+  X[1] = &xi_;
+  Y[0] = &yr_;
+  Y[1] = &yi_;
   // yr_ = 0.0;
   // yi_ = 0.0;
   x.GetToVectors(xr_, xi_);
-  {
-    mfem::Array<const mfem::Vector *> X(2);
-    mfem::Array<mfem::Vector *> Y(2);
-    X[0] = &xr_;
-    X[1] = &xi_;
-    Y[0] = &yr_;
-    Y[1] = &yi_;
-    pc_->ArrayMult(X, Y);
-  }
+  pc_->ArrayMult(X, Y);
   y.SetFromVectors(yr_, yi_);
 #else
   // y_ = 0.0;

@@ -31,6 +31,9 @@ GeometricMultigridSolver::GeometricMultigridSolver(
   X_.resize(m, mfem::Array<mfem::Vector *>());
   Y_.resize(m, mfem::Array<mfem::Vector *>());
   R_.resize(m, mfem::Array<mfem::Vector *>());
+  xrefs_.resize(m, std::vector<mfem::Vector>());
+  yrefs_.resize(m, std::vector<mfem::Vector>());
+  rrefs_.resize(m, std::vector<mfem::Vector>());
 
   // Use the supplied level 0 (coarse) solver.
   B_.reserve(m);
@@ -88,49 +91,12 @@ void GeometricMultigridSolver::SetOperator(
   width = A_.back()->Width();
 }
 
-void GeometricMultigridSolver::InitVectors(int nrhs) const
-{
-  if (nrhs * height == x_.back().Size())
-  {
-    return;
-  }
-  DestroyVectors();
-  for (int l = 0; l < GetNumLevels(); l++)
-  {
-    MFEM_VERIFY(A_[l], "Missing operator for geometric multigrid level " << l << "!");
-    x_[l].SetSize(nrhs * A_[l]->Height());
-    y_[l].SetSize(nrhs * A_[l]->Height());
-    r_[l].SetSize(nrhs * A_[l]->Height());
-    X_[l].SetSize(nrhs);
-    Y_[l].SetSize(nrhs);
-    R_[l].SetSize(nrhs);
-    for (int j = 0; j < nrhs; j++)
-    {
-      X_[l][j] = new mfem::Vector(x_[l], j * A_[l]->Height(), A_[l]->Height());
-      Y_[l][j] = new mfem::Vector(y_[l], j * A_[l]->Height(), A_[l]->Height());
-      R_[l][j] = new mfem::Vector(r_[l], j * A_[l]->Height(), A_[l]->Height());
-    }
-  }
-}
-
-void GeometricMultigridSolver::DestroyVectors() const
-{
-  for (int l = 0; l < GetNumLevels(); l++)
-  {
-    for (int j = 0; j < X_[l].Size(); j++)
-    {
-      delete X_[l][j];
-      delete Y_[l][j];
-      delete R_[l][j];
-    }
-  }
-}
-
 void GeometricMultigridSolver::VCycle(int l, bool initial_guess) const
 {
   // Pre-smooth, with zero initial guess (Y = 0 set inside). This is the coarse solve at
   // level 0. Important to note that the smoothers must respect the iterative_mode flag
   // correctly (given X, Y, compute Y <- Y + B (X - A Y)) .
+  const int nrhs = X_[l].Size();
   B_[l]->iterative_mode = initial_guess;
   B_[l]->ArrayMult(X_[l], Y_[l]);
   if (l == 0)
@@ -140,7 +106,10 @@ void GeometricMultigridSolver::VCycle(int l, bool initial_guess) const
 
   // Compute residual and restrict.
   A_[l]->ArrayMult(Y_[l], R_[l]);
-  subtract(x_[l], r_[l], r_[l]);
+  for (int j = 0; j < nrhs; j++)
+  {
+    subtract(*X_[l][j], *R_[l][j], *R_[l][j]);
+  }
   GetProlongationAtLevel(l - 1).ArrayMultTranspose(R_[l], X_[l - 1]);
 
   // Coarse grid correction.
@@ -148,7 +117,10 @@ void GeometricMultigridSolver::VCycle(int l, bool initial_guess) const
 
   // Prolongate and add.
   GetProlongationAtLevel(l - 1).ArrayMult(Y_[l - 1], R_[l]);
-  y_[l] += r_[l];
+  for (int j = 0; j < nrhs; j++)
+  {
+    *Y_[l][j] += *R_[l][j];
+  }
 
   // Post-smooth, with nonzero initial guess.
   B_[l]->iterative_mode = true;
