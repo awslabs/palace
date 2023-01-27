@@ -113,16 +113,15 @@ void DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator &postop, in
   // Because the Dirichlet BC is always homogenous, no special elimination is required on
   // the RHS. Assemble the linear system for the initial frequency (so we can call
   // KspSolver:: SetOperators). Compute everything at the first frequency step.
-  constexpr double ess_diag = 1.0;
-  std::unique_ptr<petsc::PetscParMatrix> A =
-      spaceop.GetSystemMatrixPetsc(SpaceOperator::OperatorType::COMPLETE, omega0, ess_diag);
+  std::unique_ptr<petsc::PetscParMatrix> A = spaceop.GetSystemMatrixPetsc(
+      SpaceOperator::OperatorType::COMPLETE, omega0, mfem::Operator::DIAG_ONE);
   std::unique_ptr<petsc::PetscParMatrix> NegCurl = spaceop.GetNegCurlMatrixPetsc();
 
   // Set up the linear solver and set operators for the first frequency step. The
   // preconditioner for the complex linear system is constructed from a real approximation
   // to the complex system matrix.
   std::vector<std::unique_ptr<mfem::Operator>> P, AuxP;
-  spaceop.GetPreconditionerMatrix(omega0, ess_diag, P, AuxP);
+  spaceop.GetPreconditionerMatrix(omega0, P, AuxP);
 
   KspPreconditioner pc(iodata, spaceop.GetDbcMarker(), spaceop.GetNDSpaces(),
                        &spaceop.GetH1Spaces());
@@ -154,8 +153,8 @@ void DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator &postop, in
     {
       // Update frequency-dependent excitation and operators.
       A = spaceop.GetSystemMatrixPetsc(SpaceOperator::OperatorType::COMPLETE, omega,
-                                       ess_diag, false);
-      spaceop.GetPreconditionerMatrix(omega, ess_diag, P, AuxP, false);
+                                       mfem::Operator::DIAG_ONE, false);
+      spaceop.GetPreconditionerMatrix(omega, P, AuxP, false);
       pc.SetOperator(P, &AuxP);
       ksp.SetOperator(*A);
     }

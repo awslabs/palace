@@ -201,8 +201,7 @@ void LaplaceOperator::PrintHeader()
   }
 }
 
-void LaplaceOperator::GetStiffnessMatrix(double ess_diag,
-                                         std::vector<std::unique_ptr<mfem::Operator>> &K,
+void LaplaceOperator::GetStiffnessMatrix(std::vector<std::unique_ptr<mfem::Operator>> &K,
                                          std::vector<std::unique_ptr<mfem::Operator>> &Ke)
 {
   K.clear();

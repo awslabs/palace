@@ -4,7 +4,6 @@
 #include "spaceoperator.hpp"
 
 #include <complex>
-#include "linalg/hypre.hpp"
 #include "linalg/petsc.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
@@ -294,7 +293,7 @@ void SpaceOperator::PrintHeader()
 
 std::unique_ptr<petsc::PetscParMatrix>
 SpaceOperator::GetSystemMatrixPetsc(SpaceOperator::OperatorType type, double omega,
-                                    double ess_diag, bool print)
+                                    mfem::Operator::DiagonalPolicy ess_diag, bool print)
 {
   // Construct the frequency-dependent complex linear system matrix:
   //                 A = K + iω C - ω² (Mr + i Mi) + A2(ω)
@@ -353,8 +352,7 @@ SpaceOperator::GetSystemMatrixPetsc(SpaceOperator::OperatorType type, double ome
     a.Assemble(skip_zeros);
     a.Finalize(skip_zeros);
     hAr.reset(a.ParallelAssemble());
-    hypre::hypreParCSREliminateRowsCols(*hAr, dbc_tdof_list, hypre::DiagonalPolicy::USER,
-                                        ess_diag);
+    hAr->EliminateBC(dbc_tdof_list, ess_diag);
   }
   if (!dfi.empty() || !fi.empty() || !dfbi.empty() || !fbi.empty())
   {
@@ -365,7 +363,7 @@ SpaceOperator::GetSystemMatrixPetsc(SpaceOperator::OperatorType type, double ome
     a.Assemble(skip_zeros);
     a.Finalize(skip_zeros);
     hAi.reset(a.ParallelAssemble());
-    hypre::hypreParCSREliminateRowsCols(*hAi, dbc_tdof_list, hypre::DiagonalPolicy::ZERO);
+    hAi->EliminateBC(dbc_tdof_list, mfem::Operator::DiagonalPolicy::DIAG_ZERO);
   }
   if (!has_real && !has_imag)
   {
@@ -403,7 +401,7 @@ SpaceOperator::GetSystemMatrixPetsc(SpaceOperator::OperatorType type, double ome
 
 std::unique_ptr<mfem::Operator>
 SpaceOperator::GetSystemMatrix(SpaceOperator::OperatorType type, double omega,
-                               double ess_diag, bool print)
+                               mfem::Operator::DiagonalPolicy ess_diag, bool print)
 {
   // Construct the frequency-dependent complex linear system matrix:
   //                 A = K + iω C - ω² (Mr + i Mi) + A2(ω)
@@ -443,8 +441,7 @@ SpaceOperator::GetSystemMatrix(SpaceOperator::OperatorType type, double omega,
   a.Assemble(skip_zeros);
   a.Finalize(skip_zeros);
   std::unique_ptr<mfem::HypreParMatrix> A(a.ParallelAssemble());
-  hypre::hypreParCSREliminateRowsCols(*A, dbc_tdof_list, hypre::DiagonalPolicy::USER,
-                                      ess_diag);
+  A->EliminateBC(dbc_tdof_list, ess_diag);
 
   // Print some information.
   PrintHeader();
@@ -460,7 +457,7 @@ void SpaceOperator::GetPreconditionerInternal(
     const std::function<void(SumMatrixCoefficient &, SumMatrixCoefficient &,
                              SumMatrixCoefficient &, SumMatrixCoefficient &)>
         &AddCoefficients,
-    double ess_diag, std::vector<std::unique_ptr<mfem::Operator>> &B,
+    std::vector<std::unique_ptr<mfem::Operator>> &B,
     std::vector<std::unique_ptr<mfem::Operator>> &AuxB, bool print)
 {
   // Construct the real, optionally SPD matrix for frequency or time domain preconditioning
@@ -509,8 +506,7 @@ void SpaceOperator::GetPreconditionerInternal(
       {
         hB.reset(b.ParallelAssemble());
       }
-      hypre::hypreParCSREliminateRowsCols(*hB, dbc_tdof_list_l, hypre::DiagonalPolicy::USER,
-                                          ess_diag);
+      hB->EliminateBC(dbc_tdof_list_l, mfem::Operator::DiagonalPolicy::DIAG_ONE);
 
       // Print some information.
       PrintHeader();
@@ -539,7 +535,7 @@ void SpaceOperator::GetPreconditionerInternal(
 }
 
 void SpaceOperator::GetPreconditionerMatrix(
-    double omega, double ess_diag, std::vector<std::unique_ptr<mfem::Operator>> &B,
+    double omega, std::vector<std::unique_ptr<mfem::Operator>> &B,
     std::vector<std::unique_ptr<mfem::Operator>> &AuxB, bool print)
 {
   // Frequency domain preconditioner matrix.
@@ -551,11 +547,11 @@ void SpaceOperator::GetPreconditionerMatrix(
     this->AddRealMassCoefficients(pc_shifted ? omega * omega : -omega * omega, true, f, fb);
     this->AddExtraSystemBdrCoefficients(omega, dfb, dfb, fb, fb);
   };
-  GetPreconditionerInternal(AddCoefficients, ess_diag, B, AuxB, print);
+  GetPreconditionerInternal(AddCoefficients, B, AuxB, print);
 }
 
 void SpaceOperator::GetPreconditionerMatrix(
-    double a0, double a1, double ess_diag, std::vector<std::unique_ptr<mfem::Operator>> &B,
+    double a0, double a1, std::vector<std::unique_ptr<mfem::Operator>> &B,
     std::vector<std::unique_ptr<mfem::Operator>> &AuxB, bool print)
 {
   // Time domain preconditioner matrix.
@@ -566,7 +562,7 @@ void SpaceOperator::GetPreconditionerMatrix(
     this->AddDampingCoefficients(a1, f, fb);
     this->AddRealMassCoefficients(1.0, false, f, fb);
   };
-  GetPreconditionerInternal(AddCoefficients, ess_diag, B, AuxB, print);
+  GetPreconditionerInternal(AddCoefficients, B, AuxB, print);
 }
 
 std::unique_ptr<mfem::Operator> SpaceOperator::GetNegCurlMatrix()

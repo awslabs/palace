@@ -75,7 +75,7 @@ private:
       const std::function<void(SumMatrixCoefficient &, SumMatrixCoefficient &,
                                SumMatrixCoefficient &, SumMatrixCoefficient &)>
           &AddCoefficients,
-      double ess_diag, std::vector<std::unique_ptr<mfem::Operator>> &B,
+      std::vector<std::unique_ptr<mfem::Operator>> &B,
       std::vector<std::unique_ptr<mfem::Operator>> &AuxB, bool print);
 
   // Helper functions for building the bilinear forms corresponding to the discretized
@@ -140,15 +140,19 @@ public:
     EXTRA
   };
   std::unique_ptr<petsc::PetscParMatrix>
-  GetSystemMatrixPetsc(OperatorType type, double omega, double ess_diag, bool print = true);
+  GetSystemMatrixPetsc(OperatorType type, double omega,
+                       mfem::Operator::DiagonalPolicy ess_diag, bool print = true);
   std::unique_ptr<petsc::PetscParMatrix>
-  GetSystemMatrixPetsc(OperatorType type, double ess_diag, bool print = true)
+  GetSystemMatrixPetsc(OperatorType type, mfem::Operator::DiagonalPolicy ess_diag,
+                       bool print = true)
   {
     return GetSystemMatrixPetsc(type, 0.0, ess_diag, print);
   }
   std::unique_ptr<mfem::Operator> GetSystemMatrix(OperatorType type, double omega,
-                                                  double ess_diag, bool print = true);
-  std::unique_ptr<mfem::Operator> GetSystemMatrix(OperatorType type, double ess_diag,
+                                                  mfem::Operator::DiagonalPolicy ess_diag,
+                                                  bool print = true);
+  std::unique_ptr<mfem::Operator> GetSystemMatrix(OperatorType type,
+                                                  mfem::Operator::DiagonalPolicy ess_diag,
                                                   bool print = true)
   {
     return GetSystemMatrix(type, 0.0, ess_diag, print);
@@ -158,11 +162,11 @@ public:
   // (Mr > 0, Mi < 0):
   //              B =    K +  ω C + ω² (-/+ Mr - Mi) , or
   //              B = a0 K + a1 C +         Mr .
-  void GetPreconditionerMatrix(double omega, double ess_diag,
+  void GetPreconditionerMatrix(double omega,
                                std::vector<std::unique_ptr<mfem::Operator>> &B,
                                std::vector<std::unique_ptr<mfem::Operator>> &AuxB,
                                bool print = true);
-  void GetPreconditionerMatrix(double a0, double a1, double ess_diag,
+  void GetPreconditionerMatrix(double a0, double a1,
                                std::vector<std::unique_ptr<mfem::Operator>> &B,
                                std::vector<std::unique_ptr<mfem::Operator>> &AuxB,
                                bool print = true);

@@ -25,7 +25,7 @@ void ElectrostaticSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mes
   timer.Lap();
   std::vector<std::unique_ptr<mfem::Operator>> K, Ke;
   LaplaceOperator laplaceop(iodata, mesh);
-  laplaceop.GetStiffnessMatrix(1.0, K, Ke);
+  laplaceop.GetStiffnessMatrix(K, Ke);
   SaveMetadata(laplaceop.GetH1Space());
 
   // Set up the linear solver.

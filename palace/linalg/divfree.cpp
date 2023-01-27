@@ -7,7 +7,6 @@
 #include "fem/materialoperator.hpp"
 #include "linalg/amg.hpp"
 #include "linalg/gmg.hpp"
-#include "linalg/hypre.hpp"
 #include "utils/mfemcoefficients.hpp"
 
 namespace palace
@@ -39,7 +38,7 @@ DivFreeSolver::DivFreeSolver(const MaterialOperator &mat_op,
     m.Assemble();
     m.Finalize();
     mfem::HypreParMatrix *hM = m.ParallelAssemble();
-    hypre::hypreParCSREliminateRowsCols(*hM, dbc_tdof_list_l, hypre::DiagonalPolicy::ONE);
+    hM->EliminateBC(dbc_tdof_list_l, mfem::Operator::DiagonalPolicy::DIAG_ONE);
     M.emplace_back(hM);
   }
   {

@@ -6,7 +6,6 @@
 #include "fem/materialoperator.hpp"
 #include "linalg/ams.hpp"
 #include "linalg/gmg.hpp"
-#include "linalg/hypre.hpp"
 #include "utils/mfemcoefficients.hpp"
 
 namespace palace
@@ -49,7 +48,7 @@ CurlCurlSolver::CurlCurlSolver(const MaterialOperator &mat_op,
       a.Assemble();
       a.Finalize();
       mfem::HypreParMatrix *hA = a.ParallelAssemble();
-      hypre::hypreParCSREliminateRowsCols(*hA, dbc_tdof_list_l, hypre::DiagonalPolicy::ONE);
+      hA->EliminateBC(dbc_tdof_list_l, mfem::Operator::DiagonalPolicy::DIAG_ONE);
       A_.emplace_back(hA);
     }
   }

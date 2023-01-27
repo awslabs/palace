@@ -74,9 +74,8 @@ public:
       ksp.SetOperator(*A);
     }
     const double sigma = PetscSqrtReal(PetscAbsScalar(zk));
-    constexpr double ess_diag = 1.0;
     constexpr bool print = false;
-    spaceop.GetPreconditionerMatrix(sigma, 1.0 - sigma * sigma / ess_diag, P, AuxP, print);
+    spaceop.GetPreconditionerMatrix(sigma, P, AuxP, print);
     pc.SetOperator(P, &AuxP);
   }
 
@@ -103,9 +102,8 @@ public:
       ksp.SetOperator(*A);
     }
     const double sigma = PetscAbsScalar(zk);
-    constexpr double ess_diag = 1.0;
     constexpr bool print = false;
-    spaceop.GetPreconditionerMatrix(sigma, 1.0 - sigma * sigma / ess_diag, P, AuxP, print);
+    spaceop.GetPreconditionerMatrix(sigma, P, AuxP, print);
     pc.SetOperator(P, &AuxP);
   }
 

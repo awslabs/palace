@@ -69,7 +69,7 @@ public:
 
   // Construct and return system matrix representing discretized curl-curl operator for
   // Ampere's law.
-  void GetStiffnessMatrix(double ess_diag, std::vector<std::unique_ptr<mfem::Operator>> &K);
+  void GetStiffnessMatrix(std::vector<std::unique_ptr<mfem::Operator>> &K);
 
   // Construct and return the discrete curl matrix.
   std::unique_ptr<mfem::Operator> GetCurlMatrix();
