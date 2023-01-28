@@ -32,9 +32,6 @@ private:
 
   // Temporary vectors for preconditioner application.
   mutable mfem::Vector x_, y_;
-#if defined(PETSC_USE_COMPLEX)
-  mutable mfem::Vector xr_, yr_, xi_, yi_;
-#endif
 
   // Helper function for setup.
   void Init(int n);

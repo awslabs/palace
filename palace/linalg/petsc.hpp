@@ -451,7 +451,6 @@ struct PetscMatShellCtx
   mfem::Vector x, y;
 #if defined(PETSC_USE_COMPLEX)
   std::unique_ptr<mfem::Operator> Ai;
-  mfem::Vector xr, yr, xi, yi;
 #endif
 };
 

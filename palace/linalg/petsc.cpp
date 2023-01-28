@@ -6,7 +6,7 @@
 #include <petsc.h>
 #include <petscblaslapack.h>
 #include <general/forall.hpp>
-#include "linalg/hypre.hpp"
+// #include "linalg/hypre.hpp"
 #include "linalg/slepc.hpp"
 #include "utils/communication.hpp"
 
@@ -1083,10 +1083,6 @@ PetscShellMatrix::PetscShellMatrix(MPI_Comm comm, std::unique_ptr<mfem::Operator
   ctx->Ai = nullptr;
   ctx->x.SetSize(2 * n);
   ctx->y.SetSize(2 * m);
-  ctx->xr.MakeRef(ctx->x, 0, n);
-  ctx->xi.MakeRef(ctx->x, n, n);
-  ctx->yr.MakeRef(ctx->y, 0, m);
-  ctx->yi.MakeRef(ctx->y, m, m);
 #else
   ctx->x.SetSize(n);
   ctx->y.SetSize(m);
@@ -1120,10 +1116,6 @@ PetscShellMatrix::PetscShellMatrix(MPI_Comm comm, std::unique_ptr<mfem::Operator
   ctx->Ai = std::move(Bi);
   ctx->x.SetSize(2 * n);
   ctx->y.SetSize(2 * m);
-  ctx->xr.MakeRef(ctx->x, 0, n);
-  ctx->xi.MakeRef(ctx->x, n, n);
-  ctx->yr.MakeRef(ctx->y, 0, m);
-  ctx->yi.MakeRef(ctx->y, m, m);
 
   PalacePetscCall(MatCreateShell(comm, m, n, PETSC_DECIDE, PETSC_DECIDE, (void *)ctx, &A));
   __mat_shell_init(A);
@@ -1787,34 +1779,43 @@ PetscErrorCode __mat_shell_apply_add(Mat A, Vec x, Vec y)
   PetscCall(MatShellGetContext(A, (void **)&ctx));
   MFEM_VERIFY(ctx, "Invalid PETSc shell matrix context!");
 #if defined(PETSC_USE_COMPLEX)
-  xx.GetToVectors(ctx->xr, ctx->xi);
-  if (ctx->Ar)
   {
-    ctx->Ar->Mult(ctx->xr, ctx->yr);
-    ctx->Ar->Mult(ctx->xi, ctx->yi);
+    mfem::Vector xr, xi, yr, yi;
+    xr.MakeRef(ctx->x, 0, ctx->x.Size() / 2);
+    xi.MakeRef(ctx->x, ctx->x.Size() / 2, ctx->x.Size() / 2);
+    yr.MakeRef(ctx->y, 0, ctx->y.Size() / 2);
+    yi.MakeRef(ctx->y, ctx->y.Size() / 2, ctx->y.Size() / 2);
+    xx.GetToVectors(xr, xi);
+    if (ctx->Ar)
+    {
+      ctx->Ar->Mult(xr, yr);
+      ctx->Ar->Mult(xi, yi);
+    }
+    else
+    {
+      yr = 0.0;
+      yi = 0.0;
+    }
+    if (ctx->Ai)
+    {
+      ctx->Ai->AddMult(xi, yr, -1.0);
+      ctx->Ai->AddMult(xr, yi, 1.0);
+    }
+    yy.AddFromVectors(yr, yi);
   }
-  else
-  {
-    ctx->yr = 0.0;
-    ctx->yi = 0.0;
-  }
-  if (ctx->Ai)
-  {
-    ctx->Ai->AddMult(ctx->xi, ctx->yr, -1.0);
-    ctx->Ai->AddMult(ctx->xr, ctx->yi, 1.0);
-  }
-  yy.AddFromVectors(ctx->yr, ctx->yi);
 #else
-  xx.GetToVector(ctx->x);
-  if (ctx->Ar)
   {
-    ctx->Ar->Mult(ctx->x, ctx->y);
+    xx.GetToVector(ctx->x);
+    if (ctx->Ar)
+    {
+      ctx->Ar->Mult(ctx->x, ctx->y);
+    }
+    else
+    {
+      ctx->y = 0.0;
+    }
+    yy.AddFromVector(ctx->y);
   }
-  else
-  {
-    ctx->y = 0.0;
-  }
-  yy.AddFromVector(ctx->y);
 #endif
   PetscFunctionReturn(0);
 }
@@ -1841,34 +1842,43 @@ PetscErrorCode __mat_shell_apply_transpose_add(Mat A, Vec x, Vec y)
     PetscFunctionReturn(0);
   }
 #if defined(PETSC_USE_COMPLEX)
-  xx.GetToVectors(ctx->yr, ctx->yi);
-  if (ctx->Ar)
   {
-    ctx->Ar->MultTranspose(ctx->yr, ctx->xr);
-    ctx->Ar->MultTranspose(ctx->yi, ctx->xi);
+    mfem::Vector xr, xi, yr, yi;
+    xr.MakeRef(ctx->y, 0, ctx->y.Size() / 2);
+    xi.MakeRef(ctx->y, ctx->y.Size() / 2, ctx->y.Size() / 2);
+    yr.MakeRef(ctx->x, 0, ctx->x.Size() / 2);
+    yi.MakeRef(ctx->x, ctx->x.Size() / 2, ctx->x.Size() / 2);
+    xx.GetToVectors(xr, xi);
+    if (ctx->Ar)
+    {
+      ctx->Ar->MultTranspose(xr, yr);
+      ctx->Ar->MultTranspose(xi, yi);
+    }
+    else
+    {
+      yr = 0.0;
+      yi = 0.0;
+    }
+    if (ctx->Ai)
+    {
+      ctx->Ai->AddMultTranspose(xi, yr, -1.0);
+      ctx->Ai->AddMultTranspose(xr, yi, 1.0);
+    }
+    yy.AddFromVectors(yr, yi);
   }
-  else
-  {
-    ctx->xr = 0.0;
-    ctx->xi = 0.0;
-  }
-  if (ctx->Ai)
-  {
-    ctx->Ai->AddMultTranspose(ctx->yi, ctx->xr, -1.0);
-    ctx->Ai->AddMultTranspose(ctx->yr, ctx->xi, 1.0);
-  }
-  yy.AddFromVectors(ctx->xr, ctx->xi);
 #else
-  xx.GetToVectors(ctx->y);
-  if (ctx->Ar)
   {
-    ctx->Ar->MultTranspose(ctx->y, ctx->x);
+    xx.GetToVector(ctx->y);
+    if (ctx->Ar)
+    {
+      ctx->Ar->MultTranspose(ctx->y, ctx->x);
+    }
+    else
+    {
+      ctx->x = 0.0;
+    }
+    yy.AddFromVector(ctx->x);
   }
-  else
-  {
-    ctx->x = 0.0;
-  }
-  yy.AddFromVector(ctx->x);
 #endif
   PetscFunctionReturn(0);
 }
@@ -1901,39 +1911,46 @@ PetscErrorCode __mat_shell_apply_hermitian_transpose_add(Mat A, Vec x, Vec y)
     PetscFunctionReturn(0);
   }
   PetscCall(MatIsSymmetricKnown(A, &flg, &sym));
-  xx.GetToVectors(ctx->yr, ctx->yi);
-  if (ctx->Ar)
   {
-    if (flg == PETSC_TRUE && sym == PETSC_TRUE)
+    mfem::Vector xr, xi, yr, yi;
+    xr.MakeRef(ctx->y, 0, ctx->y.Size() / 2);
+    xi.MakeRef(ctx->y, ctx->y.Size() / 2, ctx->y.Size() / 2);
+    yr.MakeRef(ctx->x, 0, ctx->x.Size() / 2);
+    yi.MakeRef(ctx->x, ctx->x.Size() / 2, ctx->x.Size() / 2);
+    xx.GetToVectors(xr, xi);
+    if (ctx->Ar)
     {
-      ctx->Ar->Mult(ctx->yr, ctx->xr);
-      ctx->Ar->Mult(ctx->yi, ctx->xi);
+      if (flg == PETSC_TRUE && sym == PETSC_TRUE)
+      {
+        ctx->Ar->Mult(xr, yr);
+        ctx->Ar->Mult(xi, yi);
+      }
+      else
+      {
+        ctx->Ar->MultTranspose(xr, yr);
+        ctx->Ar->MultTranspose(xi, yi);
+      }
     }
     else
     {
-      ctx->Ar->MultTranspose(ctx->yr, ctx->xr);
-      ctx->Ar->MultTranspose(ctx->yi, ctx->xi);
+      yr = 0.0;
+      yi = 0.0;
     }
-  }
-  else
-  {
-    ctx->xr = 0.0;
-    ctx->xi = 0.0;
-  }
-  if (ctx->Ai)
-  {
-    if (flg == PETSC_TRUE && sym == PETSC_TRUE)
+    if (ctx->Ai)
     {
-      ctx->Ai->AddMult(ctx->yi, ctx->xr, 1.0);
-      ctx->Ai->AddMult(ctx->yr, ctx->xi, -1.0);
+      if (flg == PETSC_TRUE && sym == PETSC_TRUE)
+      {
+        ctx->Ai->AddMult(xi, yr, 1.0);
+        ctx->Ai->AddMult(xr, yi, -1.0);
+      }
+      else
+      {
+        ctx->Ai->AddMultTranspose(xi, yr, 1.0);
+        ctx->Ai->AddMultTranspose(xr, yi, -1.0);
+      }
     }
-    else
-    {
-      ctx->Ai->AddMultTranspose(ctx->yi, ctx->xr, 1.0);
-      ctx->Ai->AddMultTranspose(ctx->yr, ctx->xi, -1.0);
-    }
+    yy.AddFromVectors(yr, yi);
   }
-  yy.AddFromVectors(ctx->xr, ctx->xi);
 #else
   PetscCall(__mat_shell_apply_transpose_add(A, x, y));
 #endif
@@ -1955,23 +1972,28 @@ PetscErrorCode __mat_shell_apply(Mat A, const mfem::Vector &x, Vec y)
 
   PetscCall(MatShellGetContext(A, (void **)&ctx));
   MFEM_VERIFY(ctx, "Invalid PETSc shell matrix context!");
-  if (ctx->Ar)
   {
-    ctx->Ar->Mult(x, ctx->yr);
+    mfem::Vector yr, yi;
+    yr.MakeRef(ctx->y, 0, ctx->y.Size() / 2);
+    yi.MakeRef(ctx->y, ctx->y.Size() / 2, ctx->y.Size() / 2);
+    if (ctx->Ar)
+    {
+      ctx->Ar->Mult(x, yr);
+    }
+    else
+    {
+      yr = 0.0;
+    }
+    if (ctx->Ai)
+    {
+      ctx->Ai->Mult(x, yi);
+    }
+    else
+    {
+      yi = 0.0;
+    }
+    yy.SetFromVectors(yr, yi);
   }
-  else
-  {
-    ctx->yr = 0.0;
-  }
-  if (ctx->Ai)
-  {
-    ctx->Ai->Mult(x, ctx->yi);
-  }
-  else
-  {
-    ctx->yi = 0.0;
-  }
-  yy.SetFromVectors(ctx->yr, ctx->yi);
   PetscFunctionReturn(0);
 }
 
@@ -1990,23 +2012,28 @@ PetscErrorCode __mat_shell_apply_transpose(Mat A, const mfem::Vector &x, Vec y)
     PetscCall(__mat_shell_apply(A, x, y));
     PetscFunctionReturn(0);
   }
-  if (ctx->Ar)
   {
-    ctx->Ar->MultTranspose(x, ctx->xr);
+    mfem::Vector yr, yi;
+    yr.MakeRef(ctx->x, 0, ctx->x.Size() / 2);
+    yi.MakeRef(ctx->x, ctx->x.Size() / 2, ctx->x.Size() / 2);
+    if (ctx->Ar)
+    {
+      ctx->Ar->MultTranspose(x, yr);
+    }
+    else
+    {
+      yr = 0.0;
+    }
+    if (ctx->Ai)
+    {
+      ctx->Ai->MultTranspose(x, yi);
+    }
+    else
+    {
+      yi = 0.0;
+    }
+    yy.SetFromVectors(yr, yi);
   }
-  else
-  {
-    ctx->xr = 0.0;
-  }
-  if (ctx->Ai)
-  {
-    ctx->Ai->MultTranspose(x, ctx->xi);
-  }
-  else
-  {
-    ctx->xi = 0.0;
-  }
-  yy.SetFromVectors(ctx->xr, ctx->xi);
   PetscFunctionReturn(0);
 }
 
@@ -2030,39 +2057,44 @@ PetscErrorCode __mat_shell_apply_hermitian_transpose(Mat A, const mfem::Vector &
     PetscCall(__mat_shell_apply_transpose(A, x, y));
     PetscFunctionReturn(0);
   }
-  PetscCall(MatIsSymmetricKnown(A, &flg, &sym));
-  if (ctx->Ar)
   {
-    if (flg == PETSC_TRUE && sym == PETSC_TRUE)
+    mfem::Vector yr, yi;
+    yr.MakeRef(ctx->x, 0, ctx->x.Size() / 2);
+    yi.MakeRef(ctx->x, ctx->x.Size() / 2, ctx->x.Size() / 2);
+    PetscCall(MatIsSymmetricKnown(A, &flg, &sym));
+    if (ctx->Ar)
     {
-      ctx->Ar->Mult(x, ctx->xr);
+      if (flg == PETSC_TRUE && sym == PETSC_TRUE)
+      {
+        ctx->Ar->Mult(x, yr);
+      }
+      else
+      {
+        ctx->Ar->MultTranspose(x, yr);
+      }
     }
     else
     {
-      ctx->Ar->MultTranspose(x, ctx->xr);
+      yr = 0.0;
     }
-  }
-  else
-  {
-    ctx->xr = 0.0;
-  }
-  if (ctx->Ai)
-  {
-    if (flg == PETSC_TRUE && sym == PETSC_TRUE)
+    if (ctx->Ai)
     {
-      ctx->Ai->Mult(x, ctx->xi);
+      if (flg == PETSC_TRUE && sym == PETSC_TRUE)
+      {
+        ctx->Ai->Mult(x, yi);
+      }
+      else
+      {
+        ctx->Ai->MultTranspose(x, yi);
+      }
+      yi.Neg();
     }
     else
     {
-      ctx->Ai->MultTranspose(x, ctx->xi);
+      yi = 0.0;
     }
-    ctx->xi.Neg();
+    yy.SetFromVectors(yr, yi);
   }
-  else
-  {
-    ctx->xi = 0.0;
-  }
-  yy.SetFromVectors(ctx->xr, ctx->xi);
   PetscFunctionReturn(0);
 }
 #endif
@@ -2076,33 +2108,40 @@ PetscErrorCode __mat_shell_get_diagonal(Mat A, Vec diag)
   PetscCall(MatShellGetContext(A, (void **)&ctx));
   MFEM_VERIFY(ctx, "Invalid PETSc shell matrix context!");
 #if defined(PETSC_USE_COMPLEX)
-  if (ctx->Ar)
   {
-    ctx->Ar->AssembleDiagonal(ctx->xr);
+    mfem::Vector xr, xi;
+    xr.MakeRef(ctx->x, 0, ctx->x.Size() / 2);
+    xi.MakeRef(ctx->x, ctx->x.Size() / 2, ctx->x.Size() / 2);
+    if (ctx->Ar)
+    {
+      ctx->Ar->AssembleDiagonal(xr);
+    }
+    else
+    {
+      xr = 0.0;
+    }
+    if (ctx->Ai)
+    {
+      ctx->Ai->AssembleDiagonal(xi);
+    }
+    else
+    {
+      xi = 0.0;
+    }
+    ddiag.SetFromVectors(xr, xi);
   }
-  else
-  {
-    ctx->xr = 0.0;
-  }
-  if (ctx->Ai)
-  {
-    ctx->Ai->AssembleDiagonal(ctx->xi);
-  }
-  else
-  {
-    ctx->xi = 0.0;
-  }
-  ddiag.SetFromVectors(ctx->xr, ctx->xi);
 #else
-  if (ctx->Ar)
   {
-    ctx->Ar->AssembleDiagonal(ctx->x);
+    if (ctx->Ar)
+    {
+      ctx->Ar->AssembleDiagonal(ctx->x);
+    }
+    else
+    {
+      ctx->x = 0.0;
+    }
+    ddiag.SetFromVector(ctx->x);
   }
-  else
-  {
-    ctx->x = 0.0;
-  }
-  ddiag.SetFromVector(ctx->x);
 #endif
   PetscFunctionReturn(0);
 }

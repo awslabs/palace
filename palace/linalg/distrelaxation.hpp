@@ -5,6 +5,7 @@
 #define PALACE_DIST_RELAXATION_SMOOTHER_HPP
 
 #include <memory>
+#include <vector>
 #include <mfem.hpp>
 
 namespace palace
@@ -31,7 +32,6 @@ private:
 
   // Temporary vectors for smoother application.
   mutable mfem::Vector r, x_G, y_G;
-  mutable mfem::Array<mfem::Vector *> R, X_G, Y_G;
 
   // Dirichlet boundary conditions in the auxiliary space.
   mfem::Array<int> h1_dbc_tdof_list;
@@ -39,16 +39,11 @@ private:
   // Number of smoother iterations.
   const int pc_it;
 
-  // Management of temporary vector storage.
-  void InitVectors(int nrhs) const;
-  void DestroyVectors() const;
-
 public:
   DistRelaxationSmoother(mfem::ParFiniteElementSpace &nd_fespace,
                          mfem::ParFiniteElementSpace &h1_fespace,
                          const mfem::Array<int> &dbc_marker, int smooth_it,
                          int cheby_smooth_it, int cheby_order);
-  ~DistRelaxationSmoother() { DestroyVectors(); }
 
   void SetOperator(const mfem::Operator &op) override
   {
@@ -79,19 +74,31 @@ public:
   void ArrayMult(const mfem::Array<const mfem::Vector *> &X,
                  mfem::Array<mfem::Vector *> &Y) const override
   {
+    // Initialize.
     const int nrhs = X.Size();
-    InitVectors(nrhs);
+    mfem::Array<mfem::Vector *> R(nrhs), X_G(nrhs), Y_G(nrhs);
+    std::vector<mfem::Vector> rrefs(nrhs), xgrefs(nrhs), ygrefs(nrhs);
+    if (nrhs * height != r.Size())
+    {
+      r.SetSize(nrhs * height);
+      x_G.SetSize(nrhs * A_G->Height());
+      y_G.SetSize(nrhs * A_G->Height());
+    }
+    for (int j = 0; j < nrhs; j++)
+    {
+      rrefs[j].MakeRef(r, j * height, height);
+      xgrefs[j].MakeRef(x_G, j * A_G->Height(), A_G->Height());
+      ygrefs[j].MakeRef(y_G, j * A_G->Height(), A_G->Height());
+      R[j] = &rrefs[j];
+      X_G[j] = &xgrefs[j];
+      Y_G[j] = &ygrefs[j];
+    }
+
+    // Apply smoother.
     for (int it = 0; it < pc_it; it++)
     {
       // y = y + B (x - A y)
-      if (iterative_mode || it > 0)
-      {
-        B->iterative_mode = true;
-      }
-      else
-      {
-        B->iterative_mode = false;
-      }
+      B->iterative_mode = (iterative_mode || it > 0);
       B->ArrayMult(X, Y);
 
       // y = y + G B_G Gᵀ (x - A y)
@@ -113,8 +120,27 @@ public:
   void ArrayMultTranspose(const mfem::Array<const mfem::Vector *> &X,
                           mfem::Array<mfem::Vector *> &Y) const override
   {
+    // Initialize.
     const int nrhs = X.Size();
-    InitVectors(nrhs);
+    mfem::Array<mfem::Vector *> R(nrhs), X_G(nrhs), Y_G(nrhs);
+    std::vector<mfem::Vector> rrefs(nrhs), xgrefs(nrhs), ygrefs(nrhs);
+    if (nrhs * height != r.Size())
+    {
+      r.SetSize(nrhs * height);
+      x_G.SetSize(nrhs * A_G->Height());
+      y_G.SetSize(nrhs * A_G->Height());
+    }
+    for (int j = 0; j < nrhs; j++)
+    {
+      rrefs[j].MakeRef(r, j * height, height);
+      xgrefs[j].MakeRef(x_G, j * A_G->Height(), A_G->Height());
+      ygrefs[j].MakeRef(y_G, j * A_G->Height(), A_G->Height());
+      R[j] = &rrefs[j];
+      X_G[j] = &xgrefs[j];
+      Y_G[j] = &ygrefs[j];
+    }
+
+    // Apply transpose.
     B->iterative_mode = true;
     for (int it = 0; it < pc_it; it++)
     {

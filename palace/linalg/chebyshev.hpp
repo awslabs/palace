@@ -35,16 +35,10 @@ private:
 
   // Temporary vectors for smoother application.
   mutable mfem::Vector r, d;
-  mutable mfem::Array<mfem::Vector *> R, D;
-
-  // Management of temporary vector storage.
-  void InitVectors(int nrhs) const;
-  void DestroyVectors() const;
 
 public:
   ChebyshevSmoother(MPI_Comm c, const mfem::Array<int> &tdof_list, int smooth_it,
                     int poly_order);
-  ~ChebyshevSmoother() { DestroyVectors(); }
 
   void SetOperator(const mfem::Operator &op) override;
 
