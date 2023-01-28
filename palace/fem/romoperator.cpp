@@ -24,10 +24,12 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &sp, int nmax)
   // simply by setting diagonal entries of the system matrix for the corresponding dofs.
   // Because the Dirichlet BC is always homogenous, no special elimination is required on
   // the RHS. The damping matrix may be nullptr.
-  constexpr double ess_diag = 1.0;
-  K = spaceop.GetSystemMatrixPetsc(SpaceOperator::OperatorType::STIFFNESS, ess_diag);
-  M = spaceop.GetSystemMatrixPetsc(SpaceOperator::OperatorType::MASS, 0.0);
-  C = spaceop.GetSystemMatrixPetsc(SpaceOperator::OperatorType::DAMPING, 0.0);
+  K = spaceop.GetSystemMatrixPetsc(SpaceOperator::OperatorType::STIFFNESS,
+                                   mfem::Operator::DIAG_ONE);
+  M = spaceop.GetSystemMatrixPetsc(SpaceOperator::OperatorType::MASS,
+                                   mfem::Operator::DIAG_ZERO);
+  C = spaceop.GetSystemMatrixPetsc(SpaceOperator::OperatorType::DAMPING,
+                                   mfem::Operator::DIAG_ZERO);
 
   // Set up the linear solver and set operators but don't set the operators yet (this will
   // be done during an HDM solve at a given parameter point). The preconditioner for the
@@ -148,12 +150,11 @@ void RomOperator::SolveHDM(double omega, petsc::PetscParVector &E, bool print)
     const auto step = std::lround((omega - omega_min) / delta_omega);
     MFEM_VERIFY(step >= 0 && static_cast<std::size_t>(step) < A2.size(),
                 "Invalid out-of-range frequency for PROM solution!");
-    constexpr double ess_diag = 1.0;
     std::vector<std::unique_ptr<mfem::Operator>> P, AuxP;
-    A2[step] =
-        spaceop.GetSystemMatrixPetsc(SpaceOperator::OperatorType::EXTRA, omega, 0.0, print);
+    A2[step] = spaceop.GetSystemMatrixPetsc(SpaceOperator::OperatorType::EXTRA, omega,
+                                            mfem::Operator::DIAG_ZERO, print);
     auto A = utils::GetSystemMatrixShell(omega, *K, *M, C.get(), A2[step].get());
-    spaceop.GetPreconditionerMatrix(omega, ess_diag, P, AuxP, print);
+    spaceop.GetPreconditionerMatrix(omega, P, AuxP, print);
     pc0->SetOperator(P, &AuxP);
     ksp0->SetOperator(*A);
 
@@ -263,8 +264,8 @@ void RomOperator::AssemblePROM(double omega)
   // if not needed).
   if (init2)
   {
-    auto tA2 =
-        spaceop.GetSystemMatrixPetsc(SpaceOperator::OperatorType::EXTRA, omega, 0.0, false);
+    auto tA2 = spaceop.GetSystemMatrixPetsc(SpaceOperator::OperatorType::EXTRA, omega,
+                                            mfem::Operator::DIAG_ZERO, false);
     if (tA2)
     {
       hasA2 = true;
@@ -288,7 +289,7 @@ void RomOperator::AssemblePROM(double omega)
       // Debug
       // Mpi::Print("Inserting cache value for omega = {:e}\n", omega);
       A2[step] = spaceop.GetSystemMatrixPetsc(SpaceOperator::OperatorType::EXTRA, omega,
-                                              0.0, false);
+                                              mfem::Operator::DIAG_ZERO, false);
     }
     else
     {

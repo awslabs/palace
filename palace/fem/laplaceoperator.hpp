@@ -65,7 +65,7 @@ public:
 
   // Construct and return system matrix representing discretized Laplace operator for
   // Gauss's law.
-  void GetStiffnessMatrix(double ess_diag, std::vector<std::unique_ptr<mfem::Operator>> &K,
+  void GetStiffnessMatrix(std::vector<std::unique_ptr<mfem::Operator>> &K,
                           std::vector<std::unique_ptr<mfem::Operator>> &Ke);
 
   // Construct and return the discrete negative gradient matrix.

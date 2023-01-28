@@ -25,7 +25,7 @@ void MagnetostaticSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mes
   timer.Lap();
   std::vector<std::unique_ptr<mfem::Operator>> K;
   CurlCurlOperator curlcurlop(iodata, mesh);
-  curlcurlop.GetStiffnessMatrix(1.0, K);
+  curlcurlop.GetStiffnessMatrix(K);
   SaveMetadata(curlcurlop.GetNDSpace());
 
   // Set up the linear solver.

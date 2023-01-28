@@ -32,14 +32,13 @@ void EigenSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
   // values for the mass matrix PEC dof shift the Dirichlet eigenvalues out of the
   // computational range. The damping matrix may be nullptr.
   timer.Lap();
-  constexpr double ess_diag = 1.0;
   SpaceOperator spaceop(iodata, mesh);
-  std::unique_ptr<petsc::PetscParMatrix> K =
-      spaceop.GetSystemMatrixPetsc(SpaceOperator::OperatorType::STIFFNESS, ess_diag);
-  std::unique_ptr<petsc::PetscParMatrix> M =
-      spaceop.GetSystemMatrixPetsc(SpaceOperator::OperatorType::MASS, 0.0);
-  std::unique_ptr<petsc::PetscParMatrix> C =
-      spaceop.GetSystemMatrixPetsc(SpaceOperator::OperatorType::DAMPING, 0.0);
+  std::unique_ptr<petsc::PetscParMatrix> K = spaceop.GetSystemMatrixPetsc(
+      SpaceOperator::OperatorType::STIFFNESS, mfem::Operator::DIAG_ONE);
+  std::unique_ptr<petsc::PetscParMatrix> M = spaceop.GetSystemMatrixPetsc(
+      SpaceOperator::OperatorType::MASS, mfem::Operator::DIAG_ZERO);
+  std::unique_ptr<petsc::PetscParMatrix> C = spaceop.GetSystemMatrixPetsc(
+      SpaceOperator::OperatorType::DAMPING, mfem::Operator::DIAG_ZERO);
   std::unique_ptr<petsc::PetscParMatrix> NegCurl = spaceop.GetNegCurlMatrixPetsc();
   SaveMetadata(spaceop.GetNDSpace());
 
@@ -256,7 +255,7 @@ void EigenSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
     // preconditioner for complex linear systems is constructed from a real approximation
     // to the complex system matrix.
     A = utils::GetSystemMatrixShell(target, *K, *M, C.get());
-    spaceop.GetPreconditionerMatrix(target, ess_diag, P, AuxP);
+    spaceop.GetPreconditionerMatrix(target, P, AuxP);
 
     pc = std::make_unique<KspPreconditioner>(iodata, spaceop.GetDbcMarker(),
                                              spaceop.GetNDSpaces(), &spaceop.GetH1Spaces());

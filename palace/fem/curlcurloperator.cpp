@@ -3,7 +3,6 @@
 
 #include "curlcurloperator.hpp"
 
-#include "linalg/hypre.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
@@ -172,8 +171,7 @@ void CurlCurlOperator::PrintHeader()
   }
 }
 
-void CurlCurlOperator::GetStiffnessMatrix(double ess_diag,
-                                          std::vector<std::unique_ptr<mfem::Operator>> &K)
+void CurlCurlOperator::GetStiffnessMatrix(std::vector<std::unique_ptr<mfem::Operator>> &K)
 {
   K.clear();
   K.reserve(nd_fespaces.GetNumLevels());
@@ -190,8 +188,7 @@ void CurlCurlOperator::GetStiffnessMatrix(double ess_diag,
     k.Assemble(skip_zeros);
     k.Finalize(skip_zeros);
     mfem::HypreParMatrix *hK = k.ParallelAssemble();
-    hypre::hypreParCSREliminateRowsCols(*hK, dbc_tdof_list_l, hypre::DiagonalPolicy::USER,
-                                        ess_diag);
+    hK->EliminateBC(dbc_tdof_list_l, mfem::Operator::DiagonalPolicy::DIAG_ONE);
     PrintHeader();
     {
       std::string str = "";

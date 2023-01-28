@@ -71,10 +71,12 @@ public:
     // handled simply by setting diagonal entries of the mass matrix for the corresponding
     // dofs. Because the Dirichlet BC is always homogenous, no special elimination is
     // required on the RHS. Diagonal entries are set in M (so M is non-singular).
-    constexpr double ess_diag = 1.0;
-    K = spaceop.GetSystemMatrix(SpaceOperator::OperatorType::STIFFNESS, 0.0);
-    M = spaceop.GetSystemMatrix(SpaceOperator::OperatorType::MASS, ess_diag);
-    C = spaceop.GetSystemMatrix(SpaceOperator::OperatorType::DAMPING, 0.0);
+    K = spaceop.GetSystemMatrix(SpaceOperator::OperatorType::STIFFNESS,
+                                mfem::Operator::DIAG_ZERO);
+    M = spaceop.GetSystemMatrix(SpaceOperator::OperatorType::MASS,
+                                mfem::Operator::DIAG_ONE);
+    C = spaceop.GetSystemMatrix(SpaceOperator::OperatorType::DAMPING,
+                                mfem::Operator::DIAG_ZERO);
 
     // Set up RHS vector for the current source term: -g'(t) J, where g(t) handles the time
     // dependence.
@@ -137,10 +139,7 @@ public:
       GetPreconditionerMatrix = [&](double a0, double a1,
                                     std::vector<std::unique_ptr<mfem::Operator>> &B,
                                     std::vector<std::unique_ptr<mfem::Operator>> &AuxB)
-      {
-        constexpr double ess_diag = 1.0;
-        spaceop.GetPreconditionerMatrix(a0, a1, ess_diag, B, AuxB, true);
-      };
+      { spaceop.GetPreconditionerMatrix(a0, a1, B, AuxB, true); };
     }
     kspM_mult = kspA_mult = kspM_it = kspA_it = 0;
   }
