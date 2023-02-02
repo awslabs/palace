@@ -881,7 +881,6 @@ private:
   }
 
 public:
-  SumCoefficient() : mfem::Coefficient() {}
 
   bool empty() const { return c.empty(); }
 
