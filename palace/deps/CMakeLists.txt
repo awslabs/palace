@@ -94,6 +94,7 @@ if(PALACE_WITH_INTERNAL_MFEM)
     "${CMAKE_CURRENT_SOURCE_DIR}/patch/mfem/patch_part.diff"
     "${CMAKE_CURRENT_SOURCE_DIR}/patch/mfem/patch_mg.diff"
     "${CMAKE_CURRENT_SOURCE_DIR}/patch/mfem/patch_direct.diff"
+    "${CMAKE_CURRENT_SOURCE_DIR}/patch/mfem/ncmesh_trial.patch"
   )
 
   include(FetchContent)

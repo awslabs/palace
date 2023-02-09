@@ -45,7 +45,7 @@ std::map<int, std::array<int, 2>> CheckMesh(std::unique_ptr<mfem::Mesh> &,
 // Given a serial mesh on the root processor and element partitioning, create a parallel
 // mesh oer the given communicator.
 std::unique_ptr<mfem::ParMesh> DistributeMesh(MPI_Comm, std::unique_ptr<mfem::Mesh> &,
-                                              std::unique_ptr<int[]> &);
+                                              std::unique_ptr<int[]> &, bool mark_nonconforming = false);
 
 // Get list of domain and boundary attribute markers used in configuration file for mesh
 // cleaning.
@@ -1097,7 +1097,7 @@ std::map<int, std::array<int, 2>> CheckMesh(std::unique_ptr<mfem::Mesh> &orig_me
 
 std::unique_ptr<mfem::ParMesh> DistributeMesh(MPI_Comm comm,
                                               std::unique_ptr<mfem::Mesh> &smesh,
-                                              std::unique_ptr<int[]> &partitioning)
+                                              std::unique_ptr<int[]> &partitioning, bool mark_nonconforming)
 {
   // Take a serial mesh and partitioning on the root process and construct the global
   // parallel mesh. For now, prefer the MPI-based version.
@@ -1204,7 +1204,56 @@ std::unique_ptr<mfem::ParMesh> DistributeMesh(MPI_Comm comm,
     MPI_Recv(si.data(), rlen, MPI_CHAR, 0, Mpi::Rank(comm), comm, MPI_STATUS_IGNORE);
     std::istringstream fi(si);
     // std::istringstream fi(zlib::DecompressString(si));
-    return std::make_unique<mfem::ParMesh>(comm, fi);
+
+    auto pmesh = std::make_unique<mfem::ParMesh>(comm, fi);
+
+    if (mark_nonconforming)
+    {
+      std::string ncs_msg;
+      std::size_t ilen;
+      if (Mpi::Root(comm))
+      {
+        mfem::NCMesh ncmesh(smesh.get());
+
+        // rank 0 will build a byte representation of the ncmesh
+        std::ostringstream nco(std::stringstream::out);
+        nco << std::scientific;
+        nco.precision(17);
+        pmesh->ncmesh->Print(nco);
+
+        ncs_msg = nco.str();
+        ilen = ncs_msg.size();
+
+        pmesh->ncmesh = pmesh->pncmesh = new mfem::ParNCMesh(MPI_COMM_WORLD, std::move(ncmesh), partitioning.get());
+      }
+
+      // prepare the buffer
+      MPI_Bcast(&ilen, 1, MPI_UNSIGNED, 0, MPI_COMM_WORLD);
+      ncs_msg.resize(ilen);
+
+      // broadcast the buffer
+      MPI_Bcast((void *)ncs_msg.c_str(), ilen, MPI_CHAR, 0, MPI_COMM_WORLD);
+
+      if (!Mpi::Root(comm))
+      {
+        // all remaining ranks construct the ncmesh structure
+        std::istringstream fi(ncs_msg);
+        fi.ignore(2000, '\n');
+        int curved, is_nc;
+        pmesh->ncmesh = pmesh->pncmesh = new mfem::ParNCMesh(MPI_COMM_WORLD, mfem::NCMesh(fi, 10, curved, is_nc), partitioning.get());
+        MFEM_VERIFY(is_nc == 1, "Must be nc");
+      }
+
+      // All ranks now have an instance of the serial NCMesh. Prune and build together.
+      pmesh->pncmesh->Prune();
+      pmesh->InitFromNCMesh(*pmesh->ncmesh);
+      pmesh->pncmesh->OnMeshUpdated(pmesh.get());
+      pmesh->pncmesh->GetConformingSharedStructures(*pmesh);
+
+      MFEM_VERIFY(pmesh->Nonconforming(), "All must be nonconforming");
+    }
+
+    return pmesh;
   }
 }
 

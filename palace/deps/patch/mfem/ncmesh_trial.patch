@@ -1,0 +1,441 @@
+diff --git a/examples/CMakeLists.txt b/examples/CMakeLists.txt
+index 88b656d03..a918800a6 100644
+--- a/examples/CMakeLists.txt
++++ b/examples/CMakeLists.txt
+@@ -46,6 +46,7 @@ if (MFEM_USE_MPI)
+   list(APPEND ALL_EXE_SRCS
+     ex0p.cpp
+     ex1p.cpp
++    ex1p-test.cpp
+     ex2p.cpp
+     ex3p.cpp
+     ex4p.cpp
+diff --git a/examples/ex1p-test.cpp b/examples/ex1p-test.cpp
+index 9b17ae982..e543337d2 100644
+--- a/examples/ex1p-test.cpp
++++ b/examples/ex1p-test.cpp
+@@ -55,8 +55,10 @@
+ //               optional connection to the GLVis tool for visualization.
+ 
+ #include "mfem.hpp"
++#include "mesh/pncmesh.hpp"
+ #include <fstream>
+ #include <iostream>
++#include <memory>
+ 
+ using namespace std;
+ using namespace mfem;
+@@ -119,45 +121,196 @@ int main(int argc, char *argv[])
+    // 4. Read the (serial) mesh from the given mesh file on all processors.  We
+    //    can handle triangular, quadrilateral, tetrahedral, hexahedral, surface
+    //    and volume meshes with the same code.
+-   Mesh mesh(mesh_file, 1, 1);
+-   int dim = mesh.Dimension();
+ 
+-   // 5. Refine the serial mesh on all processors to increase the resolution. In
+-   //    this example we do 'ref_levels' of uniform refinement. We choose
+-   //    'ref_levels' to be the largest number that gives a final mesh with no
+-   //    more than 10,000 elements.
++   std::vector<std::string> so;
++   std::unique_ptr<ParMesh> ppmesh;
++   std::string ncmesh;
++   if (myid == 0)
+    {
+-      int ref_levels =
+-         (int)floor(log(10000./mesh.GetNE())/log(2.)/dim);
+-      for (int l = 0; l < ref_levels; l++)
++      // Cut the mesh into parts
++      Mesh mesh(mesh_file, 1, 1);
++      mesh.EnsureNCMesh(true);
++
++      // Refine the mesh to a minimum number of elements
++      int dim = mesh.Dimension();
+       {
+-         mesh.UniformRefinement();
++         int target_elem_count = 1e5;
++         int ref_levels = (int)floor(log(target_elem_count / mesh.GetNE())/log(2.)/dim);
++         for (int l = 0; l < ref_levels; l++)
++         {
++            mesh.UniformRefinement();
++         }
+       }
+-   }
++      mesh.ncmesh->MarkCoarseLevel();
+ 
+-   // 6. Define a parallel mesh by a partitioning of the serial mesh. Refine
+-   //    this mesh further in parallel to increase the resolution. Once the
+-   //    parallel mesh is defined, the serial mesh can be deleted.
+-   // ParMesh pmesh(MPI_COMM_WORLD, mesh);
+-   mesh.Clear();
+-   ifstream mesh_ifs(
+-      MakeParFilename("../miniapps/meshing/mesh-explorer.mesh.",
+-                      myid));
+-   ParMesh pmesh(MPI_COMM_WORLD, mesh_ifs, /* refine: */ false);
+-   dim = pmesh.Dimension();
+-   pmesh.PrintInfo(cout);
+-   {
+-      int par_ref_levels = 0;
+-      for (int l = 0; l < par_ref_levels; l++)
++      std::cout << "Partitioning\n";
++      MeshPartitioner partitioner(mesh, num_procs); // default partitioning for now
++
++      so.reserve(num_procs);
++      for (int i = 0; i < num_procs; i++)
++      {
++        mfem::MeshPart part;
++        partitioner.ExtractPart(i, part);
++        std::ostringstream fo(std::stringstream::out);
++        // fo << std::fixed;
++        fo << std::scientific;
++        fo.precision(17);
++        part.Print(fo);
++        so.push_back(fo.str());
++        // so.push_back((i > 0) ? zlib::CompressString(fo.str()) : fo.str());
++      }
++
++      // Scatter the partitioned mesh
++      std::vector<MPI_Request> send_requests(num_procs - 1, MPI_REQUEST_NULL);
++      for (int i = 1; i < num_procs; i++)
+       {
+-         pmesh.UniformRefinement();
++        int ilen = static_cast<int>(so[i].length());
++        MFEM_VERIFY(so[i].length() == (std::size_t)ilen,
++                    "Overflow error distributing parallel mesh!");
++        MPI_Isend(so[i].c_str(), ilen, MPI_CHAR, i, i, MPI_COMM_WORLD, &send_requests[i - 1]);
++
+       }
++      std::istringstream fi(so[0]);  // This is never compressed
++      ppmesh = std::unique_ptr<ParMesh>(new ParMesh(MPI_COMM_WORLD, fi));
++      MPI_Waitall(static_cast<int>(send_requests.size()), send_requests.data(),
++                  MPI_STATUSES_IGNORE);
++
++      std::cout << "Constructing NCMesh\n";
++      ppmesh->ncmesh = new NCMesh(*mesh.ncmesh);
++   }
++   else
++   {
++      int rlen;
++      MPI_Status status;
++      MPI_Probe(0, myid, MPI_COMM_WORLD, &status);
++      MPI_Get_count(&status, MPI_CHAR, &rlen);
++
++      // collect the parallel mesh piece
++      std::string si;
++      si.resize(rlen);
++      MPI_Recv((void*)si.data(), rlen, MPI_CHAR, 0, myid, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
++      std::istringstream fi(si);
++      ppmesh = std::unique_ptr<ParMesh>(new ParMesh(MPI_COMM_WORLD, fi));
++   }
++
++   // A parallel mesh, that is conforming.
++   // Rank 0 also has an NCmesh along with it.
++   ParMesh &pmesh = *ppmesh;
++
++   std::string ncs_msg;
++   std::size_t ilen;
++   if (myid == 0)
++   {
++      // rank 0 will build a byte representation of the ncmesh
++      std::ostringstream nco(std::stringstream::out);
++      nco << std::scientific;
++      nco.precision(17);
++      pmesh.ncmesh->Print(nco);
++
++      // Convert to a pncmesh
++      pmesh.pncmesh = new ParNCMesh(MPI_COMM_WORLD, *pmesh.ncmesh);
++      delete pmesh.ncmesh;
++      pmesh.ncmesh = pmesh.pncmesh;
++
++      ncs_msg = nco.str();
++      ilen = ncs_msg.size();
++      std::cout << "Rank 0 written to stream\n";
++   }
++
++   // send the size of the incoming string
++   if (myid==0)
++      std::cout << "Broadcasting\n";
++   MPI_Bcast(&ilen, 1, MPI_UNSIGNED, 0, MPI_COMM_WORLD);
++   ncs_msg.resize(ilen); // prepare the buffer
++
++   // broadcast the buffer
++   MPI_Bcast((void *)ncs_msg.c_str(), ilen, MPI_CHAR, 0, MPI_COMM_WORLD);
++   if (myid == 0)
++      std::cout << "Broadcasted\n";
++
++   if (myid != 0)
++   {
++      // all remaining ranks construct the ncmesh structure
++      std::istringstream fi(ncs_msg);
++      fi.ignore(2000, '\n');
++      int curved, is_nc;
++      std::cout << "Rank " << myid << " Constructing from stream\n";
++      ppmesh->ncmesh = ppmesh->pncmesh = new ParNCMesh(MPI_COMM_WORLD, NCMesh(fi, 10, curved, is_nc));
++      MFEM_VERIFY(is_nc == 1, "Must be nc");
++      std::cout << "Rank " << myid << "Constructed from stream\n";
+    }
+ 
++   // All ranks now have an instance of the serial NCMesh. Prune and build together.
++   ppmesh->pncmesh->Prune();
++   ppmesh->InitFromNCMesh(*ppmesh->ncmesh);
++   ppmesh->pncmesh->OnMeshUpdated(ppmesh.get());
++   ppmesh->pncmesh->GetConformingSharedStructures(*ppmesh);
++
++   MFEM_VERIFY(ppmesh->Nonconforming(), "All must be nonconforming");
++
++   // Mesh mesh(mesh_file, 1, 1);
++   // mesh.UniformRefinement();
++   // mesh.UniformRefinement();
++
++   // // ParMesh pmesh(MPI_COMM_WORLD, mesh);
++
++   // // NC after the pmesh is build
++   // mesh.EnsureNCMesh(true);
++
++   // ncmesh.root_state.Print();
++   // std::cout << "\nNode Memory Detail\n";
++   // std::cout << ncmesh.nodes.MemoryUsage();
++   // std::cout << "\nNode Memory Stats\n";
++   // ncmesh.nodes.PrintStats();
++   // std::cout << "\nFace Memory Detail\n";
++   // std::cout << ncmesh.faces.MemoryUsage();
++   // std::cout << "\nFace Memory Stats\n";
++   // ncmesh.faces.PrintStats();
++
++   // Can you read the pieces of Mesh necessary to construct an NCMesh directly
++   // off the file?
++
++   // // Can you build an NCMesh directly off the mesh file directly? ----- NO
++   // std::istringstream fi(mesh_file);
++   // int curved, is_nc;
++   // pmesh.ncmesh = pmesh.pncmesh = new ParNCMesh(MPI_COMM_WORLD, NCMesh(fi, 1, curved, is_nc));
++
++   // // Can you connect a pncmesh onto a pmesh after the fact? ----- YES
++   // pmesh.ncmesh = pmesh.pncmesh = new ParNCMesh(MPI_COMM_WORLD, *mesh.ncmesh);
++   // pmesh.pncmesh->Prune();
++
++   // pmesh.InitFromNCMesh(*pmesh.ncmesh);
++   // pmesh.pncmesh->OnMeshUpdated(&pmesh);
++   // pmesh.pncmesh->GetConformingSharedStructures(pmesh);
++
++   // std::cout << "pmesh.ncmesh->root_state.Size() = " << pmesh.ncmesh->root_state.Size() << std::endl;
++   // std::cout << "Rank " << myid << " ncmesh.root_state.Size() = " << ncmesh.root_state.Size() << std::endl;
++
++
++   // mesh.EnsureNCMesh(true);
++   // ParMesh pmesh(MPI_COMM_WORLD, mesh);
++
++   // std::cout << "Rank : " << myid << ", Mesh: " << sizeof(mesh) << std::endl;
++   // std::cout << "Rank : " << myid << ", PMesh: " << sizeof(pmesh) << std::endl;
++   // if (myid == 0)
++   // {
++   //    pmesh.pncmesh->PrintMemoryDetail(true);
++   // }
++
++   // pmesh.PrintInfo(cout);
++   // {
++   //    int par_ref_levels = 0;
++   //    for (int l = 0; l < par_ref_levels; l++)
++   //    {
++   //       pmesh.RandomRefinement(0.5);
++   //    }
++   // }
++
+    // 7. Define a parallel finite element space on the parallel mesh. Here we
+    //    use continuous Lagrange finite elements of the specified order. If
+    //    order < 1, we instead use an isoparametric/isogeometric space.
+    FiniteElementCollection *fec;
++   int dim = pmesh.Dimension();
+    bool delete_fec;
+    if (order > 0)
+    {
+diff --git a/general/array.hpp b/general/array.hpp
+index b18ee144a..b792e4267 100644
+--- a/general/array.hpp
++++ b/general/array.hpp
+@@ -63,6 +63,10 @@ public:
+    /// Creates an empty array
+    inline Array() : size(0) { data.Reset(); }
+ 
++   // Move construction and assignment
++   Array(Array<T>&&) = default;
++   Array& operator=(Array<T>&&) = default;
++
+    /// Creates an empty array with a given MemoryType
+    inline Array(MemoryType mt) : size(0) { data.Reset(mt); }
+ 
+diff --git a/general/hash.hpp b/general/hash.hpp
+index 088fc67b7..4fc867263 100644
+--- a/general/hash.hpp
++++ b/general/hash.hpp
+@@ -95,6 +95,10 @@ public:
+    HashTable(const HashTable& other);
+    /// @brief Copy assignment not supported
+    HashTable& operator=(const HashTable&) = delete;
++
++   HashTable(HashTable&&) = default;
++   HashTable& operator=(HashTable&&) = delete;
++
+    ~HashTable();
+ 
+    /** @brief Item accessor with key (or parents) the pair 'p1', 'p2'. Default
+diff --git a/mesh/mesh.hpp b/mesh/mesh.hpp
+index f1e321237..6499e0096 100644
+--- a/mesh/mesh.hpp
++++ b/mesh/mesh.hpp
+@@ -548,9 +548,6 @@ protected:
+    void MakeRefined_(Mesh &orig_mesh, const Array<int> ref_factors,
+                      int ref_type);
+ 
+-   /// Initialize vertices/elements/boundary/tables from a nonconforming mesh.
+-   void InitFromNCMesh(const NCMesh &ncmesh);
+-
+    /// Create from a nonconforming mesh.
+    explicit Mesh(const NCMesh &ncmesh);
+ 
+@@ -565,6 +562,9 @@ protected:
+ 
+ public:
+ 
++   /// Initialize vertices/elements/boundary/tables from a nonconforming mesh.
++   void InitFromNCMesh(const NCMesh &ncmesh);
++
+    Mesh() { SetEmpty(); }
+ 
+    /** Copy constructor. Performs a deep copy of (almost) all data, so that the
+diff --git a/mesh/ncmesh.cpp b/mesh/ncmesh.cpp
+index c9e44a814..0572bda2a 100644
+--- a/mesh/ncmesh.cpp
++++ b/mesh/ncmesh.cpp
+@@ -2159,7 +2159,7 @@ void NCMesh::UpdateVertices()
+    //      defined on a conforming mesh would no longer be valid when the
+    //      mesh is converted to an NC mesh.
+    //
+-   //   2. Make sure serial NCMesh is compatible with the parallel ParNCMesh,
++   //   2. Make sure serial NCMesh is compatible with the parallel `esh,
+    //      so it is possible to read parallel partial solutions in serial code
+    //      (e.g., serial GLVis). This means handling ghost elements, if present.
+    //
+@@ -2532,7 +2532,6 @@ void NCMesh::GetMeshComponents(Mesh &mesh) const
+ void NCMesh::OnMeshUpdated(Mesh *mesh)
+ {
+    //// PART 1: pull indices of regular edges/faces from the Mesh
+-
+    NEdges = mesh->GetNEdges();
+    NFaces = mesh->GetNumFaces();
+    if (Dim < 2) { NFaces = 0; }
+diff --git a/mesh/ncmesh.hpp b/mesh/ncmesh.hpp
+index fafb75a95..1ff31acdc 100644
+--- a/mesh/ncmesh.hpp
++++ b/mesh/ncmesh.hpp
+@@ -138,6 +138,9 @@ public:
+    /// Copy assignment not supported
+    NCMesh& operator=(NCMesh&) = delete;
+ 
++   /// Move construction
++   NCMesh(NCMesh&&) = default;
++
+    virtual ~NCMesh();
+ 
+    /// Return the dimension of the NCMesh.
+@@ -396,24 +399,23 @@ public:
+ 
+    typedef std::int64_t RefCoord;
+ 
++   /** Get edge and face numbering from 'mesh' (i.e., set all Edge::index and
++       Face::index) after a new mesh was created from us. */
++   void OnMeshUpdated(Mesh *mesh);
+ 
+-protected: // non-public interface for the Mesh class
++public: // non-public interface for the Mesh class
+ 
+    friend class Mesh;
+ 
+    /// Fill Mesh::{vertices,elements,boundary} for the current finest level.
+    void GetMeshComponents(Mesh &mesh) const;
+ 
+-   /** Get edge and face numbering from 'mesh' (i.e., set all Edge::index and
+-       Face::index) after a new mesh was created from us. */
+-   void OnMeshUpdated(Mesh *mesh);
+-
+    /** Delete top-level vertex coordinates if the Mesh became curved, e.g.,
+        by calling Mesh::SetCurvature or otherwise setting the Nodes. */
+    void MakeTopologyOnly() { coordinates.DeleteAll(); }
+ 
+ 
+-protected: // implementation
++public: // implementation
+ 
+    int Dim, spaceDim; ///< dimensions of the elements and the vertex coordinates
+    int MyRank; ///< used in parallel, or when loading a parallel file in serial
+diff --git a/mesh/pncmesh.cpp b/mesh/pncmesh.cpp
+index 648dd5cfc..1e754a333 100644
+--- a/mesh/pncmesh.cpp
++++ b/mesh/pncmesh.cpp
+@@ -46,6 +46,27 @@ ParNCMesh::ParNCMesh(MPI_Comm comm, const NCMesh &ncmesh, int *part)
+    // branches that only contain someone else's leaves (see Prune())
+ }
+ 
++ParNCMesh::ParNCMesh(MPI_Comm comm, NCMesh &&ncmesh, int *part)
++   : NCMesh(ncmesh)
++{
++   MyComm = comm;
++   MPI_Comm_size(MyComm, &NRanks);
++   MPI_Comm_rank(MyComm, &MyRank);
++
++   // assign leaf elements to the processors by simply splitting the
++   // sequence of leaf elements into 'NRanks' parts
++   for (int i = 0; i < leaf_elements.Size(); i++)
++   {
++      elements[leaf_elements[i]].rank = part ? part[i] : InitialPartition(i);
++   }
++
++   Update();
++
++   // note that at this point all processors still have all the leaf elements;
++   // we however may now start pruning the refinement tree to get rid of
++   // branches that only contain someone else's leaves (see Prune())
++}
++
+ ParNCMesh::ParNCMesh(MPI_Comm comm, std::istream &input, int version,
+                      int &curved, int &is_nc)
+    : NCMesh(input, version, curved, is_nc)
+diff --git a/mesh/pncmesh.hpp b/mesh/pncmesh.hpp
+index e2261699b..2023a3736 100644
+--- a/mesh/pncmesh.hpp
++++ b/mesh/pncmesh.hpp
+@@ -68,6 +68,7 @@ public:
+    /** SFC partitioning is used by default. A user-specified partition can be
+        passed in 'part', where part[i] is the desired MPI rank for element i. */
+    ParNCMesh(MPI_Comm comm, const NCMesh& ncmesh, int* part = NULL);
++   ParNCMesh(MPI_Comm comm, NCMesh&& ncmesh, int* part = NULL);
+ 
+    /** Load from a stream, parallel version. See the serial NCMesh::NCMesh
+        counterpart for a description of the parameters. */
+@@ -252,11 +253,13 @@ protected: // interface for ParMesh
+ 
+    friend class ParMesh;
+ 
++public:
+    /** For compatibility with conforming code in ParMesh and ParFESpace.
+        Initializes shared structures in ParMesh: gtopo, shared_*, group_s*, s*_l*.
+        The ParMesh then acts as a parallel mesh cut along the NC interfaces. */
+    void GetConformingSharedStructures(class ParMesh &pmesh);
+ 
++protected:
+    /** Populate face neighbor members of ParMesh from the ghost layer, without
+        communication. */
+    void GetFaceNeighbors(class ParMesh &pmesh);
+@@ -416,11 +419,12 @@ protected: // implementation
+        NOTE: MyRank is not included. */
+    void NeighborProcessors(Array<int> &neighbors);
+ 
++public:
+    /** Traverse the (local) refinement tree and determine which subtrees are
+        no longer needed, i.e., their leaves are not owned by us nor are they our
+        ghosts. These subtrees are then derefined. */
+    void Prune();
+-
++protected:
+    /// Internal. Recursive part of Prune().
+    bool PruneTree(int elem);
+ 
