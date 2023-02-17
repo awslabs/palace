@@ -143,38 +143,41 @@ int main(int argc, char *argv[])
   }
 
   // Initialize the problem driver.
-  std::unique_ptr<BaseSolver> solver;
-  switch (iodata.problem.type)
+  const std::unique_ptr<BaseSolver> solver = [&]() -> std::unique_ptr<BaseSolver>
   {
-    case config::ProblemData::Type::DRIVEN:
-      solver = std::make_unique<DrivenSolver>(iodata, world_root, world_size, num_thread,
+    switch (iodata.problem.type)
+    {
+      case config::ProblemData::Type::DRIVEN:
+        return std::make_unique<DrivenSolver>(iodata, world_root, world_size, num_thread,
                                               git_tag);
-      break;
-    case config::ProblemData::Type::EIGENMODE:
-      solver = std::make_unique<EigenSolver>(iodata, world_root, world_size, num_thread,
+        break;
+      case config::ProblemData::Type::EIGENMODE:
+        return std::make_unique<EigenSolver>(iodata, world_root, world_size, num_thread,
                                              git_tag);
-      break;
-    case config::ProblemData::Type::ELECTROSTATIC:
-      solver = std::make_unique<ElectrostaticSolver>(iodata, world_root, world_size,
+        break;
+      case config::ProblemData::Type::ELECTROSTATIC:
+        return std::make_unique<ElectrostaticSolver>(iodata, world_root, world_size,
                                                      num_thread, git_tag);
-      break;
-    case config::ProblemData::Type::MAGNETOSTATIC:
-      solver = std::make_unique<MagnetostaticSolver>(iodata, world_root, world_size,
+        break;
+      case config::ProblemData::Type::MAGNETOSTATIC:
+        return std::make_unique<MagnetostaticSolver>(iodata, world_root, world_size,
                                                      num_thread, git_tag);
-      break;
-    case config::ProblemData::Type::TRANSIENT:
-      solver = std::make_unique<TransientSolver>(iodata, world_root, world_size, num_thread,
+        break;
+      case config::ProblemData::Type::TRANSIENT:
+        return std::make_unique<TransientSolver>(iodata, world_root, world_size, num_thread,
                                                  git_tag);
-      break;
-    default:
-      Mpi::Print(world_comm, "Error: Unsupported problem type!\n\n");
-      return 1;
-  }
+        break;
+      default:
+        Mpi::Print(world_comm, "Error: Unsupported problem type!\n\n");
+    }
+    return nullptr;
+  }();
 
   // Read the mesh from file, refine, partition, and distribute it. Then nondimensionalize
   // it and the input parameters.
   std::vector<std::unique_ptr<mfem::ParMesh>> mesh;
-  mesh.push_back(mesh::ReadMesh(world_comm, iodata, false, true, true, false, timer));
+  mesh.push_back(std::make_unique<mfem::ParMesh>(
+      mesh::ReadMesh(world_comm, iodata, false, true, true, false, timer)));
   iodata.NondimensionalizeInputs(*mesh[0]);
   mesh::RefineMesh(iodata, mesh);
   timer.init_time += timer.Lap() - timer.io_time;

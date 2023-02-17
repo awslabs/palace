@@ -26,7 +26,7 @@ namespace
 const auto MSH_FLT_PRECISION = std::numeric_limits<double>::max_digits10;
 
 // Load the serial mesh from disk.
-std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &);
+mfem::Mesh LoadMesh(const std::string &);
 
 // Optionally reorder mesh elements based on MFEM's internal reordeing tools for improved
 // cache usage.
@@ -38,14 +38,12 @@ std::unique_ptr<int[]> GetMeshPartitioning(mfem::Mesh &, int, const std::string 
 // Cleanup the provided serial mesh by removing unnecessary domain and elements, adding
 // boundary elements for material interfaces and exterior boundaries, and adding boundary
 // elements for subdomain interfaces.
-std::map<int, std::array<int, 2>> CheckMesh(std::unique_ptr<mfem::Mesh> &,
-                                            const std::unique_ptr<int[]> &, const IoData &,
-                                            bool, bool, bool);
+std::map<int, std::array<int, 2>> CheckMesh(mfem::Mesh &, const std::unique_ptr<int[]> &,
+                                            const IoData &, bool, bool, bool);
 
 // Given a serial mesh on the root processor and element partitioning, create a parallel
-// mesh oer the given communicator.
-std::unique_ptr<mfem::ParMesh> DistributeMesh(MPI_Comm, std::unique_ptr<mfem::Mesh> &,
-                                              std::unique_ptr<int[]> &);
+// mesh over the given communicator.
+mfem::ParMesh DistributeMesh(MPI_Comm, mfem::Mesh &, const std::unique_ptr<int[]> &);
 
 // Get list of domain and boundary attribute markers used in configuration file for mesh
 // cleaning.
@@ -57,79 +55,37 @@ void GetUsedAttributeMarkers(const IoData &, int, int, mfem::Array<int> &,
 namespace mesh
 {
 
-std::unique_ptr<mfem::ParMesh> ReadMesh(MPI_Comm comm, const IoData &iodata, bool reorder,
-                                        bool clean, bool add_bdr, bool unassembled,
-                                        Timer &timer)
+mfem::ParMesh ReadMesh(MPI_Comm comm, const IoData &iodata, bool reorder, bool clean,
+                       bool add_bdr, bool unassembled, Timer &timer)
 {
   // On root, read the serial mesh (converting format if necessary), and do all necessary
   // serial preprocessing. When finished, distribute the mesh to all processes. Count disk
   // I/O time separately for the mesh read from file.
-  std::unique_ptr<mfem::Mesh> smesh;
   auto t0 = timer.Now();
-  if (Mpi::Root(comm))
+
+  // Optionally reorder elements (and vertices) based on spatial location after loading
+  // the serial mesh.
+  auto mesh = LoadMesh(iodata.model.mesh);
+  if (reorder)
   {
-    // Optionally reorder elements (and vertices) based on spatial location after loading
-    // the serial mesh.
-    smesh = LoadMesh(iodata.model.mesh);
-    if (reorder)
-    {
-      ReorderMesh(*smesh);
-    }
+    ReorderMesh(mesh);
   }
+
   Mpi::Barrier(comm);
   timer.io_time += timer.Now() - t0;
 
-  std::unique_ptr<int[]> partitioning;
-  if (Mpi::Root(comm))
-  {
-    // Generate the parallel mesh partitioning on the root process.
-    partitioning = GetMeshPartitioning(*smesh, Mpi::Size(comm), iodata.model.partition);
+  // Generate the parallel mesh partitioning on the root process.
+  const auto partitioning =
+      GetMeshPartitioning(mesh, Mpi::Size(comm), iodata.model.partition);
 
-    // Clean up unused domain elements from the mesh, add new boundary elements for material
-    // interfaces if not present, and optionally (when running unassembled) add subdomain
-    // interface boundary elements.
-    std::map<int, std::array<int, 2>> attr_map =
-        CheckMesh(smesh, partitioning, iodata, clean, add_bdr, unassembled);
-  }
+  // Clean up unused domain elements from the mesh, add new boundary elements for material
+  // interfaces if not present, and optionally (when running unassembled) add subdomain
+  // interface boundary elements.
+  static_cast<void>(CheckMesh(mesh, partitioning, iodata, clean, add_bdr, unassembled));
 
   // Construct the parallel mesh data structure by distributing the serial mesh from the
   // root process. The serial mesh and partitioning are deleted inside.
-  std::unique_ptr<mfem::ParMesh> mesh = DistributeMesh(comm, smesh, partitioning);
-
-#if 0
-  {
-    std::string tmp = iodata.problem.output;
-    if (tmp.back() != '/')
-    {
-      tmp += '/';
-    }
-    tmp += "tmp/";
-    if (Mpi::Root(comm) && !std::filesystem::exists(tmp))
-    {
-      std::filesystem::create_directories(tmp);
-    }
-    int width = 1 + static_cast<int>(std::log10(Mpi::Size(comm)-1));
-    std::unique_ptr<mfem::Mesh> gsmesh = LoadMesh(iodata.model.mesh);
-    std::unique_ptr<int[]> gpartitioning = GetMeshPartitioning(*gsmesh, Mpi::Size(comm));
-    mfem::ParMesh gpmesh(comm, *gsmesh, gpartitioning.get(), 0);
-    {
-      std::string pfile = mfem::MakeParFilename(tmp + "part.", Mpi::Rank(comm), ".mesh", width);
-      std::ofstream fo(pfile);
-      // mfem::ofgzstream fo(pfile, true);  // Use zlib compression if available
-      fo.precision(MSH_FLT_PRECISION);
-      gpmesh.ParPrint(fo);
-    }
-    {
-      std::string pfile = mfem::MakeParFilename(tmp + "final.", Mpi::Rank(comm), ".mesh", width);
-      std::ofstream fo(pfile);
-      // mfem::ofgzstream fo(pfile, true);  // Use zlib compression if available
-      fo.precision(MSH_FLT_PRECISION);
-      mesh->ParPrint(fo);
-    }
-  }
-#endif
-
-  return mesh;
+  return DistributeMesh(comm, mesh, partitioning);
 }
 
 void RefineMesh(const IoData &iodata, std::vector<std::unique_ptr<mfem::ParMesh>> &mesh)
@@ -611,7 +567,7 @@ void GetSurfaceNormal(mfem::ParMesh &mesh, const mfem::Array<int> &marker,
 namespace
 {
 
-std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &path)
+mfem::Mesh LoadMesh(const std::string &path)
 {
   // Read the (serial) mesh from the given mesh file. Handle preparation for refinement and
   // orientations here to avoid possible reorientations and reordering later on. MFEM
@@ -663,7 +619,7 @@ std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &path)
       MFEM_ABORT("Unable to open translated mesh file \"" << tmp << "\"!");
     }
 #endif
-    return std::make_unique<mfem::Mesh>(fi, 1, 1, true);
+    return mfem::Mesh(fi, 1, 1, true);
   }
   // Otherwise, just rely on MFEM load the mesh.
   std::ifstream fi(path);
@@ -671,33 +627,14 @@ std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &path)
   {
     MFEM_ABORT("Unable to open mesh file \"" << path << "\"!");
   }
-  std::unique_ptr mesh = std::make_unique<mfem::Mesh>(fi, 1, 1, true);
-  mesh->EnsureNodes();
+  auto mesh = mfem::Mesh(fi, 1, 1, true);
+  mesh.EnsureNodes();
   return mesh;
 }
 
 void ReorderMesh(mfem::Mesh &mesh)
 {
   mfem::Array<int> ordering;
-
-#if 0
-  // Gecko reordering.
-  Mpi::Print(\n);
-  mfem::Array<int> tentative;
-  int outer = 3, inner = 3, window = 4, period = 2;
-  double best_cost = mfem::infinity();
-  for (int i = 0; i < outer; i++)
-  {
-    int seed = i+1;
-    double cost = mesh.GetGeckoElementOrdering(tentative, inner, window, eriod, seed, true);
-    if (cost < best_cost)
-    {
-      ordering = tentative;
-      best_cost = cost;
-    }
-  }
-  Mpi::Print("Final cost: {:e}\n", best_cost);
-#endif
 
   // (Faster) Hilbert reordering.
   mesh.GetHilbertElementOrdering(ordering);
@@ -751,7 +688,7 @@ std::unique_ptr<int[]> GetMeshPartitioning(mfem::Mesh &mesh, int size,
   return partitioning;
 }
 
-std::map<int, std::array<int, 2>> CheckMesh(std::unique_ptr<mfem::Mesh> &orig_mesh,
+std::map<int, std::array<int, 2>> CheckMesh(mfem::Mesh &orig_mesh,
                                             const std::unique_ptr<int[]> &partitioning,
                                             const IoData &iodata, bool clean_elem,
                                             bool add_bdr, bool add_subdomain)
@@ -762,20 +699,20 @@ std::map<int, std::array<int, 2>> CheckMesh(std::unique_ptr<mfem::Mesh> &orig_me
   //   interfaces if these elements do not yet exist.
   // - If desired, create a new mesh which has removed all domain elements which do not have
   //   an associated material property specified in the input file.
-  MFEM_VERIFY(orig_mesh->Dimension() == 3 && !orig_mesh->Nonconforming(),
+  MFEM_VERIFY(orig_mesh.Dimension() == 3 && !orig_mesh.Nonconforming(),
               "Nonconforming or 2D meshes have not been tested yet!");
   mfem::Array<int> mat_marker, bdr_marker;
-  GetUsedAttributeMarkers(iodata, orig_mesh->attributes.Max(),
-                          orig_mesh->bdr_attributes.Max(), mat_marker, bdr_marker);
+  GetUsedAttributeMarkers(iodata, orig_mesh.attributes.Max(),
+                          orig_mesh.bdr_attributes.Max(), mat_marker, bdr_marker);
   bool warn = false;
-  for (int be = 0; be < orig_mesh->GetNBE(); be++)
+  for (int be = 0; be < orig_mesh.GetNBE(); be++)
   {
-    int attr = orig_mesh->GetBdrAttribute(be);
+    int attr = orig_mesh.GetBdrAttribute(be);
     if (!bdr_marker[attr - 1])
     {
       int f, o, e1, e2;
-      orig_mesh->GetBdrElementFace(be, &f, &o);
-      orig_mesh->GetFaceElements(f, &e1, &e2);
+      orig_mesh.GetBdrElementFace(be, &f, &o);
+      orig_mesh.GetFaceElements(f, &e1, &e2);
       if (e1 < 0 || e2 < 0)  // Internal boundary elements are allowed to have no BC
       {
         warn = true;
@@ -798,33 +735,33 @@ std::map<int, std::array<int, 2>> CheckMesh(std::unique_ptr<mfem::Mesh> &orig_me
   }
 
   // Count deleted or added domain and boundary elements.
-  int new_ne = orig_mesh->GetNE();
-  int new_nbdr = orig_mesh->GetNBE();
+  int new_ne = orig_mesh.GetNE();
+  int new_nbdr = orig_mesh.GetNBE();
   mfem::Array<bool> elem_delete, bdr_delete;
   mfem::Array<int> orig_bdr_faces, add_bdr_faces;
-  elem_delete.SetSize(orig_mesh->GetNE(), false);
-  bdr_delete.SetSize(orig_mesh->GetNBE(), false);
-  orig_bdr_faces.SetSize(orig_mesh->GetNumFaces(), -1);
-  for (int be = 0; be < orig_mesh->GetNBE(); be++)
+  elem_delete.SetSize(orig_mesh.GetNE(), false);
+  bdr_delete.SetSize(orig_mesh.GetNBE(), false);
+  orig_bdr_faces.SetSize(orig_mesh.GetNumFaces(), -1);
+  for (int be = 0; be < orig_mesh.GetNBE(); be++)
   {
     int f, o;
-    orig_mesh->GetBdrElementFace(be, &f, &o);
+    orig_mesh.GetBdrElementFace(be, &f, &o);
     MFEM_VERIFY(orig_bdr_faces[f] < 0,
                 "Mesh should not define boundary elements multiple times!");
     orig_bdr_faces[f] = be;
   }
   if (add_bdr || add_subdomain)
   {
-    add_bdr_faces.SetSize(orig_mesh->GetNumFaces(), -1);
+    add_bdr_faces.SetSize(orig_mesh.GetNumFaces(), -1);
   }
 
   if (clean_elem)
   {
     // Delete domain and boundary elements which have no associated material or BC attribute
     // from the mesh.
-    for (int e = 0; e < orig_mesh->GetNE(); e++)
+    for (int e = 0; e < orig_mesh.GetNE(); e++)
     {
-      int attr = orig_mesh->GetAttribute(e);
+      int attr = orig_mesh.GetAttribute(e);
       if (!mat_marker[attr - 1])
       {
         elem_delete[e] = true;
@@ -834,13 +771,13 @@ std::map<int, std::array<int, 2>> CheckMesh(std::unique_ptr<mfem::Mesh> &orig_me
 
     // Make sure to remove any boundary elements which are no longer attached to elements in
     // the domain.
-    for (int f = 0; f < orig_mesh->GetNumFaces(); f++)
+    for (int f = 0; f < orig_mesh.GetNumFaces(); f++)
     {
       const int &be = orig_bdr_faces[f];
       if (be >= 0)
       {
         int e1, e2;
-        orig_mesh->GetFaceElements(f, &e1, &e2);
+        orig_mesh.GetFaceElements(f, &e1, &e2);
         if ((e1 < 0 || elem_delete[e1]) && (e2 < 0 || elem_delete[e2]))
         {
           // Mpi::Print("Deleting an unattached boundary element!\n");
@@ -849,15 +786,15 @@ std::map<int, std::array<int, 2>> CheckMesh(std::unique_ptr<mfem::Mesh> &orig_me
         }
       }
     }
-    if (new_ne < orig_mesh->GetNE())
+    if (new_ne < orig_mesh.GetNE())
     {
       Mpi::Print("Removed {:d} unmarked domain elements from the mesh\n",
-                 orig_mesh->GetNE() - new_ne);
+                 orig_mesh.GetNE() - new_ne);
     }
-    if (new_nbdr < orig_mesh->GetNBE())
+    if (new_nbdr < orig_mesh.GetNBE())
     {
       Mpi::Print("Removed {:d} unattached boundary elements from the mesh\n",
-                 orig_mesh->GetNBE() - new_nbdr);
+                 orig_mesh.GetNBE() - new_nbdr);
     }
   }
   int new_ne_step1 = new_ne;
@@ -867,23 +804,23 @@ std::map<int, std::array<int, 2>> CheckMesh(std::unique_ptr<mfem::Mesh> &orig_me
   {
     // Add new boundary elements at material interfaces or on the exterior boundary of the
     // simulation domain, if there is not already a boundary element present.
-    MFEM_VERIFY(!orig_mesh->Nonconforming(), "Adding material interface boundary elements "
-                                             "is not supported for nonconforming meshes!");
+    MFEM_VERIFY(!orig_mesh.Nonconforming(), "Adding material interface boundary elements "
+                                            "is not supported for nonconforming meshes!");
     int add_bdr_ext = 0, add_bdr_int = 0;
-    for (int f = 0; f < orig_mesh->GetNumFaces(); f++)
+    for (int f = 0; f < orig_mesh.GetNumFaces(); f++)
     {
       const int &be = orig_bdr_faces[f];
       if (be < 0 && add_bdr_faces[f] < 0)
       {
         int e1, e2;
-        orig_mesh->GetFaceElements(f, &e1, &e2);
+        orig_mesh.GetFaceElements(f, &e1, &e2);
         if (e1 < 0 || elem_delete[e1] || e2 < 0 || elem_delete[e2])
         {
           // Mpi::Print("Adding exterior boundary element!\n");
           add_bdr_faces[f] = 1;
           add_bdr_ext++;
         }
-        else if (orig_mesh->GetAttribute(e1) != orig_mesh->GetAttribute(e2))
+        else if (orig_mesh.GetAttribute(e1) != orig_mesh.GetAttribute(e2))
         {
           // Add new boundary element at material interface between two domains.
           // Mpi::Print("Adding material interface boundary element!\n");
@@ -913,15 +850,15 @@ std::map<int, std::array<int, 2>> CheckMesh(std::unique_ptr<mfem::Mesh> &orig_me
     // subdomains. This uses similar code to mfem::Mesh::PrintWithPartitioning.
     MFEM_VERIFY(partitioning, "Cannot add subdomain interface boundary elements without "
                               "supplied mesh partitioning!");
-    MFEM_VERIFY(!orig_mesh->Nonconforming(), "Adding subdomain interface boundary elements "
-                                             "is not supported for nonconforming meshes!");
-    for (int f = 0; f < orig_mesh->GetNumFaces(); f++)
+    MFEM_VERIFY(!orig_mesh.Nonconforming(), "Adding subdomain interface boundary elements "
+                                            "is not supported for nonconforming meshes!");
+    for (int f = 0; f < orig_mesh.GetNumFaces(); f++)
     {
       const int &be = orig_bdr_faces[f];
       if (be < 0 && add_bdr_faces[f] < 0)
       {
         int e1, e2;
-        orig_mesh->GetFaceElements(f, &e1, &e2);
+        orig_mesh.GetFaceElements(f, &e1, &e2);
         if (e1 >= 0 && !elem_delete[e1] && e2 >= 0 && !elem_delete[e2] &&
             partitioning[e1] != partitioning[e2])
         {
@@ -947,34 +884,33 @@ std::map<int, std::array<int, 2>> CheckMesh(std::unique_ptr<mfem::Mesh> &orig_me
 
   // Create the new mesh.
   if (new_ne == new_ne_step1 && new_ne_step1 == new_ne_step2 &&
-      new_ne_step2 == orig_mesh->GetNE() && new_nbdr == new_nbdr_step1 &&
-      new_nbdr_step1 == new_nbdr_step2 && new_nbdr_step2 == orig_mesh->GetNBE())
+      new_ne_step2 == orig_mesh.GetNE() && new_nbdr == new_nbdr_step1 &&
+      new_nbdr_step1 == new_nbdr_step2 && new_nbdr_step2 == orig_mesh.GetNBE())
   {
     return new_attr_map;
   }
-  std::unique_ptr<mfem::Mesh> new_mesh =
-      std::make_unique<mfem::Mesh>(orig_mesh->Dimension(), orig_mesh->GetNV(), new_ne,
-                                   new_nbdr, orig_mesh->SpaceDimension());
+  auto new_mesh = mfem::Mesh(orig_mesh.Dimension(), orig_mesh.GetNV(), new_ne, new_nbdr,
+                             orig_mesh.SpaceDimension());
 
   // Copy vertices and non-deleted domain and boundary elements.
-  for (int v = 0; v < orig_mesh->GetNV(); v++)
+  for (int v = 0; v < orig_mesh.GetNV(); v++)
   {
-    new_mesh->AddVertex(orig_mesh->GetVertex(v));
+    new_mesh.AddVertex(orig_mesh.GetVertex(v));
   }
-  for (int e = 0; e < orig_mesh->GetNE(); e++)
+  for (int e = 0; e < orig_mesh.GetNE(); e++)
   {
     if (!elem_delete[e])
     {
-      mfem::Element *ne = orig_mesh->GetElement(e)->Duplicate(new_mesh.get());
-      new_mesh->AddElement(ne);
+      mfem::Element *ne = orig_mesh.GetElement(e)->Duplicate(&new_mesh);
+      new_mesh.AddElement(ne);
     }
   }
-  for (int be = 0; be < orig_mesh->GetNBE(); be++)
+  for (int be = 0; be < orig_mesh.GetNBE(); be++)
   {
     if (!bdr_delete[be])
     {
-      mfem::Element *ne = orig_mesh->GetBdrElement(be)->Duplicate(new_mesh.get());
-      new_mesh->AddBdrElement(ne);
+      mfem::Element *ne = orig_mesh.GetBdrElement(be)->Duplicate(&new_mesh);
+      new_mesh.AddBdrElement(ne);
     }
   }
 
@@ -1000,8 +936,8 @@ std::map<int, std::array<int, 2>> CheckMesh(std::unique_ptr<mfem::Mesh> &orig_me
     // 1-based, some boundary attributes may be empty since they were removed from the
     // original mesh, but to keep indices the same as config file we don't compact the
     // list.
-    int max_bdr_attr = orig_mesh->bdr_attributes.Max();
-    for (int f = 0; f < orig_mesh->GetNumFaces(); f++)
+    int max_bdr_attr = orig_mesh.bdr_attributes.Max();
+    for (int f = 0; f < orig_mesh.GetNumFaces(); f++)
     {
       if (add_bdr_faces[f] > 0)
       {
@@ -1011,21 +947,21 @@ std::map<int, std::array<int, 2>> CheckMesh(std::unique_ptr<mfem::Mesh> &orig_me
         // inverse so that the attributes of e1 and e2 can be easily referenced using the
         // new attribute. Since attributes are in 1-based indexing, a, b > 0.
         int e1, e2, a = 0, b = 0;
-        orig_mesh->GetFaceElements(f, &e1, &e2);
+        orig_mesh.GetFaceElements(f, &e1, &e2);
         if (e1 >= 0 && !elem_delete[e1] && e2 >= 0 && !elem_delete[e2])
         {
-          a = std::max(orig_mesh->GetAttribute(e1), orig_mesh->GetAttribute(e2));
-          b = (a == orig_mesh->GetAttribute(e1)) ? orig_mesh->GetAttribute(e2)
-                                                 : orig_mesh->GetAttribute(e1);
+          a = std::max(orig_mesh.GetAttribute(e1), orig_mesh.GetAttribute(e2));
+          b = (a == orig_mesh.GetAttribute(e1)) ? orig_mesh.GetAttribute(e2)
+                                                : orig_mesh.GetAttribute(e1);
         }
         else if (e1 >= 0 && !elem_delete[e1])
         {
-          a = orig_mesh->GetAttribute(e1);
+          a = orig_mesh.GetAttribute(e1);
           b = 0;
         }
         else if (e2 >= 0 && !elem_delete[e2])
         {
-          a = orig_mesh->GetAttribute(e2);
+          a = orig_mesh.GetAttribute(e2);
           b = 0;
         }
         MFEM_VERIFY(a + b > 0, "Invalid new boundary element attribute!");
@@ -1036,16 +972,16 @@ std::map<int, std::array<int, 2>> CheckMesh(std::unique_ptr<mfem::Mesh> &orig_me
         }
 
         // Add the boundary elements with the new boundary attribute.
-        mfem::Element *ne = orig_mesh->GetFace(f)->Duplicate(new_mesh.get());
+        mfem::Element *ne = orig_mesh.GetFace(f)->Duplicate(&new_mesh);
         ne->SetAttribute(new_attr);
-        new_mesh->AddBdrElement(ne);
+        new_mesh.AddBdrElement(ne);
         if (add_bdr_faces[f] > 1)
         {
           // Flip order of vertices to reverse normal direction of second added element.
-          ne = orig_mesh->GetFace(f)->Duplicate(new_mesh.get());
+          ne = orig_mesh.GetFace(f)->Duplicate(&new_mesh);
           FlipVertices(ne);
           ne->SetAttribute(new_attr);
-          new_mesh->AddBdrElement(ne);
+          new_mesh.AddBdrElement(ne);
           // Mpi::Print("Adding two BE with attr {:d} from elements {:d} and {:d}\n",
           //            new_attr, a, b);
         }
@@ -1057,21 +993,21 @@ std::map<int, std::array<int, 2>> CheckMesh(std::unique_ptr<mfem::Mesh> &orig_me
   // projecting nodes onto the new mesh for the non-trimmed vdofs (accounts for new
   // boundary elements too since no new dofs are added). See the MFEM trimmer miniapp for
   // reference.
-  new_mesh->FinalizeTopology();
-  new_mesh->Finalize();
-  new_mesh->RemoveUnusedVertices();
-  if (orig_mesh->GetNodes())
+  new_mesh.FinalizeTopology();
+  new_mesh.Finalize();
+  new_mesh.RemoveUnusedVertices();
+  if (orig_mesh.GetNodes())
   {
-    const mfem::GridFunction *nodes = orig_mesh->GetNodes();
+    const mfem::GridFunction *nodes = orig_mesh.GetNodes();
     const mfem::FiniteElementSpace *fes = nodes->FESpace();
 
     mfem::Ordering::Type ordering = fes->GetOrdering();
     int order = fes->GetMaxElementOrder();
-    int sdim = orig_mesh->SpaceDimension();
+    int sdim = orig_mesh.SpaceDimension();
     bool discont = dynamic_cast<const mfem::L2_FECollection *>(fes->FEColl()) != nullptr;
 
-    new_mesh->SetCurvature(order, discont, sdim, ordering);
-    mfem::GridFunction *new_nodes = new_mesh->GetNodes();
+    new_mesh.SetCurvature(order, discont, sdim, ordering);
+    mfem::GridFunction *new_nodes = new_mesh.GetNodes();
     const mfem::FiniteElementSpace *new_fes = new_nodes->FESpace();
 
     // The element loop works because we know the mapping from old_mesh to new_mesh element
@@ -1079,7 +1015,7 @@ std::map<int, std::array<int, 2>> CheckMesh(std::unique_ptr<mfem::Mesh> &orig_me
     mfem::Array<int> vdofs, new_vdofs;
     mfem::Vector loc_vec;
     int te = 0;
-    for (int e = 0; e < orig_mesh->GetNE(); e++)
+    for (int e = 0; e < orig_mesh.GetNE(); e++)
     {
       if (!elem_delete[e])
       {
@@ -1095,117 +1031,10 @@ std::map<int, std::array<int, 2>> CheckMesh(std::unique_ptr<mfem::Mesh> &orig_me
   return new_attr_map;
 }
 
-std::unique_ptr<mfem::ParMesh> DistributeMesh(MPI_Comm comm,
-                                              std::unique_ptr<mfem::Mesh> &smesh,
-                                              std::unique_ptr<int[]> &partitioning)
+mfem::ParMesh DistributeMesh(MPI_Comm comm, mfem::Mesh &mesh,
+                             const std::unique_ptr<int[]> &partitioning)
 {
-  // Take a serial mesh and partitioning on the root process and construct the global
-  // parallel mesh. For now, prefer the MPI-based version.
-#if 0
-  {
-    // Write each processor's component to file.
-    std::string tmp = iodata.problem.output;
-    if (tmp.back() != '/')
-    {
-      tmp += '/';
-    }
-    tmp += "tmp/";
-    int width = 1 + static_cast<int>(std::log10(Mpi::Size(comm) - 1));
-    if (Mpi::Root(comm))
-    {
-      if (!std::filesystem::exists(tmp))
-      {
-        std::filesystem::create_directories(tmp);
-      }
-      mfem::MeshPartitioner partitioner(*smesh, Mpi::Size(comm), partitioning.get());
-      for (int i = 0; i < Mpi::Size(comm); i++)
-      {
-        mfem::MeshPart part;
-        partitioner.ExtractPart(i, part);
-        std::string pfile = mfem::MakeParFilename(tmp + "part.", i, ".mesh", width);
-        std::ofstream fo(pfile);
-        // mfem::ofgzstream fo(pfile, true);  // Use zlib compression if available
-        // fo << std::fixed;
-        fo << std::scientific;
-        fo.precision(MSH_FLT_PRECISION);
-        part.Print(fo);
-      }
-    }
-
-    // Each process loads its own partitioned mesh file and constructs the parallel mesh.
-    std::string pfile =
-        mfem::MakeParFilename(tmp + "part.", Mpi::Rank(comm), ".mesh", width);
-    int exists = 0;
-    while (!exists)  // Wait for root to finish writing all files
-    {
-      exists = std::filesystem::exists(pfile);
-      Mpi::GlobalMax(1, &exists, comm);
-    }
-    std::ifstream fi(pfile);
-    // mfem::ifgzstream fi(pfile);
-    if (!fi.good())
-    {
-      MFEM_ABORT("Unable to open partitioned mesh file \"" << pfile << "\"!");
-    }
-    auto pmesh = std::make_unique<mfem::ParMesh>(comm, fi);
-    Mpi::Barrier(comm);
-    if (Mpi::Root(comm))
-    {
-      std::filesystem::remove_all(tmp);  // Remove the temporary directory
-    }
-    return pmesh;
-  }
-#endif
-  {
-    // Send each processor's component as a byte string.
-    std::vector<std::string> so;
-    if (Mpi::Root(comm))
-    {
-      mfem::MeshPartitioner partitioner(*smesh, Mpi::Size(comm), partitioning.get());
-      so.reserve(Mpi::Size(comm));
-      for (int i = 0; i < Mpi::Size(comm); i++)
-      {
-        mfem::MeshPart part;
-        partitioner.ExtractPart(i, part);
-        std::ostringstream fo(std::stringstream::out);
-        // fo << std::fixed;
-        fo << std::scientific;
-        fo.precision(MSH_FLT_PRECISION);
-        part.Print(fo);
-        so.push_back(fo.str());
-        // so.push_back((i > 0) ? zlib::CompressString(fo.str()) : fo.str());
-      }
-    }
-
-    // Scatter the partitioned mesh files and generate the parallel mesh.
-    if (Mpi::Root(comm))
-    {
-      std::vector<MPI_Request> send_requests(Mpi::Size(comm) - 1, MPI_REQUEST_NULL);
-      for (int i = 1; i < Mpi::Size(comm); i++)
-      {
-        int ilen = static_cast<int>(so[i].length());
-        MFEM_VERIFY(so[i].length() == (std::size_t)ilen,
-                    "Overflow error distributing parallel mesh!");
-        MPI_Isend(so[i].c_str(), ilen, MPI_CHAR, i, i, comm, &send_requests[i - 1]);
-      }
-      std::istringstream fi(so[0]);  // This is never compressed
-      auto pmesh = std::make_unique<mfem::ParMesh>(comm, fi);
-      MPI_Waitall(static_cast<int>(send_requests.size()), send_requests.data(),
-                  MPI_STATUSES_IGNORE);
-      return pmesh;
-    }
-    int rlen;
-    MPI_Status status;
-    MPI_Probe(0, Mpi::Rank(comm), comm, &status);
-    MPI_Get_count(&status, MPI_CHAR, &rlen);
-
-    std::string si;
-    si.resize(rlen);
-    MPI_Recv(si.data(), rlen, MPI_CHAR, 0, Mpi::Rank(comm), comm, MPI_STATUS_IGNORE);
-    std::istringstream fi(si);
-    // std::istringstream fi(zlib::DecompressString(si));
-    return std::make_unique<mfem::ParMesh>(comm, fi);
-  }
+  return mfem::ParMesh(comm, mesh, partitioning.get());
 }
 
 void GetUsedAttributeMarkers(const IoData &iodata, int n_mat, int n_bdr,
