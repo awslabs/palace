@@ -868,7 +868,6 @@ private:
   }
 
 public:
-
   bool empty() const { return c.empty(); }
 
   void AddCoefficient(std::unique_ptr<mfem::Coefficient> &&coef)
