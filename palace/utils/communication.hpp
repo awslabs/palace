@@ -68,6 +68,11 @@ const int CommTrace<char>::multiplicity;
 class Mpi
 {
 public:
+  Mpi(const Mpi&) = delete;
+  Mpi(Mpi&&) = delete;
+  Mpi& operator=(const Mpi&) = delete;
+  Mpi& operator=(Mpi&&) = delete;
+
   // Singleton creation.
   static void Init() { Init(nullptr, nullptr); }
   static void Init(int &argc, char **&argv) { Init(&argc, &argv); }
@@ -206,7 +211,6 @@ public:
   static MPI_Comm World() { return MPI_COMM_WORLD; }
 
 private:
-  // Prevent direct construction of objects of this class.
   Mpi() = default;
   ~Mpi() { Finalize(); }
 

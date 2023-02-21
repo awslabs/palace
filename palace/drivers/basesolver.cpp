@@ -388,7 +388,7 @@ void BaseSolver::PostprocessProbes(const PostOperator &postop, const std::string
   }
 
   // Write the computed field values at probe locations.
-  if (postop.GetProbes().size() == 0)
+  if (postop.GetProbes().empty())
   {
     return;
   }
@@ -408,8 +408,8 @@ void BaseSolver::PostprocessProbes(const PostOperator &postop, const std::string
     probe_data.reserve(postop.GetProbes().size());
     const std::vector<std::complex<double>> vF =
         (f == 0) ? postop.ProbeEField() : postop.ProbeBField();
-    const int dim = vF.size() / postop.GetProbes().size();
-    int i = 0;
+    const std::size_t dim = vF.size() / postop.GetProbes().size();
+    std::size_t i = 0;
     for (const auto &idx : postop.GetProbes())
     {
       probe_data.push_back(

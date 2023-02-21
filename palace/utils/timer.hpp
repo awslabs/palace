@@ -71,7 +71,7 @@ public:
   // Reduce timing information across MPI ranks.
   void Reduce(MPI_Comm comm)
   {
-    const std::size_t ntimes = data.size();
+    const int ntimes = static_cast<int>(data.size());
     data[TOTAL] = TimeFromStart();
     data_min.resize(ntimes);
     data_max.resize(ntimes);
@@ -95,7 +95,7 @@ public:
   {
     // clang-format off
     constexpr int p = 3;   // Floating point precision
-    constexpr int w = 12;  // Total column width
+    constexpr std::size_t w = 12;  // Total column width
     Mpi::Print(comm,
                "\n"
                "Elapsed Time Report (s)   {:>{}s}{:>{}s}{:>{}s}\n"

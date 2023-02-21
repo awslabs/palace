@@ -53,6 +53,8 @@ void PrintBanner(MPI_Comm comm, int np, int nt, const char *git_tag)
 
 int main(int argc, char *argv[])
 {
+  try
+  {
   // Initialize MPI.
   Mpi::Init(argc, argv);
   MPI_Comm world_comm = Mpi::World();
@@ -191,6 +193,11 @@ int main(int argc, char *argv[])
   slepc::Finalize();
 #endif
   petsc::Finalize();
+  }
+  catch(...)
+  {
+    Mpi::Print(Mpi::World(), "Error: Unexpected Exception!\n\n");
+  }
 
   return 0;
 }

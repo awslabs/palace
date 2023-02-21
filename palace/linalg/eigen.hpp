@@ -52,6 +52,10 @@ public:
   };
 
   EigenSolverBase() = default;
+  EigenSolverBase(const EigenSolverBase&) = default;
+  EigenSolverBase(EigenSolverBase&&) = default;
+  EigenSolverBase& operator=(const EigenSolverBase&) = default;
+  EigenSolverBase& operator=(EigenSolverBase&&) = default;
   virtual ~EigenSolverBase() = default;
 
   // Set operators for the generalized eigenvalue problem or for the quadratic polynomial

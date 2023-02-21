@@ -134,6 +134,12 @@ public:
   SlepcEigenSolver(int print_lvl);
   ~SlepcEigenSolver() override;
 
+  SlepcEigenSolver(const SlepcEigenSolver&) = delete;
+  SlepcEigenSolver(SlepcEigenSolver&&) = delete;
+  SlepcEigenSolver& operator=(const SlepcEigenSolver&) = delete;
+  SlepcEigenSolver& operator=(SlepcEigenSolver&&) = delete;
+
+
   // Set operators for the generalized eigenvalue problem or for the quadratic polynomial
   // eigenvalue problem.
   void SetOperators(const petsc::PetscParMatrix &K, const petsc::PetscParMatrix &M,
@@ -244,6 +250,10 @@ public:
 
   // Call's SLEPc's EPSDestroy.
   ~SlepcEPSSolverBase() override;
+  SlepcEPSSolverBase(const SlepcEPSSolverBase&) = delete;
+  SlepcEPSSolverBase(SlepcEPSSolverBase&&) = delete;
+  SlepcEPSSolverBase& operator=(const SlepcEPSSolverBase&) = delete;
+  SlepcEPSSolverBase& operator=(SlepcEPSSolverBase&&) = delete;
 
   // Set the number of required eigenmodes.
   void SetNumModes(int numeig, int numvec = 0) override;
@@ -357,6 +367,10 @@ public:
   SlepcPEPLinearSolver(MPI_Comm comm, int print_lvl,
                        const std::string &prefix = std::string());
   ~SlepcPEPLinearSolver() override;
+  SlepcPEPLinearSolver(const SlepcPEPLinearSolver&) = delete;
+  SlepcPEPLinearSolver(SlepcPEPLinearSolver&&) = delete;
+  SlepcPEPLinearSolver& operator=(const SlepcPEPLinearSolver&) = delete;
+  SlepcPEPLinearSolver& operator=(SlepcPEPLinearSolver&&) = delete;
 
   // Set operators for the quadratic polynomial eigenvalue problem.
   void SetOperators(const petsc::PetscParMatrix &K, const petsc::PetscParMatrix &C,
@@ -414,6 +428,10 @@ public:
 
   // Call's SLEPc's PEPDestroy.
   ~SlepcPEPSolverBase() override;
+  SlepcPEPSolverBase(const SlepcPEPSolverBase&) = delete;
+  SlepcPEPSolverBase(SlepcPEPSolverBase&&) = delete;
+  SlepcPEPSolverBase& operator=(const SlepcPEPSolverBase&) = delete;
+  SlepcPEPSolverBase& operator=(SlepcPEPSolverBase&&) = delete;
 
   // Set the number of required eigenmodes.
   void SetNumModes(int numeig, int numvec = 0) override;

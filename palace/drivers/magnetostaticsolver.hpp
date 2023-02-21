@@ -41,10 +41,10 @@ private:
 
 public:
   using BaseSolver::BaseSolver;
-  MagnetostaticSolver(const MagnetostaticSolver&) = delete;
-  MagnetostaticSolver(MagnetostaticSolver&&) = delete;
-  MagnetostaticSolver& operator=(const MagnetostaticSolver&) = delete;
-  MagnetostaticSolver& operator=(MagnetostaticSolver&&) = delete;
+  // MagnetostaticSolver(const MagnetostaticSolver&) = delete;
+  // MagnetostaticSolver(MagnetostaticSolver&&) = delete;
+  // MagnetostaticSolver& operator=(const MagnetostaticSolver&) = delete;
+  // MagnetostaticSolver& operator=(MagnetostaticSolver&&) = delete;
 
   void Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
              Timer &timer) const override;

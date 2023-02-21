@@ -41,10 +41,10 @@ private:
 
 public:
   using BaseSolver::BaseSolver;
-  EigenSolver(const EigenSolver&) = delete;
-  EigenSolver(EigenSolver&&) = delete;
-  EigenSolver& operator=(const EigenSolver&) = delete;
-  EigenSolver& operator=(EigenSolver&&) = delete;
+  // EigenSolver(const EigenSolver&) = delete;
+  // EigenSolver(EigenSolver&&) = delete;
+  // EigenSolver& operator=(const EigenSolver&) = delete;
+  // EigenSolver& operator=(EigenSolver&&) = delete;
 
   void Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
              Timer &timer) const override;

@@ -84,16 +84,16 @@ public:
 #if defined(MFEM_USE_GSLIB)
     // Interpolated vector values are returned from GSLIB interpolator byNODES, which we
     // transform to byVDIM for output.
-    const int npts = op.GetCode().Size();
-    const int dim = U.VectorDim();
+    const auto npts = static_cast<std::size_t>(op.GetCode().Size());
+    const auto dim = static_cast<std::size_t>(U.VectorDim());
     std::vector<double> vals(npts * dim);
-    mfem::Vector v(npts * dim);
+    mfem::Vector v(static_cast<int>(npts * dim));
     op.Interpolate(U, v);
     for (int d = 0; d < dim; d++)
     {
       for (int i = 0; i < npts; i++)
       {
-        vals[i * dim + d] = v(d * npts + i);
+        vals[i * dim + d] = v(static_cast<int>(d * npts) + i);
       }
     }
     return vals;
@@ -117,7 +117,7 @@ public:
     }
     else
     {
-      return std::vector<std::complex<double>>(vr.begin(), vr.end());
+      return {vr.begin(), vr.end()};
     }
   }
 

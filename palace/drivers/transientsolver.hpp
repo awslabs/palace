@@ -49,10 +49,10 @@ private:
 
 public:
   using BaseSolver::BaseSolver;
-  TransientSolver(const TransientSolver&) = delete;
-  TransientSolver(TransientSolver&&) = delete;
-  TransientSolver& operator=(const TransientSolver&) = delete;
-  TransientSolver& operator=(TransientSolver&&) = delete;
+  // TransientSolver(const TransientSolver&) = delete;
+  // TransientSolver(TransientSolver&&) = delete;
+  // TransientSolver& operator=(const TransientSolver&) = delete;
+  // TransientSolver& operator=(TransientSolver&&) = delete;
 
   void Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
              Timer &timer) const override;

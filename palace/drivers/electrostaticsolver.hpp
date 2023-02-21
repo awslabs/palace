@@ -43,10 +43,10 @@ private:
 
 public:
   using BaseSolver::BaseSolver;
-  ElectrostaticSolver(const ElectrostaticSolver&) = delete;
-  ElectrostaticSolver(ElectrostaticSolver&&) = delete;
-  ElectrostaticSolver& operator=(const ElectrostaticSolver&) = delete;
-  ElectrostaticSolver& operator=(ElectrostaticSolver&&) = delete;
+  // ElectrostaticSolver(const ElectrostaticSolver&) = delete;
+  // ElectrostaticSolver(ElectrostaticSolver&&) = delete;
+  // ElectrostaticSolver& operator=(const ElectrostaticSolver&) = delete;
+  // ElectrostaticSolver& operator=(ElectrostaticSolver&&) = delete;
 
   void Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
              Timer &timer) const override;

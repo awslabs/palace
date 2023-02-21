@@ -38,6 +38,11 @@ private:
     mutable std::vector<mfem::Array<int>> attr_markers;
 
     virtual ~SurfaceData() = default;
+    SurfaceData() = default;
+    SurfaceData(const SurfaceData&) = default;
+    SurfaceData(SurfaceData&&) = default;
+    SurfaceData& operator=(const SurfaceData&) = default;
+    SurfaceData& operator=(SurfaceData&&) = default;
 
     virtual std::unique_ptr<mfem::Coefficient>
     GetCoefficient(int i, const mfem::ParGridFunction &U, const MaterialOperator &mat_op,
