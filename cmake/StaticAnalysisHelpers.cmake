@@ -45,8 +45,13 @@ function(configure_clang_tidy _target_name)
         endif()
       endif()
       if(MPI_CXX_INCLUDE_DIRS)
+        set(CLANG_TIDY_EXTRA_ARG)
+        foreach(INCLUDE_DIR IN LISTS MPI_CXX_INCLUDE_DIRS)
+          set(CLANG_TIDY_EXTRA_ARG "${CLANG_TIDY_EXTRA_ARG} -I${INCLUDE_DIR}")
+        endforeach()
+        string(STRIP "${CLANG_TIDY_EXTRA_ARG}" CLANG_TIDY_EXTRA_ARG)
         list(APPEND CLANG_TIDY_COMMAND
-          "-extra-arg=-I${MPI_CXX_INCLUDE_DIRS}"
+          "-extra-arg=${CLANG_TIDY_EXTRA_ARG}"
         )
       endif()
     endif()
