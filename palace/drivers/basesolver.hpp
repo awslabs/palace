@@ -9,6 +9,8 @@
 #include <vector>
 #include <fmt/os.h>
 
+#include <mfem.hpp>
+
 namespace mfem
 {
 
@@ -75,8 +77,20 @@ public:
              const char *git_tag = nullptr);
   virtual ~BaseSolver() = default;
 
-  virtual void Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
-                     Timer &timer) const = 0;
+  /// Storage for error estimation results from the solve. Required in the
+  /// AMR loop. An error indicator is non-negative, whilst an error estimate is
+  /// signed.
+  struct SolveOutput
+  {
+    /// Elemental localized error indicators. Used for marking elements for
+    /// refinement and coarsening.
+    mfem::Array<double> local_error_indicator;
+    /// Global error indicator. Used for driving AMR and diagnostics.
+    double global_error_indicator;
+  };
+
+  virtual SolveOutput Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
+                            Timer &timer) const = 0;
 
   // These methods write different simulation metadata to a JSON file in post_dir.
   void SaveMetadata(const mfem::ParFiniteElementSpace &fespace) const;

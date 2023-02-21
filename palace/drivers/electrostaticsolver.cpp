@@ -15,8 +15,9 @@
 namespace palace
 {
 
-void ElectrostaticSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
-                                Timer &timer) const
+BaseSolver::SolveOutput
+ElectrostaticSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
+                           Timer &timer) const
 {
   // Construct the system matrix defining the linear operator. Dirichlet boundaries are
   // handled eliminating the rows and columns of the system matrix for the corresponding
@@ -117,6 +118,8 @@ void ElectrostaticSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mes
   SaveMetadata(nstep, ksp_it);
   Postprocess(laplaceop, postop, V, timer);
   timer.postpro_time += timer.Lap() - (timer.io_time - io_time_prev);
+
+  return BaseSolver::SolveOutput();
 }
 
 void ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop, PostOperator &postop,

@@ -22,8 +22,8 @@
 namespace palace
 {
 
-void DrivenSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
-                         Timer &timer) const
+BaseSolver::SolveOutput
+DrivenSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh, Timer &timer) const
 {
   // Set up the spatial discretization and frequency sweep.
   timer.Lap();
@@ -94,19 +94,14 @@ void DrivenSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
   Mpi::Print("\n");
 
   // Main frequency sweep loop.
-  if (adaptive)
-  {
-    SweepAdaptive(spaceop, postop, nstep, step0, omega0, delta_omega, timer);
-  }
-  else
-  {
-    SweepUniform(spaceop, postop, nstep, step0, omega0, delta_omega, timer);
-  }
+  return adaptive ? SweepAdaptive(spaceop, postop, nstep, step0, omega0, delta_omega, timer)
+                  : SweepUniform(spaceop, postop, nstep, step0, omega0, delta_omega, timer);
 }
 
-void DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator &postop, int nstep,
-                                int step0, double omega0, double delta_omega,
-                                Timer &timer) const
+BaseSolver::SolveOutput DrivenSolver::SweepUniform(SpaceOperator &spaceop,
+                                                   PostOperator &postop, int nstep,
+                                                   int step0, double omega0,
+                                                   double delta_omega, Timer &timer) const
 {
   // Construct the system matrices defining the linear operator. PEC boundaries are handled
   // simply by setting diagonal entries of the system matrix for the corresponding dofs.
@@ -192,11 +187,14 @@ void DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator &postop, in
     omega += delta_omega;
   }
   SaveMetadata(ksp.GetTotalNumMult(), ksp.GetTotalNumIter());
+
+  return BaseSolver::SolveOutput();
 }
 
-void DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator &postop, int nstep,
-                                 int step0, double omega0, double delta_omega,
-                                 Timer &timer) const
+BaseSolver::SolveOutput DrivenSolver::SweepAdaptive(SpaceOperator &spaceop,
+                                                    PostOperator &postop, int nstep,
+                                                    int step0, double omega0,
+                                                    double delta_omega, Timer &timer) const
 {
   // Configure default parameters if not specified.
   double offline_tol = iodata.solver.driven.adaptive_tol;
@@ -348,6 +346,8 @@ void DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator &postop, i
     step++;
     omega += delta_omega;
   }
+
+  return BaseSolver::SolveOutput();
 }
 
 int DrivenSolver::GetNumSteps(double start, double end, double delta) const

@@ -25,8 +25,8 @@ namespace palace
 
 using namespace std::complex_literals;
 
-void EigenSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
-                        Timer &timer) const
+BaseSolver::SolveOutput
+EigenSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh, Timer &timer) const
 {
   // Construct and extract the system matrices defining the eigenvalue problem. The diagonal
   // values for the mass matrix PEC dof shift the Dirichlet eigenvalues out of the
@@ -390,6 +390,8 @@ void EigenSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
                 timer);
   }
   timer.postpro_time += timer.Lap() - (timer.io_time - io_time_prev);
+
+  return BaseSolver::SolveOutput();
 }
 
 void EigenSolver::Postprocess(const PostOperator &postop,

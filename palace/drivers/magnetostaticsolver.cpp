@@ -16,8 +16,9 @@
 namespace palace
 {
 
-void MagnetostaticSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
-                                Timer &timer) const
+BaseSolver::SolveOutput
+MagnetostaticSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
+                           Timer &timer) const
 {
   // Construct the system matrix defining the linear operator. Dirichlet boundaries are
   // handled eliminating the rows and columns of the system matrix for the corresponding
@@ -119,6 +120,8 @@ void MagnetostaticSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mes
   SaveMetadata(nstep, ksp_it);
   Postprocess(curlcurlop, postop, A, timer);
   timer.postpro_time += timer.Lap() - (timer.io_time - io_time_prev);
+
+  return BaseSolver::SolveOutput();
 }
 
 void MagnetostaticSolver::Postprocess(CurlCurlOperator &curlcurlop, PostOperator &postop,

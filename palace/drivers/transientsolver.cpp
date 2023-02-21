@@ -17,8 +17,9 @@
 namespace palace
 {
 
-void TransientSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
-                            Timer &timer) const
+BaseSolver::SolveOutput
+TransientSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
+                       Timer &timer) const
 {
   // Set up the spatial discretization and time integrators for the E and B fields.
   timer.Lap();
@@ -125,6 +126,8 @@ void TransientSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
     step++;
   }
   SaveMetadata(timeop.GetTotalKspMult(), timeop.GetTotalKspIter());
+
+  return BaseSolver::SolveOutput();
 }
 
 std::function<double(double)> TransientSolver::GetTimeExcitation(bool dot) const
