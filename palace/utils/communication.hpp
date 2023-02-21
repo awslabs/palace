@@ -68,10 +68,10 @@ const int CommTrace<char>::multiplicity;
 class Mpi
 {
 public:
-  Mpi(const Mpi&) = delete;
-  Mpi(Mpi&&) = delete;
-  Mpi& operator=(const Mpi&) = delete;
-  Mpi& operator=(Mpi&&) = delete;
+  Mpi(const Mpi &) = delete;
+  Mpi(Mpi &&) = delete;
+  Mpi &operator=(const Mpi &) = delete;
+  Mpi &operator=(Mpi &&) = delete;
 
   // Singleton creation.
   static void Init() { Init(nullptr, nullptr); }

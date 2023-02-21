@@ -73,10 +73,10 @@ public:
   ~PetscScatter();
 
   PetscScatter() = default;
-  PetscScatter(const PetscScatter&) = delete;
-  PetscScatter(PetscScatter&&) = delete;
-  PetscScatter& operator=(const PetscScatter&) = delete;
-  PetscScatter& operator=(PetscScatter&&) = delete;
+  PetscScatter(const PetscScatter &) = delete;
+  PetscScatter(PetscScatter &&) = delete;
+  PetscScatter &operator=(const PetscScatter &) = delete;
+  PetscScatter &operator=(PetscScatter &&) = delete;
 
   // Routines for forward/reverse scattering.
   void Forward(const PetscParVector &x, PetscParVector &y);
@@ -121,9 +121,9 @@ public:
   virtual ~PetscParVector();
 
   PetscParVector() = default;
-  PetscParVector(PetscParVector&&) = delete;
-  PetscParVector& operator=(const PetscParVector&) = delete;
-  PetscParVector& operator=(PetscParVector&&) = delete;
+  PetscParVector(PetscParVector &&) = delete;
+  PetscParVector &operator=(const PetscParVector &) = delete;
+  PetscParVector &operator=(PetscParVector &&) = delete;
 
   // Copy to/from MFEM's Vector type.
   void GetToVector(mfem::Vector &v, PetscInt start = -1, PetscInt end = -1) const;
@@ -283,9 +283,9 @@ public:
 
   // Calls PETSc's destroy function.
   virtual ~PetscParMatrix();
-  PetscParMatrix& operator=(const PetscParMatrix&) = default;
-  PetscParMatrix(PetscParMatrix&&) = delete;
-  PetscParMatrix& operator=(PetscParMatrix&&) = delete;
+  PetscParMatrix &operator=(const PetscParMatrix &) = default;
+  PetscParMatrix(PetscParMatrix &&) = default;
+  PetscParMatrix &operator=(PetscParMatrix &&) = default;
 
   // Get/set symmetric or Hermitian flags for the matrix. When setting the flags, it is
   // assumed the structure does not change for the lifetime of the matrix(unless explicitly

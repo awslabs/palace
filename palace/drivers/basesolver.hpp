@@ -75,10 +75,10 @@ public:
              const char *git_tag = nullptr);
 
   virtual ~BaseSolver() = default;
-  BaseSolver(const BaseSolver&) = delete;
-  BaseSolver(BaseSolver&&) = delete;
-  BaseSolver& operator=(const BaseSolver&) = delete;
-  BaseSolver& operator=(BaseSolver&&) = delete;
+  BaseSolver(const BaseSolver &) = delete;
+  BaseSolver(BaseSolver &&) = delete;
+  BaseSolver &operator=(const BaseSolver &) = delete;
+  BaseSolver &operator=(BaseSolver &&) = delete;
 
   virtual void Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
                      Timer &timer) const = 0;

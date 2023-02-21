@@ -78,6 +78,12 @@ public:
   // Calls PETSc's KSPDestroy.
   ~KspSolver();
 
+  KspSolver() = default;
+  KspSolver(const KspSolver &) = default;
+  KspSolver(KspSolver &&) = default;
+  KspSolver &operator=(const KspSolver &) = default;
+  KspSolver &operator=(KspSolver &&) = default;
+
   // Sets the solver type.
   void SetType(Type type, bool piped = false);
 

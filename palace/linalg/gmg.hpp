@@ -94,7 +94,9 @@ public:
     // Initialize.
     const int m = GetNumLevels(), nrhs = X.Size();
     MFEM_VERIFY(!iterative_mode, "Geometric multigrid solver does not use iterative_mode!");
-    MFEM_VERIFY(m > 1 || pc_it == 1,
+
+    const bool check = m > 1 || pc_it == 1;
+    MFEM_VERIFY(check,
                 "Single-level geometric multigrid will not work with multiple iterations!");
     if (nrhs * height != x_[m - 1].Size())
     {

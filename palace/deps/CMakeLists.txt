@@ -93,6 +93,7 @@ if(PALACE_WITH_INTERNAL_MFEM)
     "${CMAKE_CURRENT_SOURCE_DIR}/patch/mfem/patch_mesh.diff"
     "${CMAKE_CURRENT_SOURCE_DIR}/patch/mfem/patch_part.diff"
     "${CMAKE_CURRENT_SOURCE_DIR}/patch/mfem/patch_direct.diff"
+    "${CMAKE_CURRENT_SOURCE_DIR}/patch/mfem/patch_clang-tidy-suppression.diff"
   )
 
   include(FetchContent)

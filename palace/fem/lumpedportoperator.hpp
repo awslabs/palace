@@ -53,7 +53,8 @@ public:
 
   double GetToSquare(const LumpedElementData &elem) const
   {
-    return elem.GetGeometryWidth() / elem.GetGeometryLength() * elems.size();
+    return elem.GetGeometryWidth() / elem.GetGeometryLength() *
+           static_cast<double>(elems.size());
   }
 
   bool IsExcited() const { return excitation; }

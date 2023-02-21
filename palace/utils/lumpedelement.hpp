@@ -32,6 +32,7 @@ protected:
     ones.mfem::Vector::operator=(1.0);
     mfem::ParLinearForm s(&fespace);
     mfem::ConstantCoefficient one_func(1.0);
+    // NOLINTNEXTLINE(cppcoreguidelines-owning-memory)
     s.AddBoundaryIntegrator(new BoundaryLFIntegrator(one_func), attr_marker);
     s.UseFastAssembly(true);
     s.Assemble();
@@ -39,8 +40,16 @@ protected:
   }
 
 public:
-  LumpedElementData(int d, const mfem::Array<int> &marker) : dim(d), attr_marker(marker) {}
+  LumpedElementData(int d, mfem::Array<int> marker) : dim(d), attr_marker(std::move(marker))
+  {
+  }
   virtual ~LumpedElementData() = default;
+
+  LumpedElementData() = delete;
+  LumpedElementData(const LumpedElementData &) = default;
+  LumpedElementData(LumpedElementData &&) = default;
+  LumpedElementData &operator=(const LumpedElementData &) = delete;
+  LumpedElementData &operator=(LumpedElementData &&) = delete;
 
   mfem::Array<int> &GetMarker() { return attr_marker; }
   const mfem::Array<int> &GetMarker() const { return attr_marker; }

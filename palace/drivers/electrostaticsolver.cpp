@@ -74,7 +74,8 @@ void ElectrostaticSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mes
 
   // Right-hand side term and solution vector storage.
   mfem::Vector RHS(K.back()->Height());
-  std::vector<mfem::Vector> V; V.reserve(nstep);
+  std::vector<mfem::Vector> V;
+  V.reserve(nstep);
   timer.construct_time += timer.Lap();
 
   // Main loop over terminal boundaries.
@@ -201,8 +202,7 @@ void ElectrostaticSolver::PostprocessTerminals(
   }
 
   // Write capactance matrix data.
-  auto PrintMatrix = [&terminal_sources, this](const std::string &file,
-                                               const std::string &name,
+  auto PrintMatrix = [&terminal_sources, this](const std::string &file, std::string name,
                                                const std::string &unit,
                                                const mfem::DenseMatrix &mat, double scale)
   {
@@ -213,7 +213,7 @@ void ElectrostaticSolver::PostprocessTerminals(
     {
       // clang-format off
       output.print("{:>{}s}{}",
-                   name + "[i][" + std::to_string(idx2) + "] " + unit, table.w,
+                   (((name += "[i][") += std::to_string(idx2)) += "] ") += unit, table.w,
                    (idx2 == terminal_sources.rbegin()->first) ? "" : ",");
       // clang-format on
     }

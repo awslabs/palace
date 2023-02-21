@@ -131,6 +131,12 @@ public:
                    int print_lvl);
   ~FeastEigenSolver() override;
 
+  FeastEigenSolver() = default;
+  FeastEigenSolver(const FeastEigenSolver &) = default;
+  FeastEigenSolver(FeastEigenSolver &&) = default;
+  FeastEigenSolver &operator=(const FeastEigenSolver &) = default;
+  FeastEigenSolver &operator=(FeastEigenSolver &&) = default;
+
   // Set operators for the generalized eigenvalue problem or for the quadratic polynomial
   // eigenvalue problem.
   void SetOperators(const petsc::PetscParMatrix &K, const petsc::PetscParMatrix &M,

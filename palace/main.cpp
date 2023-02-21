@@ -55,146 +55,146 @@ int main(int argc, char *argv[])
 {
   try
   {
-  // Initialize MPI.
-  Mpi::Init(argc, argv);
-  MPI_Comm world_comm = Mpi::World();
-  bool world_root = Mpi::Root(world_comm);
-  int world_size = Mpi::Size(world_comm);
-  Mpi::Print(world_comm, "\n");
+    // Initialize MPI.
+    Mpi::Init(argc, argv);
+    MPI_Comm world_comm = Mpi::World();
+    bool world_root = Mpi::Root(world_comm);
+    int world_size = Mpi::Size(world_comm);
+    Mpi::Print(world_comm, "\n");
 
-  // Initialize timer.
-  Timer timer;
+    // Initialize timer.
+    Timer timer;
 
-  // Parse command-line options.
-  std::vector<std::string_view> argv_sv(argv, argv + argc);
-  bool dryrun = false;
-  auto Help = [executable_path = argv_sv[0], &world_comm]()
-  {
-    Mpi::Print(world_comm,
-               "Usage: {} [OPTIONS] CONFIG_FILE\n\n"
-               "Options:\n"
-               "  -h, --help           Show this help message and exit\n"
-               "  -dry-run, --dry-run  Parse configuration file for errors and exit\n\n",
-               executable_path.substr(executable_path.find_last_of('/') + 1));
-  };
-  for (int i = 1; i < argc; i++)
-  {
-    std::string_view argv_i = argv_sv.at(i);
-    if ((argv_i == "-h") || (argv_i == "--help"))
+    // Parse command-line options.
+    std::vector<std::string_view> argv_sv(argv, argv + argc);
+    bool dryrun = false;
+    auto Help = [executable_path = argv_sv[0], &world_comm]()
     {
+      Mpi::Print(world_comm,
+                 "Usage: {} [OPTIONS] CONFIG_FILE\n\n"
+                 "Options:\n"
+                 "  -h, --help           Show this help message and exit\n"
+                 "  -dry-run, --dry-run  Parse configuration file for errors and exit\n\n",
+                 executable_path.substr(executable_path.find_last_of('/') + 1));
+    };
+    for (int i = 1; i < argc; i++)
+    {
+      std::string_view argv_i = argv_sv.at(i);
+      if ((argv_i == "-h") || (argv_i == "--help"))
+      {
+        Help();
+        return 0;
+      }
+      if ((argv_i == "-dry-run") || (argv_i == "--dry-run"))
+      {
+        dryrun = true;
+        continue;
+      }
+    }
+    if (argc < 2)
+    {
+      Mpi::Print(world_comm, "Error: Invalid usage!\n\n");
       Help();
+      return 1;
+    }
+
+    // Perform dry run: Parse configuration file for errors and exit.
+    if (dryrun)
+    {
+      if (Mpi::Root(world_comm))
+      {
+        IoData iodata(argv[argc - 1], false);
+      }
+      Mpi::Print(world_comm, "Dry-run: No errors detected in configuration file \"{}\"\n\n",
+                 argv[argc - 1]);
       return 0;
     }
-    if ((argv_i == "-dry-run") || (argv_i == "--dry-run"))
-    {
-      dryrun = true;
-      continue;
-    }
-  }
-  if (argc < 2)
-  {
-    Mpi::Print(world_comm, "Error: Invalid usage!\n\n");
-    Help();
-    return 1;
-  }
 
-  // Perform dry run: Parse configuration file for errors and exit.
-  if (dryrun)
-  {
-    if (Mpi::Root(world_comm))
-    {
-      IoData iodata(argv[argc - 1], false);
-    }
-    Mpi::Print(world_comm, "Dry-run: No errors detected in configuration file \"{}\"\n\n",
-               argv[argc - 1]);
-    return 0;
-  }
-
-  // Parse configuration file.
-  int num_thread = 0;
+    // Parse configuration file.
+    int num_thread = 0;
 #if defined(MFEM_USE_OPENMP)
-  const char *env = std::getenv("OMP_NUM_THREADS");
-  if (env)
-  {
-    std::sscanf(env, "%d", &num_thread);
-  }
-  else
-  {
-    num_thread = 1;
-    omp_set_num_threads(num_thread);
-  }
+    const char *env = std::getenv("OMP_NUM_THREADS");
+    if (env)
+    {
+      std::sscanf(env, "%d", &num_thread);
+    }
+    else
+    {
+      num_thread = 1;
+      omp_set_num_threads(num_thread);
+    }
 #endif
 #if defined(PALACE_GIT_COMMIT)
-  const char *git_tag = GetGitCommit();
+    const char *git_tag = GetGitCommit();
 #else
-  const char *git_tag = nullptr;
+    const char *git_tag = nullptr;
 #endif
-  PrintBanner(world_comm, world_size, num_thread, git_tag);
-  IoData iodata(argv[1], false);
+    PrintBanner(world_comm, world_size, num_thread, git_tag);
+    IoData iodata(argv[1], false);
 
-  // Initialize Hypre and PETSc, and optionally SLEPc.
-  mfem::Hypre::Init();
-  petsc::Initialize(argc, argv, nullptr, nullptr);
+    // Initialize Hypre and PETSc, and optionally SLEPc.
+    mfem::Hypre::Init();
+    petsc::Initialize(argc, argv, nullptr, nullptr);
 #if defined(PALACE_WITH_SLEPC)
-  slepc::Initialize();
+    slepc::Initialize();
 #endif
-  if (PETSC_COMM_WORLD != world_comm)
-  {
-    Mpi::Print(world_comm, "Error: Problem during MPI initialization!\n\n");
-    return 1;
-  }
-
-  // Initialize the problem driver.
-  std::unique_ptr<BaseSolver> solver;
-  switch (iodata.problem.type)
-  {
-    case config::ProblemData::Type::DRIVEN:
-      solver = std::make_unique<DrivenSolver>(iodata, world_root, world_size, num_thread,
-                                              git_tag);
-      break;
-    case config::ProblemData::Type::EIGENMODE:
-      solver = std::make_unique<EigenSolver>(iodata, world_root, world_size, num_thread,
-                                             git_tag);
-      break;
-    case config::ProblemData::Type::ELECTROSTATIC:
-      solver = std::make_unique<ElectrostaticSolver>(iodata, world_root, world_size,
-                                                     num_thread, git_tag);
-      break;
-    case config::ProblemData::Type::MAGNETOSTATIC:
-      solver = std::make_unique<MagnetostaticSolver>(iodata, world_root, world_size,
-                                                     num_thread, git_tag);
-      break;
-    case config::ProblemData::Type::TRANSIENT:
-      solver = std::make_unique<TransientSolver>(iodata, world_root, world_size, num_thread,
-                                                 git_tag);
-      break;
-    default:
-      Mpi::Print(world_comm, "Error: Unsupported problem type!\n\n");
+    if (PETSC_COMM_WORLD != world_comm)
+    {
+      Mpi::Print(world_comm, "Error: Problem during MPI initialization!\n\n");
       return 1;
-  }
+    }
 
-  // Read the mesh from file, refine, partition, and distribute it. Then nondimensionalize
-  // it and the input parameters.
-  std::vector<std::unique_ptr<mfem::ParMesh>> mesh;
-  mesh.push_back(mesh::ReadMesh(world_comm, iodata, false, true, true, false, timer));
-  iodata.NondimensionalizeInputs(*mesh[0]);
-  mesh::RefineMesh(iodata, mesh);
-  timer.init_time += timer.Lap() - timer.io_time;
+    // Initialize the problem driver.
+    std::unique_ptr<BaseSolver> solver;
+    switch (iodata.problem.type)
+    {
+      case config::ProblemData::Type::DRIVEN:
+        solver = std::make_unique<DrivenSolver>(iodata, world_root, world_size, num_thread,
+                                                git_tag);
+        break;
+      case config::ProblemData::Type::EIGENMODE:
+        solver = std::make_unique<EigenSolver>(iodata, world_root, world_size, num_thread,
+                                               git_tag);
+        break;
+      case config::ProblemData::Type::ELECTROSTATIC:
+        solver = std::make_unique<ElectrostaticSolver>(iodata, world_root, world_size,
+                                                       num_thread, git_tag);
+        break;
+      case config::ProblemData::Type::MAGNETOSTATIC:
+        solver = std::make_unique<MagnetostaticSolver>(iodata, world_root, world_size,
+                                                       num_thread, git_tag);
+        break;
+      case config::ProblemData::Type::TRANSIENT:
+        solver = std::make_unique<TransientSolver>(iodata, world_root, world_size,
+                                                   num_thread, git_tag);
+        break;
+      default:
+        Mpi::Print(world_comm, "Error: Unsupported problem type!\n\n");
+        return 1;
+    }
 
-  // Run the problem driver.
-  solver->Solve(mesh, timer);
-  timer.Reduce(world_comm);
-  timer.Print(world_comm);
-  solver->SaveMetadata(timer);
-  Mpi::Print(world_comm, "\n");
+    // Read the mesh from file, refine, partition, and distribute it. Then nondimensionalize
+    // it and the input parameters.
+    std::vector<std::unique_ptr<mfem::ParMesh>> mesh;
+    mesh.push_back(mesh::ReadMesh(world_comm, iodata, false, true, true, false, timer));
+    iodata.NondimensionalizeInputs(*mesh[0]);
+    mesh::RefineMesh(iodata, mesh);
+    timer.init_time += timer.Lap() - timer.io_time;
 
-  // Finalize PETSc.
+    // Run the problem driver.
+    solver->Solve(mesh, timer);
+    timer.Reduce(world_comm);
+    timer.Print(world_comm);
+    solver->SaveMetadata(timer);
+    Mpi::Print(world_comm, "\n");
+
+    // Finalize PETSc.
 #if defined(PALACE_WITH_SLEPC)
-  slepc::Finalize();
+    slepc::Finalize();
 #endif
-  petsc::Finalize();
+    petsc::Finalize();
   }
-  catch(...)
+  catch (...)
   {
     Mpi::Print(Mpi::World(), "Error: Unexpected Exception!\n\n");
   }

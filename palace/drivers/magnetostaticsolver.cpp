@@ -213,7 +213,7 @@ void MagnetostaticSolver::PostprocessTerminals(const SurfaceCurrentOperator &sur
   }
 
   // Write inductance matrix data.
-  auto PrintMatrix = [&surf_j_op, this](const std::string &file, const std::string &name,
+  auto PrintMatrix = [&surf_j_op, this](const std::string &file, std::string name,
                                         const std::string &unit,
                                         const mfem::DenseMatrix &mat, double scale)
   {
@@ -224,7 +224,7 @@ void MagnetostaticSolver::PostprocessTerminals(const SurfaceCurrentOperator &sur
     {
       // clang-format off
       output.print("{:>{}s}{}",
-                   name + "[i][" + std::to_string(idx2) + "] " + unit, table.w,
+                   (((name += "[i][") += std::to_string(idx2)) += "] ") += unit, table.w,
                    (idx2 == surf_j_op.rbegin()->first) ? "" : ",");
       // clang-format on
     }
