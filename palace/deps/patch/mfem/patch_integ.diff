@@ -1,5 +1,5 @@
 diff --git a/fem/bilinearform.cpp b/fem/bilinearform.cpp
-index 1c4390d7b..7e7118439 100644
+index 51a80ef74..39599f4ca 100644
 --- a/fem/bilinearform.cpp
 +++ b/fem/bilinearform.cpp
 @@ -100,6 +100,7 @@ BilinearForm::BilinearForm (FiniteElementSpace * f, BilinearForm * bf, int ps)
@@ -10,7 +10,7 @@ index 1c4390d7b..7e7118439 100644
  
     boundary_integs = bf->boundary_integs;
     boundary_integs_marker = bf->boundary_integs_marker;
-@@ -424,7 +425,7 @@ void BilinearForm::Assemble(int skip_zeros)
+@@ -425,7 +426,7 @@ void BilinearForm::Assemble(int skip_zeros)
  
        for (int i = 0; i < fes -> GetNE(); i++)
        {
@@ -19,7 +19,7 @@ index 1c4390d7b..7e7118439 100644
           doftrans = fes->GetElementVDofs(i, vdofs);
           if (element_matrices)
           {
-@@ -1175,11 +1176,14 @@ MixedBilinearForm::MixedBilinearForm (FiniteElementSpace *tr_fes,
+@@ -1176,11 +1177,14 @@ MixedBilinearForm::MixedBilinearForm (FiniteElementSpace *tr_fes,
  
     // Copy the pointers to the integrators
     domain_integs = mbf->domain_integs;
@@ -36,7 +36,7 @@ index 1c4390d7b..7e7118439 100644
     boundary_trace_face_integs_marker = mbf->boundary_trace_face_integs_marker;
  
     assembly = AssemblyLevel::LEGACY;
-@@ -1302,6 +1306,14 @@ void MixedBilinearForm::GetBlocks(Array2D<SparseMatrix *> &blocks) const
+@@ -1303,6 +1307,14 @@ void MixedBilinearForm::GetBlocks(Array2D<SparseMatrix *> &blocks) const
  void MixedBilinearForm::AddDomainIntegrator (BilinearFormIntegrator * bfi)
  {
     domain_integs.Append (bfi);
@@ -51,7 +51,7 @@ index 1c4390d7b..7e7118439 100644
  }
  
  void MixedBilinearForm::AddBoundaryIntegrator (BilinearFormIntegrator * bfi)
-@@ -1358,8 +1370,20 @@ void MixedBilinearForm::Assemble (int skip_zeros)
+@@ -1359,8 +1371,20 @@ void MixedBilinearForm::Assemble (int skip_zeros)
  
     if (domain_integs.Size())
     {
@@ -72,7 +72,7 @@ index 1c4390d7b..7e7118439 100644
           dom_dof_trans = trial_fes -> GetElementVDofs (i, trial_vdofs);
           ran_dof_trans = test_fes  -> GetElementVDofs (i, test_vdofs);
           eltrans = test_fes -> GetElementTransformation (i);
-@@ -1368,10 +1392,14 @@ void MixedBilinearForm::Assemble (int skip_zeros)
+@@ -1369,10 +1393,14 @@ void MixedBilinearForm::Assemble (int skip_zeros)
           elmat = 0.0;
           for (int k = 0; k < domain_integs.Size(); k++)
           {
@@ -92,10 +92,10 @@ index 1c4390d7b..7e7118439 100644
           if (ran_dof_trans || dom_dof_trans)
           {
 diff --git a/fem/bilinearform.hpp b/fem/bilinearform.hpp
-index 9bb93e67f..210ae3942 100644
+index 2e0ac5e31..8b7dc5456 100644
 --- a/fem/bilinearform.hpp
 +++ b/fem/bilinearform.hpp
-@@ -698,10 +698,13 @@ protected:
+@@ -716,10 +716,13 @@ protected:
  
     /// Domain integrators.
     Array<BilinearFormIntegrator*> domain_integs;
@@ -110,7 +110,7 @@ index 9bb93e67f..210ae3942 100644
  
     /// Trace face (skeleton) integrators.
     Array<BilinearFormIntegrator*> trace_face_integs;
-@@ -781,6 +784,10 @@ public:
+@@ -799,6 +802,10 @@ public:
     /// Adds a domain integrator. Assumes ownership of @a bfi.
     void AddDomainIntegrator(BilinearFormIntegrator *bfi);
  
@@ -121,7 +121,7 @@ index 9bb93e67f..210ae3942 100644
     /// Adds a boundary integrator. Assumes ownership of @a bfi.
     void AddBoundaryIntegrator(BilinearFormIntegrator *bfi);
  
-@@ -804,6 +811,10 @@ public:
+@@ -822,6 +829,10 @@ public:
  
     /// Access all integrators added with AddDomainIntegrator().
     Array<BilinearFormIntegrator*> *GetDBFI() { return &domain_integs; }
@@ -132,7 +132,7 @@ index 9bb93e67f..210ae3942 100644
  
     /// Access all integrators added with AddBoundaryIntegrator().
     Array<BilinearFormIntegrator*> *GetBBFI() { return &boundary_integs; }
-@@ -1041,6 +1052,9 @@ public:
+@@ -1059,6 +1070,9 @@ public:
     /// Adds a domain interpolator. Assumes ownership of @a di.
     void AddDomainInterpolator(DiscreteInterpolator *di)
     { AddDomainIntegrator(di); }

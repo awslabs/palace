@@ -1,5 +1,5 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 0227ec5..a5efd21 100644
+index bc181b6..29c8ef2 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
 @@ -71,7 +71,7 @@ function(pexamples list_name)
@@ -8,10 +8,10 @@ index 0227ec5..a5efd21 100644
          add_executable(${lwe} ${parpackexample_DIR}/${l} )
 -        target_link_libraries(${lwe} parpack arpack MPI::MPI_Fortran)
 +        target_link_libraries(${lwe} parpack arpack BLAS::BLAS LAPACK::LAPACK ${EXTRA_LDFLAGS} MPI::MPI_Fortran)
-         add_test(NAME "${lwe}_ex" COMMAND mpirun -n 2 ./${lwe} WORKING_DIRECTORY ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})
+         add_test(NAME "${lwe}_ex" COMMAND mpiexec -n 2 ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/${lwe})
      endforeach()
  endfunction(pexamples)
-@@ -385,13 +385,11 @@ endif()
+@@ -388,13 +388,11 @@ endif()
  add_library(arpack ${arpackutil_STAT_SRCS} ${arpacksrc_STAT_SRCS} ${arpacksrc_ICB})
  
  target_link_libraries(arpack
@@ -27,7 +27,7 @@ index 0227ec5..a5efd21 100644
  set_target_properties(arpack PROPERTIES OUTPUT_NAME arpack${LIBSUFFIX}${ITF64SUFFIX})
  set_target_properties(arpack PROPERTIES VERSION 2.1.0)
  set_target_properties(arpack PROPERTIES SOVERSION 2)
-@@ -410,11 +408,13 @@ if (MPI)
+@@ -413,11 +411,13 @@ if (MPI)
      # use -DBUILD_SHARED_LIBS=ON|OFF to control static/shared
      add_library(parpack ${parpacksrc_STAT_SRCS} ${parpackutil_STAT_SRCS} ${parpacksrc_ICB})
      target_link_libraries(parpack
@@ -43,7 +43,7 @@ index 0227ec5..a5efd21 100644
      set_target_properties(parpack PROPERTIES OUTPUT_NAME parpack${LIBSUFFIX}${ITF64SUFFIX})
      set_target_properties(parpack PROPERTIES VERSION 2.1.0)
      set_target_properties(parpack PROPERTIES SOVERSION 2)
-@@ -669,7 +669,7 @@ function(build_tests)
+@@ -672,7 +672,7 @@ function(build_tests)
      set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/PARPACK/TESTS/MPI)
  
      add_executable(issue46 PARPACK/TESTS/MPI/issue46.f)

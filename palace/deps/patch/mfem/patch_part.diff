@@ -1,16 +1,16 @@
 diff --git a/.gitignore b/.gitignore
-index f6797a381..0d1312ae6 100644
+index 36eba0c26..e0cf679af 100644
 --- a/.gitignore
 +++ b/.gitignore
-@@ -212,7 +212,7 @@ miniapps/meshing/mobius-strip.mesh
+@@ -213,7 +213,7 @@ miniapps/meshing/mobius-strip.mesh
  miniapps/meshing/klein-bottle.mesh
  miniapps/meshing/toroid-*.mesh
  miniapps/meshing/twist-*.mesh
 -miniapps/meshing/mesh-explorer.mesh
 +miniapps/meshing/mesh-explorer.mesh*
  miniapps/meshing/partitioning.txt
- miniapps/meshing/shaper.mesh
- miniapps/meshing/extruder.mesh
+ miniapps/meshing/mesh-explorer-visit*
+ miniapps/meshing/mesh-explorer-paraview/
 diff --git a/examples/ex1p-test.cpp b/examples/ex1p-test.cpp
 new file mode 100644
 index 000000000..9b17ae982
@@ -319,41 +319,40 @@ index 000000000..9b17ae982
 +   return 0;
 +}
 diff --git a/general/array.hpp b/general/array.hpp
-index aa2562ab0..b18ee144a 100644
+index aaaa00dea..8c194f181 100644
 --- a/general/array.hpp
 +++ b/general/array.hpp
-@@ -77,8 +77,8 @@ public:
-    /** @brief Creates array using an existing c-array of asize elements;
-        allocsize is set to -asize to indicate that the data will not
-        be deleted. */
--   inline Array(T *data_, int asize)
--   { data.Wrap(data_, asize, false); size = asize; }
-+   inline Array(T *data_, int asize, bool own_data = false)
-+   { data.Wrap(data_, asize, own_data); size = asize; }
+@@ -201,17 +201,15 @@ public:
+    /// Delete the whole array.
+    inline void DeleteAll();
  
-    /// Copy constructor: deep copy from @a src
-    /** This method supports source arrays using any MemoryType. */
-@@ -203,7 +203,7 @@ public:
+-
+    ///  Create a copy of the internal array to the provided @a copy.
     inline void Copy(Array &copy) const;
  
     /// Make this Array a reference to a pointer.
 -   inline void MakeRef(T *, int);
-+   inline void MakeRef(T *data_, int size_, bool own_data = false);
++   inline void MakeRef(T *data_, int asize);
  
     /// Make this Array a reference to 'master'.
     inline void MakeRef(const Array &master);
-@@ -861,11 +861,11 @@ inline void Array<T>::Copy(Array &copy) const
+ 
+-
+    /// Copy sub array starting from @a offset out to the provided @a sa.
+    inline void GetSubArray(int offset, int sa_size, Array<T> &sa) const;
+ 
+@@ -864,11 +862,11 @@ inline void Array<T>::Copy(Array &copy) const
  }
  
  template <class T>
 -inline void Array<T>::MakeRef(T *p, int s)
-+inline void Array<T>::MakeRef(T *data_, int size_, bool own_data)
++inline void Array<T>::MakeRef(T *data_, int asize)
  {
     data.Delete();
 -   data.Wrap(p, s, false);
 -   size = s;
-+   data.Wrap(data_, size_, own_data);
-+   size = size_;
++   data.Wrap(data_, asize, false);
++   size = asize;
  }
  
  template <class T>
@@ -383,7 +382,7 @@ index efc91c0ae..555eada0f 100644
  
  ///  C = A * B  (as boolean matrices)
 diff --git a/mesh/mesh.cpp b/mesh/mesh.cpp
-index 29afa7791..6cadd9984 100644
+index 57e41c73d..2b49fef0d 100644
 --- a/mesh/mesh.cpp
 +++ b/mesh/mesh.cpp
 @@ -19,6 +19,7 @@
@@ -402,7 +401,7 @@ index 29afa7791..6cadd9984 100644
  
  // Include the METIS header, if using version 5. If using METIS 4, the needed
  // declarations are inlined below, i.e. no header is needed.
-@@ -2931,7 +2933,7 @@ void Mesh::FinalizeTopology(bool generate_bdr)
+@@ -2943,7 +2945,7 @@ void Mesh::FinalizeTopology(bool generate_bdr)
     {
        GetElementToFaceTable();
        GenerateFaces();
@@ -411,7 +410,7 @@ index 29afa7791..6cadd9984 100644
        {
           GenerateBoundaryElements();
           GetElementToFaceTable(); // update be_to_face
-@@ -2951,7 +2953,7 @@ void Mesh::FinalizeTopology(bool generate_bdr)
+@@ -2963,7 +2965,7 @@ void Mesh::FinalizeTopology(bool generate_bdr)
        if (Dim == 2)
        {
           GenerateFaces(); // 'Faces' in 2D refers to the edges
@@ -420,7 +419,7 @@ index 29afa7791..6cadd9984 100644
           {
              GenerateBoundaryElements();
           }
-@@ -5342,6 +5344,12 @@ const FiniteElementSpace *Mesh::GetNodalFESpace() const
+@@ -5355,6 +5357,12 @@ const FiniteElementSpace *Mesh::GetNodalFESpace() const
  
  void Mesh::SetCurvature(int order, bool discont, int space_dim, int ordering)
  {
@@ -433,7 +432,7 @@ index 29afa7791..6cadd9984 100644
     space_dim = (space_dim == -1) ? spaceDim : space_dim;
     FiniteElementCollection* nfec;
     if (discont)
-@@ -11997,6 +12005,878 @@ int Mesh::FindPoints(DenseMatrix &point_mat, Array<int>& elem_ids,
+@@ -12055,6 +12063,878 @@ int Mesh::FindPoints(DenseMatrix &point_mat, Array<int>& elem_ids,
  }
  
  
@@ -1313,7 +1312,7 @@ index 29afa7791..6cadd9984 100644
                                     int flags, MemoryType d_mt)
  {
 diff --git a/mesh/mesh.hpp b/mesh/mesh.hpp
-index 0b97b7eae..aa324f22a 100644
+index 99b00fec4..938103e1e 100644
 --- a/mesh/mesh.hpp
 +++ b/mesh/mesh.hpp
 @@ -27,6 +27,7 @@
@@ -1337,7 +1336,7 @@ index 0b97b7eae..aa324f22a 100644
  
     // Counter for Mesh transformations: refinement, derefinement, rebalancing.
     // Used for checking during Update operations on objects depending on the
-@@ -750,7 +753,7 @@ public:
+@@ -763,7 +766,7 @@ public:
  
     int AddBdrPoint(int v, int attr = 1);
  
@@ -1346,7 +1345,7 @@ index 0b97b7eae..aa324f22a 100644
     /// Finalize the construction of a triangular Mesh.
     void FinalizeTriMesh(int generate_edges = 0, int refine = 0,
                          bool fix_orientation = true);
-@@ -1832,6 +1835,195 @@ public:
+@@ -1908,6 +1911,195 @@ public:
  std::ostream &operator<<(std::ostream &out, const Mesh &mesh);
  
  
@@ -1543,7 +1542,7 @@ index 0b97b7eae..aa324f22a 100644
      and determinants of the Jacobians. */
  /** Typically objects of this type are constructed and owned by objects of class
 diff --git a/mesh/pmesh.cpp b/mesh/pmesh.cpp
-index a99ef039f..d5d352b82 100644
+index 487a7a01e..a20fc1347 100644
 --- a/mesh/pmesh.cpp
 +++ b/mesh/pmesh.cpp
 @@ -238,6 +238,8 @@ ParMesh::ParMesh(MPI_Comm comm, Mesh &mesh, int *partitioning_,
@@ -1563,7 +1562,7 @@ index a99ef039f..d5d352b82 100644
  
     Mesh::Finalize(refine, fix_orientation);
  
-@@ -6268,6 +6271,7 @@ void ParMesh::ParPrint(ostream &os) const
+@@ -6339,6 +6342,7 @@ void ParMesh::ParPrint(ostream &os) const
     {
        os << "total_shared_faces " << sface_lface.Size() << '\n';
     }
@@ -1572,7 +1571,7 @@ index a99ef039f..d5d352b82 100644
     {
        {
 diff --git a/mesh/pmesh.hpp b/mesh/pmesh.hpp
-index 692efe1b8..832297f97 100644
+index 3ed10d5ad..2607ae629 100644
 --- a/mesh/pmesh.hpp
 +++ b/mesh/pmesh.hpp
 @@ -97,6 +97,8 @@ protected:
@@ -1632,20 +1631,20 @@ index cd5b32929..f40d2aebf 100644
     void SetRefinementFlag(int rf) { refinement_flag = rf; }
  
 diff --git a/miniapps/meshing/makefile b/miniapps/meshing/makefile
-index 5ceea20fe..3b1088d41 100644
+index a606aa6fa..d332658c4 100644
 --- a/miniapps/meshing/makefile
 +++ b/miniapps/meshing/makefile
-@@ -114,7 +114,7 @@ clean-build:
+@@ -116,7 +116,7 @@ clean-build:
  	rm -rf *.dSYM *.TVD.*breakpoints
  
  clean-exec:
 -	@rm -f mobius-strip.mesh klein-bottle.mesh mesh-explorer.mesh
 +	@rm -f mobius-strip.mesh klein-bottle.mesh mesh-explorer.mesh*
- 	@rm -f toroid-*.mesh twist-*.mesh trimmer.mesh
+ 	@rm -f toroid-*.mesh twist-*.mesh trimmer.mesh reflected.mesh
  	@rm -f partitioning.txt shaper.mesh extruder.mesh
  	@rm -f optimized* perturbed* polar-nc.mesh
 diff --git a/miniapps/meshing/mesh-explorer.cpp b/miniapps/meshing/mesh-explorer.cpp
-index c0ca387a4..56531bee1 100644
+index 71b915de2..e3fae55ad 100644
 --- a/miniapps/meshing/mesh-explorer.cpp
 +++ b/miniapps/meshing/mesh-explorer.cpp
 @@ -308,6 +308,7 @@ int main (int argc, char *argv[])
@@ -1664,19 +1663,19 @@ index c0ca387a4..56531bee1 100644
 +           "S) Save in MFEM serial format\n"
 +           "D) Save in MFEM parallel format using the current partitioning\n"
             "V) Save in VTK format (only linear and quadratic meshes)\n"
+            "D) Save as a DataCollection\n"
             "q) Quit\n"
- #ifdef MFEM_USE_ZLIB
-@@ -958,7 +960,8 @@ int main (int argc, char *argv[])
-                      cin >> nxyz[2]; np *= nxyz[2];
-                   }
+@@ -961,8 +963,8 @@ int main (int argc, char *argv[])
                 }
--               partitioning = Array<int>(mesh->CartesianPartitioning(nxyz), mesh->GetNE());
-+               partitioning.MakeRef(mesh->CartesianPartitioning(nxyz),
-+                                    mesh->GetNE(), true);
+                int *part = mesh->CartesianPartitioning(nxyz);
+                partitioning = Array<int>(part, mesh->GetNE());
+-               delete [] part;
                 recover_bdr_partitioning(mesh, partitioning, bdr_partitioning);
++               delete [] part;
              }
              else if (pk == 's')
-@@ -969,7 +972,7 @@ int main (int argc, char *argv[])
+             {
+@@ -972,7 +974,7 @@ int main (int argc, char *argv[])
                 partitioning.SetSize(mesh->GetNE());
                 for (int i = 0; i < mesh->GetNE(); i++)
                 {
@@ -1685,18 +1684,17 @@ index c0ca387a4..56531bee1 100644
                 }
                 recover_bdr_partitioning(mesh, partitioning, bdr_partitioning);
              }
-@@ -982,8 +985,8 @@ int main (int argc, char *argv[])
-                }
-                cout << "Enter number of processors: " << flush;
+@@ -987,8 +989,8 @@ int main (int argc, char *argv[])
                 cin >> np;
--               partitioning = Array<int>(mesh->GeneratePartitioning(np, part_method),
--                                         mesh->GetNE());
-+               partitioning.MakeRef(mesh->GeneratePartitioning(np, part_method),
-+                                    mesh->GetNE(), true);
+                int *part = mesh->GeneratePartitioning(np, part_method);
+                partitioning = Array<int>(part, mesh->GetNE());
+-               delete [] part;
                 recover_bdr_partitioning(mesh, partitioning, bdr_partitioning);
++               delete [] part;
              }
              if (partitioning)
-@@ -1181,6 +1184,25 @@ int main (int argc, char *argv[])
+             {
+@@ -1185,6 +1187,25 @@ int main (int argc, char *argv[])
           cout << "New mesh file: " << omesh_file << endl;
        }
  

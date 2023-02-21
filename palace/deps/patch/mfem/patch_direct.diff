@@ -183,37 +183,6 @@ index f8af98a72..0d4503723 100644
  #cmakedefine MFEM_USE_BENCHMARK
  
  // Enable Enzyme for AD
-diff --git a/config/cmake/modules/FindButterflyPACK.cmake b/config/cmake/modules/FindButterflyPACK.cmake
-new file mode 100644
-index 000000000..18436df4d
---- /dev/null
-+++ b/config/cmake/modules/FindButterflyPACK.cmake
-@@ -0,0 +1,25 @@
-+# Copyright (c) 2010-2022, Lawrence Livermore National Security, LLC. Produced
-+# at the Lawrence Livermore National Laboratory. All Rights reserved. See files
-+# LICENSE and NOTICE for details. LLNL-CODE-806117.
-+#
-+# This file is part of the MFEM library. For more information and source code
-+# availability visit https://mfem.org.
-+#
-+# MFEM is free software; you can redistribute it and/or modify it under the
-+# terms of the BSD-3 license. We welcome feedback and contributions, see file
-+# CONTRIBUTING.md for details.
-+
-+# Sets the following variables:
-+#   - ButterflyPACK_FOUND
-+#   - ButterflyPACK_INCLUDE_DIRS
-+#   - ButterflyPACK_LIBRARIES
-+
-+include(MfemCmakeUtilities)
-+mfem_find_package(ButterflyPACK ButterflyPACK ButterflyPACK_DIR "" "" "" ""
-+  "Paths to headers required by ButterflyPACK."
-+  "Libraries required by ButterflyPACK."
-+  ADD_COMPONENT "zbutterflypack" "" "" "lib" zbutterflypack
-+  ADD_COMPONENT "dbutterflypack" "" "" "lib" dbutterflypack
-+  ADD_COMPONENT "cbutterflypack" "" "" "lib" cbutterflypack
-+  ADD_COMPONENT "sbutterflypack" "" "" "lib" sbutterflypack
-+  )
 diff --git a/config/cmake/modules/FindMUMPS.cmake b/config/cmake/modules/FindMUMPS.cmake
 index 32db499ee..0f83d5bf1 100644
 --- a/config/cmake/modules/FindMUMPS.cmake
@@ -248,34 +217,6 @@ index 32db499ee..0f83d5bf1 100644
 +    message(FATAL_ERROR "Unable to determine MUMPS version.")
 +  endif()
 +endif()
-diff --git a/config/cmake/modules/FindZFP.cmake b/config/cmake/modules/FindZFP.cmake
-new file mode 100644
-index 000000000..5c35c38b5
---- /dev/null
-+++ b/config/cmake/modules/FindZFP.cmake
-@@ -0,0 +1,22 @@
-+# Copyright (c) 2010-2022, Lawrence Livermore National Security, LLC. Produced
-+# at the Lawrence Livermore National Laboratory. All Rights reserved. See files
-+# LICENSE and NOTICE for details. LLNL-CODE-806117.
-+#
-+# This file is part of the MFEM library. For more information and source code
-+# availability visit https://mfem.org.
-+#
-+# MFEM is free software; you can redistribute it and/or modify it under the
-+# terms of the BSD-3 license. We welcome feedback and contributions, see file
-+# CONTRIBUTING.md for details.
-+
-+# Sets the following variables:
-+#   - ZFP_FOUND
-+#   - ZFP_INCLUDE_DIRS
-+#   - ZFP_LIBRARIES
-+
-+include(MfemCmakeUtilities)
-+mfem_find_package(ZFP ZFP ZFP_DIR
-+  "" "" "lib" zfp
-+  "Paths to headers required by ZFP."
-+  "Libraries required by ZFP."
-+  )
 diff --git a/config/config.hpp.in b/config/config.hpp.in
 index 69e83db85..0e68416b0 100644
 --- a/config/config.hpp.in
