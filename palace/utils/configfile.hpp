@@ -107,11 +107,44 @@ struct SphereRefinementData
   std::vector<double> center = {};
 };
 
+/// Stores data specifying the adaptive mesh refinement algorithm.
+struct AdaptiveRefinementData
+{
+  /// Non-dimensional tolerance used to specify convergence of the AMR.
+  double tolerance = 1e-3;
+  /// Maximum number of iterations to perform during the AMR.
+  int max_iteration = 30;
+  /// Minimum number of iterations to perform during the AMR.
+  int min_iteration = 0;
+  /// Dorfler update fraction. The set of marked elements is the minimum set
+  /// that contains update_fraction of the total error.
+  double update_fraction = 0.25;
+  /// Whether to construct a geometric multigrid using the generated sequence of
+  /// meshes.
+  bool construct_geometric_multigrid = true;
+  /// Whether or not to perform coarsening during the AMR. Incompatible with
+  /// `construct_geometric_multigrid`.
+  bool use_coarsening = false;
+  /// Maximum difference in non-conformal refinements between two adjacent
+  /// elements. Default = 0 implies there is no constraint on local non-conformity.
+  int max_local_nc_refinements = 0;
+  /// Used in transient AMR. AMR is triggered when the error estimate rises
+  /// above tolerance, and then proceeds until the error estimate is below
+  /// on_update_tolerance_ratio * tolerance. This ensures that a mesh
+  /// generalizes into the future.
+  double on_update_tolerance_ratio = 0.5;
+};
+
 struct RefinementData
 {
 public:
   // Parallel uniform mesh refinement levels.
   int uniform_ref_levels = 0;
+  // Whether to perform adaptive mesh refinement;
+  bool use_adaptive_mesh_refinement = false;
+  // Structure containing adaptivity specification data.
+  // Only used if `use_adaptive_mesh_refinement==true`.
+  AdaptiveRefinementData adaptivity_data;
 
 private:
   // Refinement data for mesh regions.

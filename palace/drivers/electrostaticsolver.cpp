@@ -74,7 +74,8 @@ void ElectrostaticSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mes
 
   // Right-hand side term and solution vector storage.
   mfem::Vector RHS(K.back()->Height());
-  std::vector<mfem::Vector> V; V.reserve(nstep);
+  std::vector<mfem::Vector> V;
+  V.reserve(nstep);
   timer.construct_time += timer.Lap();
 
   // Main loop over terminal boundaries.
