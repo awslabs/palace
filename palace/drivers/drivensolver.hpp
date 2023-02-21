@@ -57,10 +57,6 @@ private:
 
 public:
   using BaseSolver::BaseSolver;
-  // DrivenSolver(const DrivenSolver&) = delete;
-  // DrivenSolver(DrivenSolver&&) = delete;
-  // DrivenSolver& operator=(const DrivenSolver&) = delete;
-  // DrivenSolver& operator=(DrivenSolver&&) = delete;
 
   void Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
              Timer &timer) const override;
