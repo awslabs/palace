@@ -176,31 +176,34 @@ void RefinementData::SetUp(json &model)
   {
     return;
   }
+
   uniform_ref_levels = refinement->value("UniformLevels", uniform_ref_levels);
   MFEM_VERIFY(uniform_ref_levels >= 0,
               "Number of uniform mesh refinement levels must be non-negative!");
+
   auto boxes = refinement->find("Boxes");
+
   if (boxes != refinement->end())
   {
     MFEM_VERIFY(boxes->is_array(), "config[\"Refinement\"][\"Boxes\"] should specify an "
                                    "array in the configuration file!");
-    for (auto it = boxes->begin(); it != boxes->end(); ++it)
+    for (auto &box : *boxes)
     {
-      auto xlim = it->find("XLimits");
-      auto ylim = it->find("YLimits");
-      auto zlim = it->find("ZLimits");
+      auto xlim = box.find("XLimits");
+      auto ylim = box.find("YLimits");
+      auto zlim = box.find("ZLimits");
       MFEM_VERIFY(
-          xlim != it->end() && ylim != it->end() && zlim != it->end(),
+          xlim != box.end() && ylim != box.end() && zlim != box.end(),
           "Missing \"Boxes\" refinement region \"X/Y/ZLimits\" in configuration file!");
       MFEM_VERIFY(xlim->is_array() && ylim->is_array() && zlim->is_array(),
                   "config[\"Refinement\"][\"Boxes\"][\"X/Y/ZLimits\"] should specify an "
                   "array in the "
                   "configuration file!");
-      MFEM_VERIFY(it->find("Levels") != it->end(),
+      MFEM_VERIFY(box.find("Levels") != box.end(),
                   "Missing \"Boxes\" refinement region \"Levels\" in configuration file!");
       boxlist.emplace_back();
       BoxRefinementData &data = boxlist.back();
-      data.ref_levels = it->at("Levels");  // Required
+      data.ref_levels = box.at("Levels");  // Required
 
       std::vector<double> bx = xlim->get<std::vector<double>>();  // Required
       MFEM_VERIFY(bx.size() == 2,
@@ -236,59 +239,77 @@ void RefinementData::SetUp(json &model)
       data.bbmax.push_back(bz[1]);
 
       // Cleanup
-      it->erase("Levels");
-      it->erase("XLimits");
-      it->erase("YLimits");
-      it->erase("ZLimits");
-      MFEM_VERIFY(it->empty(), "Found an unsupported configuration file keyword under "
+      box.erase("Levels");
+      box.erase("XLimits");
+      box.erase("YLimits");
+      box.erase("ZLimits");
+      MFEM_VERIFY(box.empty(), "Found an unsupported configuration file keyword under "
                                "config[\"Refinement\"][\"Boxes\"]!\n"
-                                   << it->dump(2));
-
-      // Debug
-      // std::cout << "Levels: " << data.ref_levels << '\n';
-      // std::cout << "BoxMin: " << data.bbmin << '\n';
-      // std::cout << "BoxMax: " << data.bbmax << '\n';
+                                   << box.dump(2));
     }
   }
+
   auto spheres = refinement->find("Spheres");
   if (spheres != refinement->end())
   {
     MFEM_VERIFY(spheres->is_array(), "config[\"Refinement\"][\"Spheres\"] should specify "
                                      "an array in the configuration file!");
-    for (auto it = spheres->begin(); it != spheres->end(); ++it)
+    for (auto &sphere : *spheres)
     {
-      auto ctr = it->find("Center");
-      MFEM_VERIFY(ctr != it->end() && it->find("Radius") != it->end(),
+      auto ctr = sphere.find("Center");
+      MFEM_VERIFY(ctr != sphere.end() && sphere.find("Radius") != sphere.end(),
                   "Missing \"Spheres\" refinement region \"Center\" or \"Radius\" in "
                   "configuration file!");
       MFEM_VERIFY(ctr->is_array(),
                   "config[\"Refinement\"][\"Spheres\"][\"Center\"] should specify "
                   "an array in the configuration file!");
       MFEM_VERIFY(
-          it->find("Levels") != it->end(),
+          sphere.find("Levels") != sphere.end(),
           "Missing \"Spheres\" refinement region \"Levels\" in configuration file!");
       spherelist.emplace_back();
       SphereRefinementData &data = spherelist.back();
-      data.ref_levels = it->at("Levels");             // Required
-      data.r = it->at("Radius");                      // Required
+      data.ref_levels = sphere.at("Levels");          // Required
+      data.r = sphere.at("Radius");                   // Required
       data.center = ctr->get<std::vector<double>>();  // Required
       MFEM_VERIFY(data.center.size() == 3, "config[\"Refinement\"][\"Spheres\"][\"Center\"]"
                                            " should specify an array of length "
                                            "3 in the configuration file!");
 
       // Cleanup
-      it->erase("Levels");
-      it->erase("Radius");
-      it->erase("Center");
-      MFEM_VERIFY(it->empty(), "Found an unsupported configuration file keyword under "
-                               "config[\"Refinement\"][\"Spheres\"]!\n"
-                                   << it->dump(2));
-
-      // Debug
-      // std::cout << "Levels: " << data.ref_levels << '\n';
-      // std::cout << "Radius: " << data.r << '\n';
-      // std::cout << "Center: " << data.center << '\n';
+      sphere.erase("Levels");
+      sphere.erase("Radius");
+      sphere.erase("Center");
+      MFEM_VERIFY(sphere.empty(), "Found an unsupported configuration file keyword under "
+                                  "config[\"Refinement\"][\"Spheres\"]!\n"
+                                      << sphere.dump(2));
     }
+  }
+
+  auto adapt = refinement->find("Adaptation");
+  if (adapt != refinement->end())
+  {
+    adaptation.tolerance = adapt->value("Tol", adaptation.tolerance);
+    adaptation.max_iteration = adapt->value("MaxIteration", adaptation.max_iteration);
+    adaptation.min_iteration = adapt->value("MinIteration", adaptation.min_iteration);
+    adaptation.update_fraction = adapt->value("UpdateFraction", adaptation.update_fraction);
+    adaptation.construct_geometric_multigrid =
+        adapt->value("ConstructGMG", adaptation.construct_geometric_multigrid);
+    adaptation.use_coarsening = adapt->value("UseCoarsening", adaptation.use_coarsening);
+    adaptation.max_local_nc_refinements =
+        adapt->value("MaxLocalNCRefinements", adaptation.max_local_nc_refinements);
+    adaptation.on_update_tolerance_ratio =
+        adapt->value("OnUpdateTolRatio", adaptation.on_update_tolerance_ratio);
+
+    // Cleanup
+    const auto fields = {
+        "Tol",          "MaxIteration",  "MinIteration",          "UpdateFraction",
+        "ConstructGMG", "UseCoarsening", "MaxLocalNCRefinements", "OnUpdateTolRatio"};
+    for (const auto &f : fields)
+      adapt->erase(f);
+
+    MFEM_VERIFY(adapt->empty(),
+                "Found an unsupported configuration file keyword under \"Adaptation\"!\n"
+                    << adapt->dump(2));
   }
 
   // Cleanup

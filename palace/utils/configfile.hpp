@@ -144,7 +144,7 @@ public:
   bool use_adaptive_mesh_refinement = false;
   // Structure containing adaptivity specification data.
   // Only used if `use_adaptive_mesh_refinement==true`.
-  AdaptiveRefinementData adaptivity_data;
+  AdaptiveRefinementData adaptation;
 
 private:
   // Refinement data for mesh regions.
