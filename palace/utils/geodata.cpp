@@ -178,7 +178,7 @@ void RefineMesh(const IoData &iodata, std::vector<std::unique_ptr<mfem::ParMesh>
   {
     if (mesh.capacity() > 1)
     {
-      mesh.push_back(std::make_unique<mfem::ParMesh>(*mesh.back()));
+      mesh.emplace_back(std::make_unique<mfem::ParMesh>(*mesh.back()));
     }
     mesh.back()->UniformRefinement();
   }
@@ -297,7 +297,7 @@ void RefineMesh(const IoData &iodata, std::vector<std::unique_ptr<mfem::ParMesh>
     // (adds hanging nodes).
     if (mesh.capacity() > 1)
     {
-      mesh.push_back(std::make_unique<mfem::ParMesh>(*mesh.back()));
+      mesh.emplace_back(std::make_unique<mfem::ParMesh>(*mesh.back()));
     }
     mesh.back()->GeneralRefinement(refs, -1);
     region_ref_level++;

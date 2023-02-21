@@ -41,8 +41,7 @@ void ElectrostaticSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mes
     pc->SetOperator(*K.back());
   }
 
-  mfem::IterativeSolver::PrintLevel print =
-      mfem::IterativeSolver::PrintLevel().Warnings().Errors();
+  auto print = mfem::IterativeSolver::PrintLevel().Warnings().Errors();
   if (iodata.problem.verbose > 0)
   {
     print.Summary();
@@ -75,7 +74,7 @@ void ElectrostaticSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mes
 
   // Right-hand side term and solution vector storage.
   mfem::Vector RHS(K.back()->Height());
-  std::vector<mfem::Vector> V(nstep);
+  std::vector<mfem::Vector> V; V.reserve(nstep);
   timer.construct_time += timer.Lap();
 
   // Main loop over terminal boundaries.
@@ -85,17 +84,18 @@ void ElectrostaticSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mes
   auto t0 = timer.Now();
   for (const auto &[idx, data] : laplaceop.GetSources())
   {
-    Mpi::Print("\nIt {:d}/{:d}: Index = {:d} (elapsed time = {:.2e} s)\n", step + 1, nstep,
+    Mpi::Print("\nIt {:d}/{:d}: Index = {:d} (elapsed time = {:.2e} s)\n", ++step, nstep,
                idx, Timer::Duration(timer.Now() - t0).count());
 
     // Form and solve the linear system for a prescribed nonzero voltage on the specified
     // terminal.
     Mpi::Print("\n");
-    V[step].SetSize(RHS.Size());
-    laplaceop.GetExcitationVector(idx, *K.back(), *Ke.back(), V[step], RHS);
+    V.emplace_back(RHS.Size());
+
+    laplaceop.GetExcitationVector(idx, *K.back(), *Ke.back(), V.back(), RHS);
     timer.construct_time += timer.Lap();
 
-    pcg.Mult(RHS, V[step]);
+    pcg.Mult(RHS, V.back());
     if (!pcg.GetConverged())
     {
       Mpi::Warning("Linear solver did not converge in {:d} iterations!\n",
@@ -104,14 +104,11 @@ void ElectrostaticSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mes
     ksp_it += pcg.GetNumIterations();
     timer.solve_time += timer.Lap();
 
-    // V[step]->Print();
+    // V.back()->Print();
     Mpi::Print(" Sol. ||V|| = {:.6e} (||RHS|| = {:.6e})\n",
-               std::sqrt(mfem::InnerProduct(mesh.back()->GetComm(), V[step], V[step])),
+               std::sqrt(mfem::InnerProduct(mesh.back()->GetComm(), V.back(), V.back())),
                std::sqrt(mfem::InnerProduct(mesh.back()->GetComm(), RHS, RHS)));
     timer.postpro_time += timer.Lap();
-
-    // Next terminal.
-    step++;
   }
 
   // Postprocess the capacitance matrix from the computed field solutions.
