@@ -40,11 +40,11 @@ private:
                       int i, std::complex<double> omega, double Em) const;
 
 public:
-  EigenSolver(const IoData &iodata, bool root, int size = 0, int num_thread = 0,
-              const char *git_tag = nullptr)
-    : BaseSolver(iodata, root, size, num_thread, git_tag)
-  {
-  }
+  using BaseSolver::BaseSolver;
+  EigenSolver(const EigenSolver&) = delete;
+  EigenSolver(EigenSolver&&) = delete;
+  EigenSolver& operator=(const EigenSolver&) = delete;
+  EigenSolver& operator=(EigenSolver&&) = delete;
 
   void Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
              Timer &timer) const override;

@@ -48,11 +48,11 @@ private:
                         double J_coef) const;
 
 public:
-  TransientSolver(const IoData &iodata, bool root, int size = 0, int num_thread = 0,
-                  const char *git_tag = nullptr)
-    : BaseSolver(iodata, root, size, num_thread, git_tag)
-  {
-  }
+  using BaseSolver::BaseSolver;
+  TransientSolver(const TransientSolver&) = delete;
+  TransientSolver(TransientSolver&&) = delete;
+  TransientSolver& operator=(const TransientSolver&) = delete;
+  TransientSolver& operator=(TransientSolver&&) = delete;
 
   void Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
              Timer &timer) const override;
