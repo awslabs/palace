@@ -53,6 +53,10 @@ jobs:
         with:
           mpi: ${{ matrix.mpi }}
 
+      - name: Install pkg-config
+        run: |
+          brew install pkg-config
+
       - name: Install math libraries (OpenBLAS)
         if: matrix.math-libs == 'openblas'
         run: |
