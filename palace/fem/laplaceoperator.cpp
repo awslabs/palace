@@ -163,7 +163,7 @@ ConstructFiniteElementSpaceHierarchy(mfem::ParMesh &mesh,
                                      const mfem::H1_FECollection &h1_fec)
 {
   auto *h1_fespace = new mfem::ParFiniteElementSpace(&mesh, &h1_fec);
-  return mfem::ParFiniteElementSpaceHierarchy(&mesh, h1_fespace, false, true);
+  return {&mesh, h1_fespace, false, true};
 }
 
 }  // namespace

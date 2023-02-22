@@ -146,7 +146,7 @@ mfem::ParFiniteElementSpaceHierarchy
 ConstructFiniteElementSpaceHierarchy(mfem::ParMesh &mesh, const FECollection &fec)
 {
   auto *fespace = new mfem::ParFiniteElementSpace(&mesh, &fec);
-  return mfem::ParFiniteElementSpaceHierarchy(&mesh, fespace, false, true);
+  return {&mesh, fespace, false, true};
 }
 
 template <typename DomainCoefficient, typename BoundaryCoefficient>

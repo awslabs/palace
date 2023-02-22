@@ -112,6 +112,11 @@ public:
   ArpackEigenSolver(int print_lvl);
   ~ArpackEigenSolver() override;
 
+  ArpackEigenSolver(const ArpackEigenSolver &) = delete;
+  ArpackEigenSolver(ArpackEigenSolver &&) = delete;
+  ArpackEigenSolver &operator=(const ArpackEigenSolver &) = delete;
+  ArpackEigenSolver &operator=(ArpackEigenSolver &&) = delete;
+
   // Set operators for the generalized eigenvalue problem or for the quadratic polynomial
   // eigenvalue problem.
   void SetOperators(const petsc::PetscParMatrix &K, const petsc::PetscParMatrix &M,
@@ -200,6 +205,11 @@ public:
   ArpackEPSSolver(int print_lvl);
   ~ArpackEPSSolver() override;
 
+  ArpackEPSSolver(const ArpackEPSSolver &) = delete;
+  ArpackEPSSolver(ArpackEPSSolver &&) = delete;
+  ArpackEPSSolver &operator=(const ArpackEPSSolver &) = delete;
+  ArpackEPSSolver &operator=(ArpackEPSSolver &&) = delete;
+
   // Set operators for the generalized eigenvalue problem.
   void SetOperators(const petsc::PetscParMatrix &K, const petsc::PetscParMatrix &M,
                     ScaleType type) override;
@@ -251,6 +261,11 @@ protected:
 public:
   ArpackPEPSolver(int print_lvl);
   ~ArpackPEPSolver() override;
+
+  ArpackPEPSolver(const ArpackPEPSolver &) = delete;
+  ArpackPEPSolver(ArpackPEPSolver &&) = delete;
+  ArpackPEPSolver &operator=(const ArpackPEPSolver &) = delete;
+  ArpackPEPSolver &operator=(ArpackPEPSolver &&) = delete;
 
   // Set operators for the quadratic polynomial eigenvalue problem.
   void SetOperators(const petsc::PetscParMatrix &K, const petsc::PetscParMatrix &C,

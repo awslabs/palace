@@ -325,10 +325,8 @@ WavePortData::WavePortData(const config::WavePortData &data, const MaterialOpera
                            const mfem::Array<int> &dbc_marker,
                            mfem::ParFiniteElementSpace &nd_fespace,
                            mfem::ParFiniteElementSpace &h1_fespace)
+  : excitation(data.excitation), mode_idx(data.mode_idx), d_offset(data.d_offset)
 {
-  excitation = data.excitation;
-  mode_idx = data.mode_idx;
-  d_offset = data.d_offset;
   MFEM_VERIFY(!data.attributes.empty(), "Wave port boundary found with no attributes!");
   mesh::AttrToMarker(nd_fespace.GetParMesh()->bdr_attributes.Max(), data.attributes,
                      attr_marker);
@@ -459,14 +457,13 @@ WavePortData::WavePortData(const config::WavePortData &data, const MaterialOpera
     if (type == config::EigenSolverData::Type::ARPACK)
     {
 #if defined(PALACE_WITH_ARPACK)
-      eigen = std::unique_ptr<EigenSolverBase>(new arpack::ArpackEPSSolver(print));
+      eigen = std::make_unique<arpack::ArpackEPSSolver>(print);
 #endif
     }
     else  // config::EigenSolverData::Type::SLEPC
     {
 #if defined(PALACE_WITH_SLEPC)
-      eigen =
-          std::unique_ptr<EigenSolverBase>(new slepc::SlepcEPSSolver(A->GetComm(), print));
+      eigen = std::make_unique<slepc::SlepcEPSSolver>(A->GetComm(), print);
       auto *slepc = dynamic_cast<slepc::SlepcEPSSolver *>(eigen.get());
       slepc->SetProblemType(slepc::SlepcEigenSolver::ProblemType::GEN_NON_HERMITIAN);
       slepc->SetType(slepc::SlepcEigenSolver::Type::KRYLOVSCHUR);

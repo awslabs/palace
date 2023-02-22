@@ -15,6 +15,7 @@ Checks: >
     -cppcoreguidelines-macro-usage,
     -cppcoreguidelines-non-private-member-variables-in-classes,
     -cppcoreguidelines-pro-*,
+    -cppcoreguidelines-owning-memory,
     bugprone-*,
     -bugprone-easily-swappable-parameters,
     -bugprone-reserved-identifier,
