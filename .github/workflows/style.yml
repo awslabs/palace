@@ -16,12 +16,8 @@ jobs:
         with:
           version: '1'
 
-      # Install more recent clang-format from LLVM (match Homebrew v15)
       - name: Install clang-format
         run: |
-          wget -O- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
-          sudo add-apt-repository 'deb http://apt.llvm.org/bullseye/ llvm-toolchain-bullseye-15 main'
-          sudo apt-get update -q
           sudo apt-get install -y clang-format-15
 
       - name: Check style
