@@ -23,7 +23,8 @@ namespace palace
 {
 
 BaseSolver::SolveOutput
-DrivenSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh, Timer &timer) const
+DrivenSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh, Timer &timer,
+                    int iter) const
 {
   // Set up the spatial discretization and frequency sweep.
   timer.Lap();
@@ -177,7 +178,7 @@ BaseSolver::SolveOutput DrivenSolver::SweepUniform(SpaceOperator &spaceop,
 
     // Postprocess S-parameters and optionally write solution to disk.
     const auto io_time_prev = timer.io_time;
-    Postprocess(postop, spaceop.GetLumpedPortOp(), spaceop.GetWavePortOp(),
+    Postprocess(post_dir_, postop, spaceop.GetLumpedPortOp(), spaceop.GetWavePortOp(),
                 spaceop.GetSurfaceCurrentOp(), step, omega, E_elec, E_mag,
                 !iodata.solver.driven.only_port_post, timer);
     timer.postpro_time += timer.Lap() - (timer.io_time - io_time_prev);
@@ -337,7 +338,7 @@ BaseSolver::SolveOutput DrivenSolver::SweepAdaptive(SpaceOperator &spaceop,
 
     // Postprocess S-parameters and optionally write solution to disk.
     const auto io_time_prev = timer.io_time;
-    Postprocess(postop, spaceop.GetLumpedPortOp(), spaceop.GetWavePortOp(),
+    Postprocess(post_dir_, postop, spaceop.GetLumpedPortOp(), spaceop.GetWavePortOp(),
                 spaceop.GetSurfaceCurrentOp(), step, omega, E_elec, E_mag,
                 !iodata.solver.driven.only_port_post, timer);
     timer.postpro_time += timer.Lap() - (timer.io_time - io_time_prev);
@@ -361,7 +362,7 @@ int DrivenSolver::GetNumSteps(double start, double end, double delta) const
                   (delta > 0.0 && dfinal - end < delta_eps * end));
 }
 
-void DrivenSolver::Postprocess(const PostOperator &postop,
+void DrivenSolver::Postprocess(const std::string &post_dir, const PostOperator &postop,
                                const LumpedPortOperator &lumped_port_op,
                                const WavePortOperator &wave_port_op,
                                const SurfaceCurrentOperator &surf_j_op, int step,
@@ -371,26 +372,27 @@ void DrivenSolver::Postprocess(const PostOperator &postop,
   // The internal GridFunctions for PostOperator have already been set from the E and B
   // solutions in the main frequency sweep loop.
   double freq = iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, omega);
-  PostprocessCurrents(postop, surf_j_op, step, omega);
-  PostprocessPorts(postop, lumped_port_op, step, omega);
+  PostprocessCurrents(post_dir, postop, surf_j_op, step, omega);
+  PostprocessPorts(post_dir, postop, lumped_port_op, step, omega);
   if (surf_j_op.Size() == 0)
   {
-    PostprocessSParameters(postop, lumped_port_op, wave_port_op, step, omega);
+    PostprocessSParameters(post_dir, postop, lumped_port_op, wave_port_op, step, omega);
   }
   if (full)
   {
     double E_cap = postop.GetLumpedCapacitorEnergy(lumped_port_op);
     double E_ind = postop.GetLumpedInductorEnergy(lumped_port_op);
-    PostprocessDomains(postop, "f (GHz)", step, freq, E_elec, E_mag, E_cap, E_ind);
-    PostprocessSurfaces(postop, "f (GHz)", step, freq, E_elec + E_cap, E_mag + E_ind, 1.0,
-                        1.0);
-    PostprocessProbes(postop, "f (GHz)", step, freq);
+    PostprocessDomains(post_dir, postop, "f (GHz)", step, freq, E_elec, E_mag, E_cap,
+                       E_ind);
+    PostprocessSurfaces(post_dir, postop, "f (GHz)", step, freq, E_elec + E_cap,
+                        E_mag + E_ind, 1.0, 1.0);
+    PostprocessProbes(post_dir, postop, "f (GHz)", step, freq);
   }
   if (iodata.solver.driven.delta_post > 0 && step % iodata.solver.driven.delta_post == 0)
   {
     auto t0 = timer.Now();
     Mpi::Print("\n");
-    PostprocessFields(postop, step / iodata.solver.driven.delta_post, freq);
+    PostprocessFields(post_dir, postop, step / iodata.solver.driven.delta_post, freq);
     Mpi::Print(" Wrote fields to disk at step {:d}\n", step + 1);
     timer.io_time += timer.Now() - t0;
   }
@@ -401,27 +403,28 @@ namespace
 
 struct CurrentData
 {
-  const int idx;      // Current source index
-  const double Iinc;  // Excitation current
+  int idx;      // Current source index
+  double Iinc;  // Excitation current
 };
 
 struct PortVIData
 {
-  const int idx;                      // Port index
-  const bool excitation;              // Flag for excited ports
-  const double Vinc, Iinc;            // Incident voltage, current
-  const std::complex<double> Vi, Ii;  // Port voltage, current
+  int idx;                      // Port index
+  bool excitation;              // Flag for excited ports
+  double Vinc, Iinc;            // Incident voltage, current
+  std::complex<double> Vi, Ii;  // Port voltage, current
 };
 
 struct PortSData
 {
-  const int idx;                   // Port index
-  const std::complex<double> Sij;  // Scattering parameter
+  int idx;                   // Port index
+  std::complex<double> Sij;  // Scattering parameter
 };
 
 }  // namespace
 
-void DrivenSolver::PostprocessCurrents(const PostOperator &postop,
+void DrivenSolver::PostprocessCurrents(const std::string &post_dir,
+                                       const PostOperator &postop,
                                        const SurfaceCurrentOperator &surf_j_op, int step,
                                        double omega) const
 {
@@ -471,7 +474,7 @@ void DrivenSolver::PostprocessCurrents(const PostOperator &postop,
   }
 }
 
-void DrivenSolver::PostprocessPorts(const PostOperator &postop,
+void DrivenSolver::PostprocessPorts(const std::string &post_dir, const PostOperator &postop,
                                     const LumpedPortOperator &lumped_port_op, int step,
                                     double omega) const
 {
@@ -605,7 +608,8 @@ void DrivenSolver::PostprocessPorts(const PostOperator &postop,
   }
 }
 
-void DrivenSolver::PostprocessSParameters(const PostOperator &postop,
+void DrivenSolver::PostprocessSParameters(const std::string &post_dir,
+                                          const PostOperator &postop,
                                           const LumpedPortOperator &lumped_port_op,
                                           const WavePortOperator &wave_port_op, int step,
                                           double omega) const

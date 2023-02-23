@@ -16,8 +16,8 @@ namespace palace
 {
 
 BaseSolver::SolveOutput
-ElectrostaticSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
-                           Timer &timer) const
+ElectrostaticSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh, Timer &timer,
+                           int iter) const
 {
   // Construct the system matrix defining the linear operator. Dirichlet boundaries are
   // handled eliminating the rows and columns of the system matrix for the corresponding
@@ -116,13 +116,14 @@ ElectrostaticSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
   // Postprocess the capacitance matrix from the computed field solutions.
   const auto io_time_prev = timer.io_time;
   SaveMetadata(nstep, ksp_it);
-  Postprocess(laplaceop, postop, V, timer);
+  Postprocess(post_dir_, laplaceop, postop, V, timer);
   timer.postpro_time += timer.Lap() - (timer.io_time - io_time_prev);
 
   return BaseSolver::SolveOutput();
 }
 
-void ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop, PostOperator &postop,
+void ElectrostaticSolver::Postprocess(const std::string &post_dir,
+                                      LaplaceOperator &laplaceop, PostOperator &postop,
                                       const std::vector<mfem::Vector> &V,
                                       Timer &timer) const
 {
@@ -149,13 +150,13 @@ void ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop, PostOperator &
     postop.SetEGridFunction(E);
     postop.SetVGridFunction(V[i]);
     double Ue = postop.GetEFieldEnergy();
-    PostprocessDomains(postop, "i", i, idx, Ue, 0.0, 0.0, 0.0);
-    PostprocessSurfaces(postop, "i", i, idx, Ue, 0.0, 1.0, 0.0);
-    PostprocessProbes(postop, "i", i, idx);
+    PostprocessDomains(post_dir, postop, "i", i, idx, Ue, 0.0, 0.0, 0.0);
+    PostprocessSurfaces(post_dir, postop, "i", i, idx, Ue, 0.0, 1.0, 0.0);
+    PostprocessProbes(post_dir, postop, "i", i, idx);
     if (i < iodata.solver.electrostatic.n_post)
     {
       auto t0 = timer.Now();
-      PostprocessFields(postop, i, idx);
+      PostprocessFields(post_dir, postop, i, idx);
       Mpi::Print(" Wrote fields to disk for terminal {:d}\n", idx);
       timer.io_time += timer.Now() - t0;
     }
@@ -191,12 +192,13 @@ void ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop, PostOperator &
   }
   mfem::DenseMatrix Cinv(C);
   Cinv.Invert();  // In-place, uses LAPACK (when available) and should be cheap
-  PostprocessTerminals(terminal_sources, C, Cinv, Cm);
+  PostprocessTerminals(post_dir, terminal_sources, C, Cinv, Cm);
 }
 
 void ElectrostaticSolver::PostprocessTerminals(
-    const std::map<int, mfem::Array<int>> &terminal_sources, const mfem::DenseMatrix &C,
-    const mfem::DenseMatrix &Cinv, const mfem::DenseMatrix &Cm) const
+    const std::string &post_dir, const std::map<int, mfem::Array<int>> &terminal_sources,
+    const mfem::DenseMatrix &C, const mfem::DenseMatrix &Cinv,
+    const mfem::DenseMatrix &Cm) const
 {
   // Only root writes to disk (every process has full matrices).
   if (!root || post_dir.length() == 0)
@@ -205,10 +207,10 @@ void ElectrostaticSolver::PostprocessTerminals(
   }
 
   // Write capactance matrix data.
-  auto PrintMatrix = [&terminal_sources, this](const std::string &file,
-                                               const std::string &name,
-                                               const std::string &unit,
-                                               const mfem::DenseMatrix &mat, double scale)
+  auto PrintMatrix =
+      [&terminal_sources, &post_dir, this](const std::string &file, const std::string &name,
+                                           const std::string &unit,
+                                           const mfem::DenseMatrix &mat, double scale)
   {
     std::string path = post_dir + file;
     auto output = OutputFile(path, false);

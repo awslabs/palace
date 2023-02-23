@@ -26,7 +26,8 @@ namespace palace
 using namespace std::complex_literals;
 
 BaseSolver::SolveOutput
-EigenSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh, Timer &timer) const
+EigenSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh, Timer &timer,
+                   int iter) const
 {
   // Construct and extract the system matrices defining the eigenvalue problem. The diagonal
   // values for the mass matrix PEC dof shift the Dirichlet eigenvalues out of the
@@ -386,15 +387,15 @@ EigenSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh, Timer &tim
     postop.UpdatePorts(spaceop.GetLumpedPortOp(), omega.real());
 
     // Postprocess the mode.
-    Postprocess(postop, spaceop.GetLumpedPortOp(), i, omega, error1, error2, num_conv,
-                timer);
+    Postprocess(post_dir_, postop, spaceop.GetLumpedPortOp(), i, omega, error1, error2,
+                num_conv, timer);
   }
   timer.postpro_time += timer.Lap() - (timer.io_time - io_time_prev);
 
   return BaseSolver::SolveOutput();
 }
 
-void EigenSolver::Postprocess(const PostOperator &postop,
+void EigenSolver::Postprocess(const std::string &post_dir, const PostOperator &postop,
                               const LumpedPortOperator &lumped_port_op, int i,
                               std::complex<double> omega, double error1, double error2,
                               int num_conv, Timer &timer) const
@@ -408,15 +409,16 @@ void EigenSolver::Postprocess(const PostOperator &postop,
   double E_mag = postop.GetHFieldEnergy();
   double E_cap = postop.GetLumpedCapacitorEnergy(lumped_port_op);
   double E_ind = postop.GetLumpedInductorEnergy(lumped_port_op);
-  PostprocessEigen(i, omega, error1, error2, num_conv);
-  PostprocessEPR(postop, lumped_port_op, i, omega, E_elec + E_cap);
-  PostprocessDomains(postop, "m", i, i + 1, E_elec, E_mag, E_cap, E_ind);
-  PostprocessSurfaces(postop, "m", i, i + 1, E_elec + E_cap, E_mag + E_ind, 1.0, 1.0);
-  PostprocessProbes(postop, "m", i, i + 1);
+  PostprocessEigen(post_dir, i, omega, error1, error2, num_conv);
+  PostprocessEPR(post_dir, postop, lumped_port_op, i, omega, E_elec + E_cap);
+  PostprocessDomains(post_dir, postop, "m", i, i + 1, E_elec, E_mag, E_cap, E_ind);
+  PostprocessSurfaces(post_dir, postop, "m", i, i + 1, E_elec + E_cap, E_mag + E_ind, 1.0,
+                      1.0);
+  PostprocessProbes(post_dir, postop, "m", i, i + 1);
   if (i < iodata.solver.eigenmode.n_post)
   {
     auto t0 = timer.Now();
-    PostprocessFields(postop, i, i + 1);
+    PostprocessFields(post_dir, postop, i, i + 1);
     Mpi::Print(" Wrote mode {:d} to disk\n", i + 1);
     timer.io_time += timer.Now() - t0;
   }
@@ -440,8 +442,9 @@ struct EprIOData
 
 }  // namespace
 
-void EigenSolver::PostprocessEigen(int i, std::complex<double> omega, double error1,
-                                   double error2, int num_conv) const
+void EigenSolver::PostprocessEigen(const std::string &post_dir, int i,
+                                   std::complex<double> omega, double error1, double error2,
+                                   int num_conv) const
 {
   // Dimensionalize the result and print in a nice table of frequencies and Q-factors. Save
   // to file if user has specified.
@@ -503,7 +506,7 @@ void EigenSolver::PostprocessEigen(int i, std::complex<double> omega, double err
   }
 }
 
-void EigenSolver::PostprocessEPR(const PostOperator &postop,
+void EigenSolver::PostprocessEPR(const std::string &post_dir, const PostOperator &postop,
                                  const LumpedPortOperator &lumped_port_op, int i,
                                  std::complex<double> omega, double Em) const
 {

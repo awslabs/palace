@@ -183,7 +183,9 @@ int main(int argc, char *argv[])
   timer.init_time += timer.Lap() - timer.io_time;
 
   // Run the problem driver.
-  solver->Solve(mesh, timer);
+  int iter = 0;
+  auto solver_output = solver->Solve(mesh, timer, iter++);
+
   timer.Reduce(world_comm);
   timer.Print(world_comm);
   solver->SaveMetadata(timer);

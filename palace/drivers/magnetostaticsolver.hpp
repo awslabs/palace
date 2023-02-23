@@ -32,10 +32,12 @@ class Timer;
 class MagnetostaticSolver : public BaseSolver
 {
 private:
-  void Postprocess(CurlCurlOperator &curlcurlop, PostOperator &postop,
-                   const std::vector<mfem::Vector> &A, Timer &timer) const;
+  void Postprocess(const std::string &post_dir, CurlCurlOperator &curlcurlop,
+                   PostOperator &postop, const std::vector<mfem::Vector> &A,
+                   Timer &timer) const;
 
-  void PostprocessTerminals(const SurfaceCurrentOperator &surf_j_op,
+  void PostprocessTerminals(const std::string &post_dir,
+                            const SurfaceCurrentOperator &surf_j_op,
                             const mfem::DenseMatrix &M, const mfem::DenseMatrix &Minv,
                             const mfem::DenseMatrix &Mm) const;
 
@@ -43,7 +45,7 @@ public:
   using BaseSolver::BaseSolver;
 
   BaseSolver::SolveOutput Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
-                                Timer &timer) const override;
+                                Timer &timer, int iter) const override;
 };
 
 }  // namespace palace

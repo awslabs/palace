@@ -18,8 +18,8 @@ namespace palace
 {
 
 BaseSolver::SolveOutput
-TransientSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
-                       Timer &timer) const
+TransientSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh, Timer &timer,
+                       int iter) const
 {
   // Set up the spatial discretization and time integrators for the E and B fields.
   timer.Lap();
@@ -118,8 +118,9 @@ TransientSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
 
     // Postprocess port voltages/currents and optionally write solution to disk.
     const auto io_time_prev = timer.io_time;
-    Postprocess(postop, spaceop.GetLumpedPortOp(), spaceop.GetSurfaceCurrentOp(), step, t,
-                J_coef(t), E_elec, E_mag, !iodata.solver.transient.only_port_post, timer);
+    Postprocess(post_dir_, postop, spaceop.GetLumpedPortOp(), spaceop.GetSurfaceCurrentOp(),
+                step, t, J_coef(t), E_elec, E_mag, !iodata.solver.transient.only_port_post,
+                timer);
     timer.postpro_time += timer.Lap() - (timer.io_time - io_time_prev);
 
     // Increment time step.
@@ -237,7 +238,7 @@ int TransientSolver::GetNumSteps(double start, double end, double delta) const
                   (delta > 0.0 && dfinal - end < delta_eps * end));
 }
 
-void TransientSolver::Postprocess(const PostOperator &postop,
+void TransientSolver::Postprocess(const std::string &post_dir, const PostOperator &postop,
                                   const LumpedPortOperator &lumped_port_op,
                                   const SurfaceCurrentOperator &surf_j_op, int step,
                                   double t, double J_coef, double E_elec, double E_mag,
@@ -246,23 +247,23 @@ void TransientSolver::Postprocess(const PostOperator &postop,
   // The internal GridFunctions for PostOperator have already been set from the E and B
   // solutions in the main time integration loop.
   const double ts = iodata.DimensionalizeValue(IoData::ValueType::TIME, t);
-  PostprocessCurrents(postop, surf_j_op, step, t, J_coef);
-  PostprocessPorts(postop, lumped_port_op, step, t, J_coef);
+  PostprocessCurrents(post_dir, postop, surf_j_op, step, t, J_coef);
+  PostprocessPorts(post_dir, postop, lumped_port_op, step, t, J_coef);
   if (full)
   {
     double E_cap = postop.GetLumpedCapacitorEnergy(lumped_port_op);
     double E_ind = postop.GetLumpedInductorEnergy(lumped_port_op);
-    PostprocessDomains(postop, "t (ns)", step, ts, E_elec, E_mag, E_cap, E_ind);
-    PostprocessSurfaces(postop, "t (ns)", step, ts, E_elec + E_cap, E_mag + E_ind, 1.0,
-                        1.0);
-    PostprocessProbes(postop, "t (ns)", step, ts);
+    PostprocessDomains(post_dir, postop, "t (ns)", step, ts, E_elec, E_mag, E_cap, E_ind);
+    PostprocessSurfaces(post_dir, postop, "t (ns)", step, ts, E_elec + E_cap, E_mag + E_ind,
+                        1.0, 1.0);
+    PostprocessProbes(post_dir, postop, "t (ns)", step, ts);
   }
   if (iodata.solver.transient.delta_post > 0 &&
       step % iodata.solver.transient.delta_post == 0)
   {
     auto t0 = timer.Now();
     Mpi::Print("\n");
-    PostprocessFields(postop, step / iodata.solver.transient.delta_post, ts);
+    PostprocessFields(post_dir, postop, step / iodata.solver.transient.delta_post, ts);
     Mpi::Print(" Wrote fields to disk at step {:d}\n", step);
     timer.io_time += timer.Now() - t0;
   }
@@ -287,7 +288,8 @@ struct PortData
 
 }  // namespace
 
-void TransientSolver::PostprocessCurrents(const PostOperator &postop,
+void TransientSolver::PostprocessCurrents(const std::string &post_dir,
+                                          const PostOperator &postop,
                                           const SurfaceCurrentOperator &surf_j_op, int step,
                                           double t, double J_coef) const
 {
@@ -337,7 +339,8 @@ void TransientSolver::PostprocessCurrents(const PostOperator &postop,
   }
 }
 
-void TransientSolver::PostprocessPorts(const PostOperator &postop,
+void TransientSolver::PostprocessPorts(const std::string &post_dir,
+                                       const PostOperator &postop,
                                        const LumpedPortOperator &lumped_port_op, int step,
                                        double t, double J_coef) const
 {

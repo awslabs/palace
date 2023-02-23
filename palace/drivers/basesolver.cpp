@@ -53,17 +53,17 @@ void WriteMetadata(const std::string &post_dir, const json &meta)
 
 BaseSolver::BaseSolver(const IoData &iodata_, bool root_, int size, int num_thread,
                        const char *git_tag)
-  : iodata(iodata_), post_dir(GetPostDir(iodata_.problem.output)), root(root_),
+  : iodata(iodata_), post_dir_(GetPostDir(iodata_.problem.output)), root(root_),
     table(8, 9, 6)
 {
   // Create directory for output.
-  if (root && !std::filesystem::exists(post_dir))
+  if (root && !std::filesystem::exists(post_dir_))
   {
-    std::filesystem::create_directories(post_dir);
+    std::filesystem::create_directories(post_dir_);
   }
 
   // Initialize simulation metadata for this simulation.
-  if (root && post_dir.length() > 0)
+  if (root && post_dir_.length() > 0)
   {
     json meta;
     if (git_tag)
@@ -78,11 +78,12 @@ BaseSolver::BaseSolver(const IoData &iodata_, bool root_, int size, int num_thre
     {
       meta["Problem"]["OpenMPThreads"] = num_thread;
     }
-    WriteMetadata(post_dir, meta);
+    WriteMetadata(post_dir_, meta);
   }
 }
 
-void BaseSolver::SaveMetadata(const mfem::ParFiniteElementSpace &fespace) const
+void BaseSolver::SaveMetadata(const std::string &post_dir,
+                              const mfem::ParFiniteElementSpace &fespace) const
 {
   if (post_dir.length() == 0)
   {
@@ -100,7 +101,7 @@ void BaseSolver::SaveMetadata(const mfem::ParFiniteElementSpace &fespace) const
   }
 }
 
-void BaseSolver::SaveMetadata(int ksp_mult, int ksp_it) const
+void BaseSolver::SaveMetadata(const std::string &post_dir, int ksp_mult, int ksp_it) const
 {
   if (post_dir.length() == 0)
   {
@@ -115,7 +116,7 @@ void BaseSolver::SaveMetadata(int ksp_mult, int ksp_it) const
   }
 }
 
-void BaseSolver::SaveMetadata(const Timer &timer) const
+void BaseSolver::SaveMetadata(const std::string &post_dir, const Timer &timer) const
 {
   if (post_dir.length() == 0)
   {
@@ -164,9 +165,10 @@ struct ProbeData
 
 }  // namespace
 
-void BaseSolver::PostprocessDomains(const PostOperator &postop, const std::string &name,
-                                    int step, double time, double E_elec, double E_mag,
-                                    double E_cap, double E_ind) const
+void BaseSolver::PostprocessDomains(const std::string &post_dir, const PostOperator &postop,
+                                    const std::string &name, int step, double time,
+                                    double E_elec, double E_mag, double E_cap,
+                                    double E_ind) const
 {
   // If domains have been specified for postprocessing, compute the corresponding values
   // and write out to disk.
@@ -242,7 +244,8 @@ void BaseSolver::PostprocessDomains(const PostOperator &postop, const std::strin
   }
 }
 
-void BaseSolver::PostprocessSurfaces(const PostOperator &postop, const std::string &name,
+void BaseSolver::PostprocessSurfaces(const std::string &post_dir,
+                                     const PostOperator &postop, const std::string &name,
                                      int step, double time, double E_elec, double E_mag,
                                      double Vinc, double Iinc) const
 {
@@ -376,8 +379,8 @@ void BaseSolver::PostprocessSurfaces(const PostOperator &postop, const std::stri
   }
 }
 
-void BaseSolver::PostprocessProbes(const PostOperator &postop, const std::string &name,
-                                   int step, double time) const
+void BaseSolver::PostprocessProbes(const std::string &post_dir, const PostOperator &postop,
+                                   const std::string &name, int step, double time) const
 {
 #if defined(MFEM_USE_GSLIB)
   // If probe locations have been specified for postprocessing, compute the corresponding
@@ -543,7 +546,8 @@ void BaseSolver::PostprocessProbes(const PostOperator &postop, const std::string
 #endif
 }
 
-void BaseSolver::PostprocessFields(const PostOperator &postop, int step, double time) const
+void BaseSolver::PostprocessFields(const std::string &post_dir, const PostOperator &postop,
+                                   int step, double time) const
 {
   // Save the computed fields in parallel in format for viewing with ParaView.
   if (post_dir.length() == 0)

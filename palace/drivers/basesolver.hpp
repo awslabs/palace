@@ -11,14 +11,6 @@
 
 #include <mfem.hpp>
 
-namespace mfem
-{
-
-class ParFiniteElementSpace;
-class ParMesh;
-
-}  // namespace mfem
-
 namespace palace
 {
 
@@ -36,7 +28,7 @@ protected:
   const IoData &iodata;
 
   // Parameters for writing postprocessing outputs.
-  const std::string post_dir;
+  const std::string post_dir_;
   const bool root;
 
   // Table formatting for output files.
@@ -62,40 +54,54 @@ protected:
   }
 
   // Common postprocessing functions for all simulation types.
-  void PostprocessDomains(const PostOperator &postop, const std::string &name, int step,
-                          double time, double E_elec, double E_mag, double E_cap,
-                          double E_ind) const;
-  void PostprocessSurfaces(const PostOperator &postop, const std::string &name, int step,
-                           double time, double E_elec, double E_mag, double Vinc,
-                           double Iinc) const;
-  void PostprocessProbes(const PostOperator &postop, const std::string &name, int step,
+  void PostprocessDomains(const std::string &post_dir, const PostOperator &postop,
+                          const std::string &name, int step, double time, double E_elec,
+                          double E_mag, double E_cap, double E_ind) const;
+  void PostprocessSurfaces(const std::string &post_dir, const PostOperator &postop,
+                           const std::string &name, int step, double time, double E_elec,
+                           double E_mag, double Vinc, double Iinc) const;
+  void PostprocessProbes(const std::string &post_dir, const PostOperator &postop,
+                         const std::string &name, int step, double time) const;
+  void PostprocessFields(const std::string &post_dir, const PostOperator &postop, int step,
                          double time) const;
-  void PostprocessFields(const PostOperator &postop, int step, double time) const;
 
 public:
   BaseSolver(const IoData &iodata_, bool root_, int size = 0, int num_thread = 0,
              const char *git_tag = nullptr);
   virtual ~BaseSolver() = default;
 
-  /// Storage for error estimation results from the solve. Required in the
-  /// AMR loop. An error indicator is non-negative, whilst an error estimate is
-  /// signed.
+  // Storage for error estimation results from the solve. Required in the AMR loop. An error
+  // indicator is non-negative, whilst an error estimate is signed.
   struct SolveOutput
   {
-    /// Elemental localized error indicators. Used for marking elements for
-    /// refinement and coarsening.
+    // Elemental localized error indicators. Used for marking elements for
+    // refinement and coarsening.
     mfem::Array<double> local_error_indicator;
-    /// Global error indicator. Used for driving AMR and diagnostics.
-    double global_error_indicator;
+    // Global error indicator. Used for driving AMR and diagnostics.
+    double global_error_indicator = 0;
   };
 
-  virtual SolveOutput Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
-                            Timer &timer) const = 0;
+  // Performs a solve using the mesh sequence, and recording timing for each stage. The iter
+  // argument is used to annotate output produced during postprocessing.
+  virtual SolveOutput Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh, Timer &timer,
+                            int iter) const = 0;
 
-  // These methods write different simulation metadata to a JSON file in post_dir.
-  void SaveMetadata(const mfem::ParFiniteElementSpace &fespace) const;
-  void SaveMetadata(int ksp_mult, int ksp_it) const;
-  void SaveMetadata(const Timer &timer) const;
+  // These methods write different simulation metadata to a JSON file in
+  // post_dir. If no post_dir is provided, writes to the internally stored top
+  // level postprocessing directory.
+  void SaveMetadata(const std::string &post_dir,
+                    const mfem::ParFiniteElementSpace &fespace) const;
+  void SaveMetadata(const std::string &post_dir, int ksp_mult, int ksp_it) const;
+  void SaveMetadata(const std::string &post_dir, const Timer &timer) const;
+  void SaveMetadata(const mfem::ParFiniteElementSpace &fespace) const
+  {
+    SaveMetadata(post_dir_, fespace);
+  }
+  void SaveMetadata(int ksp_mult, int ksp_it) const
+  {
+    SaveMetadata(post_dir_, ksp_mult, ksp_it);
+  }
+  void SaveMetadata(const Timer &timer) const { SaveMetadata(post_dir_, timer); }
 };
 
 }  // namespace palace

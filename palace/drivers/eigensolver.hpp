@@ -30,20 +30,22 @@ class Timer;
 class EigenSolver : public BaseSolver
 {
 private:
-  void Postprocess(const PostOperator &postop, const LumpedPortOperator &lumped_port_op,
-                   int i, std::complex<double> omega, double error1, double error2,
-                   int num_conv, Timer &timer) const;
+  void Postprocess(const std::string &post_dir, const PostOperator &postop,
+                   const LumpedPortOperator &lumped_port_op, int i,
+                   std::complex<double> omega, double error1, double error2, int num_conv,
+                   Timer &timer) const;
 
-  void PostprocessEigen(int i, std::complex<double> omega, double error1, double error2,
-                        int num_conv) const;
-  void PostprocessEPR(const PostOperator &postop, const LumpedPortOperator &lumped_port_op,
-                      int i, std::complex<double> omega, double Em) const;
+  void PostprocessEigen(const std::string &post_dir, int i, std::complex<double> omega,
+                        double error1, double error2, int num_conv) const;
+  void PostprocessEPR(const std::string &post_dir, const PostOperator &postop,
+                      const LumpedPortOperator &lumped_port_op, int i,
+                      std::complex<double> omega, double Em) const;
 
 public:
   using BaseSolver::BaseSolver;
 
   BaseSolver::SolveOutput Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
-                                Timer &timer) const override;
+                                Timer &timer, int iter) const override;
 };
 
 }  // namespace palace
