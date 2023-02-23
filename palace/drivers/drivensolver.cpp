@@ -23,7 +23,7 @@ namespace palace
 {
 
 BaseSolver::ErrorIndicators
-DrivenSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh, Timer &timer,
+DrivenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh, Timer &timer,
                     int iter) const
 {
   // Set up the spatial discretization and frequency sweep.

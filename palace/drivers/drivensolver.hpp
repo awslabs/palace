@@ -61,7 +61,7 @@ private:
 public:
   using BaseSolver::BaseSolver;
 
-  BaseSolver::ErrorIndicators Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
+  BaseSolver::ErrorIndicators Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
                                     Timer &timer, int iter) const override;
 };
 

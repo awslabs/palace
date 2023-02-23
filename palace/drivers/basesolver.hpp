@@ -87,7 +87,7 @@ public:
 
   // Performs a solve using the mesh sequence, and recording timing for each stage. The iter
   // argument is used to annotate output produced during postprocessing.
-  virtual ErrorIndicators Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
+  virtual ErrorIndicators Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
                                 Timer &timer, int iter) const = 0;
 
   // Performs adaptive mesh refinement using the solve-estimate-mark-refine
