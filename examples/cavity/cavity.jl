@@ -155,10 +155,10 @@ l, in GHz
 
 # Arguments
 
-  - n - mode number in the circumfrential direction
+  - n - mode number in the circumferential direction
   - m - mode number in the radial direction
   - l - mode number in the z direction
-  - ϵᵣ - relative electric permitivity
+  - ϵᵣ - relative electric permittivity
   - μᵣ - relative magnetic permeability
   - a - radius of cavity in centimeters
   - d - height of cavity in centimeters
