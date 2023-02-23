@@ -80,9 +80,11 @@ public:
   {
     // Elemental localized error indicators. Used for marking elements for
     // refinement and coarsening.
-    std::vector<double> local_error_indicator;
+    std::vector<double> local_error_indicators;
     // Global error indicator. Used for driving AMR and diagnostics.
     double global_error_indicator = 0;
+    // Number of global dof in the mesh.
+    int ndof;
   };
 
   // Performs a solve using the mesh sequence, and recording timing for each stage. The iter

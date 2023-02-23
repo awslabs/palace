@@ -86,8 +86,60 @@ BaseSolver::ErrorIndicators
 BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
                                     Timer &timer) const
 {
+  const auto &param = iodata.model.refinement.adaptation;
 
-  return {};
+  const bool use_coarsening = param.coarsening_fraction > 0;
+  const int use_nc = use_coarsening ? 1 : -1;
+
+  int iter = 0;
+  auto estimates = Solve(mesh, timer, iter++);
+
+  while (iter < param.min_its ||
+         (iter < param.max_its && estimates.global_error_indicator > param.tolerance))
+  {
+    if (estimates.ndof < param.dof_limit)
+    {
+      // refinement mark
+      // auto marked_elements = RefineMarker(
+      //   iodata.model.refinement.adaptive.update_fraction,
+      //   estimates.error_estimates);
+
+      mfem::Array<int> marked_elements;  // PLACEHOLDER
+
+      // refine
+      if (param.construct_geometric_multigrid)
+      {
+        mesh.emplace_back(std::make_unique<mfem::ParMesh>(*mesh.back(), true));
+      }
+
+      // If coarsening, need NC, otherwise let the mesh decide
+      mesh.back()->GeneralRefinement(marked_elements, use_nc, param.max_nc_levels);
+    }
+    else if (use_coarsening)
+    {
+      // coarsen mark
+      // auto marked_elements = CoarsenMarker(
+      //   iodata.model.refinement.adaptive.update_fraction,
+      //   estimates.error_estimates);
+
+      mfem::Array<int> marked_elements;  // PLACEHOLDER
+
+      // TODO: Compute error threshold that will trigger sufficient derefinement
+      // const double threshold = ComputeThreshold(estimates.error_estimates);
+
+      const double threshold = 0;  // PLACEHOLDER
+
+      // TODO: Figure out the method to expose here.
+      // mesh.back()->NonconformingDerefinement(estimates.error_estimates,
+      // param.max_nc_levels, 1);
+    }
+
+    // solve + estimate
+    estimates = Solve(mesh, timer, iter);
+    iter++;
+  }
+
+  return estimates;
 }
 
 void BaseSolver::SaveMetadata(const std::string &post_dir,
