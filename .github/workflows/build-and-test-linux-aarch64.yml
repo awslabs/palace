@@ -1,6 +1,10 @@
 name: Build and Test (Linux, Arm64)
 
-on: push
+on:
+  push:
+    branches:
+      - main
+  pull_request:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
