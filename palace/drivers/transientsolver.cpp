@@ -18,8 +18,8 @@ namespace palace
 {
 
 BaseSolver::ErrorIndicators
-TransientSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh, Timer &timer,
-                       int iter) const
+TransientSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
+                       Timer &timer, int iter) const
 {
   // Set up the spatial discretization and time integrators for the E and B fields.
   timer.Lap();

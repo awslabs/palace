@@ -186,9 +186,6 @@ int main(int argc, char *argv[])
   int iter = 0;
   auto solver_output = solver->Solve(mesh, timer, iter++);
 
-
-
-
   timer.Reduce(world_comm);
   timer.Print(world_comm);
   solver->SaveMetadata(timer);

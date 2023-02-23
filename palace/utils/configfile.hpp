@@ -107,32 +107,38 @@ struct SphereRefinementData
   std::vector<double> center = {};
 };
 
-/// Stores data specifying the adaptive mesh refinement algorithm.
+// Stores data specifying the adaptive mesh refinement algorithm.
 struct AdaptiveRefinementData
 {
-  /// Non-dimensional tolerance used to specify convergence of the AMR.
+  // Non-dimensional tolerance used to specify convergence of the AMR.
   double tolerance = 1e-3;
-  /// Maximum number of iterations to perform during the AMR.
-  int max_iteration = 30;
-  /// Minimum number of iterations to perform during the AMR.
-  int min_iteration = 0;
-  /// Dorfler update fraction. The set of marked elements is the minimum set
-  /// that contains update_fraction of the total error.
+  // Maximum number of iterations to perform during the AMR.
+  int max_its = 30;
+  // Minimum number of iterations to perform during the AMR.
+  int min_its = 0;
+  // Dorfler update fraction. The set of marked elements is the minimum set
+  // that contains update_fraction of the total error.
   double update_fraction = 0.25;
-  /// Whether to construct a geometric multigrid using the generated sequence of
-  /// meshes.
+  // Whether or not to perform coarsening during the AMR. Incompatible with
+  // `construct_geometric_multigrid`.
+  double coarsening_fraction = 0.0;
+  // Whether to construct a geometric multigrid using the generated sequence of
+  // meshes.
   bool construct_geometric_multigrid = true;
-  /// Whether or not to perform coarsening during the AMR. Incompatible with
-  /// `construct_geometric_multigrid`.
-  bool use_coarsening = false;
-  /// Maximum difference in non-conformal refinements between two adjacent
-  /// elements. Default = 0 implies there is no constraint on local non-conformity.
-  int max_local_nc_refinements = 0;
-  /// Used in transient AMR. AMR is triggered when the error estimate rises
-  /// above tolerance, and then proceeds until the error estimate is below
-  /// on_update_tolerance_ratio * tolerance. This ensures that a mesh
-  /// generalizes into the future.
+  // Maximum difference in non-conformal refinements between two adjacent
+  // elements. Default = 0 implies there is no constraint on local non-conformity.
+  int max_nc_levels = 0;
+  // If a refinement results in a greater number of DOFs than this value, no
+  // future refinement will be allowed unless coarsening is allowed to occur.
+  int dof_limit = 0;
+  // Used in transient AMR. AMR is triggered when the error estimate rises
+  // above tolerance, and then proceeds until the error estimate is below
+  // on_update_tolerance_ratio * tolerance. This ensures that a mesh
+  // generalizes into the future.
   double on_update_tolerance_ratio = 0.5;
+  // Frequency with which to store the post processing results for a given
+  // adaptation, e.g. save_step = 3 means save every third adaptation.
+  int save_step = 0;
 };
 
 struct RefinementData

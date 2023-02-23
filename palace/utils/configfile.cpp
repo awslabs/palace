@@ -288,22 +288,50 @@ void RefinementData::SetUp(json &model)
   auto adapt = refinement->find("Adaptation");
   if (adapt != refinement->end())
   {
+    // Load Values
     adaptation.tolerance = adapt->value("Tol", adaptation.tolerance);
-    adaptation.max_iteration = adapt->value("MaxIteration", adaptation.max_iteration);
-    adaptation.min_iteration = adapt->value("MinIteration", adaptation.min_iteration);
+    adaptation.max_its = adapt->value("MaxIteration", adaptation.max_its);
+    adaptation.min_its = adapt->value("MinIteration", adaptation.min_its);
     adaptation.update_fraction = adapt->value("UpdateFraction", adaptation.update_fraction);
     adaptation.construct_geometric_multigrid =
         adapt->value("ConstructGMG", adaptation.construct_geometric_multigrid);
-    adaptation.use_coarsening = adapt->value("UseCoarsening", adaptation.use_coarsening);
-    adaptation.max_local_nc_refinements =
-        adapt->value("MaxLocalNCRefinements", adaptation.max_local_nc_refinements);
+    adaptation.coarsening_fraction =
+        adapt->value("CoarseningFraction", adaptation.coarsening_fraction);
+    adaptation.max_nc_levels = adapt->value("MaxNCLevels", adaptation.max_nc_levels);
+    adaptation.dof_limit = adapt->value("DOFLimit", adaptation.dof_limit);
     adaptation.on_update_tolerance_ratio =
         adapt->value("OnUpdateTolRatio", adaptation.on_update_tolerance_ratio);
+    adaptation.save_step = adapt->value("SaveStep", adaptation.save_step);
+
+    // Perform Checks
+    MFEM_VERIFY(adaptation.tolerance > 0, "\"Tol\" must be strictly positive");
+    MFEM_VERIFY(adaptation.max_its >= 0, "\"MaxIts\" must be non-negative");
+    MFEM_VERIFY(adaptation.min_its >= 0, "\"MinIts\" must be non-negative");
+    MFEM_VERIFY(adaptation.min_its < adaptation.max_its,
+                "\"MinIts\" must be smaller than \"MaxIts\": " << adaptation.min_its << ","
+                                                               << adaptation.max_its);
+    MFEM_VERIFY(adaptation.update_fraction > 0 && adaptation.update_fraction < 1,
+                "\"UpdateFraction\" must be in (0,1)");
+    MFEM_VERIFY(adaptation.coarsening_fraction >= 0 && adaptation.coarsening_fraction < 1,
+                "\"CoarseningFraction\" must be in [0, 1)");
+    MFEM_VERIFY(adaptation.max_nc_levels >= 0, "\"MaxNCLevels\" must non-negative");
+    MFEM_VERIFY(adaptation.dof_limit >= 0, "\"DOFLimit\" must be non-negative");
+    MFEM_VERIFY(adaptation.on_update_tolerance_ratio > 0 &&
+                    adaptation.on_update_tolerance_ratio <= 1,
+                "\"OnUpdateTolRatio\" must be in (0, 1]");
+    MFEM_VERIFY(adaptation.save_step >= 0, "\"SaveStep\" must be non-negative");
 
     // Cleanup
-    const auto fields = {
-        "Tol",          "MaxIteration",  "MinIteration",          "UpdateFraction",
-        "ConstructGMG", "UseCoarsening", "MaxLocalNCRefinements", "OnUpdateTolRatio"};
+    const auto fields = {"Tol",
+                         "MaxIts",
+                         "MinIts",
+                         "UpdateFraction",
+                         "ConstructGMG",
+                         "CoarseningFraction",
+                         "MaxNCLevels",
+                         "DOFLimit",
+                         "OnUpdateTolRatio",
+                         "SaveStep"};
     for (const auto &f : fields)
       adapt->erase(f);
 

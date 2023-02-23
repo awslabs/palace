@@ -11,9 +11,9 @@
 
 namespace mfem
 {
-  class ParMesh;
-  class ParFiniteElementSpace;
-}
+class ParMesh;
+class ParFiniteElementSpace;
+}  // namespace mfem
 
 namespace palace
 {
@@ -112,8 +112,6 @@ public:
   }
   void SaveMetadata(const Timer &timer) const { SaveMetadata(post_dir_, timer); }
 };
-
-
 
 }  // namespace palace
 

@@ -82,14 +82,13 @@ BaseSolver::BaseSolver(const IoData &iodata_, bool root_, int size, int num_thre
   }
 }
 
-
 BaseSolver::ErrorIndicators
 BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
-                                        Timer &timer) const
+                                    Timer &timer) const
 {
+
   return {};
 }
-
 
 void BaseSolver::SaveMetadata(const std::string &post_dir,
                               const mfem::ParFiniteElementSpace &fespace) const
