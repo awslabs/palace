@@ -90,6 +90,11 @@ public:
   virtual ErrorIndicators Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
                                 Timer &timer, int iter) const = 0;
 
+  // Performs adaptive mesh refinement using the solve-estimate-mark-refine
+  // paradigm. Dispatches to the Solve method for the driver specific calculations.
+  ErrorIndicators SolveEstimateMarkRefine(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
+                                          Timer &timer) const;
+
   // These methods write different simulation metadata to a JSON file in
   // post_dir. If no post_dir is provided, writes to the internally stored top
   // level postprocessing directory.
