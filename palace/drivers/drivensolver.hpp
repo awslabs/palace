@@ -34,12 +34,12 @@ class DrivenSolver : public BaseSolver
 private:
   int GetNumSteps(double start, double end, double delta) const;
 
-  BaseSolver::SolveOutput SweepUniform(SpaceOperator &spaceop, PostOperator &postop,
-                                       int nstep, int step0, double omega0,
-                                       double delta_omega, Timer &timer) const;
-  BaseSolver::SolveOutput SweepAdaptive(SpaceOperator &spaceop, PostOperator &postop,
-                                        int nstep, int step0, double omega0,
-                                        double delta_omega, Timer &timer) const;
+  BaseSolver::ErrorIndicators SweepUniform(SpaceOperator &spaceop, PostOperator &postop,
+                                           int nstep, int step0, double omega0,
+                                           double delta_omega, Timer &timer) const;
+  BaseSolver::ErrorIndicators SweepAdaptive(SpaceOperator &spaceop, PostOperator &postop,
+                                            int nstep, int step0, double omega0,
+                                            double delta_omega, Timer &timer) const;
 
   void Postprocess(const std::string &post_dir, const PostOperator &postop,
                    const LumpedPortOperator &lumped_port_op,
@@ -61,8 +61,8 @@ private:
 public:
   using BaseSolver::BaseSolver;
 
-  BaseSolver::SolveOutput Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
-                                Timer &timer, int iter) const override;
+  BaseSolver::ErrorIndicators Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
+                                    Timer &timer, int iter) const override;
 };
 
 }  // namespace palace

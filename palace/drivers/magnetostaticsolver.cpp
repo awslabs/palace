@@ -16,7 +16,7 @@
 namespace palace
 {
 
-BaseSolver::SolveOutput
+BaseSolver::ErrorIndicators
 MagnetostaticSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh, Timer &timer,
                            int iter) const
 {
@@ -121,7 +121,7 @@ MagnetostaticSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh, Ti
   Postprocess(post_dir_, curlcurlop, postop, A, timer);
   timer.postpro_time += timer.Lap() - (timer.io_time - io_time_prev);
 
-  return BaseSolver::SolveOutput();
+  return BaseSolver::ErrorIndicators();
 }
 
 void MagnetostaticSolver::Postprocess(const std::string &post_dir,

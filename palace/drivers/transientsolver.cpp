@@ -17,7 +17,7 @@
 namespace palace
 {
 
-BaseSolver::SolveOutput
+BaseSolver::ErrorIndicators
 TransientSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh, Timer &timer,
                        int iter) const
 {
@@ -128,7 +128,7 @@ TransientSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh, Timer 
   }
   SaveMetadata(timeop.GetTotalKspMult(), timeop.GetTotalKspIter());
 
-  return BaseSolver::SolveOutput();
+  return BaseSolver::ErrorIndicators();
 }
 
 std::function<double(double)> TransientSolver::GetTimeExcitation(bool dot) const

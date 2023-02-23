@@ -9,7 +9,11 @@
 #include <vector>
 #include <fmt/os.h>
 
-#include <mfem.hpp>
+namespace mfem
+{
+  class ParMesh;
+  class ParFiniteElementSpace;
+}
 
 namespace palace
 {
@@ -72,19 +76,19 @@ public:
 
   // Storage for error estimation results from the solve. Required in the AMR loop. An error
   // indicator is non-negative, whilst an error estimate is signed.
-  struct SolveOutput
+  struct ErrorIndicators
   {
     // Elemental localized error indicators. Used for marking elements for
     // refinement and coarsening.
-    mfem::Array<double> local_error_indicator;
+    std::vector<double> local_error_indicator;
     // Global error indicator. Used for driving AMR and diagnostics.
     double global_error_indicator = 0;
   };
 
   // Performs a solve using the mesh sequence, and recording timing for each stage. The iter
   // argument is used to annotate output produced during postprocessing.
-  virtual SolveOutput Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh, Timer &timer,
-                            int iter) const = 0;
+  virtual ErrorIndicators Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
+                                Timer &timer, int iter) const = 0;
 
   // These methods write different simulation metadata to a JSON file in
   // post_dir. If no post_dir is provided, writes to the internally stored top
@@ -103,6 +107,8 @@ public:
   }
   void SaveMetadata(const Timer &timer) const { SaveMetadata(post_dir_, timer); }
 };
+
+
 
 }  // namespace palace
 

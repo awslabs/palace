@@ -25,7 +25,7 @@ namespace palace
 
 using namespace std::complex_literals;
 
-BaseSolver::SolveOutput
+BaseSolver::ErrorIndicators
 EigenSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh, Timer &timer,
                    int iter) const
 {
@@ -392,7 +392,7 @@ EigenSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh, Timer &tim
   }
   timer.postpro_time += timer.Lap() - (timer.io_time - io_time_prev);
 
-  return BaseSolver::SolveOutput();
+  return BaseSolver::ErrorIndicators();
 }
 
 void EigenSolver::Postprocess(const std::string &post_dir, const PostOperator &postop,

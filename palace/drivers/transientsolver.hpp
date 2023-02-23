@@ -51,8 +51,8 @@ private:
 public:
   using BaseSolver::BaseSolver;
 
-  BaseSolver::SolveOutput Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
-                                Timer &timer, int iter) const override;
+  BaseSolver::ErrorIndicators Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
+                                    Timer &timer, int iter) const override;
 };
 
 }  // namespace palace

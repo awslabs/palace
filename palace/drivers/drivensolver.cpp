@@ -22,7 +22,7 @@
 namespace palace
 {
 
-BaseSolver::SolveOutput
+BaseSolver::ErrorIndicators
 DrivenSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh, Timer &timer,
                     int iter) const
 {
@@ -99,10 +99,9 @@ DrivenSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh, Timer &ti
                   : SweepUniform(spaceop, postop, nstep, step0, omega0, delta_omega, timer);
 }
 
-BaseSolver::SolveOutput DrivenSolver::SweepUniform(SpaceOperator &spaceop,
-                                                   PostOperator &postop, int nstep,
-                                                   int step0, double omega0,
-                                                   double delta_omega, Timer &timer) const
+BaseSolver::ErrorIndicators
+DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator &postop, int nstep,
+                           int step0, double omega0, double delta_omega, Timer &timer) const
 {
   // Construct the system matrices defining the linear operator. PEC boundaries are handled
   // simply by setting diagonal entries of the system matrix for the corresponding dofs.
@@ -189,13 +188,14 @@ BaseSolver::SolveOutput DrivenSolver::SweepUniform(SpaceOperator &spaceop,
   }
   SaveMetadata(ksp.GetTotalNumMult(), ksp.GetTotalNumIter());
 
-  return BaseSolver::SolveOutput();
+  return BaseSolver::ErrorIndicators();
 }
 
-BaseSolver::SolveOutput DrivenSolver::SweepAdaptive(SpaceOperator &spaceop,
-                                                    PostOperator &postop, int nstep,
-                                                    int step0, double omega0,
-                                                    double delta_omega, Timer &timer) const
+BaseSolver::ErrorIndicators DrivenSolver::SweepAdaptive(SpaceOperator &spaceop,
+                                                        PostOperator &postop, int nstep,
+                                                        int step0, double omega0,
+                                                        double delta_omega,
+                                                        Timer &timer) const
 {
   // Configure default parameters if not specified.
   double offline_tol = iodata.solver.driven.adaptive_tol;
@@ -348,7 +348,7 @@ BaseSolver::SolveOutput DrivenSolver::SweepAdaptive(SpaceOperator &spaceop,
     omega += delta_omega;
   }
 
-  return BaseSolver::SolveOutput();
+  return BaseSolver::ErrorIndicators();
 }
 
 int DrivenSolver::GetNumSteps(double start, double end, double delta) const
