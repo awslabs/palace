@@ -1,0 +1,56 @@
+name: Spack
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test-spack:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - compiler: gcc
+            mpi: openmpi
+
+    runs-on: palace_ubuntu-latest_16-core
+    steps:
+      - uses: actions/checkout@v3
+
+      - uses: mpi4py/setup-mpi@v1
+        with:
+          mpi: ${{ matrix.mpi }}
+
+      - name: Configure Clang compiler
+        if: matrix.compiler == 'clang'
+        run: |
+          sudo apt-get install -y clang lld
+
+      - uses: vsoch/spack-package-action/install@main
+
+      - name: Build Palace
+        run: |
+          # Set up Spack to use external packages (MPI, etc.)
+          . /opt/spack/share/spack/setup-env.sh
+          spack external find --all
+
+          # Build and install
+          spack dev-build palace@develop%${{ matrix.compiler }}
+
+      - name: Run tests
+        env:
+          NUM_PROC_TEST_MAX: '8'
+        run: |
+          # Configure environment
+          . /opt/spack/share/spack/setup-env.sh
+          spack load palace
+
+          # Run tests
+          julia --project=test -e 'using Pkg; Pkg.instantiate()'
+          julia --project=test --color=yes test/runtests.jl
