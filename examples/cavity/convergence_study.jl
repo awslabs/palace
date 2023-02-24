@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 #=
-    This script performs a converence study of the cavity resonator problem
+    This script performs a convergence study of the cavity resonator problem
 
     Loops over mesh refinement level and order
         a) Generates a mesh that corresponds, by calling `mesh.jl`,
