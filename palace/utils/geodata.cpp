@@ -41,10 +41,6 @@ std::unique_ptr<int[]> GetMeshPartitioning(mfem::Mesh &, int, const std::string 
 std::map<int, std::array<int, 2>> CheckMesh(mfem::Mesh &, const std::unique_ptr<int[]> &,
                                             const IoData &, bool, bool, bool);
 
-// Given a serial mesh on the root processor and element partitioning, create a parallel
-// mesh over the given communicator.
-mfem::ParMesh DistributeMesh(MPI_Comm, mfem::Mesh &, const std::unique_ptr<int[]> &);
-
 // Get list of domain and boundary attribute markers used in configuration file for mesh
 // cleaning.
 void GetUsedAttributeMarkers(const IoData &, int, int, mfem::Array<int> &,
@@ -84,8 +80,8 @@ mfem::ParMesh ReadMesh(MPI_Comm comm, const IoData &iodata, bool reorder, bool c
   static_cast<void>(CheckMesh(mesh, partitioning, iodata, clean, add_bdr, unassembled));
 
   // Construct the parallel mesh data structure by distributing the serial mesh from the
-  // root process. The serial mesh and partitioning are deleted inside.
-  return mfem::ParMesh(comm, mesh, partitioning.get());
+  // root process.
+  return {comm, mesh, partitioning.get()};
 }
 
 void RefineMesh(const IoData &iodata, std::vector<std::unique_ptr<mfem::ParMesh>> &mesh)
