@@ -64,31 +64,99 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(MPI_Comm comm, const IoData &iodata, boo
   // On root, read the serial mesh (converting format if necessary), and do all necessary
   // serial preprocessing. When finished, distribute the mesh to all processes. Count disk
   // I/O time separately for the mesh read from file.
-  std::unique_ptr<mfem::Mesh> smesh;
-  auto t0 = timer.Now();
 
-  // Optionally reorder elements (and vertices) based on spatial location after loading
-  // the serial mesh.
-  smesh = LoadMesh(iodata.model.mesh);
-  if (reorder)
-  {
-    ReorderMesh(*smesh);
-  }
+  auto meshv1 = [&](){
+    std::unique_ptr<mfem::Mesh> smesh;
 
-  Mpi::Barrier(comm);
-  timer.io_time += timer.Now() - t0;
+    auto t0 = timer.Now();
+    if (Mpi::Root(comm))
+    {
+      // Optionally reorder elements (and vertices) based on spatial location after loading
+      // the serial mesh.
+      smesh = LoadMesh(iodata.model.mesh);
+      if (reorder)
+      {
+        ReorderMesh(*smesh);
+      }
 
-  // Generate the parallel mesh partitioning on the root process.
-  const auto partitioning = GetMeshPartitioning(*smesh, Mpi::Size(comm), iodata.model.partition);
+        std::ofstream fs;
+        fs.open("serial_mesh1.txt", std::ios::out);
+        smesh->Print(fs);
+        fs.close();
+    }
+    Mpi::Barrier(comm);
+    timer.io_time += timer.Now() - t0;
 
-  // Clean up unused domain elements from the mesh, add new boundary elements for material
-  // interfaces if not present, and optionally (when running unassembled) add subdomain
-  // interface boundary elements.
-  const auto attr_map = CheckMesh(smesh, partitioning, iodata, clean, add_bdr, unassembled);
+    std::unique_ptr<int[]> partitioning;
+    if (Mpi::Root(comm))
+    {
+      // Generate the parallel mesh partitioning on the root process.
+      partitioning = GetMeshPartitioning(*smesh, Mpi::Size(comm), iodata.model.partition);
 
-  // Construct the parallel mesh data structure by distributing the serial mesh from the
-  // root process. The serial mesh and partitioning are deleted inside.
-  return std::make_unique<mfem::ParMesh>(comm, *smesh, partitioning.get());
+      // Clean up unused domain elements from the mesh, add new boundary elements for material
+      // interfaces if not present, and optionally (when running unassembled) add subdomain
+      // interface boundary elements.
+      std::map<int, std::array<int, 2>> attr_map =
+          CheckMesh(smesh, partitioning, iodata, clean, add_bdr, unassembled);
+    }
+
+    // Construct the parallel mesh data structure by distributing the serial mesh from the
+    // root process. The serial mesh and partitioning are deleted inside.
+
+    auto pmesh = DistributeMesh(comm, smesh, partitioning);
+
+    std::ofstream fs;
+    fs.open("parallel_mesh1.txt." + std::to_string(Mpi::Rank(comm)), std::ios::out);
+    pmesh->ParPrint(fs);
+    fs.close();
+
+    return pmesh;
+  }();
+
+  auto meshv2 = [&](){
+    // On root, read the serial mesh (converting format if necessary), and do all necessary
+    // serial preprocessing. When finished, distribute the mesh to all processes. Count disk
+    // I/O time separately for the mesh read from file.
+    std::unique_ptr<mfem::Mesh> smesh;
+    auto t0 = timer.Now();
+
+    // Optionally reorder elements (and vertices) based on spatial location after loading
+    // the serial mesh.
+    smesh = LoadMesh(iodata.model.mesh);
+    if (reorder)
+    {
+      ReorderMesh(*smesh);
+    }
+
+    std::ofstream fs1;
+    fs1.open("serial_mesh2.txt." + std::to_string(Mpi::Rank(comm)), std::ios::out);
+    smesh->Print(fs1);
+    fs1.close();
+
+
+    Mpi::Barrier(comm);
+    timer.io_time += timer.Now() - t0;
+
+    // Generate the parallel mesh partitioning on the root process.
+    const auto partitioning = GetMeshPartitioning(*smesh, Mpi::Size(comm), iodata.model.partition);
+
+    // Clean up unused domain elements from the mesh, add new boundary elements for material
+    // interfaces if not present, and optionally (when running unassembled) add subdomain
+    // interface boundary elements.
+    const auto attr_map = CheckMesh(smesh, partitioning, iodata, clean, add_bdr, unassembled);
+
+    auto pmesh = std::make_unique<mfem::ParMesh>(comm, *smesh, partitioning.get());
+
+    std::ofstream fs2;
+    fs2.open("parallel_mesh2.txt." + std::to_string(Mpi::Rank(comm)), std::ios::out);
+    pmesh->ParPrint(fs2);
+    fs2.close();
+
+    return pmesh;
+  }();
+
+  return meshv1; // passes
+  // return meshv2; // fails
 }
 
 void RefineMesh(const IoData &iodata, std::vector<std::unique_ptr<mfem::ParMesh>> &mesh)
