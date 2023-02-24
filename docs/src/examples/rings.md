@@ -88,9 +88,9 @@ under [`config["Boundaries"]["Postprocessing"]["Inductance"]`]
 file. The resulting postprocessed values are written to `postpro/surface-M.csv`:
 
 ```
-            i,             M[i][1] (H),             M[i][2] (H)
- 1.000000e+00,        +4.258505069e-11,        +1.958488699e-12
- 2.000000e+00,        +1.958488699e-12,        +7.126907323e-10
+            i,                M[1] (H),                M[2] (H)
+ 1.000000e+00,        +4.246208372e-11,        +1.858193591e-12
+ 2.000000e+00,        +1.954077499e-12,        +7.125811940e-10
 ```
 
 The values computed using the flux integral method are in close agreement to those above, as
