@@ -1,11 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-using Test
 using Hwloc
-using CSV
-using DataFrames
-
 include("testcase.jl")
 
 if "NUM_PROC_TEST" in keys(ENV)

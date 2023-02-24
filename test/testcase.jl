@@ -1,6 +1,10 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+using CSV
+using DataFrames
+using Test
+
 function testcase(testdir, testconfig, testpostpro; np=1, rtol=1.0e-6, atol=1.0e-18)
     if isempty(testdir)
         @info "$testdir/ is empty, skipping tests"
