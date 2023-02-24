@@ -85,7 +85,7 @@ mfem::ParMesh ReadMesh(MPI_Comm comm, const IoData &iodata, bool reorder, bool c
 
   // Construct the parallel mesh data structure by distributing the serial mesh from the
   // root process. The serial mesh and partitioning are deleted inside.
-  return DistributeMesh(comm, mesh, partitioning);
+  return mfem::ParMesh(comm, mesh, partitioning.get());
 }
 
 void RefineMesh(const IoData &iodata, std::vector<std::unique_ptr<mfem::ParMesh>> &mesh)
@@ -1029,12 +1029,6 @@ std::map<int, std::array<int, 2>> CheckMesh(mfem::Mesh &orig_mesh,
   }
   orig_mesh = std::move(new_mesh);
   return new_attr_map;
-}
-
-mfem::ParMesh DistributeMesh(MPI_Comm comm, mfem::Mesh &mesh,
-                             const std::unique_ptr<int[]> &partitioning)
-{
-  return mfem::ParMesh(comm, mesh, partitioning.get());
 }
 
 void GetUsedAttributeMarkers(const IoData &iodata, int n_mat, int n_bdr,
