@@ -66,70 +66,29 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(MPI_Comm comm, const IoData &iodata, boo
   // I/O time separately for the mesh read from file.
   std::unique_ptr<mfem::Mesh> smesh;
   auto t0 = timer.Now();
-  if (Mpi::Root(comm))
+
+  // Optionally reorder elements (and vertices) based on spatial location after loading
+  // the serial mesh.
+  smesh = LoadMesh(iodata.model.mesh);
+  if (reorder)
   {
-    // Optionally reorder elements (and vertices) based on spatial location after loading
-    // the serial mesh.
-    smesh = LoadMesh(iodata.model.mesh);
-    if (reorder)
-    {
-      ReorderMesh(*smesh);
-    }
+    ReorderMesh(*smesh);
   }
+
   Mpi::Barrier(comm);
   timer.io_time += timer.Now() - t0;
 
-  std::unique_ptr<int[]> partitioning;
-  if (Mpi::Root(comm))
-  {
-    // Generate the parallel mesh partitioning on the root process.
-    partitioning = GetMeshPartitioning(*smesh, Mpi::Size(comm), iodata.model.partition);
+  // Generate the parallel mesh partitioning on the root process.
+  const auto partitioning = GetMeshPartitioning(*smesh, Mpi::Size(comm), iodata.model.partition);
 
-    // Clean up unused domain elements from the mesh, add new boundary elements for material
-    // interfaces if not present, and optionally (when running unassembled) add subdomain
-    // interface boundary elements.
-    std::map<int, std::array<int, 2>> attr_map =
-        CheckMesh(smesh, partitioning, iodata, clean, add_bdr, unassembled);
-  }
+  // Clean up unused domain elements from the mesh, add new boundary elements for material
+  // interfaces if not present, and optionally (when running unassembled) add subdomain
+  // interface boundary elements.
+  const auto attr_map = CheckMesh(smesh, partitioning, iodata, clean, add_bdr, unassembled);
 
   // Construct the parallel mesh data structure by distributing the serial mesh from the
   // root process. The serial mesh and partitioning are deleted inside.
-  std::unique_ptr<mfem::ParMesh> mesh = DistributeMesh(comm, smesh, partitioning);
-
-#if 0
-  {
-    std::string tmp = iodata.problem.output;
-    if (tmp.back() != '/')
-    {
-      tmp += '/';
-    }
-    tmp += "tmp/";
-    if (Mpi::Root(comm) && !std::filesystem::exists(tmp))
-    {
-      std::filesystem::create_directories(tmp);
-    }
-    int width = 1 + static_cast<int>(std::log10(Mpi::Size(comm)-1));
-    std::unique_ptr<mfem::Mesh> gsmesh = LoadMesh(iodata.model.mesh);
-    std::unique_ptr<int[]> gpartitioning = GetMeshPartitioning(*gsmesh, Mpi::Size(comm));
-    mfem::ParMesh gpmesh(comm, *gsmesh, gpartitioning.get(), 0);
-    {
-      std::string pfile = mfem::MakeParFilename(tmp + "part.", Mpi::Rank(comm), ".mesh", width);
-      std::ofstream fo(pfile);
-      // mfem::ofgzstream fo(pfile, true);  // Use zlib compression if available
-      fo.precision(MSH_FLT_PRECISION);
-      gpmesh.ParPrint(fo);
-    }
-    {
-      std::string pfile = mfem::MakeParFilename(tmp + "final.", Mpi::Rank(comm), ".mesh", width);
-      std::ofstream fo(pfile);
-      // mfem::ofgzstream fo(pfile, true);  // Use zlib compression if available
-      fo.precision(MSH_FLT_PRECISION);
-      mesh->ParPrint(fo);
-    }
-  }
-#endif
-
-  return mesh;
+  return std::make_unique<mfem::ParMesh>(comm, *smesh, partitioning.get());
 }
 
 void RefineMesh(const IoData &iodata, std::vector<std::unique_ptr<mfem::ParMesh>> &mesh)
