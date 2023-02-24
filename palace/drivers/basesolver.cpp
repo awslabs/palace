@@ -83,28 +83,122 @@ BaseSolver::BaseSolver(const IoData &iodata_, bool root_, int size, int num_thre
   }
 }
 
-// namespace {
-// // Given a vector of estimates local to this rank, compute a threshold that
-// // results in a Dorfler marking across processor ranks.
-// double ComputeRefineThreshold(double fraction, std::vector<double> estimates)
-// {
+namespace {
+// Given a vector of estimates local to this rank, compute a threshold that
+// results in a Dorfler marking across processor ranks.
+double ComputeRefineThreshold(double fraction, std::vector<double> estimates)
+{
 
-//   std::sort(estimates.begin(), estimates.end());
+  std::sort(estimates.begin(), estimates.end());
 
-//   const auto length = static_cast<std::size_t>(fraction * std::distance(estimates.begin(), estimates.end()));
+  const auto pivot = static_cast<std::size_t>(fraction * std::distance(estimates.begin(), estimates.end()));
 
-//   double threshold = estimates[length];
+  double threshold = estimates[pivot];
 
-//   // Each rank has computed a different threshold, if a given rank has lots of
-//   // low error elements, their value will be lower and if a rank has high error,
-//   // their value will be higher. The correct value will be an intermediate
-//   // between the min and max over ranks. To compute the correct value, can
-//   // perform bisection search on rank 0.
+  auto count_elems_in_part = [&estimates](double x)
+  {
+    const auto upper = std::upper_bound(estimates.begin(), estimates.end(), x);
+    return std::distance(estimates.begin(), upper);
+  };
 
+  // Each rank has computed a different threshold, if a given rank has lots of
+  // low error elements, their value will be lower and if a rank has high error,
+  // their value will be higher. Using the value from the low error rank will
+  // give too few elements, and using the value from the high error rank will
+  // give too many. The correct threshold value will be an intermediate
+  // between the min and max over ranks. To compute the correct value, can
+  // perform bisection search on rank 0.
 
+  auto comm = Mpi::World();
 
-// }
-// }
+  double min_threshold;
+  double max_threshold;
+  long long num_elem = estimates.size();
+  const long long max_elem = [&]()
+  { // IILE for const
+    long long max_elem = 0;
+    MPI_Reduce(&num_elem, &max_elem, 1, MPI_LONG_LONG, MPI_SUM, 0, comm);
+    return max_elem;
+  }();
+
+  long long candidate_total = 0, old_candidate_total = max_elem;
+
+  // Collect to rank zero the initial threshold bounds, and the total number of elements.
+  MPI_Reduce(&threshold, &min_threshold, 1, MPI_DOUBLE, MPI_MIN, 0, comm);
+  MPI_Reduce(&threshold, &max_threshold, 1, MPI_DOUBLE, MPI_MAX, 0, comm);
+
+  bool continue_bisecting = true;
+  MPI_Request request = MPI_REQUEST_NULL;
+
+  while (continue_bisecting)
+  {
+    if (Mpi::Root(comm))
+    {
+      // Root is going to bisect, and send thresholds to other ranks
+      constexpr double tol = 1e-3;
+      while ((max_threshold - min_threshold) > tol)
+      {
+        // Compute a new threshold and send to all ranks.
+        threshold = (min_threshold + max_threshold) / 2;
+
+        // Send to all processors
+        for (int i = 1; i < Mpi::Size(comm); i++)
+        {
+          MPI_Isend(&threshold, 1, MPI_DOUBLE, i, 0, comm, &request);
+        }
+      }
+    }
+    else
+    {
+      // Receive the new candidate threshold value from rank 0
+      MPI_Irecv(&threshold, 1, MPI_DOUBLE, 0, 0, comm, &request);
+    }
+
+    // Given the now agreed upon threshold value, count the number of elements
+    // this would mark across all ranks.
+    num_elem = count_elems_in_part(threshold);
+    MPI_Reduce(&num_elem, &candidate_total, 1, MPI_LONG_LONG, MPI_SUM, 0, comm);
+
+    if (Mpi::Root(comm))
+    {
+
+      // Check 1: That the number of candidate elements changed. This is important
+      // given working with discrete sets. The threshold value might keep changing
+      // but no outward effect.
+
+      if (candidate_total == old_candidate_total)
+      {
+        // changes in the threshold value are no longer making a difference.
+        continue_bisecting = false;
+      }
+      else
+      {
+        // Root will check the effective fraction given this threshold
+        double candidate_fraction = static_cast<double>(static_cast<long double>(candidate_total) / max_elem);
+
+        constexpr double tol = 1e-3;
+        if (std::abs(candidate_fraction - fraction) < tol)
+        {
+          // Close enough to the threshold value
+          continue_bisecting = false;
+        } else if (candidate_fraction < fraction)
+        {
+          min_threshold = threshold;
+        } else if (candidate_fraction > fraction)
+        {
+          max_threshold = threshold;
+        }
+      }
+    }
+
+    // Inform all ranks if the loop will be continuing. All ranks already have
+    // the threshold.
+    MPI_Bcast(&continue_bisecting, 1, MPI_LOGICAL, 0, comm);
+  }
+
+  return threshold;
+}
+}
 
 BaseSolver::ErrorIndicators
 BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
