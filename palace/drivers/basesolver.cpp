@@ -3,6 +3,7 @@
 
 #include "basesolver.hpp"
 
+#include <algorithm>
 #include <complex>
 #include <mfem.hpp>
 #include <nlohmann/json.hpp>
@@ -81,6 +82,29 @@ BaseSolver::BaseSolver(const IoData &iodata_, bool root_, int size, int num_thre
     WriteMetadata(post_dir_, meta);
   }
 }
+
+// namespace {
+// // Given a vector of estimates local to this rank, compute a threshold that
+// // results in a Dorfler marking across processor ranks.
+// double ComputeRefineThreshold(double fraction, std::vector<double> estimates)
+// {
+
+//   std::sort(estimates.begin(), estimates.end());
+
+//   const auto length = static_cast<std::size_t>(fraction * std::distance(estimates.begin(), estimates.end()));
+
+//   double threshold = estimates[length];
+
+//   // Each rank has computed a different threshold, if a given rank has lots of
+//   // low error elements, their value will be lower and if a rank has high error,
+//   // their value will be higher. The correct value will be an intermediate
+//   // between the min and max over ranks. To compute the correct value, can
+//   // perform bisection search on rank 0.
+
+
+
+// }
+// }
 
 BaseSolver::ErrorIndicators
 BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
