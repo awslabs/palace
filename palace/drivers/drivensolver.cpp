@@ -134,10 +134,9 @@ DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator &postop, int nst
   timer.construct_time += timer.Lap();
 
   // Main frequency sweep loop.
-  int step = step0;
   double omega = omega0;
   auto t0 = timer.Now();
-  while (step < nstep)
+  for (int step = step0; step < nstep; ++step)
   {
     const double freq = iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, omega);
     Mpi::Print("\nIt {:d}/{:d}: ω/2π = {:.3e} GHz (elapsed time = {:.2e} s)\n", step + 1,
@@ -183,7 +182,6 @@ DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator &postop, int nst
     timer.postpro_time += timer.Lap() - (timer.io_time - io_time_prev);
 
     // Increment frequency.
-    step++;
     omega += delta_omega;
   }
   SaveMetadata(ksp.GetTotalNumMult(), ksp.GetTotalNumIter());

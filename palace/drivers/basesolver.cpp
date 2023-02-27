@@ -83,7 +83,8 @@ BaseSolver::BaseSolver(const IoData &iodata_, bool root_, int size, int num_thre
   }
 }
 
-namespace {
+namespace
+{
 // Given a vector of estimates local to this rank, compute a threshold that
 // results in a Dorfler marking across processor ranks.
 double ComputeRefineThreshold(double fraction, std::vector<double> estimates)
@@ -91,7 +92,8 @@ double ComputeRefineThreshold(double fraction, std::vector<double> estimates)
 
   std::sort(estimates.begin(), estimates.end());
 
-  const auto pivot = static_cast<std::size_t>(fraction * std::distance(estimates.begin(), estimates.end()));
+  const auto pivot = static_cast<std::size_t>(
+      fraction * std::distance(estimates.begin(), estimates.end()));
 
   double threshold = estimates[pivot];
 
@@ -114,8 +116,7 @@ double ComputeRefineThreshold(double fraction, std::vector<double> estimates)
   double min_threshold;
   double max_threshold;
   long long num_elem = estimates.size();
-  const long long max_elem = [&]()
-  { // IILE for const
+  const long long max_elem = [&]() {  // IILE for const
     long long max_elem = 0;
     MPI_Reduce(&num_elem, &max_elem, 1, MPI_LONG_LONG, MPI_SUM, 0, comm);
     return max_elem;
@@ -174,17 +175,20 @@ double ComputeRefineThreshold(double fraction, std::vector<double> estimates)
       else
       {
         // Root will check the effective fraction given this threshold
-        double candidate_fraction = static_cast<double>(static_cast<long double>(candidate_total) / max_elem);
+        double candidate_fraction =
+            static_cast<double>(static_cast<long double>(candidate_total) / max_elem);
 
         constexpr double tol = 1e-3;
         if (std::abs(candidate_fraction - fraction) < tol)
         {
           // Close enough to the threshold value
           continue_bisecting = false;
-        } else if (candidate_fraction < fraction)
+        }
+        else if (candidate_fraction < fraction)
         {
           min_threshold = threshold;
-        } else if (candidate_fraction > fraction)
+        }
+        else if (candidate_fraction > fraction)
         {
           max_threshold = threshold;
         }
@@ -198,7 +202,7 @@ double ComputeRefineThreshold(double fraction, std::vector<double> estimates)
 
   return threshold;
 }
-}
+}  // namespace
 
 BaseSolver::ErrorIndicators
 BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
