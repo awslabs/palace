@@ -7,6 +7,8 @@
 #include <petscsys.h>
 #include <mfem.hpp>
 
+#include "complexvector.hpp"
+
 #if defined(PETSC_HAVE_HYPRE)
 #error \
     "PETSc should be built without Hypre to avoid conflicts with MFEM's Hypre dependency!"
@@ -121,8 +123,11 @@ public:
 #if defined(PETSC_USE_COMPLEX)
   void GetToVectors(mfem::Vector &vr, mfem::Vector &vi, PetscInt start = -1,
                     PetscInt end = -1) const;
+  ComplexVector GetToVectors(PetscInt start = -1, PetscInt end = -1) const;
   void SetFromVectors(const mfem::Vector &vr, const mfem::Vector &vi);
   void AddFromVectors(const mfem::Vector &vr, const mfem::Vector &vi);
+  void SetFromVectors(const ComplexVector &v) { SetFromVectors(v.real, v.imag); }
+  void AddFromVectors(const ComplexVector &v) { AddFromVectors(v.real, v.imag); }
 #endif
 
   // Access the data array of the vector.

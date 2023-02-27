@@ -246,6 +246,13 @@ void PetscParVector::GetToVectors(mfem::Vector &vr, mfem::Vector &vi, PetscInt s
   PalacePetscCall(VecRestoreArrayRead(x, &xv));
 }
 
+ComplexVector PetscParVector::GetToVectors(PetscInt start, PetscInt end) const
+{
+  ComplexVector cv;
+  GetToVectors(cv.real, cv.imag, start, end);
+  return cv;
+}
+
 void PetscParVector::SetFromVectors(const mfem::Vector &vr, const mfem::Vector &vi)
 {
   PetscScalar *xv;
