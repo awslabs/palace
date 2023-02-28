@@ -17,10 +17,11 @@ namespace palace
 //
 // A wrapper for the SuperLU_DIST direct solver package.
 //
-class SuperLUSolver : public mfem::SuperLUSolver
+class SuperLUSolver : public mfem::Solver
 {
 private:
   std::unique_ptr<mfem::SuperLURowLocMatrix> Aint;
+  mfem::SuperLUSolver solver;
 
 public:
   SuperLUSolver(MPI_Comm comm, int sym_fact_type, bool use_3d, int print_lvl);
@@ -39,6 +40,8 @@ public:
 
   // Sets matrix associated with the SuperLU solver.
   void SetOperator(const mfem::Operator &op) override;
+
+  void Mult(const mfem::Vector &x, mfem::Vector &y) const override { solver.Mult(x, y); }
 };
 
 }  // namespace palace

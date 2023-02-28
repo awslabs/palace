@@ -36,40 +36,40 @@ int GetNpDep(int np, bool use_3d)
 }  // namespace
 
 SuperLUSolver::SuperLUSolver(MPI_Comm comm, int sym_fact_type, bool use_3d, int print_lvl)
-  : mfem::SuperLUSolver(comm, GetNpDep(Mpi::Size(comm), use_3d))
+  : solver(comm, GetNpDep(Mpi::Size(comm), use_3d))
 {
   // Configure the solver.
   if (print_lvl > 1)
   {
-    if (npdep_ > 1)
+    if (solver.npdep_ > 1)
     {
       Mpi::Print(comm, " SuperLUSolver: Using 3D processor grid {:d} x {:d} x {:d}\n",
-                 nprow_, npcol_, npdep_);
+                 solver.nprow_, solver.npcol_, solver.npdep_);
     }
     else
     {
-      Mpi::Print(comm, " SuperLUSolver: Using 2D processor grid {:d} x {:d}\n", nprow_,
-                 npcol_);
+      Mpi::Print(comm, " SuperLUSolver: Using 2D processor grid {:d} x {:d}\n",
+                 solver.nprow_, solver.npcol_);
     }
   }
-  SetPrintStatistics(print_lvl > 1);
-  SetEquilibriate(false);
-  SetReplaceTinyPivot(false);
+  solver.SetPrintStatistics(print_lvl > 1);
+  solver.SetEquilibriate(false);
+  solver.SetReplaceTinyPivot(false);
   if (sym_fact_type == 2)
   {
-    SetColumnPermutation(mfem::superlu::PARMETIS);
+    solver.SetColumnPermutation(mfem::superlu::PARMETIS);
   }
   else if (sym_fact_type == 1)
   {
-    SetColumnPermutation(mfem::superlu::METIS_AT_PLUS_A);
+    solver.SetColumnPermutation(mfem::superlu::METIS_AT_PLUS_A);
   }
   else
   {
     // Use default
   }
-  SetRowPermutation(mfem::superlu::NOROWPERM);
-  SetIterativeRefine(mfem::superlu::NOREFINE);
-  SetSymmetricPattern(true);  // Always symmetric sparsity pattern
+  solver.SetRowPermutation(mfem::superlu::NOROWPERM);
+  solver.SetIterativeRefine(mfem::superlu::NOREFINE);
+  solver.SetSymmetricPattern(true);  // Always symmetric sparsity pattern
 }
 
 void SuperLUSolver::SetOperator(const mfem::Operator &op)
@@ -78,12 +78,12 @@ void SuperLUSolver::SetOperator(const mfem::Operator &op)
   // factorizations, always reuse the sparsity pattern.
   if (Aint)
   {
-    SetFact(mfem::superlu::SamePattern_SameRowPerm);
+    solver.SetFact(mfem::superlu::SamePattern_SameRowPerm);
   }
   Aint = std::make_unique<mfem::SuperLURowLocMatrix>(op);
 
   // Set up base class.
-  mfem::SuperLUSolver::SetOperator(*Aint);
+  solver.SetOperator(*Aint);
 }
 
 }  // namespace palace
