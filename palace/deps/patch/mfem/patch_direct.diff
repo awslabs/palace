@@ -1,5 +1,5 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 3ff5b9462..e7e1e8212 100644
+index ef3ba4f6f..8fe537b57 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
 @@ -78,7 +78,7 @@ if (MFEM_USE_CONDUIT OR
@@ -11,7 +11,7 @@ index 3ff5b9462..e7e1e8212 100644
    # Just needed to find the MPI_Fortran libraries to link with
    set(XSDK_ENABLE_Fortran ON)
  endif()
-@@ -313,6 +313,7 @@ endif()
+@@ -312,6 +312,7 @@ endif()
  if (MFEM_USE_MUMPS)
    if (MFEM_USE_MPI)
      find_package(MUMPS REQUIRED mumps_common pord)
@@ -376,7 +376,7 @@ index 69e83db85..0e68416b0 100644
  
  // Enable functionality based on the Google Benchmark library.
 diff --git a/config/defaults.cmake b/config/defaults.cmake
-index fa76d6cb2..aadd02c7c 100644
+index 0f87d6a05..4102c7ac4 100644
 --- a/config/defaults.cmake
 +++ b/config/defaults.cmake
 @@ -133,16 +133,18 @@ set(ParMETIS_DIR "${MFEM_DIR}/../parmetis-4.0.3" CACHE PATH
@@ -599,7 +599,7 @@ index 51238c4d7..379013d40 100644
              strumpack->SetFromCommandLine();
              precond = strumpack;
 diff --git a/examples/superlu/ex1p.cpp b/examples/superlu/ex1p.cpp
-index 2bd220b07..8d66b5699 100644
+index 2bd220b07..a00f00af8 100644
 --- a/examples/superlu/ex1p.cpp
 +++ b/examples/superlu/ex1p.cpp
 @@ -67,6 +67,7 @@ int main(int argc, char *argv[])
@@ -632,14 +632,18 @@ index 2bd220b07..8d66b5699 100644
     Operator *SLU_A = new SuperLURowLocMatrix(*A.As<HypreParMatrix>());
     superlu->SetPrintStatistics(true);
     superlu->SetSymmetricPattern(false);
-@@ -281,7 +284,6 @@ int main(int argc, char *argv[])
+@@ -281,10 +284,9 @@ int main(int argc, char *argv[])
     superlu->SetOperator(*SLU_A);
     superlu->SetPrintStatistics(true);
     superlu->Mult(B, X);
 -   superlu->DismantleGrid();
  
-    delete SLU_A;
+-   delete SLU_A;
     delete superlu;
++   delete SLU_A;
+ 
+    // 14. Recover the parallel grid function corresponding to X. This is the
+    //     local finite element solution on each processor.
 diff --git a/linalg/mumps.cpp b/linalg/mumps.cpp
 index eae2bd58c..8ec9a8832 100644
 --- a/linalg/mumps.cpp
@@ -1597,10 +1601,10 @@ index 070838d8e..d12683f59 100644
  
  } // namespace mfem
 diff --git a/linalg/strumpack.cpp b/linalg/strumpack.cpp
-index c89ddeb56..9bb0f5045 100644
+index c89ddeb56..efd5a94ee 100644
 --- a/linalg/strumpack.cpp
 +++ b/linalg/strumpack.cpp
-@@ -16,238 +16,455 @@
+@@ -16,238 +16,469 @@
  
  #include "strumpack.hpp"
  
@@ -1750,12 +1754,8 @@ index c89ddeb56..9bb0f5045 100644
 -   // Delete the struct
 -   if ( A_ != NULL ) { delete A_; }
 +   delete A_;
- }
- 
--STRUMPACKSolver::STRUMPACKSolver( int argc, char* argv[], MPI_Comm comm )
--   : comm_(comm),
--     APtr_(NULL),
--     solver_(NULL)
++}
++
 +template <typename STRUMPACKSolverType>
 +STRUMPACKSolverBase<STRUMPACKSolverType>::
 +STRUMPACKSolverBase(MPI_Comm comm, int argc, char *argv[])
@@ -1764,14 +1764,13 @@ index c89ddeb56..9bb0f5045 100644
 +     solve_verbose_(false),
 +     reorder_reuse_(false),
 +     nrhs_(-1)
- {
--   this->Init(argc, argv);
++{
 +   solver_ = new STRUMPACKSolverType(comm, argc, argv, false);
  }
  
--STRUMPACKSolver::STRUMPACKSolver( STRUMPACKRowLocMatrix & A )
--   : comm_(A.GetComm()),
--     APtr_(&A),
+-STRUMPACKSolver::STRUMPACKSolver( int argc, char* argv[], MPI_Comm comm )
+-   : comm_(comm),
+-     APtr_(NULL),
 -     solver_(NULL)
 +template <typename STRUMPACKSolverType>
 +STRUMPACKSolverBase<STRUMPACKSolverType>::
@@ -1782,122 +1781,147 @@ index c89ddeb56..9bb0f5045 100644
 +     reorder_reuse_(false),
 +     nrhs_(-1)
  {
--   height = A.Height();
--   width  = A.Width();
+-   this->Init(argc, argv);
 +   solver_ = new STRUMPACKSolverType(A.GetComm(), argc, argv, false);
 +   SetOperator(A);
+ }
+ 
+-STRUMPACKSolver::STRUMPACKSolver( STRUMPACKRowLocMatrix & A )
+-   : comm_(A.GetComm()),
+-     APtr_(&A),
+-     solver_(NULL)
++template <typename STRUMPACKSolverType>
++STRUMPACKSolverBase<STRUMPACKSolverType>::
++~STRUMPACKSolverBase()
+ {
+-   height = A.Height();
+-   width  = A.Width();
++   delete solver_;
 +}
  
 -   this->Init(0, NULL);
 +template <typename STRUMPACKSolverType>
-+STRUMPACKSolverBase<STRUMPACKSolverType>::
-+~STRUMPACKSolverBase()
++void STRUMPACKSolverBase<STRUMPACKSolverType>::
++SetFromCommandLine()
 +{
-+   delete solver_;
++   solver_->options().set_from_command_line();
  }
  
 -STRUMPACKSolver::~STRUMPACKSolver()
 +template <typename STRUMPACKSolverType>
 +void STRUMPACKSolverBase<STRUMPACKSolverType>::
-+SetFromCommandLine()
++SetPrintFactorStatistics(bool print_stat)
  {
 -   if ( solver_ != NULL ) { delete solver_; }
-+   solver_->options().set_from_command_line();
++   factor_verbose_ = print_stat;
  }
  
 -void STRUMPACKSolver::Init( int argc, char* argv[] )
 +template <typename STRUMPACKSolverType>
 +void STRUMPACKSolverBase<STRUMPACKSolverType>::
-+SetPrintFactorStatistics(bool print_stat)
++SetPrintSolveStatistics(bool print_stat)
  {
 -   MPI_Comm_size(comm_, &numProcs_);
 -   MPI_Comm_rank(comm_, &myid_);
-+   factor_verbose_ = print_stat;
++   solve_verbose_ = print_stat;
 +}
  
 -   factor_verbose_ = false;
 -   solve_verbose_ = false;
 +template <typename STRUMPACKSolverType>
-+void STRUMPACKSolverBase<STRUMPACKSolverType>::
-+SetPrintSolveStatistics(bool print_stat)
++void STRUMPACKSolverBase<STRUMPACKSolverType>
++::SetRelTol(double rtol)
 +{
-+   solve_verbose_ = print_stat;
++   solver_->options().set_rel_tol(rtol);
 +}
  
 -   solver_ = new StrumpackSparseSolverMPIDist<double,int>(comm_, argc, argv,
 -                                                          false);
 +template <typename STRUMPACKSolverType>
 +void STRUMPACKSolverBase<STRUMPACKSolverType>
-+::SetRelTol(double rtol)
++::SetAbsTol(double atol)
 +{
-+   solver_->options().set_rel_tol(rtol);
++   solver_->options().set_abs_tol(atol);
  }
  
 -void STRUMPACKSolver::SetFromCommandLine( )
 +template <typename STRUMPACKSolverType>
 +void STRUMPACKSolverBase<STRUMPACKSolverType>
-+::SetAbsTol(double atol)
++::SetMaxIter(int max_it)
  {
 -   solver_->options().set_from_command_line( );
-+   solver_->options().set_abs_tol(atol);
++   solver_->options().set_maxit(max_it);
  }
  
 -void STRUMPACKSolver::SetPrintFactorStatistics( bool print_stat )
 +template <typename STRUMPACKSolverType>
 +void STRUMPACKSolverBase<STRUMPACKSolverType>
-+::SetMaxIter(int max_it)
++::SetReorderingReuse(bool reuse)
  {
 -   factor_verbose_ = print_stat;
-+   solver_->options().set_maxit(max_it);
++   reorder_reuse_ = reuse;
  }
  
 -void STRUMPACKSolver::SetPrintSolveStatistics( bool print_stat )
 +template <typename STRUMPACKSolverType>
 +void STRUMPACKSolverBase<STRUMPACKSolverType>
-+::SetReorderingReuse(bool reuse)
++::EnableGPU()
  {
 -   solve_verbose_ = print_stat;
-+   reorder_reuse_ = reuse;
++   solver_->options().enable_gpu();
  }
  
 -void STRUMPACKSolver::SetKrylovSolver( strumpack::KrylovSolver method )
 +template <typename STRUMPACKSolverType>
-+void STRUMPACKSolverBase<STRUMPACKSolverType>::
-+SetKrylovSolver(strumpack::KrylovSolver method)
++void STRUMPACKSolverBase<STRUMPACKSolverType>
++::DisableGPU()
  {
 -   solver_->options().set_Krylov_solver( method );
-+   solver_->options().set_Krylov_solver(method);
++   solver_->options().disable_gpu();
  }
  
 -void STRUMPACKSolver::SetReorderingStrategy( strumpack::ReorderingStrategy
 -                                             method )
 +template <typename STRUMPACKSolverType>
 +void STRUMPACKSolverBase<STRUMPACKSolverType>::
-+SetReorderingStrategy(strumpack::ReorderingStrategy method)
++SetKrylovSolver(strumpack::KrylovSolver method)
  {
 -   solver_->options().set_reordering_method( method );
-+   solver_->options().set_reordering_method(method);
++   solver_->options().set_Krylov_solver(method);
  }
  
 -void STRUMPACKSolver::DisableMatching( )
-+#if STRUMPACK_VERSION_MAJOR >= 3
++template <typename STRUMPACKSolverType>
++void STRUMPACKSolverBase<STRUMPACKSolverType>::
++SetReorderingStrategy(strumpack::ReorderingStrategy method)
+ {
++   solver_->options().set_reordering_method(method);
++}
++
+ #if STRUMPACK_VERSION_MAJOR >= 3
+-   solver_->options().set_matching( strumpack::MatchingJob::NONE );
 +template <typename STRUMPACKSolverType>
 +void STRUMPACKSolverBase<STRUMPACKSolverType>::
 +SetMatching(strumpack::MatchingJob job)
- {
++{
 +   solver_->options().set_matching(job);
 +}
-+#else
+ #else
+-   solver_->options().set_mc64job( strumpack::MC64Job::NONE );
+-#endif
 +template <typename STRUMPACKSolverType>
 +void STRUMPACKSolverBase<STRUMPACKSolverType>::
 +SetMatching(strumpack::MC64Job job)
 +{
 +   solver_->options().set_mc64job(job);
-+}
+ }
 +#endif
-+
+ 
+-void STRUMPACKSolver::EnableMatching( )
+-{
  #if STRUMPACK_VERSION_MAJOR >= 3
--   solver_->options().set_matching( strumpack::MatchingJob::NONE );
+-   solver_->options().set_matching
+-   ( strumpack::MatchingJob::MAX_DIAGONAL_PRODUCT_SCALING );
 +template <typename STRUMPACKSolverType>
 +void STRUMPACKSolverBase<STRUMPACKSolverType>::
 +SetCompression(strumpack::CompressionType type)
@@ -1905,7 +1929,8 @@ index c89ddeb56..9bb0f5045 100644
 +#if STRUMPACK_VERSION_MAJOR >= 5
 +   solver_->options().set_compression(type);
  #else
--   solver_->options().set_mc64job( strumpack::MC64Job::NONE );
+-   solver_->options().set_mc64job
+-   ( strumpack::MC64Job::MAX_DIAGONAL_PRODUCT_SCALING );
 +   switch (type)
 +   {
 +      case strumpack::NONE:
@@ -1926,63 +1951,56 @@ index c89ddeb56..9bb0f5045 100644
  #endif
  }
  
--void STRUMPACKSolver::EnableMatching( )
-+template <typename STRUMPACKSolverType>
-+void STRUMPACKSolverBase<STRUMPACKSolverType>::
-+SetCompressionRelTol(double rtol)
- {
--#if STRUMPACK_VERSION_MAJOR >= 3
--   solver_->options().set_matching
--   ( strumpack::MatchingJob::MAX_DIAGONAL_PRODUCT_SCALING );
-+#if STRUMPACK_VERSION_MAJOR >= 5
-+   solver_->options().set_compression_rel_tol(rtol);
- #else
--   solver_->options().set_mc64job
--   ( strumpack::MC64Job::MAX_DIAGONAL_PRODUCT_SCALING );
-+   solver_->options().BLR_options().set_rel_tol(rtol);
-+   solver_->options().HSS_options().set_rel_tol(rtol);
- #endif
- }
- 
 -#if STRUMPACK_VERSION_MAJOR >= 3
 -void STRUMPACKSolver::EnableParallelMatching( )
 +template <typename STRUMPACKSolverType>
 +void STRUMPACKSolverBase<STRUMPACKSolverType>::
-+SetCompressionAbsTol(double atol)
++SetCompressionRelTol(double rtol)
  {
 -   solver_->options().set_matching
 -   ( strumpack::MatchingJob::COMBBLAS );
 -}
 +#if STRUMPACK_VERSION_MAJOR >= 5
-+   solver_->options().set_compression_abs_tol(atol);
++   solver_->options().set_compression_rel_tol(rtol);
 +#else
-+   solver_->options().BLR_options().set_abs_tol(atol);
-+   solver_->options().HSS_options().set_abs_tol(atol);
++   solver_->options().BLR_options().set_rel_tol(rtol);
++   solver_->options().HSS_options().set_rel_tol(rtol);
  #endif
 +}
  
 -void STRUMPACKSolver::SetRelTol( double rtol )
++template <typename STRUMPACKSolverType>
++void STRUMPACKSolverBase<STRUMPACKSolverType>::
++SetCompressionAbsTol(double atol)
+ {
+-   solver_->options().set_rel_tol( rtol );
++#if STRUMPACK_VERSION_MAJOR >= 5
++   solver_->options().set_compression_abs_tol(atol);
++#else
++   solver_->options().BLR_options().set_abs_tol(atol);
++   solver_->options().HSS_options().set_abs_tol(atol);
++#endif
+ }
+ 
+-void STRUMPACKSolver::SetAbsTol( double atol )
 +#if STRUMPACK_VERSION_MAJOR >= 5
 +template <typename STRUMPACKSolverType>
 +void STRUMPACKSolverBase<STRUMPACKSolverType>::
 +SetCompressionLossyPrecision(int precision)
  {
--   solver_->options().set_rel_tol( rtol );
+-   solver_->options().set_abs_tol( atol );
 +   solver_->options().set_lossy_precision(precision);
  }
  
--void STRUMPACKSolver::SetAbsTol( double atol )
 +template <typename STRUMPACKSolverType>
 +void STRUMPACKSolverBase<STRUMPACKSolverType>::
 +SetCompressionButterflyLevels(int levels)
- {
--   solver_->options().set_abs_tol( atol );
++{
 +   solver_->options().HODLR_options().set_butterfly_levels(levels);
- }
++}
 +#endif
 +#endif
  
--
 -void STRUMPACKSolver::Mult( const Vector & x, Vector & y ) const
 +template <typename STRUMPACKSolverType>
 +void STRUMPACKSolverBase<STRUMPACKSolverType>::
@@ -2195,7 +2213,7 @@ index c89ddeb56..9bb0f5045 100644
  
  #endif // MFEM_USE_MPI
 diff --git a/linalg/strumpack.hpp b/linalg/strumpack.hpp
-index 3634706ba..021e3989a 100644
+index 3634706ba..b35e90b39 100644
 --- a/linalg/strumpack.hpp
 +++ b/linalg/strumpack.hpp
 @@ -16,12 +16,14 @@
@@ -2214,7 +2232,7 @@ index 3634706ba..021e3989a 100644
  
  namespace mfem
  {
-@@ -34,63 +36,75 @@ public:
+@@ -34,63 +36,82 @@ public:
         be of size (local) nrows by (global) glob_ncols. The new parallel matrix
         contains copies of all input arrays (so they can be deleted). */
     STRUMPACKRowLocMatrix(MPI_Comm comm,
@@ -2314,10 +2332,17 @@ index 3634706ba..021e3989a 100644
 +   // operators. This method has to be called before repeated calls to
 +   // SetOperator.
 +   void SetReorderingReuse(bool reuse);
++
++   // Enable or not GPU off-loading available if STRUMPACK was compiled with CUDA. Note
++   // that input/output from MFEM to STRUMPACK is all still through host memory.
++#if STRUMPACK_VERSION_MAJOR >= 3
++   void EnableGPU();
++   void DisableGPU();
++#endif
  
     /**
      * STRUMPACK is an (approximate) direct solver. It can be used as a direct
-@@ -100,70 +114,157 @@ public:
+@@ -100,70 +121,157 @@ public:
      * used without preconditioner.
      *
      * Supported values are:
@@ -2513,7 +2538,7 @@ index 3634706ba..021e3989a 100644
  #endif // MFEM_USE_MPI
  #endif // MFEM_USE_STRUMPACK
 diff --git a/linalg/superlu.cpp b/linalg/superlu.cpp
-index fdf6b842e..e3d946895 100644
+index fdf6b842e..d6a82d286 100644
 --- a/linalg/superlu.cpp
 +++ b/linalg/superlu.cpp
 @@ -16,48 +16,50 @@
@@ -2590,19 +2615,35 @@ index fdf6b842e..e3d946895 100644
        root ++;
        if (root <= rem)
        {
-@@ -72,546 +74,709 @@ unsigned int superlu_internal::sqrti( const unsigned int & a )
+@@ -72,546 +74,692 @@ unsigned int superlu_internal::sqrti( const unsigned int & a )
     return (root >> 1);
  }
  
-+void GetSquare(int np, int &nr, int &nc)
++int GetGridRows(MPI_Comm comm, int npdep)
 +{
-+   nr = (int)sqrti((unsigned int)np);
++   int np;
++   MPI_Comm_size(comm, &np);
++   MFEM_VERIFY(npdep > 0 && np % npdep == 0 && !(npdep & (npdep - 1)),
++               "SuperLUSolver: 3D partition depth must be a power of two "
++               "and evenly divide the number of processors!");
++   int nr = (int)sqrti((unsigned int)(np / npdep));
 +   while (np % nr != 0 && nr > 0)
 +   {
 +      nr--;
 +   }
-+   nc = (int)(np / nr);
-+   MFEM_VERIFY(nr * nc == np, "Impossible processor partition!");
++   MFEM_VERIFY(nr > 0,
++               "SuperLUSolver: Unable to determine processor grid for np = " << np);
++   return nr;
++}
++
++int GetGridCols(MPI_Comm comm, int npdep, int nr)
++{
++   int np;
++   MPI_Comm_size(comm, &np);
++   int nc = np / (nr * npdep);
++   MFEM_VERIFY(nr * nc * npdep == np,
++               "SuperLUSolver: Impossible processor partition!");
++   return nc;
 +}
 +
 +namespace mfem
@@ -2838,7 +2879,11 @@ index fdf6b842e..e3d946895 100644
  
 -SuperLUSolver::SuperLUSolver( MPI_Comm comm )
 -   : comm_(comm),
--     APtr_(NULL),
++SuperLUSolver::SuperLUSolver(MPI_Comm comm, int npdep)
++   : nprow_(GetGridRows(comm, npdep)),
++     npcol_(GetGridCols(comm, npdep, nprow_)),
++     npdep_(npdep),
+      APtr_(NULL),
 -     optionsPtr_(NULL),
 -     statPtr_(NULL),
 -     ScalePermstructPtr_(NULL),
@@ -2853,10 +2898,7 @@ index fdf6b842e..e3d946895 100644
 -     firstSolveWithThisA_(false),
 -     gridInitialized_(false),
 -     LUStructInitialized_(false)
-+SuperLUSolver::SuperLUSolver(MPI_Comm comm, int npdep)
-+   : APtr_(NULL),
-+     nrhs_(0),
-+     npdep_(npdep)
++     nrhs_(0)
  {
 -   this->Init();
 +   Init(comm);
@@ -2880,15 +2922,12 @@ index fdf6b842e..e3d946895 100644
 -     gridInitialized_(false),
 -     LUStructInitialized_(false)
 +SuperLUSolver::SuperLUSolver(SuperLURowLocMatrix &A, int npdep)
-+   : APtr_(&A),
-+     nrhs_(0),
-+     npdep_(npdep)
++   : SuperLUSolver(A.GetComm(), npdep)
  {
 -   height = A.Height();
 -   width  = A.Width();
 -
 -   this->Init();
-+   Init(A.GetComm());
 +   SetOperator(A);
  }
  
@@ -2989,25 +3028,28 @@ index fdf6b842e..e3d946895 100644
 -
 -   superlu_dist_options_t * options = (superlu_dist_options_t*)optionsPtr_;
 -   SuperLUStat_t          *    stat = (SuperLUStat_t*)statPtr_;
--
+ 
 -   if ( !(berr_ = doubleMalloc_dist(nrhs_)) )
++   // Initialize process grid
 +#if SUPERLU_DIST_MAJOR_VERSION > 7 || \
 +   (SUPERLU_DIST_MAJOR_VERSION == 7 && SUPERLU_DIST_MINOR_VERSION >= 2)
 +   if (npdep_ > 1)
-    {
--      ABORT("Malloc fails for berr[].");
-+      gridPtr_         = new gridinfo3d_t;
++   {
++      gridPtr_ = new gridinfo3d_t;
++      superlu_gridinit3d(comm, nprow_, npcol_, npdep_, (gridinfo3d_t *)gridPtr_);
 +   }
 +   else
 +#endif
-+   {
-+      gridPtr_         = new gridinfo_t;
+    {
+-      ABORT("Malloc fails for berr[].");
++      gridPtr_ = new gridinfo_t;
++      MFEM_VERIFY(npdep_ == 1,
++                  "SuperLUSolver: 3D partitioning is only available for "
++                  "SuperLU_DIST version >= 7.2.0!");
++      superlu_gridinit(comm, nprow_, npcol_, (gridinfo_t *)gridPtr_);
     }
  
 -   // Set default options
-+   // Initialize process grid
-+   SetupGrid(comm);
-+
 +   // Set default options:
 +   //    options.Fact = DOFACT;
 +   //    options.Equil = YES;
@@ -3021,23 +3063,11 @@ index fdf6b842e..e3d946895 100644
 +   //    options.PrintStat = YES;
 +   superlu_dist_options_t *options = (superlu_dist_options_t *)optionsPtr_;
     set_default_options_dist(options);
-+#if SUPERLU_DIST_MAJOR_VERSION > 7 || \
-+   (SUPERLU_DIST_MAJOR_VERSION == 7 && SUPERLU_DIST_MINOR_VERSION >= 2)
-+   if (npdep_ > 1)
-+   {
-+      options->Algo3d = YES;
-+   }
-+#endif
-+}
- 
+-
 -   // Choose nprow and npcol so that the process grid is as square as possible.
 -   // If the processes cannot be divided evenly, keep the row dimension smaller
 -   // than the column dimension.
-+void SuperLUSolver::SetupGrid(MPI_Comm comm)
-+{
-+   int nprocs;
-+   MPI_Comm_size(comm, &nprocs);
- 
+-
 -   nprow_ = (int)superlu_internal::sqrti((unsigned int)numProcs_);
 -   while (numProcs_ % nprow_ != 0 && nprow_ > 0)
 +#if SUPERLU_DIST_MAJOR_VERSION > 7 || \
@@ -3045,34 +3075,14 @@ index fdf6b842e..e3d946895 100644
 +   if (npdep_ > 1)
     {
 -      nprow_--;
-+      gridinfo3d_t *grid3d = (gridinfo3d_t *)gridPtr_;
-+
-+      int mask = npdep_ - 1;
-+      MFEM_VERIFY(!(npdep_ & mask),
-+                  "SuperLUSolver::SetupGrid: 3D partition depth must be a power "
-+                  "of two!");
-+      MFEM_VERIFY(nprocs % npdep_ == 0,
-+                  "SuperLUSolver::SetupGrid: Number of processors must be "
-+                  "evenly divisible by 3D partition depth!");
-+      GetSquare(nprocs / npdep_, nprow_, npcol_);
-+
-+      superlu_gridinit3d(comm, nprow_, npcol_, npdep_, grid3d);
++      options->Algo3d = YES;
     }
-+   else
-+#endif
-+   {
-+      gridinfo_t *grid = (gridinfo_t *)gridPtr_;
- 
+-
 -   npcol_ = (int)(numProcs_ / nprow_);
 -   MFEM_ASSERT(nprow_ * npcol_ == numProcs_, "");
-+      MFEM_VERIFY(npdep_ == 1,
-+                  "SuperLUSolver::SetupGrid: 3D partitioning is only available for "
-+                  "version >= 7.2.0!");
-+      GetSquare(nprocs, nprow_, npcol_);
- 
+-
 -   PStatInit(stat); // Initialize the statistics variables.
-+      superlu_gridinit(comm, nprow_, npcol_, grid);
-+   }
++#endif
  }
  
 -void SuperLUSolver::SetPrintStatistics( bool print_stat )
@@ -3308,7 +3318,7 @@ index fdf6b842e..e3d946895 100644
 +                          APtr_->GetGlobalNumColumns(), ScalePermstruct);
 +      LUstructInit(APtr_->GetGlobalNumColumns(), LUstruct);
 +      options->Fact = DOFACT;
-+   }
+    }
 +   else
 +   {
 +      // A previous matrix has already been set and factored
@@ -3375,7 +3385,7 @@ index fdf6b842e..e3d946895 100644
 +            break;
 +      }
 +      if (options->Fact == FACTORED) { options->Fact = DOFACT; }
-    }
++   }
 +}
  
 -   gridInitialized_ = false;
@@ -3645,7 +3655,7 @@ index fdf6b842e..e3d946895 100644
  #endif // MFEM_USE_MPI
  #endif // MFEM_USE_SUPERLU
 diff --git a/linalg/superlu.hpp b/linalg/superlu.hpp
-index 921ee4a4e..16e623c5e 100644
+index 921ee4a4e..08dd8cb96 100644
 --- a/linalg/superlu.hpp
 +++ b/linalg/superlu.hpp
 @@ -16,33 +16,30 @@
@@ -3741,7 +3751,7 @@ index 921ee4a4e..16e623c5e 100644
  
  /** The MFEM SuperLU Direct Solver class.
  
-@@ -88,80 +86,80 @@ private:
+@@ -88,80 +86,75 @@ private:
      double precision types. It is currently maintained by Xiaoye Sherry Li at
      NERSC, see http://crd-legacy.lbl.gov/~xiaoye/SuperLU/.
  */
@@ -3796,7 +3806,8 @@ index 921ee4a4e..16e623c5e 100644
 +   // Factor and solve the linear system y = Op^{-T} x.
 +   // Note: Factorization modifies the operator matrix.
 +   void MultTranspose(const Vector &x, Vector &y) const;
-+   void ArrayMultTranspose(const Array<const Vector *> &X, Array<Vector *> &Y) const;
++   void ArrayMultTranspose(const Array<const Vector *> &X,
++                           Array<Vector *> &Y) const;
 +
 +   // Set various solver options. Refer to SuperLU_DIST documentation for
 +   // details.
@@ -3811,6 +3822,9 @@ index 921ee4a4e..16e623c5e 100644
 +   void SetSymmetricPattern(bool sym);
 +   void SetParSymbFact(bool par);
 +   void SetFact(superlu::Fact fact);
++
++   // Processor grid for SuperLU_DIST.
++   const int nprow_, npcol_, npdep_;
  
  private:
 -   void Init();
@@ -3818,10 +3832,6 @@ index 921ee4a4e..16e623c5e 100644
 +   void Init(MPI_Comm comm);
  
 -protected:
-+   // Allocate the MPI communicators. This routine is called internally by
-+   // Init().
-+   void SetupGrid(MPI_Comm comm);
-+
 +   // Handle error message from call to SuperLU solver.
 +   void HandleError(int info) const;
  
@@ -3858,13 +3868,8 @@ index 921ee4a4e..16e623c5e 100644
 -} // mfem namespace
 +protected:
 +   const SuperLURowLocMatrix *APtr_;
-+
-+   mutable Vector sol_;
-+   mutable int    nrhs_;
-+
-+   int nprow_;
-+   int npcol_;
-+   int npdep_;
++   mutable Vector             sol_;
++   mutable int                nrhs_;
 +
 +   /** The actual types of the following pointers are hidden to avoid exposing
 +       the SuperLU header files to the entire library. Their types are given in
