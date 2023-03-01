@@ -1,5 +1,5 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 3ff5b9462..e7e1e8212 100644
+index ef3ba4f6f..8fe537b57 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
 @@ -78,7 +78,7 @@ if (MFEM_USE_CONDUIT OR
@@ -11,7 +11,7 @@ index 3ff5b9462..e7e1e8212 100644
    # Just needed to find the MPI_Fortran libraries to link with
    set(XSDK_ENABLE_Fortran ON)
  endif()
-@@ -313,6 +313,7 @@ endif()
+@@ -312,6 +312,7 @@ endif()
  if (MFEM_USE_MUMPS)
    if (MFEM_USE_MPI)
      find_package(MUMPS REQUIRED mumps_common pord)
@@ -26,7 +26,7 @@ index f8af98a72..0d4503723 100644
 @@ -77,96 +77,101 @@
  // Internal MFEM option: enable group/batch allocation for some small objects.
  #cmakedefine MFEM_USE_MEMALLOC
-
+ 
 +// Which library functions to use in class StopWatch for measuring time.
 +// For a list of the available options, see INSTALL.
 +// If not defined, an option is selected automatically.
@@ -37,30 +37,30 @@ index f8af98a72..0d4503723 100644
 +
  // Enable MFEM functionality based on the SuiteSparse library.
  #cmakedefine MFEM_USE_SUITESPARSE
-
+ 
  // Enable MFEM functionality based on the SuperLU_DIST library.
  #cmakedefine MFEM_USE_SUPERLU
 +#cmakedefine MFEM_USE_SUPERLU5
-
+ 
  // Enable MFEM functionality based on the MUMPS library.
  #cmakedefine MFEM_USE_MUMPS
 +#cmakedefine MFEM_MUMPS_VERSION @MFEM_MUMPS_VERSION@
-
+ 
  // Enable MFEM functionality based on the STRUMPACK library.
  #cmakedefine MFEM_USE_STRUMPACK
-
+ 
 -// Enable functionality based on the Ginkgo library
 +// Enable functionality based on the Ginkgo library.
  #cmakedefine MFEM_USE_GINKGO
-
+ 
 -// Enable MFEM functionality based on the AmgX library
 +// Enable MFEM functionality based on the AmgX library.
  #cmakedefine MFEM_USE_AMGX
-
+ 
 -// Enable MFEM functionality based on the GnuTLS library
 +// Enable secure socket streams based on the GNUTLS library.
  #cmakedefine MFEM_USE_GNUTLS
-
+ 
 -// Enable MFEM functionality based on the GSLIB library
 -#cmakedefine MFEM_USE_GSLIB
 -
@@ -76,19 +76,19 @@ index f8af98a72..0d4503723 100644
 -// Enable MFEM functionality based on the Sidre library
 +// Enable Sidre support.
  #cmakedefine MFEM_USE_SIDRE
-
+ 
 -// Enable the use of SIMD in the high performance templated classes
 +// Enable the use of SIMD in the high performance templated classes.
  #cmakedefine MFEM_USE_SIMD
-
+ 
 -// Enable MFEM functionality based on the FMS library
 +// Enable FMS support.
  #cmakedefine MFEM_USE_FMS
-
+ 
 -// Enable MFEM functionality based on Conduit
 +// Enable Conduit support.
  #cmakedefine MFEM_USE_CONDUIT
-
+ 
 -// Enable MFEM functionality based on the PUMI library
 +// Enable functionality based on the NetCDF library (reading CUBIT files).
 +#cmakedefine MFEM_USE_NETCDF
@@ -104,15 +104,15 @@ index f8af98a72..0d4503723 100644
 +
 +// Enable MFEM functionality based on the PUMI library.
  #cmakedefine MFEM_USE_PUMI
-
+ 
 -// Enable MFEM functionality based on the Moonolith library
 +// Enable Moonolith-based general interpolation between finite element spaces.
  #cmakedefine MFEM_USE_MOONOLITH
-
+ 
 -// Enable MFEM functionality based on the HiOp library
 +// Enable MFEM functionality based on the HIOP library.
  #cmakedefine MFEM_USE_HIOP
-
+ 
 -// Build the GPU/CUDA-enabled version of the MFEM library.
 +// Enable MFEM functionality based on the GSLIB library.
 +#cmakedefine MFEM_USE_GSLIB
@@ -120,24 +120,24 @@ index f8af98a72..0d4503723 100644
 +// Build the NVIDIA GPU/CUDA-enabled version of the MFEM library.
  // Requires a CUDA compiler (nvcc).
  #cmakedefine MFEM_USE_CUDA
-
+ 
 -// Build the HIP-enabled version of the MFEM library.
 +// Build the AMD GPU/HIP-enabled version of the MFEM library.
  // Requires a HIP compiler (hipcc).
  #cmakedefine MFEM_USE_HIP
-
+ 
 -// Enable MFEM functionality based on the RAJA library
 +// Enable functionality based on the RAJA library.
  #cmakedefine MFEM_USE_RAJA
-
+ 
 -// Enable MFEM functionality based on the OCCA library
 +// Enable functionality based on the OCCA library.
  #cmakedefine MFEM_USE_OCCA
-
+ 
 -// Enable MFEM functionality based on the libCEED library
 +// Enable functionality based on the libCEED library.
  #cmakedefine MFEM_USE_CEED
-
+ 
 -// Enable MFEM functionality based on the Umpire library
 -#cmakedefine MFEM_USE_UMPIRE
 -
@@ -147,41 +147,41 @@ index f8af98a72..0d4503723 100644
 -// Enable MFEM functionality based on the Caliper library
 +// Enable functionality based on the Caliper library.
  #cmakedefine MFEM_USE_CALIPER
-
+ 
 -// Enable MFEM functionality based on the Algoim library
 +// Enable functionality based on the Algoim library.
  #cmakedefine MFEM_USE_ALGOIM
-
+ 
 -// Which library functions to use in class StopWatch for measuring time.
 -// For a list of the available options, see INSTALL.
 -// If not defined, an option is selected automatically.
 -#define MFEM_TIMER_TYPE @MFEM_TIMER_TYPE@
 +// Enable functionality based on the Umpire library.
 +#cmakedefine MFEM_USE_UMPIRE
-
+ 
 -// Enable MFEM functionality based on the SUNDIALS libraries.
 -#cmakedefine MFEM_USE_SUNDIALS
 +// Enable IO functionality based on the ADIOS2 library.
 +#cmakedefine MFEM_USE_ADIOS2
-
+ 
  // Version of HYPRE used for building MFEM.
  #cmakedefine MFEM_HYPRE_VERSION @MFEM_HYPRE_VERSION@
 @@ -178,13 +183,13 @@
  // Enable interface to the MKL CPardiso library.
  #cmakedefine MFEM_USE_MKL_CPARDISO
-
+ 
 -// Use forward mode for automatic differentiation
 +// Use forward mode for automatic differentiation.
  #cmakedefine MFEM_USE_ADFORWARD
-
+ 
 -// Enable the use of the CoDiPack library for AD
 +// Enable the use of the CoDiPack library for AD.
  #cmakedefine MFEM_USE_CODIPACK
-
+ 
 -// Enable MFEM functionality based on the Google Benchmark library.
 +// Enable functionality based on the Google Benchmark library.
  #cmakedefine MFEM_USE_BENCHMARK
-
+ 
  // Enable Enzyme for AD
 diff --git a/config/cmake/modules/FindButterflyPACK.cmake b/config/cmake/modules/FindButterflyPACK.cmake
 new file mode 100644
@@ -219,14 +219,14 @@ index 32db499ee..0f83d5bf1 100644
 --- a/config/cmake/modules/FindMUMPS.cmake
 +++ b/config/cmake/modules/FindMUMPS.cmake
 @@ -11,8 +11,9 @@
-
+ 
  # Sets the following variables:
  #   - MUMPS_FOUND
 -#   - MUMPS_INCLUDE_DIRS
  #   - MUMPS_LIBRARIES
 +#   - MUMPS_INCLUDE_DIRS
 +#   - MUMPS_VERSION
-
+ 
  include(MfemCmakeUtilities)
  mfem_find_package(MUMPS MUMPS MUMPS_DIR
 @@ -21,3 +22,18 @@ mfem_find_package(MUMPS MUMPS MUMPS_DIR
@@ -283,97 +283,97 @@ index 69e83db85..0e68416b0 100644
 @@ -30,10 +30,10 @@
  #define MFEM_VERSION_MINOR (((MFEM_VERSION)/100)%100)
  #define MFEM_VERSION_PATCH ((MFEM_VERSION)%100)
-
+ 
 -// The absolute path of the MFEM source prefix
 +// The absolute path of the MFEM source prefix.
  // #define MFEM_SOURCE_DIR "@MFEM_SOURCE_DIR@"
-
+ 
 -// The absolute path of the MFEM installation prefix
 +// The absolute path of the MFEM installation prefix.
  // #define MFEM_INSTALL_DIR "@MFEM_INSTALL_DIR@"
-
+ 
  // Description of the git commit used to build MFEM.
 @@ -88,7 +88,7 @@
  // Enable MFEM functionality based on the SuiteSparse library.
  // #define MFEM_USE_SUITESPARSE
-
+ 
 -// Enable MFEM functionality based on the SuperLU library.
 +// Enable MFEM functionality based on the SuperLU_DIST library.
  // #define MFEM_USE_SUPERLU
  // #define MFEM_USE_SUPERLU5
-
+ 
 @@ -99,40 +99,40 @@
  // Enable MFEM functionality based on the STRUMPACK library.
  // #define MFEM_USE_STRUMPACK
-
+ 
 -// Enable MFEM features based on the Ginkgo library
 +// Enable MFEM features based on the Ginkgo library.
  // #define MFEM_USE_GINKGO
-
+ 
  // Enable MFEM functionality based on the AmgX library.
  // #define MFEM_USE_AMGX
-
+ 
 -// Enable secure socket streams based on the GNUTLS library
 +// Enable secure socket streams based on the GNUTLS library.
  // #define MFEM_USE_GNUTLS
-
+ 
 -// Enable Sidre support
 +// Enable Sidre support.
  // #define MFEM_USE_SIDRE
-
+ 
 -// Enable the use of SIMD in the high performance templated classes
 +// Enable the use of SIMD in the high performance templated classes.
  // #define MFEM_USE_SIMD
-
+ 
 -// Enable FMS support
 +// Enable FMS support.
  // #define MFEM_USE_FMS
-
+ 
 -// Enable Conduit support
 +// Enable Conduit support.
  // #define MFEM_USE_CONDUIT
-
+ 
 -// Enable functionality based on the NetCDF library (reading CUBIT files)
 +// Enable functionality based on the NetCDF library (reading CUBIT files).
  // #define MFEM_USE_NETCDF
-
+ 
 -// Enable functionality based on the PETSc library
 +// Enable functionality based on the PETSc library.
  // #define MFEM_USE_PETSC
-
+ 
 -// Enable functionality based on the SLEPc library
 +// Enable functionality based on the SLEPc library.
  // #define MFEM_USE_SLEPC
-
+ 
  // Enable functionality based on the MPFR library.
  // #define MFEM_USE_MPFR
-
+ 
 -// Enable MFEM functionality based on the PUMI library
 +// Enable MFEM functionality based on the PUMI library.
  // #define MFEM_USE_PUMI
-
+ 
  // Enable Moonolith-based general interpolation between finite element spaces.
 @@ -141,7 +141,7 @@
  // Enable MFEM functionality based on the HIOP library.
  // #define MFEM_USE_HIOP
-
+ 
 -// Enable MFEM functionality based on the GSLIB library
 +// Enable MFEM functionality based on the GSLIB library.
  // #define MFEM_USE_GSLIB
-
+ 
  // Build the NVIDIA GPU/CUDA-enabled version of the MFEM library.
 @@ -183,10 +183,10 @@
  // Enable interface to the MKL CPardiso library.
  // #define MFEM_USE_MKL_CPARDISO
-
+ 
 -// Use forward mode for automatic differentiation
 +// Use forward mode for automatic differentiation.
  // #define MFEM_USE_ADFORWARD
-
+ 
 -// Enable the use of the CoDiPack library for AD
 +// Enable the use of the CoDiPack library for AD.
  // #define MFEM_USE_CODIPACK
-
+ 
  // Enable functionality based on the Google Benchmark library.
 diff --git a/config/defaults.cmake b/config/defaults.cmake
 index 0f87d6a05..4102c7ac4 100644
@@ -382,7 +382,7 @@ index 0f87d6a05..4102c7ac4 100644
 @@ -133,16 +133,18 @@ set(ParMETIS_DIR "${MFEM_DIR}/../parmetis-4.0.3" CACHE PATH
  set(ParMETIS_REQUIRED_PACKAGES "METIS" CACHE STRING
      "Additional packages required by ParMETIS.")
-
+ 
 -set(SuperLUDist_DIR "${MFEM_DIR}/../SuperLU_DIST_6.3.1" CACHE PATH
 +set(SuperLUDist_DIR "${MFEM_DIR}/../SuperLU_DIST_8.1.2" CACHE PATH
      "Path to the SuperLU_DIST library.")
@@ -391,7 +391,7 @@ index 0f87d6a05..4102c7ac4 100644
 +set(SuperLUDist_REQUIRED_PACKAGES "MPI" "ParMETIS" "METIS"
 +    "LAPACK" "BLAS" CACHE STRING
      "Additional packages required by SuperLU_DIST.")
-
+ 
 -set(MUMPS_DIR "${MFEM_DIR}/../MUMPS_5.2.0" CACHE PATH
 +set(MUMPS_DIR "${MFEM_DIR}/../MUMPS_5.5.0" CACHE PATH
      "Path to the MUMPS library.")
@@ -428,11 +428,11 @@ index b18ce1ba5..27ea130ac 100644
 -      -lsuperlu_dist -lblas
 +      -lsuperlu_dist $(LAPACK_LIB)
  endif
-
+ 
  # SCOTCH library configuration (required by STRUMPACK <= v2.1.0, optional in
 @@ -311,7 +311,7 @@ MPI_FORTRAN_LIB = -lmpifort
  # MPI_FORTRAN_LIB += -lgfortran
-
+ 
  # MUMPS library configuration
 -MUMPS_DIR = @MFEM_DIR@/../MUMPS_5.2.0
 +MUMPS_DIR = @MFEM_DIR@/../MUMPS_5.5.0
@@ -457,7 +457,7 @@ index 88b656d03..fabe7b16e 100644
 +      ${MPIEXEC_POSTFLAGS})
 +  endif()
  endif()
-
+ 
  # Include the examples/amgx directory if AmgX is enabled
 diff --git a/examples/ex11p.cpp b/examples/ex11p.cpp
 index 216a6f443..c88bfddff 100644
@@ -522,7 +522,7 @@ index ddd13fd25..03e7e5401 100644
        mumps_solver = false;
 +      strumpack_solver = false;
     }
-
+ 
     if (iprob > 4) { iprob = 4; }
 @@ -474,15 +481,39 @@ int main(int argc, char *argv[])
        delete A;
@@ -607,7 +607,7 @@ index 2bd220b07..a00f00af8 100644
     int slu_rowperm = 1;
     int slu_iterref = 2;
 +   int slu_npdep = 1;
-
+ 
     OptionsParser args(argc, argv);
     args.AddOption(&mesh_file, "-m", "--mesh",
 @@ -85,9 +86,11 @@ int main(int argc, char *argv[])
@@ -620,12 +620,12 @@ index 2bd220b07..a00f00af8 100644
                    "2-Double, 3-Extra");
 +   args.AddOption(&slu_npdep, "-npdep", "--npdepth",
 +                  "Depth of 3D parition for SuperLU (>= 7.2.0)");
-
+ 
     args.Parse();
     if (!args.Good())
 @@ -214,7 +217,7 @@ int main(int argc, char *argv[])
     a.FormLinearSystem(ess_tdof_list, x, b, A, X, B);
-
+ 
     // 13. Solve the linear system A X = B utilizing SuperLU.
 -   SuperLUSolver *superlu = new SuperLUSolver(MPI_COMM_WORLD);
 +   SuperLUSolver *superlu = new SuperLUSolver(MPI_COMM_WORLD, slu_npdep);
@@ -637,11 +637,11 @@ index 2bd220b07..a00f00af8 100644
     superlu->SetPrintStatistics(true);
     superlu->Mult(B, X);
 -   superlu->DismantleGrid();
-
+ 
 -   delete SLU_A;
     delete superlu;
 +   delete SLU_A;
-
+ 
     // 14. Recover the parallel grid function corresponding to X. This is the
     //     local finite element solution on each processor.
 diff --git a/linalg/mumps.cpp b/linalg/mumps.cpp
@@ -649,9 +649,9 @@ index eae2bd58c..8ec9a8832 100644
 --- a/linalg/mumps.cpp
 +++ b/linalg/mumps.cpp
 @@ -16,58 +16,123 @@
-
+ 
  #include "mumps.hpp"
-
+ 
 -#ifdef HYPRE_BIGINT
 -#error "MUMPSSolver requires HYPRE_Int == int, for now."
 +#include <algorithm>
@@ -665,17 +665,17 @@ index eae2bd58c..8ec9a8832 100644
 +#error "Full 64-bit MUMPS is not yet supported"
 +#endif
  #endif
-
+ 
 -// macro s.t. indices match MUMPS documentation
 +// Macro s.t. indices match MUMPS documentation
  #define MUMPS_ICNTL(I) icntl[(I) -1]
 +#define MUMPS_CNTL(I) cntl[(I) -1]
  #define MUMPS_INFO(I) info[(I) -1]
 +#define MUMPS_INFOG(I) infog[(I) -1]
-
+ 
  namespace mfem
  {
-
+ 
 -void MUMPSSolver::SetOperator(const Operator &op)
 +MUMPSSolver::MUMPSSolver(MPI_Comm comm_)
  {
@@ -684,7 +684,7 @@ index eae2bd58c..8ec9a8832 100644
 -   MFEM_VERIFY(APtr, "Not compatible matrix type");
 +   Init(comm_);
 +}
-
+ 
 -   height = op.Height();
 -   width = op.Width();
 +MUMPSSolver::MUMPSSolver(const Operator &op)
@@ -694,7 +694,7 @@ index eae2bd58c..8ec9a8832 100644
 +   Init(APtr->GetComm());
 +   SetOperator(op);
 +}
-
+ 
 -   comm = APtr->GetComm();
 +void MUMPSSolver::Init(MPI_Comm comm_)
 +{
@@ -702,7 +702,7 @@ index eae2bd58c..8ec9a8832 100644
 +   comm = comm_;
     MPI_Comm_size(comm, &numProcs);
     MPI_Comm_rank(comm, &myid);
-
+ 
 -   auto parcsr_op = (hypre_ParCSRMatrix *) const_cast<HypreParMatrix &>(*APtr);
 +   mat_type = MatType::UNSYMMETRIC;
 +   print_level = 0;
@@ -749,7 +749,7 @@ index eae2bd58c..8ec9a8832 100644
 +
 +   height = op.Height();
 +   width = op.Width();
-
+ 
 +   auto parcsr_op = (hypre_ParCSRMatrix *)const_cast<HypreParMatrix &>(*APtr);
     APtr->HostRead();
     hypre_CSRMatrix *csr_op = hypre_MergeDiagAndOffd(parcsr_op);
@@ -761,7 +761,7 @@ index eae2bd58c..8ec9a8832 100644
 +#else
 +   HYPRE_Int       *Jptr   = csr_op->j;
  #endif
-
+ 
 -   int *Iptr = csr_op->i;
 -   int *Jptr = csr_op->j;
 -   int n_loc = csr_op->num_rows;
@@ -769,7 +769,7 @@ index eae2bd58c..8ec9a8832 100644
 -   row_start = parcsr_op->first_row_index;
 +   int n_loc = internal::to_int(csr_op->num_rows);
 +   row_start = internal::to_int(parcsr_op->first_row_index);
-
+ 
 -   MUMPS_INT8 nnz = 0;
 +   MUMPS_INT8 nnz = 0, k = 0;
     if (mat_type)
@@ -804,7 +804,7 @@ index eae2bd58c..8ec9a8832 100644
 -   int * J = new int[nnz];
 +   int *I = new int[nnz];
 +   int *J = new int[nnz];
-
+ 
     // Fill in I and J arrays for
     // COO format in 1-based indexing
 -   int k = 0;
@@ -851,7 +851,7 @@ index eae2bd58c..8ec9a8832 100644
        }
        data = csr_op->data;
     }
-
+ 
 -   // new MUMPS object
 -   if (id)
 +   // New MUMPS object or reuse the one from a previous matrix
@@ -884,31 +884,31 @@ index eae2bd58c..8ec9a8832 100644
 +      }
 +      id = new DMUMPS_STRUC_C;
 +      id->sym = mat_type;
-
+ 
 -   id->n = parcsr_op->global_num_rows;
 +      // C to Fortran communicator
 +      id->comm_fortran = (MUMPS_INT)MPI_Comm_c2f(comm);
-
+ 
 -   id->nnz_loc = nnz;
 +      // Host is involved in computation
 +      id->par = 1;
-
+ 
 -   id->irn_loc = I;
 +      // MUMPS init
 +      id->job = -1;
 +      dmumps_c(id);
-
+ 
 -   id->jcn_loc = J;
 +      // Set MUMPS default parameters
 +      SetParameters();
-
+ 
 -   id->a_loc = data;
 +      id->n = internal::to_int(parcsr_op->global_num_rows);
 +      id->nnz_loc = nnz;
 +      id->irn_loc = I;
 +      id->jcn_loc = J;
 +      id->a_loc = data;
-
+ 
 -   // MUMPS Analysis
 -   id->job = 1;
 -   dmumps_c(id);
@@ -922,7 +922,7 @@ index eae2bd58c..8ec9a8832 100644
 +      id->jcn_loc = J;
 +      id->a_loc = data;
 +   }
-
+ 
 -   // MUMPS Factorization
 +   // MUMPS factorization
     id->job = 2;
@@ -953,12 +953,12 @@ index eae2bd58c..8ec9a8832 100644
 +         else { break; }
 +      }
 +   }
-
+ 
     hypre_CSRMatrixDestroy(csr_op);
     delete [] I;
     delete [] J;
     if (mat_type) { delete [] data; }
-
+ 
 +   id->nrhs = -1;  // Set up solution storage on first call to Mult
  #if MFEM_MUMPS_VERSION >= 530
     delete [] irhs_loc;
@@ -1000,7 +1000,7 @@ index eae2bd58c..8ec9a8832 100644
 @@ -196,54 +302,109 @@ void MUMPSSolver::SetOperator(const Operator &op)
  #endif
  }
-
+ 
 -void MUMPSSolver::Mult(const Vector &x, Vector &y) const
 +void MUMPSSolver::InitRhsSol(int nrhs) const
  {
@@ -1026,7 +1026,7 @@ index eae2bd58c..8ec9a8832 100644
 +   }
 +   id->nrhs = nrhs;
 +}
-
+ 
 -   id->nloc_rhs = x.Size();
 -   id->lrhs_loc = x.Size();
 -   id->rhs_loc = x.GetData();
@@ -1039,7 +1039,7 @@ index eae2bd58c..8ec9a8832 100644
 +   Y[0] = &y;
 +   ArrayMult(X, Y);
 +}
-
+ 
 -   id->lsol_loc = id->MUMPS_INFO(23);
 -   id->isol_loc = new int[id->MUMPS_INFO(23)];
 -   id->sol_loc = new double[id->MUMPS_INFO(23)];
@@ -1066,11 +1066,11 @@ index eae2bd58c..8ec9a8832 100644
 +                   id->rhs_loc + i * id->lrhs_loc);
 +      }
 +   }
-
+ 
     // MUMPS solve
     id->job = 3;
     dmumps_c(id);
-
+ 
 -   RedistributeSol(id->isol_loc, id->sol_loc, y.GetData());
 -
 -   delete [] id->sol_loc;
@@ -1089,11 +1089,11 @@ index eae2bd58c..8ec9a8832 100644
 +      MPI_Gatherv(X[i]->GetData(), X[i]->Size(), MPI_DOUBLE,
 +                  id->rhs + i * id->lrhs, recv_counts, displs, MPI_DOUBLE, 0, comm);
 +   }
-
+ 
     // MUMPS solve
     id->job = 3;
     dmumps_c(id);
-
+ 
 -   MPI_Scatterv(rhs_glob, recv_counts, displs,
 -                MPI_DOUBLE, y.GetData(), y.Size(),
 -                MPI_DOUBLE, 0, comm);
@@ -1106,7 +1106,7 @@ index eae2bd58c..8ec9a8832 100644
 +   }
  #endif
  }
-
+ 
  void MUMPSSolver::MultTranspose(const Vector &x, Vector &y) const
  {
 -   // Set flag for Transpose Solve
@@ -1118,7 +1118,7 @@ index eae2bd58c..8ec9a8832 100644
     // Reset the flag
     id->MUMPS_ICNTL(9) = 1;
 +}
-
+ 
 +void MUMPSSolver::ArrayMultTranspose(const Array<const Vector *> &X,
 +                                     Array<Vector *> &Y) const
 +{
@@ -1129,12 +1129,12 @@ index eae2bd58c..8ec9a8832 100644
 +   // Reset the flag
 +   id->MUMPS_ICNTL(9) = 1;
  }
-
+ 
  void MUMPSSolver::SetPrintLevel(int print_lvl)
 @@ -256,34 +417,34 @@ void MUMPSSolver::SetMatrixSymType(MatType mtype)
     mat_type = mtype;
  }
-
+ 
 -MUMPSSolver::~MUMPSSolver()
 +void MUMPSSolver::SetReorderingStrategy(ReorderingStrategy method)
  {
@@ -1158,7 +1158,7 @@ index eae2bd58c..8ec9a8832 100644
 +{
 +   reorder_reuse = reuse;
  }
-
+ 
 +#if MFEM_MUMPS_VERSION >= 510
 +void MUMPSSolver::SetBLRTol(double tol)
 +{
@@ -1245,12 +1245,12 @@ index eae2bd58c..8ec9a8832 100644
 +   }
 +#endif
  }
-
+ 
  #if MFEM_MUMPS_VERSION >= 530
 @@ -330,24 +537,23 @@ int MUMPSSolver::GetRowRank(int i, const Array<int> &row_starts_) const
     return std::distance(row_starts_.begin(), up) - 1;
  }
-
+ 
 -void MUMPSSolver::RedistributeSol(const int * row_map,
 -                                  const double * x, double * y) const
 +void MUMPSSolver::RedistributeSol(const int *rmap, const double *x,
@@ -1268,11 +1268,11 @@ index eae2bd58c..8ec9a8832 100644
        if (myid == row_rank) { continue; }
        send_count[row_rank]++;
     }
-
+ 
 -   int * recv_count = new int[numProcs];
 +   int *recv_count = new int[numProcs];
     MPI_Alltoall(send_count, 1, MPI_INT, recv_count, 1, MPI_INT, comm);
-
+ 
 -   int * send_displ = new int [numProcs]; send_displ[0] = 0;
 -   int * recv_displ = new int [numProcs]; recv_displ[0] = 0;
 +   int *send_displ = new int[numProcs]; send_displ[0] = 0;
@@ -1283,7 +1283,7 @@ index eae2bd58c..8ec9a8832 100644
 @@ -358,54 +564,59 @@ void MUMPSSolver::RedistributeSol(const int * row_map,
        rbuff_size += recv_count[k];
     }
-
+ 
 -   int * sendbuf_index = new int[sbuff_size];
 -   double * sendbuf_values = new double[sbuff_size];
 -   int * soffs = new int[numProcs]();
@@ -1292,7 +1292,7 @@ index eae2bd58c..8ec9a8832 100644
 +   int *recvbuf_index = new int[rbuff_size];
 +   double *recvbuf_values = new double[rbuff_size];
 +   int *soffs = new int[numProcs]();
-
+ 
 -   for (int i = 0; i < size; i++)
 +   for (int i = 0; i < lx_loc; i++)
     {
@@ -1313,7 +1313,7 @@ index eae2bd58c..8ec9a8832 100644
           soffs[row_rank]++;
        }
     }
-
+ 
 -   int * recvbuf_index = new int[rbuff_size];
 -   double * recvbuf_values = new double[rbuff_size];
 -   MPI_Alltoallv(sendbuf_index,
@@ -1375,14 +1375,14 @@ index eae2bd58c..8ec9a8832 100644
 +         (*Y[rhs])(local_index) = recvbuf_values[i];
 +      }
     }
-
+ 
     delete [] recvbuf_values;
 diff --git a/linalg/mumps.hpp b/linalg/mumps.hpp
 index 070838d8e..d12683f59 100644
 --- a/linalg/mumps.hpp
 +++ b/linalg/mumps.hpp
 @@ -16,12 +16,12 @@
-
+ 
  #ifdef MFEM_USE_MUMPS
  #ifdef MFEM_USE_MPI
 +
@@ -1393,7 +1393,7 @@ index 070838d8e..d12683f59 100644
 +
  #include "dmumps_c.h"
 -#include <vector>
-
+ 
  namespace mfem
  {
 @@ -31,20 +31,37 @@ namespace mfem
@@ -1424,7 +1424,7 @@ index 070838d8e..d12683f59 100644
 +      SCOTCH,
 +      PTSCOTCH
     };
-
+ 
     /**
 -    * @brief Default Constructor
 +    * @brief Constructor with MPI_Comm parameter.
@@ -1436,7 +1436,7 @@ index 070838d8e..d12683f59 100644
 +    * @brief Constructor with a HypreParMatrix Operator.
 +    */
 +   MUMPSSolver(const Operator &op);
-
+ 
     /**
      * @brief Set the Operator and perform factorization
 @@ -62,6 +79,7 @@ public:
@@ -1444,7 +1444,7 @@ index 070838d8e..d12683f59 100644
      */
     void Mult(const Vector &x, Vector &y) const;
 +   void ArrayMult(const Array<const Vector *> &X, Array<Vector *> &Y) const;
-
+ 
     /**
      * @brief Transpose Solve y = Op^{-T} x.
 @@ -70,13 +88,15 @@ public:
@@ -1453,7 +1453,7 @@ index 070838d8e..d12683f59 100644
     void MultTranspose(const Vector &x, Vector &y) const;
 +   void ArrayMultTranspose(const Array<const Vector *> &X,
 +                           Array<Vector *> &Y) const;
-
+ 
     /**
      * @brief Set the error print level for MUMPS
      *
@@ -1463,7 +1463,7 @@ index 070838d8e..d12683f59 100644
 +    * @note This method has to be called before SetOperator
      */
     void SetPrintLevel(int print_lvl);
-
+ 
 @@ -88,65 +108,109 @@ public:
      *
      * @param mtype Matrix type
@@ -1472,7 +1472,7 @@ index 070838d8e..d12683f59 100644
 +    * @note This method has to be called before SetOperator
      */
     void SetMatrixSymType(MatType mtype);
-
+ 
 +   /**
 +    * @brief Set the reordering strategy
 +    *
@@ -1509,19 +1509,19 @@ index 070838d8e..d12683f59 100644
 +
     // Destructor
     ~MUMPSSolver();
-
+ 
  private:
 -
     // MPI communicator
     MPI_Comm comm;
-
+ 
     // Number of procs
     int numProcs;
-
+ 
 -   // local mpi id
 +   // MPI rank
     int myid;
-
+ 
 -   // parameter controlling the matrix type
 -   MatType mat_type = MatType::UNSYMMETRIC;
 +   // Parameter controlling the matrix type
@@ -1536,44 +1536,44 @@ index 070838d8e..d12683f59 100644
 +   // Parameter controlling whether or not to reuse the symbolic factorization
 +   // for multiple calls to SetOperator
 +   bool reorder_reuse;
-
+ 
 -   // parameter controlling the printing level
 -   int print_level = 0;
 +#if MFEM_MUMPS_VERSION >= 510
 +   // Parameter controlling the Block Low-Rank (BLR) feature in MUMPS
 +   double blr_tol;
 +#endif
-
+ 
 -   // local row offsets
 +   // Local row offsets
     int row_start;
-
+ 
     // MUMPS object
 -   DMUMPS_STRUC_C *id=nullptr;
 +   DMUMPS_STRUC_C *id;
 +
 +   // Method for initialization
 +   void Init(MPI_Comm comm_);
-
+ 
     // Method for setting MUMPS internal parameters
     void SetParameters();
-
+ 
 -#if MFEM_MUMPS_VERSION >= 530
 +   // Method for configuring storage for distributed/centralized RHS and
 +   // solution
 +   void InitRhsSol(int nrhs) const;
-
+ 
 -   // row offsets array on all procs
 +#if MFEM_MUMPS_VERSION >= 530
 +   // Row offests array on all procs
     Array<int> row_starts;
-
+ 
 -   // row map
 -   int * irhs_loc = nullptr;
 +   // Row maps and storage for distributed RHS and solution
 +   int *irhs_loc, *isol_loc;
 +   mutable double *rhs_loc, *sol_loc;
-
+ 
     // These two methods are needed to distribute the local solution
     // vectors returned by MUMPS to the original MFEM parallel partition
     int GetRowRank(int i, const Array<int> &row_starts_) const;
@@ -1598,22 +1598,22 @@ index 070838d8e..d12683f59 100644
  #endif
 -
  }; // mfem::MUMPSSolver class
-
+ 
  } // namespace mfem
 diff --git a/linalg/strumpack.cpp b/linalg/strumpack.cpp
 index c89ddeb56..efd5a94ee 100644
 --- a/linalg/strumpack.cpp
 +++ b/linalg/strumpack.cpp
 @@ -16,238 +16,469 @@
-
+ 
  #include "strumpack.hpp"
-
+ 
 -using namespace std;
 -using namespace strumpack;
 -
  namespace mfem
  {
-
+ 
  STRUMPACKRowLocMatrix::STRUMPACKRowLocMatrix(MPI_Comm comm,
 -                                             int num_loc_rows, int first_loc_row,
 -                                             int glob_nrows, int glob_ncols,
@@ -1629,7 +1629,7 @@ index c89ddeb56..efd5a94ee 100644
     // Set mfem::Operator member data
     height = num_loc_rows;
     width  = num_loc_rows;
-
+ 
 -   // Allocate STRUMPACK's CSRMatrixMPI
 -   int nprocs, rank;
 -   MPI_Comm_rank(comm_, &rank);
@@ -1661,7 +1661,7 @@ index c89ddeb56..efd5a94ee 100644
 +      comm, sym_sparse);
 +#endif
  }
-
+ 
 -STRUMPACKRowLocMatrix::STRUMPACKRowLocMatrix(const HypreParMatrix & hypParMat)
 -   : comm_(hypParMat.GetComm()),
 -     A_(NULL)
@@ -1674,12 +1674,12 @@ index c89ddeb56..efd5a94ee 100644
 +   const HypreParMatrix *APtr = dynamic_cast<const HypreParMatrix *>(&op);
 +   MFEM_VERIFY(APtr, "Not a compatible matrix type");
 +   MPI_Comm comm = APtr->GetComm();
-
+ 
 -   MFEM_ASSERT(parcsr_op != NULL,"STRUMPACK: const_cast failed in SetOperator");
 +   // Set mfem::Operator member data
 +   height = op.Height();
 +   width  = op.Width();
-
+ 
 -   // Create the CSRMatrixMPI A_ by borrowing the internal data from a
 -   // hypre_CSRMatrix.
 -   hypParMat.HostRead();
@@ -1707,12 +1707,12 @@ index c89ddeb56..efd5a94ee 100644
 +   HYPRE_Int       *Jptr   = csr_op->j;
  #endif
 +   double          *data   = csr_op->data;
-
+ 
 -   height = csr_op->num_rows;
 -   width  = csr_op->num_rows;
 +   HYPRE_BigInt fst_row = parcsr_op->first_row_index;
 +   HYPRE_Int    m_loc   = csr_op->num_rows;
-
+ 
 -   int nprocs, rank;
 -   MPI_Comm_rank(comm_, &rank);
 -   MPI_Comm_size(comm_, &nprocs);
@@ -1743,12 +1743,12 @@ index c89ddeb56..efd5a94ee 100644
 +      (HYPRE_BigInt)m_loc, II.GetData(), Jptr, data, dist.GetData(),
 +      comm, sym_sparse);
 +#endif
-
+ 
 -   // Everything has been copied or abducted so delete the structure
 +   // Everything has been copied so delete the structure
     hypre_CSRMatrixDestroy(csr_op);
  }
-
+ 
  STRUMPACKRowLocMatrix::~STRUMPACKRowLocMatrix()
  {
 -   // Delete the struct
@@ -1767,7 +1767,7 @@ index c89ddeb56..efd5a94ee 100644
 +{
 +   solver_ = new STRUMPACKSolverType(comm, argc, argv, false);
  }
-
+ 
 -STRUMPACKSolver::STRUMPACKSolver( int argc, char* argv[], MPI_Comm comm )
 -   : comm_(comm),
 -     APtr_(NULL),
@@ -1785,7 +1785,7 @@ index c89ddeb56..efd5a94ee 100644
 +   solver_ = new STRUMPACKSolverType(A.GetComm(), argc, argv, false);
 +   SetOperator(A);
  }
-
+ 
 -STRUMPACKSolver::STRUMPACKSolver( STRUMPACKRowLocMatrix & A )
 -   : comm_(A.GetComm()),
 -     APtr_(&A),
@@ -1798,7 +1798,7 @@ index c89ddeb56..efd5a94ee 100644
 -   width  = A.Width();
 +   delete solver_;
 +}
-
+ 
 -   this->Init(0, NULL);
 +template <typename STRUMPACKSolverType>
 +void STRUMPACKSolverBase<STRUMPACKSolverType>::
@@ -1806,7 +1806,7 @@ index c89ddeb56..efd5a94ee 100644
 +{
 +   solver_->options().set_from_command_line();
  }
-
+ 
 -STRUMPACKSolver::~STRUMPACKSolver()
 +template <typename STRUMPACKSolverType>
 +void STRUMPACKSolverBase<STRUMPACKSolverType>::
@@ -1815,7 +1815,7 @@ index c89ddeb56..efd5a94ee 100644
 -   if ( solver_ != NULL ) { delete solver_; }
 +   factor_verbose_ = print_stat;
  }
-
+ 
 -void STRUMPACKSolver::Init( int argc, char* argv[] )
 +template <typename STRUMPACKSolverType>
 +void STRUMPACKSolverBase<STRUMPACKSolverType>::
@@ -1825,7 +1825,7 @@ index c89ddeb56..efd5a94ee 100644
 -   MPI_Comm_rank(comm_, &myid_);
 +   solve_verbose_ = print_stat;
 +}
-
+ 
 -   factor_verbose_ = false;
 -   solve_verbose_ = false;
 +template <typename STRUMPACKSolverType>
@@ -1834,7 +1834,7 @@ index c89ddeb56..efd5a94ee 100644
 +{
 +   solver_->options().set_rel_tol(rtol);
 +}
-
+ 
 -   solver_ = new StrumpackSparseSolverMPIDist<double,int>(comm_, argc, argv,
 -                                                          false);
 +template <typename STRUMPACKSolverType>
@@ -1843,7 +1843,7 @@ index c89ddeb56..efd5a94ee 100644
 +{
 +   solver_->options().set_abs_tol(atol);
  }
-
+ 
 -void STRUMPACKSolver::SetFromCommandLine( )
 +template <typename STRUMPACKSolverType>
 +void STRUMPACKSolverBase<STRUMPACKSolverType>
@@ -1852,7 +1852,7 @@ index c89ddeb56..efd5a94ee 100644
 -   solver_->options().set_from_command_line( );
 +   solver_->options().set_maxit(max_it);
  }
-
+ 
 -void STRUMPACKSolver::SetPrintFactorStatistics( bool print_stat )
 +template <typename STRUMPACKSolverType>
 +void STRUMPACKSolverBase<STRUMPACKSolverType>
@@ -1861,7 +1861,7 @@ index c89ddeb56..efd5a94ee 100644
 -   factor_verbose_ = print_stat;
 +   reorder_reuse_ = reuse;
  }
-
+ 
 -void STRUMPACKSolver::SetPrintSolveStatistics( bool print_stat )
 +template <typename STRUMPACKSolverType>
 +void STRUMPACKSolverBase<STRUMPACKSolverType>
@@ -1870,7 +1870,7 @@ index c89ddeb56..efd5a94ee 100644
 -   solve_verbose_ = print_stat;
 +   solver_->options().enable_gpu();
  }
-
+ 
 -void STRUMPACKSolver::SetKrylovSolver( strumpack::KrylovSolver method )
 +template <typename STRUMPACKSolverType>
 +void STRUMPACKSolverBase<STRUMPACKSolverType>
@@ -1879,7 +1879,7 @@ index c89ddeb56..efd5a94ee 100644
 -   solver_->options().set_Krylov_solver( method );
 +   solver_->options().disable_gpu();
  }
-
+ 
 -void STRUMPACKSolver::SetReorderingStrategy( strumpack::ReorderingStrategy
 -                                             method )
 +template <typename STRUMPACKSolverType>
@@ -1889,7 +1889,7 @@ index c89ddeb56..efd5a94ee 100644
 -   solver_->options().set_reordering_method( method );
 +   solver_->options().set_Krylov_solver(method);
  }
-
+ 
 -void STRUMPACKSolver::DisableMatching( )
 +template <typename STRUMPACKSolverType>
 +void STRUMPACKSolverBase<STRUMPACKSolverType>::
@@ -1916,7 +1916,7 @@ index c89ddeb56..efd5a94ee 100644
 +   solver_->options().set_mc64job(job);
  }
 +#endif
-
+ 
 -void STRUMPACKSolver::EnableMatching( )
 -{
  #if STRUMPACK_VERSION_MAJOR >= 3
@@ -1950,7 +1950,7 @@ index c89ddeb56..efd5a94ee 100644
 +   }
  #endif
  }
-
+ 
 -#if STRUMPACK_VERSION_MAJOR >= 3
 -void STRUMPACKSolver::EnableParallelMatching( )
 +template <typename STRUMPACKSolverType>
@@ -1967,7 +1967,7 @@ index c89ddeb56..efd5a94ee 100644
 +   solver_->options().HSS_options().set_rel_tol(rtol);
  #endif
 +}
-
+ 
 -void STRUMPACKSolver::SetRelTol( double rtol )
 +template <typename STRUMPACKSolverType>
 +void STRUMPACKSolverBase<STRUMPACKSolverType>::
@@ -1981,7 +1981,7 @@ index c89ddeb56..efd5a94ee 100644
 +   solver_->options().HSS_options().set_abs_tol(atol);
 +#endif
  }
-
+ 
 -void STRUMPACKSolver::SetAbsTol( double atol )
 +#if STRUMPACK_VERSION_MAJOR >= 5
 +template <typename STRUMPACKSolverType>
@@ -1991,7 +1991,7 @@ index c89ddeb56..efd5a94ee 100644
 -   solver_->options().set_abs_tol( atol );
 +   solver_->options().set_lossy_precision(precision);
  }
-
+ 
 +template <typename STRUMPACKSolverType>
 +void STRUMPACKSolverBase<STRUMPACKSolverType>::
 +SetCompressionButterflyLevels(int levels)
@@ -2000,7 +2000,7 @@ index c89ddeb56..efd5a94ee 100644
 +}
 +#endif
 +#endif
-
+ 
 -void STRUMPACKSolver::Mult( const Vector & x, Vector & y ) const
 +template <typename STRUMPACKSolverType>
 +void STRUMPACKSolverBase<STRUMPACKSolverType>::
@@ -2018,13 +2018,13 @@ index c89ddeb56..efd5a94ee 100644
 +   APtr_ = dynamic_cast<const STRUMPACKRowLocMatrix *>(&op);
 +   MFEM_VERIFY(APtr_,
 +               "STRUMPACK: Operator is not a STRUMPACKRowLocMatrix!");
-
+ 
 -   double*  yPtr = y.HostWrite();
 -   const double*  xPtr = x.HostRead();
 +   // Set mfem::Operator member data
 +   height = op.Height();
 +   width  = op.Width();
-
+ 
 -   solver_->options().set_verbose( factor_verbose_ );
 -   ReturnCode ret = solver_->factor();
 -   switch (ret)
@@ -2054,7 +2054,7 @@ index c89ddeb56..efd5a94ee 100644
 -   solver_->options().set_verbose( solve_verbose_ );
 -   solver_->solve(xPtr, yPtr);
 +}
-
+ 
 +template <typename STRUMPACKSolverType>
 +void STRUMPACKSolverBase<STRUMPACKSolverType>::
 +FactorInternal() const
@@ -2069,7 +2069,7 @@ index c89ddeb56..efd5a94ee 100644
 +      MFEM_ABORT("STRUMPACK: Factor failed with return code " << ret << "!");
 +   }
  }
-
+ 
 -void STRUMPACKSolver::SetOperator( const Operator & op )
 +template <typename STRUMPACKSolverType>
 +void STRUMPACKSolverBase<STRUMPACKSolverType>::
@@ -2097,7 +2097,7 @@ index c89ddeb56..efd5a94ee 100644
 +      MFEM_ABORT("STRUMPACK: Solve failed with return code " << ret << "!");
     }
 +}
-
+ 
 -   solver_->set_matrix( *(APtr_->getA()) );
 +template <typename STRUMPACKSolverType>
 +void STRUMPACKSolverBase<STRUMPACKSolverType>::
@@ -2112,7 +2112,7 @@ index c89ddeb56..efd5a94ee 100644
 +      Mult(*X[0], *Y[0]);
 +      return;
 +   }
-
+ 
 -   // Set mfem::Operator member data
 -   height = op.Height();
 -   width  = op.Width();
@@ -2142,7 +2142,7 @@ index c89ddeb56..efd5a94ee 100644
 +   {
 +      MFEM_ABORT("STRUMPACK: Solve failed with return code " << ret << "!");
 +   }
-
+ 
 +   for (int i = 0; i < nrhs_; i++)
 +   {
 +      MFEM_ASSERT(Y[i] && Y[i]->Size() == Width(),
@@ -2151,7 +2151,7 @@ index c89ddeb56..efd5a94ee 100644
 +      *Y[i] = s;
 +   }
  }
-
+ 
 +STRUMPACKSolver::
 +STRUMPACKSolver(MPI_Comm comm)
 +   : STRUMPACKSolverBase<strumpack::
@@ -2210,14 +2210,14 @@ index c89ddeb56..efd5a94ee 100644
 +#endif
 +
  } // mfem namespace
-
+ 
  #endif // MFEM_USE_MPI
 diff --git a/linalg/strumpack.hpp b/linalg/strumpack.hpp
 index 3634706ba..b35e90b39 100644
 --- a/linalg/strumpack.hpp
 +++ b/linalg/strumpack.hpp
 @@ -16,12 +16,14 @@
-
+ 
  #ifdef MFEM_USE_STRUMPACK
  #ifdef MFEM_USE_MPI
 +
@@ -2225,11 +2225,11 @@ index 3634706ba..b35e90b39 100644
  #include "hypre.hpp"
 -
  #include <mpi.h>
-
+ 
 +// STRUMPACK headers
  #include "StrumpackSparseSolverMPIDist.hpp"
 +#include "StrumpackSparseSolverMixedPrecisionMPIDist.hpp"
-
+ 
  namespace mfem
  {
 @@ -34,63 +36,82 @@ public:
@@ -2243,14 +2243,14 @@ index 3634706ba..b35e90b39 100644
 +                         HYPRE_BigInt glob_nrows, HYPRE_BigInt glob_ncols,
 +                         int *I, HYPRE_BigInt *J, double *data,
 +                         bool sym_sparse = false);
-
+ 
     /** Creates a copy of the parallel matrix hypParMat in STRUMPACK's RowLoc
         format. All data is copied so the original matrix may be deleted. */
 -   STRUMPACKRowLocMatrix(const HypreParMatrix & hypParMat);
 +   STRUMPACKRowLocMatrix(const Operator &op, bool sym_sparse = false);
-
+ 
     ~STRUMPACKRowLocMatrix();
-
+ 
     void Mult(const Vector &x, Vector &y) const
     {
 -      mfem_error("STRUMPACKRowLocMatrix::Mult(...)\n"
@@ -2258,13 +2258,13 @@ index 3634706ba..b35e90b39 100644
 +      MFEM_ABORT("STRUMPACKRowLocMatrix::Mult: Matrix vector products are not "
 +                 "supported!");
     }
-
+ 
 -   MPI_Comm GetComm() const { return comm_; }
 +   MPI_Comm GetComm() const { return A_->comm(); }
-
+ 
 -   strumpack::CSRMatrixMPI<double,int>* getA() const { return A_; }
 +   strumpack::CSRMatrixMPI<double, HYPRE_BigInt> *GetA() const { return A_; }
-
+ 
  private:
 -   MPI_Comm   comm_;
 -   strumpack::CSRMatrixMPI<double,int>* A_;
@@ -2272,9 +2272,9 @@ index 3634706ba..b35e90b39 100644
 -}; // mfem::STRUMPACKRowLocMatrix
 +   strumpack::CSRMatrixMPI<double, HYPRE_BigInt> *A_;
 +};
-
+ 
  /** The MFEM STRUMPACK Direct Solver class.
-
+ 
      The mfem::STRUMPACKSolver class uses the STRUMPACK library to perform LU
      factorization of a parallel sparse matrix. The solver is capable of handling
 -    double precision types. See http://portal.nersc.gov/project/sparse/strumpack
@@ -2291,26 +2291,26 @@ index 3634706ba..b35e90b39 100644
 +protected:
 +   // Constructor with MPI_Comm parameter and command line arguments.
 +   STRUMPACKSolverBase(MPI_Comm comm, int argc, char *argv[]);
-
+ 
 -   // Constructor with STRUMPACK Matrix Object.
 -   STRUMPACKSolver( STRUMPACKRowLocMatrix & A);
 +   // Constructor with STRUMPACK matrix object and command line arguments.
 +   STRUMPACKSolverBase(STRUMPACKRowLocMatrix &A, int argc, char *argv[]);
-
+ 
 +public:
     // Default destructor.
 -   ~STRUMPACKSolver( void );
 +   virtual ~STRUMPACKSolverBase();
-
+ 
     // Factor and solve the linear system y = Op^{-1} x.
 -   void Mult( const Vector & x, Vector & y ) const;
 +   void Mult(const Vector &x, Vector &y) const;
 +   void ArrayMult(const Array<const Vector *> &X, Array<Vector *> &Y) const;
-
+ 
     // Set the operator.
 -   void SetOperator( const Operator & op );
 +   void SetOperator(const Operator &op);
-
+ 
     // Set various solver options. Refer to STRUMPACK documentation for
     // details.
 -   void SetFromCommandLine( );
@@ -2339,7 +2339,7 @@ index 3634706ba..b35e90b39 100644
 +   void EnableGPU();
 +   void DisableGPU();
 +#endif
-
+ 
     /**
      * STRUMPACK is an (approximate) direct solver. It can be used as a direct
 @@ -100,70 +121,157 @@ public:
@@ -2370,7 +2370,7 @@ index 3634706ba..b35e90b39 100644
      */
 -   void SetKrylovSolver( strumpack::KrylovSolver method );
 +   void SetKrylovSolver(strumpack::KrylovSolver method);
-
+ 
     /**
      * Supported reorderings are:
 -    *    METIS, PARMETIS, SCOTCH, PTSCOTCH, RCM
@@ -2390,7 +2390,7 @@ index 3634706ba..b35e90b39 100644
      */
 -   void SetReorderingStrategy( strumpack::ReorderingStrategy method );
 +   void SetReorderingStrategy(strumpack::ReorderingStrategy method);
-
+ 
     /**
 -    * Disable static pivoting for stability. The static pivoting in strumpack
 +    * Configure static pivoting for stability. The static pivoting in STRUMPACK
@@ -2424,7 +2424,7 @@ index 3634706ba..b35e90b39 100644
 +#else
 +   void SetMatching(strumpack::MC64Job job);
 +#endif
-
+ 
  #if STRUMPACK_VERSION_MAJOR >= 3
     /**
 -    * Use the AWPM (approximate weight perfect matching) algorithm from the
@@ -2462,12 +2462,12 @@ index 3634706ba..b35e90b39 100644
 +   void SetCompressionButterflyLevels(int levels);
 +#endif
  #endif
-
+ 
  private:
 -   void Init( int argc, char* argv[] );
 +   // Helper method for calling the STRUMPACK factoriation routine.
 +   void FactorInternal() const;
-
+ 
  protected:
 -
 -   MPI_Comm      comm_;
@@ -2475,7 +2475,7 @@ index 3634706ba..b35e90b39 100644
 -   int           myid_;
 +   const STRUMPACKRowLocMatrix *APtr_;
 +   STRUMPACKSolverType         *solver_;
-
+ 
     bool factor_verbose_;
     bool solve_verbose_;
 +   bool reorder_reuse_;
@@ -2500,13 +2500,13 @@ index 3634706ba..b35e90b39 100644
 +
 +   // Constructor with STRUMPACK matrix object and command line arguments.
 +   STRUMPACKSolver(STRUMPACKRowLocMatrix &A, int argc, char *argv[]);
-
+ 
 -   const STRUMPACKRowLocMatrix * APtr_;
 -   strumpack::StrumpackSparseSolverMPIDist<double,int> * solver_;
 +   // Destructor.
 +   ~STRUMPACKSolver() {}
 +};
-
+ 
 -}; // mfem::STRUMPACKSolver class
 +#if STRUMPACK_VERSION_MAJOR >= 6 && STRUMPACK_VERSION_MINOR >= 3 && STRUMPACK_VERSION_PATCH > 1
 +class STRUMPACKMixedPrecisionSolver :
@@ -2531,10 +2531,10 @@ index 3634706ba..b35e90b39 100644
 +   ~STRUMPACKMixedPrecisionSolver() {}
 +};
 +#endif
-
+ 
 -} // mfem namespace
 +} // namespace mfem
-
+ 
  #endif // MFEM_USE_MPI
  #endif // MFEM_USE_STRUMPACK
 diff --git a/linalg/superlu.cpp b/linalg/superlu.cpp
@@ -2542,14 +2542,14 @@ index fdf6b842e..d6a82d286 100644
 --- a/linalg/superlu.cpp
 +++ b/linalg/superlu.cpp
 @@ -16,48 +16,50 @@
-
+ 
  #include "superlu.hpp"
-
+ 
 -// SuperLU headers
 -#include "superlu_defs.h"
 +// SuperLU header
  #include "superlu_ddefs.h"
-
+ 
 -#if XSDK_INDEX_SIZE == 64
 -#error "SuperLUDist has been built with 64bit integers. This is not supported"
 +#if XSDK_INDEX_SIZE == 64 && !(defined(HYPRE_BIGINT) || defined(HYPRE_MIXEDINT))
@@ -2562,7 +2562,7 @@ index fdf6b842e..d6a82d286 100644
 +#if XSDK_INDEX_SIZE == 32 && (defined(HYPRE_BIGINT) || defined(HYPRE_MIXEDINT))
 +#error "Mismatch between HYPRE (64bit) and SuperLU (32bit) integer types"
  #endif
-
+ 
 -#if SUPERLU_DIST_MAJOR_VERSION > 6 ||                                   \
 -  (SUPERLU_DIST_MAJOR_VERSION == 6 && SUPERLU_DIST_MINOR_VERSION > 2)
 +#if SUPERLU_DIST_MAJOR_VERSION > 6 || \
@@ -2580,14 +2580,14 @@ index fdf6b842e..d6a82d286 100644
  #define LUstructFree dLUstructFree
  #define LUstructInit dLUstructInit
  #endif
-
+ 
 +#if SUPERLU_DIST_MAJOR_VERSION > 7 || \
 +   (SUPERLU_DIST_MAJOR_VERSION == 7 && SUPERLU_DIST_MINOR_VERSION >= 2)
 +#define DeAllocLlu_3d dDeAllocLlu_3d
 +#define DeAllocGlu_3d dDeAllocGlu_3d
 +#define Destroy_A3d_gathered_on_2d dDestroy_A3d_gathered_on_2d
 +#endif
-
+ 
 -using namespace std;
 -
 -namespace mfem
@@ -2603,7 +2603,7 @@ index fdf6b842e..d6a82d286 100644
     unsigned short len   = sizeof(int); len <<= 2;
 -   unsigned short shift = (unsigned short)((len<<1) - 2);
 +   unsigned short shift = (unsigned short)((len << 1) - 2);
-
+ 
 -   for (int i=0; i<len; i++)
 +   for (int i = 0; i < len; i++)
     {
@@ -2618,7 +2618,7 @@ index fdf6b842e..d6a82d286 100644
 @@ -72,546 +74,692 @@ unsigned int superlu_internal::sqrti( const unsigned int & a )
     return (root >> 1);
  }
-
+ 
 +int GetGridRows(MPI_Comm comm, int npdep)
 +{
 +   int np;
@@ -2666,7 +2666,7 @@ index fdf6b842e..d6a82d286 100644
     // Set mfem::Operator member data
     height = num_loc_rows;
     width  = num_loc_rows;
-
+ 
     // Allocate SuperLU's SuperMatrix struct
 -   rowLocPtr_      = new SuperMatrix;
 -   SuperMatrix * A = (SuperMatrix*)rowLocPtr_;
@@ -2675,7 +2675,7 @@ index fdf6b842e..d6a82d286 100644
 +   rowLocPtr_     = new SuperMatrix;
 +   SuperMatrix *A = (SuperMatrix *)rowLocPtr_;
 +   A->Store       = NULL;
-
+ 
 -   int m       = glob_nrows;
 -   int n       = glob_ncols;
 -   int nnz_loc = I[num_loc_rows];
@@ -2686,14 +2686,14 @@ index fdf6b842e..d6a82d286 100644
 +   int_t nnz_loc = I[num_loc_rows];
 +   int_t m_loc   = num_loc_rows;
 +   int_t fst_row = first_loc_row;
-
+ 
 -   double * nzval  = NULL;
 -   int    * colind = NULL;
 -   int    * rowptr = NULL;
 +   double *nzval  = NULL;
 +   int_t  *colind = NULL;
 +   int_t  *rowptr = NULL;
-
+ 
 -   if ( !(nzval  = doubleMalloc_dist(nnz_loc)) )
 +   if (!(nzval = doubleMalloc_dist(nnz_loc)))
     {
@@ -2705,7 +2705,7 @@ index fdf6b842e..d6a82d286 100644
     {
        nzval[i] = data[i];
     }
-
+ 
 -   if ( !(colind = intMalloc_dist(nnz_loc)) )
 +   if (!(colind = intMalloc_dist(nnz_loc)))
     {
@@ -2717,7 +2717,7 @@ index fdf6b842e..d6a82d286 100644
     {
        colind[i] = J[i];
     }
-
+ 
 -   if ( !(rowptr = intMalloc_dist(m_loc+1)) )
 +   if (!(rowptr = intMalloc_dist(m_loc+1)))
     {
@@ -2729,7 +2729,7 @@ index fdf6b842e..d6a82d286 100644
     {
        rowptr[i] = I[i];
     }
-
+ 
 -   // Assign he matrix data to SuperLU's SuperMatrix structure
 +   // Assign the matrix data to SuperLU's SuperMatrix structure
     dCreate_CompRowLoc_Matrix_dist(A, m, n, nnz_loc, m_loc, fst_row,
@@ -2740,7 +2740,7 @@ index fdf6b842e..d6a82d286 100644
 +   num_global_rows_ = m;
 +   num_global_cols_ = n;
  }
-
+ 
 -SuperLURowLocMatrix::SuperLURowLocMatrix( const HypreParMatrix & hypParMat )
 -   : comm_(hypParMat.GetComm()),
 -     rowLocPtr_(NULL)
@@ -2753,20 +2753,20 @@ index fdf6b842e..d6a82d286 100644
 +   const HypreParMatrix *APtr = dynamic_cast<const HypreParMatrix *>(&op);
 +   MFEM_VERIFY(APtr, "Not a compatible matrix type");
 +   comm_ = APtr->GetComm();
-
+ 
 -   // First cast the parameter to a hypre_ParCSRMatrix
 -   hypre_ParCSRMatrix * parcsr_op =
 -      (hypre_ParCSRMatrix *)const_cast<HypreParMatrix&>(hypParMat);
 +   // Set mfem::Operator member data
 +   height = op.Height();
 +   width  = op.Width();
-
+ 
 -   MFEM_ASSERT(parcsr_op != NULL,"SuperLU: const_cast failed in SetOperator");
 +   // Allocate SuperLU's SuperMatrix struct
 +   rowLocPtr_     = new SuperMatrix;
 +   SuperMatrix *A = (SuperMatrix *)rowLocPtr_;
 +   A->Store       = NULL;
-
+ 
 -   // Create the SuperMatrix A by borrowing the internal data from a
 -   // hypre_CSRMatrix.
 -   hypParMat.HostRead();
@@ -2798,7 +2798,7 @@ index fdf6b842e..d6a82d286 100644
 +   int_t fst_row = parcsr_op->first_row_index;
 +   int_t nnz_loc = csr_op->num_nonzeros;
 +   int_t m_loc   = csr_op->num_rows;
-
+ 
 -   int m         = parcsr_op->global_num_rows;
 -   int n         = parcsr_op->global_num_cols;
 -   int fst_row   = parcsr_op->first_row_index;
@@ -2810,7 +2810,7 @@ index fdf6b842e..d6a82d286 100644
 +   double *nzval  = csr_op->data;
 +   int_t  *colind = NULL;
 +   int_t  *rowptr = NULL;
-
+ 
 -   double * nzval  = csr_op->data;
 -   int    * colind = csr_op->j;
 -   int    * rowptr = NULL;
@@ -2827,7 +2827,7 @@ index fdf6b842e..d6a82d286 100644
 +#else
 +   colind = Jptr;
 +#endif
-
+ 
     // The "i" array cannot be stolen from the hypre_CSRMatrix so we'll copy it
 -   if ( !(rowptr = intMalloc_dist(m_loc+1)) )
 +   if (!(rowptr = intMalloc_dist(m_loc+1)))
@@ -2841,7 +2841,7 @@ index fdf6b842e..d6a82d286 100644
 -      rowptr[i] = (csr_op->i)[i];
 +      rowptr[i] = (int_t)Iptr[i];  // Promotion for HYPRE_MIXEDINT
     }
-
+ 
 -   // Everything has been copied or abducted so delete the structure
 -   hypre_CSRMatrixDestroy(csr_op);
 -
@@ -2849,7 +2849,7 @@ index fdf6b842e..d6a82d286 100644
     dCreate_CompRowLoc_Matrix_dist(A, m, n, nnz_loc, m_loc, fst_row,
                                    nzval, colind, rowptr,
                                    SLU_NR_loc, SLU_D, SLU_GE);
-
+ 
 -   // Save global number of columns (width) of the matrix
 -   num_global_cols = n;
 +   // SuperLU will free the passed CSR data arrays
@@ -2863,7 +2863,7 @@ index fdf6b842e..d6a82d286 100644
 +   num_global_rows_ = m;
 +   num_global_cols_ = n;
  }
-
+ 
  SuperLURowLocMatrix::~SuperLURowLocMatrix()
  {
 -   SuperMatrix * A = (SuperMatrix*)rowLocPtr_;
@@ -2876,7 +2876,7 @@ index fdf6b842e..d6a82d286 100644
 -   if ( A != NULL ) { delete A; }
 +   delete A;
  }
-
+ 
 -SuperLUSolver::SuperLUSolver( MPI_Comm comm )
 -   : comm_(comm),
 +SuperLUSolver::SuperLUSolver(MPI_Comm comm, int npdep)
@@ -2903,7 +2903,7 @@ index fdf6b842e..d6a82d286 100644
 -   this->Init();
 +   Init(comm);
  }
-
+ 
 -SuperLUSolver::SuperLUSolver( SuperLURowLocMatrix & A )
 -   : comm_(A.GetComm()),
 -     APtr_(&A),
@@ -2930,7 +2930,7 @@ index fdf6b842e..d6a82d286 100644
 -   this->Init();
 +   SetOperator(A);
  }
-
+ 
  SuperLUSolver::~SuperLUSolver()
  {
 -   superlu_dist_options_t * options = (superlu_dist_options_t*)optionsPtr_;
@@ -2940,13 +2940,13 @@ index fdf6b842e..d6a82d286 100644
 -   SOLVEstruct_t     * SOLVEstruct  = (SOLVEstruct_t*)SOLVEstructPtr_;
 -   gridinfo_t        * grid         = (gridinfo_t*)gridPtr_;
 +   superlu_dist_options_t *options = (superlu_dist_options_t *)optionsPtr_;
-
+ 
 -   SUPERLU_FREE(berr_);
 -   PStatFree(stat);
 +   ScalePermstruct_t *ScalePermstruct = (ScalePermstruct_t *)ScalePermstructPtr_;
 +   LUstruct_t        *LUstruct        = (LUstruct_t *)LUstructPtr_;
 +   SOLVEstruct_t     *SOLVEstruct     = (SOLVEstruct_t *)SOLVEstructPtr_;
-
+ 
 -   if ( LUStructInitialized_ )
 +#if SUPERLU_DIST_MAJOR_VERSION > 7 || \
 +   (SUPERLU_DIST_MAJOR_VERSION == 7 && SUPERLU_DIST_MINOR_VERSION >= 2)
@@ -2957,7 +2957,7 @@ index fdf6b842e..d6a82d286 100644
 -      LUstructFree(LUstruct);
 -   }
 +      gridinfo3d_t *grid3d = (gridinfo3d_t *)gridPtr_;
-
+ 
 -   if ( options->SolveInitialized )
 +      if (APtr_)
 +      {
@@ -2999,7 +2999,7 @@ index fdf6b842e..d6a82d286 100644
 +      superlu_gridexit(grid);
 +      delete grid;
     }
-
+ 
 -   if (     options != NULL ) { delete options; }
 -   if (        stat != NULL ) { delete stat; }
 -   if (    SPstruct != NULL ) { delete SPstruct; }
@@ -3012,7 +3012,7 @@ index fdf6b842e..d6a82d286 100644
 +   delete LUstruct;
 +   delete SOLVEstruct;
  }
-
+ 
 -void SuperLUSolver::Init()
 +void SuperLUSolver::Init(MPI_Comm comm)
  {
@@ -3028,7 +3028,7 @@ index fdf6b842e..d6a82d286 100644
 -
 -   superlu_dist_options_t * options = (superlu_dist_options_t*)optionsPtr_;
 -   SuperLUStat_t          *    stat = (SuperLUStat_t*)statPtr_;
-
+ 
 -   if ( !(berr_ = doubleMalloc_dist(nrhs_)) )
 +   // Initialize process grid
 +#if SUPERLU_DIST_MAJOR_VERSION > 7 || \
@@ -3048,7 +3048,7 @@ index fdf6b842e..d6a82d286 100644
 +                  "SuperLU_DIST version >= 7.2.0!");
 +      superlu_gridinit(comm, nprow_, npcol_, (gridinfo_t *)gridPtr_);
     }
-
+ 
 -   // Set default options
 +   // Set default options:
 +   //    options.Fact = DOFACT;
@@ -3084,7 +3084,7 @@ index fdf6b842e..d6a82d286 100644
 -   PStatInit(stat); // Initialize the statistics variables.
 +#endif
  }
-
+ 
 -void SuperLUSolver::SetPrintStatistics( bool print_stat )
 +void SuperLUSolver::SetPrintStatistics(bool print_stat)
  {
@@ -3096,7 +3096,7 @@ index fdf6b842e..d6a82d286 100644
 +   yes_no_t opt = print_stat ? YES : NO;
     options->PrintStat = opt;
  }
-
+ 
 -void SuperLUSolver::SetEquilibriate( bool equil )
 +void SuperLUSolver::SetEquilibriate(bool equil)
  {
@@ -3108,7 +3108,7 @@ index fdf6b842e..d6a82d286 100644
 +   yes_no_t opt = equil ? YES : NO;
     options->Equil = opt;
  }
-
+ 
 -void SuperLUSolver::SetColumnPermutation( superlu::ColPerm col_perm )
 +void SuperLUSolver::SetColumnPermutation(superlu::ColPerm col_perm)
  {
@@ -3128,7 +3128,7 @@ index fdf6b842e..d6a82d286 100644
 +   }
     options->ColPerm = opt;
  }
-
+ 
 -void SuperLUSolver::SetRowPermutation( superlu::RowPerm row_perm,
 -                                       Array<int> * perm )
 +void SuperLUSolver::SetRowPermutation(superlu::RowPerm row_perm)
@@ -3162,7 +3162,7 @@ index fdf6b842e..d6a82d286 100644
     }
 +   options->RowPerm = opt;
  }
-
+ 
 -void SuperLUSolver::SetTranspose( superlu::Trans trans )
 -{
 -   superlu_dist_options_t * options = (superlu_dist_options_t*)optionsPtr_;
@@ -3182,7 +3182,7 @@ index fdf6b842e..d6a82d286 100644
 -
     options->IterRefine = opt;
  }
-
+ 
 -void SuperLUSolver::SetReplaceTinyPivot( bool rtp )
 +void SuperLUSolver::SetReplaceTinyPivot(bool rtp)
  {
@@ -3194,7 +3194,7 @@ index fdf6b842e..d6a82d286 100644
 +   yes_no_t opt = rtp ? YES : NO;
     options->ReplaceTinyPivot = opt;
  }
-
+ 
 -void SuperLUSolver::SetNumLookAheads( int num_lookaheads )
 +void SuperLUSolver::SetNumLookAheads(int num_lookaheads)
  {
@@ -3203,7 +3203,7 @@ index fdf6b842e..d6a82d286 100644
 +   superlu_dist_options_t *options = (superlu_dist_options_t *)optionsPtr_;
     options->num_lookaheads = num_lookaheads;
  }
-
+ 
 -void SuperLUSolver::SetLookAheadElimTree( bool etree )
 +void SuperLUSolver::SetLookAheadElimTree(bool etree)
  {
@@ -3215,7 +3215,7 @@ index fdf6b842e..d6a82d286 100644
 +   yes_no_t opt = etree ? YES : NO;
     options->lookahead_etree = opt;
  }
-
+ 
 -void SuperLUSolver::SetSymmetricPattern( bool sym )
 +void SuperLUSolver::SetSymmetricPattern(bool sym)
  {
@@ -3227,7 +3227,7 @@ index fdf6b842e..d6a82d286 100644
 +   yes_no_t opt = sym ? YES : NO;
     options->SymPattern = opt;
  }
-
+ 
 -void SuperLUSolver::SetParSymbFact( bool par )
 +void SuperLUSolver::SetParSymbFact(bool par)
  {
@@ -3239,7 +3239,7 @@ index fdf6b842e..d6a82d286 100644
 +   yes_no_t opt = par ? YES : NO;
     options->ParSymbFact = opt;
  }
-
+ 
 -void SuperLUSolver::SetupGrid()
 +void SuperLUSolver::SetFact(superlu::Fact fact)
  {
@@ -3248,7 +3248,7 @@ index fdf6b842e..d6a82d286 100644
 +   fact_t opt = (fact_t)fact;
 +   options->Fact = opt;
 +}
-
+ 
 -   // Make sure the values of nprow and npcol are reasonable
 -   if ( ((nprow_ * npcol_) > numProcs_) || ((nprow_ * npcol_) < 1) )
 -   {
@@ -3265,20 +3265,20 @@ index fdf6b842e..d6a82d286 100644
 +   bool LUStructInitialized = (APtr_ != NULL);
 +   APtr_ = dynamic_cast<const SuperLURowLocMatrix *>(&op);
 +   MFEM_VERIFY(APtr_, "SuperLUSolver::SetOperator: Not a SuperLURowLocMatrix!");
-
+ 
 -      nprow_ = (int)superlu_internal::sqrti((unsigned int)numProcs_);
 -      while (numProcs_ % nprow_ != 0 && nprow_ > 0)
 -      {
 -         nprow_--;
 -      }
 +   superlu_dist_options_t *options = (superlu_dist_options_t *)optionsPtr_;
-
+ 
 -      npcol_ = (int)(numProcs_ / nprow_);
 -      MFEM_ASSERT(nprow_ * npcol_ == numProcs_, "");
 -   }
 +   ScalePermstruct_t *ScalePermstruct = (ScalePermstruct_t *)ScalePermstructPtr_;
 +   LUstruct_t        *LUstruct        = (LUstruct_t *)LUstructPtr_;
-
+ 
 -   superlu_gridinit(comm_, nprow_, npcol_, grid);
 +   gridinfo_t        *grid;
 +#if SUPERLU_DIST_MAJOR_VERSION > 7 || \
@@ -3294,7 +3294,7 @@ index fdf6b842e..d6a82d286 100644
 +   {
 +      grid = (gridinfo_t *)gridPtr_;
 +   }
-
+ 
 -   gridInitialized_ = true;
 -}
 +   // Set mfem::Operator member data
@@ -3303,7 +3303,7 @@ index fdf6b842e..d6a82d286 100644
 +               "SuperLUSolver::SetOperator: Inconsistent new matrix size!");
 +   height = op.Height();
 +   width  = op.Width();
-
+ 
 -void SuperLUSolver::DismantleGrid()
 -{
 -   if ( gridInitialized_ )
@@ -3387,7 +3387,7 @@ index fdf6b842e..d6a82d286 100644
 +      if (options->Fact == FACTORED) { options->Fact = DOFACT; }
 +   }
 +}
-
+ 
 -   gridInitialized_ = false;
 +void SuperLUSolver::Mult(const Vector &x, Vector &y) const
 +{
@@ -3397,7 +3397,7 @@ index fdf6b842e..d6a82d286 100644
 +   Y[0] = &y;
 +   ArrayMult(X, Y);
  }
-
+ 
 -void SuperLUSolver::Mult( const Vector & x, Vector & y ) const
 +void SuperLUSolver::ArrayMult(const Array<const Vector *> &X,
 +                              Array<Vector *> &Y) const
@@ -3447,7 +3447,7 @@ index fdf6b842e..d6a82d286 100644
 -      SPstruct->DiagScale = NOEQUIL;
 +      grid = (gridinfo_t *)gridPtr_;
 +   }
-
+ 
 -      // Transfer ownership of the row permutations if available
 -      if ( perm_r_ != NULL )
 +   // SuperLU overwrites x with y, so copy x to y and pass that to the solve
@@ -3532,7 +3532,7 @@ index fdf6b842e..d6a82d286 100644
 -      LUStructInitialized_ = true;
     }
 +}
-
+ 
 -   // SuperLU overwrites x with y, so copy x to y and pass that to the solve
 -   // routine.
 +void SuperLUSolver::MultTranspose(const Vector &x, Vector &y) const
@@ -3541,14 +3541,14 @@ index fdf6b842e..d6a82d286 100644
 +   superlu_dist_options_t *options = (superlu_dist_options_t *)optionsPtr_;
 +   options->Trans = TRANS;
 +   Mult(x, y);
-
+ 
 -   const double *xPtr = x.HostRead();
 -   y = xPtr;
 -   double * yPtr = y.HostReadWrite();
 +   // Reset the flag
 +   options->Trans = NOTRANS;
 +}
-
+ 
 -   int      info = -1, locSize = y.Size();
 +void SuperLUSolver::ArrayMultTranspose(const Array<const Vector *> &X,
 +                                       Array<Vector *> &Y) const
@@ -3557,14 +3557,14 @@ index fdf6b842e..d6a82d286 100644
 +   superlu_dist_options_t *options = (superlu_dist_options_t *)optionsPtr_;
 +   options->Trans = TRANS;
 +   ArrayMult(X, Y);
-
+ 
 -   // Solve the system
 -   pdgssvx(options, A, SPstruct, yPtr, locSize, nrhs_, grid,
 -           LUstruct, SOLVEstruct, berr_, stat, &info);
 +   // Reset the flag
 +   options->Trans = NOTRANS;
 +}
-
+ 
 -   if ( info != 0 )
 +void SuperLUSolver::HandleError(int info) const
 +{
@@ -3625,7 +3625,7 @@ index fdf6b842e..d6a82d286 100644
        }
     }
  }
-
+ 
 -void SuperLUSolver::SetOperator( const Operator & op )
 -{
 -   // Verify that we have a compatible operator
@@ -3651,7 +3651,7 @@ index fdf6b842e..d6a82d286 100644
 -
 -} // mfem namespace
 +} // namespace mfem
-
+ 
  #endif // MFEM_USE_MPI
  #endif // MFEM_USE_SUPERLU
 diff --git a/linalg/superlu.hpp b/linalg/superlu.hpp
@@ -3659,7 +3659,7 @@ index 921ee4a4e..08dd8cb96 100644
 --- a/linalg/superlu.hpp
 +++ b/linalg/superlu.hpp
 @@ -16,33 +16,30 @@
-
+ 
  #ifdef MFEM_USE_SUPERLU
  #ifdef MFEM_USE_MPI
 +
@@ -3667,10 +3667,10 @@ index 921ee4a4e..08dd8cb96 100644
  #include "hypre.hpp"
 -
  #include <mpi.h>
-
+ 
  namespace mfem
  {
-
+ 
 -namespace superlu_internal
 -{
 -unsigned int sqrti(const unsigned int & a);
@@ -3699,7 +3699,7 @@ index 921ee4a4e..08dd8cb96 100644
 +typedef enum {DOFACT, SamePattern, SamePattern_SameRowPerm, FACTORED} Fact;
 +
 +} // namespace superlu
-
+ 
  class SuperLURowLocMatrix : public Operator
  {
 @@ -52,34 +49,35 @@ public:
@@ -3712,14 +3712,14 @@ index 921ee4a4e..08dd8cb96 100644
 +                       int num_loc_rows, HYPRE_BigInt first_loc_row,
 +                       HYPRE_BigInt glob_nrows, HYPRE_BigInt glob_ncols,
 +                       int *I, HYPRE_BigInt *J, double *data);
-
+ 
     /** Creates a copy of the parallel matrix hypParMat in SuperLU's RowLoc
         format. All data is copied so the original matrix may be deleted. */
 -   SuperLURowLocMatrix(const HypreParMatrix & hypParMat);
 +   SuperLURowLocMatrix(const Operator &op);
-
+ 
     ~SuperLURowLocMatrix();
-
+ 
     void Mult(const Vector &x, Vector &y) const
     {
 -      mfem_error("SuperLURowLocMatrix::Mult(...)\n"
@@ -3727,17 +3727,17 @@ index 921ee4a4e..08dd8cb96 100644
 +      MFEM_ABORT("SuperLURowLocMatrix::Mult: Matrix vector products are not "
 +                 "supported!");
     }
-
+ 
 +   void *InternalData() const { return rowLocPtr_; }
 +
     MPI_Comm GetComm() const { return comm_; }
-
+ 
 -   void * InternalData() const { return rowLocPtr_; }
 +   HYPRE_BigInt GetGlobalNumRows() const { return num_global_rows_; }
-
+ 
 -   HYPRE_BigInt GetGlobalNumColumns() const { return num_global_cols; }
 +   HYPRE_BigInt GetGlobalNumColumns() const { return num_global_cols_; }
-
+ 
  private:
 -   MPI_Comm   comm_;
 -   void     * rowLocPtr_;
@@ -3748,9 +3748,9 @@ index 921ee4a4e..08dd8cb96 100644
 +   void        *rowLocPtr_;
 +   HYPRE_BigInt num_global_rows_, num_global_cols_;
 +};
-
+ 
  /** The MFEM SuperLU Direct Solver class.
-
+ 
 @@ -88,80 +86,75 @@ private:
      double precision types. It is currently maintained by Xiaoye Sherry Li at
      NERSC, see http://crd-legacy.lbl.gov/~xiaoye/SuperLU/.
@@ -3762,16 +3762,16 @@ index 921ee4a4e..08dd8cb96 100644
     // Constructor with MPI_Comm parameter.
 -   SuperLUSolver( MPI_Comm comm );
 +   SuperLUSolver(MPI_Comm comm, int npdep = 1);
-
+ 
 -   // Constructor with SuperLU Matrix Object.
 -   SuperLUSolver( SuperLURowLocMatrix & A);
 +   // Constructor with SuperLU matrix object.
 +   SuperLUSolver(SuperLURowLocMatrix &A, int npdep = 1);
-
+ 
     // Default destructor.
 -   ~SuperLUSolver( void );
 +   ~SuperLUSolver();
-
+ 
 -   // Allocate and deallocate the MPI communicators. This routine is called
 -   // internally by SetOperator().
 -   void SetupGrid();
@@ -3779,7 +3779,7 @@ index 921ee4a4e..08dd8cb96 100644
 -   void DismantleGrid();
 +   // Set the operator.
 +   void SetOperator(const Operator &op);
-
+ 
     // Factor and solve the linear system y = Op^{-1} x.
 -   void Mult( const Vector & x, Vector & y ) const;
 -
@@ -3825,16 +3825,16 @@ index 921ee4a4e..08dd8cb96 100644
 +
 +   // Processor grid for SuperLU_DIST.
 +   const int nprow_, npcol_, npdep_;
-
+ 
  private:
 -   void Init();
 +   // Initialize the solver.
 +   void Init(MPI_Comm comm);
-
+ 
 -protected:
 +   // Handle error message from call to SuperLU solver.
 +   void HandleError(int info) const;
-
+ 
 -   MPI_Comm      comm_;
 -   int           numProcs_;
 -   int           myid_;
@@ -3885,7 +3885,7 @@ index 921ee4a4e..08dd8cb96 100644
 +};
 +
 +} // namespace mfem
-
+ 
  #endif // MFEM_USE_MPI
  #endif // MFEM_USE_SUPERLU
 diff --git a/miniapps/nurbs/nurbs_ex11p.cpp b/miniapps/nurbs/nurbs_ex11p.cpp
@@ -3922,13 +3922,13 @@ index 0a6f993c2..6043e9200 100644
 +#ifdef MFEM_USE_STRUMPACK
 +#define DIRECT_SOLVE_PARALLEL
 +#endif
-
+ 
  #if defined(DIRECT_SOLVE_SERIAL) || defined(DIRECT_SOLVE_PARALLEL)
-
+ 
 @@ -217,17 +220,37 @@ TEST_CASE("direct-parallel", "[Parallel], [CUDA]")
        Vector B, X;
        a.FormLinearSystem(ess_tdof_list, x, b, A, X, B);
-
+ 
 +      Vector B0(X.Size()), B1(X.Size()), X0(X.Size()), X1(X.Size());
 +      B0 = B;
 +      B1 = B;
@@ -3951,7 +3951,7 @@ index 0a6f993c2..6043e9200 100644
           A->Mult(X,Y);
           Y-=B;
           REQUIRE(Y.Norml2() < 1.e-12);
-
+ 
 +         mumps.Mult(BB,XX);
 +
 +         for (int i = 0; i < XX.Size(); i++)
