@@ -49,7 +49,8 @@ private:
   SurfaceCurrentOperator surf_j_op;
 
 public:
-  CurlCurlOperator(const IoData &iodata, std::vector<std::unique_ptr<mfem::ParMesh>> &mesh);
+  CurlCurlOperator(const IoData &iodata,
+                   const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh);
 
   // Returns array marking Dirichlet BC attributes and local subdomain vdofs.
   const auto &GetDbcMarker() const { return dbc_marker; }

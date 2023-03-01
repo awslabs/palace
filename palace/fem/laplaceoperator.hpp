@@ -46,7 +46,8 @@ private:
   std::map<int, mfem::Array<int>> source_attr_lists;
 
 public:
-  LaplaceOperator(const IoData &iodata, std::vector<std::unique_ptr<mfem::ParMesh>> &mesh);
+  LaplaceOperator(const IoData &iodata,
+                  const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh);
 
   // Returns array marking Dirichlet BC attributes and local subdomain vdofs.
   const auto &GetDbcMarker() const { return dbc_marker; }

@@ -10,6 +10,7 @@ target_sources(${TARGET_NAME}
   ${CMAKE_CURRENT_SOURCE_DIR}/curlcurloperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/domainpostoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/farfieldboundaryoperator.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/feutils.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/laplaceoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/lumpedportoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/materialoperator.cpp

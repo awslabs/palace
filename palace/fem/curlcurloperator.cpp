@@ -3,6 +3,8 @@
 
 #include "curlcurloperator.hpp"
 
+#include "fem/feutils.hpp"
+
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
@@ -65,71 +67,14 @@ mfem::Array<int> SetUpBoundaryProperties(const IoData &iodata, const mfem::ParMe
   return dbc_marker;
 }
 
-std::vector<std::unique_ptr<mfem::ND_FECollection>> ConstructFECollections(bool pc_gmg,
-                                                                           int p, int dim)
-{
-  MFEM_VERIFY(p > 0, "Nedelec space order must be positive!");
-  int b1 = mfem::BasisType::GaussLobatto, b2 = mfem::BasisType::GaussLegendre;
-  std::vector<std::unique_ptr<mfem::ND_FECollection>> nd_fecs;
-  if (pc_gmg)
-  {
-    nd_fecs.reserve(p);
-    for (int o = 1; o <= p; o++)
-    {
-      nd_fecs.push_back(std::make_unique<mfem::ND_FECollection>(o, dim, b1, b2));
-    }
-  }
-  else
-  {
-    nd_fecs.reserve(1);
-    nd_fecs.push_back(std::make_unique<mfem::ND_FECollection>(p, dim, b1, b2));
-  }
-  return nd_fecs;
-}
-
-mfem::ParFiniteElementSpaceHierarchy ConstructFiniteElementSpaceHierarchy(
-    std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
-    const std::vector<std::unique_ptr<mfem::ND_FECollection>> &nd_fecs,
-    const mfem::Array<int> &dbc_marker)
-{
-  MFEM_VERIFY(!mesh.empty() && !nd_fecs.empty(),
-              "Empty mesh or FE collection for FE space construction!");
-  auto *nd_fespace = new mfem::ParFiniteElementSpace(mesh[0].get(), nd_fecs[0].get());
-  mfem::ParFiniteElementSpaceHierarchy nd_fespaces(mesh[0].get(), nd_fespace, false, true);
-  // h-refinement
-  for (std::size_t l = 1; l < mesh.size(); l++)
-  {
-    nd_fespace = new mfem::ParFiniteElementSpace(mesh[l].get(), nd_fecs[0].get());
-    auto *P = new ZeroWrapTransferOperator(nd_fespaces.GetFinestFESpace(), *nd_fespace,
-                                           dbc_marker);
-    nd_fespaces.AddLevel(mesh[l].get(), nd_fespace, P, false, true, true);
-  }
-  // p-refinement
-  for (std::size_t l = 1; l < nd_fecs.size(); l++)
-  {
-    nd_fespace = new mfem::ParFiniteElementSpace(mesh.back().get(), nd_fecs[l].get());
-    auto *P = new ZeroWrapTransferOperator(nd_fespaces.GetFinestFESpace(), *nd_fespace,
-                                           dbc_marker);
-    nd_fespaces.AddLevel(mesh.back().get(), nd_fespace, P, false, true, true);
-  }
-  return nd_fespaces;
-}
-
-mfem::ParFiniteElementSpaceHierarchy
-ConstructFiniteElementSpaceHierarchy(mfem::ParMesh &mesh,
-                                     const mfem::ND_FECollection &nd_fec)
-{
-  auto *nd_fespace = new mfem::ParFiniteElementSpace(&mesh, &nd_fec);
-  return mfem::ParFiniteElementSpaceHierarchy(&mesh, nd_fespace, false, true);
-}
-
 }  // namespace
 
 CurlCurlOperator::CurlCurlOperator(const IoData &iodata,
-                                   std::vector<std::unique_ptr<mfem::ParMesh>> &mesh)
+                                   const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh)
   : dbc_marker(SetUpBoundaryProperties(iodata, *mesh.back())), skip_zeros(0),
     pc_gmg(iodata.solver.linear.mat_gmg), print_hdr(true),
-    nd_fecs(ConstructFECollections(pc_gmg, iodata.solver.order, mesh.back()->Dimension())),
+    nd_fecs(ConstructFECollections<mfem::ND_FECollection>(
+        pc_gmg, false, iodata.solver.order, mesh.back()->Dimension())),
     h1_fec(iodata.solver.order, mesh.back()->Dimension()),
     rt_fec(iodata.solver.order - 1, mesh.back()->Dimension()),
     nd_fespaces(pc_gmg

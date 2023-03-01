@@ -97,7 +97,8 @@ private:
   bool GetExcitationVector2Internal(double omega, mfem::Vector &RHSr, mfem::Vector &RHSi);
 
 public:
-  SpaceOperator(const IoData &iodata, std::vector<std::unique_ptr<mfem::ParMesh>> &mesh);
+  SpaceOperator(const IoData &iodata,
+                const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh);
 
   // Returns array marking Dirichlet BC (PEC) attributes and list of local true dofs.
   const mfem::Array<int> &GetDbcMarker() const { return dbc_marker; }
