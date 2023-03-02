@@ -3,14 +3,13 @@
 
 #include "curlcurloperator.hpp"
 
-#include "utils/feutils.hpp"
-
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
 #include "utils/mfemcoefficients.hpp"
 #include "utils/mfemintegrators.hpp"
 #include "utils/mfemoperators.hpp"
+#include "utils/multigrid.hpp"
 #include "utils/prettyprint.hpp"
 
 namespace palace

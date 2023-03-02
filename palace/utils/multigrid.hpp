@@ -1,24 +1,22 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#ifndef PALACE_FE_UTILS_HPP
-#define PALACE_FE_UTILS_HPP
+#ifndef PALACE_MULTIGRID_HPP
+#define PALACE_MULTIGRID_HPP
 
 #include <memory>
 #include <vector>
 #include <mfem.hpp>
+#include "utils/mfemoperators.hpp"
 
-#include "mfemoperators.hpp"
-
-namespace palace
+namespace palace::utils
 {
 
-namespace utils
-{
-// Construct a Finite Element Collection. If pc_pmg is true, construct a
-// p-multigrid collection, in increasing polynomial order. If pc_lor is true,
-// use mfem::BasisTypeIntegratedGLL for Vector Finite Element Collections. p is
-// the polynomial order and dim is the spatial dimension.
+//
+// Methods for constructing hierarchies of finite element spaces for geometric multigrid.
+//
+
+// Construct sequence of FECollection objects.
 template <typename FECollection>
 std::vector<std::unique_ptr<FECollection>> ConstructFECollections(bool pc_pmg, bool pc_lor,
                                                                   int p, int dim)
@@ -26,22 +24,20 @@ std::vector<std::unique_ptr<FECollection>> ConstructFECollections(bool pc_pmg, b
   // If the solver will use a LOR preconditioner, we need to construct with a specific basis
   // type.
   MFEM_VERIFY(p > 0, "Nedelec space order must be positive!");
+  constexpr bool vector_fec = std::is_same<FECollection, mfem::ND_FECollection>::value ||
+                              std::is_same<FECollection, mfem::RT_FECollection>::value;
   int b1 = mfem::BasisType::GaussLobatto, b2 = mfem::BasisType::GaussLegendre;
   if (pc_lor)
   {
     b2 = mfem::BasisType::IntegratedGLL;
   }
   std::vector<std::unique_ptr<FECollection>> fecs;
-
-  constexpr bool is_vector_fec = std::is_same<FECollection, mfem::ND_FECollection>::value ||
-                                 std::is_same<FECollection, mfem::RT_FECollection>::value;
-
   if (pc_pmg)
   {
     fecs.reserve(p);
     for (int o = 1; o <= p; o++)
     {
-      if constexpr (is_vector_fec)
+      if constexpr (vector_fec)
       {
         fecs.push_back(std::make_unique<FECollection>(o, dim, b1, b2));
       }
@@ -54,7 +50,7 @@ std::vector<std::unique_ptr<FECollection>> ConstructFECollections(bool pc_pmg, b
   else
   {
     fecs.reserve(1);
-    if constexpr (is_vector_fec)
+    if constexpr (vector_fec)
     {
       fecs.push_back(std::make_unique<FECollection>(p, dim, b1, b2));
     }
@@ -66,7 +62,7 @@ std::vector<std::unique_ptr<FECollection>> ConstructFECollections(bool pc_pmg, b
   return fecs;
 }
 
-// Construct a Finite Element Space Hierarchy given a sequence of meshes and
+// Construct a heirarchy of finite element spaces given a sequence of meshes and
 // finite element collections. Dirichlet boundary conditions are additionally
 // marked.
 template <typename FECollection>
@@ -98,7 +94,7 @@ mfem::ParFiniteElementSpaceHierarchy ConstructFiniteElementSpaceHierarchy(
   return fespaces;
 }
 
-// Construct a degenerate Finite Element Space Hierarchy given a single mesh and
+// Construct a single-level finite element space hierarchy from a single mesh and
 // finite element collection. Unnecessary to pass the dirichlet boundary
 // conditions as they need not be incorporated in any inter-space projectors.
 template <typename FECollection>
@@ -108,7 +104,7 @@ ConstructFiniteElementSpaceHierarchy(mfem::ParMesh &mesh, const FECollection &fe
   auto *fespace = new mfem::ParFiniteElementSpace(&mesh, &fec);
   return mfem::ParFiniteElementSpaceHierarchy(&mesh, fespace, false, true);
 }
-}  // namespace utils
-}  // namespace palace
 
-#endif  // PALACE_FE_UTILS_HPP
+}  // namespace palace::utils
+
+#endif  // PALACE_MULTIGRID_HPP
