@@ -3,8 +3,8 @@
 
 #include "laplaceoperator.hpp"
 
-#include "fem/feutils.hpp"
 #include "utils/communication.hpp"
+#include "utils/feutils.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
 #include "utils/mfemcoefficients.hpp"
@@ -115,12 +115,13 @@ LaplaceOperator::LaplaceOperator(const IoData &iodata,
                                  const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh)
   : dbc_marker(SetUpBoundaryProperties(iodata, *mesh.back())), skip_zeros(0),
     pc_gmg(iodata.solver.linear.mat_gmg), print_hdr(true),
-    h1_fecs(ConstructFECollections<mfem::H1_FECollection>(
+    h1_fecs(utils::ConstructFECollections<mfem::H1_FECollection>(
         pc_gmg, false, iodata.solver.order, mesh.back()->Dimension())),
     nd_fec(iodata.solver.order, mesh.back()->Dimension()),
-    h1_fespaces(pc_gmg
-                    ? ConstructFiniteElementSpaceHierarchy(mesh, h1_fecs, dbc_marker)
-                    : ConstructFiniteElementSpaceHierarchy(*mesh.back(), *h1_fecs.back())),
+    h1_fespaces(
+        pc_gmg
+            ? utils::ConstructFiniteElementSpaceHierarchy(mesh, h1_fecs, dbc_marker)
+            : utils::ConstructFiniteElementSpaceHierarchy(*mesh.back(), *h1_fecs.back())),
     nd_fespace(mesh.back().get(), &nd_fec), mat_op(iodata, *mesh.back()),
     source_attr_lists(ConstructSources(iodata))
 {

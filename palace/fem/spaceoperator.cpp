@@ -4,9 +4,9 @@
 #include "spaceoperator.hpp"
 
 #include <complex>
-#include "fem/feutils.hpp"
 #include "linalg/petsc.hpp"
 #include "utils/communication.hpp"
+#include "utils/feutils.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
 #include "utils/mfemcoefficients.hpp"
@@ -113,18 +113,18 @@ SpaceOperator::SpaceOperator(const IoData &iodata,
   : dbc_marker(SetUpBoundaryProperties(iodata, *mesh.back())), skip_zeros(0),
     pc_gmg(iodata.solver.linear.mat_gmg), pc_lor(iodata.solver.linear.mat_lor),
     pc_shifted(iodata.solver.linear.mat_shifted), print_hdr(true),
-    nd_fecs(ConstructFECollections<mfem::ND_FECollection>(
+    nd_fecs(utils::ConstructFECollections<mfem::ND_FECollection>(
         pc_gmg, pc_lor, iodata.solver.order, mesh.back()->Dimension())),
-    h1_fecs(ConstructFECollections<mfem::H1_FECollection>(
+    h1_fecs(utils::ConstructFECollections<mfem::H1_FECollection>(
         pc_gmg, false, iodata.solver.order, mesh.back()->Dimension())),
     rt_fec(iodata.solver.order - 1, mesh.back()->Dimension()),
-    nd_fespaces(pc_gmg ? ConstructFiniteElementSpaceHierarchy<mfem::ND_FECollection>(
+    nd_fespaces(pc_gmg ? utils::ConstructFiniteElementSpaceHierarchy<mfem::ND_FECollection>(
                              mesh, nd_fecs, dbc_marker)
-                       : ConstructFiniteElementSpaceHierarchy<mfem::ND_FECollection>(
+                       : utils::ConstructFiniteElementSpaceHierarchy<mfem::ND_FECollection>(
                              *mesh.back(), *nd_fecs.back())),
-    h1_fespaces(pc_gmg ? ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
+    h1_fespaces(pc_gmg ? utils::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
                              mesh, h1_fecs, dbc_marker)
-                       : ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
+                       : utils::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
                              *mesh.back(), *h1_fecs.back())),
     rt_fespace(mesh.back().get(), &rt_fec), mat_op(iodata, *mesh.back()),
     farfield_op(iodata, mat_op, *mesh.back()), surf_sigma_op(iodata, *mesh.back()),

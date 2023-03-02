@@ -3,7 +3,7 @@
 
 #include "curlcurloperator.hpp"
 
-#include "fem/feutils.hpp"
+#include "utils/feutils.hpp"
 
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
@@ -73,13 +73,14 @@ CurlCurlOperator::CurlCurlOperator(const IoData &iodata,
                                    const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh)
   : dbc_marker(SetUpBoundaryProperties(iodata, *mesh.back())), skip_zeros(0),
     pc_gmg(iodata.solver.linear.mat_gmg), print_hdr(true),
-    nd_fecs(ConstructFECollections<mfem::ND_FECollection>(
+    nd_fecs(utils::ConstructFECollections<mfem::ND_FECollection>(
         pc_gmg, false, iodata.solver.order, mesh.back()->Dimension())),
     h1_fec(iodata.solver.order, mesh.back()->Dimension()),
     rt_fec(iodata.solver.order - 1, mesh.back()->Dimension()),
-    nd_fespaces(pc_gmg
-                    ? ConstructFiniteElementSpaceHierarchy(mesh, nd_fecs, dbc_marker)
-                    : ConstructFiniteElementSpaceHierarchy(*mesh.back(), *nd_fecs.back())),
+    nd_fespaces(
+        pc_gmg
+            ? utils::ConstructFiniteElementSpaceHierarchy(mesh, nd_fecs, dbc_marker)
+            : utils::ConstructFiniteElementSpaceHierarchy(*mesh.back(), *nd_fecs.back())),
     h1_fespace(mesh.back().get(), &h1_fec), rt_fespace(mesh.back().get(), &rt_fec),
     mat_op(iodata, *mesh.back()), surf_j_op(iodata, h1_fespace)
 {

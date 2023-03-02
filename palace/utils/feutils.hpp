@@ -1,12 +1,24 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#include "feutils.hpp"
-#include "utils/mfemoperators.hpp"
+#ifndef PALACE_FE_UTILS_HPP
+#define PALACE_FE_UTILS_HPP
+
+#include <memory>
+#include <vector>
+#include <mfem.hpp>
+
+#include "mfemoperators.hpp"
 
 namespace palace
 {
 
+namespace utils
+{
+// Construct a Finite Element Collection. If pc_pmg is true, construct a
+// p-multigrid collection, in increasing polynomial order. If pc_lor is true,
+// use mfem::BasisTypeIntegratedGLL for Vector Finite Element Collections. p is
+// the polynomial order and dim is the spatial dimension.
 template <typename FECollection>
 std::vector<std::unique_ptr<FECollection>> ConstructFECollections(bool pc_pmg, bool pc_lor,
                                                                   int p, int dim)
@@ -54,6 +66,9 @@ std::vector<std::unique_ptr<FECollection>> ConstructFECollections(bool pc_pmg, b
   return fecs;
 }
 
+// Construct a Finite Element Space Hierarchy given a sequence of meshes and
+// finite element collections. Dirichlet boundary conditions are additionally
+// marked.
 template <typename FECollection>
 mfem::ParFiniteElementSpaceHierarchy ConstructFiniteElementSpaceHierarchy(
     const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
@@ -83,6 +98,9 @@ mfem::ParFiniteElementSpaceHierarchy ConstructFiniteElementSpaceHierarchy(
   return fespaces;
 }
 
+// Construct a degenerate Finite Element Space Hierarchy given a single mesh and
+// finite element collection. Unnecessary to pass the dirichlet boundary
+// conditions as they need not be incorporated in any inter-space projectors.
 template <typename FECollection>
 mfem::ParFiniteElementSpaceHierarchy
 ConstructFiniteElementSpaceHierarchy(mfem::ParMesh &mesh, const FECollection &fec)
@@ -90,23 +108,7 @@ ConstructFiniteElementSpaceHierarchy(mfem::ParMesh &mesh, const FECollection &fe
   auto *fespace = new mfem::ParFiniteElementSpace(&mesh, &fec);
   return mfem::ParFiniteElementSpaceHierarchy(&mesh, fespace, false, true);
 }
-
-// explicit instantiations
-template std::vector<std::unique_ptr<mfem::ND_FECollection>>
-ConstructFECollections(bool, bool, int, int);
-template std::vector<std::unique_ptr<mfem::H1_FECollection>>
-ConstructFECollections(bool, bool, int, int);
-
-template mfem::ParFiniteElementSpaceHierarchy ConstructFiniteElementSpaceHierarchy(
-    const std::vector<std::unique_ptr<mfem::ParMesh>> &,
-    const std::vector<std::unique_ptr<mfem::ND_FECollection>> &, const mfem::Array<int> &);
-template mfem::ParFiniteElementSpaceHierarchy ConstructFiniteElementSpaceHierarchy(
-    const std::vector<std::unique_ptr<mfem::ParMesh>> &,
-    const std::vector<std::unique_ptr<mfem::H1_FECollection>> &, const mfem::Array<int> &);
-
-template mfem::ParFiniteElementSpaceHierarchy
-ConstructFiniteElementSpaceHierarchy(mfem::ParMesh &, const mfem::ND_FECollection &);
-template mfem::ParFiniteElementSpaceHierarchy
-ConstructFiniteElementSpaceHierarchy(mfem::ParMesh &, const mfem::H1_FECollection &);
-
+}  // namespace utils
 }  // namespace palace
+
+#endif  // PALACE_FE_UTILS_HPP
