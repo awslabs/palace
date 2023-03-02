@@ -16,8 +16,9 @@ class MaterialOperator;
 //
 // This solver implements a solver to compute a smooth reconstruction of a
 // discontinuous flux. The difference between this resulting smooth flux and the
-// original non-smooth flux provides a localizable error estimate.
-//
+// original non-smooth flux provides a localizable error estimate. An instance
+// of FluxProjector can be reused across solutions, thus the construction of the
+// operator is separated from the construction of the flux RHS.
 class FluxProjector : public mfem::Solver
 {
 private:
@@ -28,6 +29,7 @@ private:
   std::unique_ptr<mfem::IterativeSolver> ksp;
   std::unique_ptr<mfem::Solver> pc;
 
+  mutable mfem::Vector tmp;
 public:
   FluxProjector(mfem::ParFiniteElementSpace &flux_fes,
                 mfem::ParFiniteElementSpaceHierarchy &smooth_flux_fes, double tol,
@@ -39,14 +41,14 @@ public:
   // Given a vector of dof defining the flux
   void Mult(mfem::Vector &x) const
   {
-    mfem::Vector tmp(x);
+    tmp = x;
     Mult(tmp, x);
   }
   void Mult(const mfem::Vector &x, mfem::Vector &y) const override { ksp->Mult(x, y); }
   void Mult(petsc::PetscParVector &x) const
   {
     auto cv = x.GetToVectors();
-    mfem::Vector tmp(cv.real);
+    tmp = cv.real;
     Mult(tmp, cv.real);
     tmp = cv.imag;
     Mult(tmp, cv.imag);
@@ -55,13 +57,12 @@ public:
   void Mult(const petsc::PetscParVector &x, petsc::PetscParVector &y) const
   {
     auto cv = x.GetToVectors();
-    mfem::Vector tmp(cv.real);
+    tmp = cv.real;
     Mult(tmp, cv.real);
     tmp = cv.imag;
     Mult(tmp, cv.imag);
     y.SetFromVectors(cv);
   }
-  using mfem::Operator::Mult;
 };
 
 }  // namespace palace

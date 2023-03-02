@@ -53,34 +53,6 @@ FluxProjector::FluxProjector(mfem::ParFiniteElementSpace &flux_fes,
                              double tol, int max_it, int print)
   : mfem::Solver(flux_fes.GetTrueVSize())
 {
-  const bool is_scalar_FE_space =
-      smooth_flux_fes.GetFESpaceAtLevel(0).GetFE(0)->GetRangeType() ==
-      mfem::FiniteElement::SCALAR;
-
-  // Assemble the bilinear form operator
-  M.reserve(smooth_flux_fes.GetNumLevels());
-  for (int l = 0; l < smooth_flux_fes.GetNumLevels(); l++)
-  {
-    auto &smooth_flux_fes_l = smooth_flux_fes.GetFESpaceAtLevel(l);
-
-    mfem::ParBilinearForm m(&smooth_flux_fes_l);
-
-    if (is_scalar_FE_space)
-    {
-      auto *vmass = new mfem::VectorMassIntegrator;
-      vmass->SetVDim(smooth_flux_fes_l.GetVDim());
-      m.AddDomainIntegrator(new mfem::VectorMassIntegrator);
-    }
-    else
-    {
-      m.AddDomainIntegrator(new mfem::VectorFEMassIntegrator);
-    }
-
-    m.Assemble();
-    m.Finalize();
-    M.emplace_back(m.ParallelAssemble());
-  }
-
   // The system matrix for the projection is real and SPD. For the coarse-level AMG solve,
   // we don't use an exact solve on the coarsest level.
   auto amg = std::make_unique<BoomerAmgSolver>();
@@ -97,11 +69,6 @@ FluxProjector::FluxProjector(mfem::ParFiniteElementSpace &flux_fes,
   ksp->SetPrintLevel(print);
   ksp->SetOperator(*M.back());
   ksp->SetPreconditioner(*pc);
-
-  // psi.SetSize(rt_fespaces.GetFinestFESpace().GetTrueVSize());
-  // rhs.SetSize(rt_fespaces.GetFinestFESpace().GetTrueVSize());
-  // xr.SetSize(height);
-  // xi.SetSize(height);
 }
 
 }  // namespace palace
