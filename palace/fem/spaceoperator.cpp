@@ -11,6 +11,7 @@
 #include "utils/mfemcoefficients.hpp"
 #include "utils/mfemintegrators.hpp"
 #include "utils/mfemoperators.hpp"
+#include "utils/multigrid.hpp"
 #include "utils/prettyprint.hpp"
 
 namespace palace
@@ -69,86 +70,6 @@ mfem::Array<int> SetUpBoundaryProperties(const IoData &iodata, const mfem::ParMe
   return dbc_marker;
 }
 
-template <typename FECollection>
-std::vector<std::unique_ptr<FECollection>> ConstructFECollections(bool pc_gmg, bool pc_lor,
-                                                                  int p, int dim)
-{
-  // If the solver will use a LOR preconditioner, we need to construct with a specific basis
-  // type.
-  MFEM_VERIFY(p > 0, "Nedelec space order must be positive!");
-  int b1 = mfem::BasisType::GaussLobatto, b2 = mfem::BasisType::GaussLegendre;
-  if (pc_lor)
-  {
-    b2 = mfem::BasisType::IntegratedGLL;
-  }
-  std::vector<std::unique_ptr<FECollection>> fecs;
-  if (pc_gmg)
-  {
-    fecs.reserve(p);
-    for (int o = 1; o <= p; o++)
-    {
-      if constexpr (std::is_same<FECollection, mfem::ND_FECollection>::value)
-      {
-        fecs.push_back(std::make_unique<FECollection>(o, dim, b1, b2));
-      }
-      else
-      {
-        fecs.push_back(std::make_unique<FECollection>(o, dim, b1));
-      }
-    }
-  }
-  else
-  {
-    fecs.reserve(1);
-    if constexpr (std::is_same<FECollection, mfem::ND_FECollection>::value)
-    {
-      fecs.push_back(std::make_unique<FECollection>(p, dim, b1, b2));
-    }
-    else
-    {
-      fecs.push_back(std::make_unique<FECollection>(p, dim, b1));
-    }
-  }
-  return fecs;
-}
-
-template <typename FECollection>
-mfem::ParFiniteElementSpaceHierarchy
-ConstructFiniteElementSpaceHierarchy(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
-                                     const std::vector<std::unique_ptr<FECollection>> &fecs,
-                                     const mfem::Array<int> &dbc_marker)
-{
-  MFEM_VERIFY(!mesh.empty() && !fecs.empty(),
-              "Empty mesh or FE collection for FE space construction!");
-  auto *fespace = new mfem::ParFiniteElementSpace(mesh[0].get(), fecs[0].get());
-  mfem::ParFiniteElementSpaceHierarchy fespaces(mesh[0].get(), fespace, false, true);
-  // h-refinement
-  for (std::size_t l = 1; l < mesh.size(); l++)
-  {
-    fespace = new mfem::ParFiniteElementSpace(mesh[l].get(), fecs[0].get());
-    auto *P =
-        new ZeroWrapTransferOperator(fespaces.GetFinestFESpace(), *fespace, dbc_marker);
-    fespaces.AddLevel(mesh[l].get(), fespace, P, false, true, true);
-  }
-  // p-refinement
-  for (std::size_t l = 1; l < fecs.size(); l++)
-  {
-    fespace = new mfem::ParFiniteElementSpace(mesh.back().get(), fecs[l].get());
-    auto *P =
-        new ZeroWrapTransferOperator(fespaces.GetFinestFESpace(), *fespace, dbc_marker);
-    fespaces.AddLevel(mesh.back().get(), fespace, P, false, true, true);
-  }
-  return fespaces;
-}
-
-template <typename FECollection>
-mfem::ParFiniteElementSpaceHierarchy
-ConstructFiniteElementSpaceHierarchy(mfem::ParMesh &mesh, const FECollection &fec)
-{
-  auto *fespace = new mfem::ParFiniteElementSpace(&mesh, &fec);
-  return mfem::ParFiniteElementSpaceHierarchy(&mesh, fespace, false, true);
-}
-
 template <typename DomainCoefficient, typename BoundaryCoefficient>
 auto AddIntegrators(mfem::ParBilinearForm &a, DomainCoefficient &df, DomainCoefficient &f,
                     BoundaryCoefficient &dfb, BoundaryCoefficient &fb)
@@ -188,22 +109,22 @@ auto AddAuxIntegrators(mfem::ParBilinearForm &a, DomainCoefficient &f,
 }  // namespace
 
 SpaceOperator::SpaceOperator(const IoData &iodata,
-                             std::vector<std::unique_ptr<mfem::ParMesh>> &mesh)
+                             const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh)
   : dbc_marker(SetUpBoundaryProperties(iodata, *mesh.back())), skip_zeros(0),
     pc_gmg(iodata.solver.linear.mat_gmg), pc_lor(iodata.solver.linear.mat_lor),
     pc_shifted(iodata.solver.linear.mat_shifted), print_hdr(true),
-    nd_fecs(ConstructFECollections<mfem::ND_FECollection>(
+    nd_fecs(utils::ConstructFECollections<mfem::ND_FECollection>(
         pc_gmg, pc_lor, iodata.solver.order, mesh.back()->Dimension())),
-    h1_fecs(ConstructFECollections<mfem::H1_FECollection>(
+    h1_fecs(utils::ConstructFECollections<mfem::H1_FECollection>(
         pc_gmg, false, iodata.solver.order, mesh.back()->Dimension())),
     rt_fec(iodata.solver.order - 1, mesh.back()->Dimension()),
-    nd_fespaces(pc_gmg ? ConstructFiniteElementSpaceHierarchy<mfem::ND_FECollection>(
+    nd_fespaces(pc_gmg ? utils::ConstructFiniteElementSpaceHierarchy<mfem::ND_FECollection>(
                              mesh, nd_fecs, dbc_marker)
-                       : ConstructFiniteElementSpaceHierarchy<mfem::ND_FECollection>(
+                       : utils::ConstructFiniteElementSpaceHierarchy<mfem::ND_FECollection>(
                              *mesh.back(), *nd_fecs.back())),
-    h1_fespaces(pc_gmg ? ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
+    h1_fespaces(pc_gmg ? utils::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
                              mesh, h1_fecs, dbc_marker)
-                       : ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
+                       : utils::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
                              *mesh.back(), *h1_fecs.back())),
     rt_fespace(mesh.back().get(), &rt_fec), mat_op(iodata, *mesh.back()),
     farfield_op(iodata, mat_op, *mesh.back()), surf_sigma_op(iodata, *mesh.back()),
