@@ -6,6 +6,7 @@
 #include <complex>
 #include <mfem.hpp>
 #include "fem/lumpedportoperator.hpp"
+#include "fem/feutils.hpp"
 #include "fem/postoperator.hpp"
 #include "fem/romoperator.hpp"
 #include "fem/spaceoperator.hpp"
@@ -108,9 +109,9 @@ DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator &postop, int nst
   // Because the Dirichlet BC is always homogenous, no special elimination is required on
   // the RHS. Assemble the linear system for the initial frequency (so we can call
   // KspSolver:: SetOperators). Compute everything at the first frequency step.
-  std::unique_ptr<petsc::PetscParMatrix> A = spaceop.GetSystemMatrixPetsc(
+  auto A = spaceop.GetSystemMatrixPetsc(
       SpaceOperator::OperatorType::COMPLETE, omega0, mfem::Operator::DIAG_ONE);
-  std::unique_ptr<petsc::PetscParMatrix> NegCurl = spaceop.GetNegCurlMatrixPetsc();
+  auto NegCurl = spaceop.GetNegCurlMatrixPetsc();
 
   // Set up the linear solver and set operators for the first frequency step. The
   // preconditioner for the complex linear system is constructed from a real approximation
@@ -132,6 +133,21 @@ DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator &postop, int nst
   E.SetZero();
   B.SetZero();
   timer.construct_time += timer.Lap();
+
+/*
+  - Build the RT FEC and FE space hierarchy
+  -
+  - Initialize the FluxProjector
+  -
+
+*/
+  // probably should be inside the spaceoperator
+
+  // const auto rt_fecs = ConstructFECollections<mfem::RT_FECollection>(true, false, iodata.solver.order-1, 3);
+  // SumMatrixCoefficient df(3);
+  // const auto &mat_op = spaceop.GetMaterialOp();
+  // df.AddCoefficient(std::make_unique<MaterialPropertyCoefficient<MaterialPropertyType::INV_PERMEABILITY>>(mat_op, 1));
+
 
   // Main frequency sweep loop.
   double omega = omega0;

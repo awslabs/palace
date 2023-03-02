@@ -186,6 +186,9 @@ public:
   // Separate out RHS vector as RHS = iω RHS1 + RHS2(ω).
   bool GetFreqDomainExcitationVector1(petsc::PetscParVector &RHS1);
   bool GetFreqDomainExcitationVector2(double omega, petsc::PetscParVector &RHS2);
+
+  // Compute elemental error estimates given a provided electric field, E
+  std::vector<double> GetErrorEstimates(const mfem::ParComplexGridFunction &E) const;
 };
 
 }  // namespace palace

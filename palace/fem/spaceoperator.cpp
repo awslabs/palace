@@ -713,4 +713,48 @@ bool SpaceOperator::GetExcitationVector2Internal(double omega, mfem::Vector &RHS
   return true;
 }
 
+std::vector<double> SpaceOperator::GetErrorEstimates(const mfem::ParComplexGridFunction &E) const
+{
+  // Define a flux integrator to project μ⁻¹ ∇ × E
+  const int sdim = nd_fespaces.GetFinestFESpace().GetParMesh()->SpaceDimension();
+  SumMatrixCoefficient muinv(sdim);
+  using MuInv = MaterialPropertyCoefficient<MaterialPropertyType::INV_PERMEABILITY>;
+  muinv.AddCoefficient(std::make_unique<MuInv>(mat_op, 1));
+  mfem::CurlCurlIntegrator flux_integrator(muinv);
+
+  // Copy the fespaces used in solves, they're identical to those needed now.
+  auto flux_fes = rt_fespace;
+  auto smooth_flux_fes = nd_fespaces;
+
+  mfem::ParComplexGridFunction flux(&flux_fes);
+  mfem::Array<int> edofs, fdofs;
+  mfem::Vector el_E, el_f;
+
+  // Given a grid function representing a component, compute the flux for a
+  // given element.
+  auto fill_dof = [&](const mfem::ParGridFunction &pgf, mfem::ParGridFunction &flux, int elem)
+  {
+    auto *fes = pgf.ParFESpace();
+    auto *T = fes->GetElementTransformation(elem);
+
+    fes->GetElementDofs(elem, edofs);
+    pgf.GetSubVector(edofs, el_E);
+
+    flux_integrator.ComputeElementFlux(*fes->GetFE(elem), *T, el_E,
+                                       *flux_fes.GetFE(elem), el_f, true);
+
+    flux_fes.GetElementDofs(elem, fdofs);
+    flux.AddElementVector(fdofs, el_f);
+  };
+
+
+  for (int i = 0; i < E.real().ParFESpace()->GetNE(); i++)
+  {
+    fill_dof(E.real(), flux.real(), i);
+    fill_dof(E.imag(), flux.imag(), i);
+  }
+
+  return {};
+}
+
 }  // namespace palace

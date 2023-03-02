@@ -450,6 +450,59 @@ inline void MaterialPropertyCoefficient<MaterialPropertyType::INV_PERMEABILITY_C
   K *= coef;
 }
 
+
+// Computes the flux, μ⁻¹ ∇ × X, of a field, X, where X can be the electric field E, or the
+// magnetic vector potential A.
+class CurlFluxCoefficient : public mfem::VectorCoefficient
+{
+private:
+  const mfem::ParGridFunction &X;
+  MaterialPropertyCoefficient<MaterialPropertyType::INV_PERMEABILITY> coef;
+
+public:
+  CurlFluxCoefficient(const mfem::ParGridFunction &pgf, const MaterialOperator &op)
+    : mfem::VectorCoefficient(pgf.ParFESpace()->GetParMesh()->SpaceDimension()), X(pgf),
+      coef(op, 1.0)
+  {
+  }
+
+  void Eval(mfem::Vector &V, mfem::ElementTransformation &T,
+            const mfem::IntegrationPoint &ip) override
+  {
+    mfem::DenseMatrix muinv;
+    coef.Eval(muinv, T, ip);
+    mfem::Vector curl;
+    X.GetCurl(T, curl);
+    muinv.Mult(curl, V);
+  }
+};
+
+// Comptues the flux, ϵ ∇ ϕ, of the electrostatic potential ϕ,
+class GradFluxCoefficient : public mfem::VectorCoefficient
+{
+private:
+  const mfem::ParGridFunction &phi;
+  MaterialPropertyCoefficient<MaterialPropertyType::PERMITTIVITY_REAL> coef;
+
+public:
+  GradFluxCoefficient(const mfem::ParGridFunction &pgf, const MaterialOperator &op)
+    : mfem::VectorCoefficient(pgf.ParFESpace()->GetParMesh()->SpaceDimension()), phi(pgf),
+      coef(op, 1.0)
+  {
+  }
+
+  void Eval(mfem::Vector &V, mfem::ElementTransformation &T,
+            const mfem::IntegrationPoint &ip) override
+  {
+    mfem::DenseMatrix eps;
+    coef.Eval(eps, T, ip);
+    mfem::Vector grad;
+    phi.GetGradient(T, grad);
+    eps.Mult(grad, V);
+  }
+};
+
+
 // Returns the local energy density evaluated as 1/2 Dᴴ E or 1/2 Bᴴ H for real-valued
 // material coefficients. For internal boundary elements, the solution is taken on the side
 // of the element with the larger-valued material property (permittivity or permeability).
