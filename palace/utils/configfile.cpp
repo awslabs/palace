@@ -320,6 +320,9 @@ void RefinementData::SetUp(json &model)
                     adaptation.on_update_tolerance_ratio <= 1,
                 "\"OnUpdateTolRatio\" must be in (0, 1]");
     MFEM_VERIFY(adaptation.save_step >= 0, "\"SaveStep\" must be non-negative");
+    MFEM_VERIFY(
+        !(adaptation.construct_geometric_multigrid && adaptation.coarsening_fraction > 0),
+        "Cannot construct a geometric multigrid if using coarsening");
 
     // Cleanup
     const auto fields = {"Tol",
