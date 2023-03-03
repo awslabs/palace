@@ -468,15 +468,16 @@ public:
   void Eval(mfem::Vector &V, mfem::ElementTransformation &T,
             const mfem::IntegrationPoint &ip) override
   {
-    mfem::DenseMatrix muinv;
+    mfem::DenseMatrix muinv(3);
     coef.Eval(muinv, T, ip);
-    mfem::Vector curl;
+    mfem::Vector curl(3);
     X.GetCurl(T, curl);
+    V.SetSize(3);
     muinv.Mult(curl, V);
   }
 };
 
-// Comptues the flux, ϵ ∇ ϕ, of the electrostatic potential ϕ.
+// Computes the flux, ϵ ∇ ϕ, of the electrostatic potential ϕ.
 class GradFluxCoefficient : public mfem::VectorCoefficient
 {
 private:
@@ -493,10 +494,11 @@ public:
   void Eval(mfem::Vector &V, mfem::ElementTransformation &T,
             const mfem::IntegrationPoint &ip) override
   {
-    mfem::DenseMatrix eps;
+    mfem::DenseMatrix eps(3);
     coef.Eval(eps, T, ip);
-    mfem::Vector grad;
+    mfem::Vector grad(3);
     phi.GetGradient(T, grad);
+    V.SetSize(3);
     eps.Mult(grad, V);
   }
 };
