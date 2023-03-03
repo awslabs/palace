@@ -31,8 +31,7 @@ private:
 
   mutable mfem::Vector tmp;
 public:
-  FluxProjector(mfem::ParFiniteElementSpace &flux_fes,
-                mfem::ParFiniteElementSpaceHierarchy &smooth_flux_fes, double tol,
+  FluxProjector(mfem::ParFiniteElementSpaceHierarchy &smooth_flux_fes, double tol,
                 int max_it, int print);
 
   // Operator is set in constructor.
@@ -63,6 +62,11 @@ public:
     Mult(tmp, cv.imag);
     y.SetFromVectors(cv);
   }
+
+  // TODO: Add in an ArrayMult optimization
+
+  petsc::PetscParVector GetFluxRHS(const mfem::ParGridFunction &phi) const;
+
 };
 
 }  // namespace palace

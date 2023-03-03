@@ -96,6 +96,10 @@ public:
 #if defined(PETSC_USE_COMPLEX)
   PetscParVector(MPI_Comm comm, const mfem::Vector &yr, const mfem::Vector &yi);
   PetscParVector(const mfem::Vector &yr, const mfem::Vector &yi);
+  PetscParVector(MPI_Comm comm, const ComplexVector &cv)
+  : PetscParVector(comm, cv.real, cv.imag) {};
+  PetscParVector(const ComplexVector &cv)
+  : PetscParVector(cv.real, cv.imag) {};
 #endif
 
   // Create a parallel or sequential PETSc vector with the provided dimension.

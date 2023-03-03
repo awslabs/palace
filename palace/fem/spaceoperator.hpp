@@ -188,7 +188,7 @@ public:
   bool GetFreqDomainExcitationVector2(double omega, petsc::PetscParVector &RHS2);
 
   // Compute elemental error estimates given a provided electric field, E
-  std::vector<double> GetErrorEstimates(const mfem::ParComplexGridFunction &E) const;
+  std::vector<double> GetErrorEstimates(const mfem::ParComplexGridFunction &E);
 };
 
 }  // namespace palace

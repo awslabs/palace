@@ -14,6 +14,15 @@ namespace palace
 // A wrapper for a pair of mfem vectors, convenient when working with complex values
 struct ComplexVector
 {
+  ComplexVector(int n) : real(n), imag(n) {}
+
+  ComplexVector() = default;
+  ComplexVector(const ComplexVector&) = default;
+  ComplexVector(ComplexVector&&) = default;
+  ComplexVector& operator=(const ComplexVector&) = default;
+  ComplexVector& operator=(ComplexVector&&) = default;
+  ~ComplexVector() = default;
+
   mfem::Vector real, imag;
 
   template <size_t I>

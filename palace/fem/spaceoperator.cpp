@@ -5,6 +5,7 @@
 
 #include <complex>
 #include "linalg/petsc.hpp"
+#include "linalg/errorestimator.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
@@ -713,48 +714,82 @@ bool SpaceOperator::GetExcitationVector2Internal(double omega, mfem::Vector &RHS
   return true;
 }
 
-std::vector<double> SpaceOperator::GetErrorEstimates(const mfem::ParComplexGridFunction &E) const
+std::vector<double> SpaceOperator::GetErrorEstimates(const mfem::ParComplexGridFunction &E)
 {
-  // Define a flux integrator to project μ⁻¹ ∇ × E
-  const int sdim = nd_fespaces.GetFinestFESpace().GetParMesh()->SpaceDimension();
-  SumMatrixCoefficient muinv(sdim);
-  using MuInv = MaterialPropertyCoefficient<MaterialPropertyType::INV_PERMEABILITY>;
-  muinv.AddCoefficient(std::make_unique<MuInv>(mat_op, 1));
-  mfem::CurlCurlIntegrator flux_integrator(muinv);
+  // Compute the non-smooth flux RHS.
+  const auto flux = [&]() -> petsc::PetscParVector {
+    CurlFluxCoefficient real_coef(E.real(), mat_op), imag_coef(E.imag(), mat_op);
+    const auto ndof = nd_fespaces.GetFinestFESpace().GetTrueVSize();
 
-  // Copy the fespaces used in solves, they're identical to those needed now.
-  auto flux_fes = rt_fespace;
-  auto smooth_flux_fes = nd_fespaces;
+    ComplexVector flux(ndof);
+    flux.real = 0.0; flux.imag = 0.0;
 
-  mfem::ParComplexGridFunction flux(&flux_fes);
-  mfem::Array<int> edofs, fdofs;
-  mfem::Vector el_E, el_f;
+    {
+      mfem::ParLinearForm rhs(&nd_fespaces.GetFinestFESpace());
+      rhs.AddDomainIntegrator(new VectorFEDomainLFIntegrator(real_coef));
+      rhs.UseFastAssembly(true);
+      rhs.Assemble();
+      rhs.ParallelAssemble(flux.real);
+    }
 
-  // Given a grid function representing a component, compute the flux for a
-  // given element.
-  auto fill_dof = [&](const mfem::ParGridFunction &pgf, mfem::ParGridFunction &flux, int elem)
+    {
+      mfem::ParLinearForm rhs(&nd_fespaces.GetFinestFESpace());
+      rhs.AddDomainIntegrator(new VectorFEDomainLFIntegrator(imag_coef));
+      rhs.UseFastAssembly(true);
+      rhs.Assemble();
+      rhs.ParallelAssemble(flux.imag);
+    }
+
+    return flux;
+  }();
+
+  // Given the RHS vector of non-smooth flux, construct a flux projector and
+  // perform mass matrix inversion in the appropriate space.
+  constexpr double tol = 1e-6;
+  constexpr int max_int = 100, print = 0;
+
+  const auto smooth_flux = [&]()
   {
-    auto *fes = pgf.ParFESpace();
-    auto *T = fes->GetElementTransformation(elem);
+    const FluxProjector flux_proj(nd_fespaces, tol, max_int, print);
+    petsc::PetscParVector smooth_flux(flux);
+    flux_proj.Mult(flux, smooth_flux);
+    return smooth_flux;
+  }();
 
-    fes->GetElementDofs(elem, edofs);
-    pgf.GetSubVector(edofs, el_E);
+  // Given the flux and the smooth flux, compute the norm of the difference
+  // between the two on each element.
+  std::vector<double> estimates;
 
-    flux_integrator.ComputeElementFlux(*fes->GetFE(elem), *T, el_E,
-                                       *flux_fes.GetFE(elem), el_f, true);
-
-    flux_fes.GetElementDofs(elem, fdofs);
-    flux.AddElementVector(fdofs, el_f);
+  // Given the two fluxes, create grid functions in order to allow integration
+  // over each element.
+  auto build_func = [this](const petsc::PetscParVector &f)
+  {
+    mfem::ParComplexGridFunction flux(&this->GetNDSpace());
+    const auto fi = f.GetToVectors();
+    flux.real().SetFromTrueDofs(fi.real);
+    flux.imag().SetFromTrueDofs(fi.imag);
+    flux.real().ExchangeFaceNbrData();
+    flux.imag().ExchangeFaceNbrData();
+    return flux;
   };
 
+  auto flux_func = build_func(flux);
+  auto smooth_flux_func = build_func(smooth_flux);
 
-  for (int i = 0; i < E.real().ParFESpace()->GetNE(); i++)
+  const int nelem = GetNDSpace().GetNE();
+  estimates.reserve(nelem);
+
+  constexpr double normp = 2;
+  for (int i = 0; i < nelem; i++)
   {
-    fill_dof(E.real(), flux.real(), i);
-    fill_dof(E.imag(), flux.imag(), i);
+    // e = sqrt( e_i^2 + e_r^2 )
+    const auto real_error2 = std::pow(mfem::ComputeElementLpDistance(normp, i, flux_func.real(), smooth_flux_func.real()), normp);
+    const auto imag_error2 = std::pow(mfem::ComputeElementLpDistance(normp, i, flux_func.real(), smooth_flux_func.real()), normp);
+
+    estimates.emplace_back(std::sqrt(real_error2 + imag_error2));
   }
 
-  return {};
+  return estimates;
 }
 
 }  // namespace palace
