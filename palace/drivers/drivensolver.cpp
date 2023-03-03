@@ -134,6 +134,10 @@ DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator &postop, int nst
   B.SetZero();
   timer.construct_time += timer.Lap();
 
+  // Instantiate error estimates and the error reduction operator.
+  BaseSolver::ErrorIndicators indicators(spaceop.GetNDof());
+  const auto error_reducer = BaseSolver::ErrorReductionOperator();
+
   // Main frequency sweep loop.
   double omega = omega0;
   auto t0 = timer.Now();
@@ -182,12 +186,16 @@ DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator &postop, int nst
                 !iodata.solver.driven.only_port_post, timer);
     timer.postpro_time += timer.Lap() - (timer.io_time - io_time_prev);
 
+    // Compute the error indicators for the field, and reduce into the indicator.
+    error_reducer(indicators, spaceop.GetErrorEstimates(postop.GetE()));
+    timer.estimation_time += timer.Lap();
+
     // Increment frequency.
     omega += delta_omega;
   }
   SaveMetadata(ksp.GetTotalNumMult(), ksp.GetTotalNumIter());
 
-  return BaseSolver::ErrorIndicators();
+  return indicators;
 }
 
 BaseSolver::ErrorIndicators DrivenSolver::SweepAdaptive(SpaceOperator &spaceop,

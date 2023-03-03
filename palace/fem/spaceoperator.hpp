@@ -127,6 +127,9 @@ public:
   auto &GetH1Space() { return h1_fespaces.GetFinestFESpace(); }
   auto &GetRTSpace() { return rt_fespace; }
 
+  // Return the number of true (conforming) dofs on the finest ND space.
+  auto GetNDof() { return GetNDSpace().GetNConformingDofs(); }
+
   // Construct the frequency-dependent complex linear system matrix:
   //                 A = K + iω C - ω² (Mr + i Mi) + A2(ω)
   // or any one of its terms. The type parameter controls which terms of the above

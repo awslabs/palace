@@ -23,6 +23,7 @@ public:
     INIT = 0,
     CONSTRUCT,
     SOLVE,
+    ESTIMATION,
     POSTPRO,
     IO,
     TOTAL,
@@ -59,6 +60,7 @@ public:
   Duration &init_time = data[INIT];
   Duration &construct_time = data[CONSTRUCT];
   Duration &solve_time = data[SOLVE];
+  Duration &estimation_time = data[ESTIMATION];
   Duration &postpro_time = data[POSTPRO];
   Duration &io_time = data[IO];
   Duration &total_time = data[TOTAL];
@@ -103,6 +105,7 @@ public:
                "Initialization            {:{}.{}f}{:{}.{}f}{:{}.{}f}\n"
                "Operator Construction     {:{}.{}f}{:{}.{}f}{:{}.{}f}\n"
                "Solve                     {:{}.{}f}{:{}.{}f}{:{}.{}f}\n"
+               "Estimation                {:{}.{}f}{:{}.{}f}{:{}.{}f}\n"
                "Postprocessing            {:{}.{}f}{:{}.{}f}{:{}.{}f}\n"
                "Disk I/O                  {:{}.{}f}{:{}.{}f}{:{}.{}f}\n"
                "--------------------------{}\n"
@@ -112,6 +115,7 @@ public:
                data_min[INIT], w, p, data_max[INIT], w, p, data_avg[INIT], w, p,
                data_min[CONSTRUCT], w, p, data_max[CONSTRUCT], w, p, data_avg[CONSTRUCT], w, p,
                data_min[SOLVE], w, p, data_max[SOLVE], w, p, data_avg[SOLVE], w, p,
+               data_min[ESTIMATION], w, p, data_max[ESTIMATION], w, p, data_avg[ESTIMATION], w, p,
                data_min[POSTPRO], w, p, data_max[POSTPRO], w, p, data_avg[POSTPRO], w, p,
                data_min[IO], w, p, data_max[IO], w, p, data_avg[IO], w, p,
                std::string(3 * w, '-'),

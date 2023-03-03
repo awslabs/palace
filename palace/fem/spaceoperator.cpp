@@ -745,20 +745,16 @@ std::vector<double> SpaceOperator::GetErrorEstimates(const mfem::ParComplexGridF
 
   // Given the RHS vector of non-smooth flux, construct a flux projector and
   // perform mass matrix inversion in the appropriate space.
-  constexpr double tol = 1e-6;
-  constexpr int max_int = 100, print = 0;
-
   const auto smooth_flux = [&]()
   {
+    constexpr double tol = 1e-6;
+    constexpr int max_int = 100, print = 0;
     const FluxProjector flux_proj(nd_fespaces, tol, max_int, print);
     petsc::PetscParVector smooth_flux(flux);
     flux_proj.Mult(flux, smooth_flux);
     return smooth_flux;
   }();
 
-  // Given the flux and the smooth flux, compute the norm of the difference
-  // between the two on each element.
-  std::vector<double> estimates;
 
   // Given the two fluxes, create grid functions in order to allow integration
   // over each element.
@@ -776,7 +772,10 @@ std::vector<double> SpaceOperator::GetErrorEstimates(const mfem::ParComplexGridF
   auto flux_func = build_func(flux);
   auto smooth_flux_func = build_func(smooth_flux);
 
+  // Given the flux and the smooth flux, compute the norm of the difference
+  // between the two on each element.
   const int nelem = GetNDSpace().GetNE();
+  std::vector<double> estimates;
   estimates.reserve(nelem);
 
   constexpr double normp = 2;

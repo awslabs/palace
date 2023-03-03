@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <complex>
+#include <numeric>
 #include <mfem.hpp>
 #include <nlohmann/json.hpp>
 #include "fem/domainpostoperator.hpp"
@@ -740,6 +741,38 @@ void BaseSolver::PostprocessFields(const std::string &post_dir, const PostOperat
   }
   postop.WriteFields(step, time);
   Mpi::Barrier();
+}
+
+void BaseSolver::ErrorReductionOperator::operator()(BaseSolver::ErrorIndicators &ebar, std::vector<double>&&ind) const
+{
+
+  // Update the maximum global error.
+  ebar.global_error_indicator = std::max(ebar.global_error_indicator,
+    std::accumulate(ind.begin(), ind.end(), 0.0));
+
+  // update the average local indicator. Using running average update rather
+  // than sum and final division to maintain validity at all times.
+  auto running_average = [](const auto& xbar, const auto& x)
+  {
+    return (xbar * n + x)/(n + 1);
+  };
+
+  if (n > 0)
+  {
+    MFEM_VERIFY(ebar.local_error_indicators.size() == ind.size(),
+                "Local error indicator vectors mismatch.");
+    // Combine these error indicators into the current average.
+    std::transform(ebar.local_error_indicators.begin(), ebar.local_error_indicators.end(),
+                   ind.begin(), ebar.local_error_indicators.begin(), running_average);
+  }
+  else
+  {
+    // This is the first sample, just steal the data.
+    ebar.local_error_indicators = std::move(ind);
+  }
+
+  // Another sample has been added, increment for the running average lambda.
+  ++n;
 }
 
 }  // namespace palace

@@ -78,13 +78,23 @@ public:
   // indicator is non-negative, whilst an error estimate is signed.
   struct ErrorIndicators
   {
+    ErrorIndicators(int ndof) : ndof(ndof) {}
     // Elemental localized error indicators. Used for marking elements for
     // refinement and coarsening.
     std::vector<double> local_error_indicators;
     // Global error indicator. Used for driving AMR and diagnostics.
     double global_error_indicator = 0;
-    // Number of global dof in the mesh.
-    int ndof;
+    // Number of global dof in the mesh. Immutable.
+    const int ndof;
+  };
+  // Operator for performing reduction of a vector of local indicators into a
+  // global running total for use in adaptation.
+  class ErrorReductionOperator
+  {
+    // number of samples. mutability required to ensure operation.
+    mutable int n = 0;
+  public:
+    void operator()(ErrorIndicators &e, std::vector<double> &&i) const;
   };
 
   // Performs a solve using the mesh sequence, and recording timing for each stage. The iter
