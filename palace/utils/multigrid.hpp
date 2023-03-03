@@ -23,9 +23,11 @@ std::vector<std::unique_ptr<FECollection>> ConstructFECollections(bool pc_pmg, b
 {
   // If the solver will use a LOR preconditioner, we need to construct with a specific basis
   // type.
-  MFEM_VERIFY(p > 0, "Nedelec space order must be positive!");
-  constexpr bool vector_fec = std::is_same<FECollection, mfem::ND_FECollection>::value ||
-                              std::is_same<FECollection, mfem::RT_FECollection>::value;
+  constexpr int pmin = (std::is_same<FECollection, mfem::H1_FECollection>::value ||
+                        std::is_same<FECollection, mfem::ND_FECollection>::value)
+                           ? 1
+                           : 0;
+  MFEM_VERIFY(p >= pmin, "FE space order must not be less than " << pmin << "!");
   int b1 = mfem::BasisType::GaussLobatto, b2 = mfem::BasisType::GaussLegendre;
   if (pc_lor)
   {
@@ -35,9 +37,10 @@ std::vector<std::unique_ptr<FECollection>> ConstructFECollections(bool pc_pmg, b
   if (pc_pmg)
   {
     fecs.reserve(p);
-    for (int o = 1; o <= p; o++)
+    for (int o = pmin; o <= p; o++)
     {
-      if constexpr (vector_fec)
+      if constexpr (std::is_same<FECollection, mfem::ND_FECollection>::value ||
+                    std::is_same<FECollection, mfem::RT_FECollection>::value)
       {
         fecs.push_back(std::make_unique<FECollection>(o, dim, b1, b2));
       }
@@ -50,7 +53,8 @@ std::vector<std::unique_ptr<FECollection>> ConstructFECollections(bool pc_pmg, b
   else
   {
     fecs.reserve(1);
-    if constexpr (vector_fec)
+    if constexpr (std::is_same<FECollection, mfem::ND_FECollection>::value ||
+                  std::is_same<FECollection, mfem::RT_FECollection>::value)
     {
       fecs.push_back(std::make_unique<FECollection>(p, dim, b1, b2));
     }
