@@ -477,7 +477,7 @@ public:
   }
 };
 
-// Comptues the flux, ϵ ∇ ϕ, of the electrostatic potential ϕ,
+// Comptues the flux, ϵ ∇ ϕ, of the electrostatic potential ϕ.
 class GradFluxCoefficient : public mfem::VectorCoefficient
 {
 private:
