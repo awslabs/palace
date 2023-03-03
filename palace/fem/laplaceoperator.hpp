@@ -64,6 +64,9 @@ public:
   auto &GetH1Space() { return h1_fespaces.GetFinestFESpace(); }
   auto &GetNDSpace() { return nd_fespace; }
 
+  // Return the number of true (conforming) dofs on the finest H1 space.
+  auto GetNDof() { return GetH1Space().GetNConformingDofs(); }
+
   // Construct and return system matrix representing discretized Laplace operator for
   // Gauss's law.
   void GetStiffnessMatrix(std::vector<std::unique_ptr<mfem::Operator>> &K,

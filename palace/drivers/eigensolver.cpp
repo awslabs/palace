@@ -392,7 +392,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh, Time
   }
   timer.postpro_time += timer.Lap() - (timer.io_time - io_time_prev);
 
-  return BaseSolver::ErrorIndicators();
+  return BaseSolver::ErrorIndicators(spaceop.GetNDof());
 }
 
 void EigenSolver::Postprocess(const std::string &post_dir, const PostOperator &postop,

@@ -121,7 +121,7 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &me
   Postprocess(post_dir_, curlcurlop, postop, A, timer);
   timer.postpro_time += timer.Lap() - (timer.io_time - io_time_prev);
 
-  return BaseSolver::ErrorIndicators();
+  return BaseSolver::ErrorIndicators(curlcurlop.GetNDof());
 }
 
 void MagnetostaticSolver::Postprocess(const std::string &post_dir,

@@ -128,7 +128,7 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
   }
   SaveMetadata(timeop.GetTotalKspMult(), timeop.GetTotalKspIter());
 
-  return BaseSolver::ErrorIndicators();
+  return BaseSolver::ErrorIndicators(spaceop.GetNDof());
 }
 
 std::function<double(double)> TransientSolver::GetTimeExcitation(bool dot) const

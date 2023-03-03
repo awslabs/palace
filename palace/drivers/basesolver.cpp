@@ -753,7 +753,7 @@ void BaseSolver::ErrorReductionOperator::operator()(BaseSolver::ErrorIndicators 
 
   // update the average local indicator. Using running average update rather
   // than sum and final division to maintain validity at all times.
-  auto running_average = [](const auto &xbar, const auto &x)
+  auto running_average = [this](const auto &xbar, const auto &x)
   { return (xbar * n + x) / (n + 1); };
 
   if (n > 0)

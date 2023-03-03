@@ -79,13 +79,20 @@ public:
   struct ErrorIndicators
   {
     ErrorIndicators(int ndof) : ndof(ndof) {}
+    ErrorIndicators() = delete;
+    ErrorIndicators(const ErrorIndicators &) = default;
+    ErrorIndicators(ErrorIndicators &&) = default;
+    ErrorIndicators &operator=(const ErrorIndicators &) = default;
+    ErrorIndicators &operator=(ErrorIndicators &&) = default;
+    ~ErrorIndicators() = default;
+
     // Elemental localized error indicators. Used for marking elements for
     // refinement and coarsening.
     std::vector<double> local_error_indicators;
     // Global error indicator. Used for driving AMR and diagnostics.
     double global_error_indicator = 0;
-    // Number of global dof in the mesh. Immutable.
-    const int ndof;
+    // Number of global dof in the mesh.
+    int ndof;
   };
   // Operator for performing reduction of a vector of local indicators into a
   // global running total for use in adaptation.

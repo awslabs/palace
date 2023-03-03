@@ -119,7 +119,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &me
   Postprocess(post_dir_, laplaceop, postop, V, timer);
   timer.postpro_time += timer.Lap() - (timer.io_time - io_time_prev);
 
-  return BaseSolver::ErrorIndicators();
+  return BaseSolver::ErrorIndicators(laplaceop.GetNDof());
 }
 
 void ElectrostaticSolver::Postprocess(const std::string &post_dir,

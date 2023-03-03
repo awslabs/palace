@@ -355,7 +355,7 @@ BaseSolver::ErrorIndicators DrivenSolver::SweepAdaptive(SpaceOperator &spaceop,
     omega += delta_omega;
   }
 
-  return BaseSolver::ErrorIndicators();
+  return BaseSolver::ErrorIndicators(spaceop.GetNDof());
 }
 
 int DrivenSolver::GetNumSteps(double start, double end, double delta) const
