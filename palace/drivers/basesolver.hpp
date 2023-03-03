@@ -93,6 +93,7 @@ public:
   {
     // number of samples. mutability required to ensure operation.
     mutable int n = 0;
+
   public:
     void operator()(ErrorIndicators &e, std::vector<double> &&i) const;
   };

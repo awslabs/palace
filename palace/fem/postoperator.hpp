@@ -87,10 +87,10 @@ public:
   bool HasB() const { return B.has_value(); }
 
   // Accessors for grid function representations. Performs check for initialization.
-  const auto& GetE() const;
-  const auto& GetB() const;
-  const auto& GetV() const;
-  const auto& GetA() const;
+  const auto &GetE() const;
+  const auto &GetB() const;
+  const auto &GetV() const;
+  const auto &GetA() const;
 
   // Compute the magnetic flux density B in RT space from electric field solution E solution
   // in ND space for the time-harmonic case: B =  -1/(iω) ∇ x E.

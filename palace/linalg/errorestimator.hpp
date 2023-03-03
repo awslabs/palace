@@ -30,6 +30,7 @@ private:
   std::unique_ptr<mfem::Solver> pc;
 
   mutable mfem::Vector tmp;
+
 public:
   FluxProjector(mfem::ParFiniteElementSpaceHierarchy &smooth_flux_fes, double tol,
                 int max_it, int print);
@@ -66,7 +67,6 @@ public:
   // TODO: Add in an ArrayMult optimization
 
   petsc::PetscParVector GetFluxRHS(const mfem::ParGridFunction &phi) const;
-
 };
 
 }  // namespace palace

@@ -4,8 +4,8 @@
 #include "spaceoperator.hpp"
 
 #include <complex>
-#include "linalg/petsc.hpp"
 #include "linalg/errorestimator.hpp"
+#include "linalg/petsc.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
@@ -717,12 +717,14 @@ bool SpaceOperator::GetExcitationVector2Internal(double omega, mfem::Vector &RHS
 std::vector<double> SpaceOperator::GetErrorEstimates(const mfem::ParComplexGridFunction &E)
 {
   // Compute the non-smooth flux RHS.
-  const auto flux = [&]() -> petsc::PetscParVector {
+  const auto flux = [&]() -> petsc::PetscParVector
+  {
     CurlFluxCoefficient real_coef(E.real(), mat_op), imag_coef(E.imag(), mat_op);
     const auto ndof = nd_fespaces.GetFinestFESpace().GetTrueVSize();
 
     ComplexVector flux(ndof);
-    flux.real = 0.0; flux.imag = 0.0;
+    flux.real = 0.0;
+    flux.imag = 0.0;
 
     {
       mfem::ParLinearForm rhs(&nd_fespaces.GetFinestFESpace());
@@ -755,7 +757,6 @@ std::vector<double> SpaceOperator::GetErrorEstimates(const mfem::ParComplexGridF
     return smooth_flux;
   }();
 
-
   // Given the two fluxes, create grid functions in order to allow integration
   // over each element.
   auto build_func = [this](const petsc::PetscParVector &f)
@@ -782,8 +783,12 @@ std::vector<double> SpaceOperator::GetErrorEstimates(const mfem::ParComplexGridF
   for (int i = 0; i < nelem; i++)
   {
     // e = sqrt( e_i^2 + e_r^2 )
-    const auto real_error2 = std::pow(mfem::ComputeElementLpDistance(normp, i, flux_func.real(), smooth_flux_func.real()), normp);
-    const auto imag_error2 = std::pow(mfem::ComputeElementLpDistance(normp, i, flux_func.real(), smooth_flux_func.real()), normp);
+    const auto real_error2 = std::pow(
+        mfem::ComputeElementLpDistance(normp, i, flux_func.real(), smooth_flux_func.real()),
+        normp);
+    const auto imag_error2 = std::pow(
+        mfem::ComputeElementLpDistance(normp, i, flux_func.real(), smooth_flux_func.real()),
+        normp);
 
     estimates.emplace_back(std::sqrt(real_error2 + imag_error2));
   }

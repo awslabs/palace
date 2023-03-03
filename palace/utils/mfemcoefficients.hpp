@@ -450,7 +450,6 @@ inline void MaterialPropertyCoefficient<MaterialPropertyType::INV_PERMEABILITY_C
   K *= coef;
 }
 
-
 // Computes the flux, μ⁻¹ ∇ × X, of a field, X, where X can be the electric field E, or the
 // magnetic vector potential A.
 class CurlFluxCoefficient : public mfem::VectorCoefficient
@@ -501,7 +500,6 @@ public:
     eps.Mult(grad, V);
   }
 };
-
 
 // Returns the local energy density evaluated as 1/2 Dᴴ E or 1/2 Bᴴ H for real-valued
 // material coefficients. For internal boundary elements, the solution is taken on the side

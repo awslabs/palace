@@ -743,19 +743,18 @@ void BaseSolver::PostprocessFields(const std::string &post_dir, const PostOperat
   Mpi::Barrier();
 }
 
-void BaseSolver::ErrorReductionOperator::operator()(BaseSolver::ErrorIndicators &ebar, std::vector<double>&&ind) const
+void BaseSolver::ErrorReductionOperator::operator()(BaseSolver::ErrorIndicators &ebar,
+                                                    std::vector<double> &&ind) const
 {
 
   // Update the maximum global error.
-  ebar.global_error_indicator = std::max(ebar.global_error_indicator,
-    std::accumulate(ind.begin(), ind.end(), 0.0));
+  ebar.global_error_indicator =
+      std::max(ebar.global_error_indicator, std::accumulate(ind.begin(), ind.end(), 0.0));
 
   // update the average local indicator. Using running average update rather
   // than sum and final division to maintain validity at all times.
-  auto running_average = [](const auto& xbar, const auto& x)
-  {
-    return (xbar * n + x)/(n + 1);
-  };
+  auto running_average = [](const auto &xbar, const auto &x)
+  { return (xbar * n + x) / (n + 1); };
 
   if (n > 0)
   {

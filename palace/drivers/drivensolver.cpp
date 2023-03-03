@@ -6,7 +6,6 @@
 #include <complex>
 #include <mfem.hpp>
 #include "fem/lumpedportoperator.hpp"
-#include "utils/multigrid.hpp"
 #include "fem/postoperator.hpp"
 #include "fem/romoperator.hpp"
 #include "fem/spaceoperator.hpp"
@@ -17,6 +16,7 @@
 #include "linalg/petsc.hpp"
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
+#include "utils/multigrid.hpp"
 #include "utils/prettyprint.hpp"
 #include "utils/timer.hpp"
 
@@ -109,8 +109,8 @@ DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator &postop, int nst
   // Because the Dirichlet BC is always homogenous, no special elimination is required on
   // the RHS. Assemble the linear system for the initial frequency (so we can call
   // KspSolver:: SetOperators). Compute everything at the first frequency step.
-  auto A = spaceop.GetSystemMatrixPetsc(
-      SpaceOperator::OperatorType::COMPLETE, omega0, mfem::Operator::DIAG_ONE);
+  auto A = spaceop.GetSystemMatrixPetsc(SpaceOperator::OperatorType::COMPLETE, omega0,
+                                        mfem::Operator::DIAG_ONE);
   auto NegCurl = spaceop.GetNegCurlMatrixPetsc();
 
   // Set up the linear solver and set operators for the first frequency step. The

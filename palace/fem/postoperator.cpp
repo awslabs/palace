@@ -740,25 +740,25 @@ std::vector<std::complex<double>> PostOperator::ProbeBField() const
 //   // Build error estimates for an H1_FECollection
 // }
 
-const auto& PostOperator::GetE() const
+const auto &PostOperator::GetE() const
 {
   MFEM_VERIFY(HasE(), "E field has not been configured yet");
   return E.value();
 }
 
-const auto& PostOperator::GetB() const
+const auto &PostOperator::GetB() const
 {
   MFEM_VERIFY(HasE(), "B field has not been configured yet");
   return B.value();
 }
 
-const auto& PostOperator::GetV() const
+const auto &PostOperator::GetV() const
 {
   MFEM_VERIFY(V.has_value(), "V field has not been configured yet");
   return V.value();
 }
 
-const auto& PostOperator::GetA() const
+const auto &PostOperator::GetA() const
 {
   MFEM_VERIFY(A.has_value(), "A field has not been configured yet");
   return A.value();
