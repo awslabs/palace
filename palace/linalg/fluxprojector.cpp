@@ -50,7 +50,8 @@ auto BuildMassMatrixHierarchy(mfem::ParFiniteElementSpaceHierarchy &h)
 
 FluxProjector::FluxProjector(mfem::ParFiniteElementSpaceHierarchy &smooth_flux_fes,
                              double tol, int max_it, int print)
-  : mfem::Solver(smooth_flux_fes.GetFinestFESpace().GetTrueVSize())
+  : mfem::Solver(smooth_flux_fes.GetFinestFESpace().GetTrueVSize()),
+  M(BuildMassMatrixHierarchy(smooth_flux_fes))
 {
   // The system matrix for the projection is real and SPD. For the coarse-level AMG solve,
   // we don't use an exact solve on the coarsest level.

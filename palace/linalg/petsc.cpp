@@ -248,7 +248,15 @@ void PetscParVector::GetToVectors(mfem::Vector &vr, mfem::Vector &vi, PetscInt s
 
 ComplexVector PetscParVector::GetToVectors(PetscInt start, PetscInt end) const
 {
-  ComplexVector cv;
+  if (start < 0)
+  {
+    start = 0;
+  }
+  if (end < 0)
+  {
+    end = GetSize();
+  }
+  ComplexVector cv(end - start);
   GetToVectors(cv.real, cv.imag, start, end);
   return cv;
 }

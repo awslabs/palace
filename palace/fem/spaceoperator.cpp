@@ -4,7 +4,7 @@
 #include "spaceoperator.hpp"
 
 #include <complex>
-#include "linalg/errorestimator.hpp"
+#include "linalg/fluxprojector.hpp"
 #include "linalg/petsc.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"

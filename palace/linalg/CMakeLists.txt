@@ -15,7 +15,7 @@ target_sources(${TARGET_NAME}
   ${CMAKE_CURRENT_SOURCE_DIR}/distrelaxation.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/divfree.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/feast.cpp
-  ${CMAKE_CURRENT_SOURCE_DIR}/errorestimator.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/fluxprojector.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/gmg.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/hypre.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/ksp.cpp
