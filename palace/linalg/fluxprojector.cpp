@@ -1,7 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#include "errorestimator.hpp"
+#include "fluxprojector.hpp"
 
 #include <limits>
 #include "fem/materialoperator.hpp"
