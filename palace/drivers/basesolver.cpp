@@ -746,10 +746,14 @@ void BaseSolver::PostprocessFields(const std::string &post_dir, const PostOperat
 void BaseSolver::ErrorReductionOperator::operator()(BaseSolver::ErrorIndicators &ebar,
                                                     std::vector<double> &&ind) const
 {
-
-  // Update the maximum global error.
+  // Compute the global indicator across all processors
+  const auto local_sum = std::accumulate(ind.begin(), ind.end(), 0.0);
+  double candidate_global_error_indicator;
+  auto comm = Mpi::World();
+  MPI_Allreduce(&local_sum, &candidate_global_error_indicator, 1, MPI_DOUBLE, MPI_SUM,
+                comm);
   ebar.global_error_indicator =
-      std::max(ebar.global_error_indicator, std::accumulate(ind.begin(), ind.end(), 0.0));
+      std::max(ebar.global_error_indicator, candidate_global_error_indicator);
 
   // update the average local indicator. Using running average update rather
   // than sum and final division to maintain validity at all times.

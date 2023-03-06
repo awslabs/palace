@@ -89,7 +89,9 @@ public:
     // Elemental localized error indicators. Used for marking elements for
     // refinement and coarsening.
     std::vector<double> local_error_indicators;
-    // Global error indicator. Used for driving AMR and diagnostics.
+    // Global error indicator. Used for driving AMR and diagnostics. This
+    // combines the local error indicators across all ranks. This number is the
+    // same on all ranks.
     double global_error_indicator = 0;
     // Number of global dof in the mesh.
     int ndof;
