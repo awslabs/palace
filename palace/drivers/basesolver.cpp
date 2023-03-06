@@ -176,7 +176,7 @@ double ComputeRefineThreshold(double fraction, std::vector<double> estimates)
       else
       {
         // Root will check the effective fraction given this threshold
-        double candidate_fraction =
+        const auto candidate_fraction =
             static_cast<double>(static_cast<long double>(candidate_total) / max_elem);
 
         constexpr double tol = 1e-3;

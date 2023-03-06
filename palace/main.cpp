@@ -183,8 +183,7 @@ int main(int argc, char *argv[])
   timer.init_time += timer.Lap() - timer.io_time;
 
   // Run the problem driver.
-  int iter = 0;
-  auto solver_output = solver->Solve(mesh, timer, iter++);
+  auto solver_output = solver->SolveEstimateMarkRefine(mesh, timer);
 
   timer.Reduce(world_comm);
   timer.Print(world_comm);
