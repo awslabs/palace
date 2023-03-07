@@ -58,7 +58,7 @@ class BdrCurrentVectorCoefficient : public mfem::VectorCoefficient,
 private:
   const mfem::ParGridFunction &B;
   const MaterialOperator &mat_op;
-  mfem::Vector C1, W, VU, VL, nor;
+  mutable mfem::Vector C1, W, VU, VL, nor;
 
 public:
   BdrCurrentVectorCoefficient(const mfem::ParGridFunction &gf, const MaterialOperator &op,
@@ -116,7 +116,7 @@ class BdrChargeCoefficient : public mfem::Coefficient, public BdrGridFunctionCoe
 private:
   const mfem::ParGridFunction &E;
   const MaterialOperator &mat_op;
-  mfem::Vector C1, W, VU, VL, nor;
+  mutable mfem::Vector C1, W, VU, VL, nor;
 
 public:
   BdrChargeCoefficient(const mfem::ParGridFunction &gf, const MaterialOperator &op,
@@ -158,7 +158,7 @@ class BdrFluxCoefficient : public mfem::Coefficient, public BdrGridFunctionCoeff
 private:
   const mfem::ParGridFunction &B;
   const mfem::Vector dir;
-  mfem::Vector V, VL, nor;
+  mutable mfem::Vector V, VL, nor;
 
 public:
   BdrFluxCoefficient(const mfem::ParGridFunction &gf, mfem::Vector d,
@@ -216,7 +216,7 @@ private:
   const MaterialOperator &mat_op;
   const double ts, epsilon;
   const mfem::Vector side;
-  mfem::Vector C1, V, nor;
+  mutable mfem::Vector C1, V, nor;
 
   int Initialize(mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip,
                  mfem::Vector &V)
@@ -477,7 +477,7 @@ private:
           GridFunctionType;
   const GridFunctionType &U;
   const MaterialOperator &mat_op;
-  mfem::Vector V;
+  mutable mfem::Vector V;
 
   double GetLocalEnergyDensity(mfem::ElementTransformation &T,
                                const mfem::IntegrationPoint &ip, int attr)
@@ -789,8 +789,8 @@ inline void BdrGridFunctionCoefficient::GetNormal(mfem::ElementTransformation &T
 class NormalProjectedCoefficient : public mfem::Coefficient
 {
   std::unique_ptr<mfem::MatrixCoefficient> c;
-  mfem::DenseMatrix K;
-  mfem::Vector nor;
+  mutable mfem::DenseMatrix K;
+  mutable mfem::Vector nor;
 
 public:
   NormalProjectedCoefficient(std::unique_ptr<mfem::MatrixCoefficient> &&coef)
@@ -911,7 +911,7 @@ class SumVectorCoefficient : public mfem::VectorCoefficient
 private:
   std::vector<std::pair<std::unique_ptr<mfem::VectorCoefficient>, const mfem::Array<int> *>>
       c;
-  mfem::Vector U;
+  mutable mfem::Vector U;
 
   void AddCoefficient(std::unique_ptr<mfem::VectorCoefficient> &&coef,
                       const mfem::Array<int> *marker)
@@ -985,7 +985,7 @@ class SumMatrixCoefficient : public mfem::MatrixCoefficient
 private:
   std::vector<std::pair<std::unique_ptr<mfem::MatrixCoefficient>, const mfem::Array<int> *>>
       c;
-  mfem::DenseMatrix M;
+  mutable mfem::DenseMatrix M;
 
   void AddCoefficient(std::unique_ptr<mfem::MatrixCoefficient> &&coef,
                       const mfem::Array<int> *marker)
