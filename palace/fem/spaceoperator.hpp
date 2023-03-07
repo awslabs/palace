@@ -20,6 +20,7 @@ namespace palace
 {
 
 class IoData;
+class SumCoefficient;
 class SumMatrixCoefficient;
 
 namespace petsc
@@ -73,8 +74,7 @@ private:
   // Helper function to assemble preconditioner matrix data structures.
   void GetPreconditionerInternal(
       const std::function<void(SumMatrixCoefficient &, SumMatrixCoefficient &,
-                               SumMatrixCoefficient &, SumMatrixCoefficient &)>
-          &AddCoefficients,
+                               SumCoefficient &, SumMatrixCoefficient &)> &AddCoefficients,
       std::vector<std::unique_ptr<mfem::Operator>> &B,
       std::vector<std::unique_ptr<mfem::Operator>> &AuxB, bool print);
 
@@ -88,8 +88,8 @@ private:
                                SumMatrixCoefficient &fb);
   void AddDampingCoefficients(double coef, SumMatrixCoefficient &f,
                               SumMatrixCoefficient &fb);
-  void AddExtraSystemBdrCoefficients(double omega, SumMatrixCoefficient &dfbr,
-                                     SumMatrixCoefficient &dfbi, SumMatrixCoefficient &fbr,
+  void AddExtraSystemBdrCoefficients(double omega, SumCoefficient &dfbr,
+                                     SumCoefficient &dfbi, SumMatrixCoefficient &fbr,
                                      SumMatrixCoefficient &fbi);
 
   // Helper functions for excitation vector assembly.

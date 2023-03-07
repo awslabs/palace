@@ -11,6 +11,7 @@ namespace palace
 
 class IoData;
 class MaterialOperator;
+class SumCoefficient;
 class SumMatrixCoefficient;
 
 //
@@ -42,8 +43,8 @@ public:
   // Add contributions to system matrices from first- or second-order absorbing boundary
   // condition.
   void AddDampingBdrCoefficients(double coef, SumMatrixCoefficient &fb);
-  void AddExtraSystemBdrCoefficients(double omega, SumMatrixCoefficient &dfbr,
-                                     SumMatrixCoefficient &dfbi);
+  void AddExtraSystemBdrCoefficients(double omega, SumCoefficient &dfbr,
+                                     SumCoefficient &dfbi);
 };
 
 }  // namespace palace

@@ -70,9 +70,8 @@ mfem::Array<int> SetUpBoundaryProperties(const IoData &iodata, const mfem::ParMe
   return dbc_marker;
 }
 
-template <typename DomainCoefficient, typename BoundaryCoefficient>
-auto AddIntegrators(mfem::ParBilinearForm &a, DomainCoefficient &df, DomainCoefficient &f,
-                    BoundaryCoefficient &dfb, BoundaryCoefficient &fb)
+template <typename T1, typename T2, typename T3, typename T4>
+auto AddIntegrators(mfem::ParBilinearForm &a, T1 &df, T2 &f, T3 &dfb, T4 &fb)
 {
   if (!df.empty())
   {
@@ -92,9 +91,8 @@ auto AddIntegrators(mfem::ParBilinearForm &a, DomainCoefficient &df, DomainCoeff
   }
 }
 
-template <typename DomainCoefficient, typename BoundaryCoefficient>
-auto AddAuxIntegrators(mfem::ParBilinearForm &a, DomainCoefficient &f,
-                       BoundaryCoefficient &fb)
+template <typename T1, typename T2>
+auto AddAuxIntegrators(mfem::ParBilinearForm &a, T1 &f, T2 &fb)
 {
   if (!f.empty())
   {
@@ -220,8 +218,8 @@ SpaceOperator::GetSystemMatrixPetsc(SpaceOperator::OperatorType type, double ome
   //                 A = K + iω C - ω² (Mr + i Mi) + A2(ω)
   // or any one of its terms.
   const int sdim = nd_fespaces.GetFinestFESpace().GetParMesh()->SpaceDimension();
-  SumMatrixCoefficient dfr(sdim), dfi(sdim), fr(sdim), fi(sdim), dfbr(sdim), dfbi(sdim),
-      fbr(sdim), fbi(sdim);
+  SumMatrixCoefficient dfr(sdim), dfi(sdim), fr(sdim), fi(sdim), fbr(sdim), fbi(sdim);
+  SumCoefficient dfbr, dfbi;
   std::string str;
   switch (type)
   {
@@ -331,7 +329,8 @@ SpaceOperator::GetSystemMatrix(SpaceOperator::OperatorType type, double omega,
   MFEM_VERIFY(omega == 0.0,
               "GetSystemMatrix for HypreParMatrix does not use omega parameter!");
   const int sdim = nd_fespaces.GetFinestFESpace().GetParMesh()->SpaceDimension();
-  SumMatrixCoefficient df(sdim), f(sdim), dfb(sdim), fb(sdim);
+  SumMatrixCoefficient df(sdim), f(sdim), fb(sdim);
+  SumCoefficient dfb;
   std::string str;
   switch (type)
   {
@@ -376,8 +375,7 @@ SpaceOperator::GetSystemMatrix(SpaceOperator::OperatorType type, double omega,
 
 void SpaceOperator::GetPreconditionerInternal(
     const std::function<void(SumMatrixCoefficient &, SumMatrixCoefficient &,
-                             SumMatrixCoefficient &, SumMatrixCoefficient &)>
-        &AddCoefficients,
+                             SumCoefficient &, SumMatrixCoefficient &)> &AddCoefficients,
     std::vector<std::unique_ptr<mfem::Operator>> &B,
     std::vector<std::unique_ptr<mfem::Operator>> &AuxB, bool print)
 {
@@ -400,7 +398,8 @@ void SpaceOperator::GetPreconditionerInternal(
       fespace_l.GetEssentialTrueDofs(dbc_marker, dbc_tdof_list_l);
 
       const int sdim = nd_fespaces.GetFinestFESpace().GetParMesh()->SpaceDimension();
-      SumMatrixCoefficient df(sdim), f(sdim), dfb(sdim), fb(sdim);
+      SumMatrixCoefficient df(sdim), f(sdim), fb(sdim);
+      SumCoefficient dfb;
       AddCoefficients(df, f, dfb, fb);
       mfem::ParBilinearForm b(&fespace_l);
       if (s == 1)
@@ -461,7 +460,7 @@ void SpaceOperator::GetPreconditionerMatrix(
 {
   // Frequency domain preconditioner matrix.
   auto AddCoefficients = [this, omega](SumMatrixCoefficient &df, SumMatrixCoefficient &f,
-                                       SumMatrixCoefficient &dfb, SumMatrixCoefficient &fb)
+                                       SumCoefficient &dfb, SumMatrixCoefficient &fb)
   {
     this->AddStiffnessCoefficients(1.0, df, f, fb);
     this->AddDampingCoefficients(omega, f, fb);
@@ -477,7 +476,7 @@ void SpaceOperator::GetPreconditionerMatrix(
 {
   // Time domain preconditioner matrix.
   auto AddCoefficients = [this, a0, a1](SumMatrixCoefficient &df, SumMatrixCoefficient &f,
-                                        SumMatrixCoefficient &dfb, SumMatrixCoefficient &fb)
+                                        SumCoefficient &dfb, SumMatrixCoefficient &fb)
   {
     this->AddStiffnessCoefficients(a0, df, f, fb);
     this->AddDampingCoefficients(a1, f, fb);
@@ -600,8 +599,8 @@ void SpaceOperator::AddDampingCoefficients(double coef, SumMatrixCoefficient &f,
   lumped_port_op.AddDampingBdrCoefficients(coef, fb);
 }
 
-void SpaceOperator::AddExtraSystemBdrCoefficients(double omega, SumMatrixCoefficient &dfbr,
-                                                  SumMatrixCoefficient &dfbi,
+void SpaceOperator::AddExtraSystemBdrCoefficients(double omega, SumCoefficient &dfbr,
+                                                  SumCoefficient &dfbi,
                                                   SumMatrixCoefficient &fbr,
                                                   SumMatrixCoefficient &fbi)
 {
