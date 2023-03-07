@@ -188,9 +188,9 @@ frequency domain driven simulation type.
 [
     {
         "Attributes": [<int array>],
-        "Conductivity": <int>,
-        "Permeability": <int>,
-        "Thickness": <int>
+        "Conductivity": <float>,
+        "Permeability": <float>,
+        "Thickness": <float>
     },
     ...
 ]
