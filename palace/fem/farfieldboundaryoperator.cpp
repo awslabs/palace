@@ -77,8 +77,8 @@ void FarfieldBoundaryOperator::AddDampingBdrCoefficients(double coef,
 }
 
 void FarfieldBoundaryOperator::AddExtraSystemBdrCoefficients(double omega,
-                                                             SumMatrixCoefficient &dfbr,
-                                                             SumMatrixCoefficient &dfbi)
+                                                             SumCoefficient &dfbr,
+                                                             SumCoefficient &dfbi)
 {
   // Contribution for second-order absorbing BC. See Jin Section 9.3 for reference. The β
   // coefficient for the second-order ABC is 1/(2ik+2/r). Taking the radius of curvature as
@@ -89,9 +89,10 @@ void FarfieldBoundaryOperator::AddExtraSystemBdrCoefficients(double omega,
   if (farfield_marker.Max() > 0 && order > 1)
   {
     dfbi.AddCoefficient(
-        std::make_unique<
-            MaterialPropertyCoefficient<MaterialPropertyType::INV_PERMEABILITY_C0>>(
-            mat_op, 0.5 / omega),
+        std::make_unique<NormalProjectedCoefficient>(
+            std::make_unique<
+                MaterialPropertyCoefficient<MaterialPropertyType::INV_PERMEABILITY_C0>>(
+                mat_op, 0.5 / omega)),
         farfield_marker);
   }
 }
