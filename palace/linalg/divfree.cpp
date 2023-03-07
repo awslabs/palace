@@ -28,7 +28,10 @@ DivFreeSolver::DivFreeSolver(const MaterialOperator &mat_op,
   {
     auto &h1_fespace_l = h1_fespaces.GetFESpaceAtLevel(l);
     mfem::Array<int> dbc_tdof_list_l;
-    h1_fespace_l.GetEssentialTrueDofs(bdr_marker, dbc_tdof_list_l);
+    if (bdr_marker.Size() > 0)
+    {
+      h1_fespace_l.GetEssentialTrueDofs(bdr_marker, dbc_tdof_list_l);
+    }
 
     mfem::ParBilinearForm m(&h1_fespace_l);
     m.AddDomainIntegrator(new mfem::MixedGradGradIntegrator(epsilon_func));
@@ -56,7 +59,10 @@ DivFreeSolver::DivFreeSolver(const MaterialOperator &mat_op,
     grad.Finalize();
     Grad.reset(grad.ParallelAssemble());
   }
-  h1_fespaces.GetFinestFESpace().GetEssentialTrueDofs(bdr_marker, h1_bdr_tdof_list);
+  if (bdr_marker.Size() > 0)
+  {
+    h1_fespaces.GetFinestFESpace().GetEssentialTrueDofs(bdr_marker, h1_bdr_tdof_list);
+  }
 
   // The system matrix for the projection is real and SPD. For the coarse-level AMG solve,
   // we don't use an exact solve on the coarsest level.

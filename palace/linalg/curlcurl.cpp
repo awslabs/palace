@@ -32,8 +32,10 @@ CurlCurlSolver::CurlCurlSolver(const MaterialOperator &mat_op,
       auto &fespace_l =
           (s == 0) ? nd_fespaces.GetFESpaceAtLevel(l) : h1_fespaces.GetFESpaceAtLevel(l);
       mfem::Array<int> dbc_tdof_list_l;
-      fespace_l.GetEssentialTrueDofs(dbc_marker, dbc_tdof_list_l);
-
+      if (dbc_marker.Size() > 0)
+      {
+        fespace_l.GetEssentialTrueDofs(dbc_marker, dbc_tdof_list_l);
+      }
       mfem::ParBilinearForm a(&fespace_l);
       if (s == 1)
       {

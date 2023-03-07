@@ -56,7 +56,10 @@ GeometricMultigridSolver::GeometricMultigridSolver(
     for (int l = 1; l < m; l++)
     {
       mfem::Array<int> dbc_tdof_list_l;
-      fespaces.GetFESpaceAtLevel(l).GetEssentialTrueDofs(dbc_marker, dbc_tdof_list_l);
+      if (dbc_marker.Size() > 0)
+      {
+        fespaces.GetFESpaceAtLevel(l).GetEssentialTrueDofs(dbc_marker, dbc_tdof_list_l);
+      }
       B_.push_back(
           std::make_unique<ChebyshevSmoother>(fespaces.GetFESpaceAtLevel(l).GetComm(),
                                               dbc_tdof_list_l, smooth_it, cheby_order));

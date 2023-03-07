@@ -27,8 +27,11 @@ DistRelaxationSmoother::DistRelaxationSmoother(mfem::ParFiniteElementSpace &nd_f
 
   // Initialize smoothers.
   mfem::Array<int> nd_dbc_tdof_list;
-  nd_fespace.GetEssentialTrueDofs(dbc_marker, nd_dbc_tdof_list);
-  h1_fespace.GetEssentialTrueDofs(dbc_marker, h1_dbc_tdof_list);
+  if (dbc_marker.Size() > 0)
+  {
+    nd_fespace.GetEssentialTrueDofs(dbc_marker, nd_dbc_tdof_list);
+    h1_fespace.GetEssentialTrueDofs(dbc_marker, h1_dbc_tdof_list);
+  }
   B = std::make_unique<ChebyshevSmoother>(nd_fespace.GetComm(), nd_dbc_tdof_list,
                                           cheby_smooth_it, cheby_order);
   B_G = std::make_unique<ChebyshevSmoother>(h1_fespace.GetComm(), h1_dbc_tdof_list,

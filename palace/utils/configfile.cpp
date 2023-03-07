@@ -290,15 +290,15 @@ void RefinementData::SetUp(json &model)
   {
     // Load Values
     adaptation.tolerance = adapt->value("Tol", adaptation.tolerance);
-    adaptation.max_its = adapt->value("MaxIteration", adaptation.max_its);
-    adaptation.min_its = adapt->value("MinIteration", adaptation.min_its);
+    adaptation.max_its = adapt->value("MaxIts", adaptation.max_its);
+    adaptation.min_its = adapt->value("MinIts", adaptation.min_its);
     adaptation.update_fraction = adapt->value("UpdateFraction", adaptation.update_fraction);
     adaptation.construct_geometric_multigrid =
         adapt->value("ConstructGMG", adaptation.construct_geometric_multigrid);
-    adaptation.coarsening_fraction =
-        adapt->value("CoarseningFraction", adaptation.coarsening_fraction);
     adaptation.max_nc_levels = adapt->value("MaxNCLevels", adaptation.max_nc_levels);
     adaptation.dof_limit = adapt->value("DOFLimit", adaptation.dof_limit);
+    adaptation.coarsening_fraction =
+        adapt->value("CoarseningFraction", adaptation.coarsening_fraction);
     adaptation.on_update_tolerance_ratio =
         adapt->value("OnUpdateTolRatio", adaptation.on_update_tolerance_ratio);
     adaptation.save_step = adapt->value("SaveStep", adaptation.save_step);
@@ -347,6 +347,7 @@ void RefinementData::SetUp(json &model)
   refinement->erase("UniformLevels");
   refinement->erase("Boxes");
   refinement->erase("Spheres");
+  refinement->erase("Adaptation");
   MFEM_VERIFY(refinement->empty(),
               "Found an unsupported configuration file keyword under \"Refinement\"!\n"
                   << refinement->dump(2));

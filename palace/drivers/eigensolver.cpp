@@ -350,7 +350,11 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh, Time
   }
   timer.solve_time += timer.Lap();
 
+
   // Postprocess the results.
+  BaseSolver::ErrorIndicators indicators(-1);
+  const auto error_reducer = BaseSolver::ErrorReductionOperator();
+
   const auto io_time_prev = timer.io_time;
   for (int i = 0; i < num_conv; i++)
   {
@@ -389,10 +393,20 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh, Time
     // Postprocess the mode.
     Postprocess(post_dir_, postop, spaceop.GetLumpedPortOp(), i, omega, error1, error2,
                 num_conv, timer);
-  }
-  timer.postpro_time += timer.Lap() - (timer.io_time - io_time_prev);
+    timer.postpro_time += timer.Lap();
 
-  return BaseSolver::ErrorIndicators(spaceop.GetNDof());
+    if (i < iodata.solver.eigenmode.n)
+    {
+      // Compute the error indicators for the field, and reduce into the
+      // indicator. Only include modes that were targeted.
+      error_reducer(indicators, spaceop.GetErrorEstimates(postop.GetE()));
+      timer.estimation_time += timer.Lap();
+    }
+  }
+  // Do not count io time as part of postprocessing.
+  timer.postpro_time -= (timer.io_time - io_time_prev);
+
+  return indicators;
 }
 
 void EigenSolver::Postprocess(const std::string &post_dir, const PostOperator &postop,

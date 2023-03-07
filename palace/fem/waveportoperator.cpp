@@ -489,8 +489,11 @@ void WavePortData::GetTrueDofs(const mfem::Array<int> &dbc_marker,
   // Ensures no duplicates in the attribute list for this port index (this would imply a
   // mistake in the configuration file). We can, however, have multiple unique ports with
   // shared boundary attributes.
-  nd_fespace.GetEssentialTrueDofs(attr_marker, nd_tdof_list);
-  h1_fespace.GetEssentialTrueDofs(attr_marker, h1_tdof_list);
+  if (attr_marker.Size() > 0)
+  {
+    nd_fespace.GetEssentialTrueDofs(attr_marker, nd_tdof_list);
+    h1_fespace.GetEssentialTrueDofs(attr_marker, h1_tdof_list);
+  }
   int nd_tdofs = nd_tdof_list.Size();
   int h1_tdofs = h1_tdof_list.Size();
 
@@ -499,8 +502,11 @@ void WavePortData::GetTrueDofs(const mfem::Array<int> &dbc_marker,
       h1_tdof_marker(h1_fespace.GetTrueVSize()), nd_dbc_tdof_list, h1_dbc_tdof_list;
   nd_tdof_marker = 0;
   h1_tdof_marker = 0;
-  nd_fespace.GetEssentialTrueDofs(dbc_marker, nd_dbc_tdof_list);
-  h1_fespace.GetEssentialTrueDofs(dbc_marker, h1_dbc_tdof_list);
+  if (dbc_marker.Size() > 0)
+  {
+    nd_fespace.GetEssentialTrueDofs(dbc_marker, nd_dbc_tdof_list);
+    h1_fespace.GetEssentialTrueDofs(dbc_marker, h1_dbc_tdof_list);
+  }
   for (auto tdof : nd_tdof_list)
   {
     nd_tdof_marker[tdof] = 1;

@@ -113,7 +113,7 @@ struct AdaptiveRefinementData
   // Non-dimensional tolerance used to specify convergence of the AMR.
   double tolerance = 1e-3;
   // Maximum number of iterations to perform during the AMR.
-  int max_its = 30;
+  int max_its = 0;
   // Minimum number of iterations to perform during the AMR.
   int min_its = 0;
   // Dorfler update fraction. The set of marked elements is the minimum set

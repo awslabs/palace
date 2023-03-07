@@ -396,7 +396,10 @@ void SpaceOperator::GetPreconditionerInternal(
       auto &fespace_l =
           (s == 0) ? nd_fespaces.GetFESpaceAtLevel(l) : h1_fespaces.GetFESpaceAtLevel(l);
       mfem::Array<int> dbc_tdof_list_l;
-      fespace_l.GetEssentialTrueDofs(dbc_marker, dbc_tdof_list_l);
+      if (dbc_marker.Size() > 0)
+      {
+        fespace_l.GetEssentialTrueDofs(dbc_marker, dbc_tdof_list_l);
+      }
 
       const int sdim = nd_fespaces.GetFinestFESpace().GetParMesh()->SpaceDimension();
       SumMatrixCoefficient df(sdim), f(sdim), fb(sdim);
@@ -792,6 +795,16 @@ std::vector<double> SpaceOperator::GetErrorEstimates(const mfem::ParComplexGridF
 
     estimates.emplace_back(std::sqrt(real_error2 + imag_error2));
   }
+
+  // The error estimate computed here is an approximation of the error in a
+  // gradient. In order to allow combining across indicators from multiple
+  // solves, we normalize by the solution norm and a length scale.
+  //    indicator ~ ∇ E / (|| E || / L)
+  // However we have already non-dimensionalized the solution field, so the
+  // length scale is unit.
+
+  const double norm = E.Norml2();
+  std::transform(estimates.begin(), estimates.end(), estimates.begin(), [=](const double& x){return x/norm;});
 
   return estimates;
 }

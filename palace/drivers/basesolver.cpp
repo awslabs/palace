@@ -90,7 +90,6 @@ namespace
 // results in a Dorfler marking across processor ranks.
 double ComputeRefineThreshold(double fraction, std::vector<double> estimates)
 {
-
   std::sort(estimates.begin(), estimates.end());
 
   const auto pivot = static_cast<std::size_t>(
@@ -114,8 +113,6 @@ double ComputeRefineThreshold(double fraction, std::vector<double> estimates)
 
   auto comm = Mpi::World();
 
-  double min_threshold;
-  double max_threshold;
   long long num_elem = estimates.size();
   const long long max_elem = [&]() {  // IILE for const
     long long max_elem = 0;
@@ -126,28 +123,29 @@ double ComputeRefineThreshold(double fraction, std::vector<double> estimates)
   long long candidate_total = 0, old_candidate_total = max_elem;
 
   // Collect to rank zero the initial threshold bounds, and the total number of elements.
-  MPI_Reduce(&threshold, &min_threshold, 1, MPI_DOUBLE, MPI_MIN, 0, comm);
-  MPI_Reduce(&threshold, &max_threshold, 1, MPI_DOUBLE, MPI_MAX, 0, comm);
+  double min_threshold = threshold;
+  double max_threshold = threshold;
+  Mpi::GlobalMin(1, &min_threshold, comm);
+  Mpi::GlobalMax(1, &max_threshold, comm);
 
-  bool continue_bisecting = true;
+  MFEM_ASSERT(min_threshold <= max_threshold, "min: " << min_threshold << " max " << max_threshold);
+
+  constexpr double bisect_tol = 1e-3;
+  bool continue_bisecting = (max_threshold - min_threshold) > bisect_tol;
+
   MPI_Request request = MPI_REQUEST_NULL;
 
   while (continue_bisecting)
   {
     if (Mpi::Root(comm))
     {
-      // Root is going to bisect, and send thresholds to other ranks
-      constexpr double tol = 1e-3;
-      while ((max_threshold - min_threshold) > tol)
-      {
-        // Compute a new threshold and send to all ranks.
-        threshold = (min_threshold + max_threshold) / 2;
+      // Root is going to bisect, and send threshold to other ranks.
+      threshold = (min_threshold + max_threshold) / 2;
 
-        // Send to all processors
-        for (int i = 1; i < Mpi::Size(comm); i++)
-        {
-          MPI_Isend(&threshold, 1, MPI_DOUBLE, i, 0, comm, &request);
-        }
+      // Send to all processors
+      for (int i = 1; i < Mpi::Size(comm); i++)
+      {
+        MPI_Isend(&threshold, 1, MPI_DOUBLE, i, 0, comm, &request);
       }
     }
     else
@@ -159,15 +157,15 @@ double ComputeRefineThreshold(double fraction, std::vector<double> estimates)
     // Given the now agreed upon threshold value, count the number of elements
     // this would mark across all ranks.
     num_elem = count_elems_in_part(threshold);
+    old_candidate_total = candidate_total;
+    candidate_total = 0;
     MPI_Reduce(&num_elem, &candidate_total, 1, MPI_LONG_LONG, MPI_SUM, 0, comm);
 
     if (Mpi::Root(comm))
     {
-
       // Check 1: That the number of candidate elements changed. This is important
       // given working with discrete sets. The threshold value might keep changing
-      // but no outward effect.
-
+      // but no outward effect, in which case we should exit early.
       if (candidate_total == old_candidate_total)
       {
         // changes in the threshold value are no longer making a difference.
@@ -198,11 +196,35 @@ double ComputeRefineThreshold(double fraction, std::vector<double> estimates)
 
     // Inform all ranks if the loop will be continuing. All ranks already have
     // the threshold.
-    MPI_Bcast(&continue_bisecting, 1, MPI_LOGICAL, 0, comm);
+    MPI_Bcast(&continue_bisecting, 1, MPI_CXX_BOOL, 0, comm);
   }
+
+  MFEM_ASSERT(threshold > 0, "threshold must be positive");
 
   return threshold;
 }
+
+mfem::Array<int> MarkedElements(double threshold, const std::vector<double> &v, bool gt = true)
+{
+  // assign a working temporary so can emplace_back
+  std::vector<int> ind;
+  for (int i = 0; i < v.size(); i++)
+  {
+    if (gt && v[i] > threshold) // Used for refinement marking.
+    {
+      ind.emplace_back(i);
+    }
+
+    if (!gt && v[i] < threshold) // Used for coarsening marking.
+    {
+      ind.emplace_back(i);
+    }
+  }
+  mfem::Array<int> e(ind.size());
+  std::copy(ind.begin(), ind.end(), e.begin());
+  return e;
+}
+
 }  // namespace
 
 BaseSolver::ErrorIndicators
@@ -211,58 +233,81 @@ BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<mfem::ParMesh>> 
 {
   const auto &param = iodata.model.refinement.adaptation;
 
+  const bool use_amr = param.max_its > 0;
   const bool use_coarsening = param.coarsening_fraction > 0;
   const int use_nc = use_coarsening ? 1 : -1;
 
   int iter = 0;
-  auto estimates = Solve(mesh, timer, iter++);
+  auto indicators = Solve(mesh, timer, iter++);
 
-  while (iter < param.min_its ||
-         (iter < param.max_its && estimates.global_error_indicator > param.tolerance))
+  if (use_amr)
   {
-    if (estimates.ndof < param.dof_limit)
+    Mpi::Print("\nAdaptive Mesh Refinement Parameters:\n");
+    Mpi::Print("MinIter: {}, MaxIter: {}, Tolerance: {:.3e}, DOFLimit: {}\n\n",
+      param.min_its, param.max_its, param.tolerance, param.dof_limit);
+  }
+
+  // collection of all tests that might exhaust resources.
+  auto exhausted_resources = [&](){
+    bool ret = false;
+    // run out of DOFs, and coarsening isn't allowed.
+    ret |= (indicators.ndof > param.dof_limit && !use_coarsening);
+    ret |= iter > param.max_its;
+
+    return ret;
+  };
+
+  while ((iter < param.min_its || indicators.global_error_indicator > param.tolerance)
+         && !exhausted_resources())
+  {
+    Mpi::Print("Adaptation Iteration {}: Error: {:.3e}, DOF: {}\n",
+      iter, indicators.global_error_indicator, indicators.ndof);
+    if (indicators.ndof < param.dof_limit)
     {
       // refinement mark
-      // auto marked_elements = RefineMarker(
-      //   iodata.model.refinement.adaptive.update_fraction,
-      //   estimates.error_estimates);
+      const auto threshold = ComputeRefineThreshold(param.update_fraction, indicators.local_error_indicators);
+      const auto marked_elements = MarkedElements(threshold, indicators.local_error_indicators);
 
-      mfem::Array<int> marked_elements;  // PLACEHOLDER
+      Mpi::Print("{} elements marked for refinement\n", marked_elements.Size());
 
-      // refine
       if (param.construct_geometric_multigrid)
       {
+        // If building a geometric multigrid, duplicate the final mesh.
         mesh.emplace_back(std::make_unique<mfem::ParMesh>(*mesh.back(), true));
       }
 
-      // If coarsening, need NC, otherwise let the mesh decide
+      // refine
       mesh.back()->GeneralRefinement(marked_elements, use_nc, param.max_nc_levels);
     }
     else if (use_coarsening)
     {
+      MFEM_VERIFY(false, "Coarsening not implemented yet.");
       // coarsen mark
       // auto marked_elements = CoarsenMarker(
       //   iodata.model.refinement.adaptive.update_fraction,
-      //   estimates.error_estimates);
+      //   indicators.error_indicators);
 
       mfem::Array<int> marked_elements;  // PLACEHOLDER
 
       // TODO: Compute error threshold that will trigger sufficient derefinement
-      // const double threshold = ComputeThreshold(estimates.error_estimates);
+      // const double threshold = ComputeThreshold(indicators.error_indicators);
 
       const double threshold = 0;  // PLACEHOLDER
 
       // TODO: Figure out the method to expose here.
-      // mesh.back()->NonconformingDerefinement(estimates.error_estimates,
+      // mesh.back()->NonconformingDerefinement(indicators.error_indicators,
       // param.max_nc_levels, 1);
     }
 
     // solve + estimate
-    estimates = Solve(mesh, timer, iter);
-    iter++;
+    indicators = Solve(mesh, timer, iter);
+    ++iter;
   }
 
-  return estimates;
+  Mpi::Print("Error Indicator: {:.3e}, DOF: {}\n",
+    indicators.global_error_indicator, indicators.ndof);
+
+  return indicators;
 }
 
 void BaseSolver::SaveMetadata(const std::string &post_dir,

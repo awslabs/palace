@@ -126,7 +126,10 @@ LaplaceOperator::LaplaceOperator(const IoData &iodata,
     source_attr_lists(ConstructSources(iodata))
 {
   // Finalize setup.
-  h1_fespaces.GetFinestFESpace().GetEssentialTrueDofs(dbc_marker, dbc_tdof_list);
+  if (dbc_marker.Size() > 0)
+  {
+    h1_fespaces.GetFinestFESpace().GetEssentialTrueDofs(dbc_marker, dbc_tdof_list);
+  }
 
   // Print essential BC information.
   if (dbc_marker.Max() > 0)
@@ -157,7 +160,11 @@ void LaplaceOperator::GetStiffnessMatrix(std::vector<std::unique_ptr<mfem::Opera
   {
     auto &h1_fespace_l = h1_fespaces.GetFESpaceAtLevel(l);
     mfem::Array<int> dbc_tdof_list_l;
-    h1_fespace_l.GetEssentialTrueDofs(dbc_marker, dbc_tdof_list_l);
+
+    if (dbc_marker.Size() > 0)
+    {
+      h1_fespace_l.GetEssentialTrueDofs(dbc_marker, dbc_tdof_list_l);
+    }
 
     MaterialPropertyCoefficient<MaterialPropertyType::PERMITTIVITY_REAL> epsilon_func(
         mat_op);

@@ -32,7 +32,10 @@ public:
   {
     height = P.Height();
     width = P.Width();
-    coarse_fespace.GetEssentialTrueDofs(dbc_marker, coarse_dbc_tdof_list);
+    if (dbc_marker.Size() > 0)
+    {
+      coarse_fespace.GetEssentialTrueDofs(dbc_marker, coarse_dbc_tdof_list);
+    }
   }
 
   void Mult(const mfem::Vector &x, mfem::Vector &y) const override { P.Mult(x, y); }

@@ -124,8 +124,10 @@ void CurlCurlOperator::GetStiffnessMatrix(std::vector<std::unique_ptr<mfem::Oper
   {
     auto &nd_fespace_l = nd_fespaces.GetFESpaceAtLevel(l);
     mfem::Array<int> dbc_tdof_list_l;
-    nd_fespace_l.GetEssentialTrueDofs(dbc_marker, dbc_tdof_list_l);
-
+    if (dbc_marker.Size() > 0)
+    {
+      nd_fespace_l.GetEssentialTrueDofs(dbc_marker, dbc_tdof_list_l);
+    }
     MaterialPropertyCoefficient<MaterialPropertyType::INV_PERMEABILITY> muinv_func(mat_op);
     mfem::ParBilinearForm k(&nd_fespace_l);
     k.AddDomainIntegrator(new mfem::CurlCurlIntegrator(muinv_func));
