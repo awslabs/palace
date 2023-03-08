@@ -1071,12 +1071,12 @@ void InterfaceDielectricPostData::SetUp(json &postpro)
     MFEM_VERIFY(ret.second, "Repeated \"Index\" found when processing \"Dielectric\" "
                             "boundaries in configuration file!");
     InterfaceDielectricData &data = ret.first->second;
+    data.ts = it->at("Thickness");  // Required for surfaces
     data.tandelta = it->value("LossTan", data.tandelta);
     data.epsilon_r = it->value("Permittivity", data.epsilon_r);
     data.epsilon_r_ma = it->value("PermittivityMA", data.epsilon_r_ma);
     data.epsilon_r_ms = it->value("PermittivityMS", data.epsilon_r_ms);
     data.epsilon_r_sa = it->value("PermittivitySA", data.epsilon_r_sa);
-    data.ts = it->at("Thickness");  // Required for surfaces
     if (it->find("Attributes") != it->end())
     {
       MFEM_VERIFY(it->find("Elements") == it->end(),

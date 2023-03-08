@@ -356,6 +356,7 @@
               "PermittivityMS": { "type": "number" },
               "PermittivitySA": { "type": "number" },
               "LossTan": { "type": "number" },
+              "Thickness": { "type": "number" },
               "Elements":
               {
                 "type": "array",
