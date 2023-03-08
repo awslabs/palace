@@ -305,36 +305,43 @@ BaseSolver::ErrorIndicators
 BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
                                     Timer &timer) const
 {
-  // auto comm = Mpi::World();
-  // std::vector<double> e;
+  // Helper to save off postprocess data.
+  auto save_postprocess = [&, this](int iter){
+    if (Mpi::Root(Mpi::World()))
+    {
+      namespace fs = std::filesystem;
+      // Create a subfolder denoting the results of this adaptation.
+      const auto out_dir = fs::path(IterationPostDir(iter));
 
-  // if (Mpi::Rank(comm) == 0)
-  // {
-  //   e = {0,1,2,3};
-  // }
-
-  // if (Mpi::Rank(comm) == 1)
-  // {
-  //   e = {4,5,6,7};
-  // }
-
-  // ComputeRefineThreshold(1.0 / 8.0, e);
-
-  // std::terminate();
+      const auto options = fs::copy_options::recursive | fs::copy_options::overwrite_existing;
+      const fs::path root_dir(post_dir);
+      for (const auto &f : fs::directory_iterator(root_dir))
+      {
+        if (f.is_regular_file())
+        {
+          fs::copy(f, out_dir / fs::path(f).filename(), options);
+        }
+      }
+      if (fs::exists(root_dir / "paraview"))
+      {
+        fs::copy(root_dir / "paraview", out_dir / "paraview", options);
+      }
+    }
+  };
 
   const auto &param = iodata.model.refinement.adaptation;
-
   const bool use_amr = param.max_its > 0;
   const bool use_coarsening = param.coarsening_fraction > 0;
 
+  int iter = 0;
   auto indicators = Solve(mesh, timer);
-  int iter = 1;
 
   if (use_amr)
   {
     Mpi::Print("\nAdaptive Mesh Refinement Parameters:\n");
     Mpi::Print("MinIter: {}, MaxIter: {}, Tolerance: {:.3e}, DOFLimit: {}\n\n",
                param.min_its, param.max_its, param.tolerance, param.dof_limit);
+    save_postprocess(iter); // Save an initial solution
   }
 
   // collection of all tests that might exhaust resources.
@@ -395,28 +402,13 @@ BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<mfem::ParMesh>> 
     // Solve + estimate.
     indicators = Solve(mesh, timer);
 
-    // Optionally save off results.
+    ++iter;
+
+    // Optionally save solution off
     if (param.save_step > 0 && iter % param.save_step == 0)
     {
-      namespace fs = std::filesystem;
-      // Create a subfolder denoting the results of this adaptation.
-      const auto out_dir = fs::path(IterationPostDir(iter));
-
-      const fs::path root_dir(post_dir);
-      for (auto &f : fs::directory_iterator(root_dir))
-      {
-        if (f.is_regular_file())
-        {
-          fs::copy(f, out_dir / f);
-        }
-      }
-      if (fs::exists(root_dir / "paraview"))
-      {
-        fs::copy(root_dir / "paraview", out_dir / "paraview");
-      }
+      save_postprocess(iter);
     }
-
-    ++iter;
   }
 
   Mpi::Print("Final Error Indicator: {:.3e}, DOF: {}\n", indicators.global_error_indicator,
