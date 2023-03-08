@@ -99,6 +99,8 @@ double ComputeRefineThreshold(double fraction, std::vector<double> estimates)
   // partition very fast.
   std::sort(estimates.begin(), estimates.end());
 
+  MFEM_ASSERT(estimates.front() >= 0, "Indicators must be non-negative");
+
   // std::cout << "e: ";
   // for (auto const &x : estimates)
   //   std::cout << x << ", ";
@@ -147,6 +149,13 @@ double ComputeRefineThreshold(double fraction, std::vector<double> estimates)
     Mpi::GlobalSum(1, &total_error, comm);
     return total_error;
   }();
+  const double max_indicator = [&]()
+  {
+    double max_indicator = estimates.back();
+    Mpi::GlobalSum(1, &max_indicator, comm);
+    return max_indicator;
+  }();
+
   double min_threshold = error_threshold;
   double max_threshold = error_threshold;
   Mpi::GlobalMin(1, &min_threshold, comm);
@@ -168,11 +177,6 @@ double ComputeRefineThreshold(double fraction, std::vector<double> estimates)
   auto [elem_marked, error_marked] = marked(error_threshold);
   // ROUT << "num_marked = " << elem_marked << " error_marked = " << error_marked << std::endl;
 
-  constexpr double bisect_tol = 1e-3;
-  bool continue_bisecting = (max_threshold - min_threshold) > bisect_tol;
-
-  MPI_Request request = MPI_REQUEST_NULL;
-
   while (true)
   {
     error_threshold = (min_threshold + max_threshold) / 2;
@@ -192,6 +196,8 @@ double ComputeRefineThreshold(double fraction, std::vector<double> estimates)
 
     const auto candidate_fraction = error_marked / total_error;
 
+    // set the tolerance based off of the largest local indicator value.
+    const double bisect_tol = 1e-3 * max_indicator;
     if (std::abs(candidate_fraction - fraction) < bisect_tol || elem_marked == elem_count)
     {
       // candidate fraction matches to tolerance, or the number of marked
@@ -205,17 +211,18 @@ double ComputeRefineThreshold(double fraction, std::vector<double> estimates)
     if (candidate_fraction > fraction)
     {
       // This candidate marked too much, raise the lower value.
-      Mpi::Print("Setting lower bound to {:.3e} from {:.3e}\n", error_threshold, min_threshold);
+      // Mpi::Print("Setting lower bound to {:.3e} from {:.3e}\n", error_threshold, min_threshold);
       min_threshold = error_threshold;
     }
     else if (candidate_fraction < fraction)
     {
       // This candidate marked too little, lower the upper bound
-      Mpi::Print("Setting upper bound to {:.3e} from {:.3e}\n", error_threshold, max_threshold);
+      // Mpi::Print("Setting upper bound to {:.3e} from {:.3e}\n", error_threshold, max_threshold);
       max_threshold = error_threshold;
     }
-    Mpi::Print("Error threshold: {:.3e} marked {} of {} elements and {:.3f}\% error\n", error_threshold, elem_marked, total_elem, 100 * error_marked / total_error);
   }
+
+  Mpi::Print("Indicator threshold {:.3e} marked {} of {} elements and {:.3f}\% error\n", error_threshold, elem_marked, total_elem, 100 * error_marked / total_error);
 
   MFEM_ASSERT(error_threshold > 0, "error_threshold must be positive");
   return error_threshold;
@@ -323,7 +330,7 @@ BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<mfem::ParMesh>> 
   while ((iter < param.min_its || indicators.global_error_indicator > param.tolerance)
          && !exhausted_resources())
   {
-    Mpi::Print("Adaptation Iteration {}: Error: {:.3e}, DOF: {}\n",
+    Mpi::Print("Adaptation Iteration {}: Error Indicator: {:.3e}, DOF: {}\n",
       iter, indicators.global_error_indicator, indicators.ndof);
     if (indicators.ndof < param.dof_limit)
     {
@@ -367,7 +374,7 @@ BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<mfem::ParMesh>> 
     ++iter;
   }
 
-  Mpi::Print("Error Indicator: {:.3e}, DOF: {}\n",
+  Mpi::Print("Final Error Indicator: {:.3e}, DOF: {}\n",
     indicators.global_error_indicator, indicators.ndof);
 
   return indicators;

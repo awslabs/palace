@@ -134,7 +134,6 @@ DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator &postop, int nst
   B.SetZero();
   timer.construct_time += timer.Lap();
 
-  // Instantiate error estimates and the error reduction operator.
   BaseSolver::ErrorIndicators indicators(spaceop.GetNDof());
   const auto error_reducer = BaseSolver::ErrorReductionOperator();
 

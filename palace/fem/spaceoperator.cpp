@@ -4,7 +4,6 @@
 #include "spaceoperator.hpp"
 
 #include <complex>
-#include "linalg/fluxprojector.hpp"
 #include "linalg/petsc.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
@@ -130,7 +129,8 @@ SpaceOperator::SpaceOperator(const IoData &iodata,
     surf_z_op(iodata, *mesh.back()), lumped_port_op(iodata, h1_fespaces.GetFinestFESpace()),
     wave_port_op(iodata, mat_op, nd_fespaces.GetFinestFESpace(),
                  h1_fespaces.GetFinestFESpace()),
-    surf_j_op(iodata, h1_fespaces.GetFinestFESpace())
+    surf_j_op(iodata, h1_fespaces.GetFinestFESpace()),
+    flux_projector(nd_fespaces, iodata.solver.linear.tol, iodata.solver.linear.max_it, 0)
 {
   // Finalize setup.
   CheckBoundaryProperties();
@@ -209,6 +209,13 @@ void SpaceOperator::PrintHeader()
                nd_fespaces.GetFinestFESpace().GlobalTrueVSize());
     print_hdr = false;
   }
+}
+
+int SpaceOperator::GetNDof()
+{
+  int ndof = GetNDSpace().GetTrueVSize();
+  Mpi::GlobalSum(1, &ndof, Mpi::World());
+  return ndof;
 }
 
 std::unique_ptr<petsc::PetscParMatrix>
@@ -752,11 +759,8 @@ std::vector<double> SpaceOperator::GetErrorEstimates(const mfem::ParComplexGridF
   // perform mass matrix inversion in the appropriate space.
   const auto smooth_flux = [&]()
   {
-    constexpr double tol = 1e-6;
-    constexpr int max_it = 100, print = 0;
-    const FluxProjector flux_proj(nd_fespaces, tol, max_it, print);
     petsc::PetscParVector smooth_flux(flux);
-    flux_proj.Mult(flux, smooth_flux);
+    flux_projector.Mult(flux, smooth_flux);
     return smooth_flux;
   }();
 

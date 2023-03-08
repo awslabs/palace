@@ -352,7 +352,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh, Time
 
 
   // Postprocess the results.
-  BaseSolver::ErrorIndicators indicators(-1);
+  BaseSolver::ErrorIndicators indicators(spaceop.GetNDof());
   const auto error_reducer = BaseSolver::ErrorReductionOperator();
 
   const auto io_time_prev = timer.io_time;
@@ -388,11 +388,6 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh, Time
     PostOperator::GetBField(omega, *NegCurl, E, B);
     postop.SetEGridFunction(E);
     postop.SetBGridFunction(B);
-    postop.UpdatePorts(spaceop.GetLumpedPortOp(), omega.real());
-
-    // Postprocess the mode.
-    Postprocess(post_dir_, postop, spaceop.GetLumpedPortOp(), i, omega, error1, error2,
-                num_conv, timer);
     timer.postpro_time += timer.Lap();
 
     if (i < iodata.solver.eigenmode.n)
@@ -402,6 +397,14 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh, Time
       error_reducer(indicators, spaceop.GetErrorEstimates(postop.GetE()));
       timer.estimation_time += timer.Lap();
     }
+
+    postop.UpdatePorts(spaceop.GetLumpedPortOp(), omega.real());
+
+    // Postprocess the mode.
+    Postprocess(post_dir_, postop, spaceop.GetLumpedPortOp(), i, omega, error1, error2,
+                num_conv, timer);
+    timer.postpro_time += timer.Lap();
+
   }
   // Do not count io time as part of postprocessing.
   timer.postpro_time -= (timer.io_time - io_time_prev);

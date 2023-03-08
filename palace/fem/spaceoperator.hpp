@@ -8,6 +8,7 @@
 #include <memory>
 #include <vector>
 #include <mfem.hpp>
+#include "linalg/fluxprojector.hpp"
 #include "fem/farfieldboundaryoperator.hpp"
 #include "fem/lumpedportoperator.hpp"
 #include "fem/materialoperator.hpp"
@@ -71,6 +72,9 @@ private:
   WavePortOperator wave_port_op;
   SurfaceCurrentOperator surf_j_op;
 
+  // Projector for computing flux based error estimate.
+  FluxProjector flux_projector;
+
   // Helper function to assemble preconditioner matrix data structures.
   void GetPreconditionerInternal(
       const std::function<void(SumMatrixCoefficient &, SumMatrixCoefficient &,
@@ -128,7 +132,7 @@ public:
   auto &GetRTSpace() { return rt_fespace; }
 
   // Return the number of true (conforming) dofs on the finest ND space.
-  auto GetNDof() { return GetNDSpace().GetNConformingDofs(); }
+  int GetNDof();
 
   // Construct the frequency-dependent complex linear system matrix:
   //                 A = K + iω C - ω² (Mr + i Mi) + A2(ω)
