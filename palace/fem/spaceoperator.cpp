@@ -753,8 +753,8 @@ std::vector<double> SpaceOperator::GetErrorEstimates(const mfem::ParComplexGridF
   const auto smooth_flux = [&]()
   {
     constexpr double tol = 1e-6;
-    constexpr int max_int = 100, print = 0;
-    const FluxProjector flux_proj(nd_fespaces, tol, max_int, print);
+    constexpr int max_it = 100, print = 0;
+    const FluxProjector flux_proj(nd_fespaces, tol, max_it, print);
     petsc::PetscParVector smooth_flux(flux);
     flux_proj.Mult(flux, smooth_flux);
     return smooth_flux;

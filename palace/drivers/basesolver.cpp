@@ -86,21 +86,48 @@ BaseSolver::BaseSolver(const IoData &iodata_, bool root_, int size, int num_thre
 
 namespace
 {
-// Given a vector of estimates local to this rank, compute a threshold that
-// results in a Dorfler marking across processor ranks.
+
+// Helper macro for mpi printing.
+#define ROUT std::cout << "R" << Mpi::Rank(Mpi::World()) << " L" << __LINE__ << " "
+
+// Given a vector of estimates local to this rank, compute an error threshold
+// such that if elements with greater error are marked for refinement, a Dorfler
+// marking is achieved.
 double ComputeRefineThreshold(double fraction, std::vector<double> estimates)
 {
+  // Pre compute the sort and partial sum to make evaluating a candidate
+  // partition very fast.
   std::sort(estimates.begin(), estimates.end());
 
-  const auto pivot = static_cast<std::size_t>(
-      fraction * std::distance(estimates.begin(), estimates.end()));
+  // std::cout << "e: ";
+  // for (auto const &x : estimates)
+  //   std::cout << x << ", ";
+  // std::cout << '\n';
 
-  double threshold = estimates[pivot];
+  std::vector<double> sum; sum.reserve(estimates.size());
+  std::partial_sum(estimates.begin(), estimates.end(), std::back_inserter(sum));
 
-  auto count_elems_in_part = [&estimates](double x)
+  // std::cout << "s: ";
+  // for (auto const &x : sum)
+  //   std::cout << x << ", ";
+  // std::cout << '\n';
+
+  auto pivot = std::distance(sum.begin(), std::lower_bound(sum.begin(), sum.end(), (1-fraction) * sum.back()));
+
+  double error_threshold = estimates[pivot];
+
+  // std::cout << "pivot = " << pivot << " threshold = " << error_threshold << '\n';
+
+  auto marked = [&estimates, &sum](double e) -> std::pair<std::size_t, double>
   {
-    const auto upper = std::upper_bound(estimates.begin(), estimates.end(), x);
-    return std::distance(estimates.begin(), upper);
+    const auto lb = std::lower_bound(estimates.begin(), estimates.end(), e);
+    const auto elems_marked = std::distance(lb, estimates.end());
+    const double error_unmarked = lb != estimates.begin() ? sum[sum.size() - elems_marked - 1] : 0;
+    const double error_marked = sum.back() - error_unmarked;
+    // ROUT << "e " << e
+        //  << " elems marked: " << elems_marked
+        //  << " error marked: " << error_marked << std::endl;
+    return {elems_marked, error_marked};
   };
 
   // Each rank has computed a different threshold, if a given rank has lots of
@@ -113,95 +140,85 @@ double ComputeRefineThreshold(double fraction, std::vector<double> estimates)
 
   auto comm = Mpi::World();
 
-  long long num_elem = estimates.size();
-  const long long max_elem = [&]() {  // IILE for const
-    long long max_elem = 0;
-    MPI_Reduce(&num_elem, &max_elem, 1, MPI_LONG_LONG, MPI_SUM, 0, comm);
-    return max_elem;
+  // Send initial information to all
+  const double total_error = [&]()
+  {
+    double total_error = sum.back();
+    Mpi::GlobalSum(1, &total_error, comm);
+    return total_error;
   }();
-
-  long long candidate_total = 0, old_candidate_total = max_elem;
-
-  // Collect to rank zero the initial threshold bounds, and the total number of elements.
-  double min_threshold = threshold;
-  double max_threshold = threshold;
+  double min_threshold = error_threshold;
+  double max_threshold = error_threshold;
   Mpi::GlobalMin(1, &min_threshold, comm);
   Mpi::GlobalMax(1, &max_threshold, comm);
+  std::size_t elem_count = 0; // for tracking if the marked set stops changing
+  const std::size_t total_elem = [&]()
+  {
+    std::size_t tmp = estimates.size();
+    Mpi::GlobalSum(1, &tmp, comm);
+    return tmp;
+  }();
 
   MFEM_ASSERT(min_threshold <= max_threshold, "min: " << min_threshold << " max " << max_threshold);
+
+  // ROUT << "error_threshold = " << error_threshold << std::endl;
+  // ROUT << "min_threshold = " << min_threshold << std::endl;
+  // ROUT << "max_threshold = " << max_threshold << std::endl;
+
+  auto [elem_marked, error_marked] = marked(error_threshold);
+  // ROUT << "num_marked = " << elem_marked << " error_marked = " << error_marked << std::endl;
 
   constexpr double bisect_tol = 1e-3;
   bool continue_bisecting = (max_threshold - min_threshold) > bisect_tol;
 
   MPI_Request request = MPI_REQUEST_NULL;
 
-  while (continue_bisecting)
+  while (true)
   {
-    if (Mpi::Root(comm))
+    error_threshold = (min_threshold + max_threshold) / 2;
+
+    std::tie(elem_marked, error_marked) = marked(error_threshold);
+
+    // All processors need the values used for the stopping criteria
+    Mpi::GlobalSum(1, &elem_marked, comm);
+    Mpi::GlobalSum(1, &error_marked, comm);
+
+    // ROUT << "error_threshold = " << error_threshold
+        //  << " elem_marked = " << elem_marked
+        //  << " error_marked = " << error_marked << std::endl;
+
+    MFEM_ASSERT(elem_marked > 0, "Some elements must have been marked");
+    MFEM_ASSERT(error_marked > 0, "Some error must have been marked");
+
+    const auto candidate_fraction = error_marked / total_error;
+
+    if (std::abs(candidate_fraction - fraction) < bisect_tol || elem_marked == elem_count)
     {
-      // Root is going to bisect, and send threshold to other ranks.
-      threshold = (min_threshold + max_threshold) / 2;
-
-      // Send to all processors
-      for (int i = 1; i < Mpi::Size(comm); i++)
-      {
-        MPI_Isend(&threshold, 1, MPI_DOUBLE, i, 0, comm, &request);
-      }
-    }
-    else
-    {
-      // Receive the new candidate threshold value from rank 0
-      MPI_Irecv(&threshold, 1, MPI_DOUBLE, 0, 0, comm, &request);
-    }
-
-    // Given the now agreed upon threshold value, count the number of elements
-    // this would mark across all ranks.
-    num_elem = count_elems_in_part(threshold);
-    old_candidate_total = candidate_total;
-    candidate_total = 0;
-    MPI_Reduce(&num_elem, &candidate_total, 1, MPI_LONG_LONG, MPI_SUM, 0, comm);
-
-    if (Mpi::Root(comm))
-    {
-      // Check 1: That the number of candidate elements changed. This is important
-      // given working with discrete sets. The threshold value might keep changing
-      // but no outward effect, in which case we should exit early.
-      if (candidate_total == old_candidate_total)
-      {
-        // changes in the threshold value are no longer making a difference.
-        continue_bisecting = false;
-      }
-      else
-      {
-        // Root will check the effective fraction given this threshold
-        const auto candidate_fraction =
-            static_cast<double>(static_cast<long double>(candidate_total) / max_elem);
-
-        constexpr double tol = 1e-3;
-        if (std::abs(candidate_fraction - fraction) < tol)
-        {
-          // Close enough to the threshold value
-          continue_bisecting = false;
-        }
-        else if (candidate_fraction < fraction)
-        {
-          min_threshold = threshold;
-        }
-        else if (candidate_fraction > fraction)
-        {
-          max_threshold = threshold;
-        }
-      }
+      // candidate fraction matches to tolerance, or the number of marked
+      // elements is no longer changing.
+      break;
     }
 
-    // Inform all ranks if the loop will be continuing. All ranks already have
-    // the threshold.
-    MPI_Bcast(&continue_bisecting, 1, MPI_CXX_BOOL, 0, comm);
+    // Update in preparation for next iteration. The logic here is inverted of a
+    // usual binary search, because a smaller value marks a greater fraction.
+    elem_count = elem_marked;
+    if (candidate_fraction > fraction)
+    {
+      // This candidate marked too much, raise the lower value.
+      Mpi::Print("Setting lower bound to {:.3e} from {:.3e}\n", error_threshold, min_threshold);
+      min_threshold = error_threshold;
+    }
+    else if (candidate_fraction < fraction)
+    {
+      // This candidate marked too little, lower the upper bound
+      Mpi::Print("Setting upper bound to {:.3e} from {:.3e}\n", error_threshold, max_threshold);
+      max_threshold = error_threshold;
+    }
+    Mpi::Print("Error threshold: {:.3e} marked {} of {} elements and {:.3f}\% error\n", error_threshold, elem_marked, total_elem, 100 * error_marked / total_error);
   }
 
-  MFEM_ASSERT(threshold > 0, "threshold must be positive");
-
-  return threshold;
+  MFEM_ASSERT(error_threshold > 0, "error_threshold must be positive");
+  return error_threshold;
 }
 
 mfem::Array<int> MarkedElements(double threshold, const std::vector<double> &v, bool gt = true)
@@ -210,12 +227,12 @@ mfem::Array<int> MarkedElements(double threshold, const std::vector<double> &v, 
   std::vector<int> ind;
   for (int i = 0; i < v.size(); i++)
   {
-    if (gt && v[i] > threshold) // Used for refinement marking.
+    if (gt && v[i] >= threshold) // Used for refinement marking.
     {
       ind.emplace_back(i);
     }
 
-    if (!gt && v[i] < threshold) // Used for coarsening marking.
+    if (!gt && v[i] <= threshold) // Used for coarsening marking.
     {
       ind.emplace_back(i);
     }
@@ -225,17 +242,63 @@ mfem::Array<int> MarkedElements(double threshold, const std::vector<double> &v, 
   return e;
 }
 
+void RebalanceMesh(std::unique_ptr<mfem::ParMesh>& mesh)
+{
+  if (mesh->Nonconforming())
+  {
+    mesh->Rebalance();
+  }
+  else
+  {
+    // DO NOTHING -> fix this in future
+
+    // // Without the refinement tree structure of a non-conforming mesh, need to
+    // // serialize and partition from scratch.
+    // auto comm = Mpi::World();
+
+    // // Build a serial mesh for each rank, one at a time so the save doesn't clash.
+    // std::unique_ptr<mfem::Mesh> new_mesh;
+    // for (int rank = 0; rank < Mpi::Size(comm); rank++)
+    // {
+    //   auto tmp = std::make_unique<mfem::Mesh>(mesh->GetSerialMesh(rank));
+    //   if (rank == Mpi::Rank(comm))
+    //   {
+    //     new_mesh = std::move(tmp);
+    //   }
+    // }
+
+    // // All ranks now have an instance of the serial mesh, can use the default partition.
+    // mesh = std::make_unique<mfem::ParMesh>(comm, *new_mesh);
+  }
+}
+
 }  // namespace
 
 BaseSolver::ErrorIndicators
 BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
                                     Timer &timer) const
 {
+  // auto comm = Mpi::World();
+  // std::vector<double> e;
+
+  // if (Mpi::Rank(comm) == 0)
+  // {
+  //   e = {0,1,2,3};
+  // }
+
+  // if (Mpi::Rank(comm) == 1)
+  // {
+  //   e = {4,5,6,7};
+  // }
+
+  // ComputeRefineThreshold(1.0 / 8.0, e);
+
+  // std::terminate();
+
   const auto &param = iodata.model.refinement.adaptation;
 
   const bool use_amr = param.max_its > 0;
   const bool use_coarsening = param.coarsening_fraction > 0;
-  const int use_nc = use_coarsening ? 1 : -1;
 
   int iter = 0;
   auto indicators = Solve(mesh, timer, iter++);
@@ -268,8 +331,6 @@ BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<mfem::ParMesh>> 
       const auto threshold = ComputeRefineThreshold(param.update_fraction, indicators.local_error_indicators);
       const auto marked_elements = MarkedElements(threshold, indicators.local_error_indicators);
 
-      Mpi::Print("{} elements marked for refinement\n", marked_elements.Size());
-
       if (param.construct_geometric_multigrid)
       {
         // If building a geometric multigrid, duplicate the final mesh.
@@ -277,7 +338,7 @@ BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<mfem::ParMesh>> 
       }
 
       // refine
-      mesh.back()->GeneralRefinement(marked_elements, use_nc, param.max_nc_levels);
+      mesh.back()->GeneralRefinement(marked_elements, -1, param.max_nc_levels);
     }
     else if (use_coarsening)
     {
@@ -287,19 +348,21 @@ BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<mfem::ParMesh>> 
       //   iodata.model.refinement.adaptive.update_fraction,
       //   indicators.error_indicators);
 
-      mfem::Array<int> marked_elements;  // PLACEHOLDER
+      // mfem::Array<int> marked_elements;  // PLACEHOLDER
 
       // TODO: Compute error threshold that will trigger sufficient derefinement
       // const double threshold = ComputeThreshold(indicators.error_indicators);
 
-      const double threshold = 0;  // PLACEHOLDER
+      // const double threshold = 0;  // PLACEHOLDER
 
       // TODO: Figure out the method to expose here.
       // mesh.back()->NonconformingDerefinement(indicators.error_indicators,
       // param.max_nc_levels, 1);
     }
 
-    // solve + estimate
+    RebalanceMesh(mesh.back());
+
+    // Solve + estimate.
     indicators = Solve(mesh, timer, iter);
     ++iter;
   }
