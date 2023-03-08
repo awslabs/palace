@@ -55,17 +55,17 @@ void WriteMetadata(const std::string &post_dir, const json &meta)
 
 BaseSolver::BaseSolver(const IoData &iodata_, bool root_, int size, int num_thread,
                        const char *git_tag)
-  : iodata(iodata_), post_dir_(GetPostDir(iodata_.problem.output)), root(root_),
+  : iodata(iodata_), post_dir(GetPostDir(iodata_.problem.output)), root(root_),
     table(8, 9, 6)
 {
   // Create directory for output.
-  if (root && !std::filesystem::exists(post_dir_))
+  if (root && !std::filesystem::exists(post_dir))
   {
-    std::filesystem::create_directories(post_dir_);
+    std::filesystem::create_directories(post_dir);
   }
 
   // Initialize simulation metadata for this simulation.
-  if (root && post_dir_.length() > 0)
+  if (root && post_dir.length() > 0)
   {
     json meta;
     if (git_tag)
@@ -80,8 +80,19 @@ BaseSolver::BaseSolver(const IoData &iodata_, bool root_, int size, int num_thre
     {
       meta["Problem"]["OpenMPThreads"] = num_thread;
     }
-    WriteMetadata(post_dir_, meta);
+    WriteMetadata(post_dir, meta);
   }
+}
+
+std::string BaseSolver::IterationPostDir(int iter) const
+{
+  std::string dir = fmt::format("{}Adapt{:0>4d}/", post_dir, iter);
+  // Create directory for output.
+  if (root && !std::filesystem::exists(dir))
+  {
+    std::filesystem::create_directories(dir);
+  }
+  return dir;
 }
 
 namespace
@@ -106,7 +117,8 @@ double ComputeRefineThreshold(double fraction, std::vector<double> estimates)
   //   std::cout << x << ", ";
   // std::cout << '\n';
 
-  std::vector<double> sum; sum.reserve(estimates.size());
+  std::vector<double> sum;
+  sum.reserve(estimates.size());
   std::partial_sum(estimates.begin(), estimates.end(), std::back_inserter(sum));
 
   // std::cout << "s: ";
@@ -114,7 +126,8 @@ double ComputeRefineThreshold(double fraction, std::vector<double> estimates)
   //   std::cout << x << ", ";
   // std::cout << '\n';
 
-  auto pivot = std::distance(sum.begin(), std::lower_bound(sum.begin(), sum.end(), (1-fraction) * sum.back()));
+  auto pivot = std::distance(
+      sum.begin(), std::lower_bound(sum.begin(), sum.end(), (1 - fraction) * sum.back()));
 
   double error_threshold = estimates[pivot];
 
@@ -124,11 +137,12 @@ double ComputeRefineThreshold(double fraction, std::vector<double> estimates)
   {
     const auto lb = std::lower_bound(estimates.begin(), estimates.end(), e);
     const auto elems_marked = std::distance(lb, estimates.end());
-    const double error_unmarked = lb != estimates.begin() ? sum[sum.size() - elems_marked - 1] : 0;
+    const double error_unmarked =
+        lb != estimates.begin() ? sum[sum.size() - elems_marked - 1] : 0;
     const double error_marked = sum.back() - error_unmarked;
     // ROUT << "e " << e
-        //  << " elems marked: " << elems_marked
-        //  << " error marked: " << error_marked << std::endl;
+    //  << " elems marked: " << elems_marked
+    //  << " error marked: " << error_marked << std::endl;
     return {elems_marked, error_marked};
   };
 
@@ -160,7 +174,7 @@ double ComputeRefineThreshold(double fraction, std::vector<double> estimates)
   double max_threshold = error_threshold;
   Mpi::GlobalMin(1, &min_threshold, comm);
   Mpi::GlobalMax(1, &max_threshold, comm);
-  std::size_t elem_count = 0; // for tracking if the marked set stops changing
+  std::size_t elem_count = 0;  // for tracking if the marked set stops changing
   const std::size_t total_elem = [&]()
   {
     std::size_t tmp = estimates.size();
@@ -168,14 +182,16 @@ double ComputeRefineThreshold(double fraction, std::vector<double> estimates)
     return tmp;
   }();
 
-  MFEM_ASSERT(min_threshold <= max_threshold, "min: " << min_threshold << " max " << max_threshold);
+  MFEM_ASSERT(min_threshold <= max_threshold,
+              "min: " << min_threshold << " max " << max_threshold);
 
   // ROUT << "error_threshold = " << error_threshold << std::endl;
   // ROUT << "min_threshold = " << min_threshold << std::endl;
   // ROUT << "max_threshold = " << max_threshold << std::endl;
 
   auto [elem_marked, error_marked] = marked(error_threshold);
-  // ROUT << "num_marked = " << elem_marked << " error_marked = " << error_marked << std::endl;
+  // ROUT << "num_marked = " << elem_marked << " error_marked = " << error_marked <<
+  // std::endl;
 
   while (true)
   {
@@ -188,8 +204,8 @@ double ComputeRefineThreshold(double fraction, std::vector<double> estimates)
     Mpi::GlobalSum(1, &error_marked, comm);
 
     // ROUT << "error_threshold = " << error_threshold
-        //  << " elem_marked = " << elem_marked
-        //  << " error_marked = " << error_marked << std::endl;
+    //  << " elem_marked = " << elem_marked
+    //  << " error_marked = " << error_marked << std::endl;
 
     MFEM_ASSERT(elem_marked > 0, "Some elements must have been marked");
     MFEM_ASSERT(error_marked > 0, "Some error must have been marked");
@@ -211,35 +227,39 @@ double ComputeRefineThreshold(double fraction, std::vector<double> estimates)
     if (candidate_fraction > fraction)
     {
       // This candidate marked too much, raise the lower value.
-      // Mpi::Print("Setting lower bound to {:.3e} from {:.3e}\n", error_threshold, min_threshold);
+      // Mpi::Print("Setting lower bound to {:.3e} from {:.3e}\n", error_threshold,
+      // min_threshold);
       min_threshold = error_threshold;
     }
     else if (candidate_fraction < fraction)
     {
       // This candidate marked too little, lower the upper bound
-      // Mpi::Print("Setting upper bound to {:.3e} from {:.3e}\n", error_threshold, max_threshold);
+      // Mpi::Print("Setting upper bound to {:.3e} from {:.3e}\n", error_threshold,
+      // max_threshold);
       max_threshold = error_threshold;
     }
   }
 
-  Mpi::Print("Indicator threshold {:.3e} marked {} of {} elements and {:.3f}\% error\n", error_threshold, elem_marked, total_elem, 100 * error_marked / total_error);
+  Mpi::Print("Indicator threshold {:.3e} marked {} of {} elements and {:.3f}\% error\n",
+             error_threshold, elem_marked, total_elem, 100 * error_marked / total_error);
 
   MFEM_ASSERT(error_threshold > 0, "error_threshold must be positive");
   return error_threshold;
 }
 
-mfem::Array<int> MarkedElements(double threshold, const std::vector<double> &v, bool gt = true)
+mfem::Array<int> MarkedElements(double threshold, const std::vector<double> &v,
+                                bool gt = true)
 {
   // assign a working temporary so can emplace_back
   std::vector<int> ind;
   for (int i = 0; i < v.size(); i++)
   {
-    if (gt && v[i] >= threshold) // Used for refinement marking.
+    if (gt && v[i] >= threshold)  // Used for refinement marking.
     {
       ind.emplace_back(i);
     }
 
-    if (!gt && v[i] <= threshold) // Used for coarsening marking.
+    if (!gt && v[i] <= threshold)  // Used for coarsening marking.
     {
       ind.emplace_back(i);
     }
@@ -249,7 +269,7 @@ mfem::Array<int> MarkedElements(double threshold, const std::vector<double> &v, 
   return e;
 }
 
-void RebalanceMesh(std::unique_ptr<mfem::ParMesh>& mesh)
+void RebalanceMesh(std::unique_ptr<mfem::ParMesh> &mesh)
 {
   if (mesh->Nonconforming())
   {
@@ -307,18 +327,19 @@ BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<mfem::ParMesh>> 
   const bool use_amr = param.max_its > 0;
   const bool use_coarsening = param.coarsening_fraction > 0;
 
-  int iter = 0;
-  auto indicators = Solve(mesh, timer, iter++);
+  auto indicators = Solve(mesh, timer);
+  int iter = 1;
 
   if (use_amr)
   {
     Mpi::Print("\nAdaptive Mesh Refinement Parameters:\n");
     Mpi::Print("MinIter: {}, MaxIter: {}, Tolerance: {:.3e}, DOFLimit: {}\n\n",
-      param.min_its, param.max_its, param.tolerance, param.dof_limit);
+               param.min_its, param.max_its, param.tolerance, param.dof_limit);
   }
 
   // collection of all tests that might exhaust resources.
-  auto exhausted_resources = [&](){
+  auto exhausted_resources = [&]()
+  {
     bool ret = false;
     // run out of DOFs, and coarsening isn't allowed.
     ret |= (indicators.ndof > param.dof_limit && !use_coarsening);
@@ -327,16 +348,18 @@ BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<mfem::ParMesh>> 
     return ret;
   };
 
-  while ((iter < param.min_its || indicators.global_error_indicator > param.tolerance)
-         && !exhausted_resources())
+  while ((iter < param.min_its || indicators.global_error_indicator > param.tolerance) &&
+         !exhausted_resources())
   {
-    Mpi::Print("Adaptation Iteration {}: Error Indicator: {:.3e}, DOF: {}\n",
-      iter, indicators.global_error_indicator, indicators.ndof);
+    Mpi::Print("Adaptation Iteration {}: Error Indicator: {:.3e}, DOF: {}\n", iter,
+               indicators.global_error_indicator, indicators.ndof);
     if (indicators.ndof < param.dof_limit)
     {
       // refinement mark
-      const auto threshold = ComputeRefineThreshold(param.update_fraction, indicators.local_error_indicators);
-      const auto marked_elements = MarkedElements(threshold, indicators.local_error_indicators);
+      const auto threshold =
+          ComputeRefineThreshold(param.update_fraction, indicators.local_error_indicators);
+      const auto marked_elements =
+          MarkedElements(threshold, indicators.local_error_indicators);
 
       if (param.construct_geometric_multigrid)
       {
@@ -370,18 +393,39 @@ BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<mfem::ParMesh>> 
     RebalanceMesh(mesh.back());
 
     // Solve + estimate.
-    indicators = Solve(mesh, timer, iter);
+    indicators = Solve(mesh, timer);
+
+    // Optionally save off results.
+    if (param.save_step > 0 && iter % param.save_step == 0)
+    {
+      namespace fs = std::filesystem;
+      // Create a subfolder denoting the results of this adaptation.
+      const auto out_dir = fs::path(IterationPostDir(iter));
+
+      const fs::path root_dir(post_dir);
+      for (auto &f : fs::directory_iterator(root_dir))
+      {
+        if (f.is_regular_file())
+        {
+          fs::copy(f, out_dir / f);
+        }
+      }
+      if (fs::exists(root_dir / "paraview"))
+      {
+        fs::copy(root_dir / "paraview", out_dir / "paraview");
+      }
+    }
+
     ++iter;
   }
 
-  Mpi::Print("Final Error Indicator: {:.3e}, DOF: {}\n",
-    indicators.global_error_indicator, indicators.ndof);
+  Mpi::Print("Final Error Indicator: {:.3e}, DOF: {}\n", indicators.global_error_indicator,
+             indicators.ndof);
 
   return indicators;
 }
 
-void BaseSolver::SaveMetadata(const std::string &post_dir,
-                              const mfem::ParFiniteElementSpace &fespace) const
+void BaseSolver::SaveMetadata(const mfem::ParFiniteElementSpace &fespace) const
 {
   if (post_dir.length() == 0)
   {
@@ -399,7 +443,7 @@ void BaseSolver::SaveMetadata(const std::string &post_dir,
   }
 }
 
-void BaseSolver::SaveMetadata(const std::string &post_dir, int ksp_mult, int ksp_it) const
+void BaseSolver::SaveMetadata(int ksp_mult, int ksp_it) const
 {
   if (post_dir.length() == 0)
   {
@@ -414,7 +458,7 @@ void BaseSolver::SaveMetadata(const std::string &post_dir, int ksp_mult, int ksp
   }
 }
 
-void BaseSolver::SaveMetadata(const std::string &post_dir, const Timer &timer) const
+void BaseSolver::SaveMetadata(const Timer &timer) const
 {
   if (post_dir.length() == 0)
   {
@@ -463,10 +507,9 @@ struct ProbeData
 
 }  // namespace
 
-void BaseSolver::PostprocessDomains(const std::string &post_dir, const PostOperator &postop,
-                                    const std::string &name, int step, double time,
-                                    double E_elec, double E_mag, double E_cap,
-                                    double E_ind) const
+void BaseSolver::PostprocessDomains(const PostOperator &postop, const std::string &name,
+                                    int step, double time, double E_elec, double E_mag,
+                                    double E_cap, double E_ind) const
 {
   // If domains have been specified for postprocessing, compute the corresponding values
   // and write out to disk.
@@ -542,8 +585,7 @@ void BaseSolver::PostprocessDomains(const std::string &post_dir, const PostOpera
   }
 }
 
-void BaseSolver::PostprocessSurfaces(const std::string &post_dir,
-                                     const PostOperator &postop, const std::string &name,
+void BaseSolver::PostprocessSurfaces(const PostOperator &postop, const std::string &name,
                                      int step, double time, double E_elec, double E_mag,
                                      double Vinc, double Iinc) const
 {
@@ -677,8 +719,8 @@ void BaseSolver::PostprocessSurfaces(const std::string &post_dir,
   }
 }
 
-void BaseSolver::PostprocessProbes(const std::string &post_dir, const PostOperator &postop,
-                                   const std::string &name, int step, double time) const
+void BaseSolver::PostprocessProbes(const PostOperator &postop, const std::string &name,
+                                   int step, double time) const
 {
 #if defined(MFEM_USE_GSLIB)
   // If probe locations have been specified for postprocessing, compute the corresponding
@@ -844,8 +886,7 @@ void BaseSolver::PostprocessProbes(const std::string &post_dir, const PostOperat
 #endif
 }
 
-void BaseSolver::PostprocessFields(const std::string &post_dir, const PostOperator &postop,
-                                   int step, double time) const
+void BaseSolver::PostprocessFields(const PostOperator &postop, int step, double time) const
 {
   // Save the computed fields in parallel in format for viewing with ParaView.
   if (post_dir.length() == 0)

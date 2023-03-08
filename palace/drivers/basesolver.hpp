@@ -32,7 +32,7 @@ protected:
   const IoData &iodata;
 
   // Parameters for writing postprocessing outputs.
-  const std::string post_dir_;
+  const std::string post_dir;
   const bool root;
 
   // Table formatting for output files.
@@ -58,16 +58,17 @@ protected:
   }
 
   // Common postprocessing functions for all simulation types.
-  void PostprocessDomains(const std::string &post_dir, const PostOperator &postop,
-                          const std::string &name, int step, double time, double E_elec,
-                          double E_mag, double E_cap, double E_ind) const;
-  void PostprocessSurfaces(const std::string &post_dir, const PostOperator &postop,
-                           const std::string &name, int step, double time, double E_elec,
-                           double E_mag, double Vinc, double Iinc) const;
-  void PostprocessProbes(const std::string &post_dir, const PostOperator &postop,
-                         const std::string &name, int step, double time) const;
-  void PostprocessFields(const std::string &post_dir, const PostOperator &postop, int step,
+  void PostprocessDomains(const PostOperator &postop, const std::string &name, int step,
+                          double time, double E_elec, double E_mag, double E_cap,
+                          double E_ind) const;
+  void PostprocessSurfaces(const PostOperator &postop, const std::string &name, int step,
+                           double time, double E_elec, double E_mag, double Vinc,
+                           double Iinc) const;
+  void PostprocessProbes(const PostOperator &postop, const std::string &name, int step,
                          double time) const;
+  void PostprocessFields(const PostOperator &postop, int step, double time) const;
+
+  std::string IterationPostDir(int iter) const;
 
 public:
   BaseSolver(const IoData &iodata_, bool root_, int size = 0, int num_thread = 0,
@@ -110,7 +111,7 @@ public:
   // Performs a solve using the mesh sequence, and recording timing for each stage. The iter
   // argument is used to annotate output produced during postprocessing.
   virtual ErrorIndicators Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
-                                Timer &timer, int iter) const = 0;
+                                Timer &timer) const = 0;
 
   // Performs adaptive mesh refinement using the solve-estimate-mark-refine
   // paradigm. Dispatches to the Solve method for the driver specific calculations.
@@ -120,19 +121,9 @@ public:
   // These methods write different simulation metadata to a JSON file in
   // post_dir. If no post_dir is provided, writes to the internally stored top
   // level postprocessing directory.
-  void SaveMetadata(const std::string &post_dir,
-                    const mfem::ParFiniteElementSpace &fespace) const;
-  void SaveMetadata(const std::string &post_dir, int ksp_mult, int ksp_it) const;
-  void SaveMetadata(const std::string &post_dir, const Timer &timer) const;
-  void SaveMetadata(const mfem::ParFiniteElementSpace &fespace) const
-  {
-    SaveMetadata(post_dir_, fespace);
-  }
-  void SaveMetadata(int ksp_mult, int ksp_it) const
-  {
-    SaveMetadata(post_dir_, ksp_mult, ksp_it);
-  }
-  void SaveMetadata(const Timer &timer) const { SaveMetadata(post_dir_, timer); }
+  void SaveMetadata(const mfem::ParFiniteElementSpace &fespace) const;
+  void SaveMetadata(int ksp_mult, int ksp_it) const;
+  void SaveMetadata(const Timer &timer) const;
 };
 
 }  // namespace palace

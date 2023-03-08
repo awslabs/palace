@@ -18,7 +18,7 @@ namespace palace
 
 BaseSolver::ErrorIndicators
 MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
-                           Timer &timer, int iter) const
+                           Timer &timer) const
 {
   // Construct the system matrix defining the linear operator. Dirichlet boundaries are
   // handled eliminating the rows and columns of the system matrix for the corresponding
@@ -118,14 +118,13 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &me
   // Postprocess the capacitance matrix from the computed field solutions.
   const auto io_time_prev = timer.io_time;
   SaveMetadata(nstep, ksp_it);
-  Postprocess(post_dir_, curlcurlop, postop, A, timer);
+  Postprocess(curlcurlop, postop, A, timer);
   timer.postpro_time += timer.Lap() - (timer.io_time - io_time_prev);
 
   return BaseSolver::ErrorIndicators(curlcurlop.GetNDof());
 }
 
-void MagnetostaticSolver::Postprocess(const std::string &post_dir,
-                                      CurlCurlOperator &curlcurlop, PostOperator &postop,
+void MagnetostaticSolver::Postprocess(CurlCurlOperator &curlcurlop, PostOperator &postop,
                                       const std::vector<mfem::Vector> &A,
                                       Timer &timer) const
 {
@@ -159,13 +158,13 @@ void MagnetostaticSolver::Postprocess(const std::string &post_dir,
     postop.SetBGridFunction(B);
     postop.SetAGridFunction(A[i]);
     double Um = postop.GetHFieldEnergy();
-    PostprocessDomains(post_dir, postop, "i", i, idx, 0.0, Um, 0.0, 0.0);
-    PostprocessSurfaces(post_dir, postop, "i", i, idx, 0.0, Um, 0.0, Iinc(i));
-    PostprocessProbes(post_dir, postop, "i", i, idx);
+    PostprocessDomains(postop, "i", i, idx, 0.0, Um, 0.0, 0.0);
+    PostprocessSurfaces(postop, "i", i, idx, 0.0, Um, 0.0, Iinc(i));
+    PostprocessProbes(postop, "i", i, idx);
     if (i < iodata.solver.magnetostatic.n_post)
     {
       auto t0 = timer.Now();
-      PostprocessFields(post_dir, postop, i, idx);
+      PostprocessFields(postop, i, idx);
       Mpi::Print(" Wrote fields to disk for terminal {:d}\n", idx);
       timer.io_time += timer.Now() - t0;
     }
@@ -202,11 +201,10 @@ void MagnetostaticSolver::Postprocess(const std::string &post_dir,
   }
   mfem::DenseMatrix Minv(M);
   Minv.Invert();  // In-place, uses LAPACK (when available) and should be cheap
-  PostprocessTerminals(post_dir, surf_j_op, M, Minv, Mm);
+  PostprocessTerminals(surf_j_op, M, Minv, Mm);
 }
 
-void MagnetostaticSolver::PostprocessTerminals(const std::string &post_dir,
-                                               const SurfaceCurrentOperator &surf_j_op,
+void MagnetostaticSolver::PostprocessTerminals(const SurfaceCurrentOperator &surf_j_op,
                                                const mfem::DenseMatrix &M,
                                                const mfem::DenseMatrix &Minv,
                                                const mfem::DenseMatrix &Mm) const
@@ -218,10 +216,9 @@ void MagnetostaticSolver::PostprocessTerminals(const std::string &post_dir,
   }
 
   // Write inductance matrix data.
-  auto PrintMatrix =
-      [&surf_j_op, &post_dir, this](const std::string &file, const std::string &name,
-                                    const std::string &unit, const mfem::DenseMatrix &mat,
-                                    double scale)
+  auto PrintMatrix = [&surf_j_op, this](const std::string &file, const std::string &name,
+                                        const std::string &unit,
+                                        const mfem::DenseMatrix &mat, double scale)
   {
     std::string path = post_dir + file;
     auto output = OutputFile(path, false);

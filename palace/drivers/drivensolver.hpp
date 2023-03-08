@@ -41,19 +41,18 @@ private:
                                             int nstep, int step0, double omega0,
                                             double delta_omega, Timer &timer) const;
 
-  void Postprocess(const std::string &post_dir, const PostOperator &postop,
-                   const LumpedPortOperator &lumped_port_op,
+  void Postprocess(const PostOperator &postop, const LumpedPortOperator &lumped_port_op,
                    const WavePortOperator &wave_port_op,
                    const SurfaceCurrentOperator &surf_j_op, int step, double omega,
                    double E_elec, double E_mag, bool full, Timer &timer) const;
 
-  void PostprocessCurrents(const std::string &post_dir, const PostOperator &postop,
+  void PostprocessCurrents(const PostOperator &postop,
                            const SurfaceCurrentOperator &surf_j_op, int step,
                            double omega) const;
-  void PostprocessPorts(const std::string &post_dir, const PostOperator &postop,
+  void PostprocessPorts(const PostOperator &postop,
                         const LumpedPortOperator &lumped_port_op, int step,
                         double omega) const;
-  void PostprocessSParameters(const std::string &post_dir, const PostOperator &postop,
+  void PostprocessSParameters(const PostOperator &postop,
                               const LumpedPortOperator &lumped_port_op,
                               const WavePortOperator &wave_port_op, int step,
                               double omega) const;
@@ -62,7 +61,7 @@ public:
   using BaseSolver::BaseSolver;
 
   BaseSolver::ErrorIndicators Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
-                                    Timer &timer, int iter) const override;
+                                    Timer &timer) const override;
 };
 
 }  // namespace palace

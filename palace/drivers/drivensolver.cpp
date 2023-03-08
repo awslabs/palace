@@ -24,8 +24,8 @@ namespace palace
 {
 
 BaseSolver::ErrorIndicators
-DrivenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh, Timer &timer,
-                    int iter) const
+DrivenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
+                    Timer &timer) const
 {
   // Set up the spatial discretization and frequency sweep.
   timer.Lap();
@@ -180,13 +180,13 @@ DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator &postop, int nst
 
     // Postprocess S-parameters and optionally write solution to disk.
     const auto io_time_prev = timer.io_time;
-    Postprocess(post_dir_, postop, spaceop.GetLumpedPortOp(), spaceop.GetWavePortOp(),
+    Postprocess(postop, spaceop.GetLumpedPortOp(), spaceop.GetWavePortOp(),
                 spaceop.GetSurfaceCurrentOp(), step, omega, E_elec, E_mag,
                 !iodata.solver.driven.only_port_post, timer);
     timer.postpro_time += timer.Lap() - (timer.io_time - io_time_prev);
 
     // Compute the error indicators for the field, and reduce into the indicator.
-    error_reducer(indicators, spaceop.GetErrorEstimates(postop.GetE()));
+    // error_reducer(indicators, spaceop.GetErrorEstimates(postop.GetE()));
     timer.estimation_time += timer.Lap();
 
     // Increment frequency.
@@ -262,7 +262,8 @@ BaseSolver::ErrorIndicators DrivenSolver::SweepAdaptive(SpaceOperator &spaceop,
 
   // Greedy procedure for basis construction (offline phase). Basis is initialized with
   // solutions at frequency sweep endpoints.
-  int iter = static_cast<int>(prom.GetSampleFrequencies().size()), iter0 = iter;
+  int greedy_iter = static_cast<int>(prom.GetSampleFrequencies().size()),
+      greedy_iter0 = greedy_iter;
   double max_error = 1.0;
   while (true)
   {
@@ -270,7 +271,7 @@ BaseSolver::ErrorIndicators DrivenSolver::SweepAdaptive(SpaceOperator &spaceop,
     double omega_star;
     max_error = prom.ComputeMaxError(ncand, omega_star);
     local_timer.construct_time += local_timer.Lap();
-    if (max_error < offline_tol || iter == nmax)
+    if (max_error < offline_tol || greedy_iter == nmax)
     {
       break;
     }
@@ -278,12 +279,12 @@ BaseSolver::ErrorIndicators DrivenSolver::SweepAdaptive(SpaceOperator &spaceop,
     // Sample HDM and add solution to basis.
     Mpi::Print(
         "\nGreedy iteration {:d} (n = {:d}): ω* = {:.3e} GHz ({:.3e}), error = {:.3e}\n",
-        iter - iter0 + 1, prom.GetReducedDimension(),
+        greedy_iter - greedy_iter0 + 1, prom.GetReducedDimension(),
         iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, omega_star), omega_star,
         max_error);
     prom.SolveHDM(omega_star, E);
     local_timer.solve_time += local_timer.Lap();
-    iter++;
+    greedy_iter++;
   }
   {
     std::vector<double> samples(prom.GetSampleFrequencies());
@@ -294,7 +295,7 @@ BaseSolver::ErrorIndicators DrivenSolver::SweepAdaptive(SpaceOperator &spaceop,
     }
     Mpi::Print("\nAdaptive sampling{} {:d} frequency samples:\n"
                " n = {:d}, error = {:.3e}, tol = {:.3e}\n",
-               (iter == nmax) ? " reached maximum" : " converged with", iter,
+               (greedy_iter == nmax) ? " reached maximum" : " converged with", greedy_iter,
                prom.GetReducedDimension(), max_error, offline_tol);
     utils::PrettyPrint(samples, " Sampled frequencies (GHz):");
   }
@@ -344,7 +345,7 @@ BaseSolver::ErrorIndicators DrivenSolver::SweepAdaptive(SpaceOperator &spaceop,
 
     // Postprocess S-parameters and optionally write solution to disk.
     const auto io_time_prev = timer.io_time;
-    Postprocess(post_dir_, postop, spaceop.GetLumpedPortOp(), spaceop.GetWavePortOp(),
+    Postprocess(postop, spaceop.GetLumpedPortOp(), spaceop.GetWavePortOp(),
                 spaceop.GetSurfaceCurrentOp(), step, omega, E_elec, E_mag,
                 !iodata.solver.driven.only_port_post, timer);
     timer.postpro_time += timer.Lap() - (timer.io_time - io_time_prev);
@@ -368,7 +369,7 @@ int DrivenSolver::GetNumSteps(double start, double end, double delta) const
                   (delta > 0.0 && dfinal - end < delta_eps * end));
 }
 
-void DrivenSolver::Postprocess(const std::string &post_dir, const PostOperator &postop,
+void DrivenSolver::Postprocess(const PostOperator &postop,
                                const LumpedPortOperator &lumped_port_op,
                                const WavePortOperator &wave_port_op,
                                const SurfaceCurrentOperator &surf_j_op, int step,
@@ -378,27 +379,26 @@ void DrivenSolver::Postprocess(const std::string &post_dir, const PostOperator &
   // The internal GridFunctions for PostOperator have already been set from the E and B
   // solutions in the main frequency sweep loop.
   double freq = iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, omega);
-  PostprocessCurrents(post_dir, postop, surf_j_op, step, omega);
-  PostprocessPorts(post_dir, postop, lumped_port_op, step, omega);
+  PostprocessCurrents(postop, surf_j_op, step, omega);
+  PostprocessPorts(postop, lumped_port_op, step, omega);
   if (surf_j_op.Size() == 0)
   {
-    PostprocessSParameters(post_dir, postop, lumped_port_op, wave_port_op, step, omega);
+    PostprocessSParameters(postop, lumped_port_op, wave_port_op, step, omega);
   }
   if (full)
   {
     double E_cap = postop.GetLumpedCapacitorEnergy(lumped_port_op);
     double E_ind = postop.GetLumpedInductorEnergy(lumped_port_op);
-    PostprocessDomains(post_dir, postop, "f (GHz)", step, freq, E_elec, E_mag, E_cap,
-                       E_ind);
-    PostprocessSurfaces(post_dir, postop, "f (GHz)", step, freq, E_elec + E_cap,
-                        E_mag + E_ind, 1.0, 1.0);
-    PostprocessProbes(post_dir, postop, "f (GHz)", step, freq);
+    PostprocessDomains(postop, "f (GHz)", step, freq, E_elec, E_mag, E_cap, E_ind);
+    PostprocessSurfaces(postop, "f (GHz)", step, freq, E_elec + E_cap, E_mag + E_ind, 1.0,
+                        1.0);
+    PostprocessProbes(postop, "f (GHz)", step, freq);
   }
   if (iodata.solver.driven.delta_post > 0 && step % iodata.solver.driven.delta_post == 0)
   {
     auto t0 = timer.Now();
     Mpi::Print("\n");
-    PostprocessFields(post_dir, postop, step / iodata.solver.driven.delta_post, freq);
+    PostprocessFields(postop, step / iodata.solver.driven.delta_post, freq);
     Mpi::Print(" Wrote fields to disk at step {:d}\n", step + 1);
     timer.io_time += timer.Now() - t0;
   }
@@ -429,8 +429,7 @@ struct PortSData
 
 }  // namespace
 
-void DrivenSolver::PostprocessCurrents(const std::string &post_dir,
-                                       const PostOperator &postop,
+void DrivenSolver::PostprocessCurrents(const PostOperator &postop,
                                        const SurfaceCurrentOperator &surf_j_op, int step,
                                        double omega) const
 {
@@ -480,7 +479,7 @@ void DrivenSolver::PostprocessCurrents(const std::string &post_dir,
   }
 }
 
-void DrivenSolver::PostprocessPorts(const std::string &post_dir, const PostOperator &postop,
+void DrivenSolver::PostprocessPorts(const PostOperator &postop,
                                     const LumpedPortOperator &lumped_port_op, int step,
                                     double omega) const
 {
@@ -614,8 +613,7 @@ void DrivenSolver::PostprocessPorts(const std::string &post_dir, const PostOpera
   }
 }
 
-void DrivenSolver::PostprocessSParameters(const std::string &post_dir,
-                                          const PostOperator &postop,
+void DrivenSolver::PostprocessSParameters(const PostOperator &postop,
                                           const LumpedPortOperator &lumped_port_op,
                                           const WavePortOperator &wave_port_op, int step,
                                           double omega) const

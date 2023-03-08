@@ -34,12 +34,10 @@ class Timer;
 class ElectrostaticSolver : public BaseSolver
 {
 private:
-  void Postprocess(const std::string &post_dir, LaplaceOperator &laplaceop,
-                   PostOperator &postop, const std::vector<mfem::Vector> &V,
-                   Timer &timer) const;
+  void Postprocess(LaplaceOperator &laplaceop, PostOperator &postop,
+                   const std::vector<mfem::Vector> &V, Timer &timer) const;
 
-  void PostprocessTerminals(const std::string &post_dir,
-                            const std::map<int, mfem::Array<int>> &terminal_sources,
+  void PostprocessTerminals(const std::map<int, mfem::Array<int>> &terminal_sources,
                             const mfem::DenseMatrix &C, const mfem::DenseMatrix &Cinv,
                             const mfem::DenseMatrix &Cm) const;
 
@@ -47,7 +45,7 @@ public:
   using BaseSolver::BaseSolver;
 
   BaseSolver::ErrorIndicators Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
-                                    Timer &timer, int iter) const override;
+                                    Timer &timer) const override;
 };
 
 }  // namespace palace
