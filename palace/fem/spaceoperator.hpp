@@ -8,7 +8,6 @@
 #include <memory>
 #include <vector>
 #include <mfem.hpp>
-#include "linalg/fluxprojector.hpp"
 #include "fem/farfieldboundaryoperator.hpp"
 #include "fem/lumpedportoperator.hpp"
 #include "fem/materialoperator.hpp"
@@ -16,6 +15,7 @@
 #include "fem/surfacecurrentoperator.hpp"
 #include "fem/surfaceimpedanceoperator.hpp"
 #include "fem/waveportoperator.hpp"
+#include "linalg/fluxprojector.hpp"
 
 namespace palace
 {
