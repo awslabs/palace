@@ -19,8 +19,6 @@ DivFreeSolver::DivFreeSolver(const MaterialOperator &mat_op,
                              int max_it, int print)
   : mfem::Solver(nd_fespace.GetTrueVSize())
 {
-  // The custom diffusion and weak divergence integrators assign a new default quadrature
-  // order, see MFEM's Tesla miniapp for example.
   MaterialPropertyCoefficient<MaterialPropertyType::PERMITTIVITY_REAL> epsilon_func(mat_op);
   MFEM_VERIFY(bdr_marker.Size() ==
                   h1_fespaces.GetFinestFESpace().GetParMesh()->bdr_attributes.Max(),

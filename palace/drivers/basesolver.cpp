@@ -262,7 +262,7 @@ void BaseSolver::PostprocessSurfaces(const PostOperator &postop, const std::stri
   eps_data.reserve(postop.GetSurfacePostOp().GetEps().size());
   for (const auto &[idx, data] : postop.GetSurfacePostOp().GetEps())
   {
-    const double pl = postop.GetBulkParticipation(idx, E_elec);
+    const double pl = postop.GetInterfaceParticipation(idx, E_elec);
     const double tandelta = postop.GetSurfacePostOp().GetInterfaceLossTangent(idx);
     const double Ql =
         (pl == 0.0 || tandelta == 0.0) ? mfem::infinity() : 1.0 / (tandelta * pl);

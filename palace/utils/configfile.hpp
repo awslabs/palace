@@ -462,6 +462,9 @@ public:
 struct InterfaceDielectricData
 {
 public:
+  // Dielectric interface thickness [m].
+  double ts = 0.0;
+
   // Loss tangent.
   double tandelta = 0.0;
 
@@ -473,9 +476,6 @@ public:
   double epsilon_r_ma = 0.0;
   double epsilon_r_ms = 0.0;
   double epsilon_r_sa = 0.0;
-
-  // Dielectric interface thickness [m].
-  double ts = 0.0;
 
   // For each dielectric postprocessing index, each Node contains a list of attributes
   // sharing the same side value.

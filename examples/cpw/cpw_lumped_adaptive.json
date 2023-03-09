@@ -34,6 +34,13 @@
     ],
     "Postprocessing":
     {
+      "Dielectric":
+      [
+        {
+          "Index": 1,
+          "Attributes": [1]
+        }
+      ],
       "Probe":
       [
         {
@@ -125,7 +132,21 @@
           }
         ]
       }
-    ]
+    ],
+    "Postprocessing":
+    {
+      "Dielectric":
+      [
+        {
+          "Index": 1,
+          "Attributes": [12],
+          "Side": "+Z",
+          "Thickness": 2e-3,  // μm
+          "PermittivitySA": 4.0,
+          "LossTan": 1.0
+        }
+      ]
+    }
   },
   "Solver":
   {
