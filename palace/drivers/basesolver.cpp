@@ -379,7 +379,7 @@ BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<mfem::ParMesh>> 
       }
 
       // refine
-      mesh.back()->GeneralRefinement(marked_elements, 0, param.max_nc_levels);
+      mesh.back()->GeneralRefinement(marked_elements, -1, param.max_nc_levels);
     }
     else if (use_coarsening)
     {
@@ -401,8 +401,9 @@ BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<mfem::ParMesh>> 
       // param.max_nc_levels, 1);
     }
 
-    // TODO: Measure this/make optional
-    RebalanceMesh(mesh.back());
+    // TODO: Measure this/make optional.
+    // TODO: This is buggy, sometimes getting invalid elements.
+    // RebalanceMesh(mesh.back());
 
     // Solve + estimate.
     indicators = Solve(mesh, timer);
