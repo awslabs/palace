@@ -186,7 +186,7 @@ DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator &postop, int nst
     timer.postpro_time += timer.Lap() - (timer.io_time - io_time_prev);
 
     // Compute the error indicators for the field, and reduce into the indicator.
-    // error_reducer(indicators, spaceop.GetErrorEstimates(postop.GetE()));
+    error_reducer(indicators, spaceop.GetErrorEstimates(postop.GetE()));
     timer.estimation_time += timer.Lap();
 
     // Increment frequency.
@@ -257,8 +257,23 @@ BaseSolver::ErrorIndicators DrivenSolver::SweepAdaptive(SpaceOperator &spaceop,
   local_timer.construct_time += local_timer.Lap();
 
   prom.SolveHDM(omega0, E, true);  // Print matrix stats at first HDM solve
+  local_timer.solve_time += local_timer.Lap();
+
+  // The error indicators will be calculated for each HDM sample rather than for
+  // the online stage.
+  BaseSolver::ErrorIndicators indicators(spaceop.GetNDof());
+  BaseSolver::ErrorReductionOperator error_reducer;
+  auto update_indicators = [&]()
+  {
+    postop.SetEGridFunction(E);
+    error_reducer(indicators, spaceop.GetErrorEstimates(postop.GetE()));
+    local_timer.estimation_time += local_timer.Lap();
+  };
+
+
   prom.SolveHDM(omega0 + (nstep - step0 - 1) * delta_omega, E, false);
   local_timer.solve_time += local_timer.Lap();
+  update_indicators();
 
   // Greedy procedure for basis construction (offline phase). Basis is initialized with
   // solutions at frequency sweep endpoints.
@@ -284,6 +299,7 @@ BaseSolver::ErrorIndicators DrivenSolver::SweepAdaptive(SpaceOperator &spaceop,
         max_error);
     prom.SolveHDM(omega_star, E);
     local_timer.solve_time += local_timer.Lap();
+    update_indicators();
     greedy_iter++;
   }
   {
@@ -355,7 +371,7 @@ BaseSolver::ErrorIndicators DrivenSolver::SweepAdaptive(SpaceOperator &spaceop,
     omega += delta_omega;
   }
 
-  return BaseSolver::ErrorIndicators(spaceop.GetNDof());
+  return indicators;
 }
 
 int DrivenSolver::GetNumSteps(double start, double end, double delta) const
