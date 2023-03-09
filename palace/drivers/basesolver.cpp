@@ -271,31 +271,35 @@ mfem::Array<int> MarkedElements(double threshold, const std::vector<double> &v,
 
 void RebalanceMesh(std::unique_ptr<mfem::ParMesh> &mesh)
 {
-  if (mesh->Nonconforming())
+  auto comm = Mpi::World();
+  if (Mpi::Size(comm) > 1)
   {
-    mesh->Rebalance();
-  }
-  else
-  {
-    // DO NOTHING -> fix this in future
+    if (mesh->Nonconforming())
+    {
+      mesh->Rebalance();
+    }
+    else
+    {
+      // Without the refinement tree structure of a non-conforming mesh, need to
+      // serialize and partition from scratch. This will ultimately place a fairly
+      // severe upper bound on mesh size, as it must be possible to store
+      // concurrent duplicates of the serial mesh.
 
-    // // Without the refinement tree structure of a non-conforming mesh, need to
-    // // serialize and partition from scratch.
-    // auto comm = Mpi::World();
+      // Build a serial mesh for each rank, one at a time so the save doesn't clash.
+      std::unique_ptr<mfem::Mesh> new_mesh;
+      for (int rank = 0; rank < Mpi::Size(comm); rank++)
+      {
+        auto tmp = std::make_unique<mfem::Mesh>(mesh->GetSerialMesh(rank));
+        if (rank == Mpi::Rank(comm))
+        {
+          new_mesh = std::move(tmp);
+        }
+      }
+      new_mesh->Finalize(true); // Mark the mesh as ready for use.
 
-    // // Build a serial mesh for each rank, one at a time so the save doesn't clash.
-    // std::unique_ptr<mfem::Mesh> new_mesh;
-    // for (int rank = 0; rank < Mpi::Size(comm); rank++)
-    // {
-    //   auto tmp = std::make_unique<mfem::Mesh>(mesh->GetSerialMesh(rank));
-    //   if (rank == Mpi::Rank(comm))
-    //   {
-    //     new_mesh = std::move(tmp);
-    //   }
-    // }
-
-    // // All ranks now have an instance of the serial mesh, can use the default partition.
-    // mesh = std::make_unique<mfem::ParMesh>(comm, *new_mesh);
+      // All ranks now have an instance of the serial mesh, can use the default partition.
+      mesh = std::make_unique<mfem::ParMesh>(comm, *new_mesh);
+    }
   }
 }
 
@@ -341,15 +345,15 @@ BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<mfem::ParMesh>> 
     Mpi::Print("\nAdaptive Mesh Refinement Parameters:\n");
     Mpi::Print("MinIter: {}, MaxIter: {}, Tolerance: {:.3e}, DOFLimit: {}\n\n",
                param.min_its, param.max_its, param.tolerance, param.dof_limit);
-    save_postprocess(iter); // Save an initial solution
+    save_postprocess(iter); // Save the initial solution
   }
 
-  // collection of all tests that might exhaust resources.
+  // Collection of all tests that might exhaust resources.
   auto exhausted_resources = [&]()
   {
     bool ret = false;
     // run out of DOFs, and coarsening isn't allowed.
-    ret |= (indicators.ndof > param.dof_limit && !use_coarsening);
+    ret |= (!use_coarsening && indicators.ndof > param.dof_limit);
     ret |= iter > param.max_its;
 
     return ret;
@@ -358,7 +362,7 @@ BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<mfem::ParMesh>> 
   while ((iter < param.min_its || indicators.global_error_indicator > param.tolerance) &&
          !exhausted_resources())
   {
-    Mpi::Print("Adaptation Iteration {}: Error Indicator: {:.3e}, DOF: {}\n", iter,
+    Mpi::Print("Adaptation iteration {}: Initial error indicator: {:.3e}, DOF: {}\n", iter,
                indicators.global_error_indicator, indicators.ndof);
     if (indicators.ndof < param.dof_limit)
     {
@@ -375,7 +379,7 @@ BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<mfem::ParMesh>> 
       }
 
       // refine
-      mesh.back()->GeneralRefinement(marked_elements, -1, param.max_nc_levels);
+      mesh.back()->GeneralRefinement(marked_elements, 0, param.max_nc_levels);
     }
     else if (use_coarsening)
     {
@@ -397,6 +401,7 @@ BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<mfem::ParMesh>> 
       // param.max_nc_levels, 1);
     }
 
+    // TODO: Measure this/make optional
     RebalanceMesh(mesh.back());
 
     // Solve + estimate.
@@ -411,7 +416,7 @@ BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<mfem::ParMesh>> 
     }
   }
 
-  Mpi::Print("Final Error Indicator: {:.3e}, DOF: {}\n", indicators.global_error_indicator,
+  Mpi::Print("\nError Indicator: {:.3e}, DOF: {}\n", indicators.global_error_indicator,
              indicators.ndof);
 
   return indicators;
