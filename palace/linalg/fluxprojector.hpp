@@ -1,8 +1,8 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#ifndef PALACE_ERROR_ESTIMATOR_HPP
-#define PALACE_ERROR_ESTIMATOR_HPP
+#ifndef PALACE_FLUX_PROJECTOR_HPP
+#define PALACE_FLUX_PROJECTOR_HPP
 
 #include <memory>
 #include <mfem.hpp>
@@ -71,4 +71,4 @@ public:
 
 }  // namespace palace
 
-#endif  // PALACE_ERROR_ESTIMATOR_HPP
+#endif  // PALACE_FLUX_PROJECTOR_HPP

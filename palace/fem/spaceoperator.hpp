@@ -15,7 +15,6 @@
 #include "fem/surfacecurrentoperator.hpp"
 #include "fem/surfaceimpedanceoperator.hpp"
 #include "fem/waveportoperator.hpp"
-#include "linalg/fluxprojector.hpp"
 
 namespace palace
 {
@@ -71,9 +70,6 @@ private:
   LumpedPortOperator lumped_port_op;
   WavePortOperator wave_port_op;
   SurfaceCurrentOperator surf_j_op;
-
-  // Projector for computing flux based error estimate.
-  FluxProjector flux_projector;
 
   // Helper function to assemble preconditioner matrix data structures.
   void GetPreconditionerInternal(
@@ -193,9 +189,6 @@ public:
   // Separate out RHS vector as RHS = iω RHS1 + RHS2(ω).
   bool GetFreqDomainExcitationVector1(petsc::PetscParVector &RHS1);
   bool GetFreqDomainExcitationVector2(double omega, petsc::PetscParVector &RHS2);
-
-  // Compute elemental error estimates given a provided electric field, E
-  std::vector<double> GetErrorEstimates(const mfem::ParComplexGridFunction &E);
 };
 
 }  // namespace palace

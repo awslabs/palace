@@ -11,10 +11,12 @@
 #include "fem/spaceoperator.hpp"
 #include "fem/surfacecurrentoperator.hpp"
 #include "fem/waveportoperator.hpp"
+#include "linalg/errorestimator.hpp"
 #include "linalg/ksp.hpp"
 #include "linalg/pc.hpp"
 #include "linalg/petsc.hpp"
 #include "utils/communication.hpp"
+#include "utils/errorindicators.hpp"
 #include "utils/iodata.hpp"
 #include "utils/multigrid.hpp"
 #include "utils/prettyprint.hpp"
@@ -23,13 +25,14 @@
 namespace palace
 {
 
-BaseSolver::ErrorIndicators
-DrivenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
-                    Timer &timer) const
+ErrorIndicators DrivenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
+                                    Timer &timer) const
 {
   // Set up the spatial discretization and frequency sweep.
   timer.Lap();
   SpaceOperator spaceop(iodata, mesh);
+  CurlFluxErrorEstimator estimator(iodata, spaceop.GetMaterialOp(), mesh,
+                                   spaceop.GetNDSpace());
   int nstep = GetNumSteps(iodata.solver.driven.min_f, iodata.solver.driven.max_f,
                           iodata.solver.driven.delta_f);
   int step0 = (iodata.solver.driven.rst > 0) ? iodata.solver.driven.rst - 1 : 0;
@@ -96,13 +99,16 @@ DrivenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
   Mpi::Print("\n");
 
   // Main frequency sweep loop.
-  return adaptive ? SweepAdaptive(spaceop, postop, nstep, step0, omega0, delta_omega, timer)
-                  : SweepUniform(spaceop, postop, nstep, step0, omega0, delta_omega, timer);
+  return adaptive ? SweepAdaptive(spaceop, postop, estimator, nstep, step0, omega0,
+                                  delta_omega, timer)
+                  : SweepUniform(spaceop, postop, estimator, nstep, step0, omega0,
+                                 delta_omega, timer);
 }
 
-BaseSolver::ErrorIndicators
-DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator &postop, int nstep,
-                           int step0, double omega0, double delta_omega, Timer &timer) const
+ErrorIndicators DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator &postop,
+                                           const CurlFluxErrorEstimator &estimator,
+                                           int nstep, int step0, double omega0,
+                                           double delta_omega, Timer &timer) const
 {
   // Construct the system matrices defining the linear operator. PEC boundaries are handled
   // simply by setting diagonal entries of the system matrix for the corresponding dofs.
@@ -134,8 +140,15 @@ DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator &postop, int nst
   B.SetZero();
   timer.construct_time += timer.Lap();
 
-  BaseSolver::ErrorIndicators indicators(spaceop.GetNDof());
-  const auto error_reducer = BaseSolver::ErrorReductionOperator();
+  // Initialize structures for storing and reducing the results of error estimation.
+  ErrorIndicators indicators(spaceop.GetNDof());
+  const auto error_reducer = ErrorReductionOperator();
+  auto update_error_indicators =
+      [&timer, &estimator, &indicators, &error_reducer](const auto &E)
+  {
+    error_reducer(indicators, estimator(E));
+    timer.estimation_time += timer.Lap();
+  };
 
   // Main frequency sweep loop.
   double omega = omega0;
@@ -163,6 +176,8 @@ DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator &postop, int nst
     ksp.Mult(RHS, E);
     timer.solve_time += timer.Lap();
 
+    update_error_indicators(E);
+
     double E_elec = 0.0, E_mag = 0.0;
     PostOperator::GetBField(omega, *NegCurl, E, B);
     postop.SetEGridFunction(E);
@@ -185,10 +200,6 @@ DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator &postop, int nst
                 !iodata.solver.driven.only_port_post, timer);
     timer.postpro_time += timer.Lap() - (timer.io_time - io_time_prev);
 
-    // Compute the error indicators for the field, and reduce into the indicator.
-    error_reducer(indicators, spaceop.GetErrorEstimates(postop.GetE()));
-    timer.estimation_time += timer.Lap();
-
     // Increment frequency.
     omega += delta_omega;
   }
@@ -197,11 +208,10 @@ DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator &postop, int nst
   return indicators;
 }
 
-BaseSolver::ErrorIndicators DrivenSolver::SweepAdaptive(SpaceOperator &spaceop,
-                                                        PostOperator &postop, int nstep,
-                                                        int step0, double omega0,
-                                                        double delta_omega,
-                                                        Timer &timer) const
+ErrorIndicators DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator &postop,
+                                            const CurlFluxErrorEstimator &estimator,
+                                            int nstep, int step0, double omega0,
+                                            double delta_omega, Timer &timer) const
 {
   // Configure default parameters if not specified.
   double offline_tol = iodata.solver.driven.adaptive_tol;
@@ -256,24 +266,24 @@ BaseSolver::ErrorIndicators DrivenSolver::SweepAdaptive(SpaceOperator &spaceop,
   prom.Initialize(nstep - step0, omega0, delta_omega);
   local_timer.construct_time += local_timer.Lap();
 
-  prom.SolveHDM(omega0, E, true);  // Print matrix stats at first HDM solve
-  local_timer.solve_time += local_timer.Lap();
-
   // The error indicators will be calculated for each HDM sample rather than for
   // the online stage.
-  BaseSolver::ErrorIndicators indicators(spaceop.GetNDof());
-  BaseSolver::ErrorReductionOperator error_reducer;
-  auto update_indicators = [&]()
+  ErrorIndicators indicators(spaceop.GetNDof());
+  ErrorReductionOperator error_reducer;
+  auto update_error_indicators =
+      [&local_timer, &estimator, &indicators, &error_reducer](const auto &E)
   {
-    postop.SetEGridFunction(E);
-    error_reducer(indicators, spaceop.GetErrorEstimates(postop.GetE()));
+    error_reducer(indicators, estimator(E));
     local_timer.estimation_time += local_timer.Lap();
   };
 
+  prom.SolveHDM(omega0, E, true);  // Print matrix stats at first HDM solve
+  local_timer.solve_time += local_timer.Lap();
+  update_error_indicators(E);
 
   prom.SolveHDM(omega0 + (nstep - step0 - 1) * delta_omega, E, false);
   local_timer.solve_time += local_timer.Lap();
-  update_indicators();
+  update_error_indicators(E);
 
   // Greedy procedure for basis construction (offline phase). Basis is initialized with
   // solutions at frequency sweep endpoints.
@@ -299,7 +309,7 @@ BaseSolver::ErrorIndicators DrivenSolver::SweepAdaptive(SpaceOperator &spaceop,
         max_error);
     prom.SolveHDM(omega_star, E);
     local_timer.solve_time += local_timer.Lap();
-    update_indicators();
+    update_error_indicators(E);
     greedy_iter++;
   }
   {

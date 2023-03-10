@@ -23,6 +23,7 @@ class Vector;
 namespace palace
 {
 
+class ErrorIndicators;
 class IoData;
 class LaplaceOperator;
 class PostOperator;
@@ -44,8 +45,8 @@ private:
 public:
   using BaseSolver::BaseSolver;
 
-  BaseSolver::ErrorIndicators Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
-                                    Timer &timer) const override;
+  ErrorIndicators Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
+                        Timer &timer) const override;
 };
 
 }  // namespace palace

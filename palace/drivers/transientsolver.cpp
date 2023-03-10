@@ -9,7 +9,9 @@
 #include "fem/spaceoperator.hpp"
 #include "fem/surfacecurrentoperator.hpp"
 #include "fem/timeoperator.hpp"
+#include "linalg/errorestimator.hpp"
 #include "utils/communication.hpp"
+#include "utils/errorindicators.hpp"
 #include "utils/excitations.hpp"
 #include "utils/iodata.hpp"
 #include "utils/timer.hpp"
@@ -17,7 +19,7 @@
 namespace palace
 {
 
-BaseSolver::ErrorIndicators
+ErrorIndicators
 TransientSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
                        Timer &timer) const
 {
@@ -127,7 +129,7 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
   }
   SaveMetadata(timeop.GetTotalKspMult(), timeop.GetTotalKspIter());
 
-  return BaseSolver::ErrorIndicators(spaceop.GetNDof());
+  return ErrorIndicators(spaceop.GetNDof());
 }
 
 std::function<double(double)> TransientSolver::GetTimeExcitation(bool dot) const

@@ -15,6 +15,7 @@
 #include "linalg/petsc.hpp"
 #include "linalg/slepc.hpp"
 #include "utils/communication.hpp"
+#include "utils/errorindicators.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
 #include "utils/timer.hpp"

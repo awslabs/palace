@@ -18,6 +18,7 @@ class ParFiniteElementSpace;
 namespace palace
 {
 
+class ErrorIndicators;
 class IoData;
 class PostOperator;
 class Timer;
@@ -74,39 +75,6 @@ public:
   BaseSolver(const IoData &iodata_, bool root_, int size = 0, int num_thread = 0,
              const char *git_tag = nullptr);
   virtual ~BaseSolver() = default;
-
-  // Storage for error estimation results from the solve. Required in the AMR loop. An error
-  // indicator is non-negative, whilst an error estimate is signed.
-  struct ErrorIndicators
-  {
-    ErrorIndicators(int ndof) : ndof(ndof) {}
-    ErrorIndicators() = delete;
-    ErrorIndicators(const ErrorIndicators &) = default;
-    ErrorIndicators(ErrorIndicators &&) = default;
-    ErrorIndicators &operator=(const ErrorIndicators &) = default;
-    ErrorIndicators &operator=(ErrorIndicators &&) = default;
-    ~ErrorIndicators() = default;
-
-    // Elemental localized error indicators. Used for marking elements for
-    // refinement and coarsening.
-    std::vector<double> local_error_indicators;
-    // Global error indicator. Used for driving AMR and diagnostics. This
-    // combines the local error indicators across all ranks. This number is the
-    // same on all ranks.
-    double global_error_indicator = 0;
-    // Number of global dof in the mesh.
-    int ndof;
-  };
-  // Operator for performing reduction of a vector of local indicators into a
-  // global running total for use in adaptation.
-  class ErrorReductionOperator
-  {
-    // number of samples. mutability required to ensure operation.
-    mutable int n = 0;
-
-  public:
-    void operator()(ErrorIndicators &e, std::vector<double> &&i) const;
-  };
 
   // Performs a solve using the mesh sequence, and recording timing for each stage. The iter
   // argument is used to annotate output produced during postprocessing.

@@ -143,11 +143,11 @@ static int HOElemTypeNastran(const int lo_type, const int num_nodes)
 }
 
 constexpr int ElemNumNodes[] = {-1,  // 2-node edge
-                                   3,  4,  4,  8,  6,  5,
-                                   -1,  // 3-node edge
-                                   6,  9,  10, 27, 18, 14,
-                                   -1,  // 1-node node
-                                   8,  20, 15, 13};
+                                3,  4,  4,  8,  6,  5,
+                                -1,  // 3-node edge
+                                6,  9,  10, 27, 18, 14,
+                                -1,  // 1-node node
+                                8,  20, 15, 13};
 
 // From COMSOL or Nastran to Gmsh ordering. See:
 //   - https://gmsh.info/doc/texinfo/gmsh.html#Node-ordering
@@ -168,25 +168,24 @@ constexpr int MphTri6[] = {0, 1, 2, 3, 5, 4};
 constexpr int MphQuad9[] = {0, 1, 3, 2, 4, 7, 8, 5, 6};
 constexpr int MphTet10[] = {0, 1, 2, 3, 4, 6, 5, 7, 9, 8};
 constexpr int MphHex27[] = {0,  1,  3,  2,  4,  5,  7,  6,  8,  9,  20, 11, 13, 10,
-                               21, 12, 22, 26, 23, 15, 24, 14, 16, 17, 25, 18, 19};
-constexpr int MphWdg18[] = {0, 1,  2,  3,  4,  5,  6,  7,  9,
-                               8, 15, 10, 16, 17, 11, 12, 13, 14};
+                            21, 12, 22, 26, 23, 15, 24, 14, 16, 17, 25, 18, 19};
+constexpr int MphWdg18[] = {0, 1, 2, 3, 4, 5, 6, 7, 9, 8, 15, 10, 16, 17, 11, 12, 13, 14};
 constexpr int MphPyr14[] = {0, 1, 3, 2, 4, 5, 6, 13, 8, 10, 7, 9, 12, 11};
 
 constexpr int NasTet10[] = {0, 1, 2, 3, 4, 5, 6, 7, 9, 8};
 constexpr int NasHex20[] = {0,  1, 2,  3,  4,  5,  6,  7,  8,  11,
-                               13, 9, 10, 12, 14, 15, 16, 18, 19, 17};
+                            13, 9, 10, 12, 14, 15, 16, 18, 19, 17};
 constexpr int NasWdg15[] = {0, 1, 2, 3, 4, 5, 6, 9, 7, 8, 10, 11, 12, 14, 13};
 constexpr int NasPyr13[] = {0, 1, 2, 3, 4, 5, 8, 10, 6, 7, 9, 11, 12};
 
 constexpr const int *ElemNodesComsol[] = {SkipElem, Msh3,     MphQuad4, Msh4,     MphHex8,
-                                       Msh6,     MphPyr5,  SkipElem, MphTri6,  MphQuad9,
-                                       MphTet10, MphHex27, MphWdg18, MphPyr14, SkipElem,
-                                       SkipElem, SkipElem, SkipElem, SkipElem};
+                                          Msh6,     MphPyr5,  SkipElem, MphTri6,  MphQuad9,
+                                          MphTet10, MphHex27, MphWdg18, MphPyr14, SkipElem,
+                                          SkipElem, SkipElem, SkipElem, SkipElem};
 constexpr const int *ElemNodesNastran[] = {SkipElem, Msh3,     Msh4,     Msh4,     Msh8,
-                                        Msh6,     Msh5,     SkipElem, Msh6,     Msh9,
-                                        NasTet10, SkipElem, SkipElem, SkipElem, SkipElem,
-                                        Msh8,     NasHex20, NasWdg15, NasPyr13};
+                                           Msh6,     Msh5,     SkipElem, Msh6,     Msh9,
+                                           NasTet10, SkipElem, SkipElem, SkipElem, SkipElem,
+                                           Msh8,     NasHex20, NasWdg15, NasPyr13};
 
 // Get line, strip comments, leading/trailing whitespace. Should not be called if end of
 // file is expected.

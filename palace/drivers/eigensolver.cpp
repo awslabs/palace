@@ -9,12 +9,14 @@
 #include "fem/spaceoperator.hpp"
 #include "linalg/arpack.hpp"
 #include "linalg/divfree.hpp"
+#include "linalg/errorestimator.hpp"
 #include "linalg/feast.hpp"
 #include "linalg/ksp.hpp"
 #include "linalg/pc.hpp"
 #include "linalg/petsc.hpp"
 #include "linalg/slepc.hpp"
 #include "utils/communication.hpp"
+#include "utils/errorindicators.hpp"
 #include "utils/freqdomain.hpp"
 #include "utils/iodata.hpp"
 #include "utils/mfemoperators.hpp"
@@ -25,15 +27,16 @@ namespace palace
 
 using namespace std::complex_literals;
 
-BaseSolver::ErrorIndicators
-EigenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
-                   Timer &timer) const
+ErrorIndicators EigenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
+                                   Timer &timer) const
 {
   // Construct and extract the system matrices defining the eigenvalue problem. The diagonal
   // values for the mass matrix PEC dof shift the Dirichlet eigenvalues out of the
   // computational range. The damping matrix may be nullptr.
   timer.Lap();
   SpaceOperator spaceop(iodata, mesh);
+  CurlFluxErrorEstimator estimator(iodata, spaceop.GetMaterialOp(), mesh,
+                                   spaceop.GetNDSpace());
   std::unique_ptr<petsc::PetscParMatrix> K = spaceop.GetSystemMatrixPetsc(
       SpaceOperator::OperatorType::STIFFNESS, mfem::Operator::DIAG_ONE);
   std::unique_ptr<petsc::PetscParMatrix> M = spaceop.GetSystemMatrixPetsc(
@@ -350,11 +353,16 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
   }
   timer.solve_time += timer.Lap();
 
-  // Postprocess the results.
-  BaseSolver::ErrorIndicators indicators(spaceop.GetNDof());
-  const auto error_reducer = BaseSolver::ErrorReductionOperator();
+  // Initialize structures for storing and reducing the results of error estimation.
+  ErrorIndicators indicators(spaceop.GetNDof());
+  ErrorReductionOperator error_reducer;
+  auto update_error_indicators =
+      [&timer, &estimator, &indicators, &error_reducer](const auto &E)
+  {
+    error_reducer(indicators, estimator(E));
+    timer.estimation_time += timer.Lap();
+  };
 
-  const auto io_time_prev = timer.io_time;
   for (int i = 0; i < num_conv; i++)
   {
     // Get the eigenvalue and relative error.
@@ -384,28 +392,24 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
 
     // Set the internal GridFunctions in PostOperator for all postprocessing operations.
     eigen->GetEigenvector(i, E);
+    if (i < iodata.solver.eigenmode.n)
+    {
+      // Only include modes that were targeted.
+      update_error_indicators(E);
+    }
+
     PostOperator::GetBField(omega, *NegCurl, E, B);
     postop.SetEGridFunction(E);
     postop.SetBGridFunction(B);
-    timer.postpro_time += timer.Lap();
-
-    if (i < iodata.solver.eigenmode.n)
-    {
-      // Compute the error indicators for the field, and reduce into the
-      // indicator. Only include modes that were targeted.
-      error_reducer(indicators, spaceop.GetErrorEstimates(postop.GetE()));
-      timer.estimation_time += timer.Lap();
-    }
 
     postop.UpdatePorts(spaceop.GetLumpedPortOp(), omega.real());
 
     // Postprocess the mode.
+    const auto io_time_prev = timer.io_time;
     Postprocess(postop, spaceop.GetLumpedPortOp(), i, omega, error1, error2, num_conv,
                 timer);
-    timer.postpro_time += timer.Lap();
+    timer.postpro_time += timer.Lap() - (timer.io_time - io_time_prev);
   }
-  // Do not count io time as part of postprocessing.
-  timer.postpro_time -= (timer.io_time - io_time_prev);
 
   return indicators;
 }

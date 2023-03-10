@@ -21,6 +21,7 @@ namespace palace
 {
 
 class CurlCurlOperator;
+class ErrorIndicators;
 class IoData;
 class PostOperator;
 class SurfaceCurrentOperator;
@@ -42,8 +43,8 @@ private:
 public:
   using BaseSolver::BaseSolver;
 
-  BaseSolver::ErrorIndicators Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
-                                    Timer &timer) const override;
+  ErrorIndicators Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
+                        Timer &timer) const override;
 };
 
 }  // namespace palace

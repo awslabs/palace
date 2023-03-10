@@ -6,16 +6,18 @@
 #include <mfem.hpp>
 #include "fem/laplaceoperator.hpp"
 #include "fem/postoperator.hpp"
+#include "linalg/errorestimator.hpp"
 #include "linalg/gmg.hpp"
 #include "linalg/pc.hpp"
 #include "utils/communication.hpp"
+#include "utils/errorindicators.hpp"
 #include "utils/iodata.hpp"
 #include "utils/timer.hpp"
 
 namespace palace
 {
 
-BaseSolver::ErrorIndicators
+ErrorIndicators
 ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
                            Timer &timer) const
 {
@@ -119,7 +121,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &me
   Postprocess(laplaceop, postop, V, timer);
   timer.postpro_time += timer.Lap() - (timer.io_time - io_time_prev);
 
-  return BaseSolver::ErrorIndicators(laplaceop.GetNDof());
+  return ErrorIndicators(laplaceop.GetNDof());
 }
 
 void ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop, PostOperator &postop,

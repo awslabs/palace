@@ -11,6 +11,7 @@
 namespace mfem
 {
 
+class ND_FECollection;
 class ParMesh;
 
 }  // namespace mfem
@@ -18,6 +19,8 @@ class ParMesh;
 namespace palace
 {
 
+class CurlFluxErrorEstimator;
+class ErrorIndicators;
 class IoData;
 class LumpedPortOperator;
 class PostOperator;
@@ -34,12 +37,14 @@ class DrivenSolver : public BaseSolver
 private:
   int GetNumSteps(double start, double end, double delta) const;
 
-  BaseSolver::ErrorIndicators SweepUniform(SpaceOperator &spaceop, PostOperator &postop,
-                                           int nstep, int step0, double omega0,
-                                           double delta_omega, Timer &timer) const;
-  BaseSolver::ErrorIndicators SweepAdaptive(SpaceOperator &spaceop, PostOperator &postop,
-                                            int nstep, int step0, double omega0,
-                                            double delta_omega, Timer &timer) const;
+  ErrorIndicators SweepUniform(SpaceOperator &spaceop, PostOperator &postop,
+                               const CurlFluxErrorEstimator &estimator, int nstep,
+                               int step0, double omega0, double delta_omega,
+                               Timer &timer) const;
+  ErrorIndicators SweepAdaptive(SpaceOperator &spaceop, PostOperator &postop,
+                                const CurlFluxErrorEstimator &estimator, int nstep,
+                                int step0, double omega0, double delta_omega,
+                                Timer &timer) const;
 
   void Postprocess(const PostOperator &postop, const LumpedPortOperator &lumped_port_op,
                    const WavePortOperator &wave_port_op,
@@ -60,8 +65,8 @@ private:
 public:
   using BaseSolver::BaseSolver;
 
-  BaseSolver::ErrorIndicators Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
-                                    Timer &timer) const override;
+  ErrorIndicators Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
+                        Timer &timer) const override;
 };
 
 }  // namespace palace

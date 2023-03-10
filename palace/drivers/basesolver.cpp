@@ -11,7 +11,9 @@
 #include "fem/domainpostoperator.hpp"
 #include "fem/postoperator.hpp"
 #include "fem/surfacepostoperator.hpp"
+#include "linalg/errorestimator.hpp"
 #include "utils/communication.hpp"
+#include "utils/errorindicators.hpp"
 #include "utils/filesystem.hpp"
 #include "utils/iodata.hpp"
 #include "utils/timer.hpp"
@@ -104,10 +106,11 @@ namespace
 // Given a vector of estimates local to this rank, compute an error threshold
 // such that if elements with greater error are marked for refinement, a Dorfler
 // marking is achieved.
-double ComputeRefineThreshold(double fraction, std::vector<double> estimates)
+double ComputeRefineThreshold(double fraction, const mfem::Vector &e)
 {
   // Pre compute the sort and partial sum to make evaluating a candidate
   // partition very fast.
+  std::vector<double> estimates(e.begin(), e.end());
   std::sort(estimates.begin(), estimates.end());
 
   MFEM_ASSERT(estimates.front() >= 0, "Indicators must be non-negative");
@@ -247,26 +250,23 @@ double ComputeRefineThreshold(double fraction, std::vector<double> estimates)
   return error_threshold;
 }
 
-mfem::Array<int> MarkedElements(double threshold, const std::vector<double> &v,
-                                bool gt = true)
+mfem::Array<int> MarkedElements(double threshold, const mfem::Vector &e, bool gt = true)
 {
-  // assign a working temporary so can emplace_back
-  std::vector<int> ind;
-  for (int i = 0; i < v.size(); i++)
+  mfem::Array<int> ind;
+  ind.Reserve(e.Size());
+  for (int i = 0; i < e.Size(); i++)
   {
-    if (gt && v[i] >= threshold)  // Used for refinement marking.
+    if (gt && e[i] >= threshold)  // Used for refinement marking.
     {
-      ind.emplace_back(i);
+      ind.Append(i);
     }
 
-    if (!gt && v[i] <= threshold)  // Used for coarsening marking.
+    if (!gt && e[i] <= threshold)  // Used for coarsening marking.
     {
-      ind.emplace_back(i);
+      ind.Append(i);
     }
   }
-  mfem::Array<int> e(ind.size());
-  std::copy(ind.begin(), ind.end(), e.begin());
-  return e;
+  return ind;
 }
 
 void RebalanceMesh(std::unique_ptr<mfem::ParMesh> &mesh)
@@ -295,7 +295,7 @@ void RebalanceMesh(std::unique_ptr<mfem::ParMesh> &mesh)
           new_mesh = std::move(tmp);
         }
       }
-      new_mesh->Finalize(true); // Mark the mesh as ready for use.
+      new_mesh->Finalize(true);  // Mark the mesh as ready for use.
 
       // All ranks now have an instance of the serial mesh, can use the default partition.
       mesh = std::make_unique<mfem::ParMesh>(comm, *new_mesh);
@@ -305,19 +305,21 @@ void RebalanceMesh(std::unique_ptr<mfem::ParMesh> &mesh)
 
 }  // namespace
 
-BaseSolver::ErrorIndicators
+ErrorIndicators
 BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
                                     Timer &timer) const
 {
   // Helper to save off postprocess data.
-  auto save_postprocess = [&, this](int iter){
+  auto save_postprocess = [&, this](int iter)
+  {
     if (Mpi::Root(Mpi::World()))
     {
       namespace fs = std::filesystem;
       // Create a subfolder denoting the results of this adaptation.
       const auto out_dir = fs::path(IterationPostDir(iter));
 
-      const auto options = fs::copy_options::recursive | fs::copy_options::overwrite_existing;
+      const auto options =
+          fs::copy_options::recursive | fs::copy_options::overwrite_existing;
       const fs::path root_dir(post_dir);
       for (const auto &f : fs::directory_iterator(root_dir))
       {
@@ -345,7 +347,7 @@ BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<mfem::ParMesh>> 
     Mpi::Print("\nAdaptive Mesh Refinement Parameters:\n");
     Mpi::Print("MinIter: {}, MaxIter: {}, Tolerance: {:.3e}, DOFLimit: {}\n\n",
                param.min_its, param.max_its, param.tolerance, param.dof_limit);
-    save_postprocess(iter); // Save the initial solution
+    save_postprocess(iter);  // Save the initial solution
   }
 
   // Collection of all tests that might exhaust resources.
@@ -895,41 +897,6 @@ void BaseSolver::PostprocessFields(const PostOperator &postop, int step, double 
   }
   postop.WriteFields(step, time);
   Mpi::Barrier();
-}
-
-void BaseSolver::ErrorReductionOperator::operator()(BaseSolver::ErrorIndicators &ebar,
-                                                    std::vector<double> &&ind) const
-{
-  // Compute the global indicator across all processors
-  const auto local_sum = std::accumulate(ind.begin(), ind.end(), 0.0);
-  double candidate_global_error_indicator;
-  auto comm = Mpi::World();
-  MPI_Allreduce(&local_sum, &candidate_global_error_indicator, 1, MPI_DOUBLE, MPI_SUM,
-                comm);
-  ebar.global_error_indicator =
-      std::max(ebar.global_error_indicator, candidate_global_error_indicator);
-
-  // update the average local indicator. Using running average update rather
-  // than sum and final division to maintain validity at all times.
-  auto running_average = [this](const auto &xbar, const auto &x)
-  { return (xbar * n + x) / (n + 1); };
-
-  if (n > 0)
-  {
-    MFEM_VERIFY(ebar.local_error_indicators.size() == ind.size(),
-                "Local error indicator vectors mismatch.");
-    // Combine these error indicators into the current average.
-    std::transform(ebar.local_error_indicators.begin(), ebar.local_error_indicators.end(),
-                   ind.begin(), ebar.local_error_indicators.begin(), running_average);
-  }
-  else
-  {
-    // This is the first sample, just steal the data.
-    ebar.local_error_indicators = std::move(ind);
-  }
-
-  // Another sample has been added, increment for the running average lambda.
-  ++n;
 }
 
 }  // namespace palace

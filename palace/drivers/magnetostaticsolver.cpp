@@ -7,16 +7,18 @@
 #include "fem/curlcurloperator.hpp"
 #include "fem/postoperator.hpp"
 #include "fem/surfacecurrentoperator.hpp"
+#include "linalg/errorestimator.hpp"
 #include "linalg/gmg.hpp"
 #include "linalg/pc.hpp"
 #include "utils/communication.hpp"
+#include "utils/errorindicators.hpp"
 #include "utils/iodata.hpp"
 #include "utils/timer.hpp"
 
 namespace palace
 {
 
-BaseSolver::ErrorIndicators
+ErrorIndicators
 MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
                            Timer &timer) const
 {
@@ -26,6 +28,8 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &me
   timer.Lap();
   std::vector<std::unique_ptr<mfem::Operator>> K;
   CurlCurlOperator curlcurlop(iodata, mesh);
+  CurlFluxErrorEstimator estimator(iodata, curlcurlop.GetMaterialOp(), mesh,
+                                   curlcurlop.GetNDSpace());
   curlcurlop.GetStiffnessMatrix(K);
   SaveMetadata(curlcurlop.GetNDSpace());
 
@@ -79,6 +83,16 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &me
   std::vector<mfem::Vector> A(nstep);
   timer.construct_time += timer.Lap();
 
+  // Initialize structures for storing and reducing the results of error estimation.
+  ErrorIndicators indicators(curlcurlop.GetNDof());
+  ErrorReductionOperator error_reducer;
+  auto update_error_indicators =
+      [&timer, &estimator, &indicators, &error_reducer](const auto &E)
+  {
+    error_reducer(indicators, estimator(E));
+    timer.estimation_time += timer.Lap();
+  };
+
   // Main loop over current source boundaries.
   Mpi::Print("\nComputing magnetostatic fields for {:d} source boundar{}\n", nstep,
              (nstep > 1) ? "ies" : "y");
@@ -115,13 +129,17 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &me
     step++;
   }
 
+  // Compute and reduce the error indicators for each solution.
+  // TODO: Possible to treat this more efficiently by solving with multiple RHS.
+  std::for_each(A.begin(), A.end(), update_error_indicators);
+
   // Postprocess the capacitance matrix from the computed field solutions.
   const auto io_time_prev = timer.io_time;
   SaveMetadata(nstep, ksp_it);
   Postprocess(curlcurlop, postop, A, timer);
   timer.postpro_time += timer.Lap() - (timer.io_time - io_time_prev);
 
-  return BaseSolver::ErrorIndicators(curlcurlop.GetNDof());
+  return ErrorIndicators(curlcurlop.GetNDof());
 }
 
 void MagnetostaticSolver::Postprocess(CurlCurlOperator &curlcurlop, PostOperator &postop,
