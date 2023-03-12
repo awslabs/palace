@@ -7,7 +7,7 @@ help()
 {
     echo "Usage: validate-config [OPTIONS] CONFIG_FILE
 
-Validate the provided Palace configuration file against the JSON schema
+Validate the provided Palace configuration file against the provided JSON Schema
 
 Options:
   -h, --help                       Show this help message and exit
@@ -50,7 +50,7 @@ else
     CONFIG="$@"
 fi
 
-SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" ; pwd -P )
+SCRIPT_DIR=$( cd "$(dirname "${BASH_SOURCE[0]}")" ; pwd -P )
 
 if ! command -v $JULIA &> /dev/null; then
     echo "Error: Could not locate $JULIA executable"
@@ -58,7 +58,13 @@ if ! command -v $JULIA &> /dev/null; then
 fi
 
 echo "
-using Pkg; Pkg.add([\"JSON\", \"JSONSchema\"])
+try
+    using JSON
+    using JSONSchema
+catch
+    using Pkg; Pkg.UPDATED_REGISTRY_THIS_SESSION[] = true
+    Pkg.activate(; temp=true); Pkg.add([\"JSON\", \"JSONSchema\"])
+end
 include(joinpath(\"$SCRIPT_DIR\", \"schema\", \"ValidateConfig.jl\"))
 using .ValidateConfig
 result = validate_config_file(;

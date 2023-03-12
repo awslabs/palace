@@ -11,7 +11,7 @@ export validate_config_file
 """
     validate_config_file(; config_file::AbstractString, schema_file::AbstractString)
 
-Validate the provided configuration file against the provided JSON schema
+Validate the provided configuration file against the provided JSON Schema
 """
 function validate_config_file(; config_file::AbstractString, schema_file::AbstractString)
     # Resolve relative paths in schema by running parsefile in its directory
