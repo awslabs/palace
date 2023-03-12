@@ -13,6 +13,7 @@
     Once these are generated, plots DOF^(-1/3) against error.
 =#
 
+using DelimitedFiles
 using Measures
 using Plots
 using PyPlot: matplotlib
@@ -47,9 +48,9 @@ markers = [
 
 # Compute the convergence data
 p_min = 1
-p_max = 3
+p_max = 2
 ref_min = 0
-ref_max = 3
+ref_max = 1
 for mesh_type ∈ [0, 1, 2]
     if mesh_type == 0
         mesh_name = "Tetrahedra"

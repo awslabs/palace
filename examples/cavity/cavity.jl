@@ -259,7 +259,7 @@ function generate_cavity_convergence_data(;
         push!(dof, eltype(dof)())
         push!(f_TM_010, eltype(f_TM_010)())
         push!(f_TE_111, eltype(f_TE_111)())
-        for ref = ref_min:(p > 3 ? 3 : ref_max)
+        for ref = (p == 1 && mesh_type == 2 ? 1 : ref_min):(p > 3 ? 3 : ref_max)
             print("p = ", p, ", ref = ", ref, ": ")
             results = solve_cavity_resonator(
                 params,
