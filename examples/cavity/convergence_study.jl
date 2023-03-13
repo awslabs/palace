@@ -48,9 +48,9 @@ markers = [
 
 # Compute the convergence data
 p_min = 1
-p_max = 2
+p_max = 3
 ref_min = 0
-ref_max = 1
+ref_max = 3
 for mesh_type ∈ [0, 1, 2]
     if mesh_type == 0
         mesh_name = "Tetrahedra"
