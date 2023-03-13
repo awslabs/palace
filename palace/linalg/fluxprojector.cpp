@@ -49,7 +49,7 @@ auto BuildMassMatrixHierarchy(mfem::ParFiniteElementSpaceHierarchy &h)
 }
 
 FluxProjector::FluxProjector(mfem::ParFiniteElementSpaceHierarchy &smooth_flux_fes,
-                             double tol, int max_it, int print)
+                             double tol, int max_it)
   : mfem::Solver(smooth_flux_fes.GetFinestFESpace().GetTrueVSize()),
     M(BuildMassMatrixHierarchy(smooth_flux_fes))
 {
@@ -66,7 +66,7 @@ FluxProjector::FluxProjector(mfem::ParFiniteElementSpaceHierarchy &smooth_flux_f
   ksp->SetRelTol(tol);
   ksp->SetAbsTol(std::numeric_limits<double>::epsilon());
   ksp->SetMaxIter(max_it);
-  ksp->SetPrintLevel(print);
+  ksp->SetPrintLevel(0);
   ksp->SetOperator(*M.back());
   ksp->SetPreconditioner(*pc);
 }

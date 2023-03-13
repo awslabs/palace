@@ -32,8 +32,8 @@ private:
   mutable mfem::Vector tmp;
 
 public:
-  FluxProjector(mfem::ParFiniteElementSpaceHierarchy &smooth_flux_fes, double tol,
-                int max_it, int print);
+  FluxProjector(mfem::ParFiniteElementSpaceHierarchy &smooth_flux_fes, double tol = 1e-12,
+                int max_it = 200);
 
   // Operator is set in constructor.
   void SetOperator(const mfem::Operator &op) override {}
