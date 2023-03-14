@@ -99,8 +99,13 @@ if $FORMAT_JL; then
     FORMAT_JL_FILES="$(find $SOURCE_DIR -maxdepth 1 \
                            -type f -iname \*.md -exec echo -n '"{}", ' \;)$FORMAT_JL_FILES"
     echo "
-using Pkg; Pkg.add(\"JuliaFormatter\")
-using JuliaFormatter
+try
+    @eval using JuliaFormatter
+catch
+    using Pkg; Pkg.UPDATED_REGISTRY_THIS_SESSION[] = true
+    Pkg.activate(; temp=true); Pkg.add(\"JuliaFormatter\")
+    @eval using JuliaFormatter
+end
 format([$FORMAT_JL_FILES], $FORMAT_JL_ARGS)
 " | $JULIA
 fi

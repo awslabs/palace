@@ -13,6 +13,7 @@
     Once these are generated, plots DOF^(-1/3) against error.
 =#
 
+using DelimitedFiles
 using Measures
 using Plots
 using PyPlot: matplotlib

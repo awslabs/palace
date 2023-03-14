@@ -595,9 +595,12 @@ void SlepcEPSSolver::SetOperators(const petsc::PetscParMatrix &K,
   {
     normK = opK->Norm2();
     normM = opM->Norm2();
-    MFEM_VERIFY(normK > 0.0 && normM > 0.0, "Invalid matrix norms for EPS scaling!");
-    gamma = normK / normM;  // Store γ² for linear problem
-    delta = 2.0 / normK;
+    MFEM_VERIFY(normK >= 0.0 && normM >= 0.0, "Invalid matrix norms for EPS scaling!");
+    if (normK > 0 && normM > 0.0)
+    {
+      gamma = normK / normM;  // Store γ² for linear problem
+      delta = 2.0 / normK;
+    }
   }
 
   // Set up workspace.
@@ -700,10 +703,13 @@ void SlepcPEPLinearSolver::SetOperators(const petsc::PetscParMatrix &K,
     normK = opK->Norm2();
     normC = opC->Norm2();
     normM = opM->Norm2();
-    MFEM_VERIFY(normK > 0.0 && normC > 0.0 && normM > 0.0,
+    MFEM_VERIFY(normK >= 0.0 && normC >= 0.0 && normM >= 0.0,
                 "Invalid matrix norms for PEP scaling!");
-    gamma = std::sqrt(normK / normM);
-    delta = 2.0 / (normK + gamma * normC);
+    if (normK > 0 && normC > 0.0 && normM > 0.0)
+    {
+      gamma = std::sqrt(normK / normM);
+      delta = 2.0 / (normK + gamma * normC);
+    }
   }
 
   // Set up workspace.
@@ -1165,10 +1171,13 @@ void SlepcPEPSolver::SetOperators(const petsc::PetscParMatrix &K,
     normK = opK->Norm2();
     normC = opC->Norm2();
     normM = opM->Norm2();
-    MFEM_VERIFY(normK > 0.0 && normC > 0.0 && normM > 0.0,
+    MFEM_VERIFY(normK >= 0.0 && normC >= 0.0 && normM >= 0.0,
                 "Invalid matrix norms for PEP scaling!");
-    gamma = std::sqrt(normK / normM);
-    delta = 2.0 / (normK + gamma * normC);
+    if (normK > 0 && normC > 0.0 && normM > 0.0)
+    {
+      gamma = std::sqrt(normK / normM);
+      delta = 2.0 / (normK + gamma * normC);
+    }
   }
 
   // Set up workspace.
