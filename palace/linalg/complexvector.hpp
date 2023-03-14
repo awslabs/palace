@@ -14,6 +14,8 @@ namespace palace
 // A wrapper for a pair of mfem vectors, convenient when working with complex values
 struct ComplexVector
 {
+  mfem::Vector real, imag;
+
   ComplexVector(int n) : real(n), imag(n) {}
 
   ComplexVector() = default;
@@ -23,8 +25,10 @@ struct ComplexVector
   ComplexVector &operator=(ComplexVector &&) = default;
   ~ComplexVector() = default;
 
-  mfem::Vector real, imag;
+  ComplexVector(const mfem::Vector &r, const mfem::Vector &i) : real(r), imag(r) {}
+  ComplexVector(mfem::Vector &&r, mfem::Vector &&i) : real(std::move(r)), imag(std::move(i)) {}
 
+  // accessors to allow structured binding
   template <size_t I>
   auto &get() &
   {
@@ -33,7 +37,6 @@ struct ComplexVector
     else if constexpr (I == 1)
       return imag;
   }
-
   template <size_t I>
   const auto &get() const &
   {
@@ -42,7 +45,6 @@ struct ComplexVector
     else if constexpr (I == 1)
       return imag;
   }
-
   template <size_t I>
   auto &&get() &&
   {
@@ -50,6 +52,26 @@ struct ComplexVector
       return std::move(real);
     else if constexpr (I == 1)
       return std::move(imag);
+  }
+
+  // Only defining inplace operations to discourage allocation.
+  inline ComplexVector &operator*=(double d)
+  {
+    real *= d;
+    imag *= d;
+    return *this;
+  }
+  inline ComplexVector &operator+=(const ComplexVector &cv)
+  {
+    real += cv.real;
+    imag += cv.imag;
+    return *this;
+  }
+  inline ComplexVector &operator-=(const ComplexVector &cv)
+  {
+    real -= cv.real;
+    imag -= cv.imag;
+    return *this;
   }
 };
 

@@ -6,37 +6,11 @@
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
 #include "utils/mfemcoefficients.hpp"
+#include "utils/mfemintegrators.hpp"
 #include "utils/multigrid.hpp"
 
 namespace palace
 {
-
-namespace
-{
-template <typename SmoothFluxFECollection>
-struct PropertySelector;
-
-template <>
-struct PropertySelector<mfem::H1_FECollection>
-{
-  static constexpr auto mat = MaterialPropertyType::PERMITTIVITY_ABS;
-  static constexpr auto dim = 3;
-  using FluxFEC = mfem::L2_FECollection;
-  using FluxCoefficient = GradFluxCoefficient;
-  using Integrator = mfem::DiffusionIntegrator;
-};
-
-template <>
-struct PropertySelector<mfem::ND_FECollection>
-{
-  static constexpr auto mat = MaterialPropertyType::INV_PERMEABILITY;
-  static constexpr auto dim = 1;
-  using FluxFEC = mfem::RT_FECollection;
-  using FluxCoefficient = CurlFluxCoefficient;
-  using Integrator = mfem::CurlCurlIntegrator;
-};
-
-}  // namespace
 
 using namespace utils;
 
@@ -80,14 +54,19 @@ mfem::Vector CurlFluxErrorEstimator::operator()(const petsc::PetscParVector &v,
   const int nelem = smooth_flux_fes.GetFinestFESpace().GetNE();
   mfem::Vector real_error(nelem), imag_error(nelem);
 
-  constexpr int normp = 1;
+  constexpr int normp = 2; // 2 norm ensures no under integration.
   if (use_mfem)
   {
-    const int order = fes.GetElementOrder(0);  // Assumes no mixed p.
+    // This is used for comparison purposes only.
+    // TODO: Delete this once the alternative direct construction is ready.
+    // NB: There are bugs within L2ZZErrorEstimator presently, that ND simplices
+    // with p > 1 will not work, and also a flux fec of RT elements will also
+    // give incorrect answers.
+    const int order = fes.GetElementOrder(0); // Assumes no mixed p.
     auto *const pmesh = fes.GetParMesh();
 
     MaterialPropertyCoefficient<MaterialPropertyType::INV_PERMEABILITY> coef(mat_op);
-    mfem::CurlCurlIntegrator flux_integrator(coef);  // L2ZZErrorEstimator ignores
+    mfem::CurlCurlIntegrator flux_integrator(coef);  // L2ZZErrorEstimator ignores coef
 
     static_cast<void>(mfem::L2ZZErrorEstimator(flux_integrator, field.real(),
                                                smooth_flux_fes.GetFinestFESpace(), flux_fes,
@@ -96,51 +75,94 @@ mfem::Vector CurlFluxErrorEstimator::operator()(const petsc::PetscParVector &v,
     static_cast<void>(mfem::L2ZZErrorEstimator(flux_integrator, field.imag(),
                                                smooth_flux_fes.GetFinestFESpace(), flux_fes,
                                                imag_error, normp));
-
   }
   else
   {
-    // Home rolled L2ZZErrorEstimator.
-
-    // Compute the non-smooth flux RHS., i.e. (W, μ⁻¹∇ × V)
-    CurlFluxCoefficient real_coef(field.real(), mat_op), imag_coef(field.imag(), mat_op);
-
     // This lambda computes the flux as achieved within mfem. Use this to bench against.
-    auto mfem_flux = [&]()
+    auto mfem_flux_func = [this, &field]()
     {
       mfem::ParComplexGridFunction flux_func(&flux_fes);
       flux_func.real() = 0.0;
       flux_func.imag() = 0.0;
 
       mfem::Array<int> xdofs, fdofs;
-      mfem::Vector el_x, el_f, alt_el_f;
+      mfem::Vector el_x, el_f;
       mfem::CurlCurlIntegrator curl;
 
-      for (int i = 0; i < fes.GetNE(); i++)
+      for (int i = 0; i < fes.GetNE(); ++i)
       {
-        auto *T = fes.GetElementTransformation(i);
-
-        fes.GetElementVDofs(i, xdofs);
-        flux_fes.GetElementVDofs(i, fdofs);
-
+        const auto * const xdoftrans = fes.GetElementVDofs(i, xdofs);
         field.real().GetSubVector(xdofs, el_x);
+        if (xdoftrans)
+        {
+          xdoftrans->InvTransformPrimal(el_x);
+        }
+
+        auto *T = field.real().ParFESpace()->GetElementTransformation(i);
         curl.ComputeElementFlux(*field.real().ParFESpace()->GetFE(i), *T, el_x,
                                 *flux_fes.GetFE(i), el_f, false);
 
-        flux_func.real().AddElementVector(fdofs, el_f);
+        const auto * const fdoftrans = flux_fes.GetElementVDofs(i, fdofs);
+        if (fdoftrans)
+        {
+          fdoftrans->TransformPrimal(el_f);
+        }
+
+        flux_func.real().SetSubVector(fdofs, el_f);
 
         field.imag().GetSubVector(xdofs, el_x);
+        if (xdoftrans)
+        {
+          xdoftrans->InvTransformPrimal(el_x);
+        }
         curl.ComputeElementFlux(*field.imag().ParFESpace()->GetFE(i), *T, el_x,
                                 *flux_fes.GetFE(i), el_f, false);
-        flux_func.imag().AddElementVector(fdofs, el_f);
+        if (fdoftrans)
+        {
+          fdoftrans->TransformPrimal(el_f);
+        }
+        flux_func.imag().SetSubVector(fdofs, el_f);
       }
 
-      const auto ndof = smooth_flux_fes.GetFinestFESpace().GetTrueVSize();
+      return flux_func;
+    };
+
+    // This lambda computes the curl flux function by forming a projector. In
+    // theory same as the above, but still doesn't allow for coefficients. This
+    // is another benching device, helpful for debugging.
+    auto projector_flux_func = [this, &cv, &field]()
+    {
+      // Interpolate the weighted curl of the field in fes onto the discrete
+      // flux space.
+      mfem::ParDiscreteLinearOperator curl(&fes, &flux_fes); // (domain, range)
+
+      auto muinv = MaterialPropertyCoefficient<MaterialPropertyType::INV_PERMEABILITY>(mat_op);
+      curl.AddDomainInterpolator(new mfem::CurlInterpolator);
+      curl.Assemble();
+      curl.Finalize();
+      auto hyprecurlop = std::unique_ptr<mfem::HypreParMatrix>(curl.ParallelAssemble());
+
+      ComplexVector flux(flux_fes.GetTrueVSize());
+
+      hyprecurlop->Mult(cv.real, flux.real);
+      hyprecurlop->Mult(cv.imag, flux.imag);
+
+      mfem::ParComplexGridFunction flux_func(&flux_fes);
+      flux_func.real().SetFromTrueDofs(flux.real);
+      flux_func.imag().SetFromTrueDofs(flux.imag);
+
+      return flux_func;
+    };
+
+    // Given a flux function built elsewhere, construct the linear operator RHS.
+    auto flux_rhs_from_func = [&v](auto &fes, mfem::ParComplexGridFunction &flux_func)
+    {
+      const auto ndof = fes.GetTrueVSize();
 
       ComplexVector flux(ndof);
       {
         mfem::VectorGridFunctionCoefficient f_real(&flux_func.real());
-        mfem::ParLinearForm rhs(&smooth_flux_fes.GetFinestFESpace());
+        mfem::ParLinearForm rhs(&fes);
         rhs.AddDomainIntegrator(new mfem::VectorFEDomainLFIntegrator(f_real));
         rhs.UseFastAssembly(true);
         rhs.Assemble();
@@ -149,37 +171,86 @@ mfem::Vector CurlFluxErrorEstimator::operator()(const petsc::PetscParVector &v,
 
       {
         mfem::VectorGridFunctionCoefficient f_imag(&flux_func.imag());
-        mfem::ParLinearForm rhs(&smooth_flux_fes.GetFinestFESpace());
+        mfem::ParLinearForm rhs(&fes);
         rhs.AddDomainIntegrator(new mfem::VectorFEDomainLFIntegrator(f_imag));
         rhs.UseFastAssembly(true);
         rhs.Assemble();
         rhs.ParallelAssemble(flux.imag);
       }
 
-      return petsc::PetscParVector(v.GetComm(), flux);
+      return flux;
     };
 
-    auto palace_flux = [&]()
+    // Compare the two flux functions, should be identical.
+    auto comp = [this](const auto &mflux, const auto &pflux)
     {
-      // TODO: Make a drop in here that uses muinv properly, but also recovers
-      // the mfem_flux for muinv of identity.
+      bool match = true;
+
+      mfem::Array<int> flux_dofs;
+      mfem::Vector mflux_val, pflux_val;
+      for (int e = 0; e < flux_fes.GetNE(); e++)
+      {
+        flux_fes.GetElementVDofs(e, flux_dofs);
+
+        pflux.GetSubVector(flux_dofs, pflux_val);
+        mflux.GetSubVector(flux_dofs, mflux_val);
+
+        MFEM_ASSERT(mflux_val.Size() == pflux_val.Size(), "Must match size.");
+        constexpr double tol = 1e-6;
+        for (int i = 0; i < mflux_val.Size(); ++i)
+        {
+          auto diff = std::abs(mflux_val(i) - pflux_val(i));
+          if (diff > tol)
+          {
+            std::cout << "Mismatch on e " << e << " i " << i << ": " << mflux_val(i) << " " << pflux_val(i) << '\n';
+            match = false;
+          }
+        }
+      }
+
+      return match;
     };
 
+    MFEM_ASSERT(comp(mfem_flux_func().real(), projector_flux_func().real()), "Mismatch between projector and L2ZZ construction real values");
+    MFEM_ASSERT(comp(mfem_flux_func().imag(), projector_flux_func().imag()), "Mismatch between projector and L2ZZ construction imag values");
 
-    const auto flux = mfem_flux();
+    // Coefficients for computing the discontinuous flux., i.e. (W, μ⁻¹∇ × V).
+    // The code from here down will ultimately be the way to calculate the flux.
+    CurlFluxCoefficient real_coef(field.real(), mat_op), imag_coef(field.imag(), mat_op);
+    auto rhs_from_coef = [](mfem::ParFiniteElementSpace &smooth_flux_fes, auto &coef)
+    {
+      mfem::Vector RHS(smooth_flux_fes.GetTrueVSize());
 
+      mfem::ParLinearForm rhs(&smooth_flux_fes);
+      rhs.AddDomainIntegrator(new VectorFEDomainLFIntegrator(coef));
+      rhs.UseFastAssembly(true);
+      rhs.Assemble();
+      rhs.ParallelAssemble(RHS);
+
+      return RHS;
+    };
+
+    // Switching between these two gives identical.
+    // auto flux_func = projector_flux_func();
+    // const auto flux = flux_rhs_from_func(smooth_flux_fes.GetFinestFESpace(), flux_func);
+    const auto flux = ComplexVector(rhs_from_coef(smooth_flux_fes.GetFinestFESpace(), real_coef),
+                                    rhs_from_coef(smooth_flux_fes.GetFinestFESpace(), imag_coef));
+
+    const auto pflux = petsc::PetscParVector(v.GetComm(), flux);
 
     // Given the RHS vector of non-smooth flux, construct a flux projector and
-    // perform mass matrix inversion in the appropriate space.
-    // f = M⁻¹ f̂
-    auto smooth_flux = [&]()
+    // perform mass matrix inversion in the appropriate space, giving f = M⁻¹ f̂.
+    auto build_smooth_flux = [this](const petsc::PetscParVector &flux)
     {
-      // use copy for convenience
+      // Use a copy construction to match appropriate size.
       petsc::PetscParVector smooth_flux(flux);
       projector.Mult(flux, smooth_flux);
       return smooth_flux;
-    }();
+    };
+    auto smooth_flux = build_smooth_flux(pflux);
 
+    // Given a complex solution represented with a PetscParVector, build a
+    // ComplexGridFunction for evaluation.
     auto build_func = [](const petsc::PetscParVector &f, mfem::ParFiniteElementSpace &fes)
     {
       mfem::ParComplexGridFunction flux(&fes);
@@ -193,20 +264,26 @@ mfem::Vector CurlFluxErrorEstimator::operator()(const petsc::PetscParVector &v,
 
     auto smooth_flux_func = build_func(smooth_flux, smooth_flux_fes.GetFinestFESpace());
 
-    auto flux_func = build_func(flux, smooth_flux_fes.GetFinestFESpace());
-
-    for (int i = 0; i < smooth_flux_fes.GetFinestFESpace().GetNE(); i++)
+    // Specify a minimum integration rule. Using normp = 2 above ensures the
+    // element integrands are polynomials of O(2p + q), thus we can exactly
+    // integrate using this minimum rule.
+    std::vector<const mfem::IntegrationRule *> irs;irs.reserve(nelem);
+    for (int i = 0; i < smooth_flux_fes.GetFinestFESpace().GetNE(); ++i)
     {
-      real_error(i) = ComputeElementLpDistance(normp, i, smooth_flux_func.real(), flux_func.real());
-      imag_error(i) = ComputeElementLpDistance(normp, i, smooth_flux_func.imag(), flux_func.imag());
+      const int order = 2 * smooth_flux_fes.GetFinestFESpace().GetOrder(i)
+                      + smooth_flux_fes.GetFinestFESpace().GetParMesh()->GetElementTransformation(i)->OrderW();
+      irs.push_back(&mfem::IntRules.Get(smooth_flux_fes.GetFinestFESpace().GetParMesh()->GetElementGeometry(i), order));
     }
+
+    smooth_flux_func.real().ComputeElementLpErrors(normp, real_coef, real_error, nullptr, nullptr, irs.data());
+    smooth_flux_func.imag().ComputeElementLpErrors(normp, imag_coef, imag_error, nullptr, nullptr, irs.data());
   }
 
   // Compute the magnitude of the complex valued error.
   auto magnitude = [](const auto &r, const auto &i) { return std::sqrt(r * r + i * i); };
   mfem::Vector estimates(real_error.Size());
   std::transform(real_error.begin(), real_error.end(), imag_error.begin(),
-                  estimates.begin(), magnitude);
+                 estimates.begin(), magnitude);
 
   return estimates;
 }
@@ -309,7 +386,7 @@ mfem::Vector GradFluxErrorEstimator::operator()(const mfem::Vector &v, bool use_
     const int nelem = smooth_flux_fes.GetFinestFESpace().GetNE();
     mfem::Vector estimates(nelem);
 
-    for (int i = 0; i < nelem; i++)
+    for (int i = 0; i < nelem; ++i)
     {
       estimates[i] = mfem::ComputeElementLpDistance(normp, i, flux_func, smooth_flux_func);
     }
