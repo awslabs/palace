@@ -270,6 +270,22 @@ public:
     Warning(World(), fmt, std::forward<T>(args)...);
   }
 
+  // Printing that is only visible in Debug
+  template <typename... T>
+  static void Debug(MPI_Comm comm, fmt::format_string<T...> fmt, T &&...args)
+  {
+#ifndef NDEBUG
+    Print(comm, fmt, std::forward<T>(args)...);
+#endif
+  }
+
+  template <typename... T>
+  static void Debug(fmt::format_string<T...> fmt, T &&...args)
+  {
+    Debug(World(), fmt, std::forward<T>(args)...);
+  }
+
+
   // Return the global communicator.
   static MPI_Comm World() { return MPI_COMM_WORLD; }
 
