@@ -177,7 +177,7 @@ double ComputeRefineThreshold(double fraction, const mfem::Vector &e)
   Mpi::GlobalSum(1, &min_elem_marked, comm);
   Mpi::GlobalSum(1, &max_elem_marked, comm);
 
-  constexpr int maxiter = 100; // Maximum limit to prevent runaway.
+  constexpr int maxiter = 100;  // Maximum limit to prevent runaway.
   for (int i = 0; i < maxiter; ++i)
   {
     error_threshold = (min_threshold + max_threshold) / 2;
@@ -193,23 +193,25 @@ double ComputeRefineThreshold(double fraction, const mfem::Vector &e)
 
     const auto candidate_fraction = error_marked / total_error;
 
-    Mpi::Debug("Threshold: {:e} < {:e} < {:e}\n", min_threshold, error_threshold, max_threshold);
-    Mpi::Debug("Marked Elems: {} <= {} <= {}\n", min_elem_marked, elem_marked, max_elem_marked);
+    Mpi::Debug("Threshold: {:e} < {:e} < {:e}\n", min_threshold, error_threshold,
+               max_threshold);
+    Mpi::Debug("Marked Elems: {} <= {} <= {}\n", min_elem_marked, elem_marked,
+               max_elem_marked);
 
     // set the tolerance based off of the largest local indicator value. These
     // tolerance values are chosen based on testing, opt not to expose them.
     const double frac_tol = 1e-3 * fraction;
-    const double error_tol = 1e-3 * max_indicator;
-    if (std::abs(max_threshold - min_threshold) < error_tol
-        || std::abs(candidate_fraction - fraction) < frac_tol
-        || max_elem_marked == min_elem_marked)
+    const double error_tol = 1e-6 * max_indicator;
+    if (std::abs(max_threshold - min_threshold) < error_tol ||
+        std::abs(candidate_fraction - fraction) < frac_tol ||
+        max_elem_marked == min_elem_marked)
     {
       // candidate fraction matches to tolerance, or the number of marked
       // elements is no longer changing.
-      Mpi::Debug("ΔFraction: {:.3e}, Tol {:.3e}, ΔThreshold: {:.3e}, Tol {:.3e},  ΔElements: {}\n",
-        candidate_fraction - fraction, frac_tol,
-        max_threshold - min_threshold, error_tol,
-        max_elem_marked - min_elem_marked);
+      Mpi::Debug(
+          "ΔFraction: {:.3e}, Tol {:.3e}, ΔThreshold: {:.3e}, Tol {:.3e},  ΔElements: {}\n",
+          candidate_fraction - fraction, frac_tol, max_threshold - min_threshold, error_tol,
+          max_elem_marked - min_elem_marked);
       break;
     }
 
@@ -231,7 +233,7 @@ double ComputeRefineThreshold(double fraction, const mfem::Vector &e)
   }
 
   Mpi::Print("Indicator threshold {:.3e} marked {} of {} elements and {:.3f}\% error\n",
-            error_threshold, elem_marked, total_elem, 100 * error_marked / total_error);
+             error_threshold, elem_marked, total_elem, 100 * error_marked / total_error);
 
   MFEM_ASSERT(error_threshold > 0, "error_threshold must be positive");
   return error_threshold;
@@ -282,10 +284,11 @@ void RebalanceMesh(std::unique_ptr<mfem::ParMesh> &mesh)
           new_mesh = std::move(tmp);
         }
       }
-      new_mesh->Finalize(true);  // Mark the mesh as ready for use.
+      new_mesh->FinalizeMesh(true, true);  // Mark the mesh as ready for use.
 
       // All ranks now have an instance of the serial mesh, can use the default partition.
       mesh = std::make_unique<mfem::ParMesh>(comm, *new_mesh);
+      mesh->FinalizeMesh(true, true);
     }
   }
 }
@@ -368,7 +371,7 @@ BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<mfem::ParMesh>> 
       }
 
       // refine
-      mesh.back()->GeneralRefinement(marked_elements, -1, param.max_nc_levels);
+      mesh.back()->GeneralRefinement(marked_elements, 1, param.max_nc_levels);
     }
     else if (use_coarsening)
     {
@@ -392,7 +395,7 @@ BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<mfem::ParMesh>> 
 
     // TODO: Measure this/make optional.
     // TODO: This is buggy, sometimes getting invalid elements.
-    // RebalanceMesh(mesh.back());
+    RebalanceMesh(mesh.back());
 
     // Solve + estimate.
     indicators = Solve(mesh, timer);
