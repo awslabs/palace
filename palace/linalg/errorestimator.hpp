@@ -46,7 +46,7 @@ public:
 
   // Compute elemental error indicators given a vector of true DOF, and the
   // finite element space they are associated with
-  mfem::Vector operator()(const petsc::PetscParVector &v, bool use_mfem = true) const;
+  mfem::Vector operator()(const petsc::PetscParVector &v, bool use_mfem = false) const;
 };
 
 // Class used for computing grad flux error estimate,

@@ -43,6 +43,10 @@ public:
   void operator()(ErrorIndicators &e, mfem::Vector &&i) const;
 };
 
+mfem::Vector ComputeElementLpErrors(const mfem::ParGridFunction &sol, double p,
+                                    mfem::VectorCoefficient &exsol,
+                                    int quad_order_increment = 0);
+
 }  // namespace palace
 
 #endif  // PALACE_ERROR_INDICATORS_HPP

@@ -4,6 +4,7 @@
 #include "errorindicators.hpp"
 
 #include "utils/communication.hpp"
+#include "utils/quadrules.hpp"
 
 namespace palace
 {
@@ -40,6 +41,70 @@ void ErrorReductionOperator::operator()(ErrorIndicators &ebar, mfem::Vector &&in
 
   // Another sample has been added, increment for the running average lambda.
   ++n;
+}
+
+// Given a grid function defining a vector solution, compute the error relative
+// to a vector coefficient. The default quadrature rule exactly integrates 2p +
+// q polynomials, but the quadrature order can be increased or decreased via
+// quad_order_increment.
+mfem::Vector ComputeElementLpErrors(const mfem::ParGridFunction &sol, double p,
+                                    mfem::VectorCoefficient &exsol,
+                                    int quad_order_increment)
+{
+  auto &fes = *sol.ParFESpace();
+
+  mfem::Vector error(fes.GetNE());
+  error = 0.0;
+
+  mfem::DenseMatrix vals, exact_vals;
+  mfem::Vector loc_errs;
+
+  for (int i = 0; i < fes.GetNE(); i++)
+  {
+    const auto &fe = *fes.GetFE(i);
+    auto &T = *fes.GetElementTransformation(i);
+    const auto &ir = *utils::GetDefaultRule(fe, T, quad_order_increment);
+
+    sol.GetVectorValues(T, ir, vals);
+    exsol.Eval(exact_vals, T, ir);
+
+    vals -= exact_vals;
+    loc_errs.SetSize(vals.Width());
+
+    // compute the lengths of the errors at the integration points thus the
+    // vector norm is rotationally invariant
+    vals.Norm2(loc_errs);
+
+    for (int j = 0; j < ir.GetNPoints(); j++)
+    {
+      const auto &ip = ir.IntPoint(j);
+      T.SetIntPoint(&ip);
+      double errj = loc_errs(j);
+      if (p < mfem::infinity())
+      {
+        errj = pow(errj, p);
+
+        error[i] += ip.weight * T.Weight() * errj;
+      }
+      else
+      {
+        error[i] = std::max(error[i], errj);
+      }
+    }
+    if (p < mfem::infinity())
+    {
+      // negative quadrature weights may cause the error to be negative
+      if (error[i] < 0.)
+      {
+        error[i] = -pow(-error[i], 1. / p);
+      }
+      else
+      {
+        error[i] = pow(error[i], 1. / p);
+      }
+    }
+  }
+  return error;
 }
 
 }  // namespace palace

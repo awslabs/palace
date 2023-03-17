@@ -4,6 +4,7 @@
 #include "errorestimator.hpp"
 #include "fem/materialoperator.hpp"
 #include "utils/communication.hpp"
+#include "utils/errorindicators.hpp"
 #include "utils/iodata.hpp"
 #include "utils/mfemcoefficients.hpp"
 #include "utils/mfemintegrators.hpp"
@@ -54,7 +55,7 @@ mfem::Vector CurlFluxErrorEstimator::operator()(const petsc::PetscParVector &v,
   const int nelem = smooth_flux_fes.GetFinestFESpace().GetNE();
   mfem::Vector real_error(nelem), imag_error(nelem);
 
-  constexpr int normp = 2; // 2 norm ensures no under integration.
+  constexpr int normp = 2;  // 2 norm ensures no under integration.
   if (use_mfem)
   {
     // This is used for comparison purposes only.
@@ -62,7 +63,7 @@ mfem::Vector CurlFluxErrorEstimator::operator()(const petsc::PetscParVector &v,
     // NB: There are bugs within L2ZZErrorEstimator presently, that ND simplices
     // with p > 1 will not work, and also a flux fec of RT elements will also
     // give incorrect answers.
-    const int order = fes.GetElementOrder(0); // Assumes no mixed p.
+    const int order = fes.GetElementOrder(0);  // Assumes no mixed p.
     auto *const pmesh = fes.GetParMesh();
 
     MaterialPropertyCoefficient<MaterialPropertyType::INV_PERMEABILITY> coef(mat_op);
@@ -91,7 +92,7 @@ mfem::Vector CurlFluxErrorEstimator::operator()(const petsc::PetscParVector &v,
 
       for (int i = 0; i < fes.GetNE(); ++i)
       {
-        const auto * const xdoftrans = fes.GetElementVDofs(i, xdofs);
+        const auto *const xdoftrans = fes.GetElementVDofs(i, xdofs);
         field.real().GetSubVector(xdofs, el_x);
         if (xdoftrans)
         {
@@ -102,7 +103,7 @@ mfem::Vector CurlFluxErrorEstimator::operator()(const petsc::PetscParVector &v,
         curl.ComputeElementFlux(*field.real().ParFESpace()->GetFE(i), *T, el_x,
                                 *flux_fes.GetFE(i), el_f, false);
 
-        const auto * const fdoftrans = flux_fes.GetElementVDofs(i, fdofs);
+        const auto *const fdoftrans = flux_fes.GetElementVDofs(i, fdofs);
         if (fdoftrans)
         {
           fdoftrans->TransformPrimal(el_f);
@@ -134,9 +135,10 @@ mfem::Vector CurlFluxErrorEstimator::operator()(const petsc::PetscParVector &v,
     {
       // Interpolate the weighted curl of the field in fes onto the discrete
       // flux space.
-      mfem::ParDiscreteLinearOperator curl(&fes, &flux_fes); // (domain, range)
+      mfem::ParDiscreteLinearOperator curl(&fes, &flux_fes);  // (domain, range)
 
-      auto muinv = MaterialPropertyCoefficient<MaterialPropertyType::INV_PERMEABILITY>(mat_op);
+      auto muinv =
+          MaterialPropertyCoefficient<MaterialPropertyType::INV_PERMEABILITY>(mat_op);
       curl.AddDomainInterpolator(new mfem::CurlInterpolator);
       curl.Assemble();
       curl.Finalize();
@@ -202,7 +204,8 @@ mfem::Vector CurlFluxErrorEstimator::operator()(const petsc::PetscParVector &v,
           auto diff = std::abs(mflux_val(i) - pflux_val(i));
           if (diff > tol)
           {
-            std::cout << "Mismatch on e " << e << " i " << i << ": " << mflux_val(i) << " " << pflux_val(i) << '\n';
+            std::cout << "Mismatch on e " << e << " i " << i << ": " << mflux_val(i) << " "
+                      << pflux_val(i) << '\n';
             match = false;
           }
         }
@@ -211,8 +214,10 @@ mfem::Vector CurlFluxErrorEstimator::operator()(const petsc::PetscParVector &v,
       return match;
     };
 
-    MFEM_ASSERT(comp(mfem_flux_func().real(), projector_flux_func().real()), "Mismatch between projector and L2ZZ construction real values");
-    MFEM_ASSERT(comp(mfem_flux_func().imag(), projector_flux_func().imag()), "Mismatch between projector and L2ZZ construction imag values");
+    MFEM_ASSERT(comp(mfem_flux_func().real(), projector_flux_func().real()),
+                "Mismatch between projector and L2ZZ construction real values");
+    MFEM_ASSERT(comp(mfem_flux_func().imag(), projector_flux_func().imag()),
+                "Mismatch between projector and L2ZZ construction imag values");
 
     // Coefficients for computing the discontinuous flux., i.e. (W, μ⁻¹∇ × V).
     // The code from here down will ultimately be the way to calculate the flux.
@@ -233,8 +238,9 @@ mfem::Vector CurlFluxErrorEstimator::operator()(const petsc::PetscParVector &v,
     // Switching between these two gives identical.
     // auto flux_func = projector_flux_func();
     // const auto flux = flux_rhs_from_func(smooth_flux_fes.GetFinestFESpace(), flux_func);
-    const auto flux = ComplexVector(rhs_from_coef(smooth_flux_fes.GetFinestFESpace(), real_coef),
-                                    rhs_from_coef(smooth_flux_fes.GetFinestFESpace(), imag_coef));
+    const auto flux =
+        ComplexVector(rhs_from_coef(smooth_flux_fes.GetFinestFESpace(), real_coef),
+                      rhs_from_coef(smooth_flux_fes.GetFinestFESpace(), imag_coef));
 
     const auto pflux = petsc::PetscParVector(v.GetComm(), flux);
 
@@ -264,19 +270,10 @@ mfem::Vector CurlFluxErrorEstimator::operator()(const petsc::PetscParVector &v,
 
     auto smooth_flux_func = build_func(smooth_flux, smooth_flux_fes.GetFinestFESpace());
 
-    // Specify a minimum integration rule. Using normp = 2 above ensures the
-    // element integrands are polynomials of O(2p + q), thus we can exactly
-    // integrate using this minimum rule.
-    std::vector<const mfem::IntegrationRule *> irs;irs.reserve(nelem);
-    for (int i = 0; i < smooth_flux_fes.GetFinestFESpace().GetNE(); ++i)
-    {
-      const int order = 2 * smooth_flux_fes.GetFinestFESpace().GetOrder(i)
-                      + smooth_flux_fes.GetFinestFESpace().GetParMesh()->GetElementTransformation(i)->OrderW();
-      irs.push_back(&mfem::IntRules.Get(smooth_flux_fes.GetFinestFESpace().GetParMesh()->GetElementGeometry(i), order));
-    }
-
-    smooth_flux_func.real().ComputeElementLpErrors(normp, real_coef, real_error, nullptr, nullptr, irs.data());
-    smooth_flux_func.imag().ComputeElementLpErrors(normp, imag_coef, imag_error, nullptr, nullptr, irs.data());
+    // Integrate the error accurate to 2(p+1) + q -> if coefficient is
+    // non-polynomial function of space, this is the order of the leading error term.
+    real_error = ComputeElementLpErrors(smooth_flux_func.real(), normp, real_coef, 2);
+    imag_error = ComputeElementLpErrors(smooth_flux_func.imag(), normp, imag_coef, 2);
   }
 
   // Compute the magnitude of the complex valued error.

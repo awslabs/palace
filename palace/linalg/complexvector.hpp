@@ -26,7 +26,9 @@ struct ComplexVector
   ~ComplexVector() = default;
 
   ComplexVector(const mfem::Vector &r, const mfem::Vector &i) : real(r), imag(r) {}
-  ComplexVector(mfem::Vector &&r, mfem::Vector &&i) : real(std::move(r)), imag(std::move(i)) {}
+  ComplexVector(mfem::Vector &&r, mfem::Vector &&i) : real(std::move(r)), imag(std::move(i))
+  {
+  }
 
   // accessors to allow structured binding
   template <size_t I>

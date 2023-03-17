@@ -6,36 +6,15 @@
 
 #include <mfem.hpp>
 
+#include "quadrules.hpp"
+
 namespace palace
 {
 
-//
-// Derived integrator classes extending the linear and bilinear form integrators of MFEM.
-//
-
-class DefaultIntegrationRule
-{
-protected:
-  static const mfem::IntegrationRule *GetDefaultRule(const mfem::FiniteElement &trial_fe,
-                                                     const mfem::FiniteElement &test_fe,
-                                                     mfem::ElementTransformation &Tr)
-  {
-    const int ir_order = trial_fe.GetOrder() + test_fe.GetOrder() + Tr.OrderW();
-    return &mfem::IntRules.Get(trial_fe.GetGeomType(), ir_order);
-  }
-
-  static const mfem::IntegrationRule *GetDefaultRule(const mfem::FiniteElement &fe,
-                                                     mfem::ElementTransformation &Tr)
-  {
-    return GetDefaultRule(fe, fe, Tr);
-  }
-};
-
 // Similar to MFEM's VectorFEBoundaryTangentLFIntegrator for ND spaces, but instead of
 // computing (n x f, v), this just computes (f, v). Also eliminates the a and b quadrature
-// parameters and uses GetDefaultRule instead.
-class VectorFEBoundaryLFIntegrator : public mfem::LinearFormIntegrator,
-                                     public DefaultIntegrationRule
+// parameters and uses utils::GetDefaultRule instead.
+class VectorFEBoundaryLFIntegrator : public mfem::LinearFormIntegrator
 {
 private:
   mfem::VectorCoefficient &Q;
@@ -52,7 +31,7 @@ public:
     const int dof = fe.GetDof();
     const int dim = fe.GetDim();
     const mfem::IntegrationRule *ir =
-        (IntRule != nullptr) ? IntRule : GetDefaultRule(fe, Tr);
+        (IntRule != nullptr) ? IntRule : utils::GetDefaultRule(fe, Tr);
     vshape.SetSize(dof, dim);
     elvect.SetSize(dof);
     elvect = 0.0;
@@ -74,9 +53,8 @@ public:
 };
 
 // Similar to MFEM's BoundaryLFIntegrator for H1 spaces, but eliminates the a and b
-// quadrature parameters and uses GetDefaultRule instead.
-class BoundaryLFIntegrator : public mfem::LinearFormIntegrator,
-                             public DefaultIntegrationRule
+// quadrature parameters and uses utils::GetDefaultRule instead.
+class BoundaryLFIntegrator : public mfem::LinearFormIntegrator
 {
 private:
   mfem::Coefficient &Q;
@@ -91,7 +69,7 @@ public:
   {
     const int dof = fe.GetDof();
     const mfem::IntegrationRule *ir =
-        (IntRule != nullptr) ? IntRule : GetDefaultRule(fe, Tr);
+        (IntRule != nullptr) ? IntRule : utils::GetDefaultRule(fe, Tr);
     shape.SetSize(dof);
     elvect.SetSize(dof);
     elvect = 0.0;
