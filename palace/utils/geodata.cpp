@@ -46,6 +46,20 @@ std::map<int, std::array<int, 2>> CheckMesh(mfem::Mesh &, const std::unique_ptr<
 void GetUsedAttributeMarkers(const IoData &, int, int, mfem::Array<int> &,
                              mfem::Array<int> &);
 
+// Simplified helper for describing the element types in a mesh
+struct ElementTypeInfo
+{
+  bool has_simplices;
+  bool has_tensors;
+  bool has_wedges;
+  bool has_pyramids;
+};
+ElementTypeInfo CheckElements(mfem::Mesh &mesh)
+{
+  auto meshgen = mesh.MeshGenerator();
+  return {bool(meshgen & 1), bool(meshgen & 2), bool(meshgen & 4), bool(meshgen & 8)};
+}
+
 }  // namespace
 
 namespace mesh
@@ -78,6 +92,16 @@ mfem::ParMesh ReadMesh(MPI_Comm comm, const IoData &iodata, bool reorder, bool c
   // interfaces if not present, and optionally (when running unassembled) add subdomain
   // interface boundary elements.
   static_cast<void>(CheckMesh(mesh, partitioning, iodata, clean, add_bdr, unassembled));
+
+  // If non simplex elements are present, AMR must be nonconforming.
+  const auto element_types = CheckElements(mesh);
+  const auto use_amr = iodata.model.refinement.adaptation.max_its > 1;
+  if (use_amr && (element_types.has_tensors || element_types.has_pyramids ||
+                  element_types.has_wedges ||
+                  iodata.model.refinement.adaptation.non_conformal_simplices))
+  {
+    mesh.EnsureNCMesh(iodata.model.refinement.adaptation.non_conformal_simplices);
+  }
 
   // Construct the parallel mesh data structure by distributing the serial mesh from the
   // root process.
@@ -556,6 +580,66 @@ void GetSurfaceNormal(mfem::ParMesh &mesh, const mfem::Array<int> &marker,
   //   Mpi::Print(comm, " Surface normal {:d} = ({:+.3e}, {:+.3e})", attr, normal(0),
   //              normal(1));
   // }
+}
+
+void RebalanceConformalMesh(std::unique_ptr<mfem::ParMesh> &mesh)
+{
+  auto smesh = mesh->GetSerialMesh(0);
+  auto comm = mesh->GetComm();
+
+  // Send each processor's component as a byte string.
+  std::vector<std::string> so;
+  if (Mpi::Root(comm))
+  {
+
+    auto partitioning = GetMeshPartitioning(smesh, Mpi::Size(comm), std::string());
+    mfem::MeshPartitioner partitioner(smesh, Mpi::Size(comm), partitioning.get());
+    so.reserve(Mpi::Size(comm));
+    for (int i = 0; i < Mpi::Size(comm); i++)
+    {
+      mfem::MeshPart part;
+      partitioner.ExtractPart(i, part);
+      std::ostringstream fo(std::stringstream::out);
+      // fo << std::fixed;
+      fo << std::scientific;
+      fo.precision(MSH_FLT_PRECISION);
+      part.Print(fo);
+      so.push_back(fo.str());
+      // so.push_back((i > 0) ? zlib::CompressString(fo.str()) : fo.str());
+    }
+  }
+
+  // Scatter the partitioned mesh files and generate the parallel mesh.
+  if (Mpi::Root(comm))
+  {
+    std::vector<MPI_Request> send_requests(Mpi::Size(comm) - 1, MPI_REQUEST_NULL);
+    for (int i = 1; i < Mpi::Size(comm); i++)
+    {
+      int ilen = static_cast<int>(so[i].length());
+      MFEM_VERIFY(so[i].length() == (std::size_t)ilen,
+                  "Overflow error distributing parallel mesh!");
+      MPI_Isend(so[i].c_str(), ilen, MPI_CHAR, i, i, comm, &send_requests[i - 1]);
+    }
+    std::istringstream fi(so[0]);  // This is never compressed
+    auto pmesh = std::make_unique<mfem::ParMesh>(comm, fi);
+    MPI_Waitall(static_cast<int>(send_requests.size()), send_requests.data(),
+                MPI_STATUSES_IGNORE);
+    mesh = std::move(pmesh);
+  }
+  else
+  {
+    int rlen;
+    MPI_Status status;
+    MPI_Probe(0, Mpi::Rank(comm), comm, &status);
+    MPI_Get_count(&status, MPI_CHAR, &rlen);
+
+    std::string si;
+    si.resize(rlen);
+    MPI_Recv(si.data(), rlen, MPI_CHAR, 0, Mpi::Rank(comm), comm, MPI_STATUS_IGNORE);
+    std::istringstream fi(si);
+    // std::istringstream fi(zlib::DecompressString(si));
+    mesh = std::make_unique<mfem::ParMesh>(comm, fi);
+  }
 }
 
 }  // namespace mesh

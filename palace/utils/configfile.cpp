@@ -302,6 +302,8 @@ void RefinementData::SetUp(json &model)
     adaptation.on_update_tolerance_ratio =
         adapt->value("OnUpdateTolRatio", adaptation.on_update_tolerance_ratio);
     adaptation.save_step = adapt->value("SaveStep", adaptation.save_step);
+    adaptation.non_conformal_simplices =
+        adapt->value("NCSimplexRefinement", adaptation.non_conformal_simplices);
 
     // Perform Checks
     MFEM_VERIFY(adaptation.tolerance > 0, "\"Tol\" must be strictly positive");
@@ -334,7 +336,8 @@ void RefinementData::SetUp(json &model)
                          "MaxNCLevels",
                          "DOFLimit",
                          "OnUpdateTolRatio",
-                         "SaveStep"};
+                         "SaveStep",
+                         "NCSimplexRefinement"};
     for (const auto &f : fields)
       adapt->erase(f);
 

@@ -15,6 +15,7 @@
 #include "utils/communication.hpp"
 #include "utils/errorindicators.hpp"
 #include "utils/filesystem.hpp"
+#include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
 #include "utils/timer.hpp"
 
@@ -269,26 +270,9 @@ void RebalanceMesh(std::unique_ptr<mfem::ParMesh> &mesh)
     }
     else
     {
-      // Without the refinement tree structure of a non-conforming mesh, need to
-      // serialize and partition from scratch. This will ultimately place a fairly
-      // severe upper bound on mesh size, as it must be possible to store
-      // concurrent duplicates of the serial mesh.
-
-      // Build a serial mesh for each rank, one at a time so the save doesn't clash.
-      std::unique_ptr<mfem::Mesh> new_mesh;
-      for (int rank = 0; rank < Mpi::Size(comm); rank++)
-      {
-        auto tmp = std::make_unique<mfem::Mesh>(mesh->GetSerialMesh(rank));
-        if (rank == Mpi::Rank(comm))
-        {
-          new_mesh = std::move(tmp);
-        }
-      }
-      new_mesh->FinalizeMesh(true, true);  // Mark the mesh as ready for use.
-
-      // All ranks now have an instance of the serial mesh, can use the default partition.
-      mesh = std::make_unique<mfem::ParMesh>(comm, *new_mesh);
-      mesh->FinalizeMesh(true, true);
+      // Without access to a refinement tree, partitioning must be done on the
+      // root processor and then redistributed.
+      mesh::RebalanceConformalMesh(mesh);
     }
   }
 }

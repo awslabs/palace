@@ -61,6 +61,9 @@ void GetSurfaceNormal(mfem::ParMesh &mesh, int attr, mfem::Vector &normal);
 void GetSurfaceNormal(mfem::ParMesh &mesh, const mfem::Array<int> &marker,
                       mfem::Vector &normal);
 
+// Rebalance a conformal mesh by sending to root, partitioning and sending to ranks.
+void RebalanceConformalMesh(std::unique_ptr<mfem::ParMesh> &mesh);
+
 }  // namespace mesh
 
 }  // namespace palace

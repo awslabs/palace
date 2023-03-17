@@ -139,6 +139,8 @@ struct AdaptiveRefinementData
   // Frequency with which to store the post processing results for a given
   // adaptation, e.g. save_step = 3 means save every third adaptation.
   int save_step = 0;
+  // Whether or not to use non-conforming adaptation for simplex elements.
+  bool non_conformal_simplices = false;
 };
 
 struct RefinementData
