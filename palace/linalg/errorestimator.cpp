@@ -137,8 +137,6 @@ mfem::Vector CurlFluxErrorEstimator::operator()(const petsc::PetscParVector &v,
       // flux space.
       mfem::ParDiscreteLinearOperator curl(&fes, &flux_fes);  // (domain, range)
 
-      auto muinv =
-          MaterialPropertyCoefficient<MaterialPropertyType::INV_PERMEABILITY>(mat_op);
       curl.AddDomainInterpolator(new mfem::CurlInterpolator);
       curl.Assemble();
       curl.Finalize();
@@ -319,76 +317,180 @@ mfem::Vector GradFluxErrorEstimator::operator()(const mfem::Vector &v, bool use_
   mfem::ParGridFunction field(&fes);
   field.SetFromTrueDofs(v);
 
-  constexpr int normp = 1;
+  const int nelem = smooth_flux_fes.GetFinestFESpace().GetNE();
+
+  constexpr int normp = 2;  // 2 norm ensures no under integration.
   if (use_mfem)
   {
+    mfem::Vector error(nelem);
+    // This is used for comparison purposes only.
+    // TODO: Delete this once the alternative direct construction is ready.
     const int order = fes.GetElementOrder(0);  // Assumes no mixed p.
     auto *const pmesh = fes.GetParMesh();
 
     MaterialPropertyCoefficient<MaterialPropertyType::PERMITTIVITY_ABS> coef(mat_op);
     mfem::DiffusionIntegrator flux_integrator(coef);
 
-    mfem::Vector estimates;
     static_cast<void>(mfem::L2ZZErrorEstimator(flux_integrator, field,
                                                smooth_flux_fes.GetFinestFESpace(), flux_fes,
-                                               estimates, normp));
-
-    return estimates;
+                                               error, normp));
+    return error;
   }
   else
   {
-    // Home rolled L2ZZErrorEstimator.
-
-    // Compute the non-smooth flux RHS, i.e. (w, ϵ ∇ ϕ)
-    const auto flux = [&]()
+    // This lambda computes the flux as achieved within mfem. Use this to bench against.
+    auto mfem_flux_func = [this, &field]()
     {
-      CurlFluxCoefficient coef(field, mat_op);
-      const auto ndof = smooth_flux_fes.GetFinestFESpace().GetTrueVSize();
+      mfem::ParGridFunction flux_func(&flux_fes);
+      flux_func = 0.0;
 
-      mfem::Vector flux(ndof);
+      mfem::Array<int> xdofs, fdofs;
+      mfem::Vector el_x, el_f;
+      mfem::CurlCurlIntegrator curl;
 
-      mfem::ParLinearForm rhs(&flux_fes);
-      rhs.AddDomainIntegrator(new mfem::VectorFEDomainLFIntegrator(coef));
+      for (int i = 0; i < fes.GetNE(); ++i)
+      {
+        const auto *const xdoftrans = fes.GetElementVDofs(i, xdofs);
+        field.GetSubVector(xdofs, el_x);
+        if (xdoftrans)
+        {
+          xdoftrans->InvTransformPrimal(el_x);
+        }
+
+        auto *T = field.ParFESpace()->GetElementTransformation(i);
+        curl.ComputeElementFlux(*field.ParFESpace()->GetFE(i), *T, el_x, *flux_fes.GetFE(i),
+                                el_f, false);
+
+        const auto *const fdoftrans = flux_fes.GetElementVDofs(i, fdofs);
+        if (fdoftrans)
+        {
+          fdoftrans->TransformPrimal(el_f);
+        }
+
+        flux_func.SetSubVector(fdofs, el_f);
+      }
+
+      return flux_func;
+    };
+
+    // This lambda computes the curl flux function by forming a projector. In
+    // theory same as the above, but still doesn't allow for coefficients. This
+    // is another benching device, helpful for debugging.
+    auto projector_flux_func = [this, &v, &field]()
+    {
+      // Interpolate the weighted curl of the field in fes onto the discrete
+      // flux space.
+      mfem::ParDiscreteLinearOperator grad(&fes, &flux_fes);  // (domain, range)
+
+      grad.AddDomainInterpolator(new mfem::GradientInterpolator);
+      grad.Assemble();
+      grad.Finalize();
+      auto hypregradop = std::unique_ptr<mfem::HypreParMatrix>(grad.ParallelAssemble());
+
+      mfem::Vector flux(flux_fes.GetTrueVSize());
+
+      hypregradop->Mult(v, flux);
+
+      mfem::ParGridFunction flux_func(&flux_fes);
+      flux_func.SetFromTrueDofs(flux);
+
+      return flux_func;
+    };
+
+    // Given a flux function built elsewhere, construct the linear operator RHS.
+    auto flux_rhs_from_func = [&v](auto &fes, mfem::ParGridFunction &flux_func)
+    {
+      mfem::Vector flux(fes.GetTrueVSize());
+
+      mfem::VectorGridFunctionCoefficient f(&flux_func);
+      mfem::ParLinearForm rhs(&fes);
+      rhs.AddDomainIntegrator(new mfem::VectorFEDomainLFIntegrator(f));
       rhs.UseFastAssembly(true);
       rhs.Assemble();
       rhs.ParallelAssemble(flux);
 
       return flux;
-    }();
+    };
+
+    // Compare the two flux functions, should be identical.
+    auto comp = [this](const auto &mflux, const auto &pflux)
+    {
+      bool match = true;
+
+      mfem::Array<int> flux_dofs;
+      mfem::Vector mflux_val, pflux_val;
+      for (int e = 0; e < flux_fes.GetNE(); e++)
+      {
+        flux_fes.GetElementVDofs(e, flux_dofs);
+
+        pflux.GetSubVector(flux_dofs, pflux_val);
+        mflux.GetSubVector(flux_dofs, mflux_val);
+
+        MFEM_ASSERT(mflux_val.Size() == pflux_val.Size(), "Must match size.");
+        constexpr double tol = 1e-6;
+        for (int i = 0; i < mflux_val.Size(); ++i)
+        {
+          auto diff = std::abs(mflux_val(i) - pflux_val(i));
+          if (diff > tol)
+          {
+            std::cout << "Mismatch on e " << e << " i " << i << ": " << mflux_val(i) << " "
+                      << pflux_val(i) << '\n';
+            match = false;
+          }
+        }
+      }
+
+      return match;
+    };
+
+    MFEM_ASSERT(comp(mfem_flux_func(), projector_flux_func()),
+                "Mismatch between projector and L2ZZ construction values");
+
+    // Coefficients for computing the discontinuous flux., i.e. (W, μ⁻¹∇ × V).
+    // The code from here down will ultimately be the way to calculate the flux.
+    GradFluxCoefficient coef(field, mat_op);
+    auto rhs_from_coef = [](mfem::ParFiniteElementSpace &smooth_flux_fes, auto &coef)
+    {
+      mfem::Vector RHS(smooth_flux_fes.GetTrueVSize());
+
+      mfem::ParLinearForm rhs(&smooth_flux_fes);
+      rhs.AddDomainIntegrator(new VectorFEDomainLFIntegrator(coef));
+      rhs.UseFastAssembly(true);
+      rhs.Assemble();
+      rhs.ParallelAssemble(RHS);
+
+      return RHS;
+    };
+
+    // Switching between these two gives identical.
+    // auto flux_func = projector_flux_func();
+    // const auto flux = flux_rhs_from_func(smooth_flux_fes.GetFinestFESpace(), flux_func);
+    const auto flux = rhs_from_coef(smooth_flux_fes.GetFinestFESpace(), coef);
 
     // Given the RHS vector of non-smooth flux, construct a flux projector and
-    // perform mass matrix inversion in the appropriate space.
-    const auto smooth_flux = [&]()
+    // perform mass matrix inversion in the appropriate space, giving f = M⁻¹ f̂.
+    auto build_smooth_flux = [this](const mfem::Vector &flux)
     {
-      mfem::Vector smooth_flux(flux.Size());
+      // Use a copy construction to match appropriate size.
+      mfem::Vector smooth_flux(flux);
       projector.Mult(flux, smooth_flux);
       return smooth_flux;
-    }();
+    };
+    auto smooth_flux = build_smooth_flux(flux);
 
-    // Given the two fluxes, create grid functions in order to allow integration
-    // over each element.
-    auto build_func = [this](const mfem::Vector &f, auto &flux_fes)
+    // Given a solution represented with a Vector, build a GridFunction for evaluation.
+    auto build_func = [](const mfem::Vector &f, mfem::ParFiniteElementSpace &fes)
     {
       mfem::ParGridFunction flux(&fes);
       flux.SetFromTrueDofs(f);
-      flux.ExchangeFaceNbrData();
       return flux;
     };
 
-    auto flux_func = build_func(flux, flux_fes);
     auto smooth_flux_func = build_func(smooth_flux, smooth_flux_fes.GetFinestFESpace());
 
-    // Given the flux and the smooth flux, compute the norm of the difference
-    // between the two on each element.
-    const int nelem = smooth_flux_fes.GetFinestFESpace().GetNE();
-    mfem::Vector estimates(nelem);
-
-    for (int i = 0; i < nelem; ++i)
-    {
-      estimates[i] = mfem::ComputeElementLpDistance(normp, i, flux_func, smooth_flux_func);
-    }
-
-    return estimates;
+    // Integrate the error accurate to 2(p+1) + q -> if coefficient is
+    // non-polynomial function of space, this is the order of the leading error term.
+    return ComputeElementLpErrors(smooth_flux_func, normp, coef, 2);
   }
 }
 
