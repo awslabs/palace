@@ -458,21 +458,23 @@ private:
   const mfem::ParGridFunction &X;
   MaterialPropertyCoefficient<MaterialPropertyType::INV_PERMEABILITY> coef;
 
+  mfem::DenseMatrix muinv;
+  mfem::Vector curl;
+
 public:
   CurlFluxCoefficient(const mfem::ParGridFunction &pgf, const MaterialOperator &op)
     : mfem::VectorCoefficient(pgf.ParFESpace()->GetParMesh()->SpaceDimension()), X(pgf),
-      coef(op, 1.0)
+      coef(op, 1.0), muinv(3), curl(3)
   {
   }
 
   void Eval(mfem::Vector &V, mfem::ElementTransformation &T,
             const mfem::IntegrationPoint &ip) override
   {
-    mfem::DenseMatrix muinv(3);
-    coef.Eval(muinv, T, ip);
-    mfem::Vector curl(3);
-    X.GetCurl(T, curl);
     V.SetSize(3);
+
+    coef.Eval(muinv, T, ip);
+    X.GetCurl(T, curl);
     muinv.Mult(curl, V);
   }
 };
@@ -484,21 +486,22 @@ private:
   const mfem::ParGridFunction &phi;
   MaterialPropertyCoefficient<MaterialPropertyType::PERMITTIVITY_REAL> coef;
 
+  mfem::Vector grad;
+  mfem::DenseMatrix eps;
+
 public:
   GradFluxCoefficient(const mfem::ParGridFunction &pgf, const MaterialOperator &op)
     : mfem::VectorCoefficient(pgf.ParFESpace()->GetParMesh()->SpaceDimension()), phi(pgf),
-      coef(op, 1.0)
+      coef(op, 1.0), grad(3), eps(3)
   {
   }
 
   void Eval(mfem::Vector &V, mfem::ElementTransformation &T,
             const mfem::IntegrationPoint &ip) override
   {
-    mfem::DenseMatrix eps(3);
-    coef.Eval(eps, T, ip);
-    mfem::Vector grad(3);
-    phi.GetGradient(T, grad);
     V.SetSize(3);
+    coef.Eval(eps, T, ip);
+    phi.GetGradient(T, grad);
     eps.Mult(grad, V);
   }
 };

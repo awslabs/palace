@@ -33,7 +33,7 @@ auto BuildMassMatrixHierarchy(mfem::ParFiniteElementSpaceHierarchy &h)
     {
       auto *vmass = new mfem::VectorMassIntegrator;
       vmass->SetVDim(h_l.GetVDim());
-      m.AddDomainIntegrator(new mfem::VectorMassIntegrator);
+      m.AddDomainIntegrator(vmass);
     }
     else
     {
@@ -66,7 +66,7 @@ FluxProjector::FluxProjector(mfem::ParFiniteElementSpaceHierarchy &smooth_flux_f
   ksp->SetRelTol(tol);
   ksp->SetAbsTol(std::numeric_limits<double>::epsilon());
   ksp->SetMaxIter(max_it);
-  ksp->SetPrintLevel(0);
+  ksp->SetPrintLevel(3);
   ksp->SetOperator(*M.back());
   ksp->SetPreconditioner(*pc);
 }

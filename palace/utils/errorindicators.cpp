@@ -96,11 +96,11 @@ mfem::Vector ComputeElementLpErrors(const mfem::ParGridFunction &sol, double p,
       // negative quadrature weights may cause the error to be negative
       if (error[i] < 0.)
       {
-        error[i] = -pow(-error[i], 1. / p);
+        error[i] = -std::pow(-error[i], 1. / p);
       }
       else
       {
-        error[i] = pow(error[i], 1. / p);
+        error[i] = std::pow(error[i], 1. / p);
       }
     }
   }

@@ -28,6 +28,9 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &me
   timer.Lap();
   std::vector<std::unique_ptr<mfem::Operator>> K, Ke;
   LaplaceOperator laplaceop(iodata, mesh);
+  GradFluxErrorEstimator estimator(iodata, laplaceop.GetMaterialOp(), mesh,
+                                   laplaceop.GetH1Space());
+
   laplaceop.GetStiffnessMatrix(K, Ke);
   SaveMetadata(laplaceop.GetH1Space());
 
@@ -121,7 +124,47 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &me
   Postprocess(laplaceop, postop, V, timer);
   timer.postpro_time += timer.Lap() - (timer.io_time - io_time_prev);
 
-  return ErrorIndicators(laplaceop.GetNDof());
+  // Construct error estimator and reduce over all
+  auto indicators = ErrorIndicators(laplaceop.GetNDof());
+  ErrorReductionOperator error_reducer;
+  auto update_error_indicators =
+      [&timer, &estimator, &indicators, &error_reducer](const auto &V)
+  {
+    auto mfem_error = estimator(V, true);
+    auto palace_error = estimator(V, false);
+
+    std::cout << std::scientific;
+    std::cout << "\npalace_error\n";
+    std::cout << palace_error.Normlinf() << ": \n";
+    // for (const auto &x : palace_error)
+    // {
+    //   std::cout << x << ", ";
+    // }
+    std::cout << "\nmfem_error\n";
+    std::cout << mfem_error.Normlinf() << ": \n";
+    // for (const auto &x : mfem_error)
+    // {
+    //   std::cout << x << ", ";
+    // }
+    auto delta = mfem_error;
+    delta -= palace_error;
+    std::cout << "\ndelta\n";
+    std::cout << delta.Normlinf();
+    // for (const auto &x : delta)
+    // {
+    //   std::cout << x << ", ";
+    // }
+    std::cout << '\n';
+    std::terminate();
+
+    error_reducer(indicators, estimator(V, false));
+
+    timer.estimation_time += timer.Lap();
+  };
+
+  std::for_each(V.begin(), V.end(), update_error_indicators);
+
+  return indicators;
 }
 
 void ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop, PostOperator &postop,
