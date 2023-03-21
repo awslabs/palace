@@ -66,7 +66,7 @@ FluxProjector::FluxProjector(mfem::ParFiniteElementSpaceHierarchy &smooth_flux_f
   ksp->SetRelTol(tol);
   ksp->SetAbsTol(std::numeric_limits<double>::epsilon());
   ksp->SetMaxIter(max_it);
-  ksp->SetPrintLevel(3);
+  ksp->SetPrintLevel(1);
   ksp->SetOperator(*M.back());
   ksp->SetPreconditioner(*pc);
 }
