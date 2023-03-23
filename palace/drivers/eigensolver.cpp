@@ -359,27 +359,6 @@ ErrorIndicators EigenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMe
   auto update_error_indicators =
       [&timer, &estimator, &indicators, &error_reducer](const auto &E)
   {
-    // auto mfem_est = estimator(E, true);
-    // std::cout << "mfem\n";
-    // for (const auto &x : mfem_est)
-    //   std::cout << x << " ";
-    // std::cout << '\n';
-
-    // auto palace_est = estimator(E, false);
-    // std::cout << "palace\n";
-    // for (const auto &x : palace_est)
-    //   std::cout << x << " ";
-    // std::cout << '\n';
-
-    // mfem_est -= palace_est;
-    // std::cout << "delta\n";
-    // for (const auto &x : mfem_est)
-    //   std::cout << x << " ";
-    // std::cout << '\n';
-
-    // Mpi::Barrier(Mpi::World());
-    // std::terminate();
-
     error_reducer(indicators, estimator(E));
     timer.estimation_time += timer.Lap();
   };

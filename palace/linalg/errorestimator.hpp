@@ -76,7 +76,7 @@ public:
 
   // Compute elemental error indicators given a vector of true DOF, and the
   // finite element space they are associated with
-  mfem::Vector operator()(const mfem::Vector &v, bool use_mfem = true) const;
+  mfem::Vector operator()(const mfem::Vector &v, bool use_mfem = false) const;
 };
 
 }  // namespace palace

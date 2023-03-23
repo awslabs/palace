@@ -163,6 +163,7 @@ void ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop, PostOperator &
   {
     // Set the internal GridFunctions in PostOperator for all postprocessing operations.
     PostOperator::GetEField(*NegGrad, V[i], E);
+
     postop.SetEGridFunction(E);
     postop.SetVGridFunction(V[i]);
     double Ue = postop.GetEFieldEnergy();

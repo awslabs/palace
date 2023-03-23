@@ -128,7 +128,7 @@ public:
   auto &GetRTSpace() { return rt_fespace; }
 
   // Return the number of true (conforming) dofs on the finest ND space.
-  int GetNDof();
+  auto GetNDof() { return GetNDSpace().GlobalTrueVSize(); };
 
   // Construct the frequency-dependent complex linear system matrix:
   //                 A = K + iω C - ω² (Mr + i Mi) + A2(ω)

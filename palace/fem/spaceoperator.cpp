@@ -210,13 +210,6 @@ void SpaceOperator::PrintHeader()
   }
 }
 
-int SpaceOperator::GetNDof()
-{
-  int ndof = GetNDSpace().GetTrueVSize();
-  Mpi::GlobalSum(1, &ndof, Mpi::World());
-  return ndof;
-}
-
 std::unique_ptr<petsc::PetscParMatrix>
 SpaceOperator::GetSystemMatrixPetsc(SpaceOperator::OperatorType type, double omega,
                                     mfem::Operator::DiagonalPolicy ess_diag, bool print)

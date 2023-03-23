@@ -102,7 +102,7 @@ ConfigurePreconditioner(const IoData &iodata, const mfem::Array<int> &dbc_marker
   if (iodata.solver.linear.mat_gmg)
   {
     // This will construct the multigrid hierarchy using pc as the coarse solver
-    // (ownership of pc is transfered to the GeometricMultigridSolver). When a special
+    // (ownership of pc is transferred to the GeometricMultigridSolver). When a special
     // auxiliary space smoother for pre-/post-smoothing is not desired, h1_fespace is just
     // a nullptr.
     return std::make_unique<GeometricMultigridSolver>(iodata, std::move(pc), dbc_marker,

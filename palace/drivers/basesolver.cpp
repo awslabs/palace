@@ -377,8 +377,6 @@ BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<mfem::ParMesh>> 
       // param.max_nc_levels, 1);
     }
 
-    // TODO: Measure this/make optional.
-    // TODO: This is buggy, sometimes getting invalid elements.
     RebalanceMesh(mesh.back());
 
     // Solve + estimate.

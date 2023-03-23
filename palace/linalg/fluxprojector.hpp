@@ -33,10 +33,13 @@ private:
 
 public:
   FluxProjector(mfem::ParFiniteElementSpaceHierarchy &smooth_flux_fes, double tol = 1e-12,
-                int max_it = 200);
+                int max_it = 200, int print_level = 1);
 
   // Operator is set in constructor.
-  void SetOperator(const mfem::Operator &op) override {}
+  void SetOperator(const mfem::Operator &op) override
+  {
+    MFEM_ABORT("The operator is set in the constructor");
+  }
 
   // Given a vector of dof defining the flux
   void Mult(mfem::Vector &x) const
@@ -65,8 +68,6 @@ public:
   }
 
   // TODO: Add in an ArrayMult optimization
-
-  petsc::PetscParVector GetFluxRHS(const mfem::ParGridFunction &phi) const;
 };
 
 }  // namespace palace

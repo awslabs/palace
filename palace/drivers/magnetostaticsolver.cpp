@@ -87,9 +87,9 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &me
   ErrorIndicators indicators(curlcurlop.GetNDof());
   ErrorReductionOperator error_reducer;
   auto update_error_indicators =
-      [&timer, &estimator, &indicators, &error_reducer](const auto &E)
+      [&timer, &estimator, &indicators, &error_reducer](const auto &A)
   {
-    error_reducer(indicators, estimator(E));
+    error_reducer(indicators, estimator(A));
     timer.estimation_time += timer.Lap();
   };
 
@@ -139,7 +139,7 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &me
   Postprocess(curlcurlop, postop, A, timer);
   timer.postpro_time += timer.Lap() - (timer.io_time - io_time_prev);
 
-  return ErrorIndicators(curlcurlop.GetNDof());
+  return indicators;
 }
 
 void MagnetostaticSolver::Postprocess(CurlCurlOperator &curlcurlop, PostOperator &postop,

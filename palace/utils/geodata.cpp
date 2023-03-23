@@ -96,6 +96,11 @@ mfem::ParMesh ReadMesh(MPI_Comm comm, const IoData &iodata, bool reorder, bool c
   // If non simplex elements are present, AMR must be nonconforming.
   const auto element_types = CheckElements(mesh);
   const auto use_amr = iodata.model.refinement.adaptation.max_its > 1;
+  if (element_types.has_simplices && element_types.has_tensors)
+  {
+    Mpi::Warning("Nonconformal mixed meshes are not supported within MFEM presently.");
+  }
+
   if (use_amr && (element_types.has_tensors || element_types.has_pyramids ||
                   element_types.has_wedges ||
                   iodata.model.refinement.adaptation.non_conformal_simplices))
