@@ -12,6 +12,7 @@
 #include "fem/waveportoperator.hpp"
 #include "linalg/petsc.hpp"
 #include "utils/communication.hpp"
+#include "utils/errorindicators.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
 #include "utils/mfemcoefficients.hpp"
@@ -56,6 +57,9 @@ PostOperator::PostOperator(const IoData &iodata, SpaceOperator &spaceop,
     surf_post_op(iodata, spaceop.GetMaterialOp(), local_to_shared, spaceop.GetH1Space()),
     dom_post_op(iodata, spaceop.GetMaterialOp(), &spaceop.GetNDSpace(),
                 &spaceop.GetRTSpace()),
+    indicator_fec(0, spaceop.GetNDSpace().GetParMesh()->Dimension()),
+    indicator_fes(spaceop.GetNDSpace().GetParMesh(), &indicator_fec),
+    indicator_field(std::nullopt),
     has_imaginary(iodata.problem.type != config::ProblemData::Type::TRANSIENT),
     E(&spaceop.GetNDSpace()), B(&spaceop.GetRTSpace()), V(std::nullopt), A(std::nullopt),
     lumped_port_init(false), wave_port_init(false),
@@ -110,8 +114,10 @@ PostOperator::PostOperator(const IoData &iodata, LaplaceOperator &laplaceop,
     surf_post_op(iodata, laplaceop.GetMaterialOp(), local_to_shared,
                  laplaceop.GetH1Space()),
     dom_post_op(iodata, laplaceop.GetMaterialOp(), &laplaceop.GetNDSpace(), nullptr),
-    has_imaginary(false), E(&laplaceop.GetNDSpace()), B(std::nullopt),
-    V(&laplaceop.GetH1Space()), A(std::nullopt), lumped_port_init(false),
+    indicator_fec(0, laplaceop.GetH1Space().GetParMesh()->Dimension()),
+    indicator_fes(laplaceop.GetH1Space().GetParMesh(), &indicator_fec),
+    indicator_field(std::nullopt), has_imaginary(false), E(&laplaceop.GetNDSpace()),
+    B(std::nullopt), V(&laplaceop.GetH1Space()), A(std::nullopt), lumped_port_init(false),
     wave_port_init(false),
     paraview(CreateParaviewPath(iodata, name), laplaceop.GetNDSpace().GetParMesh()),
     paraview_bdr(CreateParaviewPath(iodata, name) + "_boundary",
@@ -139,8 +145,11 @@ PostOperator::PostOperator(const IoData &iodata, CurlCurlOperator &curlcurlop,
     surf_post_op(iodata, curlcurlop.GetMaterialOp(), local_to_shared,
                  curlcurlop.GetH1Space()),
     dom_post_op(iodata, curlcurlop.GetMaterialOp(), nullptr, &curlcurlop.GetRTSpace()),
-    has_imaginary(false), E(std::nullopt), B(&curlcurlop.GetRTSpace()), V(std::nullopt),
-    A(&curlcurlop.GetNDSpace()), lumped_port_init(false), wave_port_init(false),
+    indicator_fec(0, curlcurlop.GetNDSpace().GetParMesh()->Dimension()),
+    indicator_fes(curlcurlop.GetNDSpace().GetParMesh(), &indicator_fec),
+    indicator_field(std::nullopt), has_imaginary(false), E(std::nullopt),
+    B(&curlcurlop.GetRTSpace()), V(std::nullopt), A(&curlcurlop.GetNDSpace()),
+    lumped_port_init(false), wave_port_init(false),
     paraview(CreateParaviewPath(iodata, name), curlcurlop.GetNDSpace().GetParMesh()),
     paraview_bdr(CreateParaviewPath(iodata, name) + "_boundary",
                  curlcurlop.GetNDSpace().GetParMesh()),
@@ -373,6 +382,15 @@ void PostOperator::SetAGridFunction(const mfem::Vector &a)
   MFEM_VERIFY(A, "Incorrect usage of PostOperator::SetAGridFunction!");
   A->SetFromTrueDofs(a);
   A->ExchangeFaceNbrData();
+}
+
+void PostOperator::SetIndicatorGridFunction(const mfem::Vector &i)
+{
+  indicator_field = mfem::ParGridFunction(&indicator_fes);
+  indicator_field->SetFromTrueDofs(i);
+  indicator_field->ExchangeFaceNbrData();  // Probably unnecessary, no face shared data.
+  // Reregistration overwrites the underlying.
+  paraview.RegisterField("ErrorIndicator", &indicator_field.value());
 }
 
 void PostOperator::UpdatePorts(const LumpedPortOperator &lumped_port_op, double omega)
@@ -696,6 +714,7 @@ void PostOperator::WriteFields(int step, double time) const
   paraview.SetTime(time);
   paraview_bdr.SetCycle(step);
   paraview_bdr.SetTime(time);
+
   if (first_save)
   {
     mfem::ParMesh &mesh =

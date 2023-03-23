@@ -357,9 +357,11 @@ ErrorIndicators EigenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMe
   ErrorIndicators indicators(spaceop.GetNDof());
   ErrorReductionOperator error_reducer;
   auto update_error_indicators =
-      [&timer, &estimator, &indicators, &error_reducer](const auto &E)
+      [&timer, &estimator, &indicators, &error_reducer, &postop](const auto &E)
   {
-    error_reducer(indicators, estimator(E));
+    auto ind = estimator(E);
+    postop.SetIndicatorGridFunction(ind);
+    error_reducer(indicators, std::move(ind));
     timer.estimation_time += timer.Lap();
   };
 
@@ -394,7 +396,7 @@ ErrorIndicators EigenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMe
     eigen->GetEigenvector(i, E);
     if (i < iodata.solver.eigenmode.n)
     {
-      // Only include modes that were targeted.
+      // Only update the error indicator for targetted modes.
       update_error_indicators(E);
     }
 

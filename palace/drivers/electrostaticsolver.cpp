@@ -118,12 +118,6 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &me
     timer.postpro_time += timer.Lap();
   }
 
-  // Postprocess the capacitance matrix from the computed field solutions.
-  const auto io_time_prev = timer.io_time;
-  SaveMetadata(nstep, ksp_it);
-  Postprocess(laplaceop, postop, V, timer);
-  timer.postpro_time += timer.Lap() - (timer.io_time - io_time_prev);
-
   // Construct error estimator and reduce over all
   auto indicators = ErrorIndicators(laplaceop.GetNDof());
   ErrorReductionOperator error_reducer;
@@ -135,6 +129,15 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &me
   };
 
   std::for_each(V.begin(), V.end(), update_error_indicators);
+
+  // Register the indicator field used to drive the overall adaptation.
+  postop.SetIndicatorGridFunction(indicators.local_error_indicators);
+
+  // Postprocess the capacitance matrix from the computed field solutions.
+  const auto io_time_prev = timer.io_time;
+  SaveMetadata(nstep, ksp_it);
+  Postprocess(laplaceop, postop, V, timer);
+  timer.postpro_time += timer.Lap() - (timer.io_time - io_time_prev);
 
   return indicators;
 }
@@ -180,13 +183,13 @@ void ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop, PostOperator &
 
     // Diagonal: C_ii = 2 U_e(V_i) / V_i².
     C(i, i) = Cm(i, i) = 2.0 * Ue;
-    i++;
+    ++i;
   }
 
   // Off-diagonals: C_ij = U_e(V_i + V_j) / (V_i V_j) - 1/2 (V_i/V_j C_ii + V_j/V_i C_jj).
-  for (i = 0; i < C.Height(); i++)
+  for (i = 0; i < C.Height(); ++i)
   {
-    for (int j = 0; j < C.Width(); j++)
+    for (int j = 0; j < C.Width(); ++j)
     {
       if (j < i)
       {

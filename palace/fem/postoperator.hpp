@@ -19,6 +19,7 @@ namespace palace
 {
 
 class CurlCurlOperator;
+class ErrorIndicators;
 class IoData;
 class LaplaceOperator;
 class LumpedPortOperator;
@@ -57,6 +58,11 @@ private:
   std::optional<mfem::ParGridFunction> V, A;
   std::unique_ptr<mfem::VectorCoefficient> Esr, Esi, Bsr, Bsi, As, Jsr, Jsi;
   std::unique_ptr<mfem::Coefficient> Vs, Ue, Um, Qsr, Qsi;
+
+  // Objects for storing the error indicator field for plotting
+  mfem::L2_FECollection indicator_fec;
+  mfem::ParFiniteElementSpace indicator_fes;
+  std::optional<mfem::ParGridFunction> indicator_field;
 
   // Lumped and wave port voltage and current (R, L, and C branches) caches updated when
   // the grid functions are set.
@@ -116,6 +122,7 @@ public:
   void SetBGridFunction(const mfem::Vector &b);
   void SetVGridFunction(const mfem::Vector &v);
   void SetAGridFunction(const mfem::Vector &a);
+  void SetIndicatorGridFunction(const mfem::Vector &i);
 
   // Update cached port voltages and currents for lumped and wave port operators.
   void UpdatePorts(const LumpedPortOperator &lumped_port_op,
@@ -189,8 +196,9 @@ public:
 
   // Write to disk the E- and B-fields extracted from the solution vectors. Note that fields
   // are not redimensionalized, to do so one needs to compute: B <= B * (μ₀ H₀), E <= E *
-  // (Z₀ H₀), V <= V * (Z₀ H₀ L₀), etc.
+  // (Z₀ H₀), V <= V * (Z₀ H₀ L₀), etc. Optionally also write error indicator field
   void WriteFields(int step, double time) const;
+  void WriteFields(int step, double time, ErrorIndicators &indicators) const;
 
   // Probe the E- and B-fields for their vector-values at speceified locations in space.
   // Locations of probes are set up in constructor from configuration file data. If

@@ -144,9 +144,11 @@ ErrorIndicators DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator 
   ErrorIndicators indicators(spaceop.GetNDof());
   const auto error_reducer = ErrorReductionOperator();
   auto update_error_indicators =
-      [&timer, &estimator, &indicators, &error_reducer](const auto &E)
+      [&timer, &estimator, &indicators, &error_reducer, &postop](const auto &E)
   {
-    error_reducer(indicators, estimator(E));
+    auto ind = estimator(E);
+    postop.SetIndicatorGridFunction(ind);
+    error_reducer(indicators, std::move(ind));
     timer.estimation_time += timer.Lap();
   };
 
@@ -333,6 +335,9 @@ ErrorIndicators DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator
              Timer::Duration(local_construction_time).count(),
              Timer::Duration(local_timer.construct_time).count(),
              Timer::Duration(local_timer.solve_time).count());  // Timings on rank 0
+
+  // Set the indicator field to the combined field for postprocessing.
+  postop.SetIndicatorGridFunction(indicators.local_error_indicators);
 
   // Main fast frequency sweep loop (online phase).
   Mpi::Print("\nBeginning fast frequency sweep online phase\n");

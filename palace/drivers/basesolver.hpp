@@ -69,6 +69,8 @@ protected:
                          double time) const;
   void PostprocessFields(const PostOperator &postop, int step, double time) const;
 
+  // Returns a path to the directory for storing postprocessing data for
+  // a given adaptation iteration.
   std::string IterationPostDir(int iter) const;
 
 public:
