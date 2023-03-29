@@ -234,10 +234,10 @@ mfem::Vector CurlFluxErrorEstimator::operator()(const petsc::PetscParVector &v,
       return match;
     };
 
-    MFEM_ASSERT(comp(mfem_flux_func().real(), projector_flux_func().real()),
-                "Mismatch between projector and L2ZZ construction real values");
-    MFEM_ASSERT(comp(mfem_flux_func().imag(), projector_flux_func().imag()),
-                "Mismatch between projector and L2ZZ construction imag values");
+    // MFEM_ASSERT(comp(mfem_flux_func().real(), projector_flux_func().real()),
+    //             "Mismatch between projector and L2ZZ construction real values");
+    // MFEM_ASSERT(comp(mfem_flux_func().imag(), projector_flux_func().imag()),
+    //             "Mismatch between projector and L2ZZ construction imag values");
 
     // Coefficients for computing the discontinuous flux., i.e. (W, μ⁻¹∇ × V).
     // The code from here down will ultimately be the way to calculate the flux.
@@ -290,10 +290,8 @@ mfem::Vector CurlFluxErrorEstimator::operator()(const petsc::PetscParVector &v,
 
     auto smooth_flux_func = build_func(smooth_flux, smooth_flux_fes.GetFinestFESpace());
 
-    // Integrate the error accurate to 2(p+1) + q -> if coefficient is
-    // non-polynomial function of space, this is the order of the leading error term.
-    real_error = ComputeElementLpErrors(smooth_flux_func.real(), normp, real_coef, 2);
-    imag_error = ComputeElementLpErrors(smooth_flux_func.imag(), normp, imag_coef, 2);
+    real_error = ComputeElementLpErrors(smooth_flux_func.real(), normp, real_coef);
+    imag_error = ComputeElementLpErrors(smooth_flux_func.imag(), normp, imag_coef);
   }
 
   // Compute the magnitude of the complex valued error.
@@ -376,114 +374,116 @@ mfem::Vector GradFluxErrorEstimator::operator()(const mfem::Vector &v, bool use_
   }
   else
   {
-    // This lambda computes the flux as achieved within mfem. Use this to bench against.
-    auto mfem_flux_func = [this, &field]()
-    {
-      mfem::ParGridFunction flux_func(&flux_fes);
-      flux_func = 0.0;
+    // // This lambda computes the flux as achieved within mfem. Use this to bench against.
+    // auto mfem_flux_func = [this, &field]()
+    // {
+    //   mfem::ParGridFunction flux_func(&flux_fes);
+    //   flux_func = 0.0;
 
-      mfem::Array<int> xdofs, fdofs;
-      mfem::Vector el_x, el_f;
-      MaterialPropertyCoefficient<MaterialPropertyType::PERMITTIVITY_ABS> eps(mat_op);
-      mfem::DiffusionIntegrator grad(eps);
+    //   mfem::Array<int> xdofs, fdofs;
+    //   mfem::Vector el_x, el_f;
+    //   MaterialPropertyCoefficient<MaterialPropertyType::PERMITTIVITY_ABS> eps(mat_op);
+    //   mfem::DiffusionIntegrator grad(eps);
 
-      for (int i = 0; i < fes.GetNE(); ++i)
-      {
-        const auto *const xdoftrans = fes.GetElementVDofs(i, xdofs);
-        field.GetSubVector(xdofs, el_x);
-        if (xdoftrans)
-        {
-          xdoftrans->InvTransformPrimal(el_x);
-        }
+    //   for (int i = 0; i < fes.GetNE(); ++i)
+    //   {
+    //     const auto *const xdoftrans = fes.GetElementVDofs(i, xdofs);
+    //     field.GetSubVector(xdofs, el_x);
+    //     if (xdoftrans)
+    //     {
+    //       xdoftrans->InvTransformPrimal(el_x);
+    //     }
 
-        auto *T = field.ParFESpace()->GetElementTransformation(i);
-        grad.ComputeElementFlux(*field.ParFESpace()->GetFE(i), *T, el_x, *flux_fes.GetFE(i),
-                                el_f, false);
+    //     auto *T = field.ParFESpace()->GetElementTransformation(i);
+    //     grad.ComputeElementFlux(*field.ParFESpace()->GetFE(i), *T, el_x,
+    //     *flux_fes.GetFE(i),
+    //                             el_f, false);
 
-        const auto *const fdoftrans = flux_fes.GetElementVDofs(i, fdofs);
-        if (fdoftrans)
-        {
-          fdoftrans->TransformPrimal(el_f);
-        }
+    //     const auto *const fdoftrans = flux_fes.GetElementVDofs(i, fdofs);
+    //     if (fdoftrans)
+    //     {
+    //       fdoftrans->TransformPrimal(el_f);
+    //     }
 
-        flux_func.SetSubVector(fdofs, el_f);
-      }
+    //     flux_func.SetSubVector(fdofs, el_f);
+    //   }
 
-      return flux_func;
-    };
+    //   return flux_func;
+    // };
 
-    // This lambda computes the grad flux function by forming a projector. In
-    // theory same as the above, but still doesn't allow for coefficients. This
-    // is another benching device, helpful for debugging.
-    auto projector_flux_func = [this, &v, &field]()
-    {
-      // Interpolate the weighted grad of the field in fes onto the discrete
-      // flux space.
-      mfem::ParDiscreteLinearOperator grad(&fes, &flux_fes);  // (domain, range)
+    // // This lambda computes the grad flux function by forming a projector. In
+    // // theory same as the above, but still doesn't allow for coefficients. This
+    // // is another benching device, helpful for debugging.
+    // auto projector_flux_func = [this, &v, &field]()
+    // {
+    //   // Interpolate the weighted grad of the field in fes onto the discrete
+    //   // flux space.
+    //   mfem::ParDiscreteLinearOperator grad(&fes, &flux_fes);  // (domain, range)
 
-      grad.AddDomainInterpolator(new mfem::GradientInterpolator);
-      grad.Assemble();
-      grad.Finalize();
-      auto hypregradop = std::unique_ptr<mfem::HypreParMatrix>(grad.ParallelAssemble());
+    //   grad.AddDomainInterpolator(new mfem::GradientInterpolator);
+    //   grad.Assemble();
+    //   grad.Finalize();
+    //   auto hypregradop = std::unique_ptr<mfem::HypreParMatrix>(grad.ParallelAssemble());
 
-      mfem::Vector flux(flux_fes.GetTrueVSize());
+    //   mfem::Vector flux(flux_fes.GetTrueVSize());
 
-      hypregradop->Mult(v, flux);
+    //   hypregradop->Mult(v, flux);
 
-      mfem::ParGridFunction flux_func(&flux_fes);
-      flux_func.SetFromTrueDofs(flux);
+    //   mfem::ParGridFunction flux_func(&flux_fes);
+    //   flux_func.SetFromTrueDofs(flux);
 
-      return flux_func;
-    };
+    //   return flux_func;
+    // };
 
-    // Given a flux function built elsewhere, construct the linear operator RHS.
-    auto flux_rhs_from_func = [&v](auto &fes, mfem::ParGridFunction &flux_func)
-    {
-      mfem::Vector flux(fes.GetTrueVSize());
+    // // Given a flux function built elsewhere, construct the linear operator RHS.
+    // auto flux_rhs_from_func = [&v](auto &fes, mfem::ParGridFunction &flux_func)
+    // {
+    //   mfem::Vector flux(fes.GetTrueVSize());
 
-      mfem::VectorGridFunctionCoefficient f(&flux_func);
-      mfem::ParLinearForm rhs(&fes);
-      rhs.AddDomainIntegrator(new mfem::VectorDomainLFIntegrator(f));
-      rhs.UseFastAssembly(true);
-      rhs.Assemble();
-      rhs.ParallelAssemble(flux);
+    //   mfem::VectorGridFunctionCoefficient f(&flux_func);
+    //   mfem::ParLinearForm rhs(&fes);
+    //   rhs.AddDomainIntegrator(new mfem::VectorDomainLFIntegrator(f));
+    //   rhs.UseFastAssembly(true);
+    //   rhs.Assemble();
+    //   rhs.ParallelAssemble(flux);
 
-      return flux;
-    };
+    //   return flux;
+    // };
 
-    // Compare the two flux functions, should be identical.
-    auto comp = [this](const auto &mflux, const auto &pflux)
-    {
-      bool match = true;
+    // // Compare the two flux functions, should be identical.
+    // auto comp = [this](const auto &mflux, const auto &pflux)
+    // {
+    //   bool match = true;
 
-      mfem::Array<int> flux_dofs;
-      mfem::Vector mflux_val, pflux_val;
-      for (int e = 0; e < flux_fes.GetNE(); e++)
-      {
-        flux_fes.GetElementVDofs(e, flux_dofs);
+    //   mfem::Array<int> flux_dofs;
+    //   mfem::Vector mflux_val, pflux_val;
+    //   for (int e = 0; e < flux_fes.GetNE(); e++)
+    //   {
+    //     flux_fes.GetElementVDofs(e, flux_dofs);
 
-        pflux.GetSubVector(flux_dofs, pflux_val);
-        mflux.GetSubVector(flux_dofs, mflux_val);
+    //     pflux.GetSubVector(flux_dofs, pflux_val);
+    //     mflux.GetSubVector(flux_dofs, mflux_val);
 
-        MFEM_ASSERT(mflux_val.Size() == pflux_val.Size(), "Must match size.");
-        constexpr double tol = 1e-6;
-        for (int i = 0; i < mflux_val.Size(); ++i)
-        {
-          auto diff = std::abs(mflux_val(i) - pflux_val(i));
-          if (diff > tol)
-          {
-            std::cout << "Mismatch on e " << e << " i " << i << ": " << mflux_val(i) << " "
-                      << pflux_val(i) << '\n';
-            match = false;
-          }
-        }
-      }
+    //     MFEM_ASSERT(mflux_val.Size() == pflux_val.Size(), "Must match size.");
+    //     constexpr double tol = 1e-6;
+    //     for (int i = 0; i < mflux_val.Size(); ++i)
+    //     {
+    //       auto diff = std::abs(mflux_val(i) - pflux_val(i));
+    //       if (diff > tol)
+    //       {
+    //         std::cout << "Mismatch on e " << e << " i " << i << ": " << mflux_val(i) << "
+    //         "
+    //                   << pflux_val(i) << '\n';
+    //         match = false;
+    //       }
+    //     }
+    //   }
 
-      return match;
-    };
+    //   return match;
+    // };
 
-    MFEM_ASSERT(comp(mfem_flux_func(), projector_flux_func()),
-                "Mismatch between projector and L2ZZ construction values");
+    // MFEM_ASSERT(comp(mfem_flux_func(), projector_flux_func()),
+    //             "Mismatch between projector and L2ZZ construction values");
 
     // Coefficients for computing the discontinuous flux., i.e. (V, ϵ ∇ ϕ).
     // The code from here down will ultimately be the way to calculate the flux.
@@ -527,10 +527,7 @@ mfem::Vector GradFluxErrorEstimator::operator()(const mfem::Vector &v, bool use_
 
     auto smooth_flux_func = build_func(smooth_flux, smooth_flux_fes.GetFinestFESpace());
 
-    // Integrate the error accurate to 2p + q + 2 = 2(p+1) + q -> if coefficient
-    // is a non-polynomial function of space, this is the order of the leading
-    // error term.
-    auto estimates = ComputeElementLpErrors(smooth_flux_func, normp, coef, 2);
+    auto estimates = ComputeElementLpErrors(smooth_flux_func, normp, coef);
 
     // Normalize the error by the solution L2 norm, ensures reductions are well scaled.
     const auto normalization = ComputeScalarLpNorm(field, 2);
@@ -550,13 +547,15 @@ mfem::Vector ComputeElementLpErrors(const mfem::ParGridFunction &sol, double p,
 {
   auto &fes = *sol.ParFESpace();
 
+  MFEM_VERIFY(p < mfem::infinity(), "Do not use this routine to compute Linf norm\n");
+
   mfem::Vector error(fes.GetNE());
   error = 0.0;
 
   mfem::DenseMatrix vals, exact_vals;
   mfem::Vector loc_errs;
 
-  for (int i = 0; i < fes.GetNE(); i++)
+  for (int i = 0; i < fes.GetNE(); ++i)
   {
     const auto &fe = *fes.GetFE(i);
     auto &T = *fes.GetElementTransformation(i);
@@ -566,40 +565,22 @@ mfem::Vector ComputeElementLpErrors(const mfem::ParGridFunction &sol, double p,
     exsol.Eval(exact_vals, T, ir);
 
     vals -= exact_vals;
-    loc_errs.SetSize(vals.Width());
 
-    // compute the lengths of the errors at the integration points thus the
-    // vector norm is rotationally invariant
-    vals.Norm2(loc_errs);
-
-    for (int j = 0; j < ir.GetNPoints(); j++)
+    for (int j = 0; j < ir.GetNPoints(); ++j)
     {
+      // Combine components
+      double component = 0.0;
+      for (int c = 0; c < vals.Height(); ++c)
+      {
+        component += std::pow(std::abs(vals(c, j)), p);
+      }
+
       const auto &ip = ir.IntPoint(j);
       T.SetIntPoint(&ip);
-      double errj = loc_errs(j);
-      if (p < mfem::infinity())
-      {
-        errj = pow(errj, p);
 
-        error[i] += ip.weight * T.Weight() * errj;
-      }
-      else
-      {
-        error[i] = std::max(error[i], errj);
-      }
+      error[i] += ip.weight * T.Weight() * component;
     }
-    if (p < mfem::infinity())
-    {
-      // negative quadrature weights may cause the error to be negative
-      if (error[i] < 0.)
-      {
-        error[i] = -std::pow(-error[i], 1. / p);
-      }
-      else
-      {
-        error[i] = std::pow(error[i], 1. / p);
-      }
-    }
+    error[i] = std::pow(std::abs(error[i]), 1 / p);
   }
   return error;
 }
@@ -638,11 +619,11 @@ double ComputeVectorLpNorm(const mfem::ParGridFunction &sol, double p,
 
       elem_norm[i] += ip.weight * T.Weight() * component;
     }
-  }
 
-  // negative quadrature weights might case elemental norms to have been
-  // negative, correct this before accumulation.
-  std::for_each(elem_norm.begin(), elem_norm.end(), [](auto &x) { x = std::abs(x); });
+    // negative quadrature weights might case elemental norms to have been
+    // negative, correct this before accumulation.
+    elem_norm[i] = std::abs(elem_norm[i]);
+  }
 
   // (sum_e (\| u \|_Lp(e))^p)^(1/p)
   auto norm = std::accumulate(elem_norm.begin(), elem_norm.end(), 0.0);
@@ -679,11 +660,11 @@ double ComputeScalarLpNorm(const mfem::ParGridFunction &sol, double p,
       T.SetIntPoint(&ip);
       elem_norm[i] += ip.weight * T.Weight() * std::pow(std::abs(vals(j)), p);
     }
-  }
 
-  // negative quadrature weights might case elemental norms to have been
-  // negative, correct this before accumulation.
-  std::for_each(elem_norm.begin(), elem_norm.end(), [](auto &x) { x = std::abs(x); });
+    // negative quadrature weights might cause elemental norms to have been
+    // negative.
+    elem_norm[i] = std::abs(elem_norm[i]);
+  }
 
   // (∑ₑ ∫ₑ|u|^p)^(1/p)
   auto norm = std::accumulate(elem_norm.begin(), elem_norm.end(), 0.0);

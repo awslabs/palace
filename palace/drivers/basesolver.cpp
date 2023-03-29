@@ -355,7 +355,12 @@ BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<mfem::ParMesh>> 
       }
 
       // refine
+      const auto initial_elem_count = mesh.back()->GetGlobalNE();
       mesh.back()->GeneralRefinement(marked_elements, 1, param.max_nc_levels);
+      const auto final_elem_count = mesh.back()->GetGlobalNE();
+      Mpi::Print("Mesh refinement added {} elements. Initial: {}, Final: {}\n",
+                 final_elem_count - initial_elem_count, initial_elem_count,
+                 final_elem_count);
     }
     else if (use_coarsening)
     {
@@ -383,6 +388,9 @@ BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<mfem::ParMesh>> 
     indicators = Solve(mesh, timer);
 
     ++iter;
+
+    std::ofstream fout(post_dir + "mesh.mph");
+    mesh.back()->PrintAsSerial(fout);
 
     // Optionally save solution off
     if (param.save_step > 0 && iter % param.save_step == 0)

@@ -90,6 +90,7 @@ if(PALACE_WITH_INTERNAL_MFEM)
   # A number of patches to MFEM for our uses
   set(PALACE_MFEM_PATCH_FILES
     "${CMAKE_CURRENT_SOURCE_DIR}/patch/mfem/patch_integ.diff"
+    "${CMAKE_CURRENT_SOURCE_DIR}/patch/mfem/tmp.patch"
     "${CMAKE_CURRENT_SOURCE_DIR}/patch/mfem/patch_mesh.diff"
     "${CMAKE_CURRENT_SOURCE_DIR}/patch/mfem/patch_part.diff"
     "${CMAKE_CURRENT_SOURCE_DIR}/patch/mfem/patch_direct.diff"

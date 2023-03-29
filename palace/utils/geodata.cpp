@@ -23,7 +23,7 @@ namespace
 
 // Floating point precision for mesh IO. This precision is important, make sure nothing is
 // lost!
-const auto MSH_FLT_PRECISION = std::numeric_limits<double>::max_digits10;
+constexpr auto MSH_FLT_PRECISION = std::numeric_limits<double>::max_digits10;
 
 // Load the serial mesh from disk.
 mfem::Mesh LoadMesh(const std::string &);
@@ -96,15 +96,16 @@ mfem::ParMesh ReadMesh(MPI_Comm comm, const IoData &iodata, bool reorder, bool c
   // If non simplex elements are present, AMR must be nonconforming.
   const auto element_types = CheckElements(mesh);
   const auto use_amr = iodata.model.refinement.adaptation.max_its > 1;
-  if (element_types.has_simplices && element_types.has_tensors)
-  {
-    Mpi::Warning("Nonconformal mixed meshes are not supported within MFEM presently.");
-  }
 
   if (use_amr && (element_types.has_tensors || element_types.has_pyramids ||
                   element_types.has_wedges ||
                   iodata.model.refinement.adaptation.non_conformal_simplices))
   {
+    if (element_types.has_simplices && iodata.model.refinement.adaptation.non_conformal_simplices)
+    {
+      Mpi::Warning("{}\n{}\n","!!!Non conformal refinement with simplices is not fully supported within MFEM!!!",
+                    "!!!Highly likely to trigger errors/warnings within MFEM at this time!!!");
+    }
     mesh.EnsureNCMesh(iodata.model.refinement.adaptation.non_conformal_simplices);
   }
 

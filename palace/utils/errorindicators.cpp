@@ -9,12 +9,17 @@
 namespace palace
 {
 
-void ErrorReductionOperator::operator()(ErrorIndicators &ebar, mfem::Vector &&ind) const
+void ErrorReductionOperator::operator()(ErrorIndicators &ebar, mfem::Vector &&ind,
+                                        double p) const
 {
 
   // Compute the global indicator across all processors
   auto comm = Mpi::World();
-  double candidate_global_error_indicator = std::accumulate(ind.begin(), ind.end(), 0.0);
+  double candidate_global_error_indicator =
+      std::pow(std::transform_reduce(ind.begin(), ind.end(), 0.0, std::plus(),
+                                     [&p](auto val) { return std::pow(val, p); }),
+               1 / p);
+
   Mpi::GlobalSum(1, &candidate_global_error_indicator, comm);
 
   ebar.global_error_indicator =

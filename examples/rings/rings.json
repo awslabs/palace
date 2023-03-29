@@ -8,7 +8,21 @@
   "Model":
   {
     "Mesh": "mesh/rings.msh",
-    "L0": 1.0e-6  // um
+    "L0": 1.0e-6,  // um
+    "Refinement":
+    {
+      // "UniformLevels": 1
+      "Adaptation":
+      {
+        "Tol": 1e-3,
+        "MaxIts": 10,
+        "DOFLimit": 1e6,
+        "UpdateFraction": 0.1,
+        "ConstructGMG": false,
+        "SaveStep": 1,
+        "NCSimplexRefinement": true
+      }
+    }
   },
   "Domains":
   {
@@ -70,7 +84,7 @@
   },
   "Solver":
   {
-    "Order": 2,
+    "Order": 1,
     "Magnetostatic":
     {
       "Save": 2
