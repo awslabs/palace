@@ -43,7 +43,7 @@ set(EXTERN_PARMETIS_GIT_TAG
   "Git tag for external ParMETIS build"
 )
 set(EXTERN_PETSC_GIT_TAG
-  "db157d3dd939fc4411afc30f595d8ecbc11f2778" CACHE STRING  # 03/29/2023
+  "c7d19d7b3f2d9e6411c648820d1207320e4154c7" CACHE STRING  # 03/30/2023
   "Git tag for external PETSc build"
 )
 set(EXTERN_SLEPC_GIT_TAG
