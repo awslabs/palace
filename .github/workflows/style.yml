@@ -20,13 +20,17 @@ jobs:
         with:
           version: '1'
 
+      # Install more recent clang-format from LLVM (match Homebrew v16)
       - name: Install clang-format
         run: |
-          sudo apt-get install -y clang-format-15
+          wget -O- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
+          sudo add-apt-repository 'deb http://apt.llvm.org/bullseye/ llvm-toolchain-bullseye-16 main'
+          sudo apt-get update -q
+          sudo apt-get install -y clang-format-16
 
       - name: Check style
         run: |
-          ./scripts/format-source --clang-format clang-format-15
+          ./scripts/format-source --clang-format clang-format-16
           if [[ `git status -s | wc -l` -ne 0 ]]; then
             echo 'Error: Commit is not formatted!'
             echo 'Run '\`'./scripts/format-source'\`' in the source root directory'
