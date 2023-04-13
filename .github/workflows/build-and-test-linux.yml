@@ -101,7 +101,7 @@ jobs:
       - name: Configure Intel oneAPI compiler
         if: matrix.compiler == 'intel'
         run: |
-          sudo apt-get remove -y gcc-10 g++-10 && sudo apt-get autoremove -y
+          sudo apt-get remove -y gcc-9 g++-9 gcc-10 g++-10 && sudo apt-get autoremove -y
           sudo apt-get install -y intel-oneapi-compiler-dpcpp-cpp \
                                   intel-oneapi-compiler-fortran
 
