@@ -327,7 +327,8 @@ void RefinementData::SetUp(json &model)
         "Cannot construct a geometric multigrid if using coarsening");
 
     MFEM_VERIFY(adaptation.coarsening_fraction == 0, "Coarsening is not supported yet.");
-    MFEM_VERIFY(adaptation.construct_geometric_multigrid == false, "Geometric multigrid not supported yet.");
+    MFEM_VERIFY(adaptation.construct_geometric_multigrid == false,
+                "Geometric multigrid not supported yet.");
 
     // Cleanup
     const auto fields = {"Tol",

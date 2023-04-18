@@ -8,6 +8,7 @@
 #include <numeric>
 #include <mfem.hpp>
 #include <nlohmann/json.hpp>
+#include "drivers/transientsolver.hpp"
 #include "fem/domainpostoperator.hpp"
 #include "fem/postoperator.hpp"
 #include "fem/surfacepostoperator.hpp"
@@ -18,7 +19,6 @@
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
 #include "utils/timer.hpp"
-#include "drivers/transientsolver.hpp"
 
 namespace palace
 {
@@ -325,7 +325,7 @@ BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<mfem::ParMesh>> 
 
   if (use_amr)
   {
-    const auto is_transient = dynamic_cast<const TransientSolver*>(this) != nullptr;
+    const auto is_transient = dynamic_cast<const TransientSolver *>(this) != nullptr;
     if (is_transient)
     {
       Mpi::Warning("{}\n", "AMR is not currently supported for transient simulations");
@@ -334,7 +334,7 @@ BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<mfem::ParMesh>> 
     {
       Mpi::Print("\nAdaptive Mesh Refinement Parameters:\n");
       Mpi::Print("MinIter: {}, MaxIter: {}, Tolerance: {:.3e}, DOFLimit: {}\n\n",
-                param.min_its, param.max_its, param.tolerance, param.dof_limit);
+                 param.min_its, param.max_its, param.tolerance, param.dof_limit);
       save_postprocess(iter);  // Save the initial solution
     }
   }
@@ -348,7 +348,7 @@ BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<mfem::ParMesh>> 
     ret |= iter > param.max_its;
     // There are no resources for transient amr.
     // TODO: remove this once transient simulations are supported.
-    ret |= dynamic_cast<const TransientSolver*>(this) != nullptr;
+    ret |= dynamic_cast<const TransientSolver *>(this) != nullptr;
 
     return ret;
   };

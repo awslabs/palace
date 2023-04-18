@@ -289,8 +289,7 @@ ErrorIndicators DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator
 
   // Greedy procedure for basis construction (offline phase). Basis is initialized with
   // solutions at frequency sweep endpoints.
-  int iter = static_cast<int>(prom.GetSampleFrequencies().size()),
-      iter0 = iter;
+  int iter = static_cast<int>(prom.GetSampleFrequencies().size()), iter0 = iter;
   double max_error = 1.0;
   while (true)
   {
