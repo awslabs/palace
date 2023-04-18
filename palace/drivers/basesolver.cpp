@@ -18,6 +18,7 @@
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
 #include "utils/timer.hpp"
+#include "drivers/transientsolver.hpp"
 
 namespace palace
 {
@@ -324,10 +325,18 @@ BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<mfem::ParMesh>> 
 
   if (use_amr)
   {
-    Mpi::Print("\nAdaptive Mesh Refinement Parameters:\n");
-    Mpi::Print("MinIter: {}, MaxIter: {}, Tolerance: {:.3e}, DOFLimit: {}\n\n",
-               param.min_its, param.max_its, param.tolerance, param.dof_limit);
-    save_postprocess(iter);  // Save the initial solution
+    const auto is_transient = dynamic_cast<const TransientSolver*>(this) != nullptr;
+    if (is_transient)
+    {
+      Mpi::Warning("{}\n", "AMR is not currently supported for transient simulations");
+    }
+    else
+    {
+      Mpi::Print("\nAdaptive Mesh Refinement Parameters:\n");
+      Mpi::Print("MinIter: {}, MaxIter: {}, Tolerance: {:.3e}, DOFLimit: {}\n\n",
+                param.min_its, param.max_its, param.tolerance, param.dof_limit);
+      save_postprocess(iter);  // Save the initial solution
+    }
   }
 
   // Collection of all tests that might exhaust resources.
@@ -337,6 +346,8 @@ BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<mfem::ParMesh>> 
     // run out of DOFs, and coarsening isn't allowed.
     ret |= (!use_coarsening && indicators.ndof > param.dof_limit);
     ret |= iter > param.max_its;
+    // There are no resources for transient amr.
+    ret |= dynamic_cast<const TransientSolver*>(this) != nullptr;
 
     return ret;
   };
