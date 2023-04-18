@@ -7,22 +7,8 @@
   },
   "Model":
   {
-    "Mesh": "mesh/q1_spheres.msh",
-    "L0": 1.0e-2,  // cm
-    "Refinement":
-    {
-      // "UniformLevels": 1
-      "Adaptation":
-      {
-        "Tol": 1e-3,
-        "MaxIts": 100,
-        "DOFLimit": 1e6,
-        "UpdateFraction": 0.01,
-        "ConstructGMG": false,
-        "SaveStep": 1,
-        "NCSimplexRefinement": true
-      }
-    }
+    "Mesh": "mesh/spheres.msh",
+    "L0": 1.0e-2  // cm
   },
   "Domains":
   {
@@ -80,7 +66,7 @@
   },
   "Solver":
   {
-    "Order": 1,
+    "Order": 3,
     "Electrostatic":
     {
       "Save": 2
