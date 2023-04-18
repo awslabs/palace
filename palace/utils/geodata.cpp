@@ -97,15 +97,11 @@ mfem::ParMesh ReadMesh(MPI_Comm comm, const IoData &iodata, bool reorder, bool c
   const auto element_types = CheckElements(mesh);
   const auto use_amr = iodata.model.refinement.adaptation.max_its > 1;
 
-  if (use_amr && (element_types.has_tensors || element_types.has_pyramids ||
+  const bool use_nc = (element_types.has_tensors || element_types.has_pyramids ||
                   element_types.has_wedges ||
-                  iodata.model.refinement.adaptation.non_conformal_simplices))
+                  iodata.model.refinement.adaptation.non_conformal_simplices);
+  if (use_amr && use_nc)
   {
-    if (element_types.has_simplices && iodata.model.refinement.adaptation.non_conformal_simplices)
-    {
-      Mpi::Warning("{}\n{}\n","!!!Non conformal refinement with simplices is not fully supported within MFEM!!!",
-                    "!!!Highly likely to trigger errors/warnings within MFEM at this time!!!");
-    }
     mesh.EnsureNCMesh(iodata.model.refinement.adaptation.non_conformal_simplices);
   }
 

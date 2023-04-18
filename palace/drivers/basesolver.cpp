@@ -311,7 +311,12 @@ BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<mfem::ParMesh>> 
 
   const auto &param = iodata.model.refinement.adaptation;
   const bool use_amr = param.max_its > 0;
-  const bool use_coarsening = param.coarsening_fraction > 0;
+  const bool use_coarsening = mesh.back()->Nonconforming() && param.coarsening_fraction > 0;
+
+  if (param.coarsening_fraction > 0 && mesh.back()->Conforming())
+  {
+    Mpi::Warning("{}\n{}\n", "Non-zero coarsening fraction is being ignored.", "Coarsening can only occur if a mesh is in nonconforming mode.");
+  }
 
   int iter = 0;
   auto indicators = Solve(mesh, timer);
@@ -388,9 +393,6 @@ BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<mfem::ParMesh>> 
     indicators = Solve(mesh, timer);
 
     ++iter;
-
-    std::ofstream fout(post_dir + "mesh.mph");
-    mesh.back()->PrintAsSerial(fout);
 
     // Optionally save solution off
     if (param.save_step > 0 && iter % param.save_step == 0)
