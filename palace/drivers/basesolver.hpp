@@ -11,8 +11,8 @@
 
 namespace mfem
 {
-class ParMesh;
 class ParFiniteElementSpace;
+class ParMesh;
 }  // namespace mfem
 
 namespace palace
@@ -78,8 +78,7 @@ public:
              const char *git_tag = nullptr);
   virtual ~BaseSolver() = default;
 
-  // Performs a solve using the mesh sequence, and recording timing for each stage. The iter
-  // argument is used to annotate output produced during postprocessing.
+  // Performs a solve using the mesh sequence, and recording timing for each stage.
   virtual ErrorIndicators Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
                                 Timer &timer) const = 0;
 
@@ -88,9 +87,7 @@ public:
   ErrorIndicators SolveEstimateMarkRefine(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
                                           Timer &timer) const;
 
-  // These methods write different simulation metadata to a JSON file in
-  // post_dir. If no post_dir is provided, writes to the internally stored top
-  // level postprocessing directory.
+  // These methods write different simulation metadata to a JSON file in post_dir.
   void SaveMetadata(const mfem::ParFiniteElementSpace &fespace) const;
   void SaveMetadata(int ksp_mult, int ksp_it) const;
   void SaveMetadata(const Timer &timer) const;

@@ -11,7 +11,6 @@
 namespace mfem
 {
 
-class ND_FECollection;
 class ParMesh;
 
 }  // namespace mfem

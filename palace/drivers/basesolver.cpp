@@ -186,7 +186,7 @@ double ComputeRefineThreshold(double fraction, const mfem::Vector &e)
 
     std::tie(elem_marked, error_marked) = marked(error_threshold);
 
-    // All processors need the values used for the stopping criteria
+    // All processors need the values used for the stopping criteria.
     Mpi::GlobalSum(1, &elem_marked, comm);
     Mpi::GlobalSum(1, &error_marked, comm);
 
@@ -200,7 +200,7 @@ double ComputeRefineThreshold(double fraction, const mfem::Vector &e)
     Mpi::Debug("Marked Elems: {} <= {} <= {}\n", min_elem_marked, elem_marked,
                max_elem_marked);
 
-    // set the tolerance based off of the largest local indicator value. These
+    // Set the tolerance based off of the largest local indicator value. These
     // tolerance values are chosen based on testing, opt not to expose them.
     const double frac_tol = 1e-3 * fraction;
     const double error_tol = 1e-6 * max_indicator;
@@ -208,7 +208,7 @@ double ComputeRefineThreshold(double fraction, const mfem::Vector &e)
         std::abs(candidate_fraction - fraction) < frac_tol ||
         max_elem_marked == min_elem_marked)
     {
-      // candidate fraction matches to tolerance, or the number of marked
+      // Candidate fraction matches to tolerance, or the number of marked
       // elements is no longer changing.
       Mpi::Debug(
           "ΔFraction: {:.3e}, Tol {:.3e}, ΔThreshold: {:.3e}, Tol {:.3e},  ΔElements: {}\n",
@@ -228,7 +228,7 @@ double ComputeRefineThreshold(double fraction, const mfem::Vector &e)
     }
     else if (candidate_fraction < fraction)
     {
-      // This candidate marked too little, lower the upper bound
+      // This candidate marked too little, lower the upper bound.
       max_threshold = error_threshold;
       min_elem_marked = elem_marked;
     }
@@ -347,6 +347,7 @@ BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<mfem::ParMesh>> 
     ret |= (!use_coarsening && indicators.ndof > param.dof_limit);
     ret |= iter > param.max_its;
     // There are no resources for transient amr.
+    // TODO: remove this once transient simulations are supported.
     ret |= dynamic_cast<const TransientSolver*>(this) != nullptr;
 
     return ret;
@@ -359,7 +360,6 @@ BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<mfem::ParMesh>> 
                indicators.global_error_indicator, indicators.ndof);
     if (indicators.ndof < param.dof_limit)
     {
-      // refinement mark
       const auto threshold =
           ComputeRefineThreshold(param.update_fraction, indicators.local_error_indicators);
       const auto marked_elements =
@@ -371,7 +371,6 @@ BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<mfem::ParMesh>> 
         mesh.emplace_back(std::make_unique<mfem::ParMesh>(*mesh.back(), true));
       }
 
-      // refine
       const auto initial_elem_count = mesh.back()->GetGlobalNE();
       mesh.back()->GeneralRefinement(marked_elements, 1, param.max_nc_levels);
       const auto final_elem_count = mesh.back()->GetGlobalNE();

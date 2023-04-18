@@ -289,8 +289,8 @@ ErrorIndicators DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator
 
   // Greedy procedure for basis construction (offline phase). Basis is initialized with
   // solutions at frequency sweep endpoints.
-  int greedy_iter = static_cast<int>(prom.GetSampleFrequencies().size()),
-      greedy_iter0 = greedy_iter;
+  int iter = static_cast<int>(prom.GetSampleFrequencies().size()),
+      iter0 = iter;
   double max_error = 1.0;
   while (true)
   {
@@ -298,7 +298,7 @@ ErrorIndicators DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator
     double omega_star;
     max_error = prom.ComputeMaxError(ncand, omega_star);
     local_timer.construct_time += local_timer.Lap();
-    if (max_error < offline_tol || greedy_iter == nmax)
+    if (max_error < offline_tol || iter == nmax)
     {
       break;
     }
@@ -306,13 +306,13 @@ ErrorIndicators DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator
     // Sample HDM and add solution to basis.
     Mpi::Print(
         "\nGreedy iteration {:d} (n = {:d}): ω* = {:.3e} GHz ({:.3e}), error = {:.3e}\n",
-        greedy_iter - greedy_iter0 + 1, prom.GetReducedDimension(),
+        iter - iter0 + 1, prom.GetReducedDimension(),
         iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, omega_star), omega_star,
         max_error);
     prom.SolveHDM(omega_star, E);
     local_timer.solve_time += local_timer.Lap();
     update_error_indicators(E);
-    greedy_iter++;
+    ++iter;
   }
   {
     std::vector<double> samples(prom.GetSampleFrequencies());
@@ -323,7 +323,7 @@ ErrorIndicators DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator
     }
     Mpi::Print("\nAdaptive sampling{} {:d} frequency samples:\n"
                " n = {:d}, error = {:.3e}, tol = {:.3e}\n",
-               (greedy_iter == nmax) ? " reached maximum" : " converged with", greedy_iter,
+               (iter == nmax) ? " reached maximum" : " converged with", iter,
                prom.GetReducedDimension(), max_error, offline_tol);
     utils::PrettyPrint(samples, " Sampled frequencies (GHz):");
   }
@@ -382,7 +382,7 @@ ErrorIndicators DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator
     timer.postpro_time += timer.Lap() - (timer.io_time - io_time_prev);
 
     // Increment frequency.
-    step++;
+    ++step;
     omega += delta_omega;
   }
 
@@ -440,16 +440,16 @@ namespace
 
 struct CurrentData
 {
-  int idx;      // Current source index
-  double Iinc;  // Excitation current
+  const int idx;      // Current source index
+  const double Iinc;  // Excitation current
 };
 
 struct PortVIData
 {
-  int idx;                      // Port index
-  bool excitation;              // Flag for excited ports
-  double Vinc, Iinc;            // Incident voltage, current
-  std::complex<double> Vi, Ii;  // Port voltage, current
+  const int idx;                      // Port index
+  const bool excitation;              // Flag for excited ports
+  const double Vinc, Iinc;            // Incident voltage, current
+  const std::complex<double> Vi, Ii;  // Port voltage, current
 };
 
 struct PortSData
