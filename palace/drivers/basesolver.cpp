@@ -315,7 +315,8 @@ BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<mfem::ParMesh>> 
 
   if (param.coarsening_fraction > 0 && mesh.back()->Conforming())
   {
-    Mpi::Warning("{}\n{}\n", "Non-zero coarsening fraction is being ignored.", "Coarsening can only occur if a mesh is in nonconforming mode.");
+    Mpi::Warning("{}\n{}\n", "Non-zero coarsening fraction is being ignored.",
+                 "Coarsening can only occur if a mesh is in nonconforming mode.");
   }
 
   int iter = 0;

@@ -98,8 +98,8 @@ mfem::ParMesh ReadMesh(MPI_Comm comm, const IoData &iodata, bool reorder, bool c
   const auto use_amr = iodata.model.refinement.adaptation.max_its > 1;
 
   const bool use_nc = (element_types.has_tensors || element_types.has_pyramids ||
-                  element_types.has_wedges ||
-                  iodata.model.refinement.adaptation.non_conformal_simplices);
+                       element_types.has_wedges ||
+                       iodata.model.refinement.adaptation.non_conformal_simplices);
   if (use_amr && use_nc)
   {
     mesh.EnsureNCMesh(iodata.model.refinement.adaptation.non_conformal_simplices);

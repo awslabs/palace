@@ -2,8 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 using Gmsh: gmsh
-function generate_spheres_mesh(;filename, order)
-
+function generate_spheres_mesh(; filename, order)
     kernel = gmsh.model.occ
 
     gmsh.initialize()
@@ -115,5 +114,5 @@ function generate_spheres_mesh(;filename, order)
         gmsh.fltk.run()
     end
 
-    gmsh.finalize()
+    return gmsh.finalize()
 end
