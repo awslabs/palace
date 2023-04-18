@@ -77,7 +77,6 @@ mfem::Vector CurlFluxErrorEstimator::operator()(const petsc::PetscParVector &v) 
   constexpr int normp = 2;  // 2 norm ensures no under integration.
 
   // Coefficients for computing the discontinuous flux., i.e. (W, μ⁻¹∇ × V).
-  // The code from here down will ultimately be the way to calculate the flux.
   CurlFluxCoefficient real_coef(field.real(), mat_op), imag_coef(field.imag(), mat_op);
   auto rhs_from_coef = [](mfem::ParFiniteElementSpace &smooth_flux_fes, auto &coef)
   {
@@ -92,8 +91,6 @@ mfem::Vector CurlFluxErrorEstimator::operator()(const petsc::PetscParVector &v) 
     return RHS;
   };
 
-  // Switching between these two gives identical.
-  // const auto flux = flux_rhs_from_func(smooth_flux_fes.GetFinestFESpace(), projector_flux_func());
   const auto flux =
       ComplexVector(rhs_from_coef(smooth_flux_fes.GetFinestFESpace(), real_coef),
                     rhs_from_coef(smooth_flux_fes.GetFinestFESpace(), imag_coef));
@@ -128,7 +125,6 @@ mfem::Vector CurlFluxErrorEstimator::operator()(const petsc::PetscParVector &v) 
 
   real_error = ComputeElementLpErrors(smooth_flux_func.real(), normp, real_coef);
   imag_error = ComputeElementLpErrors(smooth_flux_func.imag(), normp, imag_coef);
-
 
   // Compute the magnitude of the complex valued error.
   auto magnitude = [](const auto &r, const auto &i) { return std::sqrt(r * r + i * i); };
@@ -183,7 +179,6 @@ mfem::Vector GradFluxErrorEstimator::operator()(const mfem::Vector &v) const
   constexpr int normp = 2;  // 2 norm ensures no under integration.
 
   // Coefficients for computing the discontinuous flux., i.e. (V, ϵ ∇ ϕ).
-  // The code from here down will ultimately be the way to calculate the flux.
   GradFluxCoefficient coef(field, mat_op);
   auto rhs_from_coef = [](mfem::ParFiniteElementSpace &smooth_flux_fes, auto &coef)
   {
@@ -198,9 +193,6 @@ mfem::Vector GradFluxErrorEstimator::operator()(const mfem::Vector &v) const
     return RHS;
   };
 
-  // Switching between these two gives identical.
-  // auto flux_func = mfem_flux_func();
-  // const auto flux = flux_rhs_from_func(smooth_flux_fes.GetFinestFESpace(), flux_func);
   const auto flux = rhs_from_coef(smooth_flux_fes.GetFinestFESpace(), coef);
 
   // Given the RHS vector of non-smooth flux, construct a flux projector and
@@ -315,12 +307,12 @@ double ComputeVectorLpNorm(const mfem::ParGridFunction &sol, double p,
       elem_norm[i] += ip.weight * T.Weight() * component;
     }
 
-    // negative quadrature weights might case elemental norms to have been
+    // Negative quadrature weights might case elemental norms to have been
     // negative, correct this before accumulation.
     elem_norm[i] = std::abs(elem_norm[i]);
   }
 
-  // (sum_e (\| u \|_Lp(e))^p)^(1/p)
+  // (∑ₑ ∫ₑ|u|^p)^(1/p)
   auto norm = std::accumulate(elem_norm.begin(), elem_norm.end(), 0.0);
 
   Mpi::GlobalSum(1, &norm, Mpi::World());
@@ -356,7 +348,7 @@ double ComputeScalarLpNorm(const mfem::ParGridFunction &sol, double p,
       elem_norm[i] += ip.weight * T.Weight() * std::pow(std::abs(vals(j)), p);
     }
 
-    // negative quadrature weights might cause elemental norms to have been
+    // Negative quadrature weights might cause elemental norms to have been
     // negative.
     elem_norm[i] = std::abs(elem_norm[i]);
   }
