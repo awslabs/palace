@@ -28,8 +28,6 @@ class CurlFluxErrorEstimator
   // The finite element space used to represent V
   mfem::ParFiniteElementSpace &fes;
 
-  mfem::RT_FECollection flux_fec;
-  mutable mfem::ParFiniteElementSpace flux_fes;
   std::vector<std::unique_ptr<mfem::ND_FECollection>> smooth_flux_fecs;
   mutable mfem::ParFiniteElementSpaceHierarchy smooth_flux_fes;
   mutable FluxProjector projector;
@@ -46,20 +44,18 @@ public:
 
   // Compute elemental error indicators given a vector of true DOF, and the
   // finite element space they are associated with
-  mfem::Vector operator()(const petsc::PetscParVector &v, bool use_mfem = false) const;
+  mfem::Vector operator()(const petsc::PetscParVector &v) const;
 };
 
 // Class used for computing grad flux error estimate,
 // i.e. || ϵ ∇ ϕ - F ||_K
-// where F denotes a smooth reconstruction of ϵ ∇ u
+// where F denotes a smooth reconstruction of ϵ ∇ ϕ
 class GradFluxErrorEstimator
 {
   const MaterialOperator &mat_op;
   // The finite element space used to represent ϕ
   mfem::ParFiniteElementSpace &fes;
 
-  mfem::L2_FECollection flux_fec;
-  mutable mfem::ParFiniteElementSpace flux_fes;
   std::vector<std::unique_ptr<mfem::H1_FECollection>> smooth_flux_fecs;
   mutable mfem::ParFiniteElementSpaceHierarchy smooth_flux_fes;
   mutable FluxProjector projector;
@@ -76,7 +72,7 @@ public:
 
   // Compute elemental error indicators given a vector of true DOF, and the
   // finite element space they are associated with
-  mfem::Vector operator()(const mfem::Vector &v, bool use_mfem = false) const;
+  mfem::Vector operator()(const mfem::Vector &v) const;
 };
 
 }  // namespace palace
