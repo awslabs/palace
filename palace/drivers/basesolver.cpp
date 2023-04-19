@@ -102,10 +102,11 @@ std::string BaseSolver::IterationPostDir(int iter) const
 namespace
 {
 
-// Given a vector of estimates local to this rank, compute an error threshold
-// such that if elements with greater error are marked for refinement, a Dorfler
-// marking is achieved.
-double ComputeRefineThreshold(double fraction, const mfem::Vector &e)
+// Given a vector of estimates, e, and a fraction, compute a partition value E,
+// such that that the set of all estimates with value greater than e, K_E is the
+// smallest number to achieve sum_{K_E} e >= fraction * sum e. Namely the
+// smallest set of elements that will mark the top fraction of the sum of the error.
+double ComputeDorflerThreshold(double fraction, const mfem::Vector &e)
 {
   // Pre compute the sort and partial sum to make evaluating a candidate
   // partition very fast.
@@ -361,7 +362,7 @@ BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<mfem::ParMesh>> 
     if (indicators.ndof < param.dof_limit)
     {
       const auto threshold =
-          ComputeRefineThreshold(param.update_fraction, indicators.local_error_indicators);
+          ComputeDorflerThreshold(param.update_fraction, indicators.local_error_indicators);
       const auto marked_elements =
           MarkedElements(threshold, indicators.local_error_indicators);
 
@@ -380,22 +381,28 @@ BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<mfem::ParMesh>> 
     }
     else if (use_coarsening)
     {
-      MFEM_VERIFY(false, "Coarsening not implemented yet.");
-      // coarsen mark
-      // auto marked_elements = CoarsenMarker(
-      //   iodata.model.refinement.adaptive.update_fraction,
-      //   indicators.error_indicators);
+      // Perform a Dorfler style marking looking for the largest number of
+      // refinement opportunities to represent a fraction of the derefinable error.
+      const auto &derefinement_table = mesh.back()->pncmesh->GetDerefinementTable();
 
-      // mfem::Array<int> marked_elements;  // PLACEHOLDER
+      mfem::Vector coarse_error(derefinement_table.Size());
+      for (int i = 0; i < derefinement_table.Size(); ++i)
+      {
+        mfem::Array<int> row;
+        derefinement_table.GetRow(i, row);
 
-      // TODO: Compute error threshold that will trigger sufficient derefinement
-      // const double threshold = ComputeThreshold(indicators.error_indicators);
+        // sum the error for all sub elements that can be combined
+        coarse_error[i] = std::accumulate(row.begin(), row.end(), 0.0, [&indicators](double &s, int i){ s += indicators.local_error_indicators[i]; });
+      }
 
-      // const double threshold = 0;  // PLACEHOLDER
+      // Given the coarse errors, we use the Dorfler marking strategy to track
+      // (1 - θ) of the total error, where θ is the coarsening fraction.
+      // Marking those elements with error less than this partitioning value for
+      // coarsening will give the largest possible set that makes up at most θ
+      // of the possible coarsenable error.
 
-      // TODO: Figure out the method to expose here.
-      // mesh.back()->NonconformingDerefinement(indicators.error_indicators,
-      // param.max_nc_levels, 1);
+      const double threshold = ComputeDorflerThreshold(1 - param.coarsening_fraction, coarse_error);
+      mesh.back()->DerefineByError(indicators.local_error_indicators, threshold, param.max_nc_levels);
     }
 
     RebalanceMesh(mesh.back());
