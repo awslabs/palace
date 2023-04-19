@@ -15,6 +15,6 @@ namespace palace::utils
 // smallest set of elements that will mark the top fraction of the sum of the error.
 double ComputeDorflerThreshold(double fraction, const mfem::Vector &e);
 
-} // namespace palace::utils
+}  // namespace palace::utils
 
 #endif  // PALACE_DORFLER_HPP

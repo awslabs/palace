@@ -146,4 +146,4 @@ double ComputeDorflerThreshold(double fraction, const mfem::Vector &e)
   return error_threshold;
 }
 
-} // namespace palace::utils
+}  // namespace palace::utils

@@ -14,12 +14,12 @@
 #include "fem/surfacepostoperator.hpp"
 #include "linalg/errorestimator.hpp"
 #include "utils/communication.hpp"
+#include "utils/dorfler.hpp"
 #include "utils/errorindicators.hpp"
 #include "utils/filesystem.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
 #include "utils/timer.hpp"
-#include "utils/dorfler.hpp"
 
 namespace palace
 {
@@ -222,8 +222,8 @@ BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<mfem::ParMesh>> 
                indicators.global_error_indicator, indicators.ndof);
     if (indicators.ndof < param.dof_limit)
     {
-      const auto threshold =
-          utils::ComputeDorflerThreshold(param.update_fraction, indicators.local_error_indicators);
+      const auto threshold = utils::ComputeDorflerThreshold(
+          param.update_fraction, indicators.local_error_indicators);
       const auto marked_elements =
           MarkedElements(threshold, indicators.local_error_indicators);
 
@@ -253,7 +253,10 @@ BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<mfem::ParMesh>> 
         derefinement_table.GetRow(i, row);
 
         // sum the error for all sub elements that can be combined
-        coarse_error[i] = std::accumulate(row.begin(), row.end(), 0.0, [&indicators](double s, int i){ return s += indicators.local_error_indicators[i]; });
+        coarse_error[i] =
+            std::accumulate(row.begin(), row.end(), 0.0,
+                            [&indicators](double s, int i)
+                            { return s += indicators.local_error_indicators[i]; });
       }
 
       // Given the coarse errors, we use the Dorfler marking strategy to track
@@ -262,8 +265,10 @@ BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<mfem::ParMesh>> 
       // coarsening will give the largest possible set that makes up at most θ
       // of the possible coarsenable error.
 
-      const double threshold = utils::ComputeDorflerThreshold(1 - param.coarsening_fraction, coarse_error);
-      mesh.back()->DerefineByError(indicators.local_error_indicators, threshold, param.max_nc_levels);
+      const double threshold =
+          utils::ComputeDorflerThreshold(1 - param.coarsening_fraction, coarse_error);
+      mesh.back()->DerefineByError(indicators.local_error_indicators, threshold,
+                                   param.max_nc_levels);
     }
 
     RebalanceMesh(mesh.back());
