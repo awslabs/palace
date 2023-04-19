@@ -3,7 +3,7 @@
 
 #include "basesolver.hpp"
 
-#include <algorithm>
+// #include <algorithm>
 #include <complex>
 #include <numeric>
 #include <mfem.hpp>
@@ -19,6 +19,7 @@
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
 #include "utils/timer.hpp"
+#include "utils/dorfler.hpp"
 
 namespace palace
 {
@@ -101,146 +102,6 @@ std::string BaseSolver::IterationPostDir(int iter) const
 
 namespace
 {
-
-// Given a vector of estimates, e, and a fraction, compute a partition value E,
-// such that that the set of all estimates with value greater than e, K_E is the
-// smallest number to achieve sum_{K_E} e >= fraction * sum e. Namely the
-// smallest set of elements that will mark the top fraction of the sum of the error.
-double ComputeDorflerThreshold(double fraction, const mfem::Vector &e)
-{
-  // Pre compute the sort and partial sum to make evaluating a candidate
-  // partition very fast.
-  std::vector<double> estimates(e.begin(), e.end());
-  std::sort(estimates.begin(), estimates.end());
-
-  MFEM_ASSERT(estimates.front() >= 0, "Indicators must be non-negative");
-
-  std::vector<double> sum;
-  sum.reserve(estimates.size());
-  std::partial_sum(estimates.begin(), estimates.end(), std::back_inserter(sum));
-
-  auto pivot = std::distance(
-      sum.begin(), std::lower_bound(sum.begin(), sum.end(), (1 - fraction) * sum.back()));
-
-  double error_threshold = estimates[pivot];
-
-  auto marked = [&estimates, &sum](double e) -> std::pair<std::size_t, double>
-  {
-    const auto lb = std::lower_bound(estimates.begin(), estimates.end(), e);
-    const auto elems_marked = std::distance(lb, estimates.end());
-    const double error_unmarked =
-        lb != estimates.begin() ? sum[sum.size() - elems_marked - 1] : 0;
-    const double error_marked = sum.back() - error_unmarked;
-    return {elems_marked, error_marked};
-  };
-
-  // Each rank has computed a different threshold, if a given rank has lots of
-  // low error elements, their value will be lower and if a rank has high error,
-  // their value will be higher. Using the value from the low error rank will
-  // give too many elements, and using the value from the high error rank will
-  // give too few. The correct threshold value will be an intermediate
-  // between the min and max over ranks.
-
-  auto comm = Mpi::World();
-
-  // Send initial information to all
-  const double total_error = [&]()
-  {
-    double total_error = sum.back();
-    Mpi::GlobalSum(1, &total_error, comm);
-    return total_error;
-  }();
-  const double max_indicator = [&]()
-  {
-    double max_indicator = estimates.back();
-    Mpi::GlobalSum(1, &max_indicator, comm);
-    return max_indicator;
-  }();
-
-  double min_threshold = error_threshold;
-  double max_threshold = error_threshold;
-  Mpi::GlobalMin(1, &min_threshold, comm);
-  Mpi::GlobalMax(1, &max_threshold, comm);
-  const std::size_t total_elem = [&]()
-  {
-    std::size_t tmp = estimates.size();
-    Mpi::GlobalSum(1, &tmp, comm);
-    return tmp;
-  }();
-
-  MFEM_ASSERT(min_threshold <= max_threshold,
-              "min: " << min_threshold << " max " << max_threshold);
-
-  auto [elem_marked, error_marked] = marked(error_threshold);
-
-  // Keep track of the number of elements marked by the threshold bounds. If the
-  // top and bottom values are equal, there's no point further bisecting.
-  auto [max_elem_marked, min_error_marked] = marked(min_threshold);
-  auto [min_elem_marked, max_error_marked] = marked(max_threshold);
-  Mpi::GlobalSum(1, &min_elem_marked, comm);
-  Mpi::GlobalSum(1, &max_elem_marked, comm);
-
-  constexpr int maxiter = 100;  // Maximum limit to prevent runaway.
-  for (int i = 0; i < maxiter; ++i)
-  {
-    error_threshold = (min_threshold + max_threshold) / 2;
-
-    std::tie(elem_marked, error_marked) = marked(error_threshold);
-
-    // All processors need the values used for the stopping criteria.
-    Mpi::GlobalSum(1, &elem_marked, comm);
-    Mpi::GlobalSum(1, &error_marked, comm);
-
-    MFEM_ASSERT(elem_marked > 0, "Some elements must have been marked");
-    MFEM_ASSERT(error_marked > 0, "Some error must have been marked");
-
-    const auto candidate_fraction = error_marked / total_error;
-
-    Mpi::Debug("Threshold: {:e} < {:e} < {:e}\n", min_threshold, error_threshold,
-               max_threshold);
-    Mpi::Debug("Marked Elems: {} <= {} <= {}\n", min_elem_marked, elem_marked,
-               max_elem_marked);
-
-    // Set the tolerance based off of the largest local indicator value. These
-    // tolerance values are chosen based on testing, opt not to expose them.
-    const double frac_tol = 1e-3 * fraction;
-    const double error_tol = 1e-6 * max_indicator;
-    if (std::abs(max_threshold - min_threshold) < error_tol ||
-        std::abs(candidate_fraction - fraction) < frac_tol ||
-        max_elem_marked == min_elem_marked)
-    {
-      // Candidate fraction matches to tolerance, or the number of marked
-      // elements is no longer changing.
-      Mpi::Debug(
-          "ΔFraction: {:.3e}, Tol {:.3e}, ΔThreshold: {:.3e}, Tol {:.3e},  ΔElements: {}\n",
-          candidate_fraction - fraction, frac_tol, max_threshold - min_threshold, error_tol,
-          max_elem_marked - min_elem_marked);
-      break;
-    }
-
-    // Update in preparation for next iteration. The logic here looks inverted
-    // compared to a usual binary search, because a smaller value marks a larger
-    // number of elements and thus a greater fraction of error.
-    if (candidate_fraction > fraction)
-    {
-      // This candidate marked too much, raise the lower value.
-      min_threshold = error_threshold;
-      max_elem_marked = elem_marked;
-    }
-    else if (candidate_fraction < fraction)
-    {
-      // This candidate marked too little, lower the upper bound.
-      max_threshold = error_threshold;
-      min_elem_marked = elem_marked;
-    }
-  }
-
-  Mpi::Print("Indicator threshold {:.3e} marked {} of {} elements and {:.3f}\% error\n",
-             error_threshold, elem_marked, total_elem, 100 * error_marked / total_error);
-
-  MFEM_ASSERT(error_threshold > 0, "error_threshold must be positive");
-  return error_threshold;
-}
 
 mfem::Array<int> MarkedElements(double threshold, const mfem::Vector &e, bool gt = true)
 {
@@ -362,7 +223,7 @@ BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<mfem::ParMesh>> 
     if (indicators.ndof < param.dof_limit)
     {
       const auto threshold =
-          ComputeDorflerThreshold(param.update_fraction, indicators.local_error_indicators);
+          utils::ComputeDorflerThreshold(param.update_fraction, indicators.local_error_indicators);
       const auto marked_elements =
           MarkedElements(threshold, indicators.local_error_indicators);
 
@@ -392,7 +253,7 @@ BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<mfem::ParMesh>> 
         derefinement_table.GetRow(i, row);
 
         // sum the error for all sub elements that can be combined
-        coarse_error[i] = std::accumulate(row.begin(), row.end(), 0.0, [&indicators](double &s, int i){ s += indicators.local_error_indicators[i]; });
+        coarse_error[i] = std::accumulate(row.begin(), row.end(), 0.0, [&indicators](double s, int i){ return s += indicators.local_error_indicators[i]; });
       }
 
       // Given the coarse errors, we use the Dorfler marking strategy to track
@@ -401,7 +262,7 @@ BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<mfem::ParMesh>> 
       // coarsening will give the largest possible set that makes up at most θ
       // of the possible coarsenable error.
 
-      const double threshold = ComputeDorflerThreshold(1 - param.coarsening_fraction, coarse_error);
+      const double threshold = utils::ComputeDorflerThreshold(1 - param.coarsening_fraction, coarse_error);
       mesh.back()->DerefineByError(indicators.local_error_indicators, threshold, param.max_nc_levels);
     }
 
