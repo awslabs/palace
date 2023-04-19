@@ -47,7 +47,7 @@ CurlFluxErrorEstimator::CurlFluxErrorEstimator(
         mesh.back()->Dimension())),
     smooth_flux_fes(utils::ConstructFiniteElementSpaceHierarchy<mfem::ND_FECollection>(
         mesh, smooth_flux_fecs)),
-    projector(smooth_flux_fes, iodata.solver.linear.tol / 10, 200, iodata.problem.verbose)
+    projector(smooth_flux_fes, iodata.solver.linear.tol, 200, iodata.problem.verbose)
 {
 }
 
@@ -60,7 +60,7 @@ CurlFluxErrorEstimator::CurlFluxErrorEstimator(const IoData &iodata,
         iodata.solver.linear.mat_gmg, false, iodata.solver.order, mesh->Dimension())),
     smooth_flux_fes(utils::ConstructFiniteElementSpaceHierarchy<mfem::ND_FECollection>(
         mesh, smooth_flux_fecs)),
-    projector(smooth_flux_fes, iodata.solver.linear.tol / 10, 200, iodata.problem.verbose)
+    projector(smooth_flux_fes, iodata.solver.linear.tol, 200, iodata.problem.verbose)
 {
 }
 
@@ -152,7 +152,7 @@ GradFluxErrorEstimator::GradFluxErrorEstimator(
         mesh.back()->Dimension())),
     smooth_flux_fes(utils::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
         mesh, smooth_flux_fecs, mesh.back()->Dimension())),
-    projector(smooth_flux_fes, iodata.solver.linear.tol / 10, 200, iodata.problem.verbose)
+    projector(smooth_flux_fes, iodata.solver.linear.tol, 200, iodata.problem.verbose)
 {
 }
 
@@ -165,7 +165,7 @@ GradFluxErrorEstimator::GradFluxErrorEstimator(const IoData &iodata,
         iodata.solver.linear.mat_gmg, false, iodata.solver.order, mesh->Dimension())),
     smooth_flux_fes(utils::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
         mesh, smooth_flux_fecs, mesh->Dimension())),
-    projector(smooth_flux_fes, iodata.solver.linear.tol / 10, 200, iodata.problem.verbose)
+    projector(smooth_flux_fes, iodata.solver.linear.tol, 200, iodata.problem.verbose)
 {
 }
 
