@@ -25,12 +25,15 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &me
   // handled eliminating the rows and columns of the system matrix for the corresponding
   // dofs. The eliminated matrix is stored in order to construct the RHS vector for nonzero
   // prescribed BC values.
+
+
   timer.Lap();
   std::vector<std::unique_ptr<mfem::Operator>> K, Ke;
   LaplaceOperator laplaceop(iodata, mesh);
+  timer.construct_time += timer.Lap();
   GradFluxErrorEstimator estimator(iodata, laplaceop.GetMaterialOp(), mesh,
                                    laplaceop.GetH1Space());
-
+  timer.est_construction_time += timer.Lap();
   laplaceop.GetStiffnessMatrix(K, Ke);
   SaveMetadata(laplaceop.GetH1Space());
 
@@ -118,14 +121,14 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &me
     timer.postpro_time += timer.Lap();
   }
 
-  // Construct error estimator and reduce over all
+  // Evaluate error estimator and reduce over all
   auto indicators = ErrorIndicators(laplaceop.GetNDof());
   ErrorReductionOperator error_reducer;
   auto update_error_indicators =
       [&timer, &estimator, &indicators, &error_reducer](const auto &V)
   {
     error_reducer(indicators, estimator(V));
-    timer.estimation_time += timer.Lap();
+    timer.est_solve_time += timer.Lap();
   };
 
   std::for_each(V.begin(), V.end(), update_error_indicators);

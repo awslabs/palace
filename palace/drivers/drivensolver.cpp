@@ -31,8 +31,10 @@ ErrorIndicators DrivenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParM
   // Set up the spatial discretization and frequency sweep.
   timer.Lap();
   SpaceOperator spaceop(iodata, mesh);
+  timer.construct_time += timer.Lap();
   CurlFluxErrorEstimator estimator(iodata, spaceop.GetMaterialOp(), mesh,
                                    spaceop.GetNDSpace());
+  timer.est_construction_time += timer.Lap();
   int nstep = GetNumSteps(iodata.solver.driven.min_f, iodata.solver.driven.max_f,
                           iodata.solver.driven.delta_f);
   int step0 = (iodata.solver.driven.rst > 0) ? iodata.solver.driven.rst - 1 : 0;
@@ -149,7 +151,7 @@ ErrorIndicators DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator 
     auto ind = estimator(E);
     postop.SetIndicatorGridFunction(ind);
     error_reducer(indicators, std::move(ind));
-    timer.estimation_time += timer.Lap();
+    timer.est_solve_time += timer.Lap();
   };
 
   // Main frequency sweep loop.
@@ -276,7 +278,7 @@ ErrorIndicators DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator
       [&local_timer, &estimator, &indicators, &error_reducer](const auto &E)
   {
     error_reducer(indicators, estimator(E));
-    local_timer.estimation_time += local_timer.Lap();
+    local_timer.est_solve_time += local_timer.Lap();
   };
 
   prom.SolveHDM(omega0, E, true);  // Print matrix stats at first HDM solve

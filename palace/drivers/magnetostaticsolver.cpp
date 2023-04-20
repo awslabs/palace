@@ -28,8 +28,10 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &me
   timer.Lap();
   std::vector<std::unique_ptr<mfem::Operator>> K;
   CurlCurlOperator curlcurlop(iodata, mesh);
+  timer.construct_time += timer.Lap();
   CurlFluxErrorEstimator estimator(iodata, curlcurlop.GetMaterialOp(), mesh,
                                    curlcurlop.GetNDSpace());
+  timer.est_construction_time += timer.Lap();
   curlcurlop.GetStiffnessMatrix(K);
   SaveMetadata(curlcurlop.GetNDSpace());
 
@@ -90,7 +92,7 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &me
       [&timer, &estimator, &indicators, &error_reducer](const auto &A)
   {
     error_reducer(indicators, estimator(A));
-    timer.estimation_time += timer.Lap();
+    timer.est_solve_time += timer.Lap();
   };
 
   // Main loop over current source boundaries.
