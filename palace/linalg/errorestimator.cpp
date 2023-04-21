@@ -10,6 +10,8 @@
 #include "utils/mfemintegrators.hpp"
 #include "utils/multigrid.hpp"
 
+#include <chrono>
+
 namespace palace
 {
 
@@ -171,8 +173,18 @@ GradFluxErrorEstimator::GradFluxErrorEstimator(const IoData &iodata,
 
 mfem::Vector GradFluxErrorEstimator::operator()(const mfem::Vector &v) const
 {
+  using namespace std::chrono;
+  int iclock = 0;
+  auto start = steady_clock::now();
+  auto lap = start;
+  auto stopwatch = [&start, &lap, &iclock](){
+    lap = steady_clock::now();
+    std::cout << "clock " << iclock++ << " : " << duration_cast<microseconds>(lap - start).count() << " μs\n";
+    start = steady_clock::now();
+  };
   mfem::ParGridFunction field(&fes);
   field.SetFromTrueDofs(v);
+  stopwatch(); // 0
 
   const int nelem = smooth_flux_fes.GetFinestFESpace().GetNE();
 
@@ -193,8 +205,10 @@ mfem::Vector GradFluxErrorEstimator::operator()(const mfem::Vector &v) const
     return RHS;
   };
 
+  stopwatch(); // 1
   const auto flux = rhs_from_coef(smooth_flux_fes.GetFinestFESpace(), coef);
 
+  stopwatch(); // 2
   // Given the RHS vector of non-smooth flux, construct a flux projector and
   // perform mass matrix inversion in the appropriate space, giving f = M⁻¹ f̂.
   auto build_smooth_flux = [this](const mfem::Vector &flux)
@@ -204,8 +218,10 @@ mfem::Vector GradFluxErrorEstimator::operator()(const mfem::Vector &v) const
     projector.Mult(flux, smooth_flux);
     return smooth_flux;
   };
+  stopwatch(); // 3
   auto smooth_flux = build_smooth_flux(flux);
 
+  stopwatch(); // 4
   // Given a solution represented with a Vector, build a GridFunction for evaluation.
   auto build_func = [](const mfem::Vector &f, mfem::ParFiniteElementSpace &fes)
   {
@@ -213,16 +229,21 @@ mfem::Vector GradFluxErrorEstimator::operator()(const mfem::Vector &v) const
     flux.SetFromTrueDofs(f);
     return flux;
   };
+  stopwatch(); // 5
 
   auto smooth_flux_func = build_func(smooth_flux, smooth_flux_fes.GetFinestFESpace());
 
+  stopwatch(); // 6
   auto estimates = ComputeElementLpErrors(smooth_flux_func, normp, coef);
 
+  stopwatch(); // 7
   // Normalize the error by the solution L2 norm, ensures reductions are well scaled.
   const auto normalization = ComputeScalarLpNorm(field, 2);
+  stopwatch(); // 8
   std::for_each(estimates.begin(), estimates.end(),
                 [&normalization](auto &x) { x /= normalization; });
 
+  stopwatch(); // 9
   return estimates;
 }
 
@@ -232,7 +253,17 @@ mfem::Vector ComputeElementLpErrors(const mfem::ParGridFunction &sol, double p,
                                     mfem::VectorCoefficient &exsol,
                                     int quad_order_increment)
 {
-  auto &fes = *sol.ParFESpace();
+  using namespace std::chrono;
+  auto start = steady_clock::now();
+  auto lap = start;
+  auto stopwatch = [&start](){
+    auto lap = steady_clock::now();
+    auto delta = duration_cast<microseconds>(lap - start).count();
+    start = lap;
+    return delta;
+  };
+
+  auto &fes = *(sol.ParFESpace());
 
   MFEM_VERIFY(p < mfem::infinity(), "Do not use this routine to compute Linf norm\n");
 
@@ -240,7 +271,9 @@ mfem::Vector ComputeElementLpErrors(const mfem::ParGridFunction &sol, double p,
   error = 0.0;
 
   mfem::DenseMatrix vals, exact_vals;
-  mfem::Vector loc_errs;
+
+  std::vector<int> clocks(6, 0);
+
 
   for (int i = 0; i < fes.GetNE(); ++i)
   {
@@ -248,16 +281,23 @@ mfem::Vector ComputeElementLpErrors(const mfem::ParGridFunction &sol, double p,
     auto &T = *fes.GetElementTransformation(i);
     const auto &ir = *utils::GetDefaultRule(fe, T, quad_order_increment);
 
+    int iclock = 0;
+    clocks[iclock++] += stopwatch();
     sol.GetVectorValues(T, ir, vals);
+    clocks[iclock++] += stopwatch();
     exsol.Eval(exact_vals, T, ir);
+    clocks[iclock++] += stopwatch();
 
+    MFEM_VERIFY(vals.Height() == exact_vals.Height() && vals.Width() == exact_vals.Width(), "!");
     vals -= exact_vals;
+    clocks[iclock++] += stopwatch();
 
+    MFEM_ASSERT(vals.Height() == 3, "!");
     for (int j = 0; j < ir.GetNPoints(); ++j)
     {
       // Combine components
       double component = 0.0;
-      for (int c = 0; c < vals.Height(); ++c)
+      for (int c = 0; c < 3; ++c)
       {
         component += std::pow(std::abs(vals(c, j)), p);
       }
@@ -267,8 +307,17 @@ mfem::Vector ComputeElementLpErrors(const mfem::ParGridFunction &sol, double p,
 
       error[i] += ip.weight * T.Weight() * component;
     }
+    clocks[iclock++] += stopwatch();
     error[i] = std::pow(std::abs(error[i]), 1 / p);
+
+    clocks[iclock++] += stopwatch();
   }
+
+  for (std::size_t i = 0; i < clocks.size(); ++i)
+  {
+    std::cout << "subclock " << i << " " << clocks[i] << " μs\n";
+  }
+
   return error;
 }
 
