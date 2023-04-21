@@ -23,7 +23,7 @@ public:
     INIT = 0,
     CONSTRUCT,
     SOLVE,
-    ESTCONSTRUCTION,
+    ESTCONSTRUCT,
     ESTSOLVE,
     POSTPRO,
     IO,
@@ -61,7 +61,7 @@ public:
   Duration &init_time = data[INIT];
   Duration &construct_time = data[CONSTRUCT];
   Duration &solve_time = data[SOLVE];
-  Duration &est_construction_time = data[ESTCONSTRUCTION];
+  Duration &est_construction_time = data[ESTCONSTRUCT];
   Duration &est_solve_time = data[ESTSOLVE];
   Duration &postpro_time = data[POSTPRO];
   Duration &io_time = data[IO];
@@ -118,7 +118,7 @@ public:
                data_min[INIT], w, p, data_max[INIT], w, p, data_avg[INIT], w, p,
                data_min[CONSTRUCT], w, p, data_max[CONSTRUCT], w, p, data_avg[CONSTRUCT], w, p,
                data_min[SOLVE], w, p, data_max[SOLVE], w, p, data_avg[SOLVE], w, p,
-               data_min[ESTCONSTRUCTION], w, p, data_max[ESTCONSTRUCTION], w, p, data_avg[ESTCONSTRUCTION], w, p,
+               data_min[ESTCONSTRUCT], w, p, data_max[ESTCONSTRUCT], w, p, data_avg[ESTCONSTRUCT], w, p,
                data_min[ESTSOLVE], w, p, data_max[ESTSOLVE], w, p, data_avg[ESTSOLVE], w, p,
                data_min[POSTPRO], w, p, data_max[POSTPRO], w, p, data_avg[POSTPRO], w, p,
                data_min[IO], w, p, data_max[IO], w, p, data_avg[IO], w, p,
