@@ -31,10 +31,6 @@ ErrorIndicators DrivenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParM
   // Set up the spatial discretization and frequency sweep.
   timer.Lap();
   SpaceOperator spaceop(iodata, mesh);
-  timer.construct_time += timer.Lap();
-  CurlFluxErrorEstimator estimator(iodata, spaceop.GetMaterialOp(), mesh,
-                                   spaceop.GetNDSpace());
-  timer.est_construction_time += timer.Lap();
   int nstep = GetNumSteps(iodata.solver.driven.min_f, iodata.solver.driven.max_f,
                           iodata.solver.driven.delta_f);
   int step0 = (iodata.solver.driven.rst > 0) ? iodata.solver.driven.rst - 1 : 0;
@@ -100,6 +96,10 @@ ErrorIndicators DrivenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParM
   }
   Mpi::Print("\n");
 
+  CurlFluxErrorEstimator estimator(iodata, spaceop.GetMaterialOp(), mesh,
+                                   spaceop.GetNDSpace());
+  timer.est_construction_time += timer.Lap();
+
   // Main frequency sweep loop.
   return adaptive ? SweepAdaptive(spaceop, postop, estimator, nstep, step0, omega0,
                                   delta_omega, timer)
@@ -153,6 +153,8 @@ ErrorIndicators DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator 
     error_reducer(indicators, std::move(ind));
     timer.est_solve_time += timer.Lap();
   };
+
+  timer.est_construction_time += timer.Lap();
 
   // Main frequency sweep loop.
   double omega = omega0;
@@ -280,6 +282,7 @@ ErrorIndicators DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator
     error_reducer(indicators, estimator(E));
     local_timer.est_solve_time += local_timer.Lap();
   };
+  local_timer.est_construction_time += local_timer.Lap();
 
   prom.SolveHDM(omega0, E, true);  // Print matrix stats at first HDM solve
   local_timer.solve_time += local_timer.Lap();
@@ -332,10 +335,14 @@ ErrorIndicators DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator
   const auto local_construction_time = timer.Lap();
   timer.construct_time += local_construction_time;
   Mpi::Print(" Total offline phase elapsed time: {:.2e} s\n"
-             " Parameter space sampling: {:.2e} s, HDM solves: {:.2e} s\n",
+             " Parameter space sampling: {:.2e} s, HDM solves: {:.2e} s\n"
+             " AMR Error Estimation construction time: {:.2e} s\n"
+             " AMR Error Estimation solve time: {:.2e} s\n",
              Timer::Duration(local_construction_time).count(),
              Timer::Duration(local_timer.construct_time).count(),
-             Timer::Duration(local_timer.solve_time).count());  // Timings on rank 0
+             Timer::Duration(local_timer.solve_time).count(),
+             Timer::Duration(local_timer.est_construction_time).count(),
+             Timer::Duration(local_timer.est_solve_time).count());  // Timings on rank 0
 
   // Set the indicator field to the combined field for postprocessing.
   postop.SetIndicatorGridFunction(indicators.local_error_indicators);

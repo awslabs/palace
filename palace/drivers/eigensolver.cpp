@@ -35,10 +35,6 @@ ErrorIndicators EigenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMe
   // computational range. The damping matrix may be nullptr.
   timer.Lap();
   SpaceOperator spaceop(iodata, mesh);
-  timer.construct_time += timer.Lap();
-  CurlFluxErrorEstimator estimator(iodata, spaceop.GetMaterialOp(), mesh,
-                                   spaceop.GetNDSpace());
-  timer.est_construction_time += timer.Lap();
   std::unique_ptr<petsc::PetscParMatrix> K = spaceop.GetSystemMatrixPetsc(
       SpaceOperator::OperatorType::STIFFNESS, mfem::Operator::DIAG_ONE);
   std::unique_ptr<petsc::PetscParMatrix> M = spaceop.GetSystemMatrixPetsc(
@@ -337,6 +333,10 @@ ErrorIndicators EigenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMe
     // }
   }
   timer.construct_time += timer.Lap();
+
+  CurlFluxErrorEstimator estimator(iodata, spaceop.GetMaterialOp(), mesh,
+                                   spaceop.GetNDSpace());
+  timer.est_construction_time += timer.Lap();
 
   // Eigenvalue problem solve.
   Mpi::Print("\n");

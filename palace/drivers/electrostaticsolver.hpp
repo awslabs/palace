@@ -46,7 +46,7 @@ public:
   using BaseSolver::BaseSolver;
 
   ErrorIndicators Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
-                        Timer &timer) const override;
+                        Timer &timer) const final;
 };
 
 }  // namespace palace

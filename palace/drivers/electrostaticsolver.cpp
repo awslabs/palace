@@ -30,10 +30,6 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &me
   timer.Lap();
   std::vector<std::unique_ptr<mfem::Operator>> K, Ke;
   LaplaceOperator laplaceop(iodata, mesh);
-  timer.construct_time += timer.Lap();
-  GradFluxErrorEstimator estimator(iodata, laplaceop.GetMaterialOp(), mesh,
-                                   laplaceop.GetH1Space());
-  timer.est_construction_time += timer.Lap();
   laplaceop.GetStiffnessMatrix(K, Ke);
   SaveMetadata(laplaceop.GetH1Space());
 
@@ -121,6 +117,10 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &me
     timer.postpro_time += timer.Lap();
   }
 
+
+  GradFluxErrorEstimator estimator(iodata, laplaceop.GetMaterialOp(), mesh,
+                                   laplaceop.GetH1Space());
+
   // Evaluate error estimator and reduce over all
   auto indicators = ErrorIndicators(laplaceop.GetNDof());
   ErrorReductionOperator error_reducer;
@@ -130,6 +130,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &me
     error_reducer(indicators, estimator(V));
     timer.est_solve_time += timer.Lap();
   };
+  timer.est_construction_time += timer.Lap();
 
   std::for_each(V.begin(), V.end(), update_error_indicators);
 

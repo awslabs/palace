@@ -28,10 +28,6 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &me
   timer.Lap();
   std::vector<std::unique_ptr<mfem::Operator>> K;
   CurlCurlOperator curlcurlop(iodata, mesh);
-  timer.construct_time += timer.Lap();
-  CurlFluxErrorEstimator estimator(iodata, curlcurlop.GetMaterialOp(), mesh,
-                                   curlcurlop.GetNDSpace());
-  timer.est_construction_time += timer.Lap();
   curlcurlop.GetStiffnessMatrix(K);
   SaveMetadata(curlcurlop.GetNDSpace());
 
@@ -85,16 +81,6 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &me
   std::vector<mfem::Vector> A(nstep);
   timer.construct_time += timer.Lap();
 
-  // Initialize structures for storing and reducing the results of error estimation.
-  ErrorIndicators indicators(curlcurlop.GetNDof());
-  ErrorReductionOperator error_reducer;
-  auto update_error_indicators =
-      [&timer, &estimator, &indicators, &error_reducer](const auto &A)
-  {
-    error_reducer(indicators, estimator(A));
-    timer.est_solve_time += timer.Lap();
-  };
-
   // Main loop over current source boundaries.
   Mpi::Print("\nComputing magnetostatic fields for {:d} source boundar{}\n", nstep,
              (nstep > 1) ? "ies" : "y");
@@ -130,6 +116,21 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &me
     // Next source.
     ++step;
   }
+
+
+  CurlFluxErrorEstimator estimator(iodata, curlcurlop.GetMaterialOp(), mesh,
+                                   curlcurlop.GetNDSpace());
+
+  // Initialize structures for storing and reducing the results of error estimation.
+  ErrorIndicators indicators(curlcurlop.GetNDof());
+  ErrorReductionOperator error_reducer;
+  auto update_error_indicators =
+      [&timer, &estimator, &indicators, &error_reducer](const auto &A)
+  {
+    error_reducer(indicators, estimator(A));
+    timer.est_solve_time += timer.Lap();
+  };
+  timer.est_construction_time += timer.Lap();
 
   // Compute and reduce the error indicators for each solution.
   // TODO: Possible to treat this more efficiently by solving with multiple RHS.
