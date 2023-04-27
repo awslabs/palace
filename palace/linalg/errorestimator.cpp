@@ -18,21 +18,14 @@ namespace
 {
 
 // Given a grid function defining a vector solution, compute the error relative
-// to a vector coefficient. The default quadrature rule exactly integrates 2p +
-// q polynomials, but the quadrature order can be increased or decreased via
-// quad_order_increment.
-mfem::Vector ComputeElementLpErrors(const mfem::ParGridFunction &sol, double p,
-                                    mfem::VectorCoefficient &exsol,
-                                    int quad_order_increment = 0);
+// to a vector coefficient.
+mfem::Vector ComputeElementL2Errors(const mfem::ParGridFunction &sol,
+                                    mfem::VectorCoefficient &exsol);
 
-// Given a grid function defining a vector/scalar solution, compute the Lp norm of the
-// solution. The default quadrature rule exactly integrates 2p +
-// q polynomials, but the quadrature order can be increased or decreased via
-// quad_order_increment for non L2 norms.
-double ComputeVectorLpNorm(const mfem::ParGridFunction &sol, double p = 2,
-                           int quad_order_increment = 0);
-double ComputeScalarLpNorm(const mfem::ParGridFunction &sol, double p = 2,
-                           int quad_order_increment = 0);
+// Given a grid function defining a vector/scalar solution, compute the L2 norm of the
+// solution.
+double ComputeVectorL2Norm(const mfem::ParGridFunction &sol);
+double ComputeScalarL2Norm(const mfem::ParGridFunction &sol);
 
 }  // namespace
 
@@ -122,8 +115,8 @@ mfem::Vector CurlFluxErrorEstimator::operator()(const petsc::PetscParVector &v) 
 
   auto smooth_flux_func = build_func(smooth_flux, smooth_flux_fes.GetFinestFESpace());
 
-  real_error = ComputeElementLpErrors(smooth_flux_func.real(), normp, real_coef);
-  imag_error = ComputeElementLpErrors(smooth_flux_func.imag(), normp, imag_coef);
+  real_error = ComputeElementL2Errors(smooth_flux_func.real(), real_coef);
+  imag_error = ComputeElementL2Errors(smooth_flux_func.imag(), imag_coef);
 
   // Compute the magnitude of the complex valued error.
   auto magnitude = [](const auto &r, const auto &i) { return std::sqrt(r * r + i * i); };
@@ -132,8 +125,8 @@ mfem::Vector CurlFluxErrorEstimator::operator()(const petsc::PetscParVector &v) 
                  estimates.begin(), magnitude);
 
   // Normalize the error by the solution L2 norm.
-  const auto normalization = std::sqrt(std::pow(ComputeVectorLpNorm(field.real(), 2), 2.0) +
-                                       std::pow(ComputeVectorLpNorm(field.imag(), 2), 2.0));
+  const auto normalization = std::sqrt(std::pow(ComputeVectorL2Norm(field.real()), 2.0) +
+                                       std::pow(ComputeVectorL2Norm(field.imag()), 2.0));
 
   std::for_each(estimates.begin(), estimates.end(),
                 [&normalization](auto &x) { x /= normalization; });
@@ -227,7 +220,7 @@ mfem::Vector GradFluxErrorEstimator::operator()(const mfem::Vector &v) const
 
   // local_timer.est_construction_time += local_timer.Lap();
 
-  auto estimates = ComputeElementLpErrors(smooth_flux_func, normp, coef);
+  auto estimates = ComputeElementL2Errors(smooth_flux_func, coef);
 
   // mfem::L2_FECollection est_fec(0, 3);
   // mfem::ParFiniteElementSpace est_fes(fes.GetParMesh(), &est_fec);
@@ -239,7 +232,7 @@ mfem::Vector GradFluxErrorEstimator::operator()(const mfem::Vector &v) const
   // local_timer.est_solve_time += local_timer.Lap();
 
   // Normalize the error by the solution L2 norm, ensures reductions are well scaled.
-  const auto normalization = ComputeScalarLpNorm(field);
+  const auto normalization = ComputeScalarL2Norm(field);
   std::for_each(estimates.begin(), estimates.end(),
                 [&normalization](auto &x) { x /= normalization; });
 
@@ -262,25 +255,21 @@ mfem::Vector GradFluxErrorEstimator::operator()(const mfem::Vector &v) const
 
 namespace
 {
-mfem::Vector ComputeElementLpErrors(const mfem::ParGridFunction &sol, double p,
-                                    mfem::VectorCoefficient &exsol,
-                                    int quad_order_increment)
+mfem::Vector ComputeElementL2Errors(const mfem::ParGridFunction &sol,
+                                    mfem::VectorCoefficient &exsol)
 {
   auto &fes = *sol.ParFESpace();
-
-  MFEM_VERIFY(p < mfem::infinity(), "Do not use this routine to compute Linf norm\n");
 
   mfem::Vector error(fes.GetNE());
   error = 0.0;
 
   mfem::DenseMatrix vals, exact_vals;
-  mfem::Vector loc_errs;
 
   for (int i = 0; i < fes.GetNE(); ++i)
   {
     const auto &fe = *fes.GetFE(i);
     auto &T = *fes.GetElementTransformation(i);
-    const auto &ir = *utils::GetDefaultRule(fe, T, quad_order_increment);
+    const auto &ir = *utils::GetDefaultRule(fe, T);
 
     sol.GetVectorValues(T, ir, vals);
     exsol.Eval(exact_vals, T, ir);
@@ -289,112 +278,93 @@ mfem::Vector ComputeElementLpErrors(const mfem::ParGridFunction &sol, double p,
 
     for (int j = 0; j < ir.GetNPoints(); ++j)
     {
-      // Combine components
-      double component = 0.0;
-      for (int c = 0; c < vals.Height(); ++c)
-      {
-        component += std::pow(std::abs(vals(c, j)), p);
-      }
-
       const auto &ip = ir.IntPoint(j);
       T.SetIntPoint(&ip);
 
-      error[i] += ip.weight * T.Weight() * component;
+      error[i] += ip.weight * T.Weight() *
+        (vals(0, j)*vals(0, j) + vals(1, j)*vals(1, j) + vals(2, j)*vals(2, j));
     }
-    error[i] = std::pow(std::abs(error[i]), 1 / p);
+    error[i] = std::sqrt(std::abs(error[i]));
   }
   return error;
 }
 
-double ComputeVectorLpNorm(const mfem::ParGridFunction &sol, double p,
-                           int quad_order_increment)
+double ComputeVectorL2Norm(const mfem::ParGridFunction &sol)
 {
   auto &fes = *sol.ParFESpace();
   const int nelem = fes.GetNE();
 
-  MFEM_VERIFY(p < mfem::infinity(), "Do not use this routine to compute Linf norm\n");
-
   mfem::DenseMatrix vals;
-  mfem::Vector loc, elem_norm(nelem);
 
-  elem_norm = 0.0;
-
+  double norm2 = 0.0;
   for (int i = 0; i < fes.GetNE(); ++i)
   {
     const auto &fe = *fes.GetFE(i);
     auto &T = *fes.GetElementTransformation(i);
-    const auto &ir = *utils::GetDefaultRule(fe, T, quad_order_increment);
+    const auto &ir = *utils::GetDefaultRule(fe, T);
     sol.GetVectorValues(T, ir, vals);
 
+    MFEM_ASSERT(vals.Height() == 3, "!");
+
+    double elem_norm2 = 0;
     for (int j = 0; j < ir.GetNPoints(); ++j)
     {
       // Combine components
       double component = 0.0;
-      for (int c = 0; c < vals.Height(); ++c)
+      for (int c = 0; c < 3; ++c)
       {
-        component += std::pow(std::abs(vals(c, j)), p);
+        component += std::pow(std::abs(vals(c, j)), 2.0);
       }
 
       const auto &ip = ir.IntPoint(j);
       T.SetIntPoint(&ip);
 
-      elem_norm[i] += ip.weight * T.Weight() * component;
+      elem_norm2 += ip.weight * T.Weight() *
+        (vals(0, j)*vals(0, j) + vals(1, j)*vals(1, j) + vals(2, j)*vals(2, j));
     }
 
     // Negative quadrature weights might case elemental norms to have been
     // negative, correct this before accumulation.
-    elem_norm[i] = std::abs(elem_norm[i]);
+    norm2 += std::abs(elem_norm2);
   }
 
-  // (∑ₑ ∫ₑ|u|^p)^(1/p)
-  auto norm = std::accumulate(elem_norm.begin(), elem_norm.end(), 0.0);
+  Mpi::GlobalSum(1, &norm2, Mpi::World());
 
-  Mpi::GlobalSum(1, &norm, Mpi::World());
-
-  norm = std::pow(norm, 1.0 / p);
-
-  return norm;
+  return std::sqrt(norm2);
 }
 
-double ComputeScalarLpNorm(const mfem::ParGridFunction &sol, double p,
-                           int quad_order_increment)
+double ComputeScalarL2Norm(const mfem::ParGridFunction &sol)
 {
   auto &fes = *sol.ParFESpace();
   const int nelem = fes.GetNE();
 
-  MFEM_VERIFY(p < mfem::infinity(), "Do not use this routine to compute Linf norm\n");
+  mfem::Vector vals;
 
-  mfem::Vector vals, elem_norm(nelem);
-
-  elem_norm = 0.0;
+  double norm2 = 0.0;
 
   for (int i = 0; i < fes.GetNE(); ++i)
   {
     const auto &fe = *fes.GetFE(i);
     auto &T = *fes.GetElementTransformation(i);
-    const auto &ir = *utils::GetDefaultRule(fe, T, quad_order_increment);
+    const auto &ir = *utils::GetDefaultRule(fe, T);
     sol.GetValues(T, ir, vals);
 
+    double elem_norm2 = 0.0;
     for (int j = 0; j < ir.GetNPoints(); ++j)
     {
       const auto &ip = ir.IntPoint(j);
       T.SetIntPoint(&ip);
-      elem_norm[i] += ip.weight * T.Weight() * std::pow(std::abs(vals(j)), p);
+      elem_norm2 += ip.weight * T.Weight() * vals(j) * vals(j);
     }
 
     // Negative quadrature weights might cause elemental norms to have been
     // negative.
-    elem_norm[i] = std::abs(elem_norm[i]);
+    norm2 += std::abs(elem_norm2);
   }
 
-  // (∑ₑ ∫ₑ|u|^p)^(1/p)
-  auto norm = std::accumulate(elem_norm.begin(), elem_norm.end(), 0.0);
+  Mpi::GlobalSum(1, &norm2, Mpi::World());
 
-  Mpi::GlobalSum(1, &norm, Mpi::World());
-
-  norm = std::pow(norm, 1.0 / p);
-
-  return norm;
+  return std::sqrt(norm2);
 }
 }  // namespace
 
