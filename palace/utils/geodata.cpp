@@ -95,11 +95,12 @@ mfem::ParMesh ReadMesh(MPI_Comm comm, const IoData &iodata, bool reorder, bool c
 
   // If non simplex elements are present, AMR must be nonconforming.
   const auto element_types = CheckElements(mesh);
-  const auto use_amr = iodata.model.refinement.adaptation.max_its > 1;
+  const auto use_amr = iodata.model.refinement.adaptation.max_its > 0;
 
   const bool use_nc = (element_types.has_tensors || element_types.has_pyramids ||
                        element_types.has_wedges ||
                        iodata.model.refinement.adaptation.non_conformal_simplices);
+
   if (use_amr && use_nc)
   {
     mesh.EnsureNCMesh(iodata.model.refinement.adaptation.non_conformal_simplices);
@@ -586,14 +587,13 @@ void GetSurfaceNormal(mfem::ParMesh &mesh, const mfem::Array<int> &marker,
 
 void RebalanceConformalMesh(std::unique_ptr<mfem::ParMesh> &mesh)
 {
-  auto smesh = mesh->GetSerialMesh(0);
   auto comm = mesh->GetComm();
+  auto smesh = mesh->GetSerialMesh(0);
 
   // Send each processor's component as a byte string.
   std::vector<std::string> so;
   if (Mpi::Root(comm))
   {
-
     auto partitioning = GetMeshPartitioning(smesh, Mpi::Size(comm), std::string());
     mfem::MeshPartitioner partitioner(smesh, Mpi::Size(comm), partitioning.get());
     so.reserve(Mpi::Size(comm));

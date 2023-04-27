@@ -207,7 +207,8 @@ BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<mfem::ParMesh>> 
     bool ret = false;
     // run out of DOFs, and coarsening isn't allowed.
     ret |= (!use_coarsening && indicators.ndof > param.dof_limit);
-    ret |= iter > param.max_its;
+    // run out of iterations
+    ret |= iter >= param.max_its;
     // There are no resources for transient amr.
     // TODO: remove this once transient simulations are supported.
     ret |= dynamic_cast<const TransientSolver *>(this) != nullptr;
@@ -237,8 +238,8 @@ BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<mfem::ParMesh>> 
       mesh.back()->GeneralRefinement(marked_elements, 1, param.max_nc_levels);
       const auto final_elem_count = mesh.back()->GetGlobalNE();
       Mpi::Print("Mesh refinement added {} elements. Initial: {}, Final: {}\n",
-                 final_elem_count - initial_elem_count, initial_elem_count,
-                 final_elem_count);
+                 final_elem_count - initial_elem_count,
+                 initial_elem_count, final_elem_count);
     }
     else if (use_coarsening)
     {
@@ -267,8 +268,14 @@ BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<mfem::ParMesh>> 
 
       const double threshold =
           utils::ComputeDorflerThreshold(1 - param.coarsening_fraction, coarse_error);
+
+      const auto initial_elem_count = mesh.back()->GetGlobalNE();
       mesh.back()->DerefineByError(indicators.local_error_indicators, threshold,
                                    param.max_nc_levels);
+      const auto final_elem_count = mesh.back()->GetGlobalNE();
+      Mpi::Print("Mesh coarsening removed {} elements. Initial: {}, Final: {}\n",
+                 initial_elem_count - final_elem_count,
+                 initial_elem_count, final_elem_count);
     }
 
     RebalanceMesh(mesh.back());

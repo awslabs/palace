@@ -9,7 +9,7 @@
 namespace palace
 {
 
-void ErrorReductionOperator::operator()(ErrorIndicators &ebar, mfem::Vector &&ind,
+void ErrorReductionOperator::operator()(ErrorIndicators &ebar, const mfem::Vector &ind,
                                         double p) const
 {
 
@@ -41,7 +41,7 @@ void ErrorReductionOperator::operator()(ErrorIndicators &ebar, mfem::Vector &&in
   else
   {
     // This is the first sample, just steal the data.
-    ebar.local_error_indicators = std::move(ind);
+    ebar.local_error_indicators = ind;
   }
 
   // Another sample has been added, increment for the running average lambda.

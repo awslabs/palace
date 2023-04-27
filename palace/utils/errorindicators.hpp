@@ -42,7 +42,7 @@ class ErrorReductionOperator
 public:
   // Reduce a vector indicators, i, computed with norm p, into the combined
   // error indicator e.
-  void operator()(ErrorIndicators &e, mfem::Vector &&i, double p = 2) const;
+  void operator()(ErrorIndicators &e, const mfem::Vector &i, double p = 2) const;
 };
 
 }  // namespace palace

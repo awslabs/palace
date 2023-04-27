@@ -388,9 +388,8 @@ void PostOperator::SetIndicatorGridFunction(const mfem::Vector &i)
 {
   indicator_field = mfem::ParGridFunction(&indicator_fes);
   indicator_field->SetFromTrueDofs(i);
-  indicator_field->ExchangeFaceNbrData();  // Probably unnecessary, no face shared data.
   // Reregistration overwrites the underlying.
-  paraview.RegisterField("ErrorIndicator", &indicator_field.value());
+  paraview.RegisterField("ErrorIndicator", std::addressof(indicator_field.value()));
 }
 
 void PostOperator::UpdatePorts(const LumpedPortOperator &lumped_port_op, double omega)

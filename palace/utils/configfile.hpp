@@ -140,7 +140,7 @@ struct AdaptiveRefinementData
   // adaptation, e.g. save_step = 3 means save every third adaptation.
   int save_step = 0;
   // Whether or not to use non-conforming adaptation for simplex elements.
-  bool non_conformal_simplices = false;
+  bool non_conformal_simplices = true;
 };
 
 struct RefinementData

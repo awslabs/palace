@@ -309,7 +309,7 @@ void RefinementData::SetUp(json &model)
     MFEM_VERIFY(adaptation.tolerance > 0, "\"Tol\" must be strictly positive");
     MFEM_VERIFY(adaptation.max_its >= 0, "\"MaxIts\" must be non-negative");
     MFEM_VERIFY(adaptation.min_its >= 0, "\"MinIts\" must be non-negative");
-    MFEM_VERIFY(adaptation.min_its < adaptation.max_its,
+    MFEM_VERIFY(adaptation.min_its <= adaptation.max_its,
                 "\"MinIts\" must be smaller than \"MaxIts\": " << adaptation.min_its << ","
                                                                << adaptation.max_its);
     MFEM_VERIFY(adaptation.update_fraction > 0 && adaptation.update_fraction < 1,
