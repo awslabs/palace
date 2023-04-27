@@ -9,6 +9,7 @@
 #include "utils/mfemcoefficients.hpp"
 #include "utils/mfemintegrators.hpp"
 #include "utils/multigrid.hpp"
+#include "utils/timer.hpp"
 
 namespace palace
 {
@@ -47,7 +48,7 @@ CurlFluxErrorEstimator::CurlFluxErrorEstimator(
         mesh.back()->Dimension())),
     smooth_flux_fes(utils::ConstructFiniteElementSpaceHierarchy<mfem::ND_FECollection>(
         mesh, smooth_flux_fecs)),
-    projector(smooth_flux_fes, iodata.solver.linear.tol, 200, iodata.problem.verbose)
+    projector(smooth_flux_fes, iodata.solver.linear.tol * 10, 200, iodata.problem.verbose)
 {
 }
 
@@ -60,7 +61,7 @@ CurlFluxErrorEstimator::CurlFluxErrorEstimator(const IoData &iodata,
         iodata.solver.linear.mat_gmg, false, iodata.solver.order, mesh->Dimension())),
     smooth_flux_fes(utils::ConstructFiniteElementSpaceHierarchy<mfem::ND_FECollection>(
         mesh, smooth_flux_fecs)),
-    projector(smooth_flux_fes, iodata.solver.linear.tol, 200, iodata.problem.verbose)
+    projector(smooth_flux_fes, iodata.solver.linear.tol * 10, 200, iodata.problem.verbose)
 {
 }
 
@@ -91,11 +92,9 @@ mfem::Vector CurlFluxErrorEstimator::operator()(const petsc::PetscParVector &v) 
     return RHS;
   };
 
-  const auto flux =
-      ComplexVector(rhs_from_coef(smooth_flux_fes.GetFinestFESpace(), real_coef),
+  const auto pflux = petsc::PetscParVector(v.GetComm(),
+                    rhs_from_coef(smooth_flux_fes.GetFinestFESpace(), real_coef),
                     rhs_from_coef(smooth_flux_fes.GetFinestFESpace(), imag_coef));
-
-  const auto pflux = petsc::PetscParVector(v.GetComm(), flux);
 
   // Given the RHS vector of non-smooth flux, construct a flux projector and
   // perform mass matrix inversion in the appropriate space, giving f = M⁻¹ f̂.
@@ -152,7 +151,7 @@ GradFluxErrorEstimator::GradFluxErrorEstimator(
         mesh.back()->Dimension())),
     smooth_flux_fes(utils::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
         mesh, smooth_flux_fecs, mesh.back()->Dimension())),
-    projector(smooth_flux_fes, iodata.solver.linear.tol, 200, iodata.problem.verbose)
+    projector(smooth_flux_fes, iodata.solver.linear.tol * 10, 200, iodata.problem.verbose)
 {
 }
 
@@ -165,12 +164,13 @@ GradFluxErrorEstimator::GradFluxErrorEstimator(const IoData &iodata,
         iodata.solver.linear.mat_gmg, false, iodata.solver.order, mesh->Dimension())),
     smooth_flux_fes(utils::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
         mesh, smooth_flux_fecs, mesh->Dimension())),
-    projector(smooth_flux_fes, iodata.solver.linear.tol, 200, iodata.problem.verbose)
+    projector(smooth_flux_fes, iodata.solver.linear.tol * 10, 200, iodata.problem.verbose)
 {
 }
 
 mfem::Vector GradFluxErrorEstimator::operator()(const mfem::Vector &v) const
 {
+  // Timer local_timer;
   mfem::ParGridFunction field(&fes);
   field.SetFromTrueDofs(v);
 
@@ -193,7 +193,12 @@ mfem::Vector GradFluxErrorEstimator::operator()(const mfem::Vector &v) const
     return RHS;
   };
 
+  // mfem::ParaViewDataCollection paraview("debug", fes.GetParMesh());
+  // paraview.SetLengthScale(1e-2);
+  // paraview.RegisterVCoeffField("Flux", &coef);
+
   const auto flux = rhs_from_coef(smooth_flux_fes.GetFinestFESpace(), coef);
+  // local_timer.construct_time += local_timer.Lap();
 
   // Given the RHS vector of non-smooth flux, construct a flux projector and
   // perform mass matrix inversion in the appropriate space, giving f = M⁻¹ f̂.
@@ -206,6 +211,8 @@ mfem::Vector GradFluxErrorEstimator::operator()(const mfem::Vector &v) const
   };
   auto smooth_flux = build_smooth_flux(flux);
 
+  // local_timer.solve_time += local_timer.Lap();
+
   // Given a solution represented with a Vector, build a GridFunction for evaluation.
   auto build_func = [](const mfem::Vector &f, mfem::ParFiniteElementSpace &fes)
   {
@@ -216,12 +223,39 @@ mfem::Vector GradFluxErrorEstimator::operator()(const mfem::Vector &v) const
 
   auto smooth_flux_func = build_func(smooth_flux, smooth_flux_fes.GetFinestFESpace());
 
+  // paraview.RegisterField("SmoothFlux", &smooth_flux_func);
+
+  // local_timer.est_construction_time += local_timer.Lap();
+
   auto estimates = ComputeElementLpErrors(smooth_flux_func, normp, coef);
 
+  // mfem::L2_FECollection est_fec(0, 3);
+  // mfem::ParFiniteElementSpace est_fes(fes.GetParMesh(), &est_fec);
+  // mfem::ParGridFunction est_field(&est_fes);
+  // est_field.SetFromTrueDofs(estimates);
+
+  // paraview.RegisterField("ErrorIndicator", &est_field);
+
+  // local_timer.est_solve_time += local_timer.Lap();
+
   // Normalize the error by the solution L2 norm, ensures reductions are well scaled.
-  const auto normalization = ComputeScalarLpNorm(field, 2);
+  const auto normalization = ComputeScalarLpNorm(field);
   std::for_each(estimates.begin(), estimates.end(),
                 [&normalization](auto &x) { x /= normalization; });
+
+  auto max_loc = std::max_element(estimates.begin(), estimates.end());
+  // local_timer.postpro_time += local_timer.Lap();
+
+  // mfem::ParGridFunction norm_est_field(&est_fes);
+  // norm_est_field.SetFromTrueDofs(estimates);
+  // paraview.RegisterField("NormalizedErrorIndicator", &norm_est_field);
+
+  // paraview.Save();
+
+  Mpi::Print("GradFluxErrorEstimationProfiling");
+  // local_timer.Reduce(Mpi::World());
+
+  // local_timer.Print(Mpi::World());
 
   return estimates;
 }
