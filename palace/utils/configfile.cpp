@@ -329,6 +329,9 @@ void RefinementData::SetUp(json &model)
     MFEM_VERIFY(adaptation.construct_geometric_multigrid == false,
                 "Geometric multigrid not supported yet.");
 
+    MFEM_VERIFY(adaptation.max_its == 0 || uniform_ref_levels == 0,
+                "Cannot use adaptation with uniform refinement.");
+
     // Cleanup
     const auto fields = {"Tol",
                          "MaxIts",

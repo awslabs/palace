@@ -117,7 +117,6 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &me
     ++step;
   }
 
-
   CurlFluxErrorEstimator estimator(iodata, curlcurlop.GetMaterialOp(), mesh,
                                    curlcurlop.GetNDSpace());
 

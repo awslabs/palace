@@ -228,18 +228,12 @@ BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<mfem::ParMesh>> 
       const auto marked_elements =
           MarkedElements(threshold, indicators.local_error_indicators);
 
-      if (param.construct_geometric_multigrid)
-      {
-        // If building a geometric multigrid, duplicate the final mesh.
-        mesh.emplace_back(std::make_unique<mfem::ParMesh>(*mesh.back(), true));
-      }
-
       const auto initial_elem_count = mesh.back()->GetGlobalNE();
       mesh.back()->GeneralRefinement(marked_elements, 1, param.max_nc_levels);
       const auto final_elem_count = mesh.back()->GetGlobalNE();
       Mpi::Print("Mesh refinement added {} elements. Initial: {}, Final: {}\n",
-                 final_elem_count - initial_elem_count,
-                 initial_elem_count, final_elem_count);
+                 final_elem_count - initial_elem_count, initial_elem_count,
+                 final_elem_count);
     }
     else if (use_coarsening)
     {
@@ -274,8 +268,8 @@ BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<mfem::ParMesh>> 
                                    param.max_nc_levels);
       const auto final_elem_count = mesh.back()->GetGlobalNE();
       Mpi::Print("Mesh coarsening removed {} elements. Initial: {}, Final: {}\n",
-                 initial_elem_count - final_elem_count,
-                 initial_elem_count, final_elem_count);
+                 initial_elem_count - final_elem_count, initial_elem_count,
+                 final_elem_count);
     }
 
     RebalanceMesh(mesh.back());

@@ -92,9 +92,9 @@ mfem::Vector CurlFluxErrorEstimator::operator()(const petsc::PetscParVector &v) 
     return RHS;
   };
 
-  const auto pflux = petsc::PetscParVector(v.GetComm(),
-                    rhs_from_coef(smooth_flux_fes.GetFinestFESpace(), real_coef),
-                    rhs_from_coef(smooth_flux_fes.GetFinestFESpace(), imag_coef));
+  const auto pflux = petsc::PetscParVector(
+      v.GetComm(), rhs_from_coef(smooth_flux_fes.GetFinestFESpace(), real_coef),
+      rhs_from_coef(smooth_flux_fes.GetFinestFESpace(), imag_coef));
 
   // Given the RHS vector of non-smooth flux, construct a flux projector and
   // perform mass matrix inversion in the appropriate space, giving f = M⁻¹ f̂.
@@ -252,7 +252,7 @@ mfem::Vector GradFluxErrorEstimator::operator()(const mfem::Vector &v) const
 
   // paraview.Save();
 
-  Mpi::Print("GradFluxErrorEstimationProfiling");
+  // Mpi::Print("GradFluxErrorEstimationProfiling");
   // local_timer.Reduce(Mpi::World());
 
   // local_timer.Print(Mpi::World());

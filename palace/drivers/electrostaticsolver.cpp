@@ -26,7 +26,6 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &me
   // dofs. The eliminated matrix is stored in order to construct the RHS vector for nonzero
   // prescribed BC values.
 
-
   timer.Lap();
   std::vector<std::unique_ptr<mfem::Operator>> K, Ke;
   LaplaceOperator laplaceop(iodata, mesh);
@@ -116,7 +115,6 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &me
                std::sqrt(mfem::InnerProduct(mesh.back()->GetComm(), RHS, RHS)));
     timer.postpro_time += timer.Lap();
   }
-
 
   GradFluxErrorEstimator estimator(iodata, laplaceop.GetMaterialOp(), mesh,
                                    laplaceop.GetH1Space());
