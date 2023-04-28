@@ -16,11 +16,12 @@ void ErrorReductionOperator::operator()(ErrorIndicators &ebar, const mfem::Vecto
   // Compute the global indicator across all processors
   auto comm = Mpi::World();
   double candidate_global_error_indicator =
-      std::pow(std::transform_reduce(ind.begin(), ind.end(), 0.0, std::plus(),
-                                     [&p](auto val) { return std::pow(val, p); }),
-               1 / p);
+      std::transform_reduce(ind.begin(), ind.end(), 0.0, std::plus(),
+                                     [&p](auto val) { return std::pow(val, p); });
 
   Mpi::GlobalSum(1, &candidate_global_error_indicator, comm);
+
+  candidate_global_error_indicator = std::pow(candidate_global_error_indicator, 1.0 / p);
 
   ebar.global_error_indicator =
       std::max(ebar.global_error_indicator, candidate_global_error_indicator);
