@@ -30,7 +30,16 @@ class CurlFluxErrorEstimator
 
   std::vector<std::unique_ptr<mfem::ND_FECollection>> smooth_flux_fecs;
   mutable mfem::ParFiniteElementSpaceHierarchy smooth_flux_fes;
-  mutable FluxProjector projector;
+  mutable FluxProjector smooth_projector;
+
+  mfem::ParBilinearForm mass;
+
+  std::vector<std::unique_ptr<mfem::L2_FECollection>> coarse_flux_fecs;
+  mutable mfem::ParFiniteElementSpaceHierarchy coarse_flux_fes;
+  mutable FluxProjector coarse_projector;
+
+  mfem::ParDiscreteLinearOperator smooth_to_coarse;
+  std::vector<mfem::DenseMatrix> scalar_mass_matrices;
 
 public:
   // Constructor for using geometric and p multigrid
