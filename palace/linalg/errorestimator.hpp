@@ -66,7 +66,7 @@ class GradFluxErrorEstimator
   mutable mfem::ParFiniteElementSpaceHierarchy coarse_flux_fes;
   mutable FluxProjector coarse_projector;
 
-  mfem::TransferOperator smooth_to_coarse;
+  mfem::TrueTransferOperator smooth_to_coarse;
   std::vector<mfem::DenseMatrix> scalar_mass_matrices;
 
 public:

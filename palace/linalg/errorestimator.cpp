@@ -253,71 +253,37 @@ mfem::Vector GradFluxErrorEstimator::operator()(const mfem::Vector &v) const
     return flux;
   };
 
-  auto smooth_flux_func = build_func(smooth_flux, smooth_flux_fes.GetFinestFESpace());
-
-  local_timer.est_construction_time += local_timer.Lap();
-
-  // The smooth flux is in p, the coefficient is p-1, so reduce the quad order by 1.
-  auto estimates = ComputeElementL2Errors(smooth_flux_func, coef, -1);
-
-  local_timer.est_solve_time += local_timer.Lap();
-
   const auto coarse_flux_rhs = rhs_from_coef(coarse_flux_fes.GetFinestFESpace(), coef);
   local_timer.construct_time += local_timer.Lap();
   auto coarse_flux = build_flux(coarse_projector, coarse_flux_rhs);
   local_timer.solve_time += local_timer.Lap();
 
-  auto coarse_flux_func = build_func(coarse_flux, coarse_flux_fes.GetFinestFESpace());
-  local_timer.est_construction_time += local_timer.Lap();
-  mfem::Vector estimates2(nelem);
-  for (int i = 0; i < nelem; ++i)
-  {
-    // This uses 2p + 1 quadrature -> To match this, can use the
-    // quad_order_increment argument to ComputeElementL2Errors.
-    estimates2[i] = mfem::ComputeElementLpDistance(2, i, smooth_flux_func, coarse_flux_func);
-  }
-  local_timer.est_solve_time += local_timer.Lap();
-
-  estimates2 -= estimates;
-
-  std::cout << "Delta 2 : " << estimates2.Normlinf() << '\n';
-
   smooth_to_coarse.AddMult(smooth_flux, coarse_flux, -1.0);
 
   mfem::Array<int> dofs;
-  mfem::Vector coarse_sub_vec, fine_sub_vec;
-  mfem::Vector estimates3(nelem);
+  mfem::Vector coarse_sub_vec;
+  mfem::Vector estimates(nelem);
   for (int e = 0; e < fes.GetNE(); ++e)
   {
     coarse_flux_fes.GetFinestFESpace().GetElementVDofs(e, dofs);
     coarse_flux.GetSubVector(dofs, coarse_sub_vec);
 
     int ndof = coarse_sub_vec.Size() / 3;
-    std::cout << "nvdof = " << dofs.Size() << '\n';
-    std::cout << "scalar_mass_matrices[e].Size " << scalar_mass_matrices[e].Height() << " " << scalar_mass_matrices[e].Width() << '\n';
-    estimates3[e] = scalar_mass_matrices[e].InnerProduct(coarse_sub_vec.GetData(), coarse_sub_vec.GetData());
+    estimates[e] = scalar_mass_matrices[e].InnerProduct(coarse_sub_vec.GetData(), coarse_sub_vec.GetData());
     for (int c = 1; c < 3; ++c)
     {
       double *slice = coarse_sub_vec.GetData() + c * ndof;
-      estimates3[e] += scalar_mass_matrices[e].InnerProduct(slice, slice);
+      estimates[e] += scalar_mass_matrices[e].InnerProduct(slice, slice);
     }
 
-    estimates3[e] = std::sqrt(estimates3[e]);
+    estimates[e] = std::sqrt(estimates[e]);
   }
-
-  estimates3 -= estimates;
-
-  std::cout << "Delta 3 : " << estimates3.Normlinf() << '\n';
-
-  // Normalize the error by the solution L2 norm, ensures reductions are well scaled.
-  // const auto normalization2 = ComputeScalarL2Norm(field);
 
   double normalization = mass.InnerProduct(field, field);
   Mpi::GlobalSum(1, &normalization, field.ParFESpace()->GetComm());
 
   normalization = std::sqrt(normalization);
 
-  // std::cout << "normalization " << normalization << " normalization2 " << normalization2 << '\n';
   std::for_each(estimates.begin(), estimates.end(),
                 [&normalization](auto &x) { x /= normalization; });
 
@@ -330,6 +296,7 @@ mfem::Vector GradFluxErrorEstimator::operator()(const mfem::Vector &v) const
     mfem::ParaViewDataCollection paraview("debug", fes.GetParMesh());
     paraview.RegisterVCoeffField("Flux", &coef);
 
+    auto smooth_flux_func = build_func(smooth_flux, smooth_flux_fes.GetFinestFESpace());
     paraview.RegisterField("SmoothFlux", &smooth_flux_func);
 
     mfem::L2_FECollection est_fec(0, 3);
@@ -342,7 +309,7 @@ mfem::Vector GradFluxErrorEstimator::operator()(const mfem::Vector &v) const
     paraview.Save();
   }
 
-  if constexpr (true)
+  if constexpr (false)
   {
     Mpi::Print("GradFluxErrorEstimation Profiling");
     local_timer.Reduce(Mpi::World());
