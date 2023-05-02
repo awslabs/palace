@@ -26,9 +26,10 @@ CurlFluxErrorEstimator::CurlFluxErrorEstimator(
         mesh.back()->Dimension())),
     smooth_flux_fes(utils::ConstructFiniteElementSpaceHierarchy<mfem::ND_FECollection>(
         mesh, smooth_flux_fecs)),
-    smooth_projector(smooth_flux_fes, iodata.solver.linear.tol, 200, iodata.problem.verbose),
-    mass(&fes),
-    coarse_flux_fec(iodata.solver.order, mesh.back()->Dimension(), mfem::BasisType::GaussLobatto),
+    smooth_projector(smooth_flux_fes, iodata.solver.linear.tol, 200,
+                     iodata.problem.verbose),
+    mass(&fes), coarse_flux_fec(iodata.solver.order, mesh.back()->Dimension(),
+                                mfem::BasisType::GaussLobatto),
     coarse_flux_fes(mesh.back().get(), &coarse_flux_fec, mesh.back()->Dimension()),
     scalar_mass_matrices(fes.GetNE()), smooth_to_coarse_embed(fes.GetNE())
 {
@@ -59,7 +60,8 @@ CurlFluxErrorEstimator::CurlFluxErrorEstimator(const IoData &iodata,
         iodata.solver.linear.mat_gmg, false, iodata.solver.order, mesh->Dimension())),
     smooth_flux_fes(utils::ConstructFiniteElementSpaceHierarchy<mfem::ND_FECollection>(
         mesh, smooth_flux_fecs)),
-    smooth_projector(smooth_flux_fes, iodata.solver.linear.tol, 200, iodata.problem.verbose),
+    smooth_projector(smooth_flux_fes, iodata.solver.linear.tol, 200,
+                     iodata.problem.verbose),
     mass(&fes),
     coarse_flux_fec(iodata.solver.order, mesh->Dimension(), mfem::BasisType::GaussLobatto),
     coarse_flux_fes(mesh.get(), &coarse_flux_fec, mesh->Dimension()),
@@ -79,7 +81,6 @@ CurlFluxErrorEstimator::CurlFluxErrorEstimator(const IoData &iodata,
     const auto &smooth_fe = *smooth_flux_fes.GetFinestFESpace().GetFE(e);
     auto &fine_T = *coarse_flux_fes.GetElementTransformation(e);
     coarse_fe.Project(smooth_fe, fine_T, smooth_to_coarse_embed[e]);
-
   }
 
   mass.AddDomainIntegrator(new mfem::VectorFEMassIntegrator);
@@ -120,7 +121,8 @@ mfem::Vector CurlFluxErrorEstimator::operator()(const petsc::PetscParVector &v) 
 
   // Given the RHS vector of non-smooth flux, construct a flux projector and
   // perform mass matrix inversion in the appropriate space, giving f = M⁻¹ f̂.
-  auto build_flux = [this](const FluxProjector &proj, const petsc::PetscParVector &flux_coef)
+  auto build_flux =
+      [this](const FluxProjector &proj, const petsc::PetscParVector &flux_coef)
   {
     // Use a copy construction to match appropriate size.
     petsc::PetscParVector flux(flux_coef);
@@ -190,7 +192,8 @@ mfem::Vector CurlFluxErrorEstimator::operator()(const petsc::PetscParVector &v) 
   }
   local_timer.est_solve_time += local_timer.Lap();
 
-  auto normalization = mass.InnerProduct(field.real(), field.real()) + mass.InnerProduct(field.imag(), field.imag());
+  auto normalization = mass.InnerProduct(field.real(), field.real()) +
+                       mass.InnerProduct(field.imag(), field.imag());
   Mpi::GlobalSum(1, &normalization, field.ParFESpace()->GetComm());
   normalization = std::sqrt(normalization);
 
@@ -241,9 +244,10 @@ GradFluxErrorEstimator::GradFluxErrorEstimator(
         mesh.back()->Dimension())),
     smooth_flux_fes(utils::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
         mesh, smooth_flux_fecs, mesh.back()->Dimension())),
-    smooth_projector(smooth_flux_fes, iodata.solver.linear.tol, 200, iodata.problem.verbose),
-    mass(&fes),
-    coarse_flux_fec(iodata.solver.order, mesh.back()->Dimension(), mfem::BasisType::GaussLobatto),
+    smooth_projector(smooth_flux_fes, iodata.solver.linear.tol, 200,
+                     iodata.problem.verbose),
+    mass(&fes), coarse_flux_fec(iodata.solver.order, mesh.back()->Dimension(),
+                                mfem::BasisType::GaussLobatto),
     coarse_flux_fes(mesh.back().get(), &coarse_flux_fec, mesh.back()->Dimension()),
     scalar_mass_matrices(fes.GetNE()), smooth_to_coarse_embed(fes.GetNE())
 {
@@ -275,12 +279,12 @@ GradFluxErrorEstimator::GradFluxErrorEstimator(const IoData &iodata,
         iodata.solver.linear.mat_gmg, false, iodata.solver.order, mesh->Dimension())),
     smooth_flux_fes(utils::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
         mesh, smooth_flux_fecs, mesh->Dimension())),
-    smooth_projector(smooth_flux_fes, iodata.solver.linear.tol, 200, iodata.problem.verbose),
+    smooth_projector(smooth_flux_fes, iodata.solver.linear.tol, 200,
+                     iodata.problem.verbose),
     mass(&fes),
     coarse_flux_fec(iodata.solver.order, mesh->Dimension(), mfem::BasisType::GaussLobatto),
     coarse_flux_fes(mesh.get(), &coarse_flux_fec, mesh->Dimension()),
-    scalar_mass_matrices(fes.GetNE()),
-    smooth_to_coarse_embed(fes.GetNE())
+    scalar_mass_matrices(fes.GetNE()), smooth_to_coarse_embed(fes.GetNE())
 {
   auto mass_integrator = new mfem::MassIntegrator;
   for (int e = 0; e < fes.GetNE(); ++e)
@@ -376,8 +380,9 @@ mfem::Vector GradFluxErrorEstimator::operator()(const mfem::Vector &v) const
     smooth_flux_func.GetElementDofValues(e, smooth_vec);
 
     MFEM_ASSERT(coarse_vec.Size() == smooth_vec.Size() && coarse_vec.Size() % 3 == 0,
-      "H1d and L2d spaces should have the same number of elemental dofs, "
-      "and should be exactly divisible by 3: " << coarse_vec.Size() << " " << smooth_vec.Size());
+                "H1d and L2d spaces should have the same number of elemental dofs, "
+                "and should be exactly divisible by 3: "
+                    << coarse_vec.Size() << " " << smooth_vec.Size());
 
     const int ndof = coarse_vec.Size() / 3;
     coarse_sub_vec.SetSize(ndof);
@@ -398,7 +403,6 @@ mfem::Vector GradFluxErrorEstimator::operator()(const mfem::Vector &v) const
 
     estimates[e] = std::sqrt(estimates[e]);
   }
-
 
   auto normalization = mass.InnerProduct(field, field);
   Mpi::GlobalSum(1, &normalization, field.ParFESpace()->GetComm());

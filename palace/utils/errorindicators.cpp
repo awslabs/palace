@@ -17,7 +17,7 @@ void ErrorReductionOperator::operator()(ErrorIndicators &ebar, const mfem::Vecto
   auto comm = Mpi::World();
   double candidate_global_error_indicator =
       std::transform_reduce(ind.begin(), ind.end(), 0.0, std::plus(),
-                                     [&p](auto val) { return std::pow(val, p); });
+                            [&p](auto val) { return std::pow(val, p); });
 
   Mpi::GlobalSum(1, &candidate_global_error_indicator, comm);
 

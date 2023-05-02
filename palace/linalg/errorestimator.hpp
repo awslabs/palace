@@ -39,6 +39,7 @@ class CurlFluxErrorEstimator
 
   std::vector<mfem::DenseMatrix> scalar_mass_matrices;
   std::vector<mfem::DenseMatrix> smooth_to_coarse_embed;
+
 public:
   // Constructor for using geometric and p multigrid
   CurlFluxErrorEstimator(const IoData &iodata, const MaterialOperator &mat_op,

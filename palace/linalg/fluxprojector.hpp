@@ -35,7 +35,7 @@ public:
   FluxProjector(mfem::ParFiniteElementSpaceHierarchy &smooth_flux_fes, double tol = 1e-12,
                 int max_it = 200, int print_level = 1);
 
-  const std::unique_ptr<mfem::Operator>& GetMass(){ return M.back(); }
+  const std::unique_ptr<mfem::Operator> &GetMass() { return M.back(); }
 
   // Operator is set in constructor.
   void SetOperator(const mfem::Operator &op) override
