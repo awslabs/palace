@@ -34,12 +34,12 @@ class CurlFluxErrorEstimator
 
   mfem::ParBilinearForm mass;
 
-  std::vector<std::unique_ptr<mfem::L2_FECollection>> coarse_flux_fecs;
-  mutable mfem::ParFiniteElementSpaceHierarchy coarse_flux_fes;
-  mutable FluxProjector coarse_projector;
+  mfem::L2_FECollection coarse_flux_fec;
+  mutable mfem::ParFiniteElementSpace coarse_flux_fes;
 
-  mfem::ParDiscreteLinearOperator smooth_to_coarse;
+  std::unique_ptr<mfem::Operator> smooth_to_coarse;
   std::vector<mfem::DenseMatrix> scalar_mass_matrices;
+  std::vector<mfem::DenseMatrix> vector_mass_matrices;
 
 public:
   // Constructor for using geometric and p multigrid
@@ -71,12 +71,12 @@ class GradFluxErrorEstimator
 
   mfem::ParBilinearForm mass;
 
-  std::vector<std::unique_ptr<mfem::L2_FECollection>> coarse_flux_fecs;
-  mutable mfem::ParFiniteElementSpaceHierarchy coarse_flux_fes;
-  mutable FluxProjector coarse_projector;
+  mfem::L2_FECollection coarse_flux_fec;
+  mutable mfem::ParFiniteElementSpace coarse_flux_fes;
 
   mfem::TrueTransferOperator smooth_to_coarse;
   std::vector<mfem::DenseMatrix> scalar_mass_matrices;
+  std::vector<mfem::DenseMatrix> smooth_to_coarse_matrices;
 
 public:
   // Constructor for using geometric and p multigrid
