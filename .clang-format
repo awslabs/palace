@@ -26,34 +26,24 @@ ContinuationIndentWidth: 4
 IncludeCategories:
   - Regex:           '^<.*/.*\.hpp>'
     Priority:        6
-    SortPriority:    0
   - Regex:           '^<.*\.hpp>'
     Priority:        5
-    SortPriority:    0
   - Regex:           '^<.*/.*\.h>'
     Priority:        4
-    SortPriority:    0
   - Regex:           '^<.*\.h>'
     Priority:        3
-    SortPriority:    0
   - Regex:           '^<(complex|chrono)>'
     Priority:        1
-    SortPriority:    0
   - Regex:           '^<c.*>'
     Priority:        0
-    SortPriority:    0
   - Regex:           '^<.*/.*>'
     Priority:        2
-    SortPriority:    0
   - Regex:           '^<.*>'
     Priority:        1
-    SortPriority:    0
   - Regex:           '^".*"'
     Priority:        7
-    SortPriority:    0
   - Regex:           '.*'
     Priority:        8
-    SortPriority:    0
 IndentCaseBlocks: true
 IndentCaseLabels: true
 IndentWidth: 2
