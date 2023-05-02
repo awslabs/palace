@@ -122,9 +122,6 @@ struct AdaptiveRefinementData
   // Whether or not to perform coarsening during the AMR. Incompatible with
   // `construct_geometric_multigrid`.
   double coarsening_fraction = 0.0;
-  // Whether to construct a geometric multigrid using the generated sequence of
-  // meshes.
-  bool construct_geometric_multigrid = true;
   // Maximum difference in non-conformal refinements between two adjacent
   // elements. Default = 0 implies there is no constraint on local non-conformity.
   int max_nc_levels = 0;

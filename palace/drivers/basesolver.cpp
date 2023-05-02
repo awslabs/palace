@@ -182,6 +182,12 @@ BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<mfem::ParMesh>> 
                  "Coarsening can only occur if a mesh is in nonconforming mode.");
   }
 
+  if (use_amr && mesh.size() > 1)
+  {
+    Mpi::Warning('{}\n', "Flattening mesh sequence: AMR will solve using only the final mesh in a refinement sequence.");
+    mesh.erase(mesh.begin(), mesh.end() - 1);
+  }
+
   int iter = 0;
   auto indicators = Solve(mesh, timer);
 
@@ -238,7 +244,7 @@ BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<mfem::ParMesh>> 
     else if (use_coarsening)
     {
       // Perform a Dorfler style marking looking for the largest number of
-      // refinement opportunities to represent a fraction of the derefinable error.
+      // derefinement opportunities to represent a fraction of the derefinable error.
       const auto &derefinement_table = mesh.back()->pncmesh->GetDerefinementTable();
 
       mfem::Vector coarse_error(derefinement_table.Size());
@@ -254,11 +260,10 @@ BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<mfem::ParMesh>> 
                             { return s += indicators.local_error_indicators[i]; });
       }
 
-      // Given the coarse errors, we use the Dorfler marking strategy to track
-      // (1 - θ) of the total error, where θ is the coarsening fraction.
-      // Marking those elements with error less than this partitioning value for
-      // coarsening will give the largest possible set that makes up at most θ
-      // of the possible coarsenable error.
+      // Given the coarse errors, we use the Dorfler marking strategy to
+      // identify the smallest set of elements that make up (1 - θ) of the total
+      // error, where θ is the coarsening fraction. The complement of this set
+      // is then the largest number of elements that make up θ of the total error.
 
       const double threshold =
           utils::ComputeDorflerThreshold(1 - param.coarsening_fraction, coarse_error);

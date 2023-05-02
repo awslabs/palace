@@ -293,8 +293,6 @@ void RefinementData::SetUp(json &model)
     adaptation.max_its = adapt->value("MaxIts", adaptation.max_its);
     adaptation.min_its = adapt->value("MinIts", adaptation.min_its);
     adaptation.update_fraction = adapt->value("UpdateFraction", adaptation.update_fraction);
-    adaptation.construct_geometric_multigrid =
-        adapt->value("ConstructGMG", adaptation.construct_geometric_multigrid);
     adaptation.max_nc_levels = adapt->value("MaxNCLevels", adaptation.max_nc_levels);
     adaptation.dof_limit = adapt->value("DOFLimit", adaptation.dof_limit);
     adaptation.coarsening_fraction =
@@ -322,22 +320,12 @@ void RefinementData::SetUp(json &model)
                     adaptation.on_update_tolerance_ratio <= 1,
                 "\"OnUpdateTolRatio\" must be in (0, 1]");
     MFEM_VERIFY(adaptation.save_step >= 0, "\"SaveStep\" must be non-negative");
-    MFEM_VERIFY(
-        !(adaptation.construct_geometric_multigrid && adaptation.coarsening_fraction > 0),
-        "Cannot construct a geometric multigrid if using coarsening");
-
-    MFEM_VERIFY(adaptation.construct_geometric_multigrid == false,
-                "Geometric multigrid not supported yet.");
-
-    MFEM_VERIFY(adaptation.max_its == 0 || uniform_ref_levels == 0,
-                "Cannot use adaptation with uniform refinement.");
 
     // Cleanup
     const auto fields = {"Tol",
                          "MaxIts",
                          "MinIts",
                          "UpdateFraction",
-                         "ConstructGMG",
                          "CoarseningFraction",
                          "MaxNCLevels",
                          "DOFLimit",
