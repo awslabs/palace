@@ -184,7 +184,7 @@ BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<mfem::ParMesh>> 
 
   if (use_amr && mesh.size() > 1)
   {
-    Mpi::Warning('{}\n', "Flattening mesh sequence: AMR will solve using only the final "
+    Mpi::Warning("{}\n", "Flattening mesh sequence: AMR will solve using only the final "
                          "mesh in a refinement sequence.");
     mesh.erase(mesh.begin(), mesh.end() - 1);
   }
@@ -213,7 +213,7 @@ BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<mfem::ParMesh>> 
   {
     bool ret = false;
     // run out of DOFs, and coarsening isn't allowed.
-    ret |= (!use_coarsening && indicators.ndof > param.dof_limit);
+    ret |= (!use_coarsening && indicators.ndof > param.dof_limit && param.dof_limit > 0);
     // run out of iterations
     ret |= iter >= param.max_its;
     // There are no resources for transient amr.
