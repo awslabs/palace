@@ -12,4 +12,5 @@ which can be performed with *Palace* and the various features available in the s
 
   - [Problem Types](problem.md)
   - [Simulation Models](model.md)
+  - [Boundary Conditions](boundaries.md)
   - [Postprocessing and Visualization](postprocessing.md)
