@@ -36,7 +36,7 @@ For frequency domain driven simulations, [`config["Problem"]["Type"]: "Driven"`]
 (../config/problem.md#config["Problem"]), the model is excited
 by a time harmonic incident field (port boundary) or surface current. The user can specify
 a port excitation using [lumped ports or numeric wave ports]
-(model.md#Lumped-and-wave-ports).
+(boundaries.md#Lumped-and-wave-port-excitation).
 
 The default frequency sweep behavior for frequency domain driven simulations is to perform a
 uniform sampling from the minimum to the maximum specified frequency of interest, using the
@@ -51,9 +51,9 @@ model within the frequency band of interest. This is particularly useful for
 fine-resolution sweeps containing many sample points, where it can yield a significant
 speedup over the default strategy.
 
-Port scattering parameters are postprocessed for the column of the scattering matrix
-corresponding to the driven port index automatically for this simulation type and stored in
-an ASCII file named `port-S.csv`, in the directory specified by
+Port scattering parameters, or S-parameters, are postprocessed for the column of the
+scattering matrix corresponding to the driven port index automatically for this simulation
+type and stored in an ASCII file named `port-S.csv`, in the directory specified by
 [`config["Problem"]["Output"]`](../config/problem.md#config%5B%22Problem%22%5D). In the case
 that more than a single lumped or wave port is excited or surface current excitations are
 used, scattering parameter output will be disabled for the simulation(though other
@@ -86,7 +86,10 @@ histories are written to `surface-I.csv`.
 
 For electrostatic simulations, ([`config["Problem"]["Type"]: "Electrostatic"`]
 (../config/problem.md#config["Problem"]), the user should specify a number of terminal
-boundaries as well as boundaries which are grounded. For each terminal, an electrostatic
+boundaries ([`config["Boundaries"]["Terminal"]`]
+(../config/boundaries.md#boundaries%5B%22Terminal%22%5D)) as well as boundaries which are
+grounded ([`config["Boundaries"]["Ground"]`]
+(../config/boundaries.md#boundaries%5B%22Ground%22%5D)). For each terminal, an electrostatic
 field is computed by assigning the terminal of interest a positive nonzero voltage and all
 other terminals and grounded boundaries a zero voltage. The resulting fields are then used
 to compute the Maxwell capacitance matrix and its inverse, which are written to an ASCII

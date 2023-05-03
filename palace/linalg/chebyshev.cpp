@@ -143,24 +143,21 @@ void ChebyshevSmoother::ArrayMult(const mfem::Array<const mfem::Vector *> &X,
     }
     for (int k = 1; k < order; k++)
     {
-      for (int j = 0; j < nrhs; j++)
-      {
-        *Y[j] += *D[j];
-      }
       A->ArrayAddMult(D, R, -1.0);
       {
+        // From Phillips and Fischer or Lottes (with k -> k + 1 shift due to 1-based
+        // indexing)
+        const double sd = (2.0 * k - 1.0) / (2.0 * k + 3.0);
+        const double sr = (8.0 * k + 4.0) / ((2.0 * k + 3.0) * lambda_max);
         const auto *DI = dinv.Read();
         for (int j = 0; j < nrhs; j++)
         {
           const auto *RR = R[j]->Read();
+          auto *YY = Y[j]->ReadWrite();
           auto *DD = D[j]->ReadWrite();
           MFEM_FORALL(i, height, {
-            // From Lottes
-            // DD[i] = (2.0 * k - 3.0) / (2.0 * k + 1.0) * DD[i] +
-            //         (8.0 * k - 4.0) / ((2.0 * k + 1.0) * lambda_max) * DI[i] * RR[i];
-            // From Phillips and Fischer
-            DD[i] = (2.0 * k - 1.0) / (2.0 * k + 3.0) * DD[i] +
-                    (8.0 * k + 4.0) / ((2.0 * k + 3.0) * lambda_max) * DI[i] * RR[i];
+            YY[i] += DD[i];
+            DD[i] = sd * DD[i] + sr * DI[i] * RR[i];
           });
         }
       }

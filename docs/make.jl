@@ -22,6 +22,7 @@ makedocs(
             "guide/guide.md",
             "guide/problem.md",
             "guide/model.md",
+            "guide/boundaries.md",
             "guide/postprocessing.md"
         ],
         "Configuration File" => Any[

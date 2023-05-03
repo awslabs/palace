@@ -877,7 +877,9 @@ std::map<int, std::array<int, 2>> CheckMesh(std::unique_ptr<mfem::Mesh> &orig_me
       {
         int e1, e2;
         orig_mesh->GetFaceElements(f, &e1, &e2);
-        if (e1 < 0 || elem_delete[e1] || e2 < 0 || elem_delete[e2])
+        bool no_e1 = (e1 < 0 || elem_delete[e1]);
+        bool no_e2 = (e2 < 0 || elem_delete[e2]);
+        if (no_e1 || no_e1 && !(no_e1 && no_e2))
         {
           // Mpi::Print("Adding exterior boundary element!\n");
           add_bdr_faces[f] = 1;
@@ -922,8 +924,9 @@ std::map<int, std::array<int, 2>> CheckMesh(std::unique_ptr<mfem::Mesh> &orig_me
       {
         int e1, e2;
         orig_mesh->GetFaceElements(f, &e1, &e2);
-        if (e1 >= 0 && !elem_delete[e1] && e2 >= 0 && !elem_delete[e2] &&
-            partitioning[e1] != partitioning[e2])
+        bool no_e1 = (e1 < 0 || elem_delete[e1]);
+        bool no_e2 = (e2 < 0 || elem_delete[e2]);
+        if (!no_e1 && !no_e2 && partitioning[e1] != partitioning[e2])
         {
           // Internal face is connected to two elements belonging to different subdomains
           // (this works for conforming meshes).
@@ -1012,18 +1015,20 @@ std::map<int, std::array<int, 2>> CheckMesh(std::unique_ptr<mfem::Mesh> &orig_me
         // new attribute. Since attributes are in 1-based indexing, a, b > 0.
         int e1, e2, a = 0, b = 0;
         orig_mesh->GetFaceElements(f, &e1, &e2);
-        if (e1 >= 0 && !elem_delete[e1] && e2 >= 0 && !elem_delete[e2])
+        bool no_e1 = (e1 < 0 || elem_delete[e1]);
+        bool no_e2 = (e2 < 0 || elem_delete[e2]);
+        if (!no_e1 && !no_e2)
         {
           a = std::max(orig_mesh->GetAttribute(e1), orig_mesh->GetAttribute(e2));
           b = (a == orig_mesh->GetAttribute(e1)) ? orig_mesh->GetAttribute(e2)
                                                  : orig_mesh->GetAttribute(e1);
         }
-        else if (e1 >= 0 && !elem_delete[e1])
+        else if (!no_e1)
         {
           a = orig_mesh->GetAttribute(e1);
           b = 0;
         }
-        else if (e2 >= 0 && !elem_delete[e2])
+        else if (!no_e2)
         {
           a = orig_mesh->GetAttribute(e2);
           b = 0;

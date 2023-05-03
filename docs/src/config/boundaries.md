@@ -16,15 +16,15 @@
     {
         ...
     },
+    "Impedance":
+    [
+        ...
+    ],
     "Absorbing":
     {
         ...
     },
     "Conductivity":
-    [
-        ...
-    ],
-    "Impedance":
     [
         ...
     ],
@@ -83,16 +83,16 @@ conditions (zero tangential electric field).
 conditions (zero tangential magnetic field). Also imposes symmetry of the electric field
 across the boundary surface.
 
+`"Impedance"` :  Array of objects for configuring surface impedance boundary conditions. A
+surface impedance boundary relates the tangential electric and magnetic fields on the
+boundary using a user specified surface impedance.
+
 `"Absorbing"` : Top-level object for configuring absorbing boundary conditions. These are
 artificial scattering boundary conditions at farfield boundaries.
 
 `"Conductivity"` :  Array of objects for configuring finite conductivity surface impedance
 boundary conditions. Finite conductivity boundaries are only available for the frequency
 domain driven simulation type.
-
-`"Impedance"` :  Array of objects for configuring surface impedance boundary conditions. A
-surface impedance boundary relates the tangential electric and magnetic fields on the
-boundary using a user specified surface impedance.
 
 `"LumpedPort"` :  Array of objects for configuring lumped port boundary conditions. Lumped
 ports can be specified on boundaries which are internal to the computational domain.
@@ -105,7 +105,7 @@ frequency domain driven simulation type.
 `"WavePortPEC"` :  Top-level object for configuring PEC boundary conditions for boundary
 mode analysis performed on the wave port boundaries. Thus, this object is only relevant
 when wave port boundaries are specified under [`config["Boundaries"]["WavePort"]`]
-(#boundaries["WavePort"]).
+(#boundaries[%5B%22WavePort%22%5D]).
 
 `"SurfaceCurrent"` :  Array of objects for configuring surface current boundary conditions.
 This boundary prescribes a unit source surface current excitation on the given boundary in
@@ -162,6 +162,35 @@ with
 `"Attributes" [None]` :  Integer array of mesh boundary attributes at which to apply the
 PMC boundary condition.
 
+## `boundaries["Impedance"]`
+
+```json
+"Impedance":
+[
+    {
+        "Attributes": [<int array>],
+        "Rs": <float>,
+        "Ls": <float>,
+        "Cs": <float>
+    },
+    ...
+]
+```
+
+with
+
+`"Attributes" [None]` :  Integer array of mesh boundary attributes for this surface
+impedance boundary.
+
+`"Rs" [0.0]` :  Surface resistance used for computing this surface impedance boundary's
+impedance per square, ``\Omega``/sq.
+
+`"Ls" [0.0]` :  Surface inductance used for computing this surface impedance boundary's
+impedance per square, H/sq.
+
+`"Cs" [0.0]` :  Surface capacitance used computing this surface impedance boundary's
+impedance per square, F/sq.
+
 ## `boundaries["Absorbing"]`
 
 ```json
@@ -174,8 +203,8 @@ PMC boundary condition.
 
 with
 
-`"Attributes" [None]` :  Integer array of mesh boundary attributes at which to apply this
-boundary condition.
+`"Attributes" [None]` :  Integer array of mesh boundary attributes at which to apply
+farfield absorbing boundary conditions.
 
 `"Order" [1]` :  Specify a first- or second-order approximation for the farfield absorbing
 boundary condition. Second-order absorbing boundary conditions are only available for the
@@ -209,35 +238,6 @@ S/m.
 `"Thickness" [None]` :  Optional conductor thickness for this finite conductivity boundary
 specified in mesh length units. Activates a finite conductivity boundary condition which
 accounts for nonzero metal thickness.
-
-## `boundaries["Impedance"]`
-
-```json
-"Impedance":
-[
-    {
-        "Attributes": [<int array>],
-        "Rs": <float>,
-        "Ls": <float>,
-        "Cs": <float>
-    },
-    ...
-]
-```
-
-with
-
-`"Attributes" [None]` :  Integer array of mesh boundary attributes for this surface
-impedance boundary.
-
-`"Rs" [0.0]` :  Surface resistance used for computing this surface impedance boundary's
-impedance per square, ``\Omega``/sq.
-
-`"Ls" [0.0]` :  Surface inductance used for computing this surface impedance boundary's
-impedance per square, H/sq.
-
-`"Cs" [0.0]` :  Surface capacitance used computing this surface impedance boundary's
-impedance per square, F/sq.
 
 ## `boundaries["LumpedPort"]`
 
@@ -310,13 +310,13 @@ parameters, and not with any of the circuit parameters `"R"`, `"L"`, or `"C"`.
 impedance, F/sq. This option should only be used along with the corresponding `"Rs"` and
 `"Ls"` parameters, and not with any of the circuit parameters `"R"`, `"L"`, or `"C"`.
 
-`"Elements"[]."Attributes" [None]` :  This option is for multielement lumped ports and
+`"Elements"[]["Attributes"] [None]` :  This option is for multielement lumped ports and
 should not be combined with the `"Attributes"` field described above. Each element of a
 multielement lumped port can be described by its own unique integer array of mesh boundary
 attributes, which are specified here. The elements of a multielement port add in parallel.
 
-`"Elements"[]."Direction" [None]` :  This option is for multielement lumped ports and should
-not be combined with the `"Direction"` field described above. Each element of a
+`"Elements"[]["Direction"] [None]` :  This option is for multielement lumped ports and
+should not be combined with the `"Direction"` field described above. Each element of a
 multielement lumped port can be described by its own unique direction, which is specified
 here. The elements of a multielement port add in parallel.
 
@@ -349,8 +349,8 @@ driven simulation types.
 `"Mode" [1]` :  Mode index (1-based) for the characteristic port mode of this wave port
 boundary. Ranked in order of decreasing wave number.
 
-`"Offset" [0.0]` :  Offset distance used for S-parameter de-embedding for this wave port
-boundary, specified in mesh length units.
+`"Offset" [0.0]` :  Offset distance used for scattering parameter de-embedding for this wave
+port boundary, specified in mesh length units.
 
 ## `boundaries["WavePortPEC"]`
 
@@ -364,8 +364,8 @@ boundary, specified in mesh length units.
 with
 
 `"Attributes" [None]` :  Integer array of mesh boundary attributes to consider along with
-those specified under `["Boundaries"]["PEC"]["Attributes"]` as PEC when performing wave
-port boundary mode analysis.
+those specified under [`config["Boundaries"]["PEC"]["Attributes"]`]
+(#boundaries%5B%22PEC%22%5D) as PEC when performing wave port boundary mode analysis.
 
 ## `boundaries["SurfaceCurrent"]`
 
@@ -395,22 +395,22 @@ with
 files.
 
 `"Attributes" [None]` :  Integer array of mesh boundary attributes for this surface current
-boundary. If this boundary is to be a multielement boundary which distributes the source
+boundary. If this source is to be a multielement source which distributes the source
 across more than a single lumped element, use the `"Elements"` array described below.
 
 `"Direction" [None]` :  Defines the source current direction for this surface current
 boundary. The available options are the same as under
-`["Boundaries"]["LumpedPort"]["Direction"]`. If this boundary is to be a multielement
-boundary which distributes the source across more than a single lumped element, use the
-`"Elements"` array described below.
+[`config["Boundaries"]["LumpedPort"]["Direction"]`](#boundaries%5B%22LumpedPort%22%5D). If
+this source is to be a multielement source which distributes the source across more than a
+single lumped element, use the `"Elements"` array described below.
 
-`["Elements"][]["Attributes"] [None]` :  This option is for multielement surface current
+`"Elements"[]["Attributes"] [None]` :  This option is for multielement surface current
 boundaries should not be combined with the `"Attributes"` field described above. Each
 element of a multielement current source can be described by its own unique integer array of
 mesh boundary attributes, which are specified here. The elements of a multielement source
 add in parallel to give the same total current as a single-element source.
 
-`["Elements"][]["Direction"] [None]` :  This option is for multielement surface current
+`"Elements"[]["Direction"] [None]` :  This option is for multielement surface current
 boundaires and should not be combined with the `"Direction"` field described above. Each
 element of a multielement current source can be described by its own unique direction,
 which is specified here. The elements of a multielement source add in parallel to give the

@@ -36,6 +36,29 @@
         }
       }
     },
+    "Impedance":
+    {
+      "type": "array",
+      "additionalItems": false,
+      "items":
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["Attributes"],
+        "properties":
+        {
+          "Attributes":
+          {
+            "type": "array",
+            "additionalItems": false,
+            "items": { "type": "integer"}
+          },
+          "Rs": { "type": "number" },
+          "Ls": { "type": "number" },
+          "Cs": { "type": "number" }
+        }
+      }
+    },
     "Absorbing":
     {
       "type": "object",
@@ -73,29 +96,6 @@
           "Permeability": { "type": "number" },
           "Thickness": { "type": "number" },
           "External": { "type": "boolean" }
-        }
-      }
-    },
-    "Impedance":
-    {
-      "type": "array",
-      "additionalItems": false,
-      "items":
-      {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["Attributes"],
-        "properties":
-        {
-          "Attributes":
-          {
-            "type": "array",
-            "additionalItems": false,
-            "items": { "type": "integer"}
-          },
-          "Rs": { "type": "number" },
-          "Ls": { "type": "number" },
-          "Cs": { "type": "number" }
         }
       }
     },
