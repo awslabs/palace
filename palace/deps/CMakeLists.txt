@@ -15,7 +15,7 @@ set(PALACE_INTERNAL_FMT_URL
   "URL for internal fmt build"
 )
 set(PALACE_INTERNAL_MFEM_GIT_TAG
-  "a598682d68e5a21e84bc1c31205a4236e01515d2" CACHE STRING  # master @ 01/11/2022
+  "e5231334e6a8175b4f404b877f590b73dee2dedc" CACHE STRING  # master @ 05/02/2023
   "Git tag for internal MFEM build"
 )
 

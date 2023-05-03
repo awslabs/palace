@@ -1,0 +1,19 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 8bff45e..def57b3 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -685,11 +685,11 @@ endif()
+ 
+ 
+ # examples
+-add_subdirectory(examples)
++# add_subdirectory(examples)
+ 
+ # testing
+-include(CTest)
+-add_subdirectory(test)
++# include(CTest)
++# add_subdirectory(test)
+ 
+ 
+ # documentation

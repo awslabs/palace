@@ -114,7 +114,6 @@ if(PALACE_WITH_SUPERLU OR PALACE_WITH_STRUMPACK)
     "${CMAKE_CURRENT_SOURCE_DIR}/patch/ParMETIS/patch_build.diff"
     "${CMAKE_CURRENT_SOURCE_DIR}/patch/ParMETIS/patch_install.diff"
     "${CMAKE_CURRENT_SOURCE_DIR}/patch/ParMETIS/patch_spack.diff"
-    "${CMAKE_CURRENT_SOURCE_DIR}/patch/ParMETIS/patch_braces.diff"
   )
 
   ExternalProject_Add(parmetis

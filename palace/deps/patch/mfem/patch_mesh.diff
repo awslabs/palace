@@ -1,5 +1,5 @@
 diff --git a/fem/datacollection.cpp b/fem/datacollection.cpp
-index e08718760..5934891e3 100644
+index fde0f1490..25111438d 100644
 --- a/fem/datacollection.cpp
 +++ b/fem/datacollection.cpp
 @@ -210,6 +210,11 @@ void DataCollection::Save()
@@ -32,12 +32,12 @@ index e08718760..5934891e3 100644
       high_order_output(false),
 -     restart_mode(false)
 +     restart_mode(false),
-+     bdr(false),
-+     lscale(1.0)
++     bdr_output(false),
++     length_scale(1.0)
  {
- #ifdef MFEM_USE_ZLIB
-    compression = -1; // default zlib compression level, equivalent to 6
-@@ -907,16 +914,19 @@ void ParaViewDataCollection::Save()
+    cycle = 0; // always include a valid cycle index in file names
+ 
+@@ -910,16 +917,19 @@ void ParaViewDataCollection::Save()
     std::string vtu_prefix = col_path + "/" + GenerateVTUPath() + "/";
  
     // Save the local part of the mesh and grid functions fields to the local
@@ -53,13 +53,13 @@ index e08718760..5934891e3 100644
 +   // Save the local part of the quadrature function fields.
     for (const auto &qfield : q_field_map)
     {
-+      MFEM_VERIFY(!bdr,
++      MFEM_VERIFY(!bdr_output,
 +                  "QuadratureFunction output is not supported for "
 +                  "ParaViewDataCollection on domain boundary!");
        const std::string &field_name = qfield.first;
        std::ofstream os(vtu_prefix + GenerateVTUFileName(field_name, myid));
-       qfield.second->SaveVTU(os, pv_data_format, compression);
-@@ -932,7 +942,7 @@ void ParaViewDataCollection::Save()
+       qfield.second->SaveVTU(os, pv_data_format, GetCompressionLevel());
+@@ -935,7 +945,7 @@ void ParaViewDataCollection::Save()
           std::ofstream pvtu_out(vtu_prefix + GeneratePVTUFileName("data"));
           WritePVTUHeader(pvtu_out);
  
@@ -68,7 +68,7 @@ index e08718760..5934891e3 100644
           pvtu_out << "<PPointData>\n";
           for (auto &field_it : field_map)
           {
-@@ -942,7 +952,24 @@ void ParaViewDataCollection::Save()
+@@ -945,7 +955,24 @@ void ParaViewDataCollection::Save()
                       << "\" NumberOfComponents=\"" << vec_dim << "\" "
                       << "format=\"" << GetDataFormatString() << "\" />\n";
           }
@@ -93,20 +93,21 @@ index e08718760..5934891e3 100644
           // Element attributes
           pvtu_out << "<PCellData>\n";
           pvtu_out << "\t<PDataArray type=\"Int32\" Name=\"" << "attribute"
-@@ -1039,7 +1066,7 @@ void ParaViewDataCollection::SaveDataVTU(std::ostream &os, int ref)
+@@ -1042,7 +1069,8 @@ void ParaViewDataCollection::SaveDataVTU(std::ostream &os, int ref)
     }
     os << " version=\"0.1\" byte_order=\"" << VTKByteOrder() << "\">\n";
     os << "<UnstructuredGrid>\n";
--   mesh->PrintVTU(os,ref,pv_data_format,high_order_output,compression);
-+   mesh->PrintVTU(os,ref,pv_data_format,high_order_output,compression,bdr,lscale);
+-   mesh->PrintVTU(os,ref,pv_data_format,high_order_output,GetCompressionLevel());
++   mesh->PrintVTU(os,ref,pv_data_format,high_order_output,GetCompressionLevel(),
++                  bdr_output,length_scale);
  
     // dump out the grid functions as point data
     os << "<PointData >\n";
-@@ -1047,8 +1074,23 @@ void ParaViewDataCollection::SaveDataVTU(std::ostream &os, int ref)
+@@ -1050,8 +1078,23 @@ void ParaViewDataCollection::SaveDataVTU(std::ostream &os, int ref)
     // iterate over all grid functions
     for (FieldMapIterator it=field_map.begin(); it!=field_map.end(); ++it)
     {
-+      MFEM_VERIFY(!bdr,
++      MFEM_VERIFY(!bdr_output,
 +                  "GridFunction output is not supported for "
 +                  "ParaViewDataCollection on domain boundary!");
        SaveGFieldVTU(os,ref,it);
@@ -126,7 +127,7 @@ index e08718760..5934891e3 100644
     os << "</PointData>\n";
     // close the mesh
     os << "</Piece>\n"; // close the piece open in the PrintVTU method
-@@ -1070,7 +1112,6 @@ void ParaViewDataCollection::SaveGFieldVTU(std::ostream &os, int ref_,
+@@ -1073,7 +1116,6 @@ void ParaViewDataCollection::SaveGFieldVTU(std::ostream &os, int ref_,
        << " format=\"" << GetDataFormatString() << "\" >" << '\n';
     if (vec_dim == 1)
     {
@@ -134,13 +135,13 @@ index e08718760..5934891e3 100644
        for (int i = 0; i < mesh->GetNE(); i++)
        {
           RefG = GlobGeometryRefiner.Refine(
-@@ -1100,11 +1141,131 @@ void ParaViewDataCollection::SaveGFieldVTU(std::ostream &os, int ref_,
+@@ -1103,11 +1145,131 @@ void ParaViewDataCollection::SaveGFieldVTU(std::ostream &os, int ref_,
           }
        }
     }
 +   if (pv_data_format != VTKFormat::ASCII)
 +   {
-+      WriteBase64WithSizeAndClear(os, buf, compression);
++      WriteBase64WithSizeAndClear(os, buf, GetCompressionLevel());
 +   }
 +   os << "</DataArray>" << std::endl;
 +}
@@ -158,10 +159,10 @@ index e08718760..5934891e3 100644
 +      << "\" NumberOfComponents=\"" << vec_dim << "\""
 +      << " format=\"" << GetDataFormatString() << "\" >" << '\n';
     {
--      WriteVTKEncodedCompressed(os,buf.data(),buf.size(),compression);
+-      WriteVTKEncodedCompressed(os,buf.data(),buf.size(),GetCompressionLevel());
 -      os << '\n';
 +      // scalar data
-+      if (!bdr)
++      if (!bdr_output)
 +      {
 +         for (int i = 0; i < mesh->GetNE(); i++)
 +         {
@@ -218,7 +219,7 @@ index e08718760..5934891e3 100644
 +      << " format=\"" << GetDataFormatString() << "\" >" << '\n';
 +   {
 +      // vector data
-+      if (!bdr)
++      if (!bdr_output)
 +      {
 +         for (int i = 0; i < mesh->GetNE(); i++)
 +         {
@@ -265,29 +266,29 @@ index e08718760..5934891e3 100644
 +   }
 +   if (pv_data_format != VTKFormat::ASCII)
 +   {
-+      WriteBase64WithSizeAndClear(os, buf, compression);
++      WriteBase64WithSizeAndClear(os, buf, GetCompressionLevel());
     }
     os << "</DataArray>" << std::endl;
  }
-@@ -1142,6 +1303,16 @@ void ParaViewDataCollection::SetCompression(bool compression_)
-    }
+@@ -1140,6 +1302,16 @@ void ParaViewDataCollection::SetCompression(bool compression_)
+    compression = compression_;
  }
  
-+void ParaViewDataCollection::SetBoundaryOutput(bool bdr_)
++void ParaViewDataCollection::SetBoundaryOutput(bool bdr_output_)
 +{
-+   bdr = bdr_;
++   bdr_output = bdr_output_;
 +}
 +
-+void ParaViewDataCollection::SetLengthScale(double lscale_)
++void ParaViewDataCollection::SetLengthScale(double length_scale_)
 +{
-+   lscale = lscale_;
++   length_scale = length_scale_;
 +}
 +
  void ParaViewDataCollection::UseRestartMode(bool restart_mode_)
  {
     restart_mode = restart_mode_;
 diff --git a/fem/datacollection.hpp b/fem/datacollection.hpp
-index b39b5b7da..3749bc58c 100644
+index c216188af..9f40e52af 100644
 --- a/fem/datacollection.hpp
 +++ b/fem/datacollection.hpp
 @@ -133,6 +133,10 @@ private:
@@ -416,7 +417,7 @@ index b39b5b7da..3749bc58c 100644
  #ifdef MFEM_USE_MPI
     /// Set/change the mesh associated with the collection.
     /** For this case, @a comm is used to set the DataCollection's MPI rank id
-@@ -368,7 +422,19 @@ public:
+@@ -369,7 +423,19 @@ public:
     /// Save one field, assuming the collection directory already exists.
     virtual void SaveField(const std::string &field_name);
     /// Save one q-field, assuming the collection directory already exists.
@@ -437,12 +438,12 @@ index b39b5b7da..3749bc58c 100644
  
     /// Load the collection. Not implemented in the base class DataCollection.
     virtual void Load(int cycle_ = 0);
-@@ -490,12 +556,18 @@ private:
+@@ -512,12 +578,18 @@ private:
     VTKFormat pv_data_format;
     bool high_order_output;
     bool restart_mode;
-+   bool bdr;
-+   double lscale;
++   bool bdr_output;
++   double length_scale;
  
  protected:
     void WritePVTUHeader(std::ostream &out);
@@ -455,8 +456,8 @@ index b39b5b7da..3749bc58c 100644
 +                           const VCoeffFieldMapIterator& it);
     const char *GetDataFormatString() const;
     const char *GetDataTypeString() const;
- 
-@@ -506,7 +578,6 @@ protected:
+    /// @brief If compression is enabled, return the compression level, otherwise
+@@ -531,7 +603,6 @@ protected:
     std::string GeneratePVTUFileName(const std::string &prefix);
     std::string GeneratePVTUPath();
  
@@ -464,86 +465,89 @@ index b39b5b7da..3749bc58c 100644
  public:
     /// Constructor. The collection name is used when saving the data.
     /** If @a mesh_ is NULL, then the mesh can be set later by calling SetMesh().
-@@ -548,6 +619,14 @@ public:
+@@ -582,6 +653,14 @@ public:
     /// by default). Reading high-order data requires ParaView 5.5 or later.
     void SetHighOrderOutput(bool high_order_output_);
  
 +   /// Configures collection to save only fields evaluated on boundaries of
 +   /// the mesh.
-+   void SetBoundaryOutput(bool bdr_);
++   void SetBoundaryOutput(bool bdr_output_);
 +
 +   /// Sets length scale used to scale mesh point coordinates on output.
 +   /// The default if unset is 1.0 (unscaled).
-+   void SetLengthScale(double lscale_);
++   void SetLengthScale(double length_scale_);
 +
     /// Enable or disable restart mode. If restart is enabled, new writes will
     /// preserve timestep metadata for any solutions prior to the currently
     /// defined time.
 diff --git a/mesh/mesh.cpp b/mesh/mesh.cpp
-index 29afa7791..2b6a578b0 100644
+index de2d80f15..bf0428652 100644
 --- a/mesh/mesh.cpp
 +++ b/mesh/mesh.cpp
-@@ -10456,7 +10456,8 @@ void Mesh::PrintVTU(std::string fname,
+@@ -10566,7 +10566,8 @@ void Mesh::PrintVTU(std::string fname,
                      VTKFormat format,
                      bool high_order_output,
                      int compression_level,
 -                    bool bdr)
-+                    bool bdr,
-+                    double sf)
++                    bool bdr_elements,
++                    double scale_factor)
  {
     int ref = (high_order_output && Nodes)
-              ? Nodes->FESpace()->GetElementOrder(0) : 1;
-@@ -10470,7 +10471,7 @@ void Mesh::PrintVTU(std::string fname,
+              ? Nodes->FESpace()->GetMaxElementOrder() : 1;
+@@ -10580,7 +10581,8 @@ void Mesh::PrintVTU(std::string fname,
     }
     os << " byte_order=\"" << VTKByteOrder() << "\">\n";
     os << "<UnstructuredGrid>\n";
 -   PrintVTU(os, ref, format, high_order_output, compression_level, bdr);
-+   PrintVTU(os, ref, format, high_order_output, compression_level, bdr, sf);
++   PrintVTU(os, ref, format, high_order_output, compression_level, bdr_elements,
++            scale_factor);
     os << "</Piece>\n"; // need to close the piece open in the PrintVTU method
     os << "</UnstructuredGrid>\n";
     os << "</VTKFile>" << std::endl;
-@@ -10481,14 +10482,15 @@ void Mesh::PrintVTU(std::string fname,
+@@ -10591,14 +10593,16 @@ void Mesh::PrintVTU(std::string fname,
  void Mesh::PrintBdrVTU(std::string fname,
                         VTKFormat format,
                         bool high_order_output,
 -                       int compression_level)
 +                       int compression_level,
-+                       double sf)
++                       double scale_factor)
  {
 -   PrintVTU(fname, format, high_order_output, compression_level, true);
-+   PrintVTU(fname, format, high_order_output, compression_level, true, sf);
++   PrintVTU(fname, format, high_order_output, compression_level, true,
++            scale_factor);
  }
  
  void Mesh::PrintVTU(std::ostream &os, int ref, VTKFormat format,
                      bool high_order_output, int compression_level,
 -                    bool bdr_elements)
-+                    bool bdr_elements, double sf)
++                    bool bdr_elements, double scale_factor)
  {
     RefinedGeometry *RefG;
     DenseMatrix pmat;
-@@ -10536,6 +10538,11 @@ void Mesh::PrintVTU(std::ostream &os, int ref, VTKFormat format,
+@@ -10645,6 +10649,11 @@ void Mesh::PrintVTU(std::ostream &os, int ref, VTKFormat format,
           GetElementTransformation(i)->Transform(RefG->RefPts, pmat);
        }
  
-+      if (sf != 1.0)
++      if (scale_factor != 1.0)
 +      {
-+         pmat *= sf;
++         pmat *= scale_factor;
 +      }
 +
        for (int j = 0; j < pmat.Width(); j++)
        {
           WriteBinaryOrASCII(os, buf, pmat(0,j), " ", format);
 diff --git a/mesh/mesh.hpp b/mesh/mesh.hpp
-index 0b97b7eae..803dab2b0 100644
+index 3e0590067..7c5148edc 100644
 --- a/mesh/mesh.hpp
 +++ b/mesh/mesh.hpp
-@@ -1690,25 +1690,29 @@ public:
+@@ -1838,25 +1838,30 @@ public:
     /** Print the mesh in VTU format. The parameter ref > 0 specifies an element
         subdivision number (useful for high order fields and curved meshes).
         If @a bdr_elements is true, then output (only) the boundary elements,
 -       otherwise output only the non-boundary elements. */
-+       otherwise output only the non-boundary elements. The parameter @a sf sets
-+       a scale factor for the output mesh point coordinates. */
++       otherwise output only the non-boundary elements. The parameter
++       @a scale_factor sets a scale factor for the output mesh point
++       coordinates. */
     void PrintVTU(std::ostream &os,
                   int ref=1,
                   VTKFormat format=VTKFormat::ASCII,
@@ -551,15 +555,15 @@ index 0b97b7eae..803dab2b0 100644
                   int compression_level=0,
 -                 bool bdr_elements=false);
 +                 bool bdr_elements=false,
-+                 double sf=1.0);
++                 double scale_factor=1.0);
     /** Print the mesh in VTU format with file name fname. */
     virtual void PrintVTU(std::string fname,
                           VTKFormat format=VTKFormat::ASCII,
                           bool high_order_output=false,
                           int compression_level=0,
 -                         bool bdr=false);
-+                         bool bdr=false,
-+                         double sf=1.0);
++                         bool bdr_elements=false,
++                         double scale_factor=1.0);
     /** Print the boundary elements of the mesh in VTU format, and output the
         boundary attributes as a data array (useful for boundary conditions). */
     void PrintBdrVTU(std::string fname,
@@ -567,65 +571,56 @@ index 0b97b7eae..803dab2b0 100644
                      bool high_order_output=false,
 -                    int compression_level=0);
 +                    int compression_level=0,
-+                    double sf=1.0);
++                    double scale_factor=1.0);
  
     void GetElementColoring(Array<int> &colors, int el0 = 0);
  
+@@ -1878,8 +1883,8 @@ public:
+     */
+    void PrintSurfaces(const Table &Aface_face, std::ostream &out) const;
+ 
+-   void ScaleSubdomains (double sf);
+-   void ScaleElements (double sf);
++   void ScaleSubdomains(double sf);
++   void ScaleElements(double sf);
+ 
+    void Transform(void (*f)(const Vector&, Vector&));
+    void Transform(VectorCoefficient &deformation);
 diff --git a/mesh/pmesh.cpp b/mesh/pmesh.cpp
-index a99ef039f..e88befef9 100644
+index 8392d2b67..1e49f8a17 100644
 --- a/mesh/pmesh.cpp
 +++ b/mesh/pmesh.cpp
-@@ -3333,12 +3333,14 @@ void ParMesh::ReorientTetMesh()
-       for (int i = 0; i < stria_flag.Size(); i++)
-       {
-          const int *v = shared_trias[i].v;
--         MFEM_VERIFY(stria_flag[i] == stria_master_flag[i],
--                     "inconsistent vertex ordering found, shared triangle "
--                     << i << ": ("
--                     << v[0] << ", " << v[1] << ", " << v[2] << "), "
--                     << "local flag: " << stria_flag[i]
--                     << ", master flag: " << stria_master_flag[i]);
-+         if (stria_flag[i] != stria_master_flag[i])
-+         {
-+            std::cout << " Warning: Inconsistent vertex ordering found, shared triangle "
-+                      << i << ": ("
-+                      << v[0] << ", " << v[1] << ", " << v[2] << "), "
-+                      << "local flag: " << stria_flag[i]
-+                      << ", master flag: " << stria_master_flag[i] << "!\n";
-+         }
-       }
-    }
- 
-@@ -6322,7 +6324,8 @@ void ParMesh::PrintVTU(std::string pathname,
+@@ -6393,7 +6393,8 @@ void ParMesh::PrintVTU(std::string pathname,
                         VTKFormat format,
                         bool high_order_output,
                         int compression_level,
 -                       bool bdr)
-+                       bool bdr,
-+                       double sf)
++                       bool bdr_elements,
++                       double scale_factor)
  {
     int pad_digits_rank = 6;
     DataCollection::create_directory(pathname, this, MyRank);
-@@ -6382,7 +6385,7 @@ void ParMesh::PrintVTU(std::string pathname,
+@@ -6453,7 +6454,8 @@ void ParMesh::PrintVTU(std::string pathname,
  
     std::string vtu_fname = pathname + "/" + fname + ".proc"
                             + to_padded_string(MyRank, pad_digits_rank);
 -   Mesh::PrintVTU(vtu_fname, format, high_order_output, compression_level, bdr);
-+   Mesh::PrintVTU(vtu_fname, format, high_order_output, compression_level, bdr, sf);
++   Mesh::PrintVTU(vtu_fname, format, high_order_output, compression_level,
++                  bdr_elements, scale_factor);
  }
  
  int ParMesh::FindPoints(DenseMatrix& point_mat, Array<int>& elem_id,
 diff --git a/mesh/pmesh.hpp b/mesh/pmesh.hpp
-index 692efe1b8..368513030 100644
+index 6ad702b58..cac481699 100644
 --- a/mesh/pmesh.hpp
 +++ b/mesh/pmesh.hpp
-@@ -621,7 +621,8 @@ public:
+@@ -637,7 +637,8 @@ public:
                   VTKFormat format=VTKFormat::ASCII,
                   bool high_order_output=false,
                   int compression_level=0,
 -                 bool bdr=false) override;
-+                 bool bdr=false,
-+                 double sf=1.0) override;
++                 bool bdr_elements=false,
++                 double scale_factor=1.0) override;
  
     /// Parallel version of Mesh::Load().
     void Load(std::istream &input, int generate_edges = 0,

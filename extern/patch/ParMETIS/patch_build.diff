@@ -1,14 +1,3 @@
-diff --git a/.gitignore b/.gitignore
-index 4796f27..488c746 100644
---- a/.gitignore
-+++ b/.gitignore
-@@ -59,3 +59,5 @@ graphs/*.epart.*
- graphs/*.npart.*
- .svn/
- 
-+
-+bin
-\ No newline at end of file
 diff --git a/CMakeLists.txt b/CMakeLists.txt
 index 146bc5f..89f3c13 100644
 --- a/CMakeLists.txt
@@ -87,150 +76,6 @@ index e6e1e98..0000000
 -int main(int argc, char **argv) {
 -  return 0;
 -}
-diff --git a/conf/gkbuild.cmake b/conf/gkbuild.cmake
-deleted file mode 100644
-index afcafdd..0000000
---- a/conf/gkbuild.cmake
-+++ /dev/null
-@@ -1,138 +0,0 @@
--# Helper modules.
--include(CheckFunctionExists)
--include(CheckIncludeFile)
--
--# Setup options.
--option(GDB "enable use of GDB" OFF)
--option(ASSERT "turn asserts on" OFF)
--option(ASSERT2 "additional assertions" OFF)
--option(DEBUG "add debugging support" OFF)
--option(GPROF "add gprof support" OFF)
--option(OPENMP "enable OpenMP support" OFF)
--option(PCRE "enable PCRE support" OFF)
--option(GKREGEX "enable GKREGEX support" OFF)
--option(GKRAND "enable GKRAND support" OFF)
--
--# Add compiler flags.
--if(MSVC)
--  set(GK_COPTS "/Ox")
--  set(GK_COPTIONS "-DWIN32 -DMSC -D_CRT_SECURE_NO_DEPRECATE -DUSE_GKREGEX")
--elseif(MINGW)
--  set(GK_COPTS "-DUSE_GKREGEX")
--else()
--  set(GK_COPTIONS "-DLINUX -D_FILE_OFFSET_BITS=64")
--endif(MSVC)
--if(CYGWIN)
--  set(GK_COPTIONS "${GK_COPTIONS} -DCYGWIN")
--endif(CYGWIN)
--if(CMAKE_COMPILER_IS_GNUCC)
--# GCC opts.
--  set(GK_COPTIONS "${GK_COPTIONS} -std=c99 -fno-strict-aliasing")
--  set(GK_COPTIONS "${GK_COPTIONS} -march=native")
--  if(NOT MINGW)
--      set(GK_COPTIONS "${GK_COPTIONS} -fPIC")
--  endif(NOT MINGW)
--# GCC warnings.
--  set(GK_COPTIONS "${GK_COPTIONS} -Werror -Wall -pedantic -Wno-unused-function -Wno-unused-but-set-variable -Wno-unused-variable -Wno-unknown-pragmas -Wno-unused-label")
--elseif(${CMAKE_C_COMPILER_ID} MATCHES "Sun")
--# Sun insists on -xc99.
--  set(GK_COPTIONS "${GK_COPTIONS} -xc99")
--endif(CMAKE_COMPILER_IS_GNUCC)
--
--if(${CMAKE_C_COMPILER_ID} STREQUAL "Intel")
--  set(GK_COPTIONS "${GK_COPTIONS} -xHost")
--  #  set(GK_COPTIONS "${GK_COPTIONS} -fast")
--endif()
--
--# Add support for the Accelerate framework in OS X
--if(APPLE)
--  set(GK_COPTIONS "${GK_COPTIONS} -framework Accelerate")
--endif(APPLE)
--
--# Find OpenMP if it is requested.
--if(OPENMP)
--  include(FindOpenMP)
--  if(OPENMP_FOUND)
--    set(GK_COPTIONS "${GK_COPTIONS} -D__OPENMP__ ${OpenMP_C_FLAGS}")
--  else()
--    message(WARNING "OpenMP was requested but support was not found")
--  endif(OPENMP_FOUND)
--endif(OPENMP)
--
--
--# Add various definitions.
--if(GDB)
--  set(GK_COPTS "${GK_COPTS} -g")
--  set(GK_COPTIONS "${GK_COPTIONS} -Werror")
--else()
--  set(GK_COPTS "-O3")
--endif(GDB)
--
--
--if(DEBUG)
--  set(GK_COPTS "-Og")
--  set(GK_COPTIONS "${GK_COPTIONS} -DDEBUG")
--endif(DEBUG)
--
--if(GPROF)
--  set(GK_COPTS "-pg")
--endif(GPROF)
--
--if(NOT ASSERT)
--  set(GK_COPTIONS "${GK_COPTIONS} -DNDEBUG")
--endif(NOT ASSERT)
--
--if(NOT ASSERT2)
--  set(GK_COPTIONS "${GK_COPTIONS} -DNDEBUG2")
--endif(NOT ASSERT2)
--
--
--# Add various options
--if(PCRE)
--  set(GK_COPTIONS "${GK_COPTIONS} -D__WITHPCRE__")
--endif(PCRE)
--
--if(GKREGEX)
--  set(GK_COPTIONS "${GK_COPTIONS} -DUSE_GKREGEX")
--endif(GKREGEX)
--
--if(GKRAND)
--  set(GK_COPTIONS "${GK_COPTIONS} -DUSE_GKRAND")
--endif(GKRAND)
--
--
--# Check for features.
--check_include_file(execinfo.h HAVE_EXECINFO_H)
--if(HAVE_EXECINFO_H)
--  set(GK_COPTIONS "${GK_COPTIONS} -DHAVE_EXECINFO_H")
--endif(HAVE_EXECINFO_H)
--
--check_function_exists(getline HAVE_GETLINE)
--if(HAVE_GETLINE)
--  set(GK_COPTIONS "${GK_COPTIONS} -DHAVE_GETLINE")
--endif(HAVE_GETLINE)
--
--
--# Custom check for TLS.
--if(MSVC)
--  set(GK_COPTIONS "${GK_COPTIONS} -D__thread=__declspec(thread)")
--
--  # This if checks if that value is cached or not.
--  if("${HAVE_THREADLOCALSTORAGE}" MATCHES "^${HAVE_THREADLOCALSTORAGE}$")
--    try_compile(HAVE_THREADLOCALSTORAGE
--      ${CMAKE_BINARY_DIR}
--      ${CMAKE_SOURCE_DIR}/conf/check_thread_storage.c)
--    if(HAVE_THREADLOCALSTORAGE)
--      message(STATUS "checking for thread-local storage - found")
--    else()
--      message(STATUS "checking for thread-local storage - not found")
--    endif()
--  endif()
--  if(NOT HAVE_THREADLOCALSTORAGE)
--    set(GK_COPTIONS "${GK_COPTIONS} -D__thread=")
--  endif()
--endif()
--
--# Finally set the official C flags.
--set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${GK_COPTIONS} ${GK_COPTS}")
--
 diff --git a/conf/parmetisConfig.cmake.in b/conf/parmetisConfig.cmake.in
 new file mode 100644
 index 0000000..3e948b1
@@ -261,29 +106,36 @@ index 6a27074..0000000
 -install(FILES parmetis.h DESTINATION include)
 \ No newline at end of file
 diff --git a/libparmetis/CMakeLists.txt b/libparmetis/CMakeLists.txt
-index e8c3213..a4d7124 100644
+index b9d6d84..b8ddac5 100644
 --- a/libparmetis/CMakeLists.txt
 +++ b/libparmetis/CMakeLists.txt
-@@ -1,13 +1,53 @@
+@@ -1,17 +1,52 @@
  # Include directories for library code.
 -include_directories(.)
-+file(GLOB parmetis_sources ${CMAKE_CURRENT_SOURCE_DIR}/*.c)
-+file(GLOB parmetis_headers ${CMAKE_CURRENT_SOURCE_DIR}/*.h)
- 
+-
 -# Find sources.
 -file(GLOB parmetis_sources *.c)
-+add_library(${PROJECT_NAME})
-+add_library(${PROJECT_NAME}::${PROJECT_NAME} ALIAS ${PROJECT_NAME})
- 
+-
 -# Create libparmetis
 -add_library(parmetis ${ParMETIS_LIBRARY_TYPE} ${parmetis_sources})
-+target_compile_features(${PROJECT_NAME} PUBLIC c_std_99)
-+set_property(TARGET ${PROJECT_NAME} PROPERTY POSITION_INDEPENDENT_CODE True)
- 
+-
+-if(SHARED)
+-  target_link_libraries(parmetis metis GKlib)
+-endif()
+- 
 -install(TARGETS parmetis
 -  LIBRARY DESTINATION lib
 -  RUNTIME DESTINATION lib
 -  ARCHIVE DESTINATION lib)
++file(GLOB parmetis_sources ${CMAKE_CURRENT_SOURCE_DIR}/*.c)
++file(GLOB parmetis_headers ${CMAKE_CURRENT_SOURCE_DIR}/*.h)
++
++add_library(${PROJECT_NAME})
++add_library(${PROJECT_NAME}::${PROJECT_NAME} ALIAS ${PROJECT_NAME})
++
++target_compile_features(${PROJECT_NAME} PUBLIC c_std_99)
++set_property(TARGET ${PROJECT_NAME} PROPERTY POSITION_INDEPENDENT_CODE True)
++
 +target_sources(${PROJECT_NAME} PRIVATE ${parmetis_sources} ${parmetis_headers} ${PROJECT_SOURCE_DIR}/include/parmetis.h)
 +
 +target_include_directories(${PROJECT_NAME} PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}> $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
@@ -291,8 +143,7 @@ index e8c3213..a4d7124 100644
 +
 +target_link_libraries(${PROJECT_NAME}
 +  PUBLIC metis::metis GKlib::GKlib MPI::MPI_C
-+  PRIVATE GKlib::GKlib_compile_definitions
-+          $<BUILD_INTERFACE:$<$<NOT:$<C_COMPILER_ID:MSVC>>:GKlib::GKlib_warnings>>)
++  PRIVATE GKlib::GKlib_compile_definitions)
 +
 +target_compile_options(${PROJECT_NAME} PUBLIC $<$<AND:$<BOOL:${GPROF}>,$<BOOL:${HAVE_GPROF_SUPPORT}>>:-pg>)
 +

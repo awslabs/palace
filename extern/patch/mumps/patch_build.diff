@@ -1,5 +1,5 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 5a83b9b..037f707 100644
+index 79fc863..a4f02a7 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
 @@ -42,17 +42,9 @@ include(cmake/lapack.cmake)
@@ -36,11 +36,15 @@ index 5a83b9b..037f707 100644
  message(STATUS "MUMPS ORDERING_DEFS: ${ORDERING_DEFS}")
  message(STATUS "MUMPS ORDERING_LIBS: ${ORDERING_LIBS}")
  
-@@ -127,4 +110,3 @@ message(STATUS "Configured MUMPS ${MUMPS_UPSTREAM_VERSION} source in ${mumps_SOU
+@@ -127,8 +110,6 @@ message(STATUS "Configured MUMPS ${MUMPS_UPSTREAM_VERSION} source in ${mumps_SOU
  
  include(cmake/summary.cmake)
  
 -include(cmake/install.cmake)
+-
+ if(NOT PROJECT_SOURCE_DIR STREQUAL PROJECT_BINARY_DIR)
+   file(GENERATE OUTPUT .gitignore CONTENT "*")
+ endif()
 diff --git a/cmake/FindLAPACK.cmake b/cmake/FindLAPACK.cmake
 deleted file mode 100644
 index 35395c6..0000000
@@ -1004,39 +1008,6 @@ index d4e6336..e565d0e 100644
  
  if(BUILD_DOUBLE)
  check_fortran_source_compiles(
-diff --git a/cmake/options.cmake b/cmake/options.cmake
-index 57572cd..29ae9a3 100644
---- a/cmake/options.cmake
-+++ b/cmake/options.cmake
-@@ -2,16 +2,6 @@ include(GNUInstallDirs)
- 
- message(STATUS "${PROJECT_NAME} ${PROJECT_VERSION}  CMake ${CMAKE_VERSION}  Toolchain ${CMAKE_TOOLCHAIN_FILE}")
- 
--option(find_static "Find static libraries for Lapack and Scalapack (default shared then static search)")
--
--if(local)
--  get_filename_component(local ${local} ABSOLUTE)
--
--  if(NOT IS_DIRECTORY ${local})
--    message(FATAL_ERROR "Local directory ${local} does not exist")
--  endif()
--endif()
--
- if(MUMPS_UPSTREAM_VERSION VERSION_GREATER_EQUAL 5.2)
-   option(gemmt "GEMMT is recommended in User Manual if available" ON)
- endif()
-@@ -57,11 +47,6 @@ set(CMAKE_INSTALL_RPATH_USE_LINK_PATH true)
- # Necessary for shared library with Visual Studio / Windows oneAPI
- set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS true)
- 
--# allow CMAKE_PREFIX_PATH with ~ expand
--if(CMAKE_PREFIX_PATH)
--  get_filename_component(CMAKE_PREFIX_PATH ${CMAKE_PREFIX_PATH} ABSOLUTE)
--endif()
--
- # --- auto-ignore build directory
- if(NOT EXISTS ${PROJECT_BINARY_DIR}/.gitignore)
-   file(WRITE ${PROJECT_BINARY_DIR}/.gitignore "*")
 diff --git a/cmake/scalapack.cmake b/cmake/scalapack.cmake
 deleted file mode 100644
 index a9e9311..0000000
@@ -1070,3 +1041,24 @@ index 3c14760..74db3a8 100644
  add_feature_info(Openmp openmp "OpenMP API https://www.openmp.org/")
  
  add_feature_info(real32 ${BUILD_SINGLE} "Build with single precision")
+diff --git a/options.cmake b/options.cmake
+index 7031669..6f7e19f 100644
+--- a/options.cmake
++++ b/options.cmake
+@@ -2,16 +2,6 @@ include(GNUInstallDirs)
+ 
+ message(STATUS "${PROJECT_NAME} ${PROJECT_VERSION}  CMake ${CMAKE_VERSION}  Toolchain ${CMAKE_TOOLCHAIN_FILE}")
+ 
+-option(find_static "Find static libraries for Lapack and Scalapack (default shared then static search)")
+-
+-if(local)
+-  get_filename_component(local ${local} ABSOLUTE)
+-
+-  if(NOT IS_DIRECTORY ${local})
+-    message(FATAL_ERROR "Local directory ${local} does not exist")
+-  endif()
+-endif()
+-
+ if(MUMPS_UPSTREAM_VERSION VERSION_GREATER_EQUAL 5.2)
+   option(gemmt "GEMMT is recommended in User Manual if available" ON)
+ endif()

@@ -60,6 +60,11 @@ foreach(DEP IN LISTS PALACE_MFEM_DEPS)
   # set(${DEP}_INCLUDE_DIRS "" CACHE STRING "Path to ${DEP} include directories")
 endforeach()
 
+# Enable Fortran if required
+if(PALACE_WITH_STRUMPACK OR PALACE_WITH_MUMPS OR PALACE_WITH_ARPACK)
+  enable_language(Fortran)
+endif()
+
 # Set a default build type if none was specified
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   message(STATUS "Setting build type to 'Release' as none was specified")
@@ -205,7 +210,7 @@ if(PALACE_WITH_SLEPC)
 endif()
 if(PALACE_WITH_ARPACK)
   target_link_libraries(${TARGET_NAME}
-    PRIVATE PARPACK::PARPACK ARPACK::ARPACK
+    PRIVATE PARPACK::PARPACK ARPACK::ARPACK MPI::MPI_Fortran
   )
   target_compile_definitions(${TARGET_NAME}
     PRIVATE PALACE_WITH_ARPACK

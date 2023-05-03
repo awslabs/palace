@@ -46,3 +46,7 @@
 	path = extern/scalapack
 	url = https://github.com/scivision/scalapack.git
 	branch = main
+[submodule "extern/zfp"]
+	path = extern/zfp
+	url = https://github.com/LLNL/zfp.git
+	branch = develop

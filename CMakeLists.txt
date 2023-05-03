@@ -23,8 +23,6 @@ set(PALACE_WITH_OPENMP OFF CACHE BOOL "Use OpenMP")
 set(PALACE_WITH_GSLIB ON CACHE BOOL "Build with GSLIB library for high-order field interpolation")
 set(PALACE_WITH_SUPERLU ON CACHE BOOL "Build with SuperLU_DIST sparse direct solver")
 set(PALACE_WITH_STRUMPACK OFF CACHE BOOL "Build with STRUMPACK sparse direct solver")
-set(PALACE_STRUMPACK_WITH_BUTTERFLYPACK ON CACHE BOOL "Build Palace STRUMPACK with ButterflyPACK support")
-set(PALACE_STRUMPACK_WITH_ZFP OFF CACHE BOOL "Build Palace STRUMPACK with ZFP support")
 set(PALACE_WITH_MUMPS OFF CACHE BOOL "Build with MUMPS sparse direct solver")
 set(PALACE_WITH_SLEPC ON CACHE BOOL "Build with SLEPc eigenvalue solver")
 set(PALACE_WITH_ARPACK OFF CACHE BOOL "Build with ARPACK eigenvalue solver")
@@ -32,7 +30,7 @@ set(ANALYZE_SOURCES_CLANG_TIDY OFF CACHE BOOL "Run static analysis checks using 
 set(ANALYZE_SOURCES_CPPCHECK OFF CACHE BOOL "Run static analysis checks using cppcheck")
 
 # Enable Fortran if required
-if(PALACE_WITH_ARPACK OR PALACE_WITH_STRUMPACK OR PALACE_WITH_MUMPS)
+if(PALACE_WITH_STRUMPACK OR PALACE_WITH_MUMPS OR PALACE_WITH_ARPACK)
   enable_language(Fortran)
 endif()
 
