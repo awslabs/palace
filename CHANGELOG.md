@@ -11,6 +11,22 @@ The format of this changelog is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.11.1] - 2023-05-03
+
+  - Fixed a bug for interface dielectric loss postprocessing including when using
+    `--dry-run`.
+  - Fixed a regression bug affecting second-order absorbing boundary conditions.
+  - Fixed a bug when the number of processors was large enough that some subdomains own no
+    true dofs.
+  - Fixed memory bug in destruction of SuperLU solver.
+  - Fixed some typos in the documentation.
+  - Fixed a bug in the cavity convergence study example for the coarsest hexahedral mesh
+    case, as well as some other minor Julia fixes in the `examples/` and `scripts/`
+    directories.
+  - Added updates to superbuild including better ARPACK support, though still experimental
+    compared to SLEPc.
+  - Added updated submodules for superbuild.
+
 ## [0.11.0] - 2023-01-26
 
   - Initial public release on GitHub.
@@ -40,13 +56,14 @@ The format of this changelog is based on
     eventually. Geometric multigrid is turned on by default.
   - Added structured simulation metadata output in the form of a JSON file `palace.json`
     written to the directory specified by `config["Problem"]["Output"]`.
-  - Added JSON schema files for the configuration file format as well as a helper script
+  - Added JSON Schema files for the configuration file format as well as a helper script
     to check a provided configuration file against the schema.
   - Added optional interface to GSLIB library which enables `"Probe"` functionality to
     sample the computed electric and magnetic fields at points in space.
-  - Prepared to support builds using Spack. This includes an option in the build system for
-    user-supplied dependencies as an alternative to the superbuild configuration.
-  - Updated submodules for superbuild, fixing a bug in SuperLU_DIST solver causing
+  - Added preliminary support for builds using Spack. This includes an option in the build
+    system for user-supplied dependencies as an alternative to the superbuild
+    configuration.
+  - Added updated submodules for superbuild, fixing a bug in SuperLU_DIST solver causing
     communication hangs for certain numbers of processors.
 
 ## [0.10.0] - 2022-10-04
@@ -72,7 +89,7 @@ The format of this changelog is based on
   - Fixed issues when compiling with Intel or Clang compilers.
   - Added CI test builds to test various build options and added easier default build
     options in CMake configuration.
-  - Add `clang-format` and `JuliaFormatter` configurations for automated C++, Julia, and
+  - Added `clang-format` and `JuliaFormatter` configurations for automated C++, Julia, and
     Markdown code formatting.
 
 ## [0.9.0] - 2022-07-11
