@@ -1,5 +1,5 @@
 diff --git a/fem/bilinearform.cpp b/fem/bilinearform.cpp
-index 51a80ef74..39599f4ca 100644
+index fad9717aa..2c36948d9 100644
 --- a/fem/bilinearform.cpp
 +++ b/fem/bilinearform.cpp
 @@ -100,6 +100,7 @@ BilinearForm::BilinearForm (FiniteElementSpace * f, BilinearForm * bf, int ps)
@@ -19,6 +19,17 @@ index 51a80ef74..39599f4ca 100644
           doftrans = fes->GetElementVDofs(i, vdofs);
           if (element_matrices)
           {
+@@ -436,8 +437,8 @@ void BilinearForm::Assemble(int skip_zeros)
+             elmat.SetSize(0);
+             for (int k = 0; k < domain_integs.Size(); k++)
+             {
+-               if ( domain_integs_marker[k] == NULL ||
+-                    (*(domain_integs_marker[k]))[elem_attr-1] == 1)
++               if (domain_integs_marker[k] == NULL ||
++                   (*(domain_integs_marker[k]))[elem_attr-1] == 1)
+                {
+                   const FiniteElement &fe = *fes->GetFE(i);
+                   eltrans = fes->GetElementTransformation(i);
 @@ -1176,11 +1177,14 @@ MixedBilinearForm::MixedBilinearForm (FiniteElementSpace *tr_fes,
  
     // Copy the pointers to the integrators
@@ -80,8 +91,8 @@ index 51a80ef74..39599f4ca 100644
 -                                                        *test_fes  -> GetFE(i),
 -                                                        *eltrans, elemmat);
 -            elmat += elemmat;
-+            if ( domain_integs_marker[k] == NULL ||
-+                 (*(domain_integs_marker[k]))[elem_attr-1] == 1)
++            if (domain_integs_marker[k] == NULL ||
++                (*(domain_integs_marker[k]))[elem_attr-1] == 1)
 +            {
 +               domain_integs[k] -> AssembleElementMatrix2 (*trial_fes -> GetFE(i),
 +                                                           *test_fes  -> GetFE(i),
@@ -91,10 +102,130 @@ index 51a80ef74..39599f4ca 100644
           }
           if (ran_dof_trans || dom_dof_trans)
           {
+@@ -1895,41 +1923,56 @@ void DiscreteLinearOperator::Assemble(int skip_zeros)
+       return;
+    }
+ 
+-   Array<int> dom_vdofs, ran_vdofs;
+-   ElementTransformation *T;
++   ElementTransformation *eltrans;
+    DofTransformation * dom_dof_trans;
+    DofTransformation * ran_dof_trans;
+-   const FiniteElement *dom_fe, *ran_fe;
+-   DenseMatrix totelmat, elmat;
++   DenseMatrix elmat;
++
++   Mesh *mesh = test_fes->GetMesh();
+ 
+    if (mat == NULL)
+    {
+       mat = new SparseMatrix(height, width);
+    }
+ 
+-   if (domain_integs.Size() > 0)
++   if (domain_integs.Size())
+    {
++      for (int k = 0; k < domain_integs.Size(); k++)
++      {
++         if (domain_integs_marker[k] != NULL)
++         {
++            MFEM_VERIFY(domain_integs_marker[k]->Size() ==
++                        (mesh->attributes.Size() ? mesh->attributes.Max() : 0),
++                        "invalid element marker for domain integrator #"
++                        << k << ", counting from zero");
++         }
++      }
++
+       for (int i = 0; i < test_fes->GetNE(); i++)
+       {
+-         dom_dof_trans = trial_fes->GetElementVDofs(i, dom_vdofs);
+-         ran_dof_trans = test_fes->GetElementVDofs(i, ran_vdofs);
+-         T = test_fes->GetElementTransformation(i);
+-         dom_fe = trial_fes->GetFE(i);
+-         ran_fe = test_fes->GetFE(i);
+-
+-         domain_integs[0]->AssembleElementMatrix2(*dom_fe, *ran_fe, *T,
+-                                                  totelmat);
+-         for (int j = 1; j < domain_integs.Size(); j++)
++         int elem_attr = mesh->GetAttribute(i);
++         dom_dof_trans = trial_fes->GetElementVDofs(i, trial_vdofs);
++         ran_dof_trans = test_fes->GetElementVDofs(i, test_vdofs);
++         eltrans = test_fes->GetElementTransformation(i);
++
++         elmat.SetSize(test_vdofs.Size(), trial_vdofs.Size());
++         elmat = 0.0;
++         for (int k = 0; k < domain_integs.Size(); k++)
+          {
+-            domain_integs[j]->AssembleElementMatrix2(*dom_fe, *ran_fe, *T,
+-                                                     elmat);
+-            totelmat += elmat;
++            if (domain_integs_marker[k] == NULL ||
++                (*(domain_integs_marker[k]))[elem_attr-1] == 1)
++            {
++               domain_integs[k]->AssembleElementMatrix2(*trial_fes->GetFE(i),
++                                                        *test_fes->GetFE(i),
++                                                        *eltrans, elemmat);
++               elmat += elemmat;
++            }
+          }
+          if (ran_dof_trans || dom_dof_trans)
+          {
+-            TransformPrimal(ran_dof_trans, dom_dof_trans, totelmat);
++            TransformPrimal(ran_dof_trans, dom_dof_trans, elemmat);
+          }
+-         mat->SetSubMatrix(ran_vdofs, dom_vdofs, totelmat, skip_zeros);
++         mat->SetSubMatrix(test_vdofs, trial_vdofs, elemmat, skip_zeros);
+       }
+    }
+ 
+@@ -1938,21 +1981,21 @@ void DiscreteLinearOperator::Assemble(int skip_zeros)
+       const int nfaces = test_fes->GetMesh()->GetNumFaces();
+       for (int i = 0; i < nfaces; i++)
+       {
+-         trial_fes->GetFaceVDofs(i, dom_vdofs);
+-         test_fes->GetFaceVDofs(i, ran_vdofs);
+-         T = test_fes->GetMesh()->GetFaceTransformation(i);
+-         dom_fe = trial_fes->GetFaceElement(i);
+-         ran_fe = test_fes->GetFaceElement(i);
+-
+-         trace_face_integs[0]->AssembleElementMatrix2(*dom_fe, *ran_fe, *T,
+-                                                      totelmat);
+-         for (int j = 1; j < trace_face_integs.Size(); j++)
++         trial_fes->GetFaceVDofs(i, trial_vdofs);
++         test_fes->GetFaceVDofs(i, test_vdofs);
++         eltrans = test_fes->GetMesh()->GetFaceTransformation(i);
++
++         trace_face_integs[0]->AssembleElementMatrix2(*trial_fes->GetFaceElement(i),
++                                                      *test_fes->GetFaceElement(i),
++                                                      *eltrans, elmat);
++         for (int k = 1; k < trace_face_integs.Size(); k++)
+          {
+-            trace_face_integs[j]->AssembleElementMatrix2(*dom_fe, *ran_fe, *T,
+-                                                         elmat);
+-            totelmat += elmat;
++            trace_face_integs[k]->AssembleElementMatrix2(*trial_fes->GetFaceElement(i),
++                                                         *test_fes->GetFaceElement(i),
++                                                         *eltrans, elemmat);
++            elmat += elemmat;
+          }
+-         mat->SetSubMatrix(ran_vdofs, dom_vdofs, totelmat, skip_zeros);
++         mat->SetSubMatrix(test_vdofs, trial_vdofs, elmat, skip_zeros);
+       }
+    }
+ }
 diff --git a/fem/bilinearform.hpp b/fem/bilinearform.hpp
-index 2e0ac5e31..8b7dc5456 100644
+index b23df9280..876bc1b17 100644
 --- a/fem/bilinearform.hpp
 +++ b/fem/bilinearform.hpp
+@@ -100,7 +100,7 @@ protected:
+    /// Includes all by default.
+    /// 0 - ignore attribute
+    /// 1 - include attribute
+-   Array<Array<int>*>             domain_integs_marker;
++   Array<Array<int>*> domain_integs_marker; ///< Entries are not owned.
+ 
+    /// Set of Boundary Integrators to be applied.
+    Array<BilinearFormIntegrator*> boundary_integs;
 @@ -716,10 +716,13 @@ protected:
  
     /// Domain integrators.
@@ -110,7 +241,7 @@ index 2e0ac5e31..8b7dc5456 100644
  
     /// Trace face (skeleton) integrators.
     Array<BilinearFormIntegrator*> trace_face_integs;
-@@ -799,6 +802,10 @@ public:
+@@ -799,12 +802,16 @@ public:
     /// Adds a domain integrator. Assumes ownership of @a bfi.
     void AddDomainIntegrator(BilinearFormIntegrator *bfi);
  
@@ -121,7 +252,26 @@ index 2e0ac5e31..8b7dc5456 100644
     /// Adds a boundary integrator. Assumes ownership of @a bfi.
     void AddBoundaryIntegrator(BilinearFormIntegrator *bfi);
  
-@@ -822,6 +829,10 @@ public:
+    /// Adds a boundary integrator. Assumes ownership of @a bfi.
+-   void AddBoundaryIntegrator (BilinearFormIntegrator * bfi,
+-                               Array<int> &bdr_marker);
++   void AddBoundaryIntegrator(BilinearFormIntegrator * bfi,
++                              Array<int> &bdr_marker);
+ 
+    /** @brief Add a trace face integrator. Assumes ownership of @a bfi.
+ 
+@@ -814,14 +821,18 @@ public:
+    void AddTraceFaceIntegrator(BilinearFormIntegrator *bfi);
+ 
+    /// Adds a boundary trace face integrator. Assumes ownership of @a bfi.
+-   void AddBdrTraceFaceIntegrator (BilinearFormIntegrator * bfi);
++   void AddBdrTraceFaceIntegrator(BilinearFormIntegrator * bfi);
+ 
+    /// Adds a boundary trace face integrator. Assumes ownership of @a bfi.
+-   void AddBdrTraceFaceIntegrator (BilinearFormIntegrator * bfi,
+-                                   Array<int> &bdr_marker);
++   void AddBdrTraceFaceIntegrator(BilinearFormIntegrator * bfi,
++                                  Array<int> &bdr_marker);
  
     /// Access all integrators added with AddDomainIntegrator().
     Array<BilinearFormIntegrator*> *GetDBFI() { return &domain_integs; }
@@ -142,8 +292,16 @@ index 2e0ac5e31..8b7dc5456 100644
  
     /// Adds a trace face interpolator. Assumes ownership of @a di.
     void AddTraceFaceInterpolator(DiscreteInterpolator *di)
+@@ -1066,6 +1080,7 @@ public:
+ 
+    /// Access all interpolators added with AddDomainInterpolator().
+    Array<BilinearFormIntegrator*> *GetDI() { return &domain_integs; }
++   Array<Array<int>*> *GetDI_Marker() { return &domain_integs_marker; }
+ 
+    /// Set the desired assembly level. The default is AssemblyLevel::FULL.
+    /** This method must be called before assembly. */
 diff --git a/fem/nonlinearform.cpp b/fem/nonlinearform.cpp
-index 31a7a456e..4562ad950 100644
+index a01e83ebe..88271e234 100644
 --- a/fem/nonlinearform.cpp
 +++ b/fem/nonlinearform.cpp
 @@ -97,12 +97,37 @@ double NonlinearForm::GetGridFunctionEnergy(const Vector &x) const
@@ -487,7 +645,7 @@ index 31a7a456e..4562ad950 100644
        // Which boundary attributes need to be processed?
        Array<int> bdr_attr_marker(mesh->bdr_attributes.Size() ?
 diff --git a/fem/nonlinearform.hpp b/fem/nonlinearform.hpp
-index 5c5f9f7a8..8f9ca6082 100644
+index d15d09e04..77da539f7 100644
 --- a/fem/nonlinearform.hpp
 +++ b/fem/nonlinearform.hpp
 @@ -37,6 +37,7 @@ protected:
