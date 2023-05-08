@@ -70,16 +70,6 @@ if(NOT "${BLAS_LAPACK_LIBRARIES}" STREQUAL "")
   )
 endif()
 
-# Configure SLEPc eigenvalue solver
-if(PALACE_WITH_SLEPC)
-  list(APPEND PETSC_OPTIONS
-    "--download-slepc"
-    "--download-slepc-commit=${EXTERN_SLEPC_GIT_TAG}"
-    "--download-slepc-configure-arguments=\"--with-feast=0\""
-    # "--download-slepc-configure-arguments=\"--with-slepc4py=1\""
-  )
-endif()
-
 string(REPLACE ";" "; " PETSC_OPTIONS_PRINT "${PETSC_OPTIONS}")
 message(STATUS "PETSC_OPTIONS: ${PETSC_OPTIONS_PRINT}")
 
@@ -97,3 +87,35 @@ ExternalProject_Add(petsc
   TEST_COMMAND        ${CMAKE_MAKE_PROGRAM} check  # Use auto-detected PETSC_DIR/PETSC_ARCH
   TEST_BEFORE_INSTALL TRUE
 )
+
+# Configure SLEPc eigenvalue solver
+if(PALACE_WITH_SLEPC)
+  set(SLEPC_DEPENDENCIES petsc)
+
+  set(SLEPC_OPTIONS
+    "--prefix=${CMAKE_INSTALL_PREFIX}"
+    "--with-feast=0"
+    "--with-arpack=0"
+    # "--with-slepc4py=1
+  )
+
+  string(REPLACE ";" "; " SLEPC_OPTIONS_PRINT "${SLEPC_OPTIONS}")
+  message(STATUS "SLEPC_OPTIONS: ${SLEPC_OPTIONS_PRINT}")
+
+  include(ExternalProject)
+  ExternalProject_Add(slepc
+    DEPENDS             ${SLEPC_DEPENDENCIES}
+    GIT_REPOSITORY      ${CMAKE_CURRENT_SOURCE_DIR}/slepc
+    GIT_TAG             ${EXTERN_SLEPC_GIT_TAG}
+    SOURCE_DIR          ${CMAKE_CURRENT_BINARY_DIR}/slepc
+    INSTALL_DIR         ${CMAKE_INSTALL_PREFIX}
+    PREFIX              ${CMAKE_CURRENT_BINARY_DIR}/slepc-cmake
+    BUILD_IN_SOURCE     TRUE
+    UPDATE_COMMAND      ""
+    CONFIGURE_COMMAND   SLEPC_DIR=<SOURCE_DIR> PETSC_DIR=${CMAKE_INSTALL_PREFIX} PETSC_ARCH= ./configure ${SLEPC_OPTIONS}
+    BUILD_COMMAND       SLEPC_DIR=<SOURCE_DIR> PETSC_DIR=${CMAKE_INSTALL_PREFIX} PETSC_ARCH= ${CMAKE_MAKE_PROGRAM}
+    INSTALL_COMMAND     SLEPC_DIR=<SOURCE_DIR> PETSC_DIR=${CMAKE_INSTALL_PREFIX} PETSC_ARCH= ${CMAKE_MAKE_PROGRAM} install
+    TEST_COMMAND        SLEPC_DIR=<SOURCE_DIR> PETSC_DIR=${CMAKE_INSTALL_PREFIX} PETSC_ARCH= ${CMAKE_MAKE_PROGRAM} check  # Use auto-detected SLEPC_DIR/SLEPC_ARCH
+    TEST_BEFORE_INSTALL TRUE
+  )
+endif()
