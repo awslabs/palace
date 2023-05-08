@@ -6,7 +6,11 @@
 #
 
 # Force build order
-set(GSLIB_DEPENDENCIES petsc)
+if(PALACE_WITH_SLEPC)
+  set(GSLIB_DEPENDENCIES slepc)
+else()
+  set(GSLIB_DEPENDENCIES petsc)
+endif()
 
 set(GSLIB_OPTIONS
   "INSTALL_ROOT=${CMAKE_INSTALL_PREFIX}"
