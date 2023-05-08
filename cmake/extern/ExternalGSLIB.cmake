@@ -13,19 +13,21 @@ set(GSLIB_OPTIONS
   "CC=${CMAKE_C_COMPILER}"
   "MPI=1"
 )
-if(CMAKE_BUILD_TYPE MATCHES "Debug|debug|DEBUG")
-  list(APPEND GSLIB_OPTIONS
-    "DEBUG=1"
-  )
-endif()
 
 set(GSLIB_LDFLAGS)
 set(GSLIB_CFLAGS ${CMAKE_C_FLAGS})
 
-# GSLIB is always built as a static library, even when BUILD_SHARED_LIBS=ON, but we need
-# -fPIC
+# GSLIB will add -fPIC as necessary
 if(BUILD_SHARED_LIBS)
-  set(GSLIB_CFLAGS "${GSLIB_CFLAGS} -fPIC")
+  list(APPEND GSLIB_OPTIONS
+    "STATIC=0"
+    "SHARED=1"
+  )
+else()
+  list(APPEND GSLIB_OPTIONS
+    "STATIC=1"
+    "SHARED=0"
+  )
 endif()
 
 # User might specify the MPI compiler wrappers directly, otherwise we need to supply MPI
@@ -77,6 +79,11 @@ list(APPEND GSLIB_OPTIONS
 string(REPLACE ";" "; " GSLIB_OPTIONS_PRINT "${GSLIB_OPTIONS}")
 message(STATUS "GSLIB_OPTIONS: ${GSLIB_OPTIONS_PRINT}")
 
+# Fix build
+set(GSLIB_PATCH_FILES
+  "${CMAKE_CURRENT_SOURCE_DIR}/patch/gslib/patch_build.diff"
+)
+
 include(ExternalProject)
 ExternalProject_Add(gslib
   DEPENDS           ${GSLIB_DEPENDENCIES}
@@ -87,6 +94,7 @@ ExternalProject_Add(gslib
   PREFIX            ${CMAKE_CURRENT_BINARY_DIR}/gslib-cmake
   BUILD_IN_SOURCE   TRUE
   UPDATE_COMMAND    ""
+  PATCH_COMMAND     git apply "${GSLIB_PATCH_FILES}"
   CONFIGURE_COMMAND ""
   BUILD_COMMAND     ""
   INSTALL_COMMAND   ${CMAKE_MAKE_PROGRAM} ${GSLIB_OPTIONS} install
