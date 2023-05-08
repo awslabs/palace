@@ -33,6 +33,13 @@ list(APPEND SUPERLU_OPTIONS
   "-DTPL_ENABLE_HIPLIB=OFF"
 )
 
+# SuperLU_DIST has a BUILD_STATIC_LIBS option which defaults to ON
+if(BUILD_SHARED_LIBS)
+  list(APPEND SUPERLU_OPTIONS
+    "-DBUILD_STATIC_LIBS=OFF"
+  )
+endif()
+
 # Configure 64-bit indices
 if(PALACE_WITH_64BIT_INT)
   list(APPEND SUPERLU_OPTIONS
