@@ -15,7 +15,7 @@ set(EXTERN_ARPACK_GIT_TAG
   "Git tag for external ARPACK-NG build"
 )
 set(EXTERN_BUTTERFLYPACK_GIT_TAG
-  "04d498f5ef170fade5fd9f3caed841354b215a5a" CACHE STRING  # 04/13/2023
+  "6082f26ee2c06fc23bb1388d0242a8a92bf8ba02" CACHE STRING  # 05/03/2023
   "Git tag for external ButterflyPACK build"
 )
 set(EXTERN_GKLIB_GIT_TAG
@@ -27,7 +27,7 @@ set(EXTERN_GSLIB_GIT_TAG
   "Git tag for external GSLIB build"
 )
 set(EXTERN_HYPRE_GIT_TAG
-  "e351324df841fdb323e1791162915a55f1ba642a" CACHE STRING  # 05/02/2023
+  "6ac5d7d0c89430b1eaa8f8657040d8144c911a55" CACHE STRING  # 05/08/2023
   "Git tag for external HYPRE build"
 )
 set(EXTERN_METIS_GIT_TAG
@@ -43,11 +43,11 @@ set(EXTERN_PARMETIS_GIT_TAG
   "Git tag for external ParMETIS build"
 )
 set(EXTERN_PETSC_GIT_TAG
-  "c377bc1b91c268822f21b2f974c0bfcf48ec1990" CACHE STRING  # 05/02/2023
+  "629fb9b110dab6ed3b6e5e8cbe704510372bf638" CACHE STRING  # 05/08/2023
   "Git tag for external PETSc build"
 )
 set(EXTERN_SLEPC_GIT_TAG
-  "59bebb3495c16e27671f3799be79dd1fb541dd93" CACHE STRING  # 04/28/2023
+  "19c2f7e23f164dc9c1722faf88a7c1f5f9bd1647" CACHE STRING  # 05/05/2023
   "Git tag for external SLEPc build"
 )
 set(EXTERN_SCALAPACK_GIT_TAG
@@ -59,7 +59,7 @@ set(EXTERN_STRUMPACK_GIT_TAG
   "Git tag for external STRUMPACK build"
 )
 set(EXTERN_SUPERLU_GIT_TAG
-  "09cb1430f7be288fd4d75b8ed461aa0b7e68fefe" CACHE STRING  # 05/02/2023
+  "02b7c0d71bc33e785d098b0f8e4c26414bb8e39a" CACHE STRING  # 05/08/2023
   "Git tag for external SuperLU_DIST build"
 )
 set(EXTERN_ZFP_GIT_TAG
