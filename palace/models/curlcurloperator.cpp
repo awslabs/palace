@@ -6,7 +6,6 @@
 #include "fem/coefficient.hpp"
 #include "fem/integrator.hpp"
 #include "fem/multigrid.hpp"
-#include "fem/operator.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
@@ -70,22 +69,24 @@ mfem::Array<int> SetUpBoundaryProperties(const IoData &iodata, const mfem::ParMe
 
 CurlCurlOperator::CurlCurlOperator(const IoData &iodata,
                                    const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh)
-  : dbc_marker(SetUpBoundaryProperties(iodata, *mesh.back())), skip_zeros(0),
-    pc_gmg(iodata.solver.linear.mat_gmg), print_hdr(true),
+  : assembly_level(iodata.solver.linear.mat_pa ? mfem::AssemblyLevel::PARTIAL
+                                               : mfem::AssemblyLevel::LEGACY),
+    skip_zeros(0), pc_gmg(iodata.solver.linear.mat_gmg), print_hdr(true),
+    dbc_marker(SetUpBoundaryProperties(iodata, *mesh.back())),
     nd_fecs(utils::ConstructFECollections<mfem::ND_FECollection>(
         pc_gmg, false, iodata.solver.order, mesh.back()->Dimension())),
     h1_fec(iodata.solver.order, mesh.back()->Dimension()),
     rt_fec(iodata.solver.order - 1, mesh.back()->Dimension()),
-    nd_fespaces(
-        pc_gmg
-            ? utils::ConstructFiniteElementSpaceHierarchy(mesh, nd_fecs, dbc_marker)
-            : utils::ConstructFiniteElementSpaceHierarchy(*mesh.back(), *nd_fecs.back())),
+    nd_fespaces(pc_gmg ? utils::ConstructFiniteElementSpaceHierarchy(
+                             mesh, nd_fecs, &dbc_marker, &dbc_tdof_lists)
+                       : utils::ConstructFiniteElementSpaceHierarchy(
+                             *mesh.back(), *nd_fecs.back(), &dbc_marker,
+                             &dbc_tdof_lists.emplace_back())),
     h1_fespace(mesh.back().get(), &h1_fec), rt_fespace(mesh.back().get(), &rt_fec),
-    mat_op(iodata, *mesh.back()), surf_j_op(iodata, h1_fespace)
+    mat_op(iodata, *mesh.back()), surf_j_op(iodata, GetH1Space())
 {
   // Finalize setup.
   CheckBoundaryProperties();
-  nd_fespaces.GetFinestFESpace().GetEssentialTrueDofs(dbc_marker, dbc_tdof_list);
 
   // Print essential BC information.
   if (dbc_marker.Max() > 0)
@@ -106,57 +107,55 @@ void CurlCurlOperator::CheckBoundaryProperties()
   }
 }
 
-void CurlCurlOperator::PrintHeader()
+void CurlCurlOperator::GetStiffnessMatrix(std::vector<std::unique_ptr<ParOperator>> &K)
 {
   if (print_hdr)
   {
-    Mpi::Print("\nConfiguring system matrices, number of global unknowns: {:d}\n",
-               nd_fespaces.GetFinestFESpace().GlobalTrueVSize());
-    print_hdr = false;
+    Mpi::Print("\nAssembling system matrices, number of global unknowns:\n"
+               " ND: {:d}\n RT: {:d}\n",
+               GetNDSpace().GlobalTrueVSize(), GetRTSpace().GlobalTrueVSize());
+    Mpi::Print("\nAssembling multigrid hierarchy:\n");
   }
-}
-
-void CurlCurlOperator::GetStiffnessMatrix(std::vector<std::unique_ptr<mfem::Operator>> &K)
-{
   K.clear();
   K.reserve(nd_fespaces.GetNumLevels());
   for (int l = 0; l < nd_fespaces.GetNumLevels(); l++)
   {
     auto &nd_fespace_l = nd_fespaces.GetFESpaceAtLevel(l);
-    mfem::Array<int> dbc_tdof_list_l;
-    nd_fespace_l.GetEssentialTrueDofs(dbc_marker, dbc_tdof_list_l);
-
-    MaterialPropertyCoefficient<MaterialPropertyType::INV_PERMEABILITY> muinv_func(mat_op);
-    mfem::ParBilinearForm k(&nd_fespace_l);
-    k.AddDomainIntegrator(new mfem::CurlCurlIntegrator(muinv_func));
-    // k.SetAssemblyLevel(mfem::AssemblyLevel::FULL);
-    k.Assemble(skip_zeros);
-    k.Finalize(skip_zeros);
-    mfem::HypreParMatrix *hK = k.ParallelAssemble();
-    hK->EliminateBC(dbc_tdof_list_l, mfem::Operator::DiagonalPolicy::DIAG_ONE);
-    PrintHeader();
+    constexpr MaterialPropertyType MatType = MaterialPropertyType::INV_PERMEABILITY;
+    MaterialPropertyCoefficient<MatType> muinv_func(mat_op);
+    auto k = std::make_unique<mfem::BilinearForm>(&nd_fespace_l);
+    k->AddDomainIntegrator(new mfem::CurlCurlIntegrator(muinv_func));
+    k->SetAssemblyLevel(assembly_level);
+    k->Assemble(skip_zeros);
+    k->Finalize(skip_zeros);
+    if (print_hdr)
     {
-      std::string str = "";
-      if (pc_gmg)
+      Mpi::Print(" Level {:d}: {:d} unknowns", l, nd_fespace_l.GlobalTrueVSize());
+      if (assembly_level == mfem::AssemblyLevel::LEGACY)
       {
-        str =
-            fmt::format(" (Level {:d}, {:d} unknowns)", l, nd_fespace_l.GlobalTrueVSize());
+        HYPRE_BigInt nnz = k->SpMat().NumNonZeroElems();
+        Mpi::GlobalSum(1, &nnz, nd_fespace_l.GetComm());
+        Mpi::Print(", {:d} NNZ\n", nnz);
       }
-      Mpi::Print(" K{}: NNZ = {:d}, norm = {:e}\n", str, hK->NNZ(),
-                 hypre_ParCSRMatrixFnorm(*hK));
+      else
+      {
+        Mpi::Print("\n");
+      }
     }
-    K.emplace_back(hK);
+    K.push_back(std::make_unique<ParOperator>(std::move(k), nd_fespace_l, nd_fespace_l));
+    K.back()->SetEssentialTrueDofs(dbc_tdof_lists[l], Operator::DiagonalPolicy::DIAG_ONE);
   }
+  print_hdr = false;
 }
 
-std::unique_ptr<mfem::Operator> CurlCurlOperator::GetCurlMatrix()
+std::unique_ptr<ParOperator> CurlCurlOperator::GetCurlMatrix()
 {
-  mfem::ParDiscreteLinearOperator curl(&nd_fespaces.GetFinestFESpace(), &rt_fespace);
-  curl.AddDomainInterpolator(new mfem::CurlInterpolator);
-  // curl.SetAssemblyLevel(mfem::AssemblyLevel::FULL);
-  curl.Assemble();
-  curl.Finalize();
-  return std::unique_ptr<mfem::HypreParMatrix>(curl.ParallelAssemble());
+  auto curl = std::make_unique<mfem::DiscreteLinearOperator>(&GetNDSpace(), &GetRTSpace());
+  curl->AddDomainInterpolator(new mfem::CurlInterpolator);
+  curl->SetAssemblyLevel(assembly_level);
+  curl->Assemble();
+  curl->Finalize();
+  return std::make_unique<ParOperator>(std::move(curl), GetNDSpace(), GetRTSpace(), true);
 }
 
 void CurlCurlOperator::GetExcitationVector(int idx, mfem::Vector &RHS)
@@ -164,21 +163,20 @@ void CurlCurlOperator::GetExcitationVector(int idx, mfem::Vector &RHS)
   // Assemble the surface current excitation +J. The SurfaceCurrentOperator assembles -J
   // (meant for time or frequency domain Maxwell discretization, so we multiply by -1 to
   // retrieve +J).
-  SumVectorCoefficient fb(nd_fespaces.GetFinestFESpace().GetParMesh()->SpaceDimension());
+  SumVectorCoefficient fb(GetNDSpace().GetParMesh()->SpaceDimension());
   surf_j_op.AddExcitationBdrCoefficients(idx, fb);
-  RHS.SetSize(nd_fespaces.GetFinestFESpace().GetTrueVSize());
+  RHS.SetSize(GetNDSpace().GetTrueVSize());
   RHS = 0.0;
   if (fb.empty())
   {
     return;
   }
-  mfem::ParLinearForm rhs(&nd_fespaces.GetFinestFESpace());
+  mfem::LinearForm rhs(&GetNDSpace());
   rhs.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fb));
-  rhs.UseFastAssembly(true);
+  rhs.UseFastAssembly(false);
   rhs.Assemble();
-  rhs.ParallelAssemble(RHS);
-  RHS.Neg();
-  RHS.SetSubVector(dbc_tdof_list, 0.0);
+  GetNDSpace().GetProlongationMatrix()->AddMultTranspose(rhs, RHS, -1.0);
+  RHS.SetSubVector(dbc_tdof_lists.back(), 0.0);
 }
 
 }  // namespace palace

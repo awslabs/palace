@@ -94,6 +94,9 @@ void HypreAmsSolver::ConstructAuxiliaryMatrices(mfem::ParFiniteElementSpace &nd_
   mfem::FiniteElementCollection *h1_fec = nullptr;
   if (!h1_fespace)
   {
+
+    // XX TODO REUSE FROM INPUT...
+
     h1_fec = new mfem::H1_FECollection(nd_fespace.GetMaxElementOrder(),
                                        nd_fespace.GetParMesh()->Dimension());
     h1_fespace = new mfem::ParFiniteElementSpace(nd_fespace.GetParMesh(), h1_fec);

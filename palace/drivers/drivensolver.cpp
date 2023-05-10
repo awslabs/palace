@@ -5,7 +5,9 @@
 
 #include <complex>
 #include <mfem.hpp>
+#include "linalg/complex.hpp"
 #include "linalg/ksp.hpp"
+#include "linalg/operator.hpp"
 #include "linalg/pc.hpp"
 #include "linalg/petsc.hpp"
 #include "models/lumpedportoperator.hpp"
@@ -21,6 +23,8 @@
 
 namespace palace
 {
+
+using namespace std::complex_literals;
 
 void DrivenSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
                          Timer &timer) const
@@ -112,30 +116,43 @@ void DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator &postop, in
   // simply by setting diagonal entries of the system matrix for the corresponding dofs.
   // Because the Dirichlet BC is always homogenous, no special elimination is required on
   // the RHS. Assemble the linear system for the initial frequency (so we can call
-  // KspSolver:: SetOperators). Compute everything at the first frequency step.
-  std::unique_ptr<petsc::PetscParMatrix> A = spaceop.GetSystemMatrixPetsc(
-      SpaceOperator::OperatorType::COMPLETE, omega0, mfem::Operator::DIAG_ONE);
-  std::unique_ptr<petsc::PetscParMatrix> NegCurl = spaceop.GetNegCurlMatrixPetsc();
+  // KspSolver::SetOperators). Compute everything at the first frequency step.
+
+  // XX TODO WIP
+  //  std::unique_ptr<petsc::PetscParMatrix> A = spaceop.GetSystemMatrixPetsc(
+  //      SpaceOperator::OperatorType::COMPLETE, omega0, mfem::Operator::DIAG_ONE);
+
+  std::unique_ptr<ComplexParOperator> K = spaceop.GetComplexSystemMatrix(
+      SpaceOperator::OperatorType::STIFFNESS, Operator::DIAG_ONE);
+  std::unique_ptr<ComplexParOperator> M = spaceop.GetComplexSystemMatrix(
+      SpaceOperator::OperatorType::MASS, Operator::DIAG_ZERO);
+  std::unique_ptr<ComplexParOperator> C = spaceop.GetComplexSystemMatrix(
+      SpaceOperator::OperatorType::DAMPING, Operator::DIAG_ZERO);
+  std::unique_ptr<ComplexParOperator> A2 = spaceop.GetComplexSystemMatrix(
+      SpaceOperator::OperatorType::EXTRA, omega0, Operator::DIAG_ZERO);
+  std::unique_ptr<ComplexParOperator> Curl = spaceop.GetComplexCurlMatrix();
+  std::unique_ptr<ComplexParOperator> A = spaceop.GetComplexSystemMatrix(
+      1.0, 1i * omega0, -omega0 * omega0, K.get(), C.get(), M.get(), A2.get());
 
   // Set up the linear solver and set operators for the first frequency step. The
   // preconditioner for the complex linear system is constructed from a real approximation
   // to the complex system matrix.
-  std::vector<std::unique_ptr<mfem::Operator>> P, AuxP;
-  spaceop.GetPreconditionerMatrix(omega0, P, AuxP);
+  std::vector<std::unique_ptr<ParOperator>> P, AuxP;
+  spaceop.GetPreconditionerMatrix(1.0, omega0, -omega0 * omega0, omega0, P, AuxP);
 
-  KspPreconditioner pc(iodata, spaceop.GetDbcMarker(), spaceop.GetNDSpaces(),
-                       &spaceop.GetH1Spaces());
-  pc.SetOperator(P, &AuxP);
+  // KspPreconditioner pc(iodata, spaceop.GetDbcMarker(), spaceop.GetNDSpaces(),
+  //                      &spaceop.GetH1Spaces());
+  // pc.SetOperator(P, &AuxP);
 
   KspSolver ksp(A->GetComm(), iodata, "ksp_");
-  ksp.SetPreconditioner(pc);
-  ksp.SetOperator(*A);
+  // ksp.SetPreconditioner(pc);   //XX TODO!
+  // ksp.SetOperator(*A);
 
   // Set up RHS vector for the incident field at port boundaries, and the vector for the
   // first frequency step.
-  petsc::PetscParVector RHS(*NegCurl), E(*NegCurl), B(*NegCurl, true);
-  E.SetZero();
-  B.SetZero();
+  ComplexVector RHS(Curl->Width()), E(Curl->Width()), B(Curl->Height());
+  E = 0.0;
+  B = 0.0;
   timer.construct_time += timer.Lap();
 
   // Main frequency sweep loop.
@@ -144,33 +161,35 @@ void DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator &postop, in
   auto t0 = timer.Now();
   while (step < nstep)
   {
-    const double freq = iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, omega);
-    Mpi::Print("\nIt {:d}/{:d}: ω/2π = {:.3e} GHz (elapsed time = {:.2e} s)\n", step + 1,
-               nstep, freq, Timer::Duration(timer.Now() - t0).count());
+    // const double freq = iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, omega);
+    // Mpi::Print("\nIt {:d}/{:d}: ω/2π = {:.3e} GHz (elapsed time = {:.2e} s)\n", step + 1,
+    //            nstep, freq, Timer::Duration(timer.Now() - t0).count());
 
-    // Assemble the linear system and solve.
-    if (step > step0)
-    {
-      // Update frequency-dependent excitation and operators.
-      A = spaceop.GetSystemMatrixPetsc(SpaceOperator::OperatorType::COMPLETE, omega,
-                                       mfem::Operator::DIAG_ONE, false);
-      spaceop.GetPreconditionerMatrix(omega, P, AuxP, false);
-      pc.SetOperator(P, &AuxP);
-      ksp.SetOperator(*A);
-    }
-    spaceop.GetFreqDomainExcitationVector(omega, RHS);
-    timer.construct_time += timer.Lap();
+    // // Assemble the linear system and solve.
+    // if (step > step0)
+    // {
+    //   // Update frequency-dependent excitation and operators.
+    //   A = spaceop.GetSystemMatrixPetsc(SpaceOperator::OperatorType::COMPLETE, omega,
+    //                                    mfem::Operator::DIAG_ONE, false);
+    //   spaceop.GetPreconditionerMatrix(omega, P, AuxP, false);
+    //   pc.SetOperator(P, &AuxP);
+    //   ksp.SetOperator(*A);
+    // }
+    // spaceop.GetFreqDomainExcitationVector(omega, RHS);
+    // timer.construct_time += timer.Lap();
 
-    Mpi::Print("\n");
-    ksp.Mult(RHS, E);
-    timer.solve_time += timer.Lap();
+    // Mpi::Print("\n");
+    // ksp.Mult(RHS, E);
+    // timer.solve_time += timer.Lap();
 
+    // Compute B = -1/(iω) ∇ x E on the true dofs, and set the internal GridFunctions in
+    // PostOperator for all postprocessing operations.
     double E_elec = 0.0, E_mag = 0.0;
-    PostOperator::GetBField(omega, *NegCurl, E, B);
-    postop.SetEGridFunction(E);
-    postop.SetBGridFunction(B);
+    Curl->Mult(E, B);
+    B *= -1.0 / (1i * omega);
+    // postop.SetEGridFunction(E);  //XX TODO petsc::PetscParVector
+    // postop.SetBGridFunction(B);
     postop.UpdatePorts(spaceop.GetLumpedPortOp(), spaceop.GetWavePortOp(), omega);
-    // E.Print();
     Mpi::Print(" Sol. ||E|| = {:.6e} (||RHS|| = {:.6e})\n", E.Norml2(), RHS.Norml2());
     if (!iodata.solver.driven.only_port_post)
     {
@@ -228,79 +247,79 @@ void DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator &postop, i
 
   // Allocate negative curl matrix for postprocessing the B-field and vectors for the
   // high-dimensional field solution.
-  std::unique_ptr<petsc::PetscParMatrix> NegCurl = spaceop.GetNegCurlMatrixPetsc();
-  petsc::PetscParVector E(*NegCurl), B(*NegCurl, true);
-  E.SetZero();
-  B.SetZero();
+  std::unique_ptr<ComplexParOperator> Curl = spaceop.GetComplexCurlMatrix();
+  ComplexVector E(Curl->Width()), B(Curl->Height());
+  E = 0.0;
+  B = 0.0;
 
-  // Configure the PROM operator which performs the parameter space sampling and basis
-  // construction during the offline phase as well as the PROM solution during the online
-  // phase. Initialize the basis with samples from the top and bottom of the frequency
-  // range of interest. Each call for an HDM solution adds the frequency sample to P_S and
-  // removes it from P \ P_S.
-  timer.construct_time += timer.Lap();
-  Timer local_timer;
-  Mpi::Print("\nBeginning PROM construction offline phase:\n"
-             " {:d} points for frequency sweep over [{:.3e}, {:.3e}] GHz\n",
-             nstep - step0,
-             iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, omega0),
-             iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY,
-                                        omega0 + (nstep - step0 - 1) * delta_omega));
-  spaceop.GetWavePortOp().SetSuppressOutput(true);  // Suppress wave port stuff for offline
-  RomOperator prom(iodata, spaceop, nmax);
-  prom.Initialize(nstep - step0, omega0, delta_omega);
-  local_timer.construct_time += local_timer.Lap();
+  // // Configure the PROM operator which performs the parameter space sampling and basis
+  // // construction during the offline phase as well as the PROM solution during the online
+  // // phase. Initialize the basis with samples from the top and bottom of the frequency
+  // // range of interest. Each call for an HDM solution adds the frequency sample to P_S
+  // and
+  // // removes it from P \ P_S.
+  // timer.construct_time += timer.Lap();
+  // Timer local_timer;
+  // Mpi::Print("\nBeginning PROM construction offline phase:\n"
+  //            " {:d} points for frequency sweep over [{:.3e}, {:.3e}] GHz\n",
+  //            nstep - step0,
+  //            iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, omega0),
+  //            iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY,
+  //                                       omega0 + (nstep - step0 - 1) * delta_omega));
+  // spaceop.GetWavePortOp().SetSuppressOutput(true);  // Suppress wave port stuff for
+  // offline RomOperator prom(iodata, spaceop, nmax); prom.Initialize(nstep - step0, omega0,
+  // delta_omega); local_timer.construct_time += local_timer.Lap();
 
-  prom.SolveHDM(omega0, E, true);  // Print matrix stats at first HDM solve
-  prom.SolveHDM(omega0 + (nstep - step0 - 1) * delta_omega, E, false);
-  local_timer.solve_time += local_timer.Lap();
+  // prom.SolveHDM(omega0, E, true);  // Print matrix stats at first HDM solve
+  // prom.SolveHDM(omega0 + (nstep - step0 - 1) * delta_omega, E, false);
+  // local_timer.solve_time += local_timer.Lap();
 
-  // Greedy procedure for basis construction (offline phase). Basis is initialized with
-  // solutions at frequency sweep endpoints.
-  int iter = static_cast<int>(prom.GetSampleFrequencies().size()), iter0 = iter;
-  double max_error = 1.0;
-  while (true)
-  {
-    // Compute maximum error in parameter domain with current PROM.
-    double omega_star;
-    max_error = prom.ComputeMaxError(ncand, omega_star);
-    local_timer.construct_time += local_timer.Lap();
-    if (max_error < offline_tol || iter == nmax)
-    {
-      break;
-    }
+  // // Greedy procedure for basis construction (offline phase). Basis is initialized with
+  // // solutions at frequency sweep endpoints.
+  // int iter = static_cast<int>(prom.GetSampleFrequencies().size()), iter0 = iter;
+  // double max_error = 1.0;
+  // while (true)
+  // {
+  //   // Compute maximum error in parameter domain with current PROM.
+  //   double omega_star;
+  //   max_error = prom.ComputeMaxError(ncand, omega_star);
+  //   local_timer.construct_time += local_timer.Lap();
+  //   if (max_error < offline_tol || iter == nmax)
+  //   {
+  //     break;
+  //   }
 
-    // Sample HDM and add solution to basis.
-    Mpi::Print(
-        "\nGreedy iteration {:d} (n = {:d}): ω* = {:.3e} GHz ({:.3e}), error = {:.3e}\n",
-        iter - iter0 + 1, prom.GetReducedDimension(),
-        iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, omega_star), omega_star,
-        max_error);
-    prom.SolveHDM(omega_star, E);
-    local_timer.solve_time += local_timer.Lap();
-    iter++;
-  }
-  {
-    std::vector<double> samples(prom.GetSampleFrequencies());
-    // samples.Sort();
-    for (auto &sample : samples)
-    {
-      sample = iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, sample);
-    }
-    Mpi::Print("\nAdaptive sampling{} {:d} frequency samples:\n"
-               " n = {:d}, error = {:.3e}, tol = {:.3e}\n",
-               (iter == nmax) ? " reached maximum" : " converged with", iter,
-               prom.GetReducedDimension(), max_error, offline_tol);
-    utils::PrettyPrint(samples, " Sampled frequencies (GHz):");
-  }
-  SaveMetadata(prom.GetTotalKspMult(), prom.GetTotalKspIter());
-  const auto local_construction_time = timer.Lap();
-  timer.construct_time += local_construction_time;
-  Mpi::Print(" Total offline phase elapsed time: {:.2e} s\n"
-             " Parameter space sampling: {:.2e} s, HDM solves: {:.2e} s\n",
-             Timer::Duration(local_construction_time).count(),
-             Timer::Duration(local_timer.construct_time).count(),
-             Timer::Duration(local_timer.solve_time).count());  // Timings on rank 0
+  //   // Sample HDM and add solution to basis.
+  //   Mpi::Print(
+  //       "\nGreedy iteration {:d} (n = {:d}): ω* = {:.3e} GHz ({:.3e}), error = {:.3e}\n",
+  //       iter - iter0 + 1, prom.GetReducedDimension(),
+  //       iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, omega_star), omega_star,
+  //       max_error);
+  //   prom.SolveHDM(omega_star, E);
+  //   local_timer.solve_time += local_timer.Lap();
+  //   iter++;
+  // }
+  // {
+  //   std::vector<double> samples(prom.GetSampleFrequencies());
+  //   // samples.Sort();
+  //   for (auto &sample : samples)
+  //   {
+  //     sample = iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, sample);
+  //   }
+  //   Mpi::Print("\nAdaptive sampling{} {:d} frequency samples:\n"
+  //              " n = {:d}, error = {:.3e}, tol = {:.3e}\n",
+  //              (iter == nmax) ? " reached maximum" : " converged with", iter,
+  //              prom.GetReducedDimension(), max_error, offline_tol);
+  //   utils::PrettyPrint(samples, " Sampled frequencies (GHz):");
+  // }
+  // SaveMetadata(prom.GetTotalKspMult(), prom.GetTotalKspIter());
+  // const auto local_construction_time = timer.Lap();
+  // timer.construct_time += local_construction_time;
+  // Mpi::Print(" Total offline phase elapsed time: {:.2e} s\n"
+  //            " Parameter space sampling: {:.2e} s, HDM solves: {:.2e} s\n",
+  //            Timer::Duration(local_construction_time).count(),
+  //            Timer::Duration(local_timer.construct_time).count(),
+  //            Timer::Duration(local_timer.solve_time).count());  // Timings on rank 0
 
   // Main fast frequency sweep loop (online phase).
   Mpi::Print("\nBeginning fast frequency sweep online phase\n");
@@ -314,20 +333,24 @@ void DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator &postop, i
     Mpi::Print("\nIt {:d}/{:d}: ω/2π = {:.3e} GHz (elapsed time = {:.2e} s)\n", step + 1,
                nstep, freq, Timer::Duration(timer.Now() - t0).count());
 
-    // Assemble the linear system and solve.
-    prom.AssemblePROM(omega);
-    timer.construct_time += timer.Lap();
+    // XX TODO PROM
 
-    Mpi::Print("\n");
-    prom.SolvePROM(E);
-    timer.solve_time += timer.Lap();
+    // // Assemble the linear system and solve.
+    // prom.AssemblePROM(omega);
+    // timer.construct_time += timer.Lap();
 
+    // Mpi::Print("\n");
+    // prom.SolvePROM(E);
+    // timer.solve_time += timer.Lap();
+
+    // Compute B = -1/(iω) ∇ x E on the true dofs, and set the internal GridFunctions in
+    // PostOperator for all postprocessing operations.
     double E_elec = 0.0, E_mag = 0.0;
-    PostOperator::GetBField(omega, *NegCurl, E, B);
+    Curl->Mult(E, B);
+    B *= -1.0 / (1i * omega);
     postop.SetEGridFunction(E);
     postop.SetBGridFunction(B);
     postop.UpdatePorts(spaceop.GetLumpedPortOp(), spaceop.GetWavePortOp(), omega);
-    // E.Print();
     Mpi::Print(" Sol. ||E|| = {:.6e}\n", E.Norml2());
     if (!iodata.solver.driven.only_port_post)
     {

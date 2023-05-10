@@ -12,6 +12,8 @@
 namespace palace
 {
 
+// XX TODO STORE DBC TDOFS AND APPLY AFTER PROLONGATION TRANSPOSE
+
 //
 // Geometric multigrid preconditioner using a given coarse solver for the provided
 // hierarchy of finite element spaces. Optionally can be configured to use auxiliary space

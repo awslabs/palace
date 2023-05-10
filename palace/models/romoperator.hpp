@@ -4,6 +4,8 @@
 #ifndef PALACE_MODELS_ROM_OPERATOR_HPP
 #define PALACE_MODELS_ROM_OPERATOR_HPP
 
+#if 0  // XX TODO DISABLE ROM FOR NOW
+
 #include <memory>
 #include <random>
 #include <vector>
@@ -50,7 +52,7 @@ private:
   std::unique_ptr<KspSolver> ksp;
 
   // Linear solver for inner product solves for error metric.
-  std::unique_ptr<CurlCurlSolver> kspKM;
+  std::unique_ptr<CurlCurlMassSolver> kspKM;
   std::unique_ptr<petsc::PetscParMatrix> opKM;
 
   // PROM reduced-order basis and parameter domain samplings.
@@ -104,5 +106,7 @@ public:
 };
 
 }  // namespace palace
+
+#endif
 
 #endif  // PALACE_MODELS_ROM_OPERATOR_HPP

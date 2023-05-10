@@ -7,13 +7,13 @@
 #include <memory>
 #include <vector>
 #include "drivers/basesolver.hpp"
+#include "linalg/vector.hpp"
 
 namespace mfem
 {
 
 class DenseMatrix;
 class ParMesh;
-class Vector;
 
 }  // namespace mfem
 
@@ -33,7 +33,7 @@ class MagnetostaticSolver : public BaseSolver
 {
 private:
   void Postprocess(CurlCurlOperator &curlcurlop, PostOperator &postop,
-                   const std::vector<mfem::Vector> &A, Timer &timer) const;
+                   const std::vector<Vector> &A, Timer &timer) const;
 
   void PostprocessTerminals(const SurfaceCurrentOperator &surf_j_op,
                             const mfem::DenseMatrix &M, const mfem::DenseMatrix &Minv,

@@ -150,7 +150,7 @@ public:
   // Zero all entries of the vector.
   void SetZero();
 
-  // Sets all entries of the vector to random numbers sampled from the range[-1-i, 1+i], or
+  // Sets all entries of the vector to random numbers sampled from the range [-1-i, 1+i], or
   // [-1, 1].
   void SetRandom();
 #if defined(PETSC_USE_COMPLEX)
@@ -585,7 +585,7 @@ public:
   void RestoreArray(PetscScalar *data);
   void RestoreArrayRead(const PetscScalar *data) const;
 
-  // Sets all entries of the vector to random numbers sampled from the range[-1-i, 1+i], or
+  // Sets all entries of the matrix to random numbers sampled from the range [-1-i, 1+i], or
   // [-1, 1].
   void SetRandom(PetscInt start = -1, PetscInt end = -1);
 #if defined(PETSC_USE_COMPLEX)

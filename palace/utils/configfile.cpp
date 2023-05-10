@@ -198,8 +198,7 @@ void RefinementData::SetUp(json &model)
                   "configuration file!");
       MFEM_VERIFY(it->find("Levels") != it->end(),
                   "Missing \"Boxes\" refinement region \"Levels\" in configuration file!");
-      boxlist.emplace_back();
-      BoxRefinementData &data = boxlist.back();
+      BoxRefinementData &data = boxlist.emplace_back();
       data.ref_levels = it->at("Levels");  // Required
 
       std::vector<double> bx = xlim->get<std::vector<double>>();  // Required
@@ -267,8 +266,7 @@ void RefinementData::SetUp(json &model)
       MFEM_VERIFY(
           it->find("Levels") != it->end(),
           "Missing \"Spheres\" refinement region \"Levels\" in configuration file!");
-      spherelist.emplace_back();
-      SphereRefinementData &data = spherelist.back();
+      SphereRefinementData &data = spherelist.emplace_back();
       data.ref_levels = it->at("Levels");             // Required
       data.r = it->at("Radius");                      // Required
       data.center = ctr->get<std::vector<double>>();  // Required
@@ -345,8 +343,7 @@ void MaterialDomainData::SetUp(json &domains)
     MFEM_VERIFY(
         it->find("Attributes") != it->end(),
         "Missing \"Attributes\" list for \"Materials\" domain in configuration file!");
-    vecdata.emplace_back();
-    MaterialData &data = vecdata.back();
+    MaterialData &data = vecdata.emplace_back();
     data.attributes = it->at("Attributes").get<std::vector<int>>();  // Required
     data.mu_r = ParseSymmetricMatrixData(*it, "Permeability", data.mu_r);
     data.epsilon_r = ParseSymmetricMatrixData(*it, "Permittivity", data.epsilon_r);
@@ -663,8 +660,7 @@ void ConductivityBoundaryData::SetUp(json &boundaries)
     MFEM_VERIFY(
         it->find("Conductivity") != it->end(),
         "Missing \"Conductivity\" boundary \"Conductivity\" in configuration file!");
-    vecdata.emplace_back();
-    ConductivityData &data = vecdata.back();
+    ConductivityData &data = vecdata.emplace_back();
     data.attributes = it->at("Attributes").get<std::vector<int>>();  // Required
     data.sigma = it->at("Conductivity");                             // Required
     data.mu_r = it->value("Permeability", data.mu_r);
@@ -704,8 +700,7 @@ void ImpedanceBoundaryData::SetUp(json &boundaries)
     MFEM_VERIFY(
         it->find("Attributes") != it->end(),
         "Missing \"Attributes\" list for \"Impedance\" boundary in configuration file!");
-    vecdata.emplace_back();
-    ImpedanceData &data = vecdata.back();
+    ImpedanceData &data = vecdata.emplace_back();
     data.attributes = it->at("Attributes").get<std::vector<int>>();  // Required
     data.Rs = it->value("Rs", data.Rs);
     data.Ls = it->value("Ls", data.Ls);
@@ -793,8 +788,7 @@ void LumpedPortBoundaryData::SetUp(json &boundaries)
         MFEM_VERIFY(elem_it->find("Attributes") != elem_it->end(),
                     "Missing \"Attributes\" list for \"LumpedPort\" or \"Terminal\" "
                     "boundary element in configuration file!");
-        data.nodes.emplace_back();
-        LumpedPortData::Node &node = data.nodes.back();
+        LumpedPortData::Node &node = data.nodes.emplace_back();
         node.attributes = elem_it->at("Attributes").get<std::vector<int>>();  // Required
         node.direction = elem_it->value("Direction", node.direction);
         if (terminal == boundaries.end())
@@ -933,8 +927,7 @@ void SurfaceCurrentBoundaryData::SetUp(json &boundaries)
             elem_it->find("Attributes") != elem_it->end(),
             "Missing \"Attributes\" list for \"SurfaceCurrent\" boundary element in "
             "configuration file!");
-        data.nodes.emplace_back();
-        SurfaceCurrentData::Node &node = data.nodes.back();
+        SurfaceCurrentData::Node &node = data.nodes.emplace_back();
         node.attributes = it->at("Attributes").get<std::vector<int>>();  // Required
         node.direction = it->value("Direction", node.direction);
         CheckDirection(node.direction, true);
@@ -1102,8 +1095,7 @@ void InterfaceDielectricPostData::SetUp(json &postpro)
         MFEM_VERIFY(elem_it->find("Attributes") != elem_it->end(),
                     "Missing \"Attributes\" list for \"Dielectric\" boundary element in "
                     "configuration file!");
-        data.nodes.emplace_back();
-        InterfaceDielectricData::Node &node = data.nodes.back();
+        InterfaceDielectricData::Node &node = data.nodes.emplace_back();
         node.attributes = elem_it->at("Attributes").get<std::vector<int>>();  // Required
         node.side = it->value("Side", node.side);
         if (!node.side.empty())
@@ -1567,6 +1559,7 @@ void LinearSolverData::SetUp(json &solver)
   ksp_piped = linear->value("UseKSPPiped", ksp_piped);
 
   // Preconditioner-specific options
+  mat_pa = linear->value("UsePA", mat_pa);
   mat_gmg = linear->value("UseGMG", mat_gmg);
   mat_lor = linear->value("UseLOR", mat_lor);
   mat_shifted = linear->value("UsePCShifted", mat_shifted);
@@ -1605,6 +1598,7 @@ void LinearSolverData::SetUp(json &solver)
   linear->erase("UseCGS2");
   linear->erase("UseInitialGuess");
   linear->erase("UseKSPPiped");
+  linear->erase("UsePA");
   linear->erase("UseGMG");
   linear->erase("UseLOR");
   linear->erase("UsePCShifted");
@@ -1635,6 +1629,7 @@ void LinearSolverData::SetUp(json &solver)
   // std::cout << "UseCGS2: " << orthog_cgs2 << '\n';
   // std::cout << "UseInitialGuess: " << ksp_initial_guess << '\n';
   // std::cout << "UseKSPPiped: " << ksp_piped << '\n';
+  // std::cout << "UsePA: " << mat_pa << '\n';
   // std::cout << "UseGMG: " << mat_gmg << '\n';
   // std::cout << "UseLOR: " << mat_lor << '\n';
   // std::cout << "UsePCShifted: " << mat_shifted << '\n';

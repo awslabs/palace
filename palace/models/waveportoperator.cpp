@@ -27,7 +27,8 @@ inline mfem::HypreParMatrix GetBtt(const MaterialOperator &mat_op,
                                    mfem::Array<int> &attr_marker)
 {
   // Mass matrix: Bₜₜ = (μ⁻¹ u, v).
-  MaterialPropertyCoefficient<MaterialPropertyType::INV_PERMEABILITY> muinv_func(mat_op);
+  constexpr MaterialPropertyType MatType = MaterialPropertyType::INV_PERMEABILITY;
+  MaterialPropertyCoefficient<MatType> muinv_func(mat_op);
   mfem::ParBilinearForm btt(&nd_fespace);
   btt.AddBoundaryIntegrator(new mfem::MixedVectorMassIntegrator(muinv_func), attr_marker);
   // btt.SetAssemblyLevel(mfem::AssemblyLevel::FULL);
@@ -42,8 +43,9 @@ inline mfem::HypreParMatrix GetBtn(const MaterialOperator &mat_op,
                                    mfem::Array<int> &attr_marker)
 {
   // Mass matrix: Bₜₙ = (μ⁻¹ ∇ₜ u, v).
+  constexpr MaterialPropertyType MatType = MaterialPropertyType::INV_PERMEABILITY;
+  MaterialPropertyCoefficient<MatType> muinv_func(mat_op);
   mfem::ParMixedBilinearForm btn(&h1_fespace, &nd_fespace);
-  MaterialPropertyCoefficient<MaterialPropertyType::INV_PERMEABILITY> muinv_func(mat_op);
   btn.AddBoundaryIntegrator(new mfem::MixedVectorGradientIntegrator(muinv_func),
                             attr_marker);
   // btn.SetAssemblyLevel(mfem::AssemblyLevel::FULL);
@@ -63,16 +65,17 @@ inline Bnn GetBnn(const MaterialOperator &mat_op, mfem::ParFiniteElementSpace &h
                   mfem::Array<int> &attr_marker)
 {
   // Mass matrix: Bₙₙ = (μ⁻¹ ∇ₜ u, ∇ₜ v) - ω² (ε u, v) = Bₙₙ₁ - ω² Bₙₙ₂.
-  MaterialPropertyCoefficient<MaterialPropertyType::INV_PERMEABILITY> muinv_func(mat_op);
+  constexpr MaterialPropertyType MatTypeMuInv = MaterialPropertyType::INV_PERMEABILITY;
+  MaterialPropertyCoefficient<MatTypeMuInv> muinv_func(mat_op);
   mfem::ParBilinearForm bnn1(&h1_fespace);
   bnn1.AddBoundaryIntegrator(new mfem::MixedGradGradIntegrator(muinv_func), attr_marker);
   // bnn1.SetAssemblyLevel(mfem::AssemblyLevel::FULL);
   bnn1.Assemble(skip_zeros);
   bnn1.Finalize(skip_zeros);
 
+  constexpr MaterialPropertyType MatTypeEpsReal = MaterialPropertyType::PERMITTIVITY_REAL;
   NormalProjectedCoefficient epsilon_func(
-      std::make_unique<
-          MaterialPropertyCoefficient<MaterialPropertyType::PERMITTIVITY_REAL>>(mat_op));
+      std::make_unique<MaterialPropertyCoefficient<MatTypeEpsReal>>(mat_op));
   mfem::ParBilinearForm bnn2r(&h1_fespace);
   bnn2r.AddBoundaryIntegrator(new mfem::MixedScalarMassIntegrator(epsilon_func),
                               attr_marker);
@@ -81,23 +84,20 @@ inline Bnn GetBnn(const MaterialOperator &mat_op, mfem::ParFiniteElementSpace &h
   bnn2r.Finalize(skip_zeros);
 
   // Contribution for loss tangent: ε => ε * (1 - i tan(δ)).
-  if (mat_op.HasLossTangent())
-  {
-    NormalProjectedCoefficient negepstandelta_func(
-        std::make_unique<
-            MaterialPropertyCoefficient<MaterialPropertyType::PERMITTIVITY_IMAG>>(mat_op));
-    mfem::ParBilinearForm bnn2i(&h1_fespace);
-    bnn2i.AddBoundaryIntegrator(new mfem::MixedScalarMassIntegrator(negepstandelta_func),
-                                attr_marker);
-    // bnn2i.SetAssemblyLevel(mfem::AssemblyLevel::FULL);
-    bnn2i.Assemble(skip_zeros);
-    bnn2i.Finalize(skip_zeros);
-    return {*bnn1.ParallelAssemble(), *bnn2r.ParallelAssemble(), *bnn2i.ParallelAssemble()};
-  }
-  else
+  if (!mat_op.HasLossTangent())
   {
     return {*bnn1.ParallelAssemble(), *bnn2r.ParallelAssemble()};
   }
+  constexpr MaterialPropertyType MatTypeEpsImag = MaterialPropertyType::PERMITTIVITY_IMAG;
+  NormalProjectedCoefficient negepstandelta_func(
+      std::make_unique<MaterialPropertyCoefficient<MatTypeEpsImag>>(mat_op));
+  mfem::ParBilinearForm bnn2i(&h1_fespace);
+  bnn2i.AddBoundaryIntegrator(new mfem::MixedScalarMassIntegrator(negepstandelta_func),
+                              attr_marker);
+  // bnn2i.SetAssemblyLevel(mfem::AssemblyLevel::FULL);
+  bnn2i.Assemble(skip_zeros);
+  bnn2i.Finalize(skip_zeros);
+  return {*bnn1.ParallelAssemble(), *bnn2r.ParallelAssemble(), *bnn2i.ParallelAssemble()};
 }
 
 struct Att
@@ -111,16 +111,17 @@ inline Att GetAtt(const MaterialOperator &mat_op, mfem::ParFiniteElementSpace &n
                   mfem::Array<int> &attr_marker)
 {
   // Stiffness matrix: Aₜₜ = (μ⁻¹ ∇ₜ x u, ∇ₜ x v) - ω² (ε u, v) = Aₜₜ₁ - ω² Aₜₜ₂.
+  constexpr MaterialPropertyType MatTypeMuInv = MaterialPropertyType::INV_PERMEABILITY;
   NormalProjectedCoefficient muinv_func(
-      std::make_unique<MaterialPropertyCoefficient<MaterialPropertyType::INV_PERMEABILITY>>(
-          mat_op));
+      std::make_unique<MaterialPropertyCoefficient<MatTypeMuInv>>(mat_op));
   mfem::ParBilinearForm att1(&nd_fespace);
   att1.AddBoundaryIntegrator(new mfem::CurlCurlIntegrator(muinv_func), attr_marker);
   // att1.SetAssemblyLevel(mfem::AssemblyLevel::FULL);
   att1.Assemble(skip_zeros);
   att1.Finalize(skip_zeros);
 
-  MaterialPropertyCoefficient<MaterialPropertyType::PERMITTIVITY_REAL> epsilon_func(mat_op);
+  constexpr MaterialPropertyType MatTypeEpsReal = MaterialPropertyType::PERMITTIVITY_REAL;
+  MaterialPropertyCoefficient<MatTypeEpsReal> epsilon_func(mat_op);
   mfem::ParBilinearForm att2r(&nd_fespace);
   att2r.AddBoundaryIntegrator(new mfem::MixedVectorMassIntegrator(epsilon_func),
                               attr_marker);
@@ -133,8 +134,8 @@ inline Att GetAtt(const MaterialOperator &mat_op, mfem::ParFiniteElementSpace &n
   {
     return {*att1.ParallelAssemble(), *att2r.ParallelAssemble()};
   }
-  MaterialPropertyCoefficient<MaterialPropertyType::PERMITTIVITY_IMAG> negepstandelta_func(
-      mat_op);
+  constexpr MaterialPropertyType MatTypeEpsImag = MaterialPropertyType::PERMITTIVITY_IMAG;
+  MaterialPropertyCoefficient<MatTypeEpsImag> negepstandelta_func(mat_op);
   mfem::ParBilinearForm att2i(&nd_fespace);
   att2i.AddBoundaryIntegrator(new mfem::MixedVectorMassIntegrator(negepstandelta_func),
                               attr_marker);
@@ -172,7 +173,7 @@ GetSystemMatrices(const mfem::HypreParMatrix &Att1, const mfem::HypreParMatrix &
                   const mfem::Array<int> &nd_tdof_list,
                   const mfem::Array<int> &h1_tdof_list, int nd_tdof_offset)
 {
-  // Construct the 2x2 block matrices for the eigenvalue problem. We pre- compute the
+  // Construct the 2x2 block matrices for the eigenvalue problem. We pre-compute the
   // eigenvalue problem matrices such that:
   //              A = A₁ - ω² A₂, B = A + 1/Θ² B₃ - ω²/Θ² B₄.
   mfem::Array2D<const mfem::HypreParMatrix *> blocks(2, 2);
@@ -219,9 +220,9 @@ GetSystemMatrices(const mfem::HypreParMatrix &Att1, const mfem::HypreParMatrix &
     return petsc::PetscAijMatrix(*hB4r, *hB4i);
   }();
 
-  // Consolidate list of local ND and H1 tdofs before extracting the respective submatrices.
-  // The matrix is still distributed over the same number of processors, though some are
-  // empty (PETSc handles this).
+  // Consolidate list of local ND and H1 true dofs before extracting the respective
+  // submatrices. The matrix is still distributed over the same number of processors,
+  // though some are empty (PETSc handles this).
   mfem::Array<int> tdof_list;
   tdof_list.Reserve(nd_tdof_list.Size() + h1_tdof_list.Size());
   for (auto tdof : nd_tdof_list)
@@ -692,8 +693,8 @@ void WavePortData::Initialize(double omega)
     mfem::ParLinearForm sut(&nd_fespace), sun(&h1_fespace);
     sut.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(tdir), attr_marker);
     sun.AddBoundaryIntegrator(new BoundaryLFIntegrator(ndir), attr_marker);
-    sut.UseFastAssembly(true);
-    sun.UseFastAssembly(true);
+    sut.UseFastAssembly(false);
+    sun.UseFastAssembly(false);
     sut.Assemble();
     sun.Assemble();
     if (sut(E0t->real()) + sun(E0n->real()) < 0.0)
@@ -710,8 +711,8 @@ void WavePortData::Initialize(double omega)
     si = std::make_unique<mfem::ParLinearForm>(&nd_fespace);
     sr->AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(*nxH0r_func), attr_marker);
     si->AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(*nxH0i_func), attr_marker);
-    sr->UseFastAssembly(true);
-    si->UseFastAssembly(true);
+    sr->UseFastAssembly(false);
+    si->UseFastAssembly(false);
     sr->Assemble();
     si->Assemble();
     std::complex<double> s0(-(*sr)(E0t->real()) - (*si)(E0t->imag()),
@@ -762,8 +763,8 @@ std::complex<double> WavePortData::GetPower(mfem::ParComplexGridFunction &E,
   mfem::ParLinearForm pr(&nd_fespace), pi(&nd_fespace);
   pr.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(nxHr_func), attr_marker);
   pi.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(nxHi_func), attr_marker);
-  pr.UseFastAssembly(true);
-  pi.UseFastAssembly(true);
+  pr.UseFastAssembly(false);
+  pi.UseFastAssembly(false);
   pr.Assemble();
   pi.Assemble();
   return {pr(E.real()) + pi(E.imag()), pr(E.imag()) - pi(E.real())};
@@ -981,11 +982,10 @@ void WavePortOperator::AddExtraSystemBdrCoefficients(double omega,
   Initialize(omega);
   for (auto &[idx, data] : ports)
   {
-    fbi.AddCoefficient(
-        std::make_unique<
-            MaterialPropertyCoefficient<MaterialPropertyType::INV_PERMEABILITY>>(
-            mat_op, data.GetPropagationConstant().real()),
-        data.GetMarker());
+    constexpr MaterialPropertyType MatType = MaterialPropertyType::INV_PERMEABILITY;
+    fbi.AddCoefficient(std::make_unique<MaterialPropertyCoefficient<MatType>>(
+                           mat_op, data.GetPropagationConstant().real()),
+                       data.GetMarker());
   }
 }
 

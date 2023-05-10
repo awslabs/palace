@@ -7,6 +7,8 @@
 #include <functional>
 #include <memory>
 #include <mfem.hpp>
+#include "linalg/operator.hpp"
+#include "linalg/vector.hpp"
 
 namespace palace
 {
@@ -21,7 +23,7 @@ class TimeOperator
 {
 private:
   // Solution vector storage.
-  mfem::Vector E, dE, En, B;
+  Vector E, dE, En, B;
 
   // Time integrator for the curl-curl E-field formulation.
   std::unique_ptr<mfem::SecondOrderODESolver> ode;
@@ -30,16 +32,16 @@ private:
   std::unique_ptr<mfem::SecondOrderTimeDependentOperator> op;
 
   // Discrete curl for B-field time integration.
-  std::unique_ptr<mfem::Operator> NegCurl;
+  std::unique_ptr<ParOperator> Curl;
 
 public:
   TimeOperator(const IoData &iodata, SpaceOperator &spaceop,
                std::function<double(double)> &djcoef);
 
   // Access solution vectors for E- and B-fields.
-  const mfem::Vector &GetE() const { return E; }
-  const mfem::Vector &GetEdot() const { return dE; }
-  const mfem::Vector &GetB() const { return B; }
+  const Vector &GetE() const { return E; }
+  const Vector &GetEdot() const { return dE; }
+  const Vector &GetB() const { return B; }
 
   // Is time integration scheme explicit or implicit.
   bool isExplicit() const { return op->isExplicit(); }

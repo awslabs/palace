@@ -7,7 +7,7 @@
 #include <memory>
 #include <vector>
 #include <mfem.hpp>
-#include "fem/operator.hpp"
+#include "linalg/operator.hpp"
 
 namespace palace::utils
 {
@@ -66,33 +66,51 @@ std::vector<std::unique_ptr<FECollection>> ConstructFECollections(bool pc_pmg, b
   return fecs;
 }
 
-// Construct a heirarchy of finite element spaces given a sequence of meshes and
+// Construct a hierarchy of finite element spaces given a sequence of meshes and
 // finite element collections. Dirichlet boundary conditions are additionally
 // marked.
 template <typename FECollection>
 mfem::ParFiniteElementSpaceHierarchy ConstructFiniteElementSpaceHierarchy(
     const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
     const std::vector<std::unique_ptr<FECollection>> &fecs,
-    const mfem::Array<int> &dbc_marker)
+    const mfem::Array<int> *dbc_marker = nullptr,
+    std::vector<mfem::Array<int>> *dbc_tdof_lists = nullptr)
 {
-  MFEM_VERIFY(!mesh.empty() && !fecs.empty(),
+  MFEM_VERIFY(!mesh.empty() && !fecs.empty() &&
+                  (!dbc_tdof_lists || dbc_tdof_lists->empty()),
               "Empty mesh or FE collection for FE space construction!");
   auto *fespace = new mfem::ParFiniteElementSpace(mesh[0].get(), fecs[0].get());
+  if (dbc_marker && dbc_tdof_lists)
+  {
+    fespace->GetEssentialTrueDofs(*dbc_marker, dbc_tdof_lists->emplace_back());
+  }
   mfem::ParFiniteElementSpaceHierarchy fespaces(mesh[0].get(), fespace, false, true);
+
   // h-refinement
   for (std::size_t l = 1; l < mesh.size(); l++)
   {
     fespace = new mfem::ParFiniteElementSpace(mesh[l].get(), fecs[0].get());
-    auto *P =
-        new ZeroWrapTransferOperator(fespaces.GetFinestFESpace(), *fespace, dbc_marker);
+    if (dbc_marker && dbc_tdof_lists)
+    {
+      fespace->GetEssentialTrueDofs(*dbc_marker, dbc_tdof_lists->emplace_back());
+    }
+    auto *P = new ParOperator(
+        std::make_unique<mfem::TransferOperator>(fespaces.GetFinestFESpace(), *fespace),
+        fespaces.GetFinestFESpace(), *fespace);
     fespaces.AddLevel(mesh[l].get(), fespace, P, false, true, true);
   }
+
   // p-refinement
   for (std::size_t l = 1; l < fecs.size(); l++)
   {
     fespace = new mfem::ParFiniteElementSpace(mesh.back().get(), fecs[l].get());
-    auto *P =
-        new ZeroWrapTransferOperator(fespaces.GetFinestFESpace(), *fespace, dbc_marker);
+    if (dbc_marker && dbc_tdof_lists)
+    {
+      fespace->GetEssentialTrueDofs(*dbc_marker, dbc_tdof_lists->emplace_back());
+    }
+    auto *P = new ParOperator(
+        std::make_unique<mfem::TransferOperator>(fespaces.GetFinestFESpace(), *fespace),
+        fespaces.GetFinestFESpace(), *fespace);
     fespaces.AddLevel(mesh.back().get(), fespace, P, false, true, true);
   }
   return fespaces;
@@ -103,9 +121,15 @@ mfem::ParFiniteElementSpaceHierarchy ConstructFiniteElementSpaceHierarchy(
 // conditions as they need not be incorporated in any inter-space projectors.
 template <typename FECollection>
 mfem::ParFiniteElementSpaceHierarchy
-ConstructFiniteElementSpaceHierarchy(mfem::ParMesh &mesh, const FECollection &fec)
+ConstructFiniteElementSpaceHierarchy(mfem::ParMesh &mesh, const FECollection &fec,
+                                     const mfem::Array<int> *dbc_marker = nullptr,
+                                     mfem::Array<int> *dbc_tdof_list = nullptr)
 {
   auto *fespace = new mfem::ParFiniteElementSpace(&mesh, &fec);
+  if (dbc_marker && dbc_tdof_list)
+  {
+    fespace->GetEssentialTrueDofs(*dbc_marker, *dbc_tdof_list);
+  }
   return mfem::ParFiniteElementSpaceHierarchy(&mesh, fespace, false, true);
 }
 

@@ -16,7 +16,7 @@ class MaterialOperator;
 //
 // This solver implements a solver for the operator K + M in the Nedelec space.
 //
-class CurlCurlSolver : public mfem::Solver
+class CurlCurlMassSolver : public mfem::Solver
 {
 private:
   // H(curl) norm operator A = K + M.
@@ -30,10 +30,10 @@ private:
   mutable mfem::Vector xr, xi, yr, yi;
 
 public:
-  CurlCurlSolver(const MaterialOperator &mat_op, const mfem::Array<int> &dbc_marker,
-                 mfem::ParFiniteElementSpaceHierarchy &nd_fespaces,
-                 mfem::ParFiniteElementSpaceHierarchy &h1_fespaces, double tol, int max_it,
-                 int print);
+  CurlCurlMassSolver(const MaterialOperator &mat_op, const mfem::Array<int> &dbc_marker,
+                     mfem::ParFiniteElementSpaceHierarchy &nd_fespaces,
+                     mfem::ParFiniteElementSpaceHierarchy &h1_fespaces, double tol,
+                     int max_it, int print);
 
   // Operator is set in constructor.
   void SetOperator(const mfem::Operator &op) override {}

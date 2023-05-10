@@ -69,10 +69,9 @@ void FarfieldBoundaryOperator::AddDampingBdrCoefficients(double coef,
   // First-order absorbing boundary condition.
   if (farfield_marker.Max() > 0)
   {
-    fb.AddCoefficient(
-        std::make_unique<MaterialPropertyCoefficient<MaterialPropertyType::INV_Z0>>(mat_op,
-                                                                                    coef),
-        farfield_marker);
+    constexpr MaterialPropertyType MatType = MaterialPropertyType::INV_Z0;
+    fb.AddCoefficient(std::make_unique<MaterialPropertyCoefficient<MatType>>(mat_op, coef),
+                      farfield_marker);
   }
 }
 
@@ -88,11 +87,10 @@ void FarfieldBoundaryOperator::AddExtraSystemBdrCoefficients(double omega,
   // does as well.
   if (farfield_marker.Max() > 0 && order > 1)
   {
+    constexpr MaterialPropertyType MatType = MaterialPropertyType::INV_PERMEABILITY_C0;
     dfbi.AddCoefficient(
         std::make_unique<NormalProjectedCoefficient>(
-            std::make_unique<
-                MaterialPropertyCoefficient<MaterialPropertyType::INV_PERMEABILITY_C0>>(
-                mat_op, 0.5 / omega)),
+            std::make_unique<MaterialPropertyCoefficient<MatType>>(mat_op, 0.5 / omega)),
         farfield_marker);
   }
 }

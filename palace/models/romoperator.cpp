@@ -3,10 +3,11 @@
 
 #include "romoperator.hpp"
 
+#if 0  // XX TODO DISABLE ROM FOR NOW
+
 #include <algorithm>
 #include <chrono>
-#include "fem/freqdomain.hpp"
-#include "fem/operator.hpp"
+#include "linalg/operator.hpp"
 #include "models/spaceoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
@@ -61,7 +62,7 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &sp, int nmax)
   if (iodata.solver.driven.adaptive_metric_aposteriori)
   {
     constexpr int curlcurl_verbose = 0;
-    kspKM = std::make_unique<CurlCurlSolver>(
+    kspKM = std::make_unique<CurlCurlMassSolver>(
         spaceop.GetMaterialOp(), spaceop.GetDbcMarker(), spaceop.GetNDSpaces(),
         spaceop.GetH1Spaces(), iodata.solver.linear.tol, iodata.solver.linear.max_it,
         curlcurl_verbose);
@@ -153,13 +154,17 @@ void RomOperator::SolveHDM(double omega, petsc::PetscParVector &E, bool print)
     std::vector<std::unique_ptr<mfem::Operator>> P, AuxP;
     A2[step] = spaceop.GetSystemMatrixPetsc(SpaceOperator::OperatorType::EXTRA, omega,
                                             mfem::Operator::DIAG_ZERO, print);
+
+     //XX TODO  FIX WITH SUM OPERATOR
+
     auto A = utils::GetSystemMatrixShell(omega, *K, *M, C.get(), A2[step].get());
     spaceop.GetPreconditionerMatrix(omega, P, AuxP, print);
     pc0->SetOperator(P, &AuxP);
     ksp0->SetOperator(*A);
 
     Mpi::Print("\n");
-    spaceop.GetFreqDomainExcitationVector(omega, *R0);
+    spaceop.GetFreqDomainExcitationVector(
+        omega, *R0);  // XX TODO ASSEMBLE PIECE WISE LIKE OPERATOR...
     E.SetZero();
     ksp0->Mult(*R0, E);
   }
@@ -532,3 +537,5 @@ void RomOperator::BVDotVecInternal(petsc::PetscDenseMatrix &V, petsc::PetscParVe
 }
 
 }  // namespace palace
+
+#endif
