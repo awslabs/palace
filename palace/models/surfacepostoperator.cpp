@@ -66,8 +66,7 @@ SurfacePostOperator::InterfaceDielectricData::InterfaceDielectricData(
 
     // Store information about the surface side to consider.
     int component;
-    sides.emplace_back();
-    mfem::Vector &side = sides.back();
+    mfem::Vector &side = sides.emplace_back();
     if (node.side.length() == 0)
     {
       // This is OK if surface is single sided, just push back an empty Vector.
@@ -96,8 +95,8 @@ SurfacePostOperator::InterfaceDielectricData::InterfaceDielectricData(
     }
 
     // Store markers for this element of the postprocessing boundary.
-    attr_markers.emplace_back();
-    mesh::AttrToMarker(mesh.bdr_attributes.Max(), node.attributes, attr_markers.back());
+    mesh::AttrToMarker(mesh.bdr_attributes.Max(), node.attributes,
+                       attr_markers.emplace_back());
   }
 }
 
@@ -128,8 +127,8 @@ SurfacePostOperator::InterfaceDielectricData::GetCoefficient(
 SurfacePostOperator::SurfaceChargeData::SurfaceChargeData(
     const config::CapacitanceData &data, mfem::ParMesh &mesh)
 {
-  attr_markers.emplace_back();
-  mesh::AttrToMarker(mesh.bdr_attributes.Max(), data.attributes, attr_markers.back());
+  mesh::AttrToMarker(mesh.bdr_attributes.Max(), data.attributes,
+                     attr_markers.emplace_back());
 }
 
 std::unique_ptr<mfem::Coefficient> SurfacePostOperator::SurfaceChargeData::GetCoefficient(
@@ -174,8 +173,8 @@ SurfacePostOperator::SurfaceFluxData::SurfaceFluxData(const config::InductanceDa
 
   // Construct the coefficient for this postprocessing boundary (copies the direction
   // vector).
-  attr_markers.emplace_back();
-  mesh::AttrToMarker(mesh.bdr_attributes.Max(), data.attributes, attr_markers.back());
+  mesh::AttrToMarker(mesh.bdr_attributes.Max(), data.attributes,
+                     attr_markers.emplace_back());
 }
 
 std::unique_ptr<mfem::Coefficient> SurfacePostOperator::SurfaceFluxData::GetCoefficient(
@@ -260,7 +259,7 @@ double SurfacePostOperator::GetSurfaceIntegral(const SurfaceData &data,
     fb.emplace_back(data.GetCoefficient(i, U, mat_op, local_to_shared));
     s.AddBoundaryIntegrator(new BoundaryLFIntegrator(*fb.back()), data.attr_markers[i]);
   }
-  s.UseFastAssembly(true);
+  s.UseFastAssembly(false);
   s.Assemble();
   return s(ones);
 }

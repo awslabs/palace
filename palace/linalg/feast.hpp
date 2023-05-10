@@ -4,6 +4,8 @@
 #ifndef PALACE_LINALG_FEAST_HPP
 #define PALACE_LINALG_FEAST_HPP
 
+#if 0  // XX TODO DISABLE FEAST FOR NOW
+
 #if defined(PALACE_WITH_SLEPC)
 
 #include "linalg/petsc.hpp"
@@ -281,6 +283,8 @@ public:
 }  // namespace feast
 
 }  // namespace palace
+
+#endif
 
 #endif
 

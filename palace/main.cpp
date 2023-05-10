@@ -12,7 +12,7 @@
 #include "drivers/electrostaticsolver.hpp"
 #include "drivers/magnetostaticsolver.hpp"
 #include "drivers/transientsolver.hpp"
-#include "linalg/petsc.hpp"
+#include "linalg/petsc.hpp"  //XX TODO REMOVE ONLY SLEPC...
 #include "linalg/slepc.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"

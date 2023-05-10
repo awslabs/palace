@@ -27,7 +27,7 @@ private:
   // Number of smoother iterations and polynomial order.
   const int pc_it, order;
 
-  // Diagonal scaling of the operator.
+  // Inverse diagonal scaling of the operator.
   mfem::Vector dinv;
 
   // Maximum operator eigenvalue for Chebyshev polynomial smoothing.
@@ -42,28 +42,31 @@ public:
 
   void SetOperator(const mfem::Operator &op) override;
 
-  void Mult(const mfem::Vector &x, mfem::Vector &y) const override
-  {
-    mfem::Array<const mfem::Vector *> X(1);
-    mfem::Array<mfem::Vector *> Y(1);
-    X[0] = &x;
-    Y[0] = &y;
-    ArrayMult(X, Y);
-  }
-
-  void ArrayMult(const mfem::Array<const mfem::Vector *> &X,
-                 mfem::Array<mfem::Vector *> &Y) const override;
+  void Mult(const mfem::Vector &x, mfem::Vector &y) const override;
 
   void MultTranspose(const mfem::Vector &x, mfem::Vector &y) const override
   {
     Mult(x, y);  // Assumes operator symmetry
   }
 
-  void ArrayMultTranspose(const mfem::Array<const mfem::Vector *> &X,
-                          mfem::Array<mfem::Vector *> &Y) const override
-  {
-    ArrayMult(X, Y);  // Assumes operator symmetry
-  }
+  // XX TODO REMOVE...
+  //  void Mult(const mfem::Vector &x, mfem::Vector &y) const override
+  //  {
+  //    mfem::Array<const mfem::Vector *> X(1);
+  //    mfem::Array<mfem::Vector *> Y(1);
+  //    X[0] = &x;
+  //    Y[0] = &y;
+  //    ArrayMult(X, Y);
+  //  }
+
+  // void ArrayMult(const mfem::Array<const mfem::Vector *> &X,
+  //                mfem::Array<mfem::Vector *> &Y) const override;
+
+  // void ArrayMultTranspose(const mfem::Array<const mfem::Vector *> &X,
+  //                         mfem::Array<mfem::Vector *> &Y) const override
+  // {
+  //   ArrayMult(X, Y);  // Assumes operator symmetry
+  // }
 };
 
 }  // namespace palace

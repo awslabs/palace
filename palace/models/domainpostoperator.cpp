@@ -129,7 +129,7 @@ double DomainPostOperatorMF::GetVolumeIntegral(mfem::Coefficient &f) const
   // Integrate the coefficient over the entire domain.
   mfem::ParLinearForm s(ones.ParFESpace());
   s.AddDomainIntegrator(new DomainLFIntegrator(f));
-  s.UseFastAssembly(true);
+  s.UseFastAssembly(false);
   s.Assemble();
   return s(ones);
 }
@@ -140,7 +140,7 @@ double DomainPostOperatorMF::GetVolumeIntegral(mfem::Coefficient &f,
   // Integrate the coefficient over the domain attributes making up this domain index.
   mfem::ParLinearForm s(ones.ParFESpace());
   s.AddDomainIntegrator(new DomainLFIntegrator(f), attr_marker);
-  s.UseFastAssembly(true);
+  s.UseFastAssembly(false);
   s.Assemble();
   return s(ones);
 }
@@ -157,8 +157,9 @@ DomainPostOperator::DomainPostOperator(const IoData &iodata, const MaterialOpera
     //              E_elec = 1/2 Re{∫_Ω Dᴴ E dV} as (M_eps * e)ᴴ e.
     // Only the real part of the permeability contributes to the energy (imaginary part
     // cancels out in the inner product due to symmetry).
-    MaterialPropertyCoefficient<MaterialPropertyType::PERMITTIVITY_REAL> epsilon_func(
-        mat_op);
+    constexpr MaterialPropertyType MatTypeEpsReal = MaterialPropertyType::PERMITTIVITY_REAL;
+    constexpr MaterialPropertyType MatTypeEpsImag = MaterialPropertyType::PERMITTIVITY_IMAG;
+    MaterialPropertyCoefficient<MatTypeEpsReal> epsilon_func(mat_op);
     m0ND->AddDomainIntegrator(new mfem::MixedVectorMassIntegrator(epsilon_func));
     // m0ND->SetAssemblyLevel(mfem::AssemblyLevel::FULL);
     m0ND->Assemble();
@@ -178,13 +179,10 @@ DomainPostOperator::DomainPostOperator(const IoData &iodata, const MaterialOpera
       SumMatrixCoefficient epsilon_func_r(nd_fespace->GetParMesh()->SpaceDimension());
       SumMatrixCoefficient epsilon_func_i(nd_fespace->GetParMesh()->SpaceDimension());
       epsilon_func_r.AddCoefficient(
-          std::make_unique<
-              MaterialPropertyCoefficient<MaterialPropertyType::PERMITTIVITY_REAL>>(mat_op),
+          std::make_unique<MaterialPropertyCoefficient<MatTypeEpsReal>>(mat_op),
           attr_marker);
       epsilon_func_i.AddCoefficient(
-          std::make_unique<
-              MaterialPropertyCoefficient<MaterialPropertyType::PERMITTIVITY_IMAG>>(mat_op,
-                                                                                    -1.0),
+          std::make_unique<MaterialPropertyCoefficient<MatTypeEpsImag>>(mat_op, -1.0),
           attr_marker);
       auto &m0 = m0NDi.emplace(idx, std::make_pair(nd_fespace, nd_fespace)).first->second;
       mfem::ParBilinearForm &m0r = m0.first;
@@ -204,7 +202,8 @@ DomainPostOperator::DomainPostOperator(const IoData &iodata, const MaterialOpera
   {
     // Construct RT mass matrix to compute the magnetic field energy integral as:
     //              E_mag = 1/2 Re{∫_Ω Bᴴ H dV} as (M_muinv * b)ᴴ b.
-    MaterialPropertyCoefficient<MaterialPropertyType::INV_PERMEABILITY> muinv_func(mat_op);
+    constexpr MaterialPropertyType MatTypeMuInv = MaterialPropertyType::INV_PERMEABILITY;
+    MaterialPropertyCoefficient<MatTypeMuInv> muinv_func(mat_op);
     m0RT->AddDomainIntegrator(new mfem::MixedVectorMassIntegrator(muinv_func));
     // m0RT->SetAssemblyLevel(mfem::AssemblyLevel::FULL);
     m0RT->Assemble();

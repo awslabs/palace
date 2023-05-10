@@ -112,6 +112,8 @@ void GeometricMultigridSolver::VCycle(int l, bool initial_guess) const
   }
   GetProlongationAtLevel(l - 1).ArrayMultTranspose(R_[l], X_[l - 1]);
 
+  // XX TODO FIX DIRICHLET BCS HERE LIKE FOR DIST RELAXATION...
+
   // Coarse grid correction.
   VCycle(l - 1, false);
 

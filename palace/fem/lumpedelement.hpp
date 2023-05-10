@@ -33,7 +33,7 @@ protected:
     mfem::ParLinearForm s(&fespace);
     mfem::ConstantCoefficient one_func(1.0);
     s.AddBoundaryIntegrator(new BoundaryLFIntegrator(one_func), attr_marker);
-    s.UseFastAssembly(true);
+    s.UseFastAssembly(false);
     s.Assemble();
     return s(ones);
   }

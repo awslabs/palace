@@ -177,7 +177,7 @@ std::complex<double> LumpedPortData::GetSParameter(mfem::ParComplexGridFunction 
     }
     s = std::make_unique<mfem::ParLinearForm>(&nd_fespace);
     s->AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fb));
-    s->UseFastAssembly(true);
+    s->UseFastAssembly(false);
     s->Assemble();
   }
   return {(*s)(E.real()), (*s)(E.imag())};
@@ -201,7 +201,7 @@ double LumpedPortData::GetPower(mfem::ParGridFunction &E, mfem::ParGridFunction 
   }
   mfem::ParLinearForm p(&nd_fespace);
   p.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fb));
-  p.UseFastAssembly(true);
+  p.UseFastAssembly(false);
   p.Assemble();
   return p(E);
 }
@@ -230,8 +230,8 @@ LumpedPortData::GetPower(mfem::ParComplexGridFunction &E, mfem::ParComplexGridFu
   mfem::ParLinearForm pr(&nd_fespace), pi(&nd_fespace);
   pr.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fbr));
   pi.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fbi));
-  pr.UseFastAssembly(true);
-  pi.UseFastAssembly(true);
+  pr.UseFastAssembly(false);
+  pi.UseFastAssembly(false);
   pr.Assemble();
   pi.Assemble();
   return {pr(E.real()) + pi(E.imag()), pr(E.imag()) - pi(E.real())};
@@ -258,7 +258,7 @@ double LumpedPortData::GetVoltage(mfem::ParGridFunction &E) const
     }
     v = std::make_unique<mfem::ParLinearForm>(&nd_fespace);
     v->AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fb));
-    v->UseFastAssembly(true);
+    v->UseFastAssembly(false);
     v->Assemble();
   }
   return (*v)(E);

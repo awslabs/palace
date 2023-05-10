@@ -8,7 +8,6 @@
 #include <map>
 #include <sstream>
 #include <string>
-#include <mfem.hpp>
 #include "utils/communication.hpp"
 #include "utils/filesystem.hpp"
 #include "utils/iodata.hpp"
@@ -1068,16 +1067,17 @@ std::map<int, std::array<int, 2>> CheckMesh(std::unique_ptr<mfem::Mesh> &orig_me
   if (orig_mesh->GetNodes())
   {
     const mfem::GridFunction *nodes = orig_mesh->GetNodes();
-    const mfem::FiniteElementSpace *fes = nodes->FESpace();
+    const mfem::FiniteElementSpace *fespace = nodes->FESpace();
 
-    mfem::Ordering::Type ordering = fes->GetOrdering();
-    int order = fes->GetMaxElementOrder();
+    mfem::Ordering::Type ordering = fespace->GetOrdering();
+    int order = fespace->GetMaxElementOrder();
     int sdim = orig_mesh->SpaceDimension();
-    bool discont = dynamic_cast<const mfem::L2_FECollection *>(fes->FEColl()) != nullptr;
+    bool discont =
+        dynamic_cast<const mfem::L2_FECollection *>(fespace->FEColl()) != nullptr;
 
     new_mesh->SetCurvature(order, discont, sdim, ordering);
     mfem::GridFunction *new_nodes = new_mesh->GetNodes();
-    const mfem::FiniteElementSpace *new_fes = new_nodes->FESpace();
+    const mfem::FiniteElementSpace *new_fespace = new_nodes->FESpace();
 
     // The element loop works because we know the mapping from old_mesh to new_mesh element
     // indices from the insertion order.
@@ -1088,9 +1088,9 @@ std::map<int, std::array<int, 2>> CheckMesh(std::unique_ptr<mfem::Mesh> &orig_me
     {
       if (!elem_delete[e])
       {
-        fes->GetElementVDofs(e, vdofs);
+        fespace->GetElementVDofs(e, vdofs);
         nodes->GetSubVector(vdofs, loc_vec);
-        new_fes->GetElementVDofs(te, new_vdofs);
+        new_fespace->GetElementVDofs(te, new_vdofs);
         new_nodes->SetSubVector(new_vdofs, loc_vec);
         te++;
       }
