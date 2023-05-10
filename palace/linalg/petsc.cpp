@@ -1518,6 +1518,9 @@ void PetscDenseMatrix::SetRandomSign(PetscInt start, PetscInt end, bool init)
 
 PetscReal PetscDenseMatrix::OrthonormalizeColumn(PetscInt j, bool mgs, bool cgs2)
 {
+
+  // XX TODO MOVE INTO REAL-VALUED BASIS CLASS...
+
   auto Dot = [](const PetscParVector &v, const PetscParVector &w) -> PetscScalar
   { return v.Dot(w); };
   auto VecDot = [](const PetscParVector &v, const PetscParMatrix &A,

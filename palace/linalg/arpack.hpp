@@ -15,6 +15,8 @@
 #include <parpack.hpp>
 #include "linalg/eigen.hpp"
 
+// XX TODO REMOVE PETSc DEPENDENCE
+
 namespace palace
 {
 

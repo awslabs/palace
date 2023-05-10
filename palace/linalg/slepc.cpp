@@ -50,6 +50,9 @@ PetscReal GetMaxSingularValue(const petsc::PetscParMatrix &A, PetscReal tol,
   // is not Hermitian).
   PetscInt nconv;
   PetscReal sigma;
+
+  // XX TODO ADDRESS GetHermitian
+
   if (A.GetHermitian())  // Returns true if symmetric and not PETSC_USE_COMPLEX
   {
     EPS eps;

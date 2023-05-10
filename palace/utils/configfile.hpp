@@ -697,6 +697,10 @@ public:
 
 struct LinearSolverData
 {
+
+  // XX TODO REVISIT AVAILABLE OPTIONS FOR KSP AFTER HYPRE SWITCH...
+  // XX TODO REVISIT OPTIONS FOR PA AND KEYWORDS... "GMG" "PA" CAN DO BETTER (RATEL?)
+
 public:
   // Solver type.
   enum class Type
@@ -750,6 +754,9 @@ public:
 
   // Enable pipelined Krylov solver variants to reduce blocking communications.
   bool ksp_piped = false;
+
+  // Enable partial assembly for operators.
+  bool mat_pa = false;
 
   // Enable hp-geometric multigrid coarsening, using the solver specified by the type member
   // at the coarsest level.

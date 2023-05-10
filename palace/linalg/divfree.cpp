@@ -12,6 +12,11 @@
 namespace palace
 {
 
+// XX TODO: THIS PROBABLY NEEDS TO CONSIDER IN ALL 3 BILINEAR FORMS THE EFFECTS OF
+//          THE INPUT BDR_MARKER?
+
+// XX TODO NEW ParOperator FRAMEWORK
+
 DivFreeSolver::DivFreeSolver(const MaterialOperator &mat_op,
                              const mfem::Array<int> &bdr_marker,
                              mfem::ParFiniteElementSpace &nd_fespace,
@@ -19,7 +24,8 @@ DivFreeSolver::DivFreeSolver(const MaterialOperator &mat_op,
                              int max_it, int print)
   : mfem::Solver(nd_fespace.GetTrueVSize())
 {
-  MaterialPropertyCoefficient<MaterialPropertyType::PERMITTIVITY_REAL> epsilon_func(mat_op);
+  constexpr MaterialPropertyType MatType = MaterialPropertyType::PERMITTIVITY_REAL;
+  MaterialPropertyCoefficient<MatType> epsilon_func(mat_op);
   MFEM_VERIFY(bdr_marker.Size() ==
                   h1_fespaces.GetFinestFESpace().GetParMesh()->bdr_attributes.Max(),
               "Invalid boundary marker for divergence-free solver!");

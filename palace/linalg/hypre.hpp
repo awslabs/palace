@@ -9,6 +9,8 @@
 namespace mfem
 {
 
+// XX TODO REMOVE WHAT CAN BE REMOVED...
+
 // Convenience wrapper for casting away the const on the pointers and dispatching onto the
 // original function that has the argument type: mfem::Array2D<mfem::HypreParMatrix*> &.
 mfem::HypreParMatrix *

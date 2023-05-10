@@ -86,19 +86,23 @@ public:
   bool HasE() const { return E.has_value(); }
   bool HasB() const { return B.has_value(); }
 
-  // Compute the magnetic flux density B in RT space from electric field solution E solution
-  // in ND space for the time-harmonic case: B =  -1/(iω) ∇ x E.
-  static void GetBField(std::complex<double> omega, const petsc::PetscParMatrix &NegCurl,
-                        const petsc::PetscParVector &e, petsc::PetscParVector &b);
+  // XX TODO REMOVE THESE
+  //  // Compute the magnetic flux density B in RT space from electric field solution E
+  //  solution
+  //  // in ND space for the time-harmonic case: B =  -1/(iω) ∇ x E.
+  //  static void GetBField(std::complex<double> omega, const petsc::PetscParMatrix
+  //  &NegCurl,
+  //                        const petsc::PetscParVector &e, petsc::PetscParVector &b);
 
-  // Compute the magnetic flux density B in RT space from the magnetic vector potential
-  // solution A in ND space: B = ∇ x A.
-  static void GetBField(const mfem::Operator &Curl, const mfem::Vector &a, mfem::Vector &b);
+  // // Compute the magnetic flux density B in RT space from the magnetic vector potential
+  // // solution A in ND space: B = ∇ x A.
+  // static void GetBField(const mfem::Operator &Curl, const mfem::Vector &a, mfem::Vector
+  // &b);
 
-  // Compute the electric field E in ND space from the scalar potential solution V in H1
-  // space: E = -∇V.
-  static void GetEField(const mfem::Operator &NegGrad, const mfem::Vector &v,
-                        mfem::Vector &e);
+  // // Compute the electric field E in ND space from the scalar potential solution V in H1
+  // // space: E = -∇V.
+  // static void GetEField(const mfem::Operator &NegGrad, const mfem::Vector &v,
+  //                       mfem::Vector &e);
 
   // Populate the grid function solutions for the E- and B-field using the solution vectors
   // on the true dofs. For the real-valued overload, the electric scalar potential can be

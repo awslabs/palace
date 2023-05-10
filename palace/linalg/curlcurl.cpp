@@ -11,15 +11,20 @@
 namespace palace
 {
 
-CurlCurlSolver::CurlCurlSolver(const MaterialOperator &mat_op,
-                               const mfem::Array<int> &dbc_marker,
-                               mfem::ParFiniteElementSpaceHierarchy &nd_fespaces,
-                               mfem::ParFiniteElementSpaceHierarchy &h1_fespaces,
-                               double tol, int max_it, int print)
+CurlCurlMassSolver::CurlCurlMassSolver(const MaterialOperator &mat_op,
+                                       const mfem::Array<int> &dbc_marker,
+                                       mfem::ParFiniteElementSpaceHierarchy &nd_fespaces,
+                                       mfem::ParFiniteElementSpaceHierarchy &h1_fespaces,
+                                       double tol, int max_it, int print)
   : mfem::Solver(nd_fespaces.GetFinestFESpace().GetTrueVSize())
 {
-  MaterialPropertyCoefficient<MaterialPropertyType::INV_PERMEABILITY> muinv_func(mat_op);
-  MaterialPropertyCoefficient<MaterialPropertyType::PERMITTIVITY_REAL> epsilon_func(mat_op);
+
+  // XX TODO NEW ParOperator FRAMEWORK
+
+  constexpr MaterialPropertyType MatTypeMuInv = MaterialPropertyType::INV_PERMEABILITY;
+  constexpr MaterialPropertyType MatTypeEps = MaterialPropertyType::PERMITTIVITY_REAL;
+  MaterialPropertyCoefficient<MatTypeMuInv> muinv_func(mat_op);
+  MaterialPropertyCoefficient<MatTypeEps> epsilon_func(mat_op);
   MFEM_VERIFY(dbc_marker.Size() ==
                   nd_fespaces.GetFinestFESpace().GetParMesh()->bdr_attributes.Max(),
               "Invalid boundary marker for curl-curl solver!");

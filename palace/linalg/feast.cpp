@@ -3,6 +3,8 @@
 
 #include "feast.hpp"
 
+#if 0  // XX TODO DISABLE FEAST FOR NOW
+
 #if defined(PALACE_WITH_SLEPC)
 
 #include <memory>
@@ -1290,5 +1292,7 @@ PetscErrorCode __mat_apply_FEAST_PEP(Mat A, Vec x, Vec y)
   }
   PetscFunctionReturn(0);
 }
+
+#endif
 
 #endif
