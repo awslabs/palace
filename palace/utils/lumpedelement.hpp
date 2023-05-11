@@ -1,8 +1,8 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#ifndef PALACE_LUMPED_ELEMENT_HPP
-#define PALACE_LUMPED_ELEMENT_HPP
+#ifndef PALACE_UTILS_LUMPED_ELEMENT_HPP
+#define PALACE_UTILS_LUMPED_ELEMENT_HPP
 
 #include <memory>
 #include <string>
@@ -164,4 +164,4 @@ public:
 
 }  // namespace palace
 
-#endif  // PALACE_LUMPED_ELEMENT_HPP
+#endif  // PALACE_UTILS_LUMPED_ELEMENT_HPP

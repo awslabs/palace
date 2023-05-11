@@ -1,8 +1,8 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#ifndef PALACE_MULTIGRID_HPP
-#define PALACE_MULTIGRID_HPP
+#ifndef PALACE_UTILS_MULTIGRID_HPP
+#define PALACE_UTILS_MULTIGRID_HPP
 
 #include <memory>
 #include <vector>
@@ -111,4 +111,4 @@ ConstructFiniteElementSpaceHierarchy(mfem::ParMesh &mesh, const FECollection &fe
 
 }  // namespace palace::utils
 
-#endif  // PALACE_MULTIGRID_HPP
+#endif  // PALACE_UTILS_MULTIGRID_HPP

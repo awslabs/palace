@@ -1,8 +1,8 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#ifndef PALACE_WAVE_PORT_OPERATOR_HPP
-#define PALACE_WAVE_PORT_OPERATOR_HPP
+#ifndef PALACE_FEM_WAVE_PORT_OPERATOR_HPP
+#define PALACE_FEM_WAVE_PORT_OPERATOR_HPP
 
 #include <complex>
 #include <map>
@@ -185,4 +185,4 @@ public:
 
 }  // namespace palace
 
-#endif  // PALACE_WAVE_PORT_OPERATOR_HPP
+#endif  // PALACE_FEM_WAVE_PORT_OPERATOR_HPP

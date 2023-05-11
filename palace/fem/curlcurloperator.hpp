@@ -1,8 +1,8 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#ifndef PALACE_CURL_CURL_OPERATOR_HPP
-#define PALACE_CURL_CURL_OPERATOR_HPP
+#ifndef PALACE_FEM_CURL_CURL_OPERATOR_HPP
+#define PALACE_FEM_CURL_CURL_OPERATOR_HPP
 
 #include <memory>
 #include <vector>
@@ -82,4 +82,4 @@ public:
 
 }  // namespace palace
 
-#endif  // PALACE_CURL_CURL_OPERATOR_HPP
+#endif  // PALACE_FEM_CURL_CURL_OPERATOR_HPP

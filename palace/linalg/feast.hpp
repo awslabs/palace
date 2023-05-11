@@ -1,8 +1,8 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#ifndef PALACE_FEAST_HPP
-#define PALACE_FEAST_HPP
+#ifndef PALACE_LINALG_FEAST_HPP
+#define PALACE_LINALG_FEAST_HPP
 
 #if defined(PALACE_WITH_SLEPC)
 
@@ -284,4 +284,4 @@ public:
 
 #endif
 
-#endif  // PALACE_FEAST_HPP
+#endif  // PALACE_LINALG_FEAST_HPP

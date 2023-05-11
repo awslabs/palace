@@ -1,8 +1,8 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#ifndef PALACE_PETSC_HPP
-#define PALACE_PETSC_HPP
+#ifndef PALACE_LINALG_PETSC_HPP
+#define PALACE_LINALG_PETSC_HPP
 
 #include <petscsys.h>
 #include <mfem.hpp>
@@ -609,4 +609,4 @@ public:
 
 }  // namespace palace::petsc
 
-#endif  // PALACE_PETSC_HPP
+#endif  // PALACE_LINALG_PETSC_HPP

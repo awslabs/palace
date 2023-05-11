@@ -1,8 +1,8 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#ifndef PALACE_CURL_CURL_HPP
-#define PALACE_CURL_CURL_HPP
+#ifndef PALACE_LINALG_CURL_CURL_HPP
+#define PALACE_LINALG_CURL_CURL_HPP
 
 #include <memory>
 #include <mfem.hpp>
@@ -52,4 +52,4 @@ public:
 
 }  // namespace palace
 
-#endif  // PALACE_CURL_CURL_HPP
+#endif  // PALACE_LINALG_CURL_CURL_HPP

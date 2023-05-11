@@ -1,8 +1,8 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#ifndef PALACE_COMMUNICATION_HPP
-#define PALACE_COMMUNICATION_HPP
+#ifndef PALACE_UTILS_COMMUNICATION_HPP
+#define PALACE_UTILS_COMMUNICATION_HPP
 
 #include <complex>
 #include <fmt/format.h>
@@ -291,4 +291,4 @@ private:
 
 }  // namespace palace
 
-#endif  // PALACE_COMMUNICATION_HPP
+#endif  // PALACE_UTILS_COMMUNICATION_HPP

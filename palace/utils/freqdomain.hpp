@@ -1,8 +1,8 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#ifndef PALACE_FREQ_DOMAIN_HPP
-#define PALACE_FREQ_DOMAIN_HPP
+#ifndef PALACE_UTILS_FREQ_DOMAIN_HPP
+#define PALACE_UTILS_FREQ_DOMAIN_HPP
 
 #include <mfem.hpp>
 #include "linalg/petsc.hpp"
@@ -71,4 +71,4 @@ inline std::unique_ptr<petsc::PetscParMatrix> GetSystemMatrixShell(
 
 }  // namespace palace::utils
 
-#endif  // PALACE_FREQ_DOMAIN_HPP
+#endif  // PALACE_UTILS_FREQ_DOMAIN_HPP

@@ -1,8 +1,8 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#ifndef PALACE_GEOMETRIC_MULTIGRID_HPP
-#define PALACE_GEOMETRIC_MULTIGRID_HPP
+#ifndef PALACE_LINALG_GEOMETRIC_MULTIGRID_HPP
+#define PALACE_LINALG_GEOMETRIC_MULTIGRID_HPP
 
 #include <memory>
 #include <vector>
@@ -143,4 +143,4 @@ public:
 
 }  // namespace palace
 
-#endif  // PALACE_GEOMETRIC_MULTIGRID_HPP
+#endif  // PALACE_LINALG_GEOMETRIC_MULTIGRID_HPP
