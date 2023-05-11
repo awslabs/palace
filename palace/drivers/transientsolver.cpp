@@ -4,11 +4,11 @@
 #include "transientsolver.hpp"
 
 #include <mfem.hpp>
-#include "fem/lumpedportoperator.hpp"
-#include "fem/postoperator.hpp"
-#include "fem/spaceoperator.hpp"
-#include "fem/surfacecurrentoperator.hpp"
-#include "fem/timeoperator.hpp"
+#include "models/lumpedportoperator.hpp"
+#include "models/postoperator.hpp"
+#include "models/spaceoperator.hpp"
+#include "models/surfacecurrentoperator.hpp"
+#include "models/timeoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/excitations.hpp"
 #include "utils/iodata.hpp"

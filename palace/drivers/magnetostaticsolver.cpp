@@ -4,11 +4,11 @@
 #include "magnetostaticsolver.hpp"
 
 #include <mfem.hpp>
-#include "fem/curlcurloperator.hpp"
-#include "fem/postoperator.hpp"
-#include "fem/surfacecurrentoperator.hpp"
 #include "linalg/gmg.hpp"
 #include "linalg/pc.hpp"
+#include "models/curlcurloperator.hpp"
+#include "models/postoperator.hpp"
+#include "models/surfacecurrentoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
 #include "utils/timer.hpp"
