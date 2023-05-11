@@ -1,8 +1,8 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#ifndef PALACE_STRUMPACK_HPP
-#define PALACE_STRUMPACK_HPP
+#ifndef PALACE_LINALG_STRUMPACK_HPP
+#define PALACE_LINALG_STRUMPACK_HPP
 
 #include <mfem.hpp>
 
@@ -81,4 +81,4 @@ using StrumpackMixedPrecisionSolver =
 
 #endif
 
-#endif  // PALACE_STRUMPACK_HPP
+#endif  // PALACE_LINALG_STRUMPACK_HPP

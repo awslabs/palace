@@ -1,8 +1,8 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#ifndef PALACE_CONSTANTS_HPP
-#define PALACE_CONSTANTS_HPP
+#ifndef PALACE_UTILS_CONSTANTS_HPP
+#define PALACE_UTILS_CONSTANTS_HPP
 
 #include <cmath>
 
@@ -39,4 +39,4 @@ static
 
 }  // namespace palace::electromagnetics
 
-#endif  // PALACE_CONSTANTS_HPP
+#endif  // PALACE_UTILS_CONSTANTS_HPP

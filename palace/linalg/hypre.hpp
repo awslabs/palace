@@ -1,8 +1,8 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#ifndef PALACE_HYPRE_HPP
-#define PALACE_HYPRE_HPP
+#ifndef PALACE_LINALG_HYPRE_HPP
+#define PALACE_LINALG_HYPRE_HPP
 
 #include <mfem.hpp>
 
@@ -67,4 +67,4 @@ void hypreParCSRInfNorm(hypre_ParCSRMatrix *Ar, hypre_ParCSRMatrix *Ai, HYPRE_Re
 
 }  // namespace palace::hypre
 
-#endif  // PALACE_HYPRE_HPP
+#endif  // PALACE_LINALG_HYPRE_HPP

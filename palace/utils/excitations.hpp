@@ -1,8 +1,8 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#ifndef PALACE_EXCITATIONS_HPP
-#define PALACE_EXCITATIONS_HPP
+#ifndef PALACE_UTILS_EXCITATIONS_HPP
+#define PALACE_UTILS_EXCITATIONS_HPP
 
 #include <cmath>
 
@@ -111,4 +111,4 @@ inline double dpulse_smootherstep(double t, double tau, double t0)
 
 }  // namespace palace::excitations
 
-#endif  // PALACE_EXCITATIONS_HPP
+#endif  // PALACE_UTILS_EXCITATIONS_HPP

@@ -1,8 +1,8 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#ifndef PALACE_DIST_RELAXATION_SMOOTHER_HPP
-#define PALACE_DIST_RELAXATION_SMOOTHER_HPP
+#ifndef PALACE_LINALG_DIST_RELAXATION_SMOOTHER_HPP
+#define PALACE_LINALG_DIST_RELAXATION_SMOOTHER_HPP
 
 #include <memory>
 #include <vector>
@@ -179,4 +179,4 @@ public:
 
 }  // namespace palace
 
-#endif  // PALACE_DIST_RELAXATION_SMOOTHER_HPP
+#endif  // PALACE_LINALG_DIST_RELAXATION_SMOOTHER_HPP

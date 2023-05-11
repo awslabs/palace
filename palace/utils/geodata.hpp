@@ -1,8 +1,8 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#ifndef PALACE_GEO_DATA_HPP
-#define PALACE_GEO_DATA_HPP
+#ifndef PALACE_UTILS_GEODATA_HPP
+#define PALACE_UTILS_GEODATA_HPP
 
 #include <memory>
 #include <vector>
@@ -66,4 +66,4 @@ void GetSurfaceNormal(mfem::ParMesh &mesh, const mfem::Array<int> &marker,
 
 }  // namespace palace
 
-#endif  // PALACE_GEO_DATA_HPP
+#endif  // PALACE_UTILS_GEODATA_HPP

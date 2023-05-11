@@ -1,8 +1,8 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#ifndef PALACE_MESH_IO_HPP
-#define PALACE_MESH_IO_HPP
+#ifndef PALACE_UTILS_MESH_IO_HPP
+#define PALACE_UTILS_MESH_IO_HPP
 
 #include <iostream>
 #include <string>
@@ -24,4 +24,4 @@ void ConvertMeshNastran(const std::string &filename, std::ostream &buffer);
 
 }  // namespace palace::mesh
 
-#endif  // PALACE_MESH_IO_HPP
+#endif  // PALACE_UTILS_MESH_IO_HPP

@@ -1,8 +1,8 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#ifndef PALACE_ROM_OPERATOR_HPP
-#define PALACE_ROM_OPERATOR_HPP
+#ifndef PALACE_FEM_ROM_OPERATOR_HPP
+#define PALACE_FEM_ROM_OPERATOR_HPP
 
 #include <memory>
 #include <random>
@@ -105,4 +105,4 @@ public:
 
 }  // namespace palace
 
-#endif  // PALACE_ROM_OPERATOR_HPP
+#endif  // PALACE_FEM_ROM_OPERATOR_HPP

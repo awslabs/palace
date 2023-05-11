@@ -1,8 +1,8 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#ifndef PALACE_TIMER_HPP
-#define PALACE_TIMER_HPP
+#ifndef PALACE_UTILS_TIMER_HPP
+#define PALACE_UTILS_TIMER_HPP
 
 #include <chrono>
 #include <string>
@@ -122,4 +122,4 @@ public:
 
 }  // namespace palace
 
-#endif  // PALACE_TIMER_HPP
+#endif  // PALACE_UTILS_TIMER_HPP

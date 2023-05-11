@@ -1,8 +1,8 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#ifndef PALACE_BASE_SOLVER_HPP
-#define PALACE_BASE_SOLVER_HPP
+#ifndef PALACE_DRIVERS_BASE_SOLVER_HPP
+#define PALACE_DRIVERS_BASE_SOLVER_HPP
 
 #include <memory>
 #include <string>
@@ -86,4 +86,4 @@ public:
 
 }  // namespace palace
 
-#endif  // PALACE_BASE_SOLVER_HPP
+#endif  // PALACE_DRIVERS_BASE_SOLVER_HPP

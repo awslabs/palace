@@ -1,8 +1,8 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#ifndef PALACE_MUMPS_HPP
-#define PALACE_MUMPS_HPP
+#ifndef PALACE_LINALG_MUMPS_HPP
+#define PALACE_LINALG_MUMPS_HPP
 
 #include <mfem.hpp>
 
@@ -49,4 +49,4 @@ public:
 
 #endif
 
-#endif  // PALACE_MUMPS_HPP
+#endif  // PALACE_LINALG_MUMPS_HPP

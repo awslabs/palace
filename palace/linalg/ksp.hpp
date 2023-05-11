@@ -1,8 +1,8 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#ifndef PALACE_KSP_SOLVER_HPP
-#define PALACE_KSP_SOLVER_HPP
+#ifndef PALACE_LINALG_KSP_SOLVER_HPP
+#define PALACE_LINALG_KSP_SOLVER_HPP
 
 #include <string>
 #include "linalg/petsc.hpp"
@@ -144,4 +144,4 @@ public:
 
 }  // namespace palace
 
-#endif  // PALACE_KSP_SOLVER_HPP
+#endif  // PALACE_LINALG_KSP_SOLVER_HPP

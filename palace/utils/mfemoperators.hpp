@@ -1,8 +1,8 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#ifndef PALACE_MFEM_OPERATOR_HPP
-#define PALACE_MFEM_OPERATOR_HPP
+#ifndef PALACE_UTILS_MFEM_OPERATOR_HPP
+#define PALACE_UTILS_MFEM_OPERATOR_HPP
 
 #include <functional>
 #include <utility>
@@ -102,4 +102,4 @@ public:
 
 }  // namespace palace
 
-#endif  // PALACE_MFEM_OPERATOR_HPP
+#endif  // PALACE_UTILS_MFEM_OPERATOR_HPP

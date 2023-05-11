@@ -1,8 +1,8 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#ifndef PALACE_ZLIB_HPP
-#define PALACE_ZLIB_HPP
+#ifndef PALACE_UTILS_ZLIB_HPP
+#define PALACE_UTILS_ZLIB_HPP
 
 #include <iomanip>
 #include <iostream>
@@ -120,4 +120,4 @@ std::string DecompressString(const std::string &str)
 
 }  // namespace palace::utils
 
-#endif  // PALACE_ZLIB_HPP
+#endif  // PALACE_UTILS_ZLIB_HPP
