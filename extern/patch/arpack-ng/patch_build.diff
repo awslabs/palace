@@ -1,5 +1,5 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index bc181b6..29c8ef2 100644
+index 690cad4..e238b8f 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
 @@ -71,7 +71,7 @@ function(pexamples list_name)
@@ -11,7 +11,7 @@ index bc181b6..29c8ef2 100644
          add_test(NAME "${lwe}_ex" COMMAND mpiexec -n 2 ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/${lwe})
      endforeach()
  endfunction(pexamples)
-@@ -388,13 +388,11 @@ endif()
+@@ -390,13 +390,11 @@ endif()
  add_library(arpack ${arpackutil_STAT_SRCS} ${arpacksrc_STAT_SRCS} ${arpacksrc_ICB})
  
  target_link_libraries(arpack
@@ -27,7 +27,7 @@ index bc181b6..29c8ef2 100644
  set_target_properties(arpack PROPERTIES OUTPUT_NAME arpack${LIBSUFFIX}${ITF64SUFFIX})
  set_target_properties(arpack PROPERTIES VERSION 2.1.0)
  set_target_properties(arpack PROPERTIES SOVERSION 2)
-@@ -413,11 +411,13 @@ if (MPI)
+@@ -415,9 +413,10 @@ if (MPI)
      # use -DBUILD_SHARED_LIBS=ON|OFF to control static/shared
      add_library(parpack ${parpacksrc_STAT_SRCS} ${parpackutil_STAT_SRCS} ${parpacksrc_ICB})
      target_link_libraries(parpack
@@ -39,17 +39,14 @@ index bc181b6..29c8ef2 100644
 +      $<BUILD_INTERFACE:BLAS::BLAS>
        $<BUILD_INTERFACE:MPI::MPI_Fortran>
      )
-+    target_link_options(parpack PRIVATE "${EXTRA_LDFLAGS}")
      set_target_properties(parpack PROPERTIES OUTPUT_NAME parpack${LIBSUFFIX}${ITF64SUFFIX})
-     set_target_properties(parpack PROPERTIES VERSION 2.1.0)
-     set_target_properties(parpack PROPERTIES SOVERSION 2)
-@@ -672,7 +672,7 @@ function(build_tests)
+@@ -674,7 +673,7 @@ function(build_tests)
      set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/PARPACK/TESTS/MPI)
  
      add_executable(issue46 PARPACK/TESTS/MPI/issue46.f)
 -    target_link_libraries(issue46 parpack arpack BLAS::BLAS LAPACK::LAPACK ${EXTRA_LDFLAGS})
 +    target_link_libraries(issue46 parpack arpack BLAS::BLAS LAPACK::LAPACK ${EXTRA_LDFLAGS} MPI::MPI_Fortran)
-     add_test(issue46_tst ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/issue46)
+     add_test(issue46_tst mpiexec -n 2 ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/issue46)
    endif()
  
 diff --git a/cmake/arpackng-config.cmake.in b/cmake/arpackng-config.cmake.in
