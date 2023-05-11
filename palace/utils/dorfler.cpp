@@ -108,7 +108,7 @@ double ComputeDorflerThreshold(double fraction, const mfem::Vector &e)
     // Set the tolerance based off of the largest local indicator value. These
     // tolerance values are chosen based on testing, opt not to expose them.
     const double frac_tol = 1e-3 * fraction;
-    const double error_tol = 1e-6 * max_indicator;
+    const double error_tol = 1e-10 * max_indicator;
     if (std::abs(max_threshold - min_threshold) < error_tol ||
         std::abs(candidate_fraction - fraction) < frac_tol ||
         max_elem_marked == min_elem_marked)
