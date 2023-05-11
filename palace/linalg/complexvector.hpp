@@ -25,7 +25,7 @@ struct ComplexVector
   ComplexVector &operator=(ComplexVector &&) = default;
   ~ComplexVector() = default;
 
-  ComplexVector(const mfem::Vector &r, const mfem::Vector &i) : real(r), imag(r) {}
+  ComplexVector(const mfem::Vector &r, const mfem::Vector &i) : real(r), imag(i) {}
   ComplexVector(mfem::Vector &&r, mfem::Vector &&i) : real(std::move(r)), imag(std::move(i))
   {
   }
