@@ -1,3 +1,26 @@
+diff --git a/CHANGELOG b/CHANGELOG
+index 34b68a10e..eb4f4e4bd 100644
+--- a/CHANGELOG
++++ b/CHANGELOG
+@@ -18,11 +18,16 @@ Version 4.5.3 (development)
+   These functions can take the place of the MFEM_FORALL macros, which have been
+   preserved for backwards compatibility.
+ 
++- TMOP improvement: added asymptotically-balanced compound metrics 90, 94, 328,
++  338. Added the tmop-metric-magnitude tool for tracking how metrics change
++  under geometric perturbations.
++
+ New and updated examples and miniapps
+ -------------------------------------
+-- Added a miniapp pmesh-fitting in miniapps/meshing for interface and boundary fitting to implicit domains defined using level-set functions.
++- Added a miniapp pmesh-fitting in miniapps/meshing for interface and boundary
++  fitting to implicit domains defined using level-set functions.
+ 
+-- Moved the distance solver methods from miniapps/shifted to miniapps/common. 
++- Moved the distance solver methods from miniapps/shifted to miniapps/common.
+ 
+ Discretization improvements
+ ---------------------------
 diff --git a/examples/ex13p.cpp b/examples/ex13p.cpp
 index da3a7cdba..af3cbc696 100644
 --- a/examples/ex13p.cpp
@@ -140,7 +163,7 @@ index e24c52809..285fcc8e8 100644
     //    use the Nedelec finite elements of the specified order.
     FiniteElementCollection *fec = new ND_FECollection(order, dim);
 diff --git a/fem/doftrans.cpp b/fem/doftrans.cpp
-index 95da3859d..9c8b3be8c 100644
+index 95da3859d..c944954f9 100644
 --- a/fem/doftrans.cpp
 +++ b/fem/doftrans.cpp
 @@ -14,54 +14,6 @@
@@ -258,7 +281,29 @@ index 95da3859d..9c8b3be8c 100644
  {
     // Return immediately when no face DoFs are present
     if (nfdofs < 2) { return; }
-@@ -409,8 +353,7 @@ ND_TetDofTransformation::InvTransformPrimal(double *v) const
+@@ -398,9 +342,21 @@ ND_TetDofTransformation::InvTransformPrimal(double *v) const
+    double data[2];
+    Vector v2(data, 2);
+ 
++   auto print_orientations = [this]()
++   {
++      std::stringstream msg;
++      msg << "Orientations = ";
++      for (const auto &x : Fo)
++      {
++         msg << x << " ";
++      }
++      return msg.str();
++   };
++
+    // Transform face DoFs
+    for (int f=0; f<4; f++)
+    {
++      MFEM_ASSERT(Fo[f] >=0 && Fo[f] <= 5, print_orientations() << " are invalid");
+       for (int i=0; i<nfdofs/2; i++)
+       {
+          v2 = &v[6*nedofs + f*nfdofs + 2*i];
+@@ -409,8 +365,7 @@ ND_TetDofTransformation::InvTransformPrimal(double *v) const
     }
  }
  
@@ -268,7 +313,7 @@ index 95da3859d..9c8b3be8c 100644
  {
     // Return immediately when no face DoFs are present
     if (nfdofs < 2) { return; }
-@@ -432,8 +375,7 @@ ND_TetDofTransformation::TransformDual(double *v) const
+@@ -432,8 +387,7 @@ ND_TetDofTransformation::TransformDual(double *v) const
     }
  }
  
@@ -278,7 +323,7 @@ index 95da3859d..9c8b3be8c 100644
  {
     // Return immediately when no face DoFs are present
     if (nfdofs < 2) { return; }
-@@ -482,8 +424,7 @@ void ND_WedgeDofTransformation::TransformPrimal(double *v) const
+@@ -482,8 +436,7 @@ void ND_WedgeDofTransformation::TransformPrimal(double *v) const
     }
  }
  
@@ -288,7 +333,7 @@ index 95da3859d..9c8b3be8c 100644
  {
     // Return immediately when no face DoFs are present
     if (nfdofs < 2) { return; }
-@@ -505,8 +446,7 @@ ND_WedgeDofTransformation::InvTransformPrimal(double *v) const
+@@ -505,8 +458,7 @@ ND_WedgeDofTransformation::InvTransformPrimal(double *v) const
     }
  }
  
@@ -298,7 +343,7 @@ index 95da3859d..9c8b3be8c 100644
  {
     // Return immediately when no face DoFs are present
     if (nfdofs < 2) { return; }
-@@ -528,8 +468,7 @@ ND_WedgeDofTransformation::TransformDual(double *v) const
+@@ -528,8 +480,7 @@ ND_WedgeDofTransformation::TransformDual(double *v) const
     }
  }
  
@@ -309,7 +354,7 @@ index 95da3859d..9c8b3be8c 100644
     // Return immediately when no face DoFs are present
     if (nfdofs < 2) { return; }
 diff --git a/fem/doftrans.hpp b/fem/doftrans.hpp
-index 9375246b5..f889802ef 100644
+index 9375246b5..ddbb902a8 100644
 --- a/fem/doftrans.hpp
 +++ b/fem/doftrans.hpp
 @@ -63,6 +63,12 @@ protected:
@@ -325,7 +370,18 @@ index 9375246b5..f889802ef 100644
  public:
  
     inline int Size() const { return size_; }
-@@ -83,38 +89,71 @@ public:
+@@ -75,7 +81,9 @@ public:
+        current element. */
+    /// The face_orientation array can be obtained from Mesh::GetElementFaces.
+    inline void SetFaceOrientations(const Array<int> & face_orientation)
+-   { Fo = face_orientation; }
++   {
++      Fo = face_orientation;
++   }
+ 
+    inline const Array<int> & GetFaceOrientations() const { return Fo; }
+ 
+@@ -83,38 +91,71 @@ public:
         transformation can be used to map the local vector computed by
         FiniteElement::Project() to the transformed vector stored within a
         GridFunction object. */
@@ -410,7 +466,15 @@ index 9375246b5..f889802ef 100644
  };
  
  /** Transform a matrix of DoFs entries from different finite element spaces as
-@@ -189,10 +228,11 @@ public:
+@@ -181,18 +222,16 @@ public:
+    /// Return the nested DofTransformation object
+    inline DofTransformation * GetDofTransformation() const { return doftrans_; }
+ 
+-   inline void SetFaceOrientation(const Array<int> & face_orientation)
+-   { Fo = face_orientation; doftrans_->SetFaceOrientations(face_orientation); }
+-
+    using DofTransformation::TransformPrimal;
+    using DofTransformation::InvTransformPrimal;
     using DofTransformation::TransformDual;
     using DofTransformation::InvTransformDual;
  
@@ -426,7 +490,7 @@ index 9375246b5..f889802ef 100644
  };
  
  /** Abstract base class for high-order Nedelec spaces on elements with
-@@ -237,15 +277,13 @@ public:
+@@ -237,15 +276,13 @@ public:
     using DofTransformation::TransformPrimal;
     using DofTransformation::InvTransformPrimal;
     using DofTransformation::TransformDual;
@@ -448,7 +512,7 @@ index 9375246b5..f889802ef 100644
  };
  
  /// DoF transformation implementation for the Nedelec basis on tetrahedra
-@@ -259,13 +297,11 @@ public:
+@@ -259,13 +296,11 @@ public:
     using DofTransformation::TransformDual;
     using DofTransformation::InvTransformDual;
  
@@ -467,7 +531,7 @@ index 9375246b5..f889802ef 100644
  };
  
  /// DoF transformation implementation for the Nedelec basis on wedge elements
-@@ -279,14 +315,11 @@ public:
+@@ -279,14 +314,11 @@ public:
     using DofTransformation::TransformDual;
     using DofTransformation::InvTransformDual;
  
@@ -487,8 +551,151 @@ index 9375246b5..f889802ef 100644
  };
  
  } // namespace mfem
+diff --git a/fem/eltrans.cpp b/fem/eltrans.cpp
+index a4af691d7..4b98d3ea2 100644
+--- a/fem/eltrans.cpp
++++ b/fem/eltrans.cpp
+@@ -492,6 +492,7 @@ int IsoparametricTransformation::OrderGrad(const FiniteElement *fe) const
+ void IsoparametricTransformation::Transform (const IntegrationPoint &ip,
+                                              Vector &trans)
+ {
++   MFEM_ASSERT(FElem != nullptr, "!");
+    shape.SetSize(FElem->GetDof());
+    trans.SetSize(PointMat.Height());
+ 
+diff --git a/fem/gridfunc.cpp b/fem/gridfunc.cpp
+index 6b14f8910..8b108f218 100644
+--- a/fem/gridfunc.cpp
++++ b/fem/gridfunc.cpp
+@@ -397,8 +397,6 @@ void GridFunction::GetNodalValues(int i, Array<double> &nval, int vdim) const
+ {
+    Array<int> vdofs;
+ 
+-   int k;
+-
+    DofTransformation * doftrans = fes->GetElementVDofs(i, vdofs);
+    const FiniteElement *FElem = fes->GetFE(i);
+    const IntegrationRule *ElemVert =
+@@ -419,7 +417,7 @@ void GridFunction::GetNodalValues(int i, Array<double> &nval, int vdim) const
+       Vector shape(dof);
+       if (FElem->GetMapType() == FiniteElement::VALUE)
+       {
+-         for (k = 0; k < n; k++)
++         for (int k = 0; k < n; k++)
+          {
+             FElem->CalcShape(ElemVert->IntPoint(k), shape);
+             nval[k] = shape * (&loc_data[dof * vdim]);
+@@ -428,7 +426,7 @@ void GridFunction::GetNodalValues(int i, Array<double> &nval, int vdim) const
+       else
+       {
+          ElementTransformation *Tr = fes->GetElementTransformation(i);
+-         for (k = 0; k < n; k++)
++         for (int k = 0; k < n; k++)
+          {
+             Tr->SetIntPoint(&ElemVert->IntPoint(k));
+             FElem->CalcPhysShape(*Tr, shape);
+@@ -440,7 +438,7 @@ void GridFunction::GetNodalValues(int i, Array<double> &nval, int vdim) const
+    {
+       ElementTransformation *Tr = fes->GetElementTransformation(i);
+       DenseMatrix vshape(dof, FElem->GetDim());
+-      for (k = 0; k < n; k++)
++      for (int k = 0; k < n; k++)
+       {
+          Tr->SetIntPoint(&ElemVert->IntPoint(k));
+          FElem->CalcVShape(*Tr, vshape);
+@@ -1118,11 +1116,10 @@ int GridFunction::GetFaceVectorValues(
+    int i, int side, const IntegrationRule &ir,
+    DenseMatrix &vals, DenseMatrix &tr) const
+ {
+-   int n, di;
++   int di;
+    FaceElementTransformations *Transf;
+ 
+-   n = ir.GetNPoints();
+-   IntegrationRule eir(n);  // ---
++   IntegrationRule eir(ir.GetNPoints());  // ---
+    Transf = fes->GetMesh()->GetFaceElementTransformations(i, 0);
+    if (side == 2)
+    {
+@@ -1144,12 +1141,14 @@ int GridFunction::GetFaceVectorValues(
+    if (di == 0)
+    {
+       Transf = fes->GetMesh()->GetFaceElementTransformations(i, 5);
++      MFEM_ASSERT(Transf != nullptr, "!");
+       Transf->Loc1.Transform(ir, eir);
+       GetVectorValues(*Transf->Elem1, eir, vals, &tr);
+    }
+    else
+    {
+       Transf = fes->GetMesh()->GetFaceElementTransformations(i, 10);
++      MFEM_ASSERT(Transf != nullptr, "!");
+       Transf->Loc2.Transform(ir, eir);
+       GetVectorValues(*Transf->Elem2, eir, vals, &tr);
+    }
+@@ -2401,7 +2400,11 @@ void GridFunction::ProjectDeltaCoefficient(DeltaCoefficient &delta_coeff,
+                                      loc_mass);
+             vals.SetSize(fe->GetDof());
+             fe->ProjectDelta(j, vals);
+-            fes->GetElementVDofs(i, vdofs);
++            const DofTransformation* const doftrans = fes->GetElementVDofs(i, vdofs);
++            if (doftrans)
++            {
++               doftrans->TransformPrimal(vals);
++            }
+             SetSubVector(vdofs, vals);
+             loc_mass_vals.SetSize(vals.Size());
+             loc_mass.Mult(vals, loc_mass_vals);
+@@ -2755,7 +2758,11 @@ void GridFunction::ProjectBdrCoefficientNormal(
+          CalcOrtho(T->Jacobian(), nor);
+          lvec(j) = (vc * nor);
+       }
+-      fes->GetBdrElementDofs(i, dofs);
++      const DofTransformation* const doftrans = fes->GetBdrElementDofs(i, dofs);
++      if (doftrans)
++      {
++         doftrans->TransformPrimal(lvec);
++      }
+       SetSubVector(dofs, lvec);
+    }
+ #endif
+@@ -4031,11 +4038,19 @@ double ZZErrorEstimator(BilinearFormIntegrator &blfi,
+       {
+          if (with_subdomains && ufes->GetAttribute(i) != s) { continue; }
+ 
+-         ufes->GetElementVDofs(i, udofs);
+-         ffes->GetElementVDofs(i, fdofs);
++         const DofTransformation* const utrans = ufes->GetElementVDofs(i, udofs);
++         const DofTransformation* const ftrans = ffes->GetElementVDofs(i, fdofs);
+ 
+          u.GetSubVector(udofs, ul);
+          flux.GetSubVector(fdofs, fla);
++         if (utrans)
++         {
++            utrans->InvTransformPrimal(ul);
++         }
++         if (ftrans)
++         {
++            ftrans->InvTransformPrimal(fla);
++         }
+ 
+          Transf = ufes->GetElementTransformation(i);
+          blfi.ComputeElementFlux(*ufes->GetFE(i), *Transf, ul,
+@@ -4330,8 +4345,12 @@ double LSZZErrorEstimator(BilinearFormIntegrator &blfi,  // input
+                                                     flux_order));
+          int num_integration_pts = ir->GetNPoints();
+ 
+-         ufes->GetElementVDofs(ielem, udofs);
++         const DofTransformation* const utrans = ufes->GetElementVDofs(ielem, udofs);
+          u.GetSubVector(udofs, ul);
++         if (utrans)
++         {
++            utrans->InvTransformPrimal(ul);
++         }
+          Transf = ufes->GetElementTransformation(ielem);
+          FiniteElement *dummy = nullptr;
+          blfi.ComputeElementFlux(*ufes->GetFE(ielem), *Transf, ul,
 diff --git a/fem/pfespace.cpp b/fem/pfespace.cpp
-index f719540f7..be548825c 100644
+index 6f0af11c6..9edf59365 100644
 --- a/fem/pfespace.cpp
 +++ b/fem/pfespace.cpp
 @@ -1173,6 +1173,7 @@ const Operator *ParFiniteElementSpace::GetProlongationMatrix() const
@@ -499,7 +706,15 @@ index f719540f7..be548825c 100644
        return Pconf;
     }
     else
-@@ -1948,9 +1949,8 @@ struct PMatrixRow
+@@ -1293,6 +1294,7 @@ void ParFiniteElementSpace::ExchangeFaceNbrData()
+    // element)
+    face_nbr_element_dof.MakeI(recv_el_off[num_face_nbrs]);
+ 
++
+    int *send_I = send_nbr_elem_dof.GetI();
+    int *recv_I = face_nbr_element_dof.GetI();
+    for (int fn = 0; fn < num_face_nbrs; fn++)
+@@ -1948,9 +1950,8 @@ struct PMatrixRow
     void AddRow(const PMatrixRow &other, double coef)
     {
        elems.reserve(elems.size() + other.elems.size());
@@ -510,7 +725,7 @@ index f719540f7..be548825c 100644
           elems.push_back(
              PMatrixElement(oei.column, oei.stride, coef * oei.value));
        }
-@@ -2088,6 +2088,7 @@ void NeighborRowMessage::Encode(int rank)
+@@ -2088,6 +2089,7 @@ void NeighborRowMessage::Encode(int rank)
        for (int i = 0; i < ids.Size(); i++)
        {
           const MeshId &id = ids[i];
@@ -518,7 +733,7 @@ index f719540f7..be548825c 100644
           const RowInfo &ri = rows[row_idx[ent][i]];
           MFEM_ASSERT(ent == ri.entity, "");
  
-@@ -2139,24 +2140,36 @@ void NeighborRowMessage::Decode(int rank)
+@@ -2139,24 +2141,36 @@ void NeighborRowMessage::Decode(int rank)
     rows.reserve(nrows);
  
     // read rows
@@ -558,7 +773,7 @@ index f719540f7..be548825c 100644
              int fo = pncmesh->GetFaceOrientation(id.index);
              ind = fec->DofOrderForOrientation(geom, fo);
           }
-@@ -2168,6 +2181,7 @@ void NeighborRowMessage::Decode(int rank)
+@@ -2168,6 +2182,7 @@ void NeighborRowMessage::Decode(int rank)
              s = -1.0;
           }
  
@@ -566,7 +781,7 @@ index f719540f7..be548825c 100644
           rows.push_back(RowInfo(ent, id.index, edof, group_ids[gi++]));
           rows.back().row.read(stream, s);
  
-@@ -2177,6 +2191,65 @@ void NeighborRowMessage::Decode(int rank)
+@@ -2177,6 +2192,65 @@ void NeighborRowMessage::Decode(int rank)
                     << rows.back().index << ", edof " << rows.back().edof
                     << std::endl;
  #endif
@@ -632,7 +847,7 @@ index f719540f7..be548825c 100644
        }
     }
  }
-@@ -2306,12 +2379,6 @@ int ParFiniteElementSpace
+@@ -2306,12 +2380,6 @@ int ParFiniteElementSpace
                                         Array<int> *dof_tdof,
                                         bool partial) const
  {
@@ -645,10 +860,1454 @@ index f719540f7..be548825c 100644
     bool dg = (nvdofs == 0 && nedofs == 0 && nfdofs == 0);
  
  #ifdef MFEM_PMATRIX_STATS
+diff --git a/fem/pgridfunc.cpp b/fem/pgridfunc.cpp
+index 0dccf5dbf..fd6fa2260 100644
+--- a/fem/pgridfunc.cpp
++++ b/fem/pgridfunc.cpp
+@@ -58,9 +58,18 @@ ParGridFunction::ParGridFunction(ParMesh *pmesh, const GridFunction *gf,
+       {
+          if (partitioning[i] == MyRank)
+          {
+-            pfes->GetElementVDofs(element_counter, lvdofs);
+-            glob_fes->GetElementVDofs(i, gvdofs);
++            const DofTransformation* const ltrans = pfes->GetElementVDofs(element_counter,
++                                                                          lvdofs);
++            const DofTransformation* const gtrans = glob_fes->GetElementVDofs(i, gvdofs);
+             gf->GetSubVector(gvdofs, lnodes);
++            if (gtrans)
++            {
++               gtrans->InvTransformPrimal(lnodes);
++            }
++            if (ltrans)
++            {
++               ltrans->TransformPrimal(lnodes);
++            }
+             SetSubVector(lvdofs, lnodes);
+             element_counter++;
+          }
+@@ -270,13 +279,15 @@ const
+    if (nbr_el_no >= 0)
+    {
+       int fes_vdim = pfes->GetVDim();
+-      pfes->GetFaceNbrElementVDofs(nbr_el_no, dofs);
++      const DofTransformation* const doftrans = pfes->GetFaceNbrElementVDofs(
++                                                   nbr_el_no, dofs);
+       const FiniteElement *fe = pfes->GetFaceNbrFE(nbr_el_no);
+       if (fes_vdim > 1)
+       {
+          int s = dofs.Size()/fes_vdim;
+          Array<int> dofs_(&dofs[(vdim-1)*s], s);
+          face_nbr_data.GetSubVector(dofs_, LocVec);
++
+          DofVal.SetSize(s);
+       }
+       else
+@@ -284,6 +295,11 @@ const
+          face_nbr_data.GetSubVector(dofs, LocVec);
+          DofVal.SetSize(dofs.Size());
+       }
++      if (doftrans)
++      {
++         doftrans->InvTransformPrimal(LocVec);
++      }
++
+       if (fe->GetMapType() == FiniteElement::VALUE)
+       {
+          fe->CalcShape(ip, DofVal);
+@@ -298,7 +314,7 @@ const
+    }
+    else
+    {
+-      fes->GetElementDofs(i, dofs);
++      const DofTransformation* const doftrans = fes->GetElementDofs(i, dofs);
+       fes->DofsToVDofs(vdim-1, dofs);
+       DofVal.SetSize(dofs.Size());
+       const FiniteElement *fe = fes->GetFE(i);
+@@ -313,6 +329,10 @@ const
+          fe->CalcPhysShape(*Tr, DofVal);
+       }
+       GetSubVector(dofs, LocVec);
++      if (doftrans)
++      {
++         doftrans->InvTransformPrimal(LocVec);
++      }
+    }
+ 
+    return (DofVal * LocVec);
+@@ -325,8 +345,9 @@ void ParGridFunction::GetVectorValue(int i, const IntegrationPoint &ip,
+    if (nbr_el_no >= 0)
+    {
+       Array<int> dofs;
+-      DofTransformation * doftrans = pfes->GetFaceNbrElementVDofs(nbr_el_no,
+-                                                                  dofs);
++      const DofTransformation* const doftrans = pfes->GetFaceNbrElementVDofs(
++                                                   nbr_el_no,
++                                                   dofs);
+       Vector loc_data;
+       face_nbr_data.GetSubVector(dofs, loc_data);
+       if (doftrans)
+@@ -400,7 +421,8 @@ double ParGridFunction::GetValue(ElementTransformation &T,
+ 
+    Array<int> dofs;
+    const FiniteElement * fe = pfes->GetFaceNbrFE(nbr_el_no);
+-   pfes->GetFaceNbrElementVDofs(nbr_el_no, dofs);
++   const DofTransformation* const doftrans = pfes->GetFaceNbrElementVDofs(
++                                                nbr_el_no, dofs);
+ 
+    pfes->DofsToVDofs(comp-1, dofs);
+    Vector DofVal(dofs.Size()), LocVec;
+@@ -413,6 +435,11 @@ double ParGridFunction::GetValue(ElementTransformation &T,
+       fe->CalcPhysShape(T, DofVal);
+    }
+    face_nbr_data.GetSubVector(dofs, LocVec);
++   if (doftrans)
++   {
++      doftrans->InvTransformPrimal(LocVec);
++   }
++
+ 
+    return (DofVal * LocVec);
+ }
+@@ -442,17 +469,17 @@ void ParGridFunction::GetVectorValue(ElementTransformation &T,
+    }
+ 
+    Array<int> vdofs;
+-   DofTransformation * doftrans = pfes->GetFaceNbrElementVDofs(nbr_el_no,
+-                                                               vdofs);
+-   const FiniteElement *fe = pfes->GetFaceNbrFE(nbr_el_no);
+-
+-   int dof = fe->GetDof();
++   DofTransformation * doftrans = pfes->GetFaceNbrElementVDofs(nbr_el_no, vdofs);
+    Vector loc_data;
+    face_nbr_data.GetSubVector(vdofs, loc_data);
+    if (doftrans)
+    {
+       doftrans->InvTransformPrimal(loc_data);
+    }
++
++   const FiniteElement *fe = pfes->GetFaceNbrFE(nbr_el_no);
++   int dof = fe->GetDof();
++
+    if (fe->GetRangeType() == FiniteElement::SCALAR)
+    {
+       Vector shape(dof);
+@@ -1160,15 +1187,23 @@ double L2ZZErrorEstimator(BilinearFormIntegrator &flux_integrator,
+ 
+    for (int i = 0; i < xfes->GetNE(); i++)
+    {
+-      xfes->GetElementVDofs(i, xdofs);
++      const DofTransformation* const xtrans = xfes->GetElementVDofs(i, xdofs);
+       x.GetSubVector(xdofs, el_x);
++      if (xtrans)
++      {
++         xtrans->InvTransformPrimal(el_x);
++      }
+ 
+       ElementTransformation *Transf = xfes->GetElementTransformation(i);
+       flux_integrator.ComputeElementFlux(*xfes->GetFE(i), *Transf, el_x,
+                                          *flux_fes.GetFE(i), el_f, false);
+ 
+-      flux_fes.GetElementVDofs(i, fdofs);
+-      flux.AddElementVector(fdofs, el_f);
++      const DofTransformation* const ftrans = flux_fes.GetElementVDofs(i, fdofs);
++      if (ftrans)
++      {
++         ftrans->TransformPrimal(el_f);
++      }
++      flux.SetSubVector(fdofs, el_f);
+    }
+ 
+    // Assemble the linear system for L2 projection into the "smooth" space
+diff --git a/fem/tmop.cpp b/fem/tmop.cpp
+index 342c241c9..dddc0c349 100644
+--- a/fem/tmop.cpp
++++ b/fem/tmop.cpp
+@@ -536,12 +536,23 @@ void TMOP_Metric_022::AssembleH(const DenseMatrix &Jpt,
+    ie.Assemble_ddI2b(c4, A.GetData());
+ }
+ 
++double TMOP_Metric_050::EvalWMatrixForm(const DenseMatrix &Jpt) const
++{
++   // mu_50 = 0.5 |J^t J|^2 / det(J)^2 - 1.
++   DenseMatrix JtJ(2);
++   MultAAt(Jpt, JtJ);
++   JtJ.Transpose();
++   double det = Jpt.Det();
++
++   return 0.5 * JtJ.FNorm2()/(det*det) - 1.0;
++}
++
+ double TMOP_Metric_050::EvalW(const DenseMatrix &Jpt) const
+ {
+    // mu_50 = 0.5*|J^t J|^2/det(J)^2 - 1
+    //       = 0.5*(l1^4 + l2^4)/(l1*l2)^2 - 1
+    //       = 0.5*((l1/l2)^2 + (l2/l1)^2) - 1 = 0.5*(l1/l2 - l2/l1)^2
+-   //       = 0.5*(l1/l2 + l2/l1)^2 - 2 = 0.5*I1b^2 - 2
++   //       = 0.5*(l1/l2 + l2/l1)^2 - 2 = 0.5*I1b^2 - 2.
+    ie.SetJacobian(Jpt.GetData());
+    const double I1b = ie.Get_I1b();
+    return 0.5*I1b*I1b - 2.0;
+@@ -597,9 +608,16 @@ void TMOP_Metric_055::AssembleH(const DenseMatrix &Jpt,
+    ie.Assemble_ddI2b(2*weight*(ie.Get_I2b() - 1.0), A.GetData());
+ }
+ 
++double TMOP_Metric_056::EvalWMatrixForm(const DenseMatrix &Jpt) const
++{
++   // mu_56 = 0.5 (det(J) + 1 / det(J)) - 1.
++   const double d = Jpt.Det();
++   return 0.5 * (d + 1.0 / d) - 1.0;
++}
++
+ double TMOP_Metric_056::EvalW(const DenseMatrix &Jpt) const
+ {
+-   // mu_56 = 0.5*(I2b + 1/I2b) - 1
++   // mu_56 = 0.5*(I2b + 1/I2b) - 1.
+    ie.SetJacobian(Jpt.GetData());
+    const double I2b = ie.Get_I2b();
+    return 0.5*(I2b + 1.0/I2b) - 1.0;
+@@ -607,8 +625,8 @@ double TMOP_Metric_056::EvalW(const DenseMatrix &Jpt) const
+ 
+ void TMOP_Metric_056::EvalP(const DenseMatrix &Jpt, DenseMatrix &P) const
+ {
+-   // mu_56 = 0.5*(I2b + 1/I2b) - 1
+-   // P = 0.5*(1 - 1/I2b^2)*dI2b
++   // mu_56 = 0.5*(I2b + 1/I2b) - 1.
++   // P = 0.5*(1 - 1/I2b^2)*dI2b.
+    ie.SetJacobian(Jpt.GetData());
+    P.Set(0.5 - 0.5/ie.Get_I2(), ie.Get_dI2b());
+ }
+@@ -618,8 +636,8 @@ void TMOP_Metric_056::AssembleH(const DenseMatrix &Jpt,
+                                 const double weight,
+                                 DenseMatrix &A) const
+ {
+-   // P  = 0.5*(1 - 1/I2b^2)*dI2b
+-   // dP = (1/I2b^3)*(dI2b x dI2b) + (0.5 - 0.5/I2)*ddI2b
++   // P  = 0.5*(1 - 1/I2b^2)*dI2b.
++   // dP = (1/I2b^3)*(dI2b x dI2b) + (0.5 - 0.5/I2)*ddI2b.
+    ie.SetJacobian(Jpt.GetData());
+    ie.SetDerivativeMatrix(DS.Height(), DS.GetData());
+    ie.Assemble_TProd(weight/(ie.Get_I2()*ie.Get_I2b()),
+@@ -629,7 +647,7 @@ void TMOP_Metric_056::AssembleH(const DenseMatrix &Jpt,
+ 
+ double TMOP_Metric_058::EvalWMatrixForm(const DenseMatrix &Jpt) const
+ {
+-   // mu_58 = |J^t J|^2 / det(J)^2 - 2|J|^2 / det(J) + 2
++   // mu_58 = |J^t J|^2 / det(J)^2 - 2|J|^2 / det(J) + 2.
+    DenseMatrix JtJ(2);
+    MultAAt(Jpt, JtJ);
+    JtJ.Transpose();
+@@ -667,17 +685,24 @@ void TMOP_Metric_058::AssembleH(const DenseMatrix &Jpt,
+    ie.Assemble_ddI1b(weight*(2*ie.Get_I1b() - 2.0), A.GetData());
+ }
+ 
++double TMOP_Metric_077::EvalWMatrixForm(const DenseMatrix &Jpt) const
++{
++   // mu_77 = 0.5 (det(J)^2 + 1 / det(J)^2) - 1.
++   const double d = Jpt.Det();
++   return 0.5 * (d*d + 1.0/(d*d)) - 1.0;
++}
+ double TMOP_Metric_077::EvalW(const DenseMatrix &Jpt) const
+ {
++   // mu_77 = 0.5 (I2 + 1 / I2) - 1.0.
+    ie.SetJacobian(Jpt.GetData());
+-   const double I2b = ie.Get_I2b();
+-   return  0.5*(I2b*I2b + 1./(I2b*I2b) - 2.);
++   const double I2 = ie.Get_I2();
++   return  0.5*(I2 + 1.0/I2) - 1.0;
+ }
+ 
+ void TMOP_Metric_077::EvalP(const DenseMatrix &Jpt, DenseMatrix &P) const
+ {
+-   // Using I2b^2 = I2.
+-   // dmu77_dJ = 1/2 (1 - 1/I2^2) dI2_dJ.
++   // mu_77 = 0.5 (I2 + 1 / I2) - 1.0.
++   // P = 1/2 (1 - 1/I2^2) dI2_dJ.
+    ie.SetJacobian(Jpt.GetData());
+    const double I2 = ie.Get_I2();
+    P.Set(0.5 * (1.0 - 1.0 / (I2 * I2)), ie.Get_dI2());
+@@ -1091,6 +1116,43 @@ void TMOP_Metric_316::AssembleH(const DenseMatrix &Jpt,
+    ie.Assemble_ddI3b(weight*(0.5 - 0.5/ie.Get_I3()), A.GetData());
+ }
+ 
++double TMOP_Metric_318::EvalWMatrixForm(const DenseMatrix &Jpt) const
++{
++   // mu_318 = 0.5 (det(J)^2 + 1/det(J)^2) - 1.
++   double d = Jpt.Det();
++   return 0.5 * (d*d + 1.0 / (d*d)) - 1.0;
++}
++
++double TMOP_Metric_318::EvalW(const DenseMatrix &Jpt) const
++{
++   // mu_318 = mu_77_3D = 0.5 * (I3 + 1/I3) - 1.
++   ie.SetJacobian(Jpt.GetData());
++   const double I3 = ie.Get_I3();
++   return 0.5*(I3 + 1.0/I3) - 1.0;
++}
++
++void TMOP_Metric_318::EvalP(const DenseMatrix &Jpt, DenseMatrix &P) const
++{
++   // mu_318 = mu_77_3D = 0.5*(I3 + 1/I3) - 1.
++   // P = 0.5*(1 - 1/I3^2)*dI3 = (0.5 - 0.5/I3^2)*dI3.
++   ie.SetJacobian(Jpt.GetData());
++   P.Set(0.5 - 0.5/(ie.Get_I3()*ie.Get_I3()), ie.Get_dI3());
++}
++
++void TMOP_Metric_318::AssembleH(const DenseMatrix &Jpt,
++                                const DenseMatrix &DS,
++                                const double weight,
++                                DenseMatrix &A) const
++{
++   // P = (0.5 - 0.5/I3^2)*dI3.
++   // dP =  (1/I3^3)*(dI3 x dI3) +(0.5 - 0.5/I3^2)*ddI3
++   ie.SetJacobian(Jpt.GetData());
++   ie.SetDerivativeMatrix(DS.Height(), DS.GetData());
++   const double i3 = ie.Get_I3();
++   ie.Assemble_TProd(weight/(i3 * i3 * i3), ie.Get_dI3(), A.GetData());
++   ie.Assemble_ddI3(weight*(0.5 - 0.5 / (i3 * i3)), A.GetData());
++}
++
+ double TMOP_Metric_321::EvalWMatrixForm(const DenseMatrix &Jpt) const
+ {
+    // mu_321 = |J - J^-t|^2.
+@@ -2105,17 +2167,17 @@ void DiscreteAdaptTC::ComputeElementTargets(int e_id, const FiniteElement &fe,
+             if (sizeidx != -1) // Set size
+             {
+                par_vals.SetDataAndSize(tspec_vals.GetData()+sizeidx*ndofs, ndofs);
+-               double min_size = par_vals.Min();//0.001; //
+-               if (lim_min_size > 0.)
+-               {
+-                  min_size = lim_min_size;
+-               }
+-               else
++               double min_size = par_vals.Min();
++               if (lim_min_size > 0.) { min_size = lim_min_size; }
++               MFEM_VERIFY(min_size > 0.0,
++                           "Non-positive size propagated in the target definition.");
++
++               double size = fmax(shape * par_vals, min_size);
++               NCMesh *ncmesh = tspec_fesv->GetMesh()->ncmesh;
++               if (ncmesh)
+                {
+-                  MFEM_VERIFY(min_size > 0.0,
+-                              "Non-positive size propagated in the target definition.");
++                  size /= ncmesh->GetElementSizeReduction(e_id);
+                }
+-               const double size = std::max(shape * par_vals, min_size);
+                Jtr(q).Set(std::pow(size, 1.0/dim), Jtr(q));
+                DenseMatrix Jtrcomp_q(Jtrcomp.GetData(0 + 4*q), dim, dim);
+                Jtrcomp_q = Jtr(q);
+diff --git a/fem/tmop.hpp b/fem/tmop.hpp
+index 913ac62b7..4ffc95180 100644
+--- a/fem/tmop.hpp
++++ b/fem/tmop.hpp
+@@ -124,6 +124,8 @@ public:
+                                const TargetConstructor &tc,
+                                Vector &weights) const;
+ 
++   void GetWeights(Array<double> &weights) const { weights = wt_arr; }
++
+    /// Changes the weights of the metrics in the combination.
+    void SetWeights(const Vector &weights)
+    {
+@@ -410,7 +412,10 @@ protected:
+    mutable InvariantsEvaluator2D<double> ie;
+ 
+ public:
+-   // W = 0.5|J^t J|^2 / det(J)^2 - 1.
++   // W = 0.5 |J^t J|^2 / det(J)^2 - 1.
++   virtual double EvalWMatrixForm(const DenseMatrix &Jpt) const;
++
++   // W = 0.5 I1b^2 - 2.
+    virtual double EvalW(const DenseMatrix &Jpt) const;
+ 
+    virtual void EvalP(const DenseMatrix &Jpt, DenseMatrix &P) const;
+@@ -445,9 +450,10 @@ protected:
+    mutable InvariantsEvaluator2D<double> ie;
+ 
+ public:
+-   // W = 0.5( sqrt(det(J)) - 1 / sqrt(det(J)) )^2
+-   //   = 0.5( det(J) - 1 )^2 / det(J)
+-   //   = 0.5( det(J) + 1/det(J) ) - 1.
++   // W = 0.5 (det(J) + 1 / det(J)) - 1.
++   virtual double EvalWMatrixForm(const DenseMatrix &Jpt) const;
++
++   // W = 0.5 (I2b + 1/I2b) - 1.
+    virtual double EvalW(const DenseMatrix &Jpt) const;
+ 
+    virtual void EvalP(const DenseMatrix &Jpt, DenseMatrix &P) const;
+@@ -505,7 +511,10 @@ protected:
+    mutable InvariantsEvaluator2D<double> ie;
+ 
+ public:
+-   // W = 0.5(det(J) - 1 / det(J))^2.
++   // W = 0.5 (det(J) - 1 / det(J))^2.
++   virtual double EvalWMatrixForm(const DenseMatrix &Jpt) const;
++
++   // W = 0.5 (I2 + 1 / I2) - 1.0.
+    virtual double EvalW(const DenseMatrix &Jpt) const;
+ 
+    virtual void EvalP(const DenseMatrix &Jpt, DenseMatrix &P) const;
+@@ -554,6 +563,48 @@ public:
+    { MFEM_ABORT("Not implemented"); }
+ };
+ 
++/// 2D compound barrier Shape+Size (VS) metric (balanced).
++class TMOP_Metric_090 : public TMOP_Combo_QualityMetric
++{
++protected:
++   mutable InvariantsEvaluator2D<double> ie;
++   TMOP_QualityMetric *sh_metric, *sz_metric;
++
++public:
++   TMOP_Metric_090()
++      : sh_metric(new TMOP_Metric_050), sz_metric(new TMOP_Metric_077)
++   {
++      // mu_50 + lambda mu_77.
++      // 1 <= lambda <= 4 should produce best asymptotic balance.
++      AddQualityMetric(sh_metric, 1.0);
++      AddQualityMetric(sz_metric, 2.5);
++   }
++
++   virtual int Id() const { return 90; }
++   virtual ~TMOP_Metric_090() { delete sh_metric; delete sz_metric; }
++};
++
++/// 2D compound barrier Shape+Size (VS) metric (balanced).
++class TMOP_Metric_094 : public TMOP_Combo_QualityMetric
++{
++protected:
++   mutable InvariantsEvaluator2D<double> ie;
++   TMOP_QualityMetric *sh_metric, *sz_metric;
++
++public:
++   TMOP_Metric_094()
++      : sh_metric(new TMOP_Metric_002), sz_metric(new TMOP_Metric_056)
++   {
++      // mu_2 + lambda mu_56.
++      // 1 <= lambda <= 2 should produce best asymptotic balance.
++      AddQualityMetric(sh_metric, 1.0);
++      AddQualityMetric(sz_metric, 1.5);
++   }
++
++   virtual int Id() const { return 94; }
++   virtual ~TMOP_Metric_094() { delete sh_metric; delete sz_metric; }
++};
++
+ /// 2D barrier Shape+Size+Orientation (VOS) metric (polyconvex).
+ class TMOP_Metric_098 : public TMOP_QualityMetric
+ {
+@@ -730,7 +781,7 @@ public:
+    virtual int Id() const { return 313; }
+ };
+ 
+-/// 3D non-barrier metric without a type.
++/// 3D Size (V) metric.
+ class TMOP_Metric_315 : public TMOP_QualityMetric
+ {
+ protected:
+@@ -748,7 +799,7 @@ public:
+    virtual int Id() const { return 315; }
+ };
+ 
+-/// 3D barrier metric without a type.
++/// 3D Size (V) metric.
+ class TMOP_Metric_316 : public TMOP_QualityMetric
+ {
+ protected:
+@@ -767,6 +818,27 @@ public:
+                           const double weight, DenseMatrix &A) const;
+ };
+ 
++/// 3D Size (V) metric.
++class TMOP_Metric_318 : public TMOP_QualityMetric
++{
++protected:
++   mutable InvariantsEvaluator3D<double> ie;
++
++public:
++   // W = 0.5 (det(J)^2 + 1/det(J)^2) - 1.
++   virtual double EvalWMatrixForm(const DenseMatrix &Jpt) const;
++
++   // W = 0.5 (I3 + 1/I3) - 1.
++   virtual double EvalW(const DenseMatrix &Jpt) const;
++
++   virtual void EvalP(const DenseMatrix &Jpt, DenseMatrix &P) const;
++
++   virtual void AssembleH(const DenseMatrix &Jpt, const DenseMatrix &DS,
++                          const double weight, DenseMatrix &A) const;
++
++   virtual int Id() const { return 318; }
++};
++
+ /// 3D barrier Shape+Size (VS) metric, well-posed (invex).
+ class TMOP_Metric_321 : public TMOP_QualityMetric
+ {
+@@ -830,7 +902,7 @@ public:
+    virtual int Id() const { return 323; }
+ };
+ 
+-/// 3D barrier Shape+Size (VS) metric (polyconvex).
++/// 3D compound barrier Shape+Size (VS) metric (polyconvex, balanced).
+ class TMOP_Metric_328 : public TMOP_Combo_QualityMetric
+ {
+ protected:
+@@ -838,18 +910,20 @@ protected:
+    TMOP_QualityMetric *sh_metric, *sz_metric;
+ 
+ public:
+-   TMOP_Metric_328(double gamma)
++   TMOP_Metric_328()
+       : sh_metric(new TMOP_Metric_301), sz_metric(new TMOP_Metric_316)
+    {
+-      // (1-gamma) mu_301 + gamma mu_316
+-      AddQualityMetric(sh_metric, 1.-gamma);
+-      AddQualityMetric(sz_metric, gamma);
++      // lambda mu_301 + mu_316.
++      // 3/8 <= lambda <= 9/8 should produce best asymptotic balance.
++      AddQualityMetric(sh_metric, 0.75);
++      AddQualityMetric(sz_metric, 1.0);
+    }
+ 
++   virtual int Id() const { return 328; }
+    virtual ~TMOP_Metric_328() { delete sh_metric; delete sz_metric; }
+ };
+ 
+-/// 3D barrier Shape+Size (VS) metric (polyconvex).
++/// 3D compound barrier Shape+Size (VS) metric (polyconvex).
+ class TMOP_Metric_332 : public TMOP_Combo_QualityMetric
+ {
+ protected:
+@@ -911,6 +985,27 @@ public:
+    virtual ~TMOP_Metric_334() { delete sh_metric; delete sz_metric; }
+ };
+ 
++/// 3D compound barrier Shape+Size (VS) metric (polyconvex, balanced).
++class TMOP_Metric_338 : public TMOP_Combo_QualityMetric
++{
++protected:
++   mutable InvariantsEvaluator2D<double> ie;
++   TMOP_QualityMetric *sh_metric, *sz_metric;
++
++public:
++   TMOP_Metric_338()
++      : sh_metric(new TMOP_Metric_302), sz_metric(new TMOP_Metric_318)
++   {
++      // mu_302 + lambda mu_318.
++      // 4/9 <= lambda <= 3 should produce best asymptotic balance.
++      AddQualityMetric(sh_metric, 1.0);
++      AddQualityMetric(sz_metric, 0.5 * (4.0/9.0 + 3.0));
++   }
++
++   virtual int Id() const { return 338; }
++   virtual ~TMOP_Metric_338() { delete sh_metric; delete sz_metric; }
++};
++
+ /// 3D barrier Shape+Size (VS) metric, well-posed (polyconvex).
+ class TMOP_Metric_347 : public TMOP_Combo_QualityMetric
+ {
+diff --git a/fem/tmop/tmop_pa_da3.cpp b/fem/tmop/tmop_pa_da3.cpp
+index f2b382294..2f8738b1a 100644
+--- a/fem/tmop/tmop_pa_da3.cpp
++++ b/fem/tmop/tmop_pa_da3.cpp
+@@ -24,6 +24,7 @@ MFEM_REGISTER_TMOP_KERNELS(void, DatcSize,
+                            const DenseMatrix &w_,
+                            const Array<double> &b_,
+                            const Vector &x_,
++                           const Vector &nc_reduce,
+                            DenseTensor &j_,
+                            const int d1d,
+                            const int q1d)
+@@ -43,6 +44,8 @@ MFEM_REGISTER_TMOP_KERNELS(void, DatcSize,
+    MFEM_VERIFY(sizeidx == 0,"");
+    MFEM_VERIFY(MFEM_CUDA_BLOCKS==256,"");
+ 
++   const double *nc_red = nc_reduce.Read();
++
+    mfem::forall_3D(NE, Q1D, Q1D, Q1D, [=] MFEM_HOST_DEVICE (int e)
+    {
+       const int D1D = T_D1D ? T_D1D : d1d;
+@@ -107,7 +110,7 @@ MFEM_REGISTER_TMOP_KERNELS(void, DatcSize,
+                double T;
+                kernels::internal::PullEval(qx,qy,qz,QQQ,T);
+                const double shape_par_vals = T;
+-               const double size = fmax(shape_par_vals, min);
++               const double size = fmax(shape_par_vals, min) / nc_red[e];
+                const double alpha = std::pow(size, 1.0/DIM);
+                for (int i = 0; i < DIM; i++)
+                {
+@@ -160,6 +163,14 @@ void DiscreteAdaptTC::ComputeAllElementTargets(const FiniteElementSpace &pa_fes,
+    const int D1D = maps.ndof;
+    const int Q1D = maps.nqpt;
+ 
++   Vector nc_size_red(NE, Device::GetDeviceMemoryType());
++   nc_size_red.HostWrite();
++   NCMesh *ncmesh = tspec_fesv->GetMesh()->ncmesh;
++   for (int e = 0; e < NE; e++)
++   {
++      nc_size_red(e) = (ncmesh) ? ncmesh->GetElementSizeReduction(e) : 1.0;
++   }
++
+    Vector tspec_e;
+    const ElementDofOrdering ordering = ElementDofOrdering::LEXICOGRAPHIC;
+    const Operator *R = fes->GetElementRestriction(ordering);
+@@ -170,7 +181,8 @@ void DiscreteAdaptTC::ComputeAllElementTargets(const FiniteElementSpace &pa_fes,
+    tspec.UseDevice(true);
+    R->Mult(tspec, tspec_e);
+    const int id = (D1D << 4 ) | Q1D;
+-   MFEM_LAUNCH_TMOP_KERNEL(DatcSize,id,NE,ncomp,sizeidx,W,B,tspec_e,Jtr);
++   MFEM_LAUNCH_TMOP_KERNEL(DatcSize,id,NE,ncomp,sizeidx,W,B,
++                           tspec_e, nc_size_red, Jtr);
+ }
+ 
+ } // namespace mfem
+diff --git a/fem/tmop/tmop_pa_h2s.cpp b/fem/tmop/tmop_pa_h2s.cpp
+index 06731317c..2f919ec31 100644
+--- a/fem/tmop/tmop_pa_h2s.cpp
++++ b/fem/tmop/tmop_pa_h2s.cpp
+@@ -118,6 +118,37 @@ void EvalH_007(const int e, const int qx, const int qy,
+    }
+ }
+ 
++// dP_56 = (0.5 - 0.5/I2b^2)*ddI2b + (1/I2b^3)*(dI2b x dI2b).
++static MFEM_HOST_DEVICE inline
++void EvalH_056(const int e, const int qx, const int qy,
++               const double weight, const double *Jpt,
++               DeviceTensor<7,double> H)
++{
++   constexpr int DIM = 2;
++   double dI2b[4], ddI2b[4];
++   kernels::InvariantsEvaluator2D ie(Args().J(Jpt)
++                                     .dI2b(dI2b)
++                                     .ddI2b(ddI2b));
++   const double I2b = ie.Get_I2b();
++   ConstDeviceMatrix di2b(ie.Get_dI2b(),DIM,DIM);
++   for (int i = 0; i < DIM; i++)
++   {
++      for (int j = 0; j < DIM; j++)
++      {
++         ConstDeviceMatrix ddi2b(ie.Get_ddI2b(i,j),DIM,DIM);
++         for (int r = 0; r < DIM; r++)
++         {
++            for (int c = 0; c < DIM; c++)
++            {
++               H(r,c,i,j,qx,qy,e) =
++                  weight * (0.5 - 0.5/(I2b*I2b)) * ddi2b(r,c) +
++                  weight / (I2b*I2b*I2b) * di2b(r,c) * di2b(i,j);
++            }
++         }
++      }
++   }
++}
++
+ static MFEM_HOST_DEVICE inline
+ void EvalH_077(const int e, const int qx, const int qy,
+                const double weight, const double *Jpt,
+@@ -150,13 +181,12 @@ void EvalH_077(const int e, const int qx, const int qy,
+    }
+ }
+ 
++// H_80 = w0 H_2 + w1 H_77.
+ static MFEM_HOST_DEVICE inline
+ void EvalH_080(const int e, const int qx, const int qy,
+-               const double weight, const double gamma, const double *Jpt,
++               const double weight, const double *w, const double *Jpt,
+                DeviceTensor<7,double> H)
+ {
+-   // h_80 = (1-gamma) h_2 + gamma h_77.
+-
+    constexpr int DIM = 2;
+    double ddI1[4], ddI1b[4], dI2[4], dI2b[4], ddI2[4];
+    kernels::InvariantsEvaluator2D ie(Args()
+@@ -180,9 +210,45 @@ void EvalH_080(const int e, const int qx, const int qy,
+             for (int c = 0; c < DIM; c++)
+             {
+                H(r,c,i,j,qx,qy,e) =
+-                  (1.0 - gamma) * 0.5 * weight * ddi1b(r,c) +
+-                  gamma * ( weight * 0.5 * (1.0 - I2inv_sq) * ddi2(r,c) +
+-                            weight * (I2inv_sq / I2) * di2(r,c) * di2(i,j) );
++                  w[0] * 0.5 * weight * ddi1b(r,c) +
++                  w[1] * ( weight * 0.5 * (1.0 - I2inv_sq) * ddi2(r,c) +
++                           weight * (I2inv_sq / I2) * di2(r,c) * di2(i,j) );
++            }
++         }
++      }
++   }
++}
++
++// H_94 = w0 H_2 + w1 H_56.
++static MFEM_HOST_DEVICE inline
++void EvalH_094(const int e, const int qx, const int qy,
++               const double weight, const double *w, const double *Jpt,
++               DeviceTensor<7,double> H)
++{
++   constexpr int DIM = 2;
++   double ddI1[4], ddI1b[4], dI2b[4], ddI2b[4];
++   kernels::InvariantsEvaluator2D ie(Args().J(Jpt)
++                                     .ddI1(ddI1)
++                                     .ddI1b(ddI1b)
++                                     .dI2b(dI2b)
++                                     .ddI2b(ddI2b));
++
++   const double I2b = ie.Get_I2b();
++   ConstDeviceMatrix di2b(ie.Get_dI2b(),DIM,DIM);
++   for (int i = 0; i < DIM; i++)
++   {
++      for (int j = 0; j < DIM; j++)
++      {
++         ConstDeviceMatrix ddi1b(ie.Get_ddI1b(i,j),DIM,DIM);
++         ConstDeviceMatrix ddi2b(ie.Get_ddI2b(i,j),DIM,DIM);
++         for (int r = 0; r < DIM; r++)
++         {
++            for (int c = 0; c < DIM; c++)
++            {
++               H(r,c,i,j,qx,qy,e) =
++                  w[0] * 0.5 * weight * ddi1b(r,c) +
++                  w[1] * ( weight * (0.5 - 0.5/(I2b*I2b)) * ddi2b(r,c) +
++                           weight / (I2b*I2b*I2b) * di2b(r,c) * di2b(i,j) );
+             }
+          }
+       }
+@@ -192,7 +258,7 @@ void EvalH_080(const int e, const int qx, const int qy,
+ MFEM_REGISTER_TMOP_KERNELS(void, SetupGradPA_2D,
+                            const Vector &x_,
+                            const double metric_normal,
+-                           const double metric_param,
++                           const Array<double> &metric_param,
+                            const int mid,
+                            const int NE,
+                            const Array<double> &w_,
+@@ -203,8 +269,9 @@ MFEM_REGISTER_TMOP_KERNELS(void, SetupGradPA_2D,
+                            const int d1d,
+                            const int q1d)
+ {
+-   MFEM_VERIFY(mid == 1 || mid == 2 || mid == 7 || mid == 77 || mid == 80,
+-               "Metric not yet implemented!");
++   MFEM_VERIFY(mid == 1 || mid == 2 || mid == 7 || mid == 77
++               || mid == 80 || mid == 94,
++               "2D metric not yet implemented!");
+ 
+    constexpr int DIM = 2;
+    constexpr int NBZ = 1;
+@@ -218,6 +285,8 @@ MFEM_REGISTER_TMOP_KERNELS(void, SetupGradPA_2D,
+    const auto X = Reshape(x_.Read(), D1D, D1D, DIM, NE);
+    auto H = Reshape(h_.Write(), DIM, DIM, DIM, DIM, Q1D, Q1D, NE);
+ 
++   const double *metric_data = metric_param.Read();
++
+    mfem::forall_2D_batch(NE, Q1D, Q1D, NBZ, [=] MFEM_HOST_DEVICE (int e)
+    {
+       const int D1D = T_D1D ? T_D1D : d1d;
+@@ -262,7 +331,9 @@ MFEM_REGISTER_TMOP_KERNELS(void, SetupGradPA_2D,
+             if (mid ==  2) { EvalH_002(e,qx,qy,weight,Jpt,H); }
+             if (mid ==  7) { EvalH_007(e,qx,qy,weight,Jpt,H); }
+             if (mid == 77) { EvalH_077(e,qx,qy,weight,Jpt,H); }
+-            if (mid == 80) { EvalH_080(e,qx,qy,weight,metric_param,Jpt,H); }
++            if (mid == 56) { EvalH_056(e,qx,qy,weight,Jpt,H); }
++            if (mid == 80) { EvalH_080(e,qx,qy,weight,metric_data,Jpt,H); }
++            if (mid == 94) { EvalH_094(e,qx,qy,weight,metric_data,Jpt,H); }
+          } // qx
+       } // qy
+    });
+@@ -282,8 +353,11 @@ void TMOP_Integrator::AssembleGradPA_2D(const Vector &X) const
+    const Array<double> &G = PA.maps->G;
+    Vector &H = PA.H;
+ 
+-   double mp = 0.0;
+-   if (auto m = dynamic_cast<TMOP_Metric_080 *>(metric)) { mp = m->GetGamma(); }
++   Array<double> mp;
++   if (auto m = dynamic_cast<TMOP_Combo_QualityMetric *>(metric))
++   {
++      m->GetWeights(mp);
++   }
+ 
+    MFEM_LAUNCH_TMOP_KERNEL(SetupGradPA_2D,id,X,mn,mp,M,N,W,B,G,J,H);
+ }
+diff --git a/fem/tmop/tmop_pa_h3s.cpp b/fem/tmop/tmop_pa_h3s.cpp
+index 1aa95c501..b45d38a9d 100644
+--- a/fem/tmop/tmop_pa_h3s.cpp
++++ b/fem/tmop/tmop_pa_h3s.cpp
+@@ -125,6 +125,41 @@ void EvalH_315(const int e, const int qx, const int qy, const int qz,
+    }
+ }
+ 
++// dP_318 = (I3b - 1/I3b^3)*ddI3b + (1 + 3/I3b^4)*(dI3b x dI3b)
++// Uses the I3b form, as dI3 and ddI3 were not implemented at the time.
++static MFEM_HOST_DEVICE inline
++void EvalH_318(const int e, const int qx, const int qy, const int qz,
++               const double weight, const double *J, DeviceTensor<8,double> dP,
++               double *dI3b, double *ddI3b)
++{
++   constexpr int DIM = 3;
++   kernels::InvariantsEvaluator3D ie(Args().
++                                     J(J).
++                                     dI3b(dI3b).ddI3b(ddI3b));
++
++   double sign_detJ;
++   const double I3b = ie.Get_I3b(sign_detJ);
++   ConstDeviceMatrix di3b(ie.Get_dI3b(sign_detJ),DIM,DIM);
++
++   for (int i = 0; i < DIM; i++)
++   {
++      for (int j = 0; j < DIM; j++)
++      {
++         ConstDeviceMatrix ddi3b(ie.Get_ddI3b(i,j),DIM,DIM);
++         for (int r = 0; r < DIM; r++)
++         {
++            for (int c = 0; c < DIM; c++)
++            {
++               const double dp =
++                  weight * (I3b - 1.0/(I3b*I3b*I3b)) * ddi3b(r,c) +
++                  weight * (1.0 + 3.0/(I3b*I3b*I3b*I3b)) * di3b(r,c)*di3b(i,j);
++               dP(r,c,i,j,qx,qy,qz,e) = dp;
++            }
++         }
++      }
++   }
++}
++
+ // dP_321 = ddI1 + (-2/I3b^3)*(dI2 x dI3b + dI3b x dI2)
+ //               + (1/I3)*ddI2
+ //               + (6*I2/I3b^4)*(dI3b x dI3b)
+@@ -178,10 +213,10 @@ void EvalH_321(const int e, const int qx, const int qy, const int qz,
+    }
+ }
+ 
+-// H_332 = (1-gamma) H_302 + gamma H_315
++// H_332 = w0 H_302 + w1 H_315
+ static MFEM_HOST_DEVICE inline
+ void EvalH_332(const int e, const int qx, const int qy, const int qz,
+-               const double weight, const double gamma,
++               const double weight, const double *w,
+                const double *J, DeviceTensor<8,double> dP,
+                double *B, double *dI1b, double *ddI1b,
+                double *dI2, double *dI2b, double *ddI2, double *ddI2b,
+@@ -218,8 +253,57 @@ void EvalH_332(const int e, const int qx, const int qy, const int qz,
+                   + ddi1b(r,c)*I2b;
+                const double dp_315 = 2.0 * weight * (I3b - 1.0) * ddi3b(r,c) +
+                                      2.0 * weight * di3b(r,c) * di3b(i,j);
+-               dP(r,c,i,j,qx,qy,qz,e) = (1.0 - gamma) * c1 * dp_302 +
+-                                        gamma * dp_315;
++               dP(r,c,i,j,qx,qy,qz,e) = w[0] * c1 * dp_302 +
++                                        w[1] * dp_315;
++            }
++         }
++      }
++   }
++}
++
++// H_338 = w0 H_302 + w1 H_318
++static MFEM_HOST_DEVICE inline
++void EvalH_338(const int e, const int qx, const int qy, const int qz,
++               const double weight, const double *w,
++               const double *J, DeviceTensor<8,double> dP,
++               double *B, double *dI1b, double *ddI1b,
++               double *dI2, double *dI2b, double *ddI2, double *ddI2b,
++               double *dI3b, double *ddI3b)
++{
++   constexpr int DIM = 3;
++   kernels::InvariantsEvaluator3D ie(Args()
++                                     .J(J).B(B)
++                                     .dI1b(dI1b).ddI1b(ddI1b)
++                                     .dI2(dI2).dI2b(dI2b).ddI2(ddI2).ddI2b(ddI2b)
++                                     .dI3b(dI3b).ddI3b(ddI3b));
++   double sign_detJ;
++   const double c1 = weight/9.;
++   const double I1b = ie.Get_I1b();
++   const double I2b = ie.Get_I2b();
++   const double I3b = ie.Get_I3b(sign_detJ);
++   ConstDeviceMatrix di1b(ie.Get_dI1b(),DIM,DIM);
++   ConstDeviceMatrix di2b(ie.Get_dI2b(),DIM,DIM);
++   ConstDeviceMatrix di3b(ie.Get_dI3b(sign_detJ),DIM,DIM);
++   for (int i = 0; i < DIM; i++)
++   {
++      for (int j = 0; j < DIM; j++)
++      {
++         ConstDeviceMatrix ddi1b(ie.Get_ddI1b(i,j),DIM,DIM);
++         ConstDeviceMatrix ddi2b(ie.Get_ddI2b(i,j),DIM,DIM);
++         ConstDeviceMatrix ddi3b(ie.Get_ddI3b(i,j),DIM,DIM);
++         for (int r = 0; r < DIM; r++)
++         {
++            for (int c = 0; c < DIM; c++)
++            {
++               const double dp_302 =
++                  (di2b(r,c)*di1b(i,j) + di1b(r,c)*di2b(i,j))
++                  + ddi2b(r,c)*I1b
++                  + ddi1b(r,c)*I2b;
++               const double dp_318 =
++                  weight * (I3b - 1.0/(I3b*I3b*I3b)) * ddi3b(r,c) +
++                  weight * (1.0 + 3.0/(I3b*I3b*I3b*I3b)) * di3b(r,c)*di3b(i,j);
++               dP(r,c,i,j,qx,qy,qz,e) = w[0] * c1 * dp_302 +
++                                        w[1] * dp_318;
+             }
+          }
+       }
+@@ -228,7 +312,7 @@ void EvalH_332(const int e, const int qx, const int qy, const int qz,
+ 
+ MFEM_REGISTER_TMOP_KERNELS(void, SetupGradPA_3D,
+                            const double metric_normal,
+-                           const double metric_param,
++                           const Array<double> &metric_param,
+                            const int mid,
+                            const Vector &x_,
+                            const int NE,
+@@ -240,8 +324,9 @@ MFEM_REGISTER_TMOP_KERNELS(void, SetupGradPA_3D,
+                            const int d1d,
+                            const int q1d)
+ {
+-   MFEM_VERIFY(mid == 302 || mid == 303 || mid == 315 ||
+-               mid == 321 || mid == 332, "3D metric not yet implemented!");
++   MFEM_VERIFY(mid == 302 || mid == 303 || mid == 315 || mid == 318 ||
++               mid == 321 || mid == 332 || mid == 338,
++               "3D metric not yet implemented!");
+ 
+    constexpr int DIM = 3;
+    const int D1D = T_D1D ? T_D1D : d1d;
+@@ -254,6 +339,8 @@ MFEM_REGISTER_TMOP_KERNELS(void, SetupGradPA_3D,
+    const auto X = Reshape(x_.Read(), D1D, D1D, D1D, DIM, NE);
+    auto H = Reshape(h_.Write(), DIM, DIM, DIM, DIM, Q1D, Q1D, Q1D, NE);
+ 
++   const double *metric_data = metric_param.Read();
++
+    mfem::forall_3D(NE, Q1D, Q1D, Q1D, [=] MFEM_HOST_DEVICE (int e)
+    {
+       const int D1D = T_D1D ? T_D1D : d1d;
+@@ -318,6 +405,10 @@ MFEM_REGISTER_TMOP_KERNELS(void, SetupGradPA_3D,
+                {
+                   EvalH_315(e,qx,qy,qz,weight,Jpt,H, dI3b,ddI3b);
+                }
++               if (mid == 318)
++               {
++                  EvalH_318(e,qx,qy,qz,weight,Jpt,H, dI3b,ddI3b);
++               }
+                if (mid == 321)
+                {
+                   EvalH_321(e,qx,qy,qz,weight,Jpt,H,
+@@ -325,7 +416,12 @@ MFEM_REGISTER_TMOP_KERNELS(void, SetupGradPA_3D,
+                }
+                if (mid == 332)
+                {
+-                  EvalH_332(e,qx,qy,qz,weight,metric_param,Jpt,H,
++                  EvalH_332(e,qx,qy,qz,weight,metric_data,Jpt,H,
++                            B,dI1b,ddI1b,dI2,dI2b,ddI2,ddI2b,dI3b,ddI3b);
++               }
++               if (mid == 338)
++               {
++                  EvalH_338(e,qx,qy,qz,weight,metric_data,Jpt,H,
+                             B,dI1b,ddI1b,dI2,dI2b,ddI2,ddI2b,dI3b,ddI3b);
+                }
+             } // qx
+@@ -348,8 +444,11 @@ void TMOP_Integrator::AssembleGradPA_3D(const Vector &X) const
+    const Array<double> &G = PA.maps->G;
+    Vector &H = PA.H;
+ 
+-   double mp = 0.0;
+-   if (auto m = dynamic_cast<TMOP_Metric_332 *>(metric)) { mp = m->GetGamma(); }
++   Array<double> mp;
++   if (auto m = dynamic_cast<TMOP_Combo_QualityMetric *>(metric))
++   {
++      m->GetWeights(mp);
++   }
+ 
+    MFEM_LAUNCH_TMOP_KERNEL(SetupGradPA_3D,id,mn,mp,M,X,N,W,B,G,J,H);
+ }
+diff --git a/fem/tmop/tmop_pa_p2.cpp b/fem/tmop/tmop_pa_p2.cpp
+index 5b7bec343..90e66ac2f 100644
+--- a/fem/tmop/tmop_pa_p2.cpp
++++ b/fem/tmop/tmop_pa_p2.cpp
+@@ -33,7 +33,7 @@ void EvalP_002(const double *Jpt, double *P)
+ {
+    double dI1b[4], dI2b[4];
+    kernels::InvariantsEvaluator2D ie(Args().J(Jpt).dI1b(dI1b).dI2b(dI2b));
+-   kernels::Set(2,2, 1./2., ie.Get_dI1b(), P);
++   kernels::Set(2,2, 0.5, ie.Get_dI1b(), P);
+ }
+ 
+ static MFEM_HOST_DEVICE inline
+@@ -47,6 +47,16 @@ void EvalP_007(const double *Jpt, double *P)
+                 -ie.Get_I1() / (I2*I2), ie.Get_dI2(), P);
+ }
+ 
++// P_56 = 0.5*(1 - 1/I2b^2)*dI2b.
++static MFEM_HOST_DEVICE inline
++void EvalP_056(const double *Jpt, double *P)
++{
++   double dI2b[4];
++   kernels::InvariantsEvaluator2D ie(Args().J(Jpt).dI2b(dI2b));
++   const double I2b = ie.Get_I2b();
++   kernels::Set(2,2, 0.5 * (1.0 - 1.0 / (I2b * I2b)), ie.Get_dI2b(), P);
++}
++
+ static MFEM_HOST_DEVICE inline
+ void EvalP_077(const double *Jpt, double *P)
+ {
+@@ -58,24 +68,37 @@ void EvalP_077(const double *Jpt, double *P)
+    kernels::Set(2,2, 0.5 * (1.0 - 1.0 / (I2 * I2)), ie.Get_dI2(), P);
+ }
+ 
++// P_80 = w0 P_2 + w1 P_77.
+ static MFEM_HOST_DEVICE inline
+-void EvalP_080(const double *Jpt, double gamma, double *P)
++void EvalP_080(const double *Jpt, const double *w, double *P)
+ {
+-   // p_80 = (1-gamma) p_2 + gamma p_77.
+-
+    double dI1b[4], dI2[4], dI2b[4];
+    kernels::InvariantsEvaluator2D ie(Args().J(Jpt).
+                                      dI1b(dI1b).dI2(dI2).dI2b(dI2b));
+ 
+-   kernels::Set(2,2, (1.0 - gamma) * 1./2., ie.Get_dI1b(), P);
++   kernels::Set(2,2, w[0] * 0.5, ie.Get_dI1b(), P);
+ 
+    const double I2 = ie.Get_I2();
+-   kernels::Add(2,2, gamma * 0.5 * (1.0 - 1.0 / (I2 * I2)), ie.Get_dI2(), P);
++   kernels::Add(2,2, w[1] * 0.5 * (1.0 - 1.0 / (I2 * I2)), ie.Get_dI2(), P);
++}
++
++// P_94 = w0 P_2 + w1 P_56.
++static MFEM_HOST_DEVICE inline
++void EvalP_094(const double *Jpt, const double *w, double *P)
++{
++   double dI1b[4], dI2b[4];
++   kernels::InvariantsEvaluator2D ie(Args().J(Jpt).
++                                     dI1b(dI1b).dI2b(dI2b));
++
++   kernels::Set(2,2, w[0] * 0.5, ie.Get_dI1b(), P);
++
++   const double I2b = ie.Get_I2b();
++   kernels::Add(2,2, w[1] * 0.5 * (1.0 - 1.0 / (I2b * I2b)), ie.Get_dI2b(), P);
+ }
+ 
+ MFEM_REGISTER_TMOP_KERNELS(void, AddMultPA_Kernel_2D,
+                            const double metric_normal,
+-                           const double metric_param,
++                           const Array<double> &metric_param,
+                            const int mid,
+                            const int NE,
+                            const DenseTensor &j_,
+@@ -87,8 +110,9 @@ MFEM_REGISTER_TMOP_KERNELS(void, AddMultPA_Kernel_2D,
+                            const int d1d,
+                            const int q1d)
+ {
+-   MFEM_VERIFY(mid == 1 || mid == 2 || mid == 7 || mid == 77 || mid == 80,
+-               "Metric not yet implemented!");
++   MFEM_VERIFY(mid == 1 || mid == 2 || mid == 7 || mid == 77
++               || mid == 80 || mid == 94,
++               "2D metric not yet implemented!");
+ 
+    constexpr int DIM = 2;
+    constexpr int NBZ = 1;
+@@ -103,6 +127,8 @@ MFEM_REGISTER_TMOP_KERNELS(void, AddMultPA_Kernel_2D,
+    auto X = Reshape(x_.Read(), D1D, D1D, DIM, NE);
+    auto Y = Reshape(y_.ReadWrite(), D1D, D1D, DIM, NE);
+ 
++   const double *metric_data = metric_param.Read();
++
+    mfem::forall_2D_batch(NE, Q1D, Q1D, NBZ, [=] MFEM_HOST_DEVICE (int e)
+    {
+       constexpr int NBZ = 1;
+@@ -147,8 +173,10 @@ MFEM_REGISTER_TMOP_KERNELS(void, AddMultPA_Kernel_2D,
+             if (mid ==  1) { EvalP_001(Jpt, P); }
+             if (mid ==  2) { EvalP_002(Jpt, P); }
+             if (mid ==  7) { EvalP_007(Jpt, P); }
++            if (mid == 56) { EvalP_056(Jpt, P); }
+             if (mid == 77) { EvalP_077(Jpt, P); }
+-            if (mid == 80) { EvalP_080(Jpt, metric_param, P); }
++            if (mid == 80) { EvalP_080(Jpt, metric_data, P); }
++            if (mid == 94) { EvalP_094(Jpt, metric_data, P); }
+             for (int i = 0; i < 4; i++) { P[i] *= weight; }
+ 
+             // PMatO += DS . P^t += DSh . (Jrt . P^t)
+@@ -177,8 +205,11 @@ void TMOP_Integrator::AddMultPA_2D(const Vector &X, Vector &Y) const
+    const Array<double> &G = PA.maps->G;
+    const double mn = metric_normal;
+ 
+-   double mp = 0.0;
+-   if (auto m = dynamic_cast<TMOP_Metric_080 *>(metric)) { mp = m->GetGamma(); }
++   Array<double> mp;
++   if (auto m = dynamic_cast<TMOP_Combo_QualityMetric *>(metric))
++   {
++      m->GetWeights(mp);
++   }
+ 
+    MFEM_LAUNCH_TMOP_KERNEL(AddMultPA_Kernel_2D,id,mn,mp,M,N,J,W,B,G,X,Y);
+ }
+diff --git a/fem/tmop/tmop_pa_p3.cpp b/fem/tmop/tmop_pa_p3.cpp
+index 0725ae364..d6e51179a 100644
+--- a/fem/tmop/tmop_pa_p3.cpp
++++ b/fem/tmop/tmop_pa_p3.cpp
+@@ -59,6 +59,19 @@ void EvalP_315(const double *J, double *P)
+    kernels::Set(3,3, 2.0 * (I3b - 1.0), ie.Get_dI3b(sign_detJ), P);
+ }
+ 
++// P_318 = (I3b - 1/I3b^3)*dI3b.
++// Uses the I3b form, as dI3 and ddI3 were not implemented at the time.
++static MFEM_HOST_DEVICE inline
++void EvalP_318(const double *J, double *P)
++{
++   double dI3b[9];
++   kernels::InvariantsEvaluator3D ie(Args().J(J).dI3b(dI3b));
++
++   double sign_detJ;
++   const double I3b = ie.Get_I3b(sign_detJ);
++   kernels::Set(3,3, I3b - 1.0/(I3b * I3b * I3b), ie.Get_dI3b(sign_detJ), P);
++}
++
+ // P_321 = dI1 + (1/I3)*dI2 - (2*I2/I3b^3)*dI3b
+ static MFEM_HOST_DEVICE inline
+ void EvalP_321(const double *J, double *P)
+@@ -75,9 +88,29 @@ void EvalP_321(const double *J, double *P)
+    kernels::Add(3,3, ie.Get_dI1(), P);
+ }
+ 
+-// P_332 = (1-gamma) P_302 + gamma P_315.
++// P_332 = w0 P_302 + w1 P_315.
++static MFEM_HOST_DEVICE inline
++void EvalP_332(const double *J, const double *w, double *P)
++{
++   double B[9];
++   double dI1b[9], dI2[9], dI2b[9], dI3b[9];
++   kernels::InvariantsEvaluator3D ie(Args()
++                                     .J(J).B(B)
++                                     .dI1b(dI1b)
++                                     .dI2(dI2).dI2b(dI2b)
++                                     .dI3b(dI3b));
++   const double alpha = w[0] * ie.Get_I1b()/9.;
++   const double beta = w[0]* ie.Get_I2b()/9.;
++   kernels::Add(3,3, alpha, ie.Get_dI2b(), beta, ie.Get_dI1b(), P);
++
++   double sign_detJ;
++   const double I3b = ie.Get_I3b(sign_detJ);
++   kernels::Add(3,3, w[1] * 2.0 * (I3b - 1.0), ie.Get_dI3b(sign_detJ), P);
++}
++
++// P_338 = w0 P_302 + w1 P_318.
+ static MFEM_HOST_DEVICE inline
+-void EvalP_332(const double *J, double gamma, double *P)
++void EvalP_338(const double *J, const double *w, double *P)
+ {
+    double B[9];
+    double dI1b[9], dI2[9], dI2b[9], dI3b[9];
+@@ -86,18 +119,19 @@ void EvalP_332(const double *J, double gamma, double *P)
+                                      .dI1b(dI1b)
+                                      .dI2(dI2).dI2b(dI2b)
+                                      .dI3b(dI3b));
+-   const double alpha = (1.0 - gamma) * ie.Get_I1b()/9.;
+-   const double beta = (1.0 - gamma) * ie.Get_I2b()/9.;
++   const double alpha = w[0] * ie.Get_I1b()/9.;
++   const double beta = w[0]* ie.Get_I2b()/9.;
+    kernels::Add(3,3, alpha, ie.Get_dI2b(), beta, ie.Get_dI1b(), P);
+ 
+    double sign_detJ;
+    const double I3b = ie.Get_I3b(sign_detJ);
+-   kernels::Add(3,3, gamma * 2.0 * (I3b - 1.0), ie.Get_dI3b(sign_detJ), P);
++   kernels::Add(3,3, w[1] * (I3b - 1.0/(I3b * I3b * I3b)),
++                ie.Get_dI3b(sign_detJ), P);
+ }
+ 
+ MFEM_REGISTER_TMOP_KERNELS(void, AddMultPA_Kernel_3D,
+                            const double metric_normal,
+-                           double metric_param,
++                           const Array<double> &metric_param,
+                            const int mid,
+                            const int NE,
+                            const DenseTensor &j_,
+@@ -109,8 +143,9 @@ MFEM_REGISTER_TMOP_KERNELS(void, AddMultPA_Kernel_3D,
+                            const int d1d,
+                            const int q1d)
+ {
+-   MFEM_VERIFY(mid == 302 || mid == 303 || mid == 315 ||
+-               mid == 321 || mid == 332, "3D metric not yet implemented!");
++   MFEM_VERIFY(mid == 302 || mid == 303 || mid == 315 || mid == 318 ||
++               mid == 321 || mid == 332 || mid == 338,
++               "3D metric not yet implemented!");
+ 
+    constexpr int DIM = 3;
+    const int D1D = T_D1D ? T_D1D : d1d;
+@@ -123,6 +158,8 @@ MFEM_REGISTER_TMOP_KERNELS(void, AddMultPA_Kernel_3D,
+    const auto X = Reshape(x_.Read(), D1D, D1D, D1D, DIM, NE);
+    auto Y = Reshape(y_.ReadWrite(), D1D, D1D, D1D, DIM, NE);
+ 
++   const double *metric_data = metric_param.Read();
++
+    mfem::forall_3D(NE, Q1D, Q1D, Q1D, [=] MFEM_HOST_DEVICE (int e)
+    {
+       const int D1D = T_D1D ? T_D1D : d1d;
+@@ -170,8 +207,10 @@ MFEM_REGISTER_TMOP_KERNELS(void, AddMultPA_Kernel_3D,
+                if (mid == 302) { EvalP_302(Jpt, P); }
+                if (mid == 303) { EvalP_303(Jpt, P); }
+                if (mid == 315) { EvalP_315(Jpt, P); }
++               if (mid == 318) { EvalP_318(Jpt, P); }
+                if (mid == 321) { EvalP_321(Jpt, P); }
+-               if (mid == 332) { EvalP_332(Jpt, metric_param, P); }
++               if (mid == 332) { EvalP_332(Jpt, metric_data, P); }
++               if (mid == 338) { EvalP_338(Jpt, metric_data, P); }
+                for (int i = 0; i < 9; i++) { P[i] *= weight; }
+ 
+                // Y += DS . P^t += DSh . (Jrt . P^t)
+@@ -202,8 +241,11 @@ void TMOP_Integrator::AddMultPA_3D(const Vector &X, Vector &Y) const
+    const Array<double> &G = PA.maps->G;
+    const double mn = metric_normal;
+ 
+-   double mp = 0.0;
+-   if (auto m = dynamic_cast<TMOP_Metric_332 *>(metric)) { mp = m->GetGamma(); }
++   Array<double> mp;
++   if (auto m = dynamic_cast<TMOP_Combo_QualityMetric *>(metric))
++   {
++      m->GetWeights(mp);
++   }
+ 
+    MFEM_LAUNCH_TMOP_KERNEL(AddMultPA_Kernel_3D,id,mn,mp,M,N,J,W,B,G,X,Y);
+ }
+diff --git a/fem/tmop/tmop_pa_w2.cpp b/fem/tmop/tmop_pa_w2.cpp
+index b373b3a64..b630f1a07 100644
+--- a/fem/tmop/tmop_pa_w2.cpp
++++ b/fem/tmop/tmop_pa_w2.cpp
+@@ -42,6 +42,15 @@ double EvalW_007(const double *Jpt)
+    return ie.Get_I1() * (1.0 + 1.0/ie.Get_I2()) - 4.0;
+ }
+ 
++// mu_56 = 0.5*(I2b + 1/I2b) - 1.
++static MFEM_HOST_DEVICE inline
++double EvalW_056(const double *Jpt)
++{
++   kernels::InvariantsEvaluator2D ie(Args().J(Jpt));
++   const double I2b = ie.Get_I2b();
++   return 0.5*(I2b + 1.0/I2b) - 1.0;
++}
++
+ static MFEM_HOST_DEVICE inline
+ double EvalW_077(const double *Jpt)
+ {
+@@ -51,14 +60,20 @@ double EvalW_077(const double *Jpt)
+ }
+ 
+ static MFEM_HOST_DEVICE inline
+-double EvalW_080(const double *Jpt, double gamma)
++double EvalW_080(const double *Jpt, const double *w)
+ {
+-   return (1.0 - gamma) * EvalW_002(Jpt) + gamma * EvalW_077(Jpt);
++   return w[0] * EvalW_002(Jpt) + w[1] * EvalW_077(Jpt);
++}
++
++static MFEM_HOST_DEVICE inline
++double EvalW_094(const double *Jpt, const double *w)
++{
++   return w[0] * EvalW_002(Jpt) + w[1] * EvalW_056(Jpt);
+ }
+ 
+ MFEM_REGISTER_TMOP_KERNELS(double, EnergyPA_2D,
+                            const double metric_normal,
+-                           const double metric_param,
++                           const Array<double> &metric_param,
+                            const int mid,
+                            const int NE,
+                            const DenseTensor &j_,
+@@ -71,7 +86,8 @@ MFEM_REGISTER_TMOP_KERNELS(double, EnergyPA_2D,
+                            const int d1d,
+                            const int q1d)
+ {
+-   MFEM_VERIFY(mid == 1 || mid == 2 || mid == 7 || mid == 77 || mid == 80,
++   MFEM_VERIFY(mid == 1 || mid == 2 || mid == 7 || mid == 77
++               || mid == 80 || mid == 94,
+                "2D metric not yet implemented!");
+ 
+    constexpr int DIM = 2;
+@@ -88,6 +104,8 @@ MFEM_REGISTER_TMOP_KERNELS(double, EnergyPA_2D,
+ 
+    auto E = Reshape(energy.Write(), Q1D, Q1D, NE);
+ 
++   const double *metric_data = metric_param.Read();
++
+    mfem::forall_2D_batch(NE, Q1D, Q1D, NBZ, [=] MFEM_HOST_DEVICE (int e)
+    {
+       constexpr int NBZ = 1;
+@@ -133,7 +151,8 @@ MFEM_REGISTER_TMOP_KERNELS(double, EnergyPA_2D,
+                mid ==  2 ? EvalW_002(Jpt) :
+                mid ==  7 ? EvalW_007(Jpt) :
+                mid == 77 ? EvalW_077(Jpt) :
+-               mid == 80 ? EvalW_080(Jpt, metric_param) : 0.0;
++               mid == 80 ? EvalW_080(Jpt, metric_data) :
++               mid == 94 ? EvalW_094(Jpt, metric_data) : 0.0;
+ 
+             E(qx,qy,e) = weight * EvalW;
+          }
+@@ -157,8 +176,11 @@ double TMOP_Integrator::GetLocalStateEnergyPA_2D(const Vector &X) const
+    const Vector &O = PA.O;
+    Vector &E = PA.E;
+ 
+-   double mp = 0.0;
+-   if (auto m = dynamic_cast<TMOP_Metric_080 *>(metric)) { mp = m->GetGamma(); }
++   Array<double> mp;
++   if (auto m = dynamic_cast<TMOP_Combo_QualityMetric *>(metric))
++   {
++      m->GetWeights(mp);
++   }
+ 
+    MFEM_LAUNCH_TMOP_KERNEL(EnergyPA_2D,id,mn,mp,M,N,J,W,B,G,X,O,E);
+ }
+diff --git a/fem/tmop/tmop_pa_w3.cpp b/fem/tmop/tmop_pa_w3.cpp
+index 064e113d1..ba6433046 100644
+--- a/fem/tmop/tmop_pa_w3.cpp
++++ b/fem/tmop/tmop_pa_w3.cpp
+@@ -49,6 +49,16 @@ double EvalW_315(const double *J)
+    return a*a;
+ }
+ 
++// mu_318 = 0.5 * (I3 + 1/I3) - 1.
++static MFEM_HOST_DEVICE inline
++double EvalW_318(const double *J)
++{
++   double B[9];
++   kernels::InvariantsEvaluator3D ie(Args().J(J).B(B));
++   const double I3 = ie.Get_I3();
++   return 0.5*(I3 + 1.0/I3) - 1.0;
++}
++
+ // mu_321 = I1 + I2/I3 - 6
+ static MFEM_HOST_DEVICE inline
+ double EvalW_321(const double *J)
+@@ -59,14 +69,20 @@ double EvalW_321(const double *J)
+ }
+ 
+ static MFEM_HOST_DEVICE inline
+-double EvalW_332(const double *J, double gamma)
++double EvalW_332(const double *J, const double *w)
+ {
+-   return (1.0 - gamma) * EvalW_302(J) + gamma * EvalW_315(J);
++   return w[0] * EvalW_302(J) + w[1] * EvalW_315(J);
++}
++
++static MFEM_HOST_DEVICE inline
++double EvalW_338(const double *J, const double *w)
++{
++   return w[0] * EvalW_302(J) + w[1] * EvalW_318(J);
+ }
+ 
+ MFEM_REGISTER_TMOP_KERNELS(double, EnergyPA_3D,
+                            const double metric_normal,
+-                           const double metric_param,
++                           const Array<double> &metric_param,
+                            const int mid,
+                            const int NE,
+                            const DenseTensor &j_,
+@@ -79,8 +95,9 @@ MFEM_REGISTER_TMOP_KERNELS(double, EnergyPA_3D,
+                            const int d1d,
+                            const int q1d)
+ {
+-   MFEM_VERIFY(mid == 302 || mid == 303 || mid == 315 ||
+-               mid == 321 || mid == 332, "3D metric not yet implemented!");
++   MFEM_VERIFY(mid == 302 || mid == 303 || mid == 315 || mid == 318 ||
++               mid == 321 || mid == 332 || mid == 338,
++               "3D metric not yet implemented!");
+ 
+    constexpr int DIM = 3;
+    const int D1D = T_D1D ? T_D1D : d1d;
+@@ -94,6 +111,8 @@ MFEM_REGISTER_TMOP_KERNELS(double, EnergyPA_3D,
+ 
+    auto E = Reshape(energy.Write(), Q1D, Q1D, Q1D, NE);
+ 
++   const double *metric_data = metric_param.Read();
++
+    mfem::forall_3D(NE, Q1D, Q1D, Q1D, [=] MFEM_HOST_DEVICE (int e)
+    {
+       const int D1D = T_D1D ? T_D1D : d1d;
+@@ -141,8 +160,10 @@ MFEM_REGISTER_TMOP_KERNELS(double, EnergyPA_3D,
+                   mid == 302 ? EvalW_302(Jpt) :
+                   mid == 303 ? EvalW_303(Jpt) :
+                   mid == 315 ? EvalW_315(Jpt) :
++                  mid == 318 ? EvalW_318(Jpt) :
+                   mid == 321 ? EvalW_321(Jpt) :
+-                  mid == 332 ? EvalW_332(Jpt, metric_param) : 0.0;
++                  mid == 332 ? EvalW_332(Jpt, metric_data) :
++                  mid == 338 ? EvalW_338(Jpt, metric_data) : 0.0;
+ 
+                E(qx,qy,qz,e) = weight * EvalW;
+             }
+@@ -167,8 +188,11 @@ double TMOP_Integrator::GetLocalStateEnergyPA_3D(const Vector &X) const
+    const Vector &O = PA.O;
+    Vector &E = PA.E;
+ 
+-   double mp = 0.0;
+-   if (auto m = dynamic_cast<TMOP_Metric_332 *>(metric)) { mp = m->GetGamma(); }
++   Array<double> mp;
++   if (auto m = dynamic_cast<TMOP_Combo_QualityMetric *>(metric))
++   {
++      m->GetWeights(mp);
++   }
+ 
+    MFEM_LAUNCH_TMOP_KERNEL(EnergyPA_3D,id,mn,mp,M,N,J,W,B,G,O,X,E);
+ }
+diff --git a/general/table.cpp b/general/table.cpp
+index 4c0bb68ee..da4c0187b 100644
+--- a/general/table.cpp
++++ b/general/table.cpp
+@@ -218,7 +218,8 @@ void Table::SetIJ(int *newI, int *newJ, int newsize)
+ 
+ int Table::Push(int i, int j)
+ {
+-   MFEM_ASSERT( i >=0 && i<size, "Index out of bounds.  i = "<<i);
++   MFEM_ASSERT( i >=0 &&
++                i<size, "Index out of bounds.  i = " << i << " size " << size);
+ 
+    for (int k = I[i], end = I[i+1]; k < end; k++)
+    {
+diff --git a/linalg/dinvariants.hpp b/linalg/dinvariants.hpp
+index ac16eba67..43285e423 100644
+--- a/linalg/dinvariants.hpp
++++ b/linalg/dinvariants.hpp
+@@ -100,6 +100,7 @@ public:
+       return dI1;
+    }
+ 
++   // Requires dI2b.
+    MFEM_HOST_DEVICE inline double *Get_dI1b()
+    {
+       // I1b = I1/I2b
+@@ -114,6 +115,7 @@ public:
+       return dI1b;
+    }
+ 
++   // Requires dI2b.
+    MFEM_HOST_DEVICE inline double *Get_dI2()
+    {
+       // I2 = I2b^2
+@@ -155,6 +157,7 @@ public:
+       return ddI1;
+    }
+ 
++   // Requires dI2b + ddI1.
+    // ddI1b = X1 + X2 + X3, where
+    // X1_ijkl = (I1b/I2) [ dI2b_ij dI2b_kl + dI2b_kj dI2b_il ]
+    // X2_ijkl = (1/I2b) ddI1_ijkl
+@@ -209,6 +212,7 @@ public:
+       return ddI1b;
+    }
+ 
++   // Requires dI2b.
+    // ddI2_ijkl = 2 dI2b_ij dI2b_kl + 2 (dI2b_ij dI2b_kl - dI2b_kj dI2b_il)
+    MFEM_HOST_DEVICE inline double *Get_ddI2(int i, int j)
+    {
+@@ -225,6 +229,7 @@ public:
+       return ddI2;
+    }
+ 
++   // Requires dI2b.
+    // ddI2b_ijkl = (1/I2b) (δ_ks δ_it - δ_kt δ_si) dI2b_tj dI2b_sl
+    MFEM_HOST_DEVICE inline double *Get_ddI2b(int i, int j)
+    {
 diff --git a/mesh/mesh.cpp b/mesh/mesh.cpp
-index de2d80f15..446257416 100644
+index de2d80f15..6e28286a7 100644
 --- a/mesh/mesh.cpp
 +++ b/mesh/mesh.cpp
+@@ -6864,7 +6864,7 @@ STable3D *Mesh::GetFacesTable()
+             break;
+          }
+          default:
+-            MFEM_ABORT("Unexpected type of Element.");
++            MFEM_ABORT("Unexpected type of Element: " << GetElementType(i));
+       }
+    }
+    return faces_tbl;
 @@ -9763,7 +9763,6 @@ void Mesh::Bisection(int i, HashTable<Hashed2> &v_to_v)
     t = el->GetType();
     if (t == Element::TETRAHEDRON)
@@ -677,13 +2336,838 @@ index de2d80f15..446257416 100644
        v[0][3] = v_new;
        v[1][3] = v_new;
        new_redges[0][0] = 2;
+diff --git a/mesh/nurbs.cpp b/mesh/nurbs.cpp
+index 3c2e86d16..1ec09b3c5 100644
+--- a/mesh/nurbs.cpp
++++ b/mesh/nurbs.cpp
+@@ -157,6 +157,7 @@ void KnotVector::PrintFunctions(std::ostream &os, int samples) const
+ }
+ 
+ // Routine from "The NURBS book" - 2nd ed - Piegl and Tiller
++// Algorithm A2.2 p. 70
+ void KnotVector::CalcShape(Vector &shape, int i, double xi) const
+ {
+    MFEM_ASSERT(Order <= MaxOrder, "Order > MaxOrder!");
+@@ -183,6 +184,7 @@ void KnotVector::CalcShape(Vector &shape, int i, double xi) const
+ }
+ 
+ // Routine from "The NURBS book" - 2nd ed - Piegl and Tiller
++// Algorithm A2.3 p. 72
+ void KnotVector::CalcDShape(Vector &grad, int i, double xi) const
+ {
+    int    p = Order, rk, pk;
+@@ -341,6 +343,101 @@ void KnotVector::CalcDnShape(Vector &gradn, int n, int i, double xi) const
+ 
+ }
+ 
++void KnotVector::FindMaxima(Array<int> &ks,
++                            Vector &xi,
++                            Vector &u)
++{
++   Vector shape(Order+1);
++   Vector maxima(GetNCP());
++   double arg1, arg2, arg, max1, max2, max;
++
++   xi.SetSize(GetNCP());
++   u.SetSize(GetNCP());
++   ks.SetSize(GetNCP());
++   for (int j = 0; j <GetNCP(); j++)
++   {
++      maxima[j] = 0;
++      for (int d = 0; d < Order+1; d++)
++      {
++         int i = j - d;
++         if (isElement(i))
++         {
++            arg1 = 1e-16;
++            CalcShape(shape, i, arg1);
++            max1 = shape[d];
++
++            arg2 = 1-(1e-16);
++            CalcShape(shape, i, arg2);
++            max2 = shape[d];
++
++            arg = (arg1 + arg2)/2;
++            CalcShape(shape, i, arg);
++            max = shape[d];
++
++            while ( ( max > max1 ) || (max > max2) )
++            {
++               if (max1 < max2)
++               {
++                  max1 = max;
++                  arg1 = arg;
++               }
++               else
++               {
++                  max2 = max;
++                  arg2 = arg;
++               }
++
++               arg = (arg1 + arg2)/2;
++               CalcShape ( shape, i, arg);
++               max = shape[d];
++            }
++
++            if (max > maxima[j])
++            {
++               maxima[j] = max;
++               ks[j] = i;
++               xi[j] = arg;
++               u[j]  = getKnotLocation(arg, i+Order);
++            }
++         }
++      }
++   }
++}
++
++// Routine from "The NURBS book" - 2nd ed - Piegl and Tiller
++// Algorithm A9.1 p. 369
++void KnotVector::FindInterpolant(Array<Vector*> &x)
++{
++   int order = GetOrder();
++   int ncp = GetNCP();
++
++   // Find interpolation points
++   Vector xi_args, u_args;
++   Array<int> i_args;
++   FindMaxima(i_args,xi_args, u_args);
++
++   // Assemble collocation matrix
++   Vector shape(order+1);
++   DenseMatrix A(ncp,ncp);
++   A = 0.0;
++   for (int i = 0; i < ncp; i++)
++   {
++      CalcShape ( shape, i_args[i], xi_args[i]);
++      for (int p = 0; p < order+1; p++)
++      {
++         A(i,i_args[i] + p) =  shape[p];
++      }
++   }
++
++   // Solve problems
++   A.Invert();
++   Vector tmp;
++   for (int i= 0; i < x.Size(); i++)
++   {
++      tmp = *x[i];
++      A.Mult(tmp,*x[i]);
++   }
++}
+ 
+ int KnotVector::findKnotSpan(double u) const
+ {
+@@ -879,6 +976,7 @@ void NURBSPatch::DegreeElevate(int dir, int t)
+ 
+    NURBSPatch &oldp  = *this;
+    KnotVector &oldkv = *kv[dir];
++   oldkv.GetElements();
+ 
+    NURBSPatch *newpatch = new NURBSPatch(this, dir, oldkv.GetOrder() + t,
+                                          oldkv.GetNCP() + oldkv.GetNE()*t);
+@@ -1154,6 +1252,61 @@ void NURBSPatch::SwapDirections(int dir1, int dir2)
+    swap(newpatch);
+ }
+ 
++void NURBSPatch::Rotate(double angle, double n[])
++{
++   if (Dim == 3)
++   {
++      Rotate2D(angle);
++   }
++   else
++   {
++      if (n == NULL)
++      {
++         mfem_error("NURBSPatch::Rotate : Specify an angle for a 3D rotation.");
++      }
++
++      Rotate3D(n, angle);
++   }
++}
++
++void NURBSPatch::Get2DRotationMatrix(double angle, DenseMatrix &T)
++{
++   double s = sin(angle);
++   double c = cos(angle);
++
++   T.SetSize(2);
++   T(0,0) = c;
++   T(0,1) = -s;
++   T(1,0) = s;
++   T(1,1) = c;
++}
++
++void NURBSPatch::Rotate2D(double angle)
++{
++   if (Dim != 3)
++   {
++      mfem_error("NURBSPatch::Rotate2D : not a NURBSPatch in 2D!");
++   }
++
++   DenseMatrix T(2);
++   Vector x(2), y(NULL, 2);
++
++   Get2DRotationMatrix(angle, T);
++
++   int size = 1;
++   for (int i = 0; i < kv.Size(); i++)
++   {
++      size *= kv[i]->GetNCP();
++   }
++
++   for (int i = 0; i < size; i++)
++   {
++      y.SetData(data + i*Dim);
++      x = y;
++      T.Mult(x, y);
++   }
++}
++
+ void NURBSPatch::Get3DRotationMatrix(double n[], double angle, double r,
+                                      DenseMatrix &T)
+ {
+diff --git a/mesh/nurbs.hpp b/mesh/nurbs.hpp
+index 434674109..907be677d 100644
+--- a/mesh/nurbs.hpp
++++ b/mesh/nurbs.hpp
+@@ -67,6 +67,15 @@ public:
+    void CalcD2Shape(Vector &grad2, int i, double xi) const
+    { CalcDnShape(grad2, 2, i, xi); }
+ 
++   /** Gives the locations of the maxima of the knotvector in reference space. The
++      function gives the knotspan @a ks, the coordinate in the knotspan @a xi
++      and the coordinate of the maximum in parameter space @a u */
++   void FindMaxima(Array<int> &ks, Vector &xi, Vector &u);
++   /** Global curve interpolation through the points @a x. @a x is an array with the
++      length of the spatial dimension containing vectors with spatial coordinates. The
++      controlpoints of the interpolated curve are given in @a x in the same form.*/
++   void FindInterpolant(Array<Vector*> &x);
++
+    void Difference(const KnotVector &kv, Vector &diff) const;
+    void UniformRefinement(Vector &newknots) const;
+    /** Return a new KnotVector with elevated degree by repeating the endpoints
+@@ -154,11 +163,20 @@ public:
+    inline       double &operator()(int i, int j, int k, int l);
+    inline const double &operator()(int i, int j, int k, int l) const;
+ 
++   static void Get2DRotationMatrix(double angle,
++                                   DenseMatrix &T);
+    static void Get3DRotationMatrix(double n[], double angle, double r,
+                                    DenseMatrix &T);
+    void FlipDirection(int dir);
+    void SwapDirections(int dir1, int dir2);
++
++   /// Rotate the NURBSPatch.
++   /** A rotation of a 2D NURBS-patch requires an angle only. Rotating
++       a 3D NURBS-patch requires a normal as well.*/
++   void Rotate(double angle, double normal[]= NULL);
++   void Rotate2D(double angle);
+    void Rotate3D(double normal[], double angle);
++
+    int MakeUniformDegree(int degree = -1);
+    /// @note The returned object should be deleted by the caller.
+    friend NURBSPatch *Interpolate(NURBSPatch &p1, NURBSPatch &p2);
+diff --git a/mesh/pmesh.cpp b/mesh/pmesh.cpp
+index 8392d2b67..59e87fe96 100644
+--- a/mesh/pmesh.cpp
++++ b/mesh/pmesh.cpp
+@@ -34,7 +34,6 @@ ParMesh::ParMesh(const ParMesh &pmesh, bool copy_nodes)
+      group_sedge(pmesh.group_sedge),
+      group_stria(pmesh.group_stria),
+      group_squad(pmesh.group_squad),
+-     face_nbr_el_to_face(NULL),
+      glob_elem_offset(-1),
+      glob_offset_sequence(-1),
+      gtopo(pmesh.gtopo)
+@@ -106,8 +105,7 @@ ParMesh& ParMesh::operator=(ParMesh &&mesh)
+ 
+ ParMesh::ParMesh(MPI_Comm comm, Mesh &mesh, int *partitioning_,
+                  int part_method)
+-   : face_nbr_el_to_face(NULL)
+-   , glob_elem_offset(-1)
++   : glob_elem_offset(-1)
+    , glob_offset_sequence(-1)
+    , gtopo(comm)
+ {
+@@ -854,7 +852,6 @@ ParMesh::ParMesh(const ParNCMesh &pncmesh)
+    : MyComm(pncmesh.MyComm)
+    , NRanks(pncmesh.NRanks)
+    , MyRank(pncmesh.MyRank)
+-   , face_nbr_el_to_face(NULL)
+    , glob_elem_offset(-1)
+    , glob_offset_sequence(-1)
+    , gtopo(MyComm)
+@@ -906,7 +903,7 @@ void ParMesh::FinalizeParTopo()
+    sface_lface.SetSize(nst + shared_quads.Size());
+    if (sface_lface.Size())
+    {
+-      STable3D *faces_tbl = GetFacesTable();
++      auto faces_tbl = std::unique_ptr<STable3D>(GetFacesTable());
+       for (int st = 0; st < nst; st++)
+       {
+          const int *v = shared_trias[st].v;
+@@ -917,13 +914,11 @@ void ParMesh::FinalizeParTopo()
+          const int *v = shared_quads[sq].v;
+          sface_lface[nst+sq] = (*faces_tbl)(v[0], v[1], v[2], v[3]);
+       }
+-      delete faces_tbl;
+    }
+ }
+ 
+ ParMesh::ParMesh(MPI_Comm comm, istream &input, bool refine)
+-   : face_nbr_el_to_face(NULL)
+-   , glob_elem_offset(-1)
++   : glob_elem_offset(-1)
+    , glob_offset_sequence(-1)
+    , gtopo(comm)
+ {
+@@ -1134,7 +1129,7 @@ void ParMesh::MakeRefined_(ParMesh &orig_mesh, int ref_factor, int ref_type)
+    MyComm = orig_mesh.GetComm();
+    NRanks = orig_mesh.GetNRanks();
+    MyRank = orig_mesh.GetMyRank();
+-   face_nbr_el_to_face = NULL;
++   face_nbr_el_to_face = nullptr;
+    glob_elem_offset = -1;
+    glob_offset_sequence = -1;
+    gtopo = orig_mesh.gtopo;
+@@ -2123,11 +2118,10 @@ void ParMesh::ExchangeFaceNbrData()
+ 
+    if (Nonconforming())
+    {
+-      // with ParNCMesh we can set up face neighbors without communication
++      // with ParNCMesh we can set up face neighbors mostly without communication
+       pncmesh->GetFaceNeighbors(*this);
+       have_face_nbr_data = true;
+ 
+-      ExchangeFaceNbrNodes();
+       return;
+    }
+ 
+@@ -2192,7 +2186,7 @@ void ParMesh::ExchangeFaceNbrData()
+ 
+    if (Dim == 3)
+    {
+-      GetFaceNbrElementToFaceTable();
++      BuildFaceNbrElementToFaceTable();
+    }
+ 
+    if (del_tables) { delete gr_sface; }
+@@ -2320,6 +2314,7 @@ void ParMesh::ExchangeFaceNbrData(Table *gr_sface, int *s2l_face)
+    el_marker = -1;
+    vertex_marker = -1;
+    const int nst = shared_trias.Size();
++
+    for (int fn = 0; fn < num_face_nbrs; fn++)
+    {
+       int nbr_group = face_nbr_group[fn];
+@@ -2457,8 +2452,7 @@ void ParMesh::ExchangeFaceNbrData(Table *gr_sface, int *s2l_face)
+ 
+    // convert the element data into face_nbr_elements
+    face_nbr_elements.SetSize(face_nbr_elements_offset[num_face_nbrs]);
+-   face_nbr_el_ori.Clear();
+-   face_nbr_el_ori.SetSize(face_nbr_elements_offset[num_face_nbrs], 6);
++   face_nbr_el_ori.reset(new Table(face_nbr_elements_offset[num_face_nbrs], 6));
+    while (true)
+    {
+       int fn;
+@@ -2489,7 +2483,7 @@ void ParMesh::ExchangeFaceNbrData(Table *gr_sface, int *s2l_face)
+          if (Dim == 3)
+          {
+             int nf = el->GetNFaces();
+-            int * fn_ori = face_nbr_el_ori.GetRow(elem_off);
++            int * fn_ori = face_nbr_el_ori->GetRow(elem_off);
+             for (int j = 0; j < nf; j++)
+             {
+                fn_ori[j] = recv_elemdata[j];
+@@ -2499,7 +2493,7 @@ void ParMesh::ExchangeFaceNbrData(Table *gr_sface, int *s2l_face)
+          face_nbr_elements[elem_off++] = el;
+       }
+    }
+-   face_nbr_el_ori.Finalize();
++   face_nbr_el_ori->Finalize();
+ 
+    MPI_Waitall(num_face_nbrs, send_requests, statuses);
+ 
+@@ -2721,191 +2715,118 @@ STable3D *ParMesh::GetSharedFacesTable()
+    return sfaces_tbl;
+ }
+ 
+-STable3D *ParMesh::GetFaceNbrElementToFaceTable(int ret_ftbl)
++template <int N>
++void
++ParMesh::AddTriFaces(const Array<int> &elem_vertices,
++                     const std::unique_ptr<STable3D> &faces,
++                     const std::unique_ptr<STable3D> &shared_faces,
++                     int elem, int start, int end, const int fverts[][N])
+ {
+-   int i, *v;
+-   STable3D * faces_tbl = GetFacesTable();
+-   STable3D * sfaces_tbl = GetSharedFacesTable();
+-
+-   if (face_nbr_el_to_face != NULL)
++   for (int i = start; i < end; ++i)
+    {
+-      delete face_nbr_el_to_face;
++      // Reference face vertices.
++      const auto fv = fverts[i];
++      // Element specific face vertices.
++      const Vert3 elem_fv(elem_vertices[fv[0]], elem_vertices[fv[1]],
++                          elem_vertices[fv[2]]);
++
++      // Check amongst the faces of elements local to this rank for this set of vertices
++      const int lf = faces->Index(elem_fv.v[0], elem_fv.v[1], elem_fv.v[2]);
++
++      // If the face wasn't found amonst processor local elements, search the
++      // ghosts for this set of vertices.
++      const int sf = lf < 0 ? shared_faces->Index(elem_fv.v[0], elem_fv.v[1],
++                                                  elem_fv.v[2]) : -1;
++      // If find local face -> use that
++      //    else if find shared face -> shift and use that
++      //       else no face found -> set to -1
++      const int face_to_add = lf < 0 ? (sf >= 0 ? sf + NumOfFaces : -1) : lf;
++
++      MFEM_ASSERT(sf >= 0 ||
++                  lf >= 0, "Face must be from a local or a face neighbor element");
++
++      // Add this discovered face to the list of faces of this face neighbor element
++      face_nbr_el_to_face->Push(elem, face_to_add);
+    }
+-   face_nbr_el_to_face = new Table(face_nbr_elements.Size(), 6);
+-   for (i = 0; i < face_nbr_elements.Size(); i++)
++}
++
++void ParMesh::BuildFaceNbrElementToFaceTable()
++{
++   const auto faces = std::unique_ptr<STable3D>(GetFacesTable());
++   const auto shared_faces = std::unique_ptr<STable3D>(GetSharedFacesTable());
++
++   face_nbr_el_to_face.reset(new Table(face_nbr_elements.Size(), 6));
++
++   mfem::Array<int> v;
++
++   // Helper for adding quadrilateral faces.
++   auto add_quad_faces = [&faces, &shared_faces, &v, this]
++                         (int elem, int start, int end, const int fverts[][4])
+    {
+-      v = face_nbr_elements[i]->GetVertices();
+-      switch (face_nbr_elements[i]->GetType())
++      for (int i = start; i < end; ++i)
+       {
+-         case Element::TETRAHEDRON:
++         const int * const fv = fverts[i];
++         int k = 0;
++         int max = v[fv[0]];
++
++         if (max < v[fv[1]]) { max = v[fv[1]], k = 1; }
++         if (max < v[fv[2]]) { max = v[fv[2]], k = 2; }
++         if (max < v[fv[3]]) { k = 3; }
++
++         int v0 = -1, v1 = -1, v2 = -1;
++         switch (k)
+          {
+-            for (int j = 0; j < 4; j++)
++            case 0:
++               v0 = v[fv[1]]; v1 = v[fv[2]]; v2 = v[fv[3]];
++               break;
++            case 1:
++               v0 = v[fv[0]]; v1 = v[fv[2]]; v2 = v[fv[3]];
++               break;
++            case 2:
++               v0 = v[fv[0]]; v1 = v[fv[1]]; v2 = v[fv[3]];
++               break;
++            case 3:
++               v0 = v[fv[0]]; v1 = v[fv[1]]; v2 = v[fv[2]];
++               break;
++         }
++         int lf = faces->Index(v0, v1, v2);
++         if (lf < 0)
++         {
++            lf = shared_faces->Index(v0, v1, v2);
++            if (lf >= 0)
+             {
+-               const int *fv = tet_t::FaceVert[j];
+-               int lf = faces_tbl->Index(v[fv[0]], v[fv[1]], v[fv[2]]);
+-               if (lf < 0)
+-               {
+-                  lf = sfaces_tbl->Index(v[fv[0]], v[fv[1]], v[fv[2]]);
+-                  if (lf >= 0)
+-                  {
+-                     lf += NumOfFaces;
+-                  }
+-               }
+-               face_nbr_el_to_face->Push(i, lf);
++               lf += NumOfFaces;
+             }
++         }
++         face_nbr_el_to_face->Push(elem, lf);
++      }
++   };
++
++   for (int i = 0; i < face_nbr_elements.Size(); i++)
++   {
++      face_nbr_elements[i]->GetVertices(v);
++      switch (face_nbr_elements[i]->GetType())
++      {
++         case Element::TETRAHEDRON:
++         {
++            AddTriFaces(v, faces, shared_faces, i, 0, 4, tet_t::FaceVert);
+             break;
+          }
+          case Element::WEDGE:
+          {
+-            for (int j = 0; j < 2; j++)
+-            {
+-               const int *fv = pri_t::FaceVert[j];
+-               int lf = faces_tbl->Index(v[fv[0]], v[fv[1]], v[fv[2]]);
+-               if (lf < 0)
+-               {
+-                  lf = sfaces_tbl->Index(v[fv[0]], v[fv[1]], v[fv[2]]);
+-                  if (lf >= 0)
+-                  {
+-                     lf += NumOfFaces;
+-                  }
+-               }
+-               face_nbr_el_to_face->Push(i, lf);
+-            }
+-            for (int j = 2; j < 5; j++)
+-            {
+-               const int *fv = pri_t::FaceVert[j];
+-               int k = 0;
+-               int max = v[fv[0]];
+-
+-               if (max < v[fv[1]]) { max = v[fv[1]], k = 1; }
+-               if (max < v[fv[2]]) { max = v[fv[2]], k = 2; }
+-               if (max < v[fv[3]]) { k = 3; }
+-
+-               int v0 = -1, v1 = -1, v2 = -1;
+-               switch (k)
+-               {
+-                  case 0:
+-                     v0 = v[fv[1]]; v1 = v[fv[2]]; v2 = v[fv[3]];
+-                     break;
+-                  case 1:
+-                     v0 = v[fv[0]]; v1 = v[fv[2]]; v2 = v[fv[3]];
+-                     break;
+-                  case 2:
+-                     v0 = v[fv[0]]; v1 = v[fv[1]]; v2 = v[fv[3]];
+-                     break;
+-                  case 3:
+-                     v0 = v[fv[0]]; v1 = v[fv[1]]; v2 = v[fv[2]];
+-                     break;
+-               }
+-               int lf = faces_tbl->Index(v0, v1, v2);
+-               if (lf < 0)
+-               {
+-                  lf = sfaces_tbl->Index(v0, v1, v2);
+-                  if (lf >= 0)
+-                  {
+-                     lf += NumOfFaces;
+-                  }
+-               }
+-               face_nbr_el_to_face->Push(i, lf);
+-            }
++            AddTriFaces(v, faces, shared_faces, i, 0, 2, pri_t::FaceVert);
++            add_quad_faces(i, 2, 5, pri_t::FaceVert);
+             break;
+          }
+          case Element::PYRAMID:
+          {
+-            for (int j = 0; j < 1; j++)
+-            {
+-               const int *fv = pyr_t::FaceVert[j];
+-               int k = 0;
+-               int max = v[fv[0]];
+-
+-               if (max < v[fv[1]]) { max = v[fv[1]], k = 1; }
+-               if (max < v[fv[2]]) { max = v[fv[2]], k = 2; }
+-               if (max < v[fv[3]]) { k = 3; }
+-
+-               int v0 = -1, v1 = -1, v2 = -1;
+-               switch (k)
+-               {
+-                  case 0:
+-                     v0 = v[fv[1]]; v1 = v[fv[2]]; v2 = v[fv[3]];
+-                     break;
+-                  case 1:
+-                     v0 = v[fv[0]]; v1 = v[fv[2]]; v2 = v[fv[3]];
+-                     break;
+-                  case 2:
+-                     v0 = v[fv[0]]; v1 = v[fv[1]]; v2 = v[fv[3]];
+-                     break;
+-                  case 3:
+-                     v0 = v[fv[0]]; v1 = v[fv[1]]; v2 = v[fv[2]];
+-                     break;
+-               }
+-               int lf = faces_tbl->Index(v0, v1, v2);
+-               if (lf < 0)
+-               {
+-                  lf = sfaces_tbl->Index(v0, v1, v2);
+-                  if (lf >= 0)
+-                  {
+-                     lf += NumOfFaces;
+-                  }
+-               }
+-               face_nbr_el_to_face->Push(i, lf);
+-            }
+-            for (int j = 1; j < 5; j++)
+-            {
+-               const int *fv = pyr_t::FaceVert[j];
+-               int lf = faces_tbl->Index(v[fv[0]], v[fv[1]], v[fv[2]]);
+-               if (lf < 0)
+-               {
+-                  lf = sfaces_tbl->Index(v[fv[0]], v[fv[1]], v[fv[2]]);
+-                  if (lf >= 0)
+-                  {
+-                     lf += NumOfFaces;
+-                  }
+-               }
+-               face_nbr_el_to_face->Push(i, lf);
+-            }
++            add_quad_faces(i, 0, 1, pyr_t::FaceVert);
++            AddTriFaces(v, faces, shared_faces, i, 1, 5, pyr_t::FaceVert);
+             break;
+          }
+          case Element::HEXAHEDRON:
+          {
+-            // find the face by the vertices with the smallest 3 numbers
+-            // z = 0, y = 0, x = 1, y = 1, x = 0, z = 1
+-            for (int j = 0; j < 6; j++)
+-            {
+-               const int *fv = hex_t::FaceVert[j];
+-               int k = 0;
+-               int max = v[fv[0]];
+-
+-               if (max < v[fv[1]]) { max = v[fv[1]], k = 1; }
+-               if (max < v[fv[2]]) { max = v[fv[2]], k = 2; }
+-               if (max < v[fv[3]]) { k = 3; }
+-
+-               int v0 = -1, v1 = -1, v2 = -1;
+-               switch (k)
+-               {
+-                  case 0:
+-                     v0 = v[fv[1]]; v1 = v[fv[2]]; v2 = v[fv[3]];
+-                     break;
+-                  case 1:
+-                     v0 = v[fv[0]]; v1 = v[fv[2]]; v2 = v[fv[3]];
+-                     break;
+-                  case 2:
+-                     v0 = v[fv[0]]; v1 = v[fv[1]]; v2 = v[fv[3]];
+-                     break;
+-                  case 3:
+-                     v0 = v[fv[0]]; v1 = v[fv[1]]; v2 = v[fv[2]];
+-                     break;
+-               }
+-               int lf = faces_tbl->Index(v0, v1, v2);
+-               if (lf < 0)
+-               {
+-                  lf = sfaces_tbl->Index(v0, v1, v2);
+-                  if (lf >= 0)
+-                  {
+-                     lf += NumOfFaces;
+-                  }
+-               }
+-               face_nbr_el_to_face->Push(i, lf);
+-            }
++            add_quad_faces(i, 0, 6, hex_t::FaceVert);
+             break;
+          }
+          default:
+@@ -2913,14 +2834,6 @@ STable3D *ParMesh::GetFaceNbrElementToFaceTable(int ret_ftbl)
+       }
+    }
+    face_nbr_el_to_face->Finalize();
+-
+-   delete sfaces_tbl;
+-   if (ret_ftbl)
+-   {
+-      return faces_tbl;
+-   }
+-   delete faces_tbl;
+-   return NULL;
+ }
+ 
+ int ParMesh::GetFaceNbrRank(int fn) const
+@@ -2941,33 +2854,31 @@ int ParMesh::GetFaceNbrRank(int fn) const
+ }
+ 
+ void
+-ParMesh::GetFaceNbrElementFaces(int i, Array<int> &fcs, Array<int> &cor) const
++ParMesh::GetFaceNbrElementFaces(int i, Array<int> &faces,
++                                Array<int> &orientations) const
+ {
+-   int n, j;
+    int el_nbr = i - GetNE();
+-   if (face_nbr_el_to_face)
++   if (face_nbr_el_to_face != nullptr && el_nbr < face_nbr_el_to_face->Size())
+    {
+-      face_nbr_el_to_face->GetRow(el_nbr, fcs);
++      face_nbr_el_to_face->GetRow(el_nbr, faces);
+    }
+    else
+    {
+       MFEM_ABORT("ParMesh::GetFaceNbrElementFaces(...) : "
+                  "face_nbr_el_to_face not generated.");
+    }
+-   if (el_nbr < face_nbr_el_ori.Size())
++
++   if (face_nbr_el_ori != nullptr && el_nbr < face_nbr_el_ori->Size())
+    {
+-      const int * row = face_nbr_el_ori.GetRow(el_nbr);
+-      n = fcs.Size();
+-      cor.SetSize(n);
+-      for (j=0; j<n; j++)
+-      {
+-         cor[j] = row[j];
+-      }
++      face_nbr_el_ori->GetRow(el_nbr, orientations);
+    }
+    else
+    {
+-      MFEM_ABORT("ParMesh::GetFaceNbrElementFaces(...) : "
+-                 "face_nbr_el_to_face not generated.");
++      // No face_nbr_el_ori was generated, make the orientations invalid.
++      // This will cause errors if the face orientations are necessary to
++      // evaluate the basis in face neighbor elements.
++      orientations.SetSize(faces.Size());
++      orientations = -1;
+    }
+ }
+ 
+@@ -3227,7 +3138,7 @@ int ParMesh::GetSharedFace(int sface) const
+    {
+       MFEM_ASSERT(Dim > 1, "");
+       const NCMesh::NCList &shared = pncmesh->GetSharedList(Dim-1);
+-      int csize = (int) shared.conforming.Size();
++      int csize = shared.conforming.Size();
+       return sface < csize
+              ? shared.conforming[sface].index
+              : shared.slaves[sface - csize].index;
+@@ -4593,7 +4504,7 @@ void ParMesh::UniformRefinement3D()
+ 
+    DSTable v_to_v(NumOfVertices);
+    GetVertexToVertexTable(v_to_v);
+-   STable3D *faces_tbl = GetFacesTable();
++   auto faces_tbl = std::unique_ptr<STable3D>(GetFacesTable());
+ 
+    // call Mesh::UniformRefinement3D_base so that it won't update the nodes
+    Array<int> f2qf;
+@@ -4608,7 +4519,6 @@ void ParMesh::UniformRefinement3D()
+    // update the groups
+    UniformRefineGroups3D(old_nv, old_nedges, v_to_v, *faces_tbl,
+                          f2qf.Size() ? &f2qf : NULL);
+-   delete faces_tbl;
+ 
+    UpdateNodes();
+ }
+@@ -6727,8 +6637,7 @@ void ParMesh::Destroy()
+    }
+    shared_edges.DeleteAll();
+ 
+-   delete face_nbr_el_to_face;
+-   face_nbr_el_to_face = NULL;
++   face_nbr_el_to_face = nullptr;
+ }
+ 
+ ParMesh::~ParMesh()
+diff --git a/mesh/pmesh.hpp b/mesh/pmesh.hpp
+index 6ad702b58..fc688c360 100644
+--- a/mesh/pmesh.hpp
++++ b/mesh/pmesh.hpp
+@@ -77,8 +77,11 @@ protected:
+    // sface ids: all triangles first, then all quads
+    Array<int> sface_lface;
+ 
+-   Table *face_nbr_el_to_face;
+-   Table  face_nbr_el_ori; // orientations for each face (from nbr processor)
++   /// Table that maps from face neighbor element number, to the face numbers of
++   /// that element.
++   std::unique_ptr<Table> face_nbr_el_to_face;
++   /// orientations for each face (from nbr processor)
++   std::unique_ptr<Table> face_nbr_el_ori;
+ 
+    IsoparametricTransformation FaceNbrTransformation;
+ 
+@@ -113,7 +116,32 @@ protected:
+    bool DecodeFaceSplittings(HashTable<Hashed2> &v_to_v, const int *v,
+                              const Array<unsigned> &codes, int &pos);
+ 
+-   STable3D *GetFaceNbrElementToFaceTable(int ret_ftbl = 0);
++   // Given a completed FacesTable and SharedFacesTable, construct a table that
++   // maps from face neighbor element number, to the set of faces of that
++   // element. Store the resulting data in the member variable
++   // face_nbr_el_to_face. If the mesh is nonconforming, this also builds the
++   // the face_nbr_el_ori variable from the faces_info.
++   void BuildFaceNbrElementToFaceTable();
++
++   /**
++    * @brief Helper function for adding triangle face neighbor element to face
++    * table entries. Have to use a template here rather than lambda capture
++    * because the FaceVert entries in Geometry have inner size of 3 for tets and
++    * 4 for everything else.
++    *
++    * @tparam N Inner dimension on the fvert variable, 3 for tet, 4 otherwise
++    * @param v Set of vertices for this element
++    * @param faces Table of faces interior to this rank
++    * @param shared_faces Table of faces shared by this rank and another
++    * @param elem The face neighbor element
++    * @param start Starting index into fverts
++    * @param end End index into fverts
++    * @param fverts Array of face vertices for this particular geometry.
++    */
++   template <int N>
++   void AddTriFaces(const Array<int> &v, const std::unique_ptr<STable3D> &faces,
++                    const std::unique_ptr<STable3D> &shared_faces,
++                    int elem, int start, int end, const int fverts[][N]);
+ 
+    void GetFaceNbrElementTransformation(
+       int i, IsoparametricTransformation *ElTr);
+@@ -287,7 +315,7 @@ protected:
+ 
+ public:
+    /// Default constructor. Create an empty @a ParMesh.
+-   ParMesh() : MyComm(0), NRanks(0), MyRank(-1), face_nbr_el_to_face(NULL),
++   ParMesh() : MyComm(0), NRanks(0), MyRank(-1),
+       glob_elem_offset(-1), glob_offset_sequence(-1),
+       have_face_nbr_data(false), pncmesh(NULL) { }
+ 
+@@ -465,7 +493,8 @@ public:
+    int GetFaceNbrRank(int fn) const;
+ 
+    /** Similar to Mesh::GetElementFaces */
+-   void GetFaceNbrElementFaces(int i, Array<int> &fcs, Array<int> &cor) const;
++   void GetFaceNbrElementFaces(int i, Array<int> &faces,
++                               Array<int> &orientation) const;
+ 
+    /** Similar to Mesh::GetFaceToElementTable with added face-neighbor elements
+        with indices offset by the local number of elements. */
+@@ -555,6 +584,8 @@ public:
+    /// Return the local face index for the given shared face.
+    int GetSharedFace(int sface) const;
+ 
++
++
+    /** @brief Returns the number of local faces according to the requested type,
+        does not count master non-conforming faces.
+ 
 diff --git a/mesh/pncmesh.cpp b/mesh/pncmesh.cpp
-index dbce8aee6..01322d32c 100644
+index dbce8aee6..b2ad1b826 100644
 --- a/mesh/pncmesh.cpp
 +++ b/mesh/pncmesh.cpp
-@@ -893,7 +893,15 @@ void ParNCMesh::GetFaceNeighbors(ParMesh &pmesh)
+@@ -16,6 +16,7 @@
+ #include "mesh_headers.hpp"
+ #include "pncmesh.hpp"
+ #include "../general/binaryio.hpp"
++#include "../general/communication.hpp"
+ 
+ #include <map>
+ #include <climits> // INT_MIN, INT_MAX
+@@ -892,14 +893,28 @@ void ParNCMesh::GetFaceNeighbors(ParMesh &pmesh)
+ 
     Array<Element*> fnbr;
     Array<Connection> send_elems;
++   std::map<int, std::vector<int>> recv_elems;
  
 -   int bound = shared.conforming.Size() + shared.slaves.Size();
 +   // Counts the number of slave faces of a master. This may be larger than the
@@ -698,7 +3182,32 @@ index dbce8aee6..01322d32c 100644
  
     fnbr.Reserve(bound);
     send_elems.Reserve(bound);
-@@ -928,7 +936,11 @@ void ParNCMesh::GetFaceNeighbors(ParMesh &pmesh)
+ 
++   // If there are face neighbor elements with triangular faces, the
++   // `face_nbr_el_ori` structure will need to be built. This requires
++   // communication so we attempt to avoid it by checking first.
++   bool face_nbr_w_tri_faces = false;
++
+    // go over all shared faces and collect face neighbor elements
+-   for (int i = 0; i < shared.conforming.Size(); i++)
++   for (int i = 0; i < shared.conforming.Size(); ++i)
+    {
+       const MeshId &cf = shared.conforming[i];
+       Face* face = GetFace(elements[cf.element], cf.local);
+@@ -911,8 +926,12 @@ void ParNCMesh::GetFaceNeighbors(ParMesh &pmesh)
+       if (e[0]->rank == MyRank) { std::swap(e[0], e[1]); }
+       MFEM_ASSERT(e[0]->rank != MyRank && e[1]->rank == MyRank, "");
+ 
++      face_nbr_w_tri_faces |= !Geometry::IsTensorProduct(Geometry::Type(e[0]->geom));
++      face_nbr_w_tri_faces |= !Geometry::IsTensorProduct(Geometry::Type(e[1]->geom));
++
+       fnbr.Append(e[0]);
+       send_elems.Append(Connection(e[0]->rank, e[1]->index));
++      recv_elems[e[0]->rank].push_back(e[0]->index);
+    }
+ 
+    for (int i = 0; i < shared.masters.Size(); i++)
+@@ -928,15 +947,24 @@ void ParNCMesh::GetFaceNeighbors(ParMesh &pmesh)
  
           bool loc0 = (e[0]->rank == MyRank);
           bool loc1 = (e[1]->rank == MyRank);
@@ -710,8 +3219,12 @@ index dbce8aee6..01322d32c 100644
 +         }
           if (loc0) { std::swap(e[0], e[1]); }
  
++         face_nbr_w_tri_faces |= !Geometry::IsTensorProduct(Geometry::Type(e[0]->geom));
++         face_nbr_w_tri_faces |= !Geometry::IsTensorProduct(Geometry::Type(e[1]->geom));
++
           fnbr.Append(e[0]);
-@@ -936,7 +948,8 @@ void ParNCMesh::GetFaceNeighbors(ParMesh &pmesh)
+          send_elems.Append(Connection(e[0]->rank, e[1]->index));
++         recv_elems[e[0]->rank].push_back(e[0]->index);
        }
     }
  
@@ -721,7 +3234,7 @@ index dbce8aee6..01322d32c 100644
  
     // remove duplicate face neighbor elements and sort them by rank & index
     // (note that the send table is sorted the same way and the order is also the
-@@ -957,7 +970,7 @@ void ParNCMesh::GetFaceNeighbors(ParMesh &pmesh)
+@@ -957,7 +985,7 @@ void ParNCMesh::GetFaceNeighbors(ParMesh &pmesh)
           pmesh.face_nbr_group.Append(fnbr[i]->rank);
        }
     }
@@ -730,18 +3243,16 @@ index dbce8aee6..01322d32c 100644
  
     // create a new mfem::Element for each face neighbor element
     pmesh.face_nbr_elements.SetSize(0);
-@@ -972,8 +985,8 @@ void ParNCMesh::GetFaceNeighbors(ParMesh &pmesh)
+@@ -972,7 +1000,7 @@ void ParNCMesh::GetFaceNeighbors(ParMesh &pmesh)
     std::map<int, int> vert_map;
     for (int i = 0; i < fnbr.Size(); i++)
     {
 -      Element* elem = fnbr[i];
--      mfem::Element* fne = NewMeshElement(elem->geom);
-+      auto* elem = fnbr[i];
-+      auto* fne = NewMeshElement(elem->geom);
++      NCMesh::Element* elem = fnbr[i];
+       mfem::Element* fne = NewMeshElement(elem->geom);
        fne->SetAttribute(elem->attribute);
        pmesh.face_nbr_elements.Append(fne);
- 
-@@ -1001,10 +1014,10 @@ void ParNCMesh::GetFaceNeighbors(ParMesh &pmesh)
+@@ -1001,10 +1029,10 @@ void ParNCMesh::GetFaceNeighbors(ParMesh &pmesh)
        if (coordinates.Size())
        {
           tmp_vertex = new TmpVertex[nodes.NumIds()]; // TODO: something cheaper?
@@ -755,7 +3266,21 @@ index dbce8aee6..01322d32c 100644
           }
           delete [] tmp_vertex;
        }
-@@ -1031,15 +1044,13 @@ void ParNCMesh::GetFaceNeighbors(ParMesh &pmesh)
+@@ -1014,6 +1042,13 @@ void ParNCMesh::GetFaceNeighbors(ParMesh &pmesh)
+    send_elems.Sort();
+    send_elems.Unique();
+ 
++   for (auto &kv : recv_elems)
++   {
++      std::sort(kv.second.begin(), kv.second.end());
++      kv.second.erase(std::unique(kv.second.begin(), kv.second.end()),
++                      kv.second.end());
++   }
++
+    for (int i = 0, last_rank = -1; i < send_elems.Size(); i++)
+    {
+       Connection &c = send_elems[i];
+@@ -1031,11 +1066,9 @@ void ParNCMesh::GetFaceNeighbors(ParMesh &pmesh)
     pmesh.send_face_nbr_elements.MakeFromList(nranks, send_elems);
  
     // go over the shared faces again and modify their Mesh::FaceInfo
@@ -768,12 +3293,7 @@ index dbce8aee6..01322d32c 100644
        Element* e[2] = { &elements[face->elem[0]], &elements[face->elem[1]] };
        if (e[0]->rank == MyRank) { std::swap(e[0], e[1]); }
  
--      Mesh::FaceInfo &fi = pmesh.faces_info[cf.index];
-+      auto &fi = pmesh.faces_info[cf.index];
-       fi.Elem2No = -1 - fnbr_index[e[0]->index - NElements];
- 
-       if (Dim == 3)
-@@ -1054,6 +1065,7 @@ void ParNCMesh::GetFaceNeighbors(ParMesh &pmesh)
+@@ -1054,6 +1087,7 @@ void ParNCMesh::GetFaceNeighbors(ParMesh &pmesh)
        }
     }
  
@@ -781,7 +3301,7 @@ index dbce8aee6..01322d32c 100644
     if (shared.slaves.Size())
     {
        int nfaces = NFaces, nghosts = NGhostFaces;
-@@ -1088,8 +1100,14 @@ void ParNCMesh::GetFaceNeighbors(ParMesh &pmesh)
+@@ -1088,8 +1122,14 @@ void ParNCMesh::GetFaceNeighbors(ParMesh &pmesh)
  
              bool sloc = (sfe.rank == MyRank);
              bool mloc = (mfe.rank == MyRank);
@@ -797,7 +3317,7 @@ index dbce8aee6..01322d32c 100644
              Mesh::FaceInfo &fi = pmesh.faces_info[sf.index];
              fi.Elem1No = sfe.index;
              fi.Elem2No = mfe.index;
-@@ -1119,12 +1137,18 @@ void ParNCMesh::GetFaceNeighbors(ParMesh &pmesh)
+@@ -1119,12 +1159,18 @@ void ParNCMesh::GetFaceNeighbors(ParMesh &pmesh)
              const DenseMatrix* pm = full_list.point_matrices[sf.geom][sf.matrix];
              if (!sloc && Dim == 3)
              {
@@ -820,7 +3340,7 @@ index dbce8aee6..01322d32c 100644
                 aux_pm_store.Append(pm2);
  
                 fi.Elem2Inf ^= 1;
-@@ -1149,7 +1173,7 @@ void ParNCMesh::GetFaceNeighbors(ParMesh &pmesh)
+@@ -1149,13 +1195,126 @@ void ParNCMesh::GetFaceNeighbors(ParMesh &pmesh)
                 // Mesh::ApplyLocalSlaveTransformation.
              }
  
@@ -829,11 +3349,140 @@ index dbce8aee6..01322d32c 100644
              fi.NCFace = pmesh.nc_faces_info.Size();
              pmesh.nc_faces_info.Append(Mesh::NCFaceInfo(true, sf.master, pm));
           }
+       }
+    }
+ 
++
++   // In 3D some extra orientation data structures can be needed.
++   if (Dim == 3)
++   {
++      // Populates face_nbr_el_to_face, always needed.
++      pmesh.BuildFaceNbrElementToFaceTable();
++
++      if (face_nbr_w_tri_faces)
++      {
++         // There are face neighbor elements with triangular faces, need to
++         // perform communication to ensure the orientation is valid.
++         using RankToOrientation = std::map<int, std::vector<std::array<int, 6>>>;
++         constexpr std::array<int, 6> unset_ori{{-1,-1,-1,-1,-1,-1}};
++         const int rank = pmesh.GetMyRank();
++
++         // Loop over send elems, compute the orientation and place in the buffer to
++         // send to each processor. Note elements are lexicographically sorted
++         // with rank and element number, and this ordering holds across processors.
++         RankToOrientation send_rank_to_face_neighbor_orientations;
++         Array<int> orientations, faces;
++
++         // send_elems goes from rank of the receiving processor, to the index
++         // of the face neighbor element on this processor.
++         for (const auto &se : send_elems)
++         {
++            const auto &true_rank = pmesh.face_nbr_group[se.from];
++            pmesh.GetElementFaces(se.to, faces, orientations);
++
++            // Place a new entry of unset orientations
++            send_rank_to_face_neighbor_orientations[true_rank].emplace_back(unset_ori);
++
++            // Copy the entries, any unset faces will remain -1.
++            std::copy(orientations.begin(), orientations.end(),
++                      send_rank_to_face_neighbor_orientations[true_rank].back().begin());
++         }
++
++         // Initialize the receive buffers and resize to match the expected
++         // number of elements coming in. The copy ensures the appropriate rank
++         // pairings are in place, and for a purely conformal interface, the
++         // resize is a no-op.
++         auto recv_rank_to_face_neighbor_orientations =
++            send_rank_to_face_neighbor_orientations;
++         for (auto &kv : recv_rank_to_face_neighbor_orientations)
++         {
++            kv.second.resize(recv_elems[kv.first].size());
++         }
++
++         // For asynchronous send/recv, will use arrays of requests to monitor the
++         // status of the connections.
++         const int nranks = send_rank_to_face_neighbor_orientations.size();
++         std::vector<MPI_Request> send_requests, recv_requests;
++         std::vector<MPI_Status> status(nranks);
++
++         // NOTE: This is CRITICAL, to ensure the addresses of these requests
++         // do not change between the send/recv and the wait.
++         send_requests.reserve(nranks);
++         recv_requests.reserve(nranks);
++
++         // Shared face communication is bidirectional -> any rank to whom
++         // orientations must be sent, will need to send orientations back.
++         // The orientation data is contiguous because std::array<int,6> is an
++         // aggregate.
++
++         // Loop over each communication pairing, and dispatch the buffer loaded
++         // with  all the orientation data.
++         for (const auto &kv : send_rank_to_face_neighbor_orientations)
++         {
++            send_requests.emplace_back(); // instantiate a request for tracking.
++
++            // low rank sends on low, high rank sends on high.
++            const int send_tag = (rank < kv.first)
++                                 ? std::min(rank, kv.first)
++                                 : std::max(rank, kv.first);
++            MPI_Isend(&kv.second[0][0], int(kv.second.size() * 6),
++                      MPI_INT, kv.first, send_tag, pmesh.MyComm, &send_requests.back());
++         }
++
++         // Loop over the communication pairing again, and receive the
++         // symmetric buffer from the other processor.
++         for (auto &kv : recv_rank_to_face_neighbor_orientations)
++         {
++            recv_requests.emplace_back(); // instantiate a request for tracking
++
++            // low rank receives on high, high rank sends on low.
++            const int recv_tag = (rank < kv.first)
++                                 ? std::max(rank, kv.first)
++                                 : std::min(rank, kv.first);
++            MPI_Irecv(&kv.second[0][0], int(kv.second.size() * 6),
++                      MPI_INT, kv.first, recv_tag, pmesh.MyComm, &recv_requests.back());
++         }
++
++         // Wait until all receive buffers are full before beginning to process.
++         MPI_Waitall(int(recv_requests.size()), recv_requests.data(), status.data());
++
++         pmesh.face_nbr_el_ori.reset(new Table(pmesh.face_nbr_elements.Size(), 6));
++         int elem = 0;
++         for (const auto &kv : recv_rank_to_face_neighbor_orientations)
++         {
++            // All elements associated to this face-neighbor rank
++            for (const auto &eo : kv.second)
++            {
++               std::copy(eo.begin(), eo.end(), pmesh.face_nbr_el_ori->GetRow(elem));
++               ++elem;
++            }
++         }
++         pmesh.face_nbr_el_ori->Finalize();
++
++         // Must wait for all send buffers to be released before the scope closes.
++         MPI_Waitall(int(send_requests.size()), send_requests.data(), status.data());
++      }
++   }
++
++
+    // NOTE: this function skips ParMesh::send_face_nbr_vertices and
+    // ParMesh::face_nbr_vertices_offset, these are not used outside of ParMesh
+ }
 diff --git a/mesh/pncmesh.hpp b/mesh/pncmesh.hpp
-index ed919f14c..5afe5fbf1 100644
+index ed919f14c..9a1835a82 100644
 --- a/mesh/pncmesh.hpp
 +++ b/mesh/pncmesh.hpp
-@@ -141,8 +141,8 @@ public:
+@@ -108,9 +108,7 @@ public:
+        passed. */
+    void Rebalance(const Array<int> *custom_partition = NULL);
+ 
+-
+    // interface for ParFiniteElementSpace
+-
+    int GetNElements() const { return NElements; }
+ 
+    int GetNGhostVertices() const { return NGhostVertices; }
+@@ -141,8 +139,8 @@ public:
        return (index < NFaces) ? face_orient[index] : 0;
     }
  
@@ -844,14 +3493,773 @@ index ed919f14c..5afe5fbf1 100644
  
     /// Return vertex/edge/face ('entity' == 0/1/2, resp.) owner.
     GroupId GetEntityOwnerId(int entity, int index)
+diff --git a/miniapps/meshing/mesh-optimizer.cpp b/miniapps/meshing/mesh-optimizer.cpp
+index 3737f3c92..4e85bccda 100644
+--- a/miniapps/meshing/mesh-optimizer.cpp
++++ b/miniapps/meshing/mesh-optimizer.cpp
+@@ -45,9 +45,11 @@
+ //     mesh-optimizer -m square01.mesh -o 2 -tid 11 -ni 50 -li 20 -hmid 58 -mid 7 -hr
+ //
+ //   Adapted discrete size:
+-//     mesh-optimizer -m square01.mesh -o 2 -rs 2 -mid 80 -tid 5 -ni 50 -qo 4 -nor
++//     mesh-optimizer -m square01.mesh -o 2 -rs 2 -mid 94 -tid 5 -ni 50 -qo 4 -nor
+ //     (requires GSLIB):
+ //   * mesh-optimizer -m square01.mesh -o 2 -rs 2 -mid 80 -tid 5 -ni 50 -qo 4 -nor -mno 1 -ae 1
++//   Adapted discrete size NC mesh;
++//     mesh-optimizer -m amr-quad-q2.mesh -o 2 -rs 2 -mid 94 -tid 5 -ni 50 -qo 4 -nor
+ //   Adapted discrete size 3D with PA:
+ //     mesh-optimizer -m cube.mesh -o 2 -rs 2 -mid 321 -tid 5 -ls 3 -nor -pa
+ //   Adapted discrete size 3D with PA on device (requires CUDA):
+@@ -174,7 +176,10 @@ int main(int argc, char *argv[])
+                   "77 : 0.5(tau-1/tau)^2               -- 2D size\n\t"
+                   "80 : (1-gamma)mu_2 + gamma mu_77    -- 2D shape+size\n\t"
+                   "85 : |T-|T|/sqrt(2)I|^2             -- 2D shape+orientation\n\t"
++                  "90 : balanced combo mu_50 & mu_77   -- 2D shape+size\n\t"
++                  "94 : balanced combo mu_2 & mu_56    -- 2D shape+size\n\t"
+                   "98 : (1/tau)|T-I|^2                 -- 2D shape+size+orientation\n\t"
++                  // "211: (tau-1)^2-tau+sqrt(tau^2+eps)  -- 2D untangling\n\t"
+                   // "211: (tau-1)^2-tau+sqrt(tau^2)      -- 2D untangling\n\t"
+                   // "252: 0.5(tau-1)^2/(tau-tau_0)       -- 2D untangling\n\t"
+                   "301: (|T||T^-1|)/3-1              -- 3D shape\n\t"
+@@ -188,10 +193,11 @@ int main(int argc, char *argv[])
+                   "321: |T-T^-t|^2                   -- 3D shape+size\n\t"
+                   "322: |T-adjT^-t|^2                -- 3D shape+size\n\t"
+                   "323: |J|^3-3sqrt(3)ln(det(J))-3sqrt(3)  -- 3D shape+size\n\t"
+-                  "328: (1-gamma) mu_301 + gamma mu_316  -- 3D shape+size\n\t"
++                  "328: balanced combo mu_301 & mu_316   -- 3D shape+size\n\t"
+                   "332: (1-gamma) mu_302 + gamma mu_315  -- 3D shape+size\n\t"
+                   "333: (1-gamma) mu_302 + gamma mu_316  -- 3D shape+size\n\t"
+                   "334: (1-gamma) mu_303 + gamma mu_316  -- 3D shape+size\n\t"
++                  "328: balanced combo mu_302 & mu_318   -- 3D shape+size\n\t"
+                   "347: (1-gamma) mu_304 + gamma mu_316  -- 3D shape+size\n\t"
+                   // "352: 0.5(tau-1)^2/(tau-tau_0)      -- 3D untangling\n\t"
+                   "360: (|T|^3)/3^{3/2}-tau              -- 3D shape\n\t"
+@@ -429,6 +435,8 @@ int main(int argc, char *argv[])
+       case 77: metric = new TMOP_Metric_077; break;
+       case 80: metric = new TMOP_Metric_080(0.5); break;
+       case 85: metric = new TMOP_Metric_085; break;
++      case 90: metric = new TMOP_Metric_090; break;
++      case 94: metric = new TMOP_Metric_094; break;
+       case 98: metric = new TMOP_Metric_098; break;
+       // case 211: metric = new TMOP_Metric_211; break;
+       // case 252: metric = new TMOP_Metric_252(min_detJ); break;
+@@ -443,10 +451,11 @@ int main(int argc, char *argv[])
+       case 321: metric = new TMOP_Metric_321; break;
+       case 322: metric = new TMOP_Metric_322; break;
+       case 323: metric = new TMOP_Metric_323; break;
+-      case 328: metric = new TMOP_Metric_328(0.5); break;
++      case 328: metric = new TMOP_Metric_328; break;
+       case 332: metric = new TMOP_Metric_332(0.5); break;
+       case 333: metric = new TMOP_Metric_333(0.5); break;
+       case 334: metric = new TMOP_Metric_334(0.5); break;
++      case 338: metric = new TMOP_Metric_338; break;
+       case 347: metric = new TMOP_Metric_347(0.5); break;
+       // case 352: metric = new TMOP_Metric_352(min_detJ); break;
+       case 360: metric = new TMOP_Metric_360; break;
+@@ -576,16 +585,7 @@ int main(int argc, char *argv[])
+             MFEM_ABORT("MFEM is not built with GSLIB.");
+ #endif
+          }
+-         if (dim == 2)
+-         {
+-            FunctionCoefficient size_coeff(discrete_size_2d);
+-            size.ProjectCoefficient(size_coeff);
+-         }
+-         else if (dim == 3)
+-         {
+-            FunctionCoefficient size_coeff(discrete_size_3d);
+-            size.ProjectCoefficient(size_coeff);
+-         }
++         ConstructSizeGF(size);
+          tc->SetSerialDiscreteTargetSize(size);
+          target_c = tc;
+          break;
+diff --git a/miniapps/meshing/mesh-optimizer.hpp b/miniapps/meshing/mesh-optimizer.hpp
+index 93a6c4202..2883d3125 100644
+--- a/miniapps/meshing/mesh-optimizer.hpp
++++ b/miniapps/meshing/mesh-optimizer.hpp
+@@ -18,47 +18,79 @@
+ using namespace mfem;
+ using namespace std;
+ 
+-double discrete_size_2d(const Vector &x)
++double size_indicator(const Vector &x)
+ {
+-   int opt = 2;
+-   const double small = 0.001, big = 0.01;
+-   double val = 0.;
++   // semi-circle
++   const double xc = x(0) - 0.0, yc = x(1) - 0.5,
++                zc = (x.Size() == 3) ? x(2) - 0.5 : 0.0;
++   const double r = sqrt(xc*xc + yc*yc + zc*zc);
++   double r1 = 0.45; double r2 = 0.55; double sf=30.0;
++   double val = 0.5*(1+std::tanh(sf*(r-r1))) - 0.5*(1+std::tanh(sf*(r-r2)));
+ 
+-   if (opt == 1) // sine wave.
++   val = fmax(0.,val);
++   val = fmin(1.,val);
++   return val;
++}
++
++void calc_mass_volume(const GridFunction &g, double &mass, double &vol)
++{
++   Mesh &mesh = *g.FESpace()->GetMesh();
++   const int NE = mesh.GetNE();
++   Vector g_vals;
++   mass = 0.0, vol = 0.0;
++   for (int e = 0; e < NE; e++)
+    {
+-      const double X = x(0), Y = x(1);
+-      val = std::tanh((10*(Y-0.5) + std::sin(4.0*M_PI*X)) + 1) -
+-            std::tanh((10*(Y-0.5) + std::sin(4.0*M_PI*X)) - 1);
++      ElementTransformation &Tr = *mesh.GetElementTransformation(e);
++      const IntegrationRule &ir = IntRules.Get(mesh.GetElementBaseGeometry(e),
++                                               Tr.OrderJ());
++      g.GetValues(Tr, ir, g_vals);
++      for (int j = 0; j < ir.GetNPoints(); j++)
++      {
++         const IntegrationPoint &ip = ir.IntPoint(j);
++         Tr.SetIntPoint(&ip);
++         mass   += g_vals(j) * ip.weight * Tr.Weight();
++         vol    += ip.weight * Tr.Weight();
++      }
+    }
+-   else if (opt == 2) // semi-circle
++
++#ifdef MFEM_USE_MPI
++   auto gp = dynamic_cast<const ParGridFunction *>(&g);
++   if (gp)
+    {
+-      const double xc = x(0) - 0.0, yc = x(1) - 0.5;
+-      const double r = sqrt(xc*xc + yc*yc);
+-      double r1 = 0.45; double r2 = 0.55; double sf=30.0;
+-      val = 0.5*(1+std::tanh(sf*(r-r1))) - 0.5*(1+std::tanh(sf*(r-r2)));
++      MPI_Comm comm = gp->ParFESpace()->GetComm();
++      MPI_Allreduce(MPI_IN_PLACE, &mass, 1, MPI_DOUBLE, MPI_SUM, comm);
++      MPI_Allreduce(MPI_IN_PLACE, &vol,  1, MPI_DOUBLE, MPI_SUM, comm);
+    }
+-
+-   val = std::max(0.,val);
+-   val = std::min(1.,val);
+-
+-   return val * small + (1.0 - val) * big;
++#endif
+ }
+ 
+-double discrete_size_3d(const Vector &x)
++void ConstructSizeGF(GridFunction &size)
+ {
+-   const double small = 0.0001, big = 0.01;
+-   double val = 0.;
+-
+-   // semi-circle
+-   const double xc = x(0) - 0.0, yc = x(1) - 0.5, zc = x(2) - 0.5;
+-   const double r = sqrt(xc*xc + yc*yc + zc*zc);
+-   double r1 = 0.45; double r2 = 0.55; double sf=30.0;
+-   val = 0.5*(1+std::tanh(sf*(r-r1))) - 0.5*(1+std::tanh(sf*(r-r2)));
+-
+-   val = std::max(0.,val);
+-   val = std::min(1.,val);
+-
+-   return val * small + (1.0 - val) * big;
++   // Indicator for small (value -> 1) or big (value -> 0) elements.
++   FunctionCoefficient size_ind_coeff(size_indicator);
++   size.ProjectCoefficient(size_ind_coeff);
++
++   // Determine small/big target sizes based on the total number of
++   // elements and the volume occupied by small elements.
++   double volume_ind, volume;
++   calc_mass_volume(size, volume_ind, volume);
++   Mesh &mesh = *size.FESpace()->GetMesh();
++   int NE = mesh.GetNE();
++#ifdef MFEM_USE_MPI
++   auto size_p = dynamic_cast<const ParGridFunction *>(&size);
++   if (size_p) { NE = size_p->ParFESpace()->GetParMesh()->GetGlobalNE(); }
++#endif
++   NCMesh *ncmesh = mesh.ncmesh;
++   // For parallel NC meshes, all tasks have all root elements.
++   NE = (ncmesh) ? ncmesh->GetNumRootElements() : NE;
++   const double size_ratio = (mesh.Dimension() == 2) ? 9 : 27;
++   const double small_el_size = volume_ind / NE +
++                                (volume - volume_ind) / (size_ratio * NE);
++   const double big_el_size   = size_ratio * small_el_size;
++   for (int i = 0; i < size.Size(); i++)
++   {
++      size(i) = size(i) * small_el_size + (1.0 - size(i)) * big_el_size;
++   }
+ }
+ 
+ double material_indicator_2d(const Vector &x)
+diff --git a/miniapps/meshing/pmesh-fitting.cpp b/miniapps/meshing/pmesh-fitting.cpp
+index cb2735722..376db6e57 100644
+--- a/miniapps/meshing/pmesh-fitting.cpp
++++ b/miniapps/meshing/pmesh-fitting.cpp
+@@ -282,7 +282,7 @@ int main (int argc, char *argv[])
+       case 58: metric = new TMOP_Metric_058; break;
+       case 80: metric = new TMOP_Metric_080(0.5); break;
+       case 303: metric = new TMOP_Metric_303; break;
+-      case 328: metric = new TMOP_Metric_328(0.5); break;
++      case 328: metric = new TMOP_Metric_328; break;
+       default:
+          if (myid == 0) { cout << "Unknown metric_id: " << metric_id << endl; }
+          return 3;
+diff --git a/miniapps/meshing/pmesh-optimizer.cpp b/miniapps/meshing/pmesh-optimizer.cpp
+index bccbd60e2..ecc9f5435 100644
+--- a/miniapps/meshing/pmesh-optimizer.cpp
++++ b/miniapps/meshing/pmesh-optimizer.cpp
+@@ -45,9 +45,11 @@
+ //     mpirun -np 4 pmesh-optimizer -m square01.mesh -o 2 -tid 11 -ni 50 -li 20 -hmid 58 -mid 7 -hr
+ //
+ //   Adapted discrete size:
+-//     mpirun -np 4 pmesh-optimizer -m square01.mesh -o 2 -rs 2 -mid 80 -tid 5 -ni 50 -qo 4 -nor
++//     mpirun -np 4 pmesh-optimizer -m square01.mesh -o 2 -rs 2 -mid 94 -tid 5 -ni 50 -qo 4 -nor
+ //     (requires GSLIB):
+ //   * mpirun -np 4 pmesh-optimizer -m square01.mesh -o 2 -rs 2 -mid 80 -tid 5 -ni 50 -qo 4 -nor -mno 1 -ae 1
++//   Adapted discrete size NC mesh;
++//     mpirun -np 4 pmesh-optimizer -m amr-quad-q2.mesh -o 2 -rs 2 -mid 94 -tid 5 -ni 50 -qo 4 -nor
+ //   Adapted discrete size 3D with PA:
+ //     mpirun -np 4 pmesh-optimizer -m cube.mesh -o 2 -rs 2 -mid 321 -tid 5 -ls 3 -nor -pa
+ //   Adapted discrete size 3D with PA on device (requires CUDA):
+@@ -186,6 +188,8 @@ int main (int argc, char *argv[])
+                   "77 : 0.5(tau-1/tau)^2               -- 2D size\n\t"
+                   "80 : (1-gamma)mu_2 + gamma mu_77    -- 2D shape+size\n\t"
+                   "85 : |T-|T|/sqrt(2)I|^2             -- 2D shape+orientation\n\t"
++                  "90 : balanced combo mu_50 & mu_77   -- 2D shape+size\n\t"
++                  "94 : balanced combo mu_2 & mu_56    -- 2D shape+size\n\t"
+                   "98 : (1/tau)|T-I|^2                 -- 2D shape+size+orientation\n\t"
+                   // "211: (tau-1)^2-tau+sqrt(tau^2+eps)  -- 2D untangling\n\t"
+                   // "252: 0.5(tau-1)^2/(tau-tau_0)       -- 2D untangling\n\t"
+@@ -200,10 +204,11 @@ int main (int argc, char *argv[])
+                   "321: |T-T^-t|^2                   -- 3D shape+size\n\t"
+                   "322: |T-adjT^-t|^2                -- 3D shape+size\n\t"
+                   "323: |J|^3-3sqrt(3)ln(det(J))-3sqrt(3)  -- 3D shape+size\n\t"
+-                  "328: (1-gamma) mu_301 + gamma mu_316  -- 3D shape+size\n\t"
++                  "328: balanced combo mu_301 & mu_316   -- 3D shape+size\n\t"
+                   "332: (1-gamma) mu_302 + gamma mu_315  -- 3D shape+size\n\t"
+                   "333: (1-gamma) mu_302 + gamma mu_316  -- 3D shape+size\n\t"
+                   "334: (1-gamma) mu_303 + gamma mu_316  -- 3D shape+size\n\t"
++                  "328: balanced combo mu_302 & mu_318   -- 3D shape+size\n\t"
+                   "347: (1-gamma) mu_304 + gamma mu_316  -- 3D shape+size\n\t"
+                   // "352: 0.5(tau-1)^2/(tau-tau_0)     -- 3D untangling\n\t"
+                   "360: (|T|^3)/3^{3/2}-tau              -- 3D shape\n\t"
+@@ -331,7 +336,6 @@ int main (int argc, char *argv[])
+ 
+    if (hradaptivity) { mesh->EnsureNCMesh(); }
+    ParMesh *pmesh = new ParMesh(MPI_COMM_WORLD, *mesh);
+-
+    delete mesh;
+    for (int lev = 0; lev < rp_levels; lev++)
+    {
+@@ -455,6 +459,8 @@ int main (int argc, char *argv[])
+       case 77: metric = new TMOP_Metric_077; break;
+       case 80: metric = new TMOP_Metric_080(0.5); break;
+       case 85: metric = new TMOP_Metric_085; break;
++      case 90: metric = new TMOP_Metric_090; break;
++      case 94: metric = new TMOP_Metric_094; break;
+       case 98: metric = new TMOP_Metric_098; break;
+       // case 211: metric = new TMOP_Metric_211; break;
+       // case 252: metric = new TMOP_Metric_252(min_detJ); break;
+@@ -469,10 +475,11 @@ int main (int argc, char *argv[])
+       case 321: metric = new TMOP_Metric_321; break;
+       case 322: metric = new TMOP_Metric_322; break;
+       case 323: metric = new TMOP_Metric_323; break;
+-      case 328: metric = new TMOP_Metric_328(0.5); break;
++      case 328: metric = new TMOP_Metric_328; break;
+       case 332: metric = new TMOP_Metric_332(0.5); break;
+       case 333: metric = new TMOP_Metric_333(0.5); break;
+       case 334: metric = new TMOP_Metric_334(0.5); break;
++      case 338: metric = new TMOP_Metric_338; break;
+       case 347: metric = new TMOP_Metric_347(0.5); break;
+       // case 352: metric = new TMOP_Metric_352(min_detJ); break;
+       case 360: metric = new TMOP_Metric_360; break;
+@@ -602,16 +609,7 @@ int main (int argc, char *argv[])
+             MFEM_ABORT("MFEM is not built with GSLIB.");
+ #endif
+          }
+-         if (dim == 2)
+-         {
+-            FunctionCoefficient size_coeff(discrete_size_2d);
+-            size.ProjectCoefficient(size_coeff);
+-         }
+-         else if (dim == 3)
+-         {
+-            FunctionCoefficient size_coeff(discrete_size_3d);
+-            size.ProjectCoefficient(size_coeff);
+-         }
++         ConstructSizeGF(size);
+          tc->SetParDiscreteTargetSize(size);
+          target_c = tc;
+          break;
+diff --git a/miniapps/nurbs/CMakeLists.txt b/miniapps/nurbs/CMakeLists.txt
+index a8585a954..ba349fd3e 100644
+--- a/miniapps/nurbs/CMakeLists.txt
++++ b/miniapps/nurbs/CMakeLists.txt
+@@ -12,6 +12,10 @@
+ add_mfem_miniapp(nurbs_ex1
+   MAIN nurbs_ex1.cpp
+   LIBRARIES mfem)
++  
++add_mfem_miniapp(nurbs_curveint
++  MAIN nurbs_curveint.cpp
++  LIBRARIES mfem)
+ 
+ if (MFEM_ENABLE_TESTING)
+   add_test(NAME nurbs_ex1_1d_r1_o2_ser
+diff --git a/miniapps/nurbs/nurbs_curveint.cpp b/miniapps/nurbs/nurbs_curveint.cpp
+new file mode 100644
+index 000000000..0ddae996f
+--- /dev/null
++++ b/miniapps/nurbs/nurbs_curveint.cpp
+@@ -0,0 +1,225 @@
++// Compile with: make nurbs_curveint
++//
++// Sample runs:  ./nurbs_curveint -uw -n 9
++//               ./nurbs_curveint -nw -n 9
++
++//
++// Description:  This example code demonstrates the use of MFEM to interpolate
++//               a curve in a NURBS patch. We first define a square shaped
++//               NURBS patch. We then interpolate a sine function on the bottom
++//               edge. The results can be viewed in VisIt.
++//
++//               We use curve interpolation for curves with all weights being 1,
++//               B-splines, and curves with not all weights being 1, NURBS. The
++//               spacing in both cases is chosen differently.
++
++#include "mfem.hpp"
++#include <fstream>
++#include <iostream>
++
++using namespace std;
++using namespace mfem;
++
++KnotVector *UniformKnotVector(int order, int ncp)
++{
++   if (order>=ncp)
++   {
++      mfem_error("UniformKnotVector: ncp should be at least order + 1");
++   }
++   KnotVector *kv = new KnotVector(order, ncp);
++
++   for (int i = 0; i < order+1; i++)
++   {
++      (*kv)[i] = 0.0;
++   }
++   for (int i = order+1; i < ncp; i++)
++   {
++      (*kv)[i] = (i-order)/double(ncp-order);
++   }
++   for (int i = ncp ; i < ncp + order + 1; i++)
++   {
++      (*kv)[i] = 1.0;
++   }
++   return kv;
++}
++
++int main(int argc, char *argv[])
++{
++   // Parse command-line options.
++   OptionsParser args(argc, argv);
++
++   double l       = 1.0;
++   double a       = 0.1;
++   int ncp        = 9;
++   int order      = 2;
++   bool ifbspline = true;
++
++   args.AddOption(&l, "-l", "--box-side-length",
++                  "Height and width of the box");
++   args.AddOption(&a, "-a", "--sine-ampl",
++                  "Amplitude of the fitted sine function.");
++   args.AddOption(&ncp, "-n", "--ncp",
++                  "Number of control points used over four box sides.");
++   args.AddOption(&order, "-o", "--order",
++                  "Order of the NURBSPatch");
++   args.AddOption(&ifbspline, "-uw", "--unit-weight", "-nw",
++                  "--non-unit-weight",
++                  "Use a unit-weight for B-splines (default) or not: for general NURBS");
++
++   // Parse and print commandline options
++   args.Parse();
++   if (!args.Good())
++   {
++      args.PrintUsage(cout);
++      return 1;
++   }
++   args.PrintOptions(cout);
++
++   if (order < 2 && ifbspline == false)
++   {
++      mfem_error("For a non unity weight, the order should be at least 2.");
++   }
++
++   KnotVector *kv_o1 = UniformKnotVector(1, 2);
++   KnotVector *kv    = UniformKnotVector(order, ncp);
++
++   // 1. Create a box shaped NURBS patch
++   NURBSPatch patch(kv_o1, kv_o1, 3);
++
++   // Set weights
++   for (int j = 0; j < 2; j++)
++      for (int i = 0; i < 2; i++)
++      {
++         patch(i,j,2) = 1.0;
++      }
++
++   // Define patch corners which are box corners
++   patch(0,0,0) = -0.5*l;
++   patch(0,0,1) = -0.5*l;
++
++   patch(1,0,0) = 0.5*l;
++   patch(1,0,1) = -0.5*l;
++
++   patch(0,1,0) = -0.5*l;
++   patch(0,1,1) = 0.5*l;
++
++   patch(1,1,0) = 0.5*l;
++   patch(1,1,1) = 0.5*l;
++
++   // 2. Interpolation process
++   Array<Vector*> xy(2);
++   xy[0] = new Vector();
++   xy[1] = new Vector();
++   Vector xi_args, u_args;
++   Array<int> i_args;
++   xy[0]->SetSize(ncp); xy[1]->SetSize(ncp);
++
++   // Refine direction which has fitting
++   if (!ifbspline)
++   {
++      // We alter the weight for demonstration purposes to a random value. This
++      // is not necessary for general curve fitting.
++      patch.DegreeElevate(0, 1);
++      patch(1,0,2) = sqrt(2)/2;
++      patch.DegreeElevate(0, order-kv_o1->GetOrder()-1);
++   }
++   else
++   {
++      patch.DegreeElevate(0, order-kv_o1->GetOrder());
++   }
++   patch.KnotInsert(0, *kv);
++
++   // We locate the controlpoints at the location of the
++   // maxima of the knotvectors. This works very well
++   // for patches with unit weights.
++   kv->FindMaxima(i_args,xi_args, u_args);
++
++   for (int i = 0; i < ncp; i++)
++   {
++      (*xy[0])[i]  = u_args[i]*l;
++      (*xy[1])[i]  = a * sin((*xy[0])[i]/l*2*M_PI)-0.5*l;
++      (*xy[0])[i] -= 0.5*l;
++   }
++
++   kv->FindInterpolant(xy);
++
++   // Apply interpolation to patch
++   for (int i = 0; i < ncp; i++)
++   {
++      patch(i,0,0) = (*xy[0])[i];
++      patch(i,0,1) = (*xy[1])[i];
++   }
++
++   if (!ifbspline)
++   {
++      // Convert to homogeneous coordinates. FindInterpolant returns
++      // cartesian coordinates.
++      for (int i = 0; i < ncp; i++)
++      {
++         patch(i,0,0) *= patch(i,0,2);
++         patch(i,0,1) *= patch(i,0,2);
++      }
++   }
++
++   // Refinement in curve interpolation direction
++   patch.DegreeElevate(1, order-kv_o1->GetOrder());
++   patch.KnotInsert(1, *kv);
++
++   // 3. Open and write mesh output file
++   string mesh_file("sin-fit.mesh");
++   ofstream output(mesh_file.c_str());
++
++   output<<"MFEM NURBS mesh v1.0"<<endl;
++   output<< endl << "# Square nurbs mesh with a sine fitted at its bottom edge" <<
++         endl << endl;
++   output<< "dimension"<<endl;
++   output<< 2 <<endl;
++   output<< endl;
++
++   output<<"elements"<<endl;
++   output<<"1"<<endl;
++   output<<"1 3 0 1 2 3"<<endl;
++   output<<endl;
++
++   output<<"boundary"<<endl;
++   output<<"0"<<endl;
++   output<<endl;
++
++   output << "edges" <<endl;
++   output << "4" <<endl;
++   output << "0 0 1"<<endl;
++   output << "0 3 2"<<endl;
++   output << "1 0 3"<<endl;
++   output << "1 1 2"<<endl;
++   output<<endl;
++
++   output << "vertices" << endl;
++   output << 4 << endl;
++
++   output<<"patches"<<endl;
++   output<<endl;
++
++   output << "# Patch 1 " << endl;
++   patch.Print(output);
++   output.close();
++
++   // Print mesh info to screen
++   cout << "=========================================================="<< endl;
++   cout << " Attempting to read mesh: " <<mesh_file.c_str()<< endl ;
++   cout << "=========================================================="<< endl;
++   Mesh *mesh = new Mesh(mesh_file.c_str(), 1, 1);
++   mesh->PrintInfo();
++
++   // Print mesh to file for visualisation
++   VisItDataCollection dc = VisItDataCollection("mesh", mesh);
++   dc.SetPrefixPath("solution");
++   dc.SetCycle(0);
++   dc.SetTime(0.0);
++   dc.Save();
++
++   delete kv_o1;
++   delete kv;
++   delete mesh;
++
++   return 0;
++}
+\ No newline at end of file
+diff --git a/miniapps/tools/check-tmop-metric.cpp b/miniapps/tools/check-tmop-metric.cpp
+index 9c033ce0e..1c036fb28 100644
+--- a/miniapps/tools/check-tmop-metric.cpp
++++ b/miniapps/tools/check-tmop-metric.cpp
+@@ -60,6 +60,8 @@ int main(int argc, char *argv[])
+       case 77: metric = new TMOP_Metric_077; break;
+       case 80: metric = new TMOP_Metric_080(0.5); break;
+       case 85: metric = new TMOP_Metric_085; break;
++      case 90: metric = new TMOP_Metric_090; break;
++      case 94: metric = new TMOP_Metric_094; break;
+       case 98: metric = new TMOP_Metric_098; break;
+       // case 211: metric = new TMOP_Metric_211; break;
+       // case 252: metric = new TMOP_Metric_252(tauval); break;
+@@ -71,13 +73,15 @@ int main(int argc, char *argv[])
+       case 313: metric = new TMOP_Metric_313(tauval); break;
+       case 315: metric = new TMOP_Metric_315; break;
+       case 316: metric = new TMOP_Metric_316; break;
++      case 318: metric = new TMOP_Metric_318; break;
+       case 321: metric = new TMOP_Metric_321; break;
+       case 322: metric = new TMOP_Metric_322; break;
+       case 323: metric = new TMOP_Metric_323; break;
+-      case 328: metric = new TMOP_Metric_328(0.5); break;
++      case 328: metric = new TMOP_Metric_328; break;
+       case 332: metric = new TMOP_Metric_332(0.5); break;
+       case 333: metric = new TMOP_Metric_333(0.5); break;
+       case 334: metric = new TMOP_Metric_334(0.5); break;
++      case 338: metric = new TMOP_Metric_338; break;
+       case 347: metric = new TMOP_Metric_347(0.5); break;
+       // case 352: metric = new TMOP_Metric_352(tauval); break;
+       case 360: metric = new TMOP_Metric_360; break;
+diff --git a/miniapps/tools/tmop-metric-magnitude.cpp b/miniapps/tools/tmop-metric-magnitude.cpp
+index 5aafbcab5..284701c09 100644
+--- a/miniapps/tools/tmop-metric-magnitude.cpp
++++ b/miniapps/tools/tmop-metric-magnitude.cpp
+@@ -10,7 +10,8 @@
+ // CONTRIBUTING.md for details.
+ //
+ // Checks evaluation / 1st derivative / 2nd derivative for TMOP metrics. Serial.
+-//   ./tmop-metric-magnitude -mid 2 -p 2.0
++//   ./tmop-metric-magnitude -mid 7   -pv 2.0 -par 0.5 -ps 4.0
++//   ./tmop-metric-magnitude -mid 321 -pv 2.0 -par 0.5 -ps 4.0
+ //
+ 
+ #include "mfem.hpp"
+@@ -44,6 +45,9 @@ int main(int argc, char *argv[])
+    if (!args.Good()) { args.PrintUsage(cout); return 1; }
+    args.PrintOptions(cout);
+ 
++   MFEM_VERIFY(perturb_v > 0.0 && perturb_ar > 0.0 && perturb_s >= 1.0,
++               "Invalid input");
++
+    // Setup metric.
+    TMOP_QualityMetric *metric = NULL;
+    switch (metric_id)
+@@ -165,40 +169,38 @@ void Form2DJac(double perturb_v, double perturb_ar, double perturb_s,
+ void Form3DJac(double perturb_v, double perturb_ar, double perturb_s,
+                DenseMatrix &J)
+ {
+-   MFEM_ABORT("The 3D case is still not complete.");
+-
+    // Volume.
+    const double volume = 1.0 * perturb_v;
+ 
+    // Aspect Ratio - only in one direction, the others are uniform.
+    const double ar_1 = 1.0 * perturb_ar,
+-                ar_2 = 1.0 * perturb_ar;
++                ar_2 = 1.0,
++                ar_3 = 1.0;
+ 
+    // Skew - only in one direction, the others are pi/2.
+    const double skew_angle_12 = M_PI / 2.0 / perturb_s,
+-                skew_angle_13 = M_PI / 2.0 / perturb_s,
+-                skew_angle_23 = M_PI / 2.0 / perturb_s;
+-   const double sin3 = sin(skew_angle_12)*sin(skew_angle_13)*sin(skew_angle_23);
++                skew_angle_13 = M_PI / 2.0,
++                skew_angle_23 = M_PI / 2.0;
+ 
+    // Rotation - not done yet.
+ 
+    J.SetSize(3);
+    //
+-   J(0, 0) = ar_1;
+-   J(0, 1) = ar_2 * cos(skew_angle_12);
+-   J(0, 2) = cos(skew_angle_13) / (ar_1 * ar_2) *
+-             sqrt(sin3 / volume);
++   J(0, 0) = pow(ar_1, 1.0/3.0);
++   J(0, 1) = pow(ar_2, 1.0/3.0) * cos(skew_angle_12);
++   J(0, 2) = pow(ar_3, 1.0/3.0) * cos(skew_angle_13);
+    //
+    J(1, 0) = 0.0;
+-   J(1, 1) = ar_2 * sin(skew_angle_12);
+-   J(1, 2) = sin(skew_angle_13) * cos(skew_angle_23) / (ar_1 * ar_2) *
+-             sqrt(sin3 / volume);
++   J(1, 1) = pow(ar_2, 1.0/3.0) * sin(skew_angle_12);
++   J(1, 2) = pow(ar_3, 1.0/3.0) * sin(skew_angle_13) * cos(skew_angle_23);
+    //
+    J(2, 0) = 0.0;
+    J(2, 1) = 0.0;
+-   J(2, 2) = sin(skew_angle_13) * sin(skew_angle_23) / (ar_1 * ar_2) *
+-             sqrt(sin3/ volume);
++   J(2, 2) = pow(ar_3, 1.0/3.0) * sin(skew_angle_13) * sin(skew_angle_23);
+    //
+-   J *= sqrt(volume / sin3);
++
++   double sin3 = sin(skew_angle_12)*sin(skew_angle_13)*sin(skew_angle_23),
++          ar3  = pow(ar_1, 1.0/3.0) * pow(ar_2, 1.0/3.0) * pow(ar_3, 1.0/3.0);
++   J *= pow(volume / (sin3 * ar3), 1.0/3.0);
+ }
+ 
 diff --git a/tests/unit/mesh/test_ncmesh.cpp b/tests/unit/mesh/test_ncmesh.cpp
-index 7d4ac3fec..b3b084855 100644
+index 7d4ac3fec..24ca04437 100644
 --- a/tests/unit/mesh/test_ncmesh.cpp
 +++ b/tests/unit/mesh/test_ncmesh.cpp
-@@ -297,6 +297,213 @@ TEST_CASE("pNCMesh PA diagonal",  "[Parallel], [NCMesh]")
+@@ -297,6 +297,366 @@ TEST_CASE("pNCMesh PA diagonal",  "[Parallel], [NCMesh]")
  
  } // test case
  
++namespace
++{
++// Helper functions for testing with
++
++// Given a parallel and a serial mesh, perform an L2 projection and check the
++// solutions match exactly.
++void CheckL2Projection(std::function<double(const Vector&)> exact_soln,
++                       ParMesh& pmesh, Mesh& smesh, int order)
++{
++   MPI_Barrier(MPI_COMM_WORLD); // Get our ducks in a row.
++
++   REQUIRE(pmesh.GetGlobalNE() == smesh.GetNE());
++   REQUIRE(pmesh.Dimension() == smesh.Dimension());
++   REQUIRE(pmesh.SpaceDimension() == smesh.SpaceDimension());
++
++   // Make an H1 space, then a mass matrix operator and invert it.
++   // If all non-conformal constraints have been conveyed correctly, the
++   // resulting DOF should match exactly on the serial and the parallel
++   // solution.
++
++   H1_FECollection fec(order, smesh.Dimension());
++   ConstantCoefficient one(1.0);
++   FunctionCoefficient rhs_coef(exact_soln);
++
++   constexpr double linear_tol = 1e-16;
++
++   // serial solve
++   auto serror = [&]
++   {
++      FiniteElementSpace fes(&smesh, &fec);
++      // solution vectors
++      GridFunction x(&fes);
++      x = 0.0;
++
++      LinearForm b(&fes);
++      b.AddDomainIntegrator(new DomainLFIntegrator(rhs_coef));
++      b.Assemble();
++
++      BilinearForm a(&fes);
++      a.AddDomainIntegrator(new MassIntegrator(one));
++      a.Assemble();
++
++      SparseMatrix A;
++      Vector B, X;
++
++      Array<int> empty_tdof_list;
++      a.FormLinearSystem(empty_tdof_list, x, b, A, X, B);
++
++#ifndef MFEM_USE_SUITESPARSE
++      // 9. Define a simple symmetric Gauss-Seidel preconditioner and use it to
++      //    solve the system AX=B with PCG.
++      GSSmoother M(A);
++      PCG(A, M, B, X, -1, 500, linear_tol, 0.0);
++#else
++      // 9. If MFEM was compiled with SuiteSparse, use UMFPACK to solve the system.
++      UMFPackSolver umf_solver;
++      umf_solver.Control[UMFPACK_ORDERING] = UMFPACK_ORDERING_METIS;
++      umf_solver.SetOperator(A);
++      umf_solver.Mult(B, X);
++#endif
++
++      a.RecoverFEMSolution(X, b, x);
++      return x.ComputeL2Error(rhs_coef);
++   }();
++
++   auto perror = [&]
++   {
++      // parallel solve
++      ParFiniteElementSpace fes(&pmesh, &fec);
++      ParLinearForm b(&fes);
++
++      ParGridFunction x(&fes);
++      x = 0.0;
++
++      b.AddDomainIntegrator(new DomainLFIntegrator(rhs_coef));
++      b.Assemble();
++
++      ParBilinearForm a(&fes);
++      a.AddDomainIntegrator(new MassIntegrator(one));
++      a.Assemble();
++
++      HypreParMatrix A;
++      Vector B, X;
++      Array<int> empty_tdof_list;
++      a.FormLinearSystem(empty_tdof_list, x, b, A, X, B);
++
++      HypreBoomerAMG amg(A);
++      HyprePCG pcg(A);
++      amg.SetPrintLevel(-1);
++      pcg.SetTol(linear_tol);
++      pcg.SetMaxIter(500);
++      pcg.SetPrintLevel(-1);
++      pcg.SetPreconditioner(amg);
++      pcg.Mult(B, X);
++      a.RecoverFEMSolution(X, b, x);
++      return x.ComputeL2Error(rhs_coef);
++   }();
++
++   constexpr double test_tol = 1e-8;
++   CHECK(std::abs(serror - perror) < test_tol);
++   MPI_Barrier(MPI_COMM_WORLD); // Get our ducks in a row.
++};
++
++}
++
++
 +TEST_CASE("FaceEdgeConstraint",  "[Parallel], [NCMesh]")
 +{
 +   constexpr int refining_rank = 0;
@@ -874,104 +4282,6 @@ index 7d4ac3fec..b3b084855 100644
 +      d[0] = -0.5; d[1] = -1; d[2] = -2; // arbitrary
 +      d -= x;
 +      return std::sin(d * d);
-+   };
-+
-+   // Given a parallel and a serial mesh, perform an L2 projection and check the
-+   // solutions match exactly.
-+   auto check_l2_projection = [&exact_soln](ParMesh& pmesh, Mesh& smesh, int order)
-+   {
-+      MPI_Barrier(MPI_COMM_WORLD); // Get our ducks in a row.
-+
-+      REQUIRE(pmesh.GetGlobalNE() == smesh.GetNE());
-+      REQUIRE(pmesh.Dimension() == smesh.Dimension());
-+      REQUIRE(pmesh.SpaceDimension() == smesh.SpaceDimension());
-+
-+      // Make an H1 space, then a mass matrix operator and invert it.
-+      // If all non-conformal constraints have been conveyed correctly, the
-+      // resulting DOF should match exactly on the serial and the parallel
-+      // solution.
-+
-+      H1_FECollection fec(order, smesh.Dimension());
-+      ConstantCoefficient one(1.0);
-+      FunctionCoefficient rhs_coef(exact_soln);
-+
-+      constexpr double linear_tol = 1e-16;
-+
-+      // serial solve
-+      auto serror = [&]
-+      {
-+         FiniteElementSpace fes(&smesh, &fec);
-+         // solution vectors
-+         GridFunction x(&fes);
-+         x = 0.0;
-+
-+         LinearForm b(&fes);
-+         b.AddDomainIntegrator(new DomainLFIntegrator(rhs_coef));
-+         b.Assemble();
-+
-+         BilinearForm a(&fes);
-+         a.AddDomainIntegrator(new MassIntegrator(one));
-+         a.Assemble();
-+
-+         SparseMatrix A;
-+         Vector B, X;
-+
-+         Array<int> empty_tdof_list;
-+         a.FormLinearSystem(empty_tdof_list, x, b, A, X, B);
-+
-+#ifndef MFEM_USE_SUITESPARSE
-+         // 9. Define a simple symmetric Gauss-Seidel preconditioner and use it to
-+         //    solve the system AX=B with PCG.
-+         GSSmoother M(A);
-+         PCG(A, M, B, X, -1, 500, linear_tol, 0.0);
-+#else
-+         // 9. If MFEM was compiled with SuiteSparse, use UMFPACK to solve the system.
-+         UMFPackSolver umf_solver;
-+         umf_solver.Control[UMFPACK_ORDERING] = UMFPACK_ORDERING_METIS;
-+         umf_solver.SetOperator(A);
-+         umf_solver.Mult(B, X);
-+#endif
-+
-+         a.RecoverFEMSolution(X, b, x);
-+         return x.ComputeL2Error(rhs_coef);
-+      }();
-+
-+      auto perror = [&]
-+      {
-+         // parallel solve
-+         ParFiniteElementSpace fes(&pmesh, &fec);
-+         ParLinearForm b(&fes);
-+
-+         ParGridFunction x(&fes);
-+         x = 0.0;
-+
-+         b.AddDomainIntegrator(new DomainLFIntegrator(rhs_coef));
-+         b.Assemble();
-+
-+         ParBilinearForm a(&fes);
-+         a.AddDomainIntegrator(new MassIntegrator(one));
-+         a.Assemble();
-+
-+         HypreParMatrix A;
-+         Vector B, X;
-+         Array<int> empty_tdof_list;
-+         a.FormLinearSystem(empty_tdof_list, x, b, A, X, B);
-+
-+         HypreBoomerAMG amg(A);
-+         HyprePCG pcg(A);
-+         amg.SetPrintLevel(-1);
-+         pcg.SetTol(linear_tol);
-+         pcg.SetMaxIter(500);
-+         pcg.SetPrintLevel(-1);
-+         pcg.SetPreconditioner(amg);
-+         pcg.Mult(B, X);
-+         a.RecoverFEMSolution(X, b, x);
-+         return x.ComputeL2Error(rhs_coef);
-+      }();
-+
-+      constexpr double test_tol = 1e-9;
-+      CHECK(std::abs(serror - perror) < test_tol);
-+      MPI_Barrier(MPI_COMM_WORLD); // Get our ducks in a row.
 +   };
 +
 +   REQUIRE(smesh.GetNE() == 2);
@@ -1048,17 +4358,217 @@ index 7d4ac3fec..b3b084855 100644
 +      sttmp.GeneralRefinement(serial_refines);
 +      REQUIRE(sttmp.GetNE() == 1 + 8 - 1 + 8 - 1 + 8); // 23 elements
 +
++      // Loop over interior faces, fill and check face transform on the serial.
++      for (int iface = 0; iface < sttmp.GetNumFaces(); ++iface)
++      {
++         const auto face_transform = sttmp.GetFaceElementTransformations(iface);
++
++         CHECK(std::abs(face_transform->CheckConsistency(0)) < 1e-12);
++      }
++
++      for (int iface = 0; iface < ttmp.GetNumFacesWithGhost(); ++iface)
++      {
++         const auto face_transform = ttmp.GetFaceElementTransformations(iface);
++
++         CHECK(std::abs(face_transform->CheckConsistency(0)) < 1e-12);
++      }
++
 +      // Use P4 to ensure there's a few fully interior DOF.
-+      check_l2_projection(ttmp, sttmp, 4);
++      CheckL2Projection(exact_soln, ttmp, sttmp, 4);
 +
 +      ttmp.ExchangeFaceNbrData(); // This causes issues.
 +      ttmp.Rebalance();
 +
-+      check_l2_projection(ttmp, sttmp, 4);
++      CheckL2Projection(exact_soln, ttmp, sttmp, 4);
 +   }
 +} // test case
 +
++TEST_CASE("GetVectorValueInFaceNeighborElement", "[Parallel], [NCMesh]")
++{
++   // The aim of this test is to verify the correct behaviour of the
++   // GetVectorValue method when called on face neighbor elements in a non
++   // conforming mesh.
++   auto smesh = Mesh("../../../data/beam-tet.mesh");
++
++   auto vector_exact_soln = [](const Vector& x, Vector& v)
++   {
++      Vector d(3);
++      d[0] = -0.5; d[1] = -1; d[2] = -2; // arbitrary
++      v = (d -= x);
++   };
++
++   smesh.Finalize();
++   smesh.EnsureNCMesh(true); // uncomment this to trigger the failure
++
++   for (int nc_level : {0,1,2,3}) // depth of refinement on boundary faces
++   {
++      for (int skip : {1,2}) // refine every "skip" boundary face element
++      {
++         for (bool use_ND : {false, true}) // use ND or RT elements
++         {
++            auto pmesh = ParMesh(MPI_COMM_WORLD, smesh);
++
++            // Apply refinement on face neighbors to achieve a given nc level mismatch.
++            for (int i = 0; i < nc_level; ++i)
++            {
++               // To refine the face neighbors, need to know where they are.
++               pmesh.ExchangeFaceNbrData();
++               Array<int> elem_to_refine;
++               // Refine only on odd ranks.
++               if ((Mpi::WorldRank() + 1) % 2 == 0)
++               {
++                  // Refine a subset of all shared faces. Using a subset helps to
++                  // mix in conformal faces with nonconformal faces.
++                  for (int n = 0; n < pmesh.GetNSharedFaces(); ++n)
++                  {
++                     if (n % skip != 0) { continue; }
++                     const int local_face = pmesh.GetSharedFace(n);
++                     const auto &face_info = pmesh.GetFaceInformation(local_face);
++                     REQUIRE(face_info.IsShared());
++                     REQUIRE(face_info.element[1].location == Mesh::ElementLocation::FaceNbr);
++                     elem_to_refine.Append(face_info.element[0].index);
++                  }
++               }
++               pmesh.GeneralRefinement(elem_to_refine);
++            }
++
++
++            // Do not rebalance again! The test is also checking for nc refinements
++            // along the processor boundary.
++
++            // Create a grid function of the mesh coordinates
++            pmesh.ExchangeFaceNbrData();
++            pmesh.EnsureNodes();
++            REQUIRE(pmesh.OwnsNodes());
++            GridFunction * const coords = pmesh.GetNodes();
++            dynamic_cast<ParGridFunction *>(pmesh.GetNodes())->ExchangeFaceNbrData();
++
++            // Project the linear function onto the mesh. Quadratic ND tetrahedral
++            // elements are the first to require face orientations.
++            const int order = 2, dim = 3;
++            std::unique_ptr<FiniteElementCollection> fec;
++            if (use_ND)
++            {
++               fec = std::unique_ptr<ND_FECollection>(new ND_FECollection(order, dim));
++            }
++            else
++            {
++               fec = std::unique_ptr<RT_FECollection>(new RT_FECollection(order, dim));
++            }
++            ParFiniteElementSpace pnd_fes(&pmesh, fec.get());
++
++            ParGridFunction psol(&pnd_fes);
++
++            VectorFunctionCoefficient func(3, vector_exact_soln);
++            psol.ProjectCoefficient(func);
++            psol.ExchangeFaceNbrData();
++
++            mfem::Vector value(3), exact(3), position(3);
++            const IntegrationRule &ir = mfem::IntRules.Get(Geometry::Type::TETRAHEDRON,
++                                                           order + 1);
++
++            // Check that non-ghost elements match up on the serial and parallel spaces.
++            for (int n = 0; n < pmesh.GetNE(); ++n)
++            {
++               constexpr double tol = 1e-12;
++               for (const auto &ip : ir)
++               {
++                  coords->GetVectorValue(n, ip, position);
++                  psol.GetVectorValue(n, ip, value);
++
++                  vector_exact_soln(position, exact);
++
++                  REQUIRE(value.Size() == exact.Size());
++                  CHECK((value -= exact).Normlinf() < tol);
++               }
++            }
++
++            // Loop over face neighbor elements and check the vector values match in the
++            // face neighbor space.
++            const IntegrationRule &fir = mfem::IntRules.Get(Geometry::TRIANGLE, order + 1);
++            IntegrationRule eir(fir.GetNPoints());
++            for (int n = 0; n < pmesh.GetNSharedFaces(); ++n)
++            {
++               const int local_face = pmesh.GetSharedFace(n);
++               const auto &face_info = pmesh.GetFaceInformation(local_face);
++               REQUIRE(face_info.IsShared());
++               REQUIRE(face_info.element[1].location == Mesh::ElementLocation::FaceNbr);
++
++               auto &T = *pmesh.GetFaceNbrElementTransformation(face_info.element[1].index);
++
++               constexpr double tol = 1e-12;
++               for (const auto &ip : ir)
++               {
++                  T.SetIntPoint(&ip);
++                  coords->GetVectorValue(T, ip, position);
++                  psol.GetVectorValue(T, ip, value);
++
++                  vector_exact_soln(position, exact);
++
++                  REQUIRE(value.Size() == exact.Size());
++                  CHECK((value -= exact).Normlinf() < tol);
++               }
++            }
++         }
++      }
++   }
++}
 +
  #endif // MFEM_USE_MPI
  
  } // namespace mfem
+diff --git a/tests/unit/miniapps/test_tmop_pa.cpp b/tests/unit/miniapps/test_tmop_pa.cpp
+index d5733c000..b0508821e 100644
+--- a/tests/unit/miniapps/test_tmop_pa.cpp
++++ b/tests/unit/miniapps/test_tmop_pa.cpp
+@@ -187,11 +187,14 @@ int tmop(int id, Req &res, int argc, char *argv[])
+       case   7: metric = new TMOP_Metric_007; break;
+       case  77: metric = new TMOP_Metric_077; break;
+       case  80: metric = new TMOP_Metric_080(0.5); break;
++      case  94: metric = new TMOP_Metric_094; break;
+       case 302: metric = new TMOP_Metric_302; break;
+       case 303: metric = new TMOP_Metric_303; break;
+       case 315: metric = new TMOP_Metric_315; break;
++      case 318: metric = new TMOP_Metric_318; break;
+       case 321: metric = new TMOP_Metric_321; break;
+       case 332: metric = new TMOP_Metric_332(0.5); break;
++      case 338: metric = new TMOP_Metric_338; break;
+       default:
+       {
+          if (id == 0) { cout << "Unknown metric_id: " << metric_id << endl; }
+@@ -230,16 +233,7 @@ int tmop(int id, Req &res, int argc, char *argv[])
+          target_t = TargetConstructor::IDEAL_SHAPE_GIVEN_SIZE;
+          DiscreteAdaptTC *tc = new DiscreteAdaptTC(target_t);
+          tc->SetAdaptivityEvaluator(new AdvectorCG(al));
+-         if (dim == 2)
+-         {
+-            FunctionCoefficient ind_coeff(discrete_size_2d);
+-            size.ProjectCoefficient(ind_coeff);
+-         }
+-         else if (dim == 3)
+-         {
+-            FunctionCoefficient ind_coeff(discrete_size_3d);
+-            size.ProjectCoefficient(ind_coeff);
+-         }
++         ConstructSizeGF(size);
+          tc->SetDiscreteTargetSize(size);
+          target_c = tc;
+          break;
+@@ -796,7 +790,7 @@ static void tmop_tests(int id = 0, bool all = false)
+           NORMALIZATION(true).
+           POR({1,2}).QOR({4,6}).
+           LINEAR_ITERATIONS(150).
+-          TID({5}).MID({80}).LS({3})).Run(id,all);
++          TID({5}).MID({80,94}).LS({3})).Run(id,all);
+ 
+    Launch(Launch::Args("Blade").
+           MESH("../../miniapps/meshing/blade.mesh").
+@@ -836,7 +830,7 @@ static void tmop_tests(int id = 0, bool all = false)
+           MESH("../../miniapps/meshing/cube.mesh").
+           NORMALIZATION(true).
+           POR({1,2}).QOR({4,2}).
+-          TID({5}).MID({332})).Run(id,all);
++          TID({5}).MID({332,338})).Run(id,all);
+ 
+    // Note: order 1 has no interior nodes, so all residuals are zero and the
+    // Newton iteration exits immediately.
