@@ -5,15 +5,15 @@
 
 #include <complex>
 #include <mfem.hpp>
-#include "fem/lumpedportoperator.hpp"
-#include "fem/postoperator.hpp"
-#include "fem/romoperator.hpp"
-#include "fem/spaceoperator.hpp"
-#include "fem/surfacecurrentoperator.hpp"
-#include "fem/waveportoperator.hpp"
 #include "linalg/ksp.hpp"
 #include "linalg/pc.hpp"
 #include "linalg/petsc.hpp"
+#include "models/lumpedportoperator.hpp"
+#include "models/postoperator.hpp"
+#include "models/romoperator.hpp"
+#include "models/spaceoperator.hpp"
+#include "models/surfacecurrentoperator.hpp"
+#include "models/waveportoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
 #include "utils/prettyprint.hpp"

@@ -4,10 +4,10 @@
 #include "electrostaticsolver.hpp"
 
 #include <mfem.hpp>
-#include "fem/laplaceoperator.hpp"
-#include "fem/postoperator.hpp"
 #include "linalg/gmg.hpp"
 #include "linalg/pc.hpp"
+#include "models/laplaceoperator.hpp"
+#include "models/postoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
 #include "utils/timer.hpp"

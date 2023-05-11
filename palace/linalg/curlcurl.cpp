@@ -3,10 +3,10 @@
 
 #include "curlcurl.hpp"
 
-#include "fem/materialoperator.hpp"
+#include "fem/coefficient.hpp"
 #include "linalg/ams.hpp"
 #include "linalg/gmg.hpp"
-#include "utils/mfemcoefficients.hpp"
+#include "models/materialoperator.hpp"
 
 namespace palace
 {

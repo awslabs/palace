@@ -11,10 +11,10 @@
 #include <petsc.h>
 #include <slepc.h>
 #include <slepcblaslapack.h>
-#include "fem/spaceoperator.hpp"
 #include "linalg/divfree.hpp"
 #include "linalg/ksp.hpp"
 #include "linalg/pc.hpp"
+#include "models/spaceoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
 
