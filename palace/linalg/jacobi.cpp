@@ -8,13 +8,16 @@
 namespace palace
 {
 
-JacobiSmoother::JacobiSmoother(const mfem::Vector &diag) : mfem::Solver(diag.Size())
+void JacobiSmoother::SetOperator(const Operator &op)
 {
-  dinv = diag;
+  height = op.Height();
+  width = op.Width();
+  dinv.SetSize(height);
+  op.AssembleDiagonal(dinv);
   // dinv.Reciprocal();    //XX TODO NEED MFEM PATCH
 }
 
-void JacobiSmoother::Mult(const mfem::Vector &x, mfem::Vector &y) const
+void JacobiSmoother::Mult(const Vector &x, Vector &y) const
 {
   MFEM_ASSERT(!iterative_mode,
               "JacobiSmoother is not implemented for iterative_mode = true!");

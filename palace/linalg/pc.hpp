@@ -14,6 +14,9 @@ namespace palace
 
 class IoData;
 
+// XX TODO REFACTOR INTO KSP.HPP/CPP FOR REAL-VALUED LINEAR SOLVER! KspSolver,
+// ComplexKspSolver...
+
 // Global method for preconditioner configuration and construction.
 std::unique_ptr<mfem::Solver>
 ConfigurePreconditioner(const IoData &iodata, const mfem::Array<int> &dbc_marker,
@@ -49,12 +52,10 @@ public:
     }
   }
 
-  // Sets the matrix from which to contruct a preconditioner.
   void SetOperator(const mfem::Operator &op);
   void SetOperator(const std::vector<std::unique_ptr<mfem::Operator>> &ops,
                    const std::vector<std::unique_ptr<mfem::Operator>> *aux_ops = nullptr);
 
-  // Application of the preconditioner.
   void Mult(const petsc::PetscParVector &x, petsc::PetscParVector &y) const;
 
   // Wrapper functions for PETSc PCSHELL.

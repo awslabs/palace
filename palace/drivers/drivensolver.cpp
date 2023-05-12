@@ -144,7 +144,7 @@ void DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator &postop, in
   //                      &spaceop.GetH1Spaces());
   // pc.SetOperator(P, &AuxP);
 
-  KspSolver ksp(A->GetComm(), iodata, "ksp_");
+  // KspSolver ksp(A->GetComm(), iodata, "ksp_");
   // ksp.SetPreconditioner(pc);   //XX TODO!
   // ksp.SetOperator(*A);
 
@@ -210,7 +210,7 @@ void DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator &postop, in
     step++;
     omega += delta_omega;
   }
-  SaveMetadata(ksp.GetTotalNumMult(), ksp.GetTotalNumIter());
+  // SaveMetadata(ksp.GetTotalNumMult(), ksp.GetTotalNumIter());  //XX TODO
 }
 
 void DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator &postop, int nstep,

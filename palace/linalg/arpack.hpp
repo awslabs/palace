@@ -4,6 +4,8 @@
 #ifndef PALACE_LINALG_ARPACK_HPP
 #define PALACE_LINALG_ARPACK_HPP
 
+#if 0  // XX TODO DISABLE FEAST FOR NOW
+
 #if defined(PALACE_WITH_ARPACK)
 
 #include "linalg/petsc.hpp"
@@ -265,6 +267,8 @@ public:
 }  // namespace arpack
 
 }  // namespace palace
+
+#endif
 
 #endif
 

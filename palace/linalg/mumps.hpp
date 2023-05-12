@@ -8,6 +8,7 @@
 
 #if defined(MFEM_USE_MUMPS)
 
+#include "linalg/operator.hpp"
 #include "utils/iodata.hpp"
 
 namespace palace
@@ -37,6 +38,8 @@ public:
                   print)
   {
   }
+
+  void SetOperator(const Operator &op) override;
 };
 
 }  // namespace palace

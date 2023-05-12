@@ -9,6 +9,8 @@
 #if defined(MFEM_USE_SUPERLU)
 
 #include <memory>
+#include "linalg/operator.hpp"
+#include "linalg/vector.hpp"
 #include "utils/iodata.hpp"
 
 namespace palace
@@ -33,22 +35,20 @@ public:
   {
   }
 
-  // Sets matrix associated with the SuperLU solver.
-  void SetOperator(const mfem::Operator &op) override;
+  void SetOperator(const Operator &op) override;
 
-  // Application of the solver.
-  void Mult(const mfem::Vector &x, mfem::Vector &y) const override { solver.Mult(x, y); }
-  void ArrayMult(const mfem::Array<const mfem::Vector *> &X,
-                 mfem::Array<mfem::Vector *> &Y) const override
+  void Mult(const Vector &x, Vector &y) const override { solver.Mult(x, y); }
+  void ArrayMult(const mfem::Array<const Vector *> &X,
+                 mfem::Array<Vector *> &Y) const override
   {
     solver.ArrayMult(X, Y);
   }
-  void MultTranspose(const mfem::Vector &x, mfem::Vector &y) const override
+  void MultTranspose(const Vector &x, Vector &y) const override
   {
     solver.MultTranspose(x, y);
   }
-  void ArrayMultTranspose(const mfem::Array<const mfem::Vector *> &X,
-                          mfem::Array<mfem::Vector *> &Y) const override
+  void ArrayMultTranspose(const mfem::Array<const Vector *> &X,
+                          mfem::Array<Vector *> &Y) const override
   {
     solver.ArrayMultTranspose(X, Y);
   }

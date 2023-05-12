@@ -237,7 +237,7 @@ SpaceOperator::GetSystemMatrix(SpaceOperator::OperatorType type,
   {
     return {};
   }
-  auto a = std::make_unique<mfem::BilinearForm>(&GetNDSpace());
+  auto a = std::make_unique<mfem::SymmetricBilinearForm>(&GetNDSpace());
   AddIntegrators(*a, df, f, dfb, fb);
   a->SetAssemblyLevel(assembly_level);
   a->Assemble(skip_zeros);
@@ -288,11 +288,11 @@ SpaceOperator::GetComplexSystemMatrix(SpaceOperator::OperatorType type, double o
       break;
   }
   bool has_real = false, has_imag = false;
-  std::unique_ptr<mfem::BilinearForm> ar, ai;
+  std::unique_ptr<mfem::SymmetricBilinearForm> ar, ai;
   if (!dfr.empty() || !fr.empty() || !dfbr.empty() || !fbr.empty())
   {
     has_real = true;
-    ar = std::make_unique<mfem::BilinearForm>(&GetNDSpace());
+    ar = std::make_unique<mfem::SymmetricBilinearForm>(&GetNDSpace());
     AddIntegrators(*ar, dfr, fr, dfbr, fbr);
     ar->SetAssemblyLevel(assembly_level);
     ar->Assemble(skip_zeros);
@@ -301,7 +301,7 @@ SpaceOperator::GetComplexSystemMatrix(SpaceOperator::OperatorType type, double o
   if (!dfi.empty() || !fi.empty() || !dfbi.empty() || !fbi.empty())
   {
     has_imag = true;
-    ai = std::make_unique<mfem::BilinearForm>(&GetNDSpace());
+    ai = std::make_unique<mfem::SymmetricBilinearForm>(&GetNDSpace());
     AddIntegrators(*ai, dfi, fi, dfbi, fbi);
     ai->SetAssemblyLevel(assembly_level);
     ai->Assemble(skip_zeros);
@@ -344,15 +344,15 @@ std::unique_ptr<ParOperator> SpaceOperator::GetSystemMatrix(double a0, double a1
   auto sum = std::make_unique<SumOperator>(height, width);
   if (K && a0 != 0.0)
   {
-    sum->AddOperator(K->GetOperator(), a0);
+    sum->AddOperator(K->LocalOperator(), a0);
   }
   if (C && a1 != 0.0)
   {
-    sum->AddOperator(C->GetOperator(), a1);
+    sum->AddOperator(C->LocalOperator(), a1);
   }
   if (M && a2 != 0.0)
   {
-    sum->AddOperator(M->GetOperator(), a2);
+    sum->AddOperator(M->LocalOperator(), a2);
   }
   auto A = std::make_unique<ParOperator>(std::move(sum), GetNDSpace(), GetNDSpace());
   A->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), Operator::DiagonalPolicy::DIAG_ONE);
@@ -390,19 +390,19 @@ std::unique_ptr<ComplexParOperator> SpaceOperator::GetComplexSystemMatrix(
   auto sum = std::make_unique<ComplexSumOperator>(height, width);
   if (K && a0 != 0.0)
   {
-    sum->AddOperator(K->GetOperator(), a0);
+    sum->AddOperator(K->LocalOperator(), a0);
   }
   if (C && a1 != 0.0)
   {
-    sum->AddOperator(C->GetOperator(), a1);
+    sum->AddOperator(C->LocalOperator(), a1);
   }
   if (M && a2 != 0.0)
   {
-    sum->AddOperator(M->GetOperator(), a2);
+    sum->AddOperator(M->LocalOperator(), a2);
   }
   if (A2)
   {
-    sum->AddOperator(A2->GetOperator(), 1.0);
+    sum->AddOperator(A2->LocalOperator(), 1.0);
   }
   auto A = std::make_unique<ComplexParOperator>(std::move(sum), GetNDSpace(), GetNDSpace());
   A->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), Operator::DiagonalPolicy::DIAG_ONE);
@@ -437,7 +437,7 @@ void SpaceOperator::GetPreconditionerMatrix(double a0, double a1, double a2, dou
       AddRealMassCoefficients<MaterialPropertyType::PERMITTIVITY_ABS>(
           pc_shifted ? std::abs(a2) : a2, f, fb);
       AddExtraSystemBdrCoefficients(a3, dfb, dfb, fb, fb);
-      auto b = std::make_unique<mfem::BilinearForm>(&fespace_l);
+      auto b = std::make_unique<mfem::SymmetricBilinearForm>(&fespace_l);
       if (s == 0)
       {
         AddIntegrators(*b, df, f, dfb, fb);

@@ -5,6 +5,8 @@
 #define PALACE_LINALG_JACOBI_SMOOTHER_HPP
 
 #include <mfem.hpp>
+#include "linalg/operator.hpp"
+#include "linalg/vector.hpp"
 
 namespace palace
 {
@@ -18,16 +20,16 @@ class JacobiSmoother : public mfem::Solver
 {
 private:
   // Inverse diagonal scaling of the operator.
-  mfem::Vector dinv;
+  Vector dinv;
 
 public:
-  JacobiSmoother(const mfem::Vector &diag);
+  JacobiSmoother() : mfem::Solver() {}
 
-  void SetOperator(const mfem::Operator &op) override {}
+  void SetOperator(const Operator &op) override;
 
-  void Mult(const mfem::Vector &x, mfem::Vector &y) const override;
+  void Mult(const Vector &x, Vector &y) const override;
 
-  void MultTranspose(const mfem::Vector &x, mfem::Vector &y) const override { Mult(x, y); }
+  void MultTranspose(const Vector &x, Vector &y) const override { Mult(x, y); }
 };
 
 }  // namespace palace

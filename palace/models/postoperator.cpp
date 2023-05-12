@@ -278,36 +278,6 @@ void PostOperator::InitializeDataCollection(const IoData &iodata)
   }
 }
 
-// //XX TODO REMOVE THESE
-// void PostOperator::GetBField(std::complex<double> omega,
-//                              const petsc::PetscParMatrix &NegCurl,
-//                              const petsc::PetscParVector &e, petsc::PetscParVector &b)
-// {
-//   // Compute B = -1/(iω) ∇ x E on the true dofs.
-//   MFEM_VERIFY(e.GetSize() == NegCurl.Width() && b.GetSize() == NegCurl.Height(),
-//               "Size mismatch error computing B-field in PostOperator!");
-//   NegCurl.Mult(e, b);
-//   b.Scale(1.0 / (1i * omega));
-// }
-
-// void PostOperator::GetBField(const mfem::Operator &Curl, const mfem::Vector &a,
-//                              mfem::Vector &b)
-// {
-//   // Compute B = ∇ x A on the true dofs.
-//   MFEM_VERIFY(a.Size() == Curl.Width() && b.Size() == Curl.Height(),
-//               "Size mismatch error computing B-field in PostOperator!");
-//   Curl.Mult(a, b);
-// }
-
-// void PostOperator::GetEField(const mfem::Operator &NegGrad, const mfem::Vector &v,
-//                              mfem::Vector &e)
-// {
-//   // Compute E = -∇V on the true dofs.
-//   MFEM_VERIFY(v.Size() == NegGrad.Width() && e.Size() == NegGrad.Height(),
-//               "Size mismatch error computing E-field in PostOperator!");
-//   NegGrad.Mult(v, e);
-// }
-
 void PostOperator::SetEGridFunction(const petsc::PetscParVector &e)
 {
   MFEM_VERIFY(

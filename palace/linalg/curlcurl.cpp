@@ -58,15 +58,19 @@ CurlCurlMassSolver::CurlCurlMassSolver(const MaterialOperator &mat_op,
     }
   }
 
-  // The system matrix for the projection is real and SPD. For the coarse-level AMG solve,
-  // we don't use an exact solve on the coarsest level.
-  auto ams = std::make_unique<HypreAmsSolver>(nd_fespaces.GetFESpaceAtLevel(0),
-                                              &h1_fespaces.GetFESpaceAtLevel(0), 1, 1, 1,
-                                              false, false, 0);
-  auto gmg = std::make_unique<GeometricMultigridSolver>(std::move(ams), dbc_marker,
-                                                        nd_fespaces, &h1_fespaces, 1, 1, 2);
-  gmg->SetOperator(A, &AuxA);
-  pc = std::move(gmg);
+  // XX TODO VISIT
+
+  // // The system matrix for the projection is real and SPD. For the coarse-level AMG
+  // solve,
+  // // we don't use an exact solve on the coarsest level.
+  // auto ams = std::make_unique<HypreAmsSolver>(nd_fespaces.GetFESpaceAtLevel(0),
+  //                                             &h1_fespaces.GetFESpaceAtLevel(0), 1, 1, 1,
+  //                                             false, false, 0);
+  // auto gmg = std::make_unique<GeometricMultigridSolver>(std::move(ams), dbc_marker,
+  //                                                       nd_fespaces, &h1_fespaces, 1, 1,
+  //                                                       2);
+  // gmg->SetOperator(A, &AuxA);
+  // pc = std::move(gmg);
 
   ksp = std::make_unique<mfem::CGSolver>(nd_fespaces.GetFinestFESpace().GetComm());
   ksp->SetRelTol(tol);

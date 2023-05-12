@@ -5,7 +5,6 @@
 
 #if defined(MFEM_USE_SUPERLU)
 
-#include "linalg/petsc.hpp"
 #include "utils/communication.hpp"
 
 namespace palace
@@ -81,7 +80,9 @@ void SuperLUSolver::SetOperator(const mfem::Operator &op)
   {
     solver.SetFact(mfem::superlu::SamePattern_SameRowPerm);
   }
-  A = std::make_unique<mfem::SuperLURowLocMatrix>(op);
+  auto *PtAP = const_cast<ParOperator *>(dynamic_cast<const ParOperator *>(&op));
+  MFEM_VERIFY(PtAP, "SuperLUSolver requires a ParOperator operator!");
+  A = std::make_unique<mfem::SuperLURowLocMatrix>(PtAP->ParallelAssemble());
 
   // Set up base class.
   solver.SetOperator(*A);

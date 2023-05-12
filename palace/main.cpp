@@ -133,9 +133,9 @@ int main(int argc, char *argv[])
   // Initialize Hypre and PETSc, and optionally SLEPc.
   mfem::Hypre::Init();
   petsc::Initialize(argc, argv, nullptr, nullptr);
-#if defined(PALACE_WITH_SLEPC)
-  slepc::Initialize();
-#endif
+  // #if defined(PALACE_WITH_SLEPC)   //XX TODO WORKING...
+  //   slepc::Initialize();
+  // #endif
   if (PETSC_COMM_WORLD != world_comm)
   {
     Mpi::Print(world_comm, "Error: Problem during MPI initialization!\n\n");
@@ -187,9 +187,9 @@ int main(int argc, char *argv[])
   Mpi::Print(world_comm, "\n");
 
   // Finalize PETSc.
-#if defined(PALACE_WITH_SLEPC)
-  slepc::Finalize();
-#endif
+  // #if defined(PALACE_WITH_SLEPC)   //XX TODO WORKING...
+  //   slepc::Finalize();
+  // #endif
   petsc::Finalize();
 
   return 0;

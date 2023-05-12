@@ -35,10 +35,8 @@ public:
                      mfem::ParFiniteElementSpaceHierarchy &h1_fespaces, double tol,
                      int max_it, int print);
 
-  // Operator is set in constructor.
   void SetOperator(const mfem::Operator &op) override {}
 
-  // Application of the solver.
   void Mult(const mfem::Vector &x, mfem::Vector &y) const override { ksp->Mult(x, y); }
   void Mult(const petsc::PetscParVector &x, petsc::PetscParVector &y) const
   {

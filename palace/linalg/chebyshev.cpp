@@ -5,102 +5,35 @@
 
 #include <vector>
 #include <mfem/general/forall.hpp>
-#include "linalg/operator.hpp"
 
 namespace palace
 {
 
-// XX TODO REPLACE CHEBYSHEV ARRAYMULT WITH MULT/MULT TRANSPOSE (NO NEED FOR ARRAY MULT...)
-
-// namespace
-// {
-
-// using mfem::ForallWrap;  // XX TODO NEEDED?
-
-// class SymmetricScaledOperator : public mfem::Operator
-// {
-// private:
-//   const mfem::Operator &A;
-//   const mfem::Vector &d;
-//   mutable mfem::Vector z;
-
-// public:
-//   SymmetricScaledOperator(const mfem::Operator &op, const mfem::Vector &v)
-//     : mfem::Operator(op.Height()), A(op), d(v), z(v.Size())
-//   {
-//   }
-
-//   void Mult(const mfem::Vector &x, mfem::Vector &y) const override
-//   {
-//     A.Mult(x, z);
-//     {
-//       const int N = height;
-//       const auto *D = d.Read();
-//       const auto *Z = z.Read();
-//       auto *Y = y.Write();
-//       mfem::forall(N, [=] MFEM_HOST_DEVICE(int i) { Y[i] = D[i] * Z[i]; });
-//     }
-//   }
-
-//   void MultTranspose(const mfem::Vector &x, mfem::Vector &y) const override
-//   {
-//     {
-//       const int N = height;
-//       const auto *D = d.Read();
-//       const auto *X = x.Read();
-//       auto *Z = z.Write();
-//       mfem::forall(N, [=] MFEM_HOST_DEVICE(int i) { Z[i] = D[i] * X[i]; });
-//     }
-//     A.Mult(z, y);
-//   }
-// };
-
-// }  // namespace
-
-ChebyshevSmoother::ChebyshevSmoother(MPI_Comm c, const mfem::Array<int> &tdof_list,
-                                     int smooth_it, int poly_order)
-  : comm(c), A(nullptr), dbc_tdof_list(tdof_list), pc_it(smooth_it), order(poly_order)
+ChebyshevSmoother::ChebyshevSmoother(int smooth_it, int poly_order)
+  : mfem::Solver(), pc_it(smooth_it), order(poly_order), A(nullptr)
 {
 }
 
 void ChebyshevSmoother::SetOperator(const mfem::Operator &op)
 {
   A = &op;
+
   height = A->Height();
   width = A->Width();
   r.SetSize(height);
   d.SetSize(height);
-
-  // XX TODO: AS FOR TIME OPERATOR, TDOF_LIST SHOULD NOT BE NEEDED AS WE HAVE IT IN THE
-  //          OPERATOR DIAGONAL ALREADY?? Can just use AssembleDiagonal and .Reciprocal()
-
-  // Configure symmetric diagonal scaling.
-  const int N = height;
-  dinv.SetSize(N);
-  mfem::Vector diag(N);
-  A->AssembleDiagonal(diag);
-  const auto *D = diag.Read();
-  auto *DI = dinv.Write();
-  mfem::forall(N,
-               [=] MFEM_HOST_DEVICE(int i)
-               {
-                 MFEM_ASSERT_KERNEL(D[i] != 0.0,
-                                    "Zero diagonal entry in Chebyshev smoother!");
-                 DI[i] = 1.0 / D[i];
-               });
-  const auto *I = dbc_tdof_list.Read();
-  mfem::forall(dbc_tdof_list.Size(),
-               [=] MFEM_HOST_DEVICE(int i)
-               {
-                 DI[I[i]] = 1.0;  // Assumes operator DiagonalPolicy::ONE
-               });
+  dinv.SetSize(height);
+  A->AssembleDiagonal(dinv);
+  // dinv.Reciprocal();    //XX TODO NEED MFEM PATCH
 
   // Set up Chebyshev coefficients using the computed maximum eigenvalue estimate. See
   // mfem::OperatorChebyshevSmoother or Adams et al., Parallel multigrid smoothing:
   // polynomial versus Gauss-Seidel, JCP (2003).
+  const auto *PtAP = dynamic_cast<const ParOperator *>(A);
+  MFEM_VERIFY(PtAP, "ChebyshevSmoother requires a ParOperator operator!");
   DiagonalOperator Dinv(dinv);
   SymmetricProductOperator DinvA(Dinv, *A);
-  lambda_max = 1.1 * linalg::SpectralNorm(comm, DinvA, false);
+  lambda_max = 1.1 * linalg::SpectralNorm(PtAP->GetComm(), DinvA, false);
 }
 
 void ChebyshevSmoother::Mult(const mfem::Vector &x, mfem::Vector &y) const

@@ -43,6 +43,13 @@ MumpsSolver::MumpsSolver(MPI_Comm comm, mfem::MUMPSSolver::MatType sym,
   }
 }
 
+void MumpsSolver::SetOperator(const Operator &op)
+{
+  auto *PtAP = const_cast<ParOperator *>(dynamic_cast<const ParOperator *>(&op));
+  MFEM_VERIFY(PtAP, "MumpsSolver requires a ParOperator operator!");
+  mfem::MUMPSSolver::SetOperator(PtAP->ParallelAssemble());
+}
+
 }  // namespace palace
 
 #endif

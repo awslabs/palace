@@ -698,7 +698,7 @@ public:
 struct LinearSolverData
 {
 
-  // XX TODO REVISIT AVAILABLE OPTIONS FOR KSP AFTER HYPRE SWITCH...
+  // XX TODO REVISIT AVAILABLE OPTIONS FOR KSP AFTER HYPRE SWITCH... (ALSO ADD "DEFAULT")
   // XX TODO REVISIT OPTIONS FOR PA AND KEYWORDS... "GMG" "PA" CAN DO BETTER (RATEL?)
 
 public:
@@ -720,16 +720,10 @@ public:
   enum class KspType
   {
     CG,
-    CGSYM,
-    FCG,
     MINRES,
     GMRES,
     FGMRES,
-    BCGS,
-    BCGSL,
-    FBCGS,
-    QMRCGS,
-    TFQMR,
+    BICGSTAB,
     DEFAULT,
     INVALID = -1
   };
@@ -753,7 +747,7 @@ public:
   int ksp_initial_guess = -1;
 
   // Enable pipelined Krylov solver variants to reduce blocking communications.
-  bool ksp_piped = false;
+  bool ksp_piped = false;  // XX TODO REMOVE....
 
   // Enable partial assembly for operators.
   bool mat_pa = false;
@@ -789,7 +783,7 @@ public:
     DEFAULT,
     INVALID = -1
   };
-  SideType pc_side_type = SideType::DEFAULT;
+  SideType pc_side_type = SideType::DEFAULT;  // XX TODO REMOVE...
 
   // Choose left or right preconditioning.
   enum class SymFactType

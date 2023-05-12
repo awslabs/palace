@@ -34,7 +34,7 @@ void MagnetostaticSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mes
   // // Set up the linear solver.
   // std::unique_ptr<mfem::Solver> pc =
   //     ConfigurePreconditioner(iodata, curlcurlop.GetDbcMarker(),
-  //     curlcurlop.GetNDSpaces());
+  //     curlcurlop.GetNDSpaces(), &curlcurlop.GetH1Spaces());
   // auto *gmg = dynamic_cast<GeometricMultigridSolver *>(pc.get());
   // if (gmg)
   // {
