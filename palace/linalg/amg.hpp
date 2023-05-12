@@ -5,6 +5,7 @@
 #define PALACE_LINALG_AMG_HPP
 
 #include <mfem.hpp>
+#include "linalg/operator.hpp"
 #include "utils/iodata.hpp"
 
 namespace palace
@@ -15,10 +16,6 @@ namespace palace
 //
 class BoomerAmgSolver : public mfem::HypreBoomerAMG
 {
-private:
-  // Helper function for setting common settings.
-  void Init();
-
 public:
   BoomerAmgSolver(int cycle_it = 1, int smooth_it = 1, int print = 0);
   BoomerAmgSolver(const IoData &iodata, int print)
@@ -27,13 +24,7 @@ public:
   {
   }
 
-  // Set the number of smoothing iterations to be performed at each level.
-  void SetNumSweeps(int relax_sweeps);
-
-  // Set the relaxation type on the coarsest level. Useful for specifying to not use a
-  // direct solve when the coarse matrix may be singular(relax_type = 8 is the AMS
-  // default).
-  void SetCoarseRelaxType(int relax_type);
+  void SetOperator(const Operator &op) override;
 };
 
 }  // namespace palace

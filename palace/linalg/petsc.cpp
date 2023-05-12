@@ -695,9 +695,9 @@ PetscReal PetscParMatrix::Norm2(PetscReal tol, PetscInt maxits) const
   {
     maxits = 100;
   }
-#if defined(PALACE_WITH_SLEPC)
-  return slepc::GetMaxSingularValue(*this, tol, maxits);
-#else
+  // #if defined(PALACE_WITH_SLEPC)
+  //   return slepc::GetMaxSingularValue(*this, tol, maxits);
+  // #else
   // Power iteration loop: ||A||₂² = λₙ(Aᴴ A) .
   PetscInt it = 0;
   PetscReal res = 0.0;
@@ -736,7 +736,7 @@ PetscReal PetscParMatrix::Norm2(PetscReal tol, PetscInt maxits) const
                  it, res, l);
   }
   return GetHermitian() ? l : PetscSqrtReal(l);
-#endif
+  // #endif
 }
 
 void PetscParMatrix::Scale(PetscScalar s)

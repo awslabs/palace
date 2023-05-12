@@ -4,6 +4,8 @@
 #ifndef PALACE_LINALG_SLEPC_HPP
 #define PALACE_LINALG_SLEPC_HPP
 
+#if 0  // XX TODO DISABLE FEAST FOR NOW
+
 #if defined(PALACE_WITH_SLEPC)
 
 #include "linalg/petsc.hpp"
@@ -26,7 +28,7 @@ namespace palace
 {
 
 class DivFreeSolver;
-class KspSolver;
+class KspSolver;  // XX TODO WORKING
 
 namespace petsc
 {
@@ -500,6 +502,8 @@ public:
 }  // namespace slepc
 
 }  // namespace palace
+
+#endif
 
 #endif
 

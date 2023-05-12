@@ -41,7 +41,6 @@ public:
                 mfem::ParFiniteElementSpaceHierarchy &h1_fespaces, double tol, int max_it,
                 int print);
 
-  // Operator is set in constructor.
   void SetOperator(const mfem::Operator &op) override {}
 
   // Given a vector of Nedelec dofs for an arbitrary vector field, compute the Nedelec dofs

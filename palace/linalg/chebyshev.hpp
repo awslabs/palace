@@ -5,6 +5,8 @@
 #define PALACE_LINALG_CHEBYSHEV_SMOOTHER_HPP
 
 #include <mfem.hpp>
+#include "linalg/operator.hpp"
+#include "linalg/vector.hpp"
 
 namespace palace
 {
@@ -19,32 +21,29 @@ namespace palace
 class ChebyshevSmoother : public mfem::Solver
 {
 private:
-  // System matrix (not owned), its communicator, and list of eliminated degrees of freedom.
-  MPI_Comm comm;
-  const mfem::Operator *A;
-  const mfem::Array<int> dbc_tdof_list;
-
   // Number of smoother iterations and polynomial order.
   const int pc_it, order;
 
+  // System matrix (not owned).
+  const Operator *A;
+
   // Inverse diagonal scaling of the operator.
-  mfem::Vector dinv;
+  Vector dinv;
 
   // Maximum operator eigenvalue for Chebyshev polynomial smoothing.
   double lambda_max;
 
   // Temporary vectors for smoother application.
-  mutable mfem::Vector r, d;
+  mutable Vector r, d;
 
 public:
-  ChebyshevSmoother(MPI_Comm c, const mfem::Array<int> &tdof_list, int smooth_it,
-                    int poly_order);
+  ChebyshevSmoother(int smooth_it, int poly_order);
 
-  void SetOperator(const mfem::Operator &op) override;
+  void SetOperator(const Operator &op) override;
 
-  void Mult(const mfem::Vector &x, mfem::Vector &y) const override;
+  void Mult(const Vector &x, Vector &y) const override;
 
-  void MultTranspose(const mfem::Vector &x, mfem::Vector &y) const override
+  void MultTranspose(const Vector &x, Vector &y) const override
   {
     Mult(x, y);  // Assumes operator symmetry
   }

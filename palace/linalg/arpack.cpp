@@ -3,6 +3,8 @@
 
 #include "arpack.hpp"
 
+#if 0  // XX TODO DISABLE ARPACK FOR NOW
+
 #if defined(PALACE_WITH_ARPACK)
 
 #if defined(__GNUC__) && defined(__clang__)
@@ -974,6 +976,8 @@ void ArpackPEPSolver::RestoreBlocks(PetscScalar *pv, petsc::PetscParVector &v,
 
 #if defined(__GNUC__) && defined(__clang__)
 #pragma GCC diagnostic pop
+#endif
+
 #endif
 
 #endif

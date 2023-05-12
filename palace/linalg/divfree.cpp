@@ -64,14 +64,16 @@ DivFreeSolver::DivFreeSolver(const MaterialOperator &mat_op,
   }
   h1_fespaces.GetFinestFESpace().GetEssentialTrueDofs(bdr_marker, h1_bdr_tdof_list);
 
-  // The system matrix for the projection is real and SPD. For the coarse-level AMG solve,
-  // we don't use an exact solve on the coarsest level.
-  auto amg = std::make_unique<BoomerAmgSolver>();
-  amg->SetCoarseRelaxType(8);
-  auto gmg = std::make_unique<GeometricMultigridSolver>(std::move(amg), bdr_marker,
-                                                        h1_fespaces, nullptr, 1, 1, 2);
-  gmg->SetOperator(M);
-  pc = std::move(gmg);
+  // XX TODO VISIT
+
+  // // The system matrix for the projection is real and SPD. For the coarse-level AMG
+  // solve,
+  // // we don't use an exact solve on the coarsest level.
+  // auto amg = std::make_unique<BoomerAmgSolver>();
+  // auto gmg = std::make_unique<GeometricMultigridSolver>(std::move(amg), bdr_marker,
+  //                                                       h1_fespaces, nullptr, 1, 1, 2);
+  // gmg->SetOperator(M);
+  // pc = std::move(gmg);
 
   ksp = std::make_unique<mfem::CGSolver>(h1_fespaces.GetFinestFESpace().GetComm());
   ksp->SetRelTol(tol);

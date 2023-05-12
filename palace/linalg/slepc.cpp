@@ -3,6 +3,8 @@
 
 #include "slepc.hpp"
 
+#if 0  // XX TODO DISABLE SLEPC FOR NOW
+
 #if defined(PALACE_WITH_SLEPC)
 
 #include <petsc.h>
@@ -1532,5 +1534,7 @@ PetscErrorCode __pc_apply_PEP(PC pc, Vec x, Vec y)
 
   PetscFunctionReturn(0);
 }
+
+#endif
 
 #endif

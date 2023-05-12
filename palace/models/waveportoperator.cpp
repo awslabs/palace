@@ -431,53 +431,57 @@ WavePortData::WavePortData(const config::WavePortData &data, const MaterialOpera
     // Define the linear solver to be used for solving systems associated with the
     // generalized eigenvalue problem. We use PETSc's sequential sparse solvers.
     int print = 0;
-    ksp = std::make_unique<KspSolver>(A->GetComm(), print, "port_");
-    ksp->SetType(KspSolver::Type::CHOLESKY);  // Symmetric indefinite factorization
-    ksp->SetOperator(*B);
 
-    // Define the eigenvalue solver.
-    config::EigenSolverData::Type type = config::EigenSolverData::Type::DEFAULT;
-#if defined(PALACE_WITH_ARPACK) && defined(PALACE_WITH_SLEPC)
-    if (type == config::EigenSolverData::Type::DEFAULT)
-    {
-      type = config::EigenSolverData::Type::SLEPC;
-    }
-#elif defined(PALACE_WITH_ARPACK)
-    if (type == config::EigenSolverData::Type::SLEPC)
-    {
-      Mpi::Warning("SLEPc eigensolver not available, using ARPACK!\n");
-    }
-    type = config::EigenSolverData::Type::ARPACK;
-#elif defined(PALACE_WITH_SLEPC)
-    if (type == config::EigenSolverData::Type::ARPACK)
-    {
-      Mpi::Warning("ARPACK eigensolver not available, using SLEPc!\n");
-    }
-    type = config::EigenSolverData::Type::SLEPC;
-#else
-#error "Wave port solver requires building with ARPACK or SLEPc!"
-#endif
-    if (type == config::EigenSolverData::Type::ARPACK)
-    {
-#if defined(PALACE_WITH_ARPACK)
-      eigen = std::unique_ptr<EigenSolverBase>(new arpack::ArpackEPSSolver(print));
-#endif
-    }
-    else  // config::EigenSolverData::Type::SLEPC
-    {
-#if defined(PALACE_WITH_SLEPC)
-      eigen =
-          std::unique_ptr<EigenSolverBase>(new slepc::SlepcEPSSolver(A->GetComm(), print));
-      auto *slepc = dynamic_cast<slepc::SlepcEPSSolver *>(eigen.get());
-      slepc->SetProblemType(slepc::SlepcEigenSolver::ProblemType::GEN_NON_HERMITIAN);
-      slepc->SetType(slepc::SlepcEigenSolver::Type::KRYLOVSCHUR);
-#endif
-    }
-    constexpr double tol = 1.0e-6;
-    eigen->SetLinearSolver(*ksp);
-    eigen->SetWhichEigenpairs(EigenSolverBase::WhichType::LARGEST_MAGNITUDE);
-    eigen->SetNumModes(mode_idx, std::max(2 * mode_idx + 1, 5));
-    eigen->SetTol(tol);
+    // XX TODO REVISIT
+
+    //     ksp = std::make_unique<KspSolver>(A->GetComm(), print, "port_");
+    //     ksp->SetType(KspSolver::Type::CHOLESKY);  // Symmetric indefinite factorization
+    //     ksp->SetOperator(*B);
+
+    //     // Define the eigenvalue solver.
+    //     config::EigenSolverData::Type type = config::EigenSolverData::Type::DEFAULT;
+    // #if defined(PALACE_WITH_ARPACK) && defined(PALACE_WITH_SLEPC)
+    //     if (type == config::EigenSolverData::Type::DEFAULT)
+    //     {
+    //       type = config::EigenSolverData::Type::SLEPC;
+    //     }
+    // #elif defined(PALACE_WITH_ARPACK)
+    //     if (type == config::EigenSolverData::Type::SLEPC)
+    //     {
+    //       Mpi::Warning("SLEPc eigensolver not available, using ARPACK!\n");
+    //     }
+    //     type = config::EigenSolverData::Type::ARPACK;
+    // #elif defined(PALACE_WITH_SLEPC)
+    //     if (type == config::EigenSolverData::Type::ARPACK)
+    //     {
+    //       Mpi::Warning("ARPACK eigensolver not available, using SLEPc!\n");
+    //     }
+    //     type = config::EigenSolverData::Type::SLEPC;
+    // #else
+    // #error "Wave port solver requires building with ARPACK or SLEPc!"
+    // #endif
+    //     if (type == config::EigenSolverData::Type::ARPACK)
+    //     {
+    // #if defined(PALACE_WITH_ARPACK)
+    //       eigen = std::unique_ptr<EigenSolverBase>(new arpack::ArpackEPSSolver(print));
+    // #endif
+    //     }
+    //     else  // config::EigenSolverData::Type::SLEPC
+    //     {
+    // #if defined(PALACE_WITH_SLEPC)
+    //       eigen =
+    //           std::unique_ptr<EigenSolverBase>(new slepc::SlepcEPSSolver(A->GetComm(),
+    //           print));
+    //       auto *slepc = dynamic_cast<slepc::SlepcEPSSolver *>(eigen.get());
+    //       slepc->SetProblemType(slepc::SlepcEigenSolver::ProblemType::GEN_NON_HERMITIAN);
+    //       slepc->SetType(slepc::SlepcEigenSolver::Type::KRYLOVSCHUR);
+    // #endif
+    //     }
+    //     constexpr double tol = 1.0e-6;
+    //     eigen->SetLinearSolver(*ksp);
+    //     eigen->SetWhichEigenpairs(EigenSolverBase::WhichType::LARGEST_MAGNITUDE);
+    //     eigen->SetNumModes(mode_idx, std::max(2 * mode_idx + 1, 5));
+    //     eigen->SetTol(tol);
   }
 }
 
@@ -564,43 +568,47 @@ std::complex<double> WavePortData::Solve(petsc::PetscParVector &y0,
                                          petsc::PetscScatter &scatter)
 {
   double eig[2];
-  if (A)  // Only on root
-  {
-    // The y0 and e0 vectors are still parallel vectors, but with all data on root. We want
-    // true sequential vectors.
-    PetscScalar *pe0 = e0.GetArray();
-    petsc::PetscParVector e0s(e0.GetSize(), pe0);
 
-    // Set starting vector.
-    {
-      PetscScalar *py0 = y0.GetArray();
-      petsc::PetscParVector y0s(y0.GetSize(), py0);
-      eigen->SetInitialSpace(y0s);
-      y0.RestoreArray(py0);
-    }
+  // XX TODO REVISIT...
 
-#if 0
-    // Alternatively, use B-orthogonal initial space. Probably want to call SetBMat for
-    // the eigensolver in this case.
-    {
-      PetscScalar *py0 = y0.GetArray();
-      petsc::PetscParVector y0s(y0.GetSize(), py0);
-      petsc::PetscParVector v0s(y0s);
-      ksp->Mult(y0s, v0s);
-      eigen->SetInitialSpace(v0s);
-      y0.RestoreArray(py0);
-    }
-#endif
+  //   if (A)  // Only on root
+  //   {
+  //     // The y0 and e0 vectors are still parallel vectors, but with all data on root. We
+  //     want
+  //     // true sequential vectors.
+  //     PetscScalar *pe0 = e0.GetArray();
+  //     petsc::PetscParVector e0s(e0.GetSize(), pe0);
 
-    // Solve (operators have been set in constructor).
-    int num_conv = 0;
-    eigen->SetOperators(*A, *B, EigenSolverBase::ScaleType::NONE);
-    num_conv = eigen->Solve();
-    MFEM_VERIFY(num_conv >= mode_idx, "Wave port eigensolver did not converge!");
-    eigen->GetEigenvalue(mode_idx - 1, eig[0], eig[1]);
-    eigen->GetEigenvector(mode_idx - 1, e0s);
-    e0.RestoreArray(pe0);
-  }
+  //     // Set starting vector.
+  //     {
+  //       PetscScalar *py0 = y0.GetArray();
+  //       petsc::PetscParVector y0s(y0.GetSize(), py0);
+  //       eigen->SetInitialSpace(y0s);
+  //       y0.RestoreArray(py0);
+  //     }
+
+  // #if 0
+  //     // Alternatively, use B-orthogonal initial space. Probably want to call SetBMat for
+  //     // the eigensolver in this case.
+  //     {
+  //       PetscScalar *py0 = y0.GetArray();
+  //       petsc::PetscParVector y0s(y0.GetSize(), py0);
+  //       petsc::PetscParVector v0s(y0s);
+  //       ksp->Mult(y0s, v0s);
+  //       eigen->SetInitialSpace(v0s);
+  //       y0.RestoreArray(py0);
+  //     }
+  // #endif
+
+  //     // Solve (operators have been set in constructor).
+  //     int num_conv = 0;
+  //     eigen->SetOperators(*A, *B, EigenSolverBase::ScaleType::NONE);
+  //     num_conv = eigen->Solve();
+  //     MFEM_VERIFY(num_conv >= mode_idx, "Wave port eigensolver did not converge!");
+  //     eigen->GetEigenvalue(mode_idx - 1, eig[0], eig[1]);
+  //     eigen->GetEigenvector(mode_idx - 1, e0s);
+  //     e0.RestoreArray(pe0);
+  //   }
 
   // Scatter the result to all processors.
   scatter.Reverse(e0, e);

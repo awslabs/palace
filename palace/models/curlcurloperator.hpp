@@ -39,10 +39,10 @@ private:
   // (Nedelec) and magnetic flux density (Raviart-Thomas) on the given mesh. The H1 spaces
   // are used for various purposes throughout the code including postprocessing.
   std::vector<std::unique_ptr<mfem::ND_FECollection>> nd_fecs;
-  mfem::H1_FECollection h1_fec;
+  std::vector<std::unique_ptr<mfem::H1_FECollection>> h1_fecs;
   mfem::RT_FECollection rt_fec;
-  mfem::ParFiniteElementSpaceHierarchy nd_fespaces;
-  mfem::ParFiniteElementSpace h1_fespace, rt_fespace;
+  mfem::ParFiniteElementSpaceHierarchy nd_fespaces, h1_fespaces;
+  mfem::ParFiniteElementSpace rt_fespace;
 
   // Operator for domain material properties.
   MaterialOperator mat_op;
@@ -63,7 +63,8 @@ public:
   // Return the parallel finite element space objects.
   auto &GetNDSpaces() { return nd_fespaces; }
   auto &GetNDSpace() { return nd_fespaces.GetFinestFESpace(); }
-  auto &GetH1Space() { return h1_fespace; }
+  auto &GetH1Spaces() { return h1_fespaces; }
+  auto &GetH1Space() { return h1_fespaces.GetFinestFESpace(); }
   auto &GetRTSpace() { return rt_fespace; }
 
   // Construct and return system matrix representing discretized curl-curl operator for

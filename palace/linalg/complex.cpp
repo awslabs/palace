@@ -108,10 +108,10 @@ void ComplexVector::AXPY(std::complex<double> alpha, const ComplexVector &y)
   const int N = Size();
   const double ar = alpha.real();
   const double ai = alpha.imag();
-  auto *XR = Real().ReadWrite();
-  auto *XI = Imag().ReadWrite();
   const auto *YR = y.Real().Read();
   const auto *YI = y.Imag().Read();
+  auto *XR = Real().ReadWrite();
+  auto *XI = Imag().ReadWrite();
   mfem::forall(N,
                [=] MFEM_HOST_DEVICE(int i)
                {
@@ -130,10 +130,10 @@ void ComplexVector::AXPBY(std::complex<double> alpha, const ComplexVector &y,
   const double ai = alpha.imag();
   const double br = beta.real();
   const double bi = beta.imag();
-  auto *XR = Real().ReadWrite();
-  auto *XI = Imag().ReadWrite();
   const auto *YR = y.Real().Read();
   const auto *YI = y.Imag().Read();
+  auto *XR = Real().ReadWrite();
+  auto *XI = Imag().ReadWrite();
   mfem::forall(N,
                [=] MFEM_HOST_DEVICE(int i)
                {
@@ -156,12 +156,12 @@ void ComplexVector::AXPBYPCZ(std::complex<double> alpha, const ComplexVector &y,
   const double bi = beta.imag();
   const double gr = gamma.real();
   const double gi = gamma.imag();
-  auto *XR = Real().ReadWrite();
-  auto *XI = Imag().ReadWrite();
   const auto *YR = y.Real().Read();
   const auto *YI = y.Imag().Read();
   const auto *ZR = z.Real().Read();
   const auto *ZI = z.Imag().Read();
+  auto *XR = Real().ReadWrite();
+  auto *XI = Imag().ReadWrite();
   mfem::forall(N,
                [=] MFEM_HOST_DEVICE(int i)
                {
@@ -328,14 +328,14 @@ void ComplexParOperator::AddMult(const Vector &xr, const Vector &xi, Vector &yr,
       test_fespace_.GetRestrictionMatrix()->Mult(lyi_, tyi_);
     }
     {
-      const int N = test_dbc_tdof_list_->Size();
-      auto idx = test_dbc_tdof_list_->Read();
-      auto TYR = tyr_.ReadWrite();
-      auto TYI = tyi_.ReadWrite();
       if (diag_policy_ == DiagonalPolicy::DIAG_ONE && height == width)
       {
+        const int N = test_dbc_tdof_list_->Size();
+        const auto *idx = test_dbc_tdof_list_->Read();
         const auto *XR = xr.Read();
         const auto *XI = xi.Read();
+        auto *TYR = tyr_.ReadWrite();
+        auto *TYI = tyi_.ReadWrite();
         mfem::forall(N,
                      [=] MFEM_HOST_DEVICE(int i)
                      {
@@ -346,12 +346,8 @@ void ComplexParOperator::AddMult(const Vector &xr, const Vector &xi, Vector &yr,
       }
       else if (diag_policy_ == DiagonalPolicy::DIAG_ZERO || height != width)
       {
-        mfem::forall(N,
-                     [=] MFEM_HOST_DEVICE(int i)
-                     {
-                       const int id = idx[i];
-                       TYR[id] = TYI[id] = 0.0;
-                     });
+        tyr_.SetSubVector(*test_dbc_tdof_list_, 0.0);
+        tyi_.SetSubVector(*test_dbc_tdof_list_, 0.0);
       }
       else
       {
@@ -425,14 +421,14 @@ void ComplexParOperator::AddMultTranspose(const Vector &xr, const Vector &xi, Ve
     trial_fespace_.GetProlongationMatrix()->MultTranspose(lxr_, txr_);
     trial_fespace_.GetProlongationMatrix()->MultTranspose(lxi_, txi_);
     {
-      const int N = trial_dbc_tdof_list_->Size();
-      auto idx = trial_dbc_tdof_list_->Read();
-      auto TXR = txr_.ReadWrite();
-      auto TXI = txi_.ReadWrite();
       if (diag_policy_ == DiagonalPolicy::DIAG_ONE && height == width)
       {
+        const int N = trial_dbc_tdof_list_->Size();
+        const auto *idx = trial_dbc_tdof_list_->Read();
         const auto *XR = xr.Read();
         const auto *XI = xi.Read();
+        auto *TXR = txr_.ReadWrite();
+        auto *TXI = txi_.ReadWrite();
         mfem::forall(N,
                      [=] MFEM_HOST_DEVICE(int i)
                      {
@@ -443,12 +439,8 @@ void ComplexParOperator::AddMultTranspose(const Vector &xr, const Vector &xi, Ve
       }
       else if (diag_policy_ == DiagonalPolicy::DIAG_ZERO || height != width)
       {
-        mfem::forall(N,
-                     [=] MFEM_HOST_DEVICE(int i)
-                     {
-                       const int id = idx[i];
-                       TXR[id] = TXI[id] = 0.0;
-                     });
+        txr_.SetSubVector(*trial_dbc_tdof_list_, 0.0);
+        txi_.SetSubVector(*trial_dbc_tdof_list_, 0.0);
       }
       else
       {
@@ -515,14 +507,14 @@ void ComplexParOperator::AddMultHermitianTranspose(const Vector &xr, const Vecto
     trial_fespace_.GetProlongationMatrix()->MultTranspose(lxr_, txr_);
     trial_fespace_.GetProlongationMatrix()->MultTranspose(lxi_, txi_);
     {
-      const int N = trial_dbc_tdof_list_->Size();
-      auto idx = trial_dbc_tdof_list_->Read();
-      auto TXR = txr_.ReadWrite();
-      auto TXI = txi_.ReadWrite();
       if (diag_policy_ == DiagonalPolicy::DIAG_ONE && height == width)
       {
+        const int N = trial_dbc_tdof_list_->Size();
+        const auto *idx = trial_dbc_tdof_list_->Read();
         const auto *XR = xr.Read();
         const auto *XI = xi.Read();
+        auto *TXR = txr_.ReadWrite();
+        auto *TXI = txi_.ReadWrite();
         mfem::forall(N,
                      [=] MFEM_HOST_DEVICE(int i)
                      {
@@ -533,12 +525,8 @@ void ComplexParOperator::AddMultHermitianTranspose(const Vector &xr, const Vecto
       }
       else if (diag_policy_ == DiagonalPolicy::DIAG_ZERO || height != width)
       {
-        mfem::forall(N,
-                     [=] MFEM_HOST_DEVICE(int i)
-                     {
-                       const int id = idx[i];
-                       TXR[id] = TXI[id] = 0.0;
-                     });
+        txr_.SetSubVector(*trial_dbc_tdof_list_, 0.0);
+        txi_.SetSubVector(*trial_dbc_tdof_list_, 0.0);
       }
       else
       {
@@ -685,10 +673,10 @@ void ComplexWrapperOperator::AddMult(const Vector &xr, const Vector &xi, Vector 
     const int N = height;
     const double ar = a.real();
     const double ai = a.imag();
-    auto *YR = yr.ReadWrite();
-    auto *YI = yi.ReadWrite();
     const auto *TYR = tyr_.Read();
     const auto *TYI = tyi_.Read();
+    auto *YR = yr.ReadWrite();
+    auto *YI = yi.ReadWrite();
     mfem::forall(N,
                  [=] MFEM_HOST_DEVICE(int i)
                  {
@@ -759,10 +747,10 @@ void ComplexWrapperOperator::AddMultTranspose(const Vector &xr, const Vector &xi
     const int N = width;
     const double ar = a.real();
     const double ai = a.imag();
-    auto *YR = yr.ReadWrite();
-    auto *YI = yi.ReadWrite();
     const auto *TXR = txr_.Read();
     const auto *TXI = txi_.Read();
+    auto *YR = yr.ReadWrite();
+    auto *YI = yi.ReadWrite();
     mfem::forall(N,
                  [=] MFEM_HOST_DEVICE(int i)
                  {
@@ -833,10 +821,10 @@ void ComplexWrapperOperator::AddMultHermitianTranspose(const Vector &xr, const V
     const int N = width;
     const double ar = a.real();
     const double ai = a.imag();
-    auto *YR = yr.ReadWrite();
-    auto *YI = yi.ReadWrite();
     const auto *TXR = txr_.Read();
     const auto *TXI = txi_.Read();
+    auto *YR = yr.ReadWrite();
+    auto *YI = yi.ReadWrite();
     mfem::forall(N,
                  [=] MFEM_HOST_DEVICE(int i)
                  {

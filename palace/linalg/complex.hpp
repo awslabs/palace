@@ -233,9 +233,9 @@ public:
                      bool test_restrict = false);
 
   // Get access to the underlying local (L-vector) operator.
-  const ComplexOperator &GetOperator() const
+  const ComplexOperator &LocalOperator() const
   {
-    MFEM_VERIFY(A_, "No local matrix available for ComplexParOperator::GetOperator!");
+    MFEM_VERIFY(A_, "No local matrix available for ComplexParOperator::LocalOperator!");
     return *A_;
   }
 
@@ -251,25 +251,25 @@ public:
   }
 
   // Set essential boundary condition true dofs for rectangular operators.
-  void SetEssentialTrueDofs(const mfem::Array<int> &trial_dbc_tdof_list,
-                            const mfem::Array<int> &test_dbc_tdof_list,
+  void SetEssentialTrueDofs(const mfem::Array<int> *trial_dbc_tdof_list,
+                            const mfem::Array<int> *test_dbc_tdof_list,
                             DiagonalPolicy diag_policy)
   {
     MFEM_VERIFY(diag_policy == DiagonalPolicy::DIAG_ZERO,
                 "Essential boundary condition true dof elimination for rectangular "
-                "ComplexParOperator only supports DiagonalPolicy::DIAG_ZERO!");
-    trial_dbc_tdof_list_ = &trial_dbc_tdof_list;
-    test_dbc_tdof_list_ = &test_dbc_tdof_list;
+                "ParOperator only supports DiagonalPolicy::DIAG_ZERO!");
+    trial_dbc_tdof_list_ = trial_dbc_tdof_list;
+    test_dbc_tdof_list_ = test_dbc_tdof_list;
     diag_policy_ = diag_policy;
   }
 
   // Get the essential boundary condition true dofs associated with the operator. May be
   // nullptr.
-  void GetEssentialTrueDofs(const mfem::Array<int> *&trial_dbc_tdof_list,
-                            const mfem::Array<int> *&test_dbc_tdof_list)
+  const mfem::Array<int> *GetEssentialTrueDofs() const
   {
-    trial_dbc_tdof_list = trial_dbc_tdof_list_;
-    test_dbc_tdof_list = test_dbc_tdof_list_;
+    MFEM_VERIFY(trial_dbc_tdof_list_ == test_dbc_tdof_list_ && height == width,
+                "GetEssentialTrueDofs should only be used for square ComplexParOperator!");
+    return trial_dbc_tdof_list_;
   }
 
   // Set the diagonal policy for the operator.
