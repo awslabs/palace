@@ -64,12 +64,12 @@ void ParOperator::EliminateRHS(const Vector &x, Vector &b) const
   test_dbc_tdof_list_ = b_test_dbc_tdof_list_;
 
   {
-    const int N = test_dbc_tdof_list_->Size();
-    auto idx = test_dbc_tdof_list_->Read();
-    auto B = b.ReadWrite();
     if (diag_policy_ == DiagonalPolicy::DIAG_ONE && height == width)
     {
+      const int N = test_dbc_tdof_list_->Size();
+      const auto *idx = test_dbc_tdof_list_->Read();
       const auto *X = x.Read();
+      auto *B = b.ReadWrite();
       mfem::forall(N,
                    [=] MFEM_HOST_DEVICE(int i)
                    {
@@ -79,12 +79,7 @@ void ParOperator::EliminateRHS(const Vector &x, Vector &b) const
     }
     else if (diag_policy_ == DiagonalPolicy::DIAG_ZERO || height != width)
     {
-      mfem::forall(N,
-                   [=] MFEM_HOST_DEVICE(int i)
-                   {
-                     const int id = idx[i];
-                     B[id] = 0.0;
-                   });
+      b.SetSubVector(*test_dbc_tdof_list_, 0.0);
     }
     else
     {
@@ -118,26 +113,13 @@ void ParOperator::AssembleDiagonal(Vector &diag) const
 
   if (test_dbc_tdof_list_)
   {
-    const int N = test_dbc_tdof_list_->Size();
-    const auto *idx = test_dbc_tdof_list_->Read();
-    auto *D = diag.ReadWrite();
     if (diag_policy_ == DiagonalPolicy::DIAG_ONE)
     {
-      mfem::forall(N,
-                   [=] MFEM_HOST_DEVICE(int i)
-                   {
-                     const int id = idx[i];
-                     D[id] = 1.0;
-                   });
+      diag.SetSubVector(*test_dbc_tdof_list_, 1.0);
     }
     else if (diag_policy_ == DiagonalPolicy::DIAG_ZERO)
     {
-      mfem::forall(N,
-                   [=] MFEM_HOST_DEVICE(int i)
-                   {
-                     const int id = idx[i];
-                     D[id] = 0.0;
-                   });
+      diag.SetSubVector(*test_dbc_tdof_list_, 0.0);
     }
     else
     {
@@ -148,6 +130,11 @@ void ParOperator::AssembleDiagonal(Vector &diag) const
 
 mfem::HypreParMatrix &ParOperator::ParallelAssemble()
 {
+
+  // XX TODO: For mfem::AssemblyLevel::PARTIAL, we cannot use CeedOperatorFullAssemble for
+  //          a ND space with p > 1. We should throw an error here that the user needs to
+  //          use AssemblyLevel::LEGACY in this case.
+
   if (!RAP_)
   {
     auto *bfA = dynamic_cast<mfem::BilinearForm *>(A_.get());
@@ -233,9 +220,15 @@ mfem::HypreParMatrix &ParOperator::ParallelAssemble()
       else
       {
         // Rectangular elimination sets all eliminated rows/columns to zero.
-        mfem::HypreParMatrix *RAPe = RAP_->EliminateCols(*trial_dbc_tdof_list_);
-        RAP_->EliminateRows(*test_dbc_tdof_list_);
-        delete RAPe;
+        if (test_dbc_tdof_list_)
+        {
+          RAP_->EliminateRows(*test_dbc_tdof_list_);
+        }
+        if (trial_dbc_tdof_list_)
+        {
+          mfem::HypreParMatrix *RAPe = RAP_->EliminateCols(*trial_dbc_tdof_list_);
+          delete RAPe;
+        }
       }
     }
   }
@@ -271,12 +264,12 @@ void ParOperator::AddMult(const Vector &x, Vector &y, const double a) const
     {
       test_fespace_.GetRestrictionMatrix()->Mult(ly_, ty_);
     }
-    const int N = test_dbc_tdof_list_->Size();
-    auto idx = test_dbc_tdof_list_->Read();
-    auto TY = ty_.ReadWrite();
     if (diag_policy_ == DiagonalPolicy::DIAG_ONE && height == width)
     {
+      const int N = test_dbc_tdof_list_->Size();
+      const auto *idx = test_dbc_tdof_list_->Read();
       const auto *X = x.Read();
+      auto *TY = ty_.ReadWrite();
       mfem::forall(N,
                    [=] MFEM_HOST_DEVICE(int i)
                    {
@@ -286,12 +279,7 @@ void ParOperator::AddMult(const Vector &x, Vector &y, const double a) const
     }
     else if (diag_policy_ == DiagonalPolicy::DIAG_ZERO || height != width)
     {
-      mfem::forall(N,
-                   [=] MFEM_HOST_DEVICE(int i)
-                   {
-                     const int id = idx[i];
-                     TY[id] = 0.0;
-                   });
+      ty_.SetSubVector(*test_dbc_tdof_list_, 0.0);
     }
     else
     {
@@ -341,12 +329,12 @@ void ParOperator::AddMultTranspose(const Vector &x, Vector &y, const double a) c
   if (trial_dbc_tdof_list_)
   {
     trial_fespace_.GetProlongationMatrix()->MultTranspose(lx_, tx_);
-    const int N = trial_dbc_tdof_list_->Size();
-    auto idx = trial_dbc_tdof_list_->Read();
-    auto TX = tx_.ReadWrite();
     if (diag_policy_ == DiagonalPolicy::DIAG_ONE && height == width)
     {
+      const int N = trial_dbc_tdof_list_->Size();
+      const auto *idx = trial_dbc_tdof_list_->Read();
       const auto *X = x.Read();
+      auto *TX = tx_.ReadWrite();
       mfem::forall(N,
                    [=] MFEM_HOST_DEVICE(int i)
                    {
@@ -356,12 +344,7 @@ void ParOperator::AddMultTranspose(const Vector &x, Vector &y, const double a) c
     }
     else if (diag_policy_ == DiagonalPolicy::DIAG_ZERO || height != width)
     {
-      mfem::forall(N,
-                   [=] MFEM_HOST_DEVICE(int i)
-                   {
-                     const int id = idx[i];
-                     TX[id] = 0.0;
-                   });
+      tx_.SetSubVector(*test_dbc_tdof_list_, 0.0);
     }
     else
     {

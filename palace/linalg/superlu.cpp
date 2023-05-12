@@ -5,7 +5,6 @@
 
 #if defined(MFEM_USE_SUPERLU)
 
-#include "linalg/petsc.hpp"
 #include "utils/communication.hpp"
 
 namespace palace
@@ -36,7 +35,7 @@ int GetNpDep(int np, bool use_3d)
 }  // namespace
 
 SuperLUSolver::SuperLUSolver(MPI_Comm comm, int sym_fact_type, bool use_3d, int print_lvl)
-  : solver(comm, GetNpDep(Mpi::Size(comm), use_3d))
+  : mfem::Solver(), solver(comm, GetNpDep(Mpi::Size(comm), use_3d))
 {
   // Configure the solver.
   if (print_lvl > 1)
@@ -76,14 +75,16 @@ void SuperLUSolver::SetOperator(const mfem::Operator &op)
 {
   // We need to save A because SuperLU does not copy the input matrix. For repeated
   // factorizations, always reuse the sparsity pattern.
-  if (Aint)
+  if (A)
   {
     solver.SetFact(mfem::superlu::SamePattern_SameRowPerm);
   }
-  Aint = std::make_unique<mfem::SuperLURowLocMatrix>(op);
+  auto *PtAP = const_cast<ParOperator *>(dynamic_cast<const ParOperator *>(&op));
+  MFEM_VERIFY(PtAP, "SuperLUSolver requires a ParOperator operator!");
+  A = std::make_unique<mfem::SuperLURowLocMatrix>(PtAP->ParallelAssemble());
 
   // Set up base class.
-  solver.SetOperator(*Aint);
+  solver.SetOperator(*A);
 }
 
 }  // namespace palace

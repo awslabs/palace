@@ -20,9 +20,6 @@ namespace
 class TimeDependentCurlCurlOperator : public mfem::SecondOrderTimeDependentOperator
 {
 private:
-  // MPI communicator for the parallel operators.
-  MPI_Comm comm;
-
   // System matrices and excitation RHS.
   std::unique_ptr<ParOperator> K, M, C;
   Vector NegJ;
@@ -71,7 +68,7 @@ public:
                                 std::function<double(double)> &djcoef, double t0,
                                 mfem::TimeDependentOperator::Type type)
     : mfem::SecondOrderTimeDependentOperator(spaceop.GetNDSpace().GetTrueVSize(), t0, type),
-      comm(spaceop.GetNDSpace().GetComm()), dJcoef(djcoef)
+      dJcoef(djcoef)
   {
     // Construct the system matrices defining the linear operator. PEC boundaries are
     // handled simply by setting diagonal entries of the mass matrix for the corresponding
@@ -90,17 +87,11 @@ public:
     // Set up linear solvers.
     {
       // PCG with a simple Jacobi preconditioner for mass matrix systems.
-      Vector diag(M->Height());
-      M->AssembleDiagonal(diag);
+      auto jac = std::make_unique<JacobiSmoother>();
+      jac->SetOperator(*M);
+      pcM = std::move(jac);
 
-      // XX TODO: Should not need DBC TDOF LIST as the diagonal is already 1 upon
-      // assembly... (see ParOperator)
-      //          Maybe avoid MFEM's JAcobi smoother and write our own like in Chebyshev??
-      // pcM = std::make_unique<mfem::OperatorJacobiSmoother>(diag,
-      // spaceop.GetDbcTDofList());
-      pcM = std::make_unique<JacobiSmoother>(diag);
-
-      auto pcg = std::make_unique<mfem::CGSolver>(comm);
+      auto pcg = std::make_unique<mfem::CGSolver>(M->GetComm());
       pcg->iterative_mode = iodata.solver.linear.ksp_initial_guess;
       pcg->SetRelTol(iodata.solver.linear.tol);
       pcg->SetMaxIter(iodata.solver.linear.max_it);
@@ -202,7 +193,7 @@ public:
         //  }
 
         // Construct and return the linear solver.
-        auto pcg = std::make_unique<mfem::CGSolver>(this->comm);
+        auto pcg = std::make_unique<mfem::CGSolver>(this->M->GetComm());
         pcg->iterative_mode = iterative_mode;
         pcg->SetRelTol(tol);
         pcg->SetMaxIter(max_it);
@@ -215,12 +206,11 @@ public:
     kspM_mult = kspA_mult = kspM_it = kspA_it = 0;
   }
 
-  MPI_Comm GetComm() const { return comm; }
   const ParOperator &GetK() const { return *K; }
   const ParOperator &GetM() const { return *M; }
   const ParOperator &GetC() const { return *C; }
 
-  int GetNumMult() const { return kspM_mult; }
+  int GetNumMult() const { return kspM_mult; }  // XX TODO REVISIT WITH KspSolver
   int GetNumMultIter() const { return kspM_it; }
   int GetNumImplicitSolve() const { return kspA_mult; }
   int GetNumImplicitSolveIter() const { return kspA_it; }
@@ -342,39 +332,38 @@ TimeOperator::TimeOperator(const IoData &iodata, SpaceOperator &spaceop,
 
 int TimeOperator::GetTotalKspMult() const
 {
-  const auto &curlcurl = dynamic_cast<TimeDependentCurlCurlOperator &>(*op);
+  const auto &curlcurl = dynamic_cast<const TimeDependentCurlCurlOperator &>(*op);
   return curlcurl.GetNumMult() + curlcurl.GetNumImplicitSolve();
 }
 
 int TimeOperator::GetTotalKspIter() const
 {
-  const auto &curlcurl = dynamic_cast<TimeDependentCurlCurlOperator &>(*op);
+  const auto &curlcurl = dynamic_cast<const TimeDependentCurlCurlOperator &>(*op);
   return curlcurl.GetNumMultIter() + curlcurl.GetNumImplicitSolveIter();
 }
 
 double TimeOperator::GetMaxTimeStep() const
 {
-  const auto &curlcurl = dynamic_cast<TimeDependentCurlCurlOperator &>(*op);
+  const auto &curlcurl = dynamic_cast<const TimeDependentCurlCurlOperator &>(*op);
   const ParOperator &M = curlcurl.GetM();
   const ParOperator &K = curlcurl.GetK();
 
   // Solver for M⁻¹.
   constexpr double lin_tol = 1.0e-9;
   constexpr int max_lin_it = 500;
-  mfem::CGSolver pcg(curlcurl.GetComm());
+  mfem::CGSolver pcg(M.GetComm());
   pcg.SetRelTol(lin_tol);
   pcg.SetMaxIter(max_lin_it);
   pcg.SetPrintLevel(0);
   pcg.SetOperator(M);
 
-  Vector diag(M.Height());
-  M.AssembleDiagonal(diag);
-  JacobiSmoother prec(diag);
-  pcg.SetPreconditioner(prec);
+  JacobiSmoother jac;
+  jac.SetOperator(M);
+  pcg.SetPreconditioner(jac);
 
   // Power iteration to estimate largest eigenvalue of undamped system matrix M⁻¹ K.
   SymmetricProductOperator op(pcg, K);
-  double lam = linalg::SpectralNorm(curlcurl.GetComm(), op, false);
+  double lam = linalg::SpectralNorm(M.GetComm(), op, false);
   MFEM_VERIFY(lam > 0.0, "Error during power iteration, λ = " << lam << "!");
   return 2.0 / std::sqrt(lam);
 }

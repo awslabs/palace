@@ -75,15 +75,20 @@ CurlCurlOperator::CurlCurlOperator(const IoData &iodata,
     dbc_marker(SetUpBoundaryProperties(iodata, *mesh.back())),
     nd_fecs(utils::ConstructFECollections<mfem::ND_FECollection>(
         pc_gmg, false, iodata.solver.order, mesh.back()->Dimension())),
-    h1_fec(iodata.solver.order, mesh.back()->Dimension()),
+    h1_fecs(utils::ConstructFECollections<mfem::H1_FECollection>(
+        pc_gmg, false, iodata.solver.order, mesh.back()->Dimension())),
     rt_fec(iodata.solver.order - 1, mesh.back()->Dimension()),
     nd_fespaces(pc_gmg ? utils::ConstructFiniteElementSpaceHierarchy(
                              mesh, nd_fecs, &dbc_marker, &dbc_tdof_lists)
                        : utils::ConstructFiniteElementSpaceHierarchy(
                              *mesh.back(), *nd_fecs.back(), &dbc_marker,
                              &dbc_tdof_lists.emplace_back())),
-    h1_fespace(mesh.back().get(), &h1_fec), rt_fespace(mesh.back().get(), &rt_fec),
-    mat_op(iodata, *mesh.back()), surf_j_op(iodata, GetH1Space())
+    h1_fespaces(pc_gmg ? utils::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
+                             mesh, h1_fecs)
+                       : utils::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
+                             *mesh.back(), *h1_fecs.back())),
+    rt_fespace(mesh.back().get(), &rt_fec), mat_op(iodata, *mesh.back()),
+    surf_j_op(iodata, GetH1Space())
 {
   // Finalize setup.
   CheckBoundaryProperties();
@@ -123,7 +128,7 @@ void CurlCurlOperator::GetStiffnessMatrix(std::vector<std::unique_ptr<ParOperato
     auto &nd_fespace_l = nd_fespaces.GetFESpaceAtLevel(l);
     constexpr MaterialPropertyType MatType = MaterialPropertyType::INV_PERMEABILITY;
     MaterialPropertyCoefficient<MatType> muinv_func(mat_op);
-    auto k = std::make_unique<mfem::BilinearForm>(&nd_fespace_l);
+    auto k = std::make_unique<mfem::SymmetricBilinearForm>(&nd_fespace_l);
     k->AddDomainIntegrator(new mfem::CurlCurlIntegrator(muinv_func));
     k->SetAssemblyLevel(assembly_level);
     k->Assemble(skip_zeros);

@@ -8,8 +8,8 @@
 #include <map>
 #include <memory>
 #include <mfem.hpp>
-#include "linalg/eigen.hpp"
-#include "linalg/ksp.hpp"
+// #include "linalg/eigen.hpp"
+// #include "linalg/ksp.hpp"
 #include "linalg/petsc.hpp"
 
 namespace palace
@@ -61,9 +61,9 @@ private:
   std::unique_ptr<mfem::VectorCoefficient> nxH0r_func, nxH0i_func;
   std::unique_ptr<mfem::ParLinearForm> sr, si;
 
-  // Eigenvalue solver for boundary modes.
-  std::unique_ptr<EigenSolverBase> eigen;
-  std::unique_ptr<KspSolver> ksp;
+  // // Eigenvalue solver for boundary modes.
+  // std::unique_ptr<EigenSolverBase> eigen;    //XX TODO
+  // std::unique_ptr<KspSolver> ksp;
 
   // Helper function to get true degrees of freedom on the port.
   void GetTrueDofs(const mfem::Array<int> &dbc_marker,

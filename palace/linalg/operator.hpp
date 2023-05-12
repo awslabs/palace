@@ -49,9 +49,9 @@ public:
               const mfem::ParFiniteElementSpace &test_fespace, bool test_restrict = false);
 
   // Get access to the underlying local (L-vector) operator.
-  const Operator &GetOperator() const
+  const Operator &LocalOperator() const
   {
-    MFEM_VERIFY(A_, "No local matrix available for ParOperator::GetOperator!");
+    MFEM_VERIFY(A_, "No local matrix available for ParOperator::LocalOperator!");
     return *A_;
   }
 
@@ -67,25 +67,25 @@ public:
   }
 
   // Set essential boundary condition true dofs for rectangular operators.
-  void SetEssentialTrueDofs(const mfem::Array<int> &trial_dbc_tdof_list,
-                            const mfem::Array<int> &test_dbc_tdof_list,
+  void SetEssentialTrueDofs(const mfem::Array<int> *trial_dbc_tdof_list,
+                            const mfem::Array<int> *test_dbc_tdof_list,
                             DiagonalPolicy diag_policy)
   {
     MFEM_VERIFY(diag_policy == DiagonalPolicy::DIAG_ZERO,
                 "Essential boundary condition true dof elimination for rectangular "
                 "ParOperator only supports DiagonalPolicy::DIAG_ZERO!");
-    trial_dbc_tdof_list_ = &trial_dbc_tdof_list;
-    test_dbc_tdof_list_ = &test_dbc_tdof_list;
+    trial_dbc_tdof_list_ = trial_dbc_tdof_list;
+    test_dbc_tdof_list_ = test_dbc_tdof_list;
     diag_policy_ = diag_policy;
   }
 
   // Get the essential boundary condition true dofs associated with the operator. May be
   // nullptr.
-  void GetEssentialTrueDofs(const mfem::Array<int> *&trial_dbc_tdof_list,
-                            const mfem::Array<int> *&test_dbc_tdof_list)
+  const mfem::Array<int> *GetEssentialTrueDofs() const
   {
-    trial_dbc_tdof_list = trial_dbc_tdof_list_;
-    test_dbc_tdof_list = test_dbc_tdof_list_;
+    MFEM_VERIFY(trial_dbc_tdof_list_ == test_dbc_tdof_list_ && height == width,
+                "GetEssentialTrueDofs should only be used for square ParOperator!");
+    return trial_dbc_tdof_list_;
   }
 
   // Eliminate essential true dofs from the RHS vector b, using the essential boundary
@@ -95,7 +95,8 @@ public:
   // Assemble the diagonal for the parallel operator.
   void AssembleDiagonal(Vector &diag) const override;
 
-  // Assemble the operator as a parallel sparse matrix.
+  // Assemble the operator as a parallel sparse matrix. This frees the memory associated
+  // with the local operator.
   mfem::HypreParMatrix &ParallelAssemble();
 
   // Get the associated MPI communicator.
@@ -231,5 +232,23 @@ double SpectralNorm(MPI_Comm comm, const ComplexOperator &A, bool herm = false,
 }  // namespace linalg
 
 }  // namespace palace
+
+namespace mfem
+{
+
+// A symmetric bilinear form operator which replaces *MultTranspose with *Mult.
+class SymmetricBilinearForm : public BilinearForm
+{
+public:
+  using BilinearForm::BilinearForm;
+
+  void MultTranspose(const Vector &x, Vector &y) const override { Mult(x, y); }
+  void AddMultTranspose(const Vector &x, Vector &y, double c = 1.0) const override
+  {
+    AddMult(x, y, c);
+  }
+};
+
+}  // namespace mfem
 
 #endif  // PALACE_LINALG_OPERATOR_HPP

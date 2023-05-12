@@ -8,6 +8,7 @@
 
 #if defined(MFEM_USE_STRUMPACK)
 
+#include "linalg/operator.hpp"
 #include "utils/iodata.hpp"
 
 namespace palace
@@ -65,8 +66,7 @@ public:
   {
   }
 
-  // Sets matrix associated with the STRUMPACK solver.
-  void SetOperator(const mfem::Operator &op) override;
+  void SetOperator(const Operator &op) override;
 };
 
 using StrumpackSolver = StrumpackSolverBase<mfem::STRUMPACKSolver>;
