@@ -24,7 +24,11 @@ public:
   {
   }
 
-  void SetOperator(const Operator &op) override;
+  void SetOperator(const Operator &op) override
+  {
+    MFEM_ABORT("BoomerAmgSolver requires a ParOperator operator!");
+  }
+  void SetOperator(const ParOperator &op);
 };
 
 }  // namespace palace

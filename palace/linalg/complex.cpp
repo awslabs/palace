@@ -30,11 +30,6 @@ ComplexVector::ComplexVector(const Vector &xr, const Vector &xi) : Vector(2 * xr
   Set(xr, xi);
 }
 
-int ComplexVector::Size() const
-{
-  return Vector::Size() / 2;
-}
-
 void ComplexVector::SetSize(int n)
 {
   Vector::SetSize(2 * n);
@@ -68,7 +63,7 @@ ComplexVector &ComplexVector::operator*=(std::complex<double> s)
 {
   if (s.imag() != 0.0)
   {
-    const int N = Size();
+    const int N = Size() / 2;
     const double sr = s.real();
     const double si = s.imag();
     auto *XR = Real().ReadWrite();
@@ -105,7 +100,7 @@ std::complex<double> ComplexVector::TransposeDot(const ComplexVector &y) const
 
 void ComplexVector::AXPY(std::complex<double> alpha, const ComplexVector &y)
 {
-  const int N = Size();
+  const int N = Size() / 2;
   const double ar = alpha.real();
   const double ai = alpha.imag();
   const auto *YR = y.Real().Read();
@@ -125,7 +120,7 @@ void ComplexVector::AXPY(std::complex<double> alpha, const ComplexVector &y)
 void ComplexVector::AXPBY(std::complex<double> alpha, const ComplexVector &y,
                           std::complex<double> beta)
 {
-  const int N = Size();
+  const int N = Size() / 2;
   const double ar = alpha.real();
   const double ai = alpha.imag();
   const double br = beta.real();
@@ -149,7 +144,7 @@ void ComplexVector::AXPBYPCZ(std::complex<double> alpha, const ComplexVector &y,
                              std::complex<double> beta, const ComplexVector &z,
                              std::complex<double> gamma)
 {
-  const int N = Size();
+  const int N = Size() / 2;
   const double ar = alpha.real();
   const double ai = alpha.imag();
   const double br = beta.real();
@@ -176,7 +171,7 @@ void ComplexVector::AXPBYPCZ(std::complex<double> alpha, const ComplexVector &y,
 
 void ComplexOperator::Mult(const Vector &x, Vector &y) const
 {
-  MFEM_ASSERT(x.Size() == 2 * width && y.Size() == 2 * height,
+  MFEM_ASSERT(x.Size() == width && y.Size() == height,
               "Incompatible dimensions for ComplexOperator::Mult!");
   Vector xr, xi, yr, yi;
   xr.MakeRef(const_cast<Vector &>(x), 0, width / 2);
@@ -190,7 +185,7 @@ void ComplexOperator::Mult(const Vector &x, Vector &y) const
 
 void ComplexOperator::MultTranspose(const Vector &x, Vector &y) const
 {
-  MFEM_ASSERT(x.Size() == 2 * height && y.Size() == 2 * width,
+  MFEM_ASSERT(x.Size() == height && y.Size() == width,
               "Incompatible dimensions for ComplexOperator::MultTranspose!");
   Vector xr, xi, yr, yi;
   xr.MakeRef(const_cast<Vector &>(x), 0, height / 2);
@@ -204,7 +199,7 @@ void ComplexOperator::MultTranspose(const Vector &x, Vector &y) const
 
 void ComplexOperator::MultHermitianTranspose(const Vector &x, Vector &y) const
 {
-  MFEM_ASSERT(x.Size() == 2 * height && y.Size() == 2 * width,
+  MFEM_ASSERT(x.Size() == height && y.Size() == width,
               "Incompatible dimensions for ComplexOperator::MultHermitianTranspose!");
   Vector xr, xi, yr, yi;
   xr.MakeRef(const_cast<Vector &>(x), 0, height / 2);
@@ -218,7 +213,7 @@ void ComplexOperator::MultHermitianTranspose(const Vector &x, Vector &y) const
 
 void ComplexOperator::AddMult(const Vector &x, Vector &y, const double a) const
 {
-  MFEM_ASSERT(x.Size() == 2 * width && y.Size() == 2 * height,
+  MFEM_ASSERT(x.Size() == width && y.Size() == height,
               "Incompatible dimensions for ComplexOperator::AddMult!");
   Vector xr, xi, yr, yi;
   xr.MakeRef(const_cast<Vector &>(x), 0, width / 2);
@@ -232,7 +227,7 @@ void ComplexOperator::AddMult(const Vector &x, Vector &y, const double a) const
 
 void ComplexOperator::AddMultTranspose(const Vector &x, Vector &y, const double a) const
 {
-  MFEM_ASSERT(x.Size() == 2 * height && y.Size() == 2 * width,
+  MFEM_ASSERT(x.Size() == height && y.Size() == width,
               "Incompatible dimensions for ComplexOperator::AddMultTranspose!");
   Vector xr, xi, yr, yi;
   xr.MakeRef(const_cast<Vector &>(x), 0, height / 2);
@@ -247,7 +242,7 @@ void ComplexOperator::AddMultTranspose(const Vector &x, Vector &y, const double 
 void ComplexOperator::AddMultHermitianTranspose(const Vector &x, Vector &y,
                                                 const double a) const
 {
-  MFEM_ASSERT(x.Size() == 2 * height && y.Size() == 2 * width,
+  MFEM_ASSERT(x.Size() == height && y.Size() == width,
               "Incompatible dimensions for ComplexOperator::AddMultHermitianTranspose!");
   Vector xr, xi, yr, yi;
   xr.MakeRef(const_cast<Vector &>(x), 0, height / 2);
@@ -273,17 +268,17 @@ ComplexParOperator::ComplexParOperator(std::unique_ptr<ComplexOperator> &&A,
   lxi_.SetSize(A_->Width());
   lyr_.SetSize(A_->Height());
   lyi_.SetSize(A_->Height());
-  txr_.SetSize(width);
-  txi_.SetSize(width);
+  txr_.SetSize(width / 2);
+  txi_.SetSize(width / 2);
   if (height != width)
   {
-    tyr_.SetSize(height);
-    tyi_.SetSize(height);
+    tyr_.SetSize(height / 2);
+    tyi_.SetSize(height / 2);
   }
   else
   {
-    tyr_.MakeRef(txr_, 0, height);
-    tyi_.MakeRef(txi_, 0, height);
+    tyr_.MakeRef(txr_, 0, height / 2);
+    tyi_.MakeRef(txi_, 0, height / 2);
   }
 }
 
@@ -291,8 +286,8 @@ void ComplexParOperator::AddMult(const Vector &xr, const Vector &xi, Vector &yr,
                                  const std::complex<double> a, bool zero_real,
                                  bool zero_imag) const
 {
-  MFEM_ASSERT(xr.Size() == width && xi.Size() == width && yr.Size() == height &&
-                  yi.Size() == height,
+  MFEM_ASSERT(xr.Size() == width / 2 && xi.Size() == width / 2 && yr.Size() == height / 2 &&
+                  yi.Size() == height / 2,
               "Incompatible dimensions for ComplexParOperator::AddMult!");
   if (trial_dbc_tdof_list_)
   {
@@ -376,8 +371,8 @@ void ComplexParOperator::AddMultTranspose(const Vector &xr, const Vector &xi, Ve
                                           Vector &yi, const std::complex<double> a,
                                           bool zero_real, bool zero_imag) const
 {
-  MFEM_ASSERT(xr.Size() == height && xi.Size() == height && yr.Size() == width &&
-                  yi.Size() == width,
+  MFEM_ASSERT(xr.Size() == height / 2 && xi.Size() == height / 2 &&
+                  yr.Size() == width / 2 && yi.Size() == width / 2,
               "Incompatible dimensions for ComplexParOperator::AddMultTranspose!");
   if (test_dbc_tdof_list_)
   {
@@ -462,8 +457,8 @@ void ComplexParOperator::AddMultHermitianTranspose(const Vector &xr, const Vecto
                                                    const std::complex<double> a,
                                                    bool zero_real, bool zero_imag) const
 {
-  MFEM_ASSERT(xr.Size() == height && xi.Size() == height && yr.Size() == width &&
-                  yi.Size() == width,
+  MFEM_ASSERT(xr.Size() == height / 2 && xi.Size() == height / 2 &&
+                  yr.Size() == width / 2 && yi.Size() == width / 2,
               "Incompatible dimensions for ComplexParOperator::AddMultHermitianTranspose!");
   if (test_dbc_tdof_list_)
   {
@@ -552,17 +547,17 @@ ComplexWrapperOperator::ComplexWrapperOperator(std::unique_ptr<Operator> &&Ar,
   MFEM_VERIFY((!Ar_ || !Ai_) ||
                   (Ar_->Height() == Ai_->Height() && Ar_->Width() == Ai_->Width()),
               "Mismatch in dimension of real and imaginary matrix parts!");
-  txr_.SetSize(width);
-  txi_.SetSize(width);
+  txr_.SetSize(width / 2);
+  txi_.SetSize(width / 2);
   if (height != width)
   {
-    tyr_.SetSize(height);
-    tyi_.SetSize(height);
+    tyr_.SetSize(height / 2);
+    tyi_.SetSize(height / 2);
   }
   else
   {
-    tyr_.MakeRef(txr_, 0, height);
-    tyi_.MakeRef(txi_, 0, height);
+    tyr_.MakeRef(txr_, 0, height / 2);
+    tyi_.MakeRef(txi_, 0, height / 2);
   }
 }
 
@@ -670,7 +665,7 @@ void ComplexWrapperOperator::AddMult(const Vector &xr, const Vector &xi, Vector 
   if (a.real() != 0.0 && a.imag() != 0.0)
   {
     Mult(xr, xi, tyr_, tyi_, zero_real, zero_imag);
-    const int N = height;
+    const int N = height / 2;
     const double ar = a.real();
     const double ai = a.imag();
     const auto *TYR = tyr_.Read();

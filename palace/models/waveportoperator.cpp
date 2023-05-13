@@ -323,9 +323,9 @@ public:
 };
 
 WavePortData::WavePortData(const config::WavePortData &data, const MaterialOperator &mat_op,
-                           const mfem::Array<int> &dbc_marker,
                            mfem::ParFiniteElementSpace &nd_fespace,
-                           mfem::ParFiniteElementSpace &h1_fespace)
+                           mfem::ParFiniteElementSpace &h1_fespace,
+                           const mfem::Array<int> &dbc_marker)
 {
   excitation = data.excitation;
   mode_idx = data.mode_idx;
@@ -341,7 +341,7 @@ WavePortData::WavePortData(const config::WavePortData &data, const MaterialOpera
   // field by Eₜ = eₜ/kₙ and Eₙ = ieₙ. This is solved on the global mesh so the result is a
   // grid function over the entire space, not just the port boundary (so that it can be
   // queried from functions which use the global mesh).
-  GetTrueDofs(dbc_marker, nd_fespace, h1_fespace, nd_attr_tdof_list, h1_attr_tdof_list);
+  GetTrueDofs(nd_fespace, h1_fespace, dbc_marker, nd_attr_tdof_list, h1_attr_tdof_list);
 
   // Construct the system matrices. We will actually solve the shifted problem:
   //                [Bₜₜ   Bₜₙ]  [eₜ]  =  λ [Bₜₜ + 1/Θ² Aₜₜ  Bₜₙ] [eₜ]
@@ -485,9 +485,9 @@ WavePortData::WavePortData(const config::WavePortData &data, const MaterialOpera
   }
 }
 
-void WavePortData::GetTrueDofs(const mfem::Array<int> &dbc_marker,
-                               mfem::ParFiniteElementSpace &nd_fespace,
+void WavePortData::GetTrueDofs(mfem::ParFiniteElementSpace &nd_fespace,
                                mfem::ParFiniteElementSpace &h1_fespace,
+                               const mfem::Array<int> &dbc_marker,
                                mfem::Array<int> &nd_tdof_list,
                                mfem::Array<int> &h1_tdof_list)
 {
@@ -850,7 +850,7 @@ void WavePortOperator::SetUpBoundaryProperties(const IoData &iodata,
   // Set up wave port data structures.
   for (const auto &[idx, data] : iodata.boundaries.waveport)
   {
-    ports.try_emplace(idx, data, mat_op, dbc_marker, nd_fespace, h1_fespace);
+    ports.try_emplace(idx, data, mat_op, nd_fespace, h1_fespace, dbc_marker);
   }
   MFEM_VERIFY(
       ports.empty() || iodata.problem.type == config::ProblemData::Type::DRIVEN,

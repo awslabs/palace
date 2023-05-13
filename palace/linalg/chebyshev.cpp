@@ -14,7 +14,7 @@ ChebyshevSmoother::ChebyshevSmoother(int smooth_it, int poly_order)
 {
 }
 
-void ChebyshevSmoother::SetOperator(const mfem::Operator &op)
+void ChebyshevSmoother::SetOperator(const ParOperator &op)
 {
   A = &op;
 
@@ -29,11 +29,9 @@ void ChebyshevSmoother::SetOperator(const mfem::Operator &op)
   // Set up Chebyshev coefficients using the computed maximum eigenvalue estimate. See
   // mfem::OperatorChebyshevSmoother or Adams et al., Parallel multigrid smoothing:
   // polynomial versus Gauss-Seidel, JCP (2003).
-  const auto *PtAP = dynamic_cast<const ParOperator *>(A);
-  MFEM_VERIFY(PtAP, "ChebyshevSmoother requires a ParOperator operator!");
   DiagonalOperator Dinv(dinv);
   SymmetricProductOperator DinvA(Dinv, *A);
-  lambda_max = 1.1 * linalg::SpectralNorm(PtAP->GetComm(), DinvA, false);
+  lambda_max = 1.1 * linalg::SpectralNorm(A->GetComm(), DinvA, false);
 }
 
 void ChebyshevSmoother::Mult(const mfem::Vector &x, mfem::Vector &y) const

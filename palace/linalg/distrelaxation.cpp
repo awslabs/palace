@@ -13,7 +13,7 @@ DistRelaxationSmoother::DistRelaxationSmoother(mfem::ParFiniteElementSpace &nd_f
                                                mfem::ParFiniteElementSpace &h1_fespace,
                                                int smooth_it, int cheby_smooth_it,
                                                int cheby_order)
-  : mfem::Solver(), pc_it(smooth_it), A(nullptr), A_G(nullptr), dbc_tdof_list_G(nullptr)
+  : mfem::Solver(), pc_it(smooth_it), A(nullptr), A_G(nullptr)
 {
   // Construct discrete gradient matrix for the auxiliary space.
   {
@@ -32,17 +32,13 @@ DistRelaxationSmoother::DistRelaxationSmoother(mfem::ParFiniteElementSpace &nd_f
   B_G->iterative_mode = false;
 }
 
-void DistRelaxationSmoother::SetOperator(const Operator &op, const Operator &op_G)
+void DistRelaxationSmoother::SetOperator(const ParOperator &op, const ParOperator &op_G)
 {
   A = &op;
   A_G = &op_G;
   MFEM_VERIFY(A->Height() == G->Height() && A->Width() == G->Height() &&
                   A_G->Height() == G->Width() && A_G->Width() == G->Width(),
               "Invalid operator sizes for DistRelaxationSmoother!");
-
-  const auto *PtAP_G = dynamic_cast<const ParOperator *>(&op_G);
-  MFEM_VERIFY(PtAP_G, "DistRelaxationSmoother requires ParOperator operators!");
-  dbc_tdof_list_G = PtAP_G->GetEssentialTrueDofs();
 
   height = A->Height();
   width = A->Width();
@@ -68,9 +64,9 @@ void DistRelaxationSmoother::Mult(const Vector &x, Vector &y) const
     A->Mult(y, r);
     subtract(x, r, r);
     G->MultTranspose(r, x_G);
-    if (dbc_tdof_list_G)
+    if (A_G->GetEssentialTrueDofs())
     {
-      x_G.SetSubVector(*dbc_tdof_list_G, 0.0);
+      x_G.SetSubVector(*A_G->GetEssentialTrueDofs(), 0.0);
     }
     B_G->Mult(x_G, y_G);
     G->AddMult(y_G, y, 1.0);
@@ -94,9 +90,9 @@ void DistRelaxationSmoother::MultTranspose(const Vector &x, Vector &y) const
     {
       y = 0.0;
     }
-    if (dbc_tdof_list_G)
+    if (A_G->GetEssentialTrueDofs())
     {
-      x_G.SetSubVector(*dbc_tdof_list_G, 0.0);
+      x_G.SetSubVector(*A_G->GetEssentialTrueDofs(), 0.0);
     }
     B_G->MultTranspose(x_G, y_G);
     G->AddMult(y_G, y, 1.0);

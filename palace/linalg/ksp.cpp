@@ -242,36 +242,30 @@ KspSolver::KspSolver(const IoData &iodata, mfem::ParFiniteElementSpaceHierarchy 
   ksp_->SetPreconditioner(*pc_);
 }
 
-void KspSolver::SetOperator(const Operator &op, const Operator &pc_op)
+void KspSolver::SetOperator(const Operator &op,
+                            const std::vector<std::unique_ptr<ParOperator>> &pc_ops,
+                            const std::vector<std::unique_ptr<ParOperator>> *aux_pc_ops)
 {
   // Unset the preconditioner before so that IterativeSolver::SetOperator does not set the
   // preconditioner operator again.
-  pc_->SetOperator(pc_op);
+  auto *gmg = dynamic_cast<GeometricMultigridSolver *>(pc_.get());
+  if (gmg)
+  {
+    gmg->SetOperator(pc_ops, aux_pc_ops);
+  }
+  else
+  {
+    MFEM_VERIFY(
+        !aux_pc_ops,
+        "Auxiliary space operators should not be specified for KspSolver::SetOperator "
+        "unless the preconditioner is a GeometricMultigridSolver!");
+    pc_->SetOperator(*pc_ops.back());
+  }
   // ksp_->SetPreconditioner(nullptr);    //XX TODO WAITING MFEM PATCH
   ksp_->SetOperator(op);
   ksp_->SetPreconditioner(*pc_);
   height = op.Height();
   width = op.Width();
-}
-
-void KspSolver::SetOperator(const Operator &op,
-                            const std::vector<std::unique_ptr<Operator>> &pc_ops,
-                            const std::vector<std::unique_ptr<Operator>> *aux_pc_ops)
-{
-  auto *gmg = dynamic_cast<GeometricMultigridSolver *>(pc_.get());
-  if (gmg)
-  {
-    // Unset the preconditioner before so that IterativeSolver::SetOperator does not set the
-    // preconditioner operator again.
-    gmg->SetOperator(pc_ops, aux_pc_ops);
-    // ksp_->SetPreconditioner(nullptr);    //XX TODO WAITING MFEM PATCH
-    ksp_->SetOperator(op);
-    ksp_->SetPreconditioner(*pc_);
-  }
-  else
-  {
-    SetOperator(op, *pc_ops.back());
-  }
 }
 
 void KspSolver::Mult(const Vector &x, Vector &y) const
@@ -302,9 +296,17 @@ ComplexKspSolver::ComplexKspSolver(const IoData &iodata,
   ksp_->SetPreconditioner(*pc_);
 }
 
+void ComplexKspSolver::SetOperator(
+    const ComplexOperator &op, const std::vector<std::unique_ptr<ParOperator>> &pc_ops,
+    const std::vector<std::unique_ptr<ParOperator>> *aux_pc_ops)
+{
+  KspSolver::SetOperator(op, pc_ops, aux_pc_ops);  // XX TODO TEST THIS AT RUNTIME...
+}
+
 void ComplexKspSolver::Mult(const ComplexVector &x, ComplexVector &y) const
 {
-  KspSolver::Mult(x, y);  // XX TODO TEST THIS...
+  KspSolver::Mult(x, y);  // XX TODO TEST THIS AT RUNTIME...
+  y.Sync();
 }
 
 // XX TODO REMOVE

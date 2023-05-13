@@ -88,6 +88,16 @@ public:
   SpaceOperator(const IoData &iodata,
                 const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh);
 
+  // Return list of all PEC boundary true dofs for all finite element space levels.
+  const std::vector<mfem::Array<int>> &GetNDDbcTDofLists() const
+  {
+    return nd_dbc_tdof_lists;
+  }
+  const std::vector<mfem::Array<int>> &GetH1DbcTDofLists() const
+  {
+    return h1_dbc_tdof_lists;
+  }
+
   // Returns lists of all boundary condition true dofs, PEC included, for the auxiliary
   // H1 space hierarchy. These are all boundaries which affect the stiffness and damping
   // (K and C) matrices, used for nullspace corrections.
@@ -127,7 +137,7 @@ public:
   };
 
   std::unique_ptr<ParOperator> GetSystemMatrix(OperatorType type,
-                                               mfem::Operator::DiagonalPolicy diag_policy);
+                                               Operator::DiagonalPolicy diag_policy);
   std::unique_ptr<ComplexParOperator>
   GetComplexSystemMatrix(OperatorType type, Operator::DiagonalPolicy diag_policy)
   {
@@ -135,7 +145,7 @@ public:
   }
   std::unique_ptr<ComplexParOperator>
   GetComplexSystemMatrix(OperatorType type, double omega,
-                         mfem::Operator::DiagonalPolicy diag_policy);
+                         Operator::DiagonalPolicy diag_policy);
 
   // Construct the complete frequency or time domain system matrix using the provided
   // stiffness, damping, mass, and extra matrices:

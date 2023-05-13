@@ -5,13 +5,18 @@
 #define PALACE_LINALG_DIV_FREE_HPP
 
 #include <memory>
+#include <vector>
 #include <mfem.hpp>
-#include "linalg/petsc.hpp"
+#include "linalg/complex.hpp"
+#include "linalg/ksp.hpp"
+#include "linalg/operator.hpp"
+#include "linalg/vector.hpp"
 
 namespace palace
 {
 
 class MaterialOperator;
+class KspSolver;
 
 //
 // This solver implements a projection onto a divergence-free space satisfying Gᵀ M x = 0,
@@ -22,61 +27,56 @@ class DivFreeSolver : public mfem::Solver
 {
 private:
   // Operators for the divergence-free projection.
-  std::unique_ptr<mfem::Operator> WeakDiv, Grad;
-  std::vector<std::unique_ptr<mfem::Operator>> M;
+  std::unique_ptr<ParOperator> WeakDiv, Grad;
+  std::vector<std::unique_ptr<ParOperator>> M;
 
-  // Linear solver and preconditioner for the projected linear system (Gᵀ M G) y = x.
-  std::unique_ptr<mfem::IterativeSolver> ksp;
-  std::unique_ptr<mfem::Solver> pc;
+  // Linear solver for the projected linear system (Gᵀ M G) y = x.
+  std::unique_ptr<KspSolver> ksp;
 
   // Workspace objects for solver application.
-  mutable mfem::Vector psi, rhs, xr, xi;
-
-  // Boundary condition dofs for essential BCs.
-  mfem::Array<int> h1_bdr_tdof_list;
+  mutable Vector psi, rhs;
 
 public:
-  DivFreeSolver(const MaterialOperator &mat_op, const mfem::Array<int> &bdr_marker,
-                mfem::ParFiniteElementSpace &nd_fespace,
-                mfem::ParFiniteElementSpaceHierarchy &h1_fespaces, double tol, int max_it,
-                int print);
+  DivFreeSolver(const MaterialOperator &mat_op, mfem::ParFiniteElementSpace &nd_fespace,
+                mfem::ParFiniteElementSpaceHierarchy &h1_fespaces,
+                const std::vector<mfem::Array<int>> &h1_bdr_tdof_lists, double tol,
+                int max_it, int print);
 
-  void SetOperator(const mfem::Operator &op) override {}
+  void SetOperator(const Operator &op) override {}
 
   // Given a vector of Nedelec dofs for an arbitrary vector field, compute the Nedelec dofs
   // of the irrotational portion of this vector field. The resulting vector will satisfy
-  // ∇ x x = 0.
-  void Mult(mfem::Vector &x) const
+  // ∇ x y = 0.
+  void Mult(Vector &y) const
   {
-    // Compute the divergence of x.
-    WeakDiv->Mult(x, rhs);
+    // Compute the divergence of y.
+    WeakDiv->Mult(y, rhs);
 
     // Apply essential BC and solve the linear system.
-    psi = 0.0;
-    rhs.SetSubVector(h1_bdr_tdof_list, 0.0);
+    if (M.back()->GetEssentialTrueDofs())
+    {
+      rhs.SetSubVector(*M.back()->GetEssentialTrueDofs(), 0.0);
+    }
     ksp->Mult(rhs, psi);
 
-    // Compute the irrotational portion of x and subtract.
-    Grad->AddMult(psi, x, 1.0);
+    // Compute the irrotational portion of y and subtract.
+    Grad->AddMult(psi, y, 1.0);
   }
-  void Mult(const mfem::Vector &x, mfem::Vector &y) const override
+  void Mult(const Vector &x, Vector &y) const override
   {
     y = x;
     Mult(y);
   }
-  void Mult(petsc::PetscParVector &x) const
+  void Mult(ComplexVector &y) const
   {
-    x.GetToVectors(xr, xi);
-    Mult(xr);
-    Mult(xi);
-    x.SetFromVectors(xr, xi);
+    Mult(y.Real());
+    Mult(y.Imag());
   }
-  void Mult(const petsc::PetscParVector &x, petsc::PetscParVector &y) const
+  void Mult(const ComplexVector &x, ComplexVector &y) const
   {
-    y.Copy(x);
+    y = x;
     Mult(y);
   }
-  using mfem::Operator::Mult;
 };
 
 }  // namespace palace
