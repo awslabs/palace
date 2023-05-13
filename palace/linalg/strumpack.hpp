@@ -66,7 +66,11 @@ public:
   {
   }
 
-  void SetOperator(const Operator &op) override;
+  void SetOperator(const Operator &op) override
+  {
+    MFEM_ABORT("StrumpackSolver requires a ParOperator operator!");
+  }
+  void SetOperator(const ParOperator &op);
 };
 
 using StrumpackSolver = StrumpackSolverBase<mfem::STRUMPACKSolver>;

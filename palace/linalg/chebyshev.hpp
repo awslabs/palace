@@ -25,7 +25,7 @@ private:
   const int pc_it, order;
 
   // System matrix (not owned).
-  const Operator *A;
+  const ParOperator *A;
 
   // Inverse diagonal scaling of the operator.
   Vector dinv;
@@ -39,7 +39,11 @@ private:
 public:
   ChebyshevSmoother(int smooth_it, int poly_order);
 
-  void SetOperator(const Operator &op) override;
+  void SetOperator(const Operator &op) override
+  {
+    MFEM_ABORT("ChebyshevSmoother requires a ParOperator operator!");
+  }
+  void SetOperator(const ParOperator &op);
 
   void Mult(const Vector &x, Vector &y) const override;
 

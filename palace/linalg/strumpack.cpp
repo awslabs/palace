@@ -66,13 +66,11 @@ StrumpackSolverBase<StrumpackSolverType>::StrumpackSolverBase(
 }
 
 template <typename StrumpackSolverType>
-void StrumpackSolverBase<StrumpackSolverType>::SetOperator(const Operator &op)
+void StrumpackSolverBase<StrumpackSolverType>::SetOperator(const ParOperator &op)
 {
   // Convert the input operator to a distributed STRUMPACK matrix (always assume a symmetric
   // sparsity pattern). Safe to delete the matrix since STRUMPACK copies it on input.
-  auto *PtAP = const_cast<ParOperator *>(dynamic_cast<const ParOperator *>(&op));
-  MFEM_VERIFY(PtAP, "StrumpackSolver requires a ParOperator operator!");
-  mfem::STRUMPACKRowLocMatrix A(PtAP->ParallelAssemble(), true);
+  mfem::STRUMPACKRowLocMatrix A(const_cast<ParOperator *>(&op)->ParallelAssemble(), true);
 
   // Set up base class.
   StrumpackSolverType::SetOperator(A);

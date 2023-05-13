@@ -26,10 +26,7 @@ private:
   const int pc_it;
 
   // System matrices at each multigrid level and prolongation operators (not owned).
-  std::vector<const Operator *> A_, P_;
-
-  // Essential Dirichlet boundary conditions at each level (not owned).
-  std::vector<const mfem::Array<int> *> dbc_tdof_lists_;
+  std::vector<const ParOperator *> A_, P_;
 
   // Smoothers for each level. Coarse level solver is B_[0].
   std::vector<std::unique_ptr<mfem::Solver>> B_;
@@ -64,8 +61,8 @@ public:
     MFEM_ABORT("SetOperator with a single operator is not implemented for "
                "GeometricMultigridSolver, use the other signature instead!");
   }
-  void SetOperator(const std::vector<std::unique_ptr<Operator>> &ops,
-                   const std::vector<std::unique_ptr<Operator>> *aux_ops = nullptr);
+  void SetOperator(const std::vector<std::unique_ptr<ParOperator>> &ops,
+                   const std::vector<std::unique_ptr<ParOperator>> *aux_ops = nullptr);
 
   void Mult(const Vector &x, Vector &y) const override
   {

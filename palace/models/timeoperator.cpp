@@ -173,6 +173,8 @@ public:
                                print](double a0,
                                       double a1) -> std::unique_ptr<mfem::IterativeSolver>
       {
+        // XX TODO WORKING ON MONDAY!!
+
         // Configure the system matrix and also the matrix (matrices) from which the
         // preconditioner will be constructed.
         this->A = spaceop.GetSystemMatrix(a0, a1, 1.0, this->K.get(), this->C.get(),
