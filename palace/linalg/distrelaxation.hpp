@@ -25,14 +25,11 @@ private:
   // Number of smoother iterations.
   const int pc_it;
 
-  // System matrix and its projection G^T A G (not owned).
-  const Operator *A, *A_G;
-
-  // Dirichlet boundary conditions in the auxiliary space (not owned).
-  const mfem::Array<int> *dbc_tdof_list_G;
+  // System matrix and its projection Gᵀ A G (not owned).
+  const ParOperator *A, *A_G;
 
   // Discrete gradient matrix.
-  std::unique_ptr<Operator> G;
+  std::unique_ptr<ParOperator> G;
 
   // Point smoother objects for each matrix.
   mutable std::unique_ptr<mfem::Solver> B;
@@ -51,8 +48,7 @@ public:
     MFEM_ABORT("SetOperator with a single operator is not implemented for "
                "DistRelaxationSmoother, use the two argument signature instead!");
   }
-
-  void SetOperator(const Operator &op, const Operator &op_G);
+  void SetOperator(const ParOperator &op, const ParOperator &op_G);
 
   void Mult(const Vector &x, Vector &y) const override;
 

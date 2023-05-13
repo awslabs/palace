@@ -71,7 +71,7 @@ SuperLUSolver::SuperLUSolver(MPI_Comm comm, int sym_fact_type, bool use_3d, int 
   solver.SetSymmetricPattern(true);  // Always symmetric sparsity pattern
 }
 
-void SuperLUSolver::SetOperator(const mfem::Operator &op)
+void SuperLUSolver::SetOperator(const ParOperator &op)
 {
   // We need to save A because SuperLU does not copy the input matrix. For repeated
   // factorizations, always reuse the sparsity pattern.
@@ -79,9 +79,8 @@ void SuperLUSolver::SetOperator(const mfem::Operator &op)
   {
     solver.SetFact(mfem::superlu::SamePattern_SameRowPerm);
   }
-  auto *PtAP = const_cast<ParOperator *>(dynamic_cast<const ParOperator *>(&op));
-  MFEM_VERIFY(PtAP, "SuperLUSolver requires a ParOperator operator!");
-  A = std::make_unique<mfem::SuperLURowLocMatrix>(PtAP->ParallelAssemble());
+  A = std::make_unique<mfem::SuperLURowLocMatrix>(
+      const_cast<ParOperator *>(&op)->ParallelAssemble());
 
   // Set up base class.
   solver.SetOperator(*A);

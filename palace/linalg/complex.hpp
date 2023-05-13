@@ -19,7 +19,8 @@ namespace palace
 // Vector and operator classes for complex-valued linear algebra.
 //
 
-// A complex-valued vector represented as two real vectors, one for each component.
+// A complex-valued vector represented as two real vectors, one for each component. The
+// value returned by the vector size is twice the actual complex-valued size.
 class ComplexVector : public Vector
 {
 private:
@@ -34,9 +35,6 @@ public:
 
   // Copy constructor from separately provided real and imaginary parts.
   ComplexVector(const Vector &xr, const Vector &xi);
-
-  // Returns the vector size.
-  int Size() const;
 
   // Set the size of the vector. See the notes for Vector::SetSize for behavior in the
   // cases where n is less than or greater than Size() or Capacity().
@@ -104,12 +102,13 @@ public:
   }
 };
 
-// Abstract base class for complex-valued operators.
+// Abstract base class for complex-valued operators. The values returned by the operator
+// height and width are twice the actual complex-valued size.
 class ComplexOperator : public Operator
 {
 public:
-  ComplexOperator(int s) : Operator(s) {}
-  ComplexOperator(int h, int w) : Operator(h, w) {}
+  ComplexOperator(int s) : Operator(2 * s) {}
+  ComplexOperator(int h, int w) : Operator(2 * h, 2 * w) {}
 
   // Test whether or not the operator is purely real or imaginary.
   virtual bool IsReal() const = 0;

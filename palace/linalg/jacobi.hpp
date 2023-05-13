@@ -25,7 +25,11 @@ private:
 public:
   JacobiSmoother() : mfem::Solver() {}
 
-  void SetOperator(const Operator &op) override;
+  void SetOperator(const Operator &op) override
+  {
+    MFEM_ABORT("JacobiSmoother requires a ParOperator operator!");
+  }
+  void SetOperator(const ParOperator &op);
 
   void Mult(const Vector &x, Vector &y) const override;
 

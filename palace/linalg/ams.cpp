@@ -27,8 +27,8 @@ HypreAmsSolver::HypreAmsSolver(mfem::ParFiniteElementSpace &nd_fespace,
     ams_singular(op_singular), print((print_lvl > 1) ? print_lvl - 1 : 0)
 {
   // From MFEM: The AMS preconditioner may sometimes require inverting singular matrices
-  // with BoomerAMG, which are handled correctly in hypre's Solve method, but can produce
-  // hypre errors in the Setup (specifically in the row l1-norm computation). See the
+  // with BoomerAMG, which are handled correctly in Hypre's Solve method, but can produce
+  // Hypre errors in the Setup (specifically in the row l1-norm computation). See the
   // documentation of MFEM's SetErrorMode() for more details.
   error_mode = IGNORE_HYPRE_ERRORS;
 
@@ -199,7 +199,7 @@ void HypreAmsSolver::InitializeSolver()
   }
 }
 
-void HypreAmsSolver::SetOperator(const Operator &op)
+void HypreAmsSolver::SetOperator(const ParOperator &op)
 {
   // When the operator changes, we need to rebuild the AMS solver but can use the unchanged
   // auxiliary space matrices.
@@ -209,9 +209,7 @@ void HypreAmsSolver::SetOperator(const Operator &op)
     InitializeSolver();
   }
 
-  auto *PtAP = const_cast<ParOperator *>(dynamic_cast<const ParOperator *>(&op));
-  MFEM_VERIFY(PtAP, "HypreAmsSolver requires a ParOperator operator!");
-  A = &PtAP->ParallelAssemble();
+  A = &const_cast<ParOperator *>(&op)->ParallelAssemble();
   height = A->Height();
   width = A->Width();
 

@@ -66,9 +66,9 @@ private:
   // std::unique_ptr<KspSolver> ksp;
 
   // Helper function to get true degrees of freedom on the port.
-  void GetTrueDofs(const mfem::Array<int> &dbc_marker,
-                   mfem::ParFiniteElementSpace &nd_fespace,
-                   mfem::ParFiniteElementSpace &h1_fespace, mfem::Array<int> &nd_tdof_list,
+  void GetTrueDofs(mfem::ParFiniteElementSpace &nd_fespace,
+                   mfem::ParFiniteElementSpace &h1_fespace,
+                   const mfem::Array<int> &dbc_marker, mfem::Array<int> &nd_tdof_list,
                    mfem::Array<int> &h1_tdof_list);
 
   // Configure and solve the linear eigenvalue problem for the boundary mode.
@@ -78,8 +78,8 @@ private:
 
 public:
   WavePortData(const config::WavePortData &data, const MaterialOperator &mat_op,
-               const mfem::Array<int> &dbc_marker, mfem::ParFiniteElementSpace &nd_fespace,
-               mfem::ParFiniteElementSpace &h1_fespace);
+               mfem::ParFiniteElementSpace &nd_fespace,
+               mfem::ParFiniteElementSpace &h1_fespace, const mfem::Array<int> &dbc_marker);
 
   const mfem::Array<int> &GetMarker() const { return attr_marker; }
   mfem::Array<int> &GetMarker() { return attr_marker; }

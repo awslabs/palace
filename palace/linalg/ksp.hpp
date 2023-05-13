@@ -13,6 +13,7 @@
 namespace palace
 {
 
+class ComplexParOperator;
 class ComplexVector;
 class IoData;
 
@@ -43,10 +44,14 @@ public:
   int NumTotalMult() const { return ksp_mult; }
   int NumTotalMultIter() const { return ksp_mult_it; }
 
-  void SetOperator(const Operator &op) override { SetOperator(op, op); }
-  void SetOperator(const Operator &op, const Operator &pc_op);
-  void SetOperator(const Operator &op, const std::vector<std::unique_ptr<Operator>> &pc_ops,
-                   const std::vector<std::unique_ptr<Operator>> *pc_aux_ops = nullptr);
+  void SetOperator(const Operator &op) override
+  {
+    MFEM_ABORT("SetOperator with a single operator is not implemented for KspSolver, you "
+               "must specify the preconditioner operator as well!");
+  }
+  virtual void
+  SetOperator(const Operator &op, const std::vector<std::unique_ptr<ParOperator>> &pc_ops,
+              const std::vector<std::unique_ptr<ParOperator>> *pc_aux_ops = nullptr);
 
   void Mult(const Vector &x, Vector &y) const override;
 };
@@ -56,6 +61,18 @@ class ComplexKspSolver : public KspSolver
 public:
   ComplexKspSolver(const IoData &iodata, mfem::ParFiniteElementSpaceHierarchy &fespaces,
                    mfem::ParFiniteElementSpaceHierarchy *aux_fespaces = nullptr);
+
+  using KspSolver::SetOperator;
+  void SetOperator(
+      const Operator &op, const std::vector<std::unique_ptr<ParOperator>> &pc_ops,
+      const std::vector<std::unique_ptr<ParOperator>> *pc_aux_ops = nullptr) override
+  {
+    MFEM_ABORT("SetOperator with a real-valued operator is not implemented for "
+               "ComplexKspSolver, use the complex-valued signature instead!");
+  }
+  void SetOperator(const ComplexOperator &op,
+                   const std::vector<std::unique_ptr<ParOperator>> &pc_ops,
+                   const std::vector<std::unique_ptr<ParOperator>> *pc_aux_ops = nullptr);
 
   void Mult(const Vector &x, Vector &y) const override
   {

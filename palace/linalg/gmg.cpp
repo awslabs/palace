@@ -22,7 +22,7 @@ GeometricMultigridSolver::GeometricMultigridSolver(
   MFEM_VERIFY(n_levels > 0,
               "Empty finite element space hierarchy during multigrid solver setup!");
   A_.resize(n_levels, nullptr);
-  dbc_tdof_lists_.resize(n_levels, nullptr);
+  P_.resize(n_levels, nullptr);
   x_.resize(n_levels, Vector());
   y_.resize(n_levels, Vector());
   r_.resize(n_levels, Vector());
@@ -34,10 +34,13 @@ GeometricMultigridSolver::GeometricMultigridSolver(
   R_.resize(n_levels, mfem::Array<Vector *>());
 
   // Configure prolongation operators.
-  P_.reserve(n_levels);
   for (int l = 0; l < n_levels; l++)
   {
-    P_.push_back(fespaces.GetProlongationAtLevel(l));
+    const auto *PtAP_l =
+        dynamic_cast<const ParOperator *>(fespaces.GetProlongationAtLevel(l));
+    MFEM_VERIFY(PtAP_l,
+                "GeometricMultigridSolver requires ParOperator prolongation operators!");
+    P_[l] = PtAP_l;
   }
 
   // Use the supplied level 0 (coarse) solver.
@@ -65,8 +68,8 @@ GeometricMultigridSolver::GeometricMultigridSolver(
 }
 
 void GeometricMultigridSolver::SetOperator(
-    const std::vector<std::unique_ptr<Operator>> &ops,
-    const std::vector<std::unique_ptr<Operator>> *aux_ops)
+    const std::vector<std::unique_ptr<ParOperator>> &ops,
+    const std::vector<std::unique_ptr<ParOperator>> *aux_ops)
 {
   const int n_levels = static_cast<int>(A_.size());
   MFEM_VERIFY(static_cast<std::size_t>(ops.size()) == n_levels &&
@@ -84,13 +87,11 @@ void GeometricMultigridSolver::SetOperator(
     }
     else
     {
+
+      // XX TODO TEST IF THIS ACTUALLY WORKS AT RUNTIME...
+
       B_[l]->SetOperator(*ops[l]);
     }
-
-    // Configure lists of essential boundary condition true dofs.
-    const auto *PtAP_l = dynamic_cast<const ParOperator *>(ops[l].get());
-    MFEM_VERIFY(PtAP_l, "GeometricMultigridSolver requires ParOperator operators!");
-    dbc_tdof_lists_[l] = PtAP_l->GetEssentialTrueDofs();
   }
 
   // Operator size is given by the fine level dimensions.
@@ -167,11 +168,12 @@ void GeometricMultigridSolver::VCycle(int l, bool initial_guess) const
 
   // Coarse grid correction.
   P_[l - 1]->ArrayMultTranspose(R_[l], X_[l - 1]);
-  if (dbc_tdof_lists_[l - 1])
+  if (A_[l - 1]->GetEssentialTrueDofs())
   {
+    const mfem::Array<int> &dbc_tdof_list = *A_[l - 1]->GetEssentialTrueDofs();
     for (int j = 0; j < n_rhs; j++)
     {
-      X_[l - 1][j]->SetSubVector(*dbc_tdof_lists_[l - 1], 0.0);
+      X_[l - 1][j]->SetSubVector(dbc_tdof_list, 0.0);
     }
   }
   VCycle(l - 1, false);
