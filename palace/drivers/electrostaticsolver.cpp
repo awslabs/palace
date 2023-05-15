@@ -4,16 +4,13 @@
 #include "electrostaticsolver.hpp"
 
 #include <mfem.hpp>
-#include "linalg/gmg.hpp"
+#include "linalg/ksp.hpp"
 #include "linalg/operator.hpp"
-#include "linalg/pc.hpp"
 #include "models/laplaceoperator.hpp"
 #include "models/postoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
 #include "utils/timer.hpp"
-
-// XX TODO WORKING FOR MONDAY!
 
 namespace palace
 {
@@ -31,46 +28,9 @@ void ElectrostaticSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mes
   laplaceop.GetStiffnessMatrix(K);
   SaveMetadata(laplaceop.GetH1Space());
 
-  // XX TODO REVISIT BELOW...
-
-  // // Set up the linear solver.
-  // std::unique_ptr<mfem::Solver> pc =
-  //     ConfigurePreconditioner(iodata, laplaceop.GetDbcMarker(), laplaceop.GetH1Spaces());
-  // auto *gmg = dynamic_cast<GeometricMultigridSolver *>(pc.get());
-  // if (gmg)
-  // {
-  //   gmg->SetOperator(K);
-  // }
-  // else
-  // {
-  //   pc->SetOperator(*K.back());
-  // }
-
-  // mfem::IterativeSolver::PrintLevel print =
-  //     mfem::IterativeSolver::PrintLevel().Warnings().Errors();
-  // if (iodata.problem.verbose > 0)
-  // {
-  //   print.Summary();
-  //   if (iodata.problem.verbose > 1)
-  //   {
-  //     print.Iterations();
-  //     if (iodata.problem.verbose > 2)
-  //     {
-  //       print.All();
-  //     }
-  //   }
-  // }
-  // mfem::CGSolver pcg(mesh.back()->GetComm());
-  // pcg.SetRelTol(iodata.solver.linear.tol);
-  // pcg.SetMaxIter(iodata.solver.linear.max_it);
-  // pcg.SetPrintLevel(print);
-  // pcg.SetOperator(*K.back());  // Call before SetPreconditioner, PC operator set
-  // separately pcg.SetPreconditioner(*pc); if (iodata.solver.linear.ksp_type !=
-  // config::LinearSolverData::KspType::DEFAULT &&
-  //     iodata.solver.linear.ksp_type != config::LinearSolverData::KspType::CG)
-  // {
-  //   Mpi::Warning("Electrostatic problem type always uses CG as the Krylov solver!\n");
-  // }
+  // Set up the linear solver.
+  KspSolver ksp(iodata, laplaceop.GetH1Spaces());
+  ksp.SetOperator(*K.back(), K);
 
   // Terminal indices are the set of boundaries over which to compute the capacitance
   // matrix. Terminal boundaries are aliases for ports.
@@ -93,28 +53,19 @@ void ElectrostaticSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mes
     Mpi::Print("\nIt {:d}/{:d}: Index = {:d} (elapsed time = {:.2e} s)\n", step + 1, nstep,
                idx, Timer::Duration(timer.Now() - t0).count());
 
-    //   // Form and solve the linear system for a prescribed nonzero voltage on the
-    //   specified
-    //   // terminal.
-    //   Mpi::Print("\n");
-    //   V[step].SetSize(RHS.Size());
-    //   laplaceop.GetExcitationVector(idx, *K.back(), *Ke.back(), V[step], RHS);
-    //   timer.construct_time += timer.Lap();
+    // Form and solve the linear system for a prescribed nonzero voltage on the specified
+    // terminal.
+    Mpi::Print("\n");
+    laplaceop.GetExcitationVector(idx, *K.back(), V[step], RHS);
+    timer.construct_time += timer.Lap();
 
-    //   pcg.Mult(RHS, V[step]);
-    //   if (!pcg.GetConverged())
-    //   {
-    //     Mpi::Warning("Linear solver did not converge in {:d} iterations!\n",
-    //                  pcg.GetNumIterations());
-    //   }
-    //   ksp_it += pcg.GetNumIterations();
-    //   timer.solve_time += timer.Lap();
+    ksp.Mult(RHS, V[step]);
+    timer.solve_time += timer.Lap();
 
-    //   // V[step]->Print();
-    //   Mpi::Print(" Sol. ||V|| = {:.6e} (||RHS|| = {:.6e})\n",
-    //              std::sqrt(mfem::InnerProduct(mesh.back()->GetComm(), V[step], V[step])),
-    //              std::sqrt(mfem::InnerProduct(mesh.back()->GetComm(), RHS, RHS)));
-    //   timer.postpro_time += timer.Lap();
+    Mpi::Print(" Sol. ||V|| = {:.6e} (||RHS|| = {:.6e})\n",
+               linalg::Norml2(K.back()->GetComm(), V[step]),
+               linalg::Norml2(K.back()->GetComm(), RHS));
+    timer.postpro_time += timer.Lap();
 
     // Next terminal.
     step++;
@@ -122,7 +73,7 @@ void ElectrostaticSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mes
 
   // Postprocess the capacitance matrix from the computed field solutions.
   const auto io_time_prev = timer.io_time;
-  SaveMetadata(nstep, ksp_it);
+  SaveMetadata(ksp);
   Postprocess(laplaceop, postop, V, timer);
   timer.postpro_time += timer.Lap() - (timer.io_time - io_time_prev);
 }

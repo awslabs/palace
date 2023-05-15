@@ -12,7 +12,6 @@
 #include <mfem.hpp>
 #include "linalg/curlcurl.hpp"
 #include "linalg/ksp.hpp"
-#include "linalg/pc.hpp"
 #include "linalg/petsc.hpp"
 
 namespace palace

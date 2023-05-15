@@ -4,9 +4,8 @@
 #include "timeoperator.hpp"
 
 #include <vector>
-#include "linalg/gmg.hpp"
 #include "linalg/jacobi.hpp"
-#include "linalg/pc.hpp"
+#include "linalg/ksp.hpp"
 #include "models/spaceoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
@@ -19,7 +18,7 @@ namespace
 
 class TimeDependentCurlCurlOperator : public mfem::SecondOrderTimeDependentOperator
 {
-private:
+public:
   // System matrices and excitation RHS.
   std::unique_ptr<ParOperator> K, M, C;
   Vector NegJ;
@@ -30,38 +29,14 @@ private:
 
   // Internal objects for solution of linear systems during time stepping.
   double a0_, a1_;
+  std::unique_ptr<KspSolver> kspM, kspA;
   std::unique_ptr<ParOperator> A;
   std::vector<std::unique_ptr<ParOperator>> B, AuxB;
   mutable Vector RHS;
 
-  // XX TODO REMOVE
-  //  std::function<std::unique_ptr<ParOperator>(double, double)> GetSystemMatrix;
-  //  std::function<void(double, double, std::vector<std::unique_ptr<ParOperator>> &,
-  //                     std::vector<std::unique_ptr<ParOperator>> &)>
-  //    GetPreconditionerMatrix;
-  //  std::function<std::unique_ptr<mfem::IterativeSolver>(double, double)> GetSystemMatrix;
-
-  // Linear system solvers and settings for implicit time integration.
-  std::unique_ptr<mfem::IterativeSolver> kspM, kspA;
-  std::unique_ptr<mfem::Solver> pcM, pcA;
-  mutable int kspM_mult, kspA_mult, kspM_it, kspA_it;
-
   // Bindings to SpaceOperator functions to get the system matrix and preconditioner, and
   // construct the linear solver.
-  std::function<std::unique_ptr<mfem::IterativeSolver>(double a0, double a1)>
-      ConfigureLinearSolver;
-
-  void FormRHS(const Vector &u, const Vector &du, Vector &rhs) const
-  {
-    // Multiply: rhs = -(K u + C du) - g'(t) J.
-    rhs = 0.0;
-    K->AddMult(u, rhs, -1.0);
-    if (C)
-    {
-      C->AddMult(du, rhs, -1.0);
-    }
-    rhs.Add(dJcoef(t), NegJ);
-  }
+  std::function<std::unique_ptr<KspSolver>(double a0, double a1)> ConfigureLinearSolver;
 
 public:
   TimeDependentCurlCurlOperator(const IoData &iodata, SpaceOperator &spaceop,
@@ -87,154 +62,60 @@ public:
     // Set up linear solvers.
     {
       // PCG with a simple Jacobi preconditioner for mass matrix systems.
-      auto jac = std::make_unique<JacobiSmoother>();
-      jac->SetOperator(*M);
-      pcM = std::move(jac);
-
       auto pcg = std::make_unique<mfem::CGSolver>(M->GetComm());
       pcg->iterative_mode = iodata.solver.linear.ksp_initial_guess;
       pcg->SetRelTol(iodata.solver.linear.tol);
       pcg->SetMaxIter(iodata.solver.linear.max_it);
       pcg->SetPrintLevel(0);
-      pcg->SetOperator(*M);
-      pcg->SetPreconditioner(*pcM);
-      kspM = std::move(pcg);
+      kspM =
+          std::make_unique<KspSolver>(std::move(pcg), std::make_unique<JacobiSmoother>());
+      kspM->SetOperator(*M, *M);
     }
     {
       // For explicit schemes, recommended to just use cheaper preconditioners. Otherwise,
       // use AMS or a direct solver. The system matrix is formed as a sequence of matrix
       // vector products, and is only assembled for preconditioning.
-
-      // // XX TODO ADDRESS, WITH BCS, ETC.....
-      // pcA = ConfigurePreconditioner(iodata, spaceop.GetDbcMarker(),
-      // spaceop.GetNDSpaces(),
-      //                               &spaceop.GetH1Spaces());
-
-      // XX TODO TEST IF THE BELOW WORKS?
-
-      // auto pcg = std::make_unique<mfem::CGSolver>(comm);
-      // pcg->iterative_mode = iodata.solver.linear.ksp_initial_guess;
-      // pcg->SetRelTol(iodata.solver.linear.tol);
-      // pcg->SetMaxIter(iodata.solver.linear.max_it);
-      // pcg->SetPrintLevel(print);
-      // pcg->SetOperator(*this);
-      // pcg->SetPreconditioner(*pcA);
-      // kspA = std::move(pcg);
-
-      // XX TODO REMOVE
-      //  GetSystemMatrix = [this, &spaceop](double a0, double a1) ->
-      //  std::unique_ptr<ParOperator>
-      //  {
-      //    return spaceop.GetSystemMatrix(a0, a1, 1.0, this->K.get(), this->C.get(),
-      //    this->M.get());
-      //  }
-      //  GetPreconditionerMatrix = [&spaceop](double a0, double a1,
-      //                                std::vector<std::unique_ptr<ParOperator>> &B,
-      //                                std::vector<std::unique_ptr<ParOperator>> &AuxB)
-      //  { spaceop.GetPreconditionerMatrix(a0, a1, 1.0, 0.0, B, AuxB); };
-      //  ConfigureLinearSolver = [=](std::unique_ptr<ParOperator> &A,
-      //  std::unique_ptr<mfem::Solver> &pc) -> std::unique_ptr<mfem::IterativeSolver>
-      //  {
-      //    auto pcg = std::make_unique<mfem::CGSolver>(comm);
-      //    pcg->iterative_mode = iodata.solver.linear.ksp_initial_guess;
-      //    pcg->SetRelTol(iodata.solver.linear.tol);
-      //    pcg->SetMaxIter(iodata.solver.linear.max_it);
-      //    pcg->SetPrintLevel(print);
-      //    pcg->SetOperator(*A);
-      //    pcg->SetPreconditioner(*pc);
-      //  }
-
-      // The time domain system matrix is A = a0 K + a1 C + M, which constructed using the
-      // assembled K, C, and M matrices and the coefficients a0 and a1 defined by the time
-      // integrator.
-      if (iodata.solver.linear.ksp_type != config::LinearSolverData::KspType::DEFAULT &&
-          iodata.solver.linear.ksp_type != config::LinearSolverData::KspType::CG)
+      ConfigureLinearSolver = [this, &iodata,
+                               &spaceop](double a0, double a1) -> std::unique_ptr<KspSolver>
       {
-        Mpi::Warning("Transient problem type always uses CG as the Krylov solver!\n");
-      }
-      bool iterative_mode = iodata.solver.linear.ksp_initial_guess;
-      double tol = iodata.solver.linear.tol;
-      int max_it = iodata.solver.linear.max_it;
-      mfem::IterativeSolver::PrintLevel print =
-          mfem::IterativeSolver::PrintLevel().Warnings().Errors();
-      if (iodata.problem.verbose > 0)
-      {
-        print.Summary();
-        if (iodata.problem.verbose > 1)
-        {
-          print.Iterations();
-          if (iodata.problem.verbose > 2)
-          {
-            print.All();
-          }
-        }
-      }
-      ConfigureLinearSolver = [this, &spaceop, iterative_mode, tol, max_it,
-                               print](double a0,
-                                      double a1) -> std::unique_ptr<mfem::IterativeSolver>
-      {
-        // XX TODO WORKING ON MONDAY!!
-
         // Configure the system matrix and also the matrix (matrices) from which the
         // preconditioner will be constructed.
         this->A = spaceop.GetSystemMatrix(a0, a1, 1.0, this->K.get(), this->C.get(),
                                           this->M.get());
         spaceop.GetPreconditionerMatrix(a0, a1, 1.0, 0.0, this->B, this->AuxB);
 
-        // Configure the preconditioner.
-        auto *gmg = dynamic_cast<GeometricMultigridSolver *>(this->pcA.get());
-
-        // XX TODO WIP
-        //  if (gmg)
-        //  {
-        //    gmg->SetOperator(this->B, &this->AuxB);
-        //  }
-        //  else
-        //  {
-        //    this->pcA->SetOperator(*this->B.back());
-        //  }
-
-        // Construct and return the linear solver.
-        auto pcg = std::make_unique<mfem::CGSolver>(this->M->GetComm());
-        pcg->iterative_mode = iterative_mode;
-        pcg->SetRelTol(tol);
-        pcg->SetMaxIter(max_it);
-        pcg->SetPrintLevel(print);
-        pcg->SetOperator(*this->A);
-        pcg->SetPreconditioner(*this->pcA);
-        return pcg;
+        // Configure the solver.
+        auto ksp = std::make_unique<KspSolver>(iodata, spaceop.GetNDSpaces(),
+                                               &spaceop.GetH1Spaces());
+        ksp->SetOperator(*this->A, this->B, &this->AuxB);
+        return ksp;
       };
     }
-    kspM_mult = kspA_mult = kspM_it = kspA_it = 0;
   }
 
-  const ParOperator &GetK() const { return *K; }
-  const ParOperator &GetM() const { return *M; }
-  const ParOperator &GetC() const { return *C; }
-
-  int GetNumMult() const { return kspM_mult; }  // XX TODO REVISIT WITH KspSolver
-  int GetNumMultIter() const { return kspM_it; }
-  int GetNumImplicitSolve() const { return kspA_mult; }
-  int GetNumImplicitSolveIter() const { return kspA_it; }
+  void FormRHS(const Vector &u, const Vector &du, Vector &rhs) const
+  {
+    // Multiply: rhs = -(K u + C du) - g'(t) J.
+    rhs = 0.0;
+    K->AddMult(u, rhs, -1.0);
+    if (C)
+    {
+      C->AddMult(du, rhs, -1.0);
+    }
+    rhs.Add(dJcoef(t), NegJ);
+  }
 
   void Mult(const Vector &u, const Vector &du, Vector &ddu) const override
   {
     // Solve: M ddu = -(K u + C du) - g'(t) J.
     Mpi::Print("\n");
-    if (kspM_mult == 0)
+    if (kspM->NumTotalMult() == 0)
     {
       // Operators have already been set in constructor.
       ddu = 0.0;
     }
     FormRHS(u, du, RHS);
     kspM->Mult(RHS, ddu);
-    if (!kspM->GetConverged())
-    {
-      Mpi::Warning("Linear solver did not converge in {:d} iterations!\n",
-                   kspM->GetNumIterations());
-    }
-    kspM_mult++;
-    kspM_it += kspM->GetNumIterations();
   }
 
   void ImplicitSolve(const double a0, const double a1, const Vector &u, const Vector &du,
@@ -243,43 +124,21 @@ public:
     // Solve: (a0 K + a1 C + M) k = -(K u + C du) - g'(t) J, where a0 may be 0 in the
     // explicit case. At first iteration, construct the solver. Also don't print a newline
     // if already done by the mass matrix solve at the first iteration.
-    if (kspA_mult > 0)
+    if (kspA && kspA->NumTotalMult() > 0)
     {
       Mpi::Print("\n");
     }
-    if (kspA_mult == 0 || a0 != a0_ || a1 != a1_)
+    if (!kspA || a0 != a0_ || a1 != a1_)
     {
       // Configure the linear solver, including the system matrix and also the matrix
       // (matrices) from which the preconditioner will be constructed.
       kspA = ConfigureLinearSolver(a0, a1);
-
-      // XX TODO WORKING: REMOVE THE BELOW IF THIS WORKS...
-
-      // A = GetSystemMatrix(a0, a1);
-      // GetPreconditionerMatrix(a0, a1, P, AuxP);
-      // auto *gmg = dynamic_cast<GeometricMultigridSolver *>(pcA.get());
-      // if (gmg)
-      // {
-      //   gmg->SetOperator(P, &AuxP);
-      // }
-      // else
-      // {
-      //   pcA->SetOperator(*P.back());
-      // }
-
       a0_ = a0;
       a1_ = a1;
       k = 0.0;
     }
     FormRHS(u, du, RHS);
     kspA->Mult(RHS, k);
-    if (!kspA->GetConverged())
-    {
-      Mpi::Warning("Linear solver did not converge in {:d} iterations!\n",
-                   kspA->GetNumIterations());
-    }
-    kspA_mult++;
-    kspA_it += kspA->GetNumIterations();
   }
 };
 
@@ -332,23 +191,19 @@ TimeOperator::TimeOperator(const IoData &iodata, SpaceOperator &spaceop,
   op = std::make_unique<TimeDependentCurlCurlOperator>(iodata, spaceop, djcoef, 0.0, type);
 }
 
-int TimeOperator::GetTotalKspMult() const
+const KspSolver &TimeOperator::GetLinearSolver() const
 {
   const auto &curlcurl = dynamic_cast<const TimeDependentCurlCurlOperator &>(*op);
-  return curlcurl.GetNumMult() + curlcurl.GetNumImplicitSolve();
-}
-
-int TimeOperator::GetTotalKspIter() const
-{
-  const auto &curlcurl = dynamic_cast<const TimeDependentCurlCurlOperator &>(*op);
-  return curlcurl.GetNumMultIter() + curlcurl.GetNumImplicitSolveIter();
+  MFEM_VERIFY(curlcurl.kspA,
+              "No linear solver for time-depdendent operator has been constructed!\n");
+  return *curlcurl.kspA;
 }
 
 double TimeOperator::GetMaxTimeStep() const
 {
   const auto &curlcurl = dynamic_cast<const TimeDependentCurlCurlOperator &>(*op);
-  const ParOperator &M = curlcurl.GetM();
-  const ParOperator &K = curlcurl.GetK();
+  const ParOperator &M = *curlcurl.M;
+  const ParOperator &K = *curlcurl.K;
 
   // Solver for M⁻¹.
   constexpr double lin_tol = 1.0e-9;
