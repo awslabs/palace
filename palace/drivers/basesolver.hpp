@@ -21,6 +21,7 @@ namespace palace
 {
 
 class IoData;
+class KspSolver;
 class PostOperator;
 class Timer;
 
@@ -80,7 +81,7 @@ public:
 
   // These methods write different simulation metadata to a JSON file in post_dir.
   void SaveMetadata(const mfem::ParFiniteElementSpace &fespace) const;
-  void SaveMetadata(int ksp_mult, int ksp_it) const;
+  void SaveMetadata(const KspSolver &ksp) const;
   void SaveMetadata(const Timer &timer) const;
 };
 

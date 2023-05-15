@@ -10,7 +10,6 @@
 #include "linalg/feast.hpp"
 #include "linalg/ksp.hpp"
 #include "linalg/operator.hpp"
-#include "linalg/pc.hpp"
 #include "linalg/petsc.hpp"
 #include "linalg/slepc.hpp"
 #include "models/lumpedportoperator.hpp"
