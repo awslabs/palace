@@ -143,7 +143,7 @@ void RebalanceMesh(std::unique_ptr<mfem::ParMesh> &mesh)
   // This will in turn call the mesh exchange of face neighbor data.
   if (mesh->GetNodes())
   {
-    auto *pgf = dynamic_cast<mfem::ParGridFunction*>(mesh->GetNodes());
+    auto *pgf = dynamic_cast<mfem::ParGridFunction *>(mesh->GetNodes());
     MFEM_ASSERT(pgf, "The grid function must be castable to a ParGridFunction");
     pgf->ExchangeFaceNbrData();
   }

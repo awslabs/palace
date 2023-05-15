@@ -100,7 +100,6 @@ ErrorIndicators DrivenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParM
                                    spaceop.GetNDSpace());
   timer.est_construction_time += timer.Lap();
 
-
   // Main frequency sweep loop.
   return adaptive ? SweepAdaptive(spaceop, postop, estimator, nstep, step0, omega0,
                                   delta_omega, timer)

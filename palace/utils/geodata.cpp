@@ -109,7 +109,7 @@ mfem::ParMesh ReadMesh(MPI_Comm comm, const IoData &iodata, bool reorder, bool c
   // Construct the parallel mesh data structure by distributing the serial mesh from the
   // root process.
   mfem::ParMesh pmesh(comm, mesh, partitioning.get());
-  auto *pgf = dynamic_cast<mfem::ParGridFunction*>(pmesh.GetNodes());
+  auto *pgf = dynamic_cast<mfem::ParGridFunction *>(pmesh.GetNodes());
   if (pgf)
   {
     pgf->ExchangeFaceNbrData();
