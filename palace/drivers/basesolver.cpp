@@ -6,6 +6,7 @@
 #include <complex>
 #include <mfem.hpp>
 #include <nlohmann/json.hpp>
+#include "linalg/ksp.hpp"
 #include "models/domainpostoperator.hpp"
 #include "models/postoperator.hpp"
 #include "models/surfacepostoperator.hpp"
@@ -100,7 +101,7 @@ void BaseSolver::SaveMetadata(const mfem::ParFiniteElementSpace &fespace) const
   }
 }
 
-void BaseSolver::SaveMetadata(int ksp_mult, int ksp_it) const
+void BaseSolver::SaveMetadata(const KspSolver &ksp) const
 {
   if (post_dir.length() == 0)
   {
@@ -109,8 +110,8 @@ void BaseSolver::SaveMetadata(int ksp_mult, int ksp_it) const
   if (root)
   {
     json meta = LoadMetadata(post_dir);
-    meta["LinearSolver"]["TotalSolves"] = ksp_mult;
-    meta["LinearSolver"]["TotalIts"] = ksp_it;
+    meta["LinearSolver"]["TotalSolves"] = ksp.NumTotalMult();
+    meta["LinearSolver"]["TotalIts"] = ksp.NumTotalMultIter();
     WriteMetadata(post_dir, meta);
   }
 }

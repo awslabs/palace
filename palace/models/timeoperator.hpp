@@ -14,6 +14,7 @@ namespace palace
 {
 
 class IoData;
+class KspSolver;
 class SpaceOperator;
 
 //
@@ -43,13 +44,11 @@ public:
   const Vector &GetEdot() const { return dE; }
   const Vector &GetB() const { return B; }
 
-  // Is time integration scheme explicit or implicit.
-  bool isExplicit() const { return op->isExplicit(); }
+  // Return the linear solver associated with the implicit or explicit time integrator.
+  const KspSolver &GetLinearSolver() const;
 
-  // Return number of linear solves and linear solver iterations performed during time
-  // integration.
-  int GetTotalKspMult() const;
-  int GetTotalKspIter() const;
+  // Return if the time integration scheme explicit or implicit.
+  bool isExplicit() const { return op->isExplicit(); }
 
   // Estimate the maximum stable time step based on the maximum eigenvalue of the
   // undamped system matrix M⁻¹ K.

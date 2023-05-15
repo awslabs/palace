@@ -105,8 +105,8 @@ void TransientSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
     postop.SetBGridFunction(B);
     postop.UpdatePorts(spaceop.GetLumpedPortOp());
     Mpi::Print(" Sol. ||E|| = {:.6e}, ||B|| = {:.6e}\n",
-               std::sqrt(mfem::InnerProduct(mesh.back()->GetComm(), E, E)),
-               std::sqrt(mfem::InnerProduct(mesh.back()->GetComm(), B, B)));
+               linalg::Norml2(mesh.back()->GetComm(), E),
+               linalg::Norml2(mesh.back()->GetComm(), B));
     if (!iodata.solver.transient.only_port_post)
     {
       E_elec = postop.GetEFieldEnergy();
@@ -124,7 +124,7 @@ void TransientSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
     // Increment time step.
     step++;
   }
-  SaveMetadata(timeop.GetTotalKspMult(), timeop.GetTotalKspIter());
+  SaveMetadata(timeop.GetLinearSolver());
 }
 
 std::function<double(double)> TransientSolver::GetTimeExcitation(bool dot) const

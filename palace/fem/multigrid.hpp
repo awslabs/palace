@@ -86,6 +86,8 @@ mfem::ParFiniteElementSpaceHierarchy ConstructFiniteElementSpaceHierarchy(
   }
   mfem::ParFiniteElementSpaceHierarchy fespaces(mesh[0].get(), fespace, false, true);
 
+  // XX TODO: LibCEED transfer operators!
+
   // h-refinement
   for (std::size_t l = 1; l < mesh.size(); l++)
   {
