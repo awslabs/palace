@@ -138,7 +138,19 @@ void RebalanceMesh(std::unique_ptr<mfem::ParMesh> &mesh)
       mesh::RebalanceConformalMesh(mesh);
     }
   }
-  mesh->ExchangeFaceNbrData();
+
+  // If the mesh is higher order, synchronize through the nodal grid function.
+  // This will in turn call the mesh exchange of face neighbor data.
+  if (mesh->GetNodes())
+  {
+    auto *pgf = dynamic_cast<mfem::ParGridFunction*>(mesh->GetNodes());
+    MFEM_ASSERT(pgf, "The grid function must be castable to a ParGridFunction");
+    pgf->ExchangeFaceNbrData();
+  }
+  else
+  {
+    mesh->ExchangeFaceNbrData();
+  }
   mesh->Finalize();
 }
 
@@ -190,6 +202,8 @@ BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<mfem::ParMesh>> 
                          "mesh from the refinement sequence.");
     mesh.erase(mesh.begin(), mesh.end() - 1);
   }
+
+  mesh.back()->ExchangeFaceNbrData();
 
   int iter = 0;
   auto indicators = Solve(mesh, timer);

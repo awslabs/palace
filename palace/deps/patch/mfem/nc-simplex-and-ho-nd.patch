@@ -1,3 +1,95 @@
+diff --git a/.github/workflows/builds-and-tests.yml b/.github/workflows/builds-and-tests.yml
+index ce02300a9..e28615391 100644
+--- a/.github/workflows/builds-and-tests.yml
++++ b/.github/workflows/builds-and-tests.yml
+@@ -162,7 +162,7 @@ jobs:
+ 
+     - name: get hypre
+       if: matrix.mpi == 'par' && steps.hypre-cache.outputs.cache-hit != 'true' && matrix.os != 'windows-latest'
+-      uses: mfem/github-actions/build-hypre@v2.2
++      uses: mfem/github-actions/build-hypre@v2.4
+       with:
+         archive: ${{ env.HYPRE_ARCHIVE }}
+         dir: ${{ env.HYPRE_TOP_DIR }}
+@@ -171,7 +171,7 @@ jobs:
+ 
+     - name: get hypre (Windows)
+       if: matrix.mpi == 'par' && steps.hypre-cache.outputs.cache-hit != 'true' && matrix.os == 'windows-latest'
+-      uses: mfem/github-actions/build-hypre@v2.2
++      uses: mfem/github-actions/build-hypre@v2.4
+       with:
+         archive: ${{ env.HYPRE_ARCHIVE }}
+         dir: ${{ env.HYPRE_TOP_DIR }}
+@@ -190,7 +190,7 @@ jobs:
+ 
+     - name: install metis
+       if: matrix.mpi == 'par' && matrix.os != 'windows-latest' && steps.metis-cache.outputs.cache-hit != 'true'
+-      uses: mfem/github-actions/build-metis@v2.2
++      uses: mfem/github-actions/build-metis@v2.4
+       with:
+         archive: ${{ env.METIS_ARCHIVE }}
+         dir: ${{ env.METIS_TOP_DIR }}
+@@ -217,7 +217,7 @@ jobs:
+ 
+     # MFEM build and test
+     - name: build
+-      uses: mfem/github-actions/build-mfem@v2.3
++      uses: mfem/github-actions/build-mfem@v2.4
+       env:
+         VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/vcpkg_cache
+       with:
+@@ -271,7 +271,7 @@ jobs:
+     # Code coverage (process and upload reports)
+     - name: codecov
+       if: matrix.codecov == 'YES'
+-      uses: mfem/github-actions/upload-coverage@v2.2
++      uses: mfem/github-actions/upload-coverage@v2.4
+       with:
+         name: ${{ matrix.os }}-${{ matrix.build-system }}-${{ matrix.target }}-${{ matrix.mpi }}-${{ matrix.hypre-target }}
+         project_dir: ${{ env.MFEM_TOP_DIR }}
+diff --git a/.github/workflows/mfem-analysis.yml b/.github/workflows/mfem-analysis.yml
+index df69c199f..fba4a5e5d 100644
+--- a/.github/workflows/mfem-analysis.yml
++++ b/.github/workflows/mfem-analysis.yml
+@@ -57,7 +57,7 @@ jobs:
+ 
+     - name: Get Hypre
+       if: steps.hypre-cache.outputs.cache-hit != 'true'
+-      uses: mfem/github-actions/build-hypre@v2.2
++      uses: mfem/github-actions/build-hypre@v2.4
+       with:
+         archive: ${{ env.HYPRE_ARCHIVE }}
+         dir: ${{ env.HYPRE_TOP_DIR }}
+@@ -72,14 +72,14 @@ jobs:
+ 
+     - name: Install Metis
+       if: steps.metis-cache.outputs.cache-hit != 'true'
+-      uses: mfem/github-actions/build-metis@v2.2
++      uses: mfem/github-actions/build-metis@v2.4
+       with:
+         archive: ${{ env.METIS_ARCHIVE }}
+         dir: ${{ env.METIS_TOP_DIR }}
+ 
+     # MFEM build and test
+     - name: build-mfem
+-      uses: mfem/github-actions/build-mfem@v2.2
++      uses: mfem/github-actions/build-mfem@v2.4
+       with:
+         os: ${{ runner.os }}
+         target: opt
+diff --git a/.github/workflows/mfem-sanitizer.yml b/.github/workflows/mfem-sanitizer.yml
+index e91ccc9b2..5ce995345 100644
+--- a/.github/workflows/mfem-sanitizer.yml
++++ b/.github/workflows/mfem-sanitizer.yml
+@@ -38,7 +38,7 @@ jobs:
+         path: mfem
+ 
+     - name: MFEM Build
+-      uses: mfem/github-actions/build-mfem@v2.3
++      uses: mfem/github-actions/build-mfem@v2.4
+       with:
+         os: ${{ runner.os }}
+         target: opt
 diff --git a/CHANGELOG b/CHANGELOG
 index 34b68a10e..eb4f4e4bd 100644
 --- a/CHANGELOG
@@ -163,7 +255,7 @@ index e24c52809..285fcc8e8 100644
     //    use the Nedelec finite elements of the specified order.
     FiniteElementCollection *fec = new ND_FECollection(order, dim);
 diff --git a/fem/doftrans.cpp b/fem/doftrans.cpp
-index 95da3859d..c944954f9 100644
+index 95da3859d..8494ddbf2 100644
 --- a/fem/doftrans.cpp
 +++ b/fem/doftrans.cpp
 @@ -14,54 +14,6 @@
@@ -281,29 +373,25 @@ index 95da3859d..c944954f9 100644
  {
     // Return immediately when no face DoFs are present
     if (nfdofs < 2) { return; }
-@@ -398,9 +342,21 @@ ND_TetDofTransformation::InvTransformPrimal(double *v) const
-    double data[2];
-    Vector v2(data, 2);
- 
-+   auto print_orientations = [this]()
-+   {
-+      std::stringstream msg;
-+      msg << "Orientations = ";
-+      for (const auto &x : Fo)
-+      {
-+         msg << x << " ";
-+      }
-+      return msg.str();
-+   };
-+
+@@ -401,6 +345,17 @@ ND_TetDofTransformation::InvTransformPrimal(double *v) const
     // Transform face DoFs
     for (int f=0; f<4; f++)
     {
-+      MFEM_ASSERT(Fo[f] >=0 && Fo[f] <= 5, print_orientations() << " are invalid");
++      MFEM_ASSERT(Fo[f] >=0 && Fo[f] <= 5,
++                  [this]()
++      {
++         std::stringstream msg;
++         msg << "Orientations = ";
++         for (const auto &x : Fo)
++         {
++            msg << x << " ";
++         }
++         return msg.str();
++      }() << " are invalid");
        for (int i=0; i<nfdofs/2; i++)
        {
           v2 = &v[6*nedofs + f*nfdofs + 2*i];
-@@ -409,8 +365,7 @@ ND_TetDofTransformation::InvTransformPrimal(double *v) const
+@@ -409,8 +364,7 @@ ND_TetDofTransformation::InvTransformPrimal(double *v) const
     }
  }
  
@@ -313,7 +401,7 @@ index 95da3859d..c944954f9 100644
  {
     // Return immediately when no face DoFs are present
     if (nfdofs < 2) { return; }
-@@ -432,8 +387,7 @@ ND_TetDofTransformation::TransformDual(double *v) const
+@@ -432,8 +386,7 @@ ND_TetDofTransformation::TransformDual(double *v) const
     }
  }
  
@@ -323,7 +411,7 @@ index 95da3859d..c944954f9 100644
  {
     // Return immediately when no face DoFs are present
     if (nfdofs < 2) { return; }
-@@ -482,8 +436,7 @@ void ND_WedgeDofTransformation::TransformPrimal(double *v) const
+@@ -482,8 +435,7 @@ void ND_WedgeDofTransformation::TransformPrimal(double *v) const
     }
  }
  
@@ -333,7 +421,7 @@ index 95da3859d..c944954f9 100644
  {
     // Return immediately when no face DoFs are present
     if (nfdofs < 2) { return; }
-@@ -505,8 +458,7 @@ ND_WedgeDofTransformation::InvTransformPrimal(double *v) const
+@@ -505,8 +457,7 @@ ND_WedgeDofTransformation::InvTransformPrimal(double *v) const
     }
  }
  
@@ -343,7 +431,7 @@ index 95da3859d..c944954f9 100644
  {
     // Return immediately when no face DoFs are present
     if (nfdofs < 2) { return; }
-@@ -528,8 +480,7 @@ ND_WedgeDofTransformation::TransformDual(double *v) const
+@@ -528,8 +479,7 @@ ND_WedgeDofTransformation::TransformDual(double *v) const
     }
  }
  
@@ -564,7 +652,7 @@ index a4af691d7..4b98d3ea2 100644
     trans.SetSize(PointMat.Height());
  
 diff --git a/fem/gridfunc.cpp b/fem/gridfunc.cpp
-index 6b14f8910..8b108f218 100644
+index 6b14f8910..a4c778762 100644
 --- a/fem/gridfunc.cpp
 +++ b/fem/gridfunc.cpp
 @@ -397,8 +397,6 @@ void GridFunction::GetNodalValues(int i, Array<double> &nval, int vdim) const
@@ -603,7 +691,17 @@ index 6b14f8910..8b108f218 100644
        {
           Tr->SetIntPoint(&ElemVert->IntPoint(k));
           FElem->CalcVShape(*Tr, vshape);
-@@ -1118,11 +1116,10 @@ int GridFunction::GetFaceVectorValues(
+@@ -838,6 +836,9 @@ double GridFunction::GetValue(ElementTransformation &T,
+             FaceElementTransformations * FET =
+                fes->GetMesh()->GetBdrFaceTransformations(T.ElementNo);
+ 
++            MFEM_ASSERT(FET != nullptr,
++                        "FaceElementTransformation must be valid for a boundary element");
++
+             // Boundary elements and Boundary Faces may have different
+             // orientations so adjust the integration point if necessary.
+             int o = 0;
+@@ -1118,11 +1119,10 @@ int GridFunction::GetFaceVectorValues(
     int i, int side, const IntegrationRule &ir,
     DenseMatrix &vals, DenseMatrix &tr) const
  {
@@ -617,7 +715,7 @@ index 6b14f8910..8b108f218 100644
     Transf = fes->GetMesh()->GetFaceElementTransformations(i, 0);
     if (side == 2)
     {
-@@ -1144,12 +1141,14 @@ int GridFunction::GetFaceVectorValues(
+@@ -1144,12 +1144,14 @@ int GridFunction::GetFaceVectorValues(
     if (di == 0)
     {
        Transf = fes->GetMesh()->GetFaceElementTransformations(i, 5);
@@ -632,7 +730,7 @@ index 6b14f8910..8b108f218 100644
        Transf->Loc2.Transform(ir, eir);
        GetVectorValues(*Transf->Elem2, eir, vals, &tr);
     }
-@@ -2401,7 +2400,11 @@ void GridFunction::ProjectDeltaCoefficient(DeltaCoefficient &delta_coeff,
+@@ -2401,7 +2403,11 @@ void GridFunction::ProjectDeltaCoefficient(DeltaCoefficient &delta_coeff,
                                       loc_mass);
              vals.SetSize(fe->GetDof());
              fe->ProjectDelta(j, vals);
@@ -645,7 +743,7 @@ index 6b14f8910..8b108f218 100644
              SetSubVector(vdofs, vals);
              loc_mass_vals.SetSize(vals.Size());
              loc_mass.Mult(vals, loc_mass_vals);
-@@ -2755,7 +2758,11 @@ void GridFunction::ProjectBdrCoefficientNormal(
+@@ -2755,7 +2761,11 @@ void GridFunction::ProjectBdrCoefficientNormal(
           CalcOrtho(T->Jacobian(), nor);
           lvec(j) = (vc * nor);
        }
@@ -658,7 +756,7 @@ index 6b14f8910..8b108f218 100644
        SetSubVector(dofs, lvec);
     }
  #endif
-@@ -4031,11 +4038,19 @@ double ZZErrorEstimator(BilinearFormIntegrator &blfi,
+@@ -4031,11 +4041,19 @@ double ZZErrorEstimator(BilinearFormIntegrator &blfi,
        {
           if (with_subdomains && ufes->GetAttribute(i) != s) { continue; }
  
@@ -680,7 +778,7 @@ index 6b14f8910..8b108f218 100644
  
           Transf = ufes->GetElementTransformation(i);
           blfi.ComputeElementFlux(*ufes->GetFE(i), *Transf, ul,
-@@ -4330,8 +4345,12 @@ double LSZZErrorEstimator(BilinearFormIntegrator &blfi,  // input
+@@ -4330,8 +4348,12 @@ double LSZZErrorEstimator(BilinearFormIntegrator &blfi,  // input
                                                      flux_order));
           int num_integration_pts = ir->GetNPoints();
  
@@ -2296,9 +2394,29 @@ index ac16eba67..43285e423 100644
     MFEM_HOST_DEVICE inline double *Get_ddI2b(int i, int j)
     {
 diff --git a/mesh/mesh.cpp b/mesh/mesh.cpp
-index de2d80f15..6e28286a7 100644
+index de2d80f15..5768667b9 100644
 --- a/mesh/mesh.cpp
 +++ b/mesh/mesh.cpp
+@@ -1097,8 +1097,8 @@ FaceElementTransformations *Mesh::GetBdrFaceTransformations(int BdrElemNo)
+    FaceElementTransformations *tr;
+    int fn = GetBdrFace(BdrElemNo);
+ 
+-   // Check if the face is interior, shared, or nonconforming.
+-   if (FaceIsTrueInterior(fn) || faces_info[fn].NCFace >= 0)
++   // Check if the face is interior or shared.
++   if (FaceIsTrueInterior(fn))
+    {
+       return NULL;
+    }
+@@ -1932,7 +1932,7 @@ void Mesh::GenerateBoundaryElements()
+          be2face[j++] = i;
+       }
+    }
+-   // In 3D, 'bel_to_edge' is destroyed but it's not updated.
++   // In 3D, 'be_to_edge' is destroyed but it's not updated.
+ }
+ 
+ void Mesh::FinalizeCheck()
 @@ -6864,7 +6864,7 @@ STable3D *Mesh::GetFacesTable()
              break;
           }
@@ -2570,7 +2688,7 @@ index 434674109..907be677d 100644
     /// @note The returned object should be deleted by the caller.
     friend NURBSPatch *Interpolate(NURBSPatch &p1, NURBSPatch &p2);
 diff --git a/mesh/pmesh.cpp b/mesh/pmesh.cpp
-index 8392d2b67..59e87fe96 100644
+index 8392d2b67..83710fb50 100644
 --- a/mesh/pmesh.cpp
 +++ b/mesh/pmesh.cpp
 @@ -34,7 +34,6 @@ ParMesh::ParMesh(const ParMesh &pmesh, bool copy_nodes)
@@ -3061,7 +3179,16 @@ index 8392d2b67..59e87fe96 100644
  
     UpdateNodes();
  }
-@@ -6727,8 +6637,7 @@ void ParMesh::Destroy()
+@@ -6707,6 +6617,8 @@ void ParMesh::Swap(ParMesh &other)
+    mfem::Swap(face_nbr_vertices, other.face_nbr_vertices);
+    mfem::Swap(send_face_nbr_elements, other.send_face_nbr_elements);
+    mfem::Swap(send_face_nbr_vertices, other.send_face_nbr_vertices);
++   std::swap(face_nbr_el_ori, other.face_nbr_el_ori);
++   std::swap(face_nbr_el_to_face, other.face_nbr_el_to_face);
+ 
+    // Nodes, NCMesh, and NURBSExtension are taken care of by Mesh::Swap
+    mfem::Swap(pncmesh, other.pncmesh);
+@@ -6727,8 +6639,7 @@ void ParMesh::Destroy()
     }
     shared_edges.DeleteAll();
  
@@ -3152,18 +3279,20 @@ index 6ad702b58..fc688c360 100644
         does not count master non-conforming faces.
  
 diff --git a/mesh/pncmesh.cpp b/mesh/pncmesh.cpp
-index dbce8aee6..b2ad1b826 100644
+index dbce8aee6..2c083c6e4 100644
 --- a/mesh/pncmesh.cpp
 +++ b/mesh/pncmesh.cpp
-@@ -16,6 +16,7 @@
+@@ -16,7 +16,9 @@
  #include "mesh_headers.hpp"
  #include "pncmesh.hpp"
  #include "../general/binaryio.hpp"
 +#include "../general/communication.hpp"
  
++#include <array>
  #include <map>
  #include <climits> // INT_MIN, INT_MAX
-@@ -892,14 +893,28 @@ void ParNCMesh::GetFaceNeighbors(ParMesh &pmesh)
+ 
+@@ -892,14 +894,28 @@ void ParNCMesh::GetFaceNeighbors(ParMesh &pmesh)
  
     Array<Element*> fnbr;
     Array<Connection> send_elems;
@@ -3194,7 +3323,7 @@ index dbce8aee6..b2ad1b826 100644
     {
        const MeshId &cf = shared.conforming[i];
        Face* face = GetFace(elements[cf.element], cf.local);
-@@ -911,8 +926,12 @@ void ParNCMesh::GetFaceNeighbors(ParMesh &pmesh)
+@@ -911,8 +927,12 @@ void ParNCMesh::GetFaceNeighbors(ParMesh &pmesh)
        if (e[0]->rank == MyRank) { std::swap(e[0], e[1]); }
        MFEM_ASSERT(e[0]->rank != MyRank && e[1]->rank == MyRank, "");
  
@@ -3207,7 +3336,7 @@ index dbce8aee6..b2ad1b826 100644
     }
  
     for (int i = 0; i < shared.masters.Size(); i++)
-@@ -928,15 +947,24 @@ void ParNCMesh::GetFaceNeighbors(ParMesh &pmesh)
+@@ -928,15 +948,24 @@ void ParNCMesh::GetFaceNeighbors(ParMesh &pmesh)
  
           bool loc0 = (e[0]->rank == MyRank);
           bool loc1 = (e[1]->rank == MyRank);
@@ -3234,7 +3363,7 @@ index dbce8aee6..b2ad1b826 100644
  
     // remove duplicate face neighbor elements and sort them by rank & index
     // (note that the send table is sorted the same way and the order is also the
-@@ -957,7 +985,7 @@ void ParNCMesh::GetFaceNeighbors(ParMesh &pmesh)
+@@ -957,7 +986,7 @@ void ParNCMesh::GetFaceNeighbors(ParMesh &pmesh)
           pmesh.face_nbr_group.Append(fnbr[i]->rank);
        }
     }
@@ -3243,7 +3372,7 @@ index dbce8aee6..b2ad1b826 100644
  
     // create a new mfem::Element for each face neighbor element
     pmesh.face_nbr_elements.SetSize(0);
-@@ -972,7 +1000,7 @@ void ParNCMesh::GetFaceNeighbors(ParMesh &pmesh)
+@@ -972,7 +1001,7 @@ void ParNCMesh::GetFaceNeighbors(ParMesh &pmesh)
     std::map<int, int> vert_map;
     for (int i = 0; i < fnbr.Size(); i++)
     {
@@ -3252,7 +3381,7 @@ index dbce8aee6..b2ad1b826 100644
        mfem::Element* fne = NewMeshElement(elem->geom);
        fne->SetAttribute(elem->attribute);
        pmesh.face_nbr_elements.Append(fne);
-@@ -1001,10 +1029,10 @@ void ParNCMesh::GetFaceNeighbors(ParMesh &pmesh)
+@@ -1001,10 +1030,10 @@ void ParNCMesh::GetFaceNeighbors(ParMesh &pmesh)
        if (coordinates.Size())
        {
           tmp_vertex = new TmpVertex[nodes.NumIds()]; // TODO: something cheaper?
@@ -3266,7 +3395,7 @@ index dbce8aee6..b2ad1b826 100644
           }
           delete [] tmp_vertex;
        }
-@@ -1014,6 +1042,13 @@ void ParNCMesh::GetFaceNeighbors(ParMesh &pmesh)
+@@ -1014,6 +1043,13 @@ void ParNCMesh::GetFaceNeighbors(ParMesh &pmesh)
     send_elems.Sort();
     send_elems.Unique();
  
@@ -3280,7 +3409,7 @@ index dbce8aee6..b2ad1b826 100644
     for (int i = 0, last_rank = -1; i < send_elems.Size(); i++)
     {
        Connection &c = send_elems[i];
-@@ -1031,11 +1066,9 @@ void ParNCMesh::GetFaceNeighbors(ParMesh &pmesh)
+@@ -1031,11 +1067,9 @@ void ParNCMesh::GetFaceNeighbors(ParMesh &pmesh)
     pmesh.send_face_nbr_elements.MakeFromList(nranks, send_elems);
  
     // go over the shared faces again and modify their Mesh::FaceInfo
@@ -3293,7 +3422,7 @@ index dbce8aee6..b2ad1b826 100644
        Element* e[2] = { &elements[face->elem[0]], &elements[face->elem[1]] };
        if (e[0]->rank == MyRank) { std::swap(e[0], e[1]); }
  
-@@ -1054,6 +1087,7 @@ void ParNCMesh::GetFaceNeighbors(ParMesh &pmesh)
+@@ -1054,6 +1088,7 @@ void ParNCMesh::GetFaceNeighbors(ParMesh &pmesh)
        }
     }
  
@@ -3301,7 +3430,7 @@ index dbce8aee6..b2ad1b826 100644
     if (shared.slaves.Size())
     {
        int nfaces = NFaces, nghosts = NGhostFaces;
-@@ -1088,8 +1122,14 @@ void ParNCMesh::GetFaceNeighbors(ParMesh &pmesh)
+@@ -1088,8 +1123,14 @@ void ParNCMesh::GetFaceNeighbors(ParMesh &pmesh)
  
              bool sloc = (sfe.rank == MyRank);
              bool mloc = (mfe.rank == MyRank);
@@ -3317,7 +3446,7 @@ index dbce8aee6..b2ad1b826 100644
              Mesh::FaceInfo &fi = pmesh.faces_info[sf.index];
              fi.Elem1No = sfe.index;
              fi.Elem2No = mfe.index;
-@@ -1119,12 +1159,18 @@ void ParNCMesh::GetFaceNeighbors(ParMesh &pmesh)
+@@ -1119,12 +1160,18 @@ void ParNCMesh::GetFaceNeighbors(ParMesh &pmesh)
              const DenseMatrix* pm = full_list.point_matrices[sf.geom][sf.matrix];
              if (!sloc && Dim == 3)
              {
@@ -3340,7 +3469,7 @@ index dbce8aee6..b2ad1b826 100644
                 aux_pm_store.Append(pm2);
  
                 fi.Elem2Inf ^= 1;
-@@ -1149,13 +1195,126 @@ void ParNCMesh::GetFaceNeighbors(ParMesh &pmesh)
+@@ -1149,13 +1196,125 @@ void ParNCMesh::GetFaceNeighbors(ParMesh &pmesh)
                 // Mesh::ApplyLocalSlaveTransformation.
              }
  
@@ -3401,7 +3530,6 @@ index dbce8aee6..b2ad1b826 100644
 +
 +         // For asynchronous send/recv, will use arrays of requests to monitor the
 +         // status of the connections.
-+         const int nranks = send_rank_to_face_neighbor_orientations.size();
 +         std::vector<MPI_Request> send_requests, recv_requests;
 +         std::vector<MPI_Status> status(nranks);
 +
@@ -4037,6 +4165,33 @@ index 000000000..0ddae996f
 +   return 0;
 +}
 \ No newline at end of file
+diff --git a/miniapps/nurbs/nurbs_ex1.cpp b/miniapps/nurbs/nurbs_ex1.cpp
+index d1561910d..98176b367 100644
+--- a/miniapps/nurbs/nurbs_ex1.cpp
++++ b/miniapps/nurbs/nurbs_ex1.cpp
+@@ -398,13 +398,15 @@ int main(int argc, char *argv[])
+ 
+    // 12. Save the refined mesh and the solution. This output can be viewed later
+    //     using GLVis: "glvis -m refined.mesh -g sol.gf".
+-   ofstream mesh_ofs("refined.mesh");
+-   mesh_ofs.precision(8);
+-   mesh->Print(mesh_ofs);
+-   ofstream sol_ofs("sol.gf");
+-   sol_ofs.precision(8);
+-   x.Save(sol_ofs);
+-   sol_ofs.close();
++   {
++      ofstream mesh_ofs("refined.mesh");
++      mesh_ofs.precision(8);
++      mesh->Print(mesh_ofs);
++      ofstream sol_ofs("sol.gf");
++      sol_ofs.precision(8);
++      x.Save(sol_ofs);
++      sol_ofs.close();
++   }
+ 
+    // 13. Send the solution by socket to a GLVis server.
+    if (visualization)
 diff --git a/miniapps/tools/check-tmop-metric.cpp b/miniapps/tools/check-tmop-metric.cpp
 index 9c033ce0e..1c036fb28 100644
 --- a/miniapps/tools/check-tmop-metric.cpp
@@ -4147,10 +4302,10 @@ index 5aafbcab5..284701c09 100644
  }
  
 diff --git a/tests/unit/mesh/test_ncmesh.cpp b/tests/unit/mesh/test_ncmesh.cpp
-index 7d4ac3fec..24ca04437 100644
+index 7d4ac3fec..7a6471406 100644
 --- a/tests/unit/mesh/test_ncmesh.cpp
 +++ b/tests/unit/mesh/test_ncmesh.cpp
-@@ -297,6 +297,366 @@ TEST_CASE("pNCMesh PA diagonal",  "[Parallel], [NCMesh]")
+@@ -297,6 +297,376 @@ TEST_CASE("pNCMesh PA diagonal",  "[Parallel], [NCMesh]")
  
  } // test case
  
@@ -4383,13 +4538,16 @@ index 7d4ac3fec..24ca04437 100644
 +   }
 +} // test case
 +
-+TEST_CASE("GetVectorValueInFaceNeighborElement", "[Parallel], [NCMesh]")
++/**
++ * @brief Test GetVectorValue on face neighbor elements for nonconformal meshes
++ *
++ * @param smesh The serial mesh to start from
++ * @param nc_level Depth of refinement on processor boundaries
++ * @param skip Refine every "skip" processor boundary element
++ * @param use_ND Whether to use Nedelec elements (which are sensitive to orientation)
++ */
++void TestVectorValueInVolume(Mesh &smesh, int nc_level, int skip, bool use_ND)
 +{
-+   // The aim of this test is to verify the correct behaviour of the
-+   // GetVectorValue method when called on face neighbor elements in a non
-+   // conforming mesh.
-+   auto smesh = Mesh("../../../data/beam-tet.mesh");
-+
 +   auto vector_exact_soln = [](const Vector& x, Vector& v)
 +   {
 +      Vector d(3);
@@ -4400,115 +4558,122 @@ index 7d4ac3fec..24ca04437 100644
 +   smesh.Finalize();
 +   smesh.EnsureNCMesh(true); // uncomment this to trigger the failure
 +
-+   for (int nc_level : {0,1,2,3}) // depth of refinement on boundary faces
++   auto pmesh = ParMesh(MPI_COMM_WORLD, smesh);
++
++   // Apply refinement on face neighbors to achieve a given nc level mismatch.
++   for (int i = 0; i < nc_level; ++i)
 +   {
-+      for (int skip : {1,2}) // refine every "skip" boundary face element
++      // To refine the face neighbors, need to know where they are.
++      pmesh.ExchangeFaceNbrData();
++      Array<int> elem_to_refine;
++      // Refine only on odd ranks.
++      if ((Mpi::WorldRank() + 1) % 2 == 0)
 +      {
-+         for (bool use_ND : {false, true}) // use ND or RT elements
++         // Refine a subset of all shared faces. Using a subset helps to
++         // mix in conformal faces with nonconformal faces.
++         for (int n = 0; n < pmesh.GetNSharedFaces(); ++n)
 +         {
-+            auto pmesh = ParMesh(MPI_COMM_WORLD, smesh);
++            if (n % skip != 0) { continue; }
++            const int local_face = pmesh.GetSharedFace(n);
++            const auto &face_info = pmesh.GetFaceInformation(local_face);
++            REQUIRE(face_info.IsShared());
++            REQUIRE(face_info.element[1].location == Mesh::ElementLocation::FaceNbr);
++            elem_to_refine.Append(face_info.element[0].index);
++         }
++      }
++      pmesh.GeneralRefinement(elem_to_refine);
++   }
 +
-+            // Apply refinement on face neighbors to achieve a given nc level mismatch.
-+            for (int i = 0; i < nc_level; ++i)
-+            {
-+               // To refine the face neighbors, need to know where they are.
-+               pmesh.ExchangeFaceNbrData();
-+               Array<int> elem_to_refine;
-+               // Refine only on odd ranks.
-+               if ((Mpi::WorldRank() + 1) % 2 == 0)
-+               {
-+                  // Refine a subset of all shared faces. Using a subset helps to
-+                  // mix in conformal faces with nonconformal faces.
-+                  for (int n = 0; n < pmesh.GetNSharedFaces(); ++n)
-+                  {
-+                     if (n % skip != 0) { continue; }
-+                     const int local_face = pmesh.GetSharedFace(n);
-+                     const auto &face_info = pmesh.GetFaceInformation(local_face);
-+                     REQUIRE(face_info.IsShared());
-+                     REQUIRE(face_info.element[1].location == Mesh::ElementLocation::FaceNbr);
-+                     elem_to_refine.Append(face_info.element[0].index);
-+                  }
-+               }
-+               pmesh.GeneralRefinement(elem_to_refine);
-+            }
++   // Do not rebalance again! The test is also checking for nc refinements
++   // along the processor boundary.
 +
++   // Create a grid function of the mesh coordinates
++   pmesh.ExchangeFaceNbrData();
++   pmesh.EnsureNodes();
++   REQUIRE(pmesh.OwnsNodes());
++   GridFunction * const coords = pmesh.GetNodes();
++   dynamic_cast<ParGridFunction *>(pmesh.GetNodes())->ExchangeFaceNbrData();
 +
-+            // Do not rebalance again! The test is also checking for nc refinements
-+            // along the processor boundary.
++   // Project the linear function onto the mesh. Quadratic ND tetrahedral
++   // elements are the first to require face orientations.
++   const int order = 2, dim = 3;
++   std::unique_ptr<FiniteElementCollection> fec;
++   if (use_ND)
++   {
++      fec = std::unique_ptr<ND_FECollection>(new ND_FECollection(order, dim));
++   }
++   else
++   {
++      fec = std::unique_ptr<RT_FECollection>(new RT_FECollection(order, dim));
++   }
++   ParFiniteElementSpace pnd_fes(&pmesh, fec.get());
 +
-+            // Create a grid function of the mesh coordinates
-+            pmesh.ExchangeFaceNbrData();
-+            pmesh.EnsureNodes();
-+            REQUIRE(pmesh.OwnsNodes());
-+            GridFunction * const coords = pmesh.GetNodes();
-+            dynamic_cast<ParGridFunction *>(pmesh.GetNodes())->ExchangeFaceNbrData();
++   ParGridFunction psol(&pnd_fes);
 +
-+            // Project the linear function onto the mesh. Quadratic ND tetrahedral
-+            // elements are the first to require face orientations.
-+            const int order = 2, dim = 3;
-+            std::unique_ptr<FiniteElementCollection> fec;
-+            if (use_ND)
-+            {
-+               fec = std::unique_ptr<ND_FECollection>(new ND_FECollection(order, dim));
-+            }
-+            else
-+            {
-+               fec = std::unique_ptr<RT_FECollection>(new RT_FECollection(order, dim));
-+            }
-+            ParFiniteElementSpace pnd_fes(&pmesh, fec.get());
++   VectorFunctionCoefficient func(3, vector_exact_soln);
++   psol.ProjectCoefficient(func);
++   psol.ExchangeFaceNbrData();
 +
-+            ParGridFunction psol(&pnd_fes);
++   mfem::Vector value(3), exact(3), position(3);
++   const IntegrationRule &ir = mfem::IntRules.Get(Geometry::Type::TETRAHEDRON,
++                                                  order + 1);
 +
-+            VectorFunctionCoefficient func(3, vector_exact_soln);
-+            psol.ProjectCoefficient(func);
-+            psol.ExchangeFaceNbrData();
++   // Check that non-ghost elements match up on the serial and parallel spaces.
++   for (int n = 0; n < pmesh.GetNE(); ++n)
++   {
++      constexpr double tol = 1e-12;
++      for (const auto &ip : ir)
++      {
++         coords->GetVectorValue(n, ip, position);
++         psol.GetVectorValue(n, ip, value);
 +
-+            mfem::Vector value(3), exact(3), position(3);
-+            const IntegrationRule &ir = mfem::IntRules.Get(Geometry::Type::TETRAHEDRON,
-+                                                           order + 1);
++         vector_exact_soln(position, exact);
 +
-+            // Check that non-ghost elements match up on the serial and parallel spaces.
-+            for (int n = 0; n < pmesh.GetNE(); ++n)
-+            {
-+               constexpr double tol = 1e-12;
-+               for (const auto &ip : ir)
-+               {
-+                  coords->GetVectorValue(n, ip, position);
-+                  psol.GetVectorValue(n, ip, value);
++         REQUIRE(value.Size() == exact.Size());
++         CHECK((value -= exact).Normlinf() < tol);
++      }
++   }
 +
-+                  vector_exact_soln(position, exact);
++   // Loop over face neighbor elements and check the vector values match in the
++   // face neighbor elements.
++   for (int n = 0; n < pmesh.GetNSharedFaces(); ++n)
++   {
++      const int local_face = pmesh.GetSharedFace(n);
++      const auto &face_info = pmesh.GetFaceInformation(local_face);
++      REQUIRE(face_info.IsShared());
++      REQUIRE(face_info.element[1].location == Mesh::ElementLocation::FaceNbr);
 +
-+                  REQUIRE(value.Size() == exact.Size());
-+                  CHECK((value -= exact).Normlinf() < tol);
-+               }
-+            }
++      auto &T = *pmesh.GetFaceNbrElementTransformation(face_info.element[1].index);
 +
-+            // Loop over face neighbor elements and check the vector values match in the
-+            // face neighbor space.
-+            const IntegrationRule &fir = mfem::IntRules.Get(Geometry::TRIANGLE, order + 1);
-+            IntegrationRule eir(fir.GetNPoints());
-+            for (int n = 0; n < pmesh.GetNSharedFaces(); ++n)
-+            {
-+               const int local_face = pmesh.GetSharedFace(n);
-+               const auto &face_info = pmesh.GetFaceInformation(local_face);
-+               REQUIRE(face_info.IsShared());
-+               REQUIRE(face_info.element[1].location == Mesh::ElementLocation::FaceNbr);
++      constexpr double tol = 1e-12;
++      for (const auto &ip : ir)
++      {
++         T.SetIntPoint(&ip);
++         coords->GetVectorValue(T, ip, position);
++         psol.GetVectorValue(T, ip, value);
 +
-+               auto &T = *pmesh.GetFaceNbrElementTransformation(face_info.element[1].index);
++         vector_exact_soln(position, exact);
 +
-+               constexpr double tol = 1e-12;
-+               for (const auto &ip : ir)
-+               {
-+                  T.SetIntPoint(&ip);
-+                  coords->GetVectorValue(T, ip, position);
-+                  psol.GetVectorValue(T, ip, value);
++         REQUIRE(value.Size() == exact.Size());
++         CHECK((value -= exact).Normlinf() < tol);
++      }
++   }
++}
 +
-+                  vector_exact_soln(position, exact);
++TEST_CASE("GetVectorValueInFaceNeighborElement", "[Parallel], [NCMesh]")
++{
++   // The aim of this test is to verify the correct behaviour of the
++   // GetVectorValue method when called on face neighbor elements in a non
++   // conforming mesh.
++   auto smesh = Mesh("../../data/beam-tet.mesh");
 +
-+                  REQUIRE(value.Size() == exact.Size());
-+                  CHECK((value -= exact).Normlinf() < tol);
-+               }
-+            }
++   for (int nc_level : {0,1,2,3})
++   {
++      for (int skip : {1,2})
++      {
++         for (bool use_ND : {false, true})
++         {
++            TestVectorValueInVolume(smesh, nc_level, skip, use_ND);
 +         }
 +      }
 +   }

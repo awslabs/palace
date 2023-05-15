@@ -79,8 +79,8 @@ double ComputeDorflerThreshold(double fraction, const mfem::Vector &e)
 
   // Keep track of the number of elements marked by the threshold bounds. If the
   // top and bottom values are equal, there's no point further bisecting.
-  auto [max_elem_marked, min_error_marked] = marked(min_threshold);
-  auto [min_elem_marked, max_error_marked] = marked(max_threshold);
+  auto [max_elem_marked, max_error_marked] = marked(min_threshold);
+  auto [min_elem_marked, min_error_marked] = marked(max_threshold);
   Mpi::GlobalSum(1, &min_elem_marked, comm);
   Mpi::GlobalSum(1, &max_elem_marked, comm);
 
@@ -130,14 +130,25 @@ double ComputeDorflerThreshold(double fraction, const mfem::Vector &e)
       // This candidate marked too much, raise the lower value.
       min_threshold = error_threshold;
       max_elem_marked = elem_marked;
+      max_error_marked = error_marked;
     }
     else if (candidate_fraction < fraction)
     {
       // This candidate marked too little, lower the upper bound.
       max_threshold = error_threshold;
       min_elem_marked = elem_marked;
+      min_error_marked = error_marked;
     }
   }
+
+  // Always choose the lower threshold value, thereby marking the larger number
+  // of elements and fraction of the total error. Would rather overmark than
+  // undermark, as Dorfler marking is the smallest set that covers AT LEAST the
+  // specified fraction of the error.
+
+  error_threshold = min_threshold;
+  elem_marked = max_elem_marked;
+  error_marked = max_error_marked;
 
   Mpi::Print("Indicator threshold {:.3e} marked {} of {} elements and {:.3f}\% error\n",
              error_threshold, elem_marked, total_elem, 100 * error_marked / total_error);
