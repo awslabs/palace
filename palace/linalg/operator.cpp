@@ -5,6 +5,8 @@
 
 #include <general/forall.hpp>
 #include "linalg/complex.hpp"
+#include "linalg/slepc.hpp"
+#include "linalg/vector.hpp"
 #include "utils/communication.hpp"
 
 namespace palace
@@ -382,6 +384,11 @@ double SpectralNorm(MPI_Comm comm, const ComplexOperator &A, bool herm, double t
                     int max_it)
 {
   // XX TODO: Use ARPACK or SLEPc for this when configured.
+  // #if defined(PALACE_WITH_SLEPC)
+
+  double slepc_l = slepc::GetMaxSingularValue(comm, A, herm, tol, max_it);
+
+  // #else
   // Power iteration loop: ||A||₂² = λₙ(Aᴴ A).
   int it = 0;
   double res = 0.0;
@@ -419,7 +426,13 @@ double SpectralNorm(MPI_Comm comm, const ComplexOperator &A, bool herm, double t
                  "lambda = {:.3e}!\n",
                  it, res, l);
   }
+
+  // XX TODO DEBUG
+  Mpi::Print(comm, "\nSPECTRAL NORM...Power iteration: {}, SLEPc: {}\n\n",
+             herm ? l : std::sqrt(l), slepc_l);
+
   return herm ? l : std::sqrt(l);
+  // #endif
 }
 
 }  // namespace linalg

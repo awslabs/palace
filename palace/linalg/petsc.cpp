@@ -589,8 +589,6 @@ PetscParMatrix::PetscParMatrix(Mat B, bool ref)
 
 PetscParMatrix::~PetscParMatrix()
 {
-  MPI_Comm comm;
-  PalacePetscCall(PetscObjectGetComm(reinterpret_cast<PetscObject>(A), &comm));
   PalacePetscCall(MatDestroy(&A));
 }
 

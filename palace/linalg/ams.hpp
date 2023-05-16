@@ -50,9 +50,9 @@ public:
   // internally as needed.
   HypreAmsSolver(mfem::ParFiniteElementSpace &nd_fespace,
                  mfem::ParFiniteElementSpace &h1_fespace, int cycle_it, int smooth_it,
-                 int agg_coarsen, bool vector_interp, bool op_singular, int print_lvl);
+                 int agg_coarsen, bool vector_interp, bool op_singular, int print);
   HypreAmsSolver(const IoData &iodata, mfem::ParFiniteElementSpace &nd_fespace,
-                 mfem::ParFiniteElementSpace &h1_fespace, int print_lvl)
+                 mfem::ParFiniteElementSpace &h1_fespace, int print)
     : HypreAmsSolver(nd_fespace, h1_fespace,
                      iodata.solver.linear.mat_gmg ? 1 : iodata.solver.linear.mg_cycle_it,
                      iodata.solver.linear.mg_smooth_it,
@@ -62,7 +62,7 @@ public:
                          : 0,
                      iodata.solver.linear.ams_vector,
                      (iodata.problem.type == config::ProblemData::Type::MAGNETOSTATIC),
-                     print_lvl)
+                     print)
   {
   }
   ~HypreAmsSolver() override;

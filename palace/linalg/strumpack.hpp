@@ -46,11 +46,8 @@ public:
 
 using StrumpackSolver = StrumpackSolverBase<mfem::STRUMPACKSolver>;
 
-#if STRUMPACK_VERSION_MAJOR >= 6 && STRUMPACK_VERSION_MINOR >= 3 && \
-    STRUMPACK_VERSION_PATCH > 1
 using StrumpackMixedPrecisionSolver =
     StrumpackSolverBase<mfem::STRUMPACKMixedPrecisionSolver>;
-#endif
 
 }  // namespace palace
 

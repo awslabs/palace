@@ -8,9 +8,9 @@
 #include <map>
 #include <memory>
 #include <mfem.hpp>
-// #include "linalg/eigen.hpp"
+// #include "linalg/eps.hpp"
 // #include "linalg/ksp.hpp"
-#include "linalg/petsc.hpp"
+// #include "linalg/petsc.hpp"
 
 namespace palace
 {
@@ -45,9 +45,9 @@ private:
   mfem::Array<int> nd_attr_tdof_list, h1_attr_tdof_list;
 
   // Operator storage for repeated boundary mode eigenvalue problem solves.
-  std::unique_ptr<petsc::PetscParMatrix> A, B, A1, A2, B3, B4;
-  std::unique_ptr<petsc::PetscParVector> e, e0, y0;
-  std::unique_ptr<petsc::PetscScatter> scatter;
+  // std::unique_ptr<petsc::PetscParMatrix> A, B, A1, A2, B3, B4;
+  // std::unique_ptr<petsc::PetscParVector> e, e0, y0;
+  // std::unique_ptr<petsc::PetscScatter> scatter;
   double muepsmax;
 
   // Grid functions storing the last computed electric field mode on the port and the
@@ -71,10 +71,10 @@ private:
                    const mfem::Array<int> &dbc_marker, mfem::Array<int> &nd_tdof_list,
                    mfem::Array<int> &h1_tdof_list);
 
-  // Configure and solve the linear eigenvalue problem for the boundary mode.
-  void GetInitialSpace(int nt, int nn, petsc::PetscParVector &y0);
-  std::complex<double> Solve(petsc::PetscParVector &y0, petsc::PetscParVector &e0,
-                             petsc::PetscParVector &e, petsc::PetscScatter &scatter);
+  // // Configure and solve the linear eigenvalue problem for the boundary mode.
+  // void GetInitialSpace(int nt, int nn, petsc::PetscParVector &y0);
+  // std::complex<double> Solve(petsc::PetscParVector &y0, petsc::PetscParVector &e0,
+  //                            petsc::PetscParVector &e, petsc::PetscScatter &scatter);
 
 public:
   WavePortData(const config::WavePortData &data, const MaterialOperator &mat_op,
@@ -86,8 +86,8 @@ public:
 
   void Initialize(double omega);
 
-  const petsc::PetscParMatrix *GetA() const { return A.get(); }
-  const petsc::PetscParMatrix *GetB() const { return B.get(); }
+  // const petsc::PetscParMatrix *GetA() const { return A.get(); }
+  // const petsc::PetscParMatrix *GetB() const { return B.get(); }
 
   std::complex<double> GetPropagationConstant() const { return kn0; }
   double GetOperatingFrequency() const { return omega0; }

@@ -186,6 +186,11 @@ public:
   // or not the excitation is nonzero (and thus is true most of the time).
   bool GetExcitationVector1(ComplexVector &RHS1);
   bool GetExcitationVector2(double omega, ComplexVector &RHS2);
+
+  // Construct a constant or randomly initialized vector which satisfies the PEC essential
+  // boundary conditions.
+  void GetRandomInitialVector(ComplexVector &v);
+  void GetConstantInitialVector(ComplexVector &v);
 };
 
 }  // namespace palace

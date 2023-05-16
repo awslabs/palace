@@ -27,7 +27,8 @@ private:
   Vector xr_, xi_;
 
 public:
-  // Create a vector with the given size.
+  // Create a vector with the given size. The provided size should be the real-valued size,
+  // twice the actual complex-valued size, in order to agree with ComplexOperator::Height().
   ComplexVector(int n = 0);
 
   // Copy constructor.
@@ -36,8 +37,14 @@ public:
   // Copy constructor from separately provided real and imaginary parts.
   ComplexVector(const Vector &xr, const Vector &xi);
 
-  // Set the size of the vector. See the notes for Vector::SetSize for behavior in the
-  // cases where n is less than or greater than Size() or Capacity().
+  // Copy constructor from an array of complex values. The size provided should be the
+  // length of the array x, which is half the resulting real-valued vector size.
+  ComplexVector(const std::complex<double> *px, int n);
+
+  // Set the size of the vector. The provided size should be the real-valued size, twice the
+  // actual complex-valued size, in order to agree with ComplexOperator::Height(). See the
+  // notes for Vector::SetSize for behavior in the cases where n is less than or greater
+  // than Size() or Capacity().
   void SetSize(int n);
 
   // Get const access to the real and imaginary vector parts. Assumes that these are
@@ -67,8 +74,19 @@ public:
   // Copy assignment from separately provided real and imaginary parts.
   void Set(const Vector &yr, const Vector &yi);
 
+  // Copy assignment from an array of complex values. The size provided should be the length
+  // of the array x, which is half the real-valued vector size.
+  void Set(const std::complex<double> *py, int n);
+
+  // Copy the vector into an array of complex values. The size provided should be the length
+  // of the array y, which is half the real-valued vector size.
+  void Get(std::complex<double> *py, int n) const;
+
   // Replace entries with complex conjugate.
   void Conj();
+
+  // Set all entries equal to s.
+  ComplexVector &operator=(std::complex<double> s);
 
   // Scale all entries by s.
   ComplexVector &operator*=(std::complex<double> s);
@@ -279,6 +297,11 @@ public:
 
   bool IsReal() const override { return A_->IsReal(); }
   bool IsImag() const override { return A_->IsImag(); }
+
+  const Operator &Real() const override { return A_->Real(); }
+  Operator &Real() override { return A_->Real(); }
+  const Operator &Imag() const override { return A_->Imag(); }
+  Operator &Imag() override { return A_->Imag(); }
 
   using ComplexOperator::AddMult;
   using ComplexOperator::AddMultHermitianTranspose;

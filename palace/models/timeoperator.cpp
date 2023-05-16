@@ -80,14 +80,13 @@ public:
       {
         // Configure the system matrix and also the matrix (matrices) from which the
         // preconditioner will be constructed.
-        this->A = spaceop.GetSystemMatrix(a0, a1, 1.0, this->K.get(), this->C.get(),
-                                          this->M.get());
-        spaceop.GetPreconditionerMatrix(a0, a1, 1.0, 0.0, this->B, this->AuxB);
+        A = spaceop.GetSystemMatrix(a0, a1, 1.0, K.get(), C.get(), M.get());
+        spaceop.GetPreconditionerMatrix(a0, a1, 1.0, 0.0, B, AuxB);
 
         // Configure the solver.
         auto ksp = std::make_unique<KspSolver>(iodata, spaceop.GetNDSpaces(),
                                                &spaceop.GetH1Spaces());
-        ksp->SetOperator(*this->A, this->B, &this->AuxB);
+        ksp->SetOperator(*A, B, &AuxB);
         return ksp;
       };
     }
@@ -96,13 +95,12 @@ public:
   void FormRHS(const Vector &u, const Vector &du, Vector &rhs) const
   {
     // Multiply: rhs = -(K u + C du) - g'(t) J.
-    rhs = 0.0;
-    K->AddMult(u, rhs, -1.0);
+    K->Mult(u, rhs);
     if (C)
     {
-      C->AddMult(du, rhs, -1.0);
+      C->AddMult(du, rhs, 1.0);
     }
-    rhs.Add(dJcoef(t), NegJ);
+    add(-1.0, rhs, dJcoef(t), NegJ, rhs);
   }
 
   void Mult(const Vector &u, const Vector &du, Vector &ddu) const override
@@ -241,7 +239,7 @@ void TimeOperator::Step(double &t, double &dt)
   ode->Step(E, dE, t, dt);
 
   // Trapezoidal integration for B-field: dB/dt = -∇ x E.
-  En.Add(1.0, E);
+  En += E;
   Curl->AddMult(En, B, -0.5 * dt);
 }
 

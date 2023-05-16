@@ -47,8 +47,8 @@ StrumpackSolverBase<StrumpackSolverType>::StrumpackSolverBase(
   : StrumpackSolverType(comm), comm(comm)
 {
   // Configure the solver.
-  this->SetPrintFactorStatistics((print > 1));
-  this->SetPrintSolveStatistics((print > 1));
+  this->SetPrintFactorStatistics(print > 1);
+  this->SetPrintSolveStatistics(print > 1);
   this->SetKrylovSolver(strumpack::KrylovSolver::DIRECT);  // Always as a preconditioner or
                                                            // direct solver
   this->SetMatching(strumpack::MatchingJob::NONE);
@@ -115,10 +115,7 @@ void StrumpackSolverBase<StrumpackSolverType>::SetOperator(const ParOperator &op
 }
 
 template class StrumpackSolverBase<mfem::STRUMPACKSolver>;
-#if STRUMPACK_VERSION_MAJOR >= 6 && STRUMPACK_VERSION_MINOR >= 3 && \
-    STRUMPACK_VERSION_PATCH > 1
 template class StrumpackSolverBase<mfem::STRUMPACKMixedPrecisionSolver>;
-#endif
 
 }  // namespace palace
 
