@@ -630,12 +630,13 @@ bool SpaceOperator::GetExcitationVector(double omega, ComplexVector &RHS)
 {
   // Frequency domain excitation vector: RHS = iω RHS1 + RHS2(ω).
   RHS.SetSize(GetNDSpace().GetTrueVSize());
-  RHS = 0.0;
+  RHS = std::complex<double>(0.0, 0.0);
   bool nnz1 = AddExcitationVector1Internal(RHS.Real());
   RHS *= 1i * omega;
   bool nnz2 = AddExcitationVector2Internal(omega, RHS);
   RHS.Real().SetSubVector(nd_dbc_tdof_lists.back(), 0.0);
   RHS.Imag().SetSubVector(nd_dbc_tdof_lists.back(), 0.0);
+  RHS.SyncAlias();
   return nnz1 || nnz2;
 }
 
@@ -644,19 +645,21 @@ bool SpaceOperator::GetExcitationVector1(ComplexVector &RHS1)
   // Assemble the frequency domain excitation term with linear frequency dependence
   // (coefficient iω, see GetExcitationVector above, is accounted for later).
   RHS1.SetSize(GetNDSpace().GetTrueVSize());
-  RHS1 = 0.0;
+  RHS1 = std::complex<double>(0.0, 0.0);
   bool nnz1 = AddExcitationVector1Internal(RHS1.Real());
   RHS1.Real().SetSubVector(nd_dbc_tdof_lists.back(), 0.0);
+  RHS1.SyncAlias();
   return nnz1;
 }
 
 bool SpaceOperator::GetExcitationVector2(double omega, ComplexVector &RHS2)
 {
   RHS2.SetSize(GetNDSpace().GetTrueVSize());
-  RHS2 = 0.0;
+  RHS2 = std::complex<double>(0.0, 0.0);
   bool nnz2 = AddExcitationVector2Internal(omega, RHS2);
   RHS2.Real().SetSubVector(nd_dbc_tdof_lists.back(), 0.0);
   RHS2.Imag().SetSubVector(nd_dbc_tdof_lists.back(), 0.0);
+  RHS2.SyncAlias();
   return nnz2;
 }
 
@@ -705,6 +708,23 @@ bool SpaceOperator::AddExcitationVector2Internal(double omega, ComplexVector &RH
   GetNDSpace().GetProlongationMatrix()->AddMultTranspose(rhs2r, RHS2.Real());
   GetNDSpace().GetProlongationMatrix()->AddMultTranspose(rhs2i, RHS2.Imag());
   return true;
+}
+
+void SpaceOperator::GetConstantInitialVector(ComplexVector &v)
+{
+  v.SetSize(GetNDSpace().GetTrueVSize());
+  v = std::complex<double>(1.0, 0.0);
+  v.Real().SetSubVector(nd_dbc_tdof_lists.back(), 0.0);
+  v.SyncAlias();
+}
+
+void SpaceOperator::GetRandomInitialVector(ComplexVector &v)
+{
+  v.SetSize(GetNDSpace().GetTrueVSize());
+  linalg::SetRandom(GetNDSpace().GetComm(), v);
+  v.Real().SetSubVector(nd_dbc_tdof_lists.back(), 0.0);
+  v.Imag().SetSubVector(nd_dbc_tdof_lists.back(), 0.0);
+  v.SyncAlias();
 }
 
 template void

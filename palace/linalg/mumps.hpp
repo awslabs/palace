@@ -21,8 +21,8 @@ class MumpsSolver : public mfem::MUMPSSolver
 {
 public:
   MumpsSolver(MPI_Comm comm, mfem::MUMPSSolver::MatType sym, int sym_fact_type,
-              double blr_tol, int print_lvl);
-  MumpsSolver(MPI_Comm comm, const IoData &iodata, int print_lvl)
+              double blr_tol, int print);
+  MumpsSolver(MPI_Comm comm, const IoData &iodata, int print)
     : MumpsSolver(comm,
                   (iodata.solver.linear.mat_shifted ||
                    iodata.problem.type == config::ProblemData::Type::TRANSIENT ||
@@ -41,7 +41,7 @@ public:
                    config::LinearSolverData::CompressionType::BLR)
                       ? iodata.solver.linear.strumpack_lr_tol
                       : 0.0,
-                  print_lvl)
+                  print)
   {
   }
 

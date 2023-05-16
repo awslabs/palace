@@ -8,7 +8,6 @@
 #include <utility>
 #include <vector>
 #include <mfem.hpp>
-#include "linalg/vector.hpp"
 
 namespace palace
 {
@@ -16,6 +15,7 @@ namespace palace
 class ComplexOperator;
 
 using Operator = mfem::Operator;
+using Vector = mfem::Vector;
 
 //
 // Derived operator classes extending mfem::Operator from MFEM.

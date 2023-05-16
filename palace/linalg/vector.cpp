@@ -60,7 +60,7 @@ double Normalize(MPI_Comm comm, Vector &x)
   return norm;
 }
 
-double Normalize(MPI_Comm comm, Vector &x, const ParOperator &B, Vector &Bx)
+double Normalize(MPI_Comm comm, Vector &x, const Operator &B, Vector &Bx)
 {
   B.Mult(x, Bx);
   double norm = std::sqrt(mfem::InnerProduct(comm, x, Bx));
@@ -69,7 +69,7 @@ double Normalize(MPI_Comm comm, Vector &x, const ParOperator &B, Vector &Bx)
   return norm;
 }
 
-double Normalize(MPI_Comm comm, ComplexVector &x, const ParOperator &B, ComplexVector &Bx)
+double Normalize(MPI_Comm comm, ComplexVector &x, const Operator &B, ComplexVector &Bx)
 {
   // For SPD B, xᴴ B x is real.
   B.Mult(x.Real(), Bx.Real());

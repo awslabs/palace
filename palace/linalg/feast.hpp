@@ -15,7 +15,7 @@
 #endif
 
 #include <mfem.hpp>
-#include "linalg/eigen.hpp"
+#include "linalg/eps.hpp"
 
 // Forward declarations of SLEPc objects.
 typedef struct _p_RG *RG;

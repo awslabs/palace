@@ -4,7 +4,6 @@
 #include "postoperator.hpp"
 
 #include "fem/coefficient.hpp"
-#include "linalg/petsc.hpp"
 #include "models/curlcurloperator.hpp"
 #include "models/laplaceoperator.hpp"
 #include "models/lumpedportoperator.hpp"
@@ -278,37 +277,33 @@ void PostOperator::InitializeDataCollection(const IoData &iodata)
   }
 }
 
-void PostOperator::SetEGridFunction(const petsc::PetscParVector &e)
+void PostOperator::SetEGridFunction(const ComplexVector &e)
 {
   MFEM_VERIFY(
       has_imaginary,
       "SetEGridFunction for complex-valued output called when has_imaginary == false!");
   MFEM_VERIFY(E, "Incorrect usage of PostOperator::SetEGridFunction!");
-  mfem::Vector Er(e.GetSize()), Ei(e.GetSize());
-  e.GetToVectors(Er, Ei);
-  E->real().SetFromTrueDofs(Er);  // Parallel distribute
-  E->imag().SetFromTrueDofs(Ei);
+  E->real().SetFromTrueDofs(e.Real());  // Parallel distribute
+  E->imag().SetFromTrueDofs(e.Imag());
   E->real().ExchangeFaceNbrData();  // Ready for parallel comm on shared faces
   E->imag().ExchangeFaceNbrData();
   lumped_port_init = wave_port_init = false;
 }
 
-void PostOperator::SetBGridFunction(const petsc::PetscParVector &b)
+void PostOperator::SetBGridFunction(const ComplexVector &b)
 {
   MFEM_VERIFY(
       has_imaginary,
       "SetBGridFunction for complex-valued output called when has_imaginary == false!");
   MFEM_VERIFY(B, "Incorrect usage of PostOperator::SetBGridFunction!");
-  mfem::Vector Br(b.GetSize()), Bi(b.GetSize());
-  b.GetToVectors(Br, Bi);
-  B->real().SetFromTrueDofs(Br);  // Parallel distribute
-  B->imag().SetFromTrueDofs(Bi);
+  B->real().SetFromTrueDofs(b.Real());  // Parallel distribute
+  B->imag().SetFromTrueDofs(b.Imag());
   B->real().ExchangeFaceNbrData();  // Ready for parallel comm on shared faces
   B->imag().ExchangeFaceNbrData();
   lumped_port_init = wave_port_init = false;
 }
 
-void PostOperator::SetEGridFunction(const mfem::Vector &e)
+void PostOperator::SetEGridFunction(const Vector &e)
 {
   MFEM_VERIFY(!has_imaginary,
               "SetEGridFunction for real-valued output called when has_imaginary == true!");
@@ -318,7 +313,7 @@ void PostOperator::SetEGridFunction(const mfem::Vector &e)
   lumped_port_init = wave_port_init = false;
 }
 
-void PostOperator::SetBGridFunction(const mfem::Vector &b)
+void PostOperator::SetBGridFunction(const Vector &b)
 {
   MFEM_VERIFY(!has_imaginary,
               "SetBGridFunction for real-valued output called when has_imaginary == true!");
@@ -328,7 +323,7 @@ void PostOperator::SetBGridFunction(const mfem::Vector &b)
   lumped_port_init = wave_port_init = false;
 }
 
-void PostOperator::SetVGridFunction(const mfem::Vector &v)
+void PostOperator::SetVGridFunction(const Vector &v)
 {
   MFEM_VERIFY(!has_imaginary,
               "SetVGridFunction for real-valued output called when has_imaginary == true!");
@@ -337,7 +332,7 @@ void PostOperator::SetVGridFunction(const mfem::Vector &v)
   V->ExchangeFaceNbrData();
 }
 
-void PostOperator::SetAGridFunction(const mfem::Vector &a)
+void PostOperator::SetAGridFunction(const Vector &a)
 {
   MFEM_VERIFY(!has_imaginary,
               "SetAGridFunction for real-valued output called when has_imaginary == true!");

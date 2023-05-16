@@ -83,26 +83,27 @@ void ChebyshevSmoother::Mult(const mfem::Vector &x, mfem::Vector &y) const
   }
 }
 
-// void ChebyshevSmoother::ArrayMult(const mfem::Array<const mfem::Vector *> &X,
-//                                   mfem::Array<mfem::Vector *> &Y) const
-// {
-//   // Initialize.
-//   const int nrhs = X.Size();
-//   const int N = height;
-//   mfem::Array<mfem::Vector *> R(nrhs), D(nrhs);
-//   std::vector<mfem::Vector> rrefs(nrhs), drefs(nrhs);
-//   if (nrhs * N != r.Size())
-//   {
-//     r.SetSize(nrhs * N);
-//     d.SetSize(nrhs * N);
-//   }
-//   for (int j = 0; j < nrhs; j++)
-//   {
-//     rrefs[j].MakeRef(r, j * N, N);
-//     drefs[j].MakeRef(d, j * N, N);
-//     R[j] = &rrefs[j];
-//     D[j] = &drefs[j];
-//   }
+// XX TODO REMOVE
+//  void ChebyshevSmoother::ArrayMult(const mfem::Array<const mfem::Vector *> &X,
+//                                    mfem::Array<mfem::Vector *> &Y) const
+//  {
+//    // Initialize.
+//    const int nrhs = X.Size();
+//    const int N = height;
+//    mfem::Array<mfem::Vector *> R(nrhs), D(nrhs);
+//    std::vector<mfem::Vector> rrefs(nrhs), drefs(nrhs);
+//    if (nrhs * N != r.Size())
+//    {
+//      r.SetSize(nrhs * N);
+//      d.SetSize(nrhs * N);
+//    }
+//    for (int j = 0; j < nrhs; j++)
+//    {
+//      rrefs[j].MakeRef(r, j * N, N);
+//      drefs[j].MakeRef(d, j * N, N);
+//      R[j] = &rrefs[j];
+//      D[j] = &drefs[j];
+//    }
 
 //   // Apply smoother: y = y + p(A) (x - A y) .
 //   for (int it = 0; it < pc_it; it++)

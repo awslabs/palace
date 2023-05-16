@@ -8,33 +8,40 @@
 namespace palace
 {
 
-ComplexVector::ComplexVector(int n) : Vector(2 * n)
+ComplexVector::ComplexVector(int n) : Vector(n)
 {
-  xr_.MakeRef(*this, 0, n);
-  xi_.MakeRef(*this, n, n);
+  xr_.MakeRef(*this, 0, n / 2);
+  xi_.MakeRef(*this, n / 2, n / 2);
 }
 
-ComplexVector::ComplexVector(const ComplexVector &x) : Vector(2 * x.Size())
+ComplexVector::ComplexVector(const ComplexVector &x) : Vector(x.Size())
 {
-  xr_.MakeRef(*this, 0, x.Size());
-  xi_.MakeRef(*this, x.Size(), x.Size());
+  xr_.MakeRef(*this, 0, x.Size() / 2);
+  xi_.MakeRef(*this, x.Size() / 2, x.Size() / 2);
   Set(x.Real(), x.Imag());
 }
 
 ComplexVector::ComplexVector(const Vector &xr, const Vector &xi) : Vector(2 * xr.Size())
 {
   MFEM_VERIFY(xr.Size() == xi.Size(),
-              "Mismatch in dimension of real and imaginary matrix parts!");
+              "Mismatch in dimension of real and imaginary matrix parts in ComplexVector!");
   xr_.MakeRef(*this, 0, xr.Size());
   xi_.MakeRef(*this, xr.Size(), xr.Size());
   Set(xr, xi);
 }
 
-void ComplexVector::SetSize(int n)
+ComplexVector::ComplexVector(const std::complex<double> *px, int n) : Vector(2 * n)
 {
-  Vector::SetSize(2 * n);
   xr_.MakeRef(*this, 0, n);
   xi_.MakeRef(*this, n, n);
+  Set(px, n);
+}
+
+void ComplexVector::SetSize(int n)
+{
+  Vector::SetSize(n);
+  xr_.MakeRef(*this, 0, n / 2);
+  xi_.MakeRef(*this, n / 2, n / 2);
 }
 
 ComplexVector &ComplexVector::operator=(const ComplexVector &y)
@@ -45,12 +52,49 @@ ComplexVector &ComplexVector::operator=(const ComplexVector &y)
 
 void ComplexVector::Set(const Vector &yr, const Vector &yi)
 {
-  MFEM_VERIFY(yr.Size() == yi.Size() && yr.Size() == Size(),
-              "Mismatch in dimension of real and imaginary matrix parts!");
+  MFEM_VERIFY(yr.Size() == yi.Size() && 2 * yr.Size() == Size(),
+              "Mismatch in dimension of real and imaginary matrix parts in ComplexVector!");
   Real() = yr;
   Imag() = yi;
   RestoreReal();
   RestoreImag();
+}
+
+void ComplexVector::Set(const std::complex<double> *py, int n)
+{
+  MFEM_VERIFY(2 * n == Size(),
+              "Mismatch in dimension for array of std::complex<double> in ComplexVector!");
+  Vector y(reinterpret_cast<double *>(const_cast<std::complex<double> *>(py)), 2 * n);
+  const int N = Size() / 2;
+  const auto *Y = y.Read();
+  auto *XR = Real().Write();
+  auto *XI = Imag().Write();
+  mfem::forall(N,
+               [=] MFEM_HOST_DEVICE(int i)
+               {
+                 XR[i] = Y[2 * i];
+                 XI[i] = Y[2 * i + 1];
+               });
+  RestoreReal();
+  RestoreImag();
+}
+
+void ComplexVector::Get(std::complex<double> *py, int n) const
+{
+  MFEM_VERIFY(2 * n == Size(),
+              "Mismatch in dimension for array of std::complex<double> in ComplexVector!");
+  Vector y(reinterpret_cast<double *>(py), 2 * n);
+  const int N = Size() / 2;
+  const auto *XR = Real().Read();
+  const auto *XI = Imag().Read();
+  auto *Y = y.Write();
+  mfem::forall(N,
+               [=] MFEM_HOST_DEVICE(int i)
+               {
+                 Y[2 * i] = XR[i];
+                 Y[2 * i + 1] = XI[i];
+               });
+  y.HostReadWrite();
 }
 
 void ComplexVector::Conj()
@@ -59,9 +103,21 @@ void ComplexVector::Conj()
   RestoreImag();
 }
 
+ComplexVector &ComplexVector::operator=(std::complex<double> s)
+{
+  Real() = s.real();
+  Imag() = s.imag();
+  RestoreReal();
+  RestoreImag();
+}
+
 ComplexVector &ComplexVector::operator*=(std::complex<double> s)
 {
-  if (s.imag() != 0.0)
+  if (s.imag() == 0.0)
+  {
+    *this *= s.real();
+  }
+  else
   {
     const int N = Size() / 2;
     const double sr = s.real();
@@ -75,14 +131,9 @@ ComplexVector &ComplexVector::operator*=(std::complex<double> s)
                    XR[i] = sr * XR[i] - si * XI[i];
                    XI[i] = t;
                  });
+    RestoreReal();
+    RestoreImag();
   }
-  else if (s.real() != 0.0)
-  {
-    Real() *= s.real();
-    Imag() *= s.real();
-  }
-  RestoreReal();
-  RestoreImag();
   return *this;
 }
 

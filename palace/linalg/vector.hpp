@@ -11,8 +11,8 @@ namespace palace
 {
 
 class ComplexVector;
-class ParOperator;
 
+using Operator = mfem::Operator;
 using Vector = mfem::Vector;
 
 namespace linalg
@@ -40,8 +40,8 @@ double Norml1(MPI_Comm comm, const Vector &x);
 
 // Normalize the vector, possibly with respect to an SPD matrix B.
 double Normalize(MPI_Comm comm, Vector &x);
-double Normalize(MPI_Comm comm, Vector &x, const ParOperator &B, Vector &Bx);
-double Normalize(MPI_Comm comm, ComplexVector &x, const ParOperator &B, ComplexVector &Bx);
+double Normalize(MPI_Comm comm, Vector &x, const Operator &B, Vector &Bx);
+double Normalize(MPI_Comm comm, ComplexVector &x, const Operator &B, ComplexVector &Bx);
 
 }  // namespace linalg
 

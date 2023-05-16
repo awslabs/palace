@@ -4,18 +4,20 @@
 #ifndef PALACE_LINALG_SLEPC_HPP
 #define PALACE_LINALG_SLEPC_HPP
 
-#if 0  // XX TODO DISABLE FEAST FOR NOW
-
 #if defined(PALACE_WITH_SLEPC)
 
 #include "linalg/petsc.hpp"
 
 #if !defined(PETSC_USE_COMPLEX)
-#error "SLEPc interface requires PETSc built with complex scalars!"
+#error "SLEPc interface requires PETSc compiled with complex scalars!"
 #endif
 
+#include <memory>
 #include <string>
-#include "linalg/eigen.hpp"
+#include <mpi.h>
+#include "linalg/complex.hpp"
+#include "linalg/eps.hpp"
+#include "linalg/operator.hpp"
 
 // Forward declarations of SLEPc objects.
 typedef struct _p_EPS *EPS;
@@ -27,16 +29,8 @@ typedef struct _p_RG *RG;
 namespace palace
 {
 
+class ComplexKspSolver;
 class DivFreeSolver;
-class KspSolver;  // XX TODO WORKING
-
-namespace petsc
-{
-
-class PetscParMatrix;
-class PetscParVector;
-
-}  // namespace petsc
 
 namespace slepc
 {
@@ -47,15 +41,16 @@ void Initialize();
 void Finalize();
 
 // Compute and return the maximum singular value of the given operator, σₙ² = λₙ(Aᴴ A) .
-PetscReal GetMaxSingularValue(const petsc::PetscParMatrix &A, PetscReal tol = PETSC_DEFAULT,
-                              PetscInt maxits = PETSC_DEFAULT);
+PetscReal GetMaxSingularValue(MPI_Comm comm, const ComplexOperator &A, bool herm = false,
+                              PetscReal tol = PETSC_DEFAULT,
+                              PetscInt max_it = PETSC_DEFAULT);
 
 //
 // A wrapper for the SLEPc library for generalized linear eigenvalue problems or quadratic
 // polynomial eigenvalue problems. Shift-and-invert spectral transformations can be used to
 // compute interior eigenvalues.
 //
-class SlepcEigenSolver : public EigenSolverBase
+class SlepcEigenSolver : public EigenvalueSolver
 {
 public:
   enum class ProblemType
@@ -82,9 +77,6 @@ public:
   };
 
 protected:
-  // Boolean to handle SetFromOptions calls.
-  mutable bool clcustom;
-
   // Control print level for debugging.
   int print;
 
@@ -96,92 +88,75 @@ protected:
   bool sinvert, region;
 
   // Storage for computed residual norms.
-  mutable PetscReal *res;
-
-  // Workspace vectors for initial space and residual calculations.
-  mutable petsc::PetscParVector *v0, *r0;
+  std::unique_ptr<PetscReal> res;
 
   // Reference to linear solver used for operator action for M⁻¹ (with no spectral
   // transformation) or (K - σ M)⁻¹ (generalized EVP with shift-and- invert) or P(σ)⁻¹
   // (polynomial with shift-and-invert) (not owned).
-  const KspSolver *opInv;
+  const ComplexKspSolver *opInv;
 
   // Reference to solver for projecting an intermediate vector onto a divergence-free space
   // (not owned).
   const DivFreeSolver *opProj;
 
+  // Reference to matrix used for weighted inner products (not owned). May be nullptr, in
+  // which case identity is used.
+  const Operator *opB;
+
+  // Workspace objects for eigenvalue calculations.
+  Mat B0;
+  Vec v0;
+
+  // Boolean to handle SetFromOptions calls.
+  mutable bool cl_custom;
+
   // Customize object with command line options set.
   virtual void Customize();
 
-  // Configure KSP object associated with the spectral transformation.
-  void SetPCShell(void *ctx, PetscErrorCode (*__pc_apply)(PC, Vec, Vec));
-
-  // Specify rectangular region of the complex plane, bounded by[rminr, rmaxr] x
-  // [rmini, rmaxi] in which to constrain eigenvalue search.
-  void SetRegion(PetscReal rminr, PetscReal rmaxr, PetscReal rmini, PetscReal rmaxi,
-                 bool complement = false);
+  // Specify rectangular region of the complex plane in which to constrain eigenvalue
+  // search.
+  void SetRegion(PetscScalar lower_left, PetscScalar upper_right, bool complement = false);
 
   // Perform the back-transformation from the spectrally transformed eigenvalue back to the
   // original problem.
-  void GetBackTransform(PetscScalar eig, PetscReal &eigr, PetscReal &eigi) const;
+  PetscScalar GetBackTransform(PetscScalar l) const;
 
   // Helper routine for computing the eigenpair residual.
-  virtual void GetResidual(PetscScalar eig, const petsc::PetscParVector &v,
-                           petsc::PetscParVector &r) const = 0;
+  virtual PetscReal GetResidualNorm(int i) const = 0;
 
   // Helper routine for computing the backward error.
-  virtual PetscReal GetBackwardScaling(PetscScalar eig) const = 0;
+  virtual PetscReal GetBackwardScaling(PetscScalar l) const = 0;
 
 public:
-  SlepcEigenSolver(int print_lvl);
+  SlepcEigenSolver(int print);
   ~SlepcEigenSolver() override;
 
   // Set operators for the generalized eigenvalue problem or for the quadratic polynomial
   // eigenvalue problem.
-  void SetOperators(const petsc::PetscParMatrix &K, const petsc::PetscParMatrix &M,
+  void SetOperators(const ComplexOperator &K, const ComplexOperator &M,
                     ScaleType type) override;
-  void SetOperators(const petsc::PetscParMatrix &K, const petsc::PetscParMatrix &C,
-                    const petsc::PetscParMatrix &M, ScaleType type) override;
+  void SetOperators(const ComplexOperator &K, const ComplexOperator &C,
+                    const ComplexOperator &M, ScaleType type) override;
 
   // For the linear generalized case, the linear solver should be configured to compute the
   // action of M⁻¹ (with no spectral transformation) or (K - σ M)⁻¹. For the quadratic
   // case, the linear solver should be configured to compute the action of M⁻¹ (with no
   // spectral transformation) or P(σ)⁻¹.
-  void SetLinearSolver(const KspSolver &ksp) override;
+  void SetLinearSolver(const ComplexKspSolver &ksp) override;
 
-  // Set the projection operator or operators for the divergence-free constraint.
-  void SetProjector(const DivFreeSolver &divfree) override;
+  // Set the projection operator for enforcing the divergence-free constraint.
+  void SetDivFreeProjector(const DivFreeSolver &divfree) override;
 
   // Set optional B matrix used for weighted inner products. This must be set explicitly
   // even for generalized problems, otherwise the identity will be used.
-  void SetBMat(const petsc::PetscParMatrix &B) override;
-
-  // Get spectral transformation target used by the solver.
-  bool IsShiftInvert() const { return sinvert; }
-  PetscScalar GetTarget() const { return sigma; }
+  void SetBMat(const Operator &B) override;
 
   // Get scaling factors used by the solver.
-  double GetScalingGamma() const override { return (double)gamma; }
-  double GetScalingDelta() const override { return (double)delta; }
+  PetscReal GetScalingGamma() const override { return gamma; }
+  PetscReal GetScalingDelta() const override { return delta; }
 
   // Set shift-and-invert spectral transformation.
-  void SetShiftInvert(double tr, double ti, bool precond = false) override;
-
-  // Configure the basis vectors object associated with the eigenvalue solver.
-  void SetOrthogonalization(bool mgs, bool cgs2);
-
-  // Set the number of required eigenmodes.
-  void SetNumModes(int numeig, int numvec = 0) override = 0;
-
-  // Set solver tolerance.
-  void SetTol(double tol) override = 0;
-
-  // Set maximum number of iterations.
-  void SetMaxIter(int maxits) override = 0;
-
-  // Set target spectrum for the eigensolver. When a spectral transformation is used, this
-  // applies to the spectrum of the shifted operator.
-  void SetWhichEigenpairs(WhichType type) override = 0;
+  void SetShiftInvert(PetscScalar s, bool precond = false) override;
 
   // Set problem type.
   virtual void SetProblemType(ProblemType type) = 0;
@@ -189,20 +164,11 @@ public:
   // Set eigenvalue solver.
   virtual void SetType(Type type) = 0;
 
-  // Set an initial vector for the solution subspace.
-  void SetInitialSpace(const petsc::PetscParVector &v) override = 0;
-
-  // Solve the eigenvalue problem. Returns the number of converged eigenvalues.
-  int Solve() override = 0;
-
-  // Get the corresponding eigenvalue.
-  void GetEigenvalue(int i, double &eigr, double &eigi) const override = 0;
-
-  // Get the corresponding eigenvector.
-  void GetEigenvector(int i, petsc::PetscParVector &v) const override = 0;
+  // Configure the basis vectors object associated with the eigenvalue solver.
+  void SetOrthogonalization(bool mgs, bool cgs2);
 
   // Get the corresponding eigenpair error.
-  void GetError(int i, ErrorType type, double &err) const override;
+  PetscReal GetError(int i, ErrorType type) const override;
 
   // Get the basis vectors object.
   virtual BV GetBV() const = 0;
@@ -218,12 +184,6 @@ public:
 
   // Conversion function to PetscObject.
   virtual operator PetscObject() const = 0;
-
-  // Access solver object for callback functions.
-  const KspSolver *GetKspSolver() const { return opInv; }
-
-  // Access solver object for callback functions.
-  const DivFreeSolver *GetDivFreeSolver() const { return opProj; }
 };
 
 // Base class for SLEPc's EPS problem type.
@@ -234,66 +194,51 @@ protected:
   EPS eps;
 
   // Shell matrices for the generalized eigenvalue problem.
-  petsc::PetscParMatrix *A, *B;
+  Mat A0, A1;
 
-  // Customize object with command line options set.
   void Customize() override;
 
 public:
   // Calls SLEPc's EPSCreate. Expects SLEPc to be initialized/finalized externally.
-  SlepcEPSSolverBase(MPI_Comm comm, int print_lvl,
-                     const std::string &prefix = std::string());
+  SlepcEPSSolverBase(MPI_Comm comm, int print, const std::string &prefix = std::string());
 
   // Call's SLEPc's EPSDestroy.
   ~SlepcEPSSolverBase() override;
 
-  // Set the number of required eigenmodes.
-  void SetNumModes(int numeig, int numvec = 0) override;
-
-  // Set solver tolerance.
-  void SetTol(double tol) override;
-
-  // Set maximum number of iterations.
-  void SetMaxIter(int maxits) override;
-
-  // Set target spectrum for the eigensolver. When a spectral transformation is used, this
-  // applies to the spectrum of the shifted operator.
-  void SetWhichEigenpairs(WhichType type) override;
-
-  // Set problem type.
-  void SetProblemType(ProblemType type) override;
-
-  // Set eigenvalue solver.
-  void SetType(Type type) override;
-
-  // Set an initial vector for the solution subspace.
-  void SetInitialSpace(const petsc::PetscParVector &v) override;
-
-  // Solve the eigenvalue problem. Returns the number of converged eigenvalues.
-  int Solve() override;
-
-  // Get the corresponding eigenvalue.
-  void GetEigenvalue(int i, double &eigr, double &eigi) const override;
-
-  // Get the corresponding eigenvector.
-  void GetEigenvector(int i, petsc::PetscParVector &v) const override;
-
-  // Get the basis vectors object.
-  BV GetBV() const override;
-
-  // Get the spectral transformation object.
-  ST GetST() const override;
-
-  // Get the filtering region object.
-  RG GetRG() const override;
-
-  // Get the associated MPI communicator.
-  MPI_Comm GetComm() const override;
-
   // Conversion function to SLEPc's EPS type.
   operator EPS() const { return eps; }
 
-  // Conversion function to PetscObject.
+  void SetNumModes(int num_eig, int num_vec = 0) override;
+
+  void SetTol(PetscReal tol) override;
+
+  void SetMaxIter(int max_it) override;
+
+  void SetWhichEigenpairs(WhichType type) override;
+
+  void SetProblemType(ProblemType type) override;
+
+  void SetType(Type type) override;
+
+  void SetInitialSpace(const ComplexVector &v) override;
+
+  int Solve() override;
+
+  PetscScalar GetEigenvalue(int i) const override;
+
+  void GetEigenvector(int i, ComplexVector &x) const override;
+
+  BV GetBV() const override;
+
+  ST GetST() const override;
+
+  RG GetRG() const override;
+
+  MPI_Comm GetComm() const override
+  {
+    return eps ? PetscObjectComm(reinterpret_cast<PetscObject>(eps)) : MPI_COMM_NULL;
+  }
+
   operator PetscObject() const override { return reinterpret_cast<PetscObject>(eps); };
 };
 
@@ -302,29 +247,29 @@ class SlepcEPSSolver : public SlepcEPSSolverBase
 {
 private:
   // References to matrices defining the generalized eigenvalue problem (not owned).
-  const petsc::PetscParMatrix *opK, *opM;
+  const ComplexOperator *opK, *opM;
 
   // Operator norms for scaling.
   mutable PetscReal normK, normM;
 
-protected:
-  // Helper routine for computing the eigenpair residual.
-  void GetResidual(PetscScalar eig, const petsc::PetscParVector &v,
-                   petsc::PetscParVector &r) const override;
+  // Workspace vector for operator applications.
+  mutable ComplexVector x, y;
 
-  // Helper routine for computing the backward error.
-  PetscReal GetBackwardScaling(PetscScalar eig) const override;
+  // Configure linear solver for generalized problem or spectral transformation.
+  void ConfigurePCShell();
+
+protected:
+  PetscReal GetResidualNorm(int i) const override;
+
+  PetscReal GetBackwardScaling(PetscScalar l) const override;
 
 public:
-  SlepcEPSSolver(MPI_Comm comm, int print_lvl, const std::string &prefix = std::string());
+  SlepcEPSSolver(MPI_Comm comm, int print, const std::string &prefix = std::string());
 
-  // Set operators for the generalized eigenvalue problem.
-  void SetOperators(const petsc::PetscParMatrix &K, const petsc::PetscParMatrix &M,
+  void SetOperators(const ComplexOperator &K, const ComplexOperator &M,
                     ScaleType type) override;
 
-  // Access methods for operator application.
-  const petsc::PetscParMatrix *GetOpK() { return opK; }
-  const petsc::PetscParMatrix *GetOpM() { return opM; }
+  void SetBMat(const Operator &B) override;
 };
 
 // Quadratic eigenvalue problem solver: P(λ) x = (K + λ C + λ² M) x = 0 , solved via
@@ -334,66 +279,33 @@ class SlepcPEPLinearSolver : public SlepcEPSSolverBase
 private:
   // References to matrices defining the quadratic polynomial eigenvalue problem
   // (not owned).
-  const petsc::PetscParMatrix *opK, *opC, *opM;
+  const ComplexOperator *opK, *opC, *opM;
 
   // Operator norms for scaling.
   mutable PetscReal normK, normC, normM;
 
-  // Shell matrix used for weighted inner products. May be nullptr, in which case identity
-  // is used. Also a reference to the original passed in matrix.
-  petsc::PetscParMatrix *B0;
-  const petsc::PetscParMatrix *opB;
-
   // Workspace vectors for operator applications.
-  mutable petsc::PetscParVector *x1, *x2, *y1, *y2, *z;
+  mutable ComplexVector x1, x2, y1, y2;
+
+  // Configure linear solver for generalized problem or spectral transformation.
+  void ConfigurePCShell();
 
 protected:
-  // Helper routine for computing the eigenpair residual.
-  void GetResidual(PetscScalar eig, const petsc::PetscParVector &v,
-                   petsc::PetscParVector &r) const override;
+  PetscReal GetResidualNorm(int i) const override;
 
-  // Helper routine for computing the backward error.
-  PetscReal GetBackwardScaling(PetscScalar eig) const override;
+  PetscReal GetBackwardScaling(PetscScalar l) const override;
 
 public:
-  SlepcPEPLinearSolver(MPI_Comm comm, int print_lvl,
-                       const std::string &prefix = std::string());
-  ~SlepcPEPLinearSolver() override;
+  SlepcPEPLinearSolver(MPI_Comm comm, int print, const std::string &prefix = std::string());
 
-  // Set operators for the quadratic polynomial eigenvalue problem.
-  void SetOperators(const petsc::PetscParMatrix &K, const petsc::PetscParMatrix &C,
-                    const petsc::PetscParMatrix &M, ScaleType type) override;
+  void SetOperators(const ComplexOperator &K, const ComplexOperator &C,
+                    const ComplexOperator &M, ScaleType type) override;
 
-  // Configure the basis vectors object associated with the eigenvalue solver.
-  void SetBMat(const petsc::PetscParMatrix &B) override;
+  void SetBMat(const Operator &B) override;
 
-  // Set an initial vector for the solution subspace.
-  void SetInitialSpace(const petsc::PetscParVector &v) override;
+  void SetInitialSpace(const ComplexVector &v) override;
 
-  // Get the corresponding eigenvector.
-  void GetEigenvector(int i, petsc::PetscParVector &v) const override;
-
-  // Helper methods for splitting a block vector from the linearized problem into its into
-  // two parts.
-  PetscScalar *GetBlocks(petsc::PetscParVector &v, petsc::PetscParVector &v1,
-                         petsc::PetscParVector &v2) const;
-  const PetscScalar *GetBlocksRead(const petsc::PetscParVector &v,
-                                   petsc::PetscParVector &v1,
-                                   petsc::PetscParVector &v2) const;
-  void RestoreBlocks(PetscScalar *pv, petsc::PetscParVector &v, petsc::PetscParVector &v1,
-                     petsc::PetscParVector &v2) const;
-  void RestoreBlocksRead(const PetscScalar *pv, const petsc::PetscParVector &v,
-                         petsc::PetscParVector &v1, petsc::PetscParVector &v2) const;
-
-  // Access methods for operator application.
-  const petsc::PetscParMatrix *GetOpK() { return opK; }
-  const petsc::PetscParMatrix *GetOpC() { return opC; }
-  const petsc::PetscParMatrix *GetOpM() { return opM; }
-  const petsc::PetscParMatrix *GetOpB() { return opB; }
-  petsc::PetscParVector *GetX1() { return x1; }
-  petsc::PetscParVector *GetX2() { return x2; }
-  petsc::PetscParVector *GetY1() { return y1; }
-  petsc::PetscParVector *GetY2() { return y2; }
+  void GetEigenvector(int i, ComplexVector &x) const override;
 };
 
 // Base class for SLEPc's PEP problem type.
@@ -404,66 +316,51 @@ protected:
   PEP pep;
 
   // Shell matrices for the quadratic polynomial eigenvalue problem
-  petsc::PetscParMatrix *A0, *A1, *A2;
+  Mat A0, A1, A2;
 
-  // Customize object with command line options set.
   void Customize() override;
 
 public:
   // Calls SLEPc's PEPCreate. Expects SLEPc to be initialized/finalized externally.
-  SlepcPEPSolverBase(MPI_Comm comm, int print_lvl,
-                     const std::string &prefix = std::string());
+  SlepcPEPSolverBase(MPI_Comm comm, int print, const std::string &prefix = std::string());
 
   // Call's SLEPc's PEPDestroy.
   ~SlepcPEPSolverBase() override;
 
-  // Set the number of required eigenmodes.
-  void SetNumModes(int numeig, int numvec = 0) override;
-
-  // Set solver tolerance.
-  void SetTol(double tol) override;
-
-  // Set maximum number of iterations.
-  void SetMaxIter(int maxits) override;
-
-  // Set target spectrum for the eigensolver. When a spectral transformation is used, this
-  // applies to the spectrum of the shifted operator.
-  void SetWhichEigenpairs(WhichType type) override;
-
-  // Set problem type.
-  void SetProblemType(ProblemType type) override;
-
-  // Set eigenvalue solver.
-  void SetType(Type type) override;
-
-  // Set an initial vector for the solution subspace.
-  void SetInitialSpace(const petsc::PetscParVector &v) override;
-
-  // Solve the eigenvalue problem. Returns the number of converged eigenvalues.
-  int Solve() override;
-
-  // Get the corresponding eigenvalue.
-  void GetEigenvalue(int i, double &eigr, double &eigi) const override;
-
-  // Get the corresponding eigenvector.
-  void GetEigenvector(int i, petsc::PetscParVector &v) const override;
-
-  // Get the basis vectors object.
-  BV GetBV() const override;
-
-  // Get the spectral transformation object.
-  ST GetST() const override;
-
-  // Get the filtering region object.
-  RG GetRG() const override;
-
-  // Get the associated MPI communicator.
-  MPI_Comm GetComm() const override;
-
   // Conversion function to SLEPc's PEP type.
   operator PEP() const { return pep; }
 
-  // Conversion function to PetscObject.
+  void SetNumModes(int num_eig, int num_vec = 0) override;
+
+  void SetTol(PetscReal tol) override;
+
+  void SetMaxIter(int max_it) override;
+
+  void SetWhichEigenpairs(WhichType type) override;
+
+  void SetProblemType(ProblemType type) override;
+
+  void SetType(Type type) override;
+
+  void SetInitialSpace(const ComplexVector &v) override;
+
+  int Solve() override;
+
+  PetscScalar GetEigenvalue(int i) const override;
+
+  void GetEigenvector(int i, ComplexVector &x) const override;
+
+  BV GetBV() const override;
+
+  ST GetST() const override;
+
+  RG GetRG() const override;
+
+  MPI_Comm GetComm() const override
+  {
+    return pep ? PetscObjectComm(reinterpret_cast<PetscObject>(pep)) : MPI_COMM_NULL;
+  }
+
   operator PetscObject() const override { return reinterpret_cast<PetscObject>(pep); };
 };
 
@@ -473,37 +370,34 @@ class SlepcPEPSolver : public SlepcPEPSolverBase
 private:
   // References to matrices defining the quadratic polynomial eigenvalue problem
   // (not owned).
-  const petsc::PetscParMatrix *opK, *opC, *opM;
+  const ComplexOperator *opK, *opC, *opM;
 
   // Operator norms for scaling.
   mutable PetscReal normK, normC, normM;
 
-protected:
-  // Helper routine for computing the eigenpair residual.
-  void GetResidual(PetscScalar eig, const petsc::PetscParVector &v,
-                   petsc::PetscParVector &r) const override;
+  // Workspace vector for operator applications.
+  mutable ComplexVector x, y;
 
-  // Helper routine for computing the backward error.
-  PetscReal GetBackwardScaling(PetscScalar eig) const override;
+  // Configure linear solver for generalized problem or spectral transformation.
+  void ConfigurePCShell();
+
+protected:
+  PetscReal GetResidualNorm(int i) const override;
+
+  PetscReal GetBackwardScaling(PetscScalar l) const override;
 
 public:
-  SlepcPEPSolver(MPI_Comm comm, int print_lvl, const std::string &prefix = std::string());
+  SlepcPEPSolver(MPI_Comm comm, int print, const std::string &prefix = std::string());
 
-  // Set operators for the quadratic polynomial eigenvalue problem.
-  void SetOperators(const petsc::PetscParMatrix &K, const petsc::PetscParMatrix &C,
-                    const petsc::PetscParMatrix &M, ScaleType type) override;
+  void SetOperators(const ComplexOperator &K, const ComplexOperator &C,
+                    const ComplexOperator &M, ScaleType type) override;
 
-  // Access methods for operator application.
-  const petsc::PetscParMatrix *GetOpK() { return opK; }
-  const petsc::PetscParMatrix *GetOpC() { return opC; }
-  const petsc::PetscParMatrix *GetOpM() { return opM; }
+  void SetBMat(const Operator &B) override;
 };
 
 }  // namespace slepc
 
 }  // namespace palace
-
-#endif
 
 #endif
 

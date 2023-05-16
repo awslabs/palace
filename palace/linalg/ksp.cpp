@@ -160,13 +160,10 @@ ConfigurePreconditionerSolver(MPI_Comm comm, const IoData &iodata,
       break;
 #endif
     case config::LinearSolverData::Type::STRUMPACK_MP:
-#if defined(MFEM_USE_STRUMPACK) &&                                   \
-    (STRUMPACK_VERSION_MAJOR >= 6 && STRUMPACK_VERSION_MINOR >= 3 && \
-     STRUMPACK_VERSION_PATCH > 1)
+#if defined(MFEM_USE_STRUMPACK)
       pc = std::make_unique<StrumpackMixedPrecisionSolver>(comm, iodata, print);
 #else
-      MFEM_ABORT("Solver was not built with STRUMPACK support or uses STRUMPACK older than "
-                 "6.3.1 which does not include mixed-precision support, please choose a "
+      MFEM_ABORT("Solver was not built with STRUMPACK support, please choose a "
                  "different solver!");
 #endif
       break;

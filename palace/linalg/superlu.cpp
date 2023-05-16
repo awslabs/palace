@@ -34,11 +34,11 @@ int GetNpDep(int np, bool use_3d)
 
 }  // namespace
 
-SuperLUSolver::SuperLUSolver(MPI_Comm comm, int sym_fact_type, bool use_3d, int print_lvl)
+SuperLUSolver::SuperLUSolver(MPI_Comm comm, int sym_fact_type, bool use_3d, int print)
   : mfem::Solver(), solver(comm, GetNpDep(Mpi::Size(comm), use_3d))
 {
   // Configure the solver.
-  if (print_lvl > 1)
+  if (print > 1)
   {
     if (solver.npdep_ > 1)
     {
@@ -51,7 +51,7 @@ SuperLUSolver::SuperLUSolver(MPI_Comm comm, int sym_fact_type, bool use_3d, int 
                  solver.nprow_, solver.npcol_);
     }
   }
-  solver.SetPrintStatistics(print_lvl > 1);
+  solver.SetPrintStatistics(print > 1);
   solver.SetEquilibriate(false);
   solver.SetReplaceTinyPivot(false);
   if (sym_fact_type == 2)
