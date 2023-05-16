@@ -155,87 +155,89 @@ inline mfem::HypreParMatrix GetZ(mfem::ParFiniteElementSpace &fespace)
   return *z.ParallelAssemble();
 }
 
-struct SystemMatrices
-{
-  petsc::PetscParMatrix A1;
-  petsc::PetscParMatrix A2;
-  petsc::PetscParMatrix B3;
-  petsc::PetscParMatrix B4;
-};
+// struct SystemMatrices
+// {
+//   petsc::PetscParMatrix A1;
+//   petsc::PetscParMatrix A2;
+//   petsc::PetscParMatrix B3;
+//   petsc::PetscParMatrix B4;
+// };
 
-SystemMatrices
-GetSystemMatrices(const mfem::HypreParMatrix &Att1, const mfem::HypreParMatrix &Att2r,
-                  const std::optional<mfem::HypreParMatrix> &Att2i,
-                  const mfem::HypreParMatrix &Btt, const mfem::HypreParMatrix &Btn,
-                  const mfem::HypreParMatrix &Bnn1, const mfem::HypreParMatrix &Bnn2r,
-                  const std::optional<mfem::HypreParMatrix> &Bnn2i,
-                  const mfem::HypreParMatrix &Ztt, const mfem::HypreParMatrix &Znn,
-                  const mfem::Array<int> &nd_tdof_list,
-                  const mfem::Array<int> &h1_tdof_list, int nd_tdof_offset)
-{
-  // Construct the 2x2 block matrices for the eigenvalue problem. We pre-compute the
-  // eigenvalue problem matrices such that:
-  //              A = A₁ - ω² A₂, B = A + 1/Θ² B₃ - ω²/Θ² B₄.
-  mfem::Array2D<const mfem::HypreParMatrix *> blocks(2, 2);
-  blocks(0, 0) = &Btt;
-  blocks(0, 1) = &Btn;
-  blocks(1, 0) = Btn.Transpose();
-  blocks(1, 1) = &Bnn1;
-  std::unique_ptr<mfem::HypreParMatrix> hA1s(mfem::HypreParMatrixFromBlocks(blocks));
-  auto A1s = petsc::PetscAijMatrix(*hA1s);
+// SystemMatrices
+// GetSystemMatrices(const mfem::HypreParMatrix &Att1, const mfem::HypreParMatrix &Att2r,
+//                   const std::optional<mfem::HypreParMatrix> &Att2i,
+//                   const mfem::HypreParMatrix &Btt, const mfem::HypreParMatrix &Btn,
+//                   const mfem::HypreParMatrix &Bnn1, const mfem::HypreParMatrix &Bnn2r,
+//                   const std::optional<mfem::HypreParMatrix> &Bnn2i,
+//                   const mfem::HypreParMatrix &Ztt, const mfem::HypreParMatrix &Znn,
+//                   const mfem::Array<int> &nd_tdof_list,
+//                   const mfem::Array<int> &h1_tdof_list, int nd_tdof_offset)
+// {
+//   // Construct the 2x2 block matrices for the eigenvalue problem. We pre-compute the
+//   // eigenvalue problem matrices such that:
+//   //              A = A₁ - ω² A₂, B = A + 1/Θ² B₃ - ω²/Θ² B₄.
+//   mfem::Array2D<const mfem::HypreParMatrix *> blocks(2, 2);
+//   blocks(0, 0) = &Btt;
+//   blocks(0, 1) = &Btn;
+//   blocks(1, 0) = Btn.Transpose();
+//   blocks(1, 1) = &Bnn1;
+//   std::unique_ptr<mfem::HypreParMatrix> hA1s(mfem::HypreParMatrixFromBlocks(blocks));
+//   auto A1s = petsc::PetscAijMatrix(*hA1s);
 
-  blocks = nullptr;
-  blocks(0, 0) = &Ztt;
-  blocks(1, 1) = &Bnn2r;
-  std::unique_ptr<mfem::HypreParMatrix> hA2r(mfem::HypreParMatrixFromBlocks(blocks));
-  auto A2s = [&]()
-  {
-    if (!Bnn2i)
-    {
-      return petsc::PetscAijMatrix(*hA2r);
-    }
-    blocks(1, 1) = &*Bnn2i;
-    std::unique_ptr<mfem::HypreParMatrix> hA2i(mfem::HypreParMatrixFromBlocks(blocks));
-    return petsc::PetscAijMatrix(*hA2r, *hA2i);
-  }();
+//   blocks = nullptr;
+//   blocks(0, 0) = &Ztt;
+//   blocks(1, 1) = &Bnn2r;
+//   std::unique_ptr<mfem::HypreParMatrix> hA2r(mfem::HypreParMatrixFromBlocks(blocks));
+//   auto A2s = [&]()
+//   {
+//     if (!Bnn2i)
+//     {
+//       return petsc::PetscAijMatrix(*hA2r);
+//     }
+//     blocks(1, 1) = &*Bnn2i;
+//     std::unique_ptr<mfem::HypreParMatrix> hA2i(mfem::HypreParMatrixFromBlocks(blocks));
+//     return petsc::PetscAijMatrix(*hA2r, *hA2i);
+//   }();
 
-  blocks = nullptr;
-  blocks(0, 0) = &Att1;
-  blocks(1, 1) = &Znn;
-  std::unique_ptr<mfem::HypreParMatrix> hB3s(mfem::HypreParMatrixFromBlocks(blocks));
-  auto B3s = petsc::PetscAijMatrix(*hB3s);
+//   blocks = nullptr;
+//   blocks(0, 0) = &Att1;
+//   blocks(1, 1) = &Znn;
+//   std::unique_ptr<mfem::HypreParMatrix> hB3s(mfem::HypreParMatrixFromBlocks(blocks));
+//   auto B3s = petsc::PetscAijMatrix(*hB3s);
 
-  blocks = nullptr;
-  blocks(0, 0) = &Att2r;
-  blocks(1, 1) = &Znn;
-  std::unique_ptr<mfem::HypreParMatrix> hB4r(mfem::HypreParMatrixFromBlocks(blocks));
-  auto B4s = [&]()
-  {
-    if (!Att2i)
-    {
-      return petsc::PetscAijMatrix(*hB4r);
-    }
-    blocks(0, 0) = &*Att2i;
-    std::unique_ptr<mfem::HypreParMatrix> hB4i(mfem::HypreParMatrixFromBlocks(blocks));
-    return petsc::PetscAijMatrix(*hB4r, *hB4i);
-  }();
+//   blocks = nullptr;
+//   blocks(0, 0) = &Att2r;
+//   blocks(1, 1) = &Znn;
+//   std::unique_ptr<mfem::HypreParMatrix> hB4r(mfem::HypreParMatrixFromBlocks(blocks));
+//   auto B4s = [&]()
+//   {
+//     if (!Att2i)
+//     {
+//       return petsc::PetscAijMatrix(*hB4r);
+//     }
+//     blocks(0, 0) = &*Att2i;
+//     std::unique_ptr<mfem::HypreParMatrix> hB4i(mfem::HypreParMatrixFromBlocks(blocks));
+//     return petsc::PetscAijMatrix(*hB4r, *hB4i);
+//   }();
 
-  // Consolidate list of local ND and H1 true dofs before extracting the respective
-  // submatrices. The matrix is still distributed over the same number of processors,
-  // though some are empty (PETSc handles this).
-  mfem::Array<int> tdof_list;
-  tdof_list.Reserve(nd_tdof_list.Size() + h1_tdof_list.Size());
-  for (auto tdof : nd_tdof_list)
-  {
-    tdof_list.Append(tdof);
-  }
-  for (auto tdof : h1_tdof_list)
-  {
-    tdof_list.Append(tdof + nd_tdof_offset);
-  }
-  return {*A1s.GetSubMatrix(tdof_list, tdof_list), *A2s.GetSubMatrix(tdof_list, tdof_list),
-          *B3s.GetSubMatrix(tdof_list, tdof_list), *B4s.GetSubMatrix(tdof_list, tdof_list)};
-}
+//   // Consolidate list of local ND and H1 true dofs before extracting the respective
+//   // submatrices. The matrix is still distributed over the same number of processors,
+//   // though some are empty (PETSc handles this).
+//   mfem::Array<int> tdof_list;
+//   tdof_list.Reserve(nd_tdof_list.Size() + h1_tdof_list.Size());
+//   for (auto tdof : nd_tdof_list)
+//   {
+//     tdof_list.Append(tdof);
+//   }
+//   for (auto tdof : h1_tdof_list)
+//   {
+//     tdof_list.Append(tdof + nd_tdof_offset);
+//   }
+//   return {*A1s.GetSubMatrix(tdof_list, tdof_list), *A2s.GetSubMatrix(tdof_list,
+//   tdof_list),
+//           *B3s.GetSubMatrix(tdof_list, tdof_list), *B4s.GetSubMatrix(tdof_list,
+//           tdof_list)};
+// }
 
 }  // namespace
 
@@ -370,49 +372,51 @@ WavePortData::WavePortData(const config::WavePortData &data, const MaterialOpera
     const auto &[Att1, Att2r, Att2i] = GetAtt(mat_op, nd_fespace, attr_marker);
     const auto &Ztt = GetZ(nd_fespace);
     const auto &Znn = GetZ(h1_fespace);
-    auto system_mat =
-        GetSystemMatrices(Att1, Att2r, Att2i, Btt, Btn, Bnn1, Bnn2r, Bnn2i, Ztt, Znn,
-                          nd_attr_tdof_list, h1_attr_tdof_list, nd_fespace.GetTrueVSize());
-    A1 = std::make_unique<petsc::PetscParMatrix>(std::move(system_mat.A1));
-    A2 = std::make_unique<petsc::PetscParMatrix>(std::move(system_mat.A2));
-    B3 = std::make_unique<petsc::PetscParMatrix>(std::move(system_mat.B3));
-    B4 = std::make_unique<petsc::PetscParMatrix>(std::move(system_mat.B4));
+    // auto system_mat =
+    //     GetSystemMatrices(Att1, Att2r, Att2i, Btt, Btn, Bnn1, Bnn2r, Bnn2i, Ztt, Znn,
+    //                       nd_attr_tdof_list, h1_attr_tdof_list,
+    //                       nd_fespace.GetTrueVSize());
+    // A1 = std::make_unique<petsc::PetscParMatrix>(std::move(system_mat.A1));
+    // A2 = std::make_unique<petsc::PetscParMatrix>(std::move(system_mat.A2));
+    // B3 = std::make_unique<petsc::PetscParMatrix>(std::move(system_mat.B3));
+    // B4 = std::make_unique<petsc::PetscParMatrix>(std::move(system_mat.B4));
   }
 
   // Configure sequential vector and scatter from parallel. The original vector is created
   // to be compatible with the parallel matrix, and the scatter creates a sequential vector
   // compatible with the sequential matrix. Then, gather matrices so eigenvalue problem can
   // be solved sequentially without communication. A1/A2/B3/B4 = nullptr if !root.
-  {
-    bool root = Mpi::Root(A1->GetComm());
-    e = std::make_unique<petsc::PetscParVector>(*A1);
-    scatter =
-        std::make_unique<petsc::PetscScatter>(petsc::PetscScatter::Type::TO_ZERO, *e, e0);
-    A1 = A1->GetSequentialMatrix(root);
-    A2 = A2->GetSequentialMatrix(root);
-    B3 = B3->GetSequentialMatrix(root);
-    B4 = B4->GetSequentialMatrix(root);
-  }
-  if (A1)
-  {
-    // sparsity(A2) ⊆ sparsity(A1), sparsity(B4) ⊆ sparsity(B3) ⊆ sparsity(A)
-    A = std::make_unique<petsc::PetscParMatrix>(*A1);
-    B = std::make_unique<petsc::PetscParMatrix>(*A1);
-    A->SetSymmetric();
-    B->SetSymmetric();
-    A1->SetSymmetric();
-    A2->SetSymmetric();
-    B3->SetSymmetric();
-    B4->SetSymmetric();
-  }
+  // {
+  //   bool root = Mpi::Root(A1->GetComm());
+  //   e = std::make_unique<petsc::PetscParVector>(*A1);
+  //   scatter =
+  //       std::make_unique<petsc::PetscScatter>(petsc::PetscScatter::Type::TO_ZERO, *e,
+  //       e0);
+  //   A1 = A1->GetSequentialMatrix(root);
+  //   A2 = A2->GetSequentialMatrix(root);
+  //   B3 = B3->GetSequentialMatrix(root);
+  //   B4 = B4->GetSequentialMatrix(root);
+  // }
+  // if (A1)
+  // {
+  //   // sparsity(A2) ⊆ sparsity(A1), sparsity(B4) ⊆ sparsity(B3) ⊆ sparsity(A)
+  //   A = std::make_unique<petsc::PetscParMatrix>(*A1);
+  //   B = std::make_unique<petsc::PetscParMatrix>(*A1);
+  //   A->SetSymmetric();
+  //   B->SetSymmetric();
+  //   A1->SetSymmetric();
+  //   A2->SetSymmetric();
+  //   B3->SetSymmetric();
+  //   B4->SetSymmetric();
+  // }
 
   // Create vector for initial space (initially parallel, then scattered to root).
-  {
-    petsc::PetscParVector y(*e);
-    GetInitialSpace(nd_attr_tdof_list.Size(), h1_attr_tdof_list.Size(), y);
-    y0 = std::make_unique<petsc::PetscParVector>(*e0);
-    scatter->Forward(y, *y0);
-  }
+  // {
+  //   petsc::PetscParVector y(*e);
+  //   GetInitialSpace(nd_attr_tdof_list.Size(), h1_attr_tdof_list.Size(), y);
+  //   y0 = std::make_unique<petsc::PetscParVector>(*e0);
+  //   scatter->Forward(y, *y0);
+  // }
 
   // Coefficients store references to kₙ, ω so they are updated implicitly at each new
   // solve. Also, μ⁻¹ is persistent, so no copy is OK.
@@ -426,7 +430,7 @@ WavePortData::WavePortData(const config::WavePortData &data, const MaterialOpera
   // Configure the eigenvalue problem solver. As for the full 3D case, the system matrices
   // are in general complex and symmetric. We supply the operators to the solver in
   // shift-inverted form and handle the back- transformation externally.
-  if (A)
+  // if (A)  //XX
   {
     // Define the linear solver to be used for solving systems associated with the
     // generalized eigenvalue problem. We use PETSc's sequential sparse solvers.
@@ -544,77 +548,80 @@ void WavePortData::GetTrueDofs(mfem::ParFiniteElementSpace &nd_fespace,
   }
 }
 
-void WavePortData::GetInitialSpace(int nt, int nn, petsc::PetscParVector &y0)
-{
-  // Initial space chosen as such that B v₀ = y₀, with y₀ = [y₀ₜ, 0, ... 0]ᵀ ⟂ null(A)
-  // (with Aₜₜ nonsingular). See Lee, Sun, and Cendes, 1991 for reference.
-  // Note: When the eigenvalue solver uses a standard ℓ²-inner product instead of B-inner
-  // product(since we use a general non-Hermitian solver due to complex symmetric B), then
-  // we just use v0 = y0 directly.
-  MFEM_VERIFY(y0.GetSize() == nt + nn, "Invalid vector size!");
-  y0.SetRandomReal();
-  PetscScalar *py0 = y0.GetArray();
-  // for (int i = 0; i < nt; i++)     { py0[i] = 1.0; }
-  for (int i = nt; i < nt + nn; i++)
-  {
-    py0[i] = 0.0;
-  }
-  y0.RestoreArray(py0);
-}
+// void WavePortData::GetInitialSpace(int nt, int nn, petsc::PetscParVector &y0)
+// {
+//   // Initial space chosen as such that B v₀ = y₀, with y₀ = [y₀ₜ, 0, ... 0]ᵀ ⟂ null(A)
+//   // (with Aₜₜ nonsingular). See Lee, Sun, and Cendes, 1991 for reference.
+//   // Note: When the eigenvalue solver uses a standard ℓ²-inner product instead of B-inner
+//   // product(since we use a general non-Hermitian solver due to complex symmetric B),
+//   then
+//   // we just use v0 = y0 directly.
+//   MFEM_VERIFY(y0.GetSize() == nt + nn, "Invalid vector size!");
+//   y0.SetRandomReal();
+//   PetscScalar *py0 = y0.GetArray();
+//   // for (int i = 0; i < nt; i++)     { py0[i] = 1.0; }
+//   for (int i = nt; i < nt + nn; i++)
+//   {
+//     py0[i] = 0.0;
+//   }
+//   y0.RestoreArray(py0);
+// }
 
-std::complex<double> WavePortData::Solve(petsc::PetscParVector &y0,
-                                         petsc::PetscParVector &e0,
-                                         petsc::PetscParVector &e,
-                                         petsc::PetscScatter &scatter)
-{
-  double eig[2];
+// std::complex<double> WavePortData::Solve(petsc::PetscParVector &y0,
+//                                          petsc::PetscParVector &e0,
+//                                          petsc::PetscParVector &e,
+//                                          petsc::PetscScatter &scatter)
+// {
+//   double eig[2];
 
-  // XX TODO REVISIT...
+//   // XX TODO REVISIT...
 
-  //   if (A)  // Only on root
-  //   {
-  //     // The y0 and e0 vectors are still parallel vectors, but with all data on root. We
-  //     want
-  //     // true sequential vectors.
-  //     PetscScalar *pe0 = e0.GetArray();
-  //     petsc::PetscParVector e0s(e0.GetSize(), pe0);
+//   //   if (A)  // Only on root
+//   //   {
+//   //     // The y0 and e0 vectors are still parallel vectors, but with all data on root.
+//   We
+//   //     want
+//   //     // true sequential vectors.
+//   //     PetscScalar *pe0 = e0.GetArray();
+//   //     petsc::PetscParVector e0s(e0.GetSize(), pe0);
 
-  //     // Set starting vector.
-  //     {
-  //       PetscScalar *py0 = y0.GetArray();
-  //       petsc::PetscParVector y0s(y0.GetSize(), py0);
-  //       eigen->SetInitialSpace(y0s);
-  //       y0.RestoreArray(py0);
-  //     }
+//   //     // Set starting vector.
+//   //     {
+//   //       PetscScalar *py0 = y0.GetArray();
+//   //       petsc::PetscParVector y0s(y0.GetSize(), py0);
+//   //       eigen->SetInitialSpace(y0s);
+//   //       y0.RestoreArray(py0);
+//   //     }
 
-  // #if 0
-  //     // Alternatively, use B-orthogonal initial space. Probably want to call SetBMat for
-  //     // the eigensolver in this case.
-  //     {
-  //       PetscScalar *py0 = y0.GetArray();
-  //       petsc::PetscParVector y0s(y0.GetSize(), py0);
-  //       petsc::PetscParVector v0s(y0s);
-  //       ksp->Mult(y0s, v0s);
-  //       eigen->SetInitialSpace(v0s);
-  //       y0.RestoreArray(py0);
-  //     }
-  // #endif
+//   // #if 0
+//   //     // Alternatively, use B-orthogonal initial space. Probably want to call SetBMat
+//   for
+//   //     // the eigensolver in this case.
+//   //     {
+//   //       PetscScalar *py0 = y0.GetArray();
+//   //       petsc::PetscParVector y0s(y0.GetSize(), py0);
+//   //       petsc::PetscParVector v0s(y0s);
+//   //       ksp->Mult(y0s, v0s);
+//   //       eigen->SetInitialSpace(v0s);
+//   //       y0.RestoreArray(py0);
+//   //     }
+//   // #endif
 
-  //     // Solve (operators have been set in constructor).
-  //     int num_conv = 0;
-  //     eigen->SetOperators(*A, *B, EigenSolverBase::ScaleType::NONE);
-  //     num_conv = eigen->Solve();
-  //     MFEM_VERIFY(num_conv >= mode_idx, "Wave port eigensolver did not converge!");
-  //     eigen->GetEigenvalue(mode_idx - 1, eig[0], eig[1]);
-  //     eigen->GetEigenvector(mode_idx - 1, e0s);
-  //     e0.RestoreArray(pe0);
-  //   }
+//   //     // Solve (operators have been set in constructor).
+//   //     int num_conv = 0;
+//   //     eigen->SetOperators(*A, *B, EigenSolverBase::ScaleType::NONE);
+//   //     num_conv = eigen->Solve();
+//   //     MFEM_VERIFY(num_conv >= mode_idx, "Wave port eigensolver did not converge!");
+//   //     eigen->GetEigenvalue(mode_idx - 1, eig[0], eig[1]);
+//   //     eigen->GetEigenvector(mode_idx - 1, e0s);
+//   //     e0.RestoreArray(pe0);
+//   //   }
 
-  // Scatter the result to all processors.
-  scatter.Reverse(e0, e);
-  Mpi::Broadcast(2, eig, 0, e.GetComm());
-  return {eig[0], eig[1]};
-}
+//   // Scatter the result to all processors.
+//   scatter.Reverse(e0, e);
+//   Mpi::Broadcast(2, eig, 0, e.GetComm());
+//   return {eig[0], eig[1]};
+// }
 
 void WavePortData::Initialize(double omega)
 {
@@ -626,21 +633,22 @@ void WavePortData::Initialize(double omega)
   // Use pre-computed matrices to construct and solve the generalized eigenvalue problem for
   // the desired wave port mode.
   double theta2 = muepsmax * omega * omega;
-  if (A)
-  {
-    MFEM_VERIFY(A1 && A2 && B3 && B4 && A && B,
-                "Boundary mode eigenvalue problem operators uninitialized for solve!");
-    A->Scale(0.0);
-    A->AXPY(1.0, *A1, petsc::PetscParMatrix::NNZStructure::SAME);
-    A->AXPY(-omega * omega, *A2, petsc::PetscParMatrix::NNZStructure::SUBSET);
-    B->Scale(0.0);
-    B->AXPY(1.0, *A, petsc::PetscParMatrix::NNZStructure::SAME);
-    B->AXPY(1.0 / theta2, *B3, petsc::PetscParMatrix::NNZStructure::SUBSET);
-    B->AXPY(-omega * omega / theta2, *B4, petsc::PetscParMatrix::NNZStructure::SUBSET);
-  }
+  // if (A)
+  // {
+  //   MFEM_VERIFY(A1 && A2 && B3 && B4 && A && B,
+  //               "Boundary mode eigenvalue problem operators uninitialized for solve!");
+  //   A->Scale(0.0);
+  //   A->AXPY(1.0, *A1, petsc::PetscParMatrix::NNZStructure::SAME);
+  //   A->AXPY(-omega * omega, *A2, petsc::PetscParMatrix::NNZStructure::SUBSET);
+  //   B->Scale(0.0);
+  //   B->AXPY(1.0, *A, petsc::PetscParMatrix::NNZStructure::SAME);
+  //   B->AXPY(1.0 / theta2, *B3, petsc::PetscParMatrix::NNZStructure::SUBSET);
+  //   B->AXPY(-omega * omega / theta2, *B4, petsc::PetscParMatrix::NNZStructure::SUBSET);
+  // }
 
   // Configure and solve the eigenvalue problem for the desired boundary mode.
-  std::complex<double> lambda = Solve(*y0, *e0, *e, *scatter);
+  std::complex<double> lambda;
+  // lambda = Solve(*y0, *e0, *e, *scatter);
 
   // Extract the eigenmode solution and postprocess. The extracted eigenvalue is λ =
   // Θ²/(Θ²-kₙ²).
@@ -654,11 +662,11 @@ void WavePortData::Initialize(double omega)
 
   mfem::Vector etr(nd_attr_tdof_list.Size()), eti(nd_attr_tdof_list.Size()),
       enr(h1_attr_tdof_list.Size()), eni(h1_attr_tdof_list.Size());
-  MFEM_VERIFY(e->GetSize() == etr.Size() + enr.Size(),
-              "Unexpected vector size in wave port eigenmode solver!");
-  e->GetToVectors(etr, eti, 0, nd_attr_tdof_list.Size());
-  e->GetToVectors(enr, eni, nd_attr_tdof_list.Size(),
-                  nd_attr_tdof_list.Size() + h1_attr_tdof_list.Size());
+  // MFEM_VERIFY(e->GetSize() == etr.Size() + enr.Size(),
+  //             "Unexpected vector size in wave port eigenmode solver!");
+  // e->GetToVectors(etr, eti, 0, nd_attr_tdof_list.Size());
+  // e->GetToVectors(enr, eni, nd_attr_tdof_list.Size(),
+  //                 nd_attr_tdof_list.Size() + h1_attr_tdof_list.Size());
 
   // Re-expand from restricted boundary dofs to true dofs and transform back to true
   // electric field variables: Eₜ = eₜ/kₙ and Eₙ = ieₙ.
@@ -958,19 +966,19 @@ void WavePortOperator::Initialize(double omega)
     data.Initialize(omega);
     if (!suppress_output)
     {
-      if (first)
-      {
-        // Print header at first solve.
-        if (data.GetA() && data.GetB())
-        {
-          Mpi::Print(" Number of global unknowns for port {:d}: {}\n", idx,
-                     data.GetA()->GetGlobalNumRows());
-          Mpi::Print("  A: NNZ = {:d}, norm = {:e}\n", data.GetA()->NNZ(),
-                     data.GetA()->NormF());
-          Mpi::Print("  B: NNZ = {:d}, norm = {:e}\n", data.GetB()->NNZ(),
-                     data.GetB()->NormF());
-        }
-      }
+      // if (first)
+      // {
+      //   // Print header at first solve.
+      //   if (data.GetA() && data.GetB())
+      //   {
+      //     Mpi::Print(" Number of global unknowns for port {:d}: {}\n", idx,
+      //                data.GetA()->GetGlobalNumRows());
+      //     Mpi::Print("  A: NNZ = {:d}, norm = {:e}\n", data.GetA()->NNZ(),
+      //                data.GetA()->NormF());
+      //     Mpi::Print("  B: NNZ = {:d}, norm = {:e}\n", data.GetB()->NNZ(),
+      //                data.GetB()->NormF());
+      //   }
+      // }
       double k0 = 1.0 / iodata.DimensionalizeValue(IoData::ValueType::LENGTH, 1.0);
       Mpi::Print(" Port {:d}, mode {:d}: kₙ = {:.3e}{:+.3e}i m⁻¹\n", idx,
                  data.GetModeIndex(), k0 * data.GetPropagationConstant().real(),

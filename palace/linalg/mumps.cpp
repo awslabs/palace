@@ -9,11 +9,11 @@ namespace palace
 {
 
 MumpsSolver::MumpsSolver(MPI_Comm comm, mfem::MUMPSSolver::MatType sym, int sym_fact_type,
-                         double blr_tol, int print_lvl)
+                         double blr_tol, int print)
   : mfem::MUMPSSolver(comm)
 {
   // Configure the solver (must be called before SetOperator).
-  SetPrintLevel(print_lvl);
+  SetPrintLevel(print);
   SetMatrixSymType(sym);
   if (sym_fact_type == 2)
   {

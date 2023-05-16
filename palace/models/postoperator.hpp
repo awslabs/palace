@@ -12,6 +12,7 @@
 #include <vector>
 #include <mfem.hpp>
 #include "fem/interpolation.hpp"
+#include "linalg/vector.hpp"
 #include "models/domainpostoperator.hpp"
 #include "models/surfacepostoperator.hpp"
 
@@ -26,14 +27,6 @@ class MaterialOperator;
 class SpaceOperator;
 class SurfaceCurrentOperator;
 class WavePortOperator;
-
-namespace petsc
-{
-
-class PetscParMatrix;
-class PetscParVector;
-
-}  // namespace petsc
 
 //
 // A class to handle solution postprocessing.
@@ -90,12 +83,12 @@ public:
   // on the true dofs. For the real-valued overload, the electric scalar potential can be
   // specified too for electrostatic simulations. The output mesh and fields are
   // nondimensionalized consistently (B ~ E (L₀ ω₀ E₀⁻¹)).
-  void SetEGridFunction(const petsc::PetscParVector &e);
-  void SetBGridFunction(const petsc::PetscParVector &b);
-  void SetEGridFunction(const mfem::Vector &e);
-  void SetBGridFunction(const mfem::Vector &b);
-  void SetVGridFunction(const mfem::Vector &v);
-  void SetAGridFunction(const mfem::Vector &a);
+  void SetEGridFunction(const ComplexVector &e);
+  void SetBGridFunction(const ComplexVector &b);
+  void SetEGridFunction(const Vector &e);
+  void SetBGridFunction(const Vector &b);
+  void SetVGridFunction(const Vector &v);
+  void SetAGridFunction(const Vector &a);
 
   // Update cached port voltages and currents for lumped and wave port operators.
   void UpdatePorts(const LumpedPortOperator &lumped_port_op,

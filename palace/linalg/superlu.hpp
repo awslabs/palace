@@ -26,8 +26,8 @@ private:
   mfem::SuperLUSolver solver;
 
 public:
-  SuperLUSolver(MPI_Comm comm, int sym_fact_type, bool use_3d, int print_lvl);
-  SuperLUSolver(MPI_Comm comm, const IoData &iodata, int print_lvl)
+  SuperLUSolver(MPI_Comm comm, int sym_fact_type, bool use_3d, int print);
+  SuperLUSolver(MPI_Comm comm, const IoData &iodata, int print)
     : SuperLUSolver(comm,
                     (iodata.solver.linear.sym_fact_type ==
                      config::LinearSolverData::SymFactType::PARMETIS)
@@ -36,7 +36,7 @@ public:
                             config::LinearSolverData::SymFactType::METIS)
                                ? 1
                                : 0),
-                    iodata.solver.linear.superlu_3d, print_lvl)
+                    iodata.solver.linear.superlu_3d, print)
   {
   }
 

@@ -22,7 +22,6 @@ target_sources(${TARGET_NAME}
   ${CMAKE_CURRENT_SOURCE_DIR}/ksp.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/mumps.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/operator.cpp
-  ${CMAKE_CURRENT_SOURCE_DIR}/petsc.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/slepc.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/strumpack.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/superlu.cpp

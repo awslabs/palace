@@ -46,7 +46,7 @@ void ElectrostaticSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mes
   // Main loop over terminal boundaries.
   Mpi::Print("\nComputing electrostatic fields for {:d} terminal boundar{}\n", nstep,
              (nstep > 1) ? "ies" : "y");
-  int step = 0, ksp_it = 0;
+  int step = 0;
   auto t0 = timer.Now();
   for (const auto &[idx, data] : laplaceop.GetSources())
   {

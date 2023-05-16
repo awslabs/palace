@@ -9,7 +9,7 @@ namespace palace
 HypreAmsSolver::HypreAmsSolver(mfem::ParFiniteElementSpace &nd_fespace,
                                mfem::ParFiniteElementSpace &h1_fespace, int cycle_it,
                                int smooth_it, int agg_coarsen, bool vector_interp,
-                               bool op_singular, int print_lvl)
+                               bool op_singular, int print)
   : mfem::HypreSolver(),
     // From the Hypre docs for AMS: cycles 1, 5, 8, 11, 13 are fastest, 7 yields fewest its
     // (MFEM default is 13). 14 is similar to 11/13 but is cheaper in that is uses additive
@@ -24,7 +24,7 @@ HypreAmsSolver::HypreAmsSolver(mfem::ParFiniteElementSpace &nd_fespace,
     amg_agg_levels(agg_coarsen),
     // If we know the operator is singular (no mass matrix, for magnetostatic problems),
     // internally the AMS solver will avoid G-space corrections.
-    ams_singular(op_singular), print((print_lvl > 1) ? print_lvl - 1 : 0)
+    ams_singular(op_singular), print((print > 1) ? print - 1 : 0)
 {
   // From MFEM: The AMS preconditioner may sometimes require inverting singular matrices
   // with BoomerAMG, which are handled correctly in Hypre's Solve method, but can produce
