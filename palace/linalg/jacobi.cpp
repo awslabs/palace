@@ -8,7 +8,7 @@
 namespace palace
 {
 
-void JacobiSmoother::SetOperator(const ParOperator &op)
+void JacobiSmoother::SetOperator(const Operator &op)
 {
   height = op.Height();
   width = op.Width();
