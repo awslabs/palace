@@ -34,7 +34,7 @@ void ChebyshevSmoother::SetOperator(const ParOperator &op)
   lambda_max = 1.1 * linalg::SpectralNorm(A->GetComm(), DinvA, false);
 }
 
-void ChebyshevSmoother::Mult(const mfem::Vector &x, mfem::Vector &y) const
+void ChebyshevSmoother::Mult(const Vector &x, Vector &y) const
 {
   // Apply smoother: y = y + p(A) (x - A y) .
   for (int it = 0; it < pc_it; it++)

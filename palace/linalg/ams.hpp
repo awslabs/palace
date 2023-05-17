@@ -67,10 +67,7 @@ public:
   }
   ~HypreAmsSolver() override;
 
-  void SetOperator(const Operator &op) override
-  {
-    MFEM_ABORT("HypreAmsSolver requires a ParOperator operator!");
-  }
+  void SetOperator(const Operator &op) override;
   void SetOperator(const ParOperator &op);
 
   operator HYPRE_Solver() const override { return ams; }

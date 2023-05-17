@@ -45,10 +45,7 @@ public:
   {
   }
 
-  void SetOperator(const Operator &op) override
-  {
-    MFEM_ABORT("MumpsSolver requires a ParOperator operator!");
-  }
+  using mfem::MUMPSSolver::SetOperator;
   void SetOperator(const ParOperator &op);
 };
 

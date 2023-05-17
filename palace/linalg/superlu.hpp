@@ -40,10 +40,7 @@ public:
   {
   }
 
-  void SetOperator(const Operator &op) override
-  {
-    MFEM_ABORT("SuperLUSolver requires a ParOperator operator!");
-  }
+  void SetOperator(const Operator &op) override;
   void SetOperator(const ParOperator &op);
 
   void Mult(const Vector &x, Vector &y) const override { solver.Mult(x, y); }

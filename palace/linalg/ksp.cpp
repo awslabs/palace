@@ -213,13 +213,17 @@ public:
   {
     MFEM_ASSERT(x.Size() == 2 * op_->Width() && y.Size() == 2 * op_->Height(),
                 "Incompatible dimensions for ComplexBlockDiagonalSolver::Mult!");
-    mfem::Array<const Vector *> X(2);
-    mfem::Array<Vector *> Y(2);
     Vector xr, xi, yr, yi;
     xr.MakeRef(const_cast<Vector &>(x), 0, op_->Width());
     xi.MakeRef(const_cast<Vector &>(x), op_->Width(), op_->Width());
     yr.MakeRef(y, 0, op_->Height());
     yi.MakeRef(y, op_->Height(), op_->Height());
+    mfem::Array<const Vector *> X(2);
+    mfem::Array<Vector *> Y(2);
+    X[0] = &xr;
+    X[1] = &xi;
+    Y[0] = &yr;
+    Y[1] = &yi;
     op_->ArrayMult(X, Y);
     yr.SyncAliasMemory(y);
     yi.SyncAliasMemory(y);
