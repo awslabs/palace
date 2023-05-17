@@ -24,10 +24,7 @@ public:
   {
   }
 
-  void SetOperator(const Operator &op) override
-  {
-    MFEM_ABORT("BoomerAmgSolver requires a ParOperator operator!");
-  }
+  using mfem::HypreBoomerAMG::SetOperator;
   void SetOperator(const ParOperator &op);
 };
 

@@ -109,6 +109,7 @@ ComplexVector &ComplexVector::operator=(std::complex<double> s)
   Imag() = s.imag();
   RestoreReal();
   RestoreImag();
+  return *this;
 }
 
 ComplexVector &ComplexVector::operator*=(std::complex<double> s)

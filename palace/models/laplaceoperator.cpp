@@ -152,7 +152,7 @@ void LaplaceOperator::GetStiffnessMatrix(std::vector<std::unique_ptr<ParOperator
     constexpr MaterialPropertyType MatType = MaterialPropertyType::PERMITTIVITY_REAL;
     MaterialPropertyCoefficient<MatType> epsilon_func(mat_op);
     auto k = std::make_unique<mfem::SymmetricBilinearForm>(&h1_fespace_l);
-    k->AddDomainIntegrator(new mfem::DiffusionIntegrator(epsilon_func));
+    k->AddDomainIntegrator(new mfem::MixedGradGradIntegrator(epsilon_func));
     k->SetAssemblyLevel(assembly_level);
     k->Assemble(skip_zeros);
     k->Finalize(skip_zeros);
@@ -186,8 +186,8 @@ std::unique_ptr<ParOperator> LaplaceOperator::GetGradMatrix()
   return std::make_unique<ParOperator>(std::move(grad), GetH1Space(), GetNDSpace(), true);
 }
 
-void LaplaceOperator::GetExcitationVector(int idx, const ParOperator &K, mfem::Vector &X,
-                                          mfem::Vector &RHS)
+void LaplaceOperator::GetExcitationVector(int idx, const ParOperator &K, Vector &X,
+                                          Vector &RHS)
 {
   // Apply the Dirichlet BCs to the solution vector: V = 1 on terminal boundaries with the
   // given index, V = 0 on all ground and other terminal boundaries.

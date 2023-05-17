@@ -199,7 +199,7 @@ void HypreAmsSolver::InitializeSolver()
   }
 }
 
-void HypreAmsSolver::SetOperator(const ParOperator &op)
+void HypreAmsSolver::SetOperator(const Operator &op)
 {
   // When the operator changes, we need to rebuild the AMS solver but can use the unchanged
   // auxiliary space matrices.
@@ -209,7 +209,8 @@ void HypreAmsSolver::SetOperator(const ParOperator &op)
     InitializeSolver();
   }
 
-  A = &const_cast<ParOperator *>(&op)->ParallelAssemble();
+  A = dynamic_cast<mfem::HypreParMatrix *>(const_cast<Operator *>(&op));
+  MFEM_VERIFY(A, "HypreAmsSolver requires a HypreParMatrix operator!");
   height = A->Height();
   width = A->Width();
 
@@ -222,6 +223,11 @@ void HypreAmsSolver::SetOperator(const ParOperator &op)
   auxB.Reset();
   auxX.Delete();
   auxX.Reset();
+}
+
+void HypreAmsSolver::SetOperator(const ParOperator &op)
+{
+  SetOperator(const_cast<ParOperator *>(&op)->ParallelAssemble());
 }
 
 }  // namespace palace

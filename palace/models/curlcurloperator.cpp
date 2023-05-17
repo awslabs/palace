@@ -163,7 +163,7 @@ std::unique_ptr<ParOperator> CurlCurlOperator::GetCurlMatrix()
   return std::make_unique<ParOperator>(std::move(curl), GetNDSpace(), GetRTSpace(), true);
 }
 
-void CurlCurlOperator::GetExcitationVector(int idx, mfem::Vector &RHS)
+void CurlCurlOperator::GetExcitationVector(int idx, Vector &RHS)
 {
   // Assemble the surface current excitation +J. The SurfaceCurrentOperator assembles -J
   // (meant for time or frequency domain Maxwell discretization, so we multiply by -1 to

@@ -78,26 +78,26 @@ void EigenSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
   if (type == config::EigenSolverData::Type::FEAST)
   {
     MFEM_ABORT("FEAST eigenvalue solver is currently not supported!");
-    //     Mpi::Print("\nConfiguring FEAST eigenvalue solver\n");
-    // #if defined(PALACE_WITH_SLEPC)
-    //     if (C)
-    //     {
-    //       eigen = std::make_unique<feast::FeastPEPSolver>(
-    //           K->GetComm(), iodata, spaceop, iodata.solver.eigenmode.feast_contour_np,
-    //           iodata.problem.verbose);
-    //     }
-    //     else
-    //     {
-    //       eigen = std::make_unique<feast::FeastEPSSolver>(
-    //           K->GetComm(), iodata, spaceop, iodata.solver.eigenmode.feast_contour_np,
-    //           iodata.problem.verbose);
-    //     }
-    // #endif
+#if defined(PALACE_WITH_SLEPC)
+    // Mpi::Print("\nConfiguring FEAST eigenvalue solver\n");
+    // if (C)
+    // {
+    //   eigen = std::make_unique<feast::FeastPEPSolver>(
+    //       K->GetComm(), iodata, spaceop, iodata.solver.eigenmode.feast_contour_np,
+    //       iodata.problem.verbose);
+    // }
+    // else
+    // {
+    //   eigen = std::make_unique<feast::FeastEPSSolver>(
+    //       K->GetComm(), iodata, spaceop, iodata.solver.eigenmode.feast_contour_np,
+    //       iodata.problem.verbose);
+    // }
+#endif
   }
   else if (type == config::EigenSolverData::Type::ARPACK)
   {
-    Mpi::Print("\nConfiguring ARPACK eigenvalue solver\n");
 #if defined(PALACE_WITH_ARPACK)
+    Mpi::Print("\nConfiguring ARPACK eigenvalue solver\n");
     if (C)
     {
       eigen =
@@ -112,8 +112,8 @@ void EigenSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
   }
   else  // config::EigenSolverData::Type::SLEPC
   {
-    Mpi::Print("\nConfiguring SLEPc eigenvalue solver\n");
 #if defined(PALACE_WITH_SLEPC)
+    Mpi::Print("\nConfiguring SLEPc eigenvalue solver\n");
     std::unique_ptr<slepc::SlepcEigenSolver> slepc;
     if (C)
     {
