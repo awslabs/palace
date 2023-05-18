@@ -24,13 +24,14 @@ protected:
   std::unique_ptr<mfem::IterativeSolver> ksp_;
   std::unique_ptr<mfem::Solver> pc_;
 
-private:
   // Counters for number of calls to Mult method for linear solves, and cumulative number
   // of iterations.
   mutable int ksp_mult, ksp_mult_it;
 
 protected:
   KspSolver() : ksp_(nullptr), pc_(nullptr), ksp_mult(0), ksp_mult_it(0) {}
+
+  void SetOperatorFinalize(const Operator &op);
 
 public:
   KspSolver(const IoData &iodata, mfem::ParFiniteElementSpaceHierarchy &fespaces,

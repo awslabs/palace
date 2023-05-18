@@ -22,7 +22,7 @@ GeometricMultigridSolver::GeometricMultigridSolver(
   MFEM_VERIFY(n_levels > 0,
               "Empty finite element space hierarchy during multigrid solver setup!");
   A_.resize(n_levels, nullptr);
-  P_.resize(n_levels, nullptr);
+  P_.resize(n_levels - 1, nullptr);
   x_.resize(n_levels, Vector());
   y_.resize(n_levels, Vector());
   r_.resize(n_levels, Vector());
@@ -34,7 +34,7 @@ GeometricMultigridSolver::GeometricMultigridSolver(
   R_.resize(n_levels, mfem::Array<Vector *>());
 
   // Configure prolongation operators.
-  for (int l = 0; l < n_levels; l++)
+  for (int l = 0; l < n_levels - 1; l++)
   {
     const auto *PtAP_l =
         dynamic_cast<const ParOperator *>(fespaces.GetProlongationAtLevel(l));

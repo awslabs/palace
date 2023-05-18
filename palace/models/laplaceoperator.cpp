@@ -114,16 +114,16 @@ LaplaceOperator::LaplaceOperator(const IoData &iodata,
                                  const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh)
   : assembly_level(iodata.solver.linear.mat_pa ? mfem::AssemblyLevel::PARTIAL
                                                : mfem::AssemblyLevel::LEGACY),
-    skip_zeros(0), pc_gmg(iodata.solver.linear.mat_gmg), print_hdr(true),
+    skip_zeros(0), pc_mg(iodata.solver.linear.pc_mg), print_hdr(true),
     dbc_marker(SetUpBoundaryProperties(iodata, *mesh.back())),
     h1_fecs(utils::ConstructFECollections<mfem::H1_FECollection>(
-        pc_gmg, false, iodata.solver.order, mesh.back()->Dimension())),
+        pc_mg, false, iodata.solver.order, mesh.back()->Dimension())),
     nd_fec(iodata.solver.order, mesh.back()->Dimension()),
-    h1_fespaces(pc_gmg ? utils::ConstructFiniteElementSpaceHierarchy(
-                             mesh, h1_fecs, &dbc_marker, &dbc_tdof_lists)
-                       : utils::ConstructFiniteElementSpaceHierarchy(
-                             *mesh.back(), *h1_fecs.back(), &dbc_marker,
-                             &dbc_tdof_lists.emplace_back())),
+    h1_fespaces(pc_mg ? utils::ConstructFiniteElementSpaceHierarchy(
+                            mesh, h1_fecs, &dbc_marker, &dbc_tdof_lists)
+                      : utils::ConstructFiniteElementSpaceHierarchy(
+                            *mesh.back(), *h1_fecs.back(), &dbc_marker,
+                            &dbc_tdof_lists.emplace_back())),
     nd_fespace(mesh.back().get(), &nd_fec), mat_op(iodata, *mesh.back()),
     source_attr_lists(ConstructSources(iodata))
 {
@@ -140,7 +140,7 @@ void LaplaceOperator::GetStiffnessMatrix(std::vector<std::unique_ptr<ParOperator
   if (print_hdr)
   {
     Mpi::Print("\nAssembling system matrices, number of global unknowns:\n"
-               " H1: {:d}\n ND: {:d}\n",
+               " H1: {:d}, ND: {:d}\n",
                GetH1Space().GlobalTrueVSize(), GetNDSpace().GlobalTrueVSize());
     Mpi::Print("\nAssembling multigrid hierarchy:\n");
   }
@@ -173,6 +173,8 @@ void LaplaceOperator::GetStiffnessMatrix(std::vector<std::unique_ptr<ParOperator
     K.push_back(std::make_unique<ParOperator>(std::move(k), h1_fespace_l, h1_fespace_l));
     K.back()->SetEssentialTrueDofs(dbc_tdof_lists[l], Operator::DiagonalPolicy::DIAG_ONE);
   }
+  // Save local (uneliminated) operator after parallel assembly for RHS BC elimination.
+  K.back()->SaveLocalOperator();
   print_hdr = false;
 }
 

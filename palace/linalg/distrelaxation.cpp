@@ -32,13 +32,16 @@ DistRelaxationSmoother::DistRelaxationSmoother(mfem::ParFiniteElementSpace &nd_f
   B_G->iterative_mode = false;
 }
 
-void DistRelaxationSmoother::SetOperator(const ParOperator &op, const ParOperator &op_G)
+void DistRelaxationSmoother::SetOperator(const Operator &op, const Operator &op_G)
 {
-  A = &op;
-  A_G = &op_G;
-  MFEM_VERIFY(A->Height() == G->Height() && A->Width() == G->Height() &&
-                  A_G->Height() == G->Width() && A_G->Width() == G->Width(),
+  MFEM_VERIFY(op.Height() == G->Height() && op.Width() == G->Height() &&
+                  op_G.Height() == G->Width() && op_G.Width() == G->Width(),
               "Invalid operator sizes for DistRelaxationSmoother!");
+  const auto *PtAP = dynamic_cast<const ParOperator *>(&op);
+  const auto *PtAP_G = dynamic_cast<const ParOperator *>(&op_G);
+  MFEM_VERIFY(PtAP && PtAP_G, "ChebyshevSmoother requires a ParOperator operator!");
+  A = PtAP;
+  A_G = PtAP_G;
 
   height = A->Height();
   width = A->Width();

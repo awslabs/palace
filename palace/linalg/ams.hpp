@@ -54,7 +54,7 @@ public:
   HypreAmsSolver(const IoData &iodata, mfem::ParFiniteElementSpace &nd_fespace,
                  mfem::ParFiniteElementSpace &h1_fespace, int print)
     : HypreAmsSolver(nd_fespace, h1_fespace,
-                     iodata.solver.linear.mat_gmg ? 1 : iodata.solver.linear.mg_cycle_it,
+                     iodata.solver.linear.pc_mg ? 1 : iodata.solver.linear.mg_cycle_it,
                      iodata.solver.linear.mg_smooth_it,
                      (iodata.problem.type == config::ProblemData::Type::TRANSIENT ||
                       iodata.problem.type == config::ProblemData::Type::MAGNETOSTATIC)
@@ -68,7 +68,6 @@ public:
   ~HypreAmsSolver() override;
 
   void SetOperator(const Operator &op) override;
-  void SetOperator(const ParOperator &op);
 
   operator HYPRE_Solver() const override { return ams; }
 

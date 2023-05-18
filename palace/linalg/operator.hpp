@@ -36,8 +36,11 @@ private:
   // Diagonal policy for constrained true dofs.
   DiagonalPolicy diag_policy_;
 
-  // Assembled operator as a parallel Hypre matrix.
-  std::unique_ptr<mfem::HypreParMatrix> RAP_;
+  // Assembled operator as a parallel Hypre matrix. If the save flag is true, calls to
+  // ParallelAssemble will not delete the local operator. This is useful for later on calls
+  // to EliminateRHS, for example.
+  mutable std::unique_ptr<mfem::HypreParMatrix> RAP_;
+  bool save_A_;
 
   // Temporary storage for operator application.
   mutable Vector lx_, ly_, tx_, ty_;
@@ -51,7 +54,7 @@ public:
   // Get access to the underlying local (L-vector) operator.
   const Operator &LocalOperator() const
   {
-    MFEM_VERIFY(A_, "No local matrix available for ParOperator::LocalOperator!");
+    MFEM_ASSERT(A_, "No local matrix available for ParOperator::LocalOperator!");
     return *A_;
   }
 
@@ -88,6 +91,11 @@ public:
     return trial_dbc_tdof_list_;
   }
 
+  // A call to ParallelAssemble will typically free the memory associated with the local
+  // operator as it is no longer required. When the save flag is set, the local operator
+  // will not be deleted during parallel assembly.
+  void SaveLocalOperator() { save_A_ = true; }
+
   // Eliminate essential true dofs from the RHS vector b, using the essential boundary
   // condition values in x.
   void EliminateRHS(const Vector &x, Vector &b) const;
@@ -102,27 +110,9 @@ public:
   // Get the associated MPI communicator.
   MPI_Comm GetComm() const { return trial_fespace_.GetComm(); }
 
-  void Mult(const Vector &x, Vector &y) const override
-  {
-    if (RAP_)
-    {
-      RAP_->Mult(x, y);
-      return;
-    }
-    y = 0.0;
-    AddMult(x, y);
-  }
+  void Mult(const Vector &x, Vector &y) const override;
 
-  void MultTranspose(const Vector &x, Vector &y) const override
-  {
-    if (RAP_)
-    {
-      RAP_->MultTranspose(x, y);
-      return;
-    }
-    y = 0.0;
-    AddMultTranspose(x, y);
-  }
+  void MultTranspose(const Vector &x, Vector &y) const override;
 
   void AddMult(const Vector &x, Vector &y, const double a = 1.0) const override;
 
