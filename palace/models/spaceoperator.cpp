@@ -226,6 +226,7 @@ SpaceOperator::GetSystemMatrix(SpaceOperator::OperatorType type,
       break;
     case OperatorType::DAMPING:
       AddDampingCoefficients(1.0, f, fb);
+      break;
     case OperatorType::MASS:
       AddRealMassCoefficients(1.0, f, fb);
       break;
@@ -436,8 +437,11 @@ void SpaceOperator::GetPreconditionerMatrix(double a0, double a1, double a2, dou
       SumCoefficient dfb;
       AddStiffnessCoefficients(a0, df, f, fb);
       AddDampingCoefficients(a1, f, fb);
+      // XX TODO: Test out difference of |Mr + i Mi| vs. Mr + Mi
       AddRealMassCoefficients<MaterialPropertyType::PERMITTIVITY_ABS>(
           pc_shifted ? std::abs(a2) : a2, f, fb);
+      // AddRealMassCoefficients(pc_shifted ? std::abs(a2) : a2, f, fb);
+      // AddImagMassCoefficients(a2, f, fb);
       AddExtraSystemBdrCoefficients(a3, dfb, dfb, fb, fb);
       auto b = std::make_unique<mfem::SymmetricBilinearForm>(&fespace_l);
       if (s == 0)

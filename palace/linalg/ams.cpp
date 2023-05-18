@@ -54,7 +54,8 @@ void HypreAmsSolver::ConstructAuxiliaryMatrices(mfem::ParFiniteElementSpace &nd_
     grad->SetAssemblyLevel(mfem::AssemblyLevel::LEGACY);
     grad->Assemble();
     grad->Finalize();
-    G = std::make_unique<ParOperator>(std::move(grad), h1_fespace, nd_fespace, true);
+    ParOperator RAP_G(std::move(grad), h1_fespace, nd_fespace, true);
+    G = RAP_G.StealParallelAssemble();
   }
 
   // Vertex coordinates for the lowest order case, or Nedelec interpolation matrix or
@@ -109,22 +110,23 @@ void HypreAmsSolver::ConstructAuxiliaryMatrices(mfem::ParFiniteElementSpace &nd_
   }
   else
   {
-    // XX TODO: Partial assembly option?
-    h1d_fespace = std::make_unique<mfem::ParFiniteElementSpace>(
-        &mesh, h1_fespace.FEColl(), space_dim, mfem::Ordering::byVDIM);
-    auto pi =
-        std::make_unique<mfem::DiscreteLinearOperator>(h1d_fespace.get(), &nd_fespace);
-    pi->AddDomainInterpolator(new mfem::IdentityInterpolator);
-    pi->SetAssemblyLevel(mfem::AssemblyLevel::LEGACY);
-    pi->Assemble();
-    pi->Finalize();
-    Pi = std::make_unique<ParOperator>(std::move(pi), *h1d_fespace, nd_fespace, true);
+    {
+      // XX TODO: Partial assembly option?
+      mfem::ParFiniteElementSpace h1d_fespace(&mesh, h1_fespace.FEColl(), space_dim,
+                                              mfem::Ordering::byVDIM);
+      auto pi = std::make_unique<mfem::DiscreteLinearOperator>(&h1d_fespace, &nd_fespace);
+      pi->AddDomainInterpolator(new mfem::IdentityInterpolator);
+      pi->SetAssemblyLevel(mfem::AssemblyLevel::LEGACY);
+      pi->Assemble();
+      pi->Finalize();
+      ParOperator RAP_Pi(std::move(pi), h1d_fespace, nd_fespace, true);
+      Pi = RAP_Pi.StealParallelAssemble();
+    }
     if (cycle_type >= 10)
     {
       // Get blocks of Pi corresponding to each component, and free Pi.
-      mfem::Array2D<mfem::HypreParMatrix *> Pi_blocks(1, h1d_fespace->GetVDim());
-      Pi->ParallelAssemble().GetBlocks(
-          Pi_blocks, false, h1d_fespace->GetOrdering() == mfem::Ordering::byVDIM);
+      mfem::Array2D<mfem::HypreParMatrix *> Pi_blocks(1, space_dim);
+      Pi->GetBlocks(Pi_blocks, false, true);
       Pix.reset(Pi_blocks(0, 0));
       if (space_dim > 1)
       {
@@ -179,24 +181,19 @@ void HypreAmsSolver::InitializeSolver()
   // HYPRE_AMSSetBetaAMGCoarseRelaxType(ams, coarse_relax_type);
 
   // Set the discrete gradient matrix.
-  HYPRE_AMSSetDiscreteGradient(ams, G->ParallelAssemble());
+  HYPRE_AMSSetDiscreteGradient(ams, (HYPRE_ParCSRMatrix)*G);
 
   // Set the mesh vertex coordinates or Nedelec interpolation matrix or matrices.
-  if (x)
-  {
-    HYPRE_ParVector HY_X = (x) ? (HYPRE_ParVector)*x : nullptr;
-    HYPRE_ParVector HY_Y = (y) ? (HYPRE_ParVector)*y : nullptr;
-    HYPRE_ParVector HY_Z = (z) ? (HYPRE_ParVector)*z : nullptr;
-    HYPRE_AMSSetCoordinateVectors(ams, HY_X, HY_Y, HY_Z);
-  }
-  else
-  {
-    HYPRE_ParCSRMatrix HY_Pi = (Pi) ? (HYPRE_ParCSRMatrix)Pi->ParallelAssemble() : nullptr;
-    HYPRE_ParCSRMatrix HY_Pix = (Pix) ? (HYPRE_ParCSRMatrix)*Pix : nullptr;
-    HYPRE_ParCSRMatrix HY_Piy = (Piy) ? (HYPRE_ParCSRMatrix)*Piy : nullptr;
-    HYPRE_ParCSRMatrix HY_Piz = (Piz) ? (HYPRE_ParCSRMatrix)*Piz : nullptr;
-    HYPRE_AMSSetInterpolations(ams, HY_Pi, HY_Pix, HY_Piy, HY_Piz);
-  }
+  HYPRE_ParVector HY_X = (x) ? (HYPRE_ParVector)*x : nullptr;
+  HYPRE_ParVector HY_Y = (y) ? (HYPRE_ParVector)*y : nullptr;
+  HYPRE_ParVector HY_Z = (z) ? (HYPRE_ParVector)*z : nullptr;
+  HYPRE_AMSSetCoordinateVectors(ams, HY_X, HY_Y, HY_Z);
+
+  HYPRE_ParCSRMatrix HY_Pi = (Pi) ? (HYPRE_ParCSRMatrix)*Pi : nullptr;
+  HYPRE_ParCSRMatrix HY_Pix = (Pix) ? (HYPRE_ParCSRMatrix)*Pix : nullptr;
+  HYPRE_ParCSRMatrix HY_Piy = (Piy) ? (HYPRE_ParCSRMatrix)*Piy : nullptr;
+  HYPRE_ParCSRMatrix HY_Piz = (Piz) ? (HYPRE_ParCSRMatrix)*Piz : nullptr;
+  HYPRE_AMSSetInterpolations(ams, HY_Pi, HY_Pix, HY_Piy, HY_Piz);
 }
 
 void HypreAmsSolver::SetOperator(const Operator &op)

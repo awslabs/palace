@@ -33,10 +33,10 @@ void EigenSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
   SpaceOperator spaceop(iodata, mesh);
   std::unique_ptr<ComplexParOperator> K = spaceop.GetComplexSystemMatrix(
       SpaceOperator::OperatorType::STIFFNESS, Operator::DIAG_ONE);
-  std::unique_ptr<ComplexParOperator> M = spaceop.GetComplexSystemMatrix(
-      SpaceOperator::OperatorType::MASS, Operator::DIAG_ZERO);
   std::unique_ptr<ComplexParOperator> C = spaceop.GetComplexSystemMatrix(
       SpaceOperator::OperatorType::DAMPING, Operator::DIAG_ZERO);
+  std::unique_ptr<ComplexParOperator> M = spaceop.GetComplexSystemMatrix(
+      SpaceOperator::OperatorType::MASS, Operator::DIAG_ZERO);
   std::unique_ptr<ComplexParOperator> Curl = spaceop.GetComplexCurlMatrix();
   SaveMetadata(spaceop.GetNDSpace());
 
