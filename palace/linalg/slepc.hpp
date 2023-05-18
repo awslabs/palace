@@ -87,7 +87,7 @@ protected:
   bool sinvert, region;
 
   // Storage for computed residual norms.
-  std::unique_ptr<PetscReal> res;
+  std::unique_ptr<PetscReal[]> res;
 
   // Reference to linear solver used for operator action for M⁻¹ (with no spectral
   // transformation) or (K - σ M)⁻¹ (generalized EVP with shift-and- invert) or P(σ)⁻¹
@@ -111,14 +111,6 @@ protected:
 
   // Customize object with command line options set.
   virtual void Customize();
-
-  // Specify rectangular region of the complex plane in which to constrain eigenvalue
-  // search.
-  void SetRegion(PetscScalar lower_left, PetscScalar upper_right, bool complement = false);
-
-  // Perform the back-transformation from the spectrally transformed eigenvalue back to the
-  // original problem.
-  PetscScalar GetBackTransform(PetscScalar l) const;
 
   // Helper routine for computing the eigenpair residual.
   virtual PetscReal GetResidualNorm(int i) const = 0;

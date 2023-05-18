@@ -60,18 +60,18 @@ protected:
   bool sinvert;
 
   // Storage for computed eigenvalues.
-  std::unique_ptr<std::complex<double>> eig;
-  std::unique_ptr<int> perm;
+  std::unique_ptr<std::complex<double>[]> eig;
+  std::unique_ptr<int[]> perm;
 
   // Storage for Arnoldi basis vectors.
-  std::unique_ptr<std::complex<double>> V;
+  std::unique_ptr<std::complex<double>[]> V;
 
   // Storage for computed residual norms.
-  std::unique_ptr<double> res;
+  std::unique_ptr<double[]> res;
 
   // On input used to define optional initial guess, on output stores final residual
   // vector.
-  std::unique_ptr<std::complex<double>> r;
+  std::unique_ptr<std::complex<double>[]> r;
 
   // Reference to linear solver used for operator action for M⁻¹ (with no spectral
   // transformation) or (K - σ M)⁻¹ (generalized EVP with shift-and- invert) or P(σ)⁻¹

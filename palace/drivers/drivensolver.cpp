@@ -8,6 +8,7 @@
 #include "linalg/complex.hpp"
 #include "linalg/ksp.hpp"
 #include "linalg/operator.hpp"
+#include "linalg/vector.hpp"
 #include "models/lumpedportoperator.hpp"
 #include "models/postoperator.hpp"
 #include "models/romoperator.hpp"
@@ -179,7 +180,8 @@ void DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator &postop, in
     postop.SetEGridFunction(E);
     postop.SetBGridFunction(B);
     postop.UpdatePorts(spaceop.GetLumpedPortOp(), spaceop.GetWavePortOp(), omega);
-    Mpi::Print(" Sol. ||E|| = {:.6e} (||RHS|| = {:.6e})\n", E.Norml2(), RHS.Norml2());
+    Mpi::Print(" Sol. ||E|| = {:.6e} (||RHS|| = {:.6e})\n", linalg::Norml2(A->GetComm(), E),
+               linalg::Norml2(A->GetComm(), RHS));
     if (!iodata.solver.driven.only_port_post)
     {
       E_elec = postop.GetEFieldEnergy();
@@ -337,7 +339,8 @@ void DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator &postop, i
     postop.SetEGridFunction(E);
     postop.SetBGridFunction(B);
     postop.UpdatePorts(spaceop.GetLumpedPortOp(), spaceop.GetWavePortOp(), omega);
-    Mpi::Print(" Sol. ||E|| = {:.6e}\n", E.Norml2());
+    // Mpi::Print(" Sol. ||E|| = {:.6e}\n", linalg::Norml2(A->GetComm(), E));  //XX TODO
+    // PROM
     if (!iodata.solver.driven.only_port_post)
     {
       E_elec = postop.GetEFieldEnergy();

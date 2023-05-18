@@ -249,8 +249,12 @@ public:
   // operator.
   ComplexParOperator(std::unique_ptr<ComplexOperator> &&A,
                      const mfem::ParFiniteElementSpace &trial_fespace,
-                     const mfem::ParFiniteElementSpace &test_fespace,
-                     bool test_restrict = false);
+                     const mfem::ParFiniteElementSpace &test_fespace, bool test_restrict);
+  ComplexParOperator(std::unique_ptr<ComplexOperator> &&A,
+                     const mfem::ParFiniteElementSpace &fespace)
+    : ComplexParOperator(std::move(A), fespace, fespace, false)
+  {
+  }
 
   // Get access to the underlying local (L-vector) operator.
   const ComplexOperator &LocalOperator() const
@@ -292,16 +296,19 @@ public:
     return trial_dbc_tdof_list_;
   }
 
+  // Get access to the finite element spaces associated with the operator.
+  const mfem::ParFiniteElementSpace &GetFESpace() const
+  {
+    MFEM_VERIFY(&trial_fespace_ == &test_fespace_ && height == width,
+                "GetFESpace should only be used for square ParOperator!");
+    return trial_fespace_;
+  }
+
   // Get the associated MPI communicator.
   MPI_Comm GetComm() const { return trial_fespace_.GetComm(); }
 
   bool IsReal() const override { return A_->IsReal(); }
   bool IsImag() const override { return A_->IsImag(); }
-
-  const Operator &Real() const override { return A_->Real(); }
-  Operator &Real() override { return A_->Real(); }
-  const Operator &Imag() const override { return A_->Imag(); }
-  Operator &Imag() override { return A_->Imag(); }
 
   using ComplexOperator::AddMult;
   using ComplexOperator::AddMultHermitianTranspose;

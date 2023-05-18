@@ -268,7 +268,7 @@ void ArpackEigenSolver::SetInitialSpace(const ComplexVector &v)
       "Must call SetOperators before using SetInitialSpace for ARPACK eigenvalue solver!");
   if (!r)
   {
-    r = std::make_unique<std::complex<double>>(n);
+    r = std::make_unique<std::complex<double>[]>(n);
   }
   MFEM_VERIFY(v.Size() == 2 * n,
               "Invalid size mismatch for provided initial space vector!");
@@ -323,9 +323,9 @@ int ArpackEigenSolver::SolveInternal(int n, std::complex<double> *r,
 
   // Allocate work arrays.
   a_int lworkl = 3 * ncv * ncv + 5 * ncv;
-  auto workd = std::make_unique<std::complex<double>>(3 * n);
-  auto workl = std::make_unique<std::complex<double>>(lworkl);
-  auto rwork = std::make_unique<double>(ncv);
+  auto workd = std::make_unique<std::complex<double>[]>(3 * n);
+  auto workl = std::make_unique<std::complex<double>[]>(lworkl);
+  auto rwork = std::make_unique<double[]>(ncv);
 
   // Begin RCI loop.
   a_int ido = 0, ainfo = (a_int)info, ipntr[14] = {0};
@@ -379,8 +379,8 @@ int ArpackEigenSolver::SolveInternal(int n, std::complex<double> *r,
   ::arpack::howmny howmny_option = ::arpack::howmny::ritz_vectors;
 
   // Allocate eigenvalue storage and work arrays.
-  auto select = std::make_unique<a_int>(ncv);
-  auto workev = std::make_unique<std::complex<double>>(2 * ncv);
+  auto select = std::make_unique<a_int[]>(ncv);
+  auto workev = std::make_unique<std::complex<double>[]>(2 * ncv);
 
   // Call complex problem driver.
   neupd(fcomm, rvec, howmny_option, select.get(), eig, V, (a_int)n, sigma / gamma,
@@ -512,7 +512,7 @@ int ArpackEPSSolver::Solve()
   // Initialize if user did not provide an initial space.
   if (!r)
   {
-    r = std::make_unique<std::complex<double>>(n);
+    r = std::make_unique<std::complex<double>[]>(n);
     info = 0;
   }
   if (!info)
@@ -523,15 +523,15 @@ int ArpackEPSSolver::Solve()
   // Allocate Arnoldi basis for the problem.
   if (!V)
   {
-    V = std::make_unique<std::complex<double>>(n * ncv);
+    V = std::make_unique<std::complex<double>[]>(n * ncv);
   }
 
   // Allocate storage for eigenvalues and residual norms.
   if (!eig)
   {
-    eig = std::make_unique<std::complex<double>>(nev + 1);
-    perm = std::make_unique<int>(nev);
-    res = std::make_unique<double>(nev);
+    eig = std::make_unique<std::complex<double>[]>(nev + 1);
+    perm = std::make_unique<int[]>(nev);
+    res = std::make_unique<double[]>(nev);
   }
 
   // Solve the generalized eigenvalue problem.
@@ -666,30 +666,30 @@ int ArpackPEPSolver::Solve()
   // Initialize if user did not provide an initial space.
   if (!r)
   {
-    r = std::make_unique<std::complex<double>>(n);
+    r = std::make_unique<std::complex<double>[]>(n);
     info = 0;
   }
   if (!info)
   {
     std::fill(r.get(), r.get() + n, 0.0);
   }
-  auto s = std::make_unique<std::complex<double>>(2 * n);
+  auto s = std::make_unique<std::complex<double>[]>(2 * n);
   std::copy(r.get(), r.get() + n, s.get());
   std::fill(s.get() + n, s.get() + 2 * n, 0.0);
 
   // Allocate Arnoldi basis for original and linearized problem.
   if (!V)
   {
-    V = std::make_unique<std::complex<double>>(n * ncv);
+    V = std::make_unique<std::complex<double>[]>(n * ncv);
   }
-  auto W = std::make_unique<std::complex<double>>(2 * n * ncv);
+  auto W = std::make_unique<std::complex<double>[]>(2 * n * ncv);
 
   // Allocate storage for eigenvalues and residual norms.
   if (!eig)
   {
-    eig = std::make_unique<std::complex<double>>(nev + 1);
-    perm = std::make_unique<int>(nev + 1);
-    res = std::make_unique<double>(nev + 1);
+    eig = std::make_unique<std::complex<double>[]>(nev + 1);
+    perm = std::make_unique<int[]>(nev + 1);
+    res = std::make_unique<double[]>(nev + 1);
   }
 
   // Solve the linearized eigenvalue problem.
