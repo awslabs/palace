@@ -129,9 +129,8 @@ int main(int argc, char *argv[])
   PrintBanner(world_comm, world_size, num_thread, git_tag);
   IoData iodata(argv[1], false);
 
-  // Initialize Hypre and, optionally, SLEPc.
+  // Initialize Hypre and, optionally, SLEPc/PETSc.
   mfem::Hypre::Init();
-  // petsc::Initialize(argc, argv, nullptr, nullptr);   //XX TODO REMOVE...
 #if defined(PALACE_WITH_SLEPC)
   slepc::Initialize(argc, argv, nullptr, nullptr);
 #endif
@@ -185,11 +184,10 @@ int main(int argc, char *argv[])
   solver->SaveMetadata(timer);
   Mpi::Print(world_comm, "\n");
 
-  // Finalize PETSc.
+  // Finalize SLEPc/PETSc.
 #if defined(PALACE_WITH_SLEPC)
   slepc::Finalize();
 #endif
-  // petsc::Finalize();  //XX TODO REMOVE
 
   return 0;
 }

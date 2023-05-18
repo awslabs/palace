@@ -14,9 +14,11 @@ ChebyshevSmoother::ChebyshevSmoother(int smooth_it, int poly_order)
 {
 }
 
-void ChebyshevSmoother::SetOperator(const ParOperator &op)
+void ChebyshevSmoother::SetOperator(const Operator &op)
 {
-  A = &op;
+  const auto *PtAP = dynamic_cast<const ParOperator *>(&op);
+  MFEM_VERIFY(PtAP, "ChebyshevSmoother requires a ParOperator operator!");
+  A = PtAP;
 
   height = A->Height();
   width = A->Width();
@@ -24,7 +26,7 @@ void ChebyshevSmoother::SetOperator(const ParOperator &op)
   d.SetSize(height);
   dinv.SetSize(height);
   A->AssembleDiagonal(dinv);
-  // dinv.Reciprocal();    //XX TODO NEED MFEM PATCH
+  dinv.Reciprocal();
 
   // Set up Chebyshev coefficients using the computed maximum eigenvalue estimate. See
   // mfem::OperatorChebyshevSmoother or Adams et al., Parallel multigrid smoothing:
@@ -82,89 +84,5 @@ void ChebyshevSmoother::Mult(const Vector &x, Vector &y) const
     y += d;
   }
 }
-
-// XX TODO REMOVE
-//  void ChebyshevSmoother::ArrayMult(const mfem::Array<const mfem::Vector *> &X,
-//                                    mfem::Array<mfem::Vector *> &Y) const
-//  {
-//    // Initialize.
-//    const int nrhs = X.Size();
-//    const int N = height;
-//    mfem::Array<mfem::Vector *> R(nrhs), D(nrhs);
-//    std::vector<mfem::Vector> rrefs(nrhs), drefs(nrhs);
-//    if (nrhs * N != r.Size())
-//    {
-//      r.SetSize(nrhs * N);
-//      d.SetSize(nrhs * N);
-//    }
-//    for (int j = 0; j < nrhs; j++)
-//    {
-//      rrefs[j].MakeRef(r, j * N, N);
-//      drefs[j].MakeRef(d, j * N, N);
-//      R[j] = &rrefs[j];
-//      D[j] = &drefs[j];
-//    }
-
-//   // Apply smoother: y = y + p(A) (x - A y) .
-//   for (int it = 0; it < pc_it; it++)
-//   {
-//     if (iterative_mode || it > 0)
-//     {
-//       A->ArrayMult(Y, R);
-//       for (int j = 0; j < nrhs; j++)
-//       {
-//         subtract(*X[j], *R[j], *R[j]);
-//       }
-//     }
-//     else
-//     {
-//       for (int j = 0; j < nrhs; j++)
-//       {
-//         *R[j] = *X[j];
-//         *Y[j] = 0.0;
-//       }
-//     }
-
-//     // 4th-kind Chebyshev smoother
-//     {
-//       const auto *DI = dinv.Read();
-//       for (int j = 0; j < nrhs; j++)
-//       {
-//         const auto *RR = R[j]->Read();
-//         auto *DD = D[j]->ReadWrite();
-
-//         mfem::forall(N, [=] MFEM_HOST_DEVICE(int i)
-//                      { DD[i] = 4.0 / (3.0 * lambda_max) * DI[i] * RR[i]; });
-//       }
-//     }
-//     for (int k = 1; k < order; k++)
-//     {
-//       A->ArrayAddMult(D, R, -1.0);
-//       {
-//         // From Phillips and Fischer or Lottes (with k -> k + 1 shift due to 1-based
-//         // indexing)
-//         const double sd = (2.0 * k - 1.0) / (2.0 * k + 3.0);
-//         const double sr = (8.0 * k + 4.0) / ((2.0 * k + 3.0) * lambda_max);
-//         const auto *DI = dinv.Read();
-//         for (int j = 0; j < nrhs; j++)
-//         {
-//           const auto *RR = R[j]->Read();
-//           auto *YY = Y[j]->ReadWrite();
-//           auto *DD = D[j]->ReadWrite();
-//           mfem::forall(N,
-//                        [=] MFEM_HOST_DEVICE(int i)
-//                        {
-//                          YY[i] += DD[i];
-//                          DD[i] = sd * DD[i] + sr * DI[i] * RR[i];
-//                        });
-//         }
-//       }
-//     }
-//     for (int j = 0; j < nrhs; j++)
-//     {
-//       *Y[j] += *D[j];
-//     }
-//   }
-// }
 
 }  // namespace palace

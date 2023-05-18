@@ -106,25 +106,25 @@ SpaceOperator::SpaceOperator(const IoData &iodata,
                              const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh)
   : assembly_level(iodata.solver.linear.mat_pa ? mfem::AssemblyLevel::PARTIAL
                                                : mfem::AssemblyLevel::LEGACY),
-    skip_zeros(0), pc_gmg(iodata.solver.linear.mat_gmg),
-    pc_lor(iodata.solver.linear.mat_lor), pc_shifted(iodata.solver.linear.mat_shifted),
-    print_hdr(true), print_prec_hdr(true),
+    skip_zeros(0), pc_mg(iodata.solver.linear.pc_mg),
+    pc_lor(iodata.solver.linear.pc_mat_lor),
+    pc_shifted(iodata.solver.linear.pc_mat_shifted), print_hdr(true), print_prec_hdr(true),
     dbc_marker(SetUpBoundaryProperties(iodata, *mesh.back())),
     nd_fecs(utils::ConstructFECollections<mfem::ND_FECollection>(
-        pc_gmg, pc_lor, iodata.solver.order, mesh.back()->Dimension())),
+        pc_mg, pc_lor, iodata.solver.order, mesh.back()->Dimension())),
     h1_fecs(utils::ConstructFECollections<mfem::H1_FECollection>(
-        pc_gmg, false, iodata.solver.order, mesh.back()->Dimension())),
+        pc_mg, false, iodata.solver.order, mesh.back()->Dimension())),
     rt_fec(iodata.solver.order - 1, mesh.back()->Dimension()),
-    nd_fespaces(pc_gmg ? utils::ConstructFiniteElementSpaceHierarchy<mfem::ND_FECollection>(
-                             mesh, nd_fecs, &dbc_marker, &nd_dbc_tdof_lists)
-                       : utils::ConstructFiniteElementSpaceHierarchy<mfem::ND_FECollection>(
-                             *mesh.back(), *nd_fecs.back(), &dbc_marker,
-                             &nd_dbc_tdof_lists.emplace_back())),
-    h1_fespaces(pc_gmg ? utils::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
-                             mesh, h1_fecs, &dbc_marker, &h1_dbc_tdof_lists)
-                       : utils::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
-                             *mesh.back(), *h1_fecs.back(), &dbc_marker,
-                             &h1_dbc_tdof_lists.emplace_back())),
+    nd_fespaces(pc_mg ? utils::ConstructFiniteElementSpaceHierarchy<mfem::ND_FECollection>(
+                            mesh, nd_fecs, &dbc_marker, &nd_dbc_tdof_lists)
+                      : utils::ConstructFiniteElementSpaceHierarchy<mfem::ND_FECollection>(
+                            *mesh.back(), *nd_fecs.back(), &dbc_marker,
+                            &nd_dbc_tdof_lists.emplace_back())),
+    h1_fespaces(pc_mg ? utils::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
+                            mesh, h1_fecs, &dbc_marker, &h1_dbc_tdof_lists)
+                      : utils::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
+                            *mesh.back(), *h1_fecs.back(), &dbc_marker,
+                            &h1_dbc_tdof_lists.emplace_back())),
     rt_fespace(mesh.back().get(), &rt_fec), mat_op(iodata, *mesh.back()),
     farfield_op(iodata, mat_op, *mesh.back()), surf_sigma_op(iodata, *mesh.back()),
     surf_z_op(iodata, *mesh.back()), lumped_port_op(iodata, GetH1Space()),
@@ -211,7 +211,7 @@ SpaceOperator::GetSystemMatrix(SpaceOperator::OperatorType type,
   if (print_hdr)
   {
     Mpi::Print("\nAssembling system matrices, number of global unknowns:\n"
-               " ND: {:d}\n H1: {:d}\n RT: {:d}\n",
+               " ND: {:d}, H1: {:d}, RT: {:d}\n",
                GetNDSpace().GlobalTrueVSize(), GetH1Space().GlobalTrueVSize(),
                GetRTSpace().GlobalTrueVSize());
     print_hdr = false;
@@ -254,7 +254,7 @@ SpaceOperator::GetComplexSystemMatrix(SpaceOperator::OperatorType type, double o
   if (print_hdr)
   {
     Mpi::Print("\nAssembling system matrices, number of global unknowns:\n"
-               " ND: {:d}\n H1: {:d}\n RT: {:d}\n",
+               " ND: {:d}, H1: {:d}, RT: {:d}\n",
                GetNDSpace().GlobalTrueVSize(), GetH1Space().GlobalTrueVSize(),
                GetRTSpace().GlobalTrueVSize());
     print_hdr = false;
@@ -326,18 +326,18 @@ std::unique_ptr<ParOperator> SpaceOperator::GetSystemMatrix(double a0, double a1
   int height = -1, width = -1;
   if (K)
   {
-    height = K->Height();
-    width = K->Width();
+    height = K->LocalOperator().Height();
+    width = K->LocalOperator().Width();
   }
   else if (C)
   {
-    height = C->Height();
-    width = C->Width();
+    height = C->LocalOperator().Height();
+    width = C->LocalOperator().Width();
   }
   else if (M)
   {
-    height = M->Height();
-    width = M->Width();
+    height = M->LocalOperator().Height();
+    width = M->LocalOperator().Width();
   }
   MFEM_VERIFY(height >= 0 && width >= 0,
               "At least one argument to GetSystemMatrix must not be empty!");
@@ -367,23 +367,23 @@ std::unique_ptr<ComplexParOperator> SpaceOperator::GetComplexSystemMatrix(
   int height = -1, width = -1;
   if (K)
   {
-    height = K->Height();
-    width = K->Width();
+    height = K->LocalOperator().Height();
+    width = K->LocalOperator().Width();
   }
   else if (C)
   {
-    height = C->Height();
-    width = C->Width();
+    height = C->LocalOperator().Height();
+    width = C->LocalOperator().Width();
   }
   else if (M)
   {
-    height = M->Height();
-    width = M->Width();
+    height = M->LocalOperator().Height();
+    width = M->LocalOperator().Width();
   }
   else if (A2)
   {
-    height = A2->Height();
-    width = A2->Width();
+    height = A2->LocalOperator().Height();
+    width = A2->LocalOperator().Width();
   }
   MFEM_VERIFY(height >= 0 && width >= 0,
               "At least one argument to GetSystemMatrix must not be empty!");
@@ -478,7 +478,7 @@ void SpaceOperator::GetPreconditionerMatrix(double a0, double a1, double a2, dou
           {
             HYPRE_BigInt nnz = b->SpMat().NumNonZeroElems();
             Mpi::GlobalSum(1, &nnz, fespace_l.GetComm());
-            Mpi::Print("{:d} NNZ\n", nnz);
+            Mpi::Print(", {:d} NNZ\n", nnz);
           }
           else
           {

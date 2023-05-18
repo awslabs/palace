@@ -244,18 +244,24 @@ public:
 // Generalized eigenvalue problem solver: K x = λ M x .
 class SlepcEPSSolver : public SlepcEPSSolverBase
 {
-private:
+public:
+  using SlepcEigenSolver::delta;
+  using SlepcEigenSolver::gamma;
+  using SlepcEigenSolver::opB;
+  using SlepcEigenSolver::opInv;
+  using SlepcEigenSolver::opProj;
+  using SlepcEigenSolver::sigma;
+  using SlepcEigenSolver::sinvert;
+
   // References to matrices defining the generalized eigenvalue problem (not owned).
   const ComplexOperator *opK, *opM;
-
-  // Operator norms for scaling.
-  mutable PetscReal normK, normM;
 
   // Workspace vector for operator applications.
   mutable ComplexVector x, y;
 
-  // Configure linear solver for generalized problem or spectral transformation.
-  void ConfigurePCShell();
+private:
+  // Operator norms for scaling.
+  mutable PetscReal normK, normM;
 
 protected:
   PetscReal GetResidualNorm(int i) const override;
@@ -275,19 +281,25 @@ public:
 // linearization: L₀ y = λ L₁ y .
 class SlepcPEPLinearSolver : public SlepcEPSSolverBase
 {
-private:
+public:
+  using SlepcEigenSolver::delta;
+  using SlepcEigenSolver::gamma;
+  using SlepcEigenSolver::opB;
+  using SlepcEigenSolver::opInv;
+  using SlepcEigenSolver::opProj;
+  using SlepcEigenSolver::sigma;
+  using SlepcEigenSolver::sinvert;
+
   // References to matrices defining the quadratic polynomial eigenvalue problem
   // (not owned).
   const ComplexOperator *opK, *opC, *opM;
 
-  // Operator norms for scaling.
-  mutable PetscReal normK, normC, normM;
-
   // Workspace vectors for operator applications.
   mutable ComplexVector x1, x2, y1, y2;
 
-  // Configure linear solver for generalized problem or spectral transformation.
-  void ConfigurePCShell();
+private:
+  // Operator norms for scaling.
+  mutable PetscReal normK, normC, normM;
 
 protected:
   PetscReal GetResidualNorm(int i) const override;
@@ -366,19 +378,25 @@ public:
 // Quadratic eigenvalue problem solver: P(λ) x = (K + λ C + λ² M) x = 0 .
 class SlepcPEPSolver : public SlepcPEPSolverBase
 {
-private:
+public:
+  using SlepcEigenSolver::delta;
+  using SlepcEigenSolver::gamma;
+  using SlepcEigenSolver::opB;
+  using SlepcEigenSolver::opInv;
+  using SlepcEigenSolver::opProj;
+  using SlepcEigenSolver::sigma;
+  using SlepcEigenSolver::sinvert;
+
   // References to matrices defining the quadratic polynomial eigenvalue problem
   // (not owned).
   const ComplexOperator *opK, *opC, *opM;
 
-  // Operator norms for scaling.
-  mutable PetscReal normK, normC, normM;
-
   // Workspace vector for operator applications.
   mutable ComplexVector x, y;
 
-  // Configure linear solver for generalized problem or spectral transformation.
-  void ConfigurePCShell();
+private:
+  // Operator norms for scaling.
+  mutable PetscReal normK, normC, normM;
 
 protected:
   PetscReal GetResidualNorm(int i) const override;

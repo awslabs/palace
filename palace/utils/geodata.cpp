@@ -152,7 +152,7 @@ void RefineMesh(const IoData &iodata, std::vector<std::unique_ptr<mfem::ParMesh>
       max_region_ref_levels = sphere.ref_levels;
     }
   }
-  if (iodata.solver.linear.mat_gmg)
+  if (iodata.solver.linear.pc_mg)
   {
     mesh.reserve(1 + uniform_ref_levels + max_region_ref_levels);
   }

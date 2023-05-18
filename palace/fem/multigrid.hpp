@@ -98,7 +98,7 @@ mfem::ParFiniteElementSpaceHierarchy ConstructFiniteElementSpaceHierarchy(
     }
     auto *P = new ParOperator(
         std::make_unique<mfem::TransferOperator>(fespaces.GetFinestFESpace(), *fespace),
-        fespaces.GetFinestFESpace(), *fespace);
+        fespaces.GetFinestFESpace(), *fespace, true);
     fespaces.AddLevel(mesh[l].get(), fespace, P, false, true, true);
   }
 
@@ -112,7 +112,7 @@ mfem::ParFiniteElementSpaceHierarchy ConstructFiniteElementSpaceHierarchy(
     }
     auto *P = new ParOperator(
         std::make_unique<mfem::TransferOperator>(fespaces.GetFinestFESpace(), *fespace),
-        fespaces.GetFinestFESpace(), *fespace);
+        fespaces.GetFinestFESpace(), *fespace, true);
     fespaces.AddLevel(mesh.back().get(), fespace, P, false, true, true);
   }
   return fespaces;

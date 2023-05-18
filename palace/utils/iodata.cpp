@@ -332,24 +332,26 @@ void IoData::CheckConfiguration()
   {
     solver.linear.max_size = solver.linear.max_it;
   }
-  if (solver.linear.ksp_initial_guess < 0)
+  if (solver.linear.initial_guess < 0)
   {
     if ((problem.type == config::ProblemData::Type::DRIVEN &&
          solver.driven.adaptive_tol <= 0.0) ||
-        problem.type == config::ProblemData::Type::TRANSIENT)
+        problem.type == config::ProblemData::Type::TRANSIENT ||
+        problem.type == config::ProblemData::Type::ELECTROSTATIC ||
+        problem.type == config::ProblemData::Type::MAGNETOSTATIC)
     {
-      // Default true only driven simulations without adaptive frequency sweep, or transient
-      // simulations.
-      solver.linear.ksp_initial_guess = 1;
+      // Default true only driven simulations without adaptive frequency sweep, transient
+      // simulations, or electrostatic or magnetostatics.
+      solver.linear.initial_guess = 1;
     }
     else
     {
-      solver.linear.ksp_initial_guess = 0;
+      solver.linear.initial_guess = 0;
     }
   }
-  if (solver.linear.mat_shifted < 0)
+  if (solver.linear.pc_mat_shifted < 0)
   {
-    solver.linear.mat_shifted = 0;  // Default false for most cases
+    solver.linear.pc_mat_shifted = 0;  // Default false for most cases
     if (problem.type == config::ProblemData::Type::DRIVEN)
     {
 #if defined(MFEM_USE_SUPERLU) || defined(MFEM_USE_STRUMPACK) || defined(MFEM_USE_MUMPS)
@@ -360,8 +362,22 @@ void IoData::CheckConfiguration()
 #endif
       {
         // Default true only driven simulations using AMS.
-        solver.linear.mat_shifted = 1;
+        solver.linear.pc_mat_shifted = 1;
       }
+    }
+  }
+  if (solver.linear.mg_smooth_aux < 0)
+  {
+    if (problem.type == config::ProblemData::Type::ELECTROSTATIC ||
+        problem.type == config::ProblemData::Type::MAGNETOSTATIC)
+    {
+      // Disable auxiliary space smoothing using distributive relaxation by default for
+      // problems which don't need it.
+      solver.linear.mg_smooth_aux = 0;
+    }
+    else
+    {
+      solver.linear.mg_smooth_aux = 1;
     }
   }
 }

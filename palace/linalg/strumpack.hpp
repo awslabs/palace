@@ -38,7 +38,6 @@ public:
   }
 
   void SetOperator(const Operator &op) override;
-  void SetOperator(const ParOperator &op);
 };
 
 using StrumpackSolver = StrumpackSolverBase<mfem::STRUMPACKSolver>;

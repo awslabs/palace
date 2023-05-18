@@ -48,7 +48,7 @@ public:
     MFEM_ABORT("SetOperator with a single operator is not implemented for "
                "DistRelaxationSmoother, use the two argument signature instead!");
   }
-  void SetOperator(const ParOperator &op, const ParOperator &op_G);
+  void SetOperator(const Operator &op, const Operator &op_G);
 
   void Mult(const Vector &x, Vector &y) const override;
 

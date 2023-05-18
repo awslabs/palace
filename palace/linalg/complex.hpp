@@ -124,10 +124,13 @@ public:
 // height and width are twice the actual complex-valued size.
 class ComplexOperator : public Operator
 {
-public:
-  ComplexOperator(int s) : Operator(2 * s) {}
-  ComplexOperator(int h, int w) : Operator(2 * h, 2 * w) {}
+protected:
+  // The sizes provided by derived class constructors should already be twice the actual
+  // complex-valued size.
+  ComplexOperator(int s) : Operator(s) {}
+  ComplexOperator(int h, int w) : Operator(h, w) {}
 
+public:
   // Test whether or not the operator is purely real or imaginary.
   virtual bool IsReal() const = 0;
   virtual bool IsImag() const = 0;
@@ -252,7 +255,7 @@ public:
   // Get access to the underlying local (L-vector) operator.
   const ComplexOperator &LocalOperator() const
   {
-    MFEM_VERIFY(A_, "No local matrix available for ComplexParOperator::LocalOperator!");
+    MFEM_ASSERT(A_, "No local matrix available for ComplexParOperator::LocalOperator!");
     return *A_;
   }
 
@@ -274,7 +277,7 @@ public:
   {
     MFEM_VERIFY(diag_policy == DiagonalPolicy::DIAG_ZERO,
                 "Essential boundary condition true dof elimination for rectangular "
-                "ParOperator only supports DiagonalPolicy::DIAG_ZERO!");
+                "ComplexParOperator only supports DiagonalPolicy::DIAG_ZERO!");
     trial_dbc_tdof_list_ = trial_dbc_tdof_list;
     test_dbc_tdof_list_ = test_dbc_tdof_list;
     diag_policy_ = diag_policy;
@@ -288,9 +291,6 @@ public:
                 "GetEssentialTrueDofs should only be used for square ComplexParOperator!");
     return trial_dbc_tdof_list_;
   }
-
-  // Set the diagonal policy for the operator.
-  void SetDiagonalPolicy(DiagonalPolicy diag_policy) { diag_policy_ = diag_policy; }
 
   // Get the associated MPI communicator.
   MPI_Comm GetComm() const { return trial_fespace_.GetComm(); }

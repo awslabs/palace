@@ -89,7 +89,7 @@ std::unique_ptr<mfem::IterativeSolver> ConfigureKrylovSolver(MPI_Comm comm,
       MFEM_ABORT("Unexpected solver type for Krylov solver configuration!");
       break;
   }
-  ksp->iterative_mode = iodata.solver.linear.ksp_initial_guess;
+  ksp->iterative_mode = iodata.solver.linear.initial_guess;
   ksp->SetRelTol(iodata.solver.linear.tol);
   ksp->SetMaxIter(iodata.solver.linear.max_it);
   ksp->SetPrintLevel(print);
@@ -158,8 +158,11 @@ ConfigurePreconditionerSolver(MPI_Comm comm, const IoData &iodata,
     case config::LinearSolverData::Type::STRUMPACK:
 #if defined(MFEM_USE_STRUMPACK)
       pc = std::make_unique<StrumpackSolver>(comm, iodata, print);
-      break;
+#else
+      MFEM_ABORT("Solver was not built with STRUMPACK support, please choose a "
+                 "different solver!");
 #endif
+      break;
     case config::LinearSolverData::Type::STRUMPACK_MP:
 #if defined(MFEM_USE_STRUMPACK)
       pc = std::make_unique<StrumpackMixedPrecisionSolver>(comm, iodata, print);
@@ -180,16 +183,24 @@ ConfigurePreconditionerSolver(MPI_Comm comm, const IoData &iodata,
       MFEM_ABORT("Unexpected solver type for preconditioner configuration!");
       break;
   }
-  if (iodata.solver.linear.mat_gmg)
+  if (iodata.solver.linear.pc_mg)
   {
     // This will construct the multigrid hierarchy using pc as the coarse solver
     // (ownership of pc is transfered to the GeometricMultigridSolver). When a special
     // auxiliary space smoother for pre-/post-smoothing is not desired, the auxiliary
     // space is a nullptr here.
-    return std::make_unique<GeometricMultigridSolver>(
-        iodata, std::move(pc), fespaces,
-        (iodata.problem.type != config::ProblemData::Type::MAGNETOSTATIC) ? aux_fespaces
-                                                                          : nullptr);
+    if (iodata.solver.linear.mg_smooth_aux)
+    {
+      MFEM_VERIFY(aux_fespaces, "Multigrid with auxiliary space smoothers requires both "
+                                "primary space and auxiliary spaces for construction!");
+      return std::make_unique<GeometricMultigridSolver>(iodata, std::move(pc), fespaces,
+                                                        aux_fespaces);
+    }
+    else
+    {
+      return std::make_unique<GeometricMultigridSolver>(iodata, std::move(pc), fespaces,
+                                                        nullptr);
+    }
   }
   else
   {
@@ -207,6 +218,8 @@ public:
     : mfem::Solver(2 * op->Height(), 2 * op->Width()), op_(std::move(op))
   {
   }
+
+  mfem::Solver &GetSolver() { return *op_; }
 
   void SetOperator(const Operator &op) override {}
 
@@ -245,36 +258,29 @@ KspSolver::KspSolver(std::unique_ptr<mfem::IterativeSolver> &&ksp,
                      std::unique_ptr<mfem::Solver> &&pc)
   : mfem::Solver(), ksp_(std::move(ksp)), pc_(std::move(pc)), ksp_mult(0), ksp_mult_it(0)
 {
-  ksp_->SetPreconditioner(*pc_);
 }
 
-void KspSolver::SetOperator(const Operator &op, const Operator &pc_op)
+void KspSolver::SetOperatorFinalize(const Operator &op)
 {
   // Unset the preconditioner before so that IterativeSolver::SetOperator does not set the
   // preconditioner operator again.
-  auto *gmg = dynamic_cast<GeometricMultigridSolver *>(pc_.get());
-  if (gmg)
-  {
-    MFEM_ABORT("KspSolver with a GeometricMultigridSolver preconditioner must "
-               "use the other signature for SetOperator!");
-  }
-  else
-  {
-    pc_->SetOperator(pc_op);
-  }
-  // ksp_->SetPreconditioner(nullptr);    //XX TODO WAITING MFEM PATCH
+  ksp_->SetPreconditioner(nullptr);
   ksp_->SetOperator(op);
   ksp_->SetPreconditioner(*pc_);
   height = op.Height();
   width = op.Width();
 }
 
+void KspSolver::SetOperator(const Operator &op, const Operator &pc_op)
+{
+  pc_->SetOperator(pc_op);
+  SetOperatorFinalize(op);
+}
+
 void KspSolver::SetOperator(const Operator &op,
                             const std::vector<std::unique_ptr<ParOperator>> &pc_ops,
                             const std::vector<std::unique_ptr<ParOperator>> *aux_pc_ops)
 {
-  // Unset the preconditioner before so that IterativeSolver::SetOperator does not set the
-  // preconditioner operator again.
   auto *gmg = dynamic_cast<GeometricMultigridSolver *>(pc_.get());
   if (gmg)
   {
@@ -282,17 +288,9 @@ void KspSolver::SetOperator(const Operator &op,
   }
   else
   {
-    MFEM_VERIFY(
-        !aux_pc_ops,
-        "Auxiliary space operators should not be specified for KspSolver::SetOperator "
-        "unless the preconditioner is a GeometricMultigridSolver!");
     pc_->SetOperator(*pc_ops.back());
   }
-  // ksp_->SetPreconditioner(nullptr);    //XX TODO WAITING MFEM PATCH
-  ksp_->SetOperator(op);
-  ksp_->SetPreconditioner(*pc_);
-  height = op.Height();
-  width = op.Width();
+  SetOperatorFinalize(op);
 }
 
 void KspSolver::Mult(const Vector &x, Vector &y) const
@@ -326,19 +324,31 @@ ComplexKspSolver::ComplexKspSolver(std::unique_ptr<mfem::IterativeSolver> &&ksp,
 
 void ComplexKspSolver::SetOperator(const ComplexOperator &op, const Operator &pc_op)
 {
-  KspSolver::SetOperator(op, pc_op);  // XX TODO TEST THIS AT RUNTIME...
+  auto &block = static_cast<ComplexBlockDiagonalSolver *>(pc_.get())->GetSolver();
+  block.SetOperator(pc_op);
+  SetOperatorFinalize(op);
 }
 
 void ComplexKspSolver::SetOperator(
     const ComplexOperator &op, const std::vector<std::unique_ptr<ParOperator>> &pc_ops,
     const std::vector<std::unique_ptr<ParOperator>> *aux_pc_ops)
 {
-  KspSolver::SetOperator(op, pc_ops, aux_pc_ops);  // XX TODO TEST THIS AT RUNTIME...
+  auto &block = static_cast<ComplexBlockDiagonalSolver *>(pc_.get())->GetSolver();
+  auto *gmg = dynamic_cast<GeometricMultigridSolver *>(&block);
+  if (gmg)
+  {
+    gmg->SetOperator(pc_ops, aux_pc_ops);
+  }
+  else
+  {
+    block.SetOperator(*pc_ops.back());
+  }
+  SetOperatorFinalize(op);
 }
 
 void ComplexKspSolver::Mult(const ComplexVector &x, ComplexVector &y) const
 {
-  KspSolver::Mult(x, y);  // XX TODO TEST THIS AT RUNTIME...
+  KspSolver::Mult(x, y);
   y.Sync();
 }
 

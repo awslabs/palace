@@ -63,7 +63,7 @@ public:
     {
       // PCG with a simple Jacobi preconditioner for mass matrix systems.
       auto pcg = std::make_unique<mfem::CGSolver>(M->GetComm());
-      pcg->iterative_mode = iodata.solver.linear.ksp_initial_guess;
+      pcg->iterative_mode = iodata.solver.linear.initial_guess;
       pcg->SetRelTol(iodata.solver.linear.tol);
       pcg->SetMaxIter(iodata.solver.linear.max_it);
       pcg->SetPrintLevel(0);
