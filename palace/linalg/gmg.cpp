@@ -87,9 +87,6 @@ void GeometricMultigridSolver::SetOperator(
     }
     else
     {
-
-      // XX TODO TEST IF THIS ACTUALLY WORKS AT RUNTIME...
-
       B_[l]->SetOperator(*ops[l]);
     }
   }

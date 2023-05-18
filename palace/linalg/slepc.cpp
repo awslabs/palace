@@ -122,8 +122,19 @@ void ConfigurePCShell(ST st, void *ctx, PetscErrorCode (*__pc_apply)(PC, Vec, Ve
   PalacePetscCall(STGetKSP(st, &ksp));
   PalacePetscCall(KSPGetPC(ksp, &pc));
   PalacePetscCall(PCSetType(pc, PCSHELL));
-  PalacePetscCall(PCShellSetContext(pc, (void *)ctx));
-  PalacePetscCall(PCShellSetApply(pc, (PetscErrorCode(*)(PC, Vec, Vec)) & __pc_apply));
+  PalacePetscCall(PCShellSetContext(pc, ctx));
+  PalacePetscCall(PCShellSetApply(pc, __pc_apply));
+}
+
+void ConfigureRG(RG rg, PetscReal lr, PetscReal ur, PetscReal li, PetscReal ui,
+                 bool complement = false)
+{
+  PalacePetscCall(RGSetType(rg, RGINTERVAL));
+  PalacePetscCall(RGIntervalSetEndpoints(rg, lr, ur, li, ui));
+  if (complement)
+  {
+    PalacePetscCall(RGSetComplement(rg, PETSC_TRUE));
+  }
 }
 
 }  // namespace
@@ -155,8 +166,7 @@ PetscReal GetMaxSingularValue(MPI_Comm comm, const ComplexOperator &A, bool herm
   PetscInt n = A.Height() / 2;
   PalacePetscCall(
       MatCreateShell(comm, n, n, PETSC_DECIDE, PETSC_DECIDE, (void *)&ctx, &A0));
-  PalacePetscCall(
-      MatShellSetOperation(A0, MATOP_MULT, (void (*)(void)) & __mat_apply_shell));
+  PalacePetscCall(MatShellSetOperation(A0, MATOP_MULT, (void (*)(void))__mat_apply_shell));
   if (herm)
   {
     EPS eps;
@@ -189,10 +199,10 @@ PetscReal GetMaxSingularValue(MPI_Comm comm, const ComplexOperator &A, bool herm
   else
   {
     PalacePetscCall(MatShellSetOperation(A0, MATOP_MULT_TRANSPOSE,
-                                         (void (*)(void)) & __mat_apply_transpose_shell));
+                                         (void (*)(void))__mat_apply_transpose_shell));
     PalacePetscCall(
         MatShellSetOperation(A0, MATOP_MULT_HERMITIAN_TRANSPOSE,
-                             (void (*)(void)) & __mat_apply_hermitian_transpose_shell));
+                             (void (*)(void))__mat_apply_hermitian_transpose_shell));
 
     SVD svd;
     PetscInt num_conv;
@@ -319,13 +329,13 @@ void SlepcEigenSolver::Customize()
 {
   // Configure the KSP object for non-preconditioned spectral transformations.
   PetscBool precond;
-  KSP ksp;
   ST st = GetST();
-  PalacePetscCall(STGetKSP(st, &ksp));
   PalacePetscCall(
       PetscObjectTypeCompare(reinterpret_cast<PetscObject>(st), STPRECOND, &precond));
   if (!precond)
   {
+    KSP ksp;
+    PalacePetscCall(STGetKSP(st, &ksp));
     PalacePetscCall(KSPSetType(ksp, KSPPREONLY));
   }
 
@@ -334,55 +344,37 @@ void SlepcEigenSolver::Customize()
   {
     if (PetscImaginaryPart(sigma) == 0.0)
     {
-      if (PetscRealPart(sigma) > 0.0)
+      PetscReal sr = PetscRealPart(sigma);
+      if (sr > 0.0)
       {
-        SetRegion(PetscRealPart(sigma) / gamma - PETSC_i * mfem::infinity(),
-                  mfem::infinity() + PETSC_i * mfem::infinity());
+        ConfigureRG(GetRG(), sr / gamma, mfem::infinity(), -mfem::infinity(),
+                    mfem::infinity());
       }
-      else if (PetscRealPart(sigma) < 0.0)
+      else if (sr < 0.0)
       {
-        SetRegion(-mfem::infinity() - PETSC_i * mfem::infinity(),
-                  PetscRealPart(sigma) / gamma + PETSC_i * mfem::infinity());
+        ConfigureRG(GetRG(), -mfem::infinity(), sr / gamma, -mfem::infinity(),
+                    mfem::infinity());
       }
     }
     else if (PetscRealPart(sigma) == 0.0)
     {
-      if (PetscImaginaryPart(sigma) > 0.0)
+      PetscReal si = PetscImaginaryPart(sigma);
+      if (si > 0.0)
       {
-        SetRegion(-mfem::infinity() + PETSC_i * PetscImaginaryPart(sigma) / gamma,
-                  mfem::infinity() + PETSC_i * mfem::infinity());
+        ConfigureRG(GetRG(), -mfem::infinity(), mfem::infinity(), si / gamma,
+                    mfem::infinity());
       }
-      else if (PetscImaginaryPart(sigma) < 0.0)
+      else if (si < 0.0)
       {
-        SetRegion(-mfem::infinity() - PETSC_i * mfem::infinity(),
-                  PetscImaginaryPart(sigma) / gamma + PETSC_i * mfem::infinity());
+        ConfigureRG(GetRG(), -mfem::infinity(), mfem::infinity(), -mfem::infinity(),
+                    si / gamma);
       }
     }
     else
     {
-      MFEM_ABORT("Shift-and-invert with general complex eigenvalue target "
-                 "is unsupported!");
+      MFEM_ABORT("Shift-and-invert with general complex eigenvalue target is unsupported!");
     }
   }
-}
-
-void SlepcEigenSolver::SetRegion(PetscScalar lower_left, PetscScalar upper_right,
-                                 bool complement)
-{
-  RG rg = GetRG();
-  PalacePetscCall(RGSetType(rg, RGINTERVAL));
-  PalacePetscCall(RGIntervalSetEndpoints(
-      rg, PetscRealPart(lower_left), PetscRealPart(upper_right),
-      PetscImaginaryPart(lower_left), PetscImaginaryPart(upper_right)));
-  if (complement)
-  {
-    PalacePetscCall(RGSetComplement(rg, PETSC_TRUE));
-  }
-}
-
-PetscScalar SlepcEigenSolver::GetBackTransform(PetscScalar l) const
-{
-  return gamma * l;
 }
 
 PetscReal SlepcEigenSolver::GetError(int i, EigenvalueSolver::ErrorType type) const
@@ -607,7 +599,7 @@ int SlepcEPSSolverBase::Solve()
   }
 
   // Compute and store the eigenpair residuals.
-  res = std::make_unique<PetscReal>(num_conv);
+  res = std::make_unique<PetscReal[]>(num_conv);
   for (int i = 0; i < num_conv; i++)
   {
     res.get()[i] = GetResidualNorm(i);
@@ -619,7 +611,7 @@ PetscScalar SlepcEPSSolverBase::GetEigenvalue(int i) const
 {
   PetscScalar l;
   PalacePetscCall(EPSGetEigenvalue(eps, i, &l, nullptr));
-  return GetBackTransform(l);
+  return l * gamma;
 }
 
 void SlepcEPSSolverBase::GetEigenvector(int i, ComplexVector &x) const
@@ -681,10 +673,8 @@ void SlepcEPSSolver::SetOperators(const ComplexOperator &K, const ComplexOperato
       MatCreateShell(GetComm(), n, n, PETSC_DECIDE, PETSC_DECIDE, (void *)this, &A0));
   PalacePetscCall(
       MatCreateShell(GetComm(), n, n, PETSC_DECIDE, PETSC_DECIDE, (void *)this, &A1));
-  PalacePetscCall(
-      MatShellSetOperation(A0, MATOP_MULT, (void (*)(void)) & __mat_apply_EPS_A0));
-  PalacePetscCall(
-      MatShellSetOperation(A1, MATOP_MULT, (void (*)(void)) & __mat_apply_EPS_A1));
+  PalacePetscCall(MatShellSetOperation(A0, MATOP_MULT, (void (*)(void))__mat_apply_EPS_A0));
+  PalacePetscCall(MatShellSetOperation(A1, MATOP_MULT, (void (*)(void))__mat_apply_EPS_A1));
   PalacePetscCall(EPSSetOperators(eps, A0, A1));
 
   if (first && type != ScaleType::NONE)
@@ -722,8 +712,7 @@ void SlepcEPSSolver::SetBMat(const Operator &B)
   PetscInt n = B.Height();
   PalacePetscCall(
       MatCreateShell(GetComm(), n, n, PETSC_DECIDE, PETSC_DECIDE, (void *)this, &B0));
-  PalacePetscCall(
-      MatShellSetOperation(B0, MATOP_MULT, (void (*)(void)) & __mat_apply_EPS_B));
+  PalacePetscCall(MatShellSetOperation(B0, MATOP_MULT, (void (*)(void))__mat_apply_EPS_B));
 
   BV bv = GetBV();
   PalacePetscCall(BVSetMatrix(bv, B0, PETSC_FALSE));
@@ -779,9 +768,9 @@ void SlepcPEPLinearSolver::SetOperators(const ComplexOperator &K, const ComplexO
   PalacePetscCall(MatCreateShell(GetComm(), 2 * n, 2 * n, PETSC_DECIDE, PETSC_DECIDE,
                                  (void *)this, &A1));
   PalacePetscCall(
-      MatShellSetOperation(A0, MATOP_MULT, (void (*)(void)) & __mat_apply_PEPLinear_L0));
+      MatShellSetOperation(A0, MATOP_MULT, (void (*)(void))__mat_apply_PEPLinear_L0));
   PalacePetscCall(
-      MatShellSetOperation(A1, MATOP_MULT, (void (*)(void)) & __mat_apply_PEPLinear_L1));
+      MatShellSetOperation(A1, MATOP_MULT, (void (*)(void))__mat_apply_PEPLinear_L1));
   PalacePetscCall(EPSSetOperators(eps, A0, A1));
 
   if (first && type != ScaleType::NONE)
@@ -823,7 +812,7 @@ void SlepcPEPLinearSolver::SetBMat(const Operator &B)
   PalacePetscCall(MatCreateShell(GetComm(), 2 * n, 2 * n, PETSC_DECIDE, PETSC_DECIDE,
                                  (void *)this, &B0));
   PalacePetscCall(
-      MatShellSetOperation(B0, MATOP_MULT, (void (*)(void)) & __mat_apply_PEPLinear_B));
+      MatShellSetOperation(B0, MATOP_MULT, (void (*)(void))__mat_apply_PEPLinear_B));
 
   BV bv = GetBV();
   PalacePetscCall(BVSetMatrix(bv, B0, PETSC_FALSE));
@@ -862,22 +851,22 @@ void SlepcPEPLinearSolver::GetEigenvector(int i, ComplexVector &x) const
       v0,
       "Must call SetOperators before using GetEigenvector for SLEPc eigenvalue solver!");
   PalacePetscCall(EPSGetEigenvector(eps, i, v0, nullptr));
-
   PetscInt n;
   PalacePetscCall(VecGetLocalSize(v0, &n));
-  MFEM_VERIFY(2 * x1.Size() == 2 * n, "Invalid size mismatch for provided eigenvector!");
+  MFEM_VERIFY(2 * x.Size() == 2 * n, "Invalid size mismatch for provided eigenvector!");
 
   const PetscScalar *pv0;
   PalacePetscCall(VecGetArrayRead(v0, &pv0));
-  x1.Set(pv0, n / 2);
+  x.Set(pv0, n / 2);
   PalacePetscCall(VecRestoreArrayRead(v0, &pv0));
+
   if (opB)
   {
-    linalg::Normalize(GetComm(), x1, *opB, y1);
+    linalg::Normalize(GetComm(), x, *opB, y1);
   }
   else
   {
-    linalg::Normalize(GetComm(), x1);
+    linalg::Normalize(GetComm(), x);
   }
 }
 
@@ -1115,7 +1104,7 @@ int SlepcPEPSolverBase::Solve()
   }
 
   // Compute and store the eigenpair residuals.
-  res = std::make_unique<PetscReal>(num_conv);
+  res = std::make_unique<PetscReal[]>(num_conv);
   for (int i = 0; i < num_conv; i++)
   {
     res.get()[i] = GetResidualNorm(i);
@@ -1127,7 +1116,7 @@ PetscScalar SlepcPEPSolverBase::GetEigenvalue(int i) const
 {
   PetscScalar l;
   PalacePetscCall(PEPGetEigenpair(pep, i, &l, nullptr, nullptr, nullptr));
-  return GetBackTransform(l);
+  return l * gamma;
 }
 
 void SlepcPEPSolverBase::GetEigenvector(int i, ComplexVector &x) const
@@ -1193,12 +1182,9 @@ void SlepcPEPSolver::SetOperators(const ComplexOperator &K, const ComplexOperato
       MatCreateShell(GetComm(), n, n, PETSC_DECIDE, PETSC_DECIDE, (void *)this, &A1));
   PalacePetscCall(
       MatCreateShell(GetComm(), n, n, PETSC_DECIDE, PETSC_DECIDE, (void *)this, &A2));
-  PalacePetscCall(
-      MatShellSetOperation(A0, MATOP_MULT, (void (*)(void)) & __mat_apply_PEP_A0));
-  PalacePetscCall(
-      MatShellSetOperation(A1, MATOP_MULT, (void (*)(void)) & __mat_apply_PEP_A1));
-  PalacePetscCall(
-      MatShellSetOperation(A2, MATOP_MULT, (void (*)(void)) & __mat_apply_PEP_A2));
+  PalacePetscCall(MatShellSetOperation(A0, MATOP_MULT, (void (*)(void))__mat_apply_PEP_A0));
+  PalacePetscCall(MatShellSetOperation(A1, MATOP_MULT, (void (*)(void))__mat_apply_PEP_A1));
+  PalacePetscCall(MatShellSetOperation(A2, MATOP_MULT, (void (*)(void))__mat_apply_PEP_A2));
   Mat A[3] = {A0, A1, A2};
   PalacePetscCall(PEPSetOperators(pep, 3, A));
 
@@ -1238,8 +1224,7 @@ void SlepcPEPSolver::SetBMat(const Operator &B)
   PetscInt n = B.Height();
   PalacePetscCall(
       MatCreateShell(GetComm(), n, n, PETSC_DECIDE, PETSC_DECIDE, (void *)this, &B0));
-  PalacePetscCall(
-      MatShellSetOperation(B0, MATOP_MULT, (void (*)(void)) & __mat_apply_PEP_B));
+  PalacePetscCall(MatShellSetOperation(B0, MATOP_MULT, (void (*)(void))__mat_apply_PEP_B));
 
   BV bv = GetBV();
   PalacePetscCall(BVSetMatrix(bv, B0, PETSC_FALSE));
@@ -1295,6 +1280,7 @@ PetscErrorCode __mat_apply_EPS_A0(Mat A, Vec x, Vec y)
   PetscCall(VecRestoreArrayRead(x, &px));
 
   ctx->opK->Mult(ctx->x, ctx->y);
+  ctx->y *= ctx->delta;
 
   PetscScalar *py;
   PetscCall(VecGetArrayWrite(y, &py));
@@ -1320,6 +1306,7 @@ PetscErrorCode __mat_apply_EPS_A1(Mat A, Vec x, Vec y)
   PetscCall(VecRestoreArrayRead(x, &px));
 
   ctx->opM->Mult(ctx->x, ctx->y);
+  ctx->y *= ctx->delta * ctx->gamma;
 
   PetscScalar *py;
   PetscCall(VecGetArrayWrite(y, &py));
@@ -1346,6 +1333,7 @@ PetscErrorCode __mat_apply_EPS_B(Mat A, Vec x, Vec y)
 
   ctx->opB->Mult(ctx->x.Real(), ctx->y.Real());
   ctx->opB->Mult(ctx->x.Imag(), ctx->y.Imag());
+  ctx->y *= ctx->delta * ctx->gamma;
 
   PetscScalar *py;
   PetscCall(VecGetArrayWrite(y, &py));
