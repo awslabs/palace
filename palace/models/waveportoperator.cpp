@@ -98,7 +98,7 @@ std::unique_ptr<ParOperator> GetBtt(const MaterialOperator &mat_op,
   btt->SetAssemblyLevel(mfem::AssemblyLevel::LEGACY);
   btt->Assemble(skip_zeros);
   btt->Finalize(skip_zeros);
-  return std::make_unique<ParOperator>(std::move(btt), nd_fespace, nd_fespace);
+  return std::make_unique<ParOperator>(std::move(btt), nd_fespace);
 }
 
 std::unique_ptr<ParOperator> GetBtn(const MaterialOperator &mat_op,
@@ -115,7 +115,7 @@ std::unique_ptr<ParOperator> GetBtn(const MaterialOperator &mat_op,
   btn->SetAssemblyLevel(mfem::AssemblyLevel::LEGACY);
   btn->Assemble(skip_zeros);
   btn->Finalize(skip_zeros);
-  return std::make_unique<ParOperator>(std::move(btn), h1_fespace, nd_fespace);
+  return std::make_unique<ParOperator>(std::move(btn), h1_fespace, nd_fespace, false);
 }
 
 std::array<std::unique_ptr<ParOperator>, 3> GetBnn(const MaterialOperator &mat_op,
@@ -144,9 +144,8 @@ std::array<std::unique_ptr<ParOperator>, 3> GetBnn(const MaterialOperator &mat_o
   // Contribution for loss tangent: ε => ε * (1 - i tan(δ)).
   if (!mat_op.HasLossTangent())
   {
-    return {std::make_unique<ParOperator>(std::move(bnn1), h1_fespace, h1_fespace),
-            std::make_unique<ParOperator>(std::move(bnn2r), h1_fespace, h1_fespace),
-            nullptr};
+    return {std::make_unique<ParOperator>(std::move(bnn1), h1_fespace),
+            std::make_unique<ParOperator>(std::move(bnn2r), h1_fespace), nullptr};
   }
   constexpr MaterialPropertyType MatTypeEpsImag = MaterialPropertyType::PERMITTIVITY_IMAG;
   NormalProjectedCoefficient negepstandelta_func(
@@ -157,9 +156,9 @@ std::array<std::unique_ptr<ParOperator>, 3> GetBnn(const MaterialOperator &mat_o
   bnn2i->SetAssemblyLevel(mfem::AssemblyLevel::LEGACY);
   bnn2i->Assemble(skip_zeros);
   bnn2i->Finalize(skip_zeros);
-  return {std::make_unique<ParOperator>(std::move(bnn1), h1_fespace, h1_fespace),
-          std::make_unique<ParOperator>(std::move(bnn2r), h1_fespace, h1_fespace),
-          std::make_unique<ParOperator>(std::move(bnn2i), h1_fespace, h1_fespace)};
+  return {std::make_unique<ParOperator>(std::move(bnn1), h1_fespace),
+          std::make_unique<ParOperator>(std::move(bnn2r), h1_fespace),
+          std::make_unique<ParOperator>(std::move(bnn2i), h1_fespace)};
 }
 
 std::array<std::unique_ptr<ParOperator>, 3> GetAtt(const MaterialOperator &mat_op,
@@ -188,9 +187,8 @@ std::array<std::unique_ptr<ParOperator>, 3> GetAtt(const MaterialOperator &mat_o
   // Contribution for loss tangent: ε => ε * (1 - i tan(δ)).
   if (!mat_op.HasLossTangent())
   {
-    return {std::make_unique<ParOperator>(std::move(att1), nd_fespace, nd_fespace),
-            std::make_unique<ParOperator>(std::move(att2r), nd_fespace, nd_fespace),
-            nullptr};
+    return {std::make_unique<ParOperator>(std::move(att1), nd_fespace),
+            std::make_unique<ParOperator>(std::move(att2r), nd_fespace), nullptr};
   }
   constexpr MaterialPropertyType MatTypeEpsImag = MaterialPropertyType::PERMITTIVITY_IMAG;
   MaterialPropertyCoefficient<MatTypeEpsImag> negepstandelta_func(mat_op);
@@ -200,9 +198,9 @@ std::array<std::unique_ptr<ParOperator>, 3> GetAtt(const MaterialOperator &mat_o
   att2i->SetAssemblyLevel(mfem::AssemblyLevel::LEGACY);
   att2i->Assemble(skip_zeros);
   att2i->Finalize(skip_zeros);
-  return {std::make_unique<ParOperator>(std::move(att1), nd_fespace, nd_fespace),
-          std::make_unique<ParOperator>(std::move(att2r), nd_fespace, nd_fespace),
-          std::make_unique<ParOperator>(std::move(att2i), nd_fespace, nd_fespace)};
+  return {std::make_unique<ParOperator>(std::move(att1), nd_fespace),
+          std::make_unique<ParOperator>(std::move(att2r), nd_fespace),
+          std::make_unique<ParOperator>(std::move(att2i), nd_fespace)};
 }
 
 std::array<std::unique_ptr<mfem::HypreParMatrix>, 6>

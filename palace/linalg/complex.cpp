@@ -65,7 +65,7 @@ void ComplexVector::Set(const std::complex<double> *py, int n)
   MFEM_VERIFY(2 * n == Size(),
               "Mismatch in dimension for array of std::complex<double> in ComplexVector!");
   Vector y(reinterpret_cast<double *>(const_cast<std::complex<double> *>(py)), 2 * n);
-  const int N = Size() / 2;
+  const int N = n;
   const auto *Y = y.Read();
   auto *XR = Real().Write();
   auto *XI = Imag().Write();
@@ -84,7 +84,7 @@ void ComplexVector::Get(std::complex<double> *py, int n) const
   MFEM_VERIFY(2 * n == Size(),
               "Mismatch in dimension for array of std::complex<double> in ComplexVector!");
   Vector y(reinterpret_cast<double *>(py), 2 * n);
-  const int N = Size() / 2;
+  const int N = n;
   const auto *XR = Real().Read();
   const auto *XI = Imag().Read();
   auto *Y = y.Write();
@@ -116,7 +116,7 @@ ComplexVector &ComplexVector::operator*=(std::complex<double> s)
 {
   if (s.imag() == 0.0)
   {
-    *this *= s.real();
+    Vector::operator*=(s.real());
   }
   else
   {
@@ -175,19 +175,33 @@ void ComplexVector::AXPBY(std::complex<double> alpha, const ComplexVector &y,
   const int N = Size() / 2;
   const double ar = alpha.real();
   const double ai = alpha.imag();
-  const double br = beta.real();
-  const double bi = beta.imag();
   const auto *YR = y.Real().Read();
   const auto *YI = y.Imag().Read();
-  auto *XR = Real().ReadWrite();
-  auto *XI = Imag().ReadWrite();
-  mfem::forall(N,
-               [=] MFEM_HOST_DEVICE(int i)
-               {
-                 const double t = bi * XR[i] + br * XI[i];
-                 XR[i] = ar * YR[i] - ai * YI[i] + br * XR[i] - bi * XI[i];
-                 XI[i] = ai * YR[i] + ar * YI[i] + t;
-               });
+  if (beta != 0.0)
+  {
+    const double br = beta.real();
+    const double bi = beta.imag();
+    auto *XR = Real().ReadWrite();
+    auto *XI = Imag().ReadWrite();
+    mfem::forall(N,
+                 [=] MFEM_HOST_DEVICE(int i)
+                 {
+                   const double t = bi * XR[i] + br * XI[i];
+                   XR[i] = ar * YR[i] - ai * YI[i] + br * XR[i] - bi * XI[i];
+                   XI[i] = ai * YR[i] + ar * YI[i] + t;
+                 });
+  }
+  else
+  {
+    auto *XR = Real().Write();
+    auto *XI = Imag().Write();
+    mfem::forall(N,
+                 [=] MFEM_HOST_DEVICE(int i)
+                 {
+                   XR[i] = ar * YR[i] - ai * YI[i];
+                   XI[i] = ai * YR[i] + ar * YI[i];
+                 });
+  }
   RestoreReal();
   RestoreImag();
 }
@@ -201,22 +215,36 @@ void ComplexVector::AXPBYPCZ(std::complex<double> alpha, const ComplexVector &y,
   const double ai = alpha.imag();
   const double br = beta.real();
   const double bi = beta.imag();
-  const double gr = gamma.real();
-  const double gi = gamma.imag();
   const auto *YR = y.Real().Read();
   const auto *YI = y.Imag().Read();
   const auto *ZR = z.Real().Read();
   const auto *ZI = z.Imag().Read();
-  auto *XR = Real().ReadWrite();
-  auto *XI = Imag().ReadWrite();
-  mfem::forall(N,
-               [=] MFEM_HOST_DEVICE(int i)
-               {
-                 const double t = gi * XR[i] + gr * XI[i];
-                 XR[i] = ar * YR[i] - ai * YI[i] + br * ZR[i] - bi * ZI[i] + gr * XR[i] -
-                         gi * XI[i];
-                 XI[i] = ai * YR[i] + ar * YI[i] + bi * ZR[i] + br * ZI[i] + t;
-               });
+  if (gamma != 0.0)
+  {
+    const double gr = gamma.real();
+    const double gi = gamma.imag();
+    auto *XR = Real().ReadWrite();
+    auto *XI = Imag().ReadWrite();
+    mfem::forall(N,
+                 [=] MFEM_HOST_DEVICE(int i)
+                 {
+                   const double t = gi * XR[i] + gr * XI[i];
+                   XR[i] = ar * YR[i] - ai * YI[i] + br * ZR[i] - bi * ZI[i] + gr * XR[i] -
+                           gi * XI[i];
+                   XI[i] = ai * YR[i] + ar * YI[i] + bi * ZR[i] + br * ZI[i] + t;
+                 });
+  }
+  else
+  {
+    auto *XR = Real().Write();
+    auto *XI = Imag().Write();
+    mfem::forall(N,
+                 [=] MFEM_HOST_DEVICE(int i)
+                 {
+                   XR[i] = ar * YR[i] - ai * YI[i] + br * ZR[i] - bi * ZI[i];
+                   XI[i] = ai * YR[i] + ar * YI[i] + bi * ZR[i] + br * ZI[i];
+                 });
+  }
   RestoreReal();
   RestoreImag();
 }

@@ -147,7 +147,7 @@ void CurlCurlOperator::GetStiffnessMatrix(std::vector<std::unique_ptr<ParOperato
         Mpi::Print("\n");
       }
     }
-    K.push_back(std::make_unique<ParOperator>(std::move(k), nd_fespace_l, nd_fespace_l));
+    K.push_back(std::make_unique<ParOperator>(std::move(k), nd_fespace_l));
     K.back()->SetEssentialTrueDofs(dbc_tdof_lists[l], Operator::DiagonalPolicy::DIAG_ONE);
   }
   print_hdr = false;

@@ -7,7 +7,6 @@
 #include "linalg/arpack.hpp"
 #include "linalg/complex.hpp"
 #include "linalg/divfree.hpp"
-#include "linalg/feast.hpp"
 #include "linalg/ksp.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/slepc.hpp"
@@ -46,9 +45,7 @@ void EigenSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
 
   // Define and configure the eigensolver to solve the eigenvalue problem:
   //         (K + λ C + λ² M) u = 0    or    K u = -λ² M u
-  // with λ = iω. A shift-and-invert strategy is employed to solve for the eigenvalues
-  // closest to the specified target, σ. In general, the system matrices are complex and
-  // symmetric.
+  // with λ = iω. In general, the system matrices are complex and symmetric.
   std::unique_ptr<EigenvalueSolver> eigen;
   config::EigenSolverData::Type type = iodata.solver.eigenmode.type;
 #if defined(PALACE_WITH_ARPACK) && defined(PALACE_WITH_SLEPC)
@@ -78,21 +75,6 @@ void EigenSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
   if (type == config::EigenSolverData::Type::FEAST)
   {
     MFEM_ABORT("FEAST eigenvalue solver is currently not supported!");
-#if defined(PALACE_WITH_SLEPC)
-    // Mpi::Print("\nConfiguring FEAST eigenvalue solver\n");
-    // if (C)
-    // {
-    //   eigen = std::make_unique<feast::FeastPEPSolver>(
-    //       K->GetComm(), iodata, spaceop, iodata.solver.eigenmode.feast_contour_np,
-    //       iodata.problem.verbose);
-    // }
-    // else
-    // {
-    //   eigen = std::make_unique<feast::FeastEPSSolver>(
-    //       K->GetComm(), iodata, spaceop, iodata.solver.eigenmode.feast_contour_np,
-    //       iodata.problem.verbose);
-    // }
-#endif
   }
   else if (type == config::EigenSolverData::Type::ARPACK)
   {
@@ -158,128 +140,22 @@ void EigenSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
   Mpi::Print(" Scaling γ = {:.3e}, δ = {:.3e}\n", eigen->GetScalingGamma(),
              eigen->GetScalingDelta());
 
-  const double target = iodata.solver.eigenmode.target;
-  const double f_target = iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, target);
-  std::unique_ptr<ComplexParOperator> A;
-  std::vector<std::unique_ptr<ParOperator>> P, AuxP;
-  std::unique_ptr<ComplexKspSolver> ksp;
-  // #if defined(PALACE_WITH_SLEPC)
-  //   auto *feast = dynamic_cast<feast::FeastEigenSolver *>(eigen.get());
-  //   if (feast)
-  //   {
-  //     // Configure the FEAST integration contour. The linear solvers are set up inside
-  //     the
-  //     // solver.
-  //     if (iodata.solver.eigenmode.feast_contour_np > 1)
-  //     {
-  //       double contour_ub = iodata.solver.eigenmode.feast_contour_ub;
-  //       double f_contour_ub =
-  //           iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, contour_ub);
-  //       double contour_ar = iodata.solver.eigenmode.feast_contour_ar;
-  //       MFEM_VERIFY(contour_ub > target,
-  //                   "FEAST eigensolver requires a specified upper frequency target!");
-  //       MFEM_VERIFY(
-  //           contour_ar >= 0.0 && contour_ar <= 1.0,
-  //           "Contour aspect ratio for FEAST eigenvalue solver must be in range
-  //           [0.0, 1.0]!");
-  //       Mpi::Print(" FEAST search contour: σ_lower = {:.3e} GHz ({:.3e})\n"
-  //                  "                       σ_upper = {:.3e} GHz ({:.3e})\n"
-  //                  "                       AR = {:.1e}\n",
-  //                  f_target, target, f_contour_ub, contour_ub, contour_ar);
-  //       if (C)
-  //       {
-  //         // Search for eigenvalues in the range λ = iσₗₒ to iσₕᵢ.
-  //         double h = (contour_ub - target) * contour_ar;
-  //         feast->SetContour(-0.5 * h, target, 0.5 * h, contour_ub, false, true);
-  //       }
-  //       else
-  //       {
-  //         // Linear EVP has eigenvalues μ = -λ² = ω². Search for eigenvalues from μ =
-  //         σₗₒ² to
-  //         // σₕᵢ².
-  //         double h = (contour_ub * contour_ub - target * target) * contour_ar;
-  //         feast->SetContour(target * target, -0.5 * h, contour_ub * contour_ub, 0.5 * h);
-  //       }
-  //     }
-  //     else
-  //     {
-  //       Mpi::Print(" FEAST search target: σ = {:.3e} GHz ({:.3e})\n", f_target, target);
-  //       if (C)
-  //       {
-  //         feast->SetContour(0.0, target, 0.0, target, false, true);
-  //       }
-  //       else
-  //       {
-  //         feast->SetContour(target * target, 0.0, target * target, 0.0);
-  //       }
-  //     }
-  //   }
-  //   else
-  // #endif
-  {
-    Mpi::Print(" Shift-and-invert σ = {:.3e} GHz ({:.3e})\n", f_target, target);
-    if (C)
-    {
-      // Search for eigenvalues closest to λ = iσ.
-      eigen->SetShiftInvert(0.0, target);
-      if (type == config::EigenSolverData::Type::ARPACK)
-      {
-        // ARPACK searches based on eigenvalues of the transformed problem. The eigenvalue
-        // 1 / (λ - σ) will be a large-magnitude negative imaginary number for an eigenvalue
-        // λ with frequency close to but not below the target σ.
-        eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::SMALLEST_IMAGINARY);
-      }
-      else
-      {
-        eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::TARGET_IMAGINARY);
-      }
-    }
-    else
-    {
-      // Linear EVP has eigenvalues μ = -λ² = ω². Search for eigenvalues closest to μ = σ².
-      eigen->SetShiftInvert(target * target, 0.0);
-      if (type == config::EigenSolverData::Type::ARPACK)
-      {
-        // ARPACK searches based on eigenvalues of the transformed problem. 1 / (μ - σ²)
-        // will be a large-magnitude positive real number for an eigenvalue μ with frequency
-        // close to but below the target σ².
-        eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::LARGEST_REAL);
-      }
-      else
-      {
-        eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::TARGET_REAL);
-      }
-    }
-
-    // Set up the linear solver required for solving systems involving the shifted operator
-    // (K - σ² M) or P(iσ) = (K + iσ C - σ² M) during the eigenvalue solve. The
-    // preconditioner for complex linear systems is constructed from a real approximation
-    // to the complex system matrix.
-    A = spaceop.GetComplexSystemMatrix(1.0, 1i * target, -target * target, K.get(), C.get(),
-                                       M.get(), nullptr);
-
-    spaceop.GetPreconditionerMatrix(1.0, target, -target * target, target, P, AuxP);
-
-    ksp = std::make_unique<ComplexKspSolver>(iodata, spaceop.GetNDSpaces(),
-                                             &spaceop.GetH1Spaces());
-    ksp->SetOperator(*A, P, &AuxP);
-    eigen->SetLinearSolver(*ksp);
-  }
-
   // If desired, use an M-inner product for orthogonalizing the eigenvalue subspace. The
   // constructed matrix just references the real SPD part of the mass matrix (no copy is
-  // performed).
-  std::unique_ptr<Operator> Mr;
+  // performed). Boundary conditions don't need to be eliminated here.
+  std::unique_ptr<ParOperator> Mr;
   if (iodata.solver.eigenmode.mass_orthog)
   {
     // Mpi::Print(" Basis uses M-inner product\n");
-    // Mr = std::make_unique<SumOperator>(M->Real(), 1.0);
+    // Mr = std::make_unique<ParOperator>(
+    //         std::make_unique<SumOperator>(M->LocalOperator().Real(), 1.0),
+    //         M->GetFESpace());
     // eigen->SetBMat(*Mr);
 
     Mpi::Print(" Basis uses (K + M)-inner product\n");
-    auto KM = std::make_unique<SumOperator>(M->Real(), 1.0);
-    KM->AddOperator(K->Real(), 1.0);
-    Mr = std::move(KM);
+    auto KM = std::make_unique<SumOperator>(M->LocalOperator().Real(), 1.0);
+    KM->AddOperator(K->LocalOperator().Real(), 1.0);
+    Mr = std::make_unique<ParOperator>(std::move(KM), M->GetFESpace());
     eigen->SetBMat(*Mr);
   }
 
@@ -323,22 +199,69 @@ void EigenSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
     // Grad->MultTranspose(v0, r0);
     // r0.Print();
   }
+
+  // Configure the shift-and-invert strategy is employed to solve for the eigenvalues
+  // closest to the specified target, σ.
+  const double target = iodata.solver.eigenmode.target;
+  const double f_target = iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, target);
+  std::unique_ptr<ComplexParOperator> A;
+  std::vector<std::unique_ptr<ParOperator>> P, AuxP;
+  std::unique_ptr<ComplexKspSolver> ksp;
+  {
+    Mpi::Print(" Shift-and-invert σ = {:.3e} GHz ({:.3e})\n", f_target, target);
+    if (C)
+    {
+      // Search for eigenvalues closest to λ = iσ.
+      eigen->SetShiftInvert(1i * target);
+      if (type == config::EigenSolverData::Type::ARPACK)
+      {
+        // ARPACK searches based on eigenvalues of the transformed problem. The eigenvalue
+        // 1 / (λ - σ) will be a large-magnitude negative imaginary number for an eigenvalue
+        // λ with frequency close to but not below the target σ.
+        eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::SMALLEST_IMAGINARY);
+      }
+      else
+      {
+        eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::TARGET_IMAGINARY);
+      }
+    }
+    else
+    {
+      // Linear EVP has eigenvalues μ = -λ² = ω². Search for eigenvalues closest to μ = σ².
+      eigen->SetShiftInvert(target * target);
+      if (type == config::EigenSolverData::Type::ARPACK)
+      {
+        // ARPACK searches based on eigenvalues of the transformed problem. 1 / (μ - σ²)
+        // will be a large-magnitude positive real number for an eigenvalue μ with frequency
+        // close to but below the target σ².
+        eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::LARGEST_REAL);
+      }
+      else
+      {
+        eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::TARGET_REAL);
+      }
+    }
+
+    // Set up the linear solver required for solving systems involving the shifted operator
+    // (K - σ² M) or P(iσ) = (K + iσ C - σ² M) during the eigenvalue solve. The
+    // preconditioner for complex linear systems is constructed from a real approximation
+    // to the complex system matrix.
+    A = spaceop.GetComplexSystemMatrix(1.0, 1i * target, -target * target, K.get(), C.get(),
+                                       M.get(), nullptr);
+
+    spaceop.GetPreconditionerMatrix(1.0, target, -target * target, target, P, AuxP);
+
+    ksp = std::make_unique<ComplexKspSolver>(iodata, spaceop.GetNDSpaces(),
+                                             &spaceop.GetH1Spaces());
+    ksp->SetOperator(*A, P, &AuxP);
+    eigen->SetLinearSolver(*ksp);
+  }
   timer.construct_time += timer.Lap();
 
   // Eigenvalue problem solve.
   Mpi::Print("\n");
   int num_conv = eigen->Solve();
-#if defined(PALACE_WITH_SLEPC)
-  // auto *feast = dynamic_cast<feast::FeastEigenSolver *>(eigen.get());
-  // if (feast)
-  // {
-  //   SaveMetadata(feast->GetLinearSolver());
-  // }
-  // else
-#endif
-  {
-    SaveMetadata(*ksp);
-  }
+  SaveMetadata(*ksp);
   timer.solve_time += timer.Lap();
 
   // Postprocess the results.

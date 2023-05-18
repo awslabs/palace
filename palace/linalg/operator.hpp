@@ -49,7 +49,11 @@ public:
   // Construct the parallel operator, inheriting ownership of the local operator.
   ParOperator(std::unique_ptr<Operator> &&A,
               const mfem::ParFiniteElementSpace &trial_fespace,
-              const mfem::ParFiniteElementSpace &test_fespace, bool test_restrict = false);
+              const mfem::ParFiniteElementSpace &test_fespace, bool test_restrict);
+  ParOperator(std::unique_ptr<Operator> &&A, const mfem::ParFiniteElementSpace &fespace)
+    : ParOperator(std::move(A), fespace, fespace, false)
+  {
+  }
 
   // Get access to the underlying local (L-vector) operator.
   const Operator &LocalOperator() const
@@ -89,6 +93,14 @@ public:
     MFEM_VERIFY(trial_dbc_tdof_list_ == test_dbc_tdof_list_ && height == width,
                 "GetEssentialTrueDofs should only be used for square ParOperator!");
     return trial_dbc_tdof_list_;
+  }
+
+  // Get access to the finite element spaces associated with the operator.
+  const mfem::ParFiniteElementSpace &GetFESpace() const
+  {
+    MFEM_VERIFY(&trial_fespace_ == &test_fespace_ && height == width,
+                "GetFESpace should only be used for square ParOperator!");
+    return trial_fespace_;
   }
 
   // A call to ParallelAssemble will typically free the memory associated with the local

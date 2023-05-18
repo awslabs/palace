@@ -47,7 +47,7 @@ CurlCurlMassSolver::CurlCurlMassSolver(
       a->SetAssemblyLevel(mfem::AssemblyLevel::LEGACY);
       a->Assemble(0);
       a->Finalize(0);
-      A_.push_back(std::make_unique<ParOperator>(std::move(a), fespace_l, fespace_l));
+      A_.push_back(std::make_unique<ParOperator>(std::move(a), fespace_l));
       A_.back()->SetEssentialTrueDofs(dbc_tdof_lists[l],
                                       Operator::DiagonalPolicy::DIAG_ONE);
     }
@@ -67,7 +67,7 @@ CurlCurlMassSolver::CurlCurlMassSolver(
   pcg->SetMaxIter(max_it);
   pcg->SetPrintLevel(print);
 
-  ksp = std::make_unique<KspSolver>(std::move(pcg), std::move(ams));
+  ksp = std::make_unique<KspSolver>(std::move(pcg), std::move(gmg));
   ksp->SetOperator(*A.back(), A, &AuxA);
 }
 

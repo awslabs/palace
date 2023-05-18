@@ -33,7 +33,7 @@ DivFreeSolver::DivFreeSolver(const MaterialOperator &mat_op,
       m->SetAssemblyLevel(mfem::AssemblyLevel::LEGACY);
       m->Assemble(0);
       m->Finalize(0);
-      M.push_back(std::make_unique<ParOperator>(std::move(m), h1_fespace_l, h1_fespace_l));
+      M.push_back(std::make_unique<ParOperator>(std::move(m), h1_fespace_l));
       M.back()->SetEssentialTrueDofs(h1_bdr_tdof_lists[l],
                                      Operator::DiagonalPolicy::DIAG_ONE);
     }
@@ -48,7 +48,7 @@ DivFreeSolver::DivFreeSolver(const MaterialOperator &mat_op,
     weakDiv->Assemble();
     weakDiv->Finalize();
     WeakDiv = std::make_unique<ParOperator>(std::move(weakDiv), nd_fespace,
-                                            h1_fespaces.GetFinestFESpace());
+                                            h1_fespaces.GetFinestFESpace(), false);
   }
   {
     // XX TODO: Partial assembly option?
@@ -75,7 +75,7 @@ DivFreeSolver::DivFreeSolver(const MaterialOperator &mat_op,
   pcg->SetMaxIter(max_it);
   pcg->SetPrintLevel(print);
 
-  ksp = std::make_unique<KspSolver>(std::move(pcg), std::move(amg));
+  ksp = std::make_unique<KspSolver>(std::move(pcg), std::move(gmg));
   ksp->SetOperator(*M.back(), M);
 
   psi.SetSize(h1_fespaces.GetFinestFESpace().GetTrueVSize());

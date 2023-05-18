@@ -243,7 +243,7 @@ SpaceOperator::GetSystemMatrix(SpaceOperator::OperatorType type,
   a->SetAssemblyLevel(assembly_level);
   a->Assemble(skip_zeros);
   a->Finalize(skip_zeros);
-  auto A = std::make_unique<ParOperator>(std::move(a), GetNDSpace(), GetNDSpace());
+  auto A = std::make_unique<ParOperator>(std::move(a), GetNDSpace());
   A->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
   return A;
 }
@@ -315,8 +315,7 @@ SpaceOperator::GetComplexSystemMatrix(SpaceOperator::OperatorType type, double o
     return {};
   }
   auto A = std::make_unique<ComplexParOperator>(
-      std::make_unique<ComplexWrapperOperator>(std::move(ar), std::move(ai)), GetNDSpace(),
-      GetNDSpace());
+      std::make_unique<ComplexWrapperOperator>(std::move(ar), std::move(ai)), GetNDSpace());
   A->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
   return A;
 }
@@ -357,7 +356,7 @@ std::unique_ptr<ParOperator> SpaceOperator::GetSystemMatrix(double a0, double a1
   {
     sum->AddOperator(M->LocalOperator(), a2);
   }
-  auto A = std::make_unique<ParOperator>(std::move(sum), GetNDSpace(), GetNDSpace());
+  auto A = std::make_unique<ParOperator>(std::move(sum), GetNDSpace());
   A->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), Operator::DiagonalPolicy::DIAG_ONE);
   return A;
 }
@@ -407,7 +406,7 @@ std::unique_ptr<ComplexParOperator> SpaceOperator::GetComplexSystemMatrix(
   {
     sum->AddOperator(A2->LocalOperator(), 1.0);
   }
-  auto A = std::make_unique<ComplexParOperator>(std::move(sum), GetNDSpace(), GetNDSpace());
+  auto A = std::make_unique<ComplexParOperator>(std::move(sum), GetNDSpace());
   A->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), Operator::DiagonalPolicy::DIAG_ONE);
   return A;
 }
@@ -471,7 +470,7 @@ void SpaceOperator::GetPreconditionerMatrix(double a0, double a1, double a2, dou
           Mpi::GlobalSum(1, &nnz, fespace_l.GetComm());
           Mpi::Print(", {:d} NNZ (LOR)\n", nnz);
         }
-        B_.push_back(std::make_unique<ParOperator>(std::move(b_lor), fespace_l, fespace_l));
+        B_.push_back(std::make_unique<ParOperator>(std::move(b_lor), fespace_l));
       }
       else
       {
@@ -491,7 +490,7 @@ void SpaceOperator::GetPreconditionerMatrix(double a0, double a1, double a2, dou
             Mpi::Print("\n");
           }
         }
-        B_.push_back(std::make_unique<ParOperator>(std::move(b), fespace_l, fespace_l));
+        B_.push_back(std::make_unique<ParOperator>(std::move(b), fespace_l));
       }
       B_.back()->SetEssentialTrueDofs(dbc_tdof_lists[l],
                                       Operator::DiagonalPolicy::DIAG_ONE);
@@ -633,7 +632,7 @@ bool SpaceOperator::GetExcitationVector(Vector &RHS)
 bool SpaceOperator::GetExcitationVector(double omega, ComplexVector &RHS)
 {
   // Frequency domain excitation vector: RHS = iω RHS1 + RHS2(ω).
-  RHS.SetSize(GetNDSpace().GetTrueVSize());
+  RHS.SetSize(2 * GetNDSpace().GetTrueVSize());
   RHS = std::complex<double>(0.0, 0.0);
   bool nnz1 = AddExcitationVector1Internal(RHS.Real());
   RHS *= 1i * omega;
@@ -648,7 +647,7 @@ bool SpaceOperator::GetExcitationVector1(ComplexVector &RHS1)
 {
   // Assemble the frequency domain excitation term with linear frequency dependence
   // (coefficient iω, see GetExcitationVector above, is accounted for later).
-  RHS1.SetSize(GetNDSpace().GetTrueVSize());
+  RHS1.SetSize(2 * GetNDSpace().GetTrueVSize());
   RHS1 = std::complex<double>(0.0, 0.0);
   bool nnz1 = AddExcitationVector1Internal(RHS1.Real());
   RHS1.Real().SetSubVector(nd_dbc_tdof_lists.back(), 0.0);
@@ -658,7 +657,7 @@ bool SpaceOperator::GetExcitationVector1(ComplexVector &RHS1)
 
 bool SpaceOperator::GetExcitationVector2(double omega, ComplexVector &RHS2)
 {
-  RHS2.SetSize(GetNDSpace().GetTrueVSize());
+  RHS2.SetSize(2 * GetNDSpace().GetTrueVSize());
   RHS2 = std::complex<double>(0.0, 0.0);
   bool nnz2 = AddExcitationVector2Internal(omega, RHS2);
   RHS2.Real().SetSubVector(nd_dbc_tdof_lists.back(), 0.0);
@@ -693,7 +692,7 @@ bool SpaceOperator::AddExcitationVector2Internal(double omega, ComplexVector &RH
 {
   // Assemble the contribution of wave ports to the frequency domain excitation term at the
   // specified frequency.
-  MFEM_VERIFY(RHS2.Size() == GetNDSpace().GetTrueVSize(),
+  MFEM_VERIFY(RHS2.Size() == 2 * GetNDSpace().GetTrueVSize(),
               "Invalid T-vector size for AddExcitationVector2Internal!");
   SumVectorCoefficient fbr(GetNDSpace().GetParMesh()->SpaceDimension()),
       fbi(GetNDSpace().GetParMesh()->SpaceDimension());
@@ -716,7 +715,7 @@ bool SpaceOperator::AddExcitationVector2Internal(double omega, ComplexVector &RH
 
 void SpaceOperator::GetConstantInitialVector(ComplexVector &v)
 {
-  v.SetSize(GetNDSpace().GetTrueVSize());
+  v.SetSize(2 * GetNDSpace().GetTrueVSize());
   v = std::complex<double>(1.0, 0.0);
   v.Real().SetSubVector(nd_dbc_tdof_lists.back(), 0.0);
   v.SyncAlias();
@@ -724,7 +723,7 @@ void SpaceOperator::GetConstantInitialVector(ComplexVector &v)
 
 void SpaceOperator::GetRandomInitialVector(ComplexVector &v)
 {
-  v.SetSize(GetNDSpace().GetTrueVSize());
+  v.SetSize(2 * GetNDSpace().GetTrueVSize());
   linalg::SetRandom(GetNDSpace().GetComm(), v);
   v.Real().SetSubVector(nd_dbc_tdof_lists.back(), 0.0);
   v.Imag().SetSubVector(nd_dbc_tdof_lists.back(), 0.0);

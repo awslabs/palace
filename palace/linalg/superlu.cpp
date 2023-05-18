@@ -90,6 +90,8 @@ void SuperLUSolver::SetOperator(const Operator &op)
     A = std::make_unique<mfem::SuperLURowLocMatrix>(op);
   }
   solver.SetOperator(*A);
+  height = solver.Height();
+  width = solver.Width();
 }
 
 }  // namespace palace

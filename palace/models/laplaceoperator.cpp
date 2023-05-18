@@ -170,7 +170,7 @@ void LaplaceOperator::GetStiffnessMatrix(std::vector<std::unique_ptr<ParOperator
         Mpi::Print("\n");
       }
     }
-    K.push_back(std::make_unique<ParOperator>(std::move(k), h1_fespace_l, h1_fespace_l));
+    K.push_back(std::make_unique<ParOperator>(std::move(k), h1_fespace_l));
     K.back()->SetEssentialTrueDofs(dbc_tdof_lists[l], Operator::DiagonalPolicy::DIAG_ONE);
   }
   // Save local (uneliminated) operator after parallel assembly for RHS BC elimination.
