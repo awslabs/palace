@@ -117,10 +117,10 @@ void DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator &postop, in
   // KspSolver::SetOperators). Compute everything at the first frequency step.
   std::unique_ptr<ComplexParOperator> K = spaceop.GetComplexSystemMatrix(
       SpaceOperator::OperatorType::STIFFNESS, Operator::DIAG_ONE);
-  std::unique_ptr<ComplexParOperator> M = spaceop.GetComplexSystemMatrix(
-      SpaceOperator::OperatorType::MASS, Operator::DIAG_ZERO);
   std::unique_ptr<ComplexParOperator> C = spaceop.GetComplexSystemMatrix(
       SpaceOperator::OperatorType::DAMPING, Operator::DIAG_ZERO);
+  std::unique_ptr<ComplexParOperator> M = spaceop.GetComplexSystemMatrix(
+      SpaceOperator::OperatorType::MASS, Operator::DIAG_ZERO);
   std::unique_ptr<ComplexParOperator> A2 = spaceop.GetComplexSystemMatrix(
       SpaceOperator::OperatorType::EXTRA, omega0, Operator::DIAG_ZERO);
   std::unique_ptr<ComplexParOperator> Curl = spaceop.GetComplexCurlMatrix();

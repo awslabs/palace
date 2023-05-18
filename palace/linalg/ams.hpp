@@ -29,13 +29,11 @@ private:
   const int print;
 
   // Discrete gradient matrix.
-  std::unique_ptr<ParOperator> G;
+  std::unique_ptr<mfem::HypreParMatrix> G;
 
   // Nedelec interpolation matrix and its components, or, for p = 1, the mesh vertex
   // coordinates.
-  std::unique_ptr<mfem::ParFiniteElementSpace> h1d_fespace;
-  std::unique_ptr<ParOperator> Pi;
-  std::unique_ptr<mfem::HypreParMatrix> Pix, Piy, Piz;
+  std::unique_ptr<mfem::HypreParMatrix> Pi, Pix, Piy, Piz;
   std::unique_ptr<mfem::HypreParVector> x, y, z;
 
   // Helper function to set up the auxiliary objects required by the AMS solver.

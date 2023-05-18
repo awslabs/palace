@@ -89,6 +89,7 @@ void TransientSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
     // Single time step t => t + dt.
     if (step == 0)
     {
+      Mpi::Print("\n");
       t += delta_t;
       timeop.Init();  // Initial conditions
     }

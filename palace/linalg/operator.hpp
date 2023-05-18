@@ -31,7 +31,7 @@ private:
   const bool use_R_;
 
   // Lists of constrained essential boundary true dofs for elimination.
-  mutable const mfem::Array<int> *trial_dbc_tdof_list_, *test_dbc_tdof_list_;
+  const mfem::Array<int> *trial_dbc_tdof_list_, *test_dbc_tdof_list_;
 
   // Diagonal policy for constrained true dofs.
   DiagonalPolicy diag_policy_;
@@ -39,7 +39,7 @@ private:
   // Assembled operator as a parallel Hypre matrix. If the save flag is true, calls to
   // ParallelAssemble will not delete the local operator. This is useful for later on calls
   // to EliminateRHS, for example.
-  mutable std::unique_ptr<mfem::HypreParMatrix> RAP_;
+  std::unique_ptr<mfem::HypreParMatrix> RAP_;
   bool save_A_;
 
   // Temporary storage for operator application.
@@ -106,6 +106,15 @@ public:
   // Assemble the operator as a parallel sparse matrix. This frees the memory associated
   // with the local operator.
   mfem::HypreParMatrix &ParallelAssemble();
+
+  // Steal the assembled parallel sparse matrix. The local operator is saved so that this
+  // object still can perform operations after this is called.
+  std::unique_ptr<mfem::HypreParMatrix> StealParallelAssemble()
+  {
+    SaveLocalOperator();
+    ParallelAssemble();
+    return std::move(RAP_);
+  }
 
   // Get the associated MPI communicator.
   MPI_Comm GetComm() const { return trial_fespace_.GetComm(); }

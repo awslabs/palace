@@ -58,14 +58,16 @@ void ParOperator::EliminateRHS(const Vector &x, Vector &b) const
   }
 
   // Apply the unconstrained operator.
-  std::unique_ptr<mfem::HypreParMatrix> b_RAP_ = std::move(RAP_);
-  const mfem::Array<int> *b_trial_dbc_tdof_list_ = trial_dbc_tdof_list_;
-  const mfem::Array<int> *b_test_dbc_tdof_list_ = test_dbc_tdof_list_;
-  trial_dbc_tdof_list_ = test_dbc_tdof_list_ = nullptr;
-  AddMult(tx_, b, -1.0);
-  RAP_ = std::move(b_RAP_);
-  trial_dbc_tdof_list_ = b_trial_dbc_tdof_list_;
-  test_dbc_tdof_list_ = b_test_dbc_tdof_list_;
+  trial_fespace_.GetProlongationMatrix()->Mult(tx_, lx_);
+  A_->Mult(lx_, ly_);
+  if (!use_R_)
+  {
+    test_fespace_.GetProlongationMatrix()->AddMultTranspose(ly_, b, -1.0);
+  }
+  else
+  {
+    test_fespace_.GetRestrictionMatrix()->AddMult(ly_, b, -1.0);
+  }
 
   {
     if (diag_policy_ == DiagonalPolicy::DIAG_ONE && height == width)
@@ -190,9 +192,8 @@ mfem::HypreParMatrix &ParOperator::ParallelAssemble()
                    "BilinearForm!");
       }
 #else
-      MFEM_VERIFY(
-          bfA->HasSpMat(),
-          "Missing assembled SparseMatrix for parallel assembly of BilinearForm!");
+      MFEM_VERIFY(bfA->HasSpMat(),
+                  "Missing assembled SparseMatrix for parallel assembly of BilinearForm!");
       lA = &bfA->SpMat();
 #endif
     }
@@ -210,8 +211,7 @@ mfem::HypreParMatrix &ParOperator::ParallelAssemble()
         new mfem::HypreParMatrix(trial_fespace_.GetComm(), trial_fespace_.GlobalVSize(),
                                  trial_fespace_.GetDofOffsets(), lA);
     const mfem::HypreParMatrix *P = trial_fespace_.Dof_TrueDof_Matrix();
-    RAP_ =
-        std::make_unique<mfem::HypreParMatrix>(hypre_ParCSRMatrixRAP(*P, *hA, *P), true);
+    RAP_ = std::make_unique<mfem::HypreParMatrix>(hypre_ParCSRMatrixRAP(*P, *hA, *P), true);
     delete hA;
     if (own_lA)
     {
@@ -257,23 +257,22 @@ mfem::HypreParMatrix &ParOperator::ParallelAssemble()
       lA = nullptr;
     }
     mfem::HypreParMatrix *hA = new mfem::HypreParMatrix(
-        trial_fespace_.GetComm(), test_fespace_.GlobalVSize(),
-        trial_fespace_.GlobalVSize(), test_fespace_.GetDofOffsets(),
-        trial_fespace_.GetDofOffsets(), lA);
+        trial_fespace_.GetComm(), test_fespace_.GlobalVSize(), trial_fespace_.GlobalVSize(),
+        test_fespace_.GetDofOffsets(), trial_fespace_.GetDofOffsets(), lA);
     const mfem::HypreParMatrix *P = trial_fespace_.Dof_TrueDof_Matrix();
     if (!use_R_)
     {
       const mfem::HypreParMatrix *Rt = test_fespace_.Dof_TrueDof_Matrix();
-      RAP_ = std::make_unique<mfem::HypreParMatrix>(hypre_ParCSRMatrixRAP(*Rt, *hA, *P),
-                                                    true);
+      RAP_ =
+          std::make_unique<mfem::HypreParMatrix>(hypre_ParCSRMatrixRAP(*Rt, *hA, *P), true);
     }
     else
     {
       mfem::SparseMatrix *sRt = mfem::Transpose(*test_fespace_.GetRestrictionMatrix());
       mfem::HypreParMatrix *hRt = new mfem::HypreParMatrix(
-          trial_fespace_.GetComm(), trial_fespace_.GlobalVSize(),
-          trial_fespace_.GlobalTrueVSize(), trial_fespace_.GetDofOffsets(),
-          trial_fespace_.GetTrueDofOffsets(), sRt);
+          test_fespace_.GetComm(), test_fespace_.GlobalVSize(),
+          test_fespace_.GlobalTrueVSize(), test_fespace_.GetDofOffsets(),
+          test_fespace_.GetTrueDofOffsets(), sRt);
       RAP_ = std::make_unique<mfem::HypreParMatrix>(hypre_ParCSRMatrixRAP(*hRt, *hA, *P),
                                                     true);
       delete sRt;
