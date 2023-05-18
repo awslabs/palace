@@ -1558,7 +1558,7 @@ void LinearSolverData::SetUp(json &solver)
               "Invalid value for config[\"Linear\"][\"PCSide\"] in configuration file!");
 
   pc_mg = linear->value("UseMultigrid", pc_mg);
-  mg_smooth_aux = linear->value("MGAuxiliarySpaceSmoother", mg_smooth_aux);
+  mg_smooth_aux = linear->value("MGAuxiliarySmoother", mg_smooth_aux);
   mg_cycle_it = linear->value("MGCycleIts", mg_cycle_it);
   mg_smooth_it = linear->value("MGSmoothIts", mg_smooth_it);
   mg_smooth_order = linear->value("MGSmoothOrder", mg_smooth_order);

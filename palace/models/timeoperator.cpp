@@ -51,8 +51,8 @@ public:
     // required on the RHS. Diagonal entries are set in M (so M is non-singular).
     K = spaceop.GetSystemMatrix(SpaceOperator::OperatorType::STIFFNESS,
                                 Operator::DIAG_ZERO);
-    M = spaceop.GetSystemMatrix(SpaceOperator::OperatorType::MASS, Operator::DIAG_ONE);
     C = spaceop.GetSystemMatrix(SpaceOperator::OperatorType::DAMPING, Operator::DIAG_ZERO);
+    M = spaceop.GetSystemMatrix(SpaceOperator::OperatorType::MASS, Operator::DIAG_ONE);
 
     // Set up RHS vector for the current source term: -g'(t) J, where g(t) handles the time
     // dependence.
@@ -106,7 +106,6 @@ public:
   void Mult(const Vector &u, const Vector &du, Vector &ddu) const override
   {
     // Solve: M ddu = -(K u + C du) - g'(t) J.
-    Mpi::Print("\n");
     if (kspM->NumTotalMult() == 0)
     {
       // Operators have already been set in constructor.
@@ -122,10 +121,6 @@ public:
     // Solve: (a0 K + a1 C + M) k = -(K u + C du) - g'(t) J, where a0 may be 0 in the
     // explicit case. At first iteration, construct the solver. Also don't print a newline
     // if already done by the mass matrix solve at the first iteration.
-    if (kspA && kspA->NumTotalMult() > 0)
-    {
-      Mpi::Print("\n");
-    }
     if (!kspA || a0 != a0_ || a1 != a1_)
     {
       // Configure the linear solver, including the system matrix and also the matrix
@@ -135,6 +130,7 @@ public:
       a1_ = a1;
       k = 0.0;
     }
+    Mpi::Print("\n");
     FormRHS(u, du, RHS);
     kspA->Mult(RHS, k);
   }
