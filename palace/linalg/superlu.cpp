@@ -79,15 +79,17 @@ void SuperLUSolver::SetOperator(const Operator &op)
   {
     solver.SetFact(mfem::superlu::SamePattern_SameRowPerm);
   }
-  A = std::make_unique<mfem::SuperLURowLocMatrix>(op);
-
-  // Set up base class.
+  const auto *PtAP = dynamic_cast<const ParOperator *>(&op);
+  if (PtAP)
+  {
+    A = std::make_unique<mfem::SuperLURowLocMatrix>(
+        const_cast<ParOperator *>(PtAP)->ParallelAssemble());
+  }
+  else
+  {
+    A = std::make_unique<mfem::SuperLURowLocMatrix>(op);
+  }
   solver.SetOperator(*A);
-}
-
-void SuperLUSolver::SetOperator(const ParOperator &op)
-{
-  SetOperator(const_cast<ParOperator *>(&op)->ParallelAssemble());
 }
 
 }  // namespace palace

@@ -1547,23 +1547,22 @@ void LinearSolverData::SetUp(json &solver)
   tol = linear->value("Tol", tol);
   max_it = linear->value("MaxIts", max_it);
   max_size = linear->value("MaxSize", max_size);
-  orthog_mgs = linear->value("UseMGS", orthog_mgs);
-  orthog_cgs2 = linear->value("UseCGS2", orthog_cgs2);
-  ksp_initial_guess = linear->value("UseInitialGuess", ksp_initial_guess);
-  ksp_piped = linear->value("UseKSPPiped", ksp_piped);
+  initial_guess = linear->value("UseInitialGuess", initial_guess);
 
   // Preconditioner-specific options
-  mat_pa = linear->value("UsePA", mat_pa);
-  mat_gmg = linear->value("UseGMG", mat_gmg);
-  mat_lor = linear->value("UseLOR", mat_lor);
-  mat_shifted = linear->value("UsePCShifted", mat_shifted);
+  mat_pa = linear->value("UsePartialAssembly", mat_pa);
+  pc_mat_lor = linear->value("UseLowOrderRefined", pc_mat_lor);
+  pc_mat_shifted = linear->value("UsePCMatShifted", pc_mat_shifted);
+  pc_side_type = linear->value("PCSide", pc_side_type);
+  MFEM_VERIFY(pc_side_type != LinearSolverData::SideType::INVALID,
+              "Invalid value for config[\"Linear\"][\"PCSide\"] in configuration file!");
+
+  pc_mg = linear->value("UseMultigrid", pc_mg);
+  mg_smooth_aux = linear->value("MGAuxiliarySpaceSmoother", mg_smooth_aux);
   mg_cycle_it = linear->value("MGCycleIts", mg_cycle_it);
   mg_smooth_it = linear->value("MGSmoothIts", mg_smooth_it);
   mg_smooth_order = linear->value("MGSmoothOrder", mg_smooth_order);
-  pc_side_type = linear->value("PrecondSide", pc_side_type);
-  MFEM_VERIFY(
-      pc_side_type != LinearSolverData::SideType::INVALID,
-      "Invalid value for config[\"Linear\"][\"PrecondSide\"] in configuration file!");
+
   sym_fact_type = linear->value("Reordering", sym_fact_type);
   MFEM_VERIFY(
       sym_fact_type != LinearSolverData::SymFactType::INVALID,
@@ -1578,9 +1577,14 @@ void LinearSolverData::SetUp(json &solver)
       linear->value("STRUMPACKLossyPrecision", strumpack_lossy_precision);
   strumpack_butterfly_l = linear->value("STRUMPACKButterflyLevels", strumpack_butterfly_l);
   superlu_3d = linear->value("SuperLU3D", superlu_3d);
+
   ams_vector = linear->value("AMSVector", ams_vector);
+
   divfree_tol = linear->value("DivFreeTol", divfree_tol);
   divfree_max_it = linear->value("DivFreeMaxIts", divfree_max_it);
+
+  orthog_mgs = linear->value("OrthogUseMGS", orthog_mgs);
+  orthog_cgs2 = linear->value("OrthogUseCGS2", orthog_cgs2);
 
   // Cleanup
   linear->erase("Type");
@@ -1588,18 +1592,16 @@ void LinearSolverData::SetUp(json &solver)
   linear->erase("Tol");
   linear->erase("MaxIts");
   linear->erase("MaxSize");
-  linear->erase("UseMGS");
-  linear->erase("UseCGS2");
   linear->erase("UseInitialGuess");
-  linear->erase("UseKSPPiped");
-  linear->erase("UsePA");
-  linear->erase("UseGMG");
-  linear->erase("UseLOR");
-  linear->erase("UsePCShifted");
+  linear->erase("UsePartialAssembly");
+  linear->erase("UseLowOrderRefined");
+  linear->erase("UsePCMatShifted");
+  linear->erase("PCSide");
+  linear->erase("UseMultigrid");
+  linear->erase("MGAuxiliarySmoother");
   linear->erase("MGCycleIts");
   linear->erase("MGSmoothIts");
   linear->erase("MGSmoothOrder");
-  linear->erase("PrecondSide");
   linear->erase("Reordering");
   linear->erase("STRUMPACKCompressionType");
   linear->erase("STRUMPACKCompressionTol");
@@ -1609,6 +1611,8 @@ void LinearSolverData::SetUp(json &solver)
   linear->erase("AMSVector");
   linear->erase("DivFreeTol");
   linear->erase("DivFreeMaxIts");
+  linear->erase("OrthogUseMGS");
+  linear->erase("OrthogUseCGS2");
   MFEM_VERIFY(linear->empty(),
               "Found an unsupported configuration file keyword under \"Linear\"!\n"
                   << linear->dump(2));
@@ -1619,18 +1623,16 @@ void LinearSolverData::SetUp(json &solver)
   // std::cout << "Tol: " << tol << '\n';
   // std::cout << "MaxIts: " << max_it << '\n';
   // std::cout << "MaxSize: " << max_size << '\n';
-  // std::cout << "UseMGS: " << orthog_mgs << '\n';
-  // std::cout << "UseCGS2: " << orthog_cgs2 << '\n';
-  // std::cout << "UseInitialGuess: " << ksp_initial_guess << '\n';
-  // std::cout << "UseKSPPiped: " << ksp_piped << '\n';
-  // std::cout << "UsePA: " << mat_pa << '\n';
-  // std::cout << "UseGMG: " << mat_gmg << '\n';
-  // std::cout << "UseLOR: " << mat_lor << '\n';
-  // std::cout << "UsePCShifted: " << mat_shifted << '\n';
+  // std::cout << "UseInitialGuess: " << initial_guess << '\n';
+  // std::cout << "UsePartialAssembly: " << mat_pa << '\n';
+  // std::cout << "UseLowOrderRefined: " << pc_mat_lor << '\n';
+  // std::cout << "UsePCMatShifted: " << pc_mat_shifted << '\n';
+  // std::cout << "PCSide: " << pc_side_type << '\n';
+  // std::cout << "UseMultigrid: " << pc_mg << '\n';
+  // std::cout << "MGAuxiliarySmoother: " << mg_smooth_aux << '\n';
   // std::cout << "MGCycleIts: " << mg_cycle_it << '\n';
   // std::cout << "MGSmoothIts: " << mg_smooth_it << '\n';
   // std::cout << "MGSmoothOrder: " << mg_smooth_order << '\n';
-  // std::cout << "PrecondSide: " << pc_side_type << '\n';
   // std::cout << "Reordering: " << sym_fact_type << '\n';
   // std::cout << "STRUMPACKCompressionType: " << strumpack_compression_type << '\n';
   // std::cout << "STRUMPACKCompressionTol: " << strumpack_lr_tol << '\n';
@@ -1640,6 +1642,8 @@ void LinearSolverData::SetUp(json &solver)
   // std::cout << "AMSVector: " << ams_vector << '\n';
   // std::cout << "DivFreeTol: " << divfree_tol << '\n';
   // std::cout << "DivFreeMaxIts: " << divfree_max_it << '\n';
+  // std::cout << "OrthogUseMGS: " << orthog_mgs << '\n';
+  // std::cout << "OrthogUseCGS2: " << orthog_cgs2 << '\n';
 }
 
 void SolverData::SetUp(json &config)

@@ -310,16 +310,16 @@ ComplexParOperator::ComplexParOperator(std::unique_ptr<ComplexOperator> &&A,
                                        const mfem::ParFiniteElementSpace &trial_fespace,
                                        const mfem::ParFiniteElementSpace &test_fespace,
                                        bool test_restrict)
-  : ComplexOperator(test_fespace.GetTrueVSize(), trial_fespace.GetTrueVSize()),
+  : ComplexOperator(2 * test_fespace.GetTrueVSize(), 2 * trial_fespace.GetTrueVSize()),
     A_(std::move(A)), trial_fespace_(trial_fespace), test_fespace_(test_fespace),
     use_R_(test_restrict), trial_dbc_tdof_list_(nullptr), test_dbc_tdof_list_(nullptr),
     diag_policy_(DiagonalPolicy::DIAG_ONE)
 {
   MFEM_VERIFY(A_, "Cannot construct ComplexParOperator from an empty matrix!");
-  lxr_.SetSize(A_->Width());
-  lxi_.SetSize(A_->Width());
-  lyr_.SetSize(A_->Height());
-  lyi_.SetSize(A_->Height());
+  lxr_.SetSize(A_->Width() / 2);
+  lxi_.SetSize(A_->Width() / 2);
+  lyr_.SetSize(A_->Height() / 2);
+  lyi_.SetSize(A_->Height() / 2);
   txr_.SetSize(width / 2);
   txi_.SetSize(width / 2);
   if (height != width)
@@ -592,7 +592,8 @@ void ComplexParOperator::AddMultHermitianTranspose(const Vector &xr, const Vecto
 
 ComplexWrapperOperator::ComplexWrapperOperator(std::unique_ptr<Operator> &&Ar,
                                                std::unique_ptr<Operator> &&Ai)
-  : ComplexOperator(Ar ? Ar->Height() : Ai->Height(), Ar ? Ar->Width() : Ai->Width()),
+  : ComplexOperator(2 * (Ar ? Ar->Height() : Ai->Height()),
+                    2 * (Ar ? Ar->Width() : Ai->Width())),
     Ar_(std::move(Ar)), Ai_(std::move(Ai))
 {
   MFEM_VERIFY(Ar_ || Ai_, "Cannot construct ComplexWrapperOperator from an empty matrix!");

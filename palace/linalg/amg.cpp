@@ -25,9 +25,17 @@ BoomerAmgSolver::BoomerAmgSolver(int cycle_it, int smooth_it, int print)
   // HYPRE_BoomerAMGSetCycleRelaxType(*this, coarse_relax_type, 3);
 }
 
-void BoomerAmgSolver::SetOperator(const ParOperator &op)
+void BoomerAmgSolver::SetOperator(const Operator &op)
 {
-  mfem::HypreBoomerAMG::SetOperator(const_cast<ParOperator *>(&op)->ParallelAssemble());
+  const auto *PtAP = dynamic_cast<const ParOperator *>(&op);
+  if (PtAP)
+  {
+    mfem::HypreBoomerAMG::SetOperator(const_cast<ParOperator *>(PtAP)->ParallelAssemble());
+  }
+  else
+  {
+    mfem::HypreBoomerAMG::SetOperator(op);
+  }
 }
 
 }  // namespace palace

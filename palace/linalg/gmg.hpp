@@ -59,7 +59,7 @@ public:
   void SetOperator(const Operator &op) override
   {
     MFEM_ABORT("SetOperator with a single operator is not implemented for "
-               "GeometricMultigridSolver, use the other signature instead!");
+               "GeometricMultigridSolver, use the overloaded SetOperator instead!");
   }
   void SetOperator(const std::vector<std::unique_ptr<ParOperator>> &ops,
                    const std::vector<std::unique_ptr<ParOperator>> *aux_ops = nullptr);

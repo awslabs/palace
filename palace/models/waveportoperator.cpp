@@ -887,7 +887,7 @@ void WavePortOperator::Initialize(double omega)
       if (first)
       {
         Mpi::Print(" Number of global unknowns for port {:d}:\n"
-                   "  ND: {:d}\n  H1: {:d}\n",
+                   "  ND: {:d}, H1: {:d}\n",
                    data.GlobalTrueNDSize(), data.GlobalTrueH1Size());
       }
       double k0 = 1.0 / iodata.DimensionalizeValue(IoData::ValueType::LENGTH, 1.0);

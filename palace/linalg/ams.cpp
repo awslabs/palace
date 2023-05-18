@@ -209,7 +209,15 @@ void HypreAmsSolver::SetOperator(const Operator &op)
     InitializeSolver();
   }
 
-  A = dynamic_cast<mfem::HypreParMatrix *>(const_cast<Operator *>(&op));
+  const auto *PtAP = dynamic_cast<const ParOperator *>(&op);
+  if (PtAP)
+  {
+    A = &const_cast<ParOperator *>(PtAP)->ParallelAssemble();
+  }
+  else
+  {
+    A = dynamic_cast<mfem::HypreParMatrix *>(const_cast<Operator *>(&op));
+  }
   MFEM_VERIFY(A, "HypreAmsSolver requires a HypreParMatrix operator!");
   height = A->Height();
   width = A->Width();
@@ -223,11 +231,6 @@ void HypreAmsSolver::SetOperator(const Operator &op)
   auxB.Reset();
   auxX.Delete();
   auxX.Reset();
-}
-
-void HypreAmsSolver::SetOperator(const ParOperator &op)
-{
-  SetOperator(const_cast<ParOperator *>(&op)->ParallelAssemble());
 }
 
 }  // namespace palace

@@ -71,22 +71,22 @@ CurlCurlOperator::CurlCurlOperator(const IoData &iodata,
                                    const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh)
   : assembly_level(iodata.solver.linear.mat_pa ? mfem::AssemblyLevel::PARTIAL
                                                : mfem::AssemblyLevel::LEGACY),
-    skip_zeros(0), pc_gmg(iodata.solver.linear.mat_gmg), print_hdr(true),
+    skip_zeros(0), pc_mg(iodata.solver.linear.pc_mg), print_hdr(true),
     dbc_marker(SetUpBoundaryProperties(iodata, *mesh.back())),
     nd_fecs(utils::ConstructFECollections<mfem::ND_FECollection>(
-        pc_gmg, false, iodata.solver.order, mesh.back()->Dimension())),
+        pc_mg, false, iodata.solver.order, mesh.back()->Dimension())),
     h1_fecs(utils::ConstructFECollections<mfem::H1_FECollection>(
-        pc_gmg, false, iodata.solver.order, mesh.back()->Dimension())),
+        pc_mg, false, iodata.solver.order, mesh.back()->Dimension())),
     rt_fec(iodata.solver.order - 1, mesh.back()->Dimension()),
-    nd_fespaces(pc_gmg ? utils::ConstructFiniteElementSpaceHierarchy(
-                             mesh, nd_fecs, &dbc_marker, &dbc_tdof_lists)
-                       : utils::ConstructFiniteElementSpaceHierarchy(
-                             *mesh.back(), *nd_fecs.back(), &dbc_marker,
-                             &dbc_tdof_lists.emplace_back())),
-    h1_fespaces(pc_gmg ? utils::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
-                             mesh, h1_fecs)
-                       : utils::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
-                             *mesh.back(), *h1_fecs.back())),
+    nd_fespaces(pc_mg ? utils::ConstructFiniteElementSpaceHierarchy(
+                            mesh, nd_fecs, &dbc_marker, &dbc_tdof_lists)
+                      : utils::ConstructFiniteElementSpaceHierarchy(
+                            *mesh.back(), *nd_fecs.back(), &dbc_marker,
+                            &dbc_tdof_lists.emplace_back())),
+    h1_fespaces(pc_mg ? utils::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
+                            mesh, h1_fecs)
+                      : utils::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
+                            *mesh.back(), *h1_fecs.back())),
     rt_fespace(mesh.back().get(), &rt_fec), mat_op(iodata, *mesh.back()),
     surf_j_op(iodata, GetH1Space())
 {
@@ -117,7 +117,7 @@ void CurlCurlOperator::GetStiffnessMatrix(std::vector<std::unique_ptr<ParOperato
   if (print_hdr)
   {
     Mpi::Print("\nAssembling system matrices, number of global unknowns:\n"
-               " ND: {:d}\n RT: {:d}\n",
+               " ND: {:d}, RT: {:d}\n",
                GetNDSpace().GlobalTrueVSize(), GetRTSpace().GlobalTrueVSize());
     Mpi::Print("\nAssembling multigrid hierarchy:\n");
   }

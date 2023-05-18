@@ -14,7 +14,7 @@ void JacobiSmoother::SetOperator(const Operator &op)
   width = op.Width();
   dinv.SetSize(height);
   op.AssembleDiagonal(dinv);
-  // dinv.Reciprocal();    //XX TODO NEED MFEM PATCH
+  dinv.Reciprocal();
 }
 
 void JacobiSmoother::Mult(const Vector &x, Vector &y) const

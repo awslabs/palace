@@ -264,8 +264,6 @@ void EigenSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
                                              &spaceop.GetH1Spaces());
     ksp->SetOperator(*A, P, &AuxP);
     eigen->SetLinearSolver(*ksp);
-
-    // XX TODO REVISIT FOR LOG PRINT FORMATTING...
   }
 
   // If desired, use an M-inner product for orthogonalizing the eigenvalue subspace. The
