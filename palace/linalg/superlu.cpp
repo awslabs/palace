@@ -52,8 +52,8 @@ SuperLUSolver::SuperLUSolver(MPI_Comm comm, int sym_fact_type, bool use_3d, int 
     }
   }
   solver.SetPrintStatistics(print > 1);
-  solver.SetEquilibriate(false);
-  solver.SetReplaceTinyPivot(false);
+  // solver.SetEquilibriate(false);
+  // solver.SetReplaceTinyPivot(false);
   if (sym_fact_type == 2)
   {
     solver.SetColumnPermutation(mfem::superlu::PARMETIS);
@@ -66,7 +66,7 @@ SuperLUSolver::SuperLUSolver(MPI_Comm comm, int sym_fact_type, bool use_3d, int 
   {
     // Use default
   }
-  solver.SetRowPermutation(mfem::superlu::NOROWPERM);
+  // solver.SetRowPermutation(mfem::superlu::NOROWPERM);
   solver.SetIterativeRefine(mfem::superlu::NOREFINE);
   solver.SetSymmetricPattern(true);  // Always symmetric sparsity pattern
 }

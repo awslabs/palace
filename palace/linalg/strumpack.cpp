@@ -19,7 +19,6 @@ StrumpackSolverBase<StrumpackSolverType>::StrumpackSolverBase(
   this->SetPrintSolveStatistics(print > 1);
   this->SetKrylovSolver(strumpack::KrylovSolver::DIRECT);  // Always as a preconditioner or
                                                            // direct solver
-  this->SetMatching(strumpack::MatchingJob::NONE);
   if (sym_fact_type == 2)
   {
     this->SetReorderingStrategy(strumpack::ReorderingStrategy::PARMETIS);
@@ -32,6 +31,7 @@ StrumpackSolverBase<StrumpackSolverType>::StrumpackSolverBase(
   {
     // Use default
   }
+  // this->SetMatching(strumpack::MatchingJob::NONE);
   this->SetReorderingReuse(true);  // Repeated calls use same sparsity pattern
 
   // Configure compression.

@@ -44,7 +44,7 @@ private:
   // Operator storage for repeated boundary mode eigenvalue problem solves.
   double mu_eps_max;
   HYPRE_BigInt attr_tdof_sizes[2];
-  std::unique_ptr<mfem::HypreParMatrix> A1, A2r, A2i, B3, B4r, B4i, P;
+  std::unique_ptr<mfem::HypreParMatrix> A2r, A2i, B3, P;
   std::unique_ptr<ComplexOperator> A, B;
   ComplexVector v0, e0, e0t, e0n;
 
@@ -62,6 +62,7 @@ private:
   // postprocessing integrated quantities on the port.
   std::unique_ptr<mfem::VectorCoefficient> nxH0r_func, nxH0i_func;
   std::unique_ptr<mfem::ParLinearForm> sr, si;
+  std::unique_ptr<mfem::ParGridFunction> ones;
 
 public:
   WavePortData(const config::WavePortData &data, const MaterialOperator &mat_op,

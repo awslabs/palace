@@ -117,8 +117,9 @@ void CurlCurlOperator::GetStiffnessMatrix(std::vector<std::unique_ptr<ParOperato
   if (print_hdr)
   {
     Mpi::Print("\nAssembling system matrices, number of global unknowns:\n"
-               " ND: {:d}, RT: {:d}\n",
-               GetNDSpace().GlobalTrueVSize(), GetRTSpace().GlobalTrueVSize());
+               " H1: {:d}, ND: {:d}, RT: {:d}\n",
+               GetH1Space().GlobalTrueVSize(), GetNDSpace().GlobalTrueVSize(),
+               GetRTSpace().GlobalTrueVSize());
     Mpi::Print("\nAssembling multigrid hierarchy:\n");
   }
   K.clear();

@@ -191,7 +191,7 @@ SurfacePostOperator::SurfacePostOperator(const IoData &iodata, const MaterialOpe
 {
   // Define a constant 1 function on the scalar finite element space for computing surface
   // integrals.
-  ones.mfem::Vector::operator=(1.0);
+  ones = 1.0;
 
   // Surface dielectric loss postprocessing.
   for (const auto &[idx, data] : iodata.boundaries.postpro.dielectric)
