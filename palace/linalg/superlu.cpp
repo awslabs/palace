@@ -67,7 +67,7 @@ SuperLUSolver::SuperLUSolver(MPI_Comm comm, config::LinearSolverData::SymFactTyp
   {
     // Use default
   }
-  solver.SetRowPermutation(mfem::superlu::NOROWPERM);
+  // solver.SetRowPermutation(mfem::superlu::NOROWPERM);
   solver.SetIterativeRefine(mfem::superlu::NOREFINE);
   solver.SetSymmetricPattern(true);  // Always symmetric sparsity pattern
 }

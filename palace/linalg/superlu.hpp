@@ -35,6 +35,8 @@ public:
   {
   }
 
+  mfem::SuperLUSolver &GetSolver() { return solver; }
+
   void SetOperator(const Operator &op) override;
 
   void Mult(const Vector &x, Vector &y) const override { solver.Mult(x, y); }

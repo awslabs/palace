@@ -72,6 +72,7 @@ StrumpackSolverBase<StrumpackSolverType>::StrumpackSolverBase(
   {
     // Use default
   }
+  // this->SetMatching(strumpack::MatchingJob::NONE);
   this->SetReorderingReuse(true);  // Repeated calls use same sparsity pattern
 
   // Configure compression.
