@@ -211,8 +211,8 @@ SpaceOperator::GetSystemMatrix(SpaceOperator::OperatorType type,
   if (print_hdr)
   {
     Mpi::Print("\nAssembling system matrices, number of global unknowns:\n"
-               " ND: {:d}, H1: {:d}, RT: {:d}\n",
-               GetNDSpace().GlobalTrueVSize(), GetH1Space().GlobalTrueVSize(),
+               " H1: {:d}, ND: {:d}, RT: {:d}\n",
+               GetH1Space().GlobalTrueVSize(), GetNDSpace().GlobalTrueVSize(),
                GetRTSpace().GlobalTrueVSize());
     print_hdr = false;
   }
@@ -255,8 +255,8 @@ SpaceOperator::GetComplexSystemMatrix(SpaceOperator::OperatorType type, double o
   if (print_hdr)
   {
     Mpi::Print("\nAssembling system matrices, number of global unknowns:\n"
-               " ND: {:d}, H1: {:d}, RT: {:d}\n",
-               GetNDSpace().GlobalTrueVSize(), GetH1Space().GlobalTrueVSize(),
+               " H1: {:d}, ND: {:d}, RT: {:d}\n",
+               GetH1Space().GlobalTrueVSize(), GetNDSpace().GlobalTrueVSize(),
                GetRTSpace().GlobalTrueVSize());
     print_hdr = false;
   }

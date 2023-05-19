@@ -29,7 +29,7 @@ protected:
   double GetArea(mfem::ParFiniteElementSpace &fespace)
   {
     mfem::ParGridFunction ones(&fespace);
-    ones.mfem::Vector::operator=(1.0);
+    ones = 1.0;
     mfem::ParLinearForm s(&fespace);
     mfem::ConstantCoefficient one_func(1.0);
     s.AddBoundaryIntegrator(new BoundaryLFIntegrator(one_func), attr_marker);

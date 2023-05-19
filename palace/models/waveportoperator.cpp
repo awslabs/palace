@@ -32,21 +32,25 @@ void GetEssentialTrueDofs(mfem::ParFiniteElementSpace &nd_fespace,
                           const mfem::Array<int> &attr_marker,
                           const mfem::Array<int> &dbc_marker,
                           mfem::Array<int> &nd_dbc_tdof_list,
-                          mfem::Array<int> &h1_dbc_tdof_list)
+                          mfem::Array<int> &h1_dbc_tdof_list,
+                          HYPRE_BigInt attr_tdof_sizes[2])
 {
   // Mark all ND and H1 dofs which are not on the port, and then mark PEC boundaries on
   // the port as well.
-  mfem::Array<int> nd_tdof_list, h1_tdof_list;
-  nd_fespace.GetEssentialTrueDofs(attr_marker, nd_tdof_list);
-  h1_fespace.GetEssentialTrueDofs(attr_marker, h1_tdof_list);
+  mfem::Array<int> nd_attr_tdof_list, h1_attr_tdof_list;
+  nd_fespace.GetEssentialTrueDofs(attr_marker, nd_attr_tdof_list);
+  h1_fespace.GetEssentialTrueDofs(attr_marker, h1_attr_tdof_list);
   nd_fespace.GetEssentialTrueDofs(dbc_marker, nd_dbc_tdof_list);
   h1_fespace.GetEssentialTrueDofs(dbc_marker, h1_dbc_tdof_list);
+  attr_tdof_sizes[0] = nd_attr_tdof_list.Size();
+  attr_tdof_sizes[1] = h1_attr_tdof_list.Size();
+  Mpi::GlobalSum(2, attr_tdof_sizes, nd_fespace.GetComm());
 
   mfem::Array<int> nd_dbc_tdof_marker(nd_fespace.GetTrueVSize()),
       h1_dbc_tdof_marker(h1_fespace.GetTrueVSize());
   nd_dbc_tdof_marker = 1;
   h1_dbc_tdof_marker = 1;
-  for (auto tdof : nd_tdof_list)
+  for (auto tdof : nd_attr_tdof_list)
   {
     nd_dbc_tdof_marker[tdof] = 0;
   }
@@ -54,7 +58,7 @@ void GetEssentialTrueDofs(mfem::ParFiniteElementSpace &nd_fespace,
   {
     nd_dbc_tdof_marker[tdof] = 1;
   }
-  for (auto tdof : h1_tdof_list)
+  for (auto tdof : h1_attr_tdof_list)
   {
     h1_dbc_tdof_marker[tdof] = 0;
   }
@@ -210,26 +214,9 @@ GetSystemMatrices(std::unique_ptr<ParOperator> Btt, std::unique_ptr<ParOperator>
                   std::unique_ptr<ParOperator> Att2r, std::unique_ptr<ParOperator> Att2i,
                   mfem::Array<int> &nd_dbc_tdof_list, mfem::Array<int> &h1_dbc_tdof_list)
 {
-  // Construct the 2x2 block matrices for the eigenvalue problem. We pre-compute the
-  // eigenvalue problem matrices such that:
-  //              A = A₁ - ω² A₂, B = A + 1/Θ² B₃ - ω²/Θ² B₄.
-  Btt->SetEssentialTrueDofs(nd_dbc_tdof_list, Operator::DIAG_ZERO);
-  Btn->SetEssentialTrueDofs(&h1_dbc_tdof_list, &nd_dbc_tdof_list, Operator::DIAG_ZERO);
-
-  Bnn1->SetEssentialTrueDofs(h1_dbc_tdof_list, Operator::DIAG_ZERO);
-  Bnn2r->SetEssentialTrueDofs(h1_dbc_tdof_list, Operator::DIAG_ZERO);
-  if (Bnn2i)
-  {
-    Bnn2i->SetEssentialTrueDofs(h1_dbc_tdof_list, Operator::DIAG_ZERO);
-  }
-
-  Att1->SetEssentialTrueDofs(nd_dbc_tdof_list, Operator::DIAG_ONE);
-  Att2r->SetEssentialTrueDofs(nd_dbc_tdof_list, Operator::DIAG_ZERO);
-  if (Att2i)
-  {
-    Att2i->SetEssentialTrueDofs(nd_dbc_tdof_list, Operator::DIAG_ZERO);
-  }
-
+  // Construct the 2x2 block matrices for the eigenvalue problem A e = λ B e. We pre-compute
+  // the matrices such that:
+  //              A = A₁ - ω² A₂, B = A₁ - ω² A₂ + 1/Θ² B₃ - ω²/Θ² B₄.
   std::unique_ptr<mfem::HypreParMatrix> BtnT(Btn->ParallelAssemble().Transpose());
 
   mfem::Array2D<mfem::HypreParMatrix *> blocks(2, 2);
@@ -254,17 +241,13 @@ GetSystemMatrices(std::unique_ptr<ParOperator> Btt, std::unique_ptr<ParOperator>
     A2i.reset(mfem::HypreParMatrixFromBlocks(blocks));
   }
 
-  auto &Inn = Bnn1->ParallelAssemble();
-  Inn *= 0.0;
-  Inn.EliminateZeroRows();  // Sets diagonal entries to 1
+  auto &Znn = Bnn1->ParallelAssemble();
+  Znn *= 0.0;
 
   blocks = nullptr;
   blocks(0, 0) = &Att1->ParallelAssemble();
-  blocks(1, 1) = &Inn;
+  blocks(1, 1) = &Znn;
   std::unique_ptr<mfem::HypreParMatrix> B3(mfem::HypreParMatrixFromBlocks(blocks));
-
-  auto &Znn = Inn;
-  Znn *= 0.0;
 
   blocks(0, 0) = &Att2r->ParallelAssemble();
   blocks(1, 1) = &Znn;
@@ -275,6 +258,42 @@ GetSystemMatrices(std::unique_ptr<ParOperator> Btt, std::unique_ptr<ParOperator>
   {
     blocks(0, 0) = &Att2i->ParallelAssemble();
     B4i.reset(mfem::HypreParMatrixFromBlocks(blocks));
+  }
+
+  // Eliminate boundary tdofs not associated with this wave port or constrained by Dirichlet
+  // BCs. It is not guaranteed that any HypreParMatrix has a full diagonal in its sparsity
+  // pattern, so we add a zero diagonal before elimination to guarantee this for A1 and B3.
+  mfem::Array<int> dbc_tdof_list;
+  int nd_tdof_offset = Btt->Height();
+  dbc_tdof_list.Reserve(nd_dbc_tdof_list.Size() + h1_dbc_tdof_list.Size());
+  for (auto tdof : nd_dbc_tdof_list)
+  {
+    dbc_tdof_list.Append(tdof);
+  }
+  for (auto tdof : h1_dbc_tdof_list)
+  {
+    dbc_tdof_list.Append(tdof + nd_tdof_offset);
+  }
+
+  mfem::Vector d(B3->Height());
+  d = 0.0;
+  mfem::SparseMatrix diag(d);
+  mfem::HypreParMatrix Diag(B3->GetComm(), B3->GetGlobalNumRows(), B3->GetRowStarts(),
+                            &diag);
+  A1.reset(mfem::Add(1.0, *A1, 1.0, Diag));
+  B3.reset(mfem::Add(1.0, *B3, 1.0, Diag));
+
+  A1->EliminateBC(dbc_tdof_list, Operator::DIAG_ZERO);
+  A2r->EliminateBC(dbc_tdof_list, Operator::DIAG_ZERO);
+  if (A2i)
+  {
+    A2i->EliminateBC(dbc_tdof_list, Operator::DIAG_ZERO);
+  }
+  B3->EliminateBC(dbc_tdof_list, Operator::DIAG_ONE);
+  B4r->EliminateBC(dbc_tdof_list, Operator::DIAG_ZERO);
+  if (B4i)
+  {
+    B4i->EliminateBC(dbc_tdof_list, Operator::DIAG_ZERO);
   }
 
   return {std::move(A1), std::move(A2r), std::move(A2i),
@@ -356,30 +375,30 @@ public:
 
     // Compute Re/Im{-1/i (ikₙ Eₜ + ∇ₜ Eₙ)}.
     T.SetIntPoint(&ip);
-    if (imaginary)
+    mfem::Vector U;
+    if (!imaginary)
     {
-      gridfunc_t.imag().GetVectorValue(T, ip, V);
-      V *= -kn.real();
+      gridfunc_t.real().GetVectorValue(T, ip, U);
+      U *= -kn.real();
 
-      mfem::Vector Vn;
-      gridfunc_n.real().GetGradient(T, Vn);
-      V += Vn;
+      mfem::Vector dU;
+      gridfunc_n.imag().GetGradient(T, dU);
+      U -= dU;
     }
     else
     {
-      gridfunc_t.real().GetVectorValue(T, ip, V);
-      V *= -kn.real();
+      gridfunc_t.imag().GetVectorValue(T, ip, U);
+      U *= -kn.real();
 
-      mfem::Vector Vn;
-      gridfunc_n.imag().GetGradient(T, Vn);
-      V -= Vn;
+      mfem::Vector dU;
+      gridfunc_n.real().GetGradient(T, dU);
+      U += dU;
     }
 
     // Scale by 1/(ωμ) with μ evaluated in the neighboring element.
-    mfem::Vector t(V.Size());
+    V.SetSize(U.Size());
+    mat_op.GetInvPermeability(mesh.GetAttribute(iel1)).Mult(U, V);
     V *= (1.0 / omega);
-    mat_op.GetInvPermeability(mesh.GetAttribute(iel1)).Mult(V, t);
-    V = std::move(t);
   }
 
   void SetFrequency(double w, std::complex<double> k)
@@ -418,46 +437,61 @@ WavePortData::WavePortData(const config::WavePortData &data, const MaterialOpera
   double c_min = mfem::infinity();
   for (auto attr : nd_fespace.GetParMesh()->attributes)
   {
-    double s = mat_op.GetLightSpeedMin(attr);
-    if (s < c_min)
-    {
-      c_min = s;
-    }
+    c_min = std::min(c_min, mat_op.GetLightSpeedMin(attr));
   }
-  MFEM_VERIFY(c_min > 0.0, "Invalid material speed of light detected in WavePortOperator!");
+  MFEM_VERIFY(c_min > 0.0 && c_min < mfem::infinity(),
+              "Invalid material speed of light detected in WavePortOperator!");
   mu_eps_max = 1.0 / (c_min * c_min);
 
   // Pre-compute problem matrices such that:
-  //                A = A₁ - ω² A₂, B = A + 1/Θ² B₃ - ω²/Θ² B₄.
+  //            A = A₁ - ω² A₂, B = A₁ - 1 / (μₘ εₘ) B₄ - ω² A₂ + 1/Θ² B₃ .
   mfem::Array<int> nd_dbc_tdof_list, h1_dbc_tdof_list;
   GetEssentialTrueDofs(nd_fespace, h1_fespace, attr_marker, dbc_marker, nd_dbc_tdof_list,
-                       h1_dbc_tdof_list);
-  attr_tdof_sizes[0] = nd_fespace.GetTrueVSize() - nd_dbc_tdof_list.Size();
-  attr_tdof_sizes[1] = h1_fespace.GetTrueVSize() - h1_dbc_tdof_list.Size();
-  Mpi::GlobalSum(2, attr_tdof_sizes, nd_fespace.GetComm());
+                       h1_dbc_tdof_list, attr_tdof_sizes);
   {
     auto Btt = GetBtt(mat_op, nd_fespace, attr_marker);
     auto Btn = GetBtn(mat_op, nd_fespace, h1_fespace, attr_marker);
     auto [Bnn1, Bnn2r, Bnn2i] = GetBnn(mat_op, h1_fespace, attr_marker);
     auto [Att1, Att2r, Att2i] = GetAtt(mat_op, nd_fespace, attr_marker);
 
+    std::unique_ptr<mfem::HypreParMatrix> A1, B4r, B4i;
     std::tie(A1, A2r, A2i, B3, B4r, B4i) =
         GetSystemMatrices(std::move(Btt), std::move(Btn), std::move(Bnn1), std::move(Bnn2r),
                           std::move(Bnn2i), std::move(Att1), std::move(Att2r),
                           std::move(Att2i), nd_dbc_tdof_list, h1_dbc_tdof_list);
-  }
 
-  // Allocate storage for the eigenvalue problem operators. We have sparsity(A2) ⊆
-  // sparsity(A1), sparsity(B3) = sparsity(B4) ⊆ sparsity(A1)
-  {
+    // Allocate storage for the eigenvalue problem operators. We have sparsity(A2) =
+    // sparsity(B3) = sparsity(B4) ⊆ sparsity(A1). Precompute the frequency independent
+    // contributions to A and B.
     P = std::make_unique<mfem::HypreParMatrix>(*A1);
-    *P *= 0.0;
-    A = std::make_unique<ComplexWrapperOperator>(
-        std::make_unique<mfem::HypreParMatrix>(*P),
-        std::make_unique<mfem::HypreParMatrix>(*P));
-    B = std::make_unique<ComplexWrapperOperator>(
-        std::make_unique<mfem::HypreParMatrix>(*P),
-        std::make_unique<mfem::HypreParMatrix>(*P));
+    if (A2i)
+    {
+      A = std::make_unique<ComplexWrapperOperator>(
+          std::make_unique<mfem::HypreParMatrix>(*A1),
+          std::make_unique<mfem::HypreParMatrix>(*A2i));
+      B = std::make_unique<ComplexWrapperOperator>(
+          std::make_unique<mfem::HypreParMatrix>(*A1),
+          std::make_unique<mfem::HypreParMatrix>(*A2i));
+
+      auto &Br = *static_cast<mfem::HypreParMatrix *>(&B->Real());
+      Br.Add(-1.0 / mu_eps_max, *B4r);
+
+      auto &Ai = *static_cast<mfem::HypreParMatrix *>(&A->Imag());
+      auto &Bi = *static_cast<mfem::HypreParMatrix *>(&B->Imag());
+      Ai *= 0.0;
+      Bi *= 0.0;
+      Bi.Add(-1.0 / mu_eps_max, *B4i);
+    }
+    else
+    {
+      A = std::make_unique<ComplexWrapperOperator>(
+          std::make_unique<mfem::HypreParMatrix>(*A1), nullptr);
+      B = std::make_unique<ComplexWrapperOperator>(
+          std::make_unique<mfem::HypreParMatrix>(*A1), nullptr);
+
+      auto &Br = *static_cast<mfem::HypreParMatrix *>(&B->Real());
+      Br.Add(-1.0 / mu_eps_max, *B4r);
+    }
   }
 
   // Create vector for initial space for eigenvalue solves (for nullspace of [Aₜₜ  0]
@@ -473,8 +507,17 @@ WavePortData::WavePortData(const config::WavePortData &data, const MaterialOpera
   {
     // Define the linear solver to be used for solving systems associated with the
     // generalized eigenvalue problem.
-    constexpr int print = 0;
-    config::LinearSolverData::Type pc_type = config::LinearSolverData::Type::DEFAULT;
+    constexpr int ksp_print = 0;
+    constexpr double ksp_tol = 1.0e-8;
+    constexpr double ksp_max_it = 100;
+    auto gmres = std::make_unique<mfem::GMRESSolver>(nd_fespace.GetComm());
+    gmres->iterative_mode = false;
+    gmres->SetRelTol(ksp_tol);
+    gmres->SetMaxIter(ksp_max_it);
+    gmres->SetKDim(ksp_max_it);
+    gmres->SetPrintLevel(ksp_print);
+
+    config::LinearSolverData::Type pc_type;
 #if defined(MFEM_USE_SUPERLU)
     pc_type = config::LinearSolverData::Type::SUPERLU;
 #elif defined(MFEM_USE_STRUMPACK)
@@ -488,28 +531,37 @@ WavePortData::WavePortData(const config::WavePortData &data, const MaterialOpera
     if (pc_type == config::LinearSolverData::Type::SUPERLU)
     {
 #if defined(MFEM_USE_SUPERLU)
-      pc = std::make_unique<SuperLUSolver>(nd_fespace.GetComm(), 0, false, print);
+      auto slu =
+          std::make_unique<SuperLUSolver>(nd_fespace.GetComm(), 0, false, ksp_print - 1);
+      slu->GetSolver().SetColumnPermutation(mfem::superlu::NATURAL);
+      pc = std::move(slu);
 #endif
     }
-    if (pc_type == config::LinearSolverData::Type::STRUMPACK)
+    else if (pc_type == config::LinearSolverData::Type::STRUMPACK)
     {
 #if defined(MFEM_USE_STRUMPACK)
-      pc = std::make_unique<StrumpackSolver>(
-          nd_fespace.GetComm(), 0, strumpack::CompressionType::NONE, 0.0, 0, 0, print);
+      auto strumpack = std::make_unique<StrumpackSolver>(nd_fespace.GetComm(), 0,
+                                                         strumpack::CompressionType::NONE,
+                                                         0.0, 0, 0, ksp_print - 1);
+      strumpack->SetReorderingStrategy(strumpack::ReorderingStrategy::NATURAL);
+      pc = std::move(strumpack);
 #endif
     }
     else  // config::LinearSolverData::Type::MUMPS
     {
 #if defined(MFEM_USE_MUMPS)
-      pc = std::make_unique<MumpsSolver>(
-          nd_fespace.GetComm(), mfem::MUMPSSolver::SYMMETRIC_INDEFINITE, 0, 0.0, print);
+      auto mumps = std::make_unique<MumpsSolver>(nd_fespace.GetComm(),
+                                                 mfem::MUMPSSolver::SYMMETRIC_INDEFINITE, 0,
+                                                 0.0, ksp_print - 1);
+      mumps->SetReorderingStrategy(mfem::MUMPSSolver::AMD);
+      pc = std::move(mumps);
 #endif
     }
-    ksp = std::make_unique<ComplexKspSolver>(
-        std::make_unique<mfem::GMRESSolver>(nd_fespace.GetComm()), std::move(pc));
+    ksp = std::make_unique<ComplexKspSolver>(std::move(gmres), std::move(pc));
 
     // Define the eigenvalue solver.
-    config::EigenSolverData::Type type = config::EigenSolverData::Type::DEFAULT;
+    constexpr int print = 0;
+    config::EigenSolverData::Type type;
 #if defined(PALACE_WITH_SLEPC)
     type = config::EigenSolverData::Type::SLEPC;
 #elif defined(PALACE_WITH_ARPACK)
@@ -547,6 +599,14 @@ WavePortData::WavePortData(const config::WavePortData &data, const MaterialOpera
   E0n = std::make_unique<mfem::ParComplexGridFunction>(&h1_fespace);
   nxH0r_func = std::make_unique<BdrHVectorCoefficient>(*E0t, *E0n, mat_op, false);
   nxH0i_func = std::make_unique<BdrHVectorCoefficient>(*E0t, *E0n, mat_op, true);
+  sr = std::make_unique<mfem::ParLinearForm>(&nd_fespace);
+  si = std::make_unique<mfem::ParLinearForm>(&nd_fespace);
+  sr->AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(*nxH0r_func), attr_marker);
+  si->AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(*nxH0i_func), attr_marker);
+  sr->UseFastAssembly(false);
+  si->UseFastAssembly(false);
+  ones = std::make_unique<mfem::ParGridFunction>(&nd_fespace);
+  *ones = 1.0;
 }  // namespace palace
 
 void WavePortData::Initialize(double omega)
@@ -560,37 +620,24 @@ void WavePortData::Initialize(double omega)
   // the desired wave port mode.
   double theta2 = mu_eps_max * omega * omega;
   {
-    auto &Ar = dynamic_cast<mfem::HypreParMatrix &>(A->Real());
-    auto &Ai = dynamic_cast<mfem::HypreParMatrix &>(A->Imag());
-    auto &Br = dynamic_cast<mfem::HypreParMatrix &>(B->Real());
-    auto &Bi = dynamic_cast<mfem::HypreParMatrix &>(B->Imag());
+    *P *= 0.0;
 
-    Ar *= 0.0;
-    Ar.Add(1.0, *A1);
-    Ar.Add(-omega * omega, *A2r);
+    auto &Ar = *static_cast<mfem::HypreParMatrix *>(&A->Real());
+    auto &Br = *static_cast<mfem::HypreParMatrix *>(&B->Real());
+    Ar.Add(-omega * omega + omega0 * omega0, *A2r);
+    Br.Add(-omega * omega + omega0 * omega0, *A2r);
+    Br.Add(1.0 / theta2 - (omega0 == 0.0 ? 0.0 : 1.0 / (mu_eps_max * omega0 * omega0)),
+           *B3);
+    P->Add(1.0, Br);
 
     if (A2i)
     {
-      Ai *= 0.0;
-      Ai.Add(-omega * omega, *A2i);
+      auto &Ai = *static_cast<mfem::HypreParMatrix *>(&A->Imag());
+      auto &Bi = *static_cast<mfem::HypreParMatrix *>(&B->Imag());
+      Ai.Add(-omega * omega + omega0 * omega0, *A2i);
+      Bi.Add(-omega * omega + omega0 * omega0, *A2i);
+      P->Add(1.0, Bi);
     }
-
-    Br *= 0.0;
-    Br.Add(1.0, Ar);
-    Br.Add(1.0 / theta2, *B3);
-    Br.Add(-omega * omega / theta2, *B4r);
-
-    if (B4i)
-    {
-      // When B4i is nonzero, so is A2i.
-      Bi *= 0.0;
-      Bi.Add(1.0, Ai);
-      Bi.Add(-omega * omega / theta2, *B4i);
-    }
-
-    *P *= 0.0;
-    P->Add(1.0, Br);
-    P->Add(1.0, Bi);
   }
 
   // Configure and solve the eigenvalue problem for the desired boundary mode.
@@ -600,6 +647,9 @@ void WavePortData::Initialize(double omega)
   int num_conv = eigen->Solve();
   MFEM_VERIFY(num_conv >= mode_idx, "Wave port eigensolver did not converge!");
   std::complex<double> lambda = eigen->GetEigenvalue(mode_idx - 1);
+  // Mpi::Print(" ... Wave port eigensolver error = {} (bkwd), {} (abs)\n",
+  //            eigen->GetError(mode_idx - 1, EigenvalueSolver::ErrorType::BACKWARD),
+  //            eigen->GetError(mode_idx - 1, EigenvalueSolver::ErrorType::ABSOLUTE));
 
   // Extract the eigenmode solution and postprocess. The extracted eigenvalue is λ =
   // Θ² / (Θ² - kₙ²).
@@ -608,8 +658,8 @@ void WavePortData::Initialize(double omega)
                   << "(λ = " << lambda << ")!");
   kn0 = std::sqrt(theta2 - theta2 / lambda);
   omega0 = omega;
-  dynamic_cast<BdrHVectorCoefficient &>(*nxH0r_func).SetFrequency(omega0, kn0);
-  dynamic_cast<BdrHVectorCoefficient &>(*nxH0i_func).SetFrequency(omega0, kn0);
+  static_cast<BdrHVectorCoefficient *>(nxH0r_func.get())->SetFrequency(omega0, kn0);
+  static_cast<BdrHVectorCoefficient *>(nxH0i_func.get())->SetFrequency(omega0, kn0);
 
   // Separate the computed field out into eₜ and eₙ and and transform back to true electric
   // field variables: Eₜ = eₜ/kₙ and Eₙ = ieₙ.
@@ -639,17 +689,14 @@ void WavePortData::Initialize(double omega)
   // make results for the same port consistent between frequencies/meshes.
   {
     // |E x H⋆| ⋅ n = |E ⋅ (-n x H⋆)|
-    sr = std::make_unique<mfem::ParLinearForm>(E0t->ParFESpace());
-    si = std::make_unique<mfem::ParLinearForm>(E0t->ParFESpace());
-    sr->AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(*nxH0r_func), attr_marker);
-    si->AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(*nxH0i_func), attr_marker);
-    sr->UseFastAssembly(false);
-    si->UseFastAssembly(false);
+    *sr = 0.0;
+    *si = 0.0;
     sr->Assemble();
     si->Assemble();
+    double sign = ((*sr)(*ones) > 0.0) ? 1.0 : -1.0;
     std::complex<double> s0(-(*sr)(E0t->real()) - (*si)(E0t->imag()),
                             -(*sr)(E0t->imag()) + (*si)(E0t->real()));
-    double scale = std::copysign(1.0 / std::sqrt(std::abs(s0)), s0.real());
+    double scale = sign / std::sqrt(std::abs(s0));
     E0t->real() *= scale;  // This updates the n x H coefficients depending on Et, En too
     E0t->imag() *= scale;
     E0n->real() *= scale;
@@ -885,8 +932,8 @@ void WavePortOperator::Initialize(double omega)
       if (first)
       {
         Mpi::Print(" Number of global unknowns for port {:d}:\n"
-                   "  ND: {:d}, H1: {:d}\n",
-                   data.GlobalTrueNDSize(), data.GlobalTrueH1Size());
+                   "  H1: {:d}, ND: {:d}\n",
+                   idx, data.GlobalTrueH1Size(), data.GlobalTrueNDSize());
       }
       double k0 = 1.0 / iodata.DimensionalizeValue(IoData::ValueType::LENGTH, 1.0);
       Mpi::Print(" Port {:d}, mode {:d}: kₙ = {:.3e}{:+.3e}i m⁻¹\n", idx,
