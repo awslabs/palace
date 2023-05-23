@@ -203,8 +203,7 @@ enum class DielectricInterfaceType
   DEFAULT,
   MA,
   MS,
-  SA,
-  INVALID = -1
+  SA
 };
 
 template <DielectricInterfaceType Type>
@@ -310,7 +309,7 @@ inline double DielectricInterfaceCoefficient<DielectricInterfaceType::SA>::Eval(
 
   // Substrate-air interface: 0.5 * t * (ϵ_SA * |E_t|² + 1 / ϵ_MS * |E_n|²) .
   double Vn = V * nor;
-  add(V, -Vn, nor, V);
+  mfem::Vector::add(V, -Vn, nor, V);
   return 0.5 * ts * (epsilon * (V * V) + (Vn * Vn) / epsilon);
 }
 
@@ -337,8 +336,7 @@ enum class MaterialPropertyType
   CONDUCTIVITY,
   INV_LONDON_DEPTH,
   INV_Z0,
-  INV_PERMEABILITY_C0,
-  INVALID = -1
+  INV_PERMEABILITY_C0
 };
 
 template <MaterialPropertyType Type>
@@ -456,37 +454,21 @@ inline void MaterialPropertyCoefficient<MaterialPropertyType::INV_PERMEABILITY_C
 enum class EnergyDensityType
 {
   ELECTRIC,
-  ELECTRIC_LOSS,
-  MAGNETIC,
-  INVALID = -1
-};
-enum class EnergyDensityValueType
-{
-  COMPLEX,
-  REAL,
-  INVALID = -1
+  MAGNETIC
 };
 
-template <EnergyDensityType Type, EnergyDensityValueType ValueType>
+template <EnergyDensityType Type, typename GridFunctionType>
 class EnergyDensityCoefficient : public mfem::Coefficient, public BdrGridFunctionCoefficient
 {
 private:
-  typedef
-      typename std::conditional<ValueType == EnergyDensityValueType::COMPLEX,
-                                mfem::ParComplexGridFunction, mfem::ParGridFunction>::type
-          GridFunctionType;
   const GridFunctionType &U;
   const MaterialOperator &mat_op;
   mutable mfem::Vector V;
 
+  const mfem::DenseMatrix &GetMaterialProperty(int attr) const;
+
   double GetLocalEnergyDensity(mfem::ElementTransformation &T,
-                               const mfem::IntegrationPoint &ip, int attr)
-  {
-    MFEM_ABORT(
-        "EnergyDensityCoefficient::GetLocalEnergyDensity() is not implemented for this "
-        "value type!");
-    return 0.0;
-  }
+                               const mfem::IntegrationPoint &ip, int attr);
 
 public:
   EnergyDensityCoefficient(const GridFunctionType &gf, const MaterialOperator &op,
@@ -526,75 +508,41 @@ public:
   }
 };
 
-template <>
-inline double
-EnergyDensityCoefficient<EnergyDensityType::ELECTRIC, EnergyDensityValueType::COMPLEX>::
-    GetLocalEnergyDensity(mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip,
-                          int attr)
+template <typename GridFunctionType>
+inline const mfem::DenseMatrix &
+EnergyDensityCoefficient<EnergyDensityType::ELECTRIC,
+                         GridFunctionType>::GetMaterialProperty(int attr) const
+{
+  return mat_op.GetPermittivityReal(attr);
+}
+
+template <typename GridFunctionType>
+inline const mfem::DenseMatrix &
+EnergyDensityCoefficient<EnergyDensityType::MAGNETIC,
+                         GridFunctionType>::GetMaterialProperty(int attr) const
+{
+  return mat_op.GetInvPermeability(attr);
+}
+
+template <EnergyDensityType Type>
+inline double EnergyDensityCoefficient<Type, ParComplexGridFunction>::GetLocalEnergyDensity(
+    mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip, int attr)
 {
   // Only the real part of the permittivity contributes to the energy (imaginary part
   // cancels out in the inner product due to symmetry).
   U.real().GetVectorValue(T, ip, V);
-  double res = mat_op.GetPermittivityReal(attr).InnerProduct(V, V);
+  double res = GetMaterialProperty(attr).InnerProduct(V, V);
   U.imag().GetVectorValue(T, ip, V);
-  res += mat_op.GetPermittivityReal(attr).InnerProduct(V, V);
+  res += GetMaterialProperty(attr).InnerProduct(V, V);
   return 0.5 * res;
 }
 
-template <>
-inline double
-EnergyDensityCoefficient<EnergyDensityType::ELECTRIC, EnergyDensityValueType::REAL>::
-    GetLocalEnergyDensity(mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip,
-                          int attr)
+template <EnergyDensityType Type>
+inline double EnergyDensityCoefficient<Type, ParGridFunction>::GetLocalEnergyDensity(
+    mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip, int attr)
 {
   U.GetVectorValue(T, ip, V);
-  return 0.5 * mat_op.GetPermittivityReal(attr).InnerProduct(V, V);
-}
-
-template <>
-inline double EnergyDensityCoefficient<EnergyDensityType::ELECTRIC_LOSS,
-                                       EnergyDensityValueType::COMPLEX>::
-    GetLocalEnergyDensity(mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip,
-                          int attr)
-{
-  U.real().GetVectorValue(T, ip, V);
-  double res = mat_op.GetPermittivityImag(attr).InnerProduct(V, V);
-  U.imag().GetVectorValue(T, ip, V);
-  res += mat_op.GetPermittivityImag(attr).InnerProduct(V, V);
-  return -0.5 * res;
-}
-
-template <>
-inline double
-EnergyDensityCoefficient<EnergyDensityType::ELECTRIC_LOSS, EnergyDensityValueType::REAL>::
-    GetLocalEnergyDensity(mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip,
-                          int attr)
-{
-  U.GetVectorValue(T, ip, V);
-  return -0.5 * mat_op.GetPermittivityImag(attr).InnerProduct(V, V);
-}
-
-template <>
-inline double
-EnergyDensityCoefficient<EnergyDensityType::MAGNETIC, EnergyDensityValueType::COMPLEX>::
-    GetLocalEnergyDensity(mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip,
-                          int attr)
-{
-  U.real().GetVectorValue(T, ip, V);
-  double res = mat_op.GetInvPermeability(attr).InnerProduct(V, V);
-  U.imag().GetVectorValue(T, ip, V);
-  res += mat_op.GetInvPermeability(attr).InnerProduct(V, V);
-  return 0.5 * res;
-}
-
-template <>
-inline double
-EnergyDensityCoefficient<EnergyDensityType::MAGNETIC, EnergyDensityValueType::REAL>::
-    GetLocalEnergyDensity(mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip,
-                          int attr)
-{
-  U.GetVectorValue(T, ip, V);
-  return 0.5 * mat_op.GetInvPermeability(attr).InnerProduct(V, V);
+  return 0.5 * GetMaterialProperty(attr).InnerProduct(V, V);
 }
 
 // Returns the local field evaluated on a boundary element. For internal boundary elements,

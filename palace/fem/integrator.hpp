@@ -104,7 +104,7 @@ public:
       fe.CalcShape(ip, shape);
 
       double val = ip.weight * Tr.Weight() * Q.Eval(Tr, ip);
-      add(elvect, val, shape, elvect);
+      mfem::Vector::add(elvect, val, shape, elvect);
     }
   }
 };
