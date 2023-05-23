@@ -11,16 +11,18 @@ target_sources(${TARGET_NAME}
   ${CMAKE_CURRENT_SOURCE_DIR}/ams.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/arpack.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/chebyshev.cpp
-  ${CMAKE_CURRENT_SOURCE_DIR}/complex.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/curlcurl.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/distrelaxation.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/divfree.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/gmg.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/jacobi.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/ksp.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/iterative.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/mumps.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/operator.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/rap.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/slepc.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/solver.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/strumpack.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/superlu.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/vector.cpp
