@@ -69,14 +69,17 @@ public:
 
   // Construct and return system matrix representing discretized curl-curl operator for
   // Ampere's law.
-  void GetStiffnessMatrix(std::vector<std::unique_ptr<ParOperator>> &K);
+  std::unique_ptr<Operator> GetStiffnessMatrix();
 
   // Construct and return the discrete curl matrix.
-  std::unique_ptr<ParOperator> GetCurlMatrix();
+  std::unique_ptr<Operator> GetCurlMatrix();
 
   // Assemble the right-hand side source term vector for a current source applied on
   // specified excited boundaries.
   void GetExcitationVector(int idx, Vector &RHS);
+
+  // Get the associated MPI communicator.
+  MPI_Comm GetComm() const { return GetNDSpace().GetComm(); }
 };
 
 }  // namespace palace

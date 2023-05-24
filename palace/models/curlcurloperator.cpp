@@ -112,7 +112,7 @@ void CurlCurlOperator::CheckBoundaryProperties()
   }
 }
 
-void CurlCurlOperator::GetStiffnessMatrix(std::vector<std::unique_ptr<ParOperator>> &K)
+std::unique_ptr<Operator> CurlCurlOperator::GetStiffnessMatrix()
 {
   if (print_hdr)
   {
@@ -122,8 +122,7 @@ void CurlCurlOperator::GetStiffnessMatrix(std::vector<std::unique_ptr<ParOperato
                GetRTSpace().GlobalTrueVSize());
     Mpi::Print("\nAssembling multigrid hierarchy:\n");
   }
-  K.clear();
-  K.reserve(nd_fespaces.GetNumLevels());
+  auto K = std::make_unique<MultigridOperator>(nd_fespaces.GetNumLevels());
   for (int l = 0; l < nd_fespaces.GetNumLevels(); l++)
   {
     auto &nd_fespace_l = nd_fespaces.GetFESpaceAtLevel(l);
@@ -148,13 +147,15 @@ void CurlCurlOperator::GetStiffnessMatrix(std::vector<std::unique_ptr<ParOperato
         Mpi::Print("\n");
       }
     }
-    K.push_back(std::make_unique<ParOperator>(std::move(k), nd_fespace_l));
-    K.back()->SetEssentialTrueDofs(dbc_tdof_lists[l], Operator::DiagonalPolicy::DIAG_ONE);
+    auto K_l = std::make_unique<ParOperator>(std::move(k), nd_fespace_l);
+    K_l->SetEssentialTrueDofs(dbc_tdof_lists[l], Operator::DiagonalPolicy::DIAG_ONE);
+    K.AddOperator(std::move(K_l));
   }
   print_hdr = false;
+  return K;
 }
 
-std::unique_ptr<ParOperator> CurlCurlOperator::GetCurlMatrix()
+std::unique_ptr<Operator> CurlCurlOperator::GetCurlMatrix()
 {
   auto curl = std::make_unique<mfem::DiscreteLinearOperator>(&GetNDSpace(), &GetRTSpace());
   curl->AddDomainInterpolator(new mfem::CurlInterpolator);
