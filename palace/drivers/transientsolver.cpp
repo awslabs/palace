@@ -106,8 +106,7 @@ void TransientSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
     postop.SetBGridFunction(B);
     postop.UpdatePorts(spaceop.GetLumpedPortOp());
     Mpi::Print(" Sol. ||E|| = {:.6e}, ||B|| = {:.6e}\n",
-               linalg::Norml2(mesh.back()->GetComm(), E),
-               linalg::Norml2(mesh.back()->GetComm(), B));
+               linalg::Norml2(spaceop.GetComm(), E), linalg::Norml2(spaceop.GetComm(), B));
     if (!iodata.solver.transient.only_port_post)
     {
       E_elec = postop.GetEFieldEnergy();

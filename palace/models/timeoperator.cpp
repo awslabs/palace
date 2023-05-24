@@ -4,8 +4,10 @@
 #include "timeoperator.hpp"
 
 #include <vector>
+#include "linalg/iterative.hpp"
 #include "linalg/jacobi.hpp"
 #include "linalg/ksp.hpp"
+#include "linalg/solver.hpp"
 #include "models/spaceoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
@@ -19,8 +21,11 @@ namespace
 class TimeDependentCurlCurlOperator : public mfem::SecondOrderTimeDependentOperator
 {
 public:
+  // MPI communicator.
+  MPI_comm comm;
+
   // System matrices and excitation RHS.
-  std::unique_ptr<ParOperator> K, M, C;
+  std::unique_ptr<Operator> K, M, C;
   Vector NegJ;
 
   // Time dependence of current pulse for excitation: -J'(t) = -g'(t) J. This function
@@ -30,29 +35,27 @@ public:
   // Internal objects for solution of linear systems during time stepping.
   double a0_, a1_;
   std::unique_ptr<KspSolver> kspM, kspA;
-  std::unique_ptr<ParOperator> A;
-  std::vector<std::unique_ptr<ParOperator>> B, AuxB;
+  std::unique_ptr<Operator> A, B;
   mutable Vector RHS;
 
   // Bindings to SpaceOperator functions to get the system matrix and preconditioner, and
   // construct the linear solver.
-  std::function<std::unique_ptr<KspSolver>(double a0, double a1)> ConfigureLinearSolver;
+  std::function<void(double a0, double a1)> ConfigureLinearSolver;
 
 public:
   TimeDependentCurlCurlOperator(const IoData &iodata, SpaceOperator &spaceop,
                                 std::function<double(double)> &djcoef, double t0,
                                 mfem::TimeDependentOperator::Type type)
     : mfem::SecondOrderTimeDependentOperator(spaceop.GetNDSpace().GetTrueVSize(), t0, type),
-      dJcoef(djcoef)
+      comm(spaceop.GetComm()), dJcoef(djcoef)
   {
     // Construct the system matrices defining the linear operator. PEC boundaries are
     // handled simply by setting diagonal entries of the mass matrix for the corresponding
     // dofs. Because the Dirichlet BC is always homogenous, no special elimination is
     // required on the RHS. Diagonal entries are set in M (so M is non-singular).
-    K = spaceop.GetSystemMatrix(SpaceOperator::OperatorType::STIFFNESS,
-                                Operator::DIAG_ZERO);
-    C = spaceop.GetSystemMatrix(SpaceOperator::OperatorType::DAMPING, Operator::DIAG_ZERO);
-    M = spaceop.GetSystemMatrix(SpaceOperator::OperatorType::MASS, Operator::DIAG_ONE);
+    K = spaceop.GetStiffnessMatrix(Operator::DIAG_ZERO);
+    C = spaceop.GetDampingMatrix(Operator::DIAG_ZERO);
+    M = spaceop.GetMassMatrix(Operator::DIAG_ONE);
 
     // Set up RHS vector for the current source term: -g'(t) J, where g(t) handles the time
     // dependence.
@@ -61,33 +64,33 @@ public:
 
     // Set up linear solvers.
     {
-      // PCG with a simple Jacobi preconditioner for mass matrix systems.
-      auto pcg = std::make_unique<mfem::CGSolver>(M->GetComm());
-      pcg->iterative_mode = iodata.solver.linear.initial_guess;
+      auto pcg = std::make_unique<CgSolver<Operator>>(comm, 0);
+      pcg->SetInitialGuess(iodata.solver.linear.initial_guess);
       pcg->SetRelTol(iodata.solver.linear.tol);
       pcg->SetMaxIter(iodata.solver.linear.max_it);
-      pcg->SetPrintLevel(0);
-      kspM =
-          std::make_unique<KspSolver>(std::move(pcg), std::make_unique<JacobiSmoother>());
-      kspM->SetOperator(*M, *M);
+      auto jac =
+          std::make_unique<WrapperSolver<Operator>>(std::make_unique<JacobiSmoother>());
+      kspM = std::make_unique<KspSolver>(std::move(pcg), std::move(jac));
+      kspM->SetOperators(*M, *M);
     }
     {
       // For explicit schemes, recommended to just use cheaper preconditioners. Otherwise,
       // use AMS or a direct solver. The system matrix is formed as a sequence of matrix
       // vector products, and is only assembled for preconditioning.
-      ConfigureLinearSolver = [this, &iodata,
-                               &spaceop](double a0, double a1) -> std::unique_ptr<KspSolver>
+      ConfigureLinearSolver = [this, &iodata, &spaceop](double a0, double a1)
       {
         // Configure the system matrix and also the matrix (matrices) from which the
         // preconditioner will be constructed.
         A = spaceop.GetSystemMatrix(a0, a1, 1.0, K.get(), C.get(), M.get());
-        spaceop.GetPreconditionerMatrix(a0, a1, 1.0, 0.0, B, AuxB);
+        B = spaceop.GetPreconditionerMatrix(a0, a1, 1.0, 0.0);
 
         // Configure the solver.
-        auto ksp = std::make_unique<KspSolver>(iodata, spaceop.GetNDSpaces(),
-                                               &spaceop.GetH1Spaces());
-        ksp->SetOperator(*A, B, &AuxB);
-        return ksp;
+        if (!kspA)
+        {
+          kspA = std::make_unique<KspSolver>(iodata, spaceop.GetNDSpaces(),
+                                             &spaceop.GetH1Spaces());
+        }
+        ksp->SetOperators(*A, *B);
       };
     }
   }
@@ -100,7 +103,7 @@ public:
     {
       C->AddMult(du, rhs, 1.0);
     }
-    add(-1.0, rhs, dJcoef(t), NegJ, rhs);
+    Vector::add(-1.0, rhs, dJcoef(t), NegJ, rhs);
   }
 
   void Mult(const Vector &u, const Vector &du, Vector &ddu) const override
@@ -125,7 +128,7 @@ public:
     {
       // Configure the linear solver, including the system matrix and also the matrix
       // (matrices) from which the preconditioner will be constructed.
-      kspA = ConfigureLinearSolver(a0, a1);
+      ConfigureLinearSolver(a0, a1);
       a0_ = a0;
       a1_ = a1;
       k = 0.0;
@@ -196,13 +199,14 @@ const KspSolver &TimeOperator::GetLinearSolver() const
 double TimeOperator::GetMaxTimeStep() const
 {
   const auto &curlcurl = dynamic_cast<const TimeDependentCurlCurlOperator &>(*op);
-  const ParOperator &M = *curlcurl.M;
-  const ParOperator &K = *curlcurl.K;
+  MPI_comm comm = curlcurl.comm;
+  const Operator &M = *curlcurl.M;
+  const Operator &K = *curlcurl.K;
 
   // Solver for M⁻¹.
   constexpr double lin_tol = 1.0e-9;
   constexpr int max_lin_it = 500;
-  mfem::CGSolver pcg(M.GetComm());
+  mfem::CGSolver pcg(comm);
   pcg.SetRelTol(lin_tol);
   pcg.SetMaxIter(max_lin_it);
   pcg.SetPrintLevel(0);
@@ -213,8 +217,8 @@ double TimeOperator::GetMaxTimeStep() const
   pcg.SetPreconditioner(jac);
 
   // Power iteration to estimate largest eigenvalue of undamped system matrix M⁻¹ K.
-  SymmetricProductOperator op(pcg, K);
-  double lam = linalg::SpectralNorm(M.GetComm(), op, false);
+  ProductOperator op(pcg, K);
+  double lam = linalg::SpectralNorm(comm, op, false);
   MFEM_VERIFY(lam > 0.0, "Error during power iteration, λ = " << lam << "!");
   return 2.0 / std::sqrt(lam);
 }

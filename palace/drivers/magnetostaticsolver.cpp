@@ -23,14 +23,13 @@ void MagnetostaticSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mes
   // handled eliminating the rows and columns of the system matrix for the corresponding
   // dofs.
   timer.Lap();
-  std::vector<std::unique_ptr<ParOperator>> K;
   CurlCurlOperator curlcurlop(iodata, mesh);
-  curlcurlop.GetStiffnessMatrix(K);
+  auto K = curlcurlop.GetStiffnessMatrix();
   SaveMetadata(curlcurlop.GetNDSpace());
 
   // Set up the linear solver.
   KspSolver ksp(iodata, curlcurlop.GetNDSpaces(), &curlcurlop.GetH1Spaces());
-  ksp.SetOperator(*K.back(), K);
+  ksp.SetOperators(K, K);
 
   // Terminal indices are the set of boundaries over which to compute the inductance matrix.
   PostOperator postop(iodata, curlcurlop, "magnetostatic");
@@ -39,7 +38,7 @@ void MagnetostaticSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mes
               "No surface current boundaries specified for magnetostatic simulation!");
 
   // Source term and solution vector storage.
-  Vector RHS(K.back()->Height());
+  Vector RHS(K->Height());
   std::vector<Vector> A(nstep);
   timer.construct_time += timer.Lap();
 
@@ -64,8 +63,8 @@ void MagnetostaticSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mes
     timer.solve_time += timer.Lap();
 
     Mpi::Print(" Sol. ||A|| = {:.6e} (||RHS|| = {:.6e})\n",
-               linalg::Norml2(K.back()->GetComm(), A[step]),
-               linalg::Norml2(K.back()->GetComm(), RHS));
+               linalg::Norml2(curlcurlop.GetComm(), A[step]),
+               linalg::Norml2(curlcurlop.GetComm(), RHS));
     timer.postpro_time += timer.Lap();
 
     // Next source.
@@ -89,7 +88,7 @@ void MagnetostaticSolver::Postprocess(CurlCurlOperator &curlcurlop, PostOperator
   //                         Φ_i = ∫ B ⋅ n_j dS
   // and M_ij = Φ_i/I_j. The energy formulation avoids having to locally integrate B =
   // ∇ x A.
-  std::unique_ptr<ParOperator> Curl = curlcurlop.GetCurlMatrix();
+  auto Curl = curlcurlop.GetCurlMatrix();
   const SurfaceCurrentOperator &surf_j_op = curlcurlop.GetSurfaceCurrentOp();
   int nstep = static_cast<int>(surf_j_op.Size());
   mfem::DenseMatrix M(nstep), Mm(nstep);
@@ -143,7 +142,7 @@ void MagnetostaticSolver::Postprocess(CurlCurlOperator &curlcurlop, PostOperator
       }
       else if (j > i)
       {
-        add(A[i], A[j], Aij);
+        Vector::add(A[i], A[j], Aij);
         Curl->Mult(Aij, B);
         postop.SetBGridFunction(B);
         double Um = postop.GetHFieldEnergy();

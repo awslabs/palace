@@ -5,7 +5,6 @@
 
 #include <complex>
 #include <mfem.hpp>
-#include "linalg/complex.hpp"
 #include "linalg/ksp.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
@@ -116,26 +115,21 @@ void DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator &postop, in
   // Because the Dirichlet BC is always homogenous, no special elimination is required on
   // the RHS. Assemble the linear system for the initial frequency (so we can call
   // KspSolver::SetOperators). Compute everything at the first frequency step.
-  std::unique_ptr<ComplexParOperator> K = spaceop.GetComplexSystemMatrix(
-      SpaceOperator::OperatorType::STIFFNESS, Operator::DIAG_ONE);
-  std::unique_ptr<ComplexParOperator> C = spaceop.GetComplexSystemMatrix(
-      SpaceOperator::OperatorType::DAMPING, Operator::DIAG_ZERO);
-  std::unique_ptr<ComplexParOperator> M = spaceop.GetComplexSystemMatrix(
-      SpaceOperator::OperatorType::MASS, Operator::DIAG_ZERO);
-  std::unique_ptr<ComplexParOperator> A2 = spaceop.GetComplexSystemMatrix(
-      SpaceOperator::OperatorType::EXTRA, omega0, Operator::DIAG_ZERO);
-  std::unique_ptr<ComplexParOperator> Curl = spaceop.GetComplexCurlMatrix();
-  std::unique_ptr<ComplexParOperator> A = spaceop.GetComplexSystemMatrix(
-      1.0, 1i * omega0, -omega0 * omega0, K.get(), C.get(), M.get(), A2.get());
+  auto K = spaceop.GetComplexStiffnessMatrix(Operator::DIAG_ONE);
+  auto C = spaceop.GetComplexDampingMatrix(Operator::DIAG_ZERO);
+  auto M = spaceop.GetComplexMassMatrix(Operator::DIAG_ZERO);
+  auto A2 = spaceop.GetComplexExtraSystemMatrix(omega0, Operator::DIAG_ZERO);
+  auto Curl = spaceop.GetComplexCurlMatrix();
 
   // Set up the linear solver and set operators for the first frequency step. The
   // preconditioner for the complex linear system is constructed from a real approximation
   // to the complex system matrix.
-  std::vector<std::unique_ptr<ParOperator>> P, AuxP;
-  spaceop.GetPreconditionerMatrix(1.0, omega0, -omega0 * omega0, omega0, P, AuxP);
+  auto A = spaceop.GetSystemMatrix(1.0, 1i * omega0, -omega0 * omega0, K.get(), C.get(),
+                                   M.get(), A2.get());
+  auto P = spaceop.GetPreconditionerMatrix(1.0, omega0, -omega0 * omega0, omega0);
 
   ComplexKspSolver ksp(iodata, spaceop.GetNDSpaces(), &spaceop.GetH1Spaces());
-  ksp.SetOperator(*A, P, &AuxP);
+  ksp.SetOperators(*A, *P);
 
   // Set up RHS vector for the incident field at port boundaries, and the vector for the
   // first frequency step.
@@ -158,12 +152,11 @@ void DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator &postop, in
     if (step > step0)
     {
       // Update frequency-dependent excitation and operators.
-      A2 = spaceop.GetComplexSystemMatrix(SpaceOperator::OperatorType::EXTRA, omega,
-                                          Operator::DIAG_ZERO);
-      A = spaceop.GetComplexSystemMatrix(1.0, 1i * omega, -omega * omega, K.get(), C.get(),
-                                         M.get(), A2.get());
-      spaceop.GetPreconditionerMatrix(1.0, omega, -omega * omega, omega, P, AuxP);
-      ksp.SetOperator(*A, P, &AuxP);
+      A2 = spaceop.GetComplexExtraSystemMatrix(omega, Operator::DIAG_ZERO);
+      A = spaceop.GetSystemMatrix(1.0, 1i * omega, -omega * omega, K.get(), C.get(),
+                                  M.get(), A2.get());
+      P = spaceop.GetPreconditionerMatrix(1.0, omega, -omega * omega, omega);
+      ksp.SetOperators(*A, *P);
     }
     spaceop.GetExcitationVector(omega, RHS);
     timer.construct_time += timer.Lap();
@@ -180,8 +173,9 @@ void DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator &postop, in
     postop.SetEGridFunction(E);
     postop.SetBGridFunction(B);
     postop.UpdatePorts(spaceop.GetLumpedPortOp(), spaceop.GetWavePortOp(), omega);
-    Mpi::Print(" Sol. ||E|| = {:.6e} (||RHS|| = {:.6e})\n", linalg::Norml2(A->GetComm(), E),
-               linalg::Norml2(A->GetComm(), RHS));
+    Mpi::Print(" Sol. ||E|| = {:.6e} (||RHS|| = {:.6e})\n",
+               linalg::Norml2(spaceop.GetComm(), E),
+               linalg::Norml2(spaceop.GetComm(), RHS));
     if (!iodata.solver.driven.only_port_post)
     {
       E_elec = postop.GetEFieldEnergy();
@@ -238,7 +232,7 @@ void DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator &postop, i
 
   // Allocate negative curl matrix for postprocessing the B-field and vectors for the
   // high-dimensional field solution.
-  std::unique_ptr<ComplexParOperator> Curl = spaceop.GetComplexCurlMatrix();
+  auto Curl = spaceop.GetComplexCurlMatrix();
   ComplexVector E(Curl->Width()), B(Curl->Height());
   E = std::complex<double>(0.0, 0.0);
   B = std::complex<double>(0.0, 0.0);
@@ -339,8 +333,7 @@ void DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator &postop, i
     postop.SetEGridFunction(E);
     postop.SetBGridFunction(B);
     postop.UpdatePorts(spaceop.GetLumpedPortOp(), spaceop.GetWavePortOp(), omega);
-    // Mpi::Print(" Sol. ||E|| = {:.6e}\n", linalg::Norml2(A->GetComm(), E));  //XX TODO
-    // PROM
+    Mpi::Print(" Sol. ||E|| = {:.6e}\n", linalg::Norml2(spaceop.GetComm(), E));
     if (!iodata.solver.driven.only_port_post)
     {
       E_elec = postop.GetEFieldEnergy();

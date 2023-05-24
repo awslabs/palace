@@ -8,9 +8,10 @@
 #include <map>
 #include <memory>
 #include <mfem.hpp>
-#include "linalg/complex.hpp"
 #include "linalg/eps.hpp"
 #include "linalg/ksp.hpp"
+#include "linalg/operator.hpp"
+#include "linalg/vector.hpp"
 
 namespace palace
 {
@@ -40,12 +41,12 @@ private:
   // Marker for all boundary attributes making up this port boundary. Mutable because
   // some MFEM API calls are not const correct.
   mutable mfem::Array<int> attr_marker;
+  HYPRE_BigInt attr_tdof_sizes[2];
 
   // Operator storage for repeated boundary mode eigenvalue problem solves.
   double mu_eps_max;
-  HYPRE_BigInt attr_tdof_sizes[2];
-  std::unique_ptr<mfem::HypreParMatrix> A2r, A2i, B3, P;
-  std::unique_ptr<ComplexOperator> A, B;
+  std::unique_ptr<mfem::HypreParMatrix> A2r, A2i, B3;
+  std::unique_ptr<ComplexOperator> A, B, P;
   ComplexVector v0, e0, e0t, e0n;
 
   // Eigenvalue solver for boundary modes.
