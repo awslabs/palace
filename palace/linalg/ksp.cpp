@@ -3,9 +3,9 @@
 
 #include "ksp.hpp"
 
+#include <mfem.hpp>
 #include "linalg/amg.hpp"
 #include "linalg/ams.hpp"
-#include "linalg/complex.hpp"
 #include "linalg/gmg.hpp"
 #include "linalg/mumps.hpp"
 #include "linalg/strumpack.hpp"
@@ -19,8 +19,9 @@ namespace palace
 namespace
 {
 
-std::unique_ptr<mfem::IterativeSolver> ConfigureKrylovSolver(MPI_Comm comm,
-                                                             const IoData &iodata)
+template <typename OperType>
+std::unique_ptr<IterativeSolver<OperType>> ConfigureKrylovSolver(MPI_Comm comm,
+                                                                 const IoData &iodata)
 {
   // Configure solver settings as needed based on inputs.
   config::LinearSolverData::KspType type = iodata.solver.linear.ksp_type;
@@ -37,65 +38,100 @@ std::unique_ptr<mfem::IterativeSolver> ConfigureKrylovSolver(MPI_Comm comm,
       type = config::LinearSolverData::KspType::GMRES;
     }
   }
-  mfem::IterativeSolver::PrintLevel print =
-      mfem::IterativeSolver::PrintLevel().Warnings().Errors();
-  if (iodata.problem.verbose > 0)
-  {
-    print.Summary();
-    if (iodata.problem.verbose > 1)
-    {
-      print.Iterations();
-      if (iodata.problem.verbose > 2)
-      {
-        print.All();
-      }
-    }
-  }
-
-  // XX TODO: We may want to replace the MFEM Krylov solvers with Hypre ones for performance
-  //          (for examples, Hypre has a COGMRES solver which uses CGS (or CGS2) for
-  //          orthogonalization). These will require some wrappers to allow operability with
-  //          an mfem::Operator operator and mfem::Solver preconditioner.
 
   // Create the solver.
-  std::unique_ptr<mfem::IterativeSolver> ksp;
+  std::unique_ptr<IterativeSolver<OperType>> ksp;
   switch (type)
   {
     case config::LinearSolverData::KspType::CG:
-      ksp = std::make_unique<mfem::CGSolver>(comm);
-      break;
-    case config::LinearSolverData::KspType::MINRES:
-      ksp = std::make_unique<mfem::MINRESSolver>(comm);
+      ksp = std::make_unique<CgSolver<OperType>>(comm, iodata.problem.verbose);
       break;
     case config::LinearSolverData::KspType::GMRES:
       {
-        auto gmres = std::make_unique<mfem::GMRESSolver>(comm);
-        gmres->SetKDim(iodata.solver.linear.max_size);
+        auto gmres = std::make_unique<GmresSolver<OperType>>(comm, iodata.problem.verbose);
+        gmres->SetRestartDim(iodata.solver.linear.max_size);
         ksp = std::move(gmres);
       }
       break;
     case config::LinearSolverData::KspType::FGMRES:
       {
-        auto fgmres = std::make_unique<mfem::FGMRESSolver>(comm);
-        fgmres->SetKDim(iodata.solver.linear.max_size);
+        auto fgmres =
+            std::make_unique<FGMRESSolver<OperType>>(comm, iodata.problem.verbose);
+        fgmres->SetRestartDim(iodata.solver.linear.max_size);
         ksp = std::move(fgmres);
       }
-      break;
-    case config::LinearSolverData::KspType::BICGSTAB:
-      ksp = std::make_unique<mfem::BiCGSTABSolver>(comm);
       break;
     default:
       MFEM_ABORT("Unexpected solver type for Krylov solver configuration!");
       break;
   }
-  ksp->iterative_mode = iodata.solver.linear.initial_guess;
+  ksp->SetInitialGuess(iodata.solver.linear.initial_guess);
   ksp->SetRelTol(iodata.solver.linear.tol);
   ksp->SetMaxIter(iodata.solver.linear.max_it);
-  ksp->SetPrintLevel(print);
+
+  // Configure preconditioning side (only for GMRES).
+  if (iodata.solver.linear.pc_side_type != config::LinearSolverData::SideType::DEFAULT)
+  {
+    if (type != config::LinearSolverData::KspType::GMRES)
+    {
+      Mpi::Warning(
+          comm, "Preconditioner side will be ignored for non-GMRES iterative solvers!\n");
+    }
+    else
+    {
+      auto *gmres = static_cast<GmresSolver<OperType>>(ksp.get());
+      switch (iodata.solver.linear.pc_side_type)
+      {
+        case config::LinearSolverData::SideType::LEFT:
+          gmres->SetPrecSide(GmresSolver<OperType>::PrecSide::LEFT);
+          break;
+        case config::LinearSolverData::SideType::RIGHT:
+          gmres->SetPrecSide(GmresSolver<OperType>::PrecSide::RIGHT);
+          break;
+        default:
+          MFEM_ABORT("Unexpected preconditioner side for Krylov solver configuration!");
+          break;
+      }
+    }
+  }
+
+  // Configure orthogonalization method for GMRES/FMGRES.
+  if (iodata.solver.linear.orthog_type != config::LinearSolverData::OrthogType::DEFAULT)
+  {
+    if (type != config::LinearSolverData::KspType::GMRES ||
+        type != config::LinearSolverData::KspType::FGMRES)
+    {
+      Mpi::Warning(comm, "Orthogonalization method will be ignored for non-GMRES/FGMRES "
+                         "iterative solvers!\n");
+    }
+    else
+    {
+      // Because FGMRES inherits from GMRES, this is OK.
+      auto *gmres = static_cast<GmresSolver<OperType>>(ksp.get());
+      switch (iodata.solver.linear.orthog_type)
+      {
+        case config::LinearSolverData::OrthogType::MGS:
+          gmres->SetOrthogonalization(GmresSolver<OperType>::OrthogType::MGS);
+          break;
+        case config::LinearSolverData::OrthogType::CGS:
+          gmres->SetOrthogonalization(GmresSolver<OperType>::OrthogType::CGS);
+          break;
+        case config::LinearSolverData::OrthogType::CGS2:
+          gmres->SetOrthogonalization(GmresSolver<OperType>::OrthogType::CGS2);
+          break;
+        default:
+          MFEM_ABORT(
+              "Unexpected orthogonalization method for Krylov solver configuration!");
+          break;
+      }
+    }
+  }
+
   return ksp;
 }
 
-std::unique_ptr<mfem::Solver>
+template <typename OperType>
+std::unique_ptr<Solver<OperType>>
 ConfigurePreconditionerSolver(MPI_Comm comm, const IoData &iodata,
                               mfem::ParFiniteElementSpaceHierarchy &fespaces,
                               mfem::ParFiniteElementSpaceHierarchy *aux_fespaces)
@@ -131,7 +167,7 @@ ConfigurePreconditionerSolver(MPI_Comm comm, const IoData &iodata,
   }
   int print = iodata.problem.verbose - 1;
 
-  // Create the solver.
+  // Create the real-valued solver first.
   std::unique_ptr<mfem::Solver> pc;
   switch (type)
   {
@@ -182,6 +218,8 @@ ConfigurePreconditionerSolver(MPI_Comm comm, const IoData &iodata,
       MFEM_ABORT("Unexpected solver type for preconditioner configuration!");
       break;
   }
+
+  // Construct the actual solver, which has the right value type.
   if (iodata.solver.linear.pc_mg)
   {
     // This will construct the multigrid hierarchy using pc as the coarse solver
@@ -192,163 +230,73 @@ ConfigurePreconditionerSolver(MPI_Comm comm, const IoData &iodata,
     {
       MFEM_VERIFY(aux_fespaces, "Multigrid with auxiliary space smoothers requires both "
                                 "primary space and auxiliary spaces for construction!");
-      return std::make_unique<GeometricMultigridSolver>(iodata, std::move(pc), fespaces,
-                                                        aux_fespaces);
+      return std::make_unique<GeometricMultigridSolver<OperType>>(iodata, std::move(pc),
+                                                                  fespaces, aux_fespaces);
     }
     else
     {
-      return std::make_unique<GeometricMultigridSolver>(iodata, std::move(pc), fespaces,
-                                                        nullptr);
+      return std::make_unique<GeometricMultigridSolver<OperType>>(iodata, std::move(pc),
+                                                                  fespaces, nullptr);
     }
   }
   else
   {
-    return pc;
+    return std::make_unique<WrapperSolver<OperType>>(std::move(pc));
   }
 }
-
-class ComplexBlockDiagonalSolver : public mfem::Solver
-{
-private:
-  std::unique_ptr<mfem::Solver> op_;
-
-public:
-  ComplexBlockDiagonalSolver(std::unique_ptr<mfem::Solver> &&op)
-    : mfem::Solver(2 * op->Height(), 2 * op->Width()), op_(std::move(op))
-  {
-  }
-
-  mfem::Solver &GetSolver() { return *op_; }
-
-  void SetOperator(const Operator &op) override {}
-
-  void Mult(const Vector &x, Vector &y) const override
-  {
-    MFEM_ASSERT(x.Size() == 2 * op_->Width() && y.Size() == 2 * op_->Height(),
-                "Incompatible dimensions for ComplexBlockDiagonalSolver::Mult!");
-    Vector xr, xi, yr, yi;
-    xr.MakeRef(const_cast<Vector &>(x), 0, op_->Width());
-    xi.MakeRef(const_cast<Vector &>(x), op_->Width(), op_->Width());
-    yr.MakeRef(y, 0, op_->Height());
-    yi.MakeRef(y, op_->Height(), op_->Height());
-    mfem::Array<const Vector *> X(2);
-    mfem::Array<Vector *> Y(2);
-    X[0] = &xr;
-    X[1] = &xi;
-    Y[0] = &yr;
-    Y[1] = &yi;
-    op_->ArrayMult(X, Y);
-    yr.SyncAliasMemory(y);
-    yi.SyncAliasMemory(y);
-  }
-};
 
 }  // namespace
 
-KspSolver::KspSolver(const IoData &iodata, mfem::ParFiniteElementSpaceHierarchy &fespaces,
-                     mfem::ParFiniteElementSpaceHierarchy *aux_fespaces)
-  : KspSolver(ConfigureKrylovSolver(fespaces.GetFinestFESpace().GetComm(), iodata),
-              ConfigurePreconditionerSolver(fespaces.GetFinestFESpace().GetComm(), iodata,
-                                            fespaces, aux_fespaces))
+template <typename OperType>
+KspSolver<OperType>::KspSolver(const IoData &iodata,
+                               mfem::ParFiniteElementSpaceHierarchy &fespaces,
+                               mfem::ParFiniteElementSpaceHierarchy *aux_fespaces)
+  : KspSolver(
+        ConfigureKrylovSolver<OperType>(fespaces.GetFinestFESpace().GetComm(), iodata),
+        ConfigurePreconditionerSolver<OperType>(fespaces.GetFinestFESpace().GetComm(),
+                                                iodata, fespaces, aux_fespaces))
 {
 }
 
-KspSolver::KspSolver(std::unique_ptr<mfem::IterativeSolver> &&ksp,
-                     std::unique_ptr<mfem::Solver> &&pc)
-  : mfem::Solver(), ksp_(std::move(ksp)), pc_(std::move(pc)), ksp_mult(0), ksp_mult_it(0)
+template <typename OperType>
+KspSolver<OperType>::KspSolver(std::unique_ptr<IterativeSolver<OperType>> &&ksp,
+                               std::unique_ptr<Solver<OperType>> &&pc)
+  : ksp(std::move(ksp)), pc(std::move(pc)), ksp_mult(0), ksp_mult_it(0)
 {
 }
 
-void KspSolver::SetOperatorFinalize(const Operator &op)
+template <typename OperType>
+void KspSolver<OperType>::SetOperators(const OperType &op, const OperType &pc_op)
 {
-  // Unset the preconditioner before so that IterativeSolver::SetOperator does not set the
-  // preconditioner operator again.
-  ksp_->SetPreconditioner(nullptr);
-  ksp_->SetOperator(op);
-  ksp_->SetPreconditioner(*pc_);
-  height = op.Height();
-  width = op.Width();
-}
-
-void KspSolver::SetOperator(const Operator &op, const Operator &pc_op)
-{
-  pc_->SetOperator(pc_op);
-  SetOperatorFinalize(op);
-}
-
-void KspSolver::SetOperator(const Operator &op,
-                            const std::vector<std::unique_ptr<ParOperator>> &pc_ops,
-                            const std::vector<std::unique_ptr<ParOperator>> *aux_pc_ops)
-{
-  auto *gmg = dynamic_cast<GeometricMultigridSolver *>(pc_.get());
-  if (gmg)
+  ksp->SetOperator(op);
+  const auto *mg_op = dynamic_cast<const MultigridOperator<OperType> *>(&pc_op);
+  const auto *mg_pc = dynamic_cast<const GeometricMultigridSolver<OperType> *>(pc.get());
+  if (mg_op && !mg_pc)
   {
-    gmg->SetOperator(pc_ops, aux_pc_ops);
+    pc->SetOperator(mg_op->GetFinestOperator());
   }
   else
   {
-    pc_->SetOperator(*pc_ops.back());
+    pc->SetOperator(pc_op);
   }
-  SetOperatorFinalize(op);
 }
 
-void KspSolver::Mult(const Vector &x, Vector &y) const
+template <typename OperType>
+void KspSolver<OperType>::Mult(const VecType &x, VecType &y) const
 {
-  ksp_->Mult(x, y);
-  if (!ksp_->GetConverged())
+  ksp->Mult(x, y);
+  if (!ksp->GetConverged())
   {
     Mpi::Warning(
-        ksp_->GetComm(),
+        ksp->GetComm(),
         "Linear solver did not converge, norm(Ax-b)/norm(b) = {:.3e} (norm(b) = {:.3e})!\n",
-        ksp_->GetFinalRelNorm(), ksp_->GetInitialNorm());
+        ksp->GetFinalRes() / ksp->GetInitialRes(), ksp->GetInitialRes());
   }
   ksp_mult++;
-  ksp_mult_it += ksp_->GetNumIterations();
+  ksp_mult_it += ksp->GetNumIterations();
 }
 
-ComplexKspSolver::ComplexKspSolver(const IoData &iodata,
-                                   mfem::ParFiniteElementSpaceHierarchy &fespaces,
-                                   mfem::ParFiniteElementSpaceHierarchy *aux_fespaces)
-  : KspSolver(ConfigureKrylovSolver(fespaces.GetFinestFESpace().GetComm(), iodata),
-              std::make_unique<ComplexBlockDiagonalSolver>(ConfigurePreconditionerSolver(
-                  fespaces.GetFinestFESpace().GetComm(), iodata, fespaces, aux_fespaces)))
-{
-}
-
-ComplexKspSolver::ComplexKspSolver(std::unique_ptr<mfem::IterativeSolver> &&ksp,
-                                   std::unique_ptr<mfem::Solver> &&pc)
-  : KspSolver(std::move(ksp), std::make_unique<ComplexBlockDiagonalSolver>(std::move(pc)))
-{
-}
-
-void ComplexKspSolver::SetOperator(const ComplexOperator &op, const Operator &pc_op)
-{
-  auto &block = static_cast<ComplexBlockDiagonalSolver *>(pc_.get())->GetSolver();
-  block.SetOperator(pc_op);
-  SetOperatorFinalize(op);
-}
-
-void ComplexKspSolver::SetOperator(
-    const ComplexOperator &op, const std::vector<std::unique_ptr<ParOperator>> &pc_ops,
-    const std::vector<std::unique_ptr<ParOperator>> *aux_pc_ops)
-{
-  auto &block = static_cast<ComplexBlockDiagonalSolver *>(pc_.get())->GetSolver();
-  auto *gmg = dynamic_cast<GeometricMultigridSolver *>(&block);
-  if (gmg)
-  {
-    gmg->SetOperator(pc_ops, aux_pc_ops);
-  }
-  else
-  {
-    block.SetOperator(*pc_ops.back());
-  }
-  SetOperatorFinalize(op);
-}
-
-void ComplexKspSolver::Mult(const ComplexVector &x, ComplexVector &y) const
-{
-  KspSolver::Mult(x, y);
-  y.Sync();
-}
+template class KspSolver<Operator>;
+template class KspSolver<ComplexOperator>;
 
 }  // namespace palace

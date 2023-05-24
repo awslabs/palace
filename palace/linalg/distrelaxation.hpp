@@ -5,10 +5,18 @@
 #define PALACE_LINALG_DIST_RELAXATION_SMOOTHER_HPP
 
 #include <memory>
-#include <vector>
-#include <mfem.hpp>
 #include "linalg/operator.hpp"
+#include "linalg/solver.hpp"
 #include "linalg/vector.hpp"
+
+namespace mfem
+{
+
+template <typename T>
+class Array;
+class ParFiniteElementSpace;
+
+}  // namespace mfem
 
 namespace palace
 {
@@ -19,40 +27,42 @@ namespace palace
 // Reference: Hiptmair, Multigrid method for Maxwell's equations, SIAM J. Numer. Anal.
 //            (1998).
 //
-class DistRelaxationSmoother : public mfem::Solver
+template <typename OperType>
+class DistRelaxationSmoother : public Solver<OperType>
 {
 private:
   // Number of smoother iterations.
   const int pc_it;
 
-  // System matrix and its projection Gᵀ A G (not owned).
-  const ParOperator *A, *A_G;
+  // System matrix and its projection GᵀAG (not owned).
+  const OperType *A, *A_G;
+  const mfem::Array<int> *dbc_tdof_list_G;
 
   // Discrete gradient matrix.
-  std::unique_ptr<ParOperator> G;
+  std::unique_ptr<Operator> G;
 
   // Point smoother objects for each matrix.
-  mutable std::unique_ptr<mfem::Solver> B;
-  std::unique_ptr<mfem::Solver> B_G;
+  mutable std::unique_ptr<Solver<OperType>> B;
+  std::unique_ptr<Solver<OperType>> B_G;
 
   // Temporary vectors for smoother application.
-  mutable Vector r, x_G, y_G;
+  mutable VecType r, x_G, y_G;
 
 public:
   DistRelaxationSmoother(mfem::ParFiniteElementSpace &nd_fespace,
                          mfem::ParFiniteElementSpace &h1_fespace, int smooth_it,
                          int cheby_smooth_it, int cheby_order);
 
-  void SetOperator(const Operator &op) override
+  void SetOperator(const OperType &op) override
   {
     MFEM_ABORT("SetOperator with a single operator is not implemented for "
                "DistRelaxationSmoother, use the two argument signature instead!");
   }
-  void SetOperator(const Operator &op, const Operator &op_G);
+  void SetOperators(const OperType &op, const OperType &op_G);
 
-  void Mult(const Vector &x, Vector &y) const override;
+  void Mult(const VecType &x, VecType &y) const override;
 
-  void MultTranspose(const Vector &x, Vector &y) const override;
+  void MultTranspose(const VecType &x, VecType &y) const override;
 };
 
 }  // namespace palace

@@ -4,8 +4,8 @@
 #ifndef PALACE_LINALG_CHEBYSHEV_SMOOTHER_HPP
 #define PALACE_LINALG_CHEBYSHEV_SMOOTHER_HPP
 
-#include <mfem.hpp>
 #include "linalg/operator.hpp"
+#include "linalg/solver.hpp"
 #include "linalg/vector.hpp"
 
 namespace palace
@@ -18,32 +18,33 @@ namespace palace
 // Chebyshev smoothers and one-sided V-cycles, arXiv:2210.03179v1 (2022) for reference on
 // the 4th-kind Chebyshev polynomial smoother.
 //
-class ChebyshevSmoother : public mfem::Solver
+template <typename OperType>
+class ChebyshevSmoother : public Solver<OperType>
 {
 private:
   // Number of smoother iterations and polynomial order.
   const int pc_it, order;
 
   // System matrix (not owned).
-  const ParOperator *A;
+  const OperType *A;
 
   // Inverse diagonal scaling of the operator.
-  Vector dinv;
+  VecType dinv;
 
   // Maximum operator eigenvalue for Chebyshev polynomial smoothing.
   double lambda_max;
 
   // Temporary vectors for smoother application.
-  mutable Vector r, d;
+  mutable VecType r, d;
 
 public:
   ChebyshevSmoother(int smooth_it, int poly_order);
 
-  void SetOperator(const Operator &op) override;
+  void SetOperator(const OperType &op) override;
 
-  void Mult(const Vector &x, Vector &y) const override;
+  void Mult(const VecType &x, VecType &y) const override;
 
-  void MultTranspose(const Vector &x, Vector &y) const override
+  void MultTranspose(const VecType &x, VecType &y) const override
   {
     Mult(x, y);  // Assumes operator symmetry
   }

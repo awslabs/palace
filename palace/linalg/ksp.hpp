@@ -1,96 +1,65 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#ifndef PALACE_LINALG_KSP_SOLVER_HPP
-#define PALACE_LINALG_KSP_SOLVER_HPP
+#ifndef PALACE_LINALG_KSP_HPP
+#define PALACE_LINALG_KSP_HPP
 
 #include <memory>
-#include <vector>
-#include <mfem.hpp>
+#include <type_traits>
+#include "linalg/iterative.hpp"
 #include "linalg/operator.hpp"
-#include "linalg/vector.hpp"
+#include "linalg/solver.hpp"
+
+namespace mfem
+{
+
+class ParFiniteElementSpaceHierarchy;
+
+}  // namespace mfem
 
 namespace palace
 {
 
-class ComplexParOperator;
-class ComplexVector;
 class IoData;
 
-class KspSolver : public mfem::Solver
+//
+// Linear solver class composing an iterative solver and preconditioner object.
+//
+template <typename OperType = Operator>
+class KspSolver
 {
+  static_assert(std::is_same<OperType, Operator>::value ||
+                    std::is_same<OperType, ComplexOperator>::value,
+                "Solver can only be defined for OperType = Operator or ComplexOperator!");
+
 protected:
+  typedef typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
+                                    ComplexVector, Vector>::type VecType;
+
   // The actual solver and preconditioner objects.
-  std::unique_ptr<mfem::IterativeSolver> ksp_;
-  std::unique_ptr<mfem::Solver> pc_;
+  std::unique_ptr<IterativeSolver<OperType>> ksp;
+  std::unique_ptr<Solver<OperType>> pc;
 
   // Counters for number of calls to Mult method for linear solves, and cumulative number
   // of iterations.
   mutable int ksp_mult, ksp_mult_it;
 
-protected:
-  KspSolver() : ksp_(nullptr), pc_(nullptr), ksp_mult(0), ksp_mult_it(0) {}
-
-  void SetOperatorFinalize(const Operator &op);
-
 public:
   KspSolver(const IoData &iodata, mfem::ParFiniteElementSpaceHierarchy &fespaces,
             mfem::ParFiniteElementSpaceHierarchy *aux_fespaces = nullptr);
-  KspSolver(std::unique_ptr<mfem::IterativeSolver> &&ksp,
-            std::unique_ptr<mfem::Solver> &&pc);
+  KspSolver(std::unique_ptr<IterativeSolver<OperType>> &&ksp,
+            std::unique_ptr<Solver<OperType>> &&pc);
 
   int NumTotalMult() const { return ksp_mult; }
-  int NumTotalMultIter() const { return ksp_mult_it; }
+  int NumTotalMultIterations() const { return ksp_mult_it; }
 
-  void SetOperator(const Operator &op) override
-  {
-    MFEM_ABORT("SetOperator with a single operator is not implemented for KspSolver, you "
-               "must specify the preconditioner operator as well!");
-  }
+  void SetOperators(const OperType &op, const OperType &pc_op);
 
-  virtual void SetOperator(const Operator &op, const Operator &pc_op);
-  virtual void
-  SetOperator(const Operator &op, const std::vector<std::unique_ptr<ParOperator>> &pc_ops,
-              const std::vector<std::unique_ptr<ParOperator>> *pc_aux_ops = nullptr);
-
-  void Mult(const Vector &x, Vector &y) const override;
+  void Mult(const VecType &x, VecType &y) const;
 };
 
-class ComplexKspSolver : public KspSolver
-{
-public:
-  ComplexKspSolver(const IoData &iodata, mfem::ParFiniteElementSpaceHierarchy &fespaces,
-                   mfem::ParFiniteElementSpaceHierarchy *aux_fespaces = nullptr);
-  ComplexKspSolver(std::unique_ptr<mfem::IterativeSolver> &&ksp,
-                   std::unique_ptr<mfem::Solver> &&pc);
-
-  using KspSolver::SetOperator;
-  void SetOperator(const Operator &op, const Operator &pc_op) override
-  {
-    MFEM_ABORT("SetOperator with a real-valued operator is not implemented for "
-               "ComplexKspSolver, use the complex-valued signature instead!");
-  }
-  void SetOperator(
-      const Operator &op, const std::vector<std::unique_ptr<ParOperator>> &pc_ops,
-      const std::vector<std::unique_ptr<ParOperator>> *pc_aux_ops = nullptr) override
-  {
-    MFEM_ABORT("SetOperator with a real-valued operator is not implemented for "
-               "ComplexKspSolver, use the complex-valued signature instead!");
-  }
-
-  void SetOperator(const ComplexOperator &op, const Operator &pc_op);
-  void SetOperator(const ComplexOperator &op,
-                   const std::vector<std::unique_ptr<ParOperator>> &pc_ops,
-                   const std::vector<std::unique_ptr<ParOperator>> *pc_aux_ops = nullptr);
-
-  void Mult(const Vector &x, Vector &y) const override
-  {
-    MFEM_ABORT("Mult with a real-valued vector is not implemented for "
-               "ComplexKspSolver, use the complex-valued signature instead!");
-  }
-  void Mult(const ComplexVector &x, ComplexVector &y) const;
-};
+using ComplexKspSolver = KspSolver<ComplexOperator>;
 
 }  // namespace palace
 
-#endif  // PALACE_LINALG_KSP_SOLVER_HPP
+#endif  // PALACE_LINALG_KSP_HPP
