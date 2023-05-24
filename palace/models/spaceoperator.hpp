@@ -9,7 +9,6 @@
 #include <vector>
 #include <mfem.hpp>
 #include "fem/coefficient.hpp"
-#include "linalg/complex.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
 #include "models/farfieldboundaryoperator.hpp"
@@ -68,14 +67,14 @@ private:
   // Helper functions for building the bilinear forms corresponding to the discretized
   // operators in Maxwell's equations.
   void AddStiffnessCoefficients(double coef, SumMatrixCoefficient &df,
-                                SumMatrixCoefficient &f, SumMatrixCoefficient &fb);
-  void AddDampingCoefficients(double coef, SumMatrixCoefficient &f,
-                              SumMatrixCoefficient &fb);
-  template <MaterialPropertyType MatType = MaterialPropertyType::PERMITTIVITY_REAL>
-  void AddRealMassCoefficients(double coef, SumMatrixCoefficient &f,
-                               SumMatrixCoefficient &fb);
-  void AddImagMassCoefficients(double coef, SumMatrixCoefficient &f,
-                               SumMatrixCoefficient &fb);
+                                SumMatrixCoefficient &f);
+  void AddStiffnessBdrCoefficients(double coef, SumMatrixCoefficient &fb);
+  void AddDampingCoefficients(double coef, SumMatrixCoefficient &f);
+  void AddDampingBdrCoefficients(double coef, SumMatrixCoefficient &fb);
+  void AddRealMassCoefficients(double coef, SumMatrixCoefficient &f);
+  void AddRealMassBdrCoefficients(double coef, SumMatrixCoefficient &fb);
+  void AddImagMassCoefficients(double coef, SumMatrixCoefficient &f);
+  void AddAbsMassCoefficients(double coef, SumMatrixCoefficient &f);
   void AddExtraSystemBdrCoefficients(double omega, SumCoefficient &dfbr,
                                      SumCoefficient &dfbi, SumMatrixCoefficient &fbr,
                                      SumMatrixCoefficient &fbi);
@@ -128,53 +127,52 @@ public:
   //                     A = K + iω C - ω² (Mr + i Mi) + A2(ω) .
   // For time domain problems, any one of K, C, or M = Mr can be constructed. The argument
   // ω is required only for the constructing the "extra" matrix A2(ω).
-  enum class OperatorType
-  {
-    STIFFNESS,
-    DAMPING,
-    MASS,
-    EXTRA
-  };
-
-  std::unique_ptr<ParOperator> GetSystemMatrix(OperatorType type,
-                                               Operator::DiagonalPolicy diag_policy);
-  std::unique_ptr<ComplexParOperator>
-  GetComplexSystemMatrix(OperatorType type, Operator::DiagonalPolicy diag_policy)
-  {
-    return GetComplexSystemMatrix(type, 0.0, diag_policy);
-  }
-  std::unique_ptr<ComplexParOperator>
-  GetComplexSystemMatrix(OperatorType type, double omega,
-                         Operator::DiagonalPolicy diag_policy);
+  std::unique_ptr<Operator> GetStiffnessMatrix(Operator::DiagonalPolicy diag_policy);
+  std::unique_ptr<Operator> GetDampingMatrix(Operator::DiagonalPolicy diag_policy);
+  std::unique_ptr<Operator> GetMassMatrix(Operator::DiagonalPolicy diag_policy);
+  std::unique_ptr<ComplexOperator>
+  GetComplexStiffnessMatrix(Operator::DiagonalPolicy diag_policy);
+  std::unique_ptr<ComplexOperator>
+  GetComplexDampingMatrix(Operator::DiagonalPolicy diag_policy);
+  std::unique_ptr<ComplexOperator>
+  GetComplexMassMatrix(Operator::DiagonalPolicy diag_policy);
+  std::unique_ptr<ComplexOperator>
+  GetComplexExtraSystemMatrix(double omega, Operator::DiagonalPolicy diag_policy);
 
   // Construct the complete frequency or time domain system matrix using the provided
   // stiffness, damping, mass, and extra matrices:
   //                     A = a0 K + a1 C + a2 (Mr + i Mi) + A2 .
   // It is assumed that the inputs have been constructed using previous calls to
   // GetSystemMatrix() and the returned operator does inherit ownership of any of them.
-  std::unique_ptr<ParOperator> GetSystemMatrix(double a0, double a1, double a2,
-                                               const ParOperator *K, const ParOperator *C,
-                                               const ParOperator *M);
-  std::unique_ptr<ComplexParOperator>
-  GetComplexSystemMatrix(std::complex<double> a0, std::complex<double> a1,
-                         std::complex<double> a2, const ComplexParOperator *K,
-                         const ComplexParOperator *C, const ComplexParOperator *M,
-                         const ComplexParOperator *A2);
+  template <typename OperType, typename ScalarType>
+  std::unique_ptr<OperType>
+  GetSystemMatrix(ScalarType a0, ScalarType a1, ScalarType a2, const OperType *K,
+                  const OperType *C, const OperType *M, const OperType *A2 = nullptr);
+
+  // Construct the real, SPD matrix for weighted L2 or H(curl) inner products:
+  //                           B = a0 Kr + a2 Mr .
+  // It is assumed that the inputs have been constructed using previous calls to
+  // GetSystemMatrix() and the returned operator does inherit ownership of any of them.
+  // If K or M have eliminated boundary conditions, they are not eliminated from the
+  // returned operator.
+  std::unique_ptr<Operator> GetInnerProductMatrix(double a0, double a2,
+                                                  const ComplexOperator *K,
+                                                  const ComplexOperator *M);
 
   // Construct the real, optionally SPD matrix for frequency or time domain linear system
   // preconditioning (Mr > 0, Mi < 0, |Mr + i Mi| is done on the material property
   // coefficient, not the matrix entries themselves):
   //             B = a0 K + a1 C -/+ a2 |Mr + i Mi| + A2r(a3) + A2i(a3) .
-  void GetPreconditionerMatrix(double a0, double a1, double a2, double a3,
-                               std::vector<std::unique_ptr<ParOperator>> &B,
-                               std::vector<std::unique_ptr<ParOperator>> &AuxB);
+  template <typename OperType>
+  std::unique_ptr<OperType> GetPreconditionerMatrix(double a0, double a1, double a2,
+                                                    double a3);
 
   // Construct and return the discrete curl or gradient matrices. The complex variants
   // return a matrix suitable for applying to complex-valued vectors.
-  std::unique_ptr<ParOperator> GetCurlMatrix();
-  std::unique_ptr<ComplexParOperator> GetComplexCurlMatrix();
-  std::unique_ptr<ParOperator> GetGradMatrix();
-  std::unique_ptr<ComplexParOperator> GetComplexGradMatrix();
+  std::unique_ptr<Operator> GetCurlMatrix();
+  std::unique_ptr<ComplexOperator> GetComplexCurlMatrix();
+  std::unique_ptr<Operator> GetGradMatrix();
+  std::unique_ptr<ComplexOperator> GetComplexGradMatrix();
 
   // Assemble the right-hand side source term vector for an incident field or current source
   // applied on specified excited boundaries. The return value indicates whether or not the
@@ -191,6 +189,9 @@ public:
   // boundary conditions.
   void GetRandomInitialVector(ComplexVector &v);
   void GetConstantInitialVector(ComplexVector &v);
+
+  // Get the associated MPI communicator.
+  MPI_Comm GetComm() const { return GetNDSpace().GetComm(); }
 };
 
 }  // namespace palace
