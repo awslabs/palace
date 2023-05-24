@@ -135,7 +135,7 @@ LaplaceOperator::LaplaceOperator(const IoData &iodata,
   }
 }
 
-void LaplaceOperator::GetStiffnessMatrix(std::vector<std::unique_ptr<ParOperator>> &K)
+std::unique_ptr<Operator> LaplaceOperator::GetStiffnessMatrix()
 {
   if (print_hdr)
   {
@@ -144,8 +144,7 @@ void LaplaceOperator::GetStiffnessMatrix(std::vector<std::unique_ptr<ParOperator
                GetH1Space().GlobalTrueVSize(), GetNDSpace().GlobalTrueVSize());
     Mpi::Print("\nAssembling multigrid hierarchy:\n");
   }
-  K.clear();
-  K.reserve(h1_fespaces.GetNumLevels());
+  auto K = std::make_unique<MultigridOperator>(h1_fespaces.GetNumLevels());
   for (int l = 0; l < h1_fespaces.GetNumLevels(); l++)
   {
     auto &h1_fespace_l = h1_fespaces.GetFESpaceAtLevel(l);
@@ -170,15 +169,15 @@ void LaplaceOperator::GetStiffnessMatrix(std::vector<std::unique_ptr<ParOperator
         Mpi::Print("\n");
       }
     }
-    K.push_back(std::make_unique<ParOperator>(std::move(k), h1_fespace_l));
-    K.back()->SetEssentialTrueDofs(dbc_tdof_lists[l], Operator::DiagonalPolicy::DIAG_ONE);
+    auto K_l = std::make_unique<ParOperator>(std::move(k), h1_fespace_l);
+    K_l->SetEssentialTrueDofs(dbc_tdof_lists[l], Operator::DiagonalPolicy::DIAG_ONE);
+    K.AddOperator(std::move(K_l));
   }
-  // Save local (uneliminated) operator after parallel assembly for RHS BC elimination.
-  K.back()->SaveLocalOperator();
   print_hdr = false;
+  return K;
 }
 
-std::unique_ptr<ParOperator> LaplaceOperator::GetGradMatrix()
+std::unique_ptr<Operator> LaplaceOperator::GetGradMatrix()
 {
   auto grad = std::make_unique<mfem::DiscreteLinearOperator>(&GetH1Space(), &GetNDSpace());
   grad->AddDomainInterpolator(new mfem::GradientInterpolator);
@@ -188,7 +187,7 @@ std::unique_ptr<ParOperator> LaplaceOperator::GetGradMatrix()
   return std::make_unique<ParOperator>(std::move(grad), GetH1Space(), GetNDSpace(), true);
 }
 
-void LaplaceOperator::GetExcitationVector(int idx, const ParOperator &K, Vector &X,
+void LaplaceOperator::GetExcitationVector(int idx, const Operator &K, Vector &X,
                                           Vector &RHS)
 {
   // Apply the Dirichlet BCs to the solution vector: V = 1 on terminal boundaries with the
@@ -209,7 +208,11 @@ void LaplaceOperator::GetExcitationVector(int idx, const ParOperator &K, Vector 
   X = 0.0;
   RHS = 0.0;
   x.ParallelProject(X);  // Restrict to the true dofs
-  K.EliminateRHS(X, RHS);
+  const auto *mg_K = dynamic_cast<const MultigridOperator *>(&K);
+  MFEM_VERIFY(mg_K, "LaplaceOperator requires MultigridOperator for RHS elimination!");
+  const auto *PtAP_K = dynamic_cast<const ParOperator *>(&mg_K->GetFinestOperator());
+  MFEM_VERIFY(PtAP_K, "LaplaceOperator requires ParOperator for RHS elimination!");
+  PtAP_K->EliminateRHS(X, RHS);
 }
 
 }  // namespace palace

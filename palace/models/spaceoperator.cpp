@@ -3,6 +3,7 @@
 
 #include "spaceoperator.hpp"
 
+#include <type_traits>
 #include "fem/integrator.hpp"
 #include "fem/multigrid.hpp"
 #include "utils/communication.hpp"
@@ -64,40 +65,6 @@ mfem::Array<int> SetUpBoundaryProperties(const IoData &iodata, const mfem::ParMe
   }
   mesh::AttrToMarker(bdr_attr_max, dbc_bcs, dbc_marker);
   return dbc_marker;
-}
-
-template <typename T1, typename T2, typename T3, typename T4>
-auto AddIntegrators(mfem::BilinearForm &a, T1 &df, T2 &f, T3 &dfb, T4 &fb)
-{
-  if (!df.empty())
-  {
-    a.AddDomainIntegrator(new mfem::CurlCurlIntegrator(df));
-  }
-  if (!f.empty())
-  {
-    a.AddDomainIntegrator(new mfem::MixedVectorMassIntegrator(f));
-  }
-  if (!dfb.empty())
-  {
-    a.AddBoundaryIntegrator(new mfem::CurlCurlIntegrator(dfb));
-  }
-  if (!fb.empty())
-  {
-    a.AddBoundaryIntegrator(new mfem::MixedVectorMassIntegrator(fb));
-  }
-}
-
-template <typename T1, typename T2>
-auto AddAuxIntegrators(mfem::BilinearForm &a, T1 &f, T2 &fb)
-{
-  if (!f.empty())
-  {
-    a.AddDomainIntegrator(new mfem::MixedGradGradIntegrator(f));
-  }
-  if (!fb.empty())
-  {
-    a.AddBoundaryIntegrator(new mfem::MixedGradGradIntegrator(fb));
-  }
 }
 
 }  // namespace
@@ -204,216 +171,353 @@ void SpaceOperator::CheckBoundaryProperties()
   }
 }
 
-std::unique_ptr<ParOperator>
-SpaceOperator::GetSystemMatrix(SpaceOperator::OperatorType type,
-                               Operator::DiagonalPolicy diag_policy)
+namespace
+{
+
+void PrintHeader(mfem::ParFiniteElementSpace &h1_fespace,
+                 mfem::ParFiniteElementSpace &nd_fespace,
+                 mfem::ParFiniteElementSpace &rt_fespace, bool &print_hdr)
 {
   if (print_hdr)
   {
     Mpi::Print("\nAssembling system matrices, number of global unknowns:\n"
                " H1: {:d}, ND: {:d}, RT: {:d}\n",
-               GetH1Space().GlobalTrueVSize(), GetNDSpace().GlobalTrueVSize(),
-               GetRTSpace().GlobalTrueVSize());
+               h1_fespace.GlobalTrueVSize(), nd_fespace.GlobalTrueVSize(),
+               rt_fespace.GlobalTrueVSize());
     print_hdr = false;
   }
+}
+
+template <typename T1, typename T2, typename T3, typename T4>
+auto BuildOperator(mfem::ParFiniteElementSpace &fespace, T1 *df, T2 *f, T3 *dfb, T4 *fb,
+                   mfem::AssemblyLevel assembly_level, int skip_zeros,
+                   bool no_assembly = false)
+{
+  auto a = std::make_unique<mfem::SymmetricBilinearForm>(&fespace);
+  if (df && !df->empty())
+  {
+    a->AddDomainIntegrator(new mfem::CurlCurlIntegrator(*df));
+  }
+  if (df && !f->empty())
+  {
+    a->AddDomainIntegrator(new mfem::MixedVectorMassIntegrator(*f));
+  }
+  if (df && !dfb->empty())
+  {
+    a->AddBoundaryIntegrator(new mfem::CurlCurlIntegrator(*dfb));
+  }
+  if (df && !fb->empty())
+  {
+    a->AddBoundaryIntegrator(new mfem::MixedVectorMassIntegrator(*fb));
+  }
+  if (!no_assembly)
+  {
+    a->SetAssemblyLevel(assembly_level);
+    a->Assemble(skip_zeros);
+    a->Finalize(skip_zeros);
+  }
+  return std::move(a);
+}
+
+template <typename T1, typename T2>
+auto BuildAuxOperator(mfem::ParFiniteElementSpace &fespace, T1 *f, T2 *fb,
+                      mfem::AssemblyLevel assembly_level, int skip_zeros,
+                      bool no_assembly = false)
+{
+  auto a = std::make_unique<mfem::SymmetricBilinearForm>(&fespace);
+  if (f && !f->empty())
+  {
+    a.AddDomainIntegrator(new mfem::MixedGradGradIntegrator(*f));
+  }
+  if (fb && !fb->empty())
+  {
+    a.AddBoundaryIntegrator(new mfem::MixedGradGradIntegrator(*fb));
+  }
+  if (!no_assembly)
+  {
+    a->SetAssemblyLevel(assembly_level);
+    a->Assemble(skip_zeros);
+    a->Finalize(skip_zeros);
+  }
+  return std::move(a);
+}
+
+}  // namespace
+
+std::unique_ptr<Operator>
+SpaceOperator::GetStiffnessMatrix(Operator::DiagonalPolicy diag_policy)
+{
+  PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
   const int sdim = GetNDSpace().GetParMesh()->SpaceDimension();
   SumMatrixCoefficient df(sdim), f(sdim), fb(sdim);
-  SumCoefficient dfb;
-  switch (type)
-  {
-    case OperatorType::STIFFNESS:
-      AddStiffnessCoefficients(1.0, df, f, fb);
-      break;
-    case OperatorType::DAMPING:
-      AddDampingCoefficients(1.0, f, fb);
-      break;
-    case OperatorType::MASS:
-      AddRealMassCoefficients(1.0, f, fb);
-      break;
-    case OperatorType::EXTRA:
-    default:
-      MFEM_ABORT("Invalid GetSystemMatrix matrix type for HypreParMatrix output!");
-  }
-  if (df.empty() && f.empty() && dfb.empty() && fb.empty())
+  AddStiffnessCoefficients(1.0, df, f);
+  AddBdrStiffnessCoefficients(1.0, fb);
+  if (df.empty() && f.empty() && fb.empty())
   {
     return {};
   }
-  auto a = std::make_unique<mfem::SymmetricBilinearForm>(&GetNDSpace());
-  AddIntegrators(*a, df, f, dfb, fb);
-  a->SetAssemblyLevel(assembly_level);
-  a->Assemble(skip_zeros);
-  a->Finalize(skip_zeros);
-  auto A = std::make_unique<ParOperator>(std::move(a), GetNDSpace());
-  A->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
-  return A;
+  auto K = std::make_unique<ParOperator>(
+      BuildOperator(GetNDSpace(), &df, &f, nullptr, &fb, assembly_level, skip_zeros),
+      GetNDSpace());
+  K->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+  return K;
 }
 
-std::unique_ptr<ComplexParOperator>
-SpaceOperator::GetComplexSystemMatrix(SpaceOperator::OperatorType type, double omega,
-                                      Operator::DiagonalPolicy diag_policy)
+std::unique_ptr<Operator>
+SpaceOperator::GetDampingMatrix(Operator::DiagonalPolicy diag_policy)
 {
-  if (print_hdr)
-  {
-    Mpi::Print("\nAssembling system matrices, number of global unknowns:\n"
-               " H1: {:d}, ND: {:d}, RT: {:d}\n",
-               GetH1Space().GlobalTrueVSize(), GetNDSpace().GlobalTrueVSize(),
-               GetRTSpace().GlobalTrueVSize());
-    print_hdr = false;
-  }
+  PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
   const int sdim = GetNDSpace().GetParMesh()->SpaceDimension();
-  SumMatrixCoefficient dfr(sdim), dfi(sdim), fr(sdim), fi(sdim), fbr(sdim), fbi(sdim);
-  SumCoefficient dfbr, dfbi;
-  switch (type)
-  {
-    case OperatorType::STIFFNESS:
-      MFEM_VERIFY(omega == 0.0, "GetComplexSystemMatrix for type OperatorType::STIFFNESS "
-                                "does not use omega parameter!");
-      AddStiffnessCoefficients(1.0, dfr, fr, fbr);
-      break;
-    case OperatorType::DAMPING:
-      MFEM_VERIFY(omega == 0.0, "GetComplexSystemMatrix for type OperatorType::DAMPING "
-                                "does not use omega parameter!");
-      AddDampingCoefficients(1.0, fr, fbr);
-      break;
-    case OperatorType::MASS:
-      MFEM_VERIFY(omega == 0.0, "GetComplexSystemMatrix for type OperatorType::MASS does "
-                                "not use omega parameter!");
-      AddRealMassCoefficients(1.0, fr, fbr);
-      AddImagMassCoefficients(1.0, fi, fbi);
-      break;
-    case OperatorType::EXTRA:
-      MFEM_VERIFY(omega > 0.0,
-                  "GetComplexSystemMatrix for type OperatorType::EXTRA requires "
-                  "use of omega parameter!");
-      AddExtraSystemBdrCoefficients(omega, dfbr, dfbi, fbr, fbi);
-      break;
-    default:
-      MFEM_ABORT("Invalid GetSystemMatrix matrix type!");
-  }
-  bool has_real = false, has_imag = false;
-  std::unique_ptr<mfem::SymmetricBilinearForm> ar, ai;
-  if (!dfr.empty() || !fr.empty() || !dfbr.empty() || !fbr.empty())
-  {
-    has_real = true;
-    ar = std::make_unique<mfem::SymmetricBilinearForm>(&GetNDSpace());
-    AddIntegrators(*ar, dfr, fr, dfbr, fbr);
-    ar->SetAssemblyLevel(assembly_level);
-    ar->Assemble(skip_zeros);
-    ar->Finalize(skip_zeros);
-  }
-  if (!dfi.empty() || !fi.empty() || !dfbi.empty() || !fbi.empty())
-  {
-    has_imag = true;
-    ai = std::make_unique<mfem::SymmetricBilinearForm>(&GetNDSpace());
-    AddIntegrators(*ai, dfi, fi, dfbi, fbi);
-    ai->SetAssemblyLevel(assembly_level);
-    ai->Assemble(skip_zeros);
-    ai->Finalize(skip_zeros);
-  }
-  if (!has_real && !has_imag)
+  SumMatrixCoefficient f(sdim), fb(sdim);
+  AddDampingCoefficients(1.0, f);
+  AddBdrDampingCoefficients(1.0, fb);
+  if (f.empty() && fb.empty())
   {
     return {};
   }
-  auto A = std::make_unique<ComplexParOperator>(
-      std::make_unique<ComplexWrapperOperator>(std::move(ar), std::move(ai)), GetNDSpace());
+  auto C = std::make_unique<ParOperator>(
+      BuildOperator(GetNDSpace(), nullptr, &f, nullptr, &fb, assembly_level, skip_zeros),
+      GetNDSpace());
+  C->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+  return C;
+}
+
+std::unique_ptr<Operator> SpaceOperator::GetMassMatrix(Operator::DiagonalPolicy diag_policy)
+{
+  PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
+  const int sdim = GetNDSpace().GetParMesh()->SpaceDimension();
+  SumMatrixCoefficient f(sdim), fb(sdim);
+  AddRealMassCoefficients(1.0, f);
+  AddRealMassBdrCoefficients(1.0, fb);
+  if (f.empty() && fb.empty())
+  {
+    return {};
+  }
+  auto M = std::make_unique<ParOperator>(
+      BuildOperator(GetNDSpace(), nullptr, &f, nullptr, &fb, assembly_level, skip_zeros),
+      GetNDSpace());
+  M->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+  return M;
+}
+
+std::unique_ptr<ComplexOperator>
+SpaceOperator::GetComplexStiffnessMatrix(Operator::DiagonalPolicy diag_policy)
+{
+  PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
+  const int sdim = GetNDSpace().GetParMesh()->SpaceDimension();
+  SumMatrixCoefficient df(sdim), f(sdim), fb(sdim);
+  AddStiffnessCoefficients(1.0, df, f);
+  AddBdrStiffnessCoefficients(1.0, fb);
+  if (df.empty() && f.empty() && fb.empty())
+  {
+    return {};
+  }
+  auto K = std::make_unique<ComplexParOperator>(
+      BuildOperator(GetNDSpace(), &df, &f, nullptr, &fb, assembly_level, skip_zeros),
+      nullptr, GetNDSpace());
+  K->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+  return K;
+}
+
+std::unique_ptr<ComplexOperator>
+SpaceOperator::GetComplexDampingMatrix(Operator::DiagonalPolicy diag_policy)
+{
+  PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
+  const int sdim = GetNDSpace().GetParMesh()->SpaceDimension();
+  SumMatrixCoefficient f(sdim), fb(sdim);
+  AddDampingCoefficients(1.0, f);
+  AddBdrDampingCoefficients(1.0, fb);
+  if (f.empty() && fb.empty())
+  {
+    return {};
+  }
+  auto C = std::make_unique<ComplexParOperator>(
+      BuildOperator(GetNDSpace(), nullptr, &f, nullptr, &fb, assembly_level, skip_zeros),
+      nullptr, GetNDSpace());
+  C->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+  return C;
+}
+
+std::unique_ptr<ComplexOperator>
+SpaceOperator::GetComplexMassMatrix(Operator::DiagonalPolicy diag_policy)
+{
+  PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
+  const int sdim = GetNDSpace().GetParMesh()->SpaceDimension();
+  SumMatrixCoefficient fr(sdim), fi(sdim), fbr(sdim);
+  AddRealMassCoefficients(1.0, fr);
+  AddRealMassBdrCoefficients(1.0, fbr);
+  AddImagMassCoefficients(1.0, fi);
+  std::unique_ptr<mfem::SymmetricBilinearForm> mr, mi;
+  if (!fr.empty() || !fbr.empty())
+  {
+    mr = BuildOperator(GetNDSpace(), nullptr, &fr, nullptr, &fbr, assembly_level,
+                       skip_zeros);
+  }
+  if (!fi.empty())
+  {
+    mi = BuildOperator(GetNDSpace(), nullptr, &fi, nullptr, nullptr, assembly_level,
+                       skip_zeros);
+  }
+  if (!mr && !mi)
+  {
+    return {};
+  }
+  auto M = std::make_unique<ComplexParOperator>(std::move(mr), std::move(mi)), GetNDSpace();
+  M->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+  return M;
+}
+
+std::unique_ptr<ComplexOperator>
+SpaceOperator::GetComplexExtraSystemMatrix(double omega,
+                                           Operator::DiagonalPolicy diag_policy)
+{
+  PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
+  const int sdim = GetNDSpace().GetParMesh()->SpaceDimension();
+  SumMatrixCoefficient fbr(sdim), fbi(sdim);
+  SumCoefficient dfbr, dfbi;
+  AddExtraSystemBdrCoefficients(omega, dfbr, dfbi, fbr, fbi);
+  std::unique_ptr<mfem::SymmetricBilinearForm> ar, ai;
+  if (!dfbr.empty() || !fbr.empty())
+  {
+    ar = BuildOperator(GetNDSpace(), nullptr, nullptr, &dfbr, &fbr, assembly_level,
+                       skip_zeros);
+  }
+  if (!fi.empty())
+  {
+    ai = BuildOperator(GetNDSpace(), nullptr, nullptr, &dfbi, &fbi, assembly_level,
+                       skip_zeros);
+  }
+  if (!ar && !ai)
+  {
+    return {};
+  }
+  auto A = std::make_unique<ComplexParOperator>(std::move(ar), std::move(ai)), GetNDSpace();
   A->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
   return A;
 }
 
-std::unique_ptr<ParOperator> SpaceOperator::GetSystemMatrix(double a0, double a1, double a2,
-                                                            const ParOperator *K,
-                                                            const ParOperator *C,
-                                                            const ParOperator *M)
+template <typename OperType, typename ScalarType>
+std::unique_ptr<OperType>
+SpaceOperator::GetSystemMatrix(ScalarType a0, ScalarType a1, ScalarType a2,
+                               const OperType *K, const OperType *C, const OperType *M,
+                               const OperType *A2)
 {
+  typedef typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
+                                    ComplexParOperator, ParOperator>::type ParOperType;
+  typedef typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
+                                    ComplexSumOperator, SumOperator>::type SumOperType;
+
+  const auto *PtAP_K = (K) ? dynamic_cast<const ParOperType *>(K) : nullptr;
+  const auto *PtAP_C = (C) ? dynamic_cast<const ParOperType *>(C) : nullptr;
+  const auto *PtAP_M = (M) ? dynamic_cast<const ParOperType *>(M) : nullptr;
+  const auto *PtAP_A2 = (A2) ? dynamic_cast<const ParOperType *>(A2) : nullptr;
+  MFEM_VERIFY((!K || PtAP_K) && (!C || PtAP_C) && (!M || PtAP_M) && (!A2 || PtAP_A2),
+              "SpaceOperator requires ParOperator or ComplexParOperator for system matrix "
+              "construction!");
+
   int height = -1, width = -1;
-  if (K)
+  if (PtAP_K)
   {
-    height = K->LocalOperator().Height();
-    width = K->LocalOperator().Width();
+    height = PtAP_K->LocalOperator().Height();
+    width = PtAP_K->LocalOperator().Width();
   }
-  else if (C)
+  else if (PtAP_C)
   {
-    height = C->LocalOperator().Height();
-    width = C->LocalOperator().Width();
+    height = PtAP_C->LocalOperator().Height();
+    width = PtAP_C->LocalOperator().Width();
   }
-  else if (M)
+  else if (PtAP_M)
   {
-    height = M->LocalOperator().Height();
-    width = M->LocalOperator().Width();
+    height = PtAP_M->LocalOperator().Height();
+    width = PtAP_M->LocalOperator().Width();
+  }
+  else if (PtAP_A2)
+  {
+    height = PtAP_A2->LocalOperator().Height();
+    width = PtAP_A2->LocalOperator().Width();
   }
   MFEM_VERIFY(height >= 0 && width >= 0,
               "At least one argument to GetSystemMatrix must not be empty!");
+
+  auto sum = std::make_unique<SumOperType>(height, width);
+  if (PtAP_K && a0 != 0.0)
+  {
+    sum->AddOperator(PtAP_K->LocalOperator(), a0);
+  }
+  if (PtAP_C && a1 != 0.0)
+  {
+    sum->AddOperator(PtAP_C->LocalOperator(), a1);
+  }
+  if (PtAP_M && a2 != 0.0)
+  {
+    sum->AddOperator(PtAP_M->LocalOperator(), a2);
+  }
+  if (PtAP_A2)
+  {
+    sum->AddOperator(PtAP_A2->LocalOperator(), 1.0);
+  }
+  auto A = std::make_unique<ParOperType>(std::move(sum), GetNDSpace());
+  A->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), Operator::DiagonalPolicy::DIAG_ONE);
+  return A;
+}
+
+std::unique_ptr<Operator> SpaceOperator::GetInnerProductMatrix(double a0, double a2,
+                                                               const ComplexOperator *K,
+                                                               const ComplexOperator *M)
+{
+  const auto *PtAP_K = (K) ? dynamic_cast<const ComplexParOperator *>(K) : nullptr;
+  const auto *PtAP_M = (M) ? dynamic_cast<const ComplexParOperator *>(M) : nullptr;
+  MFEM_VERIFY(
+      (!K || PtAP_K) && (!M || PtAP_M),
+      "SpaceOperator requires ComplexParOperator for inner product matrix construction!");
+
+  int height = -1, width = -1;
+  if (PtAP_K)
+  {
+    height = PtAP_K->LocalOperator().Height();
+    width = PtAP_K->LocalOperator().Width();
+  }
+  else if (PtAP_M)
+  {
+    height = PtAP_M->LocalOperator().Height();
+    width = PtAP_M->LocalOperator().Width();
+  }
+  MFEM_VERIFY(height >= 0 && width >= 0,
+              "At least one argument to GetInnerProductMatrix must not be empty!");
+
   auto sum = std::make_unique<SumOperator>(height, width);
-  if (K && a0 != 0.0)
+  if (PtAP_K && a0 != 0.0)
   {
-    sum->AddOperator(K->LocalOperator(), a0);
+    sum->AddOperator(PtAP_K->LocalOperator().Real(), a0);
   }
-  if (C && a1 != 0.0)
+  if (PtAP_M && a2 != 0.0)
   {
-    sum->AddOperator(C->LocalOperator(), a1);
+    sum->AddOperator(PtAP_M->LocalOperator().Real(), a2);
   }
-  if (M && a2 != 0.0)
-  {
-    sum->AddOperator(M->LocalOperator(), a2);
-  }
-  auto A = std::make_unique<ParOperator>(std::move(sum), GetNDSpace());
-  A->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), Operator::DiagonalPolicy::DIAG_ONE);
-  return A;
+  return std::make_unique<ParOperator>(std::move(sum), GetNDSpace());
 }
 
-std::unique_ptr<ComplexParOperator> SpaceOperator::GetComplexSystemMatrix(
-    std::complex<double> a0, std::complex<double> a1, std::complex<double> a2,
-    const ComplexParOperator *K, const ComplexParOperator *C, const ComplexParOperator *M,
-    const ComplexParOperator *A2)
+namespace
 {
-  int height = -1, width = -1;
-  if (K)
-  {
-    height = K->LocalOperator().Height();
-    width = K->LocalOperator().Width();
-  }
-  else if (C)
-  {
-    height = C->LocalOperator().Height();
-    width = C->LocalOperator().Width();
-  }
-  else if (M)
-  {
-    height = M->LocalOperator().Height();
-    width = M->LocalOperator().Width();
-  }
-  else if (A2)
-  {
-    height = A2->LocalOperator().Height();
-    width = A2->LocalOperator().Width();
-  }
-  MFEM_VERIFY(height >= 0 && width >= 0,
-              "At least one argument to GetSystemMatrix must not be empty!");
-  auto sum = std::make_unique<ComplexSumOperator>(height, width);
-  if (K && a0 != 0.0)
-  {
-    sum->AddOperator(K->LocalOperator(), a0);
-  }
-  if (C && a1 != 0.0)
-  {
-    sum->AddOperator(C->LocalOperator(), a1);
-  }
-  if (M && a2 != 0.0)
-  {
-    sum->AddOperator(M->LocalOperator(), a2);
-  }
-  if (A2)
-  {
-    sum->AddOperator(A2->LocalOperator(), 1.0);
-  }
-  auto A = std::make_unique<ComplexParOperator>(std::move(sum), GetNDSpace());
-  A->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), Operator::DiagonalPolicy::DIAG_ONE);
-  return A;
+
+auto GetLevelOperator(std::unique_ptr<MultigridOperator> &B, std::unique_ptr<Operator> &&br,
+                      std::unique_ptr<Operator> &&bi, mfem::FiniteElementSpace &fespace)
+{
+  return std::make_unique<ParOperator>(std::move(br), fespace);
 }
 
-void SpaceOperator::GetPreconditionerMatrix(double a0, double a1, double a2, double a3,
-                                            std::vector<std::unique_ptr<ParOperator>> &B,
-                                            std::vector<std::unique_ptr<ParOperator>> &AuxB)
+auto GetLevelOperator(std::unique_ptr<ComplexMultigridOperator> &B,
+                      std::unique_ptr<Operator> &&br, std::unique_ptr<Operator> &&bi,
+                      mfem::FiniteElementSpace &fespace)
+{
+  return std::make_unique<ComplexParOperator>(std::move(br), std::move(bi), fespace);
+}
+
+}  // namespace
+
+template <typename OperType>
+std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(double a0, double a1,
+                                                                 double a2, double a3)
 {
   if (print_prec_hdr)
   {
@@ -421,42 +525,37 @@ void SpaceOperator::GetPreconditionerMatrix(double a0, double a1, double a2, dou
   }
   MFEM_VERIFY(h1_fespaces.GetNumLevels() == nd_fespaces.GetNumLevels(),
               "Multigrid hierarchy mismatch for auxiliary space preconditioning!");
+  auto B = std::make_unique<MultigridOperator<OperType>>(nd_fespaces.GetNumLevels());
   for (int s = 0; s < 2; s++)
   {
-    auto &B_ = (s == 0) ? B : AuxB;
     auto &fespaces = (s == 0) ? nd_fespaces : h1_fespaces;
     auto &dbc_tdof_lists = (s == 0) ? nd_dbc_tdof_lists : h1_dbc_tdof_lists;
-    B_.clear();
-    B_.reserve(fespaces.GetNumLevels());
     for (int l = 0; l < fespaces.GetNumLevels(); l++)
     {
       auto &fespace_l = fespaces.GetFESpaceAtLevel(l);
-      const int sdim = GetNDSpace().GetParMesh()->SpaceDimension();
-      SumMatrixCoefficient df(sdim), f(sdim), fb(sdim);
-      SumCoefficient dfb;
-      AddStiffnessCoefficients(a0, df, f, fb);
-      AddDampingCoefficients(a1, f, fb);
-      // XX TODO: Test out difference of |Mr + i Mi| vs. Mr + Mi
-      AddRealMassCoefficients<MaterialPropertyType::PERMITTIVITY_ABS>(
-          pc_shifted ? std::abs(a2) : a2, f, fb);
-      // AddRealMassCoefficients(pc_shifted ? std::abs(a2) : a2, f, fb);
-      // AddImagMassCoefficients(a2, f, fb);
-      AddExtraSystemBdrCoefficients(a3, dfb, dfb, fb, fb);
-      auto b = std::make_unique<mfem::SymmetricBilinearForm>(&fespace_l);
-      if (s == 0)
-      {
-        AddIntegrators(*b, df, f, dfb, fb);
-      }
-      else
-      {
-        // H1 auxiliary space matrix Gᵀ B G.
-        AddAuxIntegrators(*b, f, fb);
-      }
       if (print_prec_hdr)
       {
         Mpi::Print(" Level {:d}{}: {:d} unknowns", l, (s == 0) ? "" : " (auxiliary)",
                    fespace_l.GlobalTrueVSize());
       }
+      const int sdim = GetNDSpace().GetParMesh()->SpaceDimension();
+      SumMatrixCoefficient df(sdim), f(sdim), fb(sdim);
+      SumCoefficient dfb;
+      AddStiffnessCoefficients(a0, df, f);
+      AddStiffnessBdrCoefficients(a0, fb);
+      AddDampingCoefficients(a1, f);
+      AddDampingBdrCoefficients(a1, fb);
+      // XX TODO: Test out difference of |Mr + i Mi| vs. Mr + Mi
+      // AddRealMassCoefficients(pc_shifted ? std::abs(a2) : a2, f);
+      // AddImagMassCoefficients(a2, f);
+      AddAbsMassCoefficients(pc_shifted ? std::abs(a2) : a2, f);
+      AddRealMassBdrCoefficients(pc_shifted ? std::abs(a2) : a2, fb);
+      AddExtraSystemBdrCoefficients(a3, dfb, dfb, fb, fb);
+      auto b = (s == 0) ? BuildOperator(fespace_l, &df, &f, &dfb, &fb, assembly_level,
+                                        skip_zeros, pc_lor)
+                        : BuildAuxOperator(fespace_l, &f, &fb, assembly_level, skip_zeros,
+                                           pc_lor);
+      std::unique_ptr<Operator> b_loc;
       if (pc_lor)
       {
         // After we construct the LOR discretization we deep copy the LOR matrix and the
@@ -470,13 +569,10 @@ void SpaceOperator::GetPreconditionerMatrix(double a0, double a1, double a2, dou
           Mpi::GlobalSum(1, &nnz, fespace_l.GetComm());
           Mpi::Print(", {:d} NNZ (LOR)\n", nnz);
         }
-        B_.push_back(std::make_unique<ParOperator>(std::move(b_lor), fespace_l));
+        b_loc = std::move(b_lor);
       }
       else
       {
-        b->SetAssemblyLevel(assembly_level);
-        b->Assemble(skip_zeros);
-        b->Finalize(skip_zeros);
         if (print_prec_hdr)
         {
           if (assembly_level == mfem::AssemblyLevel::LEGACY)
@@ -490,56 +586,77 @@ void SpaceOperator::GetPreconditionerMatrix(double a0, double a1, double a2, dou
             Mpi::Print("\n");
           }
         }
-        B_.push_back(std::make_unique<ParOperator>(std::move(b), fespace_l));
+        b_loc = std::move(b);
       }
-      B_.back()->SetEssentialTrueDofs(dbc_tdof_lists[l],
-                                      Operator::DiagonalPolicy::DIAG_ONE);
+      auto B_l = GetLevelOperator(B, std::move(b_loc), nullptr, fespace_l);
+      B_l->SetEssentialTrueDofs(dbc_tdof_lists[l], Operator::DiagonalPolicy::DIAG_ONE);
+      if (s == 0)
+      {
+        B.AddOperator(std::move(B_l));
+      }
+      else
+      {
+        B.AddAuxiliaryOperator(std::move(B_l));
+      }
     }
   }
   print_prec_hdr = false;
 }
 
-std::unique_ptr<ParOperator> SpaceOperator::GetCurlMatrix()
+namespace
 {
-  auto curl = std::make_unique<mfem::DiscreteLinearOperator>(&GetNDSpace(), &GetRTSpace());
+
+std::unique_ptr<mfem::DiscreteLinearOperator> GetCurl(mfem::FiniteElementSpace &nd_fespace,
+                                                      mfem::FiniteElementSpace &rt_fespace,
+                                                      mfem::AssemblyLevel assembly_level,
+                                                      int skip_zeros = 1)
+{
+  auto curl = std::make_unique<mfem::DiscreteLinearOperator>(&nd_fespace, &rt_fespace);
   curl->AddDomainInterpolator(new mfem::CurlInterpolator);
   curl->SetAssemblyLevel(assembly_level);
-  curl->Assemble();
-  curl->Finalize();
-  return std::make_unique<ParOperator>(std::move(curl), GetNDSpace(), GetRTSpace(), true);
+  curl->Assemble(skip_zeros);
+  curl->Finalize(skip_zeros);
+  return curl;
+}
+
+std::unique_ptr<mfem::DiscreteLinearOperator> GetGrad(mfem::FiniteElementSpace &h1_fespace,
+                                                      mfem::FiniteElementSpace &nd_fespace,
+                                                      mfem::AssemblyLevel assembly_level,
+                                                      int skip_zeros = 1)
+{
+  auto grad = std::make_unique<mfem::DiscreteLinearOperator>(&h1_fespace, &nd_fespace);
+  grad->AddDomainInterpolator(new mfem::GradientInterpolator);
+  grad->SetAssemblyLevel(assembly_level);
+  grad->Assemble(skip_zeros);
+  grad->Finalize(skip_zeros);
+  return grad;
+}
+
+}  // namespace
+
+std::unique_ptr<ParOperator> SpaceOperator::GetCurlMatrix()
+{
+  return std::make_unique<ParOperator>(GetCurl(GetNDSpace(), GetRTSpace(), assembly_level),
+                                       GetNDSpace(), GetRTSpace(), true);
 }
 
 std::unique_ptr<ComplexParOperator> SpaceOperator::GetComplexCurlMatrix()
 {
-  auto curl = std::make_unique<mfem::DiscreteLinearOperator>(&GetNDSpace(), &GetRTSpace());
-  curl->AddDomainInterpolator(new mfem::CurlInterpolator);
-  curl->SetAssemblyLevel(assembly_level);
-  curl->Assemble();
-  curl->Finalize();
   return std::make_unique<ComplexParOperator>(
-      std::make_unique<ComplexWrapperOperator>(std::move(curl), nullptr), GetNDSpace(),
+      GetCurl(GetNDSpace(), GetRTSpace(), assembly_level), nullptr, GetNDSpace(),
       GetRTSpace(), true);
 }
 
 std::unique_ptr<ParOperator> SpaceOperator::GetGradMatrix()
 {
-  auto grad = std::make_unique<mfem::DiscreteLinearOperator>(&GetH1Space(), &GetNDSpace());
-  grad->AddDomainInterpolator(new mfem::GradientInterpolator);
-  grad->SetAssemblyLevel(assembly_level);
-  grad->Assemble();
-  grad->Finalize();
-  return std::make_unique<ParOperator>(std::move(grad), GetH1Space(), GetNDSpace(), true);
+  return std::make_unique<ParOperator>(GetGrad(GetH1Space(), GetNDSpace(), assembly_level),
+                                       GetH1Space(), GetNDSpace(), true);
 }
 
 std::unique_ptr<ComplexParOperator> SpaceOperator::GetComplexGradMatrix()
 {
-  auto grad = std::make_unique<mfem::DiscreteLinearOperator>(&GetH1Space(), &GetNDSpace());
-  grad->AddDomainInterpolator(new mfem::GradientInterpolator);
-  grad->SetAssemblyLevel(assembly_level);
-  grad->Assemble();
-  grad->Finalize();
   return std::make_unique<ComplexParOperator>(
-      std::make_unique<ComplexWrapperOperator>(std::move(grad), nullptr), GetH1Space(),
+      GetGrad(GetH1Space(), GetNDSpace(), assembly_level), nullptr, GetH1Space(),
       GetNDSpace(), true);
 }
 
@@ -547,26 +664,26 @@ void SpaceOperator::AddStiffnessCoefficients(double coef, SumMatrixCoefficient &
                                              SumMatrixCoefficient &f,
                                              SumMatrixCoefficient &fb)
 {
-  {
-    constexpr MaterialPropertyType MatType = MaterialPropertyType::INV_PERMEABILITY;
-    df.AddCoefficient(std::make_unique<MaterialPropertyCoefficient<MatType>>(mat_op, coef));
-  }
+  constexpr MaterialPropertyType MatType = MaterialPropertyType::INV_PERMEABILITY;
+  df.AddCoefficient(std::make_unique<MaterialPropertyCoefficient<MatType>>(mat_op, coef));
 
   // Contribution for London superconductors.
   if (mat_op.HasLondonDepth())
   {
-    constexpr MaterialPropertyType MatType = MaterialPropertyType::INV_LONDON_DEPTH;
-    f.AddCoefficient(std::make_unique<MaterialPropertyCoefficient<MatType>>(mat_op, coef),
+    constexpr MaterialPropertyType MatTypeL = MaterialPropertyType::INV_LONDON_DEPTH;
+    f.AddCoefficient(std::make_unique<MaterialPropertyCoefficient<MatTypeL>>(mat_op, coef),
                      mat_op.GetLondonDepthMarker());
   }
+}
 
+void SpaceOperator::AddStiffnessBdrCoefficients(double coef, SumMatrixCoefficient &fb)
+{
   // Robin BC contributions due to surface impedance and lumped ports (inductance).
   surf_z_op.AddStiffnessBdrCoefficients(coef, fb);
   lumped_port_op.AddStiffnessBdrCoefficients(coef, fb);
 }
 
-void SpaceOperator::AddDampingCoefficients(double coef, SumMatrixCoefficient &f,
-                                           SumMatrixCoefficient &fb)
+void SpaceOperator::AddDampingCoefficients(double coef, SumMatrixCoefficient &f)
 {
   // Contribution for domain conductivity.
   if (mat_op.HasConductivity())
@@ -575,7 +692,10 @@ void SpaceOperator::AddDampingCoefficients(double coef, SumMatrixCoefficient &f,
     f.AddCoefficient(std::make_unique<MaterialPropertyCoefficient<MatType>>(mat_op, coef),
                      mat_op.GetConductivityMarker());
   }
+}
 
+void SpaceOperator::AddDampingBdrCoefficients(double coef, SumMatrixCoefficient &fb)
+{
   // Robin BC contributions due to surface impedance, lumped ports, and absorbing
   // boundaries (resistance).
   farfield_op.AddDampingBdrCoefficients(coef, fb);
@@ -583,19 +703,20 @@ void SpaceOperator::AddDampingCoefficients(double coef, SumMatrixCoefficient &f,
   lumped_port_op.AddDampingBdrCoefficients(coef, fb);
 }
 
-template <MaterialPropertyType MatType>
-void SpaceOperator::AddRealMassCoefficients(double coef, SumMatrixCoefficient &f,
-                                            SumMatrixCoefficient &fb)
+void SpaceOperator::AddRealMassCoefficients(double coef, SumMatrixCoefficient &f)
 {
+  constexpr MaterialPropertyType MatType = MaterialPropertyType::PERMITTIVITY_REAL;
   f.AddCoefficient(std::make_unique<MaterialPropertyCoefficient<MatType>>(mat_op, coef));
+}
 
+void SpaceOperator::AddRealMassBdrCoefficients(double coef, SumMatrixCoefficient &fb)
+{
   // Robin BC contributions due to surface impedance and lumped ports (capacitance).
   surf_z_op.AddMassBdrCoefficients(coef, fb);
   lumped_port_op.AddMassBdrCoefficients(coef, fb);
 }
 
-void SpaceOperator::AddImagMassCoefficients(double coef, SumMatrixCoefficient &f,
-                                            SumMatrixCoefficient &fb)
+void SpaceOperator::AddImagMassCoefficients(double coef, SumMatrixCoefficient &f)
 {
   // Contribution for loss tangent: ε => ε * (1 - i tan(δ)).
   if (mat_op.HasLossTangent())
@@ -604,6 +725,12 @@ void SpaceOperator::AddImagMassCoefficients(double coef, SumMatrixCoefficient &f
     f.AddCoefficient(std::make_unique<MaterialPropertyCoefficient<MatType>>(mat_op, coef),
                      mat_op.GetLossTangentMarker());
   }
+}
+
+void SpaceOperator::AddAbsMassCoefficients(double coef, SumMatrixCoefficient &f)
+{
+  constexpr MaterialPropertyType MatType = MaterialPropertyType::PERMITTIVITY_ABS;
+  f.AddCoefficient(std::make_unique<MaterialPropertyCoefficient<MatType>>(mat_op, coef));
 }
 
 void SpaceOperator::AddExtraSystemBdrCoefficients(double omega, SumCoefficient &dfbr,
@@ -730,11 +857,18 @@ void SpaceOperator::GetRandomInitialVector(ComplexVector &v)
   v.SyncAlias();
 }
 
-template void
-SpaceOperator::AddRealMassCoefficients<MaterialPropertyType::PERMITTIVITY_REAL>(
-    double, SumMatrixCoefficient &, SumMatrixCoefficient &);
-template void
-SpaceOperator::AddRealMassCoefficients<MaterialPropertyType::PERMITTIVITY_ABS>(
-    double, SumMatrixCoefficient &, SumMatrixCoefficient &);
+template std::unique_ptr<Operator>
+GetSystemMatrix<Operator, double>(double a0, double a1, double a2, const Operator *K,
+                                  const Operator *C, const Operator *M, const Operator *A2);
+template std::unique_ptr<ComplexOperator>
+GetSystemMatrix<ComplexOperator, std::complex<double>>(
+    std::complex<double> a0, std::complex<double> a1, std::complex<double> a2,
+    const ComplexOperator *K, const ComplexOperator *C, const ComplexOperator *M,
+    const ComplexOperator *A2);
+
+template std::unique_ptr<Operator> GetPreconditionerMatrix<Operator>(double a0, double a1,
+                                                                     double a2, double a3);
+template std::unique_ptr<ComplexOperator>
+GetPreconditionerMatrix<ComplexOperator>(double a0, double a1, double a2, double a3);
 
 }  // namespace palace

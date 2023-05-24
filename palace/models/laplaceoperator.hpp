@@ -64,14 +64,17 @@ public:
 
   // Construct and return system matrix representing discretized Laplace operator for
   // Gauss's law.
-  void GetStiffnessMatrix(std::vector<std::unique_ptr<ParOperator>> &K);
+  std::unique_ptr<Operator> GetStiffnessMatrix();
 
   // Construct and return the discrete gradient matrix.
-  std::unique_ptr<ParOperator> GetGradMatrix();
+  std::unique_ptr<Operator> GetGradMatrix();
 
   // Assemble the solution boundary conditions and right-hand side vector for a nonzero
   // prescribed voltage on the specified surface index.
-  void GetExcitationVector(int idx, const ParOperator &K, Vector &X, Vector &RHS);
+  void GetExcitationVector(int idx, const Operator &K, Vector &X, Vector &RHS);
+
+  // Get the associated MPI communicator.
+  MPI_Comm GetComm() const { return GetH1Space().GetComm(); }
 };
 
 }  // namespace palace
