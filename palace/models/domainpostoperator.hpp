@@ -8,7 +8,6 @@
 #include <optional>
 #include <utility>
 #include <mfem.hpp>
-#include "linalg/vector.hpp"
 
 namespace palace
 {
@@ -27,7 +26,7 @@ private:
   std::map<int, std::pair<mfem::BilinearForm, mfem::BilinearForm>> M_NDi;
 
   // Temporary vectors for inner product calculations.
-  mutable Vector D, H;
+  mutable mfem::Vector D, H;
 
 public:
   DomainPostOperator(const IoData &iodata, const MaterialOperator &mat_op,

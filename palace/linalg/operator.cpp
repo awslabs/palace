@@ -4,474 +4,639 @@
 #include "operator.hpp"
 
 #include <general/forall.hpp>
-#include "linalg/complex.hpp"
 #include "linalg/slepc.hpp"
-#include "linalg/vector.hpp"
 #include "utils/communication.hpp"
 
 namespace palace
 {
 
-ParOperator::ParOperator(std::unique_ptr<Operator> &&A,
-                         const mfem::ParFiniteElementSpace &trial_fespace,
-                         const mfem::ParFiniteElementSpace &test_fespace,
-                         bool test_restrict)
-  : Operator(test_fespace.GetTrueVSize(), trial_fespace.GetTrueVSize()), A_(std::move(A)),
-    trial_fespace_(trial_fespace), test_fespace_(test_fespace), use_R_(test_restrict),
-    trial_dbc_tdof_list_(nullptr), test_dbc_tdof_list_(nullptr),
-    diag_policy_(DiagonalPolicy::DIAG_ONE), RAP_(nullptr), save_A_(false)
+bool ComplexOperator::IsReal() const
 {
-  MFEM_VERIFY(A_, "Cannot construct ParOperator from an empty matrix!");
-  lx_.SetSize(A_->Width());
-  ly_.SetSize(A_->Height());
-  tx_.SetSize(width);
-  if (height != width)
+  MFEM_ABORT("IsReal() is not implemented for base class ComplexOperator!");
+  return false;
+}
+
+bool ComplexOperator::IsImag() const
+{
+  MFEM_ABORT("IsImag() is not implemented for base class ComplexOperator!");
+  return false;
+}
+
+bool ComplexOperator::HasReal() const
+{
+  MFEM_ABORT("HasReal() is not implemented for base class ComplexOperator!");
+  return false;
+}
+
+bool ComplexOperator::HasImag() const
+{
+  MFEM_ABORT("HasImag() is not implemented for base class ComplexOperator!");
+  return false;
+}
+
+const Operator *ComplexOperator::Real() const
+{
+  MFEM_ABORT("Real() is not implemented for base class ComplexOperator!");
+  return nullptr;
+}
+
+Operator *ComplexOperator::Real()
+{
+  MFEM_ABORT("Real() is not implemented for base class ComplexOperator!");
+  return nullptr;
+}
+
+const Operator *ComplexOperator::Imag() const
+{
+  MFEM_ABORT("Imag() is not implemented for base class ComplexOperator!");
+  return nullptr;
+}
+
+Operator *ComplexOperator::Imag()
+{
+  MFEM_ABORT("Imag() is not implemented for base class ComplexOperator!");
+  return nullptr;
+}
+
+void ComplexOperator::MultTranspose(const Vector &xr, const Vector &xi, Vector &yr,
+                                    Vector &yi, bool zero_real, bool zero_imag) const
+{
+  MFEM_ABORT("Base class ComplexOperator does not implement MultTranspose!");
+}
+
+void ComplexOperator::MultHermitianTranspose(const Vector &xr, const Vector &xi, Vector &yr,
+                                             Vector &yi, bool zero_real,
+                                             bool zero_imag) const
+{
+  MFEM_ABORT("Base class ComplexOperator does not implement MultHermitianTranspose!");
+}
+
+void ComplexOperator::AddMult(const Vector &xr, const Vector &xi, Vector &yr, Vector &yi,
+                              const std::complex<double> a, bool zero_real,
+                              bool zero_imag) const
+{
+  MFEM_ABORT("Base class ComplexOperator does not implement AddMult!");
+}
+
+void ComplexOperator::AddMultTranspose(const Vector &xr, const Vector &xi, Vector &yr,
+                                       Vector &yi, const std::complex<double> a,
+                                       bool zero_real, bool zero_imag) const
+{
+  MFEM_ABORT("Base class ComplexOperator does not implement AddMultTranspose!");
+}
+
+void ComplexOperator::AddMultHermitianTranspose(const Vector &xr, const Vector &xi,
+                                                Vector &yr, Vector &yi,
+                                                const std::complex<double> a,
+                                                bool zero_real, bool zero_imag) const
+{
+  MFEM_ABORT("Base class ComplexOperator does not implement AddMultHermitianTranspose!");
+}
+
+ComplexWrapperOperator::ComplexWrapperOperator(std::unique_ptr<Operator> &&data_Ar,
+                                               std::unique_ptr<Operator> &&data_Ai,
+                                               Operator *Ar, Operator *Ai)
+  : ComplexOperator(Ar ? Ar->Height() : (Ai ? Ai->Height() : 0),
+                    Ar ? Ar->Width() : (Ai ? Ai->Width() : 0)),
+    data_Ar(std::move(data_Ar)), data_Ai(std::move(data_Ai)),
+    Ar(this->data_Ar ? this->data_Ar.get() : Ar),
+    Ai(this->data_Ai ? this->data_Ai.get() : Ai)
+{
+  MFEM_VERIFY(Ar || Ai, "Cannot construct ComplexWrapperOperator from an empty matrix!");
+  MFEM_VERIFY((!Ar || !Ai) || (Ar->Height() == Ai->Height() && Ar->Width() == Ai->Width()),
+              "Mismatch in dimension of real and imaginary matrix parts!");
+}
+
+ComplexWrapperOperator::ComplexWrapperOperator(std::unique_ptr<Operator> &&Ar,
+                                               std::unique_ptr<Operator> &&Ai)
+  : ComplexWrapperOperator(std::move(Ar), std::move(Ai), nullptr, nullptr)
+{
+}
+
+ComplexWrapperOperator::ComplexWrapperOperator(Operator *Ar, Operator *Ai)
+  : ComplexWrapperOperator(nullptr, nullptr, Ar, Ai)
+{
+}
+
+void ComplexWrapperOperator::Mult(const Vector &xr, const Vector &xi, Vector &yr,
+                                  Vector &yi, bool zero_real, bool zero_imag) const
+{
+  if (Ar)
   {
-    ty_.SetSize(height);
+    if (!zero_real)
+    {
+      Ar->Mult(xr, yr);
+    }
+    if (!zero_imag)
+    {
+      Ar->Mult(xi, yi);
+    }
   }
   else
   {
-    ty_.MakeRef(tx_, 0, height);
+    yr = 0.0;
+    yi = 0.0;
+  }
+  if (Ai)
+  {
+    if (!zero_imag)
+    {
+      Ai->AddMult(xi, yr, -1.0);
+    }
+    if (!zero_real)
+    {
+      Ai->AddMult(xr, yi, 1.0);
+    }
   }
 }
 
-void ParOperator::EliminateRHS(const Vector &x, Vector &b) const
+void ComplexWrapperOperator::MultTranspose(const Vector &xr, const Vector &xi, Vector &yr,
+                                           Vector &yi, bool zero_real, bool zero_imag) const
 {
-  if (!trial_dbc_tdof_list_ || !test_dbc_tdof_list_)
+  if (Ar)
   {
-    return;
+    if (!zero_real)
+    {
+      Ar->MultTranspose(xr, yr);
+    }
+    if (!zero_imag)
+    {
+      Ar->MultTranspose(xi, yi);
+    }
   }
-
-  MFEM_VERIFY(A_, "No local matrix available for ParOperator::EliminateRHS!");
-  tx_ = 0.0;
+  else
   {
-    const int N = trial_dbc_tdof_list_->Size();
-    const auto *idx = trial_dbc_tdof_list_->Read();
-    const auto *X = x.Read();
-    auto *TX = tx_.ReadWrite();
+    yr = 0.0;
+    yi = 0.0;
+  }
+  if (Ai)
+  {
+    if (!zero_imag)
+    {
+      Ai->AddMultTranspose(xi, yr, -1.0);
+    }
+    if (!zero_real)
+    {
+      Ai->AddMultTranspose(xr, yi, 1.0);
+    }
+  }
+}
+
+void ComplexWrapperOperator::MultHermitianTranspose(const Vector &xr, const Vector &xi,
+                                                    Vector &yr, Vector &yi, bool zero_real,
+                                                    bool zero_imag) const
+{
+  if (Ar)
+  {
+    if (!zero_real)
+    {
+      Ar->MultTranspose(xr, yr);
+    }
+    if (!zero_imag)
+    {
+      Ar->MultTranspose(xi, yi);
+    }
+  }
+  else
+  {
+    yr = 0.0;
+    yi = 0.0;
+  }
+  if (Ai)
+  {
+    if (!zero_imag)
+    {
+      Ai->AddMultTranspose(xi, yr, 1.0);
+    }
+    if (!zero_real)
+    {
+      Ai->AddMultTranspose(xr, yi, -1.0);
+    }
+  }
+}
+
+void ComplexWrapperOperator::AddMult(const Vector &xr, const Vector &xi, Vector &yr,
+                                     Vector &yi, const std::complex<double> a,
+                                     bool zero_real, bool zero_imag) const
+{
+  if (a.real() != 0.0 && a.imag() != 0.0)
+  {
+    ty.SetSize(height);
+    Mult(xr, xi, ty.Real(), ty.Imag(), zero_real, zero_imag);
+    const int N = height;
+    const double ar = a.real();
+    const double ai = a.imag();
+    const auto *TYR = ty.Real().Read();
+    const auto *TYI = ty.Imag().Read();
+    auto *YR = yr.ReadWrite();
+    auto *YI = yi.ReadWrite();
     mfem::forall(N,
                  [=] MFEM_HOST_DEVICE(int i)
                  {
-                   const int id = idx[i];
-                   TX[id] = X[id];
+                   YR[i] += ar * TYR[i] - ai * TYI[i];
+                   YI[i] += ai * TYR[i] + ar * TYI[i];
                  });
   }
-
-  // Apply the unconstrained operator.
-  trial_fespace_.GetProlongationMatrix()->Mult(tx_, lx_);
-  A_->Mult(lx_, ly_);
-  if (!use_R_)
+  else if (a.real() != 0.0)
   {
-    test_fespace_.GetProlongationMatrix()->AddMultTranspose(ly_, b, -1.0);
-  }
-  else
-  {
-    test_fespace_.GetRestrictionMatrix()->AddMult(ly_, b, -1.0);
-  }
-
-  {
-    if (diag_policy_ == DiagonalPolicy::DIAG_ONE && height == width)
+    if (Ar)
     {
-      const int N = test_dbc_tdof_list_->Size();
-      const auto *idx = test_dbc_tdof_list_->Read();
-      const auto *X = x.Read();
-      auto *B = b.ReadWrite();
-      mfem::forall(N,
-                   [=] MFEM_HOST_DEVICE(int i)
-                   {
-                     const int id = idx[i];
-                     B[id] = X[id];
-                   });
+      if (!zero_real)
+      {
+        Ar->AddMult(xr, yr, a.real());
+      }
+      if (!zero_imag)
+      {
+        Ar->AddMult(xi, yi, a.real());
+      }
     }
-    else if (diag_policy_ == DiagonalPolicy::DIAG_ZERO || height != width)
+    if (Ai)
     {
-      b.SetSubVector(*test_dbc_tdof_list_, 0.0);
+      if (!zero_imag)
+      {
+        Ai->AddMult(xi, yr, -a.real());
+      }
+      if (!zero_real)
+      {
+        Ai->AddMult(xr, yi, a.real());
+      }
     }
-    else
+  }
+  else if (a.imag() != 0.0)
+  {
+    if (Ar)
     {
-      MFEM_ABORT("Unsupported Operator::DiagonalPolicy for ParOperator!");
+      if (!zero_real)
+      {
+        Ar->AddMult(xr, yi, a.imag());
+      }
+      if (!zero_imag)
+      {
+        Ar->AddMult(xi, yr, -a.imag());
+      }
+    }
+    if (Ai)
+    {
+      if (!zero_imag)
+      {
+        Ai->AddMult(xi, yi, -a.imag());
+      }
+      if (!zero_real)
+      {
+        Ai->AddMult(xr, yr, -a.imag());
+      }
     }
   }
 }
 
-void ParOperator::AssembleDiagonal(Vector &diag) const
+void ComplexWrapperOperator::AddMultTranspose(const Vector &xr, const Vector &xi,
+                                              Vector &yr, Vector &yi,
+                                              const std::complex<double> a, bool zero_real,
+                                              bool zero_imag) const
 {
-  if (RAP_)
+  if (a.real() != 0.0 && a.imag() != 0.0)
   {
-    RAP_->GetDiag(diag);
-    return;
+    tx.SetSize(width);
+    MultTranspose(xr, xi, tx.Real(), tx.Imag(), zero_real, zero_imag);
+    const int N = width;
+    const double ar = a.real();
+    const double ai = a.imag();
+    const auto *TXR = tx.Real().Read();
+    const auto *TXI = tx.Imag().Read();
+    auto *YR = yr.ReadWrite();
+    auto *YI = yi.ReadWrite();
+    mfem::forall(N,
+                 [=] MFEM_HOST_DEVICE(int i)
+                 {
+                   YR[i] += ar * TXR[i] - ai * TXI[i];
+                   YI[i] += ai * TXR[i] + ar * TXI[i];
+                 });
   }
-
-  // For an AMR mesh, a convergent diagonal is assembled with |P|ᵀ dₗ, where |P| has
-  // entry-wise absolute values of the conforming prolongation operator.
-  MFEM_VERIFY(&trial_fespace_ == &test_fespace_,
-              "Diagonal assembly is only available for square ParOperator!");
-  if (auto *bfA = dynamic_cast<mfem::BilinearForm *>(A_.get()))
+  else if (a.real() != 0.0)
   {
-    if (bfA->HasSpMat())
+    if (Ar)
     {
-      bfA->SpMat().GetDiag(ly_);
+      if (!zero_real)
+      {
+        Ar->AddMultTranspose(xr, yr, a.real());
+      }
+      if (!zero_imag)
+      {
+        Ar->AddMultTranspose(xi, yi, a.real());
+      }
     }
-    else if (bfA->HasExt())
+    if (Ai)
     {
-      bfA->Ext().AssembleDiagonal(ly_);
+      if (!zero_imag)
+      {
+        Ai->AddMultTranspose(xi, yr, -a.real());
+      }
+      if (!zero_real)
+      {
+        Ai->AddMultTranspose(xr, yi, a.real());
+      }
     }
-    else
+  }
+  else if (a.imag() != 0.0)
+  {
+    if (Ar)
     {
-      MFEM_ABORT("Unable to assemble the local operator diagonal of BilinearForm!");
+      if (!zero_real)
+      {
+        Ar->AddMultTranspose(xr, yi, a.imag());
+      }
+      if (!zero_imag)
+      {
+        Ar->AddMultTranspose(xi, yr, -a.imag());
+      }
     }
-  }
-  else if (auto *sA = dynamic_cast<mfem::SparseMatrix *>(A_.get()))
-  {
-    sA->GetDiag(ly_);
-  }
-  else
-  {
-    MFEM_ABORT("ParOperator::AssembleDiagonal requires A as a BilinearForm or "
-               "SparseMatrix!");
-  }
-
-  const Operator *P = test_fespace_.GetProlongationMatrix();
-  if (const auto *hP = dynamic_cast<const mfem::HypreParMatrix *>(P))
-  {
-    hP->AbsMultTranspose(1.0, ly_, 0.0, diag);
-  }
-  else
-  {
-    P->MultTranspose(ly_, diag);
-  }
-
-  if (test_dbc_tdof_list_)
-  {
-    if (diag_policy_ == DiagonalPolicy::DIAG_ONE)
+    if (Ai)
     {
-      diag.SetSubVector(*test_dbc_tdof_list_, 1.0);
-    }
-    else if (diag_policy_ == DiagonalPolicy::DIAG_ZERO)
-    {
-      diag.SetSubVector(*test_dbc_tdof_list_, 0.0);
-    }
-    else
-    {
-      MFEM_ABORT("Unsupported Operator::DiagonalPolicy for ParOperator!");
+      if (!zero_imag)
+      {
+        Ai->AddMultTranspose(xi, yi, -a.imag());
+      }
+      if (!zero_real)
+      {
+        Ai->AddMultTranspose(xr, yr, -a.imag());
+      }
     }
   }
 }
 
-mfem::HypreParMatrix &ParOperator::ParallelAssemble()
+void ComplexWrapperOperator::AddMultHermitianTranspose(const Vector &xr, const Vector &xi,
+                                                       Vector &yr, Vector &yi,
+                                                       const std::complex<double> a,
+                                                       bool zero_real, bool zero_imag) const
 {
-  if (RAP_)
+  if (a.real() != 0.0 && a.imag() != 0.0)
   {
-    return *RAP_;
+    tx.SetSize(width);
+    MultHermitianTranspose(xr, xi, tx.Real(), tx.Imag(), zero_real, zero_imag);
+    const int N = width;
+    const double ar = a.real();
+    const double ai = a.imag();
+    const auto *TXR = tx.Real().Read();
+    const auto *TXI = tx.Imag().Read();
+    auto *YR = yr.ReadWrite();
+    auto *YI = yi.ReadWrite();
+    mfem::forall(N,
+                 [=] MFEM_HOST_DEVICE(int i)
+                 {
+                   YR[i] += ar * TXR[i] - ai * TXI[i];
+                   YI[i] += ai * TXR[i] + ar * TXI[i];
+                 });
   }
-
-  // XX TODO: For mfem::AssemblyLevel::PARTIAL, we cannot use CeedOperatorFullAssemble for
-  //          a ND space with p > 1. We should throw an error here that the user needs to
-  //          use AssemblyLevel::LEGACY in this case.
-
-  // Build the square or rectangular RᵀAP HypreParMatrix.
-  if (&trial_fespace_ == &test_fespace_)
+  else if (a.real() != 0.0)
   {
-    mfem::SparseMatrix *lA;
-    bool own_lA = false;
-    if (auto *bfA = dynamic_cast<mfem::BilinearForm *>(A_.get()))
+    if (Ar)
     {
-#ifdef MFEM_USE_CEED
-      if (bfA->HasSpMat())
+      if (!zero_real)
       {
-        lA = &bfA->SpMat();
+        Ar->AddMultTranspose(xr, yr, a.real());
       }
-      else if (bfA->HasExt())
+      if (!zero_imag)
       {
-        lA = mfem::ceed::CeedOperatorFullAssemble(*bfA);
-        own_lA = true;
+        Ar->AddMultTranspose(xi, yi, a.real());
       }
-      else
+    }
+    if (Ai)
+    {
+      if (!zero_imag)
       {
-        MFEM_ABORT("Unable to assemble the local operator for parallel assembly of "
-                   "BilinearForm!");
+        Ai->AddMultTranspose(xi, yr, a.real());
       }
-#else
-      MFEM_VERIFY(bfA->HasSpMat(),
-                  "Missing assembled SparseMatrix for parallel assembly of BilinearForm!");
-      lA = &bfA->SpMat();
-#endif
-    }
-    else if (auto *sA = dynamic_cast<mfem::SparseMatrix *>(A_.get()))
-    {
-      lA = sA;
-    }
-    else
-    {
-      MFEM_ABORT("ParOperator::ParallelAssemble requires A as a BilinearForm or "
-                 "SparseMatrix!");
-      lA = nullptr;
-    }
-    mfem::HypreParMatrix *hA =
-        new mfem::HypreParMatrix(trial_fespace_.GetComm(), trial_fespace_.GlobalVSize(),
-                                 trial_fespace_.GetDofOffsets(), lA);
-    const mfem::HypreParMatrix *P = trial_fespace_.Dof_TrueDof_Matrix();
-    RAP_ = std::make_unique<mfem::HypreParMatrix>(hypre_ParCSRMatrixRAP(*P, *hA, *P), true);
-    delete hA;
-    if (own_lA)
-    {
-      delete lA;
-    }
-  }
-  else
-  {
-    mfem::SparseMatrix *lA;
-    bool own_lA = false;
-    if (auto *mbfA = dynamic_cast<mfem::MixedBilinearForm *>(A_.get()))
-    {
-#ifdef MFEM_USE_CEED
-      if (mbfA->HasSpMat())
+      if (!zero_real)
       {
-        lA = &mbfA->SpMat();
-      }
-      else if (bfA->HasExt())
-      {
-        lA = mfem::ceed::CeedOperatorFullAssemble(*bfA);
-        own_lA = true;
-      }
-      else
-      {
-        MFEM_ABORT("Unable to assemble the local operator for parallel assembly of "
-                   "MixedBilinearForm!");
-      }
-#else
-      MFEM_VERIFY(
-          mbfA->HasSpMat(),
-          "Missing assembled SparseMatrix for parallel assembly of MixedBilinearForm!");
-      lA = &mbfA->SpMat();
-#endif
-    }
-    else if (auto *sA = dynamic_cast<mfem::SparseMatrix *>(A_.get()))
-    {
-      lA = sA;
-    }
-    else
-    {
-      MFEM_ABORT("ParOperator::ParallelAssemble requires A as a MixedBilinearForm or "
-                 "SparseMatrix!");
-      lA = nullptr;
-    }
-    mfem::HypreParMatrix *hA = new mfem::HypreParMatrix(
-        trial_fespace_.GetComm(), test_fespace_.GlobalVSize(), trial_fespace_.GlobalVSize(),
-        test_fespace_.GetDofOffsets(), trial_fespace_.GetDofOffsets(), lA);
-    const mfem::HypreParMatrix *P = trial_fespace_.Dof_TrueDof_Matrix();
-    if (!use_R_)
-    {
-      const mfem::HypreParMatrix *Rt = test_fespace_.Dof_TrueDof_Matrix();
-      RAP_ =
-          std::make_unique<mfem::HypreParMatrix>(hypre_ParCSRMatrixRAP(*Rt, *hA, *P), true);
-    }
-    else
-    {
-      mfem::SparseMatrix *sRt = mfem::Transpose(*test_fespace_.GetRestrictionMatrix());
-      mfem::HypreParMatrix *hRt = new mfem::HypreParMatrix(
-          test_fespace_.GetComm(), test_fespace_.GlobalVSize(),
-          test_fespace_.GlobalTrueVSize(), test_fespace_.GetDofOffsets(),
-          test_fespace_.GetTrueDofOffsets(), sRt);
-      RAP_ = std::make_unique<mfem::HypreParMatrix>(hypre_ParCSRMatrixRAP(*hRt, *hA, *P),
-                                                    true);
-      delete sRt;
-      delete hRt;
-    }
-    delete hA;
-    if (own_lA)
-    {
-      delete lA;
-    }
-  }
-  hypre_ParCSRMatrixSetNumNonzeros(*RAP_);
-
-  // Delete the original local operator.
-  if (!save_A_)
-  {
-    A_.reset();
-  }
-
-  // Eliminate boundary conditions on the assembled matrix.
-  if (test_dbc_tdof_list_ || trial_dbc_tdof_list_)
-  {
-    if (test_dbc_tdof_list_ == trial_dbc_tdof_list_)
-    {
-      // Elimination for a square operator.
-      MFEM_VERIFY(
-          &trial_fespace_ == &test_fespace_,
-          "Only square ParOperator should have same trial and test eliminated tdofs!");
-      RAP_->EliminateBC(*trial_dbc_tdof_list_, diag_policy_);
-    }
-    else
-    {
-      // Rectangular elimination sets all eliminated rows/columns to zero.
-      if (test_dbc_tdof_list_)
-      {
-        RAP_->EliminateRows(*test_dbc_tdof_list_);
-      }
-      if (trial_dbc_tdof_list_)
-      {
-        mfem::HypreParMatrix *RAPe = RAP_->EliminateCols(*trial_dbc_tdof_list_);
-        delete RAPe;
+        Ai->AddMultTranspose(xr, yi, -a.real());
       }
     }
   }
-  return *RAP_;
+  else if (a.imag() != 0.0)
+  {
+    if (Ar)
+    {
+      if (!zero_real)
+      {
+        Ar->AddMultTranspose(xr, yi, a.imag());
+      }
+      if (!zero_imag)
+      {
+        Ar->AddMultTranspose(xi, yr, -a.imag());
+      }
+    }
+    if (Ai)
+    {
+      if (!zero_imag)
+      {
+        Ai->AddMultTranspose(xi, yi, a.imag());
+      }
+      if (!zero_real)
+      {
+        Ai->AddMultTranspose(xr, yr, a.imag());
+      }
+    }
+  }
 }
 
-void ParOperator::Mult(const Vector &x, Vector &y) const
+SumOperator::SumOperator(const Operator &op, double c) : Operator(op.Height(), op.Width())
 {
-  if (RAP_)
+  AddOperator(op, c);
+}
+
+void SumOperator::AddOperator(const Operator &op, double c)
+{
+  MFEM_VERIFY(op.Height() == height && op.Width() == width,
+              "Invalid Operator dimensions for SumOperator!");
+  ops.emplace_back(&op, c);
+}
+
+void SumOperator::Mult(const Vector &x, Vector &y) const
+{
+  if (ops.size() == 1 && ops[0].second == 1.0)
   {
-    RAP_->Mult(x, y);
-    return;
+    return ops[0].first->Mult(x, y);
   }
   y = 0.0;
   AddMult(x, y);
 }
 
-void ParOperator::MultTranspose(const Vector &x, Vector &y) const
+void SumOperator::MultTranspose(const Vector &x, Vector &y) const
 {
-  if (RAP_)
+  if (ops.size() == 1 && ops[0].second == 1.0)
   {
-    RAP_->MultTranspose(x, y);
-    return;
+    return ops[0].first->MultTranspose(x, y);
   }
   y = 0.0;
   AddMultTranspose(x, y);
 }
 
-void ParOperator::AddMult(const Vector &x, Vector &y, const double a) const
+void SumOperator::AddMult(const Vector &x, Vector &y, const double a) const
 {
-  if (RAP_)
+  for (const auto &[op, c] : ops)
   {
-    RAP_->AddMult(x, y, a);
-    return;
-  }
-  MFEM_ASSERT(x.Size() == width && y.Size() == height,
-              "Incompatible dimensions for ParOperator::AddMult!");
-  if (trial_dbc_tdof_list_)
-  {
-    tx_ = x;
-    tx_.SetSubVector(*trial_dbc_tdof_list_, 0.0);
-  }
-  trial_fespace_.GetProlongationMatrix()->Mult(trial_dbc_tdof_list_ ? tx_ : x, lx_);
-
-  // Apply the operator on the L-vector.
-  A_->Mult(lx_, ly_);
-
-  if (test_dbc_tdof_list_)
-  {
-    if (!use_R_)
-    {
-      test_fespace_.GetProlongationMatrix()->MultTranspose(ly_, ty_);
-    }
-    else
-    {
-      test_fespace_.GetRestrictionMatrix()->Mult(ly_, ty_);
-    }
-    if (diag_policy_ == DiagonalPolicy::DIAG_ONE && height == width)
-    {
-      const int N = test_dbc_tdof_list_->Size();
-      const auto *idx = test_dbc_tdof_list_->Read();
-      const auto *X = x.Read();
-      auto *TY = ty_.ReadWrite();
-      mfem::forall(N,
-                   [=] MFEM_HOST_DEVICE(int i)
-                   {
-                     const int id = idx[i];
-                     TY[id] = X[id];
-                   });
-    }
-    else if (diag_policy_ == DiagonalPolicy::DIAG_ZERO || height != width)
-    {
-      ty_.SetSubVector(*test_dbc_tdof_list_, 0.0);
-    }
-    else
-    {
-      MFEM_ABORT("Unsupported Operator::DiagonalPolicy for ParOperator!");
-    }
-    y.Add(a, ty_);
-  }
-  else
-  {
-    if (!use_R_)
-    {
-      test_fespace_.GetProlongationMatrix()->AddMultTranspose(ly_, y, a);
-    }
-    else
-    {
-      test_fespace_.GetRestrictionMatrix()->AddMult(ly_, y, a);
-    }
+    op->AddMult(x, y, a * c);
   }
 }
 
-void ParOperator::AddMultTranspose(const Vector &x, Vector &y, const double a) const
+void SumOperator::AddMultTranspose(const Vector &x, Vector &y, const double a) const
 {
-  if (RAP_)
+  for (const auto &[op, c] : ops)
   {
-    RAP_->AddMultTranspose(x, y, a);
-    return;
-  }
-  MFEM_ASSERT(x.Size() == height && y.Size() == width,
-              "Incompatible dimensions for ParOperator::AddMultTranspose!");
-  if (test_dbc_tdof_list_)
-  {
-    ty_ = x;
-    ty_.SetSubVector(*test_dbc_tdof_list_, 0.0);
-  }
-  if (!use_R_)
-  {
-    test_fespace_.GetProlongationMatrix()->Mult(test_dbc_tdof_list_ ? ty_ : x, ly_);
-  }
-  else
-  {
-    test_fespace_.GetRestrictionMatrix()->MultTranspose(test_dbc_tdof_list_ ? ty_ : x, ly_);
-  }
-
-  // Apply the operator on the L-vector.
-  A_->MultTranspose(ly_, lx_);
-
-  if (trial_dbc_tdof_list_)
-  {
-    trial_fespace_.GetProlongationMatrix()->MultTranspose(lx_, tx_);
-    if (diag_policy_ == DiagonalPolicy::DIAG_ONE && height == width)
-    {
-      const int N = trial_dbc_tdof_list_->Size();
-      const auto *idx = trial_dbc_tdof_list_->Read();
-      const auto *X = x.Read();
-      auto *TX = tx_.ReadWrite();
-      mfem::forall(N,
-                   [=] MFEM_HOST_DEVICE(int i)
-                   {
-                     const int id = idx[i];
-                     TX[id] = X[id];
-                   });
-    }
-    else if (diag_policy_ == DiagonalPolicy::DIAG_ZERO || height != width)
-    {
-      tx_.SetSubVector(*test_dbc_tdof_list_, 0.0);
-    }
-    else
-    {
-      MFEM_ABORT("Unsupported Operator::DiagonalPolicy for ParOperator!");
-    }
-    y.Add(a, tx_);
-  }
-  else
-  {
-    trial_fespace_.GetProlongationMatrix()->AddMultTranspose(lx_, y, a);
+    op->AddMultTranspose(x, y, a * c);
   }
 }
 
-void DiagonalOperator::Mult(const Vector &x, Vector &y) const
+ComplexSumOperator::ComplexSumOperator(const ComplexOperator &op, std::complex<double> c)
+  : ComplexOperator(op.Height(), op.Width())
+{
+  AddOperator(op, c);
+}
+
+void ComplexSumOperator::AddOperator(const ComplexOperator &op, std::complex<double> c)
+{
+  MFEM_VERIFY(op.Height() == height && op.Width() == width,
+              "Invalid Operator dimensions for ComplexSumOperator!");
+  ops.emplace_back(&op, c);
+}
+
+bool ComplexSumOperator::IsReal() const
+{
+  for (const auto &[op, c] : ops)
+  {
+    if (!op->IsReal())
+    {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool ComplexSumOperator::IsImag() const
+{
+  for (const auto &[op, c] : ops)
+  {
+    if (!op->IsImag())
+    {
+      return false;
+    }
+  }
+  return true;
+}
+
+void ComplexSumOperator::Mult(const Vector &xr, const Vector &xi, Vector &yr, Vector &yi,
+                              bool zero_real, bool zero_imag) const
+{
+  if (ops.Size() == 1 && ops[0].second == 1.0)
+  {
+    return ops[0].first->Mult(xr, xi, yr, yi, zero_real, zero_imag);
+  }
+  yr = 0.0;
+  yi = 0.0;
+  AddMult(xr, xi, yr, yi, 1.0, zero_real, zero_imag);
+}
+
+void ComplexSumOperator::MultTranspose(const Vector &xr, const Vector &xi, Vector &yr,
+                                       Vector &yi, bool zero_real, bool zero_imag) const
+{
+  if (ops.Size() == 1 && ops[0].second == 1.0)
+  {
+    return ops[0].first->MultTranspose(xr, xi, yr, yi, zero_real, zero_imag);
+  }
+  yr = 0.0;
+  yi = 0.0;
+  AddMultTranspose(xr, xi, yr, yi, 1.0, zero_real, zero_imag);
+}
+
+void ComplexSumOperator::MultHermitianTranspose(const Vector &xr, const Vector &xi,
+                                                Vector &yr, Vector &yi, bool zero_real,
+                                                bool zero_imag) const
+{
+  if (ops.Size() == 1 && ops[0].second == 1.0)
+  {
+    return ops[0].first->MultHermitianTranspose(xr, xi, yr, yi, zero_real, zero_imag);
+  }
+  yr = 0.0;
+  yi = 0.0;
+  AddMultHermitianTranspose(xr, xi, yr, yi, 1.0, zero_real, zero_imag);
+}
+
+void ComplexSumOperator::AddMult(const Vector &xr, const Vector &xi, Vector &yr, Vector &yi,
+                                 const std::complex<double> a, bool zero_real,
+                                 bool zero_imag) const
+{
+  for (const auto &[op, c] : ops)
+  {
+    op->AddMult(xr, xi, yr, yi, a * c, zero_real, zero_imag);
+  }
+}
+
+void ComplexSumOperator::AddMultTranspose(const Vector &xr, const Vector &xi, Vector &yr,
+                                          Vector &yi, const std::complex<double> a,
+                                          bool zero_real, bool zero_imag) const
+{
+  for (const auto &[op, c] : ops)
+  {
+    op->AddMultTranspose(xr, xi, yr, yi, a * c, zero_real, zero_imag);
+  }
+}
+
+void ComplexSumOperator::AddMultHermitianTranspose(const Vector &xr, const Vector &xi,
+                                                   Vector &yr, Vector &yi,
+                                                   const std::complex<double> a,
+                                                   bool zero_real, bool zero_imag) const
+{
+  for (const auto &[op, c] : ops)
+  {
+    op->AddMultTranspose(xr, xi, yr, yi, a * c, zero_real, zero_imag);
+  }
+}
+
+template <>
+void DiagonalOperator<Operator>::Mult(const Vector &x, Vector &y) const
 {
   const int N = height;
-  const auto *D = d_.Read();
+  const auto *D = d.Read();
   const auto *X = x.Read();
   auto *Y = y.Write();
   mfem::forall(N, [=] MFEM_HOST_DEVICE(int i) { Y[i] = D[i] * X[i]; });
+}
+
+template <>
+void DiagonalOperator<ComplexOperator>::Mult(const ComplexVector &x, ComplexVector &y) const
+{
+  const int N = height;
+  const auto *DR = d.Real().Read();
+  const auto *DI = d.Imag().Read();
+  const auto *XR = x.Real().Read();
+  const auto *XI = x.Imag().Read();
+  auto *YR = y.Real().Write();
+  auto *YI = y.Imag().Write();
+  mfem::forall(N,
+               [=] MFEM_HOST_DEVICE(int i)
+               {
+                 YR[i] = DR[i] * XR[i] - DI[i] * XI[i];
+                 YI[i] = DI[i] * XR[i] + DR[i] * XI[i];
+               });
+}
+
+template <>
+void DiagonalOperator<ComplexOperator>::MultHermitianTranspose(const ComplexVector &x,
+                                                               ComplexVector &y) const
+{
+  const int N = height;
+  const auto *DR = d.Real().Read();
+  const auto *DI = d.Imag().Read();
+  const auto *XR = x.Real().Read();
+  const auto *XI = x.Imag().Read();
+  auto *YR = y.Real().Write();
+  auto *YI = y.Imag().Write();
+  mfem::forall(N,
+               [=] MFEM_HOST_DEVICE(int i)
+               {
+                 YR[i] = DR[i] * XR[i] + DI[i] * XI[i];
+                 YI[i] = -DI[i] * XR[i] + DR[i] * XI[i];
+               });
 }
 
 namespace linalg
@@ -479,9 +644,7 @@ namespace linalg
 
 double SpectralNorm(MPI_Comm comm, const Operator &A, bool sym, double tol, int max_it)
 {
-  // The SumOperator does not take ownership of A and allows the ComplexWrapperOperator
-  // to own its input.
-  ComplexWrapperOperator Ar(std::make_unique<SumOperator>(A, 1.0), nullptr);
+  ComplexWrapperOperator Ar(&A, nullptr);  // Non-owning constructor
   return SpectralNorm(comm, Ar, sym, tol, max_it);
 }
 
