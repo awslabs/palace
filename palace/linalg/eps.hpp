@@ -6,14 +6,13 @@
 
 #include <complex>
 #include "linalg/operator.hpp"
+#include "linalg/vector.hpp"
 
 namespace palace
 {
 
-class DivFreeSolver;
 class ComplexKspSolver;
-class ComplexOperator;
-class ComplexVector;
+class DivFreeSolver;
 
 //
 // Pure abstract base class for solving generalized linear eigenvalue problems problems or

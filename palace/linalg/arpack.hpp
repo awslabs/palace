@@ -9,9 +9,9 @@
 #include <complex>
 #include <memory>
 #include <mpi.h>
-#include "linalg/complex.hpp"
 #include "linalg/eps.hpp"
 #include "linalg/operator.hpp"
+#include "linalg/vector.hpp"
 
 namespace palace
 {

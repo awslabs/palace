@@ -816,10 +816,17 @@ public:
   // Maximum number of iterations for solving linear systems in divergence-free projector.
   int divfree_max_it = 100;
 
-  // Enable modified Gram-Schmidt orthogonalization instead of classical for GMRES/FGMRES
-  // Krylov solvers and SLEPc eigenvalue solver.
-  bool orthog_mgs = false;
-  bool orthog_cgs2 = false;
+  // Enable different variants of Gram-Schmidt orthogonalization for GMRES/FGMRES iterative
+  // solvers and SLEPc eigenvalue solver.
+  enum class OrthogType
+  {
+    MGS,
+    CGS,
+    CGS2,
+    DEFAULT,
+    INVALID = -1
+  };
+  OrthogType orthog_type = OrthogType::DEFAULT;
 
   void SetUp(json &solver);
 };

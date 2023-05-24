@@ -12,9 +12,8 @@ namespace palace
 {
 
 //
-// Simple Jacobi smoother using a provided diagonal vector, usually the output of
-// AssembleDiagonal() which allows for (approximatE) diagonal construction for matrix-free
-// operators.
+// Simple Jacobi smoother using the diagonal vector from Operator::AssembleDiagonal(),
+// which allows for (approximate) diagonal construction for matrix-free operators.
 //
 class JacobiSmoother : public mfem::Solver
 {

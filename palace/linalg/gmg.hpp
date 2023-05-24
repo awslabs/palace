@@ -6,10 +6,19 @@
 
 #include <memory>
 #include <vector>
-#include <mfem.hpp>
 #include "linalg/operator.hpp"
+#include "linalg/solver.hpp"
 #include "linalg/vector.hpp"
 #include "utils/iodata.hpp"
+
+namespace mfem
+{
+
+template <typename T>
+class Array;
+class ParFiniteElementSpaceHierarchy;
+
+}  // namespace mfem
 
 namespace palace
 {
@@ -19,34 +28,35 @@ namespace palace
 // hierarchy of finite element spaces. Optionally can be configured to use auxiliary space
 // smoothing at each level.
 //
-class GeometricMultigridSolver : public mfem::Solver
+template <typename OperType>
+class GeometricMultigridSolver : public Solver<OperType>
 {
 private:
   // Number of V-cycles per preconditioner application.
   const int pc_it;
 
   // System matrices at each multigrid level and prolongation operators (not owned).
-  std::vector<const ParOperator *> A_, P_;
+  std::vector<const OperType *> A;
+  std::vector<const Operator *> P;
+  std::vector<const mfem::Array<int> *> dbc_tdof_lists;
 
-  // Smoothers for each level. Coarse level solver is B_[0].
-  std::vector<std::unique_ptr<mfem::Solver>> B_;
+  // Smoothers for each level. Coarse level solver is B[0].
+  mutable std::vector<std::unique_ptr<Solver<OperType>>> B;
 
   // Temporary vectors for preconditioner application. The type of these is dictated by the
   // MFEM Operator interface for multiple RHS.
-  mutable std::vector<Vector> x_, y_, r_;
-  mutable std::vector<std::vector<Vector>> xrefs_, yrefs_, rrefs_;
-  mutable std::vector<mfem::Array<Vector *>> X_, Y_, R_;
+  mutable std::vector<VecType> X, Y, R;
 
   // Internal function to perform a single V-cycle iteration.
   void VCycle(int l, bool initial_guess) const;
 
 public:
-  GeometricMultigridSolver(std::unique_ptr<mfem::Solver> &&coarse_solver,
+  GeometricMultigridSolver(std::unique_ptr<Solver<OperType>> &&coarse_solver,
                            mfem::ParFiniteElementSpaceHierarchy &fespaces,
                            mfem::ParFiniteElementSpaceHierarchy *aux_fespaces, int cycle_it,
                            int smooth_it, int cheby_order);
   GeometricMultigridSolver(const IoData &iodata,
-                           std::unique_ptr<mfem::Solver> &&coarse_solver,
+                           std::unique_ptr<Solver<OperType>> &&coarse_solver,
                            mfem::ParFiniteElementSpaceHierarchy &fespaces,
                            mfem::ParFiniteElementSpaceHierarchy *aux_fespaces)
     : GeometricMultigridSolver(std::move(coarse_solver), fespaces, aux_fespaces,
@@ -56,25 +66,9 @@ public:
   {
   }
 
-  void SetOperator(const Operator &op) override
-  {
-    MFEM_ABORT("SetOperator with a single operator is not implemented for "
-               "GeometricMultigridSolver, use the overloaded SetOperator instead!");
-  }
-  void SetOperator(const std::vector<std::unique_ptr<ParOperator>> &ops,
-                   const std::vector<std::unique_ptr<ParOperator>> *aux_ops = nullptr);
+  void SetOperator(const OperType &op) override;
 
-  void Mult(const Vector &x, Vector &y) const override
-  {
-    mfem::Array<const Vector *> X(1);
-    mfem::Array<Vector *> Y(1);
-    X[0] = &x;
-    Y[0] = &y;
-    ArrayMult(X, Y);
-  }
-
-  void ArrayMult(const mfem::Array<const Vector *> &X,
-                 mfem::Array<Vector *> &Y) const override;
+  void Mult(const VecType &x, VecType &y) const override;
 };
 
 }  // namespace palace
