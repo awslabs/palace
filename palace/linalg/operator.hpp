@@ -4,132 +4,181 @@
 #ifndef PALACE_LINALG_OPERATOR_HPP
 #define PALACE_LINALG_OPERATOR_HPP
 
+#include <complex>
 #include <memory>
+#include <type_traits>
 #include <utility>
 #include <vector>
-#include <mfem.hpp>
+#include "linalg/vector.hpp"
 
 namespace palace
 {
 
-class ComplexOperator;
-
-using Operator = mfem::Operator;
-using Vector = mfem::Vector;
-
 //
-// Derived operator classes extending mfem::Operator from MFEM.
+// Functionality extending mfem::Operator from MFEM.
 //
 
-// A parallel operator represented by RᵀAP constructed through the actions of Rᵀ, A, and P
-// with possible eliminated essential BC.
-class ParOperator : public Operator
+// Abstract base class for complex-valued operators.
+class ComplexOperator
 {
-private:
-  std::unique_ptr<Operator> A_;
-  const mfem::ParFiniteElementSpace &trial_fespace_, &test_fespace_;
-  const bool use_R_;
-
-  // Lists of constrained essential boundary true dofs for elimination.
-  const mfem::Array<int> *trial_dbc_tdof_list_, *test_dbc_tdof_list_;
-
-  // Diagonal policy for constrained true dofs.
-  DiagonalPolicy diag_policy_;
-
-  // Assembled operator as a parallel Hypre matrix. If the save flag is true, calls to
-  // ParallelAssemble will not delete the local operator. This is useful for later on calls
-  // to EliminateRHS, for example.
-  std::unique_ptr<mfem::HypreParMatrix> RAP_;
-  bool save_A_;
-
-  // Temporary storage for operator application.
-  mutable Vector lx_, ly_, tx_, ty_;
+protected:
+  // The size of the complex-valued operator.
+  int height, width;
 
 public:
-  // Construct the parallel operator, inheriting ownership of the local operator.
-  ParOperator(std::unique_ptr<Operator> &&A,
-              const mfem::ParFiniteElementSpace &trial_fespace,
-              const mfem::ParFiniteElementSpace &test_fespace, bool test_restrict);
-  ParOperator(std::unique_ptr<Operator> &&A, const mfem::ParFiniteElementSpace &fespace)
-    : ParOperator(std::move(A), fespace, fespace, false)
+  ComplexOperator(int s) : height(s), width(s) {}
+  ComplexOperator(int h, int w) : height(h), width(w) {}
+
+  // Get the height (size of output) of the operator.
+  int Height() const { return height; }
+
+  // Get the width (size of input) of the operator.
+  int Width() const { return width; }
+
+  // Test whether or not the operator is purely real or imaginary.
+  virtual bool IsReal() const;
+  virtual bool IsImag() const;
+
+  // Test whether or not we can access the real and imaginary operator parts.
+  virtual bool HasReal() const;
+  virtual bool HasImag() const;
+
+  // Get access to the real and imaginary operator parts.
+  virtual const Operator *Real() const;
+  virtual Operator *Real();
+  virtual const Operator *Imag() const;
+  virtual Operator *Imag();
+
+  virtual void Mult(const ComplexVector &x, ComplexVector &y) const
   {
+    Mult(x.Real(), x.Imag(), y.Real(), y.Imag());
   }
 
-  // Get access to the underlying local (L-vector) operator.
-  const Operator &LocalOperator() const
+  virtual void Mult(const Vector &xr, const Vector &xi, Vector &yr, Vector &yi,
+                    bool zero_real = false, bool zero_imag = false) const = 0;
+
+  virtual void MultTranspose(const ComplexVector &x, ComplexVector &y) const
   {
-    MFEM_ASSERT(A_, "No local matrix available for ParOperator::LocalOperator!");
-    return *A_;
+    MultTranspose(x.Real(), x.Imag(), y.Real(), y.Imag());
   }
 
-  // Set essential boundary condition true dofs for square operators.
-  void SetEssentialTrueDofs(const mfem::Array<int> &dbc_tdof_list,
-                            DiagonalPolicy diag_policy)
+  virtual void MultTranspose(const Vector &xr, const Vector &xi, Vector &yr, Vector &yi,
+                             bool zero_real = false, bool zero_imag = false) const;
+
+  virtual void MultHermitianTranspose(const ComplexVector &x, ComplexVector &y) const
   {
-    MFEM_VERIFY(height == width, "Set essential true dofs for both test and trial spaces "
-                                 "for rectangular ParOperator!");
-    trial_dbc_tdof_list_ = &dbc_tdof_list;
-    test_dbc_tdof_list_ = &dbc_tdof_list;
-    diag_policy_ = diag_policy;
+    MultHermitianTranspose(x.Real(), x.Imag(), y.Real(), y.Imag());
   }
 
-  // Set essential boundary condition true dofs for rectangular operators.
-  void SetEssentialTrueDofs(const mfem::Array<int> *trial_dbc_tdof_list,
-                            const mfem::Array<int> *test_dbc_tdof_list,
-                            DiagonalPolicy diag_policy)
+  virtual void MultHermitianTranspose(const Vector &xr, const Vector &xi, Vector &yr,
+                                      Vector &yi, bool zero_real = false,
+                                      bool zero_imag = false) const;
+
+  virtual void AddMult(const ComplexVector &x, ComplexVector &y,
+                       const std::complex<double> a = 1.0) const
   {
-    MFEM_VERIFY(diag_policy == DiagonalPolicy::DIAG_ZERO,
-                "Essential boundary condition true dof elimination for rectangular "
-                "ParOperator only supports DiagonalPolicy::DIAG_ZERO!");
-    trial_dbc_tdof_list_ = trial_dbc_tdof_list;
-    test_dbc_tdof_list_ = test_dbc_tdof_list;
-    diag_policy_ = diag_policy;
+    AddMult(x.Real(), x.Imag(), y.Real(), y.Imag(), a);
   }
 
-  // Get the essential boundary condition true dofs associated with the operator. May be
-  // nullptr.
-  const mfem::Array<int> *GetEssentialTrueDofs() const
+  virtual void AddMult(const Vector &xr, const Vector &xi, Vector &yr, Vector &yi,
+                       const std::complex<double> a = 1.0, bool zero_real = false,
+                       bool zero_imag = false) const;
+
+  virtual void AddMultTranspose(const ComplexVector &x, ComplexVector &y,
+                                const std::complex<double> a = 1.0) const
   {
-    MFEM_VERIFY(trial_dbc_tdof_list_ == test_dbc_tdof_list_ && height == width,
-                "GetEssentialTrueDofs should only be used for square ParOperator!");
-    return trial_dbc_tdof_list_;
+    AddMultTranspose(x.Real(), x.Imag(), y.Real(), y.Imag(), a);
   }
 
-  // Get access to the finite element spaces associated with the operator.
-  const mfem::ParFiniteElementSpace &GetFESpace() const
+  virtual void AddMultTranspose(const Vector &xr, const Vector &xi, Vector &yr, Vector &yi,
+                                const std::complex<double> a = 1.0, bool zero_real = false,
+                                bool zero_imag = false) const;
+
+  virtual void AddMultHermitianTranspose(const ComplexVector &x, ComplexVector &y,
+                                         const std::complex<double> a = 1.0) const
   {
-    MFEM_VERIFY(&trial_fespace_ == &test_fespace_ && height == width,
-                "GetFESpace should only be used for square ParOperator!");
-    return trial_fespace_;
+    AddMultHermitianTranspose(x.Real(), x.Imag(), y.Real(), y.Imag(), a);
   }
 
-  // A call to ParallelAssemble will typically free the memory associated with the local
-  // operator as it is no longer required. When the save flag is set, the local operator
-  // will not be deleted during parallel assembly.
-  void SaveLocalOperator() { save_A_ = true; }
+  virtual void AddMultHermitianTranspose(const Vector &xr, const Vector &xi, Vector &yr,
+                                         Vector &yi, const std::complex<double> a = 1.0,
+                                         bool zero_real = false,
+                                         bool zero_imag = false) const;
+};
 
-  // Eliminate essential true dofs from the RHS vector b, using the essential boundary
-  // condition values in x.
-  void EliminateRHS(const Vector &x, Vector &b) const;
+// A complex-valued operator represented using a block 2x2 equivalent-real formulation.
+class ComplexWrapperOperator : public ComplexOperator
+{
+private:
+  // Storage and access for real and imaginary parts of the operator.
+  std::unique_ptr<Operator> data_Ar, data_Ai;
+  Operator *Ar, *Ai;
 
-  // Assemble the diagonal for the parallel operator.
-  void AssembleDiagonal(Vector &diag) const override;
+  // Temporary storage for operator application.
+  mutable ComplexVector tx, ty;
 
-  // Assemble the operator as a parallel sparse matrix. This frees the memory associated
-  // with the local operator.
-  mfem::HypreParMatrix &ParallelAssemble();
+  ComplexWrapperOperator(std::unique_ptr<Operator> &&data_Ar,
+                         std::unique_ptr<Operator> &&data_Ai, Operator *Ar, Operator *Ai);
 
-  // Steal the assembled parallel sparse matrix. The local operator is saved so that this
-  // object still can perform operations after this is called.
-  std::unique_ptr<mfem::HypreParMatrix> StealParallelAssemble()
-  {
-    SaveLocalOperator();
-    ParallelAssemble();
-    return std::move(RAP_);
-  }
+public:
+  // Construct a complex operator which inherits ownership of the input real and imaginary
+  // parts.
+  ComplexWrapperOperator(std::unique_ptr<Operator> &&Ar, std::unique_ptr<Operator> &&Ai);
 
-  // Get the associated MPI communicator.
-  MPI_Comm GetComm() const { return trial_fespace_.GetComm(); }
+  // Non-owning constructor.
+  ComplexWrapperOperator(Operator *Ar, Operator *Ai);
+
+  bool IsReal() const override { return Ai == nullptr; }
+  bool IsImag() const override { return Ar == nullptr; }
+  bool HasReal() const override { return Ar != nullptr; }
+  bool HasImag() const override { return Ai != nullptr; }
+  const Operator *Real() const override { return Ar; }
+  Operator *Real() override { return Ar; }
+  const Operator *Imag() const override { return Ai; }
+  Operator *Imag() override { return Ai; }
+
+  using ComplexOperator::AddMult;
+  using ComplexOperator::AddMultHermitianTranspose;
+  using ComplexOperator::AddMultTranspose;
+  using ComplexOperator::Mult;
+  using ComplexOperator::MultHermitianTranspose;
+  using ComplexOperator::MultTranspose;
+
+  void Mult(const Vector &xr, const Vector &xi, Vector &yr, Vector &yi,
+            bool zero_real = false, bool zero_imag = false) const override;
+
+  void MultTranspose(const Vector &xr, const Vector &xi, Vector &yr, Vector &yi,
+                     bool zero_real = false, bool zero_imag = false) const override;
+
+  void MultHermitianTranspose(const Vector &xr, const Vector &xi, Vector &yr, Vector &yi,
+                              bool zero_real = false,
+                              bool zero_imag = false) const override;
+
+  void AddMult(const Vector &xr, const Vector &xi, Vector &yr, Vector &yi,
+               const std::complex<double> a = 1.0, bool zero_real = false,
+               bool zero_imag = false) const override;
+
+  void AddMultTranspose(const Vector &xr, const Vector &xi, Vector &yr, Vector &yi,
+                        const std::complex<double> a = 1.0, bool zero_real = false,
+                        bool zero_imag = false) const override;
+
+  void AddMultHermitianTranspose(const Vector &xr, const Vector &xi, Vector &yr, Vector &yi,
+                                 const std::complex<double> a = 1.0, bool zero_real = false,
+                                 bool zero_imag = false) const override;
+};
+
+// Wrap a sequence of operators of the same dimensions and optional coefficients.
+class SumOperator : public Operator
+{
+private:
+  std::vector<std::pair<const Operator *, double>> ops;
+
+public:
+  SumOperator(int s) : Operator(s) {}
+  SumOperator(int h, int w) : Operator(h, w) {}
+  SumOperator(const Operator &op, double c = 1.0);
+
+  void AddOperator(const Operator &op, double c = 1.0);
 
   void Mult(const Vector &x, Vector &y) const override;
 
@@ -141,94 +190,163 @@ public:
 };
 
 // Wrap a sequence of operators of the same dimensions and optional coefficients.
-class SumOperator : public Operator
+class ComplexSumOperator : public ComplexOperator
 {
 private:
-  std::vector<std::pair<const Operator *, double>> ops_;
+  std::vector<std::pair<const ComplexOperator *, std::complex<double>>> ops;
 
 public:
-  SumOperator(int s) : Operator(s) {}
-  SumOperator(int h, int w) : Operator(h, w) {}
-  SumOperator(const Operator &op, double c = 1.0) : Operator(op.Height(), op.Width())
+  ComplexSumOperator(int s) : ComplexOperator(s) {}
+  ComplexSumOperator(int h, int w) : ComplexOperator(h, w) {}
+  ComplexSumOperator(const ComplexOperator &op, std::complex<double> c = 1.0);
+
+  void AddOperator(const ComplexOperator &op, std::complex<double> c = 1.0);
+
+  bool IsReal() const override;
+  bool IsImag() const override;
+
+  using ComplexOperator::AddMult;
+  using ComplexOperator::AddMultHermitianTranspose;
+  using ComplexOperator::AddMultTranspose;
+  using ComplexOperator::Mult;
+  using ComplexOperator::MultHermitianTranspose;
+  using ComplexOperator::MultTranspose;
+
+  void Mult(const Vector &xr, const Vector &xi, Vector &yr, Vector &yi,
+            bool zero_real = false, bool zero_imag = false) const override;
+
+  void MultTranspose(const Vector &xr, const Vector &xi, Vector &yr, Vector &yi,
+                     bool zero_real = false, bool zero_imag = false) const override;
+
+  void MultHermitianTranspose(const Vector &xr, const Vector &xi, Vector &yr, Vector &yi,
+                              bool zero_real = false,
+                              bool zero_imag = false) const override;
+
+  void AddMult(const Vector &xr, const Vector &xi, Vector &yr, Vector &yi,
+               const std::complex<double> a = 1.0, bool zero_real = false,
+               bool zero_imag = false) const override;
+
+  void AddMultTranspose(const Vector &xr, const Vector &xi, Vector &yr, Vector &yi,
+                        const std::complex<double> a = 1.0, bool zero_real = false,
+                        bool zero_imag = false) const override;
+
+  void AddMultHermitianTranspose(const Vector &xr, const Vector &xi, Vector &yr, Vector &yi,
+                                 const std::complex<double> a = 1.0, bool zero_real = false,
+                                 bool zero_imag = false) const override;
+};
+
+// Wraps two operators such that: (AB)ᵀ = BᵀAᵀ and, for complex symmetric operators, the
+// Hermitian transpose operation is (AB)ᴴ = BᴴAᴴ.
+template <typename OperType = Operator>
+class ProductOperator : public OperType
+{
+private:
+  typedef typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
+                                    ComplexVector, Vector>::type VecType;
+
+  const OperType &A, &B;
+  mutable VecType z;
+
+public:
+  ProductOperator(const OperType &A, const OperType &B)
+    : OperType(A.Height(), B.Width()), A(A), B(B), z(B.Height())
   {
-    AddOperator(op, c);
   }
 
-  void AddOperator(const Operator &op, double c = 1.0)
+  void Mult(const VecType &x, VecType &y) const override
   {
-    MFEM_VERIFY(op.Height() == height && op.Width() == width,
-                "Invalid Operator dimensions for SumOperator!");
-    ops_.emplace_back(&op, c);
+    B.Mult(x, z);
+    A.Mult(z, y);
   }
 
-  void Mult(const Vector &x, Vector &y) const override
+  void MultTranspose(const VecType &x, VecType &y) const override
   {
-    y = 0.0;
-    AddMult(x, y);
+    A.MultTranspose(x, z);
+    B.MultTranspose(z, y);
   }
 
-  void MultTranspose(const Vector &x, Vector &y) const override
+  template <typename T = OperType,
+            typename = std::enable_if_t<std::is_same<T, ComplexOperator>::value>>
+  void MultHermitianTranspose(const VecType &x, VecType &y) const override
   {
-    y = 0.0;
-    AddMultTranspose(x, y);
-  }
-
-  void AddMult(const Vector &x, Vector &y, const double a = 1.0) const override
-  {
-    for (const auto &[op, c] : ops_)
-    {
-      op->AddMult(x, y, a * c);
-    }
-  }
-
-  void AddMultTranspose(const Vector &x, Vector &y, const double a = 1.0) const override
-  {
-    for (const auto &[op, c] : ops_)
-    {
-      op->AddMultTranspose(x, y, a * c);
-    }
+    A.MultHermitianTranspose(x, z);
+    B.MultHermitianTranspose(z, y);
   }
 };
 
-// Wraps two symmetric operators such that: (AB)ᵀ = BᵀAᵀ = BA.
-class SymmetricProductOperator : public Operator
-{
-private:
-  const Operator &A_, &B_;
-  mutable Vector z_;
-
-public:
-  SymmetricProductOperator(const Operator &A, const Operator &B)
-    : Operator(A.Height(), B.Width()), A_(A), B_(B), z_(B_.Height())
-  {
-  }
-
-  void Mult(const Vector &x, Vector &y) const override
-  {
-    B_.Mult(x, z_);
-    A_.Mult(z_, y);
-  }
-
-  void MultTranspose(const Vector &x, Vector &y) const override
-  {
-    A_.Mult(x, z_);
-    B_.Mult(z_, y);
-  }
-};
+using ComplexProductOperator = ProductOperator<ComplexOperator>;
 
 // Applies the simple (symmetric) operator: diag(d).
-class DiagonalOperator : public Operator
+template <typename OperType = Operator>
+class DiagonalOperator : public OperType
 {
 private:
-  const Vector &d_;
+  typedef typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
+                                    ComplexVector, Vector>::type VecType;
+
+  const VecType &d;
 
 public:
-  DiagonalOperator(const Vector &d) : Operator(d.Size()), d_(d) {}
+  DiagonalOperator(const VecType &d) : OperType(d.Size()), d(d) {}
 
-  void Mult(const Vector &x, Vector &y) const override;
+  void Mult(const VecType &x, VecType &y) const override;
 
-  void MultTranspose(const Vector &x, Vector &y) const override { Mult(x, y); }
+  void MultTranspose(const VecType &x, VecType &y) const override { Mult(x, y); }
+
+  template <typename T = OperType,
+            typename = std::enable_if_t<std::is_same<T, ComplexOperator>::value>>
+  void MultHermitianTranspose(const VecType &x, VecType &y) const override;
 };
+
+using ComplexDiagonalOperator = DiagonalOperator<ComplexOperator>;
+
+// A container for a sequence of operators corresponding to a multigrid hierarchy.
+// Optionally includes operators for the auxiliary space at each level as well. The
+// Operators are stored from coarsest to finest level. The height and width of this operator
+// are never set.
+template <typename OperType = Operator>
+class MultigridOperator : public OperType
+{
+private:
+  typedef typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
+                                    ComplexVector, Vector>::type VecType;
+
+  std::vector<std::unique_ptr<OperType>> ops, aux_ops;
+
+public:
+  MultigridOperator(int l) : OperType(0)
+  {
+    ops.reserve(l);
+    aux_ops.reserve(l);
+  }
+
+  void AddOperator(std::unique_ptr<OperType> &&op)
+  {
+    ops.push_back(std::move(op));
+    height = ops.back()->Height();
+    width = ops.back()->Width();
+  }
+
+  void AddAuxiliaryOperator(std::unique_ptr<OperType> &&aux_op)
+  {
+    aux_ops.push_back(std::move(aux_op));
+  }
+
+  bool HasAuxiliaryOperators() const { return !aux_ops.empty(); }
+
+  int GetNumLevels() const { return static_cast<int>(ops.size()); }
+  int GetNumAuxiliaryLevels() const { return static_cast<int>(aux_ops.size()); }
+
+  const OperType &GetFinestOperator() const { return *ops.back(); }
+  const OperType &GetFinestAuxiliaryOperator() const { return *aux_ops.back(); }
+
+  const OperType &GetOperatorAtLevel(int l) const { return *ops[l]; }
+  const OperType &GetAuxiliaryOperatorAtLevel(int l) const { return *aux_ops[l]; }
+
+  void Mult(const VecType &x, VecType &y) const override { GetFinestOperator().Mult(x, y); }
+};
+
+using ComplexMultigridOperator = MultigridOperator<ComplexOperator>;
 
 namespace linalg
 {
