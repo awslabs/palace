@@ -8,12 +8,12 @@
 #include "fem/coefficient.hpp"
 #include "fem/integrator.hpp"
 #include "linalg/arpack.hpp"
+#include "linalg/iterative.hpp"
 #include "linalg/mumps.hpp"
-#include "linalg/operator.hpp"
 #include "linalg/slepc.hpp"
+#include "linalg/solver.hpp"
 #include "linalg/strumpack.hpp"
 #include "linalg/superlu.hpp"
-#include "linalg/vector.hpp"
 #include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
@@ -463,7 +463,8 @@ WavePortData::WavePortData(const config::WavePortData &data, const MaterialOpera
     // Allocate storage for the eigenvalue problem operators. We have sparsity(A2) =
     // sparsity(B3) = sparsity(B4) ⊆ sparsity(A1). Precompute the frequency independent
     // contributions to A and B.
-    P = std::make_unique<mfem::HypreParMatrix>(*A1);
+    P = std::make_unique<ComplexWrapperOperator>(
+        std::make_unique<mfem::HypreParMatrix>(*A1), nullptr);
     if (A2i)
     {
       A = std::make_unique<ComplexWrapperOperator>(
@@ -510,12 +511,13 @@ WavePortData::WavePortData(const config::WavePortData &data, const MaterialOpera
     constexpr int ksp_print = 0;
     constexpr double ksp_tol = 1.0e-8;
     constexpr double ksp_max_it = 100;
-    auto gmres = std::make_unique<mfem::GMRESSolver>(nd_fespace.GetComm());
-    gmres->iterative_mode = false;
+    auto gmres =
+        std::make_unique<GmresSolver<ComplexOperator>>(nd_fespace.GetComm(), ksp_print);
+    gmres->SetInitialGuess(false);
     gmres->SetRelTol(ksp_tol);
     gmres->SetMaxIter(ksp_max_it);
-    gmres->SetKDim(ksp_max_it);
-    gmres->SetPrintLevel(ksp_print);
+    gmres->SetRestartDim(ksp_max_it);
+    // gmres->SetPrecSide(GmresSolver<ComplexOperator>::PrecSide::RIGHT);
 
     config::LinearSolverData::Type pc_type;
 #if defined(MFEM_USE_SUPERLU)
@@ -527,14 +529,14 @@ WavePortData::WavePortData(const config::WavePortData &data, const MaterialOpera
 #else
 #error "Wave port solver requires building with SuperLU_DIST, STRUMPACK, or MUMPS!"
 #endif
-    std::unique_ptr<mfem::Solver> pc;
+    std::unique_ptr<Solver<ComplexOperator>> pc;
     if (pc_type == config::LinearSolverData::Type::SUPERLU)
     {
 #if defined(MFEM_USE_SUPERLU)
       auto slu =
           std::make_unique<SuperLUSolver>(nd_fespace.GetComm(), 0, false, ksp_print - 1);
       slu->GetSolver().SetColumnPermutation(mfem::superlu::NATURAL);
-      pc = std::move(slu);
+      pc = std::make_unique<WrapperSolver<ComplexOperator>>(std::move(slu));
 #endif
     }
     else if (pc_type == config::LinearSolverData::Type::STRUMPACK)
@@ -544,7 +546,7 @@ WavePortData::WavePortData(const config::WavePortData &data, const MaterialOpera
                                                          strumpack::CompressionType::NONE,
                                                          0.0, 0, 0, ksp_print - 1);
       strumpack->SetReorderingStrategy(strumpack::ReorderingStrategy::NATURAL);
-      pc = std::move(strumpack);
+      pc = std::make_unique<WrapperSolver<ComplexOperator>>(std::move(strumpack));
 #endif
     }
     else  // config::LinearSolverData::Type::MUMPS
@@ -554,7 +556,7 @@ WavePortData::WavePortData(const config::WavePortData &data, const MaterialOpera
                                                  mfem::MUMPSSolver::SYMMETRIC_INDEFINITE, 0,
                                                  0.0, ksp_print - 1);
       mumps->SetReorderingStrategy(mfem::MUMPSSolver::AMD);
-      pc = std::move(mumps);
+      pc = std::make_unique<WrapperSolver<ComplexOperator>>(std::move(mumps));
 #endif
     }
     ksp = std::make_unique<ComplexKspSolver>(std::move(gmres), std::move(pc));
@@ -620,28 +622,29 @@ void WavePortData::Initialize(double omega)
   // the desired wave port mode.
   double theta2 = mu_eps_max * omega * omega;
   {
-    *P *= 0.0;
+    auto &Pr = *static_cast<mfem::HypreParMatrix *>(P->Real());
+    Pr *= 0.0;
 
-    auto &Ar = *static_cast<mfem::HypreParMatrix *>(&A->Real());
-    auto &Br = *static_cast<mfem::HypreParMatrix *>(&B->Real());
+    auto &Ar = *static_cast<mfem::HypreParMatrix *>(A->Real());
+    auto &Br = *static_cast<mfem::HypreParMatrix *>(B->Real());
     Ar.Add(-omega * omega + omega0 * omega0, *A2r);
     Br.Add(-omega * omega + omega0 * omega0, *A2r);
     Br.Add(1.0 / theta2 - (omega0 == 0.0 ? 0.0 : 1.0 / (mu_eps_max * omega0 * omega0)),
            *B3);
-    P->Add(1.0, Br);
+    Pr.Add(1.0, Br);
 
     if (A2i)
     {
-      auto &Ai = *static_cast<mfem::HypreParMatrix *>(&A->Imag());
-      auto &Bi = *static_cast<mfem::HypreParMatrix *>(&B->Imag());
+      auto &Ai = *static_cast<mfem::HypreParMatrix *>(A->Imag());
+      auto &Bi = *static_cast<mfem::HypreParMatrix *>(B->Imag());
       Ai.Add(-omega * omega + omega0 * omega0, *A2i);
       Bi.Add(-omega * omega + omega0 * omega0, *A2i);
-      P->Add(1.0, Bi);
+      Pr.Add(1.0, Bi);
     }
   }
 
   // Configure and solve the eigenvalue problem for the desired boundary mode.
-  ksp->SetOperator(*B, *P);
+  ksp->SetOperators(*B, *P);
   eigen->SetOperators(*A, *B, EigenvalueSolver::ScaleType::NONE);
   eigen->SetInitialSpace(v0);
   int num_conv = eigen->Solve();

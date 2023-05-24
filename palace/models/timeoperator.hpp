@@ -33,7 +33,7 @@ private:
   std::unique_ptr<mfem::SecondOrderTimeDependentOperator> op;
 
   // Discrete curl for B-field time integration.
-  std::unique_ptr<ParOperator> Curl;
+  std::unique_ptr<Operator> Curl;
 
 public:
   TimeOperator(const IoData &iodata, SpaceOperator &spaceop,

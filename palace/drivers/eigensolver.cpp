@@ -5,11 +5,11 @@
 
 #include <mfem.hpp>
 #include "linalg/arpack.hpp"
-#include "linalg/complex.hpp"
 #include "linalg/divfree.hpp"
 #include "linalg/ksp.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/slepc.hpp"
+#include "linalg/vector.hpp"
 #include "models/lumpedportoperator.hpp"
 #include "models/postoperator.hpp"
 #include "models/spaceoperator.hpp"
@@ -30,13 +30,10 @@ void EigenSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
   // computational range. The damping matrix may be nullptr.
   timer.Lap();
   SpaceOperator spaceop(iodata, mesh);
-  std::unique_ptr<ComplexParOperator> K = spaceop.GetComplexSystemMatrix(
-      SpaceOperator::OperatorType::STIFFNESS, Operator::DIAG_ONE);
-  std::unique_ptr<ComplexParOperator> C = spaceop.GetComplexSystemMatrix(
-      SpaceOperator::OperatorType::DAMPING, Operator::DIAG_ZERO);
-  std::unique_ptr<ComplexParOperator> M = spaceop.GetComplexSystemMatrix(
-      SpaceOperator::OperatorType::MASS, Operator::DIAG_ZERO);
-  std::unique_ptr<ComplexParOperator> Curl = spaceop.GetComplexCurlMatrix();
+  auto K = spaceop.GetComplexStiffnessMatrix(Operator::DIAG_ONE);
+  auto C = spaceop.GetComplexDampingMatrix(Operator::DIAG_ZERO);
+  auto M = spaceop.GetComplexMassMatrix(Operator::DIAG_ZERO);
+  auto Curl = spaceop.GetComplexCurlMatrix();
   SaveMetadata(spaceop.GetNDSpace());
 
   // Configure objects for postprocessing.
@@ -82,13 +79,13 @@ void EigenSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
     Mpi::Print("\nConfiguring ARPACK eigenvalue solver\n");
     if (C)
     {
-      eigen =
-          std::make_unique<arpack::ArpackPEPSolver>(K->GetComm(), iodata.problem.verbose);
+      eigen = std::make_unique<arpack::ArpackPEPSolver>(spaceop.GetComm(),
+                                                        iodata.problem.verbose);
     }
     else
     {
-      eigen =
-          std::make_unique<arpack::ArpackEPSSolver>(K->GetComm(), iodata.problem.verbose);
+      eigen = std::make_unique<arpack::ArpackEPSSolver>(spaceop.GetComm(),
+                                                        iodata.problem.verbose);
     }
 #endif
   }
@@ -101,25 +98,29 @@ void EigenSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
     {
       if (!iodata.solver.eigenmode.pep_linear)
       {
-        slepc =
-            std::make_unique<slepc::SlepcPEPSolver>(K->GetComm(), iodata.problem.verbose);
+        slepc = std::make_unique<slepc::SlepcPEPSolver>(spaceop.GetComm(),
+                                                        iodata.problem.verbose);
         slepc->SetType(slepc::SlepcEigenSolver::Type::TOAR);
       }
       else
       {
-        slepc = std::make_unique<slepc::SlepcPEPLinearSolver>(K->GetComm(),
+        slepc = std::make_unique<slepc::SlepcPEPLinearSolver>(spaceop.GetComm(),
                                                               iodata.problem.verbose);
         slepc->SetType(slepc::SlepcEigenSolver::Type::KRYLOVSCHUR);
       }
     }
     else
     {
-      slepc = std::make_unique<slepc::SlepcEPSSolver>(K->GetComm(), iodata.problem.verbose);
+      slepc = std::make_unique<slepc::SlepcEPSSolver>(spaceop.GetComm(),
+                                                      iodata.problem.verbose);
       slepc->SetType(slepc::SlepcEigenSolver::Type::KRYLOVSCHUR);
     }
     slepc->SetProblemType(slepc::SlepcEigenSolver::ProblemType::GEN_NON_HERMITIAN);
-    slepc->SetOrthogonalization(iodata.solver.linear.orthog_mgs,
-                                iodata.solver.linear.orthog_cgs2);
+    slepc->SetOrthogonalization(
+        iodata.solver.linear.orthog_type == config::LinearSolverData::OrthogType::MGS ||
+            iodata.solver.linear.orthog_type ==
+                config::LinearSolverData::OrthogType::DEFAULT,
+        iodata.solver.linear.orthog_type == config::LinearSolverData::OrthogType::CGS2);
     eigen = std::move(slepc);
 #endif
   }
@@ -143,20 +144,16 @@ void EigenSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
   // If desired, use an M-inner product for orthogonalizing the eigenvalue subspace. The
   // constructed matrix just references the real SPD part of the mass matrix (no copy is
   // performed). Boundary conditions don't need to be eliminated here.
-  std::unique_ptr<ParOperator> Mr;
+  std::unique_ptr<Operator> KM;
   if (iodata.solver.eigenmode.mass_orthog)
   {
     // Mpi::Print(" Basis uses M-inner product\n");
-    // Mr = std::make_unique<ParOperator>(
-    //         std::make_unique<SumOperator>(M->LocalOperator().Real(), 1.0),
-    //         M->GetFESpace());
-    // eigen->SetBMat(*Mr);
+    // KM = spaceop.GetInnerProductMatrix(0.0, 1.0, nullptr, M.get());
+    // eigen->SetBMat(*KM);
 
     Mpi::Print(" Basis uses (K + M)-inner product\n");
-    auto KM = std::make_unique<SumOperator>(M->LocalOperator().Real(), 1.0);
-    KM->AddOperator(K->LocalOperator().Real(), 1.0);
-    Mr = std::make_unique<ParOperator>(std::move(KM), M->GetFESpace());
-    eigen->SetBMat(*Mr);
+    KM = spaceop.GetInnerProductMatrix(1.0, 1.0, K.get(), M.get());
+    eigen->SetBMat(*KM);
   }
 
   // Construct a divergence-free projector so the eigenvalue solve is performed in the space
@@ -204,8 +201,7 @@ void EigenSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
   // closest to the specified target, σ.
   const double target = iodata.solver.eigenmode.target;
   const double f_target = iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, target);
-  std::unique_ptr<ComplexParOperator> A;
-  std::vector<std::unique_ptr<ParOperator>> P, AuxP;
+  std::unique_ptr<ComplexOperator> A, P;
   std::unique_ptr<ComplexKspSolver> ksp;
   {
     Mpi::Print(" Shift-and-invert σ = {:.3e} GHz ({:.3e})\n", f_target, target);
@@ -246,14 +242,13 @@ void EigenSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
     // (K - σ² M) or P(iσ) = (K + iσ C - σ² M) during the eigenvalue solve. The
     // preconditioner for complex linear systems is constructed from a real approximation
     // to the complex system matrix.
-    A = spaceop.GetComplexSystemMatrix(1.0, 1i * target, -target * target, K.get(), C.get(),
-                                       M.get(), nullptr);
-
-    spaceop.GetPreconditionerMatrix(1.0, target, -target * target, target, P, AuxP);
+    A = spaceop.GetSystemMatrix(1.0, 1i * target, -target * target, K.get(), C.get(),
+                                M.get());
+    P = spaceop.GetPreconditionerMatrix(1.0, target, -target * target, target);
 
     ksp = std::make_unique<ComplexKspSolver>(iodata, spaceop.GetNDSpaces(),
                                              &spaceop.GetH1Spaces());
-    ksp->SetOperator(*A, P, &AuxP);
+    ksp->SetOperators(*A, *P);
     eigen->SetLinearSolver(*ksp);
   }
   timer.construct_time += timer.Lap();
