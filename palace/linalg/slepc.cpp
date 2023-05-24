@@ -11,7 +11,6 @@
 #include <mfem.hpp>
 #include "linalg/divfree.hpp"
 #include "linalg/ksp.hpp"
-#include "linalg/vector.hpp"
 #include "utils/communication.hpp"
 
 static PetscErrorCode __mat_apply_EPS_A0(Mat, Vec, Vec);
@@ -161,9 +160,9 @@ PetscReal GetMaxSingularValue(MPI_Comm comm, const ComplexOperator &A, bool herm
   // or SVD solvers, namely MATOP_MULT and MATOP_MULT_HERMITIAN_TRANSPOSE (if the matrix
   // is not Hermitian).
   Mat A0;
-  ComplexVector x(A.Height()), y(A.Height());
+  PetscInt n = A.Height();
+  ComplexVector x(n), y(n);
   MatShellContext ctx = {A, x, y};
-  PetscInt n = A.Height() / 2;
   PalacePetscCall(
       MatCreateShell(comm, n, n, PETSC_DECIDE, PETSC_DECIDE, (void *)&ctx, &A0));
   PalacePetscCall(MatShellSetOperation(A0, MATOP_MULT, (void (*)(void))__mat_apply_shell));
@@ -302,26 +301,23 @@ void SlepcEigenSolver::SetShiftInvert(PetscScalar s, bool precond)
 
 void SlepcEigenSolver::SetOrthogonalization(bool mgs, bool cgs2)
 {
+  // The SLEPc default is CGS with refinement if needed.
   if (mgs || cgs2)
   {
+    BV bv = GetBV();
     BVOrthogType type;
     BVOrthogRefineType refine;
-    PetscReal eta;
-    BVOrthogBlockType btype;
-    BV bv = GetBV();
     if (mgs)
     {
       type = BV_ORTHOG_MGS;
-      PalacePetscCall(BVGetOrthogonalization(bv, nullptr, &refine, &eta, &btype));
+      refine = BV_ORTHOG_REFINE_NEVER;
     }
     else  // cgs2
     {
       type = BV_ORTHOG_CGS;
       refine = BV_ORTHOG_REFINE_ALWAYS;
-      eta = 1.0;
-      PalacePetscCall(BVGetOrthogonalization(bv, nullptr, nullptr, nullptr, &btype));
     }
-    PalacePetscCall(BVSetOrthogonalization(bv, type, refine, eta, btype));
+    PalacePetscCall(BVSetOrthogonalization(bv, type, refine, 1.0, BV_ORTHOG_BLOCK_GS));
   }
 }
 
@@ -546,8 +542,7 @@ void SlepcEPSSolverBase::SetInitialSpace(const ComplexVector &v)
 
   PetscInt n;
   PalacePetscCall(VecGetLocalSize(v0, &n));
-  MFEM_VERIFY(v.Size() == 2 * n,
-              "Invalid size mismatch for provided initial space vector!");
+  MFEM_VERIFY(v.Size() == n, "Invalid size mismatch for provided initial space vector!");
 
   PetscScalar *pv0;
   PalacePetscCall(VecGetArrayWrite(v0, &pv0));
@@ -590,7 +585,7 @@ int SlepcEPSSolverBase::Solve()
     Mpi::Print(GetComm(),
                " Total number of linear systems solved: {:d}\n"
                " Total number of linear solver iterations: {:d}\n",
-               opInv->NumTotalMult(), opInv->NumTotalMultIter());
+               opInv->NumTotalMult(), opInv->NumTotalMultIterations());
   }
 
   // Compute and store the eigenpair residuals.
@@ -618,7 +613,7 @@ void SlepcEPSSolverBase::GetEigenvector(int i, ComplexVector &x) const
 
   PetscInt n;
   PalacePetscCall(VecGetLocalSize(v0, &n));
-  MFEM_VERIFY(x.Size() == 2 * n, "Invalid size mismatch for provided eigenvector!");
+  MFEM_VERIFY(x.Size() == n, "Invalid size mismatch for provided eigenvector!");
 
   const PetscScalar *pv0;
   PalacePetscCall(VecGetArrayRead(v0, &pv0));
@@ -663,14 +658,19 @@ void SlepcEPSSolver::SetOperators(const ComplexOperator &K, const ComplexOperato
   opK = &K;
   opM = &M;
 
-  PetscInt n = opK->Height() / 2;
-  PalacePetscCall(
-      MatCreateShell(GetComm(), n, n, PETSC_DECIDE, PETSC_DECIDE, (void *)this, &A0));
-  PalacePetscCall(
-      MatCreateShell(GetComm(), n, n, PETSC_DECIDE, PETSC_DECIDE, (void *)this, &A1));
-  PalacePetscCall(MatShellSetOperation(A0, MATOP_MULT, (void (*)(void))__mat_apply_EPS_A0));
-  PalacePetscCall(MatShellSetOperation(A1, MATOP_MULT, (void (*)(void))__mat_apply_EPS_A1));
-  PalacePetscCall(EPSSetOperators(eps, A0, A1));
+  if (first)
+  {
+    PetscInt n = opK->Height();
+    PalacePetscCall(
+        MatCreateShell(GetComm(), n, n, PETSC_DECIDE, PETSC_DECIDE, (void *)this, &A0));
+    PalacePetscCall(
+        MatCreateShell(GetComm(), n, n, PETSC_DECIDE, PETSC_DECIDE, (void *)this, &A1));
+    PalacePetscCall(
+        MatShellSetOperation(A0, MATOP_MULT, (void (*)(void))__mat_apply_EPS_A0));
+    PalacePetscCall(
+        MatShellSetOperation(A1, MATOP_MULT, (void (*)(void))__mat_apply_EPS_A1));
+    PalacePetscCall(EPSSetOperators(eps, A0, A1));
+  }
 
   if (first && type != ScaleType::NONE)
   {
@@ -757,16 +757,19 @@ void SlepcPEPLinearSolver::SetOperators(const ComplexOperator &K, const ComplexO
   opC = &C;
   opM = &M;
 
-  PetscInt n = opK->Height() / 2;
-  PalacePetscCall(MatCreateShell(GetComm(), 2 * n, 2 * n, PETSC_DECIDE, PETSC_DECIDE,
-                                 (void *)this, &A0));
-  PalacePetscCall(MatCreateShell(GetComm(), 2 * n, 2 * n, PETSC_DECIDE, PETSC_DECIDE,
-                                 (void *)this, &A1));
-  PalacePetscCall(
-      MatShellSetOperation(A0, MATOP_MULT, (void (*)(void))__mat_apply_PEPLinear_L0));
-  PalacePetscCall(
-      MatShellSetOperation(A1, MATOP_MULT, (void (*)(void))__mat_apply_PEPLinear_L1));
-  PalacePetscCall(EPSSetOperators(eps, A0, A1));
+  if (first)
+  {
+    PetscInt n = opK->Height();
+    PalacePetscCall(MatCreateShell(GetComm(), 2 * n, 2 * n, PETSC_DECIDE, PETSC_DECIDE,
+                                   (void *)this, &A0));
+    PalacePetscCall(MatCreateShell(GetComm(), 2 * n, 2 * n, PETSC_DECIDE, PETSC_DECIDE,
+                                   (void *)this, &A1));
+    PalacePetscCall(
+        MatShellSetOperation(A0, MATOP_MULT, (void (*)(void))__mat_apply_PEPLinear_L0));
+    PalacePetscCall(
+        MatShellSetOperation(A1, MATOP_MULT, (void (*)(void))__mat_apply_PEPLinear_L1));
+    PalacePetscCall(EPSSetOperators(eps, A0, A1));
+  }
 
   if (first && type != ScaleType::NONE)
   {
@@ -825,7 +828,7 @@ void SlepcPEPLinearSolver::SetInitialSpace(const ComplexVector &v)
 
   PetscInt n;
   PalacePetscCall(VecGetLocalSize(v0, &n));
-  MFEM_VERIFY(2 * v.Size() == 2 * n,
+  MFEM_VERIFY(2 * v.Size() == n,
               "Invalid size mismatch for provided initial space vector!");
 
   PetscScalar *pv0;
@@ -848,7 +851,7 @@ void SlepcPEPLinearSolver::GetEigenvector(int i, ComplexVector &x) const
   PalacePetscCall(EPSGetEigenvector(eps, i, v0, nullptr));
   PetscInt n;
   PalacePetscCall(VecGetLocalSize(v0, &n));
-  MFEM_VERIFY(2 * x.Size() == 2 * n, "Invalid size mismatch for provided eigenvector!");
+  MFEM_VERIFY(2 * x.Size() == n, "Invalid size mismatch for provided eigenvector!");
 
   const PetscScalar *pv0;
   PalacePetscCall(VecGetArrayRead(v0, &pv0));
@@ -1047,8 +1050,7 @@ void SlepcPEPSolverBase::SetInitialSpace(const ComplexVector &v)
 
   PetscInt n;
   PalacePetscCall(VecGetLocalSize(v0, &n));
-  MFEM_VERIFY(v.Size() == 2 * n,
-              "Invalid size mismatch for provided initial space vector!");
+  MFEM_VERIFY(v.Size() == n, "Invalid size mismatch for provided initial space vector!");
 
   PetscScalar *pv0;
   PalacePetscCall(VecGetArrayWrite(v0, &pv0));
@@ -1091,7 +1093,7 @@ int SlepcPEPSolverBase::Solve()
     Mpi::Print(GetComm(),
                " Total number of linear systems solved: {:d}\n"
                " Total number of linear solver iterations: {:d}\n",
-               opInv->NumTotalMult(), opInv->NumTotalMultIter());
+               opInv->NumTotalMult(), opInv->NumTotalMultIterations());
   }
 
   // Compute and store the eigenpair residuals.
@@ -1119,7 +1121,7 @@ void SlepcPEPSolverBase::GetEigenvector(int i, ComplexVector &x) const
 
   PetscInt n;
   PalacePetscCall(VecGetLocalSize(v0, &n));
-  MFEM_VERIFY(x.Size() == 2 * n, "Invalid size mismatch for provided eigenvector!");
+  MFEM_VERIFY(x.Size() == n, "Invalid size mismatch for provided eigenvector!");
 
   const PetscScalar *pv0;
   PalacePetscCall(VecGetArrayRead(v0, &pv0));
@@ -1166,18 +1168,24 @@ void SlepcPEPSolver::SetOperators(const ComplexOperator &K, const ComplexOperato
   opC = &C;
   opM = &M;
 
-  PetscInt n = opK->Height() / 2;
-  PalacePetscCall(
-      MatCreateShell(GetComm(), n, n, PETSC_DECIDE, PETSC_DECIDE, (void *)this, &A0));
-  PalacePetscCall(
-      MatCreateShell(GetComm(), n, n, PETSC_DECIDE, PETSC_DECIDE, (void *)this, &A1));
-  PalacePetscCall(
-      MatCreateShell(GetComm(), n, n, PETSC_DECIDE, PETSC_DECIDE, (void *)this, &A2));
-  PalacePetscCall(MatShellSetOperation(A0, MATOP_MULT, (void (*)(void))__mat_apply_PEP_A0));
-  PalacePetscCall(MatShellSetOperation(A1, MATOP_MULT, (void (*)(void))__mat_apply_PEP_A1));
-  PalacePetscCall(MatShellSetOperation(A2, MATOP_MULT, (void (*)(void))__mat_apply_PEP_A2));
-  Mat A[3] = {A0, A1, A2};
-  PalacePetscCall(PEPSetOperators(pep, 3, A));
+  if (first)
+  {
+    PetscInt n = opK->Height();
+    PalacePetscCall(
+        MatCreateShell(GetComm(), n, n, PETSC_DECIDE, PETSC_DECIDE, (void *)this, &A0));
+    PalacePetscCall(
+        MatCreateShell(GetComm(), n, n, PETSC_DECIDE, PETSC_DECIDE, (void *)this, &A1));
+    PalacePetscCall(
+        MatCreateShell(GetComm(), n, n, PETSC_DECIDE, PETSC_DECIDE, (void *)this, &A2));
+    PalacePetscCall(
+        MatShellSetOperation(A0, MATOP_MULT, (void (*)(void))__mat_apply_PEP_A0));
+    PalacePetscCall(
+        MatShellSetOperation(A1, MATOP_MULT, (void (*)(void))__mat_apply_PEP_A1));
+    PalacePetscCall(
+        MatShellSetOperation(A2, MATOP_MULT, (void (*)(void))__mat_apply_PEP_A2));
+    Mat A[3] = {A0, A1, A2};
+    PalacePetscCall(PEPSetOperators(pep, 3, A));
+  }
 
   if (first && type != ScaleType::NONE)
   {

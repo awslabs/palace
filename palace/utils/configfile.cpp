@@ -1532,6 +1532,12 @@ NLOHMANN_JSON_SERIALIZE_ENUM(LinearSolverData::CompressionType,
                               {LinearSolverData::CompressionType::BLR_HODLR, "BLR-HODLR"},
                               {LinearSolverData::CompressionType::ZFP_BLR_HODLR,
                                "ZFP-BLR-HODLR"}})
+NLOHMANN_JSON_SERIALIZE_ENUM(LinearSolverData::OrthogType,
+                             {{LinearSolverData::OrthogType::INVALID, nullptr},
+                              {LinearSolverData::OrthogType::MGS, "MGS"},
+                              {LinearSolverData::OrthogType::CGS, "CGS"},
+                              {LinearSolverData::OrthogType::CGS2, "CGS2"},
+                              {LinearSolverData::OrthogType::DEFAULT, "Default"}})
 
 void LinearSolverData::SetUp(json &solver)
 {
@@ -1585,8 +1591,10 @@ void LinearSolverData::SetUp(json &solver)
   divfree_tol = linear->value("DivFreeTol", divfree_tol);
   divfree_max_it = linear->value("DivFreeMaxIts", divfree_max_it);
 
-  orthog_mgs = linear->value("OrthogUseMGS", orthog_mgs);
-  orthog_cgs2 = linear->value("OrthogUseCGS2", orthog_cgs2);
+  orthog_type = linear->value("Orthogonalization", orthog_type);
+  MFEM_VERIFY(
+      orthog_type != LinearSolverData::OrthogType::INVALID,
+      "Invalid value for config[\"Linear\"][\"Orthogonalization\"] in configuration file!");
 
   // Cleanup
   linear->erase("Type");
@@ -1613,8 +1621,7 @@ void LinearSolverData::SetUp(json &solver)
   linear->erase("AMSVector");
   linear->erase("DivFreeTol");
   linear->erase("DivFreeMaxIts");
-  linear->erase("OrthogUseMGS");
-  linear->erase("OrthogUseCGS2");
+  linear->erase("Orthogonalization");
   MFEM_VERIFY(linear->empty(),
               "Found an unsupported configuration file keyword under \"Linear\"!\n"
                   << linear->dump(2));
@@ -1644,8 +1651,7 @@ void LinearSolverData::SetUp(json &solver)
   // std::cout << "AMSVector: " << ams_vector << '\n';
   // std::cout << "DivFreeTol: " << divfree_tol << '\n';
   // std::cout << "DivFreeMaxIts: " << divfree_max_it << '\n';
-  // std::cout << "OrthogUseMGS: " << orthog_mgs << '\n';
-  // std::cout << "OrthogUseCGS2: " << orthog_cgs2 << '\n';
+  // std::cout << "Orthogonalization: " << orthog_type << '\n';
 }
 
 void SolverData::SetUp(json &config)

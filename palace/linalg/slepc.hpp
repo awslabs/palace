@@ -15,9 +15,9 @@
 #include <memory>
 #include <string>
 #include <mpi.h>
-#include "linalg/complex.hpp"
 #include "linalg/eps.hpp"
 #include "linalg/operator.hpp"
+#include "linalg/vector.hpp"
 
 // Forward declarations of SLEPc objects.
 typedef struct _p_EPS *EPS;

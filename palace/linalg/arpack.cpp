@@ -20,7 +20,6 @@
 // clang-format on
 #include "linalg/divfree.hpp"
 #include "linalg/ksp.hpp"
-#include "linalg/vector.hpp"
 #include "utils/communication.hpp"
 
 namespace
@@ -270,8 +269,7 @@ void ArpackEigenSolver::SetInitialSpace(const ComplexVector &v)
   {
     r = std::make_unique<std::complex<double>[]>(n);
   }
-  MFEM_VERIFY(v.Size() == 2 * n,
-              "Invalid size mismatch for provided initial space vector!");
+  MFEM_VERIFY(v.Size() == n, "Invalid size mismatch for provided initial space vector!");
   v.Get(r.get(), n);
   info = 1;
 }
@@ -365,7 +363,7 @@ int ArpackEigenSolver::SolveInternal(int n, std::complex<double> *r,
                " Total number of linear systems solved: {:d}\n"
                " Total number of linear solver iterations: {:d}\n",
                GetName(), (num_conv >= nev) ? "converged" : "finished", num_conv, num_it,
-               opInv->NumTotalMult(), opInv->NumTotalMultIter());
+               opInv->NumTotalMult(), opInv->NumTotalMultIterations());
   }
   if (num_conv < nev)
   {
@@ -438,7 +436,7 @@ void ArpackEigenSolver::GetEigenvector(int i, ComplexVector &x) const
 {
   MFEM_VERIFY(eig && i >= 0 && i < nev,
               "Out of range eigenpair requested (i = " << i << ", nev = " << nev << ")!");
-  MFEM_VERIFY(x.Size() == 2 * n, "Invalid size mismatch for provided eigenvector!");
+  MFEM_VERIFY(x.Size() == n, "Invalid size mismatch for provided eigenvector!");
   const int &j = perm.get()[i];
   x.Set(V.get() + j * n, n);
 }
@@ -492,7 +490,7 @@ void ArpackEPSSolver::SetOperators(const ComplexOperator &K, const ComplexOperat
   x.SetSize(opK->Height());
   y.SetSize(opK->Height());
   z.SetSize(opK->Height());
-  n = opK->Height() / 2;
+  n = opK->Height();
 }
 
 int ArpackEPSSolver::Solve()
@@ -645,7 +643,7 @@ void ArpackPEPSolver::SetOperators(const ComplexOperator &K, const ComplexOperat
   y1.SetSize(opK->Height());
   y2.SetSize(opK->Height());
   z.SetSize(opK->Height());
-  n = opK->Height() / 2;
+  n = opK->Height();
 }
 
 int ArpackPEPSolver::Solve()
