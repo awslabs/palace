@@ -52,10 +52,9 @@ void WriteMetadata(const std::string &post_dir, const json &meta)
 
 }  // namespace
 
-BaseSolver::BaseSolver(const IoData &iodata_, bool root_, int size, int num_thread,
+BaseSolver::BaseSolver(const IoData &iodata, bool root, int size, int num_thread,
                        const char *git_tag)
-  : iodata(iodata_), post_dir(GetPostDir(iodata_.problem.output)), root(root_),
-    table(8, 9, 6)
+  : iodata(iodata), post_dir(GetPostDir(iodata.problem.output)), root(root), table(8, 9, 6)
 {
   // Create directory for output.
   if (root && !std::filesystem::exists(post_dir))
@@ -111,7 +110,7 @@ void BaseSolver::SaveMetadata(const KspSolver &ksp) const
   {
     json meta = LoadMetadata(post_dir);
     meta["LinearSolver"]["TotalSolves"] = ksp.NumTotalMult();
-    meta["LinearSolver"]["TotalIts"] = ksp.NumTotalMultIter();
+    meta["LinearSolver"]["TotalIts"] = ksp.NumTotalMultIterations();
     WriteMetadata(post_dir, meta);
   }
 }

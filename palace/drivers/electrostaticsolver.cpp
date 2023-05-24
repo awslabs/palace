@@ -23,14 +23,13 @@ void ElectrostaticSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mes
   // dofs. The eliminated matrix is stored in order to construct the RHS vector for nonzero
   // prescribed BC values.
   timer.Lap();
-  std::vector<std::unique_ptr<ParOperator>> K;
   LaplaceOperator laplaceop(iodata, mesh);
-  laplaceop.GetStiffnessMatrix(K);
+  auto K = laplaceop.GetStiffnessMatrix(K);
   SaveMetadata(laplaceop.GetH1Space());
 
   // Set up the linear solver.
   KspSolver ksp(iodata, laplaceop.GetH1Spaces());
-  ksp.SetOperator(*K.back(), K);
+  ksp.SetOperators(K, K);
 
   // Terminal indices are the set of boundaries over which to compute the capacitance
   // matrix. Terminal boundaries are aliases for ports.
@@ -39,7 +38,7 @@ void ElectrostaticSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mes
   MFEM_VERIFY(nstep > 0, "No terminal boundaries specified for electrostatic simulation!");
 
   // Right-hand side term and solution vector storage.
-  Vector RHS(K.back()->Height());
+  Vector RHS(K->Height());
   std::vector<Vector> V(nstep);
   timer.construct_time += timer.Lap();
 
@@ -63,8 +62,8 @@ void ElectrostaticSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mes
     timer.solve_time += timer.Lap();
 
     Mpi::Print(" Sol. ||V|| = {:.6e} (||RHS|| = {:.6e})\n",
-               linalg::Norml2(K.back()->GetComm(), V[step]),
-               linalg::Norml2(K.back()->GetComm(), RHS));
+               linalg::Norml2(laplaceop.GetComm(), V[step]),
+               linalg::Norml2(laplaceop.GetComm(), RHS));
     timer.postpro_time += timer.Lap();
 
     // Next terminal.
@@ -87,7 +86,7 @@ void ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop, PostOperator &
   // charges from the prescribed voltage to get C directly as:
   //         Q_i = ∫ ρ dV = ∫ ∇ ⋅ (ε E) dV = ∫ (ε E) ⋅ n dS
   // and C_ij = Q_i/V_j. The energy formulation avoids having to locally integrate E = -∇V.
-  std::unique_ptr<ParOperator> Grad = laplaceop.GetGradMatrix();
+  auto Grad = laplaceop.GetGradMatrix();
   const std::map<int, mfem::Array<int>> &terminal_sources = laplaceop.GetSources();
   int nstep = static_cast<int>(terminal_sources.size());
   mfem::DenseMatrix C(nstep), Cm(nstep);
@@ -136,7 +135,7 @@ void ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop, PostOperator &
       }
       else if (j > i)
       {
-        add(V[i], V[j], Vij);
+        Vector::add(V[i], V[j], Vij);
         E = 0.0;
         Grad->AddMult(Vij, E, -1.0);
         postop.SetEGridFunction(E);
