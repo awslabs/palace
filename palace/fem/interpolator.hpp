@@ -1,8 +1,8 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#ifndef PALACE_FEM_INTERPOLATION_HPP
-#define PALACE_FEM_INTERPOLATION_HPP
+#ifndef PALACE_FEM_INTERPOLATOR_HPP
+#define PALACE_FEM_INTERPOLATOR_HPP
 
 #include <algorithm>
 #include <complex>
@@ -126,4 +126,4 @@ public:
 
 }  // namespace palace
 
-#endif  // PALACE_FEM_INTERPOLATION_HPP
+#endif  // PALACE_FEM_INTERPOLATOR_HPP

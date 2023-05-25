@@ -6,7 +6,6 @@
 #include <vector>
 #include "linalg/iterative.hpp"
 #include "linalg/jacobi.hpp"
-#include "linalg/ksp.hpp"
 #include "linalg/solver.hpp"
 #include "models/spaceoperator.hpp"
 #include "utils/communication.hpp"
@@ -22,7 +21,7 @@ class TimeDependentCurlCurlOperator : public mfem::SecondOrderTimeDependentOpera
 {
 public:
   // MPI communicator.
-  MPI_comm comm;
+  MPI_Comm comm;
 
   // System matrices and excitation RHS.
   std::unique_ptr<Operator> K, M, C;
@@ -82,7 +81,7 @@ public:
         // Configure the system matrix and also the matrix (matrices) from which the
         // preconditioner will be constructed.
         A = spaceop.GetSystemMatrix(a0, a1, 1.0, K.get(), C.get(), M.get());
-        B = spaceop.GetPreconditionerMatrix(a0, a1, 1.0, 0.0);
+        B = spaceop.GetPreconditionerMatrix<Operator>(a0, a1, 1.0, 0.0);
 
         // Configure the solver.
         if (!kspA)
@@ -90,7 +89,7 @@ public:
           kspA = std::make_unique<KspSolver>(iodata, spaceop.GetNDSpaces(),
                                              &spaceop.GetH1Spaces());
         }
-        ksp->SetOperators(*A, *B);
+        kspA->SetOperators(*A, *B);
       };
     }
   }
@@ -103,7 +102,7 @@ public:
     {
       C->AddMult(du, rhs, 1.0);
     }
-    Vector::add(-1.0, rhs, dJcoef(t), NegJ, rhs);
+    linalg::AXPBYPCZ(-1.0, rhs, dJcoef(t), NegJ, 0.0, rhs);
   }
 
   void Mult(const Vector &u, const Vector &du, Vector &ddu) const override
@@ -199,7 +198,7 @@ const KspSolver &TimeOperator::GetLinearSolver() const
 double TimeOperator::GetMaxTimeStep() const
 {
   const auto &curlcurl = dynamic_cast<const TimeDependentCurlCurlOperator &>(*op);
-  MPI_comm comm = curlcurl.comm;
+  MPI_Comm comm = curlcurl.comm;
   const Operator &M = *curlcurl.M;
   const Operator &K = *curlcurl.K;
 

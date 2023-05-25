@@ -10,20 +10,20 @@
 namespace palace
 {
 
-ComplexVector::ComplexVector(int n) : x(2 * n);
+ComplexVector::ComplexVector(int n) : x(2 * n)
 {
   xr.MakeRef(x, 0, n);
   xi.MakeRef(x, n, n);
 }
 
-ComplexVector::ComplexVector(const ComplexVector &y) : x(2 * x.Size())
+ComplexVector::ComplexVector(const ComplexVector &y) : x(2 * y.Size())
 {
   xr.MakeRef(x, 0, y.Size());
   xi.MakeRef(x, y.Size(), y.Size());
   Set(y.Real(), y.Imag());
 }
 
-ComplexVector::ComplexVector(const Vector &xr, const Vector &xi) : x(2 * xr.Size())
+ComplexVector::ComplexVector(const Vector &yr, const Vector &yi) : x(2 * yr.Size())
 {
   MFEM_VERIFY(yr.Size() == yi.Size(),
               "Mismatch in dimension of real and imaginary matrix parts in ComplexVector!");
@@ -161,10 +161,10 @@ void ComplexVector::Reciprocal(bool abs)
 
 void ComplexVector::SetSubVector(const mfem::Array<int> &rows, std::complex<double> s)
 {
-  const int N = dofs.Size();
+  const int N = rows.Size();
   const double sr = s.real();
   const double si = s.imag();
-  const auto *idx = dofs.Read();
+  const auto *idx = rows.Read();
   auto *XR = Real().ReadWrite();
   auto *XI = Imag().ReadWrite();
   mfem::forall(N,
@@ -286,8 +286,8 @@ void ComplexVector::AXPBYPCZ(std::complex<double> alpha, const ComplexVector &x,
   {
     if (ai == 0.0 && bi == 0.0)
     {
-      mfem::forall(N, [=] MFEM_HOST_DEVICE(int i) { ZR[i] = ar * XR[i] + br * YR[i] });
-      mfem::forall(N, [=] MFEM_HOST_DEVICE(int i) { ZI[i] = ar * XI[i] + br * YI[i] });
+      mfem::forall(N, [=] MFEM_HOST_DEVICE(int i) { ZR[i] = ar * XR[i] + br * YR[i]; });
+      mfem::forall(N, [=] MFEM_HOST_DEVICE(int i) { ZI[i] = ar * XI[i] + br * YI[i]; });
     }
     else
     {
@@ -420,6 +420,12 @@ void AXPY(double alpha, const Vector &x, Vector &y)
 }
 
 template <>
+void AXPY(double alpha, const ComplexVector &x, ComplexVector &y)
+{
+  y.AXPY(alpha, x);
+}
+
+template <>
 void AXPY(std::complex<double> alpha, const ComplexVector &x, ComplexVector &y)
 {
   y.AXPY(alpha, x);
@@ -428,7 +434,7 @@ void AXPY(std::complex<double> alpha, const ComplexVector &x, ComplexVector &y)
 template <>
 void AXPBY(double alpha, const Vector &x, double beta, Vector &y)
 {
-  Vector::add(alpha, x, beta, y, y);
+  add(alpha, x, beta, y, y);
 }
 
 template <>
@@ -436,6 +442,41 @@ void AXPBY(std::complex<double> alpha, const ComplexVector &x, std::complex<doub
            ComplexVector &y)
 {
   y.AXPBY(alpha, x, beta);
+}
+
+template <>
+void AXPBY(double alpha, const ComplexVector &x, double beta, ComplexVector &y)
+{
+  y.AXPBY(alpha, x, beta);
+}
+
+template <>
+void AXPBYPCZ(double alpha, const Vector &x, double beta, const Vector &y, double gamma,
+              Vector &z)
+{
+  if (gamma == 0.0)
+  {
+    add(alpha, x, beta, y, z);
+  }
+  else
+  {
+    AXPBY(alpha, x, gamma, z);
+    z.Add(beta, y);
+  }
+}
+
+template <>
+void AXPBYPCZ(std::complex<double> alpha, const ComplexVector &x, std::complex<double> beta,
+              const ComplexVector &y, std::complex<double> gamma, ComplexVector &z)
+{
+  z.AXPBYPCZ(alpha, x, beta, y, gamma);
+}
+
+template <>
+void AXPBYPCZ(double alpha, const ComplexVector &x, double beta, const ComplexVector &y,
+              double gamma, ComplexVector &z)
+{
+  z.AXPBYPCZ(alpha, x, beta, y, gamma);
 }
 
 }  // namespace linalg

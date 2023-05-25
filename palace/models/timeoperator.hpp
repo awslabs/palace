@@ -7,6 +7,7 @@
 #include <functional>
 #include <memory>
 #include <mfem.hpp>
+#include "linalg/ksp.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
 
@@ -14,7 +15,6 @@ namespace palace
 {
 
 class IoData;
-class KspSolver;
 class SpaceOperator;
 
 //

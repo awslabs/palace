@@ -16,6 +16,7 @@
 #include <string>
 #include <mpi.h>
 #include "linalg/eps.hpp"
+#include "linalg/ksp.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
 
@@ -29,7 +30,6 @@ typedef struct _p_RG *RG;
 namespace palace
 {
 
-class ComplexKspSolver;
 class DivFreeSolver;
 
 namespace slepc

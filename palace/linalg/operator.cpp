@@ -58,53 +58,46 @@ Operator *ComplexOperator::Imag()
   return nullptr;
 }
 
-void ComplexOperator::MultTranspose(const Vector &xr, const Vector &xi, Vector &yr,
-                                    Vector &yi, bool zero_real, bool zero_imag) const
+void ComplexOperator::MultTranspose(const ComplexVector &x, ComplexVector &y) const
 {
   MFEM_ABORT("Base class ComplexOperator does not implement MultTranspose!");
 }
 
-void ComplexOperator::MultHermitianTranspose(const Vector &xr, const Vector &xi, Vector &yr,
-                                             Vector &yi, bool zero_real,
-                                             bool zero_imag) const
+void ComplexOperator::MultHermitianTranspose(const ComplexVector &x, ComplexVector &y) const
 {
   MFEM_ABORT("Base class ComplexOperator does not implement MultHermitianTranspose!");
 }
 
-void ComplexOperator::AddMult(const Vector &xr, const Vector &xi, Vector &yr, Vector &yi,
-                              const std::complex<double> a, bool zero_real,
-                              bool zero_imag) const
+void ComplexOperator::AddMult(const ComplexVector &x, ComplexVector &y,
+                              const std::complex<double> a) const
 {
   MFEM_ABORT("Base class ComplexOperator does not implement AddMult!");
 }
 
-void ComplexOperator::AddMultTranspose(const Vector &xr, const Vector &xi, Vector &yr,
-                                       Vector &yi, const std::complex<double> a,
-                                       bool zero_real, bool zero_imag) const
+void ComplexOperator::AddMultTranspose(const ComplexVector &x, ComplexVector &y,
+                                       const std::complex<double> a) const
 {
   MFEM_ABORT("Base class ComplexOperator does not implement AddMultTranspose!");
 }
 
-void ComplexOperator::AddMultHermitianTranspose(const Vector &xr, const Vector &xi,
-                                                Vector &yr, Vector &yi,
-                                                const std::complex<double> a,
-                                                bool zero_real, bool zero_imag) const
+void ComplexOperator::AddMultHermitianTranspose(const ComplexVector &x, ComplexVector &y,
+                                                const std::complex<double> a) const
 {
   MFEM_ABORT("Base class ComplexOperator does not implement AddMultHermitianTranspose!");
 }
 
-ComplexWrapperOperator::ComplexWrapperOperator(std::unique_ptr<Operator> &&data_Ar,
-                                               std::unique_ptr<Operator> &&data_Ai,
-                                               Operator *Ar, Operator *Ai)
-  : ComplexOperator(Ar ? Ar->Height() : (Ai ? Ai->Height() : 0),
-                    Ar ? Ar->Width() : (Ai ? Ai->Width() : 0)),
-    data_Ar(std::move(data_Ar)), data_Ai(std::move(data_Ai)),
-    Ar(this->data_Ar ? this->data_Ar.get() : Ar),
-    Ai(this->data_Ai ? this->data_Ai.get() : Ai)
+ComplexWrapperOperator::ComplexWrapperOperator(std::unique_ptr<Operator> &&dAr,
+                                               std::unique_ptr<Operator> &&dAi,
+                                               Operator *pAr, Operator *pAi)
+  : ComplexOperator(), data_Ar(std::move(dAr)), data_Ai(std::move(dAi)),
+    Ar((data_Ar != nullptr) ? data_Ar.get() : pAr),
+    Ai((data_Ai != nullptr) ? data_Ai.get() : pAi)
 {
   MFEM_VERIFY(Ar || Ai, "Cannot construct ComplexWrapperOperator from an empty matrix!");
   MFEM_VERIFY((!Ar || !Ai) || (Ar->Height() == Ai->Height() && Ar->Width() == Ai->Width()),
               "Mismatch in dimension of real and imaginary matrix parts!");
+  height = Ar ? Ar->Height() : Ai->Height();
+  width = Ar ? Ar->Width() : Ai->Width();
 }
 
 ComplexWrapperOperator::ComplexWrapperOperator(std::unique_ptr<Operator> &&Ar,
@@ -118,9 +111,14 @@ ComplexWrapperOperator::ComplexWrapperOperator(Operator *Ar, Operator *Ai)
 {
 }
 
-void ComplexWrapperOperator::Mult(const Vector &xr, const Vector &xi, Vector &yr,
-                                  Vector &yi, bool zero_real, bool zero_imag) const
+void ComplexWrapperOperator::Mult(const ComplexVector &x, ComplexVector &y) const
 {
+  constexpr bool zero_real = false;
+  constexpr bool zero_imag = false;
+  const Vector &xr = x.Real();
+  const Vector &xi = x.Imag();
+  Vector &yr = y.Real();
+  Vector &yi = y.Imag();
   if (Ar)
   {
     if (!zero_real)
@@ -150,9 +148,14 @@ void ComplexWrapperOperator::Mult(const Vector &xr, const Vector &xi, Vector &yr
   }
 }
 
-void ComplexWrapperOperator::MultTranspose(const Vector &xr, const Vector &xi, Vector &yr,
-                                           Vector &yi, bool zero_real, bool zero_imag) const
+void ComplexWrapperOperator::MultTranspose(const ComplexVector &x, ComplexVector &y) const
 {
+  constexpr bool zero_real = false;
+  constexpr bool zero_imag = false;
+  const Vector &xr = x.Real();
+  const Vector &xi = x.Imag();
+  Vector &yr = y.Real();
+  Vector &yi = y.Imag();
   if (Ar)
   {
     if (!zero_real)
@@ -182,10 +185,15 @@ void ComplexWrapperOperator::MultTranspose(const Vector &xr, const Vector &xi, V
   }
 }
 
-void ComplexWrapperOperator::MultHermitianTranspose(const Vector &xr, const Vector &xi,
-                                                    Vector &yr, Vector &yi, bool zero_real,
-                                                    bool zero_imag) const
+void ComplexWrapperOperator::MultHermitianTranspose(const ComplexVector &x,
+                                                    ComplexVector &y) const
 {
+  constexpr bool zero_real = false;
+  constexpr bool zero_imag = false;
+  const Vector &xr = x.Real();
+  const Vector &xi = x.Imag();
+  Vector &yr = y.Real();
+  Vector &yi = y.Imag();
   if (Ar)
   {
     if (!zero_real)
@@ -215,14 +223,19 @@ void ComplexWrapperOperator::MultHermitianTranspose(const Vector &xr, const Vect
   }
 }
 
-void ComplexWrapperOperator::AddMult(const Vector &xr, const Vector &xi, Vector &yr,
-                                     Vector &yi, const std::complex<double> a,
-                                     bool zero_real, bool zero_imag) const
+void ComplexWrapperOperator::AddMult(const ComplexVector &x, ComplexVector &y,
+                                     const std::complex<double> a) const
 {
+  constexpr bool zero_real = false;
+  constexpr bool zero_imag = false;
+  const Vector &xr = x.Real();
+  const Vector &xi = x.Imag();
+  Vector &yr = y.Real();
+  Vector &yi = y.Imag();
   if (a.real() != 0.0 && a.imag() != 0.0)
   {
     ty.SetSize(height);
-    Mult(xr, xi, ty.Real(), ty.Imag(), zero_real, zero_imag);
+    Mult(x, ty);
     const int N = height;
     const double ar = a.real();
     const double ai = a.imag();
@@ -289,15 +302,19 @@ void ComplexWrapperOperator::AddMult(const Vector &xr, const Vector &xi, Vector 
   }
 }
 
-void ComplexWrapperOperator::AddMultTranspose(const Vector &xr, const Vector &xi,
-                                              Vector &yr, Vector &yi,
-                                              const std::complex<double> a, bool zero_real,
-                                              bool zero_imag) const
+void ComplexWrapperOperator::AddMultTranspose(const ComplexVector &x, ComplexVector &y,
+                                              const std::complex<double> a) const
 {
+  constexpr bool zero_real = false;
+  constexpr bool zero_imag = false;
+  const Vector &xr = x.Real();
+  const Vector &xi = x.Imag();
+  Vector &yr = y.Real();
+  Vector &yi = y.Imag();
   if (a.real() != 0.0 && a.imag() != 0.0)
   {
     tx.SetSize(width);
-    MultTranspose(xr, xi, tx.Real(), tx.Imag(), zero_real, zero_imag);
+    MultTranspose(x, tx);
     const int N = width;
     const double ar = a.real();
     const double ai = a.imag();
@@ -364,15 +381,20 @@ void ComplexWrapperOperator::AddMultTranspose(const Vector &xr, const Vector &xi
   }
 }
 
-void ComplexWrapperOperator::AddMultHermitianTranspose(const Vector &xr, const Vector &xi,
-                                                       Vector &yr, Vector &yi,
-                                                       const std::complex<double> a,
-                                                       bool zero_real, bool zero_imag) const
+void ComplexWrapperOperator::AddMultHermitianTranspose(const ComplexVector &x,
+                                                       ComplexVector &y,
+                                                       const std::complex<double> a) const
 {
+  constexpr bool zero_real = false;
+  constexpr bool zero_imag = false;
+  const Vector &xr = x.Real();
+  const Vector &xi = x.Imag();
+  Vector &yr = y.Real();
+  Vector &yi = y.Imag();
   if (a.real() != 0.0 && a.imag() != 0.0)
   {
     tx.SetSize(width);
-    MultHermitianTranspose(xr, xi, tx.Real(), tx.Imag(), zero_real, zero_imag);
+    MultHermitianTranspose(x, tx);
     const int N = width;
     const double ar = a.real();
     const double ai = a.imag();
@@ -453,9 +475,13 @@ void SumOperator::AddOperator(const Operator &op, double c)
 
 void SumOperator::Mult(const Vector &x, Vector &y) const
 {
-  if (ops.size() == 1 && ops[0].second == 1.0)
+  if (ops.size() == 1)
   {
-    return ops[0].first->Mult(x, y);
+    ops.front().first->Mult(x, y);
+    if (ops.front().second != 1.0)
+    {
+      y *= ops.front().second;
+    }
   }
   y = 0.0;
   AddMult(x, y);
@@ -463,9 +489,13 @@ void SumOperator::Mult(const Vector &x, Vector &y) const
 
 void SumOperator::MultTranspose(const Vector &x, Vector &y) const
 {
-  if (ops.size() == 1 && ops[0].second == 1.0)
+  if (ops.size() == 1)
   {
-    return ops[0].first->MultTranspose(x, y);
+    ops.front().first->MultTranspose(x, y);
+    if (ops.front().second != 1.0)
+    {
+      y *= ops.front().second;
+    }
   }
   y = 0.0;
   AddMultTranspose(x, y);
@@ -487,115 +517,10 @@ void SumOperator::AddMultTranspose(const Vector &x, Vector &y, const double a) c
   }
 }
 
-ComplexSumOperator::ComplexSumOperator(const ComplexOperator &op, std::complex<double> c)
-  : ComplexOperator(op.Height(), op.Width())
-{
-  AddOperator(op, c);
-}
-
-void ComplexSumOperator::AddOperator(const ComplexOperator &op, std::complex<double> c)
-{
-  MFEM_VERIFY(op.Height() == height && op.Width() == width,
-              "Invalid Operator dimensions for ComplexSumOperator!");
-  ops.emplace_back(&op, c);
-}
-
-bool ComplexSumOperator::IsReal() const
-{
-  for (const auto &[op, c] : ops)
-  {
-    if (!op->IsReal())
-    {
-      return false;
-    }
-  }
-  return true;
-}
-
-bool ComplexSumOperator::IsImag() const
-{
-  for (const auto &[op, c] : ops)
-  {
-    if (!op->IsImag())
-    {
-      return false;
-    }
-  }
-  return true;
-}
-
-void ComplexSumOperator::Mult(const Vector &xr, const Vector &xi, Vector &yr, Vector &yi,
-                              bool zero_real, bool zero_imag) const
-{
-  if (ops.Size() == 1 && ops[0].second == 1.0)
-  {
-    return ops[0].first->Mult(xr, xi, yr, yi, zero_real, zero_imag);
-  }
-  yr = 0.0;
-  yi = 0.0;
-  AddMult(xr, xi, yr, yi, 1.0, zero_real, zero_imag);
-}
-
-void ComplexSumOperator::MultTranspose(const Vector &xr, const Vector &xi, Vector &yr,
-                                       Vector &yi, bool zero_real, bool zero_imag) const
-{
-  if (ops.Size() == 1 && ops[0].second == 1.0)
-  {
-    return ops[0].first->MultTranspose(xr, xi, yr, yi, zero_real, zero_imag);
-  }
-  yr = 0.0;
-  yi = 0.0;
-  AddMultTranspose(xr, xi, yr, yi, 1.0, zero_real, zero_imag);
-}
-
-void ComplexSumOperator::MultHermitianTranspose(const Vector &xr, const Vector &xi,
-                                                Vector &yr, Vector &yi, bool zero_real,
-                                                bool zero_imag) const
-{
-  if (ops.Size() == 1 && ops[0].second == 1.0)
-  {
-    return ops[0].first->MultHermitianTranspose(xr, xi, yr, yi, zero_real, zero_imag);
-  }
-  yr = 0.0;
-  yi = 0.0;
-  AddMultHermitianTranspose(xr, xi, yr, yi, 1.0, zero_real, zero_imag);
-}
-
-void ComplexSumOperator::AddMult(const Vector &xr, const Vector &xi, Vector &yr, Vector &yi,
-                                 const std::complex<double> a, bool zero_real,
-                                 bool zero_imag) const
-{
-  for (const auto &[op, c] : ops)
-  {
-    op->AddMult(xr, xi, yr, yi, a * c, zero_real, zero_imag);
-  }
-}
-
-void ComplexSumOperator::AddMultTranspose(const Vector &xr, const Vector &xi, Vector &yr,
-                                          Vector &yi, const std::complex<double> a,
-                                          bool zero_real, bool zero_imag) const
-{
-  for (const auto &[op, c] : ops)
-  {
-    op->AddMultTranspose(xr, xi, yr, yi, a * c, zero_real, zero_imag);
-  }
-}
-
-void ComplexSumOperator::AddMultHermitianTranspose(const Vector &xr, const Vector &xi,
-                                                   Vector &yr, Vector &yi,
-                                                   const std::complex<double> a,
-                                                   bool zero_real, bool zero_imag) const
-{
-  for (const auto &[op, c] : ops)
-  {
-    op->AddMultTranspose(xr, xi, yr, yi, a * c, zero_real, zero_imag);
-  }
-}
-
 template <>
-void DiagonalOperator<Operator>::Mult(const Vector &x, Vector &y) const
+void BaseDiagonalOperator<Operator>::Mult(const Vector &x, Vector &y) const
 {
-  const int N = height;
+  const int N = this->height;
   const auto *D = d.Read();
   const auto *X = x.Read();
   auto *Y = y.Write();
@@ -603,9 +528,10 @@ void DiagonalOperator<Operator>::Mult(const Vector &x, Vector &y) const
 }
 
 template <>
-void DiagonalOperator<ComplexOperator>::Mult(const ComplexVector &x, ComplexVector &y) const
+void BaseDiagonalOperator<ComplexOperator>::Mult(const ComplexVector &x,
+                                                 ComplexVector &y) const
 {
-  const int N = height;
+  const int N = this->height;
   const auto *DR = d.Real().Read();
   const auto *DI = d.Imag().Read();
   const auto *XR = x.Real().Read();
@@ -621,10 +547,13 @@ void DiagonalOperator<ComplexOperator>::Mult(const ComplexVector &x, ComplexVect
 }
 
 template <>
-void DiagonalOperator<ComplexOperator>::MultHermitianTranspose(const ComplexVector &x,
-                                                               ComplexVector &y) const
+void DiagonalOperatorHelper<BaseDiagonalOperator<ComplexOperator>,
+                            ComplexOperator>::MultHermitianTranspose(const ComplexVector &x,
+                                                                     ComplexVector &y) const
 {
-  const int N = height;
+  const ComplexVector &d =
+      static_cast<const BaseDiagonalOperator<ComplexOperator> *>(this)->d;
+  const int N = this->height;
   const auto *DR = d.Real().Read();
   const auto *DI = d.Imag().Read();
   const auto *XR = x.Real().Read();
@@ -644,7 +573,7 @@ namespace linalg
 
 double SpectralNorm(MPI_Comm comm, const Operator &A, bool sym, double tol, int max_it)
 {
-  ComplexWrapperOperator Ar(&A, nullptr);  // Non-owning constructor
+  ComplexWrapperOperator Ar(const_cast<Operator *>(&A), nullptr);  // Non-owning constructor
   return SpectralNorm(comm, Ar, sym, tol, max_it);
 }
 

@@ -26,8 +26,9 @@ protected:
   int height, width;
 
 public:
-  ComplexOperator(int s) : height(s), width(s) {}
+  ComplexOperator(int s = 0) : height(s), width(s) {}
   ComplexOperator(int h, int w) : height(h), width(w) {}
+  virtual ~ComplexOperator() = default;
 
   // Get the height (size of output) of the operator.
   int Height() const { return height; }
@@ -49,64 +50,26 @@ public:
   virtual const Operator *Imag() const;
   virtual Operator *Imag();
 
-  virtual void Mult(const ComplexVector &x, ComplexVector &y) const
-  {
-    Mult(x.Real(), x.Imag(), y.Real(), y.Imag());
-  }
+  // Operator application.
+  virtual void Mult(const ComplexVector &x, ComplexVector &y) const = 0;
 
-  virtual void Mult(const Vector &xr, const Vector &xi, Vector &yr, Vector &yi,
-                    bool zero_real = false, bool zero_imag = false) const = 0;
+  virtual void MultTranspose(const ComplexVector &x, ComplexVector &y) const;
 
-  virtual void MultTranspose(const ComplexVector &x, ComplexVector &y) const
-  {
-    MultTranspose(x.Real(), x.Imag(), y.Real(), y.Imag());
-  }
-
-  virtual void MultTranspose(const Vector &xr, const Vector &xi, Vector &yr, Vector &yi,
-                             bool zero_real = false, bool zero_imag = false) const;
-
-  virtual void MultHermitianTranspose(const ComplexVector &x, ComplexVector &y) const
-  {
-    MultHermitianTranspose(x.Real(), x.Imag(), y.Real(), y.Imag());
-  }
-
-  virtual void MultHermitianTranspose(const Vector &xr, const Vector &xi, Vector &yr,
-                                      Vector &yi, bool zero_real = false,
-                                      bool zero_imag = false) const;
+  virtual void MultHermitianTranspose(const ComplexVector &x, ComplexVector &y) const;
 
   virtual void AddMult(const ComplexVector &x, ComplexVector &y,
-                       const std::complex<double> a = 1.0) const
-  {
-    AddMult(x.Real(), x.Imag(), y.Real(), y.Imag(), a);
-  }
-
-  virtual void AddMult(const Vector &xr, const Vector &xi, Vector &yr, Vector &yi,
-                       const std::complex<double> a = 1.0, bool zero_real = false,
-                       bool zero_imag = false) const;
+                       const std::complex<double> a = 1.0) const;
 
   virtual void AddMultTranspose(const ComplexVector &x, ComplexVector &y,
-                                const std::complex<double> a = 1.0) const
-  {
-    AddMultTranspose(x.Real(), x.Imag(), y.Real(), y.Imag(), a);
-  }
-
-  virtual void AddMultTranspose(const Vector &xr, const Vector &xi, Vector &yr, Vector &yi,
-                                const std::complex<double> a = 1.0, bool zero_real = false,
-                                bool zero_imag = false) const;
+                                const std::complex<double> a = 1.0) const;
 
   virtual void AddMultHermitianTranspose(const ComplexVector &x, ComplexVector &y,
-                                         const std::complex<double> a = 1.0) const
-  {
-    AddMultHermitianTranspose(x.Real(), x.Imag(), y.Real(), y.Imag(), a);
-  }
-
-  virtual void AddMultHermitianTranspose(const Vector &xr, const Vector &xi, Vector &yr,
-                                         Vector &yi, const std::complex<double> a = 1.0,
-                                         bool zero_real = false,
-                                         bool zero_imag = false) const;
+                                         const std::complex<double> a = 1.0) const;
 };
 
-// A complex-valued operator represented using a block 2x2 equivalent-real formulation.
+// A complex-valued operator represented using a block 2 x 2 equivalent-real formulation:
+//                          [ yr ]  =  [ Ar  -Ai ] [ xr ]
+//                          [ yi ]     [ Ai   Ar ] [ xi ] .
 class ComplexWrapperOperator : public ComplexOperator
 {
 private:
@@ -117,8 +80,8 @@ private:
   // Temporary storage for operator application.
   mutable ComplexVector tx, ty;
 
-  ComplexWrapperOperator(std::unique_ptr<Operator> &&data_Ar,
-                         std::unique_ptr<Operator> &&data_Ai, Operator *Ar, Operator *Ai);
+  ComplexWrapperOperator(std::unique_ptr<Operator> &&dAr, std::unique_ptr<Operator> &&dAi,
+                         Operator *pAr, Operator *pAi);
 
 public:
   // Construct a complex operator which inherits ownership of the input real and imaginary
@@ -137,34 +100,20 @@ public:
   const Operator *Imag() const override { return Ai; }
   Operator *Imag() override { return Ai; }
 
-  using ComplexOperator::AddMult;
-  using ComplexOperator::AddMultHermitianTranspose;
-  using ComplexOperator::AddMultTranspose;
-  using ComplexOperator::Mult;
-  using ComplexOperator::MultHermitianTranspose;
-  using ComplexOperator::MultTranspose;
+  void Mult(const ComplexVector &x, ComplexVector &y) const override;
 
-  void Mult(const Vector &xr, const Vector &xi, Vector &yr, Vector &yi,
-            bool zero_real = false, bool zero_imag = false) const override;
+  void MultTranspose(const ComplexVector &x, ComplexVector &y) const override;
 
-  void MultTranspose(const Vector &xr, const Vector &xi, Vector &yr, Vector &yi,
-                     bool zero_real = false, bool zero_imag = false) const override;
+  void MultHermitianTranspose(const ComplexVector &x, ComplexVector &y) const override;
 
-  void MultHermitianTranspose(const Vector &xr, const Vector &xi, Vector &yr, Vector &yi,
-                              bool zero_real = false,
-                              bool zero_imag = false) const override;
+  void AddMult(const ComplexVector &x, ComplexVector &y,
+               const std::complex<double> a = 1.0) const override;
 
-  void AddMult(const Vector &xr, const Vector &xi, Vector &yr, Vector &yi,
-               const std::complex<double> a = 1.0, bool zero_real = false,
-               bool zero_imag = false) const override;
+  void AddMultTranspose(const ComplexVector &x, ComplexVector &y,
+                        const std::complex<double> a = 1.0) const override;
 
-  void AddMultTranspose(const Vector &xr, const Vector &xi, Vector &yr, Vector &yi,
-                        const std::complex<double> a = 1.0, bool zero_real = false,
-                        bool zero_imag = false) const override;
-
-  void AddMultHermitianTranspose(const Vector &xr, const Vector &xi, Vector &yr, Vector &yi,
-                                 const std::complex<double> a = 1.0, bool zero_real = false,
-                                 bool zero_imag = false) const override;
+  void AddMultHermitianTranspose(const ComplexVector &x, ComplexVector &y,
+                                 const std::complex<double> a = 1.0) const override;
 };
 
 // Wrap a sequence of operators of the same dimensions and optional coefficients.
@@ -189,57 +138,41 @@ public:
   void AddMultTranspose(const Vector &x, Vector &y, const double a = 1.0) const override;
 };
 
-// Wrap a sequence of operators of the same dimensions and optional coefficients.
-class ComplexSumOperator : public ComplexOperator
-{
-private:
-  std::vector<std::pair<const ComplexOperator *, std::complex<double>>> ops;
-
-public:
-  ComplexSumOperator(int s) : ComplexOperator(s) {}
-  ComplexSumOperator(int h, int w) : ComplexOperator(h, w) {}
-  ComplexSumOperator(const ComplexOperator &op, std::complex<double> c = 1.0);
-
-  void AddOperator(const ComplexOperator &op, std::complex<double> c = 1.0);
-
-  bool IsReal() const override;
-  bool IsImag() const override;
-
-  using ComplexOperator::AddMult;
-  using ComplexOperator::AddMultHermitianTranspose;
-  using ComplexOperator::AddMultTranspose;
-  using ComplexOperator::Mult;
-  using ComplexOperator::MultHermitianTranspose;
-  using ComplexOperator::MultTranspose;
-
-  void Mult(const Vector &xr, const Vector &xi, Vector &yr, Vector &yi,
-            bool zero_real = false, bool zero_imag = false) const override;
-
-  void MultTranspose(const Vector &xr, const Vector &xi, Vector &yr, Vector &yi,
-                     bool zero_real = false, bool zero_imag = false) const override;
-
-  void MultHermitianTranspose(const Vector &xr, const Vector &xi, Vector &yr, Vector &yi,
-                              bool zero_real = false,
-                              bool zero_imag = false) const override;
-
-  void AddMult(const Vector &xr, const Vector &xi, Vector &yr, Vector &yi,
-               const std::complex<double> a = 1.0, bool zero_real = false,
-               bool zero_imag = false) const override;
-
-  void AddMultTranspose(const Vector &xr, const Vector &xi, Vector &yr, Vector &yi,
-                        const std::complex<double> a = 1.0, bool zero_real = false,
-                        bool zero_imag = false) const override;
-
-  void AddMultHermitianTranspose(const Vector &xr, const Vector &xi, Vector &yr, Vector &yi,
-                                 const std::complex<double> a = 1.0, bool zero_real = false,
-                                 bool zero_imag = false) const override;
-};
-
 // Wraps two operators such that: (AB)ᵀ = BᵀAᵀ and, for complex symmetric operators, the
 // Hermitian transpose operation is (AB)ᴴ = BᴴAᴴ.
-template <typename OperType = Operator>
-class ProductOperator : public OperType
+template <typename ProductOperator, typename OperType>
+class ProductOperatorHelper : public OperType
 {
+};
+
+template <typename ProductOperator>
+class ProductOperatorHelper<ProductOperator, Operator> : public Operator
+{
+public:
+  ProductOperatorHelper(int h, int w) : Operator(h, w) {}
+};
+
+template <typename ProductOperator>
+class ProductOperatorHelper<ProductOperator, ComplexOperator> : public ComplexOperator
+{
+public:
+  ProductOperatorHelper(int h, int w) : ComplexOperator(h, w) {}
+  void MultHermitianTranspose(const ComplexVector &x, ComplexVector &y) const override
+  {
+    const ComplexOperator &A = static_cast<const ProductOperator *>(this)->A;
+    const ComplexOperator &B = static_cast<const ProductOperator *>(this)->B;
+    ComplexVector &z = static_cast<const ProductOperator *>(this)->z;
+    A.MultHermitianTranspose(x, z);
+    B.MultHermitianTranspose(z, y);
+  }
+};
+
+template <typename OperType>
+class BaseProductOperator
+  : public ProductOperatorHelper<BaseProductOperator<OperType>, OperType>
+{
+  friend class ProductOperatorHelper<BaseProductOperator<OperType>, OperType>;
+
 private:
   typedef typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
                                     ComplexVector, Vector>::type VecType;
@@ -248,8 +181,9 @@ private:
   mutable VecType z;
 
 public:
-  ProductOperator(const OperType &A, const OperType &B)
-    : OperType(A.Height(), B.Width()), A(A), B(B), z(B.Height())
+  BaseProductOperator(const OperType &A, const OperType &B)
+    : ProductOperatorHelper<BaseProductOperator<OperType>, OperType>(A.Height(), B.Width()),
+      A(A), B(B), z(B.Height())
   {
   }
 
@@ -264,22 +198,38 @@ public:
     A.MultTranspose(x, z);
     B.MultTranspose(z, y);
   }
-
-  template <typename T = OperType,
-            typename = std::enable_if_t<std::is_same<T, ComplexOperator>::value>>
-  void MultHermitianTranspose(const VecType &x, VecType &y) const override
-  {
-    A.MultHermitianTranspose(x, z);
-    B.MultHermitianTranspose(z, y);
-  }
 };
 
-using ComplexProductOperator = ProductOperator<ComplexOperator>;
+using ProductOperator = BaseProductOperator<Operator>;
+using ComplexProductOperator = BaseProductOperator<ComplexOperator>;
 
-// Applies the simple (symmetric) operator: diag(d).
-template <typename OperType = Operator>
-class DiagonalOperator : public OperType
+// Applies the simple, symmetric but not necessarily Hermitian, operator: diag(d).
+template <typename DiagonalOperator, typename OperType>
+class DiagonalOperatorHelper : public OperType
 {
+};
+
+template <typename DiagonalOperator>
+class DiagonalOperatorHelper<DiagonalOperator, Operator> : public Operator
+{
+public:
+  DiagonalOperatorHelper(int s) : Operator(s) {}
+};
+
+template <typename DiagonalOperator>
+class DiagonalOperatorHelper<DiagonalOperator, ComplexOperator> : public ComplexOperator
+{
+public:
+  DiagonalOperatorHelper(int s) : ComplexOperator(s) {}
+  void MultHermitianTranspose(const ComplexVector &x, ComplexVector &y) const override;
+};
+
+template <typename OperType>
+class BaseDiagonalOperator
+  : public DiagonalOperatorHelper<BaseDiagonalOperator<OperType>, OperType>
+{
+  friend class DiagonalOperatorHelper<BaseDiagonalOperator<OperType>, OperType>;
+
 private:
   typedef typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
                                     ComplexVector, Vector>::type VecType;
@@ -287,25 +237,25 @@ private:
   const VecType &d;
 
 public:
-  DiagonalOperator(const VecType &d) : OperType(d.Size()), d(d) {}
+  BaseDiagonalOperator(const VecType &d)
+    : DiagonalOperatorHelper<BaseDiagonalOperator<OperType>, OperType>(d.Size()), d(d)
+  {
+  }
 
   void Mult(const VecType &x, VecType &y) const override;
 
   void MultTranspose(const VecType &x, VecType &y) const override { Mult(x, y); }
-
-  template <typename T = OperType,
-            typename = std::enable_if_t<std::is_same<T, ComplexOperator>::value>>
-  void MultHermitianTranspose(const VecType &x, VecType &y) const override;
 };
 
-using ComplexDiagonalOperator = DiagonalOperator<ComplexOperator>;
+using DiagonalOperator = BaseDiagonalOperator<Operator>;
+using ComplexDiagonalOperator = BaseDiagonalOperator<ComplexOperator>;
 
 // A container for a sequence of operators corresponding to a multigrid hierarchy.
 // Optionally includes operators for the auxiliary space at each level as well. The
 // Operators are stored from coarsest to finest level. The height and width of this operator
 // are never set.
-template <typename OperType = Operator>
-class MultigridOperator : public OperType
+template <typename OperType>
+class BaseMultigridOperator : public OperType
 {
 private:
   typedef typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
@@ -314,7 +264,7 @@ private:
   std::vector<std::unique_ptr<OperType>> ops, aux_ops;
 
 public:
-  MultigridOperator(int l) : OperType(0)
+  BaseMultigridOperator(int l) : OperType(0)
   {
     ops.reserve(l);
     aux_ops.reserve(l);
@@ -323,8 +273,8 @@ public:
   void AddOperator(std::unique_ptr<OperType> &&op)
   {
     ops.push_back(std::move(op));
-    height = ops.back()->Height();
-    width = ops.back()->Width();
+    this->height = ops.back()->Height();
+    this->width = ops.back()->Width();
   }
 
   void AddAuxiliaryOperator(std::unique_ptr<OperType> &&aux_op)
@@ -344,9 +294,14 @@ public:
   const OperType &GetAuxiliaryOperatorAtLevel(int l) const { return *aux_ops[l]; }
 
   void Mult(const VecType &x, VecType &y) const override { GetFinestOperator().Mult(x, y); }
+  void MultTranspose(const VecType &x, VecType &y) const override
+  {
+    GetFinestOperator().MultTranspose(x, y);
+  }
 };
 
-using ComplexMultigridOperator = MultigridOperator<ComplexOperator>;
+using MultigridOperator = BaseMultigridOperator<Operator>;
+using ComplexMultigridOperator = BaseMultigridOperator<ComplexOperator>;
 
 namespace linalg
 {

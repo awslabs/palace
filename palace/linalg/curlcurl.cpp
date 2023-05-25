@@ -8,6 +8,7 @@
 #include "linalg/ams.hpp"
 #include "linalg/gmg.hpp"
 #include "linalg/iterative.hpp"
+#include "linalg/rap.hpp"
 #include "models/materialoperator.hpp"
 
 namespace palace
@@ -51,11 +52,11 @@ CurlCurlMassSolver::CurlCurlMassSolver(
         A_l->SetEssentialTrueDofs(dbc_tdof_lists[l], Operator::DiagonalPolicy::DIAG_ONE);
         if (s == 0)
         {
-          A_mg.AddOperator(std::move(A_l));
+          A_mg->AddOperator(std::move(A_l));
         }
         else
         {
-          A_mg.AddAuxiliaryOperator(std::move(A_l));
+          A_mg->AddAuxiliaryOperator(std::move(A_l));
         }
       }
     }
@@ -64,9 +65,9 @@ CurlCurlMassSolver::CurlCurlMassSolver(
 
   // The system matrix K + M is real and SPD. We use Hypre's AMS solver as the coarse-level
   // multigrid solve.
-  auto ams = std::make_unique<HypreAmsSolver>(nd_fespaces.GetFESpaceAtLevel(0),
-                                              h1_fespaces.GetFESpaceAtLevel(0), 1, 1, 1,
-                                              false, false, 0);
+  auto ams = std::make_unique<WrapperSolver<Operator>>(std::make_unique<HypreAmsSolver>(
+      nd_fespaces.GetFESpaceAtLevel(0), h1_fespaces.GetFESpaceAtLevel(0), 1, 1, 1, false,
+      false, 0));
   auto gmg = std::make_unique<GeometricMultigridSolver<Operator>>(
       std::move(ams), nd_fespaces, &h1_fespaces, 1, 1, 2);
 

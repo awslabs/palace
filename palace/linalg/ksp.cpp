@@ -56,7 +56,7 @@ std::unique_ptr<IterativeSolver<OperType>> ConfigureKrylovSolver(MPI_Comm comm,
     case config::LinearSolverData::KspType::FGMRES:
       {
         auto fgmres =
-            std::make_unique<FGMRESSolver<OperType>>(comm, iodata.problem.verbose);
+            std::make_unique<FgmresSolver<OperType>>(comm, iodata.problem.verbose);
         fgmres->SetRestartDim(iodata.solver.linear.max_size);
         ksp = std::move(fgmres);
       }
@@ -81,7 +81,7 @@ std::unique_ptr<IterativeSolver<OperType>> ConfigureKrylovSolver(MPI_Comm comm,
     }
     else
     {
-      auto *gmres = static_cast<GmresSolver<OperType>>(ksp.get());
+      auto *gmres = static_cast<GmresSolver<OperType> *>(ksp.get());
       switch (iodata.solver.linear.pc_side_type)
       {
         case config::LinearSolverData::SideType::LEFT:
@@ -97,7 +97,7 @@ std::unique_ptr<IterativeSolver<OperType>> ConfigureKrylovSolver(MPI_Comm comm,
   // Configure orthogonalization method for GMRES/FMGRES.
   if (iodata.solver.linear.orthog_type != config::LinearSolverData::OrthogType::DEFAULT)
   {
-    if (type != config::LinearSolverData::KspType::GMRES ||
+    if (type != config::LinearSolverData::KspType::GMRES &&
         type != config::LinearSolverData::KspType::FGMRES)
     {
       Mpi::Warning(comm, "Orthogonalization method will be ignored for non-GMRES/FGMRES "
@@ -106,7 +106,7 @@ std::unique_ptr<IterativeSolver<OperType>> ConfigureKrylovSolver(MPI_Comm comm,
     else
     {
       // Because FGMRES inherits from GMRES, this is OK.
-      auto *gmres = static_cast<GmresSolver<OperType>>(ksp.get());
+      auto *gmres = static_cast<GmresSolver<OperType> *>(ksp.get());
       switch (iodata.solver.linear.orthog_type)
       {
         case config::LinearSolverData::OrthogType::MGS:
@@ -163,7 +163,7 @@ ConfigurePreconditionerSolver(MPI_Comm comm, const IoData &iodata,
   int print = iodata.problem.verbose - 1;
 
   // Create the real-valued solver first.
-  std::unique_ptr<mfem::Solver> pc;
+  std::unique_ptr<mfem::Solver> pc0;
   switch (type)
   {
     case config::LinearSolverData::Type::AMS:
@@ -171,15 +171,15 @@ ConfigurePreconditionerSolver(MPI_Comm comm, const IoData &iodata,
       // space (in which case fespaces.GetNumLevels() == 1).
       MFEM_VERIFY(aux_fespaces, "AMS solver relies on both primary space "
                                 "and auxiliary spaces for construction!");
-      pc = std::make_unique<HypreAmsSolver>(iodata, fespaces.GetFESpaceAtLevel(0),
-                                            aux_fespaces->GetFESpaceAtLevel(0), print);
+      pc0 = std::make_unique<HypreAmsSolver>(iodata, fespaces.GetFESpaceAtLevel(0),
+                                             aux_fespaces->GetFESpaceAtLevel(0), print);
       break;
     case config::LinearSolverData::Type::BOOMER_AMG:
-      pc = std::make_unique<BoomerAmgSolver>(iodata, print);
+      pc0 = std::make_unique<BoomerAmgSolver>(iodata, print);
       break;
     case config::LinearSolverData::Type::SUPERLU:
 #if defined(MFEM_USE_SUPERLU)
-      pc = std::make_unique<SuperLUSolver>(comm, iodata, print);
+      pc0 = std::make_unique<SuperLUSolver>(comm, iodata, print);
 #else
       MFEM_ABORT("Solver was not built with SuperLU_DIST support, please choose a "
                  "different solver!");
@@ -187,7 +187,7 @@ ConfigurePreconditionerSolver(MPI_Comm comm, const IoData &iodata,
       break;
     case config::LinearSolverData::Type::STRUMPACK:
 #if defined(MFEM_USE_STRUMPACK)
-      pc = std::make_unique<StrumpackSolver>(comm, iodata, print);
+      pc0 = std::make_unique<StrumpackSolver>(comm, iodata, print);
 #else
       MFEM_ABORT("Solver was not built with STRUMPACK support, please choose a "
                  "different solver!");
@@ -195,7 +195,7 @@ ConfigurePreconditionerSolver(MPI_Comm comm, const IoData &iodata,
       break;
     case config::LinearSolverData::Type::STRUMPACK_MP:
 #if defined(MFEM_USE_STRUMPACK)
-      pc = std::make_unique<StrumpackMixedPrecisionSolver>(comm, iodata, print);
+      pc0 = std::make_unique<StrumpackMixedPrecisionSolver>(comm, iodata, print);
 #else
       MFEM_ABORT("Solver was not built with STRUMPACK support, please choose a "
                  "different solver!");
@@ -203,7 +203,7 @@ ConfigurePreconditionerSolver(MPI_Comm comm, const IoData &iodata,
       break;
     case config::LinearSolverData::Type::MUMPS:
 #if defined(MFEM_USE_MUMPS)
-      pc = std::make_unique<MumpsSolver>(comm, iodata, print);
+      pc0 = std::make_unique<MumpsSolver>(comm, iodata, print);
 #else
       MFEM_ABORT(
           "Solver was not built with MUMPS support, please choose a different solver!");
@@ -216,6 +216,7 @@ ConfigurePreconditionerSolver(MPI_Comm comm, const IoData &iodata,
   }
 
   // Construct the actual solver, which has the right value type.
+  auto pc = std::make_unique<WrapperSolver<OperType>>(std::move(pc0));
   if (iodata.solver.linear.pc_mg)
   {
     // This will construct the multigrid hierarchy using pc as the coarse solver
@@ -237,17 +238,17 @@ ConfigurePreconditionerSolver(MPI_Comm comm, const IoData &iodata,
   }
   else
   {
-    return std::make_unique<WrapperSolver<OperType>>(std::move(pc));
+    return pc;
   }
 }
 
 }  // namespace
 
 template <typename OperType>
-KspSolver<OperType>::KspSolver(const IoData &iodata,
-                               mfem::ParFiniteElementSpaceHierarchy &fespaces,
-                               mfem::ParFiniteElementSpaceHierarchy *aux_fespaces)
-  : KspSolver(
+BaseKspSolver<OperType>::BaseKspSolver(const IoData &iodata,
+                                       mfem::ParFiniteElementSpaceHierarchy &fespaces,
+                                       mfem::ParFiniteElementSpaceHierarchy *aux_fespaces)
+  : BaseKspSolver(
         ConfigureKrylovSolver<OperType>(fespaces.GetFinestFESpace().GetComm(), iodata),
         ConfigurePreconditionerSolver<OperType>(fespaces.GetFinestFESpace().GetComm(),
                                                 iodata, fespaces, aux_fespaces))
@@ -255,17 +256,17 @@ KspSolver<OperType>::KspSolver(const IoData &iodata,
 }
 
 template <typename OperType>
-KspSolver<OperType>::KspSolver(std::unique_ptr<IterativeSolver<OperType>> &&ksp,
-                               std::unique_ptr<Solver<OperType>> &&pc)
+BaseKspSolver<OperType>::BaseKspSolver(std::unique_ptr<IterativeSolver<OperType>> &&ksp,
+                                       std::unique_ptr<Solver<OperType>> &&pc)
   : ksp(std::move(ksp)), pc(std::move(pc)), ksp_mult(0), ksp_mult_it(0)
 {
 }
 
 template <typename OperType>
-void KspSolver<OperType>::SetOperators(const OperType &op, const OperType &pc_op)
+void BaseKspSolver<OperType>::SetOperators(const OperType &op, const OperType &pc_op)
 {
   ksp->SetOperator(op);
-  const auto *mg_op = dynamic_cast<const MultigridOperator<OperType> *>(&pc_op);
+  const auto *mg_op = dynamic_cast<const BaseMultigridOperator<OperType> *>(&pc_op);
   const auto *mg_pc = dynamic_cast<const GeometricMultigridSolver<OperType> *>(pc.get());
   if (mg_op && !mg_pc)
   {
@@ -278,7 +279,7 @@ void KspSolver<OperType>::SetOperators(const OperType &op, const OperType &pc_op
 }
 
 template <typename OperType>
-void KspSolver<OperType>::Mult(const VecType &x, VecType &y) const
+void BaseKspSolver<OperType>::Mult(const VecType &x, VecType &y) const
 {
   ksp->Mult(x, y);
   if (!ksp->GetConverged())
@@ -292,7 +293,7 @@ void KspSolver<OperType>::Mult(const VecType &x, VecType &y) const
   ksp_mult_it += ksp->GetNumIterations();
 }
 
-template class KspSolver<Operator>;
-template class KspSolver<ComplexOperator>;
+template class BaseKspSolver<Operator>;
+template class BaseKspSolver<ComplexOperator>;
 
 }  // namespace palace

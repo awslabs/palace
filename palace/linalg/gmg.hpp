@@ -31,6 +31,9 @@ namespace palace
 template <typename OperType>
 class GeometricMultigridSolver : public Solver<OperType>
 {
+protected:
+  typedef typename Solver<OperType>::VecType VecType;
+
 private:
   // Number of V-cycles per preconditioner application.
   const int pc_it;

@@ -25,8 +25,8 @@ class IoData;
 //
 // Linear solver class composing an iterative solver and preconditioner object.
 //
-template <typename OperType = Operator>
-class KspSolver
+template <typename OperType>
+class BaseKspSolver
 {
   static_assert(std::is_same<OperType, Operator>::value ||
                     std::is_same<OperType, ComplexOperator>::value,
@@ -45,10 +45,10 @@ protected:
   mutable int ksp_mult, ksp_mult_it;
 
 public:
-  KspSolver(const IoData &iodata, mfem::ParFiniteElementSpaceHierarchy &fespaces,
-            mfem::ParFiniteElementSpaceHierarchy *aux_fespaces = nullptr);
-  KspSolver(std::unique_ptr<IterativeSolver<OperType>> &&ksp,
-            std::unique_ptr<Solver<OperType>> &&pc);
+  BaseKspSolver(const IoData &iodata, mfem::ParFiniteElementSpaceHierarchy &fespaces,
+                mfem::ParFiniteElementSpaceHierarchy *aux_fespaces = nullptr);
+  BaseKspSolver(std::unique_ptr<IterativeSolver<OperType>> &&ksp,
+                std::unique_ptr<Solver<OperType>> &&pc);
 
   int NumTotalMult() const { return ksp_mult; }
   int NumTotalMultIterations() const { return ksp_mult_it; }
@@ -58,7 +58,8 @@ public:
   void Mult(const VecType &x, VecType &y) const;
 };
 
-using ComplexKspSolver = KspSolver<ComplexOperator>;
+using KspSolver = BaseKspSolver<Operator>;
+using ComplexKspSolver = BaseKspSolver<ComplexOperator>;
 
 }  // namespace palace
 

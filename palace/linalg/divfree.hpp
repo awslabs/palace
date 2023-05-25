@@ -34,7 +34,7 @@ class DivFreeSolver
 private:
   // Operators for the divergence-free projection.
   std::unique_ptr<Operator> WeakDiv, Grad, M;
-  const mfem::Array<int> *dbc_tdof_list_M;
+  const mfem::Array<int> *bdr_tdof_list_M;
 
   // Linear solver for the projected linear system (Gᵀ M G) y = x.
   std::unique_ptr<KspSolver> ksp;
@@ -57,9 +57,9 @@ public:
     WeakDiv->Mult(y, rhs);
 
     // Apply essential BC and solve the linear system.
-    if (dbc_tdof_list_M)
+    if (bdr_tdof_list_M)
     {
-      rhs.SetSubVector(*dbc_tdof_list_M, 0.0);
+      rhs.SetSubVector(*bdr_tdof_list_M, 0.0);
     }
     ksp->Mult(rhs, psi);
 

@@ -69,6 +69,11 @@ public:
 
   // Set all entries equal to s.
   ComplexVector &operator=(std::complex<double> s);
+  ComplexVector &operator=(double s)
+  {
+    *this = std::complex<double>(s, 0.0);
+    return *this;
+  }
 
   // Scale all entries by s.
   ComplexVector &operator*=(std::complex<double> s);
@@ -78,7 +83,7 @@ public:
 
   // Set the entries listed the given array to value. All entries in the list should be
   // non-negative.
-  void SetSubVector(const Array<int> &rows, std::complex<double> s);
+  void SetSubVector(const mfem::Array<int> &rows, std::complex<double> s);
 
   // Vector dot product (yᴴ x) or indefinite dot product (yᵀ x) for complex vectors.
   std::complex<double> Dot(const ComplexVector &y) const;
@@ -123,10 +128,10 @@ template <typename VecType>
 void SetRandomSign(MPI_Comm comm, VecType &x, int seed = 0);
 
 // Calculate the inner product yᴴ x or yᵀ x.
-template <typename VecType, typename ScalarType>
-inline ScalarType Dot(MPI_Comm comm, const VecType &x, const VecType &y)
+template <typename VecType>
+inline auto Dot(MPI_Comm comm, const VecType &x, const VecType &y) -> decltype(x * y)
 {
-  ScalarType dot = x * y;
+  auto dot = x * y;
   Mpi::GlobalSum(1, &dot, comm);
   return dot;
 }
@@ -157,6 +162,11 @@ void AXPY(ScalarType alpha, const VecType &x, VecType &y);
 // Addition y = alpha * x + beta * y.
 template <typename VecType, typename ScalarType>
 void AXPBY(ScalarType alpha, const VecType &x, ScalarType beta, VecType &y);
+
+// Addition z = alpha * x + beta * y + gamma * z.
+template <typename VecType, typename ScalarType>
+void AXPBYPCZ(ScalarType alpha, const VecType &x, ScalarType beta, const VecType &y,
+              ScalarType gamma, VecType &z);
 
 }  // namespace linalg
 

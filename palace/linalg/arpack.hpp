@@ -10,13 +10,13 @@
 #include <memory>
 #include <mpi.h>
 #include "linalg/eps.hpp"
+#include "linalg/ksp.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
 
 namespace palace
 {
 
-class ComplexKspSolver;
 class DivFreeSolver;
 
 namespace arpack

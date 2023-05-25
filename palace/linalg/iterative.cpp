@@ -17,16 +17,16 @@ namespace
 {
 
 template <typename T>
-inline void CheckDot(T dot, std::string msg)
+inline void CheckDot(T dot, const char *msg)
 {
-  MFEM_ASSERT(std::isfinite(dot) && dot >= 0.0, msg);
+  MFEM_ASSERT(std::isfinite(dot) && dot >= 0.0, msg << dot << "!");
 }
 
 template <typename T>
-inline void CheckDot(std::complex<T> dot, std::string msg)
+inline void CheckDot(std::complex<T> dot, const char *msg)
 {
-  MFEM_ASSERT(std::isfinite(dot.real()) && std::is_finite(dot.imag()) && dot.real() >= 0.0,
-              msg);
+  MFEM_ASSERT(std::isfinite(dot.real()) && std::isfinite(dot.imag()) && dot.real() >= 0.0,
+              msg << dot << "!");
 }
 
 template <typename T>
@@ -43,6 +43,8 @@ inline constexpr T SafeMin()
   constexpr int fradix = std::numeric_limits<T>::radix;
   constexpr int expm = std::numeric_limits<T>::min_exponent;
   constexpr int expM = std::numeric_limits<T>::max_exponent;
+  // Note: pow is not constexpr in C++17 so this actually might not return a constexpr for
+  //       all compilers.
   return std::max(std::pow(fradix, T(expm - 1)), std::pow(fradix, T(1 - expM)));
 }
 
@@ -60,6 +62,8 @@ inline constexpr T SafeMax()
   constexpr int fradix = std::numeric_limits<T>::radix;
   constexpr int expm = std::numeric_limits<T>::min_exponent;
   constexpr int expM = std::numeric_limits<T>::max_exponent;
+  // Note: pow is not constexpr in C++17 so this actually might not return a constexpr for
+  //       all compilers.
   return std::min(std::pow(fradix, T(1 - expm)), std::pow(fradix, T(expM - 1)));
 }
 
@@ -67,6 +71,10 @@ template <typename T>
 inline void GeneratePlaneRotation(const T dx, const T dy, T &cs, T &sn)
 {
   // See LAPACK's s/dlartg.
+  const T safmin = SafeMin<T>();
+  const T safmax = SafeMax<T>();
+  const T root_min = std::sqrt(safmin);
+  const T root_max = std::sqrt(safmax / 2);
   if (dy == 0.0)
   {
     cs = 1.0;
@@ -79,8 +87,6 @@ inline void GeneratePlaneRotation(const T dx, const T dy, T &cs, T &sn)
     sn = std::copysign(1.0, dy);
     return;
   }
-  const T root_min = std::sqrt(SafeMin());
-  const T root_max = std::sqrt(SafeMax() / 2);
   T dx1 = std::abs(dx);
   T dy1 = std::abs(dy);
   if (dx1 > root_min && dx1 < root_max && dy1 > root_min && dy1 < root_max)
@@ -91,7 +97,7 @@ inline void GeneratePlaneRotation(const T dx, const T dy, T &cs, T &sn)
   }
   else
   {
-    T u = std::min(SafeMax(), std::max(SafeMin(), std::max(dx1, dy1)));
+    T u = std::min(safmax, std::max(safmin, std::max(dx1, dy1)));
     T dxs = dx / u;
     T dys = dy / u;
     T d = std::sqrt(dxs * dxs + dys * dys);
@@ -105,9 +111,11 @@ inline void GeneratePlaneRotation(const std::complex<T> dx, const std::complex<T
                                   std::complex<T> &sn)
 {
   // Generates a plane rotation so that:
-  //   [  cs        sn ] . [ dx ]  =  [ r ]
-  //   [ -conj(sn)  cs ]   [ dy ]     [ 0 ]
+  //   [  cs        sn ] [ dx ]  =  [ r ]
+  //   [ -conj(sn)  cs ] [ dy ]     [ 0 ]
   // where cs is real and cs² + |sn|² = 1. See LAPACK's c/zlartg.
+  const T safmin = SafeMin<T>();
+  const T safmax = SafeMax<T>();
   if (dy == 0.0)
   {
     cs = 1.0;
@@ -127,8 +135,8 @@ inline void GeneratePlaneRotation(const std::complex<T> dx, const std::complex<T
     }
     else
     {
-      const T root_min = std::sqrt(SafeMin());
-      const T root_max = std::sqrt(SafeMax() / 2);
+      const T root_min = std::sqrt(safmin);
+      const T root_max = std::sqrt(safmax / 2);
       T dy1 = std::max(std::abs(dy.real()), std::abs(dy.imag()));
       if (dy1 > root_min && dy1 < root_max)
       {
@@ -136,15 +144,15 @@ inline void GeneratePlaneRotation(const std::complex<T> dx, const std::complex<T
       }
       else
       {
-        T u = std::min(SafeMax(), std::max(SafeMin(), dy1));
+        T u = std::min(safmax, std::max(safmin, dy1));
         std::complex<T> dys = dy / u;
         sn = std::conj(dys) / std::sqrt(dys.real() * dys.real() + dys.imag() * dys.imag());
       }
     }
     return;
   }
-  const T root_min = std::sqrt(SafeMin());
-  const T root_max = std::sqrt(SafeMax() / 4);
+  const T root_min = std::sqrt(safmin);
+  const T root_max = std::sqrt(safmax / 4);
   T dx1 = std::max(std::abs(dx.real()), std::abs(dx.imag()));
   T dy1 = std::max(std::abs(dy.real()), std::abs(dy.imag()));
   if (dx1 > root_min && dx1 < root_max && dy1 > root_min && dy1 < root_max)
@@ -152,7 +160,7 @@ inline void GeneratePlaneRotation(const std::complex<T> dx, const std::complex<T
     T dx2 = dx.real() * dx.real() + dx.imag() * dx.imag();
     T dy2 = dy.real() * dy.real() + dy.imag() * dy.imag();
     T dz2 = dx2 + dy2;
-    if (dx2 >= dz2 * SafeMin())
+    if (dx2 >= dz2 * safmin)
     {
       cs = std::sqrt(dx2 / dz2);
       if (dx2 > root_min && dz2 < root_max * 2)
@@ -173,12 +181,12 @@ inline void GeneratePlaneRotation(const std::complex<T> dx, const std::complex<T
   }
   else
   {
-    T u = std::min(SafeMax(), std::max(SafeMin(), std::max(dx1, dy1))), w;
+    T u = std::min(safmax, std::max(safmin, std::max(dx1, dy1))), w;
     std::complex<T> dys = dy / u, dxs;
     T dy2 = dys.real() * dys.real() + dys.imag() * dys.imag(), dx2, dz2;
     if (dx1 / u < root_min)
     {
-      T v = std::min(SafeMax(), std::max(SafeMin(), dx1));
+      T v = std::min(safmax, std::max(safmin, dx1));
       w = v / u;
       dxs = dx / v;
       dx2 = dxs.real() * dxs.real() + dxs.imag() * dxs.imag();
@@ -191,7 +199,7 @@ inline void GeneratePlaneRotation(const std::complex<T> dx, const std::complex<T
       dx2 = dxs.real() * dxs.real() + dxs.imag() * dxs.imag();
       dz2 = dx2 + dy2;
     }
-    if (dx2 >= dz2 * SafeMin())
+    if (dx2 >= dz2 * safmin)
     {
       cs = std::sqrt(dx2 / dz2);
       if (dx2 > root_min && dz2 < root_max * 2)
@@ -233,7 +241,7 @@ inline void ApplyPlaneRotation(std::complex<T> &dx, std::complex<T> &dy, const T
 }  // namespace
 
 template <typename OperType>
-IterativeSolver<OperType>::IterativeSolver(MPI_comm comm, int print)
+IterativeSolver<OperType>::IterativeSolver(MPI_Comm comm, int print)
   : Solver<OperType>(), comm(comm), A(nullptr), B(nullptr)
 {
   print_opts.Warnings();
@@ -274,7 +282,7 @@ void CgSolver<OperType>::Mult(const VecType &b, VecType &x) const
   p.SetSize(A->Height());
 
   // Initialize.
-  if (initial_guess)
+  if (this->initial_guess)
   {
     A->Mult(x, r);
     linalg::AXPBY(1.0, b, -1.0, r);
@@ -293,7 +301,7 @@ void CgSolver<OperType>::Mult(const VecType &b, VecType &x) const
     z = r;
   }
   beta = linalg::Dot(comm, z, r);
-  CheckDot(beta, "PCG preconditioner is not positive definite: (Br, r) = " << beta << "!");
+  CheckDot(beta, "PCG preconditioner is not positive definite: (Br, r) = ");
   res = initial_res = std::sqrt(std::abs(beta));
   eps = std::max(rel_tol * res, abs_tol);
   converged = (res < eps);
@@ -309,8 +317,8 @@ void CgSolver<OperType>::Mult(const VecType &b, VecType &x) const
   {
     if (print_opts.iterations)
     {
-      Mpi::Print(comm, "{}{:{}d} iteration, residual (B r, r) = {:.6e}\n",
-                 std::string(tab_width, ' '), it, int_width, beta);
+      Mpi::Print(comm, "{}{:{}d} iteration, residual ||r||_B = {:.6e}\n",
+                 std::string(tab_width, ' '), it, int_width, res);
     }
     if (!it)
     {
@@ -318,12 +326,12 @@ void CgSolver<OperType>::Mult(const VecType &b, VecType &x) const
     }
     else
     {
-      linalg::AXPBY(1.0, z, beta / beta_prev, p);
+      linalg::AXPBY(ScalarType(1.0), z, beta / beta_prev, p);
     }
 
     A->Mult(p, z);
     denom = linalg::Dot(comm, z, p);
-    CheckDot(denom, "PCG operator is not positive definite: (Ap, p) = " << denom << "!");
+    CheckDot(denom, "PCG operator is not positive definite: (Ap, p) = ");
     alpha = beta / denom;
 
     x.Add(alpha, p);
@@ -339,15 +347,14 @@ void CgSolver<OperType>::Mult(const VecType &b, VecType &x) const
       z = r;
     }
     beta = linalg::Dot(comm, z, r);
-    CheckDot(beta,
-             "PCG preconditioner is not positive definite: (Br, r) = " << beta << "!");
+    CheckDot(beta, "PCG preconditioner is not positive definite: (Br, r) = ");
     res = std::sqrt(std::abs(beta));
     converged = (res < eps);
   }
   if (print_opts.iterations)
   {
-    Mpi::Print(comm, "{}{:{}d} iteration, residual (B r, r) = {:.6e}\n",
-               std::string(tab_width, ' '), it, int_width, beta);
+    Mpi::Print(comm, "{}{:{}d} iteration, residual ||r||_B = {:.6e}\n",
+               std::string(tab_width, ' '), it, int_width, res);
   }
   if (print_opts.summary || (print_opts.warnings && !converged))
   {
@@ -372,7 +379,7 @@ void GmresSolver<OperType>::Initialize() const
 {
   if (!V.empty())
   {
-    MFEM_ASSERT(V.Size() == max_dim + 1 && V[0].Size() == A->Height(),
+    MFEM_ASSERT(V.size() == max_dim + 1 && V[0].Size() == A->Height(),
                 "Repeated solves with GmresSolver should not modify the operator size or "
                 "restart dimension!");
     return;
@@ -405,7 +412,7 @@ void GmresSolver<OperType>::Initialize() const
 }
 
 template <typename OperType>
-void GmresSolver<OperType>::Mult(const VecType &x, VecType &y) const
+void GmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
 {
   // Set up workspace.
   RealType beta = 0.0, true_beta, eps;
@@ -427,7 +434,7 @@ void GmresSolver<OperType>::Mult(const VecType &x, VecType &y) const
     // Initialize.
     if (B && pc_side == PrecSide::LEFT)
     {
-      if (initial_guess || restart > 0)
+      if (this->initial_guess || restart > 0)
       {
         A->Mult(x, V[0]);
         linalg::AXPBY(1.0, b, -1.0, V[0]);
@@ -441,7 +448,7 @@ void GmresSolver<OperType>::Mult(const VecType &x, VecType &y) const
     }
     else  // !B || pc_side == PrecSide::RIGHT
     {
-      if (initial_guess || restart > 0)
+      if (this->initial_guess || restart > 0)
       {
         A->Mult(x, r);
         linalg::AXPBY(1.0, b, -1.0, r);
@@ -453,7 +460,7 @@ void GmresSolver<OperType>::Mult(const VecType &x, VecType &y) const
       }
     }
     true_beta = linalg::Norml2(comm, r);
-    CheckDot(true_beta, "GMRES residual norm is not valid: ||Br|| = " << true_beta << "!");
+    CheckDot(true_beta, "GMRES residual norm is not valid: beta = ");
     if (it == 0)
     {
       initial_res = true_beta;
@@ -552,7 +559,7 @@ void GmresSolver<OperType>::Mult(const VecType &x, VecType &y) const
       ApplyPlaneRotation(s[j], s[j + 1], cs[j], sn[j]);
 
       beta = std::abs(s[j + 1]);
-      CheckDot(beta, "GMRES residual norm is not valid: ||Br|| = " << beta << "!");
+      CheckDot(beta, "GMRES residual norm is not valid: beta = ");
       if (beta < eps)
       {
         converged = true;
