@@ -269,6 +269,7 @@ BaseKspSolver<OperType>::BaseKspSolver(std::unique_ptr<IterativeSolver<OperType>
 template <typename OperType>
 void BaseKspSolver<OperType>::SetOperators(const OperType &op, const OperType &pc_op)
 {
+  ksp->SetPreconditioner(*pc);
   ksp->SetOperator(op);
   const auto *mg_op = dynamic_cast<const BaseMultigridOperator<OperType> *>(&pc_op);
   const auto *mg_pc = dynamic_cast<const GeometricMultigridSolver<OperType> *>(pc.get());

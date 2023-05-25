@@ -264,7 +264,8 @@ IterativeSolver<OperType>::IterativeSolver(MPI_Comm comm, int print)
   max_it = 100;
 
   converged = false;
-  initial_res = final_res = 0.0;
+  initial_res = 1.0;
+  final_res = 0.0;
   final_it = 0;
 }
 
@@ -317,7 +318,7 @@ void CgSolver<OperType>::Mult(const VecType &b, VecType &x) const
   {
     if (print_opts.iterations)
     {
-      Mpi::Print(comm, "{}{:{}d} iteration, residual ||r||_B = {:.6e}\n",
+      Mpi::Print(comm, "{}{:{}d} KSP residual norm ||r||_B = {:.6e}\n",
                  std::string(tab_width, ' '), it, int_width, res);
     }
     if (!it)
@@ -353,16 +354,16 @@ void CgSolver<OperType>::Mult(const VecType &b, VecType &x) const
   }
   if (print_opts.iterations)
   {
-    Mpi::Print(comm, "{}{:{}d} iteration, residual ||r||_B = {:.6e}\n",
+    Mpi::Print(comm, "{}{:{}d} KSP residual norm ||r||_B = {:.6e}\n",
                std::string(tab_width, ' '), it, int_width, res);
   }
   if (print_opts.summary || (print_opts.warnings && !converged))
   {
-    Mpi::Print(comm, "{}PCG solver {} with {:d} iteration{}", std::string(tab_width, ' '),
+    Mpi::Print(comm, "{}PCG solver {} in {:d} iteration{}", std::string(tab_width, ' '),
                converged ? "converged" : "did NOT converge", it, (it == 1) ? "" : "s");
     if (it > 0)
     {
-      Mpi::Print(comm, " (avg. reduction factor: {:.6e})\n",
+      Mpi::Print(comm, " (avg. reduction factor: {:.3e})\n",
                  std::pow(res / initial_res, 1.0 / it));
     }
     else
@@ -373,6 +374,31 @@ void CgSolver<OperType>::Mult(const VecType &b, VecType &x) const
   final_res = res;
   final_it = it;
 }
+
+namespace
+{
+
+template <typename PrecSide, typename OperType, typename VecType>
+inline void ApplyBA(PrecSide side, const OperType *A, const Solver<OperType> *B,
+                    const VecType &x, VecType &y, VecType &z)
+{
+  if (B && side == GmresSolver<OperType>::PrecSide::LEFT)
+  {
+    A->Mult(x, z);
+    B->Mult(z, y);
+  }
+  else if (B && side == GmresSolver<OperType>::PrecSide::RIGHT)
+  {
+    B->Mult(x, z);
+    A->Mult(z, y);
+  }
+  else
+  {
+    A->Mult(x, y);
+  }
+}
+
+}  // namespace
 
 template <typename OperType>
 void GmresSolver<OperType>::Initialize() const
@@ -388,27 +414,27 @@ void GmresSolver<OperType>::Initialize() const
   {
     max_dim = max_it;
   }
+  const int init_size = 5;
   V.resize(max_dim + 1);
-  for (int j = 0; j < std::min(5, max_dim + 1); j++)
+  for (int j = 0; j < std::min(init_size, max_dim + 1); j++)
   {
     V[j].SetSize(A->Height());
-  }
-  if (flexible)
-  {
-    Z.resize(max_dim + 1);
-    for (int j = 0; j < std::min(5, max_dim + 1); j++)
-    {
-      Z[j].SetSize(A->Height());
-    }
-  }
-  else
-  {
-    r.SetSize(A->Height());
   }
   H.resize((max_dim + 1) * max_dim);
   s.resize(max_dim + 1);
   cs.resize(max_dim + 1);
   sn.resize(max_dim + 1);
+}
+
+template <typename OperType>
+void GmresSolver<OperType>::Update(int j) const
+{
+  // Add storage for basis vectors in increments.
+  const int add_size = 10;
+  for (int k = j + 1; k < std::min(j + 1 + add_size, max_dim + 1); k++)
+  {
+    V[k].SetSize(A->Height());
+  }
 }
 
 template <typename OperType>
@@ -419,6 +445,7 @@ void GmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
   MFEM_VERIFY(A, "Operator must be set for GmresSolver::Mult!");
   MFEM_ASSERT(A->Width() == x.Size() && A->Height() == b.Size(),
               "Size mismatch for GmresSolver::Mult!");
+  r.SetSize(A->Height());
   Initialize();
 
   // Begin iterations.
@@ -426,10 +453,10 @@ void GmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
   int it = 0, restart = 0;
   if (print_opts.iterations)
   {
-    Mpi::Print(comm, "{}Residual norms for {}GMRES solve\n", flexible ? "F" : "",
+    Mpi::Print(comm, "{}Residual norms for GMRES solve\n",
                std::string(tab_width + int_width - 1, ' '));
   }
-  for (; it < max_it && !converged; restart++)
+  for (; it < max_it; restart++)
   {
     // Initialize.
     if (B && pc_side == PrecSide::LEFT)
@@ -466,14 +493,14 @@ void GmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
       initial_res = true_beta;
       eps = std::max(rel_tol * true_beta, abs_tol);
     }
-    else if (beta > 0.0 && std::abs(beta - true_beta) > 0.1 * initial_res &&
+    else if (beta > 0.0 && std::abs(beta - true_beta) > 0.1 * true_beta &&
              print_opts.warnings)
     {
       Mpi::Print(
           comm,
-          "{}{}GMRES residual at restart ({:.6e}) is far from the residual norm estimate "
-          "from the recursion formula ({.6e}) (initial residual = {:.6e})\n",
-          std::string(tab_width, ' '), flexible ? "F" : "", true_beta, beta, initial_res);
+          "{}GMRES residual at restart ({:.6e}) is far from the residual norm estimate "
+          "from the recursion formula ({:.6e}) (initial residual = {:.6e})\n",
+          std::string(tab_width, ' '), true_beta, beta, initial_res);
     }
     beta = true_beta;
     if (beta < eps)
@@ -488,51 +515,19 @@ void GmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
     s[0] = beta;
 
     int j = 0;
-    for (; j < max_dim && it < max_it; j++, it++)
+    for (;; j++, it++)
     {
       if (print_opts.iterations)
       {
-        Mpi::Print(comm, "{}{:{}d} iteration ({:d} restarts), residual {:.6e}\n", it,
-                   std::string(tab_width, ' '), int_width, restart, beta);
+        Mpi::Print(comm, "{}{:{}d} (restart {:d}) KSP residual norm {:.6e}\n",
+                   std::string(tab_width, ' '), it, int_width, restart, beta);
       }
       VecType &w = V[j + 1];
       if (w.Size() == 0)
       {
-        // Add storage for basis vectors in increments.
-        for (int k = j + 1; k < std::min(j + 11, max_dim + 1); k++)
-        {
-          V[k].SetSize(A->Height());
-        }
-        if (flexible)
-        {
-          for (int k = j + 1; k < std::min(j + 11, max_dim + 1); k++)
-          {
-            Z[k].SetSize(A->Height());
-          }
-        }
+        Update(j);
       }
-      if (B && pc_side == PrecSide::LEFT)
-      {
-        A->Mult(V[j], r);
-        B->Mult(r, w);
-      }
-      else if (B && pc_side == PrecSide::RIGHT)
-      {
-        if (!flexible)
-        {
-          B->Mult(V[j], r);
-          A->Mult(r, w);
-        }
-        else
-        {
-          B->Mult(V[j], Z[j]);
-          A->Mult(Z[j], w);
-        }
-      }
-      else
-      {
-        A->Mult(V[j], w);
-      }
+      ApplyBA(pc_side, A, B, V[j], w, r);
 
       ScalarType *Hj = H.data() + j * (max_dim + 1);
       switch (orthog_type)
@@ -560,9 +555,10 @@ void GmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
 
       beta = std::abs(s[j + 1]);
       CheckDot(beta, "GMRES residual norm is not valid: beta = ");
-      if (beta < eps)
+      converged = (beta < eps);
+      if (converged || j + 1 == max_dim || it + 1 == max_it)
       {
-        converged = true;
+        it++;
         break;
       }
     }
@@ -572,7 +568,7 @@ void GmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
     {
       ScalarType *Hi = H.data() + i * (max_dim + 1);
       s[i] /= Hi[i];
-      for (int k = 0; k < i; k++)
+      for (int k = i - 1; k >= 0; k--)
       {
         s[k] -= Hi[k] * s[i];
       }
@@ -586,38 +582,205 @@ void GmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
     }
     else  // B && pc_side == PrecSide::RIGHT
     {
-      if (!flexible)
+      r = 0.0;
+      for (int k = 0; k <= j; k++)
       {
-        r = 0.0;
-        for (int k = 0; k <= j; k++)
-        {
-          r.Add(s[k], V[k]);
-        }
-        B->Mult(r, V[0]);
-        x += V[0];
+        r.Add(s[k], V[k]);
       }
-      else
-      {
-        for (int k = 0; k <= j; k++)
-        {
-          x.Add(s[k], Z[k]);
-        }
-      }
+      B->Mult(r, V[0]);
+      x += V[0];
+    }
+    if (converged)
+    {
+      break;
     }
   }
   if (print_opts.iterations)
   {
-    Mpi::Print(comm, "{}{:{}d} iteration ({:d} restarts), residual {:.6e}\n", it, int_width,
-               std::string(tab_width, ' '), restart, beta);
+    Mpi::Print(comm, "{}{:{}d} (restart {:d}) KSP residual norm {:.6e}\n",
+               std::string(tab_width, ' '), it, int_width, restart, beta);
   }
   if (print_opts.summary || (print_opts.warnings && !converged))
   {
-    Mpi::Print(comm, "{}{}GMRES solver {} with {:d} iteration{}", flexible ? "F" : "",
-               std::string(tab_width, ' '), converged ? "converged" : "did NOT converge",
-               it, (it == 1) ? "" : "s");
+    Mpi::Print(comm, "{}GMRES solver {} in {:d} iteration{}", std::string(tab_width, ' '),
+               converged ? "converged" : "did NOT converge", it, (it == 1) ? "" : "s");
     if (it > 0)
     {
-      Mpi::Print(comm, " (avg. reduction factor: {:.6e})\n",
+      Mpi::Print(comm, " (avg. reduction factor: {:.3e})\n",
+                 std::pow(beta / initial_res, 1.0 / it));
+    }
+    else
+    {
+      Mpi::Print(comm, "\n");
+    }
+  }
+  final_res = beta;
+  final_it = it;
+}
+
+template <typename OperType>
+void FgmresSolver<OperType>::Initialize() const
+{
+  GmresSolver<OperType>::Initialize();
+  const int init_size = 5;
+  Z.resize(max_dim + 1);
+  for (int j = 0; j < std::min(init_size, max_dim + 1); j++)
+  {
+    Z[j].SetSize(A->Height());
+  }
+}
+
+template <typename OperType>
+void FgmresSolver<OperType>::Update(int j) const
+{
+  // Add storage for basis vectors in increments.
+  GmresSolver<OperType>::Update(j);
+  const int add_size = 10;
+  for (int k = j + 1; k < std::min(j + 1 + add_size, max_dim + 1); k++)
+  {
+    Z[k].SetSize(A->Height());
+  }
+}
+
+template <typename OperType>
+void FgmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
+{
+  // Set up workspace.
+  RealType beta = 0.0, true_beta, eps;
+  MFEM_VERIFY(A && B, "Operator and preconditioner must be set for FgmresSolver::Mult!");
+  MFEM_ASSERT(A->Width() == x.Size() && A->Height() == b.Size(),
+              "Size mismatch for FgmresSolver::Mult!");
+  Initialize();
+
+  // Begin iterations.
+  converged = false;
+  int it = 0, restart = 0;
+  if (print_opts.iterations)
+  {
+    Mpi::Print(comm, "{}Residual norms for FGMRES solve\n",
+               std::string(tab_width + int_width - 1, ' '));
+  }
+  for (; it < max_it; restart++)
+  {
+    // Initialize.
+    if (this->initial_guess || restart > 0)
+    {
+      A->Mult(x, Z[0]);
+      linalg::AXPBY(1.0, b, -1.0, Z[0]);
+    }
+    else
+    {
+      Z[0] = b;
+      x = 0.0;
+    }
+    true_beta = linalg::Norml2(comm, Z[0]);
+    CheckDot(true_beta, "FGMRES residual norm is not valid: beta = ");
+    if (it == 0)
+    {
+      initial_res = true_beta;
+      eps = std::max(rel_tol * true_beta, abs_tol);
+    }
+    else if (beta > 0.0 && std::abs(beta - true_beta) > 0.1 * true_beta &&
+             print_opts.warnings)
+    {
+      Mpi::Print(
+          comm,
+          "{}FGMRES residual at restart ({:.6e}) is far from the residual norm estimate "
+          "from the recursion formula ({:.6e}) (initial residual = {:.6e})\n",
+          std::string(tab_width, ' '), true_beta, beta, initial_res);
+    }
+    beta = true_beta;
+    if (beta < eps)
+    {
+      converged = true;
+      break;
+    }
+
+    V[0] = 0.0;
+    V[0].Add(1.0 / beta, Z[0]);
+    std::fill(s.begin(), s.end(), 0.0);
+    s[0] = beta;
+
+    int j = 0;
+    for (;; j++, it++)
+    {
+      if (print_opts.iterations)
+      {
+        Mpi::Print(comm, "{}{:{}d} (restart {:d}) KSP residual norm {:.6e}\n",
+                   std::string(tab_width, ' '), it, int_width, restart, beta);
+      }
+      VecType &w = V[j + 1];
+      if (w.Size() == 0)
+      {
+        Update(j);
+      }
+      ApplyBA(PrecSide::RIGHT, A, B, V[j], w, Z[j]);
+
+      ScalarType *Hj = H.data() + j * (max_dim + 1);
+      switch (orthog_type)
+      {
+        case OrthogType::MGS:
+          linalg::OrthogonalizeColumnMGS(comm, V, w, Hj, j + 1);
+          break;
+        case OrthogType::CGS:
+          linalg::OrthogonalizeColumnCGS(comm, V, w, Hj, j + 1);
+          break;
+        case OrthogType::CGS2:
+          linalg::OrthogonalizeColumnCGS(comm, V, w, Hj, j + 1, true);
+          break;
+      }
+      Hj[j + 1] = linalg::Norml2(comm, w);
+      w *= 1.0 / Hj[j + 1];
+
+      for (int k = 0; k < j; k++)
+      {
+        ApplyPlaneRotation(Hj[k], Hj[k + 1], cs[k], sn[k]);
+      }
+      GeneratePlaneRotation(Hj[j], Hj[j + 1], cs[j], sn[j]);
+      ApplyPlaneRotation(Hj[j], Hj[j + 1], cs[j], sn[j]);
+      ApplyPlaneRotation(s[j], s[j + 1], cs[j], sn[j]);
+
+      beta = std::abs(s[j + 1]);
+      CheckDot(beta, "FGMRES residual norm is not valid: beta = ");
+      converged = (beta < eps);
+      if (converged || j + 1 == max_dim || it + 1 == max_it)
+      {
+        it++;
+        break;
+      }
+    }
+
+    // Reconstruct the solution (for restart or due to convergence or maximum iterations).
+    for (int i = j; i >= 0; i--)
+    {
+      ScalarType *Hi = H.data() + i * (max_dim + 1);
+      s[i] /= Hi[i];
+      for (int k = i - 1; k >= 0; k--)
+      {
+        s[k] -= Hi[k] * s[i];
+      }
+    }
+    for (int k = 0; k <= j; k++)
+    {
+      x.Add(s[k], Z[k]);
+    }
+    if (converged)
+    {
+      break;
+    }
+  }
+  if (print_opts.iterations)
+  {
+    Mpi::Print(comm, "{}{:{}d} (restart {:d}) KSP residual norm {:.6e}\n",
+               std::string(tab_width, ' '), it, int_width, restart, beta);
+  }
+  if (print_opts.summary || (print_opts.warnings && !converged))
+  {
+    Mpi::Print(comm, "{}FGMRES solver {} in {:d} iteration{}", std::string(tab_width, ' '),
+               converged ? "converged" : "did NOT converge", it, (it == 1) ? "" : "s");
+    if (it > 0)
+    {
+      Mpi::Print(comm, " (avg. reduction factor: {:.3e})\n",
                  std::pow(beta / initial_res, 1.0 / it));
     }
     else

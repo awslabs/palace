@@ -79,7 +79,9 @@ void GeometricMultigridSolver<OperType>::SetOperator(const OperType &op)
   for (int l = 0; l < n_levels; l++)
   {
     A[l] = &mg_op->GetOperatorAtLevel(l);
-    MFEM_VERIFY(A[l]->Height() == P[l]->Width() && A[l]->Width() == P[l]->Width(),
+    MFEM_VERIFY(A[l]->Width() == A[l]->Height() &&
+                    A[l]->Height() ==
+                        ((l < n_levels - 1) ? P[l]->Width() : P[l - 1]->Height()),
                 "Invalid operator sizes for GeometricMultigridSolver!");
 
     const auto *PtAP_l = dynamic_cast<const ParOperType *>(A[l]);

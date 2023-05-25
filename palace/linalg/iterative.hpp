@@ -181,27 +181,23 @@ protected:
   // Use left or right preconditioning.
   PrecSide pc_side;
 
-  // Flag for flexible GMRES which stores and makes use of the preconditioned vectors.
-  const bool flexible;
-
   // Temporary workspace for solve.
-  mutable std::vector<VecType> V, Z;
+  mutable std::vector<VecType> V;
   mutable VecType r;
   mutable std::vector<ScalarType> H;
   mutable std::vector<ScalarType> s, sn;
   mutable std::vector<RealType> cs;
 
   // Allocate storage for solve.
-  void Initialize() const;
-
-  GmresSolver(MPI_Comm comm, int print, bool fgmres)
-    : IterativeSolver<OperType>(comm, print), max_dim(-1), orthog_type(OrthogType::MGS),
-      pc_side(fgmres ? PrecSide::RIGHT : PrecSide::LEFT), flexible(fgmres)
-  {
-  }
+  virtual void Initialize() const;
+  virtual void Update(int j) const;
 
 public:
-  GmresSolver(MPI_Comm comm, int print) : GmresSolver(comm, print, false) {}
+  GmresSolver(MPI_Comm comm, int print)
+    : IterativeSolver<OperType>(comm, print), max_dim(-1), orthog_type(OrthogType::MGS),
+      pc_side(PrecSide::LEFT)
+  {
+  }
 
   // Set the dimension for restart.
   void SetRestartDim(int dim) { max_dim = dim; }
@@ -221,16 +217,60 @@ template <typename OperType>
 class FgmresSolver : public GmresSolver<OperType>
 {
 public:
+  typedef typename GmresSolver<OperType>::OrthogType OrthogType;
   typedef typename GmresSolver<OperType>::PrecSide PrecSide;
 
+protected:
+  typedef typename GmresSolver<OperType>::VecType VecType;
+  typedef typename GmresSolver<OperType>::RealType RealType;
+  typedef typename GmresSolver<OperType>::ScalarType ScalarType;
+
+  using GmresSolver<OperType>::comm;
+  using GmresSolver<OperType>::print_opts;
+  using GmresSolver<OperType>::int_width;
+  using GmresSolver<OperType>::tab_width;
+
+  using GmresSolver<OperType>::rel_tol;
+  using GmresSolver<OperType>::abs_tol;
+  using GmresSolver<OperType>::max_it;
+
+  using GmresSolver<OperType>::A;
+  using GmresSolver<OperType>::B;
+
+  using GmresSolver<OperType>::converged;
+  using GmresSolver<OperType>::initial_res;
+  using GmresSolver<OperType>::final_res;
+  using GmresSolver<OperType>::final_it;
+
+  using GmresSolver<OperType>::max_dim;
+  using GmresSolver<OperType>::orthog_type;
+  using GmresSolver<OperType>::pc_side;
+  using GmresSolver<OperType>::V;
+  using GmresSolver<OperType>::H;
+  using GmresSolver<OperType>::s;
+  using GmresSolver<OperType>::sn;
+  using GmresSolver<OperType>::cs;
+
+  // Temporary workspace for solve.
+  mutable std::vector<VecType> Z;
+
+  // Allocate storage for solve.
+  void Initialize() const override;
+  void Update(int j) const override;
+
 public:
-  FgmresSolver(MPI_Comm comm, int print) : GmresSolver<OperType>(comm, print, true) {}
+  FgmresSolver(MPI_Comm comm, int print) : GmresSolver<OperType>(comm, print)
+  {
+    pc_side = PrecSide::RIGHT;
+  }
 
   void SetPrecSide(PrecSide side) override
   {
     MFEM_VERIFY(side == PrecSide::RIGHT,
                 "FGMRES solver only supports right preconditioning!");
   }
+
+  void Mult(const VecType &b, VecType &x) const override;
 };
 
 }  // namespace palace
