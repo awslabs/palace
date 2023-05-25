@@ -199,15 +199,15 @@ auto BuildOperator(mfem::ParFiniteElementSpace &fespace, T1 *df, T2 *f, T3 *dfb,
   {
     a->AddDomainIntegrator(new mfem::CurlCurlIntegrator(*df));
   }
-  if (df && !f->empty())
+  if (f && !f->empty())
   {
     a->AddDomainIntegrator(new mfem::MixedVectorMassIntegrator(*f));
   }
-  if (df && !dfb->empty())
+  if (dfb && !dfb->empty())
   {
     a->AddBoundaryIntegrator(new mfem::CurlCurlIntegrator(*dfb));
   }
-  if (df && !fb->empty())
+  if (fb && !fb->empty())
   {
     a->AddBoundaryIntegrator(new mfem::MixedVectorMassIntegrator(*fb));
   }

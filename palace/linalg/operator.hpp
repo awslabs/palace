@@ -290,8 +290,17 @@ public:
   const OperType &GetFinestOperator() const { return *ops.back(); }
   const OperType &GetFinestAuxiliaryOperator() const { return *aux_ops.back(); }
 
-  const OperType &GetOperatorAtLevel(int l) const { return *ops[l]; }
-  const OperType &GetAuxiliaryOperatorAtLevel(int l) const { return *aux_ops[l]; }
+  const OperType &GetOperatorAtLevel(int l) const
+  {
+    MFEM_ASSERT(l < GetNumLevels(), "Out of bounds multigrid level operator requested!");
+    return *ops[l];
+  }
+  const OperType &GetAuxiliaryOperatorAtLevel(int l) const
+  {
+    MFEM_ASSERT(l < GetNumAuxiliaryLevels(),
+                "Out of bounds multigrid level auxiliary operator requested!");
+    return *aux_ops[l];
+  }
 
   void Mult(const VecType &x, VecType &y) const override { GetFinestOperator().Mult(x, y); }
   void MultTranspose(const VecType &x, VecType &y) const override
