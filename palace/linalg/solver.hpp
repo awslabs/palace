@@ -34,6 +34,7 @@ protected:
 
 public:
   Solver(bool initial_guess = false) : initial_guess(initial_guess) {}
+  virtual ~Solver() = default;
 
   // Configure whether or not to use an initial guess when applying the solver.
   virtual void SetInitialGuess(bool guess) { initial_guess = guess; }
@@ -56,7 +57,9 @@ public:
 template <typename OperType>
 class WrapperSolver : public Solver<OperType>
 {
-private:
+protected:
+  typedef typename Solver<OperType>::VecType VecType;
+
   std::unique_ptr<mfem::Solver> pc;
 
 public:

@@ -5,13 +5,13 @@
 #define PALACE_LINALG_EPS_HPP
 
 #include <complex>
+#include "linalg/ksp.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
 
 namespace palace
 {
 
-class ComplexKspSolver;
 class DivFreeSolver;
 
 //

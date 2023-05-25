@@ -9,6 +9,7 @@
 #include "linalg/amg.hpp"
 #include "linalg/gmg.hpp"
 #include "linalg/iterative.hpp"
+#include "linalg/rap.hpp"
 #include "models/materialoperator.hpp"
 
 namespace palace
@@ -35,7 +36,7 @@ DivFreeSolver::DivFreeSolver(const MaterialOperator &mat_op,
       m->Finalize(0);
       auto M_l = std::make_unique<ParOperator>(std::move(m), h1_fespace_l);
       M_l->SetEssentialTrueDofs(h1_bdr_tdof_lists[l], Operator::DiagonalPolicy::DIAG_ONE);
-      M_mg.AddOperator(std::move(M_l));
+      M_mg->AddOperator(std::move(M_l));
     }
     M = std::move(M_mg);
   }
@@ -62,11 +63,12 @@ DivFreeSolver::DivFreeSolver(const MaterialOperator &mat_op,
     Grad = std::make_unique<ParOperator>(std::move(grad), h1_fespaces.GetFinestFESpace(),
                                          nd_fespace, true);
   }
-  dbc_tdof_list_M = &h1_dbc_tdof_lists.back();
+  bdr_tdof_list_M = &h1_bdr_tdof_lists.back();
 
   // The system matrix for the projection is real and SPD. For the coarse-level AMG solve,
   // we don't use an exact solve on the coarsest level.
-  auto amg = std::make_unique<BoomerAmgSolver>(1, 1, 0);
+  auto amg =
+      std::make_unique<WrapperSolver<Operator>>(std::make_unique<BoomerAmgSolver>(1, 1, 0));
   auto gmg = std::make_unique<GeometricMultigridSolver<Operator>>(
       std::move(amg), h1_fespaces, nullptr, 1, 1, 2);
 

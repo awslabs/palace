@@ -11,7 +11,7 @@
 #include <string>
 #include <vector>
 #include <mfem.hpp>
-#include "fem/interpolation.hpp"
+#include "fem/interpolator.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
 #include "models/domainpostoperator.hpp"

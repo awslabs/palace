@@ -5,6 +5,7 @@
 
 #include "fem/coefficient.hpp"
 #include "fem/multigrid.hpp"
+#include "linalg/rap.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
@@ -171,7 +172,7 @@ std::unique_ptr<Operator> LaplaceOperator::GetStiffnessMatrix()
     }
     auto K_l = std::make_unique<ParOperator>(std::move(k), h1_fespace_l);
     K_l->SetEssentialTrueDofs(dbc_tdof_lists[l], Operator::DiagonalPolicy::DIAG_ONE);
-    K.AddOperator(std::move(K_l));
+    K->AddOperator(std::move(K_l));
   }
   print_hdr = false;
   return K;
@@ -209,8 +210,8 @@ void LaplaceOperator::GetExcitationVector(int idx, const Operator &K, Vector &X,
   RHS = 0.0;
   x.ParallelProject(X);  // Restrict to the true dofs
   const auto *mg_K = dynamic_cast<const MultigridOperator *>(&K);
-  MFEM_VERIFY(mg_K, "LaplaceOperator requires MultigridOperator for RHS elimination!");
-  const auto *PtAP_K = dynamic_cast<const ParOperator *>(&mg_K->GetFinestOperator());
+  const auto *PtAP_K = mg_K ? dynamic_cast<const ParOperator *>(&mg_K->GetFinestOperator())
+                            : dynamic_cast<const ParOperator *>(&K);
   MFEM_VERIFY(PtAP_K, "LaplaceOperator requires ParOperator for RHS elimination!");
   PtAP_K->EliminateRHS(X, RHS);
 }

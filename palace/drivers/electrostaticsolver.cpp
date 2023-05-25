@@ -24,12 +24,12 @@ void ElectrostaticSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mes
   // prescribed BC values.
   timer.Lap();
   LaplaceOperator laplaceop(iodata, mesh);
-  auto K = laplaceop.GetStiffnessMatrix(K);
+  auto K = laplaceop.GetStiffnessMatrix();
   SaveMetadata(laplaceop.GetH1Space());
 
   // Set up the linear solver.
   KspSolver ksp(iodata, laplaceop.GetH1Spaces());
-  ksp.SetOperators(K, K);
+  ksp.SetOperators(*K, *K);
 
   // Terminal indices are the set of boundaries over which to compute the capacitance
   // matrix. Terminal boundaries are aliases for ports.
@@ -55,7 +55,7 @@ void ElectrostaticSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mes
     // Form and solve the linear system for a prescribed nonzero voltage on the specified
     // terminal.
     Mpi::Print("\n");
-    laplaceop.GetExcitationVector(idx, *K.back(), V[step], RHS);
+    laplaceop.GetExcitationVector(idx, *K, V[step], RHS);
     timer.construct_time += timer.Lap();
 
     ksp.Mult(RHS, V[step]);
@@ -135,7 +135,7 @@ void ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop, PostOperator &
       }
       else if (j > i)
       {
-        Vector::add(V[i], V[j], Vij);
+        linalg::AXPBYPCZ(1.0, V[i], 1.0, V[j], 0.0, Vij);
         E = 0.0;
         Grad->AddMult(Vij, E, -1.0);
         postop.SetEGridFunction(E);

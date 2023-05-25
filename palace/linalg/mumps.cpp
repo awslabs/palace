@@ -5,6 +5,8 @@
 
 #if defined(MFEM_USE_MUMPS)
 
+#include "linalg/rap.hpp"
+
 namespace palace
 {
 

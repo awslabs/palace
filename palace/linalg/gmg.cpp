@@ -6,6 +6,7 @@
 #include <mfem.hpp>
 #include "linalg/chebyshev.hpp"
 #include "linalg/distrelaxation.hpp"
+#include "linalg/rap.hpp"
 
 namespace palace
 {
@@ -26,14 +27,14 @@ GeometricMultigridSolver<OperType>::GeometricMultigridSolver(
   A.resize(n_levels, nullptr);
   P.resize(n_levels - 1, nullptr);
   dbc_tdof_lists.resize(n_levels - 1, nullptr);
-  X.resize(n_levels, Vector());
-  Y.resize(n_levels, Vector());
-  R.resize(n_levels, Vector());
+  X.resize(n_levels, VecType());
+  Y.resize(n_levels, VecType());
+  R.resize(n_levels, VecType());
 
   // Configure prolongation operators.
   for (int l = 0; l < n_levels - 1; l++)
   {
-    P_[l] = fespaces.GetProlongationAtLevel(l);
+    P[l] = fespaces.GetProlongationAtLevel(l);
   }
 
   // Use the supplied level 0 (coarse) solver.
@@ -66,9 +67,9 @@ void GeometricMultigridSolver<OperType>::SetOperator(const OperType &op)
   typedef typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
                                     ComplexParOperator, ParOperator>::type ParOperType;
 
-  const auto *mg_op = dynamic_cast<const MultigridOperator<OperType> *>(&op);
-  MFEM_VERIFY(mg_op, "GeometricMultigridSolver requires a MultigridOperator argument "
-                     "provided to SetOperator!");
+  const auto *mg_op = dynamic_cast<const BaseMultigridOperator<OperType> *>(&op);
+  MFEM_VERIFY(mg_op, "GeometricMultigridSolver requires a MultigridOperator or "
+                     "ComplexMultigridOperator argument provided to SetOperator!");
 
   const int n_levels = static_cast<int>(A.size());
   MFEM_VERIFY(
@@ -114,7 +115,8 @@ void GeometricMultigridSolver<OperType>::Mult(const VecType &x, VecType &y) cons
 {
   // Initialize.
   const int n_levels = static_cast<int>(A.size());
-  MFEM_ASSERT(!initial_guess, "Geometric multigrid solver does not use initial guess!");
+  MFEM_ASSERT(!this->initial_guess,
+              "Geometric multigrid solver does not use initial guess!");
   MFEM_ASSERT(n_levels > 1 || pc_it == 1,
               "Single-level geometric multigrid will not work with multiple iterations!");
 
@@ -130,23 +132,23 @@ void GeometricMultigridSolver<OperType>::Mult(const VecType &x, VecType &y) cons
 namespace
 {
 
-inline void RealMult(Operator &op, const Vector &x, Vector &y)
+inline void RealMult(const Operator &op, const Vector &x, Vector &y)
 {
   op.Mult(x, y);
 }
 
-inline void RealMult(Operator &op, const Complex &x, Complex &y)
+inline void RealMult(const Operator &op, const ComplexVector &x, ComplexVector &y)
 {
   op.Mult(x.Real(), y.Real());
   op.Mult(x.Imag(), y.Imag());
 }
 
-inline void RealMultTranspose(Operator &op, const Vector &x, Vector &y)
+inline void RealMultTranspose(const Operator &op, const Vector &x, Vector &y)
 {
   op.MultTranspose(x, y);
 }
 
-inline void RealMultTranspose(Operator &op, const Complex &x, Complex &y)
+inline void RealMultTranspose(const Operator &op, const ComplexVector &x, ComplexVector &y)
 {
   op.MultTranspose(x.Real(), y.Real());
   op.MultTranspose(x.Imag(), y.Imag());
@@ -175,7 +177,7 @@ void GeometricMultigridSolver<OperType>::VCycle(int l, bool initial_guess) const
   RealMultTranspose(*P[l - 1], R[l], X[l - 1]);
   if (dbc_tdof_lists[l - 1])
   {
-    X[l - 1]->SetSubVector(*dbc_tdof_lists[l - 1], 0.0);
+    X[l - 1].SetSubVector(*dbc_tdof_lists[l - 1], 0.0);
   }
   VCycle(l - 1, false);
 

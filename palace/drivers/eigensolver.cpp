@@ -242,9 +242,11 @@ void EigenSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
     // (K - σ² M) or P(iσ) = (K + iσ C - σ² M) during the eigenvalue solve. The
     // preconditioner for complex linear systems is constructed from a real approximation
     // to the complex system matrix.
-    A = spaceop.GetSystemMatrix(1.0, 1i * target, -target * target, K.get(), C.get(),
-                                M.get());
-    P = spaceop.GetPreconditionerMatrix(1.0, target, -target * target, target);
+    A = spaceop.GetSystemMatrix(std::complex<double>(1.0, 0.0), 1i * target,
+                                std::complex<double>(-target * target, 0.0), K.get(),
+                                C.get(), M.get());
+    P = spaceop.GetPreconditionerMatrix<ComplexOperator>(1.0, target, -target * target,
+                                                         target);
 
     ksp = std::make_unique<ComplexKspSolver>(iodata, spaceop.GetNDSpaces(),
                                              &spaceop.GetH1Spaces());

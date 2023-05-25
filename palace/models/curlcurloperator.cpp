@@ -6,6 +6,7 @@
 #include "fem/coefficient.hpp"
 #include "fem/integrator.hpp"
 #include "fem/multigrid.hpp"
+#include "linalg/rap.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
@@ -149,7 +150,7 @@ std::unique_ptr<Operator> CurlCurlOperator::GetStiffnessMatrix()
     }
     auto K_l = std::make_unique<ParOperator>(std::move(k), nd_fespace_l);
     K_l->SetEssentialTrueDofs(dbc_tdof_lists[l], Operator::DiagonalPolicy::DIAG_ONE);
-    K.AddOperator(std::move(K_l));
+    K->AddOperator(std::move(K_l));
   }
   print_hdr = false;
   return K;

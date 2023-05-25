@@ -100,7 +100,8 @@ void BaseSolver::SaveMetadata(const mfem::ParFiniteElementSpace &fespace) const
   }
 }
 
-void BaseSolver::SaveMetadata(const KspSolver &ksp) const
+template <typename SolverType>
+void BaseSolver::SaveMetadata(const SolverType &ksp) const
 {
   if (post_dir.length() == 0)
   {
@@ -555,5 +556,8 @@ void BaseSolver::PostprocessFields(const PostOperator &postop, int step, double 
   postop.WriteFields(step, time);
   Mpi::Barrier();
 }
+
+template void BaseSolver::SaveMetadata<KspSolver>(const KspSolver &) const;
+template void BaseSolver::SaveMetadata<ComplexKspSolver>(const ComplexKspSolver &) const;
 
 }  // namespace palace

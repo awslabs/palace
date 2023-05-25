@@ -29,7 +29,7 @@ void MagnetostaticSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mes
 
   // Set up the linear solver.
   KspSolver ksp(iodata, curlcurlop.GetNDSpaces(), &curlcurlop.GetH1Spaces());
-  ksp.SetOperators(K, K);
+  ksp.SetOperators(*K, *K);
 
   // Terminal indices are the set of boundaries over which to compute the inductance matrix.
   PostOperator postop(iodata, curlcurlop, "magnetostatic");
@@ -142,7 +142,7 @@ void MagnetostaticSolver::Postprocess(CurlCurlOperator &curlcurlop, PostOperator
       }
       else if (j > i)
       {
-        Vector::add(A[i], A[j], Aij);
+        linalg::AXPBYPCZ(1.0, A[i], 1.0, A[j], 0.0, Aij);
         Curl->Mult(Aij, B);
         postop.SetBGridFunction(B);
         double Um = postop.GetHFieldEnergy();

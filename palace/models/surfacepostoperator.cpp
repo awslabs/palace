@@ -14,8 +14,7 @@ namespace palace
 
 SurfacePostOperator::InterfaceDielectricData::InterfaceDielectricData(
     const config::InterfaceDielectricData &data, mfem::ParMesh &mesh)
-  : type(DielectricInterfaceType::INVALID), epsilon(0.0), ts(data.ts),
-    tandelta(data.tandelta)
+  : ts(data.ts), tandelta(data.tandelta)
 {
   // Calculate surface dielectric loss according to the formulas from J. Wenner et al.,
   // Surface loss simulations of superconducting coplanar waveguide resonators, Appl. Phys.

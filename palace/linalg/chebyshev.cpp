@@ -5,6 +5,7 @@
 
 #include <vector>
 #include <general/forall.hpp>
+#include "linalg/rap.hpp"
 
 namespace palace
 {
@@ -26,11 +27,11 @@ void GetDiagonal(const ComplexParOperator &A, ComplexVector &diag)
   diag = 0.0;
   if (A.HasReal())
   {
-    A.Real().AssembleDiagonal(diag.Real());
+    A.Real()->AssembleDiagonal(diag.Real());
   }
   if (A.HasImag())
   {
-    A.Imag().AssembleDiagonal(diag.Imag());
+    A.Imag()->AssembleDiagonal(diag.Imag());
   }
 }
 
@@ -61,8 +62,8 @@ void ChebyshevSmoother<OperType>::SetOperator(const OperType &op)
   // Set up Chebyshev coefficients using the computed maximum eigenvalue estimate. See
   // mfem::OperatorChebyshevSmoother or Adams et al., Parallel multigrid smoothing:
   // polynomial versus Gauss-Seidel, JCP (2003).
-  DiagonalOperator<OperType> Dinv(dinv);
-  ProductOperator<OperType> DinvA(Dinv, *A);
+  BaseDiagonalOperator<OperType> Dinv(dinv);
+  BaseProductOperator<OperType> DinvA(Dinv, *A);
   lambda_max = 1.1 * linalg::SpectralNorm(PtAP->GetComm(), DinvA, false);
 }
 
@@ -122,7 +123,7 @@ inline void ApplyOrderK(const double sd, const double sr, const ComplexVector &d
                {
                  const double t = DII[i] * RR[i] + DIR[i] * RI[i];
                  DR[i] = sd * DR[i] + sr * (DIR[i] * RR[i] - DII[i] * RI[i]);
-                 DI[i] = sd * DI[i] + sr * t
+                 DI[i] = sd * DI[i] + sr * t;
                });
 }
 
@@ -134,7 +135,7 @@ void ChebyshevSmoother<OperType>::Mult(const VecType &x, VecType &y) const
   // Apply smoother: y = y + p(A) (x - A y) .
   for (int it = 0; it < pc_it; it++)
   {
-    if (initial_guess || it > 0)
+    if (this->initial_guess || it > 0)
     {
       A->Mult(y, r);
       linalg::AXPBY(1.0, x, -1.0, r);

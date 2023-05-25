@@ -8,12 +8,12 @@
 namespace palace
 {
 
-ParOperator::ParOperator(std::unique_ptr<Operator> &&data_A, Operator *A,
+ParOperator::ParOperator(std::unique_ptr<Operator> &&dA, Operator *pA,
                          const mfem::ParFiniteElementSpace &trial_fespace,
                          const mfem::ParFiniteElementSpace &test_fespace,
                          bool test_restrict)
   : Operator(test_fespace.GetTrueVSize(), trial_fespace.GetTrueVSize()),
-    data_A(std::move(data_A)), A(this->data_A ? this->data_A.get() : A),
+    data_A(std::move(dA)), A((data_A != nullptr) ? data_A.get() : pA),
     trial_fespace(trial_fespace), test_fespace(test_fespace), use_R(test_restrict),
     dbc_tdof_list(nullptr), diag_policy(DiagonalPolicy::DIAG_ONE), RAP(nullptr)
 {
@@ -27,14 +27,14 @@ ParOperator::ParOperator(std::unique_ptr<Operator> &&A,
                          const mfem::ParFiniteElementSpace &trial_fespace,
                          const mfem::ParFiniteElementSpace &test_fespace,
                          bool test_restrict)
-  : ParOperator(std::move(A), nullptr, trial_fespace, test_fespace, test_restrict),
+  : ParOperator(std::move(A), nullptr, trial_fespace, test_fespace, test_restrict)
 {
 }
 
-ParOperator::ParOperator(Operator *A, const mfem::ParFiniteElementSpace &trial_fespace,
+ParOperator::ParOperator(Operator &A, const mfem::ParFiniteElementSpace &trial_fespace,
                          const mfem::ParFiniteElementSpace &test_fespace,
                          bool test_restrict)
-  : ParOperator(nullptr, A, trial_fespace, test_fespace, test_restrict),
+  : ParOperator(nullptr, &A, trial_fespace, test_fespace, test_restrict)
 {
 }
 
@@ -44,8 +44,14 @@ const Operator &ParOperator::LocalOperator() const
   return *A;
 }
 
+Operator &ParOperator::LocalOperator()
+{
+  MFEM_ASSERT(A, "No local matrix available for ParOperator::LocalOperator!");
+  return *A;
+}
+
 void ParOperator::SetEssentialTrueDofs(const mfem::Array<int> &tdof_list,
-                                       DiagonalPolicy policy);
+                                       DiagonalPolicy policy)
 {
   MFEM_VERIFY(policy == DiagonalPolicy::DIAG_ONE || policy == DiagonalPolicy::DIAG_ZERO,
               "Essential boundary condition true dof elimination for ParOperator supports "
@@ -56,18 +62,13 @@ void ParOperator::SetEssentialTrueDofs(const mfem::Array<int> &tdof_list,
   diag_policy = policy;
 }
 
-const mfem::Array<int> *ParOperator::GetEssentialTrueDofs() const;
-{
-  return dbc_tdof_list;
-}
-
 void ParOperator::AssembleDiagonal(Vector &diag) const
 {
   // For an AMR mesh, a convergent diagonal is assembled with |P|ᵀ dₗ, where |P| has
   // entry-wise absolute values of the conforming prolongation operator.
   MFEM_VERIFY(&trial_fespace == &test_fespace,
               "Diagonal assembly is only available for square ParOperator!");
-  if (auto *bfA = dynamic_cast<mfem::BilinearForm *>(A))
+  if (auto *bfA = dynamic_cast<const mfem::BilinearForm *>(A))
   {
     if (bfA->HasSpMat())
     {
@@ -82,7 +83,7 @@ void ParOperator::AssembleDiagonal(Vector &diag) const
       MFEM_ABORT("Unable to assemble the local operator diagonal of BilinearForm!");
     }
   }
-  else if (auto *sA = dynamic_cast<mfem::SparseMatrix *>(A))
+  else if (auto *sA = dynamic_cast<const mfem::SparseMatrix *>(A))
   {
     sA->GetDiag(ly);
   }
@@ -428,15 +429,29 @@ void ParOperator::AddMultTranspose(const Vector &x, Vector &y, const double a) c
   }
 }
 
-ComplexParOperator::ComplexParOperator(std::unique_ptr<ComplexOperator> &&A,
+ComplexParOperator::ComplexParOperator(std::unique_ptr<Operator> &&dAr,
+                                       std::unique_ptr<Operator> &&dAi, Operator *pAr,
+                                       Operator *pAi,
                                        const mfem::ParFiniteElementSpace &trial_fespace,
                                        const mfem::ParFiniteElementSpace &test_fespace,
                                        bool test_restrict)
   : ComplexOperator(test_fespace.GetTrueVSize(), trial_fespace.GetTrueVSize()),
-    data_A(std::move(A)), A(data_A.get()), trial_fespace(trial_fespace),
-    test_fespace(test_fespace), use_R(test_restrict), dbc_tdof_list(nullptr),
-    diag_policy(DiagonalPolicy::DIAG_ONE)
+    data_A((dAr != nullptr || dAi != nullptr)
+               ? std::make_unique<ComplexWrapperOperator>(std::move(dAr), std::move(dAi))
+               : std::make_unique<ComplexWrapperOperator>(pAr, pAi)),
+    A(data_A.get()), trial_fespace(trial_fespace), test_fespace(test_fespace),
+    use_R(test_restrict), dbc_tdof_list(nullptr),
+    diag_policy(Operator::DiagonalPolicy::DIAG_ONE),
+    RAPr(A->HasReal()
+             ? std::make_unique<ParOperator>(*A->Real(), trial_fespace, test_fespace, use_R)
+             : nullptr),
+    RAPi(A->HasImag()
+             ? std::make_unique<ParOperator>(*A->Imag(), trial_fespace, test_fespace, use_R)
+             : nullptr)
 {
+  // We use the non-owning constructors for real and imaginary part ParOperators. We know A
+  // is a ComplexWrapperOperator which has separate access to the real and imaginary
+  // components.
   lx.SetSize(A->Width());
   ly.SetSize(A->Height());
   ty.SetSize(width);
@@ -447,20 +462,17 @@ ComplexParOperator::ComplexParOperator(std::unique_ptr<Operator> &&Ar,
                                        const mfem::ParFiniteElementSpace &trial_fespace,
                                        const mfem::ParFiniteElementSpace &test_fespace,
                                        bool test_restrict)
-  : ComplexParOperator(
-        std::make_unique<ComplexWrapperOperator>(std::move(Ar), std::move(Ai)),
-        trial_fespace, test_fespace, test_restrict);
+  : ComplexParOperator(std::move(Ar), std::move(Ai), nullptr, nullptr, trial_fespace,
+                       test_fespace, test_restrict)
 {
-  // Non-owning constructors for real and imaginary part ParOperators. We know A is a
-  // ComplexWrapperOperator which has separate access to the real and imaginary components.
-  if (A->HasReal())
-  {
-    RAPr = std::make_unique<ParOperator>(A->Real(), trial_fespace, test_fespace, use_R);
-  }
-  if (A->HasImag())
-  {
-    RAPi = std::make_unique<ParOperator>(A->Imag(), trial_fespace, test_fespace, use_R);
-  }
+}
+
+ComplexParOperator::ComplexParOperator(Operator *Ar, Operator *Ai,
+                                       const mfem::ParFiniteElementSpace &trial_fespace,
+                                       const mfem::ParFiniteElementSpace &test_fespace,
+                                       bool test_restrict)
+  : ComplexParOperator(nullptr, nullptr, Ar, Ai, trial_fespace, test_fespace, test_restrict)
+{
 }
 
 const ComplexOperator &ComplexParOperator::LocalOperator() const
@@ -469,14 +481,21 @@ const ComplexOperator &ComplexParOperator::LocalOperator() const
   return *A;
 }
 
-void ComplexParOperator::SetEssentialTrueDofs(const mfem::Array<int> &tdof_list,
-                                              DiagonalPolicy policy)
+ComplexOperator &ComplexParOperator::LocalOperator()
 {
-  MFEM_VERIFY(policy == DiagonalPolicy::DIAG_ONE || policy == DiagonalPolicy::DIAG_ZERO,
+  MFEM_ASSERT(A, "No local matrix available for ComplexParOperator::LocalOperator!");
+  return *A;
+}
+
+void ComplexParOperator::SetEssentialTrueDofs(const mfem::Array<int> &tdof_list,
+                                              Operator::DiagonalPolicy policy)
+{
+  MFEM_VERIFY(policy == Operator::DiagonalPolicy::DIAG_ONE ||
+                  policy == Operator::DiagonalPolicy::DIAG_ZERO,
               "Essential boundary condition true dof elimination for ComplexParOperator "
               "supports only DiagonalPolicy::DIAG_ONE or DiagonalPolicy::DIAG_ZERO!");
   MFEM_VERIFY(
-      policy != DiagonalPolicy::DIAG_ONE || RAPr,
+      policy != Operator::DiagonalPolicy::DIAG_ONE || RAPr,
       "DiagonalPolicy::DIAG_ONE specified for ComplexParOperator with no real part!");
   MFEM_VERIFY(height == width, "Set essential true dofs for both test and trial spaces "
                                "for rectangular ComplexParOperator!");
@@ -488,19 +507,19 @@ void ComplexParOperator::SetEssentialTrueDofs(const mfem::Array<int> &tdof_list,
   }
   if (RAPi)
   {
-    RAPi->SetEssentialTrueDofs(tdof_list, DiagonalPolicy::DIAG_ZERO);
+    RAPi->SetEssentialTrueDofs(tdof_list, Operator::DiagonalPolicy::DIAG_ZERO);
   }
 }
 
-const mfem::Array<int> *ComplexParOperator::GetEssentialTrueDofs() const
+void ComplexParOperator::AddMult(const ComplexVector &x, ComplexVector &y,
+                                 const std::complex<double> a) const
 {
-  return dbc_tdof_list;
-}
-
-void ComplexParOperator::AddMult(const Vector &xr, const Vector &xi, Vector &yr, Vector &yi,
-                                 const std::complex<double> a, bool zero_real,
-                                 bool zero_imag) const
-{
+  constexpr bool zero_real = false;
+  constexpr bool zero_imag = false;
+  const Vector &xr = x.Real();
+  const Vector &xi = x.Imag();
+  Vector &yr = y.Real();
+  Vector &yi = y.Imag();
   MFEM_ASSERT(xr.Size() == width && xi.Size() == width && yr.Size() == height &&
                   yi.Size() == height,
               "Incompatible dimensions for ComplexParOperator::AddMult!");
@@ -521,7 +540,7 @@ void ComplexParOperator::AddMult(const Vector &xr, const Vector &xi, Vector &yr,
 
   // Apply the operator on the L-vector.
   ly = 0.0;
-  A->AddMult(lx.Real(), lx.Imag(), ly.Real(), ly.Imag(), a, zero_real, zero_imag);
+  A->AddMult(lx, ly, a);
 
   if (dbc_tdof_list)
   {
@@ -535,7 +554,7 @@ void ComplexParOperator::AddMult(const Vector &xr, const Vector &xi, Vector &yr,
       test_fespace.GetRestrictionMatrix()->Mult(ly.Real(), ty.Real());
       test_fespace.GetRestrictionMatrix()->Mult(ly.Imag(), ty.Imag());
     }
-    if (diag_policy == DiagonalPolicy::DIAG_ONE && height == width)
+    if (diag_policy == Operator::DiagonalPolicy::DIAG_ONE && height == width)
     {
       const int N = dbc_tdof_list->Size();
       const auto *idx = dbc_tdof_list->Read();
@@ -551,7 +570,7 @@ void ComplexParOperator::AddMult(const Vector &xr, const Vector &xi, Vector &yr,
                      TYI[id] = XI[id];
                    });
     }
-    else if (diag_policy == DiagonalPolicy::DIAG_ZERO || height != width)
+    else if (diag_policy == Operator::DiagonalPolicy::DIAG_ZERO || height != width)
     {
       ty.SetSubVector(*dbc_tdof_list, 0.0);
     }
@@ -577,10 +596,15 @@ void ComplexParOperator::AddMult(const Vector &xr, const Vector &xi, Vector &yr,
   }
 }
 
-void ComplexParOperator::AddMultTranspose(const Vector &xr, const Vector &xi, Vector &yr,
-                                          Vector &yi, const std::complex<double> a,
-                                          bool zero_real, bool zero_imag) const
+void ComplexParOperator::AddMultTranspose(const ComplexVector &x, ComplexVector &y,
+                                          const std::complex<double> a) const
 {
+  constexpr bool zero_real = false;
+  constexpr bool zero_imag = false;
+  const Vector &xr = x.Real();
+  const Vector &xi = x.Imag();
+  Vector &yr = y.Real();
+  Vector &yi = y.Imag();
   MFEM_ASSERT(xr.Size() == height && xi.Size() == height && yr.Size() == width &&
                   yi.Size() == width,
               "Incompatible dimensions for ComplexParOperator::AddMultTranspose!");
@@ -617,13 +641,13 @@ void ComplexParOperator::AddMultTranspose(const Vector &xr, const Vector &xi, Ve
 
   // Apply the operator on the L-vector.
   lx = 0.0;
-  A->AddMultTranspose(ly.Real(), ly.Imag(), lx.Real(), lx.Imag(), a, zero_real, zero_imag);
+  A->AddMultTranspose(ly, lx, a);
 
   if (dbc_tdof_list)
   {
     trial_fespace.GetProlongationMatrix()->MultTranspose(lx.Real(), ty.Real());
     trial_fespace.GetProlongationMatrix()->MultTranspose(lx.Imag(), ty.Imag());
-    if (diag_policy == DiagonalPolicy::DIAG_ONE && height == width)
+    if (diag_policy == Operator::DiagonalPolicy::DIAG_ONE && height == width)
     {
       const int N = dbc_tdof_list->Size();
       const auto *idx = dbc_tdof_list->Read();
@@ -639,7 +663,7 @@ void ComplexParOperator::AddMultTranspose(const Vector &xr, const Vector &xi, Ve
                      TYI[id] = XI[id];
                    });
     }
-    else if (diag_policy == DiagonalPolicy::DIAG_ZERO || height != width)
+    else if (diag_policy == Operator::DiagonalPolicy::DIAG_ZERO || height != width)
     {
       ty.SetSubVector(*dbc_tdof_list, 0.0);
     }
@@ -657,11 +681,15 @@ void ComplexParOperator::AddMultTranspose(const Vector &xr, const Vector &xi, Ve
   }
 }
 
-void ComplexParOperator::AddMultHermitianTranspose(const Vector &xr, const Vector &xi,
-                                                   Vector &yr, Vector &yi,
-                                                   const std::complex<double> a,
-                                                   bool zero_real, bool zero_imag) const
+void ComplexParOperator::AddMultHermitianTranspose(const ComplexVector &x, ComplexVector &y,
+                                                   const std::complex<double> a) const
 {
+  constexpr bool zero_real = false;
+  constexpr bool zero_imag = false;
+  const Vector &xr = x.Real();
+  const Vector &xi = x.Imag();
+  Vector &yr = y.Real();
+  Vector &yi = y.Imag();
   MFEM_ASSERT(xr.Size() == height && xi.Size() == height && yr.Size() == width &&
                   yi.Size() == width,
               "Incompatible dimensions for ComplexParOperator::AddMultHermitianTranspose!");
@@ -698,14 +726,13 @@ void ComplexParOperator::AddMultHermitianTranspose(const Vector &xr, const Vecto
 
   // Apply the operator on the L-vector.
   lx = 0.0;
-  A->AddMultHermitianTranspose(ly.Real(), ly.Imag(), lx.Real(), lx.Imag(), a, zero_real,
-                               zero_imag);
+  A->AddMultHermitianTranspose(ly, lx, a);
 
   if (dbc_tdof_list)
   {
     trial_fespace.GetProlongationMatrix()->MultTranspose(lx.Real(), ty.Real());
     trial_fespace.GetProlongationMatrix()->MultTranspose(lx.Imag(), ty.Imag());
-    if (diag_policy == DiagonalPolicy::DIAG_ONE && height == width)
+    if (diag_policy == Operator::DiagonalPolicy::DIAG_ONE && height == width)
     {
       const int N = dbc_tdof_list->Size();
       const auto *idx = dbc_tdof_list->Read();
@@ -721,7 +748,7 @@ void ComplexParOperator::AddMultHermitianTranspose(const Vector &xr, const Vecto
                      TYI[id] = XI[id];
                    });
     }
-    else if (diag_policy == DiagonalPolicy::DIAG_ZERO || height != width)
+    else if (diag_policy == Operator::DiagonalPolicy::DIAG_ZERO || height != width)
     {
       ty.SetSubVector(*dbc_tdof_list, 0.0);
     }
