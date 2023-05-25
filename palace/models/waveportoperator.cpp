@@ -10,6 +10,7 @@
 #include "linalg/arpack.hpp"
 #include "linalg/iterative.hpp"
 #include "linalg/mumps.hpp"
+#include "linalg/rap.hpp"
 #include "linalg/slepc.hpp"
 #include "linalg/solver.hpp"
 #include "linalg/strumpack.hpp"
@@ -310,17 +311,15 @@ void GetInitialSpace(mfem::ParFiniteElementSpace &nd_fespace,
   // Note: When the eigenvalue solver uses a standard ℓ²-inner product instead of B-inner
   // product (since we use a general non-Hermitian solver due to complex symmetric B), then
   // we just use v0 = y0 directly.
-  v.SetSize(2 * (nd_fespace.GetTrueVSize() + h1_fespace.GetTrueVSize()));
+  v.SetSize(nd_fespace.GetTrueVSize() + h1_fespace.GetTrueVSize());
   linalg::SetRandom(nd_fespace.GetComm(), v);
   // v = std::complex<double>(1.0, 0.0);
-  v.Real().SetSubVector(nd_dbc_tdof_list, 0.0);
-  v.Imag().SetSubVector(nd_dbc_tdof_list, 0.0);
+  v.SetSubVector(nd_dbc_tdof_list, 0.0);
   for (int i = nd_fespace.GetTrueVSize();
        i < nd_fespace.GetTrueVSize() + h1_fespace.GetTrueVSize(); i++)
   {
     v.Real()[i] = v.Imag()[i] = 0.0;
   }
-  v.SyncAlias();
 }
 
 }  // namespace
@@ -474,11 +473,11 @@ WavePortData::WavePortData(const config::WavePortData &data, const MaterialOpera
           std::make_unique<mfem::HypreParMatrix>(*A1),
           std::make_unique<mfem::HypreParMatrix>(*A2i));
 
-      auto &Br = *static_cast<mfem::HypreParMatrix *>(&B->Real());
+      auto &Br = *static_cast<mfem::HypreParMatrix *>(B->Real());
       Br.Add(-1.0 / mu_eps_max, *B4r);
 
-      auto &Ai = *static_cast<mfem::HypreParMatrix *>(&A->Imag());
-      auto &Bi = *static_cast<mfem::HypreParMatrix *>(&B->Imag());
+      auto &Ai = *static_cast<mfem::HypreParMatrix *>(A->Imag());
+      auto &Bi = *static_cast<mfem::HypreParMatrix *>(B->Imag());
       Ai *= 0.0;
       Bi *= 0.0;
       Bi.Add(-1.0 / mu_eps_max, *B4i);
@@ -490,7 +489,7 @@ WavePortData::WavePortData(const config::WavePortData &data, const MaterialOpera
       B = std::make_unique<ComplexWrapperOperator>(
           std::make_unique<mfem::HypreParMatrix>(*A1), nullptr);
 
-      auto &Br = *static_cast<mfem::HypreParMatrix *>(&B->Real());
+      auto &Br = *static_cast<mfem::HypreParMatrix *>(B->Real());
       Br.Add(-1.0 / mu_eps_max, *B4r);
     }
   }
@@ -499,8 +498,8 @@ WavePortData::WavePortData(const config::WavePortData &data, const MaterialOpera
   //                                                                         [0   0] ).
   GetInitialSpace(nd_fespace, h1_fespace, nd_dbc_tdof_list, h1_dbc_tdof_list, v0);
   e0.SetSize(v0.Size());
-  e0t.SetSize(2 * nd_fespace.GetTrueVSize());
-  e0n.SetSize(2 * h1_fespace.GetTrueVSize());
+  e0t.SetSize(nd_fespace.GetTrueVSize());
+  e0n.SetSize(h1_fespace.GetTrueVSize());
 
   // Configure the eigenvalue problem solver. As for the full 3D case, the system matrices
   // are in general complex and symmetric. We supply the operators to the solver in
@@ -669,10 +668,10 @@ void WavePortData::Initialize(double omega)
   eigen->GetEigenvector(mode_idx - 1, e0);
   {
     Vector e0tr, e0ti, e0nr, e0ni;
-    e0tr.MakeRef(e0, 0, e0t.Size() / 2);
-    e0nr.MakeRef(e0, e0t.Size() / 2, e0n.Size() / 2);
-    e0ti.MakeRef(e0, e0.Size() / 2, e0t.Size() / 2);
-    e0ni.MakeRef(e0, (e0.Size() + e0t.Size()) / 2, e0n.Size() / 2);
+    e0tr.MakeRef(e0.Real(), 0, e0t.Size());
+    e0nr.MakeRef(e0.Real(), e0t.Size(), e0n.Size());
+    e0ti.MakeRef(e0.Imag(), 0, e0t.Size());
+    e0ni.MakeRef(e0.Imag(), e0t.Size(), e0n.Size());
     e0t.Real() = e0tr;
     e0t.Imag() = e0ti;
     e0n.Real() = e0nr;

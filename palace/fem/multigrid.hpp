@@ -8,6 +8,7 @@
 #include <vector>
 #include <mfem.hpp>
 #include "linalg/operator.hpp"
+#include "linalg/rap.hpp"
 
 namespace palace::utils
 {

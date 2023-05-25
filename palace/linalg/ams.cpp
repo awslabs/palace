@@ -3,6 +3,8 @@
 
 #include "ams.hpp"
 
+#include "linalg/rap.hpp"
+
 namespace palace
 {
 

@@ -119,9 +119,12 @@ public:
   // Return the parallel finite element space objects.
   auto &GetNDSpaces() { return nd_fespaces; }
   auto &GetNDSpace() { return nd_fespaces.GetFinestFESpace(); }
+  const auto &GetNDSpace() const { return nd_fespaces.GetFinestFESpace(); }
   auto &GetH1Spaces() { return h1_fespaces; }
   auto &GetH1Space() { return h1_fespaces.GetFinestFESpace(); }
+  const auto &GetH1Space() const { return h1_fespaces.GetFinestFESpace(); }
   auto &GetRTSpace() { return rt_fespace; }
+  const auto &GetRTSpace() const { return rt_fespace; }
 
   // Construct any part of the frequency-dependent complex linear system matrix:
   //                     A = K + iω C - ω² (Mr + i Mi) + A2(ω) .

@@ -73,16 +73,20 @@ PostOperator::PostOperator(const IoData &iodata, SpaceOperator &spaceop,
     Bsi = std::make_unique<BdrFieldVectorCoefficient>(B->imag(), mat_op, local_to_shared);
     Jsi = std::make_unique<BdrCurrentVectorCoefficient>(B->imag(), mat_op, local_to_shared);
     Qsi = std::make_unique<BdrChargeCoefficient>(E->imag(), mat_op, local_to_shared);
-    Ue = std::make_unique<EnergyDensityCoefficient<EnergyDensityType::ELECTRIC>>(
+    Ue = std::make_unique<EnergyDensityCoefficient<EnergyDensityType::ELECTRIC,
+                                                   mfem::ParComplexGridFunction>>(
         *E, mat_op, local_to_shared);
-    Um = std::make_unique<EnergyDensityCoefficient<EnergyDensityType::MAGNETIC>>(
+    Um = std::make_unique<EnergyDensityCoefficient<EnergyDensityType::MAGNETIC,
+                                                   mfem::ParComplexGridFunction>>(
         *B, mat_op, local_to_shared);
   }
   else
   {
-    Ue = std::make_unique<EnergyDensityCoefficient<EnergyDensityType::ELECTRIC>>(
+    Ue = std::make_unique<
+        EnergyDensityCoefficient<EnergyDensityType::ELECTRIC, mfem::ParGridFunction>>(
         E->real(), mat_op, local_to_shared);
-    Um = std::make_unique<EnergyDensityCoefficient<EnergyDensityType::MAGNETIC>>(
+    Um = std::make_unique<
+        EnergyDensityCoefficient<EnergyDensityType::MAGNETIC, mfem::ParGridFunction>>(
         B->real(), mat_op, local_to_shared);
   }
 
@@ -118,7 +122,8 @@ PostOperator::PostOperator(const IoData &iodata, LaplaceOperator &laplaceop,
   // etc.), since only V and E fields are supplied.
   Esr = std::make_unique<BdrFieldVectorCoefficient>(E->real(), mat_op, local_to_shared);
   Vs = std::make_unique<BdrFieldCoefficient>(*V, mat_op, local_to_shared);
-  Ue = std::make_unique<EnergyDensityCoefficient<EnergyDensityType::ELECTRIC>>(
+  Ue = std::make_unique<
+      EnergyDensityCoefficient<EnergyDensityType::ELECTRIC, mfem::ParGridFunction>>(
       E->real(), mat_op, local_to_shared);
   Qsr = std::make_unique<BdrChargeCoefficient>(E->real(), mat_op, local_to_shared);
 
@@ -145,7 +150,8 @@ PostOperator::PostOperator(const IoData &iodata, CurlCurlOperator &curlcurlop,
   // etc.), since only the B field is supplied.
   Bsr = std::make_unique<BdrFieldVectorCoefficient>(B->real(), mat_op, local_to_shared);
   As = std::make_unique<BdrFieldVectorCoefficient>(*A, mat_op, local_to_shared);
-  Um = std::make_unique<EnergyDensityCoefficient<EnergyDensityType::MAGNETIC>>(
+  Um = std::make_unique<
+      EnergyDensityCoefficient<EnergyDensityType::MAGNETIC, mfem::ParGridFunction>>(
       B->real(), mat_op, local_to_shared);
   Jsr = std::make_unique<BdrCurrentVectorCoefficient>(B->real(), mat_op, local_to_shared);
 

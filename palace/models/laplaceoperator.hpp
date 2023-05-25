@@ -60,7 +60,9 @@ public:
   // Return the parallel finite element space objects.
   auto &GetH1Spaces() { return h1_fespaces; }
   auto &GetH1Space() { return h1_fespaces.GetFinestFESpace(); }
+  const auto &GetH1Space() const { return h1_fespaces.GetFinestFESpace(); }
   auto &GetNDSpace() { return nd_fespace; }
+  const auto &GetNDSpace() const { return nd_fespace; }
 
   // Construct and return system matrix representing discretized Laplace operator for
   // Gauss's law.

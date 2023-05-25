@@ -10,7 +10,6 @@
 #include <slepc.h>
 #include <mfem.hpp>
 #include "linalg/divfree.hpp"
-#include "linalg/ksp.hpp"
 #include "utils/communication.hpp"
 
 static PetscErrorCode __mat_apply_EPS_A0(Mat, Vec, Vec);

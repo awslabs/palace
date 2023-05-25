@@ -25,7 +25,7 @@ template <typename OperType>
 class IterativeSolver : public Solver<OperType>
 {
 protected:
-  typedef typename double RealType;
+  typedef double RealType;
   typedef typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
                                     std::complex<RealType>, RealType>::type ScalarType;
 
@@ -53,7 +53,7 @@ protected:
   mutable int final_it;
 
 public:
-  IterativeSolver(MPI_comm comm, int print);
+  IterativeSolver(MPI_Comm comm, int print);
 
   // Set an indentation for all log printing.
   void SetTabWidth(int width) { tab_width = width; }
@@ -100,11 +100,32 @@ template <typename OperType>
 class CgSolver : public IterativeSolver<OperType>
 {
 protected:
+  typedef typename Solver<OperType>::VecType VecType;
+  typedef typename IterativeSolver<OperType>::RealType RealType;
+  typedef typename IterativeSolver<OperType>::ScalarType ScalarType;
+
+  using IterativeSolver<OperType>::comm;
+  using IterativeSolver<OperType>::print_opts;
+  using IterativeSolver<OperType>::int_width;
+  using IterativeSolver<OperType>::tab_width;
+
+  using IterativeSolver<OperType>::rel_tol;
+  using IterativeSolver<OperType>::abs_tol;
+  using IterativeSolver<OperType>::max_it;
+
+  using IterativeSolver<OperType>::A;
+  using IterativeSolver<OperType>::B;
+
+  using IterativeSolver<OperType>::converged;
+  using IterativeSolver<OperType>::initial_res;
+  using IterativeSolver<OperType>::final_res;
+  using IterativeSolver<OperType>::final_it;
+
   // Temporary workspace for solve.
   mutable VecType r, z, p;
 
 public:
-  CgSolver(MPI_comm comm, int print) : IterativeSolver<OperType>(comm, print) {}
+  CgSolver(MPI_Comm comm, int print) : IterativeSolver<OperType>(comm, print) {}
 
   void Mult(const VecType &b, VecType &x) const override;
 };
@@ -129,6 +150,27 @@ public:
   };
 
 protected:
+  typedef typename Solver<OperType>::VecType VecType;
+  typedef typename IterativeSolver<OperType>::RealType RealType;
+  typedef typename IterativeSolver<OperType>::ScalarType ScalarType;
+
+  using IterativeSolver<OperType>::comm;
+  using IterativeSolver<OperType>::print_opts;
+  using IterativeSolver<OperType>::int_width;
+  using IterativeSolver<OperType>::tab_width;
+
+  using IterativeSolver<OperType>::rel_tol;
+  using IterativeSolver<OperType>::abs_tol;
+  using IterativeSolver<OperType>::max_it;
+
+  using IterativeSolver<OperType>::A;
+  using IterativeSolver<OperType>::B;
+
+  using IterativeSolver<OperType>::converged;
+  using IterativeSolver<OperType>::initial_res;
+  using IterativeSolver<OperType>::final_res;
+  using IterativeSolver<OperType>::final_it;
+
   // Maximum subspace dimension for restarted GMRES.
   mutable int max_dim;
 
@@ -152,14 +194,14 @@ protected:
   // Allocate storage for solve.
   void Initialize() const;
 
-  GmresSolver(MPI_comm comm, int print, bool fgmres)
+  GmresSolver(MPI_Comm comm, int print, bool fgmres)
     : IterativeSolver<OperType>(comm, print), max_dim(-1), orthog_type(OrthogType::MGS),
       pc_side(fgmres ? PrecSide::RIGHT : PrecSide::LEFT), flexible(fgmres)
   {
   }
 
 public:
-  GmresSolver(MPI_comm comm, int print) : GmresSolver(comm, print, false) {}
+  GmresSolver(MPI_Comm comm, int print) : GmresSolver(comm, print, false) {}
 
   // Set the dimension for restart.
   void SetRestartDim(int dim) { max_dim = dim; }
@@ -179,7 +221,10 @@ template <typename OperType>
 class FgmresSolver : public GmresSolver<OperType>
 {
 public:
-  FgmresSolver(MPI_comm comm, int print) : GmresSolver<OperType>(comm, print, true) {}
+  typedef typename GmresSolver<OperType>::PrecSide PrecSide;
+
+public:
+  FgmresSolver(MPI_Comm comm, int print) : GmresSolver<OperType>(comm, print, true) {}
 
   void SetPrecSide(PrecSide side) override
   {

@@ -5,6 +5,7 @@
 
 #if defined(MFEM_USE_SUPERLU)
 
+#include "linalg/rap.hpp"
 #include "utils/communication.hpp"
 
 namespace palace

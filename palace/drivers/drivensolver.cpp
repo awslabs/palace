@@ -124,9 +124,11 @@ void DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator &postop, in
   // Set up the linear solver and set operators for the first frequency step. The
   // preconditioner for the complex linear system is constructed from a real approximation
   // to the complex system matrix.
-  auto A = spaceop.GetSystemMatrix(1.0, 1i * omega0, -omega0 * omega0, K.get(), C.get(),
-                                   M.get(), A2.get());
-  auto P = spaceop.GetPreconditionerMatrix(1.0, omega0, -omega0 * omega0, omega0);
+  auto A = spaceop.GetSystemMatrix(std::complex<double>(1.0, 0.0), 1i * omega0,
+                                   std::complex<double>(-omega0 * omega0, 0.0), K.get(),
+                                   C.get(), M.get(), A2.get());
+  auto P = spaceop.GetPreconditionerMatrix<ComplexOperator>(1.0, omega0, -omega0 * omega0,
+                                                            omega0);
 
   ComplexKspSolver ksp(iodata, spaceop.GetNDSpaces(), &spaceop.GetH1Spaces());
   ksp.SetOperators(*A, *P);
@@ -134,8 +136,8 @@ void DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator &postop, in
   // Set up RHS vector for the incident field at port boundaries, and the vector for the
   // first frequency step.
   ComplexVector RHS(Curl->Width()), E(Curl->Width()), B(Curl->Height());
-  E = std::complex<double>(0.0, 0.0);
-  B = std::complex<double>(0.0, 0.0);
+  E = 0.0;
+  B = 0.0;
   timer.construct_time += timer.Lap();
 
   // Main frequency sweep loop.
@@ -153,9 +155,11 @@ void DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator &postop, in
     {
       // Update frequency-dependent excitation and operators.
       A2 = spaceop.GetComplexExtraSystemMatrix(omega, Operator::DIAG_ZERO);
-      A = spaceop.GetSystemMatrix(1.0, 1i * omega, -omega * omega, K.get(), C.get(),
-                                  M.get(), A2.get());
-      P = spaceop.GetPreconditionerMatrix(1.0, omega, -omega * omega, omega);
+      A = spaceop.GetSystemMatrix(std::complex<double>(1.0, 0.0), 1i * omega,
+                                  std::complex<double>(-omega * omega, 0.0), K.get(),
+                                  C.get(), M.get(), A2.get());
+      P = spaceop.GetPreconditionerMatrix<ComplexOperator>(1.0, omega, -omega * omega,
+                                                           omega);
       ksp.SetOperators(*A, *P);
     }
     spaceop.GetExcitationVector(omega, RHS);
@@ -234,8 +238,8 @@ void DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator &postop, i
   // high-dimensional field solution.
   auto Curl = spaceop.GetComplexCurlMatrix();
   ComplexVector E(Curl->Width()), B(Curl->Height());
-  E = std::complex<double>(0.0, 0.0);
-  B = std::complex<double>(0.0, 0.0);
+  E = 0.0;
+  B = 0.0;
 
   // Configure the PROM operator which performs the parameter space sampling and basis
   // construction during the offline phase as well as the PROM solution during the online

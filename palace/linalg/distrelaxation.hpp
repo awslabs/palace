@@ -30,6 +30,9 @@ namespace palace
 template <typename OperType>
 class DistRelaxationSmoother : public Solver<OperType>
 {
+protected:
+  typedef typename Solver<OperType>::VecType VecType;
+
 private:
   // Number of smoother iterations.
   const int pc_it;

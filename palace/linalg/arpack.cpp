@@ -19,7 +19,6 @@
 #include <stat_c.hpp>
 // clang-format on
 #include "linalg/divfree.hpp"
-#include "linalg/ksp.hpp"
 #include "utils/communication.hpp"
 
 namespace

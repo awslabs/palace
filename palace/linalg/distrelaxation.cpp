@@ -6,6 +6,7 @@
 #include <mfem.hpp>
 #include <general/forall.hpp>
 #include "linalg/chebyshev.hpp"
+#include "linalg/rap.hpp"
 
 namespace palace
 {
@@ -34,7 +35,8 @@ DistRelaxationSmoother<OperType>::DistRelaxationSmoother(
 }
 
 template <typename OperType>
-void DistRelaxationSmoother<OperType>::SetOperator(const Operator &op, const Operator &op_G)
+void DistRelaxationSmoother<OperType>::SetOperators(const OperType &op,
+                                                    const OperType &op_G)
 {
   typedef typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
                                     ComplexParOperator, ParOperator>::type ParOperType;
@@ -93,7 +95,7 @@ void DistRelaxationSmoother<OperType>::Mult(const VecType &x, VecType &y) const
   for (int it = 0; it < pc_it; it++)
   {
     // y = y + B (x - A y)
-    B->SetInitialGuess(initial_guess || it > 0);
+    B->SetInitialGuess(this->initial_guess || it > 0);
     B->Mult(x, y);
 
     // y = y + G B_G Gᵀ (x - A y)
@@ -117,7 +119,7 @@ void DistRelaxationSmoother<OperType>::MultTranspose(const VecType &x, VecType &
   for (int it = 0; it < pc_it; it++)
   {
     // y = y + G B_Gᵀ Gᵀ (x - A y)
-    if (initial_guess || it > 0)
+    if (this->initial_guess || it > 0)
     {
       A->Mult(y, r);
       linalg::AXPBY(1.0, x, -1.0, r);
