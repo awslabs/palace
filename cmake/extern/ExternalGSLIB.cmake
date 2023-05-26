@@ -9,7 +9,7 @@
 if(PALACE_WITH_SLEPC)
   set(GSLIB_DEPENDENCIES slepc)
 elseif(PALACE_WITH_ARPACK)
-  set(GSLIB_DEPENDENCIES arpack)
+  set(GSLIB_DEPENDENCIES arpack-ng)
 elseif(PALACE_WITH_MUMPS)
   set(GSLIB_DEPENDENCIES mumps)
 elseif(PALACE_WITH_STRUMPACK)
@@ -45,7 +45,7 @@ endif()
 # User might specify the MPI compiler wrappers directly, otherwise we need to supply MPI
 # as found from the CMake module
 if(NOT MPI_FOUND)
-  message(FATAL_ERROR "MPI is not found when trying to build PETSc")
+  message(FATAL_ERROR "MPI is not found when trying to build GSLIB")
 endif()
 if(NOT "${CMAKE_C_COMPILER}" STREQUAL "${MPI_C_COMPILER}")
   string(REPLACE ";" " " GSLIB_MPI_LIBRARIES "${MPI_C_LIBRARIES}")
