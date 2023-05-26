@@ -86,7 +86,7 @@ void TransientSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
     Mpi::Print("\nIt {:d}/{:d}: t = {:e} ns (elapsed time = {:.2e} s)\n", step, nstep - 1,
                ts, Timer::Duration(timer.Now() - t0).count());
 
-    // Single time step t => t + dt.
+    // Single time step t -> t + dt.
     if (step == 0)
     {
       Mpi::Print("\n");

@@ -23,7 +23,7 @@ void GetInverseDiagonal(const ParOperator &A, Vector &dinv)
 void GetInverseDiagonal(const ComplexParOperator &A, ComplexVector &dinv)
 {
   MFEM_VERIFY(A.HasReal() || A.HasImag(),
-              "Invalid zero ComplexParOperator for ChebyshevSmoother!");
+              "Invalid zero ComplexOperator for ChebyshevSmoother!");
   dinv.SetSize(A.Height());
   dinv = 0.0;
   if (A.HasReal())

@@ -20,7 +20,8 @@ template <typename VecType, typename ScalarType>
 inline void OrthogonalizeColumnMGS(MPI_Comm comm, const std::vector<VecType> &V, VecType &w,
                                    ScalarType *H, int m)
 {
-  MFEM_ASSERT(m <= V.size(), "Out of bounds number of columns for MGS orthogonalization!");
+  MFEM_ASSERT(static_cast<std::size_t>(m) <= V.size(),
+              "Out of bounds number of columns for MGS orthogonalization!");
   for (int j = 0; j < m; j++)
   {
     H[j] = linalg::Dot(comm, w, V[j]);  // Global inner product
@@ -32,7 +33,12 @@ template <typename VecType, typename ScalarType>
 inline void OrthogonalizeColumnCGS(MPI_Comm comm, const std::vector<VecType> &V, VecType &w,
                                    ScalarType *H, int m, bool refine = false)
 {
-  MFEM_ASSERT(m <= V.size(), "Out of bounds number of columns for CGS orthogonalization!");
+  MFEM_ASSERT(static_cast<std::size_t>(m) <= V.size(),
+              "Out of bounds number of columns for CGS orthogonalization!");
+  if (m == 0)
+  {
+    return;
+  }
   for (int j = 0; j < m; j++)
   {
     H[j] = w * V[j];  // Local inner product
