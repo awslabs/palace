@@ -64,9 +64,6 @@ public:
   // Copy the vector into an array of complex values.
   void Get(std::complex<double> *py, int n) const;
 
-  // Replace entries with complex conjugate.
-  void Conj();
-
   // Set all entries equal to s.
   ComplexVector &operator=(std::complex<double> s);
   ComplexVector &operator=(double s)
@@ -78,8 +75,14 @@ public:
   // Scale all entries by s.
   ComplexVector &operator*=(std::complex<double> s);
 
+  // Replace entries with their complex conjugate.
+  void Conj();
+
+  // Replace entries with their absolute value.
+  void Abs();
+
   // Set all entries to their reciprocal.
-  void Reciprocal(bool abs = false);
+  void Reciprocal();
 
   // Set the entries listed the given array to value. All entries in the list should be
   // non-negative.

@@ -95,11 +95,6 @@ void ComplexVector::Get(std::complex<double> *py, int n) const
   y.HostReadWrite();
 }
 
-void ComplexVector::Conj()
-{
-  Imag() *= -1.0;
-}
-
 ComplexVector &ComplexVector::operator=(std::complex<double> s)
 {
   Real() = s.real();
@@ -132,31 +127,36 @@ ComplexVector &ComplexVector::operator*=(std::complex<double> s)
   return *this;
 }
 
-void ComplexVector::Reciprocal(bool abs)
+void ComplexVector::Conj()
+{
+  Imag() *= -1.0;
+}
+
+void ComplexVector::Abs()
 {
   const int N = Size();
   auto *XR = Real().ReadWrite();
   auto *XI = Imag().ReadWrite();
-  if (abs)
-  {
-    mfem::forall(N,
-                 [=] MFEM_HOST_DEVICE(int i)
-                 {
-                   const double t = 1.0 / std::sqrt(XR[i] * XR[i] + XI[i] * XI[i]);
-                   XR[i] = t;
-                   XI[i] = 0.0;
-                 });
-  }
-  else
-  {
-    mfem::forall(N,
-                 [=] MFEM_HOST_DEVICE(int i)
-                 {
-                   const std::complex<double> t = 1.0 / std::complex<double>(XR[i], XI[i]);
-                   XR[i] = t.real();
-                   XI[i] = t.imag();
-                 });
-  }
+  mfem::forall(N,
+               [=] MFEM_HOST_DEVICE(int i)
+               {
+                 XR[i] = std::sqrt(XR[i] * XR[i] + XI[i] * XI[i]);
+                 XI[i] = 0.0;
+               });
+}
+
+void ComplexVector::Reciprocal()
+{
+  const int N = Size();
+  auto *XR = Real().ReadWrite();
+  auto *XI = Imag().ReadWrite();
+  mfem::forall(N,
+               [=] MFEM_HOST_DEVICE(int i)
+               {
+                 const std::complex<double> t = 1.0 / std::complex<double>(XR[i], XI[i]);
+                 XR[i] = t.real();
+                 XI[i] = t.imag();
+               });
 }
 
 void ComplexVector::SetSubVector(const mfem::Array<int> &rows, std::complex<double> s)

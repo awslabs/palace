@@ -16,7 +16,8 @@ template <>
 void WrapperSolver<ComplexOperator>::SetOperator(const ComplexOperator &op)
 {
   MFEM_VERIFY(op.IsReal() && op.HasReal(),
-              "WrapperSolver::SetOperator assumes an operator which is purely real!");
+              "WrapperSolver::SetOperator requires an operator which is purely real for "
+              "mfem::Solver!");
   pc->SetOperator(*op.Real());
 }
 
