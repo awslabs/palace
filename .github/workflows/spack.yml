@@ -41,7 +41,7 @@ jobs:
           spack external find --all
 
           # Build and install
-          spack dev-build palace@develop%${{ matrix.compiler }}
+          spack dev-build palace@develop%${{ matrix.compiler }} ^petsc~hdf5
 
       - name: Run tests
         env:

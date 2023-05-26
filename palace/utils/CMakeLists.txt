@@ -7,7 +7,6 @@
 
 target_sources(${TARGET_NAME}
   PRIVATE
-  ${CMAKE_CURRENT_SOURCE_DIR}/communication.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/configfile.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/geodata.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/iodata.cpp

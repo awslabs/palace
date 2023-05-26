@@ -11,7 +11,7 @@ set(PALACE_INTERNAL_JSON_URL
   "URL for internal nlohmann/json build"
 )
 set(PALACE_INTERNAL_FMT_URL
-  "https://github.com/fmtlib/fmt/archive/refs/tags/9.1.0.tar.gz" CACHE STRING
+  "https://github.com/fmtlib/fmt/releases/download/10.0.0/fmt-10.0.0.zip" CACHE STRING
   "URL for internal fmt build"
 )
 set(PALACE_INTERNAL_MFEM_GIT_TAG

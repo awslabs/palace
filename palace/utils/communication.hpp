@@ -17,46 +17,115 @@ namespace mpi
 {
 
 template <typename T>
-struct CommTrace
-{
-  static const MPI_Datatype MPIType;
-  static const int multiplicity;
-};
+inline MPI_Datatype DataType();
 
 template <>
-const MPI_Datatype CommTrace<bool>::MPIType;
+inline MPI_Datatype DataType<char>()
+{
+  return MPI_CHAR;
+}
+
 template <>
-const int CommTrace<bool>::multiplicity;
+inline MPI_Datatype DataType<signed char>()
+{
+  return MPI_SIGNED_CHAR;
+}
+
 template <>
-const MPI_Datatype CommTrace<int>::MPIType;
+inline MPI_Datatype DataType<unsigned char>()
+{
+  return MPI_UNSIGNED_CHAR;
+}
+
 template <>
-const int CommTrace<int>::multiplicity;
+inline MPI_Datatype DataType<signed short>()
+{
+  return MPI_SHORT;
+}
+
 template <>
-const MPI_Datatype CommTrace<float>::MPIType;
+inline MPI_Datatype DataType<unsigned short>()
+{
+  return MPI_UNSIGNED_SHORT;
+}
+
 template <>
-const int CommTrace<float>::multiplicity;
+inline MPI_Datatype DataType<signed int>()
+{
+  return MPI_INT;
+}
+
 template <>
-const MPI_Datatype CommTrace<double>::MPIType;
+inline MPI_Datatype DataType<unsigned int>()
+{
+  return MPI_UNSIGNED;
+}
+
 template <>
-const int CommTrace<double>::multiplicity;
+inline MPI_Datatype DataType<signed long int>()
+{
+  return MPI_LONG;
+}
+
 template <>
-const MPI_Datatype CommTrace<std::complex<double>>::MPIType;
+inline MPI_Datatype DataType<unsigned long int>()
+{
+  return MPI_UNSIGNED_LONG;
+}
+
 template <>
-const int CommTrace<std::complex<double>>::multiplicity;
+inline MPI_Datatype DataType<signed long long int>()
+{
+  return MPI_LONG_LONG;
+}
+
 template <>
-const MPI_Datatype CommTrace<std::complex<float>>::MPIType;
+inline MPI_Datatype DataType<unsigned long long int>()
+{
+  return MPI_UNSIGNED_LONG_LONG;
+}
+
 template <>
-const int CommTrace<std::complex<float>>::multiplicity;
-#if defined(HYPRE_BIGINT) || defined(HYPRE_MIXEDINT)
+inline MPI_Datatype DataType<float>()
+{
+  return MPI_FLOAT;
+}
+
 template <>
-const MPI_Datatype CommTrace<HYPRE_BigInt>::MPIType;
+inline MPI_Datatype DataType<double>()
+{
+  return MPI_DOUBLE;
+}
+
 template <>
-const int CommTrace<HYPRE_BigInt>::multiplicity;
-#endif
+inline MPI_Datatype DataType<long double>()
+{
+  return MPI_LONG_DOUBLE;
+}
+
 template <>
-const MPI_Datatype CommTrace<char>::MPIType;
+inline MPI_Datatype DataType<std::complex<float>>()
+{
+  return MPI_C_COMPLEX;
+}
+
 template <>
-const int CommTrace<char>::multiplicity;
+inline MPI_Datatype DataType<std::complex<double>>()
+{
+  return MPI_C_DOUBLE_COMPLEX;
+}
+
+template <>
+inline MPI_Datatype DataType<std::complex<long double>>()
+{
+  return MPI_C_LONG_DOUBLE_COMPLEX;
+}
+
+template <>
+inline MPI_Datatype DataType<bool>()
+{
+  return MPI_C_BOOL;
+}
 
 }  // namespace mpi
 
@@ -126,8 +195,7 @@ public:
   template <typename T>
   static void GlobalOp(int len, T *buff, MPI_Op op, MPI_Comm comm)
   {
-    MPI_Allreduce(MPI_IN_PLACE, buff, mpi::CommTrace<T>::multiplicity * len,
-                  mpi::CommTrace<T>::MPIType, op, comm);
+    MPI_Allreduce(MPI_IN_PLACE, buff, len, mpi::DataType<T>(), op, comm);
   }
 
   // Global minimum (in-place, result is broadcast to all processes).
@@ -155,8 +223,7 @@ public:
   template <typename T>
   static void Broadcast(int len, T *buff, int root, MPI_Comm comm)
   {
-    MPI_Bcast(buff, mpi::CommTrace<T>::multiplicity * len, mpi::CommTrace<T>::MPIType, root,
-              comm);
+    MPI_Bcast(buff, len, mpi::DataType<T>(), root, comm);
   }
 
   // Print methods only print on the root process of MPI_COMM_WORLD or a given MPI_Comm.
@@ -193,7 +260,9 @@ public:
   template <typename... T>
   static void Warning(MPI_Comm comm, fmt::format_string<T...> fmt, T &&...args)
   {
-    Print(comm, fmt::format("\nWarning:\n{}\n", fmt), std::forward<T>(args)...);
+    Print(comm, "\nWarning!\n");
+    Print(comm, fmt, std::forward<T>(args)...);
+    Print(comm, "\n");
   }
 
   template <typename... T>
