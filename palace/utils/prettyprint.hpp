@@ -5,6 +5,7 @@
 #define PALACE_UTILS_PRETTY_PRINT_HPP
 
 #include <string>
+#include <type_traits>
 #include <vector>
 #include <mfem.hpp>
 #include "utils/communication.hpp"
@@ -22,15 +23,15 @@ namespace internal
 constexpr std::size_t max_width = 60;
 
 template <typename T>
-inline std::size_t GetSize(const mfem::Array<T> &v)
+inline std::size_t GetSize(const T &v)
 {
-  return v.Size();
+  return v.size();
 }
 
 template <typename T>
-inline std::size_t GetSize(const std::vector<T> &v)
+inline std::size_t GetSize(const mfem::Array<T> &v)
 {
-  return v.size();
+  return v.Size();
 }
 
 inline std::size_t PrePrint(MPI_Comm comm, std::size_t w, std::size_t wv, std::size_t lead)
@@ -57,10 +58,13 @@ inline std::size_t PrePrint(MPI_Comm comm, std::size_t w, std::size_t wv, std::s
 
 // Fixed column width wrapped printing with range notation for the contents of a marker
 // array.
-template <typename T>
-inline void PrettyPrintMarker(const T &data, const std::string &prefix = "",
+template <template <typename...> class Container, typename T, typename... U>
+inline void PrettyPrintMarker(const Container<T, U...> &data,
+                              const std::string &prefix = "",
                               MPI_Comm comm = MPI_COMM_WORLD)
 {
+  static_assert(std::is_integral<T>::value,
+                "PrettyPrintMarker requires containers with an integral type marker!");
   std::size_t i = 0, w = 0, lead = prefix.length();
   Mpi::Print(comm, prefix);
   while (i < internal::GetSize(data))
@@ -97,19 +101,18 @@ inline void PrettyPrintMarker(const T &data, const std::string &prefix = "",
 }
 
 // Fixed column width wrapped printing for the contents of an array.
-template <typename T>
-inline void PrettyPrint(const T &data, const std::string &prefix = "",
-                        MPI_Comm comm = MPI_COMM_WORLD)
+template <template <typename...> class Container, typename T, typename... U>
+inline void PrettyPrint(const Container<T, U...> &data, T scale = T(1.0),
+                        const std::string &prefix = "", MPI_Comm comm = MPI_COMM_WORLD)
 {
   constexpr int pv = 3;       // Value precision
   constexpr int wv = pv + 6;  // Total printed width of a value
-  std::size_t i = 0, w = 0, lead = prefix.length();
+  std::size_t w = 0, lead = prefix.length();
   Mpi::Print(comm, prefix);
-  while (i < internal::GetSize(data))
+  for (const auto &v : data)
   {
     w = internal::PrePrint(comm, w, wv, lead) + wv;
-    Mpi::Print(comm, "{:.{}e}", data[i], pv);
-    i++;
+    Mpi::Print(comm, "{:.{}e}", v * scale, pv);
   }
   Mpi::Print(comm, "\n");
 }
