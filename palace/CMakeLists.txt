@@ -31,6 +31,7 @@ set(PALACE_WITH_SLEPC ON CACHE BOOL "Build with SLEPc eigenvalue solver")
 set(PALACE_WITH_ARPACK OFF CACHE BOOL "Build with ARPACK eigenvalue solver")
 set(PALACE_WITH_INTERNAL_JSON ON CACHE BOOL "Use internal nlohmann/json library")
 set(PALACE_WITH_INTERNAL_FMT ON CACHE BOOL "Use internal fmt library")
+set(PALACE_WITH_INTERNAL_EIGEN ON CACHE BOOL "Use internal Eigen library")
 set(PALACE_WITH_INTERNAL_MFEM ON CACHE BOOL "Use internal MFEM library")
 set(ANALYZE_SOURCES_CLANG_TIDY OFF CACHE BOOL "Run static analysis checks using clang-tidy")
 set(ANALYZE_SOURCES_CPPCHECK OFF CACHE BOOL "Run static analysis checks using cppcheck")
@@ -87,6 +88,9 @@ if(NOT PALACE_WITH_INTERNAL_JSON)
 endif()
 if(NOT PALACE_WITH_INTERNAL_FMT)
   find_package(fmt REQUIRED CONFIG)
+endif()
+if(NOT PALACE_WITH_INTERNAL_EIGEN)
+  find_package(Eigen3 REQUIRED CONFIG)
 endif()
 if(NOT PALACE_WITH_INTERNAL_MFEM)
   message(FATAL_ERROR "Palace only supports builds with internal MFEM")
@@ -218,7 +222,7 @@ if(PALACE_WITH_ARPACK)
   )
 endif()
 target_link_libraries(${TARGET_NAME}
-  PRIVATE ${PETSC_TARGET} mfem nlohmann_json::nlohmann_json fmt::fmt MPI::MPI_CXX
+  PRIVATE ${PETSC_TARGET} mfem nlohmann_json::nlohmann_json fmt::fmt Eigen3::Eigen MPI::MPI_CXX
 )
 
 # Install target and helper scripts
