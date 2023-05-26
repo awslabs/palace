@@ -146,7 +146,7 @@ std::array<std::unique_ptr<ParOperator>, 3> GetBnn(const MaterialOperator &mat_o
   bnn2r->Assemble(skip_zeros);
   bnn2r->Finalize(skip_zeros);
 
-  // Contribution for loss tangent: ε => ε * (1 - i tan(δ)).
+  // Contribution for loss tangent: ε -> ε * (1 - i tan(δ)).
   if (!mat_op.HasLossTangent())
   {
     return {std::make_unique<ParOperator>(std::move(bnn1), h1_fespace),
@@ -189,7 +189,7 @@ std::array<std::unique_ptr<ParOperator>, 3> GetAtt(const MaterialOperator &mat_o
   att2r->Assemble(skip_zeros);
   att2r->Finalize(skip_zeros);
 
-  // Contribution for loss tangent: ε => ε * (1 - i tan(δ)).
+  // Contribution for loss tangent: ε -> ε * (1 - i tan(δ)).
   if (!mat_op.HasLossTangent())
   {
     return {std::make_unique<ParOperator>(std::move(att1), nd_fespace),
@@ -448,16 +448,24 @@ WavePortData::WavePortData(const config::WavePortData &data, const MaterialOpera
   GetEssentialTrueDofs(nd_fespace, h1_fespace, attr_marker, dbc_marker, nd_dbc_tdof_list,
                        h1_dbc_tdof_list, attr_tdof_sizes);
   {
-    auto Btt = GetBtt(mat_op, nd_fespace, attr_marker);
-    auto Btn = GetBtn(mat_op, nd_fespace, h1_fespace, attr_marker);
-    auto [Bnn1, Bnn2r, Bnn2i] = GetBnn(mat_op, h1_fespace, attr_marker);
-    auto [Att1, Att2r, Att2i] = GetAtt(mat_op, nd_fespace, attr_marker);
-
     std::unique_ptr<mfem::HypreParMatrix> A1, B4r, B4i;
-    std::tie(A1, A2r, A2i, B3, B4r, B4i) =
-        GetSystemMatrices(std::move(Btt), std::move(Btn), std::move(Bnn1), std::move(Bnn2r),
-                          std::move(Bnn2i), std::move(Att1), std::move(Att2r),
-                          std::move(Att2i), nd_dbc_tdof_list, h1_dbc_tdof_list);
+    {
+      auto Btt = GetBtt(mat_op, nd_fespace, attr_marker);
+      auto Btn = GetBtn(mat_op, nd_fespace, h1_fespace, attr_marker);
+      auto [Bnn1, Bnn2r, Bnn2i] = GetBnn(mat_op, h1_fespace, attr_marker);
+      auto [Att1, Att2r, Att2i] = GetAtt(mat_op, nd_fespace, attr_marker);
+
+      auto system_mats = GetSystemMatrices(
+          std::move(Btt), std::move(Btn), std::move(Bnn1), std::move(Bnn2r),
+          std::move(Bnn2i), std::move(Att1), std::move(Att2r), std::move(Att2i),
+          nd_dbc_tdof_list, h1_dbc_tdof_list);
+      A1 = std::move(system_mats[0]);
+      A2r = std::move(system_mats[1]);
+      A2i = std::move(system_mats[2]);
+      B3 = std::move(system_mats[3]);
+      B4r = std::move(system_mats[4]);
+      B4i = std::move(system_mats[5]);
+    }
 
     // Allocate storage for the eigenvalue problem operators. We have sparsity(A2) =
     // sparsity(B3) = sparsity(B4) ⊆ sparsity(A1). Precompute the frequency independent
