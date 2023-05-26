@@ -1,11 +1,3 @@
-[submodule "extern/petsc"]
-	path = extern/petsc
-	url = https://gitlab.com/petsc/petsc.git
-	branch = main
-[submodule "extern/slepc"]
-	path = extern/slepc
-	url = https://gitlab.com/slepc/slepc.git
-	branch = main
 [submodule "extern/hypre"]
 	path = extern/hypre
 	url = https://github.com/hypre-space/hypre.git
@@ -34,6 +26,10 @@
 	path = extern/mumps
 	url = https://github.com/scivision/mumps.git
 	branch = main
+[submodule "extern/petsc"]
+        path = extern/petsc
+        url = https://gitlab.com/petsc/petsc.git
+        branch = main
 [submodule "extern/arpack-ng"]
 	path = extern/arpack-ng
 	url = https://github.com/opencollab/arpack-ng.git
