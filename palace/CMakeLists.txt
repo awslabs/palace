@@ -105,20 +105,22 @@ if(PALACE_WITH_OPENMP)
 endif()
 
 # Find PETSc and SLEPc
-include(PkgConfigHelpers)
-set(PETSC_TEST_DEPS MPI::MPI_CXX)
-if(PALACE_WITH_OPENMP)
-  list(APPEND PETSC_TEST_DEPS OpenMP::OpenMP_CXX)
-endif()
-find_petsc_pkgconfig("${PETSC_TEST_DEPS}" PETSC_TARGET)
-if("${PETSC_TARGET}" STREQUAL "")
-  message(FATAL_ERROR "PETSc could not be found, be sure to set PETSC_DIR")
-endif()
 if(PALACE_WITH_SLEPC)
+  include(PkgConfigHelpers)
+  set(PETSC_TEST_DEPS MPI::MPI_CXX)
+  if(PALACE_WITH_OPENMP)
+    list(APPEND PETSC_TEST_DEPS OpenMP::OpenMP_CXX)
+  endif()
+  find_petsc_pkgconfig("${PETSC_TEST_DEPS}" PETSC_TARGET)
+  if("${PETSC_TARGET}" STREQUAL "")
+    message(FATAL_ERROR "PETSc could not be found, be sure to set PETSC_DIR")
+  endif()
   find_slepc_pkgconfig("${PETSC_TARGET};${PETSC_TEST_DEPS}" SLEPC_TARGET)
   if("${SLEPC_TARGET}" STREQUAL "")
     message(FATAL_ERROR "SLEPc could not be found, be sure to set SLEPC_DIR")
   endif()
+elseif(NOT PALACE_WITH_ARPACK)
+  message(FATAL_ERROR "Build requires at least one of ARPACK or SLEPc dependencies")
 endif()
 
 # Find ARPACK
@@ -207,7 +209,7 @@ endif()
 # Link with third-party dependencies
 if(PALACE_WITH_SLEPC)
   target_link_libraries(${TARGET_NAME}
-    PRIVATE ${SLEPC_TARGET}
+    PRIVATE ${SLEPC_TARGET} ${PETSC_TARGET}
   )
   target_compile_definitions(${TARGET_NAME}
     PRIVATE PALACE_WITH_SLEPC
@@ -222,7 +224,7 @@ if(PALACE_WITH_ARPACK)
   )
 endif()
 target_link_libraries(${TARGET_NAME}
-  PRIVATE ${PETSC_TARGET} mfem nlohmann_json::nlohmann_json fmt::fmt Eigen3::Eigen MPI::MPI_CXX
+  PRIVATE mfem nlohmann_json::nlohmann_json fmt::fmt Eigen3::Eigen MPI::MPI_CXX
 )
 
 # Install target and helper scripts
@@ -232,7 +234,8 @@ install(TARGETS ${TARGET_NAME}
 install(FILES
   ${CMAKE_SOURCE_DIR}/../scripts/palace ${CMAKE_SOURCE_DIR}/../scripts/validate-config
   DESTINATION bin
-  PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
+  PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE
+              WORLD_READ WORLD_EXECUTE
 )
 install(DIRECTORY
   ${CMAKE_SOURCE_DIR}/../scripts/schema

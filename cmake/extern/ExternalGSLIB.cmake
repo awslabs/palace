@@ -8,8 +8,16 @@
 # Force build order
 if(PALACE_WITH_SLEPC)
   set(GSLIB_DEPENDENCIES slepc)
+elseif(PALACE_WITH_ARPACK)
+  set(GSLIB_DEPENDENCIES arpack)
+elseif(PALACE_WITH_MUMPS)
+  set(GSLIB_DEPENDENCIES mumps)
+elseif(PALACE_WITH_STRUMPACK)
+  set(GSLIB_DEPENDENCIES strumpack)
+elseif(PALACE_WITH_SUPERLU)
+  set(GSLIB_DEPENDENCIES superlu_dist)
 else()
-  set(GSLIB_DEPENDENCIES petsc)
+  set(GSLIB_DEPENDENCIES metis)
 endif()
 
 set(GSLIB_OPTIONS
