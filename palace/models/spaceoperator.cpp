@@ -257,6 +257,7 @@ SpaceOperator::GetStiffnessMatrix(Operator::DiagonalPolicy diag_policy)
   {
     return {};
   }
+
   auto K = std::make_unique<ParOperator>(BuildOperator(GetNDSpace(), &df, &f,
                                                        (SumCoefficient *)nullptr, &fb,
                                                        assembly_level, skip_zeros),
@@ -277,6 +278,7 @@ SpaceOperator::GetDampingMatrix(Operator::DiagonalPolicy diag_policy)
   {
     return {};
   }
+
   auto C = std::make_unique<ParOperator>(
       BuildOperator(GetNDSpace(), (SumCoefficient *)nullptr, &f, (SumCoefficient *)nullptr,
                     &fb, assembly_level, skip_zeros),
@@ -296,6 +298,7 @@ std::unique_ptr<Operator> SpaceOperator::GetMassMatrix(Operator::DiagonalPolicy 
   {
     return {};
   }
+
   auto M = std::make_unique<ParOperator>(
       BuildOperator(GetNDSpace(), (SumCoefficient *)nullptr, &f, (SumCoefficient *)nullptr,
                     &fb, assembly_level, skip_zeros),
@@ -316,6 +319,7 @@ SpaceOperator::GetComplexStiffnessMatrix(Operator::DiagonalPolicy diag_policy)
   {
     return {};
   }
+
   auto K = std::make_unique<ComplexParOperator>(
       BuildOperator(GetNDSpace(), &df, &f, (SumCoefficient *)nullptr, &fb, assembly_level,
                     skip_zeros),
@@ -336,6 +340,7 @@ SpaceOperator::GetComplexDampingMatrix(Operator::DiagonalPolicy diag_policy)
   {
     return {};
   }
+
   auto C = std::make_unique<ComplexParOperator>(
       BuildOperator(GetNDSpace(), (SumCoefficient *)nullptr, &f, (SumCoefficient *)nullptr,
                     &fb, assembly_level, skip_zeros),
@@ -353,6 +358,11 @@ SpaceOperator::GetComplexMassMatrix(Operator::DiagonalPolicy diag_policy)
   AddRealMassCoefficients(1.0, fr);
   AddRealMassBdrCoefficients(1.0, fbr);
   AddImagMassCoefficients(1.0, fi);
+  if (fr.empty() && fbr.empty() && fi.empty())
+  {
+    return {};
+  }
+
   std::unique_ptr<mfem::SymmetricBilinearForm> mr, mi;
   if (!fr.empty() || !fbr.empty())
   {
@@ -364,10 +374,6 @@ SpaceOperator::GetComplexMassMatrix(Operator::DiagonalPolicy diag_policy)
     mi = BuildOperator(GetNDSpace(), (SumCoefficient *)nullptr, &fi,
                        (SumCoefficient *)nullptr, (SumCoefficient *)nullptr, assembly_level,
                        skip_zeros);
-  }
-  if (!mr && !mi)
-  {
-    return {};
   }
   auto M = std::make_unique<ComplexParOperator>(std::move(mr), std::move(mi), GetNDSpace());
   M->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
@@ -383,6 +389,11 @@ SpaceOperator::GetComplexExtraSystemMatrix(double omega,
   SumMatrixCoefficient fbr(sdim), fbi(sdim);
   SumCoefficient dfbr, dfbi;
   AddExtraSystemBdrCoefficients(omega, dfbr, dfbi, fbr, fbi);
+  if (dfbr.empty() && fbr.empty() && dfbi.empty() && fbi.empty())
+  {
+    return {};
+  }
+
   std::unique_ptr<mfem::SymmetricBilinearForm> ar, ai;
   if (!dfbr.empty() || !fbr.empty())
   {
@@ -393,10 +404,6 @@ SpaceOperator::GetComplexExtraSystemMatrix(double omega,
   {
     ai = BuildOperator(GetNDSpace(), (SumCoefficient *)nullptr, (SumCoefficient *)nullptr,
                        &dfbi, &fbi, assembly_level, skip_zeros);
-  }
-  if (!ar && !ai)
-  {
-    return {};
   }
   auto A = std::make_unique<ComplexParOperator>(std::move(ar), std::move(ai), GetNDSpace());
   A->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
@@ -663,37 +670,73 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(double a0, doub
                    fespace_l.GlobalTrueVSize());
       }
       const int sdim = GetNDSpace().GetParMesh()->SpaceDimension();
-      SumMatrixCoefficient df(sdim), f(sdim), fb(sdim);
-      SumCoefficient dfb;
-      AddStiffnessCoefficients(a0, df, f);
-      AddStiffnessBdrCoefficients(a0, fb);
-      AddDampingCoefficients(a1, f);
-      AddDampingBdrCoefficients(a1, fb);
-      // XX TODO: Test out difference of |Mr + i Mi| vs. Mr + Mi
-      // AddRealMassCoefficients(pc_shifted ? std::abs(a2) : a2, f);
-      // AddImagMassCoefficients(a2, f);
-      AddAbsMassCoefficients(pc_shifted ? std::abs(a2) : a2, f);
-      AddRealMassBdrCoefficients(pc_shifted ? std::abs(a2) : a2, fb);
-      AddExtraSystemBdrCoefficients(a3, dfb, dfb, fb, fb);
-      auto b = (s == 0) ? BuildOperator(fespace_l, &df, &f, &dfb, &fb, assembly_level,
-                                        skip_zeros, pc_lor)
-                        : BuildAuxOperator(fespace_l, &f, &fb, assembly_level, skip_zeros,
-                                           pc_lor);
-      std::unique_ptr<Operator> b_loc;
+      SumMatrixCoefficient dfr(sdim), fr(sdim), fi(sdim), fbr(sdim), fbi(sdim);
+      SumCoefficient dfbr, dfbi;
+      // if (s > 0)
+      // {
+
+      //   // XX TODO: Test complex PC matrix assembly for s > 0
+      //   //          (or s == 0 if coarse solve supports it)
+      //   // XX TODO: Handle complex coeff a0/a1/a2 (like SumOperator)
+
+      //   AddStiffnessCoefficients(a0, dfr, fr);
+      //   AddStiffnessBdrCoefficients(a0, fbr);
+      //   AddDampingCoefficients(a1, fi);
+      //   AddDampingBdrCoefficients(a1, fbi);
+      //   AddRealMassCoefficients(pc_shifted ? std::abs(a2) : a2, fr);
+      //   AddRealMassBdrCoefficients(pc_shifted ? std::abs(a2) : a2, fbr);
+      //   AddImagMassCoefficients(a2, fi);
+      //   AddExtraSystemBdrCoefficients(a3, dfbr, dfbi, fbr, fbi);
+      // }
+      // else
+      {
+        AddStiffnessCoefficients(a0, dfr, fr);
+        AddStiffnessBdrCoefficients(a0, fbr);
+        AddDampingCoefficients(a1, fr);
+        AddDampingBdrCoefficients(a1, fbr);
+        AddAbsMassCoefficients(pc_shifted ? std::abs(a2) : a2, fr);
+        AddRealMassBdrCoefficients(pc_shifted ? std::abs(a2) : a2, fbr);
+        AddExtraSystemBdrCoefficients(a3, dfbr, dfbr, fbr, fbr);
+      }
+
+      std::unique_ptr<mfem::SymmetricBilinearForm> br, bi;
+      std::unique_ptr<Operator> br_loc, bi_loc;
+      if (!dfr.empty() || !fr.empty() || !dfbr.empty() || !fbr.empty())
+      {
+        br = (s == 0) ? BuildOperator(fespace_l, &dfr, &fr, &dfbr, &fbr, assembly_level,
+                                      skip_zeros, pc_lor)
+                      : BuildAuxOperator(fespace_l, &fr, &fbr, assembly_level, skip_zeros,
+                                         pc_lor);
+      }
+      if (!fi.empty() || !dfbi.empty() || !fbi.empty())
+      {
+        bi = (s == 0) ? BuildOperator(fespace_l, (SumCoefficient *)nullptr, &fi, &dfbi,
+                                      &fbi, assembly_level, skip_zeros, pc_lor)
+                      : BuildAuxOperator(fespace_l, &fi, &fbi, assembly_level, skip_zeros,
+                                         pc_lor);
+      }
       if (pc_lor)
       {
         // After we construct the LOR discretization we deep copy the LOR matrix and the
         // original bilinear form and LOR discretization are no longer needed.
         mfem::Array<int> dummy_dbc_tdof_list;
-        mfem::LORDiscretization lor(*b, dummy_dbc_tdof_list);
-        auto b_lor = std::make_unique<mfem::SparseMatrix>(lor.GetAssembledMatrix());
+        mfem::LORDiscretization lor(*br, dummy_dbc_tdof_list);
+        auto br_lor = std::make_unique<mfem::SparseMatrix>(lor.GetAssembledMatrix());
         if (print_prec_hdr)
         {
-          HYPRE_BigInt nnz = b_lor->NumNonZeroElems();
+          HYPRE_BigInt nnz = br_lor->NumNonZeroElems();
           Mpi::GlobalSum(1, &nnz, fespace_l.GetComm());
           Mpi::Print(", {:d} NNZ (LOR)\n", nnz);
         }
-        b_loc = std::move(b_lor);
+        br_loc = std::move(br_lor);
+        br.reset();
+        if (bi)
+        {
+          mfem::LORDiscretization lori(*bi, dummy_dbc_tdof_list);
+          auto bi_lor = std::make_unique<mfem::SparseMatrix>(lori.GetAssembledMatrix());
+          bi_loc = std::move(bi_lor);
+          bi.reset();
+        }
       }
       else
       {
@@ -701,7 +744,7 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(double a0, doub
         {
           if (assembly_level == mfem::AssemblyLevel::LEGACY)
           {
-            HYPRE_BigInt nnz = b->SpMat().NumNonZeroElems();
+            HYPRE_BigInt nnz = br->SpMat().NumNonZeroElems();
             Mpi::GlobalSum(1, &nnz, fespace_l.GetComm());
             Mpi::Print(", {:d} NNZ\n", nnz);
           }
@@ -710,9 +753,10 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(double a0, doub
             Mpi::Print("\n");
           }
         }
-        b_loc = std::move(b);
+        br_loc = std::move(br);
+        bi_loc = std::move(bi);
       }
-      auto B_l = BuildLevelOperator(*B, std::move(b_loc), nullptr, fespace_l);
+      auto B_l = BuildLevelOperator(*B, std::move(br_loc), std::move(bi_loc), fespace_l);
       B_l->SetEssentialTrueDofs(dbc_tdof_lists[l], Operator::DiagonalPolicy::DIAG_ONE);
       if (s == 0)
       {

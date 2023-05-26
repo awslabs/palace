@@ -251,9 +251,6 @@ mfem::HypreParMatrix &ParOperator::ParallelAssemble()
   // Eliminate boundary conditions on the assembled (square) matrix.
   if (dbc_tdof_list)
   {
-    MFEM_VERIFY(
-        &trial_fespace == &test_fespace,
-        "Only square ParOperator should have same trial and test eliminated tdofs!");
     RAP->EliminateBC(*dbc_tdof_list, diag_policy);
   }
   return *RAP;
@@ -293,7 +290,7 @@ void ParOperator::EliminateRHS(const Vector &x, Vector &b) const
   {
     test_fespace.GetRestrictionMatrix()->AddMult(ly, b, -1.0);
   }
-  if (diag_policy == DiagonalPolicy::DIAG_ONE && height == width)
+  if (diag_policy == DiagonalPolicy::DIAG_ONE)
   {
     const int N = dbc_tdof_list->Size();
     const auto *idx = dbc_tdof_list->Read();
@@ -306,7 +303,7 @@ void ParOperator::EliminateRHS(const Vector &x, Vector &b) const
                    B[id] = X[id];
                  });
   }
-  else if (diag_policy == DiagonalPolicy::DIAG_ZERO || height != width)
+  else if (diag_policy == DiagonalPolicy::DIAG_ZERO)
   {
     b.SetSubVector(*dbc_tdof_list, 0.0);
   }
@@ -340,7 +337,7 @@ void ParOperator::AddMult(const Vector &x, Vector &y, const double a) const
     {
       test_fespace.GetRestrictionMatrix()->Mult(ly, ty);
     }
-    if (diag_policy == DiagonalPolicy::DIAG_ONE && height == width)
+    if (diag_policy == DiagonalPolicy::DIAG_ONE)
     {
       const int N = dbc_tdof_list->Size();
       const auto *idx = dbc_tdof_list->Read();
@@ -353,7 +350,7 @@ void ParOperator::AddMult(const Vector &x, Vector &y, const double a) const
                      TY[id] = X[id];
                    });
     }
-    else if (diag_policy == DiagonalPolicy::DIAG_ZERO || height != width)
+    else if (diag_policy == DiagonalPolicy::DIAG_ZERO)
     {
       ty.SetSubVector(*dbc_tdof_list, 0.0);
     }
@@ -400,7 +397,7 @@ void ParOperator::AddMultTranspose(const Vector &x, Vector &y, const double a) c
   if (dbc_tdof_list)
   {
     trial_fespace.GetProlongationMatrix()->MultTranspose(lx, ty);
-    if (diag_policy == DiagonalPolicy::DIAG_ONE && height == width)
+    if (diag_policy == DiagonalPolicy::DIAG_ONE)
     {
       const int N = dbc_tdof_list->Size();
       const auto *idx = dbc_tdof_list->Read();
@@ -413,7 +410,7 @@ void ParOperator::AddMultTranspose(const Vector &x, Vector &y, const double a) c
                      TY[id] = X[id];
                    });
     }
-    else if (diag_policy == DiagonalPolicy::DIAG_ZERO || height != width)
+    else if (diag_policy == DiagonalPolicy::DIAG_ZERO)
     {
       ty.SetSubVector(*dbc_tdof_list, 0.0);
     }
@@ -554,7 +551,7 @@ void ComplexParOperator::AddMult(const ComplexVector &x, ComplexVector &y,
       test_fespace.GetRestrictionMatrix()->Mult(ly.Real(), ty.Real());
       test_fespace.GetRestrictionMatrix()->Mult(ly.Imag(), ty.Imag());
     }
-    if (diag_policy == Operator::DiagonalPolicy::DIAG_ONE && height == width)
+    if (diag_policy == Operator::DiagonalPolicy::DIAG_ONE)
     {
       const int N = dbc_tdof_list->Size();
       const auto *idx = dbc_tdof_list->Read();
@@ -570,7 +567,7 @@ void ComplexParOperator::AddMult(const ComplexVector &x, ComplexVector &y,
                      TYI[id] = XI[id];
                    });
     }
-    else if (diag_policy == Operator::DiagonalPolicy::DIAG_ZERO || height != width)
+    else if (diag_policy == Operator::DiagonalPolicy::DIAG_ZERO)
     {
       ty.SetSubVector(*dbc_tdof_list, 0.0);
     }
@@ -647,7 +644,7 @@ void ComplexParOperator::AddMultTranspose(const ComplexVector &x, ComplexVector 
   {
     trial_fespace.GetProlongationMatrix()->MultTranspose(lx.Real(), ty.Real());
     trial_fespace.GetProlongationMatrix()->MultTranspose(lx.Imag(), ty.Imag());
-    if (diag_policy == Operator::DiagonalPolicy::DIAG_ONE && height == width)
+    if (diag_policy == Operator::DiagonalPolicy::DIAG_ONE)
     {
       const int N = dbc_tdof_list->Size();
       const auto *idx = dbc_tdof_list->Read();
@@ -663,7 +660,7 @@ void ComplexParOperator::AddMultTranspose(const ComplexVector &x, ComplexVector 
                      TYI[id] = XI[id];
                    });
     }
-    else if (diag_policy == Operator::DiagonalPolicy::DIAG_ZERO || height != width)
+    else if (diag_policy == Operator::DiagonalPolicy::DIAG_ZERO)
     {
       ty.SetSubVector(*dbc_tdof_list, 0.0);
     }
@@ -732,7 +729,7 @@ void ComplexParOperator::AddMultHermitianTranspose(const ComplexVector &x, Compl
   {
     trial_fespace.GetProlongationMatrix()->MultTranspose(lx.Real(), ty.Real());
     trial_fespace.GetProlongationMatrix()->MultTranspose(lx.Imag(), ty.Imag());
-    if (diag_policy == Operator::DiagonalPolicy::DIAG_ONE && height == width)
+    if (diag_policy == Operator::DiagonalPolicy::DIAG_ONE)
     {
       const int N = dbc_tdof_list->Size();
       const auto *idx = dbc_tdof_list->Read();
@@ -748,7 +745,7 @@ void ComplexParOperator::AddMultHermitianTranspose(const ComplexVector &x, Compl
                      TYI[id] = XI[id];
                    });
     }
-    else if (diag_policy == Operator::DiagonalPolicy::DIAG_ZERO || height != width)
+    else if (diag_policy == Operator::DiagonalPolicy::DIAG_ZERO)
     {
       ty.SetSubVector(*dbc_tdof_list, 0.0);
     }

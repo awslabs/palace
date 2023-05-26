@@ -13,26 +13,28 @@ namespace palace
 namespace
 {
 
-void GetDiagonal(const ParOperator &A, Vector &diag)
+void GetInverseDiagonal(const ParOperator &A, Vector &dinv)
 {
-  diag.SetSize(A.Height());
-  A.AssembleDiagonal(diag);
+  dinv.SetSize(A.Height());
+  A.AssembleDiagonal(dinv);
+  dinv.Reciprocal();
 }
 
-void GetDiagonal(const ComplexParOperator &A, ComplexVector &diag)
+void GetInverseDiagonal(const ComplexParOperator &A, ComplexVector &dinv)
 {
   MFEM_VERIFY(A.HasReal() || A.HasImag(),
               "Invalid zero ComplexParOperator for ChebyshevSmoother!");
-  diag.SetSize(A.Height());
-  diag = 0.0;
+  dinv.SetSize(A.Height());
+  dinv = 0.0;
   if (A.HasReal())
   {
-    A.Real()->AssembleDiagonal(diag.Real());
+    A.Real()->AssembleDiagonal(dinv.Real());
   }
   if (A.HasImag())
   {
-    A.Imag()->AssembleDiagonal(diag.Imag());
+    A.Imag()->AssembleDiagonal(dinv.Imag());
   }
+  dinv.Reciprocal();
 }
 
 }  // namespace
@@ -52,8 +54,7 @@ void ChebyshevSmoother<OperType>::SetOperator(const OperType &op)
   const auto *PtAP = dynamic_cast<const ParOperType *>(&op);
   MFEM_VERIFY(PtAP,
               "ChebyshevSmoother requires a ParOperator or ComplexParOperator operator!");
-  GetDiagonal(*PtAP, dinv);
-  dinv.Reciprocal();
+  GetInverseDiagonal(*PtAP, dinv);
 
   A = &op;
   r.SetSize(A->Height());
@@ -64,12 +65,54 @@ void ChebyshevSmoother<OperType>::SetOperator(const OperType &op)
   // polynomial versus Gauss-Seidel, JCP (2003).
   BaseDiagonalOperator<OperType> Dinv(dinv);
   BaseProductOperator<OperType> DinvA(Dinv, *A);
-  lambda_max = 1.1 * linalg::SpectralNorm(PtAP->GetComm(), DinvA, false);
+  lambda_max = 1.01 * linalg::SpectralNorm(PtAP->GetComm(), DinvA, false);
 }
 
 namespace
 {
 
+template <bool Transpose = false>
+inline void ApplyOp(const Operator &A, const Vector &x, Vector &y, const double a)
+{
+  if (a == 0.0)
+  {
+    A.Mult(x, y);
+  }
+  else
+  {
+    A.AddMult(x, y, a);
+  }
+}
+
+template <bool Transpose = false>
+inline void ApplyOp(const ComplexOperator &A, const ComplexVector &x, ComplexVector &y,
+                    const double a)
+{
+  if constexpr (!Transpose)
+  {
+    if (a == 0.0)
+    {
+      A.Mult(x, y);
+    }
+    else
+    {
+      A.AddMult(x, y, a);
+    }
+  }
+  else
+  {
+    if (a == 0.0)
+    {
+      A.MultHermitianTranspose(x, y);
+    }
+    else
+    {
+      A.AddMultHermitianTranspose(x, y, a);
+    }
+  }
+}
+
+template <bool Transpose = false>
 inline void ApplyOrder0(double sr, const Vector &dinv, const Vector &r, Vector &d)
 {
   const int N = d.Size();
@@ -79,6 +122,7 @@ inline void ApplyOrder0(double sr, const Vector &dinv, const Vector &r, Vector &
   mfem::forall(N, [=] MFEM_HOST_DEVICE(int i) { D[i] = sr * DI[i] * R[i]; });
 }
 
+template <bool Transpose = false>
 inline void ApplyOrder0(const double sr, const ComplexVector &dinv, const ComplexVector &r,
                         ComplexVector &d)
 {
@@ -89,15 +133,29 @@ inline void ApplyOrder0(const double sr, const ComplexVector &dinv, const Comple
   const auto *RI = r.Imag().Read();
   auto *DR = d.Real().ReadWrite();
   auto *DI = d.Imag().ReadWrite();
-  mfem::forall(N,
-               [=] MFEM_HOST_DEVICE(int i)
-               {
-                 const double t = DII[i] * RR[i] + DIR[i] * RI[i];
-                 DR[i] = sr * (DIR[i] * RR[i] - DII[i] * RI[i]);
-                 DI[i] = sr * t;
-               });
+  if constexpr (!Transpose)
+  {
+    mfem::forall(N,
+                 [=] MFEM_HOST_DEVICE(int i)
+                 {
+                   const double t = DII[i] * RR[i] + DIR[i] * RI[i];
+                   DR[i] = sr * (DIR[i] * RR[i] - DII[i] * RI[i]);
+                   DI[i] = sr * t;
+                 });
+  }
+  else
+  {
+    mfem::forall(N,
+                 [=] MFEM_HOST_DEVICE(int i)
+                 {
+                   const double t = -DII[i] * RR[i] + DIR[i] * RI[i];
+                   DR[i] = sr * (DIR[i] * RR[i] + DII[i] * RI[i]);
+                   DI[i] = sr * t;
+                 });
+  }
 }
 
+template <bool Transpose = false>
 inline void ApplyOrderK(const double sd, const double sr, const Vector &dinv,
                         const Vector &r, Vector &d)
 {
@@ -108,6 +166,7 @@ inline void ApplyOrderK(const double sd, const double sr, const Vector &dinv,
   mfem::forall(N, [=] MFEM_HOST_DEVICE(int i) { D[i] = sd * D[i] + sr * DI[i] * R[i]; });
 }
 
+template <bool Transpose = false>
 inline void ApplyOrderK(const double sd, const double sr, const ComplexVector &dinv,
                         const ComplexVector &r, ComplexVector &d)
 {
@@ -118,13 +177,26 @@ inline void ApplyOrderK(const double sd, const double sr, const ComplexVector &d
   const auto *RI = r.Imag().Read();
   auto *DR = d.Real().ReadWrite();
   auto *DI = d.Imag().ReadWrite();
-  mfem::forall(N,
-               [=] MFEM_HOST_DEVICE(int i)
-               {
-                 const double t = DII[i] * RR[i] + DIR[i] * RI[i];
-                 DR[i] = sd * DR[i] + sr * (DIR[i] * RR[i] - DII[i] * RI[i]);
-                 DI[i] = sd * DI[i] + sr * t;
-               });
+  if constexpr (!Transpose)
+  {
+    mfem::forall(N,
+                 [=] MFEM_HOST_DEVICE(int i)
+                 {
+                   const double t = DII[i] * RR[i] + DIR[i] * RI[i];
+                   DR[i] = sd * DR[i] + sr * (DIR[i] * RR[i] - DII[i] * RI[i]);
+                   DI[i] = sd * DI[i] + sr * t;
+                 });
+  }
+  else
+  {
+    mfem::forall(N,
+                 [=] MFEM_HOST_DEVICE(int i)
+                 {
+                   const double t = -DII[i] * RR[i] + DIR[i] * RI[i];
+                   DR[i] = sd * DR[i] + sr * (DIR[i] * RR[i] + DII[i] * RI[i]);
+                   DI[i] = sd * DI[i] + sr * t;
+                 });
+  }
 }
 
 }  // namespace
@@ -137,7 +209,7 @@ void ChebyshevSmoother<OperType>::Mult(const VecType &x, VecType &y) const
   {
     if (this->initial_guess || it > 0)
     {
-      A->Mult(y, r);
+      ApplyOp(*A, y, r, 0.0);
       linalg::AXPBY(1.0, x, -1.0, r);
     }
     else
@@ -152,7 +224,7 @@ void ChebyshevSmoother<OperType>::Mult(const VecType &x, VecType &y) const
     for (int k = 1; k < order; k++)
     {
       y += d;
-      A->AddMult(d, r, -1.0);
+      ApplyOp(*A, d, r, -1.0);
       const double sd = (2.0 * k - 1.0) / (2.0 * k + 3.0);
       const double sr = (8.0 * k + 4.0) / ((2.0 * k + 3.0) * lambda_max);
       ApplyOrderK(sd, sr, dinv, r, d);
