@@ -41,7 +41,7 @@ jobs:
             with-64bit-int: false
             with-openmp: false
             with-solver: superlu
-            with-eigensolver: slepc
+            with-eigensolver: arpack
 
     runs-on: macos-latest-xl
     steps:
