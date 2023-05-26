@@ -44,6 +44,8 @@ public:
                      const std::vector<mfem::Array<int>> &h1_dbc_tdof_lists, double tol,
                      int max_it, int print);
 
+  const Operator &GetOperator() { return *A; }
+
   void Mult(const Vector &x, Vector &y) const { ksp->Mult(x, y); }
 
   void Mult(const ComplexVector &x, ComplexVector &y)
