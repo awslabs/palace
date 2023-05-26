@@ -386,7 +386,8 @@ double Normalize(MPI_Comm comm, Vector &x, const Operator &B, Vector &Bx)
 {
   B.Mult(x, Bx);
   double dot = Dot(comm, x, Bx);
-  MFEM_ASSERT(dot > 0.0, "Non-positive vector norm in normalization!");
+  MFEM_ASSERT(dot > 0.0,
+              "Non-positive vector norm in normalization (dot = " << dot << ")!");
   double norm = std::sqrt(dot);
   x *= 1.0 / norm;
   return norm;
@@ -399,8 +400,8 @@ double Normalize(MPI_Comm comm, ComplexVector &x, const Operator &B, ComplexVect
   B.Mult(x.Real(), Bx.Real());
   B.Mult(x.Imag(), Bx.Imag());
   std::complex<double> dot = Dot(comm, x, Bx);
-  MFEM_ASSERT(dot.real() > 0.0 && dot.imag() == 0.0,
-              "Non-positive vector norm in normalization!");
+  MFEM_ASSERT(dot.real() > 0.0 && std::abs(dot.imag()) < 1.0e-9 * dot.real(),
+              "Non-positive vector norm in normalization (dot = " << dot << ")!");
   double norm = std::sqrt(dot.real());
   x *= 1.0 / norm;
   return norm;

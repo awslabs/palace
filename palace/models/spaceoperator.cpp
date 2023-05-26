@@ -883,7 +883,7 @@ bool SpaceOperator::GetExcitationVector(Vector &RHS)
 bool SpaceOperator::GetExcitationVector(double omega, ComplexVector &RHS)
 {
   // Frequency domain excitation vector: RHS = iω RHS1 + RHS2(ω).
-  RHS.SetSize(2 * GetNDSpace().GetTrueVSize());
+  RHS.SetSize(GetNDSpace().GetTrueVSize());
   RHS = 0.0;
   bool nnz1 = AddExcitationVector1Internal(RHS.Real());
   RHS *= 1i * omega;
@@ -897,7 +897,7 @@ bool SpaceOperator::GetExcitationVector1(ComplexVector &RHS1)
 {
   // Assemble the frequency domain excitation term with linear frequency dependence
   // (coefficient iω, see GetExcitationVector above, is accounted for later).
-  RHS1.SetSize(2 * GetNDSpace().GetTrueVSize());
+  RHS1.SetSize(GetNDSpace().GetTrueVSize());
   RHS1 = 0.0;
   bool nnz1 = AddExcitationVector1Internal(RHS1.Real());
   RHS1.Real().SetSubVector(nd_dbc_tdof_lists.back(), 0.0);
@@ -906,7 +906,7 @@ bool SpaceOperator::GetExcitationVector1(ComplexVector &RHS1)
 
 bool SpaceOperator::GetExcitationVector2(double omega, ComplexVector &RHS2)
 {
-  RHS2.SetSize(2 * GetNDSpace().GetTrueVSize());
+  RHS2.SetSize(GetNDSpace().GetTrueVSize());
   RHS2 = 0.0;
   bool nnz2 = AddExcitationVector2Internal(omega, RHS2);
   RHS2.Real().SetSubVector(nd_dbc_tdof_lists.back(), 0.0);
@@ -940,7 +940,7 @@ bool SpaceOperator::AddExcitationVector2Internal(double omega, ComplexVector &RH
 {
   // Assemble the contribution of wave ports to the frequency domain excitation term at the
   // specified frequency.
-  MFEM_VERIFY(RHS2.Size() == 2 * GetNDSpace().GetTrueVSize(),
+  MFEM_VERIFY(RHS2.Size() == GetNDSpace().GetTrueVSize(),
               "Invalid T-vector size for AddExcitationVector2Internal!");
   SumVectorCoefficient fbr(GetNDSpace().GetParMesh()->SpaceDimension()),
       fbi(GetNDSpace().GetParMesh()->SpaceDimension());
@@ -963,14 +963,14 @@ bool SpaceOperator::AddExcitationVector2Internal(double omega, ComplexVector &RH
 
 void SpaceOperator::GetConstantInitialVector(ComplexVector &v)
 {
-  v.SetSize(2 * GetNDSpace().GetTrueVSize());
+  v.SetSize(GetNDSpace().GetTrueVSize());
   v = 1.0;
   v.Real().SetSubVector(nd_dbc_tdof_lists.back(), 0.0);
 }
 
 void SpaceOperator::GetRandomInitialVector(ComplexVector &v)
 {
-  v.SetSize(2 * GetNDSpace().GetTrueVSize());
+  v.SetSize(GetNDSpace().GetTrueVSize());
   linalg::SetRandom(GetNDSpace().GetComm(), v);
   v.SetSubVector(nd_dbc_tdof_lists.back(), 0.0);
 }
