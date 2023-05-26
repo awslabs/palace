@@ -879,7 +879,7 @@ std::map<int, std::array<int, 2>> CheckMesh(std::unique_ptr<mfem::Mesh> &orig_me
         orig_mesh->GetFaceElements(f, &e1, &e2);
         bool no_e1 = (e1 < 0 || elem_delete[e1]);
         bool no_e2 = (e2 < 0 || elem_delete[e2]);
-        if (no_e1 || no_e1 && !(no_e1 && no_e2))
+        if ((no_e1 || no_e2) && !(no_e1 && no_e2))
         {
           // Mpi::Print("Adding exterior boundary element!\n");
           add_bdr_faces[f] = 1;
