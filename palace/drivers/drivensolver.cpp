@@ -248,63 +248,63 @@ void DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator &postop, i
   // removes it from P \ P_S.
   timer.construct_time += timer.Lap();
   Timer local_timer;
+  const double f0 = iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, 1.0);
+
   Mpi::Print("\nBeginning PROM construction offline phase:\n"
              " {:d} points for frequency sweep over [{:.3e}, {:.3e}] GHz\n",
-             nstep - step0,
-             iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, omega0),
-             iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY,
-                                        omega0 + (nstep - step0 - 1) * delta_omega));
-  spaceop.GetWavePortOp().SetSuppressOutput(true);  // Suppress wave port stuff for offline
-  // RomOperator prom(iodata, spaceop, nmax);
-  // prom.Initialize(nstep - step0, omega0, delta_omega);  //XX TODO PROM
+             nstep - step0, omega0 * f0, (omega0 + (nstep - step0 - 1) * delta_omega) * f0);
+  RomOperator prom(iodata, spaceop);
+  prom.Initialize(omega0, delta_omega, nstep - step0, nmax);
+  spaceop.GetWavePortOp().SetSuppressOutput(true);  // Suppress wave port output for offline
   local_timer.construct_time += local_timer.Lap();
 
-  // prom.SolveHDM(omega0, E, true);  // Print matrix stats at first HDM solve
-  // prom.SolveHDM(omega0 + (nstep - step0 - 1) * delta_omega, E, false);
-  // local_timer.solve_time += local_timer.Lap();  //XX TODO PROM
+  prom.SolveHDM(omega0, E);  // Print matrix stats at first HDM solve
+  local_timer.solve_time += local_timer.Lap();
+  prom.AddHDMSample(omega0, E);
+  local_timer.construct_time += local_timer.Lap();
+  prom.SolveHDM(omega0 + (nstep - step0 - 1) * delta_omega, E);
+  local_timer.solve_time += local_timer.Lap();
+  prom.AddHDMSample(omega0 + (nstep - step0 - 1) * delta_omega, E);
+  local_timer.construct_time += local_timer.Lap();
 
   // Greedy procedure for basis construction (offline phase). Basis is initialized with
   // solutions at frequency sweep endpoints.
-  // int iter = static_cast<int>(prom.GetSampleFrequencies().size()), iter0 = iter;
-  // double max_error = 1.0;
+  int iter = static_cast<int>(prom.GetSampleFrequencies().size()), iter0 = iter;
+  double max_error;
+  ;
   while (true)
   {
     // Compute maximum error in parameter domain with current PROM.
-    // double omega_star;
-    // max_error = prom.ComputeMaxError(ncand, omega_star);  //XX TODO PROM
-    // local_timer.construct_time += local_timer.Lap();
-    // if (max_error < offline_tol || iter == nmax)
-    // {
-    //   break;
-    // }
+    double omega_star;
+    max_error = prom.ComputeMaxError(ncand, omega_star);
+    local_timer.construct_time += local_timer.Lap();
+    if (max_error < offline_tol || iter == nmax)
+    {
+      break;
+    }
 
     // Sample HDM and add solution to basis.
-    // Mpi::Print(
-    //     "\nGreedy iteration {:d} (n = {:d}): ω* = {:.3e} GHz ({:.3e}), error = {:.3e}\n",
-    //     iter - iter0 + 1, prom.GetReducedDimension(),
-    //     iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, omega_star), omega_star,
-    //     max_error);
-    // prom.SolveHDM(omega_star, E);  //XX TODO PROM
-    // local_timer.solve_time += local_timer.Lap();
-    // iter++;
+    Mpi::Print(
+        "\nGreedy iteration {:d} (n = {:d}): ω* = {:.3e} GHz ({:.3e}), error = {:.3e}\n",
+        iter - iter0 + 1, prom.GetReducedDimension(), omega_star * f0, omega_star,
+        max_error);
+    prom.SolveHDM(omega_star, E);
+    local_timer.solve_time += local_timer.Lap();
+    prom.AddHDMSample(omega_star, E);
+    local_timer.construct_time += local_timer.Lap();
+    iter++;
   }
-  {
-    // std::vector<double> samples(prom.GetSampleFrequencies());
-    // for (auto &sample : samples)
-    // {
-    //   sample = iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, sample);
-    // }
-    // Mpi::Print("\nAdaptive sampling{} {:d} frequency samples:\n"
-    //            " n = {:d}, error = {:.3e}, tol = {:.3e}\n",
-    //            (iter == nmax) ? " reached maximum" : " converged with", iter,
-    //            prom.GetReducedDimension(), max_error, offline_tol);  //XX TODO PROM
-    // utils::PrettyPrint(samples, " Sampled frequencies (GHz):");
-  }
-  // SaveMetadata(prom.GetLinearSolver());   //XX TODO PROM
+  Mpi::Print("\nAdaptive sampling{} {:d} frequency samples:\n"
+             " n = {:d}, error = {:.3e}, tol = {:.3e}\n",
+             (iter == nmax) ? " reached maximum" : " converged with", iter,
+             prom.GetReducedDimension(), max_error, offline_tol);
+  utils::PrettyPrint(prom.GetSampleFrequencies(), f0, " Sampled frequencies (GHz):");
+  SaveMetadata(prom.GetLinearSolver());
+
   const auto local_construction_time = timer.Lap();
   timer.construct_time += local_construction_time;
   Mpi::Print(" Total offline phase elapsed time: {:.2e} s\n"
-             " Parameter space sampling: {:.2e} s, HDM solves: {:.2e} s\n",
+             " Sampling and PROM construction: {:.2e} s, HDM solves: {:.2e} s\n",
              Timer::Duration(local_construction_time).count(),
              Timer::Duration(local_timer.construct_time).count(),
              Timer::Duration(local_timer.solve_time).count());  // Timings on rank 0
@@ -322,11 +322,11 @@ void DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator &postop, i
                nstep, freq, Timer::Duration(timer.Now() - t0).count());
 
     // Assemble the linear system and solve.
-    // prom.AssemblePROM(omega);  //XX TODO PROM
+    prom.AssemblePROM(omega);
     timer.construct_time += timer.Lap();
 
     Mpi::Print("\n");
-    // prom.SolvePROM(E);  //XX TODO PROM
+    prom.SolvePROM(E);
     timer.solve_time += timer.Lap();
 
     // Compute B = -1/(iω) ∇ x E on the true dofs, and set the internal GridFunctions in

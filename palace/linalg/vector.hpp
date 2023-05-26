@@ -145,6 +145,8 @@ inline double Norml2(MPI_Comm comm, const VecType &x)
 {
   return std::sqrt(std::abs(Dot(comm, x, x)));
 }
+template <typename VecType>
+double Norml2(MPI_Comm comm, const VecType &x, const Operator &B, VecType &Bx);
 
 // Normalize the vector, possibly with respect to an SPD matrix B.
 template <typename VecType>
@@ -156,7 +158,13 @@ inline double Normalize(MPI_Comm comm, VecType &x)
   return norm;
 }
 template <typename VecType>
-double Normalize(MPI_Comm comm, VecType &x, const Operator &B, VecType &Bx);
+inline double Normalize(MPI_Comm comm, VecType &x, const Operator &B, VecType &Bx)
+{
+  double norm = Norml2(comm, x, B, Bx);
+  MFEM_ASSERT(norm > 0.0, "Zero vector norm in normalization!");
+  x *= 1.0 / norm;
+  return norm;
+}
 
 // Addition y += alpha * x.
 template <typename VecType, typename ScalarType>

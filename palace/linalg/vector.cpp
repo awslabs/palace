@@ -382,29 +382,25 @@ void SetRandomSign(MPI_Comm comm, ComplexVector &x, int seed)
 }
 
 template <>
-double Normalize(MPI_Comm comm, Vector &x, const Operator &B, Vector &Bx)
+double Norml2(MPI_Comm comm, const Vector &x, const Operator &B, Vector &Bx)
 {
   B.Mult(x, Bx);
-  double dot = Dot(comm, x, Bx);
+  double dot = Dot(comm, Bx, x);
   MFEM_ASSERT(dot > 0.0,
               "Non-positive vector norm in normalization (dot = " << dot << ")!");
-  double norm = std::sqrt(dot);
-  x *= 1.0 / norm;
-  return norm;
+  return std::sqrt(dot);
 }
 
 template <>
-double Normalize(MPI_Comm comm, ComplexVector &x, const Operator &B, ComplexVector &Bx)
+double Norml2(MPI_Comm comm, const ComplexVector &x, const Operator &B, ComplexVector &Bx)
 {
   // For SPD B, xᴴ B x is real.
   B.Mult(x.Real(), Bx.Real());
   B.Mult(x.Imag(), Bx.Imag());
-  std::complex<double> dot = Dot(comm, x, Bx);
+  std::complex<double> dot = Dot(comm, Bx, x);
   MFEM_ASSERT(dot.real() > 0.0 && std::abs(dot.imag()) < 1.0e-9 * dot.real(),
               "Non-positive vector norm in normalization (dot = " << dot << ")!");
-  double norm = std::sqrt(dot.real());
-  x *= 1.0 / norm;
-  return norm;
+  return std::sqrt(dot.real());
 }
 
 template <>
