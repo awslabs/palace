@@ -6,11 +6,7 @@
 #
 
 # Force build order
-if(PALACE_WITH_GSLIB)
-  set(PALACE_DEPENDENCIES gslib)
-else()
-  set(PALACE_DEPENDENCIES petsc)
-endif()
+set(PALACE_DEPENDENCIES hypre)
 
 set(PALACE_OPTIONS ${PALACE_SUPERBUILD_DEFAULT_ARGS})
 list(APPEND PALACE_OPTIONS
