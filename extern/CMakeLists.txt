@@ -90,28 +90,17 @@ if(PALACE_WITH_ARPACK)
   include(ExternalARPACK)
 endif()
 
-# Add HYPRE
-message(STATUS "===================== Configuring HYPRE dependency =====================")
-if(NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/hypre)
-  message(FATAL_ERROR
-    "Could not locate source directory for HYPRE, maybe try `git submodule update --init`"
-  )
-endif()
-include(ExternalHYPRE)
-
-# Add PETSc
+# Add SLEPc (requires PETSc)
 if(PALACE_WITH_SLEPC)
   message(STATUS "=============== Configuring PETSc and SLEPc dependencies ===============")
-else()
-  message(STATUS "===================== Configuring PETSc dependency =====================")
+  if(NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/petsc OR
+     NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/slepc)
+    message(FATAL_ERROR
+      "Could not locate source directory for PETSc or SLEPc, maybe try `git submodule update --init`"
+    )
+  endif()
+  include(ExternalSLEPc)
 endif()
-if(NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/petsc OR
-   NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/slepc)
-  message(FATAL_ERROR
-    "Could not locate source directory for PETSc or SLEPc, maybe try `git submodule update --init`"
-  )
-endif()
-include(ExternalPETSc)
 
 # Add GSLIB
 if(PALACE_WITH_GSLIB)
@@ -123,3 +112,12 @@ if(PALACE_WITH_GSLIB)
   endif()
   include(ExternalGSLIB)
 endif()
+
+# Add HYPRE
+message(STATUS "===================== Configuring HYPRE dependency =====================")
+if(NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/hypre)
+  message(FATAL_ERROR
+    "Could not locate source directory for HYPRE, maybe try `git submodule update --init`"
+  )
+endif()
+include(ExternalHYPRE)
