@@ -273,7 +273,7 @@ template <typename OperType>
 void CgSolver<OperType>::Mult(const VecType &b, VecType &x) const
 {
   // Set up workspace.
-  ScalarType beta, beta_prev, alpha, denom;
+  ScalarType beta, beta_prev = 0.0, alpha, denom;
   RealType res, eps;
   MFEM_VERIFY(A, "Operator must be set for CgSolver::Mult!");
   MFEM_ASSERT(A->Width() == x.Size() && A->Height() == b.Size(),
@@ -472,7 +472,8 @@ void GmresSolver<OperType>::Initialize() const
 {
   if (!V.empty())
   {
-    MFEM_ASSERT(V.size() == max_dim + 1 && V[0].Size() == A->Height(),
+    MFEM_ASSERT(V.size() == static_cast<std::size_t>(max_dim + 1) &&
+                    V[0].Size() == A->Height(),
                 "Repeated solves with GmresSolver should not modify the operator size or "
                 "restart dimension!");
     return;
@@ -508,7 +509,7 @@ template <typename OperType>
 void GmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
 {
   // Set up workspace.
-  RealType beta = 0.0, true_beta, eps;
+  RealType beta = 0.0, true_beta, eps = 0.0;
   MFEM_VERIFY(A, "Operator must be set for GmresSolver::Mult!");
   MFEM_ASSERT(A->Width() == x.Size() && A->Height() == b.Size(),
               "Size mismatch for GmresSolver::Mult!");
@@ -694,7 +695,7 @@ template <typename OperType>
 void FgmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
 {
   // Set up workspace.
-  RealType beta = 0.0, true_beta, eps;
+  RealType beta = 0.0, true_beta, eps = 0.0;
   MFEM_VERIFY(A && B, "Operator and preconditioner must be set for FgmresSolver::Mult!");
   MFEM_ASSERT(A->Width() == x.Size() && A->Height() == b.Size(),
               "Size mismatch for FgmresSolver::Mult!");

@@ -57,7 +57,7 @@ public:
   // Initialize time integrators and set 0 initial conditions.
   void Init();
 
-  // Perform time step from t => t + dt.
+  // Perform time step from t -> t + dt.
   void Step(double &t, double &dt);
 };
 

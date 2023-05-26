@@ -217,7 +217,7 @@ auto BuildOperator(mfem::ParFiniteElementSpace &fespace, T1 *df, T2 *f, T3 *dfb,
     a->Assemble(skip_zeros);
     a->Finalize(skip_zeros);
   }
-  return std::move(a);
+  return a;
 }
 
 template <typename T1, typename T2>
@@ -240,7 +240,7 @@ auto BuildAuxOperator(mfem::ParFiniteElementSpace &fespace, T1 *f, T2 *fb,
     a->Assemble(skip_zeros);
     a->Finalize(skip_zeros);
   }
-  return std::move(a);
+  return a;
 }
 
 }  // namespace
@@ -886,7 +886,7 @@ void SpaceOperator::AddRealMassBdrCoefficients(double coef, SumMatrixCoefficient
 
 void SpaceOperator::AddImagMassCoefficients(double coef, SumMatrixCoefficient &f)
 {
-  // Contribution for loss tangent: ε => ε * (1 - i tan(δ)).
+  // Contribution for loss tangent: ε -> ε * (1 - i tan(δ)).
   if (mat_op.HasLossTangent())
   {
     constexpr MaterialPropertyType MatType = MaterialPropertyType::PERMITTIVITY_IMAG;
@@ -932,8 +932,7 @@ bool SpaceOperator::GetExcitationVector(double omega, ComplexVector &RHS)
   bool nnz1 = AddExcitationVector1Internal(RHS.Real());
   RHS *= 1i * omega;
   bool nnz2 = AddExcitationVector2Internal(omega, RHS);
-  RHS.Real().SetSubVector(nd_dbc_tdof_lists.back(), 0.0);
-  RHS.Imag().SetSubVector(nd_dbc_tdof_lists.back(), 0.0);
+  RHS.SetSubVector(nd_dbc_tdof_lists.back(), 0.0);
   return nnz1 || nnz2;
 }
 
@@ -953,8 +952,7 @@ bool SpaceOperator::GetExcitationVector2(double omega, ComplexVector &RHS2)
   RHS2.SetSize(GetNDSpace().GetTrueVSize());
   RHS2 = 0.0;
   bool nnz2 = AddExcitationVector2Internal(omega, RHS2);
-  RHS2.Real().SetSubVector(nd_dbc_tdof_lists.back(), 0.0);
-  RHS2.Imag().SetSubVector(nd_dbc_tdof_lists.back(), 0.0);
+  RHS2.SetSubVector(nd_dbc_tdof_lists.back(), 0.0);
   return nnz2;
 }
 
