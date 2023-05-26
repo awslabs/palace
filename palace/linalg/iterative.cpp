@@ -303,8 +303,19 @@ void CgSolver<OperType>::Mult(const VecType &b, VecType &x) const
   }
   beta = linalg::Dot(comm, z, r);
   CheckDot(beta, "PCG preconditioner is not positive definite: (Br, r) = ");
-  res = initial_res = std::sqrt(std::abs(beta));
-  eps = std::max(rel_tol * res, abs_tol);
+  res = std::sqrt(std::abs(beta));
+  if (this->initial_guess && B)
+  {
+    B->Mult(b, p);
+    auto beta_rhs = linalg::Dot(comm, p, b);
+    CheckDot(beta_rhs, "PCG preconditioner is not positive definite: (Bb, b) = ");
+    initial_res = std::sqrt(std::abs(beta_rhs));
+  }
+  else
+  {
+    initial_res = res;
+  }
+  eps = std::max(rel_tol * initial_res, abs_tol);
   converged = (res < eps);
 
   // Begin iterations.
@@ -379,6 +390,40 @@ namespace
 {
 
 template <typename PrecSide, typename OperType, typename VecType>
+inline void InitialResidual(PrecSide side, const OperType *A, const Solver<OperType> *B,
+                            const VecType &b, VecType &x, VecType &r, VecType &z,
+                            bool initial_guess)
+{
+  if (B && side == GmresSolver<OperType>::PrecSide::LEFT)
+  {
+    if (initial_guess)
+    {
+      A->Mult(x, z);
+      linalg::AXPBY(1.0, b, -1.0, z);
+      B->Mult(z, r);
+    }
+    else
+    {
+      B->Mult(b, r);
+      x = 0.0;
+    }
+  }
+  else  // !B || side == PrecSide::RIGHT
+  {
+    if (initial_guess)
+    {
+      A->Mult(x, r);
+      linalg::AXPBY(1.0, b, -1.0, r);
+    }
+    else
+    {
+      r = b;
+      x = 0.0;
+    }
+  }
+}
+
+template <typename PrecSide, typename OperType, typename VecType>
 inline void ApplyBA(PrecSide side, const OperType *A, const Solver<OperType> *B,
                     const VecType &x, VecType &y, VecType &z)
 {
@@ -395,6 +440,28 @@ inline void ApplyBA(PrecSide side, const OperType *A, const Solver<OperType> *B,
   else
   {
     A->Mult(x, y);
+  }
+}
+
+template <typename OrthogType, typename VecType, typename ScalarType>
+inline void OrthogonalizeIteration(OrthogType type, MPI_Comm comm,
+                                   const std::vector<VecType> &V, VecType &w,
+                                   ScalarType *Hj, int j)
+{
+  // Orthogonalize w against the leading j + 1 columns of V.
+  typedef typename std::conditional<std::is_same<VecType, ComplexVector>::value,
+                                    ComplexOperator, Operator>::type OperType;
+  switch (type)
+  {
+    case GmresSolver<OperType>::OrthogType::MGS:
+      linalg::OrthogonalizeColumnMGS(comm, V, w, Hj, j + 1);
+      break;
+    case GmresSolver<OperType>::OrthogType::CGS:
+      linalg::OrthogonalizeColumnCGS(comm, V, w, Hj, j + 1);
+      break;
+    case GmresSolver<OperType>::OrthogType::CGS2:
+      linalg::OrthogonalizeColumnCGS(comm, V, w, Hj, j + 1, true);
+      break;
   }
 }
 
@@ -459,39 +526,31 @@ void GmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
   for (; it < max_it; restart++)
   {
     // Initialize.
-    if (B && pc_side == PrecSide::LEFT)
-    {
-      if (this->initial_guess || restart > 0)
-      {
-        A->Mult(x, V[0]);
-        linalg::AXPBY(1.0, b, -1.0, V[0]);
-        B->Mult(V[0], r);
-      }
-      else
-      {
-        B->Mult(b, r);
-        x = 0.0;
-      }
-    }
-    else  // !B || pc_side == PrecSide::RIGHT
-    {
-      if (this->initial_guess || restart > 0)
-      {
-        A->Mult(x, r);
-        linalg::AXPBY(1.0, b, -1.0, r);
-      }
-      else
-      {
-        r = b;
-        x = 0.0;
-      }
-    }
+    InitialResidual(pc_side, A, B, b, x, r, V[0], (this->initial_guess || restart > 0));
     true_beta = linalg::Norml2(comm, r);
     CheckDot(true_beta, "GMRES residual norm is not valid: beta = ");
     if (it == 0)
     {
-      initial_res = true_beta;
-      eps = std::max(rel_tol * true_beta, abs_tol);
+      if (this->initial_guess)
+      {
+        RealType beta_rhs;
+        if (B && pc_side == PrecSide::LEFT)
+        {
+          B->Mult(b, V[0]);
+          beta_rhs = linalg::Norml2(comm, V[0]);
+        }
+        else  // !B || pc_side == PrecSide::RIGHT
+        {
+          beta_rhs = linalg::Norml2(comm, b);
+        }
+        CheckDot(beta_rhs, "GMRES residual norm is not valid: beta_rhs = ");
+        initial_res = beta_rhs;
+      }
+      else
+      {
+        initial_res = true_beta;
+      }
+      eps = std::max(rel_tol * initial_res, abs_tol);
     }
     else if (beta > 0.0 && std::abs(beta - true_beta) > 0.1 * true_beta &&
              print_opts.warnings)
@@ -530,18 +589,7 @@ void GmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
       ApplyBA(pc_side, A, B, V[j], w, r);
 
       ScalarType *Hj = H.data() + j * (max_dim + 1);
-      switch (orthog_type)
-      {
-        case OrthogType::MGS:
-          linalg::OrthogonalizeColumnMGS(comm, V, w, Hj, j + 1);
-          break;
-        case OrthogType::CGS:
-          linalg::OrthogonalizeColumnCGS(comm, V, w, Hj, j + 1);
-          break;
-        case OrthogType::CGS2:
-          linalg::OrthogonalizeColumnCGS(comm, V, w, Hj, j + 1, true);
-          break;
-      }
+      OrthogonalizeIteration(orthog_type, comm, V, w, Hj, j);
       Hj[j + 1] = linalg::Norml2(comm, w);
       w *= 1.0 / Hj[j + 1];
 
@@ -663,22 +711,23 @@ void FgmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
   for (; it < max_it; restart++)
   {
     // Initialize.
-    if (this->initial_guess || restart > 0)
-    {
-      A->Mult(x, Z[0]);
-      linalg::AXPBY(1.0, b, -1.0, Z[0]);
-    }
-    else
-    {
-      Z[0] = b;
-      x = 0.0;
-    }
+    InitialResidual(PrecSide::RIGHT, A, B, b, x, Z[0], V[0],
+                    (this->initial_guess || restart > 0));
     true_beta = linalg::Norml2(comm, Z[0]);
     CheckDot(true_beta, "FGMRES residual norm is not valid: beta = ");
     if (it == 0)
     {
-      initial_res = true_beta;
-      eps = std::max(rel_tol * true_beta, abs_tol);
+      if (this->initial_guess)
+      {
+        auto beta_rhs = linalg::Norml2(comm, b);
+        CheckDot(beta_rhs, "GMRES residual norm is not valid: beta_rhs = ");
+        initial_res = beta_rhs;
+      }
+      else
+      {
+        initial_res = true_beta;
+      }
+      eps = std::max(rel_tol * initial_res, abs_tol);
     }
     else if (beta > 0.0 && std::abs(beta - true_beta) > 0.1 * true_beta &&
              print_opts.warnings)
@@ -717,18 +766,7 @@ void FgmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
       ApplyBA(PrecSide::RIGHT, A, B, V[j], w, Z[j]);
 
       ScalarType *Hj = H.data() + j * (max_dim + 1);
-      switch (orthog_type)
-      {
-        case OrthogType::MGS:
-          linalg::OrthogonalizeColumnMGS(comm, V, w, Hj, j + 1);
-          break;
-        case OrthogType::CGS:
-          linalg::OrthogonalizeColumnCGS(comm, V, w, Hj, j + 1);
-          break;
-        case OrthogType::CGS2:
-          linalg::OrthogonalizeColumnCGS(comm, V, w, Hj, j + 1, true);
-          break;
-      }
+      OrthogonalizeIteration(orthog_type, comm, V, w, Hj, j);
       Hj[j + 1] = linalg::Norml2(comm, w);
       w *= 1.0 / Hj[j + 1];
 
