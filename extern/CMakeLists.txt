@@ -93,10 +93,9 @@ endif()
 # Add SLEPc (requires PETSc)
 if(PALACE_WITH_SLEPC)
   message(STATUS "=============== Configuring PETSc and SLEPc dependencies ===============")
-  if(NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/petsc OR
-     NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/slepc)
+  if(NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/petsc)
     message(FATAL_ERROR
-      "Could not locate source directory for PETSc or SLEPc, maybe try `git submodule update --init`"
+      "Could not locate source directory for PETSc, maybe try `git submodule update --init`"
     )
   endif()
   include(ExternalSLEPc)
