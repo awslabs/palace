@@ -13,7 +13,7 @@ elseif(PALACE_WITH_STRUMPACK)
 elseif(PALACE_WITH_SUPERLU)
   set(ARPACK_DEPENDENCIES superlu_dist)
 else()
-  set(ARPACK_DEPENDENCIES metis)
+  set(ARPACK_DEPENDENCIES scotch)
 endif()
 
 # We always build the 32-bit integer ARPACK interface and link with LP64 BLAS/LAPACK

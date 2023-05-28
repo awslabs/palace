@@ -1,0 +1,154 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 83144b4..98c0cc2 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -41,8 +41,8 @@
+ ##                                                        ##
+ ############################################################
+ 
+-project(SCOTCH)
+ cmake_minimum_required(VERSION 3.10)
++project(SCOTCH)
+ enable_language(C Fortran)
+ 
+ # Add module directory
+diff --git a/src/libscotch/dummysizes.c b/src/libscotch/dummysizes.c
+index fbd7b52..7455672 100644
+--- a/src/libscotch/dummysizes.c
++++ b/src/libscotch/dummysizes.c
+@@ -253,6 +253,8 @@ char *                      argv[])
+   subsFill ("DUMMYPATCHLEVEL", EXPAND (SCOTCH_PATCHLEVEL_NUM));
+   subsFill ("DUMMYSIZEBYTEIDX", subsSizeByte (sizeof (IDX)));
+   subsFill ("DUMMYSIZEBYTENUM", subsSizeByte (sizeof (INT)));
++  subsFill ("DUMMYSIZEBITIDX", subsSizeByte (sizeof (IDX) * 8));
++  subsFill ("DUMMYSIZEBITNUM", subsSizeByte (sizeof (INT) * 8));
+   subsFill ("DUMMYSIZEARCHDOM", subsSize (sizeof (ArchDom)));
+   subsFill ("DUMMYSIZEARCH", subsSize (sizeof (Arch)));
+   subsFill ("DUMMYSIZEGEOM", subsSize (sizeof (Geom)));
+diff --git a/src/libscotchmetis/library_metis.h b/src/libscotchmetis/library_metis.h
+index a259950..740b8e6 100644
+--- a/src/libscotchmetis/library_metis.h
++++ b/src/libscotchmetis/library_metis.h
+@@ -63,6 +63,14 @@
+ /**                                                        **/
+ /************************************************************/
+ 
++/*
++**  The type and structure definitions.
++*/
++
++#ifndef SCOTCH_H                                  /* In case "scotch.h" not included before */
++typedef DUMMYINT SCOTCH_Num;
++#endif /* SCOTCH_H */
++
+ /*
+ **  The defines.
+ */
+@@ -92,6 +100,7 @@
+ #define SCOTCH_METIS_DATATYPES
+ typedef SCOTCH_Num          idx_t;
+ typedef double              real_t;
++#define IDXTYPEWIDTH        DUMMYSIZEBITNUM
+ #endif /* SCOTCH_METIS_DATATYPES */
+ 
+ #ifndef SCOTCH_METIS_OPTIONS
+@@ -146,14 +155,6 @@ typedef enum {
+ } rstatus_et;
+ #endif /* SCOTCH_METIS_RETURN */
+ 
+-/*
+-**  The type and structure definitions.
+-*/
+-
+-#ifndef SCOTCH_H                                  /* In case "scotch.h" not included before */
+-typedef DUMMYINT SCOTCH_Num;
+-#endif /* SCOTCH_H */
+-
+ /*
+ **  The function prototypes.
+ */
+@@ -174,7 +175,7 @@ int                         SCOTCH_METIS_V5_PartGraphKway (const SCOTCH_Num * co
+ int                         SCOTCH_METIS_V5_PartGraphRecursive (const SCOTCH_Num * const, const SCOTCH_Num * const, const SCOTCH_Num * const, const SCOTCH_Num * const, const SCOTCH_Num * const, const SCOTCH_Num * const, const SCOTCH_Num * const, const SCOTCH_Num * const, const double * const, const double * const, const SCOTCH_Num * const, SCOTCH_Num * const, SCOTCH_Num * const);
+ 
+ #ifndef SCOTCH_METIS_VERSION
+-#define SCOTCH_METIS_VERSION        3             /* MeTiS API version is 3 by default */
++#define SCOTCH_METIS_VERSION        5             /* MeTiS API version is 5 by default */
+ #endif /* SCOTCH_METIS_VERSION */
+ 
+ #if (SCOTCH_METIS_VERSION == 3)
+diff --git a/src/libscotchmetis/library_parmetis.h b/src/libscotchmetis/library_parmetis.h
+index 945819f..f5c4ce9 100644
+--- a/src/libscotchmetis/library_parmetis.h
++++ b/src/libscotchmetis/library_parmetis.h
+@@ -61,6 +61,14 @@
+ /**                                                        **/
+ /************************************************************/
+ 
++/*
++**  The type and structure definitions.
++*/
++
++#ifndef SCOTCH_H                                  /* In case "scotch.h" not included before */
++typedef DUMMYINT SCOTCH_Num;
++#endif /* SCOTCH_H */
++
+ /*
+ **  The defines and includes.
+ */
+@@ -93,6 +101,13 @@
+ #define METISNAME4(p,s)             p##s
+ #endif /* METISNAMEL */
+ 
++#ifndef SCOTCH_METIS_DATATYPES
++#define SCOTCH_METIS_DATATYPES
++typedef SCOTCH_Num          idx_t;
++typedef double              real_t;
++#define IDXTYPEWIDTH        DUMMYSIZEBITNUM
++#endif /* SCOTCH_METIS_DATATYPES */
++
+ #ifndef SCOTCH_METIS_RETURN
+ #define SCOTCH_METIS_RETURN
+ typedef enum {
+@@ -103,14 +118,6 @@ typedef enum {
+ } rstatus_et;
+ #endif /* SCOTCH_METIS_RETURN */
+ 
+-/*
+-**  The type and structure definitions.
+-*/
+-
+-#ifndef SCOTCH_H                                  /* In case "scotch.h" not included before */
+-typedef DUMMYINT SCOTCH_Num;
+-#endif /* SCOTCH_H */
+-
+ /*
+ **  The function prototypes.
+ */
+diff --git a/src/scotch/CMakeLists.txt b/src/scotch/CMakeLists.txt
+index 3974f4f..b2c4f36 100644
+--- a/src/scotch/CMakeLists.txt
++++ b/src/scotch/CMakeLists.txt
+@@ -117,9 +117,9 @@ add_scotch_exe(gpart gmap.c gmap.h)
+ target_compile_definitions(gpart PRIVATE SCOTCH_COMPILE_PART)
+ 
+ # Install all Scotch executables
+-foreach(target ${scotch_exe})
+-  install(TARGETS ${target} RUNTIME DESTINATION bin)
+-endforeach()
++# foreach(target ${scotch_exe})
++#   install(TARGETS ${target} RUNTIME DESTINATION bin)
++# endforeach()
+ 
+ # Executables linked against the libPTScotch library
+ if(BUILD_PTSCOTCH)
+@@ -164,7 +164,7 @@ if(BUILD_PTSCOTCH)
+   add_ptscotch_exe(dgpart dgmap.c dgmap.h)
+   target_compile_definitions(dgpart PRIVATE SCOTCH_COMPILE_PART)
+   # Install all PT-Scotch executables
+-  foreach(target ${ptscotch_exe})
+-     install(TARGETS ${target} RUNTIME DESTINATION bin)
+-  endforeach()
++  # foreach(target ${ptscotch_exe})
++  #    install(TARGETS ${target} RUNTIME DESTINATION bin)
++  # endforeach()
+  endif(BUILD_PTSCOTCH)
