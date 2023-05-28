@@ -6,11 +6,7 @@
 #
 
 # Force build order
-if(TARGET parmetis)
-  set(SUPERLU_DEPENDENCIES parmetis)
-else()
-  set(SUPERLU_DEPENDENCIES metis)
-endif()
+set(SUPERLU_DEPENDENCIES scotch)
 
 set(SUPERLU_OPTIONS ${PALACE_SUPERBUILD_DEFAULT_ARGS})
 list(APPEND SUPERLU_OPTIONS

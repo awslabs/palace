@@ -27,10 +27,9 @@ include(ExternalGitTags)
 
 # Add METIS/ParMETIS libraries
 message(STATUS "================ Configuring METIS/ParMETIS dependencies ===============")
-if(NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/METIS OR
-   NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/ParMETIS)
+if(NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/scotch)
   message(FATAL_ERROR
-    "Could not locate source directories for METIS or ParMETIS, maybe try `git submodule update --init`"
+    "Could not locate source directories for Scotch for METIS and ParMETIS, maybe try `git submodule update --init`"
   )
 endif()
 include(ExternalMETIS)

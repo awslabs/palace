@@ -18,26 +18,14 @@
 	path = extern/superlu_dist
 	url = https://github.com/xiaoyeli/superlu_dist.git
 	branch = master
-[submodule "extern/arpack-ng"]
-	path = extern/arpack-ng
-	url = https://github.com/opencollab/arpack-ng.git
-	branch = master
 [submodule "extern/mumps"]
 	path = extern/mumps
 	url = https://github.com/scivision/mumps.git
 	branch = main
-[submodule "extern/GKlib"]
-	path = extern/GKlib
-	url = https://github.com/KarypisLab/GKlib.git
+[submodule "extern/arpack-ng"]
+	path = extern/arpack-ng
+	url = https://github.com/opencollab/arpack-ng.git
 	branch = master
-[submodule "extern/METIS"]
-	path = extern/METIS
-	url = https://github.com/KarypisLab/METIS.git
-	branch = master
-[submodule "extern/ParMETIS"]
-	path = extern/ParMETIS
-	url = https://github.com/KarypisLab/ParMETIS.git
-	branch = main
 [submodule "extern/gslib"]
 	path = extern/gslib
 	url = https://github.com/Nek5000/gslib.git
@@ -50,3 +38,7 @@
 	path = extern/zfp
 	url = https://github.com/LLNL/zfp.git
 	branch = develop
+[submodule "extern/scotch"]
+	path = extern/scotch
+	url = https://gitlab.inria.fr/scotch/scotch.git
+	branch = master
