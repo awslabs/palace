@@ -17,7 +17,7 @@ elseif(PALACE_WITH_STRUMPACK)
 elseif(PALACE_WITH_SUPERLU)
   set(GSLIB_DEPENDENCIES superlu_dist)
 else()
-  set(GSLIB_DEPENDENCIES metis)
+  set(GSLIB_DEPENDENCIES scotch)
 endif()
 
 set(GSLIB_OPTIONS
