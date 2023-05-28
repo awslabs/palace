@@ -15,7 +15,7 @@ elseif(PALACE_WITH_STRUMPACK)
 elseif(PALACE_WITH_SUPERLU)
   set(PETSC_DEPENDENCIES superlu_dist)
 else()
-  set(PETSC_DEPENDENCIES metis)
+  set(PETSC_DEPENDENCIES scotch)
 endif()
 
 set(PETSC_OPTIONS

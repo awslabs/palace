@@ -8,10 +8,8 @@
 # Force build order
 if(PALACE_WITH_SUPERLU)
   set(SCALAPACK_DEPENDENCIES superlu_dist)
-elseif(TARGET parmetis)
-  set(SCALAPACK_DEPENDENCIES parmetis)
 else()
-  set(SCALAPACK_DEPENDENCIES metis)
+  set(SCALAPACK_DEPENDENCIES scotch)
 endif()
 
 set(SCALAPACK_OPTIONS ${PALACE_SUPERBUILD_DEFAULT_ARGS})
