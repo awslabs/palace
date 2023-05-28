@@ -34,19 +34,11 @@
 	path = extern/arpack-ng
 	url = https://github.com/opencollab/arpack-ng.git
 	branch = master
-[submodule "extern/GKlib"]
-	path = extern/GKlib
-	url = https://github.com/KarypisLab/GKlib.git
-	branch = master
-[submodule "extern/METIS"]
-	path = extern/METIS
-	url = https://github.com/KarypisLab/METIS.git
-	branch = master
-[submodule "extern/ParMETIS"]
-	path = extern/ParMETIS
-	url = https://github.com/KarypisLab/ParMETIS.git
-	branch = main
 [submodule "extern/gslib"]
 	path = extern/gslib
 	url = https://github.com/Nek5000/gslib.git
+	branch = master
+[submodule "extern/scotch"]
+	path = extern/scotch
+	url = https://gitlab.inria.fr/scotch/scotch.git
 	branch = master
