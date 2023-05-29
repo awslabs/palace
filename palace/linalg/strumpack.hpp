@@ -23,45 +23,14 @@ class StrumpackSolverBase : public StrumpackSolverType
 private:
   MPI_Comm comm;
 
-  strumpack::CompressionType CompressionType(config::LinearSolverData::CompressionType type)
-  {
-    switch (type)
-    {
-      case config::LinearSolverData::CompressionType::HSS:
-        return strumpack::CompressionType::HSS;
-      case config::LinearSolverData::CompressionType::BLR:
-        return strumpack::CompressionType::BLR;
-      case config::LinearSolverData::CompressionType::HODLR:
-        return strumpack::CompressionType::HODLR;
-      case config::LinearSolverData::CompressionType::ZFP:
-        return strumpack::CompressionType::LOSSY;
-      case config::LinearSolverData::CompressionType::BLR_HODLR:
-        return strumpack::CompressionType::BLR_HODLR;
-        break;
-      case config::LinearSolverData::CompressionType::ZFP_BLR_HODLR:
-        return strumpack::CompressionType::ZFP_BLR_HODLR;
-        break;
-      case config::LinearSolverData::CompressionType::NONE:
-      default:
-        return strumpack::CompressionType::NONE;
-    }
-  }
-
 public:
-  StrumpackSolverBase(MPI_Comm comm, int sym_fact_type,
-                      strumpack::CompressionType comp_type, double lr_tol, int butterfly_l,
-                      int lossy_prec, int print);
+  StrumpackSolverBase(MPI_Comm comm, config::LinearSolverData::SymFactType reorder,
+                      config::LinearSolverData::CompressionType compression, double lr_tol,
+                      int butterfly_l, int lossy_prec, int print);
 
   StrumpackSolverBase(MPI_Comm comm, const IoData &iodata, int print)
-    : StrumpackSolverBase(comm,
-                          (iodata.solver.linear.sym_fact_type ==
-                           config::LinearSolverData::SymFactType::PARMETIS)
-                              ? 2
-                              : ((iodata.solver.linear.sym_fact_type ==
-                                  config::LinearSolverData::SymFactType::METIS)
-                                     ? 1
-                                     : 0),
-                          CompressionType(iodata.solver.linear.strumpack_compression_type),
+    : StrumpackSolverBase(comm, iodata.solver.linear.sym_fact_type,
+                          iodata.solver.linear.strumpack_compression_type,
                           iodata.solver.linear.strumpack_lr_tol,
                           iodata.solver.linear.strumpack_butterfly_l,
                           iodata.solver.linear.strumpack_lossy_precision, print)
