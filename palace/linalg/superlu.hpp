@@ -24,17 +24,11 @@ private:
   mfem::SuperLUSolver solver;
 
 public:
-  SuperLUSolver(MPI_Comm comm, int sym_fact_type, bool use_3d, int print_lvl);
-  SuperLUSolver(MPI_Comm comm, const IoData &iodata, int print_lvl)
-    : SuperLUSolver(comm,
-                    (iodata.solver.linear.sym_fact_type ==
-                     config::LinearSolverData::SymFactType::PARMETIS)
-                        ? 2
-                        : ((iodata.solver.linear.sym_fact_type ==
-                            config::LinearSolverData::SymFactType::METIS)
-                               ? 1
-                               : 0),
-                    iodata.solver.linear.superlu_3d, print_lvl)
+  SuperLUSolver(MPI_Comm comm, config::LinearSolverData::SymFactType reorder, bool use_3d,
+                int print);
+  SuperLUSolver(MPI_Comm comm, const IoData &iodata, int print)
+    : SuperLUSolver(comm, iodata.solver.linear.sym_fact_type,
+                    iodata.solver.linear.superlu_3d, print)
   {
   }
 
