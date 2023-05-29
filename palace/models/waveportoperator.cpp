@@ -97,7 +97,7 @@ std::unique_ptr<ParOperator> GetBtt(const MaterialOperator &mat_op,
 {
   // Mass matrix: Bₜₜ = (μ⁻¹ u, v).
   constexpr MaterialPropertyType MatType = MaterialPropertyType::INV_PERMEABILITY;
-  MaterialPropertyCoefficient<MatType> muinv_func(mat_op);
+  BdrMaterialPropertyCoefficient<MatType> muinv_func(mat_op);
   auto btt = std::make_unique<mfem::SymmetricBilinearForm>(&nd_fespace);
   btt->AddBoundaryIntegrator(new mfem::MixedVectorMassIntegrator(muinv_func), attr_marker);
   btt->SetAssemblyLevel(mfem::AssemblyLevel::LEGACY);
@@ -113,7 +113,7 @@ std::unique_ptr<ParOperator> GetBtn(const MaterialOperator &mat_op,
 {
   // Mass matrix: Bₜₙ = (μ⁻¹ ∇ₜ u, v).
   constexpr MaterialPropertyType MatType = MaterialPropertyType::INV_PERMEABILITY;
-  MaterialPropertyCoefficient<MatType> muinv_func(mat_op);
+  BdrMaterialPropertyCoefficient<MatType> muinv_func(mat_op);
   auto btn = std::make_unique<mfem::MixedBilinearForm>(&h1_fespace, &nd_fespace);
   btn->AddBoundaryIntegrator(new mfem::MixedVectorGradientIntegrator(muinv_func),
                              attr_marker);
@@ -129,7 +129,7 @@ std::array<std::unique_ptr<ParOperator>, 3> GetBnn(const MaterialOperator &mat_o
 {
   // Mass matrix: Bₙₙ = (μ⁻¹ ∇ₜ u, ∇ₜ v) - ω² (ε u, v) = Bₙₙ₁ - ω² Bₙₙ₂.
   constexpr MaterialPropertyType MatTypeMuInv = MaterialPropertyType::INV_PERMEABILITY;
-  MaterialPropertyCoefficient<MatTypeMuInv> muinv_func(mat_op);
+  BdrMaterialPropertyCoefficient<MatTypeMuInv> muinv_func(mat_op);
   auto bnn1 = std::make_unique<mfem::SymmetricBilinearForm>(&h1_fespace);
   bnn1->AddBoundaryIntegrator(new mfem::MixedGradGradIntegrator(muinv_func), attr_marker);
   bnn1->SetAssemblyLevel(mfem::AssemblyLevel::LEGACY);
@@ -138,7 +138,7 @@ std::array<std::unique_ptr<ParOperator>, 3> GetBnn(const MaterialOperator &mat_o
 
   constexpr MaterialPropertyType MatTypeEpsReal = MaterialPropertyType::PERMITTIVITY_REAL;
   NormalProjectedCoefficient epsilon_func(
-      std::make_unique<MaterialPropertyCoefficient<MatTypeEpsReal>>(mat_op));
+      std::make_unique<BdrMaterialPropertyCoefficient<MatTypeEpsReal>>(mat_op));
   auto bnn2r = std::make_unique<mfem::SymmetricBilinearForm>(&h1_fespace);
   bnn2r->AddBoundaryIntegrator(new mfem::MixedScalarMassIntegrator(epsilon_func),
                                attr_marker);
@@ -154,7 +154,7 @@ std::array<std::unique_ptr<ParOperator>, 3> GetBnn(const MaterialOperator &mat_o
   }
   constexpr MaterialPropertyType MatTypeEpsImag = MaterialPropertyType::PERMITTIVITY_IMAG;
   NormalProjectedCoefficient negepstandelta_func(
-      std::make_unique<MaterialPropertyCoefficient<MatTypeEpsImag>>(mat_op));
+      std::make_unique<BdrMaterialPropertyCoefficient<MatTypeEpsImag>>(mat_op));
   auto bnn2i = std::make_unique<mfem::SymmetricBilinearForm>(&h1_fespace);
   bnn2i->AddBoundaryIntegrator(new mfem::MixedScalarMassIntegrator(negepstandelta_func),
                                attr_marker);
@@ -173,7 +173,7 @@ std::array<std::unique_ptr<ParOperator>, 3> GetAtt(const MaterialOperator &mat_o
   // Stiffness matrix: Aₜₜ = (μ⁻¹ ∇ₜ x u, ∇ₜ x v) - ω² (ε u, v) = Aₜₜ₁ - ω² Aₜₜ₂.
   constexpr MaterialPropertyType MatTypeMuInv = MaterialPropertyType::INV_PERMEABILITY;
   NormalProjectedCoefficient muinv_func(
-      std::make_unique<MaterialPropertyCoefficient<MatTypeMuInv>>(mat_op));
+      std::make_unique<BdrMaterialPropertyCoefficient<MatTypeMuInv>>(mat_op));
   auto att1 = std::make_unique<mfem::SymmetricBilinearForm>(&nd_fespace);
   att1->AddBoundaryIntegrator(new mfem::CurlCurlIntegrator(muinv_func), attr_marker);
   att1->SetAssemblyLevel(mfem::AssemblyLevel::LEGACY);
@@ -181,7 +181,7 @@ std::array<std::unique_ptr<ParOperator>, 3> GetAtt(const MaterialOperator &mat_o
   att1->Finalize(skip_zeros);
 
   constexpr MaterialPropertyType MatTypeEpsReal = MaterialPropertyType::PERMITTIVITY_REAL;
-  MaterialPropertyCoefficient<MatTypeEpsReal> epsilon_func(mat_op);
+  BdrMaterialPropertyCoefficient<MatTypeEpsReal> epsilon_func(mat_op);
   auto att2r = std::make_unique<mfem::SymmetricBilinearForm>(&nd_fespace);
   att2r->AddBoundaryIntegrator(new mfem::MixedVectorMassIntegrator(epsilon_func),
                                attr_marker);
@@ -196,7 +196,7 @@ std::array<std::unique_ptr<ParOperator>, 3> GetAtt(const MaterialOperator &mat_o
             std::make_unique<ParOperator>(std::move(att2r), nd_fespace), nullptr};
   }
   constexpr MaterialPropertyType MatTypeEpsImag = MaterialPropertyType::PERMITTIVITY_IMAG;
-  MaterialPropertyCoefficient<MatTypeEpsImag> negepstandelta_func(mat_op);
+  BdrMaterialPropertyCoefficient<MatTypeEpsImag> negepstandelta_func(mat_op);
   auto att2i = std::make_unique<mfem::SymmetricBilinearForm>(&nd_fespace);
   att2i->AddBoundaryIntegrator(new mfem::MixedVectorMassIntegrator(negepstandelta_func),
                                attr_marker);
@@ -739,16 +739,15 @@ std::complex<double> WavePortData::GetSParameter(mfem::ParComplexGridFunction &E
 
 std::complex<double> WavePortData::GetPower(mfem::ParComplexGridFunction &E,
                                             mfem::ParComplexGridFunction &B,
-                                            const MaterialOperator &mat_op,
-                                            const std::map<int, int> &local_to_shared) const
+                                            const MaterialOperator &mat_op) const
 {
   // Compute port power, (E x H) ⋅ n = E ⋅ (-n x H), integrated over the port surface
   // using the computed E and H = μ⁻¹ B fields. The linear form is reconstructed from
   // scratch each time due to changing H. The BdrCurrentVectorCoefficient computes -n x H,
   // where n is an outward normal.
   auto &nd_fespace = *E.ParFESpace();
-  BdrCurrentVectorCoefficient nxHr_func(B.real(), mat_op, local_to_shared);
-  BdrCurrentVectorCoefficient nxHi_func(B.imag(), mat_op, local_to_shared);
+  BdrCurrentVectorCoefficient nxHr_func(B.real(), mat_op);
+  BdrCurrentVectorCoefficient nxHi_func(B.imag(), mat_op);
   mfem::ParLinearForm pr(&nd_fespace), pi(&nd_fespace);
   pr.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(nxHr_func), attr_marker);
   pi.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(nxHi_func), attr_marker);
@@ -965,7 +964,7 @@ void WavePortOperator::AddExtraSystemBdrCoefficients(double omega,
   for (auto &[idx, data] : ports)
   {
     constexpr MaterialPropertyType MatType = MaterialPropertyType::INV_PERMEABILITY;
-    fbi.AddCoefficient(std::make_unique<MaterialPropertyCoefficient<MatType>>(
+    fbi.AddCoefficient(std::make_unique<BdrMaterialPropertyCoefficient<MatType>>(
                            mat_op, data.GetPropagationConstant().real()),
                        data.GetMarker());
   }

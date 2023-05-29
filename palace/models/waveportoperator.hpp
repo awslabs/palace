@@ -110,8 +110,7 @@ public:
   std::complex<double> GetSParameter(mfem::ParComplexGridFunction &E) const;
   std::complex<double> GetPower(mfem::ParComplexGridFunction &E,
                                 mfem::ParComplexGridFunction &B,
-                                const MaterialOperator &mat_op,
-                                const std::map<int, int> &local_to_shared) const;
+                                const MaterialOperator &mat_op) const;
   std::complex<double> GetVoltage(mfem::ParComplexGridFunction &E) const
   {
     MFEM_ABORT("GetVoltage is not yet implemented for wave port boundaries!");

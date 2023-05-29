@@ -22,6 +22,198 @@ namespace palace
 // comm on shared faces after a call to ExchangeFaceNbrData.
 //
 
+// Returns the property value of the material for the given index. Two separate classes for
+// domain element access and boundary element access, which returns the material property of
+// the neighboring domain element.
+enum class MaterialPropertyType
+{
+  INV_PERMEABILITY,
+  PERMITTIVITY_REAL,
+  PERMITTIVITY_IMAG,
+  PERMITTIVITY_ABS,
+  CONDUCTIVITY,
+  INV_LONDON_DEPTH,
+  INV_Z0,
+  INV_PERMEABILITY_C0
+};
+
+template <MaterialPropertyType Type>
+class MaterialPropertyCoefficient : public mfem::MatrixCoefficient
+{
+private:
+  const MaterialOperator &mat_op;
+  const double coef;
+
+public:
+  MaterialPropertyCoefficient(const MaterialOperator &op, double c = 1.0)
+    : mfem::MatrixCoefficient(op.SpaceDimension()), mat_op(op), coef(c)
+  {
+  }
+
+  void Eval(mfem::DenseMatrix &K, mfem::ElementTransformation &T,
+            const mfem::IntegrationPoint &ip) override
+  {
+    MFEM_ABORT("MaterialPropertyCoefficient::Eval() is not implemented for this "
+               "material property type!");
+  }
+};
+
+template <>
+inline void MaterialPropertyCoefficient<MaterialPropertyType::INV_PERMEABILITY>::Eval(
+    mfem::DenseMatrix &K, mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip)
+{
+  K = mat_op.GetInvPermeability(T.mesh->GetAttribute(T.ElementNo));
+  K *= coef;
+}
+
+template <>
+inline void MaterialPropertyCoefficient<MaterialPropertyType::PERMITTIVITY_REAL>::Eval(
+    mfem::DenseMatrix &K, mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip)
+{
+  K = mat_op.GetPermittivityReal(T.mesh->GetAttribute(T.ElementNo));
+  K *= coef;
+}
+
+template <>
+inline void MaterialPropertyCoefficient<MaterialPropertyType::PERMITTIVITY_IMAG>::Eval(
+    mfem::DenseMatrix &K, mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip)
+{
+  K = mat_op.GetPermittivityImag(T.mesh->GetAttribute(T.ElementNo));
+  K *= coef;
+}
+
+template <>
+inline void MaterialPropertyCoefficient<MaterialPropertyType::PERMITTIVITY_ABS>::Eval(
+    mfem::DenseMatrix &K, mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip)
+{
+  K = mat_op.GetPermittivityAbs(T.mesh->GetAttribute(T.ElementNo));
+  K *= coef;
+}
+
+template <>
+inline void MaterialPropertyCoefficient<MaterialPropertyType::CONDUCTIVITY>::Eval(
+    mfem::DenseMatrix &K, mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip)
+{
+  K = mat_op.GetConductivity(T.mesh->GetAttribute(T.ElementNo));
+  K *= coef;
+}
+
+template <>
+inline void MaterialPropertyCoefficient<MaterialPropertyType::INV_LONDON_DEPTH>::Eval(
+    mfem::DenseMatrix &K, mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip)
+{
+  K = mat_op.GetInvLondonDepth(T.mesh->GetAttribute(T.ElementNo));
+  K *= coef;
+}
+
+template <>
+inline void MaterialPropertyCoefficient<MaterialPropertyType::INV_Z0>::Eval(
+    mfem::DenseMatrix &K, mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip)
+{
+  K = mat_op.GetInvImpedance(T.mesh->GetAttribute(T.ElementNo));
+  K *= coef;
+}
+
+template <>
+inline void MaterialPropertyCoefficient<MaterialPropertyType::INV_PERMEABILITY_C0>::Eval(
+    mfem::DenseMatrix &K, mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip)
+{
+  const int attr = T.mesh->GetAttribute(T.ElementNo);
+  K.SetSize(height, width);
+  Mult(mat_op.GetInvPermeability(attr), mat_op.GetLightSpeed(attr), K);
+  K *= coef;
+}
+
+template <MaterialPropertyType Type>
+class BdrMaterialPropertyCoefficient : public mfem::MatrixCoefficient
+{
+private:
+  const MaterialOperator &mat_op;
+  const double coef;
+
+public:
+  BdrMaterialPropertyCoefficient(const MaterialOperator &op, double c = 1.0)
+    : mfem::MatrixCoefficient(op.SpaceDimension()), mat_op(op), coef(c)
+  {
+  }
+
+  void Eval(mfem::DenseMatrix &K, mfem::ElementTransformation &T,
+            const mfem::IntegrationPoint &ip) override
+  {
+    MFEM_ABORT("BdrMaterialPropertyCoefficient::Eval() is not implemented for this "
+               "material property type!");
+  }
+};
+
+template <>
+inline void BdrMaterialPropertyCoefficient<MaterialPropertyType::INV_PERMEABILITY>::Eval(
+    mfem::DenseMatrix &K, mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip)
+{
+  K = mat_op.GetBdrInvPermeability(T.mesh->GetAttribute(T.ElementNo));
+  K *= coef;
+}
+
+template <>
+inline void BdrMaterialPropertyCoefficient<MaterialPropertyType::PERMITTIVITY_REAL>::Eval(
+    mfem::DenseMatrix &K, mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip)
+{
+  K = mat_op.GetBdrPermittivityReal(T.mesh->GetAttribute(T.ElementNo));
+  K *= coef;
+}
+
+template <>
+inline void BdrMaterialPropertyCoefficient<MaterialPropertyType::PERMITTIVITY_IMAG>::Eval(
+    mfem::DenseMatrix &K, mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip)
+{
+  K = mat_op.GetBdrPermittivityImag(T.mesh->GetAttribute(T.ElementNo));
+  K *= coef;
+}
+
+template <>
+inline void BdrMaterialPropertyCoefficient<MaterialPropertyType::PERMITTIVITY_ABS>::Eval(
+    mfem::DenseMatrix &K, mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip)
+{
+  K = mat_op.GetBdrPermittivityAbs(T.mesh->GetAttribute(T.ElementNo));
+  K *= coef;
+}
+
+template <>
+inline void BdrMaterialPropertyCoefficient<MaterialPropertyType::CONDUCTIVITY>::Eval(
+    mfem::DenseMatrix &K, mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip)
+{
+  K = mat_op.GetBdrConductivity(T.mesh->GetAttribute(T.ElementNo));
+  K *= coef;
+}
+
+template <>
+inline void BdrMaterialPropertyCoefficient<MaterialPropertyType::INV_LONDON_DEPTH>::Eval(
+    mfem::DenseMatrix &K, mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip)
+{
+  K = mat_op.GetBdrInvLondonDepth(T.mesh->GetAttribute(T.ElementNo));
+  K *= coef;
+}
+
+template <>
+inline void BdrMaterialPropertyCoefficient<MaterialPropertyType::INV_Z0>::Eval(
+    mfem::DenseMatrix &K, mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip)
+{
+  K = mat_op.GetBdrInvImpedance(T.mesh->GetAttribute(T.ElementNo));
+  K *= coef;
+}
+
+template <>
+inline void BdrMaterialPropertyCoefficient<MaterialPropertyType::INV_PERMEABILITY_C0>::Eval(
+    mfem::DenseMatrix &K, mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip)
+{
+  const int attr = T.mesh->GetAttribute(T.ElementNo);
+  K.SetSize(height, width);
+  Mult(mat_op.GetBdrInvPermeability(attr), mat_op.GetBdrLightSpeed(attr), K);
+  K *= coef;
+}
+
+// Base class for coefficients which need to evaluate a GridFunction in a domain element
+// attached to a boundary element, or both domain elements on either side for internal
+// boundaries.
 class BdrGridFunctionCoefficient
 {
 private:
@@ -40,8 +232,8 @@ protected:
                                  mfem::Vector *C1 = nullptr);
 
 public:
-  BdrGridFunctionCoefficient(mfem::ParMesh &msh, const std::map<int, int> &l2s)
-    : mesh(msh), local_to_shared(l2s)
+  BdrGridFunctionCoefficient(mfem::ParMesh &mesh, const std::map<int, int> &local_to_shared)
+    : mesh(mesh), local_to_shared(local_to_shared)
   {
   }
 
@@ -61,12 +253,12 @@ private:
   mutable mfem::Vector C1, W, VU, VL, nor;
 
 public:
-  BdrCurrentVectorCoefficient(const mfem::ParGridFunction &gf, const MaterialOperator &op,
-                              const std::map<int, int> &l2s)
+  BdrCurrentVectorCoefficient(const mfem::ParGridFunction &gf, const MaterialOperator &op)
     : mfem::VectorCoefficient(gf.ParFESpace()->GetParMesh()->SpaceDimension()),
-      BdrGridFunctionCoefficient(*gf.ParFESpace()->GetParMesh(), l2s), B(gf), mat_op(op),
-      C1(gf.VectorDim()), W(gf.VectorDim()), VU(gf.VectorDim()), VL(gf.VectorDim()),
-      nor(gf.VectorDim())
+      BdrGridFunctionCoefficient(*gf.ParFESpace()->GetParMesh(),
+                                 op.GetLocalToSharedFaceMap()),
+      B(gf), mat_op(op), C1(gf.VectorDim()), W(gf.VectorDim()), VU(gf.VectorDim()),
+      VL(gf.VectorDim()), nor(gf.VectorDim())
   {
   }
 
@@ -119,9 +311,9 @@ private:
   mutable mfem::Vector C1, W, VU, VL, nor;
 
 public:
-  BdrChargeCoefficient(const mfem::ParGridFunction &gf, const MaterialOperator &op,
-                       const std::map<int, int> &l2s)
-    : mfem::Coefficient(), BdrGridFunctionCoefficient(*gf.ParFESpace()->GetParMesh(), l2s),
+  BdrChargeCoefficient(const mfem::ParGridFunction &gf, const MaterialOperator &op)
+    : mfem::Coefficient(), BdrGridFunctionCoefficient(*gf.ParFESpace()->GetParMesh(),
+                                                      op.GetLocalToSharedFaceMap()),
       E(gf), mat_op(op), C1(gf.VectorDim()), W(gf.VectorDim()), VU(gf.VectorDim()),
       VL(gf.VectorDim()), nor(gf.VectorDim())
   {
@@ -162,9 +354,10 @@ private:
 
 public:
   BdrFluxCoefficient(const mfem::ParGridFunction &gf, mfem::Vector d,
-                     const std::map<int, int> &l2s)
-    : mfem::Coefficient(), BdrGridFunctionCoefficient(*gf.ParFESpace()->GetParMesh(), l2s),
-      B(gf), dir(std::move(d)), V(gf.VectorDim()), VL(gf.VectorDim()), nor(gf.VectorDim())
+                     const std::map<int, int> &local_to_shared)
+    : mfem::Coefficient(),
+      BdrGridFunctionCoefficient(*gf.ParFESpace()->GetParMesh(), local_to_shared), B(gf),
+      dir(std::move(d)), V(gf.VectorDim()), VL(gf.VectorDim()), nor(gf.VectorDim())
   {
   }
 
@@ -257,8 +450,9 @@ private:
 public:
   DielectricInterfaceCoefficient(const mfem::ParGridFunction &gf,
                                  const MaterialOperator &op, double ti, double ei,
-                                 mfem::Vector s, const std::map<int, int> &l2s)
-    : mfem::Coefficient(), BdrGridFunctionCoefficient(*gf.ParFESpace()->GetParMesh(), l2s),
+                                 mfem::Vector s)
+    : mfem::Coefficient(), BdrGridFunctionCoefficient(*gf.ParFESpace()->GetParMesh(),
+                                                      op.GetLocalToSharedFaceMap()),
       E(gf), mat_op(op), ts(ti), epsilon(ei), side(std::move(s)), C1(gf.VectorDim()),
       V(gf.VectorDim()), nor(gf.VectorDim())
   {
@@ -324,130 +518,6 @@ inline double DielectricInterfaceCoefficient<DielectricInterfaceType::DEFAULT>::
   return 0.5 * ts * epsilon * (V * V);
 }
 
-// Returns the property value of the material for the given index. When called on a
-// boundary element (external only), uses the material property of the neighboring domain
-// element.
-enum class MaterialPropertyType
-{
-  INV_PERMEABILITY,
-  PERMITTIVITY_REAL,
-  PERMITTIVITY_IMAG,
-  PERMITTIVITY_ABS,
-  CONDUCTIVITY,
-  INV_LONDON_DEPTH,
-  INV_Z0,
-  INV_PERMEABILITY_C0
-};
-
-template <MaterialPropertyType Type>
-class MaterialPropertyCoefficient : public mfem::MatrixCoefficient
-{
-private:
-  const MaterialOperator &mat_op;
-  const double coef;
-
-  static int GetAttribute(mfem::ElementTransformation &T)
-  {
-    if (T.ElementType == mfem::ElementTransformation::ELEMENT)
-    {
-      return T.mesh->GetAttribute(T.ElementNo);
-    }
-    if (T.ElementType == mfem::ElementTransformation::BDR_ELEMENT)
-    {
-      int i, o;
-      int iel1, iel2, info1, info2;
-      const mfem::Mesh &mesh = *T.mesh;
-      mesh.GetBdrElementFace(T.ElementNo, &i, &o);
-      mesh.GetFaceElements(i, &iel1, &iel2);
-      mesh.GetFaceInfos(i, &info1, &info2);
-      MFEM_VERIFY(info2 < 0, "MaterialPropertyCoefficient should only be used for exterior "
-                             "(single-sided) boundaries!");
-      return mesh.GetAttribute(iel1);
-    }
-    MFEM_ABORT("Unsupported element type in MaterialPropertyCoefficient!");
-    return 0;
-  }
-
-public:
-  MaterialPropertyCoefficient(const MaterialOperator &op, double c = 1.0)
-    : mfem::MatrixCoefficient(op.SpaceDimension()), mat_op(op), coef(c)
-  {
-  }
-
-  void Eval(mfem::DenseMatrix &K, mfem::ElementTransformation &T,
-            const mfem::IntegrationPoint &ip) override
-  {
-    MFEM_ABORT("MaterialPropertyCoefficient::Eval() is not implemented for this "
-               "material property type!");
-  }
-};
-
-template <>
-inline void MaterialPropertyCoefficient<MaterialPropertyType::INV_PERMEABILITY>::Eval(
-    mfem::DenseMatrix &K, mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip)
-{
-  K = mat_op.GetInvPermeability(GetAttribute(T));
-  K *= coef;
-}
-
-template <>
-inline void MaterialPropertyCoefficient<MaterialPropertyType::PERMITTIVITY_REAL>::Eval(
-    mfem::DenseMatrix &K, mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip)
-{
-  K = mat_op.GetPermittivityReal(GetAttribute(T));
-  K *= coef;
-}
-
-template <>
-inline void MaterialPropertyCoefficient<MaterialPropertyType::PERMITTIVITY_IMAG>::Eval(
-    mfem::DenseMatrix &K, mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip)
-{
-  K = mat_op.GetPermittivityImag(GetAttribute(T));
-  K *= coef;
-}
-
-template <>
-inline void MaterialPropertyCoefficient<MaterialPropertyType::PERMITTIVITY_ABS>::Eval(
-    mfem::DenseMatrix &K, mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip)
-{
-  K = mat_op.GetPermittivityAbs(GetAttribute(T));
-  K *= coef;
-}
-
-template <>
-inline void MaterialPropertyCoefficient<MaterialPropertyType::CONDUCTIVITY>::Eval(
-    mfem::DenseMatrix &K, mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip)
-{
-  K = mat_op.GetConductivity(GetAttribute(T));
-  K *= coef;
-}
-
-template <>
-inline void MaterialPropertyCoefficient<MaterialPropertyType::INV_LONDON_DEPTH>::Eval(
-    mfem::DenseMatrix &K, mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip)
-{
-  K = mat_op.GetInvLondonDepth(GetAttribute(T));
-  K *= coef;
-}
-
-template <>
-inline void MaterialPropertyCoefficient<MaterialPropertyType::INV_Z0>::Eval(
-    mfem::DenseMatrix &K, mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip)
-{
-  K = mat_op.GetInvImpedance(GetAttribute(T));
-  K *= coef;
-}
-
-template <>
-inline void MaterialPropertyCoefficient<MaterialPropertyType::INV_PERMEABILITY_C0>::Eval(
-    mfem::DenseMatrix &K, mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip)
-{
-  const int attr = GetAttribute(T);
-  K.SetSize(height, width);
-  Mult(mat_op.GetInvPermeability(attr), mat_op.GetLightSpeed(attr), K);
-  K *= coef;
-}
-
 // Returns the local energy density evaluated as 1/2 Dᴴ E or 1/2 Bᴴ H for real-valued
 // material coefficients. For internal boundary elements, the solution is taken on the side
 // of the element with the larger-valued material property (permittivity or permeability).
@@ -469,9 +539,9 @@ private:
                                const mfem::IntegrationPoint &ip, int attr);
 
 public:
-  EnergyDensityCoefficient(const GridFunctionType &gf, const MaterialOperator &op,
-                           const std::map<int, int> &l2s)
-    : mfem::Coefficient(), BdrGridFunctionCoefficient(*gf.ParFESpace()->GetParMesh(), l2s),
+  EnergyDensityCoefficient(const GridFunctionType &gf, const MaterialOperator &op)
+    : mfem::Coefficient(), BdrGridFunctionCoefficient(*gf.ParFESpace()->GetParMesh(),
+                                                      op.GetLocalToSharedFaceMap()),
       U(gf), mat_op(op), V(gf.ParFESpace()->GetParMesh()->SpaceDimension())
   {
   }
@@ -563,10 +633,11 @@ private:
   const MaterialOperator &mat_op;
 
 public:
-  BdrFieldVectorCoefficient(const mfem::ParGridFunction &gf, const MaterialOperator &op,
-                            const std::map<int, int> &l2s)
+  BdrFieldVectorCoefficient(const mfem::ParGridFunction &gf, const MaterialOperator &op)
     : mfem::VectorCoefficient(gf.ParFESpace()->GetParMesh()->SpaceDimension()),
-      BdrGridFunctionCoefficient(*gf.ParFESpace()->GetParMesh(), l2s), U(gf), mat_op(op)
+      BdrGridFunctionCoefficient(*gf.ParFESpace()->GetParMesh(),
+                                 op.GetLocalToSharedFaceMap()),
+      U(gf), mat_op(op)
   {
   }
 
@@ -598,9 +669,9 @@ private:
   const MaterialOperator &mat_op;
 
 public:
-  BdrFieldCoefficient(const mfem::ParGridFunction &gf, const MaterialOperator &op,
-                      const std::map<int, int> &l2s)
-    : mfem::Coefficient(), BdrGridFunctionCoefficient(*gf.ParFESpace()->GetParMesh(), l2s),
+  BdrFieldCoefficient(const mfem::ParGridFunction &gf, const MaterialOperator &op)
+    : mfem::Coefficient(), BdrGridFunctionCoefficient(*gf.ParFESpace()->GetParMesh(),
+                                                      op.GetLocalToSharedFaceMap()),
       U(gf), mat_op(op)
   {
   }
@@ -624,120 +695,6 @@ public:
     }
   }
 };
-
-// From mfem::GridFunction::GetVectorValue.
-inline mfem::IntegrationPoint
-BdrGridFunctionCoefficient::be_to_bfe(mfem::Geometry::Type geom, int o,
-                                      const mfem::IntegrationPoint &ip)
-{
-  mfem::IntegrationPoint fip = {};
-  if (geom == mfem::Geometry::TRIANGLE)
-  {
-    if (o == 2)
-    {
-      fip.x = 1.0 - ip.x - ip.y;
-      fip.y = ip.x;
-    }
-    else if (o == 4)
-    {
-      fip.x = ip.y;
-      fip.y = 1.0 - ip.x - ip.y;
-    }
-    else
-    {
-      fip.x = ip.x;
-      fip.y = ip.y;
-    }
-    fip.z = ip.z;
-  }
-  else
-  {
-    if (o == 2)
-    {
-      fip.x = ip.y;
-      fip.y = 1.0 - ip.x;
-    }
-    else if (o == 4)
-    {
-      fip.x = 1.0 - ip.x;
-      fip.y = 1.0 - ip.y;
-    }
-    else if (o == 6)
-    {
-      fip.x = 1.0 - ip.y;
-      fip.y = ip.x;
-    }
-    else
-    {
-      fip.x = ip.x;
-      fip.y = ip.y;
-    }
-    fip.z = ip.z;
-  }
-  fip.weight = ip.weight;
-  fip.index = ip.index;
-  return fip;
-}
-
-inline void BdrGridFunctionCoefficient::GetElementTransformations(
-    mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip,
-    mfem::ElementTransformation *&T1, mfem::ElementTransformation *&T2, mfem::Vector *C1)
-{
-  // Return transformations for elements attached to boundary element T. T1 always exists
-  // but T2 may not if the element is truly a single-sided boundary.
-  MFEM_VERIFY(T.ElementType == mfem::ElementTransformation::BDR_ELEMENT,
-              "Unexpected element type in BdrGridFunctionCoefficient!");
-  MFEM_VERIFY(&mesh == T.mesh, "Invalid mesh for BdrGridFunctionCoefficient!");
-  int i, o;
-  int iel1, iel2, info1, info2;
-  mesh.GetBdrElementFace(T.ElementNo, &i, &o);
-  mesh.GetFaceElements(i, &iel1, &iel2);
-  mesh.GetFaceInfos(i, &info1, &info2);
-
-  mfem::FaceElementTransformations *FET;
-  if (info2 >= 0 && iel2 < 0)
-  {
-    // Face is shared with another subdomain.
-    const int &ishared = local_to_shared.at(i);
-    FET = mesh.GetSharedFaceTransformations(ishared);
-  }
-  else
-  {
-    // Face is either internal to the subdomain, or a true one-sided boundary.
-    FET = mesh.GetFaceElementTransformations(i);
-  }
-
-  // Boundary elements and boundary faces may have different orientations so adjust the
-  // integration point if necessary. See mfem::GridFunction::GetValue and GetVectorValue.
-  mfem::IntegrationPoint fip = be_to_bfe(FET->GetGeometryType(), o, ip);
-  FET->SetAllIntPoints(&fip);
-  T1 = &FET->GetElement1Transformation();
-  T2 = (info2 >= 0) ? &FET->GetElement2Transformation() : nullptr;
-
-  // If desired, get vector pointing from center of boundary element into element 1 for
-  // orientations.
-  if (C1)
-  {
-    mfem::Vector CF(T.GetSpaceDim());
-    mfem::ElementTransformation &TF = *mesh.GetFaceTransformation(i);
-    TF.Transform(mfem::Geometries.GetCenter(mesh.GetFaceGeometry(i)), CF);
-
-    C1->SetSize(T.GetSpaceDim());
-    T1->Transform(mfem::Geometries.GetCenter(T1->GetGeometryType()), *C1);
-    *C1 -= CF;  // Points into element 1 from the face
-  }
-}
-
-inline void BdrGridFunctionCoefficient::GetNormal(mfem::ElementTransformation &T,
-                                                  const mfem::IntegrationPoint &ip,
-                                                  mfem::Vector &normal)
-{
-  // Return normal vector to the boundary element at the provided integration point.
-  normal.SetSize(T.GetSpaceDim());
-  T.SetIntPoint(&ip);
-  mfem::CalcOrtho(T.Jacobian(), normal);
-  normal /= normal.Norml2();
-}
 
 // Wraps a mfem::MatrixCoefficient to compute a scalar coefficient as nᵀ M n. Only works
 // for square matrix coefficients of size equal to the spatial dimension.
@@ -1011,6 +968,120 @@ public:
     }
   }
 };
+
+// From mfem::GridFunction::GetVectorValue.
+inline mfem::IntegrationPoint
+BdrGridFunctionCoefficient::be_to_bfe(mfem::Geometry::Type geom, int o,
+                                      const mfem::IntegrationPoint &ip)
+{
+  mfem::IntegrationPoint fip = {};
+  if (geom == mfem::Geometry::TRIANGLE)
+  {
+    if (o == 2)
+    {
+      fip.x = 1.0 - ip.x - ip.y;
+      fip.y = ip.x;
+    }
+    else if (o == 4)
+    {
+      fip.x = ip.y;
+      fip.y = 1.0 - ip.x - ip.y;
+    }
+    else
+    {
+      fip.x = ip.x;
+      fip.y = ip.y;
+    }
+    fip.z = ip.z;
+  }
+  else
+  {
+    if (o == 2)
+    {
+      fip.x = ip.y;
+      fip.y = 1.0 - ip.x;
+    }
+    else if (o == 4)
+    {
+      fip.x = 1.0 - ip.x;
+      fip.y = 1.0 - ip.y;
+    }
+    else if (o == 6)
+    {
+      fip.x = 1.0 - ip.y;
+      fip.y = ip.x;
+    }
+    else
+    {
+      fip.x = ip.x;
+      fip.y = ip.y;
+    }
+    fip.z = ip.z;
+  }
+  fip.weight = ip.weight;
+  fip.index = ip.index;
+  return fip;
+}
+
+inline void BdrGridFunctionCoefficient::GetElementTransformations(
+    mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip,
+    mfem::ElementTransformation *&T1, mfem::ElementTransformation *&T2, mfem::Vector *C1)
+{
+  // Return transformations for elements attached to boundary element T. T1 always exists
+  // but T2 may not if the element is truly a single-sided boundary.
+  MFEM_VERIFY(T.ElementType == mfem::ElementTransformation::BDR_ELEMENT,
+              "Unexpected element type in BdrGridFunctionCoefficient!");
+  MFEM_VERIFY(&mesh == T.mesh, "Invalid mesh for BdrGridFunctionCoefficient!");
+  int i, o;
+  int iel1, iel2, info1, info2;
+  mesh.GetBdrElementFace(T.ElementNo, &i, &o);
+  mesh.GetFaceElements(i, &iel1, &iel2);
+  mesh.GetFaceInfos(i, &info1, &info2);
+
+  mfem::FaceElementTransformations *FET;
+  if (info2 >= 0 && iel2 < 0)
+  {
+    // Face is shared with another subdomain.
+    const int &ishared = local_to_shared.at(i);
+    FET = mesh.GetSharedFaceTransformations(ishared);
+  }
+  else
+  {
+    // Face is either internal to the subdomain, or a true one-sided boundary.
+    FET = mesh.GetFaceElementTransformations(i);
+  }
+
+  // Boundary elements and boundary faces may have different orientations so adjust the
+  // integration point if necessary. See mfem::GridFunction::GetValue and GetVectorValue.
+  mfem::IntegrationPoint fip = be_to_bfe(FET->GetGeometryType(), o, ip);
+  FET->SetAllIntPoints(&fip);
+  T1 = &FET->GetElement1Transformation();
+  T2 = (info2 >= 0) ? &FET->GetElement2Transformation() : nullptr;
+
+  // If desired, get vector pointing from center of boundary element into element 1 for
+  // orientations.
+  if (C1)
+  {
+    mfem::Vector CF(T.GetSpaceDim());
+    mfem::ElementTransformation &TF = *mesh.GetFaceTransformation(i);
+    TF.Transform(mfem::Geometries.GetCenter(mesh.GetFaceGeometry(i)), CF);
+
+    C1->SetSize(T.GetSpaceDim());
+    T1->Transform(mfem::Geometries.GetCenter(T1->GetGeometryType()), *C1);
+    *C1 -= CF;  // Points into element 1 from the face
+  }
+}
+
+inline void BdrGridFunctionCoefficient::GetNormal(mfem::ElementTransformation &T,
+                                                  const mfem::IntegrationPoint &ip,
+                                                  mfem::Vector &normal)
+{
+  // Return normal vector to the boundary element at the provided integration point.
+  normal.SetSize(T.GetSpaceDim());
+  T.SetIntPoint(&ip);
+  mfem::CalcOrtho(T.Jacobian(), normal);
+  normal /= normal.Norml2();
+}
 
 }  // namespace palace
 

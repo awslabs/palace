@@ -184,8 +184,7 @@ std::complex<double> LumpedPortData::GetSParameter(mfem::ParComplexGridFunction 
 }
 
 double LumpedPortData::GetPower(mfem::ParGridFunction &E, mfem::ParGridFunction &B,
-                                const MaterialOperator &mat_op,
-                                const std::map<int, int> &local_to_shared) const
+                                const MaterialOperator &mat_op) const
 {
   // Compute port power, (E x H) ⋅ n = E ⋅ (-n x H), integrated over the port surface
   // using the computed E and H = μ⁻¹ B fields. The linear form is reconstructed from
@@ -195,9 +194,8 @@ double LumpedPortData::GetPower(mfem::ParGridFunction &E, mfem::ParGridFunction 
   SumVectorCoefficient fb(nd_fespace.GetParMesh()->SpaceDimension());
   for (const auto &elem : elems)
   {
-    fb.AddCoefficient(
-        std::make_unique<BdrCurrentVectorCoefficient>(B, mat_op, local_to_shared),
-        elem->GetMarker());
+    fb.AddCoefficient(std::make_unique<BdrCurrentVectorCoefficient>(B, mat_op),
+                      elem->GetMarker());
   }
   mfem::ParLinearForm p(&nd_fespace);
   p.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fb));
@@ -206,10 +204,9 @@ double LumpedPortData::GetPower(mfem::ParGridFunction &E, mfem::ParGridFunction 
   return p(E);
 }
 
-std::complex<double>
-LumpedPortData::GetPower(mfem::ParComplexGridFunction &E, mfem::ParComplexGridFunction &B,
-                         const MaterialOperator &mat_op,
-                         const std::map<int, int> &local_to_shared) const
+std::complex<double> LumpedPortData::GetPower(mfem::ParComplexGridFunction &E,
+                                              mfem::ParComplexGridFunction &B,
+                                              const MaterialOperator &mat_op) const
 {
   // Compute port power, (E x H⋆) ⋅ n = E ⋅ (-n x H⋆), integrated over the port surface
   // using the computed E and H = μ⁻¹ B fields. The linear form is reconstructed from
@@ -220,12 +217,10 @@ LumpedPortData::GetPower(mfem::ParComplexGridFunction &E, mfem::ParComplexGridFu
   SumVectorCoefficient fbi(nd_fespace.GetParMesh()->SpaceDimension());
   for (const auto &elem : elems)
   {
-    fbr.AddCoefficient(
-        std::make_unique<BdrCurrentVectorCoefficient>(B.real(), mat_op, local_to_shared),
-        elem->GetMarker());
-    fbi.AddCoefficient(
-        std::make_unique<BdrCurrentVectorCoefficient>(B.imag(), mat_op, local_to_shared),
-        elem->GetMarker());
+    fbr.AddCoefficient(std::make_unique<BdrCurrentVectorCoefficient>(B.real(), mat_op),
+                       elem->GetMarker());
+    fbi.AddCoefficient(std::make_unique<BdrCurrentVectorCoefficient>(B.imag(), mat_op),
+                       elem->GetMarker());
   }
   mfem::ParLinearForm pr(&nd_fespace), pi(&nd_fespace);
   pr.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fbr));
