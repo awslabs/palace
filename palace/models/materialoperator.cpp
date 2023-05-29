@@ -279,14 +279,12 @@ mfem::DenseMatrix ToDenseMatrix(const config::SymmetricMatrixData<N> &data)
 
 }  // namespace
 
-MaterialOperator::MaterialOperator(const IoData &iodata, const mfem::ParMesh &mesh)
-  : sdim(mesh.SpaceDimension())
+MaterialOperator::MaterialOperator(const IoData &iodata, mfem::ParMesh &mesh)
 {
   SetUpMaterialProperties(iodata, mesh);
 }
 
-void MaterialOperator::SetUpMaterialProperties(const IoData &iodata,
-                                               const mfem::ParMesh &mesh)
+void MaterialOperator::SetUpMaterialProperties(const IoData &iodata, mfem::ParMesh &mesh)
 {
   // Check that material attributes have been specified correctly. The mesh attributes may
   // be non-contiguous and when no material attribute is specified the elements are deleted
@@ -314,6 +312,7 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata,
   // Set up material properties of the different domain regions, represented with piece-wise
   // constant matrix-valued coefficients for the relative permeability and permittivity,
   // and other material properties.
+  const int sdim = mesh.SpaceDimension();
   mat_muinv.resize(attr_max, mfem::DenseMatrix(sdim));
   mat_epsilon.resize(attr_max, mfem::DenseMatrix(sdim));
   mat_epsilon_imag.resize(attr_max, mfem::DenseMatrix(sdim));
@@ -407,6 +406,56 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata,
       mat_invLondon.at(attr - 1) = mat_muinv.at(attr - 1);
       mat_invLondon.at(attr - 1) *=
           std::abs(data.lambda_L) > 0.0 ? std::pow(data.lambda_L, -2.0) : 0.0;
+    }
+  }
+
+  // Construct mapping from boundary attributes to domain attributes in order to return
+  // material properties for a queried boundary element. For interior boundary elements
+  // which have two neighboring domain elements, the domain attribute is chosen from the
+  // side where the speed of light is smaller (typically should choose the non-vacuum
+  // side).
+  for (int i = 0; i < mesh.GetNSharedFaces(); i++)
+  {
+    int i_local = mesh.GetSharedFace(i);
+    local_to_shared[i_local] = i;
+  }
+  for (int be = 0; be < mesh.GetNBE(); be++)
+  {
+    int bdr_attr = mesh.GetBdrAttribute(be);
+    if (bdr_attr_map.find(bdr_attr) == bdr_attr_map.end())
+    {
+      int i, o;
+      int iel1, iel2, info1, info2;
+      mesh.GetBdrElementFace(be, &i, &o);
+      mesh.GetFaceElements(i, &iel1, &iel2);
+      mesh.GetFaceInfos(i, &info1, &info2);
+
+      mfem::FaceElementTransformations *FET;
+      if (info2 >= 0 && iel2 < 0)
+      {
+        // Face is shared with another subdomain.
+        const int &ishared = local_to_shared.at(i);
+        FET = mesh.GetSharedFaceTransformations(ishared);
+      }
+      else
+      {
+        // Face is either internal to the subdomain, or a true one-sided boundary.
+        FET = mesh.GetFaceElementTransformations(i);
+      }
+
+      int attr1 = FET->GetElement1Transformation().Attribute;
+      if (info2 < 0)
+      {
+        // Face is a true one-sided boundary.
+        bdr_attr_map[bdr_attr] = attr1;
+      }
+      else
+      {
+        // Face is an internal boundary.
+        int attr2 = FET->GetElement2Transformation().Attribute;
+        bdr_attr_map[bdr_attr] =
+            (GetLightSpeedMax(attr2) < GetLightSpeedMin(attr1)) ? attr2 : attr1;
+      }
     }
   }
 

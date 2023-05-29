@@ -23,18 +23,6 @@ using namespace std::complex_literals;
 namespace
 {
 
-auto LocalToShared(const mfem::ParMesh &mesh)
-{
-  // Construct shared face mapping required for boundary coefficients.
-  std::map<int, int> l2s;
-  for (int i = 0; i < mesh.GetNSharedFaces(); i++)
-  {
-    int i_local = mesh.GetSharedFace(i);
-    l2s[i_local] = i;
-  }
-  return l2s;
-}
-
 auto CreateParaviewPath(const IoData &iodata, const std::string &name)
 {
   std::string path = iodata.problem.output;
@@ -50,9 +38,8 @@ auto CreateParaviewPath(const IoData &iodata, const std::string &name)
 
 PostOperator::PostOperator(const IoData &iodata, SpaceOperator &spaceop,
                            const std::string &name)
-  : local_to_shared(LocalToShared(*spaceop.GetNDSpace().GetParMesh())),
-    mat_op(spaceop.GetMaterialOp()),
-    surf_post_op(iodata, spaceop.GetMaterialOp(), local_to_shared, spaceop.GetH1Space()),
+  : mat_op(spaceop.GetMaterialOp()),
+    surf_post_op(iodata, spaceop.GetMaterialOp(), spaceop.GetH1Space()),
     dom_post_op(iodata, spaceop.GetMaterialOp(), &spaceop.GetNDSpace(),
                 &spaceop.GetRTSpace()),
     has_imaginary(iodata.problem.type != config::ProblemData::Type::TRANSIENT),
@@ -63,31 +50,31 @@ PostOperator::PostOperator(const IoData &iodata, SpaceOperator &spaceop,
                  spaceop.GetNDSpace().GetParMesh()),
     interp_op(iodata, *spaceop.GetNDSpace().GetParMesh())
 {
-  Esr = std::make_unique<BdrFieldVectorCoefficient>(E->real(), mat_op, local_to_shared);
-  Bsr = std::make_unique<BdrFieldVectorCoefficient>(B->real(), mat_op, local_to_shared);
-  Jsr = std::make_unique<BdrCurrentVectorCoefficient>(B->real(), mat_op, local_to_shared);
-  Qsr = std::make_unique<BdrChargeCoefficient>(E->real(), mat_op, local_to_shared);
+  Esr = std::make_unique<BdrFieldVectorCoefficient>(E->real(), mat_op);
+  Bsr = std::make_unique<BdrFieldVectorCoefficient>(B->real(), mat_op);
+  Jsr = std::make_unique<BdrCurrentVectorCoefficient>(B->real(), mat_op);
+  Qsr = std::make_unique<BdrChargeCoefficient>(E->real(), mat_op);
   if (has_imaginary)
   {
-    Esi = std::make_unique<BdrFieldVectorCoefficient>(E->imag(), mat_op, local_to_shared);
-    Bsi = std::make_unique<BdrFieldVectorCoefficient>(B->imag(), mat_op, local_to_shared);
-    Jsi = std::make_unique<BdrCurrentVectorCoefficient>(B->imag(), mat_op, local_to_shared);
-    Qsi = std::make_unique<BdrChargeCoefficient>(E->imag(), mat_op, local_to_shared);
+    Esi = std::make_unique<BdrFieldVectorCoefficient>(E->imag(), mat_op);
+    Bsi = std::make_unique<BdrFieldVectorCoefficient>(B->imag(), mat_op);
+    Jsi = std::make_unique<BdrCurrentVectorCoefficient>(B->imag(), mat_op);
+    Qsi = std::make_unique<BdrChargeCoefficient>(E->imag(), mat_op);
     Ue = std::make_unique<EnergyDensityCoefficient<EnergyDensityType::ELECTRIC,
-                                                   mfem::ParComplexGridFunction>>(
-        *E, mat_op, local_to_shared);
+                                                   mfem::ParComplexGridFunction>>(*E,
+                                                                                  mat_op);
     Um = std::make_unique<EnergyDensityCoefficient<EnergyDensityType::MAGNETIC,
-                                                   mfem::ParComplexGridFunction>>(
-        *B, mat_op, local_to_shared);
+                                                   mfem::ParComplexGridFunction>>(*B,
+                                                                                  mat_op);
   }
   else
   {
     Ue = std::make_unique<
         EnergyDensityCoefficient<EnergyDensityType::ELECTRIC, mfem::ParGridFunction>>(
-        E->real(), mat_op, local_to_shared);
+        E->real(), mat_op);
     Um = std::make_unique<
         EnergyDensityCoefficient<EnergyDensityType::MAGNETIC, mfem::ParGridFunction>>(
-        B->real(), mat_op, local_to_shared);
+        B->real(), mat_op);
   }
 
   // Initialize data collection objects and register additional fields associated with wave
@@ -104,10 +91,8 @@ PostOperator::PostOperator(const IoData &iodata, SpaceOperator &spaceop,
 
 PostOperator::PostOperator(const IoData &iodata, LaplaceOperator &laplaceop,
                            const std::string &name)
-  : local_to_shared(LocalToShared(*laplaceop.GetNDSpace().GetParMesh())),
-    mat_op(laplaceop.GetMaterialOp()),
-    surf_post_op(iodata, laplaceop.GetMaterialOp(), local_to_shared,
-                 laplaceop.GetH1Space()),
+  : mat_op(laplaceop.GetMaterialOp()),
+    surf_post_op(iodata, laplaceop.GetMaterialOp(), laplaceop.GetH1Space()),
     dom_post_op(iodata, laplaceop.GetMaterialOp(), &laplaceop.GetNDSpace(), nullptr),
     has_imaginary(false), E(&laplaceop.GetNDSpace()), B(std::nullopt),
     V(&laplaceop.GetH1Space()), A(std::nullopt), lumped_port_init(false),
@@ -120,12 +105,12 @@ PostOperator::PostOperator(const IoData &iodata, LaplaceOperator &laplaceop,
   // Note: When using this constructor, you should not use any of the magnetic field related
   // postprocessing functions (magnetic field energy, inductor energy, surface currents,
   // etc.), since only V and E fields are supplied.
-  Esr = std::make_unique<BdrFieldVectorCoefficient>(E->real(), mat_op, local_to_shared);
-  Vs = std::make_unique<BdrFieldCoefficient>(*V, mat_op, local_to_shared);
+  Esr = std::make_unique<BdrFieldVectorCoefficient>(E->real(), mat_op);
+  Vs = std::make_unique<BdrFieldCoefficient>(*V, mat_op);
   Ue = std::make_unique<
       EnergyDensityCoefficient<EnergyDensityType::ELECTRIC, mfem::ParGridFunction>>(
-      E->real(), mat_op, local_to_shared);
-  Qsr = std::make_unique<BdrChargeCoefficient>(E->real(), mat_op, local_to_shared);
+      E->real(), mat_op);
+  Qsr = std::make_unique<BdrChargeCoefficient>(E->real(), mat_op);
 
   // Initialize data collection objects.
   InitializeDataCollection(iodata);
@@ -133,10 +118,8 @@ PostOperator::PostOperator(const IoData &iodata, LaplaceOperator &laplaceop,
 
 PostOperator::PostOperator(const IoData &iodata, CurlCurlOperator &curlcurlop,
                            const std::string &name)
-  : local_to_shared(LocalToShared(*curlcurlop.GetNDSpace().GetParMesh())),
-    mat_op(curlcurlop.GetMaterialOp()),
-    surf_post_op(iodata, curlcurlop.GetMaterialOp(), local_to_shared,
-                 curlcurlop.GetH1Space()),
+  : mat_op(curlcurlop.GetMaterialOp()),
+    surf_post_op(iodata, curlcurlop.GetMaterialOp(), curlcurlop.GetH1Space()),
     dom_post_op(iodata, curlcurlop.GetMaterialOp(), nullptr, &curlcurlop.GetRTSpace()),
     has_imaginary(false), E(std::nullopt), B(&curlcurlop.GetRTSpace()), V(std::nullopt),
     A(&curlcurlop.GetNDSpace()), lumped_port_init(false), wave_port_init(false),
@@ -148,12 +131,12 @@ PostOperator::PostOperator(const IoData &iodata, CurlCurlOperator &curlcurlop,
   // Note: When using this constructor, you should not use any of the electric field related
   // postprocessing functions (electric field energy, capacitor energy, surface charge,
   // etc.), since only the B field is supplied.
-  Bsr = std::make_unique<BdrFieldVectorCoefficient>(B->real(), mat_op, local_to_shared);
-  As = std::make_unique<BdrFieldVectorCoefficient>(*A, mat_op, local_to_shared);
+  Bsr = std::make_unique<BdrFieldVectorCoefficient>(B->real(), mat_op);
+  As = std::make_unique<BdrFieldVectorCoefficient>(*A, mat_op);
   Um = std::make_unique<
       EnergyDensityCoefficient<EnergyDensityType::MAGNETIC, mfem::ParGridFunction>>(
-      B->real(), mat_op, local_to_shared);
-  Jsr = std::make_unique<BdrCurrentVectorCoefficient>(B->real(), mat_op, local_to_shared);
+      B->real(), mat_op);
+  Jsr = std::make_unique<BdrCurrentVectorCoefficient>(B->real(), mat_op);
 
   // Initialize data collection objects.
   InitializeDataCollection(iodata);
@@ -357,13 +340,13 @@ void PostOperator::UpdatePorts(const LumpedPortOperator &lumped_port_op, double 
           omega > 0.0,
           "Frequency domain lumped port postprocessing requires nonzero frequency!");
       vi.S = data.GetSParameter(*E);
-      vi.P = data.GetPower(*E, *B, mat_op, local_to_shared);
+      vi.P = data.GetPower(*E, *B, mat_op);
       vi.V = data.GetVoltage(*E);
       vi.Z = data.GetCharacteristicImpedance(omega);
     }
     else
     {
-      vi.P = data.GetPower(E->real(), B->real(), mat_op, local_to_shared);
+      vi.P = data.GetPower(E->real(), B->real(), mat_op);
       vi.V = data.GetVoltage(E->real());
       vi.S = vi.Z = 0.0;
     }
@@ -384,7 +367,7 @@ void PostOperator::UpdatePorts(const WavePortOperator &wave_port_op, double omeg
                 "Frequency domain wave port postprocessing requires nonzero frequency!");
     auto &vi = wave_port_vi[idx];
     vi.S = data.GetSParameter(*E);
-    vi.P = data.GetPower(*E, *B, mat_op, local_to_shared);
+    vi.P = data.GetPower(*E, *B, mat_op);
     vi.V = vi.Z = 0.0;  // Not yet implemented (Z = V² / P, I = V / Z)
   }
   wave_port_init = true;

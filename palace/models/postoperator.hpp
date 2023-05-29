@@ -35,9 +35,6 @@ class WavePortOperator;
 class PostOperator
 {
 private:
-  // Shared face mapping for boundary coefficients.
-  std::map<int, int> local_to_shared;
-
   // Reference to material property operator (not owned).
   const MaterialOperator &mat_op;
 

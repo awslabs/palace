@@ -101,25 +101,24 @@ SurfacePostOperator::InterfaceDielectricData::InterfaceDielectricData(
 
 std::unique_ptr<mfem::Coefficient>
 SurfacePostOperator::InterfaceDielectricData::GetCoefficient(
-    int i, const mfem::ParGridFunction &U, const MaterialOperator &mat_op,
-    const std::map<int, int> &local_to_shared) const
+    int i, const mfem::ParGridFunction &U, const MaterialOperator &mat_op) const
 {
   switch (type)
   {
     case DielectricInterfaceType::MA:
       return std::make_unique<DielectricInterfaceCoefficient<DielectricInterfaceType::MA>>(
-          U, mat_op, ts, epsilon, sides[i], local_to_shared);
+          U, mat_op, ts, epsilon, sides[i]);
     case DielectricInterfaceType::MS:
       return std::make_unique<DielectricInterfaceCoefficient<DielectricInterfaceType::MS>>(
-          U, mat_op, ts, epsilon, sides[i], local_to_shared);
+          U, mat_op, ts, epsilon, sides[i]);
     case DielectricInterfaceType::SA:
       return std::make_unique<DielectricInterfaceCoefficient<DielectricInterfaceType::SA>>(
-          U, mat_op, ts, epsilon, sides[i], local_to_shared);
+          U, mat_op, ts, epsilon, sides[i]);
     case DielectricInterfaceType::DEFAULT:
     default:
       return std::make_unique<
           DielectricInterfaceCoefficient<DielectricInterfaceType::DEFAULT>>(
-          U, mat_op, ts, epsilon, sides[i], local_to_shared);
+          U, mat_op, ts, epsilon, sides[i]);
   }
 }
 
@@ -131,10 +130,9 @@ SurfacePostOperator::SurfaceChargeData::SurfaceChargeData(
 }
 
 std::unique_ptr<mfem::Coefficient> SurfacePostOperator::SurfaceChargeData::GetCoefficient(
-    int i, const mfem::ParGridFunction &U, const MaterialOperator &mat_op,
-    const std::map<int, int> &local_to_shared) const
+    int i, const mfem::ParGridFunction &U, const MaterialOperator &mat_op) const
 {
-  return std::make_unique<BdrChargeCoefficient>(U, mat_op, local_to_shared);
+  return std::make_unique<BdrChargeCoefficient>(U, mat_op);
 }
 
 SurfacePostOperator::SurfaceFluxData::SurfaceFluxData(const config::InductanceData &data,
@@ -176,17 +174,18 @@ SurfacePostOperator::SurfaceFluxData::SurfaceFluxData(const config::InductanceDa
                      attr_markers.emplace_back());
 }
 
-std::unique_ptr<mfem::Coefficient> SurfacePostOperator::SurfaceFluxData::GetCoefficient(
-    int i, const mfem::ParGridFunction &U, const MaterialOperator &mat_op,
-    const std::map<int, int> &local_to_shared) const
+std::unique_ptr<mfem::Coefficient>
+SurfacePostOperator::SurfaceFluxData::GetCoefficient(int i, const mfem::ParGridFunction &U,
+                                                     const MaterialOperator &mat_op) const
 {
-  return std::make_unique<BdrFluxCoefficient>(U, direction, local_to_shared);
+  return std::make_unique<BdrFluxCoefficient>(U, direction,
+                                              mat_op.GetLocalToSharedFaceMap());
 }
 
-SurfacePostOperator::SurfacePostOperator(const IoData &iodata, const MaterialOperator &mat,
-                                         const std::map<int, int> &l2s,
+SurfacePostOperator::SurfacePostOperator(const IoData &iodata,
+                                         const MaterialOperator &mat_op,
                                          mfem::ParFiniteElementSpace &h1_fespace)
-  : mat_op(mat), local_to_shared(l2s), ones(&h1_fespace)
+  : mat_op(mat_op), ones(&h1_fespace)
 {
   // Define a constant 1 function on the scalar finite element space for computing surface
   // integrals.
@@ -255,7 +254,7 @@ double SurfacePostOperator::GetSurfaceIntegral(const SurfaceData &data,
   mfem::ParLinearForm s(ones.ParFESpace());
   for (int i = 0; i < static_cast<int>(data.attr_markers.size()); i++)
   {
-    fb.emplace_back(data.GetCoefficient(i, U, mat_op, local_to_shared));
+    fb.emplace_back(data.GetCoefficient(i, U, mat_op));
     s.AddBoundaryIntegrator(new BoundaryLFIntegrator(*fb.back()), data.attr_markers[i]);
   }
   s.UseFastAssembly(false);
