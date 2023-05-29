@@ -111,6 +111,7 @@ if(PALACE_WITH_INTERNAL_MFEM)
     # "${CMAKE_CURRENT_SOURCE_DIR}/patch/mfem/patch_bilinearform_marker.diff"
     "${CMAKE_CURRENT_SOURCE_DIR}/patch/mfem/patch_mesh_part.diff"
     "${CMAKE_CURRENT_SOURCE_DIR}/patch/mfem/patch_mesh_vis.diff"
+    "${CMAKE_CURRENT_SOURCE_DIR}/patch/mfem/patch_metis.diff"
     "${CMAKE_CURRENT_SOURCE_DIR}/patch/mfem/patch_submesh.diff"
     "${CMAKE_CURRENT_SOURCE_DIR}/patch/mfem/patch_hypre_blocks.diff"
     "${CMAKE_CURRENT_SOURCE_DIR}/patch/mfem/patch_direct_solvers.diff"
