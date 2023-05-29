@@ -1533,6 +1533,8 @@ NLOHMANN_JSON_SERIALIZE_ENUM(LinearSolverData::SymFactType,
                              {{LinearSolverData::SymFactType::INVALID, nullptr},
                               {LinearSolverData::SymFactType::METIS, "METIS"},
                               {LinearSolverData::SymFactType::PARMETIS, "ParMETIS"},
+                              {LinearSolverData::SymFactType::SCOTCH, "Scotch"},
+                              {LinearSolverData::SymFactType::PTSCOTCH, "PTScotch"},
                               {LinearSolverData::SymFactType::DEFAULT, "Default"}})
 NLOHMANN_JSON_SERIALIZE_ENUM(LinearSolverData::CompressionType,
                              {{LinearSolverData::CompressionType::INVALID, nullptr},
