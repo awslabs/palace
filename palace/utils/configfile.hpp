@@ -781,6 +781,8 @@ public:
   {
     METIS,
     PARMETIS,
+    SCOTCH,
+    PTSCOTCH,
     DEFAULT,
     INVALID = -1
   };

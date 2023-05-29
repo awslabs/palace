@@ -653,7 +653,8 @@ WavePortData::WavePortData(const config::WavePortData &data, const MaterialOpera
     if (pc_type == config::LinearSolverData::Type::SUPERLU)
     {
 #if defined(MFEM_USE_SUPERLU)
-      auto slu = std::make_unique<SuperLUSolver>(port_comm, 0, false, ksp_print - 1);
+      auto slu = std::make_unique<SuperLUSolver>(
+          port_comm, config::LinearSolverData::SymFactType::DEFAULT, false, ksp_print - 1);
       // slu->GetSolver().SetColumnPermutation(mfem::superlu::NATURAL);
       pc = std::make_unique<WrapperSolver<ComplexOperator>>(std::move(slu));
 #endif
@@ -662,7 +663,8 @@ WavePortData::WavePortData(const config::WavePortData &data, const MaterialOpera
     {
 #if defined(MFEM_USE_STRUMPACK)
       auto strumpack = std::make_unique<StrumpackSolver>(
-          port_comm, 0, strumpack::CompressionType::NONE, 0.0, 0, 0, ksp_print - 1);
+          port_comm, config::LinearSolverData::SymFactType::DEFAULT,
+          config::LinearSolverData::CompressionType::NONE, 0.0, 0, 0, ksp_print - 1);
       // strumpack->SetReorderingStrategy(strumpack::ReorderingStrategy::NATURAL);
       pc = std::make_unique<WrapperSolver<ComplexOperator>>(std::move(strumpack));
 #endif
@@ -671,7 +673,8 @@ WavePortData::WavePortData(const config::WavePortData &data, const MaterialOpera
     {
 #if defined(MFEM_USE_MUMPS)
       auto mumps = std::make_unique<MumpsSolver>(
-          port_comm, mfem::MUMPSSolver::SYMMETRIC_INDEFINITE, 0, 0.0, ksp_print - 1);
+          port_comm, mfem::MUMPSSolver::SYMMETRIC_INDEFINITE,
+          config::LinearSolverData::SymFactType::DEFAULT, 0.0, ksp_print - 1);
       // mumps->SetReorderingStrategy(mfem::MUMPSSolver::AMD);
       pc = std::make_unique<WrapperSolver<ComplexOperator>>(std::move(mumps));
 #endif
