@@ -8,20 +8,29 @@
 namespace palace
 {
 
-MumpsSolver::MumpsSolver(MPI_Comm comm, mfem::MUMPSSolver::MatType sym, int sym_fact_type,
-                         double blr_tol, int print_lvl)
+MumpsSolver::MumpsSolver(MPI_Comm comm, mfem::MUMPSSolver::MatType sym,
+                         config::LinearSolverData::SymFactType reorder, double blr_tol,
+                         int print)
   : mfem::MUMPSSolver(comm)
 {
   // Configure the solver (must be called before SetOperator).
   SetPrintLevel(print_lvl);
   SetMatrixSymType(sym);
-  if (sym_fact_type == 2)
+  if (reorder == config::LinearSolverData::SymFactType::METIS)
+  {
+    SetReorderingStrategy(mfem::MUMPSSolver::METIS);
+  }
+  else if (reorder == config::LinearSolverData::SymFactType::PARMETIS)
   {
     SetReorderingStrategy(mfem::MUMPSSolver::PARMETIS);
   }
-  else if (sym_fact_type == 1)
+  else if (reorder == config::LinearSolverData::SymFactType::SCOTCH)
   {
-    SetReorderingStrategy(mfem::MUMPSSolver::METIS);
+    SetReorderingStrategy(mfem::MUMPSSolver::SCOTCH);
+  }
+  else if (reorder == config::LinearSolverData::SymFactType::PTSCOTCH)
+  {
+    SetReorderingStrategy(mfem::MUMPSSolver::PTSCOTCH);
   }
   else
   {
