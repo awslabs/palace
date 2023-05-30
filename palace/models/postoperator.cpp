@@ -82,10 +82,12 @@ PostOperator::PostOperator(const IoData &iodata, SpaceOperator &spaceop,
   InitializeDataCollection(iodata);
   for (const auto &[idx, data] : spaceop.GetWavePortOp())
   {
-    paraview_bdr.RegisterVCoeffField("nxH^0_" + std::to_string(idx) + "_real",
-                                     data.GetModeCoefficientReal().get());
-    paraview_bdr.RegisterVCoeffField("nxH^0_" + std::to_string(idx) + "_imag",
-                                     data.GetModeCoefficientImag().get());
+    paraview_bdr.RegisterVCoeffField(
+        "nxH^0_" + std::to_string(idx) + "_real",
+        const_cast<mfem::VectorCoefficient *>(&data.GetModeCoefficientReal()));
+    paraview_bdr.RegisterVCoeffField(
+        "nxH^0_" + std::to_string(idx) + "_imag",
+        const_cast<mfem::VectorCoefficient *>(&data.GetModeCoefficientImag()));
   }
 }
 

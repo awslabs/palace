@@ -416,6 +416,7 @@ double RomOperator::ComputeMaxError(int num_cand, double &omega_star)
   // Mpi::Print(" P_S: {}", PS);
   // Mpi::Print(" P\\P_S: {}\n", P_m_PS);
   // Mpi::Print(" P_C: {}\n", PC);
+  // Mpi::Print("\n");
 
   // For each candidate, compute the PROM solution and associated error metric.
   double err_max = 0.0;

@@ -38,10 +38,17 @@ private:
   int mode_idx;
   double d_offset;
 
-  // Marker for all boundary attributes making up this port boundary. Mutable because
-  // some MFEM API calls are not const correct.
+  // Attribute list and marker for all boundary attributes making up this port boundary.
+  // Mutable because some MFEM API calls are not const correct.
+  mfem::Array<int> attr_list;
   mutable mfem::Array<int> attr_marker;
-  HYPRE_BigInt attr_tdof_sizes[2];
+
+  // SubMesh data structures to define finite element spaces and grid functions on the
+  // SubMesh corresponding to this port boundary.
+  std::unique_ptr<mfem::ParSubMesh> port_mesh;
+  std::unique_ptr<mfem::FiniteElementCollection> port_nd_fec, port_h1_fec;
+  std::unique_ptr<mfem::ParFiniteElementSpace> port_nd_fespace, port_h1_fespace;
+  std::unique_ptr<mfem::ParTransferMap> port_nd_transfer, port_h1_transfer;
 
   // Operator storage for repeated boundary mode eigenvalue problem solves.
   double mu_eps_max;
@@ -50,33 +57,33 @@ private:
   ComplexVector v0, e0, e0t, e0n;
 
   // Eigenvalue solver for boundary modes.
+  MPI_Comm port_comm;
+  int port_root;
   std::unique_ptr<EigenvalueSolver> eigen;
   std::unique_ptr<ComplexKspSolver> ksp;
 
   // Grid functions storing the last computed electric field mode on the port and the
-  // associated propagation constant.
-  std::unique_ptr<mfem::ParComplexGridFunction> E0t, E0n;
+  // associated propagation constant. Also the coefficient for the incident port mode
+  // (n x H_inc) computed from the electric field mode.
+  std::unique_ptr<mfem::ParComplexGridFunction> port_E0t, port_E0n;
+  std::unique_ptr<mfem::VectorCoefficient> port_nxH0r_func, port_nxH0i_func;
+  std::unique_ptr<mfem::ParLinearForm> port_sr, port_si;
   std::complex<double> kn0;
   double omega0;
-
-  // Coefficients storing the incident port mode (n x H_inc) and linear forms for
-  // postprocessing integrated quantities on the port.
-  std::unique_ptr<mfem::VectorCoefficient> nxH0r_func, nxH0i_func;
-  std::unique_ptr<mfem::ParLinearForm> sr, si;
-  std::unique_ptr<mfem::ParGridFunction> ones;
 
 public:
   WavePortData(const config::WavePortData &data, const MaterialOperator &mat_op,
                mfem::ParFiniteElementSpace &nd_fespace,
                mfem::ParFiniteElementSpace &h1_fespace, const mfem::Array<int> &dbc_marker);
+  ~WavePortData();
 
   const mfem::Array<int> &GetMarker() const { return attr_marker; }
   mfem::Array<int> &GetMarker() { return attr_marker; }
 
   void Initialize(double omega);
 
-  HYPRE_BigInt GlobalTrueNDSize() const { return attr_tdof_sizes[0]; }
-  HYPRE_BigInt GlobalTrueH1Size() const { return attr_tdof_sizes[1]; }
+  HYPRE_BigInt GlobalTrueNDSize() const { return port_nd_fespace->GlobalTrueVSize(); }
+  HYPRE_BigInt GlobalTrueH1Size() const { return port_h1_fespace->GlobalTrueVSize(); }
 
   std::complex<double> GetPropagationConstant() const { return kn0; }
   double GetOperatingFrequency() const { return omega0; }
@@ -85,14 +92,10 @@ public:
   int GetModeIndex() const { return mode_idx; }
   double GetOffsetDistance() const { return d_offset; }
 
-  const std::unique_ptr<mfem::VectorCoefficient> &GetModeCoefficientReal() const
-  {
-    return nxH0r_func;
-  }
-  const std::unique_ptr<mfem::VectorCoefficient> &GetModeCoefficientImag() const
-  {
-    return nxH0i_func;
-  }
+  const mfem::VectorCoefficient &GetModeCoefficientReal() const { return *port_nxH0r_func; }
+  mfem::VectorCoefficient &GetModeCoefficientReal() { return *port_nxH0r_func; }
+  const mfem::VectorCoefficient &GetModeCoefficientImag() const { return *port_nxH0i_func; }
+  mfem::VectorCoefficient &GetModeCoefficientImag() { return *port_nxH0i_func; }
 
   std::complex<double> GetCharacteristicImpedance() const
   {

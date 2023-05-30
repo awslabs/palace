@@ -37,12 +37,86 @@ enum class MaterialPropertyType
   INV_PERMEABILITY_C0
 };
 
-template <MaterialPropertyType Type>
+enum class MeshElementType
+{
+  ELEMENT,
+  BDR_ELEMENT,
+  SUBMESH,
+  BDR_SUBMESH
+};
+
+template <MaterialPropertyType MatType, MeshElementType ElemType = MeshElementType::ELEMENT>
 class MaterialPropertyCoefficient : public mfem::MatrixCoefficient
 {
 private:
   const MaterialOperator &mat_op;
   const double coef;
+
+  static int GetAttribute(mfem::ElementTransformation &T)
+  {
+    if constexpr (ElemType == MeshElementType::SUBMESH ||
+                  ElemType == MeshElementType::BDR_SUBMESH)
+    {
+      MFEM_ASSERT(
+          T.ElementType == mfem::ElementTransformation::ELEMENT,
+          "Invalid usage of MaterialPropertyCoefficient for given MeshElementType!");
+      const mfem::ParSubMesh &submesh = *static_cast<mfem::ParSubMesh *>(T.mesh);
+      const mfem::ParMesh &mesh = *submesh.GetParent();
+      if constexpr (ElemType == MeshElementType::SUBMESH)
+      {
+        MFEM_ASSERT(
+            const_cast<mfem::ParSubMesh &>(submesh).GetFrom() ==
+                mfem::SubMesh::From::Domain,
+            "Invalid usage of MaterialPropertyCoefficient for given MeshElementType!");
+        return mesh.GetAttribute(submesh.GetParentElementIDMap()[T.ElementNo]);
+      }
+      else if constexpr (ElemType == MeshElementType::BDR_SUBMESH)
+      {
+        MFEM_ASSERT(
+            const_cast<mfem::ParSubMesh &>(submesh).GetFrom() ==
+                mfem::SubMesh::From::Boundary,
+            "Invalid usage of MaterialPropertyCoefficient for given MeshElementType!");
+        int i, o, iel1, iel2;
+        mesh.GetBdrElementFace(submesh.GetParentElementIDMap()[T.ElementNo], &i, &o);
+        mesh.GetFaceElements(i, &iel1, &iel2);
+#ifdef MFEM_DEBUG
+        int info1, info2, nc;
+        mesh.GetFaceInfos(i, &info1, &info2, &nc);
+        MFEM_VERIFY(nc == -1 && iel2 < 0 && info2 < 0,
+                    "MaterialPropertyCoefficient should only be used for exterior "
+                    "(single-sided) boundaries!");
+#endif
+        return mesh.GetAttribute(iel1);
+      }
+    }
+    else if constexpr (ElemType == MeshElementType::ELEMENT)
+    {
+      MFEM_ASSERT(
+          T.ElementType == mfem::ElementTransformation::ELEMENT,
+          "Invalid usage of MaterialPropertyCoefficient for given MeshElementType!");
+      return T.Attribute;
+    }
+    else if constexpr (ElemType == MeshElementType::BDR_ELEMENT)
+    {
+      MFEM_ASSERT(
+          T.ElementType == mfem::ElementTransformation::BDR_ELEMENT,
+          "Invalid usage of MaterialPropertyCoefficient for given MeshElementType!");
+      int i, o, iel1, iel2;
+      const mfem::Mesh &mesh = *T.mesh;
+      mesh.GetBdrElementFace(T.ElementNo, &i, &o);
+      mesh.GetFaceElements(i, &iel1, &iel2);
+#ifdef MFEM_DEBUG
+      int info1, info2, nc;
+      mesh.GetFaceInfos(i, &info1, &info2, &nc);
+      MFEM_VERIFY(nc == -1 && iel2 < 0 && info2 < 0,
+                  "MaterialPropertyCoefficient should only be used for exterior "
+                  "(single-sided) boundaries!");
+#endif
+      return mesh.GetAttribute(iel1);
+    }
+    MFEM_ABORT("Unsupported element type in MaterialPropertyCoefficient!");
+    return 0;
+  }
 
 public:
   MaterialPropertyCoefficient(const MaterialOperator &op, double c = 1.0)
@@ -53,163 +127,48 @@ public:
   void Eval(mfem::DenseMatrix &K, mfem::ElementTransformation &T,
             const mfem::IntegrationPoint &ip) override
   {
-    MFEM_ABORT("MaterialPropertyCoefficient::Eval() is not implemented for this "
-               "material property type!");
+    if constexpr (MatType == MaterialPropertyType::INV_PERMEABILITY)
+    {
+      K = mat_op.GetInvPermeability(GetAttribute(T));
+    }
+    else if constexpr (MatType == MaterialPropertyType::PERMITTIVITY_REAL)
+    {
+      K = mat_op.GetPermittivityReal(GetAttribute(T));
+    }
+    else if constexpr (MatType == MaterialPropertyType::PERMITTIVITY_IMAG)
+    {
+      K = mat_op.GetPermittivityImag(GetAttribute(T));
+    }
+    else if constexpr (MatType == MaterialPropertyType::PERMITTIVITY_ABS)
+    {
+      K = mat_op.GetPermittivityAbs(GetAttribute(T));
+    }
+    else if constexpr (MatType == MaterialPropertyType::CONDUCTIVITY)
+    {
+      K = mat_op.GetConductivity(GetAttribute(T));
+    }
+    else if constexpr (MatType == MaterialPropertyType::INV_LONDON_DEPTH)
+    {
+      K = mat_op.GetInvLondonDepth(GetAttribute(T));
+    }
+    else if constexpr (MatType == MaterialPropertyType::INV_Z0)
+    {
+      K = mat_op.GetInvImpedance(GetAttribute(T));
+    }
+    else if constexpr (MatType == MaterialPropertyType::INV_PERMEABILITY_C0)
+    {
+      const int attr = GetAttribute(T);
+      K.SetSize(height, width);
+      Mult(mat_op.GetInvPermeability(attr), mat_op.GetLightSpeed(attr), K);
+    }
+    else
+    {
+      MFEM_ABORT("MaterialPropertyCoefficient::Eval() is not implemented for this "
+                 "material property type!");
+    }
+    K *= coef;
   }
 };
-
-template <>
-inline void MaterialPropertyCoefficient<MaterialPropertyType::INV_PERMEABILITY>::Eval(
-    mfem::DenseMatrix &K, mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip)
-{
-  K = mat_op.GetInvPermeability(T.mesh->GetAttribute(T.ElementNo));
-  K *= coef;
-}
-
-template <>
-inline void MaterialPropertyCoefficient<MaterialPropertyType::PERMITTIVITY_REAL>::Eval(
-    mfem::DenseMatrix &K, mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip)
-{
-  K = mat_op.GetPermittivityReal(T.mesh->GetAttribute(T.ElementNo));
-  K *= coef;
-}
-
-template <>
-inline void MaterialPropertyCoefficient<MaterialPropertyType::PERMITTIVITY_IMAG>::Eval(
-    mfem::DenseMatrix &K, mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip)
-{
-  K = mat_op.GetPermittivityImag(T.mesh->GetAttribute(T.ElementNo));
-  K *= coef;
-}
-
-template <>
-inline void MaterialPropertyCoefficient<MaterialPropertyType::PERMITTIVITY_ABS>::Eval(
-    mfem::DenseMatrix &K, mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip)
-{
-  K = mat_op.GetPermittivityAbs(T.mesh->GetAttribute(T.ElementNo));
-  K *= coef;
-}
-
-template <>
-inline void MaterialPropertyCoefficient<MaterialPropertyType::CONDUCTIVITY>::Eval(
-    mfem::DenseMatrix &K, mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip)
-{
-  K = mat_op.GetConductivity(T.mesh->GetAttribute(T.ElementNo));
-  K *= coef;
-}
-
-template <>
-inline void MaterialPropertyCoefficient<MaterialPropertyType::INV_LONDON_DEPTH>::Eval(
-    mfem::DenseMatrix &K, mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip)
-{
-  K = mat_op.GetInvLondonDepth(T.mesh->GetAttribute(T.ElementNo));
-  K *= coef;
-}
-
-template <>
-inline void MaterialPropertyCoefficient<MaterialPropertyType::INV_Z0>::Eval(
-    mfem::DenseMatrix &K, mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip)
-{
-  K = mat_op.GetInvImpedance(T.mesh->GetAttribute(T.ElementNo));
-  K *= coef;
-}
-
-template <>
-inline void MaterialPropertyCoefficient<MaterialPropertyType::INV_PERMEABILITY_C0>::Eval(
-    mfem::DenseMatrix &K, mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip)
-{
-  const int attr = T.mesh->GetAttribute(T.ElementNo);
-  K.SetSize(height, width);
-  Mult(mat_op.GetInvPermeability(attr), mat_op.GetLightSpeed(attr), K);
-  K *= coef;
-}
-
-template <MaterialPropertyType Type>
-class BdrMaterialPropertyCoefficient : public mfem::MatrixCoefficient
-{
-private:
-  const MaterialOperator &mat_op;
-  const double coef;
-
-public:
-  BdrMaterialPropertyCoefficient(const MaterialOperator &op, double c = 1.0)
-    : mfem::MatrixCoefficient(op.SpaceDimension()), mat_op(op), coef(c)
-  {
-  }
-
-  void Eval(mfem::DenseMatrix &K, mfem::ElementTransformation &T,
-            const mfem::IntegrationPoint &ip) override
-  {
-    MFEM_ABORT("BdrMaterialPropertyCoefficient::Eval() is not implemented for this "
-               "material property type!");
-  }
-};
-
-template <>
-inline void BdrMaterialPropertyCoefficient<MaterialPropertyType::INV_PERMEABILITY>::Eval(
-    mfem::DenseMatrix &K, mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip)
-{
-  K = mat_op.GetBdrInvPermeability(T.mesh->GetAttribute(T.ElementNo));
-  K *= coef;
-}
-
-template <>
-inline void BdrMaterialPropertyCoefficient<MaterialPropertyType::PERMITTIVITY_REAL>::Eval(
-    mfem::DenseMatrix &K, mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip)
-{
-  K = mat_op.GetBdrPermittivityReal(T.mesh->GetAttribute(T.ElementNo));
-  K *= coef;
-}
-
-template <>
-inline void BdrMaterialPropertyCoefficient<MaterialPropertyType::PERMITTIVITY_IMAG>::Eval(
-    mfem::DenseMatrix &K, mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip)
-{
-  K = mat_op.GetBdrPermittivityImag(T.mesh->GetAttribute(T.ElementNo));
-  K *= coef;
-}
-
-template <>
-inline void BdrMaterialPropertyCoefficient<MaterialPropertyType::PERMITTIVITY_ABS>::Eval(
-    mfem::DenseMatrix &K, mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip)
-{
-  K = mat_op.GetBdrPermittivityAbs(T.mesh->GetAttribute(T.ElementNo));
-  K *= coef;
-}
-
-template <>
-inline void BdrMaterialPropertyCoefficient<MaterialPropertyType::CONDUCTIVITY>::Eval(
-    mfem::DenseMatrix &K, mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip)
-{
-  K = mat_op.GetBdrConductivity(T.mesh->GetAttribute(T.ElementNo));
-  K *= coef;
-}
-
-template <>
-inline void BdrMaterialPropertyCoefficient<MaterialPropertyType::INV_LONDON_DEPTH>::Eval(
-    mfem::DenseMatrix &K, mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip)
-{
-  K = mat_op.GetBdrInvLondonDepth(T.mesh->GetAttribute(T.ElementNo));
-  K *= coef;
-}
-
-template <>
-inline void BdrMaterialPropertyCoefficient<MaterialPropertyType::INV_Z0>::Eval(
-    mfem::DenseMatrix &K, mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip)
-{
-  K = mat_op.GetBdrInvImpedance(T.mesh->GetAttribute(T.ElementNo));
-  K *= coef;
-}
-
-template <>
-inline void BdrMaterialPropertyCoefficient<MaterialPropertyType::INV_PERMEABILITY_C0>::Eval(
-    mfem::DenseMatrix &K, mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip)
-{
-  const int attr = T.mesh->GetAttribute(T.ElementNo);
-  K.SetSize(height, width);
-  Mult(mat_op.GetBdrInvPermeability(attr), mat_op.GetBdrLightSpeed(attr), K);
-  K *= coef;
-}
 
 // Base class for coefficients which need to evaluate a GridFunction in a domain element
 // attached to a boundary element, or both domain elements on either side for internal
@@ -266,7 +225,7 @@ public:
             const mfem::IntegrationPoint &ip) override
   {
     // Get neighboring elements.
-    MFEM_VERIFY(vdim == 3, "BdrJVectorCoefficient expects a mesh in 3D space!");
+    MFEM_ASSERT(vdim == 3, "BdrJVectorCoefficient expects a mesh in 3D space!");
     mfem::ElementTransformation *T1, *T2;
     GetElementTransformations(T, ip, T1, T2, &C1);
 
@@ -551,7 +510,7 @@ public:
     if (T.ElementType == mfem::ElementTransformation::ELEMENT)
     {
       T.SetIntPoint(&ip);
-      return GetLocalEnergyDensity(T, ip, mesh.GetAttribute(T.ElementNo));
+      return GetLocalEnergyDensity(T, ip, T.Attribute);
     }
     if (T.ElementType == mfem::ElementTransformation::BDR_ELEMENT)
     {
@@ -1029,14 +988,14 @@ inline void BdrGridFunctionCoefficient::GetElementTransformations(
 {
   // Return transformations for elements attached to boundary element T. T1 always exists
   // but T2 may not if the element is truly a single-sided boundary.
-  MFEM_VERIFY(T.ElementType == mfem::ElementTransformation::BDR_ELEMENT,
+  MFEM_ASSERT(T.ElementType == mfem::ElementTransformation::BDR_ELEMENT,
               "Unexpected element type in BdrGridFunctionCoefficient!");
-  MFEM_VERIFY(&mesh == T.mesh, "Invalid mesh for BdrGridFunctionCoefficient!");
+  MFEM_ASSERT(&mesh == T.mesh, "Invalid mesh for BdrGridFunctionCoefficient!");
   int i, o;
   int iel1, iel2, info1, info2;
   mesh.GetBdrElementFace(T.ElementNo, &i, &o);
   mesh.GetFaceElements(i, &iel1, &iel2);
-  mesh.GetFaceInfos(i, &info1, &info2);
+  mesh.GetFaceInfos(i, &info1, &info2);  // XX TODO: Nonconforming support
 
   mfem::FaceElementTransformations *FET;
   if (info2 >= 0 && iel2 < 0)

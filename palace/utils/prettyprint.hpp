@@ -78,15 +78,14 @@ inline void PrettyPrintMarker(const Container<T, U...> &data,
       }
       if (i == j)
       {
-        auto wi = 1 + static_cast<int>(std::log10(i + 1));
+        auto wi = 1 + static_cast<T>(std::log10(i + 1));
         w = internal::PrePrint(comm, w, wi, lead) + wi;
         Mpi::Print(comm, "{:d}", i + 1);
         i++;
       }
       else
       {
-        auto wi =
-            3 + static_cast<int>(std::log10(i + 1)) + static_cast<int>(std::log10(j + 1));
+        auto wi = 3 + static_cast<T>(std::log10(i + 1)) + static_cast<T>(std::log10(j + 1));
         w = internal::PrePrint(comm, w, wi, lead) + wi;
         Mpi::Print(comm, "{:d}-{:d}", i + 1, j + 1);
         i = j + 1;
@@ -102,19 +101,35 @@ inline void PrettyPrintMarker(const Container<T, U...> &data,
 
 // Fixed column width wrapped printing for the contents of an array.
 template <template <typename...> class Container, typename T, typename... U>
-inline void PrettyPrint(const Container<T, U...> &data, T scale = T(1.0),
+inline void PrettyPrint(const Container<T, U...> &data, T scale,
                         const std::string &prefix = "", MPI_Comm comm = MPI_COMM_WORLD)
 {
-  constexpr int pv = 3;       // Value precision
-  constexpr int wv = pv + 6;  // Total printed width of a value
   std::size_t w = 0, lead = prefix.length();
   Mpi::Print(comm, prefix);
   for (const auto &v : data)
   {
-    w = internal::PrePrint(comm, w, wv, lead) + wv;
-    Mpi::Print(comm, "{:.{}e}", v * scale, pv);
+    if constexpr (std::is_integral<T>::value)
+    {
+      auto wv = 1 + static_cast<T>(std::log10(v * scale));
+      w = internal::PrePrint(comm, w, wv, lead) + wv;
+      Mpi::Print(comm, "{:d}", v * scale);
+    }
+    else
+    {
+      constexpr auto pv = 3;       // Value precision
+      constexpr auto wv = pv + 6;  // Total printed width of a value
+      w = internal::PrePrint(comm, w, wv, lead) + wv;
+      Mpi::Print(comm, "{:.{}e}", v * scale, pv);
+    }
   }
   Mpi::Print(comm, "\n");
+}
+
+template <template <typename...> class Container, typename T, typename... U>
+inline void PrettyPrint(const Container<T, U...> &data, const std::string &prefix = "",
+                        MPI_Comm comm = MPI_COMM_WORLD)
+{
+  PrettyPrint(data, T(1), prefix, comm);
 }
 
 }  // namespace palace::utils
