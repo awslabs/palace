@@ -32,10 +32,6 @@ private:
   // Shared face mapping for boundary coefficients.
   std::map<int, int> local_to_shared;
 
-  // Mapping from boundary element attribute to domain element attribute in order to query
-  // material properties on mesh boundary elements.
-  std::map<int, int> bdr_attr_map;
-
 public:
   MaterialOperator(const IoData &iodata, mfem::ParMesh &mesh);
 
@@ -53,47 +49,6 @@ public:
   const auto &GetLightSpeedMax(int attr) const { return mat_c0_max[attr - 1]; }
   const auto &GetConductivity(int attr) const { return mat_sigma[attr - 1]; }
   const auto &GetInvLondonDepth(int attr) const { return mat_invLondon[attr - 1]; }
-
-  const auto &GetBdrInvPermeability(int attr) const
-  {
-    return GetInvPermeability(bdr_attr_map.at(attr));
-  }
-  const auto &GetBdrPermittivityReal(int attr) const
-  {
-    return GetPermittivityReal(bdr_attr_map.at(attr));
-  }
-  const auto &GetBdrPermittivityImag(int attr) const
-  {
-    return GetPermittivityImag(bdr_attr_map.at(attr));
-  }
-  const auto &GetBdrPermittivityAbs(int attr) const
-  {
-    return GetPermittivityAbs(bdr_attr_map.at(attr));
-  }
-  const auto &GetBdrInvImpedance(int attr) const
-  {
-    return GetInvImpedance(bdr_attr_map.at(attr));
-  }
-  const auto &GetBdrLightSpeed(int attr) const
-  {
-    return GetLightSpeed(bdr_attr_map.at(attr));
-  }
-  const auto &GetBdrLightSpeedMin(int attr) const
-  {
-    return GetLightSpeedMin(bdr_attr_map.at(attr));
-  }
-  const auto &GetBdrLightSpeedMax(int attr) const
-  {
-    return GetLightSpeedMax(bdr_attr_map.at(attr));
-  }
-  const auto &GetBdrConductivity(int attr) const
-  {
-    return GetConductivity(bdr_attr_map.at(attr));
-  }
-  const auto &GetBdrInvLondonDepth(int attr) const
-  {
-    return GetInvLondonDepth(bdr_attr_map.at(attr));
-  }
 
   bool HasLossTangent() const { return (losstan_marker.Max() > 0); }
   bool HasConductivity() const { return (conductivity_marker.Max() > 0); }
