@@ -409,54 +409,12 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata, mfem::ParMe
     }
   }
 
-  // Construct mapping from boundary attributes to domain attributes in order to return
-  // material properties for a queried boundary element. For interior boundary elements
-  // which have two neighboring domain elements, the domain attribute is chosen from the
-  // side where the speed of light is smaller (typically should choose the non-vacuum
-  // side).
+  // Construct shared face mapping for boundary coefficients. This is useful to have in one
+  // place alongside material properties so we construct and store it here.
   for (int i = 0; i < mesh.GetNSharedFaces(); i++)
   {
     int i_local = mesh.GetSharedFace(i);
     local_to_shared[i_local] = i;
-  }
-  for (int be = 0; be < mesh.GetNBE(); be++)
-  {
-    int bdr_attr = mesh.GetBdrAttribute(be);
-    if (bdr_attr_map.find(bdr_attr) == bdr_attr_map.end())
-    {
-      int i, o;
-      int iel1, iel2, info1, info2;
-      mesh.GetBdrElementFace(be, &i, &o);
-      mesh.GetFaceElements(i, &iel1, &iel2);
-      mesh.GetFaceInfos(i, &info1, &info2);
-
-      mfem::FaceElementTransformations *FET;
-      if (info2 >= 0 && iel2 < 0)
-      {
-        // Face is shared with another subdomain.
-        const int &ishared = local_to_shared.at(i);
-        FET = mesh.GetSharedFaceTransformations(ishared);
-      }
-      else
-      {
-        // Face is either internal to the subdomain, or a true one-sided boundary.
-        FET = mesh.GetFaceElementTransformations(i);
-      }
-
-      int attr1 = FET->GetElement1Transformation().Attribute;
-      if (info2 < 0)
-      {
-        // Face is a true one-sided boundary.
-        bdr_attr_map[bdr_attr] = attr1;
-      }
-      else
-      {
-        // Face is an internal boundary.
-        int attr2 = FET->GetElement2Transformation().Attribute;
-        bdr_attr_map[bdr_attr] =
-            (GetLightSpeedMax(attr2) < GetLightSpeedMin(attr1)) ? attr2 : attr1;
-      }
-    }
   }
 
   // Mark selected material attributes from the mesh as having certain local properties.

@@ -70,8 +70,9 @@ void FarfieldBoundaryOperator::AddDampingBdrCoefficients(double coef,
   if (farfield_marker.Max() > 0)
   {
     constexpr MaterialPropertyType MatType = MaterialPropertyType::INV_Z0;
+    constexpr MeshElementType ElemType = MeshElementType::BDR_ELEMENT;
     fb.AddCoefficient(
-        std::make_unique<BdrMaterialPropertyCoefficient<MatType>>(mat_op, coef),
+        std::make_unique<MaterialPropertyCoefficient<MatType, ElemType>>(mat_op, coef),
         farfield_marker);
   }
 }
@@ -89,9 +90,11 @@ void FarfieldBoundaryOperator::AddExtraSystemBdrCoefficients(double omega,
   if (farfield_marker.Max() > 0 && order > 1)
   {
     constexpr MaterialPropertyType MatType = MaterialPropertyType::INV_PERMEABILITY_C0;
+    constexpr MeshElementType ElemType = MeshElementType::BDR_ELEMENT;
     dfbi.AddCoefficient(
         std::make_unique<NormalProjectedCoefficient>(
-            std::make_unique<BdrMaterialPropertyCoefficient<MatType>>(mat_op, 0.5 / omega)),
+            std::make_unique<MaterialPropertyCoefficient<MatType, ElemType>>(mat_op,
+                                                                             0.5 / omega)),
         farfield_marker);
   }
 }
