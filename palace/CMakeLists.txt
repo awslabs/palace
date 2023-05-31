@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 #
-# CMake configuration for the Palace application
+# CMake configuration for the main Palace application
 #
 
 # CMake 3.13 was released in Nov. 2018
@@ -23,45 +23,21 @@ project(palace LANGUAGES CXX VERSION 0.11.1)
 
 # Define build settings and defaults
 set(PALACE_WITH_OPENMP OFF CACHE BOOL "Use OpenMP")
-set(PALACE_WITH_GSLIB ON CACHE BOOL "Build with GSLIB library for high-order field interpolation")
-set(PALACE_WITH_SUPERLU ON CACHE BOOL "Build with SuperLU_DIST sparse direct solver")
-set(PALACE_WITH_STRUMPACK OFF CACHE BOOL "Build with STRUMPACK sparse direct solver")
-set(PALACE_WITH_MUMPS OFF CACHE BOOL "Build with MUMPS sparse direct solver")
+
 set(PALACE_WITH_SLEPC ON CACHE BOOL "Build with SLEPc eigenvalue solver")
 set(PALACE_WITH_ARPACK OFF CACHE BOOL "Build with ARPACK eigenvalue solver")
-set(PALACE_WITH_INTERNAL_JSON ON CACHE BOOL "Use internal nlohmann/json library")
-set(PALACE_WITH_INTERNAL_FMT ON CACHE BOOL "Use internal fmt library")
-set(PALACE_WITH_INTERNAL_MFEM ON CACHE BOOL "Use internal MFEM library")
+
 set(ANALYZE_SOURCES_CLANG_TIDY OFF CACHE BOOL "Run static analysis checks using clang-tidy")
 set(ANALYZE_SOURCES_CPPCHECK OFF CACHE BOOL "Run static analysis checks using cppcheck")
 
 # Help find third-party dependencies
-set(PETSC_DIR "" CACHE STRING "Path to PETSc build or installation directory (not required if already on PKG_CONFIG_PATH)")
-set(SLEPC_DIR "" CACHE STRING "Path to SLEPc build or installation directory (not required if already on PKG_CONFIG_PATH)")
+set(MFEM_DIR "" CACHE STRING "Path to MFEM build or installation directory (not required if already on CMAKE_PREFIX_PATH)")
+set(PETSC_DIR "" CACHE STRING "Path to PETSc build or installation directory (not required if already on CMAKE_PREFIX_PATH or PKG_CONFIG_PATH)")
+set(SLEPC_DIR "" CACHE STRING "Path to SLEPc build or installation directory (not required if already on CMAKE_PREFIX_PATH or PKG_CONFIG_PATH)")
 set(ARPACK_DIR "" CACHE STRING "Path to ARPACK build or installation directory (not required if already on CMAKE_PREFIX_PATH)")
 
-# Help find dependencies for the internal MFEM build
-# If we trust MFEM's Find<PACKAGE>.cmake module, we can just set <PACKAGE>_DIR and, if
-# needed, <PACKAGE>_REQUIRED_PACKAGES. The extra <PACKAGE>_REQUIRED_LIBRARIES can be used
-# to add any additional dependency libraries.
-set(PALACE_MFEM_DEPS
-  "METIS"
-  "HYPRE"
-  "SuperLUDist"
-  "STRUMPACK"
-  "MUMPS"
-  "GSLIB"
-)
-foreach(DEP IN LISTS PALACE_MFEM_DEPS)
-  set(${DEP}_DIR "" CACHE STRING "Path to ${DEP} build or installation directory")
-  set(${DEP}_REQUIRED_PACKAGES "" CACHE STRING "List of additional required packages for ${DEP}")
-  set(${DEP}_REQUIRED_LIBRARIES "" CACHE STRING "List of additional required libraries for ${DEP}")
-  # set(${DEP}_LIBRARIES "" CACHE STRING "List of library files for ${DEP}")
-  # set(${DEP}_INCLUDE_DIRS "" CACHE STRING "Path to ${DEP} include directories")
-endforeach()
-
 # Enable Fortran if required
-if(PALACE_WITH_STRUMPACK OR PALACE_WITH_MUMPS OR PALACE_WITH_ARPACK)
+if(PALACE_WITH_ARPACK)
   enable_language(Fortran)
 endif()
 
@@ -71,26 +47,8 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Choose CMake build type" FORCE)
 endif()
 
-# Set a default for dependency library builds if none was provided
-if(NOT DEFINED BUILD_SHARED_LIBS)
-  message(STATUS "Setting BUILD_SHARED_LIBS to 'OFF' as it was not specified")
-  set(BUILD_SHARED_LIBS OFF CACHE BOOL "Global flag to cause add_library() to create shared libraries if ON")
-endif()
-
 # Add extra CMake modules
-list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/../cmake")
-
-# Add third-party dependency builds
-add_subdirectory(deps)
-if(NOT PALACE_WITH_INTERNAL_JSON)
-  find_package(nlohmann_json REQUIRED CONFIG)
-endif()
-if(NOT PALACE_WITH_INTERNAL_FMT)
-  find_package(fmt REQUIRED CONFIG)
-endif()
-if(NOT PALACE_WITH_INTERNAL_MFEM)
-  message(FATAL_ERROR "Palace only supports builds with internal MFEM")
-endif()
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
 
 # Find MPI
 find_package(MPI REQUIRED)
@@ -99,6 +57,32 @@ find_package(MPI REQUIRED)
 if(PALACE_WITH_OPENMP)
   find_package(OpenMP REQUIRED)
 endif()
+
+# Find nlohmann/json
+find_package(nlohmann_json REQUIRED CONFIG)
+message(STATUS "Found nlohmann/json: ${nlohmann_json_VERSION}")
+
+# Find fmt
+find_package(fmt REQUIRED CONFIG)
+message(STATUS "Found fmt: ${fmt_VERSION}")
+
+# Find Eigen
+find_package(Eigen3 REQUIRED CONFIG)
+message(STATUS "Found Eigen: ${Eigen3_VERSION}")
+
+# Find MFEM
+if(NOT "${MFEM_DIR}" STREQUAL "")
+  set(MFEM_ROOT ${MFEM_DIR})
+endif()
+find_package(MFEM REQUIRED CONFIG)
+message(STATUS "Found MFEM: ${MFEM_VERSION}")
+if(NOT MFEM_USE_MPI)
+  message(FATAL_ERROR "Build requires MFEM with MPI support")
+endif()
+# if(MFEM_CXX_FLAGS)
+#   # Pull compiler flags from MFEM for OpenMP and optimizations
+#   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${MFEM_CXX_FLAGS}")
+# endif()
 
 # Find PETSc and SLEPc
 if(PALACE_WITH_SLEPC)
@@ -121,7 +105,9 @@ endif()
 
 # Find ARPACK
 if(PALACE_WITH_ARPACK)
-  set(arpackng_ROOT ${ARPACK_DIR})
+  if(NOT "${ARPACK_DIR}" STREQUAL "")
+    set(arpackng_ROOT ${ARPACK_DIR})
+  endif()
   find_package(arpackng REQUIRED CONFIG)
   message(STATUS "Found ARPACK: ${arpackng_VERSION}")
 elseif(NOT PALACE_WITH_SLEPC)

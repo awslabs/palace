@@ -20,12 +20,15 @@ project(palace-superbuild LANGUAGES CXX C Fortran VERSION 0.11.1)
 set(PALACE_WITH_64BIT_INT OFF CACHE BOOL "Use 64 bit integers")
 set(PALACE_WITH_64BIT_BLAS_INT OFF CACHE BOOL "Use ILP64 BLAS/LAPACK interface instead of LP64 (not recommended)")
 set(PALACE_WITH_OPENMP OFF CACHE BOOL "Use OpenMP")
+
+set(PALACE_BUILD_EXTERNAL_DEPS ON CACHE BOOL "Build external third-party dependency libraries")
 set(PALACE_WITH_GSLIB ON CACHE BOOL "Build with GSLIB library for high-order field interpolation")
 set(PALACE_WITH_SUPERLU ON CACHE BOOL "Build with SuperLU_DIST sparse direct solver")
 set(PALACE_WITH_STRUMPACK OFF CACHE BOOL "Build with STRUMPACK sparse direct solver")
 set(PALACE_WITH_MUMPS OFF CACHE BOOL "Build with MUMPS sparse direct solver")
 set(PALACE_WITH_SLEPC ON CACHE BOOL "Build with SLEPc eigenvalue solver")
 set(PALACE_WITH_ARPACK OFF CACHE BOOL "Build with ARPACK eigenvalue solver")
+
 set(ANALYZE_SOURCES_CLANG_TIDY OFF CACHE BOOL "Run static analysis checks using clang-tidy")
 set(ANALYZE_SOURCES_CPPCHECK OFF CACHE BOOL "Run static analysis checks using cppcheck")
 
@@ -48,7 +51,7 @@ if(NOT DEFINED BUILD_SHARED_LIBS)
 endif()
 
 # Add extra CMake modules
-list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake/extern")
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
 
 # Intel classic compilers no longer supported (prior to CMake 3.20, the new compilers are
 # detected as Clang instead of IntelLLVM)
@@ -74,6 +77,10 @@ include(ExternalBLASLAPACK)
 
 # Add other third-party dependency builds
 add_subdirectory("extern")
+
+# Add MFEM (always built as part of Palace)
+message(STATUS "====================== Configuring MFEM dependency =====================")
+include(ExternalMFEM)
 
 # Add the main Palace project
 message(STATUS "========================== Configuring Palace ==========================")
