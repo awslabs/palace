@@ -4,7 +4,7 @@
 #include "distrelaxation.hpp"
 
 #include <mfem.hpp>
-#include <general/forall.hpp>
+#include <mfem/general/forall.hpp>
 #include "linalg/chebyshev.hpp"
 #include "linalg/rap.hpp"
 

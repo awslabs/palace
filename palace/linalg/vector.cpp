@@ -5,7 +5,7 @@
 
 #include <cstdint>
 #include <random>
-#include <general/forall.hpp>
+#include <mfem/general/forall.hpp>
 
 namespace palace
 {

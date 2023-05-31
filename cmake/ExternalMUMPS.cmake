@@ -6,11 +6,7 @@
 #
 
 # Force build order
-if(PALACE_WITH_STRUMPACK)
-  set(MUMPS_DEPENDENCIES strumpack)
-else()
-  set(MUMPS_DEPENDENCIES scalapack)
-endif()
+set(MUMPS_DEPENDENCIES scalapack scotch)
 
 set(MUMPS_OPTIONS ${PALACE_SUPERBUILD_DEFAULT_ARGS})
 list(APPEND MUMPS_OPTIONS
@@ -52,7 +48,7 @@ set(MUMPS_PATCH_FILES
 include(ExternalProject)
 ExternalProject_Add(mumps
   DEPENDS           ${MUMPS_DEPENDENCIES}
-  GIT_REPOSITORY    ${CMAKE_CURRENT_SOURCE_DIR}/mumps
+  GIT_REPOSITORY    ${EXTERN_MUMPS_URL}
   GIT_TAG           ${EXTERN_MUMPS_GIT_TAG}
   SOURCE_DIR        ${CMAKE_CURRENT_BINARY_DIR}/mumps
   BINARY_DIR        ${CMAKE_CURRENT_BINARY_DIR}/mumps-build
