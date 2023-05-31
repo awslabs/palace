@@ -79,10 +79,11 @@ void GeometricMultigridSolver<OperType>::SetOperator(const OperType &op)
   for (int l = 0; l < n_levels; l++)
   {
     A[l] = &mg_op->GetOperatorAtLevel(l);
-    MFEM_VERIFY(A[l]->Width() == A[l]->Height() &&
-                    A[l]->Height() ==
-                        ((l < n_levels - 1) ? P[l]->Width() : P[l - 1]->Height()),
-                "Invalid operator sizes for GeometricMultigridSolver!");
+    MFEM_VERIFY(
+        A[l]->Width() == A[l]->Height() &&
+            (n_levels == 1 ||
+             (A[l]->Height() == ((l < n_levels - 1) ? P[l]->Width() : P[l - 1]->Height()))),
+        "Invalid operator sizes for GeometricMultigridSolver!");
 
     const auto *PtAP_l = dynamic_cast<const ParOperType *>(A[l]);
     MFEM_VERIFY(
@@ -162,7 +163,7 @@ template <typename OperType>
 void GeometricMultigridSolver<OperType>::VCycle(int l, bool initial_guess) const
 {
   // Pre-smooth, with zero initial guess (Y = 0 set inside). This is the coarse solve at
-  // level 0. Important to note that the smoothers must respect the iterative_mode flag
+  // level 0. Important to note that the smoothers must respect the initial guess flag
   // correctly (given X, Y, compute Y <- Y + B (X - A Y)) .
   B[l]->SetInitialGuess(initial_guess);
   B[l]->Mult(X[l], Y[l]);
