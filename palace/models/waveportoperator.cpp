@@ -295,26 +295,14 @@ void GetInitialSpace(mfem::ParFiniteElementSpace &nd_fespace,
   // product (since we use a general non-Hermitian solver due to complex symmetric B), then
   // we just use v0 = y0 directly.
   v.SetSize(nd_fespace.GetTrueVSize() + h1_fespace.GetTrueVSize());
-  linalg::SetRandom(nd_fespace.GetComm(), v);
-  // v = std::complex<double>(1.0, 0.0);
+  // linalg::SetRandomReal(nd_fespace.GetComm(), v);
+  v = std::complex<double>(1.0, 0.0);
   v.SetSubVector(nd_dbc_tdof_list, 0.0);
   for (int i = nd_fespace.GetTrueVSize();
        i < nd_fespace.GetTrueVSize() + h1_fespace.GetTrueVSize(); i++)
   {
     v.Real()[i] = v.Imag()[i] = 0.0;
   }
-}
-
-mfem::ParSubMesh &GetSubMesh(mfem::ParMesh &mesh)
-{
-  MFEM_ASSERT(mfem::ParSubMesh::IsParSubMesh(&mesh),
-              "BdrSubmeshHVectorCoefficient requires the input grid function coefficients "
-              "to be defined on a SubMesh!");
-  mfem::ParSubMesh &submesh = *static_cast<mfem::ParSubMesh *>(&mesh);
-  MFEM_ASSERT(
-      submesh.GetFrom() == mfem::SubMesh::From::Boundary,
-      "BdrSubmeshHVectorCoefficient requires a SubMesh created using CreateFromBoundary!");
-  return submesh;
 }
 
 // Computes boundary modal n x H, where +n is the direction of wave propagation: n x H =
@@ -336,6 +324,19 @@ private:
 
   std::complex<double> kn;
   double omega;
+
+  mfem::ParSubMesh &GetSubMesh(mfem::ParMesh &mesh)
+  {
+    MFEM_ASSERT(
+        mfem::ParSubMesh::IsParSubMesh(&mesh),
+        "BdrSubmeshHVectorCoefficient requires the input grid function coefficients "
+        "to be defined on a SubMesh!");
+    mfem::ParSubMesh &submesh = *static_cast<mfem::ParSubMesh *>(&mesh);
+    MFEM_ASSERT(submesh.GetFrom() == mfem::SubMesh::From::Boundary,
+                "BdrSubmeshHVectorCoefficient requires a SubMesh created using "
+                "CreateFromBoundary!");
+    return submesh;
+  }
 
 public:
   BdrSubmeshHVectorCoefficient(const mfem::ParComplexGridFunction &Et,
@@ -466,7 +467,7 @@ WavePortData::WavePortData(const config::WavePortData &data, const MaterialOpera
   port_h1_fespace =
       std::make_unique<mfem::ParFiniteElementSpace>(port_mesh.get(), port_h1_fec.get());
 
-  mfem::ParGridFunction E0t(&nd_fespace), E0n(&nd_fespace);
+  mfem::ParGridFunction E0t(&nd_fespace), E0n(&h1_fespace);
   port_E0t = std::make_unique<mfem::ParComplexGridFunction>(port_nd_fespace.get());
   port_E0n = std::make_unique<mfem::ParComplexGridFunction>(port_h1_fespace.get());
 
@@ -712,7 +713,7 @@ void WavePortData::Initialize(double omega)
     auto &Br = *static_cast<mfem::HypreParMatrix *>(B->Real());
     Ar.Add(-omega * omega + omega0 * omega0, *A2r);
     Br.Add(-omega * omega + omega0 * omega0, *A2r);
-    Br.Add(1.0 / theta2 - (omega0 == 0.0 ? 0.0 : 1.0 / (mu_eps_max * omega0 * omega0)),
+    Br.Add(1.0 / theta2 - ((omega0 == 0.0) ? 0.0 : 1.0 / (mu_eps_max * omega0 * omega0)),
            *B3);
     Pr.Add(1.0, Br);
 
@@ -793,13 +794,21 @@ void WavePortData::Initialize(double omega)
     port_sr->Assemble();
     port_si->Assemble();
 
-    mfem::ParGridFunction ones(port_nd_fespace.get());
+    Vector ones(port_nxH0r_func->GetVDim());
     ones = 1.0;
-    double sign = ((*port_sr)(ones) > 0.0) ? 1.0 : -1.0;
+    mfem::VectorConstantCoefficient tdir(ones);
+    mfem::ParGridFunction port_S0t(port_nd_fespace.get());
+    port_S0t.ProjectCoefficient(tdir);
+    double sign = ((*port_sr) * port_S0t);
+    std::complex<double> dot(
+        -((*port_sr) * port_E0t->real()) - ((*port_si) * port_E0t->imag()),
+        -((*port_sr) * port_E0t->imag()) + ((*port_si) * port_E0t->real()));
+    double data[3] = {sign, dot.real(), dot.imag()};
+    Mpi::GlobalSum(3, data, port_nd_fespace->GetComm());
+    sign = (data[0] > 0.0) ? 1.0 : -1.0;
+    dot = {data[1], data[2]};
 
-    std::complex<double> s0(-(*port_sr)(port_E0t->real()) - (*port_si)(port_E0t->imag()),
-                            -(*port_sr)(port_E0t->imag()) + (*port_si)(port_E0t->real()));
-    double scale = sign / std::sqrt(std::abs(s0));
+    double scale = sign / std::sqrt(std::abs(dot));
     port_E0t->real() *= scale;  // Updates the n x H coefficients depending on Et, En too
     port_E0t->imag() *= scale;
     port_E0n->real() *= scale;
