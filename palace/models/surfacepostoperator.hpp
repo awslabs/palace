@@ -82,9 +82,10 @@ private:
   const MaterialOperator &mat_op;
 
   // Unit function used for computing surface integrals.
-  mfem::ParGridFunction ones;
+  mfem::GridFunction ones;
 
-  double GetSurfaceIntegral(const SurfaceData &data, const mfem::ParGridFunction &U) const;
+  double GetLocalSurfaceIntegral(const SurfaceData &data,
+                                 const mfem::ParGridFunction &U) const;
 
 public:
   SurfacePostOperator(const IoData &iodata, const MaterialOperator &mat_op,
@@ -100,9 +101,13 @@ public:
 
   // Get surface integrals computing dielectric interface energy, surface charge, or
   // surface magnetic flux.
-  double GetInterfaceElectricFieldEnergy(int idx, const mfem::ParGridFunction &E) const;
   double GetInterfaceLossTangent(int idx) const;
+  double GetInterfaceElectricFieldEnergy(int idx,
+                                         const mfem::ParComplexGridFunction &E) const;
+  double GetInterfaceElectricFieldEnergy(int idx, const mfem::ParGridFunction &E) const;
+  double GetSurfaceElectricCharge(int idx, const mfem::ParComplexGridFunction &E) const;
   double GetSurfaceElectricCharge(int idx, const mfem::ParGridFunction &E) const;
+  double GetSurfaceMagneticFlux(int idx, const mfem::ParComplexGridFunction &B) const;
   double GetSurfaceMagneticFlux(int idx, const mfem::ParGridFunction &B) const;
 };
 
