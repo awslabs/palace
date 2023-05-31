@@ -3,7 +3,7 @@
 
 #include "rap.hpp"
 
-#include <general/forall.hpp>
+#include <mfem/general/forall.hpp>
 
 namespace palace
 {
