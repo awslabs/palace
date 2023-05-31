@@ -51,7 +51,7 @@ set(SCOTCH_PATCH_FILES
 include(ExternalProject)
 ExternalProject_Add(scotch
   DEPENDS           ${SCOTCH_DEPENDENCIES}
-  GIT_REPOSITORY    ${CMAKE_CURRENT_SOURCE_DIR}/scotch
+  GIT_REPOSITORY    ${EXTERN_SCOTCH_URL}
   GIT_TAG           ${EXTERN_SCOTCH_GIT_TAG}
   SOURCE_DIR        ${CMAKE_CURRENT_BINARY_DIR}/scotch
   BINARY_DIR        ${CMAKE_CURRENT_BINARY_DIR}/scotch-build
@@ -71,12 +71,13 @@ else()
 endif()
 set(_SCOTCH_LIBRARIES "")
 set(_PTSCOTCH_LIBRARIES "")
-foreach(LIB scotcherrexit scotcherr scotch scotchmetisv5 esmumps)
+foreach(LIB scotcherr scotch scotchmetisv5 esmumps)
   set(_SCOTCH_LIBRARIES ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR}/lib${LIB}${_SCOTCH_LIB_SUFFIX}$<SEMICOLON>${_SCOTCH_LIBRARIES})
 endforeach()
-foreach(LIB ptscotcherrexit ptscotcherr ptscotch ptscotchparmetisv3 ptesmumps)
+foreach(LIB ptscotcherr ptscotch ptscotchparmetisv3 ptesmumps)
   set(_PTSCOTCH_LIBRARIES ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR}/lib${LIB}${_SCOTCH_LIB_SUFFIX}$<SEMICOLON>${_PTSCOTCH_LIBRARIES})
 endforeach()
 set(METIS_LIBRARIES ${_SCOTCH_LIBRARIES} CACHE STRING "List of library files for METIS")
-set(PARMETIS_LIBRARIES ${_PTSCOTCH_LIBRARIES} CACHE STRING "List of library files for ParMETIS")
 set(METIS_INCLUDE_DIRS ${CMAKE_INSTALL_PREFIX}/include CACHE STRING "Path to METIS include directories")
+set(PARMETIS_LIBRARIES ${_PTSCOTCH_LIBRARIES} CACHE STRING "List of library files for ParMETIS")
+set(PARMETIS_INCLUDE_DIRS ${CMAKE_INSTALL_PREFIX}/include CACHE STRING "Path to ParMETIS include directories")

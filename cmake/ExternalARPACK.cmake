@@ -6,15 +6,7 @@
 #
 
 # Force build order
-if(PALACE_WITH_MUMPS)
-  set(ARPACK_DEPENDENCIES mumps)
-elseif(PALACE_WITH_STRUMPACK)
-  set(ARPACK_DEPENDENCIES strumpack)
-elseif(PALACE_WITH_SUPERLU)
-  set(ARPACK_DEPENDENCIES superlu_dist)
-else()
-  set(ARPACK_DEPENDENCIES scotch)
-endif()
+set(ARPACK_DEPENDENCIES)
 
 # We always build the 32-bit integer ARPACK interface and link with LP64 BLAS/LAPACK
 # For PARPACK, this strategy is only not feasible when matrix sizes PER MPI PROCESS exceed
@@ -63,7 +55,7 @@ endif()
 include(ExternalProject)
 ExternalProject_Add(arpack-ng
   DEPENDS           ${ARPACK_DEPENDENCIES}
-  GIT_REPOSITORY    ${CMAKE_CURRENT_SOURCE_DIR}/arpack-ng
+  GIT_REPOSITORY    ${EXTERN_ARPACK_URL}
   GIT_TAG           ${EXTERN_ARPACK_GIT_TAG}
   SOURCE_DIR        ${CMAKE_CURRENT_BINARY_DIR}/arpack-ng
   BINARY_DIR        ${CMAKE_CURRENT_BINARY_DIR}/arpack-ng-build
