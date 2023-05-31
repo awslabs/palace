@@ -67,7 +67,7 @@ private:
   // (n x H_inc) computed from the electric field mode.
   std::unique_ptr<mfem::ParComplexGridFunction> port_E0t, port_E0n;
   std::unique_ptr<mfem::VectorCoefficient> port_nxH0r_func, port_nxH0i_func;
-  std::unique_ptr<mfem::ParLinearForm> port_sr, port_si;
+  std::unique_ptr<mfem::LinearForm> port_sr, port_si;
   std::complex<double> kn0;
   double omega0;
 

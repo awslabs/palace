@@ -40,7 +40,8 @@ private:
   std::vector<std::unique_ptr<LumpedElementData>> elems;
 
   // Linear forms for postprocessing integrated quantities on the port.
-  mutable std::unique_ptr<mfem::ParLinearForm> s, v;
+  mutable std::unique_ptr<mfem::LinearForm> s, v;
+  void InitializeLinearForms(mfem::ParFiniteElementSpace &nd_fespace) const;
 
 public:
   LumpedPortData(const config::LumpedPortData &data,
