@@ -341,6 +341,12 @@ void SetRandom(MPI_Comm comm, Vector &x, int seed)
 }
 
 template <>
+void SetRandomReal(MPI_Comm comm, Vector &x, int seed)
+{
+  SetRandom(comm, x, seed);
+}
+
+template <>
 void SetRandomSign(MPI_Comm comm, Vector &x, int seed)
 {
   SetRandom(comm, x, seed);
@@ -366,6 +372,13 @@ void SetRandom(MPI_Comm comm, ComplexVector &x, int seed)
     SetRandom(comm, x.Real(), seed);
     SetRandom(comm, x.Imag(), seed);
   }
+}
+
+template <>
+void SetRandomReal(MPI_Comm comm, ComplexVector &x, int seed)
+{
+  SetRandom(comm, x.Real(), seed);
+  x.Imag() = 0.0;
 }
 
 template <>

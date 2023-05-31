@@ -128,6 +128,8 @@ inline HYPRE_BigInt GlobalSize(MPI_Comm comm, const VecType &x)
 template <typename VecType>
 void SetRandom(MPI_Comm comm, VecType &x, int seed = 0);
 template <typename VecType>
+void SetRandomReal(MPI_Comm comm, VecType &x, int seed = 0);
+template <typename VecType>
 void SetRandomSign(MPI_Comm comm, VecType &x, int seed = 0);
 
 // Calculate the inner product yᴴ x or yᵀ x.
