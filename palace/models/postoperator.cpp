@@ -597,11 +597,9 @@ double PostOperator::GetInterfaceParticipation(int idx, double Em) const
   // with:
   //          p_mj = 1/2 t_j Re{∫_{Γ_j} (ε_j E_m)ᴴ E_m dS} /(E_elec + E_cap).
   MFEM_VERIFY(E, "Surface Q not defined, no electric field solution found!");
-  double Esurf = surf_post_op.GetInterfaceElectricFieldEnergy(idx, E->real());
-  if (has_imaginary)
-  {
-    Esurf += surf_post_op.GetInterfaceElectricFieldEnergy(idx, E->imag());
-  }
+  double Esurf = has_imaginary
+                     ? surf_post_op.GetInterfaceElectricFieldEnergy(idx, *E)
+                     : surf_post_op.GetInterfaceElectricFieldEnergy(idx, E->real());
   return Esurf / Em;
 }
 
@@ -612,12 +610,8 @@ double PostOperator::GetSurfaceCharge(int idx) const
   // for both sides of the surface. This then yields the capacitive coupling to the
   // excitation as C_jk = Q_j / V_k where V_k is the excitation voltage.
   MFEM_VERIFY(E, "Surface capacitance not defined, no electric field solution found!");
-  double Q = surf_post_op.GetSurfaceElectricCharge(idx, E->real());
-  if (has_imaginary)
-  {
-    double Qi = surf_post_op.GetSurfaceElectricCharge(idx, E->imag());
-    Q = std::copysign(std::sqrt(Q * Q + Qi * Qi), Q);
-  }
+  double Q = has_imaginary ? surf_post_op.GetSurfaceElectricCharge(idx, *E)
+                           : surf_post_op.GetSurfaceElectricCharge(idx, E->real());
   return Q;
 }
 
@@ -629,12 +623,8 @@ double PostOperator::GetSurfaceFlux(int idx) const
   // which are discontinuous at interior boundary elements.
   MFEM_VERIFY(B,
               "Surface inductance not defined, no magnetic flux density solution found!");
-  double Phi = surf_post_op.GetSurfaceMagneticFlux(idx, B->real());
-  if (has_imaginary)
-  {
-    double Phii = surf_post_op.GetSurfaceMagneticFlux(idx, B->imag());
-    Phi = std::copysign(std::sqrt(Phi * Phi + Phii * Phii), Phi);
-  }
+  double Phi = has_imaginary ? surf_post_op.GetSurfaceMagneticFlux(idx, *B)
+                             : surf_post_op.GetSurfaceMagneticFlux(idx, B->real());
   return Phi;
 }
 

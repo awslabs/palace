@@ -678,8 +678,8 @@ WavePortData::WavePortData(const config::WavePortData &data, const MaterialOpera
       std::make_unique<BdrSubmeshHVectorCoefficient<true>>(*port_E0t, *port_E0n, mat_op);
   port_nxH0i_func =
       std::make_unique<BdrSubmeshHVectorCoefficient<false>>(*port_E0t, *port_E0n, mat_op);
-  port_sr = std::make_unique<mfem::ParLinearForm>(port_nd_fespace.get());
-  port_si = std::make_unique<mfem::ParLinearForm>(port_nd_fespace.get());
+  port_sr = std::make_unique<mfem::LinearForm>(port_nd_fespace.get());
+  port_si = std::make_unique<mfem::LinearForm>(port_nd_fespace.get());
   port_sr->AddDomainIntegrator(new VectorFEDomainLFIntegrator(*port_nxH0r_func));
   port_si->AddDomainIntegrator(new VectorFEDomainLFIntegrator(*port_nxH0i_func));
   port_sr->UseFastAssembly(false);
@@ -830,8 +830,10 @@ std::complex<double> WavePortData::GetSParameter(mfem::ParComplexGridFunction &E
   mfem::ParComplexGridFunction port_E(port_nd_fespace.get());
   port_nd_transfer->Transfer(E.real(), port_E.real());
   port_nd_transfer->Transfer(E.imag(), port_E.imag());
-  return {-(*port_sr)(port_E.real()) - (*port_si)(port_E.imag()),
-          -(*port_sr)(port_E.imag()) + (*port_si)(port_E.real())};
+  std::complex<double> dot(-((*port_sr) * port_E.real()) - ((*port_si) * port_E.imag()),
+                           -((*port_sr) * port_E.imag()) + ((*port_si) * port_E.real()));
+  Mpi::GlobalSum(1, &dot, port_nd_fespace->GetComm());
+  return dot;
 }
 
 std::complex<double> WavePortData::GetPower(mfem::ParComplexGridFunction &E,
@@ -845,14 +847,17 @@ std::complex<double> WavePortData::GetPower(mfem::ParComplexGridFunction &E,
   auto &nd_fespace = *E.ParFESpace();
   BdrCurrentVectorCoefficient nxHr_func(B.real(), mat_op);
   BdrCurrentVectorCoefficient nxHi_func(B.imag(), mat_op);
-  mfem::ParLinearForm pr(&nd_fespace), pi(&nd_fespace);
+  mfem::LinearForm pr(&nd_fespace), pi(&nd_fespace);
   pr.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(nxHr_func), attr_marker);
   pi.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(nxHi_func), attr_marker);
   pr.UseFastAssembly(false);
   pi.UseFastAssembly(false);
   pr.Assemble();
   pi.Assemble();
-  return {pr(E.real()) + pi(E.imag()), pr(E.imag()) - pi(E.real())};
+  std::complex<double> dot(-(pr * E.real()) - (pi * E.imag()),
+                           -(pr * E.imag()) + (pi * E.real()));
+  Mpi::GlobalSum(1, &dot, nd_fespace.GetComm());
+  return dot;
 }
 
 WavePortOperator::WavePortOperator(const IoData &iod, const MaterialOperator &mat,
