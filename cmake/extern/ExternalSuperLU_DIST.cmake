@@ -56,6 +56,12 @@ endif()
 string(REPLACE ";" "; " SUPERLU_OPTIONS_PRINT "${SUPERLU_OPTIONS}")
 message(STATUS "SUPERLU_OPTIONS: ${SUPERLU_OPTIONS_PRINT}")
 
+# Fix column permutations
+set(SUPERLU_PATCH_FILES
+  "${CMAKE_CURRENT_SOURCE_DIR}/patch/superlu_dist/patch_metis.diff"
+  "${CMAKE_CURRENT_SOURCE_DIR}/patch/superlu_dist/patch_parmetis.diff"
+)
+
 include(ExternalProject)
 ExternalProject_Add(superlu_dist
   DEPENDS           ${SUPERLU_DEPENDENCIES}
@@ -66,6 +72,7 @@ ExternalProject_Add(superlu_dist
   INSTALL_DIR       ${CMAKE_INSTALL_PREFIX}
   PREFIX            ${CMAKE_CURRENT_BINARY_DIR}/superlu_dist-cmake
   UPDATE_COMMAND    ""
+  PATCH_COMMAND     git apply "${SUPERLU_PATCH_FILES}"
   CONFIGURE_COMMAND cmake <SOURCE_DIR> "${SUPERLU_OPTIONS}"
   TEST_COMMAND      ""
 )
