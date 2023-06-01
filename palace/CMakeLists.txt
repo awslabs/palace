@@ -60,22 +60,22 @@ endif()
 
 # Find nlohmann/json
 find_package(nlohmann_json REQUIRED CONFIG)
-message(STATUS "Found nlohmann/json: ${nlohmann_json_VERSION}")
+message(STATUS "Found nlohmann/json: ${nlohmann_json_VERSION} in ${nlohmann_json_DIR}")
 
 # Find fmt
 find_package(fmt REQUIRED CONFIG)
-message(STATUS "Found fmt: ${fmt_VERSION}")
+message(STATUS "Found fmt: ${fmt_VERSION} in ${fmt_DIR}")
 
 # Find Eigen
 find_package(Eigen3 REQUIRED CONFIG)
-message(STATUS "Found Eigen: ${Eigen3_VERSION}")
+message(STATUS "Found Eigen: ${Eigen3_VERSION} in ${Eigen3_DIR}")
 
 # Find MFEM
 if(NOT "${MFEM_DIR}" STREQUAL "")
   set(MFEM_ROOT ${MFEM_DIR})
 endif()
 find_package(MFEM REQUIRED CONFIG)
-message(STATUS "Found MFEM: ${MFEM_VERSION}")
+message(STATUS "Found MFEM: ${MFEM_VERSION} in ${MFEM_DIR}")
 if(NOT MFEM_USE_MPI)
   message(FATAL_ERROR "Build requires MFEM with MPI support")
 endif()
@@ -109,7 +109,7 @@ if(PALACE_WITH_ARPACK)
     set(arpackng_ROOT ${ARPACK_DIR})
   endif()
   find_package(arpackng REQUIRED CONFIG)
-  message(STATUS "Found ARPACK: ${arpackng_VERSION}")
+  message(STATUS "Found ARPACK: ${arpackng_VERSION} in ${arpackng_DIR}")
 elseif(NOT PALACE_WITH_SLEPC)
   message(FATAL_ERROR "Build requires at least one of ARPACK or SLEPc dependencies")
 endif()
