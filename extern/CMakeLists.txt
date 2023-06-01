@@ -5,18 +5,10 @@
 # Download and build third-party dependencies
 #
 
-# Only build if requested, user can alternatively provide dependencies directly
-if(NOT PALACE_BUILD_EXTERNAL_DEPS)
-  return()
-endif()
-
 # Avoid DOWNLOAD_EXTRACT_TIMESTAMP warning
 if(CMAKE_VERSION VERSION_GREATER_EQUAL "3.24.0")
   cmake_policy(SET CMP0135 NEW)
 endif()
-
-# Git tags for third-party dependency builds
-include(ExternalGitTags)
 
 # Add METIS/ParMETIS libraries
 message(STATUS "================ Configuring METIS/ParMETIS dependencies ===============")
