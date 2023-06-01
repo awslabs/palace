@@ -91,7 +91,6 @@ if(PALACE_WITH_INTERNAL_MFEM)
   set(PALACE_MFEM_PATCH_FILES
     "${CMAKE_CURRENT_SOURCE_DIR}/patch/mfem/patch_integ.diff"
     "${CMAKE_CURRENT_SOURCE_DIR}/patch/mfem/patch_mesh.diff"
-    "${CMAKE_CURRENT_SOURCE_DIR}/patch/mfem/patch_metis.diff"
     "${CMAKE_CURRENT_SOURCE_DIR}/patch/mfem/patch_part.diff"
     "${CMAKE_CURRENT_SOURCE_DIR}/patch/mfem/patch_direct.diff"
   )
