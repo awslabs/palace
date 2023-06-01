@@ -133,12 +133,12 @@ int main(int argc, char *argv[])
   mfem::Hypre::Init();
 #if defined(PALACE_WITH_SLEPC)
   slepc::Initialize(argc, argv, nullptr, nullptr);
-#endif
   if (PETSC_COMM_WORLD != world_comm)
   {
     Mpi::Print(world_comm, "Error: Problem during MPI initialization!\n\n");
     return 1;
   }
+#endif
 
   // Initialize the problem driver.
   std::unique_ptr<BaseSolver> solver;
