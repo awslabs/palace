@@ -76,7 +76,10 @@ message(STATUS "================= Configuring BLAS/LAPACK dependencies =========
 include(ExternalBLASLAPACK)
 
 # Add other third-party dependency builds
-add_subdirectory("extern")
+include(ExternalGitTags)
+if(PALACE_BUILD_EXTERNAL_DEPS)
+  add_subdirectory("extern")
+endif()
 
 # Add MFEM (always built as part of Palace)
 message(STATUS "====================== Configuring MFEM dependency =====================")
