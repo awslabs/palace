@@ -223,7 +223,6 @@ set(MFEM_PATCH_FILES
   # "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_bilinearform_marker.diff"
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_mesh_part.diff"
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_mesh_vis.diff"
-  "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_metis.diff"
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_submesh.diff"
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_hypre_blocks.diff"
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_direct_solvers.diff"
