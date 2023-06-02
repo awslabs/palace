@@ -26,10 +26,10 @@ index fbd7b52..7455672 100644
    subsFill ("DUMMYSIZEARCH", subsSize (sizeof (Arch)));
    subsFill ("DUMMYSIZEGEOM", subsSize (sizeof (Geom)));
 diff --git a/src/libscotchmetis/library_metis.h b/src/libscotchmetis/library_metis.h
-index a259950..740b8e6 100644
+index a259950..dd5f10a 100644
 --- a/src/libscotchmetis/library_metis.h
 +++ b/src/libscotchmetis/library_metis.h
-@@ -63,6 +63,14 @@
+@@ -63,6 +63,15 @@
  /**                                                        **/
  /************************************************************/
  
@@ -38,13 +38,14 @@ index a259950..740b8e6 100644
 +*/
 +
 +#ifndef SCOTCH_H                                  /* In case "scotch.h" not included before */
++#include <stdint.h>
 +typedef DUMMYINT SCOTCH_Num;
 +#endif /* SCOTCH_H */
 +
  /*
  **  The defines.
  */
-@@ -92,6 +100,7 @@
+@@ -92,6 +101,7 @@
  #define SCOTCH_METIS_DATATYPES
  typedef SCOTCH_Num          idx_t;
  typedef double              real_t;
@@ -52,7 +53,7 @@ index a259950..740b8e6 100644
  #endif /* SCOTCH_METIS_DATATYPES */
  
  #ifndef SCOTCH_METIS_OPTIONS
-@@ -146,14 +155,6 @@ typedef enum {
+@@ -146,14 +156,6 @@ typedef enum {
  } rstatus_et;
  #endif /* SCOTCH_METIS_RETURN */
  
@@ -67,7 +68,7 @@ index a259950..740b8e6 100644
  /*
  **  The function prototypes.
  */
-@@ -174,7 +175,7 @@ int                         SCOTCH_METIS_V5_PartGraphKway (const SCOTCH_Num * co
+@@ -174,7 +176,7 @@ int                         SCOTCH_METIS_V5_PartGraphKway (const SCOTCH_Num * co
  int                         SCOTCH_METIS_V5_PartGraphRecursive (const SCOTCH_Num * const, const SCOTCH_Num * const, const SCOTCH_Num * const, const SCOTCH_Num * const, const SCOTCH_Num * const, const SCOTCH_Num * const, const SCOTCH_Num * const, const SCOTCH_Num * const, const double * const, const double * const, const SCOTCH_Num * const, SCOTCH_Num * const, SCOTCH_Num * const);
  
  #ifndef SCOTCH_METIS_VERSION
@@ -77,10 +78,10 @@ index a259950..740b8e6 100644
  
  #if (SCOTCH_METIS_VERSION == 3)
 diff --git a/src/libscotchmetis/library_parmetis.h b/src/libscotchmetis/library_parmetis.h
-index 945819f..f5c4ce9 100644
+index 945819f..897823b 100644
 --- a/src/libscotchmetis/library_parmetis.h
 +++ b/src/libscotchmetis/library_parmetis.h
-@@ -61,6 +61,14 @@
+@@ -61,6 +61,15 @@
  /**                                                        **/
  /************************************************************/
  
@@ -89,13 +90,14 @@ index 945819f..f5c4ce9 100644
 +*/
 +
 +#ifndef SCOTCH_H                                  /* In case "scotch.h" not included before */
++#include <stdint.h>
 +typedef DUMMYINT SCOTCH_Num;
 +#endif /* SCOTCH_H */
 +
  /*
  **  The defines and includes.
  */
-@@ -93,6 +101,13 @@
+@@ -93,6 +102,13 @@
  #define METISNAME4(p,s)             p##s
  #endif /* METISNAMEL */
  
@@ -109,7 +111,7 @@ index 945819f..f5c4ce9 100644
  #ifndef SCOTCH_METIS_RETURN
  #define SCOTCH_METIS_RETURN
  typedef enum {
-@@ -103,14 +118,6 @@ typedef enum {
+@@ -103,14 +119,6 @@ typedef enum {
  } rstatus_et;
  #endif /* SCOTCH_METIS_RETURN */
  
