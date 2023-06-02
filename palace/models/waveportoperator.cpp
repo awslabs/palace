@@ -305,6 +305,45 @@ void GetInitialSpace(mfem::ParFiniteElementSpace &nd_fespace,
   }
 }
 
+void NormalizeWithSign(const mfem::ParGridFunction &S0t, mfem::ParComplexGridFunction &E0t,
+                       mfem::ParComplexGridFunction &E0n, mfem::LinearForm &sr,
+                       mfem::LinearForm &si)
+{
+  // Normalize grid functions to a chosen polarization direction and unit power, |E x H⋆| ⋅
+  // n, integrated over the port surface (+n is the direction of propagation). The n x H
+  // coefficients are updated implicitly as the only store references to the Et, En grid
+  // functions as well as kₙ, ω. We choose a (rather arbitrary) sign constraint to at least
+  // make results for the same port consistent between frequencies/meshes.
+  sr = 0.0;
+  si = 0.0;
+  sr.Assemble();
+  si.Assemble();
+
+  // |E x H⋆| ⋅ n = |E ⋅ (-n x H⋆)|
+  double sign = sr * S0t;
+  std::complex<double> dot(-(sr * E0t.real()) - (si * E0t.imag()),
+                           -(sr * E0t.imag()) + (si * E0t.real()));
+  double data[3] = {sign, dot.real(), dot.imag()};
+  Mpi::GlobalSum(3, data, S0t.ParFESpace()->GetComm());
+  sign = (data[0] < 0.0) ? -1.0 : 1.0;
+  dot = {data[1], data[2]};
+
+  double scale = sign / std::sqrt(std::abs(dot));
+  E0t.real() *= scale;  // Updates the n x H coefficients depending on Et, En too
+  E0t.imag() *= scale;
+  E0n.real() *= scale;
+  E0n.imag() *= scale;
+  sr *= scale;  // Update linear forms for postprocessing
+  si *= scale;
+
+  // This parallel communication is not required since wave port boundaries are true
+  // one-sided boundaries.
+  // port_E0t->real().ExchangeFaceNbrData();  // Ready for parallel comm on shared faces
+  // port_E0t->imag().ExchangeFaceNbrData();  // for n x H coefficients evaluation
+  // port_E0n->real().ExchangeFaceNbrData();
+  // port_E0n->imag().ExchangeFaceNbrData();
+}
+
 // Computes boundary modal n x H, where +n is the direction of wave propagation: n x H =
 // -1/(iωμ) (ikₙ Eₜ + ∇ₜ Eₙ), using the tangential and normal electric field component grid
 // functions evaluated on the (single-sided) boundary element. The intent of this vector
@@ -685,6 +724,54 @@ WavePortData::WavePortData(const config::WavePortData &data, const MaterialOpera
   port_si->AddDomainIntegrator(new VectorFEDomainLFIntegrator(*port_nxH0i_func));
   port_sr->UseFastAssembly(false);
   port_si->UseFastAssembly(false);
+
+  // Configure port mode sign convention: 1ᵀ Re{-n x H} >= 0 on the "upper-right quadrant"
+  // of the wave port boundary, in order to deal with symmetry effectively.
+  {
+    Vector bbmin, bbmax;
+    port_mesh->GetBoundingBox(bbmin, bbmax);
+    const int dim = port_mesh->SpaceDimension();
+
+    double la = 0.0, lb = 0.0;
+    int da = -1, db = -1;
+    for (int d = 0; d < dim; d++)
+    {
+      double diff = bbmax(d) - bbmin(d);
+      if (diff > la)
+      {
+        lb = la;
+        la = diff;
+        db = da;
+        da = d;
+      }
+      else if (diff > lb)
+      {
+        lb = diff;
+        db = d;
+      }
+    }
+    MFEM_VERIFY(da >= 0 && db >= 0 && da != db,
+                "Unexpected wave port geometry for normalization!");
+    double ca = 0.5 * (bbmax[da] + bbmin[da]), cb = 0.5 * (bbmax[db] + bbmin[db]);
+
+    auto TDirection = [da, db, ca, cb, dim](const Vector &x, Vector &f)
+    {
+      MFEM_ASSERT(x.Size() == dim,
+                  "Invalid dimension mismatch for wave port mode normalization!");
+      f.SetSize(dim);
+      if (x[da] >= ca && x[db] >= cb)
+      {
+        f = 1.0;
+      }
+      else
+      {
+        f = 0.0;
+      }
+    };
+    mfem::VectorFunctionCoefficient tfunc(dim, TDirection);
+    port_S0t = std::make_unique<mfem::ParGridFunction>(port_nd_fespace.get());
+    port_S0t->ProjectCoefficient(tfunc);
+  }
 }
 
 WavePortData::~WavePortData()
@@ -782,47 +869,9 @@ void WavePortData::Initialize(double omega)
   port_E0n->real().SetFromTrueDofs(e0n.Real());
   port_E0n->imag().SetFromTrueDofs(e0n.Imag());
 
-  // Normalize grid functions to a chosen polarization direction and unit power, |E x H⋆| ⋅
-  // n, integrated over the port surface (+n is the direction of propagation). The n x H
-  // coefficients are updated implicitly as the only store references to the Et, En grid
-  // functions as well as kₙ, ω. We choose a (rather arbitrary) sign constraint to at least
-  // make results for the same port consistent between frequencies/meshes.
-  {
-    // |E x H⋆| ⋅ n = |E ⋅ (-n x H⋆)|
-    *port_sr = 0.0;
-    *port_si = 0.0;
-    port_sr->Assemble();
-    port_si->Assemble();
-
-    Vector ones(port_nxH0r_func->GetVDim());
-    ones = 1.0;
-    mfem::VectorConstantCoefficient tdir(ones);
-    mfem::ParGridFunction port_S0t(port_nd_fespace.get());
-    port_S0t.ProjectCoefficient(tdir);
-    double sign = ((*port_sr) * port_S0t);
-    std::complex<double> dot(
-        -((*port_sr) * port_E0t->real()) - ((*port_si) * port_E0t->imag()),
-        -((*port_sr) * port_E0t->imag()) + ((*port_si) * port_E0t->real()));
-    double data[3] = {sign, dot.real(), dot.imag()};
-    Mpi::GlobalSum(3, data, port_nd_fespace->GetComm());
-    sign = (data[0] > 0.0) ? 1.0 : -1.0;
-    dot = {data[1], data[2]};
-
-    double scale = sign / std::sqrt(std::abs(dot));
-    port_E0t->real() *= scale;  // Updates the n x H coefficients depending on Et, En too
-    port_E0t->imag() *= scale;
-    port_E0n->real() *= scale;
-    port_E0n->imag() *= scale;
-    *port_sr *= scale;  // Update linear forms for postprocessing
-    *port_si *= scale;
-  }
-
-  // This parallel communication is not required since wave port boundaries are true
-  // one-sided boundaries.
-  // port_E0t->real().ExchangeFaceNbrData();  // Ready for parallel comm on shared faces
-  // port_E0t->imag().ExchangeFaceNbrData();  // for n x H coefficients evaluation
-  // port_E0n->real().ExchangeFaceNbrData();
-  // port_E0n->imag().ExchangeFaceNbrData();
+  // Normalize the mode for a chosen polarization direction and unit powe, .|E x H⋆| ⋅ n,
+  // integrated over the port surface (+n is the direction of propagation).
+  NormalizeWithSign(*port_S0t, *port_E0t, *port_E0n, *port_sr, *port_si);
 }
 
 double WavePortData::GetExcitationPower() const
