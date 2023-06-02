@@ -168,8 +168,8 @@ jobs:
             export FC=gfortran-11
           fi
           if [[ "${{ matrix.math-libs }}" == 'aocl' ]]; then
-            export LD_LIBRARY_PATH=$AOCLROOT/lib:$LD_LIBRARY_PATH
             export AOCLROOT=/opt/amd
+            export LD_LIBRARY_PATH=$AOCLROOT/lib:$LD_LIBRARY_PATH
           fi
           export NUM_PROC_BUILD=$(nproc 2> /dev/null || sysctl -n hw.ncpu)
           if [[ "$NUM_PROC_BUILD" -gt "$NUM_PROC_BUILD_MAX" ]]; then
@@ -211,6 +211,10 @@ jobs:
             NUM_PROC_TEST=$NUM_PROC_TEST_MAX
           fi
           export PATH=$(pwd)/palace-install/bin:$PATH
+          if [[ "${{ matrix.math-libs }}" == 'aocl' ]]; then
+            export AOCLROOT=/opt/amd
+            export LD_LIBRARY_PATH=$AOCLROOT/lib:$LD_LIBRARY_PATH
+          fi
           if [[ "${{ matrix.build-shared }}" == 'true' ]]; then
             export LD_LIBRARY_PATH=$(pwd)/palace-install/lib:$(pwd)/palace-install/lib64:$LD_LIBRARY_PATH
           fi
