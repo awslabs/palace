@@ -22,6 +22,7 @@ namespace palace
 class SuperLUSolver : public mfem::Solver
 {
 private:
+  MPI_Comm comm;
   std::unique_ptr<mfem::SuperLURowLocMatrix> A;
   mfem::SuperLUSolver solver;
 

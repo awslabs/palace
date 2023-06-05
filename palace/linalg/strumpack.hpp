@@ -21,6 +21,8 @@ template <typename StrumpackSolverType>
 class StrumpackSolverBase : public StrumpackSolverType
 {
 private:
+  MPI_Comm comm;
+
   strumpack::CompressionType CompressionType(config::LinearSolverData::CompressionType type)
   {
     switch (type)
