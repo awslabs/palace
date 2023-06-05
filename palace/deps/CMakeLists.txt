@@ -14,8 +14,12 @@ set(PALACE_INTERNAL_FMT_URL
   "https://github.com/fmtlib/fmt/releases/download/10.0.0/fmt-10.0.0.zip" CACHE STRING
   "URL for internal fmt build"
 )
+set(PALACE_INTERNAL_EIGEN_URL
+  "https://gitlab.com/libeigen/eigen/-/archive/3.4.0/eigen-3.4.0.tar.gz" CACHE STRING
+  "URL for internal Eigen build"
+)
 set(PALACE_INTERNAL_MFEM_GIT_TAG
-  "e5231334e6a8175b4f404b877f590b73dee2dedc" CACHE STRING  # master @ 05/02/2023
+  "0f5d34b2b490819789d6c85546e17724ff37f021" CACHE STRING  # master @ 05/13/2023
   "Git tag for internal MFEM build"
 )
 
@@ -50,6 +54,21 @@ if(PALACE_WITH_INTERNAL_FMT)
     URL ${PALACE_INTERNAL_FMT_URL}
   )
   FetchContent_MakeAvailable(fmt)
+endif()
+
+# Get Eigen library
+if(PALACE_WITH_INTERNAL_EIGEN)
+  message(STATUS "===================== Configuring Eigen dependency =====================")
+
+  # Disable doc and check targets to avoid conflict with MFEM
+  set(EIGEN_BUILD_DOC OFF CACHE BOOL "")
+  set(BUILD_TESTING OFF CACHE BOOL "")
+
+  include(FetchContent)
+  FetchContent_Declare(Eigen3
+    URL ${PALACE_INTERNAL_EIGEN_URL}
+  )
+  FetchContent_MakeAvailable(Eigen3)
 endif()
 
 # Get MFEM library
@@ -89,10 +108,12 @@ if(PALACE_WITH_INTERNAL_MFEM)
 
   # A number of patches to MFEM for our uses
   set(PALACE_MFEM_PATCH_FILES
-    "${CMAKE_CURRENT_SOURCE_DIR}/patch/mfem/patch_integ.diff"
-    "${CMAKE_CURRENT_SOURCE_DIR}/patch/mfem/patch_mesh.diff"
-    "${CMAKE_CURRENT_SOURCE_DIR}/patch/mfem/patch_part.diff"
-    "${CMAKE_CURRENT_SOURCE_DIR}/patch/mfem/patch_direct.diff"
+    # "${CMAKE_CURRENT_SOURCE_DIR}/patch/mfem/patch_bilinearform_marker.diff"
+    "${CMAKE_CURRENT_SOURCE_DIR}/patch/mfem/patch_mesh_part.diff"
+    "${CMAKE_CURRENT_SOURCE_DIR}/patch/mfem/patch_mesh_vis.diff"
+    "${CMAKE_CURRENT_SOURCE_DIR}/patch/mfem/patch_direct_solvers.diff"
+    "${CMAKE_CURRENT_SOURCE_DIR}/patch/mfem/patch_pa_prereq.diff"
+    "${CMAKE_CURRENT_SOURCE_DIR}/patch/mfem/patch_pa_libceed.diff"
   )
 
   include(FetchContent)

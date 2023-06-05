@@ -1632,20 +1632,22 @@ index c434ae903..b72e5db55 100644
     void SetRefinementFlag(int rf) { refinement_flag = rf; }
  
 diff --git a/miniapps/meshing/makefile b/miniapps/meshing/makefile
-index ce82f238d..803820c85 100644
+index ce82f238d..b9cd9a30c 100644
 --- a/miniapps/meshing/makefile
 +++ b/miniapps/meshing/makefile
-@@ -118,7 +118,7 @@ clean-build:
+@@ -118,7 +118,9 @@ clean-build:
  	rm -rf *.dSYM *.TVD.*breakpoints
  
  clean-exec:
 -	@rm -f mobius-strip.mesh klein-bottle.mesh mesh-explorer.mesh
 +	@rm -f mobius-strip.mesh klein-bottle.mesh mesh-explorer.mesh*
++	@rm -f toroid-*.mesh twist-*.mesh trimmer.mesh
++	@rm -f mobius-strip.mesh klein-bottle.mesh mesh-explorer.mesh*
  	@rm -f toroid-*.mesh twist-*.mesh trimmer.mesh reflected.mesh
  	@rm -f partitioning.txt shaper.mesh extruder.mesh
  	@rm -f optimized* perturbed* polar-nc.mesh
 diff --git a/miniapps/meshing/mesh-explorer.cpp b/miniapps/meshing/mesh-explorer.cpp
-index 49f3f9690..50f2e4fec 100644
+index 49f3f9690..068512670 100644
 --- a/miniapps/meshing/mesh-explorer.cpp
 +++ b/miniapps/meshing/mesh-explorer.cpp
 @@ -308,6 +308,7 @@ int main (int argc, char *argv[])
@@ -1666,7 +1668,19 @@ index 49f3f9690..50f2e4fec 100644
             "V) Save in VTK format (only linear and quadratic meshes)\n"
             "D) Save as a DataCollection\n"
             "q) Quit\n"
-@@ -972,7 +974,7 @@ int main (int argc, char *argv[])
+@@ -959,9 +961,8 @@ int main (int argc, char *argv[])
+                      cin >> nxyz[2]; np *= nxyz[2];
+                   }
+                }
+-               int *part = mesh->CartesianPartitioning(nxyz);
+-               partitioning = Array<int>(part, mesh->GetNE());
+-               delete [] part;
++               partitioning.MakeRef(mesh->CartesianPartitioning(nxyz),
++                                    mesh->GetNE(), true);
+                recover_bdr_partitioning(mesh, partitioning, bdr_partitioning);
+             }
+             else if (pk == 's')
+@@ -972,7 +973,7 @@ int main (int argc, char *argv[])
                 partitioning.SetSize(mesh->GetNE());
                 for (int i = 0; i < mesh->GetNE(); i++)
                 {
@@ -1675,7 +1689,19 @@ index 49f3f9690..50f2e4fec 100644
                 }
                 recover_bdr_partitioning(mesh, partitioning, bdr_partitioning);
              }
-@@ -1185,6 +1187,25 @@ int main (int argc, char *argv[])
+@@ -985,9 +986,8 @@ int main (int argc, char *argv[])
+                }
+                cout << "Enter number of processors: " << flush;
+                cin >> np;
+-               int *part = mesh->GeneratePartitioning(np, part_method);
+-               partitioning = Array<int>(part, mesh->GetNE());
+-               delete [] part;
++               partitioning.MakeRef(mesh->GeneratePartitioning(np, part_method),
++                                    mesh->GetNE(), true);
+                recover_bdr_partitioning(mesh, partitioning, bdr_partitioning);
+             }
+             if (partitioning)
+@@ -1185,6 +1185,25 @@ int main (int argc, char *argv[])
           cout << "New mesh file: " << omesh_file << endl;
        }
  
