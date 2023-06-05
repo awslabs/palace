@@ -3847,7 +3847,7 @@ index 7b8e3bd2d..e5cf95062 100644
           strumpack->SetFromCommandLine();
           precond = strumpack;
 diff --git a/tests/unit/linalg/test_direct_solvers.cpp b/tests/unit/linalg/test_direct_solvers.cpp
-index 838bb4009..61055b677 100644
+index 838bb4009..848cf76df 100644
 --- a/tests/unit/linalg/test_direct_solvers.cpp
 +++ b/tests/unit/linalg/test_direct_solvers.cpp
 @@ -23,14 +23,16 @@ using namespace mfem;
@@ -3961,9 +3961,10 @@ index 838bb4009..61055b677 100644
  {
     int rank;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-    const int ne = 2;
+-   const int ne = 2;
 -   for (dim = 1; dim < 4; ++dim)
-+   for (int dim = 1; dim < 4; ++dim)
++   const int ne = 8;
++   for (int dim = 1; dim <= 3; ++dim)
     {
        Mesh mesh;
        if (dim == 1)
@@ -4042,10 +4043,12 @@ index 838bb4009..61055b677 100644
           superlu.SetOperator(SA);
           superlu.Mult(B, X);
 +
-+         Vector Y(X.Size());
+          Vector Y(X.Size());
+-         A->Mult(X,Y);
+-         Y-=B;
 +         A->Mult(X, Y);
 +         Y -= B;
-+         REQUIRE(Y.Norml2() < 1.e-12);
+          REQUIRE(Y.Norml2() < 1.e-12);
 +
 +         // SuperLUSolver requires constant number of RHS across solves
 +         SuperLURowLocMatrix SA2(*A.As<HypreParMatrix>());
@@ -4074,12 +4077,10 @@ index 838bb4009..61055b677 100644
 +         strumpack.SetOperator(SA);
 +         strumpack.Mult(B, X);
 +
-          Vector Y(X.Size());
--         A->Mult(X,Y);
--         Y-=B;
++         Vector Y(X.Size());
 +         A->Mult(X, Y);
 +         Y -= B;
-          REQUIRE(Y.Norml2() < 1.e-12);
++         REQUIRE(Y.Norml2() < 1.e-12);
 +
 +         strumpack.ArrayMult(BB, XX);
 +
