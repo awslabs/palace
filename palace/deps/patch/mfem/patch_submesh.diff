@@ -1,0 +1,5246 @@
+diff --git a/data/fichera-quad-mixed.mesh b/data/fichera-quad-mixed.mesh
+new file mode 100644
+index 000000000..a3458665a
+--- /dev/null
++++ b/data/fichera-quad-mixed.mesh
+@@ -0,0 +1,48 @@
++MFEM mesh v1.0
++#
++# MFEM Geometry Types (see mesh/geom.hpp):
++#
++# POINT       = 0
++# SEGMENT     = 1
++# TRIANGLE    = 2
++# SQUARE      = 3
++# TETRAHEDRON = 4
++# CUBE        = 5
++# PRISM       = 6
++#
++
++dimension
++2
++
++elements
++6
++1 3 0 1 4 3
++1 3 2 3 6 5
++1 2 3 4 8
++1 2 4 7 8
++1 2 7 6 8
++1 2 6 3 8
++
++boundary
++8
++1 1 0 1
++2 1 1 4
++3 1 4 7
++4 1 7 6
++5 1 6 5
++6 1 5 2
++7 1 2 3
++8 1 3 0
++
++vertices
++9
++2
++0.5 0
++1 0
++0 0.5
++0.5 0.5
++1 0.5
++0 1
++0.5 1
++1 1
++0.75 0.75
+diff --git a/data/fichera-quad.mesh b/data/fichera-quad.mesh
+new file mode 100644
+index 000000000..afd2df9c8
+--- /dev/null
++++ b/data/fichera-quad.mesh
+@@ -0,0 +1,44 @@
++MFEM mesh v1.0
++#
++# MFEM Geometry Types (see mesh/geom.hpp):
++#
++# POINT       = 0
++# SEGMENT     = 1
++# TRIANGLE    = 2
++# SQUARE      = 3
++# TETRAHEDRON = 4
++# CUBE        = 5
++# PRISM       = 6
++#
++
++dimension
++2
++
++elements
++3
++1 3 0 1 4 3
++1 3 2 3 6 5
++1 3 3 4 7 6
++
++boundary
++8
++1 1 0 1
++2 1 1 4
++3 1 4 7
++4 1 7 6
++5 1 6 5
++6 1 5 2
++7 1 2 3
++8 1 3 0
++
++vertices
++8
++2
++0.5 0
++1 0
++0 0.5
++0.5 0.5
++1 0.5
++0 1
++0.5 1
++1 1
+diff --git a/data/llnl-p3.mesh b/data/llnl-p3.mesh
+new file mode 100644
+index 000000000..cd82b4bf1
+--- /dev/null
++++ b/data/llnl-p3.mesh
+@@ -0,0 +1,322 @@
++MFEM mesh v1.0
++
++#
++# MFEM Geometry Types (see mesh/geom.hpp):
++#
++# POINT       = 0
++# SEGMENT     = 1
++# TRIANGLE    = 2
++# SQUARE      = 3
++# TETRAHEDRON = 4
++# CUBE        = 5
++# PRISM       = 6
++# PYRAMID     = 7
++#
++
++dimension
++2
++
++elements
++26
++1 2 1 18 0
++1 3 1 3 19 18
++2 3 3 6 20 19
++1 3 6 9 21 20
++2 3 9 12 22 21
++1 3 12 15 23 22
++2 2 23 15 24
++1 2 1 4 3
++2 3 4 7 6 3
++1 3 7 10 9 6
++2 3 10 13 12 9
++1 3 13 16 15 12
++2 3 16 25 24 15
++1 3 2 5 4 1
++1 3 5 8 7 4
++1 3 8 11 10 7
++1 3 11 14 13 10
++1 3 14 17 16 13
++1 2 25 16 17
++1 3 18 19 27 26
++2 3 19 20 28 27
++1 3 20 21 29 28
++2 3 21 22 30 29
++1 3 22 23 31 30
++2 3 23 24 32 31
++1 3 24 25 33 32
++
++boundary
++18
++1 1 28 27
++2 1 30 29
++3 1 32 31
++4 1 0 1
++4 1 1 2
++4 1 2 5
++4 1 5 8
++4 1 8 11
++4 1 11 14
++4 1 14 17
++4 1 17 25
++4 1 25 33
++4 1 33 32
++4 1 31 30
++4 1 29 28
++4 1 27 26
++4 1 26 18
++4 1 18 0
++
++vertices
++34
++
++nodes
++FiniteElementSpace
++FiniteElementCollection: H1_2D_P3
++VDim: 2
++Ordering: 1
++
++0 0
++0.53125 0
++1 0
++0.53125 0.09375
++0.5625 0.09375
++1 0.09375
++0.53125 0.21875
++0.6875 0.21875
++1 0.1875
++0.53125 0.25
++0.71875 0.25
++1 0.25
++0.53125 0.375
++0.84375 0.375
++1 0.34375
++0.53125 0.40625
++0.875 0.40625
++1 0.40625
++0 0.53125
++0.09375 0.53125
++0.21875 0.53125
++0.25 0.53125
++0.375 0.53125
++0.40625 0.53125
++0.53125 0.53125
++1 0.53125
++0 1
++0.09375 1
++0.21875 1
++0.25 1
++0.375 1
++0.40625 1
++0.53125 1
++1 1
++
++0.33175106835972 0.094168845750364
++0.094168845750364 0.33175106835972
++-5.1759634627347e-17 0.14683388869532
++6.5255471622478e-17 0.38441611130468
++0.14683388869532 6.0713766400335e-17
++0.38441611130468 8.2458945395444e-19
++0.53125 0.025911862710939
++0.53125 0.067838137289061
++0.34721731046049 0.13433915461926
++0.13433915461926 0.34721731046049
++0.025911862710939 0.53125
++0.067838137289061 0.53125
++0.53125 0.12829915028125
++0.53125 0.18420084971875
++0.39979807890035 0.24774225329947
++0.24774225329947 0.39979807890035
++0.12829915028125 0.53125
++0.18420084971875 0.53125
++0.53125 0.22738728757031
++0.53125 0.24136271242969
++0.41294327101031 0.27609302796952
++0.27609302796952 0.41294327101031
++0.22738728757031 0.53125
++0.24136271242969 0.53125
++0.53125 0.28454915028125
++0.53125 0.34045084971875
++0.46552403945017 0.38949612664974
++0.38949612664974 0.46552403945017
++0.28454915028125 0.53125
++0.34045084971875 0.53125
++0.53125 0.38363728757031
++0.53125 0.39761271242969
++0.47866923156014 0.41784690131979
++0.41784690131979 0.47866923156014
++0.38363728757031 0.53125
++0.39761271242969 0.53125
++0.53125 0.44079915028125
++0.53125 0.49670084971875
++0.44079915028125 0.53125
++0.49670084971875 0.53125
++0.53988728757031 0.025911862710939
++0.55386271242969 0.067838137289061
++0.53988728757031 0.09375
++0.55386271242969 0.09375
++0.59704915028125 0.12829915028125
++0.65295084971875 0.18420084971875
++0.57443643785157 0.21875
++0.64431356214843 0.21875
++0.69613728757031 0.22738728757031
++0.71011271242969 0.24136271242969
++0.58307372542188 0.25
++0.66692627457812 0.25
++0.75329915028125 0.28454915028125
++0.80920084971875 0.34045084971875
++0.61762287570313 0.375
++0.75737712429687 0.375
++0.85238728757031 0.38363728757031
++0.86636271242969 0.39761271242969
++0.62626016327344 0.40625
++0.77998983672656 0.40625
++0.90954915028125 0.44079915028125
++0.96545084971875 0.49670084971875
++0.6608093135547 0.53125
++0.8704406864453 0.53125
++1 0.025911862710939
++1 0.067838137289061
++0.68342202598438 0.09375
++0.87907797401562 0.09375
++0.6608093135547 0
++0.8704406864453 0
++1 0.11966186271094
++1 0.16158813728906
++0.77387287570313 0.21011271242969
++0.91362712429687 0.19613728757031
++1 0.20477457514063
++1 0.23272542485937
++0.79648558813282 0.25
++0.92226441186718 0.25
++1 0.27591186271094
++1 0.31783813728906
++0.88693643785157 0.36636271242969
++0.95681356214843 0.35238728757031
++1 0.36102457514063
++1 0.38897542485937
++0.90954915028125 0.40625
++0.96545084971875 0.40625
++1 0.44079915028125
++1 0.49670084971875
++0.09375 0.6608093135547
++0.09375 0.8704406864453
++0.025911862710939 1
++0.067838137289061 1
++0 0.6608093135547
++0 0.8704406864453
++0.21875 0.6608093135547
++0.21875 0.8704406864453
++0.12829915028125 1
++0.18420084971875 1
++0.25 0.6608093135547
++0.25 0.8704406864453
++0.22738728757031 1
++0.24136271242969 1
++0.375 0.6608093135547
++0.375 0.8704406864453
++0.28454915028125 1
++0.34045084971875 1
++0.40625 0.6608093135547
++0.40625 0.8704406864453
++0.38363728757031 1
++0.39761271242969 1
++0.53125 0.6608093135547
++0.53125 0.8704406864453
++0.44079915028125 1
++0.49670084971875 1
++1 0.6608093135547
++1 0.8704406864453
++0.6608093135547 1
++0.8704406864453 1
++0.14782497614169 0.14782497614169
++0.3364183509774 0.10629113008478
++0.3439701728879 0.12590539815918
++0.10629113008478 0.3364183509774
++0.12590539815918 0.3439701728879
++0.36175027742635 0.16568300020856
++0.38526511193449 0.21639840771017
++0.16568300020856 0.36175027742635
++0.21639840771017 0.38526511193449
++0.40343132064181 0.2555782146968
++0.40931002926885 0.2682570665722
++0.2555782146968 0.40343132064181
++0.2682570665722 0.40931002926885
++0.42747623797617 0.30743687355882
++0.45099107248431 0.35815228106044
++0.30743687355882 0.42747623797617
++0.35815228106044 0.45099107248431
++0.46915728119164 0.39733208804706
++0.47503598981867 0.41001093992246
++0.39733208804706 0.46915728119164
++0.41001093992246 0.47503598981867
++0.47232443490112 0.47232443490112
++0.54166666666667 0.0625
++0.57886271242969 0.12829915028125
++0.61931356214843 0.18420084971875
++0.54943643785157 0.12829915028125
++0.56488728757031 0.18420084971875
++0.65056356214843 0.22738728757031
++0.66067627457812 0.24136271242969
++0.57682372542188 0.22738728757031
++0.58068643785157 0.24136271242969
++0.69192627457812 0.28454915028125
++0.73237712429687 0.34045084971875
++0.59262287570313 0.28454915028125
++0.60807372542188 0.34045084971875
++0.76362712429687 0.38363728757031
++0.77373983672656 0.39761271242969
++0.62001016327344 0.38363728757031
++0.62387287570313 0.39761271242969
++0.80498983672656 0.44079915028125
++0.8454406864453 0.49670084971875
++0.6358093135547 0.44079915028125
++0.65126016327344 0.49670084971875
++0.87282797401562 0.025911862710939
++0.8766906864453 0.067838137289061
++0.6670593135547 0.025911862710939
++0.67717202598438 0.067838137289061
++0.88862712429687 0.12204915028125
++0.90407797401562 0.16783813728906
++0.70842202598438 0.12591186271094
++0.74887287570313 0.17795084971875
++0.91601441186718 0.21102457514063
++0.91987712429687 0.23511271242969
++0.78012287570313 0.22113728757031
++0.79023558813282 0.23897542485937
++0.93181356214843 0.27829915028125
++0.94726441186718 0.32408813728906
++0.82148558813282 0.28216186271094
++0.86193643785157 0.33420084971875
++0.95920084971875 0.36727457514063
++0.96306356214843 0.39136271242969
++0.89318643785157 0.37738728757031
++0.90329915028125 0.39522542485937
++0.95833333333333 0.44791666666667
++0.025911862710939 0.6608093135547
++0.067838137289061 0.6608093135547
++0.025911862710939 0.8704406864453
++0.067838137289061 0.8704406864453
++0.12829915028125 0.6608093135547
++0.18420084971875 0.6608093135547
++0.12829915028125 0.8704406864453
++0.18420084971875 0.8704406864453
++0.22738728757031 0.6608093135547
++0.24136271242969 0.6608093135547
++0.22738728757031 0.8704406864453
++0.24136271242969 0.8704406864453
++0.28454915028125 0.6608093135547
++0.34045084971875 0.6608093135547
++0.28454915028125 0.8704406864453
++0.34045084971875 0.8704406864453
++0.38363728757031 0.6608093135547
++0.39761271242969 0.6608093135547
++0.38363728757031 0.8704406864453
++0.39761271242969 0.8704406864453
++0.44079915028125 0.6608093135547
++0.49670084971875 0.6608093135547
++0.44079915028125 0.8704406864453
++0.49670084971875 0.8704406864453
++0.6608093135547 0.6608093135547
++0.8704406864453 0.6608093135547
++0.6608093135547 0.8704406864453
++0.8704406864453 0.8704406864453
+diff --git a/examples/CMakeLists.txt b/examples/CMakeLists.txt
+index afa98324c..16c3d0552 100644
+--- a/examples/CMakeLists.txt
++++ b/examples/CMakeLists.txt
+@@ -77,6 +77,8 @@ if (MFEM_USE_MPI)
+     ex31p.cpp
+     ex32p.cpp
+     ex33p.cpp
++    ex34p.cpp
++    ex35p.cpp
+     )
+ endif()
+ 
+diff --git a/examples/ex34p.cpp b/examples/ex34p.cpp
+new file mode 100644
+index 000000000..24f4802df
+--- /dev/null
++++ b/examples/ex34p.cpp
+@@ -0,0 +1,574 @@
++//                       MFEM Example 34 - Parallel Version
++//
++// Compile with: make ex34p
++//
++// Sample runs:  mpirun -np 4 ex34p -o 2
++//               mpirun -np 4 ex34p -o 2 -pa
++//
++// Device sample runs:
++//               mpirun -np 4 ex34p -o 2 -pa -d cuda
++//               mpirun -np 4 ex34p -o 2 -no-pa -d cuda
++//
++// Description:  This example code solves a simple magnetostatic problem
++//               curl curl A = J where the current density J is computed on a
++//               subset of the domain as J = -sigma grad phi. We discretize the
++//               vector potential with Nedelec finite elements, the scalar
++//               potential with Lagrange finite elements, and the current
++//               density with Raviart-Thomas finite elements.
++//
++//               The example demonstrates the use of a SubMesh to compute the
++//               scalar potential and its associated current density which is
++//               then transferred to the original mesh and used as a source
++//               function.
++//
++//               Note that this example takes certain liberties with the
++//               current density which is not necessarily divergence free
++//               as it should be. This was done to focus on the use of the
++//               SubMesh to transfer information between a full mesh and a
++//               sub-domain. A more rigorous implementation might employ an
++//               H(div) saddle point solver to obtain a divergence free J on
++//               the SubMesh. It would then also need to ensure that the r.h.s.
++//               of curl curl A = J does in fact lie in the range of the weak
++//               curl operator by performing a divergence cleaning procedure
++//               before the solve. After divergence cleaning the delta
++//               parameter would probably not be needed.
++//
++//               This example is designed to make use of a specific mesh which
++//               has a known configuration of elements and boundary attributes.
++//               Other meshes could be used but extra care would be required to
++//               properly define the SubMesh and the necessary boundaries.
++//
++//               We recommend viewing examples 1 and 3 before viewing this
++//               example.
++
++#include "mfem.hpp"
++#include <fstream>
++#include <iostream>
++
++using namespace std;
++using namespace mfem;
++
++void ComputeCurrentDensityOnSubMesh(int order,
++                                    const Array<int> &phi0_attr,
++                                    const Array<int> &phi1_attr,
++                                    ParGridFunction &j_cond);
++
++int main(int argc, char *argv[])
++{
++   // 1. Initialize MPI and HYPRE.
++   Mpi::Init(argc, argv);
++   int num_procs = Mpi::WorldSize();
++   int myid = Mpi::WorldRank();
++   Hypre::Init();
++
++   // 2. Parse command-line options.
++   const char *mesh_file = "../data/fichera-mixed.mesh";
++   Array<int> cond_attr;
++   Array<int> submesh_elems;
++   Array<int> sym_plane_attr;
++   Array<int> phi0_attr;
++   Array<int> phi1_attr;
++   int ser_ref_levels = 1;
++   int par_ref_levels = 1;
++   int order = 1;
++   double delta_const = 1e-6;
++   bool static_cond = false;
++   bool pa = false;
++   const char *device_config = "cpu";
++   bool visualization = true;
++#ifdef MFEM_USE_AMGX
++   bool useAmgX = false;
++#endif
++
++   OptionsParser args(argc, argv);
++   args.AddOption(&ser_ref_levels, "-rs", "--refine-serial",
++                  "Number of times to refine the mesh uniformly in serial.");
++   args.AddOption(&par_ref_levels, "-rp", "--refine-parallel",
++                  "Number of times to refine the mesh uniformly in parallel.");
++   args.AddOption(&order, "-o", "--order",
++                  "Finite element order (polynomial degree).");
++   args.AddOption(&delta_const, "-d", "--delta", "Magnetic Conductivity");
++   args.AddOption(&static_cond, "-sc", "--static-condensation", "-no-sc",
++                  "--no-static-condensation", "Enable static condensation.");
++   args.AddOption(&pa, "-pa", "--partial-assembly", "-no-pa",
++                  "--no-partial-assembly", "Enable Partial Assembly.");
++   args.AddOption(&device_config, "-d", "--device",
++                  "Device configuration string, see Device::Configure().");
++   args.AddOption(&visualization, "-vis", "--visualization", "-no-vis",
++                  "--no-visualization",
++                  "Enable or disable GLVis visualization.");
++#ifdef MFEM_USE_AMGX
++   args.AddOption(&useAmgX, "-amgx", "--useAmgX", "-no-amgx",
++                  "--no-useAmgX",
++                  "Enable or disable AmgX in MatrixFreeAMS.");
++#endif
++
++   args.Parse();
++   if (!args.Good())
++   {
++      if (myid == 0)
++      {
++         args.PrintUsage(cout);
++      }
++      return 1;
++   }
++   if (myid == 0)
++   {
++      args.PrintOptions(cout);
++   }
++
++   if (submesh_elems.Size() == 0 &&
++       strcmp(mesh_file, "../data/fichera-mixed.mesh") == 0)
++   {
++      submesh_elems.SetSize(5);
++      submesh_elems[0] = 0;
++      submesh_elems[1] = 2;
++      submesh_elems[2] = 3;
++      submesh_elems[3] = 4;
++      submesh_elems[4] = 9;
++   }
++   if (sym_plane_attr.Size() == 0 &&
++       strcmp(mesh_file, "../data/fichera-mixed.mesh") == 0)
++   {
++      sym_plane_attr.SetSize(8);
++      sym_plane_attr[0] =  9;
++      sym_plane_attr[1] = 10;
++      sym_plane_attr[2] = 11;
++      sym_plane_attr[3] = 12;
++      sym_plane_attr[4] = 13;
++      sym_plane_attr[5] = 14;
++      sym_plane_attr[6] = 15;
++      sym_plane_attr[7] = 16;
++   }
++   if (phi0_attr.Size() == 0 &&
++       strcmp(mesh_file, "../data/fichera-mixed.mesh") == 0)
++   {
++      phi0_attr.Append(2);
++   }
++   if (phi1_attr.Size() == 0 &&
++       strcmp(mesh_file, "../data/fichera-mixed.mesh") == 0)
++   {
++      phi1_attr.Append(23);
++   }
++
++   // 3. Enable hardware devices such as GPUs, and programming models such as
++   //    CUDA, OCCA, RAJA and OpenMP based on command line options.
++   Device device(device_config);
++   if (myid == 0) { device.Print(); }
++
++   // 4. Read the (serial) mesh from the given mesh file on all processors.  We
++   //    can handle triangular, quadrilateral, tetrahedral, hexahedral, surface
++   //    and volume meshes with the same code.
++   Mesh *mesh = new Mesh(mesh_file, 1, 1);
++   int dim = mesh->Dimension();
++
++   int submesh_attr = -1;
++   if (cond_attr.Size() == 0 && submesh_elems.Size() > 0)
++   {
++      int max_attr = mesh->attributes.Max();
++      submesh_attr = max_attr + 1;
++
++      for (int i=0; i<submesh_elems.Size(); i++)
++      {
++         mesh->SetAttribute(submesh_elems[i], submesh_attr);
++      }
++      mesh->SetAttributes();
++
++      if (cond_attr.Size() == 0)
++      {
++         cond_attr.Append(submesh_attr);
++      }
++   }
++
++   // 5. Refine the serial mesh on all processors to increase the resolution. In
++   //    this example we do 'ref_levels' of uniform refinement.
++   {
++      int ref_levels = ser_ref_levels;
++      for (int l = 0; l < ref_levels; l++)
++      {
++         mesh->UniformRefinement();
++      }
++   }
++
++   // 6. Define a parallel mesh by a partitioning of the serial mesh. Refine
++   //    this mesh further in parallel to increase the resolution. Once the
++   //    parallel mesh is defined, the serial mesh can be deleted.
++   ParMesh pmesh(MPI_COMM_WORLD, *mesh);
++   delete mesh;
++   {
++      for (int l = 0; l < par_ref_levels; l++)
++      {
++         pmesh.UniformRefinement();
++      }
++   }
++
++   // 6b. Extract a submesh covering a portion of the domain
++   ParSubMesh pmesh_cond(ParSubMesh::CreateFromDomain(pmesh, cond_attr));
++
++   // 7. Define a suitable finite element space on the SubMesh and compute
++   //    the current density as an H(div) field.
++   RT_FECollection fec_cond_rt(order - 1, dim);
++   ParFiniteElementSpace fes_cond_rt(&pmesh_cond, &fec_cond_rt);
++   ParGridFunction j_cond(&fes_cond_rt);
++
++   ComputeCurrentDensityOnSubMesh(order, phi0_attr, phi1_attr, j_cond);
++
++   // 7a. Save the SubMesh and associated current density in parallel. This
++   //     output can be viewed later using GLVis:
++   //        "glvis -np <np> -m cond_mesh -g cond_j"
++   {
++      ostringstream mesh_name, cond_name;
++      mesh_name << "cond_mesh." << setfill('0') << setw(6) << myid;
++      cond_name << "cond_j." << setfill('0') << setw(6) << myid;
++
++      ofstream mesh_ofs(mesh_name.str().c_str());
++      mesh_ofs.precision(8);
++      pmesh_cond.Print(mesh_ofs);
++
++      ofstream cond_ofs(cond_name.str().c_str());
++      cond_ofs.precision(8);
++      j_cond.Save(cond_ofs);
++   }
++   // 7b. Send the current density, computed on the SubMesh, to a GLVis server.
++   if (visualization)
++   {
++      char vishost[] = "localhost";
++      int  visport   = 19916;
++      socketstream port_sock(vishost, visport);
++      port_sock << "parallel " << num_procs << " " << myid << "\n";
++      port_sock.precision(8);
++      port_sock << "solution\n" << pmesh_cond << j_cond
++                << "window_title 'Conductor J'"
++                << "window_geometry 0 0 400 350" << flush;
++   }
++
++   // 8. Define a parallel finite element space on the full mesh. Here we
++   //    use the H(curl) finite elements for the vector potential and H(div)
++   //    for the current density.
++   ND_FECollection fec_nd(order, dim);
++   RT_FECollection fec_rt(order - 1, dim);
++   ParFiniteElementSpace fespace_nd(&pmesh, &fec_nd);
++   ParFiniteElementSpace fespace_rt(&pmesh, &fec_rt);
++
++   ParGridFunction j_full(&fespace_rt);
++   j_full = 0.0;
++   pmesh_cond.Transfer(j_cond, j_full);
++
++   // 8a. Send the transferred current density to a GLVis server.
++   if (visualization)
++   {
++      char vishost[] = "localhost";
++      int  visport   = 19916;
++      socketstream sol_sock(vishost, visport);
++      sol_sock << "parallel " << num_procs << " " << myid << "\n";
++      sol_sock.precision(8);
++      sol_sock << "solution\n" << pmesh << j_full
++               << "window_title 'J Full'"
++               << "window_geometry 400 0 400 350" << flush;
++   }
++
++   // 9. Determine the list of true (i.e. parallel conforming) essential
++   //    boundary dofs. In this example, the boundary conditions are defined
++   //    by marking all the boundary attributes except for those on a symmetry
++   //    plane as essential (Dirichlet) and converting them to a list of
++   //    true dofs.
++   Array<int> ess_tdof_list;
++   Array<int> ess_bdr;
++   if (pmesh.bdr_attributes.Size())
++   {
++      ess_bdr.SetSize(pmesh.bdr_attributes.Max());
++      ess_bdr = 1;
++      for (int i=0; i<sym_plane_attr.Size(); i++)
++      {
++         ess_bdr[sym_plane_attr[i]-1] = 0;
++      }
++      fespace_nd.GetEssentialTrueDofs(ess_bdr, ess_tdof_list);
++   }
++
++   // 10. Set up the parallel linear form b(.) which corresponds to the
++   //     right-hand side of the FEM linear system, which in this case is
++   //     (J,W_i) where J is given by the function H(div) field transferred
++   //     from the SubMesh and W_i are the basis functions in the finite
++   //     element fespace.
++   VectorGridFunctionCoefficient jCoef(&j_full);
++   ParLinearForm b(&fespace_nd);
++   b.AddDomainIntegrator(new VectorFEDomainLFIntegrator(jCoef));
++   b.Assemble();
++
++   // 11. Define the solution vector x as a parallel finite element grid
++   //     function corresponding to fespace. Initialize x to zero.
++   ParGridFunction x(&fespace_nd);
++   x = 0.0;
++
++   // 12. Set up the parallel bilinear form corresponding to the EM
++   //     diffusion operator curl muinv curl + delta I, by adding the
++   //     curl-curl and the mass domain integrators. For standard
++   //     magnetostatics equations choose delta << 1. Larger values of
++   //     delta should make the linear system easier to solve at the
++   //     expense of resembling a diffusive quasistatic magnetic field.
++   //     A reasonable balance must be found whenever the mesh or problem
++   //     setup is altered.
++   ConstantCoefficient muinv(1.0);
++   ConstantCoefficient delta(delta_const);
++   ParBilinearForm a(&fespace_nd);
++   if (pa) { a.SetAssemblyLevel(AssemblyLevel::PARTIAL); }
++   a.AddDomainIntegrator(new CurlCurlIntegrator(muinv));
++   a.AddDomainIntegrator(new VectorFEMassIntegrator(delta));
++
++   // 13. Assemble the parallel bilinear form and the corresponding linear
++   //     system, applying any necessary transformations such as: parallel
++   //     assembly, eliminating boundary conditions, applying conforming
++   //     constraints for non-conforming AMR, static condensation, etc.
++   if (static_cond) { a.EnableStaticCondensation(); }
++   a.Assemble();
++
++   OperatorPtr A;
++   Vector B, X;
++   a.FormLinearSystem(ess_tdof_list, x, b, A, X, B);
++
++   if (myid == 0)
++   {
++      cout << "\nSolving for magnetic vector potential "
++           << "using CG with AMS" << endl;
++   }
++
++   // 14. Solve the system AX=B using PCG with an AMS preconditioner.
++   if (pa)
++   {
++#ifdef MFEM_USE_AMGX
++      MatrixFreeAMS ams(a, *A, fespace_nd, &muinv, &delta, NULL, ess_bdr,
++                        useAmgX);
++#else
++      MatrixFreeAMS ams(a, *A, fespace_nd, &muinv, &delta, NULL, ess_bdr);
++#endif
++      CGSolver cg(MPI_COMM_WORLD);
++      cg.SetRelTol(1e-12);
++      cg.SetMaxIter(1000);
++      cg.SetPrintLevel(1);
++      cg.SetOperator(*A);
++      cg.SetPreconditioner(ams);
++      cg.Mult(B, X);
++   }
++   else
++   {
++      if (myid == 0)
++      {
++         cout << "Size of linear system: "
++              << A.As<HypreParMatrix>()->GetGlobalNumRows() << endl;
++      }
++
++      ParFiniteElementSpace *prec_fespace =
++         (a.StaticCondensationIsEnabled() ? a.SCParFESpace() : &fespace_nd);
++      HypreAMS ams(*A.As<HypreParMatrix>(), prec_fespace);
++      HyprePCG pcg(*A.As<HypreParMatrix>());
++      pcg.SetTol(1e-12);
++      pcg.SetMaxIter(500);
++      pcg.SetPrintLevel(2);
++      pcg.SetPreconditioner(ams);
++      pcg.Mult(B, X);
++   }
++
++   // 15. Recover the parallel grid function corresponding to X. This is the
++   //     local finite element solution on each processor.
++   a.RecoverFEMSolution(X, b, x);
++
++   // 16. Save the refined mesh and the solution in parallel. This output can
++   //     be viewed later using GLVis: "glvis -np <np> -m mesh -g sol".
++   {
++      ostringstream mesh_name, sol_name;
++      mesh_name << "mesh." << setfill('0') << setw(6) << myid;
++      sol_name << "sol." << setfill('0') << setw(6) << myid;
++
++      ofstream mesh_ofs(mesh_name.str().c_str());
++      mesh_ofs.precision(8);
++      pmesh.Print(mesh_ofs);
++
++      ofstream sol_ofs(sol_name.str().c_str());
++      sol_ofs.precision(8);
++      x.Save(sol_ofs);
++   }
++
++   // 17. Send the solution by socket to a GLVis server.
++   if (visualization)
++   {
++      char vishost[] = "localhost";
++      int  visport   = 19916;
++      socketstream sol_sock(vishost, visport);
++      sol_sock << "parallel " << num_procs << " " << myid << "\n";
++      sol_sock.precision(8);
++      sol_sock << "solution\n" << pmesh << x
++               << "window_title 'Vector Potential'"
++               << "window_geometry 800 0 400 350" << flush;
++   }
++
++   // 18. Compute the magnetic flux as the curl of the solution
++   ParDiscreteLinearOperator curl(&fespace_nd, &fespace_rt);
++   curl.AddDomainInterpolator(new CurlInterpolator);
++   curl.Assemble();
++   curl.Finalize();
++
++   ParGridFunction dx(&fespace_rt);
++   curl.Mult(x, dx);
++
++   // 19. Save the curl of the solution in parallel. This output can
++   //     be viewed later using GLVis: "glvis -np <np> -m mesh -g dsol".
++   {
++      ostringstream dsol_name;
++      dsol_name << "dsol." << setfill('0') << setw(6) << myid;
++
++      ofstream dsol_ofs(dsol_name.str().c_str());
++      dsol_ofs.precision(8);
++      dx.Save(dsol_ofs);
++   }
++
++   // 20. Send the curl of the solution by socket to a GLVis server.
++   if (visualization)
++   {
++      char vishost[] = "localhost";
++      int  visport   = 19916;
++      socketstream sol_sock(vishost, visport);
++      sol_sock << "parallel " << num_procs << " " << myid << "\n";
++      sol_sock.precision(8);
++      sol_sock << "solution\n" << pmesh << dx
++               << "window_title 'Magnetic Flux'"
++               << "window_geometry 1200 0 400 350" << flush;
++   }
++
++   // 21. Clean exit
++   return 0;
++}
++
++void ComputeCurrentDensityOnSubMesh(int order,
++                                    const Array<int> &phi0_attr,
++                                    const Array<int> &phi1_attr,
++                                    ParGridFunction &j_cond)
++{
++   // Exract the finite element space and mesh on which j_cond is defined
++   ParFiniteElementSpace &fes_cond_rt = *j_cond.ParFESpace();
++   ParMesh &pmesh_cond = *fes_cond_rt.GetParMesh();
++   int myid = fes_cond_rt.GetMyRank();
++   int dim  = pmesh_cond.Dimension();
++
++   // Define a parallel finite element space on the SubMesh. Here we use the
++   // H1 finite elements for the electrostatic potential.
++   H1_FECollection fec_h1(order, dim);
++   ParFiniteElementSpace fes_cond_h1(&pmesh_cond, &fec_h1);
++
++   // Define the conductivity coefficient and the boundaries associated with
++   // the fixed potentials phi0 and phi1 which will drive the current.
++   ConstantCoefficient sigmaCoef(1.0);
++   Array<int> ess_bdr_phi(pmesh_cond.bdr_attributes.Max());
++   Array<int> ess_bdr_j(pmesh_cond.bdr_attributes.Max());
++   Array<int> ess_bdr_tdof_phi;
++   ess_bdr_phi = 0;
++   ess_bdr_j   = 1;
++   for (int i=0; i<phi0_attr.Size(); i++)
++   {
++      ess_bdr_phi[phi0_attr[i]-1] = 1;
++      ess_bdr_j[phi0_attr[i]-1] = 0;
++   }
++   for (int i=0; i<phi1_attr.Size(); i++)
++   {
++      ess_bdr_phi[phi1_attr[i]-1] = 1;
++      ess_bdr_j[phi1_attr[i]-1] = 0;
++   }
++   fes_cond_h1.GetEssentialTrueDofs(ess_bdr_phi, ess_bdr_tdof_phi);
++
++   // Setup the bilinear form corresponding to -Div(sigma Grad phi)
++   ParBilinearForm a_h1(&fes_cond_h1);
++   a_h1.AddDomainIntegrator(new DiffusionIntegrator(sigmaCoef));
++   a_h1.Assemble();
++
++   // Set the r.h.s. to zero
++   ParLinearForm b_h1(&fes_cond_h1);
++   b_h1 = 0.0;
++
++   // Setup the boundary conditions on phi
++   ConstantCoefficient one(1.0);
++   ConstantCoefficient zero(0.0);
++   ParGridFunction phi_h1(&fes_cond_h1);
++   phi_h1 = 0.0;
++
++   Array<int> bdr0(pmesh_cond.bdr_attributes.Max()); bdr0 = 0;
++   for (int i=0; i<phi0_attr.Size(); i++)
++   {
++      bdr0[phi0_attr[i]-1] = 1;
++   }
++   phi_h1.ProjectBdrCoefficient(zero, bdr0);
++
++   Array<int> bdr1(pmesh_cond.bdr_attributes.Max()); bdr1 = 0;
++   for (int i=0; i<phi1_attr.Size(); i++)
++   {
++      bdr1[phi1_attr[i]-1] = 1;
++   }
++   phi_h1.ProjectBdrCoefficient(one, bdr1);
++
++   // Solve the linear system using algebraic multigrid
++   {
++      if (myid == 0)
++      {
++         cout << "\nSolving for electric potential "
++              << "using CG with AMG" << endl;
++      }
++      OperatorPtr A;
++      Vector B, X;
++      a_h1.FormLinearSystem(ess_bdr_tdof_phi, phi_h1, b_h1, A, X, B);
++
++      HypreBoomerAMG prec;
++      CGSolver cg(MPI_COMM_WORLD);
++      cg.SetRelTol(1e-12);
++      cg.SetMaxIter(2000);
++      cg.SetPrintLevel(1);
++      cg.SetPreconditioner(prec);
++      cg.SetOperator(*A);
++      cg.Mult(B, X);
++      a_h1.RecoverFEMSolution(X, b_h1, phi_h1);
++   }
++
++   // Solve for the current density J = -sigma Grad phi with boundary
++   // conditions J.n = 0 on the walls of the conductor but not on the
++   // ports where phi=0 and phi=1.
++
++   // J will be computed in H(div) so we need an RT mass matrix
++   ParBilinearForm m_rt(&fes_cond_rt);
++   m_rt.AddDomainIntegrator(new VectorFEMassIntegrator);
++   m_rt.Assemble();
++
++   // Assemble the (sigma Grad phi) operator
++   ParMixedBilinearForm d_h1(&fes_cond_h1, &fes_cond_rt);
++   d_h1.AddDomainIntegrator(new MixedVectorGradientIntegrator(sigmaCoef));
++   d_h1.Assemble();
++
++   // Compute the r.h.s, b_rt = sigma E = -sigma Grad phi
++   ParLinearForm b_rt(&fes_cond_rt);
++   d_h1.Mult(phi_h1, b_rt);
++   b_rt *= -1.0;
++
++   // Apply the necessary boundary conditions and solve for J in H(div)
++   if (myid == 0)
++   {
++      cout << "\nSolving for current density in H(Div) "
++           << "using diagonally scaled CG" << endl;
++      cout << "Size of linear system: "
++           << fes_cond_rt.GlobalTrueVSize() << endl;
++   }
++   Array<int> ess_bdr_tdof_rt;
++   OperatorPtr M;
++   Vector B, X;
++
++   fes_cond_rt.GetEssentialTrueDofs(ess_bdr_j, ess_bdr_tdof_rt);
++
++   j_cond = 0.0;
++   m_rt.FormLinearSystem(ess_bdr_tdof_rt, j_cond, b_rt, M, X, B);
++
++   HypreDiagScale prec;
++
++   CGSolver cg(MPI_COMM_WORLD);
++   cg.SetRelTol(1e-12);
++   cg.SetMaxIter(2000);
++   cg.SetPrintLevel(1);
++   cg.SetPreconditioner(prec);
++   cg.SetOperator(*M);
++   cg.Mult(B, X);
++   m_rt.RecoverFEMSolution(X, b_rt, j_cond);
++}
+diff --git a/examples/ex35p.cpp b/examples/ex35p.cpp
+new file mode 100644
+index 000000000..4abc2ed3a
+--- /dev/null
++++ b/examples/ex35p.cpp
+@@ -0,0 +1,809 @@
++//                       MFEM Example 35 - Parallel Version
++//
++// Compile with: make ex35p
++//
++// Sample runs:  mpirun -np 4 ex35p -p 0 -o 2
++//               mpirun -np 4 ex35p -p 0 -o 2 -pbc '22 23 24' -em 0
++//               mpirun -np 4 ex35p -p 1 -o 1 -rp 2
++//               mpirun -np 4 ex35p -p 1 -o 2
++//               mpirun -np 4 ex35p -p 2 -o 1 -rp 2 -c 15
++//
++// Device sample runs:
++//
++// Description:  This example code demonstrates the use of MFEM to define and
++//               solve simple complex-valued linear systems. It implements three
++//               variants of a damped harmonic oscillator:
++//
++//               1) A scalar H1 field
++//                  -Div(a Grad u) - omega^2 b u + i omega c u = 0
++//
++//               2) A vector H(Curl) field
++//                  Curl(a Curl u) - omega^2 b u + i omega c u = 0
++//
++//               3) A vector H(Div) field
++//                  -Grad(a Div u) - omega^2 b u + i omega c u = 0
++//
++//               In each case the field is driven by a forced oscillation, with
++//               angular frequency omega, imposed at the boundary or a portion
++//               of the boundary. The spatial variation of the boundary
++//               condition is computed as an eigenmode of an appropriate
++//               operator defined on a portion of the boundary i.e. a port
++//               boundary condition.
++//
++//               In electromagnetics the coefficients are typically named the
++//               permeability, mu = 1/a, permittivity, epsilon = b, and
++//               conductivity, sigma = c. The user can specify these constants
++//               using either set of names.
++//
++//               This example demonstrates how to transfer fields computed on
++//               a boundary generated SubMesh to the full mesh and apply them
++//               as boundary conditions. The default mesh and corresponding
++//               boundary attriburtes were chosen to verify proper behavior on
++//               both triangular and quadrilateral faces of tetrahedral,
++//               wedge-shaped, and hexahedral elements.
++//
++//               The example also demonstrates how to display a time-varying
++//               solution as a sequence of fields sent to a single GLVis socket.
++//
++//               We recommend viewing examples 11, 13, and 22 before viewing
++//               this example.
++
++#include "mfem.hpp"
++#include <fstream>
++#include <iostream>
++
++using namespace std;
++using namespace mfem;
++
++static double mu_ = 1.0;
++static double epsilon_ = 1.0;
++static double sigma_ = 2.0;
++
++void SetPortBC(int prob, int dim, int mode, ParGridFunction &port_bc);
++
++int main(int argc, char *argv[])
++{
++   // 1. Initialize MPI and HYPRE.
++   Mpi::Init(argc, argv);
++   int num_procs = Mpi::WorldSize();
++   int myid = Mpi::WorldRank();
++   Hypre::Init();
++
++   // 2. Parse command-line options.
++   const char *mesh_file = "../data/fichera-mixed.mesh";
++   int ser_ref_levels = 1;
++   int par_ref_levels = 1;
++   int order = 1;
++   Array<int> port_bc_attr;
++   int prob = 0;
++   int mode = 1;
++   double freq = -1.0;
++   double omega = 2.0 * M_PI;
++   double a_coef = 0.0;
++   bool herm_conv = true;
++   bool slu_solver  = false;
++   bool visualization = 1;
++   bool pa = false;
++   const char *device_config = "cpu";
++
++   OptionsParser args(argc, argv);
++   args.AddOption(&mesh_file, "-m", "--mesh",
++                  "Mesh file to use.");
++   args.AddOption(&ser_ref_levels, "-rs", "--refine-serial",
++                  "Number of times to refine the mesh uniformly in serial.");
++   args.AddOption(&par_ref_levels, "-rp", "--refine-parallel",
++                  "Number of times to refine the mesh uniformly in parallel.");
++   args.AddOption(&order, "-o", "--order",
++                  "Finite element order (polynomial degree).");
++   args.AddOption(&prob, "-p", "--problem-type",
++                  "Choose between 0: H_1, 1: H(Curl), or 2: H(Div) "
++                  "damped harmonic oscillator.");
++   args.AddOption(&mode, "-em", "--eigenmode",
++                  "Choose the index of the port eigenmode.");
++   args.AddOption(&a_coef, "-a", "--stiffness-coef",
++                  "Stiffness coefficient (spring constant or 1/mu).");
++   args.AddOption(&epsilon_, "-b", "--mass-coef",
++                  "Mass coefficient (or epsilon).");
++   args.AddOption(&sigma_, "-c", "--damping-coef",
++                  "Damping coefficient (or sigma).");
++   args.AddOption(&mu_, "-mu", "--permeability",
++                  "Permeability of free space (or 1/(spring constant)).");
++   args.AddOption(&epsilon_, "-eps", "--permittivity",
++                  "Permittivity of free space (or mass constant).");
++   args.AddOption(&sigma_, "-sigma", "--conductivity",
++                  "Conductivity (or damping constant).");
++   args.AddOption(&freq, "-f", "--frequency",
++                  "Frequency (in Hz).");
++   args.AddOption(&port_bc_attr, "-pbc", "--port-bc-attr",
++                  "Attributes of port boundary condition");
++   args.AddOption(&herm_conv, "-herm", "--hermitian", "-no-herm",
++                  "--no-hermitian", "Use convention for Hermitian operators.");
++#ifdef MFEM_USE_SUPERLU
++   args.AddOption(&slu_solver, "-slu", "--superlu", "-no-slu",
++                  "--no-superlu", "Use the SuperLU Solver.");
++#endif
++   args.AddOption(&visualization, "-vis", "--visualization", "-no-vis",
++                  "--no-visualization",
++                  "Enable or disable GLVis visualization.");
++   args.AddOption(&pa, "-pa", "--partial-assembly", "-no-pa",
++                  "--no-partial-assembly", "Enable Partial Assembly.");
++   args.AddOption(&device_config, "-d", "--device",
++                  "Device configuration string, see Device::Configure().");
++   args.Parse();
++   if (!args.Good())
++   {
++      if (myid == 0)
++      {
++         args.PrintUsage(cout);
++      }
++      return 1;
++   }
++
++   if ( a_coef != 0.0 )
++   {
++      mu_ = 1.0 / a_coef;
++   }
++   if ( freq > 0.0 )
++   {
++      omega = 2.0 * M_PI * freq;
++   }
++   if (port_bc_attr.Size() == 0 &&
++       strcmp(mesh_file, "../data/fichera-mixed.mesh") == 0)
++   {
++      port_bc_attr.SetSize(4);
++      port_bc_attr[0] =  7;
++      port_bc_attr[1] =  8;
++      port_bc_attr[2] = 11;
++      port_bc_attr[3] = 12;
++   }
++
++   if (myid == 0)
++   {
++      args.PrintOptions(cout);
++   }
++
++   MFEM_VERIFY(prob >= 0 && prob <=2,
++               "Unrecognized problem type: " << prob);
++
++   ComplexOperator::Convention conv =
++      herm_conv ? ComplexOperator::HERMITIAN : ComplexOperator::BLOCK_SYMMETRIC;
++
++   // 3. Enable hardware devices such as GPUs, and programming models such as
++   //    CUDA, OCCA, RAJA and OpenMP based on command line options.
++   Device device(device_config);
++   if (myid == 0) { device.Print(); }
++
++   // 4. Read the (serial) mesh from the given mesh file on all processors. We
++   //    can handle triangular, quadrilateral, tetrahedral, hexahedral, surface
++   //    and volume meshes with the same code.
++   Mesh *mesh = new Mesh(mesh_file, 1, 1);
++   int dim = mesh->Dimension();
++
++   // 5. Refine the serial mesh on all processors to increase the resolution.
++   for (int l = 0; l < ser_ref_levels; l++)
++   {
++      mesh->UniformRefinement();
++   }
++
++   // 6a. Define a parallel mesh by a partitioning of the serial mesh. Refine
++   //    this mesh further in parallel to increase the resolution. Once the
++   //    parallel mesh is defined, the serial mesh can be deleted.
++   ParMesh pmesh(MPI_COMM_WORLD, *mesh);
++   delete mesh;
++   for (int l = 0; l < par_ref_levels; l++)
++   {
++      pmesh.UniformRefinement();
++   }
++
++   // 6b. Extract a submesh covering a portion of the boundary
++   ParSubMesh pmesh_port(ParSubMesh::CreateFromBoundary(pmesh, port_bc_attr));
++
++   // 7a. Define a parallel finite element space on the parallel mesh. Here we
++   //     use continuous Lagrange, Nedelec, or Raviart-Thomas finite elements
++   //     of the specified order.
++   if (dim == 1 && prob != 0 )
++   {
++      if (myid == 0)
++      {
++         cout << "Switching to problem type 0, H1 basis functions, "
++              << "for 1 dimensional mesh." << endl;
++      }
++      prob = 0;
++   }
++
++   FiniteElementCollection *fec = NULL;
++   switch (prob)
++   {
++      case 0:  fec = new H1_FECollection(order, dim);      break;
++      case 1:  fec = new ND_FECollection(order, dim);      break;
++      case 2:  fec = new RT_FECollection(order - 1, dim);  break;
++      default: break; // This should be unreachable
++   }
++   ParFiniteElementSpace fespace(&pmesh, fec);
++   HYPRE_BigInt size = fespace.GlobalTrueVSize();
++   if (myid == 0)
++   {
++      cout << "Number of finite element unknowns: " << size << endl;
++   }
++
++   // 7b. Define a parallel finite element space on the sub-mesh. Here we
++   //    use continuous Lagrange, Nedelec, or L2 finite elements of
++   //    the specified order.
++   FiniteElementCollection *fec_port = NULL;
++   switch (prob)
++   {
++      case 0:  fec_port = new H1_FECollection(order, dim-1);      break;
++      case 1:
++         if (dim == 3)
++         {
++            fec_port = new ND_FECollection(order, dim-1);
++         }
++         else
++         {
++            fec_port = new L2_FECollection(order - 1, dim-1,
++                                           BasisType::GaussLegendre,
++                                           FiniteElement::INTEGRAL);
++         }
++         break;
++      case 2:  fec_port = new L2_FECollection(order - 1, dim-1,
++                                                 BasisType::GaussLegendre,
++                                                 FiniteElement::INTEGRAL); break;
++      default: break; // This should be unreachable
++   }
++   ParFiniteElementSpace fespace_port(&pmesh_port, fec_port);
++   HYPRE_BigInt size_port = fespace_port.GlobalTrueVSize();
++   if (myid == 0)
++   {
++      cout << "Number of finite element port BC unknowns: " << size_port
++           << endl;
++   }
++
++   // 8a. Define a parallel grid function on the SubMesh which will contain
++   //     the field to be applied as a port boundary condition.
++   ParGridFunction port_bc(&fespace_port);
++   port_bc = 0.0;
++
++   SetPortBC(prob, dim, mode, port_bc);
++
++   // 8b. Save the SubMesh and associated port boundary condition in parallel.
++   //     This output can be viewed later using GLVis:
++   //        "glvis -np <np> -m port_mesh -g port_mode"
++   {
++      ostringstream mesh_name, port_name;
++      mesh_name << "port_mesh." << setfill('0') << setw(6) << myid;
++      port_name << "port_mode." << setfill('0') << setw(6) << myid;
++
++      ofstream mesh_ofs(mesh_name.str().c_str());
++      mesh_ofs.precision(8);
++      pmesh_port.Print(mesh_ofs);
++
++      ofstream port_ofs(port_name.str().c_str());
++      port_ofs.precision(8);
++      port_bc.Save(port_ofs);
++   }
++   // 8c. Send the port bc, computed on the SubMesh, to a GLVis server.
++   if (visualization && dim == 3)
++   {
++      char vishost[] = "localhost";
++      int  visport   = 19916;
++      socketstream port_sock(vishost, visport);
++      port_sock << "parallel " << num_procs << " " << myid << "\n";
++      port_sock.precision(8);
++      port_sock << "solution\n" << pmesh_port << port_bc
++                << "window_title 'Port BC'"
++                << "window_geometry 0 0 400 350" << flush;
++   }
++
++   // 9. Determine the list of true (i.e. parallel conforming) essential
++   //    boundary dofs. In this example, the boundary conditions are defined
++   //    using an eigenmode of the appropriate type computed on the SubMesh.
++   Array<int> ess_tdof_list;
++   Array<int> ess_bdr;
++   if (pmesh.bdr_attributes.Size())
++   {
++      ess_bdr.SetSize(pmesh.bdr_attributes.Max());
++      ess_bdr = 1;
++      fespace.GetEssentialTrueDofs(ess_bdr, ess_tdof_list);
++   }
++
++   // 10. Set up the parallel linear form b(.) which corresponds to the
++   //     right-hand side of the FEM linear system.
++   ParComplexLinearForm b(&fespace, conv);
++   b.Vector::operator=(0.0);
++
++   // 11a. Define the solution vector u as a parallel complex finite element
++   //      grid function corresponding to fespace. Initialize u to equal zero.
++   ParComplexGridFunction u(&fespace);
++   u = 0.0;
++   pmesh_port.Transfer(port_bc, u.real());
++
++   // 11b. Send the transferred port bc field to a GLVis server.
++   {
++      ParGridFunction full_bc(&fespace);
++      ParTransferMap port_to_full(port_bc, full_bc);
++
++      full_bc = 0.0;
++      port_to_full.Transfer(port_bc, full_bc);
++
++      if (visualization)
++      {
++         char vishost[] = "localhost";
++         int  visport   = 19916;
++         socketstream full_sock(vishost, visport);
++         full_sock << "parallel " << num_procs << " " << myid << "\n";
++         full_sock.precision(8);
++         full_sock << "solution\n" << pmesh << full_bc
++                   << "window_title 'Transferred BC'"
++                   << "window_geometry 400 0 400 350"<< flush;
++      }
++   }
++
++   // 12. Set up the parallel sesquilinear form a(.,.) on the finite element
++   //     space corresponding to the damped harmonic oscillator operator of the
++   //     appropriate type:
++   //
++   //     0) A scalar H1 field
++   //        -Div(a Grad) - omega^2 b + i omega c
++   //
++   //     1) A vector H(Curl) field
++   //        Curl(a Curl) - omega^2 b + i omega c
++   //
++   //     2) A vector H(Div) field
++   //        -Grad(a Div) - omega^2 b + i omega c
++   //
++   ConstantCoefficient stiffnessCoef(1.0/mu_);
++   ConstantCoefficient massCoef(-omega * omega * epsilon_);
++   ConstantCoefficient lossCoef(omega * sigma_);
++   ConstantCoefficient negMassCoef(omega * omega * epsilon_);
++
++   ParSesquilinearForm a(&fespace, conv);
++   if (pa) { a.SetAssemblyLevel(AssemblyLevel::PARTIAL); }
++   switch (prob)
++   {
++      case 0:
++         a.AddDomainIntegrator(new DiffusionIntegrator(stiffnessCoef),
++                               NULL);
++         a.AddDomainIntegrator(new MassIntegrator(massCoef),
++                               new MassIntegrator(lossCoef));
++         break;
++      case 1:
++         a.AddDomainIntegrator(new CurlCurlIntegrator(stiffnessCoef),
++                               NULL);
++         a.AddDomainIntegrator(new VectorFEMassIntegrator(massCoef),
++                               new VectorFEMassIntegrator(lossCoef));
++         break;
++      case 2:
++         a.AddDomainIntegrator(new DivDivIntegrator(stiffnessCoef),
++                               NULL);
++         a.AddDomainIntegrator(new VectorFEMassIntegrator(massCoef),
++                               new VectorFEMassIntegrator(lossCoef));
++         break;
++      default: break; // This should be unreachable
++   }
++
++   // 13. Assemble the parallel bilinear form and the corresponding linear
++   //     system, applying any necessary transformations such as: parallel
++   //     assembly, eliminating boundary conditions, applying conforming
++   //     constraints for non-conforming AMR, etc.
++   a.Assemble();
++
++   OperatorHandle A;
++   Vector B, U;
++
++   a.FormLinearSystem(ess_tdof_list, u, b, A, U, B);
++
++   if (myid == 0)
++   {
++      cout << "Size of linear system: "
++           << 2 * fespace.GlobalTrueVSize() << endl << endl;
++   }
++
++   if (!slu_solver)
++   {
++      // 14a. Set up the parallel bilinear form for the preconditioner
++      //      corresponding to the appropriate operator
++      //
++      //      0) A scalar H1 field
++      //         -Div(a Grad) - omega^2 b + i omega c
++      //
++      //      1) A vector H(Curl) field
++      //         Curl(a Curl) + omega^2 b + i omega c
++      //
++      //      2) A vector H(Div) field
++      //         -Grad(a Div) - omega^2 b + i omega c
++      //
++      ParBilinearForm pcOp(&fespace);
++      if (pa) { pcOp.SetAssemblyLevel(AssemblyLevel::PARTIAL); }
++      switch (prob)
++      {
++         case 0:
++            pcOp.AddDomainIntegrator(new DiffusionIntegrator(stiffnessCoef));
++            pcOp.AddDomainIntegrator(new MassIntegrator(massCoef));
++            pcOp.AddDomainIntegrator(new MassIntegrator(lossCoef));
++            break;
++         case 1:
++            pcOp.AddDomainIntegrator(new CurlCurlIntegrator(stiffnessCoef));
++            pcOp.AddDomainIntegrator(new VectorFEMassIntegrator(negMassCoef));
++            pcOp.AddDomainIntegrator(new VectorFEMassIntegrator(lossCoef));
++            break;
++         case 2:
++            pcOp.AddDomainIntegrator(new DivDivIntegrator(stiffnessCoef));
++            pcOp.AddDomainIntegrator(new VectorFEMassIntegrator(massCoef));
++            pcOp.AddDomainIntegrator(new VectorFEMassIntegrator(lossCoef));
++            break;
++         default: break; // This should be unreachable
++      }
++      pcOp.Assemble();
++
++      // 14b. Define and apply a parallel FGMRES solver for AU=B with a block
++      //     diagonal preconditioner based on the appropriate multigrid
++      //     preconditioner from hypre.
++      Array<int> blockTrueOffsets;
++      blockTrueOffsets.SetSize(3);
++      blockTrueOffsets[0] = 0;
++      blockTrueOffsets[1] = A->Height() / 2;
++      blockTrueOffsets[2] = A->Height() / 2;
++      blockTrueOffsets.PartialSum();
++
++      BlockDiagonalPreconditioner BDP(blockTrueOffsets);
++
++      Operator * pc_r = NULL;
++      Operator * pc_i = NULL;
++
++      if (pa)
++      {
++         pc_r = new OperatorJacobiSmoother(pcOp, ess_tdof_list);
++      }
++      else
++      {
++         OperatorHandle PCOp;
++         pcOp.FormSystemMatrix(ess_tdof_list, PCOp);
++
++         switch (prob)
++         {
++            case 0:
++               pc_r = new HypreBoomerAMG(*PCOp.As<HypreParMatrix>());
++               break;
++            case 1:
++               pc_r = new HypreAMS(*PCOp.As<HypreParMatrix>(), &fespace);
++               break;
++            case 2:
++               if (dim == 2 )
++               {
++                  pc_r = new HypreAMS(*PCOp.As<HypreParMatrix>(), &fespace);
++               }
++               else
++               {
++                  pc_r = new HypreADS(*PCOp.As<HypreParMatrix>(), &fespace);
++               }
++               break;
++            default: break; // This should be unreachable
++         }
++      }
++      pc_i = new ScaledOperator(pc_r,
++                                (conv == ComplexOperator::HERMITIAN) ?
++                                -1.0:1.0);
++
++      BDP.SetDiagonalBlock(0, pc_r);
++      BDP.SetDiagonalBlock(1, pc_i);
++      BDP.owns_blocks = 1;
++
++      FGMRESSolver fgmres(MPI_COMM_WORLD);
++      fgmres.SetPreconditioner(BDP);
++      fgmres.SetOperator(*A.Ptr());
++      fgmres.SetRelTol(1e-6);
++      fgmres.SetMaxIter(1000);
++      fgmres.SetPrintLevel(1);
++      fgmres.Mult(B, U);
++   }
++#ifdef MFEM_USE_SUPERLU
++   else
++   {
++      // 14. Solve using a direct solver
++      // Transform to monolithic HypreParMatrix
++      HypreParMatrix *A_hyp = A.As<ComplexHypreParMatrix>()->GetSystemMatrix();
++      SuperLURowLocMatrix SA(*A_hyp);
++      SuperLUSolver superlu(MPI_COMM_WORLD);
++      superlu.SetPrintStatistics(true);
++      superlu.SetSymmetricPattern(false);
++      superlu.SetColumnPermutation(superlu::PARMETIS);
++      superlu.SetOperator(SA);
++      superlu.Mult(B, U);
++      delete A_hyp;
++   }
++#endif
++
++   // 15. Recover the parallel grid function corresponding to U. This is the
++   //     local finite element solution on each processor.
++   a.RecoverFEMSolution(U, b, u);
++
++   // 16. Save the refined mesh and the solution in parallel. This output can be
++   //     viewed later using GLVis: "glvis -np <np> -m mesh -g sol_r" or
++   //     "glvis -np <np> -m mesh -g sol_i".
++   {
++      ostringstream mesh_name, sol_r_name, sol_i_name;
++      mesh_name << "mesh." << setfill('0') << setw(6) << myid;
++      sol_r_name << "sol_r." << setfill('0') << setw(6) << myid;
++      sol_i_name << "sol_i." << setfill('0') << setw(6) << myid;
++
++      ofstream mesh_ofs(mesh_name.str().c_str());
++      mesh_ofs.precision(8);
++      pmesh.Print(mesh_ofs);
++
++      ofstream sol_r_ofs(sol_r_name.str().c_str());
++      ofstream sol_i_ofs(sol_i_name.str().c_str());
++      sol_r_ofs.precision(8);
++      sol_i_ofs.precision(8);
++      u.real().Save(sol_r_ofs);
++      u.imag().Save(sol_i_ofs);
++   }
++
++   // 17. Send the solution by socket to a GLVis server.
++   if (visualization)
++   {
++      char vishost[] = "localhost";
++      int  visport   = 19916;
++      socketstream sol_sock_r(vishost, visport);
++      sol_sock_r << "parallel " << num_procs << " " << myid << "\n";
++      sol_sock_r.precision(8);
++      sol_sock_r << "solution\n" << pmesh << u.real()
++                 << "window_title 'Solution: Real Part'"
++                 << "window_geometry 800 0 400 350" << flush;
++
++      MPI_Barrier(MPI_COMM_WORLD);
++
++      socketstream sol_sock_i(vishost, visport);
++      sol_sock_i << "parallel " << num_procs << " " << myid << "\n";
++      sol_sock_i.precision(8);
++      sol_sock_i << "solution\n" << pmesh << u.imag()
++                 << "window_title 'Solution: Imaginary Part'"
++                 << "window_geometry 1200 0 400 350" << flush;
++   }
++   if (visualization)
++   {
++      ParGridFunction u_t(&fespace);
++      u_t = u.real();
++      char vishost[] = "localhost";
++      int  visport   = 19916;
++      socketstream sol_sock(vishost, visport);
++      sol_sock << "parallel " << num_procs << " " << myid << "\n";
++      sol_sock.precision(8);
++      sol_sock << "solution\n" << pmesh << u_t
++               << "window_title 'Harmonic Solution (t = 0.0 T)'"
++               << "window_geometry 0 432 600 450"
++               << "pause\n" << flush;
++      if (myid == 0)
++         cout << "GLVis visualization paused."
++              << " Press space (in the GLVis window) to resume it.\n";
++      int num_frames = 32;
++      int i = 0;
++      while (sol_sock)
++      {
++         double t = (double)(i % num_frames) / num_frames;
++         ostringstream oss;
++         oss << "Harmonic Solution (t = " << t << " T)";
++
++         add(cos( 2.0 * M_PI * t), u.real(),
++             sin(-2.0 * M_PI * t), u.imag(), u_t);
++         sol_sock << "parallel " << num_procs << " " << myid << "\n";
++         sol_sock << "solution\n" << pmesh << u_t
++                  << "window_title '" << oss.str() << "'" << flush;
++         i++;
++      }
++   }
++
++   // 18. Free the used memory.
++   delete fec_port;
++   delete fec;
++
++   return 0;
++}
++
++/**
++   Solves the eigenvalue problem -Div(Grad x) = lambda x with
++   homogeneous Dirichlet boundary conditions on the boundary of the
++   domain. Returns mode number "mode" (counting from zero) in the
++   ParGridFunction "x".
++*/
++void ScalarWaveGuide(int mode, ParGridFunction &x)
++{
++   int nev = std::max(mode + 2, 5);
++   int seed = 75;
++
++   ParFiniteElementSpace &fespace = *x.ParFESpace();
++   ParMesh &pmesh = *fespace.GetParMesh();
++
++   Array<int> ess_bdr;
++   if (pmesh.bdr_attributes.Size())
++   {
++      ess_bdr.SetSize(pmesh.bdr_attributes.Max());
++      ess_bdr = 1;
++   }
++
++   ParBilinearForm a(&fespace);
++   a.AddDomainIntegrator(new DiffusionIntegrator);
++   a.Assemble();
++   a.EliminateEssentialBCDiag(ess_bdr, 1.0);
++   a.Finalize();
++
++   ParBilinearForm m(&fespace);
++   m.AddDomainIntegrator(new MassIntegrator);
++   m.Assemble();
++   // shift the eigenvalue corresponding to eliminated dofs to a large value
++   m.EliminateEssentialBCDiag(ess_bdr, numeric_limits<double>::min());
++   m.Finalize();
++
++   HypreParMatrix *A = a.ParallelAssemble();
++   HypreParMatrix *M = m.ParallelAssemble();
++
++   HypreBoomerAMG amg(*A);
++   amg.SetPrintLevel(0);
++
++   HypreLOBPCG lobpcg(MPI_COMM_WORLD);
++   lobpcg.SetNumModes(nev);
++   lobpcg.SetRandomSeed(seed);
++   lobpcg.SetPreconditioner(amg);
++   lobpcg.SetMaxIter(200);
++   lobpcg.SetTol(1e-8);
++   lobpcg.SetPrecondUsageMode(1);
++   lobpcg.SetPrintLevel(1);
++   lobpcg.SetMassMatrix(*M);
++   lobpcg.SetOperator(*A);
++   lobpcg.Solve();
++
++   x = lobpcg.GetEigenvector(mode);
++
++   delete A;
++   delete M;
++}
++
++/**
++   Solves the eigenvalue problem -Curl(Curl x) = lambda x with
++   homogeneous Dirichlet boundary conditions, on the tangential
++   component of x, on the boundary of the domain. Returns mode number
++   "mode" (counting from zero) in the ParGridFunction "x".
++*/
++void VectorWaveGuide(int mode, ParGridFunction &x)
++{
++   int nev = std::max(mode + 2, 5);
++
++   ParFiniteElementSpace &fespace = *x.ParFESpace();
++   ParMesh &pmesh = *fespace.GetParMesh();
++
++   Array<int> ess_bdr;
++   if (pmesh.bdr_attributes.Size())
++   {
++      ess_bdr.SetSize(pmesh.bdr_attributes.Max());
++      ess_bdr = 1;
++   }
++
++   ParBilinearForm a(&fespace);
++   a.AddDomainIntegrator(new CurlCurlIntegrator);
++   a.Assemble();
++   a.EliminateEssentialBCDiag(ess_bdr, 1.0);
++   a.Finalize();
++
++   ParBilinearForm m(&fespace);
++   m.AddDomainIntegrator(new VectorFEMassIntegrator);
++   m.Assemble();
++   // shift the eigenvalue corresponding to eliminated dofs to a large value
++   m.EliminateEssentialBCDiag(ess_bdr, numeric_limits<double>::min());
++   m.Finalize();
++
++   HypreParMatrix *A = a.ParallelAssemble();
++   HypreParMatrix *M = m.ParallelAssemble();
++
++   HypreAMS ams(*A,&fespace);
++   ams.SetPrintLevel(0);
++   ams.SetSingularProblem();
++
++   HypreAME ame(MPI_COMM_WORLD);
++   ame.SetNumModes(nev);
++   ame.SetPreconditioner(ams);
++   ame.SetMaxIter(100);
++   ame.SetTol(1e-8);
++   ame.SetPrintLevel(1);
++   ame.SetMassMatrix(*M);
++   ame.SetOperator(*A);
++   ame.Solve();
++
++   x = ame.GetEigenvector(mode);
++
++   delete A;
++   delete M;
++}
++
++/**
++   Solves the eigenvalue problem -Div(Grad x) = lambda x with
++   homogeneous Neumann boundary conditions on the boundary of the
++   domain. Returns mode number "mode" (counting from zero) in the
++   ParGridFunction "x_l2". Note that mode 0 is a constant field so
++   higher mode numbers are often more interesting. The eigenmode is
++   solved using continuous H1 basis of the appropriate order and then
++   projected onto the L2 basis and returned.
++*/
++void PseudoScalarWaveGuide(int mode, ParGridFunction &x_l2)
++{
++   int nev = std::max(mode + 2, 5);
++   int seed = 75;
++
++   ParFiniteElementSpace &fespace_l2 = *x_l2.ParFESpace();
++   ParMesh &pmesh = *fespace_l2.GetParMesh();
++   int order_l2 = fespace_l2.FEColl()->GetOrder();
++
++   H1_FECollection fec(order_l2+1, pmesh.Dimension());
++   ParFiniteElementSpace fespace(&pmesh, &fec);
++   ParGridFunction x(&fespace);
++   x = 0.0;
++
++   GridFunctionCoefficient xCoef(&x);
++
++   if (mode == 0)
++   {
++      x = 1.0;
++      x_l2.ProjectCoefficient(xCoef);
++      return;
++   }
++
++   ParBilinearForm a(&fespace);
++   a.AddDomainIntegrator(new DiffusionIntegrator);
++   a.AddDomainIntegrator(new MassIntegrator); // Shift eigenvalues by 1
++   a.Assemble();
++   a.Finalize();
++
++   ParBilinearForm m(&fespace);
++   m.AddDomainIntegrator(new MassIntegrator);
++   m.Assemble();
++   m.Finalize();
++
++   HypreParMatrix *A = a.ParallelAssemble();
++   HypreParMatrix *M = m.ParallelAssemble();
++
++   HypreBoomerAMG amg(*A);
++   amg.SetPrintLevel(0);
++
++   HypreLOBPCG lobpcg(MPI_COMM_WORLD);
++   lobpcg.SetNumModes(nev);
++   lobpcg.SetRandomSeed(seed);
++   lobpcg.SetPreconditioner(amg);
++   lobpcg.SetMaxIter(200);
++   lobpcg.SetTol(1e-8);
++   lobpcg.SetPrecondUsageMode(1);
++   lobpcg.SetPrintLevel(1);
++   lobpcg.SetMassMatrix(*M);
++   lobpcg.SetOperator(*A);
++   lobpcg.Solve();
++
++   x = lobpcg.GetEigenvector(mode);
++
++   x_l2.ProjectCoefficient(xCoef);
++
++   delete A;
++   delete M;
++}
++
++// Compute eigenmode "mode" of either a Dirichlet or Neumann Laplacian
++// or of a Dirichlet curl curl operator based on the problem type and
++// dimension of the domain.
++void SetPortBC(int prob, int dim, int mode, ParGridFunction &port_bc)
++{
++   switch (prob)
++   {
++      case 0:
++         ScalarWaveGuide(mode, port_bc);
++         break;
++      case 1:
++         if (dim == 3)
++         {
++            VectorWaveGuide(mode, port_bc);
++         }
++         else
++         {
++            PseudoScalarWaveGuide(mode, port_bc);
++         }
++         break;
++      case 2:
++         PseudoScalarWaveGuide(mode, port_bc);
++         break;
++   }
++}
+diff --git a/examples/makefile b/examples/makefile
+index 85a22f832..7982a9f3e 100644
+--- a/examples/makefile
++++ b/examples/makefile
+@@ -183,3 +183,4 @@ clean-exec:
+ 	@rm -f ex23.mesh ex23-*.gf
+ 	@rm -f ex25.mesh ex25-*.gf ex25p-*.*
+ 	@rm -rf ex28_* ex28p_*
++	@rm -rf cond_mesh.* cond_j.* dsol.* port_mesh.* port_mode.*
+diff --git a/fem/doftrans.cpp b/fem/doftrans.cpp
+index 95da3859d..06355ce75 100644
+--- a/fem/doftrans.cpp
++++ b/fem/doftrans.cpp
+@@ -14,54 +14,6 @@
+ namespace mfem
+ {
+ 
+-void DofTransformation::TransformPrimal(Vector &v) const
+-{
+-   TransformPrimal(v.GetData());
+-}
+-
+-void DofTransformation::TransformPrimalCols(DenseMatrix &V) const
+-{
+-   for (int c=0; c<V.Width(); c++)
+-   {
+-      TransformPrimal(V.GetColumn(c));
+-   }
+-}
+-
+-void DofTransformation::TransformDual(Vector &v) const
+-{
+-   TransformDual(v.GetData());
+-}
+-
+-void DofTransformation::TransformDual(DenseMatrix &V) const
+-{
+-   TransformDualCols(V);
+-   TransformDualRows(V);
+-}
+-
+-void DofTransformation::TransformDualRows(DenseMatrix &V) const
+-{
+-   Vector row;
+-   for (int r=0; r<V.Height(); r++)
+-   {
+-      V.GetRow(r, row);
+-      TransformDual(row);
+-      V.SetRow(r, row);
+-   }
+-}
+-
+-void DofTransformation::TransformDualCols(DenseMatrix &V) const
+-{
+-   for (int c=0; c<V.Width(); c++)
+-   {
+-      TransformDual(V.GetColumn(c));
+-   }
+-}
+-
+-void DofTransformation::InvTransformPrimal(Vector &v) const
+-{
+-   InvTransformPrimal(v.GetData());
+-}
+-
+ void TransformPrimal(const DofTransformation *ran_dof_trans,
+                      const DofTransformation *dom_dof_trans,
+                      DenseMatrix &elmat)
+@@ -85,11 +37,6 @@ void TransformPrimal(const DofTransformation *ran_dof_trans,
+    }
+ }
+ 
+-void DofTransformation::InvTransformDual(Vector &v) const
+-{
+-   InvTransformDual(v.GetData());
+-}
+-
+ void TransformDual(const DofTransformation *ran_dof_trans,
+                    const DofTransformation *dom_dof_trans,
+                    DenseMatrix &elmat)
+@@ -113,15 +60,16 @@ void TransformDual(const DofTransformation *ran_dof_trans,
+    }
+ }
+ 
+-void VDofTransformation::TransformPrimal(double *v) const
++void StatelessVDofTransformation::TransformPrimal(const Array<int> & face_ori,
++                                                  double *v) const
+ {
+-   int size = doftrans_->Size();
++   int size = sdoftrans_->Size();
+ 
+    if ((Ordering::Type)ordering_ == Ordering::byNODES || vdim_ == 1)
+    {
+       for (int i=0; i<vdim_; i++)
+       {
+-         doftrans_->TransformPrimal(&v[i*size]);
++         sdoftrans_->TransformPrimal(face_ori, &v[i*size]);
+       }
+    }
+    else
+@@ -133,7 +81,7 @@ void VDofTransformation::TransformPrimal(double *v) const
+          {
+             vec(j) = v[j*vdim_+i];
+          }
+-         doftrans_->TransformPrimal(vec);
++         sdoftrans_->TransformPrimal(face_ori, vec);
+          for (int j=0; j<size; j++)
+          {
+             v[j*vdim_+i] = vec(j);
+@@ -142,15 +90,17 @@ void VDofTransformation::TransformPrimal(double *v) const
+    }
+ }
+ 
+-void VDofTransformation::InvTransformPrimal(double *v) const
++void StatelessVDofTransformation::InvTransformPrimal(
++   const Array<int> & face_ori,
++   double *v) const
+ {
+-   int size = doftrans_->Height();
++   int size = sdoftrans_->Height();
+ 
+    if ((Ordering::Type)ordering_ == Ordering::byNODES)
+    {
+       for (int i=0; i<vdim_; i++)
+       {
+-         doftrans_->InvTransformPrimal(&v[i*size]);
++         sdoftrans_->InvTransformPrimal(face_ori, &v[i*size]);
+       }
+    }
+    else
+@@ -162,7 +112,7 @@ void VDofTransformation::InvTransformPrimal(double *v) const
+          {
+             vec(j) = v[j*vdim_+i];
+          }
+-         doftrans_->InvTransformPrimal(vec);
++         sdoftrans_->InvTransformPrimal(face_ori, vec);
+          for (int j=0; j<size; j++)
+          {
+             v[j*vdim_+i] = vec(j);
+@@ -171,15 +121,16 @@ void VDofTransformation::InvTransformPrimal(double *v) const
+    }
+ }
+ 
+-void VDofTransformation::TransformDual(double *v) const
++void StatelessVDofTransformation::TransformDual(const Array<int> & face_ori,
++                                                double *v) const
+ {
+-   int size = doftrans_->Size();
++   int size = sdoftrans_->Size();
+ 
+    if ((Ordering::Type)ordering_ == Ordering::byNODES)
+    {
+       for (int i=0; i<vdim_; i++)
+       {
+-         doftrans_->TransformDual(&v[i*size]);
++         sdoftrans_->TransformDual(face_ori, &v[i*size]);
+       }
+    }
+    else
+@@ -191,7 +142,7 @@ void VDofTransformation::TransformDual(double *v) const
+          {
+             vec(j) = v[j*vdim_+i];
+          }
+-         doftrans_->TransformDual(vec);
++         sdoftrans_->TransformDual(face_ori, vec);
+          for (int j=0; j<size; j++)
+          {
+             v[j*vdim_+i] = vec(j);
+@@ -200,15 +151,16 @@ void VDofTransformation::TransformDual(double *v) const
+    }
+ }
+ 
+-void VDofTransformation::InvTransformDual(double *v) const
++void StatelessVDofTransformation::InvTransformDual(const Array<int> & face_ori,
++                                                   double *v) const
+ {
+-   int size = doftrans_->Size();
++   int size = sdoftrans_->Size();
+ 
+    if ((Ordering::Type)ordering_ == Ordering::byNODES)
+    {
+       for (int i=0; i<vdim_; i++)
+       {
+-         doftrans_->InvTransformDual(&v[i*size]);
++         sdoftrans_->InvTransformDual(face_ori, &v[i*size]);
+       }
+    }
+    else
+@@ -220,7 +172,7 @@ void VDofTransformation::InvTransformDual(double *v) const
+          {
+             vec(j) = v[j*vdim_+i];
+          }
+-         doftrans_->InvTransformDual(vec);
++         sdoftrans_->InvTransformDual(face_ori, vec);
+          for (int j=0; j<size; j++)
+          {
+             v[j*vdim_+i] = vec(j);
+@@ -229,7 +181,8 @@ void VDofTransformation::InvTransformDual(double *v) const
+    }
+ }
+ 
+-const double ND_DofTransformation::T_data[24] =
++// ordering (i0j0, i1j0, i0j1, i1j1), each row is a column major matrix
++const double ND_StatelessDofTransformation::T_data[24] =
+ {
+    1.0,  0.0,  0.0,  1.0,
+    -1.0, -1.0,  0.0,  1.0,
+@@ -239,10 +192,11 @@ const double ND_DofTransformation::T_data[24] =
+    0.0,  1.0,  1.0,  0.0
+ };
+ 
+-const DenseTensor ND_DofTransformation
+-::T(const_cast<double*>(ND_DofTransformation::T_data), 2, 2, 6);
++const DenseTensor ND_StatelessDofTransformation
++::T(const_cast<double*>(ND_StatelessDofTransformation::T_data), 2, 2, 6);
+ 
+-const double ND_DofTransformation::TInv_data[24] =
++// ordering (i0j0, i1j0, i0j1, i1j1), each row is a column major matrix
++const double ND_StatelessDofTransformation::TInv_data[24] =
+ {
+    1.0,  0.0,  0.0,  1.0,
+    -1.0, -1.0,  0.0,  1.0,
+@@ -252,301 +206,113 @@ const double ND_DofTransformation::TInv_data[24] =
+    0.0,  1.0,  1.0,  0.0
+ };
+ 
+-const DenseTensor ND_DofTransformation
++const DenseTensor ND_StatelessDofTransformation
+ ::TInv(const_cast<double*>(TInv_data), 2, 2, 6);
+ 
+-ND_DofTransformation::ND_DofTransformation(int size, int p)
+-   : DofTransformation(size)
++ND_StatelessDofTransformation::ND_StatelessDofTransformation(int size, int p,
++                                                             int num_edges,
++                                                             int num_tri_faces)
++   : StatelessDofTransformation(size)
+    , order(p)
+    , nedofs(p)
+    , nfdofs(p*(p-1))
++   , nedges(num_edges)
++   , nfaces(num_tri_faces)
+ {
+ }
+ 
+-ND_TriDofTransformation::ND_TriDofTransformation(int p)
+-   : ND_DofTransformation(p*(p + 2), p)
+-{
+-}
+-
+-void ND_TriDofTransformation::TransformPrimal(double *v) const
+-{
+-   // Return immediately when no face DoFs are present
+-   if (nfdofs < 2) { return; }
+-
+-   MFEM_VERIFY(Fo.Size() >= 1,
+-               "Face orientations are unset in ND_TriDofTransformation");
+-
+-   double data[2];
+-   Vector v2(data, 2);
+-
+-   // Transform face DoFs
+-   for (int f=0; f<1; f++)
+-   {
+-      for (int i=0; i<nfdofs/2; i++)
+-      {
+-         v2 = &v[3*nedofs + f*nfdofs + 2*i];
+-         T(Fo[f]).Mult(v2, &v[3*nedofs + f*nfdofs + 2*i]);
+-      }
+-   }
+-}
+-
+-void
+-ND_TriDofTransformation::InvTransformPrimal(double *v) const
+-{
+-   // Return immediately when no face DoFs are present
+-   if (nfdofs < 2) { return; }
+-
+-   MFEM_VERIFY(Fo.Size() >= 1,
+-               "Face orientations are unset in ND_TriDofTransformation");
+-
+-   double data[2];
+-   Vector v2(data, 2);
+-
+-   // Transform face DoFs
+-   for (int f=0; f<1; f++)
+-   {
+-      for (int i=0; i<nfdofs/2; i++)
+-      {
+-         v2 = &v[3*nedofs + f*nfdofs + 2*i];
+-         TInv(Fo[f]).Mult(v2, &v[3*nedofs + f*nfdofs + 2*i]);
+-      }
+-   }
+-}
+-
+-void
+-ND_TriDofTransformation::TransformDual(double *v) const
++void ND_StatelessDofTransformation::TransformPrimal(const Array<int> & Fo,
++                                                    double *v) const
+ {
+    // Return immediately when no face DoFs are present
+-   if (nfdofs < 2) { return; }
++   if (IsEmpty()) { return; }
+ 
+-   MFEM_VERIFY(Fo.Size() >= 1,
+-               "Face orientations are unset in ND_TriDofTransformation");
++   MFEM_VERIFY(Fo.Size() >= nfaces,
++               "Face orientation array is shorter than the number of faces in "
++               "ND_StatelessDofTransformation");
+ 
+    double data[2];
+    Vector v2(data, 2);
+ 
+    // Transform face DoFs
+-   for (int f=0; f<1; f++)
++   for (int f=0; f<nfaces; f++)
+    {
+       for (int i=0; i<nfdofs/2; i++)
+       {
+-         v2 = &v[3*nedofs + f*nfdofs + 2*i];
+-         TInv(Fo[f]).MultTranspose(v2, &v[3*nedofs + f*nfdofs + 2*i]);
++         v2 = &v[nedges*nedofs + f*nfdofs + 2*i];
++         T(Fo[f]).Mult(v2, &v[nedges*nedofs + f*nfdofs + 2*i]);
+       }
+    }
+ }
+ 
+-void
+-ND_TriDofTransformation::InvTransformDual(double *v) const
++void ND_StatelessDofTransformation::InvTransformPrimal(const Array<int> & Fo,
++                                                       double *v) const
+ {
+    // Return immediately when no face DoFs are present
+-   if (nfdofs < 2) { return; }
++   if (IsEmpty()) { return; }
+ 
+-   MFEM_VERIFY(Fo.Size() >= 1,
+-               "Face orientations are unset in ND_TriDofTransformation");
++   MFEM_VERIFY(Fo.Size() >= nfaces,
++               "Face orientation array is shorter than the number of faces in "
++               "ND_StatelessDofTransformation");
+ 
+    double data[2];
+    Vector v2(data, 2);
+ 
+    // Transform face DoFs
+-   for (int f=0; f<1; f++)
++   for (int f=0; f<nfaces; f++)
+    {
+       for (int i=0; i<nfdofs/2; i++)
+       {
+-         v2 = &v[3*nedofs + f*nfdofs + 2*i];
+-         T(Fo[f]).MultTranspose(v2, &v[3*nedofs + f*nfdofs + 2*i]);
++         v2 = &v[nedges*nedofs + f*nfdofs + 2*i];
++         TInv(Fo[f]).Mult(v2, &v[nedges*nedofs + f*nfdofs + 2*i]);
+       }
+    }
+ }
+ 
+-ND_TetDofTransformation::ND_TetDofTransformation(int p)
+-   : ND_DofTransformation(p*(p + 2)*(p + 3)/2, p)
+-{
+-}
+-
+-void ND_TetDofTransformation::TransformPrimal(double *v) const
++void ND_StatelessDofTransformation::TransformDual(const Array<int> & Fo,
++                                                  double *v) const
+ {
+    // Return immediately when no face DoFs are present
+-   if (nfdofs < 2) { return; }
++   if (IsEmpty()) { return; }
+ 
+-   MFEM_VERIFY(Fo.Size() >= 4,
+-               "Face orientations are unset in ND_TetDofTransformation");
++   MFEM_VERIFY(Fo.Size() >= nfaces,
++               "Face orientation array is shorter than the number of faces in "
++               "ND_StatelessDofTransformation");
+ 
+    double data[2];
+    Vector v2(data, 2);
+ 
+    // Transform face DoFs
+-   for (int f=0; f<4; f++)
++   for (int f=0; f<nfaces; f++)
+    {
+       for (int i=0; i<nfdofs/2; i++)
+       {
+-         v2 = &v[6*nedofs + f*nfdofs + 2*i];
+-         T(Fo[f]).Mult(v2, &v[6*nedofs + f*nfdofs + 2*i]);
++         v2 = &v[nedges*nedofs + f*nfdofs + 2*i];
++         TInv(Fo[f]).MultTranspose(v2, &v[nedges*nedofs + f*nfdofs + 2*i]);
+       }
+    }
+ }
+ 
+-void
+-ND_TetDofTransformation::InvTransformPrimal(double *v) const
++void ND_StatelessDofTransformation::InvTransformDual(const Array<int> & Fo,
++                                                     double *v) const
+ {
+    // Return immediately when no face DoFs are present
+-   if (nfdofs < 2) { return; }
++   if (IsEmpty()) { return; }
+ 
+-   MFEM_VERIFY(Fo.Size() >= 4,
+-               "Face orientations are unset in ND_TetDofTransformation");
++   MFEM_VERIFY(Fo.Size() >= nfaces,
++               "Face orientation array is shorter than the number of faces in "
++               "ND_StatelessDofTransformation");
+ 
+    double data[2];
+    Vector v2(data, 2);
+ 
+    // Transform face DoFs
+-   for (int f=0; f<4; f++)
+-   {
+-      for (int i=0; i<nfdofs/2; i++)
+-      {
+-         v2 = &v[6*nedofs + f*nfdofs + 2*i];
+-         TInv(Fo[f]).Mult(v2, &v[6*nedofs + f*nfdofs + 2*i]);
+-      }
+-   }
+-}
+-
+-void
+-ND_TetDofTransformation::TransformDual(double *v) const
+-{
+-   // Return immediately when no face DoFs are present
+-   if (nfdofs < 2) { return; }
+-
+-   MFEM_VERIFY(Fo.Size() >= 4,
+-               "Face orientations are unset in ND_TetDofTransformation");
+-
+-   double data[2];
+-   Vector v2(data, 2);
+-
+-   // Transform face DoFs
+-   for (int f=0; f<4; f++)
+-   {
+-      for (int i=0; i<nfdofs/2; i++)
+-      {
+-         v2 = &v[6*nedofs + f*nfdofs + 2*i];
+-         TInv(Fo[f]).MultTranspose(v2, &v[6*nedofs + f*nfdofs + 2*i]);
+-      }
+-   }
+-}
+-
+-void
+-ND_TetDofTransformation::InvTransformDual(double *v) const
+-{
+-   // Return immediately when no face DoFs are present
+-   if (nfdofs < 2) { return; }
+-
+-   MFEM_VERIFY(Fo.Size() >= 4,
+-               "Face orientations are unset in ND_TetDofTransformation");
+-
+-   double data[2];
+-   Vector v2(data, 2);
+-
+-   // Transform face DoFs
+-   for (int f=0; f<4; f++)
+-   {
+-      for (int i=0; i<nfdofs/2; i++)
+-      {
+-         v2 = &v[6*nedofs + f*nfdofs + 2*i];
+-         T(Fo[f]).MultTranspose(v2, &v[6*nedofs + f*nfdofs + 2*i]);
+-      }
+-   }
+-}
+-
+-ND_WedgeDofTransformation::ND_WedgeDofTransformation(int p)
+-   : ND_DofTransformation(3 * p * ((p + 1) * (p + 2))/2, p)
+-{
+-}
+-
+-void ND_WedgeDofTransformation::TransformPrimal(double *v) const
+-{
+-   // Return immediately when no face DoFs are present
+-   if (nfdofs < 2) { return; }
+-
+-   MFEM_VERIFY(Fo.Size() >= 2,
+-               "Face orientations are unset in ND_WedgeDofTransformation");
+-
+-   double data[2];
+-   Vector v2(data, 2);
+-
+-   // Transform triangular face DoFs
+-   for (int f=0; f<2; f++)
+-   {
+-      for (int i=0; i<nfdofs/2; i++)
+-      {
+-         v2 = &v[9*nedofs + f*nfdofs + 2*i];
+-         T(Fo[f]).Mult(v2, &v[9*nedofs + f*nfdofs + 2*i]);
+-      }
+-   }
+-}
+-
+-void
+-ND_WedgeDofTransformation::InvTransformPrimal(double *v) const
+-{
+-   // Return immediately when no face DoFs are present
+-   if (nfdofs < 2) { return; }
+-
+-   MFEM_VERIFY(Fo.Size() >= 2,
+-               "Face orientations are unset in ND_WedgeDofTransformation");
+-
+-   double data[2];
+-   Vector v2(data, 2);
+-
+-   // Transform triangular face DoFs
+-   for (int f=0; f<2; f++)
+-   {
+-      for (int i=0; i<nfdofs/2; i++)
+-      {
+-         v2 = &v[9*nedofs + f*nfdofs + 2*i];
+-         TInv(Fo[f]).Mult(v2, &v[9*nedofs + f*nfdofs + 2*i]);
+-      }
+-   }
+-}
+-
+-void
+-ND_WedgeDofTransformation::TransformDual(double *v) const
+-{
+-   // Return immediately when no face DoFs are present
+-   if (nfdofs < 2) { return; }
+-
+-   MFEM_VERIFY(Fo.Size() >= 2,
+-               "Face orientations are unset in ND_WedgeDofTransformation");
+-
+-   double data[2];
+-   Vector v2(data, 2);
+-
+-   // Transform triangular face DoFs
+-   for (int f=0; f<2; f++)
+-   {
+-      for (int i=0; i<nfdofs/2; i++)
+-      {
+-         v2 = &v[9*nedofs + f*nfdofs + 2*i];
+-         TInv(Fo[f]).MultTranspose(v2, &v[9*nedofs + f*nfdofs + 2*i]);
+-      }
+-   }
+-}
+-
+-void
+-ND_WedgeDofTransformation::InvTransformDual(double *v) const
+-{
+-   // Return immediately when no face DoFs are present
+-   if (nfdofs < 2) { return; }
+-
+-   MFEM_VERIFY(Fo.Size() >= 2,
+-               "Face orientations are unset in ND_WedgeDofTransformation");
+-
+-   double data[2];
+-   Vector v2(data, 2);
+-
+-   // Transform triangular face DoFs
+-   for (int f=0; f<2; f++)
++   for (int f=0; f<nfaces; f++)
+    {
+       for (int i=0; i<nfdofs/2; i++)
+       {
+-         v2 = &v[9*nedofs + f*nfdofs + 2*i];
+-         T(Fo[f]).MultTranspose(v2, &v[9*nedofs + f*nfdofs + 2*i]);
++         v2 = &v[nedges*nedofs + f*nfdofs + 2*i];
++         T(Fo[f]).MultTranspose(v2, &v[nedges*nedofs + f*nfdofs + 2*i]);
+       }
+    }
+ }
+diff --git a/fem/doftrans.hpp b/fem/doftrans.hpp
+index 9375246b5..fbe57bb2b 100644
+--- a/fem/doftrans.hpp
++++ b/fem/doftrans.hpp
+@@ -15,19 +15,19 @@
+ #include "../config/config.hpp"
+ #include "../linalg/linalg.hpp"
+ #include "intrules.hpp"
+-#include "fe.hpp"
+ 
+ namespace mfem
+ {
+ 
+-/** The DofTransformation class is an abstract base class for a family of
+-    transformations that map local degrees of freedom (DoFs), contained within
+-    individual elements, to global degrees of freedom, stored within
++/** The StatelessDofTransformation class is an abstract base class for a family
++    of transformations that map local degrees of freedom (DoFs), contained
++    within individual elements, to global degrees of freedom, stored within
+     GridFunction objects. These transformations are necessary to ensure that
+     basis functions in neighboring elements align correctly. Closely related but
+     complementary transformations are required for the entries stored in
+-    LinearForm and BilinearForm objects. The DofTransformation class is designed
+-    to apply the action of both of these types of DoF transformations.
++    LinearForm and BilinearForm objects. The StatelessDofTransformation class
++    is designed to apply the action of both of these types of DoF
++    transformations.
+ 
+     Let the "primal transformation" be given by the operator T. This means that
+     given a local element vector v the data that must be placed into a
+@@ -53,24 +53,87 @@ namespace mfem
+     D_t = T * D * T^{-1}. This can be accomplished by using a primal
+     transformation on the columns of D and a dual transformation on its rows.
+ */
+-class DofTransformation
++class StatelessDofTransformation
+ {
+ protected:
+    int size_;
+ 
+-   Array<int> Fo;
+-
+-   DofTransformation(int size)
++   StatelessDofTransformation(int size)
+       : size_(size) {}
+ 
+ public:
+-
+    inline int Size() const { return size_; }
+    inline int Height() const { return size_; }
+    inline int NumRows() const { return size_; }
+    inline int Width() const { return size_; }
+    inline int NumCols() const { return size_; }
+ 
++   /// If the DofTransformation performs no transformation
++   virtual bool IsEmpty() const = 0;
++
++   /** Transform local DoFs to align with the global DoFs. For example, this
++       transformation can be used to map the local vector computed by
++       FiniteElement::Project() to the transformed vector stored within a
++       GridFunction object. */
++   virtual void TransformPrimal(const Array<int> & face_orientation,
++                                double *v) const = 0;
++   inline void TransformPrimal(const Array<int> & face_orientation,
++                               Vector &v) const
++   { TransformPrimal(face_orientation, v.GetData()); }
++
++   /** Inverse transform local DoFs. Used to transform DoFs from a global vector
++       back to their element-local form. For example, this must be used to
++       transform the vector obtained using GridFunction::GetSubVector before it
++       can be used to compute a local interpolation.
++   */
++   virtual void InvTransformPrimal(const Array<int> & face_orientation,
++                                   double *v) const = 0;
++   inline void InvTransformPrimal(const Array<int> & face_orientation,
++                                  Vector &v) const
++   { InvTransformPrimal(face_orientation, v.GetData()); }
++
++   /** Transform dual DoFs as computed by a LinearFormIntegrator before summing
++       into a LinearForm object. */
++   virtual void TransformDual(const Array<int> & face_orientation,
++                              double *v) const = 0;
++   inline void TransformDual(const Array<int> & face_orientation,
++                             Vector &v) const
++   { TransformDual(face_orientation, v.GetData()); }
++
++   /** Inverse Transform dual DoFs */
++   virtual void InvTransformDual(const Array<int> & face_orientation,
++                                 double *v) const = 0;
++   inline void InvTransformDual(const Array<int> & face_orientation,
++                                Vector &v) const
++   { InvTransformDual(face_orientation, v.GetData()); }
++};
++
++/** The DofTransformation class is an extension of the
++    StatelessDofTransformation which stores the face orientations used to
++    select the necessary transformations which allows it to offer a collection
++    of convenience methods.
++
++    DofTransformation objects are provided by the FiniteElementSpace which has
++    access to the mesh and can therefore provide the face orientations. This is
++    convenient when working with GridFunction, LinearForm, or BilinearForm
++    obejcts or their parallel counterparts.
++
++    StatelessDofTransformation objects are provided by FiniteElement or
++    FiniteElementCollection objects which do not have access to face
++    orientation information. This can be useful in non-standard contexts such as
++    transferring finite element degrees of freedom between different meshes.
++    For examples of its use see the TransferMap used by the SubMesh class.
++   */
++class DofTransformation : virtual public StatelessDofTransformation
++{
++protected:
++   Array<int> Fo;
++
++   DofTransformation(int size)
++      : StatelessDofTransformation(size) {}
++
++public:
++
+    /** @brief Configure the transformation using face orientations for the
+        current element. */
+    /// The face_orientation array can be obtained from Mesh::GetElementFaces.
+@@ -79,42 +142,82 @@ public:
+ 
+    inline const Array<int> & GetFaceOrientations() const { return Fo; }
+ 
++   using StatelessDofTransformation::TransformPrimal;
++   using StatelessDofTransformation::InvTransformPrimal;
++   using StatelessDofTransformation::TransformDual;
++   using StatelessDofTransformation::InvTransformDual;
++
+    /** Transform local DoFs to align with the global DoFs. For example, this
+        transformation can be used to map the local vector computed by
+        FiniteElement::Project() to the transformed vector stored within a
+        GridFunction object. */
+-   virtual void TransformPrimal(double *v) const = 0;
+-   virtual void TransformPrimal(Vector &v) const;
++   inline void TransformPrimal(double *v) const
++   { TransformPrimal(Fo, v); }
++   inline void TransformPrimal(Vector &v) const
++   { TransformPrimal(v.GetData()); }
+ 
+    /// Transform groups of DoFs stored as dense matrices
+-   virtual void TransformPrimalCols(DenseMatrix &V) const;
++   inline void TransformPrimalCols(DenseMatrix &V) const
++   {
++      for (int c=0; c<V.Width(); c++)
++      {
++         TransformPrimal(V.GetColumn(c));
++      }
++   }
+ 
+    /** Inverse transform local DoFs. Used to transform DoFs from a global vector
+        back to their element-local form. For example, this must be used to
+        transform the vector obtained using GridFunction::GetSubVector before it
+        can be used to compute a local interpolation.
+    */
+-   virtual void InvTransformPrimal(double *v) const = 0;
+-   virtual void InvTransformPrimal(Vector &v) const;
++   inline void InvTransformPrimal(double *v) const
++   { InvTransformPrimal(Fo, v); }
++   inline void InvTransformPrimal(Vector &v) const
++   { InvTransformPrimal(v.GetData()); }
+ 
+    /** Transform dual DoFs as computed by a LinearFormIntegrator before summing
+        into a LinearForm object. */
+-   virtual void TransformDual(double *v) const = 0;
+-   virtual void TransformDual(Vector &v) const;
++   inline void TransformDual(double *v) const
++   { TransformDual(Fo, v); }
++   inline void TransformDual(Vector &v) const
++   { TransformDual(v.GetData()); }
+ 
+    /** Inverse Transform dual DoFs */
+-   virtual void InvTransformDual(double *v) const = 0;
+-   virtual void InvTransformDual(Vector &v) const;
++   inline void InvTransformDual(double *v) const
++   { InvTransformDual(Fo, v); }
++   inline void InvTransformDual(Vector &v) const
++   { InvTransformDual(v.GetData()); }
+ 
+    /** Transform a matrix of dual DoFs entries as computed by a
+        BilinearFormIntegrator before summing into a BilinearForm object. */
+-   virtual void TransformDual(DenseMatrix &V) const;
++   inline void TransformDual(DenseMatrix &V) const
++   {
++      TransformDualCols(V);
++      TransformDualRows(V);
++   }
+ 
+-   /// Transform groups of dual DoFs stored as dense matrices
+-   virtual void TransformDualRows(DenseMatrix &V) const;
+-   virtual void TransformDualCols(DenseMatrix &V) const;
++   /// Transform rows of a dense matrix containing dual DoFs
++   inline void TransformDualRows(DenseMatrix &V) const
++   {
++      Vector row;
++      for (int r=0; r<V.Height(); r++)
++      {
++         V.GetRow(r, row);
++         TransformDual(row);
++         V.SetRow(r, row);
++      }
++   }
++
++   /// Transform columns of a dense matrix containing dual DoFs
++   inline void TransformDualCols(DenseMatrix &V) const
++   {
++      for (int c=0; c<V.Width(); c++)
++      {
++         TransformDual(V.GetColumn(c));
++      }
++   }
+ 
+-   virtual ~DofTransformation() {}
++   virtual ~DofTransformation() = default;
+ };
+ 
+ /** Transform a matrix of DoFs entries from different finite element spaces as
+@@ -133,66 +236,145 @@ void TransformDual(const DofTransformation *ran_dof_trans,
+                    const DofTransformation *dom_dof_trans,
+                    DenseMatrix &elmat);
+ 
+-/** The VDofTransformation class implements a nested transformation where an
+-    arbitrary DofTransformation is replicated with a vdim >= 1.
++/** The StatelessVDofTransformation class implements a nested transformation
++    where an arbitrary StatelessDofTransformation is replicated with a
++    vdim >= 1.
+ */
+-class VDofTransformation : public DofTransformation
++class StatelessVDofTransformation : virtual public StatelessDofTransformation
+ {
+-private:
++protected:
+    int vdim_;
+    int ordering_;
+-   DofTransformation * doftrans_;
++   StatelessDofTransformation * sdoftrans_;
+ 
+ public:
+    /** @brief Default constructor which requires that SetDofTransformation be
+        called before use. */
+-   VDofTransformation(int vdim = 1, int ordering = 0)
+-      : DofTransformation(0),
+-        vdim_(vdim), ordering_(ordering),
+-        doftrans_(NULL) {}
+-
+-   /// Constructor with a known DofTransformation
+-   VDofTransformation(DofTransformation & doftrans, int vdim = 1,
+-                      int ordering = 0)
+-      : DofTransformation(vdim * doftrans.Size()),
+-        vdim_(vdim), ordering_(ordering),
+-        doftrans_(&doftrans) {}
++   StatelessVDofTransformation(int vdim = 1, int ordering = 0)
++      : StatelessDofTransformation(0)
++      , vdim_(vdim)
++      , ordering_(ordering)
++      , sdoftrans_(NULL)
++   {}
++
++   /// Constructor with a known StatelessDofTransformation
++   StatelessVDofTransformation(StatelessDofTransformation & doftrans,
++                               int vdim = 1,
++                               int ordering = 0)
++      : StatelessDofTransformation(vdim * doftrans.Size())
++      , vdim_(vdim)
++      , ordering_(ordering)
++      , sdoftrans_(&doftrans)
++   {}
+ 
+    /// Set or change the vdim parameter
+    inline void SetVDim(int vdim)
+    {
+       vdim_ = vdim;
+-      if (doftrans_)
++      if (sdoftrans_)
+       {
+-         size_ = vdim_ * doftrans_->Size();
++         size_ = vdim_ * sdoftrans_->Size();
+       }
+    }
+ 
+    /// Return the current vdim value
+    inline int GetVDim() const { return vdim_; }
+ 
+-   /// Set or change the nested DofTransformation object
+-   inline void SetDofTransformation(DofTransformation & doftrans)
++   /// Set or change the nested StatelessDofTransformation object
++   inline void SetDofTransformation(StatelessDofTransformation & doftrans)
+    {
+       size_ = vdim_ * doftrans.Size();
++      sdoftrans_ = &doftrans;
++   }
++
++   /// Return the nested StatelessDofTransformation object
++   inline StatelessDofTransformation * GetDofTransformation() const
++   { return sdoftrans_; }
++
++   bool IsEmpty() const { return sdoftrans_->IsEmpty(); }
++
++   using StatelessDofTransformation::TransformPrimal;
++   using StatelessDofTransformation::InvTransformPrimal;
++   using StatelessDofTransformation::TransformDual;
++   using StatelessDofTransformation::InvTransformDual;
++
++   /** Specializations of these base class methods which account for the vdim
++       and ordering of the full set of DoFs.
++   */
++   void TransformPrimal(const Array<int> & face_ori, double *v) const;
++   void InvTransformPrimal(const Array<int> & face_ori, double *v) const;
++   void TransformDual(const Array<int> & face_ori, double *v) const;
++   void InvTransformDual(const Array<int> & face_ori, double *v) const;
++};
++
++/** The VDofTransformation class implements a nested transformation where an
++    arbitrary DofTransformation is replicated with a vdim >= 1.
++*/
++class VDofTransformation : public StatelessVDofTransformation,
++   public DofTransformation
++{
++protected:
++   DofTransformation * doftrans_;
++
++public:
++   /** @brief Default constructor which requires that SetDofTransformation be
++       called before use. */
++   VDofTransformation(int vdim = 1, int ordering = 0)
++      : StatelessDofTransformation(0)
++      , StatelessVDofTransformation(vdim, ordering)
++      , DofTransformation(0)
++      , doftrans_(NULL)
++   {}
++
++   /// Constructor with a known DofTransformation
++   /// @note The face orientations in @a doftrans will be copied into the
++   /// new VDofTransformation object.
++   VDofTransformation(DofTransformation & doftrans, int vdim = 1,
++                      int ordering = 0)
++      : StatelessDofTransformation(vdim * doftrans.Size())
++      , StatelessVDofTransformation(doftrans, vdim, ordering)
++      , DofTransformation(vdim * doftrans.Size())
++      , doftrans_(&doftrans)
++   {
++      DofTransformation::SetFaceOrientations(doftrans.GetFaceOrientations());
++   }
++
++   using StatelessVDofTransformation::SetDofTransformation;
++
++   /// Set or change the nested DofTransformation object
++   /// @note The face orientations in @a doftrans will be copied into the
++   /// VDofTransformation object.
++   void SetDofTransformation(DofTransformation & doftrans)
++   {
+       doftrans_ = &doftrans;
++      StatelessVDofTransformation::SetDofTransformation(doftrans);
++      DofTransformation::SetFaceOrientations(doftrans.GetFaceOrientations());
+    }
+ 
+    /// Return the nested DofTransformation object
+    inline DofTransformation * GetDofTransformation() const { return doftrans_; }
+ 
+-   inline void SetFaceOrientation(const Array<int> & face_orientation)
+-   { Fo = face_orientation; doftrans_->SetFaceOrientations(face_orientation); }
++   /// Set new face orientations in both the VDofTransformation and the
++   /// DofTransformation contained within (if there is one).
++   inline void SetFaceOrientations(const Array<int> & face_orientation)
++   {
++      DofTransformation::SetFaceOrientations(face_orientation);
++      if (doftrans_) { doftrans_->SetFaceOrientations(face_orientation); }
++   }
+ 
+    using DofTransformation::TransformPrimal;
+    using DofTransformation::InvTransformPrimal;
+    using DofTransformation::TransformDual;
+    using DofTransformation::InvTransformDual;
+ 
+-   void TransformPrimal(double *v) const;
+-   void InvTransformPrimal(double *v) const;
+-   void TransformDual(double *v) const;
+-   void InvTransformDual(double *v) const;
++   inline void TransformPrimal(double *v) const
++   { TransformPrimal(Fo, v); }
++   inline void InvTransformPrimal(double *v) const
++   { InvTransformPrimal(Fo, v); }
++   inline void TransformDual(double *v) const
++   { TransformDual(Fo, v); }
++   inline void InvTransformDual(double *v) const
++   { InvTransformDual(Fo, v); }
+ };
+ 
+ /** Abstract base class for high-order Nedelec spaces on elements with
+@@ -207,17 +389,22 @@ public:
+     be accessed as DenseMatrices using the GetFaceTransform() and
+     GetFaceInverseTransform() methods.
+ */
+-class ND_DofTransformation : public DofTransformation
++class ND_StatelessDofTransformation : virtual public StatelessDofTransformation
+ {
+-protected:
++private:
+    static const double T_data[24];
+    static const double TInv_data[24];
+    static const DenseTensor T, TInv;
+-   int order;
+-   int nedofs; // number of DoFs per edge
+-   int nfdofs; // number of DoFs per face
+ 
+-   ND_DofTransformation(int size, int order);
++protected:
++   const int order;  // basis function order
++   const int nedofs; // number of DoFs per edge
++   const int nfdofs; // number of DoFs per face
++   const int nedges; // number of edges per element
++   const int nfaces; // number of triangular faces per element
++
++   ND_StatelessDofTransformation(int size, int order,
++                                 int num_edges, int num_tri_faces);
+ 
+ public:
+    // Return the 2x2 transformation operator for the given face orientation
+@@ -226,67 +413,119 @@ public:
+    // Return the 2x2 inverse transformation operator
+    static const DenseMatrix & GetFaceInverseTransform(int ori)
+    { return TInv(ori); }
++
++   bool IsEmpty() const { return nfdofs < 2; }
++
++   void TransformPrimal(const Array<int> & face_orientation,
++                        double *v) const;
++
++   void InvTransformPrimal(const Array<int> & face_orientation,
++                           double *v) const;
++
++   void TransformDual(const Array<int> & face_orientation,
++                      double *v) const;
++
++   void InvTransformDual(const Array<int> & face_orientation,
++                         double *v) const;
++};
++
++/// Stateless DoF transformation implementation for the Nedelec basis on
++/// triangles
++class ND_TriStatelessDofTransformation : public ND_StatelessDofTransformation
++{
++public:
++   ND_TriStatelessDofTransformation(int order)
++      : StatelessDofTransformation(order*(order + 2))
++      , ND_StatelessDofTransformation(order*(order + 2), order, 3, 1)
++   {}
+ };
+ 
+ /// DoF transformation implementation for the Nedelec basis on triangles
+-class ND_TriDofTransformation : public ND_DofTransformation
++class ND_TriDofTransformation : public DofTransformation,
++   public ND_TriStatelessDofTransformation
+ {
+ public:
+-   ND_TriDofTransformation(int order);
++   ND_TriDofTransformation(int order)
++      : StatelessDofTransformation(order*(order + 2))
++      , DofTransformation(order*(order + 2))
++      , ND_TriStatelessDofTransformation(order)
++   {}
+ 
+    using DofTransformation::TransformPrimal;
+    using DofTransformation::InvTransformPrimal;
+    using DofTransformation::TransformDual;
++   using DofTransformation::InvTransformDual;
+ 
+-   void TransformPrimal(double *v) const;
+-
+-   void InvTransformPrimal(double *v) const;
+-
+-   void TransformDual(double *v) const;
++   using ND_TriStatelessDofTransformation::TransformPrimal;
++   using ND_TriStatelessDofTransformation::InvTransformPrimal;
++   using ND_TriStatelessDofTransformation::TransformDual;
++   using ND_TriStatelessDofTransformation::InvTransformDual;
++};
+ 
+-   void InvTransformDual(double *v) const;
+-   using DofTransformation::InvTransformDual;
++/// DoF transformation implementation for the Nedelec basis on tetrahedra
++class ND_TetStatelessDofTransformation : public ND_StatelessDofTransformation
++{
++public:
++   ND_TetStatelessDofTransformation(int order)
++      : StatelessDofTransformation(order*(order + 2)*(order + 3)/2)
++      , ND_StatelessDofTransformation(order*(order + 2)*(order + 3)/2, order,
++                                      6, 4)
++   {}
+ };
+ 
+ /// DoF transformation implementation for the Nedelec basis on tetrahedra
+-class ND_TetDofTransformation : public ND_DofTransformation
++class ND_TetDofTransformation : public DofTransformation,
++   public ND_TetStatelessDofTransformation
+ {
+ public:
+-   ND_TetDofTransformation(int order);
++   ND_TetDofTransformation(int order)
++      : StatelessDofTransformation(order*(order + 2)*(order + 3)/2)
++      , DofTransformation(order*(order + 2)*(order + 3)/2)
++      , ND_TetStatelessDofTransformation(order)
++   {}
+ 
+    using DofTransformation::TransformPrimal;
+    using DofTransformation::InvTransformPrimal;
+    using DofTransformation::TransformDual;
+    using DofTransformation::InvTransformDual;
+ 
+-   void TransformPrimal(double *v) const;
+-
+-   void InvTransformPrimal(double *v) const;
+-
+-   void TransformDual(double *v) const;
++   using ND_TetStatelessDofTransformation::TransformPrimal;
++   using ND_TetStatelessDofTransformation::InvTransformPrimal;
++   using ND_TetStatelessDofTransformation::TransformDual;
++   using ND_TetStatelessDofTransformation::InvTransformDual;
++};
+ 
+-   void InvTransformDual(double *v) const;
++/// DoF transformation implementation for the Nedelec basis on wedge elements
++class ND_WedgeStatelessDofTransformation : public ND_StatelessDofTransformation
++{
++public:
++   ND_WedgeStatelessDofTransformation(int order)
++      : StatelessDofTransformation(3 * order * ((order + 1) * (order + 2))/2)
++      , ND_StatelessDofTransformation(3 * order * ((order + 1) * (order + 2))/2,
++                                      order, 9, 2)
++   {}
+ };
+ 
+ /// DoF transformation implementation for the Nedelec basis on wedge elements
+-class ND_WedgeDofTransformation : public ND_DofTransformation
++class ND_WedgeDofTransformation : public DofTransformation,
++   public ND_WedgeStatelessDofTransformation
+ {
+ public:
+-   ND_WedgeDofTransformation(int order);
++   ND_WedgeDofTransformation(int order)
++      : StatelessDofTransformation(3 * order * ((order + 1) * (order + 2))/2)
++      , DofTransformation(3 * order * ((order + 1) * (order + 2))/2)
++      , ND_WedgeStatelessDofTransformation(order)
++   {}
+ 
+    using DofTransformation::TransformPrimal;
+    using DofTransformation::InvTransformPrimal;
+    using DofTransformation::TransformDual;
+    using DofTransformation::InvTransformDual;
+ 
+-   void TransformPrimal(double *v) const;
+-
+-   void InvTransformPrimal(double *v) const;
+-
+-   void TransformDual(double *v) const;
+-
+-   void InvTransformDual(double *v) const;
+-
++   using ND_WedgeStatelessDofTransformation::TransformPrimal;
++   using ND_WedgeStatelessDofTransformation::InvTransformPrimal;
++   using ND_WedgeStatelessDofTransformation::TransformDual;
++   using ND_WedgeStatelessDofTransformation::InvTransformDual;
+ };
+ 
+ } // namespace mfem
+diff --git a/fem/fe/fe_base.hpp b/fem/fe/fe_base.hpp
+index b533525f0..4d29aa276 100644
+--- a/fem/fe/fe_base.hpp
++++ b/fem/fe/fe_base.hpp
+@@ -14,6 +14,7 @@
+ 
+ #include "../intrules.hpp"
+ #include "../geom.hpp"
++#include "../doftrans.hpp"
+ 
+ #include <map>
+ 
+@@ -576,6 +577,7 @@ public:
+    virtual const DofToQuad &GetDofToQuad(const IntegrationRule &ir,
+                                          DofToQuad::Mode mode) const;
+ 
++
+    /** @brief Return the mapping from lexicographic face DOFs to lexicographic
+        element DOFs for the given local face @a face_id. */
+    /** Given the @a ith DOF (lexicographically ordered) on the face referenced
+@@ -590,6 +592,12 @@ public:
+        when simplex elements are supported in the future. */
+    virtual void GetFaceMap(const int face_id, Array<int> &face_map) const;
+ 
++   /** @brief Return a DoF transformation object for this particular type of
++       basis.
++   */
++   virtual StatelessDofTransformation * GetDofTransformation() const
++   { return NULL; }
++
+    /// Deconstruct the FiniteElement
+    virtual ~FiniteElement();
+ 
+diff --git a/fem/fe/fe_nd.cpp b/fem/fe/fe_nd.cpp
+index cbefd7d89..3bff03cb6 100644
+--- a/fem/fe/fe_nd.cpp
++++ b/fem/fe/fe_nd.cpp
+@@ -845,7 +845,7 @@ const double ND_TetrahedronElement::c = 1./4.;
+ 
+ ND_TetrahedronElement::ND_TetrahedronElement(const int p)
+    : VectorFiniteElement(3, Geometry::TETRAHEDRON, p*(p + 2)*(p + 3)/2, p,
+-                         H_CURL, FunctionSpace::Pk), dof2tk(dof)
++                         H_CURL, FunctionSpace::Pk), dof2tk(dof), doftrans(p)
+ {
+    const double *eop = poly1d.OpenPoints(p - 1);
+    const double *fop = (p > 1) ? poly1d.OpenPoints(p - 2) : NULL;
+@@ -1108,7 +1108,7 @@ const double ND_TriangleElement::c = 1./3.;
+ ND_TriangleElement::ND_TriangleElement(const int p)
+    : VectorFiniteElement(2, Geometry::TRIANGLE, p*(p + 2), p,
+                          H_CURL, FunctionSpace::Pk),
+-     dof2tk(dof)
++     dof2tk(dof), doftrans(p)
+ {
+    const double *eop = poly1d.OpenPoints(p - 1);
+    const double *iop = (p > 1) ? poly1d.OpenPoints(p - 2) : NULL;
+@@ -1302,6 +1302,7 @@ ND_WedgeElement::ND_WedgeElement(const int p,
+      dof2tk(dof),
+      t_dof(dof),
+      s_dof(dof),
++     doftrans(p),
+      H1TriangleFE(p, cb_type),
+      NDTriangleFE(p),
+      H1SegmentFE(p, cb_type),
+diff --git a/fem/fe/fe_nd.hpp b/fem/fe/fe_nd.hpp
+index 801b94849..231c050a7 100644
+--- a/fem/fe/fe_nd.hpp
++++ b/fem/fe/fe_nd.hpp
+@@ -179,6 +179,8 @@ class ND_TetrahedronElement : public VectorFiniteElement
+    Array<int> dof2tk;
+    DenseMatrixInverse Ti;
+ 
++   mutable ND_TetStatelessDofTransformation doftrans;
++
+ public:
+    /// Construct the ND_TetrahedronElement of order @a p
+    ND_TetrahedronElement(const int p);
+@@ -199,6 +201,8 @@ public:
+                                   ElementTransformation &Trans,
+                                   DenseMatrix &I) const
+    { LocalInterpolation_ND(CheckVectorFE(fe), tk, dof2tk, Trans, I); }
++   virtual StatelessDofTransformation * GetDofTransformation() const
++   { return &doftrans; }
+    using FiniteElement::Project;
+    virtual void Project(VectorCoefficient &vc,
+                         ElementTransformation &Trans, Vector &dofs) const
+@@ -238,6 +242,8 @@ class ND_TriangleElement : public VectorFiniteElement
+    Array<int> dof2tk;
+    DenseMatrixInverse Ti;
+ 
++   mutable ND_TriStatelessDofTransformation doftrans;
++
+ public:
+    /// Construct the ND_TriangleElement of order @a p
+    ND_TriangleElement(const int p);
+@@ -258,6 +264,8 @@ public:
+                                   ElementTransformation &Trans,
+                                   DenseMatrix &I) const
+    { LocalInterpolation_ND(CheckVectorFE(fe), tk, dof2tk, Trans, I); }
++   virtual StatelessDofTransformation * GetDofTransformation() const
++   { return &doftrans; }
+    using FiniteElement::Project;
+    virtual void Project(VectorCoefficient &vc,
+                         ElementTransformation &Trans, Vector &dofs) const
+@@ -338,6 +346,8 @@ private:
+ #endif
+    Array<int> dof2tk, t_dof, s_dof;
+ 
++   mutable ND_WedgeStatelessDofTransformation doftrans;
++
+    H1_TriangleElement H1TriangleFE;
+    ND_TriangleElement NDTriangleFE;
+    H1_SegmentElement  H1SegmentFE;
+@@ -369,6 +379,9 @@ public:
+                                   DenseMatrix &I) const
+    { LocalInterpolation_ND(CheckVectorFE(fe), tk, dof2tk, Trans, I); }
+ 
++   virtual StatelessDofTransformation * GetDofTransformation() const
++   { return &doftrans; }
++
+    using FiniteElement::Project;
+ 
+    virtual void Project(VectorCoefficient &vc,
+diff --git a/fem/fe_coll.cpp b/fem/fe_coll.cpp
+index fd7af135d..1be0c7368 100644
+--- a/fem/fe_coll.cpp
++++ b/fem/fe_coll.cpp
+@@ -2886,6 +2886,19 @@ ND_FECollection::FiniteElementForGeometry(Geometry::Type GeomType) const
+    }
+ }
+ 
++StatelessDofTransformation *
++ND_FECollection::DofTransformationForGeometry(Geometry::Type GeomType) const
++{
++   if (!Geometry::IsTensorProduct(GeomType) && this->GetOrder() > 1)
++   {
++      return FiniteElementForGeometry(GeomType)->GetDofTransformation();
++   }
++   else
++   {
++      return NULL;
++   }
++}
++
+ const int *ND_FECollection::DofOrderForOrientation(Geometry::Type GeomType,
+                                                    int Or) const
+ {
+diff --git a/fem/fe_coll.hpp b/fem/fe_coll.hpp
+index 6b05c5f31..86c1f4e66 100644
+--- a/fem/fe_coll.hpp
++++ b/fem/fe_coll.hpp
+@@ -61,6 +61,13 @@ public:
+ 
+    virtual int DofForGeometry(Geometry::Type GeomType) const = 0;
+ 
++   /** @brief Returns a DoF transformation object compatible with this basis
++       and geometry type.
++   */
++   virtual StatelessDofTransformation *
++   DofTransformationForGeometry(Geometry::Type GeomType) const
++   { return NULL; }
++
+    /** @brief Returns an array, say p, that maps a local permuted index i to a
+        local base index: base_i = p[i].
+ 
+@@ -466,8 +473,12 @@ public:
+    virtual int DofForGeometry(Geometry::Type GeomType) const
+    { return ND_dof[GeomType]; }
+ 
++   virtual StatelessDofTransformation *
++   DofTransformationForGeometry(Geometry::Type GeomType) const;
++
+    virtual const int *DofOrderForOrientation(Geometry::Type GeomType,
+                                              int Or) const;
++
+    virtual const char *Name() const { return nd_name; }
+    virtual int GetContType() const { return TANGENTIAL; }
+    FiniteElementCollection *GetTraceCollection() const;
+diff --git a/fem/fespace.hpp b/fem/fespace.hpp
+index f777bf871..47ddbf438 100644
+--- a/fem/fespace.hpp
++++ b/fem/fespace.hpp
+@@ -377,17 +377,6 @@ protected:
+    /// Return number of possible DOF variants for edge/face (var. order spaces).
+    int GetNVariants(int entity, int index) const;
+ 
+-   /// Helper to encode a sign flip into a DOF index (for Hcurl/Hdiv shapes).
+-   static inline int EncodeDof(int entity_base, int idx)
+-   { return (idx >= 0) ? (entity_base + idx) : (-1-(entity_base + (-1-idx))); }
+-
+-   /// Helpers to remove encoded sign from a DOF
+-   static inline int DecodeDof(int dof)
+-   { return (dof >= 0) ? dof : (-1 - dof); }
+-
+-   static inline int DecodeDof(int dof, double& sign)
+-   { return (dof >= 0) ? (sign = 1, dof) : (sign = -1, (-1 - dof)); }
+-
+    /// Helper to get vertex, edge or face DOFs (entity=0,1,2 resp.).
+    int GetEntityDofs(int entity, int index, Array<int> &dofs,
+                      Geometry::Type master_geom = Geometry::INVALID,
+@@ -985,6 +974,18 @@ public:
+    /// well on sets of @ref ldof "Local Dofs".
+    static void AdjustVDofs(Array<int> &vdofs);
+ 
++   /// Helper to encode a sign flip into a DOF index (for Hcurl/Hdiv shapes).
++   static inline int EncodeDof(int entity_base, int idx)
++   { return (idx >= 0) ? (entity_base + idx) : (-1-(entity_base + (-1-idx))); }
++
++   /// Helper to return the DOF associated with a sign encoded DOF
++   static inline int DecodeDof(int dof)
++   { return (dof >= 0) ? dof : (-1 - dof); }
++
++   /// Helper to determine the DOF and sign of a sign encoded DOF
++   static inline int DecodeDof(int dof, double& sign)
++   { return (dof >= 0) ? (sign = 1, dof) : (sign = -1, (-1 - dof)); }
++
+    /// @anchor getvdof @name Local Vector DoF Access Members
+    /// These member functions produce arrays of local vector degree of freedom
+    /// indices, see @ref ldof and @ref vdof. These indices can be used to
+diff --git a/fem/pfespace.cpp b/fem/pfespace.cpp
+index 6f0af11c6..51f0df2f6 100644
+--- a/fem/pfespace.cpp
++++ b/fem/pfespace.cpp
+@@ -940,7 +940,7 @@ void ParFiniteElementSpace::Build_Dof_TrueDof_Matrix() const // matrix P
+          }
+          else if (i_offd[i+1] == i_offd[i] + 2)
+          {
+-            const double * T = ND_DofTransformation
++            const double * T = ND_StatelessDofTransformation
+                                ::GetFaceTransform(ltori[i]).GetData();
+             j_offd[i_offd[i] + 1] = j_offd[i_offd[i]] + 1;
+             d_offd[i_offd[i]] = T[0]; d_offd[i_offd[i] + 1] = T[2];
+diff --git a/linalg/hypre.cpp b/linalg/hypre.cpp
+index d7069d4e6..04072c420 100644
+--- a/linalg/hypre.cpp
++++ b/linalg/hypre.cpp
+@@ -5349,20 +5349,8 @@ void HypreAMS::MakeGradientAndInterpolation(
+    rt_trace_space = dynamic_cast<const RT_Trace_FECollection*>(edge_fec);
+    trace_space = trace_space || rt_trace_space;
+ 
+-   int p = 1;
+-   if (edge_fespace->GetNE() > 0)
+-   {
+-      MFEM_VERIFY(!edge_fespace->IsVariableOrder(), "");
+-      if (trace_space)
+-      {
+-         p = edge_fespace->GetFaceOrder(0);
+-         if (dim == 2) { p++; }
+-      }
+-      else
+-      {
+-         p = edge_fespace->GetElementOrder(0);
+-      }
+-   }
++   MFEM_VERIFY(!edge_fespace->IsVariableOrder(), "");
++   int p = edge_fec->GetOrder();
+ 
+    ParMesh *pmesh = edge_fespace->GetParMesh();
+    if (rt_trace_space)
+@@ -5751,19 +5739,9 @@ void HypreADS::MakeDiscreteMatrices(ParFiniteElementSpace *face_fespace)
+    const FiniteElementCollection *face_fec = face_fespace->FEColl();
+    bool trace_space =
+       (dynamic_cast<const RT_Trace_FECollection*>(face_fec) != NULL);
+-   int p = 1;
+-   if (face_fespace->GetNE() > 0)
+-   {
+-      MFEM_VERIFY(!face_fespace->IsVariableOrder(), "");
+-      if (trace_space)
+-      {
+-         p = face_fespace->GetFaceOrder(0) + 1;
+-      }
+-      else
+-      {
+-         p = face_fespace->GetElementOrder(0);
+-      }
+-   }
++
++   MFEM_VERIFY(!face_fespace->IsVariableOrder(), "");
++   int p = face_fec->GetOrder();
+ 
+    // define the nodal and edge finite element spaces associated with face_fespace
+    ParMesh *pmesh = (ParMesh *) face_fespace->GetMesh();
+diff --git a/mesh/mesh.cpp b/mesh/mesh.cpp
+index de2d80f15..851a61744 100644
+--- a/mesh/mesh.cpp
++++ b/mesh/mesh.cpp
+@@ -3013,6 +3013,10 @@ void Mesh::FinalizeTopology(bool generate_bdr)
+    if (Dim == 1)
+    {
+       GenerateFaces();
++      if (NumOfBdrElements == 0 && generate_bdr)
++      {
++         GenerateBoundaryElements();
++      }
+    }
+ 
+    if (ncmesh)
+@@ -5653,13 +5657,54 @@ int Mesh::GetTriOrientation(const int *base, const int *test)
+    for (int j = 0; j < 3; j++)
+       if (test[aor[j]] != base[j])
+       {
+-         mfem_error("Mesh::GetTriOrientation(...)");
++         mfem::err << "Mesh::GetTriOrientation(...)" << endl;
++         mfem::err << " base = [";
++         for (int k = 0; k < 3; k++)
++         {
++            mfem::err << " " << base[k];
++         }
++         mfem::err << " ]\n test = [";
++         for (int k = 0; k < 3; k++)
++         {
++            mfem::err << " " << test[k];
++         }
++         mfem::err << " ]" << endl;
++         mfem_error();
+       }
+ #endif
+ 
+    return orient;
+ }
+ 
++int Mesh::ComposeTriOrientations(int ori_a_b, int ori_b_c)
++{
++   // Static method.
++   // Given three, possibly different, configurations of triangular face
++   // vertices: va, vb, and vc.  This function returns the relative orientation
++   // GetTriOrientation(va, vc) by composing previously computed orientations
++   // ori_a_b = GetTriOrientation(va, vb) and
++   // ori_b_c = GetTriOrientation(vb, vc) without accessing the vertices.
++
++   const int oo[6][6] =
++   {
++      {0, 1, 2, 3, 4, 5},
++      {1, 0, 5, 4, 3, 2},
++      {2, 3, 4, 5, 0, 1},
++      {3, 2, 1, 0, 5, 4},
++      {4, 5, 0, 1, 2, 3},
++      {5, 4, 3, 2, 1, 0}
++   };
++
++   int ori_a_c = oo[ori_a_b][ori_b_c];
++   return ori_a_c;
++}
++
++int Mesh::InvertTriOrientation(int ori)
++{
++   const int inv_ori[6] = {0, 1, 4, 3, 2, 5};
++   return inv_ori[ori];
++}
++
+ int Mesh::GetQuadOrientation(const int *base, const int *test)
+ {
+    int i;
+@@ -5708,6 +5753,37 @@ int Mesh::GetQuadOrientation(const int *base, const int *test)
+    return 2*i+1;
+ }
+ 
++int Mesh::ComposeQuadOrientations(int ori_a_b, int ori_b_c)
++{
++   // Static method.
++   // Given three, possibly different, configurations of quadrilateral face
++   // vertices: va, vb, and vc.  This function returns the relative orientation
++   // GetQuadOrientation(va, vc) by composing previously computed orientations
++   // ori_a_b = GetQuadOrientation(va, vb) and
++   // ori_b_c = GetQuadOrientation(vb, vc) without accessing the vertices.
++
++   const int oo[8][8] =
++   {
++      {0, 1, 2, 3, 4, 5, 6, 7},
++      {1, 0, 3, 2, 5, 4, 7, 6},
++      {2, 7, 4, 1, 6, 3, 0, 5},
++      {3, 6, 5, 0, 7, 2, 1, 4},
++      {4, 5, 6, 7, 0, 1, 2, 3},
++      {5, 4, 7, 6, 1, 0, 3, 2},
++      {6, 3, 0, 5, 2, 7, 4, 1},
++      {7, 2, 1, 4, 3, 6, 5, 0}
++   };
++
++   int ori_a_c = oo[ori_a_b][ori_b_c];
++   return ori_a_c;
++}
++
++int Mesh::InvertQuadOrientation(int ori)
++{
++   const int inv_ori[8] = {0, 1, 6, 3, 4, 5, 2, 7};
++   return inv_ori[ori];
++}
++
+ int Mesh::GetTetOrientation(const int *base, const int *test)
+ {
+    // Static method.
+@@ -6523,9 +6599,9 @@ const Table & Mesh::ElementToEdgeTable() const
+ 
+ void Mesh::AddPointFaceElement(int lf, int gf, int el)
+ {
+-   if (faces_info[gf].Elem1No == -1)  // this will be elem1
++   if (faces[gf] == NULL)  // this will be elem1
+    {
+-      // faces[gf] = new Point(&gf);
++      faces[gf] = new Point(&gf);
+       faces_info[gf].Elem1No  = el;
+       faces_info[gf].Elem1Inf = 64 * lf; // face lf with orientation 0
+       faces_info[gf].Elem2No  = -1; // in case there's no other side
+diff --git a/mesh/mesh.hpp b/mesh/mesh.hpp
+index 3e0590067..64bb85efc 100644
+--- a/mesh/mesh.hpp
++++ b/mesh/mesh.hpp
+@@ -472,8 +472,30 @@ protected:
+ 
+    /// Returns the orientation of "test" relative to "base"
+    static int GetTriOrientation (const int * base, const int * test);
++
++   /// Returns the orientation of "base" relative to "test"
++   /// In other words: GetTriOrientation(test, base) should equal
++   /// InvertTriOrientation(GetTriOrientation(base, test))
++   static int InvertTriOrientation(int ori);
++
++   /// Returns the orientation of "c" relative to "a" by composing
++   /// previously computed orientations relative to an intermediate
++   /// set "b".
++   static int ComposeTriOrientations(int ori_a_b, int ori_b_c);
++
+    /// Returns the orientation of "test" relative to "base"
+    static int GetQuadOrientation (const int * base, const int * test);
++
++   /// Returns the orientation of "base" relative to "test"
++   /// In other words: GetQuadOrientation(test, base) should equal
++   /// InvertQuadOrientation(GetQuadOrientation(base, test))
++   static int InvertQuadOrientation(int ori);
++
++   /// Returns the orientation of "c" relative to "a" by composing
++   /// previously computed orientations relative to an intermediate
++   /// set "b".
++   static int ComposeQuadOrientations(int ori_a_b, int ori_b_c);
++
+    /// Returns the orientation of "test" relative to "base"
+    static int GetTetOrientation (const int * base, const int * test);
+ 
+diff --git a/mesh/submesh/psubmesh.cpp b/mesh/submesh/psubmesh.cpp
+index b316d8b41..cf3e23d7d 100644
+--- a/mesh/submesh/psubmesh.cpp
++++ b/mesh/submesh/psubmesh.cpp
+@@ -84,7 +84,8 @@ ParSubMesh::ParSubMesh(const ParMesh &parent, SubMesh::From from,
+       GetEdgeVertices(i, lv);
+ 
+       // Find vertices/edge in parent mesh
+-      int parent_edge_id = v2v(parent_vertex_ids_[lv[0]], parent_vertex_ids_[lv[1]]);
++      int parent_edge_id = v2v(parent_vertex_ids_[lv[0]],
++                               parent_vertex_ids_[lv[1]]);
+       parent_edge_ids_.Append(parent_edge_id);
+    }
+ 
+@@ -106,6 +107,72 @@ ParSubMesh::ParSubMesh(const ParMesh &parent, SubMesh::From from,
+       {
+          parent_to_submesh_face_ids_[parent_face_ids_[i]] = i;
+       }
++
++      parent_face_ori_.SetSize(NumOfFaces);
++
++      for (int i = 0; i < NumOfFaces; i++)
++      {
++         Array<int> sub_vert;
++         GetFaceVertices(i, sub_vert);
++
++         Array<int> sub_par_vert(sub_vert.Size());
++         for (int j = 0; j < sub_vert.Size(); j++)
++         {
++            sub_par_vert[j] = parent_vertex_ids_[sub_vert[j]];
++         }
++
++         Array<int> par_vert;
++         parent.GetFaceVertices(parent_face_ids_[i], par_vert);
++
++         if (par_vert.Size() == 3)
++         {
++            parent_face_ori_[i] = GetTriOrientation(par_vert, sub_par_vert);
++         }
++         else
++         {
++            parent_face_ori_[i] = GetQuadOrientation(par_vert, sub_par_vert);
++         }
++      }
++   }
++   else if (Dim == 2)
++   {
++      parent_face_ori_.SetSize(NumOfElements);
++
++      for (int i = 0; i < NumOfElements; i++)
++      {
++         Array<int> sub_vert;
++         GetElementVertices(i, sub_vert);
++
++         Array<int> sub_par_vert(sub_vert.Size());
++         for (int j = 0; j < sub_vert.Size(); j++)
++         {
++            sub_par_vert[j] = parent_vertex_ids_[sub_vert[j]];
++         }
++
++         Array<int> par_vert;
++         int be_ori = 0;
++         if (from == SubMesh::From::Boundary)
++         {
++            parent.GetBdrElementVertices(parent_element_ids_[i], par_vert);
++
++            int f = -1;
++            parent.GetBdrElementFace(parent_element_ids_[i], &f, &be_ori);
++         }
++         else
++         {
++            parent.GetElementVertices(parent_element_ids_[i], par_vert);
++         }
++
++         if (par_vert.Size() == 3)
++         {
++            int se_ori = GetTriOrientation(par_vert, sub_par_vert);
++            parent_face_ori_[i] = ComposeTriOrientations(be_ori, se_ori);
++         }
++         else
++         {
++            parent_face_ori_[i] = GetQuadOrientation(par_vert, sub_par_vert);
++         }
++      }
+    }
+ 
+    ListOfIntegerSets groups;
+@@ -145,7 +212,7 @@ ParSubMesh::ParSubMesh(const ParMesh &parent, SubMesh::From from,
+    {
+       BuildFaceGroup(ngroups, rht, nstrias, rhq, nsquads);
+    }
+-   else
++   else if (Dim == 2)
+    {
+       group_stria.MakeI(ngroups);
+       group_stria.MakeJ();
+@@ -167,7 +234,9 @@ ParSubMesh::ParSubMesh(const ParMesh &parent, SubMesh::From from,
+ 
+    // Add boundaries
+    {
+-      int num_of_faces_or_edges = (Dim == 2) ? NumOfEdges : NumOfFaces;
++      int num_of_faces_or_edges =
++         (Dim == 3) ? NumOfFaces :
++         ((Dim == 2) ? NumOfEdges : NumOfVertices);
+       Array<int> &be2face = (Dim == 2) ? be_to_edge : be_to_face;
+ 
+       if (Dim == 3)
+@@ -190,9 +259,11 @@ ParSubMesh::ParSubMesh(const ParMesh &parent, SubMesh::From from,
+       boundary.SetSize(NumOfBdrElements);
+       be2face.SetSize(NumOfBdrElements);
+       Array<int> parent_face_to_be;
++      int max_bdr_attr = -1;
+       if (Dim == 3)
+       {
+          parent_face_to_be = parent.GetFaceToBdrElMap();
++         max_bdr_attr = parent.bdr_attributes.Max();
+       }
+       for (int i = 0, j = 0; i < num_of_faces_or_edges; i++)
+       {
+@@ -209,7 +280,7 @@ ParSubMesh::ParSubMesh(const ParMesh &parent, SubMesh::From from,
+                }
+                else
+                {
+-                  boundary[j]->SetAttribute(SubMesh::GENERATED_ATTRIBUTE);
++                  boundary[j]->SetAttribute(max_bdr_attr + 1);
+                }
+             }
+             else
+@@ -743,9 +814,14 @@ void ParSubMesh::BuildSharedEdgesMapping(const int sedges_ct,
+          else
+          {
+             Array<int> vert;
+-            GetEdgeVertices(submesh_edge_id, vert);
+-
+-            shared_edges.Append(new Segment(vert[0], vert[1], 1));
++            parent_.GetEdgeVertices(ple, vert);
++            // Swap order of vertices if orientation in parent group is -1
++            int v0 = parent_to_submesh_vertex_ids_[vert[(1-o)/2]];
++            int v1 = parent_to_submesh_vertex_ids_[vert[(1+o)/2]];
++
++            // The orienation of the shared edge relative to the local edge
++            // will be determined by whether v0 < v1 or v1 < v0
++            shared_edges.Append(new Segment(v0, v1, 1));
+             sedge_ledge.Append(submesh_edge_id);
+          }
+       }
+@@ -760,36 +836,61 @@ void ParSubMesh::BuildSharedFacesMapping(const int nstrias,
+    shared_quads.Reserve(nsquads);
+    sface_lface.Reserve(nstrias + nsquads);
+ 
+-   for (int g = 1, sq = 0; g < parent_.GetNGroups(); g++)
++   // sface_lface should list the triangular shared faces first
++   // followed by the quadrilateral shared faces.
++
++   for (int g = 1, st = 0; g < parent_.GetNGroups(); g++)
+    {
+-      for (int gq = 0; gq < parent_.GroupNQuadrilaterals(g); gq++, sq++)
++      for (int gt = 0; gt < parent_.GroupNTriangles(g); gt++, st++)
+       {
+-         int plq, o;
+-         parent_.GroupQuadrilateral(g, gq, plq, o);
+-         int submesh_face_id = parent_to_submesh_face_ids_[plq];
+-         if ((submesh_face_id == -1) || rhq[sq] == -1)
++         int plt, o;
++         parent_.GroupTriangle(g, gt, plt, o);
++         int submesh_face_id = parent_to_submesh_face_ids_[plt];
++         if ((submesh_face_id == -1) || rht[st] == -1)
+          {
+             // parent shared face is not in SubMesh or is not shared
+          }
+          else
+          {
+             Array<int> vert;
++
+             GetFaceVertices(submesh_face_id, vert);
+ 
+-            shared_quads.Append(Vert4(vert[0], vert[1], vert[2], vert[3]));
++            int v0 = vert[0];
++            int v1 = vert[1];
++            int v2 = vert[2];
++
++            // See Mesh::GetTriOrientation for info on interpretting "o"
++            switch (o)
++            {
++               case 1:
++                  std::swap(v0,v1);
++                  break;
++               case 3:
++                  std::swap(v2,v0);
++                  break;
++               case 5:
++                  std::swap(v1,v2);
++                  break;
++               default:
++                  // Do nothing
++                  break;
++            }
++
++            shared_trias.Append(Vert3(v0, v1, v2));
+             sface_lface.Append(submesh_face_id);
+          }
+       }
+    }
+ 
+-   for (int g = 1, st = 0; g < parent_.GetNGroups(); g++)
++   for (int g = 1, sq = 0; g < parent_.GetNGroups(); g++)
+    {
+-      for (int gt = 0; gt < parent_.GroupNTriangles(g); gt++, st++)
++      for (int gq = 0; gq < parent_.GroupNQuadrilaterals(g); gq++, sq++)
+       {
+-         int plt, o;
+-         parent_.GroupTriangle(g, gt, plt, o);
+-         int submesh_face_id = parent_to_submesh_face_ids_[plt];
+-         if ((submesh_face_id == -1) || rht[st] == -1)
++         int plq, o;
++         parent_.GroupQuadrilateral(g, gq, plq, o);
++         int submesh_face_id = parent_to_submesh_face_ids_[plq];
++         if ((submesh_face_id == -1) || rhq[sq] == -1)
+          {
+             // parent shared face is not in SubMesh or is not shared
+          }
+@@ -798,7 +899,7 @@ void ParSubMesh::BuildSharedFacesMapping(const int nstrias,
+             Array<int> vert;
+             GetFaceVertices(submesh_face_id, vert);
+ 
+-            shared_trias.Append(Vert3(vert[0], vert[1], vert[2]));
++            shared_quads.Append(Vert4(vert[0], vert[1], vert[2], vert[3]));
+             sface_lface.Append(submesh_face_id);
+          }
+       }
+diff --git a/mesh/submesh/psubmesh.hpp b/mesh/submesh/psubmesh.hpp
+index 58acd1d4f..8d35bc451 100644
+--- a/mesh/submesh/psubmesh.hpp
++++ b/mesh/submesh/psubmesh.hpp
+@@ -128,6 +128,16 @@ public:
+       return parent_face_ids_;
+    }
+ 
++   /**
++    * @brief Get the relative face orientations
++    *
++    * ParSubMesh element id (array index) to parent ParMesh face orientation.
++    */
++   const Array<int>& GetParentFaceOrientations() const
++   {
++      return parent_face_ori_;
++   }
++
+    /**
+     * @brief Get the ParSubMesh face id map.
+     *
+@@ -359,6 +369,10 @@ private:
+    /// ParMesh face ids.
+    Array<int> parent_face_ids_;
+ 
++   /// Mapping from SubMesh face ids (index of the array), to the orientation
++   /// of the face relative to the parent face.
++   Array<int> parent_face_ori_;
++
+    /// Mapping from parent ParMesh vertex ids (index of the array), to the
+    /// ParSubMesh vertex ids. Inverse map of parent_vertex_ids_.
+    Array<int> parent_to_submesh_vertex_ids_;
+diff --git a/mesh/submesh/ptransfermap.cpp b/mesh/submesh/ptransfermap.cpp
+index 21f37ec42..b19de4599 100644
+--- a/mesh/submesh/ptransfermap.cpp
++++ b/mesh/submesh/ptransfermap.cpp
+@@ -41,9 +41,68 @@ ParTransferMap::ParTransferMap(const ParGridFunction &src,
+ 
+       category_ = TransferCategory::SubMeshToSubMesh;
+ 
+-      root_fes_.reset(new ParFiniteElementSpace(
+-                         *src.ParFESpace(),
+-                         *const_cast<ParMesh *>(SubMeshUtils::GetRootParent(*src_sm))));
++      {
++         ParMesh * parent_mesh =
++            const_cast<ParMesh *>(SubMeshUtils::GetRootParent(*src_sm));
++
++         int parent_dim = parent_mesh->Dimension();
++         int src_sm_dim = src_sm->Dimension();
++         int dst_sm_dim = dst_sm->Dimension();
++
++         bool root_fes_reset = false;
++         if (src_sm_dim == parent_dim - 1 && dst_sm_dim == parent_dim - 1)
++         {
++            const ParFiniteElementSpace *src_fes = src.ParFESpace();
++            const ParFiniteElementSpace *dst_fes = dst.ParFESpace();
++
++            const FiniteElementCollection *src_fec = src_fes->FEColl();
++            const FiniteElementCollection *dst_fec = dst_fes->FEColl();
++
++            const L2_FECollection *src_l2_fec =
++               dynamic_cast<const L2_FECollection*>(src_fec);
++            const L2_FECollection *dst_l2_fec =
++               dynamic_cast<const L2_FECollection*>(dst_fec);
++
++            if (src_l2_fec != NULL && dst_l2_fec != NULL)
++            {
++               // Source and destination are both lower dimension L2 spaces.
++               // Transfer them as the trace of an RT space if possible.
++
++               int src_mt = src_fec->GetMapType(src_sm_dim);
++               int dst_mt = dst_fec->GetMapType(dst_sm_dim);
++
++               int src_bt = src_l2_fec->GetBasisType();
++               int dst_bt = dst_l2_fec->GetBasisType();
++
++               int src_p = src_fec->GetOrder();
++               int dst_p = dst_fec->GetOrder();
++
++               if (src_mt == FiniteElement::INTEGRAL &&
++                   dst_mt == FiniteElement::INTEGRAL &&
++                   src_bt == BasisType::GaussLegendre &&
++                   dst_bt == BasisType::GaussLegendre &&
++                   src_p == dst_p)
++               {
++                  // The subspaces are consistent with the trace of an RT space
++                  root_fec_.reset(new RT_FECollection(src_p, parent_dim));
++                  root_fes_.reset(new ParFiniteElementSpace(
++                                     const_cast<ParMesh *>(
++                                        SubMeshUtils::GetRootParent(*src_sm)),
++                                     root_fec_.get()));
++                  root_fes_reset = true;
++               }
++            }
++         }
++
++         if (!root_fes_reset)
++         {
++            root_fes_.reset(new ParFiniteElementSpace(
++                               *src.ParFESpace(),
++                               const_cast<ParMesh *>(
++                                  SubMeshUtils::GetRootParent(*src_sm))));
++         }
++      }
++
+       subfes1 = src.ParFESpace();
+       subfes2 = dst.ParFESpace();
+ 
+@@ -105,8 +164,12 @@ void ParTransferMap::Transfer(const ParGridFunction &src,
+       // dst = S1^T src
+       for (int i = 0; i < sub1_to_parent_map_.Size(); i++)
+       {
+-         dst(i) = src(sub1_to_parent_map_[i]);
++         double s = 1.0;
++         int j = FiniteElementSpace::DecodeDof(sub1_to_parent_map_[i], s);
++         dst(i) = s * src(j);
+       }
++
++      CorrectFaceOrientations(*dst.ParFESpace(), src, dst);
+    }
+    else if (category_ == TransferCategory::SubMeshToParent)
+    {
+@@ -117,10 +180,15 @@ void ParTransferMap::Transfer(const ParGridFunction &src,
+ 
+       for (int i = 0; i < sub1_to_parent_map_.Size(); i++)
+       {
+-         dst(sub1_to_parent_map_[i]) = src(i);
++         double s = 1.0;
++         int j = FiniteElementSpace::DecodeDof(sub1_to_parent_map_[i], s);
++         dst(j) = s * src(i);
+       }
+ 
+-      CommunicateSharedVdofs(dst);
++      CorrectFaceOrientations(*src.ParFESpace(), src, dst,
++                              &sub1_to_parent_map_);
++
++      // CommunicateSharedVdofs(dst);
+    }
+    else if (category_ == TransferCategory::SubMeshToSubMesh)
+    {
+@@ -132,20 +200,34 @@ void ParTransferMap::Transfer(const ParGridFunction &src,
+ 
+       for (int i = 0; i < sub2_to_parent_map_.Size(); i++)
+       {
+-         z_(sub2_to_parent_map_[i]) = dst(i);
++         double s = 1.0;
++         int j = FiniteElementSpace::DecodeDof(sub2_to_parent_map_[i], s);
++         z_(j) = s * dst(i);
+       }
+ 
++      CorrectFaceOrientations(*dst.ParFESpace(), dst, z_,
++                              &sub2_to_parent_map_);
++
+       for (int i = 0; i < sub1_to_parent_map_.Size(); i++)
+       {
+-         z_(sub1_to_parent_map_[i]) = src(i);
++         double s = 1.0;
++         int j = FiniteElementSpace::DecodeDof(sub1_to_parent_map_[i], s);
++         z_(j) = s * src(i);
+       }
+ 
+-      CommunicateSharedVdofs(z_);
++      CorrectFaceOrientations(*src.ParFESpace(), src, z_,
++                              &sub1_to_parent_map_);
++
++      // CommunicateSharedVdofs(z_);
+ 
+       for (int i = 0; i < sub2_to_parent_map_.Size(); i++)
+       {
+-         dst(i) = z_(sub2_to_parent_map_[i]);
++         double s = 1.0;
++         int j = FiniteElementSpace::DecodeDof(sub2_to_parent_map_[i], s);
++         dst(i) = s * z_(j);
+       }
++
++      CorrectFaceOrientations(*dst.ParFESpace(), z_, dst);
+    }
+    else
+    {
+@@ -159,7 +241,7 @@ void ParTransferMap::CommunicateIndicesSet(Array<int> &map, int dst_sz)
+    indices_set_local_ = 0;
+    for (int i = 0; i < map.Size(); i++)
+    {
+-      indices_set_local_[map[i]] = 1;
++      indices_set_local_[(map[i]>=0)?map[i]:(-map[i]-1)] = 1;
+    }
+    indices_set_global_ = indices_set_local_;
+    root_gc_->Reduce(indices_set_global_, GroupCommunicator::Sum);
+@@ -214,4 +296,84 @@ void ParTransferMap::CommunicateSharedVdofs(Vector &f) const
+    root_gc_->Bcast<double>(f.HostReadWrite());
+ }
+ 
++void
++ParTransferMap::CorrectFaceOrientations(const ParFiniteElementSpace &fes,
++                                        const Vector &src,
++                                        Vector &dst,
++                                        const Array<int> *sub_to_parent_map)
++{
++   const FiniteElementCollection * fec = fes.FEColl();
++
++   ParSubMesh * mesh = dynamic_cast<ParSubMesh*>(fes.GetParMesh());
++
++   const Array<int>& parent_face_ori = mesh->GetParentFaceOrientations();
++
++   if (parent_face_ori.Size() == 0) { return; }
++
++   VDofTransformation vdoftrans(fes.GetVDim(),
++                                fes.GetOrdering());
++
++   int dim = mesh->Dimension();
++   bool face = (dim == 3);
++
++   Array<int> vdofs;
++   Array<int> Fo(1);
++   Vector face_vector;
++
++   for (int i = 0; i < (face ? mesh->GetNumFaces() : mesh->GetNE()); i++)
++   {
++      if (parent_face_ori[i] == 0) { continue; }
++
++      Geometry::Type geom = face ? mesh->GetFaceGeometry(i) :
++                            mesh->GetElementGeometry(i);;
++
++      StatelessDofTransformation * doftrans =
++         fec->DofTransformationForGeometry(geom);
++
++      if (doftrans == NULL) { continue; }
++
++      vdoftrans.SetDofTransformation(*doftrans);
++
++      Fo[0] = parent_face_ori[i];
++      vdoftrans.SetFaceOrientations(Fo);
++
++      if (face)
++      {
++         fes.GetFaceVDofs(i, vdofs);
++      }
++      else
++      {
++         fes.GetElementVDofs(i, vdofs);
++      }
++
++      if (sub_to_parent_map)
++      {
++         src.GetSubVector(vdofs, face_vector);
++         vdoftrans.TransformPrimal(face_vector);
++      }
++      else
++      {
++         dst.GetSubVector(vdofs, face_vector);
++         vdoftrans.InvTransformPrimal(face_vector);
++      }
++
++      for (int j = 0; j < vdofs.Size(); j++)
++      {
++         double s = 1.0;
++         int k = FiniteElementSpace::DecodeDof(vdofs[j], s);
++
++         if (sub_to_parent_map)
++         {
++            double sps = 1.0;
++            int spk = FiniteElementSpace::DecodeDof((*sub_to_parent_map)[k],
++                                                    sps);
++            s *= sps;
++            k = spk;
++         }
++
++         dst[k] = s * face_vector[j];
++      }
++   }
++}
++
+ #endif // MFEM_USE_MPI
+diff --git a/mesh/submesh/ptransfermap.hpp b/mesh/submesh/ptransfermap.hpp
+index bd7a7bd6c..683cc5bed 100644
+--- a/mesh/submesh/ptransfermap.hpp
++++ b/mesh/submesh/ptransfermap.hpp
+@@ -75,6 +75,11 @@ private:
+     */
+    void CommunicateSharedVdofs(Vector &f) const;
+ 
++   static void CorrectFaceOrientations(const ParFiniteElementSpace &fes,
++                                       const Vector &src,
++                                       Vector &dst,
++                                       const Array<int> *s2p_map = NULL);
++
+    TransferCategory category_;
+ 
+    /// Mapping of the ParGridFunction defined on the SubMesh to the
+@@ -98,6 +103,13 @@ private:
+    /// ParSubMesh to ParSubMesh transfer.
+    std::unique_ptr<const ParFiniteElementSpace> root_fes_;
+ 
++   /// Pointer to the supplemental FiniteElementCollection used with root_fes_.
++   /// This is only used if this TransferMap represents a SubMesh to
++   /// SubMesh transfer where the root requires a different type of collection
++   /// than the SubMesh objects. For example, when the subpaces are L2 on
++   /// boundaries of the parent mesh and the root space can be RT.
++   std::unique_ptr<const FiniteElementCollection> root_fec_;
++
+    const GroupCommunicator *root_gc_ = nullptr;
+ 
+    /// Temporary vector
+diff --git a/mesh/submesh/submesh.cpp b/mesh/submesh/submesh.cpp
+index ac2058c57..c9f0b8508 100644
+--- a/mesh/submesh/submesh.cpp
++++ b/mesh/submesh/submesh.cpp
+@@ -61,6 +61,7 @@ SubMesh::SubMesh(const Mesh &parent, From from,
+                                                     parent_element_ids_);
+ 
+       Array<int> parent_face_to_be = parent.GetFaceToBdrElMap();
++      int max_bdr_attr = parent.bdr_attributes.Max();
+ 
+       for (int i = 0; i < NumOfBdrElements; i++)
+       {
+@@ -75,7 +76,73 @@ SubMesh::SubMesh(const Mesh &parent, From from,
+             // This case happens when a domain is extracted, but the root parent
+             // mesh didn't have a boundary element on the surface that defined
+             // it's boundary. It still creates a valid mesh, so we allow it.
+-            GetBdrElement(i)->SetAttribute(GENERATED_ATTRIBUTE);
++            GetBdrElement(i)->SetAttribute(max_bdr_attr + 1);
++         }
++      }
++
++      parent_face_ori_.SetSize(NumOfFaces);
++
++      for (int i = 0; i < NumOfFaces; i++)
++      {
++         Array<int> sub_vert;
++         GetFaceVertices(i, sub_vert);
++
++         Array<int> sub_par_vert(sub_vert.Size());
++         for (int j = 0; j < sub_vert.Size(); j++)
++         {
++            sub_par_vert[j] = parent_vertex_ids_[sub_vert[j]];
++         }
++
++         Array<int> par_vert;
++         parent.GetFaceVertices(parent_face_ids_[i], par_vert);
++
++         if (par_vert.Size() == 3)
++         {
++            parent_face_ori_[i] = GetTriOrientation(par_vert, sub_par_vert);
++         }
++         else
++         {
++            parent_face_ori_[i] = GetQuadOrientation(par_vert, sub_par_vert);
++         }
++      }
++   }
++   else if (Dim == 2)
++   {
++      parent_face_ori_.SetSize(NumOfElements);
++
++      for (int i = 0; i < NumOfElements; i++)
++      {
++         Array<int> sub_vert;
++         GetElementVertices(i, sub_vert);
++
++         Array<int> sub_par_vert(sub_vert.Size());
++         for (int j = 0; j < sub_vert.Size(); j++)
++         {
++            sub_par_vert[j] = parent_vertex_ids_[sub_vert[j]];
++         }
++
++         Array<int> par_vert;
++         int be_ori = 0;
++         if (from == From::Boundary)
++         {
++            parent.GetBdrElementVertices(parent_element_ids_[i], par_vert);
++
++            int f = -1;
++            parent.GetBdrElementFace(parent_element_ids_[i], &f, &be_ori);
++         }
++         else
++         {
++            parent.GetElementVertices(parent_element_ids_[i], par_vert);
++         }
++
++         if (par_vert.Size() == 3)
++         {
++            int se_ori = GetTriOrientation(par_vert, sub_par_vert);
++            parent_face_ori_[i] = ComposeTriOrientations(be_ori, se_ori);
++         }
++         else
++         {
++            parent_face_ori_[i] = GetQuadOrientation(par_vert, sub_par_vert);
+          }
+       }
+    }
+diff --git a/mesh/submesh/submesh.hpp b/mesh/submesh/submesh.hpp
+index 7b30525ed..050111f7f 100644
+--- a/mesh/submesh/submesh.hpp
++++ b/mesh/submesh/submesh.hpp
+@@ -120,6 +120,16 @@ public:
+       return parent_face_ids_;
+    }
+ 
++   /**
++    * @brief Get the relative face orientations
++    *
++    * SubMesh element id (array index) to parent Mesh face orientation.
++    */
++   const Array<int>& GetParentFaceOrientations() const
++   {
++      return parent_face_ori_;
++   }
++
+    /**
+     * @brief Get the parent vertex id map.
+     *
+@@ -193,6 +203,10 @@ private:
+    /// face ids.
+    Array<int> parent_face_ids_;
+ 
++   /// Mapping from SubMesh face ids (index of the array), to the orientation
++   /// of the face relative to the parent face.
++   Array<int> parent_face_ori_;
++
+    Array<int> face_to_be;
+ };
+ 
+diff --git a/mesh/submesh/submesh_utils.cpp b/mesh/submesh/submesh_utils.cpp
+index e76515058..3a8098727 100644
+--- a/mesh/submesh/submesh_utils.cpp
++++ b/mesh/submesh/submesh_utils.cpp
+@@ -127,7 +127,8 @@ void BuildVdofToVdofMap(const FiniteElementSpace& subfes,
+                Tr.Transf,
+                face_info);
+ 
+-            Geometry::Type face_geom = pm->GetBdrElementBaseGeometry(i);
++            Geometry::Type face_geom =
++               pm->GetBdrElementBaseGeometry(parent_element_ids[i]);
+             const FiniteElement *face_el =
+                parentfes.GetTraceElement(parent_element_ids[i], face_geom);
+             MFEM_VERIFY(dynamic_cast<const NodalFiniteElement*>(face_el),
+@@ -169,10 +170,18 @@ void BuildVdofToVdofMap(const FiniteElementSpace& subfes,
+ 
+       Array<int> sub_vdofs;
+       subfes.GetElementVDofs(i, sub_vdofs);
++
+       MFEM_ASSERT(parent_vdofs.Size() == sub_vdofs.Size(), "internal error");
+       for (int j = 0; j < parent_vdofs.Size(); j++)
+       {
+-         vdof_to_vdof_map[sub_vdofs[j]] = parent_vdofs[j];
++         double sub_sign = 1.0;
++         int sub_vdof = subfes.DecodeDof(sub_vdofs[j], sub_sign);
++
++         double parent_sign = 1.0;
++         int parent_vdof = parentfes.DecodeDof(parent_vdofs[j], parent_sign);
++
++         vdof_to_vdof_map[sub_vdof] =
++            (sub_sign * parent_sign > 0.0) ? parent_vdof : (-1-parent_vdof);
+       }
+    }
+ }
+diff --git a/mesh/submesh/transfermap.cpp b/mesh/submesh/transfermap.cpp
+index 7f632300a..5bf05c99c 100644
+--- a/mesh/submesh/transfermap.cpp
++++ b/mesh/submesh/transfermap.cpp
+@@ -37,9 +37,68 @@ TransferMap::TransferMap(const GridFunction &src,
+ 
+       category_ = TransferCategory::SubMeshToSubMesh;
+ 
+-      root_fes_.reset(new FiniteElementSpace(
+-                         *src.FESpace(),
+-                         const_cast<Mesh *>(SubMeshUtils::GetRootParent(*src_sm))));
++      {
++         Mesh * parent_mesh =
++            const_cast<Mesh *>(SubMeshUtils::GetRootParent(*src_sm));
++
++         int parent_dim = parent_mesh->Dimension();
++         int src_sm_dim = src_sm->Dimension();
++         int dst_sm_dim = dst_sm->Dimension();
++
++         bool root_fes_reset = false;
++         if (src_sm_dim == parent_dim - 1 && dst_sm_dim == parent_dim - 1)
++         {
++            const FiniteElementSpace *src_fes = src.FESpace();
++            const FiniteElementSpace *dst_fes = dst.FESpace();
++
++            const FiniteElementCollection *src_fec = src_fes->FEColl();
++            const FiniteElementCollection *dst_fec = dst_fes->FEColl();
++
++            const L2_FECollection *src_l2_fec =
++               dynamic_cast<const L2_FECollection*>(src_fec);
++            const L2_FECollection *dst_l2_fec =
++               dynamic_cast<const L2_FECollection*>(dst_fec);
++
++            if (src_l2_fec != NULL && dst_l2_fec != NULL)
++            {
++               // Source and destination are both lower dimension L2 spaces.
++               // Transfer them as the trace of an RT space if possible.
++
++               int src_mt = src_fec->GetMapType(src_sm_dim);
++               int dst_mt = dst_fec->GetMapType(dst_sm_dim);
++
++               int src_bt = src_l2_fec->GetBasisType();
++               int dst_bt = dst_l2_fec->GetBasisType();
++
++               int src_p = src_fec->GetOrder();
++               int dst_p = dst_fec->GetOrder();
++
++               if (src_mt == FiniteElement::INTEGRAL &&
++                   dst_mt == FiniteElement::INTEGRAL &&
++                   src_bt == BasisType::GaussLegendre &&
++                   dst_bt == BasisType::GaussLegendre &&
++                   src_p == dst_p)
++               {
++                  // The subspaces are consistent with the trace of an RT space
++                  root_fec_.reset(new RT_FECollection(src_p, parent_dim));
++                  root_fes_.reset(new FiniteElementSpace(
++                                     const_cast<Mesh *>(
++                                        SubMeshUtils::GetRootParent(*src_sm)),
++                                     root_fec_.get()));
++                  root_fes_reset = true;
++               }
++            }
++         }
++
++         if (!root_fes_reset)
++         {
++            root_fes_.reset(new FiniteElementSpace(
++                               *src.FESpace(),
++                               const_cast<Mesh *>(
++                                  SubMeshUtils::GetRootParent(*src_sm))));
++         }
++      }
++
+       subfes1 = src.FESpace();
+       subfes2 = dst.FESpace();
+ 
+@@ -95,8 +154,12 @@ void TransferMap::Transfer(const GridFunction &src,
+       // dst = S1^T src
+       for (int i = 0; i < sub1_to_parent_map_.Size(); i++)
+       {
+-         dst(i) = src(sub1_to_parent_map_[i]);
++         double s = 1.0;
++         int j = FiniteElementSpace::DecodeDof(sub1_to_parent_map_[i], s);
++         dst(i) = s * src(j);
+       }
++
++      CorrectFaceOrientations(*dst.FESpace(), src, dst);
+    }
+    else if (category_ == TransferCategory::SubMeshToParent)
+    {
+@@ -107,8 +170,13 @@ void TransferMap::Transfer(const GridFunction &src,
+ 
+       for (int i = 0; i < sub1_to_parent_map_.Size(); i++)
+       {
+-         dst(sub1_to_parent_map_[i]) = src(i);
++         double s = 1.0;
++         int j = FiniteElementSpace::DecodeDof(sub1_to_parent_map_[i], s);
++         dst(j) = s * src(i);
+       }
++
++      CorrectFaceOrientations(*src.FESpace(), src, dst,
++                              &sub1_to_parent_map_);
+    }
+    else if (category_ == TransferCategory::SubMeshToSubMesh)
+    {
+@@ -120,21 +188,114 @@ void TransferMap::Transfer(const GridFunction &src,
+ 
+       for (int i = 0; i < sub2_to_parent_map_.Size(); i++)
+       {
+-         z_(sub2_to_parent_map_[i]) = dst(i);
++         double s = 1.0;
++         int j = FiniteElementSpace::DecodeDof(sub2_to_parent_map_[i], s);
++         z_(j) = s * dst(i);
+       }
+ 
++      CorrectFaceOrientations(*dst.FESpace(), dst, z_,
++                              &sub2_to_parent_map_);
++
+       for (int i = 0; i < sub1_to_parent_map_.Size(); i++)
+       {
+-         z_(sub1_to_parent_map_[i]) = src(i);
++         double s = 1.0;
++         int j = FiniteElementSpace::DecodeDof(sub1_to_parent_map_[i], s);
++         z_(j) = s * src(i);
+       }
+ 
++      CorrectFaceOrientations(*src.FESpace(), src, z_,
++                              &sub1_to_parent_map_);
++
+       for (int i = 0; i < sub2_to_parent_map_.Size(); i++)
+       {
+-         dst(i) = z_(sub2_to_parent_map_[i]);
++         double s = 1.0;
++         int j = FiniteElementSpace::DecodeDof(sub2_to_parent_map_[i], s);
++         dst(i) = s * z_(j);
+       }
++
++      CorrectFaceOrientations(*dst.FESpace(), z_, dst);
+    }
+    else
+    {
+       MFEM_ABORT("unknown TransferCategory: " << category_);
+    }
+ }
++
++void TransferMap::CorrectFaceOrientations(const FiniteElementSpace &fes,
++                                          const Vector &src,
++                                          Vector &dst,
++                                          const Array<int> *sub_to_parent_map)
++{
++   const FiniteElementCollection * fec = fes.FEColl();
++
++   SubMesh * mesh = dynamic_cast<SubMesh*>(fes.GetMesh());
++
++   const Array<int>& parent_face_ori = mesh->GetParentFaceOrientations();
++
++   if (parent_face_ori.Size() == 0) { return; }
++
++   VDofTransformation vdoftrans(fes.GetVDim(),
++                                fes.GetOrdering());
++
++   int dim = mesh->Dimension();
++   bool face = (dim == 3);
++
++   Array<int> vdofs;
++   Array<int> Fo(1);
++   Vector face_vector;
++
++   for (int i = 0; i < (face ? mesh->GetNumFaces() : mesh->GetNE()); i++)
++   {
++      if (parent_face_ori[i] == 0) { continue; }
++
++      Geometry::Type geom = face ? mesh->GetFaceGeometry(i) :
++                            mesh->GetElementGeometry(i);;
++
++      StatelessDofTransformation * doftrans =
++         fec->DofTransformationForGeometry(geom);
++
++      if (doftrans == NULL) { continue; }
++
++      vdoftrans.SetDofTransformation(*doftrans);
++
++      Fo[0] = parent_face_ori[i];
++      vdoftrans.SetFaceOrientations(Fo);
++
++      if (face)
++      {
++         fes.GetFaceVDofs(i, vdofs);
++      }
++      else
++      {
++         fes.GetElementVDofs(i, vdofs);
++      }
++
++      if (sub_to_parent_map)
++      {
++         src.GetSubVector(vdofs, face_vector);
++         vdoftrans.TransformPrimal(face_vector);
++      }
++      else
++      {
++         dst.GetSubVector(vdofs, face_vector);
++         vdoftrans.InvTransformPrimal(face_vector);
++      }
++
++      for (int j = 0; j < vdofs.Size(); j++)
++      {
++         double s = 1.0;
++         int k = FiniteElementSpace::DecodeDof(vdofs[j], s);
++
++         if (sub_to_parent_map)
++         {
++            double sps = 1.0;
++            int spk = FiniteElementSpace::DecodeDof((*sub_to_parent_map)[k],
++                                                    sps);
++            s *= sps;
++            k = spk;
++         }
++
++         dst[k] = s * face_vector[j];
++      }
++   }
++}
+diff --git a/mesh/submesh/transfermap.hpp b/mesh/submesh/transfermap.hpp
+index 0a320f9de..b94a061f6 100644
+--- a/mesh/submesh/transfermap.hpp
++++ b/mesh/submesh/transfermap.hpp
+@@ -52,6 +52,12 @@ public:
+    void Transfer(const GridFunction &src, GridFunction &dst) const;
+ 
+ private:
++
++   static void CorrectFaceOrientations(const FiniteElementSpace &fes,
++                                       const Vector &src,
++                                       Vector &dst,
++                                       const Array<int> *s2p_map = NULL);
++
+    TransferCategory category_;
+ 
+    /// Mapping of the GridFunction defined on the SubMesh to the Gridfunction
+@@ -68,6 +74,13 @@ private:
+    /// SubMesh transfer.
+    std::unique_ptr<const FiniteElementSpace> root_fes_;
+ 
++   /// Pointer to the supplemental FiniteElementCollection used with root_fes_.
++   /// This is only used if this TransferMap represents a SubMesh to
++   /// SubMesh transfer where the root requires a different type of collection
++   /// than the SubMesh objects. For example, when the subpaces are L2 on
++   /// boundaries of the parent mesh and the root space can be RT.
++   std::unique_ptr<const FiniteElementCollection> root_fec_;
++
+    /// Temporary vector
+    mutable Vector z_;
+ };
+diff --git a/tests/unit/CMakeLists.txt b/tests/unit/CMakeLists.txt
+index 4b7a81af7..69cbf12ec 100644
+--- a/tests/unit/CMakeLists.txt
++++ b/tests/unit/CMakeLists.txt
+@@ -29,6 +29,7 @@ set(UNIT_TESTS_SRCS
+   linalg/test_constrainedsolver.cpp
+   linalg/test_direct_solvers.cpp
+   linalg/test_hypre_ilu.cpp
++  linalg/test_hypre_prec.cpp
+   linalg/test_hypre_vector.cpp
+   linalg/test_ilu.cpp
+   linalg/test_matrix_block.cpp
+@@ -41,6 +42,7 @@ set(UNIT_TESTS_SRCS
+   linalg/test_ode2.cpp
+   linalg/test_operator.cpp
+   linalg/test_vector.cpp
++  mesh/test_face_orientations.cpp
+   mesh/test_fms.cpp
+   mesh/test_mesh.cpp
+   mesh/test_ncmesh.cpp
+diff --git a/tests/unit/linalg/test_hypre_prec.cpp b/tests/unit/linalg/test_hypre_prec.cpp
+new file mode 100644
+index 000000000..b0a89b9aa
+--- /dev/null
++++ b/tests/unit/linalg/test_hypre_prec.cpp
+@@ -0,0 +1,288 @@
++// Copyright (c) 2010-2023, Lawrence Livermore National Security, LLC. Produced
++// at the Lawrence Livermore National Laboratory. All Rights reserved. See files
++// LICENSE and NOTICE for details. LLNL-CODE-806117.
++//
++// This file is part of the MFEM library. For more information and source code
++// availability visit https://mfem.org.
++//
++// MFEM is free software; you can redistribute it and/or modify it under the
++// terms of the BSD-3 license. We welcome feedback and contributions, see file
++// CONTRIBUTING.md for details.
++
++#include "unit_tests.hpp"
++#include "mfem.hpp"
++
++namespace mfem
++{
++
++#ifdef MFEM_USE_MPI
++
++enum PartType {ALL, FIRST, LAST, ALL_BUT_LAST, ALL_BUT_FIRST};
++
++double sin3d(const Vector &x)
++{
++   return sin(x[0]) * sin(x[1]) * sin(x[2]);
++}
++
++void sin2d_vec(const Vector &x, Vector &v)
++{
++   v.SetSize(2);
++   v[0] = cos(x[0]) * sin(x[1]);
++   v[1] = sin(x[0]) * cos(x[1]);
++}
++
++void sin3d_vec(const Vector &x, Vector &v)
++{
++   v.SetSize(3);
++   v[0] = cos(x[0]) * sin(x[1]) * sin(x[2]);
++   v[1] = sin(x[0]) * cos(x[1]) * sin(x[2]);
++   v[2] = sin(x[0]) * sin(x[1]) * cos(x[2]);
++}
++
++void GeneratePart(PartType part_type, int nelems, int world_size,
++                  int *partitioning)
++{
++   if (world_size == 1)
++   {
++      for (int i=0; i<nelems; i++)
++      {
++         partitioning[i] = 0;
++      }
++      return;
++   }
++   switch (part_type)
++   {
++      case ALL:
++         for (int i=0; i<nelems; i++)
++         {
++            partitioning[i] = i % world_size;
++         }
++         break;
++      case FIRST:
++         for (int i=0; i<nelems; i++)
++         {
++            partitioning[i] = 0;
++         }
++         break;
++      case LAST:
++         for (int i=0; i<nelems; i++)
++         {
++            partitioning[i] = world_size - 1;
++         }
++         break;
++      case ALL_BUT_LAST:
++         for (int i=0; i<nelems; i++)
++         {
++            partitioning[i] = i % (world_size-1);
++         }
++         break;
++      case ALL_BUT_FIRST:
++         for (int i=0; i<nelems; i++)
++         {
++            partitioning[i] = i % (world_size-1) + 1;
++         }
++         break;
++   }
++}
++
++TEST_CASE("HypreBoomerAMG", "[Parallel], [HypreBoomerAMG]")
++{
++   int world_size, rank;
++   MPI_Comm_size(MPI_COMM_WORLD, &world_size);
++   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
++
++   int n = 3;
++   int dim = 3;
++   int order = 2;
++
++   Mesh mesh = Mesh::MakeCartesian3D(n, n, n, Element::HEXAHEDRON);
++
++   int nelems = mesh.GetNE();
++   int *partitioning = new int[nelems];
++
++   PartType last_type = (world_size == 1) ? ALL : ALL_BUT_FIRST;
++   for (int part_type = ALL; part_type <= last_type; part_type++)
++   {
++      GeneratePart((PartType)part_type, nelems, world_size, partitioning);
++
++      ParMesh pmesh(MPI_COMM_WORLD, mesh, partitioning);
++
++      H1_FECollection fec(order, dim);
++      ParFiniteElementSpace fespace(&pmesh, &fec);
++
++      ParBilinearForm a(&fespace);
++      a.AddDomainIntegrator(new DiffusionIntegrator);
++      a.AddDomainIntegrator(new MassIntegrator);
++      a.Assemble();
++
++      ParGridFunction x(&fespace);
++      FunctionCoefficient sin3dCoef(sin3d);
++      x.ProjectCoefficient(sin3dCoef);
++      double err0 = x.ComputeL2Error(sin3dCoef);
++
++      ParLinearForm b(&fespace);
++      a.Mult(x, b);
++      x = 0.0;
++
++      OperatorPtr A;
++      Vector B, X;
++      Array<int> ess_tdof_list;
++      a.FormLinearSystem(ess_tdof_list, x, b, A, X, B);
++
++      HypreBoomerAMG amg;
++      amg.SetPrintLevel(0);
++
++      HyprePCG pcg(MPI_COMM_WORLD);
++      pcg.SetTol(1e-10);
++      pcg.SetMaxIter(2000);
++      pcg.SetPrintLevel(3);
++      pcg.SetPreconditioner(amg);
++      pcg.SetOperator(*A);
++      pcg.Mult(B, X);
++
++      int its = -1;
++      pcg.GetNumIterations(its);
++
++      a.RecoverFEMSolution(X, b, x);
++
++      double err1 = x.ComputeL2Error(sin3dCoef);
++      REQUIRE(fabs(err1 - err0) < 1e-6 * err0);
++   }
++}
++
++TEST_CASE("HypreAMS", "[Parallel], [HypreAMS]")
++{
++   int world_size, rank;
++   MPI_Comm_size(MPI_COMM_WORLD, &world_size);
++   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
++
++   int n = 3;
++   int dim = GENERATE(2, 3);
++   int order = 2;
++
++   Mesh mesh = (dim == 2) ?
++               Mesh::MakeCartesian2D(n, n, Element::QUADRILATERAL):
++               Mesh::MakeCartesian3D(n, n, n, Element::HEXAHEDRON);
++
++   int nelems = mesh.GetNE();
++   int *partitioning = new int[nelems];
++
++   PartType last_type = (world_size == 1) ? ALL : ALL_BUT_FIRST;
++   for (int part_type = ALL; part_type <= last_type; part_type++)
++   {
++      GeneratePart((PartType)part_type, nelems, world_size, partitioning);
++
++      ParMesh pmesh(MPI_COMM_WORLD, mesh, partitioning);
++
++      ND_FECollection fec(order, dim);
++      ParFiniteElementSpace fespace(&pmesh, &fec);
++
++      ParBilinearForm a(&fespace);
++      a.AddDomainIntegrator(new CurlCurlIntegrator);
++      a.AddDomainIntegrator(new VectorFEMassIntegrator);
++      a.Assemble();
++
++      ParGridFunction x(&fespace);
++      VectorFunctionCoefficient sinCoef(dim,
++                                        (dim == 2) ? sin2d_vec : sin3d_vec);
++      x.ProjectCoefficient(sinCoef);
++      double err0 = x.ComputeL2Error(sinCoef);
++
++      ParLinearForm b(&fespace);
++      a.Mult(x, b);
++      x = 0.0;
++
++      OperatorPtr A;
++      Vector B, X;
++      Array<int> ess_tdof_list;
++      a.FormLinearSystem(ess_tdof_list, x, b, A, X, B);
++
++      HypreAMS ams(*A.As<HypreParMatrix>(), &fespace);
++      ams.SetPrintLevel(0);
++
++      HyprePCG pcg(MPI_COMM_WORLD);
++      pcg.SetTol(1e-10);
++      pcg.SetMaxIter(2000);
++      pcg.SetPrintLevel(3);
++      pcg.SetPreconditioner(ams);
++      pcg.SetOperator(*A);
++      pcg.Mult(B, X);
++
++      int its = -1;
++      pcg.GetNumIterations(its);
++
++      a.RecoverFEMSolution(X, b, x);
++
++      double err1 = x.ComputeL2Error(sinCoef);
++      REQUIRE(fabs(err1 - err0) < 1e-6 * err0);
++   }
++}
++
++TEST_CASE("HypreADS", "[Parallel], [HypreADS]")
++{
++   int world_size, rank;
++   MPI_Comm_size(MPI_COMM_WORLD, &world_size);
++   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
++
++   int n = 3;
++   int dim = 3;
++   int order = 2;
++
++   Mesh mesh = Mesh::MakeCartesian3D(n, n, n, Element::HEXAHEDRON);
++
++   int nelems = mesh.GetNE();
++   int *partitioning = new int[nelems];
++
++   PartType last_type = (world_size == 1) ? ALL : ALL_BUT_FIRST;
++   for (int part_type = ALL; part_type <= last_type; part_type++)
++   {
++      GeneratePart((PartType)part_type, nelems, world_size, partitioning);
++
++      ParMesh pmesh(MPI_COMM_WORLD, mesh, partitioning);
++
++      RT_FECollection fec(order, dim);
++      ParFiniteElementSpace fespace(&pmesh, &fec);
++
++      ParBilinearForm a(&fespace);
++      a.AddDomainIntegrator(new DivDivIntegrator);
++      a.AddDomainIntegrator(new VectorFEMassIntegrator);
++      a.Assemble();
++
++      ParGridFunction x(&fespace);
++      VectorFunctionCoefficient sin3dCoef(3, sin3d_vec);
++      x.ProjectCoefficient(sin3dCoef);
++      double err0 = x.ComputeL2Error(sin3dCoef);
++
++      ParLinearForm b(&fespace);
++      a.Mult(x, b);
++      x = 0.0;
++
++      OperatorPtr A;
++      Vector B, X;
++      Array<int> ess_tdof_list;
++      a.FormLinearSystem(ess_tdof_list, x, b, A, X, B);
++
++      HypreADS ads(*A.As<HypreParMatrix>(), &fespace);
++      ads.SetPrintLevel(0);
++
++      HyprePCG pcg(MPI_COMM_WORLD);
++      pcg.SetTol(1e-10);
++      pcg.SetMaxIter(2000);
++      pcg.SetPrintLevel(3);
++      pcg.SetPreconditioner(ads);
++      pcg.SetOperator(*A);
++      pcg.Mult(B, X);
++
++      int its = -1;
++      pcg.GetNumIterations(its);
++
++      a.RecoverFEMSolution(X, b, x);
++
++      double err1 = x.ComputeL2Error(sin3dCoef);
++      REQUIRE(fabs(err1 - err0) < 1e-6 * err0);
++   }
++}
++
++#endif // MFEM_USE_MPI
++
++} // namespace mfem
+diff --git a/tests/unit/mesh/test_face_orientations.cpp b/tests/unit/mesh/test_face_orientations.cpp
+new file mode 100644
+index 000000000..ad097d25e
+--- /dev/null
++++ b/tests/unit/mesh/test_face_orientations.cpp
+@@ -0,0 +1,119 @@
++// Copyright (c) 2010-2023, Lawrence Livermore National Security, LLC. Produced
++// at the Lawrence Livermore National Laboratory. All Rights reserved. See files
++// LICENSE and NOTICE for details. LLNL-CODE-806117.
++//
++// This file is part of the MFEM library. For more information and source code
++// availability visit https://mfem.org.
++//
++// MFEM is free software; you can redistribute it and/or modify it under the
++// terms of the BSD-3 license. We welcome feedback and contributions, see file
++// CONTRIBUTING.md for details.
++
++#include "mfem.hpp"
++using namespace mfem;
++
++#include "unit_tests.hpp"
++
++class TestMesh : public Mesh
++{
++public:
++   using Mesh::GetTriOrientation;
++   using Mesh::ComposeTriOrientations;
++   using Mesh::InvertTriOrientation;
++   using Mesh::GetQuadOrientation;
++   using Mesh::ComposeQuadOrientations;
++   using Mesh::InvertQuadOrientation;
++};
++
++void TriPerm(int i, int *v)
++{
++   v[0] = int((i + 1) / 2) % 3;
++   v[1] = (7 - i) % 3;
++   v[2] = (int(i / 2)+ 2) % 3;
++}
++
++int QuadPermGen(int i, int s)
++{
++   if (i % 2 == 0)
++   {
++      return (4 + s - i / 2) % 4;
++   }
++   else
++   {
++      return (4 - s + (i - 1)/2) % 4;
++   }
++}
++
++void QuadPerm(int i, int *v)
++{
++   for (int j=0; j<4; j++)
++   {
++      v[j] = QuadPermGen(i, j);
++   }
++}
++
++TEST_CASE("Face Orientation", "[FaceOrientation]")
++{
++   SECTION("Triangle")
++   {
++      const int va[3] = {0,1,2};
++      int vb[3] = {0,1,2};
++      int vc[3] = {0,1,2};
++
++      for (int i=0; i<6; i++)
++      {
++         TriPerm(i, vb);
++
++         int ori_a_b = TestMesh::GetTriOrientation(va, vb);
++         int ori_b_a = TestMesh::GetTriOrientation(vb, va);
++
++         int inv_ori_a_b = TestMesh::InvertTriOrientation(ori_a_b);
++
++         REQUIRE(inv_ori_a_b == ori_b_a);
++
++         for (int j=0; j<6; j++)
++         {
++            TriPerm(j, vc);
++
++            int ori_b_c = TestMesh::GetTriOrientation(vb, vc);
++
++            int test_ori = TestMesh::ComposeTriOrientations(ori_a_b, ori_b_c);
++
++            int ori_a_c = TestMesh::GetTriOrientation(va, vc);
++
++            REQUIRE(test_ori == ori_a_c);
++         }
++      }
++   }
++   SECTION("Quadrilateral")
++   {
++      const int va[4] = {0,1,2,3};
++      int vb[4] = {0,1,2,3};
++      int vc[4] = {0,1,2,3};
++
++      for (int i=0; i<8; i++)
++      {
++         QuadPerm(i, vb);
++
++         int ori_a_b = TestMesh::GetQuadOrientation(va, vb);
++         int ori_b_a = TestMesh::GetQuadOrientation(vb, va);
++
++         int inv_ori_a_b = TestMesh::InvertQuadOrientation(ori_a_b);
++
++         REQUIRE(inv_ori_a_b == ori_b_a);
++
++         for (int j=0; j<8; j++)
++         {
++            QuadPerm(j, vc);
++
++            int ori_b_c = TestMesh::GetQuadOrientation(vb, vc);
++
++            int test_ori = TestMesh::ComposeQuadOrientations(ori_a_b, ori_b_c);
++
++            int ori_a_c = TestMesh::GetQuadOrientation(va, vc);
++
++            REQUIRE(test_ori == ori_a_c);
++         }
++      }
++   }
++}
+diff --git a/tests/unit/mesh/test_psubmesh.cpp b/tests/unit/mesh/test_psubmesh.cpp
+index 02a98f628..c5057338a 100644
+--- a/tests/unit/mesh/test_psubmesh.cpp
++++ b/tests/unit/mesh/test_psubmesh.cpp
+@@ -21,6 +21,7 @@ namespace ParSubMeshTests
+ enum FECType
+ {
+    H1,
++   ND,
+    L2
+ };
+ 
+@@ -31,6 +32,9 @@ FiniteElementCollection *create_fec(FECType fectype, int p, int dim)
+       case H1:
+          return new H1_FECollection(p, dim);
+          break;
++      case ND:
++         return new ND_FECollection(p, dim);
++         break;
+       case L2:
+          return new L2_FECollection(p, dim, BasisType::GaussLobatto);
+          break;
+@@ -41,6 +45,7 @@ FiniteElementCollection *create_fec(FECType fectype, int p, int dim)
+ 
+ void multidomain_test_2d(FECType fec_type)
+ {
++   constexpr int dim = 2;
+    const int p = 2;
+    double Hy = 1.0;
+    Mesh serial_parent_mesh = Mesh::MakeCartesian2D(5, 5,
+@@ -124,14 +129,17 @@ void multidomain_test_2d(FECType fec_type)
+ 
+    ParFiniteElementSpace parent_fes(&parent_mesh, fec);
+    ParGridFunction parent_gf(&parent_fes);
++   ParGridFunction parent_gf_ex(&parent_fes);
+ 
+    ParFiniteElementSpace domain1_fes(&domain_submesh, fec);
+    ParGridFunction domain1_gf(&domain1_fes);
++   ParGridFunction domain1_gf_ex(&domain1_fes);
+ 
+    FiniteElementCollection *surface_fec = create_fec(fec_type, p,
+                                                      domain_submesh.Dimension());
+    ParFiniteElementSpace boundary1_fes(&boundary_submesh, surface_fec);
+    ParGridFunction boundary1_gf(&boundary1_fes);
++   ParGridFunction boundary1_gf_ex(&boundary1_fes);
+ 
+    auto coeff = FunctionCoefficient([](const Vector &coords)
+    {
+@@ -140,18 +148,33 @@ void multidomain_test_2d(FECType fec_type)
+       return y + 0.05 * sin(x * 2.0 * M_PI);
+    });
+ 
+-   parent_gf.ProjectCoefficient(coeff);
+-
+-   Vector tmp;
++   auto vcoeff = VectorFunctionCoefficient(dim, [](const Vector &coords,
++                                                   Vector &V)
++   {
++      V.SetSize(2);
++      double x = coords(0);
++      double y = coords(1);
+ 
+-   ParGridFunction parent_gf_ex(&parent_fes);
+-   parent_gf_ex.ProjectCoefficient(coeff);
++      V(0) = y + 0.05 * sin(x * 2.0 * M_PI);
++      V(1) = x + 0.05 * sin(y * 2.0 * M_PI);
++   });
+ 
+-   ParGridFunction domain1_gf_ex(&domain1_fes);
+-   domain1_gf_ex.ProjectCoefficient(coeff);
++   if (fec_type == H1 || fec_type == L2)
++   {
++      parent_gf.ProjectCoefficient(coeff);
++      parent_gf_ex.ProjectCoefficient(coeff);
++      domain1_gf_ex.ProjectCoefficient(coeff);
++      boundary1_gf_ex.ProjectCoefficient(coeff);
++   }
++   else
++   {
++      parent_gf.ProjectCoefficient(vcoeff);
++      parent_gf_ex.ProjectCoefficient(vcoeff);
++      domain1_gf_ex.ProjectCoefficient(vcoeff);
++      boundary1_gf_ex.ProjectCoefficient(vcoeff);
++   }
+ 
+-   ParGridFunction boundary1_gf_ex(&boundary1_fes);
+-   boundary1_gf_ex.ProjectCoefficient(coeff);
++   Vector tmp;
+ 
+    auto CHECK_GLOBAL_NORM = [](Vector &v)
+    {
+@@ -182,8 +205,16 @@ void multidomain_test_2d(FECType fec_type)
+    {
+       SECTION("Volume to matching volume")
+       {
+-         parent_gf.ProjectCoefficient(coeff);
+-         domain1_gf.ProjectCoefficient(coeff);
++         if (fec_type == H1 || fec_type == L2)
++         {
++            parent_gf.ProjectCoefficient(coeff);
++            domain1_gf.ProjectCoefficient(coeff);
++         }
++         else
++         {
++            parent_gf.ProjectCoefficient(vcoeff);
++            domain1_gf.ProjectCoefficient(vcoeff);
++         }
+          ParSubMesh::Transfer(domain1_gf, parent_gf);
+          tmp = parent_gf_ex;
+          tmp -= parent_gf;
+@@ -191,7 +222,14 @@ void multidomain_test_2d(FECType fec_type)
+       }
+       SECTION("Surface to matching surface in volume")
+       {
+-         boundary1_gf.ProjectCoefficient(coeff);
++         if (fec_type == H1 || fec_type == L2)
++         {
++            boundary1_gf.ProjectCoefficient(coeff);
++         }
++         else
++         {
++            boundary1_gf.ProjectCoefficient(vcoeff);
++         }
+          ParSubMesh::Transfer(boundary1_gf, parent_gf);
+          tmp = parent_gf_ex;
+          tmp -= parent_gf;
+@@ -204,6 +242,7 @@ void multidomain_test_2d(FECType fec_type)
+ 
+ void multidomain_test_3d(FECType fec_type)
+ {
++   constexpr int dim = 3;
+    const int p = 2;
+    // Circle: sideset 1
+    // Domain boundary: sideset 2
+@@ -241,18 +280,22 @@ void multidomain_test_3d(FECType fec_type)
+ 
+    ParFiniteElementSpace parent_fes(&parent_mesh, fec);
+    ParGridFunction parent_gf(&parent_fes);
++   ParGridFunction parent_gf_ex(&parent_fes);
+ 
+    ParFiniteElementSpace cylinder_fes(&cylinder_submesh, fec);
+    ParGridFunction cylinder_gf(&cylinder_fes);
++   ParGridFunction cylinder_gf_ex(&cylinder_fes);
+ 
+    ParFiniteElementSpace outer_fes(&outer_submesh, fec);
+    ParGridFunction outer_gf(&outer_fes);
++   ParGridFunction outer_gf_ex(&outer_fes);
+ 
+    FiniteElementCollection *surface_fec = create_fec(fec_type, p,
+                                                      cylinder_surface_submesh.Dimension());
+    ParFiniteElementSpace cylinder_surface_fes(&cylinder_surface_submesh,
+                                               surface_fec);
+    ParGridFunction cylinder_surface_gf(&cylinder_surface_fes);
++   ParGridFunction cylinder_surface_gf_ex(&cylinder_surface_fes);
+ 
+    auto coeff = FunctionCoefficient([](const Vector &coords)
+    {
+@@ -262,21 +305,37 @@ void multidomain_test_3d(FECType fec_type)
+       return y + 0.05 * sin(x * 2.0 * M_PI) + z;
+    });
+ 
+-   parent_gf.ProjectCoefficient(coeff);
+-
+-   Vector tmp;
+-
+-   ParGridFunction parent_gf_ex(&parent_fes);
+-   parent_gf_ex.ProjectCoefficient(coeff);
++   auto vcoeff = VectorFunctionCoefficient(dim, [](const Vector &coords,
++                                                   Vector &V)
++   {
++      V.SetSize(3);
++      double x = coords(0);
++      double y = coords(1);
++      double z = coords(2);
+ 
+-   ParGridFunction cylinder_gf_ex(&cylinder_fes);
+-   cylinder_gf_ex.ProjectCoefficient(coeff);
++      V(0) = y + 0.05 * sin(x * 2.0 * M_PI) + z;
++      V(1) = z + 0.05 * sin(y * 2.0 * M_PI) + x;
++      V(2) = x + 0.05 * sin(z * 2.0 * M_PI) + y;
++   });
+ 
+-   ParGridFunction cylinder_surface_gf_ex(&cylinder_surface_fes);
+-   cylinder_surface_gf_ex.ProjectCoefficient(coeff);
++   if (fec_type == H1 || fec_type == L2)
++   {
++      parent_gf.ProjectCoefficient(coeff);
++      parent_gf_ex.ProjectCoefficient(coeff);
++      cylinder_gf_ex.ProjectCoefficient(coeff);
++      cylinder_surface_gf_ex.ProjectCoefficient(coeff);
++      outer_gf_ex.ProjectCoefficient(coeff);
++   }
++   else
++   {
++      parent_gf.ProjectCoefficient(vcoeff);
++      parent_gf_ex.ProjectCoefficient(vcoeff);
++      cylinder_gf_ex.ProjectCoefficient(vcoeff);
++      cylinder_surface_gf_ex.ProjectCoefficient(vcoeff);
++      outer_gf_ex.ProjectCoefficient(vcoeff);
++   }
+ 
+-   ParGridFunction outer_gf_ex(&outer_fes);
+-   outer_gf_ex.ProjectCoefficient(coeff);
++   Vector tmp;
+ 
+    auto CHECK_GLOBAL_NORM = [](Vector &v)
+    {
+@@ -307,8 +366,16 @@ void multidomain_test_3d(FECType fec_type)
+    {
+       SECTION("Volume to matching volume")
+       {
+-         parent_gf.ProjectCoefficient(coeff);
+-         cylinder_gf.ProjectCoefficient(coeff);
++         if (fec_type == H1 || fec_type == L2)
++         {
++            parent_gf.ProjectCoefficient(coeff);
++            cylinder_gf.ProjectCoefficient(coeff);
++         }
++         else
++         {
++            parent_gf.ProjectCoefficient(vcoeff);
++            cylinder_gf.ProjectCoefficient(vcoeff);
++         }
+          ParSubMesh::Transfer(cylinder_gf, parent_gf);
+          tmp = parent_gf_ex;
+          tmp -= parent_gf;
+@@ -316,7 +383,14 @@ void multidomain_test_3d(FECType fec_type)
+       }
+       SECTION("Volume to matching volume")
+       {
+-         outer_gf.ProjectCoefficient(coeff);
++         if (fec_type == H1 || fec_type == L2)
++         {
++            outer_gf.ProjectCoefficient(coeff);
++         }
++         else
++         {
++            outer_gf.ProjectCoefficient(vcoeff);
++         }
+          ParSubMesh::Transfer(outer_gf, parent_gf);
+          tmp = parent_gf_ex;
+          tmp -= parent_gf;
+@@ -324,7 +398,14 @@ void multidomain_test_3d(FECType fec_type)
+       }
+       SECTION("Surface to matching surface in volume")
+       {
+-         cylinder_surface_gf.ProjectCoefficient(coeff);
++         if (fec_type == H1 || fec_type == L2)
++         {
++            cylinder_surface_gf.ProjectCoefficient(coeff);
++         }
++         else
++         {
++            cylinder_surface_gf.ProjectCoefficient(vcoeff);
++         }
+          ParSubMesh::Transfer(cylinder_surface_gf, parent_gf);
+          tmp = parent_gf_ex;
+          tmp -= parent_gf;
+@@ -335,9 +416,18 @@ void multidomain_test_3d(FECType fec_type)
+    {
+       SECTION("Volume to matching volume")
+       {
+-         cylinder_gf.ProjectCoefficient(coeff);
+-         outer_gf.ProjectCoefficient(coeff);
+-         outer_gf_ex.ProjectCoefficient(coeff);
++         if (fec_type == H1 || fec_type == L2)
++         {
++            cylinder_gf.ProjectCoefficient(coeff);
++            outer_gf.ProjectCoefficient(coeff);
++            outer_gf_ex.ProjectCoefficient(coeff);
++         }
++         else
++         {
++            cylinder_gf.ProjectCoefficient(vcoeff);
++            outer_gf.ProjectCoefficient(vcoeff);
++            outer_gf_ex.ProjectCoefficient(vcoeff);
++         }
+          ParSubMesh::Transfer(cylinder_gf, outer_gf);
+          tmp = outer_gf_ex;
+          tmp -= outer_gf;
+@@ -345,9 +435,18 @@ void multidomain_test_3d(FECType fec_type)
+       }
+       SECTION("Volume to matching surface on volume")
+       {
+-         cylinder_gf.ProjectCoefficient(coeff);
+-         outer_gf.ProjectCoefficient(coeff);
+-         cylinder_gf_ex.ProjectCoefficient(coeff);
++         if (fec_type == H1 || fec_type == L2)
++         {
++            cylinder_gf.ProjectCoefficient(coeff);
++            outer_gf.ProjectCoefficient(coeff);
++            cylinder_gf_ex.ProjectCoefficient(coeff);
++         }
++         else
++         {
++            cylinder_gf.ProjectCoefficient(vcoeff);
++            outer_gf.ProjectCoefficient(vcoeff);
++            cylinder_gf_ex.ProjectCoefficient(vcoeff);
++         }
+          ParSubMesh::Transfer(outer_gf, cylinder_gf);
+          tmp = cylinder_gf_ex;
+          tmp -= cylinder_gf;
+@@ -356,8 +455,16 @@ void multidomain_test_3d(FECType fec_type)
+ 
+       SECTION("Volume to matching surface")
+       {
+-         cylinder_gf.ProjectCoefficient(coeff);
+-         cylinder_surface_gf_ex.ProjectCoefficient(coeff);
++         if (fec_type == H1 || fec_type == L2)
++         {
++            cylinder_gf.ProjectCoefficient(coeff);
++            cylinder_surface_gf_ex.ProjectCoefficient(coeff);
++         }
++         else
++         {
++            cylinder_gf.ProjectCoefficient(vcoeff);
++            cylinder_surface_gf_ex.ProjectCoefficient(vcoeff);
++         }
+          ParSubMesh::Transfer(cylinder_gf, cylinder_surface_gf);
+          tmp = cylinder_surface_gf_ex;
+          tmp -= cylinder_surface_gf;
+@@ -370,7 +477,7 @@ void multidomain_test_3d(FECType fec_type)
+ 
+ TEST_CASE("ParSubMesh", "[Parallel],[ParSubMesh]")
+ {
+-   auto fec_type = GENERATE(FECType::H1, FECType::L2);
++   auto fec_type = GENERATE(FECType::H1, FECType::ND, FECType::L2);
+    multidomain_test_2d(fec_type);
+    multidomain_test_3d(fec_type);
+ }
+diff --git a/tests/unit/mesh/test_submesh.cpp b/tests/unit/mesh/test_submesh.cpp
+index 590f706d2..325f51977 100644
+--- a/tests/unit/mesh/test_submesh.cpp
++++ b/tests/unit/mesh/test_submesh.cpp
+@@ -19,6 +19,7 @@ using namespace mfem;
+ enum FECType
+ {
+    H1,
++   ND,
+    L2
+ };
+ enum FieldType
+@@ -39,6 +40,9 @@ FiniteElementCollection *create_fec(FECType fec_type, int p, int dim)
+       case H1:
+          return new H1_FECollection(p, dim);
+          break;
++      case ND:
++         return new ND_FECollection(p, dim);
++         break;
+       case L2:
+          return new L2_FECollection(p, dim, BasisType::GaussLobatto);
+          break;
+@@ -56,7 +60,8 @@ void test_2d(Element::Type element_type,
+              SubMesh::From from)
+ {
+    constexpr int dim = 2;
+-   const int vdim = (field_type == FieldType::SCALAR) ? 1 : dim;
++   const int vdim = (field_type == FieldType::SCALAR ||
++                     fec_type == ND) ? 1 : dim;
+    double Hy = 1.0;
+    Mesh mesh = Mesh::MakeCartesian2D(5, 5, element_type, true, 1.0, Hy, false);
+ 
+@@ -176,7 +181,7 @@ void test_2d(Element::Type element_type,
+    {
+       GridFunction sub_ex_gf(&sub_fes);
+ 
+-      if (vdim == 1)
++      if (vdim == 1 && (fec_type == H1 || fec_type == L2))
+       {
+          parent_gf.ProjectCoefficient(coeff);
+          sub_ex_gf.ProjectCoefficient(coeff);
+@@ -188,6 +193,8 @@ void test_2d(Element::Type element_type,
+       }
+       SubMesh::Transfer(parent_gf, sub_gf);
+ 
++      REQUIRE(sub_gf.Norml2() != 0.0);
++
+       sub_gf -= sub_ex_gf;
+       REQUIRE(sub_gf.Norml2() < 1e-10);
+    }
+@@ -195,7 +202,7 @@ void test_2d(Element::Type element_type,
+    {
+       GridFunction parent_ex_gf(&parent_fes);
+ 
+-      if (vdim == 1)
++      if (vdim == 1 && (fec_type == H1 || fec_type == L2))
+       {
+          parent_gf.ProjectCoefficient(coeff);
+          sub_gf.ProjectCoefficient(coeff);
+@@ -210,6 +217,8 @@ void test_2d(Element::Type element_type,
+ 
+       SubMesh::Transfer(sub_gf, parent_gf);
+ 
++      REQUIRE(parent_gf.Norml2() != 0.0);
++
+       parent_gf -= parent_ex_gf;
+       REQUIRE(parent_gf.Norml2() < 1e-10);
+    }
+@@ -227,7 +236,8 @@ void test_3d(Element::Type element_type,
+              SubMesh::From from)
+ {
+    constexpr int dim = 3;
+-   const int vdim = (field_type == FieldType::SCALAR) ? 1 : dim;
++   const int vdim = (field_type == FieldType::SCALAR ||
++                     fec_type == ND) ? 1 : dim;
+    double Hy = 1.0;
+    Mesh mesh = Mesh::MakeCartesian3D(5, 5, 5, element_type, 1.0, Hy, 1.0, false);
+ 
+@@ -351,7 +361,7 @@ void test_3d(Element::Type element_type,
+    {
+       GridFunction sub_ex_gf(&sub_fes);
+ 
+-      if (vdim == 1)
++      if (vdim == 1 && (fec_type == H1 || fec_type == L2))
+       {
+          parent_gf.ProjectCoefficient(coeff);
+          sub_ex_gf.ProjectCoefficient(coeff);
+@@ -372,7 +382,7 @@ void test_3d(Element::Type element_type,
+    {
+       GridFunction parent_ex_gf(&parent_fes);
+ 
+-      if (vdim == 1)
++      if (vdim == 1 && (fec_type == H1 || fec_type == L2))
+       {
+          parent_gf.ProjectCoefficient(coeff);
+          sub_gf.ProjectCoefficient(coeff);
+@@ -401,13 +411,17 @@ TEST_CASE("SubMesh", "[SubMesh]")
+ {
+    int polynomial_order = 4;
+    int mesh_polynomial_order = 2;
+-   auto fec_type = GENERATE(FECType::H1, FECType::L2);
++   auto fec_type = GENERATE(FECType::H1, FECType::ND, FECType::L2);
+    auto field_type = GENERATE(FieldType::SCALAR, FieldType::VECTOR);
+    auto transfer_type = GENERATE(TransferType::ParentToSub,
+                                  TransferType::SubToParent);
+    auto from = GENERATE(SubMesh::From::Domain,
+                         SubMesh::From::Boundary);
+ 
++   if (fec_type == FECType::ND && field_type == FieldType::VECTOR)
++   {
++      return;
++   }
+    SECTION("2D")
+    {
+       auto element = GENERATE(Element::QUADRILATERAL, Element::TRIANGLE);
+@@ -421,7 +435,8 @@ TEST_CASE("SubMesh", "[SubMesh]")
+ 
+    SECTION("3D")
+    {
+-      auto element = GENERATE(Element::HEXAHEDRON, Element::TETRAHEDRON);
++      auto element = GENERATE(Element::HEXAHEDRON, Element::TETRAHEDRON,
++                              Element::WEDGE);
+       if (fec_type == FECType::L2 &&
+           from == SubMesh::From::Boundary && false)
+       {
