@@ -23,7 +23,7 @@ jobs:
             with-64bit-int: int32
             with-openmp: serial
             with-solver: superlu
-            with-eigensolver: slepc
+            with-eigensolver: arpack
 
     runs-on: palace_ubuntu-latest_16-core
     steps:
