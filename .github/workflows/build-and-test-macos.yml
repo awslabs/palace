@@ -16,32 +16,32 @@ jobs:
       fail-fast: false
       matrix:
         include:  # Pairwise testing
-          - compiler: gcc
-            mpi: mpich
-            math-libs: openblas
-            build-shared: false
-            with-64bit-int: true
-            with-openmp: true
-            with-solver: strumpack
-            with-eigensolver: slepc
-
           - compiler: clang
             mpi: openmpi
             math-libs: openblas
-            build-shared: false
-            with-64bit-int: true
-            with-openmp: false
+            build-shared: shared
+            with-64bit-int: int32
+            with-openmp: serial
             with-solver: superlu
             with-eigensolver: slepc
 
           - compiler: gcc
-            mpi: mpich
+            mpi: openmpi
             math-libs: openblas
-            build-shared: true
-            with-64bit-int: false
-            with-openmp: false
+            build-shared: static
+            with-64bit-int: int64
+            with-openmp: openmp
             with-solver: superlu
             with-eigensolver: arpack
+
+          - compiler: gcc
+            mpi: mpich
+            math-libs: openblas
+            build-shared: static
+            with-64bit-int: int32
+            with-openmp: openmp
+            with-solver: strumpack
+            with-eigensolver: slepc
 
     runs-on: macos-latest-xl
     steps:
@@ -90,6 +90,10 @@ jobs:
             NUM_PROC_BUILD=$NUM_PROC_BUILD_MAX
           fi
 
+          [[ "${{ matrix.build-shared }}" == 'shared' ]] && BUILD_SHARED='ON' || BUILD_SHARED='OFF'
+          [[ "${{ matrix.with-64bit-int }}" == 'int64' ]] && WITH_INT64='ON' || WITH_INT64='OFF'
+          [[ "${{ matrix.with-openmp }}" == 'openmp' ]] && WITH_OPENMP='ON' || WITH_OPENMP='OFF'
+
           [[ "${{ matrix.with-solver }}" == 'superlu' ]] && WITH_SUPERLU='ON' || WITH_SUPERLU='OFF'
           [[ "${{ matrix.with-solver }}" == 'strumpack' ]] && WITH_STRUMPACK='ON' || WITH_STRUMPACK='OFF'
           [[ "${{ matrix.with-solver }}" == 'mumps' ]] && WITH_MUMPS='ON' || WITH_MUMPS='OFF'
@@ -100,9 +104,9 @@ jobs:
           mkdir palace-build && cd palace-build
           cmake .. \
             -DCMAKE_INSTALL_PREFIX=$(pwd)/../palace-install \
-            -DBUILD_SHARED_LIBS=${{ matrix.build-shared }} \
-            -DPALACE_WITH_64BIT_INT=${{ matrix.with-64bit-int }} \
-            -DPALACE_WITH_OPENMP=${{ matrix.with-openmp }} \
+            -DBUILD_SHARED_LIBS=$BUILD_SHARED \
+            -DPALACE_WITH_64BIT_INT=$WITH_INT64 \
+            -DPALACE_WITH_OPENMP=$WITH_OPENMP \
             -DPALACE_WITH_SUPERLU=$WITH_SUPERLU \
             -DPALACE_WITH_STRUMPACK=$WITH_STRUMPACK \
             -DPALACE_WITH_MUMPS=$WITH_MUMPS \
@@ -120,7 +124,7 @@ jobs:
             NUM_PROC_TEST=$NUM_PROC_TEST_MAX
           fi
           export PATH=$(pwd)/palace-install/bin:$PATH
-          if [[ "${{ matrix.build-shared }}" == 'true' ]]; then
+          if [[ "${{ matrix.build-shared }}" == 'shared' ]]; then
             export DYLD_LIBRARY_PATH=$(pwd)/palace-install/lib:$DYLD_LIBRARY_PATH
           fi
 

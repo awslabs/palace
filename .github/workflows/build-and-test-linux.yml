@@ -16,67 +16,76 @@ jobs:
       fail-fast: false
       matrix:
         include:  # Pairwise testing
-          - compiler: intel
-            mpi: intelmpi
-            math-libs: intelmkl
-            build-shared: true
-            with-64bit-int: false
-            with-openmp: false
+          - compiler: gcc
+            mpi: mpich
+            math-libs: aocl
+            build-shared: static
+            with-64bit-int: int64
+            with-openmp: openmp
+            with-solver: strumpack
+            with-eigensolver: arpack
+
+          - compiler: clang
+            mpi: mpich
+            math-libs: aocl
+            build-shared: shared
+            with-64bit-int: int64
+            with-openmp: serial
+            with-solver: superlu
+            with-eigensolver: arpack
+
+          - compiler: gcc
+            mpi: openmpi
+            math-libs: openblas
+            build-shared: shared
+            with-64bit-int: int32
+            with-openmp: openmp
             with-solver: strumpack
             with-eigensolver: slepc
 
           - compiler: intel
             mpi: intelmpi
             math-libs: intelmkl
-            build-shared: false
-            with-64bit-int: false
-            with-openmp: true
+            build-shared: static
+            with-64bit-int: int64
+            with-openmp: openmp
             with-solver: superlu
+            with-eigensolver: slepc
+
+          - compiler: intel
+            mpi: intelmpi
+            math-libs: intelmkl
+            build-shared: static
+            with-64bit-int: int32
+            with-openmp: serial
+            with-solver: strumpack
+            with-eigensolver: arpack
+
+          - compiler: intel
+            mpi: intelmpi
+            math-libs: intelmkl
+            build-shared: shared
+            with-64bit-int: int32
+            with-openmp: openmp
+            with-solver: strumpack
+            with-eigensolver: slepc
+
+          - compiler: gcc
+            mpi: openmpi
+            math-libs: aocl
+            build-shared: static
+            with-64bit-int: int32
+            with-openmp: serial
+            with-solver: strumpack
             with-eigensolver: slepc
 
           - compiler: clang
             mpi: mpich
             math-libs: aocl
-            build-shared: true
-            with-64bit-int: false
-            with-openmp: false
+            build-shared: static
+            with-64bit-int: int32
+            with-openmp: serial
             with-solver: superlu
-            with-eigensolver: slepc
-
-          - compiler: intel
-            mpi: intelmpi
-            math-libs: intelmkl
-            build-shared: true
-            with-64bit-int: true
-            with-openmp: false
-            with-solver: superlu
-            with-eigensolver: arpack
-
-          - compiler: gcc
-            mpi: openmpi
-            math-libs: aocl
-            build-shared: true
-            with-64bit-int: true
-            with-openmp: true
-            with-solver: strumpack
-            with-eigensolver: arpack
-
-          - compiler: gcc
-            mpi: openmpi
-            math-libs: aocl
-            build-shared: false
-            with-64bit-int: false
-            with-openmp: false
-            with-solver: superlu
-            with-eigensolver: slepc
-
-          - compiler: gcc
-            mpi: mpich
-            math-libs: openblas
-            build-shared: true
-            with-64bit-int: true
-            with-openmp: true
-            with-solver: strumpack
             with-eigensolver: slepc
 
     runs-on: palace_ubuntu-latest_16-core
@@ -108,7 +117,7 @@ jobs:
       - name: Install math libraries (OpenBLAS)
         if: matrix.math-libs == 'openblas'
         run: |
-          if [[ "${{ matrix.with-openmp }}" == 'true' ]]; then
+          if [[ "${{ matrix.with-openmp }}" == 'openmp' ]]; then
             sudo apt-get install -y libopenblas-openmp-dev
           else
             sudo apt-get install -y libopenblas-serial-dev
@@ -124,7 +133,7 @@ jobs:
         run: |
           wget https://github.com/amd/blis/archive/refs/tags/4.0.tar.gz
           tar -xzf 4.0.tar.gz && cd blis-4.0
-          [[ "${{ matrix.with-openmp }}" == 'true' ]] && THREADING='openmp' || THREADING='no'
+          [[ "${{ matrix.with-openmp }}" == 'openmp' ]] && THREADING='openmp' || THREADING='no'
           ./configure --prefix=/opt/amd \
                       --enable-arg-max-hack \
                       --disable-static --enable-shared \
@@ -176,6 +185,10 @@ jobs:
             NUM_PROC_BUILD=$NUM_PROC_BUILD_MAX
           fi
 
+          [[ "${{ matrix.build-shared }}" == 'shared' ]] && BUILD_SHARED='ON' || BUILD_SHARED='OFF'
+          [[ "${{ matrix.with-64bit-int }}" == 'int64' ]] && WITH_INT64='ON' || WITH_INT64='OFF'
+          [[ "${{ matrix.with-openmp }}" == 'openmp' ]] && WITH_OPENMP='ON' || WITH_OPENMP='OFF'
+
           [[ "${{ matrix.with-solver }}" == 'superlu' ]] && WITH_SUPERLU='ON' || WITH_SUPERLU='OFF'
           [[ "${{ matrix.with-solver }}" == 'strumpack' ]] && WITH_STRUMPACK='ON' || WITH_STRUMPACK='OFF'
           [[ "${{ matrix.with-solver }}" == 'mumps' ]] && WITH_MUMPS='ON' || WITH_MUMPS='OFF'
@@ -186,9 +199,9 @@ jobs:
           mkdir palace-build && cd palace-build
           cmake .. \
             -DCMAKE_INSTALL_PREFIX=$(pwd)/../palace-install \
-            -DBUILD_SHARED_LIBS=${{ matrix.build-shared }} \
-            -DPALACE_WITH_64BIT_INT=${{ matrix.with-64bit-int }} \
-            -DPALACE_WITH_OPENMP=${{ matrix.with-openmp }} \
+            -DBUILD_SHARED_LIBS=$BUILD_SHARED \
+            -DPALACE_WITH_64BIT_INT=$WITH_INT64 \
+            -DPALACE_WITH_OPENMP=$WITH_OPENMP \
             -DPALACE_WITH_SUPERLU=$WITH_SUPERLU \
             -DPALACE_WITH_STRUMPACK=$WITH_STRUMPACK \
             -DPALACE_WITH_MUMPS=$WITH_MUMPS \
@@ -215,7 +228,7 @@ jobs:
             export AOCLROOT=/opt/amd
             export LD_LIBRARY_PATH=$AOCLROOT/lib:$LD_LIBRARY_PATH
           fi
-          if [[ "${{ matrix.build-shared }}" == 'true' ]]; then
+          if [[ "${{ matrix.build-shared }}" == 'shared' ]]; then
             export LD_LIBRARY_PATH=$(pwd)/palace-install/lib:$(pwd)/palace-install/lib64:$LD_LIBRARY_PATH
           fi
 
