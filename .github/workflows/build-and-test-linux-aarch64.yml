@@ -19,9 +19,9 @@ jobs:
           - compiler: clang
             mpi: mpich
             math-libs: openblas
-            build-shared: false
-            with-64bit-int: false
-            with-openmp: false
+            build-shared: static
+            with-64bit-int: int32
+            with-openmp: serial
             with-solver: superlu
             with-eigensolver: slepc
 
@@ -54,7 +54,7 @@ jobs:
 
             # Install math libraries (OpenBLAS)
             if [[ "${{ matrix.math-libs }}" == 'openblas' ]]; then
-              if [[ "${{ matrix.with-openmp }}" == 'true' ]]; then
+              if [[ "${{ matrix.with-openmp }}" == 'openmp' ]]; then
                 apt-get install -y libopenblas-openmp-dev
               else
                 apt-get install -y libopenblas-serial-dev
@@ -86,6 +86,10 @@ jobs:
               NUM_PROC_BUILD=$NUM_PROC_BUILD_MAX
             fi
 
+            [[ "${{ matrix.build-shared }}" == 'shared' ]] && BUILD_SHARED='ON' || BUILD_SHARED='OFF'
+            [[ "${{ matrix.with-64bit-int }}" == 'int64' ]] && WITH_INT64='ON' || WITH_INT64='OFF'
+            [[ "${{ matrix.with-openmp }}" == 'openmp' ]] && WITH_OPENMP='ON' || WITH_OPENMP='OFF'
+
             [[ "${{ matrix.with-solver }}" == 'superlu' ]] && WITH_SUPERLU='ON' || WITH_SUPERLU='OFF'
             [[ "${{ matrix.with-solver }}" == 'strumpack' ]] && WITH_STRUMPACK='ON' || WITH_STRUMPACK='OFF'
             [[ "${{ matrix.with-solver }}" == 'mumps' ]] && WITH_MUMPS='ON' || WITH_MUMPS='OFF'
@@ -96,9 +100,9 @@ jobs:
             mkdir palace-build && cd palace-build
             cmake .. \
               -DCMAKE_INSTALL_PREFIX=/opt/palace \
-              -DBUILD_SHARED_LIBS=${{ matrix.build-shared }} \
-              -DPALACE_WITH_64BIT_INT=${{ matrix.with-64bit-int }} \
-              -DPALACE_WITH_OPENMP=${{ matrix.with-openmp }} \
+              -DBUILD_SHARED_LIBS=$BUILD_SHARED \
+              -DPALACE_WITH_64BIT_INT=$WITH_INT64 \
+              -DPALACE_WITH_OPENMP=$WITH_OPENMP \
               -DPALACE_WITH_SUPERLU=$WITH_SUPERLU \
               -DPALACE_WITH_STRUMPACK=$WITH_STRUMPACK \
               -DPALACE_WITH_MUMPS=$WITH_MUMPS \
@@ -115,7 +119,7 @@ jobs:
             #   NUM_PROC_TEST=$NUM_PROC_TEST_MAX
             # fi
             # export PATH=/opt/palace/bin:/opt/julia/julia-1.8.4/bin:$PATH
-            # if [[ "${{ matrix.build-shared }}" == 'true' ]]; then
+            # if [[ "${{ matrix.build-shared }}" == 'shared' ]]; then
             #   export LD_LIBRARY_PATH="${LD_LIBRARY_PATH:+LD_LIBRARY_PATH:}/opt/palace/lib:/opt/palace/lib64"
             # fi
 
