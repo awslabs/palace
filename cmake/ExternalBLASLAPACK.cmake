@@ -163,7 +163,6 @@ else()
     set(OPENBLAS_DIR)
   endif()
   list(APPEND CMAKE_PREFIX_PATH ${OPENBLAS_DIR})
-  set(BLA_VENDOR OpenBLAS)
   find_package(BLAS REQUIRED)
   find_package(LAPACK REQUIRED)
   set(_BLAS_LAPACK_LIBRARIES ${LAPACK_LIBRARIES} ${BLAS_LIBRARIES})
@@ -180,7 +179,7 @@ else()
     HINTS ${_BLAS_LAPACK_DIRS}
     REQUIRED
   )
-  message(STATUS "Using BLAS/LAPACK from OpenBLAS")
+  message(STATUS "Using BLAS/LAPACK located by CMake")
 endif()
 
 set(BLAS_LAPACK_LIBRARIES ${_BLAS_LAPACK_LIBRARIES} CACHE STRING "List of library files for BLAS/LAPACK")
