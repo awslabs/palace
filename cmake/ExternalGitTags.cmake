@@ -56,8 +56,28 @@ set(EXTERN_HYPRE_URL
   "URL for external HYPRE build"
 )
 set(EXTERN_HYPRE_GIT_TAG
-  "7ff7f2f60df4c132ae38a72fc3033d5b2fbe411f" CACHE STRING  # 05/39/2023
+  "7ff7f2f60df4c132ae38a72fc3033d5b2fbe411f" CACHE STRING  # 05/29/2023
   "Git tag for external HYPRE build"
+)
+
+# libCEED
+set(EXTERN_LIBCEED_URL
+  "https://github.com/CEED/libCEED.git" CACHE STRING
+  "URL for external libCEED build"
+)
+set(EXTERN_LIBCEED_GIT_TAG
+  "42cd7ab0703ee75581ba9a7f70917ba59a9eee2e" CACHE STRING  # main @ 06/05/2023
+  "Git tag for external libCEED build"
+)
+
+# LIBXSMM (for libCEED)
+set(EXTERN_LIBXSMM_URL
+  "https://github.com/hfp/libxsmm.git" CACHE STRING
+  "URL for external LIBXSMM build"
+)
+set(EXTERN_LIBXSMM_GIT_TAG
+  "98be791e8a4e996e017edb37347fb9bb4c4c5dc9" CACHE STRING  # 06/01/2023
+  "Git tag for external LIBXSMM build"
 )
 
 # METIS

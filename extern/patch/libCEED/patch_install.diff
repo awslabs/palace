@@ -1,0 +1,125 @@
+diff --git a/.clang-format b/.clang-format
+index 6df301e2..28ea5956 100644
+--- a/.clang-format
++++ b/.clang-format
+@@ -6,6 +6,9 @@ AlignConsecutiveAssignments:  Consecutive
+ AlignConsecutiveDeclarations: Consecutive
+ AlignEscapedNewlines:         true
+ AlignOperands:                Align
++AlignTrailingComments:
++  Kind:                       Always
++  OverEmptyLines:             0
+ AllowShortIfStatementsOnASingleLine: AllIfsAndElse
+ ColumnLimit:                  150
+ CommentPragmas:               'TESTARGS'
+diff --git a/Makefile b/Makefile
+index 7cef024c..c1187812 100644
+--- a/Makefile
++++ b/Makefile
+@@ -671,7 +671,7 @@ install : $(libceed) $(OBJDIR)/ceed.pc
+ 	$(INSTALL_DATA) include/ceed/hip.h "$(DESTDIR)$(includedir)/ceed/"
+ 	$(INSTALL_DATA) include/ceed/hash.h "$(DESTDIR)$(includedir)/ceed/"
+ 	$(INSTALL_DATA) include/ceed/khash.h "$(DESTDIR)$(includedir)/ceed/"
+-	$(INSTALL_DATA) $(libceed) "$(DESTDIR)$(libdir)/"
++	$(INSTALL)      $(libceed) "$(DESTDIR)$(libdir)/"
+ 	$(INSTALL_DATA) $(OBJDIR)/ceed.pc "$(DESTDIR)$(pkgconfigdir)/"
+ 	$(INSTALL_DATA) include/ceed.h "$(DESTDIR)$(includedir)/"
+ 	$(INSTALL_DATA) include/ceedf.h "$(DESTDIR)$(includedir)/"
+diff --git a/backends/cuda-gen/ceed-cuda-gen-operator.c b/backends/cuda-gen/ceed-cuda-gen-operator.c
+index f66ca5d8..43ec4006 100644
+--- a/backends/cuda-gen/ceed-cuda-gen-operator.c
++++ b/backends/cuda-gen/ceed-cuda-gen-operator.c
+@@ -155,7 +155,6 @@ static int CeedOperatorApplyAdd_Cuda_gen(CeedOperator op, CeedVector input_vec,
+   CeedCallBackend(CeedQFunctionGetInnerContextData(qf, CEED_MEM_DEVICE, &qf_data->d_c));
+ 
+   // Apply operator
+-
+   void         *opargs[]  = {(void *)&num_elem, &qf_data->d_c, &data->indices, &data->fields, &data->B, &data->G, &data->W};
+   const CeedInt dim       = data->dim;
+   const CeedInt Q_1d      = data->Q_1d;
+diff --git a/backends/hip-ref/ceed-hip-ref.h b/backends/hip-ref/ceed-hip-ref.h
+index 450c15b9..3980b7f8 100644
+--- a/backends/hip-ref/ceed-hip-ref.h
++++ b/backends/hip-ref/ceed-hip-ref.h
+@@ -13,8 +13,6 @@
+ #include <ceed/jit-source/hip/hip-types.h>
+ #include <hip/hip_runtime.h>
+ 
+-#include "../hip/ceed-hip-common.h"
+-
+ typedef struct {
+   CeedScalar *h_array;
+   CeedScalar *h_array_borrowed;
+diff --git a/doc/sphinx/source/releasenotes.md b/doc/sphinx/source/releasenotes.md
+index 988ac7e7..e89c3e45 100644
+--- a/doc/sphinx/source/releasenotes.md
++++ b/doc/sphinx/source/releasenotes.md
+@@ -16,6 +16,8 @@ For example, `CeedOperatorContextGetFieldLabel` was renamed to `CeedOperatorGetC
+ - Added {c:func}`CeedOperatorGetFieldByName` to access a specific `CeedOperatorField` by its name
+ - Update `/cpu/self/memcheck/*` backends to help verify `CeedVector` array access assumptions and `CeedQFunction` user output assumptions.
+ - Update {c:func}`CeedOperatorLinearAssembleDiagonal` to provide default implementation that supports `CeedOperator` with multiple active bases.
++- XX TODO CHANGELOG H(curl) BASIS {c:func}`CeedBasisCreateHcurl`
++- XX TODO CHANGELOG H(curl) ELEM RESTRICTION {c:func}`CeedElemRestrictionCreateCurlOriented`
+ 
+ ### Examples
+ 
+diff --git a/interface/ceed.c b/interface/ceed.c
+index 88e24d2b..e2c5d15d 100644
+--- a/interface/ceed.c
++++ b/interface/ceed.c
+@@ -28,10 +28,8 @@ static struct {
+ } backends[32];
+ static size_t num_backends;
+ 
+-#define CEED_FTABLE_ENTRY(class, method)                     \
+-  {                                                          \
+-#class #method, offsetof(struct class##_private, method) \
+-  }
++#define CEED_FTABLE_ENTRY(class, method) \
++  { #class #method, offsetof(struct class##_private, method) }
+ /// @endcond
+ 
+ /// @file
+diff --git a/julia/LibCEED.jl/Project.toml b/julia/LibCEED.jl/Project.toml
+index 51a2e016..c556cf29 100644
+--- a/julia/LibCEED.jl/Project.toml
++++ b/julia/LibCEED.jl/Project.toml
+@@ -30,3 +30,6 @@ Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+ 
+ [targets]
+ test = ["Test"]
++
++[preferences.libCEED_jll]
++libceed_path = "/Users/sjg/Downloads/code/libCEED/lib/libceed.dylib"
+diff --git a/julia/LibCEED.jl/test/Project.toml b/julia/LibCEED.jl/test/Project.toml
+index 96e40690..71080be5 100644
+--- a/julia/LibCEED.jl/test/Project.toml
++++ b/julia/LibCEED.jl/test/Project.toml
+@@ -9,3 +9,6 @@ Preferences = "21216c6a-2e73-6563-6e65-726566657250"
+ StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
+ Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+ libCEED_jll = "762fde13-7596-547b-826d-8223c52d51c1"
++
++[preferences.libCEED_jll]
++libceed_path = "/Users/sjg/Downloads/code/libCEED/lib/libceed.dylib"
+diff --git a/tests/junit.py b/tests/junit.py
+index 6978dad9..a25a3d0e 100755
+--- a/tests/junit.py
++++ b/tests/junit.py
+@@ -118,6 +118,16 @@ def run(test, backends, mode):
+                                      stderr=proc.stderr)
+                 ref_stdout = os.path.join('tests/output', test + '.out')
+ 
++
++
++            ##XX TODO WORKING
++            print("TEST stdout:")
++            print(proc.stdout)
++            print("TEST stderr:")
++            print(proc.stderr)
++
++
++
+             # check for allowed errors
+             if not test_case.is_skipped() and proc.stderr:
+                 if 'OCCA backend failed to use' in proc.stderr:
