@@ -22,6 +22,11 @@ class Palace(CMakePackage):
     variant("int64", default=False, description="Use 64 bit integers")
     variant("openmp", default=False, description="Use OpenMP")
     variant(
+        "libceed",
+        default=True,
+        description="Build with libCEED library for high-order partial assembly support",
+    )
+    variant(
         "gslib",
         default=True,
         description="Build with GSLIB library for high-order field interpolation",
@@ -93,8 +98,9 @@ class Palace(CMakePackage):
         depends_on("arpack-ng+shared", when="+shared")
         depends_on("arpack-ng~shared", when="~shared")
 
-    # Conflicts: Palace always builds its own internal MFEM, GSLIB
+    # Conflicts: Palace always builds its own internal MFEM, libCEED, and GSLIB
     conflicts("^mfem", msg="Palace builds its own internal MFEM")
+    conflicts("^libceed", msg="Palace builds its own internal libCEED")
     conflicts("^gslib", msg="Palace builds its own internal GSLIB")
 
     # More dependency variant conflicts
@@ -110,6 +116,7 @@ class Palace(CMakePackage):
             self.define_from_variant("BUILD_SHARED_LIBS", "shared"),
             self.define_from_variant("PALACE_WITH_64BIT_INT", "int64"),
             self.define_from_variant("PALACE_WITH_OPENMP", "openmp"),
+            self.define_from_variant("PALACE_WITH_LIBCEED", "libceed"),
             self.define_from_variant("PALACE_WITH_GSLIB", "gslib"),
             self.define_from_variant("PALACE_WITH_SUPERLU", "superlu-dist"),
             self.define_from_variant("PALACE_WITH_STRUMPACK", "strumpack"),
