@@ -20,6 +20,9 @@ if(PALACE_BUILD_EXTERNAL_DEPS)
 else()
   set(MFEM_DEPENDENCIES)
 endif()
+if(PALACE_WITH_LIBCEED)
+  list(APPEND MFEM_DEPENDENCIES libCEED)
+endif()
 if(PALACE_WITH_GSLIB)
   list(APPEND MFEM_DEPENDENCIES gslib)
 endif()
@@ -79,6 +82,15 @@ if(NOT "${BLAS_LAPACK_LIBRARIES}" STREQUAL "")
   list(APPEND MFEM_OPTIONS
     "-DBLAS_LIBRARIES=${BLAS_LAPACK_LIBRARIES}"
     "-DLAPACK_LIBRARIES=${BLAS_LAPACK_LIBRARIES}"
+  )
+endif()
+
+# MFEM with libCEED is always built internally
+if(PALACE_WITH_LIBCEED)
+  list(APPEND MFEM_OPTIONS
+    "-DMFEM_USE_CEED=YES"
+    "-DCEED_DIR=${CMAKE_INSTALL_PREFIX}"
+    "-DlibCEED_REQUIRED_PACKAGES=BLAS"
   )
 endif()
 
@@ -250,7 +262,9 @@ ExternalProject_Add(mfem
   PREFIX            ${CMAKE_BINARY_DIR}/extern/mfem-cmake
   UPDATE_COMMAND    ""
   PATCH_COMMAND
-    git reset --hard && git clean -fd && git apply "${MFEM_PATCH_FILES}"
+    git reset --hard &&
+    git clean -fd &&
+    git apply "${MFEM_PATCH_FILES}"
   CONFIGURE_COMMAND ${CMAKE_COMMAND} <SOURCE_DIR> "${MFEM_OPTIONS}"
   TEST_COMMAND      ${CMAKE_MAKE_PROGRAM} ex1 ex1p
 )

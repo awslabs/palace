@@ -18488,7 +18488,7 @@ index 17ae4adae..823cd09e3 100644
  extern ceed::RestrMap ceed_restr_map;
  #endif
 diff --git a/fem/ceed/solvers/algebraic.cpp b/fem/ceed/solvers/algebraic.cpp
-index 280a19960..72eca5c2e 100644
+index 280a19960..2e6c2c45c 100644
 --- a/fem/ceed/solvers/algebraic.cpp
 +++ b/fem/ceed/solvers/algebraic.cpp
 @@ -11,14 +11,16 @@
@@ -18580,14 +18580,14 @@ index 280a19960..72eca5c2e 100644
 -   Array<BilinearFormIntegrator*> *bffis = form.GetDBFI();
 -   for (int i = 0; i < bffis->Size(); ++i)
 +   for (BilinearFormIntegrator *integ : *form.GetDBFI())
-+   {
-+      AddToCompositeOperator(integ, op);
-+   }
-+   for (BilinearFormIntegrator *integ : *form.GetBBFI())
     {
 -      AddToCompositeOperator((*bffis)[i], op);
 +      AddToCompositeOperator(integ, op);
     }
++   for (BilinearFormIntegrator *integ : *form.GetBBFI())
++   {
++      AddToCompositeOperator(integ, op);
++   }
 +   MFEM_VERIFY(form.GetFBFI()->Size() == 0, "AddInteriorFaceIntegrator is not "
 +               "currently supported in CreateCeedCompositeOperatorFromBilinearForm");
 +   MFEM_VERIFY(form.GetBFBFI()->Size() == 0, "AddBdrFaceIntegrator is not "
@@ -18825,7 +18825,7 @@ index 280a19960..72eca5c2e 100644
  #ifdef MFEM_USE_CEED
     fespaces = new AlgebraicSpaceHierarchy(*form.FESpace());
     multigrid = new AlgebraicMultigrid(*fespaces, form, ess_tdofs);
-@@ -974,6 +977,88 @@ void AlgebraicSolver::SetOperator(const mfem::Operator& op)
+@@ -974,6 +977,122 @@ void AlgebraicSolver::SetOperator(const mfem::Operator& op)
  #endif
  }
  
@@ -18854,6 +18854,40 @@ index 280a19960..72eca5c2e 100644
 +   MFEM_VERIFY(form.GetFBFI()->Size() == 0, "AddInteriorFaceIntegrator is not "
 +               "currently supported in CeedOperatorFullAssemble");
 +   MFEM_VERIFY(form.GetBFBFI()->Size() == 0, "AddBdrFaceIntegrator is not "
++               "currently supported in CeedOperatorFullAssemble");
++
++   SparseMatrix *mat = Add(mat_i);
++   for (SparseMatrix *mat_integ : mat_i)
++   {
++      delete mat_integ;
++   }
++   return mat;
++}
++
++SparseMatrix *CeedOperatorFullAssemble(MixedBilinearForm &form, bool set)
++{
++   Array<SparseMatrix *> mat_i;
++   for (BilinearFormIntegrator *integ : *form.GetDBFI())
++   {
++      if (!integ->SupportsCeed()) { continue; }
++      SparseMatrix *mat_integ;
++      int ierr = CeedOperatorFullAssemble(integ->GetCeedOp().GetCeedOperator(),
++                                          &mat_integ, set);
++      PCeedChk(ierr);
++      mat_i.Append(mat_integ);
++   }
++   for (BilinearFormIntegrator *integ : *form.GetBBFI())
++   {
++      if (!integ->SupportsCeed()) { continue; }
++      SparseMatrix *mat_integ;
++      int ierr = CeedOperatorFullAssemble(integ->GetCeedOp().GetCeedOperator(),
++                                          &mat_integ, set);
++      PCeedChk(ierr);
++      mat_i.Append(mat_integ);
++   }
++   MFEM_VERIFY(form.GetTFBFI()->Size() == 0, "AddTraceFaceIntegrator is not "
++               "currently supported in CeedOperatorFullAssemble");
++   MFEM_VERIFY(form.GetBTFBFI()->Size() == 0, "AddBdrTraceFaceIntegrator is not "
 +               "currently supported in CeedOperatorFullAssemble");
 +
 +   SparseMatrix *mat = Add(mat_i);
@@ -18915,7 +18949,7 @@ index 280a19960..72eca5c2e 100644
  
  } // namespace mfem
 diff --git a/fem/ceed/solvers/algebraic.hpp b/fem/ceed/solvers/algebraic.hpp
-index 8ede8324e..b8a37b7ec 100644
+index 8ede8324e..c98ebe966 100644
 --- a/fem/ceed/solvers/algebraic.hpp
 +++ b/fem/ceed/solvers/algebraic.hpp
 @@ -12,9 +12,9 @@
@@ -18938,7 +18972,7 @@ index 8ede8324e..b8a37b7ec 100644
  
         This only works if the Ceed device backend is enabled.
  
-@@ -204,6 +204,26 @@ public:
+@@ -204,6 +204,30 @@ public:
     void SetOperator(const mfem::Operator& op);
  };
  
@@ -18951,6 +18985,10 @@ index 8ede8324e..b8a37b7ec 100644
 +    on the host, but this works also for operators stored on device by copying
 +    memory. */
 +SparseMatrix *CeedOperatorFullAssemble(BilinearForm &form, bool set = false);
++
++/** @brief Assemble the CeedOperators from a MixedBilinearForm as an
++    mfem::SparseMatrix */
++SparseMatrix *CeedOperatorFullAssemble(MixedBilinearForm &form, bool set = false);
 +
 +/** @brief Assembles a CeedOperator as an mfem::SparseMatrix
 +

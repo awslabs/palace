@@ -65,5 +65,3 @@ include(ExternalFmt)
 # Add Eigen
 message(STATUS "===================== Configuring Eigen dependency =====================")
 include(ExternalEigen)
-
-#XX TODO: libCEED with libxsmm (optional)
