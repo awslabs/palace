@@ -26,7 +26,7 @@ CurlFluxErrorEstimator::CurlFluxErrorEstimator(
         mesh.back()->Dimension())),
     smooth_flux_fes(utils::ConstructFiniteElementSpaceHierarchy<mfem::ND_FECollection>(
         mesh, smooth_flux_fecs)),
-    smooth_projector(smooth_flux_fes, iodata.solver.linear.tol, 200, 0), mass(&fes),
+    smooth_projector(smooth_flux_fes, iodata.solver.linear.tol, 200, 0),
     coarse_flux_fec(iodata.solver.order, mesh.back()->Dimension(),
                     mfem::BasisType::GaussLobatto),
     coarse_flux_fes(mesh.back().get(), &coarse_flux_fec, mesh.back()->Dimension()),
@@ -44,10 +44,6 @@ CurlFluxErrorEstimator::CurlFluxErrorEstimator(
     const auto &smooth_fe = *smooth_flux_fes.GetFinestFESpace().GetFE(e);
     coarse_fe.Project(smooth_fe, T, smooth_to_coarse_embed[e]);
   }
-
-  mass.AddDomainIntegrator(new mfem::VectorFEMassIntegrator);
-  mass.Assemble();
-  mass.Finalize();
 }
 
 CurlFluxErrorEstimator::CurlFluxErrorEstimator(const IoData &iodata,
@@ -59,13 +55,12 @@ CurlFluxErrorEstimator::CurlFluxErrorEstimator(const IoData &iodata,
         iodata.solver.linear.mat_gmg, false, iodata.solver.order, mesh->Dimension())),
     smooth_flux_fes(utils::ConstructFiniteElementSpaceHierarchy<mfem::ND_FECollection>(
         mesh, smooth_flux_fecs)),
-    smooth_projector(smooth_flux_fes, iodata.solver.linear.tol, 200, 0), mass(&fes),
+    smooth_projector(smooth_flux_fes, iodata.solver.linear.tol, 200, 0),
     coarse_flux_fec(iodata.solver.order, mesh->Dimension(), mfem::BasisType::GaussLobatto),
     coarse_flux_fes(mesh.get(), &coarse_flux_fec, mesh->Dimension()),
     scalar_mass_matrices(fes.GetNE()), smooth_to_coarse_embed(fes.GetNE())
 {
   mfem::MassIntegrator mass_integrator;
-  mfem::VectorFEMassIntegrator vector_mass_integrator;
 
   for (int e = 0; e < fes.GetNE(); ++e)
   {
@@ -79,10 +74,6 @@ CurlFluxErrorEstimator::CurlFluxErrorEstimator(const IoData &iodata,
     auto &fine_T = *coarse_flux_fes.GetElementTransformation(e);
     coarse_fe.Project(smooth_fe, fine_T, smooth_to_coarse_embed[e]);
   }
-
-  mass.AddDomainIntegrator(new mfem::VectorFEMassIntegrator);
-  mass.Assemble();
-  mass.Finalize();
 }
 
 mfem::Vector CurlFluxErrorEstimator::operator()(const petsc::PetscParVector &v) const
@@ -155,42 +146,52 @@ mfem::Vector CurlFluxErrorEstimator::operator()(const petsc::PetscParVector &v) 
 
   // Loop over elements, embed the smooth flux into the coarse flux space, then
   // compute squared integral using a component-wise mass matrix.
-  mfem::Vector smooth_vec, coarse_vec, coarse_sub_vec, estimates(nelem);
+  mfem::Vector smooth_vec, coarse_vec, sub_vec, estimates(nelem);
   estimates = 0.0;
+  double normalization = 0.0;
+
   for (int e = 0; e < fes.GetNE(); ++e)
   {
     // real
     smooth_flux_func.real().GetElementDofValues(e, smooth_vec);
     coarse_flux_func.real().GetElementDofValues(e, coarse_vec);
 
-    smooth_to_coarse_embed[e].AddMult(smooth_vec, coarse_vec, -1.0);
-
     const int ndof = coarse_vec.Size() / 3;
-    coarse_sub_vec.SetSize(ndof);
+    sub_vec.SetSize(ndof);
     for (int c = 0; c < 3; ++c)
     {
-      coarse_sub_vec.MakeRef(coarse_vec, c * ndof);
-      estimates[e] += scalar_mass_matrices[e].InnerProduct(coarse_sub_vec, coarse_sub_vec);
+      sub_vec.MakeRef(coarse_vec, c * ndof);
+      normalization += scalar_mass_matrices[e].InnerProduct(sub_vec, sub_vec);
+    }
+
+    smooth_to_coarse_embed[e].AddMult(smooth_vec, coarse_vec, -1.0);
+    for (int c = 0; c < 3; ++c)
+    {
+      sub_vec.MakeRef(coarse_vec, c * ndof);
+      estimates[e] += scalar_mass_matrices[e].InnerProduct(sub_vec, sub_vec);
     }
 
     // imag
     smooth_flux_func.imag().GetElementDofValues(e, smooth_vec);
     coarse_flux_func.imag().GetElementDofValues(e, coarse_vec);
 
-    smooth_to_coarse_embed[e].AddMult(smooth_vec, coarse_vec, -1.0);
-
     for (int c = 0; c < 3; ++c)
     {
-      coarse_sub_vec.MakeRef(coarse_vec, c * ndof);
-      estimates[e] += scalar_mass_matrices[e].InnerProduct(coarse_sub_vec, coarse_sub_vec);
+      sub_vec.MakeRef(coarse_vec, c * ndof);
+      normalization += scalar_mass_matrices[e].InnerProduct(sub_vec, sub_vec);
+    }
+
+    smooth_to_coarse_embed[e].AddMult(smooth_vec, coarse_vec, -1.0);
+    for (int c = 0; c < 3; ++c)
+    {
+      sub_vec.MakeRef(coarse_vec, c * ndof);
+      estimates[e] += scalar_mass_matrices[e].InnerProduct(sub_vec, sub_vec);
     }
 
     estimates[e] = std::sqrt(estimates[e]);
   }
   local_timer.est_solve_time += local_timer.Lap();
 
-  auto normalization = mass.InnerProduct(field.real(), field.real()) +
-                       mass.InnerProduct(field.imag(), field.imag());
   Mpi::GlobalSum(1, &normalization, field.ParFESpace()->GetComm());
   normalization = std::sqrt(normalization);
 
@@ -241,13 +242,13 @@ GradFluxErrorEstimator::GradFluxErrorEstimator(
         mesh.back()->Dimension())),
     smooth_flux_fes(utils::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
         mesh, smooth_flux_fecs, mesh.back()->Dimension())),
-    smooth_projector(smooth_flux_fes, iodata.solver.linear.tol, 200, 0), mass(&fes),
+    smooth_projector(smooth_flux_fes, iodata.solver.linear.tol, 200, 0),
     coarse_flux_fec(iodata.solver.order, mesh.back()->Dimension(),
                     mfem::BasisType::GaussLobatto),
     coarse_flux_fes(mesh.back().get(), &coarse_flux_fec, mesh.back()->Dimension()),
     scalar_mass_matrices(fes.GetNE()), smooth_to_coarse_embed(fes.GetNE())
 {
-  auto mass_integrator = new mfem::MassIntegrator;
+  mfem::MassIntegrator mass_integrator;
 
   for (int e = 0; e < fes.GetNE(); ++e)
   {
@@ -255,15 +256,11 @@ GradFluxErrorEstimator::GradFluxErrorEstimator(
     // Will exploit the fact that vector L2 mass matrix components are independent.
     const auto &coarse_fe = *coarse_flux_fes.GetFE(e);
     auto &T = *fes.GetElementTransformation(e);
-    mass_integrator->AssembleElementMatrix(coarse_fe, T, scalar_mass_matrices[e]);
+    mass_integrator.AssembleElementMatrix(coarse_fe, T, scalar_mass_matrices[e]);
 
     const auto &smooth_fe = *smooth_flux_fes.GetFinestFESpace().GetFE(e);
     coarse_fe.Project(smooth_fe, T, smooth_to_coarse_embed[e]);
   }
-
-  mass.AddDomainIntegrator(mass_integrator);
-  mass.Assemble();
-  mass.Finalize();
 }
 
 GradFluxErrorEstimator::GradFluxErrorEstimator(const IoData &iodata,
@@ -275,36 +272,23 @@ GradFluxErrorEstimator::GradFluxErrorEstimator(const IoData &iodata,
         iodata.solver.linear.mat_gmg, false, iodata.solver.order, mesh->Dimension())),
     smooth_flux_fes(utils::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
         mesh, smooth_flux_fecs, mesh->Dimension())),
-    smooth_projector(smooth_flux_fes, iodata.solver.linear.tol, 200, 0), mass(&fes),
+    smooth_projector(smooth_flux_fes, iodata.solver.linear.tol, 200, 0),
     coarse_flux_fec(iodata.solver.order, mesh->Dimension(), mfem::BasisType::GaussLobatto),
     coarse_flux_fes(mesh.get(), &coarse_flux_fec, mesh->Dimension()),
     scalar_mass_matrices(fes.GetNE()), smooth_to_coarse_embed(fes.GetNE())
 {
-  auto mass_integrator = new mfem::MassIntegrator;
+  mfem::MassIntegrator mass_integrator;
   for (int e = 0; e < fes.GetNE(); ++e)
   {
     // Loop over each element, and save an elemental mass matrix.
     // Will exploit the fact that vector L2 mass matrix components are independent.
-    {
-      const auto &fe = *fes.GetFE(e);
-      auto &T = *fes.GetElementTransformation(e);
-      mass_integrator->AssembleElementMatrix(fe, T, scalar_mass_matrices[e]);
-    }
+    const auto &coarse_fe = *coarse_flux_fes.GetFE(e);
+    auto &T = *fes.GetElementTransformation(e);
+    mass_integrator.AssembleElementMatrix(coarse_fe, T, scalar_mass_matrices[e]);
 
-    // Construct scalar embedding matrices.
-    // Will again exploit the fact the vector component embeddings are independent.
-    {
-      const auto &smooth_flux_fe = *smooth_flux_fes.GetFinestFESpace().GetFE(e);
-      const auto &coarse_flux_fe = *coarse_flux_fes.GetFE(e);
-      auto &T = *smooth_flux_fes.GetFinestFESpace().GetElementTransformation(e);
-
-      coarse_flux_fe.Project(smooth_flux_fe, T, smooth_to_coarse_embed[e]);
-    }
+    const auto &smooth_fe = *smooth_flux_fes.GetFinestFESpace().GetFE(e);
+    coarse_fe.Project(smooth_fe, T, smooth_to_coarse_embed[e]);
   }
-
-  mass.AddDomainIntegrator(mass_integrator);
-  mass.Assemble();
-  mass.Finalize();
 }
 
 mfem::Vector GradFluxErrorEstimator::operator()(const mfem::Vector &v) const
@@ -364,10 +348,10 @@ mfem::Vector GradFluxErrorEstimator::operator()(const mfem::Vector &v) const
 
   local_timer.solve_time += local_timer.Lap();
 
-  // smooth_to_coarse.AddMult(smooth_flux, coarse_flux, -1.0);
-
   mfem::Vector coarse_vec, smooth_vec, coarse_sub_vec, smooth_sub_vec;
   mfem::Vector estimates(nelem);
+
+  double normalization = 0.0;
   for (int e = 0; e < fes.GetNE(); ++e)
   {
     coarse_flux.GetElementDofValues(e, coarse_vec);
@@ -388,6 +372,8 @@ mfem::Vector GradFluxErrorEstimator::operator()(const mfem::Vector &v) const
       coarse_sub_vec.MakeRef(coarse_vec, c * ndof);
       smooth_sub_vec.MakeRef(smooth_vec, c * ndof);
 
+      normalization += scalar_mass_matrices[e].InnerProduct(coarse_sub_vec, coarse_sub_vec);
+
       // Embed
       smooth_to_coarse_embed[e].AddMult(smooth_sub_vec, coarse_sub_vec, -1.0);
 
@@ -398,7 +384,6 @@ mfem::Vector GradFluxErrorEstimator::operator()(const mfem::Vector &v) const
     estimates[e] = std::sqrt(estimates[e]);
   }
 
-  auto normalization = mass.InnerProduct(field, field);
   Mpi::GlobalSum(1, &normalization, field.ParFESpace()->GetComm());
   normalization = std::sqrt(normalization);
 

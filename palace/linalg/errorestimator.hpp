@@ -32,8 +32,6 @@ class CurlFluxErrorEstimator
   mutable mfem::ParFiniteElementSpaceHierarchy smooth_flux_fes;
   mutable FluxProjector smooth_projector;
 
-  mfem::ParBilinearForm mass;
-
   mfem::L2_FECollection coarse_flux_fec;
   mutable mfem::ParFiniteElementSpace coarse_flux_fes;
 
@@ -41,17 +39,16 @@ class CurlFluxErrorEstimator
   std::vector<mfem::DenseMatrix> smooth_to_coarse_embed;
 
 public:
-  // Constructor for using geometric and p multigrid
+  // Constructor for using geometric and p multigrid.
   CurlFluxErrorEstimator(const IoData &iodata, const MaterialOperator &mat_op,
                          const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
                          mfem::ParFiniteElementSpace &fes);
-  // Constructor for using only p multigrid
+  // Constructor for using only p multigrid.
   CurlFluxErrorEstimator(const IoData &iodata, const MaterialOperator &mat_op,
                          std::unique_ptr<mfem::ParMesh> &mesh,
                          mfem::ParFiniteElementSpace &fes);
 
-  // Compute elemental error indicators given a vector of true DOF, and the
-  // finite element space they are associated with
+  // Compute elemental error indicators given a vector of true DOF.
   mfem::Vector operator()(const petsc::PetscParVector &v) const;
 };
 
@@ -68,8 +65,6 @@ class GradFluxErrorEstimator
   mutable mfem::ParFiniteElementSpaceHierarchy smooth_flux_fes;
   mutable FluxProjector smooth_projector;
 
-  mfem::ParBilinearForm mass;
-
   mfem::L2_FECollection coarse_flux_fec;
   mutable mfem::ParFiniteElementSpace coarse_flux_fes;
 
@@ -77,17 +72,16 @@ class GradFluxErrorEstimator
   std::vector<mfem::DenseMatrix> smooth_to_coarse_embed;
 
 public:
-  // Constructor for using geometric and p multigrid
+  // Constructor for using geometric and p multigrid.
   GradFluxErrorEstimator(const IoData &iodata, const MaterialOperator &mat_op,
                          const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
                          mfem::ParFiniteElementSpace &fes);
-  // Constructor for using only p multigrid
+  // Constructor for using only p multigrid.
   GradFluxErrorEstimator(const IoData &iodata, const MaterialOperator &mat_op,
                          std::unique_ptr<mfem::ParMesh> &mesh,
                          mfem::ParFiniteElementSpace &fes);
 
-  // Compute elemental error indicators given a vector of true DOF, and the
-  // finite element space they are associated with
+  // Compute elemental error indicators given a vector of true DOF.
   mfem::Vector operator()(const mfem::Vector &v) const;
 };
 

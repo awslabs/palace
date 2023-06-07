@@ -15,7 +15,7 @@ namespace palace::utils
 // Some utility methods for frequency domain problems.
 //
 
-// Convinience method for constructing a the frequency domain matrix-vector product with the
+// Convenience method for constructing a the frequency domain matrix-vector product with the
 // operator K + iω C - ω² M + A2(ω).
 inline std::unique_ptr<petsc::PetscParMatrix> GetSystemMatrixShell(
     double omega, const petsc::PetscParMatrix &K, const petsc::PetscParMatrix &M,
