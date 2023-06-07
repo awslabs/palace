@@ -124,9 +124,6 @@ jobs:
             NUM_PROC_TEST=$NUM_PROC_TEST_MAX
           fi
           export PATH=$(pwd)/palace-install/bin:$PATH
-          if [[ "${{ matrix.build-shared }}" == 'shared' ]]; then
-            export DYLD_LIBRARY_PATH=$(pwd)/palace-install/lib:$DYLD_LIBRARY_PATH
-          fi
 
           # Run tests
           julia --project=test -e 'using Pkg; Pkg.instantiate()'
