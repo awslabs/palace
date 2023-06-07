@@ -80,6 +80,34 @@ set(EXTERN_HYPRE_GIT_TAG
   "Git tag for external HYPRE build"
 )
 
+# libCEED
+set(EXTERN_LIBCEED_URL
+  "https://github.com/CEED/libCEED.git" CACHE STRING
+  "URL for external libCEED build"
+)
+set(EXTERN_LIBCEED_GIT_BRANCH
+  "main" CACHE STRING
+  "Git branch for external libCEED build"
+)
+set(EXTERN_LIBCEED_GIT_TAG
+  "f9358d07c5045932a84606d10f4be92eafaca9fd" CACHE STRING  # main @ 08/07/2023
+  "Git tag for external libCEED build"
+)
+
+# LIBXSMM (for libCEED)
+set(EXTERN_LIBXSMM_URL
+  "https://github.com/hfp/libxsmm.git" CACHE STRING
+  "URL for external LIBXSMM build"
+)
+set(EXTERN_LIBXSMM_GIT_BRANCH
+  "main" CACHE STRING
+  "Git branch for external LIBXSMM build"
+)
+set(EXTERN_LIBXSMM_GIT_TAG
+  "15d55050cf836caab418d41865b3108b55b67934" CACHE STRING  # 07/27/2023
+  "Git tag for external LIBXSMM build"
+)
+
 # METIS
 set(EXTERN_METIS_URL
   "https://github.com/KarypisLab/METIS.git" CACHE STRING
@@ -104,7 +132,7 @@ set(EXTERN_MFEM_GIT_BRANCH
   "Git branch for external MFEM build"
 )
 set(EXTERN_MFEM_GIT_TAG
-  "f3a58367375e8544b1c9e2066a9aa5b9b2211557" CACHE STRING  # master @ 06/29/2023
+  "f2f79aad84a47019fc10e7e8dbddd43d22c25b9c" CACHE STRING  # master @ 08/06/2023
   "Git tag for external MFEM build"
 )
 

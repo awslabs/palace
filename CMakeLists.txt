@@ -20,6 +20,7 @@ project(palace-superbuild LANGUAGES CXX C VERSION 0.11.2)
 set(PALACE_WITH_64BIT_INT OFF CACHE BOOL "Use 64 bit integers")
 set(PALACE_WITH_64BIT_BLAS_INT OFF CACHE BOOL "Use ILP64 BLAS/LAPACK interface instead of LP64 (not recommended)")
 set(PALACE_WITH_OPENMP OFF CACHE BOOL "Use OpenMP")
+set(PALACE_WITH_LIBCEED ON CACHE BOOL "Build with libCEED library for high-order partial assembly support")
 set(PALACE_WITH_GSLIB ON CACHE BOOL "Build with GSLIB library for high-order field interpolation")
 
 set(PALACE_BUILD_EXTERNAL_DEPS ON CACHE BOOL "Build external third-party dependency libraries")
@@ -28,6 +29,7 @@ set(PALACE_WITH_STRUMPACK OFF CACHE BOOL "Build with STRUMPACK sparse direct sol
 set(PALACE_WITH_MUMPS OFF CACHE BOOL "Build with MUMPS sparse direct solver")
 set(PALACE_WITH_SLEPC ON CACHE BOOL "Build with SLEPc eigenvalue solver")
 set(PALACE_WITH_ARPACK OFF CACHE BOOL "Build with ARPACK eigenvalue solver")
+set(PALACE_WITH_LIBXSMM ON CACHE BOOL "Build with LIBXSMM backend when libCEED is enabled")
 
 set(ANALYZE_SOURCES_CLANG_TIDY OFF CACHE BOOL "Run static analysis checks using clang-tidy")
 set(ANALYZE_SOURCES_CPPCHECK OFF CACHE BOOL "Run static analysis checks using cppcheck")
@@ -66,7 +68,7 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
 
 # Intel classic compilers no longer supported (prior to CMake 3.20, the new compilers are
 # detected as Clang instead of IntelLLVM)
-if(CMAKE_C_COMPILER_ID STREQUAL "Intel" OR CMAKE_CXX_COMPILER_ID STREQUAL "Intel")
+if("${CMAKE_C_COMPILER_ID}" STREQUAL "Intel" OR "${CMAKE_CXX_COMPILER_ID}" STREQUAL "Intel")
   message(WARNING "The Intel classic compilers (icc/icpc) are no longer supported and \
 have been replaced by the newer Clang-based icx/icpx from Intel oneAPI")
 endif()
@@ -119,6 +121,12 @@ endif()
 if(PALACE_WITH_GSLIB)
   message(STATUS "===================== Configuring GSLIB dependency =====================")
   include(ExternalGSLIB)
+endif()
+
+# Add libCEED (always built as part of Palace)
+if(PALACE_WITH_LIBCEED)
+  message(STATUS "==================== Configuring libCEED dependency ====================")
+  include(ExternalLibCEED)
 endif()
 
 # Add MFEM (always built as part of Palace)

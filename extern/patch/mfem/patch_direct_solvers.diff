@@ -142,25 +142,107 @@ index 51238c4d7..e6f4730fe 100644
              strumpack->SetOperator(*Arow);
              strumpack->SetFromCommandLine();
              precond = strumpack;
+diff --git a/general/communication.cpp b/general/communication.cpp
+index 10fa6988c..0c2fffc1f 100644
+--- a/general/communication.cpp
++++ b/general/communication.cpp
+@@ -26,6 +26,10 @@
+ #include "sort_pairs.hpp"
+ #include "globals.hpp"
+ 
++#ifdef MFEM_USE_STRUMPACK
++#include <StrumpackConfig.hpp> // STRUMPACK_USE_PTSCOTCH, etc.
++#endif
++
+ #include <iostream>
+ #include <map>
+ 
+@@ -34,6 +38,14 @@ using namespace std;
+ namespace mfem
+ {
+ 
++#if defined(MFEM_USE_STRUMPACK) && \
++    (defined(STRUMPACK_USE_PTSCOTCH) || defined(STRUMPACK_USE_SLATE_SCALAPACK))
++int Mpi::default_thread_required = MPI_THREAD_MULTIPLE;
++#else
++int Mpi::default_thread_required = MPI_THREAD_SINGLE;
++#endif
++
++
+ GroupTopology::GroupTopology(const GroupTopology &gt)
+    : MyComm(gt.MyComm),
+      group_lproc(gt.group_lproc)
 diff --git a/general/communication.hpp b/general/communication.hpp
-index 474486f1b..be8145689 100644
+index 474486f1b..46d4f9f21 100644
 --- a/general/communication.hpp
 +++ b/general/communication.hpp
-@@ -76,6 +76,14 @@ private:
-    static void Init_(int *argc, char ***argv)
+@@ -22,7 +22,6 @@
+ #include "globals.hpp"
+ #include <mpi.h>
+ 
+-
+ namespace mfem
+ {
+ 
+@@ -32,10 +31,25 @@ namespace mfem
+ class Mpi
+ {
+ public:
+-   /// Singleton creation with Mpi::Init();
+-   static void Init() { Init_(NULL, NULL); }
+-   /// Singleton creation with Mpi::Init(argc,argv);
+-   static void Init(int &argc, char **&argv) { Init_(&argc, &argv); }
++   /// Singleton creation with Mpi::Init(argc, argv).
++   static void Init(int &argc, char **&argv,
++                    int required = default_thread_required,
++                    int *provided = nullptr)
++   { Init(&argc, &argv, required, provided); }
++   /// Singleton creation with Mpi::Init().
++   static void Init(int *argc = nullptr, char ***argv = nullptr,
++                    int required = default_thread_required,
++                    int *provided = nullptr)
++   {
++      MFEM_VERIFY(!IsInitialized(), "MPI already initialized!");
++      int mpi_provided;
++      int mpi_err = MPI_Init_thread(argc, argv, required, &mpi_provided);
++      MFEM_VERIFY(!mpi_err, "error in MPI_Init()!");
++      if (provided) { *provided = mpi_provided; }
++      // The Mpi singleton object below needs to be created after MPI_Init() for
++      // some MPI implementations.
++      Singleton();
++   }
+    /// Finalize MPI (if it has been initialized and not yet already finalized).
+    static void Finalize()
     {
-       MFEM_VERIFY(!IsInitialized(), "MPI already initialized!")
-+#if defined(MFEM_USE_STRUMPACK)
-+#if defined(STRUMPACK_USE_PTSCOTCH) || defined(STRUMPACK_USE_SLATE_SCALAPACK)
-+      if (Root())
-+      {
-+         MFEM_WARNING("STRUMPACK built with SLATE or PT-Scotch may require MPI_Init_thread with MPI_THREAD_MULTIPLE!");
-+      }
-+#endif
-+#endif
-       MPI_Init(argc, argv);
-       // The "mpi" object below needs to be created after MPI_Init() for some
-       // MPI implementations
+@@ -71,20 +85,19 @@ public:
+    }
+    /// Return true if the rank in MPI_COMM_WORLD is zero.
+    static bool Root() { return WorldRank() == 0; }
++   /// Default level of thread support for MPI_Init_thread.
++   static MFEM_EXPORT int default_thread_required;
+ private:
+-   /// Initialize MPI
+-   static void Init_(int *argc, char ***argv)
++   /// Initialize the Mpi singleton.
++   static Mpi &Singleton()
+    {
+-      MFEM_VERIFY(!IsInitialized(), "MPI already initialized!")
+-      MPI_Init(argc, argv);
+-      // The "mpi" object below needs to be created after MPI_Init() for some
+-      // MPI implementations
+       static Mpi mpi;
++      return mpi;
+    }
+-   /// Finalize MPI
++   /// Finalize MPI.
+    ~Mpi() { Finalize(); }
+-   /// Prevent direct construction of objects of this class
+-   Mpi() { }
++   /// Prevent direct construction of objects of this class.
++   Mpi() {}
+ };
+ 
+ /** @brief A simple convenience class based on the Mpi singleton class above.
 diff --git a/linalg/strumpack.cpp b/linalg/strumpack.cpp
 index f0ff11ab4..5b54994aa 100644
 --- a/linalg/strumpack.cpp
@@ -776,7 +858,7 @@ index f0ff11ab4..5b54994aa 100644
  
  #endif // MFEM_USE_MPI
 diff --git a/linalg/strumpack.hpp b/linalg/strumpack.hpp
-index 300b8415e..6a8ac4c30 100644
+index 300b8415e..42ae555c7 100644
 --- a/linalg/strumpack.hpp
 +++ b/linalg/strumpack.hpp
 @@ -16,12 +16,14 @@
@@ -903,7 +985,7 @@ index 300b8415e..6a8ac4c30 100644
  
     /**
      * STRUMPACK is an (approximate) direct solver. It can be used as a direct
-@@ -100,70 +119,151 @@ public:
+@@ -100,70 +119,153 @@ public:
      * used without preconditioner.
      *
      * Supported values are:
@@ -1056,6 +1138,8 @@ index 300b8415e..6a8ac4c30 100644
 -}; // mfem::STRUMPACKSolver class
 +   // Constructor with MPI_Comm parameter and command line arguments.
 +   STRUMPACKSolver(MPI_Comm comm, int argc, char *argv[]);
++   MFEM_DEPRECATED STRUMPACKSolver(int argc, char *argv[], MPI_Comm comm)
++      : STRUMPACKSolver(comm, argc, argv) {}
 +
 +   // Constructor with STRUMPACK matrix object and command line arguments.
 +   STRUMPACKSolver(STRUMPACKRowLocMatrix &A, int argc, char *argv[]);
@@ -1093,6 +1177,32 @@ index 300b8415e..6a8ac4c30 100644
  
  #endif // MFEM_USE_MPI
  #endif // MFEM_USE_STRUMPACK
+diff --git a/miniapps/multidomain/multidomain.cpp b/miniapps/multidomain/multidomain.cpp
+index dfb669224..83ebb9813 100644
+--- a/miniapps/multidomain/multidomain.cpp
++++ b/miniapps/multidomain/multidomain.cpp
+@@ -322,17 +322,19 @@ int main(int argc, char *argv[])
+ 
+    char vishost[] = "localhost";
+    int  visport   = 19916;
+-   socketstream cyl_sol_sock(vishost, visport);
++   socketstream cyl_sol_sock;
+    if (visualization)
+    {
++      cyl_sol_sock.open(vishost, visport);
+       cyl_sol_sock << "parallel " << num_procs << " " << myid << "\n";
+       cyl_sol_sock.precision(8);
+       cyl_sol_sock << "solution\n" << cylinder_submesh << temperature_cylinder_gf <<
+                    "pause\n" << std::flush;
+    }
+-   socketstream block_sol_sock(vishost, visport);
++   socketstream block_sol_sock;
+    if (visualization)
+    {
++      block_sol_sock.open(vishost, visport);
+       block_sol_sock << "parallel " << num_procs << " " << myid << "\n";
+       block_sol_sock.precision(8);
+       block_sol_sock << "solution\n" << block_submesh << temperature_block_gf <<
 diff --git a/miniapps/nurbs/nurbs_ex11p.cpp b/miniapps/nurbs/nurbs_ex11p.cpp
 index 7b8e3bd2d..e5cf95062 100644
 --- a/miniapps/nurbs/nurbs_ex11p.cpp

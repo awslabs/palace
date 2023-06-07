@@ -20,6 +20,9 @@ if(PALACE_BUILD_EXTERNAL_DEPS)
 else()
   set(MFEM_DEPENDENCIES)
 endif()
+if(PALACE_WITH_LIBCEED)
+  list(APPEND MFEM_DEPENDENCIES libCEED)
+endif()
 if(PALACE_WITH_GSLIB)
   list(APPEND MFEM_DEPENDENCIES gslib)
 endif()
@@ -60,6 +63,7 @@ list(APPEND MFEM_OPTIONS
   "-DCMAKE_CXX_FLAGS=${MFEM_CXX_FLAGS}"
   "-DMFEM_USE_MPI=YES"
   "-DMFEM_USE_OPENMP=${PALACE_WITH_OPENMP}"
+  "-DMFEM_THREAD_SAFE=${PALACE_WITH_OPENMP}"
   "-DMFEM_USE_SUPERLU=${PALACE_WITH_SUPERLU}"
   "-DMFEM_USE_STRUMPACK=${PALACE_WITH_STRUMPACK}"
   "-DMFEM_USE_MUMPS=${PALACE_WITH_MUMPS}"
@@ -80,6 +84,20 @@ if(NOT "${BLAS_LAPACK_LIBRARIES}" STREQUAL "")
     "-DBLAS_LIBRARIES=${BLAS_LAPACK_LIBRARIES}"
     "-DLAPACK_LIBRARIES=${BLAS_LAPACK_LIBRARIES}"
   )
+endif()
+
+# MFEM with libCEED is always built internally
+if(PALACE_WITH_LIBCEED)
+  list(APPEND MFEM_OPTIONS
+    "-DMFEM_USE_CEED=YES"
+    "-DCEED_DIR=${CMAKE_INSTALL_PREFIX}"
+  )
+  if(NOT "${LIBCEED_EXTRA_LIBRARIES}" STREQUAL "")
+    list(APPEND MFEM_OPTIONS
+      "-DlibCEED_REQUIRED_LIBRARIES=${LIBCEED_EXTRA_LIBRARIES}"
+      # "-DlibCEED_REQUIRED_PACKAGES=BLAS"
+    )
+  endif()
 endif()
 
 # MFEM with GSLIB is always built internally
@@ -107,8 +125,8 @@ if(PALACE_BUILD_EXTERNAL_DEPS)
 
   # Need to pass gfortran (or similar) dependency to C++ linker for MFEM link line
   if(PALACE_WITH_STRUMPACK OR PALACE_WITH_MUMPS)
-    if(CMAKE_Fortran_COMPILER_ID STREQUAL "GNU")
-      if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    if("${CMAKE_Fortran_COMPILER_ID}" STREQUAL "GNU")
+      if("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU")
         set(STRUMPACK_MUMPS_GFORTRAN_LIBRARY gfortran)
       else()
         find_library(STRUMPACK_MUMPS_GFORTRAN_LIBRARY
@@ -231,8 +249,9 @@ message(STATUS "MFEM_OPTIONS: ${MFEM_OPTIONS_PRINT}")
 set(MFEM_PATCH_FILES
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_mesh_part.diff"
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_mesh_vis.diff"
-  "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_submesh.diff"
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_direct_solvers.diff"
+  "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_pa_prereq.diff"
+  "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_pa_libceed.diff"
 )
 
 include(ExternalProject)
@@ -246,7 +265,9 @@ ExternalProject_Add(mfem
   PREFIX            ${CMAKE_BINARY_DIR}/extern/mfem-cmake
   UPDATE_COMMAND    ""
   PATCH_COMMAND
-    git reset --hard && git clean -fd && git apply "${MFEM_PATCH_FILES}"
+    git reset --hard &&
+    git clean -fd &&
+    git apply "${MFEM_PATCH_FILES}"
   CONFIGURE_COMMAND ${CMAKE_COMMAND} <SOURCE_DIR> "${MFEM_OPTIONS}"
   TEST_COMMAND      ${CMAKE_MAKE_PROGRAM} ex1 ex1p
 )

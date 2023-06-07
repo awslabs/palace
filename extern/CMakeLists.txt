@@ -50,6 +50,12 @@ if(PALACE_WITH_ARPACK)
   include(ExternalARPACK)
 endif()
 
+# Add LIBXSMM (for libCEED)
+if(PALACE_WITH_LIBCEED AND PALACE_WITH_LIBXSMM)
+  message(STATUS "==================== Configuring LIBXSMM dependency ====================")
+  include(ExternalLIBXSMM)
+endif()
+
 # Add HYPRE
 message(STATUS "===================== Configuring HYPRE dependency =====================")
 include(ExternalHYPRE)
@@ -65,5 +71,3 @@ include(ExternalFmt)
 # Add Eigen
 message(STATUS "===================== Configuring Eigen dependency =====================")
 include(ExternalEigen)
-
-#XX TODO: libCEED with libxsmm (optional)
