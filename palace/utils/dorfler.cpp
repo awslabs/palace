@@ -83,6 +83,8 @@ double ComputeDorflerThreshold(double fraction, const mfem::Vector &e)
   auto [min_elem_marked, min_error_marked] = marked(max_threshold);
   Mpi::GlobalSum(1, &min_elem_marked, comm);
   Mpi::GlobalSum(1, &max_elem_marked, comm);
+  Mpi::GlobalSum(1, &min_error_marked, comm);
+  Mpi::GlobalSum(1, &max_error_marked, comm);
 
   constexpr int maxiter = 100;  // Maximum limit to prevent runaway.
   for (int i = 0; i < maxiter; ++i)
@@ -127,7 +129,7 @@ double ComputeDorflerThreshold(double fraction, const mfem::Vector &e)
     // number of elements and thus a greater fraction of error.
     if (candidate_fraction > fraction)
     {
-      // This candidate marked too much, raise the lower value.
+      // This candidate marked too much, raise the lower bound.
       min_threshold = error_threshold;
       max_elem_marked = elem_marked;
       max_error_marked = error_marked;
@@ -142,8 +144,8 @@ double ComputeDorflerThreshold(double fraction, const mfem::Vector &e)
   }
 
   // Always choose the lower threshold value, thereby marking the larger number
-  // of elements and fraction of the total error. Would rather overmark than
-  // undermark, as Dorfler marking is the smallest set that covers AT LEAST the
+  // of elements and fraction of the total error. Would rather over mark than
+  // under mark, as Dorfler marking is the smallest set that covers AT LEAST the
   // specified fraction of the error.
 
   error_threshold = min_threshold;

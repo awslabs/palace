@@ -111,16 +111,15 @@ struct SphereRefinementData
 struct AdaptiveRefinementData
 {
   // Non-dimensional tolerance used to specify convergence of the AMR.
-  double tolerance = 1e-3;
+  double tolerance = 1e-2;
   // Maximum number of iterations to perform during the AMR.
   int max_its = 0;
   // Minimum number of iterations to perform during the AMR.
   int min_its = 0;
   // Dorfler update fraction. The set of marked elements is the minimum set
   // that contains update_fraction of the total error.
-  double update_fraction = 0.25;
-  // Whether or not to perform coarsening during the AMR. Incompatible with
-  // `construct_geometric_multigrid`.
+  double update_fraction = 0.4;
+  // Whether or not to perform coarsening during the AMR.
   double coarsening_fraction = 0.0;
   // Maximum difference in non-conformal refinements between two adjacent
   // elements. Default = 0 implies there is no constraint on local non-conformity.

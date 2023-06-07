@@ -222,7 +222,7 @@ public:
   template <typename T>
   static void Broadcast(int len, T *buff, int root, MPI_Comm comm)
   {
-    MPI_Bcast((void*)buff, len, mpi::DataType<T>(), root, comm);
+    MPI_Bcast((void *)buff, len, mpi::DataType<T>(), root, comm);
   }
 
   // Print methods only print on the root process of MPI_COMM_WORLD or a given MPI_Comm.

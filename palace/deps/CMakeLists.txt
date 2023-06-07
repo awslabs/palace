@@ -15,7 +15,7 @@ set(PALACE_INTERNAL_FMT_URL
   "URL for internal fmt build"
 )
 set(PALACE_INTERNAL_MFEM_GIT_TAG
-  "e5231334e6a8175b4f404b877f590b73dee2dedc" CACHE STRING  # master @ 05/02/2023
+  "d0e75c8d0d8b6def5ae22a38e08e81dd8e38c0d8" CACHE STRING  # master @ 05/31/2023
   "Git tag for internal MFEM build"
 )
 
@@ -93,7 +93,7 @@ if(PALACE_WITH_INTERNAL_MFEM)
     "${CMAKE_CURRENT_SOURCE_DIR}/patch/mfem/patch_mesh.diff"
     "${CMAKE_CURRENT_SOURCE_DIR}/patch/mfem/patch_part.diff"
     "${CMAKE_CURRENT_SOURCE_DIR}/patch/mfem/patch_direct.diff"
-    "${CMAKE_CURRENT_SOURCE_DIR}/patch/mfem/nc-simplex-and-ho-nd.patch"
+    "${CMAKE_CURRENT_SOURCE_DIR}/patch/mfem/patch_nonconformal_mesh.diff"
   )
 
   include(FetchContent)
