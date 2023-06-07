@@ -228,9 +228,6 @@ jobs:
             export AOCLROOT=/opt/amd
             export LD_LIBRARY_PATH=$AOCLROOT/lib:$LD_LIBRARY_PATH
           fi
-          if [[ "${{ matrix.build-shared }}" == 'shared' ]]; then
-            export LD_LIBRARY_PATH=$(pwd)/palace-install/lib:$(pwd)/palace-install/lib64:$LD_LIBRARY_PATH
-          fi
 
           # Run tests
           julia --project=test -e 'using Pkg; Pkg.instantiate()'

@@ -119,9 +119,6 @@ jobs:
             #   NUM_PROC_TEST=$NUM_PROC_TEST_MAX
             # fi
             # export PATH=/opt/palace/bin:/opt/julia/julia-1.8.4/bin:$PATH
-            # if [[ "${{ matrix.build-shared }}" == 'shared' ]]; then
-            #   export LD_LIBRARY_PATH="${LD_LIBRARY_PATH:+LD_LIBRARY_PATH:}/opt/palace/lib:/opt/palace/lib64"
-            # fi
 
             # # Run tests
             # julia --project=test -e 'using Pkg; Pkg.instantiate()'

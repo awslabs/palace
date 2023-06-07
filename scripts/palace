@@ -160,6 +160,26 @@ else
     WORKDIR=""
 fi
 
+# Configure shared library runtime locations
+LIB_DIR=$(dirname $PALACE_DIR)/lib
+LIB64_DIR=$(dirname $PALACE_DIR)/lib64
+if [[ -d $LIB_DIR ]]; then
+    PALACE_LIB_PATH="$LIB_DIR"
+fi
+if [[ -d $LIB64_DIR ]]; then
+    [[ "$PALACE_LIB_PATH" == '' ]] && PALACE_LIB_PATH="$LIB64_DIR" || \
+                                      PALACE_LIB_PATH="$LIB64_DIR;$PALACE_LIB_PATH"
+fi
+if [ "$(uname)" == "Darwin" ]; then
+    LIB_PATH_BACKUP=$DYLD_LIBRARY_PATH
+    [[ "$LIB_PATH_BACKUP" == '' ]] && export DYLD_LIBRARY_PATH="$PALACE_LIB_PATH" || \
+                                      export DYLD_LIBRARY_PATH="$PALACE_LIB_PATH;$LIB_PATH_BACKUP"
+else
+    LIB_PATH_BACKUP=$LD_LIBRARY_PATH
+    [[ "$LIB_PATH_BACKUP" == '' ]] && export LD_LIBRARY_PATH="$PALACE_LIB_PATH" || \
+                                      export LD_LIBRARY_PATH="$PALACE_LIB_PATH;$LIB_PATH_BACKUP"
+fi
+
 # Run parallel simulation
 if [[ -z "$NODE_LIST" ]]; then
     # Local execution
@@ -180,4 +200,11 @@ else
     echo ">> $MPIRUN $PALACE $CONFIG"
     $MPIRUN $PALACE $CONFIG
     rm $NODE_FILE
+fi
+
+# Reset user environment
+if [ "$(uname)" == "Darwin" ]; then
+    export DYLD_LIBRARY_PATH=$LIB_PATH_BACKUP
+else
+    export LD_LIBRARY_PATH=$LIB_PATH_BACKUP
 fi
