@@ -318,9 +318,9 @@ namespace linalg
 // Estimate operator 2-norm (spectral norm) using power iteration. Assumes the operator is
 // not symmetric or Hermitian unless specified.
 double SpectralNorm(MPI_Comm comm, const Operator &A, bool sym = false, double tol = 1.0e-4,
-                    int max_it = 100);
+                    int max_it = 200);
 double SpectralNorm(MPI_Comm comm, const ComplexOperator &A, bool herm = false,
-                    double tol = 1.0e-4, int max_it = 100);
+                    double tol = 1.0e-4, int max_it = 200);
 
 }  // namespace linalg
 
