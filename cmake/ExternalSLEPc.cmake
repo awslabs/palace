@@ -80,9 +80,9 @@ ExternalProject_Add(petsc
   DEPENDS             ${PETSC_DEPENDENCIES}
   GIT_REPOSITORY      ${EXTERN_PETSC_URL}
   GIT_TAG             ${EXTERN_PETSC_GIT_TAG}
-  SOURCE_DIR          ${CMAKE_CURRENT_BINARY_DIR}/petsc
+  SOURCE_DIR          ${CMAKE_BINARY_DIR}/extern/petsc
   INSTALL_DIR         ${CMAKE_INSTALL_PREFIX}
-  PREFIX              ${CMAKE_CURRENT_BINARY_DIR}/petsc-cmake
+  PREFIX              ${CMAKE_BINARY_DIR}/extern/petsc-cmake
   BUILD_IN_SOURCE     TRUE
   UPDATE_COMMAND      ""
   CONFIGURE_COMMAND   ./configure ${PETSC_OPTIONS}
@@ -107,9 +107,9 @@ ExternalProject_Add(slepc
   DEPENDS             ${SLEPC_DEPENDENCIES}
   GIT_REPOSITORY      ${EXTERN_SLEPC_URL}
   GIT_TAG             ${EXTERN_SLEPC_GIT_TAG}
-  SOURCE_DIR          ${CMAKE_CURRENT_BINARY_DIR}/slepc
+  SOURCE_DIR          ${CMAKE_BINARY_DIR}/extern/slepc
   INSTALL_DIR         ${CMAKE_INSTALL_PREFIX}
-  PREFIX              ${CMAKE_CURRENT_BINARY_DIR}/slepc-cmake
+  PREFIX              ${CMAKE_BINARY_DIR}/extern/slepc-cmake
   BUILD_IN_SOURCE     TRUE
   UPDATE_COMMAND      ""
   CONFIGURE_COMMAND   SLEPC_DIR=<SOURCE_DIR> PETSC_DIR=${CMAKE_INSTALL_PREFIX} PETSC_ARCH= ./configure ${SLEPC_OPTIONS}
