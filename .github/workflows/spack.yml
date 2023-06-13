@@ -36,12 +36,16 @@ jobs:
 
       - name: Build Palace
         run: |
+          # Clean up Android SDK install (confuses Spack MKL link line?)
+          sudo rm -rf $ANDROID_HOME
+
           # Set up Spack to use external packages (MPI, etc.)
           . /opt/spack/share/spack/setup-env.sh
           spack external find --all
 
           # Build and install
-          spack dev-build palace@develop%${{ matrix.compiler }} ^petsc~hdf5
+          spack repo add spack/local
+          spack dev-build local.palace@develop%${{ matrix.compiler }} ^petsc~hdf5 ^intel-oneapi-mkl
 
       - name: Run tests
         env:
