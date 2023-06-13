@@ -3,7 +3,6 @@
 
 #include "basesolver.hpp"
 
-// #include <algorithm>
 #include <complex>
 #include <numeric>
 #include <mfem.hpp>

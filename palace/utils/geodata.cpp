@@ -26,25 +26,28 @@ namespace
 constexpr auto MSH_FLT_PRECISION = std::numeric_limits<double>::max_digits10;
 
 // Load the serial mesh from disk.
-mfem::Mesh LoadMesh(const std::string &);
+mfem::Mesh LoadMesh(const std::string &path);
 
 // Optionally reorder mesh elements based on MFEM's internal reordeing tools for improved
 // cache usage.
-void ReorderMesh(mfem::Mesh &);
+void ReorderMesh(mfem::Mesh &mesh);
 
 // Generate element-based mesh partitioning, using either a provided file or METIS.
-std::unique_ptr<int[]> GetMeshPartitioning(mfem::Mesh &, int, const std::string &);
+std::unique_ptr<int[]> GetMeshPartitioning(mfem::Mesh &mesh, int size,
+                                           const std::string &partition);
 
 // Cleanup the provided serial mesh by removing unnecessary domain and elements, adding
 // boundary elements for material interfaces and exterior boundaries, and adding boundary
 // elements for subdomain interfaces.
-std::map<int, std::array<int, 2>> CheckMesh(mfem::Mesh &, const std::unique_ptr<int[]> &,
-                                            const IoData &, bool, bool, bool);
+std::map<int, std::array<int, 2>> CheckMesh(mfem::Mesh &orig_mesh,
+                                            const std::unique_ptr<int[]> &partitioning,
+                                            const IoData &iodata, bool clean_elem,
+                                            bool add_bdr, bool add_subdomain);
 
 // Get list of domain and boundary attribute markers used in configuration file for mesh
 // cleaning.
-void GetUsedAttributeMarkers(const IoData &, int, int, mfem::Array<int> &,
-                             mfem::Array<int> &);
+void GetUsedAttributeMarkers(const IoData &iodata, int n_mat, int n_bdr,
+                             mfem::Array<int> &mat_marker, mfem::Array<int> &bdr_marker);
 
 // Simplified helper for describing the element types in a mesh
 struct ElementTypeInfo
@@ -159,7 +162,7 @@ void RefineMesh(const IoData &iodata, std::vector<std::unique_ptr<mfem::ParMesh>
 
   // Uniformly refine the mesh further in parallel, saving the level meshes for geometric
   // coarsening later on if desired.
-  for (int l = 0; l < uniform_ref_levels; l++)
+  for (int l = 0; l < uniform_ref_levels; ++l)
   {
     if (mesh.capacity() > 1)
     {
@@ -190,7 +193,7 @@ void RefineMesh(const IoData &iodata, std::vector<std::unique_ptr<mfem::ParMesh>
     // Mark elements for refinement in all regions. An element is marked for refinement if
     // any of its vertices are inside any refinement region for the given level.
     mfem::Array<mfem::Refinement> refs;
-    for (int i = 0; i < mesh.back()->GetNE(); i++)
+    for (int i = 0; i < mesh.back()->GetNE(); ++i)
     {
       bool refine = false;
       mfem::DenseMatrix pointmat;
@@ -206,10 +209,10 @@ void RefineMesh(const IoData &iodata, std::vector<std::unique_ptr<mfem::ParMesh>
         mfem::Array<int> verts;
         mesh.back()->GetElementVertices(i, verts);
         pointmat.SetSize(dim, verts.Size());
-        for (int j = 0; j < verts.Size(); j++)
+        for (int j = 0; j < verts.Size(); ++j)
         {
           const double *coord = mesh.back()->GetVertex(verts[j]);
-          for (int d = 0; d < dim; d++)
+          for (int d = 0; d < dim; ++d)
           {
             pointmat(d, j) = coord[d];
           }
@@ -219,11 +222,11 @@ void RefineMesh(const IoData &iodata, std::vector<std::unique_ptr<mfem::ParMesh>
       {
         if (region_ref_level < box.ref_levels)
         {
-          for (int j = 0; j < pointmat.Width(); j++)
+          for (int j = 0; j < pointmat.Width(); ++j)
           {
             // Check if the point is inside the box.
             int d = 0;
-            for (; d < pointmat.Height(); d++)
+            for (; d < pointmat.Height(); ++d)
             {
               if (pointmat(d, j) < box.bbmin[d] || pointmat(d, j) > box.bbmax[d])
               {
@@ -251,11 +254,11 @@ void RefineMesh(const IoData &iodata, std::vector<std::unique_ptr<mfem::ParMesh>
       {
         if (region_ref_level < sphere.ref_levels)
         {
-          for (int j = 0; j < pointmat.Width(); j++)
+          for (int j = 0; j < pointmat.Width(); ++j)
           {
             // Check if the point is inside the sphere.
             double dist = 0.0;
-            for (int d = 0; d < pointmat.Height(); d++)
+            for (int d = 0; d < pointmat.Height(); ++d)
             {
               double s = pointmat(d, j) - sphere.center[d];
               dist += s * s;
@@ -285,7 +288,7 @@ void RefineMesh(const IoData &iodata, std::vector<std::unique_ptr<mfem::ParMesh>
       mesh.emplace_back(std::make_unique<mfem::ParMesh>(*mesh.back()));
     }
     mesh.back()->GeneralRefinement(refs, -1);
-    region_ref_level++;
+    ++region_ref_level;
   }
 
   // Prior to MFEM's PR #1046, the tetrahedral mesh required reorientation after all mesh
@@ -390,7 +393,7 @@ void GetBoundingBox(mfem::ParMesh &mesh, const mfem::Array<int> &marker, bool bd
   int dim = mesh.SpaceDimension();
   min.SetSize(dim);
   max.SetSize(dim);
-  for (int d = 0; d < dim; d++)
+  for (int d = 0; d < dim; ++d)
   {
     min(d) = mfem::infinity();
     max(d) = -mfem::infinity();
@@ -399,10 +402,10 @@ void GetBoundingBox(mfem::ParMesh &mesh, const mfem::Array<int> &marker, bool bd
   {
     auto BBUpdate = [&mesh, &dim, &min, &max](mfem::Array<int> &verts) -> void
     {
-      for (int j = 0; j < verts.Size(); j++)
+      for (int j = 0; j < verts.Size(); ++j)
       {
         const double *coord = mesh.GetVertex(verts[j]);
-        for (int d = 0; d < dim; d++)
+        for (int d = 0; d < dim; ++d)
         {
           if (coord[d] < min(d))
           {
@@ -417,7 +420,7 @@ void GetBoundingBox(mfem::ParMesh &mesh, const mfem::Array<int> &marker, bool bd
     };
     if (bdr)
     {
-      for (int i = 0; i < mesh.GetNBE(); i++)
+      for (int i = 0; i < mesh.GetNBE(); ++i)
       {
         if (!marker[mesh.GetBdrAttribute(i) - 1])
         {
@@ -430,7 +433,7 @@ void GetBoundingBox(mfem::ParMesh &mesh, const mfem::Array<int> &marker, bool bd
     }
     else
     {
-      for (int i = 0; i < mesh.GetNE(); i++)
+      for (int i = 0; i < mesh.GetNE(); ++i)
       {
         if (!marker[mesh.GetAttribute(i) - 1])
         {
@@ -451,9 +454,9 @@ void GetBoundingBox(mfem::ParMesh &mesh, const mfem::Array<int> &marker, bool bd
       mfem::DenseMatrix pointmat;
       mfem::RefinedGeometry *RefG = mfem::GlobGeometryRefiner.Refine(geo, ref);
       T->Transform(RefG->RefPts, pointmat);
-      for (int j = 0; j < pointmat.Width(); j++)
+      for (int j = 0; j < pointmat.Width(); ++j)
       {
-        for (int d = 0; d < pointmat.Height(); d++)
+        for (int d = 0; d < pointmat.Height(); ++d)
         {
           if (pointmat(d, j) < min(d))
           {
@@ -468,7 +471,7 @@ void GetBoundingBox(mfem::ParMesh &mesh, const mfem::Array<int> &marker, bool bd
     };
     if (bdr)
     {
-      for (int i = 0; i < mesh.GetNBE(); i++)
+      for (int i = 0; i < mesh.GetNBE(); ++i)
       {
         if (!marker[mesh.GetBdrAttribute(i) - 1])
         {
@@ -481,7 +484,7 @@ void GetBoundingBox(mfem::ParMesh &mesh, const mfem::Array<int> &marker, bool bd
     }
     else
     {
-      for (int i = 0; i < mesh.GetNE(); i++)
+      for (int i = 0; i < mesh.GetNE(); ++i)
       {
         if (!marker[mesh.GetAttribute(i) - 1])
         {
@@ -515,7 +518,7 @@ void GetSurfaceNormal(mfem::ParMesh &mesh, const mfem::Array<int> &marker,
   normal.SetSize(dim);
   normal = 0.0;
   bool init = false;
-  for (int i = 0; i < mesh.GetNBE(); i++)
+  for (int i = 0; i < mesh.GetNBE(); ++i)
   {
     if (!marker[mesh.GetBdrAttribute(i) - 1])
     {
@@ -603,7 +606,7 @@ void RebalanceConformalMesh(std::unique_ptr<mfem::ParMesh> &mesh)
     auto partitioning = GetMeshPartitioning(smesh, Mpi::Size(comm), std::string());
     mfem::MeshPartitioner partitioner(smesh, Mpi::Size(comm), partitioning.get());
     so.reserve(Mpi::Size(comm));
-    for (int i = 0; i < Mpi::Size(comm); i++)
+    for (int i = 0; i < Mpi::Size(comm); ++i)
     {
       mfem::MeshPart part;
       partitioner.ExtractPart(i, part);
@@ -621,7 +624,7 @@ void RebalanceConformalMesh(std::unique_ptr<mfem::ParMesh> &mesh)
   if (Mpi::Root(comm))
   {
     std::vector<MPI_Request> send_requests(Mpi::Size(comm) - 1, MPI_REQUEST_NULL);
-    for (int i = 1; i < Mpi::Size(comm); i++)
+    for (int i = 1; i < Mpi::Size(comm); ++i)
     {
       int ilen = static_cast<int>(so[i].length());
       MFEM_VERIFY(so[i].length() == (std::size_t)ilen,
@@ -789,11 +792,13 @@ std::map<int, std::array<int, 2>> CheckMesh(mfem::Mesh &orig_mesh,
   //   an associated material property specified in the input file.
   MFEM_VERIFY(orig_mesh.Dimension() == 3 && !orig_mesh.Nonconforming(),
               "Nonconforming or 2D meshes have not been tested yet!");
+  MFEM_VERIFY(dynamic_cast<mfem::ParMesh *>(&orig_mesh) == nullptr,
+              "This function does not work for ParMesh");
   mfem::Array<int> mat_marker, bdr_marker;
   GetUsedAttributeMarkers(iodata, orig_mesh.attributes.Max(),
                           orig_mesh.bdr_attributes.Max(), mat_marker, bdr_marker);
   bool warn = false;
-  for (int be = 0; be < orig_mesh.GetNBE(); be++)
+  for (int be = 0; be < orig_mesh.GetNBE(); ++be)
   {
     int attr = orig_mesh.GetBdrAttribute(be);
     if (!bdr_marker[attr - 1])
@@ -830,7 +835,7 @@ std::map<int, std::array<int, 2>> CheckMesh(mfem::Mesh &orig_mesh,
   elem_delete.SetSize(orig_mesh.GetNE(), false);
   bdr_delete.SetSize(orig_mesh.GetNBE(), false);
   orig_bdr_faces.SetSize(orig_mesh.GetNumFaces(), -1);
-  for (int be = 0; be < orig_mesh.GetNBE(); be++)
+  for (int be = 0; be < orig_mesh.GetNBE(); ++be)
   {
     int f, o;
     orig_mesh.GetBdrElementFace(be, &f, &o);
@@ -847,19 +852,19 @@ std::map<int, std::array<int, 2>> CheckMesh(mfem::Mesh &orig_mesh,
   {
     // Delete domain and boundary elements which have no associated material or BC attribute
     // from the mesh.
-    for (int e = 0; e < orig_mesh.GetNE(); e++)
+    for (int e = 0; e < orig_mesh.GetNE(); ++e)
     {
       int attr = orig_mesh.GetAttribute(e);
       if (!mat_marker[attr - 1])
       {
         elem_delete[e] = true;
-        new_ne--;
+        --new_ne;
       }
     }
 
     // Make sure to remove any boundary elements which are no longer attached to elements in
     // the domain.
-    for (int f = 0; f < orig_mesh.GetNumFaces(); f++)
+    for (int f = 0; f < orig_mesh.GetNumFaces(); ++f)
     {
       const int &be = orig_bdr_faces[f];
       if (be >= 0)
@@ -870,7 +875,7 @@ std::map<int, std::array<int, 2>> CheckMesh(mfem::Mesh &orig_mesh,
         {
           // Mpi::Print("Deleting an unattached boundary element!\n");
           bdr_delete[be] = true;
-          new_nbdr--;
+          --new_nbdr;
         }
       }
     }
@@ -895,27 +900,28 @@ std::map<int, std::array<int, 2>> CheckMesh(mfem::Mesh &orig_mesh,
     MFEM_VERIFY(!orig_mesh.Nonconforming(), "Adding material interface boundary elements "
                                             "is not supported for nonconforming meshes!");
     int add_bdr_ext = 0, add_bdr_int = 0;
-    for (int f = 0; f < orig_mesh.GetNumFaces(); f++)
+    for (int f = 0; f < orig_mesh.GetNumFaces(); ++f)
     {
       const int &be = orig_bdr_faces[f];
       if (be < 0 && add_bdr_faces[f] < 0)
       {
         int e1, e2;
         orig_mesh.GetFaceElements(f, &e1, &e2);
+
         bool no_e1 = (e1 < 0 || elem_delete[e1]);
         bool no_e2 = (e2 < 0 || elem_delete[e2]);
         if ((no_e1 || no_e2) && !(no_e1 && no_e2))
         {
           // Mpi::Print("Adding exterior boundary element!\n");
           add_bdr_faces[f] = 1;
-          add_bdr_ext++;
+          ++add_bdr_ext;
         }
         else if (orig_mesh.GetAttribute(e1) != orig_mesh.GetAttribute(e2))
         {
           // Add new boundary element at material interface between two domains.
           // Mpi::Print("Adding material interface boundary element!\n");
           add_bdr_faces[f] = 1;
-          add_bdr_int++;
+          ++add_bdr_int;
         }
       }
     }
@@ -936,13 +942,13 @@ std::map<int, std::array<int, 2>> CheckMesh(mfem::Mesh &orig_mesh,
 
   if (add_subdomain)
   {
-    // Add new boundary elements at interfaces between elements beloning to different
+    // Add new boundary elements at interfaces between elements belonging to different
     // subdomains. This uses similar code to mfem::Mesh::PrintWithPartitioning.
     MFEM_VERIFY(partitioning, "Cannot add subdomain interface boundary elements without "
                               "supplied mesh partitioning!");
     MFEM_VERIFY(!orig_mesh.Nonconforming(), "Adding subdomain interface boundary elements "
                                             "is not supported for nonconforming meshes!");
-    for (int f = 0; f < orig_mesh.GetNumFaces(); f++)
+    for (int f = 0; f < orig_mesh.GetNumFaces(); ++f)
     {
       const int &be = orig_bdr_faces[f];
       if (be < 0 && add_bdr_faces[f] < 0)
@@ -981,15 +987,16 @@ std::map<int, std::array<int, 2>> CheckMesh(mfem::Mesh &orig_mesh,
   {
     return new_attr_map;
   }
+
   auto new_mesh = mfem::Mesh(orig_mesh.Dimension(), orig_mesh.GetNV(), new_ne, new_nbdr,
                              orig_mesh.SpaceDimension());
 
   // Copy vertices and non-deleted domain and boundary elements.
-  for (int v = 0; v < orig_mesh.GetNV(); v++)
+  for (int v = 0; v < orig_mesh.GetNV(); ++v)
   {
     new_mesh.AddVertex(orig_mesh.GetVertex(v));
   }
-  for (int e = 0; e < orig_mesh.GetNE(); e++)
+  for (int e = 0; e < orig_mesh.GetNE(); ++e)
   {
     if (!elem_delete[e])
     {
@@ -997,7 +1004,7 @@ std::map<int, std::array<int, 2>> CheckMesh(mfem::Mesh &orig_mesh,
       new_mesh.AddElement(ne);
     }
   }
-  for (int be = 0; be < orig_mesh.GetNBE(); be++)
+  for (int be = 0; be < orig_mesh.GetNBE(); ++be)
   {
     if (!bdr_delete[be])
     {
@@ -1009,19 +1016,12 @@ std::map<int, std::array<int, 2>> CheckMesh(mfem::Mesh &orig_mesh,
   // Add new boundary elements.
   if (add_bdr || add_subdomain)
   {
+
     auto FlipVertices = [](mfem::Element *e)
     {
       mfem::Array<int> v;
       e->GetVertices(v);
-      int start = 0, end = v.Size() - 1;
-      while (start < end)
-      {
-        int t = v[start];
-        v[start] = v[end];
-        v[end] = t;
-        start++;
-        end--;
-      }
+      std::reverse(v.begin(), v.end());
       e->SetVertices(v.HostRead());
     };
 
@@ -1029,7 +1029,7 @@ std::map<int, std::array<int, 2>> CheckMesh(mfem::Mesh &orig_mesh,
     // original mesh, but to keep indices the same as config file we don't compact the
     // list.
     int max_bdr_attr = orig_mesh.bdr_attributes.Max();
-    for (int f = 0; f < orig_mesh.GetNumFaces(); f++)
+    for (int f = 0; f < orig_mesh.GetNumFaces(); ++f)
     {
       if (add_bdr_faces[f] > 0)
       {
@@ -1071,13 +1071,14 @@ std::map<int, std::array<int, 2>> CheckMesh(mfem::Mesh &orig_mesh,
         new_mesh.AddBdrElement(ne);
         if (add_bdr_faces[f] > 1)
         {
-          // Flip order of vertices to reverse normal direction of second added element.
+          // Flip order of vertices to reverse normal direction of second added
+          // element.
           ne = orig_mesh.GetFace(f)->Duplicate(&new_mesh);
           FlipVertices(ne);
           ne->SetAttribute(new_attr);
           new_mesh.AddBdrElement(ne);
-          // Mpi::Print("Adding two BE with attr {:d} from elements {:d} and {:d}\n",
-          //            new_attr, a, b);
+          Mpi::Print("Adding two BE with attr {:d} from elements {:d} and {:d}\n", new_attr,
+                     a, b);
         }
       }
     }
@@ -1109,7 +1110,7 @@ std::map<int, std::array<int, 2>> CheckMesh(mfem::Mesh &orig_mesh,
     mfem::Array<int> vdofs, new_vdofs;
     mfem::Vector loc_vec;
     int te = 0;
-    for (int e = 0; e < orig_mesh.GetNE(); e++)
+    for (int e = 0; e < orig_mesh.GetNE(); ++e)
     {
       if (!elem_delete[e])
       {
@@ -1117,7 +1118,7 @@ std::map<int, std::array<int, 2>> CheckMesh(mfem::Mesh &orig_mesh,
         nodes->GetSubVector(vdofs, loc_vec);
         new_fes->GetElementVDofs(te, new_vdofs);
         new_nodes->SetSubVector(new_vdofs, loc_vec);
-        te++;
+        ++te;
       }
     }
   }
