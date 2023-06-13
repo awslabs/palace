@@ -1510,10 +1510,10 @@ index b68e309..01ba6cb 100644
       extern uint comm_gbl_id, comm_gbl_np;
  #  endif
 diff --git a/src/name.h b/src/name.h
-index b4bcd91..80bbc31 100644
+index b4bcd91..ac54032 100644
 --- a/src/name.h
 +++ b/src/name.h
-@@ -1,11 +1,11 @@
+@@ -1,43 +1,43 @@
 -#ifndef NAME_H
 -#define NAME_H
 +#ifndef GS_NAME_H
@@ -1528,9 +1528,12 @@ index b4bcd91..80bbc31 100644
 +     -DGS_UPCASE     GS_SETUP, etc.
 +     -DGS_UNDERSCORE gs_setup_, etc.
     * a prefix for all external (non-FORTRAN) function names
-      for example, -DPREFIX=jl_   transforms fail -> jl_fail
+-     for example, -DPREFIX=jl_   transforms fail -> jl_fail
++     for example, -DGS_PREFIX=jl_   transforms fail -> jl_fail
     * a prefix for all external FORTRAN function names     
-@@ -14,30 +14,30 @@
+-     for example, -DFPREFIX=jlf_ transforms gs_setup_ -> jlf_gs_setup_
++     for example, -DGS_FPREFIX=jlf_ transforms gs_setup_ -> jlf_gs_setup_
+ */
  
  /* the following macro functions like a##b,
     but will expand a and/or b if they are themselves macros */
@@ -1542,7 +1545,7 @@ index b4bcd91..80bbc31 100644
 -#ifdef PREFIX
 -#  define PREFIXED_NAME(x) TOKEN_PASTE(PREFIX,x)
 +#ifdef GS_PREFIX
-+#  define GS_PREFIXED_NAME(x) GS_TOKEN_PASTE(PREFIX,x)
++#  define GS_PREFIXED_NAME(x) GS_TOKEN_PASTE(GS_PREFIX,x)
  #else
 -#  define PREFIXED_NAME(x) x
 +#  define GS_PREFIXED_NAME(x) x
@@ -1551,7 +1554,7 @@ index b4bcd91..80bbc31 100644
 -#ifdef FPREFIX
 -#  define FPREFIXED_NAME(x) TOKEN_PASTE(FPREFIX,x)
 +#ifdef GS_FPREFIX
-+#  define GS_FPREFIXED_NAME(x) GS_TOKEN_PASTE(FPREFIX,x)
++#  define GS_FPREFIXED_NAME(x) GS_TOKEN_PASTE(GS_FPREFIX,x)
  #else
 -#  define FPREFIXED_NAME(x) x
 +#  define GS_FPREFIXED_NAME(x) x
