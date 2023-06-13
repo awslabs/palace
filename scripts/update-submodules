@@ -7,7 +7,7 @@ help()
 {
     echo "Usage: update-submodules [OPTIONS]
 
-Fetch most ercent commit from dependency repositories
+Fetch most recent commit from dependency repositories
 
 Options:
   -h, --help                       Show this help message and exit
