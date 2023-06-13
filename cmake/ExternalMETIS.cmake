@@ -45,7 +45,7 @@ message(STATUS "SCOTCH_OPTIONS: ${SCOTCH_OPTIONS_PRINT}")
 
 # Some build fixes
 set(SCOTCH_PATCH_FILES
-  "${CMAKE_CURRENT_SOURCE_DIR}/patch/scotch/patch_build.diff"
+  "${CMAKE_SOURCE_DIR}/extern/patch/scotch/patch_build.diff"
 )
 
 include(ExternalProject)
@@ -53,31 +53,30 @@ ExternalProject_Add(scotch
   DEPENDS           ${SCOTCH_DEPENDENCIES}
   GIT_REPOSITORY    ${EXTERN_SCOTCH_URL}
   GIT_TAG           ${EXTERN_SCOTCH_GIT_TAG}
-  SOURCE_DIR        ${CMAKE_CURRENT_BINARY_DIR}/scotch
-  BINARY_DIR        ${CMAKE_CURRENT_BINARY_DIR}/scotch-build
+  SOURCE_DIR        ${CMAKE_BINARY_DIR}/extern/scotch
+  BINARY_DIR        ${CMAKE_BINARY_DIR}/extern/scotch-build
   INSTALL_DIR       ${CMAKE_INSTALL_PREFIX}
-  PREFIX            ${CMAKE_CURRENT_BINARY_DIR}/scotch-cmake
+  PREFIX            ${CMAKE_BINARY_DIR}/extern/scotch-cmake
   UPDATE_COMMAND    ""
   PATCH_COMMAND     git apply "${SCOTCH_PATCH_FILES}"
-  CONFIGURE_COMMAND cmake <SOURCE_DIR> "${SCOTCH_OPTIONS}"
+  CONFIGURE_COMMAND ${CMAKE_COMMAND} <SOURCE_DIR> "${SCOTCH_OPTIONS}"
   TEST_COMMAND      ""
 )
 
+# Scotch always installs to lib/ (not CMAKE_INSTALL_LIBDIR)
 include(GNUInstallDirs)
 if(BUILD_SHARED_LIBS)
   set(_SCOTCH_LIB_SUFFIX ${CMAKE_SHARED_LIBRARY_SUFFIX})
 else()
   set(_SCOTCH_LIB_SUFFIX ${CMAKE_STATIC_LIBRARY_SUFFIX})
 endif()
-set(_SCOTCH_LIBRARIES "")
-set(_PTSCOTCH_LIBRARIES "")
-foreach(LIB scotcherr scotch scotchmetisv5 esmumps)
-  set(_SCOTCH_LIBRARIES ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR}/lib${LIB}${_SCOTCH_LIB_SUFFIX}$<SEMICOLON>${_SCOTCH_LIBRARIES})
+set(_SCOTCH_LIBRARIES ${CMAKE_INSTALL_PREFIX}/lib/libscotcherr${_SCOTCH_LIB_SUFFIX})
+set(_PTSCOTCH_LIBRARIES ${CMAKE_INSTALL_PREFIX}/lib/libptscotcherr${_SCOTCH_LIB_SUFFIX})
+foreach(LIB scotch scotchmetisv5 esmumps)
+  set(_SCOTCH_LIBRARIES ${CMAKE_INSTALL_PREFIX}/lib/lib${LIB}${_SCOTCH_LIB_SUFFIX}$<SEMICOLON>${_SCOTCH_LIBRARIES})
 endforeach()
-foreach(LIB ptscotcherr ptscotch ptscotchparmetisv3 ptesmumps)
-  set(_PTSCOTCH_LIBRARIES ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR}/lib${LIB}${_SCOTCH_LIB_SUFFIX}$<SEMICOLON>${_PTSCOTCH_LIBRARIES})
+foreach(LIB ptscotch ptscotchparmetisv3 ptesmumps)
+  set(_PTSCOTCH_LIBRARIES ${CMAKE_INSTALL_PREFIX}/lib/lib${LIB}${_SCOTCH_LIB_SUFFIX}$<SEMICOLON>${_PTSCOTCH_LIBRARIES})
 endforeach()
 set(METIS_LIBRARIES ${_SCOTCH_LIBRARIES} CACHE STRING "List of library files for METIS")
-set(METIS_INCLUDE_DIRS ${CMAKE_INSTALL_PREFIX}/include CACHE STRING "Path to METIS include directories")
 set(PARMETIS_LIBRARIES ${_PTSCOTCH_LIBRARIES} CACHE STRING "List of library files for ParMETIS")
-set(PARMETIS_INCLUDE_DIRS ${CMAKE_INSTALL_PREFIX}/include CACHE STRING "Path to ParMETIS include directories")

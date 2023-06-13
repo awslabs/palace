@@ -81,7 +81,7 @@ message(STATUS "GSLIB_OPTIONS: ${GSLIB_OPTIONS_PRINT}")
 
 # Fix build
 set(GSLIB_PATCH_FILES
-  "${CMAKE_CURRENT_SOURCE_DIR}/patch/gslib/patch_build.diff"
+  "${CMAKE_SOURCE_DIR}/extern/patch/gslib/patch_build.diff"
 )
 
 include(ExternalProject)
@@ -89,9 +89,9 @@ ExternalProject_Add(gslib
   DEPENDS           ${GSLIB_DEPENDENCIES}
   GIT_REPOSITORY    ${EXTERN_GSLIB_URL}
   GIT_TAG           ${EXTERN_GSLIB_GIT_TAG}
-  SOURCE_DIR        ${CMAKE_CURRENT_BINARY_DIR}/gslib
+  SOURCE_DIR        ${CMAKE_BINARY_DIR}/extern/gslib
   INSTALL_DIR       ${CMAKE_INSTALL_PREFIX}
-  PREFIX            ${CMAKE_CURRENT_BINARY_DIR}/gslib-cmake
+  PREFIX            ${CMAKE_BINARY_DIR}/extern/gslib-cmake
   BUILD_IN_SOURCE   TRUE
   UPDATE_COMMAND    ""
   PATCH_COMMAND     git apply "${GSLIB_PATCH_FILES}"

@@ -19,11 +19,11 @@ message(STATUS "EIGEN_OPTIONS: ${EIGEN_OPTIONS_PRINT}")
 include(ExternalProject)
 ExternalProject_Add(eigen
   URL               ${EXTERN_EIGEN_URL}
-  SOURCE_DIR        ${CMAKE_CURRENT_BINARY_DIR}/eigen
-  BINARY_DIR        ${CMAKE_CURRENT_BINARY_DIR}/eigen-build
+  SOURCE_DIR        ${CMAKE_BINARY_DIR}/extern/eigen
+  BINARY_DIR        ${CMAKE_BINARY_DIR}/extern/eigen-build
   INSTALL_DIR       ${CMAKE_INSTALL_PREFIX}
-  PREFIX            ${CMAKE_CURRENT_BINARY_DIR}/eigen-cmake
+  PREFIX            ${CMAKE_BINARY_DIR}/extern/eigen-cmake
   UPDATE_COMMAND    ""
-  CONFIGURE_COMMAND cmake <SOURCE_DIR> "${EIGEN_OPTIONS}"
+  CONFIGURE_COMMAND ${CMAKE_COMMAND} <SOURCE_DIR> "${EIGEN_OPTIONS}"
   TEST_COMMAND      ""
 )
