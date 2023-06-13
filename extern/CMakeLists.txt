@@ -50,12 +50,6 @@ if(PALACE_WITH_ARPACK)
   include(ExternalARPACK)
 endif()
 
-# Add GSLIB
-if(PALACE_WITH_GSLIB)
-  message(STATUS "===================== Configuring GSLIB dependency =====================")
-  include(ExternalGSLIB)
-endif()
-
 # Add HYPRE
 message(STATUS "===================== Configuring HYPRE dependency =====================")
 include(ExternalHYPRE)

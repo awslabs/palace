@@ -547,3 +547,17 @@ index f8fae16..0000000
 -endif(LAPACK_FOUND)
 -
 -mark_as_advanced(LAPACK_LIBRARY LAPACK_INCLUDE_DIR)
+diff --git a/cmake/options.cmake b/cmake/options.cmake
+index c87a4ac..000d4fc 100644
+--- a/cmake/options.cmake
++++ b/cmake/options.cmake
+@@ -39,9 +39,4 @@ set(CMAKE_INSTALL_RPATH_USE_LINK_PATH true)
+ # Necessary for shared library with Visual Studio / Windows oneAPI
+ set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS true)
+ 
+-# allow CMAKE_PREFIX_PATH with ~ expand
+-if(CMAKE_PREFIX_PATH)
+-  get_filename_component(CMAKE_PREFIX_PATH ${CMAKE_PREFIX_PATH} ABSOLUTE)
+-endif()
+-
+ file(GENERATE OUTPUT .gitignore CONTENT "*")

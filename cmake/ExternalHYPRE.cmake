@@ -37,11 +37,11 @@ ExternalProject_Add(hypre
   DEPENDS           ${HYPRE_DEPENDENCIES}
   GIT_REPOSITORY    ${EXTERN_HYPRE_URL}
   GIT_TAG           ${EXTERN_HYPRE_GIT_TAG}
-  SOURCE_DIR        ${CMAKE_CURRENT_BINARY_DIR}/hypre
-  BINARY_DIR        ${CMAKE_CURRENT_BINARY_DIR}/hypre-build
+  SOURCE_DIR        ${CMAKE_BINARY_DIR}/extern/hypre
+  BINARY_DIR        ${CMAKE_BINARY_DIR}/extern/hypre-build
   INSTALL_DIR       ${CMAKE_INSTALL_PREFIX}
-  PREFIX            ${CMAKE_CURRENT_BINARY_DIR}/hypre-cmake
+  PREFIX            ${CMAKE_BINARY_DIR}/extern/hypre-cmake
   UPDATE_COMMAND    ""
-  CONFIGURE_COMMAND cmake <SOURCE_DIR>/src "${HYPRE_OPTIONS}"
+  CONFIGURE_COMMAND ${CMAKE_COMMAND} <SOURCE_DIR>/src "${HYPRE_OPTIONS}"
   TEST_COMMAND      ""
 )

@@ -19,11 +19,11 @@ message(STATUS "JSON_OPTIONS: ${JSON_OPTIONS_PRINT}")
 include(ExternalProject)
 ExternalProject_Add(json
   URL               ${EXTERN_JSON_URL}
-  SOURCE_DIR        ${CMAKE_CURRENT_BINARY_DIR}/json
-  BINARY_DIR        ${CMAKE_CURRENT_BINARY_DIR}/json-build
+  SOURCE_DIR        ${CMAKE_BINARY_DIR}/extern/json
+  BINARY_DIR        ${CMAKE_BINARY_DIR}/extern/json-build
   INSTALL_DIR       ${CMAKE_INSTALL_PREFIX}
-  PREFIX            ${CMAKE_CURRENT_BINARY_DIR}/json-cmake
+  PREFIX            ${CMAKE_BINARY_DIR}/extern/json-cmake
   UPDATE_COMMAND    ""
-  CONFIGURE_COMMAND cmake <SOURCE_DIR> "${JSON_OPTIONS}"
+  CONFIGURE_COMMAND ${CMAKE_COMMAND} <SOURCE_DIR> "${JSON_OPTIONS}"
   TEST_COMMAND      ""
 )
