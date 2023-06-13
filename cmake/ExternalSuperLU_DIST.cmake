@@ -23,7 +23,7 @@ list(APPEND SUPERLU_OPTIONS
   "-Denable_openmp=${PALACE_WITH_OPENMP}"
   "-DTPL_ENABLE_PARMETISLIB=ON"
   "-DTPL_PARMETIS_LIBRARIES=${PARMETIS_LIBRARIES}$<SEMICOLON>${METIS_LIBRARIES}"
-  "-DTPL_PARMETIS_INCLUDE_DIRS=${PARMETIS_INCLUDE_DIRS}"
+  "-DTPL_PARMETIS_INCLUDE_DIRS=${CMAKE_INSTALL_PREFIX}/include"
   "-DTPL_ENABLE_COMBBLASLIB=OFF"
   "-DTPL_ENABLE_CUDALIB=OFF"
   "-DTPL_ENABLE_HIPLIB=OFF"
@@ -58,8 +58,8 @@ message(STATUS "SUPERLU_OPTIONS: ${SUPERLU_OPTIONS_PRINT}")
 
 # Fix column permutations
 set(SUPERLU_PATCH_FILES
-  "${CMAKE_CURRENT_SOURCE_DIR}/patch/superlu_dist/patch_metis.diff"
-  "${CMAKE_CURRENT_SOURCE_DIR}/patch/superlu_dist/patch_parmetis.diff"
+  "${CMAKE_SOURCE_DIR}/extern/patch/superlu_dist/patch_metis.diff"
+  "${CMAKE_SOURCE_DIR}/extern/patch/superlu_dist/patch_parmetis.diff"
 )
 
 include(ExternalProject)
@@ -67,12 +67,12 @@ ExternalProject_Add(superlu_dist
   DEPENDS           ${SUPERLU_DEPENDENCIES}
   GIT_REPOSITORY    ${EXTERN_SUPERLU_URL}
   GIT_TAG           ${EXTERN_SUPERLU_GIT_TAG}
-  SOURCE_DIR        ${CMAKE_CURRENT_BINARY_DIR}/superlu_dist
-  BINARY_DIR        ${CMAKE_CURRENT_BINARY_DIR}/superlu_dist-build
+  SOURCE_DIR        ${CMAKE_BINARY_DIR}/extern/superlu_dist
+  BINARY_DIR        ${CMAKE_BINARY_DIR}/extern/superlu_dist-build
   INSTALL_DIR       ${CMAKE_INSTALL_PREFIX}
-  PREFIX            ${CMAKE_CURRENT_BINARY_DIR}/superlu_dist-cmake
+  PREFIX            ${CMAKE_BINARY_DIR}/extern/superlu_dist-cmake
   UPDATE_COMMAND    ""
   PATCH_COMMAND     git apply "${SUPERLU_PATCH_FILES}"
-  CONFIGURE_COMMAND cmake <SOURCE_DIR> "${SUPERLU_OPTIONS}"
+  CONFIGURE_COMMAND ${CMAKE_COMMAND} <SOURCE_DIR> "${SUPERLU_OPTIONS}"
   TEST_COMMAND      ""
 )

@@ -20,11 +20,11 @@ message(STATUS "FMT_OPTIONS: ${FMT_OPTIONS_PRINT}")
 include(ExternalProject)
 ExternalProject_Add(fmt
   URL               ${EXTERN_FMT_URL}
-  SOURCE_DIR        ${CMAKE_CURRENT_BINARY_DIR}/fmt
-  BINARY_DIR        ${CMAKE_CURRENT_BINARY_DIR}/fmt-build
+  SOURCE_DIR        ${CMAKE_BINARY_DIR}/extern/fmt
+  BINARY_DIR        ${CMAKE_BINARY_DIR}/extern/fmt-build
   INSTALL_DIR       ${CMAKE_INSTALL_PREFIX}
-  PREFIX            ${CMAKE_CURRENT_BINARY_DIR}/fmt-cmake
+  PREFIX            ${CMAKE_BINARY_DIR}/extern/fmt-cmake
   UPDATE_COMMAND    ""
-  CONFIGURE_COMMAND cmake <SOURCE_DIR> "${FMT_OPTIONS}"
+  CONFIGURE_COMMAND ${CMAKE_COMMAND} <SOURCE_DIR> "${FMT_OPTIONS}"
   TEST_COMMAND      ""
 )

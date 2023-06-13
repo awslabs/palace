@@ -60,13 +60,6 @@ if(CMAKE_C_COMPILER_ID STREQUAL "Intel" OR CMAKE_CXX_COMPILER_ID STREQUAL "Intel
 have been replaced by the newer Clang-based icx/icpx from Intel oneAPI")
 endif()
 
-# Default arguments for all external CMake builds
-set(PALACE_SUPERBUILD_DEFAULT_ARGS
-  "-DCMAKE_INSTALL_PREFIX=${CMAKE_INSTALL_PREFIX}"
-  "-DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}"
-  "-DBUILD_SHARED_LIBS=${BUILD_SHARED_LIBS}"
-)
-
 # MPI is required for most dependency builds
 message(STATUS "====================== Configuring MPI dependency ======================")
 find_package(MPI REQUIRED)
@@ -75,10 +68,46 @@ find_package(MPI REQUIRED)
 message(STATUS "================= Configuring BLAS/LAPACK dependencies =================")
 include(ExternalBLASLAPACK)
 
+# Default arguments for all external CMake builds (needs to happen after BLAS/LAPACK
+# detection in case CMAKE_PREFIX_PATH is modified)
+# See https://spack.readthedocs.io/en/latest/build_systems/cmakepackage.html#cmake-arguments-provided-by-spack
+set(PALACE_SUPERBUILD_DEFAULT_ARGS
+  "-DCMAKE_INSTALL_PREFIX=${CMAKE_INSTALL_PREFIX}"
+  "-DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}"
+  "-DBUILD_SHARED_LIBS=${BUILD_SHARED_LIBS}"
+)
+if(NOT "${CMAKE_PREFIX_PATH}" STREQUAL "")
+  string(REPLACE ";" "$<SEMICOLON>" PALACE_CMAKE_PREFIX_PATH "${CMAKE_PREFIX_PATH}")
+  list(APPEND PALACE_SUPERBUILD_DEFAULT_ARGS
+    "-DCMAKE_PREFIX_PATH=${PALACE_CMAKE_PREFIX_PATH}$<SEMICOLON>${CMAKE_INSTALL_PREFIX}"
+  )
+else()
+  list(APPEND PALACE_SUPERBUILD_DEFAULT_ARGS
+    "-DCMAKE_PREFIX_PATH=${CMAKE_INSTALL_PREFIX}"
+  )
+endif()
+if(NOT "${CMAKE_INSTALL_RPATH}" STREQUAL "")
+  string(REPLACE ";" "$<SEMICOLON>" PALACE_CMAKE_INSTALL_RPATH "${CMAKE_INSTALL_RPATH}")
+  list(APPEND PALACE_SUPERBUILD_DEFAULT_ARGS
+    "-DCMAKE_INSTALL_RPATH=${PALACE_CMAKE_INSTALL_RPATH}"
+  )
+endif()
+if(NOT "${CMAKE_INSTALL_RPATH_USE_LINK_PATH}" STREQUAL "")
+  list(APPEND PALACE_SUPERBUILD_DEFAULT_ARGS
+    "-DCMAKE_INSTALL_RPATH_USE_LINK_PATH=${CMAKE_INSTALL_RPATH_USE_LINK_PATH}"
+  )
+endif()
+
 # Add other third-party dependency builds
 include(ExternalGitTags)
 if(PALACE_BUILD_EXTERNAL_DEPS)
   add_subdirectory("extern")
+endif()
+
+# Add GSLIB (always built as part of Palace)
+if(PALACE_WITH_GSLIB)
+  message(STATUS "===================== Configuring GSLIB dependency =====================")
+  include(ExternalGSLIB)
 endif()
 
 # Add MFEM (always built as part of Palace)

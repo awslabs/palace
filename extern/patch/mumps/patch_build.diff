@@ -963,6 +963,18 @@ index e93337f..0000000
 -endif()
 -
 -mark_as_advanced(SCALAPACK_LIBRARY SCALAPACK_INCLUDE_DIR)
+diff --git a/cmake/compilers.cmake b/cmake/compilers.cmake
+index c1cc549..b0dd3ab 100644
+--- a/cmake/compilers.cmake
++++ b/cmake/compilers.cmake
+@@ -107,7 +107,3 @@ set(CMAKE_INSTALL_RPATH_USE_LINK_PATH true)
+ # Necessary for shared library with Visual Studio / Windows oneAPI
+ set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS true)
+ 
+-# allow CMAKE_PREFIX_PATH with ~ expand
+-if(CMAKE_PREFIX_PATH)
+-  get_filename_component(CMAKE_PREFIX_PATH ${CMAKE_PREFIX_PATH} ABSOLUTE)
+-endif()
 diff --git a/cmake/lapack.cmake b/cmake/lapack.cmake
 index d4e6336..e565d0e 100644
 --- a/cmake/lapack.cmake
