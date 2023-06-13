@@ -273,14 +273,16 @@ public:
 
     // This coefficient is only to be used on true exterior boundaries.
     int i, o;
-    int iel1, iel2, info1, info2;
+    int iel1, iel2, info1, info2, ncface;
     const mfem::Mesh &mesh = *T.mesh;
     mesh.GetBdrElementFace(T.ElementNo, &i, &o);
     mesh.GetFaceElements(i, &iel1, &iel2);
-    mesh.GetFaceInfos(i, &info1, &info2);
-    if (info2 >= 0)
+    mesh.GetFaceInfos(i, &info1, &info2, &ncface);
+
+    const bool is_interior = iel2 >= 0 || info2 >= 0 || ncface >= 0;
+    if (is_interior)
     {
-      // Just return for an non-true boundary face.
+      // Just return for a non-true boundary face.
       V.SetSize(vdim);
       V = 0.0;
       return;
