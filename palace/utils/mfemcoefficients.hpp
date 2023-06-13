@@ -195,7 +195,7 @@ public:
 // Uses the neighbor element on a user specified side to compute a single-sided value for
 // potentially discontinuous solutions for an interior boundary element. The four cases
 // correspond to a generic interface vs. specializations for metal-air, metal-substrate,
-// and subtrate-air interfaces following:
+// and substrate-air interfaces following:
 //   J. Wenner et al., Surface loss simulations of superconducting coplanar waveguide
 //     resonators, Appl. Phys. Lett. (2011).
 enum class DielectricInterfaceType
