@@ -45,7 +45,7 @@ jobs:
             # Install dependencies
             apt-get update -q
             apt-get install -y build-essential clang lld gfortran python3 wget git \
-                               cmake pkg-config libmpich-dev bison flex
+                               cmake pkg-config libmpich-dev
 
             # Install Julia
             wget https://julialang-s3.julialang.org/bin/linux/aarch64/1.8/julia-1.8.4-linux-aarch64.tar.gz

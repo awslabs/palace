@@ -57,9 +57,9 @@ jobs:
         with:
           mpi: ${{ matrix.mpi }}
 
-      - name: Install dependencies
+      - name: Install pkg-config
         run: |
-          brew install pkg-config bison flex
+          brew install pkg-config
 
       - name: Install math libraries (OpenBLAS)
         if: matrix.math-libs == 'openblas'
@@ -72,7 +72,6 @@ jobs:
           NUM_PROC_BUILD_MAX: '32'
         run: |
           # Configure environment
-          export PATH="/usr/local/opt/bison/bin":$PATH  # Homebrew Bison
           if [[ "${{ matrix.compiler }}" == 'clang' ]]; then
             export CC=$(brew --prefix llvm@15)/bin/clang
             export CXX=$(brew --prefix llvm@15)/bin/clang++
