@@ -12,6 +12,32 @@ index 83144b4..98c0cc2 100644
  enable_language(C Fortran)
  
  # Add module directory
+diff --git a/src/esmumps/CMakeLists.txt b/src/esmumps/CMakeLists.txt
+index 62114b5..f3eedf1 100644
+--- a/src/esmumps/CMakeLists.txt
++++ b/src/esmumps/CMakeLists.txt
+@@ -106,7 +106,6 @@ target_include_directories(esmumps PRIVATE
+   $<INSTALL_INTERFACE:include>)
+ 
+ target_link_libraries(esmumps PRIVATE scotch)
+-
+ add_dependencies(esmumps scotch_h)
+ 
+ add_executable(test_esmumps test_esmumps.c)
+@@ -135,9 +134,12 @@ install(TARGETS esmumps
+ 
+ # Dummy PTEsMUMPS library file
+ add_library(ptesmumps ${esmumps_src} ${esmumps_headers})
+-
+ set_target_properties(ptesmumps PROPERTIES PUBLIC_HEADER "${GENERATED_INCLUDE_DIR}/esmumps.h")
+ 
++if(APPLE)
++  set_target_properties(ptesmumps PROPERTIES LINK_FLAGS "-undefined dynamic_lookup")
++endif(APPLE)
++
+ target_include_directories(ptesmumps PRIVATE
+   $<BUILD_INTERFACE:${LIBSCOTCH_INCLUDE_DIR}>
+   $<BUILD_INTERFACE:${GENERATED_INCLUDE_DIR}>
 diff --git a/src/libscotch/dummysizes.c b/src/libscotch/dummysizes.c
 index fbd7b52..7455672 100644
 --- a/src/libscotch/dummysizes.c
@@ -126,6 +152,52 @@ index 945819f..897823b 100644
  /*
  **  The function prototypes.
  */
+diff --git a/src/libscotchmetis/metis_graph_part.c b/src/libscotchmetis/metis_graph_part.c
+index 867c851..62c4610 100644
+--- a/src/libscotchmetis/metis_graph_part.c
++++ b/src/libscotchmetis/metis_graph_part.c
+@@ -548,16 +548,18 @@ SCOTCH_Num * const          objval,
+ SCOTCH_Num * const          part)
+ {
+   SCOTCH_Num          baseval;
++  double              kbalval;
+ 
+   baseval = ((options != NULL) && (options != xadj)) ? options[METIS_OPTION_NUMBERING] : 0;
++  kbalval = (ubvec != NULL) ? *ubvec : 0.01;
+ 
+   return ((vsize == NULL)
+           ? _SCOTCH_METIS_PartGraph (nvtxs, ncon, xadj, adjncy, vwgt, adjwgt,
+                                      &baseval, nparts, tpwgts, options, objval, part,
+-                                     SCOTCH_STRATDEFAULT, ubvec)
++                                     SCOTCH_STRATDEFAULT, &kbalval)
+           : _SCOTCH_METIS_PartGraph_Volume (nvtxs, ncon, xadj, adjncy, vwgt, vsize,
+                                             &baseval, nparts, tpwgts, options, objval, part,
+-                                            SCOTCH_STRATDEFAULT, ubvec));
++                                            SCOTCH_STRATDEFAULT, &kbalval));
+ }
+ 
+ /*
+@@ -581,16 +583,18 @@ SCOTCH_Num * const          objval,
+ SCOTCH_Num * const          part)
+ {
+   SCOTCH_Num          baseval;
++  double              kbalval;
+ 
+   baseval = ((options != NULL) && (options != xadj)) ? options[METIS_OPTION_NUMBERING] : 0;
++  kbalval = (ubvec != NULL) ? *ubvec : 0.01;
+ 
+   return ((vsize == NULL)
+           ? _SCOTCH_METIS_PartGraph (nvtxs, ncon, xadj, adjncy, vwgt, adjwgt,
+                                      &baseval, nparts, tpwgts, options, objval, part,
+-                                     SCOTCH_STRATRECURSIVE, ubvec)
++                                     SCOTCH_STRATRECURSIVE, &kbalval)
+           : _SCOTCH_METIS_PartGraph_Volume (nvtxs, ncon, xadj, adjncy, vwgt, vsize,
+                                             &baseval, nparts, tpwgts, options, objval, part,
+-                                            SCOTCH_STRATRECURSIVE, ubvec));
++                                            SCOTCH_STRATRECURSIVE, &kbalval));
+ }
+ 
+ /*******************/
 diff --git a/src/scotch/CMakeLists.txt b/src/scotch/CMakeLists.txt
 index 3974f4f..b2c4f36 100644
 --- a/src/scotch/CMakeLists.txt
