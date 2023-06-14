@@ -285,7 +285,7 @@ private:
     // implementations.
     MFEM_VERIFY(!IsInitialized(), "MPI should not be initialized more than once!");
 #if defined(MFEM_USE_OPENMP)
-    int provided, requested = MPI_THREAD_MULTIPLE;  // MPI_THREAD_FUNNELED
+    int provided, requested = MPI_THREAD_FUNNELED;  // MPI_THREAD_MULTIPLE
     MPI_Init_thread(argc, argv, requested, &provided);
     MFEM_VERIFY(provided >= requested,
                 "MPI could not provide the requested level of thread support!");

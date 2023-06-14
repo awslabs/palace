@@ -14,7 +14,7 @@ if("${CMAKE_SOURCE_DIR}" STREQUAL "${CMAKE_BINARY_DIR}")
 endif()
 
 # Initialize the project
-project(palace-superbuild LANGUAGES CXX C Fortran VERSION 0.11.1)
+project(palace-superbuild LANGUAGES CXX C VERSION 0.11.1)
 
 # Define build settings and defaults
 set(PALACE_WITH_64BIT_INT OFF CACHE BOOL "Use 64 bit integers")
@@ -31,6 +31,11 @@ set(PALACE_WITH_ARPACK OFF CACHE BOOL "Build with ARPACK eigenvalue solver")
 
 set(ANALYZE_SOURCES_CLANG_TIDY OFF CACHE BOOL "Run static analysis checks using clang-tidy")
 set(ANALYZE_SOURCES_CPPCHECK OFF CACHE BOOL "Run static analysis checks using cppcheck")
+
+# Enable Fortran if required
+if(PALACE_WITH_STRUMPACK OR PALACE_WITH_MUMPS OR PALACE_WITH_ARPACK)
+  enable_language(Fortran)
+endif()
 
 # Set a default installation location if none was provided
 if(NOT CMAKE_INSTALL_PREFIX OR CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
