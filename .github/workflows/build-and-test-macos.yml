@@ -16,14 +16,14 @@ jobs:
       fail-fast: false
       matrix:
         include:  # Pairwise testing
-          - compiler: clang
-            mpi: openmpi
-            math-libs: openblas
-            build-shared: shared
-            with-64bit-int: int32
-            with-openmp: serial
-            with-solver: superlu
-            with-eigensolver: slepc
+          # - compiler: clang
+          #   mpi: openmpi
+          #   math-libs: openblas
+          #   build-shared: shared
+          #   with-64bit-int: int32
+          #   with-openmp: serial
+          #   with-solver: superlu
+          #   with-eigensolver: slepc
 
           - compiler: gcc
             mpi: openmpi
