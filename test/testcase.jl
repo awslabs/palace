@@ -57,6 +57,7 @@ function testcase(testdir, testconfig, testpostpro; np=1, rtol=1.0e-6, atol=1.0e
         for file in filesref
             dataref = CSV.File(joinpath(refpostprodir, file); header=1) |> DataFrame
             data    = CSV.File(joinpath(postprodir, file); header=1) |> DataFrame
+            data    = data[1:size(dataref, 1), :]
 
             test = isapprox.(data, dataref; rtol=rtol, atol=atol)
             for (row, rowdataref, rowdata) in

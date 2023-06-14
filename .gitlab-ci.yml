@@ -113,7 +113,6 @@ test-build-shared:
     - make -j$NUM_PROC_BUILD
     - cd ..
     - export PATH=$(pwd)/build/bin:$PATH
-    - export LD_LIBRARY_PATH=$(pwd)/build/lib:$(pwd)/build/lib64:$LD_LIBRARY_PATH
     - julia --project=test -e 'using Pkg; Pkg.instantiate()'
     - julia --project=test --color=yes test/runtests.jl
 
@@ -233,7 +232,6 @@ test-build-arm64-shared:
     - make -j$NUM_PROC_BUILD
     - cd ..
     - export PATH=$(pwd)/build/bin:$PATH
-    - export LD_LIBRARY_PATH=$(pwd)/build/lib:$(pwd)/build/lib64:$LD_LIBRARY_PATH
     - julia --project=test -e 'using Pkg; Pkg.instantiate()'
     - julia --project=test --color=yes test/runtests.jl
 
