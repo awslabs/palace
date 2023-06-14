@@ -184,7 +184,7 @@ void CurlCurlOperator::GetExcitationVector(int idx, Vector &RHS)
   rhs.UseFastAssembly(false);
   rhs.Assemble();
   GetNDSpace().GetProlongationMatrix()->AddMultTranspose(rhs, RHS, -1.0);
-  RHS.SetSubVector(dbc_tdof_lists.back(), 0.0);
+  linalg::SetSubVector(RHS, dbc_tdof_lists.back(), 0.0);
 }
 
 }  // namespace palace

@@ -84,10 +84,6 @@ public:
   // Set all entries to their reciprocal.
   void Reciprocal();
 
-  // Set the entries listed the given array to value. All entries in the list should be
-  // non-negative.
-  void SetSubVector(const mfem::Array<int> &rows, std::complex<double> s);
-
   // Vector dot product (yᴴ x) or indefinite dot product (yᵀ x) for complex vectors.
   std::complex<double> Dot(const ComplexVector &y) const;
   std::complex<double> TransposeDot(const ComplexVector &y) const;
@@ -122,6 +118,13 @@ inline HYPRE_BigInt GlobalSize(MPI_Comm comm, const VecType &x)
   Mpi::GlobalSum(1, &N, comm);
   return N;
 }
+
+// Sets all entries of the vector corresponding to the given indices to the given (real)
+// value.
+template <typename VecType>
+void SetSubVector(VecType &x, const mfem::Array<int> &rows, double s);
+template <typename VecType>
+void SetSubVector(VecType &x, const mfem::Array<int> &rows, const VecType &y);
 
 // Sets all entries of the vector to random numbers sampled from the [-1, 1] or [-1 - 1i,
 // 1 + 1i] for complex-valued vectors.

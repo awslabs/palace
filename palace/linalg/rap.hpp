@@ -42,6 +42,11 @@ private:
   // Temporary storage for operator application.
   mutable Vector lx, ly, ty;
 
+  // Helper methods for operator application.
+  void RestrictionMatrixMult(const Vector &ly, Vector &ty) const;
+  void RestrictionMatrixAddMult(const Vector &ly, Vector &ty, const double a) const;
+  void RestrictionMatrixMultTranspose(const Vector &ty, Vector &ly) const;
+
   ParOperator(std::unique_ptr<Operator> &&dA, Operator *pA,
               const mfem::ParFiniteElementSpace &trial_fespace,
               const mfem::ParFiniteElementSpace &test_fespace, bool test_restrict);
@@ -96,17 +101,9 @@ public:
   // condition values in x.
   void EliminateRHS(const Vector &x, Vector &b) const;
 
-  void Mult(const Vector &x, Vector &y) const override
-  {
-    y = 0.0;
-    AddMult(x, y);
-  }
+  void Mult(const Vector &x, Vector &y) const override;
 
-  void MultTranspose(const Vector &x, Vector &y) const override
-  {
-    y = 0.0;
-    AddMultTranspose(x, y);
-  }
+  void MultTranspose(const Vector &x, Vector &y) const override;
 
   void AddMult(const Vector &x, Vector &y, const double a = 1.0) const override;
 
@@ -136,6 +133,12 @@ private:
 
   // Temporary storage for operator application.
   mutable ComplexVector lx, ly, ty;
+
+  // Helper methods for operator application.
+  void RestrictionMatrixMult(const ComplexVector &ly, ComplexVector &ty) const;
+  void RestrictionMatrixAddMult(const ComplexVector &ly, ComplexVector &ty,
+                                const double a) const;
+  void RestrictionMatrixMultTranspose(const ComplexVector &ty, ComplexVector &ly) const;
 
   ComplexParOperator(std::unique_ptr<Operator> &&dAr, std::unique_ptr<Operator> &&dAi,
                      Operator *pAr, Operator *pAi,
@@ -187,23 +190,11 @@ public:
   const Operator *Imag() const override { return RAPi.get(); }
   Operator *Imag() override { return RAPi.get(); }
 
-  void Mult(const ComplexVector &x, ComplexVector &y) const override
-  {
-    y = 0.0;
-    AddMult(x, y);
-  }
+  void Mult(const ComplexVector &x, ComplexVector &y) const override;
 
-  void MultTranspose(const ComplexVector &x, ComplexVector &y) const override
-  {
-    y = 0.0;
-    AddMultTranspose(x, y);
-  }
+  void MultTranspose(const ComplexVector &x, ComplexVector &y) const override;
 
-  void MultHermitianTranspose(const ComplexVector &x, ComplexVector &y) const override
-  {
-    y = 0.0;
-    AddMultHermitianTranspose(x, y);
-  }
+  void MultHermitianTranspose(const ComplexVector &x, ComplexVector &y) const override;
 
   void AddMult(const ComplexVector &x, ComplexVector &y,
                const std::complex<double> a = 1.0) const override;

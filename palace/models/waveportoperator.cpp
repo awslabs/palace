@@ -48,8 +48,8 @@ void GetEssentialTrueDofs(mfem::ParGridFunction &E0t, mfem::ParGridFunction &E0n
   Vector tE0t(nd_fespace.GetTrueVSize()), tE0n(h1_fespace.GetTrueVSize());
   tE0t = 0.0;
   tE0n = 0.0;
-  tE0t.SetSubVector(nd_dbc_tdof_list, 1.0);
-  tE0n.SetSubVector(h1_dbc_tdof_list, 1.0);
+  linalg::SetSubVector(tE0t, nd_dbc_tdof_list, 1.0);
+  linalg::SetSubVector(tE0n, h1_dbc_tdof_list, 1.0);
   E0t.SetFromTrueDofs(tE0t);
   E0n.SetFromTrueDofs(tE0n);
   port_nd_transfer.Transfer(E0t, port_E0t);
@@ -297,7 +297,7 @@ void GetInitialSpace(mfem::ParFiniteElementSpace &nd_fespace,
   v.SetSize(nd_fespace.GetTrueVSize() + h1_fespace.GetTrueVSize());
   // linalg::SetRandomReal(nd_fespace.GetComm(), v);
   v = std::complex<double>(1.0, 0.0);
-  v.SetSubVector(nd_dbc_tdof_list, 0.0);
+  linalg::SetSubVector(v, nd_dbc_tdof_list, 0.0);
   for (int i = nd_fespace.GetTrueVSize();
        i < nd_fespace.GetTrueVSize() + h1_fespace.GetTrueVSize(); i++)
   {

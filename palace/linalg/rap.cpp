@@ -93,6 +93,7 @@ void ParOperator::AssembleDiagonal(Vector &diag) const
                "SparseMatrix!");
   }
 
+  // Parallel assemble and eliminate essential true dofs.
   const Operator *P = test_fespace.GetProlongationMatrix();
   if (const auto *hP = dynamic_cast<const mfem::HypreParMatrix *>(P))
   {
@@ -102,20 +103,15 @@ void ParOperator::AssembleDiagonal(Vector &diag) const
   {
     P->MultTranspose(ly, diag);
   }
-
   if (dbc_tdof_list)
   {
     if (diag_policy == DiagonalPolicy::DIAG_ONE)
     {
-      diag.SetSubVector(*dbc_tdof_list, 1.0);
+      linalg::SetSubVector(diag, *dbc_tdof_list, 1.0);
     }
     else if (diag_policy == DiagonalPolicy::DIAG_ZERO)
     {
-      diag.SetSubVector(*dbc_tdof_list, 0.0);
-    }
-    else
-    {
-      MFEM_ABORT("Unsupported Operator::DiagonalPolicy for ParOperator!");
+      linalg::SetSubVector(diag, *dbc_tdof_list, 0.0);
     }
   }
 }
@@ -267,51 +263,52 @@ void ParOperator::EliminateRHS(const Vector &x, Vector &b) const
 
   MFEM_VERIFY(A, "No local matrix available for ParOperator::EliminateRHS!");
   ty = 0.0;
-  {
-    const int N = dbc_tdof_list->Size();
-    const auto *idx = dbc_tdof_list->Read();
-    const auto *X = x.Read();
-    auto *TY = ty.ReadWrite();
-    mfem::forall(N,
-                 [=] MFEM_HOST_DEVICE(int i)
-                 {
-                   const int id = idx[i];
-                   TY[id] = X[id];
-                 });
-  }
+  linalg::SetSubVector(ty, *dbc_tdof_list, x);
+  trial_fespace.GetProlongationMatrix()->Mult(ty, lx);
 
   // Apply the unconstrained operator.
-  trial_fespace.GetProlongationMatrix()->Mult(ty, lx);
   A->Mult(lx, ly);
 
-  if (!use_R)
-  {
-    test_fespace.GetProlongationMatrix()->AddMultTranspose(ly, b, -1.0);
-  }
-  else
-  {
-    test_fespace.GetRestrictionMatrix()->AddMult(ly, b, -1.0);
-  }
+  RestrictionMatrixAddMult(ly, b, -1.0);
   if (diag_policy == DiagonalPolicy::DIAG_ONE)
   {
-    const int N = dbc_tdof_list->Size();
-    const auto *idx = dbc_tdof_list->Read();
-    const auto *X = x.Read();
-    auto *B = b.ReadWrite();
-    mfem::forall(N,
-                 [=] MFEM_HOST_DEVICE(int i)
-                 {
-                   const int id = idx[i];
-                   B[id] = X[id];
-                 });
+    linalg::SetSubVector(b, *dbc_tdof_list, x);
   }
   else if (diag_policy == DiagonalPolicy::DIAG_ZERO)
   {
-    b.SetSubVector(*dbc_tdof_list, 0.0);
+    linalg::SetSubVector(b, *dbc_tdof_list, 0.0);
+  }
+}
+
+void ParOperator::Mult(const Vector &x, Vector &y) const
+{
+  MFEM_ASSERT(x.Size() == width && y.Size() == height,
+              "Incompatible dimensions for ParOperator::Mult!");
+  if (dbc_tdof_list)
+  {
+    ty = x;
+    linalg::SetSubVector(ty, *dbc_tdof_list, 0.0);
+    trial_fespace.GetProlongationMatrix()->Mult(ty, lx);
   }
   else
   {
-    MFEM_ABORT("Unsupported Operator::DiagonalPolicy for ParOperator!");
+    trial_fespace.GetProlongationMatrix()->Mult(x, lx);
+  }
+
+  // Apply the operator on the L-vector.
+  A->Mult(lx, ly);
+
+  RestrictionMatrixMult(ly, y);
+  if (dbc_tdof_list)
+  {
+    if (diag_policy == DiagonalPolicy::DIAG_ONE)
+    {
+      linalg::SetSubVector(y, *dbc_tdof_list, x);
+    }
+    else if (diag_policy == DiagonalPolicy::DIAG_ZERO)
+    {
+      linalg::SetSubVector(y, *dbc_tdof_list, 0.0);
+    }
   }
 }
 
@@ -322,55 +319,64 @@ void ParOperator::AddMult(const Vector &x, Vector &y, const double a) const
   if (dbc_tdof_list)
   {
     ty = x;
-    ty.SetSubVector(*dbc_tdof_list, 0.0);
+    linalg::SetSubVector(ty, *dbc_tdof_list, 0.0);
+    trial_fespace.GetProlongationMatrix()->Mult(ty, lx);
   }
-  trial_fespace.GetProlongationMatrix()->Mult(dbc_tdof_list ? ty : x, lx);
+  else
+  {
+    trial_fespace.GetProlongationMatrix()->Mult(x, lx);
+  }
 
   // Apply the operator on the L-vector.
   A->Mult(lx, ly);
 
   if (dbc_tdof_list)
   {
-    if (!use_R)
-    {
-      test_fespace.GetProlongationMatrix()->MultTranspose(ly, ty);
-    }
-    else
-    {
-      test_fespace.GetRestrictionMatrix()->Mult(ly, ty);
-    }
+    RestrictionMatrixMult(ly, ty);
     if (diag_policy == DiagonalPolicy::DIAG_ONE)
     {
-      const int N = dbc_tdof_list->Size();
-      const auto *idx = dbc_tdof_list->Read();
-      const auto *X = x.Read();
-      auto *TY = ty.ReadWrite();
-      mfem::forall(N,
-                   [=] MFEM_HOST_DEVICE(int i)
-                   {
-                     const int id = idx[i];
-                     TY[id] = X[id];
-                   });
+      linalg::SetSubVector(ty, *dbc_tdof_list, x);
     }
     else if (diag_policy == DiagonalPolicy::DIAG_ZERO)
     {
-      ty.SetSubVector(*dbc_tdof_list, 0.0);
-    }
-    else
-    {
-      MFEM_ABORT("Unsupported Operator::DiagonalPolicy for ParOperator!");
+      linalg::SetSubVector(ty, *dbc_tdof_list, 0.0);
     }
     y.Add(a, ty);
   }
   else
   {
-    if (!use_R)
+    RestrictionMatrixAddMult(ly, y, a);
+  }
+}
+
+void ParOperator::MultTranspose(const Vector &x, Vector &y) const
+{
+  MFEM_ASSERT(x.Size() == height && y.Size() == width,
+              "Incompatible dimensions for ParOperator::MultTranspose!");
+  if (dbc_tdof_list)
+  {
+    ty = x;
+    linalg::SetSubVector(ty, *dbc_tdof_list, 0.0);
+    RestrictionMatrixMultTranspose(ty, ly);
+  }
+  else
+  {
+    RestrictionMatrixMultTranspose(x, ly);
+  }
+
+  // Apply the operator on the L-vector.
+  A->MultTranspose(ly, lx);
+
+  trial_fespace.GetProlongationMatrix()->MultTranspose(lx, y);
+  if (dbc_tdof_list)
+  {
+    if (diag_policy == DiagonalPolicy::DIAG_ONE)
     {
-      test_fespace.GetProlongationMatrix()->AddMultTranspose(ly, y, a);
+      linalg::SetSubVector(y, *dbc_tdof_list, x);
     }
-    else
+    else if (diag_policy == DiagonalPolicy::DIAG_ZERO)
     {
-      test_fespace.GetRestrictionMatrix()->AddMult(ly, y, a);
+      linalg::SetSubVector(y, *dbc_tdof_list, 0.0);
     }
   }
 }
@@ -382,15 +388,12 @@ void ParOperator::AddMultTranspose(const Vector &x, Vector &y, const double a) c
   if (dbc_tdof_list)
   {
     ty = x;
-    ty.SetSubVector(*dbc_tdof_list, 0.0);
-  }
-  if (!use_R)
-  {
-    test_fespace.GetProlongationMatrix()->Mult(dbc_tdof_list ? ty : x, ly);
+    linalg::SetSubVector(ty, *dbc_tdof_list, 0.0);
+    RestrictionMatrixMultTranspose(ty, ly);
   }
   else
   {
-    test_fespace.GetRestrictionMatrix()->MultTranspose(dbc_tdof_list ? ty : x, ly);
+    RestrictionMatrixMultTranspose(x, ly);
   }
 
   // Apply the operator on the L-vector.
@@ -401,30 +404,54 @@ void ParOperator::AddMultTranspose(const Vector &x, Vector &y, const double a) c
     trial_fespace.GetProlongationMatrix()->MultTranspose(lx, ty);
     if (diag_policy == DiagonalPolicy::DIAG_ONE)
     {
-      const int N = dbc_tdof_list->Size();
-      const auto *idx = dbc_tdof_list->Read();
-      const auto *X = x.Read();
-      auto *TY = ty.ReadWrite();
-      mfem::forall(N,
-                   [=] MFEM_HOST_DEVICE(int i)
-                   {
-                     const int id = idx[i];
-                     TY[id] = X[id];
-                   });
+      linalg::SetSubVector(ty, *dbc_tdof_list, x);
     }
     else if (diag_policy == DiagonalPolicy::DIAG_ZERO)
     {
-      ty.SetSubVector(*dbc_tdof_list, 0.0);
-    }
-    else
-    {
-      MFEM_ABORT("Unsupported Operator::DiagonalPolicy for ParOperator!");
+      linalg::SetSubVector(ty, *dbc_tdof_list, 0.0);
     }
     y.Add(a, ty);
   }
   else
   {
     trial_fespace.GetProlongationMatrix()->AddMultTranspose(lx, y, a);
+  }
+}
+
+void ParOperator::RestrictionMatrixMult(const Vector &ly, Vector &ty) const
+{
+  if (!use_R)
+  {
+    test_fespace.GetProlongationMatrix()->MultTranspose(ly, ty);
+  }
+  else
+  {
+    test_fespace.GetRestrictionMatrix()->Mult(ly, ty);
+  }
+}
+
+void ParOperator::RestrictionMatrixAddMult(const Vector &ly, Vector &ty,
+                                           const double a) const
+{
+  if (!use_R)
+  {
+    test_fespace.GetProlongationMatrix()->AddMultTranspose(ly, ty, a);
+  }
+  else
+  {
+    test_fespace.GetRestrictionMatrix()->AddMult(ly, ty, a);
+  }
+}
+
+void ParOperator::RestrictionMatrixMultTranspose(const Vector &ty, Vector &ly) const
+{
+  if (!use_R)
+  {
+    test_fespace.GetProlongationMatrix()->Mult(ty, ly);
+  }
+  else
+  {
+    test_fespace.GetRestrictionMatrix()->MultTranspose(ty, ly);
   }
 }
 
@@ -510,31 +537,56 @@ void ComplexParOperator::SetEssentialTrueDofs(const mfem::Array<int> &tdof_list,
   }
 }
 
+void ComplexParOperator::Mult(const ComplexVector &x, ComplexVector &y) const
+{
+  MFEM_ASSERT(x.Size() == width && y.Size() == height,
+              "Incompatible dimensions for ComplexParOperator::Mult!");
+  if (dbc_tdof_list)
+  {
+    ty = x;
+    linalg::SetSubVector(ty, *dbc_tdof_list, 0.0);
+    trial_fespace.GetProlongationMatrix()->Mult(ty.Real(), lx.Real());
+    trial_fespace.GetProlongationMatrix()->Mult(ty.Imag(), lx.Imag());
+  }
+  else
+  {
+    trial_fespace.GetProlongationMatrix()->Mult(x.Real(), lx.Real());
+    trial_fespace.GetProlongationMatrix()->Mult(x.Imag(), lx.Imag());
+  }
+
+  // Apply the operator on the L-vector.
+  A->Mult(lx, ly);
+
+  RestrictionMatrixMult(ly, y);
+  if (dbc_tdof_list)
+  {
+    if (diag_policy == Operator::DiagonalPolicy::DIAG_ONE)
+    {
+      linalg::SetSubVector(y, *dbc_tdof_list, x);
+    }
+    else if (diag_policy == Operator::DiagonalPolicy::DIAG_ZERO)
+    {
+      linalg::SetSubVector(y, *dbc_tdof_list, 0.0);
+    }
+  }
+}
+
 void ComplexParOperator::AddMult(const ComplexVector &x, ComplexVector &y,
                                  const std::complex<double> a) const
 {
-  constexpr bool zero_real = false;
-  constexpr bool zero_imag = false;
-  const Vector &xr = x.Real();
-  const Vector &xi = x.Imag();
-  Vector &yr = y.Real();
-  Vector &yi = y.Imag();
-  MFEM_ASSERT(xr.Size() == width && xi.Size() == width && yr.Size() == height &&
-                  yi.Size() == height,
+  MFEM_ASSERT(x.Size() == width && y.Size() == height,
               "Incompatible dimensions for ComplexParOperator::AddMult!");
   if (dbc_tdof_list)
   {
-    ty.Real() = xr;
-    ty.Imag() = xi;
-    ty.SetSubVector(*dbc_tdof_list, 0.0);
+    ty = x;
+    linalg::SetSubVector(ty, *dbc_tdof_list, 0.0);
+    trial_fespace.GetProlongationMatrix()->Mult(ty.Real(), lx.Real());
+    trial_fespace.GetProlongationMatrix()->Mult(ty.Imag(), lx.Imag());
   }
-  if (!zero_real)
+  else
   {
-    trial_fespace.GetProlongationMatrix()->Mult(dbc_tdof_list ? ty.Real() : xr, lx.Real());
-  }
-  if (!zero_imag)
-  {
-    trial_fespace.GetProlongationMatrix()->Mult(dbc_tdof_list ? ty.Imag() : xi, lx.Imag());
+    trial_fespace.GetProlongationMatrix()->Mult(x.Real(), lx.Real());
+    trial_fespace.GetProlongationMatrix()->Mult(x.Imag(), lx.Imag());
   }
 
   // Apply the operator on the L-vector.
@@ -543,54 +595,52 @@ void ComplexParOperator::AddMult(const ComplexVector &x, ComplexVector &y,
 
   if (dbc_tdof_list)
   {
-    if (!use_R)
-    {
-      test_fespace.GetProlongationMatrix()->MultTranspose(ly.Real(), ty.Real());
-      test_fespace.GetProlongationMatrix()->MultTranspose(ly.Imag(), ty.Imag());
-    }
-    else
-    {
-      test_fespace.GetRestrictionMatrix()->Mult(ly.Real(), ty.Real());
-      test_fespace.GetRestrictionMatrix()->Mult(ly.Imag(), ty.Imag());
-    }
+    RestrictionMatrixMult(ly, ty);
     if (diag_policy == Operator::DiagonalPolicy::DIAG_ONE)
     {
-      const int N = dbc_tdof_list->Size();
-      const auto *idx = dbc_tdof_list->Read();
-      const auto *XR = xr.Read();
-      const auto *XI = xi.Read();
-      auto *TYR = ty.Real().ReadWrite();
-      auto *TYI = ty.Imag().ReadWrite();
-      mfem::forall(N,
-                   [=] MFEM_HOST_DEVICE(int i)
-                   {
-                     const int id = idx[i];
-                     TYR[id] = XR[id];
-                     TYI[id] = XI[id];
-                   });
+      linalg::SetSubVector(ty, *dbc_tdof_list, x);
     }
     else if (diag_policy == Operator::DiagonalPolicy::DIAG_ZERO)
     {
-      ty.SetSubVector(*dbc_tdof_list, 0.0);
+      linalg::SetSubVector(ty, *dbc_tdof_list, 0.0);
     }
-    else
-    {
-      MFEM_ABORT("Unsupported Operator::DiagonalPolicy for ParOperator!");
-    }
-    yr += ty.Real();
-    yi += ty.Imag();
+    y += ty;
   }
   else
   {
-    if (!use_R)
+    RestrictionMatrixAddMult(ly, y, 1.0);
+  }
+}
+
+void ComplexParOperator::MultTranspose(const ComplexVector &x, ComplexVector &y) const
+{
+  MFEM_ASSERT(x.Size() == height && y.Size() == width,
+              "Incompatible dimensions for ComplexParOperator::MultTranspose!");
+  if (dbc_tdof_list)
+  {
+    ty = x;
+    linalg::SetSubVector(ty, *dbc_tdof_list, 0.0);
+    RestrictionMatrixMultTranspose(ty, ly);
+  }
+  else
+  {
+    RestrictionMatrixMultTranspose(x, ly);
+  }
+
+  // Apply the operator on the L-vector.
+  A->MultTranspose(ly, lx);
+
+  trial_fespace.GetProlongationMatrix()->MultTranspose(lx.Real(), y.Real());
+  trial_fespace.GetProlongationMatrix()->MultTranspose(lx.Imag(), y.Imag());
+  if (dbc_tdof_list)
+  {
+    if (diag_policy == Operator::DiagonalPolicy::DIAG_ONE)
     {
-      test_fespace.GetProlongationMatrix()->MultTranspose(ly.Real(), yr);
-      test_fespace.GetProlongationMatrix()->MultTranspose(ly.Imag(), yi);
+      linalg::SetSubVector(y, *dbc_tdof_list, x);
     }
-    else
+    else if (diag_policy == Operator::DiagonalPolicy::DIAG_ZERO)
     {
-      test_fespace.GetRestrictionMatrix()->Mult(ly.Real(), yr);
-      test_fespace.GetRestrictionMatrix()->Mult(ly.Imag(), yi);
+      linalg::SetSubVector(y, *dbc_tdof_list, 0.0);
     }
   }
 }
@@ -598,44 +648,17 @@ void ComplexParOperator::AddMult(const ComplexVector &x, ComplexVector &y,
 void ComplexParOperator::AddMultTranspose(const ComplexVector &x, ComplexVector &y,
                                           const std::complex<double> a) const
 {
-  constexpr bool zero_real = false;
-  constexpr bool zero_imag = false;
-  const Vector &xr = x.Real();
-  const Vector &xi = x.Imag();
-  Vector &yr = y.Real();
-  Vector &yi = y.Imag();
-  MFEM_ASSERT(xr.Size() == height && xi.Size() == height && yr.Size() == width &&
-                  yi.Size() == width,
+  MFEM_ASSERT(x.Size() == height && y.Size() == width,
               "Incompatible dimensions for ComplexParOperator::AddMultTranspose!");
   if (dbc_tdof_list)
   {
-    ty.Real() = xr;
-    ty.Imag() = xi;
-    ty.SetSubVector(*dbc_tdof_list, 0.0);
-  }
-  if (!use_R)
-  {
-    if (!zero_real)
-    {
-      test_fespace.GetProlongationMatrix()->Mult(dbc_tdof_list ? ty.Real() : xr, ly.Real());
-    }
-    if (!zero_imag)
-    {
-      test_fespace.GetProlongationMatrix()->Mult(dbc_tdof_list ? ty.Imag() : xi, ly.Imag());
-    }
+    ty = x;
+    linalg::SetSubVector(ty, *dbc_tdof_list, 0.0);
+    RestrictionMatrixMultTranspose(ty, ly);
   }
   else
   {
-    if (!zero_real)
-    {
-      test_fespace.GetRestrictionMatrix()->MultTranspose(dbc_tdof_list ? ty.Real() : xr,
-                                                         ly.Real());
-    }
-    if (!zero_imag)
-    {
-      test_fespace.GetRestrictionMatrix()->MultTranspose(dbc_tdof_list ? ty.Imag() : xi,
-                                                         ly.Imag());
-    }
+    RestrictionMatrixMultTranspose(x, ly);
   }
 
   // Apply the operator on the L-vector.
@@ -648,79 +671,69 @@ void ComplexParOperator::AddMultTranspose(const ComplexVector &x, ComplexVector 
     trial_fespace.GetProlongationMatrix()->MultTranspose(lx.Imag(), ty.Imag());
     if (diag_policy == Operator::DiagonalPolicy::DIAG_ONE)
     {
-      const int N = dbc_tdof_list->Size();
-      const auto *idx = dbc_tdof_list->Read();
-      const auto *XR = xr.Read();
-      const auto *XI = xi.Read();
-      auto *TYR = ty.Real().ReadWrite();
-      auto *TYI = ty.Imag().ReadWrite();
-      mfem::forall(N,
-                   [=] MFEM_HOST_DEVICE(int i)
-                   {
-                     const int id = idx[i];
-                     TYR[id] = XR[id];
-                     TYI[id] = XI[id];
-                   });
+      linalg::SetSubVector(ty, *dbc_tdof_list, x);
     }
     else if (diag_policy == Operator::DiagonalPolicy::DIAG_ZERO)
     {
-      ty.SetSubVector(*dbc_tdof_list, 0.0);
+      linalg::SetSubVector(ty, *dbc_tdof_list, 0.0);
     }
-    else
-    {
-      MFEM_ABORT("Unsupported Operator::DiagonalPolicy for ParOperator!");
-    }
-    yr += ty.Real();
-    yi += ty.Imag();
+    y += ty;
   }
   else
   {
-    trial_fespace.GetProlongationMatrix()->AddMultTranspose(lx.Real(), yr);
-    trial_fespace.GetProlongationMatrix()->AddMultTranspose(lx.Imag(), yi);
+    trial_fespace.GetProlongationMatrix()->AddMultTranspose(lx.Real(), y.Real());
+    trial_fespace.GetProlongationMatrix()->AddMultTranspose(lx.Imag(), y.Imag());
+  }
+}
+
+void ComplexParOperator::MultHermitianTranspose(const ComplexVector &x,
+                                                ComplexVector &y) const
+{
+  MFEM_ASSERT(x.Size() == height && y.Size() == width,
+              "Incompatible dimensions for ComplexParOperator::MultHermitianTranspose!");
+  if (dbc_tdof_list)
+  {
+    ty = x;
+    linalg::SetSubVector(ty, *dbc_tdof_list, 0.0);
+    RestrictionMatrixMultTranspose(ty, ly);
+  }
+  else
+  {
+    RestrictionMatrixMultTranspose(x, ly);
+  }
+
+  // Apply the operator on the L-vector.
+  A->MultHermitianTranspose(ly, lx);
+
+  trial_fespace.GetProlongationMatrix()->MultTranspose(lx.Real(), y.Real());
+  trial_fespace.GetProlongationMatrix()->MultTranspose(lx.Imag(), y.Imag());
+  if (dbc_tdof_list)
+  {
+    if (diag_policy == Operator::DiagonalPolicy::DIAG_ONE)
+    {
+      linalg::SetSubVector(y, *dbc_tdof_list, x);
+    }
+    else if (diag_policy == Operator::DiagonalPolicy::DIAG_ZERO)
+    {
+      linalg::SetSubVector(y, *dbc_tdof_list, 0.0);
+    }
   }
 }
 
 void ComplexParOperator::AddMultHermitianTranspose(const ComplexVector &x, ComplexVector &y,
                                                    const std::complex<double> a) const
 {
-  constexpr bool zero_real = false;
-  constexpr bool zero_imag = false;
-  const Vector &xr = x.Real();
-  const Vector &xi = x.Imag();
-  Vector &yr = y.Real();
-  Vector &yi = y.Imag();
-  MFEM_ASSERT(xr.Size() == height && xi.Size() == height && yr.Size() == width &&
-                  yi.Size() == width,
+  MFEM_ASSERT(x.Size() == height && y.Size() == width,
               "Incompatible dimensions for ComplexParOperator::AddMultHermitianTranspose!");
   if (dbc_tdof_list)
   {
-    ty.Real() = xr;
-    ty.Imag() = xi;
-    ty.SetSubVector(*dbc_tdof_list, 0.0);
-  }
-  if (!use_R)
-  {
-    if (!zero_real)
-    {
-      test_fespace.GetProlongationMatrix()->Mult(dbc_tdof_list ? ty.Real() : xr, ly.Real());
-    }
-    if (!zero_imag)
-    {
-      test_fespace.GetProlongationMatrix()->Mult(dbc_tdof_list ? ty.Imag() : xi, ly.Imag());
-    }
+    ty = x;
+    linalg::SetSubVector(ty, *dbc_tdof_list, 0.0);
+    RestrictionMatrixMultTranspose(ty, ly);
   }
   else
   {
-    if (!zero_real)
-    {
-      test_fespace.GetRestrictionMatrix()->MultTranspose(dbc_tdof_list ? ty.Real() : xr,
-                                                         ly.Real());
-    }
-    if (!zero_imag)
-    {
-      test_fespace.GetRestrictionMatrix()->MultTranspose(dbc_tdof_list ? ty.Imag() : xi,
-                                                         ly.Imag());
-    }
+    RestrictionMatrixMultTranspose(x, ly);
   }
 
   // Apply the operator on the L-vector.
@@ -733,35 +746,63 @@ void ComplexParOperator::AddMultHermitianTranspose(const ComplexVector &x, Compl
     trial_fespace.GetProlongationMatrix()->MultTranspose(lx.Imag(), ty.Imag());
     if (diag_policy == Operator::DiagonalPolicy::DIAG_ONE)
     {
-      const int N = dbc_tdof_list->Size();
-      const auto *idx = dbc_tdof_list->Read();
-      const auto *XR = xr.Read();
-      const auto *XI = xi.Read();
-      auto *TYR = ty.Real().ReadWrite();
-      auto *TYI = ty.Imag().ReadWrite();
-      mfem::forall(N,
-                   [=] MFEM_HOST_DEVICE(int i)
-                   {
-                     const int id = idx[i];
-                     TYR[id] = XR[id];
-                     TYI[id] = XI[id];
-                   });
+      linalg::SetSubVector(ty, *dbc_tdof_list, x);
     }
     else if (diag_policy == Operator::DiagonalPolicy::DIAG_ZERO)
     {
-      ty.SetSubVector(*dbc_tdof_list, 0.0);
+      linalg::SetSubVector(ty, *dbc_tdof_list, 0.0);
     }
-    else
-    {
-      MFEM_ABORT("Unsupported Operator::DiagonalPolicy for ParOperator!");
-    }
-    yr += ty.Real();
-    yi += ty.Imag();
+    y += ty;
   }
   else
   {
-    trial_fespace.GetProlongationMatrix()->AddMultTranspose(lx.Real(), yr);
-    trial_fespace.GetProlongationMatrix()->AddMultTranspose(lx.Imag(), yi);
+    trial_fespace.GetProlongationMatrix()->AddMultTranspose(lx.Real(), y.Real());
+    trial_fespace.GetProlongationMatrix()->AddMultTranspose(lx.Imag(), y.Imag());
+  }
+}
+
+void ComplexParOperator::RestrictionMatrixMult(const ComplexVector &ly,
+                                               ComplexVector &ty) const
+{
+  if (!use_R)
+  {
+    test_fespace.GetProlongationMatrix()->MultTranspose(ly.Real(), ty.Real());
+    test_fespace.GetProlongationMatrix()->MultTranspose(ly.Imag(), ty.Imag());
+  }
+  else
+  {
+    test_fespace.GetRestrictionMatrix()->Mult(ly.Real(), ty.Real());
+    test_fespace.GetRestrictionMatrix()->Mult(ly.Imag(), ty.Imag());
+  }
+}
+
+void ComplexParOperator::RestrictionMatrixAddMult(const ComplexVector &ly,
+                                                  ComplexVector &ty, const double a) const
+{
+  if (!use_R)
+  {
+    test_fespace.GetProlongationMatrix()->AddMultTranspose(ly.Real(), ty.Real(), a);
+    test_fespace.GetProlongationMatrix()->AddMultTranspose(ly.Imag(), ty.Imag(), a);
+  }
+  else
+  {
+    test_fespace.GetRestrictionMatrix()->AddMult(ly.Real(), ty.Real(), a);
+    test_fespace.GetRestrictionMatrix()->AddMult(ly.Imag(), ty.Imag(), a);
+  }
+}
+
+void ComplexParOperator::RestrictionMatrixMultTranspose(const ComplexVector &ty,
+                                                        ComplexVector &ly) const
+{
+  if (!use_R)
+  {
+    test_fespace.GetProlongationMatrix()->Mult(ty.Real(), ly.Real());
+    test_fespace.GetProlongationMatrix()->Mult(ty.Imag(), ly.Imag());
+  }
+  else
+  {
+    test_fespace.GetRestrictionMatrix()->MultTranspose(ty.Real(), ly.Real());
+    test_fespace.GetRestrictionMatrix()->MultTranspose(ty.Imag(), ly.Imag());
   }
 }
 

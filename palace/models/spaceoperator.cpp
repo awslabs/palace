@@ -920,7 +920,7 @@ bool SpaceOperator::GetExcitationVector(Vector &RHS)
   RHS.SetSize(GetNDSpace().GetTrueVSize());
   RHS = 0.0;
   bool nnz = AddExcitationVector1Internal(RHS);
-  RHS.SetSubVector(nd_dbc_tdof_lists.back(), 0.0);
+  linalg::SetSubVector(RHS, nd_dbc_tdof_lists.back(), 0.0);
   return nnz;
 }
 
@@ -932,7 +932,7 @@ bool SpaceOperator::GetExcitationVector(double omega, ComplexVector &RHS)
   bool nnz1 = AddExcitationVector1Internal(RHS.Real());
   RHS *= 1i * omega;
   bool nnz2 = AddExcitationVector2Internal(omega, RHS);
-  RHS.SetSubVector(nd_dbc_tdof_lists.back(), 0.0);
+  linalg::SetSubVector(RHS, nd_dbc_tdof_lists.back(), 0.0);
   return nnz1 || nnz2;
 }
 
@@ -943,7 +943,7 @@ bool SpaceOperator::GetExcitationVector1(ComplexVector &RHS1)
   RHS1.SetSize(GetNDSpace().GetTrueVSize());
   RHS1 = 0.0;
   bool nnz1 = AddExcitationVector1Internal(RHS1.Real());
-  RHS1.Real().SetSubVector(nd_dbc_tdof_lists.back(), 0.0);
+  linalg::SetSubVector(RHS1.Real(), nd_dbc_tdof_lists.back(), 0.0);
   return nnz1;
 }
 
@@ -952,7 +952,7 @@ bool SpaceOperator::GetExcitationVector2(double omega, ComplexVector &RHS2)
   RHS2.SetSize(GetNDSpace().GetTrueVSize());
   RHS2 = 0.0;
   bool nnz2 = AddExcitationVector2Internal(omega, RHS2);
-  RHS2.SetSubVector(nd_dbc_tdof_lists.back(), 0.0);
+  linalg::SetSubVector(RHS2, nd_dbc_tdof_lists.back(), 0.0);
   return nnz2;
 }
 
@@ -1007,14 +1007,14 @@ void SpaceOperator::GetConstantInitialVector(ComplexVector &v)
 {
   v.SetSize(GetNDSpace().GetTrueVSize());
   v = 1.0;
-  v.Real().SetSubVector(nd_dbc_tdof_lists.back(), 0.0);
+  linalg::SetSubVector(v.Real(), nd_dbc_tdof_lists.back(), 0.0);
 }
 
 void SpaceOperator::GetRandomInitialVector(ComplexVector &v)
 {
   v.SetSize(GetNDSpace().GetTrueVSize());
   linalg::SetRandom(GetNDSpace().GetComm(), v);
-  v.SetSubVector(nd_dbc_tdof_lists.back(), 0.0);
+  linalg::SetSubVector(v, nd_dbc_tdof_lists.back(), 0.0);
 }
 
 template std::unique_ptr<Operator>

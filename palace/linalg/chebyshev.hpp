@@ -31,8 +31,8 @@ private:
   // System matrix (not owned).
   const OperType *A;
 
-  // Inverse diagonal scaling of the operator.
-  VecType dinv;
+  // Inverse diagonal scaling of the operator (real-valued for now).
+  Vector dinv;
 
   // Maximum operator eigenvalue for Chebyshev polynomial smoothing.
   double lambda_max;

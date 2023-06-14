@@ -26,6 +26,8 @@ DistRelaxationSmoother<OperType>::DistRelaxationSmoother(
     grad->Assemble();
     grad->Finalize();
     G = std::make_unique<ParOperator>(std::move(grad), h1_fespace, nd_fespace, true);
+    // ParOperator RAP_G(std::move(grad), h1_fespace, nd_fespace, true);
+    // G = RAP_G.StealParallelAssemble();
   }
 
   // Initialize smoothers.
@@ -46,41 +48,55 @@ void DistRelaxationSmoother<OperType>::SetOperators(const OperType &op,
               "Invalid operator sizes for DistRelaxationSmoother!");
   A = &op;
   A_G = &op_G;
+  // if constexpr (std::is_same<OperType, ComplexOperator>::value)
+  // {
+  //   A = &const_cast<ParOperator &>(dynamic_cast<const ParOperator &>(*op.Real()))
+  //            .ParallelAssemble();
+  //   A_G = &const_cast<ParOperator &>(dynamic_cast<const ParOperator &>(*op_G.Real()))
+  //              .ParallelAssemble();
+  // }
+  // else
+  // {
+  //   A = &const_cast<ParOperType &>(dynamic_cast<const ParOperType &>(op))
+  //            .ParallelAssemble();
+  //   A_G = &const_cast<ParOperType &>(dynamic_cast<const ParOperType &>(op_G))
+  //              .ParallelAssemble();
+  // }
 
   const auto *PtAP_G = dynamic_cast<const ParOperType *>(&op_G);
   MFEM_VERIFY(PtAP_G,
               "ChebyshevSmoother requires a ParOperator or ComplexParOperator operator!");
   dbc_tdof_list_G = PtAP_G->GetEssentialTrueDofs();
 
-  r.SetSize(A->Height());
-  x_G.SetSize(A_G->Height());
-  y_G.SetSize(A_G->Height());
+  r.SetSize(op.Height());
+  x_G.SetSize(op_G.Height());
+  y_G.SetSize(op_G.Height());
 
   // Set up smoothers for A and A_G.
-  B->SetOperator(*A);
-  B_G->SetOperator(*A_G);
+  B->SetOperator(op);
+  B_G->SetOperator(op_G);
 }
 
 namespace
 {
 
-inline void RealAddMult(Operator &op, const Vector &x, Vector &y)
+inline void RealAddMult(const Operator &op, const Vector &x, Vector &y)
 {
   op.AddMult(x, y, 1.0);
 }
 
-inline void RealAddMult(Operator &op, const ComplexVector &x, ComplexVector &y)
+inline void RealAddMult(const Operator &op, const ComplexVector &x, ComplexVector &y)
 {
   op.AddMult(x.Real(), y.Real(), 1.0);
   op.AddMult(x.Imag(), y.Imag(), 1.0);
 }
 
-inline void RealMultTranspose(Operator &op, const Vector &x, Vector &y)
+inline void RealMultTranspose(const Operator &op, const Vector &x, Vector &y)
 {
   op.MultTranspose(x, y);
 }
 
-inline void RealMultTranspose(Operator &op, const ComplexVector &x, ComplexVector &y)
+inline void RealMultTranspose(const Operator &op, const ComplexVector &x, ComplexVector &y)
 {
   op.MultTranspose(x.Real(), y.Real());
   op.MultTranspose(x.Imag(), y.Imag());
@@ -104,7 +120,7 @@ void DistRelaxationSmoother<OperType>::Mult(const VecType &x, VecType &y) const
     RealMultTranspose(*G, r, x_G);
     if (dbc_tdof_list_G)
     {
-      x_G.SetSubVector(*dbc_tdof_list_G, 0.0);
+      linalg::SetSubVector(x_G, *dbc_tdof_list_G, 0.0);
     }
     B_G->Mult(x_G, y_G);
     RealAddMult(*G, y_G, y);
@@ -132,7 +148,7 @@ void DistRelaxationSmoother<OperType>::MultTranspose(const VecType &x, VecType &
     }
     if (dbc_tdof_list_G)
     {
-      x_G.SetSubVector(*dbc_tdof_list_G, 0.0);
+      linalg::SetSubVector(x_G, *dbc_tdof_list_G, 0.0);
     }
     B_G->MultTranspose(x_G, y_G);
     RealAddMult(*G, y_G, y);

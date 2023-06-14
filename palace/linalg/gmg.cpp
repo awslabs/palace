@@ -79,13 +79,25 @@ void GeometricMultigridSolver<OperType>::SetOperator(const OperType &op)
   for (int l = 0; l < n_levels; l++)
   {
     A[l] = &mg_op->GetOperatorAtLevel(l);
+    // if constexpr (std::is_same<OperType, ComplexOperator>::value)
+    // {
+    //   A[l] = &const_cast<ParOperator &>(
+    //               dynamic_cast<const ParOperator
+    //               &>(*mg_op->GetOperatorAtLevel(l).Real())) .ParallelAssemble();
+    // }
+    // else
+    // {
+    //   A[l] = &const_cast<ParOperType &>(
+    //               dynamic_cast<const ParOperType &>(mg_op->GetOperatorAtLevel(l)))
+    //               .ParallelAssemble();
+    // }
     MFEM_VERIFY(
         A[l]->Width() == A[l]->Height() &&
             (n_levels == 1 ||
              (A[l]->Height() == ((l < n_levels - 1) ? P[l]->Width() : P[l - 1]->Height()))),
         "Invalid operator sizes for GeometricMultigridSolver!");
 
-    const auto *PtAP_l = dynamic_cast<const ParOperType *>(A[l]);
+    const auto *PtAP_l = dynamic_cast<const ParOperType *>(&mg_op->GetOperatorAtLevel(l));
     MFEM_VERIFY(
         PtAP_l,
         "GeometricMultigridSolver requires ParOperator or ComplexParOperator operators!");
@@ -100,11 +112,12 @@ void GeometricMultigridSolver<OperType>::SetOperator(const OperType &op)
       MFEM_VERIFY(mg_op->HasAuxiliaryOperators(),
                   "Distributive relaxation smoother relies on both primary space and "
                   "auxiliary space operators for multigrid smoothing!");
-      dist_smoother->SetOperators(*A[l], mg_op->GetAuxiliaryOperatorAtLevel(l));
+      dist_smoother->SetOperators(mg_op->GetOperatorAtLevel(l),
+                                  mg_op->GetAuxiliaryOperatorAtLevel(l));
     }
     else
     {
-      B[l]->SetOperator(*A[l]);
+      B[l]->SetOperator(mg_op->GetOperatorAtLevel(l));
     }
 
     X[l].SetSize(A[l]->Height());
@@ -180,7 +193,7 @@ void GeometricMultigridSolver<OperType>::VCycle(int l, bool initial_guess) const
   RealMultTranspose(*P[l - 1], R[l], X[l - 1]);
   if (dbc_tdof_lists[l - 1])
   {
-    X[l - 1].SetSubVector(*dbc_tdof_lists[l - 1], 0.0);
+    linalg::SetSubVector(X[l - 1], *dbc_tdof_lists[l - 1], 0.0);
   }
   VCycle(l - 1, false);
 

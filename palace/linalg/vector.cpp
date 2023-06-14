@@ -159,28 +159,6 @@ void ComplexVector::Reciprocal()
                });
 }
 
-void ComplexVector::SetSubVector(const mfem::Array<int> &rows, std::complex<double> s)
-{
-  const int N = rows.Size();
-  const double sr = s.real();
-  const double si = s.imag();
-  const auto *idx = rows.Read();
-  auto *XR = Real().ReadWrite();
-  auto *XI = Imag().ReadWrite();
-  mfem::forall(N,
-               [=] MFEM_HOST_DEVICE(int i)
-               {
-                 const int id = idx[i];
-                 XR[id] = sr;
-               });
-  mfem::forall(N,
-               [=] MFEM_HOST_DEVICE(int i)
-               {
-                 const int id = idx[i];
-                 XI[id] = si;
-               });
-}
-
 std::complex<double> ComplexVector::Dot(const ComplexVector &y) const
 {
   return {(Real() * y.Real()) + (Imag() * y.Imag()),
@@ -392,6 +370,81 @@ void SetRandomSign(MPI_Comm comm, ComplexVector &x, int seed)
                { XR[i] = (XR[i] > 0.0) ? 1.0 : ((XR[i] < 0.0) ? -1.0 : 0.0); });
   mfem::forall(N, [=] MFEM_HOST_DEVICE(int i)
                { XI[i] = (XI[i] > 0.0) ? 1.0 : ((XI[i] < 0.0) ? -1.0 : 0.0); });
+}
+
+template <>
+void SetSubVector(Vector &x, const mfem::Array<int> &rows, double s)
+{
+  const int N = rows.Size();
+  const double sr = s;
+  const auto *idx = rows.Read();
+  auto *X = x.ReadWrite();
+  mfem::forall(N,
+               [=] MFEM_HOST_DEVICE(int i)
+               {
+                 const int id = idx[i];
+                 X[id] = sr;
+               });
+}
+
+template <>
+void SetSubVector(ComplexVector &x, const mfem::Array<int> &rows, double s)
+{
+  const int N = rows.Size();
+  const double sr = s;
+  const auto *idx = rows.Read();
+  auto *XR = x.Real().ReadWrite();
+  auto *XI = x.Imag().ReadWrite();
+  mfem::forall(N,
+               [=] MFEM_HOST_DEVICE(int i)
+               {
+                 const int id = idx[i];
+                 XR[id] = sr;
+               });
+  mfem::forall(N,
+               [=] MFEM_HOST_DEVICE(int i)
+               {
+                 const int id = idx[i];
+                 XI[id] = 0.0;
+               });
+}
+
+template <>
+void SetSubVector(Vector &x, const mfem::Array<int> &rows, const Vector &y)
+{
+  const int N = rows.Size();
+  const auto *idx = rows.Read();
+  const auto *Y = y.Read();
+  auto *X = x.ReadWrite();
+  mfem::forall(N,
+               [=] MFEM_HOST_DEVICE(int i)
+               {
+                 const int id = idx[i];
+                 X[id] = Y[id];
+               });
+}
+
+template <>
+void SetSubVector(ComplexVector &x, const mfem::Array<int> &rows, const ComplexVector &y)
+{
+  const int N = rows.Size();
+  const auto *idx = rows.Read();
+  const auto *YR = y.Real().Read();
+  const auto *YI = y.Imag().Read();
+  auto *XR = x.Real().ReadWrite();
+  auto *XI = x.Imag().ReadWrite();
+  mfem::forall(N,
+               [=] MFEM_HOST_DEVICE(int i)
+               {
+                 const int id = idx[i];
+                 XR[id] = YR[id];
+               });
+  mfem::forall(N,
+               [=] MFEM_HOST_DEVICE(int i)
+               {
+                 const int id = idx[i];
+                 XI[id] = YI[id];
+               });
 }
 
 template <>

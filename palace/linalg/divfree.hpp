@@ -59,7 +59,7 @@ public:
     // Apply essential BC and solve the linear system.
     if (bdr_tdof_list_M)
     {
-      rhs.SetSubVector(*bdr_tdof_list_M, 0.0);
+      linalg::SetSubVector(rhs, *bdr_tdof_list_M, 0.0);
     }
     ksp->Mult(rhs, psi);
 
