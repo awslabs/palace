@@ -32,7 +32,6 @@ class SpaceOperator
 private:
   const mfem::AssemblyLevel assembly_level;  // Use full or partial assembly for operators
   const int skip_zeros;                      // Skip zeros during full assembly of operators
-  const bool pc_mg;                          // Use geometric multigrid in preconditioning
   const bool pc_lor;      // Use low-order refined (LOR) space for the preconditioner
   const bool pc_shifted;  // Use shifted mass matrix for the preconditioner
 

@@ -38,11 +38,11 @@ CurlCurlMassSolver::CurlCurlMassSolver(
         if (s == 0)
         {
           a->AddDomainIntegrator(new mfem::CurlCurlIntegrator(muinv_func));
-          a->AddDomainIntegrator(new mfem::MixedVectorMassIntegrator(epsilon_func));
+          a->AddDomainIntegrator(new mfem::VectorFEMassIntegrator(epsilon_func));
         }
         else
         {
-          a->AddDomainIntegrator(new mfem::MixedGradGradIntegrator(epsilon_func));
+          a->AddDomainIntegrator(new mfem::DiffusionIntegrator(epsilon_func));
         }
         // XX TODO: Partial assembly option?
         a->SetAssemblyLevel(mfem::AssemblyLevel::LEGACY);

@@ -19,8 +19,9 @@ class BoomerAmgSolver : public mfem::HypreBoomerAMG
 public:
   BoomerAmgSolver(int cycle_it = 1, int smooth_it = 1, int print = 0);
   BoomerAmgSolver(const IoData &iodata, int print)
-    : BoomerAmgSolver(iodata.solver.linear.pc_mg ? 1 : iodata.solver.linear.mg_cycle_it,
-                      iodata.solver.linear.mg_smooth_it, print)
+    : BoomerAmgSolver(
+          (iodata.solver.linear.mg_max_levels > 1) ? 1 : iodata.solver.linear.mg_cycle_it,
+          iodata.solver.linear.mg_smooth_it, print)
   {
   }
 

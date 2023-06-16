@@ -129,6 +129,11 @@ int main(int argc, char *argv[])
   PrintBanner(world_comm, world_size, num_thread, git_tag);
   IoData iodata(argv[1], false);
 
+  //XX TODO: DEVICE DEFAULTS?
+
+  // Initialize MFEM device.
+  mfem::Device device(iodata.solver.device.c_str());
+
   // Initialize Hypre and, optionally, SLEPc/PETSc.
   mfem::Hypre::Init();
 #if defined(PALACE_WITH_SLEPC)

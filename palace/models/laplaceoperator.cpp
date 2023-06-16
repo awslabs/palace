@@ -113,18 +113,14 @@ std::map<int, mfem::Array<int>> ConstructSources(const IoData &iodata)
 
 LaplaceOperator::LaplaceOperator(const IoData &iodata,
                                  const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh)
-  : assembly_level(iodata.solver.linear.mat_pa ? mfem::AssemblyLevel::PARTIAL
-                                               : mfem::AssemblyLevel::LEGACY),
-    skip_zeros(0), pc_mg(iodata.solver.linear.pc_mg), print_hdr(true),
-    dbc_marker(SetUpBoundaryProperties(iodata, *mesh.back())),
+  : assembly_level(utils::GetAssemblyLevel(iodata.solver.assembly_level)), skip_zeros(0),
+    print_hdr(true), dbc_marker(SetUpBoundaryProperties(iodata, *mesh.back())),
     h1_fecs(utils::ConstructFECollections<mfem::H1_FECollection>(
-        pc_mg, false, iodata.solver.order, mesh.back()->Dimension())),
+        iodata.solver.order, mesh.back()->Dimension(), iodata.solver.linear.mg_max_levels,
+        iodata.solver.linear.mg_coarsen_type, false)),
     nd_fec(iodata.solver.order, mesh.back()->Dimension()),
-    h1_fespaces(pc_mg ? utils::ConstructFiniteElementSpaceHierarchy(
-                            mesh, h1_fecs, &dbc_marker, &dbc_tdof_lists)
-                      : utils::ConstructFiniteElementSpaceHierarchy(
-                            *mesh.back(), *h1_fecs.back(), &dbc_marker,
-                            &dbc_tdof_lists.emplace_back())),
+    h1_fespaces(utils::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
+        iodata.solver.linear.mg_max_levels, mesh, h1_fecs, &dbc_marker, &dbc_tdof_lists)),
     nd_fespace(mesh.back().get(), &nd_fec), mat_op(iodata, *mesh.back()),
     source_attr_lists(ConstructSources(iodata))
 {
@@ -152,7 +148,7 @@ std::unique_ptr<Operator> LaplaceOperator::GetStiffnessMatrix()
     constexpr auto MatType = MaterialPropertyType::PERMITTIVITY_REAL;
     MaterialPropertyCoefficient<MatType> epsilon_func(mat_op);
     auto k = std::make_unique<mfem::SymmetricBilinearForm>(&h1_fespace_l);
-    k->AddDomainIntegrator(new mfem::MixedGradGradIntegrator(epsilon_func));
+    k->AddDomainIntegrator(new mfem::DiffusionIntegrator(epsilon_func));
     k->SetAssemblyLevel(assembly_level);
     k->Assemble(skip_zeros);
     k->Finalize(skip_zeros);

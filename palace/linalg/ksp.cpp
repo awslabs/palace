@@ -217,7 +217,7 @@ ConfigurePreconditionerSolver(MPI_Comm comm, const IoData &iodata,
 
   // Construct the actual solver, which has the right value type.
   auto pc = std::make_unique<WrapperSolver<OperType>>(std::move(pc0));
-  if (iodata.solver.linear.pc_mg)
+  if (iodata.solver.linear.mg_max_levels > 1)
   {
     // This will construct the multigrid hierarchy using pc as the coarse solver
     // (ownership of pc is transferred to the GeometricMultigridSolver). When a special

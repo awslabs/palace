@@ -29,7 +29,7 @@ DivFreeSolver::DivFreeSolver(const MaterialOperator &mat_op,
     {
       auto &h1_fespace_l = h1_fespaces.GetFESpaceAtLevel(l);
       auto m = std::make_unique<mfem::SymmetricBilinearForm>(&h1_fespace_l);
-      m->AddDomainIntegrator(new mfem::MixedGradGradIntegrator(epsilon_func));
+      m->AddDomainIntegrator(new mfem::DiffusionIntegrator(epsilon_func));
       // XX TODO: Partial assembly option?
       m->SetAssemblyLevel(mfem::AssemblyLevel::LEGACY);
       m->Assemble(0);
