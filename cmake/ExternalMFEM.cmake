@@ -92,6 +92,11 @@ if(PALACE_WITH_LIBCEED)
     "-DCEED_DIR=${CMAKE_INSTALL_PREFIX}"
     "-DlibCEED_REQUIRED_PACKAGES=BLAS"
   )
+  if(NOT "${LIBCEED_EXTRA_LIBRARIES}" STREQUAL "")
+    list(APPEND MFEM_OPTIONS
+      "-DlibCEED_REQUIRED_LIBRARIES=${LIBCEED_EXTRA_LIBRARIES}"
+    )
+  endif()
 endif()
 
 # MFEM with GSLIB is always built internally

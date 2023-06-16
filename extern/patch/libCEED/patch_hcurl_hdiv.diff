@@ -1750,9 +1750,20 @@ index e97020b7..37aa0f29 100644
    if (*err == 0) {
      *elemrestriction = CeedElemRestriction_count++;
 diff --git a/interface/ceed-preconditioning.c b/interface/ceed-preconditioning.c
-index e0fe455c..5ebb9bb4 100644
+index 7067a6da..22fff574 100644
 --- a/interface/ceed-preconditioning.c
 +++ b/interface/ceed-preconditioning.c
+@@ -442,8 +442,8 @@ static inline int CeedCompositeOperatorLinearAssembleAddDiagonal(CeedOperator op
+ 
+   Users should generally use CeedOperatorLinearAssembleSymbolic()
+ 
+-  Note: For operators using oriented element restrictions, entries in rows or cols may be negative indicating the assembled value at this nonzero
+-should be negated
++  Note: For operators using oriented element restrictions, entries in rows or cols may be negative indicating the assembled value at this entry should
++be negated and the true row/col corresponds to -row/col - 1
+ 
+   @param[in]  op     CeedOperator to assemble nonzero pattern
+   @param[in]  offset Offset for number of entries
 @@ -459,19 +459,22 @@ static int CeedSingleOperatorAssembleSymbolic(CeedOperator op, CeedInt offset, C
    bool is_composite;
    CeedCall(CeedOperatorGetCeed(op, &ceed));
@@ -1783,7 +1794,13 @@ index e0fe455c..5ebb9bb4 100644
  
    CeedInt local_num_entries = elem_size * num_comp * elem_size * num_comp * num_elem;
  
-@@ -485,7 +488,7 @@ static int CeedSingleOperatorAssembleSymbolic(CeedOperator op, CeedInt offset, C
+@@ -480,12 +483,12 @@ static int CeedSingleOperatorAssembleSymbolic(CeedOperator op, CeedInt offset, C
+   CeedCall(CeedVectorCreate(ceed, num_nodes, &index_vec));
+   CeedScalar *array;
+   CeedCall(CeedVectorGetArrayWrite(index_vec, CEED_MEM_HOST, &array));
+-  for (CeedInt i = 0; i < num_nodes; i++) array[i] = i;
++  for (CeedInt i = 0; i < num_nodes; i++) array[i] = i + 1;
+   CeedCall(CeedVectorRestoreArray(index_vec, &array));
    CeedVector elem_dof;
    CeedCall(CeedVectorCreate(ceed, num_elem * elem_size * num_comp, &elem_dof));
    CeedCall(CeedVectorSetValue(elem_dof, 0.0));
@@ -1792,7 +1809,27 @@ index e0fe455c..5ebb9bb4 100644
    const CeedScalar *elem_dof_a;
    CeedCall(CeedVectorGetArrayRead(elem_dof, CEED_MEM_HOST, &elem_dof_a));
    CeedCall(CeedVectorDestroy(&index_vec));
-@@ -591,8 +594,8 @@ static int CeedSingleOperatorAssemble(CeedOperator op, CeedInt offset, CeedVecto
+@@ -503,8 +506,8 @@ static int CeedSingleOperatorAssembleSymbolic(CeedOperator op, CeedInt offset, C
+             const CeedInt row = elem_dof_a[elem_dof_index_row];
+             const CeedInt col = elem_dof_a[elem_dof_index_col];
+ 
+-            rows[offset + count] = row;
+-            cols[offset + count] = col;
++            rows[offset + count] = (row > 0) ? row - 1 : row;
++            cols[offset + count] = (col > 0) ? col - 1 : col;
+             count++;
+           }
+         }
+@@ -568,8 +571,6 @@ static int CeedSingleOperatorAssemble(CeedOperator op, CeedInt offset, CeedVecto
+   CeedVector          assembled_qf = NULL;
+   CeedElemRestriction rstr_q       = NULL;
+   CeedCall(CeedOperatorLinearAssembleQFunctionBuildOrUpdate(op, &assembled_qf, &rstr_q, CEED_REQUEST_IMMEDIATE));
+-  CeedSize qf_length;
+-  CeedCall(CeedVectorGetLength(assembled_qf, &qf_length));
+ 
+   CeedInt            num_input_fields, num_output_fields;
+   CeedOperatorField *input_fields;
+@@ -591,8 +592,8 @@ static int CeedSingleOperatorAssemble(CeedOperator op, CeedInt offset, CeedVecto
    CeedCheck(num_eval_modes_in[0] > 0 && num_eval_modes_out[0] > 0, ceed, CEED_ERROR_UNSUPPORTED, "Cannot assemble operator with out inputs/outputs");
  
    CeedElemRestriction active_rstr;
@@ -1802,7 +1839,7 @@ index e0fe455c..5ebb9bb4 100644
    CeedCall(CeedElemRestrictionGetNumElements(active_rstr, &num_elem));
    CeedCall(CeedElemRestrictionGetElementSize(active_rstr, &elem_size));
    CeedCall(CeedElemRestrictionGetNumComponents(active_rstr, &num_comp));
-@@ -739,10 +742,14 @@ static int CeedSingleOperatorMultigridLevel(CeedOperator op_fine, CeedVector p_m
+@@ -739,10 +740,14 @@ static int CeedSingleOperatorMultigridLevel(CeedOperator op_fine, CeedVector p_m
  
    // Multiplicity vector
    if (op_restrict || op_prolong) {
@@ -1819,7 +1856,39 @@ index e0fe455c..5ebb9bb4 100644
      CeedCall(CeedElemRestrictionCreateVector(rstr_fine, &mult_vec, &mult_e_vec));
      CeedCall(CeedVectorSetValue(mult_e_vec, 0.0));
      CeedCall(CeedElemRestrictionApply(rstr_p_mult_fine, CEED_NOTRANSPOSE, p_mult_fine, mult_e_vec, CEED_REQUEST_IMMEDIATE));
-@@ -1353,7 +1360,7 @@ int CeedOperatorAssemblyDataGetBases(CeedOperatorAssemblyData data, CeedInt *num
+@@ -1133,10 +1138,9 @@ int CeedOperatorAssemblyDataCreate(Ceed ceed, CeedOperator op, CeedOperatorAssem
+     if (vec == CEED_VECTOR_ACTIVE) {
+       CeedBasis    basis_in = NULL;
+       CeedEvalMode eval_mode;
+-      CeedInt      index = -1, dim, num_comp, q_comp;
++      CeedInt      index = -1, num_comp, q_comp;
+       CeedCall(CeedOperatorFieldGetBasis(op_fields[i], &basis_in));
+       CeedCall(CeedQFunctionFieldGetEvalMode(qf_fields[i], &eval_mode));
+-      CeedCall(CeedBasisGetDimension(basis_in, &dim));
+       CeedCall(CeedBasisGetNumComponents(basis_in, &num_comp));
+       CeedCall(CeedBasisGetNumQuadratureComponents(basis_in, eval_mode, &q_comp));
+       for (CeedInt i = 0; i < num_active_bases; i++) {
+@@ -1198,10 +1202,9 @@ int CeedOperatorAssemblyDataCreate(Ceed ceed, CeedOperator op, CeedOperatorAssem
+     if (vec == CEED_VECTOR_ACTIVE) {
+       CeedBasis    basis_out = NULL;
+       CeedEvalMode eval_mode;
+-      CeedInt      index = -1, dim, num_comp, q_comp;
++      CeedInt      index = -1, num_comp, q_comp;
+       CeedCall(CeedOperatorFieldGetBasis(op_fields[i], &basis_out));
+       CeedCall(CeedQFunctionFieldGetEvalMode(qf_fields[i], &eval_mode));
+-      CeedCall(CeedBasisGetDimension(basis_out, &dim));
+       CeedCall(CeedBasisGetNumComponents(basis_out, &num_comp));
+       CeedCall(CeedBasisGetNumQuadratureComponents(basis_out, eval_mode, &q_comp));
+       for (CeedInt i = 0; i < num_active_bases; i++) {
+@@ -1209,7 +1212,6 @@ int CeedOperatorAssemblyDataCreate(Ceed ceed, CeedOperator op, CeedOperatorAssem
+       }
+       if (index == -1) {
+         CeedElemRestriction elem_rstr_out;
+-
+         index = num_active_bases;
+         CeedCall(CeedRealloc(num_active_bases + 1, &(*data)->active_bases));
+         (*data)->active_bases[num_active_bases] = NULL;
+@@ -1353,7 +1355,7 @@ int CeedOperatorAssemblyDataGetBases(CeedOperatorAssemblyData data, CeedInt *num
            }
          }
        }
@@ -1828,7 +1897,7 @@ index e0fe455c..5ebb9bb4 100644
        data->assembled_bases_in[b] = B_in;
      }
    }
-@@ -1398,7 +1405,7 @@ int CeedOperatorAssemblyDataGetBases(CeedOperatorAssemblyData data, CeedInt *num
+@@ -1398,7 +1400,7 @@ int CeedOperatorAssemblyDataGetBases(CeedOperatorAssemblyData data, CeedInt *num
            }
          }
        }
@@ -1837,7 +1906,7 @@ index e0fe455c..5ebb9bb4 100644
        data->assembled_bases_out[b] = B_out;
      }
    }
-@@ -2014,7 +2021,11 @@ int CeedCompositeOperatorGetMultiplicity(CeedOperator op, CeedInt num_skip_indic
+@@ -2014,7 +2016,11 @@ int CeedCompositeOperatorGetMultiplicity(CeedOperator op, CeedInt num_skip_indic
      }
  
      // -- Sub operator multiplicity

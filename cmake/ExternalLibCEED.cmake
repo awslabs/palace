@@ -8,19 +8,43 @@
 # Force build order
 set(LIBCEED_DEPENDENCIES)
 
-set(LIBCEED_CFLAGS ${CMAKE_C_FLAGS})
-
 # Build LIBXSMM dependency for CPU-based backends (header-only)
 set(PALACE_LIBCEED_WITH_LIBXSMM ON)
 if(PALACE_LIBCEED_WITH_LIBXSMM)
   set(LIBXSMM_DEPENDENCIES)
 
-  # Configure debugging in LIBXSMM
+  set(LIBXSMM_OPTIONS
+    "PREFIX=${CMAKE_INSTALL_PREFIX}"
+    "CC=${CMAKE_C_COMPILER}"
+    "CXX=${CMAKE_CXX_COMPILER}"
+    "FC=0"
+    "FORTRAN=0"
+    "VERBOSE=1"
+    "PPKGDIR=lib/pkgconfig"
+    "PMODDIR=lib/pkgconfig"
+  )
+
+  # Always build LIBXSMM as a shared library
+  list(APPEND LIBXSMM_OPTIONS
+    "STATIC=0"
+  )
+
+  # Configure debugging
   if(CMAKE_BUILD_TYPE MATCHES "Debug|debug|DEBUG")
-    set(LIBCEED_CFLAGS "${LIBCEED_CFLAGS} -D_DEBUG -D__TRACE=1")
-  else()
-    set(LIBCEED_CFLAGS "${LIBCEED_CFLAGS} -DNDEBUG")
+    list(APPEND LIBXSMM_OPTIONS
+      "SYM=1"
+      "DBG=1"
+      "TRACE=1"
+    )
   endif()
+
+  string(REPLACE ";" "; " LIBXSMM_OPTIONS_PRINT "${LIBXSMM_OPTIONS}")
+  message(STATUS "LIBXSMM_OPTIONS: ${LIBXSMM_OPTIONS_PRINT}")
+
+  # Patch install step
+  set(LIBXSMM_PATCH_FILES
+    "${CMAKE_SOURCE_DIR}/extern/patch/libxsmm/patch_install.diff"
+  )
 
   include(ExternalProject)
   ExternalProject_Add(libxsmm
@@ -32,48 +56,37 @@ if(PALACE_LIBCEED_WITH_LIBXSMM)
     PREFIX            ${CMAKE_BINARY_DIR}/extern/libxsmm-cmake
     BUILD_IN_SOURCE   TRUE
     UPDATE_COMMAND    ""
+    PATCH_COMMAND     git apply "${LIBXSMM_PATCH_FILES}"
     CONFIGURE_COMMAND ""
     BUILD_COMMAND     ""
-    INSTALL_COMMAND
-      ${CMAKE_COMMAND} -E rm -rf <INSTALL_DIR>/include/libxsmm &&
-      ${CMAKE_COMMAND} -E copy_directory <SOURCE_DIR>/src <INSTALL_DIR>/include/libxsmm &&
-      ${CMAKE_COMMAND} -E echo "file(GLOB LIBXSMM_INCLUDE_FILES \"<SOURCE_DIR>/include/libxsmm*.h\")" > <SOURCE_DIR>/install-includes.cmake &&
-      ${CMAKE_COMMAND} -E echo "file(INSTALL \${LIBXSMM_INCLUDE_FILES} DESTINATION <INSTALL_DIR>/include)" >> <SOURCE_DIR>/install-includes.cmake &&
-      ${CMAKE_COMMAND} -P <SOURCE_DIR>/install-includes.cmake &&
-      <SOURCE_DIR>/scripts/libxsmm_source.sh libxsmm > <INSTALL_DIR>/include/libxsmm_source.h
+    INSTALL_COMMAND   ${CMAKE_MAKE_PROGRAM} ${LIBXSMM_OPTIONS} install
     TEST_COMMAND      ""
   )
   list(APPEND LIBCEED_DEPENDENCIES libxsmm)
 endif()
 
-# Build libCEED (libCEED's Makefile will add some flags, but we pass CMake's flags just to
-# make sure they are included)
+# Note on recommended flags for libCEED (from Makefile, Spack):
+#   gcc/clang/icx: -O3 -g -march=native -ffp-contract=fast -fopenmp-simd
+#   icc:           -O3 -g -qopenmp-simd
+include(CheckCCompilerFlag)
+set(LIBCEED_C_FLAGS "${CMAKE_C_FLAGS}")
+check_c_compiler_flag(-fopenmp-simd SUPPORTS_OMP_SIMD)
+if(SUPPORTS_OMP_SIMD)
+  set(LIBCEED_C_FLAGS "${LIBCEED_C_FLAGS} -fopenmp-simd")
+endif()
+
+# Build libCEED
 set(LIBCEED_OPTIONS
   "prefix=${CMAKE_INSTALL_PREFIX}"
   "CC=${CMAKE_C_COMPILER}"
-  "PEDANTIC=1"
-  "PEDANTICFLAGS=${LIBCEED_CFLAGS}"
+  "OPT=${LIBCEED_C_FLAGS}"
   "VERBOSE=1"
 )
-
-
-#XX TODO EXTRACT USEFUL ONES FROM FROM LIBCEED_CFLAGS AND RELY ON LIBCEED MAKEFILE?
-#XX TODO OPT FLAGS LIKE SPACK? OR JUST RELY ON MAKEFILE (like -qopenmp-simd)
-
 
 # Always build libCEED as a shared library
 list(APPEND LIBCEED_OPTIONS
   "STATIC="
 )
-# if(BUILD_SHARED_LIBS)
-#   list(APPEND LIBCEED_OPTIONS
-#     "STATIC="
-#   )
-# else()
-#   list(APPEND LIBCEED_OPTIONS
-#     "STATIC=1"
-#   )
-# endif()
 
 # Configure libCEED backends (disable CUDA for now, AVX handled automatically)
 list(APPEND LIBCEED_OPTIONS
@@ -99,7 +112,6 @@ message(STATUS "LIBCEED_OPTIONS: ${LIBCEED_OPTIONS_PRINT}")
 set(LIBCEED_PATCH_FILES
   "${CMAKE_SOURCE_DIR}/extern/patch/libCEED/patch_hcurl_hdiv.diff"
   "${CMAKE_SOURCE_DIR}/extern/patch/libCEED/patch_install.diff"
-  "${CMAKE_SOURCE_DIR}/extern/patch/libCEED/patch_xsmm.diff"
 )
 
 include(ExternalProject)
@@ -118,3 +130,9 @@ ExternalProject_Add(libCEED
   INSTALL_COMMAND   ${CMAKE_MAKE_PROGRAM} ${LIBCEED_OPTIONS} install
   TEST_COMMAND      ""
 )
+
+if(PALACE_LIBCEED_WITH_LIBXSMM)
+  include(GNUInstallDirs)
+  set(_LIBCEED_EXTRA_LIBRARIES ${CMAKE_INSTALL_PREFIX}/lib/libxsmm${CMAKE_SHARED_LIBRARY_SUFFIX})
+  set(LIBCEED_EXTRA_LIBRARIES ${_LIBCEED_EXTRA_LIBRARIES} CACHE STRING "List of extra library files for libCEED")
+endif()

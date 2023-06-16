@@ -1,27 +1,48 @@
-diff --git a/.clang-format b/.clang-format
-index 6df301e2..28ea5956 100644
---- a/.clang-format
-+++ b/.clang-format
-@@ -6,6 +6,9 @@ AlignConsecutiveAssignments:  Consecutive
- AlignConsecutiveDeclarations: Consecutive
- AlignEscapedNewlines:         true
- AlignOperands:                Align
-+AlignTrailingComments:
-+  Kind:                       Always
-+  OverEmptyLines:             0
- AllowShortIfStatementsOnASingleLine: AllIfsAndElse
- ColumnLimit:                  150
- CommentPragmas:               'TESTARGS'
 diff --git a/Makefile b/Makefile
-index 7cef024c..c1187812 100644
+index 64509a63..7251b9dc 100644
 --- a/Makefile
 +++ b/Makefile
-@@ -671,7 +671,7 @@ install : $(libceed) $(OBJDIR)/ceed.pc
+@@ -180,7 +180,6 @@ OBJDIR := build
+ for_install := $(filter install,$(MAKECMDGOALS))
+ LIBDIR := $(if $(for_install),$(OBJDIR),lib)
+ 
+-
+ # Installation variables
+ prefix ?= /usr/local
+ bindir = $(prefix)/bin
+@@ -190,6 +189,8 @@ pkgconfigdir = $(libdir)/pkgconfig
+ INSTALL = install
+ INSTALL_PROGRAM = $(INSTALL)
+ INSTALL_DATA = $(INSTALL) -m644
++INSTALL_LIBS = $(INSTALL) -m755
++INSTALL_LIBS = $(INSTALL) $(if $(STATIC),-m644,-m755)
+ 
+ # Get number of processors of the machine
+ NPROCS := $(shell getconf _NPROCESSORS_ONLN)
+@@ -383,15 +384,14 @@ ifneq ($(wildcard $(XSMM_DIR)/lib/libxsmm.*),)
+   PKG_LIBS += -L$(abspath $(XSMM_DIR))/lib -lxsmm -ldl
+   MKL ?=
+   ifeq (,$(MKL)$(MKLROOT))
+-    BLAS_LIB = -lblas
++    BLAS_LIB ?= -lblas
+   else
+     ifneq ($(MKLROOT),)
+       # Some installs put everything inside an intel64 subdirectory, others not
+       MKL_LIBDIR = $(dir $(firstword $(wildcard $(MKLROOT)/lib/intel64/libmkl_sequential.* $(MKLROOT)/lib/libmkl_sequential.*)))
+       MKL_LINK = -L$(MKL_LIBDIR)
+-      PKG_LIB_DIRS += $(MKL_LIBDIR)
+     endif
+-    BLAS_LIB = $(MKL_LINK) -Wl,--push-state,--no-as-needed -lmkl_intel_lp64 -lmkl_sequential -lmkl_core -lpthread -lm -ldl -Wl,--pop-state
++    BLAS_LIB ?= $(MKL_LINK) -Wl,--push-state,--no-as-needed -lmkl_intel_lp64 -lmkl_sequential -lmkl_core -lpthread -lm -ldl -Wl,--pop-state
+   endif
+   PKG_LIBS += $(BLAS_LIB)
+   libceed.c += $(xsmm.c)
+@@ -700,7 +700,7 @@ install : $(libceed) $(OBJDIR)/ceed.pc
  	$(INSTALL_DATA) include/ceed/hip.h "$(DESTDIR)$(includedir)/ceed/"
  	$(INSTALL_DATA) include/ceed/hash.h "$(DESTDIR)$(includedir)/ceed/"
  	$(INSTALL_DATA) include/ceed/khash.h "$(DESTDIR)$(includedir)/ceed/"
 -	$(INSTALL_DATA) $(libceed) "$(DESTDIR)$(libdir)/"
-+	$(INSTALL)      $(libceed) "$(DESTDIR)$(libdir)/"
++	$(INSTALL_LIBS) $(libceed) "$(DESTDIR)$(libdir)/"
  	$(INSTALL_DATA) $(OBJDIR)/ceed.pc "$(DESTDIR)$(pkgconfigdir)/"
  	$(INSTALL_DATA) include/ceed.h "$(DESTDIR)$(includedir)/"
  	$(INSTALL_DATA) include/ceedf.h "$(DESTDIR)$(includedir)/"
@@ -37,6 +58,14 @@ index f66ca5d8..43ec4006 100644
    void         *opargs[]  = {(void *)&num_elem, &qf_data->d_c, &data->indices, &data->fields, &data->B, &data->G, &data->W};
    const CeedInt dim       = data->dim;
    const CeedInt Q_1d      = data->Q_1d;
+diff --git a/backends/cuda-ref/ceed-cuda-restriction.c b/backends/cuda-ref/ceed-cuda-ref-restriction.c
+similarity index 100%
+rename from backends/cuda-ref/ceed-cuda-restriction.c
+rename to backends/cuda-ref/ceed-cuda-ref-restriction.c
+diff --git a/backends/cuda-ref/ceed-cuda-vector.c b/backends/cuda-ref/ceed-cuda-ref-vector.c
+similarity index 100%
+rename from backends/cuda-ref/ceed-cuda-vector.c
+rename to backends/cuda-ref/ceed-cuda-ref-vector.c
 diff --git a/backends/hip-ref/ceed-hip-ref.h b/backends/hip-ref/ceed-hip-ref.h
 index 450c15b9..3980b7f8 100644
 --- a/backends/hip-ref/ceed-hip-ref.h
@@ -50,76 +79,120 @@ index 450c15b9..3980b7f8 100644
  typedef struct {
    CeedScalar *h_array;
    CeedScalar *h_array_borrowed;
-diff --git a/doc/sphinx/source/releasenotes.md b/doc/sphinx/source/releasenotes.md
-index 988ac7e7..e89c3e45 100644
---- a/doc/sphinx/source/releasenotes.md
-+++ b/doc/sphinx/source/releasenotes.md
-@@ -16,6 +16,8 @@ For example, `CeedOperatorContextGetFieldLabel` was renamed to `CeedOperatorGetC
- - Added {c:func}`CeedOperatorGetFieldByName` to access a specific `CeedOperatorField` by its name
- - Update `/cpu/self/memcheck/*` backends to help verify `CeedVector` array access assumptions and `CeedQFunction` user output assumptions.
- - Update {c:func}`CeedOperatorLinearAssembleDiagonal` to provide default implementation that supports `CeedOperator` with multiple active bases.
-+- XX TODO CHANGELOG H(curl) BASIS {c:func}`CeedBasisCreateHcurl`
-+- XX TODO CHANGELOG H(curl) ELEM RESTRICTION {c:func}`CeedElemRestrictionCreateCurlOriented`
- 
- ### Examples
- 
-diff --git a/interface/ceed.c b/interface/ceed.c
-index 88e24d2b..e2c5d15d 100644
---- a/interface/ceed.c
-+++ b/interface/ceed.c
-@@ -28,10 +28,8 @@ static struct {
- } backends[32];
- static size_t num_backends;
- 
--#define CEED_FTABLE_ENTRY(class, method)                     \
--  {                                                          \
--#class #method, offsetof(struct class##_private, method) \
--  }
-+#define CEED_FTABLE_ENTRY(class, method) \
-+  { #class #method, offsetof(struct class##_private, method) }
- /// @endcond
- 
- /// @file
-diff --git a/julia/LibCEED.jl/Project.toml b/julia/LibCEED.jl/Project.toml
-index 51a2e016..c556cf29 100644
---- a/julia/LibCEED.jl/Project.toml
-+++ b/julia/LibCEED.jl/Project.toml
-@@ -30,3 +30,6 @@ Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
- 
- [targets]
- test = ["Test"]
-+
-+[preferences.libCEED_jll]
-+libceed_path = "/Users/sjg/Downloads/code/libCEED/lib/libceed.dylib"
-diff --git a/julia/LibCEED.jl/test/Project.toml b/julia/LibCEED.jl/test/Project.toml
-index 96e40690..71080be5 100644
---- a/julia/LibCEED.jl/test/Project.toml
-+++ b/julia/LibCEED.jl/test/Project.toml
-@@ -9,3 +9,6 @@ Preferences = "21216c6a-2e73-6563-6e65-726566657250"
- StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
- Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
- libCEED_jll = "762fde13-7596-547b-826d-8223c52d51c1"
-+
-+[preferences.libCEED_jll]
-+libceed_path = "/Users/sjg/Downloads/code/libCEED/lib/libceed.dylib"
+diff --git a/backends/xsmm/ceed-xsmm-tensor-f32.c b/backends/xsmm/ceed-xsmm-tensor-f32.c
+index 95328feb..58eec637 100644
+--- a/backends/xsmm/ceed-xsmm-tensor-f32.c
++++ b/backends/xsmm/ceed-xsmm-tensor-f32.c
+@@ -94,7 +94,9 @@ int CeedTensorContractCreate_f32_Xsmm(CeedBasis basis, CeedTensorContract contra
+         for (CeedInt t_mode = 0; t_mode <= 1; t_mode++) {
+           for (CeedInt grad = 0; grad <= 1; grad++) {
+             for (CeedInt dim = 0; dim < impl->dim; dim++) {
+-              const int flags = LIBXSMM_GEMM_FLAGS('N', t_mode ? 'T' : 'N');
++              const int flags_t  = LIBXSMM_GEMM_FLAGS('N', t_mode ? 'T' : 'N');
++              const int flags_ab = (!add) ? LIBXSMM_GEMM_FLAG_BETA_0 : 0;
++              const int flags    = (flags_t | flags_ab);
+               CeedInt   B = grad ? impl->Q : (t_mode ? impl->Q : impl->P), J = grad ? impl->Q : (t_mode ? impl->P : impl->Q),
+                       C = num_elem * CeedIntPow(J, dim);
+               // Add key, kernel pair to hash table
+@@ -103,9 +105,7 @@ int CeedTensorContractCreate_f32_Xsmm(CeedBasis basis, CeedTensorContract contra
+               khint_t          k = kh_put(f32, impl->lookup_f32, key, &new_item);
+               if (new_item) {
+                 // Build kernel
+-                float alpha = 1.0, beta = 1.0;
+-                if (!add) beta = 0.0;
+-                libxsmm_smmfunction kernel = libxsmm_smmdispatch(C, J, B, NULL, NULL, NULL, &alpha, &beta, &flags, NULL);
++                libxsmm_smmfunction kernel = libxsmm_smmdispatch_v2(C, J, B, NULL, NULL, NULL, &flags);
+                 CeedCheck(kernel, ceed, CEED_ERROR_BACKEND, "LIBXSMM kernel failed to build.");
+                 // Add kernel to hash table
+                 kh_value(impl->lookup_f32, k) = kernel;
+@@ -125,7 +125,9 @@ int CeedTensorContractCreate_f32_Xsmm(CeedBasis basis, CeedTensorContract contra
+         for (CeedInt t_mode = 0; t_mode <= 1; t_mode++) {
+           CeedInt gradstride = CeedIntMax(impl->dim - 1, 1);
+           for (CeedInt grad = 1; grad <= impl->dim; grad += gradstride) {
+-            const int flags = LIBXSMM_GEMM_FLAGS('N', t_mode ? 'T' : 'N');
++            const int flags_t  = LIBXSMM_GEMM_FLAGS('N', t_mode ? 'T' : 'N');
++            const int flags_ab = (!add) ? LIBXSMM_GEMM_FLAG_BETA_0 : 0;
++            const int flags    = (flags_t | flags_ab);
+             CeedInt   B = t_mode ? grad * impl->Q : impl->P, J = t_mode ? impl->P : grad * impl->Q, C = num_elem;
+             // Add key, kernel pair to hash table
+             CeedHashIJKLMKey key = {B, C, J, t_mode, add};
+@@ -133,9 +135,7 @@ int CeedTensorContractCreate_f32_Xsmm(CeedBasis basis, CeedTensorContract contra
+             khint_t          k = kh_put(f32, impl->lookup_f32, key, &new_item);
+             if (new_item) {
+               // Build kernel
+-              float alpha = 1.0, beta = 1.0;
+-              if (!add) beta = 0.0;
+-              libxsmm_smmfunction kernel = libxsmm_smmdispatch(C, J, B, NULL, NULL, NULL, &alpha, &beta, &flags, NULL);
++              libxsmm_smmfunction kernel = libxsmm_smmdispatch_v2(C, J, B, NULL, NULL, NULL, &flags);
+               CeedCheck(kernel, ceed, CEED_ERROR_BACKEND, "LIBXSMM kernel failed to build.");
+               // Add kernel to hash table
+               kh_value(impl->lookup_f32, k) = kernel;
+diff --git a/backends/xsmm/ceed-xsmm-tensor-f64.c b/backends/xsmm/ceed-xsmm-tensor-f64.c
+index d4e828e3..a997a9ac 100644
+--- a/backends/xsmm/ceed-xsmm-tensor-f64.c
++++ b/backends/xsmm/ceed-xsmm-tensor-f64.c
+@@ -94,7 +94,9 @@ int CeedTensorContractCreate_f64_Xsmm(CeedBasis basis, CeedTensorContract contra
+         for (CeedInt t_mode = 0; t_mode <= 1; t_mode++) {
+           for (CeedInt grad = 0; grad <= 1; grad++) {
+             for (CeedInt dim = 0; dim < impl->dim; dim++) {
+-              const int flags = LIBXSMM_GEMM_FLAGS('N', t_mode ? 'T' : 'N');
++              const int flags_t  = LIBXSMM_GEMM_FLAGS('N', t_mode ? 'T' : 'N');
++              const int flags_ab = (!add) ? LIBXSMM_GEMM_FLAG_BETA_0 : 0;
++              const int flags    = (flags_t | flags_ab);
+               CeedInt   B = grad ? impl->Q : (t_mode ? impl->Q : impl->P), J = grad ? impl->Q : (t_mode ? impl->P : impl->Q),
+                       C = num_elem * CeedIntPow(J, dim);
+               // Add key, kernel pair to hash table
+@@ -103,9 +105,7 @@ int CeedTensorContractCreate_f64_Xsmm(CeedBasis basis, CeedTensorContract contra
+               khint_t          k = kh_put(f64, impl->lookup_f64, key, &new_item);
+               if (new_item) {
+                 // Build kernel
+-                double alpha = 1.0, beta = 1.0;
+-                if (!add) beta = 0.0;
+-                libxsmm_dmmfunction kernel = libxsmm_dmmdispatch(C, J, B, NULL, NULL, NULL, &alpha, &beta, &flags, NULL);
++                libxsmm_dmmfunction kernel = libxsmm_dmmdispatch_v2(C, J, B, NULL, NULL, NULL, &flags);
+                 CeedCheck(kernel, ceed, CEED_ERROR_BACKEND, "LIBXSMM kernel failed to build.");
+                 // Add kernel to hash table
+                 kh_value(impl->lookup_f64, k) = kernel;
+@@ -125,7 +125,9 @@ int CeedTensorContractCreate_f64_Xsmm(CeedBasis basis, CeedTensorContract contra
+         for (CeedInt t_mode = 0; t_mode <= 1; t_mode++) {
+           CeedInt gradstride = CeedIntMax(impl->dim - 1, 1);
+           for (CeedInt grad = 1; grad <= impl->dim; grad += gradstride) {
+-            const int flags = LIBXSMM_GEMM_FLAGS('N', t_mode ? 'T' : 'N');
++            const int flags_t  = LIBXSMM_GEMM_FLAGS('N', t_mode ? 'T' : 'N');
++            const int flags_ab = (!add) ? LIBXSMM_GEMM_FLAG_BETA_0 : 0;
++            const int flags    = (flags_t | flags_ab);
+             CeedInt   B = t_mode ? grad * impl->Q : impl->P, J = t_mode ? impl->P : grad * impl->Q, C = num_elem;
+             // Add key, kernel pair to hash table
+             CeedHashIJKLMKey key = {B, C, J, t_mode, add};
+@@ -133,9 +135,7 @@ int CeedTensorContractCreate_f64_Xsmm(CeedBasis basis, CeedTensorContract contra
+             khint_t          k = kh_put(f64, impl->lookup_f64, key, &new_item);
+             if (new_item) {
+               // Build kernel
+-              double alpha = 1.0, beta = 1.0;
+-              if (!add) beta = 0.0;
+-              libxsmm_dmmfunction kernel = libxsmm_dmmdispatch(C, J, B, NULL, NULL, NULL, &alpha, &beta, &flags, NULL);
++              libxsmm_dmmfunction kernel = libxsmm_dmmdispatch_v2(C, J, B, NULL, NULL, NULL, &flags);
+               CeedCheck(kernel, ceed, CEED_ERROR_BACKEND, "LIBXSMM kernel failed to build.");
+               // Add kernel to hash table
+               kh_value(impl->lookup_f64, k) = kernel;
 diff --git a/tests/junit.py b/tests/junit.py
-index 6978dad9..a25a3d0e 100755
+index 1de86e4e..dd0e4b5f 100755
 --- a/tests/junit.py
 +++ b/tests/junit.py
-@@ -118,6 +118,16 @@ def run(test, backends, mode):
-                                      stderr=proc.stderr)
-                 ref_stdout = os.path.join('tests/output', test + '.out')
- 
-+
-+
-+            ##XX TODO WORKING
-+            print("TEST stdout:")
-+            print(proc.stdout)
-+            print("TEST stderr:")
-+            print(proc.stderr)
-+
-+
-+
-             # check for allowed errors
-             if not test_case.is_skipped() and proc.stderr:
-                 if 'OCCA backend failed to use' in proc.stderr:
+@@ -183,13 +183,13 @@ def run(test, backends, mode):
+                 print('# $ {}'.format(test_case.args))
+                 if test_case.is_error():
+                     print('not ok {} - ERROR: {}'.format(index, (test_case.errors[0]['message'] or "NO MESSAGE").strip()))
+-                    print('Output: \n{}'.format(test_case.errors[0]['output'].strip()))
++                    print('Output: \n{}'.format((test_case.errors[0]['output'] or "NO OUTPUT").strip()))
+                     if test_case.is_failure():
+                         print('            FAIL: {}'.format(index, (test_case.failures[0]['message'] or "NO MESSAGE").strip()))
+-                        print('Output: \n{}'.format(test_case.failures[0]['output'].strip()))
++                        print('Output: \n{}'.format((test_case.failures[0]['output'] or "NO OUTPUT").strip()))
+                 elif test_case.is_failure():
+                     print('not ok {} - FAIL: {}'.format(index, (test_case.failures[0]['message'] or "NO MESSAGE").strip()))
+-                    print('Output: \n{}'.format(test_case.failures[0]['output'].strip()))
++                    print('Output: \n{}'.format((test_case.failures[0]['output'] or "NO OUTPUT").strip()))
+                 elif test_case.is_skipped():
+                     print('ok {} - SKIP: {}'.format(index, (test_case.skipped[0]['message'] or "NO MESSAGE").strip()))
+                 else:

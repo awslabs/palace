@@ -26,7 +26,7 @@ set(EXTERN_BUTTERFLYPACK_URL
   "URL for external ButterflyPACK build"
 )
 set(EXTERN_BUTTERFLYPACK_GIT_TAG
-  "24157e93a882e5500ff32a2894588d628f2fcb24" CACHE STRING  # 05/31/2023
+  "5a92f43697699e962f694536e07be291d4e9a3a7" CACHE STRING  # 06/14/2023
   "Git tag for external ButterflyPACK build"
 )
 
@@ -56,7 +56,7 @@ set(EXTERN_HYPRE_URL
   "URL for external HYPRE build"
 )
 set(EXTERN_HYPRE_GIT_TAG
-  "7ff7f2f60df4c132ae38a72fc3033d5b2fbe411f" CACHE STRING  # 05/29/2023
+  "72f5f3e136e5adec25f7cacc4710fab0f47ad610" CACHE STRING  # 06/15/2023
   "Git tag for external HYPRE build"
 )
 
@@ -66,7 +66,7 @@ set(EXTERN_LIBCEED_URL
   "URL for external libCEED build"
 )
 set(EXTERN_LIBCEED_GIT_TAG
-  "42cd7ab0703ee75581ba9a7f70917ba59a9eee2e" CACHE STRING  # main @ 06/05/2023
+  "bd882c8a454763a096666645dc9a6229d5263694" CACHE STRING  # main @ 06/15/2023
   "Git tag for external libCEED build"
 )
 
@@ -76,7 +76,7 @@ set(EXTERN_LIBXSMM_URL
   "URL for external LIBXSMM build"
 )
 set(EXTERN_LIBXSMM_GIT_TAG
-  "98be791e8a4e996e017edb37347fb9bb4c4c5dc9" CACHE STRING  # 06/01/2023
+  "7ae1b5b14d5b0cc0d0fe3abe58ed0bbb1b876d8b" CACHE STRING  # 06/07/2023
   "Git tag for external LIBXSMM build"
 )
 
@@ -126,7 +126,7 @@ set(EXTERN_PETSC_URL
   "URL for external PETSc build"
 )
 set(EXTERN_PETSC_GIT_TAG
-  "d8d0d1f978d96b11bcf4c3a26591d3dda1fc7ca1" CACHE STRING  # 06/01/2023
+  "ed63cbed510a5c8206399273090c321f5182507d" CACHE STRING  # 06/15/2023
   "Git tag for external PETSc build"
 )
 
@@ -146,7 +146,7 @@ set(EXTERN_SLEPC_URL
   "URL for external SLEPc build"
 )
 set(EXTERN_SLEPC_GIT_TAG
-  "4bb5cae4f0558ddb7d86fe0dea313cdb64f27ea8" CACHE STRING  # 05/27/2023
+  "cb46717a0b8405ec0bc9db973003912fb563af7f" CACHE STRING  # 06/13/2023
   "Git tag for external SLEPc build"
 )
 
@@ -156,7 +156,7 @@ set(EXTERN_STRUMPACK_URL
   "URL for external STRUMPACK build"
 )
 set(EXTERN_STRUMPACK_GIT_TAG
-  "ce9d0a3dc5a37d08b1bf96e3ce023e80088a2576" CACHE STRING  # 05/25/2023
+  "17de5e2c833c0c51888036f83abfa4a49fa2bc8d" CACHE STRING  # 06/15/2023
   "Git tag for external STRUMPACK build"
 )
 
