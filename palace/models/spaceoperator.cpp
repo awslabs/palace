@@ -72,27 +72,23 @@ mfem::Array<int> SetUpBoundaryProperties(const IoData &iodata, const mfem::ParMe
 
 SpaceOperator::SpaceOperator(const IoData &iodata,
                              const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh)
-  : assembly_level(iodata.solver.linear.mat_pa ? mfem::AssemblyLevel::PARTIAL
-                                               : mfem::AssemblyLevel::LEGACY),
-    skip_zeros(0), pc_mg(iodata.solver.linear.pc_mg),
+  : assembly_level(utils::GetAssemblyLevel(iodata.solver.assembly_level)), skip_zeros(0),
     pc_lor(iodata.solver.linear.pc_mat_lor),
     pc_shifted(iodata.solver.linear.pc_mat_shifted), print_hdr(true), print_prec_hdr(true),
     dbc_marker(SetUpBoundaryProperties(iodata, *mesh.back())),
     nd_fecs(utils::ConstructFECollections<mfem::ND_FECollection>(
-        pc_mg, pc_lor, iodata.solver.order, mesh.back()->Dimension())),
+        iodata.solver.order, mesh.back()->Dimension(), iodata.solver.linear.mg_max_levels,
+        iodata.solver.linear.mg_coarsen_type, pc_lor)),
     h1_fecs(utils::ConstructFECollections<mfem::H1_FECollection>(
-        pc_mg, false, iodata.solver.order, mesh.back()->Dimension())),
+        iodata.solver.order, mesh.back()->Dimension(), iodata.solver.linear.mg_max_levels,
+        iodata.solver.linear.mg_coarsen_type, false)),
     rt_fec(iodata.solver.order - 1, mesh.back()->Dimension()),
-    nd_fespaces(pc_mg ? utils::ConstructFiniteElementSpaceHierarchy<mfem::ND_FECollection>(
-                            mesh, nd_fecs, &dbc_marker, &nd_dbc_tdof_lists)
-                      : utils::ConstructFiniteElementSpaceHierarchy<mfem::ND_FECollection>(
-                            *mesh.back(), *nd_fecs.back(), &dbc_marker,
-                            &nd_dbc_tdof_lists.emplace_back())),
-    h1_fespaces(pc_mg ? utils::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
-                            mesh, h1_fecs, &dbc_marker, &h1_dbc_tdof_lists)
-                      : utils::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
-                            *mesh.back(), *h1_fecs.back(), &dbc_marker,
-                            &h1_dbc_tdof_lists.emplace_back())),
+    nd_fespaces(utils::ConstructFiniteElementSpaceHierarchy<mfem::ND_FECollection>(
+        iodata.solver.linear.mg_max_levels, mesh, nd_fecs, &dbc_marker,
+        &nd_dbc_tdof_lists)),
+    h1_fespaces(utils::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
+        iodata.solver.linear.mg_max_levels, mesh, h1_fecs, &dbc_marker,
+        &h1_dbc_tdof_lists)),
     rt_fespace(mesh.back().get(), &rt_fec), mat_op(iodata, *mesh.back()),
     farfield_op(iodata, mat_op, *mesh.back()), surf_sigma_op(iodata, *mesh.back()),
     surf_z_op(iodata, *mesh.back()), lumped_port_op(iodata, GetH1Space()),
@@ -201,7 +197,7 @@ auto BuildOperator(mfem::ParFiniteElementSpace &fespace, T1 *df, T2 *f, T3 *dfb,
   }
   if (f && !f->empty())
   {
-    a->AddDomainIntegrator(new mfem::MixedVectorMassIntegrator(*f));
+    a->AddDomainIntegrator(new mfem::VectorFEMassIntegrator(*f));
   }
   if (dfb && !dfb->empty())
   {
@@ -209,7 +205,7 @@ auto BuildOperator(mfem::ParFiniteElementSpace &fespace, T1 *df, T2 *f, T3 *dfb,
   }
   if (fb && !fb->empty())
   {
-    a->AddBoundaryIntegrator(new mfem::MixedVectorMassIntegrator(*fb));
+    a->AddBoundaryIntegrator(new mfem::VectorFEMassIntegrator(*fb));
   }
   if (!no_assembly)
   {
@@ -228,11 +224,11 @@ auto BuildAuxOperator(mfem::ParFiniteElementSpace &fespace, T1 *f, T2 *fb,
   auto a = std::make_unique<mfem::SymmetricBilinearForm>(&fespace);
   if (f && !f->empty())
   {
-    a->AddDomainIntegrator(new mfem::MixedGradGradIntegrator(*f));
+    a->AddDomainIntegrator(new mfem::DiffusionIntegrator(*f));
   }
   if (fb && !fb->empty())
   {
-    a->AddBoundaryIntegrator(new mfem::MixedGradGradIntegrator(*fb));
+    a->AddBoundaryIntegrator(new mfem::DiffusionIntegrator(*fb));
   }
   if (!no_assembly)
   {
@@ -702,18 +698,24 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(double a0, doub
 
       std::unique_ptr<mfem::SymmetricBilinearForm> br, bi;
       std::unique_ptr<Operator> br_loc, bi_loc;
+
+
+      //XX TODO FIX BUG IN CEED OPERATOR FULL ASSEMBLY?
+      mfem::AssemblyLevel assembly = (l > 0) ? assembly_level : mfem::AssemblyLevel::LEGACY;
+
+
       if (!dfr.empty() || !fr.empty() || !dfbr.empty() || !fbr.empty())
       {
-        br = (s == 0) ? BuildOperator(fespace_l, &dfr, &fr, &dfbr, &fbr, assembly_level,
+        br = (s == 0) ? BuildOperator(fespace_l, &dfr, &fr, &dfbr, &fbr, assembly,
                                       skip_zeros, pc_lor)
-                      : BuildAuxOperator(fespace_l, &fr, &fbr, assembly_level, skip_zeros,
+                      : BuildAuxOperator(fespace_l, &fr, &fbr, assembly, skip_zeros,
                                          pc_lor);
       }
       if (!fi.empty() || !dfbi.empty() || !fbi.empty())
       {
         bi = (s == 0) ? BuildOperator(fespace_l, (SumCoefficient *)nullptr, &fi, &dfbi,
-                                      &fbi, assembly_level, skip_zeros, pc_lor)
-                      : BuildAuxOperator(fespace_l, &fi, &fbi, assembly_level, skip_zeros,
+                                      &fbi, assembly, skip_zeros, pc_lor)
+                      : BuildAuxOperator(fespace_l, &fi, &fbi, assembly, skip_zeros,
                                          pc_lor);
       }
       if (pc_lor)

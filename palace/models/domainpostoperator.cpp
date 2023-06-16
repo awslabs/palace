@@ -27,7 +27,7 @@ DomainPostOperator::DomainPostOperator(const IoData &iodata, const MaterialOpera
     constexpr auto MatTypeEpsReal = MaterialPropertyType::PERMITTIVITY_REAL;
     constexpr auto MatTypeEpsImag = MaterialPropertyType::PERMITTIVITY_IMAG;
     MaterialPropertyCoefficient<MatTypeEpsReal> epsilon_func(mat_op);
-    M_ND->AddDomainIntegrator(new mfem::MixedVectorMassIntegrator(epsilon_func));
+    M_ND->AddDomainIntegrator(new mfem::VectorFEMassIntegrator(epsilon_func));
     // XX TODO: Partial assembly option?
     M_ND->SetAssemblyLevel(mfem::AssemblyLevel::LEGACY);
     M_ND->Assemble(0);
@@ -56,8 +56,8 @@ DomainPostOperator::DomainPostOperator(const IoData &iodata, const MaterialOpera
       auto &M = M_NDi.emplace(idx, std::make_pair(nd_fespace, nd_fespace)).first->second;
       mfem::BilinearForm &Mr = M.first;
       mfem::BilinearForm &Mi = M.second;
-      Mr.AddDomainIntegrator(new mfem::MixedVectorMassIntegrator(epsilon_func_r));
-      Mi.AddDomainIntegrator(new mfem::MixedVectorMassIntegrator(epsilon_func_i));
+      Mr.AddDomainIntegrator(new mfem::VectorFEMassIntegrator(epsilon_func_r));
+      Mi.AddDomainIntegrator(new mfem::VectorFEMassIntegrator(epsilon_func_i));
       // XX TODO: Partial assembly option?
       Mr.SetAssemblyLevel(mfem::AssemblyLevel::LEGACY);
       Mi.SetAssemblyLevel(mfem::AssemblyLevel::LEGACY);
@@ -74,7 +74,7 @@ DomainPostOperator::DomainPostOperator(const IoData &iodata, const MaterialOpera
     //              E_mag = 1/2 Re{∫_Ω Bᴴ H dV} as (M_muinv * b)ᴴ b.
     constexpr auto MatTypeMuInv = MaterialPropertyType::INV_PERMEABILITY;
     MaterialPropertyCoefficient<MatTypeMuInv> muinv_func(mat_op);
-    M_RT->AddDomainIntegrator(new mfem::MixedVectorMassIntegrator(muinv_func));
+    M_RT->AddDomainIntegrator(new mfem::VectorFEMassIntegrator(muinv_func));
     // XX TODO: Partial assembly option?
     M_RT->SetAssemblyLevel(mfem::AssemblyLevel::LEGACY);
     M_RT->Assemble(0);

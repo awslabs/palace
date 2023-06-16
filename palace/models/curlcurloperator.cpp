@@ -70,24 +70,19 @@ mfem::Array<int> SetUpBoundaryProperties(const IoData &iodata, const mfem::ParMe
 
 CurlCurlOperator::CurlCurlOperator(const IoData &iodata,
                                    const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh)
-  : assembly_level(iodata.solver.linear.mat_pa ? mfem::AssemblyLevel::PARTIAL
-                                               : mfem::AssemblyLevel::LEGACY),
-    skip_zeros(0), pc_mg(iodata.solver.linear.pc_mg), print_hdr(true),
-    dbc_marker(SetUpBoundaryProperties(iodata, *mesh.back())),
+  : assembly_level(utils::GetAssemblyLevel(iodata.solver.assembly_level)), skip_zeros(0),
+    print_hdr(true), dbc_marker(SetUpBoundaryProperties(iodata, *mesh.back())),
     nd_fecs(utils::ConstructFECollections<mfem::ND_FECollection>(
-        pc_mg, false, iodata.solver.order, mesh.back()->Dimension())),
+        iodata.solver.order, mesh.back()->Dimension(), iodata.solver.linear.mg_max_levels,
+        iodata.solver.linear.mg_coarsen_type, false)),
     h1_fecs(utils::ConstructFECollections<mfem::H1_FECollection>(
-        pc_mg, false, iodata.solver.order, mesh.back()->Dimension())),
+        iodata.solver.order, mesh.back()->Dimension(), iodata.solver.linear.mg_max_levels,
+        iodata.solver.linear.mg_coarsen_type, false)),
     rt_fec(iodata.solver.order - 1, mesh.back()->Dimension()),
-    nd_fespaces(pc_mg ? utils::ConstructFiniteElementSpaceHierarchy(
-                            mesh, nd_fecs, &dbc_marker, &dbc_tdof_lists)
-                      : utils::ConstructFiniteElementSpaceHierarchy(
-                            *mesh.back(), *nd_fecs.back(), &dbc_marker,
-                            &dbc_tdof_lists.emplace_back())),
-    h1_fespaces(pc_mg ? utils::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
-                            mesh, h1_fecs)
-                      : utils::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
-                            *mesh.back(), *h1_fecs.back())),
+    nd_fespaces(utils::ConstructFiniteElementSpaceHierarchy<mfem::ND_FECollection>(
+        iodata.solver.linear.mg_max_levels, mesh, nd_fecs, &dbc_marker, &dbc_tdof_lists)),
+    h1_fespaces(utils::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
+        iodata.solver.linear.mg_max_levels, mesh, h1_fecs, nullptr, nullptr)),
     rt_fespace(mesh.back().get(), &rt_fec), mat_op(iodata, *mesh.back()),
     surf_j_op(iodata, GetH1Space())
 {

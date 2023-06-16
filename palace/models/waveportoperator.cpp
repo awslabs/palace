@@ -85,7 +85,7 @@ std::unique_ptr<ParOperator> GetBtt(const MaterialOperator &mat_op,
   constexpr auto ElemType = MeshElementType::BDR_SUBMESH;
   MaterialPropertyCoefficient<MatType, ElemType> muinv_func(mat_op);
   auto btt = std::make_unique<mfem::SymmetricBilinearForm>(&nd_fespace);
-  btt->AddDomainIntegrator(new mfem::MixedVectorMassIntegrator(muinv_func));
+  btt->AddDomainIntegrator(new mfem::VectorFEMassIntegrator(muinv_func));
   btt->SetAssemblyLevel(mfem::AssemblyLevel::LEGACY);
   btt->Assemble(skip_zeros);
   btt->Finalize(skip_zeros);
@@ -116,7 +116,7 @@ std::array<std::unique_ptr<ParOperator>, 3> GetBnn(const MaterialOperator &mat_o
   constexpr auto ElemType = MeshElementType::BDR_SUBMESH;
   MaterialPropertyCoefficient<MatTypeMuInv, ElemType> muinv_func(mat_op);
   auto bnn1 = std::make_unique<mfem::SymmetricBilinearForm>(&h1_fespace);
-  bnn1->AddDomainIntegrator(new mfem::MixedGradGradIntegrator(muinv_func));
+  bnn1->AddDomainIntegrator(new mfem::DiffusionIntegrator(muinv_func));
   bnn1->SetAssemblyLevel(mfem::AssemblyLevel::LEGACY);
   bnn1->Assemble(skip_zeros);
   bnn1->Finalize(skip_zeros);
@@ -166,7 +166,7 @@ std::array<std::unique_ptr<ParOperator>, 3> GetAtt(const MaterialOperator &mat_o
   constexpr auto MatTypeEpsReal = MaterialPropertyType::PERMITTIVITY_REAL;
   MaterialPropertyCoefficient<MatTypeEpsReal, ElemType> epsilon_func(mat_op);
   auto att2r = std::make_unique<mfem::SymmetricBilinearForm>(&nd_fespace);
-  att2r->AddDomainIntegrator(new mfem::MixedVectorMassIntegrator(epsilon_func));
+  att2r->AddDomainIntegrator(new mfem::VectorFEMassIntegrator(epsilon_func));
   att2r->SetAssemblyLevel(mfem::AssemblyLevel::LEGACY);
   att2r->Assemble(skip_zeros);
   att2r->Finalize(skip_zeros);
@@ -180,7 +180,7 @@ std::array<std::unique_ptr<ParOperator>, 3> GetAtt(const MaterialOperator &mat_o
   constexpr auto MatTypeEpsImag = MaterialPropertyType::PERMITTIVITY_IMAG;
   MaterialPropertyCoefficient<MatTypeEpsImag, ElemType> negepstandelta_func(mat_op);
   auto att2i = std::make_unique<mfem::SymmetricBilinearForm>(&nd_fespace);
-  att2i->AddDomainIntegrator(new mfem::MixedVectorMassIntegrator(negepstandelta_func));
+  att2i->AddDomainIntegrator(new mfem::VectorFEMassIntegrator(negepstandelta_func));
   att2i->SetAssemblyLevel(mfem::AssemblyLevel::LEGACY);
   att2i->Assemble(skip_zeros);
   att2i->Finalize(skip_zeros);

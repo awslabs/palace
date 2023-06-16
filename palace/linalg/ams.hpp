@@ -51,16 +51,16 @@ public:
                  int agg_coarsen, bool vector_interp, bool op_singular, int print);
   HypreAmsSolver(const IoData &iodata, mfem::ParFiniteElementSpace &nd_fespace,
                  mfem::ParFiniteElementSpace &h1_fespace, int print)
-    : HypreAmsSolver(nd_fespace, h1_fespace,
-                     iodata.solver.linear.pc_mg ? 1 : iodata.solver.linear.mg_cycle_it,
-                     iodata.solver.linear.mg_smooth_it,
-                     (iodata.problem.type == config::ProblemData::Type::TRANSIENT ||
-                      iodata.problem.type == config::ProblemData::Type::MAGNETOSTATIC)
-                         ? 1
-                         : 0,
-                     iodata.solver.linear.ams_vector,
-                     (iodata.problem.type == config::ProblemData::Type::MAGNETOSTATIC),
-                     print)
+    : HypreAmsSolver(
+          nd_fespace, h1_fespace,
+          (iodata.solver.linear.mg_max_levels > 1) ? 1 : iodata.solver.linear.mg_cycle_it,
+          iodata.solver.linear.mg_smooth_it,
+          (iodata.problem.type == config::ProblemData::Type::TRANSIENT ||
+           iodata.problem.type == config::ProblemData::Type::MAGNETOSTATIC)
+              ? 1
+              : 0,
+          iodata.solver.linear.ams_vector,
+          (iodata.problem.type == config::ProblemData::Type::MAGNETOSTATIC), print)
   {
   }
   ~HypreAmsSolver() override;
