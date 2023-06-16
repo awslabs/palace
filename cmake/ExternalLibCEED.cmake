@@ -8,7 +8,7 @@
 # Force build order
 set(LIBCEED_DEPENDENCIES)
 
-# Build LIBXSMM dependency for CPU-based backends (header-only)
+# Build LIBXSMM dependency for CPU-based backends
 set(PALACE_LIBCEED_WITH_LIBXSMM ON)
 if(PALACE_LIBCEED_WITH_LIBXSMM)
   set(LIBXSMM_DEPENDENCIES)
@@ -19,6 +19,8 @@ if(PALACE_LIBCEED_WITH_LIBXSMM)
     "CXX=${CMAKE_CXX_COMPILER}"
     "FC=0"
     "FORTRAN=0"
+    "BLAS=0"  # For now, no BLAS linkage (like PyFR)
+    "SYM=1"   # Always build with symbols
     "VERBOSE=1"
     "PPKGDIR=lib/pkgconfig"
     "PMODDIR=lib/pkgconfig"
@@ -32,7 +34,6 @@ if(PALACE_LIBCEED_WITH_LIBXSMM)
   # Configure debugging
   if(CMAKE_BUILD_TYPE MATCHES "Debug|debug|DEBUG")
     list(APPEND LIBXSMM_OPTIONS
-      "SYM=1"
       "DBG=1"
       "TRACE=1"
     )
@@ -40,11 +41,6 @@ if(PALACE_LIBCEED_WITH_LIBXSMM)
 
   string(REPLACE ";" "; " LIBXSMM_OPTIONS_PRINT "${LIBXSMM_OPTIONS}")
   message(STATUS "LIBXSMM_OPTIONS: ${LIBXSMM_OPTIONS_PRINT}")
-
-  # Patch install step
-  set(LIBXSMM_PATCH_FILES
-    "${CMAKE_SOURCE_DIR}/extern/patch/libxsmm/patch_install.diff"
-  )
 
   include(ExternalProject)
   ExternalProject_Add(libxsmm
@@ -56,10 +52,9 @@ if(PALACE_LIBCEED_WITH_LIBXSMM)
     PREFIX            ${CMAKE_BINARY_DIR}/extern/libxsmm-cmake
     BUILD_IN_SOURCE   TRUE
     UPDATE_COMMAND    ""
-    PATCH_COMMAND     git apply "${LIBXSMM_PATCH_FILES}"
     CONFIGURE_COMMAND ""
     BUILD_COMMAND     ""
-    INSTALL_COMMAND   ${CMAKE_MAKE_PROGRAM} ${LIBXSMM_OPTIONS} install
+    INSTALL_COMMAND   ${CMAKE_MAKE_PROGRAM} ${LIBXSMM_OPTIONS} install-minimal
     TEST_COMMAND      ""
   )
   list(APPEND LIBCEED_DEPENDENCIES libxsmm)
@@ -96,13 +91,14 @@ if(PALACE_LIBCEED_WITH_LIBXSMM)
   # LIBXSMM requires linkage with BLAS for fallback
   list(APPEND LIBCEED_OPTIONS
     "XSMM_DIR=${CMAKE_INSTALL_PREFIX}"
+    "BLAS_LIB="
   )
-  if(NOT "${BLAS_LAPACK_LIBRARIES}" STREQUAL "")
-    string(REPLACE "$<SEMICOLON>" " " LIBCEED_BLAS_LAPACK_LIBRARIES "${BLAS_LAPACK_LIBRARIES}")
-    list(APPEND LIBCEED_OPTIONS
-      "BLAS_LIB=${LIBCEED_BLAS_LAPACK_LIBRARIES}"
-    )
-  endif()
+  # if(NOT "${BLAS_LAPACK_LIBRARIES}" STREQUAL "")
+  #   string(REPLACE "$<SEMICOLON>" " " LIBCEED_BLAS_LAPACK_LIBRARIES "${BLAS_LAPACK_LIBRARIES}")
+  #   list(APPEND LIBCEED_OPTIONS
+  #     "BLAS_LIB=${LIBCEED_BLAS_LAPACK_LIBRARIES}"
+  #   )
+  # endif()
 endif()
 
 string(REPLACE ";" "; " LIBCEED_OPTIONS_PRINT "${LIBCEED_OPTIONS}")

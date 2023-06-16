@@ -1,16 +1,8 @@
 diff --git a/Makefile b/Makefile
-index 64509a63..7251b9dc 100644
+index 64509a63..3a1d3bde 100644
 --- a/Makefile
 +++ b/Makefile
-@@ -180,7 +180,6 @@ OBJDIR := build
- for_install := $(filter install,$(MAKECMDGOALS))
- LIBDIR := $(if $(for_install),$(OBJDIR),lib)
- 
--
- # Installation variables
- prefix ?= /usr/local
- bindir = $(prefix)/bin
-@@ -190,6 +189,8 @@ pkgconfigdir = $(libdir)/pkgconfig
+@@ -190,6 +190,8 @@ pkgconfigdir = $(libdir)/pkgconfig
  INSTALL = install
  INSTALL_PROGRAM = $(INSTALL)
  INSTALL_DATA = $(INSTALL) -m644
@@ -19,12 +11,16 @@ index 64509a63..7251b9dc 100644
  
  # Get number of processors of the machine
  NPROCS := $(shell getconf _NPROCESSORS_ONLN)
-@@ -383,15 +384,14 @@ ifneq ($(wildcard $(XSMM_DIR)/lib/libxsmm.*),)
-   PKG_LIBS += -L$(abspath $(XSMM_DIR))/lib -lxsmm -ldl
+@@ -380,18 +382,17 @@ PKG_STUBS_LIBS =
+ # libXSMM Backends
+ XSMM_BACKENDS = /cpu/self/xsmm/serial /cpu/self/xsmm/blocked
+ ifneq ($(wildcard $(XSMM_DIR)/lib/libxsmm.*),)
+-  PKG_LIBS += -L$(abspath $(XSMM_DIR))/lib -lxsmm -ldl
++  PKG_LIBS += -L$(abspath $(XSMM_DIR))/lib -lxsmm
    MKL ?=
    ifeq (,$(MKL)$(MKLROOT))
 -    BLAS_LIB = -lblas
-+    BLAS_LIB ?= -lblas
++    BLAS_LIB ?= -lblas -ldl
    else
      ifneq ($(MKLROOT),)
        # Some installs put everything inside an intel64 subdirectory, others not
@@ -37,7 +33,7 @@ index 64509a63..7251b9dc 100644
    endif
    PKG_LIBS += $(BLAS_LIB)
    libceed.c += $(xsmm.c)
-@@ -700,7 +700,7 @@ install : $(libceed) $(OBJDIR)/ceed.pc
+@@ -700,7 +701,7 @@ install : $(libceed) $(OBJDIR)/ceed.pc
  	$(INSTALL_DATA) include/ceed/hip.h "$(DESTDIR)$(includedir)/ceed/"
  	$(INSTALL_DATA) include/ceed/hash.h "$(DESTDIR)$(includedir)/ceed/"
  	$(INSTALL_DATA) include/ceed/khash.h "$(DESTDIR)$(includedir)/ceed/"
@@ -80,10 +76,57 @@ index 450c15b9..3980b7f8 100644
    CeedScalar *h_array;
    CeedScalar *h_array_borrowed;
 diff --git a/backends/xsmm/ceed-xsmm-tensor-f32.c b/backends/xsmm/ceed-xsmm-tensor-f32.c
-index 95328feb..58eec637 100644
+index 95328feb..2e178689 100644
 --- a/backends/xsmm/ceed-xsmm-tensor-f32.c
 +++ b/backends/xsmm/ceed-xsmm-tensor-f32.c
-@@ -94,7 +94,9 @@ int CeedTensorContractCreate_f32_Xsmm(CeedBasis basis, CeedTensorContract contra
+@@ -22,7 +22,6 @@ static int CeedTensorContract_Xsmm_C1(CeedTensorContract contract, CeedInt A, Ce
+   float alpha = 1.0, beta = 1.0;
+   char  trans_u = 'N', trans_t = 'N';
+   if ((t_mode == CEED_TRANSPOSE && C != 1) || (t_mode == CEED_NOTRANSPOSE && C == 1)) trans_t = 'T';
+-
+   if (!add) beta = 0.0;
+ 
+   // libXSMM GEMM
+@@ -40,14 +39,20 @@ static int CeedTensorContractApply_Xsmm(CeedTensorContract contract, CeedInt A,
+   CeedCallBackend(CeedTensorContractGetData(contract, &impl));
+ 
+   // Get kernel
+-  libxsmm_smmfunction kernel;
+-  CeedHashIJKLMKey    key = {B, C, J, t_mode, add};
+-  khint_t             k   = kh_get(f32, impl->lookup_f32, key);
++  libxsmm_gemmfunction kernel;
++  CeedHashIJKLMKey     key = {B, C, J, t_mode, add};
++  khint_t              k   = kh_get(f32, impl->lookup_f32, key);
+   CeedHashGetValue(impl->lookup_f32, k, kernel);
+ 
+   // Run kernel or fallback to default implementation
+   if (C != 1) {
+-    for (CeedInt a = 0; a < A; a++) LIBXSMM_MMFUNCTION_KERNEL(&u[a * B * C], &t[0], &v[a * J * C]);
++    libxsmm_gemm_param gemm_param;
++    gemm_param.b.primary = (float *)&t[0];
++    for (CeedInt a = 0; a < A; a++) {
++      gemm_param.a.primary = (float *)&u[a * B * C];
++      gemm_param.c.primary = (float *)&v[a * J * C];
++      kernel(&gemm_param);
++    }
+   } else {
+     CeedTensorContract_Xsmm_C1(contract, A, B, C, J, t, t_mode, add, u, v);
+   }
+@@ -60,11 +65,9 @@ static int CeedTensorContractApply_Xsmm(CeedTensorContract contract, CeedInt A,
+ //------------------------------------------------------------------------------
+ static int CeedTensorContractDestroy_Xsmm(CeedTensorContract contract) {
+   CeedTensorContract_Xsmm *impl;
+-  libxsmm_smmfunction      kernel;
+-
+   CeedCallBackend(CeedTensorContractGetData(contract, &impl));
+-  // Free kernels
+-  kh_foreach_value(impl->lookup_f32, kernel, libxsmm_release_kernel(&kernel));
++
++  // Release the hash table (no need to free kernels)
+   kh_destroy(f32, impl->lookup_f32);
+   CeedCallBackend(CeedFree(&impl));
+   return CEED_ERROR_SUCCESS;
+@@ -94,7 +97,9 @@ int CeedTensorContractCreate_f32_Xsmm(CeedBasis basis, CeedTensorContract contra
          for (CeedInt t_mode = 0; t_mode <= 1; t_mode++) {
            for (CeedInt grad = 0; grad <= 1; grad++) {
              for (CeedInt dim = 0; dim < impl->dim; dim++) {
@@ -94,44 +137,102 @@ index 95328feb..58eec637 100644
                CeedInt   B = grad ? impl->Q : (t_mode ? impl->Q : impl->P), J = grad ? impl->Q : (t_mode ? impl->P : impl->Q),
                        C = num_elem * CeedIntPow(J, dim);
                // Add key, kernel pair to hash table
-@@ -103,9 +105,7 @@ int CeedTensorContractCreate_f32_Xsmm(CeedBasis basis, CeedTensorContract contra
+@@ -103,9 +108,10 @@ int CeedTensorContractCreate_f32_Xsmm(CeedBasis basis, CeedTensorContract contra
                khint_t          k = kh_put(f32, impl->lookup_f32, key, &new_item);
                if (new_item) {
                  // Build kernel
 -                float alpha = 1.0, beta = 1.0;
 -                if (!add) beta = 0.0;
 -                libxsmm_smmfunction kernel = libxsmm_smmdispatch(C, J, B, NULL, NULL, NULL, &alpha, &beta, &flags, NULL);
-+                libxsmm_smmfunction kernel = libxsmm_smmdispatch_v2(C, J, B, NULL, NULL, NULL, &flags);
++                const libxsmm_gemm_shape gemm_shape = libxsmm_create_gemm_shape(C, J, B, C, !t_mode ? B : J, C, LIBXSMM_DATATYPE_F32,
++                                                                                LIBXSMM_DATATYPE_F32, LIBXSMM_DATATYPE_F32, LIBXSMM_DATATYPE_F32);
++                libxsmm_gemmfunction     kernel =
++                    libxsmm_dispatch_gemm_v2(gemm_shape, (libxsmm_bitfield)(flags), (libxsmm_bitfield)LIBXSMM_GEMM_PREFETCH_NONE);
                  CeedCheck(kernel, ceed, CEED_ERROR_BACKEND, "LIBXSMM kernel failed to build.");
                  // Add kernel to hash table
                  kh_value(impl->lookup_f32, k) = kernel;
-@@ -125,7 +125,9 @@ int CeedTensorContractCreate_f32_Xsmm(CeedBasis basis, CeedTensorContract contra
+@@ -123,19 +129,22 @@ int CeedTensorContractCreate_f32_Xsmm(CeedBasis basis, CeedTensorContract contra
+     for (CeedInt num_elem = 1; num_elem <= 8; num_elem += 7) {
+       for (CeedInt add = 0; add <= 1; add++) {
          for (CeedInt t_mode = 0; t_mode <= 1; t_mode++) {
-           CeedInt gradstride = CeedIntMax(impl->dim - 1, 1);
-           for (CeedInt grad = 1; grad <= impl->dim; grad += gradstride) {
+-          CeedInt gradstride = CeedIntMax(impl->dim - 1, 1);
+-          for (CeedInt grad = 1; grad <= impl->dim; grad += gradstride) {
 -            const int flags = LIBXSMM_GEMM_FLAGS('N', t_mode ? 'T' : 'N');
+-            CeedInt   B = t_mode ? grad * impl->Q : impl->P, J = t_mode ? impl->P : grad * impl->Q, C = num_elem;
++          CeedInt q_comp_stride = CeedIntMax(impl->dim - 1, 1);
++          for (CeedInt q_comp = 1; q_comp <= impl->dim; q_comp += q_comp_stride) {
 +            const int flags_t  = LIBXSMM_GEMM_FLAGS('N', t_mode ? 'T' : 'N');
 +            const int flags_ab = (!add) ? LIBXSMM_GEMM_FLAG_BETA_0 : 0;
 +            const int flags    = (flags_t | flags_ab);
-             CeedInt   B = t_mode ? grad * impl->Q : impl->P, J = t_mode ? impl->P : grad * impl->Q, C = num_elem;
++            CeedInt   B = t_mode ? q_comp * impl->Q : impl->P, J = t_mode ? impl->P : q_comp * impl->Q, C = num_elem;
              // Add key, kernel pair to hash table
              CeedHashIJKLMKey key = {B, C, J, t_mode, add};
-@@ -133,9 +135,7 @@ int CeedTensorContractCreate_f32_Xsmm(CeedBasis basis, CeedTensorContract contra
+             int              new_item;
              khint_t          k = kh_put(f32, impl->lookup_f32, key, &new_item);
              if (new_item) {
                // Build kernel
 -              float alpha = 1.0, beta = 1.0;
 -              if (!add) beta = 0.0;
 -              libxsmm_smmfunction kernel = libxsmm_smmdispatch(C, J, B, NULL, NULL, NULL, &alpha, &beta, &flags, NULL);
-+              libxsmm_smmfunction kernel = libxsmm_smmdispatch_v2(C, J, B, NULL, NULL, NULL, &flags);
++              const libxsmm_gemm_shape gemm_shape = libxsmm_create_gemm_shape(C, J, B, C, !t_mode ? B : J, C, LIBXSMM_DATATYPE_F32,
++                                                                              LIBXSMM_DATATYPE_F32, LIBXSMM_DATATYPE_F32, LIBXSMM_DATATYPE_F32);
++              libxsmm_gemmfunction     kernel =
++                  libxsmm_dispatch_gemm_v2(gemm_shape, (libxsmm_bitfield)(flags), (libxsmm_bitfield)LIBXSMM_GEMM_PREFETCH_NONE);
                CeedCheck(kernel, ceed, CEED_ERROR_BACKEND, "LIBXSMM kernel failed to build.");
                // Add kernel to hash table
                kh_value(impl->lookup_f32, k) = kernel;
 diff --git a/backends/xsmm/ceed-xsmm-tensor-f64.c b/backends/xsmm/ceed-xsmm-tensor-f64.c
-index d4e828e3..a997a9ac 100644
+index d4e828e3..dc08cdec 100644
 --- a/backends/xsmm/ceed-xsmm-tensor-f64.c
 +++ b/backends/xsmm/ceed-xsmm-tensor-f64.c
-@@ -94,7 +94,9 @@ int CeedTensorContractCreate_f64_Xsmm(CeedBasis basis, CeedTensorContract contra
+@@ -22,7 +22,6 @@ static int CeedTensorContract_Xsmm_C1(CeedTensorContract contract, CeedInt A, Ce
+   double alpha = 1.0, beta = 1.0;
+   char   trans_u = 'N', trans_t = 'N';
+   if ((t_mode == CEED_TRANSPOSE && C != 1) || (t_mode == CEED_NOTRANSPOSE && C == 1)) trans_t = 'T';
+-
+   if (!add) beta = 0.0;
+ 
+   // libXSMM GEMM
+@@ -40,14 +39,20 @@ static int CeedTensorContractApply_Xsmm(CeedTensorContract contract, CeedInt A,
+   CeedCallBackend(CeedTensorContractGetData(contract, &impl));
+ 
+   // Get kernel
+-  libxsmm_dmmfunction kernel;
+-  CeedHashIJKLMKey    key = {B, C, J, t_mode, add};
+-  khint_t             k   = kh_get(f64, impl->lookup_f64, key);
++  libxsmm_gemmfunction kernel;
++  CeedHashIJKLMKey     key = {B, C, J, t_mode, add};
++  khint_t              k   = kh_get(f64, impl->lookup_f64, key);
+   CeedHashGetValue(impl->lookup_f64, k, kernel);
+ 
+   // Run kernel or fallback to default implementation
+   if (C != 1) {
+-    for (CeedInt a = 0; a < A; a++) LIBXSMM_MMFUNCTION_KERNEL(&u[a * B * C], &t[0], &v[a * J * C]);
++    libxsmm_gemm_param gemm_param;
++    gemm_param.b.primary = (double *)&t[0];
++    for (CeedInt a = 0; a < A; a++) {
++      gemm_param.a.primary = (double *)&u[a * B * C];
++      gemm_param.c.primary = (double *)&v[a * J * C];
++      kernel(&gemm_param);
++    }
+   } else {
+     CeedTensorContract_Xsmm_C1(contract, A, B, C, J, t, t_mode, add, u, v);
+   }
+@@ -60,11 +65,9 @@ static int CeedTensorContractApply_Xsmm(CeedTensorContract contract, CeedInt A,
+ //------------------------------------------------------------------------------
+ static int CeedTensorContractDestroy_Xsmm(CeedTensorContract contract) {
+   CeedTensorContract_Xsmm *impl;
+-  libxsmm_dmmfunction      kernel;
+-
+   CeedCallBackend(CeedTensorContractGetData(contract, &impl));
+-  // Free kernels
+-  kh_foreach_value(impl->lookup_f64, kernel, libxsmm_release_kernel(&kernel));
++
++  // Release the hash table (no need to free kernels)
+   kh_destroy(f64, impl->lookup_f64);
+   CeedCallBackend(CeedFree(&impl));
+   return CEED_ERROR_SUCCESS;
+@@ -94,7 +97,9 @@ int CeedTensorContractCreate_f64_Xsmm(CeedBasis basis, CeedTensorContract contra
          for (CeedInt t_mode = 0; t_mode <= 1; t_mode++) {
            for (CeedInt grad = 0; grad <= 1; grad++) {
              for (CeedInt dim = 0; dim < impl->dim; dim++) {
@@ -142,39 +243,114 @@ index d4e828e3..a997a9ac 100644
                CeedInt   B = grad ? impl->Q : (t_mode ? impl->Q : impl->P), J = grad ? impl->Q : (t_mode ? impl->P : impl->Q),
                        C = num_elem * CeedIntPow(J, dim);
                // Add key, kernel pair to hash table
-@@ -103,9 +105,7 @@ int CeedTensorContractCreate_f64_Xsmm(CeedBasis basis, CeedTensorContract contra
+@@ -103,9 +108,10 @@ int CeedTensorContractCreate_f64_Xsmm(CeedBasis basis, CeedTensorContract contra
                khint_t          k = kh_put(f64, impl->lookup_f64, key, &new_item);
                if (new_item) {
                  // Build kernel
 -                double alpha = 1.0, beta = 1.0;
 -                if (!add) beta = 0.0;
 -                libxsmm_dmmfunction kernel = libxsmm_dmmdispatch(C, J, B, NULL, NULL, NULL, &alpha, &beta, &flags, NULL);
-+                libxsmm_dmmfunction kernel = libxsmm_dmmdispatch_v2(C, J, B, NULL, NULL, NULL, &flags);
++                const libxsmm_gemm_shape gemm_shape = libxsmm_create_gemm_shape(C, J, B, C, !t_mode ? B : J, C, LIBXSMM_DATATYPE_F64,
++                                                                                LIBXSMM_DATATYPE_F64, LIBXSMM_DATATYPE_F64, LIBXSMM_DATATYPE_F64);
++                libxsmm_gemmfunction     kernel =
++                    libxsmm_dispatch_gemm_v2(gemm_shape, (libxsmm_bitfield)(flags), (libxsmm_bitfield)LIBXSMM_GEMM_PREFETCH_NONE);
                  CeedCheck(kernel, ceed, CEED_ERROR_BACKEND, "LIBXSMM kernel failed to build.");
                  // Add kernel to hash table
                  kh_value(impl->lookup_f64, k) = kernel;
-@@ -125,7 +125,9 @@ int CeedTensorContractCreate_f64_Xsmm(CeedBasis basis, CeedTensorContract contra
+@@ -123,19 +129,22 @@ int CeedTensorContractCreate_f64_Xsmm(CeedBasis basis, CeedTensorContract contra
+     for (CeedInt num_elem = 1; num_elem <= 8; num_elem += 7) {
+       for (CeedInt add = 0; add <= 1; add++) {
          for (CeedInt t_mode = 0; t_mode <= 1; t_mode++) {
-           CeedInt gradstride = CeedIntMax(impl->dim - 1, 1);
-           for (CeedInt grad = 1; grad <= impl->dim; grad += gradstride) {
+-          CeedInt gradstride = CeedIntMax(impl->dim - 1, 1);
+-          for (CeedInt grad = 1; grad <= impl->dim; grad += gradstride) {
 -            const int flags = LIBXSMM_GEMM_FLAGS('N', t_mode ? 'T' : 'N');
+-            CeedInt   B = t_mode ? grad * impl->Q : impl->P, J = t_mode ? impl->P : grad * impl->Q, C = num_elem;
++          CeedInt q_comp_stride = CeedIntMax(impl->dim - 1, 1);
++          for (CeedInt q_comp = 1; q_comp <= impl->dim; q_comp += q_comp_stride) {
 +            const int flags_t  = LIBXSMM_GEMM_FLAGS('N', t_mode ? 'T' : 'N');
 +            const int flags_ab = (!add) ? LIBXSMM_GEMM_FLAG_BETA_0 : 0;
 +            const int flags    = (flags_t | flags_ab);
-             CeedInt   B = t_mode ? grad * impl->Q : impl->P, J = t_mode ? impl->P : grad * impl->Q, C = num_elem;
++            CeedInt   B = t_mode ? q_comp * impl->Q : impl->P, J = t_mode ? impl->P : q_comp * impl->Q, C = num_elem;
              // Add key, kernel pair to hash table
              CeedHashIJKLMKey key = {B, C, J, t_mode, add};
-@@ -133,9 +135,7 @@ int CeedTensorContractCreate_f64_Xsmm(CeedBasis basis, CeedTensorContract contra
+             int              new_item;
              khint_t          k = kh_put(f64, impl->lookup_f64, key, &new_item);
              if (new_item) {
                // Build kernel
 -              double alpha = 1.0, beta = 1.0;
 -              if (!add) beta = 0.0;
 -              libxsmm_dmmfunction kernel = libxsmm_dmmdispatch(C, J, B, NULL, NULL, NULL, &alpha, &beta, &flags, NULL);
-+              libxsmm_dmmfunction kernel = libxsmm_dmmdispatch_v2(C, J, B, NULL, NULL, NULL, &flags);
++              const libxsmm_gemm_shape gemm_shape = libxsmm_create_gemm_shape(C, J, B, C, !t_mode ? B : J, C, LIBXSMM_DATATYPE_F64,
++                                                                              LIBXSMM_DATATYPE_F64, LIBXSMM_DATATYPE_F64, LIBXSMM_DATATYPE_F64);
++              libxsmm_gemmfunction     kernel =
++                  libxsmm_dispatch_gemm_v2(gemm_shape, (libxsmm_bitfield)(flags), (libxsmm_bitfield)LIBXSMM_GEMM_PREFETCH_NONE);
                CeedCheck(kernel, ceed, CEED_ERROR_BACKEND, "LIBXSMM kernel failed to build.");
                // Add kernel to hash table
                kh_value(impl->lookup_f64, k) = kernel;
+diff --git a/backends/xsmm/ceed-xsmm.h b/backends/xsmm/ceed-xsmm.h
+index da3b328c..6efe040b 100644
+--- a/backends/xsmm/ceed-xsmm.h
++++ b/backends/xsmm/ceed-xsmm.h
+@@ -21,16 +21,11 @@
+                                        (LIBXSMM_VERSION_UPDATE > update || (LIBXSMM_VERSION_UPDATE == update && LIBXSMM_VERSION_PATCH >= patch))))))
+ #endif
+ 
+-#if LIBXSMM_VERSION_GE(1, 17, 0, 0)
+-#define LIBXSMM_MMFUNCTION_KERNEL(a, b, c) kernel(a, b, c)
+-#else
+-#define LIBXSMM_MMFUNCTION_KERNEL(a, b, c) kernel(a, b, c, NULL, NULL, NULL)
+-#endif
+-
+ // Instantiate khash structs and methods
+-CeedHashIJKLMInit(f32, libxsmm_smmfunction) CeedHashIJKLMInit(f64, libxsmm_dmmfunction)
++CeedHashIJKLMInit(f32, libxsmm_gemmfunction);
++CeedHashIJKLMInit(f64, libxsmm_gemmfunction);
+ 
+-    typedef struct {
++typedef struct {
+   bool    is_tensor;
+   CeedInt P, Q, dim;
+   khash_t(f32) * lookup_f32;
+diff --git a/interface/ceed-tensor.c b/interface/ceed-tensor.c
+index a6249317..b0564985 100644
+--- a/interface/ceed-tensor.c
++++ b/interface/ceed-tensor.c
+@@ -90,7 +90,7 @@ int CeedTensorContractApply(CeedTensorContract contract, CeedInt A, CeedInt B, C
+   @param[in]  D        First index of v, first index of t
+   @param[in]  J        Third index of v, one of last two indices of t
+   @param[in]  t        Tensor array to contract against
+-  @param[in]  t_mode   Transpose mode for t, \ref CEED_NOTRANSPOSE for t_jb \ref CEED_TRANSPOSE for t_bj
++  @param[in]  t_mode   Transpose mode for t, \ref CEED_NOTRANSPOSE for t_djb \ref CEED_TRANSPOSE for t_dbj
+   @param[in]  add      Add mode
+   @param[in]  u        Input array
+   @param[out] v        Output array
+@@ -101,13 +101,21 @@ int CeedTensorContractApply(CeedTensorContract contract, CeedInt A, CeedInt B, C
+ **/
+ int CeedTensorContractStridedApply(CeedTensorContract contract, CeedInt A, CeedInt B, CeedInt C, CeedInt D, CeedInt J, const CeedScalar *restrict t,
+                                    CeedTransposeMode t_mode, const CeedInt add, const CeedScalar *restrict u, CeedScalar *restrict v) {
+-  if (t_mode == CEED_TRANSPOSE) {
+-    for (CeedInt d = 0; d < D; d++) {
+-      CeedCall(contract->Apply(contract, A, J, C, B, t + d * B * J, t_mode, add, u + d * A * J * C, v));
++  if (A != 1) {
++    if (t_mode == CEED_TRANSPOSE) {
++      for (CeedInt d = 0; d < D; d++) {
++        CeedCall(contract->Apply(contract, A, J, C, B, t + d * B * J, t_mode, add, u + d * A * J * C, v));
++      }
++    } else {
++      for (CeedInt d = 0; d < D; d++) {
++        CeedCall(contract->Apply(contract, A, B, C, J, t + d * B * J, t_mode, add, u, v + d * A * J * C));
++      }
+     }
+   } else {
+-    for (CeedInt d = 0; d < D; d++) {
+-      CeedCall(contract->Apply(contract, A, B, C, J, t + d * B * J, t_mode, add, u, v + d * A * J * C));
++    if (t_mode == CEED_TRANSPOSE) {
++      CeedCall(contract->Apply(contract, A, D * J, C, B, t, t_mode, add, u, v));
++    } else {
++      CeedCall(contract->Apply(contract, A, B, C, D * J, t, t_mode, add, u, v));
+     }
+   }
+   return CEED_ERROR_SUCCESS;
 diff --git a/tests/junit.py b/tests/junit.py
 index 1de86e4e..dd0e4b5f 100755
 --- a/tests/junit.py
