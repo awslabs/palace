@@ -747,7 +747,7 @@ public:
     LOGARITHMIC,
     INVALID = -1
   };
-  MultigridCoarsenType mg_coarsen_type = MultigridCoarsenType::LINEAR;
+  MultigridCoarsenType mg_coarsen_type = MultigridCoarsenType::LOGARITHMIC;
 
   // Use auxiliary space smoothers on geometric multigrid levels.
   int mg_smooth_aux = -1;
@@ -822,7 +822,7 @@ public:
   double divfree_tol = 1.0e-12;
 
   // Maximum number of iterations for solving linear systems in divergence-free projector.
-  int divfree_max_it = 100;
+  int divfree_max_it = 1000;
 
   // Enable different variants of Gram-Schmidt orthogonalization for GMRES/FGMRES iterative
   // solvers and SLEPc eigenvalue solver.

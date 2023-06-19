@@ -42,7 +42,7 @@ public:
                      mfem::ParFiniteElementSpaceHierarchy &h1_fespaces,
                      const std::vector<mfem::Array<int>> &nd_dbc_tdof_lists,
                      const std::vector<mfem::Array<int>> &h1_dbc_tdof_lists, double tol,
-                     int max_it, int print);
+                     int max_it, int print, bool use_pa);
 
   const Operator &GetOperator() { return *A; }
 

@@ -19,7 +19,7 @@ CurlCurlMassSolver::CurlCurlMassSolver(
     mfem::ParFiniteElementSpaceHierarchy &h1_fespaces,
     const std::vector<mfem::Array<int>> &nd_dbc_tdof_lists,
     const std::vector<mfem::Array<int>> &h1_dbc_tdof_lists, double tol, int max_it,
-    int print)
+    int print, bool use_pa)
 {
   constexpr auto MatTypeMuInv = MaterialPropertyType::INV_PERMEABILITY;
   constexpr auto MatTypeEps = MaterialPropertyType::PERMITTIVITY_REAL;
@@ -44,8 +44,8 @@ CurlCurlMassSolver::CurlCurlMassSolver(
         {
           a->AddDomainIntegrator(new mfem::DiffusionIntegrator(epsilon_func));
         }
-        // XX TODO: Partial assembly option?
-        a->SetAssemblyLevel(mfem::AssemblyLevel::LEGACY);
+        a->SetAssemblyLevel(use_pa ? mfem::AssemblyLevel::PARTIAL
+                                   : mfem::AssemblyLevel::LEGACY);
         a->Assemble(0);
         a->Finalize(0);
         auto A_l = std::make_unique<ParOperator>(std::move(a), fespace_l);

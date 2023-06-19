@@ -117,7 +117,8 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &spaceop) : spaceop
     kspKM = std::make_unique<CurlCurlMassSolver>(
         spaceop.GetMaterialOp(), spaceop.GetNDSpaces(), spaceop.GetH1Spaces(),
         spaceop.GetNDDbcTDofLists(), spaceop.GetH1DbcTDofLists(), iodata.solver.linear.tol,
-        iodata.solver.linear.max_it, curlcurl_verbose);
+        iodata.solver.linear.max_it, curlcurl_verbose,
+        iodata.solver.assembly_level == config::SolverData::AssemblyLevel::PARTIAL);
   }
 
   // The initial PROM basis is empty. Orthogonalization uses MGS by default, else CGS2.
