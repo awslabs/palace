@@ -171,18 +171,20 @@ void SpaceOperator::CheckBoundaryProperties()
 namespace
 {
 
-void PrintHeader(mfem::ParFiniteElementSpace &h1_fespace,
+bool PrintHeader(mfem::ParFiniteElementSpace &h1_fespace,
                  mfem::ParFiniteElementSpace &nd_fespace,
-                 mfem::ParFiniteElementSpace &rt_fespace, bool &print_hdr)
+                 mfem::ParFiniteElementSpace &rt_fespace,
+                 mfem::AssemblyLevel assembly_level, bool print_hdr)
 {
   if (print_hdr)
   {
     Mpi::Print("\nAssembling system matrices, number of global unknowns:\n"
-               " H1: {:d}, ND: {:d}, RT: {:d}\n",
+               " H1: {:d}, ND: {:d}, RT: {:d}\n Operator assembly level: {}\n",
                h1_fespace.GlobalTrueVSize(), nd_fespace.GlobalTrueVSize(),
-               rt_fespace.GlobalTrueVSize());
-    print_hdr = false;
+               rt_fespace.GlobalTrueVSize(),
+               assembly_level == mfem::AssemblyLevel::PARTIAL ? "Partial" : "Full");
   }
+  return false;
 }
 
 template <typename T1, typename T2, typename T3, typename T4>
@@ -244,7 +246,8 @@ auto BuildAuxOperator(mfem::ParFiniteElementSpace &fespace, T1 *f, T2 *fb,
 std::unique_ptr<Operator>
 SpaceOperator::GetStiffnessMatrix(Operator::DiagonalPolicy diag_policy)
 {
-  PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
+  print_hdr =
+      PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), assembly_level, print_hdr);
   const int sdim = GetNDSpace().GetParMesh()->SpaceDimension();
   SumMatrixCoefficient df(sdim), f(sdim), fb(sdim);
   AddStiffnessCoefficients(1.0, df, f);
@@ -265,7 +268,8 @@ SpaceOperator::GetStiffnessMatrix(Operator::DiagonalPolicy diag_policy)
 std::unique_ptr<Operator>
 SpaceOperator::GetDampingMatrix(Operator::DiagonalPolicy diag_policy)
 {
-  PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
+  print_hdr =
+      PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), assembly_level, print_hdr);
   const int sdim = GetNDSpace().GetParMesh()->SpaceDimension();
   SumMatrixCoefficient f(sdim), fb(sdim);
   AddDampingCoefficients(1.0, f);
@@ -285,7 +289,8 @@ SpaceOperator::GetDampingMatrix(Operator::DiagonalPolicy diag_policy)
 
 std::unique_ptr<Operator> SpaceOperator::GetMassMatrix(Operator::DiagonalPolicy diag_policy)
 {
-  PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
+  print_hdr =
+      PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), assembly_level, print_hdr);
   const int sdim = GetNDSpace().GetParMesh()->SpaceDimension();
   SumMatrixCoefficient f(sdim), fb(sdim);
   AddRealMassCoefficients(1.0, f);
@@ -306,7 +311,8 @@ std::unique_ptr<Operator> SpaceOperator::GetMassMatrix(Operator::DiagonalPolicy 
 std::unique_ptr<ComplexOperator>
 SpaceOperator::GetComplexStiffnessMatrix(Operator::DiagonalPolicy diag_policy)
 {
-  PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
+  print_hdr =
+      PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), assembly_level, print_hdr);
   const int sdim = GetNDSpace().GetParMesh()->SpaceDimension();
   SumMatrixCoefficient df(sdim), f(sdim), fb(sdim);
   AddStiffnessCoefficients(1.0, df, f);
@@ -327,7 +333,8 @@ SpaceOperator::GetComplexStiffnessMatrix(Operator::DiagonalPolicy diag_policy)
 std::unique_ptr<ComplexOperator>
 SpaceOperator::GetComplexDampingMatrix(Operator::DiagonalPolicy diag_policy)
 {
-  PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
+  print_hdr =
+      PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), assembly_level, print_hdr);
   const int sdim = GetNDSpace().GetParMesh()->SpaceDimension();
   SumMatrixCoefficient f(sdim), fb(sdim);
   AddDampingCoefficients(1.0, f);
@@ -348,7 +355,8 @@ SpaceOperator::GetComplexDampingMatrix(Operator::DiagonalPolicy diag_policy)
 std::unique_ptr<ComplexOperator>
 SpaceOperator::GetComplexMassMatrix(Operator::DiagonalPolicy diag_policy)
 {
-  PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
+  print_hdr =
+      PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), assembly_level, print_hdr);
   const int sdim = GetNDSpace().GetParMesh()->SpaceDimension();
   SumMatrixCoefficient fr(sdim), fi(sdim), fbr(sdim);
   AddRealMassCoefficients(1.0, fr);
@@ -380,7 +388,8 @@ std::unique_ptr<ComplexOperator>
 SpaceOperator::GetComplexExtraSystemMatrix(double omega,
                                            Operator::DiagonalPolicy diag_policy)
 {
-  PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
+  print_hdr =
+      PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), assembly_level, print_hdr);
   const int sdim = GetNDSpace().GetParMesh()->SpaceDimension();
   SumMatrixCoefficient fbr(sdim), fbi(sdim);
   SumCoefficient dfbr, dfbi;
@@ -698,24 +707,18 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(double a0, doub
 
       std::unique_ptr<mfem::SymmetricBilinearForm> br, bi;
       std::unique_ptr<Operator> br_loc, bi_loc;
-
-
-      //XX TODO FIX BUG IN CEED OPERATOR FULL ASSEMBLY?
-      mfem::AssemblyLevel assembly = (l > 0) ? assembly_level : mfem::AssemblyLevel::LEGACY;
-
-
       if (!dfr.empty() || !fr.empty() || !dfbr.empty() || !fbr.empty())
       {
-        br = (s == 0) ? BuildOperator(fespace_l, &dfr, &fr, &dfbr, &fbr, assembly,
+        br = (s == 0) ? BuildOperator(fespace_l, &dfr, &fr, &dfbr, &fbr, assembly_level,
                                       skip_zeros, pc_lor)
-                      : BuildAuxOperator(fespace_l, &fr, &fbr, assembly, skip_zeros,
+                      : BuildAuxOperator(fespace_l, &fr, &fbr, assembly_level, skip_zeros,
                                          pc_lor);
       }
       if (!fi.empty() || !dfbi.empty() || !fbi.empty())
       {
         bi = (s == 0) ? BuildOperator(fespace_l, (SumCoefficient *)nullptr, &fi, &dfbi,
-                                      &fbi, assembly, skip_zeros, pc_lor)
-                      : BuildAuxOperator(fespace_l, &fi, &fbi, assembly, skip_zeros,
+                                      &fbi, assembly_level, skip_zeros, pc_lor)
+                      : BuildAuxOperator(fespace_l, &fi, &fbi, assembly_level, skip_zeros,
                                          pc_lor);
       }
       if (pc_lor)

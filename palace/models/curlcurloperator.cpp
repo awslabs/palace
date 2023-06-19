@@ -113,9 +113,10 @@ std::unique_ptr<Operator> CurlCurlOperator::GetStiffnessMatrix()
   if (print_hdr)
   {
     Mpi::Print("\nAssembling system matrices, number of global unknowns:\n"
-               " H1: {:d}, ND: {:d}, RT: {:d}\n",
+               " H1: {:d}, ND: {:d}, RT: {:d}\n Operator assembly level: {}\n",
                GetH1Space().GlobalTrueVSize(), GetNDSpace().GlobalTrueVSize(),
-               GetRTSpace().GlobalTrueVSize());
+               GetRTSpace().GlobalTrueVSize(),
+               assembly_level == mfem::AssemblyLevel::PARTIAL ? "Partial" : "Full");
     Mpi::Print("\nAssembling multigrid hierarchy:\n");
   }
   auto K = std::make_unique<MultigridOperator>(nd_fespaces.GetNumLevels());

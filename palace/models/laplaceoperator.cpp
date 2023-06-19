@@ -137,8 +137,9 @@ std::unique_ptr<Operator> LaplaceOperator::GetStiffnessMatrix()
   if (print_hdr)
   {
     Mpi::Print("\nAssembling system matrices, number of global unknowns:\n"
-               " H1: {:d}, ND: {:d}\n",
-               GetH1Space().GlobalTrueVSize(), GetNDSpace().GlobalTrueVSize());
+               " H1: {:d}, ND: {:d}\n Operator assembly level: {}\n",
+               GetH1Space().GlobalTrueVSize(), GetNDSpace().GlobalTrueVSize(),
+               assembly_level == mfem::AssemblyLevel::PARTIAL ? "Partial" : "Full");
     Mpi::Print("\nAssembling multigrid hierarchy:\n");
   }
   auto K = std::make_unique<MultigridOperator>(h1_fespaces.GetNumLevels());

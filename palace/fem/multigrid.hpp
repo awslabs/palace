@@ -46,66 +46,44 @@ std::vector<std::unique_ptr<FECollection>> inline ConstructFECollections(
   {
     b2 = mfem::BasisType::IntegratedGLL;
   }
-  auto AddLevel = [dim, b1, b2](int o, std::vector<std::unique_ptr<FECollection>> &fecs)
+  constexpr int pm1 = (std::is_same<FECollection, mfem::H1_FECollection>::value ||
+                       std::is_same<FECollection, mfem::ND_FECollection>::value)
+                          ? 0
+                          : 1;
+
+  // Construct the p-multigrid hierarchy, first finest to coarsest and then reverse the
+  // order.
+  std::vector<std::unique_ptr<FECollection>> fecs;
+  for (int l = 0; l < std::max(1, mg_max_levels); l++)
   {
-    constexpr int om1 = (std::is_same<FECollection, mfem::H1_FECollection>::value ||
-                         std::is_same<FECollection, mfem::ND_FECollection>::value)
-                            ? 0
-                            : 1;
     if constexpr (std::is_same<FECollection, mfem::ND_FECollection>::value ||
                   std::is_same<FECollection, mfem::RT_FECollection>::value)
     {
-      fecs.push_back(std::make_unique<FECollection>(o - om1, dim, b1, b2));
+      fecs.push_back(std::make_unique<FECollection>(p - pm1, dim, b1, b2));
     }
     else
     {
-      fecs.push_back(std::make_unique<FECollection>(o - om1, dim, b1));
+      fecs.push_back(std::make_unique<FECollection>(p - pm1, dim, b1));
       MFEM_CONTRACT_VAR(b2);
     }
-  };
-
-  // Construct the p-multigrid hierarchy.
-  std::vector<std::unique_ptr<FECollection>> fecs;
-  if (mg_max_levels > 1)
-  {
+    if (p == 1)
+    {
+      break;
+    }
     switch (mg_coarsen_type)
     {
       case config::LinearSolverData::MultigridCoarsenType::LINEAR:
-        {
-          int num_levels = std::min(p, mg_max_levels);
-          fecs.reserve(num_levels);
-          for (int o = p - num_levels + 1; o <= p; o++)
-          {
-            AddLevel(o, fecs);
-          }
-        }
+        p--;
         break;
       case config::LinearSolverData::MultigridCoarsenType::LOGARITHMIC:
-        {
-          MFEM_VERIFY((p & (p - 1)) == 0, "Multigrid with logarithmic coarsening multigrid "
-                                          "requires order to be a power of 2!");
-          int num_levels = 1, p_min = p;
-          while (num_levels < mg_max_levels && p_min > 1)
-          {
-            num_levels++;
-            p_min >>= 1;
-          }
-          fecs.reserve(num_levels);
-          for (int o = p_min; o <= p; o *= 2)
-          {
-            AddLevel(o, fecs);
-          }
-        }
+        p = (p + 1) / 2;
         break;
       default:
         MFEM_ABORT("Invalid coarsening type for p-multigrid levels!");
         break;
     }
   }
-  else
-  {
-    AddLevel(p, fecs);
-  }
+  std::reverse(fecs.begin(), fecs.end());
   return fecs;
 }
 
@@ -119,9 +97,6 @@ inline mfem::ParFiniteElementSpaceHierarchy ConstructFiniteElementSpaceHierarchy
     const mfem::Array<int> *dbc_marker = nullptr,
     std::vector<mfem::Array<int>> *dbc_tdof_lists = nullptr)
 {
-
-  // XX TODO: LibCEED transfer operators!
-
   MFEM_VERIFY(!mesh.empty() && !fecs.empty() &&
                   (!dbc_tdof_lists || dbc_tdof_lists->empty()),
               "Empty mesh or FE collection for FE space construction!");
@@ -157,6 +132,9 @@ inline mfem::ParFiniteElementSpaceHierarchy ConstructFiniteElementSpaceHierarchy
     {
       fespace->GetEssentialTrueDofs(*dbc_marker, dbc_tdof_lists->emplace_back());
     }
+
+    // XX TODO LIBCEED TRANSFER OPTION (P MG ONLY...)
+
     auto *P = new ParOperator(
         std::make_unique<mfem::TransferOperator>(fespaces.GetFinestFESpace(), *fespace),
         fespaces.GetFinestFESpace(), *fespace, true);

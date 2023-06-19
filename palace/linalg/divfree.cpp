@@ -19,7 +19,7 @@ DivFreeSolver::DivFreeSolver(const MaterialOperator &mat_op,
                              mfem::ParFiniteElementSpace &nd_fespace,
                              mfem::ParFiniteElementSpaceHierarchy &h1_fespaces,
                              const std::vector<mfem::Array<int>> &h1_bdr_tdof_lists,
-                             double tol, int max_it, int print)
+                             double tol, int max_it, int print, bool use_pa)
 {
   constexpr auto MatType = MaterialPropertyType::PERMITTIVITY_REAL;
   MaterialPropertyCoefficient<MatType> epsilon_func(mat_op);
@@ -30,8 +30,8 @@ DivFreeSolver::DivFreeSolver(const MaterialOperator &mat_op,
       auto &h1_fespace_l = h1_fespaces.GetFESpaceAtLevel(l);
       auto m = std::make_unique<mfem::SymmetricBilinearForm>(&h1_fespace_l);
       m->AddDomainIntegrator(new mfem::DiffusionIntegrator(epsilon_func));
-      // XX TODO: Partial assembly option?
-      m->SetAssemblyLevel(mfem::AssemblyLevel::LEGACY);
+      m->SetAssemblyLevel(use_pa ? mfem::AssemblyLevel::PARTIAL
+                                 : mfem::AssemblyLevel::LEGACY);
       m->Assemble(0);
       m->Finalize(0);
       auto M_l = std::make_unique<ParOperator>(std::move(m), h1_fespace_l);
@@ -41,12 +41,12 @@ DivFreeSolver::DivFreeSolver(const MaterialOperator &mat_op,
     M = std::move(M_mg);
   }
   {
-    // XX TODO: Partial assembly option?
     auto weakDiv = std::make_unique<mfem::MixedBilinearForm>(
         &nd_fespace, &h1_fespaces.GetFinestFESpace());
     weakDiv->AddDomainIntegrator(
         new mfem::MixedVectorWeakDivergenceIntegrator(epsilon_func));
-    weakDiv->SetAssemblyLevel(mfem::AssemblyLevel::LEGACY);
+    weakDiv->SetAssemblyLevel(use_pa ? mfem::AssemblyLevel::PARTIAL
+                                     : mfem::AssemblyLevel::LEGACY);
     weakDiv->Assemble();
     weakDiv->Finalize();
     WeakDiv = std::make_unique<ParOperator>(std::move(weakDiv), nd_fespace,
