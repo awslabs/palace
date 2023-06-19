@@ -1,8 +1,8 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#ifndef PALACE_PRETTY_PRINT_HPP
-#define PALACE_PRETTY_PRINT_HPP
+#ifndef PALACE_UTILS_PRETTY_PRINT_HPP
+#define PALACE_UTILS_PRETTY_PRINT_HPP
 
 #include <string>
 #include <vector>
@@ -116,4 +116,4 @@ inline void PrettyPrint(const T &data, const std::string &prefix = "",
 
 }  // namespace palace::utils
 
-#endif  // PALACE_PRETTY_PRINT_HPP
+#endif  // PALACE_UTILS_PRETTY_PRINT_HPP

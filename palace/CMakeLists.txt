@@ -140,6 +140,7 @@ target_include_directories(${TARGET_NAME}
 add_subdirectory(drivers)
 add_subdirectory(fem)
 add_subdirectory(linalg)
+add_subdirectory(models)
 add_subdirectory(utils)
 
 # Add binary extension for build architecture

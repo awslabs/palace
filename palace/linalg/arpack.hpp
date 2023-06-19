@@ -1,8 +1,8 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#ifndef PALACE_ARPACK_HPP
-#define PALACE_ARPACK_HPP
+#ifndef PALACE_LINALG_ARPACK_HPP
+#define PALACE_LINALG_ARPACK_HPP
 
 #if defined(PALACE_WITH_ARPACK)
 
@@ -266,4 +266,4 @@ public:
 
 #endif
 
-#endif  // PALACE_ARPACK_HPP
+#endif  // PALACE_LINALG_ARPACK_HPP

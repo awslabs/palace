@@ -1,8 +1,8 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#ifndef PALACE_CHEBYSHEV_SMOOTHER_HPP
-#define PALACE_CHEBYSHEV_SMOOTHER_HPP
+#ifndef PALACE_LINALG_CHEBYSHEV_SMOOTHER_HPP
+#define PALACE_LINALG_CHEBYSHEV_SMOOTHER_HPP
 
 #include <mfem.hpp>
 
@@ -68,4 +68,4 @@ public:
 
 }  // namespace palace
 
-#endif  // PALACE_CHEBYSHEV_SMOOTHER_HPP
+#endif  // PALACE_LINALG_CHEBYSHEV_SMOOTHER_HPP

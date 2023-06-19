@@ -4,9 +4,8 @@
 #include "eigensolver.hpp"
 
 #include <mfem.hpp>
-#include "fem/lumpedportoperator.hpp"
-#include "fem/postoperator.hpp"
-#include "fem/spaceoperator.hpp"
+#include "fem/freqdomain.hpp"
+#include "fem/operator.hpp"
 #include "linalg/arpack.hpp"
 #include "linalg/divfree.hpp"
 #include "linalg/feast.hpp"
@@ -14,10 +13,11 @@
 #include "linalg/pc.hpp"
 #include "linalg/petsc.hpp"
 #include "linalg/slepc.hpp"
+#include "models/lumpedportoperator.hpp"
+#include "models/postoperator.hpp"
+#include "models/spaceoperator.hpp"
 #include "utils/communication.hpp"
-#include "utils/freqdomain.hpp"
 #include "utils/iodata.hpp"
-#include "utils/mfemoperators.hpp"
 #include "utils/timer.hpp"
 
 namespace palace

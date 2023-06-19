@@ -1,8 +1,8 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#ifndef PALACE_IODATA_HPP
-#define PALACE_IODATA_HPP
+#ifndef PALACE_UTILS_IODATA_HPP
+#define PALACE_UTILS_IODATA_HPP
 
 #include <sstream>
 #include "utils/configfile.hpp"
@@ -64,4 +64,4 @@ public:
 
 }  // namespace palace
 
-#endif  // PALACE_IODATA_HPP
+#endif  // PALACE_UTILS_IODATA_HPP
