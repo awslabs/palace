@@ -41,10 +41,10 @@ if(PALACE_WITH_ARPACK)
   enable_language(Fortran)
 endif()
 
-# Set a default build type if none was specified
+# Set a default build type if none was provided
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
-  message(STATUS "Setting build type to 'Release' as none was specified")
-  set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Choose CMake build type" FORCE)
+  message(STATUS "Setting CMAKE_BUILD_TYPE to 'Release' as none was specified")
+  set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Specifies the build type ('Debug' or 'Release', for example)" FORCE)
 endif()
 
 # Add extra CMake modules
