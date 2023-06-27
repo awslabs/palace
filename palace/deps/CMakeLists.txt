@@ -19,7 +19,7 @@ set(PALACE_INTERNAL_EIGEN_URL
   "URL for internal Eigen build"
 )
 set(PALACE_INTERNAL_MFEM_GIT_TAG
-  "0f5d34b2b490819789d6c85546e17724ff37f021" CACHE STRING  # master @ 05/13/2023
+  "6470d3a7b2edf868aace2b9454d95d124ff98173" CACHE STRING  # master @ 06/26/2023
   "Git tag for internal MFEM build"
 )
 
@@ -108,14 +108,10 @@ if(PALACE_WITH_INTERNAL_MFEM)
 
   # A number of patches to MFEM for our uses
   set(PALACE_MFEM_PATCH_FILES
-    # "${CMAKE_CURRENT_SOURCE_DIR}/patch/mfem/patch_bilinearform_marker.diff"
     "${CMAKE_CURRENT_SOURCE_DIR}/patch/mfem/patch_mesh_part.diff"
     "${CMAKE_CURRENT_SOURCE_DIR}/patch/mfem/patch_mesh_vis.diff"
     "${CMAKE_CURRENT_SOURCE_DIR}/patch/mfem/patch_submesh.diff"
-    "${CMAKE_CURRENT_SOURCE_DIR}/patch/mfem/patch_hypre_blocks.diff"
     "${CMAKE_CURRENT_SOURCE_DIR}/patch/mfem/patch_direct_solvers.diff"
-    "${CMAKE_CURRENT_SOURCE_DIR}/patch/mfem/patch_pa_prereq.diff"
-    "${CMAKE_CURRENT_SOURCE_DIR}/patch/mfem/patch_pa_libceed.diff"
   )
 
   include(FetchContent)

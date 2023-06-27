@@ -1,3 +1,27 @@
+diff --git a/CHANGELOG b/CHANGELOG
+index 1d0a1c166..aa3b60cdf 100644
+--- a/CHANGELOG
++++ b/CHANGELOG
+@@ -26,6 +26,9 @@ New and updated examples and miniapps
+   integrators are added in support of DPG systems: TraceIntegrator,
+   NormalTraceIntegrator and TangentTraceIntegrator.
+ 
++- Added new SubMesh examples demonstrating source terms and boundary conditions
++  transferred from SubMesh objects.
++
+ - Added a new H(div) solvers miniapp in miniapps/hdiv-linear-solver,
+   demonstrating the use of a matrix-free saddle-point solver methodology,
+   suitable for high-order discretizations and for GPU acceleration. Examples
+@@ -47,6 +50,9 @@ Discretization improvements
+ - Face restriction operators for Nedelec and Raviart-Thomas finite element
+   spaces are now supported through the ConformingFaceRestriction class.
+ 
++- SubMesh and ParSubMesh have been extended to support the transfer of
++  Nedelec and Raviart-Thomas finite element spaces.
++
+ - VectorFEBoundaryFluxLFIntegrator is now supported on device/GPU.
+ 
+ - Added support for p-refined meshes in FindPointsGSLIB.
 diff --git a/data/fichera-quad-mixed.mesh b/data/fichera-quad-mixed.mesh
 new file mode 100644
 index 000000000..a3458665a
@@ -431,7 +455,7 @@ index 000000000..cd82b4bf1
 +0.6608093135547 0.8704406864453
 +0.8704406864453 0.8704406864453
 diff --git a/examples/CMakeLists.txt b/examples/CMakeLists.txt
-index afa98324c..16c3d0552 100644
+index 7d9c835c9..a89df6220 100644
 --- a/examples/CMakeLists.txt
 +++ b/examples/CMakeLists.txt
 @@ -77,6 +77,8 @@ if (MFEM_USE_MPI)
@@ -1839,9 +1863,18 @@ index 000000000..4abc2ed3a
 +   }
 +}
 diff --git a/examples/makefile b/examples/makefile
-index 85a22f832..7982a9f3e 100644
+index 85a22f832..1e3088f1a 100644
 --- a/examples/makefile
 +++ b/examples/makefile
+@@ -26,7 +26,7 @@ SEQ_EXAMPLES = ex0 ex1 ex2 ex3 ex4 ex5 ex6 ex7 ex8 ex9 ex10 ex14 ex15 ex16 \
+   ex31 ex33
+ PAR_EXAMPLES = ex0p ex1p ex2p ex3p ex4p ex5p ex6p ex7p ex8p ex9p ex10p ex11p \
+   ex12p ex13p ex14p ex15p ex16p ex17p ex18p ex19p ex20p ex21p ex22p ex24p \
+-  ex25p ex26p ex27p ex28p ex29p ex30p ex31p ex32p ex33p
++  ex25p ex26p ex27p ex28p ex29p ex30p ex31p ex32p ex33p ex34p ex35p
+ SEQ_DEVICE_EXAMPLES = ex1 ex3 ex4 ex5 ex6 ex9 ex22 ex24 ex25 ex26
+ PAR_DEVICE_EXAMPLES = ex1p ex2p ex3p ex4p ex5p ex6p ex7p ex9p ex13p ex22p \
+   ex24p ex25p ex26p
 @@ -183,3 +183,4 @@ clean-exec:
  	@rm -f ex23.mesh ex23-*.gf
  	@rm -f ex25.mesh ex25-*.gf ex25p-*.*
@@ -2406,10 +2439,10 @@ index 95da3859d..06355ce75 100644
     }
  }
 diff --git a/fem/doftrans.hpp b/fem/doftrans.hpp
-index 9375246b5..fbe57bb2b 100644
+index 9375246b5..a1ddb3399 100644
 --- a/fem/doftrans.hpp
 +++ b/fem/doftrans.hpp
-@@ -15,19 +15,19 @@
+@@ -15,19 +15,31 @@
  #include "../config/config.hpp"
  #include "../linalg/linalg.hpp"
  #include "intrules.hpp"
@@ -2421,11 +2454,25 @@ index 9375246b5..fbe57bb2b 100644
 -/** The DofTransformation class is an abstract base class for a family of
 -    transformations that map local degrees of freedom (DoFs), contained within
 -    individual elements, to global degrees of freedom, stored within
+-    GridFunction objects. These transformations are necessary to ensure that
+-    basis functions in neighboring elements align correctly. Closely related but
 +/** The StatelessDofTransformation class is an abstract base class for a family
 +    of transformations that map local degrees of freedom (DoFs), contained
 +    within individual elements, to global degrees of freedom, stored within
-     GridFunction objects. These transformations are necessary to ensure that
-     basis functions in neighboring elements align correctly. Closely related but
++    GridFunction objects.
++
++    In this context "stateless" means that the concrete classes derived from
++    StatelessDofTransformation do not store information about the relative
++    orientations of the faces with respect to their neighboring elements. In
++    other words there is no information specific to a particular element (aside
++    from the element type e.g. tetrahedron, wedge, or pyramid). The
++    StatelessDofTransformation provides access to the transformation operators
++    for specific relative face orientations. These are useful, for example, when
++    relating DoFs associated with distinct overlapping meshes such as parent and
++    sub-meshes.
++
++    These transformations are necessary to ensure that basis functions in
++    neighboring (or overlapping) elements align correctly. Closely related but
      complementary transformations are required for the entries stored in
 -    LinearForm and BilinearForm objects. The DofTransformation class is designed
 -    to apply the action of both of these types of DoF transformations.
@@ -2435,7 +2482,7 @@ index 9375246b5..fbe57bb2b 100644
  
      Let the "primal transformation" be given by the operator T. This means that
      given a local element vector v the data that must be placed into a
-@@ -53,24 +53,87 @@ namespace mfem
+@@ -53,24 +65,87 @@ namespace mfem
      D_t = T * D * T^{-1}. This can be accomplished by using a primal
      transformation on the columns of D and a dual transformation on its rows.
  */
@@ -2528,7 +2575,7 @@ index 9375246b5..fbe57bb2b 100644
     /** @brief Configure the transformation using face orientations for the
         current element. */
     /// The face_orientation array can be obtained from Mesh::GetElementFaces.
-@@ -79,42 +142,82 @@ public:
+@@ -79,42 +154,82 @@ public:
  
     inline const Array<int> & GetFaceOrientations() const { return Fo; }
  
@@ -2625,7 +2672,7 @@ index 9375246b5..fbe57bb2b 100644
  };
  
  /** Transform a matrix of DoFs entries from different finite element spaces as
-@@ -133,66 +236,145 @@ void TransformDual(const DofTransformation *ran_dof_trans,
+@@ -133,66 +248,145 @@ void TransformDual(const DofTransformation *ran_dof_trans,
                     const DofTransformation *dom_dof_trans,
                     DenseMatrix &elmat);
  
@@ -2797,7 +2844,7 @@ index 9375246b5..fbe57bb2b 100644
  };
  
  /** Abstract base class for high-order Nedelec spaces on elements with
-@@ -207,17 +389,22 @@ public:
+@@ -207,17 +401,22 @@ public:
      be accessed as DenseMatrices using the GetFaceTransform() and
      GetFaceInverseTransform() methods.
  */
@@ -2826,7 +2873,7 @@ index 9375246b5..fbe57bb2b 100644
  
  public:
     // Return the 2x2 transformation operator for the given face orientation
-@@ -226,67 +413,119 @@ public:
+@@ -226,67 +425,119 @@ public:
     // Return the 2x2 inverse transformation operator
     static const DenseMatrix & GetFaceInverseTransform(int ori)
     { return TInv(ori); }
@@ -3151,7 +3198,7 @@ index 6b05c5f31..86c1f4e66 100644
     virtual int GetContType() const { return TANGENTIAL; }
     FiniteElementCollection *GetTraceCollection() const;
 diff --git a/fem/fespace.hpp b/fem/fespace.hpp
-index f777bf871..47ddbf438 100644
+index c30299bfe..e2c495506 100644
 --- a/fem/fespace.hpp
 +++ b/fem/fespace.hpp
 @@ -377,17 +377,6 @@ protected:
@@ -3205,10 +3252,10 @@ index 6f0af11c6..51f0df2f6 100644
              j_offd[i_offd[i] + 1] = j_offd[i_offd[i]] + 1;
              d_offd[i_offd[i]] = T[0]; d_offd[i_offd[i] + 1] = T[2];
 diff --git a/linalg/hypre.cpp b/linalg/hypre.cpp
-index d7069d4e6..04072c420 100644
+index 689ce675e..7c1a463be 100644
 --- a/linalg/hypre.cpp
 +++ b/linalg/hypre.cpp
-@@ -5349,20 +5349,8 @@ void HypreAMS::MakeGradientAndInterpolation(
+@@ -5340,20 +5340,8 @@ void HypreAMS::MakeGradientAndInterpolation(
     rt_trace_space = dynamic_cast<const RT_Trace_FECollection*>(edge_fec);
     trace_space = trace_space || rt_trace_space;
  
@@ -3231,7 +3278,7 @@ index d7069d4e6..04072c420 100644
  
     ParMesh *pmesh = edge_fespace->GetParMesh();
     if (rt_trace_space)
-@@ -5751,19 +5739,9 @@ void HypreADS::MakeDiscreteMatrices(ParFiniteElementSpace *face_fespace)
+@@ -5742,19 +5730,9 @@ void HypreADS::MakeDiscreteMatrices(ParFiniteElementSpace *face_fespace)
     const FiniteElementCollection *face_fec = face_fespace->FEColl();
     bool trace_space =
        (dynamic_cast<const RT_Trace_FECollection*>(face_fec) != NULL);
@@ -3255,10 +3302,10 @@ index d7069d4e6..04072c420 100644
     // define the nodal and edge finite element spaces associated with face_fespace
     ParMesh *pmesh = (ParMesh *) face_fespace->GetMesh();
 diff --git a/mesh/mesh.cpp b/mesh/mesh.cpp
-index de2d80f15..851a61744 100644
+index 87e606510..296accf53 100644
 --- a/mesh/mesh.cpp
 +++ b/mesh/mesh.cpp
-@@ -3013,6 +3013,10 @@ void Mesh::FinalizeTopology(bool generate_bdr)
+@@ -3020,6 +3020,10 @@ void Mesh::FinalizeTopology(bool generate_bdr)
     if (Dim == 1)
     {
        GenerateFaces();
@@ -3269,7 +3316,7 @@ index de2d80f15..851a61744 100644
     }
  
     if (ncmesh)
-@@ -5653,13 +5657,54 @@ int Mesh::GetTriOrientation(const int *base, const int *test)
+@@ -5660,13 +5664,54 @@ int Mesh::GetTriOrientation(const int *base, const int *test)
     for (int j = 0; j < 3; j++)
        if (test[aor[j]] != base[j])
        {
@@ -3325,7 +3372,7 @@ index de2d80f15..851a61744 100644
  int Mesh::GetQuadOrientation(const int *base, const int *test)
  {
     int i;
-@@ -5708,6 +5753,37 @@ int Mesh::GetQuadOrientation(const int *base, const int *test)
+@@ -5715,6 +5760,37 @@ int Mesh::GetQuadOrientation(const int *base, const int *test)
     return 2*i+1;
  }
  
@@ -3363,7 +3410,7 @@ index de2d80f15..851a61744 100644
  int Mesh::GetTetOrientation(const int *base, const int *test)
  {
     // Static method.
-@@ -6523,9 +6599,9 @@ const Table & Mesh::ElementToEdgeTable() const
+@@ -6530,9 +6606,9 @@ const Table & Mesh::ElementToEdgeTable() const
  
  void Mesh::AddPointFaceElement(int lf, int gf, int el)
  {
@@ -3376,10 +3423,10 @@ index de2d80f15..851a61744 100644
        faces_info[gf].Elem1Inf = 64 * lf; // face lf with orientation 0
        faces_info[gf].Elem2No  = -1; // in case there's no other side
 diff --git a/mesh/mesh.hpp b/mesh/mesh.hpp
-index 3e0590067..64bb85efc 100644
+index 64cf55ae4..06f4356a7 100644
 --- a/mesh/mesh.hpp
 +++ b/mesh/mesh.hpp
-@@ -472,8 +472,30 @@ protected:
+@@ -468,8 +468,30 @@ protected:
  
     /// Returns the orientation of "test" relative to "base"
     static int GetTriOrientation (const int * base, const int * test);
@@ -3411,10 +3458,23 @@ index 3e0590067..64bb85efc 100644
     static int GetTetOrientation (const int * base, const int * test);
  
 diff --git a/mesh/submesh/psubmesh.cpp b/mesh/submesh/psubmesh.cpp
-index b316d8b41..cf3e23d7d 100644
+index b316d8b41..1de148a76 100644
 --- a/mesh/submesh/psubmesh.cpp
 +++ b/mesh/submesh/psubmesh.cpp
-@@ -84,7 +84,8 @@ ParSubMesh::ParSubMesh(const ParMesh &parent, SubMesh::From from,
+@@ -38,10 +38,8 @@ ParSubMesh ParSubMesh::CreateFromBoundary(const ParMesh &parent,
+ ParSubMesh::ParSubMesh(const ParMesh &parent, SubMesh::From from,
+                        Array<int> &attributes) : parent_(parent), from_(from), attributes_(attributes)
+ {
+-   if (Nonconforming())
+-   {
+-      MFEM_ABORT("SubMesh does not support non-conforming meshes");
+-   }
++   MFEM_VERIFY(from == SubMesh::From::Boundary || !Nonconforming(),
++               "ParSubMesh does not support non-conforming meshes with From::Domain");
+ 
+    MyComm = parent.GetComm();
+    NRanks = parent.GetNRanks();
+@@ -84,7 +82,8 @@ ParSubMesh::ParSubMesh(const ParMesh &parent, SubMesh::From from,
        GetEdgeVertices(i, lv);
  
        // Find vertices/edge in parent mesh
@@ -3424,7 +3484,7 @@ index b316d8b41..cf3e23d7d 100644
        parent_edge_ids_.Append(parent_edge_id);
     }
  
-@@ -106,6 +107,72 @@ ParSubMesh::ParSubMesh(const ParMesh &parent, SubMesh::From from,
+@@ -106,6 +105,72 @@ ParSubMesh::ParSubMesh(const ParMesh &parent, SubMesh::From from,
        {
           parent_to_submesh_face_ids_[parent_face_ids_[i]] = i;
        }
@@ -3497,7 +3557,7 @@ index b316d8b41..cf3e23d7d 100644
     }
  
     ListOfIntegerSets groups;
-@@ -145,7 +212,7 @@ ParSubMesh::ParSubMesh(const ParMesh &parent, SubMesh::From from,
+@@ -145,7 +210,7 @@ ParSubMesh::ParSubMesh(const ParMesh &parent, SubMesh::From from,
     {
        BuildFaceGroup(ngroups, rht, nstrias, rhq, nsquads);
     }
@@ -3506,7 +3566,7 @@ index b316d8b41..cf3e23d7d 100644
     {
        group_stria.MakeI(ngroups);
        group_stria.MakeJ();
-@@ -167,7 +234,9 @@ ParSubMesh::ParSubMesh(const ParMesh &parent, SubMesh::From from,
+@@ -167,7 +232,9 @@ ParSubMesh::ParSubMesh(const ParMesh &parent, SubMesh::From from,
  
     // Add boundaries
     {
@@ -3517,7 +3577,7 @@ index b316d8b41..cf3e23d7d 100644
        Array<int> &be2face = (Dim == 2) ? be_to_edge : be_to_face;
  
        if (Dim == 3)
-@@ -190,9 +259,11 @@ ParSubMesh::ParSubMesh(const ParMesh &parent, SubMesh::From from,
+@@ -190,9 +257,11 @@ ParSubMesh::ParSubMesh(const ParMesh &parent, SubMesh::From from,
        boundary.SetSize(NumOfBdrElements);
        be2face.SetSize(NumOfBdrElements);
        Array<int> parent_face_to_be;
@@ -3529,7 +3589,7 @@ index b316d8b41..cf3e23d7d 100644
        }
        for (int i = 0, j = 0; i < num_of_faces_or_edges; i++)
        {
-@@ -209,7 +280,7 @@ ParSubMesh::ParSubMesh(const ParMesh &parent, SubMesh::From from,
+@@ -209,7 +278,7 @@ ParSubMesh::ParSubMesh(const ParMesh &parent, SubMesh::From from,
                 }
                 else
                 {
@@ -3538,7 +3598,7 @@ index b316d8b41..cf3e23d7d 100644
                 }
              }
              else
-@@ -743,9 +814,14 @@ void ParSubMesh::BuildSharedEdgesMapping(const int sedges_ct,
+@@ -743,9 +812,14 @@ void ParSubMesh::BuildSharedEdgesMapping(const int sedges_ct,
           else
           {
              Array<int> vert;
@@ -3556,7 +3616,7 @@ index b316d8b41..cf3e23d7d 100644
              sedge_ledge.Append(submesh_edge_id);
           }
        }
-@@ -760,36 +836,61 @@ void ParSubMesh::BuildSharedFacesMapping(const int nstrias,
+@@ -760,36 +834,61 @@ void ParSubMesh::BuildSharedFacesMapping(const int nstrias,
     shared_quads.Reserve(nsquads);
     sface_lface.Reserve(nstrias + nsquads);
  
@@ -3631,7 +3691,7 @@ index b316d8b41..cf3e23d7d 100644
           {
              // parent shared face is not in SubMesh or is not shared
           }
-@@ -798,7 +899,7 @@ void ParSubMesh::BuildSharedFacesMapping(const int nstrias,
+@@ -798,7 +897,7 @@ void ParSubMesh::BuildSharedFacesMapping(const int nstrias,
              Array<int> vert;
              GetFaceVertices(submesh_face_id, vert);
  
@@ -3641,7 +3701,7 @@ index b316d8b41..cf3e23d7d 100644
           }
        }
 diff --git a/mesh/submesh/psubmesh.hpp b/mesh/submesh/psubmesh.hpp
-index 58acd1d4f..8d35bc451 100644
+index 8c71c7181..651be6243 100644
 --- a/mesh/submesh/psubmesh.hpp
 +++ b/mesh/submesh/psubmesh.hpp
 @@ -128,6 +128,16 @@ public:
@@ -3944,10 +4004,23 @@ index bd7a7bd6c..683cc5bed 100644
  
     /// Temporary vector
 diff --git a/mesh/submesh/submesh.cpp b/mesh/submesh/submesh.cpp
-index ac2058c57..c9f0b8508 100644
+index ac2058c57..76d4456c5 100644
 --- a/mesh/submesh/submesh.cpp
 +++ b/mesh/submesh/submesh.cpp
-@@ -61,6 +61,7 @@ SubMesh::SubMesh(const Mesh &parent, From from,
+@@ -31,10 +31,8 @@ SubMesh SubMesh::CreateFromBoundary(const Mesh &parent,
+ SubMesh::SubMesh(const Mesh &parent, From from,
+                  Array<int> attributes) : parent_(parent), from_(from), attributes_(attributes)
+ {
+-   if (Nonconforming())
+-   {
+-      MFEM_ABORT("SubMesh does not support non-conforming meshes");
+-   }
++   MFEM_VERIFY(from == From::Boundary || !Nonconforming(),
++               "SubMesh does not support non-conforming meshes with From::Domain");
+ 
+    if (from == From::Domain)
+    {
+@@ -61,6 +59,7 @@ SubMesh::SubMesh(const Mesh &parent, From from,
                                                      parent_element_ids_);
  
        Array<int> parent_face_to_be = parent.GetFaceToBdrElMap();
@@ -3955,7 +4028,7 @@ index ac2058c57..c9f0b8508 100644
  
        for (int i = 0; i < NumOfBdrElements; i++)
        {
-@@ -75,7 +76,73 @@ SubMesh::SubMesh(const Mesh &parent, From from,
+@@ -75,7 +74,73 @@ SubMesh::SubMesh(const Mesh &parent, From from,
              // This case happens when a domain is extracted, but the root parent
              // mesh didn't have a boundary element on the surface that defined
              // it's boundary. It still creates a valid mesh, so we allow it.
@@ -5120,7 +5193,7 @@ index 02a98f628..c5057338a 100644
     multidomain_test_3d(fec_type);
  }
 diff --git a/tests/unit/mesh/test_submesh.cpp b/tests/unit/mesh/test_submesh.cpp
-index 590f706d2..325f51977 100644
+index 590f706d2..05751376c 100644
 --- a/tests/unit/mesh/test_submesh.cpp
 +++ b/tests/unit/mesh/test_submesh.cpp
 @@ -19,6 +19,7 @@ using namespace mfem;
@@ -5141,17 +5214,28 @@ index 590f706d2..325f51977 100644
        case L2:
           return new L2_FECollection(p, dim, BasisType::GaussLobatto);
           break;
-@@ -56,7 +60,8 @@ void test_2d(Element::Type element_type,
+@@ -56,12 +60,19 @@ void test_2d(Element::Type element_type,
               SubMesh::From from)
  {
     constexpr int dim = 2;
 -   const int vdim = (field_type == FieldType::SCALAR) ? 1 : dim;
 +   const int vdim = (field_type == FieldType::SCALAR ||
 +                     fec_type == ND) ? 1 : dim;
++   const bool nonconforming = true;
     double Hy = 1.0;
     Mesh mesh = Mesh::MakeCartesian2D(5, 5, element_type, true, 1.0, Hy, false);
  
-@@ -176,7 +181,7 @@ void test_2d(Element::Type element_type,
+    if (from == SubMesh::From::Boundary)
+    {
++      if (nonconforming)
++      {
++         mesh.EnsureNCMesh();
++         mesh.RandomRefinement(0.5);
++      }
+       for (int i = 0; i < mesh.GetNBE(); i++)
+       {
+          Element *el = mesh.GetBdrElement(i);
+@@ -176,7 +187,7 @@ void test_2d(Element::Type element_type,
     {
        GridFunction sub_ex_gf(&sub_fes);
  
@@ -5160,7 +5244,7 @@ index 590f706d2..325f51977 100644
        {
           parent_gf.ProjectCoefficient(coeff);
           sub_ex_gf.ProjectCoefficient(coeff);
-@@ -188,6 +193,8 @@ void test_2d(Element::Type element_type,
+@@ -188,6 +199,8 @@ void test_2d(Element::Type element_type,
        }
        SubMesh::Transfer(parent_gf, sub_gf);
  
@@ -5169,7 +5253,7 @@ index 590f706d2..325f51977 100644
        sub_gf -= sub_ex_gf;
        REQUIRE(sub_gf.Norml2() < 1e-10);
     }
-@@ -195,7 +202,7 @@ void test_2d(Element::Type element_type,
+@@ -195,7 +208,7 @@ void test_2d(Element::Type element_type,
     {
        GridFunction parent_ex_gf(&parent_fes);
  
@@ -5178,7 +5262,7 @@ index 590f706d2..325f51977 100644
        {
           parent_gf.ProjectCoefficient(coeff);
           sub_gf.ProjectCoefficient(coeff);
-@@ -210,6 +217,8 @@ void test_2d(Element::Type element_type,
+@@ -210,6 +223,8 @@ void test_2d(Element::Type element_type,
  
        SubMesh::Transfer(sub_gf, parent_gf);
  
@@ -5187,17 +5271,28 @@ index 590f706d2..325f51977 100644
        parent_gf -= parent_ex_gf;
        REQUIRE(parent_gf.Norml2() < 1e-10);
     }
-@@ -227,7 +236,8 @@ void test_3d(Element::Type element_type,
+@@ -227,12 +242,19 @@ void test_3d(Element::Type element_type,
               SubMesh::From from)
  {
     constexpr int dim = 3;
 -   const int vdim = (field_type == FieldType::SCALAR) ? 1 : dim;
 +   const int vdim = (field_type == FieldType::SCALAR ||
 +                     fec_type == ND) ? 1 : dim;
++   const bool nonconforming = true;
     double Hy = 1.0;
     Mesh mesh = Mesh::MakeCartesian3D(5, 5, 5, element_type, 1.0, Hy, 1.0, false);
  
-@@ -351,7 +361,7 @@ void test_3d(Element::Type element_type,
+    if (from == SubMesh::From::Boundary)
+    {
++      if (nonconforming)
++      {
++         mesh.EnsureNCMesh();
++         mesh.RandomRefinement(0.5);
++      }
+       for (int i = 0; i < mesh.GetNBE(); i++)
+       {
+          Element *el = mesh.GetBdrElement(i);
+@@ -351,7 +373,7 @@ void test_3d(Element::Type element_type,
     {
        GridFunction sub_ex_gf(&sub_fes);
  
@@ -5206,7 +5301,7 @@ index 590f706d2..325f51977 100644
        {
           parent_gf.ProjectCoefficient(coeff);
           sub_ex_gf.ProjectCoefficient(coeff);
-@@ -372,7 +382,7 @@ void test_3d(Element::Type element_type,
+@@ -372,7 +394,7 @@ void test_3d(Element::Type element_type,
     {
        GridFunction parent_ex_gf(&parent_fes);
  
@@ -5215,7 +5310,7 @@ index 590f706d2..325f51977 100644
        {
           parent_gf.ProjectCoefficient(coeff);
           sub_gf.ProjectCoefficient(coeff);
-@@ -401,13 +411,17 @@ TEST_CASE("SubMesh", "[SubMesh]")
+@@ -401,13 +423,17 @@ TEST_CASE("SubMesh", "[SubMesh]")
  {
     int polynomial_order = 4;
     int mesh_polynomial_order = 2;
@@ -5234,7 +5329,7 @@ index 590f706d2..325f51977 100644
     SECTION("2D")
     {
        auto element = GENERATE(Element::QUADRILATERAL, Element::TRIANGLE);
-@@ -421,7 +435,8 @@ TEST_CASE("SubMesh", "[SubMesh]")
+@@ -421,7 +447,8 @@ TEST_CASE("SubMesh", "[SubMesh]")
  
     SECTION("3D")
     {
