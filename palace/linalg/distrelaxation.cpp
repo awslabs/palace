@@ -14,7 +14,7 @@ namespace palace
 template <typename OperType>
 DistRelaxationSmoother<OperType>::DistRelaxationSmoother(
     mfem::ParFiniteElementSpace &nd_fespace, mfem::ParFiniteElementSpace &h1_fespace,
-    int smooth_it, int cheby_smooth_it, int cheby_order)
+    int smooth_it, int cheby_smooth_it, int cheby_order, bool use_pa)
   : Solver<OperType>(), pc_it(smooth_it), A(nullptr), A_G(nullptr), dbc_tdof_list_G(nullptr)
 {
   // Construct discrete gradient matrix for the auxiliary space.
@@ -22,7 +22,8 @@ DistRelaxationSmoother<OperType>::DistRelaxationSmoother(
     // XX TODO: Partial assembly option?
     auto grad = std::make_unique<mfem::DiscreteLinearOperator>(&h1_fespace, &nd_fespace);
     grad->AddDomainInterpolator(new mfem::GradientInterpolator);
-    grad->SetAssemblyLevel(mfem::AssemblyLevel::LEGACY);
+    grad->SetAssemblyLevel(use_pa ? mfem::AssemblyLevel::PARTIAL
+                                  : mfem::AssemblyLevel::LEGACY);
     grad->Assemble();
     grad->Finalize();
     G = std::make_unique<ParOperator>(std::move(grad), h1_fespace, nd_fespace, true);
