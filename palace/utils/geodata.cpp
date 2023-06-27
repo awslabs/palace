@@ -190,7 +190,7 @@ void RefineMesh(const IoData &iodata, std::vector<std::unique_ptr<mfem::ParMesh>
        mesh[0]->MeshGenerator() & 8))
   {
     // XX TODO: Region-based refinement won't work if the ParMesh has been constructed from
-    //          a conforming mesh, but non-conforming refinement is needed. Unclear if the
+    //          a conforming mesh, but nonconforming refinement is needed. Unclear if the
     //          current mesh distribution scheme will work even for a conforming serial mesh
     //          which is a NCMesh after Mesh::EnsureNCMesh is called.
     MFEM_ABORT("Region-based refinement is currently only supported for simplex meshes!");

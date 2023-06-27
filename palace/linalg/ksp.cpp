@@ -61,6 +61,7 @@ std::unique_ptr<IterativeSolver<OperType>> ConfigureKrylovSolver(MPI_Comm comm,
         ksp = std::move(fgmres);
       }
       break;
+    case config::LinearSolverData::KspType::MINRES:
     case config::LinearSolverData::KspType::BICGSTAB:
     case config::LinearSolverData::KspType::DEFAULT:
     case config::LinearSolverData::KspType::INVALID:
@@ -90,35 +91,34 @@ std::unique_ptr<IterativeSolver<OperType>> ConfigureKrylovSolver(MPI_Comm comm,
         case config::LinearSolverData::SideType::RIGHT:
           gmres->SetPrecSide(GmresSolver<OperType>::PrecSide::RIGHT);
           break;
+        case config::LinearSolverData::SideType::DEFAULT:
+        case config::LinearSolverData::SideType::INVALID:
+          MFEM_ABORT("Unexpected side for configuring preconditioning!");
+          break;
       }
     }
   }
 
   // Configure orthogonalization method for GMRES/FMGRES.
-  if (iodata.solver.linear.orthog_type != config::LinearSolverData::OrthogType::DEFAULT)
+  if (type == config::LinearSolverData::KspType::GMRES ||
+      type == config::LinearSolverData::KspType::FGMRES)
   {
-    if (type != config::LinearSolverData::KspType::GMRES &&
-        type != config::LinearSolverData::KspType::FGMRES)
+    // Because FGMRES inherits from GMRES, this is OK.
+    auto *gmres = static_cast<GmresSolver<OperType> *>(ksp.get());
+    switch (iodata.solver.linear.gs_orthog_type)
     {
-      Mpi::Warning(comm, "Orthogonalization method will be ignored for non-GMRES/FGMRES "
-                         "iterative solvers!\n");
-    }
-    else
-    {
-      // Because FGMRES inherits from GMRES, this is OK.
-      auto *gmres = static_cast<GmresSolver<OperType> *>(ksp.get());
-      switch (iodata.solver.linear.orthog_type)
-      {
-        case config::LinearSolverData::OrthogType::MGS:
-          gmres->SetOrthogonalization(GmresSolver<OperType>::OrthogType::MGS);
-          break;
-        case config::LinearSolverData::OrthogType::CGS:
-          gmres->SetOrthogonalization(GmresSolver<OperType>::OrthogType::CGS);
-          break;
-        case config::LinearSolverData::OrthogType::CGS2:
-          gmres->SetOrthogonalization(GmresSolver<OperType>::OrthogType::CGS2);
-          break;
-      }
+      case config::LinearSolverData::OrthogType::MGS:
+        gmres->SetOrthogonalization(GmresSolver<OperType>::OrthogType::MGS);
+        break;
+      case config::LinearSolverData::OrthogType::CGS:
+        gmres->SetOrthogonalization(GmresSolver<OperType>::OrthogType::CGS);
+        break;
+      case config::LinearSolverData::OrthogType::CGS2:
+        gmres->SetOrthogonalization(GmresSolver<OperType>::OrthogType::CGS2);
+        break;
+      case config::LinearSolverData::OrthogType::INVALID:
+        MFEM_ABORT("Unexpected orthogonalization type for Krylov solver configuration!");
+        break;
     }
   }
 

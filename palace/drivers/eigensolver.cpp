@@ -117,10 +117,8 @@ void EigenSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
     }
     slepc->SetProblemType(slepc::SlepcEigenSolver::ProblemType::GEN_NON_HERMITIAN);
     slepc->SetOrthogonalization(
-        iodata.solver.linear.orthog_type == config::LinearSolverData::OrthogType::MGS ||
-            iodata.solver.linear.orthog_type ==
-                config::LinearSolverData::OrthogType::DEFAULT,
-        iodata.solver.linear.orthog_type == config::LinearSolverData::OrthogType::CGS2);
+        iodata.solver.linear.gs_orthog_type == config::LinearSolverData::OrthogType::MGS,
+        iodata.solver.linear.gs_orthog_type == config::LinearSolverData::OrthogType::CGS2);
     eigen = std::move(slepc);
 #endif
   }

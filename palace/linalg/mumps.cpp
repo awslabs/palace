@@ -36,7 +36,8 @@ MumpsSolver::MumpsSolver(MPI_Comm comm, mfem::MUMPSSolver::MatType sym,
   }
   else
   {
-    SetReorderingStrategy(mfem::MUMPSSolver::AUTOMATIC);  // MUMPS should have good defaults
+    // SetReorderingStrategy(mfem::MUMPSSolver::AUTOMATIC);  // Should have good default
+    SetReorderingStrategy(mfem::MUMPSSolver::PORD);
   }
   SetReorderingReuse(true);  // Repeated calls use same sparsity pattern
   if (blr_tol > 0.0)

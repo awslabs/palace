@@ -3,7 +3,7 @@
 
 #include "operator.hpp"
 
-#include <general/forall.hpp>
+#include <mfem/general/forall.hpp>
 #include "linalg/slepc.hpp"
 #include "utils/communication.hpp"
 

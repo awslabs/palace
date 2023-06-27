@@ -101,7 +101,7 @@ StrumpackSolverBase<StrumpackSolverType>::StrumpackSolverBase(
       this->SetCompressionRelTol(lr_tol);
       break;
     case config::LinearSolverData::CompressionType::NONE:
-    default:
+    case config::LinearSolverData::CompressionType::INVALID:
       break;
   }
 }

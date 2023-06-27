@@ -123,8 +123,7 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &spaceop) : spaceop
   // The initial PROM basis is empty. Orthogonalization uses MGS by default, else CGS2.
   dim_V = 0;
   orthog_mgs =
-      (iodata.solver.linear.orthog_type == config::LinearSolverData::OrthogType::DEFAULT ||
-       iodata.solver.linear.orthog_type == config::LinearSolverData::OrthogType::MGS);
+      (iodata.solver.linear.gs_orthog_type == config::LinearSolverData::OrthogType::MGS);
 
   // Seed the random number generator for parameter space sampling.
   engine.seed(std::chrono::system_clock::now().time_since_epoch().count());

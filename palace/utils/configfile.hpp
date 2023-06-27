@@ -825,10 +825,9 @@ public:
     MGS,
     CGS,
     CGS2,
-    DEFAULT,
     INVALID = -1
   };
-  OrthogType orthog_type = OrthogType::DEFAULT;
+  OrthogType gs_orthog_type = OrthogType::MGS;
 
   void SetUp(json &solver);
 };

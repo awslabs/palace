@@ -288,7 +288,7 @@ int ArpackEigenSolver::SolveInternal(int n, std::complex<double> *r,
   ::arpack::bmat bmat_option =
       (opB) ? ::arpack::bmat::generalized : ::arpack::bmat::identity;
 
-  ::arpack::which which_option;
+  ::arpack::which which_option = ::arpack::which::largest_magnitude;
   switch (which_type)
   {
     case WhichType::LARGEST_MAGNITUDE:
@@ -314,7 +314,6 @@ int ArpackEigenSolver::SolveInternal(int n, std::complex<double> *r,
     case WhichType::TARGET_IMAGINARY:
       MFEM_ABORT("ARPACK eigenvalue solver does not implement TARGET_REAL or "
                  "TARGET_IMAGINARY for SetWhichEigenpairs!");
-      which_option = ::arpack::which::largest_magnitude;  // For compiler warning
       break;
   }
 

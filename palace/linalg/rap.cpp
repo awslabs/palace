@@ -3,7 +3,7 @@
 
 #include "rap.hpp"
 
-#include <general/forall.hpp>
+#include <mfem/general/forall.hpp>
 
 namespace palace
 {
@@ -152,6 +152,7 @@ mfem::HypreParMatrix &ParOperator::ParallelAssemble()
       {
         MFEM_ABORT("Unable to assemble the local operator for parallel assembly of "
                    "BilinearForm!");
+        lA = nullptr;
       }
 #else
       MFEM_VERIFY(bfA->HasSpMat(),
@@ -191,15 +192,16 @@ mfem::HypreParMatrix &ParOperator::ParallelAssemble()
       {
         lA = &mbfA->SpMat();
       }
-      else if (bfA->HasExt())
+      else if (mbfA->HasExt())
       {
-        lA = mfem::ceed::CeedOperatorFullAssemble(*bfA);
+        lA = mfem::ceed::CeedOperatorFullAssemble(*mbfA);
         own_lA = true;
       }
       else
       {
         MFEM_ABORT("Unable to assemble the local operator for parallel assembly of "
                    "MixedBilinearForm!");
+        lA = nullptr;
       }
 #else
       MFEM_VERIFY(

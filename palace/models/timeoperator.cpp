@@ -153,7 +153,7 @@ TimeOperator::TimeOperator(const IoData &iodata, SpaceOperator &spaceop,
   B.SetSize(Curl->Height());
 
   // Create ODE solver for 2nd-order IVP.
-  mfem::TimeDependentOperator::Type type;
+  mfem::TimeDependentOperator::Type type = mfem::TimeDependentOperator::EXPLICIT;
   switch (iodata.solver.transient.type)
   {
     case config::TransientSolverData::Type::GEN_ALPHA:
@@ -179,7 +179,6 @@ TimeOperator::TimeOperator(const IoData &iodata, SpaceOperator &spaceop,
       break;
     case config::TransientSolverData::Type::INVALID:
       MFEM_ABORT("Invalid transient solver type!");
-      type = mfem::TimeDependentOperator::EXPLICIT;  // For compiler warning
       break;
   }
 

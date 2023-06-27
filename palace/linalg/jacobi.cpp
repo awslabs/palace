@@ -3,7 +3,7 @@
 
 #include "jacobi.hpp"
 
-#include <general/forall.hpp>
+#include <mfem/general/forall.hpp>
 
 namespace palace
 {
