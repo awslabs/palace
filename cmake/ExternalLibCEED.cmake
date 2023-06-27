@@ -39,6 +39,13 @@ if(PALACE_LIBCEED_WITH_LIBXSMM)
     )
   endif()
 
+  # Fix libxsmmext library linkage on macOS
+  if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
+    list(APPEND LIBXSMM_OPTIONS
+      "LDFLAGS=-undefined dynamic_lookup"
+    )
+  endif()
+
   string(REPLACE ";" "; " LIBXSMM_OPTIONS_PRINT "${LIBXSMM_OPTIONS}")
   message(STATUS "LIBXSMM_OPTIONS: ${LIBXSMM_OPTIONS_PRINT}")
 
