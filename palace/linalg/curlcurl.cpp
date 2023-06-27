@@ -69,7 +69,7 @@ CurlCurlMassSolver::CurlCurlMassSolver(
       nd_fespaces.GetFESpaceAtLevel(0), h1_fespaces.GetFESpaceAtLevel(0), 1, 1, 1, false,
       false, 0));
   auto gmg = std::make_unique<GeometricMultigridSolver<Operator>>(
-      std::move(ams), nd_fespaces, &h1_fespaces, 1, 1, 2);
+      std::move(ams), nd_fespaces, &h1_fespaces, 1, 1, 2, use_pa);
 
   auto pcg =
       std::make_unique<CgSolver<Operator>>(nd_fespaces.GetFinestFESpace().GetComm(), print);

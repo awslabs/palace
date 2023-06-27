@@ -57,7 +57,8 @@ DivFreeSolver::DivFreeSolver(const MaterialOperator &mat_op,
     auto grad = std::make_unique<mfem::DiscreteLinearOperator>(
         &h1_fespaces.GetFinestFESpace(), &nd_fespace);
     grad->AddDomainInterpolator(new mfem::GradientInterpolator);
-    grad->SetAssemblyLevel(mfem::AssemblyLevel::LEGACY);
+    grad->SetAssemblyLevel(use_pa ? mfem::AssemblyLevel::PARTIAL
+                                  : mfem::AssemblyLevel::LEGACY);
     grad->Assemble();
     grad->Finalize();
     Grad = std::make_unique<ParOperator>(std::move(grad), h1_fespaces.GetFinestFESpace(),
@@ -70,7 +71,7 @@ DivFreeSolver::DivFreeSolver(const MaterialOperator &mat_op,
   auto amg =
       std::make_unique<WrapperSolver<Operator>>(std::make_unique<BoomerAmgSolver>(1, 1, 0));
   auto gmg = std::make_unique<GeometricMultigridSolver<Operator>>(
-      std::move(amg), h1_fespaces, nullptr, 1, 1, 2);
+      std::move(amg), h1_fespaces, nullptr, 1, 1, 2, use_pa);
 
   auto pcg =
       std::make_unique<CgSolver<Operator>>(h1_fespaces.GetFinestFESpace().GetComm(), print);

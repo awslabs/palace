@@ -53,7 +53,7 @@ private:
 public:
   DistRelaxationSmoother(mfem::ParFiniteElementSpace &nd_fespace,
                          mfem::ParFiniteElementSpace &h1_fespace, int smooth_it,
-                         int cheby_smooth_it, int cheby_order);
+                         int cheby_smooth_it, int cheby_order, bool use_pa);
 
   void SetOperator(const OperType &op) override
   {
