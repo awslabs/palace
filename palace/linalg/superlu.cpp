@@ -40,7 +40,7 @@ SuperLUSolver::SuperLUSolver(MPI_Comm comm, config::LinearSolverData::SymFactTyp
   : mfem::Solver(), comm(comm), A(nullptr), solver(comm, GetNpDep(Mpi::Size(comm), use_3d))
 {
   // Configure the solver.
-  if (print_lvl > 1)
+  if (print > 1)
   {
     if (solver.npdep_ > 1)
     {
@@ -77,14 +77,14 @@ void SuperLUSolver::SetOperator(const mfem::Operator &op)
 {
   // We need to save A because SuperLU does not copy the input matrix. For repeated
   // factorizations, always reuse the sparsity pattern.
-  if (Aint)
+  if (A)
   {
     solver.SetFact(mfem::superlu::SamePattern_SameRowPerm);
   }
-  Aint = std::make_unique<mfem::SuperLURowLocMatrix>(op);
+  A = std::make_unique<mfem::SuperLURowLocMatrix>(op);
 
   // Set up base class.
-  solver.SetOperator(*Aint);
+  solver.SetOperator(*A);
 }
 
 }  // namespace palace

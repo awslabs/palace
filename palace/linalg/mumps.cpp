@@ -14,7 +14,7 @@ MumpsSolver::MumpsSolver(MPI_Comm comm, mfem::MUMPSSolver::MatType sym,
   : mfem::MUMPSSolver(comm)
 {
   // Configure the solver (must be called before SetOperator).
-  SetPrintLevel(print_lvl);
+  SetPrintLevel(print);
   SetMatrixSymType(sym);
   if (reorder == config::LinearSolverData::SymFactType::METIS)
   {

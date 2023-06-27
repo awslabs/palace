@@ -46,8 +46,8 @@ StrumpackSolverBase<StrumpackSolverType>::StrumpackSolverBase(
   : StrumpackSolverType(comm), comm(comm)
 {
   // Configure the solver.
-  this->SetPrintFactorStatistics((print_lvl > 1));
-  this->SetPrintSolveStatistics((print_lvl > 1));
+  this->SetPrintFactorStatistics((print > 1));
+  this->SetPrintSolveStatistics((print > 1));
   this->SetKrylovSolver(strumpack::KrylovSolver::DIRECT);  // Always as a preconditioner or
                                                            // direct solver
   this->SetMatching(strumpack::MatchingJob::NONE);

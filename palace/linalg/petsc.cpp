@@ -5,7 +5,7 @@
 
 #include <petsc.h>
 #include <petscblaslapack.h>
-#include <general/forall.hpp>
+#include <mfem/general/forall.hpp>
 // #include "linalg/hypre.hpp"
 #include "linalg/slepc.hpp"
 #include "utils/communication.hpp"

@@ -32,7 +32,7 @@ public:
                           iodata.solver.linear.strumpack_compression_type,
                           iodata.solver.linear.strumpack_lr_tol,
                           iodata.solver.linear.strumpack_butterfly_l,
-                          iodata.solver.linear.strumpack_lossy_precision, print_lvl)
+                          iodata.solver.linear.strumpack_lossy_precision, print)
   {
   }
 

@@ -34,7 +34,7 @@ public:
                    config::LinearSolverData::CompressionType::BLR)
                       ? iodata.solver.linear.strumpack_lr_tol
                       : 0.0,
-                  print_lvl)
+                  print)
   {
   }
 };
