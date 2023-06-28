@@ -14,10 +14,6 @@ set(PALACE_INTERNAL_FMT_URL
   "https://github.com/fmtlib/fmt/releases/download/10.0.0/fmt-10.0.0.zip" CACHE STRING
   "URL for internal fmt build"
 )
-set(PALACE_INTERNAL_EIGEN_URL
-  "https://gitlab.com/libeigen/eigen/-/archive/3.4.0/eigen-3.4.0.tar.gz" CACHE STRING
-  "URL for internal Eigen build"
-)
 set(PALACE_INTERNAL_MFEM_GIT_TAG
   "6470d3a7b2edf868aace2b9454d95d124ff98173" CACHE STRING  # master @ 06/26/2023
   "Git tag for internal MFEM build"
@@ -54,21 +50,6 @@ if(PALACE_WITH_INTERNAL_FMT)
     URL ${PALACE_INTERNAL_FMT_URL}
   )
   FetchContent_MakeAvailable(fmt)
-endif()
-
-# Get Eigen library
-if(PALACE_WITH_INTERNAL_EIGEN)
-  message(STATUS "===================== Configuring Eigen dependency =====================")
-
-  # Disable doc and check targets to avoid conflict with MFEM
-  set(EIGEN_BUILD_DOC OFF CACHE BOOL "")
-  set(BUILD_TESTING OFF CACHE BOOL "")
-
-  include(FetchContent)
-  FetchContent_Declare(Eigen3
-    URL ${PALACE_INTERNAL_EIGEN_URL}
-  )
-  FetchContent_MakeAvailable(Eigen3)
 endif()
 
 # Get MFEM library
