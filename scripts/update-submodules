@@ -60,7 +60,7 @@ for GIT_URL in $GIT_REMOTE_URLS; do
     echo "Repository: $GIT_URL" && printf "\n"
 
     git remote add origin $GIT_URL
-    GIT_BRANCH=$(git ls-remote --symref origin HEAD | head -1 | awk '{print $2}' | awk -F '/' '{print $NF}')
+    GIT_BRANCH=$(grep -A 4 "$GIT_URL" $SOURCE_DIR/cmake/ExternalGitTags.cmake | tail -1 | awk '{print $1}' | sed 's/\"//g')
     if $VERBOSE; then
         git fetch --depth=1 origin $GIT_BRANCH && printf "\n"
     else
@@ -69,7 +69,7 @@ for GIT_URL in $GIT_REMOTE_URLS; do
     GIT_LOG=$(git log -1 origin/$GIT_BRANCH)
     git remote remove origin
 
-    GIT_TAG=$(grep -A 4 "$GIT_URL" $SOURCE_DIR/cmake/ExternalGitTags.cmake | tail -1 | awk '{print $1}' | sed 's/\"//g')
+    GIT_TAG=$(grep -A 8 "$GIT_URL" $SOURCE_DIR/cmake/ExternalGitTags.cmake | tail -1 | awk '{print $1}' | sed 's/\"//g')
     GIT_TAG_NEW=$(echo "$GIT_LOG" | head -1 | awk '{print $NF}')
     if [[ ! "$GIT_TAG_NEW" == "$GIT_TAG" ]]; then
         echo "** NEW PACKAGE VERSION AVAILABLE! **" && printf "\n"
