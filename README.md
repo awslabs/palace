@@ -42,10 +42,9 @@ command `spack install palace`. Run `spack info palace` to get more information 
 available configuration options and dependencies.
 
 Instructions for obtaining *Palace* and building from source can be found in the
-[documentation](https://awslabs.github.io/palace/dev/install/). Git submodules are used
-to manage the builds of most dependencies, so the repository should be cloned using the
-`--recurse-submodules` flag, or alternatively `git submodule update --init` can be run in
-order to download the dependency source code for an existing clone.
+[documentation](https://awslabs.github.io/palace/dev/install/). As part of the CMake build
+process, most dependencies are downloaded and installed automatically and thus an internet
+connection is required.
 
 System requirements:
 
