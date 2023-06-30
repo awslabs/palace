@@ -15,7 +15,7 @@ set(PALACE_INTERNAL_FMT_URL
   "URL for internal fmt build"
 )
 set(PALACE_INTERNAL_MFEM_GIT_TAG
-  "e5231334e6a8175b4f404b877f590b73dee2dedc" CACHE STRING  # master @ 05/02/2023
+  "6470d3a7b2edf868aace2b9454d95d124ff98173" CACHE STRING  # master @ 06/26/2023
   "Git tag for internal MFEM build"
 )
 
@@ -89,10 +89,10 @@ if(PALACE_WITH_INTERNAL_MFEM)
 
   # A number of patches to MFEM for our uses
   set(PALACE_MFEM_PATCH_FILES
-    "${CMAKE_CURRENT_SOURCE_DIR}/patch/mfem/patch_integ.diff"
-    "${CMAKE_CURRENT_SOURCE_DIR}/patch/mfem/patch_mesh.diff"
-    "${CMAKE_CURRENT_SOURCE_DIR}/patch/mfem/patch_part.diff"
-    "${CMAKE_CURRENT_SOURCE_DIR}/patch/mfem/patch_direct.diff"
+    "${CMAKE_CURRENT_SOURCE_DIR}/patch/mfem/patch_mesh_part.diff"
+    "${CMAKE_CURRENT_SOURCE_DIR}/patch/mfem/patch_mesh_vis.diff"
+    "${CMAKE_CURRENT_SOURCE_DIR}/patch/mfem/patch_submesh.diff"
+    "${CMAKE_CURRENT_SOURCE_DIR}/patch/mfem/patch_direct_solvers.diff"
   )
 
   include(FetchContent)
