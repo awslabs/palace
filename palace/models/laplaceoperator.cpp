@@ -113,14 +113,15 @@ std::map<int, mfem::Array<int>> ConstructSources(const IoData &iodata)
 
 LaplaceOperator::LaplaceOperator(const IoData &iodata,
                                  const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh)
-  : assembly_level(utils::GetAssemblyLevel(iodata.solver.assembly_level)), skip_zeros(0),
-    print_hdr(true), dbc_marker(SetUpBoundaryProperties(iodata, *mesh.back())),
+  : pa_order_threshold(iodata.solver.pa_order_threshold), skip_zeros(0), print_hdr(true),
+    dbc_marker(SetUpBoundaryProperties(iodata, *mesh.back())),
     h1_fecs(utils::ConstructFECollections<mfem::H1_FECollection>(
         iodata.solver.order, mesh.back()->Dimension(), iodata.solver.linear.mg_max_levels,
         iodata.solver.linear.mg_coarsen_type, false)),
     nd_fec(iodata.solver.order, mesh.back()->Dimension()),
     h1_fespaces(utils::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
-        iodata.solver.linear.mg_max_levels, mesh, h1_fecs, &dbc_marker, &dbc_tdof_lists)),
+        iodata.solver.linear.mg_max_levels, iodata.solver.linear.mg_legacy_transfer,
+        pa_order_threshold, mesh, h1_fecs, &dbc_marker, &dbc_tdof_lists)),
     nd_fespace(mesh.back().get(), &nd_fec), mat_op(iodata, *mesh.back()),
     source_attr_lists(ConstructSources(iodata))
 {
@@ -139,26 +140,33 @@ std::unique_ptr<Operator> LaplaceOperator::GetStiffnessMatrix()
     Mpi::Print("\nAssembling system matrices, number of global unknowns:\n"
                " H1: {:d}, ND: {:d}\n Operator assembly level: {}\n",
                GetH1Space().GlobalTrueVSize(), GetNDSpace().GlobalTrueVSize(),
-               assembly_level == mfem::AssemblyLevel::PARTIAL ? "Partial" : "Full");
+               GetH1Space().GetMaxElementOrder() > pa_order_threshold ? "Partial" : "Full");
     Mpi::Print("\nAssembling multigrid hierarchy:\n");
   }
   auto K = std::make_unique<MultigridOperator>(h1_fespaces.GetNumLevels());
   for (int l = 0; l < h1_fespaces.GetNumLevels(); l++)
   {
     auto &h1_fespace_l = h1_fespaces.GetFESpaceAtLevel(l);
+    if (print_hdr)
+    {
+      Mpi::Print(" Level {:d}: {:d} unknowns", l, h1_fespace_l.GlobalTrueVSize());
+    }
     constexpr auto MatType = MaterialPropertyType::PERMITTIVITY_REAL;
     MaterialPropertyCoefficient<MatType> epsilon_func(mat_op);
     auto k = std::make_unique<mfem::SymmetricBilinearForm>(&h1_fespace_l);
     k->AddDomainIntegrator(new mfem::DiffusionIntegrator(epsilon_func));
-    k->SetAssemblyLevel(assembly_level);
+    k->SetAssemblyLevel(
+        utils::GetAssemblyLevel(h1_fespace_l.GetMaxElementOrder(), pa_order_threshold));
     k->Assemble(skip_zeros);
     k->Finalize(skip_zeros);
+    auto K_l = std::make_unique<ParOperator>(
+        utils::AssembleOperator(std::move(k), pa_order_threshold), h1_fespace_l);
     if (print_hdr)
     {
-      Mpi::Print(" Level {:d}: {:d} unknowns", l, h1_fespace_l.GlobalTrueVSize());
-      if (assembly_level == mfem::AssemblyLevel::LEGACY)
+      if (const auto *k_spm =
+              dynamic_cast<const mfem::SparseMatrix *>(&K_l->LocalOperator()))
       {
-        HYPRE_BigInt nnz = k->SpMat().NumNonZeroElems();
+        HYPRE_BigInt nnz = k_spm->NumNonZeroElems();
         Mpi::GlobalSum(1, &nnz, h1_fespace_l.GetComm());
         Mpi::Print(", {:d} NNZ\n", nnz);
       }
@@ -167,7 +175,6 @@ std::unique_ptr<Operator> LaplaceOperator::GetStiffnessMatrix()
         Mpi::Print("\n");
       }
     }
-    auto K_l = std::make_unique<ParOperator>(std::move(k), h1_fespace_l);
     K_l->SetEssentialTrueDofs(dbc_tdof_lists[l], Operator::DiagonalPolicy::DIAG_ONE);
     K->AddOperator(std::move(K_l));
   }
@@ -179,10 +186,13 @@ std::unique_ptr<Operator> LaplaceOperator::GetGradMatrix()
 {
   auto grad = std::make_unique<mfem::DiscreteLinearOperator>(&GetH1Space(), &GetNDSpace());
   grad->AddDomainInterpolator(new mfem::GradientInterpolator);
-  grad->SetAssemblyLevel(assembly_level);
+  grad->SetAssemblyLevel(
+      utils::GetAssemblyLevel(GetH1Space().GetMaxElementOrder(), pa_order_threshold));
   grad->Assemble();
   grad->Finalize();
-  return std::make_unique<ParOperator>(std::move(grad), GetH1Space(), GetNDSpace(), true);
+  return std::make_unique<ParOperator>(
+      utils::AssembleOperator(std::move(grad), pa_order_threshold), GetH1Space(),
+      GetNDSpace(), true);
 }
 
 void LaplaceOperator::GetExcitationVector(int idx, const Operator &K, Vector &X,

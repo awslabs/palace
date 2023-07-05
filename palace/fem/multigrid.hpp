@@ -18,17 +18,55 @@ namespace palace::utils
 // Methods for constructing hierarchies of finite element spaces for geometric multigrid.
 //
 
-// Convert a configuration file assembly level enum into MFEM's type.
-inline mfem::AssemblyLevel
-GetAssemblyLevel(config::SolverData::AssemblyLevel assembly_level)
+// Helper function for accessing the finite element space from a bilinear form.
+inline auto GetFESpace(mfem::BilinearForm &a)
 {
-  switch (assembly_level)
+  return *a.FESpace();
+}
+
+// Helper function for accessing the finite element space from a mixed bilinear form.
+inline auto GetFESpace(mfem::MixedBilinearForm &a)
+{
+  return *a.TrialFESpace();
+}
+
+// Get the default assembly level for a bilinear or mixed bilinear form.
+inline auto GetAssemblyLevel(int order, int pa_order_threshold)
+{
+  return (mfem::DeviceCanUseCeed() || order > pa_order_threshold)
+             ? mfem::AssemblyLevel::PARTIAL
+             : mfem::AssemblyLevel::LEGACY;
+}
+
+// Get the default assembly level for a bilinear or mixed bilinear form which only supports
+// partial assembly for the libCEED backend.
+inline auto GetAssemblyLevel()
+{
+  return mfem::DeviceCanUseCeed() ? mfem::AssemblyLevel::PARTIAL
+                                  : mfem::AssemblyLevel::LEGACY;
+}
+
+// Assembly a bilinear or mixed bilinear form. If the order is lower than the specified
+// threshold, the operator is assembled as a sparse matrix.
+template <typename BilinearForm>
+inline std::unique_ptr<Operator> AssembleOperator(std::unique_ptr<BilinearForm> &&a,
+                                                  int pa_order_threshold)
+{
+  if (a->GetAssemblyLevel() == mfem::AssemblyLevel::PARTIAL &&
+      GetFESpace(*a).GetMaxElementOrder() > pa_order_threshold)
   {
-    case config::SolverData::AssemblyLevel::PARTIAL:
-      return mfem::AssemblyLevel::PARTIAL;
-    case config::SolverData::AssemblyLevel::FULL:
-    default:
-      return mfem::AssemblyLevel::LEGACY;
+    return std::move(a);
+  }
+  else
+  {
+#ifdef MFEM_USE_CEED
+    mfem::SparseMatrix *spm =
+        a->HasExt() ? mfem::ceed::CeedOperatorFullAssemble(*a) : a->LoseMat();
+#else
+    mfem::SparseMatrix *spm = a->LoseMat();
+#endif
+    MFEM_VERIFY(spm, "Missing assembled sparse matrix!");
+    return std::unique_ptr<Operator>(spm);
   }
 }
 
@@ -92,7 +130,8 @@ std::vector<std::unique_ptr<FECollection>> inline ConstructFECollections(
 // marked.
 template <typename FECollection>
 inline mfem::ParFiniteElementSpaceHierarchy ConstructFiniteElementSpaceHierarchy(
-    int mg_max_levels, const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
+    int mg_max_levels, bool mg_legacy_transfer, int pa_order_threshold,
+    const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
     const std::vector<std::unique_ptr<FECollection>> &fecs,
     const mfem::Array<int> *dbc_marker = nullptr,
     std::vector<mfem::Array<int>> *dbc_tdof_lists = nullptr)
@@ -132,12 +171,25 @@ inline mfem::ParFiniteElementSpaceHierarchy ConstructFiniteElementSpaceHierarchy
     {
       fespace->GetEssentialTrueDofs(*dbc_marker, dbc_tdof_lists->emplace_back());
     }
-
-    // XX TODO LIBCEED TRANSFER OPTION (P MG ONLY...)
-
-    auto *P = new ParOperator(
-        std::make_unique<mfem::TransferOperator>(fespaces.GetFinestFESpace(), *fespace),
-        fespaces.GetFinestFESpace(), *fespace, true);
+    ParOperator *P;
+    if (!mg_legacy_transfer)
+    {
+      // Partial assembly for this operator is only available with libCEED backend.
+      auto p = std::make_unique<mfem::DiscreteLinearOperator>(&fespaces.GetFinestFESpace(),
+                                                              fespace);
+      p->AddDomainInterpolator(new mfem::IdentityInterpolator);
+      p->SetAssemblyLevel(GetAssemblyLevel());
+      p->Assemble();
+      p->Finalize();
+      P = new ParOperator(AssembleOperator(std::move(p), pa_order_threshold),
+                          fespaces.GetFinestFESpace(), *fespace, true);
+    }
+    else
+    {
+      P = new ParOperator(
+          std::make_unique<mfem::TransferOperator>(fespaces.GetFinestFESpace(), *fespace),
+          fespaces.GetFinestFESpace(), *fespace, true);
+    }
     fespaces.AddLevel(mesh.back().get(), fespace, P, false, true, true);
   }
   return fespaces;

@@ -6,6 +6,7 @@
 #include <limits>
 #include <mfem.hpp>
 #include "fem/coefficient.hpp"
+#include "fem/multigrid.hpp"
 #include "linalg/amg.hpp"
 #include "linalg/gmg.hpp"
 #include "linalg/iterative.hpp"
@@ -19,7 +20,7 @@ DivFreeSolver::DivFreeSolver(const MaterialOperator &mat_op,
                              mfem::ParFiniteElementSpace &nd_fespace,
                              mfem::ParFiniteElementSpaceHierarchy &h1_fespaces,
                              const std::vector<mfem::Array<int>> &h1_bdr_tdof_lists,
-                             double tol, int max_it, int print, bool use_pa)
+                             double tol, int max_it, int print, int pa_order_threshold)
 {
   constexpr auto MatType = MaterialPropertyType::PERMITTIVITY_REAL;
   MaterialPropertyCoefficient<MatType> epsilon_func(mat_op);
@@ -30,39 +31,42 @@ DivFreeSolver::DivFreeSolver(const MaterialOperator &mat_op,
       auto &h1_fespace_l = h1_fespaces.GetFESpaceAtLevel(l);
       auto m = std::make_unique<mfem::SymmetricBilinearForm>(&h1_fespace_l);
       m->AddDomainIntegrator(new mfem::DiffusionIntegrator(epsilon_func));
-      m->SetAssemblyLevel(use_pa ? mfem::AssemblyLevel::PARTIAL
-                                 : mfem::AssemblyLevel::LEGACY);
+      m->SetAssemblyLevel(
+          utils::GetAssemblyLevel(h1_fespace_l.GetMaxElementOrder(), pa_order_threshold));
       m->Assemble(0);
       m->Finalize(0);
-      auto M_l = std::make_unique<ParOperator>(std::move(m), h1_fespace_l);
+      auto M_l = std::make_unique<ParOperator>(
+          utils::AssembleOperator(std::move(m), pa_order_threshold), h1_fespace_l);
       M_l->SetEssentialTrueDofs(h1_bdr_tdof_lists[l], Operator::DiagonalPolicy::DIAG_ONE);
       M_mg->AddOperator(std::move(M_l));
     }
     M = std::move(M_mg);
   }
   {
-    auto weakDiv = std::make_unique<mfem::MixedBilinearForm>(
+    // Partial assembly for this operator is only available with libCEED backend.
+    auto weakdiv = std::make_unique<mfem::MixedBilinearForm>(
         &nd_fespace, &h1_fespaces.GetFinestFESpace());
-    weakDiv->AddDomainIntegrator(
+    weakdiv->AddDomainIntegrator(
         new mfem::MixedVectorWeakDivergenceIntegrator(epsilon_func));
-    weakDiv->SetAssemblyLevel(use_pa ? mfem::AssemblyLevel::PARTIAL
-                                     : mfem::AssemblyLevel::LEGACY);
-    weakDiv->Assemble();
-    weakDiv->Finalize();
-    WeakDiv = std::make_unique<ParOperator>(std::move(weakDiv), nd_fespace,
-                                            h1_fespaces.GetFinestFESpace(), false);
+    weakdiv->SetAssemblyLevel(utils::GetAssemblyLevel());
+    weakdiv->Assemble();
+    weakdiv->Finalize();
+    WeakDiv = std::make_unique<ParOperator>(
+        utils::AssembleOperator(std::move(weakdiv), pa_order_threshold), nd_fespace,
+        h1_fespaces.GetFinestFESpace(), false);
   }
   {
-    // XX TODO: Partial assembly option?
+    // XX TODO: Separate interpolator partial assembly option?
     auto grad = std::make_unique<mfem::DiscreteLinearOperator>(
         &h1_fespaces.GetFinestFESpace(), &nd_fespace);
     grad->AddDomainInterpolator(new mfem::GradientInterpolator);
-    grad->SetAssemblyLevel(use_pa ? mfem::AssemblyLevel::PARTIAL
-                                  : mfem::AssemblyLevel::LEGACY);
+    grad->SetAssemblyLevel(
+        utils::GetAssemblyLevel(nd_fespace.GetMaxElementOrder(), pa_order_threshold));
     grad->Assemble();
     grad->Finalize();
-    Grad = std::make_unique<ParOperator>(std::move(grad), h1_fespaces.GetFinestFESpace(),
-                                         nd_fespace, true);
+    Grad = std::make_unique<ParOperator>(
+        utils::AssembleOperator(std::move(grad), pa_order_threshold),
+        h1_fespaces.GetFinestFESpace(), nd_fespace, true);
   }
   bdr_tdof_list_M = &h1_bdr_tdof_lists.back();
 
@@ -71,7 +75,7 @@ DivFreeSolver::DivFreeSolver(const MaterialOperator &mat_op,
   auto amg =
       std::make_unique<WrapperSolver<Operator>>(std::make_unique<BoomerAmgSolver>(1, 1, 0));
   auto gmg = std::make_unique<GeometricMultigridSolver<Operator>>(
-      std::move(amg), h1_fespaces, nullptr, 1, 1, 2, use_pa);
+      std::move(amg), h1_fespaces, nullptr, 1, 1, 2, pa_order_threshold);
 
   auto pcg =
       std::make_unique<CgSolver<Operator>>(h1_fespaces.GetFinestFESpace().GetComm(), print);

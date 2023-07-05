@@ -56,7 +56,7 @@ public:
   GeometricMultigridSolver(std::unique_ptr<Solver<OperType>> &&coarse_solver,
                            mfem::ParFiniteElementSpaceHierarchy &fespaces,
                            mfem::ParFiniteElementSpaceHierarchy *aux_fespaces, int cycle_it,
-                           int smooth_it, int cheby_order, bool use_pa);
+                           int smooth_it, int cheby_order, int pa_order_threshold);
   GeometricMultigridSolver(const IoData &iodata,
                            std::unique_ptr<Solver<OperType>> &&coarse_solver,
                            mfem::ParFiniteElementSpaceHierarchy &fespaces,
@@ -64,8 +64,7 @@ public:
     : GeometricMultigridSolver(
           std::move(coarse_solver), fespaces, aux_fespaces,
           iodata.solver.linear.mg_cycle_it, iodata.solver.linear.mg_smooth_it,
-          iodata.solver.linear.mg_smooth_order,
-          iodata.solver.assembly_level == config::SolverData::AssemblyLevel::PARTIAL)
+          iodata.solver.linear.mg_smooth_order, iodata.solver.pa_order_threshold)
   {
   }
 

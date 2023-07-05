@@ -16,7 +16,7 @@ GeometricMultigridSolver<OperType>::GeometricMultigridSolver(
     std::unique_ptr<Solver<OperType>> &&coarse_solver,
     mfem::ParFiniteElementSpaceHierarchy &fespaces,
     mfem::ParFiniteElementSpaceHierarchy *aux_fespaces, int cycle_it, int smooth_it,
-    int cheby_order, bool use_pa)
+    int cheby_order, int pa_order_threshold)
   : Solver<OperType>(), pc_it(cycle_it), A(fespaces.GetNumLevels()),
     P(fespaces.GetNumLevels() - 1), dbc_tdof_lists(fespaces.GetNumLevels() - 1),
     B(fespaces.GetNumLevels()), X(fespaces.GetNumLevels()), Y(fespaces.GetNumLevels()),
@@ -45,7 +45,7 @@ GeometricMultigridSolver<OperType>::GeometricMultigridSolver(
     {
       B[l] = std::make_unique<DistRelaxationSmoother<OperType>>(
           fespaces.GetFESpaceAtLevel(l), aux_fespaces->GetFESpaceAtLevel(l), smooth_it, 1,
-          cheby_order, use_pa);
+          cheby_order, pa_order_threshold);
     }
     else
     {

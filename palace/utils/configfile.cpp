@@ -1568,6 +1568,7 @@ void LinearSolverData::SetUp(json &solver)
   MFEM_VERIFY(
       mg_coarsen_type != LinearSolverData::MultigridCoarsenType::INVALID,
       "Invalid value for config[\"Linear\"][\"MGCoarsenType\"] in configuration file!");
+  mg_legacy_transfer = linear->value("MGLegacyTransfer", mg_legacy_transfer);
   mg_smooth_aux = linear->value("MGAuxiliarySmoother", mg_smooth_aux);
   mg_cycle_it = linear->value("MGCycleIts", mg_cycle_it);
   mg_smooth_it = linear->value("MGSmoothIts", mg_smooth_it);
@@ -1615,6 +1616,7 @@ void LinearSolverData::SetUp(json &solver)
 
   linear->erase("MGMaxLevels");
   linear->erase("MGCoarsenType");
+  linear->erase("MGLegacyTransfer");
   linear->erase("MGAuxiliarySmoother");
   linear->erase("MGCycleIts");
   linear->erase("MGSmoothIts");
@@ -1647,6 +1649,7 @@ void LinearSolverData::SetUp(json &solver)
 
   // std::cout << "MGMaxLevels: " << mg_max_levels << '\n';
   // std::cout << "MGCoarsenType: " << mg_coarsen_type << '\n';
+  // std::cout << "MGLegacyTransfer: " << mg_legacy_transfer << '\n';
   // std::cout << "MGAuxiliarySmoother: " << mg_smooth_aux << '\n';
   // std::cout << "MGCycleIts: " << mg_cycle_it << '\n';
   // std::cout << "MGSmoothIts: " << mg_smooth_it << '\n';
@@ -1667,12 +1670,6 @@ void LinearSolverData::SetUp(json &solver)
   // std::cout << "GSOrthogonalization: " << gs_orthog_type << '\n';
 }
 
-// Helpers for converting string keys to enum for SolverData::AssemblyLevel.
-NLOHMANN_JSON_SERIALIZE_ENUM(SolverData::AssemblyLevel,
-                             {{SolverData::AssemblyLevel::INVALID, nullptr},
-                              {SolverData::AssemblyLevel::FULL, "Full"},
-                              {SolverData::AssemblyLevel::PARTIAL, "Partial"}})
-
 void SolverData::SetUp(json &config)
 {
   auto solver = config.find("Solver");
@@ -1681,11 +1678,7 @@ void SolverData::SetUp(json &config)
     return;
   }
   order = solver->value("Order", order);
-  MFEM_VERIFY(order > 0, "config[\"Solver\"][\"Order\"] must be positive!");
-  assembly_level = solver->value("AssemblyLevel", assembly_level);
-  MFEM_VERIFY(
-      assembly_level != SolverData::AssemblyLevel::INVALID,
-      "Invalid value for config[\"Solver\"][\"AssemblyLevel\"] in configuration file!");
+  pa_order_threshold = solver->value("PartialAssemblyThreshold", pa_order_threshold);
   device = solver->value("Device", device);
 
   driven.SetUp(*solver);
@@ -1697,7 +1690,7 @@ void SolverData::SetUp(json &config)
 
   // Cleanup
   solver->erase("Order");
-  solver->erase("AssemblyLevel");
+  solver->erase("PartialAssemblyThreshold");
   solver->erase("Device");
 
   solver->erase("Driven");
@@ -1712,7 +1705,7 @@ void SolverData::SetUp(json &config)
 
   // Debug
   // std::cout << "Order: " << order << '\n';
-  // std::cout << "AssemblyLevel: " << assembly_level << '\n';
+  // std::cout << "PartialAssemblyThreshold: " << pa_order_threshold << '\n';
   // std::cout << "Device: " << device << '\n';
 }
 
