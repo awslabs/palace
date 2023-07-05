@@ -146,6 +146,7 @@ std::unique_ptr<Operator> LaplaceOperator::GetStiffnessMatrix()
   auto K = std::make_unique<MultigridOperator>(h1_fespaces.GetNumLevels());
   for (int l = 0; l < h1_fespaces.GetNumLevels(); l++)
   {
+    // Force coarse level operator to be fully assembled always.
     auto &h1_fespace_l = h1_fespaces.GetFESpaceAtLevel(l);
     if (print_hdr)
     {
@@ -155,12 +156,10 @@ std::unique_ptr<Operator> LaplaceOperator::GetStiffnessMatrix()
     MaterialPropertyCoefficient<MatType> epsilon_func(mat_op);
     auto k = std::make_unique<mfem::SymmetricBilinearForm>(&h1_fespace_l);
     k->AddDomainIntegrator(new mfem::DiffusionIntegrator(epsilon_func));
-    k->SetAssemblyLevel(
-        utils::GetAssemblyLevel(h1_fespace_l.GetMaxElementOrder(), pa_order_threshold));
-    k->Assemble(skip_zeros);
-    k->Finalize(skip_zeros);
     auto K_l = std::make_unique<ParOperator>(
-        utils::AssembleOperator(std::move(k), pa_order_threshold), h1_fespace_l);
+        utils::AssembleOperator(std::move(k), true, (l > 0) ? pa_order_threshold : 100,
+                                skip_zeros),
+        h1_fespace_l);
     if (print_hdr)
     {
       if (const auto *k_spm =
@@ -186,12 +185,8 @@ std::unique_ptr<Operator> LaplaceOperator::GetGradMatrix()
 {
   auto grad = std::make_unique<mfem::DiscreteLinearOperator>(&GetH1Space(), &GetNDSpace());
   grad->AddDomainInterpolator(new mfem::GradientInterpolator);
-  grad->SetAssemblyLevel(
-      utils::GetAssemblyLevel(GetH1Space().GetMaxElementOrder(), pa_order_threshold));
-  grad->Assemble();
-  grad->Finalize();
   return std::make_unique<ParOperator>(
-      utils::AssembleOperator(std::move(grad), pa_order_threshold), GetH1Space(),
+      utils::AssembleOperator(std::move(grad), true, pa_order_threshold), GetH1Space(),
       GetNDSpace(), true);
 }
 

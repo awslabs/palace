@@ -219,11 +219,7 @@ std::unique_ptr<Operator> BuildOperator(mfem::ParFiniteElementSpace &fespace, T1
   }
   else
   {
-    a->SetAssemblyLevel(
-        utils::GetAssemblyLevel(fespace.GetMaxElementOrder(), pa_order_threshold));
-    a->Assemble(skip_zeros);
-    a->Finalize(skip_zeros);
-    return utils::AssembleOperator(std::move(a), pa_order_threshold);
+    return utils::AssembleOperator(std::move(a), true, pa_order_threshold, skip_zeros);
   }
 }
 
@@ -251,11 +247,7 @@ std::unique_ptr<Operator> BuildAuxOperator(mfem::ParFiniteElementSpace &fespace,
   }
   else
   {
-    a->SetAssemblyLevel(
-        utils::GetAssemblyLevel(fespace.GetMaxElementOrder(), pa_order_threshold));
-    a->Assemble(skip_zeros);
-    a->Finalize(skip_zeros);
-    return utils::AssembleOperator(std::move(a), pa_order_threshold);
+    return utils::AssembleOperator(std::move(a), true, pa_order_threshold, skip_zeros);
   }
 }
 
@@ -675,6 +667,7 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(double a0, doub
     auto &dbc_tdof_lists = (s == 0) ? nd_dbc_tdof_lists : h1_dbc_tdof_lists;
     for (int l = 0; l < fespaces.GetNumLevels(); l++)
     {
+      // Force coarse level operator to be fully assembled always.
       auto &fespace_l = fespaces.GetFESpaceAtLevel(l);
       if (print_prec_hdr)
       {
@@ -714,17 +707,19 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(double a0, doub
       std::unique_ptr<Operator> br, bi;
       if (!dfr.empty() || !fr.empty() || !dfbr.empty() || !fbr.empty())
       {
-        br = (s == 0) ? BuildOperator(fespace_l, &dfr, &fr, &dfbr, &fbr, pa_order_threshold,
-                                      skip_zeros, pc_lor)
-                      : BuildAuxOperator(fespace_l, &fr, &fbr, pa_order_threshold,
-                                         skip_zeros, pc_lor);
+        br = (s == 0)
+                 ? BuildOperator(fespace_l, &dfr, &fr, &dfbr, &fbr,
+                                 (l > 0) ? pa_order_threshold : 100, skip_zeros, pc_lor)
+                 : BuildAuxOperator(fespace_l, &fr, &fbr,
+                                    (l > 0) ? pa_order_threshold : 100, skip_zeros, pc_lor);
       }
       if (!fi.empty() || !dfbi.empty() || !fbi.empty())
       {
-        bi = (s == 0) ? BuildOperator(fespace_l, (SumCoefficient *)nullptr, &fi, &dfbi,
-                                      &fbi, pa_order_threshold, skip_zeros, pc_lor)
-                      : BuildAuxOperator(fespace_l, &fi, &fbi, pa_order_threshold,
-                                         skip_zeros, pc_lor);
+        bi = (s == 0)
+                 ? BuildOperator(fespace_l, (SumCoefficient *)nullptr, &fi, &dfbi, &fbi,
+                                 (l > 0) ? pa_order_threshold : 100, skip_zeros, pc_lor)
+                 : BuildAuxOperator(fespace_l, &fi, &fbi,
+                                    (l > 0) ? pa_order_threshold : 100, skip_zeros, pc_lor);
       }
       if (print_prec_hdr)
       {
@@ -764,10 +759,7 @@ auto BuildCurl(mfem::ParFiniteElementSpace &nd_fespace,
   // Partial assembly for this operator is only available with libCEED backend.
   auto curl = std::make_unique<mfem::DiscreteLinearOperator>(&nd_fespace, &rt_fespace);
   curl->AddDomainInterpolator(new mfem::CurlInterpolator);
-  curl->SetAssemblyLevel(utils::GetAssemblyLevel());
-  curl->Assemble();
-  curl->Finalize();
-  return utils::AssembleOperator(std::move(curl), pa_order_threshold);
+  return utils::AssembleOperator(std::move(curl), false, pa_order_threshold - 1);
 }
 
 auto BuildGrad(mfem::ParFiniteElementSpace &h1_fespace,
@@ -775,11 +767,7 @@ auto BuildGrad(mfem::ParFiniteElementSpace &h1_fespace,
 {
   auto grad = std::make_unique<mfem::DiscreteLinearOperator>(&h1_fespace, &nd_fespace);
   grad->AddDomainInterpolator(new mfem::GradientInterpolator);
-  grad->SetAssemblyLevel(
-      utils::GetAssemblyLevel(h1_fespace.GetMaxElementOrder(), pa_order_threshold));
-  grad->Assemble();
-  grad->Finalize();
-  return utils::AssembleOperator(std::move(grad), pa_order_threshold);
+  return utils::AssembleOperator(std::move(grad), true, pa_order_threshold);
 }
 
 }  // namespace

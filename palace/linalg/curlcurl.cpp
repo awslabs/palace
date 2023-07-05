@@ -22,6 +22,7 @@ CurlCurlMassSolver::CurlCurlMassSolver(
     const std::vector<mfem::Array<int>> &h1_dbc_tdof_lists, double tol, int max_it,
     int print, int pa_order_threshold)
 {
+  constexpr int skip_zeros = 0;
   constexpr auto MatTypeMuInv = MaterialPropertyType::INV_PERMEABILITY;
   constexpr auto MatTypeEps = MaterialPropertyType::PERMITTIVITY_REAL;
   MaterialPropertyCoefficient<MatTypeMuInv> muinv_func(mat_op);
@@ -34,6 +35,7 @@ CurlCurlMassSolver::CurlCurlMassSolver(
       auto &dbc_tdof_lists = (s == 0) ? nd_dbc_tdof_lists : h1_dbc_tdof_lists;
       for (int l = 0; l < fespaces.GetNumLevels(); l++)
       {
+        // Force coarse level operator to be fully assembled always.
         auto &fespace_l = fespaces.GetFESpaceAtLevel(l);
         auto a = std::make_unique<mfem::SymmetricBilinearForm>(&fespace_l);
         if (s == 0)
@@ -45,12 +47,10 @@ CurlCurlMassSolver::CurlCurlMassSolver(
         {
           a->AddDomainIntegrator(new mfem::DiffusionIntegrator(epsilon_func));
         }
-        a->SetAssemblyLevel(
-            utils::GetAssemblyLevel(fespace_l.GetMaxElementOrder(), pa_order_threshold));
-        a->Assemble(0);
-        a->Finalize(0);
         auto A_l = std::make_unique<ParOperator>(
-            utils::AssembleOperator(std::move(a), pa_order_threshold), fespace_l);
+            utils::AssembleOperator(std::move(a), true, (l > 0) ? pa_order_threshold : 100,
+                                    skip_zeros),
+            fespace_l);
         A_l->SetEssentialTrueDofs(dbc_tdof_lists[l], Operator::DiagonalPolicy::DIAG_ONE);
         if (s == 0)
         {

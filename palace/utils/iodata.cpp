@@ -328,6 +328,10 @@ void IoData::CheckConfiguration()
   }
 
   // Resolve default values in configuration file.
+
+  // XX TODO: Default value for pa_order_threshold if we want PA enabled by default
+  // XX TODO: Also default value for mg_legacy_transfer, maybe always true for PA?
+
   if (solver.linear.max_size < 0)
   {
     solver.linear.max_size = solver.linear.max_it;
