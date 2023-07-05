@@ -124,6 +124,7 @@ std::unique_ptr<Operator> CurlCurlOperator::GetStiffnessMatrix()
   auto K = std::make_unique<MultigridOperator>(nd_fespaces.GetNumLevels());
   for (int l = 0; l < nd_fespaces.GetNumLevels(); l++)
   {
+    // Force coarse level operator to be fully assembled always.
     auto &nd_fespace_l = nd_fespaces.GetFESpaceAtLevel(l);
     if (print_hdr)
     {
@@ -133,12 +134,10 @@ std::unique_ptr<Operator> CurlCurlOperator::GetStiffnessMatrix()
     MaterialPropertyCoefficient<MatType> muinv_func(mat_op);
     auto k = std::make_unique<mfem::SymmetricBilinearForm>(&nd_fespace_l);
     k->AddDomainIntegrator(new mfem::CurlCurlIntegrator(muinv_func));
-    k->SetAssemblyLevel(
-        utils::GetAssemblyLevel(nd_fespace_l.GetMaxElementOrder(), pa_order_threshold));
-    k->Assemble(skip_zeros);
-    k->Finalize(skip_zeros);
     auto K_l = std::make_unique<ParOperator>(
-        utils::AssembleOperator(std::move(k), pa_order_threshold), nd_fespace_l);
+        utils::AssembleOperator(std::move(k), true, (l > 0) ? pa_order_threshold : 100,
+                                skip_zeros),
+        nd_fespace_l);
     if (print_hdr)
     {
       if (const auto *k_spm =
@@ -165,11 +164,8 @@ std::unique_ptr<Operator> CurlCurlOperator::GetCurlMatrix()
   // Partial assembly for this operator is only available with libCEED backend.
   auto curl = std::make_unique<mfem::DiscreteLinearOperator>(&GetNDSpace(), &GetRTSpace());
   curl->AddDomainInterpolator(new mfem::CurlInterpolator);
-  curl->SetAssemblyLevel(utils::GetAssemblyLevel());
-  curl->Assemble();
-  curl->Finalize();
   return std::make_unique<ParOperator>(
-      utils::AssembleOperator(std::move(curl), pa_order_threshold), GetNDSpace(),
+      utils::AssembleOperator(std::move(curl), false, pa_order_threshold - 1), GetNDSpace(),
       GetRTSpace(), true);
 }
 

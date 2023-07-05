@@ -23,15 +23,9 @@ DistRelaxationSmoother<OperType>::DistRelaxationSmoother(
     // XX TODO: Separate interpolator partial assembly option?
     auto grad = std::make_unique<mfem::DiscreteLinearOperator>(&h1_fespace, &nd_fespace);
     grad->AddDomainInterpolator(new mfem::GradientInterpolator);
-    grad->SetAssemblyLevel(
-        utils::GetAssemblyLevel(h1_fespace.GetMaxElementOrder(), pa_order_threshold));
-    grad->Assemble();
-    grad->Finalize();
     G = std::make_unique<ParOperator>(
-        utils::AssembleOperator(std::move(grad), pa_order_threshold), h1_fespace,
+        utils::AssembleOperator(std::move(grad), true, pa_order_threshold), h1_fespace,
         nd_fespace, true);
-    // ParOperator RAP_G(utils::AssembleOperator(std::move(grad), pa_order_threshold),
-    // h1_fespace, nd_fespace, true); G = RAP_G.StealParallelAssemble();
   }
 
   // Initialize smoothers.
