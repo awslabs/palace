@@ -14,11 +14,6 @@
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
 
-// XX TODO NOTES
-//    - Precompute A2, RHS2 for all frequencies? This seems very dumb and especially risky
-//    for fine resolution sweeps, so for now remove A2, RHS2 storage (and omega = omega_0 +
-//    delta_omega * step)
-
 namespace palace
 {
 

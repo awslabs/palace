@@ -5,6 +5,7 @@
 
 #include <mfem.hpp>
 #include "fem/coefficient.hpp"
+#include "fem/multigrid.hpp"
 #include "linalg/ams.hpp"
 #include "linalg/gmg.hpp"
 #include "linalg/iterative.hpp"
@@ -19,7 +20,7 @@ CurlCurlMassSolver::CurlCurlMassSolver(
     mfem::ParFiniteElementSpaceHierarchy &h1_fespaces,
     const std::vector<mfem::Array<int>> &nd_dbc_tdof_lists,
     const std::vector<mfem::Array<int>> &h1_dbc_tdof_lists, double tol, int max_it,
-    int print, bool use_pa)
+    int print, int pa_order_threshold)
 {
   constexpr auto MatTypeMuInv = MaterialPropertyType::INV_PERMEABILITY;
   constexpr auto MatTypeEps = MaterialPropertyType::PERMITTIVITY_REAL;
@@ -44,11 +45,12 @@ CurlCurlMassSolver::CurlCurlMassSolver(
         {
           a->AddDomainIntegrator(new mfem::DiffusionIntegrator(epsilon_func));
         }
-        a->SetAssemblyLevel(use_pa ? mfem::AssemblyLevel::PARTIAL
-                                   : mfem::AssemblyLevel::LEGACY);
+        a->SetAssemblyLevel(
+            utils::GetAssemblyLevel(fespace_l.GetMaxElementOrder(), pa_order_threshold));
         a->Assemble(0);
         a->Finalize(0);
-        auto A_l = std::make_unique<ParOperator>(std::move(a), fespace_l);
+        auto A_l = std::make_unique<ParOperator>(
+            utils::AssembleOperator(std::move(a), pa_order_threshold), fespace_l);
         A_l->SetEssentialTrueDofs(dbc_tdof_lists[l], Operator::DiagonalPolicy::DIAG_ONE);
         if (s == 0)
         {
@@ -69,7 +71,7 @@ CurlCurlMassSolver::CurlCurlMassSolver(
       nd_fespaces.GetFESpaceAtLevel(0), h1_fespaces.GetFESpaceAtLevel(0), 1, 1, 1, false,
       false, 0));
   auto gmg = std::make_unique<GeometricMultigridSolver<Operator>>(
-      std::move(ams), nd_fespaces, &h1_fespaces, 1, 1, 2, use_pa);
+      std::move(ams), nd_fespaces, &h1_fespaces, 1, 1, 2, pa_order_threshold);
 
   auto pcg =
       std::make_unique<CgSolver<Operator>>(nd_fespaces.GetFinestFESpace().GetComm(), print);

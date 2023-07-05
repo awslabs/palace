@@ -70,8 +70,8 @@ mfem::Array<int> SetUpBoundaryProperties(const IoData &iodata, const mfem::ParMe
 
 CurlCurlOperator::CurlCurlOperator(const IoData &iodata,
                                    const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh)
-  : assembly_level(utils::GetAssemblyLevel(iodata.solver.assembly_level)), skip_zeros(0),
-    print_hdr(true), dbc_marker(SetUpBoundaryProperties(iodata, *mesh.back())),
+  : pa_order_threshold(iodata.solver.pa_order_threshold), skip_zeros(0), print_hdr(true),
+    dbc_marker(SetUpBoundaryProperties(iodata, *mesh.back())),
     nd_fecs(utils::ConstructFECollections<mfem::ND_FECollection>(
         iodata.solver.order, mesh.back()->Dimension(), iodata.solver.linear.mg_max_levels,
         iodata.solver.linear.mg_coarsen_type, false)),
@@ -80,9 +80,11 @@ CurlCurlOperator::CurlCurlOperator(const IoData &iodata,
         iodata.solver.linear.mg_coarsen_type, false)),
     rt_fec(iodata.solver.order - 1, mesh.back()->Dimension()),
     nd_fespaces(utils::ConstructFiniteElementSpaceHierarchy<mfem::ND_FECollection>(
-        iodata.solver.linear.mg_max_levels, mesh, nd_fecs, &dbc_marker, &dbc_tdof_lists)),
+        iodata.solver.linear.mg_max_levels, iodata.solver.linear.mg_legacy_transfer,
+        pa_order_threshold, mesh, nd_fecs, &dbc_marker, &dbc_tdof_lists)),
     h1_fespaces(utils::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
-        iodata.solver.linear.mg_max_levels, mesh, h1_fecs, nullptr, nullptr)),
+        iodata.solver.linear.mg_max_levels, iodata.solver.linear.mg_legacy_transfer,
+        pa_order_threshold, mesh, h1_fecs, nullptr, nullptr)),
     rt_fespace(mesh.back().get(), &rt_fec), mat_op(iodata, *mesh.back()),
     surf_j_op(iodata, GetH1Space())
 {
@@ -116,26 +118,33 @@ std::unique_ptr<Operator> CurlCurlOperator::GetStiffnessMatrix()
                " H1: {:d}, ND: {:d}, RT: {:d}\n Operator assembly level: {}\n",
                GetH1Space().GlobalTrueVSize(), GetNDSpace().GlobalTrueVSize(),
                GetRTSpace().GlobalTrueVSize(),
-               assembly_level == mfem::AssemblyLevel::PARTIAL ? "Partial" : "Full");
+               GetNDSpace().GetMaxElementOrder() > pa_order_threshold ? "Partial" : "Full");
     Mpi::Print("\nAssembling multigrid hierarchy:\n");
   }
   auto K = std::make_unique<MultigridOperator>(nd_fespaces.GetNumLevels());
   for (int l = 0; l < nd_fespaces.GetNumLevels(); l++)
   {
     auto &nd_fespace_l = nd_fespaces.GetFESpaceAtLevel(l);
+    if (print_hdr)
+    {
+      Mpi::Print(" Level {:d}: {:d} unknowns", l, nd_fespace_l.GlobalTrueVSize());
+    }
     constexpr auto MatType = MaterialPropertyType::INV_PERMEABILITY;
     MaterialPropertyCoefficient<MatType> muinv_func(mat_op);
     auto k = std::make_unique<mfem::SymmetricBilinearForm>(&nd_fespace_l);
     k->AddDomainIntegrator(new mfem::CurlCurlIntegrator(muinv_func));
-    k->SetAssemblyLevel(assembly_level);
+    k->SetAssemblyLevel(
+        utils::GetAssemblyLevel(nd_fespace_l.GetMaxElementOrder(), pa_order_threshold));
     k->Assemble(skip_zeros);
     k->Finalize(skip_zeros);
+    auto K_l = std::make_unique<ParOperator>(
+        utils::AssembleOperator(std::move(k), pa_order_threshold), nd_fespace_l);
     if (print_hdr)
     {
-      Mpi::Print(" Level {:d}: {:d} unknowns", l, nd_fespace_l.GlobalTrueVSize());
-      if (assembly_level == mfem::AssemblyLevel::LEGACY)
+      if (const auto *k_spm =
+              dynamic_cast<const mfem::SparseMatrix *>(&K_l->LocalOperator()))
       {
-        HYPRE_BigInt nnz = k->SpMat().NumNonZeroElems();
+        HYPRE_BigInt nnz = k_spm->NumNonZeroElems();
         Mpi::GlobalSum(1, &nnz, nd_fespace_l.GetComm());
         Mpi::Print(", {:d} NNZ\n", nnz);
       }
@@ -144,7 +153,6 @@ std::unique_ptr<Operator> CurlCurlOperator::GetStiffnessMatrix()
         Mpi::Print("\n");
       }
     }
-    auto K_l = std::make_unique<ParOperator>(std::move(k), nd_fespace_l);
     K_l->SetEssentialTrueDofs(dbc_tdof_lists[l], Operator::DiagonalPolicy::DIAG_ONE);
     K->AddOperator(std::move(K_l));
   }
@@ -154,12 +162,15 @@ std::unique_ptr<Operator> CurlCurlOperator::GetStiffnessMatrix()
 
 std::unique_ptr<Operator> CurlCurlOperator::GetCurlMatrix()
 {
+  // Partial assembly for this operator is only available with libCEED backend.
   auto curl = std::make_unique<mfem::DiscreteLinearOperator>(&GetNDSpace(), &GetRTSpace());
   curl->AddDomainInterpolator(new mfem::CurlInterpolator);
-  curl->SetAssemblyLevel(assembly_level);
+  curl->SetAssemblyLevel(utils::GetAssemblyLevel());
   curl->Assemble();
   curl->Finalize();
-  return std::make_unique<ParOperator>(std::move(curl), GetNDSpace(), GetRTSpace(), true);
+  return std::make_unique<ParOperator>(
+      utils::AssembleOperator(std::move(curl), pa_order_threshold), GetNDSpace(),
+      GetRTSpace(), true);
 }
 
 void CurlCurlOperator::GetExcitationVector(int idx, Vector &RHS)

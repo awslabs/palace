@@ -5,6 +5,7 @@
 
 #include "fem/coefficient.hpp"
 #include "fem/integrator.hpp"
+#include "fem/multigrid.hpp"
 #include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
@@ -14,7 +15,8 @@ namespace palace
 
 DomainPostOperator::DomainPostOperator(const IoData &iodata, const MaterialOperator &mat_op,
                                        mfem::ParFiniteElementSpace *nd_fespace,
-                                       mfem::ParFiniteElementSpace *rt_fespace, bool use_pa)
+                                       mfem::ParFiniteElementSpace *rt_fespace,
+                                       int pa_order_threshold)
   : M_ND(nd_fespace ? std::optional<mfem::BilinearForm>(nd_fespace) : std::nullopt),
     M_RT(rt_fespace ? std::optional<mfem::BilinearForm>(rt_fespace) : std::nullopt)
 {
@@ -28,8 +30,8 @@ DomainPostOperator::DomainPostOperator(const IoData &iodata, const MaterialOpera
     constexpr auto MatTypeEpsImag = MaterialPropertyType::PERMITTIVITY_IMAG;
     MaterialPropertyCoefficient<MatTypeEpsReal> epsilon_func(mat_op);
     M_ND->AddDomainIntegrator(new mfem::VectorFEMassIntegrator(epsilon_func));
-    M_ND->SetAssemblyLevel(use_pa ? mfem::AssemblyLevel::PARTIAL
-                                  : mfem::AssemblyLevel::LEGACY);
+    M_ND->SetAssemblyLevel(
+        utils::GetAssemblyLevel(nd_fespace->GetMaxElementOrder(), pa_order_threshold));
     M_ND->Assemble(0);
     M_ND->Finalize(0);
     D.SetSize(M_ND->Height());
@@ -58,14 +60,14 @@ DomainPostOperator::DomainPostOperator(const IoData &iodata, const MaterialOpera
       mfem::BilinearForm &Mi = M.second;
       Mr.AddDomainIntegrator(new mfem::VectorFEMassIntegrator(epsilon_func_r));
       Mi.AddDomainIntegrator(new mfem::VectorFEMassIntegrator(epsilon_func_i));
-      Mr.SetAssemblyLevel(use_pa ? mfem::AssemblyLevel::PARTIAL
-                                 : mfem::AssemblyLevel::LEGACY);
-      Mi.SetAssemblyLevel(use_pa ? mfem::AssemblyLevel::PARTIAL
-                                 : mfem::AssemblyLevel::LEGACY);
-      Mr.Assemble();
-      Mi.Assemble();
-      Mr.Finalize();
-      Mi.Finalize();
+      Mr.SetAssemblyLevel(
+          utils::GetAssemblyLevel(nd_fespace->GetMaxElementOrder(), pa_order_threshold));
+      Mi.SetAssemblyLevel(
+          utils::GetAssemblyLevel(nd_fespace->GetMaxElementOrder(), pa_order_threshold));
+      Mr.Assemble(0);
+      Mi.Assemble(0);
+      Mr.Finalize(0);
+      Mi.Finalize(0);
     }
   }
 
@@ -76,8 +78,8 @@ DomainPostOperator::DomainPostOperator(const IoData &iodata, const MaterialOpera
     constexpr auto MatTypeMuInv = MaterialPropertyType::INV_PERMEABILITY;
     MaterialPropertyCoefficient<MatTypeMuInv> muinv_func(mat_op);
     M_RT->AddDomainIntegrator(new mfem::VectorFEMassIntegrator(muinv_func));
-    M_RT->SetAssemblyLevel(use_pa ? mfem::AssemblyLevel::PARTIAL
-                                  : mfem::AssemblyLevel::LEGACY);
+    M_RT->SetAssemblyLevel(
+        utils::GetAssemblyLevel(rt_fespace->GetMaxElementOrder() + 1, pa_order_threshold));
     M_RT->Assemble(0);
     M_RT->Finalize(0);
     H.SetSize(M_RT->Height());

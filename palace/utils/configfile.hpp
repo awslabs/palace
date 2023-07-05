@@ -749,6 +749,10 @@ public:
   };
   MultigridCoarsenType mg_coarsen_type = MultigridCoarsenType::LOGARITHMIC;
 
+  // Switch to use mfem::TransferOperator or enable partial assembly for the multigrid
+  // transfer operators.
+  bool mg_legacy_transfer = true;
+
   // Use auxiliary space smoothers on geometric multigrid levels.
   int mg_smooth_aux = -1;
 
@@ -844,14 +848,10 @@ public:
   // Approximation order.
   int order = 1;
 
-  // Assembly level for bilinear forms (see https://mfem.org/howto/assembly_levels).
-  enum class AssemblyLevel
-  {
-    FULL,
-    PARTIAL,
-    INVALID = -1
-  };
-  AssemblyLevel assembly_level = AssemblyLevel::FULL;
+  // Order above which to always use partial assembly instead of full assembly.
+  int pa_order_threshold = 100;
+
+  // XX TODO: Separate interpolator partial assembly option?
 
   // Device used to configure the MFEM backend.
   std::string device = "cpu";
