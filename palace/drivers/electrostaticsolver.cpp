@@ -40,7 +40,7 @@ void ElectrostaticSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mes
   // Right-hand side term and solution vector storage.
   Vector RHS(K->Height());
   std::vector<Vector> V(nstep);
-  timer.construct_time += timer.Lap();
+  timer.MarkTime(Timer::CONSTRUCT);
 
   // Main loop over terminal boundaries.
   Mpi::Print("\nComputing electrostatic fields for {:d} terminal boundar{}\n", nstep,
@@ -56,25 +56,25 @@ void ElectrostaticSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mes
     // terminal.
     Mpi::Print("\n");
     laplaceop.GetExcitationVector(idx, *K, V[step], RHS);
-    timer.construct_time += timer.Lap();
+    timer.MarkTime(Timer::CONSTRUCT);
 
     ksp.Mult(RHS, V[step]);
-    timer.solve_time += timer.Lap();
+    timer.MarkTime(Timer::SOLVE);
 
     Mpi::Print(" Sol. ||V|| = {:.6e} (||RHS|| = {:.6e})\n",
                linalg::Norml2(laplaceop.GetComm(), V[step]),
                linalg::Norml2(laplaceop.GetComm(), RHS));
-    timer.postpro_time += timer.Lap();
+    timer.MarkTime(Timer::POSTPRO);
 
     // Next terminal.
     step++;
   }
 
   // Postprocess the capacitance matrix from the computed field solutions.
-  const auto io_time_prev = timer.io_time;
+  const auto io_time_prev = timer[Timer::IO];
   SaveMetadata(ksp);
   Postprocess(laplaceop, postop, V, timer);
-  timer.postpro_time += timer.Lap() - (timer.io_time - io_time_prev);
+  timer.MarkTime(Timer::POSTPRO, timer.Lap() - (timer[Timer::IO] - io_time_prev));
 }
 
 void ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop, PostOperator &postop,
@@ -113,7 +113,7 @@ void ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop, PostOperator &
       auto t0 = timer.Now();
       PostprocessFields(postop, i, idx);
       Mpi::Print(" Wrote fields to disk for terminal {:d}\n", idx);
-      timer.io_time += timer.Now() - t0;
+      timer.MarkTime(Timer::IO, timer.Now() - t0);
     }
 
     // Diagonal: C_ii = 2 U_e(V_i) / V_i².

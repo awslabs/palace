@@ -248,16 +248,16 @@ void EigenSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
                                                 &spaceop.GetH1Spaces());
   ksp->SetOperators(*A, *P);
   eigen->SetLinearSolver(*ksp);
-  timer.construct_time += timer.Lap();
+  timer.MarkTime(Timer::CONSTRUCT);
 
   // Eigenvalue problem solve.
   Mpi::Print("\n");
   int num_conv = eigen->Solve();
   SaveMetadata(*ksp);
-  timer.solve_time += timer.Lap();
+  timer.MarkTime(Timer::SOLVE);
 
   // Postprocess the results.
-  const auto io_time_prev = timer.io_time;
+  const auto io_time_prev = timer[Timer::IO];
   for (int i = 0; i < num_conv; i++)
   {
     // Get the eigenvalue and relative error.
@@ -294,7 +294,7 @@ void EigenSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
     Postprocess(postop, spaceop.GetLumpedPortOp(), i, omega, error1, error2, num_conv,
                 timer);
   }
-  timer.postpro_time += timer.Lap() - (timer.io_time - io_time_prev);
+  timer.MarkTime(Timer::POSTPRO, timer.Lap() - (timer[Timer::IO] - io_time_prev));
 }
 
 void EigenSolver::Postprocess(const PostOperator &postop,
@@ -321,7 +321,7 @@ void EigenSolver::Postprocess(const PostOperator &postop,
     auto t0 = timer.Now();
     PostprocessFields(postop, i, i + 1);
     Mpi::Print(" Wrote mode {:d} to disk\n", i + 1);
-    timer.io_time += timer.Now() - t0;
+    timer.MarkTime(Timer::IO, timer.Now() - t0);
   }
 }
 

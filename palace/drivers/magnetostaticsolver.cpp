@@ -40,7 +40,7 @@ void MagnetostaticSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mes
   // Source term and solution vector storage.
   Vector RHS(K->Height());
   std::vector<Vector> A(nstep);
-  timer.construct_time += timer.Lap();
+  timer.MarkTime(Timer::CONSTRUCT);
 
   // Main loop over current source boundaries.
   Mpi::Print("\nComputing magnetostatic fields for {:d} source boundar{}\n", nstep,
@@ -57,25 +57,25 @@ void MagnetostaticSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mes
     A[step].SetSize(RHS.Size());
     A[step] = 0.0;
     curlcurlop.GetExcitationVector(idx, RHS);
-    timer.construct_time += timer.Lap();
+    timer.MarkTime(Timer::CONSTRUCT);
 
     ksp.Mult(RHS, A[step]);
-    timer.solve_time += timer.Lap();
+    timer.MarkTime(Timer::SOLVE);
 
     Mpi::Print(" Sol. ||A|| = {:.6e} (||RHS|| = {:.6e})\n",
                linalg::Norml2(curlcurlop.GetComm(), A[step]),
                linalg::Norml2(curlcurlop.GetComm(), RHS));
-    timer.postpro_time += timer.Lap();
+    timer.MarkTime(Timer::POSTPRO);
 
     // Next source.
     step++;
   }
 
   // Postprocess the capacitance matrix from the computed field solutions.
-  const auto io_time_prev = timer.io_time;
+  const auto io_time_prev = timer[Timer::IO];
   SaveMetadata(ksp);
   Postprocess(curlcurlop, postop, A, timer);
-  timer.postpro_time += timer.Lap() - (timer.io_time - io_time_prev);
+  timer.MarkTime(Timer::POSTPRO, timer.Lap() - (timer[Timer::IO] - io_time_prev));
 }
 
 void MagnetostaticSolver::Postprocess(CurlCurlOperator &curlcurlop, PostOperator &postop,
@@ -120,7 +120,7 @@ void MagnetostaticSolver::Postprocess(CurlCurlOperator &curlcurlop, PostOperator
       auto t0 = timer.Now();
       PostprocessFields(postop, i, idx);
       Mpi::Print(" Wrote fields to disk for terminal {:d}\n", idx);
-      timer.io_time += timer.Now() - t0;
+      timer.MarkTime(Timer::IO, timer.Now() - t0);
     }
 
     // Diagonal: M_ii = 2 U_m(A_i) / I_i².

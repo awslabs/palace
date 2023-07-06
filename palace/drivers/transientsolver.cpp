@@ -74,7 +74,7 @@ void TransientSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
     MFEM_VERIFY(excitations > 0, "No excitation specified for transient simulation!");
   }
   Mpi::Print("\n");
-  timer.construct_time += timer.Lap();
+  timer.MarkTime(Timer::CONSTRUCT);
 
   // Main time integration loop.
   int step = 0;
@@ -97,7 +97,7 @@ void TransientSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
     {
       timeop.Step(t, delta_t);  // Advances t internally
     }
-    timer.solve_time += timer.Lap();
+    timer.MarkTime(Timer::SOLVE);
 
     double E_elec = 0.0, E_mag = 0.0;
     const Vector &E = timeop.GetE();
@@ -116,10 +116,10 @@ void TransientSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
     }
 
     // Postprocess port voltages/currents and optionally write solution to disk.
-    const auto io_time_prev = timer.io_time;
+    const auto io_time_prev = timer[Timer::IO];
     Postprocess(postop, spaceop.GetLumpedPortOp(), spaceop.GetSurfaceCurrentOp(), step, t,
                 J_coef(t), E_elec, E_mag, !iodata.solver.transient.only_port_post, timer);
-    timer.postpro_time += timer.Lap() - (timer.io_time - io_time_prev);
+    timer.MarkTime(Timer::POSTPRO, timer.Lap() - (timer[Timer::IO] - io_time_prev));
 
     // Increment time step.
     step++;
@@ -259,7 +259,7 @@ void TransientSolver::Postprocess(const PostOperator &postop,
     Mpi::Print("\n");
     PostprocessFields(postop, step / iodata.solver.transient.delta_post, ts);
     Mpi::Print(" Wrote fields to disk at step {:d}\n", step);
-    timer.io_time += timer.Now() - t0;
+    timer.MarkTime(Timer::IO, timer.Now() - t0);
   }
 }
 

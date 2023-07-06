@@ -18,7 +18,7 @@ namespace palace
 class Timer
 {
 public:
-  enum Index
+  enum
   {
     INIT = 0,
     CONSTRUCT,
@@ -32,14 +32,17 @@ public:
   using Clock = std::chrono::steady_clock;
   using Duration = std::chrono::duration<double>;
 
+  static const std::vector<std::string> descriptions;
+
 private:
   const typename Clock::time_point start_time;
   typename Clock::time_point last_lap_time;
   std::vector<Duration> data;
+  std::vector<int> counts;
   std::vector<double> data_min, data_max, data_avg;
 
 public:
-  Timer() : start_time(Now()), last_lap_time(start_time), data((int)NUMTIMINGS) {}
+  Timer() : start_time(Now()), last_lap_time(start_time), data(NUMTIMINGS), counts(NUMTIMINGS) {}
 
   // Get current time.
   typename Clock::time_point Now() const { return Clock::now(); }
@@ -55,35 +58,47 @@ public:
   // Get time since start.
   Duration TimeFromStart() const { return Now() - start_time; }
 
-  // Access the timing data.
-  Duration &init_time = data[INIT];
-  Duration &construct_time = data[CONSTRUCT];
-  Duration &solve_time = data[SOLVE];
-  Duration &postpro_time = data[POSTPRO];
-  Duration &io_time = data[IO];
-  Duration &total_time = data[TOTAL];
+  // Log a timing step by adding a duration
+  Duration MarkTime(int key, Duration time)
+  {
+    data[key] += time;
+    counts[key]++;
+    return data[key];
+  }
+  // Log a timing step by timer lap
+  Duration MarkTime(int key) { return MarkTime(key, Lap()); }
+  
+  // Provide map-like read-only access to the timing data.
+  Duration operator[](int key) const { return data[key]; }
 
-  // Access the reduced timing data.
-  double GetMinTime(Index idx) const { return data_min[idx]; }
-  double GetMaxTime(Index idx) const { return data_max[idx]; }
-  double GetAvgTime(Index idx) const { return data_avg[idx]; }
+  // Provide access to the reduced timing data.
+  double GetMinTime(int i) const { return data_min[i]; }
+  double GetMaxTime(int i) const { return data_max[i]; }
+  double GetAvgTime(int i) const { return data_avg[i]; }
+
+  // Related to counts.
+  bool ShouldPrint(int idx) const { return counts[idx] > 0; }
+  int GetCounts(int idx) const { return counts[idx]; }
 
   // Reduce timing information across MPI ranks.
   void Reduce(MPI_Comm comm)
   {
     const std::size_t ntimes = data.size();
-    data[TOTAL] = TimeFromStart();
+    MarkTime(TOTAL, TimeFromStart());
     data_min.resize(ntimes);
     data_max.resize(ntimes);
     data_avg.resize(ntimes);
+
+    int np = Mpi::Size(comm);
     for (std::size_t i = 0; i < ntimes; i++)
     {
       data_min[i] = data_max[i] = data_avg[i] = data[i].count();
     }
+
     Mpi::GlobalMin(ntimes, data_min.data(), comm);
     Mpi::GlobalMax(ntimes, data_max.data(), comm);
     Mpi::GlobalSum(ntimes, data_avg.data(), comm);
-    int np = Mpi::Size(comm);
+
     for (std::size_t i = 0; i < ntimes; i++)
     {
       data_avg[i] /= np;
@@ -95,27 +110,30 @@ public:
   {
     // clang-format off
     constexpr int p = 3;   // Floating point precision
-    constexpr int w = 12;  // Total column width
-    Mpi::Print(comm,
-               "\n"
-               "Elapsed Time Report (s)   {:>{}s}{:>{}s}{:>{}s}\n"
-               "=========================={}\n"
-               "Initialization            {:{}.{}f}{:{}.{}f}{:{}.{}f}\n"
-               "Operator Construction     {:{}.{}f}{:{}.{}f}{:{}.{}f}\n"
-               "Solve                     {:{}.{}f}{:{}.{}f}{:{}.{}f}\n"
-               "Postprocessing            {:{}.{}f}{:{}.{}f}{:{}.{}f}\n"
-               "Disk I/O                  {:{}.{}f}{:{}.{}f}{:{}.{}f}\n"
-               "--------------------------{}\n"
-               "Total Simulation          {:{}.{}f}{:{}.{}f}{:{}.{}f}\n",
-               "Min.", w, "Max.", w, "Avg.", w,
-               std::string(3 * w, '='),
-               data_min[INIT], w, p, data_max[INIT], w, p, data_avg[INIT], w, p,
-               data_min[CONSTRUCT], w, p, data_max[CONSTRUCT], w, p, data_avg[CONSTRUCT], w, p,
-               data_min[SOLVE], w, p, data_max[SOLVE], w, p, data_avg[SOLVE], w, p,
-               data_min[POSTPRO], w, p, data_max[POSTPRO], w, p, data_avg[POSTPRO], w, p,
-               data_min[IO], w, p, data_max[IO], w, p, data_avg[IO], w, p,
-               std::string(3 * w, '-'),
-               data_min[TOTAL], w, p, data_max[TOTAL], w, p, data_avg[TOTAL], w, p);
+    constexpr int w = 12;  // Data column width
+    constexpr int h = 26;  // Left-hand side width
+    Mpi::Print(
+      comm,
+      "\n"
+      "{:<{}s}{:>{}s}{:>{}s}{:>{}s}\n",
+      "Elapsed Time Report (s)", h, "Min.", w, "Max.", w, "Avg.", w
+    );
+    Mpi::Print(comm, "{}\n", std::string(h + 3 * w, '='));
+    for (int i = 0; i < NUMTIMINGS; i++)
+    {
+        if (ShouldPrint(i))
+        {
+          if (i == TOTAL)
+          {
+            Mpi::Print(comm, "{}\n", std::string(h + 3 * w, '-'));
+          }
+          Mpi::Print(
+            comm,
+            "{:<{}s}{:{}.{}f}{:{}.{}f}{:{}.{}f}\n",
+            descriptions[i], h, data_min[i], w, p, data_max[i], w, p, data_avg[i], w, p
+          );
+        }
+    }
     // clang-format on
   }
 };

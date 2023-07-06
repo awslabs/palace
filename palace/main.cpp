@@ -184,7 +184,7 @@ int main(int argc, char *argv[])
   mesh.push_back(mesh::ReadMesh(world_comm, iodata, false, true, true, false, timer));
   iodata.NondimensionalizeInputs(*mesh[0]);
   mesh::RefineMesh(iodata, mesh);
-  timer.init_time += timer.Lap() - timer.io_time;
+  timer.MarkTime(Timer::INIT, timer.Lap() - timer[Timer::IO]);
 
   // Run the problem driver.
   solver->Solve(mesh, timer);

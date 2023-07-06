@@ -82,7 +82,7 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(MPI_Comm comm, const IoData &iodata, boo
     }
   }
   Mpi::Barrier(comm);
-  timer.io_time += timer.Now() - t0;
+  timer.MarkTime(Timer::IO, timer.Now() - t0);
 
   std::unique_ptr<int[]> partitioning;
   if (Mpi::Root(comm))

@@ -131,12 +131,12 @@ void BaseSolver::SaveMetadata(const Timer &timer) const
   if (root)
   {
     json meta = LoadMetadata(post_dir);
-    meta["ElapsedTime"]["Initialization"] = timer.GetAvgTime(Timer::INIT);
-    meta["ElapsedTime"]["OperatorConstruction"] = timer.GetAvgTime(Timer::CONSTRUCT);
-    meta["ElapsedTime"]["Solve"] = timer.GetAvgTime(Timer::SOLVE);
-    meta["ElapsedTime"]["Postprocessing"] = timer.GetAvgTime(Timer::POSTPRO);
-    meta["ElapsedTime"]["DiskIO"] = timer.GetAvgTime(Timer::IO);
-    meta["ElapsedTime"]["Total"] = timer.GetAvgTime(Timer::TOTAL);
+    for (int i = 0; i < Timer::NUMTIMINGS; i++)
+    {
+      auto key = Timer::descriptions[i];
+      key.erase(std::remove_if(key.begin(), key.end(), isspace), key.end());
+      meta["ElapsedTime"][key] = timer.GetAvgTime(i);
+    }
     WriteMetadata(post_dir, meta);
   }
 }
