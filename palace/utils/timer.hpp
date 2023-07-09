@@ -22,6 +22,8 @@ public:
   {
     INIT = 0,
     CONSTRUCT,
+    PSS,
+    HDMSOLVE,
     SOLVE,
     POSTPRO,
     IO,

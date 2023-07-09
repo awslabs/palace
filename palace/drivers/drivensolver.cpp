@@ -245,7 +245,8 @@ void DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator &postop, i
   // phase. Initialize the basis with samples from the top and bottom of the frequency
   // range of interest. Each call for an HDM solution adds the frequency sample to P_S and
   // removes it from P \ P_S.
-  Timer local_timer;
+  TimedBlock p(Timer::PSS);
+  auto t0 = TimedBlock::Timer().Now();
   const double f0 = iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, 1.0);
   Mpi::Print("\nBeginning PROM construction offline phase:\n"
              " {:d} points for frequency sweep over [{:.3e}, {:.3e}] GHz\n",
@@ -253,16 +254,16 @@ void DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator &postop, i
   RomOperator prom(iodata, spaceop);
   prom.Initialize(omega0, delta_omega, nstep - step0, nmax);
   spaceop.GetWavePortOp().SetSuppressOutput(true);  // Suppress wave port output for offline
-  local_timer.MarkTime(Timer::CONSTRUCT);
-
-  prom.SolveHDM(omega0, E);  // Print matrix stats at first HDM solve
-  local_timer.MarkTime(Timer::SOLVE);
+  {
+    TimedBlock h(Timer::HDMSOLVE);
+    prom.SolveHDM(omega0, E);  // Print matrix stats at first HDM solve
+  }
   prom.AddHDMSample(omega0, E);
-  local_timer.MarkTime(Timer::CONSTRUCT);
-  prom.SolveHDM(omega0 + (nstep - step0 - 1) * delta_omega, E);
-  local_timer.MarkTime(Timer::SOLVE);
+  {
+    TimedBlock h(Timer::HDMSOLVE);
+    prom.SolveHDM(omega0 + (nstep - step0 - 1) * delta_omega, E);
+  }
   prom.AddHDMSample(omega0 + (nstep - step0 - 1) * delta_omega, E);
-  local_timer.MarkTime(Timer::CONSTRUCT);
 
   // Greedy procedure for basis construction (offline phase). Basis is initialized with
   // solutions at frequency sweep endpoints.
@@ -273,7 +274,6 @@ void DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator &postop, i
     // Compute maximum error in parameter domain with current PROM.
     double omega_star;
     max_error = prom.ComputeMaxError(ncand, omega_star);
-    local_timer.MarkTime(Timer::CONSTRUCT);
     if (max_error < offline_tol || iter == nmax)
     {
       break;
@@ -284,36 +284,35 @@ void DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator &postop, i
         "\nGreedy iteration {:d} (n = {:d}): ω* = {:.3e} GHz ({:.3e}), error = {:.3e}\n",
         iter - iter0 + 1, prom.GetReducedDimension(), omega_star * f0, omega_star,
         max_error);
-    prom.SolveHDM(omega_star, E);
-    local_timer.MarkTime(Timer::SOLVE);
+    {
+      TimedBlock h(Timer::HDMSOLVE);
+      prom.SolveHDM(omega_star, E);
+    }
     prom.AddHDMSample(omega_star, E);
-    local_timer.MarkTime(Timer::CONSTRUCT);
     iter++;
   }
+  TimedBlock c(Timer::CONSTRUCT);  // Force fallback from parameter space sampling timing
   Mpi::Print("\nAdaptive sampling{} {:d} frequency samples:\n"
              " n = {:d}, error = {:.3e}, tol = {:.3e}\n",
              (iter == nmax) ? " reached maximum" : " converged with", iter,
              prom.GetReducedDimension(), max_error, offline_tol);
   utils::PrettyPrint(prom.GetSampleFrequencies(), f0, " Sampled frequencies (GHz):");
-  SaveMetadata(prom.GetLinearSolver());
-
-  const auto local_construction_time = local_timer.TimeFromStart();
   Mpi::Print(" Total offline phase elapsed time: {:.2e} s\n"
              " Sampling and PROM construction: {:.2e} s, HDM solves: {:.2e} s\n",
-             Timer::Duration(local_construction_time).count(),
-             Timer::Duration(local_timer[Timer::CONSTRUCT]).count(),
-             Timer::Duration(local_timer[Timer::SOLVE]).count());  // Timings on rank 0
+             Timer::Duration(TimedBlock::Timer().Now() - t0).count(),
+             Timer::Duration(TimedBlock::Timer()[Timer::PSS]).count(),
+             Timer::Duration(TimedBlock::Timer()[Timer::HDMSOLVE]).count());  // Timings on root
+  SaveMetadata(prom.GetLinearSolver());
 
   // Main fast frequency sweep loop (online phase).
   Mpi::Print("\nBeginning fast frequency sweep online phase\n");
   spaceop.GetWavePortOp().SetSuppressOutput(false);  // Disable output suppression
   int step = step0;
   double omega = omega0;
-  auto t0 = TimedBlock::Timer().Now();
   while (step < nstep)
   {
     // Assemble the linear system.
-    TimedBlock c(Timer::CONSTRUCT);
+    TimedBlock d(Timer::CONSTRUCT);
     const double freq = iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, omega);
     Mpi::Print("\nIt {:d}/{:d}: ω/2π = {:.3e} GHz (elapsed time = {:.2e} s)\n", step + 1,
                nstep, freq, Timer::Duration(TimedBlock::Timer().Now() - t0).count());
