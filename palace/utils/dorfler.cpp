@@ -102,15 +102,14 @@ double ComputeDorflerThreshold(double fraction, const mfem::Vector &e)
 
     const auto candidate_fraction = error_marked / total_error;
 
-    Mpi::Debug("Threshold: {:e} < {:e} < {:e}\n", min_threshold, error_threshold,
-               max_threshold);
-    Mpi::Debug("Marked Elems: {} <= {} <= {}\n", min_elem_marked, elem_marked,
-               max_elem_marked);
+    Mpi::Debug("Threshold: {:e} < {:e} < {:e}, Marked Elems: {} <= {} <= {}\n",
+               min_threshold, error_threshold, max_threshold,
+               min_elem_marked, elem_marked, max_elem_marked);
 
     // Set the tolerance based off of the largest local indicator value. These
     // tolerance values are chosen based on testing, opt not to expose them.
-    constexpr double frac_tol = 1e-6;
-    const double error_tol = 1e-10 * max_indicator;
+    constexpr double frac_tol = 2 * std::numeric_limits<double>::epsilon();
+    const double error_tol = 2 * std::numeric_limits<double>::epsilon() * max_indicator;
     if (std::abs(max_threshold - min_threshold) < error_tol ||
         std::abs(candidate_fraction - fraction) < frac_tol ||
         max_elem_marked == min_elem_marked)

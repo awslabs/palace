@@ -116,7 +116,7 @@ struct AdaptiveRefinementData
   int max_its = 0;
   // Minimum number of iterations to perform during the AMR.
   int min_its = 0;
-  // Dorfler update fraction. The set of marked elements is the minimum set
+  // Dörfler update fraction. The set of marked elements is the minimum set
   // that contains update_fraction of the total error.
   double update_fraction = 0.4;
   // Whether or not to perform coarsening during the AMR.
