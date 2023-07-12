@@ -651,6 +651,10 @@ void RebalanceConformalMesh(std::unique_ptr<mfem::ParMesh> &mesh)
     // std::istringstream fi(zlib::DecompressString(si));
     mesh = std::make_unique<mfem::ParMesh>(comm, fi);
   }
+
+  mesh->FinalizeTopology();
+  mesh->Finalize(true);
+  mesh->ExchangeFaceNbrData();
 }
 
 }  // namespace mesh
@@ -784,6 +788,9 @@ std::map<int, std::array<int, 2>> CheckMesh(mfem::Mesh &orig_mesh,
                                             const IoData &iodata, bool clean_elem,
                                             bool add_bdr, bool add_subdomain)
 {
+  orig_mesh.FinalizeTopology();
+  orig_mesh.Finalize(true);
+
   // - Check that all external boundaries of the mesh have a corresponding boundary
   //   condition.
   // - If desired, create a new mesh which has added boundary elements for all material
@@ -1089,7 +1096,7 @@ std::map<int, std::array<int, 2>> CheckMesh(mfem::Mesh &orig_mesh,
   // boundary elements too since no new dofs are added). See the MFEM trimmer miniapp for
   // reference.
   new_mesh.FinalizeTopology();
-  new_mesh.Finalize();
+  new_mesh.Finalize(true);
   new_mesh.RemoveUnusedVertices();
   if (orig_mesh.GetNodes())
   {

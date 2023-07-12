@@ -138,6 +138,9 @@ void RebalanceMesh(std::unique_ptr<mfem::ParMesh> &mesh)
     }
   }
 
+  mesh->FinalizeTopology();
+  mesh->Finalize(true);
+
   // If the mesh is higher order, synchronize through the nodal grid function.
   // This will in turn call the mesh exchange of face neighbor data.
   if (mesh->GetNodes())
@@ -150,7 +153,6 @@ void RebalanceMesh(std::unique_ptr<mfem::ParMesh> &mesh)
   {
     mesh->ExchangeFaceNbrData();
   }
-  mesh->Finalize();
 }
 
 }  // namespace
@@ -283,6 +285,7 @@ BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<mfem::ParMesh>> 
 
       const double threshold =
           utils::ComputeDorflerThreshold(1 - param.coarsening_fraction, coarse_error);
+
 
       const auto initial_elem_count = mesh.back()->GetGlobalNE();
       mesh.back()->DerefineByError(indicators.local_error_indicators, threshold,
