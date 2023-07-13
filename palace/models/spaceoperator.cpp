@@ -257,8 +257,6 @@ SpaceOperator::GetSystemMatrixPetsc(SpaceOperator::OperatorType type, double ome
       AddExtraSystemBdrCoefficients(omega, dfbr, dfbi, fbr, fbi);
       str = "A2";
       break;
-    default:
-      MFEM_ABORT("Invalid GetSystemMatrix matrix type!");
   }
   std::unique_ptr<mfem::HypreParMatrix> hAr, hAi;
   bool has_real = false, has_imag = false;
@@ -348,7 +346,6 @@ SpaceOperator::GetSystemMatrix(SpaceOperator::OperatorType type, double omega,
       break;
     case OperatorType::COMPLETE:
     case OperatorType::EXTRA:
-    default:
       MFEM_ABORT("Invalid GetSystemMatrix matrix type for HypreParMatrix output!");
   }
   if (df.empty() && f.empty() && fb.empty())

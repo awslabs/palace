@@ -95,7 +95,8 @@ ConfigurePreconditioner(const IoData &iodata, const mfem::Array<int> &dbc_marker
           "Solver was not built with MUMPS support, please choose a different solver!");
 #endif
       break;
-    default:
+    case config::LinearSolverData::Type::DEFAULT:
+    case config::LinearSolverData::Type::INVALID:
       MFEM_ABORT("Unexpected type for KspPreconditioner configuration!");
       break;
   }

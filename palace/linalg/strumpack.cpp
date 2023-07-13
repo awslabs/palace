@@ -31,9 +31,10 @@ GetCompressionType(config::LinearSolverData::CompressionType type)
       return strumpack::CompressionType::ZFP_BLR_HODLR;
       break;
     case config::LinearSolverData::CompressionType::NONE:
-    default:
+    case config::LinearSolverData::CompressionType::INVALID:
       return strumpack::CompressionType::NONE;
   }
+  return strumpack::CompressionType::NONE;  // For compiler warning
 }
 
 }  // namespace

@@ -160,9 +160,6 @@ void ArpackEigenSolver::SetWhichEigenpairs(EigenSolverBase::WhichType type)
       MFEM_ABORT("ARPACK eigenvalue solver does not implement TARGET_REAL or "
                  "TARGET_IMAGINARY for SetWhichEigenpairs!");
       break;
-    default:
-      MFEM_ABORT("Which eigenpair not implemented!");
-      break;
   }
 }
 
@@ -515,9 +512,6 @@ void ArpackEigenSolver::GetError(int i, EigenSolverBase::ErrorType type, double 
       break;
     case ErrorType::BACKWARD:
       err = res[j] / GetBackwardScaling(eig[j]);
-      break;
-    default:
-      MFEM_ABORT("Eigenpair error type not implemented!");
       break;
   }
 }

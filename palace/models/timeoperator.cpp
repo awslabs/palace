@@ -289,7 +289,7 @@ TimeOperator::TimeOperator(const IoData &iodata, SpaceOperator &spaceop,
         type = mfem::TimeDependentOperator::EXPLICIT;
       }
       break;
-    default:
+    case config::TransientSolverData::Type::INVALID:
       MFEM_ABORT("Invalid transient solver type!");
       type = mfem::TimeDependentOperator::EXPLICIT;  // For compiler warning
       break;

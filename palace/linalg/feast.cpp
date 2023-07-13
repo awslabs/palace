@@ -790,9 +790,6 @@ void FeastEigenSolver::GetError(int i, EigenSolverBase::ErrorType type, double &
     case ErrorType::BACKWARD:
       err = res[j] / GetBackwardScaling(eig[j]);
       break;
-    default:
-      MFEM_ABORT("Eigenpair error type not implemented!");
-      break;
   }
 }
 

@@ -486,7 +486,7 @@ void IoData::NondimensionalizeInputs(mfem::ParMesh &mesh)
 double IoData::DimensionalizeValue(IoData::ValueType type, double v) const
 {
   // XX TODO: Add more for fields, currents, voltages, energies
-  double sf;
+  double sf = 1.0;
   switch (type)
   {
     case ValueType::TIME:
@@ -509,10 +509,6 @@ double IoData::DimensionalizeValue(IoData::ValueType type, double v) const
       break;
     case ValueType::CONDUCTIVITY:
       sf = 1.0 / (electromagnetics::Z0_ * Lc);  // [S/m]
-      break;
-    default:
-      MFEM_ABORT("Unsupported value type for dimensionalization!");
-      sf = 1.0;  // For compiler warning
       break;
   }
   return v * sf;

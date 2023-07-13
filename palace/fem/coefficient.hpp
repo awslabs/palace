@@ -203,8 +203,7 @@ enum class DielectricInterfaceType
   DEFAULT,
   MA,
   MS,
-  SA,
-  INVALID = -1
+  SA
 };
 
 template <DielectricInterfaceType Type>
@@ -337,8 +336,7 @@ enum class MaterialPropertyType
   CONDUCTIVITY,
   INV_LONDON_DEPTH,
   INV_Z0,
-  INV_PERMEABILITY_C0,
-  INVALID = -1
+  INV_PERMEABILITY_C0
 };
 
 template <MaterialPropertyType Type>
@@ -457,14 +455,12 @@ enum class EnergyDensityType
 {
   ELECTRIC,
   ELECTRIC_LOSS,
-  MAGNETIC,
-  INVALID = -1
+  MAGNETIC
 };
 enum class EnergyDensityValueType
 {
   COMPLEX,
-  REAL,
-  INVALID = -1
+  REAL
 };
 
 template <EnergyDensityType Type, EnergyDensityValueType ValueType>
