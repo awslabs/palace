@@ -146,7 +146,7 @@ set(EXTERN_PETSC_GIT_BRANCH
   "Git branch for external PETSc build"
 )
 set(EXTERN_PETSC_GIT_TAG
-  "be9abff6868db7c605b9a0e8c528eb974d5f6240" CACHE STRING  # 06/29/2023
+  "7006ab40fc609cdb009e742a19581829c59eb108" CACHE STRING  # 07/12/2023
   "Git tag for external PETSc build"
 )
 
@@ -174,7 +174,7 @@ set(EXTERN_SLEPC_GIT_BRANCH
   "Git branch for external SLEPc build"
 )
 set(EXTERN_SLEPC_GIT_TAG
-  "8e3b117d1541118f30cb23abc37985e98cfecd2f" CACHE STRING  # 06/27/2023
+  "0f4a11b3abcb99a1b8d99d471c378b79620bab37" CACHE STRING  # 07/13/2023
   "Git tag for external SLEPc build"
 )
 
@@ -188,7 +188,7 @@ set(EXTERN_STRUMPACK_GIT_BRANCH
   "Git branch for external STRUMPACK build"
 )
 set(EXTERN_STRUMPACK_GIT_TAG
-  "0a143ba7617c56859dd2aec5fa4b5ff7bbfd6ff8" CACHE STRING  # 06/24/2023
+  "2c0b804820d270bf41bbf90c8074b8dd7f17abc6" CACHE STRING  # 07/10/2023
   "Git tag for external STRUMPACK build"
 )
 
@@ -202,7 +202,7 @@ set(EXTERN_SUPERLU_GIT_BRANCH
   "Git branch for external SuperLU_DIST build"
 )
 set(EXTERN_SUPERLU_GIT_TAG
-  "be70919c08cfbd2044b5e57414d8cab844671f07" CACHE STRING  # 06/21/2023
+  "20d0a436e94aecb600b2b86673be59a22aedd30a" CACHE STRING  # 07/09/2023
   "Git tag for external SuperLU_DIST build"
 )
 
