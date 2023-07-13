@@ -48,7 +48,7 @@ connection is required.
 
 System requirements:
 
-  - CMake version 3.13 or later
+  - CMake version 3.18.1 or later
   - C++17 compatible C++ compiler
   - C and (optionally) Fortran compilers for dependency builds
   - MPI distribution

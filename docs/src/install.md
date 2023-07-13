@@ -27,7 +27,7 @@ found using `spack info palace`.
 
 A build from source requires the following prerequisites installed on your system:
 
-  - [CMake](https://cmake.org/download) version 3.13 or later
+  - [CMake](https://cmake.org/download) version 3.18.1 or later
   - C++ compiler supporting C++17
   - C and (optionally) Fortran compilers for dependency builds
   - MPI distribution

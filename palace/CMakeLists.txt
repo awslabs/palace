@@ -5,8 +5,8 @@
 # CMake configuration for the main Palace application
 #
 
-# CMake 3.13 was released in Nov. 2018
-cmake_minimum_required(VERSION 3.13)
+# CMake 3.18.1 was released in Jul. 2020
+cmake_minimum_required(VERSION 3.18.1)
 
 # Prohibit in-source builds
 if("${CMAKE_SOURCE_DIR}" STREQUAL "${CMAKE_BINARY_DIR}")
