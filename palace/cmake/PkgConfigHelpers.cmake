@@ -41,7 +41,7 @@ int main()
   TS ts;
   int argc = 0;
   char **argv = NULL;
-  PetscCall(PetscInitialize(&argc, &argv, PETSC_NULL, PETSC_NULL));
+  PetscCall(PetscInitialize(&argc, &argv, PETSC_NULLPTR, PETSC_NULLPTR));
   PetscCall(TSCreate(PETSC_COMM_WORLD, &ts));
   PetscCall(TSSetFromOptions(ts));
   PetscCall(TSDestroy(&ts));
@@ -80,7 +80,7 @@ int main()
   EPS eps;
   int argc = 0;
   char **argv = NULL;
-  PetscCall(SlepcInitialize(&argc, &argv, PETSC_NULL, PETSC_NULL));
+  PetscCall(SlepcInitialize(&argc, &argv, PETSC_NULLPTR, PETSC_NULLPTR));
   PetscCall(EPSCreate(PETSC_COMM_SELF, &eps));
   PetscCall(EPSDestroy(&eps));
   PetscCall(SlepcFinalize());
