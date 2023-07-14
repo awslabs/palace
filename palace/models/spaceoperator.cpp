@@ -193,21 +193,35 @@ std::unique_ptr<Operator> BuildOperator(mfem::ParFiniteElementSpace &fespace, T1
                                         int skip_zeros, bool pc_lor = false)
 {
   auto a = std::make_unique<mfem::SymmetricBilinearForm>(&fespace);
-  if (df && !df->empty())
+  if (df && !df->empty() && f && !f->empty() && mfem::DeviceCanUseCeed())
   {
-    a->AddDomainIntegrator(new mfem::CurlCurlIntegrator(*df));
+    a->AddDomainIntegrator(new mfem::CurlCurlMassIntegrator(*df, *f));
   }
-  if (f && !f->empty())
+  else
   {
-    a->AddDomainIntegrator(new mfem::VectorFEMassIntegrator(*f));
+    if (df && !df->empty())
+    {
+      a->AddDomainIntegrator(new mfem::CurlCurlIntegrator(*df));
+    }
+    if (f && !f->empty())
+    {
+      a->AddDomainIntegrator(new mfem::VectorFEMassIntegrator(*f));
+    }
   }
-  if (dfb && !dfb->empty())
+  if (dfb && !dfb->empty() && fb && !fb->empty() && mfem::DeviceCanUseCeed())
   {
-    a->AddBoundaryIntegrator(new mfem::CurlCurlIntegrator(*dfb));
+    a->AddBoundaryIntegrator(new mfem::CurlCurlMassIntegrator(*dfb, *fb));
   }
-  if (fb && !fb->empty())
+  else
   {
-    a->AddBoundaryIntegrator(new mfem::VectorFEMassIntegrator(*fb));
+    if (dfb && !dfb->empty())
+    {
+      a->AddBoundaryIntegrator(new mfem::CurlCurlIntegrator(*dfb));
+    }
+    if (fb && !fb->empty())
+    {
+      a->AddBoundaryIntegrator(new mfem::VectorFEMassIntegrator(*fb));
+    }
   }
   if (pc_lor)
   {

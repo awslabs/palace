@@ -751,7 +751,7 @@ public:
 
   // Switch to use mfem::TransferOperator or enable partial assembly for the multigrid
   // transfer operators.
-  bool mg_legacy_transfer = true;
+  bool mg_legacy_transfer = false;
 
   // Use auxiliary space smoothers on geometric multigrid levels.
   int mg_smooth_aux = -1;

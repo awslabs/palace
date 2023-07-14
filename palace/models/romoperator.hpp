@@ -9,7 +9,7 @@
 #include <set>
 #include <vector>
 #include <Eigen/Dense>
-#include "linalg/curlcurl.hpp"
+#include "linalg/hcurl.hpp"
 #include "linalg/ksp.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
@@ -42,7 +42,7 @@ private:
   std::unique_ptr<ComplexKspSolver> ksp;
 
   // Linear solver for inner product solves for error metric.
-  std::unique_ptr<CurlCurlMassSolver> kspKM;
+  std::unique_ptr<HCurlNormSolver> kspKM;
 
   // PROM matrices and vectors.
   Eigen::MatrixXcd Kr, Mr, Cr, Ar;
