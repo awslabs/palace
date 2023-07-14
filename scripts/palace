@@ -18,10 +18,12 @@ Options:
   -launcher, --launcher LAUNCHER   MPI launcher, default is mpirun
   -map-by, --map-by                Options to pass with --map-by to MPI launcher, for example :SPAN or :OVERSUBSCRIBE
   -bindings, --report-bindings     Pass --report-bindings option to MPI launcher
+  -x, --env \"VAR1;VAR2;...\"      List of environment variables to export with OMPI_MCA_mca_base_env_list (for OpenMPI)
 "
 }
 
 # Parse arguments
+BASE_ENV_LIST="PATH;LD_LIBRARY_PATH"
 POSITIONAL=()
 while [[ $# -gt 0 ]]; do
     key="$1"
@@ -64,6 +66,11 @@ while [[ $# -gt 0 ]]; do
         ;;
         -bindings|--report-bindings)
         BINDINGS="--report-bindings"
+        shift
+        ;;
+        -x|--env)
+        BASE_ENV_LIST="$BASE_ENV_LIST;$2"
+        shift
         shift
         ;;
         "-"|"--")
@@ -191,7 +198,7 @@ else
     echo The master node of this job is `hostname`
     echo The working directory is `echo $SUBMIT_DIR`
     echo This job runs on the following nodes: && cat $NODE_FILE
-    export OMPI_MCA_mca_base_env_list="PATH;LD_LIBRARY_PATH"
+    export OMPI_MCA_mca_base_env_list="$BASE_ENV_LIST"
     MPIRUN="$MPIRUN --hostfile $NODE_FILE"
     # NUM_NODES=$(wc -l < $NODE_FILE)
     # NUM_PPN=$(($(($NUM_PROCS + $NUM_NODES - 1)) / $NUM_NODES))

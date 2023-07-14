@@ -12,11 +12,13 @@ Fetch most recent commit from dependency repositories
 Options:
   -h, --help                       Show this help message and exit
   -v, --verbose                    Verbose log output
+  -p, --package <PACKAGE_NAME>     Check for updates for a specified package (may be repeated)
 "
 }
 
 # Parse arguments
 VERBOSE="false"
+PKG_LIST=""
 POSITIONAL=()
 while [[ $# -gt 0 ]]; do
     key="$1"
@@ -27,6 +29,11 @@ while [[ $# -gt 0 ]]; do
         ;;
         -v|--verbose)
         VERBOSE="true"
+        shift
+        ;;
+        -p|--package)
+        PKG_LIST="${PKG_LIST:+$PKG_LIST$'\n'}$2"
+        shift
         shift
         ;;
         *)
@@ -51,6 +58,18 @@ if ! command -v git &> /dev/null; then
 fi
 
 GIT_REMOTE_URLS=$(grep '\.git' $SOURCE_DIR/cmake/ExternalGitTags.cmake | awk '{print $1}' | sed 's/\"//g')
+if [[ ! -z "$PKG_LIST" ]]; then
+    GIT_URLS_TMP=""
+    for PKG in $PKG_LIST; do
+        PKG_URL=$(echo "$GIT_REMOTE_URLS" | grep -i $PKG)
+        GIT_URLS_TMP="$PKG_URL${GIT_URLS_TMP:+$'\n'$GIT_URLS_TMP}"
+    done
+    GIT_REMOTE_URLS=$GIT_URLS_TMP
+fi
+if [[ -z "$GIT_REMOTE_URLS" ]]; then
+    echo "Error: Empty package list"
+    exit 1
+fi
 
 TMP_DIR=$(mktemp -d 2>/dev/null || mktemp -d -t 'TMP_DIR')
 pushd $TMP_DIR > /dev/null
