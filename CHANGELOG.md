@@ -23,6 +23,7 @@ The format of this changelog is based on
     affects the Spack package recipe, so a new recipe is distributed as part of Palace in
     in `spack/` which will keep compatibility with `main` while changes are upstreamed to
     the built-in Spack repository.
+  - Add a basic Makefile with some useful targets for development.
 
 ## [0.11.1] - 2023-05-03
 
