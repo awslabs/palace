@@ -6,17 +6,7 @@
 #
 
 # Force build order
-if(PALACE_WITH_ARPACK)
-  set(HYPRE_DEPENDENCIES arpack-ng)
-elseif(PALACE_WITH_MUMPS)
-  set(HYPRE_DEPENDENCIES mumps)
-elseif(PALACE_WITH_STRUMPACK)
-  set(HYPRE_DEPENDENCIES strumpack)
-elseif(PALACE_WITH_SUPERLU)
-  set(HYPRE_DEPENDENCIES superlu_dist)
-else()
-  set(HYPRE_DEPENDENCIES parmetis)
-endif()
+set(HYPRE_DEPENDENCIES)
 
 set(HYPRE_OPTIONS ${PALACE_SUPERBUILD_DEFAULT_ARGS})
 list(APPEND HYPRE_OPTIONS
@@ -45,13 +35,13 @@ message(STATUS "HYPRE_OPTIONS: ${HYPRE_OPTIONS_PRINT}")
 include(ExternalProject)
 ExternalProject_Add(hypre
   DEPENDS           ${HYPRE_DEPENDENCIES}
-  GIT_REPOSITORY    ${CMAKE_CURRENT_SOURCE_DIR}/hypre
+  GIT_REPOSITORY    ${EXTERN_HYPRE_URL}
   GIT_TAG           ${EXTERN_HYPRE_GIT_TAG}
-  SOURCE_DIR        ${CMAKE_CURRENT_BINARY_DIR}/hypre
-  BINARY_DIR        ${CMAKE_CURRENT_BINARY_DIR}/hypre-build
+  SOURCE_DIR        ${CMAKE_BINARY_DIR}/extern/hypre
+  BINARY_DIR        ${CMAKE_BINARY_DIR}/extern/hypre-build
   INSTALL_DIR       ${CMAKE_INSTALL_PREFIX}
-  PREFIX            ${CMAKE_CURRENT_BINARY_DIR}/hypre-cmake
+  PREFIX            ${CMAKE_BINARY_DIR}/extern/hypre-cmake
   UPDATE_COMMAND    ""
-  CONFIGURE_COMMAND cmake <SOURCE_DIR>/src "${HYPRE_OPTIONS}"
+  CONFIGURE_COMMAND ${CMAKE_COMMAND} <SOURCE_DIR>/src "${HYPRE_OPTIONS}"
   TEST_COMMAND      ""
 )

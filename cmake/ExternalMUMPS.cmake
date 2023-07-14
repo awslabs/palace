@@ -6,11 +6,7 @@
 #
 
 # Force build order
-if(PALACE_WITH_STRUMPACK)
-  set(MUMPS_DEPENDENCIES strumpack)
-else()
-  set(MUMPS_DEPENDENCIES scalapack)
-endif()
+set(MUMPS_DEPENDENCIES scalapack metis)
 
 set(MUMPS_OPTIONS ${PALACE_SUPERBUILD_DEFAULT_ARGS})
 list(APPEND MUMPS_OPTIONS
@@ -28,9 +24,9 @@ list(APPEND MUMPS_OPTIONS
   "-Dmetis=ON"
   "-Dscotch=OFF"
   "-DMETIS_LIBRARY=${METIS_LIBRARIES}"
-  "-DMETIS_INCLUDE_DIR=${METIS_INCLUDE_DIRS}"
+  "-DMETIS_INCLUDE_DIR=${CMAKE_INSTALL_PREFIX}/include"
   "-DSCALAPACK_LIBRARIES=${SCALAPACK_LIBRARIES}"
-  "-DSCALAPACK_INCLUDE_DIRS=${SCALAPACK_INCLUDE_DIRS}"
+  "-DSCALAPACK_INCLUDE_DIRS=${CMAKE_INSTALL_PREFIX}/include"
 )
 
 # Configure LAPACK dependency
@@ -46,20 +42,20 @@ message(STATUS "MUMPS_OPTIONS: ${MUMPS_OPTIONS_PRINT}")
 
 # Fix FindLAPACK and FindScaLAPACK in configuration
 set(MUMPS_PATCH_FILES
-  "${CMAKE_CURRENT_SOURCE_DIR}/patch/mumps/patch_build.diff"
+  "${CMAKE_SOURCE_DIR}/extern/patch/mumps/patch_build.diff"
 )
 
 include(ExternalProject)
 ExternalProject_Add(mumps
   DEPENDS           ${MUMPS_DEPENDENCIES}
-  GIT_REPOSITORY    ${CMAKE_CURRENT_SOURCE_DIR}/mumps
+  GIT_REPOSITORY    ${EXTERN_MUMPS_URL}
   GIT_TAG           ${EXTERN_MUMPS_GIT_TAG}
-  SOURCE_DIR        ${CMAKE_CURRENT_BINARY_DIR}/mumps
-  BINARY_DIR        ${CMAKE_CURRENT_BINARY_DIR}/mumps-build
+  SOURCE_DIR        ${CMAKE_BINARY_DIR}/extern/mumps
+  BINARY_DIR        ${CMAKE_BINARY_DIR}/extern/mumps-build
   INSTALL_DIR       ${CMAKE_INSTALL_PREFIX}
-  PREFIX            ${CMAKE_CURRENT_BINARY_DIR}/mumps-cmake
+  PREFIX            ${CMAKE_BINARY_DIR}/extern/mumps-cmake
   UPDATE_COMMAND    ""
   PATCH_COMMAND     git apply "${MUMPS_PATCH_FILES}"
-  CONFIGURE_COMMAND cmake <SOURCE_DIR> "${MUMPS_OPTIONS}"
+  CONFIGURE_COMMAND ${CMAKE_COMMAND} <SOURCE_DIR> "${MUMPS_OPTIONS}"
   TEST_COMMAND      ""
 )

@@ -10,3 +10,4 @@ index 19285d7..e27a809 100644
 -  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 +# install(TARGETS pm_ptest pm_mtest pm_parmetis pm_pometis pm_dglpart
 +#   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+

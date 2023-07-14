@@ -82,7 +82,7 @@ void KspSolver::Configure(const IoData &iodata)
     case config::LinearSolverData::KspType::TFQMR:
       SetType(Type::TFQMR);
       break;
-    default:
+    case config::LinearSolverData::KspType::INVALID:
       MFEM_ABORT("Unexpected type for KspSolver configuration!");
       break;
   }
@@ -188,9 +188,6 @@ void KspSolver::SetType(KspSolver::Type type, bool piped)
         PalacePetscCall(PCSetType(pc, PCLU));
         SetCheckFinal(false);
       }
-      break;
-    default:
-      MFEM_ABORT("Unexpected type for KspSolver!");
       break;
   }
 }

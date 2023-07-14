@@ -1,0 +1,15 @@
+diff --git a/config/BuildSystem/config/packages/MPI.py b/config/BuildSystem/config/packages/MPI.py
+index f0a23783a1c..cb1f51b0dfc 100644
+--- a/config/BuildSystem/config/packages/MPI.py
++++ b/config/BuildSystem/config/packages/MPI.py
+@@ -549,7 +549,9 @@ Unable to run hostname to check the network')
+       if (MPI_Recv_c(buf,count,MPI_INT,source,tag,MPI_COMM_WORLD,&stat)) return 1;
+       if (MPI_Recv_init_c(buf,count,MPI_INT,source,tag,MPI_COMM_WORLD,&req)) return 1;
+       if (MPI_Irecv_c(buf,count,MPI_INT,source,tag,MPI_COMM_WORLD,&req)) return 1;
+-    '''):
++      if (MPI_Neighbor_alltoallv_c(0,0,0,MPI_INT,0,0,0,MPI_INT,MPI_COMM_WORLD)) return 1;
++      if (MPI_Ineighbor_alltoallv_c(0,0,0,MPI_INT,0,0,0,MPI_INT,MPI_COMM_WORLD,&req)) return 1;
++    ''' + ('if (MPI_Reduce_local_c(0,0,0,MPI_INT,MPI_SUM)) return 1;\n' if self.haveReduceLocal == 1 else '')):
+       self.addDefine('HAVE_MPI_LARGE_COUNT', 1)
+ 
+     self.compilers.CPPFLAGS = oldFlags

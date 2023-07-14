@@ -1,0 +1,387 @@
+diff --git a/SRC/get_perm_c.c b/SRC/get_perm_c.c
+index 2f098b50..c945c152 100644
+--- a/SRC/get_perm_c.c
++++ b/SRC/get_perm_c.c
+@@ -35,75 +35,39 @@ get_metis_dist(
+ 	  int_t bnz,       /* number of nonzeros in matrix A. */
+ 	  int_t *b_colptr, /* column pointer of size n+1 for matrix B. */
+ 	  int_t *b_rowind, /* row indices of size bnz for matrix B. */
+-	  int_t *perm_c    /* out - the column permutation vector. */
++	  int_t *perm_c,   /* out - the column permutation vector. */
++	  MPI_Comm comm    /* MPI communicator to broadcast the permutation. */
+ 	  )
+ {
+ #ifdef HAVE_PARMETIS
+-    /*#define METISOPTIONS 8*/
+-#define METISOPTIONS 40
+-    int_t metis_options[METISOPTIONS];
+-    int_t i, nm, numflag = 0; /* C-Style ordering */
+-    int_t *perm, *iperm;
+-    int_t *b_colptr_int, *b_rowind_int;
+-
+-    extern int METIS_NodeND(int_t*, int_t*, int_t*, int_t*, int_t*,
+-			    int_t*, int_t*);
+-
+-    metis_options[0] = 0; /* Use Defaults for now */
+-
+-    perm = (int_t*) SUPERLU_MALLOC(2*n * sizeof(int_t));
+-    if (!perm) ABORT("SUPERLU_MALLOC fails for perm.");
+-    iperm = perm + n;
+-    nm = n;
+-
+-#if 0
+-#if defined(_LONGINT)
+-    /* Metis can only take 32-bit integers */
+-
+-    if ( !(b_colptr_int = (int*) SUPERLU_MALLOC((n+1) * sizeof(int))) )
+-	 ABORT("SUPERLU_MALLOC fails for b_colptr_int.");
+-    for (i = 0; i < n+1; ++i) b_colptr_int[i] = b_colptr[i];
+-    SUPERLU_FREE(b_colptr);
+-    
+-    if ( !(b_rowind_int = (int*) SUPERLU_MALLOC(bnz * sizeof(int))) )
+-	ABORT("SUPERLU_MALLOC fails for b_rowind_int.");
+-
+-    for (i = 0; i < bnz; ++i) b_rowind_int[i] = b_rowind[i];
+-    SUPERLU_FREE(b_rowind);
+-#else
+-    b_colptr_int = b_colptr;
+-    b_rowind_int = b_rowind;
+-#endif
+-#endif
++    int iam;
++    MPI_Comm_rank( comm, &iam );
++    if ( !iam ) {
++        int_t i, nm;
++        int_t *perm, *iperm;
+ 
+-    /* Call metis */
+-#undef USEEND
+-#ifdef USEEND
+-    METIS_EdgeND(&nm, b_colptr_int, b_rowind_int, &numflag, metis_options,
+-		 perm, iperm);
+-#else
++        extern int METIS_NodeND(int_t*, int_t*, int_t*, int_t*, int_t*,
++                    int_t*, int_t*);
+ 
+-    /* Earlier version 3.x.x */
+-    /* METIS_NodeND(&nm, b_colptr, b_rowind, &numflag, metis_options,
+-       perm, iperm);*/
++        perm = (int_t*) SUPERLU_MALLOC(2*n * sizeof(int_t));
++        if (!perm) ABORT("SUPERLU_MALLOC fails for perm.");
++        iperm = perm + n;
++        nm = n;
+ 
+-    /* Latest version 4.x.x */
+-    METIS_NodeND(&nm, b_colptr, b_rowind, NULL, NULL, perm, iperm);
++        /* Call metis */
++        METIS_NodeND(&nm, b_colptr, b_rowind, NULL, NULL, perm, iperm);
+ 
+-    /*check_perm_dist("metis perm",  n, perm);*/
+-#endif
++        /* Copy the permutation vector into SuperLU data structure. */
++        for (i = 0; i < n; ++i) perm_c[i] = iperm[i];
+ 
+-    /* Copy the permutation vector into SuperLU data structure. */
+-    for (i = 0; i < n; ++i) perm_c[i] = iperm[i];
++        SUPERLU_FREE(perm);
++    }
++    MPI_Bcast( perm_c, n, mpi_int_t, 0, comm);
+ 
+-#if 0
+-    SUPERLU_FREE(b_colptr_int);
+-    SUPERLU_FREE(b_rowind_int);
+-#else
+     SUPERLU_FREE(b_colptr);
+     SUPERLU_FREE(b_rowind);
+-#endif
+-    SUPERLU_FREE(perm);
++#else
++    for (int i = 0; i < n; ++i) perm_c[i] = i;
+ #endif /* HAVE_PARMETIS */
+ }
+ 
+@@ -114,31 +78,40 @@ get_colamd_dist(
+ 	   const int nnz,/* number of nonzeros in matrix A. */
+ 	   int_t *colptr,  /* column pointer of size n+1 for matrix A. */
+ 	   int_t *rowind,  /* row indices of size nz for matrix A. */
+-	   int_t *perm_c   /* out - the column permutation vector. */
++	   int_t *perm_c,  /* out - the column permutation vector. */
++	   MPI_Comm comm   /* MPI communicator to broadcast the permutation. */
+ 	   )
+ {
+ #ifdef HAVE_COLAMD    
+-    int Alen, *A, i, info, *p;
+-    double knobs[COLAMD_KNOBS];
+-    int stats[COLAMD_STATS];
+-
+-    Alen = colamd_recommended(nnz, m, n);
+-
+-    colamd_set_defaults(knobs);
+-
+-    if (!(A = (int *) SUPERLU_MALLOC(Alen * sizeof(int))) )
+-        ABORT("Malloc fails for A[]");
+-    if (!(p = (int *) SUPERLU_MALLOC((n+1) * sizeof(int))) )
+-        ABORT("Malloc fails for p[]");
+-    for (i = 0; i <= n; ++i) p[i] = colptr[i];
+-    for (i = 0; i < nnz; ++i) A[i] = rowind[i];
+-    info = colamd(m, n, Alen, A, p, knobs, stats);
+-    if ( info == FALSE ) ABORT("COLAMD failed");
+-
+-    for (i = 0; i < n; ++i) perm_c[p[i]] = i;
++    int iam;
++    MPI_Comm_rank( comm, &iam );
++    if ( !iam ) {
++        int Alen, *A, i, info, *p;
++        double knobs[COLAMD_KNOBS];
++        int stats[COLAMD_STATS];
++
++        Alen = colamd_recommended(nnz, m, n);
++
++        colamd_set_defaults(knobs);
++
++        if (!(A = (int *) SUPERLU_MALLOC(Alen * sizeof(int))) )
++            ABORT("Malloc fails for A[]");
++        if (!(p = (int *) SUPERLU_MALLOC((n+1) * sizeof(int))) )
++            ABORT("Malloc fails for p[]");
++        for (i = 0; i <= n; ++i) p[i] = colptr[i];
++        for (i = 0; i < nnz; ++i) A[i] = rowind[i];
++        info = colamd(m, n, Alen, A, p, knobs, stats);
++        if ( info == FALSE ) ABORT("COLAMD failed");
++
++        for (i = 0; i < n; ++i) perm_c[p[i]] = i;
++
++        SUPERLU_FREE(A);
++        SUPERLU_FREE(p);
++    }
++    MPI_Bcast( perm_c, n, mpi_int_t, 0, comm);
+ 
+-    SUPERLU_FREE(A);
+-    SUPERLU_FREE(p);
++    SUPERLU_FREE(colptr);
++    SUPERLU_FREE(rowind);
+ #else
+     for (int i = 0; i < n; ++i) perm_c[i] = i;
+ #endif // HAVE_COLAMD    
+@@ -466,7 +439,13 @@ at_plus_a_dist(
+  * </pre>
+  */
+ void
+-get_perm_c_dist(int_t pnum, int_t ispec, SuperMatrix *A, int_t *perm_c)
++get_perm_c_dist(
++	  int_t pnum,
++	  int_t ispec,
++	  SuperMatrix *A,
++	  int_t *perm_c,
++	  MPI_Comm comm
++	  )
+ 
+ {
+     NCformat *Astore = A->Store;
+@@ -516,7 +495,7 @@ get_perm_c_dist(int_t pnum, int_t ispec, SuperMatrix *A, int_t *perm_c)
+ 
+         case (COLAMD): /* Approximate minimum degree column ordering. */
+ 	      get_colamd_dist(m, n, Astore->nnz, Astore->colptr, Astore->rowind,
+-			      perm_c);
++			      perm_c, comm);
+ #if ( PRNTlevel>=1 )
+ 	      printf(".. Use approximate minimum degree column ordering.\n");
+ #endif
+@@ -528,7 +507,7 @@ get_perm_c_dist(int_t pnum, int_t ispec, SuperMatrix *A, int_t *perm_c)
+ 			     &bnz, &b_colptr, &b_rowind);
+ 
+ 	      if ( bnz ) { /* non-empty adjacency structure */
+-		  get_metis_dist(n, bnz, b_colptr, b_rowind, perm_c);
++		  get_metis_dist(n, bnz, b_colptr, b_rowind, perm_c, comm);
+ 	      } else { /* e.g., diagonal matrix */
+ 		  for (i = 0; i < n; ++i) perm_c[i] = i;
+ 		  SUPERLU_FREE(b_colptr);
+diff --git a/SRC/pdgssvx.c b/SRC/pdgssvx.c
+index c0bd343d..1abb5e8b 100644
+--- a/SRC/pdgssvx.c
++++ b/SRC/pdgssvx.c
+@@ -1021,7 +1021,7 @@ pdgssvx(superlu_dist_options_t *options, SuperMatrix *A,
+ 		  return;
+      	      }
+ 	  } else {
+-	      get_perm_c_dist(iam, permc_spec, &GA, perm_c);
++	      get_perm_c_dist(iam, permc_spec, &GA, perm_c, grid->comm);
+           }
+         }
+ 
+diff --git a/SRC/pdgssvx3d.c b/SRC/pdgssvx3d.c
+index 75da7dca..2fbdf665 100644
+--- a/SRC/pdgssvx3d.c
++++ b/SRC/pdgssvx3d.c
+@@ -1073,7 +1073,7 @@ pdgssvx3d (superlu_dist_options_t * options, SuperMatrix * A,
+ 		    if (flinfo > 0)
+ 			ABORT ("ERROR in get perm_c parmetis.");
+ 		} else {
+-		    get_perm_c_dist (iam, permc_spec, &GA, perm_c);
++		    get_perm_c_dist (iam, permc_spec, &GA, perm_c, grid->comm);
+ 		}
+ 	    }
+ 
+diff --git a/SRC/pdgssvx_ABglobal.c b/SRC/pdgssvx_ABglobal.c
+index 24f20776..d0c0d996 100644
+--- a/SRC/pdgssvx_ABglobal.c
++++ b/SRC/pdgssvx_ABglobal.c
+@@ -855,7 +855,7 @@ pdgssvx_ABglobal(superlu_dist_options_t *options, SuperMatrix *A,
+ 	permc_spec = options->ColPerm;
+ 	if ( permc_spec != MY_PERMC && Fact == DOFACT )
+ 	    /* Use an ordering provided by SuperLU */
+-	    get_perm_c_dist(iam, permc_spec, A, perm_c);
++	    get_perm_c_dist(iam, permc_spec, A, perm_c, grid->comm);
+ 
+ 	/* Compute the elimination tree of Pc*(A'+A)*Pc' or Pc*A'*A*Pc'
+ 	   (a.k.a. column etree), depending on the choice of ColPerm.
+diff --git a/SRC/psgssvx.c b/SRC/psgssvx.c
+index 620c3584..c3c18d3f 100644
+--- a/SRC/psgssvx.c
++++ b/SRC/psgssvx.c
+@@ -1021,7 +1021,7 @@ psgssvx(superlu_dist_options_t *options, SuperMatrix *A,
+ 		  return;
+      	      }
+ 	  } else {
+-	      get_perm_c_dist(iam, permc_spec, &GA, perm_c);
++	      get_perm_c_dist(iam, permc_spec, &GA, perm_c, grid->comm);
+           }
+         }
+ 
+diff --git a/SRC/psgssvx3d.c b/SRC/psgssvx3d.c
+index 8ac7e954..d2f7bf0e 100644
+--- a/SRC/psgssvx3d.c
++++ b/SRC/psgssvx3d.c
+@@ -1068,7 +1068,7 @@ psgssvx3d (superlu_dist_options_t * options, SuperMatrix * A,
+ 		    if (flinfo > 0)
+ 			ABORT ("ERROR in get perm_c parmetis.");
+ 		} else {
+-		    get_perm_c_dist (iam, permc_spec, &GA, perm_c);
++		    get_perm_c_dist (iam, permc_spec, &GA, perm_c, grid->comm);
+ 		}
+ 	    }
+ 
+diff --git a/SRC/psgssvx_ABglobal.c b/SRC/psgssvx_ABglobal.c
+index 8c83409c..1ea7a78c 100644
+--- a/SRC/psgssvx_ABglobal.c
++++ b/SRC/psgssvx_ABglobal.c
+@@ -855,7 +855,7 @@ psgssvx_ABglobal(superlu_dist_options_t *options, SuperMatrix *A,
+ 	permc_spec = options->ColPerm;
+ 	if ( permc_spec != MY_PERMC && Fact == DOFACT )
+ 	    /* Use an ordering provided by SuperLU */
+-	    get_perm_c_dist(iam, permc_spec, A, perm_c);
++	    get_perm_c_dist(iam, permc_spec, A, perm_c, grid->comm);
+ 
+ 	/* Compute the elimination tree of Pc*(A'+A)*Pc' or Pc*A'*A*Pc'
+ 	   (a.k.a. column etree), depending on the choice of ColPerm.
+diff --git a/SRC/psgssvx_d2.c b/SRC/psgssvx_d2.c
+index 94d04e4c..a839da0f 100644
+--- a/SRC/psgssvx_d2.c
++++ b/SRC/psgssvx_d2.c
+@@ -1075,7 +1075,7 @@ psgssvx_d2(superlu_dist_options_t *options, SuperMatrix *A,
+ 		  return;
+      	      }
+ 	  } else {
+-	      get_perm_c_dist(iam, permc_spec, &GA, perm_c);
++	      get_perm_c_dist(iam, permc_spec, &GA, perm_c, grid->comm);
+           }
+         }
+ 
+diff --git a/SRC/pzgssvx.c b/SRC/pzgssvx.c
+index 390c9709..5906a927 100644
+--- a/SRC/pzgssvx.c
++++ b/SRC/pzgssvx.c
+@@ -1022,7 +1022,7 @@ pzgssvx(superlu_dist_options_t *options, SuperMatrix *A,
+ 		  return;
+      	      }
+ 	  } else {
+-	      get_perm_c_dist(iam, permc_spec, &GA, perm_c);
++	      get_perm_c_dist(iam, permc_spec, &GA, perm_c, grid->comm);
+           }
+         }
+ 
+diff --git a/SRC/pzgssvx3d.c b/SRC/pzgssvx3d.c
+index 0f8c5aa7..8b13bcf2 100644
+--- a/SRC/pzgssvx3d.c
++++ b/SRC/pzgssvx3d.c
+@@ -1069,7 +1069,7 @@ pzgssvx3d (superlu_dist_options_t * options, SuperMatrix * A,
+ 		    if (flinfo > 0)
+ 			ABORT ("ERROR in get perm_c parmetis.");
+ 		} else {
+-		    get_perm_c_dist (iam, permc_spec, &GA, perm_c);
++		    get_perm_c_dist (iam, permc_spec, &GA, perm_c, grid->comm);
+ 		}
+ 	    }
+ 
+diff --git a/SRC/pzgssvx_ABglobal.c b/SRC/pzgssvx_ABglobal.c
+index 644d35eb..3786e13d 100644
+--- a/SRC/pzgssvx_ABglobal.c
++++ b/SRC/pzgssvx_ABglobal.c
+@@ -854,7 +854,7 @@ pzgssvx_ABglobal(superlu_dist_options_t *options, SuperMatrix *A,
+ 	permc_spec = options->ColPerm;
+ 	if ( permc_spec != MY_PERMC && Fact == DOFACT )
+ 	    /* Use an ordering provided by SuperLU */
+-	    get_perm_c_dist(iam, permc_spec, A, perm_c);
++	    get_perm_c_dist(iam, permc_spec, A, perm_c, grid->comm);
+ 
+ 	/* Compute the elimination tree of Pc*(A'+A)*Pc' or Pc*A'*A*Pc'
+ 	   (a.k.a. column etree), depending on the choice of ColPerm.
+diff --git a/SRC/superlu_defs.h b/SRC/superlu_defs.h
+index 27db0107..5e504fb5 100644
+--- a/SRC/superlu_defs.h
++++ b/SRC/superlu_defs.h
+@@ -1064,10 +1064,9 @@ extern "C" {
+ extern void   superlu_gridinit(MPI_Comm, int, int, gridinfo_t *);
+ extern void   superlu_gridmap(MPI_Comm, int, int, int [], int, gridinfo_t *);
+ extern void   superlu_gridexit(gridinfo_t *);
+-extern void   superlu_gridinit3d(MPI_Comm Bcomm,  int nprow, int npcol, int npdep,
+-				 gridinfo3d_t *grid) ;
++extern void   superlu_gridinit3d(MPI_Comm, int, int, int, gridinfo3d_t *) ;
+ extern void   superlu_gridmap3d(MPI_Comm, int, int, int, int [], gridinfo3d_t *);
+-extern void   superlu_gridexit3d(gridinfo3d_t *grid);
++extern void   superlu_gridexit3d(gridinfo3d_t *);
+ 
+ extern void   set_default_options_dist(superlu_dist_options_t *);
+ extern void   print_options_dist(superlu_dist_options_t *);
+@@ -1082,17 +1081,17 @@ extern void   sp_colorder (superlu_dist_options_t*, SuperMatrix*, int_t*, int_t*
+ 			   SuperMatrix*);
+ extern int    sp_symetree_dist(int_t *, int_t *, int_t *, int_t, int_t *);
+ extern int    sp_coletree_dist (int_t *, int_t *, int_t *, int_t, int_t, int_t *);
+-extern void   get_perm_c_dist(int_t, int_t, SuperMatrix *, int_t *);
++extern void   get_perm_c_dist(int_t, int_t, SuperMatrix *, int_t *, MPI_Comm);
+ extern void   at_plus_a_dist(const int_t, const int_t, int_t *, int_t *,
+ 			     int_t *, int_t **, int_t **);
+-extern int    genmmd_dist_(int_t *, int_t *, int_t *a, 
++extern int    genmmd_dist_(int_t *, int_t *, int_t *,
+ 			   int_t *, int_t *, int_t *, int_t *, 
+ 			   int_t *, int_t *, int_t *, int_t *, int_t *);
+ extern void  bcast_tree(void *, int, MPI_Datatype, int, int,
+ 			gridinfo_t *, int, int *);
+ extern int_t symbfact(superlu_dist_options_t *, int, SuperMatrix *, int_t *,
+                       int_t *, Glu_persist_t *, Glu_freeable_t *);
+-extern int_t symbfact_SubInit(superlu_dist_options_t *options,
++extern int_t symbfact_SubInit(superlu_dist_options_t *,
+ 			      fact_t, void *, int_t, int_t, int_t, int_t,
+ 			      Glu_persist_t *, Glu_freeable_t *);
+ extern int_t symbfact_SubXpand(int_t, int_t, int_t, MemType, int_t *,
+@@ -1190,10 +1189,10 @@ extern int_t get_num_gpu_streams (void);
+ extern int getnGPUStreams(void);
+ extern int get_mpi_process_per_gpu (void);
+ /*to print out various statistics from GPU activities*/
+-extern void printGPUStats(int nsupers, SuperLUStat_t *stat, gridinfo3d_t*);
++extern void printGPUStats(int, SuperLUStat_t *, gridinfo3d_t *);
+ #endif
+ 
+-extern double estimate_cpu_time(int m, int n , int k);
++extern double estimate_cpu_time(int, int, int k);
+ 
+ extern int get_thread_per_process(void);
+ extern int_t get_max_buffer_size (void);
+@@ -1208,7 +1207,7 @@ extern int get_acc_offload(void);
+ extern void  print_panel_seg_dist(int_t, int_t, int_t, int_t, int_t *, int_t *);
+ extern void  check_repfnz_dist(int_t, int_t, int_t, int_t *);
+ extern int_t CheckZeroDiagonal(int_t, int_t *, int_t *, int_t *);
+-extern int   check_perm_dist(char *what, int_t n, int_t *perm);
++extern int   check_perm_dist(char *, int_t, int_t *);
+ extern void  PrintDouble5(char *, int_t, double *);
+ extern void  PrintInt10(char *, int_t, int_t *);
+ extern void  PrintInt32(char *, int, int *);

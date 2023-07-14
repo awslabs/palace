@@ -6,7 +6,7 @@
 #
 
 # Force build order
-set(GSLIB_DEPENDENCIES petsc)
+set(GSLIB_DEPENDENCIES)
 
 set(GSLIB_OPTIONS
   "INSTALL_ROOT=${CMAKE_INSTALL_PREFIX}"
@@ -33,7 +33,7 @@ endif()
 # User might specify the MPI compiler wrappers directly, otherwise we need to supply MPI
 # as found from the CMake module
 if(NOT MPI_FOUND)
-  message(FATAL_ERROR "MPI is not found when trying to build PETSc")
+  message(FATAL_ERROR "MPI is not found when trying to build GSLIB")
 endif()
 if(NOT "${CMAKE_C_COMPILER}" STREQUAL "${MPI_C_COMPILER}")
   string(REPLACE ";" " " GSLIB_MPI_LIBRARIES "${MPI_C_LIBRARIES}")
@@ -81,17 +81,17 @@ message(STATUS "GSLIB_OPTIONS: ${GSLIB_OPTIONS_PRINT}")
 
 # Fix build
 set(GSLIB_PATCH_FILES
-  "${CMAKE_CURRENT_SOURCE_DIR}/patch/gslib/patch_build.diff"
+  "${CMAKE_SOURCE_DIR}/extern/patch/gslib/patch_build.diff"
 )
 
 include(ExternalProject)
 ExternalProject_Add(gslib
   DEPENDS           ${GSLIB_DEPENDENCIES}
-  GIT_REPOSITORY    ${CMAKE_CURRENT_SOURCE_DIR}/gslib
+  GIT_REPOSITORY    ${EXTERN_GSLIB_URL}
   GIT_TAG           ${EXTERN_GSLIB_GIT_TAG}
-  SOURCE_DIR        ${CMAKE_CURRENT_BINARY_DIR}/gslib
+  SOURCE_DIR        ${CMAKE_BINARY_DIR}/extern/gslib
   INSTALL_DIR       ${CMAKE_INSTALL_PREFIX}
-  PREFIX            ${CMAKE_CURRENT_BINARY_DIR}/gslib-cmake
+  PREFIX            ${CMAKE_BINARY_DIR}/extern/gslib-cmake
   BUILD_IN_SOURCE   TRUE
   UPDATE_COMMAND    ""
   PATCH_COMMAND     git apply "${GSLIB_PATCH_FILES}"

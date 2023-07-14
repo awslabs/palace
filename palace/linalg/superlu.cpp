@@ -35,11 +35,12 @@ int GetNpDep(int np, bool use_3d)
 
 }  // namespace
 
-SuperLUSolver::SuperLUSolver(MPI_Comm comm, int sym_fact_type, bool use_3d, int print_lvl)
-  : solver(comm, GetNpDep(Mpi::Size(comm), use_3d))
+SuperLUSolver::SuperLUSolver(MPI_Comm comm, config::LinearSolverData::SymFactType reorder,
+                             bool use_3d, int print)
+  : mfem::Solver(), comm(comm), A(nullptr), solver(comm, GetNpDep(Mpi::Size(comm), use_3d))
 {
   // Configure the solver.
-  if (print_lvl > 1)
+  if (print > 1)
   {
     if (solver.npdep_ > 1)
     {
@@ -52,16 +53,16 @@ SuperLUSolver::SuperLUSolver(MPI_Comm comm, int sym_fact_type, bool use_3d, int 
                  solver.nprow_, solver.npcol_);
     }
   }
-  solver.SetPrintStatistics(print_lvl > 1);
+  solver.SetPrintStatistics(print > 1);
   solver.SetEquilibriate(false);
   solver.SetReplaceTinyPivot(false);
-  if (sym_fact_type == 2)
-  {
-    solver.SetColumnPermutation(mfem::superlu::PARMETIS);
-  }
-  else if (sym_fact_type == 1)
+  if (reorder == config::LinearSolverData::SymFactType::METIS)
   {
     solver.SetColumnPermutation(mfem::superlu::METIS_AT_PLUS_A);
+  }
+  else if (reorder == config::LinearSolverData::SymFactType::PARMETIS)
+  {
+    solver.SetColumnPermutation(mfem::superlu::PARMETIS);
   }
   else
   {
@@ -76,14 +77,14 @@ void SuperLUSolver::SetOperator(const mfem::Operator &op)
 {
   // We need to save A because SuperLU does not copy the input matrix. For repeated
   // factorizations, always reuse the sparsity pattern.
-  if (Aint)
+  if (A)
   {
     solver.SetFact(mfem::superlu::SamePattern_SameRowPerm);
   }
-  Aint = std::make_unique<mfem::SuperLURowLocMatrix>(op);
+  A = std::make_unique<mfem::SuperLURowLocMatrix>(op);
 
   // Set up base class.
-  solver.SetOperator(*Aint);
+  solver.SetOperator(*A);
 }
 
 }  // namespace palace

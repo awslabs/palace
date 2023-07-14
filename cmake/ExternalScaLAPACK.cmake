@@ -6,13 +6,7 @@
 #
 
 # Force build order
-if(PALACE_WITH_SUPERLU)
-  set(SCALAPACK_DEPENDENCIES superlu_dist)
-elseif(TARGET parmetis)
-  set(SCALAPACK_DEPENDENCIES parmetis)
-else()
-  set(SCALAPACK_DEPENDENCIES metis)
-endif()
+set(SCALAPACK_DEPENDENCIES)
 
 set(SCALAPACK_OPTIONS ${PALACE_SUPERBUILD_DEFAULT_ARGS})
 list(APPEND SCALAPACK_OPTIONS
@@ -40,22 +34,22 @@ message(STATUS "SCALAPACK_OPTIONS: ${SCALAPACK_OPTIONS_PRINT}")
 
 # Fix build
 set(SCALAPACK_PATCH_FILES
-  "${CMAKE_CURRENT_SOURCE_DIR}/patch/scalapack/patch_build.diff"
-  "${CMAKE_CURRENT_SOURCE_DIR}/patch/scalapack/patch_version.diff"
+  "${CMAKE_SOURCE_DIR}/extern/patch/scalapack/patch_build.diff"
+  "${CMAKE_SOURCE_DIR}/extern/patch/scalapack/patch_version.diff"
 )
 
 include(ExternalProject)
 ExternalProject_Add(scalapack
   DEPENDS           ${SCALAPACK_DEPENDENCIES}
-  GIT_REPOSITORY    ${CMAKE_CURRENT_SOURCE_DIR}/scalapack
+  GIT_REPOSITORY    ${EXTERN_SCALAPACK_URL}
   GIT_TAG           ${EXTERN_SCALAPACK_GIT_TAG}
-  SOURCE_DIR        ${CMAKE_CURRENT_BINARY_DIR}/scalapack
-  BINARY_DIR        ${CMAKE_CURRENT_BINARY_DIR}/scalapack-build
+  SOURCE_DIR        ${CMAKE_BINARY_DIR}/extern/scalapack
+  BINARY_DIR        ${CMAKE_BINARY_DIR}/extern/scalapack-build
   INSTALL_DIR       ${CMAKE_INSTALL_PREFIX}
-  PREFIX            ${CMAKE_CURRENT_BINARY_DIR}/scalapack-cmake
+  PREFIX            ${CMAKE_BINARY_DIR}/extern/scalapack-cmake
   UPDATE_COMMAND    ""
   PATCH_COMMAND     git apply "${SCALAPACK_PATCH_FILES}"
-  CONFIGURE_COMMAND cmake <SOURCE_DIR> "${SCALAPACK_OPTIONS}"
+  CONFIGURE_COMMAND ${CMAKE_COMMAND} <SOURCE_DIR> "${SCALAPACK_OPTIONS}"
   TEST_COMMAND      ""
 )
 
@@ -68,4 +62,3 @@ endif()
 set(_SCALAPACK_LIBRARIES ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR}/libblacs${_SCALAPACK_LIB_SUFFIX})
 set(_SCALAPACK_LIBRARIES ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR}/libscalapack${_SCALAPACK_LIB_SUFFIX}$<SEMICOLON>${_SCALAPACK_LIBRARIES})
 set(SCALAPACK_LIBRARIES ${_SCALAPACK_LIBRARIES} CACHE STRING "List of library files for ScaLAPACK")
-set(SCALAPACK_INCLUDE_DIRS ${CMAKE_INSTALL_PREFIX}/include CACHE STRING "Path to ScaLAPACK include directories")

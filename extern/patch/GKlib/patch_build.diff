@@ -633,3 +633,4 @@ index bb8f296..b004e23 100644
  #ifdef __OPENMPXXXX__
    return omp_get_wtime();
  #else
+

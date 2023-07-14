@@ -5,7 +5,7 @@
 
 #include <petsc.h>
 #include <petscblaslapack.h>
-#include <general/forall.hpp>
+#include <mfem/general/forall.hpp>
 // #include "linalg/hypre.hpp"
 #include "linalg/slepc.hpp"
 #include "utils/communication.hpp"
@@ -774,9 +774,6 @@ void PetscParMatrix::AXPY(PetscScalar alpha, const PetscParMatrix &B,
       break;
     case NNZStructure::SUBSET:
       PalacePetscCall(MatAXPY(A, alpha, B, SUBSET_NONZERO_PATTERN));
-      break;
-    default:
-      MFEM_ABORT("Nonzero type for MatAXPY not implemented!");
       break;
   }
 }
@@ -2393,7 +2390,6 @@ PetscErrorCode __mat_shell_get_diagonal(Mat A, Vec diag)
 // #endif
 //       break;
 //     case NORM_1:  // Max absolute column sum (not supported yet)
-//     default:
 //       MFEM_ABORT("Unsupported matrix norm type!");
 //   }
 //   PetscFunctionReturn(0);

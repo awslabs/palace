@@ -166,7 +166,7 @@ int main(int argc, char *argv[])
       solver = std::make_unique<TransientSolver>(iodata, world_root, world_size, num_thread,
                                                  git_tag);
       break;
-    default:
+    case config::ProblemData::Type::INVALID:
       Mpi::Print(world_comm, "Error: Unsupported problem type!\n\n");
       return 1;
   }

@@ -304,9 +304,6 @@ void SlepcEigenSolver::GetError(int i, EigenSolverBase::ErrorType type, double &
     case ErrorType::BACKWARD:
       err = res[i] / GetBackwardScaling(eig);
       break;
-    default:
-      MFEM_ABORT("Eigenpair error type not implemented!");
-      break;
   }
 }
 
@@ -401,9 +398,6 @@ void SlepcEPSSolverBase::SetWhichEigenpairs(EigenSolverBase::WhichType type)
     case WhichType::TARGET_IMAGINARY:
       PalacePetscCall(EPSSetWhichEigenpairs(eps, EPS_TARGET_IMAGINARY));
       break;
-    default:
-      MFEM_ABORT("Which eigenpair not implemented!");
-      break;
   }
 }
 
@@ -427,7 +421,8 @@ void SlepcEPSSolverBase::SetProblemType(SlepcEigenSolver::ProblemType type)
       PalacePetscCall(EPSSetProblemType(eps, EPS_GNHEP));
       // PalacePetscCall(EPSSetProblemType(eps, EPS_PGNHEP));  // If B is SPD
       break;
-    default:
+    case ProblemType::HYPERBOLIC:
+    case ProblemType::GYROSCOPIC:
       MFEM_ABORT("Problem type not implemented!");
       break;
   }
@@ -440,9 +435,6 @@ void SlepcEPSSolverBase::SetType(SlepcEigenSolver::Type type)
     case Type::KRYLOVSCHUR:
       PalacePetscCall(EPSSetType(eps, EPSKRYLOVSCHUR));
       break;
-    case Type::ARPACK:
-      PalacePetscCall(EPSSetType(eps, EPSARPACK));
-      break;
     case Type::POWER:
       PalacePetscCall(EPSSetType(eps, EPSPOWER));
       break;
@@ -453,7 +445,9 @@ void SlepcEPSSolverBase::SetType(SlepcEigenSolver::Type type)
       PalacePetscCall(EPSSetType(eps, EPSJD));
       region = false;
       break;
-    default:
+    case Type::TOAR:
+    case Type::STOAR:
+    case Type::QARNOLDI:
       MFEM_ABORT("Eigenvalue solver type not implemented!");
       break;
   }
@@ -970,9 +964,6 @@ void SlepcPEPSolverBase::SetWhichEigenpairs(EigenSolverBase::WhichType type)
     case WhichType::TARGET_IMAGINARY:
       PalacePetscCall(PEPSetWhichEigenpairs(pep, PEP_TARGET_IMAGINARY));
       break;
-    default:
-      MFEM_ABORT("Which eigenpair not implemented!");
-      break;
   }
 }
 
@@ -995,9 +986,6 @@ void SlepcPEPSolverBase::SetProblemType(SlepcEigenSolver::ProblemType type)
     case ProblemType::GYROSCOPIC:
       PalacePetscCall(PEPSetProblemType(pep, PEP_GYROSCOPIC));
       break;
-    default:
-      MFEM_ABORT("Problem type not implemented!");
-      break;
   }
 }
 
@@ -1018,7 +1006,9 @@ void SlepcPEPSolverBase::SetType(SlepcEigenSolver::Type type)
       PalacePetscCall(PEPSetType(pep, PEPJD));
       region = false;
       break;
-    default:
+    case Type::KRYLOVSCHUR:
+    case Type::POWER:
+    case Type::SUBSPACE:
       MFEM_ABORT("Eigenvalue solver type not implemented!");
       break;
   }

@@ -10,3 +10,4 @@ index e22ec29..22d4bd5 100644
 -  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 +# install(TARGETS gpmetis ndmetis mpmetis m2gmetis graphchk cmpfillin
 +#   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+

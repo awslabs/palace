@@ -8,25 +8,65 @@
 namespace palace
 {
 
+namespace
+{
+
+strumpack::CompressionType
+GetCompressionType(config::LinearSolverData::CompressionType type)
+{
+  switch (type)
+  {
+    case config::LinearSolverData::CompressionType::HSS:
+      return strumpack::CompressionType::HSS;
+    case config::LinearSolverData::CompressionType::BLR:
+      return strumpack::CompressionType::BLR;
+    case config::LinearSolverData::CompressionType::HODLR:
+      return strumpack::CompressionType::HODLR;
+    case config::LinearSolverData::CompressionType::ZFP:
+      return strumpack::CompressionType::LOSSY;
+    case config::LinearSolverData::CompressionType::BLR_HODLR:
+      return strumpack::CompressionType::BLR_HODLR;
+      break;
+    case config::LinearSolverData::CompressionType::ZFP_BLR_HODLR:
+      return strumpack::CompressionType::ZFP_BLR_HODLR;
+      break;
+    case config::LinearSolverData::CompressionType::NONE:
+    case config::LinearSolverData::CompressionType::INVALID:
+      return strumpack::CompressionType::NONE;
+  }
+  return strumpack::CompressionType::NONE;  // For compiler warning
+}
+
+}  // namespace
+
 template <typename StrumpackSolverType>
 StrumpackSolverBase<StrumpackSolverType>::StrumpackSolverBase(
-    MPI_Comm comm, int sym_fact_type, strumpack::CompressionType comp_type, double lr_tol,
-    int butterfly_l, int lossy_prec, int print_lvl)
-  : StrumpackSolverType(comm)
+    MPI_Comm comm, config::LinearSolverData::SymFactType reorder,
+    config::LinearSolverData::CompressionType compression, double lr_tol, int butterfly_l,
+    int lossy_prec, int print)
+  : StrumpackSolverType(comm), comm(comm)
 {
   // Configure the solver.
-  this->SetPrintFactorStatistics((print_lvl > 1));
-  this->SetPrintSolveStatistics((print_lvl > 1));
+  this->SetPrintFactorStatistics((print > 1));
+  this->SetPrintSolveStatistics((print > 1));
   this->SetKrylovSolver(strumpack::KrylovSolver::DIRECT);  // Always as a preconditioner or
                                                            // direct solver
   this->SetMatching(strumpack::MatchingJob::NONE);
-  if (sym_fact_type == 2)
+  if (reorder == config::LinearSolverData::SymFactType::METIS)
+  {
+    this->SetReorderingStrategy(strumpack::ReorderingStrategy::METIS);
+  }
+  else if (reorder == config::LinearSolverData::SymFactType::PARMETIS)
   {
     this->SetReorderingStrategy(strumpack::ReorderingStrategy::PARMETIS);
   }
-  else if (sym_fact_type == 1)
+  else if (reorder == config::LinearSolverData::SymFactType::SCOTCH)
   {
-    this->SetReorderingStrategy(strumpack::ReorderingStrategy::METIS);
+    this->SetReorderingStrategy(strumpack::ReorderingStrategy::SCOTCH);
+  }
+  else if (reorder == config::LinearSolverData::SymFactType::PTSCOTCH)
+  {
+    this->SetReorderingStrategy(strumpack::ReorderingStrategy::PTSCOTCH);
   }
   else
   {
@@ -35,31 +75,29 @@ StrumpackSolverBase<StrumpackSolverType>::StrumpackSolverBase(
   this->SetReorderingReuse(true);  // Repeated calls use same sparsity pattern
 
   // Configure compression.
-  this->SetCompression(comp_type);
-  switch (comp_type)
+  this->SetCompression(GetCompressionType(compression));
+  switch (compression)
   {
-    case strumpack::CompressionType::LOSSLESS:
-    case strumpack::CompressionType::LOSSY:
+    case config::LinearSolverData::CompressionType::ZFP:
       if (lossy_prec <= 0)
       {
         this->SetCompression(strumpack::CompressionType::LOSSLESS);
       }
       else
       {
-        this->SetCompression(strumpack::CompressionType::LOSSY);
         this->SetCompressionLossyPrecision(lossy_prec);
       }
       break;
-    case strumpack::CompressionType::ZFP_BLR_HODLR:
+    case config::LinearSolverData::CompressionType::ZFP_BLR_HODLR:
       this->SetCompressionLossyPrecision(lossy_prec);
-    case strumpack::CompressionType::HODLR:
-    case strumpack::CompressionType::BLR_HODLR:
+    case config::LinearSolverData::CompressionType::HODLR:
+    case config::LinearSolverData::CompressionType::BLR_HODLR:
       this->SetCompressionButterflyLevels(butterfly_l);
-    case strumpack::CompressionType::HSS:
-    case strumpack::CompressionType::BLR:
+    case config::LinearSolverData::CompressionType::HSS:
+    case config::LinearSolverData::CompressionType::BLR:
       this->SetCompressionRelTol(lr_tol);
       break;
-    case strumpack::CompressionType::NONE:
+    case config::LinearSolverData::CompressionType::NONE:
     default:
       break;
   }

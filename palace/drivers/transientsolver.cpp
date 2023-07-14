@@ -217,7 +217,7 @@ std::function<double(double)> TransientSolver::GetTimeExcitation(bool dot) const
         return F{[=](double t) { return pulse_smootherstep(t, data.pulse_tau, delay); }};
       }
       break;
-    default:
+    case config::TransientSolverData::ExcitationType::INVALID:
       MFEM_ABORT("Unsupported source excitation type!");
   }
   return F{};

@@ -68,3 +68,4 @@ index 0f1d746..9cc18ac 100644
          bxyz[cand[i].val*ndims+k] = j;
          i++;
        }
+

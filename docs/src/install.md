@@ -27,30 +27,27 @@ found using `spack info palace`.
 
 A build from source requires the following prerequisites installed on your system:
 
-  - [CMake](https://cmake.org/download) version 3.13 or later
+  - [CMake](https://cmake.org/download) version 3.18.1 or later
   - C++ compiler supporting C++17
   - C and (optionally) Fortran compilers for dependency builds
   - MPI distribution
   - BLAS, LAPACK libraries (described below in [Math libraries](#Math-libraries))
 
 In addition, builds from source require the following system packages which are typically
-already installed and are available from most package managers (`apt`, `yum`, `brew`, etc.):
+already installed and are available from most package managers (`apt`, `dnf`, `brew`, etc.):
 
   - Python 3
   - [`pkg-config`](https://www.freedesktop.org/wiki/Software/pkg-config/)
+  - [`libunwind`](https://www.nongnu.org/libunwind/) (optional)
   - [`zlib`](https://zlib.net/) (optional)
 
 ### Quick start
 
-To start, clone the code, including the library dependency source code, using
+To start, clone the code using
 
 ```bash
-git clone https://github.com/awslabs/palace.git --recurse-submodules
+git clone https://github.com/awslabs/palace.git
 ```
-
-If the repository was already cloned without recursive checkout,
-`git submodule update --init --recursive` can be run to initialize or update the dependency
-repositories.
 
 Then, a build using the default options can be performed by running the following from
 within the directory where the repository was cloned:
@@ -86,6 +83,10 @@ The *Palace* build respects standard CMake variables, including:
     `RelWithDebInfo`, and `MinSizeRel` (`Release` if not otherwise specified).
   - `BUILD_SHARED_LIBS` which is a flag to create shared libraries for dependency library
     builds instead of static libraries (`OFF` by default).
+  - `CMAKE_PREFIX_PATH` which lists directories specifying installation prefixes to be
+    searched for dependencies.
+  - `CMAKE_INSTALL_RPATH` and `CMAKE_INSTALL_RPATH_USE_LINK_PATH` which configure the rpath
+    for installed library and executable targets.
 
 Additional build options are (with default values in brackets):
 
@@ -148,10 +149,8 @@ as the standard parallelization in approach in *Palace* is to use pure MPI paral
 
 *Palace* leverages the [MFEM finite element discretization library](http://mfem.org). It
 always configures and builds its own installation of MFEM internally in order to support
-the most up to date features and patches. In addition, *Palace* uses:
-
-  - [nlohmann/json](https://github.com/nlohmann/json)
-  - [fmt](https://fmt.dev/latest/index.html)
+the most up to date features and patches. Likewise, Palace will always build its own
+installation of [GSLIB](https://github.com/Nek5000/gslib), when `PALACE_WITH_GSLIB=ON`.
 
 As part of the [Build from source](#Build-from-source), the CMake build will automatically
 build and install a small number of third-party dependencies before building *Palace*. The
@@ -161,19 +160,21 @@ source code for these dependencies is downloaded using using [Git submodules]
   - [METIS](http://glaros.dtc.umn.edu/gkhome/metis/metis/overview) and [ParMETIS]
     (http://glaros.dtc.umn.edu/gkhome/metis/parmetis/overview)
   - [Hypre](https://github.com/hypre-space/hypre)
-  - [PETSc](https://petsc.org/release/)
-  - [GSLIB](https://github.com/Nek5000/gslib) (optional, when `PALACE_WITH_GSLIB=ON`)
   - [SuperLU_DIST](https://github.com/xiaoyeli/superlu_dist) (optional, when
     `PALACE_WITH_SUPERLU=ON`)
   - [STRUMPACK](https://portal.nersc.gov/project/sparse/strumpack) (optional, when
     `PALACE_WITH_STRUMPACK=ON`), including [ButterflyPACK]
-    (https://github.com/liuyangzhuan/ButterflyPACK) support
+    (https://github.com/liuyangzhuan/ButterflyPACK) and [zfp](https://github.com/LLNL/zfp)
+    support
   - [MUMPS](http://mumps.enseeiht.fr/) (optional, when `PALACE_WITH_MUMPS=ON`)
-  - [SLEPc](https://slepc.upv.es/) (optional, when `PALACE_WITH_SLEPC=ON`)
+  - [SLEPc](https://slepc.upv.es/) (optional, when `PALACE_WITH_SLEPC=ON`), including
+    [PETSc](https://petsc.org/release/)
   - [ARPACK-NG](https://github.com/opencollab/arpack-ng) (optional, when
     `PALACE_WITH_ARPACK=ON`)
+  - [nlohmann/json](https://github.com/nlohmann/json)
+  - [fmt](https://fmt.dev/latest)
+  - [Eigen](https://eigen.tuxfamily.org)
 
-PETSc is built with complex number support. For solving eigenvalue problems, at least one of
-SLEPc or ARPACK-NG must be specified. Typically only one of the SuperLU_DIST, STRUMPACK,
-and MUMPS dependencies is required but by default all are built and the user can decide at
-runtime which solver to use.
+For solving eigenvalue problems, at least one of SLEPc or ARPACK-NG must be specified.
+Typically only one of the SuperLU_DIST, STRUMPACK, and MUMPS dependencies is required but
+all can be built so the user can decide at runtime which solver to use.

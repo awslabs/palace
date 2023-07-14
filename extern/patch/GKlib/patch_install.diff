@@ -10,3 +10,4 @@ index 04ecac1..3fafee7 100644
 -install(TARGETS csrcnv RUNTIME DESTINATION bin)
 +# # Install a subset of them
 +# install(TARGETS csrcnv RUNTIME DESTINATION bin)
+

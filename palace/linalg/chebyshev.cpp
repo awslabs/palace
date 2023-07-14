@@ -4,7 +4,7 @@
 #include "chebyshev.hpp"
 
 #include <vector>
-#include <general/forall.hpp>
+#include <mfem/general/forall.hpp>
 #include "linalg/pc.hpp"
 #include "linalg/petsc.hpp"
 

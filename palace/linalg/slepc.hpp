@@ -70,7 +70,6 @@ public:
   enum class Type
   {
     KRYLOVSCHUR,
-    ARPACK,
     POWER,
     SUBSPACE,
     TOAR,
