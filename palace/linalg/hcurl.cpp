@@ -1,7 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#include "curlcurl.hpp"
+#include "hcurl.hpp"
 
 #include <mfem.hpp>
 #include "fem/coefficient.hpp"
@@ -15,12 +15,12 @@
 namespace palace
 {
 
-CurlCurlMassSolver::CurlCurlMassSolver(
-    const MaterialOperator &mat_op, mfem::ParFiniteElementSpaceHierarchy &nd_fespaces,
-    mfem::ParFiniteElementSpaceHierarchy &h1_fespaces,
-    const std::vector<mfem::Array<int>> &nd_dbc_tdof_lists,
-    const std::vector<mfem::Array<int>> &h1_dbc_tdof_lists, double tol, int max_it,
-    int print, int pa_order_threshold)
+HCurlNormSolver::HCurlNormSolver(const MaterialOperator &mat_op,
+                                 mfem::ParFiniteElementSpaceHierarchy &nd_fespaces,
+                                 mfem::ParFiniteElementSpaceHierarchy &h1_fespaces,
+                                 const std::vector<mfem::Array<int>> &nd_dbc_tdof_lists,
+                                 const std::vector<mfem::Array<int>> &h1_dbc_tdof_lists,
+                                 double tol, int max_it, int print, int pa_order_threshold)
 {
   constexpr int skip_zeros = 0;
   constexpr auto MatTypeMuInv = MaterialPropertyType::INV_PERMEABILITY;
@@ -40,8 +40,16 @@ CurlCurlMassSolver::CurlCurlMassSolver(
         auto a = std::make_unique<mfem::SymmetricBilinearForm>(&fespace_l);
         if (s == 0)
         {
-          a->AddDomainIntegrator(new mfem::CurlCurlIntegrator(muinv_func));
-          a->AddDomainIntegrator(new mfem::VectorFEMassIntegrator(epsilon_func));
+          if (mfem::DeviceCanUseCeed())
+          {
+            a->AddDomainIntegrator(
+                new mfem::CurlCurlMassIntegrator(muinv_func, epsilon_func));
+          }
+          else
+          {
+            a->AddDomainIntegrator(new mfem::CurlCurlIntegrator(muinv_func));
+            a->AddDomainIntegrator(new mfem::VectorFEMassIntegrator(epsilon_func));
+          }
         }
         else
         {
