@@ -11,7 +11,7 @@ The format of this changelog is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
-## In progress
+## [0.11.2] - 2023-07-14
 
   - Changed layout and names of `palace/` source directory for better organization.
   - Fixed a regression bug affecting meshes which have domain elements which are not
@@ -20,8 +20,8 @@ The format of this changelog is based on
     dependencies relying instead directly on CMake's ExternalProject, patch GSLIB dependency
     for shared library builds, add CI tests with ARPACK-NG instead of SLEPc, update all
     dependency versions including MFEM to incorporate bug fixes and improvements. This
-    affects the Spack package recipe, so a new recipe is distributed as part of the Palace
-    repository which will keep compatibility with `main` while changes are upstreamed to
+    affects the Spack package recipe, so a new recipe is distributed as part of Palace in
+    in `spack/` which will keep compatibility with `main` while changes are upstreamed to
     the built-in Spack repository.
 
 ## [0.11.1] - 2023-05-03
