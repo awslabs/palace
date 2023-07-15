@@ -33,7 +33,7 @@ class MagnetostaticSolver : public BaseSolver
 {
 private:
   void Postprocess(CurlCurlOperator &curlcurlop, PostOperator &postop,
-                   const std::vector<Vector> &A, Timer &timer) const;
+                   const std::vector<Vector> &A) const;
 
   void PostprocessTerminals(const SurfaceCurrentOperator &surf_j_op,
                             const mfem::DenseMatrix &M, const mfem::DenseMatrix &Minv,
@@ -46,8 +46,7 @@ public:
   {
   }
 
-  void Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
-             Timer &timer) const override;
+  void Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const override;
 };
 
 }  // namespace palace

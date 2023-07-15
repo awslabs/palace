@@ -41,13 +41,24 @@ private:
   std::vector<int> counts;
   std::vector<double> data_min, data_max, data_avg;
 
-public:
-  Timer() : start_time(Now()), last_lap_time(start_time), data(NUMTIMINGS), counts(NUMTIMINGS) {}
+  // Save a timing step by adding a duration, without lapping; optionally, count it.
+  Duration SaveTime(int key, Duration time, bool count_it)
+  {
+    data[key] += time;
+    count_it &&counts[key]++;
+    return data[key];
+  }
 
-  // Get current time.
+public:
+  Timer()
+    : start_time(Now()), last_lap_time(start_time), data(NUMTIMINGS), counts(NUMTIMINGS)
+  {
+  }
+
+  // Get the current time.
   typename Clock::time_point Now() const { return Clock::now(); }
 
-  // Stopwatch functionality.
+  // Provide stopwatch lap split functionality.
   Duration Lap()
   {
     auto temp_time = last_lap_time;
@@ -55,36 +66,34 @@ public:
     return last_lap_time - temp_time;
   }
 
-  // Get time since start.
+  // Return the time elapsed since timer creation.
   Duration TimeFromStart() const { return Now() - start_time; }
 
-  // Log a timing step by adding a duration
-  Duration MarkTime(int key, Duration time)
+  // Lap and record a timing step.
+  Duration MarkTime(int key, bool count_it = true)
   {
-    data[key] += time;
-    counts[key]++;
-    return data[key];
+    return SaveTime(key, Lap(), count_it);
   }
-  // Log a timing step by timer lap
-  Duration MarkTime(int key) { return MarkTime(key, Lap()); }
-  
+
   // Provide map-like read-only access to the timing data.
-  Duration operator[](int key) const { return data[key]; }
+  Duration operator[](int key) const { return (data)[key]; }
 
   // Provide access to the reduced timing data.
   double GetMinTime(int i) const { return data_min[i]; }
   double GetMaxTime(int i) const { return data_max[i]; }
   double GetAvgTime(int i) const { return data_avg[i]; }
 
-  // Related to counts.
+  // Only print a category in log files if it was timed.
   bool ShouldPrint(int idx) const { return counts[idx] > 0; }
+
+  // Return number of times timer.MarkTime(idx) or TimerBlock b(idx) was called.
   int GetCounts(int idx) const { return counts[idx]; }
 
   // Reduce timing information across MPI ranks.
   void Reduce(MPI_Comm comm)
   {
     const std::size_t ntimes = data.size();
-    MarkTime(TOTAL, TimeFromStart());
+    SaveTime(TOTAL, TimeFromStart(), true);
     data_min.resize(ntimes);
     data_max.resize(ntimes);
     data_avg.resize(ntimes);
@@ -105,7 +114,7 @@ public:
     }
   }
 
-  // Print timing information. Assumes the data has already been reduced.
+  // Prints timing information. We assume the data has already been reduced.
   void Print(MPI_Comm comm) const
   {
     // clang-format off
@@ -135,6 +144,34 @@ public:
         }
     }
     // clang-format on
+  }
+};
+
+class TimedBlock
+{
+private:
+  static std::vector<int> stack;
+  static Timer timer;
+
+public:
+  using Duration = Timer::Duration;
+
+  // Provide read-only access to the timer object.
+  static const Timer &Timer() { return timer; }
+
+  TimedBlock(int i)
+  {
+    // Start timing when entering the block, interrupting whatever we were timing before.
+    // Take note of what we are now timing.
+    (stack.empty()) ? timer.Lap() : timer.MarkTime(stack.back(), false);
+    stack.push_back(i);
+  }
+
+  ~TimedBlock()
+  {
+    // When a TimedBlock is no longer in scope, record the time.
+    timer.MarkTime(stack.back());
+    stack.pop_back();
   }
 };
 

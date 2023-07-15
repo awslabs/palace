@@ -35,14 +35,14 @@ private:
   int GetNumSteps(double start, double end, double delta) const;
 
   void SweepUniform(SpaceOperator &spaceop, PostOperator &postop, int nstep, int step0,
-                    double omega0, double delta_omega, Timer &timer) const;
+                    double omega0, double delta_omega) const;
   void SweepAdaptive(SpaceOperator &spaceop, PostOperator &postop, int nstep, int step0,
-                     double omega0, double delta_omega, Timer &timer) const;
+                     double omega0, double delta_omega) const;
 
   void Postprocess(const PostOperator &postop, const LumpedPortOperator &lumped_port_op,
                    const WavePortOperator &wave_port_op,
                    const SurfaceCurrentOperator &surf_j_op, int step, double omega,
-                   double E_elec, double E_mag, bool full, Timer &timer) const;
+                   double E_elec, double E_mag, bool full) const;
 
   void PostprocessCurrents(const PostOperator &postop,
                            const SurfaceCurrentOperator &surf_j_op, int step,
@@ -62,8 +62,7 @@ public:
   {
   }
 
-  void Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
-             Timer &timer) const override;
+  void Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const override;
 };
 
 }  // namespace palace

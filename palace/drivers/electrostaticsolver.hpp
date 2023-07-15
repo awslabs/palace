@@ -35,7 +35,7 @@ class ElectrostaticSolver : public BaseSolver
 {
 private:
   void Postprocess(LaplaceOperator &laplaceop, PostOperator &postop,
-                   const std::vector<Vector> &V, Timer &timer) const;
+                   const std::vector<Vector> &V) const;
 
   void PostprocessTerminals(const std::map<int, mfem::Array<int>> &terminal_sources,
                             const mfem::DenseMatrix &C, const mfem::DenseMatrix &Cinv,
@@ -48,8 +48,7 @@ public:
   {
   }
 
-  void Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
-             Timer &timer) const override;
+  void Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const override;
 };
 
 }  // namespace palace

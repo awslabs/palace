@@ -73,8 +73,7 @@ public:
              const char *git_tag = nullptr);
   virtual ~BaseSolver() = default;
 
-  virtual void Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
-                     Timer &timer) const = 0;
+  virtual void Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const = 0;
 
   // These methods write different simulation metadata to a JSON file in post_dir.
   void SaveMetadata(const mfem::ParFiniteElementSpaceHierarchy &fespaces) const;

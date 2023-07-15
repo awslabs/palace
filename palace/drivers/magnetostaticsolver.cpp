@@ -16,13 +16,12 @@
 namespace palace
 {
 
-void MagnetostaticSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
-                                Timer &timer) const
+void MagnetostaticSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const
 {
   // Construct the system matrix defining the linear operator. Dirichlet boundaries are
   // handled eliminating the rows and columns of the system matrix for the corresponding
   // dofs.
-  timer.Lap();
+  TimedBlock b(Timer::CONSTRUCT);
   CurlCurlOperator curlcurlop(iodata, mesh);
   auto K = curlcurlop.GetStiffnessMatrix();
   SaveMetadata(curlcurlop.GetNDSpaces());
@@ -40,46 +39,43 @@ void MagnetostaticSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mes
   // Source term and solution vector storage.
   Vector RHS(K->Height());
   std::vector<Vector> A(nstep);
-  timer.MarkTime(Timer::CONSTRUCT);
 
   // Main loop over current source boundaries.
   Mpi::Print("\nComputing magnetostatic fields for {:d} source boundar{}\n", nstep,
              (nstep > 1) ? "ies" : "y");
   int step = 0;
-  auto t0 = timer.Now();
+  auto t0 = TimedBlock::Timer().Now();
   for (const auto &[idx, data] : curlcurlop.GetSurfaceCurrentOp())
   {
-    Mpi::Print("\nIt {:d}/{:d}: Index = {:d} (elapsed time = {:.2e} s)\n", step + 1, nstep,
-               idx, Timer::Duration(timer.Now() - t0).count());
-
     // Form and solve the linear system for a prescribed current on the specified source.
+    TimedBlock c(Timer::CONSTRUCT);
+    Mpi::Print("\nIt {:d}/{:d}: Index = {:d} (elapsed time = {:.2e} s)\n", step + 1, nstep,
+               idx, Timer::Duration(TimedBlock::Timer().Now() - t0).count());
     Mpi::Print("\n");
     A[step].SetSize(RHS.Size());
     A[step] = 0.0;
     curlcurlop.GetExcitationVector(idx, RHS);
-    timer.MarkTime(Timer::CONSTRUCT);
 
+    TimedBlock s(Timer::SOLVE);
     ksp.Mult(RHS, A[step]);
-    timer.MarkTime(Timer::SOLVE);
 
+    TimedBlock p(Timer::POSTPRO);
     Mpi::Print(" Sol. ||A|| = {:.6e} (||RHS|| = {:.6e})\n",
                linalg::Norml2(curlcurlop.GetComm(), A[step]),
                linalg::Norml2(curlcurlop.GetComm(), RHS));
-    timer.MarkTime(Timer::POSTPRO);
 
     // Next source.
     step++;
   }
 
   // Postprocess the capacitance matrix from the computed field solutions.
-  const auto io_time_prev = timer[Timer::IO];
+  TimedBlock p(Timer::POSTPRO);
   SaveMetadata(ksp);
-  Postprocess(curlcurlop, postop, A, timer);
-  timer.MarkTime(Timer::POSTPRO, timer.Lap() - (timer[Timer::IO] - io_time_prev));
+  Postprocess(curlcurlop, postop, A);
 }
 
 void MagnetostaticSolver::Postprocess(CurlCurlOperator &curlcurlop, PostOperator &postop,
-                                      const std::vector<Vector> &A, Timer &timer) const
+                                      const std::vector<Vector> &A) const
 {
   // Postprocess the Maxwell inductance matrix. See p. 97 of the COMSOL AC/DC Module manual
   // for the associated formulas based on the magnetic field energy based on a current
@@ -117,10 +113,9 @@ void MagnetostaticSolver::Postprocess(CurlCurlOperator &curlcurlop, PostOperator
     PostprocessProbes(postop, "i", i, idx);
     if (i < iodata.solver.magnetostatic.n_post)
     {
-      auto t0 = timer.Now();
+      TimedBlock b(Timer::IO);
       PostprocessFields(postop, i, idx);
       Mpi::Print(" Wrote fields to disk for terminal {:d}\n", idx);
-      timer.MarkTime(Timer::IO, timer.Now() - t0);
     }
 
     // Diagonal: M_ii = 2 U_m(A_i) / I_i².

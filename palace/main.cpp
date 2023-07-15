@@ -59,9 +59,6 @@ int main(int argc, char *argv[])
   int world_size = Mpi::Size(world_comm);
   Mpi::Print(world_comm, "\n");
 
-  // Initialize timer.
-  Timer timer;
-
   // Parse command-line options.
   std::vector<std::string_view> argv_sv(argv, argv + argc);
   bool dryrun = false;
@@ -181,13 +178,17 @@ int main(int argc, char *argv[])
   // Read the mesh from file, refine, partition, and distribute it. Then nondimensionalize
   // it and the input parameters.
   std::vector<std::unique_ptr<mfem::ParMesh>> mesh;
-  mesh.push_back(mesh::ReadMesh(world_comm, iodata, false, true, true, false, timer));
-  iodata.NondimensionalizeInputs(*mesh[0]);
-  mesh::RefineMesh(iodata, mesh);
-  timer.MarkTime(Timer::INIT, timer.Lap() - timer[Timer::IO]);
+  {
+    TimedBlock b(Timer::INIT);
+    mesh.push_back(mesh::ReadMesh(world_comm, iodata, false, true, true, false));
+    iodata.NondimensionalizeInputs(*mesh[0]);
+    mesh::RefineMesh(iodata, mesh);
+  }
 
   // Run the problem driver.
-  solver->Solve(mesh, timer);
+  solver->Solve(mesh);
+
+  Timer timer = TimedBlock::Timer();
   timer.Reduce(world_comm);
   timer.Print(world_comm);
   solver->SaveMetadata(timer);

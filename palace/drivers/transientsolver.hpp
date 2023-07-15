@@ -37,8 +37,7 @@ private:
 
   void Postprocess(const PostOperator &postop, const LumpedPortOperator &lumped_port_op,
                    const SurfaceCurrentOperator &surf_j_op, int step, double t,
-                   double J_coef, double E_elec, double E_mag, bool ful,
-                   Timer &timer) const;
+                   double J_coef, double E_elec, double E_mag, bool ful) const;
 
   void PostprocessCurrents(const PostOperator &postop,
                            const SurfaceCurrentOperator &surf_j_op, int step, double t,
@@ -54,8 +53,7 @@ public:
   {
   }
 
-  void Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
-             Timer &timer) const override;
+  void Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const override;
 };
 
 }  // namespace palace
