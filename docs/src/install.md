@@ -113,12 +113,15 @@ Additional build options are (with default values in brackets):
 
   - `PALACE_WITH_64BIT_INT [OFF]` :  Build with 64-bit integer support
   - `PALACE_WITH_OPENMP [OFF]` :  Use OpenMP
+  - `PALACE_WITH_LIBCEED [ON]` :  Build with libCEED library for high-order partial assembly
+    support
   - `PALACE_WITH_GSLIB [ON]` :  Build with GSLIB library for high-order field interpolation
   - `PALACE_WITH_SUPERLU [ON]` :  Build with SuperLU_DIST sparse direct solver
   - `PALACE_WITH_STRUMPACK [OFF]` :  Build with STRUMPACK sparse direct solver
   - `PALACE_WITH_MUMPS [OFF]` :  Build with MUMPS sparse direct solver
   - `PALACE_WITH_SLEPC [ON]` :  Build with SLEPc eigenvalue solver
   - `PALACE_WITH_ARPACK [OFF]` :  Build with ARPACK eigenvalue solver
+  - `PALACE_WITH_LIBXSMM [ON]` :  Build with LIBXSMM backend when libCEED is enabled
 
 The build step is invoked by running (for example with 4 `make` threads)
 
@@ -171,7 +174,8 @@ as the standard parallelization in approach in *Palace* is to use pure MPI paral
 *Palace* leverages the [MFEM finite element discretization library](http://mfem.org). It
 always configures and builds its own installation of MFEM internally in order to support
 the most up to date features and patches. Likewise, Palace will always build its own
-installation of [GSLIB](https://github.com/Nek5000/gslib), when `PALACE_WITH_GSLIB=ON`.
+installation of [libCEED](https://github.com/CEED/libCEED), when `PALACE_WITH_LIBCEED=ON`,
+and [GSLIB](https://github.com/Nek5000/gslib), when `PALACE_WITH_GSLIB=ON`.
 
 As part of the [Build from source](#Build-from-source), the CMake build will automatically
 build and install a small number of third-party dependencies before building *Palace*. The
@@ -192,6 +196,8 @@ source code for these dependencies is downloaded using using [Git submodules]
     [PETSc](https://petsc.org/release/)
   - [ARPACK-NG](https://github.com/opencollab/arpack-ng) (optional, when
     `PALACE_WITH_ARPACK=ON`)
+  - [LIBXSMM](https://github.com/libxsmm/libxsmm) (optional, when `PALACE_WITH_LIBXSMM=ON`
+    and `PALACE_WITH_LIBCEED=ON`)
   - [nlohmann/json](https://github.com/nlohmann/json)
   - [fmt](https://fmt.dev/latest)
   - [Eigen](https://eigen.tuxfamily.org)
