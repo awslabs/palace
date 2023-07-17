@@ -51,12 +51,13 @@ void HypreAmsSolver::ConstructAuxiliaryMatrices(mfem::ParFiniteElementSpace &nd_
   // HypreAMS:Init. Start with the discrete gradient matrix.
   {
     // XX TODO: Partial assembly option?
-    auto grad = std::make_unique<mfem::DiscreteLinearOperator>(&h1_fespace, &nd_fespace);
-    grad->AddDomainInterpolator(new mfem::GradientInterpolator);
-    grad->SetAssemblyLevel(mfem::AssemblyLevel::LEGACY);
-    grad->Assemble();
-    grad->Finalize();
-    ParOperator RAP_G(std::move(grad), h1_fespace, nd_fespace, true);
+    mfem::DiscreteLinearOperator grad(&h1_fespace, &nd_fespace);
+    grad.AddDomainInterpolator(new mfem::GradientInterpolator);
+    grad.SetAssemblyLevel(mfem::AssemblyLevel::LEGACY);
+    grad.Assemble();
+    grad.Finalize();
+    ParOperator RAP_G(std::unique_ptr<mfem::SparseMatrix>(grad.LoseMat()), h1_fespace,
+                      nd_fespace, true);
     G = RAP_G.StealParallelAssemble();
   }
 
@@ -112,18 +113,17 @@ void HypreAmsSolver::ConstructAuxiliaryMatrices(mfem::ParFiniteElementSpace &nd_
   }
   else
   {
-    {
-      // XX TODO: Partial assembly option?
-      mfem::ParFiniteElementSpace h1d_fespace(&mesh, h1_fespace.FEColl(), space_dim,
-                                              mfem::Ordering::byVDIM);
-      auto pi = std::make_unique<mfem::DiscreteLinearOperator>(&h1d_fespace, &nd_fespace);
-      pi->AddDomainInterpolator(new mfem::IdentityInterpolator);
-      pi->SetAssemblyLevel(mfem::AssemblyLevel::LEGACY);
-      pi->Assemble();
-      pi->Finalize();
-      ParOperator RAP_Pi(std::move(pi), h1d_fespace, nd_fespace, true);
-      Pi = RAP_Pi.StealParallelAssemble();
-    }
+    // XX TODO: Partial assembly option?
+    mfem::ParFiniteElementSpace h1d_fespace(&mesh, h1_fespace.FEColl(), space_dim,
+                                            mfem::Ordering::byVDIM);
+    mfem::DiscreteLinearOperator pi(&h1d_fespace, &nd_fespace);
+    pi.AddDomainInterpolator(new mfem::IdentityInterpolator);
+    pi.SetAssemblyLevel(mfem::AssemblyLevel::LEGACY);
+    pi.Assemble();
+    pi.Finalize();
+    ParOperator RAP_Pi(std::unique_ptr<mfem::SparseMatrix>(pi.LoseMat()), h1d_fespace,
+                       nd_fespace, true);
+    Pi = RAP_Pi.StealParallelAssemble();
     if (cycle_type >= 10)
     {
       // Get blocks of Pi corresponding to each component, and free Pi.
