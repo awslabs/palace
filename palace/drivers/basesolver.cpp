@@ -136,6 +136,7 @@ void BaseSolver::SaveMetadata(const Timer &timer) const
       auto key = Timer::descriptions[i];
       key.erase(std::remove_if(key.begin(), key.end(), isspace), key.end());
       meta["ElapsedTime"][key] = timer.GetAvgTime(i);
+      meta["TimerCounts"][key] = timer.GetCounts(i);
     }
     WriteMetadata(post_dir, meta);
   }
