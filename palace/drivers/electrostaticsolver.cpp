@@ -21,7 +21,7 @@ void ElectrostaticSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mes
   // handled eliminating the rows and columns of the system matrix for the corresponding
   // dofs. The eliminated matrix is stored in order to construct the RHS vector for nonzero
   // prescribed BC values.
-  TimedBlock b(Timer::CONSTRUCT);
+  BlockTimer b(Timer::CONSTRUCT);
   LaplaceOperator laplaceop(iodata, mesh);
   auto K = laplaceop.GetStiffnessMatrix();
   SaveMetadata(laplaceop.GetH1Spaces());
@@ -44,21 +44,21 @@ void ElectrostaticSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mes
   Mpi::Print("\nComputing electrostatic fields for {:d} terminal boundar{}\n", nstep,
              (nstep > 1) ? "ies" : "y");
   int step = 0;
-  auto t0 = TimedBlock::Timer().Now();
+  auto t0 = BlockTimer::Timer().Now();
   for (const auto &[idx, data] : laplaceop.GetSources())
   {
     // Form and solve the linear system for a prescribed nonzero voltage on the specified
     // terminal.
-    TimedBlock c(Timer::CONSTRUCT);
+    BlockTimer c(Timer::CONSTRUCT);
     Mpi::Print("\nIt {:d}/{:d}: Index = {:d} (elapsed time = {:.2e} s)\n", step + 1, nstep,
-               idx, Timer::Duration(TimedBlock::Timer().Now() - t0).count());
+               idx, Timer::Duration(BlockTimer::Timer().Now() - t0).count());
     Mpi::Print("\n");
     laplaceop.GetExcitationVector(idx, *K, V[step], RHS);
 
-    TimedBlock s(Timer::SOLVE);
+    BlockTimer s(Timer::SOLVE);
     ksp.Mult(RHS, V[step]);
 
-    TimedBlock p(Timer::POSTPRO);
+    BlockTimer p(Timer::POSTPRO);
     Mpi::Print(" Sol. ||V|| = {:.6e} (||RHS|| = {:.6e})\n",
                linalg::Norml2(laplaceop.GetComm(), V[step]),
                linalg::Norml2(laplaceop.GetComm(), RHS));
@@ -68,7 +68,7 @@ void ElectrostaticSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mes
   }
 
   // Postprocess the capacitance matrix from the computed field solutions.
-  TimedBlock p(Timer::POSTPRO);
+  BlockTimer p(Timer::POSTPRO);
   SaveMetadata(ksp);
   Postprocess(laplaceop, postop, V);
 }
@@ -106,7 +106,7 @@ void ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop, PostOperator &
     PostprocessProbes(postop, "i", i, idx);
     if (i < iodata.solver.electrostatic.n_post)
     {
-      TimedBlock b(Timer::IO);
+      BlockTimer b(Timer::IO);
       PostprocessFields(postop, i, idx);
       Mpi::Print(" Wrote fields to disk for terminal {:d}\n", idx);
     }

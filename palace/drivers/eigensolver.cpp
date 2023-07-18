@@ -27,7 +27,7 @@ void EigenSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const
   // Construct and extract the system matrices defining the eigenvalue problem. The diagonal
   // values for the mass matrix PEC dof shift the Dirichlet eigenvalues out of the
   // computational range. The damping matrix may be nullptr.
-  TimedBlock b(Timer::CONSTRUCT);
+  BlockTimer b(Timer::CONSTRUCT);
   SpaceOperator spaceop(iodata, mesh);
   auto K = spaceop.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE);
   auto C = spaceop.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
@@ -249,13 +249,13 @@ void EigenSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const
   eigen->SetLinearSolver(*ksp);
 
   // Eigenvalue problem solve.
-  TimedBlock s(Timer::SOLVE);
+  BlockTimer s(Timer::SOLVE);
   Mpi::Print("\n");
   int num_conv = eigen->Solve();
   SaveMetadata(*ksp);
 
   // Postprocess the results.
-  TimedBlock p(Timer::POSTPRO);
+  BlockTimer p(Timer::POSTPRO);
   for (int i = 0; i < num_conv; i++)
   {
     // Get the eigenvalue and relative error.
@@ -314,7 +314,7 @@ void EigenSolver::Postprocess(const PostOperator &postop,
   PostprocessProbes(postop, "m", i, i + 1);
   if (i < iodata.solver.eigenmode.n_post)
   {
-    TimedBlock b(Timer::IO);
+    BlockTimer b(Timer::IO);
     PostprocessFields(postop, i, i + 1);
     Mpi::Print(" Wrote mode {:d} to disk\n", i + 1);
   }

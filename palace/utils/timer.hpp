@@ -8,6 +8,7 @@
 #include <initializer_list>
 #include <string>
 #include <vector>
+#include <stack>
 #include "utils/communication.hpp"
 
 namespace palace
@@ -162,32 +163,30 @@ public:
   }
 };
 
-class TimedBlock
+class BlockTimer
 {
 private:
   using Index = Timer::Index;
-  inline static std::vector<Index> stack;
+  inline static std::stack<Index> stack;
   inline static Timer timer;
 
 public:
-  using Duration = Timer::Duration;
-
   // Provide read-only access to the timer object.
   static const Timer &Timer() { return timer; }
 
-  TimedBlock(Index i)
+  BlockTimer(Index i)
   {
     // Start timing when entering the block, interrupting whatever we were timing before.
     // Take note of what we are now timing.
-    (stack.empty()) ? timer.Lap() : timer.MarkTime(stack.back(), false);
-    stack.push_back(i);
+    (stack.empty()) ? timer.Lap() : timer.MarkTime(stack.top(), false);
+    stack.push(i);
   }
 
-  ~TimedBlock()
+  ~BlockTimer()
   {
-    // When a TimedBlock is no longer in scope, record the time.
-    timer.MarkTime(stack.back());
-    stack.pop_back();
+    // When a BlockTimer is no longer in scope, record the time.
+    timer.MarkTime(stack.top());
+    stack.pop();
   }
 };
 

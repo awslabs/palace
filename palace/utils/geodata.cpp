@@ -70,7 +70,7 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(MPI_Comm comm, const IoData &iodata, boo
   // I/O time separately for the mesh read from file.
   std::unique_ptr<mfem::Mesh> smesh;
   {
-    TimedBlock b(Timer::IO);
+    BlockTimer b(Timer::IO);
     if (Mpi::Root(comm))
     {
       // Optionally reorder elements (and vertices) based on spatial location after loading

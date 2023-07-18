@@ -21,7 +21,7 @@ namespace palace
 void TransientSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const
 {
   // Set up the spatial discretization and time integrators for the E and B fields.
-  TimedBlock b(Timer::CONSTRUCT);
+  BlockTimer b(Timer::CONSTRUCT);
   std::function<double(double)> J_coef = GetTimeExcitation(false);
   std::function<double(double)> dJdt_coef = GetTimeExcitation(true);
   SpaceOperator spaceop(iodata, mesh);
@@ -77,14 +77,14 @@ void TransientSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) c
   // Main time integration loop.
   int step = 0;
   double t = -delta_t;
-  auto t0 = TimedBlock::Timer().Now();
+  auto t0 = BlockTimer::Timer().Now();
   while (step < nstep)
   {
     // Single time step t -> t + dt.
-    TimedBlock s(Timer::SOLVE);
+    BlockTimer s(Timer::SOLVE);
     const double ts = iodata.DimensionalizeValue(IoData::ValueType::TIME, t + delta_t);
     Mpi::Print("\nIt {:d}/{:d}: t = {:e} ns (elapsed time = {:.2e} s)\n", step, nstep - 1,
-               ts, Timer::Duration(TimedBlock::Timer().Now() - t0).count());
+               ts, Timer::Duration(BlockTimer::Timer().Now() - t0).count());
     if (step == 0)
     {
       Mpi::Print("\n");
@@ -97,7 +97,7 @@ void TransientSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) c
     }
 
     // Postprocess for the time step.
-    TimedBlock p(Timer::POSTPRO);
+    BlockTimer p(Timer::POSTPRO);
     double E_elec = 0.0, E_mag = 0.0;
     const Vector &E = timeop.GetE();
     const Vector &B = timeop.GetB();
@@ -252,7 +252,7 @@ void TransientSolver::Postprocess(const PostOperator &postop,
   if (iodata.solver.transient.delta_post > 0 &&
       step % iodata.solver.transient.delta_post == 0)
   {
-    TimedBlock b(Timer::IO);
+    BlockTimer b(Timer::IO);
     Mpi::Print("\n");
     PostprocessFields(postop, step / iodata.solver.transient.delta_post, ts);
     Mpi::Print(" Wrote fields to disk at step {:d}\n", step);

@@ -179,7 +179,7 @@ int main(int argc, char *argv[])
   // it and the input parameters.
   std::vector<std::unique_ptr<mfem::ParMesh>> mesh;
   {
-    TimedBlock b(Timer::INIT);
+    BlockTimer b(Timer::INIT);
     mesh.push_back(mesh::ReadMesh(world_comm, iodata, false, true, true, false));
     iodata.NondimensionalizeInputs(*mesh[0]);
     mesh::RefineMesh(iodata, mesh);
@@ -188,7 +188,7 @@ int main(int argc, char *argv[])
   // Run the problem driver.
   solver->Solve(mesh);
 
-  Timer timer = TimedBlock::Timer();
+  Timer timer = BlockTimer::Timer();
   timer.Reduce(world_comm);
   timer.Print(world_comm);
   solver->SaveMetadata(timer);

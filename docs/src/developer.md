@@ -57,22 +57,22 @@ Schema are also installed and can be accessed in `<INSTALL_DIR>/bin`.
 
 ## Timing
 
-Timing facilities are provided by `TimedBlock`.
+Timing facilities are provided by `BlockTimer`.
 
-Creating a block as `TimedBlock b(idx)` where `idx` is a category like `CONSTRUCT`, `SOLVE`,
+Creating a block as `BlockTimer b(idx)` where `idx` is a category like `CONSTRUCT`, `SOLVE`,
 etc. will record time so long as `b` is in scope; however, timing may be interrupted by
-creation of another `TimedBlock` object. It will resume whenever the new block is destroyed.
+creation of another `BlockTimer` object. It will resume whenever the new block is destroyed.
 Only one category is timed at once. This enables functions can declare how calls within them
 are timed without needing to know how timing may be done by the calling function.
 
-The `TimedBlock` implementation relies upon a static member object of the `Timer` class,
+The `BlockTimer` implementation relies upon a static member object of the `Timer` class,
 which behaves as a stopwatch with some memory functions. It is the responsibility of this
-`Timer TimedBlock::timer` object to record time spent in each recorded category. Other
+`Timer BlockTimer::timer` object to record time spent in each recorded category. Other
 `Timer` objects may be created for local timing purposes, but these will not count toward
 time reported at the end of a log file or in the metadata JSON.
 
-Internally, the number of times `TimerBlock b(idx)` was called for each possible value of
-`idx` (timing category) can be queried with `TimerBlock::Timer().GetCounts()`.
+Internally, the number of times `BlockTimer b(idx)` was called for each possible value of
+`idx` (timing category) can be queried with `BlockTimer::Timer().GetCounts()`.
 
 ## Changelog
 

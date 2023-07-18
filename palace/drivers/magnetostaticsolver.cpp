@@ -21,7 +21,7 @@ void MagnetostaticSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mes
   // Construct the system matrix defining the linear operator. Dirichlet boundaries are
   // handled eliminating the rows and columns of the system matrix for the corresponding
   // dofs.
-  TimedBlock b(Timer::CONSTRUCT);
+  BlockTimer b(Timer::CONSTRUCT);
   CurlCurlOperator curlcurlop(iodata, mesh);
   auto K = curlcurlop.GetStiffnessMatrix();
   SaveMetadata(curlcurlop.GetNDSpaces());
@@ -44,22 +44,22 @@ void MagnetostaticSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mes
   Mpi::Print("\nComputing magnetostatic fields for {:d} source boundar{}\n", nstep,
              (nstep > 1) ? "ies" : "y");
   int step = 0;
-  auto t0 = TimedBlock::Timer().Now();
+  auto t0 = BlockTimer::Timer().Now();
   for (const auto &[idx, data] : curlcurlop.GetSurfaceCurrentOp())
   {
     // Form and solve the linear system for a prescribed current on the specified source.
-    TimedBlock c(Timer::CONSTRUCT);
+    BlockTimer c(Timer::CONSTRUCT);
     Mpi::Print("\nIt {:d}/{:d}: Index = {:d} (elapsed time = {:.2e} s)\n", step + 1, nstep,
-               idx, Timer::Duration(TimedBlock::Timer().Now() - t0).count());
+               idx, Timer::Duration(BlockTimer::Timer().Now() - t0).count());
     Mpi::Print("\n");
     A[step].SetSize(RHS.Size());
     A[step] = 0.0;
     curlcurlop.GetExcitationVector(idx, RHS);
 
-    TimedBlock s(Timer::SOLVE);
+    BlockTimer s(Timer::SOLVE);
     ksp.Mult(RHS, A[step]);
 
-    TimedBlock p(Timer::POSTPRO);
+    BlockTimer p(Timer::POSTPRO);
     Mpi::Print(" Sol. ||A|| = {:.6e} (||RHS|| = {:.6e})\n",
                linalg::Norml2(curlcurlop.GetComm(), A[step]),
                linalg::Norml2(curlcurlop.GetComm(), RHS));
@@ -69,7 +69,7 @@ void MagnetostaticSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mes
   }
 
   // Postprocess the capacitance matrix from the computed field solutions.
-  TimedBlock p(Timer::POSTPRO);
+  BlockTimer p(Timer::POSTPRO);
   SaveMetadata(ksp);
   Postprocess(curlcurlop, postop, A);
 }
@@ -113,7 +113,7 @@ void MagnetostaticSolver::Postprocess(CurlCurlOperator &curlcurlop, PostOperator
     PostprocessProbes(postop, "i", i, idx);
     if (i < iodata.solver.magnetostatic.n_post)
     {
-      TimedBlock b(Timer::IO);
+      BlockTimer b(Timer::IO);
       PostprocessFields(postop, i, idx);
       Mpi::Print(" Wrote fields to disk for terminal {:d}\n", idx);
     }
