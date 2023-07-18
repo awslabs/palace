@@ -54,47 +54,94 @@ function generate_cylindrical_cavity_mesh(;
     height = aspect_ratio * 2 * radius  # Cylinder height
 
     # Mesh parameters
-    n_height = 2 * 2^refinement # Minimum two elements in vertical
-    n_circum = 4 * 2^refinement # Minimum four elements on round
+    n_height = 2                       # Two elements in height
+    n_circum = mesh_type == 2 ? 4 : 6  # Four or six elements on circumference
 
     # Geometry
-    base_circle = kernel.addDisk(0.0, 0.0, 0.0, radius, radius)
-    if mesh_type > 0
-        cylinder_dimtags =
-            kernel.extrude([(2, base_circle)], 0.0, 0.0, height, [n_height], [1.0], true)
+    if (mesh_type == 2)
+        base_square = kernel.addRectangle(
+            -0.4 * radius,
+            -0.4 * radius,
+            0.0,
+            0.8 * radius,
+            0.8 * radius
+        )
+        kernel.rotate((2, base_square), 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, pi / 4.0)
+        base_circle = kernel.addDisk(0.0, 0.0, 0.0, radius, radius)
+        base_circle, _ = kernel.cut((2, base_circle), (2, base_square), -1, true, false)
+        @assert length(base_circle) == 1 && first(base_circle)[1] == 2
+        base_circle = first(base_circle)[2]
+        cylinder_dimtags = kernel.extrude(
+            [(2, base_square), (2, base_circle)],
+            0.0,
+            0.0,
+            height,
+            [n_height],
+            [1.0],
+            true
+        )
+        cylinder = filter(x -> x[1] == 3, cylinder_dimtags)
+        @assert length(cylinder) == 2
+        cylinder = [x[2] for x in cylinder]
+
+        kernel.synchronize()
+
+        gmsh.model.mesh.setRecombine(2, base_square)
+        gmsh.model.mesh.setRecombine(2, base_circle)
+
+        # Add physical groups
+        cylinder_group = gmsh.model.addPhysicalGroup(3, cylinder, -1, "cylinder")
+        _, square_boundaries = gmsh.model.getAdjacencies(3, cylinder[1])
+        _, circle_boundaries = gmsh.model.getAdjacencies(3, cylinder[2])
+        boundaries = copy(circle_boundaries)
+        for boundary in square_boundaries
+            idx = first(indexin([boundary], boundaries))
+            if !isnothing(idx)
+                deleteat!(boundaries, idx)
+            else
+                push!(boundaries, boundary)
+            end
+        end
+        boundary_group = gmsh.model.addPhysicalGroup(2, boundaries, -1, "boundaries")
     else
-        cylinder_dimtags = kernel.extrude([(2, base_circle)], 0.0, 0.0, height)
+        base_circle = kernel.addDisk(0.0, 0.0, 0.0, radius, radius)
+        cylinder_dimtags = kernel.extrude(
+            [(2, base_circle)],
+            0.0,
+            0.0,
+            height,
+            [n_height],
+            [1.0],
+            mesh_type > 0
+        )
+        cylinder = filter(x -> x[1] == 3, cylinder_dimtags)
+        @assert length(cylinder) == 1 && first(cylinder)[1] == 3
+        cylinder = first(cylinder)[2]
+
+        kernel.synchronize()
+
+        # Add physical groups
+        cylinder_group = gmsh.model.addPhysicalGroup(3, [cylinder], -1, "cylinder")
+
+        _, boundaries = gmsh.model.getAdjacencies(3, cylinder)
+        boundary_group = gmsh.model.addPhysicalGroup(2, boundaries, -1, "boundaries")
     end
-    cylinder = filter(x -> x[1] == 3, cylinder_dimtags)
-    @assert length(cylinder) == 1 && first(cylinder)[1] == 3
-    cylinder = first(cylinder)[2]
-
-    kernel.synchronize()
-
-    # Add physical groups
-    cylinder_group = gmsh.model.addPhysicalGroup(3, [cylinder], -1, "cylinder")
-
-    _, boundaries = gmsh.model.getAdjacencies(3, cylinder)
-    boundary_group = gmsh.model.addPhysicalGroup(2, boundaries, -1, "boundaries")
 
     # Generate mesh
     gmsh.option.setNumber("Mesh.MinimumCurveNodes", 2)
     gmsh.option.setNumber("Mesh.MinimumCircleNodes", 0)
 
-    gmsh.option.setNumber("Mesh.MeshSizeMin", 2π * radius / n_circum)
-    gmsh.option.setNumber("Mesh.MeshSizeMax", 2π * radius / n_circum)
-
     gmsh.option.setNumber("Mesh.MeshSizeFromPoints", 0)
     gmsh.option.setNumber("Mesh.MeshSizeFromCurvature", n_circum)
     gmsh.option.setNumber("Mesh.MeshSizeExtendFromBoundary", 1)
-    if mesh_type > 1
-        gmsh.model.mesh.setRecombine(2, base_circle)
-    end
 
-    gmsh.option.setNumber("Mesh.Algorithm", 6)
+    gmsh.option.setNumber("Mesh.Algorithm", mesh_type == 2 ? 8 : 6)
     gmsh.option.setNumber("Mesh.Algorithm3D", 10)
 
     gmsh.model.mesh.generate(3) # Dimension of the mesh
+    for i = 0:(refinement - 1)
+        gmsh.model.mesh.refine()
+    end
     gmsh.model.mesh.setOrder(order) # Polynomial order of the mesh
 
     # Save mesh
