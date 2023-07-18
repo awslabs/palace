@@ -13,6 +13,17 @@ The format of this changelog is based on
 
 ## In progress
 
+  - Changed implementation of complex-valued linear algebra to use new `ComplexVector` and
+    `ComplexOperator` types, which are based on the underlying `mfem::Vector` and
+    `mfem::Operator` classes, instead of PETSc. PETSc is now fully optional and only
+    required when SLEPc eigenvalue solver support is requested. Krylov solvers for real- and
+    complex-valued linear systems are implemented via the built-in `IterativeSolver`
+    classes.
+  - Changed implementation of PROMs for adaptive fast frequency sweep to use the Eigen
+    library for sequential dense linear algebra.
+  - Changed implementation of numeric wave ports to use MFEM's `SubMesh` functionality. As
+    of [#3379](https://github.com/mfem/mfem/pull/3379) in MFEM, this has full ND and RT
+    basis support. For now, support for nonconforming mesh boundaries is limited.
   - Added Apptainer/Singularity container build definition for Palace.
   - Added build dependencies on [libCEED](https://github.com/CEED/libCEED) and
     [LIBXSMM](https://github.com/libxsmm/libxsmm) to support operator partial assembly (CPU-
@@ -20,9 +31,9 @@ The format of this changelog is based on
 
 ## [0.11.2] - 2023-07-14
 
-  - Changed layout and names of `palace/` source directory for better organization.
   - Fixed a regression bug affecting meshes which have domain elements which are not
     assigned material properties in the configuration file.
+  - Changed layout and names of `palace/` source directory for better organization.
   - Added many updates to build system: Removed use of Git submodules to download
     dependencies relying instead directly on CMake's ExternalProject, patch GSLIB dependency
     for shared library builds, add CI tests with ARPACK-NG instead of SLEPc, update all
