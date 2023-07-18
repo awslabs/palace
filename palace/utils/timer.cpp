@@ -8,18 +8,13 @@
 namespace palace
 {
 
-const std::vector<std::string> Timer::descriptions ({
-  "Initialization",
-  "Operator Construction",
-  "Parameter Space Sampling",   // adaptive driven
-  "HDM Solve",                  // adaptive driven
-  "Solve",
-  "Postprocessing",
-  "Disk IO",
-  "Total"
-});
+const std::vector<std::string>
+    Timer::descriptions({"Initialization", "Operator Construction",
+                         "Parameter Space Sampling",  // adaptive driven
+                         "HDM Solve",                 // adaptive driven
+                         "Solve", "Postprocessing", "Disk IO", "Total"});
 
 Timer TimedBlock::timer;
-std::vector<int> TimedBlock::stack;
+std::vector<Timer::Index> TimedBlock::stack;
 
 }  // namespace palace

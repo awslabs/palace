@@ -5,6 +5,7 @@
 #define PALACE_UTILS_TIMER_HPP
 
 #include <chrono>
+#include <initializer_list>
 #include <string>
 #include <vector>
 #include "utils/communication.hpp"
@@ -18,7 +19,7 @@ namespace palace
 class Timer
 {
 public:
-  enum
+  enum Index
   {
     INIT = 0,
     CONSTRUCT,
@@ -30,6 +31,9 @@ public:
     TOTAL,
     NUMTIMINGS
   };
+
+  inline static const std::initializer_list<Index> indices = {
+      INIT, CONSTRUCT, PSS, HDMSOLVE, SOLVE, POSTPRO, IO, TOTAL};
 
   using Clock = std::chrono::steady_clock;
   using Duration = std::chrono::duration<double>;
@@ -44,11 +48,11 @@ private:
   std::vector<double> data_min, data_max, data_avg;
 
   // Save a timing step by adding a duration, without lapping; optionally, count it.
-  Duration SaveTime(int key, Duration time, bool count_it)
+  Duration SaveTime(Index idx, Duration time, bool count_it)
   {
-    data[key] += time;
-    count_it &&counts[key]++;
-    return data[key];
+    data[idx] += time;
+    count_it &&counts[idx]++;
+    return data[idx];
   }
 
 public:
@@ -72,24 +76,24 @@ public:
   Duration TimeFromStart() const { return Now() - start_time; }
 
   // Lap and record a timing step.
-  Duration MarkTime(int key, bool count_it = true)
+  Duration MarkTime(Index idx, bool count_it = true)
   {
-    return SaveTime(key, Lap(), count_it);
+    return SaveTime(idx, Lap(), count_it);
   }
 
   // Provide map-like read-only access to the timing data.
-  Duration operator[](int key) const { return (data)[key]; }
+  Duration operator[](Index idx) const { return (data)[idx]; }
 
   // Provide access to the reduced timing data.
-  double GetMinTime(int i) const { return data_min[i]; }
-  double GetMaxTime(int i) const { return data_max[i]; }
-  double GetAvgTime(int i) const { return data_avg[i]; }
+  double GetMinTime(Index idx) const { return data_min[idx]; }
+  double GetMaxTime(Index idx) const { return data_max[idx]; }
+  double GetAvgTime(Index idx) const { return data_avg[idx]; }
 
   // Only print a category in log files if it was timed.
-  bool ShouldPrint(int idx) const { return counts[idx] > 0; }
+  bool ShouldPrint(Index idx) const { return counts[idx] > 0; }
 
   // Return number of times timer.MarkTime(idx) or TimerBlock b(idx) was called.
-  int GetCounts(int idx) const { return counts[idx]; }
+  int GetCounts(Index idx) const { return counts[idx]; }
 
   // Reduce timing information across MPI ranks.
   void Reduce(MPI_Comm comm)
@@ -130,7 +134,7 @@ public:
       "Elapsed Time Report (s)", h, "Min.", w, "Max.", w, "Avg.", w
     );
     Mpi::Print(comm, "{}\n", std::string(h + 3 * w, '='));
-    for (int i = 0; i < NUMTIMINGS; i++)
+    for (auto i : Timer::indices)
     {
         if (ShouldPrint(i))
         {
@@ -152,7 +156,8 @@ public:
 class TimedBlock
 {
 private:
-  static std::vector<int> stack;
+  using Index = Timer::Index;
+  static std::vector<Index> stack;
   static Timer timer;
 
 public:
@@ -161,7 +166,7 @@ public:
   // Provide read-only access to the timer object.
   static const Timer &Timer() { return timer; }
 
-  TimedBlock(int i)
+  TimedBlock(Index i)
   {
     // Start timing when entering the block, interrupting whatever we were timing before.
     // Take note of what we are now timing.
