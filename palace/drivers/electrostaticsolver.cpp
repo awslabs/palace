@@ -21,7 +21,7 @@ void ElectrostaticSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mes
   // handled eliminating the rows and columns of the system matrix for the corresponding
   // dofs. The eliminated matrix is stored in order to construct the RHS vector for nonzero
   // prescribed BC values.
-  BlockTimer b(Timer::CONSTRUCT);
+  BlockTimer bt0(Timer::CONSTRUCT);
   LaplaceOperator laplaceop(iodata, mesh);
   auto K = laplaceop.GetStiffnessMatrix();
   SaveMetadata(laplaceop.GetH1Spaces());
@@ -49,16 +49,16 @@ void ElectrostaticSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mes
   {
     // Form and solve the linear system for a prescribed nonzero voltage on the specified
     // terminal.
-    BlockTimer c(Timer::CONSTRUCT);
+    BlockTimer bt1(Timer::CONSTRUCT);
     Mpi::Print("\nIt {:d}/{:d}: Index = {:d} (elapsed time = {:.2e} s)\n", step + 1, nstep,
                idx, Timer::Duration(BlockTimer::Timer().Now() - t0).count());
     Mpi::Print("\n");
     laplaceop.GetExcitationVector(idx, *K, V[step], RHS);
 
-    BlockTimer s(Timer::SOLVE);
+    BlockTimer bt2(Timer::SOLVE);
     ksp.Mult(RHS, V[step]);
 
-    BlockTimer p(Timer::POSTPRO);
+    BlockTimer bt3(Timer::POSTPRO);
     Mpi::Print(" Sol. ||V|| = {:.6e} (||RHS|| = {:.6e})\n",
                linalg::Norml2(laplaceop.GetComm(), V[step]),
                linalg::Norml2(laplaceop.GetComm(), RHS));
@@ -68,7 +68,7 @@ void ElectrostaticSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mes
   }
 
   // Postprocess the capacitance matrix from the computed field solutions.
-  BlockTimer p(Timer::POSTPRO);
+  BlockTimer bt1(Timer::POSTPRO);
   SaveMetadata(ksp);
   Postprocess(laplaceop, postop, V);
 }
@@ -106,7 +106,7 @@ void ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop, PostOperator &
     PostprocessProbes(postop, "i", i, idx);
     if (i < iodata.solver.electrostatic.n_post)
     {
-      BlockTimer b(Timer::IO);
+      BlockTimer bt0(Timer::IO);
       PostprocessFields(postop, i, idx);
       Mpi::Print(" Wrote fields to disk for terminal {:d}\n", idx);
     }

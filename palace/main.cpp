@@ -179,7 +179,7 @@ int main(int argc, char *argv[])
   // it and the input parameters.
   std::vector<std::unique_ptr<mfem::ParMesh>> mesh;
   {
-    BlockTimer b(Timer::INIT);
+    BlockTimer bt0(Timer::INIT);
     mesh.push_back(mesh::ReadMesh(world_comm, iodata, false, true, true, false));
     iodata.NondimensionalizeInputs(*mesh[0]);
     mesh::RefineMesh(iodata, mesh);

@@ -21,7 +21,7 @@ namespace palace
 void TransientSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const
 {
   // Set up the spatial discretization and time integrators for the E and B fields.
-  BlockTimer b(Timer::CONSTRUCT);
+  BlockTimer bt0(Timer::CONSTRUCT);
   std::function<double(double)> J_coef = GetTimeExcitation(false);
   std::function<double(double)> dJdt_coef = GetTimeExcitation(true);
   SpaceOperator spaceop(iodata, mesh);
@@ -81,7 +81,7 @@ void TransientSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) c
   while (step < nstep)
   {
     // Single time step t -> t + dt.
-    BlockTimer s(Timer::SOLVE);
+    BlockTimer bt1(Timer::SOLVE);
     const double ts = iodata.DimensionalizeValue(IoData::ValueType::TIME, t + delta_t);
     Mpi::Print("\nIt {:d}/{:d}: t = {:e} ns (elapsed time = {:.2e} s)\n", step, nstep - 1,
                ts, Timer::Duration(BlockTimer::Timer().Now() - t0).count());
@@ -97,7 +97,7 @@ void TransientSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) c
     }
 
     // Postprocess for the time step.
-    BlockTimer p(Timer::POSTPRO);
+    BlockTimer bt2(Timer::POSTPRO);
     double E_elec = 0.0, E_mag = 0.0;
     const Vector &E = timeop.GetE();
     const Vector &B = timeop.GetB();
@@ -252,7 +252,7 @@ void TransientSolver::Postprocess(const PostOperator &postop,
   if (iodata.solver.transient.delta_post > 0 &&
       step % iodata.solver.transient.delta_post == 0)
   {
-    BlockTimer b(Timer::IO);
+    BlockTimer bt0(Timer::IO);
     Mpi::Print("\n");
     PostprocessFields(postop, step / iodata.solver.transient.delta_post, ts);
     Mpi::Print(" Wrote fields to disk at step {:d}\n", step);
