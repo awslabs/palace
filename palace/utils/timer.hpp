@@ -24,7 +24,7 @@ public:
   {
     INIT = 0,
     CONSTRUCT,
-    PSS,
+    FSS,
     HDMSOLVE,
     SOLVE,
     POSTPRO,
@@ -34,7 +34,7 @@ public:
   };
 
   inline static const std::initializer_list<Index> indices = {
-      INIT, CONSTRUCT, PSS, HDMSOLVE, SOLVE, POSTPRO, IO, TOTAL};
+      INIT, CONSTRUCT, FSS, HDMSOLVE, SOLVE, POSTPRO, IO, TOTAL};
 
   using Clock = std::chrono::steady_clock;
   using Duration = std::chrono::duration<double>;
@@ -42,8 +42,8 @@ public:
   inline static const std::vector<std::string> descriptions {
     "Initialization",
     "Operator Construction",
-    "Parameter Space Sampling",  // adaptive driven
-    "HDM Solve",                 // adaptive driven
+    "Frequency Sample Selection",  // adaptive driven
+    "HDM Solve",                   // adaptive driven
     "Solve",
     "Postprocessing",
     "Disk IO",

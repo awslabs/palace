@@ -245,7 +245,7 @@ void DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator &postop, i
   // phase. Initialize the basis with samples from the top and bottom of the frequency
   // range of interest. Each call for an HDM solution adds the frequency sample to P_S and
   // removes it from P \ P_S.
-  BlockTimer p(Timer::PSS);
+  BlockTimer p(Timer::FSS);
   auto t0 = BlockTimer::Timer().Now();
   const double f0 = iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, 1.0);
   Mpi::Print("\nBeginning PROM construction offline phase:\n"
@@ -300,7 +300,7 @@ void DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator &postop, i
   Mpi::Print(" Total offline phase elapsed time: {:.2e} s\n"
              " Sampling and PROM construction: {:.2e} s, HDM solves: {:.2e} s\n",
              Timer::Duration(BlockTimer::Timer().Now() - t0).count(),
-             Timer::Duration(BlockTimer::Timer()[Timer::PSS]).count(),
+             Timer::Duration(BlockTimer::Timer()[Timer::FSS]).count(),
              Timer::Duration(BlockTimer::Timer()[Timer::HDMSOLVE]).count());  // Timings on root
   SaveMetadata(prom.GetLinearSolver());
 
