@@ -38,7 +38,16 @@ public:
   using Clock = std::chrono::steady_clock;
   using Duration = std::chrono::duration<double>;
 
-  static const std::vector<std::string> descriptions;
+  inline static const std::vector<std::string> descriptions {
+    "Initialization",
+    "Operator Construction",
+    "Parameter Space Sampling",  // adaptive driven
+    "HDM Solve",                 // adaptive driven
+    "Solve",
+    "Postprocessing",
+    "Disk IO",
+    "Total"
+  };
 
 private:
   const typename Clock::time_point start_time;
@@ -157,8 +166,8 @@ class TimedBlock
 {
 private:
   using Index = Timer::Index;
-  static std::vector<Index> stack;
-  static Timer timer;
+  inline static std::vector<Index> stack;
+  inline static Timer timer;
 
 public:
   using Duration = Timer::Duration;
