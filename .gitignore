@@ -3,7 +3,7 @@ examples/**/postpro*/
 examples/**/log*/
 spack/local/packages/palace/__pycache__/
 test/ref/**/*.json
+.*.swp
+.DS_Store
 .gitlab-ci-local
-**/.DS_Store
-**/.*.swp
 Manifest.toml
