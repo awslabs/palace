@@ -6,3 +6,4 @@ test/ref/**/*.json
 .gitlab-ci-local
 **/.DS_Store
 **/.*.swp
+Manifest.toml
