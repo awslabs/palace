@@ -72,7 +72,7 @@ which behaves as a stopwatch with some memory functions. It is the responsibilit
 time reported at the end of a log file or in the metadata JSON.
 
 Internally, the number of times `BlockTimer b(idx)` was called for each possible value of
-`idx` (timing category) can be queried with `BlockTimer::Timer().GetCounts()`.
+`idx` (timing category) can be queried with `BlockTimer::GetTimer().GetCounts()`.
 
 ## Changelog
 

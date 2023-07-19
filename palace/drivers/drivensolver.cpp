@@ -246,7 +246,7 @@ void DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator &postop, i
   // range of interest. Each call for an HDM solution adds the frequency sample to P_S and
   // removes it from P \ P_S.
   BlockTimer bt1(Timer::FSS);
-  auto t0 = BlockTimer::Timer().Now();
+  auto t0 = BlockTimer::GetTimer().Now();
   const double f0 = iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, 1.0);
   Mpi::Print("\nBeginning PROM construction offline phase:\n"
              " {:d} points for frequency sweep over [{:.3e}, {:.3e}] GHz\n",
@@ -299,9 +299,9 @@ void DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator &postop, i
   utils::PrettyPrint(prom.GetSampleFrequencies(), f0, " Sampled frequencies (GHz):");
   Mpi::Print(" Total offline phase elapsed time: {:.2e} s\n"
              " Sampling and PROM construction: {:.2e} s, HDM solves: {:.2e} s\n",
-             Timer::Duration(BlockTimer::Timer().Now() - t0).count(),
-             Timer::Duration(BlockTimer::Timer()[Timer::FSS]).count(),
-             Timer::Duration(BlockTimer::Timer()[Timer::HDMSOLVE]).count());  // Timings on root
+             Timer::Duration(BlockTimer::GetTimer().Now() - t0).count(),
+             Timer::Duration(BlockTimer::GetTimer()[Timer::FSS]).count(),
+             Timer::Duration(BlockTimer::GetTimer()[Timer::HDMSOLVE]).count());  // Timings on root
   SaveMetadata(prom.GetLinearSolver());
 
   // Main fast frequency sweep loop (online phase).
@@ -315,7 +315,7 @@ void DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator &postop, i
     BlockTimer bt3(Timer::CONSTRUCT);
     const double freq = iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, omega);
     Mpi::Print("\nIt {:d}/{:d}: ω/2π = {:.3e} GHz (elapsed time = {:.2e} s)\n", step + 1,
-               nstep, freq, Timer::Duration(BlockTimer::Timer().Now() - t0).count());
+               nstep, freq, Timer::Duration(BlockTimer::GetTimer().Now() - t0).count());
     prom.AssemblePROM(omega);
 
     // Solve the linear system.

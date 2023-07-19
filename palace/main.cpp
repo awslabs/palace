@@ -188,7 +188,7 @@ int main(int argc, char *argv[])
   // Run the problem driver.
   solver->Solve(mesh);
 
-  Timer timer = BlockTimer::Timer();
+  Timer timer = BlockTimer::GetTimer();
   timer.Reduce(world_comm);
   timer.Print(world_comm);
   solver->SaveMetadata(timer);

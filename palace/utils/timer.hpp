@@ -171,7 +171,7 @@ private:
 
 public:
   // Provide read-only access to the timer object.
-  static const Timer &Timer() { return timer; }
+  static const Timer &GetTimer() { return timer; }
 
   BlockTimer(Index i)
   {
