@@ -6,9 +6,9 @@
 
 #include <chrono>
 #include <initializer_list>
+#include <stack>
 #include <string>
 #include <vector>
-#include <stack>
 #include "utils/communication.hpp"
 
 namespace palace
@@ -39,16 +39,15 @@ public:
   using Clock = std::chrono::steady_clock;
   using Duration = std::chrono::duration<double>;
 
-  inline static const std::vector<std::string> descriptions {
-    "Initialization",
-    "Operator Construction",
-    "Frequency Sample Selection",  // adaptive driven
-    "HDM Solve",                   // adaptive driven
-    "Solve",
-    "Postprocessing",
-    "Disk IO",
-    "Total"
-  };
+  inline static const std::vector<std::string> descriptions{
+      "Initialization",
+      "Operator Construction",
+      "Frequency Sample Selection",  // adaptive driven
+      "HDM Solve",                   // adaptive driven
+      "Solve",
+      "Postprocessing",
+      "Disk IO",
+      "Total"};
 
 private:
   const typename Clock::time_point start_time;
