@@ -5,7 +5,6 @@
 #define PALACE_UTILS_TIMER_HPP
 
 #include <chrono>
-#include <initializer_list>
 #include <stack>
 #include <string>
 #include <vector>
@@ -24,7 +23,7 @@ public:
   {
     INIT = 0,
     CONSTRUCT,
-    FSS,
+    FREQUENCYSPACESAMPLING,
     HDMSOLVE,
     SOLVE,
     POSTPRO,
@@ -32,9 +31,6 @@ public:
     TOTAL,
     NUMTIMINGS
   };
-
-  inline static const std::initializer_list<Index> indices = {
-      INIT, CONSTRUCT, FSS, HDMSOLVE, SOLVE, POSTPRO, IO, TOTAL};
 
   using Clock = std::chrono::steady_clock;
   using Duration = std::chrono::duration<double>;
@@ -91,7 +87,7 @@ public:
   }
 
   // Provide map-like read-only access to the timing data.
-  Duration operator[](Index idx) const { return (data)[idx]; }
+  Duration operator[](Index idx) const { return data[idx]; }
 
   // Provide access to the reduced timing data.
   double GetMinTime(Index idx) const { return data_min[idx]; }
@@ -143,9 +139,9 @@ public:
       "Elapsed Time Report (s)", h, "Min.", w, "Max.", w, "Avg.", w
     );
     Mpi::Print(comm, "{}\n", std::string(h + 3 * w, '='));
-    for (auto i : Timer::indices)
+    for (int i = INIT; i < NUMTIMINGS; i++)
     {
-        if (ShouldPrint(i))
+        if (ShouldPrint((Index)i))
         {
           if (i == TOTAL)
           {
