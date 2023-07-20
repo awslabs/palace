@@ -723,6 +723,108 @@ void ImpedanceBoundaryData::SetUp(json &boundaries)
   }
 }
 
+namespace
+{
+
+// Helper function for extracting a ComponentNode from a json, if the is_port
+// value is set to true, will extract the normal vector from either the provided
+// keyword argument or from a specified 3 vector. In extracting the normal
+// various checks are performed for validity of the input combinations.
+auto ParseComponentNode(json &j, bool is_port = true)
+{
+  ComponentNode node;
+  node.attributes = j.at("Attributes").get<std::vector<int>>();  // Required
+
+  try
+  {
+    node.direction = j.at("Direction").get<std::string>();
+  }
+  catch (json::exception)
+  {
+    try
+    {
+      node.normal = j.at("Direction").get<std::array<double, 3>>();
+    }
+    catch (json::exception)
+    {
+      MFEM_VERIFY(!is_port, "A port requires the direction be specified");
+      return node;
+    }
+  }
+
+  for (auto &c : node.direction)
+  {
+    c = std::tolower(c);
+  }
+
+  const auto xpos = node.direction.find("x");
+  const auto ypos = node.direction.find("y");
+  const auto zpos = node.direction.find("z");
+  const auto rpos = node.direction.find("r");
+
+  const bool xfound = xpos != std::string::npos;
+  const bool yfound = ypos != std::string::npos;
+  const bool zfound = zpos != std::string::npos;
+  const bool rfound = rpos != std::string::npos;
+
+  // Either a keyword direction is specified xor the magnitude is non-zero
+  MFEM_VERIFY((xfound || yfound || zfound || rfound) ^ (node.NormalMagnitude() > 0.0),
+              "Keyword and vector specification are mutually exclusive");
+
+  if (xfound)
+  {
+    MFEM_VERIFY(node.direction.length() == 1 || node.direction[xpos - 1] == '-' ||
+                    node.direction[xpos - 1] == '+',
+                "Missing required sign specification on \"X\"");
+    node.normal[0] =
+        (node.direction.length() == 1 || node.direction[xpos - 1] == '+') ? 1 : -1;
+  }
+  if (yfound)
+  {
+    MFEM_VERIFY(node.direction.length() == 1 || node.direction[ypos - 1] == '-' ||
+                    node.direction[ypos - 1] == '+',
+                "Missing sign specification on \"Y\"");
+    node.normal[1] =
+        node.direction.length() == 1 || node.direction[ypos - 1] == '+' ? 1 : -1;
+  }
+  if (zfound)
+  {
+    MFEM_VERIFY(node.direction.length() == 1 || node.direction[zpos - 1] == '-' ||
+                    node.direction[zpos - 1] == '+',
+                "Missing sign specification on \"Z\"");
+    node.normal[2] =
+        node.direction.length() == 1 || node.direction[zpos - 1] == '+' ? 1 : -1;
+  }
+  if (rfound)
+  {
+    if (node.direction.length() == 1)
+    {
+      node.direction = "+r";
+    }
+    MFEM_VERIFY(node.direction[rpos - 1] == '-' || node.direction[rpos - 1] == '+',
+                "Missing sign specification on \"R\"");
+    MFEM_VERIFY(!xfound && !yfound && !zfound,
+                "\"R\" cannot be combined with \"X\", \"Y\" or \"Z\"");
+  }
+
+  double mag = node.NormalMagnitude();
+
+  double constexpr tol = 1e-6;
+  if (mag > 0 && std::abs(mag - 1) > tol)
+  {
+    std::cout << "Renormalized port direction to: ";
+    for (auto &x : node.normal)
+    {
+      x /= mag;
+      std::cout << x << ' ';
+    }
+    std::cout << '\n';
+  }
+
+  return node;
+}
+}  // namespace
+
 void LumpedPortBoundaryData::SetUp(json &boundaries)
 {
   auto port = boundaries.find("LumpedPort");
@@ -746,64 +848,52 @@ void LumpedPortBoundaryData::SetUp(json &boundaries)
   MFEM_VERIFY(
       port->is_array(),
       "\"LumpedPort\" and \"Terminal\" should specify an array in the configuration file!");
-  for (auto it = port->begin(); it != port->end(); ++it)
+  for (auto &p : *port)
   {
     MFEM_VERIFY(
-        it->find("Index") != it->end(),
+        p.find("Index") != p.end(),
         "Missing \"LumpedPort\" or \"Terminal\" boundary \"Index\" in configuration file!");
-    auto ret = mapdata.insert(std::make_pair(it->at("Index"), LumpedPortData()));
+    auto ret = mapdata.insert(std::make_pair(p.at("Index"), LumpedPortData()));
     MFEM_VERIFY(ret.second, "Repeated \"Index\" found when processing \"LumpedPort\" or "
                             "\"Terminal\" boundaries in configuration file!");
     LumpedPortData &data = ret.first->second;
-    data.R = it->value("R", data.R);
-    data.L = it->value("L", data.L);
-    data.C = it->value("C", data.C);
-    data.Rs = it->value("Rs", data.Rs);
-    data.Ls = it->value("Ls", data.Ls);
-    data.Cs = it->value("Cs", data.Cs);
-    data.excitation = it->value("Excitation", data.excitation);
-    if (it->find("Attributes") != it->end())
+    data.R = p.value("R", data.R);
+    data.L = p.value("L", data.L);
+    data.C = p.value("C", data.C);
+    data.Rs = p.value("Rs", data.Rs);
+    data.Ls = p.value("Ls", data.Ls);
+    data.Cs = p.value("Cs", data.Cs);
+    data.excitation = p.value("Excitation", data.excitation);
+    if (p.find("Attributes") != p.end())
     {
-      MFEM_VERIFY(it->find("Elements") == it->end(),
+      MFEM_VERIFY(p.find("Elements") == p.end(),
                   "Cannot specify both top-level \"Attributes\" list and \"Elements\" for "
                   "\"LumpedPort\" or \"Terminal\" boundary in configuration file!");
-      data.nodes.resize(1);
-      LumpedPortData::Node &node = data.nodes.back();
-      node.attributes = it->at("Attributes").get<std::vector<int>>();  // Required
-      node.direction = it->value("Direction", node.direction);
-      if (terminal == boundaries.end())
-      {
-        // Only check direction for true ports, not terminals.
-        CheckDirection(node.direction, true);
-      }
+
+      data.nodes.clear();
+      data.nodes.emplace_back(ParseComponentNode(p, terminal == boundaries.end()));
     }
     else
     {
-      auto elements = it->find("Elements");
-      MFEM_VERIFY(elements != it->end(),
+      auto elements = p.find("Elements");
+      MFEM_VERIFY(elements != p.end(),
                   "Missing top-level \"Attributes\" list or \"Elements\" for "
                   "\"LumpedPort\" or \"Terminal\" boundary in configuration file!");
-      for (auto elem_it = elements->begin(); elem_it != elements->end(); ++elem_it)
+      for (auto &elem : *elements)
       {
-        MFEM_VERIFY(elem_it->find("Attributes") != elem_it->end(),
+        MFEM_VERIFY(elem.find("Attributes") != elem.end(),
                     "Missing \"Attributes\" list for \"LumpedPort\" or \"Terminal\" "
                     "boundary element in configuration file!");
-        LumpedPortData::Node &node = data.nodes.emplace_back();
-        node.attributes = elem_it->at("Attributes").get<std::vector<int>>();  // Required
-        node.direction = elem_it->value("Direction", node.direction);
-        if (terminal == boundaries.end())
-        {
-          // Only check direction for true ports, not terminals.
-          CheckDirection(node.direction, true);
-        }
+
+        data.nodes.emplace_back(ParseComponentNode(elem, terminal == boundaries.end()));
 
         // Cleanup
-        elem_it->erase("Attributes");
-        elem_it->erase("Direction");
-        MFEM_VERIFY(elem_it->empty(),
+        elem.erase("Attributes");
+        elem.erase("Direction");
+        MFEM_VERIFY(elem.empty(),
                     "Found an unsupported configuration file keyword under \"LumpedPort\" "
                     "or \"Terminal\" boundary element!\n"
-                        << elem_it->dump(2));
+                        << elem.dump(2));
       }
     }
 
@@ -823,20 +913,20 @@ void LumpedPortBoundaryData::SetUp(json &boundaries)
     // }
 
     // Cleanup
-    it->erase("Index");
-    it->erase("R");
-    it->erase("L");
-    it->erase("C");
-    it->erase("Rs");
-    it->erase("Ls");
-    it->erase("Cs");
-    it->erase("Excitation");
-    it->erase("Attributes");
-    it->erase("Direction");
-    it->erase("Elements");
-    MFEM_VERIFY(it->empty(), "Found an unsupported configuration file keyword under "
-                             "\"LumpedPort\" or \"Terminal\"!\n"
-                                 << it->dump(2));
+    p.erase("Index");
+    p.erase("R");
+    p.erase("L");
+    p.erase("C");
+    p.erase("Rs");
+    p.erase("Ls");
+    p.erase("Cs");
+    p.erase("Excitation");
+    p.erase("Attributes");
+    p.erase("Direction");
+    p.erase("Elements");
+    MFEM_VERIFY(p.empty(), "Found an unsupported configuration file keyword under "
+                           "\"LumpedPort\" or \"Terminal\"!\n"
+                               << p.dump(2));
   }
 }
 
@@ -895,49 +985,44 @@ void SurfaceCurrentBoundaryData::SetUp(json &boundaries)
   }
   MFEM_VERIFY(source->is_array(),
               "\"SurfaceCurrent\" should specify an array in the configuration file!");
-  for (auto it = source->begin(); it != source->end(); ++it)
+  for (auto &s : *source)
   {
-    MFEM_VERIFY(it->find("Index") != it->end(),
+    MFEM_VERIFY(s.find("Index") != s.end(),
                 "Missing \"SurfaceCurrent\" source \"Index\" in configuration file!");
-    auto ret = mapdata.insert(std::make_pair(it->at("Index"), SurfaceCurrentData()));
+    auto ret = mapdata.insert(std::make_pair(s.at("Index"), SurfaceCurrentData()));
     MFEM_VERIFY(ret.second, "Repeated \"Index\" found when processing \"SurfaceCurrent\" "
                             "boundaries in configuration file!");
     SurfaceCurrentData &data = ret.first->second;
-    if (it->find("Attributes") != it->end())
+    if (s.find("Attributes") != s.end())
     {
-      MFEM_VERIFY(it->find("Elements") == it->end(),
+      MFEM_VERIFY(s.find("Elements") == s.end(),
                   "Cannot specify both top-level \"Attributes\" list and \"Elements\" for "
                   "\"SurfaceCurrent\" boundary in configuration file!");
-      data.nodes.resize(1);
-      SurfaceCurrentData::Node &node = data.nodes.back();
-      node.attributes = it->at("Attributes").get<std::vector<int>>();  // Required
-      node.direction = it->value("Direction", node.direction);
-      CheckDirection(node.direction, true);
+      data.nodes.clear();
+      data.nodes.emplace_back(ParseComponentNode(s));
     }
     else
     {
-      auto elements = it->find("Elements");
+      auto elements = s.find("Elements");
       MFEM_VERIFY(
-          elements != it->end(),
+          elements != s.end(),
           "Missing top-level \"Attributes\" list or \"Elements\" for \"SurfaceCurrent\" "
           "boundary in configuration file!");
-      for (auto elem_it = elements->begin(); elem_it != elements->end(); ++elem_it)
+      for (auto elem : *elements)
       {
         MFEM_VERIFY(
-            elem_it->find("Attributes") != elem_it->end(),
+            elem.find("Attributes") != elem.end(),
             "Missing \"Attributes\" list for \"SurfaceCurrent\" boundary element in "
             "configuration file!");
-        SurfaceCurrentData::Node &node = data.nodes.emplace_back();
-        node.attributes = it->at("Attributes").get<std::vector<int>>();  // Required
-        node.direction = it->value("Direction", node.direction);
-        CheckDirection(node.direction, true);
+
+        data.nodes.emplace_back(ParseComponentNode(s));
 
         // Cleanup
-        elem_it->erase("Attributes");
-        elem_it->erase("Direction");
-        MFEM_VERIFY(elem_it->empty(), "Found an unsupported configuration file keyword "
-                                      "under \"SurfaceCurrent\" boundary element!\n"
-                                          << elem_it->dump(2));
+        elem.erase("Attributes");
+        elem.erase("Direction");
+        MFEM_VERIFY(elem.empty(), "Found an unsupported configuration file keyword "
+                                  "under \"SurfaceCurrent\" boundary element!\n"
+                                      << elem.dump(2));
       }
     }
 
@@ -950,14 +1035,14 @@ void SurfaceCurrentBoundaryData::SetUp(json &boundaries)
     // }
 
     // Cleanup
-    it->erase("Index");
-    it->erase("Attributes");
-    it->erase("Direction");
-    it->erase("Elements");
+    s.erase("Index");
+    s.erase("Attributes");
+    s.erase("Direction");
+    s.erase("Elements");
     MFEM_VERIFY(
-        it->empty(),
+        s.empty(),
         "Found an unsupported configuration file keyword under \"SurfaceCurrent\"!\n"
-            << it->dump(2));
+            << s.dump(2));
   }
 }
 

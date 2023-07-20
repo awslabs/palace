@@ -59,38 +59,22 @@ public:
 class UniformElementData : public LumpedElementData
 {
 protected:
-  bool sign;      // Sign of incident field, +x̂ / ŷ / ẑ if true
-  int component;  // Lumped element direction (0: x, 1: y, 2: z)
-  double l, w;    // Lumped element length and width
+  mfem::Vector direction;  // Cartesian vector specifying signed direction of incident field
+  double l, w;             // Lumped element length and width
 
 public:
-  UniformElementData(const std::string &direction, const mfem::Array<int> &marker,
+  UniformElementData(const std::array<double, 3> &input_dir, const mfem::Array<int> &marker,
                      mfem::ParFiniteElementSpace &fespace)
-    : LumpedElementData(fespace.GetParMesh()->SpaceDimension(), marker),
-      sign(direction[0] == '+')
+    : LumpedElementData(fespace.GetParMesh()->SpaceDimension(), marker), direction(3)
   {
-    switch (direction[1])
-    {
-      case 'x':
-        component = 0;
-        break;
-      case 'y':
-        component = 1;
-        break;
-      case 'z':
-        component = 2;
-        break;
-      default:
-        MFEM_ABORT("Lumped element direction is not correctly formatted!");
-        component = 0;  // For compiler warning
-        break;
-    }
+    std::copy(input_dir.begin(), input_dir.end(), direction.begin());
 
-    // Get the lumped element length and width assuming axis-aligned rectangle.
+    // Get the lumped element length and width.
     mfem::Vector bbmin, bbmax;
     mesh::GetBoundingBox(*fespace.GetParMesh(), marker, true, bbmin, bbmax);
     double A = GetArea(fespace);
-    l = bbmax(component) - bbmin(component);
+    bbmax -= bbmin;
+    l = std::abs(bbmax * direction);
     w = A / l;
   }
 
@@ -100,9 +84,8 @@ public:
   std::unique_ptr<mfem::VectorCoefficient>
   GetModeCoefficient(double coef = 1.0) const override
   {
-    mfem::Vector source(dim);
-    source = 0.0;
-    source(component) = (sign ? 1.0 : -1.0) * coef;
+    mfem::Vector source = direction;
+    source *= coef;
     return std::make_unique<mfem::VectorConstantCoefficient>(source);
   }
 };
@@ -155,7 +138,7 @@ public:
   {
     double scoef = (sign ? 1.0 : -1.0) * coef;
     mfem::Vector x0(c);
-    auto Source = [scoef, x0](const mfem::Vector &x, mfem::Vector &f) -> void
+    auto Source = [scoef, x0](const mfem::Vector &x, mfem::Vector &f)
     {
       f = x;
       f -= x0;

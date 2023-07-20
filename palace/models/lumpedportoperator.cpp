@@ -50,13 +50,6 @@ LumpedPortData::LumpedPortData(const config::LumpedPortData &data,
   // Construct the port elements allowing for a possible multielement lumped port.
   for (const auto &node : data.nodes)
   {
-    // Check input direction.
-    MFEM_VERIFY(node.direction.length() == 2 &&
-                    (node.direction[0] == '-' || node.direction[0] == '+') &&
-                    (node.direction[1] == 'x' || node.direction[1] == 'y' ||
-                     node.direction[1] == 'z' || node.direction[1] == 'r'),
-                "Lumped port direction is not correctly formatted!");
-
     mfem::Array<int> attr_marker;
     mesh::AttrToMarker(h1_fespace.GetParMesh()->bdr_attributes.Max(), node.attributes,
                        attr_marker);
@@ -68,7 +61,7 @@ LumpedPortData::LumpedPortData(const config::LumpedPortData &data,
     else
     {
       elems.push_back(
-          std::make_unique<UniformElementData>(node.direction, attr_marker, h1_fespace));
+          std::make_unique<UniformElementData>(node.normal, attr_marker, h1_fespace));
     }
   }
 
