@@ -4,6 +4,7 @@
 #ifndef PALACE_UTILS_CONFIG_FILE_HPP
 #define PALACE_UTILS_CONFIG_FILE_HPP
 
+#include <cmath>
 #include <array>
 #include <map>
 #include <set>
@@ -345,6 +346,40 @@ public:
   void SetUp(json &boundaries);
 };
 
+// A component Node consists of a list of attributes making up a single
+// element of a potentially multielement node, and a direction and/or a normal
+// defining the incident field. These are used for Lumped Ports, Terminals,
+// and Surface Currents.
+//
+// Exactly one of either the direction or the normal direction must be defined.
+struct ComponentNode
+{
+  // Optional string defining source excitation field direction. Options are "X", "Y", "Z",
+  // or "R", preceeded with a "+" or "-" for the direction. The first three options are for
+  // uniform lumped ports and the last is for a coaxial lumped port (radial excitation).
+  std::string direction = "";
+
+  // Vector defining the normal direction for this port. Used in Cartesian
+  // coordinate system ports, with  "X", "Y", and "Z" mapping to (1,0,0),
+  // (0,1,0), and (0,0,1) respectively. Any user specified value is normalized
+  // to a tolerance of 1e-6, and if normalization is needed, printed to the terminal.
+  std::array<double, 3> normal{{0.0, 0.0, 0.0}};
+
+  // List of boundary attributes for this lumped port element.
+  std::vector<int> attributes = {};
+
+  // Convenience function for computing the normal magnitude.
+  inline double NormalMagnitude() const
+  {
+    double mag = 0.0;
+    for (auto x : normal)
+    {
+      mag += x * x;
+    }
+    return std::sqrt(mag);
+  }
+};
+
 struct LumpedPortData
 {
 public:
@@ -361,19 +396,7 @@ public:
   // Flag for source term in driven and transient simulations.
   bool excitation = false;
 
-  // For each lumped port index, each Node contains a list of attributes making up a single
-  // element of a potentially multielement port.
-  struct Node
-  {
-    // String defining source excitation field direction. Options are "X", "Y", "Z", or "R",
-    // preceeded with a "+" or "-" for the direction. The first three options are for
-    // uniform lumped ports and the last is for a coaxial lumped port (radial excitation).
-    std::string direction = "";
-
-    // List of boundary attributes for this lumped port element.
-    std::vector<int> attributes = {};
-  };
-  std::vector<Node> nodes = {};
+  std::vector<ComponentNode> nodes = {};
 };
 
 struct LumpedPortBoundaryData : public internal::DataMap<LumpedPortData>
@@ -409,17 +432,7 @@ struct SurfaceCurrentData
 public:
   // For each surface current source index, each Node contains a list of attributes making
   // up a single element of a potentially multielement current source.
-  struct Node
-  {
-    // String defining surface current source excitation direction. Options are "X", "Y",
-    // "Z", or "R", preceeded with a "+" or "-" for the direction. The first three options
-    // are for uniform sources and the last is for a coaxial source (radial excitation).
-    std::string direction = "";
-
-    // List of boundary attributes for this surface current element.
-    std::vector<int> attributes = {};
-  };
-  std::vector<Node> nodes = {};
+  std::vector<ComponentNode> nodes = {};
 };
 
 struct SurfaceCurrentBoundaryData : public internal::DataMap<SurfaceCurrentData>

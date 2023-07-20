@@ -79,11 +79,11 @@
         [
           {
             "Attributes": [4],
-            "Direction": "+Y"
+            "Direction": [0,1,0]
           },
           {
             "Attributes": [8],
-            "Direction": "-Y"
+            "Direction": [0,-1,0]
           }
         ]
       },
@@ -94,11 +94,11 @@
         [
           {
             "Attributes": [5],
-            "Direction": "+Y"
+            "Direction": [0,1,0]
           },
           {
             "Attributes": [9],
-            "Direction": "-Y"
+            "Direction": [0,-1,0]
           }
         ]
       },
@@ -109,11 +109,11 @@
         [
           {
             "Attributes": [6],
-            "Direction": "+Y"
+            "Direction": [0,1,0]
           },
           {
             "Attributes": [10],
-            "Direction": "-Y"
+            "Direction": [0,-1,0]
           }
         ]
       },
@@ -124,11 +124,11 @@
         [
           {
             "Attributes": [7],
-            "Direction": "+Y"
+            "Direction": [0,1,0]
           },
           {
             "Attributes": [11],
-            "Direction": "-Y"
+            "Direction": [0,-1,0]
           }
         ]
       }

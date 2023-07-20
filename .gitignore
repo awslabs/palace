@@ -1,6 +1,7 @@
 build*/
 examples/**/postpro*/
 examples/**/log*/
+examples/**/*.log
 spack/local/packages/palace/__pycache__/
 test/ref/**/*.json
 .*.swp
