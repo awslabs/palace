@@ -44,13 +44,13 @@ void MagnetostaticSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mes
   Mpi::Print("\nComputing magnetostatic fields for {:d} source boundar{}\n", nstep,
              (nstep > 1) ? "ies" : "y");
   int step = 0;
-  auto t0 = BlockTimer::GetTimer().Now();
+  auto t0 = Timer::Now();
   for (const auto &[idx, data] : curlcurlop.GetSurfaceCurrentOp())
   {
     // Form and solve the linear system for a prescribed current on the specified source.
     BlockTimer bt1(Timer::CONSTRUCT);
     Mpi::Print("\nIt {:d}/{:d}: Index = {:d} (elapsed time = {:.2e} s)\n", step + 1, nstep,
-               idx, Timer::Duration(BlockTimer::GetTimer().Now() - t0).count());
+               idx, Timer::Duration(Timer::Now() - t0).count());
     Mpi::Print("\n");
     A[step].SetSize(RHS.Size());
     A[step] = 0.0;

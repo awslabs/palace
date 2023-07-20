@@ -44,14 +44,14 @@ void ElectrostaticSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mes
   Mpi::Print("\nComputing electrostatic fields for {:d} terminal boundar{}\n", nstep,
              (nstep > 1) ? "ies" : "y");
   int step = 0;
-  auto t0 = BlockTimer::GetTimer().Now();
+  auto t0 = Timer::Now();
   for (const auto &[idx, data] : laplaceop.GetSources())
   {
     // Form and solve the linear system for a prescribed nonzero voltage on the specified
     // terminal.
     BlockTimer bt1(Timer::CONSTRUCT);
     Mpi::Print("\nIt {:d}/{:d}: Index = {:d} (elapsed time = {:.2e} s)\n", step + 1, nstep,
-               idx, Timer::Duration(BlockTimer::GetTimer().Now() - t0).count());
+               idx, Timer::Duration(Timer::Now() - t0).count());
     Mpi::Print("\n");
     laplaceop.GetExcitationVector(idx, *K, V[step], RHS);
 

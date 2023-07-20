@@ -188,11 +188,7 @@ int main(int argc, char *argv[])
   // Run the problem driver.
   solver->Solve(mesh);
 
-  Timer timer = BlockTimer::GetTimer();
-  timer.Reduce(world_comm);
-  timer.Print(world_comm);
-  solver->SaveMetadata(timer);
-  Mpi::Print(world_comm, "\n");
+  BlockTimer::Finalize(world_comm, *solver);
 
   // Finalize SLEPc/PETSc.
 #if defined(PALACE_WITH_SLEPC)

@@ -8,6 +8,7 @@
 #include <stack>
 #include <string>
 #include <vector>
+#include "drivers/basesolver.hpp"
 #include "utils/communication.hpp"
 
 namespace palace
@@ -67,7 +68,7 @@ public:
   }
 
   // Get the current time.
-  typename Clock::time_point Now() const { return Clock::now(); }
+  static typename Clock::time_point Now() { return Clock::now(); }
 
   // Provide stopwatch lap split functionality.
   Duration Lap()
@@ -166,9 +167,6 @@ private:
   inline static Timer timer;
 
 public:
-  // Provide read-only access to the timer object.
-  static const Timer &GetTimer() { return timer; }
-
   BlockTimer(Index i)
   {
     // Start timing when entering the block, interrupting whatever we were timing before.
@@ -180,8 +178,26 @@ public:
   ~BlockTimer()
   {
     // When a BlockTimer is no longer in scope, record the time.
-    timer.MarkTime(stack.top());
-    stack.pop();
+    // (check whether stack is empty in case Finalize was called already.)
+    if (!stack.empty())
+    {
+      timer.MarkTime(stack.top());
+      stack.pop();
+    }
+  }
+
+  static void Finalize(MPI_Comm comm, BaseSolver &solver)
+  {
+    while (!stack.empty())
+    {
+      timer.MarkTime(stack.top());
+      stack.pop();
+    }
+
+    timer.Reduce(comm);
+    timer.Print(comm);
+    solver.SaveMetadata(timer);
+    Mpi::Print(comm, "\n");
   }
 };
 
