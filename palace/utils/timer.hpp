@@ -24,7 +24,7 @@ public:
   {
     INIT = 0,
     CONSTRUCT,
-    FREQSPACESAMPLING,
+    FREQSAMPLESELECTION,
     HDMSOLVE,
     SOLVE,
     POSTPRO,

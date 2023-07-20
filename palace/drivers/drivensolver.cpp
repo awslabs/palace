@@ -243,7 +243,7 @@ void DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator &postop, i
   // phase. Initialize the basis with samples from the top and bottom of the frequency
   // range of interest. Each call for an HDM solution adds the frequency sample to P_S and
   // removes it from P \ P_S.
-  BlockTimer bt1(Timer::FREQSPACESAMPLING);
+  BlockTimer bt1(Timer::FREQSAMPLESELECTION);
   auto t0 = Timer::Now();
   const double f0 = iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, 1.0);
   Mpi::Print("\nBeginning PROM construction offline phase:\n"
