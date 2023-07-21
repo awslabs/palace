@@ -58,41 +58,17 @@ SurfacePostOperator::InterfaceDielectricData::InterfaceDielectricData(
   // different side values.
   for (const auto &node : data.nodes)
   {
-    // Check inputs.
-    MFEM_VERIFY(node.side.length() == 0 ||
-                    (node.side.length() == 2 &&
-                     (node.side[0] == '-' || node.side[0] == '+') &&
-                     (node.side[1] == 'x' || node.side[1] == 'y' || node.side[1] == 'z')),
-                "Postprocessing surface side is not correctly formatted!");
 
     // Store information about the surface side to consider.
-    int component;
     mfem::Vector &side = sides.emplace_back();
-    if (node.side.length() == 0)
+    if (node.NormalMagnitude() > 0)
     {
-      // This is OK if surface is single sided, just push back an empty Vector.
+      side.SetSize(mesh.SpaceDimension());
+      std::copy(node.normal.begin(), node.normal.end(), side.begin());
     }
     else
     {
-      side.SetSize(mesh.SpaceDimension());
-      side = 0.0;
-      switch (node.side[1])
-      {
-        case 'x':
-          component = 0;
-          break;
-        case 'y':
-          component = 1;
-          break;
-        case 'z':
-          component = 2;
-          break;
-        default:
-          MFEM_ABORT("Invalid side for surface boundary!");
-          component = 0;  // For compiler warning
-          break;
-      }
-      side(component) = (node.side[0] == '-') ? -1.0 : 1.0;
+      // This is OK if surface is single sided, just push back an empty Vector.
     }
 
     // Store markers for this element of the postprocessing boundary.
@@ -137,38 +113,13 @@ std::unique_ptr<mfem::Coefficient> SurfacePostOperator::SurfaceChargeData::GetCo
   return std::make_unique<BdrChargeCoefficient>(U, mat_op);
 }
 
-SurfacePostOperator::SurfaceFluxData::SurfaceFluxData(const config::InductanceData &data,
+SurfacePostOperator::SurfaceFluxData::SurfaceFluxData(const config::DataNode &data,
                                                       mfem::ParMesh &mesh)
 {
-  // Check inputs.
-  MFEM_VERIFY(data.direction.length() == 2 &&
-                  (data.direction[0] == '-' || data.direction[0] == '+') &&
-                  (data.direction[1] == 'x' || data.direction[1] == 'y' ||
-                   data.direction[1] == 'z'),
-              "Inductance postprocessing surface direction is not correctly formatted!");
-
   // Store information about the global direction for orientation. Note the true boundary
   // normal is used in calculating the flux, this is just used to determine the sign.
-  int component;
   direction.SetSize(mesh.SpaceDimension());
-  direction = 0.0;
-  switch (data.direction[1])
-  {
-    case 'x':
-      component = 0;
-      break;
-    case 'y':
-      component = 1;
-      break;
-    case 'z':
-      component = 2;
-      break;
-    default:
-      MFEM_ABORT("Invalid direction for surface boundary!");
-      component = 0;  // For compiler warning
-      break;
-  }
-  direction(component) = (data.direction[0] == '-') ? -1.0 : 1.0;
+  std::copy(data.normal.begin(), data.normal.end(), direction.begin());
 
   // Construct the coefficient for this postprocessing boundary (copies the direction
   // vector).
