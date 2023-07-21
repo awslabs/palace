@@ -140,7 +140,7 @@ public:
       Q.RestoreColumn(j, q);
       if (M > 1)
       {
-        petsc::PetscParVector q = Q.GetColumn(j + m0);
+        q = Q.GetColumn(j + m0);
         q.AXPY(zk / gamma, v);
         Q.RestoreColumn(j + m0, q);
       }
@@ -182,8 +182,8 @@ FeastEigenSolver::FeastEigenSolver(MPI_Comm comm, const IoData &iodata,
   print = print_lvl;
   info = 0;
   nev = m0 = mQ = 0;
-  M = iodata.solver.eigenmode.feast_moments;
-  MFEM_VERIFY(M == 1 || M == 2,
+  N_moments = iodata.solver.eigenmode.feast_moments;
+  MFEM_VERIFY(N_moments == 1 || N_moments == 2,
               "FEAST eigensolver only supports up to 2 subspace moments!");
   rtol = 0.0;
   max_it = 0;
@@ -268,7 +268,7 @@ void FeastEigenSolver::SetNumModes(int numeig, int numvec)
       m0 = std::max(nev + 3, nev + (nev + 1) / 2);
     }
   }
-  mQ = 2 * M * m0;  // Real-valued basis splitting leads to factor of 2
+  mQ = 2 * N_moments * m0;  // Real-valued basis splitting leads to factor of 2
 }
 
 void FeastEigenSolver::SetTol(double tol)
@@ -381,7 +381,7 @@ int FeastEigenSolver::SolveInternal(RG rg)
     for (PetscInt j = 1; j < mQ / 2; j++)
     {
       // Ensure homogeneous Dirichlet BC are satisfied by the starting subspace.
-      petsc::PetscParVector q = Q.GetColumn(j);
+      q = Q.GetColumn(j);
       q.PointwiseMult(*r0, false);
       Q.RestoreColumn(j, q);
     }
@@ -458,27 +458,27 @@ int FeastEigenSolver::SolveInternal(RG rg)
         x.Normalize();
       }
       GetResidual(sigma, x, r);
-      PetscReal res = r.Norml2() / (x.Norml2() * PetscAbsScalar(sigma));
+      PetscReal local_res = r.Norml2() / (x.Norml2() * PetscAbsScalar(sigma));
       // PetscReal res = r.Norml2()/x.Norml2();
       X->RestoreColumn(j, x);
       R.RestoreColumn(j, r);
-      if (res < rtol)
+      if (local_res < rtol)
       {
         // Mark converged even for eigenvalues outside the contour.
         converged[j] = true;
         nconv++;
-        if (res > rmax)
+        if (local_res > rmax)
         {
-          rmax = res;
+          rmax = local_res;
           jmax = j;
         }
       }
       else
       {
         converged[j] = false;
-        if (res < rmin)
+        if (local_res < rmin)
         {
-          rmin = res;
+          rmin = local_res;
           jmin = j;
         }
       }
@@ -493,7 +493,7 @@ int FeastEigenSolver::SolveInternal(RG rg)
 
       // Debug
       // Mpi::Print(comm, " res[{:d}] = {:e} (eig = {:+e}{:+e}i, inside = {:d})\n",
-      //            j, res, PetscRealPart(sigma),
+      //            j, local_res, PetscRealPart(sigma),
       //            PetscImaginaryPart(sigma), inside[j]);
     }
     if (print > 0)
@@ -1198,10 +1198,10 @@ void FeastPEPSolver::SolveProjectedProblem(const petsc::PetscDenseMatrix &Q_,
   for (PetscInt i = 0; i < m0; i++)
   {
     eig_[i] = alpha[sort[i]];
-    const PetscScalar *pXQ = XQ->GetArrayRead();
+    const PetscScalar* const local_pXQ = XQ->GetArrayRead();
     PetscScalar *pXQ0 = XQ0->GetArray();
-    PalacePetscCall(PetscArraycpy(pXQ0 + mQ * i, pXQ + 2 * mQ * sort[i], mQ));
-    XQ->RestoreArrayRead(pXQ);
+    PalacePetscCall(PetscArraycpy(pXQ0 + mQ * i, local_pXQ + 2 * mQ * sort[i], mQ));
+    XQ->RestoreArrayRead(local_pXQ);
     XQ0->RestoreArray(pXQ0);
   }
 

@@ -539,6 +539,7 @@ void WavePortData::GetTrueDofs(const mfem::Array<int> &dbc_marker,
   }
 }
 
+// static
 void WavePortData::GetInitialSpace(int nt, int nn, petsc::PetscParVector &y0)
 {
   // Initial space chosen as such that B v₀ = y₀, with y₀ = [y₀ₜ, 0, ... 0]ᵀ ⟂ null(A)
@@ -557,37 +558,35 @@ void WavePortData::GetInitialSpace(int nt, int nn, petsc::PetscParVector &y0)
   y0.RestoreArray(py0);
 }
 
-std::complex<double> WavePortData::Solve(petsc::PetscParVector &y0,
-                                         petsc::PetscParVector &e0,
-                                         petsc::PetscParVector &e,
-                                         petsc::PetscScatter &scatter)
+
+std::complex<double> WavePortData::Solve()
 {
   double eig[2];
   if (A)  // Only on root
   {
     // The y0 and e0 vectors are still parallel vectors, but with all data on root. We want
     // true sequential vectors.
-    PetscScalar *pe0 = e0.GetArray();
-    petsc::PetscParVector e0s(e0.GetSize(), pe0);
+    PetscScalar *pe0 = e0->GetArray();
+    petsc::PetscParVector e0s(e0->GetSize(), pe0);
 
     // Set starting vector.
     {
-      PetscScalar *py0 = y0.GetArray();
-      petsc::PetscParVector y0s(y0.GetSize(), py0);
+      PetscScalar *py0 = y0->GetArray();
+      petsc::PetscParVector y0s(y0->GetSize(), py0);
       eigen->SetInitialSpace(y0s);
-      y0.RestoreArray(py0);
+      y0->RestoreArray(py0);
     }
 
 #if 0
     // Alternatively, use B-orthogonal initial space. Probably want to call SetBMat for
     // the eigensolver in this case.
     {
-      PetscScalar *py0 = y0.GetArray();
-      petsc::PetscParVector y0s(y0.GetSize(), py0);
+      PetscScalar *py0 = y0->GetArray();
+      petsc::PetscParVector y0s(y0->GetSize(), py0);
       petsc::PetscParVector v0s(y0s);
       ksp->Mult(y0s, v0s);
       eigen->SetInitialSpace(v0s);
-      y0.RestoreArray(py0);
+      y0->RestoreArray(py0);
     }
 #endif
 
@@ -598,12 +597,12 @@ std::complex<double> WavePortData::Solve(petsc::PetscParVector &y0,
     MFEM_VERIFY(num_conv >= mode_idx, "Wave port eigensolver did not converge!");
     eigen->GetEigenvalue(mode_idx - 1, eig[0], eig[1]);
     eigen->GetEigenvector(mode_idx - 1, e0s);
-    e0.RestoreArray(pe0);
+    e0->RestoreArray(pe0);
   }
 
   // Scatter the result to all processors.
-  scatter.Reverse(e0, e);
-  Mpi::Broadcast(2, eig, 0, e.GetComm());
+  scatter->Reverse(*e0, *e);
+  Mpi::Broadcast(2, eig, 0, e->GetComm());
   return {eig[0], eig[1]};
 }
 
@@ -631,7 +630,7 @@ void WavePortData::Initialize(double omega)
   }
 
   // Configure and solve the eigenvalue problem for the desired boundary mode.
-  std::complex<double> lambda = Solve(*y0, *e0, *e, *scatter);
+  std::complex<double> lambda = Solve();
 
   // Extract the eigenmode solution and postprocess. The extracted eigenvalue is λ =
   // Θ²/(Θ²-kₙ²).
@@ -747,8 +746,8 @@ std::complex<double> WavePortData::GetSParameter(mfem::ParComplexGridFunction &E
   return {-(*sr)(E.real()) - (*si)(E.imag()), -(*sr)(E.imag()) + (*si)(E.real())};
 }
 
-std::complex<double> WavePortData::GetPower(mfem::ParComplexGridFunction &E,
-                                            mfem::ParComplexGridFunction &B,
+std::complex<double> WavePortData::GetPower(mfem::ParComplexGridFunction &Ein,
+                                            mfem::ParComplexGridFunction &Bin,
                                             const MaterialOperator &mat_op,
                                             const std::map<int, int> &local_to_shared) const
 {
@@ -756,9 +755,9 @@ std::complex<double> WavePortData::GetPower(mfem::ParComplexGridFunction &E,
   // using the computed E and H = μ⁻¹ B fields. The linear form is reconstructed from
   // scratch each time due to changing H. The BdrCurrentVectorCoefficient computes -n x H,
   // where n is an outward normal.
-  auto &nd_fespace = *E.ParFESpace();
-  BdrCurrentVectorCoefficient nxHr_func(B.real(), mat_op, local_to_shared);
-  BdrCurrentVectorCoefficient nxHi_func(B.imag(), mat_op, local_to_shared);
+  auto &nd_fespace = *Ein.ParFESpace();
+  BdrCurrentVectorCoefficient nxHr_func(Bin.real(), mat_op, local_to_shared);
+  BdrCurrentVectorCoefficient nxHi_func(Bin.imag(), mat_op, local_to_shared);
   mfem::ParLinearForm pr(&nd_fespace), pi(&nd_fespace);
   pr.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(nxHr_func), attr_marker);
   pi.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(nxHi_func), attr_marker);
@@ -766,7 +765,7 @@ std::complex<double> WavePortData::GetPower(mfem::ParComplexGridFunction &E,
   pi.UseFastAssembly(true);
   pr.Assemble();
   pi.Assemble();
-  return {pr(E.real()) + pi(E.imag()), pr(E.imag()) - pi(E.real())};
+  return {pr(Ein.real()) + pi(Ein.imag()), pr(Ein.imag()) - pi(Ein.real())};
 }
 
 WavePortOperator::WavePortOperator(const IoData &iod, const MaterialOperator &mat,
@@ -777,13 +776,11 @@ WavePortOperator::WavePortOperator(const IoData &iod, const MaterialOperator &ma
   // Set up wave port boundary conditions.
   MFEM_VERIFY(nd_fespace.GetParMesh() == h1_fespace.GetParMesh(),
               "Mesh mismatch in WavePortOperator FE spaces!");
-  SetUpBoundaryProperties(iodata, mat_op, nd_fespace, h1_fespace);
-  PrintBoundaryInfo(iodata, *nd_fespace.GetParMesh());
+  SetUpBoundaryProperties(nd_fespace, h1_fespace);
+  PrintBoundaryInfo(*nd_fespace.GetParMesh());
 }
 
-void WavePortOperator::SetUpBoundaryProperties(const IoData &iodata,
-                                               const MaterialOperator &mat_op,
-                                               mfem::ParFiniteElementSpace &nd_fespace,
+void WavePortOperator::SetUpBoundaryProperties(mfem::ParFiniteElementSpace &nd_fespace,
                                                mfem::ParFiniteElementSpace &h1_fespace)
 {
   // Check that wave port boundary attributes have been specified correctly.
@@ -861,7 +858,7 @@ void WavePortOperator::SetUpBoundaryProperties(const IoData &iodata,
   }
 }
 
-void WavePortOperator::PrintBoundaryInfo(const IoData &iodata, mfem::ParMesh &mesh)
+void WavePortOperator::PrintBoundaryInfo(mfem::ParMesh &mesh)
 {
   // Print out BC info for all port attributes.
   if (ports.empty())

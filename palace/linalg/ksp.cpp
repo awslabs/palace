@@ -104,8 +104,10 @@ void KspSolver::Configure(const IoData &iodata)
   }
 }
 
-void KspSolver::ConfigureVerbose(int print, const std::string &prefix)
+void KspSolver::ConfigureVerbose(int print_input, const std::string &prefix)
 {
+  print = print_input;
+
   // Manage debugging output.
   if (print > 0)
   {

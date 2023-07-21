@@ -217,8 +217,7 @@ private:
   const mfem::Vector side;
   mutable mfem::Vector C1, V, nor;
 
-  int Initialize(mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip,
-                 mfem::Vector &V)
+  int Initialize(mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip)
   {
     // Get neighboring elements.
     mfem::ElementTransformation *T1, *T2;
@@ -277,7 +276,7 @@ inline double DielectricInterfaceCoefficient<DielectricInterfaceType::MA>::Eval(
     mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip)
 {
   // Get single-sided solution and neighboring element attribute.
-  Initialize(T, ip, V);
+  Initialize(T, ip);
   GetNormal(T, ip, nor);
 
   // Metal-air interface: 0.5 * t / ϵ_MA * |E_n|² .
@@ -290,7 +289,7 @@ inline double DielectricInterfaceCoefficient<DielectricInterfaceType::MS>::Eval(
     mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip)
 {
   // Get single-sided solution and neighboring element attribute.
-  int attr = Initialize(T, ip, V);
+  int attr = Initialize(T, ip);
   GetNormal(T, ip, nor);
 
   // Metal-substrate interface: 0.5 * t * (ϵ_S)² / ϵ_MS * |E_n|² .
@@ -304,7 +303,7 @@ inline double DielectricInterfaceCoefficient<DielectricInterfaceType::SA>::Eval(
     mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip)
 {
   // Get single-sided solution and neighboring element attribute.
-  Initialize(T, ip, V);
+  Initialize(T, ip);
   GetNormal(T, ip, nor);
 
   // Substrate-air interface: 0.5 * t * (ϵ_SA * |E_t|² + 1 / ϵ_MS * |E_n|²) .
@@ -318,7 +317,7 @@ inline double DielectricInterfaceCoefficient<DielectricInterfaceType::DEFAULT>::
     mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip)
 {
   // Get single-sided solution and neighboring element attribute.
-  Initialize(T, ip, V);
+  Initialize(T, ip);
 
   // No specific interface, use full field evaluation: 0.5 * t * ϵ * |E|² .
   return 0.5 * ts * epsilon * (V * V);

@@ -37,7 +37,7 @@ int GetNpDep(int np, bool use_3d)
 
 SuperLUSolver::SuperLUSolver(MPI_Comm comm, config::LinearSolverData::SymFactType reorder,
                              bool use_3d, int print)
-  : mfem::Solver(), comm(comm), A(nullptr), solver(comm, GetNpDep(Mpi::Size(comm), use_3d))
+  : mfem::Solver(), A(nullptr), solver(comm, GetNpDep(Mpi::Size(comm), use_3d))
 {
   // Configure the solver.
   if (print > 1)

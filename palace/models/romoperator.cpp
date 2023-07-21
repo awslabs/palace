@@ -467,6 +467,7 @@ double RomOperator::ComputeError(double omega)
   return num / den;
 }
 
+// static
 void RomOperator::BVMatProjectInternal(petsc::PetscDenseMatrix &V, petsc::PetscParMatrix &A,
                                        petsc::PetscDenseMatrix &Ar,
                                        petsc::PetscParVector &r, int n0, int n)
@@ -515,6 +516,7 @@ void RomOperator::BVMatProjectInternal(petsc::PetscDenseMatrix &V, petsc::PetscP
   }
 }
 
+// static
 void RomOperator::BVDotVecInternal(petsc::PetscDenseMatrix &V, petsc::PetscParVector &b,
                                    petsc::PetscParVector &br, int n0, int n)
 {

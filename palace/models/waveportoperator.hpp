@@ -72,9 +72,9 @@ private:
                    mfem::Array<int> &h1_tdof_list);
 
   // Configure and solve the linear eigenvalue problem for the boundary mode.
-  void GetInitialSpace(int nt, int nn, petsc::PetscParVector &y0);
-  std::complex<double> Solve(petsc::PetscParVector &y0, petsc::PetscParVector &e0,
-                             petsc::PetscParVector &e, petsc::PetscScatter &scatter);
+  static void GetInitialSpace(int nt, int nn, petsc::PetscParVector &y0);
+
+  std::complex<double> Solve();
 
 public:
   WavePortData(const config::WavePortData &data, const MaterialOperator &mat_op,
@@ -146,10 +146,9 @@ private:
   // Mapping from port index to data structure containing port information.
   std::map<int, WavePortData> ports;
   mfem::Array<int> port_marker;
-  void SetUpBoundaryProperties(const IoData &iodata, const MaterialOperator &mat_op,
-                               mfem::ParFiniteElementSpace &nd_fespace,
+  void SetUpBoundaryProperties(mfem::ParFiniteElementSpace &nd_fespace,
                                mfem::ParFiniteElementSpace &h1_fespace);
-  void PrintBoundaryInfo(const IoData &iodata, mfem::ParMesh &mesh);
+  void PrintBoundaryInfo(mfem::ParMesh &mesh);
 
   // Compute boundary modes for all wave port boundaries at the specified frequency.
   void Initialize(double omega);

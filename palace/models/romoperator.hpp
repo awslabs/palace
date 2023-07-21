@@ -65,10 +65,10 @@ private:
   double ComputeError(double omega);
 
   // Helper functions for reduced-order matrix or vector construction/update.
-  void BVMatProjectInternal(petsc::PetscDenseMatrix &V, petsc::PetscParMatrix &A,
+  static void BVMatProjectInternal(petsc::PetscDenseMatrix &V, petsc::PetscParMatrix &A,
                             petsc::PetscDenseMatrix &Ar, petsc::PetscParVector &r, int n0,
                             int n);
-  void BVDotVecInternal(petsc::PetscDenseMatrix &V, petsc::PetscParVector &b,
+  static void BVDotVecInternal(petsc::PetscDenseMatrix &V, petsc::PetscParVector &b,
                         petsc::PetscParVector &br, int n0, int n);
 
 public:

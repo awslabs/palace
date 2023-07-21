@@ -55,7 +55,7 @@ protected:
   PetscInt nev, m0, mQ;
 
   // Number of moments to consider for subspace construction.
-  PetscInt M;
+  PetscInt N_moments;
 
   // Relative eigenvalue error convergence tolerance for the solver.
   PetscReal rtol;
@@ -192,7 +192,7 @@ public:
   {
     MFEM_ABORT("SetWhichEigenpairs not defined for FeastEigenSolver!");
   }
-  void SetShiftInvert(double tr, double ti, bool precond = false) override
+  void SetShiftInvert(double tr_in, double ti_in, bool precond = false) override
   {
     MFEM_ABORT("SetShiftInvert not defined for FeastEigenSolver!");
   }

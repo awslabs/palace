@@ -25,6 +25,50 @@ struct InductanceData;
 
 }  // namespace config
 
+
+struct SurfaceData
+{
+  mutable std::vector<mfem::Array<int>> attr_markers;
+
+  virtual ~SurfaceData() = default;
+
+  virtual std::unique_ptr<mfem::Coefficient>
+  GetCoefficient(int i, const mfem::ParGridFunction &U, const MaterialOperator &mat_op,
+                  const std::map<int, int> &local_to_shared) const = 0;
+};
+struct InterfaceDielectricData : public SurfaceData
+{
+  DielectricInterfaceType type;
+  double epsilon, ts, tandelta;
+  std::vector<mfem::Vector> sides;
+
+  InterfaceDielectricData(const config::InterfaceDielectricData &data,
+                          mfem::ParMesh &mesh);
+
+  std::unique_ptr<mfem::Coefficient>
+  GetCoefficient(int i, const mfem::ParGridFunction &U, const MaterialOperator &mat_op,
+                  const std::map<int, int> &local_to_shared) const override;
+};
+struct SurfaceChargeData : public SurfaceData
+{
+  SurfaceChargeData(const config::CapacitanceData &data, mfem::ParMesh &mesh);
+
+  std::unique_ptr<mfem::Coefficient>
+  GetCoefficient(int i, const mfem::ParGridFunction &U, const MaterialOperator &mat_op,
+                  const std::map<int, int> &local_to_shared) const override;
+};
+struct SurfaceFluxData : public SurfaceData
+{
+  mfem::Vector direction;
+
+  SurfaceFluxData(const config::InductanceData &data, mfem::ParMesh &mesh);
+
+  std::unique_ptr<mfem::Coefficient>
+  GetCoefficient(int i, const mfem::ParGridFunction &U, const MaterialOperator &mat_op,
+                  const std::map<int, int> &local_to_shared) const override;
+};
+
+
 //
 // A class handling boundary surface postprocessing.
 //
@@ -33,47 +77,6 @@ class SurfacePostOperator
 private:
   // Mapping from surface index to data structure containing surface postprocessing
   // information for surface loss, charge, or magnetic flux.
-  struct SurfaceData
-  {
-    mutable std::vector<mfem::Array<int>> attr_markers;
-
-    virtual ~SurfaceData() = default;
-
-    virtual std::unique_ptr<mfem::Coefficient>
-    GetCoefficient(int i, const mfem::ParGridFunction &U, const MaterialOperator &mat_op,
-                   const std::map<int, int> &local_to_shared) const = 0;
-  };
-  struct InterfaceDielectricData : public SurfaceData
-  {
-    DielectricInterfaceType type;
-    double epsilon, ts, tandelta;
-    std::vector<mfem::Vector> sides;
-
-    InterfaceDielectricData(const config::InterfaceDielectricData &data,
-                            mfem::ParMesh &mesh);
-
-    std::unique_ptr<mfem::Coefficient>
-    GetCoefficient(int i, const mfem::ParGridFunction &U, const MaterialOperator &mat_op,
-                   const std::map<int, int> &local_to_shared) const override;
-  };
-  struct SurfaceChargeData : public SurfaceData
-  {
-    SurfaceChargeData(const config::CapacitanceData &data, mfem::ParMesh &mesh);
-
-    std::unique_ptr<mfem::Coefficient>
-    GetCoefficient(int i, const mfem::ParGridFunction &U, const MaterialOperator &mat_op,
-                   const std::map<int, int> &local_to_shared) const override;
-  };
-  struct SurfaceFluxData : public SurfaceData
-  {
-    mfem::Vector direction;
-
-    SurfaceFluxData(const config::InductanceData &data, mfem::ParMesh &mesh);
-
-    std::unique_ptr<mfem::Coefficient>
-    GetCoefficient(int i, const mfem::ParGridFunction &U, const MaterialOperator &mat_op,
-                   const std::map<int, int> &local_to_shared) const override;
-  };
   std::map<int, InterfaceDielectricData> eps_surfs;
   std::map<int, SurfaceChargeData> charge_surfs;
   std::map<int, SurfaceFluxData> flux_surfs;
@@ -86,9 +89,6 @@ private:
 
   // Unit function used for computing surface integrals.
   mfem::ParGridFunction ones;
-
-  double GetSurfaceIntegral(const SurfaceData &data, const mfem::ParGridFunction &U) const;
-
 public:
   SurfacePostOperator(const IoData &iodata, const MaterialOperator &mat,
                       const std::map<int, int> &l2s,
