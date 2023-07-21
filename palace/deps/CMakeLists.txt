@@ -85,14 +85,14 @@ if(PALACE_WITH_INTERNAL_MFEM)
     message(STATUS "Building without zlib and binary output compression support")
     set(MFEM_USE_ZLIB NO CACHE BOOL "")
   endif()
-  set(MFEM_USE_LIBUNWIND NO CACHE BOOL "")
+  set(MFEM_USE_LIBUNWIND YES CACHE BOOL "")
+  set(MFEM_USE_EXCEPTIONS YES CACHE BOOL "")
 
   # A number of patches to MFEM for our uses
   set(PALACE_MFEM_PATCH_FILES
   "${CMAKE_CURRENT_SOURCE_DIR}/patch/mfem/patch_direct.diff"
   "${CMAKE_CURRENT_SOURCE_DIR}/patch/mfem/patch_integ.diff"
-  "${CMAKE_CURRENT_SOURCE_DIR}/patch/mfem/patch_mesh.diff"
-  "${CMAKE_CURRENT_SOURCE_DIR}/patch/mfem/patch_ncmesh_and_partition.diff"
+  "${CMAKE_CURRENT_SOURCE_DIR}/patch/mfem/patch_ncmesh_and_partition_and_mesh_vis.diff"
   )
 
   include(FetchContent)
