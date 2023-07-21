@@ -134,12 +134,23 @@ void RebalanceMesh(std::unique_ptr<mfem::ParMesh> &mesh)
     {
       // Without access to a refinement tree, partitioning must be done on the
       // root processor and then redistributed.
-      mesh::RebalanceConformalMesh(mesh);
+
+      int min_elem, max_elem;
+      min_elem = max_elem = mesh->GetNE();
+
+      Mpi::GlobalMin(1, &min_elem, comm);
+      Mpi::GlobalMax(1, &max_elem, comm);
+      Mpi::Print("Min Elem per processor: {}, Max Elem per processor: {}, Ratio: {:.3e}\n",
+                 min_elem, max_elem, double(max_elem)/min_elem);
+
+      // TODO: The current implementation of this rebalancing is buggy. Need to
+      // introduce a better mechanism.
+      // mesh::RebalanceConformalMesh(mesh);
     }
   }
 
   mesh->FinalizeTopology();
-  mesh->Finalize(true);
+  mesh->Finalize(mesh->Conforming());
 
   // If the mesh is higher order, synchronize through the nodal grid function.
   // This will in turn call the mesh exchange of face neighbor data.

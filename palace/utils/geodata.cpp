@@ -596,6 +596,7 @@ void GetSurfaceNormal(mfem::ParMesh &mesh, const mfem::Array<int> &marker,
 
 void RebalanceConformalMesh(std::unique_ptr<mfem::ParMesh> &mesh)
 {
+  MFEM_VERIFY(mesh->Conforming(), "Must only be used with conformal meshes");
   auto comm = mesh->GetComm();
   auto smesh = mesh->GetSerialMesh(0);
 
@@ -655,6 +656,7 @@ void RebalanceConformalMesh(std::unique_ptr<mfem::ParMesh> &mesh)
   mesh->FinalizeTopology();
   mesh->Finalize(true);
   mesh->ExchangeFaceNbrData();
+
 }
 
 }  // namespace mesh
