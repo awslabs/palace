@@ -98,14 +98,11 @@ protected:
   mfem::Vector c;  // Center coordinates of coaxial annulus
 
 public:
-  CoaxialElementData(const std::string &direction, const mfem::Array<int> &marker,
+  CoaxialElementData(const std::array<double, 3> &direction, const mfem::Array<int> &marker,
                      mfem::ParFiniteElementSpace &fespace)
-    : LumpedElementData(fespace.GetParMesh()->SpaceDimension(), marker),
-      sign(direction[0] == '+')
+    : LumpedElementData(fespace.GetParMesh()->SpaceDimension(), marker), sign(direction[0] > 0)
   {
     // Get the outer annulus radius.
-    MFEM_VERIFY(direction[1] == 'r',
-                "Lumped element direction is not correctly formatted!");
     mfem::Vector bbmin, bbmax;
     mesh::GetBoundingBox(*fespace.GetParMesh(), marker, true, bbmin, bbmax);
     double A = GetArea(fespace);

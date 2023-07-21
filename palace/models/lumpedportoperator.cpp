@@ -53,10 +53,10 @@ LumpedPortData::LumpedPortData(const config::LumpedPortData &data,
     mfem::Array<int> attr_marker;
     mesh::AttrToMarker(h1_fespace.GetParMesh()->bdr_attributes.Max(), node.attributes,
                        attr_marker);
-    if (node.direction[1] == 'r')
+    if (node.coordinate_system == config::CoordinateSystem::CYLINDRICAL)
     {
       elems.push_back(
-          std::make_unique<CoaxialElementData>(node.direction, attr_marker, h1_fespace));
+          std::make_unique<CoaxialElementData>(node.normal, attr_marker, h1_fespace));
     }
     else
     {
