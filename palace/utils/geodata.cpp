@@ -624,6 +624,32 @@ void GetSurfaceNormal(mfem::ParMesh &mesh, const mfem::Array<int> &marker,
   // }
 }
 
+
+void RebalanceConformalMesh(std::unique_ptr<mfem::ParMesh> &mesh)
+{
+  Mpi::Warning("Rebalancing a conformal mesh is currently highly experimental.\n");
+
+  auto comm = mesh->GetComm();
+
+  std::unique_ptr<mfem::Mesh> smesh = std::make_unique<mfem::Mesh>(mesh->GetSerialMesh(0));
+  std::unique_ptr<int[]> partitioning;
+
+  if (!Mpi::Root(comm))
+  {
+    // The generated mesh on non-root processors is junk.
+    smesh.reset();
+  }
+  else
+  {
+    partitioning = GetMeshPartitioning(*smesh, Mpi::Size(comm));
+  }
+
+  mesh = DistributeMesh(comm, smesh, partitioning);
+  mesh->FinalizeTopology();
+  mesh->Finalize(true);
+  mesh->ExchangeFaceNbrData();
+}
+
 }  // namespace mesh
 
 namespace
