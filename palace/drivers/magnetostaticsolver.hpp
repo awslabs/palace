@@ -40,11 +40,11 @@ private:
                             const mfem::DenseMatrix &M, const mfem::DenseMatrix &Minv,
                             const mfem::DenseMatrix &Mm) const;
 
+  std::pair<ErrorIndicator, int>
+  Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const override;
+
 public:
   using BaseSolver::BaseSolver;
-
-  ErrorIndicator
-  Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const override;
 };
 
 }  // namespace palace

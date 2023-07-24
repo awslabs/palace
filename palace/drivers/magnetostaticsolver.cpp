@@ -18,7 +18,7 @@
 namespace palace
 {
 
-ErrorIndicator
+std::pair<ErrorIndicator, int>
 MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const
 {
   // Construct the system matrix defining the linear operator. Dirichlet boundaries are
@@ -74,7 +74,7 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &me
   // Postprocess the capacitance matrix from the computed field solutions.
   BlockTimer bt1(Timer::POSTPRO);
   SaveMetadata(ksp);
-  return Postprocess(curlcurlop, postop, A);
+  return {Postprocess(curlcurlop, postop, A), curlcurlop.GlobalTrueVSize()};
 }
 
 ErrorIndicator MagnetostaticSolver::Postprocess(CurlCurlOperator &curlcurlop,

@@ -185,7 +185,7 @@ int main(int argc, char *argv[])
   mesh::RefineMesh(iodata, mesh);
 
   // Run the problem driver.
-  auto indicators = solver->Solve(mesh);
+  auto indicators = solver->SolveEstimateMarkRefine(mesh);
 
   // Print timing summary.
   BlockTimer::Print(world_comm);

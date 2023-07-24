@@ -5,15 +5,20 @@
 
 #include <array>
 #include <complex>
+#include <numeric>
 #include <mfem.hpp>
 #include <nlohmann/json.hpp>
+#include "drivers/transientsolver.hpp"
 #include "fem/errorindicator.hpp"
+#include "linalg/errorestimator.hpp"
 #include "linalg/ksp.hpp"
 #include "models/domainpostoperator.hpp"
 #include "models/postoperator.hpp"
 #include "models/surfacepostoperator.hpp"
 #include "utils/communication.hpp"
+#include "utils/dorfler.hpp"
 #include "utils/filesystem.hpp"
+#include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
 #include "utils/timer.hpp"
 
@@ -84,6 +89,303 @@ BaseSolver::BaseSolver(const IoData &iodata, bool root, int size, int num_thread
   }
 }
 
+std::string BaseSolver::IterationPostDir(int iter) const
+{
+  std::string dir = fmt::format("{}Adapt{:0>3d}/", post_dir, iter);
+  // Create directory for output.
+  if (root && !std::filesystem::exists(dir))
+  {
+    std::filesystem::create_directories(dir);
+  }
+  return dir;
+}
+
+namespace
+{
+
+mfem::Array<int> MarkedElements(double threshold, const mfem::Vector &e, bool gt = true)
+{
+  mfem::Array<int> ind;
+  ind.Reserve(e.Size());
+  for (int i = 0; i < e.Size(); i++)
+  {
+    if (gt && e[i] >= threshold)  // Used for refinement marking.
+    {
+      ind.Append(i);
+    }
+    else if (!gt && e[i] <= threshold)  // Used for coarsening marking.
+    {
+      ind.Append(i);
+    }
+  }
+  return ind;
+}
+
+// Helper function responsible for rebalancing the mesh, and optionally writing meshes from
+// the intermediate stages to disk.
+void RebalanceMesh(std::unique_ptr<mfem::ParMesh> &mesh, const IoData &iodata,
+                   std::string output_dir)
+{
+  const auto &param = iodata.model.refinement.adaptation;
+  auto comm = mesh->GetComm();
+  const int width = 1 + static_cast<int>(std::log10(Mpi::Size(comm) - 1));
+  if (output_dir.back() != '/')
+  {
+    output_dir += '/';
+  }
+  std::string serial_mesh_filename;
+  if (param.write_serial_mesh)
+  {
+    serial_mesh_filename += (output_dir + "serial.mesh");
+    if (Mpi::Size(comm) == 1)
+    {
+      std::ofstream serial(serial_mesh_filename);
+      iodata.DimensionalizeMesh(*mesh);
+      mesh->Mesh::Print(serial);
+      iodata.NondimensionalizeMesh(*mesh);
+    }
+  }
+  if (param.write_pre_balance_mesh)
+  {
+    std::ofstream pfile(
+        mfem::MakeParFilename(output_dir + "prebalance.", Mpi::Rank(comm), ".mesh", width));
+    mesh->SetPrintShared(false);  // Do not mark processor boundaries in the save
+    BlockTimer bt(Timer::IO);
+    iodata.DimensionalizeMesh(*mesh);
+    mesh->ParPrint(pfile);
+    iodata.NondimensionalizeMesh(*mesh);
+  }
+
+  // If there is more than one processor, may perform rebalancing.
+  if (Mpi::Size(comm) > 1)
+  {
+    BlockTimer bt(Timer::REBALANCE);
+    mesh->ExchangeFaceNbrData();
+    int min_elem, max_elem;
+    min_elem = max_elem = mesh->GetNE();
+    Mpi::GlobalMin(1, &min_elem, comm);
+    Mpi::GlobalMax(1, &max_elem, comm);
+    const double ratio = double(max_elem) / min_elem;
+    Mpi::Print("Min Elem per processor: {}, Max Elem per processor: {}, Ratio: {:.3e}\n",
+               min_elem, max_elem, double(max_elem) / min_elem);
+    if (ratio > param.maximum_imbalance)
+    {
+      if (mesh->Nonconforming() && param.write_serial_mesh)
+      {
+        // Do not need to duplicate the mesh, as rebalancing will undo this.
+        BlockTimer bt_post(Timer::POSTPRO);
+        mfem::Array<int> serial_partition(mesh->GetNE());
+        serial_partition = 0;
+        mesh->Rebalance(serial_partition);
+        BlockTimer bt_io(Timer::IO);
+        if (Mpi::Root(comm))
+        {
+          std::ofstream serial(serial_mesh_filename);
+          iodata.DimensionalizeMesh(*mesh);
+          mesh->Mesh::Print(serial);
+          iodata.NondimensionalizeMesh(*mesh);
+        }
+        MPI_Barrier(comm);
+      }
+
+      Mpi::Print("Ratio {:.3f} exceeds maximum allowed value {}: Performing rebalancing.\n",
+                 ratio, param.maximum_imbalance);
+      if (mesh->Nonconforming())
+      {
+        mesh->Rebalance();
+      }
+      else
+      {
+        // Without access to a refinement tree, partitioning must be done on the
+        // root processor and then redistributed.
+        mesh::RebalanceConformalMesh(mesh, iodata, serial_mesh_filename);
+      }
+      if (param.write_post_balance_mesh)
+      {
+        BlockTimer bt_io(Timer::IO);
+        std::ofstream pfile(mfem::MakeParFilename(output_dir + "postbalance.",
+                                                  Mpi::Rank(comm), ".mesh", width));
+        mesh->SetPrintShared(false);  // Do not mark processor boundaries in the save
+        iodata.DimensionalizeMesh(*mesh);
+        mesh->ParPrint(pfile);
+        iodata.NondimensionalizeMesh(*mesh);
+      }
+    }
+    else if (param.write_serial_mesh)
+    {
+      if (mesh->Nonconforming())
+      {
+        // Given no rebalancing will be done, need to handle the serial write more
+        // carefully. For NC, this requires creating a duplicate mesh.
+        BlockTimer bt_post(Timer::POSTPRO);
+        mfem::ParMesh smesh(*mesh);
+        mfem::Array<int> serial_partition(mesh->GetNE());
+        smesh.FinalizeTopology();
+        smesh.Finalize();
+        smesh.ExchangeFaceNbrData();
+        serial_partition = 0;
+        smesh.Rebalance(serial_partition);
+        BlockTimer bt_io(Timer::IO);
+        if (Mpi::Root(comm))
+        {
+          std::ofstream serial(serial_mesh_filename);
+          iodata.DimensionalizeMesh(smesh);
+          smesh.Mesh::Print(serial);
+        }
+      }
+      else
+      {
+        std::ofstream serial(serial_mesh_filename);
+        serial.precision(std::numeric_limits<double>::max_digits10);
+        iodata.DimensionalizeMesh(*mesh);
+        mesh->PrintAsSerial(serial);
+        iodata.NondimensionalizeMesh(*mesh);
+      }
+    }
+    mesh->ExchangeFaceNbrData();
+  }
+}
+
+}  // namespace
+
+ErrorIndicator
+BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const
+{
+  auto comm = mesh.back()->GetComm();
+  // Helper to save off postprocess data.
+  auto SavePostProcess = [&](int iter)
+  {
+    Mpi::Barrier(comm);
+    BlockTimer bt_io(Timer::IO);
+    if (Mpi::Root(comm))
+    {
+      // Create a subfolder for the results of this adaptation.
+      namespace fs = std::filesystem;
+      const auto out_dir = fs::path(IterationPostDir(iter));
+      constexpr auto options =
+          fs::copy_options::recursive | fs::copy_options::overwrite_existing;
+      const fs::path root_dir(post_dir);
+      for (const auto &f : fs::directory_iterator(root_dir))
+      {
+        if (f.is_regular_file())
+        {
+          fs::copy(f, out_dir / fs::path(f).filename(), options);
+        }
+      }
+      if (fs::exists(root_dir / "paraview"))
+      {
+        fs::copy(root_dir / "paraview", out_dir / "paraview", options);
+      }
+    }
+    Mpi::Barrier(comm);
+  };
+
+  const auto &param = iodata.model.refinement.adaptation;
+  const bool use_amr = param.max_its > 0;
+  const bool use_coarsening = mesh.back()->Nonconforming() && param.use_coarsening;
+  if (use_amr && mesh.size() > 1)
+  {
+    Mpi::Print("{}\n", "Flattening mesh sequence: AMR will start from the final mesh in "
+                       "the refinement sequence.");
+    mesh.erase(mesh.begin(), mesh.end() - 1);
+    constexpr bool refine = true, fix_orientation = true;
+    mesh.back()->Finalize(refine, fix_orientation);
+  }
+
+  int iter = 0;
+  auto indicators_and_ntdof = Solve(mesh);
+  const auto &indicators = indicators_and_ntdof.first;
+  const auto &ntdof = indicators_and_ntdof.second;
+  if (use_amr)
+  {
+    const auto is_transient = dynamic_cast<const TransientSolver *>(this) != nullptr;
+    if (is_transient)
+    {
+      MFEM_ABORT("AMR is not currently supported for transient simulations!");
+    }
+    else
+    {
+      Mpi::Print("\nAdaptive Mesh Refinement Parameters:\n");
+      Mpi::Print("MaxIter: {}, Tolerance: {:.3e}\n\n", param.max_its, param.tolerance);
+      SavePostProcess(iter);  // Save the initial solution
+    }
+  }
+
+  // Collection of all tests that might exhaust resources.
+  auto exhausted_resources = [&]()
+  {
+    bool ret = false;
+    // Run out of DOFs, and coarsening isn't allowed.
+    ret |= (!use_coarsening && ntdof > param.dof_limit);
+    // Run out of iterations.
+    ret |= iter >= param.max_its;
+    return ret;
+  };
+
+  while (indicators.Norml2(comm) > param.tolerance && !exhausted_resources())
+  {
+    BlockTimer bt_adapt(Timer::ADAPT);
+    Mpi::Print("Adaptation iteration {}: Initial Error Indicator: {:.3e}, DOF: {}, DOF "
+               "Limit: {}\n",
+               ++iter, indicators.Norml2(comm), ntdof, param.dof_limit);
+    if (ntdof < param.dof_limit)
+    {
+      // Mark.
+      const auto threshold =
+          utils::ComputeDorflerThreshold(param.update_fraction, indicators.Local());
+      const auto marked_elements = MarkedElements(threshold, indicators.Local());
+
+      // Refine.
+      const auto initial_elem_count = mesh.back()->GetGlobalNE();
+      mesh.back()->GeneralRefinement(marked_elements, -1, param.max_nc_levels);
+      const auto final_elem_count = mesh.back()->GetGlobalNE();
+      Mpi::Print("Mesh refinement added {} elements. Initial: {}, Final: {}\n",
+                 final_elem_count - initial_elem_count, initial_elem_count,
+                 final_elem_count);
+    }
+    else if (use_coarsening)
+    {
+      // Perform a Dörfler style marking looking for the largest number of derefinement
+      // opportunities to represent a fraction of the derefinable error.
+      const auto &derefinement_table = mesh.back()->pncmesh->GetDerefinementTable();
+      mfem::Vector coarse_error(derefinement_table.Size());
+      mfem::Array<int> row;
+      for (int i = 0; i < derefinement_table.Size(); i++)
+      {
+        // Sum the error for all sub elements that can be combined.
+        derefinement_table.GetRow(i, row);
+        coarse_error[i] = std::accumulate(row.begin(), row.end(), 0.0,
+                                          [&indicators](double s, int i)
+                                          { return s += indicators.Local()[i]; });
+      }
+
+      // Given the coarse errors, we use the Dörfler marking strategy to identify the
+      // smallest set of elements that make up (1 - θ) of the total error. The complement of
+      // this set is then the largest number of elements that make up θ of the total error.
+      const double threshold =
+          utils::ComputeDorflerThreshold(1 - param.update_fraction, coarse_error);
+      const auto initial_elem_count = mesh.back()->GetGlobalNE();
+      mesh.back()->DerefineByError(indicators.Local(), threshold, param.max_nc_levels);
+      const auto final_elem_count = mesh.back()->GetGlobalNE();
+      Mpi::Print("Mesh coarsening removed {} elements. Initial: {}, Final: {}\n",
+                 initial_elem_count - final_elem_count, initial_elem_count,
+                 final_elem_count);
+    }
+    RebalanceMesh(mesh.back(), iodata, post_dir);
+
+    // Solve + estimate.
+    indicators_and_ntdof = Solve(mesh);
+
+    // Optionally save solution off.
+    if (param.save_step > 0 && iter % param.save_step == 0)
+    {
+      SavePostProcess(iter);
+    }
+  }
+  Mpi::Print("\nFinal Error Indicator: {:.3e}, DOF: {}, DOF Limit: {}\n",
+             indicators.Norml2(comm), ntdof, param.dof_limit);
+  return indicators;
+}
 void BaseSolver::SaveMetadata(const mfem::ParFiniteElementSpaceHierarchy &fespaces) const
 {
   if (post_dir.length() == 0)

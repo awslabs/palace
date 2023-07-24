@@ -397,16 +397,67 @@ void RefinementData::SetUp(json &model)
     }
   }
 
+  auto adapt = refinement->find("Adaptation");
+  if (adapt != refinement->end())
+  {
+    // Load Values
+    adaptation.tolerance = adapt->value("Tol", adaptation.tolerance);
+    adaptation.max_its = adapt->value("MaxIts", adaptation.max_its);
+    adaptation.update_fraction = adapt->value("UpdateFraction", adaptation.update_fraction);
+    // adaptation.max_nc_levels = adapt->value("MaxNCLevels", adaptation.max_nc_levels);
+    adaptation.dof_limit = adapt->value("DOFLimit", adaptation.dof_limit);
+    // adaptation.use_coarsening =
+    //     adapt->value("UseCoarsening", adaptation.use_coarsening);
+    adaptation.save_step = adapt->value("SaveStep", adaptation.save_step);
+    // adaptation.nonconformal = adapt->value("Nonconformal", adaptation.nonconformal);
+    adaptation.maximum_imbalance =
+        adapt->value("MaximumImbalance", adaptation.maximum_imbalance);
+    adaptation.write_post_balance_mesh =
+        adapt->value("WritePostBalanceMesh", adaptation.write_post_balance_mesh);
+    adaptation.write_pre_balance_mesh =
+        adapt->value("WritePreBalanceMesh", adaptation.write_pre_balance_mesh);
+    adaptation.write_serial_mesh =
+        adapt->value("WriteSerialMesh", adaptation.write_serial_mesh);
+
+    // Perform Checks
+    MFEM_VERIFY(adaptation.tolerance > 0, "\"Tol\" must be strictly positive");
+    MFEM_VERIFY(adaptation.max_its >= 0, "\"MaxIts\" must be non-negative");
+    MFEM_VERIFY(adaptation.update_fraction > 0 && adaptation.update_fraction < 1,
+                "\"UpdateFraction\" must be in (0,1)");
+    MFEM_VERIFY(!adaptation.use_coarsening || adaptation.nonconformal,
+                "\"UseCoarsening\" can only be used with \"Nonconformal\"");
+    // MFEM_VERIFY(adaptation.max_nc_levels >= 0, "\"MaxNCLevels\" must non-negative");
+    MFEM_VERIFY(adaptation.dof_limit >= 0, "\"DOFLimit\" must be non-negative");
+    MFEM_VERIFY(adaptation.save_step >= 0, "\"SaveStep\" must be non-negative");
+    MFEM_VERIFY(adaptation.maximum_imbalance >= 1,
+                "\"MaximumImbalance\" must be greater than or equal to 1");
+
+    // Cleanup
+    const auto fields = {"Tol", "MaxIts", "UpdateFraction",
+                         //  "UseCoarsening",
+                         //  "MaxNCLevels",
+                         "DOFLimit", "SaveStep",
+                         //  "Nonconformal",
+                         "MaximumImbalance", "WritePostBalanceMesh", "WritePreBalanceMesh",
+                         "WriteSerialMesh"};
+    for (const auto &f : fields)
+    {
+      adapt->erase(f);
+    }
+
+    MFEM_VERIFY(adapt->empty(),
+                "Found an unsupported configuration file keyword under \"Adaptation\"!\n"
+                    << adapt->dump(2));
+  }
+
   // Cleanup
   refinement->erase("UniformLevels");
   refinement->erase("Boxes");
   refinement->erase("Spheres");
+  refinement->erase("Adaptation");
   MFEM_VERIFY(refinement->empty(),
               "Found an unsupported configuration file keyword under \"Refinement\"!\n"
                   << refinement->dump(2));
-
-  // Debug
-  // std::cout << "UniformLevels: " << uniform_ref_levels << '\n';
 }
 
 void ModelData::SetUp(json &config)

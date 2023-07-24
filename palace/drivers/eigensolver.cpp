@@ -24,7 +24,7 @@ namespace palace
 
 using namespace std::complex_literals;
 
-ErrorIndicator
+std::pair<ErrorIndicator, int>
 EigenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const
 {
   // Construct and extract the system matrices defining the eigenvalue problem. The diagonal
@@ -305,7 +305,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) cons
     Postprocess(postop, spaceop.GetLumpedPortOp(), i, omega, error1, error2, num_conv,
                 (i == 0) ? &indicator : nullptr);
   }
-  return indicator;
+  return {indicator, spaceop.GlobalTrueVSize()};
 }
 
 void EigenSolver::Postprocess(const PostOperator &postop,

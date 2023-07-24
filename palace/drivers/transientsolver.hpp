@@ -49,11 +49,11 @@ private:
                         const LumpedPortOperator &lumped_port_op, int step, double t,
                         double J_coef) const;
 
+  std::pair<ErrorIndicator, int>
+  Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const override;
+
 public:
   using BaseSolver::BaseSolver;
-
-  ErrorIndicator
-  Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const override;
 };
 
 }  // namespace palace
