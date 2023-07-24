@@ -48,7 +48,6 @@ inline MPI_Datatype DataType<unsigned short>()
 {
   return MPI_UNSIGNED_SHORT;
 }
-
 template <>
 inline MPI_Datatype DataType<signed int>()
 {
@@ -302,7 +301,7 @@ public:
   template <typename T>
   static void Broadcast(int len, T *buff, int root, MPI_Comm comm)
   {
-    MPI_Bcast(buff, len, mpi::DataType<T>(), root, comm);
+    MPI_Bcast((void *)buff, len, mpi::DataType<T>(), root, comm);
   }
 
   // Print methods only print on the root process of MPI_COMM_WORLD or a given MPI_Comm.
@@ -348,6 +347,21 @@ public:
   static void Warning(fmt::format_string<T...> fmt, T &&...args)
   {
     Warning(World(), fmt, std::forward<T>(args)...);
+  }
+
+  // Printing that is only visible in Debug
+  template <typename... T>
+  static void Debug(MPI_Comm comm, fmt::format_string<T...> fmt, T &&...args)
+  {
+#ifndef NDEBUG
+    Print(comm, fmt, std::forward<T>(args)...);
+#endif
+  }
+
+  template <typename... T>
+  static void Debug(fmt::format_string<T...> fmt, T &&...args)
+  {
+    Debug(World(), fmt, std::forward<T>(args)...);
   }
 
   // Return the global communicator.

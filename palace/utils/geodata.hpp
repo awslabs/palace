@@ -123,6 +123,10 @@ void GetSurfaceNormal(mfem::ParMesh &mesh, int attr, mfem::Vector &normal);
 void GetSurfaceNormal(mfem::ParMesh &mesh, const mfem::Array<int> &marker,
                       mfem::Vector &normal);
 
+// Rebalance a conformal mesh across processor ranks, using the MeshPartitioner.
+// Gathers the mesh onto the root rank before scattering the partitioned mesh.
+void RebalanceConformalMesh(std::unique_ptr<mfem::ParMesh> &mesh);
+
 }  // namespace mesh
 
 }  // namespace palace

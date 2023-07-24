@@ -400,8 +400,6 @@ void RefinementData::SetUp(json &model)
   auto adapt = refinement->find("Adaptation");
   if (adapt != refinement->end())
   {
-    MFEM_ABORT("Placeholder: Not currently supported!");
-
     // Load Values
     adaptation.tolerance = adapt->value("Tol", adaptation.tolerance);
     adaptation.max_its = adapt->value("MaxIts", adaptation.max_its);

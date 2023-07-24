@@ -187,10 +187,7 @@ int main(int argc, char *argv[])
   timer.init_time += timer.Lap() - timer.io_time;
 
   // Run the problem driver.
-  auto solver_output = solver->Solve(mesh, timer);
-
-  Mpi::Print(world_comm, "Normalized Error Indicator: {:.3e}",
-             solver_output.global_error_indicator);
+  auto solver_output = solver->SolveEstimateMarkRefine(mesh, timer);
 
   timer.Reduce(world_comm);
   timer.Print(world_comm);

@@ -155,7 +155,7 @@ struct AdaptiveRefinementData
   bool nonconformal = true;
   // Maximum allowable ratio of number of elements across processors before
   // rebalancing is performed.
-  double maximum_imbalance = 1.5;
+  double maximum_imbalance = 1.0;
 };
 
 struct RefinementData

@@ -1,6 +1,9 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+using CSV
+using DataFrames
+using Test
 function testcase(
     testdir,
     testconfig,
