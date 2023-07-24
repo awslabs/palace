@@ -102,6 +102,13 @@ public:
     return *this;
   }
 
+  // In-place subtraction (*this) -= x
+  ComplexVector &operator-=(const ComplexVector &x)
+  {
+    AXPY(-1.0, x);
+    return *this;
+  }
+
   // In-place addition (*this) = alpha * x + beta * (*this).
   void AXPBY(std::complex<double> alpha, const ComplexVector &x, std::complex<double> beta);
 
