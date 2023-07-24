@@ -54,7 +54,19 @@ scale based on the bounding box of the computational domain.
             "Radius": float
         },
         ...
-    ]
+    ],
+    "Adaptation":
+    {
+        "Tol": <float>,
+        "MaxIts": <int>,
+        "UpdateFraction": <float>,
+        "DOFLimit": <int>,
+        "SaveStep": <int>,
+        "MaximumImbalance": <float>,
+        "WritePostBalanceMesh": <bool>,
+        "WritePreBalanceMesh": <bool>,
+        "WriteSerialMesh": <bool>
+    }
 }
 ```
 
@@ -90,8 +102,32 @@ Specified in mesh length units.
 `"Radius" [None]` : The radius of the sphere for this sphere refinement region, specified in
 mesh length units.
 
+`"Tol" [1e-3]` : Relative error convergence tolerance for mesh adaptation.
+
+`"MaxIts" [0]` : Maximum number of iterations to perform of adaptive mesh refinement.
+
+`"UpdateFraction" [0.4]` : Dörfler marking fraction used to specify which elements to
+refine. This marking strategy will mark the smallest number of elements that make up
+`"UpdateFraction"` of the total error in the mesh.
+
+`"DOFLimit" [0]` : The maximum allowable number of DOF within an AMR loop, if an adapted
+mesh exceeds this value no further adaptation will occur.
+
+`"SaveStep" [1]` : Specify which adaptive iterations to save off within the post processing
+output folder. `"SaveStep"` of 1 specifies to save all iterations, while for example
+`"SaveStep"` of 3 would save every third iteration.
+
+`"MaximumImbalance" [1.0]` : The ratio between maximum number of elements on a processor and
+minimum number of elements on a processor before a rebalance is performed. A value of `2.0`
+would result in rebalancing occurring only if one processor had more than double the number
+of elements on another.
+
+`"WriteSerialMesh" [true]` : Whether to write a serialized mesh to file after adaptation.
+
 ### Advanced model options
 
   - `"Partition" [""]`
   - `"ReorientTetMesh" [false]`
   - `"RemoveCurvature" [false]`
+  - `"WritePostBalanceMesh" [false]`
+  - `"WritePreBalanceMesh" [false]`

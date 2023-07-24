@@ -17,7 +17,7 @@
 namespace palace
 {
 
-ErrorIndicator
+std::pair<ErrorIndicator, int>
 ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const
 {
   // Construct the system matrix defining the linear operator. Dirichlet boundaries are
@@ -73,7 +73,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &me
   // Postprocess the capacitance matrix from the computed field solutions.
   BlockTimer bt1(Timer::POSTPRO);
   SaveMetadata(ksp);
-  return Postprocess(laplaceop, postop, V);
+  return {Postprocess(laplaceop, postop, V), laplaceop.GlobalTrueVSize()};
 }
 
 ErrorIndicator ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop,

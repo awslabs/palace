@@ -20,7 +20,7 @@
 namespace palace
 {
 
-ErrorIndicator
+std::pair<ErrorIndicator, int>
 TransientSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const
 {
   // Set up the spatial discretization and time integrators for the E and B fields.
@@ -137,7 +137,7 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) 
     step++;
   }
   SaveMetadata(timeop.GetLinearSolver());
-  return indicator;
+  return {indicator, spaceop.GlobalTrueVSize()};
 }
 
 std::function<double(double)> TransientSolver::GetTimeExcitation(bool dot) const
