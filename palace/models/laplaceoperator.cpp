@@ -121,7 +121,7 @@ LaplaceOperator::LaplaceOperator(const IoData &iodata,
     nd_fec(iodata.solver.order, mesh.back()->Dimension()),
     h1_fespaces(utils::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
         iodata.solver.linear.mg_max_levels, iodata.solver.linear.mg_legacy_transfer,
-        pa_order_threshold, mesh, h1_fecs, &dbc_marker, &dbc_tdof_lists)),
+        pa_order_threshold, mesh, h1_fecs, dbc_marker, dbc_tdof_lists)),
     nd_fespace(mesh.back().get(), &nd_fec), mat_op(iodata, *mesh.back()),
     source_attr_lists(ConstructSources(iodata))
 {
