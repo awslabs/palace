@@ -19,6 +19,7 @@ class ParMesh;
 namespace palace
 {
 
+struct ErrorIndicators;
 class IoData;
 class LumpedPortOperator;
 class PostOperator;
@@ -48,14 +49,10 @@ private:
                         double J_coef) const;
 
 public:
-  TransientSolver(const IoData &iodata, bool root, int size = 0, int num_thread = 0,
-                  const char *git_tag = nullptr)
-    : BaseSolver(iodata, root, size, num_thread, git_tag)
-  {
-  }
+  using BaseSolver::BaseSolver;
 
-  void Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
-             Timer &timer) const override;
+  ErrorIndicators Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
+                        Timer &timer) const override;
 };
 
 }  // namespace palace

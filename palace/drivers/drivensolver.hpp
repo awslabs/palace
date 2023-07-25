@@ -18,6 +18,8 @@ class ParMesh;
 namespace palace
 {
 
+class CurlFluxErrorEstimator;
+struct ErrorIndicators;
 class IoData;
 class LumpedPortOperator;
 class PostOperator;
@@ -34,10 +36,14 @@ class DrivenSolver : public BaseSolver
 private:
   int GetNumSteps(double start, double end, double delta) const;
 
-  void SweepUniform(SpaceOperator &spaceop, PostOperator &postop, int nstep, int step0,
-                    double omega0, double delta_omega, Timer &timer) const;
-  void SweepAdaptive(SpaceOperator &spaceop, PostOperator &postop, int nstep, int step0,
-                     double omega0, double delta_omega, Timer &timer) const;
+  ErrorIndicators SweepUniform(SpaceOperator &spaceop, PostOperator &postop,
+                               const CurlFluxErrorEstimator &estimator, int nstep,
+                               int step0, double omega0, double delta_omega,
+                               Timer &timer) const;
+  ErrorIndicators SweepAdaptive(SpaceOperator &spaceop, PostOperator &postop,
+                                const CurlFluxErrorEstimator &estimator, int nstep,
+                                int step0, double omega0, double delta_omega,
+                                Timer &timer) const;
 
   void Postprocess(const PostOperator &postop, const LumpedPortOperator &lumped_port_op,
                    const WavePortOperator &wave_port_op,
@@ -56,14 +62,10 @@ private:
                               double omega) const;
 
 public:
-  DrivenSolver(const IoData &iodata, bool root, int size = 0, int num_thread = 0,
-               const char *git_tag = nullptr)
-    : BaseSolver(iodata, root, size, num_thread, git_tag)
-  {
-  }
+  using BaseSolver::BaseSolver;
 
-  void Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
-             Timer &timer) const override;
+  ErrorIndicators Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
+                        Timer &timer) const final;
 };
 
 }  // namespace palace
