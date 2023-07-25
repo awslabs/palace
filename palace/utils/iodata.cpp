@@ -3,11 +3,15 @@
 
 #include "iodata.hpp"
 
+#include <charconv>
 #include <fstream>
 #include <functional>
 #include <iostream>
 #include <regex>
+#include <sstream>
 #include <stack>
+#include <string>
+#include <string_view>
 #include <mfem.hpp>
 #include <nlohmann/json.hpp>
 #include "utils/communication.hpp"
@@ -16,14 +20,137 @@
 namespace palace
 {
 
+namespace
+{
+
+std::stringstream PreprocessFile(const char *filename)
+{
+  // Read configuration file into memory and return as a stringstream.
+  std::string file;
+  {
+    std::ifstream fi(filename);
+    std::stringstream buf;
+    if (!fi.is_open())
+    {
+      MFEM_ABORT("Unable to open configuration file \"" << filename << "\"!");
+    }
+    buf << fi.rdbuf();
+    fi.close();
+    file = buf.str();
+  }
+
+  // Strip C and C++ style comments (//, /* */) using regex. Correctly handles comments
+  // within strings and escaped comment markers (see tinyurl.com/2s3n8dkr).
+  {
+    std::regex rgx(R"((([\"'])(?:(?=(\\?))\3.)*?\2))"
+                   R"(|(\/\*([^*]|[\r\n]|(\*+([^*\/]|[\r\n])))*\*+\/))"
+                   R"(|(\/\/.*))");
+    file = std::regex_replace(file, rgx, "$1");
+  }
+
+  // Also strip whitespace.
+  {
+    std::regex rgx(R"((([\"'])(?:(?=(\\?))\3.)*?\2))"
+                   R"(|(\s+))");
+    file = std::regex_replace(file, rgx, "$1");
+  }
+
+  // Also strip erroneous trailing commas.
+  {
+    std::regex rgx(R"((([\"'])(?:(?=(\\?))\3.)*?\2))"
+                   R"(|,+(?=\s*?[\}\]]))");
+    file = std::regex_replace(file, rgx, "$1");
+  }
+
+  // Perform integer range expansion for arrays ([a - b, c] = [a-b,c] =
+  // [a,a+1,...,b-1,b,c]). The whole file is now one line and arrays have no spaces after
+  // whitespace stripping.
+  std::stringstream output;
+  auto RangeExpand = [](std::string_view str) -> std::string
+  {
+    // Handle the given string which is only numeric with possible hyphens.
+    int num;
+    auto [ptr, ec] = std::from_chars(str.data(), str.data() + str.length(), num);
+    MFEM_VERIFY(
+        ec == std::errc(),
+        "Invalid integer conversion in range expansion"
+            << (ec == std::errc::result_out_of_range ? " (integer out of range)!" : "!"));
+    if (ptr == str.data() + str.length())
+    {
+      return std::string(str);
+    }
+    // Range specified, expand the bounds.
+    int num2;
+    auto [ptr2, ec2] = std::from_chars(ptr + 1, str.data() + str.length(), num2);
+    MFEM_VERIFY(
+        ec2 == std::errc(),
+        "Invalid integer conversion in range expansion"
+            << (ec2 == std::errc::result_out_of_range ? " (integer out of range)!" : "!"));
+    std::string rng;
+    while (num < num2)
+    {
+      rng += std::to_string(num++) + ",";
+    }
+    rng += std::to_string(num);
+    return rng;
+  };
+  {
+    const std::string range_vals = "-0123456789,";
+    auto start = file.begin();
+    bool inside = false;
+    for (auto it = start; it != file.end(); ++it)
+    {
+      if (inside)
+      {
+        if (*it == ']')
+        {
+          // Apply integer range expansion (as needed) to the array, which includes only
+          // digits, commas, and '-'. Exclude the outer square brackets.
+          std::string_view str(file.data() + (start - file.cbegin() + 1), it - start - 1);
+          std::size_t s = 0, pos;
+          output << '[';
+          while ((pos = str.find(',', s)) != std::string::npos)
+          {
+            output << RangeExpand(str.substr(s, pos - s)) << ',';
+            s = pos + 1;
+          }
+          output << RangeExpand(str.substr(s)) << ']';
+          start = it + 1;
+          inside = false;
+        }
+        else if (*it == '[')
+        {
+          output << std::string(start, it);
+          start = it;
+        }
+        else if (range_vals.find(*it) == std::string::npos)
+        {
+          output << std::string(start, it);
+          start = it;
+          inside = false;
+        }
+      }
+      else if (*it == '[')
+      {
+        output << std::string(start, it);
+        start = it;
+        inside = true;
+      }
+    }
+    output << std::string(start, file.end());
+  }
+  return output;
+}
+
+}  // namespace
+
 using json = nlohmann::json;
 
 IoData::IoData(const char *filename, bool print) : Lc(1.0), tc(1.0), init(false)
 {
   // Open configuration file and preprocess: strip whitespace, comments, and expand integer
   // ranges.
-  std::stringstream buffer;
-  PreprocessFile(filename, buffer);
+  std::stringstream buffer = PreprocessFile(filename);
 
   // Parse the configuration file. Use a callback function to detect and throw errors for
   // duplicate keys.
@@ -87,105 +214,6 @@ IoData::IoData(const char *filename, bool print) : Lc(1.0), tc(1.0), init(false)
 
   // Check compatibility of configuration file and problem type.
   CheckConfiguration();
-}
-
-void IoData::PreprocessFile(const char *filename, std::stringstream &buffer)
-{
-  // Read configuration file into memory.
-  std::string file;
-  {
-    std::ifstream fi(filename);
-    std::stringstream buf;
-    if (!fi.is_open())
-    {
-      MFEM_ABORT("Unable to open configuration file \"" << filename << "\"!");
-    }
-    buf << fi.rdbuf();
-    fi.close();
-    file = buf.str();
-  }
-
-  // Strip C and C++ style comments (//, /* */) using regex. Correctly handles comments
-  // within strings and escaped comment markers (see tinyurl.com/2s3n8dkr).
-  {
-    std::regex rgx(R"((([\"'])(?:(?=(\\?))\3.)*?\2))"
-                   R"(|(\/\*([^*]|[\r\n]|(\*+([^*\/]|[\r\n])))*\*+\/))"
-                   R"(|(\/\/.*))");
-    file = std::regex_replace(file, rgx, "$1");
-  }
-
-  // Also strip whitespace.
-  {
-    std::regex rgx(R"((([\"'])(?:(?=(\\?))\3.)*?\2))"
-                   R"(|(\s+))");
-    file = std::regex_replace(file, rgx, "$1");
-  }
-
-  // Also strip erroneous trailing commas.
-  {
-    std::regex rgx(R"((([\"'])(?:(?=(\\?))\3.)*?\2))"
-                   R"(|,+(?=\s*?[\}\]]))");
-    file = std::regex_replace(file, rgx, "$1");
-  }
-
-  // Perform integer range expansion for arrays ([a - b, c] = [a-b,c] =
-  // [a,a+1,...,b-1,b,c]). The whole file is now one line and arrays have no spaces after
-  // whitespace stripping.
-  auto RangeExpand = [](const std::string &str, std::size_t pos) -> std::string
-  {
-    // Handle the substring str.substr(0, pos), which is only numeric with possible hyphens.
-    MFEM_VERIFY(pos != std::string::npos, "Invalid string size in range expansion!");
-    std::string rng;
-    std::size_t size, size2;
-    int number = std::stoi(str, &size);
-    MFEM_VERIFY(size <= pos, "Unexpected stoi result in range expansion!");
-    if (size < pos)
-    {
-      // Range specified, expand the bounds.
-      MFEM_VERIFY(str[size] == '-', "Invalid character encountered in range expansion!");
-      int number2 = std::stoi(str.substr(size + 1), &size2);
-      MFEM_VERIFY(size + size2 + 1 == pos, "Unexpected stoi result in range expansion!");
-      MFEM_VERIFY(number < number2, "Invalid range bounds in range expansion!");
-      while (number < number2)
-      {
-        rng += std::to_string(number++) + ",";
-      }
-      rng += std::to_string(number);
-    }
-    else
-    {
-      // Just push back the number.
-      rng += str.substr(0, size);
-    }
-    if (pos != str.length())
-    {
-      rng += ",";
-    }
-    return rng;
-  };
-  {
-    buffer.str(std::string(""));  // Clear the output buffer
-    std::regex rgx(R"(\[(-?[0-9][\-\,0-9]*[0-9])\])");
-    auto it = file.cbegin();
-    const auto end = file.cend();
-    for (std::smatch match; std::regex_search(it, end, match, rgx); it = match[0].second)
-    {
-      // Apply integer range expansion (as needed) to the first capture group. The match
-      // includes only digits, commas, and '-'.
-      std::string str = match[1].str(), range;
-      std::size_t pos = 0;
-      MFEM_VERIFY(str.find_first_not_of(",-0123456789") == std::string::npos,
-                  "Range expansion expects only integer values!");
-      buffer << match.prefix() << '[';
-      while ((pos = str.find(',')) != std::string::npos)
-      {
-        buffer << RangeExpand(str, pos);
-        str.erase(0, pos + 1);
-      }
-      buffer << RangeExpand(str, str.length()) << ']';
-    }
-    buffer << std::string(it, end);
-  }
 }
 
 void IoData::CheckConfiguration()

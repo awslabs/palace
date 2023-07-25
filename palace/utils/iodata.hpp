@@ -4,7 +4,6 @@
 #ifndef PALACE_UTILS_IODATA_HPP
 #define PALACE_UTILS_IODATA_HPP
 
-#include <sstream>
 #include "utils/configfile.hpp"
 
 namespace mfem
@@ -34,9 +33,6 @@ private:
   // Characteristic reference length [m] and time [ns] for nondimensionalization.
   double Lc, tc;
   bool init;
-
-  // Preprocess the configuration file for parsing.
-  void PreprocessFile(const char *filename, std::stringstream &buffer);
 
   // Check configuration file options and compatibility with requested problem type.
   void CheckConfiguration();
