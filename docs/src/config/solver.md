@@ -9,6 +9,8 @@
 "Solver":
 {
     "Order": <int>,
+    "PartialAssemblyOrder": <int>,
+    "Device": <string>,
     "Eigenmode":
     {
         ...
@@ -39,6 +41,16 @@
 with
 
 `"Order" [1]` :  Finite element order (degree). Arbitrary high-order spaces are supported.
+
+`"PartialAssemblyOrder" [100]` :  Order at which to switch from full assembly of finite
+element operators to [partial assembly](https://mfem.org/howto/assembly_levels/). Setting
+this parameter equal to 1 will fully activate operator partial assembly on all levels.
+
+`"Device" ["cpu"]` :  The device configuration passed to [MFEM]
+(https://mfem.org/howto/assembly_levels/) in order to activate different backends at
+runtime. CPU-based partial assembly is supported by the `"cpu"` backend for tensor-product
+meshes using the native MFEM kernels and `"ceed-cpu"` backend for all mesh types using
+libCEED.
 
 `"Eigenmode"` :  Top-level object for configuring the eigenvalue solver for the eigenmode
 simulation type. Thus, this object is only relevant for
@@ -299,13 +311,13 @@ directory specified by [`config["Problem"]["Output"]`]
     "Tol": <float>,
     "MaxIts": <int>,
     "MaxSize": <int>,
-    "UsePCMatShifted": <bool>,
-    "PCSide": <string>,
-    "UseMultigrid": <bool>,
-    "MGAuxiliarySmoother": <bool>,
+    "MGMaxLevels": <int>,
+    "MGCoarsenType": <string>,
     "MGCycleIts": <int>,
     "MGSmoothIts": <int>,
     "MGSmoothOrder": <int>,
+    "PCMatShifted": <bool>,
+    "PCSide": <string>,
     "DivFreeTol": <float>,
     "DivFreeMaxIts": <float>,
     "GSOrthogonalization": <string>
@@ -365,26 +377,15 @@ equations arising for each simulation type. The available options are:
 `"MaxSize" [0]` :  Maximum Krylov space size for the GMRES and FGMRES solvers. A value less
 than 1 defaults to the value specified by `"MaxIts"`.
 
-`"UsePCMatShifted" [false]` :  When set to `true`, constructs the preconditioner for frequency
-domain problems using a real SPD approximation of the system matrix, which can help
-performance at high frequencies (relative to the lowest nonzero eigenfrequencies of the
-model).
-
-`"PCSide" ["Default"]` :  Side for preconditioning. Not all options are available for all
-iterative solver choices, and the default choice depends on the iterative solver used.
-
-  - `"Left"`
-  - `"Right"`
-  - `"Default"`
-
-`"UseMultigrid" [true]` :  Chose whether to enable [geometric multigrid preconditioning]
+`"MGMaxLevels" [100]` :  Chose whether to enable [geometric multigrid preconditioning]
 (https://en.wikipedia.org/wiki/Multigrid_method) which uses p- and h-multigrid coarsening as
 available to construct the multigrid hierarchy. The solver specified by `"Type"` is used on
 the coarsest level. Relaxation on the fine levels is performed with Chebyshev smoothing.
 
-`"MGAuxiliarySmoother"` :  Activate hybrid smoothing from Hiptmair for multigrid levels when
-`"UseMultigrid"` is `true`. For non-singular problems involving curl-curl operators, this
-option is `true` by default.
+`"MGCoarsenType" ["Logarithmic"]` :  Coarsening to create p-multigrid levels.
+
+  - `"Logarithmic"`
+  - `"Linear"`
 
 `"MGCycleIts" [1]` :  Number of V-cycle iterations per preconditioner application for
 multigrid preconditioners (when `"UseMultigrid"` is `true` or `"Type"` is `"AMS"` or
@@ -395,6 +396,18 @@ preconditioners (when `"UseMultigrid"` is `true` or `"Type"` is `"AMS"` or `"Boo
 
 `"MGSmoothOrder" [3]` :  Order of polynomial smoothing for geometric multigrid
 preconditioning (when `"UseMultigrid"` is `true`).
+
+`"PCMatShifted" [false]` :  When set to `true`, constructs the preconditioner for frequency
+domain problems using a real SPD approximation of the system matrix, which can help
+performance at high frequencies (relative to the lowest nonzero eigenfrequencies of the
+model).
+
+`"PCSide" ["Default"]` :  Side for preconditioning. Not all options are available for all
+iterative solver choices, and the default choice depends on the iterative solver used.
+
+  - `"Left"`
+  - `"Right"`
+  - `"Default"`
 
 `"DivFreeTol" [1.0e-12]` :  Relative tolerance for divergence-free cleaning used in the
 eigenmode simulation type.
@@ -411,10 +424,11 @@ vectors in Krylov subspace methods or other parts of the code.
 
 ### Advanced linear solver options
 
-  - `"UseInitialGuess" [true]`
-  - `"UsePartialAssembly" [false]`
-  - `"UseLowOrderRefined" [false]`
-  - `"Reordering" ["Default"]` :  `"METIS"`, `"ParMETIS"`,`"Scotch"`, `"PTScotch"`,
+  - `"InitialGuess" [true]`
+  - `"MGLegacyTransfer" [false]`
+  - `"MGAuxiliarySmoother" [true]`
+  - `"PCLowOrderRefined" [false]`
+  - `"ColumnOrdering" ["Default"]` :  `"METIS"`, `"ParMETIS"`,`"Scotch"`, `"PTScotch"`,
     `"Default"`
   - `"STRUMPACKCompressionType" ["None"]` :  `"None"`, `"BLR"`, `"HSS"`, `"HODLR"`, `"ZFP"`,
     `"BLR-HODLR"`, `"ZFP-BLR-HODLR"`
