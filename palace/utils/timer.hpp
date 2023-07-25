@@ -29,9 +29,11 @@ public:
     INIT = 0,
     CONSTRUCT,
     WAVEPORT,  // Wave port solver
+    ESTCONSTRUCT,    // Construction of estimate operator
     SOLVE,
     PRECONDITIONER,  // Linear solver
     COARSESOLVE,     // Linear solver
+    ESTSOLVE,        // Estimation calculation
     CONSTRUCTPROM,   // Adaptive frequency sweep
     SOLVEPROM,       // Adaptive frequency sweep
     POSTPRO,
@@ -43,9 +45,11 @@ public:
   inline static const std::vector<std::string> descriptions{"Initialization",
                                                             "Operator Construction",
                                                             "  Wave Ports",
+                                                            "  Error Estimate",
                                                             "Solve",
                                                             "  Preconditioner",
                                                             "  Coarse Solve",
+                                                            "  Error Estimate",
                                                             "PROM Construction",
                                                             "PROM Solve",
                                                             "Postprocessing",
@@ -77,7 +81,6 @@ public:
 
   // Return the time elapsed since timer creation.
   Duration TimeFromStart() const { return Now() - start_time; }
-
   // Save a timing step by adding a duration, without lapping; optionally, count it.
   Duration SaveTime(Index idx, Duration time, bool count_it = true)
   {

@@ -4,6 +4,7 @@
 #include "transientsolver.hpp"
 
 #include <mfem.hpp>
+#include "linalg/errorestimator.hpp"
 #include "linalg/vector.hpp"
 #include "models/lumpedportoperator.hpp"
 #include "models/postoperator.hpp"
@@ -11,6 +12,7 @@
 #include "models/surfacecurrentoperator.hpp"
 #include "models/timeoperator.hpp"
 #include "utils/communication.hpp"
+#include "utils/errorindicators.hpp"
 #include "utils/excitations.hpp"
 #include "utils/iodata.hpp"
 #include "utils/timer.hpp"
@@ -18,7 +20,8 @@
 namespace palace
 {
 
-void TransientSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const
+ErrorIndicators
+TransientSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const
 {
   // Set up the spatial discretization and time integrators for the E and B fields.
   BlockTimer bt0(Timer::CONSTRUCT);
@@ -122,9 +125,10 @@ void TransientSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) c
     // Increment time step.
     step++;
   }
-  SaveMetadata(timeop.GetLinearSolver());
-}
 
+  SaveMetadata(timeop.GetLinearSolver());
+  return ErrorIndicators(spaceop.GlobalTrueVSize());
+}
 std::function<double(double)> TransientSolver::GetTimeExcitation(bool dot) const
 {
   using namespace excitations;

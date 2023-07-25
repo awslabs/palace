@@ -4,19 +4,22 @@
 #include "magnetostaticsolver.hpp"
 
 #include <mfem.hpp>
+#include "linalg/errorestimator.hpp"
 #include "linalg/ksp.hpp"
 #include "linalg/operator.hpp"
 #include "models/curlcurloperator.hpp"
 #include "models/postoperator.hpp"
 #include "models/surfacecurrentoperator.hpp"
 #include "utils/communication.hpp"
+#include "utils/errorindicators.hpp"
 #include "utils/iodata.hpp"
 #include "utils/timer.hpp"
 
 namespace palace
 {
 
-void MagnetostaticSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const
+ErrorIndicators
+MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const
 {
   // Construct the system matrix defining the linear operator. Dirichlet boundaries are
   // handled eliminating the rows and columns of the system matrix for the corresponding
@@ -65,13 +68,33 @@ void MagnetostaticSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mes
                linalg::Norml2(curlcurlop.GetComm(), RHS));
 
     // Next source.
-    step++;
+    ++step;
   }
+
+  CurlFluxErrorEstimator estimator(iodata, curlcurlop.GetMaterialOp(), mesh,
+                                   curlcurlop.GetNDSpace());
+
+  // Initialize structures for storing and reducing the results of error estimation.
+  ErrorIndicators indicators(curlcurlop.GlobalTrueVSize());
+  ErrorReductionOperator error_reducer;
+  auto update_error_indicators =[&estimator, &indicators, &error_reducer](const auto &A)
+  {
+    BlockTimer bt(Timer::ESTSOLVE);
+    error_reducer(indicators, estimator(A));
+  };
+
+  // Compute and reduce the error indicators for each solution.
+  // TODO: Possible to treat this more efficiently by solving with multiple RHS.
+  std::for_each(A.begin(), A.end(), update_error_indicators);
+
+  // Register the indicator field used to drive the overall adaptation.
+  postop.SetIndicatorGridFunction(indicators.local_error_indicators);
 
   // Postprocess the capacitance matrix from the computed field solutions.
   BlockTimer bt1(Timer::POSTPRO);
   SaveMetadata(ksp);
   Postprocess(curlcurlop, postop, A);
+  return indicators;
 }
 
 void MagnetostaticSolver::Postprocess(CurlCurlOperator &curlcurlop, PostOperator &postop,
@@ -119,13 +142,13 @@ void MagnetostaticSolver::Postprocess(CurlCurlOperator &curlcurlop, PostOperator
 
     // Diagonal: M_ii = 2 U_m(A_i) / I_i².
     M(i, i) = Mm(i, i) = 2.0 * Um / (Iinc(i) * Iinc(i));
-    i++;
+    ++i;
   }
 
   // Off-diagonals: M_ij = U_m(A_i + A_j) / (I_i I_j) - 1/2 (I_i/I_j M_ii + I_j/I_i M_jj).
-  for (i = 0; i < M.Height(); i++)
+  for (i = 0; i < M.Height(); ++i)
   {
-    for (int j = 0; j < M.Width(); j++)
+    for (int j = 0; j < M.Width(); ++j)
     {
       if (j < i)
       {
@@ -192,10 +215,10 @@ void MagnetostaticSolver::PostprocessTerminals(const SurfaceCurrentOperator &sur
                      mat(i, j) * scale, table.w, table.p,
                      (idx2 == surf_j_op.rbegin()->first) ? "" : ",");
         // clang-format on
-        j++;
+        ++j;
       }
       output.print("\n");
-      i++;
+      ++i;
     }
   };
   const double H = iodata.DimensionalizeValue(IoData::ValueType::INDUCTANCE, 1.0);

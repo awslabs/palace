@@ -15,6 +15,7 @@
 #include "drivers/transientsolver.hpp"
 #include "linalg/slepc.hpp"
 #include "utils/communication.hpp"
+#include "utils/errorindicators.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
 #include "utils/timer.hpp"
@@ -185,7 +186,10 @@ int main(int argc, char *argv[])
   mesh::RefineMesh(iodata, mesh);
 
   // Run the problem driver.
-  solver->Solve(mesh);
+  auto solver_output = solver->Solve(mesh);
+
+  Mpi::Print(world_comm, "Normalized Error Indicator: {:.3e}",
+             solver_output.global_error_indicator);
 
   // Print timing summary.
   BlockTimer::Print(world_comm);
