@@ -86,10 +86,10 @@ SpaceOperator::SpaceOperator(const IoData &iodata,
     rt_fec(iodata.solver.order - 1, mesh.back()->Dimension()),
     nd_fespaces(utils::ConstructFiniteElementSpaceHierarchy<mfem::ND_FECollection>(
         iodata.solver.linear.mg_max_levels, iodata.solver.linear.mg_legacy_transfer,
-        pa_order_threshold, mesh, nd_fecs, &dbc_marker, &nd_dbc_tdof_lists)),
+        pa_order_threshold, mesh, nd_fecs, dbc_marker, nd_dbc_tdof_lists)),
     h1_fespaces(utils::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
         iodata.solver.linear.mg_max_levels, iodata.solver.linear.mg_legacy_transfer,
-        pa_order_threshold, mesh, h1_fecs, &dbc_marker, &h1_dbc_tdof_lists)),
+        pa_order_threshold, mesh, h1_fecs, dbc_marker, h1_dbc_tdof_lists)),
     rt_fespace(mesh.back().get(), &rt_fec), mat_op(iodata, *mesh.back()),
     farfield_op(iodata, mat_op, *mesh.back()), surf_sigma_op(iodata, *mesh.back()),
     surf_z_op(iodata, *mesh.back()), lumped_port_op(iodata, GetH1Space()),

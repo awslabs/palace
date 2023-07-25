@@ -7,6 +7,7 @@
 #include <string_view>
 #include <vector>
 #include <mfem.hpp>
+
 #include "drivers/drivensolver.hpp"
 #include "drivers/eigensolver.hpp"
 #include "drivers/electrostaticsolver.hpp"
@@ -153,30 +154,28 @@ int main(int argc, char *argv[])
 #endif
 
   // Initialize the problem driver.
-  std::unique_ptr<BaseSolver> solver;
-  switch (iodata.problem.type)
+  const std::unique_ptr<BaseSolver> solver = [&]() -> std::unique_ptr<BaseSolver>
   {
-    case config::ProblemData::Type::DRIVEN:
-      solver = std::make_unique<DrivenSolver>(iodata, world_root, world_size, num_thread,
+    switch (iodata.problem.type)
+    {
+      case config::ProblemData::Type::DRIVEN:
+        return std::make_unique<DrivenSolver>(iodata, world_root, world_size, num_thread,
                                               git_tag);
-      break;
-    case config::ProblemData::Type::EIGENMODE:
-      solver = std::make_unique<EigenSolver>(iodata, world_root, world_size, num_thread,
+      case config::ProblemData::Type::EIGENMODE:
+        return std::make_unique<EigenSolver>(iodata, world_root, world_size, num_thread,
                                              git_tag);
-      break;
-    case config::ProblemData::Type::ELECTROSTATIC:
-      solver = std::make_unique<ElectrostaticSolver>(iodata, world_root, world_size,
+      case config::ProblemData::Type::ELECTROSTATIC:
+        return std::make_unique<ElectrostaticSolver>(iodata, world_root, world_size,
                                                      num_thread, git_tag);
-      break;
-    case config::ProblemData::Type::MAGNETOSTATIC:
-      solver = std::make_unique<MagnetostaticSolver>(iodata, world_root, world_size,
+      case config::ProblemData::Type::MAGNETOSTATIC:
+        return std::make_unique<MagnetostaticSolver>(iodata, world_root, world_size,
                                                      num_thread, git_tag);
-      break;
-    case config::ProblemData::Type::TRANSIENT:
-      solver = std::make_unique<TransientSolver>(iodata, world_root, world_size, num_thread,
+      case config::ProblemData::Type::TRANSIENT:
+        return std::make_unique<TransientSolver>(iodata, world_root, world_size, num_thread,
                                                  git_tag);
-      break;
-  }
+    }
+    return nullptr;
+  }();
 
   // Read the mesh from file, refine, partition, and distribute it. Then nondimensionalize
   // it and the input parameters.
@@ -188,6 +187,7 @@ int main(int argc, char *argv[])
 
   // Run the problem driver.
   solver->Solve(mesh, timer);
+
   timer.Reduce(world_comm);
   timer.Print(world_comm);
   solver->SaveMetadata(timer);

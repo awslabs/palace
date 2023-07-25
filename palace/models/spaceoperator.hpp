@@ -126,6 +126,9 @@ public:
   auto &GetRTSpace() { return rt_fespace; }
   const auto &GetRTSpace() const { return rt_fespace; }
 
+  // Return the number of true (conforming) dofs on the finest ND space.
+  auto GetNDof() { return GetNDSpace().GlobalTrueVSize(); }
+
   // Construct any part of the frequency-dependent complex linear system matrix:
   //                     A = K + iω C - ω² (Mr + i Mi) + A2(ω) .
   // For time domain problems, any one of K, C, or M = Mr can be constructed. The argument
