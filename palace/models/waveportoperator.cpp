@@ -558,7 +558,6 @@ void WavePortData::GetInitialSpace(int nt, int nn, petsc::PetscParVector &y0)
   y0.RestoreArray(py0);
 }
 
-
 std::complex<double> WavePortData::Solve()
 {
   double eig[2];

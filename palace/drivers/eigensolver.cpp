@@ -164,7 +164,7 @@ void EigenSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
   std::unique_ptr<KspSolver> ksp;
   std::unique_ptr<KspPreconditioner> pc;
 #if defined(PALACE_WITH_SLEPC)
-  auto * const feast = dynamic_cast<feast::FeastEigenSolver *>(eigen.get());
+  auto *const feast = dynamic_cast<feast::FeastEigenSolver *>(eigen.get());
   if (feast)
   {
     // Configure the FEAST integration contour. The linear solvers are set up inside the

@@ -25,7 +25,6 @@ struct InductanceData;
 
 }  // namespace config
 
-
 struct SurfaceData
 {
   mutable std::vector<mfem::Array<int>> attr_markers;
@@ -34,7 +33,7 @@ struct SurfaceData
 
   virtual std::unique_ptr<mfem::Coefficient>
   GetCoefficient(int i, const mfem::ParGridFunction &U, const MaterialOperator &mat_op,
-                  const std::map<int, int> &local_to_shared) const = 0;
+                 const std::map<int, int> &local_to_shared) const = 0;
 };
 struct InterfaceDielectricData : public SurfaceData
 {
@@ -42,12 +41,11 @@ struct InterfaceDielectricData : public SurfaceData
   double epsilon, ts, tandelta;
   std::vector<mfem::Vector> sides;
 
-  InterfaceDielectricData(const config::InterfaceDielectricData &data,
-                          mfem::ParMesh &mesh);
+  InterfaceDielectricData(const config::InterfaceDielectricData &data, mfem::ParMesh &mesh);
 
   std::unique_ptr<mfem::Coefficient>
   GetCoefficient(int i, const mfem::ParGridFunction &U, const MaterialOperator &mat_op,
-                  const std::map<int, int> &local_to_shared) const override;
+                 const std::map<int, int> &local_to_shared) const override;
 };
 struct SurfaceChargeData : public SurfaceData
 {
@@ -55,7 +53,7 @@ struct SurfaceChargeData : public SurfaceData
 
   std::unique_ptr<mfem::Coefficient>
   GetCoefficient(int i, const mfem::ParGridFunction &U, const MaterialOperator &mat_op,
-                  const std::map<int, int> &local_to_shared) const override;
+                 const std::map<int, int> &local_to_shared) const override;
 };
 struct SurfaceFluxData : public SurfaceData
 {
@@ -65,9 +63,8 @@ struct SurfaceFluxData : public SurfaceData
 
   std::unique_ptr<mfem::Coefficient>
   GetCoefficient(int i, const mfem::ParGridFunction &U, const MaterialOperator &mat_op,
-                  const std::map<int, int> &local_to_shared) const override;
+                 const std::map<int, int> &local_to_shared) const override;
 };
-
 
 //
 // A class handling boundary surface postprocessing.
@@ -89,6 +86,7 @@ private:
 
   // Unit function used for computing surface integrals.
   mfem::ParGridFunction ones;
+
 public:
   SurfacePostOperator(const IoData &iodata, const MaterialOperator &mat,
                       const std::map<int, int> &l2s,

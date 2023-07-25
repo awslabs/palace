@@ -1198,7 +1198,7 @@ void FeastPEPSolver::SolveProjectedProblem(const petsc::PetscDenseMatrix &Q_,
   for (PetscInt i = 0; i < m0; i++)
   {
     eig_[i] = alpha[sort[i]];
-    const PetscScalar* const local_pXQ = XQ->GetArrayRead();
+    const PetscScalar *const local_pXQ = XQ->GetArrayRead();
     PetscScalar *pXQ0 = XQ0->GetArray();
     PalacePetscCall(PetscArraycpy(pXQ0 + mQ * i, local_pXQ + 2 * mQ * sort[i], mQ));
     XQ->RestoreArrayRead(local_pXQ);

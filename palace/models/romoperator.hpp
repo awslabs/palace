@@ -66,10 +66,10 @@ private:
 
   // Helper functions for reduced-order matrix or vector construction/update.
   static void BVMatProjectInternal(petsc::PetscDenseMatrix &V, petsc::PetscParMatrix &A,
-                            petsc::PetscDenseMatrix &Ar, petsc::PetscParVector &r, int n0,
-                            int n);
+                                   petsc::PetscDenseMatrix &Ar, petsc::PetscParVector &r,
+                                   int n0, int n);
   static void BVDotVecInternal(petsc::PetscDenseMatrix &V, petsc::PetscParVector &b,
-                        petsc::PetscParVector &br, int n0, int n);
+                               petsc::PetscParVector &br, int n0, int n);
 
 public:
   RomOperator(const IoData &iodata, SpaceOperator &sp, int nmax);
