@@ -71,7 +71,10 @@ std::stringstream PreprocessFile(const char *filename)
     // Handle the given string which is only numeric with possible hyphens.
     int num;
     auto [ptr, ec] = std::from_chars(str.data(), str.data() + str.length(), num);
-    MFEM_VERIFY(ptr != str.data(), "Invalid integer conversion in range expansion!");
+    MFEM_VERIFY(
+        ec == std::errc(),
+        "Invalid integer conversion in range expansion"
+            << (ec == std::errc::result_out_of_range ? " (integer out of range)!" : "!"));
     if (ptr == str.data() + str.length())
     {
       return std::string(str);
@@ -79,7 +82,10 @@ std::stringstream PreprocessFile(const char *filename)
     // Range specified, expand the bounds.
     int num2;
     auto [ptr2, ec2] = std::from_chars(ptr + 1, str.data() + str.length(), num2);
-    MFEM_VERIFY(ptr2 != ptr + 1, "Invalid integer conversion in range expansion!");
+    MFEM_VERIFY(
+        ec2 == std::errc(),
+        "Invalid integer conversion in range expansion"
+            << (ec2 == std::errc::result_out_of_range ? " (integer out of range)!" : "!"));
     std::string rng;
     while (num < num2)
     {
