@@ -127,21 +127,22 @@ template <typename FECollection>
 inline mfem::ParFiniteElementSpaceHierarchy ConstructFiniteElementSpaceHierarchy(
     int mg_max_levels, bool mg_legacy_transfer, int pa_order_threshold,
     const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
-    const std::vector<std::unique_ptr<FECollection>> &fecs, int dim = 1)
+    const std::vector<std::unique_ptr<FECollection>> &fecs, int dim = 1,
+    int ordering = mfem::Ordering::byNODES)
 {
   MFEM_VERIFY(!mesh.empty() && !fecs.empty(),
               "Empty mesh or FE collection for FE space construction!");
   int coarse_mesh_l =
       std::max(0, static_cast<int>(mesh.size() + fecs.size()) - 1 - mg_max_levels);
-  auto *fespace =
-      new mfem::ParFiniteElementSpace(mesh[coarse_mesh_l].get(), fecs[0].get(), dim);
+  auto *fespace = new mfem::ParFiniteElementSpace(mesh[coarse_mesh_l].get(), fecs[0].get(),
+                                                  dim, ordering);
   mfem::ParFiniteElementSpaceHierarchy fespaces(mesh[coarse_mesh_l].get(), fespace, false,
                                                 true);
 
   // h-refinement
   for (std::size_t l = coarse_mesh_l + 1; l < mesh.size(); l++)
   {
-    fespace = new mfem::ParFiniteElementSpace(mesh[l].get(), fecs[0].get(), dim);
+    fespace = new mfem::ParFiniteElementSpace(mesh[l].get(), fecs[0].get(), dim, ordering);
 
     auto *P = new ParOperator(
         std::make_unique<mfem::TransferOperator>(fespaces.GetFinestFESpace(), *fespace),
@@ -152,7 +153,8 @@ inline mfem::ParFiniteElementSpaceHierarchy ConstructFiniteElementSpaceHierarchy
   // p-refinement
   for (std::size_t l = 1; l < fecs.size(); l++)
   {
-    fespace = new mfem::ParFiniteElementSpace(mesh.back().get(), fecs[l].get(), dim);
+    fespace =
+        new mfem::ParFiniteElementSpace(mesh.back().get(), fecs[l].get(), dim, ordering);
 
     ParOperator *P;
     if (!mg_legacy_transfer && mfem::DeviceCanUseCeed())
@@ -183,11 +185,11 @@ mfem::ParFiniteElementSpaceHierarchy ConstructFiniteElementSpaceHierarchy(
     int mg_max_levels, bool mg_legacy_transfer, int pa_order_threshold,
     const Container<MeshT...> &mesh, const std::vector<std::unique_ptr<FECollection>> &fecs,
     const mfem::Array<int> &dbc_marker, std::vector<mfem::Array<int>> &dbc_tdof_lists,
-    int dim = 1)
+    int dim = 1, int ordering = mfem::Ordering::byNODES)
 {
   dbc_tdof_lists.clear();
-  auto fespaces = ConstructFiniteElementSpaceHierarchy(mg_max_levels, mg_legacy_transfer,
-                                                       pa_order_threshold, mesh, fecs, dim);
+  auto fespaces = ConstructFiniteElementSpaceHierarchy(
+      mg_max_levels, mg_legacy_transfer, pa_order_threshold, mesh, fecs, dim, ordering);
   for (int l = 0; l < fespaces.GetNumLevels(); l++)
   {
     fespaces.GetFESpaceAtLevel(l).GetEssentialTrueDofs(dbc_marker,
