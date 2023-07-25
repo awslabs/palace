@@ -11,15 +11,14 @@
 
 namespace mfem
 {
-
 class ParFiniteElementSpaceHierarchy;
 class ParMesh;
-
 }  // namespace mfem
 
 namespace palace
 {
 
+struct ErrorIndicators;
 class IoData;
 class PostOperator;
 class Timer;
@@ -73,8 +72,9 @@ public:
              const char *git_tag = nullptr);
   virtual ~BaseSolver() = default;
 
-  virtual void Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
-                     Timer &timer) const = 0;
+  // Performs a solve using the mesh sequence, and recording timing for each stage.
+  virtual ErrorIndicators Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
+                                Timer &timer) const = 0;
 
   // These methods write different simulation metadata to a JSON file in post_dir.
   void SaveMetadata(const mfem::ParFiniteElementSpaceHierarchy &fespaces) const;

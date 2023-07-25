@@ -6,6 +6,7 @@
 #include <mfem.hpp>
 #include "linalg/arpack.hpp"
 #include "linalg/divfree.hpp"
+#include "linalg/errorestimator.hpp"
 #include "linalg/ksp.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/slepc.hpp"
@@ -14,6 +15,7 @@
 #include "models/postoperator.hpp"
 #include "models/spaceoperator.hpp"
 #include "utils/communication.hpp"
+#include "utils/errorindicators.hpp"
 #include "utils/iodata.hpp"
 #include "utils/timer.hpp"
 
@@ -22,8 +24,8 @@ namespace palace
 
 using namespace std::complex_literals;
 
-void EigenSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
-                        Timer &timer) const
+ErrorIndicators EigenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
+                                   Timer &timer) const
 {
   // Construct and extract the system matrices defining the eigenvalue problem. The diagonal
   // values for the mass matrix PEC dof shift the Dirichlet eigenvalues out of the
@@ -250,14 +252,28 @@ void EigenSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
   eigen->SetLinearSolver(*ksp);
   timer.construct_time += timer.Lap();
 
+  CurlFluxErrorEstimator estimator(iodata, spaceop.GetMaterialOp(), mesh,
+                                   spaceop.GetNDSpace());
+  timer.est_construction_time += timer.Lap();
+
   // Eigenvalue problem solve.
   Mpi::Print("\n");
   int num_conv = eigen->Solve();
   SaveMetadata(*ksp);
   timer.solve_time += timer.Lap();
 
-  // Postprocess the results.
-  const auto io_time_prev = timer.io_time;
+  // Initialize structures for storing and reducing the results of error estimation.
+  ErrorIndicators indicators(spaceop.GlobalTrueVSize());
+  ErrorReductionOperator error_reducer;
+  auto update_error_indicators =
+      [&timer, &estimator, &indicators, &error_reducer, &postop](const auto &E)
+  {
+    auto ind = estimator(E);
+    postop.SetIndicatorGridFunction(ind);
+    error_reducer(indicators, std::move(ind));
+    timer.est_solve_time += timer.Lap();
+  };
+
   for (int i = 0; i < num_conv; i++)
   {
     // Get the eigenvalue and relative error.
@@ -284,17 +300,29 @@ void EigenSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
     // Compute B = -1/(iω) ∇ x E on the true dofs, and set the internal GridFunctions in
     // PostOperator for all postprocessing operations.
     eigen->GetEigenvector(i, E);
+
     Curl->Mult(E, B);
     B *= -1.0 / (1i * omega);
+
+    if (i < iodata.solver.eigenmode.n)
+    {
+      // Only update the error indicator for targetted modes.
+      update_error_indicators(E);
+    }
+
     postop.SetEGridFunction(E);
     postop.SetBGridFunction(B);
+
     postop.UpdatePorts(spaceop.GetLumpedPortOp(), omega.real());
 
     // Postprocess the mode.
+    const auto io_time_prev = timer.io_time;
     Postprocess(postop, spaceop.GetLumpedPortOp(), i, omega, error1, error2, num_conv,
                 timer);
+    timer.postpro_time += timer.Lap() - (timer.io_time - io_time_prev);
   }
-  timer.postpro_time += timer.Lap() - (timer.io_time - io_time_prev);
+
+  return indicators;
 }
 
 void EigenSolver::Postprocess(const PostOperator &postop,

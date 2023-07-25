@@ -15,6 +15,7 @@
 #include "drivers/transientsolver.hpp"
 #include "linalg/slepc.hpp"
 #include "utils/communication.hpp"
+#include "utils/errorindicators.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
 #include "utils/timer.hpp"
@@ -186,7 +187,10 @@ int main(int argc, char *argv[])
   timer.init_time += timer.Lap() - timer.io_time;
 
   // Run the problem driver.
-  solver->Solve(mesh, timer);
+  auto solver_output = solver->Solve(mesh, timer);
+
+  Mpi::Print(world_comm, "Normalized Error Indicator: {:.3e}",
+             solver_output.global_error_indicator);
 
   timer.Reduce(world_comm);
   timer.Print(world_comm);

@@ -477,6 +477,62 @@ inline double DielectricInterfaceCoefficient<DielectricInterfaceType::DEFAULT>::
   return 0.5 * ts * epsilon * (V * V);
 }
 
+// Computes the flux, μ⁻¹ ∇ × X, of a field, X, where X can be the electric field E, or the
+// magnetic vector potential A.
+class CurlFluxCoefficient : public mfem::VectorCoefficient
+{
+private:
+  const mfem::ParGridFunction &X;
+  MaterialPropertyCoefficient<MaterialPropertyType::INV_PERMEABILITY> coef;
+
+  mfem::DenseMatrix muinv;
+  mfem::Vector curl;
+
+public:
+  CurlFluxCoefficient(const mfem::ParGridFunction &pgf, const MaterialOperator &op)
+    : mfem::VectorCoefficient(pgf.ParFESpace()->GetParMesh()->SpaceDimension()), X(pgf),
+      coef(op, 1.0), muinv(3), curl(3)
+  {
+  }
+
+  void Eval(mfem::Vector &V, mfem::ElementTransformation &T,
+            const mfem::IntegrationPoint &ip) override
+  {
+    V.SetSize(3);
+
+    coef.Eval(muinv, T, ip);
+    X.GetCurl(T, curl);
+    muinv.Mult(curl, V);
+  }
+};
+
+// Computes the flux, ϵ ∇ ϕ, of the electrostatic potential ϕ.
+class GradFluxCoefficient : public mfem::VectorCoefficient
+{
+private:
+  const mfem::ParGridFunction &phi;
+  MaterialPropertyCoefficient<MaterialPropertyType::PERMITTIVITY_REAL> coef;
+
+  mfem::Vector grad;
+  mfem::DenseMatrix eps;
+
+public:
+  GradFluxCoefficient(const mfem::ParGridFunction &pgf, const MaterialOperator &op)
+    : mfem::VectorCoefficient(pgf.ParFESpace()->GetParMesh()->SpaceDimension()), phi(pgf),
+      coef(op, 1.0), grad(3), eps(3)
+  {
+  }
+
+  void Eval(mfem::Vector &V, mfem::ElementTransformation &T,
+            const mfem::IntegrationPoint &ip) override
+  {
+    V.SetSize(3);
+    coef.Eval(eps, T, ip);
+    phi.GetGradient(T, grad);
+    eps.Mult(grad, V);
+  }
+};
+
 enum class EnergyDensityType
 {
   ELECTRIC,
@@ -739,8 +795,6 @@ private:
   }
 
 public:
-  SumCoefficient() : mfem::Coefficient() {}
-
   bool empty() const { return c.empty(); }
 
   void AddCoefficient(std::unique_ptr<mfem::Coefficient> &&coef)
