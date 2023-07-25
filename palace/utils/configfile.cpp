@@ -1678,7 +1678,7 @@ void SolverData::SetUp(json &config)
     return;
   }
   order = solver->value("Order", order);
-  pa_order_threshold = solver->value("PartialAssemblyThreshold", pa_order_threshold);
+  pa_order_threshold = solver->value("PartialAssemblyOrder", pa_order_threshold);
   device = solver->value("Device", device);
 
   driven.SetUp(*solver);
@@ -1690,7 +1690,7 @@ void SolverData::SetUp(json &config)
 
   // Cleanup
   solver->erase("Order");
-  solver->erase("PartialAssemblyThreshold");
+  solver->erase("PartialAssemblyOrder");
   solver->erase("Device");
 
   solver->erase("Driven");
@@ -1705,7 +1705,7 @@ void SolverData::SetUp(json &config)
 
   // Debug
   // std::cout << "Order: " << order << '\n';
-  // std::cout << "PartialAssemblyThreshold: " << pa_order_threshold << '\n';
+  // std::cout << "PartialAssemblyOrder: " << pa_order_threshold << '\n';
   // std::cout << "Device: " << device << '\n';
 }
 
