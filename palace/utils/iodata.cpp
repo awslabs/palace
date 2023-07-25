@@ -3,11 +3,13 @@
 
 #include "iodata.hpp"
 
+#include <charconv>
 #include <fstream>
 #include <functional>
 #include <iostream>
 #include <regex>
 #include <stack>
+#include <string_view>
 #include <mfem.hpp>
 #include <nlohmann/json.hpp>
 #include "utils/communication.hpp"
@@ -131,60 +133,72 @@ void IoData::PreprocessFile(const char *filename, std::stringstream &buffer)
   // Perform integer range expansion for arrays ([a - b, c] = [a-b,c] =
   // [a,a+1,...,b-1,b,c]). The whole file is now one line and arrays have no spaces after
   // whitespace stripping.
-  auto RangeExpand = [](const std::string &str, std::size_t pos) -> std::string
+  auto RangeExpand = [](std::string_view str) -> std::string
   {
-    // Handle the substring str.substr(0, pos), which is only numeric with possible hyphens.
-    MFEM_VERIFY(pos != std::string::npos, "Invalid string size in range expansion!");
+    // Handle the given string which is only numeric with possible hyphens.
+    int num;
+    auto [ptr, ec] = std::from_chars(str.data(), str.data() + str.length(), num);
+    MFEM_VERIFY(ptr != str.data(), "Invalid integer conversion in range expansion!");
+    if (ptr == str.data() + str.length())
+    {
+      return std::string(str);
+    }
+    // Range specified, expand the bounds.
+    int num2;
+    auto [ptr2, ec2] = std::from_chars(ptr + 1, str.data() + str.length(), num2);
+    MFEM_VERIFY(ptr2 != ptr + 1, "Invalid integer conversion in range expansion!");
     std::string rng;
-    std::size_t size, size2;
-    int number = std::stoi(str, &size);
-    MFEM_VERIFY(size <= pos, "Unexpected stoi result in range expansion!");
-    if (size < pos)
+    while (num < num2)
     {
-      // Range specified, expand the bounds.
-      MFEM_VERIFY(str[size] == '-', "Invalid character encountered in range expansion!");
-      int number2 = std::stoi(str.substr(size + 1), &size2);
-      MFEM_VERIFY(size + size2 + 1 == pos, "Unexpected stoi result in range expansion!");
-      MFEM_VERIFY(number < number2, "Invalid range bounds in range expansion!");
-      while (number < number2)
-      {
-        rng += std::to_string(number++) + ",";
-      }
-      rng += std::to_string(number);
+      rng += std::to_string(num++) + ",";
     }
-    else
-    {
-      // Just push back the number.
-      rng += str.substr(0, size);
-    }
-    if (pos != str.length())
-    {
-      rng += ",";
-    }
+    rng += std::to_string(num);
     return rng;
   };
   {
-    buffer.str(std::string(""));  // Clear the output buffer
-    std::regex rgx(R"(\[(-?[0-9][\-\,0-9]*[0-9])\])");
-    auto it = file.cbegin();
-    const auto end = file.cend();
-    for (std::smatch match; std::regex_search(it, end, match, rgx); it = match[0].second)
+    const std::string range_vals = "-0123456789,";
+    auto start = file.begin();
+    bool inside = false;
+    for (auto it = start; it != file.end(); ++it)
     {
-      // Apply integer range expansion (as needed) to the first capture group. The match
-      // includes only digits, commas, and '-'.
-      std::string str = match[1].str(), range;
-      std::size_t pos = 0;
-      MFEM_VERIFY(str.find_first_not_of(",-0123456789") == std::string::npos,
-                  "Range expansion expects only integer values!");
-      buffer << match.prefix() << '[';
-      while ((pos = str.find(',')) != std::string::npos)
+      if (inside)
       {
-        buffer << RangeExpand(str, pos);
-        str.erase(0, pos + 1);
+        if (*it == ']')
+        {
+          // Apply integer range expansion (as needed) to the array, which includes only
+          // digits, commas, and '-'. Exclude the outer square brackets.
+          std::string_view str(file.data() + (start - file.cbegin() + 1), it - start - 1);
+          std::size_t s = 0, pos;
+          buffer << '[';
+          while ((pos = str.find(',', s)) != std::string::npos)
+          {
+            buffer << RangeExpand(str.substr(s, pos - s)) << ',';
+            s = pos + 1;
+          }
+          buffer << RangeExpand(str.substr(s)) << ']';
+          start = it + 1;
+          inside = false;
+        }
+        else if (*it == '[')
+        {
+          buffer << std::string(start, it);
+          start = it;
+        }
+        else if (range_vals.find(*it) == std::string::npos)
+        {
+          buffer << std::string(start, it);
+          start = it;
+          inside = false;
+        }
       }
-      buffer << RangeExpand(str, str.length()) << ']';
+      else if (*it == '[')
+      {
+        buffer << std::string(start, it);
+        start = it;
+        inside = true;
+      }
     }
-    buffer << std::string(it, end);
+    buffer << std::string(start, file.end());
   }
 }
 
