@@ -60,8 +60,12 @@ class GradFluxErrorEstimator
   // The finite element space used to represent ϕ
   mfem::ParFiniteElementSpace &fes;
 
+  // Collections and spaces for the smooth flux. Note the hierarchy uses the
+  // SCALAR finite element space, whilst the true flux is in the VECTOR finite
+  // element space. This allows for a component wise inversion.
   std::vector<std::unique_ptr<mfem::H1_FECollection>> smooth_flux_fecs;
-  mutable mfem::ParFiniteElementSpaceHierarchy smooth_flux_fes;
+  mutable mfem::ParFiniteElementSpaceHierarchy smooth_flux_component_fes;
+  mutable mfem::ParFiniteElementSpace smooth_flux_fes;
   mutable FluxProjector smooth_projector;
 
   mfem::L2_FECollection coarse_flux_fec;
@@ -69,6 +73,7 @@ class GradFluxErrorEstimator
 
   std::vector<mfem::DenseMatrix> scalar_mass_matrices;
   std::vector<mfem::DenseMatrix> smooth_to_coarse_embed;
+
 public:
   // Constructor for using geometric and p multigrid.
   GradFluxErrorEstimator(const IoData &iodata, const MaterialOperator &mat_op,

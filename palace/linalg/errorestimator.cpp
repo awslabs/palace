@@ -336,10 +336,11 @@ GradFluxErrorEstimator::GradFluxErrorEstimator(
     smooth_flux_fecs(ConstructFECollections<mfem::H1_FECollection>(
       iodata.solver.order, mesh.back()->Dimension(), iodata.solver.linear.mg_max_levels,
         iodata.solver.linear.mg_coarsen_type, false)),
-    smooth_flux_fes(utils::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
+    smooth_flux_component_fes(utils::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
         iodata.solver.linear.mg_max_levels, iodata.solver.linear.mg_legacy_transfer,
-      iodata.solver.pa_order_threshold, mesh, smooth_flux_fecs, mesh.back()->Dimension())),
-    smooth_projector(smooth_flux_fes, iodata.solver.linear.tol, 200, 0, iodata.solver.pa_order_threshold),
+      iodata.solver.pa_order_threshold, mesh, smooth_flux_fecs)),
+    smooth_flux_fes(mesh.back().get(), smooth_flux_fecs.back().get(), mesh.back()->Dimension()),
+    smooth_projector(smooth_flux_component_fes, iodata.solver.linear.tol, 200, 0, iodata.solver.pa_order_threshold),
     coarse_flux_fec(iodata.solver.order, mesh.back()->Dimension(),
                     mfem::BasisType::GaussLobatto),
     coarse_flux_fes(mesh.back().get(), &coarse_flux_fec, mesh.back()->Dimension()),
@@ -355,7 +356,7 @@ GradFluxErrorEstimator::GradFluxErrorEstimator(
     auto &T = *fes.GetElementTransformation(e);
     mass_integrator.AssembleElementMatrix(coarse_fe, T, scalar_mass_matrices[e]);
 
-    const auto &smooth_fe = *smooth_flux_fes.GetFinestFESpace().GetFE(e);
+    const auto &smooth_fe = *smooth_flux_component_fes.GetFinestFESpace().GetFE(e);
     coarse_fe.Project(smooth_fe, T, smooth_to_coarse_embed[e]);
   }
 }
@@ -366,7 +367,7 @@ Vector GradFluxErrorEstimator::operator()(const Vector &v) const
   mfem::ParGridFunction field(&fes);
   field.SetFromTrueDofs(v);
 
-  const int nelem = smooth_flux_fes.GetFinestFESpace().GetNE();
+  const int nelem = smooth_flux_fes.GetNE();
 
   // Coefficients for computing the discontinuous flux., i.e. (V, ϵ ∇ ϕ).
   GradFluxCoefficient coef(field, mat_op);
@@ -383,16 +384,31 @@ Vector GradFluxErrorEstimator::operator()(const Vector &v) const
     return RHS;
   };
 
-  const auto smooth_flux_rhs = rhs_from_coef(smooth_flux_fes.GetFinestFESpace(), coef);
+  auto smooth_flux_rhs = rhs_from_coef(smooth_flux_fes, coef);
   local_timer.construct_time += local_timer.Lap();
 
   // Given the RHS vector of non-smooth flux, construct a flux projector and
-  // perform mass matrix inversion in the appropriate space, giving f = M⁻¹ f̂.
-  auto build_flux = [](const FluxProjector &proj, const Vector &flux_coef)
+  // perform component wise mass matrix inversion in the appropriate space,
+  // giving fᵢ = M⁻¹ f̂ᵢ.
+  auto build_flux = [](const FluxProjector &proj, Vector &rhs)
   {
     // Use a copy construction to match appropriate size.
-    Vector flux(flux_coef);
-    proj.Mult(flux_coef, flux);
+    Vector flux(rhs.Size());
+    flux = 0.0;
+
+    // Apply the flux projector component wise.
+    const int ndof = flux.Size();
+    const int stride = ndof / 3;
+    MFEM_ASSERT(ndof % 3 == 0, "!");
+
+    Vector flux_comp, rhs_comp;
+    for (std::size_t i = 0; i < 3; ++i)
+    {
+      flux_comp.MakeRef(flux, i * stride, stride);
+      rhs_comp.MakeRef(rhs, i * stride, stride);
+      proj.Mult(rhs_comp, flux_comp);
+    }
+
     return flux;
   };
 
@@ -409,7 +425,7 @@ Vector GradFluxErrorEstimator::operator()(const Vector &v) const
     return flux;
   };
 
-  auto smooth_flux_func = build_func(smooth_flux, smooth_flux_fes.GetFinestFESpace());
+  auto smooth_flux_func = build_func(smooth_flux, smooth_flux_fes);
 
   mfem::ParGridFunction coarse_flux(&coarse_flux_fes);
   local_timer.construct_time += local_timer.Lap();
@@ -468,7 +484,7 @@ Vector GradFluxErrorEstimator::operator()(const Vector &v) const
     mfem::ParaViewDataCollection paraview("debug", fes.GetParMesh());
     paraview.RegisterVCoeffField("Flux", &coef);
 
-    auto smooth_flux_func = build_func(smooth_flux, smooth_flux_fes.GetFinestFESpace());
+    auto smooth_flux_func = build_func(smooth_flux, smooth_flux_fes);
     paraview.RegisterField("SmoothFlux", &smooth_flux_func);
 
     mfem::L2_FECollection est_fec(0, 3);

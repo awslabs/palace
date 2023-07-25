@@ -90,7 +90,6 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &me
   timer.est_construction_time += timer.Lap();
 
   // Compute and reduce the error indicators for each solution.
-  // TODO: Possible to treat this more efficiently by solving with multiple RHS.
   std::for_each(V.begin(), V.end(), update_error_indicators);
 
   // Register the indicator field used to drive the overall adaptation.

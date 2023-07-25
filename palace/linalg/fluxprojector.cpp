@@ -32,9 +32,9 @@ std::unique_ptr<Operator> BuildMassMatrixOperator(mfem::ParFiniteElementSpaceHie
 
     if (is_scalar_FE_space)
     {
-      auto *vmass = new mfem::VectorMassIntegrator;
-      vmass->SetVDim(h_l.GetVDim());
-      m->AddDomainIntegrator(vmass);
+      MFEM_ASSERT(h_l.GetVDim() == 1,
+                  "Scalar mass matrix hierarchy assumes a component-wise solve.");
+      m->AddDomainIntegrator(new mfem::MassIntegrator);
     }
     else
     {
