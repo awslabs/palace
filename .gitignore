@@ -7,3 +7,4 @@ test/ref/**/*.json
 .DS_Store
 .gitlab-ci-local
 Manifest.toml
+*.sif
