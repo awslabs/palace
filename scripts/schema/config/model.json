@@ -20,6 +20,25 @@
       "properties":
       {
         "UniformLevels": { "type": "integer", "minimum": 0 },
+        "Adaptation":
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["MaxIts"],
+          "properties":
+          {
+            "Tol": {"type": "number", "exclusiveMinimum": 0.0},
+            "MaxIts": {"type": "integer", "inclusiveMinimum": 0},
+            "MinIts": {"type": "integer", "inclusiveMinimum": 0},
+            "UpdateFraction": {"type": "number", "exclusiveMinimum": 0.0, "exclusiveMaximum": 1.0},
+            "CoarseningFraction": {"type": "number", "exclusiveMaximum": 1.0, "inclusiveMinimum": 0.0},
+            "DOFLimit": {"type": "number", "inclusiveMinimum": 0},
+            "SaveStep": {"type": "integer", "inclusiveMinimum": 0},
+            "MaxNCLevels": {"type": "integer", "inclusiveMinimum": 0},
+            "Nonconformal": {"type": "boolean"},
+            "MaximumImbalance": {"type": "number", "inclusiveMinimum": 1.0}
+          }
+        },
         "Boxes":
         {
           "type": "array",

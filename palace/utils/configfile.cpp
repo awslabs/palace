@@ -397,10 +397,61 @@ void RefinementData::SetUp(json &model)
     }
   }
 
+  auto adapt = refinement->find("Adaptation");
+  if (adapt != refinement->end())
+  {
+    MFEM_ABORT("Placeholder: Not currently supported!");
+
+    // Load Values
+    adaptation.tolerance = adapt->value("Tol", adaptation.tolerance);
+    adaptation.max_its = adapt->value("MaxIts", adaptation.max_its);
+    adaptation.min_its = adapt->value("MinIts", adaptation.min_its);
+    adaptation.update_fraction = adapt->value("UpdateFraction", adaptation.update_fraction);
+    adaptation.max_nc_levels = adapt->value("MaxNCLevels", adaptation.max_nc_levels);
+    adaptation.dof_limit = adapt->value("DOFLimit", adaptation.dof_limit);
+    adaptation.coarsening_fraction =
+        adapt->value("CoarseningFraction", adaptation.coarsening_fraction);
+    adaptation.save_step = adapt->value("SaveStep", adaptation.save_step);
+    adaptation.nonconformal = adapt->value("Nonconformal", adaptation.nonconformal);
+    adaptation.maximum_imbalance =
+        adapt->value("MaximumImbalance", adaptation.maximum_imbalance);
+
+    // Perform Checks
+    MFEM_VERIFY(adaptation.tolerance > 0, "\"Tol\" must be strictly positive");
+    MFEM_VERIFY(adaptation.max_its >= 0, "\"MaxIts\" must be non-negative");
+    MFEM_VERIFY(adaptation.min_its >= 0, "\"MinIts\" must be non-negative");
+    MFEM_VERIFY(adaptation.min_its <= adaptation.max_its,
+                "\"MinIts\" must be smaller than \"MaxIts\": " << adaptation.min_its << ","
+                                                               << adaptation.max_its);
+    MFEM_VERIFY(adaptation.update_fraction > 0 && adaptation.update_fraction < 1,
+                "\"UpdateFraction\" must be in (0,1)");
+    MFEM_VERIFY(adaptation.coarsening_fraction >= 0 && adaptation.coarsening_fraction < 1,
+                "\"CoarseningFraction\" must be in [0, 1)");
+    MFEM_VERIFY(adaptation.max_nc_levels >= 0, "\"MaxNCLevels\" must non-negative");
+    MFEM_VERIFY(adaptation.dof_limit >= 0, "\"DOFLimit\" must be non-negative");
+    MFEM_VERIFY(adaptation.save_step >= 0, "\"SaveStep\" must be non-negative");
+    MFEM_VERIFY(adaptation.maximum_imbalance >= 1,
+                "\"MaximumImbalance\" must be greater than or equal to 1");
+
+    // Cleanup
+    const auto fields = {
+        "Tol",         "MaxIts",   "MinIts",   "UpdateFraction", "CoarseningFraction",
+        "MaxNCLevels", "DOFLimit", "SaveStep", "Nonconformal",   "MaximumImbalance"};
+    for (const auto &f : fields)
+    {
+      adapt->erase(f);
+    }
+
+    MFEM_VERIFY(adapt->empty(),
+                "Found an unsupported configuration file keyword under \"Adaptation\"!\n"
+                    << adapt->dump(2));
+  }
+
   // Cleanup
   refinement->erase("UniformLevels");
   refinement->erase("Boxes");
   refinement->erase("Spheres");
+  refinement->erase("Adaptation");
   MFEM_VERIFY(refinement->empty(),
               "Found an unsupported configuration file keyword under \"Refinement\"!\n"
                   << refinement->dump(2));
