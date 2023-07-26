@@ -1,0 +1,90 @@
+name: Singularity
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - v*
+  pull_request:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+  ARTIFACT_NAME: palace.tar.gz
+
+jobs:
+
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: quay.io/singularity/singularity:v3.10.5
+      options: --privileged
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Install dependencies
+        run: apk update && apk add perl
+
+      - name: Build container
+        run: |
+          sudo -E singularity build --notest --sandbox palace.sif singularity/singularity.def
+      - run: tar -czvf $ARTIFACT_NAME ./palace.sif  # better upload performance
+      - uses: actions/upload-artifact@v3
+        with:
+          name: container
+          path: ${{ env.ARTIFACT_NAME }}
+          retention-days: 1
+
+
+  test:
+    runs-on: ubuntu-latest
+    container:
+      image: quay.io/singularity/singularity:v3.10.5
+      options: --privileged
+    needs: build
+    steps:
+      - uses: actions/download-artifact@v3
+        with:
+          name: container
+
+      - run: tar -xzvf $ARTIFACT_NAME
+
+      - run: sudo singularity test --writable --containall palace.sif
+
+  push:
+    runs-on: ubuntu-latest
+    needs: test
+    container:
+      image: quay.io/singularity/singularity:v3.10.5
+      options: --privileged
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v3
+
+      - uses: actions/download-artifact@v3
+        with:
+          name: container
+
+      - run: tar -xzvf $ARTIFACT_NAME
+
+      - name: Extract metadata (tags, labels)
+        id: meta
+        uses: docker/metadata-action@v4
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+
+      - name: Push container
+        if: ${{ github.event_name != 'pull_request' }}
+        shell: bash
+        run: |
+          echo "Tagged as ${{ steps.meta.outputs.tags }}"
+          echo ${{ secrets.GITHUB_TOKEN }} | singularity remote login -u ${{ github.repository_owner }} \
+            --password-stdin oras://ghcr.io
+          
+          # push multiple tags (separated by newlines)
+          while IFS= read -r remote; do
+            singularity push -U palace.sif "oras://${remote}"
+          done <<< "${{ steps.meta.outputs.tags }}"
