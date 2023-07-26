@@ -23,6 +23,21 @@ spack install palace
 More information about about the available configuration options and dependencies can be
 found using `spack info palace`.
 
+## Build using Singularity / Apptainer
+
+*Palace* can be built in a [Singularity / Apptainer]
+(https://apptainer.org/docs/user/main/introduction.html) container often used in HPC environments.
+
+To build the container, first [set up Singularity or Apptainer]
+(https://github.com/apptainer/apptainer/blob/main/INSTALL.md) and subsequently run:
+
+```bash
+singularity build palace.sif singularity.def
+```
+
+For more information about Singularity / Apptainer,
+see the [Quick Start guide](https://apptainer.org/docs/user/main/quick_start.html).
+
 ## Build from source
 
 A build from source requires the following prerequisites installed on your system:

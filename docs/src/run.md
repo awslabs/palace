@@ -42,3 +42,19 @@ supplying options directly to their MPI launcher of choice, as:
 where `<MPI_RUN>` is the MPI launcher command, `[OPTIONS]` is a list of command line options
 passed to the MPI launcher, and `<ARCH>` is the machine architecture (`x86_64` or
 `arm64`).
+
+## Singularity / Apptainer
+
+Assuming *Palace* was built to `palace.sif`, running:
+
+```bash
+singularity run palace.sif [ARGS ...]
+```
+
+corresponds to a
+
+```bash
+<INSTALL_DIR>/bin/palace [ARGS ...]
+```
+
+call as described above.
