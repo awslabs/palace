@@ -7,11 +7,20 @@
   },
   "Model":
   {
-    "Mesh": "mesh/cavity.msh",
+    "Mesh": "mesh/cavity_tet.msh",
     "L0": 1.0e-2,  // cm
     "Refinement":
     {
-      "UniformLevels": 1
+      // "UniformLevels": 2,
+      "Adaptation":
+      {
+        "MaxIts": 5,
+        "Tol": 1e-4,
+        "UpdateFraction": 0.4,
+        "Nonconformal": false,
+        "DOFLimit": 1e6,
+        "SaveStep": 1
+      }
     }
   },
   "Domains":
@@ -32,7 +41,7 @@
         {
           "Index": 1,
           "Attributes": [1]
-        }
+        },
       ]
     }
   },
@@ -48,10 +57,10 @@
     "Order": 2,
     "Eigenmode":
     {
-      "N": 15,
+      "N": 1,
       "Tol": 1.0e-8,
       "Target": 2.0,  // TE f111 ~ 2.9 GHz
-      "Save": 15
+      "Save": 1
     },
     "Linear":
     {

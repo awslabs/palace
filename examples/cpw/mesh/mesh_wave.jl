@@ -66,7 +66,8 @@ function generate_coplanar_waveguide_wave_mesh(;
 
     # Mesh parameters
     l_trace = 1.5 * trace_width_μm * 2^-refinement
-    l_farfield = 1.0 * substrate_height_μm * 2^-refinement
+    max_length = max(length_μm, ground_width_μm, substrate_height_μm)
+    l_farfield = 1.0 * max_length * 2^-refinement
 
     # Chip pattern
     dy = 0.0
