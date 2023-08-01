@@ -21,14 +21,14 @@ default:
       apt-get update -q
       apt-get install -y wget git
       if [[ "$(uname -m)" == "x86_64" ]]; then
-        JULIA_URL=https://julialang-s3.julialang.org/bin/linux/x64/1.8/julia-1.8.4-linux-x86_64.tar.gz
+        JULIA_URL=https://julialang-s3.julialang.org/bin/linux/x64/1.9/julia-1.9.2-linux-x86_64.tar.gz
       else
-        JULIA_URL=https://julialang-s3.julialang.org/bin/linux/aarch64/1.8/julia-1.8.4-linux-aarch64.tar.gz
+        JULIA_URL=https://julialang-s3.julialang.org/bin/linux/aarch64/1.9/julia-1.9.2-linux-aarch64.tar.gz
       fi
       wget $JULIA_URL
-      mkdir -p /opt/julia && tar -xzf julia-1.8.4-linux-$(uname -m).tar.gz -C /opt/julia
-      rm -rf *.tar.gz
-      export PATH=/opt/julia/julia-1.8.4/bin:$PATH
+      mkdir -p /opt/julia && tar -xzf julia-1.9.2-linux-$(uname -m).tar.gz -C /opt/julia
+      rm -rf julia-*.tar.gz
+      export PATH=/opt/julia/julia-1.9.2/bin:$PATH
     # Install build dependencies, set default number of cores for building and testing
     - |
       if [[ "$CI_JOB_STAGE" == "build" ]]; then

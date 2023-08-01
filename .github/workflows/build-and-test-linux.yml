@@ -149,7 +149,7 @@ jobs:
                       --disable-static-build --enable-dynamic-build \
                       --enable-lapack2flame
           make -j && sudo make install
-          cd .. && rm -rf *.tar.gz libflame-*
+          cd .. && rm -rf 4.0.tar.gz libflame-*
 
       - name: Build Palace
         env:
