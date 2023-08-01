@@ -41,6 +41,7 @@ endif()
 # required
 set(PALACE_MFEM_WITH_ZLIB NO)
 set(PALACE_MFEM_WITH_LIBUNWIND NO)
+set(PALACE_MFEM_WITH_EXCEPTIONS NO)
 find_package(ZLIB)
 if(ZLIB_FOUND)
   message(STATUS "Building MFEM with zlib support for binary output compression")
@@ -55,6 +56,7 @@ if(CMAKE_BUILD_TYPE MATCHES "Debug|debug|DEBUG")
     message(STATUS "Building MFEM with libunwind support")
     set(PALACE_MFEM_WITH_LIBUNWIND YES)
   endif()
+  set(PALACE_MFEM_WITH_EXCEPTIONS YES)
 endif()
 
 set(MFEM_OPTIONS ${PALACE_SUPERBUILD_DEFAULT_ARGS})
@@ -69,6 +71,7 @@ list(APPEND MFEM_OPTIONS
   "-DMFEM_USE_MUMPS=${PALACE_WITH_MUMPS}"
   "-DMFEM_USE_ZLIB=${PALACE_MFEM_WITH_ZLIB}"
   "-DMFEM_USE_LIBUNWIND=${PALACE_MFEM_WITH_LIBUNWIND}"
+  "-DMFEM_USE_EXCEPTIONS=${PALACE_MFEM_WITH_EXCEPTIONS}"
   "-DMFEM_USE_METIS_5=YES"
 )
 if(PALACE_WITH_STRUMPACK OR PALACE_WITH_MUMPS)
@@ -252,6 +255,7 @@ set(MFEM_PATCH_FILES
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_direct_solvers.diff"
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_pa_prereq.diff"
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_pa_libceed.diff"
+  "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_ncmesh.diff"
 )
 
 include(ExternalProject)
