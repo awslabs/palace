@@ -33,7 +33,9 @@ function generate_cylindrical_cavity_mesh(;
     radius::Real=2.74,
     aspect_ratio::Real=1.0,
     filename::AbstractString,
-    verbose::Integer=1
+    verbose::Integer=1,
+    gui::Bool=false,
+    internal_boundary::Bool=false
 )
     @assert refinement >= 0
     @assert order > 0
@@ -41,7 +43,7 @@ function generate_cylindrical_cavity_mesh(;
     kernel = gmsh.model.occ
 
     gmsh.initialize()
-    gmsh.option.setNumber("General.Verbosity", verbose)
+    # gmsh.option.setNumber("General.Verbosity", verbose)
 
     # Add model
     if "cavity" in gmsh.model.list()
@@ -55,7 +57,7 @@ function generate_cylindrical_cavity_mesh(;
 
     # Mesh parameters
     n_height = 2 * 2^refinement # Minimum two elements in vertical
-    n_circum = 4 * 2^refinement # Minimum four elements on round
+    n_circum = 8 * 2^refinement # Minimum four elements on round
 
     # Geometry
     base_circle = kernel.addDisk(0.0, 0.0, 0.0, radius, radius)
@@ -78,8 +80,8 @@ function generate_cylindrical_cavity_mesh(;
     boundary_group = gmsh.model.addPhysicalGroup(2, boundaries, -1, "boundaries")
 
     # Generate mesh
-    gmsh.option.setNumber("Mesh.MinimumCurveNodes", 2)
-    gmsh.option.setNumber("Mesh.MinimumCircleNodes", 0)
+    gmsh.option.setNumber("Mesh.MinimumCurveNodes", 4)
+    gmsh.option.setNumber("Mesh.MinimumCircleNodes", 4)
 
     gmsh.option.setNumber("Mesh.MeshSizeMin", 2π * radius / n_circum)
     gmsh.option.setNumber("Mesh.MeshSizeMax", 2π * radius / n_circum)
@@ -91,8 +93,9 @@ function generate_cylindrical_cavity_mesh(;
         gmsh.model.mesh.setRecombine(2, base_circle)
     end
 
-    gmsh.option.setNumber("Mesh.Algorithm", 6)
-    gmsh.option.setNumber("Mesh.Algorithm3D", 10)
+    # gmsh.option.setNumber("Mesh.Algorithm", 6)
+    # gmsh.option.setNumber("Mesh.Algorithm3D", 10)
+    gmsh.option.setNumber("Mesh.Smoothing", 100)
 
     gmsh.model.mesh.generate(3) # Dimension of the mesh
     gmsh.model.mesh.setOrder(order) # Polynomial order of the mesh
@@ -111,7 +114,7 @@ function generate_cylindrical_cavity_mesh(;
     end
 
     # Optionally launch GUI
-    if "gui" in lowercase.(ARGS)
+    if gui
         gmsh.fltk.run()
     end
 

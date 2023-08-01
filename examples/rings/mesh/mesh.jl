@@ -22,7 +22,7 @@ farfield_radius = 10.0 * outer_radius
 
 # Mesh parameters
 l_ring = 2.0
-l_farfield = 200.0
+l_farfield = 600.0
 
 # Origin
 p0 = kernel.addPoint(0.0, 0.0, 0.0)
@@ -175,7 +175,7 @@ gmsh.model.mesh.embed(
     domain
 )
 
-gmsh.option.setNumber("Mesh.Algorithm3D", 10)
+# gmsh.option.setNumber("Mesh.Algorithm3D", 10)
 
 gmsh.model.mesh.generate(3)
 gmsh.model.mesh.setOrder(2)

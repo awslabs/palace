@@ -8,7 +8,20 @@
   "Model":
   {
     "Mesh": "mesh/rings.msh",
-    "L0": 1.0e-6  // um
+    "L0": 1.0e-6,  // um
+    "Refinement":
+    {
+      // "UniformLevels": 1,
+      "Adaptation":
+      {
+        "MaxIts": 10,
+        "Tol": 1e-3,
+        "UpdateFraction": 0.4,
+        "DOFLimit": 1e7,
+        // "Nonconformal": false,
+        "SaveStep": 1
+      }
+    }
   },
   "Domains":
   {
@@ -73,14 +86,14 @@
     "Order": 2,
     "Magnetostatic":
     {
-      "Save": 2
+      "Save": 1
     },
     "Linear":
     {
       "Type": "AMS",
       "KSPType": "CG",
       "Tol": 1.0e-8,
-      "MaxIts": 100
+      "MaxIts": 200
     }
   }
 }

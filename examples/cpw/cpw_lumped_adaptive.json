@@ -11,7 +11,12 @@
     "L0": 1.0e-6,  // μm
     "Refinement":
     {
-      "UniformLevels": 1
+      // "Adaptation":
+      // {
+      //   "MaxIts": 30,
+      //   "DOFLimit": 1e7,
+      //   "SaveStep": 1
+      // }
     }
   },
   "Domains":
@@ -150,14 +155,14 @@
   },
   "Solver":
   {
-    "Order": 1,
+    "Order": 3,
     "Driven":
     {
       "MinFreq": 2.0,  // GHz
       "MaxFreq": 30.0,  // GHz
       "FreqStep": 0.1,  // GHz
-      "SaveStep": 40,
-      "AdaptiveTol": 1.0e-3
+      "SaveStep": 0,
+      "AdaptiveTol": 1.0e-2
     },
     "Linear":
     {
