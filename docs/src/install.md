@@ -7,8 +7,10 @@
 
 *Palace* can be built and installed using the [Spack HPC package manager]
 (https://spack.io/), following the instructions in the [Build using Spack]
-(#Build-using-Spack) section. Alternatively, compiling from source using [CMake]
-(https://cmake.org/download) is described in [Build from source](#Build-from-source).
+(#Build-using-Spack) section. Containerized builds are possible with Singularity/Apptainer,
+described in [Build using Singularity/Apptainer](#Build-using-Singularity/Apptainer).
+Alternatively, compiling from source using [CMake](https://cmake.org/download) is described
+in [Build from source](#Build-from-source).
 
 ## Build using Spack
 
@@ -23,20 +25,24 @@ spack install palace
 More information about about the available configuration options and dependencies can be
 found using `spack info palace`.
 
-## Build using Singularity / Apptainer
+## Build using Singularity/Apptainer
 
-*Palace* can be built in a [Singularity / Apptainer]
-(https://apptainer.org/docs/user/main/introduction.html) container often used in HPC environments.
-
-To build the container, first [set up Singularity or Apptainer]
+*Palace* can be built in a [Singularity/Apptainer]
+(https://apptainer.org/docs/user/main/introduction.html) container for HPC environments
+supporting the Singularity/Apptainer container system. To build the container using the
+provided definition file in the [singularity/]
+(https://github.com/awslabs/palace/blob/main/singularity) directory, first
+[set up Singularity/Apptainer on your system]
 (https://github.com/apptainer/apptainer/blob/main/INSTALL.md) and subsequently run:
 
 ```bash
-singularity build palace.sif singularity.def
+singularity build palace.sif <SOURCE_DIR>/singularity/singularity.def
 ```
 
-For more information about Singularity / Apptainer,
-see the [Quick Start guide](https://apptainer.org/docs/user/main/quick_start.html).
+where the repository source code has been cloned to `<SOURCE_DIR>`. For more information
+about Singularity/Apptainer, see the [Quick Start]
+(https://apptainer.org/docs/user/main/quick_start.html) guide in the Singularity/Apptainer
+documentation.
 
 ## Build from source
 

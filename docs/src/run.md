@@ -43,18 +43,18 @@ where `<MPI_RUN>` is the MPI launcher command, `[OPTIONS]` is a list of command 
 passed to the MPI launcher, and `<ARCH>` is the machine architecture (`x86_64` or
 `arm64`).
 
-## Singularity / Apptainer
+## Singularity/Apptainer
 
-Assuming *Palace* was built to `palace.sif`, running:
-
-```bash
-singularity run palace.sif [ARGS ...]
-```
-
-corresponds to a
+Assuming *Palace* was built using Singularity/Apptainer to `palace.sif`, running:
 
 ```bash
-<INSTALL_DIR>/bin/palace [ARGS ...]
+singularity run palace.sif <ARGS...>
 ```
 
-call as described above.
+corresponds to running a *Palace* simulation with command line arguments `<ARGS...>` using:
+
+```bash
+<INSTALL_DIR>/bin/palace <ARGS...>
+```
+
+as described above.

@@ -3,7 +3,7 @@ From: centos:7.9.2009
 
 %help
     This container contains Palace compiled with all dependencies.
-    `singularity run palace [ARG ...]` is equal to `palace [ARG ...]`.
+    `singularity run palace.sif <ARGS...>` is equivalent to `palace <ARGS...>`.
 
 %labels
     org.opencontainers.image.title Palace
@@ -14,7 +14,7 @@ From: centos:7.9.2009
 %environment
     source /opt/rh/devtoolset-11/enable
     source /opt/rh/rh-git218/enable
-    export PATH="$PATH:/usr/lib64/mpich-3.2/bin/"
+    export PATH="$PATH:/usr/lib64/mpich-3.2/bin"
 
 %runscript
     exec /opt/palace/bin/palace "$@"
@@ -23,100 +23,83 @@ From: centos:7.9.2009
     exec /opt/julia/bin/julia "$@"
 
 %post -c /bin/bash
-    #!/bin/bash
-    
     # CPU architecture for compilation, see https://gcc.gnu.org/onlinedocs/gcc/x86-Options.html
     export MARCH="native"
 
-    yum -y upgrade
-    
     # Enable EPEL (required by NVIDIA packages, useful after https://github.com/awslabs/palace/issues/3)
+    yum -y upgrade
     yum -y install https://dl.fedoraproject.org/pub/epel/epel-release-latest-7.noarch.rpm
-    yum -y install centos-release-scl
-    yum -y install devtoolset-11
-    yum -y install rh-git218
-    yum -y install openssl-devel
-    yum -y install cmake3
+
+    # Install dependencies
+    yum -y install centos-release-scl devtoolset-11 rh-git218 openssl-devel cmake3 libcurl \
+                   wget lbzip2 libsndfile numactl zlib perl \
+                   openblas-devel m4 curl-devel hdf5-devel libunwind
     source /opt/rh/devtoolset-11/enable
     source /opt/rh/rh-git218/enable
-    yum -y install libcurl
-    
-    # Install additional stuff
-    yum -y install wget lbzip2 libsndfile numactl zlib perl
 
-    # Install mpich
-    # If the env `NEWER_MPI` is defined, a newer version is compiled fro source
-    # This  may be passed to singularity using `singularity build --env NEWER_MPI=1`
-    if [ -v NEWER_MPI ]; then
-        wget -qO- http://www.mpich.org/static/downloads/4.0.2/mpich-4.0.2.tar.gz | tar xvz
-        cd mpich-4.0.2 || exit
+    # Install MPICH
+    # If the environment variable `MPICH4` is defined, MPICH v4.0 will be compiled from source
+    # This may be passed to singularity using `singularity build --env MPICH4=1`
+    if [[ -v MPICH4 ]]; then
+        wget http://www.mpich.org/static/downloads/4.0.2/mpich-4.0.2.tar.gz
+        tar -xzf mpich-4.0.2.tar.gz && cd mpich-4.0.2
         ./configure --enable-fast=all,O3 --prefix=/usr FFLAGS="-std=legacy" FCFLAGS="-std=legacy"
         make -j "$(nproc)"
         make install
         ldconfig
+        cd .. && rm -rf mpich-*
     else
-        yum -y install mpich-3.2
-        yum -y install mpich-3.2-devel
-        export PATH="/usr/lib64/mpich-3.2/bin/:$PATH"
+        yum -y install mpich-3.2 mpich-3.2-devel
+        export PATH="$PATH:/usr/lib64/mpich-3.2/bin"
     fi
     
-    # Install newer cmake, needed for Palace dependencies
-    wget -qO- https://cmake.org/files/v3.26/cmake-3.26.4.tar.gz | tar xvz
-    cd cmake-3.26.4 || exit
+    # Install newer CMake, needed for Palace dependencies
+    wget https://cmake.org/files/v3.26/cmake-3.26.4.tar.gz
+    tar -xzf cmake-3.26.4.tar.gz && cd cmake-3.26.4
     ./bootstrap --prefix=/usr/local -- -DCMAKE_BUILD_TYPE:STRING=Release
     make -j "$(nproc)"
     make install
-    cd ..
-    rm -rf cmake-3.26.4
+    cd .. && rm -rf cmake-*
 
-    yum -y install openblas-devel
-    yum -y install m4
-    yum -y install curl-devel
-    yum -y install hdf5-devel
-    yum -y install libunwind
-    
+    # Install Julia
+    wget https://julialang-s3.julialang.org/bin/linux/x64/1.9/julia-1.9.2-linux-x86_64.tar.gz
+    tar -xzf julia-1.9.2-linux-x86_64.tar.gz
+    rm -rf /opt/julia && mv julia-1.9.2 /opt/julia
+    rm -rf julia-*.tar.gz
+
+    # Show environment
     which gcc
-    which mpicc
     which gfortran
+    which mpicc
     which mpif90
     mpicc --showall
     mpif90 --showall
 
-    mkdir /opt/src
-    cd /opt/src || exit
-    
-    # Compile Palace
-    git clone https://github.com/awslabs/palace.git
-    cd palace || exit
-    mkdir build
-    cd build || exit
-    cmake ../ -DCMAKE_INSTALL_PREFIX=/opt/palace \
-            -DCMAKE_CXX_FLAGS="-O3 -fopenmp -funroll-loops -march=$MARCH" \
-            -DCMAKE_C_FLAGS="-O3 -fopenmp -funroll-loops -march=$MARCH -D_POSIX_C_SOURCE=199309L" \
-            -DCMAKE_Fortran_FLAGS="-O3 -fPIC -funroll-loops -march=$MARCH" \
-            -DPALACE_WITH_OPENMP:BOOL=TRUE \
-            -DPALACE_WITH_GSLIB:BOOL=TRUE \
-            -DPALACE_WITH_SUPERLU:BOOL=TRUE \
-            -DPALACE_WITH_STRUMPACK:BOOL=TRUE \
-            -DPALACE_WITH_MUMPS:BOOL=TRUE \
-            -DPALACE_WITH_SLEPC:BOOL=TRUE \
-            -DPALACE_WITH_ARPACK:BOOL=TRUE \
-            -DOPENBLAS_DIR="/usr/include/openblas/"
+    # Build and install Palace
+    git clone https://github.com/awslabs/palace.git /opt/palace-src
+    mkdir -p /opt/palace-build && cd /opt/palace-build
+    cmake ../palace-src \
+        -DCMAKE_INSTALL_PREFIX=/opt/palace \
+        -DCMAKE_CXX_FLAGS="-O3 -fopenmp -funroll-loops -march=$MARCH" \
+        -DCMAKE_C_FLAGS="-O3 -fopenmp -funroll-loops -march=$MARCH -D_POSIX_C_SOURCE=199309L" \
+        -DCMAKE_Fortran_FLAGS="-O3 -fPIC -funroll-loops -march=$MARCH" \
+        -DPALACE_WITH_64BIT_INT:BOOL=FALSE \
+        -DPALACE_WITH_OPENMP:BOOL=TRUE \
+        -DPALACE_WITH_GSLIB:BOOL=TRUE \
+        -DPALACE_WITH_SUPERLU:BOOL=TRUE \
+        -DPALACE_WITH_STRUMPACK:BOOL=TRUE \
+        -DPALACE_WITH_MUMPS:BOOL=TRUE \
+        -DPALACE_WITH_SLEPC:BOOL=TRUE \
+        -DPALACE_WITH_ARPACK:BOOL=TRUE \
+        -DOPENBLAS_DIR="/usr/include/openblas"
     make -j "$(nproc)"
-    cd /opt/src || exit
-
-    # Install Julia
-    wget -qO- https://julialang-s3.julialang.org/bin/linux/x64/1.9/julia-1.9.2-linux-x86_64.tar.gz | tar xvz
-    mv julia-1.9.2 /opt/julia
-
-    # Install Julia dependencies
-    cd /opt/src/palace || exit
-    /opt/julia/bin/julia --project=test -e 'using Pkg; Pkg.instantiate()'
+    cd .. && rm -rf palace-build  # Leave source directory
 
 %test
-    export PATH="/opt/palace/bin:$PATH"
-    export PATH="/usr/lib64/mpich-3.2/bin/:$PATH"
-    cd /opt/src/palace || exit
+    # Configure environment
+    export PATH="$PATH:/opt/palace/bin:/usr/lib64/mpich-3.2/bin"
 
+    # Run tests
+    cd /opt/palace-src
     /opt/julia/bin/julia --project=test -e 'using Pkg; Pkg.instantiate()'
     /opt/julia/bin/julia --project=test --color=yes test/runtests.jl
