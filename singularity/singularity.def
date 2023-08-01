@@ -31,7 +31,8 @@ From: centos:7.9.2009
     yum -y install https://dl.fedoraproject.org/pub/epel/epel-release-latest-7.noarch.rpm
 
     # Install dependencies
-    yum -y install centos-release-scl devtoolset-11 rh-git218 openssl-devel cmake3 libcurl \
+    yum -y install centos-release-scl  # update package index
+    yum -y install devtoolset-11 rh-git218 openssl-devel cmake3 libcurl \
                    wget lbzip2 libsndfile numactl zlib perl \
                    openblas-devel m4 curl-devel hdf5-devel libunwind
     source /opt/rh/devtoolset-11/enable
