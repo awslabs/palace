@@ -11,7 +11,14 @@
     "L0": 1.0e-6,  // μm
     "Refinement":
     {
-      "UniformLevels": 1
+      // "UniformLevels": 1
+      "Adaptation":
+      {
+        "MaxIts": 30,
+        "DOFLimit": 1e7,
+        "SaveStep": 1,
+        "Nonconformal": true
+      }
     }
   },
   "Domains":

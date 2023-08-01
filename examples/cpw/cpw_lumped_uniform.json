@@ -11,7 +11,14 @@
     "L0": 1.0e-6,  // μm
     "Refinement":
     {
-      "UniformLevels": 1
+      // "UniformLevels": 1
+      "Adaptation":
+      {
+        "MaxIts": 5,
+        "UpdateFraction": 0.4,
+        "DOFLimit": 1e6,
+        "SaveStep": 1
+      }
     }
   },
   "Domains":
@@ -150,20 +157,20 @@
   },
   "Solver":
   {
-    "Order": 1,
+    "Order": 3,
     "Driven":
     {
       "MinFreq": 2.0,  // GHz
-      "MaxFreq": 30.0,  // GHz
-      "FreqStep": 2.0,  // GHz
-      "SaveStep": 2
+      "MaxFreq": 16.0,  // GHz
+      "FreqStep": 14.0,  // GHz
+      "SaveStep": 1
     },
     "Linear":
     {
       "Type": "Default",
       "KSPType": "GMRES",
       "Tol": 1.0e-8,
-      "MaxIts": 100
+      "MaxIts": 200
     }
   }
 }

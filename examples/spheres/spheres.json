@@ -8,7 +8,20 @@
   "Model":
   {
     "Mesh": "mesh/spheres.msh",
-    "L0": 1.0e-2  // cm
+    "L0": 1.0e-2,  // cm
+    "Refinement":
+    {
+      // "UniformLevels": 1
+      "Adaptation":
+      {
+        "MaxIts": 3,
+        "Tol": 1e-3,
+        "UpdateFraction": 0.4,
+        // "Nonconformal": true,
+        "DOFLimit": 1e7,
+        "SaveStep": 1
+      }
+    }
   },
   "Domains":
   {
