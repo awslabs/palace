@@ -16,10 +16,6 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
-      - uses: julia-actions/setup-julia@v1
-        with:
-          version: '1'
-
       # Install more recent clang-format from LLVM (match Homebrew v16)
       - name: Install clang-format
         run: |
@@ -48,10 +44,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
-
-      - uses: julia-actions/setup-julia@v1
-        with:
-          version: '1'
 
       - name: Check JSON Schema
         run: |

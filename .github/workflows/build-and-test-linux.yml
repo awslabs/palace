@@ -94,10 +94,6 @@ jobs:
         with:
           submodules: 'recursive'
 
-      - uses: julia-actions/setup-julia@v1
-        with:
-          version: '1'
-
       - uses: mpi4py/setup-mpi@v1
         with:
           mpi: ${{ matrix.mpi }}
@@ -222,11 +218,11 @@ jobs:
           if [[ "$NUM_PROC_TEST" -gt "$NUM_PROC_TEST_MAX" ]]; then
             NUM_PROC_TEST=$NUM_PROC_TEST_MAX
           fi
-          export PATH=$(pwd)/palace-install/bin:$PATH
           if [[ "${{ matrix.math-libs }}" == 'aocl' ]]; then
             export AOCLROOT=/opt/amd
             export LD_LIBRARY_PATH=$AOCLROOT/lib:$LD_LIBRARY_PATH
           fi
+          export PATH=$(pwd)/palace-install/bin:$PATH
 
           # Run tests
           julia --project=test -e 'using Pkg; Pkg.instantiate()'

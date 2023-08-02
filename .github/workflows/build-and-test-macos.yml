@@ -49,10 +49,6 @@ jobs:
         with:
           submodules: 'recursive'
 
-      - uses: julia-actions/setup-julia@v1
-        with:
-          version: '1'
-
       - uses: mpi4py/setup-mpi@v1
         with:
           mpi: ${{ matrix.mpi }}

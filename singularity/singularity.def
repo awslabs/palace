@@ -1,5 +1,5 @@
 Bootstrap: docker
-From: centos:7.9.2009
+From: rockylinux:9
 
 %help
     This container contains Palace compiled with all dependencies.
@@ -9,81 +9,73 @@ From: centos:7.9.2009
     org.opencontainers.image.title Palace
     org.opencontainers.image.source https://github.com/awslabs/palace
     org.opencontainers.image.vendor AWS Labs
-    org.opencontainers.image.base.name docker.io/library/centos:7.9.2009
+    org.opencontainers.image.base.name docker.io/library/rockylinux:9
 
 %environment
-    source /opt/rh/devtoolset-11/enable
-    source /opt/rh/rh-git218/enable
-    export PATH="$PATH:/usr/lib64/mpich-3.2/bin"
+    if [[ -d /usr/lib64/mpich ]]; then
+        export PATH="$PATH:/usr/lib64/mpich/bin"
+    fi
+    export PATH="$PATH:/opt/palace/bin"
 
 %runscript
-    exec /opt/palace/bin/palace "$@"
+    exec palace "$@"
 
-%apprun julia
-    exec /opt/julia/bin/julia "$@"
+%setup
+    # When building the container, bind the Palace source directory to /opt/palace-src with
+    # `singularity build --bind <SOURCE_DIR>:/opt/palace-src`.
+    mkdir $SINGULARITY_ROOTFS/opt/palace-src
 
 %post -c /bin/bash
     # CPU architecture for compilation, see https://gcc.gnu.org/onlinedocs/gcc/x86-Options.html
     export MARCH="native"
-
-    # Enable EPEL (required by NVIDIA packages, useful after https://github.com/awslabs/palace/issues/3)
-    yum -y upgrade
-    yum -y install https://dl.fedoraproject.org/pub/epel/epel-release-latest-7.noarch.rpm
+    export OPT_FLAGS="-O3 -funroll-loops -march=$MARCH"
 
     # Install dependencies
-    yum -y install centos-release-scl  # update package index
-    yum -y install devtoolset-11 rh-git218 openssl-devel cmake3 libcurl \
-                   wget lbzip2 libsndfile numactl zlib perl \
-                   openblas-devel m4 curl-devel hdf5-devel libunwind
-    source /opt/rh/devtoolset-11/enable
-    source /opt/rh/rh-git218/enable
+    dnf install -y dnf-plugins-core && dnf config-manager --enable crb
+    dnf install -y epel-release
+    dnf update -y
+    dnf groupinstall -y "Development Tools"
+    dnf install -y curl-minimal gcc-gfortran git libunwind-devel openblas-devel \
+                   pkg-config python3 wget zlib
+
+    # Install CMake (STRUMPACK requires >= 3.21)
+    CMAKE_VERSION=3.26.5
+    wget https://github.com/Kitware/CMake/releases/download/v$CMAKE_VERSION/cmake-$CMAKE_VERSION-linux-$(uname -m).sh
+    /bin/bash cmake-$CMAKE_VERSION-* --skip-license --prefix=/usr
+    rm -rf cmake-*
 
     # Install MPICH
-    # If the environment variable `MPICH4` is defined, MPICH v4.0 will be compiled from source
-    # This may be passed to singularity using `singularity build --env MPICH4=1`
+    # If the environment variable `MPICH4` is defined, MPICH v4.0 will be compiled from
+    # source. This may be passed to singularity using `singularity build --env MPICH4=1`.
     if [[ -v MPICH4 ]]; then
-        wget http://www.mpich.org/static/downloads/4.0.2/mpich-4.0.2.tar.gz
-        tar -xzf mpich-4.0.2.tar.gz && cd mpich-4.0.2
+        MPICH_VERSION=4.0.2
+        wget http://www.mpich.org/static/downloads/$MPICH_VERSION/mpich-$MPICH_VERSION.tar.gz
+        tar -xzf mpich-$MPICH_VERSION.tar.gz && cd mpich-$MPICH_VERSION
         ./configure --enable-fast=all,O3 --prefix=/usr FFLAGS="-std=legacy" FCFLAGS="-std=legacy"
-        make -j "$(nproc)"
+        make -j"$(nproc)"
         make install
         ldconfig
         cd .. && rm -rf mpich-*
     else
-        yum -y install mpich-3.2 mpich-3.2-devel
-        export PATH="$PATH:/usr/lib64/mpich-3.2/bin"
+        dnf -y install mpich-devel
+        export PATH="$PATH:/usr/lib64/mpich/bin"
     fi
-    
-    # Install newer CMake, needed for Palace dependencies
-    wget https://cmake.org/files/v3.26/cmake-3.26.4.tar.gz
-    tar -xzf cmake-3.26.4.tar.gz && cd cmake-3.26.4
-    ./bootstrap --prefix=/usr/local -- -DCMAKE_BUILD_TYPE:STRING=Release
-    make -j "$(nproc)"
-    make install
-    cd .. && rm -rf cmake-*
 
-    # Install Julia
-    wget https://julialang-s3.julialang.org/bin/linux/x64/1.9/julia-1.9.2-linux-x86_64.tar.gz
-    tar -xzf julia-1.9.2-linux-x86_64.tar.gz
-    rm -rf /opt/julia && mv julia-1.9.2 /opt/julia
-    rm -rf julia-*.tar.gz
-
-    # Show environment
-    which gcc
-    which gfortran
-    which mpicc
-    which mpif90
-    mpicc --showall
-    mpif90 --showall
+    # Show compiler information
+    mpicc -v
+    mpif90 -v
 
     # Build and install Palace
-    git clone https://github.com/awslabs/palace.git /opt/palace-src
-    mkdir -p /opt/palace-build && cd /opt/palace-build
-    cmake ../palace-src \
+    if [[ -z "$(ls -A /opt/palace-src)" ]]; then
+        git clone https://github.com/awslabs/palace.git /opt/palace-src
+    fi
+    mkdir /opt/palace-build && cd /opt/palace-build
+    cmake /opt/palace-src \
         -DCMAKE_INSTALL_PREFIX=/opt/palace \
-        -DCMAKE_CXX_FLAGS="-O3 -fopenmp -funroll-loops -march=$MARCH" \
-        -DCMAKE_C_FLAGS="-O3 -fopenmp -funroll-loops -march=$MARCH -D_POSIX_C_SOURCE=199309L" \
-        -DCMAKE_Fortran_FLAGS="-O3 -fPIC -funroll-loops -march=$MARCH" \
+        -DCMAKE_CXX_FLAGS="$OPT_FLAGS" \
+        -DCMAKE_C_FLAGS="$OPT_FLAGS" \
+        -DCMAKE_Fortran_FLAGS="$OPT_FLAGS" \
+        -DBUILD_SHARED_LIBS:BOOL=TRUE \
         -DPALACE_WITH_64BIT_INT:BOOL=FALSE \
         -DPALACE_WITH_OPENMP:BOOL=TRUE \
         -DPALACE_WITH_GSLIB:BOOL=TRUE \
@@ -91,16 +83,6 @@ From: centos:7.9.2009
         -DPALACE_WITH_STRUMPACK:BOOL=TRUE \
         -DPALACE_WITH_MUMPS:BOOL=TRUE \
         -DPALACE_WITH_SLEPC:BOOL=TRUE \
-        -DPALACE_WITH_ARPACK:BOOL=TRUE \
-        -DOPENBLAS_DIR="/usr/include/openblas"
-    make -j "$(nproc)"
-    cd .. && rm -rf palace-build  # Leave source directory
-
-%test
-    # Configure environment
-    export PATH="$PATH:/opt/palace/bin:/usr/lib64/mpich-3.2/bin"
-
-    # Run tests
-    cd /opt/palace-src
-    /opt/julia/bin/julia --project=test -e 'using Pkg; Pkg.instantiate()'
-    /opt/julia/bin/julia --project=test --color=yes test/runtests.jl
+        -DPALACE_WITH_ARPACK:BOOL=TRUE
+    make -j"$(nproc)"
+    cd .. && rm -rf palace-build

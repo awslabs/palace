@@ -177,6 +177,7 @@ else()
   find_path(_BLAS_LAPACK_INCLUDE_DIRS
     NAMES cblas.h
     HINTS ${_BLAS_LAPACK_DIRS}
+    PATH_SUFFIXES include include/openblas
     REQUIRED
   )
   message(STATUS "Using BLAS/LAPACK located by CMake")

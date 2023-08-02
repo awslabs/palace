@@ -1,7 +1,15 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-function testcase(testdir, testconfig, testpostpro; np=1, rtol=1.0e-6, atol=1.0e-18)
+function testcase(
+    testdir,
+    testconfig,
+    testpostpro;
+    palace="palace",
+    np=1,
+    rtol=1.0e-6,
+    atol=1.0e-18
+)
     if isempty(testdir)
         @info "$testdir/ is empty, skipping tests"
         return
@@ -24,7 +32,7 @@ function testcase(testdir, testconfig, testpostpro; np=1, rtol=1.0e-6, atol=1.0e
         errfile = "err.out"
         proc = run(
             pipeline(
-                ignorestatus(`palace -np $np -wdir $exampledir $testconfig`);
+                ignorestatus(`$palace -np $np -wdir $exampledir $testconfig`);
                 stdout=joinpath(logdir, logfile),
                 stderr=joinpath(logdir, errfile)
             )

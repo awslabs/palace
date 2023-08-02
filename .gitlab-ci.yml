@@ -16,23 +16,11 @@ default:
     - arch:amd64
     - size:2xlarge
   before_script:
-    # Install Julia
-    - |
-      apt-get update -q
-      apt-get install -y wget git
-      if [[ "$(uname -m)" == "x86_64" ]]; then
-        JULIA_URL=https://julialang-s3.julialang.org/bin/linux/x64/1.9/julia-1.9.2-linux-x86_64.tar.gz
-      else
-        JULIA_URL=https://julialang-s3.julialang.org/bin/linux/aarch64/1.9/julia-1.9.2-linux-aarch64.tar.gz
-      fi
-      wget $JULIA_URL
-      mkdir -p /opt/julia && tar -xzf julia-1.9.2-linux-$(uname -m).tar.gz -C /opt/julia
-      rm -rf julia-*.tar.gz
-      export PATH=/opt/julia/julia-1.9.2/bin:$PATH
     # Install build dependencies, set default number of cores for building and testing
     - |
       if [[ "$CI_JOB_STAGE" == "build" ]]; then
-        apt-get install -y build-essential gfortran python3 python-is-python3 cmake pkg-config
+        apt-get update -q
+        apt-get install -y build-essential cmake curl gfortran git pkg-config python3 wget
         if [[ "$(nproc)" -gt "$NUM_PROC_BUILD_MAX" ]]; then
           export NUM_PROC_BUILD=$NUM_PROC_BUILD_MAX
         else
@@ -44,6 +32,10 @@ default:
           export NUM_PROC_TEST=$(nproc)
         fi
       fi
+    # Install Julia
+    - |
+      curl -fsSL https://install.julialang.org | sh -s -- -y
+      export PATH=~/.juliaup/bin:$PATH
 
 test-build:
   stage: build
@@ -263,14 +255,14 @@ test-format:
   variables:
     GIT_SUBMODULE_STRATEGY: none
   script:
-    # Install more recent clang-format from LLVM (match Homebrew v15)
+    # Install more recent clang-format from LLVM (match Homebrew v16)
     - apt-get install -y gpg
     - wget -O- https://apt.llvm.org/llvm-snapshot.gpg.key | apt-key add -
     - |
-      echo "deb http://apt.llvm.org/bullseye/ llvm-toolchain-bullseye-15 main" \
+      echo "deb http://apt.llvm.org/bullseye/ llvm-toolchain-bullseye-16 main" \
       | tee /etc/apt/sources.list.d/llvm.list
-    - apt-get update -q && apt-get install -y clang-format-15
-    - ./scripts/format-source --clang-format clang-format-15
+    - apt-get update -q && apt-get install -y clang-format-16
+    - ./scripts/format-source --clang-format clang-format-16
     - |-
       if [[ `git status -s | wc -l` -ne 0 ]]; then
         echo 'Error: Commit is not formatted!'

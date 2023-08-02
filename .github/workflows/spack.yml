@@ -52,6 +52,10 @@ jobs:
           NUM_PROC_TEST_MAX: '8'
         run: |
           # Configure environment
+          export NUM_PROC_TEST=$(nproc 2> /dev/null || sysctl -n hw.ncpu)
+          if [[ "$NUM_PROC_TEST" -gt "$NUM_PROC_TEST_MAX" ]]; then
+            NUM_PROC_TEST=$NUM_PROC_TEST_MAX
+          fi
           . /opt/spack/share/spack/setup-env.sh
           spack load palace
 

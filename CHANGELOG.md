@@ -11,6 +11,10 @@ The format of this changelog is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## In progress
+
+  - Added Apptainer/Singularity container build definition for Palace.
+
 ## [0.11.2] - 2023-07-14
 
   - Changed layout and names of `palace/` source directory for better organization.
@@ -23,7 +27,7 @@ The format of this changelog is based on
     affects the Spack package recipe, so a new recipe is distributed as part of Palace in
     in `spack/` which will keep compatibility with `main` while changes are upstreamed to
     the built-in Spack repository.
-  - Add a basic Makefile with some useful targets for development.
+  - Added a basic Makefile with some useful targets for development.
 
 ## [0.11.1] - 2023-05-03
 
