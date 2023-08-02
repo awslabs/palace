@@ -389,17 +389,566 @@ void AttrToMarker(int max_attr, const std::vector<int> &attrs, mfem::Array<int> 
   }
 }
 
-void GetBoundingBox(mfem::ParMesh &mesh, int attr, bool bdr, mfem::Vector &min,
-                    mfem::Vector &max)
+namespace
+{
+
+// Compute the cross product between two 3-vectors expressed as arrays.
+std::array<double, 3> Cross(const std::array<double, 3> &n_1,
+                            const std::array<double, 3> &n_2)
+{
+  return {n_1[1] * n_2[2] - n_1[2] * n_2[1], -n_1[0] * n_2[2] + n_1[2] * n_2[0],
+          n_1[0] * n_2[1] - n_1[1] * n_2[0]};
+};
+
+// Helper for converting a container with begin(), end() to a string for printing.
+template <typename T>
+std::string String(const T &v)
+{
+  std::stringstream msg;
+  for (auto x : v)
+  {
+    msg << x << ' ';
+  }
+  return msg.str();
+};
+template <typename T, std::size_t N>
+std::string String(const std::vector<std::array<T, N>> &v)
+{
+  std::stringstream msg;
+  for (const auto &x : v)
+  {
+    msg << "{";
+    for (auto y : x)
+      msg << y << ' ';
+    msg << "} ";
+  }
+  return msg.str();
+};
+
+}  // namespace
+
+double BoundingBox::Area() const
+{
+  auto cross = Cross(normals[0], normals[1]);
+  return 4 * std::sqrt(cross[0] * cross[0] + cross[1] * cross[1] + cross[2] * cross[2]);
+}
+
+double BoundingBox::Volume() const
+{
+  // Compute area in plane, then extrude above and below to get volume.
+  return planar
+             ? 0
+             : 2 *
+                   std::sqrt(normals[2][0] * normals[2][0] + normals[2][1] * normals[2][1] +
+                             normals[2][2] * normals[2][2]) *
+                   Area();
+}
+
+BoundingBox BoundingBoxFromPointCloud(MPI_Comm comm,
+                                      std::vector<std::array<double, 3>> vertices)
+{
+  using Array3 = std::array<double, 3>;
+
+  const auto num_vertices = int(vertices.size());
+  const int dominant_rank = Mpi::FindMax<int>(num_vertices, comm).rank;
+
+  // dominant_rank will perform the calculation
+  std::vector<int> recv_counts(Mpi::Size(comm)), displacements;
+  MPI_Gather(&num_vertices, 1, MPI_INT, recv_counts.data(), 1, MPI_INT, dominant_rank,
+             comm);
+
+  std::vector<std::array<double, 3>> collected_vertices;
+  if (Mpi::Rank(comm) == dominant_rank)
+  {
+    // First displacement is zero, then after is the partial sum of recv_counts.
+    displacements.resize(Mpi::Size(comm));
+    displacements[0] = 0;
+    std::partial_sum(recv_counts.begin(), recv_counts.end() - 1, displacements.begin() + 1);
+
+    // Add on slots at the end of vertices for the incoming data.
+    collected_vertices.resize(std::accumulate(recv_counts.begin(), recv_counts.end(), 0));
+  }
+
+  // Gather the data to the dominant rank.
+  const auto mpi_array_3_type = Mpi::GetArrayType<double, 3>();
+  MPI_Gatherv(vertices.data(), num_vertices, mpi_array_3_type, collected_vertices.data(),
+              recv_counts.data(), displacements.data(), mpi_array_3_type, dominant_rank,
+              comm);
+
+  BoundingBox box;
+  if (Mpi::Rank(comm) == dominant_rank)
+  {
+    vertices = std::move(collected_vertices);
+    // dominant_rank now has a fully stocked vector of vertices. All other ranks
+    // will wait for results.
+    // Deduplicate vertices. Given floating point precision, need a tolerance.
+    auto vertex_equality = [](const auto &x, const auto &y)
+    {
+      constexpr double tolerance = 10 * std::numeric_limits<double>::epsilon();
+      return std::abs(x[0] - y[0]) < tolerance && std::abs(x[1] - y[1]) < tolerance &&
+             std::abs(x[2] - y[2]) < tolerance;
+    };
+
+    std::sort(vertices.begin(), vertices.end());
+    vertices.erase(std::unique(vertices.begin(), vertices.end(), vertex_equality),
+                   vertices.end());
+
+    MFEM_VERIFY(vertices.size() >= 4,
+                "A bounding box requires a minimum of four vertices for this algorithm");
+
+    // Define a diagonal of the ASSUMED cuboid bounding box. Store references as
+    // this is useful for checking pointers later.
+    const auto &v_000 = *std::min_element(vertices.begin(), vertices.end());
+    const auto &v_111 = *std::max_element(vertices.begin(), vertices.end());
+
+    MFEM_VERIFY(&v_000 != &v_111, "Minimum and Maximum extents cannot be identical");
+
+    const auto origin = v_000;  // Save a copy to make undoing the transform later easier.
+
+    // Return y <- a * x + y
+    auto Inplace = [](Array3 &y, const Array3 &x, double a = 1.0)
+    {
+      y[0] += a * x[0];
+      y[1] += a * x[1];
+      y[2] += a * x[2];
+    };
+
+    // Dot product
+    auto Dot = [](const Array3 &x_1, const Array3 &x_2)
+    { return x_1[0] * x_2[0] + x_1[1] * x_2[1] + x_1[2] * x_2[2]; };
+
+    // Scale to unit magnitude
+    auto Normalize = [Dot](Array3 &v)
+    {
+      auto mag = std::sqrt(Dot(v, v));
+      MFEM_ASSERT(mag >= 0, "!");
+      v[0] /= mag;
+      v[1] /= mag;
+      v[2] /= mag;
+    };
+
+    // Given a pair of vertices, define a normalized vector from x_1 to x_2
+    auto Normal = [Inplace, Normalize](const Array3 &x_1, Array3 x_2)
+    {
+      Inplace(x_2, x_1, -1);
+      Normalize(x_2);
+      return x_2;
+    };
+
+    // v_1 -= (v_1 . v_2) v_2. ASSUMES v_2 normalized
+    auto Orthogonalize = [Inplace, Dot](Array3 &v_1, const Array3 &v_2)
+    { Inplace(v_1, v_2, -Dot(v_1, v_2)); };
+
+    // Orient all vertex positions relative to origin. Makes projection and
+    // orientation logic simpler.
+    for (auto &v : vertices)
+    {
+      Inplace(v, origin, -1.0);
+    }
+
+    const auto n_1 = Normal(v_000, v_111);
+
+    // Compute the distance from the normal axis. Note: everything has been
+    // oriented relative to v_000 == (0,0,0).
+    auto PerpendicularDistance = [&n_1, Dot, Inplace](Array3 v)
+    {
+      Inplace(v, n_1, -Dot(v, n_1));
+      return std::sqrt(Dot(v, v));
+    };
+
+    // Find the vertex furthest from the diagonal axis. We cannot know yet if
+    // this defines (001) or (011).
+    const auto &t_0 =
+        *std::max_element(vertices.begin(), vertices.end(),
+                          [PerpendicularDistance](const Array3 &x, const Array3 &y)
+                          { return PerpendicularDistance(x) < PerpendicularDistance(y); });
+
+    MFEM_VERIFY(&t_0 != &v_000, "Vertices are degenerate!");
+    MFEM_VERIFY(&t_0 != &v_111, "Vertices are degenerate!");
+
+    // Use the discovered vertex define a second normal direction, and thus a plane.
+    auto n_2 = t_0;
+    Orthogonalize(n_2, n_1);
+    Normalize(n_2);
+
+    // n_1 and n_2 now define a planar coordinate system intersecting the main
+    // diagonal, and two opposite edges of the cuboid.
+
+    // Now look for a component that maximizes distance from the planar system:
+    // complete the axes with a cross, then use a dot product to pick the
+    // greatest deviation.
+    const auto n_3 = Cross(n_1, n_2);
+
+    auto OutOfPlaneComp = [&n_1, &n_2, &n_3, Dot](const Array3 &v_1, const Array3 &v_2)
+    {
+      // Precedence of directions is in reverse order of discovery of the
+      // directions. The most important deciding feature is the distance in the
+      // out of plane direction, then in the first off-diagonal, then finally in
+      // the diagonal direction.
+      const Array3 dist_1{{Dot(v_1, n_3), Dot(v_1, n_2), Dot(v_1, n_1)}};
+      const Array3 dist_2{{Dot(v_2, n_3), Dot(v_2, n_2), Dot(v_2, n_1)}};
+      return dist_1 < dist_2;
+    };
+    const auto &t_1 = *std::max_element(vertices.begin(), vertices.end(), OutOfPlaneComp);
+
+    // There is a degeneration if the final point is within the plane defined by
+    // (v_000, v_001, v_111).
+    constexpr double planar_tolerance = 1e-9;
+    box.planar = std::abs(Dot(n_3, t_0)) < planar_tolerance &&
+                 std::abs(Dot(n_3, t_1)) < planar_tolerance;
+
+    if (!box.planar)
+    {
+      MFEM_VERIFY(&t_0 != &t_1, "Degenerate coordinates");
+
+      MFEM_VERIFY(&t_0 != &v_000, "Degenerate coordinates");
+      MFEM_VERIFY(&t_0 != &v_111, "Degenerate coordinates");
+
+      MFEM_VERIFY(&t_1 != &v_000, "Degenerate coordinates");
+      MFEM_VERIFY(&t_1 != &v_111, "Degenerate coordinates");
+    }
+
+    // If t_1 points to v_000, t_0 or v_111, then the data is coplanar.
+    // Establish if t_0 is a diagonal or not (using Pythagoras).
+    // Only pick t_1 for v_001 if the points are non planar, and t_0 is longer.
+    bool t_0_gt_t_1 = Dot(t_0, t_0) >= Dot(t_1, t_1);
+    const auto &v_001 = !box.planar && t_0_gt_t_1 ? t_1 : t_0;
+    const auto &v_011 = !box.planar && t_0_gt_t_1 ? t_0 : t_1;
+
+    // In the v_000 coordinate system, can easily compute the center as halfway
+    // along the main diagonal.
+    box.center = {origin[0] + v_111[0] / 2, origin[1] + v_111[1] / 2,
+                  origin[2] + v_111[2] / 2};
+
+    // The length in each direction is then given by traversing the edges of the
+    // cuboid in turn
+    box.normals[0] = Array3{(v_001[0] - v_000[0]) / 2, (v_001[1] - v_000[1]) / 2,
+                            (v_001[2] - v_000[2]) / 2};
+    box.normals[1] = box.planar
+                         ? Array3{(v_111[0] - v_001[0]) / 2, (v_111[1] - v_001[1]) / 2,
+                                  (v_111[2] - v_001[2]) / 2}
+                         : Array3{(v_011[0] - v_001[0]) / 2, (v_011[1] - v_001[1]) / 2,
+                                  (v_011[2] - v_001[2]) / 2};
+    box.normals[2] = box.planar
+                         ? Array3{0, 0, 0}
+                         : Array3{(v_111[0] - v_011[0]) / 2, (v_111[1] - v_011[1]) / 2,
+                                  (v_111[2] - v_011[2]) / 2};
+
+    // Make sure the longest dimension comes first
+    std::sort(box.normals.begin(), box.normals.end(),
+              [Dot](const Array3 &x, const Array3 &y) { return Dot(x, x) > Dot(y, y); });
+  }
+
+  Mpi::Broadcast(3, box.center.data(), dominant_rank, comm);
+  Mpi::Broadcast(3 * 3, box.normals.data()->data(), dominant_rank, comm);
+  Mpi::Broadcast(1, &box.planar, dominant_rank, comm);
+
+  return box;
+}
+
+BoundingBox GetBoundingBox(mfem::ParMesh &mesh, const mfem::Array<int> &marker, bool bdr)
+{
+  // Collect set of vertices to check
+  std::set<int> vertex_indices;
+
+  using Array3 = std::array<double, 3>;
+  std::vector<Array3> vertices;
+
+  if (mesh.GetNodes() == nullptr)
+  {
+    // Linear mesh, work with element vertices directly.
+    mfem::Array<int> v;
+    if (bdr)
+    {
+      for (int i = 0; i < mesh.GetNBE(); ++i)
+      {
+        if (!marker[mesh.GetBdrAttribute(i) - 1])
+        {
+          continue;
+        }
+        mesh.GetBdrElementVertices(i, v);
+        vertex_indices.insert(v.begin(), v.end());
+      }
+    }
+    else
+    {
+      for (int i = 0; i < mesh.GetNE(); i++)
+      {
+        if (!marker[mesh.GetAttribute(i) - 1])
+        {
+          continue;
+        }
+        mesh.GetElementVertices(i, v);
+        vertex_indices.insert(v.begin(), v.end());
+      }
+    }
+
+    for (auto i : vertex_indices)
+    {
+      const auto &vx = mesh.GetVertex(i);
+      vertices.push_back({vx[0], vx[1], vx[2]});
+    }
+  }
+  else
+  {
+    // Nonlinear mesh, need to process point matrices.
+    const int ref = mesh.GetNodes()->FESpace()->GetMaxElementOrder();
+    mfem::DenseMatrix pointmat;  // 3 x N
+    mfem::ElementTransformation *T;
+
+    if (bdr)
+    {
+      for (int i = 0; i < mesh.GetNBE(); ++i)
+      {
+        if (!marker[mesh.GetBdrAttribute(i) - 1])
+        {
+          continue;
+        }
+
+        T = mesh.GetBdrElementTransformation(i);
+        T->Transform(
+            mfem::GlobGeometryRefiner.Refine(mesh.GetBdrElementGeometry(i), ref)->RefPts,
+            pointmat);
+        for (int j = 0; j < pointmat.Width(); ++j)
+        {
+          vertices.push_back({pointmat(0, j), pointmat(1, j), pointmat(2, j)});
+        }
+      }
+    }
+    else
+    {
+      for (int i = 0; i < mesh.GetNE(); ++i)
+      {
+        if (!marker[mesh.GetAttribute(i) - 1])
+        {
+          continue;
+        }
+
+        T = mesh.GetElementTransformation(i);
+        T->Transform(
+            mfem::GlobGeometryRefiner.Refine(mesh.GetElementGeometry(i), ref)->RefPts,
+            pointmat);
+        for (int j = 0; j < pointmat.Width(); ++j)
+        {
+          vertices.push_back({pointmat(0, j), pointmat(1, j), pointmat(2, j)});
+        }
+      }
+    }
+  }
+
+  return BoundingBoxFromPointCloud(mesh.GetComm(), std::move(vertices));
+}
+
+BoundingBox GetBoundingBox(mfem::ParMesh &mesh, int attr, bool bdr)
 {
   mfem::Array<int> marker(bdr ? mesh.bdr_attributes.Max() : mesh.attributes.Max());
   marker = 0;
   marker[attr - 1] = 1;
-  GetBoundingBox(mesh, marker, bdr, min, max);
+
+  return GetBoundingBox(mesh, marker, bdr);
 }
 
-void GetBoundingBox(mfem::ParMesh &mesh, const mfem::Array<int> &marker, bool bdr,
-                    mfem::Vector &min, mfem::Vector &max)
+BoundingBall BoundingBallFromPointCloud(MPI_Comm comm,
+                                        std::vector<std::array<double, 3>> vertices)
+{
+  using Array3 = std::array<double, 3>;
+
+  auto num_vertices = int(vertices.size());
+  const int dominant_rank = Mpi::FindMax<int>(num_vertices, comm).rank;
+
+  const bool is_root = dominant_rank == Mpi::Rank(comm);
+
+  // dominant_rank will perform the calculation
+  std::vector<int> recv_counts(Mpi::Size(comm)), displacements;
+  MPI_Gather(&num_vertices, 1, MPI_INT, recv_counts.data(), 1, MPI_INT, dominant_rank,
+             comm);
+
+  std::vector<Array3> collected_vertices;
+  if (is_root)
+  {
+    // First displacement is zero, then after is the partial sum of recv_counts.
+    displacements.resize(Mpi::Size(comm));
+    displacements[0] = 0;
+    std::partial_sum(recv_counts.begin(), recv_counts.end() - 1, displacements.begin() + 1);
+
+    // Add on slots at the end of vertices for the incoming data.
+    collected_vertices.resize(std::accumulate(recv_counts.begin(), recv_counts.end(), 0));
+  }
+
+  // Gather the data to the dominant rank.
+  const auto mpi_array_3_type = Mpi::GetArrayType<double, 3>();
+  MPI_Gatherv(vertices.data(), vertices.size(), mpi_array_3_type, collected_vertices.data(),
+              recv_counts.data(), displacements.data(), mpi_array_3_type, dominant_rank,
+              comm);
+
+  BoundingBall ball;
+  if (Mpi::Rank(comm) == dominant_rank)
+  {
+    vertices = std::move(collected_vertices);
+    // dominant_rank now has a fully stocked vector of vertices.
+    // Use lexicographic sort to get min and max vertices. These will be
+    // separated by the largest L1 distance.
+
+    const auto &min = *std::min_element(vertices.begin(), vertices.end());
+    const auto &max = *std::max_element(vertices.begin(), vertices.end());
+
+    Array3 delta{{max[0] - min[0], max[1] - min[1], max[2] - min[2]}};
+
+    ball.radius =
+        std::sqrt(delta[0] * delta[0] + delta[1] * delta[1] + delta[2] * delta[2]) / 2;
+    ball.center = {min[0] + delta[0] / 2, min[1] + delta[1] / 2, min[2] + delta[2] / 2};
+
+    // Project onto this candidate diameter, and pick a vertex furthest away.
+    // Check that this resulting distance is less than or equal to the radius,
+    // and use the resulting direction to compute another in plane vector.
+
+    // Assumes all delta are normalized, and applies a common origin as part of the
+    // projection.
+    auto PerpendicularDistance = [min](const std::initializer_list<Array3> &deltas, auto v)
+    {
+      v[0] -= min[0];
+      v[1] -= min[1];
+      v[2] -= min[2];
+      for (const auto &d : deltas)
+      {
+        double dot = d[0] * v[0] + d[1] * v[1] + d[2] * v[2];
+        for (auto i : {0, 1, 2})
+        {
+          v[i] -= dot * d[i];
+        }
+      }
+      return std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+    };
+
+    // Normalize the diagonal.
+    delta[0] /= (ball.radius * 2);
+    delta[1] /= (ball.radius * 2);
+    delta[2] /= (ball.radius * 2);
+
+    const auto &perp = *std::max_element(
+        vertices.begin(), vertices.end(),
+        [&delta, PerpendicularDistance](const auto &x, const auto &y)
+        { return PerpendicularDistance({delta}, x) < PerpendicularDistance({delta}, y); });
+
+    constexpr double radius_tol = 1e-6;
+    MFEM_VERIFY(std::abs(PerpendicularDistance({delta}, perp) - ball.radius) /
+                        ball.radius <=
+                    radius_tol,
+                "A point perpendicular must be contained in the ball: "
+                    << PerpendicularDistance({delta}, perp) << " vs " << ball.radius);
+
+    auto n_radial = perp;
+    n_radial[0] -= ball.center[0];
+    n_radial[1] -= ball.center[1];
+    n_radial[2] -= ball.center[2];
+
+    auto radius_2 = std::sqrt(n_radial[0] * n_radial[0] + n_radial[1] * n_radial[1] +
+                              n_radial[2] * n_radial[2]);
+    n_radial[0] /= radius_2;
+    n_radial[1] /= radius_2;
+    n_radial[2] /= radius_2;
+
+    // Compute a perpendicular to the circle using the cross product
+    ball.planar_normal[0] = delta[1] * n_radial[2] - delta[2] * n_radial[1];
+    ball.planar_normal[1] = delta[2] * n_radial[0] - delta[0] * n_radial[2];
+    ball.planar_normal[2] = delta[0] * n_radial[1] - delta[1] * n_radial[0];
+
+    // Compute the point furthest out of the plane discovered. If below
+    // tolerance, this means the circle is 2D.
+
+    const auto &out_of_plane = *std::max_element(
+        vertices.begin(), vertices.end(),
+        [&delta, &n_radial, PerpendicularDistance](const auto &x, const auto &y)
+        {
+          return PerpendicularDistance({delta, n_radial}, x) <
+                 PerpendicularDistance({delta, n_radial}, y);
+        });
+
+    constexpr double planar_tolerance = 1e-9;
+    if (PerpendicularDistance({delta, n_radial}, out_of_plane) < planar_tolerance)
+    {
+      // The points are functionally coplanar, zero out the normal
+      ball.planar_normal[0] *= 0;
+      ball.planar_normal[1] *= 0;
+      ball.planar_normal[2] *= 0;
+    }
+    else
+    {
+      MFEM_VERIFY(PerpendicularDistance({delta, n_radial}, out_of_plane) <= ball.radius,
+                  "A point perpendicular must be contained in the ball");
+    }
+  }
+
+  Mpi::Broadcast(3, ball.center.data(), dominant_rank, comm);
+  Mpi::Broadcast(3, ball.planar_normal.data(), dominant_rank, comm);
+  Mpi::Broadcast(1, &ball.radius, dominant_rank, comm);
+
+  return ball;
+}
+
+BoundingBall GetBoundingBall(mfem::ParMesh &mesh, const mfem::Array<int> &marker, bool bdr)
+{
+  // Collect set of vertices to check.
+  std::set<int> vertex_indices;
+  mfem::Array<int> v;
+  if (bdr)
+  {
+    for (int i = 0; i < mesh.GetNBE(); ++i)
+    {
+      if (!marker[mesh.GetBdrAttribute(i) - 1])
+      {
+        continue;
+      }
+      mesh.GetBdrElementVertices(i, v);
+      vertex_indices.insert(v.begin(), v.end());
+    }
+  }
+  else
+  {
+    for (int i = 0; i < mesh.GetNE(); i++)
+    {
+      if (!marker[mesh.GetAttribute(i) - 1])
+      {
+        continue;
+      }
+      mesh.GetElementVertices(i, v);
+      vertex_indices.insert(v.begin(), v.end());
+    }
+  }
+
+  // Extract the coordinates for each vertex
+  using Array3 = std::array<double, 3>;
+
+  std::vector<Array3> vertices;
+  for (auto i : vertex_indices)
+  {
+    const auto &vx = mesh.GetVertex(i);
+    vertices.push_back({vx[0], vx[1], vx[2]});
+  }
+
+  return BoundingBallFromPointCloud(mesh.GetComm(), vertices);
+}
+
+BoundingBall GetBoundingBall(mfem::ParMesh &mesh, int attr, bool bdr)
+{
+  mfem::Array<int> marker(bdr ? mesh.bdr_attributes.Max() : mesh.attributes.Max());
+  marker = 0;
+  marker[attr - 1] = 1;
+
+  return GetBoundingBall(mesh, marker, bdr);
+}
+
+void GetCartesianBoundingBox(mfem::ParMesh &mesh, int attr, bool bdr, mfem::Vector &min,
+                             mfem::Vector &max)
+{
+  mfem::Array<int> marker(bdr ? mesh.bdr_attributes.Max() : mesh.attributes.Max());
+  marker = 0;
+  marker[attr - 1] = 1;
+  GetCartesianBoundingBox(mesh, marker, bdr, min, max);
+}
+
+void GetCartesianBoundingBox(mfem::ParMesh &mesh, const mfem::Array<int> &marker, bool bdr,
+                             mfem::Vector &min, mfem::Vector &max)
 {
   int dim = mesh.SpaceDimension();
   min.SetSize(dim);
