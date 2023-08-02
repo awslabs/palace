@@ -4,6 +4,7 @@ examples/**/log*/
 spack/local/packages/palace/__pycache__/
 test/ref/**/*.json
 .*.swp
+*.sif
 .DS_Store
 .gitlab-ci-local
 Manifest.toml

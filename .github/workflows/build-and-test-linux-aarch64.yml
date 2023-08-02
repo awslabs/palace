@@ -44,13 +44,12 @@ jobs:
           run: |
             # Install dependencies
             apt-get update -q
-            apt-get install -y build-essential clang lld gfortran python3 wget git \
-                               cmake pkg-config libmpich-dev
+            apt-get install -y build-essential clang cmake curl gfortran git lld \
+                               libmpich-dev pkg-config python3 wget
 
             # Install Julia
-            wget https://julialang-s3.julialang.org/bin/linux/aarch64/1.8/julia-1.8.4-linux-aarch64.tar.gz
-            mkdir -p /opt/julia && tar -xzf julia-1.8.4-linux-aarch64.tar.gz -C /opt/julia
-            rm -rf *.tar.gz
+            curl -fsSL https://install.julialang.org | sh -s -- -y
+            export PATH=~/.juliaup/bin:$PATH
 
             # Install math libraries (OpenBLAS)
             if [[ "${{ matrix.math-libs }}" == 'openblas' ]]; then
@@ -118,7 +117,7 @@ jobs:
             # if [[ "$NUM_PROC_TEST" -gt "$NUM_PROC_TEST_MAX" ]]; then
             #   NUM_PROC_TEST=$NUM_PROC_TEST_MAX
             # fi
-            # export PATH=/opt/palace/bin:/opt/julia/julia-1.8.4/bin:$PATH
+            # export PATH=/opt/palace/bin:$PATH
 
             # # Run tests
             # julia --project=test -e 'using Pkg; Pkg.instantiate()'
