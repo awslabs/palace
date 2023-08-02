@@ -35,30 +35,6 @@ SymmetricMatrixData<N> ParseSymmetricMatrixData(json &mat, std::string name,
   return data;
 }
 
-void CheckDirection(std::string &str, bool port)
-{
-  std::transform(str.begin(), str.end(), str.begin(), ::tolower);
-  if (port)
-  {
-    MFEM_VERIFY((str.size() == 1 &&
-                 (str[0] == 'x' || str[0] == 'y' || str[0] == 'z' || str[0] == 'r')) ||
-                    (str.size() == 2 && (str[0] == '+' || str[0] == '-') &&
-                     (str[1] == 'x' || str[1] == 'y' || str[1] == 'z' || str[1] == 'r')),
-                "Invalid format for boundary direction or side!");
-  }
-  else
-  {
-    MFEM_VERIFY((str.size() == 1 && (str[0] == 'x' || str[0] == 'y' || str[0] == 'z')) ||
-                    (str.size() == 2 && (str[0] == '+' || str[0] == '-') &&
-                     (str[1] == 'x' || str[1] == 'y' || str[1] == 'z')),
-                "Invalid format for boundary direction or side!");
-  }
-  if (str.length() == 1)
-  {
-    str.insert(0, "+");
-  }
-}
-
 template <typename T>
 std::ostream &operator<<(std::ostream &os, const std::vector<T> &data)
 {
@@ -734,7 +710,7 @@ NLOHMANN_JSON_SERIALIZE_ENUM(CoordinateSystem,
 // value is set to true, will extract the normal vector from either the provided
 // keyword argument or from a specified 3 vector. In extracting the normal
 // various checks are performed for validity of the input combinations.
-auto ParseDataNode(json &j, const std::string& key_word, bool is_port = true)
+auto ParseDataNode(json &j, const std::string &key_word, bool is_port = true)
 {
   DataNode node;
   node.attributes = j.at("Attributes").get<std::vector<int>>();  // Required
@@ -782,44 +758,45 @@ auto ParseDataNode(json &j, const std::string& key_word, bool is_port = true)
     MFEM_VERIFY(direction.length() == 1 || direction[xpos - 1] == '-' ||
                     direction[xpos - 1] == '+',
                 "Missing required sign specification on \"X\"");
-    node.normal[0] =
-        (direction.length() == 1 || direction[xpos - 1] == '+') ? 1 : -1;
-    MFEM_VERIFY(node.coordinate_system == CoordinateSystem::CARTESIAN, "Can only specify \"X\" in Cartesian Coordinates");
+    node.normal[0] = (direction.length() == 1 || direction[xpos - 1] == '+') ? 1 : -1;
+    MFEM_VERIFY(node.coordinate_system == CoordinateSystem::CARTESIAN,
+                "Can only specify \"X\" in Cartesian Coordinates");
   }
   if (yfound)
   {
     MFEM_VERIFY(direction.length() == 1 || direction[ypos - 1] == '-' ||
                     direction[ypos - 1] == '+',
                 "Missing sign specification on \"Y\"");
-    node.normal[1] =
-        direction.length() == 1 || direction[ypos - 1] == '+' ? 1 : -1;
-    MFEM_VERIFY(node.coordinate_system == CoordinateSystem::CARTESIAN, "Can only specify \"Y\" in Cartesian Coordinates");
+    node.normal[1] = direction.length() == 1 || direction[ypos - 1] == '+' ? 1 : -1;
+    MFEM_VERIFY(node.coordinate_system == CoordinateSystem::CARTESIAN,
+                "Can only specify \"Y\" in Cartesian Coordinates");
   }
   if (zfound)
   {
     MFEM_VERIFY(direction.length() == 1 || direction[zpos - 1] == '-' ||
                     direction[zpos - 1] == '+',
                 "Missing sign specification on \"Z\"");
-    node.normal[2] =
-        direction.length() == 1 || direction[zpos - 1] == '+' ? 1 : -1;
-    MFEM_VERIFY(node.coordinate_system == CoordinateSystem::CARTESIAN, "Can only specify \"Z\" in Cartesian Coordinates");
+    node.normal[2] = direction.length() == 1 || direction[zpos - 1] == '+' ? 1 : -1;
+    MFEM_VERIFY(node.coordinate_system == CoordinateSystem::CARTESIAN,
+                "Can only specify \"Z\" in Cartesian Coordinates");
   }
   if (rfound)
   {
-    MFEM_VERIFY(direction.length() == 1 || direction[rpos - 1] == '-' || direction[rpos - 1] == '+',
+    MFEM_VERIFY(direction.length() == 1 || direction[rpos - 1] == '-' ||
+                    direction[rpos - 1] == '+',
                 "Missing sign specification on \"R\"");
     MFEM_VERIFY(!xfound && !yfound && !zfound,
                 "\"R\" cannot be combined with \"X\", \"Y\" or \"Z\"");
     node.coordinate_system = CoordinateSystem::CYLINDRICAL;
-    node.normal[0] =
-        direction.length() == 1 || direction[rpos - 1] == '+' ? 1 : -1;
-    node.normal[1] = 0; node.normal[2] = 0;
+    node.normal[0] = direction.length() == 1 || direction[rpos - 1] == '+' ? 1 : -1;
+    node.normal[1] = 0;
+    node.normal[2] = 0;
   }
 
   if (node.coordinate_system == CoordinateSystem::CYLINDRICAL)
   {
     MFEM_VERIFY(std::abs(node.normal[0]) == 1 && node.normal[1] == 0 && node.normal[2] == 0,
-      "Azimuthal and Longitudinal normal vectors are not supported currently.");
+                "Azimuthal and Longitudinal normal vectors are not supported currently.");
   }
 
   double mag = node.NormalMagnitude();
@@ -900,7 +877,8 @@ void LumpedPortBoundaryData::SetUp(json &boundaries)
                     "Missing \"Attributes\" list for \"LumpedPort\" or \"Terminal\" "
                     "boundary element in configuration file!");
 
-        data.nodes.emplace_back(ParseDataNode(elem, "Direction", terminal == boundaries.end()));
+        data.nodes.emplace_back(
+            ParseDataNode(elem, "Direction", terminal == boundaries.end()));
 
         // Cleanup
         elem.erase("Attributes");
@@ -1111,7 +1089,8 @@ void InductancePostData::SetUp(json &postpro)
     MFEM_VERIFY(i.find("Attributes") != i.end() && i.find("Direction") != i.end(),
                 "Missing \"Attributes\" list or \"Direction\" for \"Inductance\" boundary "
                 "in configuration file!");
-    auto ret = mapdata.insert(std::make_pair(i.at("Index"), ParseDataNode(i, "Direction", false)));
+    auto ret =
+        mapdata.insert(std::make_pair(i.at("Index"), ParseDataNode(i, "Direction", false)));
     MFEM_VERIFY(ret.second, "Repeated \"Index\" found when processing \"Inductance\" "
                             "boundaries in configuration file!");
 
@@ -1169,9 +1148,9 @@ void InterfaceDielectricPostData::SetUp(json &postpro)
       data.nodes.clear();
       data.nodes.emplace_back(ParseDataNode(d, "Side", false));
 
-      MFEM_VERIFY(data.nodes.back().coordinate_system == CoordinateSystem::CARTESIAN,
-        "Only Cartesian coordinate system currently supported for InterfaceDielectrics");
-
+      MFEM_VERIFY(
+          data.nodes.back().coordinate_system == CoordinateSystem::CARTESIAN,
+          "Only Cartesian coordinate system currently supported for InterfaceDielectrics");
     }
     else
     {
@@ -1188,14 +1167,15 @@ void InterfaceDielectricPostData::SetUp(json &postpro)
         data.nodes.emplace_back(ParseDataNode(d, "Side", false));
 
         MFEM_VERIFY(data.nodes.back().coordinate_system == CoordinateSystem::CARTESIAN,
-          "Only Cartesian coordinate system currently supported for InterfaceDielectrics");
+                    "Only Cartesian coordinate system currently supported for "
+                    "InterfaceDielectrics");
 
         // Cleanup
         e.erase("Attributes");
         e.erase("Side");
         MFEM_VERIFY(e.empty(), "Found an unsupported configuration file keyword "
-                                      "under \"Dielectric\" boundary element!\n"
-                                          << e.dump(2));
+                               "under \"Dielectric\" boundary element!\n"
+                                   << e.dump(2));
       }
     }
 

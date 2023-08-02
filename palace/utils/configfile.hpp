@@ -346,7 +346,11 @@ public:
   void SetUp(json &boundaries);
 };
 
-enum class CoordinateSystem { CARTESIAN, CYLINDRICAL };
+enum class CoordinateSystem
+{
+  CARTESIAN,
+  CYLINDRICAL
+};
 
 // A DataNode consists of a list of attributes making up a single
 // element of a potentially multielement node, and a direction and/or a normal

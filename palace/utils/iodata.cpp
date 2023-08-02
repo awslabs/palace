@@ -419,17 +419,9 @@ void IoData::NondimensionalizeInputs(mfem::ParMesh &mesh)
   {
     mfem::Vector bbmin, bbmax;
     mesh.GetBoundingBox(bbmin, bbmax);
-    bbmin *= model.L0;  // [m]
-    bbmax *= model.L0;
-    Lc = -mfem::infinity();
-    for (int d = 0; d < mesh.SpaceDimension(); d++)
-    {
-      double l = bbmax(d) - bbmin(d);
-      if (Lc < l)
-      {
-        Lc = l;  // [m]
-      }
-    }
+    bbmax -= bbmin;
+    bbmax *= model.L0;  // [m]
+    Lc = *std::max_element(bbmax.begin(), bbmax.end());
   }
   tc = 1.0e9 * Lc / electromagnetics::c0_;  // [ns]
 
