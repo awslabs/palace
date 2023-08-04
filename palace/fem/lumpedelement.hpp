@@ -10,6 +10,7 @@
 #include "fem/integrator.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
+#include "utils/communication.hpp"
 
 namespace palace
 {
@@ -82,30 +83,40 @@ public:
                     << bounding_box.Area() << " and integrated area " << A
                     << " do not match: Port geometry is not rectangular");
 
-    // Pick normal most aligned with direction -> should be forgiving to errors
-    // in specification of direction.
+    // Check the user specified direction aligns with an axis direction
     auto Dot = [](const auto &x_1, const auto &x_2)
-    { return x_1[0] * x_2[0] + x_1[1] * x_2[1] + x_1[2] * x_2[2]; };
-
-    const auto &normal = std::abs(Dot(input_dir, bounding_box.normals[0])) >
-                                 std::abs(Dot(input_dir, bounding_box.normals[1]))
-                             ? bounding_box.normals[0]
-                             : bounding_box.normals[1];
-    std::copy(normal.begin(), normal.end(), direction.begin());
-
-    if ((direction[0] * input_dir[0] + direction[1] * input_dir[1] +
-         direction[2] * input_dir[2]) < 0)
     {
-      // Ensure the correct orientation of the direction was chosen.
-      direction *= -1.0;
+      return x_1[0] * x_2[0] + x_1[1] * x_2[1] + x_1[2] * x_2[2];
+    };
+    auto AbsAngle = [Dot](const auto &x_1, const auto &x_2)
+    {
+      return std::acos(std::abs(Dot(x_1, x_2)) / std::sqrt(Dot(x_1, x_1) * Dot(x_2, x_2)));
+    };
+
+    double deviation_0_deg = AbsAngle(input_dir, bounding_box.normals[0]) * (180 / M_PI);
+    double deviation_1_deg = AbsAngle(input_dir, bounding_box.normals[1]) * (180 / M_PI);
+
+    constexpr double angle_warning_deg = 0.1;
+    constexpr double angle_error_deg = 1;
+    if (deviation_0_deg > angle_warning_deg && deviation_1_deg > angle_warning_deg)
+    {
+      auto normalized_0 = bounding_box.normals[0];
+      for (auto &x : normalized_0) { x /= std::sqrt(Dot(bounding_box.normals[0], bounding_box.normals[0])); }
+      auto normalized_1 = bounding_box.normals[1];
+      for (auto &x : normalized_1) { x /= std::sqrt(Dot(bounding_box.normals[1], bounding_box.normals[1])); }
+      Mpi::Warning("User specified direction {} does not align with either bounding box axis up to {} degrees.\n"
+      "Axis 1: {} ({} degrees)\nAxis 2: {} ({} degrees)",
+        input_dir, angle_warning_deg, normalized_0, deviation_0_deg, normalized_1, deviation_1_deg);
     }
 
-    // Get the lumped element length and width.
-    l = std::sqrt(Dot(direction, direction)) * 2;
-    w = A / l;
+    MFEM_VERIFY(deviation_0_deg <= angle_error_deg || deviation_1_deg <= angle_error_deg,
+      "Specified direction does not align sufficiently with bounding box axes");
 
-    // Normalize the direction vector
-    direction /= direction.Norml2();
+    // Compute the length from the most aligned normal direction.
+    l = 2 * std::sqrt(deviation_0_deg < deviation_1_deg
+                        ? Dot(bounding_box.normals[0], bounding_box.normals[0])
+                        : Dot(bounding_box.normals[1], bounding_box.normals[1]));
+    w = bounding_box.Area() / l;
   }
 
   double GetGeometryLength() const override { return l; }
@@ -156,7 +167,7 @@ public:
     double scoef = (sign ? 1.0 : -1.0) * coef;
     mfem::Vector x0(3);
     std::copy(bounding_ball.center.begin(), bounding_ball.center.end(), x0.begin());
-    auto Source = [scoef, x0](const mfem::Vector &x, mfem::Vector &f)
+    auto Source = [scoef, x0](const mfem::Vector &x, mfem::Vector &f) -> void
     {
       f = x;
       f -= x0;

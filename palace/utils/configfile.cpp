@@ -801,17 +801,15 @@ auto ParseDataNode(json &j, const std::string &key_word, bool is_port = true)
 
   double mag = node.NormalMagnitude();
 
-  double constexpr tol = 1e-6;
+  double constexpr tol = 1e-5;
   if (mag > 0 && std::abs(mag - 1) > tol)
   {
-    std::cout << "Renormalized port direction to: ";
     for (auto &x : node.normal)
     {
       x /= mag;
-      std::cout << x << ' ';
     }
-    std::cout << '\n';
   }
+
 
   return node;
 }
