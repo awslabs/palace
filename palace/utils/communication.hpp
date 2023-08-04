@@ -224,15 +224,6 @@ public:
     MPI_Allreduce(MPI_IN_PLACE, buff, len, mpi::DataType<T>(), op, comm);
   }
 
-  // Scalar wrapper for MPI_AllReduce with value semantics
-  template <typename T>
-  static T GlobalOp(const T &val, MPI_Op op, MPI_Comm comm)
-  {
-    T gval;
-    MPI_Allreduce(&gval, &val, 1, mpi::DataType<T>(), op, comm);
-    return gval;
-  }
-
   // Global minimum (in-place, result is broadcast to all processes).
   template <typename T>
   static void GlobalMin(int len, T *buff, MPI_Comm comm)
@@ -240,25 +231,11 @@ public:
     GlobalOp(len, buff, MPI_MIN, comm);
   }
 
-  // Scalar global minimum with value semantics
-  template <typename T>
-  static T GlobalMin(const T &val, MPI_Comm comm)
-  {
-    return GlobalOp(val, MPI_MIN, comm);
-  }
-
   // Global maximum (in-place, result is broadcast to all processes).
   template <typename T>
   static void GlobalMax(int len, T *buff, MPI_Comm comm)
   {
     GlobalOp(len, buff, MPI_MAX, comm);
-  }
-
-  // Scalar global maximum with value semantics
-  template <typename T>
-  static T GlobalMax(const T &val, MPI_Comm comm)
-  {
-    return GlobalOp(val, MPI_MAX, comm);
   }
 
   // Global sum (in-place, result is broadcast to all processes).

@@ -69,6 +69,7 @@ SurfacePostOperator::InterfaceDielectricData::InterfaceDielectricData(
     else
     {
       // This is OK if surface is single sided, just push back an empty Vector.
+      side = 0.0;
     }
 
     // Store markers for this element of the postprocessing boundary.
