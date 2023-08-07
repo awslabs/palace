@@ -360,15 +360,10 @@ enum class CoordinateSystem
 // Exactly one of either the direction or the normal direction must be defined.
 struct DataNode
 {
-  // Optional string defining source excitation field direction. Options are "X", "Y", "Z",
-  // or "R", preceeded with a "+" or "-" for the direction. The first three options are for
-  // uniform lumped ports and the last is for a coaxial lumped port (radial excitation).
-  // std::string direction = "";
-
   // Vector defining the normal direction for this port. In a Cartesian system
   // with  "X", "Y", and "Z" mapping to (1,0,0), (0,1,0), and (0,0,1)
   // respectively. Any user specified value is normalized to a tolerance of
-  // 1e-6, and if normalization is needed, printed to the terminal.
+  // 1e-5, and if normalization is needed, printed to the terminal.
   std::array<double, 3> normal{{0.0, 0.0, 0.0}};
 
   // Coordinate system that the normal vector is expressed in
@@ -462,12 +457,6 @@ struct CapacitancePostData : public internal::DataMap<CapacitanceData>
 public:
   void SetUp(json &postpro);
 };
-
-// using InductanceData = DataNode;
-// struct InductanceData : public DataNode
-// {
-//   using DataNode::DataNode;
-// };
 
 struct InductancePostData : public internal::DataMap<DataNode>
 {

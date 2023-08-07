@@ -8,6 +8,7 @@
 #include <map>
 #include <sstream>
 #include <string>
+#include <Eigen/Dense>
 #include "utils/communication.hpp"
 #include "utils/filesystem.hpp"
 #include "utils/iodata.hpp"
@@ -61,7 +62,7 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(MPI_Comm comm, const IoData &iodata, boo
                                         Timer &timer)
 {
   // On root, read the serial mesh (converting format if necessary), and do all necessary
-  // serial preprocessing. When finished, distribute the mesh to all processes. Count disk
+  // serial preprocessing. When eval, distribute the mesh to all processes. Count disk
   // I/O time separately for the mesh read from file.
   std::unique_ptr<mfem::Mesh> smesh;
   auto t0 = timer.Now();
@@ -392,12 +393,10 @@ void AttrToMarker(int max_attr, const std::vector<int> &attrs, mfem::Array<int> 
 namespace
 {
 
-// Compute the cross product between two 3-vectors expressed as arrays.
-std::array<double, 3> Cross(const std::array<double, 3> &n_1,
-                            const std::array<double, 3> &n_2)
+// Compute a lexicographic comparison of Eigen Vector3d
+bool EigenLE(const Eigen::Vector3d &x, const Eigen::Vector3d &y)
 {
-  return {n_1[1] * n_2[2] - n_1[2] * n_2[1], -n_1[0] * n_2[2] + n_1[2] * n_2[0],
-          n_1[0] * n_2[1] - n_1[1] * n_2[0]};
+  return std::lexicographical_compare(x.begin(), x.end(), y.begin(), y.end());
 };
 
 // Helper for converting a container with begin(), end() to a string for printing.
@@ -429,26 +428,17 @@ std::string String(const std::vector<std::array<T, N>> &v)
 
 double BoundingBox::Area() const
 {
-  auto cross = Cross(normals[0], normals[1]);
-  return 4 * std::sqrt(cross[0] * cross[0] + cross[1] * cross[1] + cross[2] * cross[2]);
+  return 4 * normals[0].cross(normals[1]).norm();
 }
 
 double BoundingBox::Volume() const
 {
   // Compute area in plane, then extrude above and below to get volume.
-  return planar
-             ? 0
-             : 2 *
-                   std::sqrt(normals[2][0] * normals[2][0] + normals[2][1] * normals[2][1] +
-                             normals[2][2] * normals[2][2]) *
-                   Area();
+  return planar ? 0 : 2 * normals[2].norm() * Area();
 }
 
-BoundingBox BoundingBoxFromPointCloud(MPI_Comm comm,
-                                      std::vector<std::array<double, 3>> vertices)
+BoundingBox BoundingBoxFromPointCloud(MPI_Comm comm, std::vector<Eigen::Vector3d> vertices)
 {
-  using Array3 = std::array<double, 3>;
-
   const auto num_vertices = int(vertices.size());
   const int dominant_rank = Mpi::FindMax<int>(num_vertices, comm).rank;
 
@@ -457,7 +447,7 @@ BoundingBox BoundingBoxFromPointCloud(MPI_Comm comm,
   MPI_Gather(&num_vertices, 1, MPI_INT, recv_counts.data(), 1, MPI_INT, dominant_rank,
              comm);
 
-  std::vector<std::array<double, 3>> collected_vertices;
+  std::vector<Eigen::Vector3d> collected_vertices;
   if (Mpi::Rank(comm) == dominant_rank)
   {
     // First displacement is zero, then after is the partial sum of recv_counts.
@@ -489,7 +479,7 @@ BoundingBox BoundingBoxFromPointCloud(MPI_Comm comm,
              std::abs(x[2] - y[2]) < tolerance;
     };
 
-    std::sort(vertices.begin(), vertices.end());
+    std::sort(vertices.begin(), vertices.end(), EigenLE);
     vertices.erase(std::unique(vertices.begin(), vertices.end(), vertex_equality),
                    vertices.end());
 
@@ -498,95 +488,53 @@ BoundingBox BoundingBoxFromPointCloud(MPI_Comm comm,
 
     // Define a diagonal of the ASSUMED cuboid bounding box. Store references as
     // this is useful for checking pointers later.
-    const auto &v_000 = *std::min_element(vertices.begin(), vertices.end());
-    const auto &v_111 = *std::max_element(vertices.begin(), vertices.end());
+    const auto &v_000 = *std::min_element(vertices.begin(), vertices.end(), EigenLE);
+    const auto &v_111 = *std::max_element(vertices.begin(), vertices.end(), EigenLE);
 
     MFEM_VERIFY(&v_000 != &v_111, "Minimum and Maximum extents cannot be identical");
 
     const auto origin = v_000;  // Save a copy to make undoing the transform later easier.
 
-    // Return y <- a * x + y
-    auto Inplace = [](Array3 &y, const Array3 &x, double a = 1.0)
-    {
-      y[0] += a * x[0];
-      y[1] += a * x[1];
-      y[2] += a * x[2];
-    };
-
-    // Dot product
-    auto Dot = [](const Array3 &x_1, const Array3 &x_2)
-    { return x_1[0] * x_2[0] + x_1[1] * x_2[1] + x_1[2] * x_2[2]; };
-
-    // Scale to unit magnitude
-    auto Normalize = [Dot](Array3 &v)
-    {
-      auto mag = std::sqrt(Dot(v, v));
-      MFEM_ASSERT(mag >= 0, "!");
-      v[0] /= mag;
-      v[1] /= mag;
-      v[2] /= mag;
-    };
-
-    // Given a pair of vertices, define a normalized vector from x_1 to x_2
-    auto Normal = [Inplace, Normalize](const Array3 &x_1, Array3 x_2)
-    {
-      Inplace(x_2, x_1, -1);
-      Normalize(x_2);
-      return x_2;
-    };
-
-    // v_1 -= (v_1 . v_2) v_2. ASSUMES v_2 normalized
-    auto Orthogonalize = [Inplace, Dot](Array3 &v_1, const Array3 &v_2)
-    { Inplace(v_1, v_2, -Dot(v_1, v_2)); };
-
     // Orient all vertex positions relative to origin. Makes projection and
     // orientation logic simpler.
-    for (auto &v : vertices)
-    {
-      Inplace(v, origin, -1.0);
-    }
 
-    const auto n_1 = Normal(v_000, v_111);
+    const Eigen::Vector3d n_1 = (v_111 - v_000).normalized();
 
     // Compute the distance from the normal axis. Note: everything has been
     // oriented relative to v_000 == (0,0,0).
-    auto PerpendicularDistance = [&n_1, Dot, Inplace](Array3 v)
-    {
-      Inplace(v, n_1, -Dot(v, n_1));
-      return std::sqrt(Dot(v, v));
-    };
+    auto PerpendicularDistance = [&n_1, &origin](const Eigen::Vector3d &v)
+    { return ((v - origin) - (v - origin).dot(n_1) * n_1).norm(); };
 
     // Find the vertex furthest from the diagonal axis. We cannot know yet if
     // this defines (001) or (011).
     const auto &t_0 =
         *std::max_element(vertices.begin(), vertices.end(),
-                          [PerpendicularDistance](const Array3 &x, const Array3 &y)
+                          [PerpendicularDistance](const auto &x, const auto &y)
                           { return PerpendicularDistance(x) < PerpendicularDistance(y); });
 
     MFEM_VERIFY(&t_0 != &v_000, "Vertices are degenerate!");
     MFEM_VERIFY(&t_0 != &v_111, "Vertices are degenerate!");
 
     // Use the discovered vertex define a second normal direction, and thus a plane.
-    auto n_2 = t_0;
-    Orthogonalize(n_2, n_1);
-    Normalize(n_2);
+    const Eigen::Vector3d n_2 =
+        ((t_0 - origin) - (t_0 - origin).dot(n_1) * n_1).normalized();
 
     // n_1 and n_2 now define a planar coordinate system intersecting the main
-    // diagonal, and two opposite edges of the cuboid.
+    // diagonal, and two opposite edges of the cuboid. Now look for a component
+    // that maximizes distance from the planar system: complete the axes with a
+    // cross, then use a dot product to pick the greatest deviation.
+    const Eigen::Vector3d n_3 = n_1.cross(n_2).normalized();
 
-    // Now look for a component that maximizes distance from the planar system:
-    // complete the axes with a cross, then use a dot product to pick the
-    // greatest deviation.
-    const auto n_3 = Cross(n_1, n_2);
-
-    auto OutOfPlaneComp = [&n_1, &n_2, &n_3, Dot](const Array3 &v_1, const Array3 &v_2)
+    auto OutOfPlaneComp = [&n_1, &n_2, &n_3, &origin](const auto &v_1, const auto &v_2)
     {
       // Precedence of directions is in reverse order of discovery of the
       // directions. The most important deciding feature is the distance in the
       // out of plane direction, then in the first off-diagonal, then finally in
       // the diagonal direction.
-      const Array3 dist_1{{Dot(v_1, n_3), Dot(v_1, n_2), Dot(v_1, n_1)}};
-      const Array3 dist_2{{Dot(v_2, n_3), Dot(v_2, n_2), Dot(v_2, n_1)}};
+      const std::array<double, 3> dist_1{(v_1 - origin).dot(n_3), (v_1 - origin).dot(n_2),
+                                         (v_1 - origin).dot(n_1)};
+      const std::array<double, 3> dist_2{(v_2 - origin).dot(n_3), (v_2 - origin).dot(n_2),
+                                         (v_2 - origin).dot(n_1)};
       return dist_1 < dist_2;
     };
     const auto &t_1 = *std::max_element(vertices.begin(), vertices.end(), OutOfPlaneComp);
@@ -594,8 +542,8 @@ BoundingBox BoundingBoxFromPointCloud(MPI_Comm comm,
     // There is a degeneration if the final point is within the plane defined by
     // (v_000, v_001, v_111).
     constexpr double planar_tolerance = 1e-9;
-    box.planar = std::abs(Dot(n_3, t_0)) < planar_tolerance &&
-                 std::abs(Dot(n_3, t_1)) < planar_tolerance;
+    box.planar = std::abs(n_3.dot(t_0)) < planar_tolerance &&
+                 std::abs(n_3.dot(t_1)) < planar_tolerance;
 
     if (!box.planar)
     {
@@ -611,32 +559,26 @@ BoundingBox BoundingBoxFromPointCloud(MPI_Comm comm,
     // If t_1 points to v_000, t_0 or v_111, then the data is coplanar.
     // Establish if t_0 is a diagonal or not (using Pythagoras).
     // Only pick t_1 for v_001 if the points are non planar, and t_0 is longer.
-    bool t_0_gt_t_1 = Dot(t_0, t_0) >= Dot(t_1, t_1);
+    bool t_0_gt_t_1 = t_0.norm() >= t_1.norm();
     const auto &v_001 = !box.planar && t_0_gt_t_1 ? t_1 : t_0;
     const auto &v_011 = !box.planar && t_0_gt_t_1 ? t_0 : t_1;
 
     // In the v_000 coordinate system, can easily compute the center as halfway
     // along the main diagonal.
-    box.center = {origin[0] + v_111[0] / 2, origin[1] + v_111[1] / 2,
-                  origin[2] + v_111[2] / 2};
+    box.center = (v_000 + v_111) / 2;
 
     // The length in each direction is then given by traversing the edges of the
     // cuboid in turn
-    box.normals[0] = Array3{(v_001[0] - v_000[0]) / 2, (v_001[1] - v_000[1]) / 2,
-                            (v_001[2] - v_000[2]) / 2};
-    box.normals[1] = box.planar
-                         ? Array3{(v_111[0] - v_001[0]) / 2, (v_111[1] - v_001[1]) / 2,
-                                  (v_111[2] - v_001[2]) / 2}
-                         : Array3{(v_011[0] - v_001[0]) / 2, (v_011[1] - v_001[1]) / 2,
-                                  (v_011[2] - v_001[2]) / 2};
-    box.normals[2] = box.planar
-                         ? Array3{0, 0, 0}
-                         : Array3{(v_111[0] - v_011[0]) / 2, (v_111[1] - v_011[1]) / 2,
-                                  (v_111[2] - v_011[2]) / 2};
+    box.normals[0] = (v_001 - v_000) / 2;
+    box.normals[1] =
+        box.planar ? ((v_111 - v_001) / 2).eval() : ((v_011 - v_001) / 2).eval();
+    box.normals[1] =
+        box.planar ? ((v_111 - v_001) / 2).eval() : ((v_011 - v_001) / 2).eval();
+    box.normals[2] = box.planar ? Eigen::Vector3d(0, 0, 0) : ((v_111 - v_011) / 2.0).eval();
 
     // Make sure the longest dimension comes first
     std::sort(box.normals.begin(), box.normals.end(),
-              [Dot](const Array3 &x, const Array3 &y) { return Dot(x, x) > Dot(y, y); });
+              [](const auto &x, const auto &y) { return x.norm() > y.norm(); });
   }
 
   Mpi::Broadcast(3, box.center.data(), dominant_rank, comm);
@@ -651,8 +593,7 @@ BoundingBox GetBoundingBox(mfem::ParMesh &mesh, const mfem::Array<int> &marker, 
   // Collect set of vertices to check
   std::set<int> vertex_indices;
 
-  using Array3 = std::array<double, 3>;
-  std::vector<Array3> vertices;
+  std::vector<Eigen::Vector3d> vertices;
 
   if (mesh.GetNodes() == nullptr)
   {
@@ -749,10 +690,8 @@ BoundingBox GetBoundingBox(mfem::ParMesh &mesh, int attr, bool bdr)
 }
 
 BoundingBall BoundingBallFromPointCloud(MPI_Comm comm,
-                                        std::vector<std::array<double, 3>> vertices)
+                                        std::vector<Eigen::Vector3d> vertices)
 {
-  using Array3 = std::array<double, 3>;
-
   auto num_vertices = int(vertices.size());
   const int dominant_rank = Mpi::FindMax<int>(num_vertices, comm).rank;
 
@@ -763,7 +702,7 @@ BoundingBall BoundingBallFromPointCloud(MPI_Comm comm,
   MPI_Gather(&num_vertices, 1, MPI_INT, recv_counts.data(), 1, MPI_INT, dominant_rank,
              comm);
 
-  std::vector<Array3> collected_vertices;
+  std::vector<Eigen::Vector3d> collected_vertices;
   if (is_root)
   {
     // First displacement is zero, then after is the partial sum of recv_counts.
@@ -789,14 +728,12 @@ BoundingBall BoundingBallFromPointCloud(MPI_Comm comm,
     // Use lexicographic sort to get min and max vertices. These will be
     // separated by the largest L1 distance.
 
-    const auto &min = *std::min_element(vertices.begin(), vertices.end());
-    const auto &max = *std::max_element(vertices.begin(), vertices.end());
+    const auto &min = *std::min_element(vertices.begin(), vertices.end(), EigenLE);
+    const auto &max = *std::max_element(vertices.begin(), vertices.end(), EigenLE);
 
-    Array3 delta{{max[0] - min[0], max[1] - min[1], max[2] - min[2]}};
-
-    ball.radius =
-        std::sqrt(delta[0] * delta[0] + delta[1] * delta[1] + delta[2] * delta[2]) / 2;
-    ball.center = {min[0] + delta[0] / 2, min[1] + delta[1] / 2, min[2] + delta[2] / 2};
+    Eigen::Vector3d delta = max - min;
+    ball.radius = delta.norm() / 2;
+    ball.center = (min + max) / 2;
 
     // Project onto this candidate diameter, and pick a vertex furthest away.
     // Check that this resulting distance is less than or equal to the radius,
@@ -804,27 +741,19 @@ BoundingBall BoundingBallFromPointCloud(MPI_Comm comm,
 
     // Assumes all delta are normalized, and applies a common origin as part of the
     // projection.
-    auto PerpendicularDistance = [min](const std::initializer_list<Array3> &deltas, auto v)
+    auto PerpendicularDistance = [min](const std::initializer_list<Eigen::Vector3d> &deltas,
+                                       const Eigen::Vector3d &vin)
     {
-      v[0] -= min[0];
-      v[1] -= min[1];
-      v[2] -= min[2];
+      Eigen::Vector3d v = vin - min;
       for (const auto &d : deltas)
       {
-        double dot = d[0] * v[0] + d[1] * v[1] + d[2] * v[2];
-        for (auto i : {0, 1, 2})
-        {
-          v[i] -= dot * d[i];
-        }
+        v -= d.dot(v) * d;
       }
-      return std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+      return v.norm();
     };
 
     // Normalize the diagonal.
-    delta[0] /= (ball.radius * 2);
-    delta[1] /= (ball.radius * 2);
-    delta[2] /= (ball.radius * 2);
-
+    delta.normalize();
     const auto &perp = *std::max_element(
         vertices.begin(), vertices.end(),
         [&delta, PerpendicularDistance](const auto &x, const auto &y)
@@ -837,25 +766,13 @@ BoundingBall BoundingBallFromPointCloud(MPI_Comm comm,
                 "A point perpendicular must be contained in the ball: "
                     << PerpendicularDistance({delta}, perp) << " vs " << ball.radius);
 
-    auto n_radial = perp;
-    n_radial[0] -= ball.center[0];
-    n_radial[1] -= ball.center[1];
-    n_radial[2] -= ball.center[2];
+    const Eigen::Vector3d n_radial = (perp - ball.center).normalized();
 
-    auto radius_2 = std::sqrt(n_radial[0] * n_radial[0] + n_radial[1] * n_radial[1] +
-                              n_radial[2] * n_radial[2]);
-    n_radial[0] /= radius_2;
-    n_radial[1] /= radius_2;
-    n_radial[2] /= radius_2;
-
-    // Compute a perpendicular to the circle using the cross product
-    ball.planar_normal[0] = delta[1] * n_radial[2] - delta[2] * n_radial[1];
-    ball.planar_normal[1] = delta[2] * n_radial[0] - delta[0] * n_radial[2];
-    ball.planar_normal[2] = delta[0] * n_radial[1] - delta[1] * n_radial[0];
+    // Compute a perpendicular to the circle using the cross product.
+    ball.planar_normal = delta.cross(n_radial).normalized();
 
     // Compute the point furthest out of the plane discovered. If below
     // tolerance, this means the circle is 2D.
-
     const auto &out_of_plane = *std::max_element(
         vertices.begin(), vertices.end(),
         [&delta, &n_radial, PerpendicularDistance](const auto &x, const auto &y)
@@ -865,15 +782,10 @@ BoundingBall BoundingBallFromPointCloud(MPI_Comm comm,
         });
 
     constexpr double planar_tolerance = 1e-9;
-    if (PerpendicularDistance({delta, n_radial}, out_of_plane) < planar_tolerance)
+    if (PerpendicularDistance({delta, n_radial}, out_of_plane) > planar_tolerance)
     {
-      // The points are functionally coplanar, zero out the normal
-      ball.planar_normal[0] *= 0;
-      ball.planar_normal[1] *= 0;
-      ball.planar_normal[2] *= 0;
-    }
-    else
-    {
+      // The points are not functionally coplanar, zero out the normal
+      ball.planar_normal *= 0;
       MFEM_VERIFY(PerpendicularDistance({delta, n_radial}, out_of_plane) <= ball.radius,
                   "A point perpendicular must be contained in the ball");
     }
@@ -917,9 +829,7 @@ BoundingBall GetBoundingBall(mfem::ParMesh &mesh, const mfem::Array<int> &marker
   }
 
   // Extract the coordinates for each vertex
-  using Array3 = std::array<double, 3>;
-
-  std::vector<Array3> vertices;
+  std::vector<Eigen::Vector3d> vertices;
   for (auto i : vertex_indices)
   {
     const auto &vx = mesh.GetVertex(i);
@@ -938,17 +848,17 @@ BoundingBall GetBoundingBall(mfem::ParMesh &mesh, int attr, bool bdr)
   return GetBoundingBall(mesh, marker, bdr);
 }
 
-void GetCartesianBoundingBox(mfem::ParMesh &mesh, int attr, bool bdr, mfem::Vector &min,
-                             mfem::Vector &max)
+void GetAxisAlignedBoundingBox(mfem::ParMesh &mesh, int attr, bool bdr, mfem::Vector &min,
+                               mfem::Vector &max)
 {
   mfem::Array<int> marker(bdr ? mesh.bdr_attributes.Max() : mesh.attributes.Max());
   marker = 0;
   marker[attr - 1] = 1;
-  GetCartesianBoundingBox(mesh, marker, bdr, min, max);
+  GetAxisAlignedBoundingBox(mesh, marker, bdr, min, max);
 }
 
-void GetCartesianBoundingBox(mfem::ParMesh &mesh, const mfem::Array<int> &marker, bool bdr,
-                             mfem::Vector &min, mfem::Vector &max)
+void GetAxisAlignedBoundingBox(mfem::ParMesh &mesh, const mfem::Array<int> &marker,
+                               bool bdr, mfem::Vector &min, mfem::Vector &max)
 {
   int dim = mesh.SpaceDimension();
   min.SetSize(dim);

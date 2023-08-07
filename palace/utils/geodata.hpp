@@ -7,6 +7,7 @@
 #include <array>
 #include <memory>
 #include <vector>
+#include <Eigen/Dense>
 #include <mpi.h>
 
 namespace mfem
@@ -52,19 +53,19 @@ void AttrToMarker(int max_attr, const mfem::Array<int> &attrs, mfem::Array<int> 
 void AttrToMarker(int max_attr, const std::vector<int> &attrs, mfem::Array<int> &marker);
 
 // Helper function to construct the bounding box for all elements with the given attribute.
-void GetCartesianBoundingBox(mfem::ParMesh &mesh, int attr, bool bdr, mfem::Vector &min,
-                             mfem::Vector &max);
-void GetCartesianBoundingBox(mfem::ParMesh &mesh, const mfem::Array<int> &marker, bool bdr,
-                             mfem::Vector &min, mfem::Vector &max);
+void GetAxisAlignedBoundingBox(mfem::ParMesh &mesh, int attr, bool bdr, mfem::Vector &min,
+                               mfem::Vector &max);
+void GetAxisAlignedBoundingBox(mfem::ParMesh &mesh, const mfem::Array<int> &marker,
+                               bool bdr, mfem::Vector &min, mfem::Vector &max);
 
 // Struct describing a bounding box in terms of the center and face normals. The
-// normals specify the distance from the center of the box.
+// normals specify the direction from the center of the box.
 struct BoundingBox
 {
   // The central point of the bounding box.
-  std::array<double, 3> center;
+  Eigen::Vector3d center;
   // Vectors from center to the midpoint of each face.
-  std::array<std::array<double, 3>, 3> normals;
+  std::array<Eigen::Vector3d, 3> normals;
   // Whether or not this bounding box is two dimensional.
   bool planar;
   // Compute the area of the bounding box spanned by the first two normals.
@@ -75,27 +76,28 @@ struct BoundingBox
 
 // Computes a bounding box for a point cloud, assuming a distributed point cloud
 // of vertices.
-BoundingBox BoundingBoxFromPointCloud(MPI_Comm comm,
-                                      std::vector<std::array<double, 3>> vertices);
+BoundingBox BoundingBoxFromPointCloud(MPI_Comm comm, std::vector<Eigen::Vector3d> vertices);
 // Helper functions for computing bounding boxes from a mesh and markers.
 BoundingBox GetBoundingBox(mfem::ParMesh &mesh, const mfem::Array<int> &marker, bool bdr);
 BoundingBox GetBoundingBox(mfem::ParMesh &mesh, int attr, bool bdr);
 
+// Struct describing a bounding ball in terms of a center and radius. If a ball
+// is two dimensional, additionally provides a normal to the plane.
 struct BoundingBall
 {
-  // The centroid of the ball
-  std::array<double, 3> center;
-  // The radius of the ball from the center
+  // The centroid of the ball.
+  Eigen::Vector3d center;
+  // The radius of the ball from the center.
   double radius;
   // If the ball is two dimensional, the normal defining the planar surface.
   // Zero magnitude if a sphere.
-  std::array<double, 3> planar_normal;
+  Eigen::Vector3d planar_normal;
 };
 
-// Helper for computing a diameter from a point cloud, assumes that contains a
-// set of points on a circle, and uses lexicographic min and max.
+// Helper for computing a diameter from a point cloud. The cloud is assumed to
+// contain a set of points on a circle.
 BoundingBall BoundingBallFromPointCloud(MPI_Comm comm,
-                                        std::vector<std::array<double, 3>> vertices);
+                                        std::vector<Eigen::Vector3d> vertices);
 // Given a mesh and a marker, compute the diameter of a bounding circle/sphere,
 // assuming that the extrema points are in the marked group.
 BoundingBall GetBoundingBall(mfem::ParMesh &mesh, const mfem::Array<int> &marker, bool bdr);
