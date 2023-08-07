@@ -100,6 +100,7 @@ class Palace(CMakePackage):
         depends_on("arpack-ng~shared", when="~shared")
 
     with when("+libceed") and when("+libxsmm"):
+        depends_on("libxsmm@main")
         depends_on("libxsmm+shared", when="+shared")
         depends_on("libxsmm~shared", when="~shared")
 

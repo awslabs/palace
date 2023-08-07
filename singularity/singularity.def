@@ -28,7 +28,7 @@ From: rockylinux:9
 %post -c /bin/bash
     # CPU architecture for compilation, see https://gcc.gnu.org/onlinedocs/gcc/x86-Options.html
     export MARCH="native"
-    export OPT_FLAGS="-O3 -funroll-loops -march=$MARCH"
+    export OPT_FLAGS="-O3 -ffp-contract=fast -funroll-loops -march=$MARCH"
 
     # Install dependencies
     dnf install -y dnf-plugins-core && dnf config-manager --enable crb
@@ -72,17 +72,22 @@ From: rockylinux:9
     mkdir /opt/palace-build && cd /opt/palace-build
     cmake /opt/palace-src \
         -DCMAKE_INSTALL_PREFIX=/opt/palace \
+        -DCMAKE_CXX_COMPILER=g++ \
         -DCMAKE_CXX_FLAGS="$OPT_FLAGS" \
+        -DCMAKE_C_COMPILER=gcc \
         -DCMAKE_C_FLAGS="$OPT_FLAGS" \
+        -DCMAKE_Fortran_COMPILER=gfortran \
         -DCMAKE_Fortran_FLAGS="$OPT_FLAGS" \
         -DBUILD_SHARED_LIBS:BOOL=TRUE \
         -DPALACE_WITH_64BIT_INT:BOOL=FALSE \
         -DPALACE_WITH_OPENMP:BOOL=TRUE \
+        -DPALACE_WITH_LIBCEED:BOOL=TRUE \
         -DPALACE_WITH_GSLIB:BOOL=TRUE \
         -DPALACE_WITH_SUPERLU:BOOL=TRUE \
         -DPALACE_WITH_STRUMPACK:BOOL=TRUE \
         -DPALACE_WITH_MUMPS:BOOL=TRUE \
         -DPALACE_WITH_SLEPC:BOOL=TRUE \
-        -DPALACE_WITH_ARPACK:BOOL=TRUE
+        -DPALACE_WITH_ARPACK:BOOL=TRUE \
+        -DPALACE_WITH_LIBXSMM:BOOL=TRUE
     make -j"$(nproc)"
     cd .. && rm -rf palace-build
