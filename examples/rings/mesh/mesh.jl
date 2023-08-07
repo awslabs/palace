@@ -4,7 +4,12 @@
 using Gmsh: gmsh
 using LinearAlgebra
 
-function generate_ring_mesh(gui::Bool=false)
+function generate_ring_mesh(;
+    gui::Bool=false,
+    rc=[0.0, 0.0, 0.0],
+    ra=[0.0, 0.0, 1.0],
+    θ=pi / 2
+)
     kernel = gmsh.model.occ
 
     gmsh.initialize()
@@ -113,9 +118,6 @@ function generate_ring_mesh(gui::Bool=false)
     )
 
     # Apply a rotation transformation to all entities in the model
-    rc = [0.0, 0.0, 0.0]
-    ra = [0.0, 0.0, 1.0]
-    θ = pi / 3
     ra ./= norm(ra)
     kernel.rotate(kernel.getEntities(), rc[1], rc[2], rc[3], ra[1], ra[2], ra[3], θ)
 
@@ -185,7 +187,7 @@ function generate_ring_mesh(gui::Bool=false)
         domain
     )
 
-    gmsh.option.setNumber("Mesh.Algorithm3D", 10)
+    # gmsh.option.setNumber("Mesh.Algorithm3D", 10)
 
     gmsh.model.mesh.generate(3)
     gmsh.model.mesh.setOrder(2)
