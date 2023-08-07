@@ -10,7 +10,6 @@
 #include "fem/integrator.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
-#include "utils/communication.hpp"
 
 namespace palace
 {
@@ -64,13 +63,11 @@ protected:
   mesh::BoundingBox bounding_box;  // Bounding box defining the rectangular lumped port
   double l, w;                     // Lumped element length and width
 public:
-  UniformElementData(const std::array<double, 3> &input_dir, const mfem::Array<int> &marker,
+  UniformElementData(std::array<double, 3> input_dir, const mfem::Array<int> &marker,
                      mfem::ParFiniteElementSpace &fespace)
     : LumpedElementData(fespace.GetParMesh()->SpaceDimension(), marker), direction(3),
       bounding_box(mesh::GetBoundingBox(*fespace.GetParMesh(), marker, true))
   {
-    std::copy(input_dir.begin(), input_dir.end(), direction.begin());
-
     MFEM_VERIFY(bounding_box.planar, "The set of boundary elements must be coplanar");
 
     double A = GetArea(fespace);
@@ -84,39 +81,38 @@ public:
                     << " do not match: Port geometry is not rectangular");
 
     // Check the user specified direction aligns with an axis direction
-    auto Dot = [](const auto &x_1, const auto &x_2)
-    {
-      return x_1[0] * x_2[0] + x_1[1] * x_2[1] + x_1[2] * x_2[2];
-    };
-    auto AbsAngle = [Dot](const auto &x_1, const auto &x_2)
-    {
-      return std::acos(std::abs(Dot(x_1, x_2)) / std::sqrt(Dot(x_1, x_1) * Dot(x_2, x_2)));
-    };
+    Eigen::Map<Eigen::Vector3d> norm_dir(input_dir.data());
+    norm_dir.normalize();
 
-    double deviation_0_deg = AbsAngle(input_dir, bounding_box.normals[0]) * (180 / M_PI);
-    double deviation_1_deg = AbsAngle(input_dir, bounding_box.normals[1]) * (180 / M_PI);
+    auto normalized_0 = bounding_box.normals[0].normalized();
+    auto normalized_1 = bounding_box.normals[1].normalized();
+
+    double deviation_0_deg =
+        std::acos(std::min(1.0, std::abs(norm_dir.dot(normalized_0)))) * (180 / M_PI);
+    double deviation_1_deg =
+        std::acos(std::min(1.0, std::abs(norm_dir.dot(normalized_1)))) * (180 / M_PI);
 
     constexpr double angle_warning_deg = 0.1;
     constexpr double angle_error_deg = 1;
-    if (deviation_0_deg > angle_warning_deg && deviation_1_deg > angle_warning_deg)
+    if ((deviation_0_deg > angle_warning_deg && deviation_1_deg > angle_warning_deg) ||
+        std::isnan(deviation_0_deg) || std::isnan(deviation_0_deg))
     {
-      auto normalized_0 = bounding_box.normals[0];
-      for (auto &x : normalized_0) { x /= std::sqrt(Dot(bounding_box.normals[0], bounding_box.normals[0])); }
-      auto normalized_1 = bounding_box.normals[1];
-      for (auto &x : normalized_1) { x /= std::sqrt(Dot(bounding_box.normals[1], bounding_box.normals[1])); }
-      Mpi::Warning("User specified direction {} does not align with either bounding box axis up to {} degrees.\n"
-      "Axis 1: {} ({} degrees)\nAxis 2: {} ({} degrees)",
-        input_dir, angle_warning_deg, normalized_0, deviation_0_deg, normalized_1, deviation_1_deg);
+      Mpi::Warning("User specified direction {} does not align with either bounding box "
+                   "axis up to {} degrees.\n"
+                   "Axis 1: {} ({} degrees)\nAxis 2: {} ({} degrees)",
+                   input_dir, angle_warning_deg, normalized_0, deviation_0_deg,
+                   normalized_1, deviation_1_deg);
     }
 
     MFEM_VERIFY(deviation_0_deg <= angle_error_deg || deviation_1_deg <= angle_error_deg,
-      "Specified direction does not align sufficiently with bounding box axes");
+                "Specified direction does not align sufficiently with bounding box axes: "
+                    << deviation_0_deg << ' ' << deviation_1_deg << ' ' << angle_error_deg);
 
     // Compute the length from the most aligned normal direction.
-    l = 2 * std::sqrt(deviation_0_deg < deviation_1_deg
-                        ? Dot(bounding_box.normals[0], bounding_box.normals[0])
-                        : Dot(bounding_box.normals[1], bounding_box.normals[1]));
+    l = 2 * bounding_box.normals[deviation_0_deg < deviation_1_deg ? 0 : 1].norm();
     w = bounding_box.Area() / l;
+
+    std::copy(input_dir.begin(), input_dir.end(), direction.begin());
   }
 
   double GetGeometryLength() const override { return l; }

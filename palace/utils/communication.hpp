@@ -133,7 +133,7 @@ struct ValueAndRank
 {
   // The reduced value from the MINLOC or MAXLOC operation.
   T value;
-  // The processor rank that has the value/
+  // The processor rank that has the value.
   int rank;
   // Convenience decay operators to allow use as the underlying value.
   inline operator const T &() const { return value; }

@@ -810,7 +810,6 @@ auto ParseDataNode(json &j, const std::string &key_word, bool is_port = true)
     }
   }
 
-
   return node;
 }
 }  // namespace
