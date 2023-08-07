@@ -1,5 +1,5 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 79fc863..a4f02a7 100644
+index 2672e70..37a0454 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
 @@ -42,17 +42,9 @@ include(cmake/lapack.cmake)
@@ -11,7 +11,7 @@ index 79fc863..a4f02a7 100644
    set(NUMERIC_LIBS ${SCALAPACK_LIBRARIES} ${LAPACK_LIBRARIES})
  
 -  if(find_static AND NOT WIN32 AND
--    MKL IN_LIST LAPACK_COMPONENTS AND
+-    MKL IN_LIST LAPACK_VENDOR AND
 -    CMAKE_VERSION VERSION_GREATER_EQUAL 3.24
 -    )
 -    set(NUMERIC_LIBS $<LINK_GROUP:RESCAN,${NUMERIC_LIBS}>)
@@ -20,8 +20,8 @@ index 79fc863..a4f02a7 100644
    # avoid MPICH -fallow flag leakage
    set(NUMERIC_INC ${SCALAPACK_INCLUDE_DIRS} ${LAPACK_INCLUDE_DIRS} ${MPI_Fortran_INCLUDE_DIRS})
    list(APPEND NUMERIC_LIBS ${MPI_Fortran_LIBRARIES} MPI::MPI_C)
-@@ -79,15 +71,6 @@ if(metis)
- endif()
+@@ -86,15 +78,6 @@ endif()
+ 
  list(APPEND ORDERING_LIBS pord)
  
 -install(FILES
@@ -36,7 +36,7 @@ index 79fc863..a4f02a7 100644
  message(STATUS "MUMPS ORDERING_DEFS: ${ORDERING_DEFS}")
  message(STATUS "MUMPS ORDERING_LIBS: ${ORDERING_LIBS}")
  
-@@ -127,8 +110,6 @@ message(STATUS "Configured MUMPS ${MUMPS_UPSTREAM_VERSION} source in ${mumps_SOU
+@@ -134,8 +117,6 @@ message(STATUS "Configured MUMPS ${MUMPS_UPSTREAM_VERSION} source in ${mumps_SOU
  
  include(cmake/summary.cmake)
  
@@ -47,10 +47,10 @@ index 79fc863..a4f02a7 100644
  endif()
 diff --git a/cmake/FindLAPACK.cmake b/cmake/FindLAPACK.cmake
 deleted file mode 100644
-index 35395c6..0000000
+index 765e14f..0000000
 --- a/cmake/FindLAPACK.cmake
 +++ /dev/null
-@@ -1,591 +0,0 @@
+@@ -1,585 +0,0 @@
 -# Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
 -# file Copyright.txt or https://cmake.org/licensing for details.
 -
@@ -273,28 +273,22 @@ index 35395c6..0000000
 -function(openblas_libs)
 -
 -find_library(LAPACK_LIBRARY
--NAMES lapack
+-NAMES openblas
 -PATH_SUFFIXES openblas
--DOC "LAPACK library"
--)
--
--find_library(BLAS_LIBRARY
--NAMES openblas blas
--NAMES_PER_DIR
--PATH_SUFFIXES openblas
--DOC "BLAS library"
+-DOC "OpenBLAS library"
 -)
 -
 -find_path(LAPACK_INCLUDE_DIR
--NAMES cblas-openblas.h cblas.h f77blas.h openblas_config.h
--DOC "LAPACK include directory"
+-NAMES openblas_config.h cblas-openblas.h
+-DOC "OpenBLAS include directory"
 -)
 -
--if(NOT (LAPACK_LIBRARY AND BLAS_LIBRARY))
+-if(NOT LAPACK_LIBRARY)
 -  return()
 -endif()
 -
--list(APPEND LAPACK_LIBRARY ${BLAS_LIBRARY})
+-set(BLAS_LIBRARY ${LAPACK_LIBRARY} CACHE FILEPATH "OpenBLAS library")
+-
 -set(LAPACK_OpenBLAS_FOUND true PARENT_SCOPE)
 -
 -list(APPEND LAPACK_LIBRARY ${CMAKE_THREAD_LIBS_INIT})
@@ -642,12 +636,56 @@ index 35395c6..0000000
 -endif(LAPACK_FOUND)
 -
 -mark_as_advanced(LAPACK_LIBRARY LAPACK_INCLUDE_DIR)
+diff --git a/cmake/FindMETIS.cmake b/cmake/FindMETIS.cmake
+index 0d866df..cfa63ec 100644
+--- a/cmake/FindMETIS.cmake
++++ b/cmake/FindMETIS.cmake
+@@ -26,7 +26,7 @@ METIS_INCLUDE_DIRS
+ #]=======================================================================]
+ 
+ 
+-if(parallel IN_LIST METIS_FIND_COMPONENTS)
++if("parallel" IN_LIST METIS_FIND_COMPONENTS)
+   find_library(PARMETIS_LIBRARY
+     NAMES parmetis
+     PATH_SUFFIXES METIS libmetis
+@@ -43,7 +43,7 @@ find_library(METIS_LIBRARY
+   DOC "METIS library"
+   )
+ 
+-if(parallel IN_LIST METIS_FIND_COMPONENTS)
++if("parallel" IN_LIST METIS_FIND_COMPONENTS)
+   set(metis_inc parmetis.h)
+ else()
+   set(metis_inc metis.h)
+diff --git a/cmake/FindOctave.cmake b/cmake/FindOctave.cmake
+index 86d136e..7aac781 100644
+--- a/cmake/FindOctave.cmake
++++ b/cmake/FindOctave.cmake
+@@ -92,7 +92,7 @@ if(Octave_CONFIG_EXECUTABLE)
+   )
+ endif()
+ 
+-if(Development IN_LIST Octave_FIND_COMPONENTS)
++if("Development" IN_LIST Octave_FIND_COMPONENTS)
+ 
+   if(Octave_CONFIG_EXECUTABLE)
+     foreach(p OCTINCLUDEDIR OCTLIBDIR LIBDIR)
+@@ -128,7 +128,7 @@ if(Development IN_LIST Octave_FIND_COMPONENTS)
+ 
+ endif()
+ 
+-if(Interpreter IN_LIST Octave_FIND_COMPONENTS)
++if("Interpreter" IN_LIST Octave_FIND_COMPONENTS)
+ 
+   find_program(Octave_EXECUTABLE
+   NAMES octave-cli octave
 diff --git a/cmake/FindSCALAPACK.cmake b/cmake/FindSCALAPACK.cmake
 deleted file mode 100644
-index e93337f..0000000
+index a1cd943..0000000
 --- a/cmake/FindSCALAPACK.cmake
 +++ /dev/null
-@@ -1,315 +0,0 @@
+@@ -1,303 +0,0 @@
 -# Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
 -# file Copyright.txt or https://cmake.org/licensing for details.
 -
@@ -707,18 +745,6 @@ index e93337f..0000000
 -#===== functions
 -
 -function(scalapack_check)
--
--if(NOT (MPI_C_FOUND AND MPI_Fortran_FOUND))
--  find_package(MPI COMPONENTS C Fortran)
--endif()
--
--if(NOT LAPACK_FOUND)
--  # otherwise can cause 32-bit lapack when 64-bit wanted
--  find_package(LAPACK)
--endif()
--if(NOT (MPI_Fortran_FOUND AND LAPACK_FOUND))
--  return()
--endif()
 -
 -# some OpenMPI builds need -pthread
 -find_package(Threads)
@@ -963,44 +989,111 @@ index e93337f..0000000
 -endif()
 -
 -mark_as_advanced(SCALAPACK_LIBRARY SCALAPACK_INCLUDE_DIR)
-diff --git a/cmake/compilers.cmake b/cmake/compilers.cmake
-index c1cc549..b0dd3ab 100644
---- a/cmake/compilers.cmake
-+++ b/cmake/compilers.cmake
-@@ -107,7 +107,3 @@ set(CMAKE_INSTALL_RPATH_USE_LINK_PATH true)
- # Necessary for shared library with Visual Studio / Windows oneAPI
- set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS true)
+diff --git a/cmake/FindScotch.cmake b/cmake/FindScotch.cmake
+index 39e378d..66483a9 100644
+--- a/cmake/FindScotch.cmake
++++ b/cmake/FindScotch.cmake
+@@ -57,13 +57,13 @@ DOC "Scotch include directory"
  
--# allow CMAKE_PREFIX_PATH with ~ expand
--if(CMAKE_PREFIX_PATH)
--  get_filename_component(CMAKE_PREFIX_PATH ${CMAKE_PREFIX_PATH} ABSOLUTE)
--endif()
+ # need plain scotch when using ptscotch
+ set(scotch_names scotch scotcherr)
+-if(ESMUMPS IN_LIST Scotch_FIND_COMPONENTS)
++if("ESMUMPS" IN_LIST Scotch_FIND_COMPONENTS)
+   list(INSERT scotch_names 0 esmumps)
+ endif()
+ 
+-if(parallel IN_LIST Scotch_FIND_COMPONENTS)
++if("parallel" IN_LIST Scotch_FIND_COMPONENTS)
+   list(INSERT scotch_names 0 ptscotch ptscotcherr)
+-  if(ESMUMPS IN_LIST Scotch_FIND_COMPONENTS)
++  if("ESMUMPS" IN_LIST Scotch_FIND_COMPONENTS)
+     list(INSERT scotch_names 0 ptesmumps)
+   endif()
+ endif()
+@@ -79,7 +79,7 @@ foreach(l IN LISTS scotch_names)
+   mark_as_advanced(Scotch_${l}_LIBRARY)
+ endforeach()
+ 
+-if(parallel IN_LIST Scotch_FIND_COMPONENTS)
++if("parallel" IN_LIST Scotch_FIND_COMPONENTS)
+   if(Scotch_ptesmumps_LIBRARY AND Scotch_ptscotch_LIBRARY)
+     set(Scotch_ESMUMPS_FOUND true)
+     set(Scotch_parallel_FOUND true)
+diff --git a/cmake/install.cmake b/cmake/install.cmake
+deleted file mode 100644
+index 8129655..0000000
+--- a/cmake/install.cmake
++++ /dev/null
+@@ -1,43 +0,0 @@
+-# --- BOILERPLATE: install / packaging
+-
+-include(CMakePackageConfigHelpers)
+-
+-configure_package_config_file(${CMAKE_CURRENT_LIST_DIR}/config.cmake.in
+-${CMAKE_CURRENT_BINARY_DIR}/cmake/${PROJECT_NAME}Config.cmake
+-INSTALL_DESTINATION cmake
+-)
+-
+-write_basic_package_version_file(
+-${CMAKE_CURRENT_BINARY_DIR}/cmake/${PROJECT_NAME}ConfigVersion.cmake
+-COMPATIBILITY SameMajorVersion
+-)
+-
+-install(EXPORT ${PROJECT_NAME}-targets
+-NAMESPACE ${PROJECT_NAME}::
+-DESTINATION cmake
+-)
+-
+-install(FILES
+-${CMAKE_CURRENT_BINARY_DIR}/cmake/${PROJECT_NAME}Config.cmake
+-${CMAKE_CURRENT_BINARY_DIR}/cmake/${PROJECT_NAME}ConfigVersion.cmake
+-DESTINATION cmake
+-)
+-
+-# --- CPack
+-
+-set(CPACK_GENERATOR "TBZ2")
+-set(CPACK_SOURCE_GENERATOR "TBZ2")
+-set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE")
+-set(CPACK_RESOURCE_FILE_README "${CMAKE_CURRENT_SOURCE_DIR}/README.md")
+-set(CPACK_PACKAGE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/package)
+-
+-# not .gitignore as its regex syntax is more advanced than CMake
+-set(CPACK_SOURCE_IGNORE_FILES .git/ .github/ .vscode/ _CPack_Packages/
+-${CMAKE_BINARY_DIR}/ ${PROJECT_BINARY_DIR}/
+-)
+-
+-install(FILES ${CPACK_RESOURCE_FILE_README} ${CPACK_RESOURCE_FILE_LICENSE}
+-DESTINATION share/docs/${PROJECT_NAME}
+-)
+-
+-include(CPack)
 diff --git a/cmake/lapack.cmake b/cmake/lapack.cmake
-index d4e6336..e565d0e 100644
+index 16d5a7f..e565d0e 100644
 --- a/cmake/lapack.cmake
 +++ b/cmake/lapack.cmake
 @@ -2,38 +2,13 @@
  
  include(CheckFortranSourceCompiles)
  
--if(NOT DEFINED LAPACK_COMPONENTS AND DEFINED ENV{MKLROOT})
--  set(LAPACK_COMPONENTS MKL)
+-if(NOT DEFINED LAPACK_VENDOR AND DEFINED ENV{MKLROOT})
+-  set(LAPACK_VENDOR MKL)
 -endif()
 -
--if(MKL IN_LIST LAPACK_COMPONENTS)
+-if(MKL IN_LIST LAPACK_VENDOR)
 -  if(intsize64)
--    list(APPEND LAPACK_COMPONENTS MKL64)
+-    list(APPEND LAPACK_VENDOR MKL64)
 -  endif()
 -  if(openmp)
--    list(APPEND LAPACK_COMPONENTS OpenMP)
+-    list(APPEND LAPACK_VENDOR OpenMP)
 -  endif()
 -endif()
 -
 -if(find_static)
--  list(APPEND LAPACK_COMPONENTS STATIC)
+-  list(APPEND LAPACK_VENDOR STATIC)
 -endif()
 -
--find_package(LAPACK REQUIRED COMPONENTS ${LAPACK_COMPONENTS})
+-find_package(LAPACK REQUIRED COMPONENTS ${LAPACK_VENDOR})
 +find_package(LAPACK REQUIRED)
  
  # GEMMT is recommeded in MUMPS User Manual if available
@@ -1009,7 +1102,7 @@ index d4e6336..e565d0e 100644
  set(CMAKE_REQUIRED_INCLUDES ${LAPACK_INCLUDE_DIRS})
 -
 -if(find_static AND NOT WIN32 AND
--  MKL IN_LIST LAPACK_COMPONENTS AND
+-  MKL IN_LIST LAPACK_VENDOR AND
 -  CMAKE_VERSION VERSION_GREATER_EQUAL 3.24
 -  )
 -  set(CMAKE_REQUIRED_LIBRARIES $<LINK_GROUP:RESCAN,${LAPACK_LIBRARIES}>)
@@ -1022,55 +1115,22 @@ index d4e6336..e565d0e 100644
  check_fortran_source_compiles(
 diff --git a/cmake/scalapack.cmake b/cmake/scalapack.cmake
 deleted file mode 100644
-index a9e9311..0000000
+index 627b8d0..0000000
 --- a/cmake/scalapack.cmake
 +++ /dev/null
 @@ -1,15 +0,0 @@
--if(NOT DEFINED SCALAPACK_COMPONENTS AND DEFINED ENV{MKLROOT})
--  set(SCALAPACK_COMPONENTS MKL)
+-if(NOT DEFINED SCALAPACK_VENDOR AND DEFINED ENV{MKLROOT})
+-  set(SCALAPACK_VENDOR MKL)
 -endif()
 -
--if(MKL IN_LIST SCALAPACK_COMPONENTS)
+-if(MKL IN_LIST SCALAPACK_VENDOR)
 -  if(intsize64)
--    list(APPEND SCALAPACK_COMPONENTS MKL64)
+-    list(APPEND SCALAPACK_VENDOR MKL64)
 -  endif()
 -endif()
 -
 -if(find_static)
--  list(APPEND SCALAPACK_COMPONENTS STATIC)
+-  list(APPEND SCALAPACK_VENDOR STATIC)
 -endif()
 -
--find_package(SCALAPACK REQUIRED COMPONENTS ${SCALAPACK_COMPONENTS})
-diff --git a/cmake/summary.cmake b/cmake/summary.cmake
-index 3c14760..74db3a8 100644
---- a/cmake/summary.cmake
-+++ b/cmake/summary.cmake
-@@ -4,6 +4,7 @@ add_feature_info(64-bit-integer intsize64 "use 64-bit integers in C and Fortran"
- add_feature_info(GEMMT BLAS_HAVE_GEMMT "use GEMMT for symmetric matrix-matrix multiplication")
- 
- add_feature_info(Scotch scotch "Scotch graph partitioning https://www.labri.fr/perso/pelegrin/scotch/")
-+add_feature_info(METIS metis "METIS graph partitioning http://glaros.dtc.umn.edu/gkhome/metis/metis/overview")
- add_feature_info(Openmp openmp "OpenMP API https://www.openmp.org/")
- 
- add_feature_info(real32 ${BUILD_SINGLE} "Build with single precision")
-diff --git a/options.cmake b/options.cmake
-index 7031669..6f7e19f 100644
---- a/options.cmake
-+++ b/options.cmake
-@@ -2,16 +2,6 @@ include(GNUInstallDirs)
- 
- message(STATUS "${PROJECT_NAME} ${PROJECT_VERSION}  CMake ${CMAKE_VERSION}  Toolchain ${CMAKE_TOOLCHAIN_FILE}")
- 
--option(find_static "Find static libraries for Lapack and Scalapack (default shared then static search)")
--
--if(local)
--  get_filename_component(local ${local} ABSOLUTE)
--
--  if(NOT IS_DIRECTORY ${local})
--    message(FATAL_ERROR "Local directory ${local} does not exist")
--  endif()
--endif()
--
- if(MUMPS_UPSTREAM_VERSION VERSION_GREATER_EQUAL 5.2)
-   option(gemmt "GEMMT is recommended in User Manual if available" ON)
- endif()
+-find_package(SCALAPACK REQUIRED COMPONENTS ${SCALAPACK_VENDOR})

@@ -125,8 +125,8 @@ if(PALACE_BUILD_EXTERNAL_DEPS)
 
   # Need to pass gfortran (or similar) dependency to C++ linker for MFEM link line
   if(PALACE_WITH_STRUMPACK OR PALACE_WITH_MUMPS)
-    if("${CMAKE_Fortran_COMPILER_ID}" STREQUAL "GNU")
-      if("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU")
+    if(CMAKE_Fortran_COMPILER_ID STREQUAL "GNU")
+      if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
         set(STRUMPACK_MUMPS_GFORTRAN_LIBRARY gfortran)
       else()
         find_library(STRUMPACK_MUMPS_GFORTRAN_LIBRARY

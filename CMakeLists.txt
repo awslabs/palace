@@ -9,7 +9,7 @@
 cmake_minimum_required(VERSION 3.18.1)
 
 # Prohibit in-source builds
-if("${CMAKE_SOURCE_DIR}" STREQUAL "${CMAKE_BINARY_DIR}")
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_BINARY_DIR)
   message(FATAL_ERROR "In-source builds are prohibited")
 endif()
 
@@ -68,7 +68,7 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
 
 # Intel classic compilers no longer supported (prior to CMake 3.20, the new compilers are
 # detected as Clang instead of IntelLLVM)
-if("${CMAKE_C_COMPILER_ID}" STREQUAL "Intel" OR "${CMAKE_CXX_COMPILER_ID}" STREQUAL "Intel")
+if(CMAKE_C_COMPILER_ID STREQUAL "Intel" OR CMAKE_CXX_COMPILER_ID STREQUAL "Intel")
   message(WARNING "The Intel classic compilers (icc/icpc) are no longer supported and \
 have been replaced by the newer Clang-based icx/icpx from Intel oneAPI")
 endif()
