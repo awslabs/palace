@@ -9,7 +9,7 @@
 cmake_minimum_required(VERSION 3.18.1)
 
 # Prohibit in-source builds
-if("${CMAKE_SOURCE_DIR}" STREQUAL "${CMAKE_BINARY_DIR}")
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_BINARY_DIR)
   message(FATAL_ERROR "In-source builds are prohibited")
 endif()
 
@@ -132,7 +132,7 @@ add_subdirectory(models)
 add_subdirectory(utils)
 
 # Add binary extension for build architecture
-if(${CMAKE_SYSTEM_PROCESSOR} MATCHES "aarch64|arm")
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm")
   set(TARGET_EXTENSION "arm64")
 else()
   set(TARGET_EXTENSION "x86_64")
@@ -146,7 +146,7 @@ set_target_properties(${TARGET_NAME} PROPERTIES
 include(GetGitDescription)
 git_describe(GIT_COMMIT_ID)
 message(STATUS "Git string: ${GIT_COMMIT_ID}")
-if(NOT "${GIT_COMMIT_ID}" MATCHES "NOTFOUND")
+if(NOT GIT_COMMIT_ID MATCHES "NOTFOUND")
   file(WRITE ${CMAKE_BINARY_DIR}/config/gitversion.hpp
 "#pragma once
 const char *GetGitCommit()

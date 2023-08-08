@@ -22,6 +22,11 @@ class Palace(CMakePackage):
     variant("int64", default=False, description="Use 64 bit integers")
     variant("openmp", default=False, description="Use OpenMP")
     variant(
+        "libceed",
+        default=True,
+        description="Build with libCEED library for high-order partial assembly support",
+    )
+    variant(
         "gslib",
         default=True,
         description="Build with GSLIB library for high-order field interpolation",
@@ -33,6 +38,7 @@ class Palace(CMakePackage):
     variant("mumps", default=False, description="Build with MUMPS sparse direct solver")
     variant("slepc", default=True, description="Build with SLEPc eigenvalue solver")
     variant("arpack", default=False, description="Build with ARPACK eigenvalue solver")
+    variant("libxsmm", default=True, description="Build with LIBXSMM backend when libCEED is enabled")
 
     # Dependencies
     depends_on("cmake@3.13:", type="build")
@@ -93,8 +99,14 @@ class Palace(CMakePackage):
         depends_on("arpack-ng+shared", when="+shared")
         depends_on("arpack-ng~shared", when="~shared")
 
-    # Conflicts: Palace always builds its own internal MFEM, GSLIB
+    with when("+libceed") and when("+libxsmm"):
+        depends_on("libxsmm@main")
+        depends_on("libxsmm+shared", when="+shared")
+        depends_on("libxsmm~shared", when="~shared")
+
+    # Conflicts: Palace always builds its own internal MFEM, libCEED, and GSLIB
     conflicts("^mfem", msg="Palace builds its own internal MFEM")
+    conflicts("^libceed", msg="Palace builds its own internal libCEED")
     conflicts("^gslib", msg="Palace builds its own internal GSLIB")
 
     # More dependency variant conflicts
@@ -107,12 +119,14 @@ class Palace(CMakePackage):
             self.define_from_variant("BUILD_SHARED_LIBS", "shared"),
             self.define_from_variant("PALACE_WITH_64BIT_INT", "int64"),
             self.define_from_variant("PALACE_WITH_OPENMP", "openmp"),
+            self.define_from_variant("PALACE_WITH_LIBCEED", "libceed"),
             self.define_from_variant("PALACE_WITH_GSLIB", "gslib"),
             self.define_from_variant("PALACE_WITH_SUPERLU", "superlu-dist"),
             self.define_from_variant("PALACE_WITH_STRUMPACK", "strumpack"),
             self.define_from_variant("PALACE_WITH_MUMPS", "mumps"),
             self.define_from_variant("PALACE_WITH_SLEPC", "slepc"),
             self.define_from_variant("PALACE_WITH_ARPACK", "arpack"),
+            self.define_from_variant("PALACE_WITH_LIBXSMM", "libxsmm"),
             self.define("PALACE_BUILD_EXTERNAL_DEPS", False),
         ]
 
@@ -131,6 +145,10 @@ class Palace(CMakePackage):
             args += [self.define("STRUMPACK_REQUIRED_PACKAGES", "LAPACK;BLAS;MPI;MPI_Fortran")]
         if "+mumps" in self.spec:
             args += [self.define("MUMPS_REQUIRED_PACKAGES", "LAPACK;BLAS;MPI;MPI_Fortran")]
+
+        # Allow internal libCEED build to find LIBXSMM
+        if "+libxsmm" in self.spec:
+            args += [self.define("LIBXSMM_DIR", self.spec["libxsmm"].prefix)]
 
         return args
 

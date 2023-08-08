@@ -41,7 +41,11 @@ the frequency or time domain, using the
 command `spack install palace`. Run `spack info palace` to get more information about the
 available configuration options and dependencies.
 
-Instructions for obtaining *Palace* and building from source can be found in the
+Those wishing to work in a containerized environment may use the Singularity/Apptainer
+container for *Palace* which is built from the recipe in [`singularity/`](./singularity) and
+pushed to the GitHub Container Registry at https://ghcr.io/awslabs/palace.
+
+Finally, instructions for obtaining *Palace* and building from source can be found in the
 [documentation](https://awslabs.github.io/palace/dev/install/). As part of the CMake build
 process, most dependencies are downloaded and installed automatically and thus an internet
 connection is required.

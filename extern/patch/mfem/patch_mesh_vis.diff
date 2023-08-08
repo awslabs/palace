@@ -481,10 +481,10 @@ index c216188af..9f40e52af 100644
     /// preserve timestep metadata for any solutions prior to the currently
     /// defined time.
 diff --git a/mesh/mesh.cpp b/mesh/mesh.cpp
-index 87e606510..057677de3 100644
+index 01772ce19..cfb836db5 100644
 --- a/mesh/mesh.cpp
 +++ b/mesh/mesh.cpp
-@@ -10574,7 +10574,8 @@ void Mesh::PrintVTU(std::string fname,
+@@ -10650,7 +10650,8 @@ void Mesh::PrintVTU(std::string fname,
                      VTKFormat format,
                      bool high_order_output,
                      int compression_level,
@@ -494,7 +494,7 @@ index 87e606510..057677de3 100644
  {
     int ref = (high_order_output && Nodes)
               ? Nodes->FESpace()->GetMaxElementOrder() : 1;
-@@ -10588,7 +10589,8 @@ void Mesh::PrintVTU(std::string fname,
+@@ -10664,7 +10665,8 @@ void Mesh::PrintVTU(std::string fname,
     }
     os << " byte_order=\"" << VTKByteOrder() << "\">\n";
     os << "<UnstructuredGrid>\n";
@@ -504,7 +504,7 @@ index 87e606510..057677de3 100644
     os << "</Piece>\n"; // need to close the piece open in the PrintVTU method
     os << "</UnstructuredGrid>\n";
     os << "</VTKFile>" << std::endl;
-@@ -10599,14 +10601,16 @@ void Mesh::PrintVTU(std::string fname,
+@@ -10675,14 +10677,16 @@ void Mesh::PrintVTU(std::string fname,
  void Mesh::PrintBdrVTU(std::string fname,
                         VTKFormat format,
                         bool high_order_output,
@@ -524,7 +524,7 @@ index 87e606510..057677de3 100644
  {
     RefinedGeometry *RefG;
     DenseMatrix pmat;
-@@ -10653,6 +10657,11 @@ void Mesh::PrintVTU(std::ostream &os, int ref, VTKFormat format,
+@@ -10729,6 +10733,11 @@ void Mesh::PrintVTU(std::ostream &os, int ref, VTKFormat format,
           GetElementTransformation(i)->Transform(RefG->RefPts, pmat);
        }
  
@@ -537,10 +537,10 @@ index 87e606510..057677de3 100644
        {
           WriteBinaryOrASCII(os, buf, pmat(0,j), " ", format);
 diff --git a/mesh/mesh.hpp b/mesh/mesh.hpp
-index 64cf55ae4..13ea23bfe 100644
+index 2c7f06954..d4eabcf6f 100644
 --- a/mesh/mesh.hpp
 +++ b/mesh/mesh.hpp
-@@ -1840,25 +1840,30 @@ public:
+@@ -2021,25 +2021,30 @@ public:
     /** Print the mesh in VTU format. The parameter ref > 0 specifies an element
         subdivision number (useful for high order fields and curved meshes).
         If @a bdr_elements is true, then output (only) the boundary elements,
@@ -573,19 +573,8 @@ index 64cf55ae4..13ea23bfe 100644
 +                    int compression_level=0,
 +                    double scale_factor=1.0);
  
-    void GetElementColoring(Array<int> &colors, int el0 = 0);
- 
-@@ -1880,8 +1885,8 @@ public:
-     */
-    void PrintSurfaces(const Table &Aface_face, std::ostream &out) const;
- 
--   void ScaleSubdomains (double sf);
--   void ScaleElements (double sf);
-+   void ScaleSubdomains(double sf);
-+   void ScaleElements(double sf);
- 
-    void Transform(void (*f)(const Vector&, Vector&));
-    void Transform(VectorCoefficient &deformation);
+    /** @brief Prints the mesh with boundary elements given by the boundary of
+        the subdomains, so that the boundary of subdomain i has boundary
 diff --git a/mesh/pmesh.cpp b/mesh/pmesh.cpp
 index 8392d2b67..1e49f8a17 100644
 --- a/mesh/pmesh.cpp

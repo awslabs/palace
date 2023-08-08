@@ -51,7 +51,7 @@ endif()
 if(NOT MPI_FOUND)
   message(FATAL_ERROR "MPI is not found when trying to build PETSc")
 endif()
-if(NOT "${CMAKE_CXX_COMPILER}" STREQUAL "${MPI_CXX_COMPILER}")
+if(NOT CMAKE_CXX_COMPILER STREQUAL MPI_CXX_COMPILER)
   # For OpenMPI at least, when given a C++ compiler, PETSc needs the C++ MPI libraries for
   # its CxxMPICheck
   string(REPLACE ";" "," PETSC_MPI_LIBRARIES "${MPI_CXX_LIBRARIES}")
@@ -75,11 +75,6 @@ endif()
 string(REPLACE ";" "; " PETSC_OPTIONS_PRINT "${PETSC_OPTIONS}")
 message(STATUS "PETSC_OPTIONS: ${PETSC_OPTIONS_PRINT}")
 
-# Fix build
-set(PETSC_PATCH_FILES
-  "${CMAKE_SOURCE_DIR}/extern/patch/petsc/patch_mpi.diff"
-)
-
 include(ExternalProject)
 ExternalProject_Add(petsc
   DEPENDS             ${PETSC_DEPENDENCIES}
@@ -90,7 +85,6 @@ ExternalProject_Add(petsc
   PREFIX              ${CMAKE_BINARY_DIR}/extern/petsc-cmake
   BUILD_IN_SOURCE     TRUE
   UPDATE_COMMAND      ""
-  PATCH_COMMAND       git apply "${PETSC_PATCH_FILES}"
   CONFIGURE_COMMAND   ./configure ${PETSC_OPTIONS}
   TEST_COMMAND        ${CMAKE_MAKE_PROGRAM} check  # Use auto-detected PETSC_DIR/PETSC_ARCH
   TEST_BEFORE_INSTALL TRUE
