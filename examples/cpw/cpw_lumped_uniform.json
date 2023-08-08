@@ -79,7 +79,8 @@
         [
           {
             "Attributes": [4],
-            "Direction": [0,1,0]
+            "Direction": [0,1,0],
+            "CoordinateSystem": "Cartesian"
           },
           {
             "Attributes": [8],
@@ -98,7 +99,8 @@
           },
           {
             "Attributes": [9],
-            "Direction": [0,-1,0]
+            "Direction": [0,-1,0],
+            "CoordinateSystem": "Cartesian"
           }
         ]
       },

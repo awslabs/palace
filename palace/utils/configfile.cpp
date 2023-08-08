@@ -699,12 +699,12 @@ void ImpedanceBoundaryData::SetUp(json &boundaries)
   }
 }
 
-namespace
-{
-
 NLOHMANN_JSON_SERIALIZE_ENUM(CoordinateSystem,
                              {{CoordinateSystem::CARTESIAN, "Cartesian"},
                               {CoordinateSystem::CYLINDRICAL, "Cylindrical"}})
+
+namespace
+{
 
 // Helper function for extracting a DataNode from a json, if the is_port
 // value is set to true, will extract the normal vector from either the provided
@@ -729,7 +729,7 @@ auto ParseDataNode(json &j, const std::string &key_word, bool is_port = true)
     }
     catch (json::exception)
     {
-      MFEM_VERIFY(!is_port, "A port requires the direction be specified");
+      MFEM_VERIFY(!is_port, "A port requires " << key_word << " be specified");
       return node;
     }
   }
@@ -880,6 +880,7 @@ void LumpedPortBoundaryData::SetUp(json &boundaries)
         // Cleanup
         elem.erase("Attributes");
         elem.erase("Direction");
+        elem.erase("CoordinateSystem");
         MFEM_VERIFY(elem.empty(),
                     "Found an unsupported configuration file keyword under \"LumpedPort\" "
                     "or \"Terminal\" boundary element!\n"
@@ -913,6 +914,7 @@ void LumpedPortBoundaryData::SetUp(json &boundaries)
     p.erase("Excitation");
     p.erase("Attributes");
     p.erase("Direction");
+    p.erase("CoordinateSystem");
     p.erase("Elements");
     MFEM_VERIFY(p.empty(), "Found an unsupported configuration file keyword under "
                            "\"LumpedPort\" or \"Terminal\"!\n"
@@ -1009,6 +1011,7 @@ void SurfaceCurrentBoundaryData::SetUp(json &boundaries)
         // Cleanup
         elem.erase("Attributes");
         elem.erase("Direction");
+        elem.erase("CoordinateSystem");
         MFEM_VERIFY(elem.empty(), "Found an unsupported configuration file keyword "
                                   "under \"SurfaceCurrent\" boundary element!\n"
                                       << elem.dump(2));
@@ -1028,6 +1031,7 @@ void SurfaceCurrentBoundaryData::SetUp(json &boundaries)
     s.erase("Attributes");
     s.erase("Direction");
     s.erase("Elements");
+    s.erase("CoordinateSystem");
     MFEM_VERIFY(
         s.empty(),
         "Found an unsupported configuration file keyword under \"SurfaceCurrent\"!\n"
@@ -1095,6 +1099,7 @@ void InductancePostData::SetUp(json &postpro)
     i.erase("Index");
     i.erase("Attributes");
     i.erase("Direction");
+    i.erase("CoordinateSystem");
     MFEM_VERIFY(i.empty(),
                 "Found an unsupported configuration file keyword under \"Inductance\"!\n"
                     << i.dump(2));
@@ -1170,6 +1175,7 @@ void InterfaceDielectricPostData::SetUp(json &postpro)
         // Cleanup
         e.erase("Attributes");
         e.erase("Side");
+        e.erase("CoordinateSystem");
         MFEM_VERIFY(e.empty(), "Found an unsupported configuration file keyword "
                                "under \"Dielectric\" boundary element!\n"
                                    << e.dump(2));
@@ -1200,6 +1206,7 @@ void InterfaceDielectricPostData::SetUp(json &postpro)
     d.erase("Thickness");
     d.erase("Attributes");
     d.erase("Side");
+    d.erase("CoordinateSystem");
     MFEM_VERIFY(d.empty(),
                 "Found an unsupported configuration file keyword under \"Dielectric\"!\n"
                     << d.dump(2));
