@@ -45,7 +45,7 @@ protected:
     int p;   // Floating point precision for data
     int w1;  // First column width = precision + 7 extra
     int p1;  // Floating point precision for first column
-    Table(int sp, int p, int p1_) : w(sp + p + 7), sp(sp), p(p), w1(p1_ + 7), p1(p1_) {}
+    Table(int sp, int p, int p1) : w(sp + p + 7), sp(sp), p(p), w1(p1 + 7), p1(p1) {}
   };
   const Table table;
 
