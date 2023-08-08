@@ -30,7 +30,9 @@ The format of this changelog is based on
     less than `"Order"` and `config["Solver"]["Device"]: "ceed-cpu"`.
   - Added support for non axis aligned lumped ports and current sources. Key words `"X"`,
     `"Y"`, `"Z"` and `"R"`, with optional prefix `"+"` or `"-"` still work, but now
-    directions can be specified as vectors with 3 components.
+    directions can be specified as vectors with 3 components. Users will be warned, and
+    ultimately errored, if the specified directions do not agree with axis directions
+    discovered from the geometry.
   - Added build dependencies on [libCEED](https://github.com/CEED/libCEED) and
     [LIBXSMM](https://github.com/libxsmm/libxsmm) to support operator partial assembly (CPU-
     based for now).
