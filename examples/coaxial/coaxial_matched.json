@@ -41,8 +41,7 @@
         "Index": 2,
         "Attributes": [4],
         "R": 50.0,  // Ω, perfect matching
-        "Direction": [1,0,0],  // Coaxial lumped port
-        "CoordinateSystem": "Cylindrical"
+        "Direction": "+R"  // Coaxial lumped port
       }
     ]
   },

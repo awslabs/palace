@@ -61,6 +61,29 @@ public:
   [[nodiscard]] auto end() { return mapdata.end(); }
 };
 
+// A ElementData consists of a list of attributes making up a single
+// element of a potentially multielement node, and a direction and/or a normal
+// defining the incident field. These are used for Lumped Ports, Terminals,
+// and Surface Currents.
+struct ElementData
+{
+  enum class CoordinateSystem
+  {
+    CARTESIAN,
+    CYLINDRICAL
+  };
+  // Vector defining the direction for this port. In a Cartesian system
+  // with  "X", "Y", and "Z" mapping to (1,0,0), (0,1,0), and (0,0,1)
+  // respectively. Any user specified value is normalized before use.
+  std::array<double, 3> direction{{0.0, 0.0, 0.0}};
+
+  // Coordinate system that the normal vector is expressed in.
+  CoordinateSystem coordinate_system = CoordinateSystem::CARTESIAN;
+
+  // List of boundary attributes for this lumped port element.
+  std::vector<int> attributes = {};
+};
+
 }  // namespace internal
 
 struct ProblemData
@@ -346,44 +369,6 @@ public:
   void SetUp(json &boundaries);
 };
 
-enum class CoordinateSystem
-{
-  CARTESIAN,
-  CYLINDRICAL
-};
-
-// A DataNode consists of a list of attributes making up a single
-// element of a potentially multielement node, and a direction and/or a normal
-// defining the incident field. These are used for Lumped Ports, Terminals,
-// and Surface Currents.
-//
-// Exactly one of either the direction or the normal direction must be defined.
-struct DataNode
-{
-  // Vector defining the normal direction for this port. In a Cartesian system
-  // with  "X", "Y", and "Z" mapping to (1,0,0), (0,1,0), and (0,0,1)
-  // respectively. Any user specified value is normalized to a tolerance of
-  // 1e-5, and if normalization is needed, printed to the terminal.
-  std::array<double, 3> normal{{0.0, 0.0, 0.0}};
-
-  // Coordinate system that the normal vector is expressed in
-  CoordinateSystem coordinate_system = CoordinateSystem::CARTESIAN;
-
-  // List of boundary attributes for this lumped port element.
-  std::vector<int> attributes = {};
-
-  // Convenience function for computing the normal magnitude.
-  inline double NormalMagnitude() const
-  {
-    double mag = 0.0;
-    for (auto x : normal)
-    {
-      mag += x * x;
-    }
-    return std::sqrt(mag);
-  }
-};
-
 struct LumpedPortData
 {
 public:
@@ -400,7 +385,7 @@ public:
   // Flag for source term in driven and transient simulations.
   bool excitation = false;
 
-  std::vector<DataNode> nodes = {};
+  std::vector<internal::ElementData> nodes = {};
 };
 
 struct LumpedPortBoundaryData : public internal::DataMap<LumpedPortData>
@@ -436,7 +421,7 @@ struct SurfaceCurrentData
 public:
   // For each surface current source index, each Node contains a list of attributes making
   // up a single element of a potentially multielement current source.
-  std::vector<DataNode> nodes = {};
+  std::vector<internal::ElementData> nodes = {};
 };
 
 struct SurfaceCurrentBoundaryData : public internal::DataMap<SurfaceCurrentData>
@@ -458,7 +443,13 @@ public:
   void SetUp(json &postpro);
 };
 
-struct InductancePostData : public internal::DataMap<DataNode>
+struct InductanceData : public internal::ElementData
+{
+  InductanceData(internal::ElementData &&e) : internal::ElementData(e) {}
+  using internal::ElementData::ElementData;
+};
+
+struct InductancePostData : public internal::DataMap<InductanceData>
 {
 public:
   void SetUp(json &postpro);
@@ -484,7 +475,7 @@ public:
 
   // For each dielectric postprocessing index, each Node contains a list of attributes
   // sharing the same side value.
-  std::vector<DataNode> nodes = {};
+  std::vector<internal::ElementData> nodes = {};
 };
 
 struct InterfaceDielectricPostData : public internal::DataMap<InterfaceDielectricData>

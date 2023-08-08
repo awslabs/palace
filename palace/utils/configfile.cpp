@@ -71,6 +71,109 @@ std::ostream &operator<<(std::ostream &os, const SymmetricMatrixData<N> &data)
   return os;
 }
 
+// Helper function for extracting a DataNode from a json, if the is_port
+// value is set to true, will extract the normal vector from either the provided
+// keyword argument or from a specified 3 vector. In extracting the normal
+// various checks are performed for validity of the input combinations.
+auto ParseElementData(json &j, const std::string &key_word, bool is_port = true)
+{
+  internal::ElementData node;
+  node.attributes = j.at("Attributes").get<std::vector<int>>();  // Required
+
+  std::string direction;
+  try
+  {
+    direction = j.at(key_word).get<std::string>();
+  }
+  catch (json::exception)
+  {
+    try
+    {
+      node.direction = j.at(key_word).get<std::array<double, 3>>();
+      node.coordinate_system = j.value("CoordinateSystem", node.coordinate_system);
+    }
+    catch (json::exception)
+    {
+      MFEM_VERIFY(!is_port, "A port requires " << key_word << " be specified");
+      return node;
+    }
+  }
+
+  for (auto &c : direction)
+  {
+    c = std::tolower(c);
+  }
+
+  const auto xpos = direction.find("x");
+  const auto ypos = direction.find("y");
+  const auto zpos = direction.find("z");
+  const auto rpos = direction.find("r");
+
+  const bool xfound = xpos != std::string::npos;
+  const bool yfound = ypos != std::string::npos;
+  const bool zfound = zpos != std::string::npos;
+  const bool rfound = rpos != std::string::npos;
+
+  // Either a keyword direction is specified xor the magnitude is non-zero
+  const double mag2 = std::pow(node.direction[0], 2.0) + std::pow(node.direction[1], 2.0) +
+                      std::pow(node.direction[2], 2.0);
+  MFEM_VERIFY((xfound || yfound || zfound || rfound) ^ (mag2 > 0.0),
+              "Keyword and vector specification are mutually exclusive");
+
+  if (xfound)
+  {
+    MFEM_VERIFY(direction.length() == 1 || direction[xpos - 1] == '-' ||
+                    direction[xpos - 1] == '+',
+                "Missing required sign specification on \"X\"");
+    node.direction[0] = (direction.length() == 1 || direction[xpos - 1] == '+') ? 1 : -1;
+    MFEM_VERIFY(node.coordinate_system ==
+                    internal::ElementData::CoordinateSystem::CARTESIAN,
+                "Can only specify \"X\" in Cartesian Coordinates");
+  }
+  if (yfound)
+  {
+    MFEM_VERIFY(direction.length() == 1 || direction[ypos - 1] == '-' ||
+                    direction[ypos - 1] == '+',
+                "Missing sign specification on \"Y\"");
+    node.direction[1] = direction.length() == 1 || direction[ypos - 1] == '+' ? 1 : -1;
+    MFEM_VERIFY(node.coordinate_system ==
+                    internal::ElementData::CoordinateSystem::CARTESIAN,
+                "Can only specify \"Y\" in Cartesian Coordinates");
+  }
+  if (zfound)
+  {
+    MFEM_VERIFY(direction.length() == 1 || direction[zpos - 1] == '-' ||
+                    direction[zpos - 1] == '+',
+                "Missing sign specification on \"Z\"");
+    node.direction[2] = direction.length() == 1 || direction[zpos - 1] == '+' ? 1 : -1;
+    MFEM_VERIFY(node.coordinate_system ==
+                    internal::ElementData::CoordinateSystem::CARTESIAN,
+                "Can only specify \"Z\" in Cartesian Coordinates");
+  }
+  if (rfound)
+  {
+    MFEM_VERIFY(direction.length() == 1 || direction[rpos - 1] == '-' ||
+                    direction[rpos - 1] == '+',
+                "Missing sign specification on \"R\"");
+    MFEM_VERIFY(!xfound && !yfound && !zfound,
+                "\"R\" cannot be combined with \"X\", \"Y\" or \"Z\"");
+    node.coordinate_system = internal::ElementData::CoordinateSystem::CYLINDRICAL;
+    node.direction[0] = direction.length() == 1 || direction[rpos - 1] == '+' ? 1 : -1;
+    node.direction[1] = 0;
+    node.direction[2] = 0;
+  }
+
+  if (node.coordinate_system == internal::ElementData::CoordinateSystem::CYLINDRICAL)
+  {
+    MFEM_VERIFY(
+        std::abs(node.direction[0]) == 1 && node.direction[1] == 0 &&
+            node.direction[2] == 0,
+        "Azimuthal and Longitudinal direction vectors are not supported currently.");
+  }
+
+  return node;
+}
+
 }  // namespace
 
 // Helper for converting string keys to enum for ProblemData::Type.
@@ -699,120 +802,11 @@ void ImpedanceBoundaryData::SetUp(json &boundaries)
   }
 }
 
-NLOHMANN_JSON_SERIALIZE_ENUM(CoordinateSystem,
-                             {{CoordinateSystem::CARTESIAN, "Cartesian"},
-                              {CoordinateSystem::CYLINDRICAL, "Cylindrical"}})
-
-namespace
-{
-
-// Helper function for extracting a DataNode from a json, if the is_port
-// value is set to true, will extract the normal vector from either the provided
-// keyword argument or from a specified 3 vector. In extracting the normal
-// various checks are performed for validity of the input combinations.
-auto ParseDataNode(json &j, const std::string &key_word, bool is_port = true)
-{
-  DataNode node;
-  node.attributes = j.at("Attributes").get<std::vector<int>>();  // Required
-
-  std::string direction;
-  try
-  {
-    direction = j.at(key_word).get<std::string>();
-  }
-  catch (json::exception)
-  {
-    try
-    {
-      node.normal = j.at(key_word).get<std::array<double, 3>>();
-      node.coordinate_system = j.value("CoordinateSystem", node.coordinate_system);
-    }
-    catch (json::exception)
-    {
-      MFEM_VERIFY(!is_port, "A port requires " << key_word << " be specified");
-      return node;
-    }
-  }
-
-  for (auto &c : direction)
-  {
-    c = std::tolower(c);
-  }
-
-  const auto xpos = direction.find("x");
-  const auto ypos = direction.find("y");
-  const auto zpos = direction.find("z");
-  const auto rpos = direction.find("r");
-
-  const bool xfound = xpos != std::string::npos;
-  const bool yfound = ypos != std::string::npos;
-  const bool zfound = zpos != std::string::npos;
-  const bool rfound = rpos != std::string::npos;
-
-  // Either a keyword direction is specified xor the magnitude is non-zero
-  MFEM_VERIFY((xfound || yfound || zfound || rfound) ^ (node.NormalMagnitude() > 0.0),
-              "Keyword and vector specification are mutually exclusive");
-
-  if (xfound)
-  {
-    MFEM_VERIFY(direction.length() == 1 || direction[xpos - 1] == '-' ||
-                    direction[xpos - 1] == '+',
-                "Missing required sign specification on \"X\"");
-    node.normal[0] = (direction.length() == 1 || direction[xpos - 1] == '+') ? 1 : -1;
-    MFEM_VERIFY(node.coordinate_system == CoordinateSystem::CARTESIAN,
-                "Can only specify \"X\" in Cartesian Coordinates");
-  }
-  if (yfound)
-  {
-    MFEM_VERIFY(direction.length() == 1 || direction[ypos - 1] == '-' ||
-                    direction[ypos - 1] == '+',
-                "Missing sign specification on \"Y\"");
-    node.normal[1] = direction.length() == 1 || direction[ypos - 1] == '+' ? 1 : -1;
-    MFEM_VERIFY(node.coordinate_system == CoordinateSystem::CARTESIAN,
-                "Can only specify \"Y\" in Cartesian Coordinates");
-  }
-  if (zfound)
-  {
-    MFEM_VERIFY(direction.length() == 1 || direction[zpos - 1] == '-' ||
-                    direction[zpos - 1] == '+',
-                "Missing sign specification on \"Z\"");
-    node.normal[2] = direction.length() == 1 || direction[zpos - 1] == '+' ? 1 : -1;
-    MFEM_VERIFY(node.coordinate_system == CoordinateSystem::CARTESIAN,
-                "Can only specify \"Z\" in Cartesian Coordinates");
-  }
-  if (rfound)
-  {
-    MFEM_VERIFY(direction.length() == 1 || direction[rpos - 1] == '-' ||
-                    direction[rpos - 1] == '+',
-                "Missing sign specification on \"R\"");
-    MFEM_VERIFY(!xfound && !yfound && !zfound,
-                "\"R\" cannot be combined with \"X\", \"Y\" or \"Z\"");
-    node.coordinate_system = CoordinateSystem::CYLINDRICAL;
-    node.normal[0] = direction.length() == 1 || direction[rpos - 1] == '+' ? 1 : -1;
-    node.normal[1] = 0;
-    node.normal[2] = 0;
-  }
-
-  if (node.coordinate_system == CoordinateSystem::CYLINDRICAL)
-  {
-    MFEM_VERIFY(std::abs(node.normal[0]) == 1 && node.normal[1] == 0 && node.normal[2] == 0,
-                "Azimuthal and Longitudinal normal vectors are not supported currently.");
-  }
-
-  double mag = node.NormalMagnitude();
-
-  double constexpr tol = 1e-5;
-  if (mag > 0 && std::abs(mag - 1) > tol)
-  {
-    for (auto &x : node.normal)
-    {
-      x /= mag;
-    }
-  }
-
-  return node;
-}
-}  // namespace
+// Helper for converting string keys to enum for internal::ElementData::CoordinateSystem.
+NLOHMANN_JSON_SERIALIZE_ENUM(
+    internal::ElementData::CoordinateSystem,
+    {{internal::ElementData::CoordinateSystem::CARTESIAN, "Cartesian"},
+     {internal::ElementData::CoordinateSystem::CYLINDRICAL, "Cylindrical"}})
 
 void LumpedPortBoundaryData::SetUp(json &boundaries)
 {
@@ -860,7 +854,8 @@ void LumpedPortBoundaryData::SetUp(json &boundaries)
                   "\"LumpedPort\" or \"Terminal\" boundary in configuration file!");
 
       data.nodes.clear();
-      data.nodes.emplace_back(ParseDataNode(p, "Direction", terminal == boundaries.end()));
+      data.nodes.emplace_back(
+          ParseElementData(p, "Direction", terminal == boundaries.end()));
     }
     else
     {
@@ -875,7 +870,7 @@ void LumpedPortBoundaryData::SetUp(json &boundaries)
                     "boundary element in configuration file!");
 
         data.nodes.emplace_back(
-            ParseDataNode(elem, "Direction", terminal == boundaries.end()));
+            ParseElementData(elem, "Direction", terminal == boundaries.end()));
 
         // Cleanup
         elem.erase("Attributes");
@@ -991,7 +986,7 @@ void SurfaceCurrentBoundaryData::SetUp(json &boundaries)
                   "Cannot specify both top-level \"Attributes\" list and \"Elements\" for "
                   "\"SurfaceCurrent\" boundary in configuration file!");
       data.nodes.clear();
-      data.nodes.emplace_back(ParseDataNode(s, "Direction"));
+      data.nodes.emplace_back(ParseElementData(s, "Direction"));
     }
     else
     {
@@ -1006,7 +1001,7 @@ void SurfaceCurrentBoundaryData::SetUp(json &boundaries)
             elem.find("Attributes") != elem.end(),
             "Missing \"Attributes\" list for \"SurfaceCurrent\" boundary element in "
             "configuration file!");
-        data.nodes.emplace_back(ParseDataNode(s, "Direction"));
+        data.nodes.emplace_back(ParseElementData(s, "Direction"));
 
         // Cleanup
         elem.erase("Attributes");
@@ -1090,8 +1085,8 @@ void InductancePostData::SetUp(json &postpro)
     MFEM_VERIFY(i.find("Attributes") != i.end() && i.find("Direction") != i.end(),
                 "Missing \"Attributes\" list or \"Direction\" for \"Inductance\" boundary "
                 "in configuration file!");
-    auto ret =
-        mapdata.insert(std::make_pair(i.at("Index"), ParseDataNode(i, "Direction", false)));
+    auto ret = mapdata.insert(std::make_pair(
+        i.at("Index"), InductanceData(ParseElementData(i, "Direction", false))));
     MFEM_VERIFY(ret.second, "Repeated \"Index\" found when processing \"Inductance\" "
                             "boundaries in configuration file!");
 
@@ -1148,10 +1143,11 @@ void InterfaceDielectricPostData::SetUp(json &postpro)
                   "\"Dielectric\" boundary in configuration file!");
 
       data.nodes.clear();
-      data.nodes.emplace_back(ParseDataNode(d, "Side", false));
+      data.nodes.emplace_back(ParseElementData(d, "Side", false));
 
       MFEM_VERIFY(
-          data.nodes.back().coordinate_system == CoordinateSystem::CARTESIAN,
+          data.nodes.back().coordinate_system ==
+              internal::ElementData::CoordinateSystem::CARTESIAN,
           "Only Cartesian coordinate system currently supported for InterfaceDielectrics");
     }
     else
@@ -1166,9 +1162,10 @@ void InterfaceDielectricPostData::SetUp(json &postpro)
                     "Missing \"Attributes\" list for \"Dielectric\" boundary element in "
                     "configuration file!");
 
-        data.nodes.emplace_back(ParseDataNode(d, "Side", false));
+        data.nodes.emplace_back(ParseElementData(d, "Side", false));
 
-        MFEM_VERIFY(data.nodes.back().coordinate_system == CoordinateSystem::CARTESIAN,
+        MFEM_VERIFY(data.nodes.back().coordinate_system ==
+                        internal::ElementData::CoordinateSystem::CARTESIAN,
                     "Only Cartesian coordinate system currently supported for "
                     "InterfaceDielectrics");
 

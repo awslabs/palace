@@ -3,6 +3,7 @@
 
 #include "geodata.hpp"
 
+#include <algorithm>
 #include <array>
 #include <limits>
 #include <map>
@@ -115,14 +116,14 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(MPI_Comm comm, const IoData &iodata, boo
     {
       std::string pfile = mfem::MakeParFilename(tmp + "part.", Mpi::Rank(comm), ".mesh", width);
       std::ofstream fo(pfile);
-      // mfem::ofgzstream fo(pfile, true);  // Use zlib compression if available
+      // mfem::ofgzstream fo(pfile, true);  // Use zlib compression if available.
       fo.precision(MSH_FLT_PRECISION);
       gpmesh.ParPrint(fo);
     }
     {
       std::string pfile = mfem::MakeParFilename(tmp + "final.", Mpi::Rank(comm), ".mesh", width);
       std::ofstream fo(pfile);
-      // mfem::ofgzstream fo(pfile, true);  // Use zlib compression if available
+      // mfem::ofgzstream fo(pfile, true);  // Use zlib compression if available.
       fo.precision(MSH_FLT_PRECISION);
       mesh->ParPrint(fo);
     }
@@ -390,26 +391,49 @@ void AttrToMarker(int max_attr, const std::vector<int> &attrs, mfem::Array<int> 
   }
 }
 
+using CVector3dMap = Eigen::Map<const Eigen::Vector3d>;
 double BoundingBox::Area() const
 {
-  return 4 * normals[0].cross(normals[1]).norm();
+  return 4 * CVector3dMap(normals[0].data()).cross(CVector3dMap(normals[1].data())).norm();
 }
 
 double BoundingBox::Volume() const
 {
-  // Compute area in plane, then extrude above and below to get volume.
-  return planar ? 0 : 2 * normals[2].norm() * Area();
+  return planar ? 0 : 2 * CVector3dMap(normals[2].data()).norm() * Area();
+}
+
+std::array<double, 3> BoundingBox::Lengths() const
+{
+  return {2 * CVector3dMap(normals[0].data()).norm(),
+          2 * CVector3dMap(normals[1].data()).norm(),
+          2 * CVector3dMap(normals[2].data()).norm()};
+}
+
+std::array<double, 3> BoundingBox::Deviation(const std::array<double, 3> &direction) const
+{
+  const auto eig_dir = CVector3dMap(direction.data());
+  std::array<double, 3> deviation_deg;
+  for (std::size_t i = 0; i < 3; ++i)
+  {
+    deviation_deg[i] =
+        std::acos(std::min(1.0, std::abs(eig_dir.normalized().dot(
+                                    CVector3dMap(normals[i].data()).normalized())))) *
+        (180 / M_PI);
+  }
+  return deviation_deg;
 }
 
 namespace
 {
 
-// Compute a lexicographic comparison of Eigen Vector3d
+// Compute a lexicographic comparison of Eigen Vector3d.
 bool EigenLE(const Eigen::Vector3d &x, const Eigen::Vector3d &y)
 {
   return std::lexicographical_compare(x.begin(), x.end(), y.begin(), y.end());
 };
 
+// Helper for collecting a point cloud from a mesh, used in calculating bounding
+// boxes or bounding balls.
 std::vector<Eigen::Vector3d> CollectPointCloud(mfem::ParMesh &mesh,
                                                const mfem::Array<int> &marker, bool bdr)
 {
@@ -455,7 +479,7 @@ std::vector<Eigen::Vector3d> CollectPointCloud(mfem::ParMesh &mesh,
   {
     // Nonlinear mesh, need to process point matrices.
     const int ref = mesh.GetNodes()->FESpace()->GetMaxElementOrder();
-    mfem::DenseMatrix pointmat;  // 3 x N
+    mfem::DenseMatrix pointmat;  // 3 x N.
     mfem::ElementTransformation *T;
 
     if (bdr)
@@ -501,10 +525,16 @@ std::vector<Eigen::Vector3d> CollectPointCloud(mfem::ParMesh &mesh,
   return vertices;
 }
 
+// Calculates a bounding box from a point cloud, result is broadcast across all processes.
 BoundingBox BoundingBoxFromPointCloud(MPI_Comm comm, std::vector<Eigen::Vector3d> vertices)
 {
   const auto num_vertices = int(vertices.size());
-  const int dominant_rank = Mpi::FindMax<int>(num_vertices, comm).rank;
+  const int dominant_rank = [&]()
+  {
+    int vert = num_vertices, rank = Mpi::Rank(comm);
+    Mpi::GlobalMaxLoc(1, &vert, &rank, comm);
+    return rank;
+  }();
 
   // dominant_rank will perform the calculation.
   std::vector<int> recv_counts(Mpi::Size(comm)), displacements;
@@ -512,7 +542,7 @@ BoundingBox BoundingBoxFromPointCloud(MPI_Comm comm, std::vector<Eigen::Vector3d
              comm);
 
   std::vector<Eigen::Vector3d> collected_vertices;
-  if (Mpi::Rank(comm) == dominant_rank)
+  if (dominant_rank == Mpi::Rank(comm))
   {
     // First displacement is zero, then after is the partial sum of recv_counts.
     displacements.resize(Mpi::Size(comm));
@@ -521,16 +551,25 @@ BoundingBox BoundingBoxFromPointCloud(MPI_Comm comm, std::vector<Eigen::Vector3d
 
     // Add on slots at the end of vertices for the incoming data.
     collected_vertices.resize(std::accumulate(recv_counts.begin(), recv_counts.end(), 0));
+
+    // MPI transfer will be done with MPI_DOUBLE, so duplicate all these values.
+    for (auto &x : displacements)
+    {
+      x *= 3;
+    }
+    for (auto &x : recv_counts)
+    {
+      x *= 3;
+    }
   }
 
   // Gather the data to the dominant rank.
-  const auto mpi_array_3_type = Mpi::GetArrayType<double, 3>();
-  MPI_Gatherv(vertices.data(), num_vertices, mpi_array_3_type, collected_vertices.data(),
-              recv_counts.data(), displacements.data(), mpi_array_3_type, dominant_rank,
-              comm);
+  static_assert(sizeof(Eigen::Vector3d) == 3 * sizeof(double));
+  MPI_Gatherv(vertices.data(), 3 * num_vertices, MPI_DOUBLE, collected_vertices.data(),
+              recv_counts.data(), displacements.data(), MPI_DOUBLE, dominant_rank, comm);
 
   BoundingBox box;
-  if (Mpi::Rank(comm) == dominant_rank)
+  if (dominant_rank == Mpi::Rank(comm))
   {
     vertices = std::move(collected_vertices);
     // dominant_rank now has a fully stocked vector of vertices. All other ranks
@@ -624,20 +663,21 @@ BoundingBox BoundingBoxFromPointCloud(MPI_Comm comm, std::vector<Eigen::Vector3d
     const auto &v_011 = !box.planar && t_0_gt_t_1 ? t_0 : t_1;
 
     // Compute the center as halfway along the main diagonal.
-    box.center = (v_000 + v_111) / 2;
+    using Vector3dMap = Eigen::Map<Eigen::Vector3d>;
+    Vector3dMap(box.center.data()) = (v_000 + v_111) / 2;
 
     // The length in each direction is then given by traversing the edges of the
     // cuboid in turn.
-    box.normals[0] = (v_001 - v_000) / 2;
-    box.normals[1] =
+    Vector3dMap(box.normals[0].data()) = (v_001 - v_000) / 2;
+    Vector3dMap(box.normals[1].data()) =
         box.planar ? ((v_111 - v_001) / 2).eval() : ((v_011 - v_001) / 2).eval();
-    box.normals[1] =
-        box.planar ? ((v_111 - v_001) / 2).eval() : ((v_011 - v_001) / 2).eval();
-    box.normals[2] = box.planar ? Eigen::Vector3d(0, 0, 0) : ((v_111 - v_011) / 2.0).eval();
+    Vector3dMap(box.normals[2].data()) =
+        box.planar ? Eigen::Vector3d(0, 0, 0) : ((v_111 - v_011) / 2.0).eval();
 
     // Make sure the longest dimension comes first.
     std::sort(box.normals.begin(), box.normals.end(),
-              [](const auto &x, const auto &y) { return x.norm() > y.norm(); });
+              [](const auto &x, const auto &y)
+              { return CVector3dMap(x.data()).norm() > CVector3dMap(y.data()).norm(); });
   }
 
   Mpi::Broadcast(3, box.center.data(), dominant_rank, comm);
@@ -647,13 +687,17 @@ BoundingBox BoundingBoxFromPointCloud(MPI_Comm comm, std::vector<Eigen::Vector3d
   return box;
 }
 
+// Calculates a bounding ball from a point cloud, result is broadcast across all processes.
 BoundingBall BoundingBallFromPointCloud(MPI_Comm comm,
                                         std::vector<Eigen::Vector3d> vertices)
 {
-  auto num_vertices = int(vertices.size());
-  const int dominant_rank = Mpi::FindMax<int>(num_vertices, comm).rank;
-
-  const bool is_root = dominant_rank == Mpi::Rank(comm);
+  const auto num_vertices = int(vertices.size());
+  const int dominant_rank = [&]()
+  {
+    int vert = num_vertices, rank = Mpi::Rank(comm);
+    Mpi::GlobalMaxLoc(1, &vert, &rank, comm);
+    return rank;
+  }();
 
   // dominant_rank will perform the calculation.
   std::vector<int> recv_counts(Mpi::Size(comm)), displacements;
@@ -661,7 +705,7 @@ BoundingBall BoundingBallFromPointCloud(MPI_Comm comm,
              comm);
 
   std::vector<Eigen::Vector3d> collected_vertices;
-  if (is_root)
+  if (dominant_rank == Mpi::Rank(comm))
   {
     // First displacement is zero, then after is the partial sum of recv_counts.
     displacements.resize(Mpi::Size(comm));
@@ -670,16 +714,25 @@ BoundingBall BoundingBallFromPointCloud(MPI_Comm comm,
 
     // Add on slots at the end of vertices for the incoming data.
     collected_vertices.resize(std::accumulate(recv_counts.begin(), recv_counts.end(), 0));
+
+    // MPI transfer will be done with MPI_DOUBLE, so duplicate all these values.
+    for (auto &x : displacements)
+    {
+      x *= 3;
+    }
+    for (auto &x : recv_counts)
+    {
+      x *= 3;
+    }
   }
 
   // Gather the data to the dominant rank.
-  const auto mpi_array_3_type = Mpi::GetArrayType<double, 3>();
-  MPI_Gatherv(vertices.data(), vertices.size(), mpi_array_3_type, collected_vertices.data(),
-              recv_counts.data(), displacements.data(), mpi_array_3_type, dominant_rank,
-              comm);
+  static_assert(sizeof(Eigen::Vector3d) == 3 * sizeof(double));
+  MPI_Gatherv(vertices.data(), 3 * num_vertices, MPI_DOUBLE, collected_vertices.data(),
+              recv_counts.data(), displacements.data(), MPI_DOUBLE, dominant_rank, comm);
 
   BoundingBall ball;
-  if (Mpi::Rank(comm) == dominant_rank)
+  if (dominant_rank == Mpi::Rank(comm))
   {
     vertices = std::move(collected_vertices);
     // dominant_rank now has a fully stocked vector of vertices.
@@ -688,9 +741,10 @@ BoundingBall BoundingBallFromPointCloud(MPI_Comm comm,
     const auto &min = *std::min_element(vertices.begin(), vertices.end(), EigenLE);
     const auto &max = *std::max_element(vertices.begin(), vertices.end(), EigenLE);
 
+    using Vector3dMap = Eigen::Map<Eigen::Vector3d>;
     Eigen::Vector3d delta = max - min;
     ball.radius = delta.norm() / 2;
-    ball.center = (min + max) / 2;
+    Vector3dMap(ball.center.data()) = (min + max) / 2;
 
     // Project onto this candidate diameter, and pick a vertex furthest away.
     // Check that this resulting distance is less than or equal to the radius,
@@ -722,10 +776,10 @@ BoundingBall BoundingBallFromPointCloud(MPI_Comm comm,
                 "A point perpendicular must be contained in the ball: "
                     << PerpendicularDistance({delta}, perp) << " vs " << ball.radius);
 
-    const Eigen::Vector3d n_radial = (perp - ball.center).normalized();
+    const Eigen::Vector3d n_radial = (perp - CVector3dMap(ball.center.data())).normalized();
 
     // Compute a perpendicular to the circle using the cross product.
-    ball.planar_normal = delta.cross(n_radial).normalized();
+    Vector3dMap(ball.planar_normal.data()) = delta.cross(n_radial).normalized();
 
     // Compute the point furthest out of the plane discovered. If below
     // tolerance, this means the circle is 2D.
@@ -741,15 +795,17 @@ BoundingBall BoundingBallFromPointCloud(MPI_Comm comm,
     if (PerpendicularDistance({delta, n_radial}, out_of_plane) > planar_tolerance)
     {
       // The points are not functionally coplanar, zero out the normal.
-      ball.planar_normal *= 0;
+      Vector3dMap(ball.planar_normal.data()) *= 0;
       MFEM_VERIFY(PerpendicularDistance({delta, n_radial}, out_of_plane) <= ball.radius,
                   "A point perpendicular must be contained in the ball");
+      ball.planar = true;
     }
   }
 
   Mpi::Broadcast(3, ball.center.data(), dominant_rank, comm);
   Mpi::Broadcast(3, ball.planar_normal.data(), dominant_rank, comm);
   Mpi::Broadcast(1, &ball.radius, dominant_rank, comm);
+  Mpi::Broadcast(1, &ball.planar, dominant_rank, comm);
 
   return ball;
 }
@@ -766,7 +822,6 @@ BoundingBox GetBoundingBox(mfem::ParMesh &mesh, int attr, bool bdr)
   mfem::Array<int> marker(bdr ? mesh.bdr_attributes.Max() : mesh.attributes.Max());
   marker = 0;
   marker[attr - 1] = 1;
-
   return GetBoundingBox(mesh, marker, bdr);
 }
 
@@ -780,7 +835,6 @@ BoundingBall GetBoundingBall(mfem::ParMesh &mesh, int attr, bool bdr)
   mfem::Array<int> marker(bdr ? mesh.bdr_attributes.Max() : mesh.attributes.Max());
   marker = 0;
   marker[attr - 1] = 1;
-
   return GetBoundingBall(mesh, marker, bdr);
 }
 
@@ -1032,7 +1086,7 @@ std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &path)
     }
     tmp += "tmp/serial.msh";
     std::ofstream fo(tmp);
-    // mfem::ofgzstream fo(tmp, true);  // Use zlib compression if available
+    // mfem::ofgzstream fo(tmp, true);  // Use zlib compression if available.
     // fo << std::fixed;
     fo << std::scientific;
     fo.precision(MSH_FLT_PRECISION);
@@ -1170,7 +1224,7 @@ std::map<int, std::array<int, 2>> CheckMesh(std::unique_ptr<mfem::Mesh> &orig_me
       int f, o, e1, e2;
       orig_mesh->GetBdrElementFace(be, &f, &o);
       orig_mesh->GetFaceElements(f, &e1, &e2);
-      if (e1 < 0 || e2 < 0)  // Internal boundary elements are allowed to have no BC
+      if (e1 < 0 || e2 < 0)  // Internal boundary elements are allowed to have no BC.
       {
         warn = true;
         break;
@@ -1428,7 +1482,7 @@ std::map<int, std::array<int, 2>> CheckMesh(std::unique_ptr<mfem::Mesh> &orig_me
           b = 0;
         }
         MFEM_VERIFY(a + b > 0, "Invalid new boundary element attribute!");
-        int new_attr = max_bdr_attr + (a * (a - 1)) / 2 + b;  // At least max_bdr_attr+1
+        int new_attr = max_bdr_attr + (a * (a - 1)) / 2 + b;  // At least max_bdr_attr+1.
         if (new_attr_map.find(new_attr) == new_attr_map.end())
         {
           new_attr_map.emplace(new_attr, std::array<int, 2>{a, b});
@@ -1524,7 +1578,7 @@ std::unique_ptr<mfem::ParMesh> DistributeMesh(MPI_Comm comm,
         partitioner.ExtractPart(i, part);
         std::string pfile = mfem::MakeParFilename(tmp + "part.", i, ".mesh", width);
         std::ofstream fo(pfile);
-        // mfem::ofgzstream fo(pfile, true);  // Use zlib compression if available
+        // mfem::ofgzstream fo(pfile, true);  // Use zlib compression if available.
         // fo << std::fixed;
         fo << std::scientific;
         fo.precision(MSH_FLT_PRECISION);
@@ -1536,7 +1590,7 @@ std::unique_ptr<mfem::ParMesh> DistributeMesh(MPI_Comm comm,
     std::string pfile =
         mfem::MakeParFilename(tmp + "part.", Mpi::Rank(comm), ".mesh", width);
     int exists = 0;
-    while (!exists)  // Wait for root to finish writing all files
+    while (!exists)  // Wait for root to finish writing all files.
     {
       exists = std::filesystem::exists(pfile);
       Mpi::GlobalMax(1, &exists, comm);
@@ -1551,7 +1605,7 @@ std::unique_ptr<mfem::ParMesh> DistributeMesh(MPI_Comm comm,
     Mpi::Barrier(comm);
     if (Mpi::Root(comm))
     {
-      std::filesystem::remove_all(tmp);  // Remove the temporary directory
+      std::filesystem::remove_all(tmp);  // Remove the temporary directory.
     }
     return pmesh;
   }
@@ -1588,7 +1642,7 @@ std::unique_ptr<mfem::ParMesh> DistributeMesh(MPI_Comm comm,
                     "Overflow error distributing parallel mesh!");
         MPI_Isend(so[i].c_str(), ilen, MPI_CHAR, i, i, comm, &send_requests[i - 1]);
       }
-      std::istringstream fi(so[0]);  // This is never compressed
+      std::istringstream fi(so[0]);  // This is never compressed.
       auto pmesh = std::make_unique<mfem::ParMesh>(comm, fi);
       MPI_Waitall(static_cast<int>(send_requests.size()), send_requests.data(),
                   MPI_STATUSES_IGNORE);

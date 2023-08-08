@@ -4,10 +4,10 @@
 #ifndef PALACE_UTILS_GEODATA_HPP
 #define PALACE_UTILS_GEODATA_HPP
 
+#include <cmath>
 #include <array>
 #include <memory>
 #include <vector>
-#include <Eigen/Dense>
 #include <mpi.h>
 
 namespace mfem
@@ -63,15 +63,20 @@ void GetAxisAlignedBoundingBox(mfem::ParMesh &mesh, const mfem::Array<int> &mark
 struct BoundingBox
 {
   // The central point of the bounding box.
-  Eigen::Vector3d center;
+  std::array<double, 3> center;
   // Vectors from center to the midpoint of each face.
-  std::array<Eigen::Vector3d, 3> normals;
+  std::array<std::array<double, 3>, 3> normals;
   // Whether or not this bounding box is two dimensional.
   bool planar;
   // Compute the area of the bounding box spanned by the first two normals.
   double Area() const;
   // Compute the volume of a 3D bounding box. Returns zero if planar.
   double Volume() const;
+  // Compute the lengths of each axis.
+  std::array<double, 3> Lengths() const;
+  // Compute the deviation in degrees of a vector from each of the normal
+  // directions.
+  std::array<double, 3> Deviation(const std::array<double, 3> &direction) const;
 };
 
 // Helper functions for computing bounding boxes from a mesh and markers.
@@ -83,12 +88,18 @@ BoundingBox GetBoundingBox(mfem::ParMesh &mesh, int attr, bool bdr);
 struct BoundingBall
 {
   // The centroid of the ball.
-  Eigen::Vector3d center;
+  std::array<double, 3> center;
   // The radius of the ball from the center.
   double radius;
   // If the ball is two dimensional, the normal defining the planar surface.
   // Zero magnitude if a sphere.
-  Eigen::Vector3d planar_normal;
+  std::array<double, 3> planar_normal;
+  // Whether or not this bounding ball is two dimensional.
+  bool planar;
+  // Compute the area of the bounding box spanned by the first two normals.
+  double Area() const { return M_PI * std::pow(radius, 2.0); }
+  // Compute the volume of a 3D bounding box. Returns zero if planar.
+  double Volume() const { return planar ? 0.0 : (4 * M_PI / 3) * std::pow(radius, 3.0); }
 };
 
 // Given a mesh and a marker, compute the diameter of a bounding circle/sphere,

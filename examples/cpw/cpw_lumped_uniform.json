@@ -79,12 +79,11 @@
         [
           {
             "Attributes": [4],
-            "Direction": [0,1,0],
-            "CoordinateSystem": "Cartesian"
+            "Direction": "+Y"
           },
           {
             "Attributes": [8],
-            "Direction": [0,-1,0]
+            "Direction": "-Y"
           }
         ]
       },
@@ -95,12 +94,11 @@
         [
           {
             "Attributes": [5],
-            "Direction": [0,1,0]
+            "Direction": "+Y"
           },
           {
             "Attributes": [9],
-            "Direction": [0,-1,0],
-            "CoordinateSystem": "Cartesian"
+            "Direction": "-Y"
           }
         ]
       },
@@ -111,11 +109,11 @@
         [
           {
             "Attributes": [6],
-            "Direction": [0,1,0]
+            "Direction": "+Y"
           },
           {
             "Attributes": [10],
-            "Direction": [0,-1,0]
+            "Direction": "-Y"
           }
         ]
       },
@@ -126,11 +124,11 @@
         [
           {
             "Attributes": [7],
-            "Direction": [0,1,0]
+            "Direction": "+Y"
           },
           {
             "Attributes": [11],
-            "Direction": [0,-1,0]
+            "Direction": "-Y"
           }
         ]
       }

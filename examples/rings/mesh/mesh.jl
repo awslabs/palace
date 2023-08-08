@@ -4,15 +4,36 @@
 using Gmsh: gmsh
 using LinearAlgebra
 
+"""
+    generate_ring_mesh(;
+        gui::Bool                  = false,
+        rc::AbstractVector{<:Real} = [0.0, 0.0, 0.0],
+        ra::AbstractVector{<:Real} = [0.0, 0.0, 1.0],
+        θ::Real                    = π / 2,
+        verbose::Bool              = false
+    )
+
+Generate a mesh for the rings example using Gmsh
+
+# Arguments
+
+  - gui - whether to launch the gmsh gui on mesh generation
+  - rc - center of rotation
+  - ra - axis of rotation
+  - θ - angle of rotation about ra, originating at rc
+  - verbose - flag to dictate the level of print to REPL, passed to Gmsh
+"""
 function generate_ring_mesh(;
-    gui::Bool=false,
-    rc=[0.0, 0.0, 0.0],
-    ra=[0.0, 0.0, 1.0],
-    θ=pi / 2
+    gui::Bool                  = false,
+    rc::AbstractVector{<:Real} = [0.0, 0.0, 0.0],
+    ra::AbstractVector{<:Real} = [0.0, 0.0, 1.0],
+    θ::Real                    = π / 2,
+    verbose::Bool              = false
 )
     kernel = gmsh.model.occ
 
     gmsh.initialize()
+    gmsh.option.setNumber("General.Verbosity", verbose)
 
     # Add model
     if "rings" in gmsh.model.list()
@@ -187,7 +208,7 @@ function generate_ring_mesh(;
         domain
     )
 
-    # gmsh.option.setNumber("Mesh.Algorithm3D", 10)
+    gmsh.option.setNumber("Mesh.Algorithm3D", 10)
 
     gmsh.model.mesh.generate(3)
     gmsh.model.mesh.setOrder(2)

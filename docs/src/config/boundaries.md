@@ -247,7 +247,7 @@ accounts for nonzero metal thickness.
     {
         "Index": <int>,
         "Attributes": [<int array>],
-        "Direction": <string> or <float array>,
+        "Direction": <string> or [<float array>],
         "CoordinateSystem": <string>,
         "Excitation": <bool>,
         "R": <float>,
@@ -259,7 +259,7 @@ accounts for nonzero metal thickness.
         "Elements":
         [
             {
-                "Attributes": <string> or <float array>,
+                "Attributes": <string> or [<float array>],
                 "Direction": <string>,
                 "CoordinateSystem": <string>
             },
@@ -330,7 +330,7 @@ should not be combined with the `"Direction"` field described above. Each elemen
 multielement lumped port can be described by its own unique direction, which is specified
 here. The elements of a multielement port add in parallel.
 
-`"Elements"[]["CoordinateSystem"] [None]` :  This option is for multielement
+`"Elements"[]["CoordinateSystem"] ["Cartesian"]` :  This option is for multielement
 lumped ports and should not be combined with the `"CoordinateSystem"` field
 described above. Each element of a multielement lumped port can be described by
 its own unique direction, and corresponding coordinate system.
@@ -390,13 +390,13 @@ those specified under [`config["Boundaries"]["PEC"]["Attributes"]`]
     {
         "Index": <int>,
         "Attributes": [<int array>],
-        "Direction": <string> or <float array>,
+        "Direction": <string> or [<float array>],
         "CoordinateSystem": <string>,
         "Elements":
         [
             {
                 "Attributes": [<int array>],
-                "Direction": <string> or <float array>,
+                "Direction": <string> or [<float array>],
                 "CoordinateSystem": <string>,
             },
             ...
@@ -559,7 +559,7 @@ for example `[0, 1, 0]`. The true surface normal is used in the calculation,
         {
             "Index": <int>,
             "Attributes": [<int array>],
-            "Side": <string> or <float array>,
+            "Side": <string> or [<float array>],
             "Thickness": <float>,
             "Permittivity": <float>,
             "PermittivityMA": <float>,
@@ -570,7 +570,7 @@ for example `[0, 1, 0]`. The true surface normal is used in the calculation,
             [
                 {
                     "Attributes": [<int array>],
-                    "Side": <string> or <float array>
+                    "Side": <string> or [<float array>]
                 },
                 ...
             ]
