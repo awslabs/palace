@@ -74,9 +74,6 @@ struct BoundingBox
   double Volume() const;
 };
 
-// Computes a bounding box for a point cloud, assuming a distributed point cloud
-// of vertices.
-BoundingBox BoundingBoxFromPointCloud(MPI_Comm comm, std::vector<Eigen::Vector3d> vertices);
 // Helper functions for computing bounding boxes from a mesh and markers.
 BoundingBox GetBoundingBox(mfem::ParMesh &mesh, const mfem::Array<int> &marker, bool bdr);
 BoundingBox GetBoundingBox(mfem::ParMesh &mesh, int attr, bool bdr);
@@ -94,10 +91,6 @@ struct BoundingBall
   Eigen::Vector3d planar_normal;
 };
 
-// Helper for computing a diameter from a point cloud. The cloud is assumed to
-// contain a set of points on a circle.
-BoundingBall BoundingBallFromPointCloud(MPI_Comm comm,
-                                        std::vector<Eigen::Vector3d> vertices);
 // Given a mesh and a marker, compute the diameter of a bounding circle/sphere,
 // assuming that the extrema points are in the marked group.
 BoundingBall GetBoundingBall(mfem::ParMesh &mesh, const mfem::Array<int> &marker, bool bdr);

@@ -141,9 +141,7 @@ public:
       sign(direction[0] > 0),
       bounding_ball(mesh::GetBoundingBall(*fespace.GetParMesh(), marker, true))
   {
-    MFEM_VERIFY(std::abs(bounding_ball.planar_normal[0]) == 0 &&
-                    std::abs(bounding_ball.planar_normal[1]) == 0 &&
-                    std::abs(bounding_ball.planar_normal[2]) == 0,
+    MFEM_VERIFY(bounding_ball.planar_normal.norm() > 0,
                 "Boundary elements must be coplanar to define a coaxial port.");
 
     double A = GetArea(fespace);

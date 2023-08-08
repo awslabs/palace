@@ -247,7 +247,8 @@ accounts for nonzero metal thickness.
     {
         "Index": <int>,
         "Attributes": [<int array>],
-        "Direction": <string>,
+        "Direction": <string> or <float array>,
+        "CoordinateSystem": <string>,
         "Excitation": <bool>,
         "R": <float>,
         "L": <float>,
@@ -258,8 +259,9 @@ accounts for nonzero metal thickness.
         "Elements":
         [
             {
-                "Attributes": [<int array>],
-                "Direction": <string>
+                "Attributes": <string> or <float array>,
+                "Direction": <string>,
+                "CoordinateSystem": <string>
             },
             ...
         ]
@@ -276,12 +278,20 @@ with
 boundary. If this port is to be a multielement lumped port with more than a single lumped
 element, use the `"Elements"` array described below.
 
-`"Direction" [None]` :  Direction to define the polarization direction of the port field
-mode on this lumped port boundary. Lumped ports must be axis-aligned unless the port is a
-coaxial port. The available options are: `"+X"`, `"-X"`, `"+Y"`, `"-Y"`, `"+Z"`, `"-Z"`,
-`"+R"`, `"-R"` (`"R"` is for a coaxial lumped port). If this port is to be a multielement
-lumped port with more than a single lumped element, use the `"Elements"` array described
-below.
+`"Direction" [None]` :  Direction to define the polarization direction of the
+port field mode on this lumped port boundary. Axis aligned lumped ports can be
+specified using keywords: `"+X"`, `"-X"`, `"+Y"`, `"-Y"`, `"+Z"`, `"-Z"`, while
+coaxial lumped ports can be specified using `"+R"`, `"-R"`. The direction can
+alternatively be specified as a normalized array of three values, for example
+`[0, 1, 0]`. If a vector direction is specified, the `"CoordinateSystem"` value
+specifies the coordinate system it is expressed in. If this port is to be a
+multielement lumped port with more than a single lumped element, use the
+`"Elements"` array described below.
+
+`"CoordinateSystem" ["Cartesian"]` : Coordinate system used to express the
+`"Direction"` vector, the options are `"Cartesian"` and `"Cylindrical"`. If a
+keyword argument is used for `"Direction"` this value is ignored, and the
+appropriate coordinate system is used instead.
 
 `"Excitation" [false]` :  Turns on or off port excitation for this lumped port boundary for
 driven or transient simulation types.
@@ -319,6 +329,11 @@ attributes, which are specified here. The elements of a multielement port add in
 should not be combined with the `"Direction"` field described above. Each element of a
 multielement lumped port can be described by its own unique direction, which is specified
 here. The elements of a multielement port add in parallel.
+
+`"Elements"[]["CoordinateSystem"] [None]` :  This option is for multielement
+lumped ports and should not be combined with the `"CoordinateSystem"` field
+described above. Each element of a multielement lumped port can be described by
+its own unique direction, and corresponding coordinate system.
 
 ## `boundaries["WavePort"]`
 
@@ -375,12 +390,14 @@ those specified under [`config["Boundaries"]["PEC"]["Attributes"]`]
     {
         "Index": <int>,
         "Attributes": [<int array>],
-        "Direction": <string>
+        "Direction": <string> or <float array>,
+        "CoordinateSystem": <string>,
         "Elements":
         [
             {
                 "Attributes": [<int array>],
-                "Direction": <string>
+                "Direction": <string> or <float array>,
+                "CoordinateSystem": <string>,
             },
             ...
         ]
@@ -404,6 +421,12 @@ boundary. The available options are the same as under
 this source is to be a multielement source which distributes the source across more than a
 single lumped element, use the `"Elements"` array described below.
 
+`"CoordinateSystem" ["Cartesian"]` :  Defines the coordinate system for the source current
+direction for this surface current boundary. The available options are the same as under
+[`config["Boundaries"]["LumpedPort"]["CoordinateSystem"]`](#boundaries%5B%22LumpedPort%22%5D). If
+this source is to be a multielement source which distributes the source across more than a
+single lumped element, use the `"Elements"` array described below.
+
 `"Elements"[]["Attributes"] [None]` :  This option is for multielement surface current
 boundaries should not be combined with the `"Attributes"` field described above. Each
 element of a multielement current source can be described by its own unique integer array of
@@ -411,10 +434,15 @@ mesh boundary attributes, which are specified here. The elements of a multieleme
 add in parallel to give the same total current as a single-element source.
 
 `"Elements"[]["Direction"] [None]` :  This option is for multielement surface current
-boundaires and should not be combined with the `"Direction"` field described above. Each
+boundaries and should not be combined with the `"Direction"` field described above. Each
 element of a multielement current source can be described by its own unique direction,
 which is specified here. The elements of a multielement source add in parallel to give the
 same total current as a single-element source.
+
+`"Elements"[]["CoordinateSystem"] ["Cartesian"]` :  This option is for multielement surface current
+boundaries and should not be combined with the `"CoordinateSystem"` field described above. Each
+element of a multielement current source can be described by its own unique
+direction, and corresponding coordinate system.
 
 ## `boundaries["Ground"]`
 
@@ -516,7 +544,10 @@ postprocessing boundary.
 
 `"Direction" [None]` :  Defines the global direction with which to orient the surface
 normals with computing the magnetic flux for this inductance postprocessing boundary. The
-available options are: `"+X"`, `"-X"`, `"+Y"`, `"-Y"`, `"+Z"`, `"-Z"`.
+available options are: `"+X"`, `"-X"`, `"+Y"`, `"-Y"`, `"+Z"`, `"-Z"`. The
+direction can alternatively be specified as a normalized array of three values,
+for example `[0, 1, 0]`. The true surface normal is used in the calculation,
+`"Direction"` is only used to ensure the correct choice of orientation of the normal.
 
 ## `boundaries["Postprocessing"]["Dielectric"]`
 
@@ -528,7 +559,7 @@ available options are: `"+X"`, `"-X"`, `"+Y"`, `"-Y"`, `"+Z"`, `"-Z"`.
         {
             "Index": <int>,
             "Attributes": [<int array>],
-            "Side": <string>,
+            "Side": <string> or <float array>,
             "Thickness": <float>,
             "Permittivity": <float>,
             "PermittivityMA": <float>,
@@ -539,7 +570,7 @@ available options are: `"+X"`, `"-X"`, `"+Y"`, `"-Y"`, `"+Z"`, `"-Z"`.
             [
                 {
                     "Attributes": [<int array>],
-                    "Side": <string>
+                    "Side": <string> or <float array>
                 },
                 ...
             ]

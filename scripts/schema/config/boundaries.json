@@ -118,6 +118,7 @@
             "items": { "type": "integer"}
           },
           "Direction": { "$ref": "#/$defs/Direction" },
+          "CoordinateSystem": { "type": "string", "enum": ["Cartesian", "Cylindrical"] },
           "R": { "type": "number" },
           "L": { "type": "number" },
           "C": { "type": "number" },
@@ -142,7 +143,8 @@
                   "additionalItems": false,
                   "items": { "type": "integer"}
                 },
-                "Direction": { "$ref": "#/$defs/Direction" }
+                "Direction": { "$ref": "#/$defs/Direction" },
+                "CoordinateSystem": { "type": "string", "enum": ["Cartesian", "Cylindrical"] },
               }
             }
           }
@@ -207,6 +209,7 @@
             "items": { "type": "integer"}
           },
           "Direction": { "$ref": "#/$defs/Direction" },
+          "CoordinateSystem": { "type": "string", "enum": ["Cartesian", "Cylindrical"] },
           "Elements":
           {
             "type": "array",
@@ -224,7 +227,8 @@
                   "additionalItems": false,
                   "items": { "type": "integer"}
                 },
-                "Direction": { "$ref": "#/$defs/Direction" }
+                "Direction": { "$ref": "#/$defs/Direction" },
+                "CoordinateSystem": { "type": "string", "enum": ["Cartesian", "Cylindrical"] },
               }
             }
           }
@@ -328,7 +332,8 @@
                 "additionalItems": false,
                 "items": { "type": "integer"}
               },
-              "Direction": { "$ref": "#/$defs/Direction" }
+              "Direction": { "$ref": "#/$defs/Direction" },
+              "CoordinateSystem": { "type": "string", "enum": ["Cartesian", "Cylindrical"] }
             }
           }
         },
@@ -350,7 +355,8 @@
                 "additionalItems": false,
                 "items": { "type": "integer"}
               },
-              "Side": { "type": "string" },
+              "Side": { "$ref": "#/$defs/Direction" },
+              "CoordinateSystem": { "type": "string", "enum": ["Cartesian", "Cylindrical"] },
               "Permittivity": { "type": "number" },
               "PermittivityMA": { "type": "number" },
               "PermittivityMS": { "type": "number" },
@@ -374,7 +380,8 @@
                       "additionalItems": false,
                       "items": { "type": "integer"}
                     },
-                    "Side": { "type": "string" }
+                    "Side": { "$ref": "#/$defs/Direction" },
+                    "CoordinateSystem": { "type": "string", "enum": ["Cartesian", "Cylindrical"] }
                   }
                 }
               }
