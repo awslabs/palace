@@ -21,7 +21,7 @@ namespace config
 
 struct InterfaceDielectricData;
 struct CapacitanceData;
-struct DataNode;
+struct InductanceData;
 
 }  // namespace config
 
@@ -68,7 +68,7 @@ private:
   {
     mfem::Vector direction;
 
-    SurfaceFluxData(const config::DataNode &data, mfem::ParMesh &mesh);
+    SurfaceFluxData(const config::InductanceData &data, mfem::ParMesh &mesh);
 
     std::unique_ptr<mfem::Coefficient>
     GetCoefficient(int i, const mfem::ParGridFunction &U,

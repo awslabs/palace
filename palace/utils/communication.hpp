@@ -127,29 +127,51 @@ inline MPI_Datatype DataType<bool>()
   return MPI_C_BOOL;
 }
 
-// Helper for returning the rank with a MIN or MAX reduction.
-template <typename T>
-struct ValueAndRank
+// Helper for computing a reduction along with an identifier, for example rank
+// of the owning process.
+template <typename T, typename U = signed int>
+struct ValueAndId
 {
-  // The reduced value from the MINLOC or MAXLOC operation.
-  T value;
-  // The processor rank that has the value.
-  int rank;
-  // Convenience decay operators to allow use as the underlying value.
-  inline operator const T &() const { return value; }
-  inline operator T &() { return value; }
+  // The value used in a reduction.
+  T val;
+  // The id that corresponds to the reduced value.
+  U id;
 };
 
 template <>
-inline MPI_Datatype DataType<ValueAndRank<double>>()
+inline MPI_Datatype DataType<ValueAndId<float, signed int>>()
+{
+  return MPI_FLOAT_INT;
+}
+
+template <>
+inline MPI_Datatype DataType<ValueAndId<double, signed int>>()
 {
   return MPI_DOUBLE_INT;
 }
 
 template <>
-inline MPI_Datatype DataType<ValueAndRank<int>>()
+inline MPI_Datatype DataType<ValueAndId<long double, signed int>>()
+{
+  return MPI_LONG_DOUBLE_INT;
+}
+
+template <>
+inline MPI_Datatype DataType<ValueAndId<signed short, signed int>>()
+{
+  return MPI_SHORT_INT;
+}
+
+template <>
+inline MPI_Datatype DataType<ValueAndId<signed int, signed int>>()
 {
   return MPI_2INT;
+}
+
+template <>
+inline MPI_Datatype DataType<ValueAndId<signed long int, signed int>>()
+{
+  return MPI_LONG_INT;
 }
 
 }  // namespace mpi
@@ -169,7 +191,6 @@ public:
   // Finalize MPI (if it has been initialized and not yet already finalized).
   static void Finalize()
   {
-
     if (IsInitialized() && !IsFinalized())
     {
       MPI_Finalize();
@@ -245,22 +266,42 @@ public:
     GlobalOp(len, buff, MPI_SUM, comm);
   }
 
-  // Return the rank that has the minimum over the communicator
+  // Global minimum with id (in-place, result is broadcast to all processes).
   template <typename T>
-  static mpi::ValueAndRank<T> FindMin(const T val, MPI_Comm comm)
+  static void GlobalMinLoc(int len, T *val, int *id, MPI_Comm comm)
   {
-    mpi::ValueAndRank<T> local{val, Mpi::Rank(comm)};
-    GlobalOp(1, &local, MPI_MINLOC, comm);
-    return local;
+    std::vector<mpi::ValueAndId<T, int>> buffer(len);
+    for (int i = 0; i < len; ++i)
+    {
+      buffer[i].val = val[i];
+      buffer[i].id = id[i];
+    }
+
+    GlobalOp(len, buffer.data(), MPI_MINLOC, comm);
+    for (int i = 0; i < len; ++i)
+    {
+      val[i] = buffer[i].val;
+      id[i] = buffer[i].id;
+    }
   }
 
-  // Return the rank that has the maximum over the communicator
+  // Global minimum with id (in-place, result is broadcast to all processes).
   template <typename T>
-  static mpi::ValueAndRank<T> FindMax(const T &val, MPI_Comm comm)
+  static void GlobalMaxLoc(int len, T *val, int *id, MPI_Comm comm)
   {
-    mpi::ValueAndRank<T> local{val, Mpi::Rank(comm)};
-    GlobalOp(1, &local, MPI_MAXLOC, comm);
-    return local;
+    std::vector<mpi::ValueAndId<T, int>> buffer(len);
+    for (int i = 0; i < len; ++i)
+    {
+      buffer[i].val = val[i];
+      buffer[i].id = id[i];
+    }
+
+    GlobalOp(len, buffer.data(), MPI_MAXLOC, comm);
+    for (int i = 0; i < len; ++i)
+    {
+      val[i] = buffer[i].val;
+      id[i] = buffer[i].id;
+    }
   }
 
   // Global broadcast from root.
@@ -318,54 +359,10 @@ public:
   // Return the global communicator.
   static MPI_Comm World() { return MPI_COMM_WORLD; }
 
-  // Generate a custom MPI_Datatype for a given std::array<T,N>. The types are
-  // deleted on Finalization of the singleton.
-  template <typename T, std::size_t N>
-  static MPI_Datatype GetArrayType()
-  {
-    // This only works if the array type is size equivalent to a C-array.
-    static_assert(sizeof(std::array<T, N>) == N * sizeof(T));
-
-    static MPI_Datatype type;
-    static bool set = false;
-    if (set)
-    {
-      return type;
-    }
-    else
-    {
-      int block_lengths[N];
-      MPI_Aint displacements[N];
-      MPI_Datatype types[N];
-
-      for (int i = 0; i < N; ++i)
-      {
-        block_lengths[i] = 1;
-        displacements[i] = i * sizeof(T);
-        types[i] = mpi::DataType<T>();
-      }
-
-      MPI_Type_create_struct(N, block_lengths, displacements, types, &type);
-      MPI_Type_commit(&type);
-
-      Instance().custom_types.push_back(type);
-      set = true;
-    }
-    return type;
-  }
-
 private:
   // Prevent direct construction of objects of this class.
   Mpi() = default;
-  ~Mpi()
-  {
-    // Remove any custom types generated since initialization
-    for (auto &dt : custom_types)
-    {
-      MPI_Type_free(&dt);
-    }
-    Finalize();
-  }
+  ~Mpi() { Finalize(); }
 
   // Access the singleton instance.
   static Mpi &Instance()
@@ -373,8 +370,6 @@ private:
     static Mpi mpi;
     return mpi;
   }
-
-  std::vector<MPI_Datatype> custom_types;
 
   static void Init(int *argc, char ***argv)
   {

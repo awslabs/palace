@@ -22,15 +22,16 @@ SurfaceCurrentData::SurfaceCurrentData(const config::SurfaceCurrentData &data,
     mfem::Array<int> attr_marker;
     mesh::AttrToMarker(h1_fespace.GetParMesh()->bdr_attributes.Max(), node.attributes,
                        attr_marker);
-    if (node.coordinate_system == config::CoordinateSystem::CYLINDRICAL)
+    switch (node.coordinate_system)
     {
-      elems.push_back(
-          std::make_unique<CoaxialElementData>(node.normal, attr_marker, h1_fespace));
-    }
-    else
-    {
-      elems.push_back(
-          std::make_unique<UniformElementData>(node.normal, attr_marker, h1_fespace));
+      case config::internal::ElementData::CoordinateSystem::CYLINDRICAL:
+        elems.push_back(
+            std::make_unique<CoaxialElementData>(node.direction, attr_marker, h1_fespace));
+        break;
+      case config::internal::ElementData::CoordinateSystem::CARTESIAN:
+        elems.push_back(
+            std::make_unique<UniformElementData>(node.direction, attr_marker, h1_fespace));
+        break;
     }
   }
 }

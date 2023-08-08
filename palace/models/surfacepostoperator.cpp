@@ -61,15 +61,15 @@ SurfacePostOperator::InterfaceDielectricData::InterfaceDielectricData(
 
     // Store information about the surface side to consider.
     mfem::Vector &side = sides.emplace_back();
-    if (node.NormalMagnitude() > 0)
+    if (node.direction[0] == 0 && node.direction[1] == 0 && node.direction[2] == 0)
     {
-      side.SetSize(mesh.SpaceDimension());
-      std::copy(node.normal.begin(), node.normal.end(), side.begin());
+      // This is OK if surface is single sided, just push back an empty Vector.
     }
     else
     {
-      // This is OK if surface is single sided, just push back an empty Vector.
-      side = 0.0;
+      side.SetSize(mesh.SpaceDimension());
+      std::copy(node.direction.begin(), node.direction.end(), side.begin());
+      side /= side.Norml2();
     }
 
     // Store markers for this element of the postprocessing boundary.
@@ -114,13 +114,14 @@ std::unique_ptr<mfem::Coefficient> SurfacePostOperator::SurfaceChargeData::GetCo
   return std::make_unique<BdrChargeCoefficient>(U, mat_op);
 }
 
-SurfacePostOperator::SurfaceFluxData::SurfaceFluxData(const config::DataNode &data,
+SurfacePostOperator::SurfaceFluxData::SurfaceFluxData(const config::InductanceData &data,
                                                       mfem::ParMesh &mesh)
 {
   // Store information about the global direction for orientation. Note the true boundary
   // normal is used in calculating the flux, this is just used to determine the sign.
   direction.SetSize(mesh.SpaceDimension());
-  std::copy(data.normal.begin(), data.normal.end(), direction.begin());
+  std::copy(data.direction.begin(), data.direction.end(), direction.begin());
+  direction /= direction.Norml2();
 
   // Construct the coefficient for this postprocessing boundary (copies the direction
   // vector).

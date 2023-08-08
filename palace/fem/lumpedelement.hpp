@@ -59,14 +59,14 @@ public:
 class UniformElementData : public LumpedElementData
 {
 protected:
-  mfem::Vector direction;  // Cartesian vector specifying signed direction of incident field
   mesh::BoundingBox bounding_box;  // Bounding box defining the rectangular lumped port
-  double l, w;                     // Lumped element length and width
+  mfem::Vector direction;  // Cartesian vector specifying signed direction of incident field
+  double l, w;             // Lumped element length and width
 public:
-  UniformElementData(std::array<double, 3> input_dir, const mfem::Array<int> &marker,
+  UniformElementData(const std::array<double, 3> &input_dir, const mfem::Array<int> &marker,
                      mfem::ParFiniteElementSpace &fespace)
-    : LumpedElementData(fespace.GetParMesh()->SpaceDimension(), marker), direction(3),
-      bounding_box(mesh::GetBoundingBox(*fespace.GetParMesh(), marker, true))
+    : LumpedElementData(fespace.GetParMesh()->SpaceDimension(), marker),
+      bounding_box(mesh::GetBoundingBox(*fespace.GetParMesh(), marker, true)), direction(3)
   {
     MFEM_VERIFY(bounding_box.planar, "The set of boundary elements must be coplanar");
 
@@ -81,38 +81,43 @@ public:
                     << " do not match: Port geometry is not rectangular");
 
     // Check the user specified direction aligns with an axis direction
-    Eigen::Map<Eigen::Vector3d> norm_dir(input_dir.data());
-    norm_dir.normalize();
-
-    auto normalized_0 = bounding_box.normals[0].normalized();
-    auto normalized_1 = bounding_box.normals[1].normalized();
-
-    double deviation_0_deg =
-        std::acos(std::min(1.0, std::abs(norm_dir.dot(normalized_0)))) * (180 / M_PI);
-    double deviation_1_deg =
-        std::acos(std::min(1.0, std::abs(norm_dir.dot(normalized_1)))) * (180 / M_PI);
+    auto lengths = bounding_box.Lengths();
+    auto deviation_deg = bounding_box.Deviation(input_dir);
 
     constexpr double angle_warning_deg = 0.1;
     constexpr double angle_error_deg = 1;
-    if ((deviation_0_deg > angle_warning_deg && deviation_1_deg > angle_warning_deg) ||
-        std::isnan(deviation_0_deg) || std::isnan(deviation_0_deg))
+    if ((deviation_deg[0] > angle_warning_deg && deviation_deg[1] > angle_warning_deg) ||
+        std::isnan(deviation_deg[0]) || std::isnan(deviation_deg[1]))
     {
+      auto normal_0 = bounding_box.normals[0];
+      for (auto &x : normal_0)
+      {
+        x /= lengths[0];
+      }
+      auto normal_1 = bounding_box.normals[1];
+      for (auto &x : normal_1)
+      {
+        x /= lengths[1];
+      }
+
       Mpi::Warning("User specified direction {} does not align with either bounding box "
                    "axis up to {} degrees.\n"
                    "Axis 1: {} ({} degrees)\nAxis 2: {} ({} degrees)",
-                   input_dir, angle_warning_deg, normalized_0, deviation_0_deg,
-                   normalized_1, deviation_1_deg);
+                   input_dir, angle_warning_deg, normal_0, deviation_deg[0], normal_1,
+                   deviation_deg[1]);
     }
 
-    MFEM_VERIFY(deviation_0_deg <= angle_error_deg || deviation_1_deg <= angle_error_deg,
+    MFEM_VERIFY(deviation_deg[0] <= angle_error_deg || deviation_deg[1] <= angle_error_deg,
                 "Specified direction does not align sufficiently with bounding box axes: "
-                    << deviation_0_deg << ' ' << deviation_1_deg << ' ' << angle_error_deg);
+                    << deviation_deg[0] << ' ' << deviation_deg[1] << ' '
+                    << angle_error_deg);
 
     // Compute the length from the most aligned normal direction.
-    l = 2 * bounding_box.normals[deviation_0_deg < deviation_1_deg ? 0 : 1].norm();
-    w = bounding_box.Area() / l;
+    l = lengths[deviation_deg[0] < deviation_deg[1] ? 0 : 1];
+    w = A / l;
 
     std::copy(input_dir.begin(), input_dir.end(), direction.begin());
+    direction /= direction.Norml2();
   }
 
   double GetGeometryLength() const override { return l; }
@@ -130,25 +135,26 @@ public:
 class CoaxialElementData : public LumpedElementData
 {
 protected:
+  mesh::BoundingBall bounding_ball;  // Bounding ball defined by boundary element
   bool sign;                         // Sign of incident field, +r̂ if true
   double ra;                         // Inner radius of coaxial annulus
-  mesh::BoundingBall bounding_ball;  // Bounding ball defined by boundary element
 
 public:
   CoaxialElementData(const std::array<double, 3> &direction, const mfem::Array<int> &marker,
                      mfem::ParFiniteElementSpace &fespace)
     : LumpedElementData(fespace.GetParMesh()->SpaceDimension(), marker),
-      sign(direction[0] > 0),
-      bounding_ball(mesh::GetBoundingBall(*fespace.GetParMesh(), marker, true))
+      bounding_ball(mesh::GetBoundingBall(*fespace.GetParMesh(), marker, true)),
+      sign(direction[0] > 0)
   {
-    MFEM_VERIFY(bounding_ball.planar_normal.norm() > 0,
+    MFEM_VERIFY(bounding_ball.planar,
                 "Boundary elements must be coplanar to define a coaxial port.");
 
     double A = GetArea(fespace);
     // Get inner radius of annulus assuming full 2π circumference.
     MFEM_VERIFY(bounding_ball.radius > 0.0 &&
                     std::pow(bounding_ball.radius, 2) - A / M_PI > 0.0,
-                "Coaxial element boundary is not defined correctly!");
+                "Coaxial element boundary is not defined correctly: Radius "
+                    << bounding_ball.radius << " Area " << A);
     ra = std::sqrt(std::pow(bounding_ball.radius, 2) - A / M_PI);
   }
 
