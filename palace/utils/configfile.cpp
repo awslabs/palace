@@ -831,55 +831,55 @@ void LumpedPortBoundaryData::SetUp(json &boundaries)
   MFEM_VERIFY(
       port->is_array(),
       "\"LumpedPort\" and \"Terminal\" should specify an array in the configuration file!");
-  for (auto &p : *port)
+  for (auto it = port->begin(); it != port->end(); ++it)
   {
     MFEM_VERIFY(
-        p.find("Index") != p.end(),
+        it->find("Index") != it->end(),
         "Missing \"LumpedPort\" or \"Terminal\" boundary \"Index\" in configuration file!");
-    auto ret = mapdata.insert(std::make_pair(p.at("Index"), LumpedPortData()));
+    auto ret = mapdata.insert(std::make_pair(it->at("Index"), LumpedPortData()));
     MFEM_VERIFY(ret.second, "Repeated \"Index\" found when processing \"LumpedPort\" or "
                             "\"Terminal\" boundaries in configuration file!");
     LumpedPortData &data = ret.first->second;
-    data.R = p.value("R", data.R);
-    data.L = p.value("L", data.L);
-    data.C = p.value("C", data.C);
-    data.Rs = p.value("Rs", data.Rs);
-    data.Ls = p.value("Ls", data.Ls);
-    data.Cs = p.value("Cs", data.Cs);
-    data.excitation = p.value("Excitation", data.excitation);
-    if (p.find("Attributes") != p.end())
+    data.R = it->value("R", data.R);
+    data.L = it->value("L", data.L);
+    data.C = it->value("C", data.C);
+    data.Rs = it->value("Rs", data.Rs);
+    data.Ls = it->value("Ls", data.Ls);
+    data.Cs = it->value("Cs", data.Cs);
+    data.excitation = it->value("Excitation", data.excitation);
+    if (it->find("Attributes") != it->end())
     {
-      MFEM_VERIFY(p.find("Elements") == p.end(),
+      MFEM_VERIFY(it->find("Elements") == it->end(),
                   "Cannot specify both top-level \"Attributes\" list and \"Elements\" for "
                   "\"LumpedPort\" or \"Terminal\" boundary in configuration file!");
 
       data.nodes.clear();
       data.nodes.emplace_back(
-          ParseElementData(p, "Direction", terminal == boundaries.end()));
+          ParseElementData(*it, "Direction", terminal == boundaries.end()));
     }
     else
     {
-      auto elements = p.find("Elements");
-      MFEM_VERIFY(elements != p.end(),
+      auto elements = it->find("Elements");
+      MFEM_VERIFY(elements != it->end(),
                   "Missing top-level \"Attributes\" list or \"Elements\" for "
                   "\"LumpedPort\" or \"Terminal\" boundary in configuration file!");
-      for (auto &elem : *elements)
+      for (auto elem_it = elements->begin(); elem_it != elements->end(); ++elem_it)
       {
-        MFEM_VERIFY(elem.find("Attributes") != elem.end(),
+        MFEM_VERIFY(elem_it->find("Attributes") != elem_it->end(),
                     "Missing \"Attributes\" list for \"LumpedPort\" or \"Terminal\" "
                     "boundary element in configuration file!");
 
         data.nodes.emplace_back(
-            ParseElementData(elem, "Direction", terminal == boundaries.end()));
+            ParseElementData(*elem_it, "Direction", terminal == boundaries.end()));
 
         // Cleanup
-        elem.erase("Attributes");
-        elem.erase("Direction");
-        elem.erase("CoordinateSystem");
-        MFEM_VERIFY(elem.empty(),
+        elem_it->erase("Attributes");
+        elem_it->erase("Direction");
+        elem_it->erase("CoordinateSystem");
+        MFEM_VERIFY(elem_it->empty(),
                     "Found an unsupported configuration file keyword under \"LumpedPort\" "
                     "or \"Terminal\" boundary element!\n"
-                        << elem.dump(2));
+                        << elem_it->dump(2));
       }
     }
 
@@ -899,21 +899,21 @@ void LumpedPortBoundaryData::SetUp(json &boundaries)
     // }
 
     // Cleanup
-    p.erase("Index");
-    p.erase("R");
-    p.erase("L");
-    p.erase("C");
-    p.erase("Rs");
-    p.erase("Ls");
-    p.erase("Cs");
-    p.erase("Excitation");
-    p.erase("Attributes");
-    p.erase("Direction");
-    p.erase("CoordinateSystem");
-    p.erase("Elements");
-    MFEM_VERIFY(p.empty(), "Found an unsupported configuration file keyword under "
-                           "\"LumpedPort\" or \"Terminal\"!\n"
-                               << p.dump(2));
+    it->erase("Index");
+    it->erase("R");
+    it->erase("L");
+    it->erase("C");
+    it->erase("Rs");
+    it->erase("Ls");
+    it->erase("Cs");
+    it->erase("Excitation");
+    it->erase("Attributes");
+    it->erase("Direction");
+    it->erase("CoordinateSystem");
+    it->erase("Elements");
+    MFEM_VERIFY(it->empty(), "Found an unsupported configuration file keyword under "
+                             "\"LumpedPort\" or \"Terminal\"!\n"
+                                 << it->dump(2));
   }
 }
 
@@ -972,44 +972,44 @@ void SurfaceCurrentBoundaryData::SetUp(json &boundaries)
   }
   MFEM_VERIFY(source->is_array(),
               "\"SurfaceCurrent\" should specify an array in the configuration file!");
-  for (auto &s : *source)
+  for (auto it = source->begin(); it != source->end(); ++it)
   {
-    MFEM_VERIFY(s.find("Index") != s.end(),
+    MFEM_VERIFY(it->find("Index") != it->end(),
                 "Missing \"SurfaceCurrent\" source \"Index\" in configuration file!");
-    auto ret = mapdata.insert(std::make_pair(s.at("Index"), SurfaceCurrentData()));
+    auto ret = mapdata.insert(std::make_pair(it->at("Index"), SurfaceCurrentData()));
     MFEM_VERIFY(ret.second, "Repeated \"Index\" found when processing \"SurfaceCurrent\" "
                             "boundaries in configuration file!");
     SurfaceCurrentData &data = ret.first->second;
-    if (s.find("Attributes") != s.end())
+    if (it->find("Attributes") != it->end())
     {
-      MFEM_VERIFY(s.find("Elements") == s.end(),
+      MFEM_VERIFY(it->find("Elements") == it->end(),
                   "Cannot specify both top-level \"Attributes\" list and \"Elements\" for "
                   "\"SurfaceCurrent\" boundary in configuration file!");
       data.nodes.clear();
-      data.nodes.emplace_back(ParseElementData(s, "Direction"));
+      data.nodes.emplace_back(ParseElementData(*it, "Direction"));
     }
     else
     {
-      auto elements = s.find("Elements");
+      auto elements = it->find("Elements");
       MFEM_VERIFY(
-          elements != s.end(),
+          elements != it->end(),
           "Missing top-level \"Attributes\" list or \"Elements\" for \"SurfaceCurrent\" "
           "boundary in configuration file!");
-      for (auto elem : *elements)
+      for (auto elem_it = elements->begin(); elem_it != elements->end(); ++elem_it)
       {
         MFEM_VERIFY(
-            elem.find("Attributes") != elem.end(),
+            elem_it->find("Attributes") != elem_it->end(),
             "Missing \"Attributes\" list for \"SurfaceCurrent\" boundary element in "
             "configuration file!");
-        data.nodes.emplace_back(ParseElementData(s, "Direction"));
+        data.nodes.emplace_back(ParseElementData(*elem_it, "Direction"));
 
         // Cleanup
-        elem.erase("Attributes");
-        elem.erase("Direction");
-        elem.erase("CoordinateSystem");
-        MFEM_VERIFY(elem.empty(), "Found an unsupported configuration file keyword "
-                                  "under \"SurfaceCurrent\" boundary element!\n"
-                                      << elem.dump(2));
+        elem_it->erase("Attributes");
+        elem_it->erase("Direction");
+        elem_it->erase("CoordinateSystem");
+        MFEM_VERIFY(elem_it->empty(), "Found an unsupported configuration file keyword "
+                                      "under \"SurfaceCurrent\" boundary element!\n"
+                                          << elem_it->dump(2));
       }
     }
 
@@ -1022,15 +1022,15 @@ void SurfaceCurrentBoundaryData::SetUp(json &boundaries)
     // }
 
     // Cleanup
-    s.erase("Index");
-    s.erase("Attributes");
-    s.erase("Direction");
-    s.erase("Elements");
-    s.erase("CoordinateSystem");
+    it->erase("Index");
+    it->erase("Attributes");
+    it->erase("Direction");
+    it->erase("Elements");
+    it->erase("CoordinateSystem");
     MFEM_VERIFY(
-        s.empty(),
+        it->empty(),
         "Found an unsupported configuration file keyword under \"SurfaceCurrent\"!\n"
-            << s.dump(2));
+            << it->dump(2));
   }
 }
 
@@ -1078,26 +1078,30 @@ void InductancePostData::SetUp(json &postpro)
   }
   MFEM_VERIFY(inductance->is_array(),
               "\"Inductance\" should specify an array in the configuration file!");
-  for (auto &i : *inductance)
+  for (auto it = inductance->begin(); it != inductance->end(); ++it)
   {
-    MFEM_VERIFY(i.find("Index") != i.end(),
+    MFEM_VERIFY(it->find("Index") != it->end(),
                 "Missing \"Inductance\" boundary \"Index\" in configuration file!");
-    MFEM_VERIFY(i.find("Attributes") != i.end() && i.find("Direction") != i.end(),
+    MFEM_VERIFY(it->find("Attributes") != it->end() && it->find("Direction") != it->end(),
                 "Missing \"Attributes\" list or \"Direction\" for \"Inductance\" boundary "
                 "in configuration file!");
     auto ret = mapdata.insert(std::make_pair(
-        i.at("Index"), InductanceData(ParseElementData(i, "Direction", false))));
+        it->at("Index"), InductanceData(ParseElementData(*it, "Direction", false))));
     MFEM_VERIFY(ret.second, "Repeated \"Index\" found when processing \"Inductance\" "
                             "boundaries in configuration file!");
+    // Debug
+    // std::cout << "Index: " << ret.first->first << '\n';
+    // std::cout << "Attributes: " << data.attributes << '\n';
+    // std::cout << "Direction: " << data.direction << '\n';
 
     // Cleanup
-    i.erase("Index");
-    i.erase("Attributes");
-    i.erase("Direction");
-    i.erase("CoordinateSystem");
-    MFEM_VERIFY(i.empty(),
+    it->erase("Index");
+    it->erase("Attributes");
+    it->erase("Direction");
+    it->erase("CoordinateSystem");
+    MFEM_VERIFY(it->empty(),
                 "Found an unsupported configuration file keyword under \"Inductance\"!\n"
-                    << i.dump(2));
+                    << it->dump(2));
   }
 }
 
@@ -1110,40 +1114,40 @@ void InterfaceDielectricPostData::SetUp(json &postpro)
   }
   MFEM_VERIFY(dielectric->is_array(),
               "\"Dielectric\" should specify an array in the configuration file!");
-  for (auto &d : *dielectric)
+  for (auto it = dielectric->begin(); it != dielectric->end(); ++it)
   {
-    MFEM_VERIFY(d.find("Index") != d.end(),
+    MFEM_VERIFY(it->find("Index") != it->end(),
                 "Missing \"Dielectric\" boundary \"Index\" in configuration file!");
     // One (and only one) of epsilon_r, epsilon_r_ma, epsilon_r_ms, and epsilon_r_sa
     // are required for surfaces.
-    MFEM_VERIFY((d.find("Permittivity") != d.end()) +
-                        (d.find("PermittivityMA") != d.end()) +
-                        (d.find("PermittivityMS") != d.end()) +
-                        (d.find("PermittivitySA") != d.end()) ==
+    MFEM_VERIFY((it->find("Permittivity") != it->end()) +
+                        (it->find("PermittivityMA") != it->end()) +
+                        (it->find("PermittivityMS") != it->end()) +
+                        (it->find("PermittivitySA") != it->end()) ==
                     1,
                 "Only one of \"Dielectric\" boundary \"Permittivity\", "
                 "\"PermittivityMA\", \"PermittivityMS\", or \"PermittivitySA\" should be "
                 "specified for interface dielectric loss in configuration file!");
-    MFEM_VERIFY(d.find("Thickness") != d.end(),
+    MFEM_VERIFY(it->find("Thickness") != it->end(),
                 "Missing \"Dielectric\" boundary \"Thickness\" in configuration file!");
-    auto ret = mapdata.insert(std::make_pair(d.at("Index"), InterfaceDielectricData()));
+    auto ret = mapdata.insert(std::make_pair(it->at("Index"), InterfaceDielectricData()));
     MFEM_VERIFY(ret.second, "Repeated \"Index\" found when processing \"Dielectric\" "
                             "boundaries in configuration file!");
     InterfaceDielectricData &data = ret.first->second;
-    data.ts = d.at("Thickness");  // Required for surfaces
-    data.tandelta = d.value("LossTan", data.tandelta);
-    data.epsilon_r = d.value("Permittivity", data.epsilon_r);
-    data.epsilon_r_ma = d.value("PermittivityMA", data.epsilon_r_ma);
-    data.epsilon_r_ms = d.value("PermittivityMS", data.epsilon_r_ms);
-    data.epsilon_r_sa = d.value("PermittivitySA", data.epsilon_r_sa);
-    if (d.find("Attributes") != d.end())
+    data.ts = it->at("Thickness");  // Required for surfaces
+    data.tandelta = it->value("LossTan", data.tandelta);
+    data.epsilon_r = it->value("Permittivity", data.epsilon_r);
+    data.epsilon_r_ma = it->value("PermittivityMA", data.epsilon_r_ma);
+    data.epsilon_r_ms = it->value("PermittivityMS", data.epsilon_r_ms);
+    data.epsilon_r_sa = it->value("PermittivitySA", data.epsilon_r_sa);
+    if (it->find("Attributes") != it->end())
     {
-      MFEM_VERIFY(d.find("Elements") == d.end(),
+      MFEM_VERIFY(it->find("Elements") == it->end(),
                   "Cannot specify both top-level \"Attributes\" list and \"Elements\" for "
                   "\"Dielectric\" boundary in configuration file!");
 
       data.nodes.clear();
-      data.nodes.emplace_back(ParseElementData(d, "Side", false));
+      data.nodes.emplace_back(ParseElementData(*it, "Side", false));
 
       MFEM_VERIFY(
           data.nodes.back().coordinate_system ==
@@ -1152,17 +1156,17 @@ void InterfaceDielectricPostData::SetUp(json &postpro)
     }
     else
     {
-      auto elements = d.find("Elements");
-      MFEM_VERIFY(elements != d.end(),
+      auto elements = it->find("Elements");
+      MFEM_VERIFY(elements != it->end(),
                   "Missing top-level \"Attributes\" list or \"Elements\" for "
                   "\"Dielectric\" boundary in configuration file!");
-      for (auto &e : *elements)
+      for (auto elem_it = elements->begin(); elem_it != elements->end(); ++elem_it)
       {
-        MFEM_VERIFY(e.find("Attributes") != e.end(),
+        MFEM_VERIFY(elem_it->find("Attributes") != elem_it->end(),
                     "Missing \"Attributes\" list for \"Dielectric\" boundary element in "
                     "configuration file!");
 
-        data.nodes.emplace_back(ParseElementData(d, "Side", false));
+        data.nodes.emplace_back(ParseElementData(*elem_it, "Side", false));
 
         MFEM_VERIFY(data.nodes.back().coordinate_system ==
                         internal::ElementData::CoordinateSystem::CARTESIAN,
@@ -1170,12 +1174,12 @@ void InterfaceDielectricPostData::SetUp(json &postpro)
                     "InterfaceDielectrics");
 
         // Cleanup
-        e.erase("Attributes");
-        e.erase("Side");
-        e.erase("CoordinateSystem");
-        MFEM_VERIFY(e.empty(), "Found an unsupported configuration file keyword "
-                               "under \"Dielectric\" boundary element!\n"
-                                   << e.dump(2));
+        elem_it->erase("Attributes");
+        elem_it->erase("Side");
+        elem_it->erase("CoordinateSystem");
+        MFEM_VERIFY(elem_it->empty(), "Found an unsupported configuration file keyword "
+                                      "under \"Dielectric\" boundary element!\n"
+                                          << elem_it->dump(2));
       }
     }
 
@@ -1194,19 +1198,19 @@ void InterfaceDielectricPostData::SetUp(json &postpro)
     // }
 
     // Cleanup
-    d.erase("Index");
-    d.erase("LossTan");
-    d.erase("Permittivity");
-    d.erase("PermittivityMA");
-    d.erase("PermittivityMS");
-    d.erase("PermittivitySA");
-    d.erase("Thickness");
-    d.erase("Attributes");
-    d.erase("Side");
-    d.erase("CoordinateSystem");
-    MFEM_VERIFY(d.empty(),
+    it->erase("Index");
+    it->erase("LossTan");
+    it->erase("Permittivity");
+    it->erase("PermittivityMA");
+    it->erase("PermittivityMS");
+    it->erase("PermittivitySA");
+    it->erase("Thickness");
+    it->erase("Attributes");
+    it->erase("Side");
+    it->erase("CoordinateSystem");
+    MFEM_VERIFY(it->empty(),
                 "Found an unsupported configuration file keyword under \"Dielectric\"!\n"
-                    << d.dump(2));
+                    << it->dump(2));
   }
 }
 
