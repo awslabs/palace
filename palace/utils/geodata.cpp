@@ -792,13 +792,14 @@ BoundingBall BoundingBallFromPointCloud(MPI_Comm comm,
         });
 
     constexpr double planar_tolerance = 1e-9;
-    if (PerpendicularDistance({delta, n_radial}, out_of_plane) > planar_tolerance)
+
+    ball.planar = PerpendicularDistance({delta, n_radial}, out_of_plane) < planar_tolerance;
+    if (!ball.planar)
     {
       // The points are not functionally coplanar, zero out the normal.
       Vector3dMap(ball.planar_normal.data()) *= 0;
       MFEM_VERIFY(PerpendicularDistance({delta, n_radial}, out_of_plane) <= ball.radius,
                   "A point perpendicular must be contained in the ball");
-      ball.planar = true;
     }
   }
 
