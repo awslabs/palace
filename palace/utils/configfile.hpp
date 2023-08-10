@@ -4,7 +4,6 @@
 #ifndef PALACE_UTILS_CONFIG_FILE_HPP
 #define PALACE_UTILS_CONFIG_FILE_HPP
 
-#include <cmath>
 #include <array>
 #include <map>
 #include <set>
@@ -61,20 +60,19 @@ public:
   [[nodiscard]] auto end() { return mapdata.end(); }
 };
 
-// A ElementData consists of a list of attributes making up a single
-// element of a potentially multielement node, and a direction and/or a normal
-// defining the incident field. These are used for Lumped Ports, Terminals,
-// and Surface Currents.
+// An ElementData consists of a list of attributes making up a single element of a
+// potentially multielement node, and a direction and/or a normal defining the incident
+// field. These are used for lumped ports, terminals, and surface currents.
 struct ElementData
 {
   enum class CoordinateSystem
   {
     CARTESIAN,
-    CYLINDRICAL
+    CYLINDRICAL,
+    INVALID = -1
   };
-  // Vector defining the direction for this port. In a Cartesian system
-  // with  "X", "Y", and "Z" mapping to (1,0,0), (0,1,0), and (0,0,1)
-  // respectively. Any user specified value is normalized before use.
+  // Vector defining the direction for this port. In a Cartesian system, "X", "Y", and "Z"
+  // map to (1,0,0), (0,1,0), and (0,0,1), respectively.
   std::array<double, 3> direction{{0.0, 0.0, 0.0}};
 
   // Coordinate system that the normal vector is expressed in.
@@ -385,7 +383,9 @@ public:
   // Flag for source term in driven and transient simulations.
   bool excitation = false;
 
-  std::vector<internal::ElementData> nodes = {};
+  // For each lumped port index, each element contains a list of attributes making up a
+  // single element of a potentially multielement lumped port.
+  std::vector<internal::ElementData> elements = {};
 };
 
 struct LumpedPortBoundaryData : public internal::DataMap<LumpedPortData>
@@ -419,9 +419,9 @@ public:
 struct SurfaceCurrentData
 {
 public:
-  // For each surface current source index, each Node contains a list of attributes making
-  // up a single element of a potentially multielement current source.
-  std::vector<internal::ElementData> nodes = {};
+  // For each surface current source index, each element contains a list of attributes
+  // making up a single element of a potentially multielement current source.
+  std::vector<internal::ElementData> elements = {};
 };
 
 struct SurfaceCurrentBoundaryData : public internal::DataMap<SurfaceCurrentData>
@@ -445,7 +445,6 @@ public:
 
 struct InductanceData : public internal::ElementData
 {
-  InductanceData(internal::ElementData &&e) : internal::ElementData(e) {}
   using internal::ElementData::ElementData;
 };
 
@@ -473,9 +472,9 @@ public:
   double epsilon_r_ms = 0.0;
   double epsilon_r_sa = 0.0;
 
-  // For each dielectric postprocessing index, each Node contains a list of attributes
+  // For each dielectric postprocessing index, each element contains a list of attributes
   // sharing the same side value.
-  std::vector<internal::ElementData> nodes = {};
+  std::vector<internal::ElementData> elements = {};
 };
 
 struct InterfaceDielectricPostData : public internal::DataMap<InterfaceDielectricData>
@@ -564,7 +563,7 @@ public:
   double target = 0.0;
 
   // Eigenvalue solver relative tolerance.
-  double tol = 1e-6;
+  double tol = 1.0e-6;
 
   // Maximum iterations for eigenvalue solver.
   int max_it = -1;
@@ -670,7 +669,7 @@ public:
   double max_t = 1.0;
 
   // Step size for time stepping [ns].
-  double delta_t = 1e-2;
+  double delta_t = 1.0e-2;
 
   // Step increment for saving fields to disk.
   int delta_post = 0;
@@ -712,7 +711,7 @@ public:
   KspType ksp_type = KspType::DEFAULT;
 
   // Iterative solver relative tolerance.
-  double tol = 1e-6;
+  double tol = 1.0e-6;
 
   // Maximum iterations for iterative solver.
   int max_it = 100;
