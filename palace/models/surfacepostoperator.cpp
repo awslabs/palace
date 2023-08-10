@@ -56,24 +56,23 @@ SurfacePostOperator::InterfaceDielectricData::InterfaceDielectricData(
 
   // Construct the postprocessing data allowing for multiple groups of attribute with
   // different side values.
-  for (const auto &node : data.nodes)
+  for (const auto &elem : data.elements)
   {
-
     // Store information about the surface side to consider.
     mfem::Vector &side = sides.emplace_back();
-    if (node.direction[0] == 0 && node.direction[1] == 0 && node.direction[2] == 0)
+    if (elem.direction[0] == 0 && elem.direction[1] == 0 && elem.direction[2] == 0)
     {
       // This is OK if surface is single sided, just push back an empty Vector.
     }
     else
     {
       side.SetSize(mesh.SpaceDimension());
-      std::copy(node.direction.begin(), node.direction.end(), side.begin());
+      std::copy(elem.direction.begin(), elem.direction.end(), side.begin());
       side /= side.Norml2();
     }
 
     // Store markers for this element of the postprocessing boundary.
-    mesh::AttrToMarker(mesh.bdr_attributes.Max(), node.attributes,
+    mesh::AttrToMarker(mesh.bdr_attributes.Max(), elem.attributes,
                        attr_markers.emplace_back());
   }
 }

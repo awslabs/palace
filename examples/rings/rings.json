@@ -24,7 +24,7 @@
       "Probe":
       [
         {
-          "Index": 1,   // Center of rings
+          "Index": 1,  // Center of rings
           "X": 0.0,
           "Y": 0.0,
           "Z": 0.0
@@ -43,12 +43,12 @@
       {
         "Index": 1,
         "Attributes": [4],  // Inner ring
-        "Direction": [-0.5, 0.8660254037844386, 0.0] // "+Y" rotated π/6 around (0,0,1)
+        "Direction": [-0.5, 0.8660254037844386, 0.0]  // "+Y" rotated π/6 around (0,0,1)
       },
       {
         "Index": 2,
         "Attributes": [5],  // Outer ring
-        "Direction": [-0.5, 0.8660254037844386, 0.0] // "+Y" rotated π/6 around (0,0,1)
+        "Direction": [-0.5, 0.8660254037844386, 0.0]  // "+Y" rotated π/6 around (0,0,1)
       }
     ],
     "Postprocessing":  // Inductance from flux instead of energy
@@ -58,12 +58,12 @@
         {
           "Index": 1,
           "Attributes": [6],  // Inner hole
-          "Direction": [0,0,1]
+          "Direction": [0, 0, 1]
         },
         {
           "Index": 2,
           "Attributes": [6, 7],  // Outer (total) hole
-          "Direction": [0,0,1]
+          "Direction": [0, 0, 1]
         }
       ]
     }
@@ -79,7 +79,7 @@
     {
       "Type": "AMS",
       "KSPType": "CG",
-      "Tol": 1.0e-9,
+      "Tol": 1.0e-8,
       "MaxIts": 100
     }
   }
