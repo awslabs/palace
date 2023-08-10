@@ -24,7 +24,7 @@
       "Probe":
       [
         {
-          "Index": 1,  // Center of rings
+          "Index": 1,   // Center of rings
           "X": 0.0,
           "Y": 0.0,
           "Z": 0.0
@@ -79,7 +79,7 @@
     {
       "Type": "AMS",
       "KSPType": "CG",
-      "Tol": 1.0e-10,
+      "Tol": 1.0e-9,
       "MaxIts": 100
     }
   }
