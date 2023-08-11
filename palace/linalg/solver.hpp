@@ -21,11 +21,14 @@ namespace palace
 template <typename OperType>
 class Solver
 {
-  static_assert(std::is_same<OperType, Operator>::value ||
-                    std::is_same<OperType, ComplexOperator>::value,
+protected:
+
+  static constexpr bool is_complex = std::is_same<OperType, ComplexOperator>::value;
+  static constexpr bool is_real = std::is_same<OperType, Operator>::value;
+
+  static_assert(is_complex || is_real,
                 "Solver can only be defined for OperType = Operator or ComplexOperator!");
 
-protected:
   typedef typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
                                     ComplexVector, Vector>::type VecType;
 
@@ -58,6 +61,9 @@ template <typename OperType>
 class WrapperSolver : public Solver<OperType>
 {
 protected:
+  using Solver<OperType>::is_real;
+  using Solver<OperType>::is_complex;
+
   typedef typename Solver<OperType>::VecType VecType;
 
   std::unique_ptr<mfem::Solver> pc;
@@ -74,9 +80,38 @@ public:
     pc->iterative_mode = guess;
   }
 
-  void SetOperator(const OperType &op) override;
+  void SetOperator(const OperType &op) override
+  {
+    if constexpr (is_real)
+    {
+      pc->SetOperator(op);
+    }
+    else if constexpr (is_complex)
+    {
+      MFEM_VERIFY(op.IsReal() && op.HasReal(),
+                  "WrapperSolver::SetOperator requires an operator which is purely real for "
+                  "mfem::Solver!");
+      pc->SetOperator(*op.Real());
+    }
+  }
 
-  void Mult(const VecType &x, VecType &y) const override;
+  void Mult(const VecType &x, VecType &y) const override
+  {
+    if constexpr (is_real)
+    {
+      pc->Mult(x, y);
+    }
+    else if constexpr (is_complex)
+    {
+      mfem::Array<const Vector *> X(2);
+      mfem::Array<Vector *> Y(2);
+      X[0] = &x.Real();
+      X[1] = &x.Imag();
+      Y[0] = &y.Real();
+      Y[1] = &y.Imag();
+      pc->ArrayMult(X, Y);
+    }
+  }
 };
 
 }  // namespace palace
