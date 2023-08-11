@@ -61,7 +61,7 @@ public:
   [[nodiscard]] auto end() { return mapdata.end(); }
 };
 
-// A ElementData consists of a list of attributes making up a single
+// An ElementData consists of a list of attributes making up a single
 // element of a potentially multielement node, and a direction and/or a normal
 // defining the incident field. These are used for Lumped Ports, Terminals,
 // and Surface Currents.
