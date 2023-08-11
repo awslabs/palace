@@ -80,8 +80,7 @@ struct BoundingBox
   // Compute the lengths of each axis.
   std::array<double, 3> Lengths() const;
 
-  // Compute the deviation in degrees of a vector from each of the normal
-  // directions.
+  // Compute the deviation in degrees of a vector from each of the normal directions.
   std::array<double, 3> Deviation(const std::array<double, 3> &direction) const;
 };
 

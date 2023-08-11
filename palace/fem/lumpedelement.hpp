@@ -71,8 +71,8 @@ public:
     MFEM_VERIFY(bounding_box.planar,
                 "Boundary elements must be coplanar to define a lumped element!");
 
-    // Check that the bounding box discovered matches the area. This validates
-    // that the boundary elements form a right angled quadrilateral port.
+    // Check that the bounding box discovered matches the area. This validates that the
+    // boundary elements form a right angled quadrilateral port.
     constexpr double rel_tol = 1.0e-6;
     double A = GetArea(fespace);
     MFEM_VERIFY(std::abs(A - bounding_box.Area()) / A < rel_tol,

@@ -708,21 +708,21 @@ BoundingBox BoundingBoxFromPointCloud(MPI_Comm comm, std::vector<Eigen::Vector3d
     MFEM_VERIFY(vertices.size() >= 4,
                 "A bounding box requires a minimum of four vertices for this algorithm!");
 
-    // Define a diagonal of the ASSUMED cuboid bounding box. Store references as
-    // this is useful for checking pointers later.
+    // Define a diagonal of the ASSUMED cuboid bounding box. Store references as this is
+    // useful for checking pointers later.
     const auto &v_000 = *std::min_element(vertices.begin(), vertices.end(), EigenLE);
     const auto &v_111 = *std::max_element(vertices.begin(), vertices.end(), EigenLE);
     MFEM_VERIFY(&v_000 != &v_111, "Minimum and maximum extents cannot be identical!");
     const auto origin = v_000;
     const Eigen::Vector3d n_1 = (v_111 - v_000).normalized();
 
-    // Compute the distance from the normal axis. Note: everything has been
-    // oriented relative to v_000 == (0,0,0).
+    // Compute the distance from the normal axis. Note: everything has been oriented
+    // relative to v_000 == (0,0,0).
     auto PerpendicularDistance = [&n_1, &origin](const Eigen::Vector3d &v)
     { return ((v - origin) - (v - origin).dot(n_1) * n_1).norm(); };
 
-    // Find the vertex furthest from the diagonal axis. We cannot know yet if
-    // this defines (001) or (011).
+    // Find the vertex furthest from the diagonal axis. We cannot know yet if this defines
+    // (001) or (011).
     const auto &t_0 =
         *std::max_element(vertices.begin(), vertices.end(),
                           [PerpendicularDistance](const auto &x, const auto &y)
@@ -734,18 +734,17 @@ BoundingBox BoundingBoxFromPointCloud(MPI_Comm comm, std::vector<Eigen::Vector3d
     const Eigen::Vector3d n_2 =
         ((t_0 - origin) - (t_0 - origin).dot(n_1) * n_1).normalized();
 
-    // n_1 and n_2 now define a planar coordinate system intersecting the main
-    // diagonal, and two opposite edges of the cuboid. Now look for a component
-    // that maximizes distance from the planar system: complete the axes with a
-    // cross, then use a dot product to pick the greatest deviation.
+    // n_1 and n_2 now define a planar coordinate system intersecting the main diagonal, and
+    // two opposite edges of the cuboid. Now look for a component that maximizes distance
+    // from the planar system: complete the axes with a cross, then use a dot product to
+    // pick the greatest deviation.
     const Eigen::Vector3d n_3 = n_1.cross(n_2).normalized();
 
     auto OutOfPlaneComp = [&n_1, &n_2, &n_3, &origin](const auto &v_1, const auto &v_2)
     {
-      // Precedence of directions is in reverse order of discovery of the
-      // directions. The most important deciding feature is the distance in the
-      // out of plane direction, then in the first off-diagonal, then finally in
-      // the diagonal direction.
+      // Precedence of directions is in reverse order of discovery of the directions. The
+      // most important deciding feature is the distance in the out of plane direction,
+      // then in the first off-diagonal, then finally in the diagonal direction.
       const std::array<double, 3> dist_1{(v_1 - origin).dot(n_3), (v_1 - origin).dot(n_2),
                                          (v_1 - origin).dot(n_1)};
       const std::array<double, 3> dist_2{(v_2 - origin).dot(n_3), (v_2 - origin).dot(n_2),
@@ -753,8 +752,8 @@ BoundingBox BoundingBoxFromPointCloud(MPI_Comm comm, std::vector<Eigen::Vector3d
       return dist_1 < dist_2;
     };
 
-    // There is a degeneration if the final point is within the plane defined by
-    // (v_000, v_001, v_111).
+    // There is a degeneration if the final point is within the plane defined by (v_000,
+    // v_001, v_111).
     const auto &t_1 = *std::max_element(vertices.begin(), vertices.end(), OutOfPlaneComp);
     constexpr double planar_tolerance = 1.0e-9;
     box.planar = std::abs(n_3.dot(t_0)) < planar_tolerance &&
@@ -768,9 +767,9 @@ BoundingBox BoundingBoxFromPointCloud(MPI_Comm comm, std::vector<Eigen::Vector3d
       MFEM_VERIFY(&t_1 != &v_111, "Degenerate coordinates!");
     }
 
-    // If t_1 points to v_000, t_0 or v_111, then the data is coplanar.
-    // Establish if t_0 is a diagonal or not (using Pythagoras).
-    // Only pick t_1 for v_001 if the points are non planar, and t_0 is longer.
+    // If t_1 points to v_000, t_0 or v_111, then the data is coplanar. Establish if t_0 is
+    // a diagonal or not (using Pythagoras). Only pick t_1 for v_001 if the points are non-
+    // planar, and t_0 is longer.
     bool t_0_gt_t_1 = t_0.norm() >= t_1.norm();
     const auto &v_001 = !box.planar && t_0_gt_t_1 ? t_1 : t_0;
     const auto &v_011 = !box.planar && t_0_gt_t_1 ? t_0 : t_1;
@@ -778,8 +777,8 @@ BoundingBox BoundingBoxFromPointCloud(MPI_Comm comm, std::vector<Eigen::Vector3d
     // Compute the center as halfway along the main diagonal.
     Vector3dMap(box.center.data()) = 0.5 * (v_000 + v_111);
 
-    // The length in each direction is then given by traversing the edges of the
-    // cuboid in turn.
+    // The length in each direction is then given by traversing the edges of the cuboid in
+    // turn.
     Vector3dMap(box.normals[0].data()) = 0.5 * (v_001 - v_000);
     Vector3dMap(box.normals[1].data()) =
         box.planar ? (0.5 * (v_111 - v_001)).eval() : (0.5 * (v_011 - v_001)).eval();
@@ -858,10 +857,8 @@ BoundingBall BoundingBallFromPointCloud(MPI_Comm comm,
 
     // Project onto this candidate diameter, and pick a vertex furthest away. Check that
     // this resulting distance is less than or equal to the radius, and use the resulting
-    // direction to compute another in plane vector.
-    //
-    // Assumes all delta are normalized, and applies a common origin as part of the
-    // projection.
+    // direction to compute another in plane vector. Assumes all delta are normalized, and
+    // applies a common origin as part of the projection.
     auto PerpendicularDistance = [min](const std::initializer_list<Eigen::Vector3d> &deltas,
                                        const Eigen::Vector3d &vin)
     {
@@ -889,8 +886,8 @@ BoundingBall BoundingBallFromPointCloud(MPI_Comm comm,
     const Eigen::Vector3d n_radial = (perp - CVector3dMap(ball.center.data())).normalized();
     Vector3dMap(ball.planar_normal.data()) = delta.cross(n_radial).normalized();
 
-    // Compute the point furthest out of the plane discovered. If below
-    // tolerance, this means the circle is 2D.
+    // Compute the point furthest out of the plane discovered. If below tolerance, this
+    // means the circle is 2D.
     const auto &out_of_plane = *std::max_element(
         vertices.begin(), vertices.end(),
         [&delta, &n_radial, PerpendicularDistance](const auto &x, const auto &y)
