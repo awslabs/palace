@@ -17,44 +17,32 @@ GeometricMultigridSolver<OperType>::GeometricMultigridSolver(
     mfem::ParFiniteElementSpaceHierarchy &fespaces,
     mfem::ParFiniteElementSpaceHierarchy *aux_fespaces, int cycle_it, int smooth_it,
     int cheby_order)
-  : Solver<OperType>(), pc_it(cycle_it)
+  : Solver<OperType>(), pc_it(cycle_it), n_levels(fespaces.GetNumLevels()),
+  A(n_levels), dbc_tdof_lists(n_levels - 1), X(n_levels), Y(n_levels), R(n_levels)
 {
   // Configure levels of geometric coarsening. Multigrid vectors will be configured at first
   // call to Mult. The multigrid operator size is set based on the finest space dimension.
-  const int n_levels = fespaces.GetNumLevels();
   MFEM_VERIFY(n_levels > 0,
               "Empty finite element space hierarchy during multigrid solver setup!");
-  A.resize(n_levels, nullptr);
-  P.resize(n_levels - 1, nullptr);
-  dbc_tdof_lists.resize(n_levels - 1, nullptr);
-  X.resize(n_levels, VecType());
-  Y.resize(n_levels, VecType());
-  R.resize(n_levels, VecType());
 
-  // Configure prolongation operators.
-  for (int l = 0; l < n_levels - 1; l++)
-  {
-    P[l] = fespaces.GetProlongationAtLevel(l);
-  }
+  // Configure prolongation operators and level smoothers.
+  P.reserve(n_levels - 1);
+  B.reserve(n_levels);
 
   // Use the supplied level 0 (coarse) solver.
-  B.reserve(n_levels);
   B.push_back(std::move(coarse_solver));
 
-  // Configure level smoothers. Use distributive relaxation smoothing if an auxiliary
-  // finite element space was provided.
-  if (aux_fespaces)
+  // Use distributive relaxation smoothing if an auxiliary finite element space was provided.
+  for (int l = 1; l < n_levels; l++)
   {
-    for (int l = 1; l < n_levels; l++)
+    P.push_back(fespaces.GetProlongationAtLevel(l - 1));
+    if (aux_fespaces)
     {
       B.push_back(std::make_unique<DistRelaxationSmoother<OperType>>(
           fespaces.GetFESpaceAtLevel(l), aux_fespaces->GetFESpaceAtLevel(l), smooth_it, 1,
           cheby_order));
     }
-  }
-  else
-  {
-    for (int l = 1; l < n_levels; l++)
+    else
     {
       B.push_back(std::make_unique<ChebyshevSmoother<OperType>>(smooth_it, cheby_order));
     }
@@ -70,8 +58,6 @@ void GeometricMultigridSolver<OperType>::SetOperator(const OperType &op)
   const auto *mg_op = dynamic_cast<const BaseMultigridOperator<OperType> *>(&op);
   MFEM_VERIFY(mg_op, "GeometricMultigridSolver requires a MultigridOperator or "
                      "ComplexMultigridOperator argument provided to SetOperator!");
-
-  const int n_levels = static_cast<int>(A.size());
   MFEM_VERIFY(
       mg_op->GetNumLevels() == n_levels &&
           (!mg_op->HasAuxiliaryOperators() || mg_op->GetNumAuxiliaryLevels() == n_levels),
@@ -130,7 +116,6 @@ template <typename OperType>
 void GeometricMultigridSolver<OperType>::Mult(const VecType &x, VecType &y) const
 {
   // Initialize.
-  const int n_levels = static_cast<int>(A.size());
   MFEM_ASSERT(!this->initial_guess,
               "Geometric multigrid solver does not use initial guess!");
   MFEM_ASSERT(n_levels > 1 || pc_it == 1,

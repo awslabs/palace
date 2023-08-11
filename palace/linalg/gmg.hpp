@@ -37,6 +37,7 @@ protected:
 private:
   // Number of V-cycles per preconditioner application.
   const int pc_it;
+  const int n_levels;
 
   // System matrices at each multigrid level and prolongation operators (not owned).
   std::vector<const OperType *> A;
