@@ -64,7 +64,6 @@ std::unique_ptr<IterativeSolver<OperType>> ConfigureKrylovSolver(MPI_Comm comm,
     case config::LinearSolverData::KspType::MINRES:
     case config::LinearSolverData::KspType::BICGSTAB:
     case config::LinearSolverData::KspType::DEFAULT:
-    case config::LinearSolverData::KspType::INVALID:
       MFEM_ABORT("Unexpected solver type for Krylov solver configuration!");
       break;
   }
@@ -73,29 +72,26 @@ std::unique_ptr<IterativeSolver<OperType>> ConfigureKrylovSolver(MPI_Comm comm,
   ksp->SetMaxIter(iodata.solver.linear.max_it);
 
   // Configure preconditioning side (only for GMRES).
-  if (iodata.solver.linear.pc_side_type != config::LinearSolverData::SideType::DEFAULT)
+  if (iodata.solver.linear.pc_side_type != config::LinearSolverData::SideType::DEFAULT &&
+      type != config::LinearSolverData::KspType::GMRES)
   {
-    if (type != config::LinearSolverData::KspType::GMRES)
+    Mpi::Warning(comm,
+                 "Preconditioner side will be ignored for non-GMRES iterative solvers!\n");
+  }
+  else
+  {
+    auto *gmres = static_cast<GmresSolver<OperType> *>(ksp.get());
+    switch (iodata.solver.linear.pc_side_type)
     {
-      Mpi::Warning(
-          comm, "Preconditioner side will be ignored for non-GMRES iterative solvers!\n");
-    }
-    else
-    {
-      auto *gmres = static_cast<GmresSolver<OperType> *>(ksp.get());
-      switch (iodata.solver.linear.pc_side_type)
-      {
-        case config::LinearSolverData::SideType::LEFT:
-          gmres->SetPrecSide(GmresSolver<OperType>::PrecSide::LEFT);
-          break;
-        case config::LinearSolverData::SideType::RIGHT:
-          gmres->SetPrecSide(GmresSolver<OperType>::PrecSide::RIGHT);
-          break;
-        case config::LinearSolverData::SideType::DEFAULT:
-        case config::LinearSolverData::SideType::INVALID:
-          MFEM_ABORT("Unexpected side for configuring preconditioning!");
-          break;
-      }
+      case config::LinearSolverData::SideType::LEFT:
+        gmres->SetPrecSide(GmresSolver<OperType>::PrecSide::LEFT);
+        break;
+      case config::LinearSolverData::SideType::RIGHT:
+        gmres->SetPrecSide(GmresSolver<OperType>::PrecSide::RIGHT);
+        break;
+      case config::LinearSolverData::SideType::DEFAULT:
+        // Do nothing
+        break;
     }
   }
 
@@ -115,9 +111,6 @@ std::unique_ptr<IterativeSolver<OperType>> ConfigureKrylovSolver(MPI_Comm comm,
         break;
       case config::LinearSolverData::OrthogType::CGS2:
         gmres->SetOrthogonalization(GmresSolver<OperType>::OrthogType::CGS2);
-        break;
-      case config::LinearSolverData::OrthogType::INVALID:
-        MFEM_ABORT("Unexpected orthogonalization type for Krylov solver configuration!");
         break;
     }
   }
@@ -211,7 +204,6 @@ ConfigurePreconditionerSolver(MPI_Comm comm, const IoData &iodata,
 #endif
       break;
     case config::LinearSolverData::Type::DEFAULT:
-    case config::LinearSolverData::Type::INVALID:
       MFEM_ABORT("Unexpected solver type for preconditioner configuration!");
       break;
   }
