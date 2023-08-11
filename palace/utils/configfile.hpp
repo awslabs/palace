@@ -62,23 +62,24 @@ public:
 
 // An ElementData consists of a list of attributes making up a single element of a
 // potentially multielement boundary, and a direction and/or a normal defining the incident
-// field. These are used for lumped ports, terminals, and surface currents.
+// field. These are used for lumped ports, terminals, surface currents, and other boundary
+// postprocessing objects.
 struct ElementData
 {
+  // Vector defining the direction for this port. In a Cartesian system, "X", "Y", and "Z"
+  // map to (1,0,0), (0,1,0), and (0,0,1), respectively.
+  std::array<double, 3> direction{{0.0, 0.0, 0.0}};
+
+  // Coordinate system that the normal vector is expressed in.
   enum class CoordinateSystem
   {
     CARTESIAN,
     CYLINDRICAL,
     INVALID = -1
   };
-  // Vector defining the direction for this port. In a Cartesian system, "X", "Y", and "Z"
-  // map to (1,0,0), (0,1,0), and (0,0,1), respectively.
-  std::array<double, 3> direction{{0.0, 0.0, 0.0}};
-
-  // Coordinate system that the normal vector is expressed in.
   CoordinateSystem coordinate_system = CoordinateSystem::CARTESIAN;
 
-  // List of boundary attributes for this lumped port element.
+  // List of boundary attributes for this element.
   std::vector<int> attributes = {};
 };
 
