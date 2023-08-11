@@ -16,8 +16,8 @@ namespace
 {
 
 template <std::size_t N>
-SymmetricMatrixData<N> ParseSymmetricMatrixData(json &mat, std::string name,
-                                                SymmetricMatrixData<N> data)
+void ParseSymmetricMatrixData(json &mat, const std::string &name,
+                              SymmetricMatrixData<N> &data)
 {
   auto it = mat.find(name);
   if (it != mat.end() && it->is_array())
@@ -32,7 +32,113 @@ SymmetricMatrixData<N> ParseSymmetricMatrixData(json &mat, std::string name,
     data.s.fill(s);
   }
   data.v = mat.value("MaterialAxes", data.v);
-  return data;
+}
+
+// Helper for converting string keys to enum for internal::ElementData::CoordinateSystem.
+NLOHMANN_JSON_SERIALIZE_ENUM(
+    internal::ElementData::CoordinateSystem,
+    {{internal::ElementData::CoordinateSystem::INVALID, nullptr},
+     {internal::ElementData::CoordinateSystem::CARTESIAN, "Cartesian"},
+     {internal::ElementData::CoordinateSystem::CYLINDRICAL, "Cylindrical"}})
+
+// Helper function for extracting element data from the configuration file, either from a
+// provided keyword argument of from a specified vector. In extracting the direction various
+// checks are performed for validity of the input combinations.
+auto ParseElementData(json &elem, const std::string &name, bool allows_r,
+                      internal::ElementData &data)
+{
+  data.attributes = elem.at("Attributes").get<std::vector<int>>();  // Required
+  auto it = elem.find(name);
+  if (it != elem.end() && it->is_array())
+  {
+    // Attempt to parse as an array.
+    data.direction = it->get<std::array<double, 3>>();
+    data.coordinate_system = elem.value("CoordinateSystem", data.coordinate_system);
+    MFEM_VERIFY(data.coordinate_system != internal::ElementData::CoordinateSystem::INVALID,
+                "Invalid value for config[\""
+                    << name << "\"][\"CoordinateSystem\"] in configuration file!");
+  }
+  else
+  {
+    // Fall back to parsing as a string.
+    MFEM_VERIFY(elem.find("CoordinateSystem") == elem.end(),
+                "Cannot specify \"CoordinateSystem\" when specifying a direction or side "
+                "using a string in configuration file!");
+    std::string direction = it->get<std::string>();
+    for (auto &c : direction)
+    {
+      c = std::tolower(c);
+    }
+    const auto xpos = direction.find("x");
+    const auto ypos = direction.find("y");
+    const auto zpos = direction.find("z");
+    const auto rpos = direction.find("r");
+    const bool xfound = xpos != std::string::npos;
+    const bool yfound = ypos != std::string::npos;
+    const bool zfound = zpos != std::string::npos;
+    const bool rfound = rpos != std::string::npos;
+    if (xfound)
+    {
+      MFEM_VERIFY(direction.length() == 1 || direction[xpos - 1] == '-' ||
+                      direction[xpos - 1] == '+',
+                  "Missing required sign specification on \"X\" for config[\"" << name
+                                                                               << "\"]!");
+      MFEM_VERIFY(!yfound && !zfound && !rfound,
+                  "\"X\" cannot be combined with \"Y\", \"Z\", or \"R\" for config[\""
+                      << name << "\"]!");
+      data.direction[0] =
+          (direction.length() == 1 || direction[xpos - 1] == '+') ? 1.0 : -1.0;
+      data.coordinate_system = internal::ElementData::CoordinateSystem::CARTESIAN;
+    }
+    if (yfound)
+    {
+      MFEM_VERIFY(direction.length() == 1 || direction[ypos - 1] == '-' ||
+                      direction[ypos - 1] == '+',
+                  "Missing required sign specification on \"Y\" for config[\"" << name
+                                                                               << "\"]!");
+      MFEM_VERIFY(!xfound && !zfound && !rfound,
+                  "\"Y\" cannot be combined with \"X\", \"Z\", or \"R\" for config[\""
+                      << name << "\"]!");
+      data.direction[1] =
+          direction.length() == 1 || direction[ypos - 1] == '+' ? 1.0 : -1.0;
+      data.coordinate_system = internal::ElementData::CoordinateSystem::CARTESIAN;
+    }
+    if (zfound)
+    {
+      MFEM_VERIFY(direction.length() == 1 || direction[zpos - 1] == '-' ||
+                      direction[zpos - 1] == '+',
+                  "Missing required sign specification on \"Z\" for config[\"" << name
+                                                                               << "\"]!");
+      MFEM_VERIFY(!xfound && !yfound && !rfound,
+                  "\"Z\" cannot be combined with \"X\", \"Y\", or \"R\" for config[\""
+                      << name << "\"]!");
+      data.direction[2] =
+          direction.length() == 1 || direction[zpos - 1] == '+' ? 1.0 : -1.0;
+      data.coordinate_system = internal::ElementData::CoordinateSystem::CARTESIAN;
+    }
+    if (rfound)
+    {
+      MFEM_VERIFY(direction.length() == 1 || direction[rpos - 1] == '-' ||
+                      direction[rpos - 1] == '+',
+                  "Missing required sign specification on \"R\"!");
+      MFEM_VERIFY(!xfound && !yfound && !zfound,
+                  "\"R\" cannot be combined with \"X\", \"Y\", or \"Z\"!");
+      data.direction[0] =
+          direction.length() == 1 || direction[rpos - 1] == '+' ? 1.0 : -1.0;
+      data.direction[1] = 0.0;
+      data.direction[2] = 0.0;
+      data.coordinate_system = internal::ElementData::CoordinateSystem::CYLINDRICAL;
+    }
+  }
+  if (data.coordinate_system == internal::ElementData::CoordinateSystem::CYLINDRICAL)
+  {
+    MFEM_VERIFY(allows_r, "Direction or side in configuration file does not support "
+                          "cylindrical coordinate systems!");
+    MFEM_VERIFY(std::abs(data.direction[0]) == 1 && data.direction[1] == 0 &&
+                    data.direction[2] == 0,
+                "Parsing azimuthal and longitudinal directions for cylindrical coordinate "
+                "system directions is not supported currently!");
+  }
 }
 
 template <typename T>
@@ -69,109 +175,6 @@ std::ostream &operator<<(std::ostream &os, const SymmetricMatrixData<N> &data)
     os << ", v" << j++ << ": " << x;
   }
   return os;
-}
-
-// Helper function for extracting a DataNode from a json, if the is_port
-// value is set to true, will extract the normal vector from either the provided
-// keyword argument or from a specified 3 vector. In extracting the normal
-// various checks are performed for validity of the input combinations.
-auto ParseElementData(json &j, const std::string &key_word, bool is_port = true)
-{
-  internal::ElementData node;
-  node.attributes = j.at("Attributes").get<std::vector<int>>();  // Required
-
-  std::string direction;
-  try
-  {
-    direction = j.at(key_word).get<std::string>();
-  }
-  catch (json::exception)
-  {
-    try
-    {
-      node.direction = j.at(key_word).get<std::array<double, 3>>();
-      node.coordinate_system = j.value("CoordinateSystem", node.coordinate_system);
-    }
-    catch (json::exception)
-    {
-      MFEM_VERIFY(!is_port, "A port requires " << key_word << " be specified");
-      return node;
-    }
-  }
-
-  for (auto &c : direction)
-  {
-    c = std::tolower(c);
-  }
-
-  const auto xpos = direction.find("x");
-  const auto ypos = direction.find("y");
-  const auto zpos = direction.find("z");
-  const auto rpos = direction.find("r");
-
-  const bool xfound = xpos != std::string::npos;
-  const bool yfound = ypos != std::string::npos;
-  const bool zfound = zpos != std::string::npos;
-  const bool rfound = rpos != std::string::npos;
-
-  // Either a keyword direction is specified xor the magnitude is non-zero
-  const double mag2 = std::pow(node.direction[0], 2.0) + std::pow(node.direction[1], 2.0) +
-                      std::pow(node.direction[2], 2.0);
-  MFEM_VERIFY((xfound || yfound || zfound || rfound) ^ (mag2 > 0.0),
-              "Keyword and vector specification are mutually exclusive");
-
-  if (xfound)
-  {
-    MFEM_VERIFY(direction.length() == 1 || direction[xpos - 1] == '-' ||
-                    direction[xpos - 1] == '+',
-                "Missing required sign specification on \"X\"");
-    node.direction[0] = (direction.length() == 1 || direction[xpos - 1] == '+') ? 1 : -1;
-    MFEM_VERIFY(node.coordinate_system ==
-                    internal::ElementData::CoordinateSystem::CARTESIAN,
-                "Can only specify \"X\" in Cartesian Coordinates");
-  }
-  if (yfound)
-  {
-    MFEM_VERIFY(direction.length() == 1 || direction[ypos - 1] == '-' ||
-                    direction[ypos - 1] == '+',
-                "Missing sign specification on \"Y\"");
-    node.direction[1] = direction.length() == 1 || direction[ypos - 1] == '+' ? 1 : -1;
-    MFEM_VERIFY(node.coordinate_system ==
-                    internal::ElementData::CoordinateSystem::CARTESIAN,
-                "Can only specify \"Y\" in Cartesian Coordinates");
-  }
-  if (zfound)
-  {
-    MFEM_VERIFY(direction.length() == 1 || direction[zpos - 1] == '-' ||
-                    direction[zpos - 1] == '+',
-                "Missing sign specification on \"Z\"");
-    node.direction[2] = direction.length() == 1 || direction[zpos - 1] == '+' ? 1 : -1;
-    MFEM_VERIFY(node.coordinate_system ==
-                    internal::ElementData::CoordinateSystem::CARTESIAN,
-                "Can only specify \"Z\" in Cartesian Coordinates");
-  }
-  if (rfound)
-  {
-    MFEM_VERIFY(direction.length() == 1 || direction[rpos - 1] == '-' ||
-                    direction[rpos - 1] == '+',
-                "Missing sign specification on \"R\"");
-    MFEM_VERIFY(!xfound && !yfound && !zfound,
-                "\"R\" cannot be combined with \"X\", \"Y\" or \"Z\"");
-    node.coordinate_system = internal::ElementData::CoordinateSystem::CYLINDRICAL;
-    node.direction[0] = direction.length() == 1 || direction[rpos - 1] == '+' ? 1 : -1;
-    node.direction[1] = 0;
-    node.direction[2] = 0;
-  }
-
-  if (node.coordinate_system == internal::ElementData::CoordinateSystem::CYLINDRICAL)
-  {
-    MFEM_VERIFY(
-        std::abs(node.direction[0]) == 1 && node.direction[1] == 0 &&
-            node.direction[2] == 0,
-        "Azimuthal and Longitudinal direction vectors are not supported currently.");
-  }
-
-  return node;
 }
 
 }  // namespace
@@ -424,10 +427,10 @@ void MaterialDomainData::SetUp(json &domains)
         "Missing \"Attributes\" list for \"Materials\" domain in configuration file!");
     MaterialData &data = vecdata.emplace_back();
     data.attributes = it->at("Attributes").get<std::vector<int>>();  // Required
-    data.mu_r = ParseSymmetricMatrixData(*it, "Permeability", data.mu_r);
-    data.epsilon_r = ParseSymmetricMatrixData(*it, "Permittivity", data.epsilon_r);
-    data.tandelta = ParseSymmetricMatrixData(*it, "LossTan", data.tandelta);
-    data.sigma = ParseSymmetricMatrixData(*it, "Conductivity", data.sigma);
+    ParseSymmetricMatrixData(*it, "Permeability", data.mu_r);
+    ParseSymmetricMatrixData(*it, "Permittivity", data.epsilon_r);
+    ParseSymmetricMatrixData(*it, "LossTan", data.tandelta);
+    ParseSymmetricMatrixData(*it, "Conductivity", data.sigma);
     data.lambda_L = it->value("LondonDepth", data.lambda_L);
 
     // Debug
@@ -802,12 +805,6 @@ void ImpedanceBoundaryData::SetUp(json &boundaries)
   }
 }
 
-// Helper for converting string keys to enum for internal::ElementData::CoordinateSystem.
-NLOHMANN_JSON_SERIALIZE_ENUM(
-    internal::ElementData::CoordinateSystem,
-    {{internal::ElementData::CoordinateSystem::CARTESIAN, "Cartesian"},
-     {internal::ElementData::CoordinateSystem::CYLINDRICAL, "Cylindrical"}})
-
 void LumpedPortBoundaryData::SetUp(json &boundaries)
 {
   auto port = boundaries.find("LumpedPort");
@@ -852,10 +849,8 @@ void LumpedPortBoundaryData::SetUp(json &boundaries)
       MFEM_VERIFY(it->find("Elements") == it->end(),
                   "Cannot specify both top-level \"Attributes\" list and \"Elements\" for "
                   "\"LumpedPort\" or \"Terminal\" boundary in configuration file!");
-
-      data.nodes.clear();
-      data.nodes.emplace_back(
-          ParseElementData(*it, "Direction", terminal == boundaries.end()));
+      auto &elem = data.elements.emplace_back();
+      ParseElementData(*it, "Direction", (terminal == boundaries.end()), elem);
     }
     else
     {
@@ -868,9 +863,8 @@ void LumpedPortBoundaryData::SetUp(json &boundaries)
         MFEM_VERIFY(elem_it->find("Attributes") != elem_it->end(),
                     "Missing \"Attributes\" list for \"LumpedPort\" or \"Terminal\" "
                     "boundary element in configuration file!");
-
-        data.nodes.emplace_back(
-            ParseElementData(*elem_it, "Direction", terminal == boundaries.end()));
+        auto &elem = data.elements.emplace_back();
+        ParseElementData(*elem_it, "Direction", (terminal == boundaries.end()), elem);
 
         // Cleanup
         elem_it->erase("Attributes");
@@ -892,10 +886,10 @@ void LumpedPortBoundaryData::SetUp(json &boundaries)
     // std::cout << "Ls: " << data.Ls << '\n';
     // std::cout << "Cs: " << data.Cs << '\n';
     // std::cout << "Excitation: " << data.excitation << '\n';
-    // for (const auto &node : data.nodes)
+    // for (const auto &elem : data.elements)
     // {
-    //   std::cout << "Attributes: " << node.attributes << '\n';
-    //   std::cout << "Direction: " << node.direction << '\n';
+    //   std::cout << "Attributes: " << elem.attributes << '\n';
+    //   std::cout << "Direction: " << elem.direction << '\n';
     // }
 
     // Cleanup
@@ -985,8 +979,8 @@ void SurfaceCurrentBoundaryData::SetUp(json &boundaries)
       MFEM_VERIFY(it->find("Elements") == it->end(),
                   "Cannot specify both top-level \"Attributes\" list and \"Elements\" for "
                   "\"SurfaceCurrent\" boundary in configuration file!");
-      data.nodes.clear();
-      data.nodes.emplace_back(ParseElementData(*it, "Direction"));
+      auto &elem = data.elements.emplace_back();
+      ParseElementData(*it, "Direction", true, elem);
     }
     else
     {
@@ -1001,7 +995,8 @@ void SurfaceCurrentBoundaryData::SetUp(json &boundaries)
             elem_it->find("Attributes") != elem_it->end(),
             "Missing \"Attributes\" list for \"SurfaceCurrent\" boundary element in "
             "configuration file!");
-        data.nodes.emplace_back(ParseElementData(*elem_it, "Direction"));
+        auto &elem = data.elements.emplace_back();
+        ParseElementData(*elem_it, "Direction", true, elem);
 
         // Cleanup
         elem_it->erase("Attributes");
@@ -1015,10 +1010,10 @@ void SurfaceCurrentBoundaryData::SetUp(json &boundaries)
 
     // Debug
     // std::cout << "Index: " << ret.first->first << '\n';
-    // for (const auto &node : data.nodes)
+    // for (const auto &elem : data.elements)
     // {
-    //   std::cout << "Attributes: " << node.attributes << '\n';
-    //   std::cout << "Direction: " << node.direction << '\n';
+    //   std::cout << "Attributes: " << elem.attributes << '\n';
+    //   std::cout << "Direction: " << elem.direction << '\n';
     // }
 
     // Cleanup
@@ -1085,10 +1080,12 @@ void InductancePostData::SetUp(json &postpro)
     MFEM_VERIFY(it->find("Attributes") != it->end() && it->find("Direction") != it->end(),
                 "Missing \"Attributes\" list or \"Direction\" for \"Inductance\" boundary "
                 "in configuration file!");
-    auto ret = mapdata.insert(std::make_pair(
-        it->at("Index"), InductanceData(ParseElementData(*it, "Direction", false))));
+    auto ret = mapdata.insert(std::make_pair(it->at("Index"), InductanceData()));
     MFEM_VERIFY(ret.second, "Repeated \"Index\" found when processing \"Inductance\" "
                             "boundaries in configuration file!");
+    InductanceData &data = ret.first->second;
+    ParseElementData(*it, "Direction", false, data);
+
     // Debug
     // std::cout << "Index: " << ret.first->first << '\n';
     // std::cout << "Attributes: " << data.attributes << '\n';
@@ -1145,14 +1142,8 @@ void InterfaceDielectricPostData::SetUp(json &postpro)
       MFEM_VERIFY(it->find("Elements") == it->end(),
                   "Cannot specify both top-level \"Attributes\" list and \"Elements\" for "
                   "\"Dielectric\" boundary in configuration file!");
-
-      data.nodes.clear();
-      data.nodes.emplace_back(ParseElementData(*it, "Side", false));
-
-      MFEM_VERIFY(
-          data.nodes.back().coordinate_system ==
-              internal::ElementData::CoordinateSystem::CARTESIAN,
-          "Only Cartesian coordinate system currently supported for InterfaceDielectrics");
+      auto &elem = data.elements.emplace_back();
+      ParseElementData(*it, "Side", false, elem);
     }
     else
     {
@@ -1165,13 +1156,8 @@ void InterfaceDielectricPostData::SetUp(json &postpro)
         MFEM_VERIFY(elem_it->find("Attributes") != elem_it->end(),
                     "Missing \"Attributes\" list for \"Dielectric\" boundary element in "
                     "configuration file!");
-
-        data.nodes.emplace_back(ParseElementData(*elem_it, "Side", false));
-
-        MFEM_VERIFY(data.nodes.back().coordinate_system ==
-                        internal::ElementData::CoordinateSystem::CARTESIAN,
-                    "Only Cartesian coordinate system currently supported for "
-                    "InterfaceDielectrics");
+        auto &elem = data.elements.emplace_back();
+        ParseElementData(*elem_it, "Side", false, elem);
 
         // Cleanup
         elem_it->erase("Attributes");
@@ -1191,10 +1177,10 @@ void InterfaceDielectricPostData::SetUp(json &postpro)
     // std::cout << "PermittivityMS: " << data.epsilon_r_ms << '\n';
     // std::cout << "PermittivitySA: " << data.epsilon_r_sa << '\n';
     // std::cout << "Thickness: " << data.ts << '\n';
-    // for (const auto &node : data.nodes)
+    // for (const auto &elem : data.elements)
     // {
-    //   std::cout << "Attributes: " << node.attributes << '\n';
-    //   std::cout << "Side: " << node.side << '\n';
+    //   std::cout << "Attributes: " << elem.attributes << '\n';
+    //   std::cout << "Side: " << elem.side << '\n';
     // }
 
     // Cleanup
@@ -1236,9 +1222,9 @@ void BoundaryPostData::SetUp(json &boundaries)
   }
   for (const auto &[idx, data] : dielectric)
   {
-    for (const auto &node : data.nodes)
+    for (const auto &elem : data.elements)
     {
-      attributes.insert(node.attributes.begin(), node.attributes.end());
+      attributes.insert(elem.attributes.begin(), elem.attributes.end());
     }
   }
 
@@ -1282,9 +1268,9 @@ void BoundaryData::SetUp(json &config)
   }
   for (const auto &[idx, data] : lumpedport)
   {
-    for (const auto &node : data.nodes)
+    for (const auto &elem : data.elements)
     {
-      attributes.insert(node.attributes.begin(), node.attributes.end());
+      attributes.insert(elem.attributes.begin(), elem.attributes.end());
     }
   }
   for (const auto &[idx, data] : waveport)
@@ -1293,9 +1279,9 @@ void BoundaryData::SetUp(json &config)
   }
   for (const auto &[idx, data] : current)
   {
-    for (const auto &node : data.nodes)
+    for (const auto &elem : data.elements)
     {
-      attributes.insert(node.attributes.begin(), node.attributes.end());
+      attributes.insert(elem.attributes.begin(), elem.attributes.end());
     }
   }
   attributes.insert(postpro.attributes.begin(), postpro.attributes.end());

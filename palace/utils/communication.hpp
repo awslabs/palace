@@ -271,14 +271,14 @@ public:
   static void GlobalMinLoc(int len, T *val, int *id, MPI_Comm comm)
   {
     std::vector<mpi::ValueAndId<T, int>> buffer(len);
-    for (int i = 0; i < len; ++i)
+    for (int i = 0; i < len; i++)
     {
       buffer[i].val = val[i];
       buffer[i].id = id[i];
     }
 
     GlobalOp(len, buffer.data(), MPI_MINLOC, comm);
-    for (int i = 0; i < len; ++i)
+    for (int i = 0; i < len; i++)
     {
       val[i] = buffer[i].val;
       id[i] = buffer[i].id;
@@ -290,14 +290,14 @@ public:
   static void GlobalMaxLoc(int len, T *val, int *id, MPI_Comm comm)
   {
     std::vector<mpi::ValueAndId<T, int>> buffer(len);
-    for (int i = 0; i < len; ++i)
+    for (int i = 0; i < len; i++)
     {
       buffer[i].val = val[i];
       buffer[i].id = id[i];
     }
 
     GlobalOp(len, buffer.data(), MPI_MAXLOC, comm);
-    for (int i = 0; i < len; ++i)
+    for (int i = 0; i < len; i++)
     {
       val[i] = buffer[i].val;
       id[i] = buffer[i].id;
