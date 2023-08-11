@@ -6,7 +6,7 @@
 # Inductance Matrix for a Pair of Concentric Rings
 
 !!! note
-
+    
     The files for this example can be found in the [`examples/rings/`]
     (https://github.com/awslabs/palace/blob/main/examples/rings) directory of the *Palace*
     source code.
@@ -78,7 +78,7 @@ M_{bb} &= 707.2050\text{ pH}
 ```
 
 for the self inductances. Thus, the *Palace* solution has approximately ``0.71\%`` error in
-the mutual inductance ``2.2\%`` and ``0.83\%`` errors in the self inductances versus the
+the mutual inductance and ``2.2\%`` and ``0.84\%`` errors in the self inductances versus the
 analytic solutions.
 
 The typical approach used by *Palace* for lumped parameter extraction uses the computed

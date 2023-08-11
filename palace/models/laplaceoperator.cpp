@@ -50,9 +50,9 @@ mfem::Array<int> SetUpBoundaryProperties(const IoData &iodata, const mfem::ParMe
     }
     for (const auto &[idx, data] : iodata.boundaries.lumpedport)
     {
-      for (const auto &node : data.nodes)
+      for (const auto &elem : data.elements)
       {
-        for (auto attr : node.attributes)
+        for (auto attr : elem.attributes)
         {
           MFEM_VERIFY(
               attr > 0 && attr <= bdr_attr_max,
@@ -77,9 +77,9 @@ mfem::Array<int> SetUpBoundaryProperties(const IoData &iodata, const mfem::ParMe
   }
   for (const auto &[idx, data] : iodata.boundaries.lumpedport)
   {
-    for (const auto &node : data.nodes)
+    for (const auto &elem : data.elements)
     {
-      for (auto attr : node.attributes)
+      for (auto attr : elem.attributes)
       {
         dbc_bcs.Append(attr);
       }
@@ -98,9 +98,9 @@ std::map<int, mfem::Array<int>> ConstructSources(const IoData &iodata)
   for (const auto &[idx, data] : iodata.boundaries.lumpedport)
   {
     mfem::Array<int> &attr_list = source_attr_lists[idx];
-    for (const auto &node : data.nodes)
+    for (const auto &elem : data.elements)
     {
-      for (auto attr : node.attributes)
+      for (auto attr : elem.attributes)
       {
         attr_list.Append(attr);
       }

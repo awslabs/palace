@@ -58,52 +58,63 @@ void GetAxisAlignedBoundingBox(mfem::ParMesh &mesh, int attr, bool bdr, mfem::Ve
 void GetAxisAlignedBoundingBox(mfem::ParMesh &mesh, const mfem::Array<int> &marker,
                                bool bdr, mfem::Vector &min, mfem::Vector &max);
 
-// Struct describing a bounding box in terms of the center and face normals. The
-// normals specify the direction from the center of the box.
+// Struct describing a bounding box in terms of the center and face normals. The normals
+// specify the direction from the center of the box.
 struct BoundingBox
 {
   // The central point of the bounding box.
   std::array<double, 3> center;
+
   // Vectors from center to the midpoint of each face.
   std::array<std::array<double, 3>, 3> normals;
+
   // Whether or not this bounding box is two dimensional.
   bool planar;
+
   // Compute the area of the bounding box spanned by the first two normals.
   double Area() const;
+
   // Compute the volume of a 3D bounding box. Returns zero if planar.
   double Volume() const;
+
   // Compute the lengths of each axis.
   std::array<double, 3> Lengths() const;
+
   // Compute the deviation in degrees of a vector from each of the normal
   // directions.
   std::array<double, 3> Deviation(const std::array<double, 3> &direction) const;
+};
+
+// Struct describing a bounding ball in terms of a center and radius. If a ball is two
+// dimensional, additionally provides a normal to the plane.
+struct BoundingBall
+{
+  // The centroid of the ball.
+  std::array<double, 3> center;
+
+  // The radius of the ball from the center.
+  double radius;
+
+  // If the ball is two dimensional, the normal defining the planar surface. Zero magnitude
+  // if a sphere.
+  std::array<double, 3> planar_normal;
+
+  // Whether or not this bounding ball is two dimensional.
+  bool planar;
+
+  // Compute the area of the bounding box spanned by the first two normals.
+  double Area() const { return M_PI * std::pow(radius, 2.0); }
+
+  // Compute the volume of a 3D bounding box. Returns zero if planar.
+  double Volume() const { return planar ? 0.0 : (4 * M_PI / 3) * std::pow(radius, 3.0); }
 };
 
 // Helper functions for computing bounding boxes from a mesh and markers.
 BoundingBox GetBoundingBox(mfem::ParMesh &mesh, const mfem::Array<int> &marker, bool bdr);
 BoundingBox GetBoundingBox(mfem::ParMesh &mesh, int attr, bool bdr);
 
-// Struct describing a bounding ball in terms of a center and radius. If a ball
-// is two dimensional, additionally provides a normal to the plane.
-struct BoundingBall
-{
-  // The centroid of the ball.
-  std::array<double, 3> center;
-  // The radius of the ball from the center.
-  double radius;
-  // If the ball is two dimensional, the normal defining the planar surface.
-  // Zero magnitude if a sphere.
-  std::array<double, 3> planar_normal;
-  // Whether or not this bounding ball is two dimensional.
-  bool planar;
-  // Compute the area of the bounding box spanned by the first two normals.
-  double Area() const { return M_PI * std::pow(radius, 2.0); }
-  // Compute the volume of a 3D bounding box. Returns zero if planar.
-  double Volume() const { return planar ? 0.0 : (4 * M_PI / 3) * std::pow(radius, 3.0); }
-};
-
-// Given a mesh and a marker, compute the diameter of a bounding circle/sphere,
-// assuming that the extrema points are in the marked group.
+// Given a mesh and a marker, compute the diameter of a bounding circle/sphere, assuming
+// that the extrema points are in the marked group.
 BoundingBall GetBoundingBall(mfem::ParMesh &mesh, const mfem::Array<int> &marker, bool bdr);
 BoundingBall GetBoundingBall(mfem::ParMesh &mesh, int attr, bool bdr);
 
