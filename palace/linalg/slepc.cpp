@@ -377,11 +377,11 @@ PetscReal SlepcEigenSolver::GetError(int i, EigenvalueSolver::ErrorType type) co
   switch (type)
   {
     case ErrorType::ABSOLUTE:
-      return res.get()[i];
+      return res[i];
     case ErrorType::RELATIVE:
-      return res.get()[i] / PetscAbsScalar(GetEigenvalue(i));
+      return res[i] / PetscAbsScalar(GetEigenvalue(i));
     case ErrorType::BACKWARD:
-      return res.get()[i] / GetBackwardScaling(GetEigenvalue(i));
+      return res[i] / GetBackwardScaling(GetEigenvalue(i));
   }
   return 0.0;
 }
@@ -588,10 +588,10 @@ int SlepcEPSSolverBase::Solve()
   }
 
   // Compute and store the eigenpair residuals.
-  res = std::make_unique<PetscReal[]>(num_conv);
+  res.resize(num_conv);
   for (int i = 0; i < num_conv; i++)
   {
-    res.get()[i] = GetResidualNorm(i);
+    res[i] = GetResidualNorm(i);
   }
   return (int)num_conv;
 }
@@ -1096,10 +1096,10 @@ int SlepcPEPSolverBase::Solve()
   }
 
   // Compute and store the eigenpair residuals.
-  res = std::make_unique<PetscReal[]>(num_conv);
+  res.resize(num_conv);
   for (int i = 0; i < num_conv; i++)
   {
-    res.get()[i] = GetResidualNorm(i);
+    res[i] = GetResidualNorm(i);
   }
   return (int)num_conv;
 }

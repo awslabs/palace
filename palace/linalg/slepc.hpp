@@ -87,7 +87,8 @@ protected:
   bool sinvert, region;
 
   // Storage for computed residual norms.
-  std::unique_ptr<PetscReal[]> res;
+  // std::unique_ptr<PetscReal[]>
+  std::vector<PetscReal> res;
 
   // Reference to linear solver used for operator action for M⁻¹ (with no spectral
   // transformation) or (K - σ M)⁻¹ (generalized EVP with shift-and- invert) or P(σ)⁻¹
