@@ -127,49 +127,45 @@ inline MPI_Datatype DataType<bool>()
   return MPI_C_BOOL;
 }
 
-// Helper for computing a reduction along with an identifier, for example rank
-// of the owning process.
-template <typename T, typename U = signed int>
-struct ValueAndId
+template <typename T, typename U>
+struct ValueAndLoc
 {
-  // The value used in a reduction.
   T val;
-  // The id that corresponds to the reduced value.
-  U id;
+  U loc;
 };
 
 template <>
-inline MPI_Datatype DataType<ValueAndId<float, signed int>>()
+inline MPI_Datatype DataType<ValueAndLoc<float, signed int>>()
 {
   return MPI_FLOAT_INT;
 }
 
 template <>
-inline MPI_Datatype DataType<ValueAndId<double, signed int>>()
+inline MPI_Datatype DataType<ValueAndLoc<double, signed int>>()
 {
   return MPI_DOUBLE_INT;
 }
 
 template <>
-inline MPI_Datatype DataType<ValueAndId<long double, signed int>>()
+inline MPI_Datatype DataType<ValueAndLoc<long double, signed int>>()
 {
   return MPI_LONG_DOUBLE_INT;
 }
 
 template <>
-inline MPI_Datatype DataType<ValueAndId<signed short, signed int>>()
+inline MPI_Datatype DataType<ValueAndLoc<signed short, signed int>>()
 {
   return MPI_SHORT_INT;
 }
 
 template <>
-inline MPI_Datatype DataType<ValueAndId<signed int, signed int>>()
+inline MPI_Datatype DataType<ValueAndLoc<signed int, signed int>>()
 {
   return MPI_2INT;
 }
 
 template <>
-inline MPI_Datatype DataType<ValueAndId<signed long int, signed int>>()
+inline MPI_Datatype DataType<ValueAndLoc<signed long int, signed int>>()
 {
   return MPI_LONG_INT;
 }
@@ -266,41 +262,39 @@ public:
     GlobalOp(len, buff, MPI_SUM, comm);
   }
 
-  // Global minimum with id (in-place, result is broadcast to all processes).
-  template <typename T>
-  static void GlobalMinLoc(int len, T *val, int *id, MPI_Comm comm)
+  // Global minimum with index (in-place, result is broadcast to all processes).
+  template <typename T, typename U>
+  static void GlobalMinLoc(int len, T *val, U *loc, MPI_Comm comm)
   {
-    std::vector<mpi::ValueAndId<T, int>> buffer(len);
+    std::vector<mpi::ValueAndLoc<T, U>> buffer(len);
     for (int i = 0; i < len; i++)
     {
       buffer[i].val = val[i];
-      buffer[i].id = id[i];
+      buffer[i].loc = loc[i];
     }
-
     GlobalOp(len, buffer.data(), MPI_MINLOC, comm);
     for (int i = 0; i < len; i++)
     {
       val[i] = buffer[i].val;
-      id[i] = buffer[i].id;
+      loc[i] = buffer[i].loc;
     }
   }
 
-  // Global minimum with id (in-place, result is broadcast to all processes).
-  template <typename T>
-  static void GlobalMaxLoc(int len, T *val, int *id, MPI_Comm comm)
+  // Global maximum with index (in-place, result is broadcast to all processes).
+  template <typename T, typename U>
+  static void GlobalMaxLoc(int len, T *val, U *loc, MPI_Comm comm)
   {
-    std::vector<mpi::ValueAndId<T, int>> buffer(len);
+    std::vector<mpi::ValueAndLoc<T, U>> buffer(len);
     for (int i = 0; i < len; i++)
     {
       buffer[i].val = val[i];
-      buffer[i].id = id[i];
+      buffer[i].loc = loc[i];
     }
-
     GlobalOp(len, buffer.data(), MPI_MAXLOC, comm);
     for (int i = 0; i < len; i++)
     {
       val[i] = buffer[i].val;
-      id[i] = buffer[i].id;
+      loc[i] = buffer[i].loc;
     }
   }
 
