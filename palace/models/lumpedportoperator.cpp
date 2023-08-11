@@ -63,9 +63,6 @@ LumpedPortData::LumpedPortData(const config::LumpedPortData &data,
         elems.push_back(
             std::make_unique<UniformElementData>(elem.direction, attr_marker, h1_fespace));
         break;
-      case config::internal::ElementData::CoordinateSystem::INVALID:
-        MFEM_ABORT("Unexpected coordinate system for lumped port direction!");
-        break;
     }
   }
 

@@ -115,9 +115,6 @@ std::vector<std::unique_ptr<FECollection>> inline ConstructFECollections(
       case config::LinearSolverData::MultigridCoarsenType::LOGARITHMIC:
         p = (p + pmin) / 2;
         break;
-      case config::LinearSolverData::MultigridCoarsenType::INVALID:
-        MFEM_ABORT("Invalid coarsening type for p-multigrid levels!");
-        break;
     }
   }
   std::reverse(fecs.begin(), fecs.end());
