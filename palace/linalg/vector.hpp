@@ -32,10 +32,13 @@ public:
   // Copy constructor.
   ComplexVector(const ComplexVector &y);
 
-  // Copy constructor from separately provided real and imaginary parts.
+  // Move constructor.
+  ComplexVector(ComplexVector &&y) noexcept;
+
+  // Constructor from separately provided real and imaginary parts.
   ComplexVector(const Vector &yr, const Vector &yi);
 
-  // Copy constructor from an array of complex values.
+  // Constructor from an array of complex values.
   ComplexVector(const std::complex<double> *py, int n);
 
   // Return the size of the vector.
@@ -51,17 +54,21 @@ public:
   const Vector &Imag() const { return xi; }
   Vector &Imag() { return xi; }
 
-  // Copy assignment operator. This should probably not be used to modify the size of the
-  // vector.
+  // Copy assignment operator.
   ComplexVector &operator=(const ComplexVector &y);
+  // Move assignment operator.
+  ComplexVector &operator=(ComplexVector &&y) noexcept;
 
-  // Copy assignment from separately provided real and imaginary parts.
+  // Set from ComplexVector. Does not allow resizing.
+  void Set(const ComplexVector &y);
+
+  // Set from separately provided real and imaginary parts. Does not allow resizing.
   void Set(const Vector &yr, const Vector &yi);
 
-  // Copy assignment from an array of complex values.
+  // Set from an array of complex values. Does not allow resizing.
   void Set(const std::complex<double> *py, int n);
 
-  // Copy the vector into an array of complex values.
+  // Copy the vector into an array of complex values. Does not allow resizing.
   void Get(std::complex<double> *py, int n) const;
 
   // Set all entries equal to s.
