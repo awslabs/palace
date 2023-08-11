@@ -79,7 +79,7 @@
     {
       "Type": "AMS",
       "KSPType": "CG",
-      "Tol": 1.0e-9,
+      "Tol": 1.0e-8,
       "MaxIts": 100
     }
   }

@@ -116,14 +116,14 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(MPI_Comm comm, const IoData &iodata, boo
     {
       std::string pfile = mfem::MakeParFilename(tmp + "part.", Mpi::Rank(comm), ".mesh", width);
       std::ofstream fo(pfile);
-      // mfem::ofgzstream fo(pfile, true);  // Use zlib compression if available.
+      // mfem::ofgzstream fo(pfile, true);  // Use zlib compression if available
       fo.precision(MSH_FLT_PRECISION);
       gpmesh.ParPrint(fo);
     }
     {
       std::string pfile = mfem::MakeParFilename(tmp + "final.", Mpi::Rank(comm), ".mesh", width);
       std::ofstream fo(pfile);
-      // mfem::ofgzstream fo(pfile, true);  // Use zlib compression if available.
+      // mfem::ofgzstream fo(pfile, true);  // Use zlib compression if available
       fo.precision(MSH_FLT_PRECISION);
       mesh->ParPrint(fo);
     }
@@ -1087,7 +1087,7 @@ std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &path)
     }
     tmp += "tmp/serial.msh";
     std::ofstream fo(tmp);
-    // mfem::ofgzstream fo(tmp, true);  // Use zlib compression if available.
+    // mfem::ofgzstream fo(tmp, true);  // Use zlib compression if available
     // fo << std::fixed;
     fo << std::scientific;
     fo.precision(MSH_FLT_PRECISION);
@@ -1225,7 +1225,7 @@ std::map<int, std::array<int, 2>> CheckMesh(std::unique_ptr<mfem::Mesh> &orig_me
       int f, o, e1, e2;
       orig_mesh->GetBdrElementFace(be, &f, &o);
       orig_mesh->GetFaceElements(f, &e1, &e2);
-      if (e1 < 0 || e2 < 0)  // Internal boundary elements are allowed to have no BC.
+      if (e1 < 0 || e2 < 0)  // Internal boundary elements are allowed to have no BC
       {
         warn = true;
         break;
@@ -1483,7 +1483,7 @@ std::map<int, std::array<int, 2>> CheckMesh(std::unique_ptr<mfem::Mesh> &orig_me
           b = 0;
         }
         MFEM_VERIFY(a + b > 0, "Invalid new boundary element attribute!");
-        int new_attr = max_bdr_attr + (a * (a - 1)) / 2 + b;  // At least max_bdr_attr+1.
+        int new_attr = max_bdr_attr + (a * (a - 1)) / 2 + b;  // At least max_bdr_attr+1
         if (new_attr_map.find(new_attr) == new_attr_map.end())
         {
           new_attr_map.emplace(new_attr, std::array<int, 2>{a, b});
@@ -1579,7 +1579,7 @@ std::unique_ptr<mfem::ParMesh> DistributeMesh(MPI_Comm comm,
         partitioner.ExtractPart(i, part);
         std::string pfile = mfem::MakeParFilename(tmp + "part.", i, ".mesh", width);
         std::ofstream fo(pfile);
-        // mfem::ofgzstream fo(pfile, true);  // Use zlib compression if available.
+        // mfem::ofgzstream fo(pfile, true);  // Use zlib compression if available
         // fo << std::fixed;
         fo << std::scientific;
         fo.precision(MSH_FLT_PRECISION);
@@ -1591,7 +1591,7 @@ std::unique_ptr<mfem::ParMesh> DistributeMesh(MPI_Comm comm,
     std::string pfile =
         mfem::MakeParFilename(tmp + "part.", Mpi::Rank(comm), ".mesh", width);
     int exists = 0;
-    while (!exists)  // Wait for root to finish writing all files.
+    while (!exists)  // Wait for root to finish writing all files
     {
       exists = std::filesystem::exists(pfile);
       Mpi::GlobalMax(1, &exists, comm);
@@ -1606,7 +1606,7 @@ std::unique_ptr<mfem::ParMesh> DistributeMesh(MPI_Comm comm,
     Mpi::Barrier(comm);
     if (Mpi::Root(comm))
     {
-      std::filesystem::remove_all(tmp);  // Remove the temporary directory.
+      std::filesystem::remove_all(tmp);  // Remove the temporary directory
     }
     return pmesh;
   }
@@ -1643,7 +1643,7 @@ std::unique_ptr<mfem::ParMesh> DistributeMesh(MPI_Comm comm,
                     "Overflow error distributing parallel mesh!");
         MPI_Isend(so[i].c_str(), ilen, MPI_CHAR, i, i, comm, &send_requests[i - 1]);
       }
-      std::istringstream fi(so[0]);  // This is never compressed.
+      std::istringstream fi(so[0]);  // This is never compressed
       auto pmesh = std::make_unique<mfem::ParMesh>(comm, fi);
       MPI_Waitall(static_cast<int>(send_requests.size()), send_requests.data(),
                   MPI_STATUSES_IGNORE);
