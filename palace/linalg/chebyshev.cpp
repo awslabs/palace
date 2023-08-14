@@ -70,8 +70,9 @@ ChebyshevSmoother<OperType>::ChebyshevSmoother(int smooth_it, int poly_order)
 template <typename OperType>
 void ChebyshevSmoother<OperType>::SetOperator(const OperType &op)
 {
-  typedef typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
-                                    ComplexParOperator, ParOperator>::type ParOperType;
+  using ParOperType =
+      typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
+                                ComplexParOperator, ParOperator>::type;
 
   A = &op;
   // if constexpr (std::is_same<OperType, ComplexOperator>::value)

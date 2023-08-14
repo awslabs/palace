@@ -271,12 +271,12 @@ void RomOperator::AssemblePROM(double omega)
   {
     Ar.setZero();
   }
-  Ar.noalias() += Kr;
+  Ar += Kr;
   if (C)
   {
-    Ar.noalias() += (1i * omega) * Cr;
+    Ar += (1i * omega) * Cr;
   }
-  Ar.noalias() += (-omega * omega) * Mr;
+  Ar += (-omega * omega) * Mr;
 
   if (has_RHS2)
   {
@@ -289,7 +289,7 @@ void RomOperator::AssemblePROM(double omega)
   }
   if (RHS1.Size())
   {
-    RHSr.noalias() += (1i * omega) * RHS1r;
+    RHSr += (1i * omega) * RHS1r;
   }
 }
 
@@ -380,8 +380,7 @@ double RomOperator::ComputeMaxError(int num_cand, double &omega_star)
     PC.reserve(num_cand);
     for (auto sample : PS)
     {
-      int i = std::distance(P_m_PS.begin(),
-                            std::lower_bound(P_m_PS.begin(), P_m_PS.end(), sample));
+      int i = std::distance(P_m_PS.begin(), P_m_PS.lower_bound(sample));
       int il = i-1;
       while (il >= 0)
       {

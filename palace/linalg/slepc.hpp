@@ -50,7 +50,7 @@ PetscReal GetMaxSingularValue(MPI_Comm comm, const ComplexOperator &A, bool herm
 // polynomial eigenvalue problems. Shift-and-invert spectral transformations can be used to
 // compute interior eigenvalues.
 //
-class SlepcEigenSolver : public EigenvalueSolver
+class SlepcEigenvalueSolver : public EigenvalueSolver
 {
 public:
   enum class ProblemType
@@ -119,8 +119,8 @@ protected:
   virtual PetscReal GetBackwardScaling(PetscScalar l) const = 0;
 
 public:
-  SlepcEigenSolver(int print);
-  ~SlepcEigenSolver() override;
+  SlepcEigenvalueSolver(int print);
+  ~SlepcEigenvalueSolver() override;
 
   // Set operators for the generalized eigenvalue problem or for the quadratic polynomial
   // eigenvalue problem.
@@ -178,7 +178,7 @@ public:
 };
 
 // Base class for SLEPc's EPS problem type.
-class SlepcEPSSolverBase : public SlepcEigenSolver
+class SlepcEPSSolverBase : public SlepcEigenvalueSolver
 {
 protected:
   // SLEPc eigensolver object. Polynomial problems are handled using linearization.
@@ -237,13 +237,13 @@ public:
 class SlepcEPSSolver : public SlepcEPSSolverBase
 {
 public:
-  using SlepcEigenSolver::delta;
-  using SlepcEigenSolver::gamma;
-  using SlepcEigenSolver::opB;
-  using SlepcEigenSolver::opInv;
-  using SlepcEigenSolver::opProj;
-  using SlepcEigenSolver::sigma;
-  using SlepcEigenSolver::sinvert;
+  using SlepcEigenvalueSolver::delta;
+  using SlepcEigenvalueSolver::gamma;
+  using SlepcEigenvalueSolver::opB;
+  using SlepcEigenvalueSolver::opInv;
+  using SlepcEigenvalueSolver::opProj;
+  using SlepcEigenvalueSolver::sigma;
+  using SlepcEigenvalueSolver::sinvert;
 
   // References to matrices defining the generalized eigenvalue problem (not owned).
   const ComplexOperator *opK, *opM;
@@ -274,13 +274,13 @@ public:
 class SlepcPEPLinearSolver : public SlepcEPSSolverBase
 {
 public:
-  using SlepcEigenSolver::delta;
-  using SlepcEigenSolver::gamma;
-  using SlepcEigenSolver::opB;
-  using SlepcEigenSolver::opInv;
-  using SlepcEigenSolver::opProj;
-  using SlepcEigenSolver::sigma;
-  using SlepcEigenSolver::sinvert;
+  using SlepcEigenvalueSolver::delta;
+  using SlepcEigenvalueSolver::gamma;
+  using SlepcEigenvalueSolver::opB;
+  using SlepcEigenvalueSolver::opInv;
+  using SlepcEigenvalueSolver::opProj;
+  using SlepcEigenvalueSolver::sigma;
+  using SlepcEigenvalueSolver::sinvert;
 
   // References to matrices defining the quadratic polynomial eigenvalue problem
   // (not owned).
@@ -312,7 +312,7 @@ public:
 };
 
 // Base class for SLEPc's PEP problem type.
-class SlepcPEPSolverBase : public SlepcEigenSolver
+class SlepcPEPSolverBase : public SlepcEigenvalueSolver
 {
 protected:
   // SLEPc eigensolver object.
@@ -371,13 +371,13 @@ public:
 class SlepcPEPSolver : public SlepcPEPSolverBase
 {
 public:
-  using SlepcEigenSolver::delta;
-  using SlepcEigenSolver::gamma;
-  using SlepcEigenSolver::opB;
-  using SlepcEigenSolver::opInv;
-  using SlepcEigenSolver::opProj;
-  using SlepcEigenSolver::sigma;
-  using SlepcEigenSolver::sinvert;
+  using SlepcEigenvalueSolver::delta;
+  using SlepcEigenvalueSolver::gamma;
+  using SlepcEigenvalueSolver::opB;
+  using SlepcEigenvalueSolver::opInv;
+  using SlepcEigenvalueSolver::opProj;
+  using SlepcEigenvalueSolver::sigma;
+  using SlepcEigenvalueSolver::sinvert;
 
   // References to matrices defining the quadratic polynomial eigenvalue problem
   // (not owned).

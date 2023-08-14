@@ -230,7 +230,7 @@ PetscReal GetMaxSingularValue(MPI_Comm comm, const ComplexOperator &A, bool herm
 
 // Eigensolver base class methods
 
-SlepcEigenSolver::SlepcEigenSolver(int print) : print(print)
+SlepcEigenvalueSolver::SlepcEigenvalueSolver(int print) : print(print)
 {
   sinvert = false;
   region = true;
@@ -247,41 +247,41 @@ SlepcEigenSolver::SlepcEigenSolver(int print) : print(print)
   cl_custom = false;
 }
 
-SlepcEigenSolver::~SlepcEigenSolver()
+SlepcEigenvalueSolver::~SlepcEigenvalueSolver()
 {
   PalacePetscCall(MatDestroy(&B0));
   PalacePetscCall(VecDestroy(&v0));
 }
 
-void SlepcEigenSolver::SetOperators(const ComplexOperator &K, const ComplexOperator &M,
-                                    EigenvalueSolver::ScaleType type)
+void SlepcEigenvalueSolver::SetOperators(const ComplexOperator &K, const ComplexOperator &M,
+                                         EigenvalueSolver::ScaleType type)
 {
-  MFEM_ABORT("SetOperators not defined for base class SlepcEigenSolver!");
+  MFEM_ABORT("SetOperators not defined for base class SlepcEigenvalueSolver!");
 }
 
-void SlepcEigenSolver::SetOperators(const ComplexOperator &K, const ComplexOperator &C,
-                                    const ComplexOperator &M,
-                                    EigenvalueSolver::ScaleType type)
+void SlepcEigenvalueSolver::SetOperators(const ComplexOperator &K, const ComplexOperator &C,
+                                         const ComplexOperator &M,
+                                         EigenvalueSolver::ScaleType type)
 {
-  MFEM_ABORT("SetOperators not defined for base class SlepcEigenSolver!");
+  MFEM_ABORT("SetOperators not defined for base class SlepcEigenvalueSolver!");
 }
 
-void SlepcEigenSolver::SetLinearSolver(const ComplexKspSolver &ksp)
+void SlepcEigenvalueSolver::SetLinearSolver(const ComplexKspSolver &ksp)
 {
   opInv = &ksp;
 }
 
-void SlepcEigenSolver::SetDivFreeProjector(const DivFreeSolver &divfree)
+void SlepcEigenvalueSolver::SetDivFreeProjector(const DivFreeSolver &divfree)
 {
   opProj = &divfree;
 }
 
-void SlepcEigenSolver::SetBMat(const Operator &B)
+void SlepcEigenvalueSolver::SetBMat(const Operator &B)
 {
   opB = &B;
 }
 
-void SlepcEigenSolver::SetShiftInvert(PetscScalar s, bool precond)
+void SlepcEigenvalueSolver::SetShiftInvert(PetscScalar s, bool precond)
 {
   ST st = GetST();
   if (precond)
@@ -298,7 +298,7 @@ void SlepcEigenSolver::SetShiftInvert(PetscScalar s, bool precond)
   sinvert = true;
 }
 
-void SlepcEigenSolver::SetOrthogonalization(bool mgs, bool cgs2)
+void SlepcEigenvalueSolver::SetOrthogonalization(bool mgs, bool cgs2)
 {
   // The SLEPc default is CGS with refinement if needed.
   if (mgs || cgs2)
@@ -320,7 +320,7 @@ void SlepcEigenSolver::SetOrthogonalization(bool mgs, bool cgs2)
   }
 }
 
-void SlepcEigenSolver::Customize()
+void SlepcEigenvalueSolver::Customize()
 {
   // Configure the KSP object for non-preconditioned spectral transformations.
   PetscBool precond;
@@ -372,7 +372,7 @@ void SlepcEigenSolver::Customize()
   }
 }
 
-PetscReal SlepcEigenSolver::GetError(int i, EigenvalueSolver::ErrorType type) const
+PetscReal SlepcEigenvalueSolver::GetError(int i, EigenvalueSolver::ErrorType type) const
 {
   switch (type)
   {
@@ -389,7 +389,7 @@ PetscReal SlepcEigenSolver::GetError(int i, EigenvalueSolver::ErrorType type) co
 // EPS specific methods
 
 SlepcEPSSolverBase::SlepcEPSSolverBase(MPI_Comm comm, int print, const std::string &prefix)
-  : SlepcEigenSolver(print)
+  : SlepcEigenvalueSolver(print)
 {
   PalacePetscCall(EPSCreate(comm, &eps));
   PalacePetscCall(EPSSetOptionsPrefix(eps, prefix.c_str()));
@@ -477,7 +477,7 @@ void SlepcEPSSolverBase::SetWhichEigenpairs(EigenvalueSolver::WhichType type)
   }
 }
 
-void SlepcEPSSolverBase::SetProblemType(SlepcEigenSolver::ProblemType type)
+void SlepcEPSSolverBase::SetProblemType(SlepcEigenvalueSolver::ProblemType type)
 {
   switch (type)
   {
@@ -504,7 +504,7 @@ void SlepcEPSSolverBase::SetProblemType(SlepcEigenSolver::ProblemType type)
   }
 }
 
-void SlepcEPSSolverBase::SetType(SlepcEigenSolver::Type type)
+void SlepcEPSSolverBase::SetType(SlepcEigenvalueSolver::Type type)
 {
   switch (type)
   {
@@ -554,7 +554,7 @@ void SlepcEPSSolverBase::SetInitialSpace(const ComplexVector &v)
 
 void SlepcEPSSolverBase::Customize()
 {
-  SlepcEigenSolver::Customize();
+  SlepcEigenvalueSolver::Customize();
   PalacePetscCall(EPSSetTarget(eps, sigma / gamma));
   if (!cl_custom)
   {
@@ -701,7 +701,7 @@ void SlepcEPSSolver::SetOperators(const ComplexOperator &K, const ComplexOperato
 
 void SlepcEPSSolver::SetBMat(const Operator &B)
 {
-  SlepcEigenSolver::SetBMat(B);
+  SlepcEigenvalueSolver::SetBMat(B);
 
   PetscInt n = B.Height();
   PalacePetscCall(
@@ -803,7 +803,7 @@ void SlepcPEPLinearSolver::SetOperators(const ComplexOperator &K, const ComplexO
 
 void SlepcPEPLinearSolver::SetBMat(const Operator &B)
 {
-  SlepcEigenSolver::SetBMat(B);
+  SlepcEigenvalueSolver::SetBMat(B);
 
   PetscInt n = B.Height();
   PalacePetscCall(MatCreateShell(GetComm(), 2 * n, 2 * n, PETSC_DECIDE, PETSC_DECIDE,
@@ -902,7 +902,7 @@ PetscReal SlepcPEPLinearSolver::GetBackwardScaling(PetscScalar l) const
 // PEP specific methods
 
 SlepcPEPSolverBase::SlepcPEPSolverBase(MPI_Comm comm, int print, const std::string &prefix)
-  : SlepcEigenSolver(print)
+  : SlepcEigenvalueSolver(print)
 {
   PalacePetscCall(PEPCreate(comm, &pep));
   PalacePetscCall(PEPSetOptionsPrefix(pep, prefix.c_str()));
@@ -990,7 +990,7 @@ void SlepcPEPSolverBase::SetWhichEigenpairs(EigenvalueSolver::WhichType type)
   }
 }
 
-void SlepcPEPSolverBase::SetProblemType(SlepcEigenSolver::ProblemType type)
+void SlepcPEPSolverBase::SetProblemType(SlepcEigenvalueSolver::ProblemType type)
 {
   switch (type)
   {
@@ -1012,7 +1012,7 @@ void SlepcPEPSolverBase::SetProblemType(SlepcEigenSolver::ProblemType type)
   }
 }
 
-void SlepcPEPSolverBase::SetType(SlepcEigenSolver::Type type)
+void SlepcPEPSolverBase::SetType(SlepcEigenvalueSolver::Type type)
 {
   switch (type)
   {
@@ -1062,7 +1062,7 @@ void SlepcPEPSolverBase::SetInitialSpace(const ComplexVector &v)
 
 void SlepcPEPSolverBase::Customize()
 {
-  SlepcEigenSolver::Customize();
+  SlepcEigenvalueSolver::Customize();
   PalacePetscCall(PEPSetTarget(pep, sigma / gamma));
   if (!cl_custom)
   {
@@ -1217,7 +1217,7 @@ void SlepcPEPSolver::SetOperators(const ComplexOperator &K, const ComplexOperato
 
 void SlepcPEPSolver::SetBMat(const Operator &B)
 {
-  SlepcEigenSolver::SetBMat(B);
+  SlepcEigenvalueSolver::SetBMat(B);
 
   PetscInt n = B.Height();
   PalacePetscCall(

@@ -271,7 +271,6 @@ void DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator &postop, i
   // solutions at frequency sweep endpoints.
   int iter = static_cast<int>(prom.GetSampleFrequencies().size()), iter0 = iter;
   double max_error;
-  ;
   while (true)
   {
     // Compute maximum error in parameter domain with current PROM.

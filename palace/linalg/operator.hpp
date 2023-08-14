@@ -173,10 +173,10 @@ class BaseProductOperator
 {
   friend class ProductOperatorHelper<BaseProductOperator<OperType>, OperType>;
 
-private:
-  typedef typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
-                                    ComplexVector, Vector>::type VecType;
+  using VecType = typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
+                                            ComplexVector, Vector>::type;
 
+private:
   const OperType &A, &B;
   mutable VecType z;
 
@@ -230,10 +230,10 @@ class BaseDiagonalOperator
 {
   friend class DiagonalOperatorHelper<BaseDiagonalOperator<OperType>, OperType>;
 
-private:
-  typedef typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
-                                    ComplexVector, Vector>::type VecType;
+  using VecType = typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
+                                            ComplexVector, Vector>::type;
 
+private:
   const VecType &d;
 
 public:
@@ -257,10 +257,10 @@ using ComplexDiagonalOperator = BaseDiagonalOperator<ComplexOperator>;
 template <typename OperType>
 class BaseMultigridOperator : public OperType
 {
-private:
-  typedef typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
-                                    ComplexVector, Vector>::type VecType;
+  using VecType = typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
+                                            ComplexVector, Vector>::type;
 
+private:
   std::vector<std::unique_ptr<OperType>> ops, aux_ops;
 
 public:
@@ -292,7 +292,8 @@ public:
 
   const OperType &GetOperatorAtLevel(int l) const
   {
-    MFEM_ASSERT(l < GetNumLevels(), "Out of bounds multigrid level operator requested!");
+    MFEM_ASSERT(l >= 0 && l < GetNumLevels(),
+                "Out of bounds multigrid level operator requested!");
     return *ops[l];
   }
   const OperType &GetAuxiliaryOperatorAtLevel(int l) const

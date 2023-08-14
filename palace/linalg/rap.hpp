@@ -13,7 +13,7 @@ namespace palace
 {
 
 //
-// A parallel operators represented by RAP constructed through the actions of R, A, and P,
+// A parallel operator represented by RAP constructed through the actions of R, A, and P,
 // usually with R = Pᵀ, and with possible eliminated essential BC.
 //
 

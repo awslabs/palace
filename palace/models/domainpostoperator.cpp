@@ -24,8 +24,8 @@ DomainPostOperator::DomainPostOperator(const IoData &iodata, const MaterialOpera
     //              E_elec = 1/2 Re{∫_Ω Dᴴ E dV} as (M_eps * e)ᴴ e.
     // Only the real part of the permeability contributes to the energy (imaginary part
     // cancels out in the inner product due to symmetry).
-    constexpr MaterialPropertyType MatTypeEpsReal = MaterialPropertyType::PERMITTIVITY_REAL;
-    constexpr MaterialPropertyType MatTypeEpsImag = MaterialPropertyType::PERMITTIVITY_IMAG;
+    constexpr auto MatTypeEpsReal = MaterialPropertyType::PERMITTIVITY_REAL;
+    constexpr auto MatTypeEpsImag = MaterialPropertyType::PERMITTIVITY_IMAG;
     MaterialPropertyCoefficient<MatTypeEpsReal> epsilon_func(mat_op);
     M_ND->AddDomainIntegrator(new mfem::MixedVectorMassIntegrator(epsilon_func));
     // XX TODO: Partial assembly option?
@@ -72,7 +72,7 @@ DomainPostOperator::DomainPostOperator(const IoData &iodata, const MaterialOpera
   {
     // Construct RT mass matrix to compute the magnetic field energy integral as:
     //              E_mag = 1/2 Re{∫_Ω Bᴴ H dV} as (M_muinv * b)ᴴ b.
-    constexpr MaterialPropertyType MatTypeMuInv = MaterialPropertyType::INV_PERMEABILITY;
+    constexpr auto MatTypeMuInv = MaterialPropertyType::INV_PERMEABILITY;
     MaterialPropertyCoefficient<MatTypeMuInv> muinv_func(mat_op);
     M_RT->AddDomainIntegrator(new mfem::MixedVectorMassIntegrator(muinv_func));
     // XX TODO: Partial assembly option?

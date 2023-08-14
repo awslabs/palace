@@ -93,29 +93,29 @@ void EigenSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
   {
 #if defined(PALACE_WITH_SLEPC)
     Mpi::Print("\nConfiguring SLEPc eigenvalue solver\n");
-    std::unique_ptr<slepc::SlepcEigenSolver> slepc;
+    std::unique_ptr<slepc::SlepcEigenvalueSolver> slepc;
     if (C)
     {
       if (!iodata.solver.eigenmode.pep_linear)
       {
         slepc = std::make_unique<slepc::SlepcPEPSolver>(spaceop.GetComm(),
                                                         iodata.problem.verbose);
-        slepc->SetType(slepc::SlepcEigenSolver::Type::TOAR);
+        slepc->SetType(slepc::SlepcEigenvalueSolver::Type::TOAR);
       }
       else
       {
         slepc = std::make_unique<slepc::SlepcPEPLinearSolver>(spaceop.GetComm(),
                                                               iodata.problem.verbose);
-        slepc->SetType(slepc::SlepcEigenSolver::Type::KRYLOVSCHUR);
+        slepc->SetType(slepc::SlepcEigenvalueSolver::Type::KRYLOVSCHUR);
       }
     }
     else
     {
       slepc = std::make_unique<slepc::SlepcEPSSolver>(spaceop.GetComm(),
                                                       iodata.problem.verbose);
-      slepc->SetType(slepc::SlepcEigenSolver::Type::KRYLOVSCHUR);
+      slepc->SetType(slepc::SlepcEigenvalueSolver::Type::KRYLOVSCHUR);
     }
-    slepc->SetProblemType(slepc::SlepcEigenSolver::ProblemType::GEN_NON_HERMITIAN);
+    slepc->SetProblemType(slepc::SlepcEigenvalueSolver::ProblemType::GEN_NON_HERMITIAN);
     slepc->SetOrthogonalization(
         iodata.solver.linear.gs_orthog_type == config::LinearSolverData::OrthogType::MGS,
         iodata.solver.linear.gs_orthog_type == config::LinearSolverData::OrthogType::CGS2);

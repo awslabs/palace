@@ -28,7 +28,7 @@ namespace arpack
 // used to compute interior eigenvalues. Currently only implemented for complex scalar
 // interface.
 //
-class ArpackEigenSolver : public EigenvalueSolver
+class ArpackEigenvalueSolver : public EigenvalueSolver
 {
 protected:
   // MPI communicator for PARPACK.
@@ -104,7 +104,7 @@ protected:
   virtual const char *GetName() const = 0;
 
 public:
-  ArpackEigenSolver(MPI_Comm comm, int print);
+  ArpackEigenvalueSolver(MPI_Comm comm, int print);
 
   // Set operators for the generalized eigenvalue problem or for the quadratic polynomial
   // eigenvalue problem.
@@ -163,7 +163,7 @@ public:
 };
 
 // Generalized eigenvalue problem solver: K x = λ M x .
-class ArpackEPSSolver : public ArpackEigenSolver
+class ArpackEPSSolver : public ArpackEigenvalueSolver
 {
 private:
   // References to matrices defining the generalized eigenvalue problem (not owned).
@@ -193,7 +193,7 @@ public:
 };
 
 // Quadratic eigenvalue problem solver: P(λ) x = (K + λ C + λ² M) x = 0 .
-class ArpackPEPSolver : public ArpackEigenSolver
+class ArpackPEPSolver : public ArpackEigenvalueSolver
 {
 private:
   // References to matrices defining the quadratic polynomial eigenvalue problem

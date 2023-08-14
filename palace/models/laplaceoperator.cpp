@@ -149,7 +149,7 @@ std::unique_ptr<Operator> LaplaceOperator::GetStiffnessMatrix()
   for (int l = 0; l < h1_fespaces.GetNumLevels(); l++)
   {
     auto &h1_fespace_l = h1_fespaces.GetFESpaceAtLevel(l);
-    constexpr MaterialPropertyType MatType = MaterialPropertyType::PERMITTIVITY_REAL;
+    constexpr auto MatType = MaterialPropertyType::PERMITTIVITY_REAL;
     MaterialPropertyCoefficient<MatType> epsilon_func(mat_op);
     auto k = std::make_unique<mfem::SymmetricBilinearForm>(&h1_fespace_l);
     k->AddDomainIntegrator(new mfem::MixedGradGradIntegrator(epsilon_func));

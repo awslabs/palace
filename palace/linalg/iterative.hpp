@@ -25,9 +25,10 @@ template <typename OperType>
 class IterativeSolver : public Solver<OperType>
 {
 protected:
-  typedef double RealType;
-  typedef typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
-                                    std::complex<RealType>, RealType>::type ScalarType;
+  using RealType = double;
+  using ScalarType =
+      typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
+                                std::complex<RealType>, RealType>::type;
 
   // MPI communicator associated with the solver.
   MPI_Comm comm;
@@ -100,9 +101,9 @@ template <typename OperType>
 class CgSolver : public IterativeSolver<OperType>
 {
 protected:
-  typedef typename Solver<OperType>::VecType VecType;
-  typedef typename IterativeSolver<OperType>::RealType RealType;
-  typedef typename IterativeSolver<OperType>::ScalarType ScalarType;
+  using VecType = typename Solver<OperType>::VecType;
+  using RealType = typename IterativeSolver<OperType>::RealType;
+  using ScalarType = typename IterativeSolver<OperType>::ScalarType;
 
   using IterativeSolver<OperType>::comm;
   using IterativeSolver<OperType>::print_opts;
@@ -150,9 +151,9 @@ public:
   };
 
 protected:
-  typedef typename Solver<OperType>::VecType VecType;
-  typedef typename IterativeSolver<OperType>::RealType RealType;
-  typedef typename IterativeSolver<OperType>::ScalarType ScalarType;
+  using VecType = typename Solver<OperType>::VecType;
+  using RealType = typename IterativeSolver<OperType>::RealType;
+  using ScalarType = typename IterativeSolver<OperType>::ScalarType;
 
   using IterativeSolver<OperType>::comm;
   using IterativeSolver<OperType>::print_opts;
@@ -217,13 +218,13 @@ template <typename OperType>
 class FgmresSolver : public GmresSolver<OperType>
 {
 public:
-  typedef typename GmresSolver<OperType>::OrthogType OrthogType;
-  typedef typename GmresSolver<OperType>::PrecSide PrecSide;
+  using OrthogType = typename GmresSolver<OperType>::OrthogType;
+  using PrecSide = typename GmresSolver<OperType>::PrecSide;
 
 protected:
-  typedef typename GmresSolver<OperType>::VecType VecType;
-  typedef typename GmresSolver<OperType>::RealType RealType;
-  typedef typename GmresSolver<OperType>::ScalarType ScalarType;
+  using VecType = typename GmresSolver<OperType>::VecType;
+  using RealType = typename GmresSolver<OperType>::RealType;
+  using ScalarType = typename GmresSolver<OperType>::ScalarType;
 
   using GmresSolver<OperType>::comm;
   using GmresSolver<OperType>::print_opts;

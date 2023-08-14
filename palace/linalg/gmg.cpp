@@ -64,8 +64,9 @@ GeometricMultigridSolver<OperType>::GeometricMultigridSolver(
 template <typename OperType>
 void GeometricMultigridSolver<OperType>::SetOperator(const OperType &op)
 {
-  typedef typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
-                                    ComplexParOperator, ParOperator>::type ParOperType;
+  using ParOperType =
+      typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
+                                ComplexParOperator, ParOperator>::type;
 
   const auto *mg_op = dynamic_cast<const BaseMultigridOperator<OperType> *>(&op);
   MFEM_VERIFY(mg_op, "GeometricMultigridSolver requires a MultigridOperator or "

@@ -482,6 +482,7 @@ void SumOperator::Mult(const Vector &x, Vector &y) const
     {
       y *= ops.front().second;
     }
+    return;
   }
   y = 0.0;
   AddMult(x, y);
@@ -496,6 +497,7 @@ void SumOperator::MultTranspose(const Vector &x, Vector &y) const
     {
       y *= ops.front().second;
     }
+    return;
   }
   y = 0.0;
   AddMultTranspose(x, y);

@@ -94,8 +94,7 @@ void SuperLUSolver::SetOperator(const Operator &op)
     hypA = dynamic_cast<const mfem::HypreParMatrix *>(&op);
     MFEM_VERIFY(hypA, "SuperLUSolver requires a HypreParMatrix operator!");
   }
-  hypre_ParCSRMatrix *parcsr =
-      (hypre_ParCSRMatrix *)const_cast<mfem::HypreParMatrix &>(*hypA);
+  auto *parcsr = (hypre_ParCSRMatrix *)const_cast<mfem::HypreParMatrix &>(*hypA);
   hypA->HostRead();
   hypre_CSRMatrix *csr = hypre_MergeDiagAndOffd(parcsr);
   hypA->HypreRead();

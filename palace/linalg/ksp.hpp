@@ -32,10 +32,10 @@ class BaseKspSolver
                     std::is_same<OperType, ComplexOperator>::value,
                 "Solver can only be defined for OperType = Operator or ComplexOperator!");
 
-protected:
-  typedef typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
-                                    ComplexVector, Vector>::type VecType;
+  using VecType = typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
+                                            ComplexVector, Vector>::type;
 
+protected:
   // The actual solver and preconditioner objects.
   std::unique_ptr<IterativeSolver<OperType>> ksp;
   std::unique_ptr<Solver<OperType>> pc;

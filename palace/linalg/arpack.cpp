@@ -164,7 +164,8 @@ namespace palace::arpack
 
 // Base class methods
 
-ArpackEigenSolver::ArpackEigenSolver(MPI_Comm comm, int print) : comm(comm), print(print)
+ArpackEigenvalueSolver::ArpackEigenvalueSolver(MPI_Comm comm, int print)
+  : comm(comm), print(print)
 {
   // Initialization.
   info = 0;
@@ -190,37 +191,39 @@ ArpackEigenSolver::ArpackEigenSolver(MPI_Comm comm, int print) : comm(comm), pri
   cstatn_c();
 }
 
-void ArpackEigenSolver::SetOperators(const ComplexOperator &K, const ComplexOperator &M,
-                                     EigenvalueSolver::ScaleType type)
+void ArpackEigenvalueSolver::SetOperators(const ComplexOperator &K,
+                                          const ComplexOperator &M,
+                                          EigenvalueSolver::ScaleType type)
 {
-  MFEM_ABORT("SetOperators not defined for base class ArpackEigenSolver!");
+  MFEM_ABORT("SetOperators not defined for base class ArpackEigenvalueSolver!");
 }
 
-void ArpackEigenSolver::SetOperators(const ComplexOperator &K, const ComplexOperator &C,
-                                     const ComplexOperator &M,
-                                     EigenvalueSolver::ScaleType type)
+void ArpackEigenvalueSolver::SetOperators(const ComplexOperator &K,
+                                          const ComplexOperator &C,
+                                          const ComplexOperator &M,
+                                          EigenvalueSolver::ScaleType type)
 {
-  MFEM_ABORT("SetOperators not defined for base class ArpackEigenSolver!");
+  MFEM_ABORT("SetOperators not defined for base class ArpackEigenvalueSolver!");
 }
 
-void ArpackEigenSolver::SetLinearSolver(const ComplexKspSolver &ksp)
+void ArpackEigenvalueSolver::SetLinearSolver(const ComplexKspSolver &ksp)
 {
   opInv = &ksp;
 }
 
-void ArpackEigenSolver::SetDivFreeProjector(const DivFreeSolver &divfree)
+void ArpackEigenvalueSolver::SetDivFreeProjector(const DivFreeSolver &divfree)
 {
   opProj = &divfree;
 }
 
-void ArpackEigenSolver::SetBMat(const Operator &B)
+void ArpackEigenvalueSolver::SetBMat(const Operator &B)
 {
   MFEM_VERIFY(!opB || opB->Height() == B.Height(),
               "Invalid modification of eigenvalue problem size!");
   opB = &B;
 }
 
-void ArpackEigenSolver::SetNumModes(int num_eig, int num_vec)
+void ArpackEigenvalueSolver::SetNumModes(int num_eig, int num_vec)
 {
   if (nev > 0 && num_eig != nev)
   {
@@ -236,22 +239,22 @@ void ArpackEigenSolver::SetNumModes(int num_eig, int num_vec)
   ncv = (num_vec > 0) ? num_vec : std::max(20, 2 * nev + 1);  // Default from SLEPc
 }
 
-void ArpackEigenSolver::SetTol(double tol)
+void ArpackEigenvalueSolver::SetTol(double tol)
 {
   rtol = tol;
 }
 
-void ArpackEigenSolver::SetMaxIter(int max_it)
+void ArpackEigenvalueSolver::SetMaxIter(int max_it)
 {
   arpack_it = max_it;
 }
 
-void ArpackEigenSolver::SetWhichEigenpairs(EigenvalueSolver::WhichType type)
+void ArpackEigenvalueSolver::SetWhichEigenpairs(EigenvalueSolver::WhichType type)
 {
   which_type = type;
 }
 
-void ArpackEigenSolver::SetShiftInvert(std::complex<double> s, bool precond)
+void ArpackEigenvalueSolver::SetShiftInvert(std::complex<double> s, bool precond)
 {
   MFEM_VERIFY(!precond, "ARPACK eigenvalue solver does not support preconditioned "
                         "spectral transformation option!");
@@ -259,7 +262,7 @@ void ArpackEigenSolver::SetShiftInvert(std::complex<double> s, bool precond)
   sinvert = true;
 }
 
-void ArpackEigenSolver::SetInitialSpace(const ComplexVector &v)
+void ArpackEigenvalueSolver::SetInitialSpace(const ComplexVector &v)
 {
   MFEM_VERIFY(
       n > 0,
@@ -273,9 +276,9 @@ void ArpackEigenSolver::SetInitialSpace(const ComplexVector &v)
   info = 1;
 }
 
-int ArpackEigenSolver::SolveInternal(int n, std::complex<double> *r,
-                                     std::complex<double> *V, std::complex<double> *eig,
-                                     int *perm)
+int ArpackEigenvalueSolver::SolveInternal(int n, std::complex<double> *r,
+                                          std::complex<double> *V,
+                                          std::complex<double> *eig, int *perm)
 {
   MPI_Fint fcomm = MPI_Comm_c2f(comm);
   a_int iparam[11] = {0};
@@ -414,7 +417,7 @@ int ArpackEigenSolver::SolveInternal(int n, std::complex<double> *r,
   return num_conv;
 }
 
-void ArpackEigenSolver::CheckParameters() const
+void ArpackEigenvalueSolver::CheckParameters() const
 {
   MFEM_VERIFY(n > 0, "Operators are not set for ARPACK eigenvalue solver!");
   MFEM_VERIFY(nev > 0, "Number of requested modes is not positive!");
@@ -422,7 +425,7 @@ void ArpackEigenSolver::CheckParameters() const
   MFEM_VERIFY(opInv, "No linear solver provided for operator!");
 }
 
-std::complex<double> ArpackEigenSolver::GetEigenvalue(int i) const
+std::complex<double> ArpackEigenvalueSolver::GetEigenvalue(int i) const
 {
   MFEM_VERIFY(eig && i >= 0 && i < nev,
               "Out of range eigenpair requested (i = " << i << ", nev = " << nev << ")!");
@@ -430,7 +433,7 @@ std::complex<double> ArpackEigenSolver::GetEigenvalue(int i) const
   return eig.get()[j];
 }
 
-void ArpackEigenSolver::GetEigenvector(int i, ComplexVector &x) const
+void ArpackEigenvalueSolver::GetEigenvector(int i, ComplexVector &x) const
 {
   MFEM_VERIFY(eig && i >= 0 && i < nev,
               "Out of range eigenpair requested (i = " << i << ", nev = " << nev << ")!");
@@ -439,7 +442,7 @@ void ArpackEigenSolver::GetEigenvector(int i, ComplexVector &x) const
   x.Set(V.get() + j * n, n);
 }
 
-double ArpackEigenSolver::GetError(int i, EigenvalueSolver::ErrorType type) const
+double ArpackEigenvalueSolver::GetError(int i, EigenvalueSolver::ErrorType type) const
 {
   MFEM_VERIFY(eig && i >= 0 && i < nev,
               "Out of range eigenpair requested (i = " << i << ", nev = " << nev << ")!");
@@ -458,7 +461,8 @@ double ArpackEigenSolver::GetError(int i, EigenvalueSolver::ErrorType type) cons
 
 // EPS specific methods
 
-ArpackEPSSolver::ArpackEPSSolver(MPI_Comm comm, int print) : ArpackEigenSolver(comm, print)
+ArpackEPSSolver::ArpackEPSSolver(MPI_Comm comm, int print)
+  : ArpackEigenvalueSolver(comm, print)
 {
   opK = opM = nullptr;
   normK = normM = 0.0;
@@ -605,7 +609,8 @@ double ArpackEPSSolver::GetBackwardScaling(std::complex<double> l) const
 
 // PEP specific methods
 
-ArpackPEPSolver::ArpackPEPSolver(MPI_Comm comm, int print) : ArpackEigenSolver(comm, print)
+ArpackPEPSolver::ArpackPEPSolver(MPI_Comm comm, int print)
+  : ArpackEigenvalueSolver(comm, print)
 {
   opK = opC = opM = nullptr;
   normK = normC = normM = 0.0;

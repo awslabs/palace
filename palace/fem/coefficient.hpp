@@ -22,9 +22,6 @@ namespace palace
 // comm on shared faces after a call to ExchangeFaceNbrData.
 //
 
-// Returns the property value of the material for the given index. Two separate classes for
-// domain element access and boundary element access, which returns the material property of
-// the neighboring domain element.
 enum class MaterialPropertyType
 {
   INV_PERMEABILITY,
@@ -45,6 +42,9 @@ enum class MeshElementType
   BDR_SUBMESH
 };
 
+// Returns the property value of the material for the given index. Two separate classes for
+// domain element access and boundary element access, which returns the material property of
+// the neighboring domain element.
 template <MaterialPropertyType MatType, MeshElementType ElemType = MeshElementType::ELEMENT>
 class MaterialPropertyCoefficient : public mfem::MatrixCoefficient
 {
@@ -343,13 +343,6 @@ public:
   }
 };
 
-// Computes a single-valued α Eᵀ E on boundaries from E given as a vector grid function.
-// Uses the neighbor element on a user specified side to compute a single-sided value for
-// potentially discontinuous solutions for an interior boundary element. The four cases
-// correspond to a generic interface vs. specializations for metal-air, metal-substrate,
-// and subtrate-air interfaces following:
-//   J. Wenner et al., Surface loss simulations of superconducting coplanar waveguide
-//     resonators, Appl. Phys. Lett. (2011).
 enum class DielectricInterfaceType
 {
   DEFAULT,
@@ -358,6 +351,13 @@ enum class DielectricInterfaceType
   SA
 };
 
+// Computes a single-valued α Eᵀ E on boundaries from E given as a vector grid function.
+// Uses the neighbor element on a user specified side to compute a single-sided value for
+// potentially discontinuous solutions for an interior boundary element. The four cases
+// correspond to a generic interface vs. specializations for metal-air, metal-substrate,
+// and subtrate-air interfaces following:
+//   J. Wenner et al., Surface loss simulations of superconducting coplanar waveguide
+//     resonators, Appl. Phys. Lett. (2011).
 template <DielectricInterfaceType Type>
 class DielectricInterfaceCoefficient : public mfem::Coefficient,
                                        public BdrGridFunctionCoefficient
@@ -477,15 +477,15 @@ inline double DielectricInterfaceCoefficient<DielectricInterfaceType::DEFAULT>::
   return 0.5 * ts * epsilon * (V * V);
 }
 
-// Returns the local energy density evaluated as 1/2 Dᴴ E or 1/2 Bᴴ H for real-valued
-// material coefficients. For internal boundary elements, the solution is taken on the side
-// of the element with the larger-valued material property (permittivity or permeability).
 enum class EnergyDensityType
 {
   ELECTRIC,
   MAGNETIC
 };
 
+// Returns the local energy density evaluated as 1/2 Dᴴ E or 1/2 Bᴴ H for real-valued
+// material coefficients. For internal boundary elements, the solution is taken on the side
+// of the element with the larger-valued material property (permittivity or permeability).
 template <EnergyDensityType Type, typename GridFunctionType>
 class EnergyDensityCoefficient : public mfem::Coefficient, public BdrGridFunctionCoefficient
 {

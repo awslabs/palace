@@ -21,8 +21,7 @@ namespace palace
 template <typename OperType>
 class ChebyshevSmoother : public Solver<OperType>
 {
-protected:
-  typedef typename Solver<OperType>::VecType VecType;
+  using VecType = typename Solver<OperType>::VecType;
 
 private:
   // Number of smoother iterations and polynomial order.

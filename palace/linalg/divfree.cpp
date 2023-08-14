@@ -21,7 +21,7 @@ DivFreeSolver::DivFreeSolver(const MaterialOperator &mat_op,
                              const std::vector<mfem::Array<int>> &h1_bdr_tdof_lists,
                              double tol, int max_it, int print)
 {
-  constexpr MaterialPropertyType MatType = MaterialPropertyType::PERMITTIVITY_REAL;
+  constexpr auto MatType = MaterialPropertyType::PERMITTIVITY_REAL;
   MaterialPropertyCoefficient<MatType> epsilon_func(mat_op);
   {
     auto M_mg = std::make_unique<MultigridOperator>(h1_fespaces.GetNumLevels());

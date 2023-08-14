@@ -81,8 +81,8 @@ std::unique_ptr<ParOperator> GetBtt(const MaterialOperator &mat_op,
                                     mfem::ParFiniteElementSpace &nd_fespace)
 {
   // Mass matrix: Bₜₜ = (μ⁻¹ u, v).
-  constexpr MaterialPropertyType MatType = MaterialPropertyType::INV_PERMEABILITY;
-  constexpr MeshElementType ElemType = MeshElementType::BDR_SUBMESH;
+  constexpr auto MatType = MaterialPropertyType::INV_PERMEABILITY;
+  constexpr auto ElemType = MeshElementType::BDR_SUBMESH;
   MaterialPropertyCoefficient<MatType, ElemType> muinv_func(mat_op);
   auto btt = std::make_unique<mfem::SymmetricBilinearForm>(&nd_fespace);
   btt->AddDomainIntegrator(new mfem::MixedVectorMassIntegrator(muinv_func));
@@ -97,8 +97,8 @@ std::unique_ptr<ParOperator> GetBtn(const MaterialOperator &mat_op,
                                     mfem::ParFiniteElementSpace &h1_fespace)
 {
   // Mass matrix: Bₜₙ = (μ⁻¹ ∇ₜ u, v).
-  constexpr MaterialPropertyType MatType = MaterialPropertyType::INV_PERMEABILITY;
-  constexpr MeshElementType ElemType = MeshElementType::BDR_SUBMESH;
+  constexpr auto MatType = MaterialPropertyType::INV_PERMEABILITY;
+  constexpr auto ElemType = MeshElementType::BDR_SUBMESH;
   MaterialPropertyCoefficient<MatType, ElemType> muinv_func(mat_op);
   auto btn = std::make_unique<mfem::MixedBilinearForm>(&h1_fespace, &nd_fespace);
   btn->AddDomainIntegrator(new mfem::MixedVectorGradientIntegrator(muinv_func));
@@ -112,8 +112,8 @@ std::array<std::unique_ptr<ParOperator>, 3> GetBnn(const MaterialOperator &mat_o
                                                    mfem::ParFiniteElementSpace &h1_fespace)
 {
   // Mass matrix: Bₙₙ = (μ⁻¹ ∇ₜ u, ∇ₜ v) - ω² (ε u, v) = Bₙₙ₁ - ω² Bₙₙ₂.
-  constexpr MaterialPropertyType MatTypeMuInv = MaterialPropertyType::INV_PERMEABILITY;
-  constexpr MeshElementType ElemType = MeshElementType::BDR_SUBMESH;
+  constexpr auto MatTypeMuInv = MaterialPropertyType::INV_PERMEABILITY;
+  constexpr auto ElemType = MeshElementType::BDR_SUBMESH;
   MaterialPropertyCoefficient<MatTypeMuInv, ElemType> muinv_func(mat_op);
   auto bnn1 = std::make_unique<mfem::SymmetricBilinearForm>(&h1_fespace);
   bnn1->AddDomainIntegrator(new mfem::MixedGradGradIntegrator(muinv_func));
@@ -121,7 +121,7 @@ std::array<std::unique_ptr<ParOperator>, 3> GetBnn(const MaterialOperator &mat_o
   bnn1->Assemble(skip_zeros);
   bnn1->Finalize(skip_zeros);
 
-  constexpr MaterialPropertyType MatTypeEpsReal = MaterialPropertyType::PERMITTIVITY_REAL;
+  constexpr auto MatTypeEpsReal = MaterialPropertyType::PERMITTIVITY_REAL;
   NormalProjectedCoefficient epsilon_func(
       std::make_unique<MaterialPropertyCoefficient<MatTypeEpsReal, ElemType>>(mat_op));
   auto bnn2r = std::make_unique<mfem::SymmetricBilinearForm>(&h1_fespace);
@@ -136,7 +136,7 @@ std::array<std::unique_ptr<ParOperator>, 3> GetBnn(const MaterialOperator &mat_o
     return {std::make_unique<ParOperator>(std::move(bnn1), h1_fespace),
             std::make_unique<ParOperator>(std::move(bnn2r), h1_fespace), nullptr};
   }
-  constexpr MaterialPropertyType MatTypeEpsImag = MaterialPropertyType::PERMITTIVITY_IMAG;
+  constexpr auto MatTypeEpsImag = MaterialPropertyType::PERMITTIVITY_IMAG;
   NormalProjectedCoefficient negepstandelta_func(
       std::make_unique<MaterialPropertyCoefficient<MatTypeEpsImag, ElemType>>(mat_op));
   auto bnn2i = std::make_unique<mfem::SymmetricBilinearForm>(&h1_fespace);
@@ -153,8 +153,8 @@ std::array<std::unique_ptr<ParOperator>, 3> GetAtt(const MaterialOperator &mat_o
                                                    mfem::ParFiniteElementSpace &nd_fespace)
 {
   // Stiffness matrix: Aₜₜ = (μ⁻¹ ∇ₜ x u, ∇ₜ x v) - ω² (ε u, v) = Aₜₜ₁ - ω² Aₜₜ₂.
-  constexpr MaterialPropertyType MatTypeMuInv = MaterialPropertyType::INV_PERMEABILITY;
-  constexpr MeshElementType ElemType = MeshElementType::BDR_SUBMESH;
+  constexpr auto MatTypeMuInv = MaterialPropertyType::INV_PERMEABILITY;
+  constexpr auto ElemType = MeshElementType::BDR_SUBMESH;
   NormalProjectedCoefficient muinv_func(
       std::make_unique<MaterialPropertyCoefficient<MatTypeMuInv, ElemType>>(mat_op));
   auto att1 = std::make_unique<mfem::SymmetricBilinearForm>(&nd_fespace);
@@ -163,7 +163,7 @@ std::array<std::unique_ptr<ParOperator>, 3> GetAtt(const MaterialOperator &mat_o
   att1->Assemble(skip_zeros);
   att1->Finalize(skip_zeros);
 
-  constexpr MaterialPropertyType MatTypeEpsReal = MaterialPropertyType::PERMITTIVITY_REAL;
+  constexpr auto MatTypeEpsReal = MaterialPropertyType::PERMITTIVITY_REAL;
   MaterialPropertyCoefficient<MatTypeEpsReal, ElemType> epsilon_func(mat_op);
   auto att2r = std::make_unique<mfem::SymmetricBilinearForm>(&nd_fespace);
   att2r->AddDomainIntegrator(new mfem::MixedVectorMassIntegrator(epsilon_func));
@@ -177,7 +177,7 @@ std::array<std::unique_ptr<ParOperator>, 3> GetAtt(const MaterialOperator &mat_o
     return {std::make_unique<ParOperator>(std::move(att1), nd_fespace),
             std::make_unique<ParOperator>(std::move(att2r), nd_fespace), nullptr};
   }
-  constexpr MaterialPropertyType MatTypeEpsImag = MaterialPropertyType::PERMITTIVITY_IMAG;
+  constexpr auto MatTypeEpsImag = MaterialPropertyType::PERMITTIVITY_IMAG;
   MaterialPropertyCoefficient<MatTypeEpsImag, ElemType> negepstandelta_func(mat_op);
   auto att2i = std::make_unique<mfem::SymmetricBilinearForm>(&nd_fespace);
   att2i->AddDomainIntegrator(new mfem::MixedVectorMassIntegrator(negepstandelta_func));
@@ -529,12 +529,14 @@ WavePortData::WavePortData(const config::WavePortData &data, const MaterialOpera
   // grid function over the entire space, not just the port boundary (so that it can be
   // queried from functions which use the global mesh).
   //
-  // We will actually solve the shifted problem A e = λ B e, where (see Lee, Sun, and
-  // Cendes, 1991):
+  // We will actually solve the shifted problem A e = λ B e, where:
   //                [Bₜₜ   Bₜₙ]  [eₜ]  =  λ [Bₜₜ + 1/Θ² Aₜₜ  Bₜₙ] [eₜ]
   //                [Bₜₙᵀ  Bₙₙ] [eₙ]       [Bₜₙᵀ          Bₙₙ] [eₙ] .
   // Here we have λ = Θ²/(Θ²-kₙ²), where Θ² bounds the maximum kₙ² and is taken as Θ² =
   // ω² μₘₐₓ εₘₐₓ over the entire simulation domain.
+  // Reference: Lee, Sun, and Cendes, Full-wave analysis of dielectric waveguides using
+  //            tangential vector finite elements, IEEE Trans. Microwave Theory Tech.
+  //            (1991).
   double c_min = mfem::infinity();
   for (auto attr : mesh.attributes)
   {
@@ -701,8 +703,8 @@ WavePortData::WavePortData(const config::WavePortData &data, const MaterialOpera
     {
 #if defined(PALACE_WITH_SLEPC)
       auto slepc = std::make_unique<slepc::SlepcEPSSolver>(port_comm, print);
-      slepc->SetType(slepc::SlepcEigenSolver::Type::KRYLOVSCHUR);
-      slepc->SetProblemType(slepc::SlepcEigenSolver::ProblemType::GEN_NON_HERMITIAN);
+      slepc->SetType(slepc::SlepcEigenvalueSolver::Type::KRYLOVSCHUR);
+      slepc->SetProblemType(slepc::SlepcEigenvalueSolver::ProblemType::GEN_NON_HERMITIAN);
       eigen = std::move(slepc);
 #endif
     }
@@ -872,7 +874,7 @@ void WavePortData::Initialize(double omega)
   port_E0n->real().SetFromTrueDofs(e0n.Real());
   port_E0n->imag().SetFromTrueDofs(e0n.Imag());
 
-  // Normalize the mode for a chosen polarization direction and unit powe, .|E x H⋆| ⋅ n,
+  // Normalize the mode for a chosen polarization direction and unit power, |E x H⋆| ⋅ n,
   // integrated over the port surface (+n is the direction of propagation).
   NormalizeWithSign(*port_S0t, *port_E0t, *port_E0n, *port_sr, *port_si);
 }
@@ -1126,8 +1128,8 @@ void WavePortOperator::AddExtraSystemBdrCoefficients(double omega,
   Initialize(omega);
   for (auto &[idx, data] : ports)
   {
-    constexpr MaterialPropertyType MatType = MaterialPropertyType::INV_PERMEABILITY;
-    constexpr MeshElementType ElemType = MeshElementType::BDR_ELEMENT;
+    constexpr auto MatType = MaterialPropertyType::INV_PERMEABILITY;
+    constexpr auto ElemType = MeshElementType::BDR_ELEMENT;
     fbi.AddCoefficient(std::make_unique<MaterialPropertyCoefficient<MatType, ElemType>>(
                            mat_op, data.GetPropagationConstant().real()),
                        data.GetMarker());

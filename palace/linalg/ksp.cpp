@@ -220,7 +220,7 @@ ConfigurePreconditionerSolver(MPI_Comm comm, const IoData &iodata,
   if (iodata.solver.linear.pc_mg)
   {
     // This will construct the multigrid hierarchy using pc as the coarse solver
-    // (ownership of pc is transfered to the GeometricMultigridSolver). When a special
+    // (ownership of pc is transferred to the GeometricMultigridSolver). When a special
     // auxiliary space smoother for pre-/post-smoothing is not desired, the auxiliary
     // space is a nullptr here.
     if (iodata.solver.linear.mg_smooth_aux)
@@ -260,12 +260,12 @@ BaseKspSolver<OperType>::BaseKspSolver(std::unique_ptr<IterativeSolver<OperType>
                                        std::unique_ptr<Solver<OperType>> &&pc)
   : ksp(std::move(ksp)), pc(std::move(pc)), ksp_mult(0), ksp_mult_it(0)
 {
+  this->ksp->SetPreconditioner(*this->pc);
 }
 
 template <typename OperType>
 void BaseKspSolver<OperType>::SetOperators(const OperType &op, const OperType &pc_op)
 {
-  ksp->SetPreconditioner(*pc);
   ksp->SetOperator(op);
   const auto *mg_op = dynamic_cast<const BaseMultigridOperator<OperType> *>(&pc_op);
   const auto *mg_pc = dynamic_cast<const GeometricMultigridSolver<OperType> *>(pc.get());

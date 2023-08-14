@@ -26,8 +26,8 @@ class Solver
                 "Solver can only be defined for OperType = Operator or ComplexOperator!");
 
 protected:
-  typedef typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
-                                    ComplexVector, Vector>::type VecType;
+  using VecType = typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
+                                            ComplexVector, Vector>::type;
 
   // Whether or not to use the second argument of Mult() as an initial guess.
   bool initial_guess;
@@ -57,9 +57,9 @@ public:
 template <typename OperType>
 class WrapperSolver : public Solver<OperType>
 {
-protected:
-  typedef typename Solver<OperType>::VecType VecType;
+  using VecType = typename Solver<OperType>::VecType;
 
+protected:
   std::unique_ptr<mfem::Solver> pc;
 
 public:

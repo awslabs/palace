@@ -12,7 +12,7 @@ namespace palace::linalg
 {
 
 //
-// Orthogonalization functions for a orthogonalizing a vector against a number of basis
+// Orthogonalization functions for orthogonalizing a vector against a number of basis
 // vectors using modified or classical Gram-Schmidt.
 //
 

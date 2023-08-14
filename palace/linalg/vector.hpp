@@ -137,7 +137,7 @@ void SetRandomSign(MPI_Comm comm, VecType &x, int seed = 0);
 
 // Calculate the inner product yᴴ x or yᵀ x.
 template <typename VecType>
-inline auto Dot(MPI_Comm comm, const VecType &x, const VecType &y) -> decltype(x * y)
+inline auto Dot(MPI_Comm comm, const VecType &x, const VecType &y)
 {
   auto dot = x * y;
   Mpi::GlobalSum(1, &dot, comm);

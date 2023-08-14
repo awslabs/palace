@@ -21,8 +21,8 @@ CurlCurlMassSolver::CurlCurlMassSolver(
     const std::vector<mfem::Array<int>> &h1_dbc_tdof_lists, double tol, int max_it,
     int print)
 {
-  constexpr MaterialPropertyType MatTypeMuInv = MaterialPropertyType::INV_PERMEABILITY;
-  constexpr MaterialPropertyType MatTypeEps = MaterialPropertyType::PERMITTIVITY_REAL;
+  constexpr auto MatTypeMuInv = MaterialPropertyType::INV_PERMEABILITY;
+  constexpr auto MatTypeEps = MaterialPropertyType::PERMITTIVITY_REAL;
   MaterialPropertyCoefficient<MatTypeMuInv> muinv_func(mat_op);
   MaterialPropertyCoefficient<MatTypeEps> epsilon_func(mat_op);
   {

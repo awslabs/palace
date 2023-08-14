@@ -413,8 +413,7 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata, mfem::ParMe
   // place alongside material properties so we construct and store it here.
   for (int i = 0; i < mesh.GetNSharedFaces(); i++)
   {
-    int i_local = mesh.GetSharedFace(i);
-    local_to_shared[i_local] = i;
+    local_to_shared[mesh.GetSharedFace(i)] = i;
   }
 
   // Mark selected material attributes from the mesh as having certain local properties.

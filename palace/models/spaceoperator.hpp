@@ -146,7 +146,7 @@ public:
   // stiffness, damping, mass, and extra matrices:
   //                     A = a0 K + a1 C + a2 (Mr + i Mi) + A2 .
   // It is assumed that the inputs have been constructed using previous calls to
-  // GetSystemMatrix() and the returned operator does inherit ownership of any of them.
+  // GetSystemMatrix() and the returned operator does not inherit ownership of any of them.
   template <typename OperType, typename ScalarType>
   std::unique_ptr<OperType>
   GetSystemMatrix(ScalarType a0, ScalarType a1, ScalarType a2, const OperType *K,
@@ -155,7 +155,7 @@ public:
   // Construct the real, SPD matrix for weighted L2 or H(curl) inner products:
   //                           B = a0 Kr + a2 Mr .
   // It is assumed that the inputs have been constructed using previous calls to
-  // GetSystemMatrix() and the returned operator does inherit ownership of any of them.
+  // GetSystemMatrix() and the returned operator does not inherit ownership of any of them.
   // If K or M have eliminated boundary conditions, they are not eliminated from the
   // returned operator.
   std::unique_ptr<Operator> GetInnerProductMatrix(double a0, double a2,

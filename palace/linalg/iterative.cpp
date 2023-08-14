@@ -448,9 +448,10 @@ inline void OrthogonalizeIteration(OrthogType type, MPI_Comm comm,
                                    const std::vector<VecType> &V, VecType &w,
                                    ScalarType *Hj, int j)
 {
+  using OperType = typename std::conditional<std::is_same<VecType, ComplexVector>::value,
+                                             ComplexOperator, Operator>::type;
+
   // Orthogonalize w against the leading j + 1 columns of V.
-  typedef typename std::conditional<std::is_same<VecType, ComplexVector>::value,
-                                    ComplexOperator, Operator>::type OperType;
   switch (type)
   {
     case GmresSolver<OperType>::OrthogType::MGS:
@@ -482,7 +483,7 @@ void GmresSolver<OperType>::Initialize() const
   {
     max_dim = max_it;
   }
-  const int init_size = 5;
+  constexpr int init_size = 5;
   V.resize(max_dim + 1);
   for (int j = 0; j < std::min(init_size, max_dim + 1); j++)
   {
@@ -498,7 +499,7 @@ template <typename OperType>
 void GmresSolver<OperType>::Update(int j) const
 {
   // Add storage for basis vectors in increments.
-  const int add_size = 10;
+  constexpr int add_size = 10;
   for (int k = j + 1; k < std::min(j + 1 + add_size, max_dim + 1); k++)
   {
     V[k].SetSize(A->Height());
@@ -671,7 +672,7 @@ template <typename OperType>
 void FgmresSolver<OperType>::Initialize() const
 {
   GmresSolver<OperType>::Initialize();
-  const int init_size = 5;
+  constexpr int init_size = 5;
   Z.resize(max_dim + 1);
   for (int j = 0; j < std::min(init_size, max_dim + 1); j++)
   {
@@ -684,7 +685,7 @@ void FgmresSolver<OperType>::Update(int j) const
 {
   // Add storage for basis vectors in increments.
   GmresSolver<OperType>::Update(j);
-  const int add_size = 10;
+  constexpr int add_size = 10;
   for (int k = j + 1; k < std::min(j + 1 + add_size, max_dim + 1); k++)
   {
     Z[k].SetSize(A->Height());

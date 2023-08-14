@@ -127,7 +127,7 @@ std::unique_ptr<Operator> CurlCurlOperator::GetStiffnessMatrix()
   for (int l = 0; l < nd_fespaces.GetNumLevels(); l++)
   {
     auto &nd_fespace_l = nd_fespaces.GetFESpaceAtLevel(l);
-    constexpr MaterialPropertyType MatType = MaterialPropertyType::INV_PERMEABILITY;
+    constexpr auto MatType = MaterialPropertyType::INV_PERMEABILITY;
     MaterialPropertyCoefficient<MatType> muinv_func(mat_op);
     auto k = std::make_unique<mfem::SymmetricBilinearForm>(&nd_fespace_l);
     k->AddDomainIntegrator(new mfem::CurlCurlIntegrator(muinv_func));

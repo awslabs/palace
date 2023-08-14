@@ -545,8 +545,9 @@ SpaceOperator::GetSystemMatrix(ScalarType a0, ScalarType a1, ScalarType a2,
                                const OperType *K, const OperType *C, const OperType *M,
                                const OperType *A2)
 {
-  typedef typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
-                                    ComplexParOperator, ParOperator>::type ParOperType;
+  using ParOperType =
+      typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
+                                ComplexParOperator, ParOperator>::type;
 
   const auto *PtAP_K = (K) ? dynamic_cast<const ParOperType *>(K) : nullptr;
   const auto *PtAP_C = (C) ? dynamic_cast<const ParOperType *>(C) : nullptr;
@@ -832,13 +833,13 @@ std::unique_ptr<ComplexOperator> SpaceOperator::GetComplexGradMatrix()
 void SpaceOperator::AddStiffnessCoefficients(double coef, SumMatrixCoefficient &df,
                                              SumMatrixCoefficient &f)
 {
-  constexpr MaterialPropertyType MatType = MaterialPropertyType::INV_PERMEABILITY;
+  constexpr auto MatType = MaterialPropertyType::INV_PERMEABILITY;
   df.AddCoefficient(std::make_unique<MaterialPropertyCoefficient<MatType>>(mat_op, coef));
 
   // Contribution for London superconductors.
   if (mat_op.HasLondonDepth())
   {
-    constexpr MaterialPropertyType MatTypeL = MaterialPropertyType::INV_LONDON_DEPTH;
+    constexpr auto MatTypeL = MaterialPropertyType::INV_LONDON_DEPTH;
     f.AddCoefficient(std::make_unique<MaterialPropertyCoefficient<MatTypeL>>(mat_op, coef),
                      mat_op.GetLondonDepthMarker());
   }
@@ -856,7 +857,7 @@ void SpaceOperator::AddDampingCoefficients(double coef, SumMatrixCoefficient &f)
   // Contribution for domain conductivity.
   if (mat_op.HasConductivity())
   {
-    constexpr MaterialPropertyType MatType = MaterialPropertyType::CONDUCTIVITY;
+    constexpr auto MatType = MaterialPropertyType::CONDUCTIVITY;
     f.AddCoefficient(std::make_unique<MaterialPropertyCoefficient<MatType>>(mat_op, coef),
                      mat_op.GetConductivityMarker());
   }
@@ -873,7 +874,7 @@ void SpaceOperator::AddDampingBdrCoefficients(double coef, SumMatrixCoefficient 
 
 void SpaceOperator::AddRealMassCoefficients(double coef, SumMatrixCoefficient &f)
 {
-  constexpr MaterialPropertyType MatType = MaterialPropertyType::PERMITTIVITY_REAL;
+  constexpr auto MatType = MaterialPropertyType::PERMITTIVITY_REAL;
   f.AddCoefficient(std::make_unique<MaterialPropertyCoefficient<MatType>>(mat_op, coef));
 }
 
@@ -889,7 +890,7 @@ void SpaceOperator::AddImagMassCoefficients(double coef, SumMatrixCoefficient &f
   // Contribution for loss tangent: ε -> ε * (1 - i tan(δ)).
   if (mat_op.HasLossTangent())
   {
-    constexpr MaterialPropertyType MatType = MaterialPropertyType::PERMITTIVITY_IMAG;
+    constexpr auto MatType = MaterialPropertyType::PERMITTIVITY_IMAG;
     f.AddCoefficient(std::make_unique<MaterialPropertyCoefficient<MatType>>(mat_op, coef),
                      mat_op.GetLossTangentMarker());
   }
@@ -897,7 +898,7 @@ void SpaceOperator::AddImagMassCoefficients(double coef, SumMatrixCoefficient &f
 
 void SpaceOperator::AddAbsMassCoefficients(double coef, SumMatrixCoefficient &f)
 {
-  constexpr MaterialPropertyType MatType = MaterialPropertyType::PERMITTIVITY_ABS;
+  constexpr auto MatType = MaterialPropertyType::PERMITTIVITY_ABS;
   f.AddCoefficient(std::make_unique<MaterialPropertyCoefficient<MatType>>(mat_op, coef));
 }
 
