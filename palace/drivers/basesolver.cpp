@@ -147,8 +147,7 @@ void RebalanceMesh(std::unique_ptr<mfem::ParMesh> &mesh, double maximum_imbalanc
       {
         // Without access to a refinement tree, partitioning must be done on the
         // root processor and then redistributed.
-        // TODO: Fix Mfem sufficiently that this will work
-        // mesh::RebalanceConformalMesh(mesh);
+        mesh::RebalanceConformalMesh(mesh);
       }
     }
   }
