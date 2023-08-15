@@ -24,10 +24,14 @@ The format of this changelog is based on
   - Changed implementation of numeric wave ports to use MFEM's `SubMesh` functionality. As
     of [#3379](https://github.com/mfem/mfem/pull/3379) in MFEM, this has full ND and RT
     basis support. For now, support for nonconforming mesh boundaries is limited.
-  - Added Apptainer/Singularity container build definition for Palace.
+  - Added support for operator partial assembly for high-order finite element spaces based
+    on libCEED for non-tensor product element meshes. This option is disabled by default,
+    but can be activated using `config["Solver"]["PartialAssemblyOrder"]` set to some number
+    less than `"Order"` and `config["Solver"]["Device"]: "ceed-cpu"`.
   - Added build dependencies on [libCEED](https://github.com/CEED/libCEED) and
     [LIBXSMM](https://github.com/libxsmm/libxsmm) to support operator partial assembly (CPU-
     based for now).
+  - Added Apptainer/Singularity container build definition for Palace.
 
 ## [0.11.2] - 2023-07-14
 
