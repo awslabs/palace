@@ -14,7 +14,7 @@
       // "UniformLevels": 1,
       "Adaptation":
       {
-        "MaxIts": 10,
+        "MaxIts": 3,
         "Tol": 1e-3,
         "UpdateFraction": 0.4,
         "DOFLimit": 1e7,

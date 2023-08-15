@@ -132,15 +132,16 @@ void RebalanceMesh(std::unique_ptr<mfem::ParMesh> &mesh, double maximum_imbalanc
     Mpi::GlobalMin(1, &min_elem, comm);
     Mpi::GlobalMax(1, &max_elem, comm);
 
-    const double ratio = double(max_elem)/min_elem;
+    const double ratio = double(max_elem) / min_elem;
     Mpi::Print("Min Elem per processor: {}, Max Elem per processor: {}, Ratio: {:.3e}\n",
-                min_elem, max_elem, double(max_elem)/min_elem);
+               min_elem, max_elem, double(max_elem) / min_elem);
 
     if (ratio > maximum_imbalance)
     {
       if (mesh->Nonconforming())
       {
-        Mpi::Print("Ratio {:.3e} exceeds maximum allowed value {} -> Rebalancing.", ratio, maximum_imbalance);
+        Mpi::Print("Ratio {:.3e} exceeds maximum allowed value {} -> Rebalancing.", ratio,
+                   maximum_imbalance);
         mesh->Rebalance();
       }
       else
@@ -280,7 +281,7 @@ BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<mfem::ParMesh>> 
       const auto &derefinement_table = mesh.back()->pncmesh->GetDerefinementTable();
 
       mfem::Vector coarse_error(derefinement_table.Size());
-      for (int i = 0; i < derefinement_table.Size(); ++i)
+      for (int i = 0; i < derefinement_table.Size(); i++)
       {
         mfem::Array<int> row;
         derefinement_table.GetRow(i, row);
@@ -314,7 +315,7 @@ BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<mfem::ParMesh>> 
     // Solve + estimate.
     indicators = Solve(mesh, timer);
 
-    ++iter;
+    iter++;
 
     // Optionally save solution off
     if (param.save_step > 0 && iter % param.save_step == 0)

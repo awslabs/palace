@@ -661,7 +661,7 @@ int CollectPointCloudOnRoot(mfem::ParMesh &mesh, const mfem::Array<int> &marker,
         T->Transform(
             mfem::GlobGeometryRefiner.Refine(mesh.GetBdrElementGeometry(i), ref)->RefPts,
             pointmat);
-        for (int j = 0; j < pointmat.Width(); ++j)
+        for (int j = 0; j < pointmat.Width(); j++)
         {
           vertices.push_back({pointmat(0, j), pointmat(1, j), pointmat(2, j)});
         }
@@ -679,7 +679,7 @@ int CollectPointCloudOnRoot(mfem::ParMesh &mesh, const mfem::Array<int> &marker,
         T->Transform(
             mfem::GlobGeometryRefiner.Refine(mesh.GetElementGeometry(i), ref)->RefPts,
             pointmat);
-        for (int j = 0; j < pointmat.Width(); ++j)
+        for (int j = 0; j < pointmat.Width(); j++)
         {
           vertices.push_back({pointmat(0, j), pointmat(1, j), pointmat(2, j)});
         }
@@ -1081,7 +1081,6 @@ void GetSurfaceNormal(mfem::ParMesh &mesh, const mfem::Array<int> &marker,
   //              normal(1));
   // }
 }
-
 
 void RebalanceConformalMesh(std::unique_ptr<mfem::ParMesh> &mesh)
 {

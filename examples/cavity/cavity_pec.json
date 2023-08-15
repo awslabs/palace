@@ -17,7 +17,7 @@
         "MaxIts": 5,
         "Tol": 1e-4,
         "UpdateFraction": 0.4,
-        "Nonconformal": false,
+        "Nonconformal": true,
         "DOFLimit": 1e6,
         "SaveStep": 1
       }
