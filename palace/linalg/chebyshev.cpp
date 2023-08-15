@@ -75,16 +75,6 @@ void ChebyshevSmoother<OperType>::SetOperator(const OperType &op)
                                 ComplexParOperator, ParOperator>::type;
 
   A = &op;
-  // if constexpr (std::is_same<OperType, ComplexOperator>::value)
-  // {
-  //   A = &const_cast<ParOperator &>(dynamic_cast<const ParOperator &>(*op.Real()))
-  //            .ParallelAssemble();
-  // }
-  // else
-  // {
-  //   A = &const_cast<ParOperType &>(dynamic_cast<const ParOperator &>(op))
-  //            .ParallelAssemble();
-  // }
   r.SetSize(op.Height());
   d.SetSize(op.Height());
 
@@ -108,13 +98,6 @@ inline void ApplyOp(const Operator &A, const Vector &x, Vector &y)
   A.Mult(x, y);
 }
 
-// template <bool Transpose = false>
-// inline void ApplyOp(const Operator &A, const ComplexVector &x, ComplexVector &y)
-// {
-//   A.Mult(x.Real(), y.Real());
-//   A.Mult(x.Imag(), y.Imag());
-// }
-
 template <bool Transpose = false>
 inline void ApplyOp(const ComplexOperator &A, const ComplexVector &x, ComplexVector &y)
 {
@@ -133,14 +116,6 @@ inline void ApplyOp(const Operator &A, const Vector &x, Vector &y, const double 
 {
   A.AddMult(x, y, a);
 }
-
-// template <bool Transpose = false>
-// inline void ApplyOp(const Operator &A, const ComplexVector &x, ComplexVector &y,
-//                     const double a)
-// {
-//   A.AddMult(x.Real(), y.Real(), a);
-//   A.AddMult(x.Imag(), y.Imag(), a);
-// }
 
 template <bool Transpose = false>
 inline void ApplyOp(const ComplexOperator &A, const ComplexVector &x, ComplexVector &y,

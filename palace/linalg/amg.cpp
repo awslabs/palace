@@ -32,7 +32,7 @@ void BoomerAmgSolver::SetOperator(const Operator &op)
   const auto *PtAP = dynamic_cast<const ParOperator *>(&op);
   if (PtAP)
   {
-    mfem::HypreBoomerAMG::SetOperator(const_cast<ParOperator *>(PtAP)->ParallelAssemble());
+    mfem::HypreBoomerAMG::SetOperator(PtAP->ParallelAssemble());
   }
   else
   {

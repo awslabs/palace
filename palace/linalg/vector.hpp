@@ -51,14 +51,18 @@ public:
   const Vector &Imag() const { return xi; }
   Vector &Imag() { return xi; }
 
-  // Copy assignment operator. This should probably not be used to modify the size of the
-  // vector.
-  ComplexVector &operator=(const ComplexVector &y);
+  // Set from a ComplexVector, without resizing.
+  ComplexVector &operator=(const ComplexVector &y) { return Set(y); }
+  ComplexVector &Set(const ComplexVector &y)
+  {
+    Set(y.Real(), y.Imag());
+    return *this;
+  }
 
-  // Copy assignment from separately provided real and imaginary parts.
+  // Set from separately provided real and imaginary parts, without resizing.
   void Set(const Vector &yr, const Vector &yi);
 
-  // Copy assignment from an array of complex values.
+  // Set from an array of complex values, without resizing.
   void Set(const std::complex<double> *py, int n);
 
   // Copy the vector into an array of complex values.

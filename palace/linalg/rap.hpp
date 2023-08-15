@@ -14,7 +14,8 @@ namespace palace
 
 //
 // A parallel operator represented by RAP constructed through the actions of R, A, and P,
-// usually with R = Pᵀ, and with possible eliminated essential BC.
+// usually with R = Pᵀ, and with possible eliminated essential BC. Here R and P are the
+// parallel restriction and prolongation matrices.
 //
 
 // Real-valued RAP operator.
@@ -37,7 +38,7 @@ private:
 
   // Assembled operator as a parallel Hypre matrix. If assembled, the local operator is not
   // deleted.
-  std::unique_ptr<mfem::HypreParMatrix> RAP;
+  mutable std::unique_ptr<mfem::HypreParMatrix> RAP;
 
   // Temporary storage for operator application.
   mutable Vector lx, ly, ty;
@@ -88,10 +89,10 @@ public:
 
   // Assemble the operator as a parallel sparse matrix. The memory associated with the
   // local operator is not freed.
-  mfem::HypreParMatrix &ParallelAssemble();
+  mfem::HypreParMatrix &ParallelAssemble() const;
 
   // Steal the assembled parallel sparse matrix.
-  std::unique_ptr<mfem::HypreParMatrix> StealParallelAssemble()
+  std::unique_ptr<mfem::HypreParMatrix> StealParallelAssemble() const
   {
     ParallelAssemble();
     return std::move(RAP);

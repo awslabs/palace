@@ -10,32 +10,22 @@
 namespace palace
 {
 
-ComplexVector::ComplexVector(int n) : x(2 * n)
+ComplexVector::ComplexVector(int n) : x(2 * n), xr(x, 0, n), xi(x, n, n) {}
+
+ComplexVector::ComplexVector(const ComplexVector &y) : ComplexVector(y.Size())
 {
-  xr.MakeRef(x, 0, n);
-  xi.MakeRef(x, n, n);
+  Set(y);
 }
 
-ComplexVector::ComplexVector(const ComplexVector &y) : x(2 * y.Size())
-{
-  xr.MakeRef(x, 0, y.Size());
-  xi.MakeRef(x, y.Size(), y.Size());
-  Set(y.Real(), y.Imag());
-}
-
-ComplexVector::ComplexVector(const Vector &yr, const Vector &yi) : x(2 * yr.Size())
+ComplexVector::ComplexVector(const Vector &yr, const Vector &yi) : ComplexVector(yr.Size())
 {
   MFEM_VERIFY(yr.Size() == yi.Size(),
               "Mismatch in dimension of real and imaginary matrix parts in ComplexVector!");
-  xr.MakeRef(x, 0, yr.Size());
-  xi.MakeRef(x, yr.Size(), yr.Size());
   Set(yr, yi);
 }
 
-ComplexVector::ComplexVector(const std::complex<double> *py, int n) : x(2 * n)
+ComplexVector::ComplexVector(const std::complex<double> *py, int n) : ComplexVector(n)
 {
-  xr.MakeRef(x, 0, n);
-  xi.MakeRef(x, n, n);
   Set(py, n);
 }
 
@@ -44,12 +34,6 @@ void ComplexVector::SetSize(int n)
   x.SetSize(2 * n);
   xr.MakeRef(x, 0, n);
   xi.MakeRef(x, n, n);
-}
-
-ComplexVector &ComplexVector::operator=(const ComplexVector &y)
-{
-  Set(y.Real(), y.Imag());
-  return *this;
 }
 
 void ComplexVector::Set(const Vector &yr, const Vector &yi)

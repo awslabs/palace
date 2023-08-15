@@ -74,7 +74,6 @@ StrumpackSolverBase<StrumpackSolverType>::StrumpackSolverBase(
   {
     // Use default
   }
-  // this->SetMatching(strumpack::MatchingJob::NONE);
   this->SetReorderingReuse(true);  // Repeated calls use same sparsity pattern
 
   // Configure compression.
@@ -117,7 +116,7 @@ void StrumpackSolverBase<StrumpackSolverType>::SetOperator(const Operator &op)
   const auto *PtAP = dynamic_cast<const ParOperator *>(&op);
   if (PtAP)
   {
-    hypA = &const_cast<ParOperator *>(PtAP)->ParallelAssemble();
+    hypA = &PtAP->ParallelAssemble();
   }
   else
   {

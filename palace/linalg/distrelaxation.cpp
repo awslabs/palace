@@ -49,20 +49,6 @@ void DistRelaxationSmoother<OperType>::SetOperators(const OperType &op,
               "Invalid operator sizes for DistRelaxationSmoother!");
   A = &op;
   A_G = &op_G;
-  // if constexpr (std::is_same<OperType, ComplexOperator>::value)
-  // {
-  //   A = &const_cast<ParOperator &>(dynamic_cast<const ParOperator &>(*op.Real()))
-  //            .ParallelAssemble();
-  //   A_G = &const_cast<ParOperator &>(dynamic_cast<const ParOperator &>(*op_G.Real()))
-  //              .ParallelAssemble();
-  // }
-  // else
-  // {
-  //   A = &const_cast<ParOperType &>(dynamic_cast<const ParOperType &>(op))
-  //            .ParallelAssemble();
-  //   A_G = &const_cast<ParOperType &>(dynamic_cast<const ParOperType &>(op_G))
-  //              .ParallelAssemble();
-  // }
 
   const auto *PtAP_G = dynamic_cast<const ParOperType *>(&op_G);
   MFEM_VERIFY(PtAP_G,

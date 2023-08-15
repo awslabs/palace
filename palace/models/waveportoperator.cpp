@@ -323,8 +323,8 @@ void NormalizeWithSign(const mfem::ParGridFunction &S0t, mfem::ParComplexGridFun
   double sign = sr * S0t;
   std::complex<double> dot(-(sr * E0t.real()) - (si * E0t.imag()),
                            -(sr * E0t.imag()) + (si * E0t.real()));
-  double data[3] = {sign, dot.real(), dot.imag()};
-  Mpi::GlobalSum(3, data, S0t.ParFESpace()->GetComm());
+  std::array<double, 3> data = {sign, dot.real(), dot.imag()};
+  Mpi::GlobalSum(3, data.data(), S0t.ParFESpace()->GetComm());
   sign = (data[0] < 0.0) ? -1.0 : 1.0;
   dot = {data[1], data[2]};
 
@@ -522,7 +522,7 @@ WavePortData::WavePortData(const config::WavePortData &data, const MaterialOpera
                        port_h1_dbc_tdof_list);
 
   // Construct operators for the generalized eigenvalue problem:
-  //                [Aₜₜ  0] [eₜ]  = -kₙ² [Bₜₜ   Bₜₙ]  [eₜ]
+  //                [Aₜₜ  0] [eₜ]  = -kₙ² [Bₜₜ   Bₜₙ] [eₜ]
   //                [0   0] [eₙ]        [Bₜₙᵀ  Bₙₙ] [eₙ]
   // for the wave port of the given index. The transformed variables are related to the true
   // field by Eₜ = eₜ/kₙ and Eₙ = ieₙ. This is solved on the global mesh so the result is a
@@ -530,7 +530,7 @@ WavePortData::WavePortData(const config::WavePortData &data, const MaterialOpera
   // queried from functions which use the global mesh).
   //
   // We will actually solve the shifted problem A e = λ B e, where:
-  //                [Bₜₜ   Bₜₙ]  [eₜ]  =  λ [Bₜₜ + 1/Θ² Aₜₜ  Bₜₙ] [eₜ]
+  //                [Bₜₜ   Bₜₙ] [eₜ]   =  λ [Bₜₜ + 1/Θ² Aₜₜ  Bₜₙ] [eₜ]
   //                [Bₜₙᵀ  Bₙₙ] [eₙ]       [Bₜₙᵀ          Bₙₙ] [eₙ] .
   // Here we have λ = Θ²/(Θ²-kₙ²), where Θ² bounds the maximum kₙ² and is taken as Θ² =
   // ω² μₘₐₓ εₘₐₓ over the entire simulation domain.

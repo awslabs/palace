@@ -17,19 +17,16 @@ GeometricMultigridSolver<OperType>::GeometricMultigridSolver(
     mfem::ParFiniteElementSpaceHierarchy &fespaces,
     mfem::ParFiniteElementSpaceHierarchy *aux_fespaces, int cycle_it, int smooth_it,
     int cheby_order)
-  : Solver<OperType>(), pc_it(cycle_it)
+  : Solver<OperType>(), pc_it(cycle_it), A(fespaces.GetNumLevels()),
+    P(fespaces.GetNumLevels() - 1), dbc_tdof_lists(fespaces.GetNumLevels() - 1),
+    B(fespaces.GetNumLevels()), X(fespaces.GetNumLevels()), Y(fespaces.GetNumLevels()),
+    R(fespaces.GetNumLevels())
 {
   // Configure levels of geometric coarsening. Multigrid vectors will be configured at first
   // call to Mult. The multigrid operator size is set based on the finest space dimension.
   const int n_levels = fespaces.GetNumLevels();
   MFEM_VERIFY(n_levels > 0,
               "Empty finite element space hierarchy during multigrid solver setup!");
-  A.resize(n_levels, nullptr);
-  P.resize(n_levels - 1, nullptr);
-  dbc_tdof_lists.resize(n_levels - 1, nullptr);
-  X.resize(n_levels, VecType());
-  Y.resize(n_levels, VecType());
-  R.resize(n_levels, VecType());
 
   // Configure prolongation operators.
   for (int l = 0; l < n_levels - 1; l++)
@@ -38,25 +35,21 @@ GeometricMultigridSolver<OperType>::GeometricMultigridSolver(
   }
 
   // Use the supplied level 0 (coarse) solver.
-  B.reserve(n_levels);
-  B.push_back(std::move(coarse_solver));
+  B[0] = std::move(coarse_solver);
 
   // Configure level smoothers. Use distributive relaxation smoothing if an auxiliary
   // finite element space was provided.
-  if (aux_fespaces)
+  for (int l = 1; l < n_levels; l++)
   {
-    for (int l = 1; l < n_levels; l++)
+    if (aux_fespaces)
     {
-      B.push_back(std::make_unique<DistRelaxationSmoother<OperType>>(
+      B[l] = std::make_unique<DistRelaxationSmoother<OperType>>(
           fespaces.GetFESpaceAtLevel(l), aux_fespaces->GetFESpaceAtLevel(l), smooth_it, 1,
-          cheby_order));
+          cheby_order);
     }
-  }
-  else
-  {
-    for (int l = 1; l < n_levels; l++)
+    else
     {
-      B.push_back(std::make_unique<ChebyshevSmoother<OperType>>(smooth_it, cheby_order));
+      B[l] = std::make_unique<ChebyshevSmoother<OperType>>(smooth_it, cheby_order);
     }
   }
 }
@@ -80,18 +73,6 @@ void GeometricMultigridSolver<OperType>::SetOperator(const OperType &op)
   for (int l = 0; l < n_levels; l++)
   {
     A[l] = &mg_op->GetOperatorAtLevel(l);
-    // if constexpr (std::is_same<OperType, ComplexOperator>::value)
-    // {
-    //   A[l] = &const_cast<ParOperator &>(
-    //               dynamic_cast<const ParOperator
-    //               &>(*mg_op->GetOperatorAtLevel(l).Real())) .ParallelAssemble();
-    // }
-    // else
-    // {
-    //   A[l] = &const_cast<ParOperType &>(
-    //               dynamic_cast<const ParOperType &>(mg_op->GetOperatorAtLevel(l)))
-    //               .ParallelAssemble();
-    // }
     MFEM_VERIFY(
         A[l]->Width() == A[l]->Height() &&
             (n_levels == 1 ||

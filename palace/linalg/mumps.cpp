@@ -51,7 +51,7 @@ void MumpsSolver::SetOperator(const Operator &op)
   const auto *PtAP = dynamic_cast<const ParOperator *>(&op);
   if (PtAP)
   {
-    mfem::MUMPSSolver::SetOperator(const_cast<ParOperator *>(PtAP)->ParallelAssemble());
+    mfem::MUMPSSolver::SetOperator(PtAP->ParallelAssemble());
   }
   else
   {

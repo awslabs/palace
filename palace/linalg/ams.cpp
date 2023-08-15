@@ -211,7 +211,7 @@ void HypreAmsSolver::SetOperator(const Operator &op)
   const auto *PtAP = dynamic_cast<const ParOperator *>(&op);
   if (PtAP)
   {
-    A = &const_cast<ParOperator *>(PtAP)->ParallelAssemble();
+    A = &PtAP->ParallelAssemble();
   }
   else
   {

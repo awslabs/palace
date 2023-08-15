@@ -87,7 +87,7 @@ void SuperLUSolver::SetOperator(const Operator &op)
   const auto *PtAP = dynamic_cast<const ParOperator *>(&op);
   if (PtAP)
   {
-    hypA = &const_cast<ParOperator *>(PtAP)->ParallelAssemble();
+    hypA = &PtAP->ParallelAssemble();
   }
   else
   {

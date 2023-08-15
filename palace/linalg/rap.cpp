@@ -116,7 +116,7 @@ void ParOperator::AssembleDiagonal(Vector &diag) const
   }
 }
 
-mfem::HypreParMatrix &ParOperator::ParallelAssemble()
+mfem::HypreParMatrix &ParOperator::ParallelAssemble() const
 {
   if (RAP)
   {
