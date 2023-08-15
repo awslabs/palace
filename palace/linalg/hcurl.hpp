@@ -27,7 +27,7 @@ class MaterialOperator;
 //
 // This solver implements a solver for the operator K + M in a Nedelec space.
 //
-class HCurlNormSolver
+class EnergyNormSolver
 {
 private:
   // H(curl) norm operator A = K + M and its projection Gᵀ A G.
@@ -37,12 +37,12 @@ private:
   std::unique_ptr<KspSolver> ksp;
 
 public:
-  HCurlNormSolver(const MaterialOperator &mat_op,
-                  mfem::ParFiniteElementSpaceHierarchy &nd_fespaces,
-                  mfem::ParFiniteElementSpaceHierarchy &h1_fespaces,
-                  const std::vector<mfem::Array<int>> &nd_dbc_tdof_lists,
-                  const std::vector<mfem::Array<int>> &h1_dbc_tdof_lists, double tol,
-                  int max_it, int print, int pa_order_threshold);
+  EnergyNormSolver(const MaterialOperator &mat_op,
+                   mfem::ParFiniteElementSpaceHierarchy &nd_fespaces,
+                   mfem::ParFiniteElementSpaceHierarchy &h1_fespaces,
+                   const std::vector<mfem::Array<int>> &nd_dbc_tdof_lists,
+                   const std::vector<mfem::Array<int>> &h1_dbc_tdof_lists, double tol,
+                   int max_it, int print, int pa_order_threshold);
 
   const Operator &GetOperator() { return *A; }
 

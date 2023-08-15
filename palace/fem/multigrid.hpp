@@ -33,7 +33,7 @@ inline auto GetMaxElementOrder(mfem::MixedBilinearForm &a)
                   a.TrialFESpace()->GetMaxElementOrder());
 }
 
-// Assembly a bilinear or mixed bilinear form. If the order is lower than the specified
+// Assemble a bilinear or mixed bilinear form. If the order is lower than the specified
 // threshold, the operator is assembled as a sparse matrix.
 template <typename BilinearForm>
 inline std::unique_ptr<Operator>
@@ -77,16 +77,16 @@ std::vector<std::unique_ptr<FECollection>> inline ConstructFECollections(
 {
   // If the solver will use a LOR preconditioner, we need to construct with a specific basis
   // type.
-  MFEM_VERIFY(p >= 1, "FE space order must not be less than 1!");
+  constexpr int pmin = (std::is_base_of<mfem::H1_FECollection, FECollection>::value ||
+                        std::is_base_of<mfem::ND_FECollection, FECollection>::value)
+                           ? 1
+                           : 0;
+  MFEM_VERIFY(p >= pmin, "FE space order must not be less than " << pmin << "!");
   int b1 = mfem::BasisType::GaussLobatto, b2 = mfem::BasisType::GaussLegendre;
   if (mat_lor)
   {
     b2 = mfem::BasisType::IntegratedGLL;
   }
-  constexpr int pm1 = (std::is_base_of<mfem::H1_FECollection, FECollection>::value ||
-                       std::is_base_of<mfem::ND_FECollection, FECollection>::value)
-                          ? 0
-                          : 1;
 
   // Construct the p-multigrid hierarchy, first finest to coarsest and then reverse the
   // order.
@@ -96,14 +96,14 @@ std::vector<std::unique_ptr<FECollection>> inline ConstructFECollections(
     if constexpr (std::is_base_of<mfem::ND_FECollection, FECollection>::value ||
                   std::is_base_of<mfem::RT_FECollection, FECollection>::value)
     {
-      fecs.push_back(std::make_unique<FECollection>(p - pm1, dim, b1, b2));
+      fecs.push_back(std::make_unique<FECollection>(p, dim, b1, b2));
     }
     else
     {
-      fecs.push_back(std::make_unique<FECollection>(p - pm1, dim, b1));
+      fecs.push_back(std::make_unique<FECollection>(p, dim, b1));
       MFEM_CONTRACT_VAR(b2);
     }
-    if (p == 1)
+    if (p == pmin)
     {
       break;
     }
@@ -113,7 +113,7 @@ std::vector<std::unique_ptr<FECollection>> inline ConstructFECollections(
         p--;
         break;
       case config::LinearSolverData::MultigridCoarsenType::LOGARITHMIC:
-        p = (p + 1) / 2;
+        p = (p + pmin) / 2;
         break;
       case config::LinearSolverData::MultigridCoarsenType::INVALID:
         MFEM_ABORT("Invalid coarsening type for p-multigrid levels!");
@@ -138,18 +138,18 @@ inline mfem::ParFiniteElementSpaceHierarchy ConstructFiniteElementSpaceHierarchy
   MFEM_VERIFY(!mesh.empty() && !fecs.empty() &&
                   (!dbc_tdof_lists || dbc_tdof_lists->empty()),
               "Empty mesh or FE collection for FE space construction!");
-  auto mesh_levels = std::min(mesh.size() - 1, mg_max_levels - fecs.size());
-  auto *fespace = new mfem::ParFiniteElementSpace(mesh[mesh.size() - mesh_levels - 1].get(),
-                                                  fecs[0].get());
+  int coarse_mesh_l =
+      std::max(0, static_cast<int>(mesh.size() + fecs.size()) - 1 - mg_max_levels);
+  auto *fespace = new mfem::ParFiniteElementSpace(mesh[coarse_mesh_l].get(), fecs[0].get());
   if (dbc_marker && dbc_tdof_lists)
   {
     fespace->GetEssentialTrueDofs(*dbc_marker, dbc_tdof_lists->emplace_back());
   }
-  mfem::ParFiniteElementSpaceHierarchy fespaces(mesh[mesh.size() - mesh_levels - 1].get(),
-                                                fespace, false, true);
+  mfem::ParFiniteElementSpaceHierarchy fespaces(mesh[coarse_mesh_l].get(), fespace, false,
+                                                true);
 
   // h-refinement
-  for (std::size_t l = mesh.size() - mesh_levels; l < mesh.size(); l++)
+  for (std::size_t l = coarse_mesh_l + 1; l < mesh.size(); l++)
   {
     fespace = new mfem::ParFiniteElementSpace(mesh[l].get(), fecs[0].get());
     if (dbc_marker && dbc_tdof_lists)
