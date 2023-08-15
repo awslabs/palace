@@ -740,7 +740,7 @@ public:
   // Maximum number of levels for geometric multigrid (set to 1 to disable multigrid).
   int mg_max_levels = 100;
 
-  // Type of coarsening for geometric multigrid.
+  // Type of coarsening for p-multigrid.
   enum class MultigridCoarsenType
   {
     LINEAR,

@@ -42,7 +42,7 @@ private:
   std::unique_ptr<ComplexKspSolver> ksp;
 
   // Linear solver for inner product solves for error metric.
-  std::unique_ptr<HCurlNormSolver> kspKM;
+  std::unique_ptr<EnergyNormSolver> kspKM;
 
   // PROM matrices and vectors.
   Eigen::MatrixXcd Kr, Mr, Cr, Ar;
