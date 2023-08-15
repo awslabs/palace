@@ -17,9 +17,10 @@
         "MaxIts": 3,
         "Tol": 1e-3,
         "UpdateFraction": 0.4,
-        // "Nonconformal": true,
+        "Nonconformal": true,
         "DOFLimit": 1e7,
-        "SaveStep": 1
+        "SaveStep": 1,
+        "MaximumImbalance": 1.0
       }
     }
   },
