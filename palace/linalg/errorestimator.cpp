@@ -22,10 +22,12 @@ CurlFluxErrorEstimator::CurlFluxErrorEstimator(
     mfem::ParFiniteElementSpace &fes)
   : mat_op(mat_op), fes(fes),
     smooth_flux_fecs(ConstructFECollections<mfem::ND_FECollection>(
-        iodata.solver.linear.pc_mg, false, iodata.solver.order, mesh.back()->Dimension())),
-    smooth_flux_fes(utils::ConstructFiniteElementSpaceHierarchy<mfem::ND_FECollection>(
-        mesh, smooth_flux_fecs)),
-    smooth_projector(smooth_flux_fes, iodata.solver.linear.tol, 200, 0),
+        iodata.solver.order, mesh.back()->Dimension(), iodata.solver.linear.mg_max_levels,
+        iodata.solver.linear.mg_coarsen_type, false)), // TODO: pc_lor?
+    smooth_flux_fes(ConstructFiniteElementSpaceHierarchy<mfem::ND_FECollection>(
+        iodata.solver.linear.mg_max_levels, iodata.solver.linear.mg_legacy_transfer,
+        iodata.solver.pa_order_threshold, mesh, smooth_flux_fecs)),
+    smooth_projector(smooth_flux_fes, iodata.solver.linear.tol, 200, 0, iodata.solver.pa_order_threshold),
     coarse_flux_fec(iodata.solver.order, mesh.back()->Dimension(),
                     mfem::BasisType::GaussLobatto),
     coarse_flux_fes(mesh.back().get(), &coarse_flux_fec, mesh.back()->Dimension()),
@@ -42,36 +44,6 @@ CurlFluxErrorEstimator::CurlFluxErrorEstimator(
 
     const auto &smooth_fe = *smooth_flux_fes.GetFinestFESpace().GetFE(e);
     coarse_fe.Project(smooth_fe, T, smooth_to_coarse_embed[e]);
-  }
-}
-
-CurlFluxErrorEstimator::CurlFluxErrorEstimator(const IoData &iodata,
-                                               const MaterialOperator &mat_op,
-                                               std::unique_ptr<mfem::ParMesh> &mesh,
-                                               mfem::ParFiniteElementSpace &fes)
-  : mat_op(mat_op), fes(fes),
-    smooth_flux_fecs(ConstructFECollections<mfem::ND_FECollection>(
-        iodata.solver.linear.pc_mg, false, iodata.solver.order, mesh->Dimension())),
-    smooth_flux_fes(utils::ConstructFiniteElementSpaceHierarchy<mfem::ND_FECollection>(
-        mesh, smooth_flux_fecs)),
-    smooth_projector(smooth_flux_fes, iodata.solver.linear.tol, 200, 0),
-    coarse_flux_fec(iodata.solver.order, mesh->Dimension(), mfem::BasisType::GaussLobatto),
-    coarse_flux_fes(mesh.get(), &coarse_flux_fec, mesh->Dimension()),
-    scalar_mass_matrices(fes.GetNE()), smooth_to_coarse_embed(fes.GetNE())
-{
-  mfem::MassIntegrator mass_integrator;
-
-  for (int e = 0; e < fes.GetNE(); ++e)
-  {
-    // Loop over each element, and save an elemental mass matrix.
-    // Will exploit the fact that vector L2 mass matrix components are independent.
-    const auto &coarse_fe = *coarse_flux_fes.GetFE(e);
-    auto &coarse_T = *coarse_flux_fes.GetElementTransformation(e);
-    mass_integrator.AssembleElementMatrix(coarse_fe, coarse_T, scalar_mass_matrices[e]);
-
-    const auto &smooth_fe = *smooth_flux_fes.GetFinestFESpace().GetFE(e);
-    auto &fine_T = *coarse_flux_fes.GetElementTransformation(e);
-    coarse_fe.Project(smooth_fe, fine_T, smooth_to_coarse_embed[e]);
   }
 }
 
@@ -362,13 +334,14 @@ GradFluxErrorEstimator::GradFluxErrorEstimator(
     mfem::ParFiniteElementSpace &fes)
   : mat_op(mat_op), fes(fes),
     smooth_flux_fecs(ConstructFECollections<mfem::H1_FECollection>(
-        iodata.solver.linear.pc_mg, false, iodata.solver.order, mesh.back()->Dimension())),
-    smooth_flux_component_fes(
-        utils::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
-            mesh, smooth_flux_fecs)),
+      iodata.solver.order, mesh.back()->Dimension(), iodata.solver.linear.mg_max_levels,
+      iodata.solver.linear.mg_coarsen_type, false)),
+    smooth_flux_component_fes(ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
+      iodata.solver.linear.mg_max_levels, iodata.solver.linear.mg_legacy_transfer,
+      iodata.solver.pa_order_threshold, mesh, smooth_flux_fecs)),
     smooth_flux_fes(mesh.back().get(), smooth_flux_fecs.back().get(),
                     mesh.back()->Dimension()),
-    smooth_projector(smooth_flux_component_fes, iodata.solver.linear.tol, 200, 0),
+    smooth_projector(smooth_flux_component_fes, iodata.solver.linear.tol, 200, 0, iodata.solver.pa_order_threshold),
     coarse_flux_fec(iodata.solver.order, mesh.back()->Dimension(),
                     mfem::BasisType::GaussLobatto),
     coarse_flux_fes(mesh.back().get(), &coarse_flux_fec, mesh.back()->Dimension()),
@@ -380,36 +353,6 @@ GradFluxErrorEstimator::GradFluxErrorEstimator(
   {
     // Loop over each element, and save an elemental mass matrix.
     // Will exploit the fact that vector L2 mass matrix components are independent.
-    const auto &coarse_fe = *coarse_flux_fes.GetFE(e);
-    auto &T = *fes.GetElementTransformation(e);
-    mass_integrator.AssembleElementMatrix(coarse_fe, T, scalar_mass_matrices[e]);
-
-    const auto &smooth_fe = *smooth_flux_component_fes.GetFinestFESpace().GetFE(e);
-    coarse_fe.Project(smooth_fe, T, smooth_to_coarse_embed[e]);
-  }
-}
-
-GradFluxErrorEstimator::GradFluxErrorEstimator(const IoData &iodata,
-                                               const MaterialOperator &mat_op,
-                                               std::unique_ptr<mfem::ParMesh> &mesh,
-                                               mfem::ParFiniteElementSpace &fes)
-  : mat_op(mat_op), fes(fes),
-    smooth_flux_fecs(ConstructFECollections<mfem::H1_FECollection>(
-        iodata.solver.linear.pc_mg, false, iodata.solver.order, mesh->Dimension())),
-    smooth_flux_component_fes(
-        utils::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
-            mesh, smooth_flux_fecs)),
-    smooth_flux_fes(mesh.get(), smooth_flux_fecs.back().get(), mesh->Dimension()),
-    smooth_projector(smooth_flux_component_fes, iodata.solver.linear.tol, 200, 0),
-    coarse_flux_fec(iodata.solver.order, mesh->Dimension(), mfem::BasisType::GaussLobatto),
-    coarse_flux_fes(mesh.get(), &coarse_flux_fec, mesh->Dimension()),
-    scalar_mass_matrices(fes.GetNE()), smooth_to_coarse_embed(fes.GetNE())
-{
-  mfem::MassIntegrator mass_integrator;
-  for (int e = 0; e < fes.GetNE(); ++e)
-  {
-    // Loop over each element, and save an elemental mass matrix.
-    // Will exploit the fact that elemental L2 mass matrices are independent.
     const auto &coarse_fe = *coarse_flux_fes.GetFE(e);
     auto &T = *fes.GetElementTransformation(e);
     mass_integrator.AssembleElementMatrix(coarse_fe, T, scalar_mass_matrices[e]);

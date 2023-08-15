@@ -43,10 +43,6 @@ public:
   CurlFluxErrorEstimator(const IoData &iodata, const MaterialOperator &mat_op,
                          const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
                          mfem::ParFiniteElementSpace &fes);
-  // Constructor for using only p multigrid.
-  CurlFluxErrorEstimator(const IoData &iodata, const MaterialOperator &mat_op,
-                         std::unique_ptr<mfem::ParMesh> &mesh,
-                         mfem::ParFiniteElementSpace &fes);
 
   // Compute elemental error indicators given a complex vector of true DOF.
   Vector operator()(const ComplexVector &v) const;
@@ -82,10 +78,6 @@ public:
   // Constructor for using geometric and p multigrid.
   GradFluxErrorEstimator(const IoData &iodata, const MaterialOperator &mat_op,
                          const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
-                         mfem::ParFiniteElementSpace &fes);
-  // Constructor for using only p multigrid.
-  GradFluxErrorEstimator(const IoData &iodata, const MaterialOperator &mat_op,
-                         std::unique_ptr<mfem::ParMesh> &mesh,
                          mfem::ParFiniteElementSpace &fes);
 
   // Compute elemental error indicators given a vector of true DOF.
