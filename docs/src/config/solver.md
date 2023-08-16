@@ -316,6 +316,7 @@ directory specified by [`config["Problem"]["Output"]`]
     "MGCycleIts": <int>,
     "MGSmoothIts": <int>,
     "MGSmoothOrder": <int>,
+    "PCMatReal": <bool>,
     "PCMatShifted": <bool>,
     "PCSide": <string>,
     "DivFreeTol": <float>,
@@ -394,13 +395,17 @@ multigrid preconditioners (when `"UseMultigrid"` is `true` or `"Type"` is `"AMS"
 `"MGSmoothIts" [1]` :  Number of pre- and post-smooth iterations used for multigrid
 preconditioners (when `"UseMultigrid"` is `true` or `"Type"` is `"AMS"` or `"BoomerAMG"`).
 
-`"MGSmoothOrder" [3]` :  Order of polynomial smoothing for geometric multigrid
+`"MGSmoothOrder" [4]` :  Order of polynomial smoothing for geometric multigrid
 preconditioning (when `"UseMultigrid"` is `true`).
 
+`"PCMatReal" [false]` :  When set to `true`, constructs the preconditioner for frequency
+domain problems using a real-valued approximation of the system matrix. This is always
+performed for the coarsest multigrid level regardless of the setting of `"PCMatReal"`.
+
 `"PCMatShifted" [false]` :  When set to `true`, constructs the preconditioner for frequency
-domain problems using a real SPD approximation of the system matrix, which can help
-performance at high frequencies (relative to the lowest nonzero eigenfrequencies of the
-model).
+domain problems using a positive definite approximation of the system matrix by flipping
+the sign for the mass matrix contribution, which can help performance at high frequencies
+(relative to the lowest nonzero eigenfrequencies of the model).
 
 `"PCSide" ["Default"]` :  Side for preconditioning. Not all options are available for all
 iterative solver choices, and the default choice depends on the iterative solver used.
@@ -427,6 +432,9 @@ vectors in Krylov subspace methods or other parts of the code.
   - `"InitialGuess" [true]`
   - `"MGLegacyTransfer" [false]`
   - `"MGAuxiliarySmoother" [true]`
+  - `"MGSmoothEigScaleMax" [1.0]`
+  - `"MGSmoothEigScaleMin" [0.0]`
+  - `"MGSmoothChebyshev4th" [true]`
   - `"PCLowOrderRefined" [false]`
   - `"ColumnOrdering" ["Default"]` :  `"METIS"`, `"ParMETIS"`,`"Scotch"`, `"PTScotch"`,
     `"Default"`
