@@ -84,9 +84,9 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &spaceop) : spaceop
   // simply by setting diagonal entries of the system matrix for the corresponding dofs.
   // Because the Dirichlet BC is always homogenous, no special elimination is required on
   // the RHS. The damping matrix may be nullptr.
-  K = spaceop.GetComplexStiffnessMatrix(Operator::DIAG_ONE);
-  C = spaceop.GetComplexDampingMatrix(Operator::DIAG_ZERO);
-  M = spaceop.GetComplexMassMatrix(Operator::DIAG_ZERO);
+  K = spaceop.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE);
+  C = spaceop.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+  M = spaceop.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
   MFEM_VERIFY(K && M, "Invalid empty HDM matrices when constructing PROM!");
 
   // Set up RHS vector (linear in frequency part) for the incident field at port boundaries,
@@ -158,7 +158,7 @@ void RomOperator::SolveHDM(double omega, ComplexVector &e)
 {
   // Compute HDM solution at the given frequency. The system matrix, A = K + iω C - ω² M +
   // A2(ω) is built by summing the underlying operator contributions.
-  A2 = spaceop.GetComplexExtraSystemMatrix(omega, Operator::DIAG_ZERO);
+  A2 = spaceop.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO);
   has_A2 = (A2 != nullptr);
   auto A = spaceop.GetSystemMatrix(std::complex<double>(1.0, 0.0), 1i * omega,
                                    std::complex<double>(-omega * omega, 0.0), K.get(),
@@ -264,7 +264,7 @@ void RomOperator::AssemblePROM(double omega)
   // only nonzero on boundaries, will be empty if not needed.
   if (has_A2)
   {
-    A2 = spaceop.GetComplexExtraSystemMatrix(omega, Operator::DIAG_ZERO);
+    A2 = spaceop.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO);
     ProjectMatInternal(spaceop.GetComm(), V, *A2, Ar, r, 0);
   }
   else
@@ -368,40 +368,44 @@ double RomOperator::ComputeMaxError(int num_cand, double &omega_star)
   std::vector<double> PC;
   if (Mpi::Root(spaceop.GetComm()))
   {
-    // Sample with uniform probability.
-    PC.reserve(num_cand);
-    std::sample(P_m_PS.begin(), P_m_PS.end(), std::back_inserter(PC), num_cand, engine);
-
-#if 0
-    // Sample with weighted probability by distance from the set of already sampled
-    // points.
-    std::vector<double> weights(P_m_PS.size());
-    weights = static_cast<double>(weights.Size());
-    PC.reserve(num_cand);
-    for (auto sample : PS)
+    if constexpr (false)
     {
-      int i = std::distance(P_m_PS.begin(), P_m_PS.lower_bound(sample));
-      int il = i-1;
-      while (il >= 0)
+      // Sample with weighted probability by distance from the set of already sampled
+      // points.
+      std::vector<double> weights(P_m_PS.size());
+      PC.reserve(num_cand);
+      for (auto sample : PS)
       {
-        weights[il] = std::min(weights[il], static_cast<double>(i-il));
-        il--;
+        int i = std::distance(P_m_PS.begin(), P_m_PS.lower_bound(sample));
+        int il = i - 1;
+        while (il >= 0)
+        {
+          weights[il] = std::min(weights[il], static_cast<double>(i - il));
+          il--;
+        }
+        int iu = i;
+        while (iu < weights.size())
+        {
+          weights[iu] = std::min(weights[iu], static_cast<double>(1 + iu - i));
+          iu++;
+        }
       }
-      int iu = i;
-      while (iu < weights.size())
+      for (int i = 0; i < num_cand; i++)
       {
-        weights[iu] = std::min(weights[iu], static_cast<double>(1+iu-i));
-        iu++;
+        std::discrete_distribution<std::size_t> dist(weights.begin(), weights.end());
+        auto res = dist(engine);
+        auto it = P_m_PS.begin();
+        std::advance(it, res);
+        PC.push_back(*it);
+        weights[res] = 0.0;  // No replacement
       }
     }
-    for (int i = 0; i < num_cand; i++)
+    else
     {
-      std::discrete_distribution<int> dist(weights.begin(), weights.end());
-      int res = dist(engine);
-      PC.push_back(P_m_PS[res]);
-      weights[res] = 0.0;  // No replacement
+      // Sample with uniform probability.
+      PC.reserve(num_cand);
+      std::sample(P_m_PS.begin(), P_m_PS.end(), std::back_inserter(PC), num_cand, engine);
     }
-#endif
   }
   else
   {

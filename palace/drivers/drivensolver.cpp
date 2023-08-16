@@ -115,11 +115,11 @@ void DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator &postop, in
   // Because the Dirichlet BC is always homogenous, no special elimination is required on
   // the RHS. Assemble the linear system for the initial frequency (so we can call
   // KspSolver::SetOperators). Compute everything at the first frequency step.
-  auto K = spaceop.GetComplexStiffnessMatrix(Operator::DIAG_ONE);
-  auto C = spaceop.GetComplexDampingMatrix(Operator::DIAG_ZERO);
-  auto M = spaceop.GetComplexMassMatrix(Operator::DIAG_ZERO);
-  auto A2 = spaceop.GetComplexExtraSystemMatrix(omega0, Operator::DIAG_ZERO);
-  auto Curl = spaceop.GetComplexCurlMatrix();
+  auto K = spaceop.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE);
+  auto C = spaceop.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+  auto M = spaceop.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+  auto A2 = spaceop.GetExtraSystemMatrix<ComplexOperator>(omega0, Operator::DIAG_ZERO);
+  auto Curl = spaceop.GetCurlMatrix<ComplexOperator>();
 
   // Set up the linear solver and set operators for the first frequency step. The
   // preconditioner for the complex linear system is constructed from a real approximation
@@ -154,7 +154,7 @@ void DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator &postop, in
     if (step > step0)
     {
       // Update frequency-dependent excitation and operators.
-      A2 = spaceop.GetComplexExtraSystemMatrix(omega, Operator::DIAG_ZERO);
+      A2 = spaceop.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO);
       A = spaceop.GetSystemMatrix(std::complex<double>(1.0, 0.0), 1i * omega,
                                   std::complex<double>(-omega * omega, 0.0), K.get(),
                                   C.get(), M.get(), A2.get());
@@ -236,7 +236,7 @@ void DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator &postop, i
 
   // Allocate negative curl matrix for postprocessing the B-field and vectors for the
   // high-dimensional field solution.
-  auto Curl = spaceop.GetComplexCurlMatrix();
+  auto Curl = spaceop.GetCurlMatrix<ComplexOperator>();
   ComplexVector E(Curl->Width()), B(Curl->Height());
   E = 0.0;
   B = 0.0;

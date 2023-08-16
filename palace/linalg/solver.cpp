@@ -10,6 +10,8 @@ template <>
 void WrapperSolver<Operator>::SetOperator(const Operator &op)
 {
   pc->SetOperator(op);
+  this->height = op.Height();
+  this->width = op.Width();
 }
 
 template <>
@@ -19,6 +21,8 @@ void WrapperSolver<ComplexOperator>::SetOperator(const ComplexOperator &op)
               "WrapperSolver::SetOperator requires an operator which is purely real for "
               "mfem::Solver!");
   pc->SetOperator(*op.Real());
+  this->height = op.Height();
+  this->width = op.Width();
 }
 
 template <>

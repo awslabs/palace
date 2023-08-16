@@ -4,31 +4,34 @@
 #ifndef PALACE_LINALG_JACOBI_SMOOTHER_HPP
 #define PALACE_LINALG_JACOBI_SMOOTHER_HPP
 
-#include <mfem.hpp>
 #include "linalg/operator.hpp"
+#include "linalg/solver.hpp"
 #include "linalg/vector.hpp"
 
 namespace palace
 {
 
 //
-// Simple Jacobi smoother using the diagonal vector from Operator::AssembleDiagonal(),
+// Simple Jacobi smoother using the diagonal vector from OperType::AssembleDiagonal(),
 // which allows for (approximate) diagonal construction for matrix-free operators.
 //
-class JacobiSmoother : public mfem::Solver
+template <typename OperType>
+class JacobiSmoother : public Solver<OperType>
 {
+  using VecType = typename Solver<OperType>::VecType;
+
 private:
-  // Inverse diagonal scaling of the operator.
-  Vector dinv;
+  // Inverse diagonal scaling of the operator (real-valued for now).
+  VecType dinv;
 
 public:
-  JacobiSmoother() : mfem::Solver() {}
+  JacobiSmoother() : Solver<OperType>() {}
 
-  void SetOperator(const Operator &op) override;
+  void SetOperator(const OperType &op) override;
 
-  void Mult(const Vector &x, Vector &y) const override;
+  void Mult(const VecType &x, VecType &y) const override;
 
-  void MultTranspose(const Vector &x, Vector &y) const override { Mult(x, y); }
+  void MultTranspose(const VecType &x, VecType &y) const override { Mult(x, y); }
 };
 
 }  // namespace palace

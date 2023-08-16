@@ -368,7 +368,7 @@ void CgSolver<OperType>::Mult(const VecType &b, VecType &x) const
     Mpi::Print(comm, "{}{:{}d} KSP residual norm ||r||_B = {:.6e}\n",
                std::string(tab_width, ' '), it, int_width, res);
   }
-  if (print_opts.summary || (print_opts.warnings && !converged))
+  if (print_opts.summary || (print_opts.warnings && eps > 0.0 && !converged))
   {
     Mpi::Print(comm, "{}PCG solver {} in {:d} iteration{}", std::string(tab_width, ' '),
                converged ? "converged" : "did NOT converge", it, (it == 1) ? "" : "s");
@@ -650,7 +650,7 @@ void GmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
     Mpi::Print(comm, "{}{:{}d} (restart {:d}) KSP residual norm {:.6e}\n",
                std::string(tab_width, ' '), it, int_width, restart, beta);
   }
-  if (print_opts.summary || (print_opts.warnings && !converged))
+  if (print_opts.summary || (print_opts.warnings && eps > 0.0 && !converged))
   {
     Mpi::Print(comm, "{}GMRES solver {} in {:d} iteration{}", std::string(tab_width, ' '),
                converged ? "converged" : "did NOT converge", it, (it == 1) ? "" : "s");
@@ -814,7 +814,7 @@ void FgmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
     Mpi::Print(comm, "{}{:{}d} (restart {:d}) KSP residual norm {:.6e}\n",
                std::string(tab_width, ' '), it, int_width, restart, beta);
   }
-  if (print_opts.summary || (print_opts.warnings && !converged))
+  if (print_opts.summary || (print_opts.warnings && eps > 0.0 && !converged))
   {
     Mpi::Print(comm, "{}FGMRES solver {} in {:d} iteration{}", std::string(tab_width, ' '),
                converged ? "converged" : "did NOT converge", it, (it == 1) ? "" : "s");

@@ -1640,14 +1640,18 @@ void LinearSolverData::SetUp(json &solver)
   mg_max_levels = linear->value("MGMaxLevels", mg_max_levels);
   mg_coarsen_type = linear->value("MGCoarsenType", mg_coarsen_type);
   mg_legacy_transfer = linear->value("MGLegacyTransfer", mg_legacy_transfer);
-  mg_smooth_aux = linear->value("MGAuxiliarySmoother", mg_smooth_aux);
   mg_cycle_it = linear->value("MGCycleIts", mg_cycle_it);
+  mg_smooth_aux = linear->value("MGAuxiliarySmoother", mg_smooth_aux);
   mg_smooth_it = linear->value("MGSmoothIts", mg_smooth_it);
   mg_smooth_order = linear->value("MGSmoothOrder", mg_smooth_order);
+  mg_smooth_sf_max = linear->value("MGSmoothEigScaleMax", mg_smooth_sf_max);
+  mg_smooth_sf_min = linear->value("MGSmoothEigScaleMin", mg_smooth_sf_min);
+  mg_smooth_cheby_4th = linear->value("MGSmoothChebyshev4th", mg_smooth_cheby_4th);
 
   // Preconditioner-specific options
-  pc_mat_lor = linear->value("PCLowOrderRefined", pc_mat_lor);
+  pc_mat_real = linear->value("PCMatReal", pc_mat_real);
   pc_mat_shifted = linear->value("PCMatShifted", pc_mat_shifted);
+  pc_mat_lor = linear->value("PCLowOrderRefined", pc_mat_lor);
   pc_side_type = linear->value("PCSide", pc_side_type);
   sym_fact_type = linear->value("ColumnOrdering", sym_fact_type);
   strumpack_compression_type =
@@ -1673,13 +1677,17 @@ void LinearSolverData::SetUp(json &solver)
   linear->erase("MGMaxLevels");
   linear->erase("MGCoarsenType");
   linear->erase("MGLegacyTransfer");
-  linear->erase("MGAuxiliarySmoother");
   linear->erase("MGCycleIts");
+  linear->erase("MGAuxiliarySmoother");
   linear->erase("MGSmoothIts");
   linear->erase("MGSmoothOrder");
+  linear->erase("MGSmoothEigScaleMax");
+  linear->erase("MGSmoothEigScaleMin");
+  linear->erase("MGSmoothChebyshev4th");
 
-  linear->erase("PCLowOrderRefined");
+  linear->erase("PCMatReal");
   linear->erase("PCMatShifted");
+  linear->erase("PCLowOrderRefined");
   linear->erase("PCSide");
   linear->erase("ColumnOrdering");
   linear->erase("STRUMPACKCompressionType");
@@ -1706,13 +1714,17 @@ void LinearSolverData::SetUp(json &solver)
   // std::cout << "MGMaxLevels: " << mg_max_levels << '\n';
   // std::cout << "MGCoarsenType: " << mg_coarsen_type << '\n';
   // std::cout << "MGLegacyTransfer: " << mg_legacy_transfer << '\n';
-  // std::cout << "MGAuxiliarySmoother: " << mg_smooth_aux << '\n';
   // std::cout << "MGCycleIts: " << mg_cycle_it << '\n';
+  // std::cout << "MGAuxiliarySmoother: " << mg_smooth_aux << '\n';
   // std::cout << "MGSmoothIts: " << mg_smooth_it << '\n';
   // std::cout << "MGSmoothOrder: " << mg_smooth_order << '\n';
+  // std::cout << "MGSmoothEigScaleMax: " << mg_smooth_sf_max << '\n';
+  // std::cout << "MGSmoothEigScaleMin: " << mg_smooth_sf_min << '\n';
+  // std::cout << "MGSmoothChebyshev4th: " << mg_smooth_cheby_4th << '\n';
 
-  // std::cout << "PCLowOrderRefined: " << pc_mat_lor << '\n';
+  // std::cout << "PCMatReal: " << pc_mat_real << '\n';
   // std::cout << "PCMatShifted: " << pc_mat_shifted << '\n';
+  // std::cout << "PCLowOrderRefined: " << pc_mat_lor << '\n';
   // std::cout << "PCSide: " << pc_side_type << '\n';
   // std::cout << "ColumnOrdering: " << sym_fact_type << '\n';
   // std::cout << "STRUMPACKCompressionType: " << strumpack_compression_type << '\n';

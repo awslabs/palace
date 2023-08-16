@@ -32,8 +32,9 @@ class SpaceOperator
 private:
   const int pa_order_threshold;  // Order above which to use partial assembly vs. full
   const int skip_zeros;          // Skip zeros during full assembly of operators
-  const bool pc_lor;             // Use low-order refined (LOR) space for preconditioner
-  const bool pc_shifted;         // Use shifted mass matrix for preconditioner
+  const bool pc_mat_real;        // Use real-valued matrix for preconditioner
+  const bool pc_mat_shifted;     // Use shifted mass matrix for preconditioner
+  const bool pc_mat_lor;         // Use low-order refined (LOR) space for preconditioner
 
   // Helper variables for log file printing.
   bool print_hdr, print_prec_hdr;
@@ -129,17 +130,15 @@ public:
   //                     A = K + iω C - ω² (Mr + i Mi) + A2(ω) .
   // For time domain problems, any one of K, C, or M = Mr can be constructed. The argument
   // ω is required only for the constructing the "extra" matrix A2(ω).
-  std::unique_ptr<Operator> GetStiffnessMatrix(Operator::DiagonalPolicy diag_policy);
-  std::unique_ptr<Operator> GetDampingMatrix(Operator::DiagonalPolicy diag_policy);
-  std::unique_ptr<Operator> GetMassMatrix(Operator::DiagonalPolicy diag_policy);
-  std::unique_ptr<ComplexOperator>
-  GetComplexStiffnessMatrix(Operator::DiagonalPolicy diag_policy);
-  std::unique_ptr<ComplexOperator>
-  GetComplexDampingMatrix(Operator::DiagonalPolicy diag_policy);
-  std::unique_ptr<ComplexOperator>
-  GetComplexMassMatrix(Operator::DiagonalPolicy diag_policy);
-  std::unique_ptr<ComplexOperator>
-  GetComplexExtraSystemMatrix(double omega, Operator::DiagonalPolicy diag_policy);
+  template <typename OperType>
+  std::unique_ptr<OperType> GetStiffnessMatrix(Operator::DiagonalPolicy diag_policy);
+  template <typename OperType>
+  std::unique_ptr<OperType> GetDampingMatrix(Operator::DiagonalPolicy diag_policy);
+  template <typename OperType>
+  std::unique_ptr<OperType> GetMassMatrix(Operator::DiagonalPolicy diag_policy);
+  template <typename OperType>
+  std::unique_ptr<OperType> GetExtraSystemMatrix(double omega,
+                                                 Operator::DiagonalPolicy diag_policy);
 
   // Construct the complete frequency or time domain system matrix using the provided
   // stiffness, damping, mass, and extra matrices:
@@ -171,10 +170,10 @@ public:
 
   // Construct and return the discrete curl or gradient matrices. The complex variants
   // return a matrix suitable for applying to complex-valued vectors.
-  std::unique_ptr<Operator> GetCurlMatrix();
-  std::unique_ptr<ComplexOperator> GetComplexCurlMatrix();
-  std::unique_ptr<Operator> GetGradMatrix();
-  std::unique_ptr<ComplexOperator> GetComplexGradMatrix();
+  template <typename OperType>
+  std::unique_ptr<OperType> GetCurlMatrix();
+  template <typename OperType>
+  std::unique_ptr<OperType> GetGradMatrix();
 
   // Assemble the right-hand side source term vector for an incident field or current source
   // applied on specified excited boundaries. The return value indicates whether or not the
