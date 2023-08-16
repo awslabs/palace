@@ -19,7 +19,7 @@ namespace palace
 
 // Abstract base class for real-valued or complex-valued solvers.
 template <typename OperType>
-class Solver
+class Solver : public OperType
 {
   static_assert(std::is_same<OperType, Operator>::value ||
                     std::is_same<OperType, ComplexOperator>::value,

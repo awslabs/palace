@@ -32,8 +32,9 @@ class SpaceOperator
 private:
   const int pa_order_threshold;  // Order above which to use partial assembly vs. full
   const int skip_zeros;          // Skip zeros during full assembly of operators
-  const bool pc_lor;             // Use low-order refined (LOR) space for preconditioner
-  const bool pc_shifted;         // Use shifted mass matrix for preconditioner
+  const bool pc_mat_real;        // Use real-valued matrix for preconditioner
+  const bool pc_mat_shifted;     // Use shifted mass matrix for preconditioner
+  const bool pc_mat_lor;         // Use low-order refined (LOR) space for preconditioner
 
   // Helper variables for log file printing.
   bool print_hdr, print_prec_hdr;

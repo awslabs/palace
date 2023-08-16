@@ -731,12 +731,12 @@ public:
   // transfer operators.
   bool mg_legacy_transfer = false;
 
-  // Use auxiliary space smoothers on geometric multigrid levels.
-  int mg_smooth_aux = -1;
-
   // Number of iterations for preconditioners which support it. For multigrid, this is the
   // number of V-cycles per Krylov solver iteration.
   int mg_cycle_it = 1;
+
+  // Use auxiliary space smoothers on geometric multigrid levels.
+  int mg_smooth_aux = -1;
 
   // Number of pre-/post-smoothing iterations at each geometric or algebraic multigrid
   // level.
@@ -745,13 +745,26 @@ public:
   // Order of polynomial smoothing for geometric multigrid.
   int mg_smooth_order = 4;
 
-  // Enable low-order refined (LOR) preconditioner construction. Only available for meshes
-  // based on tensor-product elements.
-  bool pc_mat_lor = false;
+  // Safety factors for eigenvalue estimates associated with Chebyshev smoothing for
+  // geometric multigrid.
+  double mg_smooth_sf_max = 1.0;
+  double mg_smooth_sf_min = 0.0;
+
+  // Smooth based on 4th-kind Chebyshev polynomials for geometric multigrid, otherwise
+  // use standard 1st-kind polynomials.
+  bool mg_smooth_cheby_4th = true;
+
+  // For frequency domain applications, precondition linear systems with a real-valued
+  // approximation to the system matrix.
+  bool pc_mat_real = false;
 
   // For frequency domain applications, precondition linear systems with a shifted matrix
   // (makes the preconditoner matrix SPD).
   int pc_mat_shifted = -1;
+
+  // Enable low-order refined (LOR) preconditioner construction. Only available for meshes
+  // based on tensor-product elements.
+  bool pc_mat_lor = false;
 
   // Choose left or right preconditioning.
   enum class SideType

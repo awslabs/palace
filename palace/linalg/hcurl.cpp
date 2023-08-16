@@ -80,7 +80,8 @@ EnergyNormSolver::EnergyNormSolver(const MaterialOperator &mat_op,
       nd_fespaces.GetFESpaceAtLevel(0), h1_fespaces.GetFESpaceAtLevel(0), 1, 1, 1, false,
       false, 0));
   auto gmg = std::make_unique<GeometricMultigridSolver<Operator>>(
-      std::move(ams), nd_fespaces, &h1_fespaces, 1, 1, 2, pa_order_threshold);
+      std::move(ams), nd_fespaces, &h1_fespaces, 1, 1, 2, 1.0, 0.0, true,
+      pa_order_threshold);
 
   auto pcg =
       std::make_unique<CgSolver<Operator>>(nd_fespaces.GetFinestFESpace().GetComm(), print);
