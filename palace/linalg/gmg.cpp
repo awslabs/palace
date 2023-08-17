@@ -99,6 +99,7 @@ void GeometricMultigridSolver<OperType>::SetOperator(const OperType &op)
     }
     else
     {
+      Mpi::Print("{}:{}\n", __FILE__, __LINE__);
       B[l]->SetOperator(mg_op->GetOperatorAtLevel(l));
     }
 
@@ -162,6 +163,10 @@ void GeometricMultigridSolver<OperType>::VCycle(int l, bool initial_guess) const
   // correctly (given X, Y, compute Y <- Y + B (X - A Y)) .
   B[l]->SetInitialGuess(initial_guess);
   B[l]->Mult(X[l], Y[l]);
+
+  Mpi::Print("GMG Level {} Presmooth || x || = {:.4e}, || Bx || = {:.4e}, initial_guess = {}\n", l,
+    linalg::Norml2(MPI_COMM_WORLD, X[l]),
+    linalg::Norml2(MPI_COMM_WORLD, Y[l]), initial_guess);
   if (l == 0)
   {
     return;
@@ -169,23 +174,43 @@ void GeometricMultigridSolver<OperType>::VCycle(int l, bool initial_guess) const
 
   // Compute residual.
   A[l]->Mult(Y[l], R[l]);
+
+  Mpi::Print("GMG Level {} || A(Bx_l) || = {:.4e}\n", l,
+    linalg::Norml2(MPI_COMM_WORLD, R[l]));
+
   linalg::AXPBY(1.0, X[l], -1.0, R[l]);
+
+  Mpi::Print("GMG Level {} || A(Bx_l) - X_l || = {:.4e}\n", l,
+    linalg::Norml2(MPI_COMM_WORLD, R[l]));
 
   // Coarse grid correction.
   RealMultTranspose(*P[l - 1], R[l], X[l - 1]);
+
+  Mpi::Print("GMG Level {} Coarse Correction || P^t(A(B X[l]) - X[l]) = X[l-1] || = {:.4e}\n", l,
+    linalg::Norml2(MPI_COMM_WORLD, X[l - 1]));
   if (dbc_tdof_lists[l - 1])
   {
     linalg::SetSubVector(X[l - 1], *dbc_tdof_lists[l - 1], 0.0);
   }
+
+  Mpi::Print("GMG Level {} post essential || X_[l-1] || = {:.4e}\n", l,
+    linalg::Norml2(MPI_COMM_WORLD, X[l-1]));
   VCycle(l - 1, false);
 
   // Prolongate and add.
   RealMult(*P[l - 1], Y[l - 1], R[l]);
+
+  Mpi::Print("GMG Level {}, Prolongate || Y[l - 1] || = {:.4e}, || R[l] || = {:.4e}\n", l,
+    linalg::Norml2(MPI_COMM_WORLD, Y[l - 1]), linalg::Norml2(MPI_COMM_WORLD, R[l]));
+
   Y[l] += R[l];
 
   // Post-smooth, with nonzero initial guess.
   B[l]->SetInitialGuess(true);
   B[l]->MultTranspose(X[l], Y[l]);
+
+  Mpi::Print("GMG Level {}, Post smooth || Y[l] || = {:.4e}\n", l,
+    linalg::Norml2(MPI_COMM_WORLD, Y[l]));
 }
 
 template class GeometricMultigridSolver<Operator>;

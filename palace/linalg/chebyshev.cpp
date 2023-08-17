@@ -4,6 +4,8 @@
 #include "chebyshev.hpp"
 
 #include <vector>
+#include <numeric>
+#include <limits>
 #include <mfem/general/forall.hpp>
 #include "linalg/rap.hpp"
 
@@ -17,6 +19,34 @@ void GetInverseDiagonal(const ParOperator &A, Vector &dinv)
 {
   dinv.SetSize(A.Height());
   A.AssembleDiagonal(dinv);
+
+  // auto lower_bound = 1e-6 * linalg::Norml2(A.GetComm(), dinv);
+  auto size = dinv.Size();
+  Mpi::GlobalSum(1, &size, A.GetComm());
+  auto min = dinv.Min();
+  Mpi::GlobalMin(1, &min, A.GetComm());
+  auto max = dinv.Max();
+  Mpi::GlobalMax(1, &max, A.GetComm());
+
+  auto min_mag = std::transform_reduce(dinv.begin(), dinv.end(),
+    std::numeric_limits<double>::max(), [](auto x, auto y){return std::min(x,y); }, [](auto v){return std::abs(v);});
+  Mpi::GlobalMin(1, &min_mag, A.GetComm());
+
+  auto lower_bound = 1e-2 * linalg::Norml2(A.GetComm(), dinv) / size;
+
+  Mpi::Print("norm {:.3e}, lower_bound {:.3e}, min {:.3e}, max {:.3e}, min_mag {:.3e}\n",
+  linalg::Norml2(A.GetComm(), dinv), lower_bound, min, max, min_mag);
+
+  constexpr double invp = 1.0/3;
+  for (auto &x : dinv)
+  {
+    if (std::abs(x) < lower_bound)
+    {
+      // x = std::copysign(lower_bound, x);
+      x = std::copysign(lower_bound * std::pow(std::abs(x)/lower_bound, invp), x);
+    }
+  }
+
   dinv.Reciprocal();
 }
 
@@ -26,7 +56,36 @@ void GetInverseDiagonal(const ComplexParOperator &A, Vector &dinv)
               "ComplexOperator for ChebyshevSmoother must be real-valued for now!");
   dinv.SetSize(A.Height());
   A.Real()->AssembleDiagonal(dinv);
+
+  // auto lower_bound = 1e-6 * linalg::Norml2(A.GetComm(), dinv);
+  auto size = dinv.Size();
+  Mpi::GlobalSum(1, &size, A.GetComm());
+  auto min = dinv.Min();
+  Mpi::GlobalMin(1, &min, A.GetComm());
+  auto max = dinv.Max();
+  Mpi::GlobalMax(1, &max, A.GetComm());
+
+  auto min_mag = std::transform_reduce(dinv.begin(), dinv.end(),
+    std::numeric_limits<double>::max(), [](auto x, auto y){return std::min(x,y); }, [](auto v){return std::abs(v);});
+  Mpi::GlobalMin(1, &min_mag, A.GetComm());
+
+  auto lower_bound = linalg::Norml2(A.GetComm(), dinv) / size;
+
+  Mpi::Print("norm {:.3e}, lower_bound {:.3e}, min {:.3e}, max {:.3e}, min_mag {:.3e}\n",
+  linalg::Norml2(A.GetComm(), dinv), lower_bound, min, max, min_mag);
+
+  constexpr double invp = 1.0/3;
+  for (auto &x : dinv)
+  {
+    if (std::abs(x) < lower_bound)
+    {
+      // x = std::copysign(lower_bound, x);
+      x = std::copysign(lower_bound * std::pow(std::abs(x)/lower_bound, invp), x);
+    }
+  }
+
   dinv.Reciprocal();
+  // dinv *= 0.5;
   // MFEM_VERIFY(A.HasReal() || A.HasImag(),
   //             "Invalid zero ComplexOperator for ChebyshevSmoother!");
   // dinv.SetSize(A.Height());
@@ -229,12 +288,19 @@ inline void ApplyOrderK(const double sd, const double sr, const Vector &dinv,
 template <typename OperType>
 void ChebyshevSmoother<OperType>::Mult(const VecType &x, VecType &y) const
 {
+  Mpi::Print("Cheby ||x|| = {:.4e}, ||y|| = {:.4e}\n",
+    linalg::Norml2(MPI_COMM_WORLD, x),
+    linalg::Norml2(MPI_COMM_WORLD, y));
+
   // Apply smoother: y = y + p(A) (x - A y) .
   for (int it = 0; it < pc_it; it++)
   {
     if (this->initial_guess || it > 0)
     {
       ApplyOp(*A, y, r);
+      Mpi::Print("Cheby ||Ay|| = {:.4e}\n",
+        linalg::Norml2(MPI_COMM_WORLD, r));
+
       linalg::AXPBY(1.0, x, -1.0, r);
     }
     else
@@ -243,18 +309,33 @@ void ChebyshevSmoother<OperType>::Mult(const VecType &x, VecType &y) const
       y = 0.0;
     }
 
+
     // 4th-kind Chebyshev smoother, from Phillips and Fischer or Lottes (with k -> k + 1
     // shift due to 1-based indexing).
     ApplyOrder0(4.0 / (3.0 * lambda_max), dinv, r, d);
+
+    Mpi::Print("Cheby ApplyOrder0 lambda_max = {:.4e}, ||dinv|| = {:.4e}, ||r|| = {:.4e}, ||d|| = {:.4e}\n", lambda_max,
+    linalg::Norml2(MPI_COMM_WORLD, dinv), linalg::Norml2(MPI_COMM_WORLD, r), linalg::Norml2(MPI_COMM_WORLD, d));
+
     for (int k = 1; k < order; k++)
     {
       y += d;
       ApplyOp(*A, d, r, -1.0);
+
+      Mpi::Print("Cheby ApplyOp, ||y|| = {:.4e}, ||r|| = {:.4e}, \n",
+      linalg::Norml2(MPI_COMM_WORLD, y), linalg::Norml2(MPI_COMM_WORLD, r));
+
       const double sd = (2.0 * k - 1.0) / (2.0 * k + 3.0);
       const double sr = (8.0 * k + 4.0) / ((2.0 * k + 3.0) * lambda_max);
       ApplyOrderK(sd, sr, dinv, r, d);
+
+      Mpi::Print("Cheby ApplyOrder{} sd {:.4e} sr {:.4e}, ||dinv|| = {:.4e}, ||r|| = {:.4e}, ||d|| = {:.4e}\n", k, sd, sr,
+      linalg::Norml2(MPI_COMM_WORLD, dinv), linalg::Norml2(MPI_COMM_WORLD, r), linalg::Norml2(MPI_COMM_WORLD, d));
+
     }
     y += d;
+    Mpi::Print("Cheby ||y|| = {:.4e}\n",
+      linalg::Norml2(MPI_COMM_WORLD, y));
   }
 }
 

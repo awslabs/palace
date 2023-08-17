@@ -394,17 +394,26 @@ inline void InitialResidual(PrecSide side, const OperType *A, const Solver<OperT
                             const VecType &b, VecType &x, VecType &r, VecType &z,
                             bool initial_guess)
 {
+  Mpi::Print("Initial Residual: initial_guess {}\n", initial_guess);
   if (B && side == GmresSolver<OperType>::PrecSide::LEFT)
   {
     if (initial_guess)
     {
       A->Mult(x, z);
+
+      Mpi::Print("Left ||x|| = {}, ||Ax|| = {}, ||b|| = {}\n",
+        linalg::Norml2(MPI_COMM_WORLD, x),
+        linalg::Norml2(MPI_COMM_WORLD, z), linalg::Norml2(MPI_COMM_WORLD, b));
+
       linalg::AXPBY(1.0, b, -1.0, z);
       B->Mult(z, r);
     }
     else
     {
       B->Mult(b, r);
+
+      Mpi::Print("||Bb|| = {}, ||b|| = {}\n",
+        linalg::Norml2(MPI_COMM_WORLD, r), linalg::Norml2(MPI_COMM_WORLD, b));
       x = 0.0;
     }
   }
@@ -413,12 +422,19 @@ inline void InitialResidual(PrecSide side, const OperType *A, const Solver<OperT
     if (initial_guess)
     {
       A->Mult(x, r);
+
+      Mpi::Print("Right ||x|| = {}, ||Ax|| = {}, ||b|| = {}\n",
+        linalg::Norml2(MPI_COMM_WORLD, x),
+        linalg::Norml2(MPI_COMM_WORLD, r), linalg::Norml2(MPI_COMM_WORLD, b));
+
       linalg::AXPBY(1.0, b, -1.0, r);
     }
     else
     {
       r = b;
       x = 0.0;
+
+      Mpi::Print("||b|| = {}\n", linalg::Norml2(MPI_COMM_WORLD, b));
     }
   }
 }

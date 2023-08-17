@@ -58,7 +58,9 @@ void DistRelaxationSmoother<OperType>::SetOperators(const OperType &op,
   y_G.SetSize(op_G.Height());
 
   // Set up smoothers for A and A_G.
+  Mpi::Print("{}:{}\n", __FILE__, __LINE__);
   B->SetOperator(op);
+  Mpi::Print("{}:{}\n", __FILE__, __LINE__);
   B_G->SetOperator(op_G);
 }
 
@@ -97,18 +99,34 @@ void DistRelaxationSmoother<OperType>::Mult(const VecType &x, VecType &y) const
   {
     // y = y + B (x - A y)
     B->SetInitialGuess(this->initial_guess || it > 0);
-    B->Mult(x, y);
+    B->Mult(x, y); // y = B x
+
+    Mpi::Print("Dist Mult || x || = {:.4e}, || Bx || = {:.4e}\n",
+      linalg::Norml2(MPI_COMM_WORLD, x),
+      linalg::Norml2(MPI_COMM_WORLD, y));
 
     // y = y + G B_G Gᵀ (x - A y)
-    A->Mult(y, r);
-    linalg::AXPBY(1.0, x, -1.0, r);
-    RealMultTranspose(*G, r, x_G);
+    A->Mult(y, r); // r = A B x
+
+    Mpi::Print("Dist Mult || ABx || = {:.4e}\n",
+      linalg::Norml2(MPI_COMM_WORLD, r));
+
+    linalg::AXPBY(1.0, x, -1.0, r); // r = x - A B x
+    RealMultTranspose(*G, r, x_G); // x_G = G^T (x - A B x)
+
+    Mpi::Print("Dist Mult || x - A B x || = {:.4e}, || G^T(x - A B x) || = {:.4e}\n",
+      linalg::Norml2(MPI_COMM_WORLD, r),
+      linalg::Norml2(MPI_COMM_WORLD, y));
+
     if (dbc_tdof_list_G)
     {
       linalg::SetSubVector(x_G, *dbc_tdof_list_G, 0.0);
     }
-    B_G->Mult(x_G, y_G);
-    RealAddMult(*G, y_G, y);
+    B_G->Mult(x_G, y_G); // y_G = B_G (G^T (x - A B x))
+    RealAddMult(*G, y_G, y); // y = y + G (B_G (G^T (x - A B x)))
+    Mpi::Print("Dist Mult || B_G (G^T(x - A B x)) || = {:.4e}, || y + G (B_G (G^T (x - A B x))) || = {:.4e}\n",
+      linalg::Norml2(MPI_COMM_WORLD, y_G),
+      linalg::Norml2(MPI_COMM_WORLD, y));
   }
 }
 
@@ -122,24 +140,47 @@ void DistRelaxationSmoother<OperType>::MultTranspose(const VecType &x, VecType &
     // y = y + G B_Gᵀ Gᵀ (x - A y)
     if (this->initial_guess || it > 0)
     {
-      A->Mult(y, r);
-      linalg::AXPBY(1.0, x, -1.0, r);
-      RealMultTranspose(*G, r, x_G);
+      A->Mult(y, r); // r = A y
+
+      Mpi::Print("Dist MultTranspose || y || = {:.4e}, || Ay || = {:.4e}\n",
+        linalg::Norml2(MPI_COMM_WORLD, y),
+        linalg::Norml2(MPI_COMM_WORLD, r));
+      linalg::AXPBY(1.0, x, -1.0, r); // r = x - A y
+
+      RealMultTranspose(*G, r, x_G); // x_G = G^T (x - A y)
+
+      Mpi::Print("Dist MultTranspose || x - Ay || = {:.4e}, || x_G || = {:.4e}\n",
+        linalg::Norml2(MPI_COMM_WORLD, r),
+        linalg::Norml2(MPI_COMM_WORLD, x_G));
     }
     else
     {
       y = 0.0;
-      RealMultTranspose(*G, x, x_G);
+      RealMultTranspose(*G, x, x_G); // x_G = G^T (x - A y)
+
+      Mpi::Print("Dist MultTranspose || x || = {:.4e}, || x_G || = {:.4e}\n",
+        linalg::Norml2(MPI_COMM_WORLD, x),
+        linalg::Norml2(MPI_COMM_WORLD, x_G));
     }
     if (dbc_tdof_list_G)
     {
       linalg::SetSubVector(x_G, *dbc_tdof_list_G, 0.0);
     }
-    B_G->MultTranspose(x_G, y_G);
-    RealAddMult(*G, y_G, y);
+    B_G->MultTranspose(x_G, y_G); // y_G = B_G^T (G^T (x - A y))
 
+    RealAddMult(*G, y_G, y); // y = y + G (B_G^T (G^T (x - A y))
+
+    Mpi::Print("Dist MultTranspose || x_G || = {:.4e}, || y_G || = {:.4e}, || y = y + G (B_G^T (G^T (x - A y)) || = {:.4e}\n",
+      linalg::Norml2(MPI_COMM_WORLD, x_G),
+      linalg::Norml2(MPI_COMM_WORLD, y_G),
+      linalg::Norml2(MPI_COMM_WORLD, y));
+
+    // ????????? What happened to all that data in y?
     // y = y + Bᵀ (x - A y)
     B->MultTranspose(x, y);
+
+    Mpi::Print("Dist MultTranspose  || y + Bᵀ (x - A y) || = {:.4e}\n",
+      linalg::Norml2(MPI_COMM_WORLD, y));
   }
 }
 
