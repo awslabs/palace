@@ -50,15 +50,16 @@ The configuration file for the *Palace* simulation is [`rings.json`]
 surface current to drive the inner or outer ring. The rest of the ring boundaries are
 labeled as `"PEC"` boundaries, which prescibes a zero magnetic flux, or magnetic
 insulation, boundary condition. The farfield is also prescribed the `"PEC"` boundary
-condition. We seek a second-order solution and use the geometric multigrid AMS solver.
+condition. We seek a second-order solution and use the geometric multigrid AMS
+solver.
 
 The computed inductance matrix is saved to disk as `postpro/terminal-M.csv`, and below we
 show its contents:
 
 ```
             i,             M[i][1] (H),             M[i][2] (H)
- 1.000000e+00,        +4.258505069e-11,        +1.958488699e-12
- 2.000000e+00,        +1.958488699e-12,        +7.126907323e-10
+ 1.000000e+00,        +4.272291158e-11,        +1.959927760e-12
+ 2.000000e+00,        +1.959927760e-12,        +7.131293160e-10
 ```
 
 According to the analytic expressions above, for this geometry we should have
@@ -76,8 +77,8 @@ M_{bb} &= 707.2050\text{ pH}
 \end{aligned}
 ```
 
-for the self inductances. Thus, the *Palace* solution has approximately ``0.78\%`` error in
-the mutual inductance ``1.9\%`` and ``0.78\%`` errors in the self inductances versus the
+for the self inductances. Thus, the *Palace* solution has approximately ``0.71\%`` error in
+the mutual inductance and ``2.2\%`` and ``0.84\%`` errors in the self inductances versus the
 analytic solutions.
 
 The typical approach used by *Palace* for lumped parameter extraction uses the computed
@@ -89,8 +90,8 @@ file. The resulting postprocessed values are written to `postpro/surface-M.csv`:
 
 ```
             i,                M[1] (H),                M[2] (H)
- 1.000000e+00,        +4.246208372e-11,        +1.858193591e-12
- 2.000000e+00,        +1.954077499e-12,        +7.125811940e-10
+ 1.000000e+00,        +4.257285432e-11,        +1.832374026e-12
+ 2.000000e+00,        +1.955250721e-12,        +7.130247545e-10
 ```
 
 The values computed using the flux integral method are in close agreement to those above, as

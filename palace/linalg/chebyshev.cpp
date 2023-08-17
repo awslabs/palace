@@ -50,41 +50,9 @@ void GetInverseDiagonal(const ParOperator &A, Vector &dinv)
   dinv.Reciprocal();
 }
 
-void GetInverseDiagonal(const ComplexParOperator &A, Vector &dinv)
+void GetInverseDiagonal(const ComplexParOperator &A, ComplexVector &dinv)
 {
-  MFEM_VERIFY(A.HasReal() && !A.HasImag(),
-              "ComplexOperator for ChebyshevSmoother must be real-valued for now!");
-  dinv.SetSize(A.Height());
-  A.Real()->AssembleDiagonal(dinv);
 
-  // auto lower_bound = 1e-6 * linalg::Norml2(A.GetComm(), dinv);
-  auto size = dinv.Size();
-  Mpi::GlobalSum(1, &size, A.GetComm());
-  auto min = dinv.Min();
-  Mpi::GlobalMin(1, &min, A.GetComm());
-  auto max = dinv.Max();
-  Mpi::GlobalMax(1, &max, A.GetComm());
-
-  auto min_mag = std::transform_reduce(dinv.begin(), dinv.end(),
-    std::numeric_limits<double>::max(), [](auto x, auto y){return std::min(x,y); }, [](auto v){return std::abs(v);});
-  Mpi::GlobalMin(1, &min_mag, A.GetComm());
-
-  auto lower_bound = linalg::Norml2(A.GetComm(), dinv) / size;
-
-  Mpi::Print("norm {:.3e}, lower_bound {:.3e}, min {:.3e}, max {:.3e}, min_mag {:.3e}\n",
-  linalg::Norml2(A.GetComm(), dinv), lower_bound, min, max, min_mag);
-
-  constexpr double invp = 1.0/3;
-  for (auto &x : dinv)
-  {
-    if (std::abs(x) < lower_bound)
-    {
-      // x = std::copysign(lower_bound, x);
-      x = std::copysign(lower_bound * std::pow(std::abs(x)/lower_bound, invp), x);
-    }
-  }
-
-  dinv.Reciprocal();
   // dinv *= 0.5;
   // MFEM_VERIFY(A.HasReal() || A.HasImag(),
   //             "Invalid zero ComplexOperator for ChebyshevSmoother!");
@@ -100,6 +68,37 @@ void GetInverseDiagonal(const ComplexParOperator &A, Vector &dinv)
   //   A.Imag()->AssembleDiagonal(dinv.Imag());
   // }
   // dinv.Reciprocal();
+
+  dinv.SetSize(A.Height());
+  dinv = 0.0;
+  if (A.HasReal())
+  {
+    A.Real()->AssembleDiagonal(dinv.Real());
+  }
+  if (A.HasImag())
+  {
+    A.Imag()->AssembleDiagonal(dinv.Imag());
+  }
+  dinv.Reciprocal();
+
+  auto d = dinv;
+
+  // auto lower_bound = 1e-6 * linalg::Norml2(A.GetComm(), dinv);
+  auto size = d.Size();
+  Mpi::GlobalSum(1, &size, A.GetComm());
+  auto min = d.Min();
+  Mpi::GlobalMin(1, &min, A.GetComm());
+  auto max = d.Max();
+  Mpi::GlobalMax(1, &max, A.GetComm());
+
+  auto min_mag = std::transform_reduce(d.begin(), d.end(),
+    std::numeric_limits<double>::max(), [](auto x, auto y){return std::min(x,y); }, [](auto v){return std::abs(v);});
+  Mpi::GlobalMin(1, &min_mag, A.GetComm());
+
+  auto lower_bound = linalg::Norml2(A.GetComm(), d) / size;
+
+  Mpi::Print("norm {:.3e}, lower_bound {:.3e}, min {:.3e}, max {:.3e}, min_mag {:.3e}\n",
+  linalg::Norml2(A.GetComm(), d), lower_bound, min, max, min_mag);
 }
 
 double GetLambdaMax(MPI_Comm comm, const Operator &A, const Vector &dinv)
@@ -109,47 +108,12 @@ double GetLambdaMax(MPI_Comm comm, const Operator &A, const Vector &dinv)
   return linalg::SpectralNorm(comm, DinvA, false);
 }
 
-double GetLambdaMax(MPI_Comm comm, const ComplexOperator &A, const Vector &dinv)
+double GetLambdaMax(MPI_Comm comm, const ComplexOperator &A, const ComplexVector &dinv)
 {
-  MFEM_VERIFY(A.HasReal() && !A.HasImag(),
-              "ComplexOperator for ChebyshevSmoother must be real-valued for now!");
-  DiagonalOperator Dinv(dinv);
-  ProductOperator DinvA(Dinv, *A.Real());
+  ComplexDiagonalOperator Dinv(dinv);
+  ComplexProductOperator DinvA(Dinv, A);
   return linalg::SpectralNorm(comm, DinvA, false);
 }
-
-}  // namespace
-
-template <typename OperType>
-ChebyshevSmoother<OperType>::ChebyshevSmoother(int smooth_it, int poly_order)
-  : Solver<OperType>(), pc_it(smooth_it), order(poly_order), A(nullptr)
-{
-}
-
-template <typename OperType>
-void ChebyshevSmoother<OperType>::SetOperator(const OperType &op)
-{
-  using ParOperType =
-      typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
-                                ComplexParOperator, ParOperator>::type;
-
-  A = &op;
-  r.SetSize(op.Height());
-  d.SetSize(op.Height());
-
-  const auto *PtAP = dynamic_cast<const ParOperType *>(&op);
-  MFEM_VERIFY(PtAP,
-              "ChebyshevSmoother requires a ParOperator or ComplexParOperator operator!");
-  GetInverseDiagonal(*PtAP, dinv);
-
-  // Set up Chebyshev coefficients using the computed maximum eigenvalue estimate. See
-  // mfem::OperatorChebyshevSmoother or Adams et al., Parallel multigrid smoothing:
-  // polynomial versus Gauss-Seidel, JCP (2003).
-  lambda_max = 1.01 * GetLambdaMax(PtAP->GetComm(), *A, dinv);
-}
-
-namespace
-{
 
 template <bool Transpose = false>
 inline void ApplyOp(const Operator &A, const Vector &x, Vector &y)
@@ -201,13 +165,12 @@ inline void ApplyOrder0(double sr, const Vector &dinv, const Vector &r, Vector &
 }
 
 template <bool Transpose = false>
-inline void ApplyOrder0(const double sr, const Vector &dinv, const ComplexVector &r,
+inline void ApplyOrder0(const double sr, const ComplexVector &dinv, const ComplexVector &r,
                         ComplexVector &d)
 {
   const int N = dinv.Size();
-  // const auto *DIR = dinv.Real().Read();
-  // const auto *DII = dinv.Imag().Read();
-  const auto *DIR = dinv.Read();
+  const auto *DIR = dinv.Real().Read();
+  const auto *DII = dinv.Imag().Read();
   const auto *RR = r.Real().Read();
   const auto *RI = r.Imag().Read();
   auto *DR = d.Real().ReadWrite();
@@ -217,10 +180,8 @@ inline void ApplyOrder0(const double sr, const Vector &dinv, const ComplexVector
     mfem::forall(N,
                  [=] MFEM_HOST_DEVICE(int i)
                  {
-                   // DR[i] = sr * (DIR[i] * RR[i] - DII[i] * RI[i]);
-                   // DI[i] = sr * (DII[i] * RR[i] + DIR[i] * RI[i]);
-                   DR[i] = sr * DIR[i] * RR[i];
-                   DI[i] = sr * DIR[i] * RI[i];
+                   DR[i] = sr * (DIR[i] * RR[i] - DII[i] * RI[i]);
+                   DI[i] = sr * (DII[i] * RR[i] + DIR[i] * RI[i]);
                  });
   }
   else
@@ -228,10 +189,8 @@ inline void ApplyOrder0(const double sr, const Vector &dinv, const ComplexVector
     mfem::forall(N,
                  [=] MFEM_HOST_DEVICE(int i)
                  {
-                   // DR[i] = sr * (DIR[i] * RR[i] + DII[i] * RI[i]);
-                   // DI[i] = sr * (-DII[i] * RR[i] + DIR[i] * RI[i]);
-                   DR[i] = sr * DIR[i] * RR[i];
-                   DI[i] = sr * DIR[i] * RI[i];
+                   DR[i] = sr * (DIR[i] * RR[i] + DII[i] * RI[i]);
+                   DI[i] = sr * (-DII[i] * RR[i] + DIR[i] * RI[i]);
                  });
   }
 }
@@ -248,13 +207,12 @@ inline void ApplyOrderK(const double sd, const double sr, const Vector &dinv,
 }
 
 template <bool Transpose = false>
-inline void ApplyOrderK(const double sd, const double sr, const Vector &dinv,
+inline void ApplyOrderK(const double sd, const double sr, const ComplexVector &dinv,
                         const ComplexVector &r, ComplexVector &d)
 {
   const int N = dinv.Size();
-  // const auto *DIR = dinv.Real().Read();
-  // const auto *DII = dinv.Imag().Read();
-  const auto *DIR = dinv.Read();
+  const auto *DIR = dinv.Real().Read();
+  const auto *DII = dinv.Imag().Read();
   const auto *RR = r.Real().Read();
   const auto *RI = r.Imag().Read();
   auto *DR = d.Real().ReadWrite();
@@ -264,10 +222,8 @@ inline void ApplyOrderK(const double sd, const double sr, const Vector &dinv,
     mfem::forall(N,
                  [=] MFEM_HOST_DEVICE(int i)
                  {
-                   // DR[i] = sd * DR[i] + sr * (DIR[i] * RR[i] - DII[i] * RI[i]);
-                   // DI[i] = sd * DI[i] + sr * (DII[i] * RR[i] + DIR[i] * RI[i]);
-                   DR[i] = sd * DR[i] + sr * DIR[i] * RR[i];
-                   DI[i] = sd * DI[i] + sr * DIR[i] * RI[i];
+                   DR[i] = sd * DR[i] + sr * (DIR[i] * RR[i] - DII[i] * RI[i]);
+                   DI[i] = sd * DI[i] + sr * (DII[i] * RR[i] + DIR[i] * RI[i]);
                  });
   }
   else
@@ -275,15 +231,44 @@ inline void ApplyOrderK(const double sd, const double sr, const Vector &dinv,
     mfem::forall(N,
                  [=] MFEM_HOST_DEVICE(int i)
                  {
-                   // DR[i] = sd * DR[i] + sr * (DIR[i] * RR[i] + DII[i] * RI[i]);
-                   // DI[i] = sd * DI[i] + sr * (-DII[i] * RR[i] + DIR[i] * RI[i]);
-                   DR[i] = sd * DR[i] + sr * DIR[i] * RR[i];
-                   DI[i] = sd * DI[i] + sr * DIR[i] * RI[i];
+                   DR[i] = sd * DR[i] + sr * (DIR[i] * RR[i] + DII[i] * RI[i]);
+                   DI[i] = sd * DI[i] + sr * (-DII[i] * RR[i] + DIR[i] * RI[i]);
                  });
   }
 }
 
 }  // namespace
+
+template <typename OperType>
+ChebyshevSmoother<OperType>::ChebyshevSmoother(int smooth_it, int poly_order, double sf_max)
+  : Solver<OperType>(), pc_it(smooth_it), order(poly_order), A(nullptr), lambda_max(0.0),
+    sf_max(sf_max)
+{
+  MFEM_VERIFY(order > 0, "Polynomial order for Chebyshev smoothing must be positive!");
+}
+
+template <typename OperType>
+void ChebyshevSmoother<OperType>::SetOperator(const OperType &op)
+{
+  using ParOperType =
+      typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
+                                ComplexParOperator, ParOperator>::type;
+
+  A = &op;
+  r.SetSize(op.Height());
+  d.SetSize(op.Height());
+  this->height = op.Height();
+  this->width = op.Width();
+
+  const auto *PtAP = dynamic_cast<const ParOperType *>(&op);
+  MFEM_VERIFY(PtAP,
+              "ChebyshevSmoother requires a ParOperator or ComplexParOperator operator!");
+  GetInverseDiagonal(*PtAP, dinv);
+
+  // Set up Chebyshev coefficients using the computed maximum eigenvalue estimate. See
+  // mfem::OperatorChebyshevSmoother or Adams et al. (2003).
+  lambda_max = sf_max * GetLambdaMax(PtAP->GetComm(), *A, dinv);
+}
 
 template <typename OperType>
 void ChebyshevSmoother<OperType>::Mult(const VecType &x, VecType &y) const
@@ -339,7 +324,82 @@ void ChebyshevSmoother<OperType>::Mult(const VecType &x, VecType &y) const
   }
 }
 
+template <typename OperType>
+ChebyshevSmoother1stKind<OperType>::ChebyshevSmoother1stKind(int smooth_it, int poly_order,
+                                                             double sf_max, double sf_min)
+  : Solver<OperType>(), pc_it(smooth_it), order(poly_order), A(nullptr), theta(0.0),
+    sf_max(sf_max), sf_min(sf_min)
+{
+  MFEM_VERIFY(order > 0, "Polynomial order for Chebyshev smoothing must be positive!");
+}
+
+template <typename OperType>
+void ChebyshevSmoother1stKind<OperType>::SetOperator(const OperType &op)
+{
+  using ParOperType =
+      typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
+                                ComplexParOperator, ParOperator>::type;
+
+  A = &op;
+  r.SetSize(op.Height());
+  d.SetSize(op.Height());
+
+  const auto *PtAP = dynamic_cast<const ParOperType *>(&op);
+  MFEM_VERIFY(
+      PtAP,
+      "ChebyshevSmoother1stKind requires a ParOperator or ComplexParOperator operator!");
+  GetInverseDiagonal(*PtAP, dinv);
+
+  // Set up Chebyshev coefficients using the computed maximum eigenvalue estimate. The
+  // optimized estimate of lambda_min comes from (2.24) of Phillips and Fischer (2022).
+  if (sf_min <= 0.0)
+  {
+    sf_min = 1.69 / (std::pow(order, 1.68) + 2.11 * order + 1.98);
+  }
+  const double lambda_max = sf_max * GetLambdaMax(PtAP->GetComm(), *A, dinv);
+  const double lambda_min = sf_min * lambda_max;
+  theta = 0.5 * (lambda_max + lambda_min);
+  delta = 0.5 * (lambda_max - lambda_min);
+}
+
+template <typename OperType>
+void ChebyshevSmoother1stKind<OperType>::Mult(const VecType &x, VecType &y) const
+{
+  // Apply smoother: y = y + p(A) (x - A y) .
+  for (int it = 0; it < pc_it; it++)
+  {
+    if (this->initial_guess || it > 0)
+    {
+      ApplyOp(*A, y, r);
+      linalg::AXPBY(1.0, x, -1.0, r);
+    }
+    else
+    {
+      r = x;
+      y = 0.0;
+    }
+
+    // 1th-kind Chebyshev smoother, from Phillips and Fischer or Adams.
+    ApplyOrder0(1.0 / theta, dinv, r, d);
+    double rhop = delta / theta;
+    for (int k = 1; k < order; k++)
+    {
+      y += d;
+      ApplyOp(*A, d, r, -1.0);
+      const double rho = 1.0 / (2.0 * theta / delta - rhop);
+      const double sd = rho * rhop;
+      const double sr = 2.0 * rho / delta;
+      ApplyOrderK(sd, sr, dinv, r, d);
+      rhop = rho;
+    }
+    y += d;
+  }
+}
+
 template class ChebyshevSmoother<Operator>;
 template class ChebyshevSmoother<ComplexOperator>;
+
+template class ChebyshevSmoother1stKind<Operator>;
+template class ChebyshevSmoother1stKind<ComplexOperator>;
 
 }  // namespace palace

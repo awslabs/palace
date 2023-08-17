@@ -178,9 +178,6 @@ int main(int argc, char *argv[])
       case config::ProblemData::Type::TRANSIENT:
         return std::make_unique<TransientSolver>(iodata, world_root, world_size, num_thread,
                                                  git_tag);
-        break;
-      case config::ProblemData::Type::INVALID:
-        Mpi::Print(world_comm, "Error: Unsupported problem type!\n\n");
     }
     return nullptr;
   }();

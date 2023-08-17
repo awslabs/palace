@@ -126,6 +126,49 @@ inline MPI_Datatype DataType<bool>()
   return MPI_C_BOOL;
 }
 
+template <typename T, typename U>
+struct ValueAndLoc
+{
+  T val;
+  U loc;
+};
+
+template <>
+inline MPI_Datatype DataType<ValueAndLoc<float, signed int>>()
+{
+  return MPI_FLOAT_INT;
+}
+
+template <>
+inline MPI_Datatype DataType<ValueAndLoc<double, signed int>>()
+{
+  return MPI_DOUBLE_INT;
+}
+
+template <>
+inline MPI_Datatype DataType<ValueAndLoc<long double, signed int>>()
+{
+  return MPI_LONG_DOUBLE_INT;
+}
+
+template <>
+inline MPI_Datatype DataType<ValueAndLoc<signed short, signed int>>()
+{
+  return MPI_SHORT_INT;
+}
+
+template <>
+inline MPI_Datatype DataType<ValueAndLoc<signed int, signed int>>()
+{
+  return MPI_2INT;
+}
+
+template <>
+inline MPI_Datatype DataType<ValueAndLoc<signed long int, signed int>>()
+{
+  return MPI_LONG_INT;
+}
+
 }  // namespace mpi
 
 //
@@ -218,6 +261,42 @@ public:
     GlobalOp(len, buff, MPI_SUM, comm);
   }
 
+  // Global minimum with index (in-place, result is broadcast to all processes).
+  template <typename T, typename U>
+  static void GlobalMinLoc(int len, T *val, U *loc, MPI_Comm comm)
+  {
+    std::vector<mpi::ValueAndLoc<T, U>> buffer(len);
+    for (int i = 0; i < len; i++)
+    {
+      buffer[i].val = val[i];
+      buffer[i].loc = loc[i];
+    }
+    GlobalOp(len, buffer.data(), MPI_MINLOC, comm);
+    for (int i = 0; i < len; i++)
+    {
+      val[i] = buffer[i].val;
+      loc[i] = buffer[i].loc;
+    }
+  }
+
+  // Global maximum with index (in-place, result is broadcast to all processes).
+  template <typename T, typename U>
+  static void GlobalMaxLoc(int len, T *val, U *loc, MPI_Comm comm)
+  {
+    std::vector<mpi::ValueAndLoc<T, U>> buffer(len);
+    for (int i = 0; i < len; i++)
+    {
+      buffer[i].val = val[i];
+      buffer[i].loc = loc[i];
+    }
+    GlobalOp(len, buffer.data(), MPI_MAXLOC, comm);
+    for (int i = 0; i < len; i++)
+    {
+      val[i] = buffer[i].val;
+      loc[i] = buffer[i].loc;
+    }
+  }
+
   // Global broadcast from root.
   template <typename T>
   static void Broadcast(int len, T *buff, int root, MPI_Comm comm)
@@ -293,6 +372,13 @@ private:
   Mpi() = default;
   ~Mpi() { Finalize(); }
 
+  // Access the singleton instance.
+  static Mpi &Instance()
+  {
+    static Mpi mpi;
+    return mpi;
+  }
+
   static void Init(int *argc, char ***argv)
   {
     // The Mpi object below needs to be created after MPI_Init() for some MPI
@@ -306,7 +392,8 @@ private:
 #else
     MPI_Init(argc, argv);
 #endif
-    static Mpi mpi;
+    // Initialize the singleton Instance.
+    Instance();
   }
 };
 

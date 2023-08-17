@@ -29,6 +29,7 @@ protected:
   using ScalarType =
       typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
                                 std::complex<RealType>, RealType>::type;
+  using VecType = typename Solver<OperType>::VecType;
 
   // MPI communicator associated with the solver.
   MPI_Comm comm;
@@ -74,13 +75,18 @@ public:
   }
 
   // Set the operator for the solver.
-  void SetOperator(const OperType &op) override { A = &op; }
+  void SetOperator(const OperType &op) override
+  {
+    A = &op;
+    this->height = op.Height();
+    this->width = op.Width();
+  }
 
   // Set the preconditioner for the solver.
   void SetPreconditioner(const Solver<OperType> &pc) { B = &pc; }
 
   // Returns if the previous solve converged or not.
-  bool GetConverged() const { return converged; }
+  bool GetConverged() const { return converged && (rel_tol > 0.0 || abs_tol > 0.0); }
 
   // Returns the initial (absolute) residual for the previous solve.
   double GetInitialRes() const { return initial_res; }
@@ -94,6 +100,12 @@ public:
 
   // Get the associated MPI communicator.
   MPI_Comm GetComm() const { return comm; }
+
+  // Alias for the solve method.
+  void MultTranspose(const VecType &x, VecType &y) const override
+  {
+    this->Mult(x, y);  // Assumes operator symmetry
+  }
 };
 
 // Preconditioned Conjugate Gradient (CG) method for SPD linear systems.

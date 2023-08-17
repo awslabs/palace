@@ -117,7 +117,8 @@
             "additionalItems": false,
             "items": { "type": "integer"}
           },
-          "Direction": { "type": "string" },
+          "Direction": { "$ref": "#/$defs/Direction" },
+          "CoordinateSystem": { "type": "string", "enum": ["Cartesian", "Cylindrical"] },
           "R": { "type": "number" },
           "L": { "type": "number" },
           "C": { "type": "number" },
@@ -142,7 +143,8 @@
                   "additionalItems": false,
                   "items": { "type": "integer"}
                 },
-                "Direction": { "type": "string" }
+                "Direction": { "$ref": "#/$defs/Direction" },
+                "CoordinateSystem": { "type": "string", "enum": ["Cartesian", "Cylindrical"] },
               }
             }
           }
@@ -206,7 +208,8 @@
             "additionalItems": false,
             "items": { "type": "integer"}
           },
-          "Direction": { "type": "string" },
+          "Direction": { "$ref": "#/$defs/Direction" },
+          "CoordinateSystem": { "type": "string", "enum": ["Cartesian", "Cylindrical"] },
           "Elements":
           {
             "type": "array",
@@ -224,7 +227,8 @@
                   "additionalItems": false,
                   "items": { "type": "integer"}
                 },
-                "Direction": { "type": "string" }
+                "Direction": { "$ref": "#/$defs/Direction" },
+                "CoordinateSystem": { "type": "string", "enum": ["Cartesian", "Cylindrical"] },
               }
             }
           }
@@ -328,7 +332,8 @@
                 "additionalItems": false,
                 "items": { "type": "integer"}
               },
-              "Direction": { "type": "string", "minLength": 1, "maxLength": 2 }
+              "Direction": { "$ref": "#/$defs/Direction" },
+              "CoordinateSystem": { "type": "string", "enum": ["Cartesian", "Cylindrical"] }
             }
           }
         },
@@ -350,7 +355,8 @@
                 "additionalItems": false,
                 "items": { "type": "integer"}
               },
-              "Side": { "type": "string" },
+              "Side": { "$ref": "#/$defs/Direction" },
+              "CoordinateSystem": { "type": "string", "enum": ["Cartesian", "Cylindrical"] },
               "Permittivity": { "type": "number" },
               "PermittivityMA": { "type": "number" },
               "PermittivityMS": { "type": "number" },
@@ -374,7 +380,8 @@
                       "additionalItems": false,
                       "items": { "type": "integer"}
                     },
-                    "Side": { "type": "string" }
+                    "Side": { "$ref": "#/$defs/Direction" },
+                    "CoordinateSystem": { "type": "string", "enum": ["Cartesian", "Cylindrical"] }
                   }
                 }
               }
@@ -383,5 +390,25 @@
         }
       }
     }
+  },
+  "$defs":
+  {
+    "Direction":
+    {
+      "anyOf":
+      [
+        {
+          "type": "string",
+          "enum": ["R", "X", "Y", "Z", "+R", "+X", "+Y", "+Z", "-R", "-X", "-Y", "-Z",
+                   "r", "x", "y", "z", "+r", "+x", "+y", "+z", "-r", "-x", "-y", "-z"]
+        },
+        {
+          "type": "array",
+          "items": { "type": "number" },
+          "minItems": 3, "maxItems": 3
+        }
+      ]
+    }
   }
 }
+

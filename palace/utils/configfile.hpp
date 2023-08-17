@@ -60,6 +60,28 @@ public:
   [[nodiscard]] auto end() { return mapdata.end(); }
 };
 
+// An ElementData consists of a list of attributes making up a single element of a
+// potentially multielement boundary, and a direction and/or a normal defining the incident
+// field. These are used for lumped ports, terminals, surface currents, and other boundary
+// postprocessing objects.
+struct ElementData
+{
+  // Vector defining the direction for this port. In a Cartesian system, "X", "Y", and "Z"
+  // map to (1,0,0), (0,1,0), and (0,0,1), respectively.
+  std::array<double, 3> direction{{0.0, 0.0, 0.0}};
+
+  // Coordinate system that the normal vector is expressed in.
+  enum class CoordinateSystem
+  {
+    CARTESIAN,
+    CYLINDRICAL
+  };
+  CoordinateSystem coordinate_system = CoordinateSystem::CARTESIAN;
+
+  // List of boundary attributes for this element.
+  std::vector<int> attributes = {};
+};
+
 }  // namespace internal
 
 struct ProblemData
@@ -72,10 +94,9 @@ public:
     EIGENMODE,
     ELECTROSTATIC,
     MAGNETOSTATIC,
-    TRANSIENT,
-    INVALID = -1
+    TRANSIENT
   };
-  Type type = Type::INVALID;
+  Type type = Type::DRIVEN;
 
   // Level of printing.
   int verbose = 1;
@@ -398,19 +419,9 @@ public:
   // Flag for source term in driven and transient simulations.
   bool excitation = false;
 
-  // For each lumped port index, each Node contains a list of attributes making up a single
-  // element of a potentially multielement port.
-  struct Node
-  {
-    // String defining source excitation field direction. Options are "X", "Y", "Z", or "R",
-    // preceeded with a "+" or "-" for the direction. The first three options are for
-    // uniform lumped ports and the last is for a coaxial lumped port (radial excitation).
-    std::string direction = "";
-
-    // List of boundary attributes for this lumped port element.
-    std::vector<int> attributes = {};
-  };
-  std::vector<Node> nodes = {};
+  // For each lumped port index, each element contains a list of attributes making up a
+  // single element of a potentially multielement lumped port.
+  std::vector<internal::ElementData> elements = {};
 };
 
 struct LumpedPortBoundaryData : public internal::DataMap<LumpedPortData>
@@ -444,19 +455,9 @@ public:
 struct SurfaceCurrentData
 {
 public:
-  // For each surface current source index, each Node contains a list of attributes making
-  // up a single element of a potentially multielement current source.
-  struct Node
-  {
-    // String defining surface current source excitation direction. Options are "X", "Y",
-    // "Z", or "R", preceeded with a "+" or "-" for the direction. The first three options
-    // are for uniform sources and the last is for a coaxial source (radial excitation).
-    std::string direction = "";
-
-    // List of boundary attributes for this surface current element.
-    std::vector<int> attributes = {};
-  };
-  std::vector<Node> nodes = {};
+  // For each surface current source index, each element contains a list of attributes
+  // making up a single element of a potentially multielement current source.
+  std::vector<internal::ElementData> elements = {};
 };
 
 struct SurfaceCurrentBoundaryData : public internal::DataMap<SurfaceCurrentData>
@@ -478,16 +479,9 @@ public:
   void SetUp(json &postpro);
 };
 
-struct InductanceData
+struct InductanceData : public internal::ElementData
 {
-public:
-  // String defining global direction with which to orient the computed flux (influences the
-  // computed sign). Options are "X", "Y", or "Z", preceeded with a "+" or "-" for the
-  // direction.
-  std::string direction = "";
-
-  // List of boundary attributes for this inductance postprocessing index.
-  std::vector<int> attributes = {};
+  using internal::ElementData::ElementData;
 };
 
 struct InductancePostData : public internal::DataMap<InductanceData>
@@ -514,19 +508,9 @@ public:
   double epsilon_r_ms = 0.0;
   double epsilon_r_sa = 0.0;
 
-  // For each dielectric postprocessing index, each Node contains a list of attributes
+  // For each dielectric postprocessing index, each element contains a list of attributes
   // sharing the same side value.
-  struct Node
-  {
-    // String defining surface side for interior surfaces. Options are "X", "Y", or "Z",
-    // preceeded with a "+" or "-" for the direction.
-    std::string side = "";
-
-    // List of domain or boundary attributes for this interface dielectric postprocessing
-    // index.
-    std::vector<int> attributes = {};
-  };
-  std::vector<Node> nodes = {};
+  std::vector<internal::ElementData> elements = {};
 };
 
 struct InterfaceDielectricPostData : public internal::DataMap<InterfaceDielectricData>
@@ -615,7 +599,7 @@ public:
   double target = 0.0;
 
   // Eigenvalue solver relative tolerance.
-  double tol = 1e-6;
+  double tol = 1.0e-6;
 
   // Maximum iterations for eigenvalue solver.
   int max_it = -1;
@@ -643,11 +627,10 @@ public:
   // Eigenvalue solver type.
   enum class Type
   {
-    ARPACK,
-    SLEPC,
-    FEAST,
     DEFAULT,
-    INVALID = -1
+    SLEPC,
+    ARPACK,
+    FEAST
   };
   Type type = Type::DEFAULT;
 
@@ -692,11 +675,10 @@ public:
   // Time integration scheme type.
   enum class Type
   {
+    DEFAULT,
     GEN_ALPHA,
     NEWMARK,
-    CENTRAL_DIFF,
-    DEFAULT,
-    INVALID = -1
+    CENTRAL_DIFF
   };
   Type type = Type::DEFAULT;
 
@@ -708,10 +690,9 @@ public:
     DIFF_GAUSSIAN,
     MOD_GAUSSIAN,
     RAMP_STEP,
-    SMOOTH_STEP,
-    INVALID = -1
+    SMOOTH_STEP
   };
-  ExcitationType excitation = ExcitationType::INVALID;
+  ExcitationType excitation = ExcitationType::SINUSOIDAL;
 
   // Excitation parameters: frequency [GHz] and pulse width [ns].
   double pulse_f = 0.0;
@@ -721,7 +702,7 @@ public:
   double max_t = 1.0;
 
   // Step size for time stepping [ns].
-  double delta_t = 1e-2;
+  double delta_t = 1.0e-2;
 
   // Step increment for saving fields to disk.
   int delta_post = 0;
@@ -738,32 +719,30 @@ public:
   // Solver type.
   enum class Type
   {
+    DEFAULT,
     AMS,
     BOOMER_AMG,
     MUMPS,
     SUPERLU,
     STRUMPACK,
-    STRUMPACK_MP,
-    DEFAULT,
-    INVALID = -1
+    STRUMPACK_MP
   };
   Type type = Type::DEFAULT;
 
   // Krylov solver type.
   enum class KspType
   {
+    DEFAULT,
     CG,
     MINRES,
     GMRES,
     FGMRES,
-    BICGSTAB,
-    DEFAULT,
-    INVALID = -1
+    BICGSTAB
   };
   KspType ksp_type = KspType::DEFAULT;
 
   // Iterative solver relative tolerance.
-  double tol = 1e-6;
+  double tol = 1.0e-6;
 
   // Maximum iterations for iterative solver.
   int max_it = 100;
@@ -781,8 +760,7 @@ public:
   enum class MultigridCoarsenType
   {
     LINEAR,
-    LOGARITHMIC,
-    INVALID = -1
+    LOGARITHMIC
   };
   MultigridCoarsenType mg_coarsen_type = MultigridCoarsenType::LOGARITHMIC;
 
@@ -790,12 +768,12 @@ public:
   // transfer operators.
   bool mg_legacy_transfer = false;
 
-  // Use auxiliary space smoothers on geometric multigrid levels.
-  int mg_smooth_aux = -1;
-
   // Number of iterations for preconditioners which support it. For multigrid, this is the
   // number of V-cycles per Krylov solver iteration.
   int mg_cycle_it = 1;
+
+  // Use auxiliary space smoothers on geometric multigrid levels.
+  int mg_smooth_aux = -1;
 
   // Number of pre-/post-smoothing iterations at each geometric or algebraic multigrid
   // level.
@@ -804,21 +782,33 @@ public:
   // Order of polynomial smoothing for geometric multigrid.
   int mg_smooth_order = 4;
 
-  // Enable low-order refined (LOR) preconditioner construction. Only available for meshes
-  // based on tensor-product elements.
-  bool pc_mat_lor = false;
+  // Safety factors for eigenvalue estimates associated with Chebyshev smoothing for
+  // geometric multigrid.
+  double mg_smooth_sf_max = 1.0;
+  double mg_smooth_sf_min = 0.0;
+
+  // Smooth based on 4th-kind Chebyshev polynomials for geometric multigrid, otherwise
+  // use standard 1st-kind polynomials.
+  bool mg_smooth_cheby_4th = true;
+
+  // For frequency domain applications, precondition linear systems with a real-valued
+  // approximation to the system matrix.
+  bool pc_mat_real = false;
 
   // For frequency domain applications, precondition linear systems with a shifted matrix
   // (makes the preconditoner matrix SPD).
   int pc_mat_shifted = -1;
 
+  // Enable low-order refined (LOR) preconditioner construction. Only available for meshes
+  // based on tensor-product elements.
+  bool pc_mat_lor = false;
+
   // Choose left or right preconditioning.
   enum class SideType
   {
-    RIGHT,
-    LEFT,
     DEFAULT,
-    INVALID = -1
+    RIGHT,
+    LEFT
   };
   SideType pc_side_type = SideType::DEFAULT;
 
@@ -826,12 +816,11 @@ public:
   // direct solvers.
   enum class SymFactType
   {
+    DEFAULT,
     METIS,
     PARMETIS,
     SCOTCH,
-    PTSCOTCH,
-    DEFAULT,
-    INVALID = -1
+    PTSCOTCH
   };
   SymFactType sym_fact_type = SymFactType::DEFAULT;
 
@@ -845,8 +834,7 @@ public:
     HODLR,
     ZFP,
     BLR_HODLR,
-    ZFP_BLR_HODLR,
-    INVALID = -1
+    ZFP_BLR_HODLR
   };
   CompressionType strumpack_compression_type = CompressionType::NONE;
   double strumpack_lr_tol = 1.0e-3;
@@ -871,8 +859,7 @@ public:
   {
     MGS,
     CGS,
-    CGS2,
-    INVALID = -1
+    CGS2
   };
   OrthogType gs_orthog_type = OrthogType::MGS;
 

@@ -14,9 +14,10 @@ namespace palace
 //
 // Matrix-free diagonally-scaled Chebyshev smoothing. This is largely the same as
 // mfem::OperatorChebyshevSmoother allows a nonzero initial guess and uses alternative
-// methods to estimate the largest eigenvalue. See also Phillips and Fischer, Optimal
-// Chebyshev smoothers and one-sided V-cycles, arXiv:2210.03179v1 (2022) for reference on
-// the 4th-kind Chebyshev polynomial smoother.
+// methods to estimate the largest eigenvalue. We use a smoother based on Chebyshev
+// polynomials of the 4th-kind as proposed in recent work.
+// Reference: Phillips and Fischer, Optimal Chebyshev smoothers and one-sided V-cycles,
+//            arXiv:2210.03179v1 (2022).
 //
 template <typename OperType>
 class ChebyshevSmoother : public Solver<OperType>
@@ -31,16 +32,57 @@ private:
   const OperType *A;
 
   // Inverse diagonal scaling of the operator (real-valued for now).
-  Vector dinv;
+  VecType dinv;
 
   // Maximum operator eigenvalue for Chebyshev polynomial smoothing.
-  double lambda_max;
+  double lambda_max, sf_max;
 
   // Temporary vectors for smoother application.
   mutable VecType r, d;
 
 public:
-  ChebyshevSmoother(int smooth_it, int poly_order);
+  ChebyshevSmoother(int smooth_it, int poly_order, double sf_max);
+
+  void SetOperator(const OperType &op) override;
+
+  void Mult(const VecType &x, VecType &y) const override;
+
+  void MultTranspose(const VecType &x, VecType &y) const override
+  {
+    Mult(x, y);  // Assumes operator symmetry
+  }
+};
+
+//
+// Matrix-free diagonally-scaled Chebyshev smoothing using standard 1st-kind Chebyshev
+// polynomials.
+// Reference: Adams et al., Parallel multigrid smoothing: polynomial versus Gauss–Seidel,
+//            JCP (2003).
+//
+template <typename OperType>
+class ChebyshevSmoother1stKind : public Solver<OperType>
+{
+  using VecType = typename Solver<OperType>::VecType;
+
+private:
+  // Number of smoother iterations and polynomial order.
+  const int pc_it, order;
+
+  // System matrix (not owned).
+  const OperType *A;
+
+  // Inverse diagonal scaling of the operator (real-valued for now).
+  VecType dinv;
+
+  // Parameters depending on maximum and minimum operator eigenvalue estimates for Chebyshev
+  // polynomial smoothing.
+  double theta, delta, sf_max, sf_min;
+
+  // Temporary vectors for smoother application.
+  mutable VecType r, d;
+
+public:
+  ChebyshevSmoother1stKind(int smooth_it, int poly_order, double sf_max, double sf_min);
 
   void SetOperator(const OperType &op) override;
 

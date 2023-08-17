@@ -368,40 +368,44 @@ double RomOperator::ComputeMaxError(int num_cand, double &omega_star)
   std::vector<double> PC;
   if (Mpi::Root(spaceop.GetComm()))
   {
-    // Sample with uniform probability.
-    PC.reserve(num_cand);
-    std::sample(P_m_PS.begin(), P_m_PS.end(), std::back_inserter(PC), num_cand, engine);
-
-#if 0
-    // Sample with weighted probability by distance from the set of already sampled
-    // points.
-    std::vector<double> weights(P_m_PS.size());
-    weights = static_cast<double>(weights.Size());
-    PC.reserve(num_cand);
-    for (auto sample : PS)
+    if constexpr (false)
     {
-      int i = std::distance(P_m_PS.begin(), P_m_PS.lower_bound(sample));
-      int il = i-1;
-      while (il >= 0)
+      // Sample with weighted probability by distance from the set of already sampled
+      // points.
+      std::vector<double> weights(P_m_PS.size());
+      PC.reserve(num_cand);
+      for (auto sample : PS)
       {
-        weights[il] = std::min(weights[il], static_cast<double>(i-il));
-        il--;
+        int i = std::distance(P_m_PS.begin(), P_m_PS.lower_bound(sample));
+        int il = i - 1;
+        while (il >= 0)
+        {
+          weights[il] = std::min(weights[il], static_cast<double>(i - il));
+          il--;
+        }
+        int iu = i;
+        while (iu < weights.size())
+        {
+          weights[iu] = std::min(weights[iu], static_cast<double>(1 + iu - i));
+          iu++;
+        }
       }
-      int iu = i;
-      while (iu < weights.size())
+      for (int i = 0; i < num_cand; i++)
       {
-        weights[iu] = std::min(weights[iu], static_cast<double>(1+iu-i));
-        iu++;
+        std::discrete_distribution<std::size_t> dist(weights.begin(), weights.end());
+        auto res = dist(engine);
+        auto it = P_m_PS.begin();
+        std::advance(it, res);
+        PC.push_back(*it);
+        weights[res] = 0.0;  // No replacement
       }
     }
-    for (int i = 0; i < num_cand; i++)
+    else
     {
-      std::discrete_distribution<int> dist(weights.begin(), weights.end());
-      int res = dist(engine);
-      PC.push_back(P_m_PS[res]);
-      weights[res] = 0.0;  // No replacement
+      // Sample with uniform probability.
+      PC.reserve(num_cand);
+      std::sample(P_m_PS.begin(), P_m_PS.end(), std::back_inserter(PC), num_cand, engine);
     }
-#endif
   }
   else
   {

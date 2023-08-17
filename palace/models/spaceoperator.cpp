@@ -73,12 +73,13 @@ mfem::Array<int> SetUpBoundaryProperties(const IoData &iodata, const mfem::ParMe
 SpaceOperator::SpaceOperator(const IoData &iodata,
                              const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh)
   : pa_order_threshold(iodata.solver.pa_order_threshold), skip_zeros(0),
-    pc_lor(iodata.solver.linear.pc_mat_lor),
-    pc_shifted(iodata.solver.linear.pc_mat_shifted), print_hdr(true), print_prec_hdr(true),
+    pc_mat_real(iodata.solver.linear.pc_mat_real),
+    pc_mat_shifted(iodata.solver.linear.pc_mat_shifted),
+    pc_mat_lor(iodata.solver.linear.pc_mat_lor), print_hdr(true), print_prec_hdr(true),
     dbc_marker(SetUpBoundaryProperties(iodata, *mesh.back())),
     nd_fecs(utils::ConstructFECollections<mfem::ND_FECollection>(
         iodata.solver.order, mesh.back()->Dimension(), iodata.solver.linear.mg_max_levels,
-        iodata.solver.linear.mg_coarsen_type, pc_lor)),
+        iodata.solver.linear.mg_coarsen_type, pc_mat_lor)),
     h1_fecs(utils::ConstructFECollections<mfem::H1_FECollection>(
         iodata.solver.order, mesh.back()->Dimension(), iodata.solver.linear.mg_max_levels,
         iodata.solver.linear.mg_coarsen_type, false)),
@@ -668,6 +669,8 @@ template <typename OperType>
 std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(double a0, double a1,
                                                                  double a2, double a3)
 {
+  // XX TODO: Test complex PC matrix assembly for l == 0 if coarse solve supports it
+  // XX TODO: Handle complex coeff a0/a1/a2/a3 (like GetSystemMatrix)
   if (print_prec_hdr)
   {
     Mpi::Print("\nAssembling multigrid hierarchy:\n");
@@ -691,49 +694,48 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(double a0, doub
       const int sdim = GetNDSpace().GetParMesh()->SpaceDimension();
       SumMatrixCoefficient dfr(sdim), fr(sdim), fi(sdim), fbr(sdim), fbi(sdim);
       SumCoefficient dfbr, dfbi;
-      // if (s > 0)
-      // {
-
-      //   // XX TODO: Test complex PC matrix assembly for s > 0
-      //   //          (or s == 0 if coarse solve supports it)
-      //   // XX TODO: Handle complex coeff a0/a1/a2 (like SumOperator)
-
-      //   AddStiffnessCoefficients(a0, dfr, fr);
-      //   AddStiffnessBdrCoefficients(a0, fbr);
-      //   AddDampingCoefficients(a1, fi);
-      //   AddDampingBdrCoefficients(a1, fbi);
-      //   AddRealMassCoefficients(pc_shifted ? std::abs(a2) : a2, fr);
-      //   AddRealMassBdrCoefficients(pc_shifted ? std::abs(a2) : a2, fbr);
-      //   AddImagMassCoefficients(a2, fi);
-      //   AddExtraSystemBdrCoefficients(a3, dfbr, dfbi, fbr, fbi);
-      // }
-      // else
+      if (pc_mat_real || l == 0)
       {
+        // Real-valued system matrix approximation for preconditioning.
         AddStiffnessCoefficients(a0, dfr, fr);
         AddStiffnessBdrCoefficients(a0, fbr);
         AddDampingCoefficients(a1, fr);
         AddDampingBdrCoefficients(a1, fbr);
-        AddAbsMassCoefficients(pc_shifted ? std::abs(a2) : a2, fr);
-        AddRealMassBdrCoefficients(pc_shifted ? std::abs(a2) : a2, fbr);
+        AddAbsMassCoefficients(pc_mat_shifted ? std::abs(a2) : a2, fr);
+        AddRealMassBdrCoefficients(pc_mat_shifted ? std::abs(a2) : a2, fbr);
         AddExtraSystemBdrCoefficients(a3, dfbr, dfbr, fbr, fbr);
+      }
+      else
+      {
+        // Build preconditioner based on the actual complex-valued system matrix.
+        AddStiffnessCoefficients(a0, dfr, fr);
+        AddStiffnessBdrCoefficients(a0, fbr);
+        AddDampingCoefficients(a1, fi);
+        AddDampingBdrCoefficients(a1, fbi);
+        AddRealMassCoefficients(pc_mat_shifted ? std::abs(a2) : a2, fr);
+        AddRealMassBdrCoefficients(pc_mat_shifted ? std::abs(a2) : a2, fbr);
+        AddImagMassCoefficients(a2, fi);
+        AddExtraSystemBdrCoefficients(a3, dfbr, dfbi, fbr, fbi);
       }
 
       std::unique_ptr<Operator> br, bi;
       if (!dfr.empty() || !fr.empty() || !dfbr.empty() || !fbr.empty())
       {
-        br = (s == 0)
-                 ? BuildOperator(fespace_l, &dfr, &fr, &dfbr, &fbr,
-                                 (l > 0) ? pa_order_threshold : 100, skip_zeros, pc_lor)
-                 : BuildAuxOperator(fespace_l, &fr, &fbr,
-                                    (l > 0) ? pa_order_threshold : 100, skip_zeros, pc_lor);
+        br =
+            (s == 0)
+                ? BuildOperator(fespace_l, &dfr, &fr, &dfbr, &fbr,
+                                (l > 0) ? pa_order_threshold : 100, skip_zeros, pc_mat_lor)
+                : BuildAuxOperator(fespace_l, &fr, &fbr, (l > 0) ? pa_order_threshold : 100,
+                                   skip_zeros, pc_mat_lor);
       }
       if (!fi.empty() || !dfbi.empty() || !fbi.empty())
       {
-        bi = (s == 0)
-                 ? BuildOperator(fespace_l, (SumCoefficient *)nullptr, &fi, &dfbi, &fbi,
-                                 (l > 0) ? pa_order_threshold : 100, skip_zeros, pc_lor)
-                 : BuildAuxOperator(fespace_l, &fi, &fbi,
-                                    (l > 0) ? pa_order_threshold : 100, skip_zeros, pc_lor);
+        bi =
+            (s == 0)
+                ? BuildOperator(fespace_l, (SumCoefficient *)nullptr, &fi, &dfbi, &fbi,
+                                (l > 0) ? pa_order_threshold : 100, skip_zeros, pc_mat_lor)
+                : BuildAuxOperator(fespace_l, &fi, &fbi, (l > 0) ? pa_order_threshold : 100,
+                                   skip_zeros, pc_mat_lor);
       }
       if (print_prec_hdr)
       {
@@ -741,7 +743,7 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(double a0, doub
         {
           HYPRE_BigInt nnz = br_spm->NumNonZeroElems();
           Mpi::GlobalSum(1, &nnz, fespace_l.GetComm());
-          Mpi::Print(", {:d} NNZ{}\n", nnz, pc_lor ? " (LOR)" : "");
+          Mpi::Print(", {:d} NNZ{}\n", nnz, pc_mat_lor ? " (LOR)" : "");
         }
         else
         {

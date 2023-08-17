@@ -67,8 +67,7 @@ public:
       pcg->SetInitialGuess(iodata.solver.linear.initial_guess);
       pcg->SetRelTol(iodata.solver.linear.tol);
       pcg->SetMaxIter(iodata.solver.linear.max_it);
-      auto jac =
-          std::make_unique<WrapperSolver<Operator>>(std::make_unique<JacobiSmoother>());
+      auto jac = std::make_unique<JacobiSmoother<Operator>>();
       kspM = std::make_unique<KspSolver>(std::move(pcg), std::move(jac));
       kspM->SetOperators(*M, *M);
     }
@@ -177,9 +176,6 @@ TimeOperator::TimeOperator(const IoData &iodata, SpaceOperator &spaceop,
         type = mfem::TimeDependentOperator::EXPLICIT;
       }
       break;
-    case config::TransientSolverData::Type::INVALID:
-      MFEM_ABORT("Invalid transient solver type!");
-      break;
   }
 
   // Set up time-dependent operator for 2nd-order curl-curl equation for E.
@@ -204,13 +200,11 @@ double TimeOperator::GetMaxTimeStep() const
   // Solver for M⁻¹.
   constexpr double lin_tol = 1.0e-9;
   constexpr int max_lin_it = 500;
-  mfem::CGSolver pcg(comm);
+  CgSolver<Operator> pcg(comm, 0);
   pcg.SetRelTol(lin_tol);
   pcg.SetMaxIter(max_lin_it);
-  pcg.SetPrintLevel(0);
   pcg.SetOperator(M);
-
-  JacobiSmoother jac;
+  JacobiSmoother<Operator> jac;
   jac.SetOperator(M);
   pcg.SetPreconditioner(jac);
 

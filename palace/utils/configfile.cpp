@@ -7,6 +7,36 @@
 #include <mfem.hpp>
 #include <nlohmann/json.hpp>
 
+// This is similar to NLOHMANN_JSON_SERIALIZE_ENUM, but results in an error if an enum
+// value corresponding to the string cannot be found.
+#define PALACE_JSON_SERIALIZE_ENUM(ENUM_TYPE, ...)                                         \
+  template <typename BasicJsonType>                                                        \
+  inline void to_json(BasicJsonType &j, const ENUM_TYPE &e)                                \
+  {                                                                                        \
+    static_assert(std::is_enum<ENUM_TYPE>::value, #ENUM_TYPE " must be an enum!");         \
+    static const std::pair<ENUM_TYPE, BasicJsonType> m[] = __VA_ARGS__;                    \
+    auto it = std::find_if(std::begin(m), std::end(m),                                     \
+                           [e](const std::pair<ENUM_TYPE, BasicJsonType> &ej_pair)         \
+                           { return ej_pair.first == e; });                                \
+    MFEM_VERIFY(it != std::end(m),                                                         \
+                "Invalid value for " << #ENUM_TYPE " given when parsing to JSON!");        \
+    j = it->second;                                                                        \
+  }                                                                                        \
+  template <typename BasicJsonType>                                                        \
+  inline void from_json(const BasicJsonType &j, ENUM_TYPE &e)                              \
+  {                                                                                        \
+    static_assert(std::is_enum<ENUM_TYPE>::value, #ENUM_TYPE " must be an enum!");         \
+    static const std::pair<ENUM_TYPE, BasicJsonType> m[] = __VA_ARGS__;                    \
+    auto it = std::find_if(std::begin(m), std::end(m),                                     \
+                           [j](const std::pair<ENUM_TYPE, BasicJsonType> &ej_pair)         \
+                           { return ej_pair.second == j; });                               \
+    MFEM_VERIFY(it != std::end(m),                                                         \
+                "Invalid value ("                                                          \
+                    << j << ") for "                                                       \
+                    << #ENUM_TYPE " given in configuration file when parsing from JSON!"); \
+    e = it->first;                                                                         \
+  }
+
 namespace palace::config
 {
 
@@ -16,8 +46,8 @@ namespace
 {
 
 template <std::size_t N>
-SymmetricMatrixData<N> ParseSymmetricMatrixData(json &mat, std::string name,
-                                                SymmetricMatrixData<N> data)
+void ParseSymmetricMatrixData(json &mat, const std::string &name,
+                              SymmetricMatrixData<N> &data)
 {
   auto it = mat.find(name);
   if (it != mat.end() && it->is_array())
@@ -32,31 +62,112 @@ SymmetricMatrixData<N> ParseSymmetricMatrixData(json &mat, std::string name,
     data.s.fill(s);
   }
   data.v = mat.value("MaterialAxes", data.v);
-  return data;
 }
 
-void CheckDirection(std::string &str, bool port)
+// Helper for converting string keys to enum for internal::ElementData::CoordinateSystem.
+PALACE_JSON_SERIALIZE_ENUM(
+    internal::ElementData::CoordinateSystem,
+    {{internal::ElementData::CoordinateSystem::CARTESIAN, "Cartesian"},
+     {internal::ElementData::CoordinateSystem::CYLINDRICAL, "Cylindrical"}})
+
+// Helper function for extracting element data from the configuration file, either from a
+// provided keyword argument of from a specified vector. In extracting the direction various
+// checks are performed for validity of the input combinations.
+void ParseElementData(json &elem, const std::string &name, bool required,
+                      internal::ElementData &data)
 {
-  std::transform(str.begin(), str.end(), str.begin(), ::tolower);
-  if (port)
+  data.attributes = elem.at("Attributes").get<std::vector<int>>();  // Required
+  auto it = elem.find(name);
+  if (it != elem.end() && it->is_array())
   {
-    MFEM_VERIFY((str.size() == 1 &&
-                 (str[0] == 'x' || str[0] == 'y' || str[0] == 'z' || str[0] == 'r')) ||
-                    (str.size() == 2 && (str[0] == '+' || str[0] == '-') &&
-                     (str[1] == 'x' || str[1] == 'y' || str[1] == 'z' || str[1] == 'r')),
-                "Invalid format for boundary direction or side!");
+    // Attempt to parse as an array.
+    data.direction = it->get<std::array<double, 3>>();
+    data.coordinate_system = elem.value("CoordinateSystem", data.coordinate_system);
   }
   else
   {
-    MFEM_VERIFY((str.size() == 1 && (str[0] == 'x' || str[0] == 'y' || str[0] == 'z')) ||
-                    (str.size() == 2 && (str[0] == '+' || str[0] == '-') &&
-                     (str[1] == 'x' || str[1] == 'y' || str[1] == 'z')),
-                "Invalid format for boundary direction or side!");
+    // Fall back to parsing as a string (value is optional).
+    MFEM_VERIFY(elem.find("CoordinateSystem") == elem.end(),
+                "Cannot specify \"CoordinateSystem\" when specifying a direction or side "
+                "using a string in configuration file!");
+    std::string direction;
+    direction = elem.value(name, direction);
+    for (auto &c : direction)
+    {
+      c = std::tolower(c);
+    }
+    const auto xpos = direction.find("x");
+    const auto ypos = direction.find("y");
+    const auto zpos = direction.find("z");
+    const auto rpos = direction.find("r");
+    const bool xfound = xpos != std::string::npos;
+    const bool yfound = ypos != std::string::npos;
+    const bool zfound = zpos != std::string::npos;
+    const bool rfound = rpos != std::string::npos;
+    if (xfound)
+    {
+      MFEM_VERIFY(direction.length() == 1 || direction[xpos - 1] == '-' ||
+                      direction[xpos - 1] == '+',
+                  "Missing required sign specification on \"X\" for \""
+                      << name << "\" in configuration file!");
+      MFEM_VERIFY(!yfound && !zfound && !rfound,
+                  "\"X\" cannot be combined with \"Y\", \"Z\", or \"R\" for \""
+                      << name << "\" in configuration file!");
+      data.direction[0] =
+          (direction.length() == 1 || direction[xpos - 1] == '+') ? 1.0 : -1.0;
+      data.coordinate_system = internal::ElementData::CoordinateSystem::CARTESIAN;
+    }
+    if (yfound)
+    {
+      MFEM_VERIFY(direction.length() == 1 || direction[ypos - 1] == '-' ||
+                      direction[ypos - 1] == '+',
+                  "Missing required sign specification on \"Y\" for \""
+                      << name << "\" in configuration file!");
+      MFEM_VERIFY(!xfound && !zfound && !rfound,
+                  "\"Y\" cannot be combined with \"X\", \"Z\", or \"R\" for \""
+                      << name << "\" in configuration file!");
+      data.direction[1] =
+          direction.length() == 1 || direction[ypos - 1] == '+' ? 1.0 : -1.0;
+      data.coordinate_system = internal::ElementData::CoordinateSystem::CARTESIAN;
+    }
+    if (zfound)
+    {
+      MFEM_VERIFY(direction.length() == 1 || direction[zpos - 1] == '-' ||
+                      direction[zpos - 1] == '+',
+                  "Missing required sign specification on \"Z\" for \""
+                      << name << "\" in configuration file!");
+      MFEM_VERIFY(!xfound && !yfound && !rfound,
+                  "\"Z\" cannot be combined with \"X\", \"Y\", or \"R\" for \""
+                      << name << "\" in configuration file!");
+      data.direction[2] =
+          direction.length() == 1 || direction[zpos - 1] == '+' ? 1.0 : -1.0;
+      data.coordinate_system = internal::ElementData::CoordinateSystem::CARTESIAN;
+    }
+    if (rfound)
+    {
+      MFEM_VERIFY(direction.length() == 1 || direction[rpos - 1] == '-' ||
+                      direction[rpos - 1] == '+',
+                  "Missing required sign specification on \"R\" for \""
+                      << name << "\" in configuration file!");
+      MFEM_VERIFY(!xfound && !yfound && !zfound,
+                  "\"R\" cannot be combined with \"X\", \"Y\", or \"Z\" for \""
+                      << name << "\" in configuration file!");
+      data.direction[0] =
+          direction.length() == 1 || direction[rpos - 1] == '+' ? 1.0 : -1.0;
+      data.direction[1] = 0.0;
+      data.direction[2] = 0.0;
+      data.coordinate_system = internal::ElementData::CoordinateSystem::CYLINDRICAL;
+    }
   }
-  if (str.length() == 1)
-  {
-    str.insert(0, "+");
-  }
+  MFEM_VERIFY(data.coordinate_system !=
+                      internal::ElementData::CoordinateSystem::CYLINDRICAL ||
+                  (data.direction[1] == 0.0 && data.direction[2] == 0.0),
+              "Parsing azimuthal and longitudinal directions for cylindrical coordinate "
+              "system directions from the configuration file is not currently supported!");
+  MFEM_VERIFY(!required || data.direction[0] != 0.0 || data.direction[1] != 0.0 ||
+                  data.direction[2] != 0.0,
+              "Missing \"" << name
+                           << "\" for an object which requires it in configuration file!");
 }
 
 template <typename T>
@@ -98,13 +209,12 @@ std::ostream &operator<<(std::ostream &os, const SymmetricMatrixData<N> &data)
 }  // namespace
 
 // Helper for converting string keys to enum for ProblemData::Type.
-NLOHMANN_JSON_SERIALIZE_ENUM(ProblemData::Type,
-                             {{ProblemData::Type::INVALID, nullptr},
-                              {ProblemData::Type::DRIVEN, "Driven"},
-                              {ProblemData::Type::EIGENMODE, "Eigenmode"},
-                              {ProblemData::Type::ELECTROSTATIC, "Electrostatic"},
-                              {ProblemData::Type::MAGNETOSTATIC, "Magnetostatic"},
-                              {ProblemData::Type::TRANSIENT, "Transient"}})
+PALACE_JSON_SERIALIZE_ENUM(ProblemData::Type,
+                           {{ProblemData::Type::DRIVEN, "Driven"},
+                            {ProblemData::Type::EIGENMODE, "Eigenmode"},
+                            {ProblemData::Type::ELECTROSTATIC, "Electrostatic"},
+                            {ProblemData::Type::MAGNETOSTATIC, "Magnetostatic"},
+                            {ProblemData::Type::TRANSIENT, "Transient"}})
 
 void ProblemData::SetUp(json &config)
 {
@@ -114,8 +224,6 @@ void ProblemData::SetUp(json &config)
   MFEM_VERIFY(problem->find("Type") != problem->end(),
               "Missing config[\"Problem\"][\"Type\"] in configuration file!");
   type = problem->at("Type");  // Required
-  MFEM_VERIFY(type != ProblemData::Type::INVALID,
-              "Invalid value for config[\"Problem\"][\"Type\"] in configuration file!");
   verbose = problem->value("Verbose", verbose);
   output = problem->value("Output", output);
 
@@ -406,10 +514,10 @@ void MaterialDomainData::SetUp(json &domains)
         "Missing \"Attributes\" list for \"Materials\" domain in configuration file!");
     MaterialData &data = vecdata.emplace_back();
     data.attributes = it->at("Attributes").get<std::vector<int>>();  // Required
-    data.mu_r = ParseSymmetricMatrixData(*it, "Permeability", data.mu_r);
-    data.epsilon_r = ParseSymmetricMatrixData(*it, "Permittivity", data.epsilon_r);
-    data.tandelta = ParseSymmetricMatrixData(*it, "LossTan", data.tandelta);
-    data.sigma = ParseSymmetricMatrixData(*it, "Conductivity", data.sigma);
+    ParseSymmetricMatrixData(*it, "Permeability", data.mu_r);
+    ParseSymmetricMatrixData(*it, "Permittivity", data.epsilon_r);
+    ParseSymmetricMatrixData(*it, "LossTan", data.tandelta);
+    ParseSymmetricMatrixData(*it, "Conductivity", data.sigma);
     data.lambda_L = it->value("LondonDepth", data.lambda_L);
 
     // Debug
@@ -828,15 +936,8 @@ void LumpedPortBoundaryData::SetUp(json &boundaries)
       MFEM_VERIFY(it->find("Elements") == it->end(),
                   "Cannot specify both top-level \"Attributes\" list and \"Elements\" for "
                   "\"LumpedPort\" or \"Terminal\" boundary in configuration file!");
-      data.nodes.resize(1);
-      LumpedPortData::Node &node = data.nodes.back();
-      node.attributes = it->at("Attributes").get<std::vector<int>>();  // Required
-      node.direction = it->value("Direction", node.direction);
-      if (terminal == boundaries.end())
-      {
-        // Only check direction for true ports, not terminals.
-        CheckDirection(node.direction, true);
-      }
+      auto &elem = data.elements.emplace_back();
+      ParseElementData(*it, "Direction", terminal == boundaries.end(), elem);
     }
     else
     {
@@ -849,18 +950,13 @@ void LumpedPortBoundaryData::SetUp(json &boundaries)
         MFEM_VERIFY(elem_it->find("Attributes") != elem_it->end(),
                     "Missing \"Attributes\" list for \"LumpedPort\" or \"Terminal\" "
                     "boundary element in configuration file!");
-        LumpedPortData::Node &node = data.nodes.emplace_back();
-        node.attributes = elem_it->at("Attributes").get<std::vector<int>>();  // Required
-        node.direction = elem_it->value("Direction", node.direction);
-        if (terminal == boundaries.end())
-        {
-          // Only check direction for true ports, not terminals.
-          CheckDirection(node.direction, true);
-        }
+        auto &elem = data.elements.emplace_back();
+        ParseElementData(*elem_it, "Direction", terminal == boundaries.end(), elem);
 
         // Cleanup
         elem_it->erase("Attributes");
         elem_it->erase("Direction");
+        elem_it->erase("CoordinateSystem");
         MFEM_VERIFY(elem_it->empty(),
                     "Found an unsupported configuration file keyword under \"LumpedPort\" "
                     "or \"Terminal\" boundary element!\n"
@@ -877,10 +973,10 @@ void LumpedPortBoundaryData::SetUp(json &boundaries)
     // std::cout << "Ls: " << data.Ls << '\n';
     // std::cout << "Cs: " << data.Cs << '\n';
     // std::cout << "Excitation: " << data.excitation << '\n';
-    // for (const auto &node : data.nodes)
+    // for (const auto &elem : data.elements)
     // {
-    //   std::cout << "Attributes: " << node.attributes << '\n';
-    //   std::cout << "Direction: " << node.direction << '\n';
+    //   std::cout << "Attributes: " << elem.attributes << '\n';
+    //   std::cout << "Direction: " << elem.direction << '\n';
     // }
 
     // Cleanup
@@ -894,6 +990,7 @@ void LumpedPortBoundaryData::SetUp(json &boundaries)
     it->erase("Excitation");
     it->erase("Attributes");
     it->erase("Direction");
+    it->erase("CoordinateSystem");
     it->erase("Elements");
     MFEM_VERIFY(it->empty(), "Found an unsupported configuration file keyword under "
                              "\"LumpedPort\" or \"Terminal\"!\n"
@@ -969,11 +1066,8 @@ void SurfaceCurrentBoundaryData::SetUp(json &boundaries)
       MFEM_VERIFY(it->find("Elements") == it->end(),
                   "Cannot specify both top-level \"Attributes\" list and \"Elements\" for "
                   "\"SurfaceCurrent\" boundary in configuration file!");
-      data.nodes.resize(1);
-      SurfaceCurrentData::Node &node = data.nodes.back();
-      node.attributes = it->at("Attributes").get<std::vector<int>>();  // Required
-      node.direction = it->value("Direction", node.direction);
-      CheckDirection(node.direction, true);
+      auto &elem = data.elements.emplace_back();
+      ParseElementData(*it, "Direction", true, elem);
     }
     else
     {
@@ -988,14 +1082,13 @@ void SurfaceCurrentBoundaryData::SetUp(json &boundaries)
             elem_it->find("Attributes") != elem_it->end(),
             "Missing \"Attributes\" list for \"SurfaceCurrent\" boundary element in "
             "configuration file!");
-        SurfaceCurrentData::Node &node = data.nodes.emplace_back();
-        node.attributes = it->at("Attributes").get<std::vector<int>>();  // Required
-        node.direction = it->value("Direction", node.direction);
-        CheckDirection(node.direction, true);
+        auto &elem = data.elements.emplace_back();
+        ParseElementData(*elem_it, "Direction", true, elem);
 
         // Cleanup
         elem_it->erase("Attributes");
         elem_it->erase("Direction");
+        elem_it->erase("CoordinateSystem");
         MFEM_VERIFY(elem_it->empty(), "Found an unsupported configuration file keyword "
                                       "under \"SurfaceCurrent\" boundary element!\n"
                                           << elem_it->dump(2));
@@ -1004,10 +1097,10 @@ void SurfaceCurrentBoundaryData::SetUp(json &boundaries)
 
     // Debug
     // std::cout << "Index: " << ret.first->first << '\n';
-    // for (const auto &node : data.nodes)
+    // for (const auto &elem : data.elements)
     // {
-    //   std::cout << "Attributes: " << node.attributes << '\n';
-    //   std::cout << "Direction: " << node.direction << '\n';
+    //   std::cout << "Attributes: " << elem.attributes << '\n';
+    //   std::cout << "Direction: " << elem.direction << '\n';
     // }
 
     // Cleanup
@@ -1015,6 +1108,7 @@ void SurfaceCurrentBoundaryData::SetUp(json &boundaries)
     it->erase("Attributes");
     it->erase("Direction");
     it->erase("Elements");
+    it->erase("CoordinateSystem");
     MFEM_VERIFY(
         it->empty(),
         "Found an unsupported configuration file keyword under \"SurfaceCurrent\"!\n"
@@ -1077,9 +1171,11 @@ void InductancePostData::SetUp(json &postpro)
     MFEM_VERIFY(ret.second, "Repeated \"Index\" found when processing \"Inductance\" "
                             "boundaries in configuration file!");
     InductanceData &data = ret.first->second;
-    data.attributes = it->at("Attributes").get<std::vector<int>>();  // Required
-    data.direction = it->at("Direction");                            // Required
-    CheckDirection(data.direction, false);
+    ParseElementData(*it, "Direction", true, data);
+    MFEM_VERIFY(data.coordinate_system ==
+                    internal::ElementData::CoordinateSystem::CARTESIAN,
+                "\"Direction\" for \"Inductance\" boundary only supports Cartesian "
+                "coordinate systems!");
 
     // Debug
     // std::cout << "Index: " << ret.first->first << '\n';
@@ -1090,6 +1186,7 @@ void InductancePostData::SetUp(json &postpro)
     it->erase("Index");
     it->erase("Attributes");
     it->erase("Direction");
+    it->erase("CoordinateSystem");
     MFEM_VERIFY(it->empty(),
                 "Found an unsupported configuration file keyword under \"Inductance\"!\n"
                     << it->dump(2));
@@ -1136,14 +1233,12 @@ void InterfaceDielectricPostData::SetUp(json &postpro)
       MFEM_VERIFY(it->find("Elements") == it->end(),
                   "Cannot specify both top-level \"Attributes\" list and \"Elements\" for "
                   "\"Dielectric\" boundary in configuration file!");
-      data.nodes.resize(1);
-      InterfaceDielectricData::Node &node = data.nodes.back();
-      node.attributes = it->at("Attributes").get<std::vector<int>>();  // Required
-      node.side = it->value("Side", node.side);
-      if (!node.side.empty())
-      {
-        CheckDirection(node.side, false);  // Can be empty
-      }
+      auto &elem = data.elements.emplace_back();
+      ParseElementData(*it, "Side", false, elem);
+      MFEM_VERIFY(elem.coordinate_system ==
+                      internal::ElementData::CoordinateSystem::CARTESIAN,
+                  "\"Side\" for \"Dielectric\" boundary only supports Cartesian coordinate "
+                  "systems!");
     }
     else
     {
@@ -1156,17 +1251,17 @@ void InterfaceDielectricPostData::SetUp(json &postpro)
         MFEM_VERIFY(elem_it->find("Attributes") != elem_it->end(),
                     "Missing \"Attributes\" list for \"Dielectric\" boundary element in "
                     "configuration file!");
-        InterfaceDielectricData::Node &node = data.nodes.emplace_back();
-        node.attributes = elem_it->at("Attributes").get<std::vector<int>>();  // Required
-        node.side = it->value("Side", node.side);
-        if (!node.side.empty())
-        {
-          CheckDirection(node.side, false);  // Can be empty
-        }
+        auto &elem = data.elements.emplace_back();
+        ParseElementData(*elem_it, "Side", false, elem);
+        MFEM_VERIFY(elem.coordinate_system ==
+                        internal::ElementData::CoordinateSystem::CARTESIAN,
+                    "\"Side\" for \"Dielectric\" boundary only supports Cartesian "
+                    "coordinate systems!");
 
         // Cleanup
         elem_it->erase("Attributes");
         elem_it->erase("Side");
+        elem_it->erase("CoordinateSystem");
         MFEM_VERIFY(elem_it->empty(), "Found an unsupported configuration file keyword "
                                       "under \"Dielectric\" boundary element!\n"
                                           << elem_it->dump(2));
@@ -1181,10 +1276,10 @@ void InterfaceDielectricPostData::SetUp(json &postpro)
     // std::cout << "PermittivityMS: " << data.epsilon_r_ms << '\n';
     // std::cout << "PermittivitySA: " << data.epsilon_r_sa << '\n';
     // std::cout << "Thickness: " << data.ts << '\n';
-    // for (const auto &node : data.nodes)
+    // for (const auto &elem : data.elements)
     // {
-    //   std::cout << "Attributes: " << node.attributes << '\n';
-    //   std::cout << "Side: " << node.side << '\n';
+    //   std::cout << "Attributes: " << elem.attributes << '\n';
+    //   std::cout << "Side: " << elem.side << '\n';
     // }
 
     // Cleanup
@@ -1197,6 +1292,7 @@ void InterfaceDielectricPostData::SetUp(json &postpro)
     it->erase("Thickness");
     it->erase("Attributes");
     it->erase("Side");
+    it->erase("CoordinateSystem");
     MFEM_VERIFY(it->empty(),
                 "Found an unsupported configuration file keyword under \"Dielectric\"!\n"
                     << it->dump(2));
@@ -1225,9 +1321,9 @@ void BoundaryPostData::SetUp(json &boundaries)
   }
   for (const auto &[idx, data] : dielectric)
   {
-    for (const auto &node : data.nodes)
+    for (const auto &elem : data.elements)
     {
-      attributes.insert(node.attributes.begin(), node.attributes.end());
+      attributes.insert(elem.attributes.begin(), elem.attributes.end());
     }
   }
 
@@ -1271,9 +1367,9 @@ void BoundaryData::SetUp(json &config)
   }
   for (const auto &[idx, data] : lumpedport)
   {
-    for (const auto &node : data.nodes)
+    for (const auto &elem : data.elements)
     {
-      attributes.insert(node.attributes.begin(), node.attributes.end());
+      attributes.insert(elem.attributes.begin(), elem.attributes.end());
     }
   }
   for (const auto &[idx, data] : waveport)
@@ -1282,9 +1378,9 @@ void BoundaryData::SetUp(json &config)
   }
   for (const auto &[idx, data] : current)
   {
-    for (const auto &node : data.nodes)
+    for (const auto &elem : data.elements)
     {
-      attributes.insert(node.attributes.begin(), node.attributes.end());
+      attributes.insert(elem.attributes.begin(), elem.attributes.end());
     }
   }
   attributes.insert(postpro.attributes.begin(), postpro.attributes.end());
@@ -1361,12 +1457,11 @@ void DrivenSolverData::SetUp(json &solver)
 }
 
 // Helper for converting string keys to enum for EigenSolverData::Type.
-NLOHMANN_JSON_SERIALIZE_ENUM(EigenSolverData::Type,
-                             {{EigenSolverData::Type::INVALID, nullptr},
-                              {EigenSolverData::Type::ARPACK, "ARPACK"},
-                              {EigenSolverData::Type::SLEPC, "SLEPc"},
-                              {EigenSolverData::Type::FEAST, "FEAST"},
-                              {EigenSolverData::Type::DEFAULT, "Default"}})
+PALACE_JSON_SERIALIZE_ENUM(EigenSolverData::Type,
+                           {{EigenSolverData::Type::DEFAULT, "Default"},
+                            {EigenSolverData::Type::SLEPC, "SLEPc"},
+                            {EigenSolverData::Type::ARPACK, "ARPACK"},
+                            {EigenSolverData::Type::FEAST, "FEAST"}})
 
 void EigenSolverData::SetUp(json &solver)
 {
@@ -1384,8 +1479,6 @@ void EigenSolverData::SetUp(json &solver)
   n = eigenmode->value("N", n);
   n_post = eigenmode->value("Save", n_post);
   type = eigenmode->value("Type", type);
-  MFEM_VERIFY(type != EigenSolverData::Type::INVALID,
-              "Invalid value for config[\"Eigenmode\"][\"Type\"] in configuration file!");
   pep_linear = eigenmode->value("PEPLinear", pep_linear);
   feast_contour_np = eigenmode->value("ContourNPoints", feast_contour_np);
   if (type == EigenSolverData::Type::FEAST && feast_contour_np > 1)
@@ -1483,17 +1576,14 @@ void MagnetostaticSolverData::SetUp(json &solver)
 
 // Helper for converting string keys to enum for TransientSolverData::Type and
 // TransientSolverData::ExcitationType.
-NLOHMANN_JSON_SERIALIZE_ENUM(TransientSolverData::Type,
-                             {{TransientSolverData::Type::INVALID, nullptr},
-                              {TransientSolverData::Type::GEN_ALPHA, "GeneralizedAlpha"},
-                              {TransientSolverData::Type::NEWMARK, "NewmarkBeta"},
-                              {TransientSolverData::Type::CENTRAL_DIFF,
-                               "CentralDifference"},
-                              {TransientSolverData::Type::DEFAULT, "Default"}})
-NLOHMANN_JSON_SERIALIZE_ENUM(
+PALACE_JSON_SERIALIZE_ENUM(TransientSolverData::Type,
+                           {{TransientSolverData::Type::DEFAULT, "Default"},
+                            {TransientSolverData::Type::GEN_ALPHA, "GeneralizedAlpha"},
+                            {TransientSolverData::Type::NEWMARK, "NewmarkBeta"},
+                            {TransientSolverData::Type::CENTRAL_DIFF, "CentralDifference"}})
+PALACE_JSON_SERIALIZE_ENUM(
     TransientSolverData::ExcitationType,
-    {{TransientSolverData::ExcitationType::INVALID, nullptr},
-     {TransientSolverData::ExcitationType::SINUSOIDAL, "Sinusoidal"},
+    {{TransientSolverData::ExcitationType::SINUSOIDAL, "Sinusoidal"},
      {TransientSolverData::ExcitationType::GAUSSIAN, "Gaussian"},
      {TransientSolverData::ExcitationType::DIFF_GAUSSIAN, "DifferentiatedGaussian"},
      {TransientSolverData::ExcitationType::MOD_GAUSSIAN, "ModulatedGaussian"},
@@ -1514,12 +1604,7 @@ void TransientSolverData::SetUp(json &solver)
           transient->find("TimeStep") != transient->end(),
       "Missing \"Transient\" solver \"MaxTime\" or \"TimeStep\" in configuration file!");
   type = transient->value("Type", type);
-  MFEM_VERIFY(type != TransientSolverData::Type::INVALID,
-              "Invalid value for config[\"Transient\"][\"Type\"] in configuration file!");
   excitation = transient->at("Excitation");  // Required
-  MFEM_VERIFY(
-      excitation != TransientSolverData::ExcitationType::INVALID,
-      "Invalid value for config[\"Transient\"][\"Excitation\"] in configuration file!");
   pulse_f = transient->value("ExcitationFreq", pulse_f);
   pulse_tau = transient->value("ExcitationWidth", pulse_tau);
   max_t = transient->at("MaxTime");     // Required
@@ -1552,58 +1637,51 @@ void TransientSolverData::SetUp(json &solver)
 }
 
 // Helpers for converting string keys to enum for LinearSolverData::Type,
-// LinearSolverData::Ksp, LinearSolverData::SideType,
+// LinearSolverData::KspType, LinearSolverData::SideType,
 // LinearSolverData::MultigridCoarsenType, LinearSolverData::SymFactType,
 // LinearSolverData::CompressionType, and LinearSolverData::OrthogType.
-NLOHMANN_JSON_SERIALIZE_ENUM(LinearSolverData::Type,
-                             {{LinearSolverData::Type::INVALID, nullptr},
-                              {LinearSolverData::Type::AMS, "AMS"},
-                              {LinearSolverData::Type::BOOMER_AMG, "BoomerAMG"},
-                              {LinearSolverData::Type::MUMPS, "MUMPS"},
-                              {LinearSolverData::Type::SUPERLU, "SuperLU"},
-                              {LinearSolverData::Type::STRUMPACK, "STRUMPACK"},
-                              {LinearSolverData::Type::STRUMPACK_MP, "STRUMPACK-MP"},
-                              {LinearSolverData::Type::DEFAULT, "Default"}})
-NLOHMANN_JSON_SERIALIZE_ENUM(LinearSolverData::KspType,
-                             {{LinearSolverData::KspType::INVALID, nullptr},
-                              {LinearSolverData::KspType::CG, "CG"},
-                              {LinearSolverData::KspType::MINRES, "MINRES"},
-                              {LinearSolverData::KspType::GMRES, "GMRES"},
-                              {LinearSolverData::KspType::FGMRES, "FGMRES"},
-                              {LinearSolverData::KspType::BICGSTAB, "BiCGSTAB"},
-                              {LinearSolverData::KspType::DEFAULT, "Default"}})
-NLOHMANN_JSON_SERIALIZE_ENUM(LinearSolverData::SideType,
-                             {{LinearSolverData::SideType::INVALID, nullptr},
-                              {LinearSolverData::SideType::RIGHT, "Right"},
-                              {LinearSolverData::SideType::LEFT, "Left"},
-                              {LinearSolverData::SideType::DEFAULT, "Default"}})
-NLOHMANN_JSON_SERIALIZE_ENUM(LinearSolverData::MultigridCoarsenType,
-                             {{LinearSolverData::MultigridCoarsenType::INVALID, nullptr},
-                              {LinearSolverData::MultigridCoarsenType::LINEAR, "Linear"},
-                              {LinearSolverData::MultigridCoarsenType::LOGARITHMIC,
-                               "Logarithmic"}})
-NLOHMANN_JSON_SERIALIZE_ENUM(LinearSolverData::SymFactType,
-                             {{LinearSolverData::SymFactType::INVALID, nullptr},
-                              {LinearSolverData::SymFactType::METIS, "METIS"},
-                              {LinearSolverData::SymFactType::PARMETIS, "ParMETIS"},
-                              {LinearSolverData::SymFactType::SCOTCH, "Scotch"},
-                              {LinearSolverData::SymFactType::PTSCOTCH, "PTScotch"},
-                              {LinearSolverData::SymFactType::DEFAULT, "Default"}})
-NLOHMANN_JSON_SERIALIZE_ENUM(LinearSolverData::CompressionType,
-                             {{LinearSolverData::CompressionType::INVALID, nullptr},
-                              {LinearSolverData::CompressionType::NONE, "None"},
-                              {LinearSolverData::CompressionType::BLR, "BLR"},
-                              {LinearSolverData::CompressionType::HSS, "HSS"},
-                              {LinearSolverData::CompressionType::HODLR, "HODLR"},
-                              {LinearSolverData::CompressionType::ZFP, "ZFP"},
-                              {LinearSolverData::CompressionType::BLR_HODLR, "BLR-HODLR"},
-                              {LinearSolverData::CompressionType::ZFP_BLR_HODLR,
-                               "ZFP-BLR-HODLR"}})
-NLOHMANN_JSON_SERIALIZE_ENUM(LinearSolverData::OrthogType,
-                             {{LinearSolverData::OrthogType::INVALID, nullptr},
-                              {LinearSolverData::OrthogType::MGS, "MGS"},
-                              {LinearSolverData::OrthogType::CGS, "CGS"},
-                              {LinearSolverData::OrthogType::CGS2, "CGS2"}})
+PALACE_JSON_SERIALIZE_ENUM(LinearSolverData::Type,
+                           {{LinearSolverData::Type::DEFAULT, "Default"},
+                            {LinearSolverData::Type::AMS, "AMS"},
+                            {LinearSolverData::Type::BOOMER_AMG, "BoomerAMG"},
+                            {LinearSolverData::Type::MUMPS, "MUMPS"},
+                            {LinearSolverData::Type::SUPERLU, "SuperLU"},
+                            {LinearSolverData::Type::STRUMPACK, "STRUMPACK"},
+                            {LinearSolverData::Type::STRUMPACK_MP, "STRUMPACK-MP"}})
+PALACE_JSON_SERIALIZE_ENUM(LinearSolverData::KspType,
+                           {{LinearSolverData::KspType::DEFAULT, "Default"},
+                            {LinearSolverData::KspType::CG, "CG"},
+                            {LinearSolverData::KspType::MINRES, "MINRES"},
+                            {LinearSolverData::KspType::GMRES, "GMRES"},
+                            {LinearSolverData::KspType::FGMRES, "FGMRES"},
+                            {LinearSolverData::KspType::BICGSTAB, "BiCGSTAB"}})
+PALACE_JSON_SERIALIZE_ENUM(LinearSolverData::SideType,
+                           {{LinearSolverData::SideType::DEFAULT, "Default"},
+                            {LinearSolverData::SideType::RIGHT, "Right"},
+                            {LinearSolverData::SideType::LEFT, "Left"}})
+PALACE_JSON_SERIALIZE_ENUM(LinearSolverData::MultigridCoarsenType,
+                           {{LinearSolverData::MultigridCoarsenType::LINEAR, "Linear"},
+                            {LinearSolverData::MultigridCoarsenType::LOGARITHMIC,
+                             "Logarithmic"}})
+PALACE_JSON_SERIALIZE_ENUM(LinearSolverData::SymFactType,
+                           {{LinearSolverData::SymFactType::DEFAULT, "Default"},
+                            {LinearSolverData::SymFactType::METIS, "METIS"},
+                            {LinearSolverData::SymFactType::PARMETIS, "ParMETIS"},
+                            {LinearSolverData::SymFactType::SCOTCH, "Scotch"},
+                            {LinearSolverData::SymFactType::PTSCOTCH, "PTScotch"}})
+PALACE_JSON_SERIALIZE_ENUM(LinearSolverData::CompressionType,
+                           {{LinearSolverData::CompressionType::NONE, "None"},
+                            {LinearSolverData::CompressionType::BLR, "BLR"},
+                            {LinearSolverData::CompressionType::HSS, "HSS"},
+                            {LinearSolverData::CompressionType::HODLR, "HODLR"},
+                            {LinearSolverData::CompressionType::ZFP, "ZFP"},
+                            {LinearSolverData::CompressionType::BLR_HODLR, "BLR-HODLR"},
+                            {LinearSolverData::CompressionType::ZFP_BLR_HODLR,
+                             "ZFP-BLR-HODLR"}})
+PALACE_JSON_SERIALIZE_ENUM(LinearSolverData::OrthogType,
+                           {{LinearSolverData::OrthogType::MGS, "MGS"},
+                            {LinearSolverData::OrthogType::CGS, "CGS"},
+                            {LinearSolverData::OrthogType::CGS2, "CGS2"}})
 
 void LinearSolverData::SetUp(json &solver)
 {
@@ -1613,11 +1691,7 @@ void LinearSolverData::SetUp(json &solver)
     return;
   }
   type = linear->value("Type", type);
-  MFEM_VERIFY(type != LinearSolverData::Type::INVALID,
-              "Invalid value for config[\"Linear\"][\"Type\"] in configuration file!");
   ksp_type = linear->value("KSPType", ksp_type);
-  MFEM_VERIFY(ksp_type != LinearSolverData::KspType::INVALID,
-              "Invalid value for config[\"Linear\"][\"KSPType\"] in configuration file!");
   tol = linear->value("Tol", tol);
   max_it = linear->value("MaxIts", max_it);
   max_size = linear->value("MaxSize", max_size);
@@ -1626,46 +1700,32 @@ void LinearSolverData::SetUp(json &solver)
   // Options related to multigrid
   mg_max_levels = linear->value("MGMaxLevels", mg_max_levels);
   mg_coarsen_type = linear->value("MGCoarsenType", mg_coarsen_type);
-  MFEM_VERIFY(
-      mg_coarsen_type != LinearSolverData::MultigridCoarsenType::INVALID,
-      "Invalid value for config[\"Linear\"][\"MGCoarsenType\"] in configuration file!");
   mg_legacy_transfer = linear->value("MGLegacyTransfer", mg_legacy_transfer);
-  mg_smooth_aux = linear->value("MGAuxiliarySmoother", mg_smooth_aux);
   mg_cycle_it = linear->value("MGCycleIts", mg_cycle_it);
+  mg_smooth_aux = linear->value("MGAuxiliarySmoother", mg_smooth_aux);
   mg_smooth_it = linear->value("MGSmoothIts", mg_smooth_it);
   mg_smooth_order = linear->value("MGSmoothOrder", mg_smooth_order);
+  mg_smooth_sf_max = linear->value("MGSmoothEigScaleMax", mg_smooth_sf_max);
+  mg_smooth_sf_min = linear->value("MGSmoothEigScaleMin", mg_smooth_sf_min);
+  mg_smooth_cheby_4th = linear->value("MGSmoothChebyshev4th", mg_smooth_cheby_4th);
 
   // Preconditioner-specific options
-  pc_mat_lor = linear->value("PCLowOrderRefined", pc_mat_lor);
+  pc_mat_real = linear->value("PCMatReal", pc_mat_real);
   pc_mat_shifted = linear->value("PCMatShifted", pc_mat_shifted);
+  pc_mat_lor = linear->value("PCLowOrderRefined", pc_mat_lor);
   pc_side_type = linear->value("PCSide", pc_side_type);
-  MFEM_VERIFY(pc_side_type != LinearSolverData::SideType::INVALID,
-              "Invalid value for config[\"Linear\"][\"PCSide\"] in configuration file!");
-
   sym_fact_type = linear->value("ColumnOrdering", sym_fact_type);
-  MFEM_VERIFY(
-      sym_fact_type != LinearSolverData::SymFactType::INVALID,
-      "Invalid value for config[\"Linear\"][\"ColumnOrdering\"] in configuration file!");
   strumpack_compression_type =
       linear->value("STRUMPACKCompressionType", strumpack_compression_type);
-  MFEM_VERIFY(strumpack_compression_type != LinearSolverData::CompressionType::INVALID,
-              "Invalid value for config[\"Linear\"][\"STRUMPACKCompressionType\"] in "
-              "configuration file!");
   strumpack_lr_tol = linear->value("STRUMPACKCompressionTol", strumpack_lr_tol);
   strumpack_lossy_precision =
       linear->value("STRUMPACKLossyPrecision", strumpack_lossy_precision);
   strumpack_butterfly_l = linear->value("STRUMPACKButterflyLevels", strumpack_butterfly_l);
   superlu_3d = linear->value("SuperLU3D", superlu_3d);
-
   ams_vector = linear->value("AMSVector", ams_vector);
-
   divfree_tol = linear->value("DivFreeTol", divfree_tol);
   divfree_max_it = linear->value("DivFreeMaxIts", divfree_max_it);
-
   gs_orthog_type = linear->value("GSOrthogonalization", gs_orthog_type);
-  MFEM_VERIFY(gs_orthog_type != LinearSolverData::OrthogType::INVALID,
-              "Invalid value for config[\"Linear\"][\"GSOrthogonalization\"] in "
-              "configuration file!");
 
   // Cleanup
   linear->erase("Type");
@@ -1678,13 +1738,17 @@ void LinearSolverData::SetUp(json &solver)
   linear->erase("MGMaxLevels");
   linear->erase("MGCoarsenType");
   linear->erase("MGLegacyTransfer");
-  linear->erase("MGAuxiliarySmoother");
   linear->erase("MGCycleIts");
+  linear->erase("MGAuxiliarySmoother");
   linear->erase("MGSmoothIts");
   linear->erase("MGSmoothOrder");
+  linear->erase("MGSmoothEigScaleMax");
+  linear->erase("MGSmoothEigScaleMin");
+  linear->erase("MGSmoothChebyshev4th");
 
-  linear->erase("PCLowOrderRefined");
+  linear->erase("PCMatReal");
   linear->erase("PCMatShifted");
+  linear->erase("PCLowOrderRefined");
   linear->erase("PCSide");
   linear->erase("ColumnOrdering");
   linear->erase("STRUMPACKCompressionType");
@@ -1711,13 +1775,17 @@ void LinearSolverData::SetUp(json &solver)
   // std::cout << "MGMaxLevels: " << mg_max_levels << '\n';
   // std::cout << "MGCoarsenType: " << mg_coarsen_type << '\n';
   // std::cout << "MGLegacyTransfer: " << mg_legacy_transfer << '\n';
-  // std::cout << "MGAuxiliarySmoother: " << mg_smooth_aux << '\n';
   // std::cout << "MGCycleIts: " << mg_cycle_it << '\n';
+  // std::cout << "MGAuxiliarySmoother: " << mg_smooth_aux << '\n';
   // std::cout << "MGSmoothIts: " << mg_smooth_it << '\n';
   // std::cout << "MGSmoothOrder: " << mg_smooth_order << '\n';
+  // std::cout << "MGSmoothEigScaleMax: " << mg_smooth_sf_max << '\n';
+  // std::cout << "MGSmoothEigScaleMin: " << mg_smooth_sf_min << '\n';
+  // std::cout << "MGSmoothChebyshev4th: " << mg_smooth_cheby_4th << '\n';
 
-  // std::cout << "PCLowOrderRefined: " << pc_mat_lor << '\n';
+  // std::cout << "PCMatReal: " << pc_mat_real << '\n';
   // std::cout << "PCMatShifted: " << pc_mat_shifted << '\n';
+  // std::cout << "PCLowOrderRefined: " << pc_mat_lor << '\n';
   // std::cout << "PCSide: " << pc_side_type << '\n';
   // std::cout << "ColumnOrdering: " << sym_fact_type << '\n';
   // std::cout << "STRUMPACKCompressionType: " << strumpack_compression_type << '\n';
