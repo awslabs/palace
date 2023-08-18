@@ -708,10 +708,29 @@ BoundingBox BoundingBoxFromPointCloud(MPI_Comm comm, std::vector<Eigen::Vector3d
     MFEM_VERIFY(vertices.size() >= 4,
                 "A bounding box requires a minimum of four vertices for this algorithm!");
 
+    // Pick a candidate 000 vertex using lexicographic sort. This can be vulnerable to
+    // floating point precision if the box is axis aligned, but not floating point exact.
+    // Pick candidate 111 as the furthest from this candidate, then reassign 000 as the
+    // furthest from 111. Such a pair has to form the diagonal for a point cloud defining a
+    // box.
+    auto p_000 = std::min_element(vertices.begin(), vertices.end(), EigenLE);
+    auto DistFromP_000 = [&p_000](const Eigen::Vector3d &x, const Eigen::Vector3d &y)
+    { return (x - *p_000).norm() < (y - *p_000).norm(); };
+
+    auto p_111 = std::max_element(vertices.begin(), vertices.end(), DistFromP_000);
+    auto DistFromP_111 = [&p_111](const Eigen::Vector3d &x, const Eigen::Vector3d &y)
+    { return (x - *p_111).norm() < (y - *p_111).norm(); };
+
+    p_000 = std::max_element(vertices.begin(), vertices.end(), DistFromP_111);
+
+    // Verify that p_111 is also the maximum distance from p_000 -> a diagonal is found.
+    MFEM_VERIFY(std::max_element(vertices.begin(), vertices.end(), DistFromP_000) == p_111,
+                "p_000 and p_111 must be mutually opposing points");
+
     // Define a diagonal of the ASSUMED cuboid bounding box. Store references as this is
     // useful for checking pointers later.
-    const auto &v_000 = *std::min_element(vertices.begin(), vertices.end(), EigenLE);
-    const auto &v_111 = *std::max_element(vertices.begin(), vertices.end(), EigenLE);
+    const auto &v_000 = *p_000;
+    const auto &v_111 = *p_111;
     MFEM_VERIFY(&v_000 != &v_111, "Minimum and maximum extents cannot be identical!");
     const auto origin = v_000;
     const Eigen::Vector3d n_1 = (v_111 - v_000).normalized();
@@ -729,7 +748,6 @@ BoundingBox BoundingBoxFromPointCloud(MPI_Comm comm, std::vector<Eigen::Vector3d
                           { return PerpendicularDistance(x) < PerpendicularDistance(y); });
     MFEM_VERIFY(&t_0 != &v_000, "Vertices are degenerate!");
     MFEM_VERIFY(&t_0 != &v_111, "Vertices are degenerate!");
-
     // Use the discovered vertex to define a second direction and thus a plane.
     const Eigen::Vector3d n_2 =
         ((t_0 - origin) - (t_0 - origin).dot(n_1) * n_1).normalized();
@@ -846,11 +864,43 @@ BoundingBall BoundingBallFromPointCloud(MPI_Comm comm,
   BoundingBall ball;
   if (dominant_rank == Mpi::Rank(comm))
   {
-    // dominant_rank now has a fully stocked vector of vertices. Use lexicographic sort to
-    // get min and max vertices. These will be separated by the largest L1 distance.
+    // dominant_rank now has a fully stocked vector of vertices. All other ranks will wait
+    // for results. Deduplicate vertices. Given floating point precision, need a tolerance.
+    auto vertex_equality = [](const auto &x, const auto &y)
+    {
+      constexpr double tolerance = 10.0 * std::numeric_limits<double>::epsilon();
+      return std::abs(x[0] - y[0]) < tolerance && std::abs(x[1] - y[1]) < tolerance &&
+             std::abs(x[2] - y[2]) < tolerance;
+    };
+
     vertices = std::move(collected_vertices);
-    const auto &min = *std::min_element(vertices.begin(), vertices.end(), EigenLE);
-    const auto &max = *std::max_element(vertices.begin(), vertices.end(), EigenLE);
+    std::sort(vertices.begin(), vertices.end(), EigenLE);
+    vertices.erase(std::unique(vertices.begin(), vertices.end(), vertex_equality),
+                   vertices.end());
+    MFEM_VERIFY(vertices.size() >= 3,
+                "A bounding ball requires a minimum of three vertices for this algorithm!");
+
+    // Pick a candidate 000 vertex using lexicographic sort. This can be vulnerable to
+    // floating point precision if there is no directly opposed vertex.
+    // Pick candidate 111 as the furthest from this candidate, then reassign 000 as the
+    // furthest from 111. Such a pair has to form the diagonal for a point cloud defining a
+    // ball.
+    auto p_000 = std::min_element(vertices.begin(), vertices.end(), EigenLE);
+    auto DistFromP_000 = [&p_000](const Eigen::Vector3d &x, const Eigen::Vector3d &y)
+    { return (x - *p_000).norm() < (y - *p_000).norm(); };
+
+    auto p_111 = std::max_element(vertices.begin(), vertices.end(), DistFromP_000);
+    auto DistFromP_111 = [&p_111](const Eigen::Vector3d &x, const Eigen::Vector3d &y)
+    { return (x - *p_111).norm() < (y - *p_111).norm(); };
+
+    p_000 = std::max_element(vertices.begin(), vertices.end(), DistFromP_111);
+
+    // Verify that p_111 is also the maximum distance from p_000 -> a diagonal is found.
+    MFEM_VERIFY(std::max_element(vertices.begin(), vertices.end(), DistFromP_000) == p_111,
+                "p_000 and p_111 must be mutually opposing points");
+
+    const auto &min = *p_000;
+    const auto &max = *p_111;
     Eigen::Vector3d delta = max - min;
     ball.radius = 0.5 * delta.norm();
     Vector3dMap(ball.center.data()) = 0.5 * (min + max);
@@ -879,8 +929,7 @@ BoundingBall BoundingBallFromPointCloud(MPI_Comm comm,
     MFEM_VERIFY(std::abs(PerpendicularDistance({delta}, perp) - ball.radius) <=
                     radius_tol * ball.radius,
                 "A point perpendicular must be contained in the ball: "
-                    << PerpendicularDistance({delta}, perp) << " vs. " << ball.radius
-                    << '!');
+                    << PerpendicularDistance({delta}, perp) << " vs. " << ball.radius);
 
     // Compute a perpendicular to the circle using the cross product.
     const Eigen::Vector3d n_radial = (perp - CVector3dMap(ball.center.data())).normalized();
