@@ -70,7 +70,7 @@ public:
   const auto &GetRTSpace() const { return rt_fespace; }
 
   // Return the number of true (conforming) dofs on the finest ND space.
-  auto GetNDof() { return GetNDSpace().GlobalTrueVSize(); }
+  auto GlobalTrueVSize() { return GetNDSpace().GlobalTrueVSize(); }
 
   // Construct and return system matrix representing discretized curl-curl operator for
   // Ampere's law.
