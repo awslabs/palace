@@ -81,24 +81,26 @@ void GetInverseDiagonal(const ComplexParOperator &A, ComplexVector &dinv)
   }
   dinv.Reciprocal();
 
-  auto d = dinv;
+  // std::vector<std::complex<double>> d(dinv.Size());
 
-  // auto lower_bound = 1e-6 * linalg::Norml2(A.GetComm(), dinv);
-  auto size = d.Size();
-  Mpi::GlobalSum(1, &size, A.GetComm());
-  auto min = d.Min();
-  Mpi::GlobalMin(1, &min, A.GetComm());
-  auto max = d.Max();
-  Mpi::GlobalMax(1, &max, A.GetComm());
+  // dinv.Get(d.data(), d.size());
 
-  auto min_mag = std::transform_reduce(d.begin(), d.end(),
-    std::numeric_limits<double>::max(), [](auto x, auto y){return std::min(x,y); }, [](auto v){return std::abs(v);});
-  Mpi::GlobalMin(1, &min_mag, A.GetComm());
+  // // auto lower_bound = 1e-6 * linalg::Norml2(A.GetComm(), dinv);
+  // auto size = d.size();
+  // Mpi::GlobalSum(1, &size, A.GetComm());
+  // auto min = d.Real().Min();
+  // Mpi::GlobalMin(1, &min, A.GetComm());
+  // auto max = d.Real().Max();
+  // Mpi::GlobalMax(1, &max, A.GetComm());
 
-  auto lower_bound = linalg::Norml2(A.GetComm(), d) / size;
+  // auto min_mag = std::transform_reduce(d.begin(), d.end(),
+  //   std::numeric_limits<double>::max(), [](auto x, auto y){return std::min(x,y); }, [](auto v){return std::abs(v);});
+  // Mpi::GlobalMin(1, &min_mag, A.GetComm());
 
-  Mpi::Print("norm {:.3e}, lower_bound {:.3e}, min {:.3e}, max {:.3e}, min_mag {:.3e}\n",
-  linalg::Norml2(A.GetComm(), d), lower_bound, min, max, min_mag);
+  // auto lower_bound = linalg::Norml2(A.GetComm(), d) / size;
+
+  // Mpi::Print("norm {:.3e}, lower_bound {:.3e}, min {:.3e}, max {:.3e}, min_mag {:.3e}\n",
+  // linalg::Norml2(A.GetComm(), d), lower_bound, min, max, min_mag);
 }
 
 double GetLambdaMax(MPI_Comm comm, const Operator &A, const Vector &dinv)

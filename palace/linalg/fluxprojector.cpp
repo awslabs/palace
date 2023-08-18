@@ -58,7 +58,7 @@ FluxProjector::FluxProjector(mfem::ParFiniteElementSpaceHierarchy &smooth_flux_f
   // we don't use an exact solve on the coarsest level.
   auto amg = std::make_unique<WrapperSolver<Operator>>(std::make_unique<BoomerAmgSolver>(1, 1, 0));
   auto gmg = std::make_unique<GeometricMultigridSolver<Operator>>(
-      std::move(amg), smooth_flux_fes, nullptr, 1, 1, 2, pa_order_threshold);
+      std::move(amg), smooth_flux_fes, nullptr, 1, 1, 2, 1.0, 0.0, true, pa_order_threshold);
 
   auto pcg = std::make_unique<CgSolver<Operator>>(
       smooth_flux_fes.GetFinestFESpace().GetComm(), print_level);
