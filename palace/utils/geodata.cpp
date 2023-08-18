@@ -560,13 +560,12 @@ bool EigenLE(const Eigen::Vector3d &x, const Eigen::Vector3d &y)
 };
 
 // Helper for collecting a point cloud from a mesh, used in calculating bounding boxes or
-// bounding balls.
-std::vector<Eigen::Vector3d> CollectPointCloud(mfem::ParMesh &mesh,
-                                               const mfem::Array<int> &marker, bool bdr)
+// bounding balls. Returns the vector of vertices on the dominant rank, and none on all
+// ranks. Vertices are de-duplicated to a certain floating point precision.
+int CollectPointCloudOnRoot(mfem::ParMesh &mesh, const mfem::Array<int> &marker, bool bdr,
+                            std::vector<Eigen::Vector3d> &vertices)
 {
   std::set<int> vertex_indices;
-  std::vector<Eigen::Vector3d> vertices;
-
   if (mesh.GetNodes() == nullptr)
   {
     // Linear mesh, work with element vertices directly.
@@ -643,12 +642,9 @@ std::vector<Eigen::Vector3d> CollectPointCloud(mfem::ParMesh &mesh,
       }
     }
   }
-  return vertices;
-}
 
-// Calculates a bounding box from a point cloud, result is broadcast across all processes.
-BoundingBox BoundingBoxFromPointCloud(MPI_Comm comm, std::vector<Eigen::Vector3d> vertices)
-{
+  // dominant_rank will perform the calculation.
+  MPI_Comm comm = mesh.GetComm();
   const auto num_vertices = int(vertices.size());
   const int dominant_rank = [&]()
   {
@@ -656,13 +652,10 @@ BoundingBox BoundingBoxFromPointCloud(MPI_Comm comm, std::vector<Eigen::Vector3d
     Mpi::GlobalMaxLoc(1, &vert, &rank, comm);
     return rank;
   }();
-
-  // dominant_rank will perform the calculation.
   std::vector<int> recv_counts(Mpi::Size(comm)), displacements;
+  std::vector<Eigen::Vector3d> collected_vertices;
   MPI_Gather(&num_vertices, 1, MPI_INT, recv_counts.data(), 1, MPI_INT, dominant_rank,
              comm);
-
-  std::vector<Eigen::Vector3d> collected_vertices;
   if (dominant_rank == Mpi::Rank(comm))
   {
     // First displacement is zero, then after is the partial sum of recv_counts.
@@ -689,43 +682,52 @@ BoundingBox BoundingBoxFromPointCloud(MPI_Comm comm, std::vector<Eigen::Vector3d
   MPI_Gatherv(vertices.data(), 3 * num_vertices, MPI_DOUBLE, collected_vertices.data(),
               recv_counts.data(), displacements.data(), MPI_DOUBLE, dominant_rank, comm);
 
-  BoundingBox box;
+  // Deduplicate vertices. Given floating point precision, need a tolerance.
   if (dominant_rank == Mpi::Rank(comm))
   {
-    // dominant_rank now has a fully stocked vector of vertices. All other ranks will wait
-    // for results. Deduplicate vertices. Given floating point precision, need a tolerance.
     auto vertex_equality = [](const auto &x, const auto &y)
     {
       constexpr double tolerance = 10.0 * std::numeric_limits<double>::epsilon();
       return std::abs(x[0] - y[0]) < tolerance && std::abs(x[1] - y[1]) < tolerance &&
              std::abs(x[2] - y[2]) < tolerance;
     };
-
     vertices = std::move(collected_vertices);
     std::sort(vertices.begin(), vertices.end(), EigenLE);
     vertices.erase(std::unique(vertices.begin(), vertices.end(), vertex_equality),
                    vertices.end());
-    MFEM_VERIFY(vertices.size() >= 4,
-                "A bounding box requires a minimum of four vertices for this algorithm!");
+  }
+  else
+  {
+    vertices.clear();
+  }
 
+  return dominant_rank;
+}
+
+// Calculates a bounding box from a point cloud, result is broadcast across all processes.
+BoundingBox BoundingBoxFromPointCloud(MPI_Comm comm, std::vector<Eigen::Vector3d> &vertices,
+                                      int dominant_rank)
+{
+  BoundingBox box;
+  if (dominant_rank == Mpi::Rank(comm))
+  {
     // Pick a candidate 000 vertex using lexicographic sort. This can be vulnerable to
     // floating point precision if the box is axis aligned, but not floating point exact.
     // Pick candidate 111 as the furthest from this candidate, then reassign 000 as the
     // furthest from 111. Such a pair has to form the diagonal for a point cloud defining a
-    // box.
+    // box. Verify that p_111 is also the maximum distance from p_000 -> a diagonal is
+    // found.
+    MFEM_VERIFY(vertices.size() >= 4,
+                "A bounding box requires a minimum of four vertices for this algorithm!");
     auto p_000 = std::min_element(vertices.begin(), vertices.end(), EigenLE);
     auto DistFromP_000 = [&p_000](const Eigen::Vector3d &x, const Eigen::Vector3d &y)
     { return (x - *p_000).norm() < (y - *p_000).norm(); };
-
     auto p_111 = std::max_element(vertices.begin(), vertices.end(), DistFromP_000);
     auto DistFromP_111 = [&p_111](const Eigen::Vector3d &x, const Eigen::Vector3d &y)
     { return (x - *p_111).norm() < (y - *p_111).norm(); };
-
     p_000 = std::max_element(vertices.begin(), vertices.end(), DistFromP_111);
-
-    // Verify that p_111 is also the maximum distance from p_000 -> a diagonal is found.
     MFEM_VERIFY(std::max_element(vertices.begin(), vertices.end(), DistFromP_000) == p_111,
-                "p_000 and p_111 must be mutually opposing points");
+                "p_000 and p_111 must be mutually opposing points!");
 
     // Define a diagonal of the ASSUMED cuboid bounding box. Store references as this is
     // useful for checking pointers later.
@@ -748,6 +750,7 @@ BoundingBox BoundingBoxFromPointCloud(MPI_Comm comm, std::vector<Eigen::Vector3d
                           { return PerpendicularDistance(x) < PerpendicularDistance(y); });
     MFEM_VERIFY(&t_0 != &v_000, "Vertices are degenerate!");
     MFEM_VERIFY(&t_0 != &v_111, "Vertices are degenerate!");
+
     // Use the discovered vertex to define a second direction and thus a plane.
     const Eigen::Vector3d n_2 =
         ((t_0 - origin) - (t_0 - origin).dot(n_1) * n_1).normalized();
@@ -819,85 +822,29 @@ BoundingBox BoundingBoxFromPointCloud(MPI_Comm comm, std::vector<Eigen::Vector3d
 
 // Calculates a bounding ball from a point cloud, result is broadcast across all processes.
 BoundingBall BoundingBallFromPointCloud(MPI_Comm comm,
-                                        std::vector<Eigen::Vector3d> vertices)
+                                        std::vector<Eigen::Vector3d> &vertices,
+                                        int dominant_rank)
 {
-  const auto num_vertices = int(vertices.size());
-  const int dominant_rank = [&]()
-  {
-    int vert = num_vertices, rank = Mpi::Rank(comm);
-    Mpi::GlobalMaxLoc(1, &vert, &rank, comm);
-    return rank;
-  }();
-
-  // dominant_rank will perform the calculation.
-  std::vector<int> recv_counts(Mpi::Size(comm)), displacements;
-  MPI_Gather(&num_vertices, 1, MPI_INT, recv_counts.data(), 1, MPI_INT, dominant_rank,
-             comm);
-
-  std::vector<Eigen::Vector3d> collected_vertices;
-  if (dominant_rank == Mpi::Rank(comm))
-  {
-    // First displacement is zero, then after is the partial sum of recv_counts.
-    displacements.resize(Mpi::Size(comm));
-    displacements[0] = 0;
-    std::partial_sum(recv_counts.begin(), recv_counts.end() - 1, displacements.begin() + 1);
-
-    // Add on slots at the end of vertices for the incoming data.
-    collected_vertices.resize(std::accumulate(recv_counts.begin(), recv_counts.end(), 0));
-
-    // MPI transfer will be done with MPI_DOUBLE, so duplicate all these values.
-    for (auto &x : displacements)
-    {
-      x *= 3;
-    }
-    for (auto &x : recv_counts)
-    {
-      x *= 3;
-    }
-  }
-
-  // Gather the data to the dominant rank.
-  static_assert(sizeof(Eigen::Vector3d) == 3 * sizeof(double));
-  MPI_Gatherv(vertices.data(), 3 * num_vertices, MPI_DOUBLE, collected_vertices.data(),
-              recv_counts.data(), displacements.data(), MPI_DOUBLE, dominant_rank, comm);
-
   BoundingBall ball;
   if (dominant_rank == Mpi::Rank(comm))
   {
-    // dominant_rank now has a fully stocked vector of vertices. All other ranks will wait
-    // for results. Deduplicate vertices. Given floating point precision, need a tolerance.
-    auto vertex_equality = [](const auto &x, const auto &y)
-    {
-      constexpr double tolerance = 10.0 * std::numeric_limits<double>::epsilon();
-      return std::abs(x[0] - y[0]) < tolerance && std::abs(x[1] - y[1]) < tolerance &&
-             std::abs(x[2] - y[2]) < tolerance;
-    };
-
-    vertices = std::move(collected_vertices);
-    std::sort(vertices.begin(), vertices.end(), EigenLE);
-    vertices.erase(std::unique(vertices.begin(), vertices.end(), vertex_equality),
-                   vertices.end());
-    MFEM_VERIFY(vertices.size() >= 3,
-                "A bounding ball requires a minimum of three vertices for this algorithm!");
-
     // Pick a candidate 000 vertex using lexicographic sort. This can be vulnerable to
     // floating point precision if there is no directly opposed vertex.
     // Pick candidate 111 as the furthest from this candidate, then reassign 000 as the
     // furthest from 111. Such a pair has to form the diagonal for a point cloud defining a
-    // ball.
+    // ball. Verify that p_111 is also the maximum distance from p_000 -> a diagonal is
+    // found.
+    MFEM_VERIFY(vertices.size() >= 3,
+                "A bounding ball requires a minimum of three vertices for this algorithm!");
     auto p_000 = std::min_element(vertices.begin(), vertices.end(), EigenLE);
     auto DistFromP_000 = [&p_000](const Eigen::Vector3d &x, const Eigen::Vector3d &y)
     { return (x - *p_000).norm() < (y - *p_000).norm(); };
-
     auto p_111 = std::max_element(vertices.begin(), vertices.end(), DistFromP_000);
     auto DistFromP_111 = [&p_111](const Eigen::Vector3d &x, const Eigen::Vector3d &y)
     { return (x - *p_111).norm() < (y - *p_111).norm(); };
-
     p_000 = std::max_element(vertices.begin(), vertices.end(), DistFromP_111);
-
-    // Verify that p_111 is also the maximum distance from p_000 -> a diagonal is found.
     MFEM_VERIFY(std::max_element(vertices.begin(), vertices.end(), DistFromP_000) == p_111,
-                "p_000 and p_111 must be mutually opposing points");
+                "p_000 and p_111 must be mutually opposing points!");
 
     const auto &min = *p_000;
     const auto &max = *p_111;
@@ -929,7 +876,8 @@ BoundingBall BoundingBallFromPointCloud(MPI_Comm comm,
     MFEM_VERIFY(std::abs(PerpendicularDistance({delta}, perp) - ball.radius) <=
                     radius_tol * ball.radius,
                 "A point perpendicular must be contained in the ball: "
-                    << PerpendicularDistance({delta}, perp) << " vs. " << ball.radius);
+                    << PerpendicularDistance({delta}, perp) << " vs. " << ball.radius
+                    << "!");
 
     // Compute a perpendicular to the circle using the cross product.
     const Eigen::Vector3d n_radial = (perp - CVector3dMap(ball.center.data())).normalized();
@@ -969,7 +917,9 @@ BoundingBall BoundingBallFromPointCloud(MPI_Comm comm,
 
 BoundingBox GetBoundingBox(mfem::ParMesh &mesh, const mfem::Array<int> &marker, bool bdr)
 {
-  return BoundingBoxFromPointCloud(mesh.GetComm(), CollectPointCloud(mesh, marker, bdr));
+  std::vector<Eigen::Vector3d> vertices;
+  int dominant_rank = CollectPointCloudOnRoot(mesh, marker, bdr, vertices);
+  return BoundingBoxFromPointCloud(mesh.GetComm(), vertices, dominant_rank);
 }
 
 BoundingBox GetBoundingBox(mfem::ParMesh &mesh, int attr, bool bdr)
@@ -982,7 +932,9 @@ BoundingBox GetBoundingBox(mfem::ParMesh &mesh, int attr, bool bdr)
 
 BoundingBall GetBoundingBall(mfem::ParMesh &mesh, const mfem::Array<int> &marker, bool bdr)
 {
-  return BoundingBallFromPointCloud(mesh.GetComm(), CollectPointCloud(mesh, marker, bdr));
+  std::vector<Eigen::Vector3d> vertices;
+  int dominant_rank = CollectPointCloudOnRoot(mesh, marker, bdr, vertices);
+  return BoundingBallFromPointCloud(mesh.GetComm(), vertices, dominant_rank);
 }
 
 BoundingBall GetBoundingBall(mfem::ParMesh &mesh, int attr, bool bdr)
