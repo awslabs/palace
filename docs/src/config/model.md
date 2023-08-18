@@ -89,3 +89,9 @@ Specified in mesh length units.
 
 `"Radius" [None]` : The radius of the sphere for this sphere refinement region, specified in
 mesh length units.
+
+### Advanced model options
+
+  - `"Partition" [""]`
+  - `"ReorientTetMesh" [false]`
+  - `"RemoveCurvature" [false]`

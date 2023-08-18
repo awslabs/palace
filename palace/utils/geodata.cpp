@@ -30,7 +30,7 @@ namespace
 const auto MSH_FLT_PRECISION = std::numeric_limits<double>::max_digits10;
 
 // Load the serial mesh from disk.
-std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &);
+std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &, bool);
 
 // Optionally reorder mesh elements based on MFEM's internal reordeing tools for improved
 // cache usage.
@@ -49,7 +49,8 @@ std::map<int, std::array<int, 2>> CheckMesh(std::unique_ptr<mfem::Mesh> &,
 // Given a serial mesh on the root processor and element partitioning, create a parallel
 // mesh oer the given communicator.
 std::unique_ptr<mfem::ParMesh> DistributeMesh(MPI_Comm, std::unique_ptr<mfem::Mesh> &,
-                                              std::unique_ptr<int[]> &);
+                                              std::unique_ptr<int[]> &,
+                                              const std::string &);
 
 // Get list of domain and boundary attribute markers used in configuration file for mesh
 // cleaning.
@@ -74,7 +75,7 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(MPI_Comm comm, const IoData &iodata, boo
   {
     // Optionally reorder elements (and vertices) based on spatial location after loading
     // the serial mesh.
-    smesh = LoadMesh(iodata.model.mesh);
+    smesh = LoadMesh(iodata.model.mesh, iodata.model.remove_curvature);
     if (reorder)
     {
       ReorderMesh(*smesh);
@@ -98,8 +99,8 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(MPI_Comm comm, const IoData &iodata, boo
 
   // Construct the parallel mesh data structure by distributing the serial mesh from the
   // root process. The serial mesh and partitioning are deleted inside.
-  std::unique_ptr<mfem::ParMesh> mesh = DistributeMesh(comm, smesh, partitioning);
-
+  std::unique_ptr<mfem::ParMesh> mesh =
+      DistributeMesh(comm, smesh, partitioning, iodata.problem.output);
 #if 0
   {
     std::string tmp = iodata.problem.output;
@@ -463,7 +464,7 @@ void GetAxisAlignedBoundingBox(mfem::ParMesh &mesh, const mfem::Array<int> &mark
   }
   else
   {
-    int ref = mesh.GetNodes()->FESpace()->GetMaxElementOrder();
+    const int ref = mesh.GetNodes()->FESpace()->GetMaxElementOrder();
     auto BBUpdate = [&ref, &min, &max](mfem::ElementTransformation *T,
                                        mfem::Geometry::Type &geo) -> void
     {
@@ -1044,13 +1045,14 @@ void GetSurfaceNormal(mfem::ParMesh &mesh, const mfem::Array<int> &marker,
 namespace
 {
 
-std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &path)
+std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &path, bool remove_curvature)
 {
   // Read the (serial) mesh from the given mesh file. Handle preparation for refinement and
   // orientations here to avoid possible reorientations and reordering later on. MFEM
   // supports a native mesh format (.mesh), VTK/VTU, Gmsh, as well as some others. We use
   // built-in converters for the types we know, otherwise rely on MFEM to do the conversion
   // or error out if not supported.
+  std::unique_ptr<mfem::Mesh> mesh;
   std::filesystem::path mfile(path);
   if (mfile.extension() == ".mphtxt" || mfile.extension() == ".mphbin" ||
       mfile.extension() == ".nas" || mfile.extension() == ".bdf")
@@ -1096,16 +1098,23 @@ std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &path)
       MFEM_ABORT("Unable to open translated mesh file \"" << tmp << "\"!");
     }
 #endif
-    return std::make_unique<mfem::Mesh>(fi, 1, 1, true);
+    mesh = std::make_unique<mfem::Mesh>(fi, 1, 1, true);
   }
-  // Otherwise, just rely on MFEM load the mesh.
-  std::ifstream fi(path);
-  if (!fi.good())
+  else
   {
-    MFEM_ABORT("Unable to open mesh file \"" << path << "\"!");
+    // Otherwise, just rely on MFEM load the mesh.
+    std::ifstream fi(path);
+    if (!fi.good())
+    {
+      MFEM_ABORT("Unable to open mesh file \"" << path << "\"!");
+    }
+    mesh = std::make_unique<mfem::Mesh>(fi, 1, 1, true);
   }
-  std::unique_ptr mesh = std::make_unique<mfem::Mesh>(fi, 1, 1, true);
   mesh->EnsureNodes();
+  if (remove_curvature && mesh->GetNodes()->FESpace()->GetMaxElementOrder() > 1)
+  {
+    mesh->SetCurvature(1, false);
+  }
   return mesh;
 }
 
@@ -1536,115 +1545,110 @@ std::map<int, std::array<int, 2>> CheckMesh(std::unique_ptr<mfem::Mesh> &orig_me
 
 std::unique_ptr<mfem::ParMesh> DistributeMesh(MPI_Comm comm,
                                               std::unique_ptr<mfem::Mesh> &smesh,
-                                              std::unique_ptr<int[]> &partitioning)
+                                              std::unique_ptr<int[]> &partitioning,
+                                              const std::string &output_dir)
 {
   // Take a serial mesh and partitioning on the root process and construct the global
   // parallel mesh. For now, prefer the MPI-based version.
 #if 0
+  // Write each processor's component to file.
+  std::string tmp = output_dir;
+  if (tmp.back() != '/')
   {
-    // Write each processor's component to file.
-    std::string tmp = iodata.problem.output;
-    if (tmp.back() != '/')
-    {
-      tmp += '/';
-    }
-    tmp += "tmp/";
-    int width = 1 + static_cast<int>(std::log10(Mpi::Size(comm) - 1));
-    if (Mpi::Root(comm))
-    {
-      if (!std::filesystem::exists(tmp))
-      {
-        std::filesystem::create_directories(tmp);
-      }
-      mfem::MeshPartitioner partitioner(*smesh, Mpi::Size(comm), partitioning.get());
-      for (int i = 0; i < Mpi::Size(comm); i++)
-      {
-        mfem::MeshPart part;
-        partitioner.ExtractPart(i, part);
-        std::string pfile = mfem::MakeParFilename(tmp + "part.", i, ".mesh", width);
-        std::ofstream fo(pfile);
-        // mfem::ofgzstream fo(pfile, true);  // Use zlib compression if available
-        // fo << std::fixed;
-        fo << std::scientific;
-        fo.precision(MSH_FLT_PRECISION);
-        part.Print(fo);
-      }
-    }
-
-    // Each process loads its own partitioned mesh file and constructs the parallel mesh.
-    std::string pfile =
-        mfem::MakeParFilename(tmp + "part.", Mpi::Rank(comm), ".mesh", width);
-    int exists = 0;
-    while (!exists)  // Wait for root to finish writing all files
-    {
-      exists = std::filesystem::exists(pfile);
-      Mpi::GlobalMax(1, &exists, comm);
-    }
-    std::ifstream fi(pfile);
-    // mfem::ifgzstream fi(pfile);
-    if (!fi.good())
-    {
-      MFEM_ABORT("Unable to open partitioned mesh file \"" << pfile << "\"!");
-    }
-    auto pmesh = std::make_unique<mfem::ParMesh>(comm, fi);
-    Mpi::Barrier(comm);
-    if (Mpi::Root(comm))
-    {
-      std::filesystem::remove_all(tmp);  // Remove the temporary directory
-    }
-    return pmesh;
+    tmp += '/';
   }
-#endif
+  tmp += "tmp/";
+  int width = 1 + static_cast<int>(std::log10(Mpi::Size(comm) - 1));
+  if (Mpi::Root(comm))
   {
-    // Send each processor's component as a byte string.
-    std::vector<std::string> so;
-    if (Mpi::Root(comm))
+    if (!std::filesystem::exists(tmp))
     {
-      mfem::MeshPartitioner partitioner(*smesh, Mpi::Size(comm), partitioning.get());
-      so.reserve(Mpi::Size(comm));
-      for (int i = 0; i < Mpi::Size(comm); i++)
-      {
-        mfem::MeshPart part;
-        partitioner.ExtractPart(i, part);
-        std::ostringstream fo(std::stringstream::out);
-        // fo << std::fixed;
-        fo << std::scientific;
-        fo.precision(MSH_FLT_PRECISION);
-        part.Print(fo);
-        so.push_back(fo.str());
-        // so.push_back((i > 0) ? zlib::CompressString(fo.str()) : fo.str());
-      }
+      std::filesystem::create_directories(tmp);
     }
+    mfem::MeshPartitioner partitioner(*smesh, Mpi::Size(comm), partitioning.get());
+    for (int i = 0; i < Mpi::Size(comm); i++)
+    {
+      mfem::MeshPart part;
+      partitioner.ExtractPart(i, part);
+      std::string pfile = mfem::MakeParFilename(tmp + "part.", i, ".mesh", width);
+      std::ofstream fo(pfile);
+      // mfem::ofgzstream fo(pfile, true);  // Use zlib compression if available
+      // fo << std::fixed;
+      fo << std::scientific;
+      fo.precision(MSH_FLT_PRECISION);
+      part.Print(fo);
+    }
+  }
 
-    // Scatter the partitioned mesh files and generate the parallel mesh.
-    if (Mpi::Root(comm))
+  // Each process loads its own partitioned mesh file and constructs the parallel mesh.
+  std::string pfile =
+      mfem::MakeParFilename(tmp + "part.", Mpi::Rank(comm), ".mesh", width);
+  int exists = 0;
+  while (!exists)  // Wait for root to finish writing all files
+  {
+    exists = std::filesystem::exists(pfile);
+    Mpi::GlobalMax(1, &exists, comm);
+  }
+  std::ifstream fi(pfile);
+  // mfem::ifgzstream fi(pfile);
+  if (!fi.good())
+  {
+    MFEM_ABORT("Unable to open partitioned mesh file \"" << pfile << "\"!");
+  }
+  auto pmesh = std::make_unique<mfem::ParMesh>(comm, fi);
+  Mpi::Barrier(comm);
+  if (Mpi::Root(comm))
+  {
+    std::filesystem::remove_all(tmp);  // Remove the temporary directory
+  }
+  return pmesh;
+#endif
+  // Send each processor's component as a byte string.
+  std::unique_ptr<mfem::ParMesh> pmesh;
+  if (Mpi::Root(comm))
+  {
+    mfem::MeshPartitioner partitioner(*smesh, Mpi::Size(comm), partitioning.get());
+    std::vector<MPI_Request> send_requests(Mpi::Size(comm) - 1, MPI_REQUEST_NULL);
+    std::vector<std::string> so;
+    so.reserve(Mpi::Size(comm));
+    for (int i = 0; i < Mpi::Size(comm); i++)
     {
-      std::vector<MPI_Request> send_requests(Mpi::Size(comm) - 1, MPI_REQUEST_NULL);
-      for (int i = 1; i < Mpi::Size(comm); i++)
+      mfem::MeshPart part;
+      partitioner.ExtractPart(i, part);
+      std::ostringstream fo(std::stringstream::out);
+      // fo << std::fixed;
+      fo << std::scientific;
+      fo.precision(MSH_FLT_PRECISION);
+      part.Print(fo);
+      so.push_back(fo.str());
+      // so.push_back((i > 0) ? zlib::CompressString(fo.str()) : fo.str());
+      if (i > 0)
       {
-        int ilen = static_cast<int>(so[i].length());
-        MFEM_VERIFY(so[i].length() == (std::size_t)ilen,
+        int slen = static_cast<int>(so[i].length());
+        MFEM_VERIFY(so[i].length() == (std::size_t)slen,
                     "Overflow error distributing parallel mesh!");
-        MPI_Isend(so[i].c_str(), ilen, MPI_CHAR, i, i, comm, &send_requests[i - 1]);
+        MPI_Isend(so[i].data(), slen, MPI_CHAR, i, i, comm, &send_requests[i - 1]);
       }
-      std::istringstream fi(so[0]);  // This is never compressed
-      auto pmesh = std::make_unique<mfem::ParMesh>(comm, fi);
-      MPI_Waitall(static_cast<int>(send_requests.size()), send_requests.data(),
-                  MPI_STATUSES_IGNORE);
-      return pmesh;
     }
-    int rlen;
+    std::istringstream fi(so[0]);  // This is never compressed
+    pmesh = std::make_unique<mfem::ParMesh>(comm, fi);
+    MPI_Waitall(static_cast<int>(send_requests.size()), send_requests.data(),
+                MPI_STATUSES_IGNORE);
+  }
+  else
+  {
     MPI_Status status;
+    int rlen;
+    std::string si;
     MPI_Probe(0, Mpi::Rank(comm), comm, &status);
     MPI_Get_count(&status, MPI_CHAR, &rlen);
-
-    std::string si;
     si.resize(rlen);
     MPI_Recv(si.data(), rlen, MPI_CHAR, 0, Mpi::Rank(comm), comm, MPI_STATUS_IGNORE);
     std::istringstream fi(si);
     // std::istringstream fi(zlib::DecompressString(si));
-    return std::make_unique<mfem::ParMesh>(comm, fi);
+    pmesh = std::make_unique<mfem::ParMesh>(comm, fi);
   }
+  return pmesh;
 }
 
 void GetUsedAttributeMarkers(const IoData &iodata, int n_mat, int n_bdr,

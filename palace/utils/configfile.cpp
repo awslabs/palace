@@ -420,6 +420,7 @@ void ModelData::SetUp(json &config)
   Lc = model->value("Lc", Lc);
   partition = model->value("Partition", partition);
   reorient_tet = model->value("ReorientTetMesh", reorient_tet);
+  remove_curvature = model->value("RemoveCurvature", remove_curvature);
   refinement.SetUp(*model);
 
   // Cleanup
@@ -428,6 +429,7 @@ void ModelData::SetUp(json &config)
   model->erase("Lc");
   model->erase("Partition");
   model->erase("ReorientTetMesh");
+  model->erase("RemoveCurvature");
   model->erase("Refinement");
   MFEM_VERIFY(model->empty(),
               "Found an unsupported configuration file keyword under \"Model\"!\n"
@@ -439,6 +441,7 @@ void ModelData::SetUp(json &config)
   // std::cout << "Lc: " << Lc << '\n';
   // std::cout << "Partition: " << partition << '\n';
   // std::cout << "ReorientTetMesh: " << reorient_tet << '\n';
+  // std::cout << "RemoveCurvature: " << remove_curvature << '\n';
 }
 
 void MaterialDomainData::SetUp(json &domains)
