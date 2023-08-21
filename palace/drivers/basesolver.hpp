@@ -18,7 +18,7 @@ class ParMesh;
 namespace palace
 {
 
-struct ErrorIndicators;
+class ErrorIndicators;
 class IoData;
 class PostOperator;
 class Timer;

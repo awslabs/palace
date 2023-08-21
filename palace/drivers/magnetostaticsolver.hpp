@@ -21,7 +21,7 @@ namespace palace
 {
 
 class CurlCurlOperator;
-struct ErrorIndicators;
+class ErrorIndicators;
 class IoData;
 class PostOperator;
 class SurfaceCurrentOperator;

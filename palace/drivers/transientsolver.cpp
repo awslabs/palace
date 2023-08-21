@@ -127,7 +127,6 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
     // Increment time step.
     step++;
   }
-
   SaveMetadata(timeop.GetLinearSolver());
   return ErrorIndicators(spaceop.GlobalTrueVSize());
 }

@@ -23,18 +23,19 @@ CurlFluxErrorEstimator::CurlFluxErrorEstimator(
   : mat_op(mat_op), fes(fes),
     smooth_flux_fecs(ConstructFECollections<mfem::ND_FECollection>(
         iodata.solver.order, mesh.back()->Dimension(), iodata.solver.linear.mg_max_levels,
-        iodata.solver.linear.mg_coarsen_type, false)), // TODO: pc_lor?
+        iodata.solver.linear.mg_coarsen_type, iodata.solver.linear.pc_mat_lor)),
     smooth_flux_fes(ConstructFiniteElementSpaceHierarchy<mfem::ND_FECollection>(
         iodata.solver.linear.mg_max_levels, iodata.solver.linear.mg_legacy_transfer,
         iodata.solver.pa_order_threshold, mesh, smooth_flux_fecs)),
-    smooth_projector(smooth_flux_fes, iodata.solver.linear.tol, 200, 0, iodata.solver.pa_order_threshold),
+    smooth_projector(smooth_flux_fes, iodata.solver.linear.tol, 200, 0,
+                     iodata.solver.pa_order_threshold),
     coarse_flux_fec(iodata.solver.order, mesh.back()->Dimension(),
                     mfem::BasisType::GaussLobatto),
     coarse_flux_fes(mesh.back().get(), &coarse_flux_fec, mesh.back()->Dimension()),
     scalar_mass_matrices(fes.GetNE()), smooth_to_coarse_embed(fes.GetNE())
 {
   mfem::MassIntegrator mass_integrator;
-  for (int e = 0; e < fes.GetNE(); ++e)
+  for (int e = 0; e < fes.GetNE(); e++)
   {
     // Loop over each element, and save an elemental mass matrix.
     // Will exploit the fact that vector L2 mass matrix components are independent.
@@ -74,11 +75,10 @@ Vector CurlFluxErrorEstimator::operator()(const ComplexVector &v) const
   const auto smooth_flux_rhs =
       ComplexVector(rhs_from_coef(smooth_flux_fes.GetFinestFESpace(), real_coef),
                     rhs_from_coef(smooth_flux_fes.GetFinestFESpace(), imag_coef));
-
   local_timer.construct_time += local_timer.Lap();
 
-  // Given the RHS vector of non-smooth flux, construct a flux projector and
-  // perform mass matrix inversion in the appropriate space, giving f = M⁻¹ f̂.
+  // Given the RHS vector of non-smooth flux, construct a flux projector and perform mass
+  // matrix inversion in the appropriate space, giving f = M⁻¹ f̂.
   auto build_flux = [](const FluxProjector &proj, const ComplexVector &flux_coef)
   {
     // Use a copy construction to match appropriate size.
@@ -87,11 +87,10 @@ Vector CurlFluxErrorEstimator::operator()(const ComplexVector &v) const
     return flux;
   };
   auto smooth_flux = build_flux(smooth_projector, smooth_flux_rhs);
-
   local_timer.solve_time += local_timer.Lap();
 
-  // Given a complex solution represented with a PetscParVector, build a
-  // ComplexGridFunction for evaluation.
+  // Given a complex solution represented with a PetscParVector, build a ComplexGridFunction
+  // for evaluation.
   auto build_func = [](const ComplexVector &f, mfem::ParFiniteElementSpace &fes)
   {
     mfem::ParComplexGridFunction flux(&fes);
@@ -105,20 +104,18 @@ Vector CurlFluxErrorEstimator::operator()(const ComplexVector &v) const
   auto smooth_flux_func = build_func(smooth_flux, smooth_flux_fes.GetFinestFESpace());
 
   mfem::ParComplexGridFunction coarse_flux_func(&coarse_flux_fes);
-
   local_timer.construct_time += local_timer.Lap();
+
   coarse_flux_func.real().ProjectCoefficient(real_coef);
   coarse_flux_func.imag().ProjectCoefficient(imag_coef);
-
   local_timer.solve_time += local_timer.Lap();
 
-  // Loop over elements, embed the smooth flux into the coarse flux space, then
-  // compute squared integral using a component-wise mass matrix.
+  // Loop over elements, embed the smooth flux into the coarse flux space, then compute
+  // squared integral using a component-wise mass matrix.
   Vector smooth_vec, coarse_vec, sub_vec, estimates(nelem);
   estimates = 0.0;
   double normalization = 0.0;
-
-  for (int e = 0; e < fes.GetNE(); ++e)
+  for (int e = 0; e < fes.GetNE(); e++)
   {
     // real
     smooth_flux_func.real().GetElementDofValues(e, smooth_vec);
@@ -126,14 +123,14 @@ Vector CurlFluxErrorEstimator::operator()(const ComplexVector &v) const
 
     const int ndof = coarse_vec.Size() / 3;
     sub_vec.SetSize(ndof);
-    for (int c = 0; c < 3; ++c)
+    for (int c = 0; c < 3; c++)
     {
       sub_vec.MakeRef(coarse_vec, c * ndof);
       normalization += scalar_mass_matrices[e].InnerProduct(sub_vec, sub_vec);
     }
 
     smooth_to_coarse_embed[e].AddMult(smooth_vec, coarse_vec, -1.0);
-    for (int c = 0; c < 3; ++c)
+    for (int c = 0; c < 3; c++)
     {
       sub_vec.MakeRef(coarse_vec, c * ndof);
       estimates[e] += scalar_mass_matrices[e].InnerProduct(sub_vec, sub_vec);
@@ -143,14 +140,14 @@ Vector CurlFluxErrorEstimator::operator()(const ComplexVector &v) const
     smooth_flux_func.imag().GetElementDofValues(e, smooth_vec);
     coarse_flux_func.imag().GetElementDofValues(e, coarse_vec);
 
-    for (int c = 0; c < 3; ++c)
+    for (int c = 0; c < 3; c++)
     {
       sub_vec.MakeRef(coarse_vec, c * ndof);
       normalization += scalar_mass_matrices[e].InnerProduct(sub_vec, sub_vec);
     }
 
     smooth_to_coarse_embed[e].AddMult(smooth_vec, coarse_vec, -1.0);
-    for (int c = 0; c < 3; ++c)
+    for (int c = 0; c < 3; c++)
     {
       sub_vec.MakeRef(coarse_vec, c * ndof);
       estimates[e] += scalar_mass_matrices[e].InnerProduct(sub_vec, sub_vec);
@@ -165,7 +162,6 @@ Vector CurlFluxErrorEstimator::operator()(const ComplexVector &v) const
 
   std::for_each(estimates.begin(), estimates.end(),
                 [&normalization](auto &x) { x /= normalization; });
-
   local_timer.postpro_time += local_timer.Lap();
 
   if constexpr (false)
@@ -226,8 +222,8 @@ Vector CurlFluxErrorEstimator::operator()(const Vector &v) const
   const auto smooth_flux_rhs = rhs_from_coef(smooth_flux_fes.GetFinestFESpace(), coef);
   local_timer.construct_time += local_timer.Lap();
 
-  // Given the RHS vector of non-smooth flux, construct a flux projector and
-  // perform mass matrix inversion in the appropriate space, giving f = M⁻¹ f̂.
+  // Given the RHS vector of non-smooth flux, construct a flux projector and perform mass
+  // matrix inversion in the appropriate space, giving f = M⁻¹ f̂.
   auto build_flux = [](const FluxProjector &proj, const Vector &flux_coef)
   {
     // Use a copy construction to match appropriate size.
@@ -236,11 +232,10 @@ Vector CurlFluxErrorEstimator::operator()(const Vector &v) const
     return flux;
   };
   auto smooth_flux = build_flux(smooth_projector, smooth_flux_rhs);
-
   local_timer.solve_time += local_timer.Lap();
 
-  // Given a complex solution represented with a PetscParVector, build a
-  // ComplexGridFunction for evaluation.
+  // Given a complex solution represented with a PetscParVector, build a ComplexGridFunction
+  // for evaluation.
   auto build_func = [](const Vector &f, mfem::ParFiniteElementSpace &fes)
   {
     mfem::ParGridFunction flux(&fes);
@@ -252,33 +247,31 @@ Vector CurlFluxErrorEstimator::operator()(const Vector &v) const
   auto smooth_flux_func = build_func(smooth_flux, smooth_flux_fes.GetFinestFESpace());
 
   mfem::ParGridFunction coarse_flux_func(&coarse_flux_fes);
-
   local_timer.construct_time += local_timer.Lap();
-  coarse_flux_func.ProjectCoefficient(coef);
 
+  coarse_flux_func.ProjectCoefficient(coef);
   local_timer.solve_time += local_timer.Lap();
 
-  // Loop over elements, embed the smooth flux into the coarse flux space, then
-  // compute squared integral using a component-wise mass matrix.
+  // Loop over elements, embed the smooth flux into the coarse flux space, then compute
+  // squared integral using a component-wise mass matrix.
   Vector smooth_vec, coarse_vec, sub_vec, estimates(nelem);
   estimates = 0.0;
   double normalization = 0.0;
-
-  for (int e = 0; e < fes.GetNE(); ++e)
+  for (int e = 0; e < fes.GetNE(); e++)
   {
     smooth_flux_func.GetElementDofValues(e, smooth_vec);
     coarse_flux_func.GetElementDofValues(e, coarse_vec);
 
     const int ndof = coarse_vec.Size() / 3;
     sub_vec.SetSize(ndof);
-    for (int c = 0; c < 3; ++c)
+    for (int c = 0; c < 3; c++)
     {
       sub_vec.MakeRef(coarse_vec, c * ndof);
       normalization += scalar_mass_matrices[e].InnerProduct(sub_vec, sub_vec);
     }
 
     smooth_to_coarse_embed[e].AddMult(smooth_vec, coarse_vec, -1.0);
-    for (int c = 0; c < 3; ++c)
+    for (int c = 0; c < 3; c++)
     {
       sub_vec.MakeRef(coarse_vec, c * ndof);
       estimates[e] += scalar_mass_matrices[e].InnerProduct(sub_vec, sub_vec);
@@ -293,7 +286,6 @@ Vector CurlFluxErrorEstimator::operator()(const Vector &v) const
 
   std::for_each(estimates.begin(), estimates.end(),
                 [&normalization](auto &x) { x /= normalization; });
-
   local_timer.postpro_time += local_timer.Lap();
 
   if constexpr (false)
@@ -334,13 +326,16 @@ GradFluxErrorEstimator::GradFluxErrorEstimator(
     mfem::ParFiniteElementSpace &fes)
   : mat_op(mat_op), fes(fes),
     smooth_flux_fecs(ConstructFECollections<mfem::H1_FECollection>(
-      iodata.solver.order, mesh.back()->Dimension(), iodata.solver.linear.mg_max_levels,
+        iodata.solver.order, mesh.back()->Dimension(), iodata.solver.linear.mg_max_levels,
         iodata.solver.linear.mg_coarsen_type, false)),
-    smooth_flux_component_fes(utils::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
-        iodata.solver.linear.mg_max_levels, iodata.solver.linear.mg_legacy_transfer,
-      iodata.solver.pa_order_threshold, mesh, smooth_flux_fecs)),
-    smooth_flux_fes(mesh.back().get(), smooth_flux_fecs.back().get(), mesh.back()->Dimension()),
-    smooth_projector(smooth_flux_component_fes, iodata.solver.linear.tol, 200, 0, iodata.solver.pa_order_threshold),
+    smooth_flux_component_fes(
+        utils::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
+            iodata.solver.linear.mg_max_levels, iodata.solver.linear.mg_legacy_transfer,
+            iodata.solver.pa_order_threshold, mesh, smooth_flux_fecs)),
+    smooth_flux_fes(mesh.back().get(), smooth_flux_fecs.back().get(),
+                    mesh.back()->Dimension()),
+    smooth_projector(smooth_flux_component_fes, iodata.solver.linear.tol, 200, 0,
+                     iodata.solver.pa_order_threshold),
     coarse_flux_fec(iodata.solver.order, mesh.back()->Dimension(),
                     mfem::BasisType::GaussLobatto),
     coarse_flux_fes(mesh.back().get(), &coarse_flux_fec, mesh.back()->Dimension()),
@@ -348,7 +343,7 @@ GradFluxErrorEstimator::GradFluxErrorEstimator(
 {
   mfem::MassIntegrator mass_integrator;
 
-  for (int e = 0; e < fes.GetNE(); ++e)
+  for (int e = 0; e < fes.GetNE(); e++)
   {
     // Loop over each element, and save an elemental mass matrix.
     // Will exploit the fact that vector L2 mass matrix components are independent.
@@ -387,9 +382,8 @@ Vector GradFluxErrorEstimator::operator()(const Vector &v) const
   auto smooth_flux_rhs = rhs_from_coef(smooth_flux_fes, coef);
   local_timer.construct_time += local_timer.Lap();
 
-  // Given the RHS vector of non-smooth flux, construct a flux projector and
-  // perform component wise mass matrix inversion in the appropriate space,
-  // giving fᵢ = M⁻¹ f̂ᵢ.
+  // Given the RHS vector of non-smooth flux, construct a flux projector and perform
+  // component wise mass matrix inversion in the appropriate space, giving fᵢ = M⁻¹ f̂ᵢ.
   auto build_flux = [](const FluxProjector &proj, Vector &rhs)
   {
     // Use a copy construction to match appropriate size.
@@ -402,7 +396,7 @@ Vector GradFluxErrorEstimator::operator()(const Vector &v) const
     MFEM_ASSERT(ndof % 3 == 0, "!");
 
     Vector flux_comp, rhs_comp;
-    for (std::size_t i = 0; i < 3; ++i)
+    for (int i = 0; i < 3; i++)
     {
       flux_comp.MakeRef(flux, i * stride, stride);
       rhs_comp.MakeRef(rhs, i * stride, stride);
@@ -413,7 +407,6 @@ Vector GradFluxErrorEstimator::operator()(const Vector &v) const
   };
 
   auto smooth_flux = build_flux(smooth_projector, smooth_flux_rhs);
-
   local_timer.solve_time += local_timer.Lap();
 
   // Given a solution represented with a Vector, build a GridFunction for evaluation.
@@ -431,14 +424,12 @@ Vector GradFluxErrorEstimator::operator()(const Vector &v) const
   local_timer.construct_time += local_timer.Lap();
 
   coarse_flux.ProjectCoefficient(coef);
-
   local_timer.solve_time += local_timer.Lap();
 
   Vector coarse_vec, smooth_vec, coarse_sub_vec, smooth_sub_vec, estimates(nelem);
   estimates = 0.0;
-
   double normalization = 0.0;
-  for (int e = 0; e < fes.GetNE(); ++e)
+  for (int e = 0; e < fes.GetNE(); e++)
   {
     coarse_flux.GetElementDofValues(e, coarse_vec);
     smooth_flux_func.GetElementDofValues(e, smooth_vec);
@@ -452,18 +443,15 @@ Vector GradFluxErrorEstimator::operator()(const Vector &v) const
     coarse_sub_vec.SetSize(ndof);
     smooth_sub_vec.SetSize(ndof);
 
-    for (int c = 0; c < 3; ++c)
+    for (int c = 0; c < 3; c++)
     {
       coarse_sub_vec.MakeRef(coarse_vec, c * ndof);
       smooth_sub_vec.MakeRef(smooth_vec, c * ndof);
 
       normalization += scalar_mass_matrices[e].InnerProduct(coarse_sub_vec, coarse_sub_vec);
-
-      // Embed
-      smooth_to_coarse_embed[e].AddMult(smooth_sub_vec, coarse_sub_vec, -1.0);
-
-      // Integrate
-      estimates[e] += scalar_mass_matrices[e].InnerProduct(coarse_sub_vec, coarse_sub_vec);
+      smooth_to_coarse_embed[e].AddMult(smooth_sub_vec, coarse_sub_vec, -1.0);  // Embed
+      estimates[e] += scalar_mass_matrices[e].InnerProduct(coarse_sub_vec,
+                                                           coarse_sub_vec);  // Integrate
     }
 
     estimates[e] = std::sqrt(estimates[e]);
@@ -474,7 +462,6 @@ Vector GradFluxErrorEstimator::operator()(const Vector &v) const
 
   std::for_each(estimates.begin(), estimates.end(),
                 [&normalization](auto &x) { x /= normalization; });
-
   local_timer.postpro_time += local_timer.Lap();
 
   if constexpr (false)

@@ -17,7 +17,8 @@ namespace palace
 
 // Given a finite element space hierarchy, construct a vector of mass matrix
 // operators corresponding to each level.
-std::unique_ptr<Operator> BuildMassMatrixOperator(mfem::ParFiniteElementSpaceHierarchy &h, int pa_order_threshold)
+std::unique_ptr<Operator> BuildMassMatrixOperator(mfem::ParFiniteElementSpaceHierarchy &h,
+                                                  int pa_order_threshold)
 {
   constexpr int skip_zeros = 0;
   const bool is_scalar_FE_space =
@@ -25,7 +26,7 @@ std::unique_ptr<Operator> BuildMassMatrixOperator(mfem::ParFiniteElementSpaceHie
 
   // Assemble the bilinear form operator
   auto M = std::make_unique<MultigridOperator>(h.GetNumLevels());
-  for (int l = 0; l < h.GetNumLevels(); ++l)
+  for (int l = 0; l < h.GetNumLevels(); l++)
   {
     auto &h_l = h.GetFESpaceAtLevel(l);
     auto m = std::make_unique<mfem::SymmetricBilinearForm>(&h_l);
@@ -42,7 +43,9 @@ std::unique_ptr<Operator> BuildMassMatrixOperator(mfem::ParFiniteElementSpaceHie
     }
 
     auto M_l = std::make_unique<ParOperator>(
-      utils::AssembleOperator(std::move(m), true, (l > 0) ? pa_order_threshold : 100, skip_zeros), h_l);
+        utils::AssembleOperator(std::move(m), true, (l > 0) ? pa_order_threshold : 100,
+                                skip_zeros),
+        h_l);
 
     // Set the essential dofs (none).
     M->AddOperator(std::move(M_l));
@@ -51,12 +54,14 @@ std::unique_ptr<Operator> BuildMassMatrixOperator(mfem::ParFiniteElementSpaceHie
 }
 
 FluxProjector::FluxProjector(mfem::ParFiniteElementSpaceHierarchy &smooth_flux_fes,
-                             double tol, int max_it, int print_level, int pa_order_threshold)
+                             double tol, int max_it, int print_level,
+                             int pa_order_threshold)
   : M(BuildMassMatrixOperator(smooth_flux_fes, pa_order_threshold))
 {
   // The system matrix for the projection is real and SPD. For the coarse-level AMG solve,
   // we don't use an exact solve on the coarsest level.
-  auto amg = std::make_unique<WrapperSolver<Operator>>(std::make_unique<BoomerAmgSolver>(1, 1, 0));
+  auto amg =
+      std::make_unique<WrapperSolver<Operator>>(std::make_unique<BoomerAmgSolver>(1, 1, 0));
   auto gmg = std::make_unique<GeometricMultigridSolver<Operator>>(
       std::move(amg), smooth_flux_fes, nullptr, 1, 1, 2, 1.0, 0.0, true,
       pa_order_threshold);

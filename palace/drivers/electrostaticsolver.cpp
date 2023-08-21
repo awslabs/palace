@@ -26,7 +26,6 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &me
   // handled eliminating the rows and columns of the system matrix for the corresponding
   // dofs. The eliminated matrix is stored in order to construct the RHS vector for nonzero
   // prescribed BC values.
-
   timer.Lap();
   LaplaceOperator laplaceop(iodata, mesh);
   auto K = laplaceop.GetStiffnessMatrix();
@@ -72,16 +71,15 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &me
     timer.postpro_time += timer.Lap();
 
     // Next terminal.
-    ++step;
+    step++;
   }
 
+  // Construct estimator and reducer for error indicators.
   GradFluxErrorEstimator estimator(iodata, laplaceop.GetMaterialOp(), mesh,
                                    laplaceop.GetH1Space());
-
-  // Evaluate error estimator and reduce over all
   auto indicators = ErrorIndicators(laplaceop.GlobalTrueVSize());
   ErrorReductionOperator error_reducer;
-  auto update_error_indicators =
+  auto UpdateErrorIndicators =
       [&timer, &estimator, &indicators, &error_reducer](const auto &V)
   {
     error_reducer(indicators, estimator(V));
@@ -90,7 +88,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &me
   timer.est_construction_time += timer.Lap();
 
   // Compute and reduce the error indicators for each solution.
-  std::for_each(V.begin(), V.end(), update_error_indicators);
+  std::for_each(V.begin(), V.end(), UpdateErrorIndicators);
 
   // Register the indicator field used to drive the overall adaptation.
   postop.SetIndicatorGridFunction(indicators.local_error_indicators);
@@ -100,7 +98,6 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &me
   SaveMetadata(ksp);
   Postprocess(laplaceop, postop, V, timer);
   timer.postpro_time += timer.Lap() - (timer.io_time - io_time_prev);
-
   return indicators;
 }
 
@@ -129,7 +126,6 @@ void ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop, PostOperator &
     // for all postprocessing operations.
     E = 0.0;
     Grad->AddMult(V[i], E, -1.0);
-
     postop.SetEGridFunction(E);
     postop.SetVGridFunction(V[i]);
     double Ue = postop.GetEFieldEnergy();
@@ -146,13 +142,13 @@ void ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop, PostOperator &
 
     // Diagonal: C_ii = 2 U_e(V_i) / V_i².
     C(i, i) = Cm(i, i) = 2.0 * Ue;
-    ++i;
+    i++;
   }
 
   // Off-diagonals: C_ij = U_e(V_i + V_j) / (V_i V_j) - 1/2 (V_i/V_j C_ii + V_j/V_i C_jj).
-  for (i = 0; i < C.Height(); ++i)
+  for (i = 0; i < C.Height(); i++)
   {
-    for (int j = 0; j < C.Width(); ++j)
+    for (int j = 0; j < C.Width(); j++)
     {
       if (j < i)
       {

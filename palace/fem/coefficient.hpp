@@ -499,7 +499,6 @@ public:
             const mfem::IntegrationPoint &ip) override
   {
     V.SetSize(3);
-
     coef.Eval(muinv, T, ip);
     X.GetCurl(T, curl);
     muinv.Mult(curl, V);

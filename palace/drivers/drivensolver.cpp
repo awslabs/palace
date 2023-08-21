@@ -119,7 +119,6 @@ ErrorIndicators DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator 
   // simply by setting diagonal entries of the system matrix for the corresponding dofs.
   // Because the Dirichlet BC is always homogenous, no special elimination is required on
   // the RHS. Assemble the linear system for the initial frequency (so we can call
-
   // KspSolver::SetOperators). Compute everything at the first frequency step.
   auto K = spaceop.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE);
   auto C = spaceop.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
@@ -149,7 +148,7 @@ ErrorIndicators DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator 
   // Initialize structures for storing and reducing the results of error estimation.
   ErrorIndicators indicators(spaceop.GlobalTrueVSize());
   const auto error_reducer = ErrorReductionOperator();
-  auto update_error_indicators =
+  auto UpdateErrorIndicators =
       [&timer, &estimator, &indicators, &error_reducer, &postop](const auto &E)
   {
     auto ind = estimator(E);
@@ -163,7 +162,7 @@ ErrorIndicators DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator 
   // Main frequency sweep loop.
   double omega = omega0;
   auto t0 = timer.Now();
-  for (int step = step0; step < nstep; ++step)
+  for (int step = step0; step < nstep; step++)
   {
     const double freq = iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, omega);
     Mpi::Print("\nIt {:d}/{:d}: ω/2π = {:.3e} GHz (elapsed time = {:.2e} s)\n", step + 1,
@@ -187,12 +186,10 @@ ErrorIndicators DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator 
     Mpi::Print("\n");
     ksp.Mult(RHS, E);
     timer.solve_time += timer.Lap();
-
-    update_error_indicators(E);
+    UpdateErrorIndicators(E);
 
     // Compute B = -1/(iω) ∇ x E on the true dofs, and set the internal GridFunctions in
     // PostOperator for all postprocessing operations.
-
     double E_elec = 0.0, E_mag = 0.0;
     Curl->Mult(E, B);
     B *= -1.0 / (1i * omega);
@@ -220,7 +217,6 @@ ErrorIndicators DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator 
     // Increment frequency.
     omega += delta_omega;
   }
-
   SaveMetadata(ksp);
   return indicators;
 }
@@ -286,7 +282,7 @@ ErrorIndicators DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator
   // the online stage.
   ErrorIndicators indicators(spaceop.GlobalTrueVSize());
   ErrorReductionOperator error_reducer;
-  auto update_error_indicators =
+  auto UpdateErrorIndicators =
       [&local_timer, &estimator, &indicators, &error_reducer](const auto &E)
   {
     error_reducer(indicators, estimator(E));
@@ -296,12 +292,12 @@ ErrorIndicators DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator
 
   prom.SolveHDM(omega0, E);  // Print matrix stats at first HDM solve
   local_timer.solve_time += local_timer.Lap();
-  update_error_indicators(E);
+  UpdateErrorIndicators(E);
   prom.AddHDMSample(omega0, E);
   local_timer.construct_time += local_timer.Lap();
   prom.SolveHDM(omega0 + (nstep - step0 - 1) * delta_omega, E);
   local_timer.solve_time += local_timer.Lap();
-  update_error_indicators(E);
+  UpdateErrorIndicators(E);
   prom.AddHDMSample(omega0 + (nstep - step0 - 1) * delta_omega, E);
   local_timer.construct_time += local_timer.Lap();
 
@@ -327,10 +323,10 @@ ErrorIndicators DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator
         max_error);
     prom.SolveHDM(omega_star, E);
     local_timer.solve_time += local_timer.Lap();
-    update_error_indicators(E);
+    UpdateErrorIndicators(E);
     prom.AddHDMSample(omega_star, E);
     local_timer.construct_time += local_timer.Lap();
-    ++iter;
+    iter++;
   }
   Mpi::Print("\nAdaptive sampling{} {:d} frequency samples:\n"
              " n = {:d}, error = {:.3e}, tol = {:.3e}\n",
@@ -397,10 +393,9 @@ ErrorIndicators DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator
     timer.postpro_time += timer.Lap() - (timer.io_time - io_time_prev);
 
     // Increment frequency.
-    ++step;
+    step++;
     omega += delta_omega;
   }
-
   return indicators;
 }
 

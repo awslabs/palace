@@ -71,7 +71,7 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &me
     timer.postpro_time += timer.Lap();
 
     // Next source.
-    ++step;
+    step++;
   }
 
   CurlFluxErrorEstimator estimator(iodata, curlcurlop.GetMaterialOp(), mesh,
@@ -80,7 +80,7 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &me
   // Initialize structures for storing and reducing the results of error estimation.
   ErrorIndicators indicators(curlcurlop.GlobalTrueVSize());
   ErrorReductionOperator error_reducer;
-  auto update_error_indicators =
+  auto UpdateErrorIndicators =
       [&timer, &estimator, &indicators, &error_reducer](const auto &A)
   {
     error_reducer(indicators, estimator(A));
@@ -89,7 +89,7 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &me
   timer.est_construction_time += timer.Lap();
 
   // Compute and reduce the error indicators for each solution.
-  std::for_each(A.begin(), A.end(), update_error_indicators);
+  std::for_each(A.begin(), A.end(), UpdateErrorIndicators);
 
   // Register the indicator field used to drive the overall adaptation.
   postop.SetIndicatorGridFunction(indicators.local_error_indicators);
@@ -99,7 +99,6 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &me
   SaveMetadata(ksp);
   Postprocess(curlcurlop, postop, A, timer);
   timer.postpro_time += timer.Lap() - (timer.io_time - io_time_prev);
-
   return indicators;
 }
 
@@ -150,13 +149,13 @@ void MagnetostaticSolver::Postprocess(CurlCurlOperator &curlcurlop, PostOperator
 
     // Diagonal: M_ii = 2 U_m(A_i) / I_i².
     M(i, i) = Mm(i, i) = 2.0 * Um / (Iinc(i) * Iinc(i));
-    ++i;
+    i++;
   }
 
   // Off-diagonals: M_ij = U_m(A_i + A_j) / (I_i I_j) - 1/2 (I_i/I_j M_ii + I_j/I_i M_jj).
-  for (i = 0; i < M.Height(); ++i)
+  for (i = 0; i < M.Height(); i++)
   {
-    for (int j = 0; j < M.Width(); ++j)
+    for (int j = 0; j < M.Width(); j++)
     {
       if (j < i)
       {
@@ -223,10 +222,10 @@ void MagnetostaticSolver::PostprocessTerminals(const SurfaceCurrentOperator &sur
                      mat(i, j) * scale, table.w, table.p,
                      (idx2 == surf_j_op.rbegin()->first) ? "" : ",");
         // clang-format on
-        ++j;
+        j++;
       }
       output.print("\n");
-      ++i;
+      i++;
     }
   };
   const double H = iodata.DimensionalizeValue(IoData::ValueType::INDUCTANCE, 1.0);
