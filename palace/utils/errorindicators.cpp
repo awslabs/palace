@@ -11,8 +11,7 @@ namespace palace
 void ErrorReductionOperator::operator()(ErrorIndicators &ebar, const Vector &ind,
                                         double p) const
 {
-
-  // Compute the global indicator across all processors
+  // Compute the global indicator across all processors.
   auto comm = Mpi::World();
   double candidate_global_error_indicator =
       std::transform_reduce(ind.begin(), ind.end(), 0.0, std::plus(),
@@ -45,7 +44,7 @@ void ErrorReductionOperator::operator()(ErrorIndicators &ebar, const Vector &ind
   }
 
   // Another sample has been added, increment for the running average lambda.
-  ++n;
+  n++;
 }
 
 }  // namespace palace

@@ -118,7 +118,6 @@ ErrorIndicators DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator 
   // simply by setting diagonal entries of the system matrix for the corresponding dofs.
   // Because the Dirichlet BC is always homogenous, no special elimination is required on
   // the RHS. Assemble the linear system for the initial frequency (so we can call
-
   // KspSolver::SetOperators). Compute everything at the first frequency step.
   auto K = spaceop.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE);
   auto C = spaceop.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
@@ -147,7 +146,7 @@ ErrorIndicators DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator 
   // Initialize structures for storing and reducing the results of error estimation.
   ErrorIndicators indicators(spaceop.GlobalTrueVSize());
   const auto error_reducer = ErrorReductionOperator();
-  auto update_error_indicators =
+  auto UpdateErrorIndicators =
       [&estimator, &indicators, &error_reducer, &postop](const auto &E)
   {
     BlockTimer bt(Timer::ESTSOLVE);
@@ -182,13 +181,11 @@ ErrorIndicators DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator 
     BlockTimer bt1(Timer::SOLVE);
     Mpi::Print("\n");
     ksp.Mult(RHS, E);
-
-    update_error_indicators(E);
+    UpdateErrorIndicators(E);
 
     // Compute B = -1/(iω) ∇ x E on the true dofs, and set the internal GridFunctions in
     // PostOperator for all postprocessing operations.
     BlockTimer bt2(Timer::POSTPRO);
-
     double E_elec = 0.0, E_mag = 0.0;
     Curl->Mult(E, B);
     B *= -1.0 / (1i * omega);
@@ -214,7 +211,6 @@ ErrorIndicators DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator 
     // Increment frequency.
     omega += delta_omega;
   }
-
   SaveMetadata(ksp);
   return indicators;
 }
@@ -276,7 +272,7 @@ ErrorIndicators DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator
   // the online stage.
   ErrorIndicators indicators(spaceop.GlobalTrueVSize());
   ErrorReductionOperator error_reducer;
-  auto update_error_indicators = [&estimator, &indicators, &error_reducer](const auto &E)
+  auto UpdateErrorIndicators = [&estimator, &indicators, &error_reducer](const auto &E)
   {
     BlockTimer bt(Timer::ESTSOLVE);
     error_reducer(indicators, estimator(E));
@@ -288,11 +284,10 @@ ErrorIndicators DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator
   // of the RomOperator.
   BlockTimer bt1(Timer::CONSTRUCTPROM);
   prom.SolveHDM(omega0, E);  // Print matrix stats at first HDM solve
-  update_error_indicators(E);
-
+  UpdateErrorIndicators(E);
   prom.AddHDMSample(omega0, E);
   prom.SolveHDM(omega0 + (nstep - step0 - 1) * delta_omega, E);
-  update_error_indicators(E);
+  UpdateErrorIndicators(E);
   prom.AddHDMSample(omega0 + (nstep - step0 - 1) * delta_omega, E);
 
   // Greedy procedure for basis construction (offline phase). Basis is initialized with
@@ -315,7 +310,7 @@ ErrorIndicators DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator
         iter - iter0 + 1, prom.GetReducedDimension(), omega_star * f0, omega_star,
         max_error);
     prom.SolveHDM(omega_star, E);
-    update_error_indicators(E);
+    UpdateErrorIndicators(E);
     prom.AddHDMSample(omega_star, E);
     iter++;
   }
@@ -376,7 +371,6 @@ ErrorIndicators DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator
     step++;
     omega += delta_omega;
   }
-
   return indicators;
 }
 

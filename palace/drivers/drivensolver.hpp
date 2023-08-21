@@ -19,7 +19,7 @@ namespace palace
 {
 
 class CurlFluxErrorEstimator;
-struct ErrorIndicators;
+class ErrorIndicators;
 class IoData;
 class LumpedPortOperator;
 class PostOperator;

@@ -657,7 +657,6 @@ void PostOperator::WriteFields(int step, double time) const
   paraview.SetTime(time);
   paraview_bdr.SetCycle(step);
   paraview_bdr.SetTime(time);
-
   if (first_save)
   {
     mfem::ParMesh &mesh =

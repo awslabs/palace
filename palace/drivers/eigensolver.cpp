@@ -263,7 +263,7 @@ ErrorIndicators EigenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMe
   // Initialize structures for storing and reducing the results of error estimation.
   ErrorIndicators indicators(spaceop.GlobalTrueVSize());
   ErrorReductionOperator error_reducer;
-  auto update_error_indicators =
+  auto UpdateErrorIndicators =
       [&estimator, &indicators, &error_reducer, &postop](const auto &E)
   {
     BlockTimer bt(Timer::ESTSOLVE);
@@ -301,19 +301,16 @@ ErrorIndicators EigenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMe
     // Compute B = -1/(iω) ∇ x E on the true dofs, and set the internal GridFunctions in
     // PostOperator for all postprocessing operations.
     eigen->GetEigenvector(i, E);
-
     Curl->Mult(E, B);
     B *= -1.0 / (1i * omega);
-
     if (i < iodata.solver.eigenmode.n)
     {
       // Only update the error indicator for targetted modes.
-      update_error_indicators(E);
+      UpdateErrorIndicators(E);
     }
 
     postop.SetEGridFunction(E);
     postop.SetBGridFunction(B);
-
     postop.UpdatePorts(spaceop.GetLumpedPortOp(), omega.real());
 
     // Postprocess the mode.
