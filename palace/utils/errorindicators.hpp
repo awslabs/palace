@@ -10,9 +10,10 @@ namespace palace
 {
 
 // Storage for error estimation results from the solve. Required in the AMR loop. An error
-// indicator is non-negative, whilst an error estimate is signed.
-struct ErrorIndicators
+// indicator is non-negative, while an error estimate is signed.
+class ErrorIndicators
 {
+public:
   ErrorIndicators(int ndof) : ndof(ndof) {}
   ErrorIndicators() = delete;
   ErrorIndicators(const ErrorIndicators &) = default;

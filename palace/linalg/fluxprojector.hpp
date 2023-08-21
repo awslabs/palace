@@ -33,8 +33,8 @@ private:
   mutable Vector tmp;
 
 public:
-  FluxProjector(mfem::ParFiniteElementSpaceHierarchy &smooth_flux_fes,
-                double tol = 1e-12, int max_it = 200, int print_level = 1, int pa_order_threshold = 1);
+  FluxProjector(mfem::ParFiniteElementSpaceHierarchy &smooth_flux_fes, double tol = 1e-12,
+                int max_it = 200, int print_level = 1, int pa_order_threshold = 1);
 
   // Given a vector of dof defining the flux, compute the smooth flux IN PLACE.
   void Mult(Vector &x) const
@@ -53,8 +53,6 @@ public:
     y = x;
     Mult(y);
   }
-
-  // TODO: Add in an ArrayMult optimization
 };
 
 }  // namespace palace

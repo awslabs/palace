@@ -23,7 +23,7 @@ class ParMesh;
 namespace palace
 {
 
-struct ErrorIndicators;
+class ErrorIndicators;
 class IoData;
 class LaplaceOperator;
 class PostOperator;
