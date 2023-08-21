@@ -8,7 +8,9 @@ function testcase(
     palace="palace",
     np=1,
     rtol=1.0e-6,
-    atol=1.0e-18
+    atol=1.0e-18,
+    excluded_columns=[],
+    skip_rowcount=false
 )
     if isempty(testdir)
         @info "$testdir/ is empty, skipping tests"
@@ -66,7 +68,17 @@ function testcase(
         for file in filesref
             dataref = CSV.File(joinpath(refpostprodir, file); header=1) |> DataFrame
             data    = CSV.File(joinpath(postprodir, file); header=1) |> DataFrame
-            data    = data[1:size(dataref, 1), :]
+            if !skip_rowcount
+                @test size(dataref, 1) <= size(data, 1)
+            end
+            data = data[1:min(size(dataref, 1), size(data, 1)), :]
+
+            # Check the number of columns matches, before removing any excluded_columns
+            @test ncol(data) == ncol(dataref)
+            for col ∈ excluded_columns
+                select!(data, Not(Cols(contains(col))))
+                select!(dataref, Not(Cols(contains(col))))
+            end
 
             test = isapprox.(data, dataref; rtol=rtol, atol=atol)
             for (row, rowdataref, rowdata) in

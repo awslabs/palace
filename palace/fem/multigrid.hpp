@@ -15,7 +15,7 @@ namespace palace::fem
 {
 
 //
-// Methods for constructing hierarchies of finite element spaces for multigrid.
+// Methods for constructing hierarchies of finite element spaces for geometric multigrid.
 //
 
 // Helper function for getting the order of the finite element space underlying a bilinear
@@ -131,28 +131,37 @@ std::vector<std::unique_ptr<FECollection>> inline ConstructFECollections(
 }
 
 // Construct a hierarchy of finite element spaces given a sequence of meshes and
-// finite element collections. Uses geometric multigrid and p multigrid.
+// finite element collections. Dirichlet boundary conditions are additionally
+// marked.
 template <typename FECollection>
 inline mfem::ParFiniteElementSpaceHierarchy ConstructFiniteElementSpaceHierarchy(
     int mg_max_levels, bool mg_legacy_transfer, int pa_order_threshold,
     const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
-    const std::vector<std::unique_ptr<FECollection>> &fecs, int dim = 1,
-    int ordering = mfem::Ordering::byNODES)
+    const std::vector<std::unique_ptr<FECollection>> &fecs,
+    const mfem::Array<int> *dbc_marker = nullptr,
+    std::vector<mfem::Array<int>> *dbc_tdof_lists = nullptr)
 {
-  MFEM_VERIFY(!mesh.empty() && !fecs.empty(),
+  MFEM_VERIFY(!mesh.empty() && !fecs.empty() &&
+                  (!dbc_tdof_lists || dbc_tdof_lists->empty()),
               "Empty mesh or FE collection for FE space construction!");
   int coarse_mesh_l =
       std::max(0, static_cast<int>(mesh.size() + fecs.size()) - 1 - mg_max_levels);
-  auto *fespace = new mfem::ParFiniteElementSpace(mesh[coarse_mesh_l].get(), fecs[0].get(),
-                                                  dim, ordering);
+  auto *fespace = new mfem::ParFiniteElementSpace(mesh[coarse_mesh_l].get(), fecs[0].get());
+  if (dbc_marker && dbc_tdof_lists)
+  {
+    fespace->GetEssentialTrueDofs(*dbc_marker, dbc_tdof_lists->emplace_back());
+  }
   mfem::ParFiniteElementSpaceHierarchy fespaces(mesh[coarse_mesh_l].get(), fespace, false,
                                                 true);
 
   // h-refinement
   for (std::size_t l = coarse_mesh_l + 1; l < mesh.size(); l++)
   {
-    fespace = new mfem::ParFiniteElementSpace(mesh[l].get(), fecs[0].get(), dim, ordering);
-
+    fespace = new mfem::ParFiniteElementSpace(mesh[l].get(), fecs[0].get());
+    if (dbc_marker && dbc_tdof_lists)
+    {
+      fespace->GetEssentialTrueDofs(*dbc_marker, dbc_tdof_lists->emplace_back());
+    }
     auto *P = new ParOperator(
         std::make_unique<mfem::TransferOperator>(fespaces.GetFinestFESpace(), *fespace),
         fespaces.GetFinestFESpace(), *fespace, true);
@@ -162,9 +171,11 @@ inline mfem::ParFiniteElementSpaceHierarchy ConstructFiniteElementSpaceHierarchy
   // p-refinement
   for (std::size_t l = 1; l < fecs.size(); l++)
   {
-    fespace =
-        new mfem::ParFiniteElementSpace(mesh.back().get(), fecs[l].get(), dim, ordering);
-
+    fespace = new mfem::ParFiniteElementSpace(mesh.back().get(), fecs[l].get());
+    if (dbc_marker && dbc_tdof_lists)
+    {
+      fespace->GetEssentialTrueDofs(*dbc_marker, dbc_tdof_lists->emplace_back());
+    }
     ParOperator *P;
     if (!mg_legacy_transfer && mfem::DeviceCanUseCeed())
     {
@@ -182,27 +193,6 @@ inline mfem::ParFiniteElementSpaceHierarchy ConstructFiniteElementSpaceHierarchy
           fespaces.GetFinestFESpace(), *fespace, true);
     }
     fespaces.AddLevel(mesh.back().get(), fespace, P, false, true, true);
-  }
-  return fespaces;
-}
-
-// Overload for treatment of Dirichlet boundary conditions, extracts the true
-// dof vectors for each level within a finite element space hierarchy.
-template <typename FECollection, template <class... C> typename Container,
-          typename... MeshT>
-mfem::ParFiniteElementSpaceHierarchy ConstructFiniteElementSpaceHierarchy(
-    int mg_max_levels, bool mg_legacy_transfer, int pa_order_threshold,
-    const Container<MeshT...> &mesh, const std::vector<std::unique_ptr<FECollection>> &fecs,
-    const mfem::Array<int> &dbc_marker, std::vector<mfem::Array<int>> &dbc_tdof_lists,
-    int dim = 1, int ordering = mfem::Ordering::byNODES)
-{
-  dbc_tdof_lists.clear();
-  auto fespaces = ConstructFiniteElementSpaceHierarchy(
-      mg_max_levels, mg_legacy_transfer, pa_order_threshold, mesh, fecs, dim, ordering);
-  for (int l = 0; l < fespaces.GetNumLevels(); l++)
-  {
-    fespaces.GetFESpaceAtLevel(l).GetEssentialTrueDofs(dbc_marker,
-                                                       dbc_tdof_lists.emplace_back());
   }
   return fespaces;
 }

@@ -5,6 +5,7 @@
 # Add source files and subdirectories.
 #
 
-# target_sources(${TARGET_NAME}
-#   PRIVATE
-# )
+target_sources(${TARGET_NAME}
+  PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/errorindicator.cpp
+)

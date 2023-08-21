@@ -23,7 +23,7 @@ class ParMesh;
 namespace palace
 {
 
-struct ErrorIndicators;
+class ErrorIndicator;
 class IoData;
 class LaplaceOperator;
 class PostOperator;
@@ -36,7 +36,8 @@ class ElectrostaticSolver : public BaseSolver
 {
 private:
   void Postprocess(LaplaceOperator &laplaceop, PostOperator &postop,
-                   const std::vector<Vector> &V) const;
+                   const std::vector<Vector> &V,
+                   const std::vector<ErrorIndicator> &indicators) const;
 
   void PostprocessTerminals(const std::map<int, mfem::Array<int>> &terminal_sources,
                             const mfem::DenseMatrix &C, const mfem::DenseMatrix &Cinv,
@@ -45,7 +46,8 @@ private:
 public:
   using BaseSolver::BaseSolver;
 
-  ErrorIndicators Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const final;
+  ErrorIndicator
+  Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const override;
 };
 
 }  // namespace palace

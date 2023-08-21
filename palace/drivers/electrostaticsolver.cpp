@@ -4,6 +4,7 @@
 #include "electrostaticsolver.hpp"
 
 #include <mfem.hpp>
+#include "fem/errorindicator.hpp"
 #include "linalg/errorestimator.hpp"
 #include "linalg/ksp.hpp"
 #include "linalg/operator.hpp"
@@ -11,14 +12,13 @@
 #include "models/laplaceoperator.hpp"
 #include "models/postoperator.hpp"
 #include "utils/communication.hpp"
-#include "utils/errorindicators.hpp"
 #include "utils/iodata.hpp"
 #include "utils/timer.hpp"
 
 namespace palace
 {
 
-ErrorIndicators
+ErrorIndicator
 ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const
 {
   // Construct the system matrix defining the linear operator. Dirichlet boundaries are
@@ -29,6 +29,14 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &me
   LaplaceOperator laplaceop(iodata, mesh);
   auto K = laplaceop.GetStiffnessMatrix();
   SaveMetadata(laplaceop.GetH1Spaces());
+
+  // Construct the error estimator.
+  auto estimator = [&]()
+  {
+    BlockTimer bt(Timer::ESTCONSTRUCT);
+    return GradFluxErrorEstimator(iodata, laplaceop.GetMaterialOp(),
+                                  laplaceop.GetH1Spaces());
+  }();
 
   // Set up the linear solver.
   KspSolver ksp(iodata, laplaceop.GetH1Spaces());
@@ -43,6 +51,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &me
   // Right-hand side term and solution vector storage.
   Vector RHS(K->Height());
   std::vector<Vector> V(nstep);
+  std::vector<ErrorIndicator> indicators(nstep);
 
   // Main loop over terminal boundaries.
   Mpi::Print("\nComputing electrostatic fields for {:d} terminal boundar{}\n", nstep,
@@ -61,6 +70,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &me
 
     BlockTimer bt1(Timer::SOLVE);
     ksp.Mult(RHS, V[step]);
+    indicators[step] = estimator.ComputeIndicators(V[step]);
 
     BlockTimer bt2(Timer::POSTPRO);
     Mpi::Print(" Sol. ||V|| = {:.6e} (||RHS|| = {:.6e})\n",
@@ -68,37 +78,21 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &me
                linalg::Norml2(laplaceop.GetComm(), RHS));
 
     // Next terminal.
-    ++step;
+    step++;
   }
-
-  GradFluxErrorEstimator estimator(iodata, laplaceop.GetMaterialOp(), mesh,
-                                   laplaceop.GetH1Space());
-
-  // Evaluate error estimator and reduce over all
-  auto indicators = ErrorIndicators(laplaceop.GlobalTrueVSize());
-  ErrorReductionOperator error_reducer;
-  auto update_error_indicators =
-      [&estimator, &indicators, &error_reducer](const auto &V)
-  {
-    BlockTimer bt1(Timer::ESTSOLVE);
-    error_reducer(indicators, estimator(V));
-  };
-
-  // Compute and reduce the error indicators for each solution.
-  std::for_each(V.begin(), V.end(), update_error_indicators);
-
-  // Register the indicator field used to drive the overall adaptation.
-  postop.SetIndicatorGridFunction(indicators.local_error_indicators);
 
   // Postprocess the capacitance matrix from the computed field solutions.
   BlockTimer bt1(Timer::POSTPRO);
   SaveMetadata(ksp);
-  Postprocess(laplaceop, postop, V);
+  Postprocess(laplaceop, postop, V, indicators);
+  PostprocessErrorIndicator(
+      ErrorIndicator(indicators).GetPostprocessData(laplaceop.GetComm()));
   return indicators;
 }
 
 void ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop, PostOperator &postop,
-                                      const std::vector<Vector> &V) const
+                                      const std::vector<Vector> &V,
+                                      const std::vector<ErrorIndicator> &indicators) const
 {
   // Postprocess the Maxwell capacitance matrix. See p. 97 of the COMSOL AC/DC Module manual
   // for the associated formulas based on the electric field energy based on a unit voltage
@@ -106,6 +100,7 @@ void ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop, PostOperator &
   // charges from the prescribed voltage to get C directly as:
   //         Q_i = ∫ ρ dV = ∫ ∇ ⋅ (ε E) dV = ∫ (ε E) ⋅ n dS
   // and C_ij = Q_i/V_j. The energy formulation avoids having to locally integrate E = -∇V.
+  // Additionally compute error estimates for each terminal.
   auto Grad = laplaceop.GetGradMatrix();
   const std::map<int, mfem::Array<int>> &terminal_sources = laplaceop.GetSources();
   int nstep = static_cast<int>(terminal_sources.size());
@@ -122,7 +117,6 @@ void ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop, PostOperator &
     // for all postprocessing operations.
     E = 0.0;
     Grad->AddMult(V[i], E, -1.0);
-
     postop.SetEGridFunction(E);
     postop.SetVGridFunction(V[i]);
     double Ue = postop.GetEFieldEnergy();
@@ -131,19 +125,20 @@ void ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop, PostOperator &
     PostprocessProbes(postop, "i", i, idx);
     if (i < iodata.solver.electrostatic.n_post)
     {
+      postop.SetIndicatorGridFunction(indicators[i].Local());
       PostprocessFields(postop, i, idx);
       Mpi::Print(" Wrote fields to disk for terminal {:d}\n", idx);
     }
 
     // Diagonal: C_ii = 2 U_e(V_i) / V_i².
     C(i, i) = Cm(i, i) = 2.0 * Ue;
-    ++i;
+    i++;
   }
 
   // Off-diagonals: C_ij = U_e(V_i + V_j) / (V_i V_j) - 1/2 (V_i/V_j C_ii + V_j/V_i C_jj).
-  for (i = 0; i < C.Height(); ++i)
+  for (i = 0; i < C.Height(); i++)
   {
-    for (int j = 0; j < C.Width(); ++j)
+    for (int j = 0; j < C.Width(); j++)
     {
       if (j < i)
       {

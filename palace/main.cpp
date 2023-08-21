@@ -7,15 +7,14 @@
 #include <string_view>
 #include <vector>
 #include <mfem.hpp>
-
 #include "drivers/drivensolver.hpp"
 #include "drivers/eigensolver.hpp"
 #include "drivers/electrostaticsolver.hpp"
 #include "drivers/magnetostaticsolver.hpp"
 #include "drivers/transientsolver.hpp"
+#include "fem/errorindicator.hpp"
 #include "linalg/slepc.hpp"
 #include "utils/communication.hpp"
-#include "utils/errorindicators.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
 #include "utils/timer.hpp"
@@ -155,7 +154,7 @@ int main(int argc, char *argv[])
 #endif
 
   // Initialize the problem driver.
-  const std::unique_ptr<BaseSolver> solver = [&]() -> std::unique_ptr<BaseSolver>
+  const auto solver = [&]() -> std::unique_ptr<BaseSolver>
   {
     switch (iodata.problem.type)
     {
@@ -186,10 +185,7 @@ int main(int argc, char *argv[])
   mesh::RefineMesh(iodata, mesh);
 
   // Run the problem driver.
-  auto solver_output = solver->Solve(mesh);
-
-  Mpi::Print(world_comm, "Normalized Error Indicator: {:.3e}",
-             solver_output.global_error_indicator);
+  auto indicators = solver->Solve(mesh);
 
   // Print timing summary.
   BlockTimer::Print(world_comm);

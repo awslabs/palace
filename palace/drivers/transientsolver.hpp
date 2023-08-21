@@ -19,7 +19,7 @@ class ParMesh;
 namespace palace
 {
 
-struct ErrorIndicators;
+class ErrorIndicator;
 class IoData;
 class LumpedPortOperator;
 class PostOperator;
@@ -50,7 +50,8 @@ private:
 public:
   using BaseSolver::BaseSolver;
 
-  ErrorIndicators Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const override;
+  ErrorIndicator
+  Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const override;
 };
 
 }  // namespace palace

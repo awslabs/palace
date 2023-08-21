@@ -477,21 +477,19 @@ inline double DielectricInterfaceCoefficient<DielectricInterfaceType::DEFAULT>::
   return 0.5 * ts * epsilon * (V * V);
 }
 
-// Computes the flux, μ⁻¹ ∇ × X, of a field, X, where X can be the electric field E, or the
+// Computes the flux, μ⁻¹ ∇ × U, of a field, U, where U can be the electric field E, or the
 // magnetic vector potential A.
 class CurlFluxCoefficient : public mfem::VectorCoefficient
 {
 private:
-  const mfem::ParGridFunction &X;
-  MaterialPropertyCoefficient<MaterialPropertyType::INV_PERMEABILITY> coef;
-
-  mfem::DenseMatrix muinv;
+  const mfem::ParGridFunction &U;
+  const MaterialOperator &mat_op;
   mfem::Vector curl;
 
 public:
-  CurlFluxCoefficient(const mfem::ParGridFunction &pgf, const MaterialOperator &op)
-    : mfem::VectorCoefficient(pgf.ParFESpace()->GetParMesh()->SpaceDimension()), X(pgf),
-      coef(op, 1.0), muinv(3), curl(3)
+  CurlFluxCoefficient(const mfem::ParGridFunction &gf, const MaterialOperator &mat_op)
+    : mfem::VectorCoefficient(gf.ParFESpace()->GetParMesh()->SpaceDimension()), U(gf),
+      mat_op(mat_op), curl(gf.ParFESpace()->GetParMesh()->SpaceDimension())
   {
   }
 
@@ -499,37 +497,51 @@ public:
             const mfem::IntegrationPoint &ip) override
   {
     V.SetSize(3);
-
-    coef.Eval(muinv, T, ip);
-    X.GetCurl(T, curl);
-    muinv.Mult(curl, V);
+    U.GetCurl(T, curl);
+    mat_op.GetInvPermeability(T.Attribute).Mult(curl, V);
   }
 };
 
 // Computes the flux, ϵ ∇ ϕ, of the electrostatic potential ϕ.
-class GradFluxCoefficient : public mfem::VectorCoefficient
+class GradFluxCoefficient : public mfem::Coefficient
 {
 private:
-  const mfem::ParGridFunction &phi;
-  MaterialPropertyCoefficient<MaterialPropertyType::PERMITTIVITY_REAL> coef;
-
-  mfem::Vector grad;
-  mfem::DenseMatrix eps;
+  const mfem::ParGridFunction &gf;
+  const MaterialOperator &mat_op;
+  mfem::Vector grad, tmp;
+  int component;
 
 public:
-  GradFluxCoefficient(const mfem::ParGridFunction &pgf, const MaterialOperator &op)
-    : mfem::VectorCoefficient(pgf.ParFESpace()->GetParMesh()->SpaceDimension()), phi(pgf),
-      coef(op, 1.0), grad(3), eps(3)
+  GradFluxCoefficient(const mfem::ParGridFunction &gf, const MaterialOperator &mat_op)
+    : mfem::Coefficient(), gf(gf), mat_op(mat_op),
+      grad(gf.ParFESpace()->GetParMesh()->SpaceDimension()),
+      tmp(gf.ParFESpace()->GetParMesh()->SpaceDimension()), component(-1)
   {
   }
 
-  void Eval(mfem::Vector &V, mfem::ElementTransformation &T,
-            const mfem::IntegrationPoint &ip) override
+  // Specify the component
+  void SetComponent(int i)
   {
-    V.SetSize(3);
-    coef.Eval(eps, T, ip);
-    phi.GetGradient(T, grad);
-    eps.Mult(grad, V);
+    MFEM_ASSERT(i >= 0 && i < gf.ParFESpace()->GetParMesh()->SpaceDimension(),
+                "Invalid component index!");
+    component = i;
+  }
+
+  double Eval(mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip) override
+  {
+    MFEM_ASSERT(component >= 0 &&
+                    component < gf.ParFESpace()->GetParMesh()->SpaceDimension(),
+                "Invalid component index, try calling SetComponent(int)!");
+    Eval(tmp, T, ip);
+    return tmp(component);
+  }
+
+  // VectorCoefficient style Eval method for use in elemental integral evaluation.
+  inline void Eval(mfem::Vector &V, mfem::ElementTransformation &T,
+                   const mfem::IntegrationPoint &ip)
+  {
+    gf.GetGradient(T, grad);
+    mat_op.GetPermittivityReal(T.Attribute).Mult(grad, V);
   }
 };
 
@@ -795,6 +807,8 @@ private:
   }
 
 public:
+  SumCoefficient() : mfem::Coefficient() {}
+
   bool empty() const { return c.empty(); }
 
   void AddCoefficient(std::unique_ptr<mfem::Coefficient> &&coef)

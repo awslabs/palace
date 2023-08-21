@@ -4,6 +4,7 @@
 #include "transientsolver.hpp"
 
 #include <mfem.hpp>
+#include "fem/errorindicator.hpp"
 #include "linalg/errorestimator.hpp"
 #include "linalg/vector.hpp"
 #include "models/lumpedportoperator.hpp"
@@ -12,7 +13,6 @@
 #include "models/surfacecurrentoperator.hpp"
 #include "models/timeoperator.hpp"
 #include "utils/communication.hpp"
-#include "utils/errorindicators.hpp"
 #include "utils/excitations.hpp"
 #include "utils/iodata.hpp"
 #include "utils/timer.hpp"
@@ -20,7 +20,7 @@
 namespace palace
 {
 
-ErrorIndicators
+ErrorIndicator
 TransientSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const
 {
   // Set up the spatial discretization and time integrators for the E and B fields.
@@ -77,6 +77,14 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) 
   }
   Mpi::Print("\n");
 
+  // Initialize structures for storing and reducing the results of error estimation.
+  auto estimator = [&]()
+  {
+    BlockTimer bt(Timer::ESTCONSTRUCT);
+    return CurlFluxErrorEstimator(iodata, spaceop.GetMaterialOp(), spaceop.GetNDSpaces());
+  }();
+  ErrorIndicator indicator;
+
   // Main time integration loop.
   int step = 0;
   double t = -delta_t;
@@ -118,6 +126,9 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) 
                  E_elec + E_mag);
     }
 
+    // Calculate and record the error indicators.
+    estimator.AddErrorIndicator(indicator, postop, E);
+
     // Postprocess port voltages/currents and optionally write solution to disk.
     Postprocess(postop, spaceop.GetLumpedPortOp(), spaceop.GetSurfaceCurrentOp(), step, t,
                 J_coef(t), E_elec, E_mag, !iodata.solver.transient.only_port_post);
@@ -125,9 +136,9 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) 
     // Increment time step.
     step++;
   }
-
   SaveMetadata(timeop.GetLinearSolver());
-  return ErrorIndicators(spaceop.GlobalTrueVSize());
+  PostprocessErrorIndicator(indicator.GetPostprocessData(spaceop.GetComm()));
+  return indicator;
 }
 std::function<double(double)> TransientSolver::GetTimeExcitation(bool dot) const
 {

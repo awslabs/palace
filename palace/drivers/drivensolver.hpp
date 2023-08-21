@@ -19,7 +19,7 @@ namespace palace
 {
 
 class CurlFluxErrorEstimator;
-struct ErrorIndicators;
+class ErrorIndicator;
 class IoData;
 class LumpedPortOperator;
 class PostOperator;
@@ -36,12 +36,12 @@ class DrivenSolver : public BaseSolver
 private:
   int GetNumSteps(double start, double end, double delta) const;
 
-  ErrorIndicators SweepUniform(SpaceOperator &spaceop, PostOperator &postop,
-                               const CurlFluxErrorEstimator &estimator, int nstep,
-                               int step0, double omega0, double delta_omega) const;
-  ErrorIndicators SweepAdaptive(SpaceOperator &spaceop, PostOperator &postop,
-                                const CurlFluxErrorEstimator &estimator, int nstep,
-                                int step0, double omega0, double delta_omega) const;
+  ErrorIndicator SweepUniform(SpaceOperator &spaceop, PostOperator &postop,
+                              CurlFluxErrorEstimator &estimator, int nstep, int step0,
+                              double omega0, double delta_omega) const;
+  ErrorIndicator SweepAdaptive(SpaceOperator &spaceop, PostOperator &postop,
+                               CurlFluxErrorEstimator &estimator, int nstep, int step0,
+                               double omega0, double delta_omega) const;
 
   void Postprocess(const PostOperator &postop, const LumpedPortOperator &lumped_port_op,
                    const WavePortOperator &wave_port_op,
@@ -62,7 +62,7 @@ private:
 public:
   using BaseSolver::BaseSolver;
 
-  ErrorIndicators Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const final;
+  ErrorIndicator Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const final;
 };
 
 }  // namespace palace

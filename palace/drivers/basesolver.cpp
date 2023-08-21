@@ -6,12 +6,12 @@
 #include <complex>
 #include <mfem.hpp>
 #include <nlohmann/json.hpp>
+#include "fem/errorindicator.hpp"
 #include "linalg/ksp.hpp"
 #include "models/domainpostoperator.hpp"
 #include "models/postoperator.hpp"
 #include "models/surfacepostoperator.hpp"
 #include "utils/communication.hpp"
-#include "utils/errorindicators.hpp"
 #include "utils/filesystem.hpp"
 #include "utils/iodata.hpp"
 #include "utils/timer.hpp"
@@ -564,6 +564,39 @@ void BaseSolver::PostprocessFields(const PostOperator &postop, int step, double 
   }
   postop.WriteFields(step, time);
   Mpi::Barrier();
+}
+
+void BaseSolver::PostprocessErrorIndicator(const std::array<double, 5> &data) const
+{
+  if (post_dir.length() == 0)
+  {
+    return;
+  }
+
+  // Write the indicator statistics
+  if (root)
+  {
+    std::string path = post_dir + "error-indicators.csv";
+    auto output = OutputFile(path, false);
+
+    // clang-format off
+    output.print("{:>{}s},{:>{}s},{:>{}s},{:>{}s},{:>{}s}\n",
+                  "Sum", table.w,
+                  "Min", table.w,
+                  "Max", table.w,
+                  "Mean", table.w,
+                  "Normalization", table.w);
+    // clang-format on
+
+    // clang-format off
+    output.print("{:+{}.{}e},{:+{}.{}e},{:+{}.{}e},{:+{}.{}e},{:+{}.{}e}\n",
+                data[0], table.w, table.p,
+                data[1], table.w, table.p,
+                data[2], table.w, table.p,
+                data[3], table.w, table.p,
+                data[4], table.w, table.p);
+    // clang-format on
+  }
 }
 
 template void BaseSolver::SaveMetadata<KspSolver>(const KspSolver &) const;
