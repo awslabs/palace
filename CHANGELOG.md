@@ -36,6 +36,7 @@ The format of this changelog is based on
   - Added build dependencies on [libCEED](https://github.com/CEED/libCEED) and
     [LIBXSMM](https://github.com/libxsmm/libxsmm) to support operator partial assembly (CPU-
     based for now).
+  - Added improved OpenMP support in `palace` wrapper script and CI tests.
   - Added Apptainer/Singularity container build definition for Palace.
 
 ## [0.11.2] - 2023-07-14
