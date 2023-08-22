@@ -59,38 +59,60 @@ public:
 class UniformElementData : public LumpedElementData
 {
 protected:
-  bool sign;      // Sign of incident field, +x̂ / ŷ / ẑ if true
-  int component;  // Lumped element direction (0: x, 1: y, 2: z)
-  double l, w;    // Lumped element length and width
-
+  mesh::BoundingBox bounding_box;  // Bounding box defining the rectangular lumped port
+  mfem::Vector direction;  // Cartesian vector specifying signed direction of incident field
+  double l, w;             // Lumped element length and width
 public:
-  UniformElementData(const std::string &direction, const mfem::Array<int> &marker,
+  UniformElementData(const std::array<double, 3> &input_dir, const mfem::Array<int> &marker,
                      mfem::ParFiniteElementSpace &fespace)
     : LumpedElementData(fespace.GetParMesh()->SpaceDimension(), marker),
-      sign(direction[0] == '+')
+      bounding_box(mesh::GetBoundingBox(*fespace.GetParMesh(), marker, true)), direction(3)
   {
-    switch (direction[1])
-    {
-      case 'x':
-        component = 0;
-        break;
-      case 'y':
-        component = 1;
-        break;
-      case 'z':
-        component = 2;
-        break;
-      default:
-        MFEM_ABORT("Lumped element direction is not correctly formatted!");
-        component = 0;  // For compiler warning
-        break;
-    }
+    MFEM_VERIFY(bounding_box.planar,
+                "Boundary elements must be coplanar to define a lumped element!");
 
-    // Get the lumped element length and width assuming axis-aligned rectangle.
-    mfem::Vector bbmin, bbmax;
-    mesh::GetBoundingBox(*fespace.GetParMesh(), marker, true, bbmin, bbmax);
+    // Check that the bounding box discovered matches the area. This validates that the
+    // boundary elements form a right angled quadrilateral port.
+    constexpr double rel_tol = 1.0e-6;
     double A = GetArea(fespace);
-    l = bbmax(component) - bbmin(component);
+    MFEM_VERIFY(std::abs(A - bounding_box.Area()) / A < rel_tol,
+                "Assumed bounding box area "
+                    << bounding_box.Area() << " and integrated area " << A
+                    << " do not match: Port geometry is not rectangular!");
+
+    // Check the user specified direction aligns with an axis direction.
+    constexpr double angle_warning_deg = 0.1;
+    constexpr double angle_error_deg = 1.0;
+    auto lengths = bounding_box.Lengths();
+    auto deviation_deg = bounding_box.Deviation(input_dir);
+    if ((deviation_deg[0] > angle_warning_deg && deviation_deg[1] > angle_warning_deg) ||
+        std::isnan(deviation_deg[0]) || std::isnan(deviation_deg[1]))
+    {
+      auto normal_0 = bounding_box.normals[0];
+      for (auto &x : normal_0)
+      {
+        x /= lengths[0];
+      }
+      auto normal_1 = bounding_box.normals[1];
+      for (auto &x : normal_1)
+      {
+        x /= lengths[1];
+      }
+      Mpi::Warning("User specified direction {} does not align with either bounding box "
+                   "axis up to {} degrees.\n"
+                   "Axis 1: {} ({} degrees)\nAxis 2: {} ({} degrees)!\n",
+                   input_dir, angle_warning_deg, normal_0, deviation_deg[0], normal_1,
+                   deviation_deg[1]);
+    }
+    MFEM_VERIFY(deviation_deg[0] <= angle_error_deg || deviation_deg[1] <= angle_error_deg,
+                "Specified direction does not align sufficiently with bounding box axes: "
+                    << deviation_deg[0] << ' ' << deviation_deg[1] << ' ' << angle_error_deg
+                    << '!');
+    std::copy(input_dir.begin(), input_dir.end(), direction.begin());
+    direction /= direction.Norml2();
+
+    // Compute the length from the most aligned normal direction.
+    l = lengths[deviation_deg[0] < deviation_deg[1] ? 0 : 1];
     w = A / l;
   }
 
@@ -100,9 +122,8 @@ public:
   std::unique_ptr<mfem::VectorCoefficient>
   GetModeCoefficient(double coef = 1.0) const override
   {
-    mfem::Vector source(dim);
-    source = 0.0;
-    source(component) = (sign ? 1.0 : -1.0) * coef;
+    mfem::Vector source = direction;
+    source *= coef;
     return std::make_unique<mfem::VectorConstantCoefficient>(source);
   }
 };
@@ -110,51 +131,38 @@ public:
 class CoaxialElementData : public LumpedElementData
 {
 protected:
-  bool sign;       // Sign of incident field, +r̂ if true
-  double ra, rb;   // Inner and outer radius of coaxial annulus
-  mfem::Vector c;  // Center coordinates of coaxial annulus
+  mesh::BoundingBall bounding_ball;  // Bounding ball defined by boundary element
+  bool sign;                         // Sign of incident field, +r̂ if true
+  double ra;                         // Inner radius of coaxial annulus
 
 public:
-  CoaxialElementData(const std::string &direction, const mfem::Array<int> &marker,
+  CoaxialElementData(const std::array<double, 3> &direction, const mfem::Array<int> &marker,
                      mfem::ParFiniteElementSpace &fespace)
     : LumpedElementData(fespace.GetParMesh()->SpaceDimension(), marker),
-      sign(direction[0] == '+')
+      bounding_ball(mesh::GetBoundingBall(*fespace.GetParMesh(), marker, true)),
+      sign(direction[0] > 0)
   {
-    // Get the outer annulus radius.
-    MFEM_VERIFY(direction[1] == 'r',
-                "Lumped element direction is not correctly formatted!");
-    mfem::Vector bbmin, bbmax;
-    mesh::GetBoundingBox(*fespace.GetParMesh(), marker, true, bbmin, bbmax);
-    double A = GetArea(fespace);
-    rb = 0.0;
-    for (int d = 0; d < dim; d++)
-    {
-      double diff = 0.5 * (bbmax(d) - bbmin(d));
-      if (diff > rb)
-      {
-        rb = diff;
-      }
-    }
+    MFEM_VERIFY(bounding_ball.planar,
+                "Boundary elements must be coplanar to define a coaxial lumped element!");
 
     // Get inner radius of annulus assuming full 2π circumference.
-    MFEM_VERIFY(rb > 0.0 && rb * rb - A / M_PI > 0.0,
-                "Coaxial element boundary is not defined correctly!");
-    ra = std::sqrt(rb * rb - A / M_PI);
-    c.SetSize(dim);
-    for (int d = 0; d < dim; d++)
-    {
-      c(d) = 0.5 * (bbmax(d) + bbmin(d));
-    }
+    double A = GetArea(fespace);
+    MFEM_VERIFY(bounding_ball.radius > 0.0 &&
+                    std::pow(bounding_ball.radius, 2) - A / M_PI > 0.0,
+                "Coaxial element boundary is not defined correctly: Radius "
+                    << bounding_ball.radius << ", area " << A << "!");
+    ra = std::sqrt(std::pow(bounding_ball.radius, 2) - A / M_PI);
   }
 
-  double GetGeometryLength() const override { return std::log(rb / ra); }
+  double GetGeometryLength() const override { return std::log(bounding_ball.radius / ra); }
   double GetGeometryWidth() const override { return 2.0 * M_PI; }
 
   std::unique_ptr<mfem::VectorCoefficient>
   GetModeCoefficient(double coef = 1.0) const override
   {
     double scoef = (sign ? 1.0 : -1.0) * coef;
-    mfem::Vector x0(c);
+    mfem::Vector x0(3);
+    std::copy(bounding_ball.center.begin(), bounding_ball.center.end(), x0.begin());
     auto Source = [scoef, x0](const mfem::Vector &x, mfem::Vector &f) -> void
     {
       f = x;

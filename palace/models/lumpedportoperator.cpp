@@ -48,27 +48,24 @@ LumpedPortData::LumpedPortData(const config::LumpedPortData &data,
   }
 
   // Construct the port elements allowing for a possible multielement lumped port.
-  for (const auto &node : data.nodes)
+  for (const auto &elem : data.elements)
   {
-    // Check input direction.
-    MFEM_VERIFY(node.direction.length() == 2 &&
-                    (node.direction[0] == '-' || node.direction[0] == '+') &&
-                    (node.direction[1] == 'x' || node.direction[1] == 'y' ||
-                     node.direction[1] == 'z' || node.direction[1] == 'r'),
-                "Lumped port direction is not correctly formatted!");
-
     mfem::Array<int> attr_marker;
-    mesh::AttrToMarker(h1_fespace.GetParMesh()->bdr_attributes.Max(), node.attributes,
+    mesh::AttrToMarker(h1_fespace.GetParMesh()->bdr_attributes.Max(), elem.attributes,
                        attr_marker);
-    if (node.direction[1] == 'r')
+    switch (elem.coordinate_system)
     {
-      elems.push_back(
-          std::make_unique<CoaxialElementData>(node.direction, attr_marker, h1_fespace));
-    }
-    else
-    {
-      elems.push_back(
-          std::make_unique<UniformElementData>(node.direction, attr_marker, h1_fespace));
+      case config::internal::ElementData::CoordinateSystem::CYLINDRICAL:
+        elems.push_back(
+            std::make_unique<CoaxialElementData>(elem.direction, attr_marker, h1_fespace));
+        break;
+      case config::internal::ElementData::CoordinateSystem::CARTESIAN:
+        elems.push_back(
+            std::make_unique<UniformElementData>(elem.direction, attr_marker, h1_fespace));
+        break;
+      case config::internal::ElementData::CoordinateSystem::INVALID:
+        MFEM_ABORT("Unexpected coordinate system for lumped port direction!");
+        break;
     }
   }
 
@@ -307,9 +304,9 @@ void LumpedPortOperator::SetUpBoundaryProperties(const IoData &iodata,
     }
     for (const auto &[idx, data] : iodata.boundaries.lumpedport)
     {
-      for (const auto &node : data.nodes)
+      for (const auto &elem : data.elements)
       {
-        for (auto attr : node.attributes)
+        for (auto attr : elem.attributes)
         {
           MFEM_VERIFY(attr > 0 && attr <= bdr_attr_max,
                       "Port boundary attribute tags must be non-negative and correspond to "

@@ -3,11 +3,13 @@
 
 #include "geodata.hpp"
 
+#include <algorithm>
 #include <array>
 #include <limits>
 #include <map>
 #include <sstream>
 #include <string>
+#include <Eigen/Dense>
 #include "utils/communication.hpp"
 #include "utils/filesystem.hpp"
 #include "utils/iodata.hpp"
@@ -16,6 +18,9 @@
 
 namespace palace
 {
+
+using Vector3dMap = Eigen::Map<Eigen::Vector3d>;
+using CVector3dMap = Eigen::Map<const Eigen::Vector3d>;
 
 namespace
 {
@@ -389,17 +394,17 @@ void AttrToMarker(int max_attr, const std::vector<int> &attrs, mfem::Array<int> 
   }
 }
 
-void GetBoundingBox(mfem::ParMesh &mesh, int attr, bool bdr, mfem::Vector &min,
-                    mfem::Vector &max)
+void GetAxisAlignedBoundingBox(mfem::ParMesh &mesh, int attr, bool bdr, mfem::Vector &min,
+                               mfem::Vector &max)
 {
   mfem::Array<int> marker(bdr ? mesh.bdr_attributes.Max() : mesh.attributes.Max());
   marker = 0;
   marker[attr - 1] = 1;
-  GetBoundingBox(mesh, marker, bdr, min, max);
+  GetAxisAlignedBoundingBox(mesh, marker, bdr, min, max);
 }
 
-void GetBoundingBox(mfem::ParMesh &mesh, const mfem::Array<int> &marker, bool bdr,
-                    mfem::Vector &min, mfem::Vector &max)
+void GetAxisAlignedBoundingBox(mfem::ParMesh &mesh, const mfem::Array<int> &marker,
+                               bool bdr, mfem::Vector &min, mfem::Vector &max)
 {
   int dim = mesh.SpaceDimension();
   min.SetSize(dim);
@@ -511,6 +516,435 @@ void GetBoundingBox(mfem::ParMesh &mesh, const mfem::Array<int> &marker, bool bd
   auto *Max = max.HostReadWrite();
   Mpi::GlobalMin(dim, Min, mesh.GetComm());
   Mpi::GlobalMax(dim, Max, mesh.GetComm());
+}
+
+double BoundingBox::Area() const
+{
+  return 4.0 *
+         CVector3dMap(normals[0].data()).cross(CVector3dMap(normals[1].data())).norm();
+}
+
+double BoundingBox::Volume() const
+{
+  return planar ? 0.0 : 2.0 * CVector3dMap(normals[2].data()).norm() * Area();
+}
+
+std::array<double, 3> BoundingBox::Lengths() const
+{
+  return {2.0 * CVector3dMap(normals[0].data()).norm(),
+          2.0 * CVector3dMap(normals[1].data()).norm(),
+          2.0 * CVector3dMap(normals[2].data()).norm()};
+}
+
+std::array<double, 3> BoundingBox::Deviation(const std::array<double, 3> &direction) const
+{
+  const auto eig_dir = CVector3dMap(direction.data());
+  std::array<double, 3> deviation_deg;
+  for (std::size_t i = 0; i < 3; i++)
+  {
+    deviation_deg[i] =
+        std::acos(std::min(1.0, std::abs(eig_dir.normalized().dot(
+                                    CVector3dMap(normals[i].data()).normalized())))) *
+        (180.0 / M_PI);
+  }
+  return deviation_deg;
+}
+
+namespace
+{
+
+// Compute a lexicographic comparison of Eigen Vector3d.
+bool EigenLE(const Eigen::Vector3d &x, const Eigen::Vector3d &y)
+{
+  return std::lexicographical_compare(x.begin(), x.end(), y.begin(), y.end());
+};
+
+// Helper for collecting a point cloud from a mesh, used in calculating bounding boxes and
+// bounding balls. Returns the dominant rank, for which the vertices argument will be
+// filled, while all other ranks will have an empty vector. Vertices are de-duplicated to a
+// certain floating point precision.
+int CollectPointCloudOnRoot(mfem::ParMesh &mesh, const mfem::Array<int> &marker, bool bdr,
+                            std::vector<Eigen::Vector3d> &vertices)
+{
+  std::set<int> vertex_indices;
+  if (mesh.GetNodes() == nullptr)
+  {
+    // Linear mesh, work with element vertices directly.
+    mfem::Array<int> v;
+    if (bdr)
+    {
+      for (int i = 0; i < mesh.GetNBE(); i++)
+      {
+        if (!marker[mesh.GetBdrAttribute(i) - 1])
+        {
+          continue;
+        }
+        mesh.GetBdrElementVertices(i, v);
+        vertex_indices.insert(v.begin(), v.end());
+      }
+    }
+    else
+    {
+      for (int i = 0; i < mesh.GetNE(); i++)
+      {
+        if (!marker[mesh.GetAttribute(i) - 1])
+        {
+          continue;
+        }
+        mesh.GetElementVertices(i, v);
+        vertex_indices.insert(v.begin(), v.end());
+      }
+    }
+    for (auto i : vertex_indices)
+    {
+      const auto &vx = mesh.GetVertex(i);
+      vertices.push_back({vx[0], vx[1], vx[2]});
+    }
+  }
+  else
+  {
+    // Nonlinear mesh, need to process point matrices.
+    const int ref = mesh.GetNodes()->FESpace()->GetMaxElementOrder();
+    mfem::DenseMatrix pointmat;  // 3 x N
+    if (bdr)
+    {
+      for (int i = 0; i < mesh.GetNBE(); i++)
+      {
+        if (!marker[mesh.GetBdrAttribute(i) - 1])
+        {
+          continue;
+        }
+        mfem::ElementTransformation *T = mesh.GetBdrElementTransformation(i);
+        T->Transform(
+            mfem::GlobGeometryRefiner.Refine(mesh.GetBdrElementGeometry(i), ref)->RefPts,
+            pointmat);
+        for (int j = 0; j < pointmat.Width(); ++j)
+        {
+          vertices.push_back({pointmat(0, j), pointmat(1, j), pointmat(2, j)});
+        }
+      }
+    }
+    else
+    {
+      for (int i = 0; i < mesh.GetNE(); i++)
+      {
+        if (!marker[mesh.GetAttribute(i) - 1])
+        {
+          continue;
+        }
+        mfem::ElementTransformation *T = mesh.GetElementTransformation(i);
+        T->Transform(
+            mfem::GlobGeometryRefiner.Refine(mesh.GetElementGeometry(i), ref)->RefPts,
+            pointmat);
+        for (int j = 0; j < pointmat.Width(); ++j)
+        {
+          vertices.push_back({pointmat(0, j), pointmat(1, j), pointmat(2, j)});
+        }
+      }
+    }
+  }
+
+  // dominant_rank will perform the calculation.
+  MPI_Comm comm = mesh.GetComm();
+  const auto num_vertices = int(vertices.size());
+  const int dominant_rank = [&]()
+  {
+    int vert = num_vertices, rank = Mpi::Rank(comm);
+    Mpi::GlobalMaxLoc(1, &vert, &rank, comm);
+    return rank;
+  }();
+  std::vector<int> recv_counts(Mpi::Size(comm)), displacements;
+  std::vector<Eigen::Vector3d> collected_vertices;
+  MPI_Gather(&num_vertices, 1, MPI_INT, recv_counts.data(), 1, MPI_INT, dominant_rank,
+             comm);
+  if (dominant_rank == Mpi::Rank(comm))
+  {
+    // First displacement is zero, then after is the partial sum of recv_counts.
+    displacements.resize(Mpi::Size(comm));
+    displacements[0] = 0;
+    std::partial_sum(recv_counts.begin(), recv_counts.end() - 1, displacements.begin() + 1);
+
+    // Add on slots at the end of vertices for the incoming data.
+    collected_vertices.resize(std::accumulate(recv_counts.begin(), recv_counts.end(), 0));
+
+    // MPI transfer will be done with MPI_DOUBLE, so duplicate all these values.
+    for (auto &x : displacements)
+    {
+      x *= 3;
+    }
+    for (auto &x : recv_counts)
+    {
+      x *= 3;
+    }
+  }
+
+  // Gather the data to the dominant rank.
+  static_assert(sizeof(Eigen::Vector3d) == 3 * sizeof(double));
+  MPI_Gatherv(vertices.data(), 3 * num_vertices, MPI_DOUBLE, collected_vertices.data(),
+              recv_counts.data(), displacements.data(), MPI_DOUBLE, dominant_rank, comm);
+
+  // Deduplicate vertices. Given floating point precision, need a tolerance.
+  if (dominant_rank == Mpi::Rank(comm))
+  {
+    auto vertex_equality = [](const auto &x, const auto &y)
+    {
+      constexpr double tolerance = 10.0 * std::numeric_limits<double>::epsilon();
+      return std::abs(x[0] - y[0]) < tolerance && std::abs(x[1] - y[1]) < tolerance &&
+             std::abs(x[2] - y[2]) < tolerance;
+    };
+    vertices = std::move(collected_vertices);
+    std::sort(vertices.begin(), vertices.end(), EigenLE);
+    vertices.erase(std::unique(vertices.begin(), vertices.end(), vertex_equality),
+                   vertices.end());
+  }
+  else
+  {
+    vertices.clear();
+  }
+
+  return dominant_rank;
+}
+
+// Calculates a bounding box from a point cloud, result is broadcast across all processes.
+BoundingBox BoundingBoxFromPointCloud(MPI_Comm comm,
+                                      const std::vector<Eigen::Vector3d> &vertices,
+                                      int dominant_rank)
+{
+  BoundingBox box;
+  if (dominant_rank == Mpi::Rank(comm))
+  {
+    // Pick a candidate 000 vertex using lexicographic sort. This can be vulnerable to
+    // floating point precision if the box is axis aligned, but not floating point exact.
+    // Pick candidate 111 as the furthest from this candidate, then reassign 000 as the
+    // furthest from 111. Such a pair has to form the diagonal for a point cloud defining a
+    // box. Verify that p_111 is also the maximum distance from p_000 -> a diagonal is
+    // found.
+    MFEM_VERIFY(vertices.size() >= 4,
+                "A bounding box requires a minimum of four vertices for this algorithm!");
+    auto p_000 = std::min_element(vertices.begin(), vertices.end(), EigenLE);
+    auto DistFromP_000 = [&p_000](const Eigen::Vector3d &x, const Eigen::Vector3d &y)
+    { return (x - *p_000).norm() < (y - *p_000).norm(); };
+    auto p_111 = std::max_element(vertices.begin(), vertices.end(), DistFromP_000);
+    auto DistFromP_111 = [&p_111](const Eigen::Vector3d &x, const Eigen::Vector3d &y)
+    { return (x - *p_111).norm() < (y - *p_111).norm(); };
+    p_000 = std::max_element(vertices.begin(), vertices.end(), DistFromP_111);
+    MFEM_VERIFY(std::max_element(vertices.begin(), vertices.end(), DistFromP_000) == p_111,
+                "p_000 and p_111 must be mutually opposing points!");
+
+    // Define a diagonal of the ASSUMED cuboid bounding box. Store references as this is
+    // useful for checking pointers later.
+    const auto &v_000 = *p_000;
+    const auto &v_111 = *p_111;
+    MFEM_VERIFY(&v_000 != &v_111, "Minimum and maximum extents cannot be identical!");
+    const auto origin = v_000;
+    const Eigen::Vector3d n_1 = (v_111 - v_000).normalized();
+
+    // Compute the distance from the normal axis. Note: everything has been oriented
+    // relative to v_000 == (0,0,0).
+    auto PerpendicularDistance = [&n_1, &origin](const Eigen::Vector3d &v)
+    { return ((v - origin) - (v - origin).dot(n_1) * n_1).norm(); };
+
+    // Find the vertex furthest from the diagonal axis. We cannot know yet if this defines
+    // (001) or (011).
+    const auto &t_0 =
+        *std::max_element(vertices.begin(), vertices.end(),
+                          [PerpendicularDistance](const auto &x, const auto &y)
+                          { return PerpendicularDistance(x) < PerpendicularDistance(y); });
+    MFEM_VERIFY(&t_0 != &v_000, "Vertices are degenerate!");
+    MFEM_VERIFY(&t_0 != &v_111, "Vertices are degenerate!");
+
+    // Use the discovered vertex to define a second direction and thus a plane.
+    const Eigen::Vector3d n_2 =
+        ((t_0 - origin) - (t_0 - origin).dot(n_1) * n_1).normalized();
+
+    // n_1 and n_2 now define a planar coordinate system intersecting the main diagonal, and
+    // two opposite edges of the cuboid. Now look for a component that maximizes distance
+    // from the planar system: complete the axes with a cross, then use a dot product to
+    // pick the greatest deviation.
+    const Eigen::Vector3d n_3 = n_1.cross(n_2).normalized();
+
+    auto OutOfPlaneComp = [&n_1, &n_2, &n_3, &origin](const auto &v_1, const auto &v_2)
+    {
+      // Precedence of directions is in reverse order of discovery of the directions. The
+      // most important deciding feature is the distance in the out of plane direction,
+      // then in the first off-diagonal, then finally in the diagonal direction.
+      const std::array<double, 3> dist_1{(v_1 - origin).dot(n_3), (v_1 - origin).dot(n_2),
+                                         (v_1 - origin).dot(n_1)};
+      const std::array<double, 3> dist_2{(v_2 - origin).dot(n_3), (v_2 - origin).dot(n_2),
+                                         (v_2 - origin).dot(n_1)};
+      return dist_1 < dist_2;
+    };
+
+    // There is a degeneration if the final point is within the plane defined by (v_000,
+    // v_001, v_111).
+    const auto &t_1 = *std::max_element(vertices.begin(), vertices.end(), OutOfPlaneComp);
+    constexpr double planar_tolerance = 1.0e-9;
+    box.planar = std::abs(n_3.dot(t_0)) < planar_tolerance &&
+                 std::abs(n_3.dot(t_1)) < planar_tolerance;
+    if (!box.planar)
+    {
+      MFEM_VERIFY(&t_0 != &t_1, "Degenerate coordinates!");
+      MFEM_VERIFY(&t_0 != &v_000, "Degenerate coordinates!");
+      MFEM_VERIFY(&t_0 != &v_111, "Degenerate coordinates!");
+      MFEM_VERIFY(&t_1 != &v_000, "Degenerate coordinates!");
+      MFEM_VERIFY(&t_1 != &v_111, "Degenerate coordinates!");
+    }
+
+    // If t_1 points to v_000, t_0 or v_111, then the data is coplanar. Establish if t_0 is
+    // a diagonal or not (using Pythagoras). Only pick t_1 for v_001 if the points are non-
+    // planar, and t_0 is longer.
+    bool t_0_gt_t_1 = t_0.norm() >= t_1.norm();
+    const auto &v_001 = !box.planar && t_0_gt_t_1 ? t_1 : t_0;
+    const auto &v_011 = !box.planar && t_0_gt_t_1 ? t_0 : t_1;
+
+    // Compute the center as halfway along the main diagonal.
+    Vector3dMap(box.center.data()) = 0.5 * (v_000 + v_111);
+
+    // The length in each direction is then given by traversing the edges of the cuboid in
+    // turn.
+    Vector3dMap(box.normals[0].data()) = 0.5 * (v_001 - v_000);
+    Vector3dMap(box.normals[1].data()) =
+        box.planar ? (0.5 * (v_111 - v_001)).eval() : (0.5 * (v_011 - v_001)).eval();
+    Vector3dMap(box.normals[2].data()) =
+        box.planar ? Eigen::Vector3d(0, 0, 0) : (0.5 * (v_111 - v_011)).eval();
+
+    // Make sure the longest dimension comes first.
+    std::sort(box.normals.begin(), box.normals.end(),
+              [](const auto &x, const auto &y)
+              { return CVector3dMap(x.data()).norm() > CVector3dMap(y.data()).norm(); });
+  }
+
+  // Broadcast result to all processors.
+  Mpi::Broadcast(3, box.center.data(), dominant_rank, comm);
+  Mpi::Broadcast(3 * 3, box.normals.data()->data(), dominant_rank, comm);
+  Mpi::Broadcast(1, &box.planar, dominant_rank, comm);
+
+  return box;
+}
+
+// Calculates a bounding ball from a point cloud, result is broadcast across all processes.
+BoundingBall BoundingBallFromPointCloud(MPI_Comm comm,
+                                        const std::vector<Eigen::Vector3d> &vertices,
+                                        int dominant_rank)
+{
+  BoundingBall ball;
+  if (dominant_rank == Mpi::Rank(comm))
+  {
+    // Pick a candidate 000 vertex using lexicographic sort. This can be vulnerable to
+    // floating point precision if there is no directly opposed vertex.
+    // Pick candidate 111 as the furthest from this candidate, then reassign 000 as the
+    // furthest from 111. Such a pair has to form the diagonal for a point cloud defining a
+    // ball. Verify that p_111 is also the maximum distance from p_000 -> a diagonal is
+    // found.
+    MFEM_VERIFY(vertices.size() >= 3,
+                "A bounding ball requires a minimum of three vertices for this algorithm!");
+    auto p_000 = std::min_element(vertices.begin(), vertices.end(), EigenLE);
+    auto DistFromP_000 = [&p_000](const Eigen::Vector3d &x, const Eigen::Vector3d &y)
+    { return (x - *p_000).norm() < (y - *p_000).norm(); };
+    auto p_111 = std::max_element(vertices.begin(), vertices.end(), DistFromP_000);
+    auto DistFromP_111 = [&p_111](const Eigen::Vector3d &x, const Eigen::Vector3d &y)
+    { return (x - *p_111).norm() < (y - *p_111).norm(); };
+    p_000 = std::max_element(vertices.begin(), vertices.end(), DistFromP_111);
+    MFEM_VERIFY(std::max_element(vertices.begin(), vertices.end(), DistFromP_000) == p_111,
+                "p_000 and p_111 must be mutually opposing points!");
+
+    const auto &min = *p_000;
+    const auto &max = *p_111;
+    Eigen::Vector3d delta = max - min;
+    ball.radius = 0.5 * delta.norm();
+    Vector3dMap(ball.center.data()) = 0.5 * (min + max);
+
+    // Project onto this candidate diameter, and pick a vertex furthest away. Check that
+    // this resulting distance is less than or equal to the radius, and use the resulting
+    // direction to compute another in plane vector. Assumes all delta are normalized, and
+    // applies a common origin as part of the projection.
+    auto PerpendicularDistance = [min](const std::initializer_list<Eigen::Vector3d> &deltas,
+                                       const Eigen::Vector3d &vin)
+    {
+      Eigen::Vector3d v = vin - min;
+      for (const auto &d : deltas)
+      {
+        v -= d.dot(v) * d;
+      }
+      return v.norm();
+    };
+
+    delta.normalize();
+    const auto &perp = *std::max_element(
+        vertices.begin(), vertices.end(),
+        [&delta, PerpendicularDistance](const auto &x, const auto &y)
+        { return PerpendicularDistance({delta}, x) < PerpendicularDistance({delta}, y); });
+    constexpr double radius_tol = 1.0e-6;
+    MFEM_VERIFY(std::abs(PerpendicularDistance({delta}, perp) - ball.radius) <=
+                    radius_tol * ball.radius,
+                "A point perpendicular must be contained in the ball: "
+                    << PerpendicularDistance({delta}, perp) << " vs. " << ball.radius
+                    << "!");
+
+    // Compute a perpendicular to the circle using the cross product.
+    const Eigen::Vector3d n_radial = (perp - CVector3dMap(ball.center.data())).normalized();
+    Vector3dMap(ball.planar_normal.data()) = delta.cross(n_radial).normalized();
+
+    // Compute the point furthest out of the plane discovered. If below tolerance, this
+    // means the circle is 2D.
+    const auto &out_of_plane = *std::max_element(
+        vertices.begin(), vertices.end(),
+        [&delta, &n_radial, PerpendicularDistance](const auto &x, const auto &y)
+        {
+          return PerpendicularDistance({delta, n_radial}, x) <
+                 PerpendicularDistance({delta, n_radial}, y);
+        });
+
+    constexpr double planar_tolerance = 1.0e-9;
+    ball.planar = PerpendicularDistance({delta, n_radial}, out_of_plane) < planar_tolerance;
+    if (!ball.planar)
+    {
+      // The points are not functionally coplanar, zero out the normal.
+      MFEM_VERIFY(PerpendicularDistance({delta, n_radial}, out_of_plane) <= ball.radius,
+                  "A point perpendicular must be contained in the ball!");
+      Vector3dMap(ball.planar_normal.data()) *= 0;
+    }
+  }
+
+  // Broadcast result to all processors.
+  Mpi::Broadcast(3, ball.center.data(), dominant_rank, comm);
+  Mpi::Broadcast(3, ball.planar_normal.data(), dominant_rank, comm);
+  Mpi::Broadcast(1, &ball.radius, dominant_rank, comm);
+  Mpi::Broadcast(1, &ball.planar, dominant_rank, comm);
+
+  return ball;
+}
+
+}  // namespace
+
+BoundingBox GetBoundingBox(mfem::ParMesh &mesh, const mfem::Array<int> &marker, bool bdr)
+{
+  std::vector<Eigen::Vector3d> vertices;
+  int dominant_rank = CollectPointCloudOnRoot(mesh, marker, bdr, vertices);
+  return BoundingBoxFromPointCloud(mesh.GetComm(), vertices, dominant_rank);
+}
+
+BoundingBox GetBoundingBox(mfem::ParMesh &mesh, int attr, bool bdr)
+{
+  mfem::Array<int> marker(bdr ? mesh.bdr_attributes.Max() : mesh.attributes.Max());
+  marker = 0;
+  marker[attr - 1] = 1;
+  return GetBoundingBox(mesh, marker, bdr);
+}
+
+BoundingBall GetBoundingBall(mfem::ParMesh &mesh, const mfem::Array<int> &marker, bool bdr)
+{
+  std::vector<Eigen::Vector3d> vertices;
+  int dominant_rank = CollectPointCloudOnRoot(mesh, marker, bdr, vertices);
+  return BoundingBallFromPointCloud(mesh.GetComm(), vertices, dominant_rank);
+}
+
+BoundingBall GetBoundingBall(mfem::ParMesh &mesh, int attr, bool bdr)
+{
+  mfem::Array<int> marker(bdr ? mesh.bdr_attributes.Max() : mesh.attributes.Max());
+  marker = 0;
+  marker[attr - 1] = 1;
+  return GetBoundingBall(mesh, marker, bdr);
 }
 
 void GetSurfaceNormal(mfem::ParMesh &mesh, int attr, mfem::Vector &normal)
@@ -1033,7 +1467,7 @@ std::map<int, std::array<int, 2>> CheckMesh(std::unique_ptr<mfem::Mesh> &orig_me
           b = 0;
         }
         MFEM_VERIFY(a + b > 0, "Invalid new boundary element attribute!");
-        int new_attr = max_bdr_attr + (a * (a - 1)) / 2 + b;  // At least max_bdr_attr+1
+        int new_attr = max_bdr_attr + (a * (a - 1)) / 2 + b;  // At least max_bdr_attr + 1
         if (new_attr_map.find(new_attr) == new_attr_map.end())
         {
           new_attr_map.emplace(new_attr, std::array<int, 2>{a, b});
