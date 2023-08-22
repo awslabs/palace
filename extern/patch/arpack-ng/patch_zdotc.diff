@@ -126,7 +126,7 @@ index af76f06..4cc4388 100644
   40         continue
  c
 diff --git a/PARPACK/SRC/MPI/pzgetv0.f b/PARPACK/SRC/MPI/pzgetv0.f
-index 731fb31..bd36f1d 100644
+index 94fb705..a22538d 100644
 --- a/PARPACK/SRC/MPI/pzgetv0.f
 +++ b/PARPACK/SRC/MPI/pzgetv0.f
 @@ -200,8 +200,8 @@ c
@@ -138,9 +138,9 @@ index 731fb31..bd36f1d 100644
 +     &           zzdotc10
 +      external   zzdotc10 , pdznorm2 , dlapy2
  c
- c     %-----------------------%
- c     | Executable Statements |
-@@ -321,7 +321,7 @@ c
+ c     %-----------------%
+ c     | Data Statements |
+@@ -331,7 +331,7 @@ c
  c
        first = .FALSE.
        if (bmat .eq. 'G') then
@@ -149,7 +149,7 @@ index 731fb31..bd36f1d 100644
            call MPI_ALLREDUCE( [cnorm_buf], buf2, 1,
       &          MPI_DOUBLE_COMPLEX , MPI_SUM, comm, ierr )
            cnorm = buf2(1)
-@@ -383,7 +383,7 @@ c
+@@ -393,7 +393,7 @@ c
        end if
  c
        if (bmat .eq. 'G') then
@@ -266,7 +266,7 @@ index afc48c0..d8ad395 100644
  if ICB
  SSRC += icbass.F90 icbasn.F90
 diff --git a/SRC/zgetv0.f b/SRC/zgetv0.f
-index cc13c3c..1b3dee8 100644
+index 1fbd508..ee1bd41 100644
 --- a/SRC/zgetv0.f
 +++ b/SRC/zgetv0.f
 @@ -177,8 +177,8 @@ c
@@ -278,9 +278,9 @@ index cc13c3c..1b3dee8 100644
 +     &           zzdotc10
 +      external   zzdotc10, dznrm2, dlapy2
  c
- c     %-----------------------%
- c     | Executable Statements |
-@@ -284,7 +284,7 @@ c
+ c     %-----------------%
+ c     | Data Statements |
+@@ -293,7 +293,7 @@ c
  c
        first = .FALSE.
        if (bmat .eq. 'G') then
@@ -289,7 +289,7 @@ index cc13c3c..1b3dee8 100644
            rnorm0 = sqrt(dlapy2(dble(cnorm),aimag(cnorm)))
        else if (bmat .eq. 'I') then
             rnorm0 = dznrm2(n, resid, 1)
-@@ -341,7 +341,7 @@ c
+@@ -350,7 +350,7 @@ c
        end if
  c
        if (bmat .eq. 'G') then

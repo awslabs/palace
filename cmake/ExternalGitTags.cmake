@@ -20,7 +20,7 @@ set(EXTERN_ARPACK_GIT_BRANCH
   "Git branch for external ARPACK-NG build"
 )
 set(EXTERN_ARPACK_GIT_TAG
-  "6d625dbf34375a0b5823d6c03bd16044f405baae" CACHE STRING  # 05/27/2023
+  "e7cf106bc204ed7f7909d906fd9b1c3d18e86f76" CACHE STRING  # 08/14/2023
   "Git tag for external ARPACK-NG build"
 )
 
@@ -76,7 +76,7 @@ set(EXTERN_HYPRE_GIT_BRANCH
   "Git branch for external HYPRE build"
 )
 set(EXTERN_HYPRE_GIT_TAG
-  "03b9d3d090e73a0841e22017992cac7e2e085407" CACHE STRING  # 07/20/2023
+  "b372b31a116a25d1432c689cef75881aac145a8e" CACHE STRING  # 08/16/2023
   "Git tag for external HYPRE build"
 )
 
@@ -104,7 +104,7 @@ set(EXTERN_LIBXSMM_GIT_BRANCH
   "Git branch for external LIBXSMM build"
 )
 set(EXTERN_LIBXSMM_GIT_TAG
-  "15d55050cf836caab418d41865b3108b55b67934" CACHE STRING  # 07/27/2023
+  "f4ba09230d84b78db0187320677d3c71d0d4854f" CACHE STRING  # 08/21/2023
   "Git tag for external LIBXSMM build"
 )
 
@@ -146,7 +146,7 @@ set(EXTERN_MUMPS_GIT_BRANCH
   "Git branch for external MUMPS build"
 )
 set(EXTERN_MUMPS_GIT_TAG
-  "1b8a394c4a69d8efd3d294c71c3f04a2b06839de" CACHE STRING  # 07/24/2023
+  "11e55c28cbb9279ec2e37e81ecc25a0297e78790" CACHE STRING  # 08/22/2023
   "Git tag for external MUMPS build"
 )
 
@@ -174,7 +174,7 @@ set(EXTERN_PETSC_GIT_BRANCH
   "Git branch for external PETSc build"
 )
 set(EXTERN_PETSC_GIT_TAG
-  "9c861a52734fc6b5ae153c4a0376d986968f048d" CACHE STRING  # 08/07/2023
+  "cf5559fda63577c063f2295093a6cc1d073921a1" CACHE STRING  # 08/22/2023
   "Git tag for external PETSc build"
 )
 
@@ -202,7 +202,7 @@ set(EXTERN_SLEPC_GIT_BRANCH
   "Git branch for external SLEPc build"
 )
 set(EXTERN_SLEPC_GIT_TAG
-  "4e5c8f646f5d21ab7073da202a263206cb480f47" CACHE STRING  # 08/07/2023
+  "99de2f78219a1407b15b805118c86f14e6da0a11" CACHE STRING  # 08/17/2023
   "Git tag for external SLEPc build"
 )
 
@@ -216,7 +216,7 @@ set(EXTERN_STRUMPACK_GIT_BRANCH
   "Git branch for external STRUMPACK build"
 )
 set(EXTERN_STRUMPACK_GIT_TAG
-  "9e2f3f995d23fb6bfe07889dc40fdf2180d1bec4" CACHE STRING  # 07/14/2023
+  "bdf1fe9d32dfe0b2997c97ea436bf4afc59d77bf" CACHE STRING  # 08/21/2023
   "Git tag for external STRUMPACK build"
 )
 
