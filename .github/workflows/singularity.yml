@@ -13,7 +13,6 @@ concurrency:
 
 env:
   CONTAINER_NAME: palace.sif
-  IMAGE_NAME: ghcr.io/${{ github.repository }}
 
 jobs:
   build-and-test-singularity:
@@ -42,23 +41,6 @@ jobs:
           # Run tests
           julia --project=test -e 'using Pkg; Pkg.instantiate()'
           julia --project=test --color=yes test/runtests.jl
-
-      - uses: docker/metadata-action@v4
-        if: github.event_name != 'pull_request'
-        id: metadata
-        with:
-          images: ${{ env.IMAGE_NAME }}
-
-      - name: Push container
-        if: github.event_name != 'pull_request'
-        shell: bash
-        run: |
-          # Push multiple tags (separated by newlines)
-          echo "Container tags: ${{ steps.metadata.outputs.tags }}"
-          echo ${{ secrets.GITHUB_TOKEN }} | singularity remote login -u ${{ github.repository_owner }} --password-stdin oras://ghcr.io
-          while IFS= read -r remote; do
-            singularity push -U $CONTAINER_NAME "oras://${remote}"
-          done <<< "${{ steps.metadata.outputs.tags }}"
 
       - uses: actions/upload-artifact@v3
         with:

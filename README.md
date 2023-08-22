@@ -42,8 +42,8 @@ command `spack install palace`. Run `spack info palace` to get more information 
 available configuration options and dependencies.
 
 Those wishing to work in a containerized environment may use the Singularity/Apptainer
-container for *Palace* which is built from the recipe in [`singularity/`](./singularity) and
-pushed to the GitHub Container Registry at https://ghcr.io/awslabs/palace.
+recipe for *Palace* in [`singularity/`](./singularity) to build a container containing
+*Palace* and all its dependencies.
 
 Finally, instructions for obtaining *Palace* and building from source can be found in the
 [documentation](https://awslabs.github.io/palace/dev/install/). As part of the CMake build
