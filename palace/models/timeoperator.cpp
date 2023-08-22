@@ -177,9 +177,6 @@ TimeOperator::TimeOperator(const IoData &iodata, SpaceOperator &spaceop,
         type = mfem::TimeDependentOperator::EXPLICIT;
       }
       break;
-    case config::TransientSolverData::Type::INVALID:
-      MFEM_ABORT("Invalid transient solver type!");
-      break;
   }
 
   // Set up time-dependent operator for 2nd-order curl-curl equation for E.

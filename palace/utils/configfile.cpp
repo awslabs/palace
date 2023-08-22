@@ -7,6 +7,36 @@
 #include <mfem.hpp>
 #include <nlohmann/json.hpp>
 
+// This is similar to NLOHMANN_JSON_SERIALIZE_ENUM, but results in an error if an enum
+// value corresponding to the string cannot be found.
+#define PALACE_JSON_SERIALIZE_ENUM(ENUM_TYPE, ...)                                         \
+  template <typename BasicJsonType>                                                        \
+  inline void to_json(BasicJsonType &j, const ENUM_TYPE &e)                                \
+  {                                                                                        \
+    static_assert(std::is_enum<ENUM_TYPE>::value, #ENUM_TYPE " must be an enum!");         \
+    static const std::pair<ENUM_TYPE, BasicJsonType> m[] = __VA_ARGS__;                    \
+    auto it = std::find_if(std::begin(m), std::end(m),                                     \
+                           [e](const std::pair<ENUM_TYPE, BasicJsonType> &ej_pair)         \
+                           { return ej_pair.first == e; });                                \
+    MFEM_VERIFY(it != std::end(m),                                                         \
+                "Invalid value for " << #ENUM_TYPE " given when parsing to JSON!");        \
+    j = it->second;                                                                        \
+  }                                                                                        \
+  template <typename BasicJsonType>                                                        \
+  inline void from_json(const BasicJsonType &j, ENUM_TYPE &e)                              \
+  {                                                                                        \
+    static_assert(std::is_enum<ENUM_TYPE>::value, #ENUM_TYPE " must be an enum!");         \
+    static const std::pair<ENUM_TYPE, BasicJsonType> m[] = __VA_ARGS__;                    \
+    auto it = std::find_if(std::begin(m), std::end(m),                                     \
+                           [j](const std::pair<ENUM_TYPE, BasicJsonType> &ej_pair)         \
+                           { return ej_pair.second == j; });                               \
+    MFEM_VERIFY(it != std::end(m),                                                         \
+                "Invalid value ("                                                          \
+                    << j << ") for "                                                       \
+                    << #ENUM_TYPE " given in configuration file when parsing from JSON!"); \
+    e = it->first;                                                                         \
+  }
+
 namespace palace::config
 {
 
@@ -35,10 +65,9 @@ void ParseSymmetricMatrixData(json &mat, const std::string &name,
 }
 
 // Helper for converting string keys to enum for internal::ElementData::CoordinateSystem.
-NLOHMANN_JSON_SERIALIZE_ENUM(
+PALACE_JSON_SERIALIZE_ENUM(
     internal::ElementData::CoordinateSystem,
-    {{internal::ElementData::CoordinateSystem::INVALID, nullptr},
-     {internal::ElementData::CoordinateSystem::CARTESIAN, "Cartesian"},
+    {{internal::ElementData::CoordinateSystem::CARTESIAN, "Cartesian"},
      {internal::ElementData::CoordinateSystem::CYLINDRICAL, "Cylindrical"}})
 
 // Helper function for extracting element data from the configuration file, either from a
@@ -54,9 +83,6 @@ void ParseElementData(json &elem, const std::string &name, bool required,
     // Attempt to parse as an array.
     data.direction = it->get<std::array<double, 3>>();
     data.coordinate_system = elem.value("CoordinateSystem", data.coordinate_system);
-    MFEM_VERIFY(data.coordinate_system != internal::ElementData::CoordinateSystem::INVALID,
-                "Invalid value for config[\""
-                    << name << "\"][\"CoordinateSystem\"] in configuration file!");
   }
   else
   {
@@ -183,13 +209,12 @@ std::ostream &operator<<(std::ostream &os, const SymmetricMatrixData<N> &data)
 }  // namespace
 
 // Helper for converting string keys to enum for ProblemData::Type.
-NLOHMANN_JSON_SERIALIZE_ENUM(ProblemData::Type,
-                             {{ProblemData::Type::INVALID, nullptr},
-                              {ProblemData::Type::DRIVEN, "Driven"},
-                              {ProblemData::Type::EIGENMODE, "Eigenmode"},
-                              {ProblemData::Type::ELECTROSTATIC, "Electrostatic"},
-                              {ProblemData::Type::MAGNETOSTATIC, "Magnetostatic"},
-                              {ProblemData::Type::TRANSIENT, "Transient"}})
+PALACE_JSON_SERIALIZE_ENUM(ProblemData::Type,
+                           {{ProblemData::Type::DRIVEN, "Driven"},
+                            {ProblemData::Type::EIGENMODE, "Eigenmode"},
+                            {ProblemData::Type::ELECTROSTATIC, "Electrostatic"},
+                            {ProblemData::Type::MAGNETOSTATIC, "Magnetostatic"},
+                            {ProblemData::Type::TRANSIENT, "Transient"}})
 
 void ProblemData::SetUp(json &config)
 {
@@ -199,8 +224,6 @@ void ProblemData::SetUp(json &config)
   MFEM_VERIFY(problem->find("Type") != problem->end(),
               "Missing config[\"Problem\"][\"Type\"] in configuration file!");
   type = problem->at("Type");  // Required
-  MFEM_VERIFY(type != ProblemData::Type::INVALID,
-              "Invalid value for config[\"Problem\"][\"Type\"] in configuration file!");
   verbose = problem->value("Verbose", verbose);
   output = problem->value("Output", output);
 
@@ -1373,12 +1396,11 @@ void DrivenSolverData::SetUp(json &solver)
 }
 
 // Helper for converting string keys to enum for EigenSolverData::Type.
-NLOHMANN_JSON_SERIALIZE_ENUM(EigenSolverData::Type,
-                             {{EigenSolverData::Type::INVALID, nullptr},
-                              {EigenSolverData::Type::ARPACK, "ARPACK"},
-                              {EigenSolverData::Type::SLEPC, "SLEPc"},
-                              {EigenSolverData::Type::FEAST, "FEAST"},
-                              {EigenSolverData::Type::DEFAULT, "Default"}})
+PALACE_JSON_SERIALIZE_ENUM(EigenSolverData::Type,
+                           {{EigenSolverData::Type::DEFAULT, "Default"},
+                            {EigenSolverData::Type::SLEPC, "SLEPc"},
+                            {EigenSolverData::Type::ARPACK, "ARPACK"},
+                            {EigenSolverData::Type::FEAST, "FEAST"}})
 
 void EigenSolverData::SetUp(json &solver)
 {
@@ -1396,8 +1418,6 @@ void EigenSolverData::SetUp(json &solver)
   n = eigenmode->value("N", n);
   n_post = eigenmode->value("Save", n_post);
   type = eigenmode->value("Type", type);
-  MFEM_VERIFY(type != EigenSolverData::Type::INVALID,
-              "Invalid value for config[\"Eigenmode\"][\"Type\"] in configuration file!");
   pep_linear = eigenmode->value("PEPLinear", pep_linear);
   feast_contour_np = eigenmode->value("ContourNPoints", feast_contour_np);
   if (type == EigenSolverData::Type::FEAST && feast_contour_np > 1)
@@ -1495,17 +1515,14 @@ void MagnetostaticSolverData::SetUp(json &solver)
 
 // Helper for converting string keys to enum for TransientSolverData::Type and
 // TransientSolverData::ExcitationType.
-NLOHMANN_JSON_SERIALIZE_ENUM(TransientSolverData::Type,
-                             {{TransientSolverData::Type::INVALID, nullptr},
-                              {TransientSolverData::Type::GEN_ALPHA, "GeneralizedAlpha"},
-                              {TransientSolverData::Type::NEWMARK, "NewmarkBeta"},
-                              {TransientSolverData::Type::CENTRAL_DIFF,
-                               "CentralDifference"},
-                              {TransientSolverData::Type::DEFAULT, "Default"}})
-NLOHMANN_JSON_SERIALIZE_ENUM(
+PALACE_JSON_SERIALIZE_ENUM(TransientSolverData::Type,
+                           {{TransientSolverData::Type::DEFAULT, "Default"},
+                            {TransientSolverData::Type::GEN_ALPHA, "GeneralizedAlpha"},
+                            {TransientSolverData::Type::NEWMARK, "NewmarkBeta"},
+                            {TransientSolverData::Type::CENTRAL_DIFF, "CentralDifference"}})
+PALACE_JSON_SERIALIZE_ENUM(
     TransientSolverData::ExcitationType,
-    {{TransientSolverData::ExcitationType::INVALID, nullptr},
-     {TransientSolverData::ExcitationType::SINUSOIDAL, "Sinusoidal"},
+    {{TransientSolverData::ExcitationType::SINUSOIDAL, "Sinusoidal"},
      {TransientSolverData::ExcitationType::GAUSSIAN, "Gaussian"},
      {TransientSolverData::ExcitationType::DIFF_GAUSSIAN, "DifferentiatedGaussian"},
      {TransientSolverData::ExcitationType::MOD_GAUSSIAN, "ModulatedGaussian"},
@@ -1526,12 +1543,7 @@ void TransientSolverData::SetUp(json &solver)
           transient->find("TimeStep") != transient->end(),
       "Missing \"Transient\" solver \"MaxTime\" or \"TimeStep\" in configuration file!");
   type = transient->value("Type", type);
-  MFEM_VERIFY(type != TransientSolverData::Type::INVALID,
-              "Invalid value for config[\"Transient\"][\"Type\"] in configuration file!");
   excitation = transient->at("Excitation");  // Required
-  MFEM_VERIFY(
-      excitation != TransientSolverData::ExcitationType::INVALID,
-      "Invalid value for config[\"Transient\"][\"Excitation\"] in configuration file!");
   pulse_f = transient->value("ExcitationFreq", pulse_f);
   pulse_tau = transient->value("ExcitationWidth", pulse_tau);
   max_t = transient->at("MaxTime");     // Required
@@ -1564,58 +1576,51 @@ void TransientSolverData::SetUp(json &solver)
 }
 
 // Helpers for converting string keys to enum for LinearSolverData::Type,
-// LinearSolverData::Ksp, LinearSolverData::SideType,
+// LinearSolverData::KspType, LinearSolverData::SideType,
 // LinearSolverData::MultigridCoarsenType, LinearSolverData::SymFactType,
 // LinearSolverData::CompressionType, and LinearSolverData::OrthogType.
-NLOHMANN_JSON_SERIALIZE_ENUM(LinearSolverData::Type,
-                             {{LinearSolverData::Type::INVALID, nullptr},
-                              {LinearSolverData::Type::AMS, "AMS"},
-                              {LinearSolverData::Type::BOOMER_AMG, "BoomerAMG"},
-                              {LinearSolverData::Type::MUMPS, "MUMPS"},
-                              {LinearSolverData::Type::SUPERLU, "SuperLU"},
-                              {LinearSolverData::Type::STRUMPACK, "STRUMPACK"},
-                              {LinearSolverData::Type::STRUMPACK_MP, "STRUMPACK-MP"},
-                              {LinearSolverData::Type::DEFAULT, "Default"}})
-NLOHMANN_JSON_SERIALIZE_ENUM(LinearSolverData::KspType,
-                             {{LinearSolverData::KspType::INVALID, nullptr},
-                              {LinearSolverData::KspType::CG, "CG"},
-                              {LinearSolverData::KspType::MINRES, "MINRES"},
-                              {LinearSolverData::KspType::GMRES, "GMRES"},
-                              {LinearSolverData::KspType::FGMRES, "FGMRES"},
-                              {LinearSolverData::KspType::BICGSTAB, "BiCGSTAB"},
-                              {LinearSolverData::KspType::DEFAULT, "Default"}})
-NLOHMANN_JSON_SERIALIZE_ENUM(LinearSolverData::SideType,
-                             {{LinearSolverData::SideType::INVALID, nullptr},
-                              {LinearSolverData::SideType::RIGHT, "Right"},
-                              {LinearSolverData::SideType::LEFT, "Left"},
-                              {LinearSolverData::SideType::DEFAULT, "Default"}})
-NLOHMANN_JSON_SERIALIZE_ENUM(LinearSolverData::MultigridCoarsenType,
-                             {{LinearSolverData::MultigridCoarsenType::INVALID, nullptr},
-                              {LinearSolverData::MultigridCoarsenType::LINEAR, "Linear"},
-                              {LinearSolverData::MultigridCoarsenType::LOGARITHMIC,
-                               "Logarithmic"}})
-NLOHMANN_JSON_SERIALIZE_ENUM(LinearSolverData::SymFactType,
-                             {{LinearSolverData::SymFactType::INVALID, nullptr},
-                              {LinearSolverData::SymFactType::METIS, "METIS"},
-                              {LinearSolverData::SymFactType::PARMETIS, "ParMETIS"},
-                              {LinearSolverData::SymFactType::SCOTCH, "Scotch"},
-                              {LinearSolverData::SymFactType::PTSCOTCH, "PTScotch"},
-                              {LinearSolverData::SymFactType::DEFAULT, "Default"}})
-NLOHMANN_JSON_SERIALIZE_ENUM(LinearSolverData::CompressionType,
-                             {{LinearSolverData::CompressionType::INVALID, nullptr},
-                              {LinearSolverData::CompressionType::NONE, "None"},
-                              {LinearSolverData::CompressionType::BLR, "BLR"},
-                              {LinearSolverData::CompressionType::HSS, "HSS"},
-                              {LinearSolverData::CompressionType::HODLR, "HODLR"},
-                              {LinearSolverData::CompressionType::ZFP, "ZFP"},
-                              {LinearSolverData::CompressionType::BLR_HODLR, "BLR-HODLR"},
-                              {LinearSolverData::CompressionType::ZFP_BLR_HODLR,
-                               "ZFP-BLR-HODLR"}})
-NLOHMANN_JSON_SERIALIZE_ENUM(LinearSolverData::OrthogType,
-                             {{LinearSolverData::OrthogType::INVALID, nullptr},
-                              {LinearSolverData::OrthogType::MGS, "MGS"},
-                              {LinearSolverData::OrthogType::CGS, "CGS"},
-                              {LinearSolverData::OrthogType::CGS2, "CGS2"}})
+PALACE_JSON_SERIALIZE_ENUM(LinearSolverData::Type,
+                           {{LinearSolverData::Type::DEFAULT, "Default"},
+                            {LinearSolverData::Type::AMS, "AMS"},
+                            {LinearSolverData::Type::BOOMER_AMG, "BoomerAMG"},
+                            {LinearSolverData::Type::MUMPS, "MUMPS"},
+                            {LinearSolverData::Type::SUPERLU, "SuperLU"},
+                            {LinearSolverData::Type::STRUMPACK, "STRUMPACK"},
+                            {LinearSolverData::Type::STRUMPACK_MP, "STRUMPACK-MP"}})
+PALACE_JSON_SERIALIZE_ENUM(LinearSolverData::KspType,
+                           {{LinearSolverData::KspType::DEFAULT, "Default"},
+                            {LinearSolverData::KspType::CG, "CG"},
+                            {LinearSolverData::KspType::MINRES, "MINRES"},
+                            {LinearSolverData::KspType::GMRES, "GMRES"},
+                            {LinearSolverData::KspType::FGMRES, "FGMRES"},
+                            {LinearSolverData::KspType::BICGSTAB, "BiCGSTAB"}})
+PALACE_JSON_SERIALIZE_ENUM(LinearSolverData::SideType,
+                           {{LinearSolverData::SideType::DEFAULT, "Default"},
+                            {LinearSolverData::SideType::RIGHT, "Right"},
+                            {LinearSolverData::SideType::LEFT, "Left"}})
+PALACE_JSON_SERIALIZE_ENUM(LinearSolverData::MultigridCoarsenType,
+                           {{LinearSolverData::MultigridCoarsenType::LINEAR, "Linear"},
+                            {LinearSolverData::MultigridCoarsenType::LOGARITHMIC,
+                             "Logarithmic"}})
+PALACE_JSON_SERIALIZE_ENUM(LinearSolverData::SymFactType,
+                           {{LinearSolverData::SymFactType::DEFAULT, "Default"},
+                            {LinearSolverData::SymFactType::METIS, "METIS"},
+                            {LinearSolverData::SymFactType::PARMETIS, "ParMETIS"},
+                            {LinearSolverData::SymFactType::SCOTCH, "Scotch"},
+                            {LinearSolverData::SymFactType::PTSCOTCH, "PTScotch"}})
+PALACE_JSON_SERIALIZE_ENUM(LinearSolverData::CompressionType,
+                           {{LinearSolverData::CompressionType::NONE, "None"},
+                            {LinearSolverData::CompressionType::BLR, "BLR"},
+                            {LinearSolverData::CompressionType::HSS, "HSS"},
+                            {LinearSolverData::CompressionType::HODLR, "HODLR"},
+                            {LinearSolverData::CompressionType::ZFP, "ZFP"},
+                            {LinearSolverData::CompressionType::BLR_HODLR, "BLR-HODLR"},
+                            {LinearSolverData::CompressionType::ZFP_BLR_HODLR,
+                             "ZFP-BLR-HODLR"}})
+PALACE_JSON_SERIALIZE_ENUM(LinearSolverData::OrthogType,
+                           {{LinearSolverData::OrthogType::MGS, "MGS"},
+                            {LinearSolverData::OrthogType::CGS, "CGS"},
+                            {LinearSolverData::OrthogType::CGS2, "CGS2"}})
 
 void LinearSolverData::SetUp(json &solver)
 {
@@ -1625,11 +1630,7 @@ void LinearSolverData::SetUp(json &solver)
     return;
   }
   type = linear->value("Type", type);
-  MFEM_VERIFY(type != LinearSolverData::Type::INVALID,
-              "Invalid value for config[\"Linear\"][\"Type\"] in configuration file!");
   ksp_type = linear->value("KSPType", ksp_type);
-  MFEM_VERIFY(ksp_type != LinearSolverData::KspType::INVALID,
-              "Invalid value for config[\"Linear\"][\"KSPType\"] in configuration file!");
   tol = linear->value("Tol", tol);
   max_it = linear->value("MaxIts", max_it);
   max_size = linear->value("MaxSize", max_size);
@@ -1638,9 +1639,6 @@ void LinearSolverData::SetUp(json &solver)
   // Options related to multigrid
   mg_max_levels = linear->value("MGMaxLevels", mg_max_levels);
   mg_coarsen_type = linear->value("MGCoarsenType", mg_coarsen_type);
-  MFEM_VERIFY(
-      mg_coarsen_type != LinearSolverData::MultigridCoarsenType::INVALID,
-      "Invalid value for config[\"Linear\"][\"MGCoarsenType\"] in configuration file!");
   mg_legacy_transfer = linear->value("MGLegacyTransfer", mg_legacy_transfer);
   mg_smooth_aux = linear->value("MGAuxiliarySmoother", mg_smooth_aux);
   mg_cycle_it = linear->value("MGCycleIts", mg_cycle_it);
@@ -1651,33 +1649,18 @@ void LinearSolverData::SetUp(json &solver)
   pc_mat_lor = linear->value("PCLowOrderRefined", pc_mat_lor);
   pc_mat_shifted = linear->value("PCMatShifted", pc_mat_shifted);
   pc_side_type = linear->value("PCSide", pc_side_type);
-  MFEM_VERIFY(pc_side_type != LinearSolverData::SideType::INVALID,
-              "Invalid value for config[\"Linear\"][\"PCSide\"] in configuration file!");
-
   sym_fact_type = linear->value("ColumnOrdering", sym_fact_type);
-  MFEM_VERIFY(
-      sym_fact_type != LinearSolverData::SymFactType::INVALID,
-      "Invalid value for config[\"Linear\"][\"ColumnOrdering\"] in configuration file!");
   strumpack_compression_type =
       linear->value("STRUMPACKCompressionType", strumpack_compression_type);
-  MFEM_VERIFY(strumpack_compression_type != LinearSolverData::CompressionType::INVALID,
-              "Invalid value for config[\"Linear\"][\"STRUMPACKCompressionType\"] in "
-              "configuration file!");
   strumpack_lr_tol = linear->value("STRUMPACKCompressionTol", strumpack_lr_tol);
   strumpack_lossy_precision =
       linear->value("STRUMPACKLossyPrecision", strumpack_lossy_precision);
   strumpack_butterfly_l = linear->value("STRUMPACKButterflyLevels", strumpack_butterfly_l);
   superlu_3d = linear->value("SuperLU3D", superlu_3d);
-
   ams_vector = linear->value("AMSVector", ams_vector);
-
   divfree_tol = linear->value("DivFreeTol", divfree_tol);
   divfree_max_it = linear->value("DivFreeMaxIts", divfree_max_it);
-
   gs_orthog_type = linear->value("GSOrthogonalization", gs_orthog_type);
-  MFEM_VERIFY(gs_orthog_type != LinearSolverData::OrthogType::INVALID,
-              "Invalid value for config[\"Linear\"][\"GSOrthogonalization\"] in "
-              "configuration file!");
 
   // Cleanup
   linear->erase("Type");
