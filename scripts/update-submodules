@@ -45,7 +45,7 @@ done
 set -- "${POSITIONAL[@]}"  # Restore positional parameters
 
 # Check arguments
-if [[ ! -z "$@" ]]; then
+if [[ -n "$@" ]]; then
     help
     exit 1
 fi
@@ -58,7 +58,7 @@ if ! command -v git &> /dev/null; then
 fi
 
 GIT_REMOTE_URLS=$(grep '\.git' $SOURCE_DIR/cmake/ExternalGitTags.cmake | awk '{print $1}' | sed 's/\"//g')
-if [[ ! -z "$PKG_LIST" ]]; then
+if [[ -n "$PKG_LIST" ]]; then
     GIT_URLS_TMP=""
     for PKG in $PKG_LIST; do
         PKG_URL=$(echo "$GIT_REMOTE_URLS" | grep -i $PKG)
