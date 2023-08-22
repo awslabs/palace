@@ -314,7 +314,7 @@ void EigenSolver::Postprocess(const PostOperator &postop,
   PostprocessProbes(postop, "m", i, i + 1);
   if (i < iodata.solver.eigenmode.n_post)
   {
-    BlockTimer bt0(Timer::IO);
+    BlockTimer bt(Timer::IO);
     PostprocessFields(postop, i, i + 1);
     Mpi::Print(" Wrote mode {:d} to disk\n", i + 1);
   }

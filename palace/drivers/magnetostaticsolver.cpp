@@ -113,7 +113,7 @@ void MagnetostaticSolver::Postprocess(CurlCurlOperator &curlcurlop, PostOperator
     PostprocessProbes(postop, "i", i, idx);
     if (i < iodata.solver.magnetostatic.n_post)
     {
-      BlockTimer bt0(Timer::IO);
+      BlockTimer bt(Timer::IO);
       PostprocessFields(postop, i, idx);
       Mpi::Print(" Wrote fields to disk for terminal {:d}\n", idx);
     }

@@ -252,7 +252,7 @@ void TransientSolver::Postprocess(const PostOperator &postop,
   if (iodata.solver.transient.delta_post > 0 &&
       step % iodata.solver.transient.delta_post == 0)
   {
-    BlockTimer bt0(Timer::IO);
+    BlockTimer bt(Timer::IO);
     Mpi::Print("\n");
     PostprocessFields(postop, step / iodata.solver.transient.delta_post, ts);
     Mpi::Print(" Wrote fields to disk at step {:d}\n", step);

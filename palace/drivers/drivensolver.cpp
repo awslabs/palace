@@ -383,7 +383,7 @@ void DrivenSolver::Postprocess(const PostOperator &postop,
   }
   if (iodata.solver.driven.delta_post > 0 && step % iodata.solver.driven.delta_post == 0)
   {
-    BlockTimer bt0(Timer::IO);
+    BlockTimer bt(Timer::IO);
     Mpi::Print("\n");
     PostprocessFields(postop, step / iodata.solver.driven.delta_post, freq);
     Mpi::Print(" Wrote fields to disk at step {:d}\n", step + 1);

@@ -52,6 +52,9 @@ void PrintBanner(MPI_Comm comm, int np, int nt, const char *git_tag)
 
 int main(int argc, char *argv[])
 {
+  // Initialize the timer.
+  BlockTimer bt(Timer::INIT);
+
   // Initialize MPI.
   Mpi::Init(argc, argv);
   MPI_Comm world_comm = Mpi::World();
@@ -178,16 +181,14 @@ int main(int argc, char *argv[])
   // Read the mesh from file, refine, partition, and distribute it. Then nondimensionalize
   // it and the input parameters.
   std::vector<std::unique_ptr<mfem::ParMesh>> mesh;
-  {
-    BlockTimer bt0(Timer::INIT);
-    mesh.push_back(mesh::ReadMesh(world_comm, iodata, false, true, true, false));
-    iodata.NondimensionalizeInputs(*mesh[0]);
-    mesh::RefineMesh(iodata, mesh);
-  }
+  mesh.push_back(mesh::ReadMesh(world_comm, iodata, false, true, true, false));
+  iodata.NondimensionalizeInputs(*mesh[0]);
+  mesh::RefineMesh(iodata, mesh);
 
   // Run the problem driver.
   solver->Solve(mesh);
 
+  // Print timing summary.
   BlockTimer::Finalize(world_comm, *solver);
 
   // Finalize SLEPc/PETSc.

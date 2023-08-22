@@ -15,11 +15,16 @@ namespace palace
 {
 
 //
-// A timer class for profiling.
+// Timer classes for profiling.
 //
+
 class Timer
 {
 public:
+  using Clock = std::chrono::steady_clock;
+  using Duration = std::chrono::duration<double>;
+  using TimePoint = typename Clock::time_point;
+
   enum Index
   {
     INIT = 0,
@@ -33,22 +38,18 @@ public:
     NUMTIMINGS
   };
 
-  using Clock = std::chrono::steady_clock;
-  using Duration = std::chrono::duration<double>;
-
-  inline static const std::vector<std::string> descriptions{
-      "Initialization",
-      "Operator Construction",
-      "Frequency Sample Selection",  // adaptive driven
-      "HDM Solve",                   // adaptive driven
-      "Solve",
-      "Postprocessing",
-      "Disk IO",
-      "Total"};
+  inline static const std::vector<std::string> descriptions{"Initialization",
+                                                            "Operator Construction",
+                                                            "Frequency Sample Selection",
+                                                            "HDM Solve",
+                                                            "Solve",
+                                                            "Postprocessing",
+                                                            "Disk IO",
+                                                            "Total"};
 
 private:
-  const typename Clock::time_point start_time;
-  typename Clock::time_point last_lap_time;
+  const TimePoint start_time;
+  TimePoint last_lap_time;
   std::vector<Duration> data;
   std::vector<int> counts;
   std::vector<double> data_min, data_max, data_avg;
@@ -68,7 +69,7 @@ public:
   }
 
   // Get the current time.
-  static typename Clock::time_point Now() { return Clock::now(); }
+  static TimePoint Now() { return Clock::now(); }
 
   // Provide stopwatch lap split functionality.
   Duration Lap()
@@ -94,9 +95,6 @@ public:
   double GetMinTime(Index idx) const { return data_min[idx]; }
   double GetMaxTime(Index idx) const { return data_max[idx]; }
   double GetAvgTime(Index idx) const { return data_avg[idx]; }
-
-  // Only print a category in log files if it was timed.
-  bool ShouldPrint(Index idx) const { return counts[idx] > 0; }
 
   // Return number of times timer.MarkTime(idx) or TimerBlock b(idx) was called.
   int GetCounts(Index idx) const { return counts[idx]; }
@@ -129,40 +127,37 @@ public:
   // Prints timing information. We assume the data has already been reduced.
   void Print(MPI_Comm comm) const
   {
-    // clang-format off
     constexpr int p = 3;   // Floating point precision
     constexpr int w = 12;  // Data column width
     constexpr int h = 26;  // Left-hand side width
-    Mpi::Print(
-      comm,
-      "\n"
-      "{:<{}s}{:>{}s}{:>{}s}{:>{}s}\n",
-      "Elapsed Time Report (s)", h, "Min.", w, "Max.", w, "Avg.", w
-    );
+    // clang-format off
+    Mpi::Print(comm, "\n{:<{}s}{:>{}s}{:>{}s}{:>{}s}\n",
+               "Elapsed Time Report (s)", h, "Min.", w, "Max.", w, "Avg.", w);
+    // clang-format on
     Mpi::Print(comm, "{}\n", std::string(h + 3 * w, '='));
     for (int i = INIT; i < NUMTIMINGS; i++)
     {
-        if (ShouldPrint((Index)i))
+      if (counts[i] > 0)
+      {
+        if (i == TOTAL)
         {
-          if (i == TOTAL)
-          {
-            Mpi::Print(comm, "{}\n", std::string(h + 3 * w, '-'));
-          }
-          Mpi::Print(
-            comm,
-            "{:<{}s}{:{}.{}f}{:{}.{}f}{:{}.{}f}\n",
-            descriptions[i], h, data_min[i], w, p, data_max[i], w, p, data_avg[i], w, p
-          );
+          Mpi::Print(comm, "{}\n", std::string(h + 3 * w, '-'));
         }
+        // clang-format off
+        Mpi::Print(comm, "{:<{}s}{:{}.{}f}{:{}.{}f}{:{}.{}f}\n",
+                   descriptions[i], h,
+                   data_min[i], w, p, data_max[i], w, p, data_avg[i], w, p);
+        // clang-format on
+      }
     }
-    // clang-format on
   }
 };
 
 class BlockTimer
 {
-private:
   using Index = Timer::Index;
+
+private:
   inline static std::stack<Index> stack;
   inline static Timer timer;
 
@@ -193,7 +188,6 @@ public:
       timer.MarkTime(stack.top());
       stack.pop();
     }
-
     timer.Reduce(comm);
     timer.Print(comm);
     solver.SaveMetadata(timer);
