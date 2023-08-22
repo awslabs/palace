@@ -7,14 +7,14 @@
   },
   "Model":
   {
-    "Mesh": "mesh/cavity_tet.msh",
+    "Mesh": "mesh/cavity.msh",
     "L0": 1.0e-2,  // cm
     "Refinement":
     {
       // "UniformLevels": 2,
       "Adaptation":
       {
-        "MaxIts": 5,
+        "MaxIts": 1,
         "Tol": 1e-4,
         "UpdateFraction": 0.4,
         "Nonconformal": true,
@@ -67,7 +67,8 @@
       "Type": "Default",
       "KSPType": "GMRES",
       "Tol": 1.0e-8,
-      "MaxIts": 100
+      "MaxIts": 100,
+      "MGMaxLevels": 2
     }
   }
 }

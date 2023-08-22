@@ -92,6 +92,8 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(MPI_Comm comm, const IoData &iodata, boo
   {
     // If using the mesh partitioner, only the root node needs to load the mesh.
     smesh = LoadMesh(iodata.model.mesh);
+    smesh->SetCurvature(0, false);
+    smesh->NodesUpdated();
 
     // Optionally reorder elements (and vertices) based on spatial location after loading
     // the serial mesh.
