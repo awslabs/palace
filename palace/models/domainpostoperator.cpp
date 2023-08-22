@@ -5,6 +5,7 @@
 
 #include "fem/coefficient.hpp"
 #include "fem/integrator.hpp"
+#include "fem/multigrid.hpp"
 #include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
@@ -14,24 +15,22 @@ namespace palace
 
 DomainPostOperator::DomainPostOperator(const IoData &iodata, const MaterialOperator &mat_op,
                                        mfem::ParFiniteElementSpace *nd_fespace,
-                                       mfem::ParFiniteElementSpace *rt_fespace)
-  : M_ND(nd_fespace ? std::optional<mfem::BilinearForm>(nd_fespace) : std::nullopt),
-    M_RT(rt_fespace ? std::optional<mfem::BilinearForm>(rt_fespace) : std::nullopt)
+                                       mfem::ParFiniteElementSpace *rt_fespace,
+                                       int pa_order_threshold)
 {
-  if (M_ND.has_value())
+  if (nd_fespace)
   {
     // Construct ND mass matrix to compute the electric field energy integral as:
     //              E_elec = 1/2 Re{∫_Ω Dᴴ E dV} as (M_eps * e)ᴴ e.
     // Only the real part of the permeability contributes to the energy (imaginary part
     // cancels out in the inner product due to symmetry).
+    constexpr int skip_zeros = 0;
     constexpr auto MatTypeEpsReal = MaterialPropertyType::PERMITTIVITY_REAL;
     constexpr auto MatTypeEpsImag = MaterialPropertyType::PERMITTIVITY_IMAG;
     MaterialPropertyCoefficient<MatTypeEpsReal> epsilon_func(mat_op);
-    M_ND->AddDomainIntegrator(new mfem::MixedVectorMassIntegrator(epsilon_func));
-    // XX TODO: Partial assembly option?
-    M_ND->SetAssemblyLevel(mfem::AssemblyLevel::LEGACY);
-    M_ND->Assemble(0);
-    M_ND->Finalize(0);
+    auto m_nd = std::make_unique<mfem::SymmetricBilinearForm>(nd_fespace);
+    m_nd->AddDomainIntegrator(new mfem::VectorFEMassIntegrator(epsilon_func));
+    M_ND = utils::AssembleOperator(std::move(m_nd), true, pa_order_threshold, skip_zeros);
     D.SetSize(M_ND->Height());
 
     // Use the provided domain postprocessing indices to group for postprocessing bulk
@@ -53,32 +52,29 @@ DomainPostOperator::DomainPostOperator(const IoData &iodata, const MaterialOpera
       epsilon_func_i.AddCoefficient(
           std::make_unique<MaterialPropertyCoefficient<MatTypeEpsImag>>(mat_op, -1.0),
           attr_marker);
-      auto &M = M_NDi.emplace(idx, std::make_pair(nd_fespace, nd_fespace)).first->second;
-      mfem::BilinearForm &Mr = M.first;
-      mfem::BilinearForm &Mi = M.second;
-      Mr.AddDomainIntegrator(new mfem::MixedVectorMassIntegrator(epsilon_func_r));
-      Mi.AddDomainIntegrator(new mfem::MixedVectorMassIntegrator(epsilon_func_i));
-      // XX TODO: Partial assembly option?
-      Mr.SetAssemblyLevel(mfem::AssemblyLevel::LEGACY);
-      Mi.SetAssemblyLevel(mfem::AssemblyLevel::LEGACY);
-      Mr.Assemble();
-      Mi.Assemble();
-      Mr.Finalize();
-      Mi.Finalize();
+      auto mr_nd = std::make_unique<mfem::SymmetricBilinearForm>(nd_fespace);
+      auto mi_nd = std::make_unique<mfem::SymmetricBilinearForm>(nd_fespace);
+      mr_nd->AddDomainIntegrator(new mfem::VectorFEMassIntegrator(epsilon_func_r));
+      mi_nd->AddDomainIntegrator(new mfem::VectorFEMassIntegrator(epsilon_func_i));
+      M_NDi.emplace(
+          idx, std::make_pair(utils::AssembleOperator(std::move(mr_nd), true,
+                                                      pa_order_threshold, skip_zeros),
+                              utils::AssembleOperator(std::move(mi_nd), true,
+                                                      pa_order_threshold, skip_zeros)));
     }
   }
 
-  if (M_RT.has_value())
+  if (rt_fespace)
   {
     // Construct RT mass matrix to compute the magnetic field energy integral as:
     //              E_mag = 1/2 Re{∫_Ω Bᴴ H dV} as (M_muinv * b)ᴴ b.
+    constexpr int skip_zeros = 0;
     constexpr auto MatTypeMuInv = MaterialPropertyType::INV_PERMEABILITY;
     MaterialPropertyCoefficient<MatTypeMuInv> muinv_func(mat_op);
-    M_RT->AddDomainIntegrator(new mfem::MixedVectorMassIntegrator(muinv_func));
-    // XX TODO: Partial assembly option?
-    M_RT->SetAssemblyLevel(mfem::AssemblyLevel::LEGACY);
-    M_RT->Assemble(0);
-    M_RT->Finalize(0);
+    auto m_rt = std::make_unique<mfem::SymmetricBilinearForm>(rt_fespace);
+    m_rt->AddDomainIntegrator(new mfem::VectorFEMassIntegrator(muinv_func));
+    M_RT =
+        utils::AssembleOperator(std::move(m_rt), true, pa_order_threshold - 1, skip_zeros);
     H.SetSize(M_RT->Height());
   }
 }
@@ -86,7 +82,7 @@ DomainPostOperator::DomainPostOperator(const IoData &iodata, const MaterialOpera
 double
 DomainPostOperator::GetElectricFieldEnergy(const mfem::ParComplexGridFunction &E) const
 {
-  if (M_ND.has_value())
+  if (M_ND)
   {
     M_ND->Mult(E.real(), D);
     double res = mfem::InnerProduct(E.real(), D);
@@ -102,7 +98,7 @@ DomainPostOperator::GetElectricFieldEnergy(const mfem::ParComplexGridFunction &E
 
 double DomainPostOperator::GetElectricFieldEnergy(const mfem::ParGridFunction &E) const
 {
-  if (M_ND.has_value())
+  if (M_ND)
   {
     M_ND->Mult(E, D);
     double res = mfem::InnerProduct(E, D);
@@ -117,7 +113,7 @@ double DomainPostOperator::GetElectricFieldEnergy(const mfem::ParGridFunction &E
 double
 DomainPostOperator::GetMagneticFieldEnergy(const mfem::ParComplexGridFunction &B) const
 {
-  if (M_RT.has_value())
+  if (M_RT)
   {
     M_RT->Mult(B.real(), H);
     double res = mfem::InnerProduct(B.real(), H);
@@ -133,7 +129,7 @@ DomainPostOperator::GetMagneticFieldEnergy(const mfem::ParComplexGridFunction &B
 
 double DomainPostOperator::GetMagneticFieldEnergy(const mfem::ParGridFunction &B) const
 {
-  if (M_RT.has_value())
+  if (M_RT)
   {
     M_RT->Mult(B, H);
     double res = mfem::InnerProduct(B, H);
@@ -152,9 +148,9 @@ double DomainPostOperator::GetDomainElectricFieldEnergy(
   auto it = M_NDi.find(idx);
   MFEM_VERIFY(it != M_NDi.end(),
               "Invalid domain index when postprocessing bulk dielectric loss!");
-  it->second.first.Mult(E.real(), D);
+  it->second.first->Mult(E.real(), D);
   double res = mfem::InnerProduct(E.real(), D);
-  it->second.first.Mult(E.imag(), D);
+  it->second.first->Mult(E.imag(), D);
   res += mfem::InnerProduct(E.imag(), D);
   Mpi::GlobalSum(1, &res, E.ParFESpace()->GetComm());
   return 0.5 * res;
@@ -167,7 +163,7 @@ DomainPostOperator::GetDomainElectricFieldEnergy(int idx,
   auto it = M_NDi.find(idx);
   MFEM_VERIFY(it != M_NDi.end(),
               "Invalid domain index when postprocessing bulk dielectric loss!");
-  it->second.first.Mult(E, D);
+  it->second.first->Mult(E, D);
   double res = mfem::InnerProduct(E, D);
   Mpi::GlobalSum(1, &res, E.ParFESpace()->GetComm());
   return 0.5 * res;
@@ -180,9 +176,9 @@ double DomainPostOperator::GetDomainElectricFieldEnergyLoss(
   auto it = M_NDi.find(idx);
   MFEM_VERIFY(it != M_NDi.end(),
               "Invalid domain index when postprocessing bulk dielectric loss!");
-  it->second.second.Mult(E.real(), D);
+  it->second.second->Mult(E.real(), D);
   double res = mfem::InnerProduct(E.real(), D);
-  it->second.second.Mult(E.imag(), D);
+  it->second.second->Mult(E.imag(), D);
   res += mfem::InnerProduct(E.imag(), D);
   Mpi::GlobalSum(1, &res, E.ParFESpace()->GetComm());
   return 0.5 * res;
@@ -195,7 +191,7 @@ DomainPostOperator::GetDomainElectricFieldEnergyLoss(int idx,
   auto it = M_NDi.find(idx);
   MFEM_VERIFY(it != M_NDi.end(),
               "Invalid domain index when postprocessing bulk dielectric loss!");
-  it->second.second.Mult(E, D);
+  it->second.second->Mult(E, D);
   double res = mfem::InnerProduct(E, D);
   Mpi::GlobalSum(1, &res, E.ParFESpace()->GetComm());
   return 0.5 * res;

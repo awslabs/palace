@@ -72,27 +72,23 @@ mfem::Array<int> SetUpBoundaryProperties(const IoData &iodata, const mfem::ParMe
 
 SpaceOperator::SpaceOperator(const IoData &iodata,
                              const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh)
-  : assembly_level(iodata.solver.linear.mat_pa ? mfem::AssemblyLevel::PARTIAL
-                                               : mfem::AssemblyLevel::LEGACY),
-    skip_zeros(0), pc_mg(iodata.solver.linear.pc_mg),
+  : pa_order_threshold(iodata.solver.pa_order_threshold), skip_zeros(0),
     pc_lor(iodata.solver.linear.pc_mat_lor),
     pc_shifted(iodata.solver.linear.pc_mat_shifted), print_hdr(true), print_prec_hdr(true),
     dbc_marker(SetUpBoundaryProperties(iodata, *mesh.back())),
     nd_fecs(utils::ConstructFECollections<mfem::ND_FECollection>(
-        pc_mg, pc_lor, iodata.solver.order, mesh.back()->Dimension())),
+        iodata.solver.order, mesh.back()->Dimension(), iodata.solver.linear.mg_max_levels,
+        iodata.solver.linear.mg_coarsen_type, pc_lor)),
     h1_fecs(utils::ConstructFECollections<mfem::H1_FECollection>(
-        pc_mg, false, iodata.solver.order, mesh.back()->Dimension())),
+        iodata.solver.order, mesh.back()->Dimension(), iodata.solver.linear.mg_max_levels,
+        iodata.solver.linear.mg_coarsen_type, false)),
     rt_fec(iodata.solver.order - 1, mesh.back()->Dimension()),
-    nd_fespaces(pc_mg ? utils::ConstructFiniteElementSpaceHierarchy<mfem::ND_FECollection>(
-                            mesh, nd_fecs, &dbc_marker, &nd_dbc_tdof_lists)
-                      : utils::ConstructFiniteElementSpaceHierarchy<mfem::ND_FECollection>(
-                            *mesh.back(), *nd_fecs.back(), &dbc_marker,
-                            &nd_dbc_tdof_lists.emplace_back())),
-    h1_fespaces(pc_mg ? utils::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
-                            mesh, h1_fecs, &dbc_marker, &h1_dbc_tdof_lists)
-                      : utils::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
-                            *mesh.back(), *h1_fecs.back(), &dbc_marker,
-                            &h1_dbc_tdof_lists.emplace_back())),
+    nd_fespaces(utils::ConstructFiniteElementSpaceHierarchy<mfem::ND_FECollection>(
+        iodata.solver.linear.mg_max_levels, iodata.solver.linear.mg_legacy_transfer,
+        pa_order_threshold, mesh, nd_fecs, &dbc_marker, &nd_dbc_tdof_lists)),
+    h1_fespaces(utils::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
+        iodata.solver.linear.mg_max_levels, iodata.solver.linear.mg_legacy_transfer,
+        pa_order_threshold, mesh, h1_fecs, &dbc_marker, &h1_dbc_tdof_lists)),
     rt_fespace(mesh.back().get(), &rt_fec), mat_op(iodata, *mesh.back()),
     farfield_op(iodata, mat_op, *mesh.back()), surf_sigma_op(iodata, *mesh.back()),
     surf_z_op(iodata, *mesh.back()), lumped_port_op(iodata, GetH1Space()),
@@ -177,70 +173,96 @@ namespace
 
 void PrintHeader(mfem::ParFiniteElementSpace &h1_fespace,
                  mfem::ParFiniteElementSpace &nd_fespace,
-                 mfem::ParFiniteElementSpace &rt_fespace, bool &print_hdr)
+                 mfem::ParFiniteElementSpace &rt_fespace, int pa_order_threshold,
+                 bool &print_hdr)
 {
   if (print_hdr)
   {
     Mpi::Print("\nAssembling system matrices, number of global unknowns:\n"
-               " H1: {:d}, ND: {:d}, RT: {:d}\n",
+               " H1: {:d}, ND: {:d}, RT: {:d}\n Operator assembly level: {}\n",
                h1_fespace.GlobalTrueVSize(), nd_fespace.GlobalTrueVSize(),
-               rt_fespace.GlobalTrueVSize());
-    print_hdr = false;
+               rt_fespace.GlobalTrueVSize(),
+               nd_fespace.GetMaxElementOrder() > pa_order_threshold ? "Partial" : "Full");
   }
+  print_hdr = false;
 }
 
 template <typename T1, typename T2, typename T3, typename T4>
-auto BuildOperator(mfem::ParFiniteElementSpace &fespace, T1 *df, T2 *f, T3 *dfb, T4 *fb,
-                   mfem::AssemblyLevel assembly_level, int skip_zeros,
-                   bool no_assembly = false)
+std::unique_ptr<Operator> BuildOperator(mfem::ParFiniteElementSpace &fespace, T1 *df, T2 *f,
+                                        T3 *dfb, T4 *fb, int pa_order_threshold,
+                                        int skip_zeros, bool pc_lor = false)
 {
   auto a = std::make_unique<mfem::SymmetricBilinearForm>(&fespace);
-  if (df && !df->empty())
+  if (df && !df->empty() && f && !f->empty() && mfem::DeviceCanUseCeed())
   {
-    a->AddDomainIntegrator(new mfem::CurlCurlIntegrator(*df));
+    a->AddDomainIntegrator(new mfem::CurlCurlMassIntegrator(*df, *f));
   }
-  if (f && !f->empty())
+  else
   {
-    a->AddDomainIntegrator(new mfem::MixedVectorMassIntegrator(*f));
+    if (df && !df->empty())
+    {
+      a->AddDomainIntegrator(new mfem::CurlCurlIntegrator(*df));
+    }
+    if (f && !f->empty())
+    {
+      a->AddDomainIntegrator(new mfem::VectorFEMassIntegrator(*f));
+    }
   }
-  if (dfb && !dfb->empty())
+  if (dfb && !dfb->empty() && fb && !fb->empty() && mfem::DeviceCanUseCeed())
   {
-    a->AddBoundaryIntegrator(new mfem::CurlCurlIntegrator(*dfb));
+    a->AddBoundaryIntegrator(new mfem::CurlCurlMassIntegrator(*dfb, *fb));
   }
-  if (fb && !fb->empty())
+  else
   {
-    a->AddBoundaryIntegrator(new mfem::MixedVectorMassIntegrator(*fb));
+    if (dfb && !dfb->empty())
+    {
+      a->AddBoundaryIntegrator(new mfem::CurlCurlIntegrator(*dfb));
+    }
+    if (fb && !fb->empty())
+    {
+      a->AddBoundaryIntegrator(new mfem::VectorFEMassIntegrator(*fb));
+    }
   }
-  if (!no_assembly)
+  if (pc_lor)
   {
-    a->SetAssemblyLevel(assembly_level);
-    a->Assemble(skip_zeros);
-    a->Finalize(skip_zeros);
+    // After we construct the LOR discretization we deep copy the LOR matrix and the
+    // original bilinear form and LOR discretization are no longer needed.
+    mfem::Array<int> dummy_dbc_tdof_list;
+    mfem::LORDiscretization lor(*a, dummy_dbc_tdof_list);
+    return std::make_unique<mfem::SparseMatrix>(lor.GetAssembledMatrix());
   }
-  return a;
+  else
+  {
+    return utils::AssembleOperator(std::move(a), true, pa_order_threshold, skip_zeros);
+  }
 }
 
 template <typename T1, typename T2>
-auto BuildAuxOperator(mfem::ParFiniteElementSpace &fespace, T1 *f, T2 *fb,
-                      mfem::AssemblyLevel assembly_level, int skip_zeros,
-                      bool no_assembly = false)
+std::unique_ptr<Operator> BuildAuxOperator(mfem::ParFiniteElementSpace &fespace, T1 *f,
+                                           T2 *fb, int pa_order_threshold, int skip_zeros,
+                                           bool pc_lor = false)
 {
   auto a = std::make_unique<mfem::SymmetricBilinearForm>(&fespace);
   if (f && !f->empty())
   {
-    a->AddDomainIntegrator(new mfem::MixedGradGradIntegrator(*f));
+    a->AddDomainIntegrator(new mfem::DiffusionIntegrator(*f));
   }
   if (fb && !fb->empty())
   {
-    a->AddBoundaryIntegrator(new mfem::MixedGradGradIntegrator(*fb));
+    a->AddBoundaryIntegrator(new mfem::DiffusionIntegrator(*fb));
   }
-  if (!no_assembly)
+  if (pc_lor)
   {
-    a->SetAssemblyLevel(assembly_level);
-    a->Assemble(skip_zeros);
-    a->Finalize(skip_zeros);
+    // After we construct the LOR discretization we deep copy the LOR matrix and the
+    // original bilinear form and LOR discretization are no longer needed.
+    mfem::Array<int> dummy_dbc_tdof_list;
+    mfem::LORDiscretization lor(*a, dummy_dbc_tdof_list);
+    return std::make_unique<mfem::SparseMatrix>(lor.GetAssembledMatrix());
   }
-  return a;
+  else
+  {
+    return utils::AssembleOperator(std::move(a), true, pa_order_threshold, skip_zeros);
+  }
 }
 
 }  // namespace
@@ -248,7 +270,7 @@ auto BuildAuxOperator(mfem::ParFiniteElementSpace &fespace, T1 *f, T2 *fb,
 std::unique_ptr<Operator>
 SpaceOperator::GetStiffnessMatrix(Operator::DiagonalPolicy diag_policy)
 {
-  PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
+  PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), pa_order_threshold, print_hdr);
   const int sdim = GetNDSpace().GetParMesh()->SpaceDimension();
   SumMatrixCoefficient df(sdim), f(sdim), fb(sdim);
   AddStiffnessCoefficients(1.0, df, f);
@@ -258,10 +280,9 @@ SpaceOperator::GetStiffnessMatrix(Operator::DiagonalPolicy diag_policy)
     return {};
   }
 
-  auto K = std::make_unique<ParOperator>(BuildOperator(GetNDSpace(), &df, &f,
-                                                       (SumCoefficient *)nullptr, &fb,
-                                                       assembly_level, skip_zeros),
-                                         GetNDSpace());
+  auto k = BuildOperator(GetNDSpace(), &df, &f, (SumCoefficient *)nullptr, &fb,
+                         pa_order_threshold, skip_zeros);
+  auto K = std::make_unique<ParOperator>(std::move(k), GetNDSpace());
   K->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
   return K;
 }
@@ -269,7 +290,7 @@ SpaceOperator::GetStiffnessMatrix(Operator::DiagonalPolicy diag_policy)
 std::unique_ptr<Operator>
 SpaceOperator::GetDampingMatrix(Operator::DiagonalPolicy diag_policy)
 {
-  PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
+  PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), pa_order_threshold, print_hdr);
   const int sdim = GetNDSpace().GetParMesh()->SpaceDimension();
   SumMatrixCoefficient f(sdim), fb(sdim);
   AddDampingCoefficients(1.0, f);
@@ -279,17 +300,16 @@ SpaceOperator::GetDampingMatrix(Operator::DiagonalPolicy diag_policy)
     return {};
   }
 
-  auto C = std::make_unique<ParOperator>(
-      BuildOperator(GetNDSpace(), (SumCoefficient *)nullptr, &f, (SumCoefficient *)nullptr,
-                    &fb, assembly_level, skip_zeros),
-      GetNDSpace());
+  auto c = BuildOperator(GetNDSpace(), (SumCoefficient *)nullptr, &f,
+                         (SumCoefficient *)nullptr, &fb, pa_order_threshold, skip_zeros);
+  auto C = std::make_unique<ParOperator>(std::move(c), GetNDSpace());
   C->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
   return C;
 }
 
 std::unique_ptr<Operator> SpaceOperator::GetMassMatrix(Operator::DiagonalPolicy diag_policy)
 {
-  PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
+  PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), pa_order_threshold, print_hdr);
   const int sdim = GetNDSpace().GetParMesh()->SpaceDimension();
   SumMatrixCoefficient f(sdim), fb(sdim);
   AddRealMassCoefficients(1.0, f);
@@ -299,10 +319,9 @@ std::unique_ptr<Operator> SpaceOperator::GetMassMatrix(Operator::DiagonalPolicy 
     return {};
   }
 
-  auto M = std::make_unique<ParOperator>(
-      BuildOperator(GetNDSpace(), (SumCoefficient *)nullptr, &f, (SumCoefficient *)nullptr,
-                    &fb, assembly_level, skip_zeros),
-      GetNDSpace());
+  auto m = BuildOperator(GetNDSpace(), (SumCoefficient *)nullptr, &f,
+                         (SumCoefficient *)nullptr, &fb, pa_order_threshold, skip_zeros);
+  auto M = std::make_unique<ParOperator>(std::move(m), GetNDSpace());
   M->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
   return M;
 }
@@ -310,7 +329,7 @@ std::unique_ptr<Operator> SpaceOperator::GetMassMatrix(Operator::DiagonalPolicy 
 std::unique_ptr<ComplexOperator>
 SpaceOperator::GetComplexStiffnessMatrix(Operator::DiagonalPolicy diag_policy)
 {
-  PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
+  PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), pa_order_threshold, print_hdr);
   const int sdim = GetNDSpace().GetParMesh()->SpaceDimension();
   SumMatrixCoefficient df(sdim), f(sdim), fb(sdim);
   AddStiffnessCoefficients(1.0, df, f);
@@ -320,10 +339,9 @@ SpaceOperator::GetComplexStiffnessMatrix(Operator::DiagonalPolicy diag_policy)
     return {};
   }
 
-  auto K = std::make_unique<ComplexParOperator>(
-      BuildOperator(GetNDSpace(), &df, &f, (SumCoefficient *)nullptr, &fb, assembly_level,
-                    skip_zeros),
-      nullptr, GetNDSpace());
+  auto k = BuildOperator(GetNDSpace(), &df, &f, (SumCoefficient *)nullptr, &fb,
+                         pa_order_threshold, skip_zeros);
+  auto K = std::make_unique<ComplexParOperator>(std::move(k), nullptr, GetNDSpace());
   K->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
   return K;
 }
@@ -331,7 +349,7 @@ SpaceOperator::GetComplexStiffnessMatrix(Operator::DiagonalPolicy diag_policy)
 std::unique_ptr<ComplexOperator>
 SpaceOperator::GetComplexDampingMatrix(Operator::DiagonalPolicy diag_policy)
 {
-  PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
+  PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), pa_order_threshold, print_hdr);
   const int sdim = GetNDSpace().GetParMesh()->SpaceDimension();
   SumMatrixCoefficient f(sdim), fb(sdim);
   AddDampingCoefficients(1.0, f);
@@ -341,10 +359,9 @@ SpaceOperator::GetComplexDampingMatrix(Operator::DiagonalPolicy diag_policy)
     return {};
   }
 
-  auto C = std::make_unique<ComplexParOperator>(
-      BuildOperator(GetNDSpace(), (SumCoefficient *)nullptr, &f, (SumCoefficient *)nullptr,
-                    &fb, assembly_level, skip_zeros),
-      nullptr, GetNDSpace());
+  auto c = BuildOperator(GetNDSpace(), (SumCoefficient *)nullptr, &f,
+                         (SumCoefficient *)nullptr, &fb, pa_order_threshold, skip_zeros);
+  auto C = std::make_unique<ComplexParOperator>(std::move(c), nullptr, GetNDSpace());
   C->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
   return C;
 }
@@ -352,7 +369,7 @@ SpaceOperator::GetComplexDampingMatrix(Operator::DiagonalPolicy diag_policy)
 std::unique_ptr<ComplexOperator>
 SpaceOperator::GetComplexMassMatrix(Operator::DiagonalPolicy diag_policy)
 {
-  PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
+  PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), pa_order_threshold, print_hdr);
   const int sdim = GetNDSpace().GetParMesh()->SpaceDimension();
   SumMatrixCoefficient fr(sdim), fi(sdim), fbr(sdim);
   AddRealMassCoefficients(1.0, fr);
@@ -363,17 +380,17 @@ SpaceOperator::GetComplexMassMatrix(Operator::DiagonalPolicy diag_policy)
     return {};
   }
 
-  std::unique_ptr<mfem::SymmetricBilinearForm> mr, mi;
+  std::unique_ptr<Operator> mr, mi;
   if (!fr.empty() || !fbr.empty())
   {
     mr = BuildOperator(GetNDSpace(), (SumCoefficient *)nullptr, &fr,
-                       (SumCoefficient *)nullptr, &fbr, assembly_level, skip_zeros);
+                       (SumCoefficient *)nullptr, &fbr, pa_order_threshold, skip_zeros);
   }
   if (!fi.empty())
   {
     mi = BuildOperator(GetNDSpace(), (SumCoefficient *)nullptr, &fi,
-                       (SumCoefficient *)nullptr, (SumCoefficient *)nullptr, assembly_level,
-                       skip_zeros);
+                       (SumCoefficient *)nullptr, (SumCoefficient *)nullptr,
+                       pa_order_threshold, skip_zeros);
   }
   auto M = std::make_unique<ComplexParOperator>(std::move(mr), std::move(mi), GetNDSpace());
   M->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
@@ -384,7 +401,7 @@ std::unique_ptr<ComplexOperator>
 SpaceOperator::GetComplexExtraSystemMatrix(double omega,
                                            Operator::DiagonalPolicy diag_policy)
 {
-  PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
+  PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), pa_order_threshold, print_hdr);
   const int sdim = GetNDSpace().GetParMesh()->SpaceDimension();
   SumMatrixCoefficient fbr(sdim), fbi(sdim);
   SumCoefficient dfbr, dfbi;
@@ -394,16 +411,16 @@ SpaceOperator::GetComplexExtraSystemMatrix(double omega,
     return {};
   }
 
-  std::unique_ptr<mfem::SymmetricBilinearForm> ar, ai;
+  std::unique_ptr<Operator> ar, ai;
   if (!dfbr.empty() || !fbr.empty())
   {
     ar = BuildOperator(GetNDSpace(), (SumCoefficient *)nullptr, (SumCoefficient *)nullptr,
-                       &dfbr, &fbr, assembly_level, skip_zeros);
+                       &dfbr, &fbr, pa_order_threshold, skip_zeros);
   }
   if (!dfbi.empty() || !fbi.empty())
   {
     ai = BuildOperator(GetNDSpace(), (SumCoefficient *)nullptr, (SumCoefficient *)nullptr,
-                       &dfbi, &fbi, assembly_level, skip_zeros);
+                       &dfbi, &fbi, pa_order_threshold, skip_zeros);
   }
   auto A = std::make_unique<ComplexParOperator>(std::move(ar), std::move(ai), GetNDSpace());
   A->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
@@ -664,6 +681,7 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(double a0, doub
     auto &dbc_tdof_lists = (s == 0) ? nd_dbc_tdof_lists : h1_dbc_tdof_lists;
     for (int l = 0; l < fespaces.GetNumLevels(); l++)
     {
+      // Force coarse level operator to be fully assembled always.
       auto &fespace_l = fespaces.GetFESpaceAtLevel(l);
       if (print_prec_hdr)
       {
@@ -700,64 +718,37 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(double a0, doub
         AddExtraSystemBdrCoefficients(a3, dfbr, dfbr, fbr, fbr);
       }
 
-      std::unique_ptr<mfem::SymmetricBilinearForm> br, bi;
-      std::unique_ptr<Operator> br_loc, bi_loc;
+      std::unique_ptr<Operator> br, bi;
       if (!dfr.empty() || !fr.empty() || !dfbr.empty() || !fbr.empty())
       {
-        br = (s == 0) ? BuildOperator(fespace_l, &dfr, &fr, &dfbr, &fbr, assembly_level,
-                                      skip_zeros, pc_lor)
-                      : BuildAuxOperator(fespace_l, &fr, &fbr, assembly_level, skip_zeros,
-                                         pc_lor);
+        br = (s == 0)
+                 ? BuildOperator(fespace_l, &dfr, &fr, &dfbr, &fbr,
+                                 (l > 0) ? pa_order_threshold : 100, skip_zeros, pc_lor)
+                 : BuildAuxOperator(fespace_l, &fr, &fbr,
+                                    (l > 0) ? pa_order_threshold : 100, skip_zeros, pc_lor);
       }
       if (!fi.empty() || !dfbi.empty() || !fbi.empty())
       {
-        bi = (s == 0) ? BuildOperator(fespace_l, (SumCoefficient *)nullptr, &fi, &dfbi,
-                                      &fbi, assembly_level, skip_zeros, pc_lor)
-                      : BuildAuxOperator(fespace_l, &fi, &fbi, assembly_level, skip_zeros,
-                                         pc_lor);
+        bi = (s == 0)
+                 ? BuildOperator(fespace_l, (SumCoefficient *)nullptr, &fi, &dfbi, &fbi,
+                                 (l > 0) ? pa_order_threshold : 100, skip_zeros, pc_lor)
+                 : BuildAuxOperator(fespace_l, &fi, &fbi,
+                                    (l > 0) ? pa_order_threshold : 100, skip_zeros, pc_lor);
       }
-      if (pc_lor)
+      if (print_prec_hdr)
       {
-        // After we construct the LOR discretization we deep copy the LOR matrix and the
-        // original bilinear form and LOR discretization are no longer needed.
-        mfem::Array<int> dummy_dbc_tdof_list;
-        mfem::LORDiscretization lor(*br, dummy_dbc_tdof_list);
-        auto br_lor = std::make_unique<mfem::SparseMatrix>(lor.GetAssembledMatrix());
-        if (print_prec_hdr)
+        if (const auto *br_spm = dynamic_cast<const mfem::SparseMatrix *>(br.get()))
         {
-          HYPRE_BigInt nnz = br_lor->NumNonZeroElems();
+          HYPRE_BigInt nnz = br_spm->NumNonZeroElems();
           Mpi::GlobalSum(1, &nnz, fespace_l.GetComm());
-          Mpi::Print(", {:d} NNZ (LOR)\n", nnz);
+          Mpi::Print(", {:d} NNZ{}\n", nnz, pc_lor ? " (LOR)" : "");
         }
-        br_loc = std::move(br_lor);
-        br.reset();
-        if (bi)
+        else
         {
-          mfem::LORDiscretization lori(*bi, dummy_dbc_tdof_list);
-          auto bi_lor = std::make_unique<mfem::SparseMatrix>(lori.GetAssembledMatrix());
-          bi_loc = std::move(bi_lor);
-          bi.reset();
+          Mpi::Print("\n");
         }
       }
-      else
-      {
-        if (print_prec_hdr)
-        {
-          if (assembly_level == mfem::AssemblyLevel::LEGACY)
-          {
-            HYPRE_BigInt nnz = br->SpMat().NumNonZeroElems();
-            Mpi::GlobalSum(1, &nnz, fespace_l.GetComm());
-            Mpi::Print(", {:d} NNZ\n", nnz);
-          }
-          else
-          {
-            Mpi::Print("\n");
-          }
-        }
-        br_loc = std::move(br);
-        bi_loc = std::move(bi);
-      }
-      auto B_l = BuildLevelOperator(*B, std::move(br_loc), std::move(bi_loc), fespace_l);
+      auto B_l = BuildLevelOperator(*B, std::move(br), std::move(bi), fespace_l);
       B_l->SetEssentialTrueDofs(dbc_tdof_lists[l], Operator::DiagonalPolicy::DIAG_ONE);
       if (s == 0)
       {
@@ -777,27 +768,20 @@ namespace
 {
 
 auto BuildCurl(mfem::ParFiniteElementSpace &nd_fespace,
-               mfem::ParFiniteElementSpace &rt_fespace, mfem::AssemblyLevel assembly_level,
-               int skip_zeros = 1)
+               mfem::ParFiniteElementSpace &rt_fespace, int pa_order_threshold)
 {
+  // Partial assembly for this operator is only available with libCEED backend.
   auto curl = std::make_unique<mfem::DiscreteLinearOperator>(&nd_fespace, &rt_fespace);
   curl->AddDomainInterpolator(new mfem::CurlInterpolator);
-  curl->SetAssemblyLevel(assembly_level);
-  curl->Assemble(skip_zeros);
-  curl->Finalize(skip_zeros);
-  return curl;
+  return utils::AssembleOperator(std::move(curl), false, pa_order_threshold - 1);
 }
 
 auto BuildGrad(mfem::ParFiniteElementSpace &h1_fespace,
-               mfem::ParFiniteElementSpace &nd_fespace, mfem::AssemblyLevel assembly_level,
-               int skip_zeros = 1)
+               mfem::ParFiniteElementSpace &nd_fespace, int pa_order_threshold)
 {
   auto grad = std::make_unique<mfem::DiscreteLinearOperator>(&h1_fespace, &nd_fespace);
   grad->AddDomainInterpolator(new mfem::GradientInterpolator);
-  grad->SetAssemblyLevel(assembly_level);
-  grad->Assemble(skip_zeros);
-  grad->Finalize(skip_zeros);
-  return grad;
+  return utils::AssembleOperator(std::move(grad), true, pa_order_threshold);
 }
 
 }  // namespace
@@ -805,28 +789,28 @@ auto BuildGrad(mfem::ParFiniteElementSpace &h1_fespace,
 std::unique_ptr<Operator> SpaceOperator::GetCurlMatrix()
 {
   return std::make_unique<ParOperator>(
-      BuildCurl(GetNDSpace(), GetRTSpace(), assembly_level), GetNDSpace(), GetRTSpace(),
+      BuildCurl(GetNDSpace(), GetRTSpace(), pa_order_threshold), GetNDSpace(), GetRTSpace(),
       true);
 }
 
 std::unique_ptr<ComplexOperator> SpaceOperator::GetComplexCurlMatrix()
 {
   return std::make_unique<ComplexParOperator>(
-      BuildCurl(GetNDSpace(), GetRTSpace(), assembly_level), nullptr, GetNDSpace(),
+      BuildCurl(GetNDSpace(), GetRTSpace(), pa_order_threshold), nullptr, GetNDSpace(),
       GetRTSpace(), true);
 }
 
 std::unique_ptr<Operator> SpaceOperator::GetGradMatrix()
 {
   return std::make_unique<ParOperator>(
-      BuildGrad(GetH1Space(), GetNDSpace(), assembly_level), GetH1Space(), GetNDSpace(),
+      BuildGrad(GetH1Space(), GetNDSpace(), pa_order_threshold), GetH1Space(), GetNDSpace(),
       true);
 }
 
 std::unique_ptr<ComplexOperator> SpaceOperator::GetComplexGradMatrix()
 {
   return std::make_unique<ComplexParOperator>(
-      BuildGrad(GetH1Space(), GetNDSpace(), assembly_level), nullptr, GetH1Space(),
+      BuildGrad(GetH1Space(), GetNDSpace(), pa_order_threshold), nullptr, GetH1Space(),
       GetNDSpace(), true);
 }
 

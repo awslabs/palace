@@ -5,6 +5,7 @@
 
 #include <mfem.hpp>
 #include <mfem/general/forall.hpp>
+#include "fem/multigrid.hpp"
 #include "linalg/chebyshev.hpp"
 #include "linalg/rap.hpp"
 
@@ -14,20 +15,17 @@ namespace palace
 template <typename OperType>
 DistRelaxationSmoother<OperType>::DistRelaxationSmoother(
     mfem::ParFiniteElementSpace &nd_fespace, mfem::ParFiniteElementSpace &h1_fespace,
-    int smooth_it, int cheby_smooth_it, int cheby_order)
+    int smooth_it, int cheby_smooth_it, int cheby_order, int pa_order_threshold)
   : Solver<OperType>(), pc_it(smooth_it), A(nullptr), A_G(nullptr), dbc_tdof_list_G(nullptr)
 {
   // Construct discrete gradient matrix for the auxiliary space.
   {
-    // XX TODO: Partial assembly option?
+    // XX TODO: Separate interpolator partial assembly option?
     auto grad = std::make_unique<mfem::DiscreteLinearOperator>(&h1_fespace, &nd_fespace);
     grad->AddDomainInterpolator(new mfem::GradientInterpolator);
-    grad->SetAssemblyLevel(mfem::AssemblyLevel::LEGACY);
-    grad->Assemble();
-    grad->Finalize();
-    G = std::make_unique<ParOperator>(std::move(grad), h1_fespace, nd_fespace, true);
-    // ParOperator RAP_G(std::move(grad), h1_fespace, nd_fespace, true);
-    // G = RAP_G.StealParallelAssemble();
+    G = std::make_unique<ParOperator>(
+        utils::AssembleOperator(std::move(grad), true, pa_order_threshold), h1_fespace,
+        nd_fespace, true);
   }
 
   // Initialize smoothers.

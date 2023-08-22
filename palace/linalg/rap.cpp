@@ -68,7 +68,7 @@ void ParOperator::AssembleDiagonal(Vector &diag) const
   // entry-wise absolute values of the conforming prolongation operator.
   MFEM_VERIFY(&trial_fespace == &test_fespace,
               "Diagonal assembly is only available for square ParOperator!");
-  if (auto *bfA = dynamic_cast<const mfem::BilinearForm *>(A))
+  if (const auto *bfA = dynamic_cast<const mfem::BilinearForm *>(A))
   {
     if (bfA->HasSpMat())
     {
@@ -83,7 +83,7 @@ void ParOperator::AssembleDiagonal(Vector &diag) const
       MFEM_ABORT("Unable to assemble the local operator diagonal of BilinearForm!");
     }
   }
-  else if (auto *sA = dynamic_cast<const mfem::SparseMatrix *>(A))
+  else if (const auto *sA = dynamic_cast<const mfem::SparseMatrix *>(A))
   {
     sA->GetDiag(ly);
   }
@@ -123,102 +123,23 @@ mfem::HypreParMatrix &ParOperator::ParallelAssemble() const
     return *RAP;
   }
 
-  // XX TODO: For mfem::AssemblyLevel::PARTIAL, we cannot use CeedOperatorFullAssemble for
-  //          a ND space with p > 1. We should throw an error here that the user needs to
-  //          use AssemblyLevel::LEGACY in this case.
-
-  // Build the square or rectangular RAP HypreParMatrix.
+  // Build the square or rectangular assembled HypreParMatrix.
+  mfem::SparseMatrix *sA = dynamic_cast<mfem::SparseMatrix *>(A);
+  MFEM_VERIFY(sA, "ParOperator::ParallelAssemble requires A as a SparseMatrix!");
   if (&trial_fespace == &test_fespace)
   {
-    mfem::SparseMatrix *lA;
-    bool own_lA = false;
-    if (auto *bfA = dynamic_cast<mfem::BilinearForm *>(A))
-    {
-#ifdef MFEM_USE_CEED
-      if (bfA->HasSpMat())
-      {
-        lA = &bfA->SpMat();
-      }
-      else if (bfA->HasExt())
-      {
-        lA = mfem::ceed::CeedOperatorFullAssemble(*bfA);
-        own_lA = true;
-      }
-      else
-      {
-        MFEM_ABORT("Unable to assemble the local operator for parallel assembly of "
-                   "BilinearForm!");
-        lA = nullptr;
-      }
-#else
-      MFEM_VERIFY(bfA->HasSpMat(),
-                  "Missing assembled SparseMatrix for parallel assembly of BilinearForm!");
-      lA = &bfA->SpMat();
-#endif
-    }
-    else if (auto *sA = dynamic_cast<mfem::SparseMatrix *>(A))
-    {
-      lA = sA;
-    }
-    else
-    {
-      MFEM_ABORT("ParOperator::ParallelAssemble requires A as a BilinearForm or "
-                 "SparseMatrix!");
-      lA = nullptr;
-    }
     mfem::HypreParMatrix *hA =
         new mfem::HypreParMatrix(trial_fespace.GetComm(), trial_fespace.GlobalVSize(),
-                                 trial_fespace.GetDofOffsets(), lA);
+                                 trial_fespace.GetDofOffsets(), sA);
     const mfem::HypreParMatrix *P = trial_fespace.Dof_TrueDof_Matrix();
     RAP = std::make_unique<mfem::HypreParMatrix>(hypre_ParCSRMatrixRAP(*P, *hA, *P), true);
     delete hA;
-    if (own_lA)
-    {
-      delete lA;
-    }
   }
   else
   {
-    mfem::SparseMatrix *lA;
-    bool own_lA = false;
-    if (auto *mbfA = dynamic_cast<mfem::MixedBilinearForm *>(A))
-    {
-#ifdef MFEM_USE_CEED
-      if (mbfA->HasSpMat())
-      {
-        lA = &mbfA->SpMat();
-      }
-      else if (mbfA->HasExt())
-      {
-        lA = mfem::ceed::CeedOperatorFullAssemble(*mbfA);
-        own_lA = true;
-      }
-      else
-      {
-        MFEM_ABORT("Unable to assemble the local operator for parallel assembly of "
-                   "MixedBilinearForm!");
-        lA = nullptr;
-      }
-#else
-      MFEM_VERIFY(
-          mbfA->HasSpMat(),
-          "Missing assembled SparseMatrix for parallel assembly of MixedBilinearForm!");
-      lA = &mbfA->SpMat();
-#endif
-    }
-    else if (auto *sA = dynamic_cast<mfem::SparseMatrix *>(A))
-    {
-      lA = sA;
-    }
-    else
-    {
-      MFEM_ABORT("ParOperator::ParallelAssemble requires A as a MixedBilinearForm or "
-                 "SparseMatrix!");
-      lA = nullptr;
-    }
     mfem::HypreParMatrix *hA = new mfem::HypreParMatrix(
         trial_fespace.GetComm(), test_fespace.GlobalVSize(), trial_fespace.GlobalVSize(),
-        test_fespace.GetDofOffsets(), trial_fespace.GetDofOffsets(), lA);
+        test_fespace.GetDofOffsets(), trial_fespace.GetDofOffsets(), sA);
     const mfem::HypreParMatrix *P = trial_fespace.Dof_TrueDof_Matrix();
     if (!use_R)
     {
@@ -239,10 +160,6 @@ mfem::HypreParMatrix &ParOperator::ParallelAssemble() const
       delete hRt;
     }
     delete hA;
-    if (own_lA)
-    {
-      delete lA;
-    }
   }
   hypre_ParCSRMatrixSetNumNonzeros(*RAP);
 

@@ -114,10 +114,10 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &spaceop) : spaceop
   if (iodata.solver.driven.adaptive_metric_aposteriori)
   {
     constexpr int curlcurl_verbose = 0;
-    kspKM = std::make_unique<CurlCurlMassSolver>(
+    kspKM = std::make_unique<WeightedHCurlNormSolver>(
         spaceop.GetMaterialOp(), spaceop.GetNDSpaces(), spaceop.GetH1Spaces(),
         spaceop.GetNDDbcTDofLists(), spaceop.GetH1DbcTDofLists(), iodata.solver.linear.tol,
-        iodata.solver.linear.max_it, curlcurl_verbose);
+        iodata.solver.linear.max_it, curlcurl_verbose, iodata.solver.pa_order_threshold);
   }
 
   // The initial PROM basis is empty. Orthogonalization uses MGS by default, else CGS2.

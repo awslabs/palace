@@ -84,12 +84,13 @@ std::unique_ptr<ParOperator> GetBtt(const MaterialOperator &mat_op,
   constexpr auto MatType = MaterialPropertyType::INV_PERMEABILITY;
   constexpr auto ElemType = MeshElementType::BDR_SUBMESH;
   MaterialPropertyCoefficient<MatType, ElemType> muinv_func(mat_op);
-  auto btt = std::make_unique<mfem::SymmetricBilinearForm>(&nd_fespace);
-  btt->AddDomainIntegrator(new mfem::MixedVectorMassIntegrator(muinv_func));
-  btt->SetAssemblyLevel(mfem::AssemblyLevel::LEGACY);
-  btt->Assemble(skip_zeros);
-  btt->Finalize(skip_zeros);
-  return std::make_unique<ParOperator>(std::move(btt), nd_fespace);
+  mfem::SymmetricBilinearForm btt(&nd_fespace);
+  btt.AddDomainIntegrator(new mfem::VectorFEMassIntegrator(muinv_func));
+  btt.SetAssemblyLevel(mfem::AssemblyLevel::LEGACY);
+  btt.Assemble(skip_zeros);
+  btt.Finalize(skip_zeros);
+  return std::make_unique<ParOperator>(std::unique_ptr<mfem::SparseMatrix>(btt.LoseMat()),
+                                       nd_fespace);
 }
 
 std::unique_ptr<ParOperator> GetBtn(const MaterialOperator &mat_op,
@@ -100,12 +101,13 @@ std::unique_ptr<ParOperator> GetBtn(const MaterialOperator &mat_op,
   constexpr auto MatType = MaterialPropertyType::INV_PERMEABILITY;
   constexpr auto ElemType = MeshElementType::BDR_SUBMESH;
   MaterialPropertyCoefficient<MatType, ElemType> muinv_func(mat_op);
-  auto btn = std::make_unique<mfem::MixedBilinearForm>(&h1_fespace, &nd_fespace);
-  btn->AddDomainIntegrator(new mfem::MixedVectorGradientIntegrator(muinv_func));
-  btn->SetAssemblyLevel(mfem::AssemblyLevel::LEGACY);
-  btn->Assemble(skip_zeros);
-  btn->Finalize(skip_zeros);
-  return std::make_unique<ParOperator>(std::move(btn), h1_fespace, nd_fespace, false);
+  mfem::MixedBilinearForm btn(&h1_fespace, &nd_fespace);
+  btn.AddDomainIntegrator(new mfem::MixedVectorGradientIntegrator(muinv_func));
+  btn.SetAssemblyLevel(mfem::AssemblyLevel::LEGACY);
+  btn.Assemble(skip_zeros);
+  btn.Finalize(skip_zeros);
+  return std::make_unique<ParOperator>(std::unique_ptr<mfem::SparseMatrix>(btn.LoseMat()),
+                                       h1_fespace, nd_fespace, false);
 }
 
 std::array<std::unique_ptr<ParOperator>, 3> GetBnn(const MaterialOperator &mat_op,
@@ -115,38 +117,44 @@ std::array<std::unique_ptr<ParOperator>, 3> GetBnn(const MaterialOperator &mat_o
   constexpr auto MatTypeMuInv = MaterialPropertyType::INV_PERMEABILITY;
   constexpr auto ElemType = MeshElementType::BDR_SUBMESH;
   MaterialPropertyCoefficient<MatTypeMuInv, ElemType> muinv_func(mat_op);
-  auto bnn1 = std::make_unique<mfem::SymmetricBilinearForm>(&h1_fespace);
-  bnn1->AddDomainIntegrator(new mfem::MixedGradGradIntegrator(muinv_func));
-  bnn1->SetAssemblyLevel(mfem::AssemblyLevel::LEGACY);
-  bnn1->Assemble(skip_zeros);
-  bnn1->Finalize(skip_zeros);
+  mfem::SymmetricBilinearForm bnn1(&h1_fespace);
+  bnn1.AddDomainIntegrator(new mfem::DiffusionIntegrator(muinv_func));
+  bnn1.SetAssemblyLevel(mfem::AssemblyLevel::LEGACY);
+  bnn1.Assemble(skip_zeros);
+  bnn1.Finalize(skip_zeros);
 
   constexpr auto MatTypeEpsReal = MaterialPropertyType::PERMITTIVITY_REAL;
   NormalProjectedCoefficient epsilon_func(
       std::make_unique<MaterialPropertyCoefficient<MatTypeEpsReal, ElemType>>(mat_op));
-  auto bnn2r = std::make_unique<mfem::SymmetricBilinearForm>(&h1_fespace);
-  bnn2r->AddDomainIntegrator(new mfem::MixedScalarMassIntegrator(epsilon_func));
-  bnn2r->SetAssemblyLevel(mfem::AssemblyLevel::LEGACY);
-  bnn2r->Assemble(skip_zeros);
-  bnn2r->Finalize(skip_zeros);
+  mfem::SymmetricBilinearForm bnn2r(&h1_fespace);
+  bnn2r.AddDomainIntegrator(new mfem::MixedScalarMassIntegrator(epsilon_func));
+  bnn2r.SetAssemblyLevel(mfem::AssemblyLevel::LEGACY);
+  bnn2r.Assemble(skip_zeros);
+  bnn2r.Finalize(skip_zeros);
 
   // Contribution for loss tangent: ε -> ε * (1 - i tan(δ)).
   if (!mat_op.HasLossTangent())
   {
-    return {std::make_unique<ParOperator>(std::move(bnn1), h1_fespace),
-            std::make_unique<ParOperator>(std::move(bnn2r), h1_fespace), nullptr};
+    return {std::make_unique<ParOperator>(
+                std::unique_ptr<mfem::SparseMatrix>(bnn1.LoseMat()), h1_fespace),
+            std::make_unique<ParOperator>(
+                std::unique_ptr<mfem::SparseMatrix>(bnn2r.LoseMat()), h1_fespace),
+            nullptr};
   }
   constexpr auto MatTypeEpsImag = MaterialPropertyType::PERMITTIVITY_IMAG;
   NormalProjectedCoefficient negepstandelta_func(
       std::make_unique<MaterialPropertyCoefficient<MatTypeEpsImag, ElemType>>(mat_op));
-  auto bnn2i = std::make_unique<mfem::SymmetricBilinearForm>(&h1_fespace);
-  bnn2i->AddDomainIntegrator(new mfem::MixedScalarMassIntegrator(negepstandelta_func));
-  bnn2i->SetAssemblyLevel(mfem::AssemblyLevel::LEGACY);
-  bnn2i->Assemble(skip_zeros);
-  bnn2i->Finalize(skip_zeros);
-  return {std::make_unique<ParOperator>(std::move(bnn1), h1_fespace),
-          std::make_unique<ParOperator>(std::move(bnn2r), h1_fespace),
-          std::make_unique<ParOperator>(std::move(bnn2i), h1_fespace)};
+  mfem::SymmetricBilinearForm bnn2i(&h1_fespace);
+  bnn2i.AddDomainIntegrator(new mfem::MixedScalarMassIntegrator(negepstandelta_func));
+  bnn2i.SetAssemblyLevel(mfem::AssemblyLevel::LEGACY);
+  bnn2i.Assemble(skip_zeros);
+  bnn2i.Finalize(skip_zeros);
+  return {std::make_unique<ParOperator>(std::unique_ptr<mfem::SparseMatrix>(bnn1.LoseMat()),
+                                        h1_fespace),
+          std::make_unique<ParOperator>(
+              std::unique_ptr<mfem::SparseMatrix>(bnn2r.LoseMat()), h1_fespace),
+          std::make_unique<ParOperator>(
+              std::unique_ptr<mfem::SparseMatrix>(bnn2i.LoseMat()), h1_fespace)};
 }
 
 std::array<std::unique_ptr<ParOperator>, 3> GetAtt(const MaterialOperator &mat_op,
@@ -157,36 +165,42 @@ std::array<std::unique_ptr<ParOperator>, 3> GetAtt(const MaterialOperator &mat_o
   constexpr auto ElemType = MeshElementType::BDR_SUBMESH;
   NormalProjectedCoefficient muinv_func(
       std::make_unique<MaterialPropertyCoefficient<MatTypeMuInv, ElemType>>(mat_op));
-  auto att1 = std::make_unique<mfem::SymmetricBilinearForm>(&nd_fespace);
-  att1->AddDomainIntegrator(new mfem::CurlCurlIntegrator(muinv_func));
-  att1->SetAssemblyLevel(mfem::AssemblyLevel::LEGACY);
-  att1->Assemble(skip_zeros);
-  att1->Finalize(skip_zeros);
+  mfem::SymmetricBilinearForm att1(&nd_fespace);
+  att1.AddDomainIntegrator(new mfem::CurlCurlIntegrator(muinv_func));
+  att1.SetAssemblyLevel(mfem::AssemblyLevel::LEGACY);
+  att1.Assemble(skip_zeros);
+  att1.Finalize(skip_zeros);
 
   constexpr auto MatTypeEpsReal = MaterialPropertyType::PERMITTIVITY_REAL;
   MaterialPropertyCoefficient<MatTypeEpsReal, ElemType> epsilon_func(mat_op);
-  auto att2r = std::make_unique<mfem::SymmetricBilinearForm>(&nd_fespace);
-  att2r->AddDomainIntegrator(new mfem::MixedVectorMassIntegrator(epsilon_func));
-  att2r->SetAssemblyLevel(mfem::AssemblyLevel::LEGACY);
-  att2r->Assemble(skip_zeros);
-  att2r->Finalize(skip_zeros);
+  mfem::SymmetricBilinearForm att2r(&nd_fespace);
+  att2r.AddDomainIntegrator(new mfem::VectorFEMassIntegrator(epsilon_func));
+  att2r.SetAssemblyLevel(mfem::AssemblyLevel::LEGACY);
+  att2r.Assemble(skip_zeros);
+  att2r.Finalize(skip_zeros);
 
   // Contribution for loss tangent: ε -> ε * (1 - i tan(δ)).
   if (!mat_op.HasLossTangent())
   {
-    return {std::make_unique<ParOperator>(std::move(att1), nd_fespace),
-            std::make_unique<ParOperator>(std::move(att2r), nd_fespace), nullptr};
+    return {std::make_unique<ParOperator>(
+                std::unique_ptr<mfem::SparseMatrix>(att1.LoseMat()), nd_fespace),
+            std::make_unique<ParOperator>(
+                std::unique_ptr<mfem::SparseMatrix>(att2r.LoseMat()), nd_fespace),
+            nullptr};
   }
   constexpr auto MatTypeEpsImag = MaterialPropertyType::PERMITTIVITY_IMAG;
   MaterialPropertyCoefficient<MatTypeEpsImag, ElemType> negepstandelta_func(mat_op);
-  auto att2i = std::make_unique<mfem::SymmetricBilinearForm>(&nd_fespace);
-  att2i->AddDomainIntegrator(new mfem::MixedVectorMassIntegrator(negepstandelta_func));
-  att2i->SetAssemblyLevel(mfem::AssemblyLevel::LEGACY);
-  att2i->Assemble(skip_zeros);
-  att2i->Finalize(skip_zeros);
-  return {std::make_unique<ParOperator>(std::move(att1), nd_fespace),
-          std::make_unique<ParOperator>(std::move(att2r), nd_fespace),
-          std::make_unique<ParOperator>(std::move(att2i), nd_fespace)};
+  mfem::SymmetricBilinearForm att2i(&nd_fespace);
+  att2i.AddDomainIntegrator(new mfem::VectorFEMassIntegrator(negepstandelta_func));
+  att2i.SetAssemblyLevel(mfem::AssemblyLevel::LEGACY);
+  att2i.Assemble(skip_zeros);
+  att2i.Finalize(skip_zeros);
+  return {std::make_unique<ParOperator>(std::unique_ptr<mfem::SparseMatrix>(att1.LoseMat()),
+                                        nd_fespace),
+          std::make_unique<ParOperator>(
+              std::unique_ptr<mfem::SparseMatrix>(att2r.LoseMat()), nd_fespace),
+          std::make_unique<ParOperator>(
+              std::unique_ptr<mfem::SparseMatrix>(att2i.LoseMat()), nd_fespace)};
 }
 
 std::array<std::unique_ptr<mfem::HypreParMatrix>, 6>

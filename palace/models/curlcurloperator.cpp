@@ -70,24 +70,21 @@ mfem::Array<int> SetUpBoundaryProperties(const IoData &iodata, const mfem::ParMe
 
 CurlCurlOperator::CurlCurlOperator(const IoData &iodata,
                                    const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh)
-  : assembly_level(iodata.solver.linear.mat_pa ? mfem::AssemblyLevel::PARTIAL
-                                               : mfem::AssemblyLevel::LEGACY),
-    skip_zeros(0), pc_mg(iodata.solver.linear.pc_mg), print_hdr(true),
+  : pa_order_threshold(iodata.solver.pa_order_threshold), skip_zeros(0), print_hdr(true),
     dbc_marker(SetUpBoundaryProperties(iodata, *mesh.back())),
     nd_fecs(utils::ConstructFECollections<mfem::ND_FECollection>(
-        pc_mg, false, iodata.solver.order, mesh.back()->Dimension())),
+        iodata.solver.order, mesh.back()->Dimension(), iodata.solver.linear.mg_max_levels,
+        iodata.solver.linear.mg_coarsen_type, false)),
     h1_fecs(utils::ConstructFECollections<mfem::H1_FECollection>(
-        pc_mg, false, iodata.solver.order, mesh.back()->Dimension())),
+        iodata.solver.order, mesh.back()->Dimension(), iodata.solver.linear.mg_max_levels,
+        iodata.solver.linear.mg_coarsen_type, false)),
     rt_fec(iodata.solver.order - 1, mesh.back()->Dimension()),
-    nd_fespaces(pc_mg ? utils::ConstructFiniteElementSpaceHierarchy(
-                            mesh, nd_fecs, &dbc_marker, &dbc_tdof_lists)
-                      : utils::ConstructFiniteElementSpaceHierarchy(
-                            *mesh.back(), *nd_fecs.back(), &dbc_marker,
-                            &dbc_tdof_lists.emplace_back())),
-    h1_fespaces(pc_mg ? utils::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
-                            mesh, h1_fecs)
-                      : utils::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
-                            *mesh.back(), *h1_fecs.back())),
+    nd_fespaces(utils::ConstructFiniteElementSpaceHierarchy<mfem::ND_FECollection>(
+        iodata.solver.linear.mg_max_levels, iodata.solver.linear.mg_legacy_transfer,
+        pa_order_threshold, mesh, nd_fecs, &dbc_marker, &dbc_tdof_lists)),
+    h1_fespaces(utils::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
+        iodata.solver.linear.mg_max_levels, iodata.solver.linear.mg_legacy_transfer,
+        pa_order_threshold, mesh, h1_fecs, nullptr, nullptr)),
     rt_fespace(mesh.back().get(), &rt_fec), mat_op(iodata, *mesh.back()),
     surf_j_op(iodata, GetH1Space())
 {
@@ -118,28 +115,35 @@ std::unique_ptr<Operator> CurlCurlOperator::GetStiffnessMatrix()
   if (print_hdr)
   {
     Mpi::Print("\nAssembling system matrices, number of global unknowns:\n"
-               " H1: {:d}, ND: {:d}, RT: {:d}\n",
+               " H1: {:d}, ND: {:d}, RT: {:d}\n Operator assembly level: {}\n",
                GetH1Space().GlobalTrueVSize(), GetNDSpace().GlobalTrueVSize(),
-               GetRTSpace().GlobalTrueVSize());
+               GetRTSpace().GlobalTrueVSize(),
+               GetNDSpace().GetMaxElementOrder() > pa_order_threshold ? "Partial" : "Full");
     Mpi::Print("\nAssembling multigrid hierarchy:\n");
   }
   auto K = std::make_unique<MultigridOperator>(nd_fespaces.GetNumLevels());
   for (int l = 0; l < nd_fespaces.GetNumLevels(); l++)
   {
+    // Force coarse level operator to be fully assembled always.
     auto &nd_fespace_l = nd_fespaces.GetFESpaceAtLevel(l);
+    if (print_hdr)
+    {
+      Mpi::Print(" Level {:d}: {:d} unknowns", l, nd_fespace_l.GlobalTrueVSize());
+    }
     constexpr auto MatType = MaterialPropertyType::INV_PERMEABILITY;
     MaterialPropertyCoefficient<MatType> muinv_func(mat_op);
     auto k = std::make_unique<mfem::SymmetricBilinearForm>(&nd_fespace_l);
     k->AddDomainIntegrator(new mfem::CurlCurlIntegrator(muinv_func));
-    k->SetAssemblyLevel(assembly_level);
-    k->Assemble(skip_zeros);
-    k->Finalize(skip_zeros);
+    auto K_l = std::make_unique<ParOperator>(
+        utils::AssembleOperator(std::move(k), true, (l > 0) ? pa_order_threshold : 100,
+                                skip_zeros),
+        nd_fespace_l);
     if (print_hdr)
     {
-      Mpi::Print(" Level {:d}: {:d} unknowns", l, nd_fespace_l.GlobalTrueVSize());
-      if (assembly_level == mfem::AssemblyLevel::LEGACY)
+      if (const auto *k_spm =
+              dynamic_cast<const mfem::SparseMatrix *>(&K_l->LocalOperator()))
       {
-        HYPRE_BigInt nnz = k->SpMat().NumNonZeroElems();
+        HYPRE_BigInt nnz = k_spm->NumNonZeroElems();
         Mpi::GlobalSum(1, &nnz, nd_fespace_l.GetComm());
         Mpi::Print(", {:d} NNZ\n", nnz);
       }
@@ -148,7 +152,6 @@ std::unique_ptr<Operator> CurlCurlOperator::GetStiffnessMatrix()
         Mpi::Print("\n");
       }
     }
-    auto K_l = std::make_unique<ParOperator>(std::move(k), nd_fespace_l);
     K_l->SetEssentialTrueDofs(dbc_tdof_lists[l], Operator::DiagonalPolicy::DIAG_ONE);
     K->AddOperator(std::move(K_l));
   }
@@ -158,12 +161,12 @@ std::unique_ptr<Operator> CurlCurlOperator::GetStiffnessMatrix()
 
 std::unique_ptr<Operator> CurlCurlOperator::GetCurlMatrix()
 {
+  // Partial assembly for this operator is only available with libCEED backend.
   auto curl = std::make_unique<mfem::DiscreteLinearOperator>(&GetNDSpace(), &GetRTSpace());
   curl->AddDomainInterpolator(new mfem::CurlInterpolator);
-  curl->SetAssemblyLevel(assembly_level);
-  curl->Assemble();
-  curl->Finalize();
-  return std::make_unique<ParOperator>(std::move(curl), GetNDSpace(), GetRTSpace(), true);
+  return std::make_unique<ParOperator>(
+      utils::AssembleOperator(std::move(curl), false, pa_order_threshold - 1), GetNDSpace(),
+      GetRTSpace(), true);
 }
 
 void CurlCurlOperator::GetExcitationVector(int idx, Vector &RHS)

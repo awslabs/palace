@@ -46,7 +46,7 @@ public:
   DivFreeSolver(const MaterialOperator &mat_op, mfem::ParFiniteElementSpace &nd_fespace,
                 mfem::ParFiniteElementSpaceHierarchy &h1_fespaces,
                 const std::vector<mfem::Array<int>> &h1_bdr_tdof_lists, double tol,
-                int max_it, int print);
+                int max_it, int print, int pa_order_threshold);
 
   // Given a vector of Nedelec dofs for an arbitrary vector field, compute the Nedelec dofs
   // of the irrotational portion of this vector field. The resulting vector will satisfy

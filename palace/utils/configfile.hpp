@@ -737,8 +737,35 @@ public:
   // Reuse previous solution as initial guess for Krylov solvers.
   int initial_guess = -1;
 
-  // Enable partial assembly for operators.
-  bool mat_pa = false;
+  // Maximum number of levels for geometric multigrid (set to 1 to disable multigrid).
+  int mg_max_levels = 100;
+
+  // Type of coarsening for p-multigrid.
+  enum class MultigridCoarsenType
+  {
+    LINEAR,
+    LOGARITHMIC,
+    INVALID = -1
+  };
+  MultigridCoarsenType mg_coarsen_type = MultigridCoarsenType::LOGARITHMIC;
+
+  // Switch to use mfem::TransferOperator or enable partial assembly for the multigrid
+  // transfer operators.
+  bool mg_legacy_transfer = false;
+
+  // Use auxiliary space smoothers on geometric multigrid levels.
+  int mg_smooth_aux = -1;
+
+  // Number of iterations for preconditioners which support it. For multigrid, this is the
+  // number of V-cycles per Krylov solver iteration.
+  int mg_cycle_it = 1;
+
+  // Number of pre-/post-smoothing iterations at each geometric or algebraic multigrid
+  // level.
+  int mg_smooth_it = 1;
+
+  // Order of polynomial smoothing for geometric multigrid.
+  int mg_smooth_order = 4;
 
   // Enable low-order refined (LOR) preconditioner construction. Only available for meshes
   // based on tensor-product elements.
@@ -758,25 +785,8 @@ public:
   };
   SideType pc_side_type = SideType::DEFAULT;
 
-  // Enable hp-geometric multigrid coarsening, using the solver specified by the type member
-  // at the coarsest level.
-  bool pc_mg = true;
-
-  // Use auxiliary space smoothers on geometric multigrid levels
-  int mg_smooth_aux = -1;
-
-  // Number of iterations for preconditioners which support it. For multigrid, this is the
-  // number of V-cycles per Krylov solver iteration.
-  int mg_cycle_it = 1;
-
-  // Number of pre-/post-smoothing iterations at each geometric or algebraic multigrid
-  // level.
-  int mg_smooth_it = 1;
-
-  // Order of polynomial smoothing for geometric multigrid.
-  int mg_smooth_order = 4;
-
-  // Specify details for symbolic factorization used by sparse direct solvers.
+  // Specify details for the column ordering method in the symbolic factorization for sparse
+  // direct solvers.
   enum class SymFactType
   {
     METIS,
@@ -816,7 +826,7 @@ public:
   double divfree_tol = 1.0e-12;
 
   // Maximum number of iterations for solving linear systems in divergence-free projector.
-  int divfree_max_it = 100;
+  int divfree_max_it = 1000;
 
   // Enable different variants of Gram-Schmidt orthogonalization for GMRES/FGMRES iterative
   // solvers and SLEPc eigenvalue solver.
@@ -837,6 +847,14 @@ struct SolverData
 public:
   // Approximation order.
   int order = 1;
+
+  // Order above which to always use partial assembly instead of full assembly.
+  int pa_order_threshold = 100;
+
+  // XX TODO: Separate interpolator partial assembly option?
+
+  // Device used to configure the MFEM backend.
+  std::string device = "cpu";
 
   // Solver objects.
   DrivenSolverData driven = {};

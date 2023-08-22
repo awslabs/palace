@@ -171,11 +171,12 @@ ConfigurePreconditionerSolver(MPI_Comm comm, const IoData &iodata,
       // space (in which case fespaces.GetNumLevels() == 1).
       MFEM_VERIFY(aux_fespaces, "AMS solver relies on both primary space "
                                 "and auxiliary spaces for construction!");
-      pc0 = std::make_unique<HypreAmsSolver>(iodata, fespaces.GetFESpaceAtLevel(0),
+      pc0 = std::make_unique<HypreAmsSolver>(iodata, fespaces.GetNumLevels() > 1,
+                                             fespaces.GetFESpaceAtLevel(0),
                                              aux_fespaces->GetFESpaceAtLevel(0), print);
       break;
     case config::LinearSolverData::Type::BOOMER_AMG:
-      pc0 = std::make_unique<BoomerAmgSolver>(iodata, print);
+      pc0 = std::make_unique<BoomerAmgSolver>(iodata, fespaces.GetNumLevels() > 1, print);
       break;
     case config::LinearSolverData::Type::SUPERLU:
 #if defined(MFEM_USE_SUPERLU)
@@ -217,7 +218,7 @@ ConfigurePreconditionerSolver(MPI_Comm comm, const IoData &iodata,
 
   // Construct the actual solver, which has the right value type.
   auto pc = std::make_unique<WrapperSolver<OperType>>(std::move(pc0));
-  if (iodata.solver.linear.pc_mg)
+  if (fespaces.GetNumLevels() > 1)
   {
     // This will construct the multigrid hierarchy using pc as the coarse solver
     // (ownership of pc is transferred to the GeometricMultigridSolver). When a special

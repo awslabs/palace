@@ -5,9 +5,10 @@
 #define PALACE_MODELS_DOMAIN_POST_OPERATOR_HPP
 
 #include <map>
-#include <optional>
+#include <memory>
 #include <utility>
 #include <mfem.hpp>
+#include "linalg/operator.hpp"
 
 namespace palace
 {
@@ -22,8 +23,8 @@ class DomainPostOperator
 {
 private:
   // Bilinear forms for computing field energy integrals over domains.
-  std::optional<mfem::BilinearForm> M_ND, M_RT;
-  std::map<int, std::pair<mfem::BilinearForm, mfem::BilinearForm>> M_NDi;
+  std::unique_ptr<Operator> M_ND, M_RT;
+  std::map<int, std::pair<std::unique_ptr<Operator>, std::unique_ptr<Operator>>> M_NDi;
 
   // Temporary vectors for inner product calculations.
   mutable mfem::Vector D, H;
@@ -31,7 +32,7 @@ private:
 public:
   DomainPostOperator(const IoData &iodata, const MaterialOperator &mat_op,
                      mfem::ParFiniteElementSpace *nd_fespace,
-                     mfem::ParFiniteElementSpace *rt_fespace);
+                     mfem::ParFiniteElementSpace *rt_fespace, int pa_order_threshold);
 
   // Access underlying bulk loss postprocessing data structures (for keys).
   const auto &GetEps() const { return M_NDi; }

@@ -11,10 +11,10 @@ target_sources(${TARGET_NAME}
   ${CMAKE_CURRENT_SOURCE_DIR}/ams.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/arpack.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/chebyshev.cpp
-  ${CMAKE_CURRENT_SOURCE_DIR}/curlcurl.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/distrelaxation.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/divfree.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/gmg.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/hcurl.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/jacobi.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/ksp.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/iterative.cpp

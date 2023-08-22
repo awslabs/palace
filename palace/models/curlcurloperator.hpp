@@ -23,9 +23,8 @@ class IoData;
 class CurlCurlOperator
 {
 private:
-  const mfem::AssemblyLevel assembly_level;  // Use full or partial assembly for operators
-  const int skip_zeros;                      // Skip zeros during full assembly of operators
-  const bool pc_mg;                          // Use geometric multigrid in preconditioning
+  const int pa_order_threshold;  // Order above which to use partial assembly vs. full
+  const int skip_zeros;          // Skip zeros during full assembly of operators
 
   // Helper variable for log file printing.
   bool print_hdr;

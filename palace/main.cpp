@@ -129,6 +129,18 @@ int main(int argc, char *argv[])
   PrintBanner(world_comm, world_size, num_thread, git_tag);
   IoData iodata(argv[1], false);
 
+  // XX TODO: Better device defaults?
+
+  // Initialize MFEM device.
+#if defined(MFEM_USE_OPENMP)
+  if (iodata.solver.device.find("omp") == std::string::npos)
+  {
+    iodata.solver.device =
+        iodata.solver.device.empty() ? "omp" : (iodata.solver.device + ",omp");
+  }
+#endif
+  mfem::Device device(iodata.solver.device.c_str());
+
   // Initialize Hypre and, optionally, SLEPc/PETSc.
   mfem::Hypre::Init();
 #if defined(PALACE_WITH_SLEPC)

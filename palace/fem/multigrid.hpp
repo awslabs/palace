@@ -9,6 +9,7 @@
 #include <mfem.hpp>
 #include "linalg/operator.hpp"
 #include "linalg/rap.hpp"
+#include "utils/iodata.hpp"
 
 namespace palace::utils
 {
@@ -17,53 +18,109 @@ namespace palace::utils
 // Methods for constructing hierarchies of finite element spaces for geometric multigrid.
 //
 
+// Helper function for getting the order of the finite element space underlying a bilinear
+// form.
+inline auto GetMaxElementOrder(mfem::BilinearForm &a)
+{
+  return a.FESpace()->GetMaxElementOrder();
+}
+
+// Helper function for getting the order of the finite element space underlying a mixed
+// bilinear form.
+inline auto GetMaxElementOrder(mfem::MixedBilinearForm &a)
+{
+  return std::max(a.TestFESpace()->GetMaxElementOrder(),
+                  a.TrialFESpace()->GetMaxElementOrder());
+}
+
+// Assemble a bilinear or mixed bilinear form. If the order is lower than the specified
+// threshold, the operator is assembled as a sparse matrix.
+template <typename BilinearForm>
+inline std::unique_ptr<Operator>
+AssembleOperator(std::unique_ptr<BilinearForm> &&a, bool mfem_pa_support,
+                 int pa_order_threshold, int skip_zeros = 1)
+{
+  mfem::AssemblyLevel assembly_level =
+      (mfem::DeviceCanUseCeed() ||
+       (mfem_pa_support && GetMaxElementOrder(*a) >= pa_order_threshold))
+          ? mfem::AssemblyLevel::PARTIAL
+          : mfem::AssemblyLevel::LEGACY;
+  a->SetAssemblyLevel(assembly_level);
+  a->Assemble(skip_zeros);
+  a->Finalize(skip_zeros);
+  if (assembly_level == mfem::AssemblyLevel::LEGACY ||
+      (assembly_level == mfem::AssemblyLevel::PARTIAL &&
+       GetMaxElementOrder(*a) < pa_order_threshold &&
+       std::is_base_of<mfem::BilinearForm, BilinearForm>::value))
+  {
+    // libCEED full assembly does not support mixed forms.
+#ifdef MFEM_USE_CEED
+    mfem::SparseMatrix *spm =
+        a->HasExt() ? mfem::ceed::CeedOperatorFullAssemble(*a) : a->LoseMat();
+#else
+    mfem::SparseMatrix *spm = a->LoseMat();
+#endif
+    MFEM_VERIFY(spm, "Missing assembled sparse matrix!");
+    return std::unique_ptr<Operator>(spm);
+  }
+  else
+  {
+    return std::move(a);
+  }
+}
+
 // Construct sequence of FECollection objects.
 template <typename FECollection>
-std::vector<std::unique_ptr<FECollection>> ConstructFECollections(bool pc_pmg, bool pc_lor,
-                                                                  int p, int dim)
+std::vector<std::unique_ptr<FECollection>> inline ConstructFECollections(
+    int p, int dim, int mg_max_levels,
+    config::LinearSolverData::MultigridCoarsenType mg_coarsen_type, bool mat_lor)
 {
   // If the solver will use a LOR preconditioner, we need to construct with a specific basis
   // type.
-  constexpr int pmin = (std::is_same<FECollection, mfem::H1_FECollection>::value ||
-                        std::is_same<FECollection, mfem::ND_FECollection>::value)
+  constexpr int pmin = (std::is_base_of<mfem::H1_FECollection, FECollection>::value ||
+                        std::is_base_of<mfem::ND_FECollection, FECollection>::value)
                            ? 1
                            : 0;
   MFEM_VERIFY(p >= pmin, "FE space order must not be less than " << pmin << "!");
   int b1 = mfem::BasisType::GaussLobatto, b2 = mfem::BasisType::GaussLegendre;
-  if (pc_lor)
+  if (mat_lor)
   {
     b2 = mfem::BasisType::IntegratedGLL;
   }
+
+  // Construct the p-multigrid hierarchy, first finest to coarsest and then reverse the
+  // order.
   std::vector<std::unique_ptr<FECollection>> fecs;
-  if (pc_pmg)
+  for (int l = 0; l < std::max(1, mg_max_levels); l++)
   {
-    fecs.reserve(p);
-    for (int o = pmin; o <= p; o++)
-    {
-      if constexpr (std::is_same<FECollection, mfem::ND_FECollection>::value ||
-                    std::is_same<FECollection, mfem::RT_FECollection>::value)
-      {
-        fecs.push_back(std::make_unique<FECollection>(o, dim, b1, b2));
-      }
-      else
-      {
-        fecs.push_back(std::make_unique<FECollection>(o, dim, b1));
-      }
-    }
-  }
-  else
-  {
-    fecs.reserve(1);
-    if constexpr (std::is_same<FECollection, mfem::ND_FECollection>::value ||
-                  std::is_same<FECollection, mfem::RT_FECollection>::value)
+    if constexpr (std::is_base_of<mfem::ND_FECollection, FECollection>::value ||
+                  std::is_base_of<mfem::RT_FECollection, FECollection>::value)
     {
       fecs.push_back(std::make_unique<FECollection>(p, dim, b1, b2));
     }
     else
     {
       fecs.push_back(std::make_unique<FECollection>(p, dim, b1));
+      MFEM_CONTRACT_VAR(b2);
+    }
+    if (p == pmin)
+    {
+      break;
+    }
+    switch (mg_coarsen_type)
+    {
+      case config::LinearSolverData::MultigridCoarsenType::LINEAR:
+        p--;
+        break;
+      case config::LinearSolverData::MultigridCoarsenType::LOGARITHMIC:
+        p = (p + pmin) / 2;
+        break;
+      case config::LinearSolverData::MultigridCoarsenType::INVALID:
+        MFEM_ABORT("Invalid coarsening type for p-multigrid levels!");
+        break;
     }
   }
+  std::reverse(fecs.begin(), fecs.end());
   return fecs;
 }
 
@@ -71,7 +128,8 @@ std::vector<std::unique_ptr<FECollection>> ConstructFECollections(bool pc_pmg, b
 // finite element collections. Dirichlet boundary conditions are additionally
 // marked.
 template <typename FECollection>
-mfem::ParFiniteElementSpaceHierarchy ConstructFiniteElementSpaceHierarchy(
+inline mfem::ParFiniteElementSpaceHierarchy ConstructFiniteElementSpaceHierarchy(
+    int mg_max_levels, bool mg_legacy_transfer, int pa_order_threshold,
     const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
     const std::vector<std::unique_ptr<FECollection>> &fecs,
     const mfem::Array<int> *dbc_marker = nullptr,
@@ -80,17 +138,18 @@ mfem::ParFiniteElementSpaceHierarchy ConstructFiniteElementSpaceHierarchy(
   MFEM_VERIFY(!mesh.empty() && !fecs.empty() &&
                   (!dbc_tdof_lists || dbc_tdof_lists->empty()),
               "Empty mesh or FE collection for FE space construction!");
-  auto *fespace = new mfem::ParFiniteElementSpace(mesh[0].get(), fecs[0].get());
+  int coarse_mesh_l =
+      std::max(0, static_cast<int>(mesh.size() + fecs.size()) - 1 - mg_max_levels);
+  auto *fespace = new mfem::ParFiniteElementSpace(mesh[coarse_mesh_l].get(), fecs[0].get());
   if (dbc_marker && dbc_tdof_lists)
   {
     fespace->GetEssentialTrueDofs(*dbc_marker, dbc_tdof_lists->emplace_back());
   }
-  mfem::ParFiniteElementSpaceHierarchy fespaces(mesh[0].get(), fespace, false, true);
-
-  // XX TODO: LibCEED transfer operators!
+  mfem::ParFiniteElementSpaceHierarchy fespaces(mesh[coarse_mesh_l].get(), fespace, false,
+                                                true);
 
   // h-refinement
-  for (std::size_t l = 1; l < mesh.size(); l++)
+  for (std::size_t l = coarse_mesh_l + 1; l < mesh.size(); l++)
   {
     fespace = new mfem::ParFiniteElementSpace(mesh[l].get(), fecs[0].get());
     if (dbc_marker && dbc_tdof_lists)
@@ -111,29 +170,25 @@ mfem::ParFiniteElementSpaceHierarchy ConstructFiniteElementSpaceHierarchy(
     {
       fespace->GetEssentialTrueDofs(*dbc_marker, dbc_tdof_lists->emplace_back());
     }
-    auto *P = new ParOperator(
-        std::make_unique<mfem::TransferOperator>(fespaces.GetFinestFESpace(), *fespace),
-        fespaces.GetFinestFESpace(), *fespace, true);
+    ParOperator *P;
+    if (!mg_legacy_transfer && mfem::DeviceCanUseCeed())
+    {
+      // Partial and full assembly for this operator is only available with libCEED backend.
+      auto p = std::make_unique<mfem::DiscreteLinearOperator>(&fespaces.GetFinestFESpace(),
+                                                              fespace);
+      p->AddDomainInterpolator(new mfem::IdentityInterpolator);
+      P = new ParOperator(AssembleOperator(std::move(p), false, pa_order_threshold),
+                          fespaces.GetFinestFESpace(), *fespace, true);
+    }
+    else
+    {
+      P = new ParOperator(
+          std::make_unique<mfem::TransferOperator>(fespaces.GetFinestFESpace(), *fespace),
+          fespaces.GetFinestFESpace(), *fespace, true);
+    }
     fespaces.AddLevel(mesh.back().get(), fespace, P, false, true, true);
   }
   return fespaces;
-}
-
-// Construct a single-level finite element space hierarchy from a single mesh and
-// finite element collection. Unnecessary to pass the dirichlet boundary
-// conditions as they need not be incorporated in any inter-space projectors.
-template <typename FECollection>
-mfem::ParFiniteElementSpaceHierarchy
-ConstructFiniteElementSpaceHierarchy(mfem::ParMesh &mesh, const FECollection &fec,
-                                     const mfem::Array<int> *dbc_marker = nullptr,
-                                     mfem::Array<int> *dbc_tdof_list = nullptr)
-{
-  auto *fespace = new mfem::ParFiniteElementSpace(&mesh, &fec);
-  if (dbc_marker && dbc_tdof_list)
-  {
-    fespace->GetEssentialTrueDofs(*dbc_marker, *dbc_tdof_list);
-  }
-  return mfem::ParFiniteElementSpaceHierarchy(&mesh, fespace, false, true);
 }
 
 }  // namespace palace::utils
