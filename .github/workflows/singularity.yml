@@ -37,7 +37,7 @@ jobs:
           if [[ "$NUM_PROC_TEST" -gt "$NUM_PROC_TEST_MAX" ]]; then
             NUM_PROC_TEST=$NUM_PROC_TEST_MAX
           fi
-          export PALACE_TEST="singularity run $CONTAINER_NAME"
+          export PALACE_TEST="singularity run $(pwd)/$CONTAINER_NAME"
 
           # Run tests
           julia --project=test -e 'using Pkg; Pkg.instantiate()'
