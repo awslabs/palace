@@ -559,9 +559,10 @@ bool EigenLE(const Eigen::Vector3d &x, const Eigen::Vector3d &y)
   return std::lexicographical_compare(x.begin(), x.end(), y.begin(), y.end());
 };
 
-// Helper for collecting a point cloud from a mesh, used in calculating bounding boxes or
-// bounding balls. Returns the vector of vertices on the dominant rank, and none on all
-// ranks. Vertices are de-duplicated to a certain floating point precision.
+// Helper for collecting a point cloud from a mesh, used in calculating bounding boxes and
+// bounding balls. Returns the dominant rank, for which the vertices argument will be
+// filled, while all other ranks will have an empty vector. Vertices are de-duplicated to a
+// certain floating point precision.
 int CollectPointCloudOnRoot(mfem::ParMesh &mesh, const mfem::Array<int> &marker, bool bdr,
                             std::vector<Eigen::Vector3d> &vertices)
 {
@@ -705,7 +706,8 @@ int CollectPointCloudOnRoot(mfem::ParMesh &mesh, const mfem::Array<int> &marker,
 }
 
 // Calculates a bounding box from a point cloud, result is broadcast across all processes.
-BoundingBox BoundingBoxFromPointCloud(MPI_Comm comm, std::vector<Eigen::Vector3d> &vertices,
+BoundingBox BoundingBoxFromPointCloud(MPI_Comm comm,
+                                      const std::vector<Eigen::Vector3d> &vertices,
                                       int dominant_rank)
 {
   BoundingBox box;
@@ -822,7 +824,7 @@ BoundingBox BoundingBoxFromPointCloud(MPI_Comm comm, std::vector<Eigen::Vector3d
 
 // Calculates a bounding ball from a point cloud, result is broadcast across all processes.
 BoundingBall BoundingBallFromPointCloud(MPI_Comm comm,
-                                        std::vector<Eigen::Vector3d> &vertices,
+                                        const std::vector<Eigen::Vector3d> &vertices,
                                         int dominant_rank)
 {
   BoundingBall ball;
