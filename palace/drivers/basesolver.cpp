@@ -554,6 +554,7 @@ void BaseSolver::PostprocessProbes(const PostOperator &postop, const std::string
 void BaseSolver::PostprocessFields(const PostOperator &postop, int step, double time) const
 {
   // Save the computed fields in parallel in format for viewing with ParaView.
+  BlockTimer bt(Timer::IO);
   if (post_dir.length() == 0)
   {
     Mpi::Warning("No file specified under [\"Problem\"][\"Output\"]!\nSkipping saving of "

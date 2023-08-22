@@ -19,6 +19,7 @@
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
+#include "utils/timer.hpp"
 
 namespace palace
 {
@@ -1110,6 +1111,7 @@ void WavePortOperator::Initialize(double omega)
   {
     return;
   }
+  BlockTimer bt(Timer::WAVEPORT);
   if (!suppress_output)
   {
     const double freq = iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, omega);

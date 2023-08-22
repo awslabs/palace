@@ -9,6 +9,7 @@
 #include <string>
 #include "linalg/orthog.hpp"
 #include "utils/communication.hpp"
+#include "utils/timer.hpp"
 
 namespace palace
 {
@@ -238,6 +239,91 @@ inline void ApplyPlaneRotation(std::complex<T> &dx, std::complex<T> &dy, const T
   dx = t;
 }
 
+template <typename OperType, typename VecType>
+inline void ApplyB(const Solver<OperType> *B, const VecType &x, VecType &y)
+{
+  BlockTimer bt(Timer::PRECONDITIONER);
+  MFEM_ASSERT(B, "Missing preconditioner in ApplyB!");
+  B->Mult(x, y);
+}
+
+template <typename PrecSide, typename OperType, typename VecType>
+inline void InitialResidual(PrecSide side, const OperType *A, const Solver<OperType> *B,
+                            const VecType &b, VecType &x, VecType &r, VecType &z,
+                            bool initial_guess)
+{
+  if (B && side == GmresSolver<OperType>::PrecSide::LEFT)
+  {
+    if (initial_guess)
+    {
+      A->Mult(x, z);
+      linalg::AXPBY(1.0, b, -1.0, z);
+      ApplyB(B, z, r);
+    }
+    else
+    {
+      ApplyB(B, b, r);
+      x = 0.0;
+    }
+  }
+  else  // !B || side == PrecSide::RIGHT
+  {
+    if (initial_guess)
+    {
+      A->Mult(x, r);
+      linalg::AXPBY(1.0, b, -1.0, r);
+    }
+    else
+    {
+      r = b;
+      x = 0.0;
+    }
+  }
+}
+
+template <typename PrecSide, typename OperType, typename VecType>
+inline void ApplyBA(PrecSide side, const OperType *A, const Solver<OperType> *B,
+                    const VecType &x, VecType &y, VecType &z)
+{
+  if (B && side == GmresSolver<OperType>::PrecSide::LEFT)
+  {
+    A->Mult(x, z);
+    ApplyB(B, z, y);
+  }
+  else if (B && side == GmresSolver<OperType>::PrecSide::RIGHT)
+  {
+    ApplyB(B, x, z);
+    A->Mult(z, y);
+  }
+  else
+  {
+    A->Mult(x, y);
+  }
+}
+
+template <typename OrthogType, typename VecType, typename ScalarType>
+inline void OrthogonalizeIteration(OrthogType type, MPI_Comm comm,
+                                   const std::vector<VecType> &V, VecType &w,
+                                   ScalarType *Hj, int j)
+{
+  using OperType = typename std::conditional<std::is_same<VecType, ComplexVector>::value,
+                                             ComplexOperator, Operator>::type;
+
+  // Orthogonalize w against the leading j + 1 columns of V.
+  switch (type)
+  {
+    case GmresSolver<OperType>::OrthogType::MGS:
+      linalg::OrthogonalizeColumnMGS(comm, V, w, Hj, j + 1);
+      break;
+    case GmresSolver<OperType>::OrthogType::CGS:
+      linalg::OrthogonalizeColumnCGS(comm, V, w, Hj, j + 1);
+      break;
+    case GmresSolver<OperType>::OrthogType::CGS2:
+      linalg::OrthogonalizeColumnCGS(comm, V, w, Hj, j + 1, true);
+      break;
+  }
+}
+
 }  // namespace
 
 template <typename OperType>
@@ -295,7 +381,7 @@ void CgSolver<OperType>::Mult(const VecType &b, VecType &x) const
   }
   if (B)
   {
-    B->Mult(r, z);
+    ApplyB(B, r, z);
   }
   else
   {
@@ -306,7 +392,7 @@ void CgSolver<OperType>::Mult(const VecType &b, VecType &x) const
   res = std::sqrt(std::abs(beta));
   if (this->initial_guess && B)
   {
-    B->Mult(b, p);
+    ApplyB(B, b, p);
     auto beta_rhs = linalg::Dot(comm, p, b);
     CheckDot(beta_rhs, "PCG preconditioner is not positive definite: (Bb, b) = ");
     initial_res = std::sqrt(std::abs(beta_rhs));
@@ -352,7 +438,7 @@ void CgSolver<OperType>::Mult(const VecType &b, VecType &x) const
     beta_prev = beta;
     if (B)
     {
-      B->Mult(r, z);
+      ApplyB(B, r, z);
     }
     else
     {
@@ -385,88 +471,6 @@ void CgSolver<OperType>::Mult(const VecType &b, VecType &x) const
   final_res = res;
   final_it = it;
 }
-
-namespace
-{
-
-template <typename PrecSide, typename OperType, typename VecType>
-inline void InitialResidual(PrecSide side, const OperType *A, const Solver<OperType> *B,
-                            const VecType &b, VecType &x, VecType &r, VecType &z,
-                            bool initial_guess)
-{
-  if (B && side == GmresSolver<OperType>::PrecSide::LEFT)
-  {
-    if (initial_guess)
-    {
-      A->Mult(x, z);
-      linalg::AXPBY(1.0, b, -1.0, z);
-      B->Mult(z, r);
-    }
-    else
-    {
-      B->Mult(b, r);
-      x = 0.0;
-    }
-  }
-  else  // !B || side == PrecSide::RIGHT
-  {
-    if (initial_guess)
-    {
-      A->Mult(x, r);
-      linalg::AXPBY(1.0, b, -1.0, r);
-    }
-    else
-    {
-      r = b;
-      x = 0.0;
-    }
-  }
-}
-
-template <typename PrecSide, typename OperType, typename VecType>
-inline void ApplyBA(PrecSide side, const OperType *A, const Solver<OperType> *B,
-                    const VecType &x, VecType &y, VecType &z)
-{
-  if (B && side == GmresSolver<OperType>::PrecSide::LEFT)
-  {
-    A->Mult(x, z);
-    B->Mult(z, y);
-  }
-  else if (B && side == GmresSolver<OperType>::PrecSide::RIGHT)
-  {
-    B->Mult(x, z);
-    A->Mult(z, y);
-  }
-  else
-  {
-    A->Mult(x, y);
-  }
-}
-
-template <typename OrthogType, typename VecType, typename ScalarType>
-inline void OrthogonalizeIteration(OrthogType type, MPI_Comm comm,
-                                   const std::vector<VecType> &V, VecType &w,
-                                   ScalarType *Hj, int j)
-{
-  using OperType = typename std::conditional<std::is_same<VecType, ComplexVector>::value,
-                                             ComplexOperator, Operator>::type;
-
-  // Orthogonalize w against the leading j + 1 columns of V.
-  switch (type)
-  {
-    case GmresSolver<OperType>::OrthogType::MGS:
-      linalg::OrthogonalizeColumnMGS(comm, V, w, Hj, j + 1);
-      break;
-    case GmresSolver<OperType>::OrthogType::CGS:
-      linalg::OrthogonalizeColumnCGS(comm, V, w, Hj, j + 1);
-      break;
-    case GmresSolver<OperType>::OrthogType::CGS2:
-      linalg::OrthogonalizeColumnCGS(comm, V, w, Hj, j + 1, true);
-      break;
-  }
-}
-
-}  // namespace
 
 template <typename OperType>
 void GmresSolver<OperType>::Initialize() const
@@ -538,7 +542,7 @@ void GmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
         RealType beta_rhs;
         if (B && pc_side == PrecSide::LEFT)
         {
-          B->Mult(b, V[0]);
+          ApplyB(B, b, V[0]);
           beta_rhs = linalg::Norml2(comm, V[0]);
         }
         else  // !B || pc_side == PrecSide::RIGHT
@@ -637,7 +641,7 @@ void GmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
       {
         r.Add(s[k], V[k]);
       }
-      B->Mult(r, V[0]);
+      ApplyB(B, r, V[0]);
       x += V[0];
     }
     if (converged)

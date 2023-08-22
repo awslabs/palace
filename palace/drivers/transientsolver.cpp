@@ -80,11 +80,12 @@ void TransientSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) c
   auto t0 = Timer::Now();
   while (step < nstep)
   {
-    // Single time step t -> t + dt.
-    BlockTimer bt1(Timer::SOLVE);
     const double ts = iodata.DimensionalizeValue(IoData::ValueType::TIME, t + delta_t);
     Mpi::Print("\nIt {:d}/{:d}: t = {:e} ns (elapsed time = {:.2e} s)\n", step, nstep - 1,
                ts, Timer::Duration(Timer::Now() - t0).count());
+
+    // Single time step t -> t + dt.
+    BlockTimer bt1(Timer::SOLVE);
     if (step == 0)
     {
       Mpi::Print("\n");
@@ -252,7 +253,6 @@ void TransientSolver::Postprocess(const PostOperator &postop,
   if (iodata.solver.transient.delta_post > 0 &&
       step % iodata.solver.transient.delta_post == 0)
   {
-    BlockTimer bt(Timer::IO);
     Mpi::Print("\n");
     PostprocessFields(postop, step / iodata.solver.transient.delta_post, ts);
     Mpi::Print(" Wrote fields to disk at step {:d}\n", step);

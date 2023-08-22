@@ -47,18 +47,18 @@ void ElectrostaticSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mes
   auto t0 = Timer::Now();
   for (const auto &[idx, data] : laplaceop.GetSources())
   {
-    // Form and solve the linear system for a prescribed nonzero voltage on the specified
-    // terminal.
-    BlockTimer bt1(Timer::CONSTRUCT);
     Mpi::Print("\nIt {:d}/{:d}: Index = {:d} (elapsed time = {:.2e} s)\n", step + 1, nstep,
                idx, Timer::Duration(Timer::Now() - t0).count());
+
+    // Form and solve the linear system for a prescribed nonzero voltage on the specified
+    // terminal.
     Mpi::Print("\n");
     laplaceop.GetExcitationVector(idx, *K, V[step], RHS);
 
-    BlockTimer bt2(Timer::SOLVE);
+    BlockTimer bt1(Timer::SOLVE);
     ksp.Mult(RHS, V[step]);
 
-    BlockTimer bt3(Timer::POSTPRO);
+    BlockTimer bt2(Timer::POSTPRO);
     Mpi::Print(" Sol. ||V|| = {:.6e} (||RHS|| = {:.6e})\n",
                linalg::Norml2(laplaceop.GetComm(), V[step]),
                linalg::Norml2(laplaceop.GetComm(), RHS));
@@ -106,7 +106,6 @@ void ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop, PostOperator &
     PostprocessProbes(postop, "i", i, idx);
     if (i < iodata.solver.electrostatic.n_post)
     {
-      BlockTimer bt(Timer::IO);
       PostprocessFields(postop, i, idx);
       Mpi::Print(" Wrote fields to disk for terminal {:d}\n", idx);
     }

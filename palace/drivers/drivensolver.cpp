@@ -144,11 +144,11 @@ void DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator &postop, in
   auto t0 = Timer::Now();
   while (step < nstep)
   {
-    // Assemble the linear system.
-    BlockTimer bt1(Timer::CONSTRUCT);
     const double freq = iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, omega);
     Mpi::Print("\nIt {:d}/{:d}: ω/2π = {:.3e} GHz (elapsed time = {:.2e} s)\n", step + 1,
                nstep, freq, Timer::Duration(Timer::Now() - t0).count());
+
+    // Assemble the linear system.
     if (step > step0)
     {
       // Update frequency-dependent excitation and operators.
@@ -163,13 +163,13 @@ void DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator &postop, in
     spaceop.GetExcitationVector(omega, RHS);
 
     // Solve the linear system.
-    BlockTimer bt2(Timer::SOLVE);
+    BlockTimer bt1(Timer::SOLVE);
     Mpi::Print("\n");
     ksp.Mult(RHS, E);
 
     // Compute B = -1/(iω) ∇ x E on the true dofs, and set the internal GridFunctions in
     // PostOperator for all postprocessing operations.
-    BlockTimer bt3(Timer::POSTPRO);
+    BlockTimer bt2(Timer::POSTPRO);
     double E_elec = 0.0, E_mag = 0.0;
     Curl->Mult(E, B);
     B *= -1.0 / (1i * omega);
@@ -240,10 +240,7 @@ void DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator &postop, i
 
   // Configure the PROM operator which performs the parameter space sampling and basis
   // construction during the offline phase as well as the PROM solution during the online
-  // phase. Initialize the basis with samples from the top and bottom of the frequency
-  // range of interest. Each call for an HDM solution adds the frequency sample to P_S and
-  // removes it from P \ P_S.
-  BlockTimer bt1(Timer::FREQSAMPLESELECTION);
+  // phase.
   auto t0 = Timer::Now();
   const double f0 = iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, 1.0);
   Mpi::Print("\nBeginning PROM construction offline phase:\n"
@@ -252,15 +249,15 @@ void DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator &postop, i
   RomOperator prom(iodata, spaceop);
   prom.Initialize(omega0, delta_omega, nstep - step0, nmax);
   spaceop.GetWavePortOp().SetSuppressOutput(true);  // Suppress wave port output for offline
-  {
-    BlockTimer bt2(Timer::HDMSOLVE);
-    prom.SolveHDM(omega0, E);  // Print matrix stats at first HDM solve
-  }
+
+  // Initialize the basis with samples from the top and bottom of the frequency
+  // range of interest. Each call for an HDM solution adds the frequency sample to P_S and
+  // removes it from P \ P_S. Timing for the HDM construction and solve is handled inside
+  // of the RomOperator.
+  BlockTimer bt1(Timer::CONSTRUCTPROM);
+  prom.SolveHDM(omega0, E);  // Print matrix stats at first HDM solve
   prom.AddHDMSample(omega0, E);
-  {
-    BlockTimer bt2(Timer::HDMSOLVE);
-    prom.SolveHDM(omega0 + (nstep - step0 - 1) * delta_omega, E);
-  }
+  prom.SolveHDM(omega0 + (nstep - step0 - 1) * delta_omega, E);
   prom.AddHDMSample(omega0 + (nstep - step0 - 1) * delta_omega, E);
 
   // Greedy procedure for basis construction (offline phase). Basis is initialized with
@@ -282,10 +279,7 @@ void DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator &postop, i
         "\nGreedy iteration {:d} (n = {:d}): ω* = {:.3e} GHz ({:.3e}), error = {:.3e}\n",
         iter - iter0 + 1, prom.GetReducedDimension(), omega_star * f0, omega_star,
         max_error);
-    {
-      BlockTimer bt2(Timer::HDMSOLVE);
-      prom.SolveHDM(omega_star, E);
-    }
+    prom.SolveHDM(omega_star, E);
     prom.AddHDMSample(omega_star, E);
     iter++;
   }
@@ -299,21 +293,22 @@ void DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator &postop, i
   SaveMetadata(prom.GetLinearSolver());
 
   // Main fast frequency sweep loop (online phase).
+  BlockTimer bt2(Timer::CONSTRUCT);
   Mpi::Print("\nBeginning fast frequency sweep online phase\n");
   spaceop.GetWavePortOp().SetSuppressOutput(false);  // Disable output suppression
   int step = step0;
   double omega = omega0;
   while (step < nstep)
   {
-    // Assemble the linear system.
-    BlockTimer bt2(Timer::CONSTRUCT);
     const double freq = iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, omega);
     Mpi::Print("\nIt {:d}/{:d}: ω/2π = {:.3e} GHz (elapsed time = {:.2e} s)\n", step + 1,
                nstep, freq, Timer::Duration(Timer::Now() - t0).count());
+
+    // Assemble the linear system.
     prom.AssemblePROM(omega);
 
     // Solve the linear system.
-    BlockTimer bt3(Timer::SOLVE);
+    BlockTimer bt3(Timer::SOLVEPROM);
     Mpi::Print("\n");
     prom.SolvePROM(E);
 
@@ -383,7 +378,6 @@ void DrivenSolver::Postprocess(const PostOperator &postop,
   }
   if (iodata.solver.driven.delta_post > 0 && step % iodata.solver.driven.delta_post == 0)
   {
-    BlockTimer bt(Timer::IO);
     Mpi::Print("\n");
     PostprocessFields(postop, step / iodata.solver.driven.delta_post, freq);
     Mpi::Print(" Wrote fields to disk at step {:d}\n", step + 1);

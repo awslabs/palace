@@ -7,6 +7,7 @@
 #include "linalg/chebyshev.hpp"
 #include "linalg/distrelaxation.hpp"
 #include "linalg/rap.hpp"
+#include "utils/timer.hpp"
 
 namespace palace
 {
@@ -176,11 +177,13 @@ void GeometricMultigridSolver<OperType>::VCycle(int l, bool initial_guess) const
   // level 0. Important to note that the smoothers must respect the initial guess flag
   // correctly (given X, Y, compute Y <- Y + B (X - A Y)) .
   B[l]->SetInitialGuess(initial_guess);
-  B[l]->Mult(X[l], Y[l]);
   if (l == 0)
   {
+    BlockTimer bt(Timer::COARSESOLVE);
+    B[l]->Mult(X[l], Y[l]);
     return;
   }
+  B[l]->Mult(X[l], Y[l]);
 
   // Compute residual.
   A[l]->Mult(Y[l], R[l]);

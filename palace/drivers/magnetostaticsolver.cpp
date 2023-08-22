@@ -47,19 +47,19 @@ void MagnetostaticSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mes
   auto t0 = Timer::Now();
   for (const auto &[idx, data] : curlcurlop.GetSurfaceCurrentOp())
   {
-    // Form and solve the linear system for a prescribed current on the specified source.
-    BlockTimer bt1(Timer::CONSTRUCT);
     Mpi::Print("\nIt {:d}/{:d}: Index = {:d} (elapsed time = {:.2e} s)\n", step + 1, nstep,
                idx, Timer::Duration(Timer::Now() - t0).count());
+
+    // Form and solve the linear system for a prescribed current on the specified source.
     Mpi::Print("\n");
     A[step].SetSize(RHS.Size());
     A[step] = 0.0;
     curlcurlop.GetExcitationVector(idx, RHS);
 
-    BlockTimer bt2(Timer::SOLVE);
+    BlockTimer bt1(Timer::SOLVE);
     ksp.Mult(RHS, A[step]);
 
-    BlockTimer bt3(Timer::POSTPRO);
+    BlockTimer bt2(Timer::POSTPRO);
     Mpi::Print(" Sol. ||A|| = {:.6e} (||RHS|| = {:.6e})\n",
                linalg::Norml2(curlcurlop.GetComm(), A[step]),
                linalg::Norml2(curlcurlop.GetComm(), RHS));
@@ -113,7 +113,6 @@ void MagnetostaticSolver::Postprocess(CurlCurlOperator &curlcurlop, PostOperator
     PostprocessProbes(postop, "i", i, idx);
     if (i < iodata.solver.magnetostatic.n_post)
     {
-      BlockTimer bt(Timer::IO);
       PostprocessFields(postop, i, idx);
       Mpi::Print(" Wrote fields to disk for terminal {:d}\n", idx);
     }

@@ -29,9 +29,12 @@ public:
   {
     INIT = 0,
     CONSTRUCT,
-    FREQSAMPLESELECTION,
-    HDMSOLVE,
+    WAVEPORT,  // Wave port solver
     SOLVE,
+    PRECONDITIONER,  // Linear solver
+    COARSESOLVE,     // Linear solver
+    CONSTRUCTPROM,   // Adaptive frequency sweep
+    SOLVEPROM,       // Adaptive frequency sweep
     POSTPRO,
     IO,
     TOTAL,
@@ -40,9 +43,12 @@ public:
 
   inline static const std::vector<std::string> descriptions{"Initialization",
                                                             "Operator Construction",
-                                                            "Frequency Sample Selection",
-                                                            "HDM Solve",
+                                                            "  Wave Ports",
                                                             "Solve",
+                                                            "  Preconditioner",
+                                                            "    Coarse Solve",
+                                                            "PROM Construction",
+                                                            "PROM Solve",
                                                             "Postprocessing",
                                                             "Disk IO",
                                                             "Total"};
