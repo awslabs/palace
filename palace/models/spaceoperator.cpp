@@ -675,7 +675,8 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(double a0, doub
       auto &fespace_l = fespaces.GetFESpaceAtLevel(l);
       if (print_prec_hdr)
       {
-        Mpi::Print(" Level {:d}{}: {:d} unknowns", l, (s == 0) ? "" : " (auxiliary)",
+        Mpi::Print(" Level {:d}{} (p = {:d}): {:d} unknowns", l,
+                   (s == 0) ? "" : " (auxiliary)", fespace_l.GetMaxElementOrder(),
                    fespace_l.GlobalTrueVSize());
       }
       const int sdim = GetNDSpace().GetParMesh()->SpaceDimension();
