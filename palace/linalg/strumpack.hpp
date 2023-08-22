@@ -8,6 +8,7 @@
 
 #if defined(MFEM_USE_STRUMPACK)
 
+#include "linalg/operator.hpp"
 #include "utils/iodata.hpp"
 
 namespace palace
@@ -36,17 +37,13 @@ public:
   {
   }
 
-  // Sets matrix associated with the STRUMPACK solver.
-  void SetOperator(const mfem::Operator &op) override;
+  void SetOperator(const Operator &op) override;
 };
 
 using StrumpackSolver = StrumpackSolverBase<mfem::STRUMPACKSolver>;
 
-#if STRUMPACK_VERSION_MAJOR >= 6 && STRUMPACK_VERSION_MINOR >= 3 && \
-    STRUMPACK_VERSION_PATCH > 1
 using StrumpackMixedPrecisionSolver =
     StrumpackSolverBase<mfem::STRUMPACKMixedPrecisionSolver>;
-#endif
 
 }  // namespace palace
 

@@ -4,7 +4,9 @@
 #ifndef PALACE_LINALG_AMS_HPP
 #define PALACE_LINALG_AMS_HPP
 
+#include <memory>
 #include <mfem.hpp>
+#include "linalg/operator.hpp"
 #include "utils/iodata.hpp"
 
 namespace palace
@@ -19,34 +21,38 @@ private:
   // The Hypre solver object.
   HYPRE_Solver ams;
 
-  // Discrete gradient matrix.
-  std::unique_ptr<mfem::HypreParMatrix> G;
-
-  // Nedelec interpolation matrix and its components (used even for p = 1).
-  std::unique_ptr<mfem::HypreParMatrix> Pi, Pix, Piy, Piz;
-
   // Parameters used for preconditioner construction.
-  const int cycle_type, sdim, ams_it, ams_smooth_it, agg_levels;
+  const int cycle_type, space_dim, ams_it, ams_smooth_it, amg_agg_levels;
   const bool ams_singular;
 
   // Control print level for debugging.
   const int print;
 
-  // Helper functions to construct the AMS solver and required auxiliary space matrices.
-  void Initialize();
+  // Discrete gradient matrix.
+  std::unique_ptr<mfem::HypreParMatrix> G;
+
+  // Nedelec interpolation matrix and its components, or, for p = 1, the mesh vertex
+  // coordinates.
+  std::unique_ptr<mfem::HypreParMatrix> Pi, Pix, Piy, Piz;
+  std::unique_ptr<mfem::HypreParVector> x, y, z;
+
+  // Helper function to set up the auxiliary objects required by the AMS solver.
   void ConstructAuxiliaryMatrices(mfem::ParFiniteElementSpace &nd_fespace,
-                                  mfem::ParFiniteElementSpace *h1_fespace = nullptr);
+                                  mfem::ParFiniteElementSpace &h1_fespace);
+
+  // Helper function to construct and configure the AMS solver.
+  void InitializeSolver();
 
 public:
   // Constructor requires the ND space, but will construct the H1 and (H1)ᵈ spaces
   // internally as needed.
   HypreAmsSolver(mfem::ParFiniteElementSpace &nd_fespace,
-                 mfem::ParFiniteElementSpace *h1_fespace, int cycle_it, int smooth_it,
-                 int agg_coarsen, bool vector_interp, bool op_singular, int print_lvl);
+                 mfem::ParFiniteElementSpace &h1_fespace, int cycle_it, int smooth_it,
+                 int agg_coarsen, bool vector_interp, bool op_singular, int print);
   HypreAmsSolver(const IoData &iodata, mfem::ParFiniteElementSpace &nd_fespace,
-                 mfem::ParFiniteElementSpace *h1_fespace, int print_lvl)
+                 mfem::ParFiniteElementSpace &h1_fespace, int print)
     : HypreAmsSolver(nd_fespace, h1_fespace,
-                     iodata.solver.linear.mat_gmg ? 1 : iodata.solver.linear.mg_cycle_it,
+                     iodata.solver.linear.pc_mg ? 1 : iodata.solver.linear.mg_cycle_it,
                      iodata.solver.linear.mg_smooth_it,
                      (iodata.problem.type == config::ProblemData::Type::TRANSIENT ||
                       iodata.problem.type == config::ProblemData::Type::MAGNETOSTATIC)
@@ -54,15 +60,13 @@ public:
                          : 0,
                      iodata.solver.linear.ams_vector,
                      (iodata.problem.type == config::ProblemData::Type::MAGNETOSTATIC),
-                     print_lvl)
+                     print)
   {
   }
   ~HypreAmsSolver() override;
 
-  // Sets matrix associated with the AMS solver.
-  void SetOperator(const mfem::Operator &op) override;
+  void SetOperator(const Operator &op) override;
 
-  // The typecast to HYPRE_Solver returns the internal ams object.
   operator HYPRE_Solver() const override { return ams; }
 
   HYPRE_PtrToParSolverFcn SetupFcn() const override

@@ -11,7 +11,9 @@
 #include <string>
 #include <vector>
 #include <mfem.hpp>
-#include "fem/interpolation.hpp"
+#include "fem/interpolator.hpp"
+#include "linalg/operator.hpp"
+#include "linalg/vector.hpp"
 #include "models/domainpostoperator.hpp"
 #include "models/surfacepostoperator.hpp"
 
@@ -27,23 +29,12 @@ class SpaceOperator;
 class SurfaceCurrentOperator;
 class WavePortOperator;
 
-namespace petsc
-{
-
-class PetscParMatrix;
-class PetscParVector;
-
-}  // namespace petsc
-
 //
 // A class to handle solution postprocessing.
 //
 class PostOperator
 {
 private:
-  // Shared face mapping for boundary coefficients.
-  std::map<int, int> local_to_shared;
-
   // Reference to material property operator (not owned).
   const MaterialOperator &mat_op;
 
@@ -86,30 +77,16 @@ public:
   bool HasE() const { return E.has_value(); }
   bool HasB() const { return B.has_value(); }
 
-  // Compute the magnetic flux density B in RT space from electric field solution E solution
-  // in ND space for the time-harmonic case: B =  -1/(iω) ∇ x E.
-  static void GetBField(std::complex<double> omega, const petsc::PetscParMatrix &NegCurl,
-                        const petsc::PetscParVector &e, petsc::PetscParVector &b);
-
-  // Compute the magnetic flux density B in RT space from the magnetic vector potential
-  // solution A in ND space: B = ∇ x A.
-  static void GetBField(const mfem::Operator &Curl, const mfem::Vector &a, mfem::Vector &b);
-
-  // Compute the electric field E in ND space from the scalar potential solution V in H1
-  // space: E = -∇V.
-  static void GetEField(const mfem::Operator &NegGrad, const mfem::Vector &v,
-                        mfem::Vector &e);
-
   // Populate the grid function solutions for the E- and B-field using the solution vectors
   // on the true dofs. For the real-valued overload, the electric scalar potential can be
   // specified too for electrostatic simulations. The output mesh and fields are
   // nondimensionalized consistently (B ~ E (L₀ ω₀ E₀⁻¹)).
-  void SetEGridFunction(const petsc::PetscParVector &e);
-  void SetBGridFunction(const petsc::PetscParVector &b);
-  void SetEGridFunction(const mfem::Vector &e);
-  void SetBGridFunction(const mfem::Vector &b);
-  void SetVGridFunction(const mfem::Vector &v);
-  void SetAGridFunction(const mfem::Vector &a);
+  void SetEGridFunction(const ComplexVector &e);
+  void SetBGridFunction(const ComplexVector &b);
+  void SetEGridFunction(const Vector &e);
+  void SetBGridFunction(const Vector &b);
+  void SetVGridFunction(const Vector &v);
+  void SetAGridFunction(const Vector &a);
 
   // Update cached port voltages and currents for lumped and wave port operators.
   void UpdatePorts(const LumpedPortOperator &lumped_port_op,

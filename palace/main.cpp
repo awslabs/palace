@@ -12,7 +12,6 @@
 #include "drivers/electrostaticsolver.hpp"
 #include "drivers/magnetostaticsolver.hpp"
 #include "drivers/transientsolver.hpp"
-#include "linalg/petsc.hpp"
 #include "linalg/slepc.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
@@ -130,17 +129,16 @@ int main(int argc, char *argv[])
   PrintBanner(world_comm, world_size, num_thread, git_tag);
   IoData iodata(argv[1], false);
 
-  // Initialize Hypre and PETSc, and optionally SLEPc.
+  // Initialize Hypre and, optionally, SLEPc/PETSc.
   mfem::Hypre::Init();
-  petsc::Initialize(argc, argv, nullptr, nullptr);
 #if defined(PALACE_WITH_SLEPC)
-  slepc::Initialize();
-#endif
+  slepc::Initialize(argc, argv, nullptr, nullptr);
   if (PETSC_COMM_WORLD != world_comm)
   {
     Mpi::Print(world_comm, "Error: Problem during MPI initialization!\n\n");
     return 1;
   }
+#endif
 
   // Initialize the problem driver.
   std::unique_ptr<BaseSolver> solver;
@@ -186,11 +184,10 @@ int main(int argc, char *argv[])
   solver->SaveMetadata(timer);
   Mpi::Print(world_comm, "\n");
 
-  // Finalize PETSc.
+  // Finalize SLEPc/PETSc.
 #if defined(PALACE_WITH_SLEPC)
   slepc::Finalize();
 #endif
-  petsc::Finalize();
 
   return 0;
 }

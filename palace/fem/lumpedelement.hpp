@@ -8,6 +8,7 @@
 #include <string>
 #include <mfem.hpp>
 #include "fem/integrator.hpp"
+#include "utils/communication.hpp"
 #include "utils/geodata.hpp"
 
 namespace palace
@@ -28,14 +29,17 @@ protected:
 
   double GetArea(mfem::ParFiniteElementSpace &fespace)
   {
-    mfem::ParGridFunction ones(&fespace);
-    ones.mfem::Vector::operator=(1.0);
-    mfem::ParLinearForm s(&fespace);
     mfem::ConstantCoefficient one_func(1.0);
+    mfem::LinearForm s(&fespace);
     s.AddBoundaryIntegrator(new BoundaryLFIntegrator(one_func), attr_marker);
-    s.UseFastAssembly(true);
+    s.UseFastAssembly(false);
     s.Assemble();
-    return s(ones);
+
+    mfem::GridFunction ones(&fespace);
+    ones = 1.0;
+    double dot = s * ones;
+    Mpi::GlobalSum(1, &dot, fespace.GetComm());
+    return dot;
   }
 
 public:

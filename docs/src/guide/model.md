@@ -40,7 +40,7 @@ or region-based refinement, specified using the [`config["Model"]["Refinement"]`
 uniform refinement levels as well as local refinement regions which refines the elements
 inside of a certain box or sphere-shaped region. For simplex meshes, the refinement
 maintains a conforming mesh but meshes containing hexahedra, prism, or pyramid elements
-will be non-conforming after local refinement (this is not supported at this time).
+will be nonconforming after local refinement (this is not supported at this time).
 
 [Adaptive mesh refinement (AMR)](https://en.wikipedia.org/wiki/Adaptive_mesh_refinement)
 according to error estimates in the computed solution is a work in progress for all

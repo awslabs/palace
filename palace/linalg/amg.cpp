@@ -3,6 +3,8 @@
 
 #include "amg.hpp"
 
+#include "linalg/rap.hpp"
+
 namespace palace
 {
 
@@ -12,26 +14,30 @@ BoomerAmgSolver::BoomerAmgSolver(int cycle_it, int smooth_it, int print)
   SetPrintLevel((print > 1) ? print - 1 : 0);
   SetMaxIter(cycle_it);
   SetTol(0.0);
-  SetNumSweeps(smooth_it);
-  Init();
-}
 
-void BoomerAmgSolver::Init()
-{
+  // Set additional BoomerAMG options.
   double theta = 0.5;  // AMG strength parameter = 0.25 is 2D optimal (0.5-0.8 for 3D)
   int agg_levels = 1;  // Number of aggressive coarsening levels
+
   SetStrengthThresh(theta);
   SetAggressiveCoarsening(agg_levels);
+  HYPRE_BoomerAMGSetNumSweeps(*this, smooth_it);
+
+  // int coarse_relax_type = 8;  // l1-symm. GS (inexact coarse solve)
+  // HYPRE_BoomerAMGSetCycleRelaxType(*this, coarse_relax_type, 3);
 }
 
-void BoomerAmgSolver::SetNumSweeps(int relax_sweeps)
+void BoomerAmgSolver::SetOperator(const Operator &op)
 {
-  HYPRE_BoomerAMGSetNumSweeps(*this, relax_sweeps);
-}
-
-void BoomerAmgSolver::SetCoarseRelaxType(int relax_type)
-{
-  HYPRE_BoomerAMGSetCycleRelaxType(*this, relax_type, 3);
+  const auto *PtAP = dynamic_cast<const ParOperator *>(&op);
+  if (PtAP)
+  {
+    mfem::HypreBoomerAMG::SetOperator(PtAP->ParallelAssemble());
+  }
+  else
+  {
+    mfem::HypreBoomerAMG::SetOperator(op);
+  }
 }
 
 }  // namespace palace

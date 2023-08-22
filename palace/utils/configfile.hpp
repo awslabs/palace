@@ -716,16 +716,10 @@ public:
   enum class KspType
   {
     CG,
-    CGSYM,
-    FCG,
     MINRES,
     GMRES,
     FGMRES,
-    BCGS,
-    BCGSL,
-    FBCGS,
-    QMRCGS,
-    TFQMR,
+    BICGSTAB,
     DEFAULT,
     INVALID = -1
   };
@@ -740,28 +734,36 @@ public:
   // Maximum Krylov space dimension for GMRES/FGMRES iterative solvers.
   int max_size = -1;
 
-  // Enable modified Gram-Schmidt orthogonalization instead of classical for GMRES/FGMRES
-  // Krylov solvers and SLEPc eigenvalue solver.
-  bool orthog_mgs = false;
-  bool orthog_cgs2 = false;
-
   // Reuse previous solution as initial guess for Krylov solvers.
-  int ksp_initial_guess = -1;
+  int initial_guess = -1;
 
-  // Enable pipelined Krylov solver variants to reduce blocking communications.
-  bool ksp_piped = false;
-
-  // Enable hp-geometric multigrid coarsening, using the solver specified by the type member
-  // at the coarsest level.
-  bool mat_gmg = true;
+  // Enable partial assembly for operators.
+  bool mat_pa = false;
 
   // Enable low-order refined (LOR) preconditioner construction. Only available for meshes
-  // based on tensor elements.
-  bool mat_lor = false;
+  // based on tensor-product elements.
+  bool pc_mat_lor = false;
 
   // For frequency domain applications, precondition linear systems with a shifted matrix
   // (makes the preconditoner matrix SPD).
-  int mat_shifted = -1;
+  int pc_mat_shifted = -1;
+
+  // Choose left or right preconditioning.
+  enum class SideType
+  {
+    RIGHT,
+    LEFT,
+    DEFAULT,
+    INVALID = -1
+  };
+  SideType pc_side_type = SideType::DEFAULT;
+
+  // Enable hp-geometric multigrid coarsening, using the solver specified by the type member
+  // at the coarsest level.
+  bool pc_mg = true;
+
+  // Use auxiliary space smoothers on geometric multigrid levels
+  int mg_smooth_aux = -1;
 
   // Number of iterations for preconditioners which support it. For multigrid, this is the
   // number of V-cycles per Krylov solver iteration.
@@ -774,17 +776,7 @@ public:
   // Order of polynomial smoothing for geometric multigrid.
   int mg_smooth_order = 4;
 
-  // Choose left or right preconditioning.
-  enum class SideType
-  {
-    RIGHT,
-    LEFT,
-    DEFAULT,
-    INVALID = -1
-  };
-  SideType pc_side_type = SideType::DEFAULT;
-
-  // Choose left or right preconditioning.
+  // Specify details for symbolic factorization used by sparse direct solvers.
   enum class SymFactType
   {
     METIS,
@@ -797,7 +789,7 @@ public:
   SymFactType sym_fact_type = SymFactType::DEFAULT;
 
   // Low-rank and butterfly compression parameters for sparse direct solvers which support
-  // it.
+  // it (mainly STRUMPACK).
   enum class CompressionType
   {
     NONE,
@@ -825,6 +817,17 @@ public:
 
   // Maximum number of iterations for solving linear systems in divergence-free projector.
   int divfree_max_it = 100;
+
+  // Enable different variants of Gram-Schmidt orthogonalization for GMRES/FGMRES iterative
+  // solvers and SLEPc eigenvalue solver.
+  enum class OrthogType
+  {
+    MGS,
+    CGS,
+    CGS2,
+    INVALID = -1
+  };
+  OrthogType gs_orthog_type = OrthogType::MGS;
 
   void SetUp(json &solver);
 };

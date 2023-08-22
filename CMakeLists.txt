@@ -57,12 +57,6 @@ if(NOT DEFINED BUILD_SHARED_LIBS)
   set(BUILD_SHARED_LIBS OFF CACHE BOOL "Global flag to cause add_library() to create shared libraries if ON")
 endif()
 
-# For now, SLEPc is always required
-if(NOT PALACE_WITH_SLEPC)
-  message(STATUS "Building with SLEPc eigenvalue solver as it is required")
-  set(PALACE_WITH_SLEPC ON CACHE BOOL "Build with SLEPc eigenvalue solver" FORCE)
-endif()
-
 # Add extra CMake modules
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
 

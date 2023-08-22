@@ -3,9 +3,11 @@
 
 #include "surfacepostoperator.hpp"
 
+#include <complex>
 #include <string>
 #include "fem/integrator.hpp"
 #include "models/materialoperator.hpp"
+#include "utils/communication.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
 
@@ -65,8 +67,7 @@ SurfacePostOperator::InterfaceDielectricData::InterfaceDielectricData(
 
     // Store information about the surface side to consider.
     int component;
-    sides.emplace_back();
-    mfem::Vector &side = sides.back();
+    mfem::Vector &side = sides.emplace_back();
     if (node.side.length() == 0)
     {
       // This is OK if surface is single sided, just push back an empty Vector.
@@ -95,31 +96,30 @@ SurfacePostOperator::InterfaceDielectricData::InterfaceDielectricData(
     }
 
     // Store markers for this element of the postprocessing boundary.
-    attr_markers.emplace_back();
-    mesh::AttrToMarker(mesh.bdr_attributes.Max(), node.attributes, attr_markers.back());
+    mesh::AttrToMarker(mesh.bdr_attributes.Max(), node.attributes,
+                       attr_markers.emplace_back());
   }
 }
 
 std::unique_ptr<mfem::Coefficient>
 SurfacePostOperator::InterfaceDielectricData::GetCoefficient(
-    int i, const mfem::ParGridFunction &U, const MaterialOperator &mat_op,
-    const std::map<int, int> &local_to_shared) const
+    int i, const mfem::ParGridFunction &U, const MaterialOperator &mat_op) const
 {
   switch (type)
   {
     case DielectricInterfaceType::MA:
       return std::make_unique<DielectricInterfaceCoefficient<DielectricInterfaceType::MA>>(
-          U, mat_op, ts, epsilon, sides[i], local_to_shared);
+          U, mat_op, ts, epsilon, sides[i]);
     case DielectricInterfaceType::MS:
       return std::make_unique<DielectricInterfaceCoefficient<DielectricInterfaceType::MS>>(
-          U, mat_op, ts, epsilon, sides[i], local_to_shared);
+          U, mat_op, ts, epsilon, sides[i]);
     case DielectricInterfaceType::SA:
       return std::make_unique<DielectricInterfaceCoefficient<DielectricInterfaceType::SA>>(
-          U, mat_op, ts, epsilon, sides[i], local_to_shared);
+          U, mat_op, ts, epsilon, sides[i]);
     case DielectricInterfaceType::DEFAULT:
       return std::make_unique<
           DielectricInterfaceCoefficient<DielectricInterfaceType::DEFAULT>>(
-          U, mat_op, ts, epsilon, sides[i], local_to_shared);
+          U, mat_op, ts, epsilon, sides[i]);
   }
   return {};  // For compiler warning
 }
@@ -127,15 +127,14 @@ SurfacePostOperator::InterfaceDielectricData::GetCoefficient(
 SurfacePostOperator::SurfaceChargeData::SurfaceChargeData(
     const config::CapacitanceData &data, mfem::ParMesh &mesh)
 {
-  attr_markers.emplace_back();
-  mesh::AttrToMarker(mesh.bdr_attributes.Max(), data.attributes, attr_markers.back());
+  mesh::AttrToMarker(mesh.bdr_attributes.Max(), data.attributes,
+                     attr_markers.emplace_back());
 }
 
 std::unique_ptr<mfem::Coefficient> SurfacePostOperator::SurfaceChargeData::GetCoefficient(
-    int i, const mfem::ParGridFunction &U, const MaterialOperator &mat_op,
-    const std::map<int, int> &local_to_shared) const
+    int i, const mfem::ParGridFunction &U, const MaterialOperator &mat_op) const
 {
-  return std::make_unique<BdrChargeCoefficient>(U, mat_op, local_to_shared);
+  return std::make_unique<BdrChargeCoefficient>(U, mat_op);
 }
 
 SurfacePostOperator::SurfaceFluxData::SurfaceFluxData(const config::InductanceData &data,
@@ -173,25 +172,26 @@ SurfacePostOperator::SurfaceFluxData::SurfaceFluxData(const config::InductanceDa
 
   // Construct the coefficient for this postprocessing boundary (copies the direction
   // vector).
-  attr_markers.emplace_back();
-  mesh::AttrToMarker(mesh.bdr_attributes.Max(), data.attributes, attr_markers.back());
+  mesh::AttrToMarker(mesh.bdr_attributes.Max(), data.attributes,
+                     attr_markers.emplace_back());
 }
 
-std::unique_ptr<mfem::Coefficient> SurfacePostOperator::SurfaceFluxData::GetCoefficient(
-    int i, const mfem::ParGridFunction &U, const MaterialOperator &mat_op,
-    const std::map<int, int> &local_to_shared) const
+std::unique_ptr<mfem::Coefficient>
+SurfacePostOperator::SurfaceFluxData::GetCoefficient(int i, const mfem::ParGridFunction &U,
+                                                     const MaterialOperator &mat_op) const
 {
-  return std::make_unique<BdrFluxCoefficient>(U, direction, local_to_shared);
+  return std::make_unique<BdrFluxCoefficient>(U, direction,
+                                              mat_op.GetLocalToSharedFaceMap());
 }
 
-SurfacePostOperator::SurfacePostOperator(const IoData &iodata, const MaterialOperator &mat,
-                                         const std::map<int, int> &l2s,
+SurfacePostOperator::SurfacePostOperator(const IoData &iodata,
+                                         const MaterialOperator &mat_op,
                                          mfem::ParFiniteElementSpace &h1_fespace)
-  : mat_op(mat), local_to_shared(l2s), ones(&h1_fespace)
+  : mat_op(mat_op), ones(&h1_fespace)
 {
   // Define a constant 1 function on the scalar finite element space for computing surface
   // integrals.
-  ones.mfem::Vector::operator=(1.0);
+  ones = 1.0;
 
   // Surface dielectric loss postprocessing.
   for (const auto &[idx, data] : iodata.boundaries.postpro.dielectric)
@@ -212,16 +212,6 @@ SurfacePostOperator::SurfacePostOperator(const IoData &iodata, const MaterialOpe
   }
 }
 
-double
-SurfacePostOperator::GetInterfaceElectricFieldEnergy(int idx,
-                                                     const mfem::ParGridFunction &E) const
-{
-  auto it = eps_surfs.find(idx);
-  MFEM_VERIFY(it != eps_surfs.end(),
-              "Unknown dielectric loss postprocessing surface index requested!");
-  return GetSurfaceIntegral(it->second, E);
-}
-
 double SurfacePostOperator::GetInterfaceLossTangent(int idx) const
 {
   auto it = eps_surfs.find(idx);
@@ -230,13 +220,65 @@ double SurfacePostOperator::GetInterfaceLossTangent(int idx) const
   return it->second.tandelta;
 }
 
+double SurfacePostOperator::GetInterfaceElectricFieldEnergy(
+    int idx, const mfem::ParComplexGridFunction &E) const
+{
+  auto it = eps_surfs.find(idx);
+  MFEM_VERIFY(it != eps_surfs.end(),
+              "Unknown dielectric loss postprocessing surface index requested!");
+  double dot = GetLocalSurfaceIntegral(it->second, E.real()) +
+               GetLocalSurfaceIntegral(it->second, E.imag());
+  Mpi::GlobalSum(1, &dot, E.ParFESpace()->GetComm());
+  return dot;
+}
+
+double
+SurfacePostOperator::GetInterfaceElectricFieldEnergy(int idx,
+                                                     const mfem::ParGridFunction &E) const
+{
+  auto it = eps_surfs.find(idx);
+  MFEM_VERIFY(it != eps_surfs.end(),
+              "Unknown dielectric loss postprocessing surface index requested!");
+  double dot = GetLocalSurfaceIntegral(it->second, E);
+  Mpi::GlobalSum(1, &dot, E.ParFESpace()->GetComm());
+  return dot;
+}
+
+double
+SurfacePostOperator::GetSurfaceElectricCharge(int idx,
+                                              const mfem::ParComplexGridFunction &E) const
+{
+  auto it = charge_surfs.find(idx);
+  MFEM_VERIFY(it != charge_surfs.end(),
+              "Unknown capacitance postprocessing surface index requested!");
+  std::complex<double> dot(GetLocalSurfaceIntegral(it->second, E.real()),
+                           GetLocalSurfaceIntegral(it->second, E.imag()));
+  Mpi::GlobalSum(1, &dot, E.ParFESpace()->GetComm());
+  return std::copysign(std::abs(dot), dot.real());
+}
+
 double SurfacePostOperator::GetSurfaceElectricCharge(int idx,
                                                      const mfem::ParGridFunction &E) const
 {
   auto it = charge_surfs.find(idx);
   MFEM_VERIFY(it != charge_surfs.end(),
               "Unknown capacitance postprocessing surface index requested!");
-  return GetSurfaceIntegral(it->second, E);
+  double dot = GetLocalSurfaceIntegral(it->second, E);
+  Mpi::GlobalSum(1, &dot, E.ParFESpace()->GetComm());
+  return dot;
+}
+
+double
+SurfacePostOperator::GetSurfaceMagneticFlux(int idx,
+                                            const mfem::ParComplexGridFunction &B) const
+{
+  auto it = flux_surfs.find(idx);
+  MFEM_VERIFY(it != flux_surfs.end(),
+              "Unknown inductance postprocessing surface index requested!");
+  std::complex<double> dot(GetLocalSurfaceIntegral(it->second, B.real()),
+                           GetLocalSurfaceIntegral(it->second, B.imag()));
+  Mpi::GlobalSum(1, &dot, B.ParFESpace()->GetComm());
+  return std::copysign(std::abs(dot), dot.real());
 }
 
 double SurfacePostOperator::GetSurfaceMagneticFlux(int idx,
@@ -245,23 +287,25 @@ double SurfacePostOperator::GetSurfaceMagneticFlux(int idx,
   auto it = flux_surfs.find(idx);
   MFEM_VERIFY(it != flux_surfs.end(),
               "Unknown inductance postprocessing surface index requested!");
-  return GetSurfaceIntegral(it->second, B);
+  double dot = GetLocalSurfaceIntegral(it->second, B);
+  Mpi::GlobalSum(1, &dot, B.ParFESpace()->GetComm());
+  return dot;
 }
 
-double SurfacePostOperator::GetSurfaceIntegral(const SurfaceData &data,
-                                               const mfem::ParGridFunction &U) const
+double SurfacePostOperator::GetLocalSurfaceIntegral(const SurfaceData &data,
+                                                    const mfem::ParGridFunction &U) const
 {
   // Integrate the coefficient over the boundary attributes making up this surface index.
   std::vector<std::unique_ptr<mfem::Coefficient>> fb;
-  mfem::ParLinearForm s(ones.ParFESpace());
+  mfem::LinearForm s(const_cast<mfem::FiniteElementSpace *>(ones.FESpace()));
   for (int i = 0; i < static_cast<int>(data.attr_markers.size()); i++)
   {
-    fb.emplace_back(data.GetCoefficient(i, U, mat_op, local_to_shared));
+    fb.emplace_back(data.GetCoefficient(i, U, mat_op));
     s.AddBoundaryIntegrator(new BoundaryLFIntegrator(*fb.back()), data.attr_markers[i]);
   }
-  s.UseFastAssembly(true);
+  s.UseFastAssembly(false);
   s.Assemble();
-  return s(ones);
+  return s * ones;
 }
 
 }  // namespace palace

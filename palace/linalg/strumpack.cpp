@@ -5,6 +5,8 @@
 
 #if defined(MFEM_USE_STRUMPACK)
 
+#include "linalg/rap.hpp"
+
 namespace palace
 {
 
@@ -47,8 +49,8 @@ StrumpackSolverBase<StrumpackSolverType>::StrumpackSolverBase(
   : StrumpackSolverType(comm), comm(comm)
 {
   // Configure the solver.
-  this->SetPrintFactorStatistics((print > 1));
-  this->SetPrintSolveStatistics((print > 1));
+  this->SetPrintFactorStatistics(print > 1);
+  this->SetPrintSolveStatistics(print > 1);
   this->SetKrylovSolver(strumpack::KrylovSolver::DIRECT);  // Always as a preconditioner or
                                                            // direct solver
   this->SetMatching(strumpack::MatchingJob::NONE);
@@ -98,28 +100,65 @@ StrumpackSolverBase<StrumpackSolverType>::StrumpackSolverBase(
       this->SetCompressionRelTol(lr_tol);
       break;
     case config::LinearSolverData::CompressionType::NONE:
-    default:
+    case config::LinearSolverData::CompressionType::INVALID:
       break;
   }
 }
 
 template <typename StrumpackSolverType>
-void StrumpackSolverBase<StrumpackSolverType>::SetOperator(const mfem::Operator &op)
+void StrumpackSolverBase<StrumpackSolverType>::SetOperator(const Operator &op)
 {
-  // Convert the input operator to a distributed STRUMPACK matrix (always use
-  // symmetric sparsity pattern). Safe to delete the matrix since STRUMPACK
-  // copies it on input.
-  mfem::STRUMPACKRowLocMatrix A(op, true);
+  // Convert the input operator to a distributed STRUMPACK matrix (always assume a symmetric
+  // sparsity pattern). This is very similar to the MFEM STRUMPACKRowLocMatrix from a
+  // HypreParMatrix but avoids using the communicator from the Hypre matrix in the case that
+  // the solver is constructed on a different communicator.
+  const mfem::HypreParMatrix *hypA;
+  const auto *PtAP = dynamic_cast<const ParOperator *>(&op);
+  if (PtAP)
+  {
+    hypA = &PtAP->ParallelAssemble();
+  }
+  else
+  {
+    hypA = dynamic_cast<const mfem::HypreParMatrix *>(&op);
+    MFEM_VERIFY(hypA, "StrumpackSolver requires a HypreParMatrix operator!");
+  }
+  auto *parcsr = (hypre_ParCSRMatrix *)const_cast<mfem::HypreParMatrix &>(*hypA);
+  hypA->HostRead();
+  hypre_CSRMatrix *csr = hypre_MergeDiagAndOffd(parcsr);
+  hypA->HypreRead();
 
-  // Set up base class.
+  // Create the STRUMPACKRowLocMatrix by taking the internal data from a hypre_CSRMatrix.
+  HYPRE_Int n_loc = csr->num_rows;
+  HYPRE_BigInt first_row = parcsr->first_row_index;
+  HYPRE_Int *I = csr->i;
+  HYPRE_BigInt *J = csr->big_j;
+  double *data = csr->data;
+
+  // Safe to delete the matrix since STRUMPACK copies it on input. Also clean up the Hypre
+  // data structure once we are done with it.
+#if !defined(HYPRE_BIGINT)
+  mfem::STRUMPACKRowLocMatrix A(comm, n_loc, first_row, hypA->GetGlobalNumRows(),
+                                hypA->GetGlobalNumCols(), I, J, data, true);
+#else
+  int n_loc_int = static_cast<int>(n_loc);
+  MFEM_ASSERT(n_loc == (HYPRE_Int)n_loc_int,
+              "Overflow error for local sparse matrix size!");
+  mfem::Array<int> II(n_loc_int + 1);
+  for (int i = 0; i <= n_loc_int; i++)
+  {
+    II[i] = static_cast<int>(I[i]);
+    MFEM_ASSERT(I[i] == (HYPRE_Int)II[i], "Overflow error for local sparse matrix index!");
+  }
+  mfem::STRUMPACKRowLocMatrix A(comm, n_loc_int, first_row, hypA->GetGlobalNumRows(),
+                                hypA->GetGlobalNumCols(), II, J, data, true);
+#endif
   StrumpackSolverType::SetOperator(A);
+  hypre_CSRMatrixDestroy(csr);
 }
 
 template class StrumpackSolverBase<mfem::STRUMPACKSolver>;
-#if STRUMPACK_VERSION_MAJOR >= 6 && STRUMPACK_VERSION_MINOR >= 3 && \
-    STRUMPACK_VERSION_PATCH > 1
 template class StrumpackSolverBase<mfem::STRUMPACKMixedPrecisionSolver>;
-#endif
 
 }  // namespace palace
 

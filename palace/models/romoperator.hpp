@@ -6,12 +6,18 @@
 
 #include <memory>
 #include <random>
+#include <set>
 #include <vector>
-#include <mfem.hpp>
+#include <Eigen/Dense>
 #include "linalg/curlcurl.hpp"
 #include "linalg/ksp.hpp"
-#include "linalg/pc.hpp"
-#include "linalg/petsc.hpp"
+#include "linalg/operator.hpp"
+#include "linalg/vector.hpp"
+
+// XX TODO NOTES
+//    - Precompute A2, RHS2 for all frequencies? This seems very dumb and especially risky
+//    for fine resolution sweeps, so for now remove A2, RHS2 storage (and omega = omega_0 +
+//    delta_omega * step)
 
 namespace palace
 {
@@ -20,7 +26,8 @@ class IoData;
 class SpaceOperator;
 
 //
-// A class handling PROM construction and use for adaptive fast frequency sweeps.
+// A class handling projection-based reduced order model (PROM) construction and use for
+// adaptive fast frequency sweeps.
 //
 class RomOperator
 {
@@ -29,78 +36,66 @@ private:
   SpaceOperator &spaceop;
 
   // HDM system matrices and excitation RHS.
-  std::unique_ptr<petsc::PetscParMatrix> K, M, C;
-  std::unique_ptr<petsc::PetscParVector> RHS1;
-
-  // HDM storage for terms with non-polynomial frequency dependence.
-  std::vector<std::unique_ptr<petsc::PetscParMatrix>> A2;
-  std::vector<std::unique_ptr<petsc::PetscParVector>> RHS2;
-  bool init2, hasA2, hasRHS2;
-
-  // HDM linear system solver and preconditioner.
-  std::unique_ptr<KspSolver> ksp0;
-  std::unique_ptr<KspPreconditioner> pc0;
+  std::unique_ptr<ComplexOperator> K, M, C, A2;
+  ComplexVector RHS1, RHS2;
+  bool has_A2, has_RHS2;
 
   // Working storage for HDM vectors.
-  std::unique_ptr<petsc::PetscParVector> E0, R0, T0;
+  ComplexVector r, w, z;
 
-  // PROM matrices, vectors, and linear solver.
-  std::unique_ptr<petsc::PetscDenseMatrix> Kr, Mr, Cr, Ar;
-  std::unique_ptr<petsc::PetscParVector> RHS1r, RHSr, Er;
-  std::unique_ptr<KspSolver> ksp;
+  // HDM linear system solver and preconditioner.
+  std::unique_ptr<ComplexKspSolver> ksp;
 
   // Linear solver for inner product solves for error metric.
-  std::unique_ptr<CurlCurlSolver> kspKM;
-  std::unique_ptr<petsc::PetscParMatrix> opKM;
+  std::unique_ptr<CurlCurlMassSolver> kspKM;
 
-  // PROM reduced-order basis and parameter domain samplings.
-  int dim;
-  std::unique_ptr<petsc::PetscDenseMatrix> V;
-  std::vector<double> Ps, PmPs;
-  double omega_min, delta_omega;
+  // PROM matrices and vectors.
+  Eigen::MatrixXcd Kr, Mr, Cr, Ar;
+  Eigen::VectorXcd RHS1r, RHSr;
+
+  // PROM reduced-order basis (real-valued) and active dimension.
+  std::vector<Vector> V;
+  int dim_V;
+  bool orthog_mgs;
+
+  // Data structures for parameter domain sampling.
+  std::set<double> PS, P_m_PS;
   std::default_random_engine engine;
 
-  // Compute the error metric for the PROM solution (computed internally) at the specified
-  // frequency.
-  double ComputeError(double omega);
-
-  // Helper functions for reduced-order matrix or vector construction/update.
-  void BVMatProjectInternal(petsc::PetscDenseMatrix &V, petsc::PetscParMatrix &A,
-                            petsc::PetscDenseMatrix &Ar, petsc::PetscParVector &r, int n0,
-                            int n);
-  void BVDotVecInternal(petsc::PetscDenseMatrix &V, petsc::PetscParVector &b,
-                        petsc::PetscParVector &br, int n0, int n);
-
 public:
-  RomOperator(const IoData &iodata, SpaceOperator &sp, int nmax);
+  RomOperator(const IoData &iodata, SpaceOperator &sp);
 
-  // Return set of sampled parameter points for basis construction.
-  const std::vector<double> &GetSampleFrequencies() const { return Ps; }
+  // Return the HDM linear solver.
+  const ComplexKspSolver &GetLinearSolver() const { return *ksp; }
 
   // Return PROM dimension.
-  int GetReducedDimension() const { return dim; }
+  int GetReducedDimension() const { return dim_V; }
 
-  // Return number of HDM linear solves and linear solver iterations performed during
-  // offline training.
-  int GetTotalKspMult() const { return ksp0->GetTotalNumMult(); }
-  int GetTotalKspIter() const { return ksp0->GetTotalNumIter(); }
+  // Return set of sampled parameter points for basis construction.
+  const std::set<double> &GetSampleFrequencies() const { return PS; }
 
-  // Initialize the solution basis with HDM samples at the minimum and maximum frequencies.
-  void Initialize(int steps, double start, double delta);
+  // Initialize the parameter domain P = {ω_L, ω_L + δ, ..., ω_R}. Also sets the maximum
+  // number of sample points for the PROM construction.
+  void Initialize(double start, double delta, int num_steps, int max_dim);
 
-  // Assemble and solve the HDM at the specified frequency, adding the solution vector to
-  // the reduced-order basis.
-  void SolveHDM(double omega, petsc::PetscParVector &E, bool print = false);
+  // Assemble and solve the HDM at the specified frequency.
+  void SolveHDM(double omega, ComplexVector &e);
+
+  // Add the solution vector to the reduced-order basis and update the PROM.
+  void AddHDMSample(double omega, ComplexVector &e);
 
   // Assemble and solve the PROM at the specified frequency, expanding the solution back
   // into the high-dimensional solution space.
   void AssemblePROM(double omega);
-  void SolvePROM(petsc::PetscParVector &E);
+  void SolvePROM(ComplexVector &e);
+
+  // Compute the error metric for the PROM at the specified frequency.
+  double ComputeError(double omega);
 
   // Compute the maximum error over a randomly sampled set of candidate points. Returns the
   // maximum error and its correcponding frequency, as well as the number of candidate
   // points used (if fewer than those availble in the unsampled parameter domain).
-  double ComputeMaxError(int Nc, double &omega_star);
+  double ComputeMaxError(int num_cand, double &omega_star);
 };
 
 }  // namespace palace

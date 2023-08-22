@@ -5,6 +5,8 @@
 
 #if defined(MFEM_USE_MUMPS)
 
+#include "linalg/rap.hpp"
+
 namespace palace
 {
 
@@ -34,12 +36,26 @@ MumpsSolver::MumpsSolver(MPI_Comm comm, mfem::MUMPSSolver::MatType sym,
   }
   else
   {
-    SetReorderingStrategy(mfem::MUMPSSolver::AUTOMATIC);  // MUMPS should have good defaults
+    // SetReorderingStrategy(mfem::MUMPSSolver::AUTOMATIC);  // Should have good default
+    SetReorderingStrategy(mfem::MUMPSSolver::PORD);
   }
   SetReorderingReuse(true);  // Repeated calls use same sparsity pattern
   if (blr_tol > 0.0)
   {
     SetBLRTol(blr_tol);
+  }
+}
+
+void MumpsSolver::SetOperator(const Operator &op)
+{
+  const auto *PtAP = dynamic_cast<const ParOperator *>(&op);
+  if (PtAP)
+  {
+    mfem::MUMPSSolver::SetOperator(PtAP->ParallelAssemble());
+  }
+  else
+  {
+    mfem::MUMPSSolver::SetOperator(op);
   }
 }
 

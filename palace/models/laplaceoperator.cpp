@@ -5,7 +5,7 @@
 
 #include "fem/coefficient.hpp"
 #include "fem/multigrid.hpp"
-#include "fem/operator.hpp"
+#include "linalg/rap.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
@@ -113,21 +113,21 @@ std::map<int, mfem::Array<int>> ConstructSources(const IoData &iodata)
 
 LaplaceOperator::LaplaceOperator(const IoData &iodata,
                                  const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh)
-  : dbc_marker(SetUpBoundaryProperties(iodata, *mesh.back())), skip_zeros(0),
-    pc_gmg(iodata.solver.linear.mat_gmg), print_hdr(true),
+  : assembly_level(iodata.solver.linear.mat_pa ? mfem::AssemblyLevel::PARTIAL
+                                               : mfem::AssemblyLevel::LEGACY),
+    skip_zeros(0), pc_mg(iodata.solver.linear.pc_mg), print_hdr(true),
+    dbc_marker(SetUpBoundaryProperties(iodata, *mesh.back())),
     h1_fecs(utils::ConstructFECollections<mfem::H1_FECollection>(
-        pc_gmg, false, iodata.solver.order, mesh.back()->Dimension())),
+        pc_mg, false, iodata.solver.order, mesh.back()->Dimension())),
     nd_fec(iodata.solver.order, mesh.back()->Dimension()),
-    h1_fespaces(
-        pc_gmg
-            ? utils::ConstructFiniteElementSpaceHierarchy(mesh, h1_fecs, dbc_marker)
-            : utils::ConstructFiniteElementSpaceHierarchy(*mesh.back(), *h1_fecs.back())),
+    h1_fespaces(pc_mg ? utils::ConstructFiniteElementSpaceHierarchy(
+                            mesh, h1_fecs, &dbc_marker, &dbc_tdof_lists)
+                      : utils::ConstructFiniteElementSpaceHierarchy(
+                            *mesh.back(), *h1_fecs.back(), &dbc_marker,
+                            &dbc_tdof_lists.emplace_back())),
     nd_fespace(mesh.back().get(), &nd_fec), mat_op(iodata, *mesh.back()),
     source_attr_lists(ConstructSources(iodata))
 {
-  // Finalize setup.
-  h1_fespaces.GetFinestFESpace().GetEssentialTrueDofs(dbc_marker, dbc_tdof_list);
-
   // Print essential BC information.
   if (dbc_marker.Max() > 0)
   {
@@ -136,73 +136,64 @@ LaplaceOperator::LaplaceOperator(const IoData &iodata,
   }
 }
 
-void LaplaceOperator::PrintHeader()
+std::unique_ptr<Operator> LaplaceOperator::GetStiffnessMatrix()
 {
   if (print_hdr)
   {
-    Mpi::Print("\nConfiguring system matrices, number of global unknowns: {:d}\n",
-               h1_fespaces.GetFinestFESpace().GlobalTrueVSize());
-    print_hdr = false;
+    Mpi::Print("\nAssembling system matrices, number of global unknowns:\n"
+               " H1: {:d}, ND: {:d}\n",
+               GetH1Space().GlobalTrueVSize(), GetNDSpace().GlobalTrueVSize());
+    Mpi::Print("\nAssembling multigrid hierarchy:\n");
   }
-}
-
-void LaplaceOperator::GetStiffnessMatrix(std::vector<std::unique_ptr<mfem::Operator>> &K,
-                                         std::vector<std::unique_ptr<mfem::Operator>> &Ke)
-{
-  K.clear();
-  Ke.clear();
-  K.reserve(h1_fespaces.GetNumLevels());
-  Ke.reserve(h1_fespaces.GetNumLevels());
+  auto K = std::make_unique<MultigridOperator>(h1_fespaces.GetNumLevels());
   for (int l = 0; l < h1_fespaces.GetNumLevels(); l++)
   {
     auto &h1_fespace_l = h1_fespaces.GetFESpaceAtLevel(l);
-    mfem::Array<int> dbc_tdof_list_l;
-    h1_fespace_l.GetEssentialTrueDofs(dbc_marker, dbc_tdof_list_l);
-
-    MaterialPropertyCoefficient<MaterialPropertyType::PERMITTIVITY_REAL> epsilon_func(
-        mat_op);
-    mfem::ParBilinearForm k(&h1_fespace_l);
-    k.AddDomainIntegrator(new mfem::MixedGradGradIntegrator(epsilon_func));
-    // k.SetAssemblyLevel(mfem::AssemblyLevel::FULL);
-    k.Assemble(skip_zeros);
-    k.Finalize(skip_zeros);
-    mfem::HypreParMatrix *hK = k.ParallelAssemble();
-    mfem::HypreParMatrix *hKe = hK->EliminateRowsCols(dbc_tdof_list_l);
-    PrintHeader();
+    constexpr auto MatType = MaterialPropertyType::PERMITTIVITY_REAL;
+    MaterialPropertyCoefficient<MatType> epsilon_func(mat_op);
+    auto k = std::make_unique<mfem::SymmetricBilinearForm>(&h1_fespace_l);
+    k->AddDomainIntegrator(new mfem::MixedGradGradIntegrator(epsilon_func));
+    k->SetAssemblyLevel(assembly_level);
+    k->Assemble(skip_zeros);
+    k->Finalize(skip_zeros);
+    if (print_hdr)
     {
-      std::string str = "";
-      if (pc_gmg)
+      Mpi::Print(" Level {:d}: {:d} unknowns", l, h1_fespace_l.GlobalTrueVSize());
+      if (assembly_level == mfem::AssemblyLevel::LEGACY)
       {
-        str =
-            fmt::format(" (Level {:d}, {:d} unknowns)", l, h1_fespace_l.GlobalTrueVSize());
+        HYPRE_BigInt nnz = k->SpMat().NumNonZeroElems();
+        Mpi::GlobalSum(1, &nnz, h1_fespace_l.GetComm());
+        Mpi::Print(", {:d} NNZ\n", nnz);
       }
-      Mpi::Print(" K{}: NNZ = {:d}, norm = {:e}\n", str, hK->NNZ(),
-                 hypre_ParCSRMatrixFnorm(*hK));
+      else
+      {
+        Mpi::Print("\n");
+      }
     }
-    K.emplace_back(hK);
-    Ke.emplace_back(hKe);
+    auto K_l = std::make_unique<ParOperator>(std::move(k), h1_fespace_l);
+    K_l->SetEssentialTrueDofs(dbc_tdof_lists[l], Operator::DiagonalPolicy::DIAG_ONE);
+    K->AddOperator(std::move(K_l));
   }
+  print_hdr = false;
+  return K;
 }
 
-std::unique_ptr<mfem::Operator> LaplaceOperator::GetNegGradMatrix()
+std::unique_ptr<Operator> LaplaceOperator::GetGradMatrix()
 {
-  mfem::ParDiscreteLinearOperator grad(&h1_fespaces.GetFinestFESpace(), &nd_fespace);
-  grad.AddDomainInterpolator(new mfem::GradientInterpolator);
-  // grad.SetAssemblyLevel(mfem::AssemblyLevel::FULL);
-  grad.Assemble();
-  grad.Finalize();
-  std::unique_ptr<mfem::HypreParMatrix> NegGrad(grad.ParallelAssemble());
-  *NegGrad *= -1.0;
-  return NegGrad;
+  auto grad = std::make_unique<mfem::DiscreteLinearOperator>(&GetH1Space(), &GetNDSpace());
+  grad->AddDomainInterpolator(new mfem::GradientInterpolator);
+  grad->SetAssemblyLevel(assembly_level);
+  grad->Assemble();
+  grad->Finalize();
+  return std::make_unique<ParOperator>(std::move(grad), GetH1Space(), GetNDSpace(), true);
 }
 
-void LaplaceOperator::GetExcitationVector(int idx, const mfem::Operator &K,
-                                          const mfem::Operator &Ke, mfem::Vector &X,
-                                          mfem::Vector &RHS)
+void LaplaceOperator::GetExcitationVector(int idx, const Operator &K, Vector &X,
+                                          Vector &RHS)
 {
   // Apply the Dirichlet BCs to the solution vector: V = 1 on terminal boundaries with the
   // given index, V = 0 on all ground and other terminal boundaries.
-  mfem::ParGridFunction x(&h1_fespaces.GetFinestFESpace());
+  mfem::ParGridFunction x(&GetH1Space());
   x = 0.0;
 
   // Get a marker of all boundary attributes with the given source surface index.
@@ -213,13 +204,16 @@ void LaplaceOperator::GetExcitationVector(int idx, const mfem::Operator &K,
   x.ProjectBdrCoefficient(one, source_marker);  // Values are only correct on master
 
   // Eliminate the essential BC to get the RHS vector.
-  X.SetSize(h1_fespaces.GetFinestFESpace().GetTrueVSize());
-  RHS.SetSize(h1_fespaces.GetFinestFESpace().GetTrueVSize());
+  X.SetSize(GetH1Space().GetTrueVSize());
+  RHS.SetSize(GetH1Space().GetTrueVSize());
   X = 0.0;
   RHS = 0.0;
   x.ParallelProject(X);  // Restrict to the true dofs
-  dynamic_cast<const mfem::HypreParMatrix &>(K).EliminateBC(
-      dynamic_cast<const mfem::HypreParMatrix &>(Ke), dbc_tdof_list, X, RHS);
+  const auto *mg_K = dynamic_cast<const MultigridOperator *>(&K);
+  const auto *PtAP_K = mg_K ? dynamic_cast<const ParOperator *>(&mg_K->GetFinestOperator())
+                            : dynamic_cast<const ParOperator *>(&K);
+  MFEM_VERIFY(PtAP_K, "LaplaceOperator requires ParOperator for RHS elimination!");
+  PtAP_K->EliminateRHS(X, RHS);
 }
 
 }  // namespace palace

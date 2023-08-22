@@ -4,7 +4,6 @@
 #include "postoperator.hpp"
 
 #include "fem/coefficient.hpp"
-#include "linalg/petsc.hpp"
 #include "models/curlcurloperator.hpp"
 #include "models/laplaceoperator.hpp"
 #include "models/lumpedportoperator.hpp"
@@ -24,18 +23,6 @@ using namespace std::complex_literals;
 namespace
 {
 
-auto LocalToShared(const mfem::ParMesh &mesh)
-{
-  // Construct shared face mapping required for boundary coefficients.
-  std::map<int, int> l2s;
-  for (int i = 0; i < mesh.GetNSharedFaces(); i++)
-  {
-    int i_local = mesh.GetSharedFace(i);
-    l2s[i_local] = i;
-  }
-  return l2s;
-}
-
 auto CreateParaviewPath(const IoData &iodata, const std::string &name)
 {
   std::string path = iodata.problem.output;
@@ -51,9 +38,8 @@ auto CreateParaviewPath(const IoData &iodata, const std::string &name)
 
 PostOperator::PostOperator(const IoData &iodata, SpaceOperator &spaceop,
                            const std::string &name)
-  : local_to_shared(LocalToShared(*spaceop.GetNDSpace().GetParMesh())),
-    mat_op(spaceop.GetMaterialOp()),
-    surf_post_op(iodata, spaceop.GetMaterialOp(), local_to_shared, spaceop.GetH1Space()),
+  : mat_op(spaceop.GetMaterialOp()),
+    surf_post_op(iodata, spaceop.GetMaterialOp(), spaceop.GetH1Space()),
     dom_post_op(iodata, spaceop.GetMaterialOp(), &spaceop.GetNDSpace(),
                 &spaceop.GetRTSpace()),
     has_imaginary(iodata.problem.type != config::ProblemData::Type::TRANSIENT),
@@ -64,31 +50,31 @@ PostOperator::PostOperator(const IoData &iodata, SpaceOperator &spaceop,
                  spaceop.GetNDSpace().GetParMesh()),
     interp_op(iodata, *spaceop.GetNDSpace().GetParMesh())
 {
-  Esr = std::make_unique<BdrFieldVectorCoefficient>(E->real(), mat_op, local_to_shared);
-  Bsr = std::make_unique<BdrFieldVectorCoefficient>(B->real(), mat_op, local_to_shared);
-  Jsr = std::make_unique<BdrCurrentVectorCoefficient>(B->real(), mat_op, local_to_shared);
-  Qsr = std::make_unique<BdrChargeCoefficient>(E->real(), mat_op, local_to_shared);
+  Esr = std::make_unique<BdrFieldVectorCoefficient>(E->real(), mat_op);
+  Bsr = std::make_unique<BdrFieldVectorCoefficient>(B->real(), mat_op);
+  Jsr = std::make_unique<BdrCurrentVectorCoefficient>(B->real(), mat_op);
+  Qsr = std::make_unique<BdrChargeCoefficient>(E->real(), mat_op);
   if (has_imaginary)
   {
-    Esi = std::make_unique<BdrFieldVectorCoefficient>(E->imag(), mat_op, local_to_shared);
-    Bsi = std::make_unique<BdrFieldVectorCoefficient>(B->imag(), mat_op, local_to_shared);
-    Jsi = std::make_unique<BdrCurrentVectorCoefficient>(B->imag(), mat_op, local_to_shared);
-    Qsi = std::make_unique<BdrChargeCoefficient>(E->imag(), mat_op, local_to_shared);
+    Esi = std::make_unique<BdrFieldVectorCoefficient>(E->imag(), mat_op);
+    Bsi = std::make_unique<BdrFieldVectorCoefficient>(B->imag(), mat_op);
+    Jsi = std::make_unique<BdrCurrentVectorCoefficient>(B->imag(), mat_op);
+    Qsi = std::make_unique<BdrChargeCoefficient>(E->imag(), mat_op);
     Ue = std::make_unique<EnergyDensityCoefficient<EnergyDensityType::ELECTRIC,
-                                                   EnergyDensityValueType::COMPLEX>>(
-        *E, mat_op, local_to_shared);
+                                                   mfem::ParComplexGridFunction>>(*E,
+                                                                                  mat_op);
     Um = std::make_unique<EnergyDensityCoefficient<EnergyDensityType::MAGNETIC,
-                                                   EnergyDensityValueType::COMPLEX>>(
-        *B, mat_op, local_to_shared);
+                                                   mfem::ParComplexGridFunction>>(*B,
+                                                                                  mat_op);
   }
   else
   {
-    Ue = std::make_unique<EnergyDensityCoefficient<EnergyDensityType::ELECTRIC,
-                                                   EnergyDensityValueType::REAL>>(
-        E->real(), mat_op, local_to_shared);
-    Um = std::make_unique<EnergyDensityCoefficient<EnergyDensityType::MAGNETIC,
-                                                   EnergyDensityValueType::REAL>>(
-        B->real(), mat_op, local_to_shared);
+    Ue = std::make_unique<
+        EnergyDensityCoefficient<EnergyDensityType::ELECTRIC, mfem::ParGridFunction>>(
+        E->real(), mat_op);
+    Um = std::make_unique<
+        EnergyDensityCoefficient<EnergyDensityType::MAGNETIC, mfem::ParGridFunction>>(
+        B->real(), mat_op);
   }
 
   // Initialize data collection objects and register additional fields associated with wave
@@ -96,19 +82,19 @@ PostOperator::PostOperator(const IoData &iodata, SpaceOperator &spaceop,
   InitializeDataCollection(iodata);
   for (const auto &[idx, data] : spaceop.GetWavePortOp())
   {
-    paraview_bdr.RegisterVCoeffField("nxH^0_" + std::to_string(idx) + "_real",
-                                     data.GetModeCoefficientReal().get());
-    paraview_bdr.RegisterVCoeffField("nxH^0_" + std::to_string(idx) + "_imag",
-                                     data.GetModeCoefficientImag().get());
+    paraview_bdr.RegisterVCoeffField(
+        "nxH^0_" + std::to_string(idx) + "_real",
+        const_cast<mfem::VectorCoefficient *>(&data.GetModeCoefficientReal()));
+    paraview_bdr.RegisterVCoeffField(
+        "nxH^0_" + std::to_string(idx) + "_imag",
+        const_cast<mfem::VectorCoefficient *>(&data.GetModeCoefficientImag()));
   }
 }
 
 PostOperator::PostOperator(const IoData &iodata, LaplaceOperator &laplaceop,
                            const std::string &name)
-  : local_to_shared(LocalToShared(*laplaceop.GetNDSpace().GetParMesh())),
-    mat_op(laplaceop.GetMaterialOp()),
-    surf_post_op(iodata, laplaceop.GetMaterialOp(), local_to_shared,
-                 laplaceop.GetH1Space()),
+  : mat_op(laplaceop.GetMaterialOp()),
+    surf_post_op(iodata, laplaceop.GetMaterialOp(), laplaceop.GetH1Space()),
     dom_post_op(iodata, laplaceop.GetMaterialOp(), &laplaceop.GetNDSpace(), nullptr),
     has_imaginary(false), E(&laplaceop.GetNDSpace()), B(std::nullopt),
     V(&laplaceop.GetH1Space()), A(std::nullopt), lumped_port_init(false),
@@ -121,12 +107,12 @@ PostOperator::PostOperator(const IoData &iodata, LaplaceOperator &laplaceop,
   // Note: When using this constructor, you should not use any of the magnetic field related
   // postprocessing functions (magnetic field energy, inductor energy, surface currents,
   // etc.), since only V and E fields are supplied.
-  Esr = std::make_unique<BdrFieldVectorCoefficient>(E->real(), mat_op, local_to_shared);
-  Vs = std::make_unique<BdrFieldCoefficient>(*V, mat_op, local_to_shared);
+  Esr = std::make_unique<BdrFieldVectorCoefficient>(E->real(), mat_op);
+  Vs = std::make_unique<BdrFieldCoefficient>(*V, mat_op);
   Ue = std::make_unique<
-      EnergyDensityCoefficient<EnergyDensityType::ELECTRIC, EnergyDensityValueType::REAL>>(
-      E->real(), mat_op, local_to_shared);
-  Qsr = std::make_unique<BdrChargeCoefficient>(E->real(), mat_op, local_to_shared);
+      EnergyDensityCoefficient<EnergyDensityType::ELECTRIC, mfem::ParGridFunction>>(
+      E->real(), mat_op);
+  Qsr = std::make_unique<BdrChargeCoefficient>(E->real(), mat_op);
 
   // Initialize data collection objects.
   InitializeDataCollection(iodata);
@@ -134,10 +120,8 @@ PostOperator::PostOperator(const IoData &iodata, LaplaceOperator &laplaceop,
 
 PostOperator::PostOperator(const IoData &iodata, CurlCurlOperator &curlcurlop,
                            const std::string &name)
-  : local_to_shared(LocalToShared(*curlcurlop.GetNDSpace().GetParMesh())),
-    mat_op(curlcurlop.GetMaterialOp()),
-    surf_post_op(iodata, curlcurlop.GetMaterialOp(), local_to_shared,
-                 curlcurlop.GetH1Space()),
+  : mat_op(curlcurlop.GetMaterialOp()),
+    surf_post_op(iodata, curlcurlop.GetMaterialOp(), curlcurlop.GetH1Space()),
     dom_post_op(iodata, curlcurlop.GetMaterialOp(), nullptr, &curlcurlop.GetRTSpace()),
     has_imaginary(false), E(std::nullopt), B(&curlcurlop.GetRTSpace()), V(std::nullopt),
     A(&curlcurlop.GetNDSpace()), lumped_port_init(false), wave_port_init(false),
@@ -149,12 +133,12 @@ PostOperator::PostOperator(const IoData &iodata, CurlCurlOperator &curlcurlop,
   // Note: When using this constructor, you should not use any of the electric field related
   // postprocessing functions (electric field energy, capacitor energy, surface charge,
   // etc.), since only the B field is supplied.
-  Bsr = std::make_unique<BdrFieldVectorCoefficient>(B->real(), mat_op, local_to_shared);
-  As = std::make_unique<BdrFieldVectorCoefficient>(*A, mat_op, local_to_shared);
+  Bsr = std::make_unique<BdrFieldVectorCoefficient>(B->real(), mat_op);
+  As = std::make_unique<BdrFieldVectorCoefficient>(*A, mat_op);
   Um = std::make_unique<
-      EnergyDensityCoefficient<EnergyDensityType::MAGNETIC, EnergyDensityValueType::REAL>>(
-      B->real(), mat_op, local_to_shared);
-  Jsr = std::make_unique<BdrCurrentVectorCoefficient>(B->real(), mat_op, local_to_shared);
+      EnergyDensityCoefficient<EnergyDensityType::MAGNETIC, mfem::ParGridFunction>>(
+      B->real(), mat_op);
+  Jsr = std::make_unique<BdrCurrentVectorCoefficient>(B->real(), mat_op);
 
   // Initialize data collection objects.
   InitializeDataCollection(iodata);
@@ -278,66 +262,33 @@ void PostOperator::InitializeDataCollection(const IoData &iodata)
   }
 }
 
-void PostOperator::GetBField(std::complex<double> omega,
-                             const petsc::PetscParMatrix &NegCurl,
-                             const petsc::PetscParVector &e, petsc::PetscParVector &b)
-{
-  // Compute B = -1/(iω) ∇ x E on the true dofs.
-  MFEM_VERIFY(e.GetSize() == NegCurl.Width() && b.GetSize() == NegCurl.Height(),
-              "Size mismatch error computing B-field in PostOperator!");
-  NegCurl.Mult(e, b);
-  b.Scale(1.0 / (1i * omega));
-}
-
-void PostOperator::GetBField(const mfem::Operator &Curl, const mfem::Vector &a,
-                             mfem::Vector &b)
-{
-  // Compute B = ∇ x A on the true dofs.
-  MFEM_VERIFY(a.Size() == Curl.Width() && b.Size() == Curl.Height(),
-              "Size mismatch error computing B-field in PostOperator!");
-  Curl.Mult(a, b);
-}
-
-void PostOperator::GetEField(const mfem::Operator &NegGrad, const mfem::Vector &v,
-                             mfem::Vector &e)
-{
-  // Compute E = -∇V on the true dofs.
-  MFEM_VERIFY(v.Size() == NegGrad.Width() && e.Size() == NegGrad.Height(),
-              "Size mismatch error computing E-field in PostOperator!");
-  NegGrad.Mult(v, e);
-}
-
-void PostOperator::SetEGridFunction(const petsc::PetscParVector &e)
+void PostOperator::SetEGridFunction(const ComplexVector &e)
 {
   MFEM_VERIFY(
       has_imaginary,
       "SetEGridFunction for complex-valued output called when has_imaginary == false!");
   MFEM_VERIFY(E, "Incorrect usage of PostOperator::SetEGridFunction!");
-  mfem::Vector Er(e.GetSize()), Ei(e.GetSize());
-  e.GetToVectors(Er, Ei);
-  E->real().SetFromTrueDofs(Er);  // Parallel distribute
-  E->imag().SetFromTrueDofs(Ei);
+  E->real().SetFromTrueDofs(e.Real());  // Parallel distribute
+  E->imag().SetFromTrueDofs(e.Imag());
   E->real().ExchangeFaceNbrData();  // Ready for parallel comm on shared faces
   E->imag().ExchangeFaceNbrData();
   lumped_port_init = wave_port_init = false;
 }
 
-void PostOperator::SetBGridFunction(const petsc::PetscParVector &b)
+void PostOperator::SetBGridFunction(const ComplexVector &b)
 {
   MFEM_VERIFY(
       has_imaginary,
       "SetBGridFunction for complex-valued output called when has_imaginary == false!");
   MFEM_VERIFY(B, "Incorrect usage of PostOperator::SetBGridFunction!");
-  mfem::Vector Br(b.GetSize()), Bi(b.GetSize());
-  b.GetToVectors(Br, Bi);
-  B->real().SetFromTrueDofs(Br);  // Parallel distribute
-  B->imag().SetFromTrueDofs(Bi);
+  B->real().SetFromTrueDofs(b.Real());  // Parallel distribute
+  B->imag().SetFromTrueDofs(b.Imag());
   B->real().ExchangeFaceNbrData();  // Ready for parallel comm on shared faces
   B->imag().ExchangeFaceNbrData();
   lumped_port_init = wave_port_init = false;
 }
 
-void PostOperator::SetEGridFunction(const mfem::Vector &e)
+void PostOperator::SetEGridFunction(const Vector &e)
 {
   MFEM_VERIFY(!has_imaginary,
               "SetEGridFunction for real-valued output called when has_imaginary == true!");
@@ -347,7 +298,7 @@ void PostOperator::SetEGridFunction(const mfem::Vector &e)
   lumped_port_init = wave_port_init = false;
 }
 
-void PostOperator::SetBGridFunction(const mfem::Vector &b)
+void PostOperator::SetBGridFunction(const Vector &b)
 {
   MFEM_VERIFY(!has_imaginary,
               "SetBGridFunction for real-valued output called when has_imaginary == true!");
@@ -357,7 +308,7 @@ void PostOperator::SetBGridFunction(const mfem::Vector &b)
   lumped_port_init = wave_port_init = false;
 }
 
-void PostOperator::SetVGridFunction(const mfem::Vector &v)
+void PostOperator::SetVGridFunction(const Vector &v)
 {
   MFEM_VERIFY(!has_imaginary,
               "SetVGridFunction for real-valued output called when has_imaginary == true!");
@@ -366,7 +317,7 @@ void PostOperator::SetVGridFunction(const mfem::Vector &v)
   V->ExchangeFaceNbrData();
 }
 
-void PostOperator::SetAGridFunction(const mfem::Vector &a)
+void PostOperator::SetAGridFunction(const Vector &a)
 {
   MFEM_VERIFY(!has_imaginary,
               "SetAGridFunction for real-valued output called when has_imaginary == true!");
@@ -391,13 +342,13 @@ void PostOperator::UpdatePorts(const LumpedPortOperator &lumped_port_op, double 
           omega > 0.0,
           "Frequency domain lumped port postprocessing requires nonzero frequency!");
       vi.S = data.GetSParameter(*E);
-      vi.P = data.GetPower(*E, *B, mat_op, local_to_shared);
+      vi.P = data.GetPower(*E, *B, mat_op);
       vi.V = data.GetVoltage(*E);
       vi.Z = data.GetCharacteristicImpedance(omega);
     }
     else
     {
-      vi.P = data.GetPower(E->real(), B->real(), mat_op, local_to_shared);
+      vi.P = data.GetPower(E->real(), B->real(), mat_op);
       vi.V = data.GetVoltage(E->real());
       vi.S = vi.Z = 0.0;
     }
@@ -418,7 +369,7 @@ void PostOperator::UpdatePorts(const WavePortOperator &wave_port_op, double omeg
                 "Frequency domain wave port postprocessing requires nonzero frequency!");
     auto &vi = wave_port_vi[idx];
     vi.S = data.GetSParameter(*E);
-    vi.P = data.GetPower(*E, *B, mat_op, local_to_shared);
+    vi.P = data.GetPower(*E, *B, mat_op);
     vi.V = vi.Z = 0.0;  // Not yet implemented (Z = V² / P, I = V / Z)
   }
   wave_port_init = true;
@@ -646,11 +597,9 @@ double PostOperator::GetInterfaceParticipation(int idx, double Em) const
   // with:
   //          p_mj = 1/2 t_j Re{∫_{Γ_j} (ε_j E_m)ᴴ E_m dS} /(E_elec + E_cap).
   MFEM_VERIFY(E, "Surface Q not defined, no electric field solution found!");
-  double Esurf = surf_post_op.GetInterfaceElectricFieldEnergy(idx, E->real());
-  if (has_imaginary)
-  {
-    Esurf += surf_post_op.GetInterfaceElectricFieldEnergy(idx, E->imag());
-  }
+  double Esurf = has_imaginary
+                     ? surf_post_op.GetInterfaceElectricFieldEnergy(idx, *E)
+                     : surf_post_op.GetInterfaceElectricFieldEnergy(idx, E->real());
   return Esurf / Em;
 }
 
@@ -661,12 +610,8 @@ double PostOperator::GetSurfaceCharge(int idx) const
   // for both sides of the surface. This then yields the capacitive coupling to the
   // excitation as C_jk = Q_j / V_k where V_k is the excitation voltage.
   MFEM_VERIFY(E, "Surface capacitance not defined, no electric field solution found!");
-  double Q = surf_post_op.GetSurfaceElectricCharge(idx, E->real());
-  if (has_imaginary)
-  {
-    double Qi = surf_post_op.GetSurfaceElectricCharge(idx, E->imag());
-    Q = std::copysign(std::sqrt(Q * Q + Qi * Qi), Q);
-  }
+  double Q = has_imaginary ? surf_post_op.GetSurfaceElectricCharge(idx, *E)
+                           : surf_post_op.GetSurfaceElectricCharge(idx, E->real());
   return Q;
 }
 
@@ -678,12 +623,8 @@ double PostOperator::GetSurfaceFlux(int idx) const
   // which are discontinuous at interior boundary elements.
   MFEM_VERIFY(B,
               "Surface inductance not defined, no magnetic flux density solution found!");
-  double Phi = surf_post_op.GetSurfaceMagneticFlux(idx, B->real());
-  if (has_imaginary)
-  {
-    double Phii = surf_post_op.GetSurfaceMagneticFlux(idx, B->imag());
-    Phi = std::copysign(std::sqrt(Phi * Phi + Phii * Phii), Phi);
-  }
+  double Phi = has_imaginary ? surf_post_op.GetSurfaceMagneticFlux(idx, *B)
+                             : surf_post_op.GetSurfaceMagneticFlux(idx, B->real());
   return Phi;
 }
 

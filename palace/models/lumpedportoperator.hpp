@@ -40,7 +40,8 @@ private:
   std::vector<std::unique_ptr<LumpedElementData>> elems;
 
   // Linear forms for postprocessing integrated quantities on the port.
-  mutable std::unique_ptr<mfem::ParLinearForm> s, v;
+  mutable std::unique_ptr<mfem::LinearForm> s, v;
+  void InitializeLinearForms(mfem::ParFiniteElementSpace &nd_fespace) const;
 
 public:
   LumpedPortData(const config::LumpedPortData &data,
@@ -69,11 +70,9 @@ public:
   std::complex<double> GetSParameter(mfem::ParComplexGridFunction &E) const;
   std::complex<double> GetPower(mfem::ParComplexGridFunction &E,
                                 mfem::ParComplexGridFunction &B,
-                                const MaterialOperator &mat_op,
-                                const std::map<int, int> &local_to_shared) const;
+                                const MaterialOperator &mat_op) const;
   double GetPower(mfem::ParGridFunction &E, mfem::ParGridFunction &B,
-                  const MaterialOperator &mat_op,
-                  const std::map<int, int> &local_to_shared) const;
+                  const MaterialOperator &mat_op) const;
   std::complex<double> GetVoltage(mfem::ParComplexGridFunction &E) const;
   double GetVoltage(mfem::ParGridFunction &E) const;
 };

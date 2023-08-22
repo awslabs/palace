@@ -8,6 +8,7 @@
 
 #if defined(MFEM_USE_MUMPS)
 
+#include "linalg/operator.hpp"
 #include "utils/iodata.hpp"
 
 namespace palace
@@ -23,7 +24,7 @@ public:
               config::LinearSolverData::SymFactType reorder, double blr_tol, int print);
   MumpsSolver(MPI_Comm comm, const IoData &iodata, int print)
     : MumpsSolver(comm,
-                  (iodata.solver.linear.mat_shifted ||
+                  (iodata.solver.linear.pc_mat_shifted ||
                    iodata.problem.type == config::ProblemData::Type::TRANSIENT ||
                    iodata.problem.type == config::ProblemData::Type::ELECTROSTATIC ||
                    iodata.problem.type == config::ProblemData::Type::MAGNETOSTATIC)
@@ -37,6 +38,8 @@ public:
                   print)
   {
   }
+
+  void SetOperator(const Operator &op) override;
 };
 
 }  // namespace palace

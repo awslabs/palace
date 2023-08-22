@@ -5,8 +5,8 @@
 
 #include <algorithm>
 #include <chrono>
-#include "fem/freqdomain.hpp"
-#include "fem/operator.hpp"
+#include <mfem.hpp>
+#include "linalg/orthog.hpp"
 #include "models/spaceoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
@@ -16,44 +16,97 @@ namespace palace
 
 using namespace std::complex_literals;
 
-RomOperator::RomOperator(const IoData &iodata, SpaceOperator &sp, int nmax)
-  : spaceop(sp),
-    engine((unsigned)std::chrono::system_clock::now().time_since_epoch().count())
+namespace
+{
+
+inline void ProjectMatInternal(MPI_Comm comm, const std::vector<Vector> &V,
+                               const ComplexOperator &A, Eigen::MatrixXcd &Ar,
+                               ComplexVector &r, int n0)
+{
+  // Update Ar = Vᴴ A V for the new basis dimension n0 -> n. V is real and thus the result
+  // is complex symmetric if A is symmetric (which we assume is the case). Ar is replicated
+  // across all processes as a sequential n x n matrix.
+  const auto n = Ar.rows();
+  MFEM_VERIFY(n0 < n, "Unexpected dimensions in PROM matrix projection!");
+  for (int j = n0; j < n; j++)
+  {
+    // Fill block of Vᴴ A V = [  | Vᴴ A vj ] . We can optimize the matrix-vector product
+    // since the columns of V are real.
+    MFEM_VERIFY(A.HasReal() || A.HasImag(),
+                "Invalid zero ComplexOperator for PROM matrix projection!");
+    if (A.HasReal())
+    {
+      A.Real()->Mult(V[j], r.Real());
+    }
+    if (A.HasImag())
+    {
+      A.Imag()->Mult(V[j], r.Imag());
+    }
+    for (int i = 0; i < n; i++)
+    {
+      Ar(i, j).real(A.HasReal() ? V[i] * r.Real() : 0.0);  // Local inner product
+      Ar(i, j).imag(A.HasImag() ? V[i] * r.Imag() : 0.0);
+    }
+  }
+  Mpi::GlobalSum((n - n0) * n, Ar.data() + n0 * n, comm);
+
+  // Fill lower block of Vᴴ A V = [ ____________  |  ]
+  //                              [ vjᴴ A V[1:n0] |  ] .
+  for (int j = 0; j < n0; j++)
+  {
+    for (int i = n0; i < n; i++)
+    {
+      Ar(i, j) = Ar(j, i);
+    }
+  }
+}
+
+inline void ProjectVecInternal(MPI_Comm comm, const std::vector<Vector> &V,
+                               const ComplexVector &b, Eigen::VectorXcd &br, int n0)
+{
+  // Update br = Vᴴ b for the new basis dimension n0 -> n. br is replicated across all
+  // processes as a sequential n-dimensional vector.
+  const auto n = br.size();
+  MFEM_VERIFY(n0 < n, "Unexpected dimensions in PROM vector projection!");
+  for (int i = n0; i < n; i++)
+  {
+    br(i).real(V[i] * b.Real());  // Local inner product
+    br(i).imag(V[i] * b.Imag());
+  }
+  Mpi::GlobalSum(n - n0, br.data() + n0, comm);
+}
+
+}  // namespace
+
+RomOperator::RomOperator(const IoData &iodata, SpaceOperator &spaceop) : spaceop(spaceop)
 {
   // Construct the system matrices defining the linear operator. PEC boundaries are handled
   // simply by setting diagonal entries of the system matrix for the corresponding dofs.
   // Because the Dirichlet BC is always homogenous, no special elimination is required on
   // the RHS. The damping matrix may be nullptr.
-  K = spaceop.GetSystemMatrixPetsc(SpaceOperator::OperatorType::STIFFNESS,
-                                   mfem::Operator::DIAG_ONE);
-  M = spaceop.GetSystemMatrixPetsc(SpaceOperator::OperatorType::MASS,
-                                   mfem::Operator::DIAG_ZERO);
-  C = spaceop.GetSystemMatrixPetsc(SpaceOperator::OperatorType::DAMPING,
-                                   mfem::Operator::DIAG_ZERO);
+  K = spaceop.GetComplexStiffnessMatrix(Operator::DIAG_ONE);
+  C = spaceop.GetComplexDampingMatrix(Operator::DIAG_ZERO);
+  M = spaceop.GetComplexMassMatrix(Operator::DIAG_ZERO);
+  MFEM_VERIFY(K && M, "Invalid empty HDM matrices when constructing PROM!");
+
+  // Set up RHS vector (linear in frequency part) for the incident field at port boundaries,
+  // and the vector for the solution, which satisfies the Dirichlet (PEC) BC.
+  if (!spaceop.GetExcitationVector1(RHS1))
+  {
+    RHS1.SetSize(0);
+  }
+  has_A2 = has_RHS2 = true;
+
+  // Initialize temporary vector storage.
+  r.SetSize(K->Height());
+  w.SetSize(K->Height());
 
   // Set up the linear solver and set operators but don't set the operators yet (this will
   // be done during an HDM solve at a given parameter point). The preconditioner for the
   // complex linear system is constructed from a real approximation to the complex system
   // matrix.
-  pc0 = std::make_unique<KspPreconditioner>(iodata, spaceop.GetDbcMarker(),
-                                            spaceop.GetNDSpaces(), &spaceop.GetH1Spaces());
-  ksp0 = std::make_unique<KspSolver>(K->GetComm(), iodata, "ksp_");
-  ksp0->SetPreconditioner(*pc0);
-
-  // Set up RHS vector (linear in frequency part) for the incident field at port boundaries,
-  // and the vector for the solution, which satisfies the Dirichlet (PEC) BC.
-  RHS1 = std::make_unique<petsc::PetscParVector>(*K);
-  if (!spaceop.GetFreqDomainExcitationVector1(*RHS1))
-  {
-    RHS1.reset();
-  }
-  init2 = true;
-  hasA2 = hasRHS2 = false;
-
-  // Initialize other data structure and storage.
-  E0 = std::make_unique<petsc::PetscParVector>(*K);
-  R0 = std::make_unique<petsc::PetscParVector>(*K);
-  T0 = std::make_unique<petsc::PetscParVector>(*K);
+  ksp = std::make_unique<ComplexKspSolver>(iodata, spaceop.GetNDSpaces(),
+                                           &spaceop.GetH1Spaces());
 
   // Initialize solver for inner product solves. The system matrix for the inner product is
   // real and SPD. This uses the dual norm from https://ieeexplore.ieee.org/document/5313818
@@ -61,304 +114,273 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &sp, int nmax)
   if (iodata.solver.driven.adaptive_metric_aposteriori)
   {
     constexpr int curlcurl_verbose = 0;
-    kspKM = std::make_unique<CurlCurlSolver>(
-        spaceop.GetMaterialOp(), spaceop.GetDbcMarker(), spaceop.GetNDSpaces(),
-        spaceop.GetH1Spaces(), iodata.solver.linear.tol, iodata.solver.linear.max_it,
-        curlcurl_verbose);
-
-    auto KM = std::make_unique<SumOperator>(K->GetNumRows(), K->GetNumCols());
-    KM->AddOperator(*K->GetOperator(petsc::PetscParMatrix::ExtractStructure::REAL));
-    KM->AddOperator(*M->GetOperator(petsc::PetscParMatrix::ExtractStructure::REAL));
-    opKM = std::make_unique<petsc::PetscShellMatrix>(K->GetComm(), std::move(KM));
-    opKM->SetRealSymmetric();
+    kspKM = std::make_unique<CurlCurlMassSolver>(
+        spaceop.GetMaterialOp(), spaceop.GetNDSpaces(), spaceop.GetH1Spaces(),
+        spaceop.GetNDDbcTDofLists(), spaceop.GetH1DbcTDofLists(), iodata.solver.linear.tol,
+        iodata.solver.linear.max_it, curlcurl_verbose);
   }
 
-  // Construct initial (empty) basis and ROM operators. Ar = Vᴴ A V when assembled is
-  // complex symmetric for real V. The provided nmax is the number of sample points(2 basis
-  // vectors per point).
-  MFEM_VERIFY(K && M, "Invalid empty HDM matrices constructing PROM operators!");
-  MFEM_VERIFY(nmax > 0, "Reduced order basis storage must have > 0 columns!");
-  dim = 0;
-  omega_min = delta_omega = 0.0;
-  V = std::make_unique<petsc::PetscDenseMatrix>(K->GetComm(), K->Height(), PETSC_DECIDE,
-                                                PETSC_DECIDE, 2 * nmax, nullptr);
+  // The initial PROM basis is empty. Orthogonalization uses MGS by default, else CGS2.
+  dim_V = 0;
+  orthog_mgs =
+      (iodata.solver.linear.gs_orthog_type == config::LinearSolverData::OrthogType::MGS);
 
-  Kr = std::make_unique<petsc::PetscDenseMatrix>(dim, dim, nullptr);
-  Kr->CopySymmetry(*K);
-  Mr = std::make_unique<petsc::PetscDenseMatrix>(dim, dim, nullptr);
-  Mr->CopySymmetry(*M);
-  if (C)
+  // Seed the random number generator for parameter space sampling.
+  engine.seed(std::chrono::system_clock::now().time_since_epoch().count());
+}
+
+void RomOperator::Initialize(double start, double delta, int num_steps, int max_dim)
+{
+  // Initialize P = {ω_L, ω_L+δ, ..., ω_R}. Always insert in ascending order.
+  MFEM_VERIFY(PS.empty() && P_m_PS.empty(),
+              "RomOperator::Initialize should only be called once!");
+  MFEM_VERIFY(
+      num_steps > 2,
+      "RomOperator adaptive frequency sweep should have more than two frequency steps!");
+  if (delta < 0.0)
   {
-    Cr = std::make_unique<petsc::PetscDenseMatrix>(dim, dim, nullptr);
-    Cr->CopySymmetry(*C);
+    start = start + (num_steps - 1) * delta;
+    delta = -delta;
+  }
+  auto it = P_m_PS.begin();
+  for (int step = 0; step < num_steps; step++)
+  {
+    it = P_m_PS.emplace_hint(it, start + step * delta);
+  }
+
+  // PROM operators Ar = Vᴴ A V when assembled is complex symmetric for real V. The provided
+  // max_dim is the number of sample points (2 basis vectors per point).
+  MFEM_VERIFY(max_dim > 0, "Reduced order basis storage must have > 0 columns!");
+  V.resize(2 * max_dim, Vector());
+}
+
+void RomOperator::SolveHDM(double omega, ComplexVector &e)
+{
+  // Compute HDM solution at the given frequency. The system matrix, A = K + iω C - ω² M +
+  // A2(ω) is built by summing the underlying operator contributions.
+  A2 = spaceop.GetComplexExtraSystemMatrix(omega, Operator::DIAG_ZERO);
+  has_A2 = (A2 != nullptr);
+  auto A = spaceop.GetSystemMatrix(std::complex<double>(1.0, 0.0), 1i * omega,
+                                   std::complex<double>(-omega * omega, 0.0), K.get(),
+                                   C.get(), M.get(), A2.get());
+  auto P =
+      spaceop.GetPreconditionerMatrix<ComplexOperator>(1.0, omega, -omega * omega, omega);
+  ksp->SetOperators(*A, *P);
+
+  // The HDM excitation vector is computed as RHS = iω RHS1 + RHS2(ω).
+  Mpi::Print("\n");
+  if (has_RHS2)
+  {
+    has_RHS2 = spaceop.GetExcitationVector2(omega, r);
   }
   else
   {
-    Cr = nullptr;
+    r = 0.0;
   }
-  Ar = std::make_unique<petsc::PetscDenseMatrix>(dim, dim, nullptr);
-  Ar->SetSymmetric(K->GetSymmetric() && M->GetSymmetric() && (!C || C->GetSymmetric()));
-
-  RHS1r = (RHS1) ? std::make_unique<petsc::PetscParVector>(*Ar) : nullptr;
-  RHSr = std::make_unique<petsc::PetscParVector>(*Ar);
-  Er = std::make_unique<petsc::PetscParVector>(*Ar);
-
-  // Set up the linear solver (dense sequential on all processors). An indefinite LDLᵀ
-  // factorization is used when Ar has its symmetry flag set. The default sequential dense
-  // matrix uses LAPACK for the factorization.
-  int print = 0;
-  ksp = std::make_unique<KspSolver>(Ar->GetComm(), print, "rom_");
-  ksp->SetType(KspSolver::Type::CHOLESKY);  // Symmetric indefinite factorization
+  if (RHS1.Size())
+  {
+    r.Add(1i * omega, RHS1);
+  }
+  ksp->Mult(r, e);
 }
 
-void RomOperator::Initialize(int steps, double start, double delta)
+void RomOperator::AddHDMSample(double omega, ComplexVector &e)
 {
-  // Initialize P = {ω_L, ω_L+δ, ..., ω_R}. Always insert in ascending order.
-  MFEM_VERIFY(Ps.empty(), "RomOperator::Initialize should only be called once!");
-  MFEM_VERIFY(steps > 2, "RomOperator adaptive frequency sweep should have more than two "
-                         "frequency steps!");
-  Ps.reserve(steps);
-  PmPs.resize(steps);
-  if (delta < 0.0)
-  {
-    start = start + (steps - 1) * delta;
-    delta = -delta;
-  }
-  for (int step = 0; step < steps; step++)
-  {
-    PmPs[step] = start + step * delta;
-  }
-  omega_min = start;
-  delta_omega = delta;
-  A2.resize(steps);
-  RHS2.resize(steps);
-}
-
-void RomOperator::SolveHDM(double omega, petsc::PetscParVector &E, bool print)
-{
-  // Compute HDM solution at the given frequency and add solution to the reduced-order
-  // basis, updating the PROM operators. Update P_S and P\P_S sets.
-  auto it = std::lower_bound(PmPs.begin(), PmPs.end(), omega);
-  MFEM_VERIFY(it != PmPs.end(),
+  // Use the given HDM solution at the given frequency to update the reduced-order basis
+  // updating the PROM operators.
+  auto it = P_m_PS.lower_bound(omega);
+  MFEM_VERIFY(it != P_m_PS.end(),
               "Sample frequency " << omega << " not found in parameter set!");
-  PmPs.erase(it);
-  Ps.push_back(omega);
-
-  // Set up HDM system and solve. The system matrix A = K + iω C - ω² M + A2(ω) is built
-  // by summing the underlying operator contributions (to save memory).
-  {
-    const auto step = std::lround((omega - omega_min) / delta_omega);
-    MFEM_VERIFY(step >= 0 && static_cast<std::size_t>(step) < A2.size(),
-                "Invalid out-of-range frequency for PROM solution!");
-    std::vector<std::unique_ptr<mfem::Operator>> P, AuxP;
-    A2[step] = spaceop.GetSystemMatrixPetsc(SpaceOperator::OperatorType::EXTRA, omega,
-                                            mfem::Operator::DIAG_ZERO, print);
-    auto A = utils::GetSystemMatrixShell(omega, *K, *M, C.get(), A2[step].get());
-    spaceop.GetPreconditionerMatrix(omega, P, AuxP, print);
-    pc0->SetOperator(P, &AuxP);
-    ksp0->SetOperator(*A);
-
-    Mpi::Print("\n");
-    spaceop.GetFreqDomainExcitationVector(omega, *R0);
-    E.SetZero();
-    ksp0->Mult(*R0, E);
-  }
-
-  double norm = E.Normlinf(), ntol = 1.0e-12;
-  mfem::Vector Er_(E.GetSize()), Ei_(E.GetSize());
-  E.GetToVectors(Er_, Ei_);
-  bool has_real = (std::sqrt(mfem::InnerProduct(E.GetComm(), Er_, Er_)) > ntol * norm);
-  bool has_imag = (std::sqrt(mfem::InnerProduct(E.GetComm(), Ei_, Ei_)) > ntol * norm);
+  P_m_PS.erase(it);
+  auto ret = PS.insert(omega);
+  MFEM_VERIFY(ret.second, "Sample frequency "
+                              << omega << " already exists in the sampled parameter set!");
 
   // Update V. The basis is always real (each complex solution adds two basis vectors if it
   // has a nonzero real and imaginary parts).
-  PetscInt nmax = V->GetGlobalNumCols(), dim0 = dim;
-  dim = (has_real) + (has_imag) + static_cast<int>(dim0);
-  MFEM_VERIFY(dim <= nmax, "Unable to increase basis storage size, increase maximum number "
-                           "of vectors!");
-  bool mgs = false, cgs2 = true;
-  if (has_real && has_imag)
+  const double normr = linalg::Norml2(spaceop.GetComm(), e.Real());
+  const double normi = linalg::Norml2(spaceop.GetComm(), e.Imag());
+  const bool has_real = (normr > 1.0e-12 * std::sqrt(normr * normr + normi * normi));
+  const bool has_imag = (normi > 1.0e-12 * std::sqrt(normr * normr + normi * normi));
+  MFEM_VERIFY(dim_V + has_real + has_imag <= static_cast<int>(V.size()),
+              "Unable to increase basis storage size, increase maximum number of vectors!");
+  const int dim_V0 = dim_V;
+  std::vector<double> H(dim_V + 1);
+  if (has_real)
   {
+    V[dim_V] = e.Real();
+    if (orthog_mgs)
     {
-      petsc::PetscParVector v = V->GetColumn(dim - 2);
-      v.SetFromVector(Er_);
-      V->RestoreColumn(dim - 2, v);
-      if (opKM)
-      {
-        V->OrthonormalizeColumn(dim - 2, mgs, cgs2, *opKM, *T0);
-      }
-      else
-      {
-        V->OrthonormalizeColumn(dim - 2, mgs, cgs2);
-      }
+      linalg::OrthogonalizeColumnMGS(spaceop.GetComm(), V, V[dim_V], H.data(), dim_V);
     }
+    else
     {
-      petsc::PetscParVector v = V->GetColumn(dim - 1);
-      v.SetFromVector(Ei_);
-      V->RestoreColumn(dim - 1, v);
-      if (opKM)
-      {
-        V->OrthonormalizeColumn(dim - 1, mgs, cgs2, *opKM, *T0);
-      }
-      else
-      {
-        V->OrthonormalizeColumn(dim - 1, mgs, cgs2);
-      }
+      linalg::OrthogonalizeColumnCGS(spaceop.GetComm(), V, V[dim_V], H.data(), dim_V, true);
     }
+    V[dim_V] *= 1.0 / linalg::Norml2(spaceop.GetComm(), V[dim_V]);
+    dim_V++;
   }
-  else
+  if (has_imag)
   {
+    V[dim_V] = e.Imag();
+    if (orthog_mgs)
     {
-      petsc::PetscParVector v = V->GetColumn(dim - 1);
-      v.Copy(E);
-      V->RestoreColumn(dim - 1, v);
-      if (opKM)
-      {
-        V->OrthonormalizeColumn(dim - 1, mgs, cgs2, *opKM, *T0);
-      }
-      else
-      {
-        V->OrthonormalizeColumn(dim - 1, mgs, cgs2);
-      }
+      linalg::OrthogonalizeColumnMGS(spaceop.GetComm(), V, V[dim_V], H.data(), dim_V);
     }
+    else
+    {
+      linalg::OrthogonalizeColumnCGS(spaceop.GetComm(), V, V[dim_V], H.data(), dim_V, true);
+    }
+    V[dim_V] *= 1.0 / linalg::Norml2(spaceop.GetComm(), V[dim_V]);
+    dim_V++;
   }
 
   // Update reduced-order operators. Resize preserves the upper dim0 x dim0 block of each
   // matrix and first dim0 entries of each vector and the projection uses the values
   // computed for the unchanged basis vectors.
-  bool init = (dim0 > 0);
-  Kr->Resize(dim, dim, init);
-  Mr->Resize(dim, dim, init);
-  BVMatProjectInternal(*V, *K, *Kr, *R0, dim0, dim);
-  BVMatProjectInternal(*V, *M, *Mr, *R0, dim0, dim);
+  Kr.conservativeResize(dim_V, dim_V);
+  ProjectMatInternal(spaceop.GetComm(), V, *K, Kr, r, dim_V0);
   if (C)
   {
-    Cr->Resize(dim, dim, init);
-    BVMatProjectInternal(*V, *C, *Cr, *R0, dim0, dim);
+    Cr.conservativeResize(dim_V, dim_V);
+    ProjectMatInternal(spaceop.GetComm(), V, *C, Cr, r, dim_V0);
   }
-  if (RHS1)
+  Mr.conservativeResize(dim_V, dim_V);
+  ProjectMatInternal(spaceop.GetComm(), V, *M, Mr, r, dim_V0);
+  Ar.resize(dim_V, dim_V);
+  if (RHS1.Size())
   {
-    RHS1r->Resize(dim, init);
-    BVDotVecInternal(*V, *RHS1, *RHS1r, dim0, dim);
+    RHS1r.conservativeResize(dim_V);
+    ProjectVecInternal(spaceop.GetComm(), V, RHS1, RHS1r, dim_V0);
   }
-  Ar->Resize(dim, dim);
-  RHSr->Resize(dim);
-  Er->Resize(dim);
-  if (init)
-  {
-    ksp->Reset();  // Operator size change
-  }
-  ksp->SetOperator(*Ar);
+  RHSr.resize(dim_V);
 }
 
 void RomOperator::AssemblePROM(double omega)
 {
-  // Assemble the PROM linear system at the given frequency. Do some additional set up at
-  // the first solve call. The PROM system is defined by the matrix Aᵣ(ω) = Kᵣ + iω Cᵣ
-  // - ω² Mᵣ + Vᴴ A2ᵣ V(ω) and source vector RHSᵣ(ω) = iω RHS1ᵣ + Vᴴ RHS2ᵣ(ω) V.
-  const auto step = std::lround((omega - omega_min) / delta_omega);
-  MFEM_VERIFY(step >= 0 && static_cast<std::size_t>(step) < A2.size(),
-              "Invalid out-of-range frequency for PROM solution!");
-
-  // Construct A2(ω) and RHS2(ω) if required (only nonzero on boundaries, will be empty
-  // if not needed).
-  if (init2)
+  // Assemble the PROM linear system at the given frequency. The PROM system is defined by
+  // the matrix Aᵣ(ω) = Kᵣ + iω Cᵣ - ω² Mᵣ + Vᴴ A2 V(ω) and source vector RHSᵣ(ω) =
+  // iω RHS1ᵣ + Vᴴ RHS2(ω). A2(ω) and RHS2(ω) are constructed only if required and are
+  // only nonzero on boundaries, will be empty if not needed.
+  if (has_A2)
   {
-    auto tA2 = spaceop.GetSystemMatrixPetsc(SpaceOperator::OperatorType::EXTRA, omega,
-                                            mfem::Operator::DIAG_ZERO, false);
-    if (tA2)
-    {
-      hasA2 = true;
-      A2[step] = std::move(tA2);
-    }
-    auto tRHS2 = std::make_unique<petsc::PetscParVector>(*K);
-    if (spaceop.GetFreqDomainExcitationVector2(omega, *tRHS2))
-    {
-      hasRHS2 = true;
-      RHS2[step] = std::move(tRHS2);
-    }
-    init2 = false;
+    A2 = spaceop.GetComplexExtraSystemMatrix(omega, Operator::DIAG_ZERO);
+    ProjectMatInternal(spaceop.GetComm(), V, *A2, Ar, r, 0);
   }
-
-  // Set up PROM linear system.
-  Ar->Scale(0.0);
-  if (hasA2)
+  else
   {
-    if (!A2[step])
-    {
-      // Debug
-      // Mpi::Print("Inserting cache value for omega = {:e}\n", omega);
-      A2[step] = spaceop.GetSystemMatrixPetsc(SpaceOperator::OperatorType::EXTRA, omega,
-                                              mfem::Operator::DIAG_ZERO, false);
-    }
-    else
-    {
-      // Debug
-      // Mpi::Print("Found cache value for omega = {:e} (step = {:d})\n", omega, step);
-    }
-    BVMatProjectInternal(*V, *A2[step], *Ar, *R0, 0, dim);
+    Ar.setZero();
   }
-  Ar->AXPY(1.0, *Kr, petsc::PetscParMatrix::NNZStructure::SAME);
-  Ar->AXPY(-omega * omega, *Mr, petsc::PetscParMatrix::NNZStructure::SAME);
+  Ar += Kr;
   if (C)
   {
-    Ar->AXPY(1i * omega, *Cr, petsc::PetscParMatrix::NNZStructure::SAME);
+    Ar += (1i * omega) * Cr;
   }
+  Ar += (-omega * omega) * Mr;
 
-  RHSr->SetZero();
-  if (hasRHS2)
+  if (has_RHS2)
   {
-    if (!RHS2[step])
-    {
-      RHS2[step] = std::make_unique<petsc::PetscParVector>(*K);
-      spaceop.GetFreqDomainExcitationVector2(omega, *RHS2[step]);
-    }
-    BVDotVecInternal(*V, *RHS2[step], *RHSr, 0, dim);
+    spaceop.GetExcitationVector2(omega, RHS2);
+    ProjectVecInternal(spaceop.GetComm(), V, RHS2, RHSr, 0);
   }
-  if (RHS1)
+  else
   {
-    RHSr->AXPY(1i * omega, *RHS1r);
+    RHSr.setZero();
+  }
+  if (RHS1.Size())
+  {
+    RHSr += (1i * omega) * RHS1r;
   }
 }
 
-void RomOperator::SolvePROM(petsc::PetscParVector &E)
+void RomOperator::SolvePROM(ComplexVector &e)
 {
-  // Compute PROM solution at the given frequency and expand into high- dimensional space.
-  // The PROM is solved on every process so the matrix- vector product for vector expansion
-  // is sequential.
-  ksp->Mult(*RHSr, *Er);
+  // Compute PROM solution at the given frequency and expand into high-dimensional space.
+  // The PROM is solved on every process so the matrix-vector product for vector expansion
+  // does not require communication.
+  RHSr = Ar.partialPivLu().solve(RHSr);
+  // RHSr = Ar.ldlt().solve(RHSr);
+  // RHSr = Ar.selfadjointView<Eigen::Lower>().ldlt().solve(RHSr);
+
+  e = 0.0;
+  for (int j = 0; j < dim_V; j++)
   {
-    PetscScalar *pV = V->GetArray(), *pE = E.GetArray();
-    petsc::PetscDenseMatrix locV(V->Height(), dim, pV);
-    petsc::PetscParVector locE(V->Height(), pE);
-    locV.Mult(*Er, locE);
-    V->RestoreArray(pV);
-    E.RestoreArray(pE);
+    e.Real().Add(RHSr(j).real(), V[j]);
+    e.Imag().Add(RHSr(j).imag(), V[j]);
   }
 }
 
-double RomOperator::ComputeMaxError(int Nc, double &omega_star)
+double RomOperator::ComputeError(double omega)
 {
-  // Greedy iteration: Find argmax_{ω ∈ P_C} η(E; ω). We sample Nc candidates from P \ P_S.
-  MPI_Comm comm = K->GetComm();
-  Nc = std::min(Nc, static_cast<int>(PmPs.size()));
-  std::vector<double> Pc;
-  if (Mpi::Root(comm))
+  // Compute the error metric associated with the approximate PROM solution at the given
+  // frequency. The HDM residual -r = [K + iω C - ω² M + A2(ω)] x - [iω RHS1 + RHS2(ω)] is
+  // computed using the most recently computed A2(ω) and RHS2(ω).
+  AssemblePROM(omega);
+  SolvePROM(w);
+
+  // Residual error.
+  r = 0.0;
+  if (RHS1.Size())
+  {
+    r.Add(-1i * omega, RHS1);
+  }
+  if (has_RHS2)
+  {
+    r.Add(-1.0, RHS2);
+  }
+  double den = !kspKM ? linalg::Norml2(spaceop.GetComm(), r) : 0.0;
+
+  K->AddMult(w, r, 1.0);
+  if (C)
+  {
+    C->AddMult(w, r, 1i * omega);
+  }
+  M->AddMult(w, r, -omega * omega);
+  if (has_A2)
+  {
+    A2->AddMult(w, r, 1.0);
+  }
+
+  double num;
+  if (!kspKM)
+  {
+    num = linalg::Norml2(spaceop.GetComm(), r);
+  }
+  else
+  {
+    z.SetSize(r.Size());
+    kspKM->Mult(r, z);
+    auto dot = linalg::Dot(spaceop.GetComm(), z, r);
+    MFEM_ASSERT(dot.real() > 0.0 && std::abs(dot.imag()) < 1.0e-9 * dot.real(),
+                "Non-positive vector norm in normalization (dot = " << dot << ")!");
+    num = std::sqrt(dot.real());
+    den = linalg::Norml2(spaceop.GetComm(), w, kspKM->GetOperator(), z);
+  }
+  MFEM_VERIFY(den > 0.0, "Unexpected zero denominator in HDM residual!");
+  return num / den;
+}
+
+double RomOperator::ComputeMaxError(int num_cand, double &omega_star)
+{
+  // Greedy iteration: Find argmax_{ω ∈ P_C} η(e; ω). We sample num_cand candidates from
+  // P \ P_S.
+  num_cand = std::min(num_cand, static_cast<int>(P_m_PS.size()));
+  std::vector<double> PC;
+  if (Mpi::Root(spaceop.GetComm()))
   {
     // Sample with uniform probability.
-    Pc.reserve(Nc);
-    std::sample(PmPs.begin(), PmPs.end(), std::back_inserter(Pc), Nc, engine);
+    PC.reserve(num_cand);
+    std::sample(P_m_PS.begin(), P_m_PS.end(), std::back_inserter(PC), num_cand, engine);
 
 #if 0
     // Sample with weighted probability by distance from the set of already sampled
     // points.
-    std::vector<double> weights(PmPs.size());
+    std::vector<double> weights(P_m_PS.size());
     weights = static_cast<double>(weights.Size());
-    Pc.reserve(Nc);
-    for (auto sample : Ps)
+    PC.reserve(num_cand);
+    for (auto sample : PS)
     {
-      int i = std::distance(PmPs.begin(),
-                            std::lower_bound(PmPs.begin(), PmPs.end(), sample));
+      int i = std::distance(P_m_PS.begin(), P_m_PS.lower_bound(sample));
       int il = i-1;
       while (il >= 0)
       {
@@ -372,30 +394,31 @@ double RomOperator::ComputeMaxError(int Nc, double &omega_star)
         iu++;
       }
     }
-    for (int i = 0; i < Nc; i++)
+    for (int i = 0; i < num_cand; i++)
     {
       std::discrete_distribution<int> dist(weights.begin(), weights.end());
       int res = dist(engine);
-      Pc.push_back(PmPs[res]);
+      PC.push_back(P_m_PS[res]);
       weights[res] = 0.0;  // No replacement
     }
 #endif
   }
   else
   {
-    Pc.resize(Nc);
+    PC.resize(num_cand);
   }
-  Mpi::Broadcast(Nc, Pc.data(), 0, comm);
+  Mpi::Broadcast(num_cand, PC.data(), 0, spaceop.GetComm());
 
   // Debug
   // Mpi::Print("Candidate sampling:\n");
-  // Mpi::Print(" P_S: {}", Ps);
-  // Mpi::Print(" P\\P_S: {}\n", PmPs);
-  // Mpi::Print(" P_C: {}\n", Pc);
+  // Mpi::Print(" P_S: {}", PS);
+  // Mpi::Print(" P\\P_S: {}\n", P_m_PS);
+  // Mpi::Print(" P_C: {}\n", PC);
+  // Mpi::Print("\n");
 
   // For each candidate, compute the PROM solution and associated error metric.
   double err_max = 0.0;
-  for (auto omega : Pc)
+  for (auto omega : PC)
   {
     double err = ComputeError(omega);
 
@@ -409,126 +432,6 @@ double RomOperator::ComputeMaxError(int Nc, double &omega_star)
     }
   }
   return err_max;
-}
-
-double RomOperator::ComputeError(double omega)
-{
-  // Compute the error metric associated with the approximate PROM solution at the given
-  // frequency. The HDM residual R = [K + iω C - ω² M + A2(ω)] x - [iω RHS1 + RHS2(ω)] is
-  // computed using the most recently computed A2(ω) and RHS2(ω).
-  AssemblePROM(omega);
-  SolvePROM(*E0);
-
-  // Residual error.
-  const auto step = std::lround((omega - omega_min) / delta_omega);
-  MFEM_VERIFY(step >= 0 && static_cast<std::size_t>(step) < A2.size(),
-              "Invalid out-of-range frequency for PROM solution!");
-  double num, den = 1.0;
-  R0->SetZero();
-  if (RHS1)
-  {
-    R0->AXPY(-1i * omega, *RHS1);
-  }
-  if (hasRHS2)
-  {
-    MFEM_VERIFY(RHS2[step], "Unexpected uncached frequency for RHS2 vector in PROM!");
-    R0->AXPY(-1.0, *RHS2[step]);
-  }
-  if (!kspKM)
-  {
-    den = R0->Norml2();
-  }
-
-  K->MultAdd(*E0, *R0);
-  M->Mult(*E0, *T0);
-  R0->AXPY(-omega * omega, *T0);
-  if (C)
-  {
-    C->Mult(*E0, *T0);
-    R0->AXPY(1i * omega, *T0);
-  }
-  if (hasA2)
-  {
-    MFEM_VERIFY(A2[step], "Unexpected uncached frequency for A2 matrix in PROM!");
-    A2[step]->MultAdd(*E0, *R0);
-  }
-  if (!kspKM)
-  {
-    num = R0->Norml2();
-  }
-  else
-  {
-    kspKM->Mult(*R0, *T0);
-    num = std::sqrt(std::real(R0->Dot(*T0)));
-    opKM->Mult(*E0, *T0);
-    den = std::sqrt(std::real(E0->Dot(*T0)));
-  }
-  MFEM_VERIFY(den > 0.0, "Unexpected zero denominator in HDM residual!");
-  return num / den;
-}
-
-void RomOperator::BVMatProjectInternal(petsc::PetscDenseMatrix &V, petsc::PetscParMatrix &A,
-                                       petsc::PetscDenseMatrix &Ar,
-                                       petsc::PetscParVector &r, int n0, int n)
-{
-  // Update Ar = Vᴴ A V for the new basis dimension n0 => n. We assume V is real and thus
-  // the result is complex symmetric if A is symmetric. Ar is replicated across all
-  // processes (sequential n x n matrix).
-  MFEM_VERIFY(n0 < n, "Unexpected dimensions in BVMatProjectInternal!");
-  MFEM_VERIFY(A.GetSymmetric() && Ar.GetSymmetric(),
-              "BVMatProjectInternal is specialized for symmetric matrices!");
-  mfem::Vector vr(V.Height());
-  for (int j = n0; j < n; j++)
-  {
-    // Fill block of Vᴴ A V = [  | Vᴴ A vj ] . We optimize matrix-vector product since we
-    // know columns of V are real.
-    {
-      petsc::PetscParVector v = V.GetColumn(j);
-      v.GetToVector(vr);
-      A.Mult(vr, r);
-      // A.Mult(v, r);
-      V.RestoreColumn(j, v);
-    }
-    {
-      PetscScalar *pV = V.GetArray(), *pr = r.GetArray(), *pAr = Ar.GetArray();
-      petsc::PetscDenseMatrix locV(V.Height(), n, pV);
-      petsc::PetscParVector locr(V.Height(), pr), arn(n, pAr + j * n);
-      locV.MultTranspose(locr, arn);  // Vᴴ = Vᵀ
-      V.RestoreArray(pV);
-      r.RestoreArray(pr);
-      Ar.RestoreArray(pAr);
-    }
-  }
-  // Fill lower block of Vᴴ A V = [ ____________  |  ]
-  //                              [ vjᴴ A V[1:n0] |  ] .
-  {
-    PetscScalar *pAr = Ar.GetArray();
-    Mpi::GlobalSum((n - n0) * n, pAr + n0 * n, V.GetComm());
-    for (int j = 0; j < n0; j++)
-    {
-      for (int i = n0; i < n; i++)
-      {
-        pAr[i + j * n] = pAr[j + i * n];
-      }
-    }
-    Ar.RestoreArray(pAr);
-  }
-}
-
-void RomOperator::BVDotVecInternal(petsc::PetscDenseMatrix &V, petsc::PetscParVector &b,
-                                   petsc::PetscParVector &br, int n0, int n)
-{
-  // Update br = Vᴴ b for the new basis dimension n0 => n. br is replicated across all
-  // processes (sequential n-dimensional vector).
-  MFEM_VERIFY(n0 < n, "Unexpected dimensions in BVDotVecInternal!");
-  PetscScalar *pV = V.GetArray(), *pb = b.GetArray(), *pbr = br.GetArray();
-  petsc::PetscDenseMatrix locV(V.Height(), n - n0, pV + n0 * V.Height());
-  petsc::PetscParVector locb(V.Height(), pb), brn(n - n0, pbr + n0);
-  locV.MultTranspose(locb, brn);  // Vᴴ = Vᵀ
-  V.RestoreArray(pV);
-  b.RestoreArray(pb);
-  Mpi::GlobalSum(n - n0, pbr + n0, V.GetComm());
-  br.RestoreArray(pbr);
 }
 
 }  // namespace palace

@@ -6,6 +6,7 @@
 #include <complex>
 #include <mfem.hpp>
 #include <nlohmann/json.hpp>
+#include "linalg/ksp.hpp"
 #include "models/domainpostoperator.hpp"
 #include "models/postoperator.hpp"
 #include "models/surfacepostoperator.hpp"
@@ -51,10 +52,9 @@ void WriteMetadata(const std::string &post_dir, const json &meta)
 
 }  // namespace
 
-BaseSolver::BaseSolver(const IoData &iodata_, bool root_, int size, int num_thread,
+BaseSolver::BaseSolver(const IoData &iodata, bool root, int size, int num_thread,
                        const char *git_tag)
-  : iodata(iodata_), post_dir(GetPostDir(iodata_.problem.output)), root(root_),
-    table(8, 9, 6)
+  : iodata(iodata), post_dir(GetPostDir(iodata.problem.output)), root(root), table(8, 9, 6)
 {
   // Create directory for output.
   if (root && !std::filesystem::exists(post_dir))
@@ -100,7 +100,8 @@ void BaseSolver::SaveMetadata(const mfem::ParFiniteElementSpace &fespace) const
   }
 }
 
-void BaseSolver::SaveMetadata(int ksp_mult, int ksp_it) const
+template <typename SolverType>
+void BaseSolver::SaveMetadata(const SolverType &ksp) const
 {
   if (post_dir.length() == 0)
   {
@@ -109,8 +110,8 @@ void BaseSolver::SaveMetadata(int ksp_mult, int ksp_it) const
   if (root)
   {
     json meta = LoadMetadata(post_dir);
-    meta["LinearSolver"]["TotalSolves"] = ksp_mult;
-    meta["LinearSolver"]["TotalIts"] = ksp_it;
+    meta["LinearSolver"]["TotalSolves"] = ksp.NumTotalMult();
+    meta["LinearSolver"]["TotalIts"] = ksp.NumTotalMultIterations();
     WriteMetadata(post_dir, meta);
   }
 }
@@ -555,5 +556,8 @@ void BaseSolver::PostprocessFields(const PostOperator &postop, int step, double 
   postop.WriteFields(step, time);
   Mpi::Barrier();
 }
+
+template void BaseSolver::SaveMetadata<KspSolver>(const KspSolver &) const;
+template void BaseSolver::SaveMetadata<ComplexKspSolver>(const ComplexKspSolver &) const;
 
 }  // namespace palace

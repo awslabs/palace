@@ -7,6 +7,8 @@
 #include <memory>
 #include <vector>
 #include <mfem.hpp>
+#include "linalg/operator.hpp"
+#include "linalg/vector.hpp"
 #include "models/materialoperator.hpp"
 #include "models/surfacecurrentoperator.hpp"
 
@@ -21,26 +23,26 @@ class IoData;
 class CurlCurlOperator
 {
 private:
-  // Essential boundary condition markers.
-  mfem::Array<int> dbc_marker, dbc_tdof_list;
-  void CheckBoundaryProperties();
+  const mfem::AssemblyLevel assembly_level;  // Use full or partial assembly for operators
+  const int skip_zeros;                      // Skip zeros during full assembly of operators
+  const bool pc_mg;                          // Use geometric multigrid in preconditioning
 
-  // Options for system matrix assembly.
-  const int skip_zeros;  // Whether to skip the zeros during assembly of operators
-  const bool pc_gmg;     // Whether to use geometric multigrid in preconditioning
-
-  // Helper variable and function for log file printing.
+  // Helper variable for log file printing.
   bool print_hdr;
-  void PrintHeader();
+
+  // Essential boundary condition markers.
+  mfem::Array<int> dbc_marker;
+  std::vector<mfem::Array<int>> dbc_tdof_lists;
+  void CheckBoundaryProperties();
 
   // Objects defining the finite element spaces for the magnetic vector potential
   // (Nedelec) and magnetic flux density (Raviart-Thomas) on the given mesh. The H1 spaces
   // are used for various purposes throughout the code including postprocessing.
   std::vector<std::unique_ptr<mfem::ND_FECollection>> nd_fecs;
-  mfem::H1_FECollection h1_fec;
+  std::vector<std::unique_ptr<mfem::H1_FECollection>> h1_fecs;
   mfem::RT_FECollection rt_fec;
-  mfem::ParFiniteElementSpaceHierarchy nd_fespaces;
-  mfem::ParFiniteElementSpace h1_fespace, rt_fespace;
+  mfem::ParFiniteElementSpaceHierarchy nd_fespaces, h1_fespaces;
+  mfem::ParFiniteElementSpace rt_fespace;
 
   // Operator for domain material properties.
   MaterialOperator mat_op;
@@ -52,10 +54,6 @@ public:
   CurlCurlOperator(const IoData &iodata,
                    const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh);
 
-  // Returns array marking Dirichlet BC attributes and local subdomain vdofs.
-  const auto &GetDbcMarker() const { return dbc_marker; }
-  const auto &GetDbcTDofList() const { return dbc_tdof_list; }
-
   // Return material operator for postprocessing.
   const MaterialOperator &GetMaterialOp() const { return mat_op; }
 
@@ -65,19 +63,26 @@ public:
   // Return the parallel finite element space objects.
   auto &GetNDSpaces() { return nd_fespaces; }
   auto &GetNDSpace() { return nd_fespaces.GetFinestFESpace(); }
-  auto &GetH1Space() { return h1_fespace; }
+  const auto &GetNDSpace() const { return nd_fespaces.GetFinestFESpace(); }
+  auto &GetH1Spaces() { return h1_fespaces; }
+  auto &GetH1Space() { return h1_fespaces.GetFinestFESpace(); }
+  const auto &GetH1Space() const { return h1_fespaces.GetFinestFESpace(); }
   auto &GetRTSpace() { return rt_fespace; }
+  const auto &GetRTSpace() const { return rt_fespace; }
 
   // Construct and return system matrix representing discretized curl-curl operator for
   // Ampere's law.
-  void GetStiffnessMatrix(std::vector<std::unique_ptr<mfem::Operator>> &K);
+  std::unique_ptr<Operator> GetStiffnessMatrix();
 
   // Construct and return the discrete curl matrix.
-  std::unique_ptr<mfem::Operator> GetCurlMatrix();
+  std::unique_ptr<Operator> GetCurlMatrix();
 
   // Assemble the right-hand side source term vector for a current source applied on
   // specified excited boundaries.
-  void GetExcitationVector(int idx, mfem::Vector &RHS);
+  void GetExcitationVector(int idx, Vector &RHS);
+
+  // Get the associated MPI communicator.
+  MPI_Comm GetComm() const { return GetNDSpace().GetComm(); }
 };
 
 }  // namespace palace

@@ -7,6 +7,9 @@
 #include <functional>
 #include <memory>
 #include <mfem.hpp>
+#include "linalg/ksp.hpp"
+#include "linalg/operator.hpp"
+#include "linalg/vector.hpp"
 
 namespace palace
 {
@@ -21,7 +24,7 @@ class TimeOperator
 {
 private:
   // Solution vector storage.
-  mfem::Vector E, dE, En, B;
+  Vector E, dE, En, B;
 
   // Time integrator for the curl-curl E-field formulation.
   std::unique_ptr<mfem::SecondOrderODESolver> ode;
@@ -30,24 +33,22 @@ private:
   std::unique_ptr<mfem::SecondOrderTimeDependentOperator> op;
 
   // Discrete curl for B-field time integration.
-  std::unique_ptr<mfem::Operator> NegCurl;
+  std::unique_ptr<Operator> Curl;
 
 public:
   TimeOperator(const IoData &iodata, SpaceOperator &spaceop,
                std::function<double(double)> &djcoef);
 
   // Access solution vectors for E- and B-fields.
-  const mfem::Vector &GetE() const { return E; }
-  const mfem::Vector &GetEdot() const { return dE; }
-  const mfem::Vector &GetB() const { return B; }
+  const Vector &GetE() const { return E; }
+  const Vector &GetEdot() const { return dE; }
+  const Vector &GetB() const { return B; }
 
-  // Is time integration scheme explicit or implicit.
+  // Return the linear solver associated with the implicit or explicit time integrator.
+  const KspSolver &GetLinearSolver() const;
+
+  // Return if the time integration scheme explicit or implicit.
   bool isExplicit() const { return op->isExplicit(); }
-
-  // Return number of linear solves and linear solver iterations performed during time
-  // integration.
-  int GetTotalKspMult() const;
-  int GetTotalKspIter() const;
 
   // Estimate the maximum stable time step based on the maximum eigenvalue of the
   // undamped system matrix M⁻¹ K.
@@ -56,7 +57,7 @@ public:
   // Initialize time integrators and set 0 initial conditions.
   void Init();
 
-  // Perform time step from t => t + dt.
+  // Perform time step from t -> t + dt.
   void Step(double &t, double &dt);
 };
 

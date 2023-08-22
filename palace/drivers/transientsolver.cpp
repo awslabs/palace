@@ -4,6 +4,7 @@
 #include "transientsolver.hpp"
 
 #include <mfem.hpp>
+#include "linalg/vector.hpp"
 #include "models/lumpedportoperator.hpp"
 #include "models/postoperator.hpp"
 #include "models/spaceoperator.hpp"
@@ -85,9 +86,10 @@ void TransientSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
     Mpi::Print("\nIt {:d}/{:d}: t = {:e} ns (elapsed time = {:.2e} s)\n", step, nstep - 1,
                ts, Timer::Duration(timer.Now() - t0).count());
 
-    // Single time step t => t + dt.
+    // Single time step t -> t + dt.
     if (step == 0)
     {
+      Mpi::Print("\n");
       t += delta_t;
       timeop.Init();  // Initial conditions
     }
@@ -98,15 +100,13 @@ void TransientSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
     timer.solve_time += timer.Lap();
 
     double E_elec = 0.0, E_mag = 0.0;
-    const mfem::Vector &E = timeop.GetE();
-    const mfem::Vector &B = timeop.GetB();
+    const Vector &E = timeop.GetE();
+    const Vector &B = timeop.GetB();
     postop.SetEGridFunction(E);
     postop.SetBGridFunction(B);
     postop.UpdatePorts(spaceop.GetLumpedPortOp());
-    // E.Print();
     Mpi::Print(" Sol. ||E|| = {:.6e}, ||B|| = {:.6e}\n",
-               std::sqrt(mfem::InnerProduct(mesh.back()->GetComm(), E, E)),
-               std::sqrt(mfem::InnerProduct(mesh.back()->GetComm(), B, B)));
+               linalg::Norml2(spaceop.GetComm(), E), linalg::Norml2(spaceop.GetComm(), B));
     if (!iodata.solver.transient.only_port_post)
     {
       E_elec = postop.GetEFieldEnergy();
@@ -124,7 +124,7 @@ void TransientSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
     // Increment time step.
     step++;
   }
-  SaveMetadata(timeop.GetTotalKspMult(), timeop.GetTotalKspIter());
+  SaveMetadata(timeop.GetLinearSolver());
 }
 
 std::function<double(double)> TransientSolver::GetTimeExcitation(bool dot) const

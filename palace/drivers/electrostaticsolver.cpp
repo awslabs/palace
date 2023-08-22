@@ -4,8 +4,8 @@
 #include "electrostaticsolver.hpp"
 
 #include <mfem.hpp>
-#include "linalg/gmg.hpp"
-#include "linalg/pc.hpp"
+#include "linalg/ksp.hpp"
+#include "linalg/operator.hpp"
 #include "models/laplaceoperator.hpp"
 #include "models/postoperator.hpp"
 #include "utils/communication.hpp"
@@ -23,49 +23,13 @@ void ElectrostaticSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mes
   // dofs. The eliminated matrix is stored in order to construct the RHS vector for nonzero
   // prescribed BC values.
   timer.Lap();
-  std::vector<std::unique_ptr<mfem::Operator>> K, Ke;
   LaplaceOperator laplaceop(iodata, mesh);
-  laplaceop.GetStiffnessMatrix(K, Ke);
+  auto K = laplaceop.GetStiffnessMatrix();
   SaveMetadata(laplaceop.GetH1Space());
 
   // Set up the linear solver.
-  std::unique_ptr<mfem::Solver> pc =
-      ConfigurePreconditioner(iodata, laplaceop.GetDbcMarker(), laplaceop.GetH1Spaces());
-  auto *gmg = dynamic_cast<GeometricMultigridSolver *>(pc.get());
-  if (gmg)
-  {
-    gmg->SetOperator(K);
-  }
-  else
-  {
-    pc->SetOperator(*K.back());
-  }
-
-  mfem::IterativeSolver::PrintLevel print =
-      mfem::IterativeSolver::PrintLevel().Warnings().Errors();
-  if (iodata.problem.verbose > 0)
-  {
-    print.Summary();
-    if (iodata.problem.verbose > 1)
-    {
-      print.Iterations();
-      if (iodata.problem.verbose > 2)
-      {
-        print.All();
-      }
-    }
-  }
-  mfem::CGSolver pcg(mesh.back()->GetComm());
-  pcg.SetRelTol(iodata.solver.linear.tol);
-  pcg.SetMaxIter(iodata.solver.linear.max_it);
-  pcg.SetPrintLevel(print);
-  pcg.SetOperator(*K.back());  // Call before SetPreconditioner, PC operator set separately
-  pcg.SetPreconditioner(*pc);
-  if (iodata.solver.linear.ksp_type != config::LinearSolverData::KspType::DEFAULT &&
-      iodata.solver.linear.ksp_type != config::LinearSolverData::KspType::CG)
-  {
-    Mpi::Warning("Electrostatic problem type always uses CG as the Krylov solver!\n");
-  }
+  KspSolver ksp(iodata, laplaceop.GetH1Spaces());
+  ksp.SetOperators(*K, *K);
 
   // Terminal indices are the set of boundaries over which to compute the capacitance
   // matrix. Terminal boundaries are aliases for ports.
@@ -74,14 +38,14 @@ void ElectrostaticSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mes
   MFEM_VERIFY(nstep > 0, "No terminal boundaries specified for electrostatic simulation!");
 
   // Right-hand side term and solution vector storage.
-  mfem::Vector RHS(K.back()->Height());
-  std::vector<mfem::Vector> V(nstep);
+  Vector RHS(K->Height());
+  std::vector<Vector> V(nstep);
   timer.construct_time += timer.Lap();
 
   // Main loop over terminal boundaries.
   Mpi::Print("\nComputing electrostatic fields for {:d} terminal boundar{}\n", nstep,
              (nstep > 1) ? "ies" : "y");
-  int step = 0, ksp_it = 0;
+  int step = 0;
   auto t0 = timer.Now();
   for (const auto &[idx, data] : laplaceop.GetSources())
   {
@@ -91,23 +55,15 @@ void ElectrostaticSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mes
     // Form and solve the linear system for a prescribed nonzero voltage on the specified
     // terminal.
     Mpi::Print("\n");
-    V[step].SetSize(RHS.Size());
-    laplaceop.GetExcitationVector(idx, *K.back(), *Ke.back(), V[step], RHS);
+    laplaceop.GetExcitationVector(idx, *K, V[step], RHS);
     timer.construct_time += timer.Lap();
 
-    pcg.Mult(RHS, V[step]);
-    if (!pcg.GetConverged())
-    {
-      Mpi::Warning("Linear solver did not converge in {:d} iterations!\n",
-                   pcg.GetNumIterations());
-    }
-    ksp_it += pcg.GetNumIterations();
+    ksp.Mult(RHS, V[step]);
     timer.solve_time += timer.Lap();
 
-    // V[step]->Print();
     Mpi::Print(" Sol. ||V|| = {:.6e} (||RHS|| = {:.6e})\n",
-               std::sqrt(mfem::InnerProduct(mesh.back()->GetComm(), V[step], V[step])),
-               std::sqrt(mfem::InnerProduct(mesh.back()->GetComm(), RHS, RHS)));
+               linalg::Norml2(laplaceop.GetComm(), V[step]),
+               linalg::Norml2(laplaceop.GetComm(), RHS));
     timer.postpro_time += timer.Lap();
 
     // Next terminal.
@@ -116,14 +72,13 @@ void ElectrostaticSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mes
 
   // Postprocess the capacitance matrix from the computed field solutions.
   const auto io_time_prev = timer.io_time;
-  SaveMetadata(nstep, ksp_it);
+  SaveMetadata(ksp);
   Postprocess(laplaceop, postop, V, timer);
   timer.postpro_time += timer.Lap() - (timer.io_time - io_time_prev);
 }
 
 void ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop, PostOperator &postop,
-                                      const std::vector<mfem::Vector> &V,
-                                      Timer &timer) const
+                                      const std::vector<Vector> &V, Timer &timer) const
 {
   // Postprocess the Maxwell capacitance matrix. See p. 97 of the COMSOL AC/DC Module manual
   // for the associated formulas based on the electric field energy based on a unit voltage
@@ -131,11 +86,11 @@ void ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop, PostOperator &
   // charges from the prescribed voltage to get C directly as:
   //         Q_i = ∫ ρ dV = ∫ ∇ ⋅ (ε E) dV = ∫ (ε E) ⋅ n dS
   // and C_ij = Q_i/V_j. The energy formulation avoids having to locally integrate E = -∇V.
-  std::unique_ptr<mfem::Operator> NegGrad = laplaceop.GetNegGradMatrix();
+  auto Grad = laplaceop.GetGradMatrix();
   const std::map<int, mfem::Array<int>> &terminal_sources = laplaceop.GetSources();
   int nstep = static_cast<int>(terminal_sources.size());
   mfem::DenseMatrix C(nstep), Cm(nstep);
-  mfem::Vector E(NegGrad->Height()), Vij(NegGrad->Width());
+  Vector E(Grad->Height()), Vij(Grad->Width());
   if (iodata.solver.electrostatic.n_post > 0)
   {
     Mpi::Print("\n");
@@ -143,8 +98,10 @@ void ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop, PostOperator &
   int i = 0;
   for (const auto &[idx, data] : terminal_sources)
   {
-    // Set the internal GridFunctions in PostOperator for all postprocessing operations.
-    PostOperator::GetEField(*NegGrad, V[i], E);
+    // Compute E = -∇V on the true dofs, and set the internal GridFunctions in PostOperator
+    // for all postprocessing operations.
+    E = 0.0;
+    Grad->AddMult(V[i], E, -1.0);
     postop.SetEGridFunction(E);
     postop.SetVGridFunction(V[i]);
     double Ue = postop.GetEFieldEnergy();
@@ -178,8 +135,9 @@ void ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop, PostOperator &
       }
       else if (j > i)
       {
-        add(V[i], V[j], Vij);
-        PostOperator::GetEField(*NegGrad, Vij, E);
+        linalg::AXPBYPCZ(1.0, V[i], 1.0, V[j], 0.0, Vij);
+        E = 0.0;
+        Grad->AddMult(Vij, E, -1.0);
         postop.SetEGridFunction(E);
         double Ue = postop.GetEFieldEnergy();
         C(i, j) = Ue - 0.5 * (C(i, i) + C(j, j));

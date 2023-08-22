@@ -3,53 +3,149 @@
 
 #include "distrelaxation.hpp"
 
+#include <mfem.hpp>
+#include <mfem/general/forall.hpp>
 #include "linalg/chebyshev.hpp"
+#include "linalg/rap.hpp"
 
 namespace palace
 {
 
-DistRelaxationSmoother::DistRelaxationSmoother(mfem::ParFiniteElementSpace &nd_fespace,
-                                               mfem::ParFiniteElementSpace &h1_fespace,
-                                               const mfem::Array<int> &dbc_marker,
-                                               int smooth_it, int cheby_smooth_it,
-                                               int cheby_order)
-  : mfem::Solver(), A(nullptr), A_G(nullptr), pc_it(smooth_it)
+template <typename OperType>
+DistRelaxationSmoother<OperType>::DistRelaxationSmoother(
+    mfem::ParFiniteElementSpace &nd_fespace, mfem::ParFiniteElementSpace &h1_fespace,
+    int smooth_it, int cheby_smooth_it, int cheby_order)
+  : Solver<OperType>(), pc_it(smooth_it), A(nullptr), A_G(nullptr), dbc_tdof_list_G(nullptr)
 {
   // Construct discrete gradient matrix for the auxiliary space.
   {
-    mfem::ParDiscreteLinearOperator grad(&h1_fespace, &nd_fespace);
-    grad.AddDomainInterpolator(new mfem::GradientInterpolator);
-    // grad.SetAssemblyLevel(mfem::AssemblyLevel::FULL);
-    grad.Assemble();
-    grad.Finalize();
-    G.reset(grad.ParallelAssemble());
+    // XX TODO: Partial assembly option?
+    auto grad = std::make_unique<mfem::DiscreteLinearOperator>(&h1_fespace, &nd_fespace);
+    grad->AddDomainInterpolator(new mfem::GradientInterpolator);
+    grad->SetAssemblyLevel(mfem::AssemblyLevel::LEGACY);
+    grad->Assemble();
+    grad->Finalize();
+    G = std::make_unique<ParOperator>(std::move(grad), h1_fespace, nd_fespace, true);
+    // ParOperator RAP_G(std::move(grad), h1_fespace, nd_fespace, true);
+    // G = RAP_G.StealParallelAssemble();
   }
 
   // Initialize smoothers.
-  mfem::Array<int> nd_dbc_tdof_list;
-  nd_fespace.GetEssentialTrueDofs(dbc_marker, nd_dbc_tdof_list);
-  h1_fespace.GetEssentialTrueDofs(dbc_marker, h1_dbc_tdof_list);
-  B = std::make_unique<ChebyshevSmoother>(nd_fespace.GetComm(), nd_dbc_tdof_list,
-                                          cheby_smooth_it, cheby_order);
-  B_G = std::make_unique<ChebyshevSmoother>(h1_fespace.GetComm(), h1_dbc_tdof_list,
-                                            cheby_smooth_it, cheby_order);
-  B_G->iterative_mode = false;
+  B = std::make_unique<ChebyshevSmoother<OperType>>(cheby_smooth_it, cheby_order);
+  B_G = std::make_unique<ChebyshevSmoother<OperType>>(cheby_smooth_it, cheby_order);
+  B_G->SetInitialGuess(false);
 }
 
-void DistRelaxationSmoother::SetOperator(const mfem::Operator &op,
-                                         const mfem::Operator &op_G)
+template <typename OperType>
+void DistRelaxationSmoother<OperType>::SetOperators(const OperType &op,
+                                                    const OperType &op_G)
 {
+  using ParOperType =
+      typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
+                                ComplexParOperator, ParOperator>::type;
+
+  MFEM_VERIFY(op.Height() == G->Height() && op.Width() == G->Height() &&
+                  op_G.Height() == G->Width() && op_G.Width() == G->Width(),
+              "Invalid operator sizes for DistRelaxationSmoother!");
   A = &op;
   A_G = &op_G;
-  MFEM_VERIFY(A->Height() == G->Height() && A->Width() == G->Height() &&
-                  A_G->Height() == G->Width() && A_G->Width() == G->Width(),
-              "Invalid operator sizes for DistRelaxationSmoother!");
-  height = A->Height();
-  width = A->Width();
+
+  const auto *PtAP_G = dynamic_cast<const ParOperType *>(&op_G);
+  MFEM_VERIFY(PtAP_G,
+              "ChebyshevSmoother requires a ParOperator or ComplexParOperator operator!");
+  dbc_tdof_list_G = PtAP_G->GetEssentialTrueDofs();
+
+  r.SetSize(op.Height());
+  x_G.SetSize(op_G.Height());
+  y_G.SetSize(op_G.Height());
 
   // Set up smoothers for A and A_G.
-  B->SetOperator(*A);
-  B_G->SetOperator(*A_G);
+  B->SetOperator(op);
+  B_G->SetOperator(op_G);
 }
+
+namespace
+{
+
+inline void RealAddMult(const Operator &op, const Vector &x, Vector &y)
+{
+  op.AddMult(x, y, 1.0);
+}
+
+inline void RealAddMult(const Operator &op, const ComplexVector &x, ComplexVector &y)
+{
+  op.AddMult(x.Real(), y.Real(), 1.0);
+  op.AddMult(x.Imag(), y.Imag(), 1.0);
+}
+
+inline void RealMultTranspose(const Operator &op, const Vector &x, Vector &y)
+{
+  op.MultTranspose(x, y);
+}
+
+inline void RealMultTranspose(const Operator &op, const ComplexVector &x, ComplexVector &y)
+{
+  op.MultTranspose(x.Real(), y.Real());
+  op.MultTranspose(x.Imag(), y.Imag());
+}
+
+}  // namespace
+
+template <typename OperType>
+void DistRelaxationSmoother<OperType>::Mult(const VecType &x, VecType &y) const
+{
+  // Apply smoother.
+  for (int it = 0; it < pc_it; it++)
+  {
+    // y = y + B (x - A y)
+    B->SetInitialGuess(this->initial_guess || it > 0);
+    B->Mult(x, y);
+
+    // y = y + G B_G Gᵀ (x - A y)
+    A->Mult(y, r);
+    linalg::AXPBY(1.0, x, -1.0, r);
+    RealMultTranspose(*G, r, x_G);
+    if (dbc_tdof_list_G)
+    {
+      linalg::SetSubVector(x_G, *dbc_tdof_list_G, 0.0);
+    }
+    B_G->Mult(x_G, y_G);
+    RealAddMult(*G, y_G, y);
+  }
+}
+
+template <typename OperType>
+void DistRelaxationSmoother<OperType>::MultTranspose(const VecType &x, VecType &y) const
+{
+  // Apply transpose.
+  B->SetInitialGuess(true);
+  for (int it = 0; it < pc_it; it++)
+  {
+    // y = y + G B_Gᵀ Gᵀ (x - A y)
+    if (this->initial_guess || it > 0)
+    {
+      A->Mult(y, r);
+      linalg::AXPBY(1.0, x, -1.0, r);
+      RealMultTranspose(*G, r, x_G);
+    }
+    else
+    {
+      y = 0.0;
+      RealMultTranspose(*G, x, x_G);
+    }
+    if (dbc_tdof_list_G)
+    {
+      linalg::SetSubVector(x_G, *dbc_tdof_list_G, 0.0);
+    }
+    B_G->MultTranspose(x_G, y_G);
+    RealAddMult(*G, y_G, y);
+
+    // y = y + Bᵀ (x - A y)
+    B->MultTranspose(x, y);
+  }
+}
+
+template class DistRelaxationSmoother<Operator>;
+template class DistRelaxationSmoother<ComplexOperator>;
 
 }  // namespace palace

@@ -299,11 +299,16 @@ directory specified by [`config["Problem"]["Output"]`]
     "Tol": <float>,
     "MaxIts": <int>,
     "MaxSize": <int>,
-    "UseGMG": <bool>,
-    "UsePCShifted": <bool>,
+    "UsePCMatShifted": <bool>,
+    "PCSide": <string>,
+    "UseMultigrid": <bool>,
+    "MGAuxiliarySmoother": <bool>,
     "MGCycleIts": <int>,
     "MGSmoothIts": <int>,
-    "MGSmoothOrder": <int>
+    "MGSmoothOrder": <int>,
+    "DivFreeTol": <float>,
+    "DivFreeMaxIts": <float>,
+    "GSOrthogonalization": <string>
 }
 ```
 
@@ -353,46 +358,66 @@ equations arising for each simulation type. The available options are:
     definite (SPD) and the preconditioned conjugate gradient method (`"CG"`) is used as the
     Krylov solver.
 
-`"Tol" [1.0e-6]` :  Relative (preconditioned) residual convergence tolerance for the
-iterative linear solver.
+`"Tol" [1.0e-6]` :  Relative residual convergence tolerance for the iterative linear solver.
 
 `"MaxIts" [100]` :  Maximum number of iterations for the iterative linear solver.
 
 `"MaxSize" [0]` :  Maximum Krylov space size for the GMRES and FGMRES solvers. A value less
 than 1 defaults to the value specified by `"MaxIts"`.
 
-`"UseGMG" [true]` :  Enable or not [geometric multigrid solver]
-(https://en.wikipedia.org/wiki/Multigrid_method) which uses h- and p-multigrid coarsening as
-available to construct the multigrid hierarchy. The solver specified by `"Type"` is used on
-the coarsest level. A Hiptmair smoother is applied to all other levels.
-
-`"UsePCShifted" [false]` :  When set to `true`, constructs the preconditioner for frequency
+`"UsePCMatShifted" [false]` :  When set to `true`, constructs the preconditioner for frequency
 domain problems using a real SPD approximation of the system matrix, which can help
 performance at high frequencies (relative to the lowest nonzero eigenfrequencies of the
 model).
 
+`"PCSide" ["Default"]` :  Side for preconditioning. Not all options are available for all
+iterative solver choices, and the default choice depends on the iterative solver used.
+
+  - `"Left"`
+  - `"Right"`
+  - `"Default"`
+
+`"UseMultigrid" [true]` :  Chose whether to enable [geometric multigrid preconditioning]
+(https://en.wikipedia.org/wiki/Multigrid_method) which uses p- and h-multigrid coarsening as
+available to construct the multigrid hierarchy. The solver specified by `"Type"` is used on
+the coarsest level. Relaxation on the fine levels is performed with Chebyshev smoothing.
+
+`"MGAuxiliarySmoother"` :  Activate hybrid smoothing from Hiptmair for multigrid levels when
+`"UseMultigrid"` is `true`. For non-singular problems involving curl-curl operators, this
+option is `true` by default.
+
 `"MGCycleIts" [1]` :  Number of V-cycle iterations per preconditioner application for
-multigrid preconditioners (when `"UseGMG"` is `true` or `"Type"` is `"AMS"` or
+multigrid preconditioners (when `"UseMultigrid"` is `true` or `"Type"` is `"AMS"` or
 `"BoomerAMG"`).
 
 `"MGSmoothIts" [1]` :  Number of pre- and post-smooth iterations used for multigrid
-preconditioners (when `"UseGMG"` is `true` or `"Type"` is `"AMS"` or `"BoomerAMG"`).
+preconditioners (when `"UseMultigrid"` is `true` or `"Type"` is `"AMS"` or `"BoomerAMG"`).
 
 `"MGSmoothOrder" [3]` :  Order of polynomial smoothing for geometric multigrid
-preconditioning (when `"UseGMG"` is `true`).
+preconditioning (when `"UseMultigrid"` is `true`).
+
+`"DivFreeTol" [1.0e-12]` :  Relative tolerance for divergence-free cleaning used in the
+eigenmode simulation type.
+
+`"DivFreeMaxIts" [100]` :  Maximum number of iterations for divergence-free cleaning use in
+the eigenmode simulation type.
+
+`"GSOrthogonalization" ["MGS"]` :  Gram-Schmidt variant used to explicitly orthogonalize
+vectors in Krylov subspace methods or other parts of the code.
+
+  - `"MGS"` :  Modified Gram-Schmidt
+  - `"CGS"` :  Classical Gram-Schmidt
+  - `"CGS2"` :  Two-step classical Gram-Schmidt with reorthogonalization
 
 ### Advanced linear solver options
 
-  - `"Type"`: `"STRUMPACK-MP"`
-  - `"KSPType"`: `"MINRES"`, `"CGSYM"`, `"FCG"`, `"BCGS"`, `"BCGSL"`, `"FBCGS"`, `"QMRCGS"`,
-    `"TFQMR"`
-  - `"UseMGS" [false]`
-  - `"UseCGS2" [false]`
-  - `"UseKSPPiped" [false]`
-  - `"UseLOR" [false]`
-  - `"PrecondSide" ["Default"]`: `"Left"`, `"Right"`, `"Default"`
-  - `"Reordering" ["Default"]`: `"METIS"`, `"ParMETIS"`, `"Default"`
-  - `"STRUMPACKCompressionType" ["None"]`: `"None"`, `"BLR"`, `"HSS"`, `"HODLR"`
+  - `"UseInitialGuess" [true]`
+  - `"UsePartialAssembly" [false]`
+  - `"UseLowOrderRefined" [false]`
+  - `"Reordering" ["Default"]` :  `"METIS"`, `"ParMETIS"`,`"Scotch"`, `"PTScotch"`,
+    `"Default"`
+  - `"STRUMPACKCompressionType" ["None"]` :  `"None"`, `"BLR"`, `"HSS"`, `"HODLR"`, `"ZFP"`,
+    `"BLR-HODLR"`, `"ZFP-BLR-HODLR"`
   - `"STRUMPACKCompressionTol" [1.0e-3]`
   - `"STRUMPACKLossyPrecision" [16]`
   - `"STRUMPACKButterflyLevels" [1]`

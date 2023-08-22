@@ -4,8 +4,8 @@
 #include "magnetostaticsolver.hpp"
 
 #include <mfem.hpp>
-#include "linalg/gmg.hpp"
-#include "linalg/pc.hpp"
+#include "linalg/ksp.hpp"
+#include "linalg/operator.hpp"
 #include "models/curlcurloperator.hpp"
 #include "models/postoperator.hpp"
 #include "models/surfacecurrentoperator.hpp"
@@ -23,49 +23,13 @@ void MagnetostaticSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mes
   // handled eliminating the rows and columns of the system matrix for the corresponding
   // dofs.
   timer.Lap();
-  std::vector<std::unique_ptr<mfem::Operator>> K;
   CurlCurlOperator curlcurlop(iodata, mesh);
-  curlcurlop.GetStiffnessMatrix(K);
+  auto K = curlcurlop.GetStiffnessMatrix();
   SaveMetadata(curlcurlop.GetNDSpace());
 
   // Set up the linear solver.
-  std::unique_ptr<mfem::Solver> pc =
-      ConfigurePreconditioner(iodata, curlcurlop.GetDbcMarker(), curlcurlop.GetNDSpaces());
-  auto *gmg = dynamic_cast<GeometricMultigridSolver *>(pc.get());
-  if (gmg)
-  {
-    gmg->SetOperator(K);
-  }
-  else
-  {
-    pc->SetOperator(*K.back());
-  }
-
-  mfem::IterativeSolver::PrintLevel print =
-      mfem::IterativeSolver::PrintLevel().Warnings().Errors();
-  if (iodata.problem.verbose > 0)
-  {
-    print.Summary();
-    if (iodata.problem.verbose > 1)
-    {
-      print.Iterations();
-      if (iodata.problem.verbose > 2)
-      {
-        print.All();
-      }
-    }
-  }
-  mfem::CGSolver pcg(mesh.back()->GetComm());
-  pcg.SetRelTol(iodata.solver.linear.tol);
-  pcg.SetMaxIter(iodata.solver.linear.max_it);
-  pcg.SetPrintLevel(print);
-  pcg.SetOperator(*K.back());  // Call before SetPreconditioner, PC operator set separately
-  pcg.SetPreconditioner(*pc);
-  if (iodata.solver.linear.ksp_type != config::LinearSolverData::KspType::DEFAULT &&
-      iodata.solver.linear.ksp_type != config::LinearSolverData::KspType::CG)
-  {
-    Mpi::Warning("Magnetostatic problem type always uses CG as the Krylov solver!\n");
-  }
+  KspSolver ksp(iodata, curlcurlop.GetNDSpaces(), &curlcurlop.GetH1Spaces());
+  ksp.SetOperators(*K, *K);
 
   // Terminal indices are the set of boundaries over which to compute the inductance matrix.
   PostOperator postop(iodata, curlcurlop, "magnetostatic");
@@ -74,14 +38,14 @@ void MagnetostaticSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mes
               "No surface current boundaries specified for magnetostatic simulation!");
 
   // Source term and solution vector storage.
-  mfem::Vector RHS(K.back()->Height());
-  std::vector<mfem::Vector> A(nstep);
+  Vector RHS(K->Height());
+  std::vector<Vector> A(nstep);
   timer.construct_time += timer.Lap();
 
   // Main loop over current source boundaries.
   Mpi::Print("\nComputing magnetostatic fields for {:d} source boundar{}\n", nstep,
              (nstep > 1) ? "ies" : "y");
-  int step = 0, ksp_it = 0;
+  int step = 0;
   auto t0 = timer.Now();
   for (const auto &[idx, data] : curlcurlop.GetSurfaceCurrentOp())
   {
@@ -95,19 +59,12 @@ void MagnetostaticSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mes
     curlcurlop.GetExcitationVector(idx, RHS);
     timer.construct_time += timer.Lap();
 
-    pcg.Mult(RHS, A[step]);
-    if (!pcg.GetConverged())
-    {
-      Mpi::Warning("Linear solver did not converge in {:d} iterations!\n",
-                   pcg.GetNumIterations());
-    }
-    ksp_it += pcg.GetNumIterations();
+    ksp.Mult(RHS, A[step]);
     timer.solve_time += timer.Lap();
 
-    // A[step]->Print();
     Mpi::Print(" Sol. ||A|| = {:.6e} (||RHS|| = {:.6e})\n",
-               std::sqrt(mfem::InnerProduct(mesh.back()->GetComm(), A[step], A[step])),
-               std::sqrt(mfem::InnerProduct(mesh.back()->GetComm(), RHS, RHS)));
+               linalg::Norml2(curlcurlop.GetComm(), A[step]),
+               linalg::Norml2(curlcurlop.GetComm(), RHS));
     timer.postpro_time += timer.Lap();
 
     // Next source.
@@ -116,14 +73,13 @@ void MagnetostaticSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mes
 
   // Postprocess the capacitance matrix from the computed field solutions.
   const auto io_time_prev = timer.io_time;
-  SaveMetadata(nstep, ksp_it);
+  SaveMetadata(ksp);
   Postprocess(curlcurlop, postop, A, timer);
   timer.postpro_time += timer.Lap() - (timer.io_time - io_time_prev);
 }
 
 void MagnetostaticSolver::Postprocess(CurlCurlOperator &curlcurlop, PostOperator &postop,
-                                      const std::vector<mfem::Vector> &A,
-                                      Timer &timer) const
+                                      const std::vector<Vector> &A, Timer &timer) const
 {
   // Postprocess the Maxwell inductance matrix. See p. 97 of the COMSOL AC/DC Module manual
   // for the associated formulas based on the magnetic field energy based on a current
@@ -132,12 +88,12 @@ void MagnetostaticSolver::Postprocess(CurlCurlOperator &curlcurlop, PostOperator
   //                         Φ_i = ∫ B ⋅ n_j dS
   // and M_ij = Φ_i/I_j. The energy formulation avoids having to locally integrate B =
   // ∇ x A.
-  std::unique_ptr<mfem::Operator> Curl = curlcurlop.GetCurlMatrix();
+  auto Curl = curlcurlop.GetCurlMatrix();
   const SurfaceCurrentOperator &surf_j_op = curlcurlop.GetSurfaceCurrentOp();
   int nstep = static_cast<int>(surf_j_op.Size());
   mfem::DenseMatrix M(nstep), Mm(nstep);
-  mfem::Vector B(Curl->Height()), Aij(Curl->Width());
-  mfem::Vector Iinc(nstep);
+  Vector B(Curl->Height()), Aij(Curl->Width());
+  Vector Iinc(nstep);
   if (iodata.solver.magnetostatic.n_post > 0)
   {
     Mpi::Print("\n");
@@ -150,8 +106,9 @@ void MagnetostaticSolver::Postprocess(CurlCurlOperator &curlcurlop, PostOperator
     Iinc(i) = data.GetExcitationCurrent();
     MFEM_VERIFY(Iinc(i) > 0.0, "Zero current excitation for magnetostatic solver!");
 
-    // Set the internal GridFunctions in PostOperator for all postprocessing operations.
-    PostOperator::GetBField(*Curl, A[i], B);
+    // Compute B = ∇ x A on the true dofs, and set the internal GridFunctions in
+    // PostOperator for all postprocessing operations.
+    Curl->Mult(A[i], B);
     postop.SetBGridFunction(B);
     postop.SetAGridFunction(A[i]);
     double Um = postop.GetHFieldEnergy();
@@ -185,8 +142,8 @@ void MagnetostaticSolver::Postprocess(CurlCurlOperator &curlcurlop, PostOperator
       }
       else if (j > i)
       {
-        add(A[i], A[j], Aij);
-        PostOperator::GetBField(*Curl, Aij, B);
+        linalg::AXPBYPCZ(1.0, A[i], 1.0, A[j], 0.0, Aij);
+        Curl->Mult(Aij, B);
         postop.SetBGridFunction(B);
         double Um = postop.GetHFieldEnergy();
         M(i, j) = Um / (Iinc(i) * Iinc(j)) -

@@ -100,17 +100,16 @@
         "Tol": { "type": "number", "minimum": 0.0 },
         "MaxIts": { "type": "integer", "exclusiveMinimum": 0 },
         "MaxSize": { "type": "integer", "exclusiveMinimum": 0 },
-        "UseMGS": { "type": "boolean" },
-        "UseCGS2": { "type": "boolean" },
         "UseInitialGuess": { "type": "boolean" },
-        "UseKSPPiped": { "type": "boolean" },
-        "UseGMG": { "type": "boolean" },
-        "UseLOR": { "type": "boolean" },
-        "UsePCShifted": { "type": "boolean" },
+        "UsePartialAssembly": { "type": "boolean" },
+        "UseLowOrderRefined": { "type": "boolean" },
+        "UsePCMatShifted": { "type": "boolean" },
+        "PCSide": { "type": "string" },
+        "UseMultigrid": { "type": "boolean" },
+        "MGAuxiliarySmoother": { "type": "boolean" },
         "MGCycleIts": { "type": "integer", "exclusiveMinimum": 0 },
         "MGSmoothIts": { "type": "integer", "exclusiveMinimum": 0 },
         "MGSmoothOrder": { "type": "integer", "exclusiveMinimum": 0 },
-        "PrecondSide": { "type": "string" },
         "Reordering": { "type": "string" },
         "STRUMPACKCompressionType": { "type": "string" },
         "STRUMPACKCompressionTol": { "type": "number", "minimum": 0.0 },
@@ -119,7 +118,8 @@
         "SuperLU3D": { "type": "boolean" },
         "AMSVector": { "type": "boolean" },
         "DivFreeTol": { "type": "number", "minimum": 0.0 },
-        "DivFreeMaxIts": { "type": "integer", "minimum": 0 }
+        "DivFreeMaxIts": { "type": "integer", "minimum": 0 },
+        "GSOrthogonalization": { "type": "string" }
       }
     }
   }

@@ -3,12 +3,18 @@
 
 #include "waveportoperator.hpp"
 
-#include <optional>
+#include <array>
+#include <unordered_map>
 #include "fem/coefficient.hpp"
 #include "fem/integrator.hpp"
 #include "linalg/arpack.hpp"
-#include "linalg/hypre.hpp"
+#include "linalg/iterative.hpp"
+#include "linalg/mumps.hpp"
+#include "linalg/rap.hpp"
 #include "linalg/slepc.hpp"
+#include "linalg/solver.hpp"
+#include "linalg/strumpack.hpp"
+#include "linalg/superlu.hpp"
 #include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
@@ -17,226 +23,326 @@
 namespace palace
 {
 
+using namespace std::complex_literals;
+
 namespace
 {
 
+void GetEssentialTrueDofs(mfem::ParGridFunction &E0t, mfem::ParGridFunction &E0n,
+                          mfem::ParGridFunction &port_E0t, mfem::ParGridFunction &port_E0n,
+                          mfem::ParTransferMap &port_nd_transfer,
+                          mfem::ParTransferMap &port_h1_transfer,
+                          const mfem::Array<int> &dbc_marker,
+                          mfem::Array<int> &port_nd_dbc_tdof_list,
+                          mfem::Array<int> &port_h1_dbc_tdof_list)
+{
+  mfem::ParFiniteElementSpace &nd_fespace = *E0t.ParFESpace();
+  mfem::ParFiniteElementSpace &h1_fespace = *E0n.ParFESpace();
+  mfem::ParFiniteElementSpace &port_nd_fespace = *port_E0t.ParFESpace();
+  mfem::ParFiniteElementSpace &port_h1_fespace = *port_E0n.ParFESpace();
+
+  mfem::Array<int> nd_dbc_tdof_list, h1_dbc_tdof_list;
+  nd_fespace.GetEssentialTrueDofs(dbc_marker, nd_dbc_tdof_list);
+  h1_fespace.GetEssentialTrueDofs(dbc_marker, h1_dbc_tdof_list);
+
+  Vector tE0t(nd_fespace.GetTrueVSize()), tE0n(h1_fespace.GetTrueVSize());
+  tE0t = 0.0;
+  tE0n = 0.0;
+  linalg::SetSubVector(tE0t, nd_dbc_tdof_list, 1.0);
+  linalg::SetSubVector(tE0n, h1_dbc_tdof_list, 1.0);
+  E0t.SetFromTrueDofs(tE0t);
+  E0n.SetFromTrueDofs(tE0n);
+  port_nd_transfer.Transfer(E0t, port_E0t);
+  port_h1_transfer.Transfer(E0n, port_E0n);
+
+  Vector port_tE0t(port_nd_fespace.GetTrueVSize()),
+      port_tE0n(port_h1_fespace.GetTrueVSize());
+  port_E0t.ParallelProject(port_tE0t);
+  port_E0n.ParallelProject(port_tE0n);
+  for (int i = 0; i < port_tE0t.Size(); i++)
+  {
+    if (port_tE0t[i] != 0.0)
+    {
+      port_nd_dbc_tdof_list.Append(i);
+    }
+  }
+  for (int i = 0; i < port_tE0n.Size(); i++)
+  {
+    if (port_tE0n[i] != 0.0)
+    {
+      port_h1_dbc_tdof_list.Append(i);
+    }
+  }
+}
+
 constexpr int skip_zeros = 0;
 
-inline mfem::HypreParMatrix GetBtt(const MaterialOperator &mat_op,
-                                   mfem::ParFiniteElementSpace &nd_fespace,
-                                   mfem::Array<int> &attr_marker)
+std::unique_ptr<ParOperator> GetBtt(const MaterialOperator &mat_op,
+                                    mfem::ParFiniteElementSpace &nd_fespace)
 {
   // Mass matrix: Bₜₜ = (μ⁻¹ u, v).
-  MaterialPropertyCoefficient<MaterialPropertyType::INV_PERMEABILITY> muinv_func(mat_op);
-  mfem::ParBilinearForm btt(&nd_fespace);
-  btt.AddBoundaryIntegrator(new mfem::MixedVectorMassIntegrator(muinv_func), attr_marker);
-  // btt.SetAssemblyLevel(mfem::AssemblyLevel::FULL);
-  btt.Assemble(skip_zeros);
-  btt.Finalize(skip_zeros);
-  return *btt.ParallelAssemble();
+  constexpr auto MatType = MaterialPropertyType::INV_PERMEABILITY;
+  constexpr auto ElemType = MeshElementType::BDR_SUBMESH;
+  MaterialPropertyCoefficient<MatType, ElemType> muinv_func(mat_op);
+  auto btt = std::make_unique<mfem::SymmetricBilinearForm>(&nd_fespace);
+  btt->AddDomainIntegrator(new mfem::MixedVectorMassIntegrator(muinv_func));
+  btt->SetAssemblyLevel(mfem::AssemblyLevel::LEGACY);
+  btt->Assemble(skip_zeros);
+  btt->Finalize(skip_zeros);
+  return std::make_unique<ParOperator>(std::move(btt), nd_fespace);
 }
 
-inline mfem::HypreParMatrix GetBtn(const MaterialOperator &mat_op,
-                                   mfem::ParFiniteElementSpace &nd_fespace,
-                                   mfem::ParFiniteElementSpace &h1_fespace,
-                                   mfem::Array<int> &attr_marker)
+std::unique_ptr<ParOperator> GetBtn(const MaterialOperator &mat_op,
+                                    mfem::ParFiniteElementSpace &nd_fespace,
+                                    mfem::ParFiniteElementSpace &h1_fespace)
 {
   // Mass matrix: Bₜₙ = (μ⁻¹ ∇ₜ u, v).
-  mfem::ParMixedBilinearForm btn(&h1_fespace, &nd_fespace);
-  MaterialPropertyCoefficient<MaterialPropertyType::INV_PERMEABILITY> muinv_func(mat_op);
-  btn.AddBoundaryIntegrator(new mfem::MixedVectorGradientIntegrator(muinv_func),
-                            attr_marker);
-  // btn.SetAssemblyLevel(mfem::AssemblyLevel::FULL);
-  btn.Assemble(skip_zeros);
-  btn.Finalize(skip_zeros);
-  return *btn.ParallelAssemble();
+  constexpr auto MatType = MaterialPropertyType::INV_PERMEABILITY;
+  constexpr auto ElemType = MeshElementType::BDR_SUBMESH;
+  MaterialPropertyCoefficient<MatType, ElemType> muinv_func(mat_op);
+  auto btn = std::make_unique<mfem::MixedBilinearForm>(&h1_fespace, &nd_fespace);
+  btn->AddDomainIntegrator(new mfem::MixedVectorGradientIntegrator(muinv_func));
+  btn->SetAssemblyLevel(mfem::AssemblyLevel::LEGACY);
+  btn->Assemble(skip_zeros);
+  btn->Finalize(skip_zeros);
+  return std::make_unique<ParOperator>(std::move(btn), h1_fespace, nd_fespace, false);
 }
 
-struct Bnn
-{
-  mfem::HypreParMatrix Bnn1;
-  mfem::HypreParMatrix Bnn2r;
-  std::optional<mfem::HypreParMatrix> Bnn2i;
-};
-
-inline Bnn GetBnn(const MaterialOperator &mat_op, mfem::ParFiniteElementSpace &h1_fespace,
-                  mfem::Array<int> &attr_marker)
+std::array<std::unique_ptr<ParOperator>, 3> GetBnn(const MaterialOperator &mat_op,
+                                                   mfem::ParFiniteElementSpace &h1_fespace)
 {
   // Mass matrix: Bₙₙ = (μ⁻¹ ∇ₜ u, ∇ₜ v) - ω² (ε u, v) = Bₙₙ₁ - ω² Bₙₙ₂.
-  MaterialPropertyCoefficient<MaterialPropertyType::INV_PERMEABILITY> muinv_func(mat_op);
-  mfem::ParBilinearForm bnn1(&h1_fespace);
-  bnn1.AddBoundaryIntegrator(new mfem::MixedGradGradIntegrator(muinv_func), attr_marker);
-  // bnn1.SetAssemblyLevel(mfem::AssemblyLevel::FULL);
-  bnn1.Assemble(skip_zeros);
-  bnn1.Finalize(skip_zeros);
+  constexpr auto MatTypeMuInv = MaterialPropertyType::INV_PERMEABILITY;
+  constexpr auto ElemType = MeshElementType::BDR_SUBMESH;
+  MaterialPropertyCoefficient<MatTypeMuInv, ElemType> muinv_func(mat_op);
+  auto bnn1 = std::make_unique<mfem::SymmetricBilinearForm>(&h1_fespace);
+  bnn1->AddDomainIntegrator(new mfem::MixedGradGradIntegrator(muinv_func));
+  bnn1->SetAssemblyLevel(mfem::AssemblyLevel::LEGACY);
+  bnn1->Assemble(skip_zeros);
+  bnn1->Finalize(skip_zeros);
 
+  constexpr auto MatTypeEpsReal = MaterialPropertyType::PERMITTIVITY_REAL;
   NormalProjectedCoefficient epsilon_func(
-      std::make_unique<
-          MaterialPropertyCoefficient<MaterialPropertyType::PERMITTIVITY_REAL>>(mat_op));
-  mfem::ParBilinearForm bnn2r(&h1_fespace);
-  bnn2r.AddBoundaryIntegrator(new mfem::MixedScalarMassIntegrator(epsilon_func),
-                              attr_marker);
-  // bnn2r.SetAssemblyLevel(mfem::AssemblyLevel::FULL);
-  bnn2r.Assemble(skip_zeros);
-  bnn2r.Finalize(skip_zeros);
+      std::make_unique<MaterialPropertyCoefficient<MatTypeEpsReal, ElemType>>(mat_op));
+  auto bnn2r = std::make_unique<mfem::SymmetricBilinearForm>(&h1_fespace);
+  bnn2r->AddDomainIntegrator(new mfem::MixedScalarMassIntegrator(epsilon_func));
+  bnn2r->SetAssemblyLevel(mfem::AssemblyLevel::LEGACY);
+  bnn2r->Assemble(skip_zeros);
+  bnn2r->Finalize(skip_zeros);
 
-  // Contribution for loss tangent: ε => ε * (1 - i tan(δ)).
-  if (mat_op.HasLossTangent())
-  {
-    NormalProjectedCoefficient negepstandelta_func(
-        std::make_unique<
-            MaterialPropertyCoefficient<MaterialPropertyType::PERMITTIVITY_IMAG>>(mat_op));
-    mfem::ParBilinearForm bnn2i(&h1_fespace);
-    bnn2i.AddBoundaryIntegrator(new mfem::MixedScalarMassIntegrator(negepstandelta_func),
-                                attr_marker);
-    // bnn2i.SetAssemblyLevel(mfem::AssemblyLevel::FULL);
-    bnn2i.Assemble(skip_zeros);
-    bnn2i.Finalize(skip_zeros);
-    return {*bnn1.ParallelAssemble(), *bnn2r.ParallelAssemble(), *bnn2i.ParallelAssemble()};
-  }
-  else
-  {
-    return {*bnn1.ParallelAssemble(), *bnn2r.ParallelAssemble()};
-  }
-}
-
-struct Att
-{
-  mfem::HypreParMatrix Att1;
-  mfem::HypreParMatrix Att2r;
-  std::optional<mfem::HypreParMatrix> Att2i;
-};
-
-inline Att GetAtt(const MaterialOperator &mat_op, mfem::ParFiniteElementSpace &nd_fespace,
-                  mfem::Array<int> &attr_marker)
-{
-  // Stiffness matrix: Aₜₜ = (μ⁻¹ ∇ₜ x u, ∇ₜ x v) - ω² (ε u, v) = Aₜₜ₁ - ω² Aₜₜ₂.
-  NormalProjectedCoefficient muinv_func(
-      std::make_unique<MaterialPropertyCoefficient<MaterialPropertyType::INV_PERMEABILITY>>(
-          mat_op));
-  mfem::ParBilinearForm att1(&nd_fespace);
-  att1.AddBoundaryIntegrator(new mfem::CurlCurlIntegrator(muinv_func), attr_marker);
-  // att1.SetAssemblyLevel(mfem::AssemblyLevel::FULL);
-  att1.Assemble(skip_zeros);
-  att1.Finalize(skip_zeros);
-
-  MaterialPropertyCoefficient<MaterialPropertyType::PERMITTIVITY_REAL> epsilon_func(mat_op);
-  mfem::ParBilinearForm att2r(&nd_fespace);
-  att2r.AddBoundaryIntegrator(new mfem::MixedVectorMassIntegrator(epsilon_func),
-                              attr_marker);
-  // att2r.SetAssemblyLevel(mfem::AssemblyLevel::FULL);
-  att2r.Assemble(skip_zeros);
-  att2r.Finalize(skip_zeros);
-
-  // Contribution for loss tangent: ε => ε * (1 - i tan(δ)).
+  // Contribution for loss tangent: ε -> ε * (1 - i tan(δ)).
   if (!mat_op.HasLossTangent())
   {
-    return {*att1.ParallelAssemble(), *att2r.ParallelAssemble()};
+    return {std::make_unique<ParOperator>(std::move(bnn1), h1_fespace),
+            std::make_unique<ParOperator>(std::move(bnn2r), h1_fespace), nullptr};
   }
-  MaterialPropertyCoefficient<MaterialPropertyType::PERMITTIVITY_IMAG> negepstandelta_func(
-      mat_op);
-  mfem::ParBilinearForm att2i(&nd_fespace);
-  att2i.AddBoundaryIntegrator(new mfem::MixedVectorMassIntegrator(negepstandelta_func),
-                              attr_marker);
-  // att2i.SetAssemblyLevel(mfem::AssemblyLevel::FULL);
-  att2i.Assemble(skip_zeros);
-  att2i.Finalize(skip_zeros);
-  return {*att1.ParallelAssemble(), *att2r.ParallelAssemble(), *att2i.ParallelAssemble()};
+  constexpr auto MatTypeEpsImag = MaterialPropertyType::PERMITTIVITY_IMAG;
+  NormalProjectedCoefficient negepstandelta_func(
+      std::make_unique<MaterialPropertyCoefficient<MatTypeEpsImag, ElemType>>(mat_op));
+  auto bnn2i = std::make_unique<mfem::SymmetricBilinearForm>(&h1_fespace);
+  bnn2i->AddDomainIntegrator(new mfem::MixedScalarMassIntegrator(negepstandelta_func));
+  bnn2i->SetAssemblyLevel(mfem::AssemblyLevel::LEGACY);
+  bnn2i->Assemble(skip_zeros);
+  bnn2i->Finalize(skip_zeros);
+  return {std::make_unique<ParOperator>(std::move(bnn1), h1_fespace),
+          std::make_unique<ParOperator>(std::move(bnn2r), h1_fespace),
+          std::make_unique<ParOperator>(std::move(bnn2i), h1_fespace)};
 }
 
-inline mfem::HypreParMatrix GetZ(mfem::ParFiniteElementSpace &fespace)
+std::array<std::unique_ptr<ParOperator>, 3> GetAtt(const MaterialOperator &mat_op,
+                                                   mfem::ParFiniteElementSpace &nd_fespace)
 {
-  // Zero matrix on ND or H1 space dofs.
-  mfem::ParBilinearForm z(&fespace);
-  // z.SetAssemblyLevel(mfem::AssemblyLevel::FULL);
-  z.Assemble(skip_zeros);
-  z.Finalize(skip_zeros);
-  return *z.ParallelAssemble();
+  // Stiffness matrix: Aₜₜ = (μ⁻¹ ∇ₜ x u, ∇ₜ x v) - ω² (ε u, v) = Aₜₜ₁ - ω² Aₜₜ₂.
+  constexpr auto MatTypeMuInv = MaterialPropertyType::INV_PERMEABILITY;
+  constexpr auto ElemType = MeshElementType::BDR_SUBMESH;
+  NormalProjectedCoefficient muinv_func(
+      std::make_unique<MaterialPropertyCoefficient<MatTypeMuInv, ElemType>>(mat_op));
+  auto att1 = std::make_unique<mfem::SymmetricBilinearForm>(&nd_fespace);
+  att1->AddDomainIntegrator(new mfem::CurlCurlIntegrator(muinv_func));
+  att1->SetAssemblyLevel(mfem::AssemblyLevel::LEGACY);
+  att1->Assemble(skip_zeros);
+  att1->Finalize(skip_zeros);
+
+  constexpr auto MatTypeEpsReal = MaterialPropertyType::PERMITTIVITY_REAL;
+  MaterialPropertyCoefficient<MatTypeEpsReal, ElemType> epsilon_func(mat_op);
+  auto att2r = std::make_unique<mfem::SymmetricBilinearForm>(&nd_fespace);
+  att2r->AddDomainIntegrator(new mfem::MixedVectorMassIntegrator(epsilon_func));
+  att2r->SetAssemblyLevel(mfem::AssemblyLevel::LEGACY);
+  att2r->Assemble(skip_zeros);
+  att2r->Finalize(skip_zeros);
+
+  // Contribution for loss tangent: ε -> ε * (1 - i tan(δ)).
+  if (!mat_op.HasLossTangent())
+  {
+    return {std::make_unique<ParOperator>(std::move(att1), nd_fespace),
+            std::make_unique<ParOperator>(std::move(att2r), nd_fespace), nullptr};
+  }
+  constexpr auto MatTypeEpsImag = MaterialPropertyType::PERMITTIVITY_IMAG;
+  MaterialPropertyCoefficient<MatTypeEpsImag, ElemType> negepstandelta_func(mat_op);
+  auto att2i = std::make_unique<mfem::SymmetricBilinearForm>(&nd_fespace);
+  att2i->AddDomainIntegrator(new mfem::MixedVectorMassIntegrator(negepstandelta_func));
+  att2i->SetAssemblyLevel(mfem::AssemblyLevel::LEGACY);
+  att2i->Assemble(skip_zeros);
+  att2i->Finalize(skip_zeros);
+  return {std::make_unique<ParOperator>(std::move(att1), nd_fespace),
+          std::make_unique<ParOperator>(std::move(att2r), nd_fespace),
+          std::make_unique<ParOperator>(std::move(att2i), nd_fespace)};
 }
 
-struct SystemMatrices
+std::array<std::unique_ptr<mfem::HypreParMatrix>, 6>
+GetSystemMatrices(std::unique_ptr<ParOperator> Btt, std::unique_ptr<ParOperator> Btn,
+                  std::unique_ptr<ParOperator> Bnn1, std::unique_ptr<ParOperator> Bnn2r,
+                  std::unique_ptr<ParOperator> Bnn2i, std::unique_ptr<ParOperator> Att1,
+                  std::unique_ptr<ParOperator> Att2r, std::unique_ptr<ParOperator> Att2i,
+                  const mfem::Array<int> &nd_dbc_tdof_list,
+                  const mfem::Array<int> &h1_dbc_tdof_list)
 {
-  petsc::PetscParMatrix A1;
-  petsc::PetscParMatrix A2;
-  petsc::PetscParMatrix B3;
-  petsc::PetscParMatrix B4;
-};
+  // Construct the 2x2 block matrices for the eigenvalue problem A e = λ B e. We pre-compute
+  // the matrices such that:
+  //              A = A₁ - ω² A₂, B = A₁ - ω² A₂ + 1/Θ² B₃ - ω²/Θ² B₄.
+  std::unique_ptr<mfem::HypreParMatrix> BtnT(Btn->ParallelAssemble().Transpose());
 
-SystemMatrices
-GetSystemMatrices(const mfem::HypreParMatrix &Att1, const mfem::HypreParMatrix &Att2r,
-                  const std::optional<mfem::HypreParMatrix> &Att2i,
-                  const mfem::HypreParMatrix &Btt, const mfem::HypreParMatrix &Btn,
-                  const mfem::HypreParMatrix &Bnn1, const mfem::HypreParMatrix &Bnn2r,
-                  const std::optional<mfem::HypreParMatrix> &Bnn2i,
-                  const mfem::HypreParMatrix &Ztt, const mfem::HypreParMatrix &Znn,
-                  const mfem::Array<int> &nd_tdof_list,
-                  const mfem::Array<int> &h1_tdof_list, int nd_tdof_offset)
-{
-  // Construct the 2x2 block matrices for the eigenvalue problem. We pre- compute the
-  // eigenvalue problem matrices such that:
-  //              A = A₁ - ω² A₂, B = A + 1/Θ² B₃ - ω²/Θ² B₄.
-  mfem::Array2D<const mfem::HypreParMatrix *> blocks(2, 2);
-  blocks(0, 0) = &Btt;
-  blocks(0, 1) = &Btn;
-  blocks(1, 0) = Btn.Transpose();
-  blocks(1, 1) = &Bnn1;
-  std::unique_ptr<mfem::HypreParMatrix> hA1s(mfem::HypreParMatrixFromBlocks(blocks));
-  auto A1s = petsc::PetscAijMatrix(*hA1s);
+  mfem::Array2D<mfem::HypreParMatrix *> blocks(2, 2);
+  blocks(0, 0) = &Btt->ParallelAssemble();
+  blocks(0, 1) = &Btn->ParallelAssemble();
+  blocks(1, 0) = BtnT.get();
+  blocks(1, 1) = &Bnn1->ParallelAssemble();
+  std::unique_ptr<mfem::HypreParMatrix> A1(mfem::HypreParMatrixFromBlocks(blocks));
+
+  auto &Ztt = Btt->ParallelAssemble();
+  Ztt *= 0.0;
 
   blocks = nullptr;
   blocks(0, 0) = &Ztt;
-  blocks(1, 1) = &Bnn2r;
-  std::unique_ptr<mfem::HypreParMatrix> hA2r(mfem::HypreParMatrixFromBlocks(blocks));
-  auto A2s = [&]()
+  blocks(1, 1) = &Bnn2r->ParallelAssemble();
+  std::unique_ptr<mfem::HypreParMatrix> A2r(mfem::HypreParMatrixFromBlocks(blocks));
+
+  std::unique_ptr<mfem::HypreParMatrix> A2i;
+  if (Bnn2i)
   {
-    if (!Bnn2i)
-    {
-      return petsc::PetscAijMatrix(*hA2r);
-    }
-    blocks(1, 1) = &*Bnn2i;
-    std::unique_ptr<mfem::HypreParMatrix> hA2i(mfem::HypreParMatrixFromBlocks(blocks));
-    return petsc::PetscAijMatrix(*hA2r, *hA2i);
-  }();
+    blocks(1, 1) = &Bnn2i->ParallelAssemble();
+    A2i.reset(mfem::HypreParMatrixFromBlocks(blocks));
+  }
+
+  auto &Znn = Bnn1->ParallelAssemble();
+  Znn *= 0.0;
 
   blocks = nullptr;
-  blocks(0, 0) = &Att1;
+  blocks(0, 0) = &Att1->ParallelAssemble();
   blocks(1, 1) = &Znn;
-  std::unique_ptr<mfem::HypreParMatrix> hB3s(mfem::HypreParMatrixFromBlocks(blocks));
-  auto B3s = petsc::PetscAijMatrix(*hB3s);
+  std::unique_ptr<mfem::HypreParMatrix> B3(mfem::HypreParMatrixFromBlocks(blocks));
 
-  blocks = nullptr;
-  blocks(0, 0) = &Att2r;
+  blocks(0, 0) = &Att2r->ParallelAssemble();
   blocks(1, 1) = &Znn;
-  std::unique_ptr<mfem::HypreParMatrix> hB4r(mfem::HypreParMatrixFromBlocks(blocks));
-  auto B4s = [&]()
-  {
-    if (!Att2i)
-    {
-      return petsc::PetscAijMatrix(*hB4r);
-    }
-    blocks(0, 0) = &*Att2i;
-    std::unique_ptr<mfem::HypreParMatrix> hB4i(mfem::HypreParMatrixFromBlocks(blocks));
-    return petsc::PetscAijMatrix(*hB4r, *hB4i);
-  }();
+  std::unique_ptr<mfem::HypreParMatrix> B4r(mfem::HypreParMatrixFromBlocks(blocks));
 
-  // Consolidate list of local ND and H1 tdofs before extracting the respective submatrices.
-  // The matrix is still distributed over the same number of processors, though some are
-  // empty (PETSc handles this).
-  mfem::Array<int> tdof_list;
-  tdof_list.Reserve(nd_tdof_list.Size() + h1_tdof_list.Size());
-  for (auto tdof : nd_tdof_list)
+  std::unique_ptr<mfem::HypreParMatrix> B4i;
+  if (Att2i)
   {
-    tdof_list.Append(tdof);
+    blocks(0, 0) = &Att2i->ParallelAssemble();
+    B4i.reset(mfem::HypreParMatrixFromBlocks(blocks));
   }
-  for (auto tdof : h1_tdof_list)
+
+  // Eliminate boundary true dofs not associated with this wave port or constrained by
+  // Dirichlet BCs. It is not guaranteed that any HypreParMatrix has a full diagonal in its
+  // sparsity pattern, so we add a zero diagonal before elimination to guarantee this for A1
+  // and B3.
+  mfem::Array<int> dbc_tdof_list;
+  int nd_tdof_offset = Btt->Height();
+  dbc_tdof_list.Reserve(nd_dbc_tdof_list.Size() + h1_dbc_tdof_list.Size());
+  for (auto tdof : nd_dbc_tdof_list)
   {
-    tdof_list.Append(tdof + nd_tdof_offset);
+    dbc_tdof_list.Append(tdof);
   }
-  return {*A1s.GetSubMatrix(tdof_list, tdof_list), *A2s.GetSubMatrix(tdof_list, tdof_list),
-          *B3s.GetSubMatrix(tdof_list, tdof_list), *B4s.GetSubMatrix(tdof_list, tdof_list)};
+  for (auto tdof : h1_dbc_tdof_list)
+  {
+    dbc_tdof_list.Append(tdof + nd_tdof_offset);
+  }
+
+  mfem::Vector d(B3->Height());
+  d = 0.0;
+  mfem::SparseMatrix diag(d);
+  mfem::HypreParMatrix Diag(B3->GetComm(), B3->GetGlobalNumRows(), B3->GetRowStarts(),
+                            &diag);
+  A1.reset(mfem::Add(1.0, *A1, 1.0, Diag));
+  B3.reset(mfem::Add(1.0, *B3, 1.0, Diag));
+
+  A1->EliminateBC(dbc_tdof_list, Operator::DIAG_ZERO);
+  A2r->EliminateBC(dbc_tdof_list, Operator::DIAG_ZERO);
+  if (A2i)
+  {
+    A2i->EliminateBC(dbc_tdof_list, Operator::DIAG_ZERO);
+  }
+  B3->EliminateBC(dbc_tdof_list, Operator::DIAG_ONE);
+  B4r->EliminateBC(dbc_tdof_list, Operator::DIAG_ZERO);
+  if (B4i)
+  {
+    B4i->EliminateBC(dbc_tdof_list, Operator::DIAG_ZERO);
+  }
+
+  return {std::move(A1), std::move(A2r), std::move(A2i),
+          std::move(B3), std::move(B4r), std::move(B4i)};
 }
 
-}  // namespace
+void GetInitialSpace(mfem::ParFiniteElementSpace &nd_fespace,
+                     mfem::ParFiniteElementSpace &h1_fespace,
+                     const mfem::Array<int> &nd_dbc_tdof_list,
+                     const mfem::Array<int> &h1_dbc_tdof_list, ComplexVector &v)
+{
+  // Initial space chosen as such that B v₀ = y₀, with y₀ = [y₀ₜ, 0, ... 0]ᵀ ⟂ null(A)
+  // (with Aₜₜ nonsingular). See Lee, Sun, and Cendes, 1991 for reference.
+  // Note: When the eigenvalue solver uses a standard ℓ²-inner product instead of B-inner
+  // product (since we use a general non-Hermitian solver due to complex symmetric B), then
+  // we just use v0 = y0 directly.
+  v.SetSize(nd_fespace.GetTrueVSize() + h1_fespace.GetTrueVSize());
+  // linalg::SetRandomReal(nd_fespace.GetComm(), v);
+  v = std::complex<double>(1.0, 0.0);
+  linalg::SetSubVector(v, nd_dbc_tdof_list, 0.0);
+  for (int i = nd_fespace.GetTrueVSize();
+       i < nd_fespace.GetTrueVSize() + h1_fespace.GetTrueVSize(); i++)
+  {
+    v.Real()[i] = v.Imag()[i] = 0.0;
+  }
+}
+
+void NormalizeWithSign(const mfem::ParGridFunction &S0t, mfem::ParComplexGridFunction &E0t,
+                       mfem::ParComplexGridFunction &E0n, mfem::LinearForm &sr,
+                       mfem::LinearForm &si)
+{
+  // Normalize grid functions to a chosen polarization direction and unit power, |E x H⋆| ⋅
+  // n, integrated over the port surface (+n is the direction of propagation). The n x H
+  // coefficients are updated implicitly as the only store references to the Et, En grid
+  // functions as well as kₙ, ω. We choose a (rather arbitrary) sign constraint to at least
+  // make results for the same port consistent between frequencies/meshes.
+  sr = 0.0;
+  si = 0.0;
+  sr.Assemble();
+  si.Assemble();
+
+  // |E x H⋆| ⋅ n = |E ⋅ (-n x H⋆)|
+  double sign = sr * S0t;
+  std::complex<double> dot(-(sr * E0t.real()) - (si * E0t.imag()),
+                           -(sr * E0t.imag()) + (si * E0t.real()));
+  std::array<double, 3> data = {sign, dot.real(), dot.imag()};
+  Mpi::GlobalSum(3, data.data(), S0t.ParFESpace()->GetComm());
+  sign = (data[0] < 0.0) ? -1.0 : 1.0;
+  dot = {data[1], data[2]};
+
+  double scale = sign / std::sqrt(std::abs(dot));
+  E0t.real() *= scale;  // Updates the n x H coefficients depending on Et, En too
+  E0t.imag() *= scale;
+  E0n.real() *= scale;
+  E0n.imag() *= scale;
+  sr *= scale;  // Update linear forms for postprocessing
+  si *= scale;
+
+  // This parallel communication is not required since wave port boundaries are true
+  // one-sided boundaries.
+  // port_E0t->real().ExchangeFaceNbrData();  // Ready for parallel comm on shared faces
+  // port_E0t->imag().ExchangeFaceNbrData();  // for n x H coefficients evaluation
+  // port_E0n->real().ExchangeFaceNbrData();
+  // port_E0n->imag().ExchangeFaceNbrData();
+}
 
 // Computes boundary modal n x H, where +n is the direction of wave propagation: n x H =
 // -1/(iωμ) (ikₙ Eₜ + ∇ₜ Eₙ), using the tangential and normal electric field component grid
@@ -244,74 +350,121 @@ GetSystemMatrices(const mfem::HypreParMatrix &Att1, const mfem::HypreParMatrix &
 // grid function is to be dotted with a function E which is only in the tangential
 // component, so the fact that we use the full ∇ Eₙ in the element is fine. We use only the
 // real part of kn.
-class BdrHVectorCoefficient : public mfem::VectorCoefficient
+template <bool RealPart>
+class BdrSubmeshHVectorCoefficient : public mfem::VectorCoefficient
 {
 private:
-  const mfem::ParComplexGridFunction &gridfunc_t, &gridfunc_n;
+  const mfem::ParComplexGridFunction &Et, &En;
   const MaterialOperator &mat_op;
-  const bool imaginary;
+
+  mfem::ParSubMesh &submesh;
+  const mfem::ParMesh &parent;
+  std::unordered_map<int, int> submesh_elem_ids;
+
   std::complex<double> kn;
   double omega;
 
-public:
-  BdrHVectorCoefficient(const mfem::ParComplexGridFunction &Et,
-                        const mfem::ParComplexGridFunction &En, const MaterialOperator &op,
-                        bool imag)
-    : mfem::VectorCoefficient(Et.ParFESpace()->GetParMesh()->SpaceDimension()),
-      gridfunc_t(Et), gridfunc_n(En), mat_op(op), imaginary(imag), kn(0.0), omega(0.0)
+  mfem::ParSubMesh &GetSubMesh(mfem::ParMesh &mesh)
   {
+    MFEM_ASSERT(
+        mfem::ParSubMesh::IsParSubMesh(&mesh),
+        "BdrSubmeshHVectorCoefficient requires the input grid function coefficients "
+        "to be defined on a SubMesh!");
+    mfem::ParSubMesh &submesh = *static_cast<mfem::ParSubMesh *>(&mesh);
+    MFEM_ASSERT(submesh.GetFrom() == mfem::SubMesh::From::Boundary,
+                "BdrSubmeshHVectorCoefficient requires a SubMesh created using "
+                "CreateFromBoundary!");
+    return submesh;
+  }
+
+public:
+  BdrSubmeshHVectorCoefficient(const mfem::ParComplexGridFunction &Et,
+                               const mfem::ParComplexGridFunction &En,
+                               const MaterialOperator &mat_op)
+    : mfem::VectorCoefficient(Et.ParFESpace()->GetParMesh()->SpaceDimension()), Et(Et),
+      En(En), mat_op(mat_op), submesh(GetSubMesh(*Et.ParFESpace()->GetParMesh())),
+      parent(*submesh.GetParent()), kn(0.0), omega(0.0)
+  {
+    // Construct mapping from parent (boundary) element indices to submesh (domain)
+    // elements.
+    const mfem::Array<int> &parent_element_ids = submesh.GetParentElementIDMap();
+    for (int i = 0; i < parent_element_ids.Size(); i++)
+    {
+      submesh_elem_ids[parent_element_ids[i]] = i;
+    }
   }
 
   void Eval(mfem::Vector &V, mfem::ElementTransformation &T,
             const mfem::IntegrationPoint &ip) override
   {
-    MFEM_VERIFY(T.ElementType == mfem::ElementTransformation::BDR_ELEMENT,
-                "Unexpected element type in BdrHVectorCoefficient!");
-    MFEM_VERIFY(gridfunc_t.ParFESpace()->GetParMesh() == T.mesh &&
-                    gridfunc_n.ParFESpace()->GetParMesh() == T.mesh,
-                "Invalid mesh for BdrHVectorCoefficient!");
-
-    // This coefficient is only to be used on true exterior boundaries.
-    int i, o;
-    int iel1, iel2, info1, info2;
-    const mfem::Mesh &mesh = *T.mesh;
-    mesh.GetBdrElementFace(T.ElementNo, &i, &o);
-    mesh.GetFaceElements(i, &iel1, &iel2);
-    mesh.GetFaceInfos(i, &info1, &info2);
-    if (info2 >= 0)
+    mfem::ElementTransformation *submesh_T = nullptr;
+    int attr = 0;
+    if (T.mesh == &parent)
     {
-      // Just return for an non-true boundary face.
-      V.SetSize(vdim);
-      V = 0.0;
-      return;
+      MFEM_ASSERT(T.ElementType == mfem::ElementTransformation::BDR_ELEMENT,
+                  "BdrSubmeshHVectorCoefficient requires ElementType::BDR_ELEMENT when not "
+                  "used on a SubMesh!");
+      auto it = submesh_elem_ids.find(T.ElementNo);
+      if (it == submesh_elem_ids.end())
+      {
+        // Just return zero for a boundary face not in the submesh.
+        V.SetSize(vdim);
+        V = 0.0;
+        return;
+      }
+      else
+      {
+        submesh_T = submesh.GetElementTransformation(it->second);
+      }
+
+      int i, o, iel1, iel2;
+      parent.GetBdrElementFace(T.ElementNo, &i, &o);
+      parent.GetFaceElements(i, &iel1, &iel2);
+      attr = parent.GetAttribute(iel1);
     }
-
-    // Compute Re/Im{-1/i (ikₙ Eₜ + ∇ₜ Eₙ)}.
-    T.SetIntPoint(&ip);
-    if (imaginary)
+    else if (T.mesh == &submesh)
     {
-      gridfunc_t.imag().GetVectorValue(T, ip, V);
-      V *= -kn.real();
+      MFEM_ASSERT(T.ElementType == mfem::ElementTransformation::ELEMENT,
+                  "BdrSubmeshHVectorCoefficient requires ElementType::ELEMENT when used on "
+                  "a SubMesh!");
+      submesh_T = &T;
 
-      mfem::Vector Vn;
-      gridfunc_n.real().GetGradient(T, Vn);
-      V += Vn;
+      int i, o, iel1, iel2;
+      parent.GetBdrElementFace(submesh.GetParentElementIDMap()[T.ElementNo], &i, &o);
+      parent.GetFaceElements(i, &iel1, &iel2);
+      attr = parent.GetAttribute(iel1);
     }
     else
     {
-      gridfunc_t.real().GetVectorValue(T, ip, V);
-      V *= -kn.real();
+      MFEM_ABORT("Invalid use of BdrSubmeshHVectorCoefficient on an unrecognized mesh!");
+    }
 
-      mfem::Vector Vn;
-      gridfunc_n.imag().GetGradient(T, Vn);
-      V -= Vn;
+    // Compute Re/Im{-1/i (ikₙ Eₜ + ∇ₜ Eₙ)}.
+    mfem::Vector U;
+    submesh_T->SetIntPoint(&ip);
+    if constexpr (RealPart)
+    {
+      Et.real().GetVectorValue(*submesh_T, ip, U);
+      U *= -kn.real();
+
+      mfem::Vector dU;
+      En.imag().GetGradient(*submesh_T, dU);
+      U -= dU;
+    }
+    else
+    {
+      Et.imag().GetVectorValue(*submesh_T, ip, U);
+      U *= -kn.real();
+
+      mfem::Vector dU;
+      En.real().GetGradient(*submesh_T, dU);
+      U += dU;
     }
 
     // Scale by 1/(ωμ) with μ evaluated in the neighboring element.
-    mfem::Vector t(V.Size());
+    V.SetSize(U.Size());
+    mat_op.GetInvPermeability(attr).Mult(U, V);
     V *= (1.0 / omega);
-    mat_op.GetInvPermeability(mesh.GetAttribute(iel1)).Mult(V, t);
-    V = std::move(t);
   }
 
   void SetFrequency(double w, std::complex<double> k)
@@ -321,17 +474,52 @@ public:
   }
 };
 
+}  // namespace
+
 WavePortData::WavePortData(const config::WavePortData &data, const MaterialOperator &mat_op,
-                           const mfem::Array<int> &dbc_marker,
                            mfem::ParFiniteElementSpace &nd_fespace,
-                           mfem::ParFiniteElementSpace &h1_fespace)
+                           mfem::ParFiniteElementSpace &h1_fespace,
+                           const mfem::Array<int> &dbc_marker)
 {
   excitation = data.excitation;
   mode_idx = data.mode_idx;
   d_offset = data.d_offset;
+
+  // Construct the SubMesh.
   MFEM_VERIFY(!data.attributes.empty(), "Wave port boundary found with no attributes!");
-  mesh::AttrToMarker(nd_fespace.GetParMesh()->bdr_attributes.Max(), data.attributes,
-                     attr_marker);
+  mfem::ParMesh &mesh = *nd_fespace.GetParMesh();
+  attr_list.Reserve(data.attributes.size());
+  for (auto attr : data.attributes)
+  {
+    attr_list.Append(attr);
+  }
+  mesh::AttrToMarker(nd_fespace.GetParMesh()->bdr_attributes.Max(), attr_list, attr_marker);
+  port_mesh = std::make_unique<mfem::ParSubMesh>(
+      mfem::ParSubMesh::CreateFromBoundary(mesh, attr_list));
+
+  int p_nd = nd_fespace.GetMaxElementOrder();
+  int p_h1 = h1_fespace.GetMaxElementOrder();
+  port_nd_fec = std::make_unique<mfem::ND_FECollection>(p_nd, mesh.Dimension() - 1);
+  port_h1_fec = std::make_unique<mfem::H1_FECollection>(p_h1, mesh.Dimension() - 1);
+  port_nd_fespace =
+      std::make_unique<mfem::ParFiniteElementSpace>(port_mesh.get(), port_nd_fec.get());
+  port_h1_fespace =
+      std::make_unique<mfem::ParFiniteElementSpace>(port_mesh.get(), port_h1_fec.get());
+
+  mfem::ParGridFunction E0t(&nd_fespace), E0n(&h1_fespace);
+  port_E0t = std::make_unique<mfem::ParComplexGridFunction>(port_nd_fespace.get());
+  port_E0n = std::make_unique<mfem::ParComplexGridFunction>(port_h1_fespace.get());
+
+  port_nd_transfer = std::make_unique<mfem::ParTransferMap>(
+      mfem::ParSubMesh::CreateTransferMap(E0t, port_E0t->real()));
+  port_h1_transfer = std::make_unique<mfem::ParTransferMap>(
+      mfem::ParSubMesh::CreateTransferMap(E0n, port_E0n->real()));
+
+  // Extract Dirichlet BC true dofs for the port FE spaces.
+  mfem::Array<int> port_nd_dbc_tdof_list, port_h1_dbc_tdof_list;
+  GetEssentialTrueDofs(E0t, E0n, port_E0t->real(), port_E0n->real(), *port_nd_transfer,
+                       *port_h1_transfer, dbc_marker, port_nd_dbc_tdof_list,
+                       port_h1_dbc_tdof_list);
 
   // Construct operators for the generalized eigenvalue problem:
   //                [Aₜₜ  0] [eₜ]  = -kₙ² [Bₜₜ   Bₜₙ] [eₜ]
@@ -340,271 +528,263 @@ WavePortData::WavePortData(const config::WavePortData &data, const MaterialOpera
   // field by Eₜ = eₜ/kₙ and Eₙ = ieₙ. This is solved on the global mesh so the result is a
   // grid function over the entire space, not just the port boundary (so that it can be
   // queried from functions which use the global mesh).
-  GetTrueDofs(dbc_marker, nd_fespace, h1_fespace, nd_attr_tdof_list, h1_attr_tdof_list);
-
-  // Construct the system matrices. We will actually solve the shifted problem:
-  //                [Bₜₜ   Bₜₙ]  [eₜ]  =  λ [Bₜₜ + 1/Θ² Aₜₜ  Bₜₙ] [eₜ]
-  //                [Bₜₙᵀ  Bₙₙ] [eₙ]       [Bₜₙᵀ          Bₙₙ] [eₙ]
-  // (see Lee, Sun, and Cendes, 1991). Here we have λ = Θ²/(Θ²-kₙ²), where Θ² bounds the
-  // maximum kₙ² and is taken as ω² μₘₐₓ εₘₐₓ over the entire simulation domain.
-  double cmin = mfem::infinity();
-  for (auto attr : nd_fespace.GetParMesh()->attributes)
+  //
+  // We will actually solve the shifted problem A e = λ B e, where:
+  //                [Bₜₜ   Bₜₙ] [eₜ]   =  λ [Bₜₜ + 1/Θ² Aₜₜ  Bₜₙ] [eₜ]
+  //                [Bₜₙᵀ  Bₙₙ] [eₙ]       [Bₜₙᵀ          Bₙₙ] [eₙ] .
+  // Here we have λ = Θ²/(Θ²-kₙ²), where Θ² bounds the maximum kₙ² and is taken as Θ² =
+  // ω² μₘₐₓ εₘₐₓ over the entire simulation domain.
+  // Reference: Lee, Sun, and Cendes, Full-wave analysis of dielectric waveguides using
+  //            tangential vector finite elements, IEEE Trans. Microwave Theory Tech.
+  //            (1991).
+  double c_min = mfem::infinity();
+  for (auto attr : mesh.attributes)
   {
-    double s = mat_op.GetLightSpeedMin(attr);
-    if (s < cmin)
-    {
-      cmin = s;
-    }
+    c_min = std::min(c_min, mat_op.GetLightSpeedMin(attr));
   }
-  MFEM_VERIFY(cmin > 0.0, "Invalid material speed of light detected in WavePortOperator!");
-  muepsmax = 1.0 / (cmin * cmin);
+  MFEM_VERIFY(c_min > 0.0 && c_min < mfem::infinity(),
+              "Invalid material speed of light detected in WavePortOperator!");
+  mu_eps_max = 1.0 / (c_min * c_min);
 
   // Pre-compute problem matrices such that:
-  //                A = A₁ - ω² A₂, B = A + 1/Θ² B₃ - ω²/Θ² B₄.
-  // First, create parallel objects and then gather to matrices and vectors to root.
+  //            A = A₁ - ω² A₂, B = A₁ - 1 / (μₘ εₘ) B₄ - ω² A₂ + 1/Θ² B₃ .
   {
-    const auto &Btt = GetBtt(mat_op, nd_fespace, attr_marker);
-    const auto &Btn = GetBtn(mat_op, nd_fespace, h1_fespace, attr_marker);
-    const auto &[Bnn1, Bnn2r, Bnn2i] = GetBnn(mat_op, h1_fespace, attr_marker);
-    const auto &[Att1, Att2r, Att2i] = GetAtt(mat_op, nd_fespace, attr_marker);
-    const auto &Ztt = GetZ(nd_fespace);
-    const auto &Znn = GetZ(h1_fespace);
-    auto system_mat =
-        GetSystemMatrices(Att1, Att2r, Att2i, Btt, Btn, Bnn1, Bnn2r, Bnn2i, Ztt, Znn,
-                          nd_attr_tdof_list, h1_attr_tdof_list, nd_fespace.GetTrueVSize());
-    A1 = std::make_unique<petsc::PetscParMatrix>(std::move(system_mat.A1));
-    A2 = std::make_unique<petsc::PetscParMatrix>(std::move(system_mat.A2));
-    B3 = std::make_unique<petsc::PetscParMatrix>(std::move(system_mat.B3));
-    B4 = std::make_unique<petsc::PetscParMatrix>(std::move(system_mat.B4));
+    std::unique_ptr<mfem::HypreParMatrix> A1, B4r, B4i;
+    {
+      auto Btt = GetBtt(mat_op, *port_nd_fespace);
+      auto Btn = GetBtn(mat_op, *port_nd_fespace, *port_h1_fespace);
+      auto [Bnn1, Bnn2r, Bnn2i] = GetBnn(mat_op, *port_h1_fespace);
+      auto [Att1, Att2r, Att2i] = GetAtt(mat_op, *port_nd_fespace);
+
+      auto system_mats = GetSystemMatrices(
+          std::move(Btt), std::move(Btn), std::move(Bnn1), std::move(Bnn2r),
+          std::move(Bnn2i), std::move(Att1), std::move(Att2r), std::move(Att2i),
+          port_nd_dbc_tdof_list, port_h1_dbc_tdof_list);
+      A1 = std::move(system_mats[0]);
+      A2r = std::move(system_mats[1]);
+      A2i = std::move(system_mats[2]);
+      B3 = std::move(system_mats[3]);
+      B4r = std::move(system_mats[4]);
+      B4i = std::move(system_mats[5]);
+    }
+
+    // Allocate storage for the eigenvalue problem operators. We have sparsity(A2) =
+    // sparsity(B3) = sparsity(B4) ⊆ sparsity(A1). Precompute the frequency independent
+    // contributions to A and B.
+    P = std::make_unique<ComplexWrapperOperator>(
+        std::make_unique<mfem::HypreParMatrix>(*A1), nullptr);
+    if (A2i)
+    {
+      A = std::make_unique<ComplexWrapperOperator>(
+          std::make_unique<mfem::HypreParMatrix>(*A1),
+          std::make_unique<mfem::HypreParMatrix>(*A2i));
+      B = std::make_unique<ComplexWrapperOperator>(
+          std::make_unique<mfem::HypreParMatrix>(*A1),
+          std::make_unique<mfem::HypreParMatrix>(*A2i));
+
+      auto &Br = *static_cast<mfem::HypreParMatrix *>(B->Real());
+      Br.Add(-1.0 / mu_eps_max, *B4r);
+
+      auto &Ai = *static_cast<mfem::HypreParMatrix *>(A->Imag());
+      auto &Bi = *static_cast<mfem::HypreParMatrix *>(B->Imag());
+      Ai *= 0.0;
+      Bi *= 0.0;
+      Bi.Add(-1.0 / mu_eps_max, *B4i);
+    }
+    else
+    {
+      A = std::make_unique<ComplexWrapperOperator>(
+          std::make_unique<mfem::HypreParMatrix>(*A1), nullptr);
+      B = std::make_unique<ComplexWrapperOperator>(
+          std::make_unique<mfem::HypreParMatrix>(*A1), nullptr);
+
+      auto &Br = *static_cast<mfem::HypreParMatrix *>(B->Real());
+      Br.Add(-1.0 / mu_eps_max, *B4r);
+    }
   }
 
-  // Configure sequential vector and scatter from parallel. The original vector is created
-  // to be compatible with the parallel matrix, and the scatter creates a sequential vector
-  // compatible with the sequential matrix. Then, gather matrices so eigenvalue problem can
-  // be solved sequentially without communication. A1/A2/B3/B4 = nullptr if !root.
-  {
-    bool root = Mpi::Root(A1->GetComm());
-    e = std::make_unique<petsc::PetscParVector>(*A1);
-    scatter =
-        std::make_unique<petsc::PetscScatter>(petsc::PetscScatter::Type::TO_ZERO, *e, e0);
-    A1 = A1->GetSequentialMatrix(root);
-    A2 = A2->GetSequentialMatrix(root);
-    B3 = B3->GetSequentialMatrix(root);
-    B4 = B4->GetSequentialMatrix(root);
-  }
-  if (A1)
-  {
-    // sparsity(A2) ⊆ sparsity(A1), sparsity(B4) ⊆ sparsity(B3) ⊆ sparsity(A)
-    A = std::make_unique<petsc::PetscParMatrix>(*A1);
-    B = std::make_unique<petsc::PetscParMatrix>(*A1);
-    A->SetSymmetric();
-    B->SetSymmetric();
-    A1->SetSymmetric();
-    A2->SetSymmetric();
-    B3->SetSymmetric();
-    B4->SetSymmetric();
-  }
+  // Create vector for initial space for eigenvalue solves (for nullspace of [Aₜₜ  0]
+  //                                                                         [0   0] ).
+  GetInitialSpace(*port_nd_fespace, *port_h1_fespace, port_nd_dbc_tdof_list,
+                  port_h1_dbc_tdof_list, v0);
+  e0.SetSize(v0.Size());
+  e0t.SetSize(port_nd_fespace->GetTrueVSize());
+  e0n.SetSize(port_h1_fespace->GetTrueVSize());
 
-  // Create vector for initial space (initially parallel, then scattered to root).
-  {
-    petsc::PetscParVector y(*e);
-    GetInitialSpace(nd_attr_tdof_list.Size(), h1_attr_tdof_list.Size(), y);
-    y0 = std::make_unique<petsc::PetscParVector>(*e0);
-    scatter->Forward(y, *y0);
-  }
-
-  // Coefficients store references to kₙ, ω so they are updated implicitly at each new
-  // solve. Also, μ⁻¹ is persistent, so no copy is OK.
-  kn0 = 0.0;
-  omega0 = 0.0;
-  E0t = std::make_unique<mfem::ParComplexGridFunction>(&nd_fespace);
-  E0n = std::make_unique<mfem::ParComplexGridFunction>(&h1_fespace);
-  nxH0r_func = std::make_unique<BdrHVectorCoefficient>(*E0t, *E0n, mat_op, false);
-  nxH0i_func = std::make_unique<BdrHVectorCoefficient>(*E0t, *E0n, mat_op, true);
+  // Configure a communicator for the processes which have elements for this port.
+  MPI_Comm comm = nd_fespace.GetComm();
+  int color = (port_nd_fespace->GetVSize() > 0 || port_h1_fespace->GetVSize() > 0)
+                  ? 0
+                  : MPI_UNDEFINED;
+  MPI_Comm_split(comm, color, Mpi::Rank(comm), &port_comm);
+  MFEM_VERIFY((color == 0 && port_comm != MPI_COMM_NULL) ||
+                  (color == MPI_UNDEFINED && port_comm == MPI_COMM_NULL),
+              "Unexpected error splitting communicator for wave port boundaries!");
+  port_root = (color == MPI_UNDEFINED) ? Mpi::Size(comm) : Mpi::Rank(comm);
+  Mpi::GlobalMin(1, &port_root, comm);
+  MFEM_VERIFY(port_root < Mpi::Size(comm), "No root process found for port!");
 
   // Configure the eigenvalue problem solver. As for the full 3D case, the system matrices
   // are in general complex and symmetric. We supply the operators to the solver in
-  // shift-inverted form and handle the back- transformation externally.
-  if (A)
+  // shift-inverted form and handle the back-transformation externally.
+  if (port_comm != MPI_COMM_NULL)
   {
     // Define the linear solver to be used for solving systems associated with the
-    // generalized eigenvalue problem. We use PETSc's sequential sparse solvers.
-    int print = 0;
-    ksp = std::make_unique<KspSolver>(A->GetComm(), print, "port_");
-    ksp->SetType(KspSolver::Type::CHOLESKY);  // Symmetric indefinite factorization
-    ksp->SetOperator(*B);
+    // generalized eigenvalue problem.
+    constexpr int ksp_print = 0;
+    constexpr double ksp_tol = 1.0e-8;
+    constexpr double ksp_max_it = 30;
+    auto gmres = std::make_unique<GmresSolver<ComplexOperator>>(port_comm, ksp_print);
+    gmres->SetInitialGuess(false);
+    gmres->SetRelTol(ksp_tol);
+    gmres->SetMaxIter(ksp_max_it);
+    gmres->SetRestartDim(ksp_max_it);
+    // gmres->SetPrecSide(GmresSolver<ComplexOperator>::PrecSide::RIGHT);
+
+    config::LinearSolverData::Type pc_type;
+#if defined(MFEM_USE_SUPERLU)
+    pc_type = config::LinearSolverData::Type::SUPERLU;
+#elif defined(MFEM_USE_STRUMPACK)
+    pc_type = config::LinearSolverData::Type::STRUMPACK;
+#elif defined(MFEM_USE_MUMPS)
+    pc_type = config::LinearSolverData::Type::MUMPS;
+#else
+#error "Wave port solver requires building with SuperLU_DIST, STRUMPACK, or MUMPS!"
+#endif
+    std::unique_ptr<Solver<ComplexOperator>> pc;
+    if (pc_type == config::LinearSolverData::Type::SUPERLU)
+    {
+#if defined(MFEM_USE_SUPERLU)
+      auto slu = std::make_unique<SuperLUSolver>(
+          port_comm, config::LinearSolverData::SymFactType::DEFAULT, false, ksp_print - 1);
+      // slu->GetSolver().SetColumnPermutation(mfem::superlu::NATURAL);
+      pc = std::make_unique<WrapperSolver<ComplexOperator>>(std::move(slu));
+#endif
+    }
+    else if (pc_type == config::LinearSolverData::Type::STRUMPACK)
+    {
+#if defined(MFEM_USE_STRUMPACK)
+      auto strumpack = std::make_unique<StrumpackSolver>(
+          port_comm, config::LinearSolverData::SymFactType::DEFAULT,
+          config::LinearSolverData::CompressionType::NONE, 0.0, 0, 0, ksp_print - 1);
+      // strumpack->SetReorderingStrategy(strumpack::ReorderingStrategy::NATURAL);
+      pc = std::make_unique<WrapperSolver<ComplexOperator>>(std::move(strumpack));
+#endif
+    }
+    else  // config::LinearSolverData::Type::MUMPS
+    {
+#if defined(MFEM_USE_MUMPS)
+      auto mumps = std::make_unique<MumpsSolver>(
+          port_comm, mfem::MUMPSSolver::SYMMETRIC_INDEFINITE,
+          config::LinearSolverData::SymFactType::DEFAULT, 0.0, ksp_print - 1);
+      // mumps->SetReorderingStrategy(mfem::MUMPSSolver::AMD);
+      pc = std::make_unique<WrapperSolver<ComplexOperator>>(std::move(mumps));
+#endif
+    }
+    ksp = std::make_unique<ComplexKspSolver>(std::move(gmres), std::move(pc));
 
     // Define the eigenvalue solver.
-    config::EigenSolverData::Type type = config::EigenSolverData::Type::DEFAULT;
-#if defined(PALACE_WITH_ARPACK) && defined(PALACE_WITH_SLEPC)
-    if (type == config::EigenSolverData::Type::DEFAULT)
-    {
-      type = config::EigenSolverData::Type::SLEPC;
-    }
-#elif defined(PALACE_WITH_ARPACK)
-    if (type == config::EigenSolverData::Type::SLEPC)
-    {
-      Mpi::Warning("SLEPc eigensolver not available, using ARPACK!\n");
-    }
-    type = config::EigenSolverData::Type::ARPACK;
-#elif defined(PALACE_WITH_SLEPC)
-    if (type == config::EigenSolverData::Type::ARPACK)
-    {
-      Mpi::Warning("ARPACK eigensolver not available, using SLEPc!\n");
-    }
+    constexpr int print = 0;
+    config::EigenSolverData::Type type;
+#if defined(PALACE_WITH_SLEPC)
     type = config::EigenSolverData::Type::SLEPC;
+#elif defined(PALACE_WITH_ARPACK)
+    type = config::EigenSolverData::Type::ARPACK;
 #else
 #error "Wave port solver requires building with ARPACK or SLEPc!"
 #endif
     if (type == config::EigenSolverData::Type::ARPACK)
     {
 #if defined(PALACE_WITH_ARPACK)
-      eigen = std::unique_ptr<EigenSolverBase>(new arpack::ArpackEPSSolver(print));
+      eigen = std::make_unique<arpack::ArpackEPSSolver>(port_comm, print);
 #endif
     }
     else  // config::EigenSolverData::Type::SLEPC
     {
 #if defined(PALACE_WITH_SLEPC)
-      eigen =
-          std::unique_ptr<EigenSolverBase>(new slepc::SlepcEPSSolver(A->GetComm(), print));
-      auto *slepc = dynamic_cast<slepc::SlepcEPSSolver *>(eigen.get());
-      slepc->SetProblemType(slepc::SlepcEigenSolver::ProblemType::GEN_NON_HERMITIAN);
-      slepc->SetType(slepc::SlepcEigenSolver::Type::KRYLOVSCHUR);
+      auto slepc = std::make_unique<slepc::SlepcEPSSolver>(port_comm, print);
+      slepc->SetType(slepc::SlepcEigenvalueSolver::Type::KRYLOVSCHUR);
+      slepc->SetProblemType(slepc::SlepcEigenvalueSolver::ProblemType::GEN_NON_HERMITIAN);
+      eigen = std::move(slepc);
 #endif
     }
     constexpr double tol = 1.0e-6;
-    eigen->SetLinearSolver(*ksp);
-    eigen->SetWhichEigenpairs(EigenSolverBase::WhichType::LARGEST_MAGNITUDE);
     eigen->SetNumModes(mode_idx, std::max(2 * mode_idx + 1, 5));
     eigen->SetTol(tol);
+    eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::LARGEST_MAGNITUDE);
+    eigen->SetLinearSolver(*ksp);
+  }
+
+  // Coefficients store references to kₙ, ω so they are updated implicitly at each new
+  // solve. Also, μ⁻¹ is persistent, so no copy is OK.
+  kn0 = 0.0;
+  omega0 = 0.0;
+  port_nxH0r_func =
+      std::make_unique<BdrSubmeshHVectorCoefficient<true>>(*port_E0t, *port_E0n, mat_op);
+  port_nxH0i_func =
+      std::make_unique<BdrSubmeshHVectorCoefficient<false>>(*port_E0t, *port_E0n, mat_op);
+  port_sr = std::make_unique<mfem::LinearForm>(port_nd_fespace.get());
+  port_si = std::make_unique<mfem::LinearForm>(port_nd_fespace.get());
+  port_sr->AddDomainIntegrator(new VectorFEDomainLFIntegrator(*port_nxH0r_func));
+  port_si->AddDomainIntegrator(new VectorFEDomainLFIntegrator(*port_nxH0i_func));
+  port_sr->UseFastAssembly(false);
+  port_si->UseFastAssembly(false);
+
+  // Configure port mode sign convention: 1ᵀ Re{-n x H} >= 0 on the "upper-right quadrant"
+  // of the wave port boundary, in order to deal with symmetry effectively.
+  {
+    Vector bbmin, bbmax;
+    port_mesh->GetBoundingBox(bbmin, bbmax);
+    const int dim = port_mesh->SpaceDimension();
+
+    double la = 0.0, lb = 0.0;
+    int da = -1, db = -1;
+    for (int d = 0; d < dim; d++)
+    {
+      double diff = bbmax(d) - bbmin(d);
+      if (diff > la)
+      {
+        lb = la;
+        la = diff;
+        db = da;
+        da = d;
+      }
+      else if (diff > lb)
+      {
+        lb = diff;
+        db = d;
+      }
+    }
+    MFEM_VERIFY(da >= 0 && db >= 0 && da != db,
+                "Unexpected wave port geometry for normalization!");
+    double ca = 0.5 * (bbmax[da] + bbmin[da]), cb = 0.5 * (bbmax[db] + bbmin[db]);
+
+    auto TDirection = [da, db, ca, cb, dim](const Vector &x, Vector &f)
+    {
+      MFEM_ASSERT(x.Size() == dim,
+                  "Invalid dimension mismatch for wave port mode normalization!");
+      f.SetSize(dim);
+      if (x[da] >= ca && x[db] >= cb)
+      {
+        f = 1.0;
+      }
+      else
+      {
+        f = 0.0;
+      }
+    };
+    mfem::VectorFunctionCoefficient tfunc(dim, TDirection);
+    port_S0t = std::make_unique<mfem::ParGridFunction>(port_nd_fespace.get());
+    port_S0t->ProjectCoefficient(tfunc);
   }
 }
 
-void WavePortData::GetTrueDofs(const mfem::Array<int> &dbc_marker,
-                               mfem::ParFiniteElementSpace &nd_fespace,
-                               mfem::ParFiniteElementSpace &h1_fespace,
-                               mfem::Array<int> &nd_tdof_list,
-                               mfem::Array<int> &h1_tdof_list)
+WavePortData::~WavePortData()
 {
-  // Ensures no duplicates in the attribute list for this port index (this would imply a
-  // mistake in the configuration file). We can, however, have multiple unique ports with
-  // shared boundary attributes.
-  nd_fespace.GetEssentialTrueDofs(attr_marker, nd_tdof_list);
-  h1_fespace.GetEssentialTrueDofs(attr_marker, h1_tdof_list);
-  int nd_tdofs = nd_tdof_list.Size();
-  int h1_tdofs = h1_tdof_list.Size();
-
-  // Mark all ND and H1 dofs on the port, then unmark PEC boundaries.
-  mfem::Array<int> nd_tdof_marker(nd_fespace.GetTrueVSize()),
-      h1_tdof_marker(h1_fespace.GetTrueVSize()), nd_dbc_tdof_list, h1_dbc_tdof_list;
-  nd_tdof_marker = 0;
-  h1_tdof_marker = 0;
-  nd_fespace.GetEssentialTrueDofs(dbc_marker, nd_dbc_tdof_list);
-  h1_fespace.GetEssentialTrueDofs(dbc_marker, h1_dbc_tdof_list);
-  for (auto tdof : nd_tdof_list)
+  if (port_comm != MPI_COMM_NULL)
   {
-    nd_tdof_marker[tdof] = 1;
+    MPI_Comm_free(&port_comm);
   }
-  for (auto tdof : nd_dbc_tdof_list)
-  {
-    nd_tdof_marker[tdof] = 0;
-  }
-  for (auto tdof : h1_tdof_list)
-  {
-    h1_tdof_marker[tdof] = 1;
-  }
-  for (auto tdof : h1_dbc_tdof_list)
-  {
-    h1_tdof_marker[tdof] = 0;
-  }
-
-  // Convert back to a list.
-  nd_tdof_list.DeleteAll();
-  nd_tdof_list.Reserve(nd_tdofs);
-  for (int i = 0; i < nd_tdof_marker.Size(); i++)
-  {
-    if (nd_tdof_marker[i])
-    {
-      nd_tdof_list.Append(i);
-    }
-  }
-  h1_tdof_list.DeleteAll();
-  h1_tdof_list.Reserve(h1_tdofs);
-  for (int i = 0; i < h1_tdof_marker.Size(); i++)
-  {
-    if (h1_tdof_marker[i])
-    {
-      h1_tdof_list.Append(i);
-    }
-  }
-}
-
-void WavePortData::GetInitialSpace(int nt, int nn, petsc::PetscParVector &y0)
-{
-  // Initial space chosen as such that B v₀ = y₀, with y₀ = [y₀ₜ, 0, ... 0]ᵀ ⟂ null(A)
-  // (with Aₜₜ nonsingular). See Lee, Sun, and Cendes, 1991 for reference.
-  // Note: When the eigenvalue solver uses a standard ℓ²-inner product instead of B-inner
-  // product(since we use a general non-Hermitian solver due to complex symmetric B), then
-  // we just use v0 = y0 directly.
-  MFEM_VERIFY(y0.GetSize() == nt + nn, "Invalid vector size!");
-  y0.SetRandomReal();
-  PetscScalar *py0 = y0.GetArray();
-  // for (int i = 0; i < nt; i++)     { py0[i] = 1.0; }
-  for (int i = nt; i < nt + nn; i++)
-  {
-    py0[i] = 0.0;
-  }
-  y0.RestoreArray(py0);
-}
-
-std::complex<double> WavePortData::Solve(petsc::PetscParVector &y0,
-                                         petsc::PetscParVector &e0,
-                                         petsc::PetscParVector &e,
-                                         petsc::PetscScatter &scatter)
-{
-  double eig[2];
-  if (A)  // Only on root
-  {
-    // The y0 and e0 vectors are still parallel vectors, but with all data on root. We want
-    // true sequential vectors.
-    PetscScalar *pe0 = e0.GetArray();
-    petsc::PetscParVector e0s(e0.GetSize(), pe0);
-
-    // Set starting vector.
-    {
-      PetscScalar *py0 = y0.GetArray();
-      petsc::PetscParVector y0s(y0.GetSize(), py0);
-      eigen->SetInitialSpace(y0s);
-      y0.RestoreArray(py0);
-    }
-
-#if 0
-    // Alternatively, use B-orthogonal initial space. Probably want to call SetBMat for
-    // the eigensolver in this case.
-    {
-      PetscScalar *py0 = y0.GetArray();
-      petsc::PetscParVector y0s(y0.GetSize(), py0);
-      petsc::PetscParVector v0s(y0s);
-      ksp->Mult(y0s, v0s);
-      eigen->SetInitialSpace(v0s);
-      y0.RestoreArray(py0);
-    }
-#endif
-
-    // Solve (operators have been set in constructor).
-    int num_conv = 0;
-    eigen->SetOperators(*A, *B, EigenSolverBase::ScaleType::NONE);
-    num_conv = eigen->Solve();
-    MFEM_VERIFY(num_conv >= mode_idx, "Wave port eigensolver did not converge!");
-    eigen->GetEigenvalue(mode_idx - 1, eig[0], eig[1]);
-    eigen->GetEigenvector(mode_idx - 1, e0s);
-    e0.RestoreArray(pe0);
-  }
-
-  // Scatter the result to all processors.
-  scatter.Reverse(e0, e);
-  Mpi::Broadcast(2, eig, 0, e.GetComm());
-  return {eig[0], eig[1]};
 }
 
 void WavePortData::Initialize(double omega)
@@ -616,121 +796,87 @@ void WavePortData::Initialize(double omega)
 
   // Use pre-computed matrices to construct and solve the generalized eigenvalue problem for
   // the desired wave port mode.
-  double theta2 = muepsmax * omega * omega;
-  if (A)
+  double theta2 = mu_eps_max * omega * omega;
   {
-    MFEM_VERIFY(A1 && A2 && B3 && B4 && A && B,
-                "Boundary mode eigenvalue problem operators uninitialized for solve!");
-    A->Scale(0.0);
-    A->AXPY(1.0, *A1, petsc::PetscParMatrix::NNZStructure::SAME);
-    A->AXPY(-omega * omega, *A2, petsc::PetscParMatrix::NNZStructure::SUBSET);
-    B->Scale(0.0);
-    B->AXPY(1.0, *A, petsc::PetscParMatrix::NNZStructure::SAME);
-    B->AXPY(1.0 / theta2, *B3, petsc::PetscParMatrix::NNZStructure::SUBSET);
-    B->AXPY(-omega * omega / theta2, *B4, petsc::PetscParMatrix::NNZStructure::SUBSET);
+    auto &Pr = *static_cast<mfem::HypreParMatrix *>(P->Real());
+    Pr *= 0.0;
+
+    auto &Ar = *static_cast<mfem::HypreParMatrix *>(A->Real());
+    auto &Br = *static_cast<mfem::HypreParMatrix *>(B->Real());
+    Ar.Add(-omega * omega + omega0 * omega0, *A2r);
+    Br.Add(-omega * omega + omega0 * omega0, *A2r);
+    Br.Add(1.0 / theta2 - ((omega0 == 0.0) ? 0.0 : 1.0 / (mu_eps_max * omega0 * omega0)),
+           *B3);
+    Pr.Add(1.0, Br);
+
+    if (A2i)
+    {
+      auto &Ai = *static_cast<mfem::HypreParMatrix *>(A->Imag());
+      auto &Bi = *static_cast<mfem::HypreParMatrix *>(B->Imag());
+      Ai.Add(-omega * omega + omega0 * omega0, *A2i);
+      Bi.Add(-omega * omega + omega0 * omega0, *A2i);
+      Pr.Add(1.0, Bi);
+    }
   }
 
   // Configure and solve the eigenvalue problem for the desired boundary mode.
-  std::complex<double> lambda = Solve(*y0, *e0, *e, *scatter);
+  std::complex<double> lambda;
+  if (port_comm != MPI_COMM_NULL)
+  {
+    ksp->SetOperators(*B, *P);
+    eigen->SetOperators(*A, *B, EigenvalueSolver::ScaleType::NONE);
+    eigen->SetInitialSpace(v0);
+    int num_conv = eigen->Solve();
+    MFEM_VERIFY(num_conv >= mode_idx, "Wave port eigensolver did not converge!");
+    lambda = eigen->GetEigenvalue(mode_idx - 1);
+    // Mpi::Print(port_comm, " ... Wave port eigensolver error = {} (bkwd), {} (abs)\n",
+    //            eigen->GetError(mode_idx - 1, EigenvalueSolver::ErrorType::BACKWARD),
+    //            eigen->GetError(mode_idx - 1, EigenvalueSolver::ErrorType::ABSOLUTE));
+  }
+  Mpi::Broadcast(1, &lambda, port_root, B3->GetComm());
 
   // Extract the eigenmode solution and postprocess. The extracted eigenvalue is λ =
-  // Θ²/(Θ²-kₙ²).
+  // Θ² / (Θ² - kₙ²).
   MFEM_VERIFY(lambda.real() > 1.0 / (1.0 - 1.0e-2),
               "Computed wave port mode is or is very close to being evanescent "
                   << "(λ = " << lambda << ")!");
   kn0 = std::sqrt(theta2 - theta2 / lambda);
   omega0 = omega;
-  dynamic_cast<BdrHVectorCoefficient &>(*nxH0r_func).SetFrequency(omega0, kn0);
-  dynamic_cast<BdrHVectorCoefficient &>(*nxH0i_func).SetFrequency(omega0, kn0);
+  static_cast<BdrSubmeshHVectorCoefficient<true> *>(port_nxH0r_func.get())
+      ->SetFrequency(omega0, kn0);
+  static_cast<BdrSubmeshHVectorCoefficient<false> *>(port_nxH0i_func.get())
+      ->SetFrequency(omega0, kn0);
 
-  mfem::Vector etr(nd_attr_tdof_list.Size()), eti(nd_attr_tdof_list.Size()),
-      enr(h1_attr_tdof_list.Size()), eni(h1_attr_tdof_list.Size());
-  MFEM_VERIFY(e->GetSize() == etr.Size() + enr.Size(),
-              "Unexpected vector size in wave port eigenmode solver!");
-  e->GetToVectors(etr, eti, 0, nd_attr_tdof_list.Size());
-  e->GetToVectors(enr, eni, nd_attr_tdof_list.Size(),
-                  nd_attr_tdof_list.Size() + h1_attr_tdof_list.Size());
-
-  // Re-expand from restricted boundary dofs to true dofs and transform back to true
+  // Separate the computed field out into eₜ and eₙ and and transform back to true
   // electric field variables: Eₜ = eₜ/kₙ and Eₙ = ieₙ.
-  auto &nd_fespace = *E0t->ParFESpace();
-  auto &h1_fespace = *E0n->ParFESpace();
-  mfem::Vector E0tr(nd_fespace.GetTrueVSize()), E0ti(nd_fespace.GetTrueVSize()),
-      E0nr(h1_fespace.GetTrueVSize()), E0ni(h1_fespace.GetTrueVSize());
-  E0tr = 0.0;
-  E0ti = 0.0;
-  E0nr = 0.0;
-  E0ni = 0.0;
-  std::complex<double> ookn = 1.0 / kn0;
-  for (int i = 0; i < nd_attr_tdof_list.Size(); i++)
+  if (port_comm != MPI_COMM_NULL)
   {
-    E0tr(nd_attr_tdof_list[i]) = ookn.real() * etr(i) - ookn.imag() * eti(i);
-    E0ti(nd_attr_tdof_list[i]) = ookn.imag() * etr(i) + ookn.real() * eti(i);
+    Vector e0tr, e0ti, e0nr, e0ni;
+    eigen->GetEigenvector(mode_idx - 1, e0);
+    e0tr.MakeRef(e0.Real(), 0, e0t.Size());
+    e0nr.MakeRef(e0.Real(), e0t.Size(), e0n.Size());
+    e0ti.MakeRef(e0.Imag(), 0, e0t.Size());
+    e0ni.MakeRef(e0.Imag(), e0t.Size(), e0n.Size());
+    e0t.Real() = e0tr;
+    e0t.Imag() = e0ti;
+    e0n.Real() = e0nr;
+    e0n.Imag() = e0ni;
+    e0t *= 1.0 / kn0;
+    e0n *= 1i;
   }
-  for (int i = 0; i < h1_attr_tdof_list.Size(); i++)
+  else
   {
-    E0nr(h1_attr_tdof_list[i]) = -eni(i);
-    E0ni(h1_attr_tdof_list[i]) = enr(i);
+    MFEM_ASSERT(e0.Size() == 0 && e0t.Size() == 0 && e0n.Size() == 0,
+                "Unexpected non-empty port FE space in wave port boundary mode solve!");
   }
-  E0t->real().SetFromTrueDofs(E0tr);  // Parallel distribute
-  E0t->imag().SetFromTrueDofs(E0ti);
-  E0n->real().SetFromTrueDofs(E0nr);
-  E0n->imag().SetFromTrueDofs(E0ni);
+  port_E0t->real().SetFromTrueDofs(e0t.Real());  // Parallel distribute
+  port_E0t->imag().SetFromTrueDofs(e0t.Imag());
+  port_E0n->real().SetFromTrueDofs(e0n.Real());
+  port_E0n->imag().SetFromTrueDofs(e0n.Imag());
 
-  // Normalize grid functions to a chosen polarization direction and unit power, |E x H⋆| ⋅
-  // n, integrated over the port surface (+n is the direction of propagation). The n x H
-  // coefficients are updated implicitly as the only store references to the Et, En grid
-  // functions as well as kₙ, ω.
-  {
-    // Choose a (rather arbitrary) sign constraint: @ t = 0, 1ᵀ E > 0 when integrated over
-    // the port surface. This at least makes results for the same port consistent between
-    // frequencies/meshes.
-    mfem::Vector ones(nd_fespace.GetParMesh()->SpaceDimension());
-    ones = 1.0;
-    mfem::VectorConstantCoefficient tdir(ones);
-    mfem::ConstantCoefficient ndir(1.0);
-    mfem::ParLinearForm sut(&nd_fespace), sun(&h1_fespace);
-    sut.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(tdir), attr_marker);
-    sun.AddBoundaryIntegrator(new BoundaryLFIntegrator(ndir), attr_marker);
-    sut.UseFastAssembly(true);
-    sun.UseFastAssembly(true);
-    sut.Assemble();
-    sun.Assemble();
-    if (sut(E0t->real()) + sun(E0n->real()) < 0.0)
-    {
-      E0t->real().Neg();  // This updates the n x H coefficients depending on Et, En
-      E0t->imag().Neg();
-      E0n->real().Neg();
-      E0n->imag().Neg();
-    }
-  }
-  {
-    // |E x H⋆| ⋅ n = |E ⋅ (-n x H⋆)|
-    sr = std::make_unique<mfem::ParLinearForm>(&nd_fespace);
-    si = std::make_unique<mfem::ParLinearForm>(&nd_fespace);
-    sr->AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(*nxH0r_func), attr_marker);
-    si->AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(*nxH0i_func), attr_marker);
-    sr->UseFastAssembly(true);
-    si->UseFastAssembly(true);
-    sr->Assemble();
-    si->Assemble();
-    std::complex<double> s0(-(*sr)(E0t->real()) - (*si)(E0t->imag()),
-                            -(*sr)(E0t->imag()) + (*si)(E0t->real()));
-    double scale = 1.0 / std::sqrt(std::abs(s0));
-    E0t->real() *= scale;  // This updates the n x H coefficients depending on Et, En too
-    E0t->imag() *= scale;
-    E0n->real() *= scale;
-    E0n->imag() *= scale;
-    *sr *= scale;  // Update linear forms for postprocessing
-    *si *= scale;
-  }
-
-  // This parallel communication is not required since wave port boundaries are true
-  // one-sided boundaries.
-  // E0t->real().ExchangeFaceNbrData();  // Ready for parallel comm on shared faces
-  // E0t->imag().ExchangeFaceNbrData();  // for n x H coefficients evaluation
-  // E0n->real().ExchangeFaceNbrData();
-  // E0n->imag().ExchangeFaceNbrData();
+  // Normalize the mode for a chosen polarization direction and unit power, |E x H⋆| ⋅ n,
+  // integrated over the port surface (+n is the direction of propagation).
+  NormalizeWithSign(*port_S0t, *port_E0t, *port_E0n, *port_sr, *port_si);
 }
 
 double WavePortData::GetExcitationPower() const
@@ -744,29 +890,37 @@ std::complex<double> WavePortData::GetSParameter(mfem::ParComplexGridFunction &E
 {
   // Compute port S-parameter, or the projection of the field onto the port mode:
   // (E x H_inc⋆) ⋅ n = E ⋅ (-n x H_inc⋆), integrated over the port surface.
-  return {-(*sr)(E.real()) - (*si)(E.imag()), -(*sr)(E.imag()) + (*si)(E.real())};
+  mfem::ParComplexGridFunction port_E(port_nd_fespace.get());
+  port_nd_transfer->Transfer(E.real(), port_E.real());
+  port_nd_transfer->Transfer(E.imag(), port_E.imag());
+  std::complex<double> dot(-((*port_sr) * port_E.real()) - ((*port_si) * port_E.imag()),
+                           -((*port_sr) * port_E.imag()) + ((*port_si) * port_E.real()));
+  Mpi::GlobalSum(1, &dot, port_nd_fespace->GetComm());
+  return dot;
 }
 
 std::complex<double> WavePortData::GetPower(mfem::ParComplexGridFunction &E,
                                             mfem::ParComplexGridFunction &B,
-                                            const MaterialOperator &mat_op,
-                                            const std::map<int, int> &local_to_shared) const
+                                            const MaterialOperator &mat_op) const
 {
   // Compute port power, (E x H) ⋅ n = E ⋅ (-n x H), integrated over the port surface
   // using the computed E and H = μ⁻¹ B fields. The linear form is reconstructed from
   // scratch each time due to changing H. The BdrCurrentVectorCoefficient computes -n x H,
   // where n is an outward normal.
   auto &nd_fespace = *E.ParFESpace();
-  BdrCurrentVectorCoefficient nxHr_func(B.real(), mat_op, local_to_shared);
-  BdrCurrentVectorCoefficient nxHi_func(B.imag(), mat_op, local_to_shared);
-  mfem::ParLinearForm pr(&nd_fespace), pi(&nd_fespace);
+  BdrCurrentVectorCoefficient nxHr_func(B.real(), mat_op);
+  BdrCurrentVectorCoefficient nxHi_func(B.imag(), mat_op);
+  mfem::LinearForm pr(&nd_fespace), pi(&nd_fespace);
   pr.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(nxHr_func), attr_marker);
   pi.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(nxHi_func), attr_marker);
-  pr.UseFastAssembly(true);
-  pi.UseFastAssembly(true);
+  pr.UseFastAssembly(false);
+  pi.UseFastAssembly(false);
   pr.Assemble();
   pi.Assemble();
-  return {pr(E.real()) + pi(E.imag()), pr(E.imag()) - pi(E.real())};
+  std::complex<double> dot(-(pr * E.real()) - (pi * E.imag()),
+                           -(pr * E.imag()) + (pi * E.real()));
+  Mpi::GlobalSum(1, &dot, nd_fespace.GetComm());
+  return dot;
 }
 
 WavePortOperator::WavePortOperator(const IoData &iod, const MaterialOperator &mat,
@@ -841,7 +995,7 @@ void WavePortOperator::SetUpBoundaryProperties(const IoData &iodata,
   // Set up wave port data structures.
   for (const auto &[idx, data] : iodata.boundaries.waveport)
   {
-    ports.try_emplace(idx, data, mat_op, dbc_marker, nd_fespace, h1_fespace);
+    ports.try_emplace(idx, data, mat_op, nd_fespace, h1_fespace, dbc_marker);
   }
   MFEM_VERIFY(
       ports.empty() || iodata.problem.type == config::ProblemData::Type::DRIVEN,
@@ -951,16 +1105,9 @@ void WavePortOperator::Initialize(double omega)
     {
       if (first)
       {
-        // Print header at first solve.
-        if (data.GetA() && data.GetB())
-        {
-          Mpi::Print(" Number of global unknowns for port {:d}: {}\n", idx,
-                     data.GetA()->GetGlobalNumRows());
-          Mpi::Print("  A: NNZ = {:d}, norm = {:e}\n", data.GetA()->NNZ(),
-                     data.GetA()->NormF());
-          Mpi::Print("  B: NNZ = {:d}, norm = {:e}\n", data.GetB()->NNZ(),
-                     data.GetB()->NormF());
-        }
+        Mpi::Print(" Number of global unknowns for port {:d}:\n"
+                   "  H1: {:d}, ND: {:d}\n",
+                   idx, data.GlobalTrueH1Size(), data.GlobalTrueNDSize());
       }
       double k0 = 1.0 / iodata.DimensionalizeValue(IoData::ValueType::LENGTH, 1.0);
       Mpi::Print(" Port {:d}, mode {:d}: kₙ = {:.3e}{:+.3e}i m⁻¹\n", idx,
@@ -981,11 +1128,11 @@ void WavePortOperator::AddExtraSystemBdrCoefficients(double omega,
   Initialize(omega);
   for (auto &[idx, data] : ports)
   {
-    fbi.AddCoefficient(
-        std::make_unique<
-            MaterialPropertyCoefficient<MaterialPropertyType::INV_PERMEABILITY>>(
-            mat_op, data.GetPropagationConstant().real()),
-        data.GetMarker());
+    constexpr auto MatType = MaterialPropertyType::INV_PERMEABILITY;
+    constexpr auto ElemType = MeshElementType::BDR_ELEMENT;
+    fbi.AddCoefficient(std::make_unique<MaterialPropertyCoefficient<MatType, ElemType>>(
+                           mat_op, data.GetPropagationConstant().real()),
+                       data.GetMarker());
   }
 }
 
@@ -1003,10 +1150,10 @@ void WavePortOperator::AddExcitationBdrCoefficients(double omega, SumVectorCoeff
       continue;
     }
     fbr.AddCoefficient(std::make_unique<mfem::ScalarVectorProductCoefficient>(
-                           2.0 * omega, *data.GetModeCoefficientImag()),
+                           2.0 * omega, data.GetModeCoefficientImag()),
                        data.GetMarker());
     fbi.AddCoefficient(std::make_unique<mfem::ScalarVectorProductCoefficient>(
-                           -2.0 * omega, *data.GetModeCoefficientReal()),
+                           -2.0 * omega, data.GetModeCoefficientReal()),
                        data.GetMarker());
   }
 }

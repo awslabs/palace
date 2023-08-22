@@ -8,9 +8,10 @@
 #include <map>
 #include <memory>
 #include <mfem.hpp>
-#include "linalg/eigen.hpp"
+#include "linalg/eps.hpp"
 #include "linalg/ksp.hpp"
-#include "linalg/petsc.hpp"
+#include "linalg/operator.hpp"
+#include "linalg/vector.hpp"
 
 namespace palace
 {
@@ -37,57 +38,53 @@ private:
   int mode_idx;
   double d_offset;
 
-  // Marker for all boundary attributes making up this port boundary. Mutable because
-  // some MFEM API calls are not const correct.
+  // Attribute list and marker for all boundary attributes making up this port boundary.
+  // Mutable because some MFEM API calls are not const correct.
+  mfem::Array<int> attr_list;
   mutable mfem::Array<int> attr_marker;
 
-  // Lists of non-essential true degrees of freedom associated with the port boundary.
-  mfem::Array<int> nd_attr_tdof_list, h1_attr_tdof_list;
+  // SubMesh data structures to define finite element spaces and grid functions on the
+  // SubMesh corresponding to this port boundary.
+  std::unique_ptr<mfem::ParSubMesh> port_mesh;
+  std::unique_ptr<mfem::FiniteElementCollection> port_nd_fec, port_h1_fec;
+  std::unique_ptr<mfem::ParFiniteElementSpace> port_nd_fespace, port_h1_fespace;
+  std::unique_ptr<mfem::ParTransferMap> port_nd_transfer, port_h1_transfer;
 
   // Operator storage for repeated boundary mode eigenvalue problem solves.
-  std::unique_ptr<petsc::PetscParMatrix> A, B, A1, A2, B3, B4;
-  std::unique_ptr<petsc::PetscParVector> e, e0, y0;
-  std::unique_ptr<petsc::PetscScatter> scatter;
-  double muepsmax;
+  double mu_eps_max;
+  std::unique_ptr<mfem::HypreParMatrix> A2r, A2i, B3;
+  std::unique_ptr<ComplexOperator> A, B, P;
+  ComplexVector v0, e0, e0t, e0n;
+
+  // Eigenvalue solver for boundary modes.
+  MPI_Comm port_comm;
+  int port_root;
+  std::unique_ptr<EigenvalueSolver> eigen;
+  std::unique_ptr<ComplexKspSolver> ksp;
 
   // Grid functions storing the last computed electric field mode on the port and the
-  // associated propagation constant.
-  std::unique_ptr<mfem::ParComplexGridFunction> E0t, E0n;
+  // associated propagation constant. Also the coefficient for the incident port mode
+  // (n x H_inc) computed from the electric field mode.
+  std::unique_ptr<mfem::ParComplexGridFunction> port_E0t, port_E0n;
+  std::unique_ptr<mfem::VectorCoefficient> port_nxH0r_func, port_nxH0i_func;
+  std::unique_ptr<mfem::LinearForm> port_sr, port_si;
+  std::unique_ptr<mfem::ParGridFunction> port_S0t;
   std::complex<double> kn0;
   double omega0;
 
-  // Coefficients storing the incident port mode (n x H_inc) and linear forms for
-  // postprocessing integrated quantities on the port.
-  std::unique_ptr<mfem::VectorCoefficient> nxH0r_func, nxH0i_func;
-  std::unique_ptr<mfem::ParLinearForm> sr, si;
-
-  // Eigenvalue solver for boundary modes.
-  std::unique_ptr<EigenSolverBase> eigen;
-  std::unique_ptr<KspSolver> ksp;
-
-  // Helper function to get true degrees of freedom on the port.
-  void GetTrueDofs(const mfem::Array<int> &dbc_marker,
-                   mfem::ParFiniteElementSpace &nd_fespace,
-                   mfem::ParFiniteElementSpace &h1_fespace, mfem::Array<int> &nd_tdof_list,
-                   mfem::Array<int> &h1_tdof_list);
-
-  // Configure and solve the linear eigenvalue problem for the boundary mode.
-  void GetInitialSpace(int nt, int nn, petsc::PetscParVector &y0);
-  std::complex<double> Solve(petsc::PetscParVector &y0, petsc::PetscParVector &e0,
-                             petsc::PetscParVector &e, petsc::PetscScatter &scatter);
-
 public:
   WavePortData(const config::WavePortData &data, const MaterialOperator &mat_op,
-               const mfem::Array<int> &dbc_marker, mfem::ParFiniteElementSpace &nd_fespace,
-               mfem::ParFiniteElementSpace &h1_fespace);
+               mfem::ParFiniteElementSpace &nd_fespace,
+               mfem::ParFiniteElementSpace &h1_fespace, const mfem::Array<int> &dbc_marker);
+  ~WavePortData();
 
   const mfem::Array<int> &GetMarker() const { return attr_marker; }
   mfem::Array<int> &GetMarker() { return attr_marker; }
 
   void Initialize(double omega);
 
-  const petsc::PetscParMatrix *GetA() const { return A.get(); }
-  const petsc::PetscParMatrix *GetB() const { return B.get(); }
+  HYPRE_BigInt GlobalTrueNDSize() const { return port_nd_fespace->GlobalTrueVSize(); }
+  HYPRE_BigInt GlobalTrueH1Size() const { return port_h1_fespace->GlobalTrueVSize(); }
 
   std::complex<double> GetPropagationConstant() const { return kn0; }
   double GetOperatingFrequency() const { return omega0; }
@@ -96,14 +93,10 @@ public:
   int GetModeIndex() const { return mode_idx; }
   double GetOffsetDistance() const { return d_offset; }
 
-  const std::unique_ptr<mfem::VectorCoefficient> &GetModeCoefficientReal() const
-  {
-    return nxH0r_func;
-  }
-  const std::unique_ptr<mfem::VectorCoefficient> &GetModeCoefficientImag() const
-  {
-    return nxH0i_func;
-  }
+  const mfem::VectorCoefficient &GetModeCoefficientReal() const { return *port_nxH0r_func; }
+  mfem::VectorCoefficient &GetModeCoefficientReal() { return *port_nxH0r_func; }
+  const mfem::VectorCoefficient &GetModeCoefficientImag() const { return *port_nxH0i_func; }
+  mfem::VectorCoefficient &GetModeCoefficientImag() { return *port_nxH0i_func; }
 
   std::complex<double> GetCharacteristicImpedance() const
   {
@@ -121,8 +114,7 @@ public:
   std::complex<double> GetSParameter(mfem::ParComplexGridFunction &E) const;
   std::complex<double> GetPower(mfem::ParComplexGridFunction &E,
                                 mfem::ParComplexGridFunction &B,
-                                const MaterialOperator &mat_op,
-                                const std::map<int, int> &local_to_shared) const;
+                                const MaterialOperator &mat_op) const;
   std::complex<double> GetVoltage(mfem::ParComplexGridFunction &E) const
   {
     MFEM_ABORT("GetVoltage is not yet implemented for wave port boundaries!");

@@ -279,14 +279,12 @@ mfem::DenseMatrix ToDenseMatrix(const config::SymmetricMatrixData<N> &data)
 
 }  // namespace
 
-MaterialOperator::MaterialOperator(const IoData &iodata, const mfem::ParMesh &mesh)
-  : sdim(mesh.SpaceDimension())
+MaterialOperator::MaterialOperator(const IoData &iodata, mfem::ParMesh &mesh)
 {
   SetUpMaterialProperties(iodata, mesh);
 }
 
-void MaterialOperator::SetUpMaterialProperties(const IoData &iodata,
-                                               const mfem::ParMesh &mesh)
+void MaterialOperator::SetUpMaterialProperties(const IoData &iodata, mfem::ParMesh &mesh)
 {
   // Check that material attributes have been specified correctly. The mesh attributes may
   // be non-contiguous and when no material attribute is specified the elements are deleted
@@ -314,6 +312,7 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata,
   // Set up material properties of the different domain regions, represented with piece-wise
   // constant matrix-valued coefficients for the relative permeability and permittivity,
   // and other material properties.
+  const int sdim = mesh.SpaceDimension();
   mat_muinv.resize(attr_max, mfem::DenseMatrix(sdim));
   mat_epsilon.resize(attr_max, mfem::DenseMatrix(sdim));
   mat_epsilon_imag.resize(attr_max, mfem::DenseMatrix(sdim));
@@ -408,6 +407,13 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata,
       mat_invLondon.at(attr - 1) *=
           std::abs(data.lambda_L) > 0.0 ? std::pow(data.lambda_L, -2.0) : 0.0;
     }
+  }
+
+  // Construct shared face mapping for boundary coefficients. This is useful to have in one
+  // place alongside material properties so we construct and store it here.
+  for (int i = 0; i < mesh.GetNSharedFaces(); i++)
+  {
+    local_to_shared[mesh.GetSharedFace(i)] = i;
   }
 
   // Mark selected material attributes from the mesh as having certain local properties.

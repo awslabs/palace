@@ -3,397 +3,298 @@
 
 #include "ksp.hpp"
 
-#include <petsc.h>
 #include <mfem.hpp>
-#include "linalg/pc.hpp"
-#include "linalg/petsc.hpp"
+#include "linalg/amg.hpp"
+#include "linalg/ams.hpp"
+#include "linalg/gmg.hpp"
+#include "linalg/mumps.hpp"
+#include "linalg/strumpack.hpp"
+#include "linalg/superlu.hpp"
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
 
 namespace palace
 {
 
-KspSolver::KspSolver(MPI_Comm comm, const IoData &iodata, const std::string &prefix)
-  : clcustom(false), print(iodata.problem.verbose), print_opts(true), check_final(true),
-    solve(0)
+namespace
 {
-  PalacePetscCall(KSPCreate(comm, &ksp));
-  PalacePetscCall(KSPSetOptionsPrefix(ksp, prefix.c_str()));
-  Configure(iodata);
-  ConfigureVerbose(print, prefix);
-}
 
-KspSolver::KspSolver(MPI_Comm comm, int print_lvl, const std::string &prefix)
-  : clcustom(false), print(print_lvl), print_opts(true), check_final(true), solve(0)
+template <typename OperType>
+std::unique_ptr<IterativeSolver<OperType>> ConfigureKrylovSolver(MPI_Comm comm,
+                                                                 const IoData &iodata)
 {
-  PalacePetscCall(KSPCreate(comm, &ksp));
-  PalacePetscCall(KSPSetOptionsPrefix(ksp, prefix.c_str()));
-  ConfigureVerbose(print, prefix);
-}
-
-KspSolver::~KspSolver()
-{
-  MPI_Comm comm;
-  PalacePetscCall(PetscObjectGetComm(reinterpret_cast<PetscObject>(ksp), &comm));
-  PalacePetscCall(KSPDestroy(&ksp));
-}
-
-void KspSolver::Configure(const IoData &iodata)
-{
-  // Configure the Krylov solver. GMRES is the default solver for frequency domain
-  // problems.
-  switch (iodata.solver.linear.ksp_type)
+  // Configure solver settings as needed based on inputs.
+  config::LinearSolverData::KspType type = iodata.solver.linear.ksp_type;
+  if (type == config::LinearSolverData::KspType::DEFAULT)
   {
-    case config::LinearSolverData::KspType::CG:
-      SetType(Type::CG);
-      break;
-    case config::LinearSolverData::KspType::CGSYM:
-      SetType(Type::CGSYM);
-      break;
-    case config::LinearSolverData::KspType::FCG:
-      SetType(Type::FCG);
-      break;
-    case config::LinearSolverData::KspType::MINRES:
-      SetType(Type::MINRES);
-      break;
-    case config::LinearSolverData::KspType::GMRES:
-    case config::LinearSolverData::KspType::DEFAULT:
-      SetType(Type::GMRES);
-      SetGMRESOptions(iodata.solver.linear.max_size, iodata.solver.linear.orthog_mgs,
-                      iodata.solver.linear.orthog_cgs2);
-      break;
-    case config::LinearSolverData::KspType::FGMRES:
-      SetType(Type::FGMRES);
-      SetGMRESOptions(iodata.solver.linear.max_size, iodata.solver.linear.orthog_mgs,
-                      iodata.solver.linear.orthog_cgs2);
-      break;
-    case config::LinearSolverData::KspType::BCGS:
-      SetType(Type::BCGS);
-      break;
-    case config::LinearSolverData::KspType::BCGSL:
-      SetType(Type::BCGSL);
-      break;
-    case config::LinearSolverData::KspType::FBCGS:
-      SetType(Type::FBCGS);
-      break;
-    case config::LinearSolverData::KspType::QMRCGS:
-      SetType(Type::QMRCGS);
-      break;
-    case config::LinearSolverData::KspType::TFQMR:
-      SetType(Type::TFQMR);
-      break;
-    case config::LinearSolverData::KspType::INVALID:
-      MFEM_ABORT("Unexpected type for KspSolver configuration!");
-      break;
-  }
-  SetTol(iodata.solver.linear.tol);
-  SetMaxIter(iodata.solver.linear.max_it);
-
-  // Reuse previous solution as guess for later solves if desired.
-  SetNonzeroInitialGuess(iodata.solver.linear.ksp_initial_guess);
-
-  // Optionally use left or right preconditioning (otherwise use PETSc default for the given
-  // solver).
-  if (iodata.solver.linear.pc_side_type == config::LinearSolverData::SideType::LEFT)
-  {
-    PalacePetscCall(KSPSetPCSide(ksp, PC_LEFT));
-  }
-  else if (iodata.solver.linear.pc_side_type == config::LinearSolverData::SideType::RIGHT)
-  {
-    PalacePetscCall(KSPSetPCSide(ksp, PC_RIGHT));
-  }
-}
-
-void KspSolver::ConfigureVerbose(int print, const std::string &prefix)
-{
-  // Manage debugging output.
-  if (print > 0)
-  {
-    std::string opts = "-ksp_converged_reason";
-    if (print > 1)
+    if (iodata.problem.type == config::ProblemData::Type::ELECTROSTATIC ||
+        iodata.problem.type == config::ProblemData::Type::MAGNETOSTATIC ||
+        iodata.problem.type == config::ProblemData::Type::TRANSIENT)
     {
-      opts.append(" -ksp_monitor");
+      type = config::LinearSolverData::KspType::CG;
     }
-    if (print > 3)
+    else
     {
-      opts.append(" -ksp_view");
-    }
-    if (prefix.length() > 0)
-    {
-      PetscOptionsPrefixPush(nullptr, prefix.c_str());
-    }
-    PetscOptionsInsertString(nullptr, opts.c_str());
-    if (prefix.length() > 0)
-    {
-      PetscOptionsPrefixPop(nullptr);
+      type = config::LinearSolverData::KspType::GMRES;
     }
   }
-}
 
-void KspSolver::SetType(KspSolver::Type type, bool piped)
-{
+  // Create the solver.
+  std::unique_ptr<IterativeSolver<OperType>> ksp;
   switch (type)
   {
-    case Type::CG:
-      PalacePetscCall((piped) ? KSPSetType(ksp, KSPPIPECG) : KSPSetType(ksp, KSPCG));
-      PalacePetscCall(KSPCGSetType(ksp, KSP_CG_HERMITIAN));
+    case config::LinearSolverData::KspType::CG:
+      ksp = std::make_unique<CgSolver<OperType>>(comm, iodata.problem.verbose);
       break;
-    case Type::CGSYM:
-      PalacePetscCall((piped) ? KSPSetType(ksp, KSPPIPECG) : KSPSetType(ksp, KSPCG));
-      PalacePetscCall(KSPCGSetType(ksp, KSP_CG_SYMMETRIC));
-      break;
-    case Type::FCG:
-      PalacePetscCall(KSPSetType(ksp, KSPFCG));
-      break;
-    case Type::GMRES:
-      PalacePetscCall((piped) ? KSPSetType(ksp, KSPPGMRES) : KSPSetType(ksp, KSPGMRES));
-      break;
-    case Type::FGMRES:
-      PalacePetscCall((piped) ? KSPSetType(ksp, KSPPIPEFGMRES)
-                              : KSPSetType(ksp, KSPFGMRES));
-      break;
-    case Type::MINRES:
-      PalacePetscCall(KSPSetType(ksp, KSPMINRES));
-      break;
-    case Type::BCGS:
-      PalacePetscCall(KSPSetType(ksp, KSPBCGS));
-      break;
-    case Type::BCGSL:
-      PalacePetscCall(KSPSetType(ksp, KSPBCGSL));
-      PalacePetscCall(KSPBCGSLSetEll(ksp, 2));  // PETSc default
-      break;
-    case Type::FBCGS:
-      PalacePetscCall(KSPSetType(ksp, KSPFBCGS));
-      break;
-    case Type::QMRCGS:
-      PalacePetscCall(KSPSetType(ksp, KSPQMRCGS));
-      break;
-    case Type::TFQMR:
-      PalacePetscCall(KSPSetType(ksp, KSPTFQMR));
-      break;
-    case Type::CHOLESKY:
+    case config::LinearSolverData::KspType::GMRES:
       {
-        PC pc;
-        PalacePetscCall(KSPSetType(ksp, KSPPREONLY));
-        PalacePetscCall(KSPGetPC(ksp, &pc));
-        PalacePetscCall(PCSetType(pc, PCCHOLESKY));
-        SetCheckFinal(false);
+        auto gmres = std::make_unique<GmresSolver<OperType>>(comm, iodata.problem.verbose);
+        gmres->SetRestartDim(iodata.solver.linear.max_size);
+        ksp = std::move(gmres);
       }
       break;
-    case Type::LU:
+    case config::LinearSolverData::KspType::FGMRES:
       {
-        PC pc;
-        PalacePetscCall(KSPSetType(ksp, KSPPREONLY));
-        PalacePetscCall(KSPGetPC(ksp, &pc));
-        PalacePetscCall(PCSetType(pc, PCLU));
-        SetCheckFinal(false);
+        auto fgmres =
+            std::make_unique<FgmresSolver<OperType>>(comm, iodata.problem.verbose);
+        fgmres->SetRestartDim(iodata.solver.linear.max_size);
+        ksp = std::move(fgmres);
       }
       break;
+    case config::LinearSolverData::KspType::MINRES:
+    case config::LinearSolverData::KspType::BICGSTAB:
+    case config::LinearSolverData::KspType::DEFAULT:
+    case config::LinearSolverData::KspType::INVALID:
+      MFEM_ABORT("Unexpected solver type for Krylov solver configuration!");
+      break;
   }
-}
+  ksp->SetInitialGuess(iodata.solver.linear.initial_guess);
+  ksp->SetRelTol(iodata.solver.linear.tol);
+  ksp->SetMaxIter(iodata.solver.linear.max_it);
 
-void KspSolver::SetTol(PetscReal tol)
-{
-  PalacePetscCall(KSPSetTolerances(ksp, tol, PETSC_DEFAULT, PETSC_DEFAULT, PETSC_DEFAULT));
-}
-
-void KspSolver::SetAbsTol(PetscReal tol)
-{
-  PalacePetscCall(KSPSetTolerances(ksp, PETSC_DEFAULT, tol, PETSC_DEFAULT, PETSC_DEFAULT));
-}
-
-void KspSolver::SetMaxIter(PetscInt maxits)
-{
-  PalacePetscCall(
-      KSPSetTolerances(ksp, PETSC_DEFAULT, PETSC_DEFAULT, PETSC_DEFAULT, maxits));
-}
-
-void KspSolver::SetGMRESOptions(PetscInt maxsize, bool mgs, bool cgs2)
-{
-  PalacePetscCall(KSPGMRESSetRestart(ksp, maxsize));
-  if (mgs)
+  // Configure preconditioning side (only for GMRES).
+  if (iodata.solver.linear.pc_side_type != config::LinearSolverData::SideType::DEFAULT)
   {
-    PalacePetscCall(
-        KSPGMRESSetOrthogonalization(ksp, KSPGMRESModifiedGramSchmidtOrthogonalization));
-  }
-  else if (cgs2)
-  {
-    PalacePetscCall(KSPGMRESSetCGSRefinementType(ksp, KSP_GMRES_CGS_REFINE_ALWAYS));
-  }
-}
-
-void KspSolver::SetTabLevel(PetscInt l)
-{
-  PalacePetscCall(PetscObjectSetTabLevel(reinterpret_cast<PetscObject>(ksp), l));
-}
-
-void KspSolver::SetNonzeroInitialGuess(bool guess)
-{
-  PalacePetscCall(KSPSetInitialGuessNonzero(ksp, guess ? PETSC_TRUE : PETSC_FALSE));
-}
-
-void KspSolver::SetOperator(const petsc::PetscParMatrix &A, bool copy_prefix)
-{
-  // If A is the same as before, PETSc will reuse things like symbolic factorizations
-  // automatically.
-  PalacePetscCall(KSPSetOperators(ksp, A, A));
-  if (copy_prefix)
-  {
-    // Set Mat prefix to be the same as KSP to enable setting command-line options.
-    const char *prefix;
-    PalacePetscCall(KSPGetOptionsPrefix(ksp, &prefix));
-    PalacePetscCall(MatSetOptionsPrefix(A, prefix));
-  }
-}
-
-void KspSolver::SetPreconditioner(const KspPreconditioner &op)
-{
-  // The PETSc shell preconditioner does not take ownership of the preconditioner object.
-  PC pc;
-  PalacePetscCall(KSPGetPC(ksp, &pc));
-  PalacePetscCall(PCSetType(pc, PCSHELL));
-  PalacePetscCall(PCShellSetContext(pc, (void *)&op));
-  PalacePetscCall(PCShellSetSetUp(pc, KspPreconditioner::PCSetUp));
-  PalacePetscCall(PCShellSetApply(pc, KspPreconditioner::PCApply));
-  PalacePetscCall(PCShellSetDestroy(pc, KspPreconditioner::PCDestroy));
-}
-
-void KspSolver::Customize() const
-{
-  if (!clcustom)
-  {
-    PalacePetscCall(KSPSetFromOptions(ksp));
-    if (print > 0 && print_opts)
+    if (type != config::LinearSolverData::KspType::GMRES)
     {
-      PetscOptionsView(nullptr, PETSC_VIEWER_STDOUT_(GetComm()));
-      Mpi::Print(GetComm(), "\n");
+      Mpi::Warning(
+          comm, "Preconditioner side will be ignored for non-GMRES iterative solvers!\n");
     }
-    clcustom = true;
+    else
+    {
+      auto *gmres = static_cast<GmresSolver<OperType> *>(ksp.get());
+      switch (iodata.solver.linear.pc_side_type)
+      {
+        case config::LinearSolverData::SideType::LEFT:
+          gmres->SetPrecSide(GmresSolver<OperType>::PrecSide::LEFT);
+          break;
+        case config::LinearSolverData::SideType::RIGHT:
+          gmres->SetPrecSide(GmresSolver<OperType>::PrecSide::RIGHT);
+          break;
+        case config::LinearSolverData::SideType::DEFAULT:
+        case config::LinearSolverData::SideType::INVALID:
+          MFEM_ABORT("Unexpected side for configuring preconditioning!");
+          break;
+      }
+    }
   }
-}
 
-void KspSolver::Mult(const petsc::PetscParVector &b, petsc::PetscParVector &x) const
-{
-  KSPConvergedReason reason;
-  PetscReal norm0 = 1.0, norm;
-  if (check_final)
+  // Configure orthogonalization method for GMRES/FMGRES.
+  if (type == config::LinearSolverData::KspType::GMRES ||
+      type == config::LinearSolverData::KspType::FGMRES)
   {
-    norm0 = b.Norml2();
+    // Because FGMRES inherits from GMRES, this is OK.
+    auto *gmres = static_cast<GmresSolver<OperType> *>(ksp.get());
+    switch (iodata.solver.linear.gs_orthog_type)
+    {
+      case config::LinearSolverData::OrthogType::MGS:
+        gmres->SetOrthogonalization(GmresSolver<OperType>::OrthogType::MGS);
+        break;
+      case config::LinearSolverData::OrthogType::CGS:
+        gmres->SetOrthogonalization(GmresSolver<OperType>::OrthogType::CGS);
+        break;
+      case config::LinearSolverData::OrthogType::CGS2:
+        gmres->SetOrthogonalization(GmresSolver<OperType>::OrthogType::CGS2);
+        break;
+      case config::LinearSolverData::OrthogType::INVALID:
+        MFEM_ABORT("Unexpected orthogonalization type for Krylov solver configuration!");
+        break;
+    }
   }
-  Customize();
-  PalacePetscCall(KSPSolve(ksp, b, x));
-  PalacePetscCall(KSPGetConvergedReason(ksp, &reason));
-  if (check_final && reason < 0)
+
+  return ksp;
+}
+
+template <typename OperType>
+std::unique_ptr<Solver<OperType>>
+ConfigurePreconditionerSolver(MPI_Comm comm, const IoData &iodata,
+                              mfem::ParFiniteElementSpaceHierarchy &fespaces,
+                              mfem::ParFiniteElementSpaceHierarchy *aux_fespaces)
+{
+  // Configure solver settings as needed based on inputs.
+  config::LinearSolverData::Type type = iodata.solver.linear.type;
+  if (type == config::LinearSolverData::Type::DEFAULT)
   {
-    Mat A;
-    Vec r;
-    PalacePetscCall(VecDuplicate(b, &r));
-    PalacePetscCall(KSPGetOperators(ksp, &A, nullptr));
-    PalacePetscCall(MatMult(A, x, r));
-    PalacePetscCall(VecAXPY(r, -1.0, b));
-    PalacePetscCall(VecNorm(r, NORM_2, &norm));
-    PalacePetscCall(VecDestroy(&r));
-    Mpi::Warning(GetComm(),
-                 "Linear solver did not converge, "
-                 "norm(Ax-b)/norm(b) = {:.3e} (norm(b) = {:.3e})!\n",
-                 norm / norm0, norm0);
-  }
-  solve++;
-}
-
-void KspSolver::Reset()
-{
-  PalacePetscCall(KSPReset(ksp));
-}
-
-PetscInt KspSolver::GetTotalNumMult() const
-{
-  return solve;
-}
-
-PetscInt KspSolver::GetNumIter() const
-{
-  PetscInt num_it;
-  PalacePetscCall(KSPGetIterationNumber(ksp, &num_it));
-  return num_it;
-}
-
-PetscInt KspSolver::GetTotalNumIter() const
-{
-  PetscInt num_it;
-  PalacePetscCall(KSPGetTotalIterations(ksp, &num_it));
-  return num_it;
-}
-
-MPI_Comm KspSolver::GetComm() const
-{
-  return ksp ? PetscObjectComm(reinterpret_cast<PetscObject>(ksp)) : MPI_COMM_NULL;
-}
-
-void KspSolver::SolveJacobi(const petsc::PetscParMatrix &A, const petsc::PetscParVector &b,
-                            petsc::PetscParVector &x, PetscInt sym, PetscReal tol,
-                            PetscInt max_it)
-{
-  MPI_Comm comm;
-  KSP ksp;
-  PC pc;
-  KSPConvergedReason reason;
-
-  comm = A.GetComm();
-  PalacePetscCall(KSPCreate(comm, &ksp));
-  PalacePetscCall(KSPSetOperators(ksp, A, A));
-  PalacePetscCall(KSPSetType(ksp, (sym == 1) ? KSPCG : KSPGMRES));
-  PalacePetscCall(KSPGetPC(ksp, &pc));
-  PalacePetscCall(PCSetType(pc, PCJACOBI));
-  PalacePetscCall(PCJacobiSetFixDiagonal(pc, PETSC_TRUE));
-  PalacePetscCall(KSPSetTolerances(ksp, tol, PETSC_DEFAULT, PETSC_DEFAULT, max_it));
-  // std::string opts = "-ksp_converged_reason -ksp_monitor";
-  // PetscOptionsInsertString(nullptr, opts.c_str());
-  // PalacePetscCall(KSPSetFromOptions(ksp));
-  x.SetZero();
-  PalacePetscCall(KSPSolve(ksp, b, x));
-  PalacePetscCall(KSPGetConvergedReason(ksp, &reason));
-  MFEM_VERIFY(reason > 0, "PETSc KSP did not converge!");
-  PalacePetscCall(KSPDestroy(&ksp));
-}
-
-void KspSolver::SolveDirect(const petsc::PetscParMatrix &A, const petsc::PetscParVector &b,
-                            petsc::PetscParVector &x, PetscInt sym)
-{
-  MPI_Comm comm;
-  KSP ksp;
-  PC pc;
-  KSPConvergedReason reason;
-
-  comm = A.GetComm();
-  PalacePetscCall(KSPCreate(comm, &ksp));
-  PalacePetscCall(KSPSetOperators(ksp, A, A));
-  PalacePetscCall(KSPSetType(ksp, KSPPREONLY));
-  PalacePetscCall(KSPGetPC(ksp, &pc));
-#if defined(PETSC_HAVE_MUMPS) || defined(PETSC_HAVE_SUPERLU_DIST)
-  PalacePetscCall(PCSetType(pc, (sym > 0) ? PCCHOLESKY : PCLU));
-#if defined(PETSC_HAVE_MUMPS)
-  PalacePetscCall(PCFactorSetMatSolverType(pc, MATSOLVERMUMPS));
-#elif defined(PETSC_HAVE_SUPERLU_DIST)
-  PalacePetscCall(PCFactorSetMatSolverType(pc, MATSOLVERSUPERLU_DIST));
-#endif
+    if (iodata.problem.type == config::ProblemData::Type::ELECTROSTATIC ||
+        (iodata.problem.type == config::ProblemData::Type::TRANSIENT &&
+         iodata.solver.transient.type == config::TransientSolverData::Type::CENTRAL_DIFF))
+    {
+      type = config::LinearSolverData::Type::BOOMER_AMG;
+    }
+    else if (iodata.problem.type == config::ProblemData::Type::MAGNETOSTATIC ||
+             iodata.problem.type == config::ProblemData::Type::TRANSIENT)
+    {
+      type = config::LinearSolverData::Type::AMS;
+    }
+    else
+    {
+      // Prefer sparse direct solver for frequency domain problems if available.
+#if defined(MFEM_USE_SUPERLU)
+      type = config::LinearSolverData::Type::SUPERLU;
+#elif defined(MFEM_USE_STRUMPACK)
+      type = config::LinearSolverData::Type::STRUMPACK;
+#elif defined(MFEM_USE_MUMPS)
+      type = config::LinearSolverData::Type::MUMPS;
 #else
-  // Use PETSc default serial direct solver.
-  PalacePetscCall(PCSetType(pc, PCREDUNDANT));
-  PalacePetscCall(PCRedundantSetNumber(pc, Mpi::Size(comm)));
-  {
-    KSP ksp_in;
-    PC pc_in;
-    PalacePetscCall(PCRedundantGetKSP(pc, &ksp_in));
-    PalacePetscCall(KSPGetPC(ksp_in, &pc_in));
-    PalacePetscCall(PCSetType(pc_in, (sym > 0) ? PCCHOLESKY : PCLU));
-  }
+      type = config::LinearSolverData::Type::AMS;
 #endif
-  x.SetZero();
-  PalacePetscCall(KSPSolve(ksp, b, x));
-  PalacePetscCall(KSPGetConvergedReason(ksp, &reason));
-  MFEM_VERIFY(reason > 0, "PETSc KSP did not converge!");
-  PalacePetscCall(KSPDestroy(&ksp));
+    }
+  }
+  int print = iodata.problem.verbose - 1;
+
+  // Create the real-valued solver first.
+  std::unique_ptr<mfem::Solver> pc0;
+  switch (type)
+  {
+    case config::LinearSolverData::Type::AMS:
+      // Can either be the coarse solve for geometric multigrid or the solver at the finest
+      // space (in which case fespaces.GetNumLevels() == 1).
+      MFEM_VERIFY(aux_fespaces, "AMS solver relies on both primary space "
+                                "and auxiliary spaces for construction!");
+      pc0 = std::make_unique<HypreAmsSolver>(iodata, fespaces.GetFESpaceAtLevel(0),
+                                             aux_fespaces->GetFESpaceAtLevel(0), print);
+      break;
+    case config::LinearSolverData::Type::BOOMER_AMG:
+      pc0 = std::make_unique<BoomerAmgSolver>(iodata, print);
+      break;
+    case config::LinearSolverData::Type::SUPERLU:
+#if defined(MFEM_USE_SUPERLU)
+      pc0 = std::make_unique<SuperLUSolver>(comm, iodata, print);
+#else
+      MFEM_ABORT("Solver was not built with SuperLU_DIST support, please choose a "
+                 "different solver!");
+#endif
+      break;
+    case config::LinearSolverData::Type::STRUMPACK:
+#if defined(MFEM_USE_STRUMPACK)
+      pc0 = std::make_unique<StrumpackSolver>(comm, iodata, print);
+#else
+      MFEM_ABORT("Solver was not built with STRUMPACK support, please choose a "
+                 "different solver!");
+#endif
+      break;
+    case config::LinearSolverData::Type::STRUMPACK_MP:
+#if defined(MFEM_USE_STRUMPACK)
+      pc0 = std::make_unique<StrumpackMixedPrecisionSolver>(comm, iodata, print);
+#else
+      MFEM_ABORT("Solver was not built with STRUMPACK support, please choose a "
+                 "different solver!");
+#endif
+      break;
+    case config::LinearSolverData::Type::MUMPS:
+#if defined(MFEM_USE_MUMPS)
+      pc0 = std::make_unique<MumpsSolver>(comm, iodata, print);
+#else
+      MFEM_ABORT(
+          "Solver was not built with MUMPS support, please choose a different solver!");
+#endif
+      break;
+    case config::LinearSolverData::Type::DEFAULT:
+    case config::LinearSolverData::Type::INVALID:
+      MFEM_ABORT("Unexpected solver type for preconditioner configuration!");
+      break;
+  }
+
+  // Construct the actual solver, which has the right value type.
+  auto pc = std::make_unique<WrapperSolver<OperType>>(std::move(pc0));
+  if (iodata.solver.linear.pc_mg)
+  {
+    // This will construct the multigrid hierarchy using pc as the coarse solver
+    // (ownership of pc is transferred to the GeometricMultigridSolver). When a special
+    // auxiliary space smoother for pre-/post-smoothing is not desired, the auxiliary
+    // space is a nullptr here.
+    if (iodata.solver.linear.mg_smooth_aux)
+    {
+      MFEM_VERIFY(aux_fespaces, "Multigrid with auxiliary space smoothers requires both "
+                                "primary space and auxiliary spaces for construction!");
+      return std::make_unique<GeometricMultigridSolver<OperType>>(iodata, std::move(pc),
+                                                                  fespaces, aux_fespaces);
+    }
+    else
+    {
+      return std::make_unique<GeometricMultigridSolver<OperType>>(iodata, std::move(pc),
+                                                                  fespaces, nullptr);
+    }
+  }
+  else
+  {
+    return pc;
+  }
 }
+
+}  // namespace
+
+template <typename OperType>
+BaseKspSolver<OperType>::BaseKspSolver(const IoData &iodata,
+                                       mfem::ParFiniteElementSpaceHierarchy &fespaces,
+                                       mfem::ParFiniteElementSpaceHierarchy *aux_fespaces)
+  : BaseKspSolver(
+        ConfigureKrylovSolver<OperType>(fespaces.GetFinestFESpace().GetComm(), iodata),
+        ConfigurePreconditionerSolver<OperType>(fespaces.GetFinestFESpace().GetComm(),
+                                                iodata, fespaces, aux_fespaces))
+{
+}
+
+template <typename OperType>
+BaseKspSolver<OperType>::BaseKspSolver(std::unique_ptr<IterativeSolver<OperType>> &&ksp,
+                                       std::unique_ptr<Solver<OperType>> &&pc)
+  : ksp(std::move(ksp)), pc(std::move(pc)), ksp_mult(0), ksp_mult_it(0)
+{
+  this->ksp->SetPreconditioner(*this->pc);
+}
+
+template <typename OperType>
+void BaseKspSolver<OperType>::SetOperators(const OperType &op, const OperType &pc_op)
+{
+  ksp->SetOperator(op);
+  const auto *mg_op = dynamic_cast<const BaseMultigridOperator<OperType> *>(&pc_op);
+  const auto *mg_pc = dynamic_cast<const GeometricMultigridSolver<OperType> *>(pc.get());
+  if (mg_op && !mg_pc)
+  {
+    pc->SetOperator(mg_op->GetFinestOperator());
+  }
+  else
+  {
+    pc->SetOperator(pc_op);
+  }
+}
+
+template <typename OperType>
+void BaseKspSolver<OperType>::Mult(const VecType &x, VecType &y) const
+{
+  ksp->Mult(x, y);
+  if (!ksp->GetConverged())
+  {
+    Mpi::Warning(
+        ksp->GetComm(),
+        "Linear solver did not converge, norm(Ax-b)/norm(b) = {:.3e} (norm(b) = {:.3e})!\n",
+        ksp->GetFinalRes() / ksp->GetInitialRes(), ksp->GetInitialRes());
+  }
+  ksp_mult++;
+  ksp_mult_it += ksp->GetNumIterations();
+}
+
+template class BaseKspSolver<Operator>;
+template class BaseKspSolver<ComplexOperator>;
 
 }  // namespace palace

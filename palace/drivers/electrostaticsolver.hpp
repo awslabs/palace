@@ -8,6 +8,7 @@
 #include <memory>
 #include <vector>
 #include "drivers/basesolver.hpp"
+#include "linalg/vector.hpp"
 
 namespace mfem
 {
@@ -16,7 +17,6 @@ template <typename T>
 class Array;
 class DenseMatrix;
 class ParMesh;
-class Vector;
 
 }  // namespace mfem
 
@@ -35,7 +35,7 @@ class ElectrostaticSolver : public BaseSolver
 {
 private:
   void Postprocess(LaplaceOperator &laplaceop, PostOperator &postop,
-                   const std::vector<mfem::Vector> &V, Timer &timer) const;
+                   const std::vector<Vector> &V, Timer &timer) const;
 
   void PostprocessTerminals(const std::map<int, mfem::Array<int>> &terminal_sources,
                             const mfem::DenseMatrix &C, const mfem::DenseMatrix &Cinv,

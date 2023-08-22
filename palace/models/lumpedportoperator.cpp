@@ -160,13 +160,12 @@ double LumpedPortData::GetExcitationVoltage() const
   }
 }
 
-std::complex<double> LumpedPortData::GetSParameter(mfem::ParComplexGridFunction &E) const
+void LumpedPortData::InitializeLinearForms(mfem::ParFiniteElementSpace &nd_fespace) const
 {
-  // Compute port S-parameter, or the projection of the field onto the port mode:
-  // (E x H_inc) ⋅ n = E ⋅ (E_inc / Z_s), integrated over the port surface.
+  // The port S-parameter, or the projection of the field onto the port mode, is computed
+  // as: (E x H_inc) ⋅ n = E ⋅ (E_inc / Z_s), integrated over the port surface.
   if (!s)
   {
-    auto &nd_fespace = *E.ParFESpace();
     SumVectorCoefficient fb(nd_fespace.GetParMesh()->SpaceDimension());
     for (const auto &elem : elems)
     {
@@ -175,17 +174,46 @@ std::complex<double> LumpedPortData::GetSParameter(mfem::ParComplexGridFunction 
                                           elem->GetGeometryLength() * elems.size());
       fb.AddCoefficient(elem->GetModeCoefficient(Hinc), elem->GetMarker());
     }
-    s = std::make_unique<mfem::ParLinearForm>(&nd_fespace);
+    s = std::make_unique<mfem::LinearForm>(&nd_fespace);
     s->AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fb));
-    s->UseFastAssembly(true);
+    s->UseFastAssembly(false);
     s->Assemble();
   }
-  return {(*s)(E.real()), (*s)(E.imag())};
+
+  // The voltage across a port is computed using the electric field solution.
+  // We have:
+  //             V = ∫ E ⋅ l̂ dl = 1/w ∫ E ⋅ l̂ dS  (for rectangular ports)
+  // or,
+  //             V = 1/(2π) ∫ E ⋅ r̂ / r dS        (for coaxial ports).
+  // We compute the surface integral via an inner product between the linear form with the
+  // averaging function as a vector coefficient and the solution expansion coefficients.
+  if (!v)
+  {
+    SumVectorCoefficient fb(nd_fespace.GetParMesh()->SpaceDimension());
+    for (const auto &elem : elems)
+    {
+      fb.AddCoefficient(
+          elem->GetModeCoefficient(1.0 / (elem->GetGeometryWidth() * elems.size())),
+          elem->GetMarker());
+    }
+    v = std::make_unique<mfem::LinearForm>(&nd_fespace);
+    v->AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fb));
+    v->UseFastAssembly(false);
+    v->Assemble();
+  }
+}
+
+std::complex<double> LumpedPortData::GetSParameter(mfem::ParComplexGridFunction &E) const
+{
+  // Compute port S-parameter, or the projection of the field onto the port mode.
+  InitializeLinearForms(*E.ParFESpace());
+  std::complex<double> dot((*s) * E.real(), (*s) * E.imag());
+  Mpi::GlobalSum(1, &dot, E.ParFESpace()->GetComm());
+  return dot;
 }
 
 double LumpedPortData::GetPower(mfem::ParGridFunction &E, mfem::ParGridFunction &B,
-                                const MaterialOperator &mat_op,
-                                const std::map<int, int> &local_to_shared) const
+                                const MaterialOperator &mat_op) const
 {
   // Compute port power, (E x H) ⋅ n = E ⋅ (-n x H), integrated over the port surface
   // using the computed E and H = μ⁻¹ B fields. The linear form is reconstructed from
@@ -195,21 +223,21 @@ double LumpedPortData::GetPower(mfem::ParGridFunction &E, mfem::ParGridFunction 
   SumVectorCoefficient fb(nd_fespace.GetParMesh()->SpaceDimension());
   for (const auto &elem : elems)
   {
-    fb.AddCoefficient(
-        std::make_unique<BdrCurrentVectorCoefficient>(B, mat_op, local_to_shared),
-        elem->GetMarker());
+    fb.AddCoefficient(std::make_unique<BdrCurrentVectorCoefficient>(B, mat_op),
+                      elem->GetMarker());
   }
-  mfem::ParLinearForm p(&nd_fespace);
+  mfem::LinearForm p(&nd_fespace);
   p.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fb));
-  p.UseFastAssembly(true);
+  p.UseFastAssembly(false);
   p.Assemble();
-  return p(E);
+  double dot = p * E;
+  Mpi::GlobalSum(1, &dot, E.ParFESpace()->GetComm());
+  return dot;
 }
 
-std::complex<double>
-LumpedPortData::GetPower(mfem::ParComplexGridFunction &E, mfem::ParComplexGridFunction &B,
-                         const MaterialOperator &mat_op,
-                         const std::map<int, int> &local_to_shared) const
+std::complex<double> LumpedPortData::GetPower(mfem::ParComplexGridFunction &E,
+                                              mfem::ParComplexGridFunction &B,
+                                              const MaterialOperator &mat_op) const
 {
   // Compute port power, (E x H⋆) ⋅ n = E ⋅ (-n x H⋆), integrated over the port surface
   // using the computed E and H = μ⁻¹ B fields. The linear form is reconstructed from
@@ -220,53 +248,40 @@ LumpedPortData::GetPower(mfem::ParComplexGridFunction &E, mfem::ParComplexGridFu
   SumVectorCoefficient fbi(nd_fespace.GetParMesh()->SpaceDimension());
   for (const auto &elem : elems)
   {
-    fbr.AddCoefficient(
-        std::make_unique<BdrCurrentVectorCoefficient>(B.real(), mat_op, local_to_shared),
-        elem->GetMarker());
-    fbi.AddCoefficient(
-        std::make_unique<BdrCurrentVectorCoefficient>(B.imag(), mat_op, local_to_shared),
-        elem->GetMarker());
+    fbr.AddCoefficient(std::make_unique<BdrCurrentVectorCoefficient>(B.real(), mat_op),
+                       elem->GetMarker());
+    fbi.AddCoefficient(std::make_unique<BdrCurrentVectorCoefficient>(B.imag(), mat_op),
+                       elem->GetMarker());
   }
-  mfem::ParLinearForm pr(&nd_fespace), pi(&nd_fespace);
+  mfem::LinearForm pr(&nd_fespace), pi(&nd_fespace);
   pr.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fbr));
   pi.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fbi));
-  pr.UseFastAssembly(true);
-  pi.UseFastAssembly(true);
+  pr.UseFastAssembly(false);
+  pi.UseFastAssembly(false);
   pr.Assemble();
   pi.Assemble();
-  return {pr(E.real()) + pi(E.imag()), pr(E.imag()) - pi(E.real())};
+  std::complex<double> dot((pr * E.real()) + (pi * E.imag()),
+                           (pr * E.imag()) - (pi * E.real()));
+  Mpi::GlobalSum(1, &dot, E.ParFESpace()->GetComm());
+  return dot;
 }
 
 double LumpedPortData::GetVoltage(mfem::ParGridFunction &E) const
 {
-  // Compute the voltage across a port using the electric field solution.
-  // We have:
-  //             V = ∫ E ⋅ l̂ dl = 1/w ∫ E ⋅ l̂ dS  (for rectangular ports)
-  // or,
-  //             V = 1/(2π) ∫ E ⋅ r̂ / r dS        (for coaxial ports).
-  // We compute the surface integral via an inner product between the linear form with the
-  // averaging function as a vector coefficient and the solution expansion coefficients.
-  if (!v)
-  {
-    auto &nd_fespace = *E.ParFESpace();
-    SumVectorCoefficient fb(nd_fespace.GetParMesh()->SpaceDimension());
-    for (const auto &elem : elems)
-    {
-      fb.AddCoefficient(
-          elem->GetModeCoefficient(1.0 / (elem->GetGeometryWidth() * elems.size())),
-          elem->GetMarker());
-    }
-    v = std::make_unique<mfem::ParLinearForm>(&nd_fespace);
-    v->AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fb));
-    v->UseFastAssembly(true);
-    v->Assemble();
-  }
-  return (*v)(E);
+  // Compute the average voltage across the port.
+  InitializeLinearForms(*E.ParFESpace());
+  double dot = (*v) * E;
+  Mpi::GlobalSum(1, &dot, E.ParFESpace()->GetComm());
+  return dot;
 }
 
 std::complex<double> LumpedPortData::GetVoltage(mfem::ParComplexGridFunction &E) const
 {
-  return {GetVoltage(E.real()), GetVoltage(E.imag())};
+  // Compute the average voltage across the port.
+  InitializeLinearForms(*E.ParFESpace());
+  std::complex<double> dot((*v) * E.real(), (*v) * E.imag());
+  Mpi::GlobalSum(1, &dot, E.ParFESpace()->GetComm());
+  return dot;
 }
 
 LumpedPortOperator::LumpedPortOperator(const IoData &iodata,

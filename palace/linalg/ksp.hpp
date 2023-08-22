@@ -1,147 +1,66 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#ifndef PALACE_LINALG_KSP_SOLVER_HPP
-#define PALACE_LINALG_KSP_SOLVER_HPP
+#ifndef PALACE_LINALG_KSP_HPP
+#define PALACE_LINALG_KSP_HPP
 
-#include <string>
-#include "linalg/petsc.hpp"
+#include <memory>
+#include <type_traits>
+#include "linalg/iterative.hpp"
+#include "linalg/operator.hpp"
+#include "linalg/solver.hpp"
+
+namespace mfem
+{
+
+class ParFiniteElementSpaceHierarchy;
+
+}  // namespace mfem
 
 namespace palace
 {
 
 class IoData;
-class KspPreconditioner;
-
-namespace petsc
-{
-
-class PetscParMatrix;
-class PetscParVector;
-
-}  // namespace petsc
 
 //
-// A wrapper of PETSc's KSP class for solving linear systems.
+// Linear solver class composing an iterative solver and preconditioner object.
 //
-class KspSolver
+template <typename OperType>
+class BaseKspSolver
 {
-public:
-  enum class Type
-  {
-    CG,
-    CGSYM,
-    FCG,
-    MINRES,
-    GMRES,
-    FGMRES,
-    BCGS,
-    BCGSL,
-    FBCGS,
-    QMRCGS,
-    TFQMR,
-    CHOLESKY,
-    LU
-  };
+  static_assert(std::is_same<OperType, Operator>::value ||
+                    std::is_same<OperType, ComplexOperator>::value,
+                "Solver can only be defined for OperType = Operator or ComplexOperator!");
 
-private:
-  // The actual PETSc object.
-  KSP ksp;
+  using VecType = typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
+                                            ComplexVector, Vector>::type;
 
-  // Boolean to handle SetFromOptions calls.
-  mutable bool clcustom;
+protected:
+  // The actual solver and preconditioner objects.
+  std::unique_ptr<IterativeSolver<OperType>> ksp;
+  std::unique_ptr<Solver<OperType>> pc;
 
-  // Control print level for debugging.
-  int print;
-
-  // Print PETSc options database prior to solve.
-  bool print_opts;
-
-  // Check for final residual if not converged. Defaults to true.
-  bool check_final;
-
-  // Counter for number of calls to Mult method for a linear solve.
-  mutable PetscInt solve;
-
-  // Set up debugging output and configure the solver based on user specified parameters.
-  void Configure(const IoData &iodata);
-  void ConfigureVerbose(int print, const std::string &prefix);
-
-  // Customize object with command line options set.
-  void Customize() const;
+  // Counters for number of calls to Mult method for linear solves, and cumulative number
+  // of iterations.
+  mutable int ksp_mult, ksp_mult_it;
 
 public:
-  // Calls PETSc's KSPCreate.
-  KspSolver(MPI_Comm comm, const IoData &iodata, const std::string &prefix = std::string());
-  KspSolver(MPI_Comm comm, int print_lvl, const std::string &prefix = std::string());
+  BaseKspSolver(const IoData &iodata, mfem::ParFiniteElementSpaceHierarchy &fespaces,
+                mfem::ParFiniteElementSpaceHierarchy *aux_fespaces = nullptr);
+  BaseKspSolver(std::unique_ptr<IterativeSolver<OperType>> &&ksp,
+                std::unique_ptr<Solver<OperType>> &&pc);
 
-  // Calls PETSc's KSPDestroy.
-  ~KspSolver();
+  int NumTotalMult() const { return ksp_mult; }
+  int NumTotalMultIterations() const { return ksp_mult_it; }
 
-  // Sets the solver type.
-  void SetType(Type type, bool piped = false);
+  void SetOperators(const OperType &op, const OperType &pc_op);
 
-  // Set solver tolerance.
-  void SetTol(PetscReal tol);
-
-  // Set solver tolerance.
-  void SetAbsTol(PetscReal tol);
-
-  // Set maximum number of iterations.
-  void SetMaxIter(PetscInt maxits);
-
-  // Set options specific to GMRES and FGMRES solvers.
-  void SetGMRESOptions(PetscInt maxsize, bool mgs, bool cgs2);
-
-  // Sets the tab level for KSP output.
-  void SetTabLevel(PetscInt l);
-
-  // Set flag to print PETSc options database at start of solve.
-  void SetPrintOptions(bool opts) { print_opts = opts; }
-
-  // Set flag to check final residual if unconverged.
-  void SetCheckFinal(bool check) { check_final = check; }
-
-  // Set an initial vector for the solution subspace.
-  void SetNonzeroInitialGuess(bool guess);
-
-  // Sets the MVP and preconditioner matrix.
-  void SetOperator(const petsc::PetscParMatrix &A, bool copy_prefix = true);
-
-  // Configures a shell preconditioner based on the given preconditioner object.
-  void SetPreconditioner(const KspPreconditioner &op);
-
-  // Application of the solver.
-  void Mult(const petsc::PetscParVector &b, petsc::PetscParVector &x) const;
-
-  // Call KSPReset, for example if the operator dimension has changed.
-  void Reset();
-
-  // Get number of solver calls.
-  PetscInt GetTotalNumMult() const;
-
-  // Get number of solver iterations.
-  PetscInt GetNumIter() const;
-  PetscInt GetTotalNumIter() const;
-
-  // Get the associated MPI communicator.
-  MPI_Comm GetComm() const;
-
-  // Conversion function to PETSc's KSP type.
-  operator KSP() const { return ksp; }
-
-  // Typecasting to PETSc object.
-  operator PetscObject() const { return reinterpret_cast<PetscObject>(ksp); }
-
-  // Simple static linear solve methods. The sym variable defines the matrix type: 0 for
-  // general, 1 for SPD, 2 for symmetric indefinite (definitions from MUMPS).
-  static void SolveJacobi(const petsc::PetscParMatrix &A, const petsc::PetscParVector &b,
-                          petsc::PetscParVector &x, PetscInt sym, double PetscReal = 1.0e-9,
-                          PetscInt max_it = 5000);
-  static void SolveDirect(const petsc::PetscParMatrix &A, const petsc::PetscParVector &b,
-                          petsc::PetscParVector &x, PetscInt sym);
+  void Mult(const VecType &x, VecType &y) const;
 };
+
+using KspSolver = BaseKspSolver<Operator>;
+using ComplexKspSolver = BaseKspSolver<ComplexOperator>;
 
 }  // namespace palace
 
-#endif  // PALACE_LINALG_KSP_SOLVER_HPP
+#endif  // PALACE_LINALG_KSP_HPP
