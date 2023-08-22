@@ -201,10 +201,10 @@ void RefineMesh(const IoData &iodata, std::vector<std::unique_ptr<mfem::ParMesh>
     //          which is a NCMesh after Mesh::EnsureNCMesh is called.
     MFEM_ABORT("Region-based refinement is currently only supported for simplex meshes!");
   }
+  const bool use_nodes = (mesh.back()->GetNodes() != nullptr);
+  const int ref = use_nodes ? mesh.back()->GetNodes()->FESpace()->GetMaxElementOrder() : 1;
+  const int dim = mesh.back()->SpaceDimension();
   int region_ref_level = 0;
-  bool use_nodes = (mesh.back()->GetNodes() != nullptr);
-  int ref = use_nodes ? mesh.back()->GetNodes()->FESpace()->GetMaxElementOrder() : 1;
-  int dim = mesh.back()->SpaceDimension();
   while (region_ref_level < max_region_ref_levels)
   {
     // Mark elements for refinement in all regions. An element is marked for refinement if
@@ -415,7 +415,7 @@ void GetAxisAlignedBoundingBox(mfem::ParMesh &mesh, const mfem::Array<int> &mark
     min(d) = mfem::infinity();
     max(d) = -mfem::infinity();
   }
-  if (mesh.GetNodes() == nullptr)
+  if (!mesh.GetNodes())
   {
     auto BBUpdate = [&mesh, &dim, &min, &max](mfem::Array<int> &verts) -> void
     {
@@ -568,7 +568,7 @@ int CollectPointCloudOnRoot(mfem::ParMesh &mesh, const mfem::Array<int> &marker,
                             std::vector<Eigen::Vector3d> &vertices)
 {
   std::set<int> vertex_indices;
-  if (mesh.GetNodes() == nullptr)
+  if (!mesh.GetNodes())
   {
     // Linear mesh, work with element vertices directly.
     mfem::Array<int> v;
@@ -1110,10 +1110,19 @@ std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &path, bool remove_curvat
     }
     mesh = std::make_unique<mfem::Mesh>(fi, 1, 1, true);
   }
-  mesh->EnsureNodes();
-  if (remove_curvature && mesh->GetNodes()->FESpace()->GetMaxElementOrder() > 1)
+  if (mesh->GetNodes() && remove_curvature)
   {
-    mesh->SetCurvature(1, false);
+    mfem::GridFunction *nodes = nullptr;
+    int own_nodes = true;
+    mesh->SwapNodes(nodes, own_nodes);
+    if (own_nodes)
+    {
+      delete nodes;
+    }
+  }
+  else
+  {
+    mesh->EnsureNodes();
   }
   return mesh;
 }
