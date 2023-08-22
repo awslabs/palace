@@ -199,58 +199,54 @@ void EigenSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
   // closest to the specified target, σ.
   const double target = iodata.solver.eigenmode.target;
   const double f_target = iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, target);
-  std::unique_ptr<ComplexOperator> A, P;
-  std::unique_ptr<ComplexKspSolver> ksp;
+  Mpi::Print(" Shift-and-invert σ = {:.3e} GHz ({:.3e})\n", f_target, target);
+  if (C)
   {
-    Mpi::Print(" Shift-and-invert σ = {:.3e} GHz ({:.3e})\n", f_target, target);
-    if (C)
+    // Search for eigenvalues closest to λ = iσ.
+    eigen->SetShiftInvert(1i * target);
+    if (type == config::EigenSolverData::Type::ARPACK)
     {
-      // Search for eigenvalues closest to λ = iσ.
-      eigen->SetShiftInvert(1i * target);
-      if (type == config::EigenSolverData::Type::ARPACK)
-      {
-        // ARPACK searches based on eigenvalues of the transformed problem. The eigenvalue
-        // 1 / (λ - σ) will be a large-magnitude negative imaginary number for an eigenvalue
-        // λ with frequency close to but not below the target σ.
-        eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::SMALLEST_IMAGINARY);
-      }
-      else
-      {
-        eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::TARGET_IMAGINARY);
-      }
+      // ARPACK searches based on eigenvalues of the transformed problem. The eigenvalue
+      // 1 / (λ - σ) will be a large-magnitude negative imaginary number for an eigenvalue
+      // λ with frequency close to but not below the target σ.
+      eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::SMALLEST_IMAGINARY);
     }
     else
     {
-      // Linear EVP has eigenvalues μ = -λ² = ω². Search for eigenvalues closest to μ = σ².
-      eigen->SetShiftInvert(target * target);
-      if (type == config::EigenSolverData::Type::ARPACK)
-      {
-        // ARPACK searches based on eigenvalues of the transformed problem. 1 / (μ - σ²)
-        // will be a large-magnitude positive real number for an eigenvalue μ with frequency
-        // close to but below the target σ².
-        eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::LARGEST_REAL);
-      }
-      else
-      {
-        eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::TARGET_REAL);
-      }
+      eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::TARGET_IMAGINARY);
     }
-
-    // Set up the linear solver required for solving systems involving the shifted operator
-    // (K - σ² M) or P(iσ) = (K + iσ C - σ² M) during the eigenvalue solve. The
-    // preconditioner for complex linear systems is constructed from a real approximation
-    // to the complex system matrix.
-    A = spaceop.GetSystemMatrix(std::complex<double>(1.0, 0.0), 1i * target,
-                                std::complex<double>(-target * target, 0.0), K.get(),
-                                C.get(), M.get());
-    P = spaceop.GetPreconditionerMatrix<ComplexOperator>(1.0, target, -target * target,
-                                                         target);
-
-    ksp = std::make_unique<ComplexKspSolver>(iodata, spaceop.GetNDSpaces(),
-                                             &spaceop.GetH1Spaces());
-    ksp->SetOperators(*A, *P);
-    eigen->SetLinearSolver(*ksp);
   }
+  else
+  {
+    // Linear EVP has eigenvalues μ = -λ² = ω². Search for eigenvalues closest to μ = σ².
+    eigen->SetShiftInvert(target * target);
+    if (type == config::EigenSolverData::Type::ARPACK)
+    {
+      // ARPACK searches based on eigenvalues of the transformed problem. 1 / (μ - σ²)
+      // will be a large-magnitude positive real number for an eigenvalue μ with frequency
+      // close to but below the target σ².
+      eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::LARGEST_REAL);
+    }
+    else
+    {
+      eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::TARGET_REAL);
+    }
+  }
+
+  // Set up the linear solver required for solving systems involving the shifted operator
+  // (K - σ² M) or P(iσ) = (K + iσ C - σ² M) during the eigenvalue solve. The
+  // preconditioner for complex linear systems is constructed from a real approximation
+  // to the complex system matrix.
+  auto A = spaceop.GetSystemMatrix(std::complex<double>(1.0, 0.0), 1i * target,
+                                   std::complex<double>(-target * target, 0.0), K.get(),
+                                   C.get(), M.get());
+  auto P = spaceop.GetPreconditionerMatrix<ComplexOperator>(1.0, target, -target * target,
+                                                            target);
+
+  auto ksp = std::make_unique<ComplexKspSolver>(iodata, spaceop.GetNDSpaces(),
+                                                &spaceop.GetH1Spaces());
+  ksp->SetOperators(*A, *P);
+  eigen->SetLinearSolver(*ksp);
   timer.construct_time += timer.Lap();
 
   // Eigenvalue problem solve.
