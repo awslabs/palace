@@ -168,6 +168,9 @@ public:
   // Call MFEM's ReorientTetMesh as a check of mesh orientation after partitioning.
   bool reorient_tet = false;
 
+  // Remove high-order curvature information from the mesh.
+  bool remove_curvature = false;
+
   // Object controlling mesh refinement.
   RefinementData refinement = {};
 
