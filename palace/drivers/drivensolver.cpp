@@ -42,7 +42,7 @@ void DrivenSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
                  "Reverting to uniform sweep!\n");
     adaptive = false;
   }
-  SaveMetadata(spaceop.GetNDSpace());
+  SaveMetadata(spaceop.GetNDSpaces());
 
   // Frequencies will be sampled uniformly in the frequency domain. Index sets are for
   // computing things like S-parameters in postprocessing.

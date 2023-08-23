@@ -12,7 +12,7 @@
 namespace mfem
 {
 
-class ParFiniteElementSpace;
+class ParFiniteElementSpaceHierarchy;
 class ParMesh;
 
 }  // namespace mfem
@@ -77,7 +77,7 @@ public:
                      Timer &timer) const = 0;
 
   // These methods write different simulation metadata to a JSON file in post_dir.
-  void SaveMetadata(const mfem::ParFiniteElementSpace &fespace) const;
+  void SaveMetadata(const mfem::ParFiniteElementSpaceHierarchy &fespaces) const;
   template <typename SolverType>
   void SaveMetadata(const SolverType &ksp) const;
   void SaveMetadata(const Timer &timer) const;

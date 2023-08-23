@@ -25,7 +25,7 @@ void ElectrostaticSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mes
   timer.Lap();
   LaplaceOperator laplaceop(iodata, mesh);
   auto K = laplaceop.GetStiffnessMatrix();
-  SaveMetadata(laplaceop.GetH1Space());
+  SaveMetadata(laplaceop.GetH1Spaces());
 
   // Set up the linear solver.
   KspSolver ksp(iodata, laplaceop.GetH1Spaces());

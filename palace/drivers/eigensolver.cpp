@@ -34,7 +34,7 @@ void EigenSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
   auto C = spaceop.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
   auto M = spaceop.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
   auto Curl = spaceop.GetCurlMatrix<ComplexOperator>();
-  SaveMetadata(spaceop.GetNDSpace());
+  SaveMetadata(spaceop.GetNDSpaces());
 
   // Configure objects for postprocessing.
   PostOperator postop(iodata, spaceop, "eigenmode");

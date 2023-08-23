@@ -82,20 +82,26 @@ BaseSolver::BaseSolver(const IoData &iodata, bool root, int size, int num_thread
   }
 }
 
-void BaseSolver::SaveMetadata(const mfem::ParFiniteElementSpace &fespace) const
+void BaseSolver::SaveMetadata(const mfem::ParFiniteElementSpaceHierarchy &fespaces) const
 {
   if (post_dir.length() == 0)
   {
     return;
   }
-  const HYPRE_BigInt ndof = fespace.GlobalTrueVSize();
+  const mfem::ParFiniteElementSpace &fespace = fespaces.GetFinestFESpace();
   HYPRE_BigInt ne = fespace.GetParMesh()->GetNE();
   Mpi::GlobalSum(1, &ne, fespace.GetComm());
+  std::vector<HYPRE_BigInt> ndofs(fespaces.GetNumLevels());
+  for (int l = 0; l < fespaces.GetNumLevels(); l++)
+  {
+    ndofs[l] = fespaces.GetFESpaceAtLevel(l).GlobalTrueVSize();
+  }
   if (root)
   {
     json meta = LoadMetadata(post_dir);
     meta["Problem"]["MeshElements"] = ne;
-    meta["Problem"]["DegreesOfFreedom"] = ndof;
+    meta["Problem"]["DegreesOfFreedom"] = ndofs.back();
+    meta["Problem"]["MultigridDegreesOfFreedom"] = ndofs;
     WriteMetadata(post_dir, meta);
   }
 }

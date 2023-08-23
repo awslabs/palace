@@ -37,7 +37,7 @@ void TransientSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
     delta_t = std::min(delta_t, 0.95 * dt_max);
   }
   int nstep = GetNumSteps(0.0, iodata.solver.transient.max_t, delta_t);
-  SaveMetadata(spaceop.GetNDSpace());
+  SaveMetadata(spaceop.GetNDSpaces());
 
   // Time stepping is uniform in the time domain. Index sets are for computing things like
   // port voltages and currents in postprocessing.
