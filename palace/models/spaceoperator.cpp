@@ -381,9 +381,6 @@ SpaceOperator::GetExtraSystemMatrix(double omega, Operator::DiagonalPolicy diag_
   SumMatrixCoefficient fbr(sdim), fbi(sdim);
   SumCoefficient dfbr, dfbi;
   AddExtraSystemBdrCoefficients(omega, dfbr, dfbi, fbr, fbi);
-  constexpr bool complex = std::is_same<OperType, ComplexOperator>::value;
-  MFEM_VERIFY(complex || (dfbi.empty() && fbi.empty()),
-              "Unexpected imaginary part in GetExtraSystemMatrix<Operator>!");
   if (dfbr.empty() && fbr.empty() && dfbi.empty() && fbi.empty())
   {
     return {};
@@ -409,7 +406,8 @@ SpaceOperator::GetExtraSystemMatrix(double omega, Operator::DiagonalPolicy diag_
   }
   else
   {
-    auto A = std::make_unique<ParOperator>(std::move(ai), GetNDSpace());
+    MFEM_VERIFY(!ai, "Unexpected imaginary part in GetExtraSystemMatrix<Operator>!");
+    auto A = std::make_unique<ParOperator>(std::move(ar), GetNDSpace());
     A->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
     return A;
   }
