@@ -764,39 +764,31 @@ BoundingBox BoundingBoxFromPointCloud(MPI_Comm comm,
     // pick the greatest deviation.
     const Eigen::Vector3d n_3 = n_1.cross(n_2).normalized();
 
-    auto OutOfPlaneComp = [&n_1, &n_2, &n_3, &origin](const auto &v_1, const auto &v_2)
+    auto OutOfPlaneDistance = [&n_1, &n_2, &origin](const Eigen::Vector3d &v)
     {
-      // Precedence of directions is in reverse order of discovery of the directions. The
-      // most important deciding feature is the distance in the out of plane direction,
-      // then in the first off-diagonal, then finally in the diagonal direction.
-      const std::array<double, 3> dist_1{(v_1 - origin).dot(n_3), (v_1 - origin).dot(n_2),
-                                         (v_1 - origin).dot(n_1)};
-      const std::array<double, 3> dist_2{(v_2 - origin).dot(n_3), (v_2 - origin).dot(n_2),
-                                         (v_2 - origin).dot(n_1)};
-      return dist_1 < dist_2;
+      return ((v - origin) - (v - origin).dot(n_1) * n_1 - (v - origin).dot(n_2) * n_2)
+          .norm();
     };
 
-    // There is a degeneration if the final point is within the plane defined by (v_000,
-    // v_001, v_111).
-    const auto &t_1 = *std::max_element(vertices.begin(), vertices.end(), OutOfPlaneComp);
-    constexpr double planar_tolerance = 1.0e-9;
-    box.planar = std::abs(n_3.dot(t_0)) < planar_tolerance &&
-                 std::abs(n_3.dot(t_1)) < planar_tolerance;
-    if (!box.planar)
-    {
-      MFEM_VERIFY(&t_0 != &t_1, "Degenerate coordinates!");
-      MFEM_VERIFY(&t_0 != &v_000, "Degenerate coordinates!");
-      MFEM_VERIFY(&t_0 != &v_111, "Degenerate coordinates!");
-      MFEM_VERIFY(&t_1 != &v_000, "Degenerate coordinates!");
-      MFEM_VERIFY(&t_1 != &v_111, "Degenerate coordinates!");
-    }
+    // Filter the list of vertices to remove those that are within the plane. Planar
+    // detection is done using a tolerance given floating point precision.
+    std::vector<Eigen::Vector3d> vertices_out_of_plane;
+    const double planar_tolerance = 1.0e-3 * (v_111 - v_000).norm();
+    std::copy_if(vertices.begin(), vertices.end(),
+                 std::back_inserter(vertices_out_of_plane),
+                 [OutOfPlaneDistance, planar_tolerance](const auto &v)
+                 { return OutOfPlaneDistance(v) > planar_tolerance; });
+    box.planar = vertices_out_of_plane.empty();
 
-    // If t_1 points to v_000, t_0 or v_111, then the data is coplanar. Establish if t_0 is
-    // a diagonal or not (using Pythagoras). Only pick t_1 for v_001 if the points are non-
-    // planar, and t_0 is longer.
-    bool t_0_gt_t_1 = t_0.norm() >= t_1.norm();
-    const auto &v_001 = !box.planar && t_0_gt_t_1 ? t_1 : t_0;
-    const auto &v_011 = !box.planar && t_0_gt_t_1 ? t_0 : t_1;
+    // Given candidates t_0 and t_1, the closer to origin defines v_001.
+    const auto &t_1 = box.planar
+                          ? t_0
+                          : *std::max_element(vertices_out_of_plane.begin(),
+                                              vertices_out_of_plane.end(), DistFromP_000);
+    const bool t_0_gt_t_1 =
+        (t_0 - origin).norm() > (t_1 - origin).norm();  // If planar t_1 == t_0
+    const auto &v_001 = t_0_gt_t_1 ? t_1 : t_0;
+    const auto &v_011 = box.planar ? v_111 : (t_0_gt_t_1 ? t_0 : t_1);
 
     // Compute the center as halfway along the main diagonal.
     Vector3dMap(box.center.data()) = 0.5 * (v_000 + v_111);
@@ -804,10 +796,8 @@ BoundingBox BoundingBoxFromPointCloud(MPI_Comm comm,
     // The length in each direction is then given by traversing the edges of the cuboid in
     // turn.
     Vector3dMap(box.normals[0].data()) = 0.5 * (v_001 - v_000);
-    Vector3dMap(box.normals[1].data()) =
-        box.planar ? (0.5 * (v_111 - v_001)).eval() : (0.5 * (v_011 - v_001)).eval();
-    Vector3dMap(box.normals[2].data()) =
-        box.planar ? Eigen::Vector3d(0, 0, 0) : (0.5 * (v_111 - v_011)).eval();
+    Vector3dMap(box.normals[1].data()) = 0.5 * (v_011 - v_001);
+    Vector3dMap(box.normals[2].data()) = 0.5 * (v_111 - v_011);
 
     // Make sure the longest dimension comes first.
     std::sort(box.normals.begin(), box.normals.end(),
@@ -875,10 +865,10 @@ BoundingBall BoundingBallFromPointCloud(MPI_Comm comm,
         vertices.begin(), vertices.end(),
         [&delta, PerpendicularDistance](const auto &x, const auto &y)
         { return PerpendicularDistance({delta}, x) < PerpendicularDistance({delta}, y); });
-    constexpr double radius_tol = 1.0e-6;
+    constexpr double radius_tol = 1.0e-3;
     MFEM_VERIFY(std::abs(PerpendicularDistance({delta}, perp) - ball.radius) <=
                     radius_tol * ball.radius,
-                "A point perpendicular must be contained in the ball: "
+                "Furthest point perpendicular must be on the exterior of the ball: "
                     << PerpendicularDistance({delta}, perp) << " vs. " << ball.radius
                     << "!");
 
@@ -887,7 +877,7 @@ BoundingBall BoundingBallFromPointCloud(MPI_Comm comm,
     Vector3dMap(ball.planar_normal.data()) = delta.cross(n_radial).normalized();
 
     // Compute the point furthest out of the plane discovered. If below tolerance, this
-    // means the circle is 2D.
+    // means the ball is 2D.
     const auto &out_of_plane = *std::max_element(
         vertices.begin(), vertices.end(),
         [&delta, &n_radial, PerpendicularDistance](const auto &x, const auto &y)
@@ -896,13 +886,14 @@ BoundingBall BoundingBallFromPointCloud(MPI_Comm comm,
                  PerpendicularDistance({delta, n_radial}, y);
         });
 
-    constexpr double planar_tolerance = 1.0e-9;
-    ball.planar = PerpendicularDistance({delta, n_radial}, out_of_plane) < planar_tolerance;
+    ball.planar =
+        PerpendicularDistance({delta, n_radial}, out_of_plane) < radius_tol * ball.radius;
     if (!ball.planar)
     {
       // The points are not functionally coplanar, zero out the normal.
-      MFEM_VERIFY(PerpendicularDistance({delta, n_radial}, out_of_plane) <= ball.radius,
-                  "A point perpendicular must be contained in the ball!");
+      MFEM_VERIFY(std::abs(PerpendicularDistance({delta}, perp) - ball.radius) <=
+                      radius_tol * ball.radius,
+                  "Furthest point perpendicular must be on the exterior of the sphere!");
       Vector3dMap(ball.planar_normal.data()) *= 0;
     }
   }
