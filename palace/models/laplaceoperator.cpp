@@ -150,7 +150,8 @@ std::unique_ptr<Operator> LaplaceOperator::GetStiffnessMatrix()
     auto &h1_fespace_l = h1_fespaces.GetFESpaceAtLevel(l);
     if (print_hdr)
     {
-      Mpi::Print(" Level {:d}: {:d} unknowns", l, h1_fespace_l.GlobalTrueVSize());
+      Mpi::Print(" Level {:d} (p = {:d}): {:d} unknowns", l,
+                 h1_fespace_l.GetMaxElementOrder(), h1_fespace_l.GlobalTrueVSize());
     }
     constexpr auto MatType = MaterialPropertyType::PERMITTIVITY_REAL;
     MaterialPropertyCoefficient<MatType> epsilon_func(mat_op);

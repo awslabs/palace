@@ -4,7 +4,6 @@
 #include "distrelaxation.hpp"
 
 #include <mfem.hpp>
-#include <mfem/general/forall.hpp>
 #include "fem/multigrid.hpp"
 #include "linalg/chebyshev.hpp"
 #include "linalg/rap.hpp"
@@ -15,7 +14,8 @@ namespace palace
 template <typename OperType>
 DistRelaxationSmoother<OperType>::DistRelaxationSmoother(
     mfem::ParFiniteElementSpace &nd_fespace, mfem::ParFiniteElementSpace &h1_fespace,
-    int smooth_it, int cheby_smooth_it, int cheby_order, int pa_order_threshold)
+    int smooth_it, int cheby_smooth_it, int cheby_order, double cheby_sf_max,
+    double cheby_sf_min, bool cheby_4th_kind, int pa_order_threshold)
   : Solver<OperType>(), pc_it(smooth_it), A(nullptr), A_G(nullptr), dbc_tdof_list_G(nullptr)
 {
   // Construct discrete gradient matrix for the auxiliary space.
@@ -29,8 +29,20 @@ DistRelaxationSmoother<OperType>::DistRelaxationSmoother(
   }
 
   // Initialize smoothers.
-  B = std::make_unique<ChebyshevSmoother<OperType>>(cheby_smooth_it, cheby_order);
-  B_G = std::make_unique<ChebyshevSmoother<OperType>>(cheby_smooth_it, cheby_order);
+  if (cheby_4th_kind)
+  {
+    B = std::make_unique<ChebyshevSmoother<OperType>>(cheby_smooth_it, cheby_order,
+                                                      cheby_sf_max);
+    B_G = std::make_unique<ChebyshevSmoother<OperType>>(cheby_smooth_it, cheby_order,
+                                                        cheby_sf_max);
+  }
+  else
+  {
+    B = std::make_unique<ChebyshevSmoother1stKind<OperType>>(cheby_smooth_it, cheby_order,
+                                                             cheby_sf_max, cheby_sf_min);
+    B_G = std::make_unique<ChebyshevSmoother1stKind<OperType>>(cheby_smooth_it, cheby_order,
+                                                               cheby_sf_max, cheby_sf_min);
+  }
   B_G->SetInitialGuess(false);
 }
 
@@ -47,15 +59,16 @@ void DistRelaxationSmoother<OperType>::SetOperators(const OperType &op,
               "Invalid operator sizes for DistRelaxationSmoother!");
   A = &op;
   A_G = &op_G;
+  r.SetSize(op.Height());
+  x_G.SetSize(op_G.Height());
+  y_G.SetSize(op_G.Height());
+  this->height = op.Height();
+  this->width = op.Width();
 
   const auto *PtAP_G = dynamic_cast<const ParOperType *>(&op_G);
   MFEM_VERIFY(PtAP_G,
               "ChebyshevSmoother requires a ParOperator or ComplexParOperator operator!");
   dbc_tdof_list_G = PtAP_G->GetEssentialTrueDofs();
-
-  r.SetSize(op.Height());
-  x_G.SetSize(op_G.Height());
-  y_G.SetSize(op_G.Height());
 
   // Set up smoothers for A and A_G.
   B->SetOperator(op);

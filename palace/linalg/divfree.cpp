@@ -68,7 +68,7 @@ DivFreeSolver::DivFreeSolver(const MaterialOperator &mat_op,
   auto amg =
       std::make_unique<WrapperSolver<Operator>>(std::make_unique<BoomerAmgSolver>(1, 1, 0));
   auto gmg = std::make_unique<GeometricMultigridSolver<Operator>>(
-      std::move(amg), h1_fespaces, nullptr, 1, 1, 2, pa_order_threshold);
+      std::move(amg), h1_fespaces, nullptr, 1, 1, 2, 1.0, 0.0, true, pa_order_threshold);
 
   auto pcg =
       std::make_unique<CgSolver<Operator>>(h1_fespaces.GetFinestFESpace().GetComm(), print);

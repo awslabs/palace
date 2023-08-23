@@ -19,7 +19,7 @@ namespace palace
 
 // Abstract base class for real-valued or complex-valued solvers.
 template <typename OperType>
-class Solver
+class Solver : public OperType
 {
   static_assert(std::is_same<OperType, Operator>::value ||
                     std::is_same<OperType, ComplexOperator>::value,
@@ -33,7 +33,7 @@ protected:
   bool initial_guess;
 
 public:
-  Solver(bool initial_guess = false) : initial_guess(initial_guess) {}
+  Solver(bool initial_guess = false) : OperType(), initial_guess(initial_guess) {}
   virtual ~Solver() = default;
 
   // Configure whether or not to use an initial guess when applying the solver.
@@ -42,11 +42,8 @@ public:
   // Set the operator associated with the solver, or update it if called repeatedly.
   virtual void SetOperator(const OperType &op) = 0;
 
-  // Apply the solver.
-  virtual void Mult(const VecType &x, VecType &y) const = 0;
-
   // Apply the solver for the transpose problem.
-  virtual void MultTranspose(const VecType &x, VecType &y) const
+  void MultTranspose(const VecType &x, VecType &y) const override
   {
     MFEM_ABORT("MultTranspose() is not implemented for base class Solver<OperType>!");
   }

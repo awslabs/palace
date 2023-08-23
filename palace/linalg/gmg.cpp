@@ -16,7 +16,8 @@ GeometricMultigridSolver<OperType>::GeometricMultigridSolver(
     std::unique_ptr<Solver<OperType>> &&coarse_solver,
     mfem::ParFiniteElementSpaceHierarchy &fespaces,
     mfem::ParFiniteElementSpaceHierarchy *aux_fespaces, int cycle_it, int smooth_it,
-    int cheby_order, int pa_order_threshold)
+    int cheby_order, double cheby_sf_max, double cheby_sf_min, bool cheby_4th_kind,
+    int pa_order_threshold)
   : Solver<OperType>(), pc_it(cycle_it), A(fespaces.GetNumLevels()),
     P(fespaces.GetNumLevels() - 1), dbc_tdof_lists(fespaces.GetNumLevels() - 1),
     B(fespaces.GetNumLevels()), X(fespaces.GetNumLevels()), Y(fespaces.GetNumLevels()),
@@ -43,13 +44,25 @@ GeometricMultigridSolver<OperType>::GeometricMultigridSolver(
   {
     if (aux_fespaces)
     {
+      const int cheby_smooth_it = 1;
       B[l] = std::make_unique<DistRelaxationSmoother<OperType>>(
-          fespaces.GetFESpaceAtLevel(l), aux_fespaces->GetFESpaceAtLevel(l), smooth_it, 1,
-          cheby_order, pa_order_threshold);
+          fespaces.GetFESpaceAtLevel(l), aux_fespaces->GetFESpaceAtLevel(l), smooth_it,
+          cheby_smooth_it, cheby_order, cheby_sf_max, cheby_sf_min, cheby_4th_kind,
+          pa_order_threshold);
     }
     else
     {
-      B[l] = std::make_unique<ChebyshevSmoother<OperType>>(smooth_it, cheby_order);
+      const int cheby_smooth_it = smooth_it;
+      if (cheby_4th_kind)
+      {
+        B[l] = std::make_unique<ChebyshevSmoother<OperType>>(cheby_smooth_it, cheby_order,
+                                                             cheby_sf_max);
+      }
+      else
+      {
+        B[l] = std::make_unique<ChebyshevSmoother1stKind<OperType>>(
+            cheby_smooth_it, cheby_order, cheby_sf_max, cheby_sf_min);
+      }
     }
   }
 }
@@ -106,6 +119,8 @@ void GeometricMultigridSolver<OperType>::SetOperator(const OperType &op)
     Y[l].SetSize(A[l]->Height());
     R[l].SetSize(A[l]->Height());
   }
+  this->height = op.Height();
+  this->width = op.Width();
 }
 
 template <typename OperType>

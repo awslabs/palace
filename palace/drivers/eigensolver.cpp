@@ -30,11 +30,11 @@ void EigenSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
   // computational range. The damping matrix may be nullptr.
   timer.Lap();
   SpaceOperator spaceop(iodata, mesh);
-  auto K = spaceop.GetComplexStiffnessMatrix(Operator::DIAG_ONE);
-  auto C = spaceop.GetComplexDampingMatrix(Operator::DIAG_ZERO);
-  auto M = spaceop.GetComplexMassMatrix(Operator::DIAG_ZERO);
-  auto Curl = spaceop.GetComplexCurlMatrix();
-  SaveMetadata(spaceop.GetNDSpace());
+  auto K = spaceop.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE);
+  auto C = spaceop.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+  auto M = spaceop.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+  auto Curl = spaceop.GetCurlMatrix<ComplexOperator>();
+  SaveMetadata(spaceop.GetNDSpaces());
 
   // Configure objects for postprocessing.
   PostOperator postop(iodata, spaceop, "eigenmode");
@@ -190,7 +190,7 @@ void EigenSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
     eigen->SetInitialSpace(v0);  // Copies the vector
 
     // Debug
-    // auto Grad = spaceop.GetComplexGradMatrix();
+    // auto Grad = spaceop.GetGradMatrix<ComplexOperator>();
     // ComplexVector r0(Grad->Width());
     // Grad->MultTranspose(v0, r0);
     // r0.Print();

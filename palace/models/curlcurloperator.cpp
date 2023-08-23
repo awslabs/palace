@@ -128,7 +128,8 @@ std::unique_ptr<Operator> CurlCurlOperator::GetStiffnessMatrix()
     auto &nd_fespace_l = nd_fespaces.GetFESpaceAtLevel(l);
     if (print_hdr)
     {
-      Mpi::Print(" Level {:d}: {:d} unknowns", l, nd_fespace_l.GlobalTrueVSize());
+      Mpi::Print(" Level {:d} (p = {:d}): {:d} unknowns", l,
+                 nd_fespace_l.GetMaxElementOrder(), nd_fespace_l.GlobalTrueVSize());
     }
     constexpr auto MatType = MaterialPropertyType::INV_PERMEABILITY;
     MaterialPropertyCoefficient<MatType> muinv_func(mat_op);
