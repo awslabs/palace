@@ -57,7 +57,7 @@ Schema are also installed and can be accessed in `<INSTALL_DIR>/bin`.
 
 ## Timing
 
-Timing facilities are provided by `BlockTimer`.
+Timing facilities are provided by the `Timer` and BlockTimer` clasess.
 
 Creating a block as `BlockTimer b(idx)` where `idx` is a category like `CONSTRUCT`, `SOLVE`,
 etc. will record time so long as `b` is in scope; however, timing may be interrupted by
@@ -67,12 +67,9 @@ are timed without needing to know how timing may be done by the calling function
 
 The `BlockTimer` implementation relies upon a static member object of the `Timer` class,
 which behaves as a stopwatch with some memory functions. It is the responsibility of this
-`Timer BlockTimer::timer` object to record time spent in each recorded category. Other
-`Timer` objects may be created for local timing purposes, but these will not count toward
-time reported at the end of a log file or in the metadata JSON.
-
-Internally, the number of times `BlockTimer b(idx)` was called for each possible value of
-`idx` (timing category) can be queried with `BlockTimer::GetTimer().GetCounts()`.
+`BlockTimer::timer` object to record time spent in each recorded category. Other `Timer`
+objects may be created for local timing purposes, but these will not count toward time
+reported at the end of a log file or in the metadata JSON.
 
 ## Changelog
 

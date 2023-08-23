@@ -189,7 +189,9 @@ int main(int argc, char *argv[])
   solver->Solve(mesh);
 
   // Print timing summary.
-  BlockTimer::Finalize(world_comm, *solver);
+  BlockTimer::Print(world_comm);
+  solver->SaveMetadata(BlockTimer::GlobalTimer());
+  Mpi::Print(world_comm, "\n");
 
   // Finalize SLEPc/PETSc.
 #if defined(PALACE_WITH_SLEPC)

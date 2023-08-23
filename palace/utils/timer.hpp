@@ -8,7 +8,6 @@
 #include <stack>
 #include <string>
 #include <vector>
-#include "drivers/basesolver.hpp"
 #include "utils/communication.hpp"
 
 namespace palace
@@ -58,15 +57,6 @@ private:
   TimePoint last_lap_time;
   std::vector<Duration> data;
   std::vector<int> counts;
-  std::vector<double> data_min, data_max, data_avg;
-
-  // Save a timing step by adding a duration, without lapping; optionally, count it.
-  Duration SaveTime(Index idx, Duration time, bool count_it)
-  {
-    data[idx] += time;
-    count_it &&counts[idx]++;
-    return data[idx];
-  }
 
 public:
   Timer()
@@ -88,6 +78,14 @@ public:
   // Return the time elapsed since timer creation.
   Duration TimeFromStart() const { return Now() - start_time; }
 
+  // Save a timing step by adding a duration, without lapping; optionally, count it.
+  Duration SaveTime(Index idx, Duration time, bool count_it = true)
+  {
+    data[idx] += time;
+    counts[idx] += count_it;
+    return data[idx];
+  }
+
   // Lap and record a timing step.
   Duration MarkTime(Index idx, bool count_it = true)
   {
@@ -95,68 +93,10 @@ public:
   }
 
   // Provide map-like read-only access to the timing data.
-  Duration operator[](Index idx) const { return data[idx]; }
-
-  // Provide access to the reduced timing data.
-  double GetMinTime(Index idx) const { return data_min[idx]; }
-  double GetMaxTime(Index idx) const { return data_max[idx]; }
-  double GetAvgTime(Index idx) const { return data_avg[idx]; }
+  auto Data(Index idx) const { return data[idx].count(); }
 
   // Return number of times timer.MarkTime(idx) or TimerBlock b(idx) was called.
-  int GetCounts(Index idx) const { return counts[idx]; }
-
-  // Reduce timing information across MPI ranks.
-  void Reduce(MPI_Comm comm)
-  {
-    const std::size_t ntimes = data.size();
-    SaveTime(TOTAL, TimeFromStart(), true);
-    data_min.resize(ntimes);
-    data_max.resize(ntimes);
-    data_avg.resize(ntimes);
-
-    int np = Mpi::Size(comm);
-    for (std::size_t i = 0; i < ntimes; i++)
-    {
-      data_min[i] = data_max[i] = data_avg[i] = data[i].count();
-    }
-
-    Mpi::GlobalMin(ntimes, data_min.data(), comm);
-    Mpi::GlobalMax(ntimes, data_max.data(), comm);
-    Mpi::GlobalSum(ntimes, data_avg.data(), comm);
-
-    for (std::size_t i = 0; i < ntimes; i++)
-    {
-      data_avg[i] /= np;
-    }
-  }
-
-  // Prints timing information. We assume the data has already been reduced.
-  void Print(MPI_Comm comm) const
-  {
-    constexpr int p = 3;   // Floating point precision
-    constexpr int w = 12;  // Data column width
-    constexpr int h = 26;  // Left-hand side width
-    // clang-format off
-    Mpi::Print(comm, "\n{:<{}s}{:>{}s}{:>{}s}{:>{}s}\n",
-               "Elapsed Time Report (s)", h, "Min.", w, "Max.", w, "Avg.", w);
-    // clang-format on
-    Mpi::Print(comm, "{}\n", std::string(h + 3 * w, '='));
-    for (int i = INIT; i < NUMTIMINGS; i++)
-    {
-      if (counts[i] > 0)
-      {
-        if (i == TOTAL)
-        {
-          Mpi::Print(comm, "{}\n", std::string(h + 3 * w, '-'));
-        }
-        // clang-format off
-        Mpi::Print(comm, "{:<{}s}{:{}.{}f}{:{}.{}f}{:{}.{}f}\n",
-                   descriptions[i], h,
-                   data_min[i], w, p, data_max[i], w, p, data_avg[i], w, p);
-        // clang-format on
-      }
-    }
-  }
+  auto Counts(Index idx) const { return counts[idx]; }
 };
 
 class BlockTimer
@@ -164,15 +104,38 @@ class BlockTimer
   using Index = Timer::Index;
 
 private:
-  inline static std::stack<Index> stack;
   inline static Timer timer;
+  inline static std::stack<Index> stack;
+
+  // Reduce timing information across MPI ranks.
+  static void Reduce(MPI_Comm comm, std::vector<double> &data_min,
+                     std::vector<double> &data_max, std::vector<double> &data_avg)
+  {
+    data_min.resize(Timer::NUMTIMINGS);
+    data_max.resize(Timer::NUMTIMINGS);
+    data_avg.resize(Timer::NUMTIMINGS);
+    for (int i = Timer::INIT; i < Timer::NUMTIMINGS; i++)
+    {
+      data_min[i] = data_max[i] = data_avg[i] = timer.Data((Timer::Index)i);
+    }
+
+    Mpi::GlobalMin(Timer::NUMTIMINGS, data_min.data(), comm);
+    Mpi::GlobalMax(Timer::NUMTIMINGS, data_max.data(), comm);
+    Mpi::GlobalSum(Timer::NUMTIMINGS, data_avg.data(), comm);
+
+    const int np = Mpi::Size(comm);
+    for (int i = Timer::INIT; i < Timer::NUMTIMINGS; i++)
+    {
+      data_avg[i] /= np;
+    }
+  }
 
 public:
   BlockTimer(Index i)
   {
     // Start timing when entering the block, interrupting whatever we were timing before.
     // Take note of what we are now timing.
-    (stack.empty()) ? timer.Lap() : timer.MarkTime(stack.top(), false);
+    stack.empty() ? timer.Lap() : timer.MarkTime(stack.top(), false);
     stack.push(i);
   }
 
@@ -187,17 +150,47 @@ public:
     }
   }
 
-  static void Finalize(MPI_Comm comm, BaseSolver &solver)
+  // Read-only access the static Timer object.
+  static const Timer &GlobalTimer() { return timer; }
+
+  // Print timing information after reducing the data across all processes.
+  static void Print(MPI_Comm comm)
   {
     while (!stack.empty())
     {
       timer.MarkTime(stack.top());
       stack.pop();
     }
-    timer.Reduce(comm);
-    timer.Print(comm);
-    solver.SaveMetadata(timer);
-    Mpi::Print(comm, "\n");
+    timer.SaveTime(Timer::TOTAL, timer.TimeFromStart());
+
+    // Reduce timing data.
+    std::vector<double> data_min, data_max, data_avg;
+    Reduce(comm, data_min, data_max, data_avg);
+
+    // Print a nice table of the timing data.
+    constexpr int p = 3;   // Floating point precision
+    constexpr int w = 12;  // Data column width
+    constexpr int h = 26;  // Left-hand side width
+    // clang-format off
+    Mpi::Print(comm, "\n{:<{}s}{:>{}s}{:>{}s}{:>{}s}\n",
+               "Elapsed Time Report (s)", h, "Min.", w, "Max.", w, "Avg.", w);
+    // clang-format on
+    Mpi::Print(comm, "{}\n", std::string(h + 3 * w, '='));
+    for (int i = Timer::INIT; i < Timer::NUMTIMINGS; i++)
+    {
+      if (timer.Counts((Timer::Index)i) > 0)
+      {
+        if (i == Timer::TOTAL)
+        {
+          Mpi::Print(comm, "{}\n", std::string(h + 3 * w, '-'));
+        }
+        // clang-format off
+        Mpi::Print(comm, "{:<{}s}{:{}.{}f}{:{}.{}f}{:{}.{}f}\n",
+                   timer.descriptions[i], h,
+                   data_min[i], w, p, data_max[i], w, p, data_avg[i], w, p);
+        // clang-format on
+      }
+    }
   }
 };
 
