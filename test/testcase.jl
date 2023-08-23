@@ -25,6 +25,7 @@ function testcase(
     rm(postprodir; force=true, recursive=true)
     rm(logdir; force=true, recursive=true)
     mkdir(logdir)
+    cd(exampledir)
 
     @testset "Simulation" begin
         # Run the example simulation
@@ -32,7 +33,7 @@ function testcase(
         errfile = "err.out"
         proc = run(
             pipeline(
-                ignorestatus(`$palace -np $np -wdir $exampledir $testconfig`);
+                ignorestatus(`$palace -np $np $testconfig`);
                 stdout=joinpath(logdir, logfile),
                 stderr=joinpath(logdir, errfile)
             )

@@ -11,19 +11,23 @@ Wrapper for launching Palace using MPI
 
 Options:
   -h, --help                       Show this help message and exit
-  -wdir, --work-dir DIR            Working directory for the simulation, as mpirun's -wdir, for example
   -dry-run, --dry-run              Parse configuration file for errors and exit
   -serial, --serial                Call Palace without MPI launcher
   -np, --np NUM_PROCS              How many MPI processes to use, default is 1
-  -launcher, --launcher LAUNCHER   MPI launcher, default is mpirun
-  -map-by, --map-by                Options to pass with --map-by to MPI launcher, for example :SPAN or :OVERSUBSCRIBE
-  -bindings, --report-bindings     Pass --report-bindings option to MPI launcher
-  -x, --env \"VAR1;VAR2;...\"      List of environment variables to export with OMPI_MCA_mca_base_env_list (for OpenMPI)
+  -nt, --nt NUM_THREADS            Number of OpenMP threads to use for OpenMP builds, default is 1 or the value of OMP_NUM_THREADS in the environment
+  -launcher, --launcher LAUNCHER   MPI launcher, default is \`mpirun\`
+  -launcher-args,
+    --launcher-args ARGS           Any extra arguments to pass to MPI launcher, for example \`--map-by\` or \`--bind-to\` with their respective options (quoted)
 "
 }
 
 # Parse arguments
-BASE_ENV_LIST="PATH;LD_LIBRARY_PATH"
+DRY_RUN=""
+SERIAL="false"
+NUM_PROCS="1"
+NUM_THREADS=""
+LAUNCHER="mpirun"
+LAUNCHER_ARGS=""
 POSITIONAL=()
 while [[ $# -gt 0 ]]; do
     key="$1"
@@ -32,26 +36,12 @@ while [[ $# -gt 0 ]]; do
         help
         exit 0
         ;;
-        -wdir|--work-dir)
-        WORK_DIR="$2"
-        shift
-        shift
-        ;;
         -dry-run|--dry-run)
         DRY_RUN="--dry-run"
         shift
         ;;
-        -serial|--serial)
+        -serial|--serial|-sequential|--sequential)
         SERIAL="true"
-        shift
-        ;;
-        -sequential|--sequential)
-        SERIAL="true"
-        shift
-        ;;
-        -launcher|--launcher)
-        LAUNCHER="$2"
-        shift
         shift
         ;;
         -np|--np)
@@ -59,17 +49,18 @@ while [[ $# -gt 0 ]]; do
         shift
         shift
         ;;
-        -map-by|--map-by)
-        MAP_BY="$2"
+        -nt|--nt)
+        NUM_THREADS="$2"
         shift
         shift
         ;;
-        -bindings|--report-bindings)
-        BINDINGS="--report-bindings"
+        -launcher|--launcher)
+        LAUNCHER="$2"
+        shift
         shift
         ;;
-        -x|--env)
-        BASE_ENV_LIST="$BASE_ENV_LIST;$2"
+        -launcher-args|--launcher-args)
+        LAUNCHER_ARGS="$2"
         shift
         shift
         ;;
@@ -121,50 +112,8 @@ if ! echo $PALACE | grep -q $ARCH; then
 fi
 
 # Configure --dry-run
-if [[ ! -z "$DRY_RUN" ]]; then
+if [[ -n "$DRY_RUN" ]]; then
     PALACE="$PALACE $DRY_RUN"
-fi
-
-# Run sequential simulation
-if [[ "$SERIAL" ]]; then
-    if [[ ! -z "$WORK_DIR" ]]; then
-        echo ">> cd $WORK_DIR && $PALACE $CONFIG"
-        cd $WORK_DIR && $PALACE $CONFIG
-    else
-        echo ">> $PALACE $CONFIG"
-        $PALACE $CONFIG
-    fi
-    exit $?
-fi
-
-# Configure parallel MPI execution
-LAUNCHER=${LAUNCHER:-mpirun}
-if ! command -v $LAUNCHER &> /dev/null; then
-    echo "Error: Could not locate MPI launcher, try specifying a value for --launcher"
-    exit 1
-fi
-NUM_PROCS=${NUM_PROCS:-1}
-MPIRUN="$(which $LAUNCHER) -n $NUM_PROCS"
-if [[ ! -z "$WORK_DIR" ]]; then
-    MPIRUN="$MPIRUN --wdir $WORK_DIR"
-fi
-if [[ ! -z "$MAP_BY" ]]; then
-    MPIRUN="$MPIRUN --map-by $MAP_BY"
-fi
-if [[ ! -z "$BINDINGS" ]]; then
-    MPIRUN="$MPIRUN $BINDINGS"
-fi
-if [[ ! -z "$PBS_NODEFILE" ]]; then
-    # PBS/Torque job
-    NODE_LIST=$PBS_NODEFILE
-    SUBMIT_DIR=$PBS_O_WORKDIR
-elif [[ ! -z "$SLURM_JOB_NODELIST" ]]; then
-    # Slurm job
-    NODE_LIST=$SLURM_JOB_NODELIST
-    SUBMIT_DIR=$SLURM_SUBMIT_DIR
-else
-    NODE_LIST=""
-    WORKDIR=""
 fi
 
 # Configure shared library runtime locations
@@ -187,31 +136,70 @@ else
                                       export LD_LIBRARY_PATH="$PALACE_LIB_PATH;$LIB_PATH_BACKUP"
 fi
 
-# Run parallel simulation
-if [[ -z "$NODE_LIST" ]]; then
-    # Local execution
-    echo ">> $MPIRUN $PALACE $CONFIG"
-    $MPIRUN $PALACE $CONFIG
-else
-    NODE_FILE=mpi_nodes
-    cat $NODE_LIST | sort | uniq > $NODE_FILE
-    echo The master node of this job is `hostname`
-    echo The working directory is `echo $SUBMIT_DIR`
-    echo This job runs on the following nodes: && cat $NODE_FILE
-    export OMPI_MCA_mca_base_env_list="$BASE_ENV_LIST"
-    MPIRUN="$MPIRUN --hostfile $NODE_FILE"
-    # NUM_NODES=$(wc -l < $NODE_FILE)
-    # NUM_PPN=$(($(($NUM_PROCS + $NUM_NODES - 1)) / $NUM_NODES))
+# Configure OpenMP threads
+NUM_THREADS_BACKUP=$OMP_NUM_THREADS
+if [[ -z "$NUM_THREADS" ]]; then
+    NUM_THREADS=${OMP_NUM_THREADS:-1}
+fi
+export OMP_NUM_THREADS=$NUM_THREADS
 
-    # Distributed execution
-    echo ">> $MPIRUN $PALACE $CONFIG"
-    $MPIRUN $PALACE $CONFIG
-    rm $NODE_FILE
+if $SERIAL; then
+    # Run sequential simulation
+    if [[ -n "$WORK_DIR" ]]; then
+        echo ">> cd $WORK_DIR && $PALACE $CONFIG"
+        cd $WORK_DIR && $PALACE $CONFIG
+    else
+        echo ">> $PALACE $CONFIG"
+        $PALACE $CONFIG
+    fi
+else
+    # Configure parallel MPI execution
+    LAUNCHER=${LAUNCHER:-mpirun}
+    if ! command -v $LAUNCHER &> /dev/null; then
+        echo "Error: Could not locate MPI launcher, try specifying a value for --launcher"
+        exit 1
+    fi
+    MPIRUN="$(which $LAUNCHER) -n $NUM_PROCS"
+    if [[ -n "$LAUNCHER_ARGS" ]]; then
+        MPIRUN="$MPIRUN $LAUNCHER_ARGS"
+    fi
+
+    # Run parallel simulation
+    if [[ -n "$PBS_NODEFILE" ]]; then
+        # PBS/Torque job
+        NODE_LIST=$PBS_NODEFILE
+        SUBMIT_DIR=$PBS_O_WORKDIR
+    elif [[ -n "$SLURM_JOB_NODELIST" ]]; then
+        # Slurm job
+        NODE_LIST=$SLURM_JOB_NODELIST
+        SUBMIT_DIR=$SLURM_SUBMIT_DIR
+    else
+        NODE_LIST=""
+        WORKDIR=""
+    fi
+    if [[ -z "$NODE_LIST" ]]; then
+        # Local execution
+        echo ">> $MPIRUN $PALACE $CONFIG"
+        $MPIRUN $PALACE $CONFIG
+    else
+        NODE_FILE=mpi_nodes
+        cat $NODE_LIST | sort | uniq > $NODE_FILE
+        echo The master node of this job is `hostname`
+        echo The working directory is `echo $SUBMIT_DIR`
+        echo This job runs on the following nodes: && cat $NODE_FILE
+        MPIRUN="$MPIRUN --hostfile $NODE_FILE"
+
+        # Distributed execution
+        echo ">> $MPIRUN $PALACE $CONFIG"
+        $MPIRUN $PALACE $CONFIG
+        rm $NODE_FILE
+    fi
 fi
 
 # Reset user environment
 if [[ "$(uname)" == "Darwin" ]]; then
-    export DYLD_LIBRARY_PATH=$LIB_PATH_BACKUP
+    DYLD_LIBRARY_PATH=$LIB_PATH_BACKUP
 else
-    export LD_LIBRARY_PATH=$LIB_PATH_BACKUP
+    LD_LIBRARY_PATH=$LIB_PATH_BACKUP
 fi
+OMP_NUM_THREADS=$NUM_THREADS_BACKUP

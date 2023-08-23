@@ -38,7 +38,7 @@ jobs:
           arch: aarch64
           distro: ubuntu_latest
           env: |
-            CMAKE_BUILD_TYPE: Release
+            CMAKE_BUILD_TYPE: Debug  # Speed up builds for run-on-arch
             NUM_PROC_BUILD_MAX: '32'
             NUM_PROC_TEST_MAX: '8'
           run: |
@@ -108,17 +108,5 @@ jobs:
               -DPALACE_WITH_SLEPC=$WITH_SLEPC \
               -DPALACE_WITH_ARPACK=$WITH_ARPACK
             make -j$NUM_PROC_BUILD
-            cd ..
 
             # XX TODO: Disable tests for now since Julia precompilation fails
-
-            # # Configure environment for tests
-            # export NUM_PROC_TEST=$(nproc 2> /dev/null || sysctl -n hw.ncpu)
-            # if [[ "$NUM_PROC_TEST" -gt "$NUM_PROC_TEST_MAX" ]]; then
-            #   NUM_PROC_TEST=$NUM_PROC_TEST_MAX
-            # fi
-            # export PATH=/opt/palace/bin:$PATH
-
-            # # Run tests
-            # julia --project=test -e 'using Pkg; Pkg.instantiate()'
-            # julia --project=test --color=yes test/runtests.jl

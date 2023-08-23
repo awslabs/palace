@@ -218,6 +218,12 @@ jobs:
           if [[ "$NUM_PROC_TEST" -gt "$NUM_PROC_TEST_MAX" ]]; then
             NUM_PROC_TEST=$NUM_PROC_TEST_MAX
           fi
+          if [[ "${{ matrix.with-openmp }}" == 'true' ]]; then
+            NUM_PROC_TEST=$(( NUM_PROC_TEST / 2 ))
+            export OMP_NUM_THREADS=2
+          else
+            export OMP_NUM_THREADS=1
+          fi
           if [[ "${{ matrix.math-libs }}" == 'aocl' ]]; then
             export AOCLROOT=/opt/amd
             export LD_LIBRARY_PATH=$AOCLROOT/lib:$LD_LIBRARY_PATH
