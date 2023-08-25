@@ -68,34 +68,22 @@ public:
     : LumpedElementData(fespace.GetParMesh()->SpaceDimension(), marker),
       bounding_box(mesh::GetBoundingBox(*fespace.GetParMesh(), marker, true)), direction(3)
   {
-    MFEM_VERIFY(bounding_box.planar,
-                [this]()
-                {
-                  std::stringstream ss;
-                  ss << "Boundary elements must be coplanar to define a lumped element:\n";
-                  auto l = bounding_box.Lengths();
-                  ss << "Dimensions (" << l[0] << " x " << l[1] << " x " << l[2] << ")\n";
-                  ss << "Area " << bounding_box.Area() << "\n";
-                  ss << "Volume " << bounding_box.Volume() << "\n";
-                  return ss.str();
-                }());
-
     // Check that the bounding box discovered matches the area. This validates that the
     // boundary elements form a right angled quadrilateral port.
     constexpr double rel_tol = 1.0e-6;
     double A = GetArea(fespace);
-    MFEM_VERIFY(std::abs(A - bounding_box.Area()) / A < rel_tol,
+    MFEM_VERIFY((!bounding_box.planar || std::abs(A - bounding_box.Area()) / A < rel_tol),
                 "Assumed bounding box area "
                     << bounding_box.Area() << " and integrated area " << A
-                    << " do not match: Port geometry is not rectangular!");
+                    << " do not match: Planar port geometry is not a quadrilateral!");
 
     // Check the user specified direction aligns with an axis direction.
     constexpr double angle_warning_deg = 0.1;
     constexpr double angle_error_deg = 1.0;
     auto lengths = bounding_box.Lengths();
     auto deviation_deg = bounding_box.Deviation(input_dir);
-    if ((deviation_deg[0] > angle_warning_deg && deviation_deg[1] > angle_warning_deg) ||
-        std::isnan(deviation_deg[0]) || std::isnan(deviation_deg[1]))
+    if (!std::any_of(deviation_deg.begin(), deviation_deg.end(),
+                     [](double x) { return x < angle_warning_deg; }))
     {
       auto normal_0 = bounding_box.normals[0];
       for (auto &x : normal_0)
@@ -107,21 +95,36 @@ public:
       {
         x /= lengths[1];
       }
-      Mpi::Warning("User specified direction {} does not align with either bounding box "
-                   "axis up to {} degrees.\n"
-                   "Axis 1: {} ({} degrees)\nAxis 2: {} ({} degrees)!\n",
-                   input_dir, angle_warning_deg, normal_0, deviation_deg[0], normal_1,
-                   deviation_deg[1]);
+      auto normal_2 = bounding_box.normals[2];
+      for (auto &x : normal_2)
+      {
+        x /= lengths[2];
+      }
+      Mpi::Warning(
+          "User specified direction {:.3e} does not align with either bounding box "
+          "axis up to {:.3e} degrees.\n"
+          "Axis 1: {:.3e} ({:.3e} degrees)\nAxis 2: {:.3e} ({:.3e} degrees)\nAxis 3: {:.3e} ({:.3e} degrees)!\n",
+          input_dir, angle_warning_deg, normal_0, deviation_deg[0], normal_1,
+          deviation_deg[1], normal_2, deviation_deg[2]);
     }
-    MFEM_VERIFY(deviation_deg[0] <= angle_error_deg || deviation_deg[1] <= angle_error_deg,
+    MFEM_VERIFY(std::any_of(deviation_deg.begin(), deviation_deg.end(),
+                            [](double x) { return x < angle_error_deg; }),
                 "Specified direction does not align sufficiently with bounding box axes: "
-                    << deviation_deg[0] << ' ' << deviation_deg[1] << ' ' << angle_error_deg
-                    << '!');
+                    << deviation_deg[0] << ' ' << deviation_deg[1] << ' '
+                    << deviation_deg[2] << " tolerance " << angle_error_deg << '!');
     std::copy(input_dir.begin(), input_dir.end(), direction.begin());
     direction /= direction.Norml2();
 
     // Compute the length from the most aligned normal direction.
-    l = lengths[deviation_deg[0] < deviation_deg[1] ? 0 : 1];
+    l = lengths[std::distance(
+        deviation_deg.begin(),
+        std::min_element(deviation_deg.begin(), deviation_deg.end()))];
+
+    MFEM_ASSERT(
+        (l - mesh::GetDirectionalExtent(*fespace.GetParMesh(), marker, true, input_dir)) /
+                l <
+            1e-3,
+        "Bounding box discovered length should match projected length");
     w = A / l;
   }
 

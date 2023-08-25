@@ -736,6 +736,7 @@ BoundingBox BoundingBoxFromPointCloud(MPI_Comm comm,
     // useful for checking pointers later.
     const auto &v_000 = *p_000;
     const auto &v_111 = *p_111;
+
     MFEM_VERIFY(&v_000 != &v_111, "Minimum and maximum extents cannot be identical!");
     const auto origin = v_000;
     const Eigen::Vector3d n_1 = (v_111 - v_000).normalized();
@@ -770,20 +771,27 @@ BoundingBox BoundingBoxFromPointCloud(MPI_Comm comm,
           .norm();
     };
 
-    // Filter the list of vertices to remove those that are within the plane. Planar
-    // detection is done using a tolerance given floating point precision.
+    // Collect the furthest point from the plane.
+    auto max_distance = OutOfPlaneDistance(
+        *std::max_element(vertices.begin(), vertices.end(),
+                          [OutOfPlaneDistance](const auto &x, const auto &y)
+                          { return OutOfPlaneDistance(x) < OutOfPlaneDistance(y); }));
+
+    constexpr double rel_tol = 1e-3;
+    box.planar = max_distance < (rel_tol * (v_111 - v_000).norm());
+
+    // Given numerical tolerance, collect other points with an almost matching distance.
     std::vector<Eigen::Vector3d> vertices_out_of_plane;
-    const double planar_tolerance = 1.0e-3 * (v_111 - v_000).norm();
-    std::copy_if(vertices.begin(), vertices.end(),
-                 std::back_inserter(vertices_out_of_plane),
-                 [OutOfPlaneDistance, planar_tolerance](const auto &v)
-                 { return OutOfPlaneDistance(v) > planar_tolerance; });
-    box.planar = vertices_out_of_plane.empty();
+    const double cooincident_tolerance = rel_tol * max_distance;
+    std::copy_if(
+        vertices.begin(), vertices.end(), std::back_inserter(vertices_out_of_plane),
+        [OutOfPlaneDistance, cooincident_tolerance, max_distance](const auto &v)
+        { return std::abs(OutOfPlaneDistance(v) - max_distance) < cooincident_tolerance; });
 
     // Given candidates t_0 and t_1, the closer to origin defines v_001.
     const auto &t_1 = box.planar
                           ? t_0
-                          : *std::max_element(vertices_out_of_plane.begin(),
+                          : *std::min_element(vertices_out_of_plane.begin(),
                                               vertices_out_of_plane.end(), DistFromP_000);
     const bool t_0_gt_t_1 =
         (t_0 - origin).norm() > (t_1 - origin).norm();  // If planar t_1 == t_0
@@ -793,8 +801,7 @@ BoundingBox BoundingBoxFromPointCloud(MPI_Comm comm,
     // Compute the center as halfway along the main diagonal.
     Vector3dMap(box.center.data()) = 0.5 * (v_000 + v_111);
 
-    // The length in each direction is then given by traversing the edges of the cuboid in
-    // turn.
+    // The length in each direction is given by traversing the edges of the cuboid in turn.
     Vector3dMap(box.normals[0].data()) = 0.5 * (v_001 - v_000);
     Vector3dMap(box.normals[1].data()) = 0.5 * (v_011 - v_001);
     Vector3dMap(box.normals[2].data()) = 0.5 * (v_111 - v_011);
@@ -907,7 +914,44 @@ BoundingBall BoundingBallFromPointCloud(MPI_Comm comm,
   return ball;
 }
 
+double LengthFromPointCloud(MPI_Comm comm, const std::vector<Eigen::Vector3d> &vertices,
+                            int dominant_rank, const std::array<double, 3> &dir)
+{
+  double length;
+  if (dominant_rank == Mpi::Rank(comm))
+  {
+    MFEM_VERIFY(dir.size() == 3, "Direction must be a 3 vector!\n");
+    CVector3dMap direction(dir.data());
+
+    auto Dot = [&](const auto &x, const auto &y)
+    { return direction.dot(x) < direction.dot(y); };
+    auto p_min = std::min_element(vertices.begin(), vertices.end(), Dot);
+    auto p_max = std::max_element(vertices.begin(), vertices.end(), Dot);
+
+    length = (*p_max - *p_min).dot(direction.normalized());
+  }
+  Mpi::Broadcast(1, &length, dominant_rank, comm);
+  return length;
+}
+
 }  // namespace
+
+double GetDirectionalExtent(mfem::ParMesh &mesh, const mfem::Array<int> &marker, bool bdr,
+                            const std::array<double, 3> &dir)
+{
+  std::vector<Eigen::Vector3d> vertices;
+  int dominant_rank = CollectPointCloudOnRoot(mesh, marker, bdr, vertices);
+  return LengthFromPointCloud(mesh.GetComm(), vertices, dominant_rank, dir);
+}
+
+double GetDirectionalExtent(mfem::ParMesh &mesh, int attr, bool bdr,
+                            const std::array<double, 3> &dir)
+{
+  mfem::Array<int> marker(bdr ? mesh.bdr_attributes.Max() : mesh.attributes.Max());
+  marker = 0;
+  marker[attr - 1] = 1;
+  return GetDirectionalExtent(mesh, marker, bdr, dir);
+}
 
 BoundingBox GetBoundingBox(mfem::ParMesh &mesh, const mfem::Array<int> &marker, bool bdr)
 {
