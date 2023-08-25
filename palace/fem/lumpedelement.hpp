@@ -69,7 +69,16 @@ public:
       bounding_box(mesh::GetBoundingBox(*fespace.GetParMesh(), marker, true)), direction(3)
   {
     MFEM_VERIFY(bounding_box.planar,
-                "Boundary elements must be coplanar to define a lumped element!");
+                [this]()
+                {
+                  std::stringstream ss;
+                  ss << "Boundary elements must be coplanar to define a lumped element:\n";
+                  auto l = bounding_box.Lengths();
+                  ss << "Dimensions (" << l[0] << " x " << l[1] << " x " << l[2] << ")\n";
+                  ss << "Area " << bounding_box.Area() << "\n";
+                  ss << "Volume " << bounding_box.Volume() << "\n";
+                  return ss.str();
+                }());
 
     // Check that the bounding box discovered matches the area. This validates that the
     // boundary elements form a right angled quadrilateral port.
