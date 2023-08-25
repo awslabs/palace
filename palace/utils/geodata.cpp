@@ -1098,6 +1098,7 @@ std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &path, bool remove_curvat
       MFEM_ABORT("Unable to open translated mesh file \"" << tmp << "\"!");
     }
 #endif
+
     mesh = std::make_unique<mfem::Mesh>(fi, 1, 1, true);
   }
   else
@@ -1216,8 +1217,10 @@ std::map<int, std::array<int, 2>> CheckMesh(std::unique_ptr<mfem::Mesh> &orig_me
   MFEM_VERIFY(orig_mesh->Dimension() == 3 && !orig_mesh->Nonconforming(),
               "Nonconforming or 2D meshes have not been tested yet!");
   mfem::Array<int> mat_marker, bdr_marker;
-  GetUsedAttributeMarkers(iodata, orig_mesh->attributes.Max(),
-                          orig_mesh->bdr_attributes.Max(), mat_marker, bdr_marker);
+  GetUsedAttributeMarkers(
+      iodata, orig_mesh->attributes.Size() ? orig_mesh->attributes.Max() : 0,
+      orig_mesh->bdr_attributes.Size() ? orig_mesh->bdr_attributes.Max() : 0, mat_marker,
+      bdr_marker);
   bool warn = false;
   for (int be = 0; be < orig_mesh->GetNBE(); be++)
   {
@@ -1394,7 +1397,7 @@ std::map<int, std::array<int, 2>> CheckMesh(std::unique_ptr<mfem::Mesh> &orig_me
     }
     if (new_nbdr > new_nbdr_step2)
     {
-      Mpi::Print("Added boundary elements for subdomain interfaces to the mesh\n",
+      Mpi::Print("Added {:d} boundary elements for subdomain interfaces to the mesh\n",
                  new_nbdr - new_nbdr_step2);
     }
   }
@@ -1454,7 +1457,8 @@ std::map<int, std::array<int, 2>> CheckMesh(std::unique_ptr<mfem::Mesh> &orig_me
     // 1-based, some boundary attributes may be empty since they were removed from the
     // original mesh, but to keep indices the same as config file we don't compact the
     // list.
-    int max_bdr_attr = orig_mesh->bdr_attributes.Max();
+    int max_bdr_attr =
+        orig_mesh->bdr_attributes.Size() ? orig_mesh->bdr_attributes.Max() : 0;
     for (int f = 0; f < orig_mesh->GetNumFaces(); f++)
     {
       if (add_bdr_faces[f] > 0)
@@ -1485,7 +1489,8 @@ std::map<int, std::array<int, 2>> CheckMesh(std::unique_ptr<mfem::Mesh> &orig_me
           b = 0;
         }
         MFEM_VERIFY(a + b > 0, "Invalid new boundary element attribute!");
-        int new_attr = max_bdr_attr + (a * (a - 1)) / 2 + b;  // At least max_bdr_attr + 1
+        int new_attr = max_bdr_attr +
+                       (b > 0 ? (a * (a - 1)) / 2 + b : a);  // At least max_bdr_attr + 1
         if (new_attr_map.find(new_attr) == new_attr_map.end())
         {
           new_attr_map.emplace(new_attr, std::array<int, 2>{a, b});

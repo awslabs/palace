@@ -20,7 +20,7 @@ namespace
 
 mfem::Array<int> SetUpBoundaryProperties(const IoData &iodata, const mfem::ParMesh &mesh)
 {
-  int bdr_attr_max = mesh.bdr_attributes.Max();
+  int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   if (!iodata.boundaries.pec.empty())
   {
     // Check that boundary attributes have been specified correctly.
@@ -92,7 +92,7 @@ CurlCurlOperator::CurlCurlOperator(const IoData &iodata,
   CheckBoundaryProperties();
 
   // Print essential BC information.
-  if (dbc_marker.Max() > 0)
+  if (dbc_marker.Size() && dbc_marker.Max() > 0)
   {
     Mpi::Print("\nConfiguring Dirichlet BC at attributes:\n");
     utils::PrettyPrintMarker(dbc_marker);
