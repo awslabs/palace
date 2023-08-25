@@ -15,7 +15,7 @@ namespace palace
 namespace
 {
 
-static int ElemTypeComsol(const std::string &type)
+inline int ElemTypeComsol(const std::string &type)
 {
   if (!type.compare("tri"))  // 3-node triangle
   {
@@ -68,7 +68,7 @@ static int ElemTypeComsol(const std::string &type)
   return 0;  // Skip this element type
 }
 
-static int ElemTypeNastran(const std::string &type)
+inline int ElemTypeNastran(const std::string &type)
 {
   // Returns only the low-order type for a given keyword.
   if (!type.compare(0, 5, "CTRIA"))
@@ -98,7 +98,7 @@ static int ElemTypeNastran(const std::string &type)
   return 0;  // Skip this element type
 }
 
-static int HOElemTypeNastran(const int lo_type, const int num_nodes)
+inline int HOElemTypeNastran(const int lo_type, const int num_nodes)
 {
   // Get high-order element type for corresponding low-order type.
   if (lo_type == 2 && num_nodes > 3)
@@ -142,116 +142,102 @@ static int HOElemTypeNastran(const int lo_type, const int num_nodes)
   return lo_type;
 }
 
-static const int ElemNumNodes[] = {-1,  // 2-node edge
-                                   3,  4,  4,  8,  6,  5,
-                                   -1,  // 3-node edge
-                                   6,  9,  10, 27, 18, 14,
-                                   -1,  // 1-node node
-                                   8,  20, 15, 13};
+constexpr int ElemNumNodes[] = {-1,  // 2-node edge
+                                3,  4,  4,  8,  6,  5,
+                                -1,  // 3-node edge
+                                6,  9,  10, 27, 18, 14,
+                                -1,  // 1-node node
+                                8,  20, 15, 13};
 
 // From COMSOL or Nastran to Gmsh ordering. See:
 //   - https://gmsh.info/doc/texinfo/gmsh.html#Node-ordering
-//   - https://doc.comsol.com/5.5/doc/com.comsol.help.comsol/comsol_api_mesh.40.33.html
+//   - https://tinyurl.com/yezswzfv
 //   - https://tinyurl.com/4d32zxtn
-static const int SkipElem[] = {-1};
-static const int Msh3[] = {0, 1, 2};
-static const int Msh4[] = {0, 1, 2, 3};
-static const int Msh5[] = {0, 1, 2, 3, 4};
-static const int Msh6[] = {0, 1, 2, 3, 4, 5};
-static const int Msh8[] = {0, 1, 2, 3, 4, 5, 6, 7};
-static const int Msh9[] = {0, 1, 2, 3, 4, 5, 6, 7, 8};
+constexpr int SkipElem[] = {-1};
+constexpr int Msh3[] = {0, 1, 2};
+constexpr int Msh4[] = {0, 1, 2, 3};
+constexpr int Msh5[] = {0, 1, 2, 3, 4};
+constexpr int Msh6[] = {0, 1, 2, 3, 4, 5};
+constexpr int Msh8[] = {0, 1, 2, 3, 4, 5, 6, 7};
+constexpr int Msh9[] = {0, 1, 2, 3, 4, 5, 6, 7, 8};
 
-static const int MphQuad4[] = {0, 1, 3, 2};
-static const int MphHex8[] = {0, 1, 3, 2, 4, 5, 7, 6};
-static const int MphPyr5[] = {0, 1, 3, 2, 4};
-static const int MphTri6[] = {0, 1, 2, 3, 5, 4};
-static const int MphQuad9[] = {0, 1, 3, 2, 4, 7, 8, 5, 6};
-static const int MphTet10[] = {0, 1, 2, 3, 4, 6, 5, 7, 9, 8};
-static const int MphHex27[] = {0,  1,  3,  2,  4,  5,  7,  6,  8,  9,  20, 11, 13, 10,
-                               21, 12, 22, 26, 23, 15, 24, 14, 16, 17, 25, 18, 19};
-static const int MphWdg18[] = {0, 1,  2,  3,  4,  5,  6,  7,  9,
-                               8, 15, 10, 16, 17, 11, 12, 13, 14};
-static const int MphPyr14[] = {0, 1, 3, 2, 4, 5, 6, 13, 8, 10, 7, 9, 12, 11};
+constexpr int MphQuad4[] = {0, 1, 3, 2};
+constexpr int MphHex8[] = {0, 1, 3, 2, 4, 5, 7, 6};
+constexpr int MphPyr5[] = {0, 1, 3, 2, 4};
+constexpr int MphTri6[] = {0, 1, 2, 3, 5, 4};
+constexpr int MphQuad9[] = {0, 1, 3, 2, 4, 7, 8, 5, 6};
+constexpr int MphTet10[] = {0, 1, 2, 3, 4, 6, 5, 7, 9, 8};
+constexpr int MphHex27[] = {0,  1,  3,  2,  4,  5,  7,  6,  8,  9,  20, 11, 13, 10,
+                            21, 12, 22, 26, 23, 15, 24, 14, 16, 17, 25, 18, 19};
+constexpr int MphWdg18[] = {0, 1, 2, 3, 4, 5, 6, 7, 9, 8, 15, 10, 16, 17, 11, 12, 13, 14};
+constexpr int MphPyr14[] = {0, 1, 3, 2, 4, 5, 6, 13, 8, 10, 7, 9, 12, 11};
 
-static const int NasTet10[] = {0, 1, 2, 3, 4, 5, 6, 7, 9, 8};
-static const int NasHex20[] = {0,  1, 2,  3,  4,  5,  6,  7,  8,  11,
-                               13, 9, 10, 12, 14, 15, 16, 18, 19, 17};
-static const int NasWdg15[] = {0, 1, 2, 3, 4, 5, 6, 9, 7, 8, 10, 11, 12, 14, 13};
-static const int NasPyr13[] = {0, 1, 2, 3, 4, 5, 8, 10, 6, 7, 9, 11, 12};
+constexpr int NasTet10[] = {0, 1, 2, 3, 4, 5, 6, 7, 9, 8};
+constexpr int NasHex20[] = {0,  1, 2,  3,  4,  5,  6,  7,  8,  11,
+                            13, 9, 10, 12, 14, 15, 16, 18, 19, 17};
+constexpr int NasWdg15[] = {0, 1, 2, 3, 4, 5, 6, 9, 7, 8, 10, 11, 12, 14, 13};
+constexpr int NasPyr13[] = {0, 1, 2, 3, 4, 5, 8, 10, 6, 7, 9, 11, 12};
 
-static const int *ElemNodesComsol[] = {SkipElem, Msh3,     MphQuad4, Msh4,     MphHex8,
-                                       Msh6,     MphPyr5,  SkipElem, MphTri6,  MphQuad9,
-                                       MphTet10, MphHex27, MphWdg18, MphPyr14, SkipElem,
-                                       SkipElem, SkipElem, SkipElem, SkipElem};
-static const int *ElemNodesNastran[] = {SkipElem, Msh3,     Msh4,     Msh4,     Msh8,
-                                        Msh6,     Msh5,     SkipElem, Msh6,     Msh9,
-                                        NasTet10, SkipElem, SkipElem, SkipElem, SkipElem,
-                                        Msh8,     NasHex20, NasWdg15, NasPyr13};
+constexpr const int *ElemNodesComsol[] = {SkipElem, Msh3,     MphQuad4, Msh4,     MphHex8,
+                                          Msh6,     MphPyr5,  SkipElem, MphTri6,  MphQuad9,
+                                          MphTet10, MphHex27, MphWdg18, MphPyr14, SkipElem,
+                                          SkipElem, SkipElem, SkipElem, SkipElem};
+constexpr const int *ElemNodesNastran[] = {SkipElem, Msh3,     Msh4,     Msh4,     Msh8,
+                                           Msh6,     Msh5,     SkipElem, Msh6,     Msh9,
+                                           NasTet10, SkipElem, SkipElem, SkipElem, SkipElem,
+                                           Msh8,     NasHex20, NasWdg15, NasPyr13};
 
 // Get line, strip comments, leading/trailing whitespace. Should not be called if end of
 // file is expected.
-static void GetLineComsol(std::ifstream &input, std::string &str)
+inline std::string GetLineComsol(std::ifstream &input)
 {
+  std::string str;
   std::getline(input, str);
   MFEM_VERIFY(input, "Unexpected read failure parsing mesh file!");
-  const std::size_t pos = str.find_first_of('#');
-  if (pos == 0)
+  const auto pos = str.find_first_of('#');
+  if (pos != std::string::npos)
   {
-    str.clear();
-    return;
+    str.erase(pos);
   }
-  str.resize(pos);
-  const std::size_t start = str.find_first_not_of(" \n");
+  const auto start = str.find_first_not_of(" \t");
   if (start == std::string::npos)
   {
-    str.clear();
-    return;
+    return "";
   }
-  const std::size_t stop = str.find_last_not_of(" \n");
-  str = str.substr(start, stop - start + 1);
+  const auto stop = str.find_last_not_of(" \t");
+  return str.substr(start, stop - start + 1);
 }
 
-static void GetLineNastran(std::ifstream &input, std::string &str)
+inline std::string GetLineNastran(std::ifstream &input)
 {
+  std::string str;
   std::getline(input, str);
   MFEM_VERIFY(input, "Unexpected read failure parsing mesh file!");
-  if (str[0] == '$')
-  {
-    str.clear();
-    return;
-  }
+  return str[0] == '$' ? "" : str;
 }
 
 // COMSOL strings are parsed as an integer length followed by array of integers for the
 // string characters.
-template <bool Binary>
-static void ReadStringComsol(std::istream &input, std::string &str)
-{
-  MFEM_ABORT("ReadStringComsol not implemented!");
-}
-
-template <>
-void ReadStringComsol<true>(std::istream &input, std::string &str)
+inline std::string ReadStringComsol(std::istream &input)
 {
   int n;
-  std::vector<int> vstr;
-  input.read(reinterpret_cast<char *>(&n), sizeof(int));
-  vstr.resize(n);
-  input.read(reinterpret_cast<char *>(vstr.data()), (std::streamsize)(n * sizeof(int)));
-  str = std::string(vstr.begin(), vstr.end());
-}
-
-template <>
-void ReadStringComsol<false>(std::istream &input, std::string &str)
-{
-  int n;
-  str.clear();
+  std::string str;
   input >> n >> str;
+  return str;
+}
+
+inline std::string ReadStringComsolBinary(std::istream &input)
+{
+  int n;
+  input.read(reinterpret_cast<char *>(&n), sizeof(int));
+  std::vector<int> vstr(n);
+  input.read(reinterpret_cast<char *>(vstr.data()), (std::streamsize)(n * sizeof(int)));
+  return std::string(vstr.begin(), vstr.end());
 }
 
 // Nastran has a special floating point format: "-7.-1" instead of "-7.E-01" or "2.3+2"
 // instead of "2.3E+02".
-static double ConvertDoubleNastran(const std::string &str)
+inline double ConvertDoubleNastran(const std::string &str)
 {
   double d;
   try
@@ -278,27 +264,7 @@ static double ConvertDoubleNastran(const std::string &str)
   return d;
 }
 
-// static void WriteNode(std::ostream &buffer, const int tag,
-//                       const std::array<std::string, 3> &coord)
-// {
-// #if defined(GMSH_BIN)
-//   const double dcoord[3] = {std::stod(coord[0]),
-//                             std::stod(coord[1]),
-//                             std::stod(coord[2])};
-//   buffer.write(reinterpret_cast<const char *>(&tag), sizeof(int));
-//   buffer.write(reinterpret_cast<const char *>(dcoord), 3*sizeof(double));
-//   // No newline for binary data
-// #else
-//   // Always 3D coordinates, and avoids extra conversion to floating point
-//   // number from input stream.
-//   buffer << tag << ' '
-//          << coord[0] << ' '
-//          << coord[1] << ' '
-//          << coord[2] << '\n';
-// #endif
-// }
-
-static void WriteNode(std::ostream &buffer, const int tag, const double coord[])
+inline void WriteNode(std::ostream &buffer, const int tag, const double *coord)
 {
 #if defined(GMSH_BIN)
   buffer.write(reinterpret_cast<const char *>(&tag), sizeof(int));
@@ -310,7 +276,7 @@ static void WriteNode(std::ostream &buffer, const int tag, const double coord[])
 #endif
 }
 
-static void WriteElement(std::ostream &buffer, const int tag, const int type,
+inline void WriteElement(std::ostream &buffer, const int tag, const int type,
                          const int geom, const int nodes[])
 {
 #if defined(GMSH_BIN)
@@ -329,9 +295,9 @@ static void WriteElement(std::ostream &buffer, const int tag, const int type,
 #endif
 }
 
-static void WriteGmsh(std::ostream &buffer, const std::vector<double> &node_coords,
-                      const std::vector<int> &node_tags,
-                      const std::unordered_map<int, std::vector<int>> &elem_nodes)
+void WriteGmsh(std::ostream &buffer, const std::vector<double> &node_coords,
+               const std::vector<int> &node_tags,
+               const std::unordered_map<int, std::vector<int>> &elem_nodes)
 {
   // Write the Gmsh file header (version 2.2).
   buffer << "$MeshFormat\n2.2 "
@@ -430,7 +396,6 @@ void ConvertMeshComsol(const std::string &filename, std::ostream &buffer)
   MFEM_VERIFY(!filename.compare(filename.length() - 7, 7, ".mphtxt") ||
                   !filename.compare(filename.length() - 7, 7, ".MPHTXT") || comsol_bin,
               "Invalid file extension for COMSOL mesh format conversion!");
-  std::string line;
   std::ifstream input(filename);
   if (!input.is_open())
   {
@@ -448,7 +413,7 @@ void ConvertMeshComsol(const std::string &filename, std::ostream &buffer)
     {
       while (num_types < 0)
       {
-        GetLineComsol(input, line);
+        auto line = GetLineComsol(input);
         if (!line.empty())
         {
           std::istringstream sline(line);
@@ -462,8 +427,7 @@ void ConvertMeshComsol(const std::string &filename, std::ostream &buffer)
             int i = 0;
             while (i < num_tags)
             {
-              GetLineComsol(input, line);
-              if (!line.empty())
+              if (!GetLineComsol(input).empty())
               {
                 i++;
               }
@@ -475,8 +439,7 @@ void ConvertMeshComsol(const std::string &filename, std::ostream &buffer)
             int i = 0;
             while (i < num_types)
             {
-              GetLineComsol(input, line);
-              if (!line.empty())
+              if (!GetLineComsol(input).empty())
               {
                 i++;
               }
@@ -493,8 +456,7 @@ void ConvertMeshComsol(const std::string &filename, std::ostream &buffer)
         int i = 0;
         while (i < num_tags)
         {
-          std::string dummy;
-          ReadStringComsol<true>(input, dummy);
+          ReadStringComsolBinary(input);
           i++;
         }
       }
@@ -503,8 +465,7 @@ void ConvertMeshComsol(const std::string &filename, std::ostream &buffer)
         int i = 0;
         while (i < num_types)
         {
-          std::string dummy;
-          ReadStringComsol<true>(input, dummy);
+          ReadStringComsolBinary(input);
           i++;
         }
       }
@@ -522,7 +483,7 @@ void ConvertMeshComsol(const std::string &filename, std::ostream &buffer)
     {
       while (object_class.empty())
       {
-        GetLineComsol(input, line);
+        auto line = GetLineComsol(input);
         if (!line.empty())
         {
           std::istringstream sline(line);
@@ -532,7 +493,7 @@ void ConvertMeshComsol(const std::string &filename, std::ostream &buffer)
           }
           else if (object_class.empty())
           {
-            ReadStringComsol<false>(sline, object_class);
+            object_class = ReadStringComsol(sline);
           }
         }
       }
@@ -540,7 +501,7 @@ void ConvertMeshComsol(const std::string &filename, std::ostream &buffer)
     else
     {
       input.read(reinterpret_cast<char *>(object), 3 * sizeof(int));
-      ReadStringComsol<true>(input, object_class);
+      object_class = ReadStringComsolBinary(input);
     }
     MFEM_VERIFY(object[0] == 0 && object[1] == 0 && object[2] == 1,
                 "Invalid COMSOL object version!");
@@ -563,7 +524,7 @@ void ConvertMeshComsol(const std::string &filename, std::ostream &buffer)
     {
       while (num_ent < 0)
       {
-        GetLineComsol(input, line);
+        auto line = GetLineComsol(input);
         if (!line.empty())
         {
           std::istringstream sline(line);
@@ -573,11 +534,11 @@ void ConvertMeshComsol(const std::string &filename, std::ostream &buffer)
           }
           else if (label_str.empty())
           {
-            ReadStringComsol<false>(sline, label_str);
+            label_str = ReadStringComsol(sline);
           }
           else if (tag_str.empty())
           {
-            ReadStringComsol<false>(sline, tag_str);
+            tag_str = ReadStringComsol(sline);
           }
           else if (sdim < 0)
           {
@@ -593,8 +554,8 @@ void ConvertMeshComsol(const std::string &filename, std::ostream &buffer)
     else
     {
       input.read(reinterpret_cast<char *>(&version), sizeof(int));
-      ReadStringComsol<true>(input, label_str);
-      ReadStringComsol<true>(input, tag_str);
+      label_str = ReadStringComsolBinary(input);
+      tag_str = ReadStringComsolBinary(input);
       input.read(reinterpret_cast<char *>(&sdim), sizeof(int));
       input.read(reinterpret_cast<char *>(&num_ent), sizeof(int));
     }
@@ -605,8 +566,7 @@ void ConvertMeshComsol(const std::string &filename, std::ostream &buffer)
     {
       while (i < num_ent)
       {
-        GetLineComsol(input, line);
-        if (!line.empty())
+        if (!GetLineComsol(input).empty())
         {
           i++;
         }
@@ -633,7 +593,7 @@ void ConvertMeshComsol(const std::string &filename, std::ostream &buffer)
     {
       while (nodes_start < 0)
       {
-        GetLineComsol(input, line);
+        auto line = GetLineComsol(input);
         if (!line.empty())
         {
           std::istringstream sline(line);
@@ -672,15 +632,14 @@ void ConvertMeshComsol(const std::string &filename, std::ostream &buffer)
   // Parse mesh nodes.
   std::vector<double> node_coords;
   {
-    node_coords.resize(3 * num_nodes,
-                       0.0);  // Gmsh nodes are always 3D, so initialize to 0.0 in case
-                              // z-coordinate isn't set
+    // Gmsh nodes are always 3D, so initialize to 0.0 in case z-coordinate isn't set.
+    node_coords.resize(3 * num_nodes, 0.0);
     int i = 0;
     if (!comsol_bin)
     {
       while (i < num_nodes)
       {
-        GetLineComsol(input, line);
+        auto line = GetLineComsol(input);
         if (!line.empty())
         {
           std::istringstream sline(line);
@@ -712,7 +671,7 @@ void ConvertMeshComsol(const std::string &filename, std::ostream &buffer)
     {
       while (num_elem_types < 0)
       {
-        GetLineComsol(input, line);
+        auto line = GetLineComsol(input);
         if (!line.empty())
         {
           std::istringstream sline(line);
@@ -739,14 +698,13 @@ void ConvertMeshComsol(const std::string &filename, std::ostream &buffer)
     {
       if (!comsol_bin)
       {
-        GetLineComsol(input, line);
+        auto line = GetLineComsol(input);
         if (!line.empty())
         {
           std::istringstream sline(line);
           if (elem_type < 0)
           {
-            std::string elem_str;
-            ReadStringComsol<false>(sline, elem_str);
+            auto elem_str = ReadStringComsol(sline);
             MFEM_VERIFY(!elem_str.empty(),
                         "Unexpected empty element type found in COMSOL mesh file!");
             elem_type = ElemTypeComsol(elem_str);
@@ -778,7 +736,7 @@ void ConvertMeshComsol(const std::string &filename, std::ostream &buffer)
             int i = 0;
             while (i < num_elem)
             {
-              GetLineComsol(input, line);
+              line = GetLineComsol(input);
               if (!line.empty())
               {
                 if (!skip_type)
@@ -819,7 +777,7 @@ void ConvertMeshComsol(const std::string &filename, std::ostream &buffer)
                 (elem_type < 4 || (elem_type > 7 && elem_type < 11)) ? 1 : 0;
             while (i < num_elem)
             {
-              GetLineComsol(input, line);
+              line = GetLineComsol(input);
               if (!line.empty())
               {
                 if (!skip_type)
@@ -846,8 +804,7 @@ void ConvertMeshComsol(const std::string &filename, std::ostream &buffer)
       }
       else
       {
-        std::string elem_str;
-        ReadStringComsol<true>(input, elem_str);
+        auto elem_str = ReadStringComsolBinary(input);
         MFEM_VERIFY(!elem_str.empty(),
                     "Unexpected empty element type found in COMSOL mesh file!");
         elem_type = ElemTypeComsol(elem_str);
@@ -933,7 +890,6 @@ void ConvertMeshNastran(const std::string &filename, std::ostream &buffer)
                   !filename.compare(filename.length() - 4, 4, ".bdf") ||
                   !filename.compare(filename.length() - 4, 4, ".BDF"),
               "Invalid file extension for Nastran mesh format conversion!");
-  std::string line;
   std::ifstream input(filename);
   if (!input.is_open())
   {
@@ -945,7 +901,7 @@ void ConvertMeshNastran(const std::string &filename, std::ostream &buffer)
   // Parse until bulk data starts.
   while (true)
   {
-    GetLineNastran(input, line);
+    auto line = GetLineNastran(input);
     if (line.length() > 0)
     {
       if (!line.compare("BEGIN BULK"))
@@ -963,7 +919,7 @@ void ConvertMeshNastran(const std::string &filename, std::ostream &buffer)
   int elem_type;
   while (true)
   {
-    GetLineNastran(input, line);
+    auto line = GetLineNastran(input);
     if (line.length() > 0)
     {
       if (!line.compare("ENDDATA"))
@@ -973,8 +929,7 @@ void ConvertMeshNastran(const std::string &filename, std::ostream &buffer)
       else if (!line.compare(0, 5, "GRID*"))
       {
         // Coordinates in long field format (8 + 16 * 4 + 8).
-        std::string next;
-        GetLineNastran(input, next);
+        auto next = GetLineNastran(input);
         MFEM_VERIFY(!next.empty(), "Unexpected empty line parsing Nastran!");
 
         node_tags.push_back(std::stoi(line.substr(1 * NASTRAN_CHUNK, 2 * NASTRAN_CHUNK)));
@@ -1075,8 +1030,7 @@ void ConvertMeshNastran(const std::string &filename, std::ostream &buffer)
         // Handle line continuation.
         while (input.peek() == '+')
         {
-          std::string next;
-          GetLineNastran(input, next);
+          auto next = GetLineNastran(input);
           MFEM_VERIFY(!next.empty(), "Unexpected empty line parsing Nastran!");
 
           if (!free)
