@@ -23,7 +23,7 @@ void SurfaceImpedanceOperator::SetUpBoundaryProperties(const IoData &iodata,
                                                        const mfem::ParMesh &mesh)
 {
   // Check that impedance boundary attributes have been specified correctly.
-  int bdr_attr_max = mesh.bdr_attributes.Max();
+  int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   if (!iodata.boundaries.impedance.empty())
   {
     mfem::Array<int> bdr_attr_marker(bdr_attr_max);
@@ -99,7 +99,7 @@ void SurfaceImpedanceOperator::SetUpBoundaryProperties(const IoData &iodata,
 
 void SurfaceImpedanceOperator::PrintBoundaryInfo(const IoData &iodata, mfem::ParMesh &mesh)
 {
-  if (impedance_marker.Max() == 0)
+  if (impedance_marker.Size() && impedance_marker.Max() == 0)
   {
     return;
   }
@@ -162,7 +162,7 @@ void SurfaceImpedanceOperator::AddStiffnessBdrCoefficients(double coef,
                                                            SumMatrixCoefficient &fb)
 {
   // Lumped inductor boundaries.
-  if (impedance_Ls_marker.Max() > 0)
+  if (impedance_Ls_marker.Size() && impedance_Ls_marker.Max() > 0)
   {
     mfem::Vector v(Z_Lsinv);
     v *= coef;
@@ -174,7 +174,7 @@ void SurfaceImpedanceOperator::AddStiffnessBdrCoefficients(double coef,
 void SurfaceImpedanceOperator::AddMassBdrCoefficients(double coef, SumMatrixCoefficient &fb)
 {
   // Lumped capacitor boundaries.
-  if (impedance_Cs_marker.Max() > 0)
+  if (impedance_Cs_marker.Size() && impedance_Cs_marker.Max() > 0)
   {
     mfem::Vector v(Z_Cs);
     v *= coef;
@@ -186,7 +186,7 @@ void SurfaceImpedanceOperator::AddDampingBdrCoefficients(double coef,
                                                          SumMatrixCoefficient &fb)
 {
   // Lumped resistor boundaries.
-  if (impedance_Rs_marker.Max() > 0)
+  if (impedance_Rs_marker.Size() && impedance_Rs_marker.Max() > 0)
   {
     mfem::Vector v(Z_Rsinv);
     v *= coef;

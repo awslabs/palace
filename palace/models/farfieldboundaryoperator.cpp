@@ -22,7 +22,7 @@ FarfieldBoundaryOperator::FarfieldBoundaryOperator(const IoData &iodata,
   SetUpBoundaryProperties(iodata, mesh);
 
   // Print out BC info for all farfield attributes.
-  if (farfield_marker.Max() > 0)
+  if (farfield_marker.Size() && farfield_marker.Max() > 0)
   {
     Mpi::Print("\nConfiguring Robin absorbing BC (order {:d}) at attributes:\n", order);
     utils::PrettyPrintMarker(farfield_marker);
@@ -33,7 +33,7 @@ void FarfieldBoundaryOperator::SetUpBoundaryProperties(const IoData &iodata,
                                                        const mfem::ParMesh &mesh)
 {
   // Check that impedance boundary attributes have been specified correctly.
-  int bdr_attr_max = mesh.bdr_attributes.Max();
+  int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   if (!iodata.boundaries.farfield.empty())
   {
     mfem::Array<int> bdr_attr_marker(bdr_attr_max);
@@ -67,7 +67,7 @@ void FarfieldBoundaryOperator::AddDampingBdrCoefficients(double coef,
                                                          SumMatrixCoefficient &fb)
 {
   // First-order absorbing boundary condition.
-  if (farfield_marker.Max() > 0)
+  if (farfield_marker.Size() && farfield_marker.Max() > 0)
   {
     constexpr auto MatType = MaterialPropertyType::INV_Z0;
     constexpr auto ElemType = MeshElementType::BDR_ELEMENT;
@@ -87,7 +87,7 @@ void FarfieldBoundaryOperator::AddExtraSystemBdrCoefficients(double omega,
   // purely imaginary. Multiplying through by μ⁻¹ we get the material coefficient to ω as
   // 1 / (μ √με). Also, this implementation ignores the divergence term ∇⋅Eₜ, as COMSOL
   // does as well.
-  if (farfield_marker.Max() > 0 && order > 1)
+  if (farfield_marker.Size() && farfield_marker.Max() > 0 && order > 1)
   {
     constexpr auto MatType = MaterialPropertyType::INV_PERMEABILITY_C0;
     constexpr auto ElemType = MeshElementType::BDR_ELEMENT;

@@ -507,7 +507,10 @@ WavePortData::WavePortData(const config::WavePortData &data, const MaterialOpera
   {
     attr_list.Append(attr);
   }
-  mesh::AttrToMarker(nd_fespace.GetParMesh()->bdr_attributes.Max(), attr_list, attr_marker);
+  mesh::AttrToMarker(nd_fespace.GetParMesh()->bdr_attributes.Size()
+                         ? nd_fespace.GetParMesh()->bdr_attributes.Max()
+                         : 0,
+                     attr_list, attr_marker);
   port_mesh = std::make_unique<mfem::ParSubMesh>(
       mfem::ParSubMesh::CreateFromBoundary(mesh, attr_list));
 
@@ -955,7 +958,9 @@ void WavePortOperator::SetUpBoundaryProperties(const IoData &iodata,
                                                mfem::ParFiniteElementSpace &h1_fespace)
 {
   // Check that wave port boundary attributes have been specified correctly.
-  int bdr_attr_max = nd_fespace.GetParMesh()->bdr_attributes.Max();
+  int bdr_attr_max = nd_fespace.GetParMesh()->bdr_attributes.Size()
+                         ? nd_fespace.GetParMesh()->bdr_attributes.Max()
+                         : 0;
   if (!iodata.boundaries.waveport.empty())
   {
     mfem::Array<int> bdr_attr_marker(bdr_attr_max);
