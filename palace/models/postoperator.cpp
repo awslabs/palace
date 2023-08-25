@@ -47,7 +47,7 @@ PostOperator::PostOperator(const IoData &iodata, SpaceOperator &spaceop,
     E(&spaceop.GetNDSpace()), B(&spaceop.GetRTSpace()), V(std::nullopt), A(std::nullopt),
     indicator_fec(0, spaceop.GetNDSpace().GetParMesh()->Dimension()),
     indicator_fes(spaceop.GetNDSpace().GetParMesh(), &indicator_fec),
-    indicator_field(std::nullopt), lumped_port_init(false), wave_port_init(false),
+    indicator_field(&indicator_fes), lumped_port_init(false), wave_port_init(false),
     paraview(CreateParaviewPath(iodata, name), spaceop.GetNDSpace().GetParMesh()),
     paraview_bdr(CreateParaviewPath(iodata, name) + "_boundary",
                  spaceop.GetNDSpace().GetParMesh()),
@@ -104,7 +104,7 @@ PostOperator::PostOperator(const IoData &iodata, LaplaceOperator &laplaceop,
     V(&laplaceop.GetH1Space()), A(std::nullopt),
     indicator_fec(0, laplaceop.GetH1Space().GetParMesh()->Dimension()),
     indicator_fes(laplaceop.GetH1Space().GetParMesh(), &indicator_fec),
-    indicator_field(std::nullopt), lumped_port_init(false), wave_port_init(false),
+    indicator_field(&indicator_fes), lumped_port_init(false), wave_port_init(false),
     paraview(CreateParaviewPath(iodata, name), laplaceop.GetNDSpace().GetParMesh()),
     paraview_bdr(CreateParaviewPath(iodata, name) + "_boundary",
                  laplaceop.GetNDSpace().GetParMesh()),
@@ -134,7 +134,7 @@ PostOperator::PostOperator(const IoData &iodata, CurlCurlOperator &curlcurlop,
     A(&curlcurlop.GetNDSpace()),
     indicator_fec(0, curlcurlop.GetNDSpace().GetParMesh()->Dimension()),
     indicator_fes(curlcurlop.GetNDSpace().GetParMesh(), &indicator_fec),
-    indicator_field(std::nullopt), lumped_port_init(false), wave_port_init(false),
+    indicator_field(&indicator_fes), lumped_port_init(false), wave_port_init(false),
     paraview(CreateParaviewPath(iodata, name), curlcurlop.GetNDSpace().GetParMesh()),
     paraview_bdr(CreateParaviewPath(iodata, name) + "_boundary",
                  curlcurlop.GetNDSpace().GetParMesh()),
@@ -229,6 +229,8 @@ void PostOperator::InitializeDataCollection(const IoData &iodata)
     paraview.RegisterField("A", &*A);
     paraview_bdr.RegisterVCoeffField("A", As.get());
   }
+
+  // paraview.RegisterField("ErrorIndicator", &*indicator_field);
 
   // Extract surface charge from normally discontinuous ND E-field. Also extract surface
   // currents from tangentially discontinuous RT B-field The surface charge and surface
@@ -336,12 +338,11 @@ void PostOperator::SetAGridFunction(const Vector &a)
   A->ExchangeFaceNbrData();
 }
 
-void PostOperator::SetIndicatorGridFunction(const mfem::Vector &i)
+void PostOperator::SetIndicatorGridFunction(const Vector &i)
 {
-  indicator_field = mfem::ParGridFunction(&indicator_fes);
-  indicator_field->SetFromTrueDofs(i);
-  // Reregistration overwrites the underlying.
-  paraview.RegisterField("ErrorIndicator", std::addressof(indicator_field.value()));
+  // MFEM_VERIFY(indicator_field, "Incorrect usage of PostOperator::SetIndicatorGridFunction!");
+  // indicator_field->SetFromTrueDofs(i);
+  // indicator_field->ExchangeFaceNbrData();
 }
 
 void PostOperator::UpdatePorts(const LumpedPortOperator &lumped_port_op, double omega)

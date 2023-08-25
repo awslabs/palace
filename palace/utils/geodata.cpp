@@ -92,8 +92,8 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(MPI_Comm comm, const IoData &iodata, boo
   std::unique_ptr<mfem::Mesh> smesh;
   std::unique_ptr<int[]> partitioning;
   const auto use_amr = iodata.model.refinement.adaptation.max_its > 0;
-  const bool use_mesh_partitioner =
-      !use_amr || !iodata.model.refinement.adaptation.nonconformal;
+  const bool use_mesh_partitioner = false;
+      // !use_amr || !iodata.model.refinement.adaptation.nonconformal;
   if (Mpi::Root(comm) || !use_mesh_partitioner)
   {
     // If using the mesh partitioner, only the root node needs to load the mesh.

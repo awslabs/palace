@@ -153,7 +153,7 @@ ErrorIndicators DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator 
   {
     auto ind = estimator(E);
     postop.SetIndicatorGridFunction(ind);
-    error_reducer(indicators, std::move(ind));
+    error_reducer(indicators, ind);
     timer.est_solve_time += timer.Lap();
   };
 

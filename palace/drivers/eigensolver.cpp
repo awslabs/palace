@@ -270,7 +270,7 @@ ErrorIndicators EigenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMe
   {
     auto ind = estimator(E);
     postop.SetIndicatorGridFunction(ind);
-    error_reducer(indicators, std::move(ind));
+    error_reducer(indicators, ind);
     timer.est_solve_time += timer.Lap();
   };
 
