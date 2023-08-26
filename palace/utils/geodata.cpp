@@ -1052,6 +1052,7 @@ std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &path, bool remove_curvat
   // supports a native mesh format (.mesh), VTK/VTU, Gmsh, as well as some others. We use
   // built-in converters for the types we know, otherwise rely on MFEM to do the conversion
   // or error out if not supported.
+  constexpr bool generate_edges = true, refine = true, fix_orientation = true;
   std::unique_ptr<mfem::Mesh> mesh;
   std::filesystem::path mfile(path);
   if (mfile.extension() == ".mphtxt" || mfile.extension() == ".mphbin" ||
@@ -1099,7 +1100,7 @@ std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &path, bool remove_curvat
     }
 #endif
 
-    mesh = std::make_unique<mfem::Mesh>(fi, 1, 1, true);
+    mesh = std::make_unique<mfem::Mesh>(fi, generate_edges, refine, fix_orientation);
   }
   else
   {
@@ -1109,7 +1110,7 @@ std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &path, bool remove_curvat
     {
       MFEM_ABORT("Unable to open mesh file \"" << path << "\"!");
     }
-    mesh = std::make_unique<mfem::Mesh>(fi, 1, 1, true);
+    mesh = std::make_unique<mfem::Mesh>(fi, generate_edges, refine, fix_orientation);
   }
   if (mesh->GetNodes() && remove_curvature)
   {
@@ -1517,9 +1518,10 @@ std::map<int, std::array<int, 2>> CheckMesh(std::unique_ptr<mfem::Mesh> &orig_me
   // Finalize new mesh and replace the old one. If a curved mesh, set up the new mesh by
   // projecting nodes onto the new mesh for the non-trimmed vdofs (accounts for new
   // boundary elements too since no new dofs are added). See the MFEM trimmer miniapp for
-  // reference.
-  new_mesh->FinalizeTopology();
-  new_mesh->Finalize();
+  // reference. After we have copied the high-order nodes information, topological changes
+  // in Mesh::Finalize are OK (with refine = true).
+  constexpr bool generate_bdr = false, refine = true, fix_orientation = true;
+  new_mesh->FinalizeTopology(generate_bdr);
   new_mesh->RemoveUnusedVertices();
   if (orig_mesh->GetNodes())
   {
@@ -1553,6 +1555,7 @@ std::map<int, std::array<int, 2>> CheckMesh(std::unique_ptr<mfem::Mesh> &orig_me
       }
     }
   }
+  new_mesh->Finalize(refine, fix_orientation);
   orig_mesh = std::move(new_mesh);
   return new_attr_map;
 }
@@ -1563,7 +1566,10 @@ std::unique_ptr<mfem::ParMesh> DistributeMesh(MPI_Comm comm,
                                               const std::string &output_dir)
 {
   // Take a serial mesh and partitioning on the root process and construct the global
-  // parallel mesh. For now, prefer the MPI-based version.
+  // parallel mesh. For now, prefer the MPI-based version. When constructing the ParMesh, we
+  // pass arguments to ensure no topological changes (this isn't required since the serial
+  // mesh was marked for refinement).
+  constexpr bool generate_edges = true, refine = false, fix_orientation = true;
 #if 0
   // Write each processor's component to file.
   std::string tmp = output_dir;
@@ -1595,8 +1601,7 @@ std::unique_ptr<mfem::ParMesh> DistributeMesh(MPI_Comm comm,
   }
 
   // Each process loads its own partitioned mesh file and constructs the parallel mesh.
-  std::string pfile =
-      mfem::MakeParFilename(tmp + "part.", Mpi::Rank(comm), ".mesh", width);
+  std::string pfile = mfem::MakeParFilename(tmp + "part.", Mpi::Rank(comm), ".mesh", width);
   int exists = 0;
   while (!exists)  // Wait for root to finish writing all files
   {
@@ -1609,7 +1614,8 @@ std::unique_ptr<mfem::ParMesh> DistributeMesh(MPI_Comm comm,
   {
     MFEM_ABORT("Unable to open partitioned mesh file \"" << pfile << "\"!");
   }
-  auto pmesh = std::make_unique<mfem::ParMesh>(comm, fi);
+  auto pmesh =
+      std::make_unique<mfem::ParMesh>(comm, fi, generate_edges, refine, fix_orientation);
   Mpi::Barrier(comm);
   if (Mpi::Root(comm))
   {
@@ -1645,7 +1651,8 @@ std::unique_ptr<mfem::ParMesh> DistributeMesh(MPI_Comm comm,
       }
     }
     std::istringstream fi(so[0]);  // This is never compressed
-    pmesh = std::make_unique<mfem::ParMesh>(comm, fi);
+    pmesh =
+        std::make_unique<mfem::ParMesh>(comm, fi, generate_edges, refine, fix_orientation);
     MPI_Waitall(static_cast<int>(send_requests.size()), send_requests.data(),
                 MPI_STATUSES_IGNORE);
   }
@@ -1660,7 +1667,8 @@ std::unique_ptr<mfem::ParMesh> DistributeMesh(MPI_Comm comm,
     MPI_Recv(si.data(), rlen, MPI_CHAR, 0, Mpi::Rank(comm), comm, MPI_STATUS_IGNORE);
     std::istringstream fi(si);
     // std::istringstream fi(zlib::DecompressString(si));
-    pmesh = std::make_unique<mfem::ParMesh>(comm, fi);
+    pmesh =
+        std::make_unique<mfem::ParMesh>(comm, fi, generate_edges, refine, fix_orientation);
   }
   return pmesh;
 }
