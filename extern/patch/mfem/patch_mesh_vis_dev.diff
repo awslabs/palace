@@ -1,5 +1,5 @@
 diff --git a/fem/datacollection.cpp b/fem/datacollection.cpp
-index fde0f1490..25111438d 100644
+index 0dc718b07..86509a9b9 100644
 --- a/fem/datacollection.cpp
 +++ b/fem/datacollection.cpp
 @@ -210,6 +210,11 @@ void DataCollection::Save()
@@ -58,7 +58,7 @@ index fde0f1490..25111438d 100644
 +                  "ParaViewDataCollection on domain boundary!");
        const std::string &field_name = qfield.first;
        std::ofstream os(vtu_prefix + GenerateVTUFileName(field_name, myid));
-       qfield.second->SaveVTU(os, pv_data_format, GetCompressionLevel());
+       qfield.second->SaveVTU(os, pv_data_format, GetCompressionLevel(), field_name);
 @@ -935,7 +945,7 @@ void ParaViewDataCollection::Save()
           std::ofstream pvtu_out(vtu_prefix + GeneratePVTUFileName("data"));
           WritePVTUHeader(pvtu_out);
@@ -481,10 +481,10 @@ index c216188af..9f40e52af 100644
     /// preserve timestep metadata for any solutions prior to the currently
     /// defined time.
 diff --git a/mesh/mesh.cpp b/mesh/mesh.cpp
-index 01772ce19..cfb836db5 100644
+index f5d4dd89a..3948e4df6 100644
 --- a/mesh/mesh.cpp
 +++ b/mesh/mesh.cpp
-@@ -10650,7 +10650,8 @@ void Mesh::PrintVTU(std::string fname,
+@@ -10886,7 +10886,8 @@ void Mesh::PrintVTU(std::string fname,
                      VTKFormat format,
                      bool high_order_output,
                      int compression_level,
@@ -494,7 +494,7 @@ index 01772ce19..cfb836db5 100644
  {
     int ref = (high_order_output && Nodes)
               ? Nodes->FESpace()->GetMaxElementOrder() : 1;
-@@ -10664,7 +10665,8 @@ void Mesh::PrintVTU(std::string fname,
+@@ -10900,7 +10901,8 @@ void Mesh::PrintVTU(std::string fname,
     }
     os << " byte_order=\"" << VTKByteOrder() << "\">\n";
     os << "<UnstructuredGrid>\n";
@@ -504,7 +504,7 @@ index 01772ce19..cfb836db5 100644
     os << "</Piece>\n"; // need to close the piece open in the PrintVTU method
     os << "</UnstructuredGrid>\n";
     os << "</VTKFile>" << std::endl;
-@@ -10675,14 +10677,16 @@ void Mesh::PrintVTU(std::string fname,
+@@ -10911,14 +10913,16 @@ void Mesh::PrintVTU(std::string fname,
  void Mesh::PrintBdrVTU(std::string fname,
                         VTKFormat format,
                         bool high_order_output,
@@ -524,7 +524,7 @@ index 01772ce19..cfb836db5 100644
  {
     RefinedGeometry *RefG;
     DenseMatrix pmat;
-@@ -10729,6 +10733,11 @@ void Mesh::PrintVTU(std::ostream &os, int ref, VTKFormat format,
+@@ -10965,6 +10969,11 @@ void Mesh::PrintVTU(std::ostream &os, int ref, VTKFormat format,
           GetElementTransformation(i)->Transform(RefG->RefPts, pmat);
        }
  
@@ -537,10 +537,10 @@ index 01772ce19..cfb836db5 100644
        {
           WriteBinaryOrASCII(os, buf, pmat(0,j), " ", format);
 diff --git a/mesh/mesh.hpp b/mesh/mesh.hpp
-index 2c7f06954..d4eabcf6f 100644
+index 42032e05a..b373fb72d 100644
 --- a/mesh/mesh.hpp
 +++ b/mesh/mesh.hpp
-@@ -2021,25 +2021,30 @@ public:
+@@ -2030,25 +2030,30 @@ public:
     /** Print the mesh in VTU format. The parameter ref > 0 specifies an element
         subdivision number (useful for high order fields and curved meshes).
         If @a bdr_elements is true, then output (only) the boundary elements,
@@ -576,7 +576,7 @@ index 2c7f06954..d4eabcf6f 100644
     /** @brief Prints the mesh with boundary elements given by the boundary of
         the subdomains, so that the boundary of subdomain i has boundary
 diff --git a/mesh/pmesh.cpp b/mesh/pmesh.cpp
-index 8392d2b67..1e49f8a17 100644
+index 64b50dbd9..cffe6828e 100644
 --- a/mesh/pmesh.cpp
 +++ b/mesh/pmesh.cpp
 @@ -6393,7 +6393,8 @@ void ParMesh::PrintVTU(std::string pathname,
@@ -600,7 +600,7 @@ index 8392d2b67..1e49f8a17 100644
  
  int ParMesh::FindPoints(DenseMatrix& point_mat, Array<int>& elem_id,
 diff --git a/mesh/pmesh.hpp b/mesh/pmesh.hpp
-index 6ad702b58..cac481699 100644
+index f6139ff13..2395bc538 100644
 --- a/mesh/pmesh.hpp
 +++ b/mesh/pmesh.hpp
 @@ -637,7 +637,8 @@ public:

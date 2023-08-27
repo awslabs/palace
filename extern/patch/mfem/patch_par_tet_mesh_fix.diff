@@ -1,0 +1,258 @@
+diff --git a/fem/pfespace.cpp b/fem/pfespace.cpp
+index fa6a31a9e..4d64559c6 100644
+--- a/fem/pfespace.cpp
++++ b/fem/pfespace.cpp
+@@ -43,7 +43,7 @@ ParFiniteElementSpace::ParFiniteElementSpace(
+ }
+ 
+ ParFiniteElementSpace::ParFiniteElementSpace(
+-   ParMesh *pm, const FiniteElementSpace *global_fes, const int *partitioning,
++   ParMesh *pm, const FiniteElementSpace *global_fes,
+    const FiniteElementCollection *f)
+    : FiniteElementSpace(pm, MakeLocalNURBSext(global_fes->GetNURBSext(),
+                                               pm->NURBSext),
+diff --git a/fem/pfespace.hpp b/fem/pfespace.hpp
+index 1fbc7ccd1..ee82b0891 100644
+--- a/fem/pfespace.hpp
++++ b/fem/pfespace.hpp
+@@ -247,14 +247,11 @@ public:
+    /** @brief Construct the *local* ParFiniteElementSpace corresponding to the
+        global FE space, @a global_fes. */
+    /** The parameter @a pm is the *local* ParMesh obtained by decomposing the
+-       global Mesh used by @a global_fes. The array @a partitioning represents
+-       the parallel decomposition - it maps global element ids to MPI ranks.
+-       If the FiniteElementCollection, @a f, is NULL (default), the FE
+-       collection used by @a global_fes will be reused. If @a f is not NULL, it
+-       must be the same as, or a copy of, the FE collection used by
+-       @a global_fes. */
++       global Mesh used by @a global_fes. If the FiniteElementCollection, @a f,
++       is NULL (default), the FE collection used by @a global_fes will be
++       reused. If @a f is not NULL, it must be the same as, or a copy of, the FE
++       collection used by @a global_fes. */
+    ParFiniteElementSpace(ParMesh *pm, const FiniteElementSpace *global_fes,
+-                         const int *partitioning,
+                          const FiniteElementCollection *f = NULL);
+ 
+    ParFiniteElementSpace(ParMesh *pm, const FiniteElementCollection *f,
+diff --git a/fem/pgridfunc.cpp b/fem/pgridfunc.cpp
+index d49187457..0a58530c1 100644
+--- a/fem/pgridfunc.cpp
++++ b/fem/pgridfunc.cpp
+@@ -41,7 +41,7 @@ ParGridFunction::ParGridFunction(ParMesh *pmesh, const GridFunction *gf,
+    // duplicate the FiniteElementCollection from 'gf'
+    fec = FiniteElementCollection::New(glob_fes->FEColl()->Name());
+    // create a local ParFiniteElementSpace from the global one:
+-   fes = pfes = new ParFiniteElementSpace(pmesh, glob_fes, partitioning, fec);
++   fes = pfes = new ParFiniteElementSpace(pmesh, glob_fes, fec);
+    SetSize(pfes->GetVSize());
+ 
+    if (partitioning)
+diff --git a/mesh/mesh.hpp b/mesh/mesh.hpp
+index 419745f1b..ef3a08904 100644
+--- a/mesh/mesh.hpp
++++ b/mesh/mesh.hpp
+@@ -32,8 +32,6 @@
+ namespace mfem
+ {
+ 
+-// Data type mesh
+-
+ class GeometricFactors;
+ class FaceGeometricFactors;
+ class KnotVector;
+@@ -50,15 +48,15 @@ class ParMesh;
+ class ParNCMesh;
+ #endif
+ 
++/// Mesh data type
+ class Mesh
+ {
++   friend class NCMesh;
++   friend class NURBSExtension;
+ #ifdef MFEM_USE_MPI
+    friend class ParMesh;
+    friend class ParNCMesh;
+ #endif
+-   friend class NCMesh;
+-   friend class NURBSExtension;
+-
+ #ifdef MFEM_USE_ADIOS2
+    friend class adios2stream;
+ #endif
+diff --git a/mesh/pmesh.cpp b/mesh/pmesh.cpp
+index 4d08285e9..a9d2be1bb 100644
+--- a/mesh/pmesh.cpp
++++ b/mesh/pmesh.cpp
+@@ -923,22 +923,21 @@ void ParMesh::FinalizeParTopo()
+    }
+ }
+ 
+-ParMesh::ParMesh(MPI_Comm comm, istream &input, bool refine)
++ParMesh::ParMesh(MPI_Comm comm, std::istream &input, int generate_edges,
++                 int refine, bool fix_orientation)
+    : face_nbr_el_to_face(NULL)
+    , glob_elem_offset(-1)
+    , glob_offset_sequence(-1)
+    , gtopo(comm)
++   , pncmesh(NULL)
+ {
+    MyComm = comm;
+    MPI_Comm_size(MyComm, &NRanks);
+    MPI_Comm_rank(MyComm, &MyRank);
+ 
+-   have_face_nbr_data = false;
+-   pncmesh = NULL;
++   Load(input, generate_edges, refine, fix_orientation);
+ 
+-   const int gen_edges = 1;
+-
+-   Load(input, gen_edges, refine, true);
++   have_face_nbr_data = false;
+ }
+ 
+ void ParMesh::Load(istream &input, int generate_edges, int refine,
+@@ -1740,7 +1739,7 @@ void ParMesh::MarkTetMeshForRefinement(DSTable &v_to_v)
+ 
+    // create a GroupCommunicator on the shared edges
+    GroupCommunicator sedge_comm(gtopo);
+-   GetSharedEdgeCommunicator(sedge_comm);
++   GetSharedEdgeCommunicator(0, sedge_comm);
+ 
+    Array<int> sedge_ord(shared_edges.Size());
+    Array<Pair<int,int> > sedge_ord_map(shared_edges.Size());
+@@ -1800,7 +1799,7 @@ void ParMesh::MarkTetMeshForRefinement(DSTable &v_to_v)
+       double d_max = 0.;
+       for (int i = 1; i < order.Size(); i++)
+       {
+-         d_max = std::max(d_max, ilen_len[i-1].two-ilen_len[i].two);
++         d_max = std::max(d_max, ilen_len[i].two-ilen_len[i-1].two);
+       }
+ 
+ #if 0
+@@ -2102,16 +2101,13 @@ void ParMesh::EnsureParNodes()
+       ParFiniteElementSpace *pfes =
+          new ParFiniteElementSpace(*Nodes->FESpace(), *this);
+       ParGridFunction *new_nodes = new ParGridFunction(pfes);
+-
+       *new_nodes = *Nodes;
+-
+       if (Nodes->OwnFEC())
+       {
+          new_nodes->MakeOwner(Nodes->OwnFEC());
+          Nodes->MakeOwner(NULL); // takes away ownership of 'fec' and 'fes'
+          delete Nodes->FESpace();
+       }
+-
+       delete Nodes;
+       Nodes = new_nodes;
+    }
+@@ -3288,23 +3284,21 @@ void ParMesh::ReorientTetMesh()
+ 
+    // create a GroupCommunicator over shared vertices
+    GroupCommunicator svert_comm(gtopo);
+-   GetSharedVertexCommunicator(svert_comm);
++   GetSharedVertexCommunicator(0, svert_comm);
+ 
+    // communicate the local index of each shared vertex from the group master to
+    // other ranks in the group
+    Array<int> svert_master_rank(svert_lvert.Size());
+    Array<int> svert_master_index(svert_lvert);
++   for (int i = 0; i < group_svert.Size(); i++)
+    {
+-      for (int i = 0; i < group_svert.Size(); i++)
++      int rank = gtopo.GetGroupMasterRank(i+1);
++      for (int j = 0; j < group_svert.RowSize(i); j++)
+       {
+-         int rank = gtopo.GetGroupMasterRank(i+1);
+-         for (int j = 0; j < group_svert.RowSize(i); j++)
+-         {
+-            svert_master_rank[group_svert.GetRow(i)[j]] = rank;
+-         }
++         svert_master_rank[group_svert.GetRow(i)[j]] = rank;
+       }
+-      svert_comm.Bcast(svert_master_index);
+    }
++   svert_comm.Bcast(svert_master_index);
+ 
+    // the pairs (master rank, master local index) define a globally consistent
+    // vertex ordering
+@@ -3370,22 +3364,8 @@ void ParMesh::ReorientTetMesh()
+    {
+       // create a GroupCommunicator on the shared triangles
+       GroupCommunicator stria_comm(gtopo);
+-      {
+-         // initialize stria_comm
+-         Table &gr_stria = stria_comm.GroupLDofTable();
+-         // gr_stria differs from group_stria - the latter does not store gr. 0
+-         gr_stria.SetDims(GetNGroups(), shared_trias.Size());
+-         gr_stria.GetI()[0] = 0;
+-         for (int gr = 1; gr <= GetNGroups(); gr++)
+-         {
+-            gr_stria.GetI()[gr] = group_stria.GetI()[gr-1];
+-         }
+-         for (int k = 0; k < shared_trias.Size(); k++)
+-         {
+-            gr_stria.GetJ()[k] = group_stria.GetJ()[k];
+-         }
+-         stria_comm.Finalize();
+-      }
++      GetSharedTriCommunicator(0, stria_comm);
++
+       Array<int> stria_flag(shared_trias.Size());
+       for (int i = 0; i < stria_flag.Size(); i++)
+       {
+diff --git a/mesh/pmesh.hpp b/mesh/pmesh.hpp
+index 0aab7982e..32fdae3d0 100644
+--- a/mesh/pmesh.hpp
++++ b/mesh/pmesh.hpp
+@@ -24,6 +24,7 @@
+ 
+ namespace mfem
+ {
++
+ #ifdef MFEM_USE_PUMI
+ class ParPumiMesh;
+ #endif
+@@ -31,9 +32,16 @@ class ParPumiMesh;
+ /// Class for parallel meshes
+ class ParMesh : public Mesh
+ {
+-protected:
++   friend class ParNCMesh;
+    friend class ParSubMesh;
++#ifdef MFEM_USE_PUMI
++   friend class ParPumiMesh;
++#endif
++#ifdef MFEM_USE_ADIOS2
++   friend class adios2stream;
++#endif
+ 
++protected:
+    MPI_Comm MyComm;
+    int NRanks, MyRank;
+ 
+@@ -311,7 +319,8 @@ public:
+ 
+    /// Read a parallel mesh, each MPI rank from its own file/stream.
+    /** The @a refine parameter is passed to the method Mesh::Finalize(). */
+-   ParMesh(MPI_Comm comm, std::istream &input, bool refine = true);
++   ParMesh(MPI_Comm comm, std::istream &input, int generate_edges = 0,
++           int refine = 1, bool fix_orientation = true);
+ 
+    /// Deprecated: see @a ParMesh::MakeRefined
+    MFEM_DEPRECATED
+@@ -668,14 +677,6 @@ public:
+    void PrintSharedEntities(const std::string &fname_prefix) const;
+ 
+    virtual ~ParMesh();
+-
+-   friend class ParNCMesh;
+-#ifdef MFEM_USE_PUMI
+-   friend class ParPumiMesh;
+-#endif
+-#ifdef MFEM_USE_ADIOS2
+-   friend class adios2stream;
+-#endif
+ };
+ 
+ }
