@@ -132,7 +132,7 @@ set(EXTERN_MFEM_GIT_BRANCH
   "Git branch for external MFEM build"
 )
 set(EXTERN_MFEM_GIT_TAG
-  "f2f79aad84a47019fc10e7e8dbddd43d22c25b9c" CACHE STRING  # master @ 08/06/2023
+  "1ccb31fde641a96c9fd2920bc123c35eee31d476" CACHE STRING  # master @ 08/27/2023
   "Git tag for external MFEM build"
 )
 
@@ -146,7 +146,7 @@ set(EXTERN_MUMPS_GIT_BRANCH
   "Git branch for external MUMPS build"
 )
 set(EXTERN_MUMPS_GIT_TAG
-  "11e55c28cbb9279ec2e37e81ecc25a0297e78790" CACHE STRING  # 08/22/2023
+  "e7d12e84c35706433331c058c4bf00186d6b852d" CACHE STRING  # 08/23/2023
   "Git tag for external MUMPS build"
 )
 
@@ -174,7 +174,7 @@ set(EXTERN_PETSC_GIT_BRANCH
   "Git branch for external PETSc build"
 )
 set(EXTERN_PETSC_GIT_TAG
-  "cf5559fda63577c063f2295093a6cc1d073921a1" CACHE STRING  # 08/22/2023
+  "01a4aebd931b780f244a87406598026c571af919" CACHE STRING  # 08/27/2023
   "Git tag for external PETSc build"
 )
 
@@ -202,7 +202,7 @@ set(EXTERN_SLEPC_GIT_BRANCH
   "Git branch for external SLEPc build"
 )
 set(EXTERN_SLEPC_GIT_TAG
-  "99de2f78219a1407b15b805118c86f14e6da0a11" CACHE STRING  # 08/17/2023
+  "2f6668495ab0d84da740777486385283a890d952" CACHE STRING  # 08/27/2023
   "Git tag for external SLEPc build"
 )
 
@@ -216,7 +216,7 @@ set(EXTERN_STRUMPACK_GIT_BRANCH
   "Git branch for external STRUMPACK build"
 )
 set(EXTERN_STRUMPACK_GIT_TAG
-  "bdf1fe9d32dfe0b2997c97ea436bf4afc59d77bf" CACHE STRING  # 08/21/2023
+  "59d267964850b3dc3a97b37f2dba9d1b8228100f" CACHE STRING  # 08/25/2023
   "Git tag for external STRUMPACK build"
 )
 
@@ -244,7 +244,7 @@ set(EXTERN_ZFP_GIT_BRANCH
   "Git branch for external ZFP build"
 )
 set(EXTERN_ZFP_GIT_TAG
-  "c1845815ef1068b578b32823fb22310bd0b62b56" CACHE STRING  # 08/06/2023
+  "bc5e24145ea6f168cf5dd672e0f11544013004da" CACHE STRING  # 08/24/2023
   "Git tag for external ZFP build"
 )
 

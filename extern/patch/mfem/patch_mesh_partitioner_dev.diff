@@ -1,8 +1,8 @@
 diff --git a/.gitignore b/.gitignore
-index dbdb54ce1..4f405c132 100644
+index f87ea59b9..6e2ed719a 100644
 --- a/.gitignore
 +++ b/.gitignore
-@@ -220,7 +220,7 @@ miniapps/meshing/mobius-strip.mesh
+@@ -226,7 +226,7 @@ miniapps/meshing/mobius-strip.mesh
  miniapps/meshing/klein-bottle.mesh
  miniapps/meshing/toroid-*.mesh
  miniapps/meshing/twist-*.mesh
@@ -318,8 +318,29 @@ index 000000000..9b17ae982
 +
 +   return 0;
 +}
+diff --git a/fem/pfespace.cpp b/fem/pfespace.cpp
+index 99ec4eaac..fa6a31a9e 100644
+--- a/fem/pfespace.cpp
++++ b/fem/pfespace.cpp
+@@ -731,13 +731,10 @@ void ParFiniteElementSpace::CheckNDSTriaDofs()
+    }
+ 
+    // Check for shared triangle faces
+-   bool strias   = false;
++   bool strias = false;
++   for (int g = 1; g < pmesh->GetNGroups(); g++)
+    {
+-      int ngrps = pmesh->GetNGroups();
+-      for (int g = 1; g < ngrps; g++)
+-      {
+-         strias |= pmesh->GroupNTriangles(g);
+-      }
++      strias |= pmesh->GroupNTriangles(g);
+    }
+ 
+    // Combine results
 diff --git a/general/array.hpp b/general/array.hpp
-index c4f7a26b4..552fc34a2 100644
+index 0f16b3023..a19b099a1 100644
 --- a/general/array.hpp
 +++ b/general/array.hpp
 @@ -77,8 +77,8 @@ public:
@@ -342,7 +363,7 @@ index c4f7a26b4..552fc34a2 100644
  
     /// Make this Array a reference to 'master'.
     inline void MakeRef(const Array &master);
-@@ -866,11 +866,11 @@ inline void Array<T>::Copy(Array &copy) const
+@@ -869,11 +869,11 @@ inline void Array<T>::Copy(Array &copy) const
  }
  
  template <class T>
@@ -358,10 +379,10 @@ index c4f7a26b4..552fc34a2 100644
  
  template <class T>
 diff --git a/general/communication.cpp b/general/communication.cpp
-index 10fa6988c..95235edd3 100644
+index 0c2fffc1f..e8002a273 100644
 --- a/general/communication.cpp
 +++ b/general/communication.cpp
-@@ -263,7 +263,7 @@ void GroupTopology::Save(ostream &os) const
+@@ -275,7 +275,7 @@ void GroupTopology::Save(ostream &os) const
     os << "\ncommunication_groups\n";
     os << "number_of_groups " << NGroups() << "\n\n";
  
@@ -383,7 +404,7 @@ index 2ed9f4a1b..96373b2d1 100644
  
  ///  C = A * B  (as boolean matrices)
 diff --git a/mesh/mesh.cpp b/mesh/mesh.cpp
-index 87e606510..a4f4e2069 100644
+index 36a3063cb..45871a66e 100644
 --- a/mesh/mesh.cpp
 +++ b/mesh/mesh.cpp
 @@ -19,6 +19,7 @@
@@ -402,7 +423,16 @@ index 87e606510..a4f4e2069 100644
  
  // Include the METIS header, if using version 5. If using METIS 4, the needed
  // declarations are inlined below, i.e. no header is needed.
-@@ -2986,7 +2988,7 @@ void Mesh::FinalizeTopology(bool generate_bdr)
+@@ -1307,7 +1309,7 @@ Mesh::FaceInformation::operator Mesh::FaceInfo() const
+    return res;
+ }
+ 
+-std::ostream& operator<<(std::ostream& os, const Mesh::FaceInformation& info)
++std::ostream &operator<<(std::ostream &os, const Mesh::FaceInformation& info)
+ {
+    os << "face topology=";
+    switch (info.topology)
+@@ -2985,7 +2987,7 @@ void Mesh::FinalizeTopology(bool generate_bdr)
     {
        GetElementToFaceTable();
        GenerateFaces();
@@ -411,7 +441,7 @@ index 87e606510..a4f4e2069 100644
        {
           GenerateBoundaryElements();
           GetElementToFaceTable(); // update be_to_face
-@@ -3006,7 +3008,7 @@ void Mesh::FinalizeTopology(bool generate_bdr)
+@@ -3005,7 +3007,7 @@ void Mesh::FinalizeTopology(bool generate_bdr)
        if (Dim == 2)
        {
           GenerateFaces(); // 'Faces' in 2D refers to the edges
@@ -420,7 +450,16 @@ index 87e606510..a4f4e2069 100644
           {
              GenerateBoundaryElements();
           }
-@@ -5394,6 +5396,12 @@ const FiniteElementSpace *Mesh::GetNodalFESpace() const
+@@ -3019,7 +3021,7 @@ void Mesh::FinalizeTopology(bool generate_bdr)
+    if (Dim == 1)
+    {
+       GenerateFaces();
+-      if (NumOfBdrElements == 0 && generate_bdr)
++      if (ReduceInt(NumOfBdrElements) == 0 && generate_bdr)
+       {
+          GenerateBoundaryElements();
+       }
+@@ -5633,6 +5635,12 @@ const FiniteElementSpace *Mesh::GetNodalFESpace() const
  
  void Mesh::SetCurvature(int order, bool discont, int space_dim, int ordering)
  {
@@ -433,7 +472,16 @@ index 87e606510..a4f4e2069 100644
     space_dim = (space_dim == -1) ? spaceDim : space_dim;
     FiniteElementCollection* nfec;
     if (discont)
-@@ -12230,6 +12238,878 @@ void Mesh::GetGeometricParametersFromJacobian(const DenseMatrix &J,
+@@ -10659,7 +10667,7 @@ void Mesh::Printer(std::ostream &os, std::string section_delimiter) const
+    }
+ }
+ 
+-void Mesh::PrintTopo(std::ostream &os,const Array<int> &e_to_k) const
++void Mesh::PrintTopo(std::ostream &os, const Array<int> &e_to_k) const
+ {
+    int i;
+    Array<int> vert;
+@@ -12550,6 +12558,878 @@ void Mesh::GetGeometricParametersFromJacobian(const DenseMatrix &J,
  }
  
  
@@ -642,7 +690,7 @@ index 87e606510..a4f4e2069 100644
 +   }
 +
 +   // Write out section end tag for mesh.
-+   os << "\nmfem_mesh_end" << endl;
++   os << "mfem_mesh_end" << endl;
 +}
 +
 +Mesh &MeshPart::GetMesh()
@@ -1313,7 +1361,7 @@ index 87e606510..a4f4e2069 100644
                                     int flags, MemoryType d_mt)
  {
 diff --git a/mesh/mesh.hpp b/mesh/mesh.hpp
-index 64cf55ae4..6bddc43e9 100644
+index b373fb72d..419745f1b 100644
 --- a/mesh/mesh.hpp
 +++ b/mesh/mesh.hpp
 @@ -27,6 +27,7 @@
@@ -1337,7 +1385,41 @@ index 64cf55ae4..6bddc43e9 100644
  
     // Counter for Mesh transformations: refinement, derefinement, rebalancing.
     // Used for checking during Update operations on objects depending on the
-@@ -767,7 +770,7 @@ public:
+@@ -297,11 +300,11 @@ protected:
+    void Destroy();         // Delete all owned data.
+    void ResetLazyData();
+ 
+-   Element *ReadElementWithoutAttr(std::istream &);
+-   static void PrintElementWithoutAttr(const Element *, std::ostream &);
++   Element *ReadElementWithoutAttr(std::istream &input);
++   static void PrintElementWithoutAttr(const Element *el, std::ostream &os);
+ 
+-   Element *ReadElement(std::istream &);
+-   static void PrintElement(const Element *, std::ostream &);
++   Element *ReadElement(std::istream &input);
++   static void PrintElement(const Element *el, std::ostream &os);
+ 
+    // Readers for different mesh formats, used in the Load() method.
+    // The implementations of these methods are in mesh_readers.cpp.
+@@ -432,7 +435,7 @@ protected:
+ 
+    void UpdateNURBS();
+ 
+-   void PrintTopo(std::ostream &out, const Array<int> &e_to_k) const;
++   void PrintTopo(std::ostream &os, const Array<int> &e_to_k) const;
+ 
+    /// Used in GetFaceElementTransformations (...)
+    void GetLocalPtToSegTransformation(IsoparametricTransformation &, int);
+@@ -541,7 +544,7 @@ protected:
+    // If NURBS mesh, write NURBS format. If NCMesh, write mfem v1.1 format.
+    // If section_delimiter is empty, write mfem v1.0 format. Otherwise, write
+    // mfem v1.2 format with the given section_delimiter at the end.
+-   void Printer(std::ostream &out = mfem::out,
++   void Printer(std::ostream &os = mfem::out,
+                 std::string section_delimiter = "") const;
+ 
+    /** Creates mesh for the parallelepiped [0,sx]x[0,sy]x[0,sz], divided into
+@@ -835,7 +838,7 @@ public:
  
     int AddBdrPoint(int v, int attr = 1);
  
@@ -1346,10 +1428,48 @@ index 64cf55ae4..6bddc43e9 100644
     /// Finalize the construction of a triangular Mesh.
     void FinalizeTriMesh(int generate_edges = 0, int refine = 0,
                          bool fix_orientation = true);
-@@ -1995,6 +1998,195 @@ public:
- std::ostream &operator<<(std::ostream &out, const Mesh &mesh);
+@@ -2063,7 +2066,7 @@ public:
+                                std::ostream &os, int elem_attr = 0) const;
  
+    void PrintElementsWithPartitioning (int *partitioning,
+-                                       std::ostream &out,
++                                       std::ostream &os,
+                                        int interior_faces = 0);
  
+    /// Print set of disjoint surfaces:
+@@ -2071,13 +2074,13 @@ public:
+     * If Aface_face(i,j) != 0, print face j as a boundary
+     * element with attribute i+1.
+     */
+-   void PrintSurfaces(const Table &Aface_face, std::ostream &out) const;
++   void PrintSurfaces(const Table &Aface_face, std::ostream &os) const;
+ 
+    /// Auxiliary method used by PrintCharacteristics().
+    /** It is also used in the `mesh-explorer` miniapp. */
+    static void PrintElementsByGeometry(int dim,
+                                        const Array<int> &num_elems_by_geom,
+-                                       std::ostream &out);
++                                       std::ostream &os);
+ 
+    /** @brief Compute and print mesh characteristics such as number of vertices,
+        number of elements, number of boundary elements, minimal and maximal
+@@ -2097,7 +2100,7 @@ public:
+ 
+ #ifdef MFEM_DEBUG
+    /// Output an NCMesh-compatible debug dump.
+-   void DebugDump(std::ostream &out) const;
++   void DebugDump(std::ostream &os) const;
+ #endif
+ 
+    /// @}
+@@ -2176,9 +2179,194 @@ public:
+    /// @}
+ };
+ 
+-/** Overload operator<< for std::ostream and Mesh; valid also for the derived
+-    class ParMesh */
+-std::ostream &operator<<(std::ostream &out, const Mesh &mesh);
++
 +// Class containing a minimal description of a part (a subset of the elements)
 +// of a Mesh and its connectivity to other parts. The main purpose of this class
 +// is to be communicated between MPI ranks for repartitioning purposes. It can
@@ -1537,13 +1657,49 @@ index 64cf55ae4..6bddc43e9 100644
 +   // Destructor
 +   ~MeshPartitioner();
 +};
-+
-+
+ 
+ 
  /** @brief Structure for storing mesh geometric factors: coordinates, Jacobians,
-     and determinants of the Jacobians. */
+@@ -2187,7 +2375,6 @@ std::ostream &operator<<(std::ostream &out, const Mesh &mesh);
+     Mesh. See Mesh::GetGeometricFactors(). */
+ class GeometricFactors
+ {
+-
+ private:
+    void Compute(const GridFunction &nodes,
+                 MemoryType d_mt = MemoryType::DEFAULT);
+@@ -2235,6 +2422,7 @@ public:
+    Vector detJ;
+ };
+ 
++
+ /** @brief Structure for storing face geometric factors: coordinates, Jacobians,
+     determinants of the Jacobians, and normal vectors. */
  /** Typically objects of this type are constructed and owned by objects of class
+@@ -2289,6 +2477,7 @@ public:
+    Vector normal;
+ };
+ 
++
+ /// Class used to extrude the nodes of a mesh
+ class NodeExtrudeCoefficient : public VectorCoefficient
+ {
+@@ -2320,8 +2509,12 @@ inline void ShiftRight(int &a, int &b, int &c)
+    a = c;  c = b;  b = t;
+ }
+ 
++/** Overload operator<< for std::ostream and Mesh; valid also for the derived
++    class ParMesh */
++std::ostream &operator<<(std::ostream &os, const Mesh &mesh);
++
+ /// @brief Print function for Mesh::FaceInformation.
+-std::ostream& operator<<(std::ostream& os, const Mesh::FaceInformation& info);
++std::ostream& operator<<(std::ostream &os, const Mesh::FaceInformation& info);
+ 
+ }
+ 
 diff --git a/mesh/pmesh.cpp b/mesh/pmesh.cpp
-index 8392d2b67..c71469416 100644
+index cffe6828e..4d08285e9 100644
 --- a/mesh/pmesh.cpp
 +++ b/mesh/pmesh.cpp
 @@ -238,6 +238,8 @@ ParMesh::ParMesh(MPI_Comm comm, Mesh &mesh, int *partitioning_,
@@ -1567,19 +1723,19 @@ index 8392d2b67..c71469416 100644
     {
        os << "total_shared_faces " << sface_lface.Size() << '\n';
     }
-+   os << "\n# group 0 has no shared entities\n";
++   out << "\n# group 0 has no shared entities\n";
     for (int gr = 1; gr < GetNGroups(); gr++)
     {
        {
 diff --git a/mesh/pmesh.hpp b/mesh/pmesh.hpp
-index 6ad702b58..7206a6f4c 100644
+index 2395bc538..0aab7982e 100644
 --- a/mesh/pmesh.hpp
 +++ b/mesh/pmesh.hpp
 @@ -97,6 +97,8 @@ protected:
     // Convert the local 'meshgen' to a global one.
     void ReduceMeshGen();
  
-+   virtual void GenerateBoundaryElements() override { /* TODO */ }
++   void GenerateBoundaryElements() override { /* TODO */ }
 +
     // Determine sedge_ledge and sface_lface.
     void FinalizeParTopo();
@@ -1645,7 +1801,7 @@ index 315dc4465..656f80d0e 100644
  	@rm -f partitioning.txt shaper.mesh extruder.mesh
  	@rm -f optimized* perturbed* polar-nc.mesh
 diff --git a/miniapps/meshing/mesh-explorer.cpp b/miniapps/meshing/mesh-explorer.cpp
-index f05e18e83..6a2a4e78b 100644
+index f05e18e83..67e8b1f65 100644
 --- a/miniapps/meshing/mesh-explorer.cpp
 +++ b/miniapps/meshing/mesh-explorer.cpp
 @@ -308,6 +308,7 @@ int main (int argc, char *argv[])
@@ -1666,7 +1822,19 @@ index f05e18e83..6a2a4e78b 100644
             "V) Save in VTK format (only linear and quadratic meshes)\n"
             "D) Save as a DataCollection\n"
             "q) Quit\n"
-@@ -984,7 +986,7 @@ int main (int argc, char *argv[])
+@@ -971,9 +973,8 @@ int main (int argc, char *argv[])
+                      cin >> nxyz[2]; np *= nxyz[2];
+                   }
+                }
+-               int *part = mesh->CartesianPartitioning(nxyz);
+-               partitioning = Array<int>(part, mesh->GetNE());
+-               delete [] part;
++               partitioning.MakeRef(mesh->CartesianPartitioning(nxyz),
++                                    mesh->GetNE(), true);
+                recover_bdr_partitioning(mesh, partitioning, bdr_partitioning);
+             }
+             else if (pk == 's')
+@@ -984,7 +985,7 @@ int main (int argc, char *argv[])
                 partitioning.SetSize(mesh->GetNE());
                 for (int i = 0; i < mesh->GetNE(); i++)
                 {
@@ -1675,15 +1843,19 @@ index f05e18e83..6a2a4e78b 100644
                 }
                 recover_bdr_partitioning(mesh, partitioning, bdr_partitioning);
              }
-@@ -997,6 +999,7 @@ int main (int argc, char *argv[])
+@@ -997,9 +998,8 @@ int main (int argc, char *argv[])
                 }
                 cout << "Enter number of processors: " << flush;
                 cin >> np;
-+
-                int *part = mesh->GeneratePartitioning(np, part_method);
-                partitioning = Array<int>(part, mesh->GetNE());
-                delete [] part;
-@@ -1197,6 +1200,25 @@ int main (int argc, char *argv[])
+-               int *part = mesh->GeneratePartitioning(np, part_method);
+-               partitioning = Array<int>(part, mesh->GetNE());
+-               delete [] part;
++               partitioning.MakeRef(mesh->GeneratePartitioning(np, part_method),
++                                    mesh->GetNE(), true);
+                recover_bdr_partitioning(mesh, partitioning, bdr_partitioning);
+             }
+             if (partitioning)
+@@ -1197,6 +1197,25 @@ int main (int argc, char *argv[])
           cout << "New mesh file: " << omesh_file << endl;
        }
  
