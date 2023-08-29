@@ -126,25 +126,9 @@ jobs:
       - name: Install math libraries (AOCL)
         if: matrix.math-libs == 'aocl'
         run: |
-          wget https://github.com/amd/blis/archive/refs/tags/4.0.tar.gz
-          tar -xzf 4.0.tar.gz && cd blis-4.0
-          [[ "${{ matrix.with-openmp }}" == 'openmp' ]] && THREADING='openmp' || THREADING='no'
-          ./configure --prefix=/opt/amd \
-                      --enable-arg-max-hack \
-                      --disable-static --enable-shared \
-                      --enable-blas --enable-cblas \
-                      --enable-threading=$THREADING \
-                      auto
-          make -j && sudo make install
-          cd .. && rm -rf 4.0.tar.gz blis-*
-          wget https://github.com/amd/libflame/archive/refs/tags/4.0.tar.gz
-          tar -xzf 4.0.tar.gz && cd libflame-4.0
-          ./configure --prefix=/opt/amd \
-                      --enable-max-arg-list-hack \
-                      --disable-static-build --enable-dynamic-build \
-                      --enable-lapack2flame
-          make -j && sudo make install
-          cd .. && rm -rf 4.0.tar.gz libflame-*
+          wget https://download.amd.com/developer/eula/aocl/aocl-4-1/aocl-linux-gcc-4.1.0_1_amd64.deb
+          sudo apt-get install -y ./aocl-linux-gcc-4.1.0_1_amd64.deb
+          rm aocl-linux-gcc-*.deb
 
       - name: Build Palace
         env:
@@ -172,7 +156,7 @@ jobs:
             export FC=gfortran-11
           fi
           if [[ "${{ matrix.math-libs }}" == 'aocl' ]]; then
-            export AOCLROOT=/opt/amd
+            export AOCLROOT=/opt/AMD/aocl/aocl-linux-gcc-4.1.0/gcc
             export LD_LIBRARY_PATH=$AOCLROOT/lib:$LD_LIBRARY_PATH
           fi
           export NUM_PROC_BUILD=$(nproc 2> /dev/null || sysctl -n hw.ncpu)
@@ -225,7 +209,7 @@ jobs:
             export OMP_NUM_THREADS=1
           fi
           if [[ "${{ matrix.math-libs }}" == 'aocl' ]]; then
-            export AOCLROOT=/opt/amd
+            export AOCLROOT=/opt/AMD/aocl/aocl-linux-gcc-4.1.0/gcc
             export LD_LIBRARY_PATH=$AOCLROOT/lib:$LD_LIBRARY_PATH
           fi
           export PATH=$(pwd)/palace-install/bin:$PATH
