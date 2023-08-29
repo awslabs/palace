@@ -36,7 +36,7 @@ can be calculated as
 ```
 
 The flux density is related to the magnetic field, ``\bm{H}``, by the standard linear
-consitutive relationship ``\bm{H} = \mu_r^{-1}\bm{B}``.
+constitutive relationship ``\bm{H} = \mu_r^{-1}\bm{B}``.
 
 For a general isotropic lossy dielectric, the relative permittivity ``\varepsilon_r`` is a
 complex scalar:
@@ -178,7 +178,7 @@ get their frequency domain representation for scattering parameter calculation.
 Numeric wave ports assume a field with known normal-direction dependence
 ``\bm{E}(\bm{x})=\bm{e}(\bm{x}_t)e^{ik_n x_n}`` where ``k_n`` is the propagation constant.
 For each operating frequency ``\omega``, a two-dimensional eigenvalue problem is solved on
-the port yielding the mode shapes ``\bm{e}_m`` and associated propagaton constants
+the port yielding the mode shapes ``\bm{e}_m`` and associated propagation constants
 ``k_{n,m}``. These are used in the full 3D model where the Robin port boundary condition has
 coefficient ``\gamma=i\text{Re}\{k_{n,m}\}/\mu_r`` and the computed mode is used to compute
 the incident field in the source term ``\bm{U}^{inc}`` at excited ports. Scattering
