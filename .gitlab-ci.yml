@@ -168,25 +168,10 @@ test-build-aocl:
   script:
     # Install AMD Optimizing CPU Libraries (AOCL)
     - apt-get install -y libmpich-dev
-    - wget https://github.com/amd/blis/archive/refs/tags/4.0.tar.gz
-    - tar -xzf 4.0.tar.gz && cd blis-4.0
-    - ./configure --prefix=/opt/amd
-                  --enable-arg-max-hack
-                  --disable-static --enable-shared
-                  --enable-blas --enable-cblas
-                  --enable-threading=no
-                  auto
-    - make -j$NUM_PROC_BUILD && make install
-    - cd .. && rm -rf 4.0.tar.gz blis-*
-    - wget https://github.com/amd/libflame/archive/refs/tags/4.0.tar.gz
-    - tar -xzf 4.0.tar.gz && cd libflame-4.0
-    - ./configure --prefix=/opt/amd
-                  --enable-max-arg-list-hack
-                  --disable-static-build --enable-dynamic-build
-                  --enable-lapack2flame
-    - make -j$NUM_PROC_BUILD && make install
-    - cd .. && rm -rf 4.0.tar.gz libflame-*
-    - export AOCLROOT=/opt/amd
+    - wget https://download.amd.com/developer/eula/aocl/aocl-4-1/aocl-linux-gcc-4.1.0_1_amd64.deb
+    - apt-get install -y ./aocl-linux-gcc-4.1.0_1_amd64.deb
+    - rm aocl-linux-gcc-*.deb
+    - export AOCLROOT=/opt/AMD/aocl/aocl-linux-gcc-4.1.0/gcc
     - export LD_LIBRARY_PATH=$AOCLROOT/lib:$LD_LIBRARY_PATH
     - mkdir build && cd build
     - cmake ..
