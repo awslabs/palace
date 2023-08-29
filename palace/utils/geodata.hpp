@@ -113,10 +113,10 @@ BoundingBox GetBoundingBox(mfem::ParMesh &mesh, const mfem::Array<int> &marker, 
 BoundingBox GetBoundingBox(mfem::ParMesh &mesh, int attr, bool bdr);
 
 // Helper function for computing the direction aligned length of a marked group.
-double GetDirectionalExtent(mfem::ParMesh &mesh, const mfem::Array<int> &marker, bool bdr,
-                            const std::array<double, 3> &dir);
-double GetDirectionalExtent(mfem::ParMesh &mesh, int attr, bool bdr,
-                            const std::array<double, 3> &dir);
+double GetProjectedLength(mfem::ParMesh &mesh, const mfem::Array<int> &marker, bool bdr,
+                          const std::array<double, 3> &dir);
+double GetProjectedLength(mfem::ParMesh &mesh, int attr, bool bdr,
+                          const std::array<double, 3> &dir);
 
 // Given a mesh and a marker, compute the diameter of a bounding circle/sphere, assuming
 // that the extrema points are in the marked group.

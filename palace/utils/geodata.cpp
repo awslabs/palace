@@ -763,8 +763,6 @@ BoundingBox BoundingBoxFromPointCloud(MPI_Comm comm,
     // two opposite edges of the cuboid. Now look for a component that maximizes distance
     // from the planar system: complete the axes with a cross, then use a dot product to
     // pick the greatest deviation.
-    const Eigen::Vector3d n_3 = n_1.cross(n_2).normalized();
-
     auto OutOfPlaneDistance = [&n_1, &n_2, &origin](const Eigen::Vector3d &v)
     {
       return ((v - origin) - (v - origin).dot(n_1) * n_1 - (v - origin).dot(n_2) * n_2)
@@ -920,7 +918,6 @@ double LengthFromPointCloud(MPI_Comm comm, const std::vector<Eigen::Vector3d> &v
   double length;
   if (dominant_rank == Mpi::Rank(comm))
   {
-    MFEM_VERIFY(dir.size() == 3, "Direction must be a 3 vector!\n");
     CVector3dMap direction(dir.data());
 
     auto Dot = [&](const auto &x, const auto &y)
@@ -936,21 +933,21 @@ double LengthFromPointCloud(MPI_Comm comm, const std::vector<Eigen::Vector3d> &v
 
 }  // namespace
 
-double GetDirectionalExtent(mfem::ParMesh &mesh, const mfem::Array<int> &marker, bool bdr,
-                            const std::array<double, 3> &dir)
+double GetProjectedLength(mfem::ParMesh &mesh, const mfem::Array<int> &marker, bool bdr,
+                          const std::array<double, 3> &dir)
 {
   std::vector<Eigen::Vector3d> vertices;
   int dominant_rank = CollectPointCloudOnRoot(mesh, marker, bdr, vertices);
   return LengthFromPointCloud(mesh.GetComm(), vertices, dominant_rank, dir);
 }
 
-double GetDirectionalExtent(mfem::ParMesh &mesh, int attr, bool bdr,
-                            const std::array<double, 3> &dir)
+double GetProjectedLength(mfem::ParMesh &mesh, int attr, bool bdr,
+                          const std::array<double, 3> &dir)
 {
   mfem::Array<int> marker(bdr ? mesh.bdr_attributes.Max() : mesh.attributes.Max());
   marker = 0;
   marker[attr - 1] = 1;
-  return GetDirectionalExtent(mesh, marker, bdr, dir);
+  return GetProjectedLength(mesh, marker, bdr, dir);
 }
 
 BoundingBox GetBoundingBox(mfem::ParMesh &mesh, const mfem::Array<int> &marker, bool bdr)

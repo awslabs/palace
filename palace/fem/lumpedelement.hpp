@@ -70,10 +70,10 @@ public:
   {
     // Check that the bounding box discovered matches the area. This validates that the
     // boundary elements form a right angled quadrilateral port.
-    constexpr double rel_tol = 1.0e-6;
+    constexpr double rel_tol = 1.0e-3;
     double A = GetArea(fespace);
-    MFEM_VERIFY((!bounding_box.planar || std::abs(A - bounding_box.Area()) / A < rel_tol),
-                "Assumed bounding box area "
+    MFEM_VERIFY((!bounding_box.planar || (std::abs(A - bounding_box.Area()) / A < rel_tol)),
+                "Discovered bounding box area "
                     << bounding_box.Area() << " and integrated area " << A
                     << " do not match: Planar port geometry is not a quadrilateral!");
 
@@ -82,7 +82,7 @@ public:
     constexpr double angle_error_deg = 1.0;
     auto lengths = bounding_box.Lengths();
     auto deviation_deg = bounding_box.Deviation(input_dir);
-    if (!std::any_of(deviation_deg.begin(), deviation_deg.end(),
+    if (std::none_of(deviation_deg.begin(), deviation_deg.end(),
                      [](double x) { return x < angle_warning_deg; }))
     {
       auto normal_0 = bounding_box.normals[0];
@@ -103,12 +103,13 @@ public:
       Mpi::Warning(
           "User specified direction {:.3e} does not align with either bounding box "
           "axis up to {:.3e} degrees.\n"
-          "Axis 1: {:.3e} ({:.3e} degrees)\nAxis 2: {:.3e} ({:.3e} degrees)\nAxis 3: {:.3e} ({:.3e} degrees)!\n",
+          "Axis 1: {:.3e} ({:.3e} degrees)\nAxis 2: {:.3e} ({:.3e} degrees)\nAxis 3: "
+          "{:.3e} ({:.3e} degrees)!\n",
           input_dir, angle_warning_deg, normal_0, deviation_deg[0], normal_1,
           deviation_deg[1], normal_2, deviation_deg[2]);
     }
     MFEM_VERIFY(std::any_of(deviation_deg.begin(), deviation_deg.end(),
-                            [](double x) { return x < angle_error_deg; }),
+                            [angle_error_deg](double x) { return x < angle_error_deg; }),
                 "Specified direction does not align sufficiently with bounding box axes: "
                     << deviation_deg[0] << ' ' << deviation_deg[1] << ' '
                     << deviation_deg[2] << " tolerance " << angle_error_deg << '!');
@@ -121,9 +122,8 @@ public:
         std::min_element(deviation_deg.begin(), deviation_deg.end()))];
 
     MFEM_ASSERT(
-        (l - mesh::GetDirectionalExtent(*fespace.GetParMesh(), marker, true, input_dir)) /
-                l <
-            1e-3,
+        (l - mesh::GetProjectedLength(*fespace.GetParMesh(), marker, true, input_dir)) / l <
+            rel_tol,
         "Bounding box discovered length should match projected length");
     w = A / l;
   }
