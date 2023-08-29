@@ -126,8 +126,8 @@ jobs:
       - name: Install math libraries (AOCL)
         if: matrix.math-libs == 'aocl'
         run: |
-          wget https://github.com/amd/blis/archive/refs/tags/4.0.tar.gz
-          tar -xzf 4.0.tar.gz && cd blis-4.0
+          wget https://github.com/amd/blis/archive/refs/tags/4.1.tar.gz
+          tar -xzf 4.1.tar.gz && cd blis-4.1
           [[ "${{ matrix.with-openmp }}" == 'openmp' ]] && THREADING='openmp' || THREADING='no'
           ./configure --prefix=/opt/amd \
                       --enable-arg-max-hack \
@@ -136,15 +136,15 @@ jobs:
                       --enable-threading=$THREADING \
                       auto
           make -j && sudo make install
-          cd .. && rm -rf 4.0.tar.gz blis-*
-          wget https://github.com/amd/libflame/archive/refs/tags/4.0.tar.gz
-          tar -xzf 4.0.tar.gz && cd libflame-4.0
+          cd .. && rm -rf 4.1.tar.gz blis-*
+          wget https://github.com/amd/libflame/archive/refs/tags/4.1.tar.gz
+          tar -xzf 4.1.tar.gz && cd libflame-4.1
           ./configure --prefix=/opt/amd \
                       --enable-max-arg-list-hack \
                       --disable-static-build --enable-dynamic-build \
                       --enable-lapack2flame
           make -j && sudo make install
-          cd .. && rm -rf 4.0.tar.gz libflame-*
+          cd .. && rm -rf 4.1.tar.gz libflame-*
 
       - name: Build Palace
         env:
