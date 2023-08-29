@@ -104,14 +104,21 @@ if $FORMAT_JL; then
                           -type f \( -iname \*.md -o -iname \*.jl \) -exec echo -n '"{}", ' \;)
     FORMAT_JL_FILES="$(find $SOURCE_DIR -maxdepth 1 \
                            -type f -iname \*.md -exec echo -n '"{}", ' \;)$FORMAT_JL_FILES"
-    echo "
+    JULIA_CMD=$(
+        cat << EOF
 try
     @eval using JuliaFormatter
 catch
     using Pkg; Pkg.UPDATED_REGISTRY_THIS_SESSION[] = true
-    Pkg.activate(; temp=true); Pkg.add(\"JuliaFormatter\")
+    Pkg.activate(; temp=true); Pkg.add("JuliaFormatter")
     @eval using JuliaFormatter
 end
-format([$FORMAT_JL_FILES], $FORMAT_JL_ARGS)
-" | $JULIA
+try
+    format([$FORMAT_JL_FILES], $FORMAT_JL_ARGS)
+catch e
+    error(e)
+end
+EOF
+)
+    $JULIA -e "$JULIA_CMD"
 fi
