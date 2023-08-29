@@ -57,23 +57,31 @@ if ! command -v $JULIA &> /dev/null; then
     exit 1
 fi
 
-echo "
+JULIA_CMD=$(
+    cat << EOF
 try
     using JSON
     using JSONSchema
 catch
     using Pkg; Pkg.UPDATED_REGISTRY_THIS_SESSION[] = true
-    Pkg.activate(; temp=true); Pkg.add([\"JSON\", \"JSONSchema\"])
+    Pkg.activate(; temp=true); Pkg.add(["JSON", "JSONSchema"])
 end
-include(joinpath(\"$SCRIPT_DIR\", \"schema\", \"ValidateConfig.jl\"))
+include(joinpath("$SCRIPT_DIR", "schema", "ValidateConfig.jl"))
 using .ValidateConfig
-result = validate_config_file(;
-    config_file=\"$CONFIG\",
-    schema_file=joinpath(\"$SCRIPT_DIR\", \"schema\", \"config-schema.json\")
-)
-if result != nothing
-    println(\"Dry-run: Configuration file \\\"$CONFIG\\\" contains errors!\")
-else
-    println(\"Dry-run: No errors detected in configuration file \\\"$CONFIG\\\"\")
+try
+    result = validate_config_file(;
+        config_file="$CONFIG",
+        schema_file=joinpath("$SCRIPT_DIR", "schema", "config-schema.json")
+    )
+    if result != nothing
+        println("Dry-run: Configuration file \"$CONFIG\" contains errors!")
+        error(result)
+    else
+        println("Dry-run: No errors detected in configuration file \"$CONFIG\"")
+    end
+catch e
+    error(e)
 end
-" | $JULIA
+EOF
+)
+$JULIA -e "$JULIA_CMD"

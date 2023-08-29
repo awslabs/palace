@@ -144,7 +144,7 @@
                   "items": { "type": "integer"}
                 },
                 "Direction": { "$ref": "#/$defs/Direction" },
-                "CoordinateSystem": { "type": "string", "enum": ["Cartesian", "Cylindrical"] },
+                "CoordinateSystem": { "type": "string", "enum": ["Cartesian", "Cylindrical"] }
               }
             }
           }
@@ -228,7 +228,7 @@
                   "items": { "type": "integer"}
                 },
                 "Direction": { "$ref": "#/$defs/Direction" },
-                "CoordinateSystem": { "type": "string", "enum": ["Cartesian", "Cylindrical"] },
+                "CoordinateSystem": { "type": "string", "enum": ["Cartesian", "Cylindrical"] }
               }
             }
           }

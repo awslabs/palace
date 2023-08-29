@@ -47,7 +47,7 @@ jobs:
 
       - name: Check JSON Schema
         run: |
-          OUTPUT=$(find examples -name *.json -exec ./scripts/validate-config {} \;)
+          OUTPUT=$(find examples -name *.json -maxdepth 2 -print0 | xargs -0 -n1 ./scripts/validate-config)
           if echo $OUTPUT | grep -q 'Validation failed'; then
             echo 'Error: Configuration file validation failed!'
             echo 'Summary of output:'
