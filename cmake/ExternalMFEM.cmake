@@ -262,7 +262,8 @@ set(MFEM_PATCH_FILES
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_integ_getrule_interface.diff"
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_mfem_device_fixes.diff"
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_pa_libceed_dev.diff"
-  "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_ncmesh.diff"
+  "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_nc_ho_nedelec_tet_dev.diff"
+  "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_ncmesh_interior_boundary_dev.diff"
 )
 
 include(ExternalProject)

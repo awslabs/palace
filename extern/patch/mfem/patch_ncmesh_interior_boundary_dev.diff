@@ -1,350 +1,17 @@
 diff --git a/CHANGELOG b/CHANGELOG
-index b68e7b053..358f5490d 100644
+index b1ca2b9d3..358f5490d 100644
 --- a/CHANGELOG
 +++ b/CHANGELOG
-@@ -54,7 +54,7 @@ Meshing improvements
- - Added support for free connectivity of NURBS patches allowing for more complex
-   patch configurations such as C-meshes. This is demonstrated in a new NURBS
-   miniapp.
--  
-+
- - The edge to knot map for NURBS meshes can be determined automatically. It is no
-   longer needed to specify this in the NURBS mesh. A mesh in the NURBS miniapp
-   demonstrates this.
-@@ -83,6 +83,12 @@ Discretization improvements
- - Support for parallel transfer of H1 fields using the low-order refined (LOR)
-   transfer operators in L2ProjectionGridTransfer
+@@ -86,6 +86,9 @@ Discretization improvements
+ - Introduced support for higher order non conformal Nedelec elements on
+   simplices in ParMesh.
  
-+- Introduced support for higher order non conformal Nedelec elements on
-+  simplices in ParMesh.
-+
 +- Introduced support for internal boundary elements in nonconformal adapted
 +  meshes.
 +
  Linear and nonlinear solvers
  ----------------------------
  - Updated interface to MUMPS direct solver to support multiple right-hand
-diff --git a/data/p1_prism.msh b/data/p1_prism.msh
-new file mode 100644
-index 000000000..b05d1470c
---- /dev/null
-+++ b/data/p1_prism.msh
-@@ -0,0 +1,53 @@
-+$MeshFormat
-+2.2 0 8
-+$EndMeshFormat
-+$PhysicalNames
-+2
-+2 2 "boundaries"
-+3 1 "cylinder"
-+$EndPhysicalNames
-+$Nodes
-+15
-+1 2.74 0 0
-+2 2.74 0 5.48
-+3 -7.133049998451843e-15 2.74 0
-+4 -2.74 -3.31486008200114e-15 0
-+5 4.363887905507124e-15 -2.74 0
-+6 2.74 0 2.74
-+7 -7.133049998451843e-15 2.74 5.48
-+8 -2.74 -3.31486008200114e-15 5.48
-+9 4.363887905507124e-15 -2.74 5.48
-+10 -5.920473312798202e-16 -4.967313603494313e-16 0
-+11 -7.133049998451843e-15 2.74 2.74
-+12 -2.74 -3.31486008200114e-15 2.74
-+13 4.363887905507124e-15 -2.74 2.74
-+14 -5.920473312798202e-16 -4.967313603494313e-16 5.48
-+15 -5.920473312798202e-16 -4.967313603494313e-16 2.74
-+$EndNodes
-+$Elements
-+24
-+1 2 2 2 1 3 10 1
-+2 2 2 2 1 5 10 4
-+3 2 2 2 1 4 10 3
-+4 2 2 2 1 1 10 5
-+5 2 2 2 3 7 14 2
-+6 2 2 2 3 9 14 8
-+7 2 2 2 3 8 14 7
-+8 2 2 2 3 2 14 9
-+9 3 2 2 2 1 3 11 6
-+10 3 2 2 2 6 11 7 2
-+11 3 2 2 2 3 4 12 11
-+12 3 2 2 2 11 12 8 7
-+13 3 2 2 2 4 5 13 12
-+14 3 2 2 2 12 13 9 8
-+15 3 2 2 2 5 1 6 13
-+16 3 2 2 2 13 6 2 9
-+17 6 2 1 1 1 3 10 6 11 15
-+18 6 2 1 1 6 11 15 2 7 14
-+19 6 2 1 1 4 5 10 12 13 15
-+20 6 2 1 1 12 13 15 8 9 14
-+21 6 2 1 1 3 4 10 11 12 15
-+22 6 2 1 1 11 12 15 7 8 14
-+23 6 2 1 1 5 1 10 13 6 15
-+24 6 2 1 1 13 6 15 9 2 14
-+$EndElements
-diff --git a/data/p2_prism.msh b/data/p2_prism.msh
-new file mode 100644
-index 000000000..0cb3f66d6
---- /dev/null
-+++ b/data/p2_prism.msh
-@@ -0,0 +1,103 @@
-+$MeshFormat
-+2.2 0 8
-+$EndMeshFormat
-+$PhysicalNames
-+2
-+2 2 "boundaries"
-+3 1 "cylinder"
-+$EndPhysicalNames
-+$Nodes
-+65
-+1 2.74 0 0
-+2 2.74 0 5.48
-+3 -7.133049998451843e-15 2.74 0
-+4 -2.74 -3.31486008200114e-15 0
-+5 4.363887905507124e-15 -2.74 0
-+6 1.937472580451138 1.937472580451143 0
-+7 -1.937472580451143 1.937472580451137 0
-+8 -1.937472580451138 -1.937472580451143 0
-+9 1.937472580451142 -1.937472580451139 0
-+10 2.74 0 2.74
-+11 2.74 0 1.37
-+12 2.74 0 4.11
-+13 -7.133049998451843e-15 2.74 5.48
-+14 -2.74 -3.31486008200114e-15 5.48
-+15 4.363887905507124e-15 -2.74 5.48
-+16 1.937472580451138 1.937472580451143 5.48
-+17 -1.937472580451143 1.937472580451137 5.48
-+18 -1.937472580451138 -1.937472580451143 5.48
-+19 1.937472580451142 -1.937472580451139 5.48
-+20 -5.920473312798202e-16 -4.967313603494313e-16 0
-+21 -3.862548664865832e-15 1.37 0
-+22 1.37 -2.483656801747156e-16 0
-+23 1.885920287113652e-15 -1.37 0
-+24 -1.370000000000001 -1.905795721175286e-15 0
-+25 -7.133049998451843e-15 2.74 2.74
-+26 -2.74 -3.31486008200114e-15 2.74
-+27 4.363887905507124e-15 -2.74 2.74
-+28 1.677766114831874e-16 2.74 1.37
-+29 1.937472580451138 1.937472580451143 2.74
-+30 1.937472580451141 1.937472580451143 1.37
-+31 1.677766114831874e-16 2.74 4.11
-+32 1.937472580451141 1.937472580451143 4.11
-+33 -2.74 3.355532229663748e-16 1.37
-+34 -1.937472580451143 1.937472580451137 2.74
-+35 -1.93747258045114 1.937472580451139 1.37
-+36 -2.74 3.355532229663748e-16 4.11
-+37 -1.93747258045114 1.937472580451139 4.11
-+38 -5.033298344495622e-16 -2.74 1.37
-+39 -1.937472580451138 -1.937472580451143 2.74
-+40 -1.937472580451141 -1.937472580451141 1.37
-+41 -5.033298344495622e-16 -2.74 4.11
-+42 -1.937472580451141 -1.937472580451141 4.11
-+43 1.937472580451142 -1.937472580451139 2.74
-+44 1.937472580451139 -1.937472580451139 1.37
-+45 1.937472580451139 -1.937472580451139 4.11
-+46 -5.920473312798202e-16 -4.967313603494313e-16 5.48
-+47 -3.862548664865832e-15 1.37 5.48
-+48 1.37 -2.483656801747157e-16 5.48
-+49 1.885920287113652e-15 -1.37 5.48
-+50 -1.370000000000001 -1.905795721175286e-15 5.48
-+51 -5.920473312798202e-16 -4.967313603494313e-16 2.74
-+52 -5.920473312798202e-16 -4.967313603494313e-16 1.37
-+53 1.37 -2.483656801747157e-16 2.74
-+54 -3.862548664865832e-15 1.37 2.74
-+55 1.37 -2.483656801747157e-16 1.37
-+56 -2.121353598983164e-16 1.37 1.37
-+57 -5.920473312798202e-16 -4.967313603494313e-16 4.11
-+58 1.37 -2.483656801747157e-16 4.11
-+59 -2.121353598983164e-16 1.37 4.11
-+60 -1.37 -1.905795721175286e-15 2.74
-+61 1.885920287113652e-15 -1.37 2.74
-+62 -1.37 -8.058906869152782e-17 1.37
-+63 -5.476885828646913e-16 -1.37 1.37
-+64 -1.37 -8.058906869152802e-17 4.11
-+65 -5.476885828646913e-16 -1.37 4.11
-+$EndNodes
-+$Elements
-+24
-+1 9 2 2 1 3 20 1 21 22 6
-+2 9 2 2 1 5 20 4 23 24 8
-+3 9 2 2 1 4 20 3 24 21 7
-+4 9 2 2 1 1 20 5 22 23 9
-+5 9 2 2 3 13 46 2 47 48 16
-+6 9 2 2 3 15 46 14 49 50 18
-+7 9 2 2 3 14 46 13 50 47 17
-+8 9 2 2 3 2 46 15 48 49 19
-+9 10 2 2 2 1 3 25 10 6 28 29 11 30
-+10 10 2 2 2 10 25 13 2 29 31 16 12 32
-+11 10 2 2 2 3 4 26 25 7 33 34 28 35
-+12 10 2 2 2 25 26 14 13 34 36 17 31 37
-+13 10 2 2 2 4 5 27 26 8 38 39 33 40
-+14 10 2 2 2 26 27 15 14 39 41 18 36 42
-+15 10 2 2 2 5 1 10 27 9 11 43 38 44
-+16 10 2 2 2 27 10 2 15 43 12 19 41 45
-+17 13 2 1 1 1 3 20 10 25 51 6 22 11 21 28 52 29 53 54 30 55 56
-+18 13 2 1 1 10 25 51 2 13 46 29 53 12 54 31 57 16 48 47 32 58 59
-+19 13 2 1 1 4 5 20 26 27 51 8 24 33 23 38 52 39 60 61 40 62 63
-+20 13 2 1 1 26 27 51 14 15 46 39 60 36 61 41 57 18 50 49 42 64 65
-+21 13 2 1 1 3 4 20 25 26 51 7 21 28 24 33 52 34 54 60 35 56 62
-+22 13 2 1 1 25 26 51 13 14 46 34 54 31 60 36 57 17 47 50 37 59 64
-+23 13 2 1 1 5 1 20 27 10 51 9 23 38 22 11 52 43 61 53 44 63 55
-+24 13 2 1 1 27 10 51 15 2 46 43 61 41 53 12 57 19 49 48 45 65 58
-+$EndElements
-diff --git a/examples/ex13p.cpp b/examples/ex13p.cpp
-index da3a7cdba..af3cbc696 100644
---- a/examples/ex13p.cpp
-+++ b/examples/ex13p.cpp
-@@ -54,6 +54,7 @@ int main(int argc, char *argv[])
-    int par_ref_levels = 1;
-    int order = 1;
-    int nev = 5;
-+   bool nc = false;
-    bool visualization = 1;
-    const char *device_config = "cpu";
- 
-@@ -69,6 +70,9 @@ int main(int argc, char *argv[])
-                   " isoparametric space.");
-    args.AddOption(&nev, "-n", "--num-eigs",
-                   "Number of desired eigenmodes.");
-+   args.AddOption(&nc, "-nc", "--non-conforming", "-c",
-+                  "--conforming",
-+                  "Mark the mesh as nonconforming before partitioning.");
-    args.AddOption(&visualization, "-vis", "--visualization", "-no-vis",
-                   "--no-visualization",
-                   "Enable or disable GLVis visualization.");
-@@ -107,6 +111,11 @@ int main(int argc, char *argv[])
-       mesh->UniformRefinement();
-    }
- 
-+   if (nc)
-+   {
-+      mesh->EnsureNCMesh(true);
-+   }
-+
-    // 6. Define a parallel mesh by a partitioning of the serial mesh. Refine
-    //    this mesh further in parallel to increase the resolution (1 time by
-    //    default, or specified on the command line with -rp). Once the parallel
-diff --git a/examples/ex3.cpp b/examples/ex3.cpp
-index edbfdac7d..d36ec62bf 100644
---- a/examples/ex3.cpp
-+++ b/examples/ex3.cpp
-@@ -63,6 +63,7 @@ int main(int argc, char *argv[])
-    int order = 1;
-    bool static_cond = false;
-    bool pa = false;
-+   bool nc = false;
-    const char *device_config = "cpu";
-    bool visualization = 1;
- 
-@@ -77,6 +78,8 @@ int main(int argc, char *argv[])
-                   "--no-static-condensation", "Enable static condensation.");
-    args.AddOption(&pa, "-pa", "--partial-assembly", "-no-pa",
-                   "--no-partial-assembly", "Enable Partial Assembly.");
-+   args.AddOption(&nc, "-nc", "--non-conforming", "-no-nc",
-+                  "--no-non-conforming", "Enable Nonconforming Refinement.");
-    args.AddOption(&device_config, "-d", "--device",
-                   "Device configuration string, see Device::Configure().");
-    args.AddOption(&visualization, "-vis", "--visualization", "-no-vis",
-@@ -103,19 +106,26 @@ int main(int argc, char *argv[])
-    dim = mesh->Dimension();
-    int sdim = mesh->SpaceDimension();
- 
-+
-    // 4. Refine the mesh to increase the resolution. In this example we do
-    //    'ref_levels' of uniform refinement. We choose 'ref_levels' to be the
-    //    largest number that gives a final mesh with no more than 50,000
-    //    elements.
-+
-+   if (nc)
-+   {
-+      // Can set to false to use conformal refinement for simplices.
-+      mesh->EnsureNCMesh(true);
-+   }
-+   mesh->UniformRefinement();
-    {
-       int ref_levels =
--         (int)floor(log(50000./mesh->GetNE())/log(2.)/dim);
-+         (int)floor(log(1000./mesh->GetNE())/log(2.)/dim);
-       for (int l = 0; l < ref_levels; l++)
-       {
-          mesh->UniformRefinement();
-       }
-    }
--
-    // 5. Define a finite element space on the mesh. Here we use the Nedelec
-    //    finite elements of the specified order.
-    FiniteElementCollection *fec = new ND_FECollection(order, dim);
-diff --git a/examples/ex3p.cpp b/examples/ex3p.cpp
-index e24c52809..285fcc8e8 100644
---- a/examples/ex3p.cpp
-+++ b/examples/ex3p.cpp
-@@ -70,6 +70,7 @@ int main(int argc, char *argv[])
-    int order = 1;
-    bool static_cond = false;
-    bool pa = false;
-+   bool nc = false;
-    const char *device_config = "cpu";
-    bool visualization = true;
- #ifdef MFEM_USE_AMGX
-@@ -87,6 +88,8 @@ int main(int argc, char *argv[])
-                   "--no-static-condensation", "Enable static condensation.");
-    args.AddOption(&pa, "-pa", "--partial-assembly", "-no-pa",
-                   "--no-partial-assembly", "Enable Partial Assembly.");
-+   args.AddOption(&nc, "-nc", "--non-conforming", "-no-nc",
-+                  "--no-non-conforming", "Enable Nonconforming Refinement.");
-    args.AddOption(&device_config, "-d", "--device",
-                   "Device configuration string, see Device::Configure().");
-    args.AddOption(&visualization, "-vis", "--visualization", "-no-vis",
-@@ -129,6 +132,12 @@ int main(int argc, char *argv[])
-    //    this example we do 'ref_levels' of uniform refinement. We choose
-    //    'ref_levels' to be the largest number that gives a final mesh with no
-    //    more than 1,000 elements.
-+   if (nc)
-+   {
-+      // Can set to false to use conformal refinement for simplices.
-+      mesh->EnsureNCMesh(true);
-+   }
-+
-    {
-       int ref_levels = (int)floor(log(1000./mesh->GetNE())/log(2.)/dim);
-       for (int l = 0; l < ref_levels; l++)
-@@ -137,19 +146,20 @@ int main(int argc, char *argv[])
-       }
-    }
- 
-+
-    // 6. Define a parallel mesh by a partitioning of the serial mesh. Refine
-    //    this mesh further in parallel to increase the resolution. Once the
-    //    parallel mesh is defined, the serial mesh can be deleted.
-    ParMesh *pmesh = new ParMesh(MPI_COMM_WORLD, *mesh);
-+
-    delete mesh;
-    {
--      int par_ref_levels = 2;
-+      int par_ref_levels = 1;
-       for (int l = 0; l < par_ref_levels; l++)
-       {
-          pmesh->UniformRefinement();
-       }
-    }
--
-    // 7. Define a parallel finite element space on the parallel mesh. Here we
-    //    use the Nedelec finite elements of the specified order.
-    FiniteElementCollection *fec = new ND_FECollection(order, dim);
-diff --git a/fem/eltrans.cpp b/fem/eltrans.cpp
-index b0bf84145..7d36985de 100644
---- a/fem/eltrans.cpp
-+++ b/fem/eltrans.cpp
-@@ -488,6 +488,7 @@ int IsoparametricTransformation::OrderGrad(const FiniteElement *fe) const
- void IsoparametricTransformation::Transform (const IntegrationPoint &ip,
-                                              Vector &trans)
- {
-+   MFEM_ASSERT(FElem != nullptr, "!");
-    shape.SetSize(FElem->GetDof());
-    trans.SetSize(PointMat.Height());
- 
 diff --git a/fem/fespace.cpp b/fem/fespace.cpp
 index c898d4983..4d97a5929 100644
 --- a/fem/fespace.cpp
@@ -545,70 +212,8 @@ index 9afa756f5..5db18dece 100644
     /** @brief For a partially conforming FE space, convert a marker array (nonzero
         entries are true) on the partially conforming dofs to a marker array on
         the conforming dofs. A conforming dofs is marked iff at least one of its
-diff --git a/fem/gridfunc.cpp b/fem/gridfunc.cpp
-index cb58b6033..fc55af976 100644
---- a/fem/gridfunc.cpp
-+++ b/fem/gridfunc.cpp
-@@ -836,6 +836,9 @@ double GridFunction::GetValue(ElementTransformation &T,
-             FaceElementTransformations * FET =
-                fes->GetMesh()->GetBdrFaceTransformations(T.ElementNo);
- 
-+            MFEM_ASSERT(FET != nullptr,
-+                        "FaceElementTransformation must be valid for a boundary element");
-+
-             // Boundary elements and Boundary Faces may have different
-             // orientations so adjust the integration point if necessary.
-             int o = 0;
-@@ -975,6 +978,9 @@ void GridFunction::GetVectorValue(ElementTransformation &T,
-             FaceElementTransformations * FET =
-                fes->GetMesh()->GetBdrFaceTransformations(T.ElementNo);
- 
-+            MFEM_ASSERT(FET != nullptr,
-+                        "FaceElementTransformation must be valid for a boundary element");
-+
-             // Boundary elements and Boundary Faces may have different
-             // orientations so adjust the integration point if necessary.
-             int o = 0;
-@@ -999,6 +1005,8 @@ void GridFunction::GetVectorValue(ElementTransformation &T,
-          FaceElementTransformations * FET =
-             dynamic_cast<FaceElementTransformations *>(&T);
- 
-+         MFEM_ASSERT(FET != nullptr,
-+                     "FaceElementTransformation must be valid for a boundary element");
-          // Evaluate in neighboring element for both continuous and
-          // discontinuous fields (the integration point in T1 should have
-          // already been set).
-@@ -1116,11 +1124,10 @@ int GridFunction::GetFaceVectorValues(
-    int i, int side, const IntegrationRule &ir,
-    DenseMatrix &vals, DenseMatrix &tr) const
- {
--   int n, di;
-+   int di;
-    FaceElementTransformations *Transf;
- 
--   n = ir.GetNPoints();
--   IntegrationRule eir(n);  // ---
-+   IntegrationRule eir(ir.GetNPoints());  // ---
-    Transf = fes->GetMesh()->GetFaceElementTransformations(i, 0);
-    if (side == 2)
-    {
-@@ -1142,12 +1149,14 @@ int GridFunction::GetFaceVectorValues(
-    if (di == 0)
-    {
-       Transf = fes->GetMesh()->GetFaceElementTransformations(i, 5);
-+      MFEM_ASSERT(Transf != nullptr, "!");
-       Transf->Loc1.Transform(ir, eir);
-       GetVectorValues(*Transf->Elem1, eir, vals, &tr);
-    }
-    else
-    {
-       Transf = fes->GetMesh()->GetFaceElementTransformations(i, 10);
-+      MFEM_ASSERT(Transf != nullptr, "!");
-       Transf->Loc2.Transform(ir, eir);
-       GetVectorValues(*Transf->Elem2, eir, vals, &tr);
-    }
 diff --git a/fem/pfespace.cpp b/fem/pfespace.cpp
-index fb0c7cf9f..107b1e2d2 100644
+index ef3e7437b..107b1e2d2 100644
 --- a/fem/pfespace.cpp
 +++ b/fem/pfespace.cpp
 @@ -90,18 +90,18 @@ ParNURBSExtension *ParFiniteElementSpace::MakeLocalNURBSext(
@@ -723,161 +328,7 @@ index fb0c7cf9f..107b1e2d2 100644
  #endif
  
     MarkerToList(true_ess_dofs, ess_tdof_list);
-@@ -1261,6 +1305,7 @@ void ParFiniteElementSpace::ExchangeFaceNbrData()
-    // element)
-    face_nbr_element_dof.MakeI(recv_el_off[num_face_nbrs]);
- 
-+
-    int *send_I = send_nbr_elem_dof.GetI();
-    int *recv_I = face_nbr_element_dof.GetI();
-    for (int fn = 0; fn < num_face_nbrs; fn++)
-@@ -1923,9 +1968,8 @@ struct PMatrixRow
-    void AddRow(const PMatrixRow &other, double coef)
-    {
-       elems.reserve(elems.size() + other.elems.size());
--      for (unsigned i = 0; i < other.elems.size(); i++)
-+      for (const PMatrixElement &oei : other.elems)
-       {
--         const PMatrixElement &oei = other.elems[i];
-          elems.push_back(
-             PMatrixElement(oei.column, oei.stride, coef * oei.value));
-       }
-@@ -2059,6 +2103,7 @@ void NeighborRowMessage::Encode(int rank)
-       for (int i = 0; i < ids.Size(); i++)
-       {
-          const MeshId &id = ids[i];
-+
-          const RowInfo &ri = rows[row_idx[ent][i]];
-          MFEM_ASSERT(ent == ri.entity, "");
- 
-@@ -2110,24 +2155,36 @@ void NeighborRowMessage::Decode(int rank)
-    rows.reserve(nrows);
- 
-    // read rows
-+   // ent = {0,1,2} means vertex, edge and face entity
-    for (int ent = 0, gi = 0; ent < 3; ent++)
-    {
-+      // extract the vertex list, edge list or face list.
-       const Array<MeshId> &ids = ent_ids[ent];
-       for (int i = 0; i < ids.Size(); i++)
-       {
-          const MeshId &id = ids[i];
-+         // read the particular element dof value off the stream.
-          int edof = bin_io::read<int>(stream);
- 
--         // handle orientation and sign change
--         const int *ind = NULL;
-+         // Handle orientation and sign change.
-+         // This flips the sign on dofs where necessary, and for edges and faces
-+         // also reorders if flipped, i.e. an edge with
-+         //    1 -> 2 -> 3 -> 4
-+         // might become
-+         //    -4 -> -3 -> -2 -> -1
-+         // This cannot treat all face dofs, as they can have rotations and
-+         // reflections.
-+         const int *ind = nullptr;
-+         Geometry::Type geom = Geometry::Type::INVALID;
-          if (ent == 1)
-          {
-+            // edge NC orientation is element defined.
-             int eo = pncmesh->GetEdgeNCOrientation(id);
-             ind = fec->DofOrderForOrientation(Geometry::SEGMENT, eo);
-          }
-          else if (ent == 2)
-          {
--            Geometry::Type geom = pncmesh->GetFaceGeometry(id.index);
-+            geom = pncmesh->GetFaceGeometry(id.index);
-             int fo = pncmesh->GetFaceOrientation(id.index);
-             ind = fec->DofOrderForOrientation(geom, fo);
-          }
-@@ -2149,6 +2206,7 @@ void NeighborRowMessage::Decode(int rank)
-             s *= -1.0;
-          }
- 
-+         // Create a row for this entity, recording the index of the mesh element
-          rows.push_back(RowInfo(ent, id.index, edof, group_ids[gi++]));
-          rows.back().row.read(stream, s);
- 
-@@ -2158,6 +2216,65 @@ void NeighborRowMessage::Decode(int rank)
-                    << rows.back().index << ", edof " << rows.back().edof
-                    << std::endl;
- #endif
-+
-+         if (ent == 2 && fec->GetContType() == FiniteElementCollection::TANGENTIAL
-+             && !Geometry::IsTensorProduct(geom))
-+         {
-+            // ND face dofs need to be processed together, as the transformation
-+            // is given by a 2x2 matrix, so we manually apply an extra increment
-+            // to the loop counter and add in a new row. Once these rows are placed, they
-+            // represent the Identity transformation. To map across the
-+            // processor boundary, we also need to apply a Primal Transformation
-+            // (see doftrans.hpp) to a notional "global dof" orientation.
-+            // For simplicity we perform the action of these 2x2 matrices
-+            // manually using the AddRow capability, followed by a Collapse.
-+
-+            // To perform the operations, we add and subtract initial versions
-+            // of the rows, that represent [1 0; 0 1] in row major notation.
-+            // The first row represents the 1 at (0,0) in [1 0; 0 1]
-+            // The second row represents the 1 at (1,1) in [1 0; 0 1]
-+
-+            // We can safely bind this reference as rows was reserved above so
-+            // there is no hidden copying that could result in a dangling reference.
-+            auto &first_row = rows.back().row;
-+            // This is the first "fundamental unit" used in the transformation.
-+            const auto initial_first_row = first_row;
-+            // Extract the next dof too, and apply any dof order transformation expected.
-+            const MeshId &next_id = ids[++i];
-+            int fo = pncmesh->GetFaceOrientation(next_id.index);
-+            ind = fec->DofOrderForOrientation(geom, fo);
-+
-+            s = 1.0;
-+            edof = bin_io::read<int>(stream);
-+            if (ind && (edof = ind[edof]) < 0)
-+            {
-+               edof = -1 - edof;
-+               s = -1.0;
-+            }
-+            rows.push_back(RowInfo(ent, next_id.index, edof, group_ids[gi++]));
-+            rows.back().row.read(stream, s);
-+
-+            auto &second_row = rows.back().row;
-+
-+            // This is the second "fundamental unit" used in the transformation.
-+            const auto initial_second_row = second_row;
-+
-+            const auto T = [&fo]()
-+            {
-+               auto T = ND_DofTransformation::GetFaceTransform(fo);
-+               T(0,0) -= 1;
-+               T(1,1) -= 1;
-+               return T;
-+            }();
-+
-+            first_row.AddRow(initial_first_row, T(0,0));
-+            first_row.AddRow(initial_second_row, T(0,1));
-+            second_row.AddRow(initial_first_row, T(1,0));
-+            second_row.AddRow(initial_second_row, T(1,1));
-+
-+            first_row.Collapse();
-+            second_row.Collapse();
-+         }
-       }
-    }
- }
-@@ -2285,12 +2402,6 @@ int ParFiniteElementSpace
-                                        Array<int> *dof_tdof,
-                                        bool partial) const
- {
--   // TODO: general face DOF transformations in NeighborRowMessage::Decode()
--   MFEM_VERIFY(!(fec->GetOrder() >= 2
--                 && pmesh->HasGeometry(Geometry::TETRAHEDRON)
--                 && fec->GetContType() == FiniteElementCollection::TANGENTIAL),
--               "Nedelec NC tets of order >= 2 are not supported yet.");
--
-    const bool dg = (nvdofs == 0 && nedofs == 0 && nfdofs == 0);
- 
- #ifdef MFEM_PMATRIX_STATS
-@@ -2331,7 +2442,7 @@ int ParFiniteElementSpace
+@@ -2398,7 +2442,7 @@ int ParFiniteElementSpace
  
              if (master_dofs.Size() == 0) { continue; }
  
@@ -886,7 +337,7 @@ index fb0c7cf9f..107b1e2d2 100644
              if (fe == nullptr) { continue; }
  
              switch (mf.Geom())
-@@ -2480,6 +2591,8 @@ int ParFiniteElementSpace
+@@ -2547,6 +2591,8 @@ int ParFiniteElementSpace
        *dof_tdof = -1;
     }
  
@@ -909,33 +360,6 @@ index 3b940f2af..7bf683049 100644
     /// Return the dofs associated with the interior of the given mesh entity.
     void GetBareDofs(int entity, int index, Array<int> &dofs) const;
  
-diff --git a/fem/pgridfunc.cpp b/fem/pgridfunc.cpp
-index 0a58530c1..50ee18668 100644
---- a/fem/pgridfunc.cpp
-+++ b/fem/pgridfunc.cpp
-@@ -469,17 +469,17 @@ void ParGridFunction::GetVectorValue(ElementTransformation &T,
-    }
- 
-    Array<int> vdofs;
--   DofTransformation * doftrans = pfes->GetFaceNbrElementVDofs(nbr_el_no,
--                                                               vdofs);
--   const FiniteElement *fe = pfes->GetFaceNbrFE(nbr_el_no);
--
--   int dof = fe->GetDof();
-+   DofTransformation * doftrans = pfes->GetFaceNbrElementVDofs(nbr_el_no, vdofs);
-    Vector loc_data;
-    face_nbr_data.GetSubVector(vdofs, loc_data);
-    if (doftrans)
-    {
-       doftrans->InvTransformPrimal(loc_data);
-    }
-+
-+   const FiniteElement *fe = pfes->GetFaceNbrFE(nbr_el_no);
-+   int dof = fe->GetDof();
-+
-    if (fe->GetRangeType() == FiniteElement::SCALAR)
-    {
-       Vector shape(dof);
 diff --git a/general/hash.hpp b/general/hash.hpp
 index 288d51288..b517172aa 100644
 --- a/general/hash.hpp
@@ -949,20 +373,6 @@ index 288d51288..b517172aa 100644
  
     const_iterator cbegin() const { return const_iterator(Base::cbegin()); }
     const_iterator cend() const { return const_iterator(); }
-diff --git a/general/table.cpp b/general/table.cpp
-index 4c0bb68ee..da4c0187b 100644
---- a/general/table.cpp
-+++ b/general/table.cpp
-@@ -218,7 +218,8 @@ void Table::SetIJ(int *newI, int *newJ, int newsize)
- 
- int Table::Push(int i, int j)
- {
--   MFEM_ASSERT( i >=0 && i<size, "Index out of bounds.  i = "<<i);
-+   MFEM_ASSERT( i >=0 &&
-+                i<size, "Index out of bounds.  i = " << i << " size " << size);
- 
-    for (int k = I[i], end = I[i+1]; k < end; k++)
-    {
 diff --git a/mesh/element.hpp b/mesh/element.hpp
 index c37205eb1..2376c9dc3 100644
 --- a/mesh/element.hpp
@@ -1075,18 +485,10 @@ index a8186c0c8..450cac0ce 100644
  
  extern MFEM_EXPORT class TriLinear3DFiniteElement HexahedronFE;
 diff --git a/mesh/mesh.cpp b/mesh/mesh.cpp
-index 43651b881..8224ef5a2 100644
+index c2817ea91..8224ef5a2 100644
 --- a/mesh/mesh.cpp
 +++ b/mesh/mesh.cpp
-@@ -1110,6 +1110,7 @@ FaceElementTransformations *Mesh::GetBdrFaceTransformations(int BdrElemNo)
-    {
-       return NULL;
-    }
-+
-    tr = GetFaceElementTransformations(fn, 21);
-    tr->Attribute = boundary[BdrElemNo]->GetAttribute();
-    tr->ElementNo = BdrElemNo;
-@@ -1432,6 +1433,7 @@ Geometry::Type Mesh::GetFaceGeometry(int Face) const
+@@ -1433,6 +1433,7 @@ Geometry::Type Mesh::GetFaceGeometry(int Face) const
           }
           // ghost face
           const int nc_face_id = faces_info[Face].NCFace;
@@ -1094,7 +496,7 @@ index 43651b881..8224ef5a2 100644
           MFEM_ASSERT(nc_face_id >= 0, "parent ghost faces are not supported");
           return faces[nc_faces_info[nc_face_id].MasterFace]->GetGeometryType();
     }
-@@ -1907,14 +1909,11 @@ int Mesh::AddBdrPoint(int v, int attr)
+@@ -1908,14 +1909,11 @@ int Mesh::AddBdrPoint(int v, int attr)
  
  void Mesh::GenerateBoundaryElements()
  {
@@ -1111,7 +513,7 @@ index 43651b881..8224ef5a2 100644
     }
  
     if (Dim == 3)
-@@ -1925,14 +1924,14 @@ void Mesh::GenerateBoundaryElements()
+@@ -1926,14 +1924,14 @@ void Mesh::GenerateBoundaryElements()
  
     // count the 'NumOfBdrElements'
     NumOfBdrElements = 0;
@@ -1129,7 +531,7 @@ index 43651b881..8224ef5a2 100644
     {
        if (faces_info[i].Elem2No < 0)
        {
-@@ -4419,7 +4418,7 @@ Mesh::Mesh(Mesh *orig_mesh, int ref_factor, int ref_type)
+@@ -4420,7 +4418,7 @@ Mesh::Mesh(Mesh *orig_mesh, int ref_factor, int ref_type)
     MakeRefined_(*orig_mesh, ref_factors, ref_type);
  }
  
@@ -1138,7 +540,7 @@ index 43651b881..8224ef5a2 100644
                          int ref_type)
  {
     SetEmpty();
-@@ -6237,22 +6236,22 @@ int Mesh::CheckBdrElementOrientation(bool fix_it)
+@@ -6238,22 +6236,22 @@ int Mesh::CheckBdrElementOrientation(bool fix_it)
              {
                 // swap vertices 0 and 1 so that we don't change the marked edge:
                 // (0,1,2) -> (1,0,2)
@@ -1166,7 +568,7 @@ index 43651b881..8224ef5a2 100644
                 }
                 break;
              }
-@@ -6956,9 +6955,9 @@ void Mesh::AddQuadFaceElement(int lf, int gf, int el,
+@@ -6957,9 +6955,9 @@ void Mesh::AddQuadFaceElement(int lf, int gf, int el,
  
  void Mesh::GenerateFaces()
  {
@@ -1178,7 +580,7 @@ index 43651b881..8224ef5a2 100644
     {
        FreeElement(faces[i]);
     }
-@@ -6966,16 +6965,17 @@ void Mesh::GenerateFaces()
+@@ -6967,16 +6965,17 @@ void Mesh::GenerateFaces()
     // (re)generate the interior faces and the info for them
     faces.SetSize(nfaces);
     faces_info.SetSize(nfaces);
@@ -1200,7 +602,7 @@ index 43651b881..8224ef5a2 100644
        if (Dim == 1)
        {
           AddPointFaceElement(0, v[0], i);
-@@ -6983,7 +6983,7 @@ void Mesh::GenerateFaces()
+@@ -6984,7 +6983,7 @@ void Mesh::GenerateFaces()
        }
        else if (Dim == 2)
        {
@@ -1209,7 +611,7 @@ index 43651b881..8224ef5a2 100644
           const int ne = elements[i]->GetNEdges();
           for (int j = 0; j < ne; j++)
           {
-@@ -6993,7 +6993,7 @@ void Mesh::GenerateFaces()
+@@ -6994,7 +6993,7 @@ void Mesh::GenerateFaces()
        }
        else
        {
@@ -1218,7 +620,7 @@ index 43651b881..8224ef5a2 100644
           switch (GetElementType(i))
           {
              case Element::TETRAHEDRON:
-@@ -7059,9 +7059,9 @@ void Mesh::GenerateNCFaceInfo()
+@@ -7060,9 +7059,9 @@ void Mesh::GenerateNCFaceInfo()
  {
     MFEM_VERIFY(ncmesh, "missing NCMesh.");
  
@@ -1230,7 +632,7 @@ index 43651b881..8224ef5a2 100644
     }
  
     const NCMesh::NCList &list =
-@@ -7073,9 +7073,8 @@ void Mesh::GenerateNCFaceInfo()
+@@ -7074,9 +7073,8 @@ void Mesh::GenerateNCFaceInfo()
     int nfaces = GetNumFaces();
  
     // add records for master faces
@@ -1241,7 +643,7 @@ index 43651b881..8224ef5a2 100644
        if (master.index >= nfaces) { continue; }
  
        FaceInfo &master_fi = faces_info[master.index];
-@@ -7087,10 +7086,8 @@ void Mesh::GenerateNCFaceInfo()
+@@ -7088,10 +7086,8 @@ void Mesh::GenerateNCFaceInfo()
     }
  
     // add records for slave faces
@@ -1253,16 +655,7 @@ index 43651b881..8224ef5a2 100644
        if (slave.index < 0 || // degenerate slave face
            slave.index >= nfaces || // ghost slave
            slave.master >= nfaces) // has ghost master
-@@ -7173,7 +7170,7 @@ STable3D *Mesh::GetFacesTable()
-             break;
-          }
-          default:
--            MFEM_ABORT("Unexpected type of Element.");
-+            MFEM_ABORT("Unexpected type of Element: " << GetElementType(i));
-       }
-    }
-    return faces_tbl;
-@@ -7181,7 +7178,7 @@ STable3D *Mesh::GetFacesTable()
+@@ -7182,7 +7178,7 @@ STable3D *Mesh::GetFacesTable()
  
  STable3D *Mesh::GetElementToFaceTable(int ret_ftbl)
  {
@@ -1271,7 +664,7 @@ index 43651b881..8224ef5a2 100644
     STable3D *faces_tbl;
  
     if (el_to_face != NULL)
-@@ -7190,9 +7187,9 @@ STable3D *Mesh::GetElementToFaceTable(int ret_ftbl)
+@@ -7191,9 +7187,9 @@ STable3D *Mesh::GetElementToFaceTable(int ret_ftbl)
     }
     el_to_face = new Table(NumOfElements, 6);  // must be 6 for hexahedra
     faces_tbl = new STable3D(NumOfVertices);
@@ -1283,7 +676,7 @@ index 43651b881..8224ef5a2 100644
        switch (GetElementType(i))
        {
           case Element::TETRAHEDRON:
-@@ -7256,9 +7253,10 @@ STable3D *Mesh::GetElementToFaceTable(int ret_ftbl)
+@@ -7257,9 +7253,10 @@ STable3D *Mesh::GetElementToFaceTable(int ret_ftbl)
     el_to_face->Finalize();
     NumOfFaces = faces_tbl->NumberOfElements();
     be_to_face.SetSize(NumOfBdrElements);
@@ -1924,28 +1317,10 @@ index ddd423bfa..227aa4152 100644
  
     /// This holds in one place the constants about the geometries we support
 diff --git a/mesh/pmesh.cpp b/mesh/pmesh.cpp
-index 356a13666..a781ff8ae 100644
+index 66b132c88..007920d0e 100644
 --- a/mesh/pmesh.cpp
 +++ b/mesh/pmesh.cpp
-@@ -34,7 +34,6 @@ ParMesh::ParMesh(const ParMesh &pmesh, bool copy_nodes)
-      group_sedge(pmesh.group_sedge),
-      group_stria(pmesh.group_stria),
-      group_squad(pmesh.group_squad),
--     face_nbr_el_to_face(NULL),
-      glob_elem_offset(-1),
-      glob_offset_sequence(-1),
-      gtopo(pmesh.gtopo)
-@@ -106,8 +105,7 @@ ParMesh& ParMesh::operator=(ParMesh &&mesh)
- 
- ParMesh::ParMesh(MPI_Comm comm, Mesh &mesh, int *partitioning_,
-                  int part_method)
--   : face_nbr_el_to_face(NULL)
--   , glob_elem_offset(-1)
-+   : glob_elem_offset(-1)
-    , glob_offset_sequence(-1)
-    , gtopo(comm)
- {
-@@ -352,11 +350,8 @@ int ParMesh::BuildLocalVertices(const mfem::Mesh &mesh,
+@@ -350,11 +350,8 @@ int ParMesh::BuildLocalVertices(const mfem::Mesh &mesh,
  int ParMesh::BuildLocalElements(const Mesh& mesh, const int* partitioning,
                                  const Array<int>& vert_global_local)
  {
@@ -1959,7 +1334,7 @@ index 356a13666..a781ff8ae 100644
  
     elements.SetSize(nelems);
  
-@@ -375,7 +370,7 @@ int ParMesh::BuildLocalElements(const Mesh& mesh, const int* partitioning,
+@@ -373,7 +370,7 @@ int ParMesh::BuildLocalElements(const Mesh& mesh, const int* partitioning,
           {
              v[j] = vert_global_local[v[j]];
           }
@@ -1968,7 +1343,7 @@ index 356a13666..a781ff8ae 100644
        }
     }
  
-@@ -388,7 +383,6 @@ int ParMesh::BuildLocalBoundary(const Mesh& mesh, const int* partitioning,
+@@ -386,7 +383,6 @@ int ParMesh::BuildLocalBoundary(const Mesh& mesh, const int* partitioning,
                                  Table*& edge_element)
  {
     int nbdry = 0;
@@ -1976,58 +1351,10 @@ index 356a13666..a781ff8ae 100644
     if (mesh.NURBSext)
     {
        activeBdrElem.SetSize(mesh.GetNBE());
-@@ -856,7 +850,6 @@ ParMesh::ParMesh(const ParNCMesh &pncmesh)
-    : MyComm(pncmesh.MyComm)
-    , NRanks(pncmesh.NRanks)
-    , MyRank(pncmesh.MyRank)
--   , face_nbr_el_to_face(NULL)
-    , glob_elem_offset(-1)
-    , glob_offset_sequence(-1)
-    , gtopo(MyComm)
-@@ -908,7 +901,7 @@ void ParMesh::FinalizeParTopo()
-    sface_lface.SetSize(nst + shared_quads.Size());
-    if (sface_lface.Size())
-    {
--      STable3D *faces_tbl = GetFacesTable();
-+      auto faces_tbl = std::unique_ptr<STable3D>(GetFacesTable());
-       for (int st = 0; st < nst; st++)
-       {
-          const int *v = shared_trias[st].v;
-@@ -919,14 +912,12 @@ void ParMesh::FinalizeParTopo()
-          const int *v = shared_quads[sq].v;
-          sface_lface[nst+sq] = (*faces_tbl)(v[0], v[1], v[2], v[3]);
-       }
--      delete faces_tbl;
-    }
- }
- 
- ParMesh::ParMesh(MPI_Comm comm, istream &input, int generate_edges,
-                  int refine, bool fix_orientation)
--   : face_nbr_el_to_face(NULL)
--   , glob_elem_offset(-1)
-+   : glob_elem_offset(-1)
-    , glob_offset_sequence(-1)
-    , gtopo(comm)
-    , pncmesh(NULL)
-@@ -1135,7 +1126,7 @@ void ParMesh::MakeRefined_(ParMesh &orig_mesh, int ref_factor, int ref_type)
-    MyComm = orig_mesh.GetComm();
-    NRanks = orig_mesh.GetNRanks();
-    MyRank = orig_mesh.GetMyRank();
--   face_nbr_el_to_face = NULL;
-+   face_nbr_el_to_face.reset();
-    glob_elem_offset = -1;
-    glob_offset_sequence = -1;
-    gtopo = orig_mesh.gtopo;
-@@ -2151,11 +2142,14 @@ void ParMesh::ExchangeFaceNbrData()
- 
-    if (Nonconforming())
-    {
--      // with ParNCMesh we can set up face neighbors without communication
-+      // with ParNCMesh we can set up face neighbors mostly without communication
+@@ -2150,6 +2146,10 @@ void ParMesh::ExchangeFaceNbrData()
        pncmesh->GetFaceNeighbors(*this);
        have_face_nbr_data = true;
  
--      ExchangeFaceNbrNodes();
 +      // Internal boundary elements with an NC mesh requires extra "ghost
 +      // boundary element" information for enforcing essential boundaries.
 +      pncmesh->ComputeGhostBoundaryElements(*this);
@@ -2035,539 +1362,11 @@ index 356a13666..a781ff8ae 100644
        return;
     }
  
-@@ -2220,7 +2214,7 @@ void ParMesh::ExchangeFaceNbrData()
- 
-    if (Dim == 3)
-    {
--      GetFaceNbrElementToFaceTable();
-+      BuildFaceNbrElementToFaceTable();
-    }
- 
-    if (del_tables) { delete gr_sface; }
-@@ -2348,6 +2342,7 @@ void ParMesh::ExchangeFaceNbrData(Table *gr_sface, int *s2l_face)
-    el_marker = -1;
-    vertex_marker = -1;
-    const int nst = shared_trias.Size();
-+
-    for (int fn = 0; fn < num_face_nbrs; fn++)
-    {
-       int nbr_group = face_nbr_group[fn];
-@@ -2485,8 +2480,7 @@ void ParMesh::ExchangeFaceNbrData(Table *gr_sface, int *s2l_face)
- 
-    // convert the element data into face_nbr_elements
-    face_nbr_elements.SetSize(face_nbr_elements_offset[num_face_nbrs]);
--   face_nbr_el_ori.Clear();
--   face_nbr_el_ori.SetSize(face_nbr_elements_offset[num_face_nbrs], 6);
-+   face_nbr_el_ori.reset(new Table(face_nbr_elements_offset[num_face_nbrs], 6));
-    while (true)
-    {
-       int fn;
-@@ -2517,7 +2511,7 @@ void ParMesh::ExchangeFaceNbrData(Table *gr_sface, int *s2l_face)
-          if (Dim == 3)
-          {
-             int nf = el->GetNFaces();
--            int * fn_ori = face_nbr_el_ori.GetRow(elem_off);
-+            int * fn_ori = face_nbr_el_ori->GetRow(elem_off);
-             for (int j = 0; j < nf; j++)
-             {
-                fn_ori[j] = recv_elemdata[j];
-@@ -2527,7 +2521,7 @@ void ParMesh::ExchangeFaceNbrData(Table *gr_sface, int *s2l_face)
-          face_nbr_elements[elem_off++] = el;
-       }
-    }
--   face_nbr_el_ori.Finalize();
-+   face_nbr_el_ori->Finalize();
- 
-    MPI_Waitall(num_face_nbrs, send_requests, statuses);
- 
-@@ -2749,191 +2743,118 @@ STable3D *ParMesh::GetSharedFacesTable()
-    return sfaces_tbl;
- }
- 
--STable3D *ParMesh::GetFaceNbrElementToFaceTable(int ret_ftbl)
-+template <int N>
-+void
-+ParMesh::AddTriFaces(const Array<int> &elem_vertices,
-+                     const std::unique_ptr<STable3D> &faces,
-+                     const std::unique_ptr<STable3D> &shared_faces,
-+                     int elem, int start, int end, const int fverts[][N])
- {
--   int i, *v;
--   STable3D * faces_tbl = GetFacesTable();
--   STable3D * sfaces_tbl = GetSharedFacesTable();
--
--   if (face_nbr_el_to_face != NULL)
-+   for (int i = start; i < end; ++i)
-    {
--      delete face_nbr_el_to_face;
-+      // Reference face vertices.
-+      const auto fv = fverts[i];
-+      // Element specific face vertices.
-+      const Vert3 elem_fv(elem_vertices[fv[0]], elem_vertices[fv[1]],
-+                          elem_vertices[fv[2]]);
-+
-+      // Check amongst the faces of elements local to this rank for this set of vertices
-+      const int lf = faces->Index(elem_fv.v[0], elem_fv.v[1], elem_fv.v[2]);
-+
-+      // If the face wasn't found amonst processor local elements, search the
-+      // ghosts for this set of vertices.
-+      const int sf = lf < 0 ? shared_faces->Index(elem_fv.v[0], elem_fv.v[1],
-+                                                  elem_fv.v[2]) : -1;
-+      // If find local face -> use that
-+      //    else if find shared face -> shift and use that
-+      //       else no face found -> set to -1
-+      const int face_to_add = lf < 0 ? (sf >= 0 ? sf + NumOfFaces : -1) : lf;
-+
-+      MFEM_ASSERT(sf >= 0 ||
-+                  lf >= 0, "Face must be from a local or a face neighbor element");
-+
-+      // Add this discovered face to the list of faces of this face neighbor element
-+      face_nbr_el_to_face->Push(elem, face_to_add);
-    }
--   face_nbr_el_to_face = new Table(face_nbr_elements.Size(), 6);
--   for (i = 0; i < face_nbr_elements.Size(); i++)
-+}
-+
-+void ParMesh::BuildFaceNbrElementToFaceTable()
-+{
-+   const auto faces = std::unique_ptr<STable3D>(GetFacesTable());
-+   const auto shared_faces = std::unique_ptr<STable3D>(GetSharedFacesTable());
-+
-+   face_nbr_el_to_face.reset(new Table(face_nbr_elements.Size(), 6));
-+
-+   mfem::Array<int> v;
-+
-+   // Helper for adding quadrilateral faces.
-+   auto add_quad_faces = [&faces, &shared_faces, &v, this]
-+                         (int elem, int start, int end, const int fverts[][4])
-    {
--      v = face_nbr_elements[i]->GetVertices();
--      switch (face_nbr_elements[i]->GetType())
-+      for (int i = start; i < end; ++i)
-       {
--         case Element::TETRAHEDRON:
-+         const int * const fv = fverts[i];
-+         int k = 0;
-+         int max = v[fv[0]];
-+
-+         if (max < v[fv[1]]) { max = v[fv[1]], k = 1; }
-+         if (max < v[fv[2]]) { max = v[fv[2]], k = 2; }
-+         if (max < v[fv[3]]) { k = 3; }
-+
-+         int v0 = -1, v1 = -1, v2 = -1;
-+         switch (k)
-          {
--            for (int j = 0; j < 4; j++)
-+            case 0:
-+               v0 = v[fv[1]]; v1 = v[fv[2]]; v2 = v[fv[3]];
-+               break;
-+            case 1:
-+               v0 = v[fv[0]]; v1 = v[fv[2]]; v2 = v[fv[3]];
-+               break;
-+            case 2:
-+               v0 = v[fv[0]]; v1 = v[fv[1]]; v2 = v[fv[3]];
-+               break;
-+            case 3:
-+               v0 = v[fv[0]]; v1 = v[fv[1]]; v2 = v[fv[2]];
-+               break;
-+         }
-+         int lf = faces->Index(v0, v1, v2);
-+         if (lf < 0)
-+         {
-+            lf = shared_faces->Index(v0, v1, v2);
-+            if (lf >= 0)
-             {
--               const int *fv = tet_t::FaceVert[j];
--               int lf = faces_tbl->Index(v[fv[0]], v[fv[1]], v[fv[2]]);
--               if (lf < 0)
--               {
--                  lf = sfaces_tbl->Index(v[fv[0]], v[fv[1]], v[fv[2]]);
--                  if (lf >= 0)
--                  {
--                     lf += NumOfFaces;
--                  }
--               }
--               face_nbr_el_to_face->Push(i, lf);
-+               lf += NumOfFaces;
-             }
-+         }
-+         face_nbr_el_to_face->Push(elem, lf);
-+      }
-+   };
-+
-+   for (int i = 0; i < face_nbr_elements.Size(); i++)
-+   {
-+      face_nbr_elements[i]->GetVertices(v);
-+      switch (face_nbr_elements[i]->GetType())
-+      {
-+         case Element::TETRAHEDRON:
-+         {
-+            AddTriFaces(v, faces, shared_faces, i, 0, 4, tet_t::FaceVert);
-             break;
-          }
-          case Element::WEDGE:
-          {
--            for (int j = 0; j < 2; j++)
--            {
--               const int *fv = pri_t::FaceVert[j];
--               int lf = faces_tbl->Index(v[fv[0]], v[fv[1]], v[fv[2]]);
--               if (lf < 0)
--               {
--                  lf = sfaces_tbl->Index(v[fv[0]], v[fv[1]], v[fv[2]]);
--                  if (lf >= 0)
--                  {
--                     lf += NumOfFaces;
--                  }
--               }
--               face_nbr_el_to_face->Push(i, lf);
--            }
--            for (int j = 2; j < 5; j++)
--            {
--               const int *fv = pri_t::FaceVert[j];
--               int k = 0;
--               int max = v[fv[0]];
--
--               if (max < v[fv[1]]) { max = v[fv[1]], k = 1; }
--               if (max < v[fv[2]]) { max = v[fv[2]], k = 2; }
--               if (max < v[fv[3]]) { k = 3; }
--
--               int v0 = -1, v1 = -1, v2 = -1;
--               switch (k)
--               {
--                  case 0:
--                     v0 = v[fv[1]]; v1 = v[fv[2]]; v2 = v[fv[3]];
--                     break;
--                  case 1:
--                     v0 = v[fv[0]]; v1 = v[fv[2]]; v2 = v[fv[3]];
--                     break;
--                  case 2:
--                     v0 = v[fv[0]]; v1 = v[fv[1]]; v2 = v[fv[3]];
--                     break;
--                  case 3:
--                     v0 = v[fv[0]]; v1 = v[fv[1]]; v2 = v[fv[2]];
--                     break;
--               }
--               int lf = faces_tbl->Index(v0, v1, v2);
--               if (lf < 0)
--               {
--                  lf = sfaces_tbl->Index(v0, v1, v2);
--                  if (lf >= 0)
--                  {
--                     lf += NumOfFaces;
--                  }
--               }
--               face_nbr_el_to_face->Push(i, lf);
--            }
-+            AddTriFaces(v, faces, shared_faces, i, 0, 2, pri_t::FaceVert);
-+            add_quad_faces(i, 2, 5, pri_t::FaceVert);
-             break;
-          }
-          case Element::PYRAMID:
-          {
--            for (int j = 0; j < 1; j++)
--            {
--               const int *fv = pyr_t::FaceVert[j];
--               int k = 0;
--               int max = v[fv[0]];
--
--               if (max < v[fv[1]]) { max = v[fv[1]], k = 1; }
--               if (max < v[fv[2]]) { max = v[fv[2]], k = 2; }
--               if (max < v[fv[3]]) { k = 3; }
--
--               int v0 = -1, v1 = -1, v2 = -1;
--               switch (k)
--               {
--                  case 0:
--                     v0 = v[fv[1]]; v1 = v[fv[2]]; v2 = v[fv[3]];
--                     break;
--                  case 1:
--                     v0 = v[fv[0]]; v1 = v[fv[2]]; v2 = v[fv[3]];
--                     break;
--                  case 2:
--                     v0 = v[fv[0]]; v1 = v[fv[1]]; v2 = v[fv[3]];
--                     break;
--                  case 3:
--                     v0 = v[fv[0]]; v1 = v[fv[1]]; v2 = v[fv[2]];
--                     break;
--               }
--               int lf = faces_tbl->Index(v0, v1, v2);
--               if (lf < 0)
--               {
--                  lf = sfaces_tbl->Index(v0, v1, v2);
--                  if (lf >= 0)
--                  {
--                     lf += NumOfFaces;
--                  }
--               }
--               face_nbr_el_to_face->Push(i, lf);
--            }
--            for (int j = 1; j < 5; j++)
--            {
--               const int *fv = pyr_t::FaceVert[j];
--               int lf = faces_tbl->Index(v[fv[0]], v[fv[1]], v[fv[2]]);
--               if (lf < 0)
--               {
--                  lf = sfaces_tbl->Index(v[fv[0]], v[fv[1]], v[fv[2]]);
--                  if (lf >= 0)
--                  {
--                     lf += NumOfFaces;
--                  }
--               }
--               face_nbr_el_to_face->Push(i, lf);
--            }
-+            add_quad_faces(i, 0, 1, pyr_t::FaceVert);
-+            AddTriFaces(v, faces, shared_faces, i, 1, 5, pyr_t::FaceVert);
-             break;
-          }
-          case Element::HEXAHEDRON:
-          {
--            // find the face by the vertices with the smallest 3 numbers
--            // z = 0, y = 0, x = 1, y = 1, x = 0, z = 1
--            for (int j = 0; j < 6; j++)
--            {
--               const int *fv = hex_t::FaceVert[j];
--               int k = 0;
--               int max = v[fv[0]];
--
--               if (max < v[fv[1]]) { max = v[fv[1]], k = 1; }
--               if (max < v[fv[2]]) { max = v[fv[2]], k = 2; }
--               if (max < v[fv[3]]) { k = 3; }
--
--               int v0 = -1, v1 = -1, v2 = -1;
--               switch (k)
--               {
--                  case 0:
--                     v0 = v[fv[1]]; v1 = v[fv[2]]; v2 = v[fv[3]];
--                     break;
--                  case 1:
--                     v0 = v[fv[0]]; v1 = v[fv[2]]; v2 = v[fv[3]];
--                     break;
--                  case 2:
--                     v0 = v[fv[0]]; v1 = v[fv[1]]; v2 = v[fv[3]];
--                     break;
--                  case 3:
--                     v0 = v[fv[0]]; v1 = v[fv[1]]; v2 = v[fv[2]];
--                     break;
--               }
--               int lf = faces_tbl->Index(v0, v1, v2);
--               if (lf < 0)
--               {
--                  lf = sfaces_tbl->Index(v0, v1, v2);
--                  if (lf >= 0)
--                  {
--                     lf += NumOfFaces;
--                  }
--               }
--               face_nbr_el_to_face->Push(i, lf);
--            }
-+            add_quad_faces(i, 0, 6, hex_t::FaceVert);
-             break;
-          }
-          default:
-@@ -2941,14 +2862,6 @@ STable3D *ParMesh::GetFaceNbrElementToFaceTable(int ret_ftbl)
-       }
-    }
-    face_nbr_el_to_face->Finalize();
--
--   delete sfaces_tbl;
--   if (ret_ftbl)
--   {
--      return faces_tbl;
--   }
--   delete faces_tbl;
--   return NULL;
- }
- 
- int ParMesh::GetFaceNbrRank(int fn) const
-@@ -2969,33 +2882,31 @@ int ParMesh::GetFaceNbrRank(int fn) const
- }
- 
- void
--ParMesh::GetFaceNbrElementFaces(int i, Array<int> &fcs, Array<int> &cor) const
-+ParMesh::GetFaceNbrElementFaces(int i, Array<int> &faces,
-+                                Array<int> &orientations) const
- {
--   int n, j;
-    int el_nbr = i - GetNE();
--   if (face_nbr_el_to_face)
-+   if (face_nbr_el_to_face != nullptr && el_nbr < face_nbr_el_to_face->Size())
-    {
--      face_nbr_el_to_face->GetRow(el_nbr, fcs);
-+      face_nbr_el_to_face->GetRow(el_nbr, faces);
-    }
-    else
-    {
-       MFEM_ABORT("ParMesh::GetFaceNbrElementFaces(...) : "
-                  "face_nbr_el_to_face not generated.");
-    }
--   if (el_nbr < face_nbr_el_ori.Size())
-+
-+   if (face_nbr_el_ori != nullptr && el_nbr < face_nbr_el_ori->Size())
-    {
--      const int * row = face_nbr_el_ori.GetRow(el_nbr);
--      n = fcs.Size();
--      cor.SetSize(n);
--      for (j=0; j<n; j++)
--      {
--         cor[j] = row[j];
--      }
-+      face_nbr_el_ori->GetRow(el_nbr, orientations);
-    }
-    else
-    {
--      MFEM_ABORT("ParMesh::GetFaceNbrElementFaces(...) : "
--                 "face_nbr_el_to_face not generated.");
-+      // No face_nbr_el_ori was generated, make the orientations invalid.
-+      // This will cause errors if the face orientations are necessary to
-+      // evaluate the basis in face neighbor elements.
-+      orientations.SetSize(faces.Size());
-+      orientations = -1;
-    }
- }
- 
-@@ -3255,7 +3166,7 @@ int ParMesh::GetSharedFace(int sface) const
-    {
-       MFEM_ASSERT(Dim > 1, "");
-       const NCMesh::NCList &shared = pncmesh->GetSharedList(Dim-1);
--      int csize = (int) shared.conforming.Size();
-+      int csize = shared.conforming.Size();
-       return sface < csize
-              ? shared.conforming[sface].index
-              : shared.slaves[sface - csize].index;
-@@ -4605,7 +4516,7 @@ void ParMesh::UniformRefinement3D()
- 
-    DSTable v_to_v(NumOfVertices);
-    GetVertexToVertexTable(v_to_v);
--   STable3D *faces_tbl = GetFacesTable();
-+   auto faces_tbl = std::unique_ptr<STable3D>(GetFacesTable());
- 
-    // call Mesh::UniformRefinement3D_base so that it won't update the nodes
-    Array<int> f2qf;
-@@ -4620,7 +4531,6 @@ void ParMesh::UniformRefinement3D()
-    // update the groups
-    UniformRefineGroups3D(old_nv, old_nedges, v_to_v, *faces_tbl,
-                          f2qf.Size() ? &f2qf : NULL);
--   delete faces_tbl;
- 
-    UpdateNodes();
- }
-@@ -6722,6 +6632,8 @@ void ParMesh::Swap(ParMesh &other)
-    mfem::Swap(face_nbr_vertices, other.face_nbr_vertices);
-    mfem::Swap(send_face_nbr_elements, other.send_face_nbr_elements);
-    mfem::Swap(send_face_nbr_vertices, other.send_face_nbr_vertices);
-+   std::swap(face_nbr_el_ori, other.face_nbr_el_ori);
-+   std::swap(face_nbr_el_to_face, other.face_nbr_el_to_face);
- 
-    // Nodes, NCMesh, and NURBSExtension are taken care of by Mesh::Swap
-    mfem::Swap(pncmesh, other.pncmesh);
-@@ -6742,8 +6654,7 @@ void ParMesh::Destroy()
-    }
-    shared_edges.DeleteAll();
- 
--   delete face_nbr_el_to_face;
--   face_nbr_el_to_face = NULL;
-+   face_nbr_el_to_face.reset();
- }
- 
- ParMesh::~ParMesh()
-diff --git a/mesh/pmesh.hpp b/mesh/pmesh.hpp
-index 2ed8b00ec..c9d42aa73 100644
---- a/mesh/pmesh.hpp
-+++ b/mesh/pmesh.hpp
-@@ -85,8 +85,11 @@ protected:
-    // sface ids: all triangles first, then all quads
-    Array<int> sface_lface;
- 
--   Table *face_nbr_el_to_face;
--   Table  face_nbr_el_ori; // orientations for each face (from nbr processor)
-+   /// Table that maps from face neighbor element number, to the face numbers of
-+   /// that element.
-+   std::unique_ptr<Table> face_nbr_el_to_face;
-+   /// orientations for each face (from nbr processor)
-+   std::unique_ptr<Table> face_nbr_el_ori;
- 
-    IsoparametricTransformation FaceNbrTransformation;
- 
-@@ -123,7 +126,32 @@ protected:
-    bool DecodeFaceSplittings(HashTable<Hashed2> &v_to_v, const int *v,
-                              const Array<unsigned> &codes, int &pos);
- 
--   STable3D *GetFaceNbrElementToFaceTable(int ret_ftbl = 0);
-+   // Given a completed FacesTable and SharedFacesTable, construct a table that
-+   // maps from face neighbor element number, to the set of faces of that
-+   // element. Store the resulting data in the member variable
-+   // face_nbr_el_to_face. If the mesh is nonconforming, this also builds the
-+   // the face_nbr_el_ori variable from the faces_info.
-+   void BuildFaceNbrElementToFaceTable();
-+
-+   /**
-+    * @brief Helper function for adding triangle face neighbor element to face
-+    * table entries. Have to use a template here rather than lambda capture
-+    * because the FaceVert entries in Geometry have inner size of 3 for tets and
-+    * 4 for everything else.
-+    *
-+    * @tparam N Inner dimension on the fvert variable, 3 for tet, 4 otherwise
-+    * @param v Set of vertices for this element
-+    * @param faces Table of faces interior to this rank
-+    * @param shared_faces Table of faces shared by this rank and another
-+    * @param elem The face neighbor element
-+    * @param start Starting index into fverts
-+    * @param end End index into fverts
-+    * @param fverts Array of face vertices for this particular geometry.
-+    */
-+   template <int N>
-+   void AddTriFaces(const Array<int> &v, const std::unique_ptr<STable3D> &faces,
-+                    const std::unique_ptr<STable3D> &shared_faces,
-+                    int elem, int start, int end, const int fverts[][N]);
- 
-    void GetFaceNbrElementTransformation(
-       int i, IsoparametricTransformation *ElTr);
-@@ -297,7 +325,7 @@ protected:
- 
- public:
-    /// Default constructor. Create an empty @a ParMesh.
--   ParMesh() : MyComm(0), NRanks(0), MyRank(-1), face_nbr_el_to_face(NULL),
-+   ParMesh() : MyComm(0), NRanks(0), MyRank(-1),
-       glob_elem_offset(-1), glob_offset_sequence(-1),
-       have_face_nbr_data(false), pncmesh(NULL) { }
- 
-@@ -476,7 +504,8 @@ public:
-    int GetFaceNbrRank(int fn) const;
- 
-    /** Similar to Mesh::GetElementFaces */
--   void GetFaceNbrElementFaces(int i, Array<int> &fcs, Array<int> &cor) const;
-+   void GetFaceNbrElementFaces(int i, Array<int> &faces,
-+                               Array<int> &orientation) const;
- 
-    /** Similar to Mesh::GetFaceToElementTable with added face-neighbor elements
-        with indices offset by the local number of elements. */
-@@ -566,6 +595,8 @@ public:
-    /// Return the local face index for the given shared face.
-    int GetSharedFace(int sface) const;
- 
-+
-+
-    /** @brief Returns the number of local faces according to the requested type,
-        does not count master non-conforming faces.
- 
 diff --git a/mesh/pncmesh.cpp b/mesh/pncmesh.cpp
-index 96501a82c..edddf1ce6 100644
+index 300595296..edddf1ce6 100644
 --- a/mesh/pncmesh.cpp
 +++ b/mesh/pncmesh.cpp
-@@ -16,10 +16,12 @@
- #include "mesh_headers.hpp"
- #include "pncmesh.hpp"
- #include "../general/binaryio.hpp"
-+#include "../general/communication.hpp"
- 
- #include <numeric> // std::accumulate
- #include <map>
- #include <climits> // INT_MIN, INT_MAX
-+#include <array>
- 
- namespace mfem
- {
-@@ -575,17 +577,17 @@ void ParNCMesh::CalcFaceOrientations()
+@@ -577,17 +577,17 @@ void ParNCMesh::CalcFaceOrientations()
     face_orient.SetSize(NFaces);
     face_orient = 0;
  
@@ -2590,7 +1389,7 @@ index 96501a82c..edddf1ce6 100644
        }
     }
  }
-@@ -596,16 +598,16 @@ void ParNCMesh::GetBoundaryClosure(const Array<int> &bdr_attr_is_ess,
+@@ -598,16 +598,16 @@ void ParNCMesh::GetBoundaryClosure(const Array<int> &bdr_attr_is_ess,
  {
     NCMesh::GetBoundaryClosure(bdr_attr_is_ess, bdr_vertices, bdr_edges);
  
@@ -2610,183 +1409,12 @@ index 96501a82c..edddf1ce6 100644
     {
        if (bdr_edges[i] < NEdges) { bdr_edges[j++] = bdr_edges[i]; }
     }
-@@ -887,6 +889,7 @@ void ParNCMesh::GetFaceNeighbors(ParMesh &pmesh)
- 
-    Array<Element*> fnbr;
-    Array<Connection> send_elems;
-+   std::map<int, std::vector<int>> recv_elems;
- 
-    // Counts the number of slave faces of a master. This may be larger than the
-    // number of shared slaves if there exist degenerate slave-faces from face-edge constraints.
-@@ -901,8 +904,13 @@ void ParNCMesh::GetFaceNeighbors(ParMesh &pmesh)
-    fnbr.Reserve(bound);
-    send_elems.Reserve(bound);
- 
-+   // If there are face neighbor elements with triangular faces, the
-+   // `face_nbr_el_ori` structure will need to be built. This requires
-+   // communication so we attempt to avoid it by checking first.
-+   bool face_nbr_w_tri_faces = false;
-+
-    // go over all shared faces and collect face neighbor elements
--   for (int i = 0; i < shared.conforming.Size(); i++)
-+   for (int i = 0; i < shared.conforming.Size(); ++i)
-    {
-       const MeshId &cf = shared.conforming[i];
-       Face* face = GetFace(elements[cf.element], cf.local);
-@@ -914,8 +922,12 @@ void ParNCMesh::GetFaceNeighbors(ParMesh &pmesh)
-       if (e[0]->rank == MyRank) { std::swap(e[0], e[1]); }
-       MFEM_ASSERT(e[0]->rank != MyRank && e[1]->rank == MyRank, "");
- 
-+      face_nbr_w_tri_faces |= !Geometry::IsTensorProduct(Geometry::Type(e[0]->geom));
-+      face_nbr_w_tri_faces |= !Geometry::IsTensorProduct(Geometry::Type(e[1]->geom));
-+
-       fnbr.Append(e[0]);
-       send_elems.Append(Connection(e[0]->rank, e[1]->index));
-+      recv_elems[e[0]->rank].push_back(e[0]->index);
-    }
- 
-    for (int i = 0; i < shared.masters.Size(); i++)
-@@ -938,8 +950,12 @@ void ParNCMesh::GetFaceNeighbors(ParMesh &pmesh)
-          }
-          if (loc0) { std::swap(e[0], e[1]); }
- 
-+         face_nbr_w_tri_faces |= !Geometry::IsTensorProduct(Geometry::Type(e[0]->geom));
-+         face_nbr_w_tri_faces |= !Geometry::IsTensorProduct(Geometry::Type(e[1]->geom));
-+
-          fnbr.Append(e[0]);
-          send_elems.Append(Connection(e[0]->rank, e[1]->index));
-+         recv_elems[e[0]->rank].push_back(e[0]->index);
+@@ -1308,12 +1308,63 @@ void ParNCMesh::GetFaceNeighbors(ParMesh &pmesh)
+          MPI_Waitall(int(send_requests.size()), send_requests.data(), status.data());
        }
     }
- 
-@@ -1022,6 +1038,13 @@ void ParNCMesh::GetFaceNeighbors(ParMesh &pmesh)
-    send_elems.Sort();
-    send_elems.Unique();
- 
-+   for (auto &kv : recv_elems)
-+   {
-+      std::sort(kv.second.begin(), kv.second.end());
-+      kv.second.erase(std::unique(kv.second.begin(), kv.second.end()),
-+                      kv.second.end());
-+   }
-+
-    for (int i = 0, last_rank = -1; i < send_elems.Size(); i++)
-    {
-       Connection &c = send_elems[i];
-@@ -1175,10 +1198,173 @@ void ParNCMesh::GetFaceNeighbors(ParMesh &pmesh)
-       }
-    }
- 
-+
-+   // In 3D some extra orientation data structures can be needed.
-+   if (Dim == 3)
-+   {
-+      // Populates face_nbr_el_to_face, always needed.
-+      pmesh.BuildFaceNbrElementToFaceTable();
-+
-+      if (face_nbr_w_tri_faces)
-+      {
-+         // There are face neighbor elements with triangular faces, need to
-+         // perform communication to ensure the orientation is valid.
-+         using RankToOrientation = std::map<int, std::vector<std::array<int, 6>>>;
-+         constexpr std::array<int, 6> unset_ori{{-1,-1,-1,-1,-1,-1}};
-+         const int rank = pmesh.GetMyRank();
-+
-+         // Loop over send elems, compute the orientation and place in the buffer to
-+         // send to each processor. Note elements are lexicographically sorted
-+         // with rank and element number, and this ordering holds across processors.
-+         RankToOrientation send_rank_to_face_neighbor_orientations;
-+         Array<int> orientations, faces;
-+
-+         // send_elems goes from rank of the receiving processor, to the index
-+         // of the face neighbor element on this processor.
-+         for (const auto &se : send_elems)
-+         {
-+            const auto &true_rank = pmesh.face_nbr_group[se.from];
-+            pmesh.GetElementFaces(se.to, faces, orientations);
-+
-+            // Place a new entry of unset orientations
-+            send_rank_to_face_neighbor_orientations[true_rank].emplace_back(unset_ori);
-+
-+            // Copy the entries, any unset faces will remain -1.
-+            std::copy(orientations.begin(), orientations.end(),
-+                      send_rank_to_face_neighbor_orientations[true_rank].back().begin());
-+         }
-+
-+         // Initialize the receive buffers and resize to match the expected
-+         // number of elements coming in. The copy ensures the appropriate rank
-+         // pairings are in place, and for a purely conformal interface, the
-+         // resize is a no-op.
-+         auto recv_rank_to_face_neighbor_orientations =
-+            send_rank_to_face_neighbor_orientations;
-+         for (auto &kv : recv_rank_to_face_neighbor_orientations)
-+         {
-+            kv.second.resize(recv_elems[kv.first].size());
-+         }
-+
-+         // For asynchronous send/recv, will use arrays of requests to monitor the
-+         // status of the connections.
-+         std::vector<MPI_Request> send_requests, recv_requests;
-+         std::vector<MPI_Status> status(nranks);
-+
-+         // NOTE: This is CRITICAL, to ensure the addresses of these requests
-+         // do not change between the send/recv and the wait.
-+         send_requests.reserve(nranks);
-+         recv_requests.reserve(nranks);
-+
-+         // Shared face communication is bidirectional -> any rank to whom
-+         // orientations must be sent, will need to send orientations back.
-+         // The orientation data is contiguous because std::array<int,6> is an
-+         // aggregate.
-+
-+         // Loop over each communication pairing, and dispatch the buffer loaded
-+         // with  all the orientation data.
-+         for (const auto &kv : send_rank_to_face_neighbor_orientations)
-+         {
-+            send_requests.emplace_back(); // instantiate a request for tracking.
-+
-+            // low rank sends on low, high rank sends on high.
-+            const int send_tag = (rank < kv.first)
-+                                 ? std::min(rank, kv.first)
-+                                 : std::max(rank, kv.first);
-+            MPI_Isend(&kv.second[0][0], int(kv.second.size() * 6),
-+                      MPI_INT, kv.first, send_tag, pmesh.MyComm, &send_requests.back());
-+         }
-+
-+         // Loop over the communication pairing again, and receive the
-+         // symmetric buffer from the other processor.
-+         for (auto &kv : recv_rank_to_face_neighbor_orientations)
-+         {
-+            recv_requests.emplace_back(); // instantiate a request for tracking
-+
-+            // low rank receives on high, high rank receives on low.
-+            const int recv_tag = (rank < kv.first)
-+                                 ? std::max(rank, kv.first)
-+                                 : std::min(rank, kv.first);
-+            MPI_Irecv(&kv.second[0][0], int(kv.second.size() * 6),
-+                      MPI_INT, kv.first, recv_tag, pmesh.MyComm, &recv_requests.back());
-+         }
-+
-+         // Wait until all receive buffers are full before beginning to process.
-+         MPI_Waitall(int(recv_requests.size()), recv_requests.data(), status.data());
-+
-+         pmesh.face_nbr_el_ori.reset(new Table(pmesh.face_nbr_elements.Size(), 6));
-+         int elem = 0;
-+         for (const auto &kv : recv_rank_to_face_neighbor_orientations)
-+         {
-+            // All elements associated to this face-neighbor rank
-+            for (const auto &eo : kv.second)
-+            {
-+               std::copy(eo.begin(), eo.end(), pmesh.face_nbr_el_ori->GetRow(elem));
-+               ++elem;
-+            }
-+         }
-+         pmesh.face_nbr_el_ori->Finalize();
-+
-+         // Must wait for all send buffers to be released before the scope closes.
-+         MPI_Waitall(int(send_requests.size()), send_requests.data(), status.data());
-+      }
-+   }
+-
+-
     // NOTE: this function skips ParMesh::send_face_nbr_vertices and
     // ParMesh::face_nbr_vertices_offset, these are not used outside of ParMesh
  }
@@ -2847,7 +1475,7 @@ index 96501a82c..edddf1ce6 100644
  void ParNCMesh::ClearAuxPM()
  {
     for (int i = 0; i < aux_pm_store.Size(); i++)
-@@ -1819,10 +2005,9 @@ void ParNCMesh::RedistributeElements(Array<int> &new_ranks, int target_elements,
+@@ -1954,10 +2005,9 @@ void ParNCMesh::RedistributeElements(Array<int> &new_ranks, int target_elements,
     NeighborElementRankMessage::RecvAll(recv_ghost_ranks, MyComm);
  
     // read new ranks for the ghost layer from messages received
@@ -2860,7 +1488,7 @@ index 96501a82c..edddf1ce6 100644
        for (int i = 0; i < msg.Size(); i++)
        {
           int ghost_index = elements[msg.elements[i]].index;
-@@ -2349,9 +2534,8 @@ void ParNCMesh::AdjustMeshIds(Array<MeshId> ids[], int rank)
+@@ -2484,9 +2534,8 @@ void ParNCMesh::AdjustMeshIds(Array<MeshId> ids[], int rank)
  
     // find vertices/edges of master faces shared with 'rank', and modify their
     // MeshIds so their element/local matches the element of the master face
@@ -2872,31 +1500,10 @@ index 96501a82c..edddf1ce6 100644
        {
           int v[4], e[4], eo[4], pos, k;
 diff --git a/mesh/pncmesh.hpp b/mesh/pncmesh.hpp
-index 03689dfc4..9c425b631 100644
+index df5fb929e..9c425b631 100644
 --- a/mesh/pncmesh.hpp
 +++ b/mesh/pncmesh.hpp
-@@ -108,9 +108,7 @@ public:
-        passed. */
-    void Rebalance(const Array<int> *custom_partition = NULL);
- 
--
-    // interface for ParFiniteElementSpace
--
-    int GetNElements() const { return NElements; }
- 
-    int GetNGhostVertices() const { return NGhostVertices; }
-@@ -141,8 +139,8 @@ public:
-       return (index < NFaces) ? face_orient[index] : 0;
-    }
- 
--   typedef short GroupId;
--   typedef std::vector<int> CommGroup;
-+   using GroupId = short;
-+   using CommGroup = std::vector<int>;
- 
-    /// Return vertex/edge/face ('entity' == 0/1/2, resp.) owner.
-    GroupId GetEntityOwnerId(int entity, int index)
-@@ -248,6 +246,17 @@ public:
+@@ -246,6 +246,17 @@ public:
         The debug mesh will have element attributes set to element rank + 1. */
     void GetDebugMesh(Mesh &debug_mesh) const;
  
@@ -2914,7 +1521,7 @@ index 03689dfc4..9c425b631 100644
  protected: // interface for ParMesh
  
     friend class ParMesh;
-@@ -261,6 +270,34 @@ protected: // interface for ParMesh
+@@ -259,6 +270,34 @@ protected: // interface for ParMesh
         communication. */
     void GetFaceNeighbors(class ParMesh &pmesh);
  
@@ -2949,7 +1556,7 @@ index 03689dfc4..9c425b631 100644
  
  protected: // implementation
  
-@@ -299,6 +336,13 @@ protected: // implementation
+@@ -297,6 +336,13 @@ protected: // implementation
     Array<int> ghost_layer;    ///< list of elements whose 'element_type' == 2.
     Array<int> boundary_layer; ///< list of type 3 elements
  
@@ -3642,80 +2249,6 @@ index dc0e9fea8..678abb706 100644
    mesh/test_fms.cpp
    mesh/test_mesh.cpp
    mesh/test_ncmesh.cpp
-diff --git a/tests/unit/fem/test_pa_kernels.cpp b/tests/unit/fem/test_pa_kernels.cpp
-index 673653596..1077d998a 100644
---- a/tests/unit/fem/test_pa_kernels.cpp
-+++ b/tests/unit/fem/test_pa_kernels.cpp
-@@ -385,17 +385,17 @@ void test_pa_convection(const std::string &meshname, int order, int prob,
-    }
-    int dim = mesh.Dimension();
- 
--   FiniteElementCollection *fec;
-+   std::unique_ptr<FiniteElementCollection> fec;
-    if (prob)
-    {
-       auto basis = prob==3 ? BasisType::Positive : BasisType::GaussLobatto;
--      fec = new L2_FECollection(order, dim, basis);
-+      fec.reset(new L2_FECollection(order, dim, basis));
-    }
-    else
-    {
--      fec = new H1_FECollection(order, dim);
-+      fec.reset(new H1_FECollection(order, dim));
-    }
--   FiniteElementSpace fespace(&mesh, fec);
-+   FiniteElementSpace fespace(&mesh, fec.get());
- 
-    L2_FECollection vel_fec(order, dim, BasisType::GaussLobatto);
-    FiniteElementSpace vel_fespace(&mesh, &vel_fec, dim);
-@@ -405,21 +405,21 @@ void test_pa_convection(const std::string &meshname, int order, int prob,
-    BilinearForm k_pa(&fespace);
-    BilinearForm k_fa(&fespace);
- 
--   VectorCoefficient *vel_coeff;
--   Coefficient *rho;
-+   std::unique_ptr<VectorCoefficient> vel_coeff;
-+   std::unique_ptr<Coefficient> rho;
- 
-    // prob: 0: CG, 1: DG continuous coeff, 2: DG discontinuous coeff
-    if (prob >= 2)
-    {
-       vel_gf.Randomize(1);
--      vel_coeff = new VectorGridFunctionCoefficient(&vel_gf);
-+      vel_coeff.reset(new VectorGridFunctionCoefficient(&vel_gf));
-       rho_gf.Randomize(1);
--      rho = new GridFunctionCoefficient(&rho_gf);
-+      rho.reset(new GridFunctionCoefficient(&rho_gf));
-    }
-    else
-    {
--      vel_coeff = new VectorFunctionCoefficient(dim, velocity_function);
--      rho = new ConstantCoefficient(1.0);
-+      vel_coeff.reset(new VectorFunctionCoefficient(dim, velocity_function));
-+      rho.reset(new ConstantCoefficient(1.0));
-    }
- 
- 
-@@ -451,10 +451,6 @@ void test_pa_convection(const std::string &meshname, int order, int prob,
-    y_pa -= y_fa;
- 
-    REQUIRE(y_pa.Norml2() < 1.e-12);
--
--   delete vel_coeff;
--   delete rho;
--   delete fec;
- }
- 
- // Basic unit tests for convection
-@@ -468,7 +464,7 @@ TEST_CASE("PA Convection", "[PartialAssembly], [CUDA]")
-    auto prob = GENERATE(0, 1, 2, 3);
-    auto order = GENERATE(2);
-    // refinement > 0 => Non-conforming mesh
--   auto refinement = GENERATE(0,1);
-+   auto refinement = GENERATE(0, 1);
- 
-    SECTION("2D")
-    {
 diff --git a/tests/unit/mesh/mesh_test_utils.cpp b/tests/unit/mesh/mesh_test_utils.cpp
 new file mode 100644
 index 000000000..65fb2e01d
@@ -4015,7 +2548,7 @@ index 000000000..e4088a788
 +#endif // MFEM_MESH_TEST_UTILS
 \ No newline at end of file
 diff --git a/tests/unit/mesh/test_ncmesh.cpp b/tests/unit/mesh/test_ncmesh.cpp
-index dba0b4507..88b428d0b 100644
+index 1c512fcd4..88b428d0b 100644
 --- a/tests/unit/mesh/test_ncmesh.cpp
 +++ b/tests/unit/mesh/test_ncmesh.cpp
 @@ -10,6 +10,7 @@
@@ -4042,167 +2575,10 @@ index dba0b4507..88b428d0b 100644
  TEST_CASE("NCMesh 3D Derefined Volume", "[NCMesh]")
  {
     auto mesh_fname = GENERATE("../../data/ref-tetrahedron.mesh",
-@@ -368,7 +367,6 @@ void CheckL2Projection(ParMesh& pmesh, Mesh& smesh, int order,
-       x = 0.0;
- 
-       double pnorm = x.ComputeL2Error(rhs_coef);
--
-       b.AddDomainIntegrator(new DomainLFIntegrator(rhs_coef));
-       b.Assemble();
- 
-@@ -397,7 +395,6 @@ void CheckL2Projection(ParMesh& pmesh, Mesh& smesh, int order,
-    CHECK(std::abs(serror - perror) < test_tol);
- };
- 
--
- TEST_CASE("FaceEdgeConstraint",  "[Parallel], [NCMesh]")
- {
-    constexpr int refining_rank = 0;
-@@ -764,6 +761,1298 @@ TEST_CASE("PNQ2PureTetHexPri",  "[Parallel], [NCMesh]")
+@@ -903,6 +902,1157 @@ TEST_CASE("GetVectorValueInFaceNeighborElement", "[Parallel], [NCMesh]")
     }
- } // test case
+ }
  
-+/**
-+ * @brief Test GetVectorValue on face neighbor elements for nonconformal meshes
-+ *
-+ * @param smesh The serial mesh to start from
-+ * @param nc_level Depth of refinement on processor boundaries
-+ * @param skip Refine every "skip" processor boundary element
-+ * @param use_ND Whether to use Nedelec elements (which are sensitive to orientation)
-+ */
-+void TestVectorValueInVolume(Mesh &smesh, int nc_level, int skip, bool use_ND)
-+{
-+   auto vector_exact_soln = [](const Vector& x, Vector& v)
-+   {
-+      Vector d(3);
-+      d[0] = -0.5; d[1] = -1; d[2] = -2; // arbitrary
-+      v = (d -= x);
-+   };
-+
-+   smesh.Finalize();
-+   smesh.EnsureNCMesh(true); // uncomment this to trigger the failure
-+
-+   auto pmesh = ParMesh(MPI_COMM_WORLD, smesh);
-+
-+   // Apply refinement on face neighbors to achieve a given nc level mismatch.
-+   for (int i = 0; i < nc_level; ++i)
-+   {
-+      // To refine the face neighbors, need to know where they are.
-+      pmesh.ExchangeFaceNbrData();
-+      Array<int> elem_to_refine;
-+      // Refine only on odd ranks.
-+      if ((Mpi::WorldRank() + 1) % 2 == 0)
-+      {
-+         // Refine a subset of all shared faces. Using a subset helps to
-+         // mix in conformal faces with nonconformal faces.
-+         for (int n = 0; n < pmesh.GetNSharedFaces(); ++n)
-+         {
-+            if (n % skip != 0) { continue; }
-+            const int local_face = pmesh.GetSharedFace(n);
-+            const auto &face_info = pmesh.GetFaceInformation(local_face);
-+            REQUIRE(face_info.IsShared());
-+            REQUIRE(face_info.element[1].location == Mesh::ElementLocation::FaceNbr);
-+            elem_to_refine.Append(face_info.element[0].index);
-+         }
-+      }
-+      pmesh.GeneralRefinement(elem_to_refine);
-+   }
-+
-+   // Do not rebalance again! The test is also checking for nc refinements
-+   // along the processor boundary.
-+
-+   // Create a grid function of the mesh coordinates
-+   pmesh.ExchangeFaceNbrData();
-+   pmesh.EnsureNodes();
-+   REQUIRE(pmesh.OwnsNodes());
-+   GridFunction * const coords = pmesh.GetNodes();
-+   dynamic_cast<ParGridFunction *>(pmesh.GetNodes())->ExchangeFaceNbrData();
-+
-+   // Project the linear function onto the mesh. Quadratic ND tetrahedral
-+   // elements are the first to require face orientations.
-+   const int order = 2, dim = 3;
-+   std::unique_ptr<FiniteElementCollection> fec;
-+   if (use_ND)
-+   {
-+      fec = std::unique_ptr<ND_FECollection>(new ND_FECollection(order, dim));
-+   }
-+   else
-+   {
-+      fec = std::unique_ptr<RT_FECollection>(new RT_FECollection(order, dim));
-+   }
-+   ParFiniteElementSpace pnd_fes(&pmesh, fec.get());
-+
-+   ParGridFunction psol(&pnd_fes);
-+
-+   VectorFunctionCoefficient func(3, vector_exact_soln);
-+   psol.ProjectCoefficient(func);
-+   psol.ExchangeFaceNbrData();
-+
-+   mfem::Vector value(3), exact(3), position(3);
-+   const IntegrationRule &ir = mfem::IntRules.Get(Geometry::Type::TETRAHEDRON,
-+                                                  order + 1);
-+
-+   // Check that non-ghost elements match up on the serial and parallel spaces.
-+   for (int n = 0; n < pmesh.GetNE(); ++n)
-+   {
-+      constexpr double tol = 1e-12;
-+      for (const auto &ip : ir)
-+      {
-+         coords->GetVectorValue(n, ip, position);
-+         psol.GetVectorValue(n, ip, value);
-+
-+         vector_exact_soln(position, exact);
-+
-+         REQUIRE(value.Size() == exact.Size());
-+         CHECK((value -= exact).Normlinf() < tol);
-+      }
-+   }
-+
-+   // Loop over face neighbor elements and check the vector values match in the
-+   // face neighbor elements.
-+   for (int n = 0; n < pmesh.GetNSharedFaces(); ++n)
-+   {
-+      const int local_face = pmesh.GetSharedFace(n);
-+      const auto &face_info = pmesh.GetFaceInformation(local_face);
-+      REQUIRE(face_info.IsShared());
-+      REQUIRE(face_info.element[1].location == Mesh::ElementLocation::FaceNbr);
-+
-+      auto &T = *pmesh.GetFaceNbrElementTransformation(face_info.element[1].index);
-+
-+      constexpr double tol = 1e-12;
-+      for (const auto &ip : ir)
-+      {
-+         T.SetIntPoint(&ip);
-+         coords->GetVectorValue(T, ip, position);
-+         psol.GetVectorValue(T, ip, value);
-+
-+         vector_exact_soln(position, exact);
-+
-+         REQUIRE(value.Size() == exact.Size());
-+         CHECK((value -= exact).Normlinf() < tol);
-+      }
-+   }
-+}
-+
-+TEST_CASE("GetVectorValueInFaceNeighborElement", "[Parallel], [NCMesh]")
-+{
-+   // The aim of this test is to verify the correct behaviour of the
-+   // GetVectorValue method when called on face neighbor elements in a non
-+   // conforming mesh.
-+   auto smesh = Mesh("../../data/beam-tet.mesh");
-+
-+   for (int nc_level : {0,1,2,3})
-+   {
-+      for (int skip : {1,2})
-+      {
-+         for (bool use_ND : {false, true})
-+         {
-+            TestVectorValueInVolume(smesh, nc_level, skip, use_ND);
-+         }
-+      }
-+   }
-+}
-+
 +TEST_CASE("InteriorBoundaryReferenceTets", "[Parallel], [NCMesh]")
 +{
 +   auto p = GENERATE(1);
