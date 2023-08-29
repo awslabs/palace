@@ -1600,7 +1600,7 @@ std::unique_ptr<mfem::ParMesh> DistributeMesh(MPI_Comm comm,
   // parallel mesh. For now, prefer the MPI-based version. When constructing the ParMesh, we
   // pass arguments to ensure no topological changes (this isn't required since the serial
   // mesh was marked for refinement).
-  constexpr bool generate_edges = true, refine = false, fix_orientation = true;
+  constexpr bool generate_edges = true, refine = true, fix_orientation = true;
 #if 0
   // Write each processor's component to file.
   std::string tmp = output_dir;
