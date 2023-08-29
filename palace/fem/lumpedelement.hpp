@@ -70,7 +70,7 @@ public:
   {
     // Check that the bounding box discovered matches the area. This validates that the
     // boundary elements form a right angled quadrilateral port.
-    constexpr double rel_tol = 1.0e-3;
+    constexpr double rel_tol = 1.0e-6;
     double A = GetArea(fespace);
     MFEM_VERIFY((!bounding_box.planar || (std::abs(A - bounding_box.Area()) / A < rel_tol)),
                 "Discovered bounding box area "
@@ -102,7 +102,7 @@ public:
       }
       Mpi::Warning(
           "User specified direction {:.3e} does not align with either bounding box "
-          "axis up to {:.3e} degrees.\n"
+          "axis up to {:.3e} degrees!\n"
           "Axis 1: {:.3e} ({:.3e} degrees)\nAxis 2: {:.3e} ({:.3e} degrees)\nAxis 3: "
           "{:.3e} ({:.3e} degrees)!\n",
           input_dir, angle_warning_deg, normal_0, deviation_deg[0], normal_1,
@@ -124,7 +124,7 @@ public:
     MFEM_ASSERT(
         (l - mesh::GetProjectedLength(*fespace.GetParMesh(), marker, true, input_dir)) / l <
             rel_tol,
-        "Bounding box discovered length should match projected length");
+        "Bounding box discovered length should match projected length!");
     w = A / l;
   }
 

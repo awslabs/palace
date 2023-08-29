@@ -736,7 +736,6 @@ BoundingBox BoundingBoxFromPointCloud(MPI_Comm comm,
     // useful for checking pointers later.
     const auto &v_000 = *p_000;
     const auto &v_111 = *p_111;
-
     MFEM_VERIFY(&v_000 != &v_111, "Minimum and maximum extents cannot be identical!");
     const auto origin = v_000;
     const Eigen::Vector3d n_1 = (v_111 - v_000).normalized();
@@ -775,7 +774,7 @@ BoundingBox BoundingBoxFromPointCloud(MPI_Comm comm,
                           [OutOfPlaneDistance](const auto &x, const auto &y)
                           { return OutOfPlaneDistance(x) < OutOfPlaneDistance(y); }));
 
-    constexpr double rel_tol = 1e-3;
+    constexpr double rel_tol = 1e-6;
     box.planar = max_distance < (rel_tol * (v_111 - v_000).norm());
 
     // Given numerical tolerance, collect other points with an almost matching distance.
@@ -870,9 +869,9 @@ BoundingBall BoundingBallFromPointCloud(MPI_Comm comm,
         vertices.begin(), vertices.end(),
         [&delta, PerpendicularDistance](const auto &x, const auto &y)
         { return PerpendicularDistance({delta}, x) < PerpendicularDistance({delta}, y); });
-    constexpr double radius_tol = 1.0e-3;
+    constexpr double rel_tol = 1.0e-6;
     MFEM_VERIFY(std::abs(PerpendicularDistance({delta}, perp) - ball.radius) <=
-                    radius_tol * ball.radius,
+                    rel_tol * ball.radius,
                 "Furthest point perpendicular must be on the exterior of the ball: "
                     << PerpendicularDistance({delta}, perp) << " vs. " << ball.radius
                     << "!");
@@ -892,12 +891,12 @@ BoundingBall BoundingBallFromPointCloud(MPI_Comm comm,
         });
 
     ball.planar =
-        PerpendicularDistance({delta, n_radial}, out_of_plane) < radius_tol * ball.radius;
+        PerpendicularDistance({delta, n_radial}, out_of_plane) / ball.radius < rel_tol;
     if (!ball.planar)
     {
       // The points are not functionally coplanar, zero out the normal.
       MFEM_VERIFY(std::abs(PerpendicularDistance({delta}, perp) - ball.radius) <=
-                      radius_tol * ball.radius,
+                      rel_tol * ball.radius,
                   "Furthest point perpendicular must be on the exterior of the sphere!");
       Vector3dMap(ball.planar_normal.data()) *= 0;
     }
