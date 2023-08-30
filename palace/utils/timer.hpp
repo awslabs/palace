@@ -45,7 +45,7 @@ public:
                                                             "  Wave Ports",
                                                             "Solve",
                                                             "  Preconditioner",
-                                                            "    Coarse Solve",
+                                                            "  Coarse Solve",
                                                             "PROM Construction",
                                                             "PROM Solve",
                                                             "Postprocessing",
