@@ -20,8 +20,10 @@ SurfaceCurrentData::SurfaceCurrentData(const config::SurfaceCurrentData &data,
   for (const auto &elem : data.elements)
   {
     mfem::Array<int> attr_marker;
-    mesh::AttrToMarker(h1_fespace.GetParMesh()->bdr_attributes.Max(), elem.attributes,
-                       attr_marker);
+    mesh::AttrToMarker(h1_fespace.GetParMesh()->bdr_attributes.Size()
+                           ? h1_fespace.GetParMesh()->bdr_attributes.Max()
+                           : 0,
+                       elem.attributes, attr_marker);
     switch (elem.coordinate_system)
     {
       case config::internal::ElementData::CoordinateSystem::CYLINDRICAL:
@@ -54,7 +56,9 @@ void SurfaceCurrentOperator::SetUpBoundaryProperties(
     const IoData &iodata, mfem::ParFiniteElementSpace &h1_fespace)
 {
   // Check that surface current boundary attributes have been specified correctly.
-  int bdr_attr_max = h1_fespace.GetParMesh()->bdr_attributes.Max();
+  int bdr_attr_max = h1_fespace.GetParMesh()->bdr_attributes.Size()
+                         ? h1_fespace.GetParMesh()->bdr_attributes.Max()
+                         : 0;
   if (!iodata.boundaries.current.empty())
   {
     mfem::Array<int> bdr_attr_marker(bdr_attr_max);

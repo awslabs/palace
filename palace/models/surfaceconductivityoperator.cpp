@@ -25,7 +25,7 @@ void SurfaceConductivityOperator::SetUpBoundaryProperties(const IoData &iodata,
                                                           const mfem::ParMesh &mesh)
 {
   // Check that conductivity boundary attributes have been specified correctly.
-  int bdr_attr_max = mesh.bdr_attributes.Max();
+  int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   if (!iodata.boundaries.conductivity.empty())
   {
     mfem::Array<int> bdr_attr_marker(bdr_attr_max);
@@ -98,7 +98,7 @@ void SurfaceConductivityOperator::SetUpBoundaryProperties(const IoData &iodata,
 void SurfaceConductivityOperator::PrintBoundaryInfo(const IoData &iodata,
                                                     mfem::ParMesh &mesh)
 {
-  if (conductivity_marker.Max() == 0)
+  if (conductivity_marker.Size() && conductivity_marker.Max() == 0)
   {
     return;
   }
@@ -134,7 +134,7 @@ void SurfaceConductivityOperator::AddExtraSystemBdrCoefficients(double omega,
                                                                 SumMatrixCoefficient &fbr,
                                                                 SumMatrixCoefficient &fbi)
 {
-  if (conductivity_marker.Max() > 0)
+  if (conductivity_marker.Size() && conductivity_marker.Max() > 0)
   {
     // If the provided conductor thickness is empty (zero), prescribe a surface impedance
     // (1+i)/σδ, where δ is the skin depth. If it is nonzero, use a finite thickness

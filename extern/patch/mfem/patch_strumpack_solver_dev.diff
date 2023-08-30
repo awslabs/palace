@@ -1,8 +1,8 @@
 diff --git a/INSTALL b/INSTALL
-index cb092cc1b..9a7deaa43 100644
+index 1a325fdf6..ee3f7c03c 100644
 --- a/INSTALL
 +++ b/INSTALL
-@@ -655,8 +655,7 @@ The specific libraries and their options are:
+@@ -659,8 +659,7 @@ The specific libraries and their options are:
    requires the PT-Scotch and Scalapack libraries as well as ParMETIS, which
    includes METIS 5 in its distribution. Starting with STRUMPACK v2.2.0, ParMETIS
    and PT-Scotch are optional dependencies.
@@ -13,10 +13,10 @@ index cb092cc1b..9a7deaa43 100644
    Options: STRUMPACK_OPT, STRUMPACK_LIB.
    Versions: STRUMPACK >= 3.0.0.
 diff --git a/config/defaults.cmake b/config/defaults.cmake
-index 390026414..4386ce53a 100644
+index 06531934d..526c87c4f 100644
 --- a/config/defaults.cmake
 +++ b/config/defaults.cmake
-@@ -156,7 +156,8 @@ set(STRUMPACK_DIR "${MFEM_DIR}/../STRUMPACK-build" CACHE PATH
+@@ -157,7 +157,8 @@ set(STRUMPACK_DIR "${MFEM_DIR}/../STRUMPACK-build" CACHE PATH
  # STRUMPACK may also depend on "OpenMP", depending on how it was compiled.
  # Starting with v2.2.0 of STRUMPACK, ParMETIS and Scotch are optional.
  set(STRUMPACK_REQUIRED_PACKAGES "MPI" "MPI_Fortran" "ParMETIS" "METIS"
@@ -1224,10 +1224,10 @@ index 7b8e3bd2d..e5cf95062 100644
           strumpack->SetFromCommandLine();
           precond = strumpack;
 diff --git a/tests/unit/linalg/test_direct_solvers.cpp b/tests/unit/linalg/test_direct_solvers.cpp
-index d015a8b94..de2d074c1 100644
+index 48a1ac30e..5b74a98fa 100644
 --- a/tests/unit/linalg/test_direct_solvers.cpp
 +++ b/tests/unit/linalg/test_direct_solvers.cpp
-@@ -23,6 +23,9 @@ using namespace mfem;
+@@ -26,6 +26,9 @@ using namespace mfem;
  #ifdef MFEM_USE_SUPERLU
  #define DIRECT_SOLVE_PARALLEL
  #endif
@@ -1237,7 +1237,7 @@ index d015a8b94..de2d074c1 100644
  
  #if defined(DIRECT_SOLVE_SERIAL) || defined(DIRECT_SOLVE_PARALLEL)
  
-@@ -100,7 +103,7 @@ TEST_CASE("Serial Direct Solvers", "[CUDA]")
+@@ -103,7 +106,7 @@ TEST_CASE("Serial Direct Solvers", "[CUDA]")
        Mesh mesh;
        if (dim == 1)
        {
@@ -1246,7 +1246,7 @@ index d015a8b94..de2d074c1 100644
        }
        else if (dim == 2)
        {
-@@ -163,13 +166,13 @@ TEST_CASE("Parallel Direct Solvers", "[Parallel], [CUDA]")
+@@ -187,13 +190,13 @@ TEST_CASE("Parallel Direct Solvers", "[Parallel], [CUDA]")
  {
     int rank;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
@@ -1262,7 +1262,7 @@ index d015a8b94..de2d074c1 100644
        }
        else if (dim == 2)
        {
-@@ -288,6 +291,39 @@ TEST_CASE("Parallel Direct Solvers", "[Parallel], [CUDA]")
+@@ -312,6 +315,39 @@ TEST_CASE("Parallel Direct Solvers", "[Parallel], [CUDA]")
           REQUIRE(error < 1.e-12);
        }
  #endif

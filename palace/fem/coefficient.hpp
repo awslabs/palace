@@ -951,7 +951,6 @@ BdrGridFunctionCoefficient::be_to_bfe(mfem::Geometry::Type geom, int o,
       fip.x = ip.x;
       fip.y = ip.y;
     }
-    fip.z = ip.z;
   }
   else
   {
@@ -975,8 +974,8 @@ BdrGridFunctionCoefficient::be_to_bfe(mfem::Geometry::Type geom, int o,
       fip.x = ip.x;
       fip.y = ip.y;
     }
-    fip.z = ip.z;
   }
+  fip.z = ip.z;
   fip.weight = ip.weight;
   fip.index = ip.index;
   return fip;

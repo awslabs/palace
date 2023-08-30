@@ -247,11 +247,18 @@ message(STATUS "MFEM_OPTIONS: ${MFEM_OPTIONS_PRINT}")
 
 # A number of patches to MFEM for our use cases
 set(MFEM_PATCH_FILES
-  "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_mesh_part.diff"
-  "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_mesh_vis.diff"
-  "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_direct_solvers.diff"
-  "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_pa_prereq.diff"
-  "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_pa_libceed.diff"
+  "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_mesh_vis_dev.diff"
+  "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_mesh_partitioner_dev.diff"
+  "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_par_tet_mesh_fix.diff"
+  "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_strumpack_solver_dev.diff"
+  "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_fecoll_vdim_fix.diff"
+  "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_stateless_doftrans_threadsafe.diff"
+  "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_global_variables_threadsafe.diff"
+  "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_assembly_cleanup_prereqs.diff"
+  "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_legacy_features_cleanup.diff"
+  "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_integ_getrule_interface.diff"
+  "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_mfem_device_fixes.diff"
+  "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_pa_libceed_dev.diff"
 )
 
 include(ExternalProject)

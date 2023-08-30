@@ -72,8 +72,8 @@ SurfacePostOperator::InterfaceDielectricData::InterfaceDielectricData(
     }
 
     // Store markers for this element of the postprocessing boundary.
-    mesh::AttrToMarker(mesh.bdr_attributes.Max(), elem.attributes,
-                       attr_markers.emplace_back());
+    mesh::AttrToMarker(mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0,
+                       elem.attributes, attr_markers.emplace_back());
   }
 }
 
@@ -103,8 +103,8 @@ SurfacePostOperator::InterfaceDielectricData::GetCoefficient(
 SurfacePostOperator::SurfaceChargeData::SurfaceChargeData(
     const config::CapacitanceData &data, mfem::ParMesh &mesh)
 {
-  mesh::AttrToMarker(mesh.bdr_attributes.Max(), data.attributes,
-                     attr_markers.emplace_back());
+  mesh::AttrToMarker(mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0,
+                     data.attributes, attr_markers.emplace_back());
 }
 
 std::unique_ptr<mfem::Coefficient> SurfacePostOperator::SurfaceChargeData::GetCoefficient(
@@ -124,8 +124,8 @@ SurfacePostOperator::SurfaceFluxData::SurfaceFluxData(const config::InductanceDa
 
   // Construct the coefficient for this postprocessing boundary (copies the direction
   // vector).
-  mesh::AttrToMarker(mesh.bdr_attributes.Max(), data.attributes,
-                     attr_markers.emplace_back());
+  mesh::AttrToMarker(mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0,
+                     data.attributes, attr_markers.emplace_back());
 }
 
 std::unique_ptr<mfem::Coefficient>
