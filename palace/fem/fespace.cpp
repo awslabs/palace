@@ -12,7 +12,7 @@
 namespace palace
 {
 
-const CeedBasis FiniteElementSpace::GetCeedBasis(Ceed ceed, mfem::Geometry::Type geom) const
+CeedBasis FiniteElementSpace::GetCeedBasis(Ceed ceed, mfem::Geometry::Type geom) const
 {
   auto it = basis.find(ceed);
   MFEM_ASSERT(it != basis.end(), "Unknown Ceed context in GetCeedBasis!");
@@ -25,7 +25,7 @@ const CeedBasis FiniteElementSpace::GetCeedBasis(Ceed ceed, mfem::Geometry::Type
   return basis_map.emplace(geom, BuildCeedBasis(*this, ceed, geom)).first->second;
 }
 
-const CeedElemRestriction
+CeedElemRestriction
 FiniteElementSpace::GetCeedElemRestriction(Ceed ceed, mfem::Geometry::Type geom,
                                            const std::vector<int> &indices) const
 {
@@ -41,7 +41,7 @@ FiniteElementSpace::GetCeedElemRestriction(Ceed ceed, mfem::Geometry::Type geom,
       .first->second;
 }
 
-const CeedElemRestriction
+CeedElemRestriction
 FiniteElementSpace::GetInterpCeedElemRestriction(Ceed ceed, mfem::Geometry::Type geom,
                                                  const std::vector<int> &indices) const
 {
@@ -64,7 +64,7 @@ FiniteElementSpace::GetInterpCeedElemRestriction(Ceed ceed, mfem::Geometry::Type
       .first->second;
 }
 
-const CeedElemRestriction
+CeedElemRestriction
 FiniteElementSpace::GetInterpRangeCeedElemRestriction(Ceed ceed, mfem::Geometry::Type geom,
                                                       const std::vector<int> &indices) const
 {

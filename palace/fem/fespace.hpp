@@ -90,23 +90,22 @@ public:
   const auto *GetRestrictionMatrix() const { return Get().GetRestrictionMatrix(); }
 
   // Return the basis object for elements of the given element geometry type.
-  const CeedBasis GetCeedBasis(Ceed ceed, mfem::Geometry::Type geom) const;
+  CeedBasis GetCeedBasis(Ceed ceed, mfem::Geometry::Type geom) const;
 
   // Return the element restriction object for the given element set (all with the same
   // geometry type).
-  const CeedElemRestriction GetCeedElemRestriction(Ceed ceed, mfem::Geometry::Type geom,
-                                                   const std::vector<int> &indices) const;
+  CeedElemRestriction GetCeedElemRestriction(Ceed ceed, mfem::Geometry::Type geom,
+                                             const std::vector<int> &indices) const;
 
   // If the space has a special element restriction for discrete interpolators, return that.
   // Otherwise return the same restriction as given by GetCeedElemRestriction.
-  const CeedElemRestriction
-  GetInterpCeedElemRestriction(Ceed ceed, mfem::Geometry::Type geom,
-                               const std::vector<int> &indices) const;
+  CeedElemRestriction GetInterpCeedElemRestriction(Ceed ceed, mfem::Geometry::Type geom,
+                                                   const std::vector<int> &indices) const;
 
   // If the space has a special element restriction for the range space of discrete
   // interpolators, return that. Otherwise return the same restriction as given by
   // GetCeedElemRestriction.
-  const CeedElemRestriction
+  CeedElemRestriction
   GetInterpRangeCeedElemRestriction(Ceed ceed, mfem::Geometry::Type geom,
                                     const std::vector<int> &indices) const;
 

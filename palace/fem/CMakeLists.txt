@@ -38,6 +38,7 @@ target_sources(${LIB_TARGET_NAME}
 set(TARGET_SOURCES_DEVICE
   ${TARGET_SOURCES_DEVICE}
   ${CMAKE_CURRENT_SOURCE_DIR}/errorindicator.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/mesh.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/libceed/operator.cpp
   PARENT_SCOPE
 )

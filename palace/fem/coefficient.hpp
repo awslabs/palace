@@ -82,6 +82,7 @@ public:
   {
   }
 
+  using mfem::VectorCoefficient::Eval;
   void Eval(mfem::Vector &V, mfem::ElementTransformation &T,
             const mfem::IntegrationPoint &ip) override
   {
@@ -460,6 +461,7 @@ public:
   {
   }
 
+  using mfem::VectorCoefficient::Eval;
   void Eval(mfem::Vector &V, mfem::ElementTransformation &T,
             const mfem::IntegrationPoint &ip) override
   {
@@ -529,6 +531,7 @@ public:
   {
   }
 
+  using mfem::VectorCoefficient::Eval;
   void Eval(mfem::Vector &V, mfem::ElementTransformation &T,
             const mfem::IntegrationPoint &ip) override
   {
@@ -678,6 +681,7 @@ public:
     c.emplace_back(std::make_unique<VectorWrappedCoefficient>(vdim, std::move(coeff)), a);
   }
 
+  using mfem::VectorCoefficient::Eval;
   void Eval(mfem::Vector &V, mfem::ElementTransformation &T,
             const mfem::IntegrationPoint &ip) override
   {
