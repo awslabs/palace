@@ -52,15 +52,15 @@ void PrintBanner(MPI_Comm comm, int np, int nt, const char *git_tag)
 
 int main(int argc, char *argv[])
 {
+  // Initialize the timer.
+  BlockTimer bt(Timer::INIT);
+
   // Initialize MPI.
   Mpi::Init(argc, argv);
   MPI_Comm world_comm = Mpi::World();
   bool world_root = Mpi::Root(world_comm);
   int world_size = Mpi::Size(world_comm);
   Mpi::Print(world_comm, "\n");
-
-  // Initialize timer.
-  Timer timer;
 
   // Parse command-line options.
   std::vector<std::string_view> argv_sv(argv, argv + argc);
@@ -181,16 +181,16 @@ int main(int argc, char *argv[])
   // Read the mesh from file, refine, partition, and distribute it. Then nondimensionalize
   // it and the input parameters.
   std::vector<std::unique_ptr<mfem::ParMesh>> mesh;
-  mesh.push_back(mesh::ReadMesh(world_comm, iodata, false, true, true, false, timer));
+  mesh.push_back(mesh::ReadMesh(world_comm, iodata, false, true, true, false));
   iodata.NondimensionalizeInputs(*mesh[0]);
   mesh::RefineMesh(iodata, mesh);
-  timer.init_time += timer.Lap() - timer.io_time;
 
   // Run the problem driver.
-  solver->Solve(mesh, timer);
-  timer.Reduce(world_comm);
-  timer.Print(world_comm);
-  solver->SaveMetadata(timer);
+  solver->Solve(mesh);
+
+  // Print timing summary.
+  BlockTimer::Print(world_comm);
+  solver->SaveMetadata(BlockTimer::GlobalTimer());
   Mpi::Print(world_comm, "\n");
 
   // Finalize SLEPc/PETSc.

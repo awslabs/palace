@@ -15,14 +15,13 @@
 namespace palace
 {
 
-void ElectrostaticSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
-                                Timer &timer) const
+void ElectrostaticSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const
 {
   // Construct the system matrix defining the linear operator. Dirichlet boundaries are
   // handled eliminating the rows and columns of the system matrix for the corresponding
   // dofs. The eliminated matrix is stored in order to construct the RHS vector for nonzero
   // prescribed BC values.
-  timer.Lap();
+  BlockTimer bt0(Timer::CONSTRUCT);
   LaplaceOperator laplaceop(iodata, mesh);
   auto K = laplaceop.GetStiffnessMatrix();
   SaveMetadata(laplaceop.GetH1Spaces());
@@ -40,45 +39,42 @@ void ElectrostaticSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mes
   // Right-hand side term and solution vector storage.
   Vector RHS(K->Height());
   std::vector<Vector> V(nstep);
-  timer.construct_time += timer.Lap();
 
   // Main loop over terminal boundaries.
   Mpi::Print("\nComputing electrostatic fields for {:d} terminal boundar{}\n", nstep,
              (nstep > 1) ? "ies" : "y");
   int step = 0;
-  auto t0 = timer.Now();
+  auto t0 = Timer::Now();
   for (const auto &[idx, data] : laplaceop.GetSources())
   {
     Mpi::Print("\nIt {:d}/{:d}: Index = {:d} (elapsed time = {:.2e} s)\n", step + 1, nstep,
-               idx, Timer::Duration(timer.Now() - t0).count());
+               idx, Timer::Duration(Timer::Now() - t0).count());
 
     // Form and solve the linear system for a prescribed nonzero voltage on the specified
     // terminal.
     Mpi::Print("\n");
     laplaceop.GetExcitationVector(idx, *K, V[step], RHS);
-    timer.construct_time += timer.Lap();
 
+    BlockTimer bt1(Timer::SOLVE);
     ksp.Mult(RHS, V[step]);
-    timer.solve_time += timer.Lap();
 
+    BlockTimer bt2(Timer::POSTPRO);
     Mpi::Print(" Sol. ||V|| = {:.6e} (||RHS|| = {:.6e})\n",
                linalg::Norml2(laplaceop.GetComm(), V[step]),
                linalg::Norml2(laplaceop.GetComm(), RHS));
-    timer.postpro_time += timer.Lap();
 
     // Next terminal.
     step++;
   }
 
   // Postprocess the capacitance matrix from the computed field solutions.
-  const auto io_time_prev = timer.io_time;
+  BlockTimer bt1(Timer::POSTPRO);
   SaveMetadata(ksp);
-  Postprocess(laplaceop, postop, V, timer);
-  timer.postpro_time += timer.Lap() - (timer.io_time - io_time_prev);
+  Postprocess(laplaceop, postop, V);
 }
 
 void ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop, PostOperator &postop,
-                                      const std::vector<Vector> &V, Timer &timer) const
+                                      const std::vector<Vector> &V) const
 {
   // Postprocess the Maxwell capacitance matrix. See p. 97 of the COMSOL AC/DC Module manual
   // for the associated formulas based on the electric field energy based on a unit voltage
@@ -110,10 +106,8 @@ void ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop, PostOperator &
     PostprocessProbes(postop, "i", i, idx);
     if (i < iodata.solver.electrostatic.n_post)
     {
-      auto t0 = timer.Now();
       PostprocessFields(postop, i, idx);
       Mpi::Print(" Wrote fields to disk for terminal {:d}\n", idx);
-      timer.io_time += timer.Now() - t0;
     }
 
     // Diagonal: C_ii = 2 U_e(V_i) / V_i².

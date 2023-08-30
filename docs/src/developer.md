@@ -55,6 +55,22 @@ provided in [`scripts/schema/`]
 file and check that the fields are correctly specified. This script and the associated
 Schema are also installed and can be accessed in `<INSTALL_DIR>/bin`.
 
+## Timing
+
+Timing facilities are provided by the `Timer` and `BlockTimer` classes.
+
+Creating a block as `BlockTimer b(idx)` where `idx` is a category like `CONSTRUCT`, `SOLVE`,
+etc. will record time so long as `b` is in scope; however, timing may be interrupted by
+creation of another `BlockTimer` object. It will resume whenever the new block is destroyed.
+Only one category is timed at once. This enables functions can declare how calls within them
+are timed without needing to know how timing may be done by the calling function.
+
+The `BlockTimer` implementation relies upon a static member object of the `Timer` class,
+which behaves as a stopwatch with some memory functions. It is the responsibility of this
+`BlockTimer::timer` object to record time spent in each recorded category. Other `Timer`
+objects may be created for local timing purposes, but these will not count toward time
+reported at the end of a log file or in the metadata JSON.
+
 ## Changelog
 
 Code contributions should generally be accompanied by an entry in the [changelog]

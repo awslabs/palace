@@ -109,7 +109,7 @@ public:
           deviation_deg[1], normal_2, deviation_deg[2]);
     }
     MFEM_VERIFY(std::any_of(deviation_deg.begin(), deviation_deg.end(),
-                            [angle_error_deg](double x) { return x < angle_error_deg; }),
+                            [](double x) { return x < angle_error_deg; }),
                 "Specified direction does not align sufficiently with bounding box axes: "
                     << deviation_deg[0] << ' ' << deviation_deg[1] << ' '
                     << deviation_deg[2] << " tolerance " << angle_error_deg << '!');
@@ -120,7 +120,6 @@ public:
     l = lengths[std::distance(
         deviation_deg.begin(),
         std::min_element(deviation_deg.begin(), deviation_deg.end()))];
-
     MFEM_ASSERT(
         (l - mesh::GetProjectedLength(*fespace.GetParMesh(), marker, true, input_dir)) / l <
             rel_tol,

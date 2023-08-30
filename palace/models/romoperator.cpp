@@ -10,6 +10,7 @@
 #include "models/spaceoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
+#include "utils/timer.hpp"
 
 namespace palace
 {
@@ -158,6 +159,7 @@ void RomOperator::SolveHDM(double omega, ComplexVector &e)
 {
   // Compute HDM solution at the given frequency. The system matrix, A = K + iω C - ω² M +
   // A2(ω) is built by summing the underlying operator contributions.
+  BlockTimer bt0(Timer::CONSTRUCT);
   A2 = spaceop.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO);
   has_A2 = (A2 != nullptr);
   auto A = spaceop.GetSystemMatrix(std::complex<double>(1.0, 0.0), 1i * omega,
@@ -181,6 +183,9 @@ void RomOperator::SolveHDM(double omega, ComplexVector &e)
   {
     r.Add(1i * omega, RHS1);
   }
+
+  // Solve the linear system.
+  BlockTimer bt1(Timer::SOLVE);
   ksp->Mult(r, e);
 }
 

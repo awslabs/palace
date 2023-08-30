@@ -18,11 +18,10 @@
 namespace palace
 {
 
-void TransientSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
-                            Timer &timer) const
+void TransientSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const
 {
   // Set up the spatial discretization and time integrators for the E and B fields.
-  timer.Lap();
+  BlockTimer bt0(Timer::CONSTRUCT);
   std::function<double(double)> J_coef = GetTimeExcitation(false);
   std::function<double(double)> dJdt_coef = GetTimeExcitation(true);
   SpaceOperator spaceop(iodata, mesh);
@@ -74,19 +73,19 @@ void TransientSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
     MFEM_VERIFY(excitations > 0, "No excitation specified for transient simulation!");
   }
   Mpi::Print("\n");
-  timer.construct_time += timer.Lap();
 
   // Main time integration loop.
   int step = 0;
   double t = -delta_t;
-  auto t0 = timer.Now();
+  auto t0 = Timer::Now();
   while (step < nstep)
   {
     const double ts = iodata.DimensionalizeValue(IoData::ValueType::TIME, t + delta_t);
     Mpi::Print("\nIt {:d}/{:d}: t = {:e} ns (elapsed time = {:.2e} s)\n", step, nstep - 1,
-               ts, Timer::Duration(timer.Now() - t0).count());
+               ts, Timer::Duration(Timer::Now() - t0).count());
 
     // Single time step t -> t + dt.
+    BlockTimer bt1(Timer::SOLVE);
     if (step == 0)
     {
       Mpi::Print("\n");
@@ -97,8 +96,9 @@ void TransientSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
     {
       timeop.Step(t, delta_t);  // Advances t internally
     }
-    timer.solve_time += timer.Lap();
 
+    // Postprocess for the time step.
+    BlockTimer bt2(Timer::POSTPRO);
     double E_elec = 0.0, E_mag = 0.0;
     const Vector &E = timeop.GetE();
     const Vector &B = timeop.GetB();
@@ -116,10 +116,8 @@ void TransientSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
     }
 
     // Postprocess port voltages/currents and optionally write solution to disk.
-    const auto io_time_prev = timer.io_time;
     Postprocess(postop, spaceop.GetLumpedPortOp(), spaceop.GetSurfaceCurrentOp(), step, t,
-                J_coef(t), E_elec, E_mag, !iodata.solver.transient.only_port_post, timer);
-    timer.postpro_time += timer.Lap() - (timer.io_time - io_time_prev);
+                J_coef(t), E_elec, E_mag, !iodata.solver.transient.only_port_post);
 
     // Increment time step.
     step++;
@@ -236,7 +234,7 @@ void TransientSolver::Postprocess(const PostOperator &postop,
                                   const LumpedPortOperator &lumped_port_op,
                                   const SurfaceCurrentOperator &surf_j_op, int step,
                                   double t, double J_coef, double E_elec, double E_mag,
-                                  bool full, Timer &timer) const
+                                  bool full) const
 {
   // The internal GridFunctions for PostOperator have already been set from the E and B
   // solutions in the main time integration loop.
@@ -255,11 +253,9 @@ void TransientSolver::Postprocess(const PostOperator &postop,
   if (iodata.solver.transient.delta_post > 0 &&
       step % iodata.solver.transient.delta_post == 0)
   {
-    auto t0 = timer.Now();
     Mpi::Print("\n");
     PostprocessFields(postop, step / iodata.solver.transient.delta_post, ts);
     Mpi::Print(" Wrote fields to disk at step {:d}\n", step);
-    timer.io_time += timer.Now() - t0;
   }
 }
 

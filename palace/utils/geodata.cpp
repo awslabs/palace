@@ -63,26 +63,26 @@ namespace mesh
 {
 
 std::unique_ptr<mfem::ParMesh> ReadMesh(MPI_Comm comm, const IoData &iodata, bool reorder,
-                                        bool clean, bool add_bdr, bool unassembled,
-                                        Timer &timer)
+                                        bool clean, bool add_bdr, bool unassembled)
 {
   // On root, read the serial mesh (converting format if necessary), and do all necessary
   // serial preprocessing. When finished, distribute the mesh to all processes. Count disk
   // I/O time separately for the mesh read from file.
   std::unique_ptr<mfem::Mesh> smesh;
-  auto t0 = timer.Now();
-  if (Mpi::Root(comm))
   {
-    // Optionally reorder elements (and vertices) based on spatial location after loading
-    // the serial mesh.
-    smesh = LoadMesh(iodata.model.mesh, iodata.model.remove_curvature);
-    if (reorder)
+    BlockTimer bt(Timer::IO);
+    if (Mpi::Root(comm))
     {
-      ReorderMesh(*smesh);
+      // Optionally reorder elements (and vertices) based on spatial location after loading
+      // the serial mesh.
+      smesh = LoadMesh(iodata.model.mesh, iodata.model.remove_curvature);
+      if (reorder)
+      {
+        ReorderMesh(*smesh);
+      }
     }
+    Mpi::Barrier(comm);
   }
-  Mpi::Barrier(comm);
-  timer.io_time += timer.Now() - t0;
 
   std::unique_ptr<int[]> partitioning;
   if (Mpi::Root(comm))

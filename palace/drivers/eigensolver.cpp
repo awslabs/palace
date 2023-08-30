@@ -22,13 +22,12 @@ namespace palace
 
 using namespace std::complex_literals;
 
-void EigenSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
-                        Timer &timer) const
+void EigenSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const
 {
   // Construct and extract the system matrices defining the eigenvalue problem. The diagonal
   // values for the mass matrix PEC dof shift the Dirichlet eigenvalues out of the
   // computational range. The damping matrix may be nullptr.
-  timer.Lap();
+  BlockTimer bt0(Timer::CONSTRUCT);
   SpaceOperator spaceop(iodata, mesh);
   auto K = spaceop.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE);
   auto C = spaceop.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
@@ -248,16 +247,15 @@ void EigenSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
                                                 &spaceop.GetH1Spaces());
   ksp->SetOperators(*A, *P);
   eigen->SetLinearSolver(*ksp);
-  timer.construct_time += timer.Lap();
 
   // Eigenvalue problem solve.
+  BlockTimer bt1(Timer::SOLVE);
   Mpi::Print("\n");
   int num_conv = eigen->Solve();
   SaveMetadata(*ksp);
-  timer.solve_time += timer.Lap();
 
   // Postprocess the results.
-  const auto io_time_prev = timer.io_time;
+  BlockTimer bt2(Timer::POSTPRO);
   for (int i = 0; i < num_conv; i++)
   {
     // Get the eigenvalue and relative error.
@@ -291,16 +289,14 @@ void EigenSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
     postop.UpdatePorts(spaceop.GetLumpedPortOp(), omega.real());
 
     // Postprocess the mode.
-    Postprocess(postop, spaceop.GetLumpedPortOp(), i, omega, error1, error2, num_conv,
-                timer);
+    Postprocess(postop, spaceop.GetLumpedPortOp(), i, omega, error1, error2, num_conv);
   }
-  timer.postpro_time += timer.Lap() - (timer.io_time - io_time_prev);
 }
 
 void EigenSolver::Postprocess(const PostOperator &postop,
                               const LumpedPortOperator &lumped_port_op, int i,
                               std::complex<double> omega, double error1, double error2,
-                              int num_conv, Timer &timer) const
+                              int num_conv) const
 {
   // The internal GridFunctions for PostOperator have already been set from the E and B
   // solutions in the main loop over converged eigenvalues. Note: The energies output are
@@ -318,10 +314,8 @@ void EigenSolver::Postprocess(const PostOperator &postop,
   PostprocessProbes(postop, "m", i, i + 1);
   if (i < iodata.solver.eigenmode.n_post)
   {
-    auto t0 = timer.Now();
     PostprocessFields(postop, i, i + 1);
     Mpi::Print(" Wrote mode {:d} to disk\n", i + 1);
-    timer.io_time += timer.Now() - t0;
   }
 }
 

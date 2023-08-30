@@ -131,12 +131,13 @@ void BaseSolver::SaveMetadata(const Timer &timer) const
   if (root)
   {
     json meta = LoadMetadata(post_dir);
-    meta["ElapsedTime"]["Initialization"] = timer.GetAvgTime(Timer::INIT);
-    meta["ElapsedTime"]["OperatorConstruction"] = timer.GetAvgTime(Timer::CONSTRUCT);
-    meta["ElapsedTime"]["Solve"] = timer.GetAvgTime(Timer::SOLVE);
-    meta["ElapsedTime"]["Postprocessing"] = timer.GetAvgTime(Timer::POSTPRO);
-    meta["ElapsedTime"]["DiskIO"] = timer.GetAvgTime(Timer::IO);
-    meta["ElapsedTime"]["Total"] = timer.GetAvgTime(Timer::TOTAL);
+    for (int i = Timer::INIT; i < Timer::NUMTIMINGS; i++)
+    {
+      auto key = Timer::descriptions[i];
+      key.erase(std::remove_if(key.begin(), key.end(), isspace), key.end());
+      meta["ElapsedTime"]["Durations"][key] = timer.Data((Timer::Index)i);
+      meta["ElapsedTime"]["Counts"][key] = timer.Counts((Timer::Index)i);
+    }
     WriteMetadata(post_dir, meta);
   }
 }
@@ -553,6 +554,7 @@ void BaseSolver::PostprocessProbes(const PostOperator &postop, const std::string
 void BaseSolver::PostprocessFields(const PostOperator &postop, int step, double time) const
 {
   // Save the computed fields in parallel in format for viewing with ParaView.
+  BlockTimer bt(Timer::IO);
   if (post_dir.length() == 0)
   {
     Mpi::Warning("No file specified under [\"Problem\"][\"Output\"]!\nSkipping saving of "
