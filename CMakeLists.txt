@@ -20,6 +20,9 @@ project(palace-superbuild LANGUAGES CXX C VERSION 0.12.0)
 set(PALACE_WITH_64BIT_INT OFF CACHE BOOL "Use 64 bit integers")
 set(PALACE_WITH_64BIT_BLAS_INT OFF CACHE BOOL "Use ILP64 BLAS/LAPACK interface instead of LP64 (experimental, not recommended)")
 set(PALACE_WITH_OPENMP OFF CACHE BOOL "Use OpenMP for shared-memory parallelism")
+set(PALACE_WITH_CUDA OFF CACHE BOOL "Use CUDA for NVIDIA GPU support")
+set(PALACE_WITH_HIP OFF CACHE BOOL "Use HIP for AMD or NVIDIA GPU support")
+set(PALACE_WITH_GPU_AWARE_MPI OFF CACHE BOOL "Option to set if MPI distribution is GPU aware")
 
 set(PALACE_BUILD_EXTERNAL_DEPS ON CACHE BOOL "Build external third-party dependency libraries")
 set(PALACE_WITH_SUPERLU ON CACHE BOOL "Build with SuperLU_DIST sparse direct solver")
@@ -40,6 +43,40 @@ set(ANALYZE_SOURCES_CPPCHECK OFF CACHE BOOL "Run static analysis checks using cp
 # Enable Fortran if required
 if(PALACE_WITH_STRUMPACK OR PALACE_WITH_MUMPS OR PALACE_WITH_ARPACK)
   enable_language(Fortran)
+endif()
+
+# Enable CUDA/HIP if required
+if(PALACE_WITH_CUDA AND PALACE_WITH_HIP)
+  message(FATAL_ERROR "PALACE_WITH_CUDA is not compatible with PALACE_WITH_HIP")
+endif()
+if(PALACE_WITH_CUDA)
+  enable_language(CUDA)
+  get_filename_component(NVCC_DIR ${CMAKE_CUDA_COMPILER} DIRECTORY)
+  get_filename_component(BIN_NVCC_DIR ${NVCC_DIR} DIRECTORY)
+  set(CUDA_DIR "${BIN_NVCC_DIR}" CACHE STRING
+    "CUDA installation directory, typically /usr/local/cuda or /opt/cuda"
+  )
+  message(STATUS "Found CUDA: ${CUDA_DIR}")
+  if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
+    message(STATUS "Setting CMAKE_CUDA_ARCHITECTURES to '70' as none were specified")
+    set(CMAKE_CUDA_ARCHITECTURES "70" CACHE STRING
+      "Specifies the list of NVIDIA GPU architectures to generate device code for"
+    )
+  endif()
+elseif(PALACE_WITH_HIP)
+  enable_language(HIP)
+  get_filename_component(HIPCC_DIR ${CMAKE_HIP_COMPILER} DIRECTORY)
+  get_filename_component(BIN_HIPCC_DIR ${HIPCC_DIR} DIRECTORY)
+  set(ROCM_DIR "${BIN_HIPCC_DIR}" CACHE STRING
+    "CUDA installation directory, typically /opt/rocm"
+  )
+  message(STATUS "Found HIP: ${ROCM_DIR}")
+  if(NOT DEFINED CMAKE_HIP_ARCHITECTURES)
+    message(STATUS "Setting CMAKE_HIP_ARCHITECTURES to 'gfx900' as none were specified")
+    set(CMAKE_HIP_ARCHITECTURES "gfx900" CACHE STRING
+      "Specifies the list of AMD GPU architectures to generate device code for"
+    )
+  endif()
 endif()
 
 # Set a default build type if none was provided

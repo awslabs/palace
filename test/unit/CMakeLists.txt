@@ -20,10 +20,34 @@ add_executable(unit-tests
 )
 target_link_libraries(unit-tests PRIVATE ${LIB_TARGET_NAME} Catch2::Catch2)
 
+# Handle device source code
+set(TARGET_SOURCES_DEVICE
+  ${CMAKE_SOURCE_DIR}/fem/libceed/operator.cpp
+)
+if(PALACE_WITH_CUDA OR PALACE_WITH_HIP)
+  if(PALACE_WITH_CUDA)
+    set(LANGUAGE_PROPERTY CUDA)
+  elseif(PALACE_WITH_HIP)
+    set(LANGUAGE_PROPERTY HIP)
+  endif()
+  set(COMPILE_OPTIONS_PROPERTY "-Wno-pedantic")
+  if(PALACE_WITH_OPENMP)
+    set(COMPILE_OPTIONS_PROPERTY "${COMPILE_OPTIONS_PROPERTY} ${OpenMP_CXX_FLAGS}")
+  endif()
+  set_property(
+    SOURCE ${TARGET_SOURCES_DEVICE}
+    PROPERTY LANGUAGE ${LANGUAGE_PROPERTY}
+  )
+  set_property(
+    SOURCE ${TARGET_SOURCES_DEVICE}
+    APPEND PROPERTY COMPILE_OPTIONS "${COMPILE_OPTIONS_PROPERTY}"
+  )
+endif()
+
 # Add JIT source file path definition for libCEED
 set_property(
   SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/main.cpp
-  APPEND PROPERTY COMPILE_DEFINITIONS "PALACE_LIBCEED_JIT_SOURCE_DIR=\"${CMAKE_INSTALL_PREFIX}/include/palace\""
+  APPEND PROPERTY COMPILE_DEFINITIONS "PALACE_LIBCEED_JIT_SOURCE_DIR=\"${CMAKE_INSTALL_PREFIX}/include/palace/\""
 )
 
 # Add unit test mesh file path definition
