@@ -57,7 +57,7 @@ Schema are also installed and can be accessed in `<INSTALL_DIR>/bin`.
 
 ## Timing
 
-Timing facilities are provided by the `Timer` and BlockTimer` clasess.
+Timing facilities are provided by the `Timer` and `BlockTimer` classes.
 
 Creating a block as `BlockTimer b(idx)` where `idx` is a category like `CONSTRUCT`, `SOLVE`,
 etc. will record time so long as `b` is in scope; however, timing may be interrupted by
