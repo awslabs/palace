@@ -90,6 +90,7 @@ FluxProjector<VecType>::FluxProjector(const MaterialOperator &mat_op,
   ksp->SetOperators(*M, *M);
 
   rhs.SetSize(nd_fespace.GetTrueVSize());
+  rhs.UseDevice(true);
 }
 
 template <typename VecType>
@@ -114,6 +115,7 @@ FluxProjector<VecType>::FluxProjector(const MaterialOperator &mat_op,
   ksp->SetOperators(*M, *M);
 
   rhs.SetSize(h1d_fespace.GetTrueVSize());
+  rhs.UseDevice(true);
 }
 
 template <typename VecType>
@@ -161,6 +163,7 @@ CurlFluxErrorEstimator<VecType>::CurlFluxErrorEstimator(const MaterialOperator &
     projector(mat_op, nd_fespace, tol, max_it, print), F(nd_fespace.GetTrueVSize()),
     F_gf(&nd_fespace.Get()), U_gf(&nd_fespace.Get())
 {
+  F.UseDevice(true);
 }
 
 template <typename VecType>
@@ -261,6 +264,7 @@ ErrorIndicator CurlFluxErrorEstimator<VecType>::ComputeIndicators(const VecType 
     }
     norm2 += loc_norm2;
   }
+  estimates.UseDevice(true);
 
   // Finalize the element-wise error estimates.
   Mpi::GlobalSum(1, &norm2, mesh.GetComm());
@@ -281,6 +285,7 @@ GradFluxErrorEstimator::GradFluxErrorEstimator(const MaterialOperator &mat_op,
     projector(mat_op, h1_fespace, *h1d_fespace, tol, max_it, print),
     F(h1d_fespace->GetTrueVSize()), F_gf(&h1d_fespace->Get()), U_gf(&h1_fespace.Get())
 {
+  F.UseDevice(true);
 }
 
 ErrorIndicator GradFluxErrorEstimator::ComputeIndicators(const Vector &U) const
@@ -351,6 +356,7 @@ ErrorIndicator GradFluxErrorEstimator::ComputeIndicators(const Vector &U) const
     }
     norm2 += loc_norm2;
   }
+  estimates.UseDevice(true);
 
   // Finalize the element-wise error estimates.
   Mpi::GlobalSum(1, &norm2, mesh.GetComm());

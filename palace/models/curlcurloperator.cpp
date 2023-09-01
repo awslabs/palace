@@ -196,6 +196,7 @@ void CurlCurlOperator::GetExcitationVector(int idx, Vector &RHS)
   SumVectorCoefficient fb(GetMesh().SpaceDimension());
   surf_j_op.AddExcitationBdrCoefficients(idx, fb);
   RHS.SetSize(GetNDSpace().GetTrueVSize());
+  RHS.UseDevice(true);
   RHS = 0.0;
   int empty = (fb.empty());
   Mpi::GlobalMin(1, &empty, GetComm());

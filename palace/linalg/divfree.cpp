@@ -109,6 +109,8 @@ DivFreeSolver<VecType>::DivFreeSolver(
 
   psi.SetSize(h1_fespaces.GetFinestFESpace().GetTrueVSize());
   rhs.SetSize(h1_fespaces.GetFinestFESpace().GetTrueVSize());
+  psi.UseDevice(true);
+  rhs.UseDevice(true);
 }
 
 template <typename VecType>

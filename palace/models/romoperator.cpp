@@ -101,6 +101,8 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &spaceop) : spaceop
   // Initialize temporary vector storage.
   r.SetSize(K->Height());
   w.SetSize(K->Height());
+  r.UseDevice(true);
+  w.UseDevice(true);
 
   // Set up the linear solver and set operators but don't set the operators yet (this will
   // be done during an HDM solve at a given parameter point). The preconditioner for the
@@ -356,6 +358,7 @@ double RomOperator::ComputeError(double omega)
   else
   {
     z.SetSize(r.Size());
+    z.UseDevice(true);
     kspKM->Mult(r, z);
     auto dot = linalg::Dot(spaceop.GetComm(), z, r);
     MFEM_ASSERT(dot.real() > 0.0 && std::abs(dot.imag()) < 1.0e-9 * dot.real(),

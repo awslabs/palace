@@ -11,7 +11,6 @@
 namespace palace
 {
 
-using Operator = mfem::Operator;
 using Vector = mfem::Vector;
 
 //
@@ -23,7 +22,8 @@ using Vector = mfem::Vector;
 class ComplexVector
 {
 private:
-  Vector x, xr, xi;
+  // XX TODO WIP REMOVE FOR NOW (NO ALIAS) -> Vector x;
+  Vector xr, xi;
 
 public:
   // Create a vector with the given size.
@@ -36,14 +36,26 @@ public:
   ComplexVector(const Vector &yr, const Vector &yi);
 
   // Copy constructor from an array of complex values.
-  ComplexVector(const std::complex<double> *py, int n);
+  ComplexVector(const std::complex<double> *py, int n, bool on_dev);
+
+  // Flag for runtime execution on the mfem::Device. See the documentation for mfem::Vector.
+  void UseDevice(bool use_dev)
+  {
+    xr.UseDevice(use_dev);
+    xi.UseDevice(use_dev);
+  }
+  bool UseDevice() const { return xr.UseDevice() || xi.UseDevice(); }
 
   // Return the size of the vector.
-  int Size() const { return x.Size() / 2; }
+  int Size() const { return xr.Size(); }
 
   // Set the size of the vector. See the notes for Vector::SetSize for behavior in the cases
   // where n is less than or greater than Size() or Capacity().
-  void SetSize(int n);
+  void SetSize(int n)
+  {
+    xr.SetSize(n);
+    xi.SetSize(n);
+  }
 
   // Get access to the real and imaginary vector parts.
   const Vector &Real() const { return xr; }
@@ -63,10 +75,12 @@ public:
   void Set(const Vector &yr, const Vector &yi);
 
   // Set from an array of complex values, without resizing.
-  void Set(const std::complex<double> *py, int n);
+  void Set(const std::complex<double> *py, int n,
+           bool on_dev);  // XX TODO MEMORY LOCATION....
 
   // Copy the vector into an array of complex values.
-  void Get(std::complex<double> *py, int n) const;
+  void Get(std::complex<double> *py, int n,
+           bool on_dev) const;  // XX TODO MEMORY LOCATION....
 
   // Set all entries equal to s.
   ComplexVector &operator=(std::complex<double> s);
@@ -168,22 +182,12 @@ inline double Norml2(MPI_Comm comm, const VecType &x)
 {
   return std::sqrt(std::abs(Dot(comm, x, x)));
 }
-template <typename VecType>
-double Norml2(MPI_Comm comm, const VecType &x, const Operator &B, VecType &Bx);
 
 // Normalize the vector, possibly with respect to an SPD matrix B.
 template <typename VecType>
 inline double Normalize(MPI_Comm comm, VecType &x)
 {
   double norm = Norml2(comm, x);
-  MFEM_ASSERT(norm > 0.0, "Zero vector norm in normalization!");
-  x *= 1.0 / norm;
-  return norm;
-}
-template <typename VecType>
-inline double Normalize(MPI_Comm comm, VecType &x, const Operator &B, VecType &Bx)
-{
-  double norm = Norml2(comm, x, B, Bx);
   MFEM_ASSERT(norm > 0.0, "Zero vector norm in normalization!");
   x *= 1.0 / norm;
   return norm;

@@ -59,6 +59,9 @@ public:
     : fespace(&mesh.Get(), std::forward<T>(args)...), mesh(mesh)
   {
     ResetCeedObjects();
+    tx.UseDevice(true);
+    lx.UseDevice(true);
+    ly.UseDevice(true);
   }
   virtual ~FiniteElementSpace() { ResetCeedObjects(); }
 

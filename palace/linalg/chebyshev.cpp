@@ -67,41 +67,44 @@ inline void ApplyOp(const ComplexOperator &A, const ComplexVector &x, ComplexVec
 template <bool Transpose = false>
 inline void ApplyOrder0(double sr, const Vector &dinv, const Vector &r, Vector &d)
 {
+  const bool use_dev = dinv.UseDevice() || r.UseDevice() || d.UseDevice();
   const int N = d.Size();
-  const auto *DI = dinv.Read();
-  const auto *R = r.Read();
-  auto *D = d.Write();
-  mfem::forall(N, [=] MFEM_HOST_DEVICE(int i) { D[i] = sr * DI[i] * R[i]; });
+  const auto *DI = dinv.Read(use_dev);
+  const auto *R = r.Read(use_dev);
+  auto *D = d.Write(use_dev);
+  mfem::forall_switch(use_dev, N,
+                      [=] MFEM_HOST_DEVICE(int i) { D[i] = sr * DI[i] * R[i]; });
 }
 
 template <bool Transpose = false>
 inline void ApplyOrder0(const double sr, const ComplexVector &dinv, const ComplexVector &r,
                         ComplexVector &d)
 {
+  const bool use_dev = dinv.UseDevice() || r.UseDevice() || d.UseDevice();
   const int N = dinv.Size();
-  const auto *DIR = dinv.Real().Read();
-  const auto *DII = dinv.Imag().Read();
-  const auto *RR = r.Real().Read();
-  const auto *RI = r.Imag().Read();
-  auto *DR = d.Real().Write();
-  auto *DI = d.Imag().Write();
+  const auto *DIR = dinv.Real().Read(use_dev);
+  const auto *DII = dinv.Imag().Read(use_dev);
+  const auto *RR = r.Real().Read(use_dev);
+  const auto *RI = r.Imag().Read(use_dev);
+  auto *DR = d.Real().Write(use_dev);
+  auto *DI = d.Imag().Write(use_dev);
   if constexpr (!Transpose)
   {
-    mfem::forall(N,
-                 [=] MFEM_HOST_DEVICE(int i)
-                 {
-                   DR[i] = sr * (DIR[i] * RR[i] - DII[i] * RI[i]);
-                   DI[i] = sr * (DII[i] * RR[i] + DIR[i] * RI[i]);
-                 });
+    mfem::forall_switch(use_dev, N,
+                        [=] MFEM_HOST_DEVICE(int i)
+                        {
+                          DR[i] = sr * (DIR[i] * RR[i] - DII[i] * RI[i]);
+                          DI[i] = sr * (DII[i] * RR[i] + DIR[i] * RI[i]);
+                        });
   }
   else
   {
-    mfem::forall(N,
-                 [=] MFEM_HOST_DEVICE(int i)
-                 {
-                   DR[i] = sr * (DIR[i] * RR[i] + DII[i] * RI[i]);
-                   DI[i] = sr * (-DII[i] * RR[i] + DIR[i] * RI[i]);
-                 });
+    mfem::forall_switch(use_dev, N,
+                        [=] MFEM_HOST_DEVICE(int i)
+                        {
+                          DR[i] = sr * (DIR[i] * RR[i] + DII[i] * RI[i]);
+                          DI[i] = sr * (-DII[i] * RR[i] + DIR[i] * RI[i]);
+                        });
   }
 }
 
@@ -109,41 +112,44 @@ template <bool Transpose = false>
 inline void ApplyOrderK(const double sd, const double sr, const Vector &dinv,
                         const Vector &r, Vector &d)
 {
+  const bool use_dev = dinv.UseDevice() || r.UseDevice() || d.UseDevice();
   const int N = dinv.Size();
-  const auto *DI = dinv.Read();
-  const auto *R = r.Read();
-  auto *D = d.ReadWrite();
-  mfem::forall(N, [=] MFEM_HOST_DEVICE(int i) { D[i] = sd * D[i] + sr * DI[i] * R[i]; });
+  const auto *DI = dinv.Read(use_dev);
+  const auto *R = r.Read(use_dev);
+  auto *D = d.ReadWrite(use_dev);
+  mfem::forall_switch(
+      use_dev, N, [=] MFEM_HOST_DEVICE(int i) { D[i] = sd * D[i] + sr * DI[i] * R[i]; });
 }
 
 template <bool Transpose = false>
 inline void ApplyOrderK(const double sd, const double sr, const ComplexVector &dinv,
                         const ComplexVector &r, ComplexVector &d)
 {
+  const bool use_dev = dinv.UseDevice() || r.UseDevice() || d.UseDevice();
   const int N = dinv.Size();
-  const auto *DIR = dinv.Real().Read();
-  const auto *DII = dinv.Imag().Read();
-  const auto *RR = r.Real().Read();
-  const auto *RI = r.Imag().Read();
-  auto *DR = d.Real().ReadWrite();
-  auto *DI = d.Imag().ReadWrite();
+  const auto *DIR = dinv.Real().Read(use_dev);
+  const auto *DII = dinv.Imag().Read(use_dev);
+  const auto *RR = r.Real().Read(use_dev);
+  const auto *RI = r.Imag().Read(use_dev);
+  auto *DR = d.Real().ReadWrite(use_dev);
+  auto *DI = d.Imag().ReadWrite(use_dev);
   if constexpr (!Transpose)
   {
-    mfem::forall(N,
-                 [=] MFEM_HOST_DEVICE(int i)
-                 {
-                   DR[i] = sd * DR[i] + sr * (DIR[i] * RR[i] - DII[i] * RI[i]);
-                   DI[i] = sd * DI[i] + sr * (DII[i] * RR[i] + DIR[i] * RI[i]);
-                 });
+    mfem::forall_switch(use_dev, N,
+                        [=] MFEM_HOST_DEVICE(int i)
+                        {
+                          DR[i] = sd * DR[i] + sr * (DIR[i] * RR[i] - DII[i] * RI[i]);
+                          DI[i] = sd * DI[i] + sr * (DII[i] * RR[i] + DIR[i] * RI[i]);
+                        });
   }
   else
   {
-    mfem::forall(N,
-                 [=] MFEM_HOST_DEVICE(int i)
-                 {
-                   DR[i] = sd * DR[i] + sr * (DIR[i] * RR[i] + DII[i] * RI[i]);
-                   DI[i] = sd * DI[i] + sr * (-DII[i] * RR[i] + DIR[i] * RI[i]);
-                 });
+    mfem::forall_switch(use_dev, N,
+                        [=] MFEM_HOST_DEVICE(int i)
+                        {
+                          DR[i] = sd * DR[i] + sr * (DIR[i] * RR[i] + DII[i] * RI[i]);
+                          DI[i] = sd * DI[i] + sr * (-DII[i] * RR[i] + DIR[i] * RI[i]);
+                        });
   }
 }
 
@@ -164,6 +170,8 @@ void ChebyshevSmoother<OperType>::SetOperator(const OperType &op)
   A = &op;
   d.SetSize(op.Height());
   dinv.SetSize(op.Height());
+  d.UseDevice(true);
+  dinv.UseDevice(true);
   op.AssembleDiagonal(dinv);
   dinv.Reciprocal();
 
@@ -223,6 +231,8 @@ void ChebyshevSmoother1stKind<OperType>::SetOperator(const OperType &op)
   A = &op;
   d.SetSize(op.Height());
   dinv.SetSize(op.Height());
+  d.UseDevice(true);
+  dinv.UseDevice(true);
   op.AssembleDiagonal(dinv);
   dinv.Reciprocal();
 

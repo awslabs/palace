@@ -86,6 +86,7 @@ void GetInitialSpace(const mfem::ParFiniteElementSpace &nd_fespace,
   // Initial space which satisfies Dirichlet BCs.
   const int nd_size = nd_fespace.GetTrueVSize(), h1_size = h1_fespace.GetTrueVSize();
   v.SetSize(nd_size + h1_size);
+  v.UseDevice(true);
   v = std::complex<double>(1.0, 0.0);
   // linalg::SetRandomReal(nd_fespace.GetComm(), v);
   linalg::SetSubVector(v, nd_size, nd_size + h1_size, 0.0);
@@ -588,6 +589,8 @@ WavePortData::WavePortData(const config::WavePortData &data,
   GetInitialSpace(*port_nd_fespace, *port_h1_fespace, port_dbc_tdof_list, v0);
   e0.SetSize(port_nd_fespace->GetTrueVSize() + port_h1_fespace->GetTrueVSize());
   e0n.SetSize(port_h1_fespace->GetTrueVSize());
+  e0.UseDevice(true);
+  e0n.UseDevice(true);
 
   // The operators for the generalized eigenvalue problem are:
   //                [Aₜₜ  Aₜₙ] [eₜ] = -kₙ² [Bₜₜ  0ₜₙ] [eₜ]
@@ -899,6 +902,10 @@ void WavePortData::Initialize(double omega)
     Vector e0ti(e0.Imag(), 0, port_nd_fespace->GetTrueVSize());
     Vector e0ni(e0.Imag(), port_nd_fespace->GetTrueVSize(),
                 port_h1_fespace->GetTrueVSize());
+    e0tr.UseDevice(true);
+    e0nr.UseDevice(true);
+    e0ti.UseDevice(true);
+    e0ni.UseDevice(true);
     e0n.Real() = e0nr;
     e0n.Imag() = e0ni;
     e0n *= 1.0 / (1i * kn0);
@@ -927,6 +934,8 @@ void WavePortData::Initialize(double omega)
     port_si->Assemble();
     Normalize(*port_S0t, *port_E0t, *port_E0n, *port_sr, *port_si);
   }
+
+  // XX TODO UNSURE IF NEED DEVICE-HOST TRANSFER HERE
 }
 
 std::unique_ptr<mfem::VectorCoefficient>

@@ -14,6 +14,8 @@
 namespace palace
 {
 
+using Operator = mfem::Operator;
+
 //
 // Functionality extending mfem::Operator from MFEM.
 //
@@ -118,8 +120,8 @@ private:
   mutable Vector z;
 
 public:
-  SumOperator(int s) : Operator(s) {}
-  SumOperator(int h, int w) : Operator(h, w) {}
+  SumOperator(int s) : Operator(s) { z.UseDevice(true); }
+  SumOperator(int h, int w) : Operator(h, w) { z.UseDevice(true); }
   SumOperator(const Operator &op, double a = 1.0);
 
   void AddOperator(const Operator &op, double a = 1.0);
@@ -194,6 +196,7 @@ public:
     : ProductOperatorHelper<BaseProductOperator<OperType>, OperType>(A.Height(), B.Width()),
       A(A), B(B), z(B.Height())
   {
+    z.UseDevice(true);
   }
 
   void Mult(const VecType &x, VecType &y) const override
@@ -366,6 +369,20 @@ using ComplexMultigridOperator = BaseMultigridOperator<ComplexOperator>;
 
 namespace linalg
 {
+
+// Calculate the vector norm with respect to an SPD matrix B.
+template <typename VecType>
+double Norml2(MPI_Comm comm, const VecType &x, const Operator &B, VecType &Bx);
+
+// Normalize the vector with respect to an SPD matrix B.
+template <typename VecType>
+inline double Normalize(MPI_Comm comm, VecType &x, const Operator &B, VecType &Bx)
+{
+  double norm = Norml2(comm, x, B, Bx);
+  MFEM_ASSERT(norm > 0.0, "Zero vector norm in normalization!");
+  x *= 1.0 / norm;
+  return norm;
+}
 
 // Estimate operator 2-norm (spectral norm) using power iteration. Assumes the operator is
 // not symmetric or Hermitian unless specified.

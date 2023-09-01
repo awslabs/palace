@@ -42,6 +42,8 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // Configure objects for postprocessing.
   PostOperator postop(iodata, spaceop, "eigenmode");
   ComplexVector E(Curl.Width()), B(Curl.Height());
+  E.UseDevice(true);
+  B.UseDevice(true);
 
   // Define and configure the eigensolver to solve the eigenvalue problem:
   //         (K + λ C + λ² M) u = 0    or    K u = -λ² M u
@@ -194,6 +196,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     // Debug
     // const auto &Grad = spaceop.GetGradMatrix();
     // ComplexVector r0(Grad->Width());
+    // r0.UseDevice(true);
     // Grad.MultTranspose(v0.Real(), r0.Real());
     // Grad.MultTranspose(v0.Imag(), r0.Imag());
     // r0.Print();

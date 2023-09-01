@@ -51,6 +51,9 @@ void DistRelaxationSmoother<OperType>::SetOperators(const OperType &op,
   x_G.SetSize(op_G.Height());
   y_G.SetSize(op_G.Height());
   r_G.SetSize(op_G.Height());
+  x_G.UseDevice(true);
+  y_G.UseDevice(true);
+  r_G.UseDevice(true);
 
   const auto *PtAP_G = dynamic_cast<const ParOperType *>(&op_G);
   MFEM_VERIFY(PtAP_G,

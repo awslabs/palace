@@ -57,6 +57,7 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     // Form and solve the linear system for a prescribed current on the specified source.
     Mpi::Print("\n");
     A[step].SetSize(RHS.Size());
+    A[step].UseDevice(true);
     A[step] = 0.0;
     curlcurlop.GetExcitationVector(idx, RHS);
     ksp.Mult(RHS, A[step]);

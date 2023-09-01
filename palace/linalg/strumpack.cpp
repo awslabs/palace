@@ -105,6 +105,14 @@ StrumpackSolverBase<StrumpackSolverType>::StrumpackSolverBase(
     case config::LinearSolverData::CompressionType::NONE:
       break;
   }
+  if (mfem::Device::Allows(mfem::Backend::DEVICE_MASK))
+  {
+    this->EnableGPU();
+  }
+  else
+  {
+    this->DisableGPU();
+  }
 }
 
 template <typename StrumpackSolverType>

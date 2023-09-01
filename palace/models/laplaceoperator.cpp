@@ -225,6 +225,8 @@ void LaplaceOperator::GetExcitationVector(int idx, const Operator &K, Vector &X,
   // Eliminate the essential BC to get the RHS vector.
   X.SetSize(GetH1Space().GetTrueVSize());
   RHS.SetSize(GetH1Space().GetTrueVSize());
+  X.UseDevice(true);
+  RHS.UseDevice(true);
   X = 0.0;
   RHS = 0.0;
   x.ParallelProject(X);  // Restrict to the true dofs
