@@ -1,5 +1,5 @@
 diff --git a/fem/datacollection.cpp b/fem/datacollection.cpp
-index 0dc718b07..86509a9b9 100644
+index 0dc718b07..aec2c8af2 100644
 --- a/fem/datacollection.cpp
 +++ b/fem/datacollection.cpp
 @@ -210,6 +210,11 @@ void DataCollection::Save()
@@ -201,7 +201,7 @@ index 0dc718b07..86509a9b9 100644
 +   }
 +   if (pv_data_format != VTKFormat::ASCII)
 +   {
-+      WriteBase64WithSizeAndClear(os, buf, compression);
++      WriteBase64WithSizeAndClear(os, buf, GetCompressionLevel());
 +   }
 +   os << "</DataArray>" << std::endl;
 +}
