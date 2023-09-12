@@ -11,7 +11,7 @@
 #include "linalg/rap.hpp"
 #include "utils/iodata.hpp"
 
-namespace palace::utils
+namespace palace::fem
 {
 
 //
@@ -197,6 +197,6 @@ inline mfem::ParFiniteElementSpaceHierarchy ConstructFiniteElementSpaceHierarchy
   return fespaces;
 }
 
-}  // namespace palace::utils
+}  // namespace palace::fem
 
 #endif  // PALACE_FEM_MULTIGRID_HPP

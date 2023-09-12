@@ -56,8 +56,8 @@ WeightedHCurlNormSolver::WeightedHCurlNormSolver(
           a->AddDomainIntegrator(new mfem::DiffusionIntegrator(epsilon_func));
         }
         auto A_l = std::make_unique<ParOperator>(
-            utils::AssembleOperator(std::move(a), true, (l > 0) ? pa_order_threshold : 100,
-                                    skip_zeros),
+            fem::AssembleOperator(std::move(a), true, (l > 0) ? pa_order_threshold : 100,
+                                  skip_zeros),
             fespace_l);
         A_l->SetEssentialTrueDofs(dbc_tdof_lists[l], Operator::DiagonalPolicy::DIAG_ONE);
         if (s == 0)

@@ -77,17 +77,17 @@ SpaceOperator::SpaceOperator(const IoData &iodata,
     pc_mat_shifted(iodata.solver.linear.pc_mat_shifted),
     pc_mat_lor(iodata.solver.linear.pc_mat_lor), print_hdr(true), print_prec_hdr(true),
     dbc_marker(SetUpBoundaryProperties(iodata, *mesh.back())),
-    nd_fecs(utils::ConstructFECollections<mfem::ND_FECollection>(
+    nd_fecs(fem::ConstructFECollections<mfem::ND_FECollection>(
         iodata.solver.order, mesh.back()->Dimension(), iodata.solver.linear.mg_max_levels,
         iodata.solver.linear.mg_coarsen_type, pc_mat_lor)),
-    h1_fecs(utils::ConstructFECollections<mfem::H1_FECollection>(
+    h1_fecs(fem::ConstructFECollections<mfem::H1_FECollection>(
         iodata.solver.order, mesh.back()->Dimension(), iodata.solver.linear.mg_max_levels,
         iodata.solver.linear.mg_coarsen_type, false)),
     rt_fec(iodata.solver.order - 1, mesh.back()->Dimension()),
-    nd_fespaces(utils::ConstructFiniteElementSpaceHierarchy<mfem::ND_FECollection>(
+    nd_fespaces(fem::ConstructFiniteElementSpaceHierarchy<mfem::ND_FECollection>(
         iodata.solver.linear.mg_max_levels, iodata.solver.linear.mg_legacy_transfer,
         pa_order_threshold, mesh, nd_fecs, &dbc_marker, &nd_dbc_tdof_lists)),
-    h1_fespaces(utils::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
+    h1_fespaces(fem::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
         iodata.solver.linear.mg_max_levels, iodata.solver.linear.mg_legacy_transfer,
         pa_order_threshold, mesh, h1_fecs, &dbc_marker, &h1_dbc_tdof_lists)),
     rt_fespace(mesh.back().get(), &rt_fec), mat_op(iodata, *mesh.back()),
@@ -234,7 +234,7 @@ std::unique_ptr<Operator> BuildOperator(mfem::ParFiniteElementSpace &fespace, T1
   }
   else
   {
-    return utils::AssembleOperator(std::move(a), true, pa_order_threshold, skip_zeros);
+    return fem::AssembleOperator(std::move(a), true, pa_order_threshold, skip_zeros);
   }
 }
 
@@ -262,7 +262,7 @@ std::unique_ptr<Operator> BuildAuxOperator(mfem::ParFiniteElementSpace &fespace,
   }
   else
   {
-    return utils::AssembleOperator(std::move(a), true, pa_order_threshold, skip_zeros);
+    return fem::AssembleOperator(std::move(a), true, pa_order_threshold, skip_zeros);
   }
 }
 
@@ -761,7 +761,7 @@ auto BuildCurl(mfem::ParFiniteElementSpace &nd_fespace,
   // Partial assembly for this operator is only available with libCEED backend.
   auto curl = std::make_unique<mfem::DiscreteLinearOperator>(&nd_fespace, &rt_fespace);
   curl->AddDomainInterpolator(new mfem::CurlInterpolator);
-  return utils::AssembleOperator(std::move(curl), false, pa_order_threshold - 1);
+  return fem::AssembleOperator(std::move(curl), false, pa_order_threshold - 1);
 }
 
 auto BuildGrad(mfem::ParFiniteElementSpace &h1_fespace,
@@ -769,7 +769,7 @@ auto BuildGrad(mfem::ParFiniteElementSpace &h1_fespace,
 {
   auto grad = std::make_unique<mfem::DiscreteLinearOperator>(&h1_fespace, &nd_fespace);
   grad->AddDomainInterpolator(new mfem::GradientInterpolator);
-  return utils::AssembleOperator(std::move(grad), true, pa_order_threshold);
+  return fem::AssembleOperator(std::move(grad), true, pa_order_threshold);
 }
 
 }  // namespace

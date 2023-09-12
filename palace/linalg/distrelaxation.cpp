@@ -24,7 +24,7 @@ DistRelaxationSmoother<OperType>::DistRelaxationSmoother(
     auto grad = std::make_unique<mfem::DiscreteLinearOperator>(&h1_fespace, &nd_fespace);
     grad->AddDomainInterpolator(new mfem::GradientInterpolator);
     G = std::make_unique<ParOperator>(
-        utils::AssembleOperator(std::move(grad), true, pa_order_threshold), h1_fespace,
+        fem::AssembleOperator(std::move(grad), true, pa_order_threshold), h1_fespace,
         nd_fespace, true);
   }
 
