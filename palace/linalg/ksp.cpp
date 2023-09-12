@@ -23,40 +23,25 @@ template <typename OperType>
 std::unique_ptr<IterativeSolver<OperType>> ConfigureKrylovSolver(MPI_Comm comm,
                                                                  const IoData &iodata)
 {
-  // Configure solver settings as needed based on inputs.
-  config::LinearSolverData::KspType type = iodata.solver.linear.ksp_type;
-  if (type == config::LinearSolverData::KspType::DEFAULT)
-  {
-    if (iodata.problem.type == config::ProblemData::Type::ELECTROSTATIC ||
-        iodata.problem.type == config::ProblemData::Type::MAGNETOSTATIC ||
-        iodata.problem.type == config::ProblemData::Type::TRANSIENT)
-    {
-      type = config::LinearSolverData::KspType::CG;
-    }
-    else
-    {
-      type = config::LinearSolverData::KspType::GMRES;
-    }
-  }
-
   // Create the solver.
   std::unique_ptr<IterativeSolver<OperType>> ksp;
+  const auto type = iodata.solver.linear.ksp_type;
+  const int print = iodata.problem.verbose;
   switch (type)
   {
     case config::LinearSolverData::KspType::CG:
-      ksp = std::make_unique<CgSolver<OperType>>(comm, iodata.problem.verbose);
+      ksp = std::make_unique<CgSolver<OperType>>(comm, print);
       break;
     case config::LinearSolverData::KspType::GMRES:
       {
-        auto gmres = std::make_unique<GmresSolver<OperType>>(comm, iodata.problem.verbose);
+        auto gmres = std::make_unique<GmresSolver<OperType>>(comm, print);
         gmres->SetRestartDim(iodata.solver.linear.max_size);
         ksp = std::move(gmres);
       }
       break;
     case config::LinearSolverData::KspType::FGMRES:
       {
-        auto fgmres =
-            std::make_unique<FgmresSolver<OperType>>(comm, iodata.problem.verbose);
+        auto fgmres = std::make_unique<FgmresSolver<OperType>>(comm, print);
         fgmres->SetRestartDim(iodata.solver.linear.max_size);
         ksp = std::move(fgmres);
       }
@@ -124,39 +109,10 @@ ConfigurePreconditionerSolver(MPI_Comm comm, const IoData &iodata,
                               mfem::ParFiniteElementSpaceHierarchy &fespaces,
                               mfem::ParFiniteElementSpaceHierarchy *aux_fespaces)
 {
-  // Configure solver settings as needed based on inputs.
-  config::LinearSolverData::Type type = iodata.solver.linear.type;
-  if (type == config::LinearSolverData::Type::DEFAULT)
-  {
-    if (iodata.problem.type == config::ProblemData::Type::ELECTROSTATIC ||
-        (iodata.problem.type == config::ProblemData::Type::TRANSIENT &&
-         iodata.solver.transient.type == config::TransientSolverData::Type::CENTRAL_DIFF))
-    {
-      type = config::LinearSolverData::Type::BOOMER_AMG;
-    }
-    else if (iodata.problem.type == config::ProblemData::Type::MAGNETOSTATIC ||
-             iodata.problem.type == config::ProblemData::Type::TRANSIENT)
-    {
-      type = config::LinearSolverData::Type::AMS;
-    }
-    else
-    {
-      // Prefer sparse direct solver for frequency domain problems if available.
-#if defined(MFEM_USE_SUPERLU)
-      type = config::LinearSolverData::Type::SUPERLU;
-#elif defined(MFEM_USE_STRUMPACK)
-      type = config::LinearSolverData::Type::STRUMPACK;
-#elif defined(MFEM_USE_MUMPS)
-      type = config::LinearSolverData::Type::MUMPS;
-#else
-      type = config::LinearSolverData::Type::AMS;
-#endif
-    }
-  }
-  int print = iodata.problem.verbose - 1;
-
   // Create the real-valued solver first.
   std::unique_ptr<mfem::Solver> pc0;
+  const auto type = iodata.solver.linear.type;
+  const int print = iodata.problem.verbose - 1;
   switch (type)
   {
     case config::LinearSolverData::Type::AMS:
