@@ -1,8 +1,8 @@
 diff --git a/.gitignore b/.gitignore
-index f87ea59b9..6e2ed719a 100644
+index 3b27c313b..c1b41301e 100644
 --- a/.gitignore
 +++ b/.gitignore
-@@ -226,7 +226,7 @@ miniapps/meshing/mobius-strip.mesh
+@@ -227,7 +227,7 @@ miniapps/meshing/mobius-strip.mesh
  miniapps/meshing/klein-bottle.mesh
  miniapps/meshing/toroid-*.mesh
  miniapps/meshing/twist-*.mesh
@@ -1699,7 +1699,7 @@ index b373fb72d..419745f1b 100644
  }
  
 diff --git a/mesh/pmesh.cpp b/mesh/pmesh.cpp
-index cffe6828e..4d08285e9 100644
+index cffe6828e..d9f0df7b1 100644
 --- a/mesh/pmesh.cpp
 +++ b/mesh/pmesh.cpp
 @@ -238,6 +238,8 @@ ParMesh::ParMesh(MPI_Comm comm, Mesh &mesh, int *partitioning_,
@@ -1723,7 +1723,7 @@ index cffe6828e..4d08285e9 100644
     {
        os << "total_shared_faces " << sface_lface.Size() << '\n';
     }
-+   out << "\n# group 0 has no shared entities\n";
++   os << "\n# group 0 has no shared entities\n";
     for (int gr = 1; gr < GetNGroups(); gr++)
     {
        {
@@ -1788,10 +1788,10 @@ index c434ae903..b72e5db55 100644
     void SetRefinementFlag(int rf) { refinement_flag = rf; }
  
 diff --git a/miniapps/meshing/makefile b/miniapps/meshing/makefile
-index 315dc4465..656f80d0e 100644
+index 1ccec0455..e34a5637e 100644
 --- a/miniapps/meshing/makefile
 +++ b/miniapps/meshing/makefile
-@@ -121,7 +121,7 @@ clean-build:
+@@ -123,7 +123,7 @@ clean-build:
  	rm -rf *.dSYM *.TVD.*breakpoints
  
  clean-exec:

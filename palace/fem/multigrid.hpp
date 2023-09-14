@@ -11,7 +11,7 @@
 #include "linalg/rap.hpp"
 #include "utils/iodata.hpp"
 
-namespace palace::utils
+namespace palace::fem
 {
 
 //
@@ -19,18 +19,27 @@ namespace palace::utils
 //
 
 // Helper function for getting the order of the finite element space underlying a bilinear
-// form.
+// form. MFEM's RT_FECollection actually returns order + 1 for GetOrder() for historical
+// reasons.
 inline auto GetMaxElementOrder(mfem::BilinearForm &a)
 {
-  return a.FESpace()->GetMaxElementOrder();
+  const auto &fec = *a.FESpace()->FEColl();
+  return dynamic_cast<const mfem::RT_FECollection *>(&fec) ? fec.GetOrder() - 1
+                                                           : fec.GetOrder();
 }
 
 // Helper function for getting the order of the finite element space underlying a mixed
-// bilinear form.
+// bilinear form. MFEM's RT_FECollection actually returns order + 1 for GetOrder() for
+// historical reasons.
 inline auto GetMaxElementOrder(mfem::MixedBilinearForm &a)
 {
-  return std::max(a.TestFESpace()->GetMaxElementOrder(),
-                  a.TrialFESpace()->GetMaxElementOrder());
+  const auto &trial_fec = *a.TrialFESpace()->FEColl();
+  const auto &test_fec = *a.TestFESpace()->FEColl();
+  return std::max(
+      dynamic_cast<const mfem::RT_FECollection *>(&trial_fec) ? trial_fec.GetOrder() - 1
+                                                              : trial_fec.GetOrder(),
+      dynamic_cast<const mfem::RT_FECollection *>(&test_fec) ? test_fec.GetOrder() - 1
+                                                             : test_fec.GetOrder());
 }
 
 // Assemble a bilinear or mixed bilinear form. If the order is lower than the specified
@@ -188,6 +197,6 @@ inline mfem::ParFiniteElementSpaceHierarchy ConstructFiniteElementSpaceHierarchy
   return fespaces;
 }
 
-}  // namespace palace::utils
+}  // namespace palace::fem
 
 #endif  // PALACE_FEM_MULTIGRID_HPP

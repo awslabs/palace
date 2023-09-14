@@ -56,8 +56,8 @@ WeightedHCurlNormSolver::WeightedHCurlNormSolver(
           a->AddDomainIntegrator(new mfem::DiffusionIntegrator(epsilon_func));
         }
         auto A_l = std::make_unique<ParOperator>(
-            utils::AssembleOperator(std::move(a), true, (l > 0) ? pa_order_threshold : 100,
-                                    skip_zeros),
+            fem::AssembleOperator(std::move(a), true, (l > 0) ? pa_order_threshold : 100,
+                                  skip_zeros),
             fespace_l);
         A_l->SetEssentialTrueDofs(dbc_tdof_lists[l], Operator::DiagonalPolicy::DIAG_ONE);
         if (s == 0)
@@ -78,9 +78,17 @@ WeightedHCurlNormSolver::WeightedHCurlNormSolver(
   auto ams = std::make_unique<WrapperSolver<Operator>>(std::make_unique<HypreAmsSolver>(
       nd_fespaces.GetFESpaceAtLevel(0), h1_fespaces.GetFESpaceAtLevel(0), 1, 1, 1, false,
       false, 0));
-  auto gmg = std::make_unique<GeometricMultigridSolver<Operator>>(
-      std::move(ams), nd_fespaces, &h1_fespaces, 1, 1, 2, 1.0, 0.0, true,
-      pa_order_threshold);
+  std::unique_ptr<Solver<Operator>> pc;
+  if (nd_fespaces.GetNumLevels() > 1)
+  {
+    pc = std::make_unique<GeometricMultigridSolver<Operator>>(
+        std::move(ams), nd_fespaces, &h1_fespaces, 1, 1, 2, 1.0, 0.0, true,
+        pa_order_threshold);
+  }
+  else
+  {
+    pc = std::move(ams);
+  }
 
   auto pcg =
       std::make_unique<CgSolver<Operator>>(nd_fespaces.GetFinestFESpace().GetComm(), print);
@@ -88,7 +96,7 @@ WeightedHCurlNormSolver::WeightedHCurlNormSolver(
   pcg->SetRelTol(tol);
   pcg->SetMaxIter(max_it);
 
-  ksp = std::make_unique<KspSolver>(std::move(pcg), std::move(gmg));
+  ksp = std::make_unique<KspSolver>(std::move(pcg), std::move(pc));
   ksp->SetOperators(*A, *A);
 }
 

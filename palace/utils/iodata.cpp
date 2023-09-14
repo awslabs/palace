@@ -327,10 +327,50 @@ void IoData::CheckConfiguration()
     }
   }
 
-  // Resolve default values in configuration file.
-
   // XX TODO: Default value for pa_order_threshold if we want PA enabled by default
 
+  // Resolve default values in configuration file.
+  if (solver.linear.type == config::LinearSolverData::Type::DEFAULT)
+  {
+    if (problem.type == config::ProblemData::Type::ELECTROSTATIC ||
+        (problem.type == config::ProblemData::Type::TRANSIENT &&
+         solver.transient.type == config::TransientSolverData::Type::CENTRAL_DIFF))
+    {
+      solver.linear.type = config::LinearSolverData::Type::BOOMER_AMG;
+    }
+    else if (problem.type == config::ProblemData::Type::MAGNETOSTATIC ||
+             problem.type == config::ProblemData::Type::TRANSIENT)
+    {
+      solver.linear.type = config::LinearSolverData::Type::AMS;
+    }
+    else
+    {
+      // Prefer sparse direct solver for frequency domain problems if available.
+#if defined(MFEM_USE_SUPERLU)
+      solver.linear.type = config::LinearSolverData::Type::SUPERLU;
+#elif defined(MFEM_USE_STRUMPACK)
+      solver.linear.type = config::LinearSolverData::Type::STRUMPACK;
+#elif defined(MFEM_USE_MUMPS)
+      solver.linear.type = config::LinearSolverData::Type::MUMPS;
+#else
+      solver.linear.type = config::LinearSolverData::Type::AMS;
+#endif
+    }
+  }
+  if (solver.linear.ksp_type == config::LinearSolverData::KspType::DEFAULT)
+  {
+    // Problems with SPD operators use CG by default, else GMRES.
+    if (problem.type == config::ProblemData::Type::ELECTROSTATIC ||
+        problem.type == config::ProblemData::Type::MAGNETOSTATIC ||
+        problem.type == config::ProblemData::Type::TRANSIENT)
+    {
+      solver.linear.ksp_type = config::LinearSolverData::KspType::CG;
+    }
+    else
+    {
+      solver.linear.ksp_type = config::LinearSolverData::KspType::GMRES;
+    }
+  }
   if (solver.linear.max_size < 0)
   {
     solver.linear.max_size = solver.linear.max_it;
@@ -354,19 +394,15 @@ void IoData::CheckConfiguration()
   }
   if (solver.linear.pc_mat_shifted < 0)
   {
-    solver.linear.pc_mat_shifted = 0;  // Default false for most cases
-    if (problem.type == config::ProblemData::Type::DRIVEN)
+    if (problem.type == config::ProblemData::Type::DRIVEN &&
+        solver.linear.type == config::LinearSolverData::Type::AMS)
     {
-#if defined(MFEM_USE_SUPERLU) || defined(MFEM_USE_STRUMPACK) || defined(MFEM_USE_MUMPS)
-      if (solver.linear.type == config::LinearSolverData::Type::AMS)
-#else
-      if (solver.linear.type == config::LinearSolverData::Type::AMS ||
-          solver.linear.type == config::LinearSolverData::Type::DEFAULT)
-#endif
-      {
-        // Default true only driven simulations using AMS.
-        solver.linear.pc_mat_shifted = 1;
-      }
+      // Default true only driven simulations using AMS (false for most cases).
+      solver.linear.pc_mat_shifted = 1;
+    }
+    else
+    {
+      solver.linear.pc_mat_shifted = 0;
     }
   }
   if (solver.linear.mg_smooth_aux < 0)

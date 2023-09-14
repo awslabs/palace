@@ -325,9 +325,10 @@ void RefineMesh(const IoData &iodata, std::vector<std::unique_ptr<mfem::ParMesh>
   mfem::Vector bbmin, bbmax;
   mesh[0]->GetBoundingBox(bbmin, bbmax);
   const double Lc = iodata.DimensionalizeValue(IoData::ValueType::LENGTH, 1.0);
-  Mpi::Print(mesh[0]->GetComm(), "\nMesh curvature order: {:d}\nMesh bounding box:\n",
-             mesh[0]->GetNodes() ? mesh[0]->GetNodes()->FESpace()->GetMaxElementOrder()
-                                 : 1);
+  Mpi::Print(mesh[0]->GetComm(), "\nMesh curvature order: {}\nMesh bounding box:\n",
+             mesh[0]->GetNodes()
+                 ? std::to_string(mesh[0]->GetNodes()->FESpace()->GetMaxElementOrder())
+                 : "None");
   if (mesh[0]->SpaceDimension() == 3)
   {
     Mpi::Print(mesh[0]->GetComm(),
@@ -1143,14 +1144,17 @@ std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &path, bool remove_curvat
     }
     mesh = std::make_unique<mfem::Mesh>(fi, generate_edges, refine, fix_orientation);
   }
-  if (mesh->GetNodes() && remove_curvature)
+  if (remove_curvature)
   {
-    mfem::GridFunction *nodes = nullptr;
-    int own_nodes = true;
-    mesh->SwapNodes(nodes, own_nodes);
-    if (own_nodes)
+    if (mesh->GetNodes())
     {
-      delete nodes;
+      mfem::GridFunction *nodes = nullptr;
+      int own_nodes = true;
+      mesh->SwapNodes(nodes, own_nodes);
+      if (own_nodes)
+      {
+        delete nodes;
+      }
     }
   }
   else

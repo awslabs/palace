@@ -90,8 +90,8 @@ file. The resulting postprocessed values are written to `postpro/surface-M.csv`:
 
 ```
             i,                M[1] (H),                M[2] (H)
- 1.000000e+00,        +4.257285432e-11,        +1.830940539e-12
- 2.000000e+00,        +1.955250721e-12,        +7.130247701e-10
+ 1.000000e+00,        +4.257573396e-11,        +1.833994389e-12
+ 2.000000e+00,        +1.955277478e-12,        +7.130247940e-10
 ```
 
 The values computed using the flux integral method are in close agreement to those above, as

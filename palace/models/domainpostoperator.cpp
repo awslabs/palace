@@ -30,7 +30,7 @@ DomainPostOperator::DomainPostOperator(const IoData &iodata, const MaterialOpera
     MaterialPropertyCoefficient<MatTypeEpsReal> epsilon_func(mat_op);
     auto m_nd = std::make_unique<mfem::SymmetricBilinearForm>(nd_fespace);
     m_nd->AddDomainIntegrator(new mfem::VectorFEMassIntegrator(epsilon_func));
-    M_ND = utils::AssembleOperator(std::move(m_nd), true, pa_order_threshold, skip_zeros);
+    M_ND = fem::AssembleOperator(std::move(m_nd), true, pa_order_threshold, skip_zeros);
     D.SetSize(M_ND->Height());
 
     // Use the provided domain postprocessing indices to group for postprocessing bulk
@@ -56,11 +56,11 @@ DomainPostOperator::DomainPostOperator(const IoData &iodata, const MaterialOpera
       auto mi_nd = std::make_unique<mfem::SymmetricBilinearForm>(nd_fespace);
       mr_nd->AddDomainIntegrator(new mfem::VectorFEMassIntegrator(epsilon_func_r));
       mi_nd->AddDomainIntegrator(new mfem::VectorFEMassIntegrator(epsilon_func_i));
-      M_NDi.emplace(
-          idx, std::make_pair(utils::AssembleOperator(std::move(mr_nd), true,
-                                                      pa_order_threshold, skip_zeros),
-                              utils::AssembleOperator(std::move(mi_nd), true,
-                                                      pa_order_threshold, skip_zeros)));
+      M_NDi.emplace(idx,
+                    std::make_pair(fem::AssembleOperator(std::move(mr_nd), true,
+                                                         pa_order_threshold, skip_zeros),
+                                   fem::AssembleOperator(std::move(mi_nd), true,
+                                                         pa_order_threshold, skip_zeros)));
     }
   }
 
@@ -73,8 +73,7 @@ DomainPostOperator::DomainPostOperator(const IoData &iodata, const MaterialOpera
     MaterialPropertyCoefficient<MatTypeMuInv> muinv_func(mat_op);
     auto m_rt = std::make_unique<mfem::SymmetricBilinearForm>(rt_fespace);
     m_rt->AddDomainIntegrator(new mfem::VectorFEMassIntegrator(muinv_func));
-    M_RT =
-        utils::AssembleOperator(std::move(m_rt), true, pa_order_threshold - 1, skip_zeros);
+    M_RT = fem::AssembleOperator(std::move(m_rt), true, pa_order_threshold - 1, skip_zeros);
     H.SetSize(M_RT->Height());
   }
 }

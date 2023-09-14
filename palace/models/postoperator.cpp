@@ -163,6 +163,7 @@ void PostOperator::InitializeDataCollection(const IoData &iodata)
       iodata.DimensionalizeValue(IoData::ValueType::LENGTH, 1.0 / iodata.model.L0);
 
   // Output mesh coordinate units same as input.
+  paraview.SetCycle(-1);
   paraview.SetDataFormat(format);
   paraview.SetCompressionLevel(compress);
   paraview.SetHighOrderOutput(use_ho);
@@ -170,6 +171,7 @@ void PostOperator::InitializeDataCollection(const IoData &iodata)
   paraview.SetLengthScale(mesh_Lc0);
 
   paraview_bdr.SetBoundaryOutput(true);
+  paraview_bdr.SetCycle(-1);
   paraview_bdr.SetDataFormat(format);
   paraview_bdr.SetCompressionLevel(compress);
   paraview_bdr.SetHighOrderOutput(use_ho);

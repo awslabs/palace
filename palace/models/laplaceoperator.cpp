@@ -115,11 +115,11 @@ LaplaceOperator::LaplaceOperator(const IoData &iodata,
                                  const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh)
   : pa_order_threshold(iodata.solver.pa_order_threshold), skip_zeros(0), print_hdr(true),
     dbc_marker(SetUpBoundaryProperties(iodata, *mesh.back())),
-    h1_fecs(utils::ConstructFECollections<mfem::H1_FECollection>(
+    h1_fecs(fem::ConstructFECollections<mfem::H1_FECollection>(
         iodata.solver.order, mesh.back()->Dimension(), iodata.solver.linear.mg_max_levels,
         iodata.solver.linear.mg_coarsen_type, false)),
     nd_fec(iodata.solver.order, mesh.back()->Dimension()),
-    h1_fespaces(utils::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
+    h1_fespaces(fem::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
         iodata.solver.linear.mg_max_levels, iodata.solver.linear.mg_legacy_transfer,
         pa_order_threshold, mesh, h1_fecs, &dbc_marker, &dbc_tdof_lists)),
     nd_fespace(mesh.back().get(), &nd_fec), mat_op(iodata, *mesh.back()),
@@ -158,8 +158,8 @@ std::unique_ptr<Operator> LaplaceOperator::GetStiffnessMatrix()
     auto k = std::make_unique<mfem::SymmetricBilinearForm>(&h1_fespace_l);
     k->AddDomainIntegrator(new mfem::DiffusionIntegrator(epsilon_func));
     auto K_l = std::make_unique<ParOperator>(
-        utils::AssembleOperator(std::move(k), true, (l > 0) ? pa_order_threshold : 100,
-                                skip_zeros),
+        fem::AssembleOperator(std::move(k), true, (l > 0) ? pa_order_threshold : 100,
+                              skip_zeros),
         h1_fespace_l);
     if (print_hdr)
     {
@@ -187,7 +187,7 @@ std::unique_ptr<Operator> LaplaceOperator::GetGradMatrix()
   auto grad = std::make_unique<mfem::DiscreteLinearOperator>(&GetH1Space(), &GetNDSpace());
   grad->AddDomainInterpolator(new mfem::GradientInterpolator);
   return std::make_unique<ParOperator>(
-      utils::AssembleOperator(std::move(grad), true, pa_order_threshold), GetH1Space(),
+      fem::AssembleOperator(std::move(grad), true, pa_order_threshold), GetH1Space(),
       GetNDSpace(), true);
 }
 
