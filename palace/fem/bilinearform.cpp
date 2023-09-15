@@ -96,7 +96,15 @@ std::unique_ptr<Operator> BilinearForm::Assemble() const
   {
     q_order = fem::GetDefaultIntegrationOrder(trial_fespace, test_fespace);
   }
-  auto op = std::make_unique<ceed::Operator>();
+  std::unique_ptr<ceed::Operator> op;
+  if (&trial_fespace == &test_fespace)
+  {
+    op = std::make_unique<ceed::SymmetricOperator>();
+  }
+  else
+  {
+    op = std::make_unique<ceed::Operator>();
+  }
 
   // Assemble the libCEED operator in parallel, each thread builds a composite operator.
   // This should work fine if some threads create an empty operator (no elements or bounday
@@ -214,6 +222,7 @@ std::unique_ptr<Operator> DiscreteLinearOperator::Assemble() const
 {
   // Construct dof multiplicity vector for scaling to account for dofs shared between
   // elements (on host, then copy to device).
+  const auto &test_fespace = a.GetTestSpace();
   Vector test_multiplicity(test_fespace.GetVSize());
   test_multiplicity = 0.0;
   mfem::Array<int> dofs;
@@ -230,7 +239,7 @@ std::unique_ptr<Operator> DiscreteLinearOperator::Assemble() const
   test_multiplicity.UseDevice(true);
   test_multiplicity.Reciprocal();
 
-  auto op = BilinearForm::Assemble();
+  auto op = a.Assemble();
   static_cast<ceed::Operator *>(op.get())->SetDofMultiplicity(std::move(test_multiplicity));
   return op;
 }
@@ -238,7 +247,7 @@ std::unique_ptr<Operator> DiscreteLinearOperator::Assemble() const
 std::unique_ptr<mfem::SparseMatrix>
 DiscreteLinearOperator::FullAssemble(bool skip_zeros) const
 {
-  auto op = BilinearForm::Assemble();
+  auto op = a.Assemble();
   return ceed::CeedOperatorFullAssemble(*static_cast<ceed::Operator *>(op.get()),
                                         skip_zeros, true);
 }

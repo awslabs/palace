@@ -136,17 +136,32 @@ inline void CeedAddMult(const std::vector<CeedOperator> &ops,
 
 void Operator::AddMult(const Vector &x, Vector &y, const double a) const
 {
-  MFEM_ASSERT(a == 1.0,
-              "General coefficient case for ceed::Operator::AddMult is not yet supported!");
-  CeedAddMult(ops, u, v, x, y);
-  if (dof_multiplicity.Size() > 0)
+  if (a != 1.0)
   {
-    y *= dof_multiplicity;
+    temp_y = y;
+    temp_y = 0.0;
+    CeedAddMult(ops, u, v, x, temp_y);
+    if (dof_multiplicity.Size() > 0)
+    {
+      temp_y *= dof_multiplicity;
+    }
+    linalg::AXPY(a, temp_y, y);
+  }
+  else
+  {
+    CeedAddMult(ops, u, v, x, y);
+    if (dof_multiplicity.Size() > 0)
+    {
+      y *= dof_multiplicity;  // XX TODO NOT FOR ADD MULT...
+    }
   }
 }
 
 void Operator::AddMultTranspose(const Vector &x, Vector &y, const double a) const
 {
+
+  // XX TODO WIP ON a != 1.0 CASE
+
   MFEM_ASSERT(a == 1.0, "General coefficient case for ceed::Operator::AddMultTranspose is "
                         "not yet supported!");
   if (dof_multiplicity.Size() > 0)

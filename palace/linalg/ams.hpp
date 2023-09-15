@@ -37,8 +37,8 @@ private:
   std::unique_ptr<mfem::HypreParVector> x, y, z;
 
   // Helper function to set up the auxiliary objects required by the AMS solver.
-  void ConstructAuxiliaryMatrices(mfem::ParFiniteElementSpace &nd_fespace,
-                                  mfem::ParFiniteElementSpace &h1_fespace);
+  void ConstructAuxiliaryMatrices(const mfem::ParFiniteElementSpace &nd_fespace,
+                                  const mfem::ParFiniteElementSpace &h1_fespace);
 
   // Helper function to construct and configure the AMS solver.
   void InitializeSolver();
@@ -46,12 +46,12 @@ private:
 public:
   // Constructor requires the ND space, but will construct the H1 and (H1)ᵈ spaces
   // internally as needed.
-  HypreAmsSolver(mfem::ParFiniteElementSpace &nd_fespace,
-                 mfem::ParFiniteElementSpace &h1_fespace, int cycle_it, int smooth_it,
+  HypreAmsSolver(const mfem::ParFiniteElementSpace &nd_fespace,
+                 const mfem::ParFiniteElementSpace &h1_fespace, int cycle_it, int smooth_it,
                  int agg_coarsen, bool vector_interp, bool op_singular, int print);
   HypreAmsSolver(const IoData &iodata, bool coarse_solver,
-                 mfem::ParFiniteElementSpace &nd_fespace,
-                 mfem::ParFiniteElementSpace &h1_fespace, int print)
+                 const mfem::ParFiniteElementSpace &nd_fespace,
+                 const mfem::ParFiniteElementSpace &h1_fespace, int print)
     : HypreAmsSolver(
           nd_fespace, h1_fespace, coarse_solver ? 1 : iodata.solver.linear.mg_cycle_it,
           iodata.solver.linear.mg_smooth_it,

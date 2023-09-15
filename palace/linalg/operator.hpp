@@ -327,25 +327,4 @@ double SpectralNorm(MPI_Comm comm, const ComplexOperator &A, bool herm = false,
 
 }  // namespace palace
 
-namespace mfem
-{
-
-// XX TODO WIP MOVE OUT OF HERE, INTO bilinearform.hpp, NEED TO HANDLE SYMMETRY FOR
-// LIBCEED...
-
-// A symmetric bilinear form operator which replaces *MultTranspose with *Mult.
-class SymmetricBilinearForm : public BilinearForm
-{
-public:
-  using BilinearForm::BilinearForm;
-
-  void MultTranspose(const Vector &x, Vector &y) const override { Mult(x, y); }
-  void AddMultTranspose(const Vector &x, Vector &y, double c = 1.0) const override
-  {
-    AddMult(x, y, c);
-  }
-};
-
-}  // namespace mfem
-
 #endif  // PALACE_LINALG_OPERATOR_HPP

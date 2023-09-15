@@ -1654,7 +1654,6 @@ void LinearSolverData::SetUp(json &solver)
   // Preconditioner-specific options
   pc_mat_real = linear->value("PCMatReal", pc_mat_real);
   pc_mat_shifted = linear->value("PCMatShifted", pc_mat_shifted);
-  pc_mat_lor = linear->value("PCLowOrderRefined", pc_mat_lor);
   pc_side_type = linear->value("PCSide", pc_side_type);
   sym_fact_type = linear->value("ColumnOrdering", sym_fact_type);
   strumpack_compression_type =
@@ -1690,7 +1689,6 @@ void LinearSolverData::SetUp(json &solver)
 
   linear->erase("PCMatReal");
   linear->erase("PCMatShifted");
-  linear->erase("PCLowOrderRefined");
   linear->erase("PCSide");
   linear->erase("ColumnOrdering");
   linear->erase("STRUMPACKCompressionType");
@@ -1727,7 +1725,6 @@ void LinearSolverData::SetUp(json &solver)
 
   // std::cout << "PCMatReal: " << pc_mat_real << '\n';
   // std::cout << "PCMatShifted: " << pc_mat_shifted << '\n';
-  // std::cout << "PCLowOrderRefined: " << pc_mat_lor << '\n';
   // std::cout << "PCSide: " << pc_side_type << '\n';
   // std::cout << "ColumnOrdering: " << sym_fact_type << '\n';
   // std::cout << "STRUMPACKCompressionType: " << strumpack_compression_type << '\n';
@@ -1753,6 +1750,7 @@ void SolverData::SetUp(json &config)
   device = solver->value("Device", device);
 
   // XX TODO WIP LIBCEED BACKEND, VS MFEM DEVICE (DEFAULTS)
+  // XX TODO WIP DEFAULT QUADRATURE RULE ORDER FOR BILINEAR FORMS? (MAYBE NOT FOR NOW...)
 
   driven.SetUp(*solver);
   eigenmode.SetUp(*solver);

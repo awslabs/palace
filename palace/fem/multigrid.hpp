@@ -7,6 +7,7 @@
 #include <memory>
 #include <vector>
 #include <mfem.hpp>
+#include "fem/bilinearform.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/rap.hpp"
 #include "utils/iodata.hpp"
@@ -17,66 +18,6 @@ namespace palace::fem
 //
 // Methods for constructing hierarchies of finite element spaces for geometric multigrid.
 //
-
-// Helper function for getting the order of the finite element space underlying a bilinear
-// form. MFEM's RT_FECollection actually returns order + 1 for GetOrder() for historical
-// reasons.
-inline auto GetMaxElementOrder(mfem::BilinearForm &a)
-{
-  const auto &fec = *a.FESpace()->FEColl();
-  return dynamic_cast<const mfem::RT_FECollection *>(&fec) ? fec.GetOrder() - 1
-                                                           : fec.GetOrder();
-}
-
-// Helper function for getting the order of the finite element space underlying a mixed
-// bilinear form. MFEM's RT_FECollection actually returns order + 1 for GetOrder() for
-// historical reasons.
-inline auto GetMaxElementOrder(mfem::MixedBilinearForm &a)
-{
-  const auto &trial_fec = *a.TrialFESpace()->FEColl();
-  const auto &test_fec = *a.TestFESpace()->FEColl();
-  return std::max(
-      dynamic_cast<const mfem::RT_FECollection *>(&trial_fec) ? trial_fec.GetOrder() - 1
-                                                              : trial_fec.GetOrder(),
-      dynamic_cast<const mfem::RT_FECollection *>(&test_fec) ? test_fec.GetOrder() - 1
-                                                             : test_fec.GetOrder());
-}
-
-// Assemble a bilinear or mixed bilinear form. If the order is lower than the specified
-// threshold, the operator is assembled as a sparse matrix.
-template <typename BilinearForm>
-inline std::unique_ptr<Operator>
-AssembleOperator(std::unique_ptr<BilinearForm> &&a, bool mfem_pa_support,
-                 int pa_order_threshold, int skip_zeros = 1)
-{
-  mfem::AssemblyLevel assembly_level =
-      (mfem::DeviceCanUseCeed() ||
-       (mfem_pa_support && GetMaxElementOrder(*a) >= pa_order_threshold))
-          ? mfem::AssemblyLevel::PARTIAL
-          : mfem::AssemblyLevel::LEGACY;
-  a->SetAssemblyLevel(assembly_level);
-  a->Assemble(skip_zeros);
-  a->Finalize(skip_zeros);
-  if (assembly_level == mfem::AssemblyLevel::LEGACY ||
-      (assembly_level == mfem::AssemblyLevel::PARTIAL &&
-       GetMaxElementOrder(*a) < pa_order_threshold &&
-       std::is_base_of<mfem::BilinearForm, BilinearForm>::value))
-  {
-    // libCEED full assembly does not support mixed forms.
-#ifdef MFEM_USE_CEED
-    mfem::SparseMatrix *spm =
-        a->HasExt() ? mfem::ceed::CeedOperatorFullAssemble(*a) : a->LoseMat();
-#else
-    mfem::SparseMatrix *spm = a->LoseMat();
-#endif
-    MFEM_VERIFY(spm, "Missing assembled sparse matrix!");
-    return std::unique_ptr<Operator>(spm);
-  }
-  else
-  {
-    return std::move(a);
-  }
-}
 
 // Construct sequence of FECollection objects.
 template <typename FECollection>
@@ -177,14 +118,12 @@ inline mfem::ParFiniteElementSpaceHierarchy ConstructFiniteElementSpaceHierarchy
       fespace->GetEssentialTrueDofs(*dbc_marker, dbc_tdof_lists->emplace_back());
     }
     ParOperator *P;
-    if (!mg_legacy_transfer && mfem::DeviceCanUseCeed())
+    if (!mg_legacy_transfer)
     {
-      // Partial and full assembly for this operator is only available with libCEED backend.
-      auto p = std::make_unique<mfem::DiscreteLinearOperator>(&fespaces.GetFinestFESpace(),
-                                                              fespace);
-      p->AddDomainInterpolator(new mfem::IdentityInterpolator);
-      P = new ParOperator(AssembleOperator(std::move(p), false, pa_order_threshold),
-                          fespaces.GetFinestFESpace(), *fespace, true);
+      DiscreteLinearOperator p(fespaces.GetFinestFESpace(), *fespace);
+      p.AddDomainInterpolator(std::make_unique<IdentityInterpolator>());
+      P = new ParOperator(p.Assemble(pa_order_threshold), fespaces.GetFinestFESpace(),
+                          *fespace, true);
     }
     else
     {

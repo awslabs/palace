@@ -3,6 +3,7 @@
 
 #include "curlcurloperator.hpp"
 
+#include "fem/bilinearform.hpp"
 #include "fem/coefficient.hpp"
 #include "fem/integrator.hpp"
 #include "fem/multigrid.hpp"
@@ -125,7 +126,7 @@ std::unique_ptr<Operator> CurlCurlOperator::GetStiffnessMatrix()
   for (int l = 0; l < nd_fespaces.GetNumLevels(); l++)
   {
     // Force coarse level operator to be fully assembled always.
-    auto &nd_fespace_l = nd_fespaces.GetFESpaceAtLevel(l);
+    const auto &nd_fespace_l = nd_fespaces.GetFESpaceAtLevel(l);
     if (print_hdr)
     {
       Mpi::Print(" Level {:d} (p = {:d}): {:d} unknowns", l,
@@ -133,12 +134,10 @@ std::unique_ptr<Operator> CurlCurlOperator::GetStiffnessMatrix()
     }
     constexpr auto MatType = MaterialPropertyType::INV_PERMEABILITY;
     MaterialPropertyCoefficient<MatType> muinv_func(mat_op);
-    auto k = std::make_unique<mfem::SymmetricBilinearForm>(&nd_fespace_l);
-    k->AddDomainIntegrator(new mfem::CurlCurlIntegrator(muinv_func));
+    BilinearForm k(nd_fespace_l);
+    k.AddDomainIntegrator(std::make_unique<CurlCurlIntegrator>(muinv_func));
     auto K_l = std::make_unique<ParOperator>(
-        fem::AssembleOperator(std::move(k), true, (l > 0) ? pa_order_threshold : 100,
-                              skip_zeros),
-        nd_fespace_l);
+        k.Assemble((l > 0) ? pa_order_threshold : 99, skip_zeros), nd_fespace_l);
     if (print_hdr)
     {
       if (const auto *k_spm =
@@ -162,12 +161,11 @@ std::unique_ptr<Operator> CurlCurlOperator::GetStiffnessMatrix()
 
 std::unique_ptr<Operator> CurlCurlOperator::GetCurlMatrix()
 {
-  // Partial assembly for this operator is only available with libCEED backend.
-  auto curl = std::make_unique<mfem::DiscreteLinearOperator>(&GetNDSpace(), &GetRTSpace());
-  curl->AddDomainInterpolator(new mfem::CurlInterpolator);
-  return std::make_unique<ParOperator>(
-      fem::AssembleOperator(std::move(curl), false, pa_order_threshold - 1), GetNDSpace(),
-      GetRTSpace(), true);
+  // XX TODO: Skip zeros option?
+  DiscreteLinearOperator curl(GetNDSpace(), GetRTSpace());
+  curl.AddDomainInterpolator(std::make_unique<CurlInterpolator>());
+  return std::make_unique<ParOperator>(curl.Assemble(pa_order_threshold - 1, true),
+                                       GetNDSpace(), GetRTSpace(), true);
 }
 
 void CurlCurlOperator::GetExcitationVector(int idx, Vector &RHS)

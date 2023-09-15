@@ -765,10 +765,6 @@ public:
   // (makes the preconditoner matrix SPD).
   int pc_mat_shifted = -1;
 
-  // Enable low-order refined (LOR) preconditioner construction. Only available for meshes
-  // based on tensor-product elements.
-  bool pc_mat_lor = false;
-
   // Choose left or right preconditioning.
   enum class SideType
   {

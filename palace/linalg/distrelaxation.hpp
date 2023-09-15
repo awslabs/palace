@@ -51,8 +51,8 @@ private:
   mutable VecType r, x_G, y_G;
 
 public:
-  DistRelaxationSmoother(mfem::ParFiniteElementSpace &nd_fespace,
-                         mfem::ParFiniteElementSpace &h1_fespace, int smooth_it,
+  DistRelaxationSmoother(const mfem::ParFiniteElementSpace &nd_fespace,
+                         const mfem::ParFiniteElementSpace &h1_fespace, int smooth_it,
                          int cheby_smooth_it, int cheby_order, double cheby_sf_max,
                          double cheby_sf_min, bool cheby_4th_kind, int pa_order_threshold);
 

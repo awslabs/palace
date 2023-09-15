@@ -43,8 +43,9 @@ private:
   mutable Vector psi, rhs;
 
 public:
-  DivFreeSolver(const MaterialOperator &mat_op, mfem::ParFiniteElementSpace &nd_fespace,
-                mfem::ParFiniteElementSpaceHierarchy &h1_fespaces,
+  DivFreeSolver(const MaterialOperator &mat_op,
+                const mfem::ParFiniteElementSpace &nd_fespace,
+                const mfem::ParFiniteElementSpaceHierarchy &h1_fespaces,
                 const std::vector<mfem::Array<int>> &h1_bdr_tdof_lists, double tol,
                 int max_it, int print, int pa_order_threshold);
 

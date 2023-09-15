@@ -17,7 +17,7 @@ namespace palace::ceed
 namespace internal
 {
 
-using RestrKey = std::tuple<Ceed, void *, int, int>;
+using RestrKey = std::tuple<Ceed, void *, int, int, int>;
 
 struct RestrHash
 {
@@ -25,7 +25,9 @@ struct RestrHash
   {
     return CeedHashCombine(
         CeedHashCombine(CeedHash(std::get<0>(k)), CeedHash(std::get<1>(k))),
-        CeedHashCombine(CeedHash(std::get<2>(k)), CeedHash(std::get<3>(k))));
+        CeedHashCombine(
+            CeedHash(std::get<2>(k)),
+            CeedHashCombine(CeedHash(std::get<3>(k)), CeedHash(std::get<4>(k)))));
   }
 };
 

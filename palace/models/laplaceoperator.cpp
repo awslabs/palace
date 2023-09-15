@@ -3,6 +3,7 @@
 
 #include "laplaceoperator.hpp"
 
+#include "fem/bilinearform.hpp"
 #include "fem/coefficient.hpp"
 #include "fem/multigrid.hpp"
 #include "linalg/rap.hpp"
@@ -147,7 +148,7 @@ std::unique_ptr<Operator> LaplaceOperator::GetStiffnessMatrix()
   for (int l = 0; l < h1_fespaces.GetNumLevels(); l++)
   {
     // Force coarse level operator to be fully assembled always.
-    auto &h1_fespace_l = h1_fespaces.GetFESpaceAtLevel(l);
+    const auto &h1_fespace_l = h1_fespaces.GetFESpaceAtLevel(l);
     if (print_hdr)
     {
       Mpi::Print(" Level {:d} (p = {:d}): {:d} unknowns", l,
@@ -155,12 +156,10 @@ std::unique_ptr<Operator> LaplaceOperator::GetStiffnessMatrix()
     }
     constexpr auto MatType = MaterialPropertyType::PERMITTIVITY_REAL;
     MaterialPropertyCoefficient<MatType> epsilon_func(mat_op);
-    auto k = std::make_unique<mfem::SymmetricBilinearForm>(&h1_fespace_l);
-    k->AddDomainIntegrator(new mfem::DiffusionIntegrator(epsilon_func));
+    BilinearForm k(h1_fespace_l);
+    k.AddDomainIntegrator(std::make_unique<DiffusionIntegrator>(epsilon_func));
     auto K_l = std::make_unique<ParOperator>(
-        fem::AssembleOperator(std::move(k), true, (l > 0) ? pa_order_threshold : 100,
-                              skip_zeros),
-        h1_fespace_l);
+        k.Assemble((l > 0) ? pa_order_threshold : 99, skip_zeros), h1_fespace_l);
     if (print_hdr)
     {
       if (const auto *k_spm =
@@ -184,11 +183,11 @@ std::unique_ptr<Operator> LaplaceOperator::GetStiffnessMatrix()
 
 std::unique_ptr<Operator> LaplaceOperator::GetGradMatrix()
 {
-  auto grad = std::make_unique<mfem::DiscreteLinearOperator>(&GetH1Space(), &GetNDSpace());
-  grad->AddDomainInterpolator(new mfem::GradientInterpolator);
-  return std::make_unique<ParOperator>(
-      fem::AssembleOperator(std::move(grad), true, pa_order_threshold), GetH1Space(),
-      GetNDSpace(), true);
+  // XX TODO: Skip zeros option?
+  DiscreteLinearOperator grad(GetH1Space(), GetNDSpace());
+  grad.AddDomainInterpolator(std::make_unique<GradientInterpolator>());
+  return std::make_unique<ParOperator>(grad.Assemble(pa_order_threshold, true),
+                                       GetH1Space(), GetNDSpace(), true);
 }
 
 void LaplaceOperator::GetExcitationVector(int idx, const Operator &K, Vector &X,

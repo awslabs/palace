@@ -4,8 +4,8 @@
 #include "hcurl.hpp"
 
 #include <mfem.hpp>
+#include "fem/bilinearform.hpp"
 #include "fem/coefficient.hpp"
-#include "fem/multigrid.hpp"
 #include "linalg/ams.hpp"
 #include "linalg/gmg.hpp"
 #include "linalg/iterative.hpp"
@@ -16,8 +16,8 @@ namespace palace
 {
 
 WeightedHCurlNormSolver::WeightedHCurlNormSolver(
-    const MaterialOperator &mat_op, mfem::ParFiniteElementSpaceHierarchy &nd_fespaces,
-    mfem::ParFiniteElementSpaceHierarchy &h1_fespaces,
+    const MaterialOperator &mat_op, const mfem::ParFiniteElementSpaceHierarchy &nd_fespaces,
+    const mfem::ParFiniteElementSpaceHierarchy &h1_fespaces,
     const std::vector<mfem::Array<int>> &nd_dbc_tdof_lists,
     const std::vector<mfem::Array<int>> &h1_dbc_tdof_lists, double tol, int max_it,
     int print, int pa_order_threshold)
@@ -31,37 +31,24 @@ WeightedHCurlNormSolver::WeightedHCurlNormSolver(
     auto A_mg = std::make_unique<MultigridOperator>(nd_fespaces.GetNumLevels());
     for (int s = 0; s < 2; s++)
     {
-      auto &fespaces = (s == 0) ? nd_fespaces : h1_fespaces;
-      auto &dbc_tdof_lists = (s == 0) ? nd_dbc_tdof_lists : h1_dbc_tdof_lists;
+      const auto &fespaces = (s == 0) ? nd_fespaces : h1_fespaces;
+      const auto &dbc_tdof_lists = (s == 0) ? nd_dbc_tdof_lists : h1_dbc_tdof_lists;
       for (int l = 0; l < fespaces.GetNumLevels(); l++)
       {
         // Force coarse level operator to be fully assembled always.
-        auto &fespace_l = fespaces.GetFESpaceAtLevel(l);
-        auto a = std::make_unique<mfem::SymmetricBilinearForm>(&fespace_l);
+        const auto &fespace_l = fespaces.GetFESpaceAtLevel(l);
+        BilinearForm a(fespace_l);
         if (s == 0)
         {
-
-          // XX TODO NOT YET FOR LIBCEED...
-
-          // if (mfem::DeviceCanUseCeed())
-          // {
-          //   a->AddDomainIntegrator(
-          //       new mfem::CurlCurlMassIntegrator(muinv_func, epsilon_func));
-          // }
-          // else
-          {
-            a->AddDomainIntegrator(new mfem::CurlCurlIntegrator(muinv_func));
-            a->AddDomainIntegrator(new mfem::VectorFEMassIntegrator(epsilon_func));
-          }
+          a.AddDomainIntegrator(
+              std::make_unique<CurlCurlMassIntegrator>(muinv_func, epsilon_func));
         }
         else
         {
-          a->AddDomainIntegrator(new mfem::DiffusionIntegrator(epsilon_func));
+          a.AddDomainIntegrator(std::make_unique<DiffusionIntegrator>(epsilon_func));
         }
         auto A_l = std::make_unique<ParOperator>(
-            fem::AssembleOperator(std::move(a), true, (l > 0) ? pa_order_threshold : 100,
-                                  skip_zeros),
-            fespace_l);
+            a.Assemble((l > 0) ? pa_order_threshold : 99, skip_zeros), fespace_l);
         A_l->SetEssentialTrueDofs(dbc_tdof_lists[l], Operator::DiagonalPolicy::DIAG_ONE);
         if (s == 0)
         {

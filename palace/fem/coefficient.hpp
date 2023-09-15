@@ -65,16 +65,14 @@ private:
       if constexpr (ElemType == MeshElementType::SUBMESH)
       {
         MFEM_ASSERT(
-            const_cast<mfem::ParSubMesh &>(submesh).GetFrom() ==
-                mfem::SubMesh::From::Domain,
+            submesh.GetFrom() == mfem::SubMesh::From::Domain,
             "Invalid usage of MaterialPropertyCoefficient for given MeshElementType!");
         return mesh.GetAttribute(submesh.GetParentElementIDMap()[T.ElementNo]);
       }
       else if constexpr (ElemType == MeshElementType::BDR_SUBMESH)
       {
         MFEM_ASSERT(
-            const_cast<mfem::ParSubMesh &>(submesh).GetFrom() ==
-                mfem::SubMesh::From::Boundary,
+            submesh.GetFrom() == mfem::SubMesh::From::Boundary,
             "Invalid usage of MaterialPropertyCoefficient for given MeshElementType!");
         int i, o, iel1, iel2;
         mesh.GetBdrElementFace(submesh.GetParentElementIDMap()[T.ElementNo], &i, &o);

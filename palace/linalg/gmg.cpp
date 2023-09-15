@@ -15,8 +15,8 @@ namespace palace
 template <typename OperType>
 GeometricMultigridSolver<OperType>::GeometricMultigridSolver(
     std::unique_ptr<Solver<OperType>> &&coarse_solver,
-    mfem::ParFiniteElementSpaceHierarchy &fespaces,
-    mfem::ParFiniteElementSpaceHierarchy *aux_fespaces, int cycle_it, int smooth_it,
+    const mfem::ParFiniteElementSpaceHierarchy &fespaces,
+    const mfem::ParFiniteElementSpaceHierarchy *aux_fespaces, int cycle_it, int smooth_it,
     int cheby_order, double cheby_sf_max, double cheby_sf_min, bool cheby_4th_kind,
     int pa_order_threshold)
   : Solver<OperType>(), pc_it(cycle_it), A(fespaces.GetNumLevels()),

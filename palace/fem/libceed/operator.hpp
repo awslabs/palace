@@ -21,7 +21,7 @@ protected:
   std::vector<CeedOperator> ops, ops_t;
   std::vector<CeedVector> u, v;
   Vector dof_multiplicity;
-  mutable Vector temp_x;
+  mutable Vector temp_x, temp_y;
 
 public:
   Operator() = default;
@@ -51,6 +51,20 @@ public:
   }
 
   void AddMultTranspose(const Vector &x, Vector &y, const double a = 1.0) const override;
+};
+
+// A symmetric ceed::Operator replaces *MultTranspose with *Mult (by default, libCEED
+// operators do not have a transpose operation).
+class SymmetricOperator : public Operator
+{
+public:
+  using Operator::Operator;
+
+  void MultTranspose(const Vector &x, Vector &y) const override { Mult(x, y); }
+  void AddMultTranspose(const Vector &x, Vector &y, double c = 1.0) const override
+  {
+    AddMult(x, y, c);
+  }
 };
 
 // Assemble a ceed::Operator as an mfem::SparseMatrix.

@@ -4,6 +4,7 @@
 #include "spaceoperator.hpp"
 
 #include <type_traits>
+#include "fem/bilinearform.hpp"
 #include "fem/integrator.hpp"
 #include "fem/multigrid.hpp"
 #include "linalg/rap.hpp"
@@ -74,12 +75,11 @@ SpaceOperator::SpaceOperator(const IoData &iodata,
                              const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh)
   : pa_order_threshold(iodata.solver.pa_order_threshold), skip_zeros(0),
     pc_mat_real(iodata.solver.linear.pc_mat_real),
-    pc_mat_shifted(iodata.solver.linear.pc_mat_shifted),
-    pc_mat_lor(iodata.solver.linear.pc_mat_lor), print_hdr(true), print_prec_hdr(true),
-    dbc_marker(SetUpBoundaryProperties(iodata, *mesh.back())),
+    pc_mat_shifted(iodata.solver.linear.pc_mat_shifted), print_hdr(true),
+    print_prec_hdr(true), dbc_marker(SetUpBoundaryProperties(iodata, *mesh.back())),
     nd_fecs(fem::ConstructFECollections<mfem::ND_FECollection>(
         iodata.solver.order, mesh.back()->Dimension(), iodata.solver.linear.mg_max_levels,
-        iodata.solver.linear.mg_coarsen_type, pc_mat_lor)),
+        iodata.solver.linear.mg_coarsen_type, false)),
     h1_fecs(fem::ConstructFECollections<mfem::H1_FECollection>(
         iodata.solver.order, mesh.back()->Dimension(), iodata.solver.linear.mg_max_levels,
         iodata.solver.linear.mg_coarsen_type, false)),
@@ -189,84 +189,59 @@ void PrintHeader(mfem::ParFiniteElementSpace &h1_fespace,
 }
 
 template <typename T1, typename T2, typename T3, typename T4>
-std::unique_ptr<Operator> BuildOperator(mfem::ParFiniteElementSpace &fespace, T1 *df, T2 *f,
-                                        T3 *dfb, T4 *fb, int pa_order_threshold,
-                                        int skip_zeros, bool pc_lor = false)
+std::unique_ptr<Operator> BuildOperator(const mfem::ParFiniteElementSpace &fespace, T1 *df,
+                                        T2 *f, T3 *dfb, T4 *fb, int pa_order_threshold,
+                                        int skip_zeros)
 {
-
-  // XX TODO WIP NOT YET FOR LIBCEED...
-
-  auto a = std::make_unique<mfem::SymmetricBilinearForm>(&fespace);
-  // if (df && !df->empty() && f && !f->empty() && mfem::DeviceCanUseCeed())
-  // {
-  //   a->AddDomainIntegrator(new mfem::CurlCurlMassIntegrator(*df, *f));
-  // }
-  // else
+  BilinearForm a(fespace);
+  if (df && !df->empty() && f && !f->empty())
+  {
+    a.AddDomainIntegrator(std::make_unique<CurlCurlMassIntegrator>(*df, *f));
+  }
+  else
   {
     if (df && !df->empty())
     {
-      a->AddDomainIntegrator(new mfem::CurlCurlIntegrator(*df));
+      a.AddDomainIntegrator(std::make_unique<CurlCurlIntegrator>(*df));
     }
     if (f && !f->empty())
     {
-      a->AddDomainIntegrator(new mfem::VectorFEMassIntegrator(*f));
+      a.AddDomainIntegrator(std::make_unique<VectorFEMassIntegrator>(*f));
     }
   }
-  // if (dfb && !dfb->empty() && fb && !fb->empty() && mfem::DeviceCanUseCeed())
-  // {
-  //   a->AddBoundaryIntegrator(new mfem::CurlCurlMassIntegrator(*dfb, *fb));
-  // }
-  // else
+  if (dfb && !dfb->empty() && fb && !fb->empty())
+  {
+    a.AddBoundaryIntegrator(std::make_unique<CurlCurlMassIntegrator>(*dfb, *fb));
+  }
+  else
   {
     if (dfb && !dfb->empty())
     {
-      a->AddBoundaryIntegrator(new mfem::CurlCurlIntegrator(*dfb));
+      a.AddBoundaryIntegrator(std::make_unique<CurlCurlIntegrator>(*dfb));
     }
     if (fb && !fb->empty())
     {
-      a->AddBoundaryIntegrator(new mfem::VectorFEMassIntegrator(*fb));
+      a.AddBoundaryIntegrator(std::make_unique<VectorFEMassIntegrator>(*fb));
     }
   }
-  if (pc_lor)
-  {
-    // After we construct the LOR discretization we deep copy the LOR matrix and the
-    // original bilinear form and LOR discretization are no longer needed.
-    mfem::Array<int> dummy_dbc_tdof_list;
-    mfem::LORDiscretization lor(*a, dummy_dbc_tdof_list);
-    return std::make_unique<mfem::SparseMatrix>(lor.GetAssembledMatrix());
-  }
-  else
-  {
-    return fem::AssembleOperator(std::move(a), true, pa_order_threshold, skip_zeros);
-  }
+  return a.Assemble(pa_order_threshold, skip_zeros);
 }
 
 template <typename T1, typename T2>
-std::unique_ptr<Operator> BuildAuxOperator(mfem::ParFiniteElementSpace &fespace, T1 *f,
-                                           T2 *fb, int pa_order_threshold, int skip_zeros,
-                                           bool pc_lor = false)
+std::unique_ptr<Operator> BuildAuxOperator(const mfem::ParFiniteElementSpace &fespace,
+                                           T1 *f, T2 *fb, int pa_order_threshold,
+                                           int skip_zeros)
 {
-  auto a = std::make_unique<mfem::SymmetricBilinearForm>(&fespace);
+  BilinearForm a(fespace);
   if (f && !f->empty())
   {
-    a->AddDomainIntegrator(new mfem::DiffusionIntegrator(*f));
+    a.AddDomainIntegrator(std::make_unique<DiffusionIntegrator>(*f));
   }
   if (fb && !fb->empty())
   {
-    a->AddBoundaryIntegrator(new mfem::DiffusionIntegrator(*fb));
+    a.AddBoundaryIntegrator(std::make_unique<DiffusionIntegrator>(*fb));
   }
-  if (pc_lor)
-  {
-    // After we construct the LOR discretization we deep copy the LOR matrix and the
-    // original bilinear form and LOR discretization are no longer needed.
-    mfem::Array<int> dummy_dbc_tdof_list;
-    mfem::LORDiscretization lor(*a, dummy_dbc_tdof_list);
-    return std::make_unique<mfem::SparseMatrix>(lor.GetAssembledMatrix());
-  }
-  else
-  {
-    return fem::AssembleOperator(std::move(a), true, pa_order_threshold, skip_zeros);
-  }
+  return a.Assemble(pa_order_threshold, skip_zeros);
 }
 
 }  // namespace
@@ -710,21 +685,17 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(double a0, doub
       std::unique_ptr<Operator> br, bi;
       if (!dfr.empty() || !fr.empty() || !dfbr.empty() || !fbr.empty())
       {
-        br =
-            (s == 0)
-                ? BuildOperator(fespace_l, &dfr, &fr, &dfbr, &fbr,
-                                (l > 0) ? pa_order_threshold : 100, skip_zeros, pc_mat_lor)
-                : BuildAuxOperator(fespace_l, &fr, &fbr, (l > 0) ? pa_order_threshold : 100,
-                                   skip_zeros, pc_mat_lor);
+        br = (s == 0) ? BuildOperator(fespace_l, &dfr, &fr, &dfbr, &fbr,
+                                      (l > 0) ? pa_order_threshold : 99, skip_zeros)
+                      : BuildAuxOperator(fespace_l, &fr, &fbr,
+                                         (l > 0) ? pa_order_threshold : 99, skip_zeros);
       }
       if (!fi.empty() || !dfbi.empty() || !fbi.empty())
       {
-        bi =
-            (s == 0)
-                ? BuildOperator(fespace_l, (SumCoefficient *)nullptr, &fi, &dfbi, &fbi,
-                                (l > 0) ? pa_order_threshold : 100, skip_zeros, pc_mat_lor)
-                : BuildAuxOperator(fespace_l, &fi, &fbi, (l > 0) ? pa_order_threshold : 100,
-                                   skip_zeros, pc_mat_lor);
+        bi = (s == 0) ? BuildOperator(fespace_l, (SumCoefficient *)nullptr, &fi, &dfbi,
+                                      &fbi, (l > 0) ? pa_order_threshold : 99, skip_zeros)
+                      : BuildAuxOperator(fespace_l, &fi, &fbi,
+                                         (l > 0) ? pa_order_threshold : 99, skip_zeros);
       }
       if (print_prec_hdr)
       {
@@ -732,7 +703,7 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(double a0, doub
         {
           HYPRE_BigInt nnz = br_spm->NumNonZeroElems();
           Mpi::GlobalSum(1, &nnz, fespace_l.GetComm());
-          Mpi::Print(", {:d} NNZ{}\n", nnz, pc_mat_lor ? " (LOR)" : "");
+          Mpi::Print(", {:d} NNZ\n", nnz);
         }
         else
         {
@@ -758,21 +729,22 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(double a0, doub
 namespace
 {
 
-auto BuildCurl(mfem::ParFiniteElementSpace &nd_fespace,
-               mfem::ParFiniteElementSpace &rt_fespace, int pa_order_threshold)
+auto BuildCurl(const mfem::ParFiniteElementSpace &nd_fespace,
+               const mfem::ParFiniteElementSpace &rt_fespace, int pa_order_threshold)
 {
-  // Partial assembly for this operator is only available with libCEED backend.
-  auto curl = std::make_unique<mfem::DiscreteLinearOperator>(&nd_fespace, &rt_fespace);
-  curl->AddDomainInterpolator(new mfem::CurlInterpolator);
-  return fem::AssembleOperator(std::move(curl), false, pa_order_threshold - 1);
+  // XX TODO: Skip zeros option?
+  DiscreteLinearOperator curl(nd_fespace, rt_fespace);
+  curl.AddDomainInterpolator(std::make_unique<CurlInterpolator>());
+  return curl.Assemble(pa_order_threshold - 1, true);
 }
 
-auto BuildGrad(mfem::ParFiniteElementSpace &h1_fespace,
-               mfem::ParFiniteElementSpace &nd_fespace, int pa_order_threshold)
+auto BuildGrad(const mfem::ParFiniteElementSpace &h1_fespace,
+               const mfem::ParFiniteElementSpace &nd_fespace, int pa_order_threshold)
 {
-  auto grad = std::make_unique<mfem::DiscreteLinearOperator>(&h1_fespace, &nd_fespace);
-  grad->AddDomainInterpolator(new mfem::GradientInterpolator);
-  return fem::AssembleOperator(std::move(grad), true, pa_order_threshold);
+  // XX TODO: Skip zeros option?
+  DiscreteLinearOperator grad(h1_fespace, nd_fespace);
+  grad.AddDomainInterpolator(std::make_unique<GradientInterpolator>());
+  return grad.Assemble(pa_order_threshold, true);
 }
 
 }  // namespace

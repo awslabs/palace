@@ -210,6 +210,7 @@ void InitRestriction(const mfem::FiniteElementSpace &fespace,
   // The restriction for an interpolator range space is slightly different as
   // the output is a primal vector instead of a dual vector, and lexicographic
   // ordering is never used (no use of tensor-product basis).
+  const std::size_t ne = indices.size();
   const mfem::FiniteElement &fe =
       use_bdr ? *fespace.GetBE(indices[0]) : *fespace.GetFE(indices[0]);
   const int ncomp = fespace.GetVDim();
@@ -225,7 +226,7 @@ void InitRestriction(const mfem::FiniteElementSpace &fespace,
   }
   const bool has_dof_trans = dof_trans.GetDofTransformation() && !dof_trans.IsEmpty();
   const bool unique_range_restr = (is_interp && is_range && has_dof_trans);
-  internal::RestrKey key(ceed, (void *)&fe, ncomp, unique_range_restr);
+  internal::RestrKey key(ceed, (void *)&fe, ne, ncomp, unique_range_restr);
 
   // Initialize or retrieve key values.
   auto restr_itr = internal::restr_map.find(key);

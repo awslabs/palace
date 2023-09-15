@@ -66,29 +66,13 @@ void ParOperator::AssembleDiagonal(Vector &diag) const
   // entry-wise absolute values of the conforming prolongation operator.
   MFEM_VERIFY(&trial_fespace == &test_fespace,
               "Diagonal assembly is only available for square ParOperator!");
-  if (const auto *bfA = dynamic_cast<const mfem::BilinearForm *>(A))
-  {
-    // if (bfA->HasSpMat())   //XX TODO WIP FOR LIBCEED
-    // {
-    //   bfA->SpMat().GetDiag(ly);
-    // }
-    // else if (bfA->HasExt())
-    // {
-    //   bfA->Ext().AssembleDiagonal(ly);
-    // }
-    // else
-    {
-      MFEM_ABORT("Unable to assemble the local operator diagonal of BilinearForm!");
-    }
-  }
-  else if (const auto *sA = dynamic_cast<const mfem::SparseMatrix *>(A))
+  if (const auto *sA = dynamic_cast<const mfem::SparseMatrix *>(A))
   {
     sA->GetDiag(ly);
   }
   else
   {
-    MFEM_ABORT("ParOperator::AssembleDiagonal requires A as a BilinearForm or "
-               "SparseMatrix!");
+    A->AssembleDiagonal(ly);
   }
 
   // Parallel assemble and eliminate essential true dofs.
@@ -147,9 +131,6 @@ mfem::HypreParMatrix &ParOperator::ParallelAssemble() const
     }
     else
     {
-
-      // XX TODO WIP MIGHT NEED TO EDIT WITHOUT MFEM PATCH...
-
       mfem::SparseMatrix *sRt = mfem::Transpose(*test_fespace.GetRestrictionMatrix());
       mfem::HypreParMatrix *hRt = new mfem::HypreParMatrix(
           test_fespace.GetComm(), test_fespace.GlobalVSize(),
