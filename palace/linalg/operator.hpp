@@ -330,6 +330,9 @@ double SpectralNorm(MPI_Comm comm, const ComplexOperator &A, bool herm = false,
 namespace mfem
 {
 
+// XX TODO WIP MOVE OUT OF HERE, INTO bilinearform.hpp, NEED TO HANDLE SYMMETRY FOR
+// LIBCEED...
+
 // A symmetric bilinear form operator which replaces *MultTranspose with *Mult.
 class SymmetricBilinearForm : public BilinearForm
 {

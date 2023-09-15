@@ -40,12 +40,15 @@ WeightedHCurlNormSolver::WeightedHCurlNormSolver(
         auto a = std::make_unique<mfem::SymmetricBilinearForm>(&fespace_l);
         if (s == 0)
         {
-          if (mfem::DeviceCanUseCeed())
-          {
-            a->AddDomainIntegrator(
-                new mfem::CurlCurlMassIntegrator(muinv_func, epsilon_func));
-          }
-          else
+
+          // XX TODO NOT YET FOR LIBCEED...
+
+          // if (mfem::DeviceCanUseCeed())
+          // {
+          //   a->AddDomainIntegrator(
+          //       new mfem::CurlCurlMassIntegrator(muinv_func, epsilon_func));
+          // }
+          // else
           {
             a->AddDomainIntegrator(new mfem::CurlCurlIntegrator(muinv_func));
             a->AddDomainIntegrator(new mfem::VectorFEMassIntegrator(epsilon_func));

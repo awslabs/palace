@@ -193,12 +193,15 @@ std::unique_ptr<Operator> BuildOperator(mfem::ParFiniteElementSpace &fespace, T1
                                         T3 *dfb, T4 *fb, int pa_order_threshold,
                                         int skip_zeros, bool pc_lor = false)
 {
+
+  // XX TODO WIP NOT YET FOR LIBCEED...
+
   auto a = std::make_unique<mfem::SymmetricBilinearForm>(&fespace);
-  if (df && !df->empty() && f && !f->empty() && mfem::DeviceCanUseCeed())
-  {
-    a->AddDomainIntegrator(new mfem::CurlCurlMassIntegrator(*df, *f));
-  }
-  else
+  // if (df && !df->empty() && f && !f->empty() && mfem::DeviceCanUseCeed())
+  // {
+  //   a->AddDomainIntegrator(new mfem::CurlCurlMassIntegrator(*df, *f));
+  // }
+  // else
   {
     if (df && !df->empty())
     {
@@ -209,11 +212,11 @@ std::unique_ptr<Operator> BuildOperator(mfem::ParFiniteElementSpace &fespace, T1
       a->AddDomainIntegrator(new mfem::VectorFEMassIntegrator(*f));
     }
   }
-  if (dfb && !dfb->empty() && fb && !fb->empty() && mfem::DeviceCanUseCeed())
-  {
-    a->AddBoundaryIntegrator(new mfem::CurlCurlMassIntegrator(*dfb, *fb));
-  }
-  else
+  // if (dfb && !dfb->empty() && fb && !fb->empty() && mfem::DeviceCanUseCeed())
+  // {
+  //   a->AddBoundaryIntegrator(new mfem::CurlCurlMassIntegrator(*dfb, *fb));
+  // }
+  // else
   {
     if (dfb && !dfb->empty())
     {

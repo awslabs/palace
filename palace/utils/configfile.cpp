@@ -1752,6 +1752,8 @@ void SolverData::SetUp(json &config)
   pa_order_threshold = solver->value("PartialAssemblyOrder", pa_order_threshold);
   device = solver->value("Device", device);
 
+  // XX TODO WIP LIBCEED BACKEND, VS MFEM DEVICE (DEFAULTS)
+
   driven.SetUp(*solver);
   eigenmode.SetUp(*solver);
   electrostatic.SetUp(*solver);
