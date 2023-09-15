@@ -1738,6 +1738,11 @@ void LinearSolverData::SetUp(json &solver)
   // std::cout << "GSOrthogonalization: " << gs_orthog_type << '\n';
 }
 
+// Helpers for converting string keys to enum for SolverData::Device.
+PALACE_JSON_SERIALIZE_ENUM(SolverData::Device, {{SolverData::Device::CPU, "CPU"},
+                                                {SolverData::Device::GPU, "GPU"},
+                                                {SolverData::Device::DEBUG, "Debug"}})
+
 void SolverData::SetUp(json &config)
 {
   auto solver = config.find("Solver");
@@ -1748,11 +1753,8 @@ void SolverData::SetUp(json &config)
   order = solver->value("Order", order);
   pa_order_threshold = solver->value("PartialAssemblyOrder", pa_order_threshold);
   pa_discrete_interp = solver->value("PartialAssemblyInterpolators", pa_discrete_interp);
-
   device = solver->value("Device", device);
-
-  // XX TODO WIP LIBCEED BACKEND, VS MFEM DEVICE (DEFAULTS)
-  // XX TODO WIP DEFAULT QUADRATURE RULE ORDER FOR BILINEAR FORMS? (MAYBE NOT FOR NOW...)
+  ceed_backend = solver->value("Backend", ceed_backend);
 
   driven.SetUp(*solver);
   eigenmode.SetUp(*solver);
@@ -1765,7 +1767,8 @@ void SolverData::SetUp(json &config)
   solver->erase("Order");
   solver->erase("PartialAssemblyOrder");
   solver->erase("PartialAssemblyInterpolators");
-  solver->erase("Device");  // XX
+  solver->erase("Device");
+  solver->erase("Backend");
 
   solver->erase("Driven");
   solver->erase("Eigenmode");
@@ -1782,6 +1785,7 @@ void SolverData::SetUp(json &config)
   // std::cout << "PartialAssemblyOrder: " << pa_order_threshold << '\n';
   // std::cout << "PartialAssemblyInterpolators: " << pa_discrete_interp << '\n';
   // std::cout << "Device: " << device << '\n';
+  // std::cout << "Backend: " << ceed_backend << '\n';
 }
 
 }  // namespace palace::config

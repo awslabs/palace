@@ -5,6 +5,7 @@
 #define PALACE_LIBCEED_UTILS_HPP
 
 #include <functional>
+#include <string>
 #include <vector>
 #include <ceed.h>
 #include <mfem.hpp>
@@ -56,6 +57,9 @@ void Initialize(const char *resource, const char *jit_source_dir);
 
 // Finalize libCEED with CeedDestroy.
 void Finalize();
+
+// Get the configured libCEED backend.
+std::string Print();
 
 // Wrapper for std::hash.
 template <typename T>

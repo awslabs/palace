@@ -834,16 +834,23 @@ public:
   // Approximation order.
   int order = 1;
 
-  // Order above which to always use partial assembly instead of full assembly.
+  // Order above which to use partial assembly instead of full assembly.
   int pa_order_threshold = 100;
 
   // Enable partial assembly for discrete linear operators.
   bool pa_discrete_interp = true;
 
-  // XX TODO: Separate interpolator partial assembly option?
+  // Device used to configure MFEM.
+  enum class Device
+  {
+    CPU,
+    GPU,
+    DEBUG
+  };
+  Device device = Device::CPU;
 
-  // Device used to configure the MFEM backend.
-  std::string device = "cpu";
+  // Backend for libCEED (https://libceed.org/en/latest/gettingstarted/#backends).
+  std::string ceed_backend = "";
 
   // Solver objects.
   DrivenSolverData driven = {};

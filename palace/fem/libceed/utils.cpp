@@ -59,8 +59,8 @@ void Initialize(const char *resource, const char *jit_source_dir)
     if (jit_source_dir)
     {
 
-      // XX TODO WIP DEBUG
-      std::cout << "CEED JIT source directory: " << jit_source_dir << "\n";
+      // // XX TODO WIP DEBUG
+      // std::cout << "CEED JIT source directory: " << jit_source_dir << "\n";
 
       PalaceCeedCall(ceed, CeedAddJitSourceRoot(ceed, jit_source_dir));
     }
@@ -97,6 +97,17 @@ void Finalize()
     int ierr = CeedDestroy(&internal::ceed[i]);
     MFEM_VERIFY(!ierr, "Failed to finalize libCEED!");
   }
+  internal::ceed.clear();
+}
+
+std::string Print()
+{
+  MFEM_VERIFY(internal::ceed.size() > 0,
+              "libCEED must be initialized before querying the active backend!");
+  Ceed ceed = internal::ceed[0];
+  const char *ceed_resource;
+  PalaceCeedCall(ceed, CeedGetResource(ceed, &ceed_resource));
+  return std::string(ceed_resource);
 }
 
 void InitCeedVector(const mfem::Vector &v, Ceed ceed, CeedVector *cv)
