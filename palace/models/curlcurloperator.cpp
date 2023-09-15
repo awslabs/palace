@@ -71,8 +71,9 @@ mfem::Array<int> SetUpBoundaryProperties(const IoData &iodata, const mfem::ParMe
 
 CurlCurlOperator::CurlCurlOperator(const IoData &iodata,
                                    const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh)
-  : pa_order_threshold(iodata.solver.pa_order_threshold), skip_zeros(0), print_hdr(true),
-    dbc_marker(SetUpBoundaryProperties(iodata, *mesh.back())),
+  : pa_order_threshold(iodata.solver.pa_order_threshold),
+    pa_discrete_interp(iodata.solver.pa_discrete_interp), skip_zeros(false),
+    print_hdr(true), dbc_marker(SetUpBoundaryProperties(iodata, *mesh.back())),
     nd_fecs(fem::ConstructFECollections<mfem::ND_FECollection>(
         iodata.solver.order, mesh.back()->Dimension(), iodata.solver.linear.mg_max_levels,
         iodata.solver.linear.mg_coarsen_type, false)),
@@ -82,10 +83,11 @@ CurlCurlOperator::CurlCurlOperator(const IoData &iodata,
     rt_fec(iodata.solver.order - 1, mesh.back()->Dimension()),
     nd_fespaces(fem::ConstructFiniteElementSpaceHierarchy<mfem::ND_FECollection>(
         iodata.solver.linear.mg_max_levels, iodata.solver.linear.mg_legacy_transfer,
-        pa_order_threshold, mesh, nd_fecs, &dbc_marker, &dbc_tdof_lists)),
+        pa_order_threshold, pa_discrete_interp, mesh, nd_fecs, &dbc_marker,
+        &dbc_tdof_lists)),
     h1_fespaces(fem::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
         iodata.solver.linear.mg_max_levels, iodata.solver.linear.mg_legacy_transfer,
-        pa_order_threshold, mesh, h1_fecs, nullptr, nullptr)),
+        pa_order_threshold, pa_discrete_interp, mesh, h1_fecs, nullptr, nullptr)),
     rt_fespace(mesh.back().get(), &rt_fec), mat_op(iodata, *mesh.back()),
     surf_j_op(iodata, GetH1Space())
 {
@@ -161,11 +163,12 @@ std::unique_ptr<Operator> CurlCurlOperator::GetStiffnessMatrix()
 
 std::unique_ptr<Operator> CurlCurlOperator::GetCurlMatrix()
 {
-  // XX TODO: Skip zeros option?
+  constexpr bool skip_zeros_interp = true;
   DiscreteLinearOperator curl(GetNDSpace(), GetRTSpace());
   curl.AddDomainInterpolator(std::make_unique<CurlInterpolator>());
-  return std::make_unique<ParOperator>(curl.Assemble(pa_order_threshold - 1, true),
-                                       GetNDSpace(), GetRTSpace(), true);
+  return std::make_unique<ParOperator>(
+      curl.Assemble(pa_discrete_interp ? pa_order_threshold : 99, skip_zeros_interp),
+      GetNDSpace(), GetRTSpace(), true);
 }
 
 void CurlCurlOperator::GetExcitationVector(int idx, Vector &RHS)

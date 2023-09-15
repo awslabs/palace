@@ -77,7 +77,7 @@ std::vector<std::unique_ptr<FECollection>> inline ConstructFECollections(
 template <typename FECollection>
 inline mfem::ParFiniteElementSpaceHierarchy ConstructFiniteElementSpaceHierarchy(
     int mg_max_levels, bool mg_legacy_transfer, int pa_order_threshold,
-    const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
+    bool pa_discrete_interp, const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
     const std::vector<std::unique_ptr<FECollection>> &fecs,
     const mfem::Array<int> *dbc_marker = nullptr,
     std::vector<mfem::Array<int>> *dbc_tdof_lists = nullptr)
@@ -120,10 +120,12 @@ inline mfem::ParFiniteElementSpaceHierarchy ConstructFiniteElementSpaceHierarchy
     ParOperator *P;
     if (!mg_legacy_transfer)
     {
+      constexpr bool skip_zeros_interp = true;
       DiscreteLinearOperator p(fespaces.GetFinestFESpace(), *fespace);
       p.AddDomainInterpolator(std::make_unique<IdentityInterpolator>());
-      P = new ParOperator(p.Assemble(pa_order_threshold), fespaces.GetFinestFESpace(),
-                          *fespace, true);
+      P = new ParOperator(
+          p.Assemble(pa_discrete_interp ? pa_order_threshold : 99, skip_zeros_interp),
+          fespaces.GetFinestFESpace(), *fespace, true);
     }
     else
     {

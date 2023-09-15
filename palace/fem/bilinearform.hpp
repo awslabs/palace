@@ -69,7 +69,7 @@ public:
     boundary_integs.push_back(std::move(bfi));
   }
 
-  std::unique_ptr<Operator> Assemble(int pa_order_threshold, bool skip_zeros = false) const
+  std::unique_ptr<Operator> Assemble(int pa_order_threshold, bool skip_zeros) const
   {
     return (GetMaxElementOrder() >= pa_order_threshold) ? Assemble()
                                                         : FullAssemble(skip_zeros);
@@ -77,7 +77,7 @@ public:
 
   std::unique_ptr<Operator> Assemble() const;
 
-  std::unique_ptr<mfem::SparseMatrix> FullAssemble(bool skip_zeros = false) const;
+  std::unique_ptr<mfem::SparseMatrix> FullAssemble(bool skip_zeros) const;
 };
 
 // Discrete linear operators map primal vectors to primal vectors for interpolation between
@@ -99,7 +99,7 @@ public:
     a.AddDomainIntegrator(std::move(di));
   }
 
-  std::unique_ptr<Operator> Assemble(int pa_order_threshold, bool skip_zeros = false) const
+  std::unique_ptr<Operator> Assemble(int pa_order_threshold, bool skip_zeros) const
   {
     return (a.GetMaxElementOrder() >= pa_order_threshold) ? Assemble()
                                                           : FullAssemble(skip_zeros);
@@ -107,7 +107,7 @@ public:
 
   std::unique_ptr<Operator> Assemble() const;
 
-  std::unique_ptr<mfem::SparseMatrix> FullAssemble(bool skip_zeros = false) const;
+  std::unique_ptr<mfem::SparseMatrix> FullAssemble(bool skip_zeros) const;
 };
 
 }  // namespace palace

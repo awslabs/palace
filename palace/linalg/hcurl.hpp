@@ -42,7 +42,8 @@ public:
                           const mfem::ParFiniteElementSpaceHierarchy &h1_fespaces,
                           const std::vector<mfem::Array<int>> &nd_dbc_tdof_lists,
                           const std::vector<mfem::Array<int>> &h1_dbc_tdof_lists,
-                          double tol, int max_it, int print, int pa_order_threshold);
+                          double tol, int max_it, int print, int pa_order_threshold,
+                          bool pa_discrete_interp);
 
   const Operator &GetOperator() { return *A; }
 

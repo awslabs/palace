@@ -23,8 +23,9 @@ class IoData;
 class LaplaceOperator
 {
 private:
-  const int pa_order_threshold;  // Order above which to use partial assembly vs. full
-  const int skip_zeros;          // Skip zeros during full assembly of operators
+  const int pa_order_threshold;   // Order above which to use partial assembly vs. full
+  const bool pa_discrete_interp;  // Use partial assembly for discrete interpolators
+  const bool skip_zeros;          // Skip zeros during full assembly of matrices
 
   // Helper variable for log file printing.
   bool print_hdr;

@@ -77,7 +77,7 @@ void GetEssentialTrueDofs(mfem::ParGridFunction &E0t, mfem::ParGridFunction &E0n
   }
 }
 
-constexpr int skip_zeros = 0;
+constexpr bool skip_zeros = false;
 
 std::unique_ptr<ParOperator> GetBtt(const MaterialOperator &mat_op,
                                     const mfem::ParFiniteElementSpace &nd_fespace)

@@ -73,7 +73,8 @@ mfem::Array<int> SetUpBoundaryProperties(const IoData &iodata, const mfem::ParMe
 
 SpaceOperator::SpaceOperator(const IoData &iodata,
                              const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh)
-  : pa_order_threshold(iodata.solver.pa_order_threshold), skip_zeros(0),
+  : pa_order_threshold(iodata.solver.pa_order_threshold),
+    pa_discrete_interp(iodata.solver.pa_discrete_interp), skip_zeros(false),
     pc_mat_real(iodata.solver.linear.pc_mat_real),
     pc_mat_shifted(iodata.solver.linear.pc_mat_shifted), print_hdr(true),
     print_prec_hdr(true), dbc_marker(SetUpBoundaryProperties(iodata, *mesh.back())),
@@ -86,10 +87,12 @@ SpaceOperator::SpaceOperator(const IoData &iodata,
     rt_fec(iodata.solver.order - 1, mesh.back()->Dimension()),
     nd_fespaces(fem::ConstructFiniteElementSpaceHierarchy<mfem::ND_FECollection>(
         iodata.solver.linear.mg_max_levels, iodata.solver.linear.mg_legacy_transfer,
-        pa_order_threshold, mesh, nd_fecs, &dbc_marker, &nd_dbc_tdof_lists)),
+        pa_order_threshold, pa_discrete_interp, mesh, nd_fecs, &dbc_marker,
+        &nd_dbc_tdof_lists)),
     h1_fespaces(fem::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
         iodata.solver.linear.mg_max_levels, iodata.solver.linear.mg_legacy_transfer,
-        pa_order_threshold, mesh, h1_fecs, &dbc_marker, &h1_dbc_tdof_lists)),
+        pa_order_threshold, pa_discrete_interp, mesh, h1_fecs, &dbc_marker,
+        &h1_dbc_tdof_lists)),
     rt_fespace(mesh.back().get(), &rt_fec), mat_op(iodata, *mesh.back()),
     farfield_op(iodata, mat_op, *mesh.back()), surf_sigma_op(iodata, *mesh.back()),
     surf_z_op(iodata, *mesh.back()), lumped_port_op(iodata, GetH1Space()),
@@ -730,21 +733,21 @@ namespace
 {
 
 auto BuildCurl(const mfem::ParFiniteElementSpace &nd_fespace,
-               const mfem::ParFiniteElementSpace &rt_fespace, int pa_order_threshold)
+               const mfem::ParFiniteElementSpace &rt_fespace, int pa_order_threshold,
+               bool skip_zeros)
 {
-  // XX TODO: Skip zeros option?
   DiscreteLinearOperator curl(nd_fespace, rt_fespace);
   curl.AddDomainInterpolator(std::make_unique<CurlInterpolator>());
-  return curl.Assemble(pa_order_threshold - 1, true);
+  return curl.Assemble(pa_order_threshold, skip_zeros);
 }
 
 auto BuildGrad(const mfem::ParFiniteElementSpace &h1_fespace,
-               const mfem::ParFiniteElementSpace &nd_fespace, int pa_order_threshold)
+               const mfem::ParFiniteElementSpace &nd_fespace, int pa_order_threshold,
+               bool skip_zeros)
 {
-  // XX TODO: Skip zeros option?
   DiscreteLinearOperator grad(h1_fespace, nd_fespace);
   grad.AddDomainInterpolator(std::make_unique<GradientInterpolator>());
-  return grad.Assemble(pa_order_threshold, true);
+  return grad.Assemble(pa_order_threshold, skip_zeros);
 }
 
 }  // namespace
@@ -752,33 +755,41 @@ auto BuildGrad(const mfem::ParFiniteElementSpace &h1_fespace,
 template <>
 std::unique_ptr<Operator> SpaceOperator::GetCurlMatrix()
 {
+  constexpr bool skip_zeros_interp = true;
   return std::make_unique<ParOperator>(
-      BuildCurl(GetNDSpace(), GetRTSpace(), pa_order_threshold), GetNDSpace(), GetRTSpace(),
-      true);
+      BuildCurl(GetNDSpace(), GetRTSpace(), pa_discrete_interp ? pa_order_threshold : 99,
+                skip_zeros_interp),
+      GetNDSpace(), GetRTSpace(), true);
 }
 
 template <>
 std::unique_ptr<ComplexOperator> SpaceOperator::GetCurlMatrix()
 {
+  constexpr bool skip_zeros_interp = true;
   return std::make_unique<ComplexParOperator>(
-      BuildCurl(GetNDSpace(), GetRTSpace(), pa_order_threshold), nullptr, GetNDSpace(),
-      GetRTSpace(), true);
+      BuildCurl(GetNDSpace(), GetRTSpace(), pa_discrete_interp ? pa_order_threshold : 99,
+                skip_zeros_interp),
+      nullptr, GetNDSpace(), GetRTSpace(), true);
 }
 
 template <>
 std::unique_ptr<Operator> SpaceOperator::GetGradMatrix()
 {
+  constexpr bool skip_zeros_interp = true;
   return std::make_unique<ParOperator>(
-      BuildGrad(GetH1Space(), GetNDSpace(), pa_order_threshold), GetH1Space(), GetNDSpace(),
-      true);
+      BuildGrad(GetH1Space(), GetNDSpace(), pa_discrete_interp ? pa_order_threshold : 99,
+                skip_zeros_interp),
+      GetH1Space(), GetNDSpace(), true);
 }
 
 template <>
 std::unique_ptr<ComplexOperator> SpaceOperator::GetGradMatrix()
 {
+  constexpr bool skip_zeros_interp = true;
   return std::make_unique<ComplexParOperator>(
-      BuildGrad(GetH1Space(), GetNDSpace(), pa_order_threshold), nullptr, GetH1Space(),
-      GetNDSpace(), true);
+      BuildGrad(GetH1Space(), GetNDSpace(), pa_discrete_interp ? pa_order_threshold : 99,
+                skip_zeros_interp),
+      nullptr, GetH1Space(), GetNDSpace(), true);
 }
 
 void SpaceOperator::AddStiffnessCoefficients(double coef, SumMatrixCoefficient &df,

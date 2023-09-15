@@ -52,10 +52,10 @@ void HypreAmsSolver::ConstructAuxiliaryMatrices(
   // Set up the auxiliary space objects for the preconditioner. Mostly the same as MFEM's
   // HypreAMS:Init. Start with the discrete gradient matrix.
   {
-    // XX TODO: Skip zeros option?
+    constexpr bool skip_zeros_interp = true;
     DiscreteLinearOperator grad(h1_fespace, nd_fespace);
     grad.AddDomainInterpolator(std::make_unique<GradientInterpolator>());
-    ParOperator RAP_G(grad.FullAssemble(true), h1_fespace, nd_fespace, true);
+    ParOperator RAP_G(grad.FullAssemble(skip_zeros_interp), h1_fespace, nd_fespace, true);
     G = RAP_G.StealParallelAssemble();
   }
 

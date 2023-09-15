@@ -837,6 +837,9 @@ public:
   // Order above which to always use partial assembly instead of full assembly.
   int pa_order_threshold = 100;
 
+  // Enable partial assembly for discrete linear operators.
+  bool pa_discrete_interp = true;
+
   // XX TODO: Separate interpolator partial assembly option?
 
   // Device used to configure the MFEM backend.

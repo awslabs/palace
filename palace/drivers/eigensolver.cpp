@@ -163,7 +163,7 @@ void EigenSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const
         spaceop.GetMaterialOp(), spaceop.GetNDSpace(), spaceop.GetH1Spaces(),
         spaceop.GetAuxBdrTDofLists(), iodata.solver.linear.divfree_tol,
         iodata.solver.linear.divfree_max_it, divfree_verbose,
-        iodata.solver.pa_order_threshold);
+        iodata.solver.pa_order_threshold, iodata.solver.pa_discrete_interp);
     eigen->SetDivFreeProjector(*divfree);
   }
 

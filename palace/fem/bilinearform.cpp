@@ -96,6 +96,10 @@ std::unique_ptr<Operator> BilinearForm::Assemble() const
   {
     q_order = fem::GetDefaultIntegrationOrder(trial_fespace, test_fespace);
   }
+
+  // //XX TODO
+  // std::cout << "BilinearForm::Assemble with q_order = " << q_order << "\n";
+
   std::unique_ptr<ceed::Operator> op;
   if (&trial_fespace == &test_fespace)
   {

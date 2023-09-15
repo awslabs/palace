@@ -20,9 +20,9 @@ WeightedHCurlNormSolver::WeightedHCurlNormSolver(
     const mfem::ParFiniteElementSpaceHierarchy &h1_fespaces,
     const std::vector<mfem::Array<int>> &nd_dbc_tdof_lists,
     const std::vector<mfem::Array<int>> &h1_dbc_tdof_lists, double tol, int max_it,
-    int print, int pa_order_threshold)
+    int print, int pa_order_threshold, bool pa_discrete_interp)
 {
-  constexpr int skip_zeros = 0;
+  constexpr bool skip_zeros = false;
   constexpr auto MatTypeMuInv = MaterialPropertyType::INV_PERMEABILITY;
   constexpr auto MatTypeEps = MaterialPropertyType::PERMITTIVITY_REAL;
   MaterialPropertyCoefficient<MatTypeMuInv> muinv_func(mat_op);
@@ -73,7 +73,7 @@ WeightedHCurlNormSolver::WeightedHCurlNormSolver(
   {
     pc = std::make_unique<GeometricMultigridSolver<Operator>>(
         std::move(ams), nd_fespaces, &h1_fespaces, 1, 1, 2, 1.0, 0.0, true,
-        pa_order_threshold);
+        pa_order_threshold, pa_discrete_interp);
   }
   else
   {

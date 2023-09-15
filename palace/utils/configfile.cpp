@@ -1747,6 +1747,8 @@ void SolverData::SetUp(json &config)
   }
   order = solver->value("Order", order);
   pa_order_threshold = solver->value("PartialAssemblyOrder", pa_order_threshold);
+  pa_discrete_interp = solver->value("PartialAssemblyInterpolators", pa_discrete_interp);
+
   device = solver->value("Device", device);
 
   // XX TODO WIP LIBCEED BACKEND, VS MFEM DEVICE (DEFAULTS)
@@ -1762,7 +1764,8 @@ void SolverData::SetUp(json &config)
   // Cleanup
   solver->erase("Order");
   solver->erase("PartialAssemblyOrder");
-  solver->erase("Device");
+  solver->erase("PartialAssemblyInterpolators");
+  solver->erase("Device");  // XX
 
   solver->erase("Driven");
   solver->erase("Eigenmode");
@@ -1777,6 +1780,7 @@ void SolverData::SetUp(json &config)
   // Debug
   // std::cout << "Order: " << order << '\n';
   // std::cout << "PartialAssemblyOrder: " << pa_order_threshold << '\n';
+  // std::cout << "PartialAssemblyInterpolators: " << pa_discrete_interp << '\n';
   // std::cout << "Device: " << device << '\n';
 }
 

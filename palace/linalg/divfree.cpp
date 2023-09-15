@@ -20,9 +20,10 @@ DivFreeSolver::DivFreeSolver(const MaterialOperator &mat_op,
                              const mfem::ParFiniteElementSpace &nd_fespace,
                              const mfem::ParFiniteElementSpaceHierarchy &h1_fespaces,
                              const std::vector<mfem::Array<int>> &h1_bdr_tdof_lists,
-                             double tol, int max_it, int print, int pa_order_threshold)
+                             double tol, int max_it, int print, int pa_order_threshold,
+                             bool pa_discrete_interp)
 {
-  constexpr int skip_zeros = 0;
+  constexpr bool skip_zeros = false;
   constexpr auto MatType = MaterialPropertyType::PERMITTIVITY_REAL;
   MaterialPropertyCoefficient<MatType> epsilon_func(mat_op);
   {
@@ -49,11 +50,12 @@ DivFreeSolver::DivFreeSolver(const MaterialOperator &mat_op,
                                       nd_fespace, h1_fespaces.GetFinestFESpace(), false);
   }
   {
-    // XX TODO: Separate interpolator partial assembly option? Skip zeros option?
+    constexpr bool skip_zeros_interp = true;
     DiscreteLinearOperator grad(h1_fespaces.GetFinestFESpace(), nd_fespace);
     grad.AddDomainInterpolator(std::make_unique<GradientInterpolator>());
-    Grad = std::make_unique<ParOperator>(grad.Assemble(pa_order_threshold, true),
-                                         h1_fespaces.GetFinestFESpace(), nd_fespace, true);
+    Grad = std::make_unique<ParOperator>(
+        grad.Assemble(pa_discrete_interp ? pa_order_threshold : 99, skip_zeros_interp),
+        h1_fespaces.GetFinestFESpace(), nd_fespace, true);
   }
   bdr_tdof_list_M = &h1_bdr_tdof_lists.back();
 
@@ -65,7 +67,8 @@ DivFreeSolver::DivFreeSolver(const MaterialOperator &mat_op,
   if (h1_fespaces.GetNumLevels() > 1)
   {
     pc = std::make_unique<GeometricMultigridSolver<Operator>>(
-        std::move(amg), h1_fespaces, nullptr, 1, 1, 2, 1.0, 0.0, true, pa_order_threshold);
+        std::move(amg), h1_fespaces, nullptr, 1, 1, 2, 1.0, 0.0, true, pa_order_threshold,
+        pa_discrete_interp);
   }
   else
   {

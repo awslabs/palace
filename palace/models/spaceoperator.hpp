@@ -30,10 +30,11 @@ class IoData;
 class SpaceOperator
 {
 private:
-  const int pa_order_threshold;  // Order above which to use partial assembly vs. full
-  const int skip_zeros;          // Skip zeros during full assembly of operators
-  const bool pc_mat_real;        // Use real-valued matrix for preconditioner
-  const bool pc_mat_shifted;     // Use shifted mass matrix for preconditioner
+  const int pa_order_threshold;   // Order above which to use partial assembly vs. full
+  const bool pa_discrete_interp;  // Use partial assembly for discrete interpolators
+  const bool skip_zeros;          // Skip zeros during full assembly of matrices
+  const bool pc_mat_real;         // Use real-valued matrix for preconditioner
+  const bool pc_mat_shifted;      // Use shifted mass matrix for preconditioner
 
   // Helper variables for log file printing.
   bool print_hdr, print_prec_hdr;

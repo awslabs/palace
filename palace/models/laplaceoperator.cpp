@@ -114,15 +114,17 @@ std::map<int, mfem::Array<int>> ConstructSources(const IoData &iodata)
 
 LaplaceOperator::LaplaceOperator(const IoData &iodata,
                                  const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh)
-  : pa_order_threshold(iodata.solver.pa_order_threshold), skip_zeros(0), print_hdr(true),
-    dbc_marker(SetUpBoundaryProperties(iodata, *mesh.back())),
+  : pa_order_threshold(iodata.solver.pa_order_threshold),
+    pa_discrete_interp(iodata.solver.pa_discrete_interp), skip_zeros(false),
+    print_hdr(true), dbc_marker(SetUpBoundaryProperties(iodata, *mesh.back())),
     h1_fecs(fem::ConstructFECollections<mfem::H1_FECollection>(
         iodata.solver.order, mesh.back()->Dimension(), iodata.solver.linear.mg_max_levels,
         iodata.solver.linear.mg_coarsen_type, false)),
     nd_fec(iodata.solver.order, mesh.back()->Dimension()),
     h1_fespaces(fem::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
         iodata.solver.linear.mg_max_levels, iodata.solver.linear.mg_legacy_transfer,
-        pa_order_threshold, mesh, h1_fecs, &dbc_marker, &dbc_tdof_lists)),
+        pa_order_threshold, pa_discrete_interp, mesh, h1_fecs, &dbc_marker,
+        &dbc_tdof_lists)),
     nd_fespace(mesh.back().get(), &nd_fec), mat_op(iodata, *mesh.back()),
     source_attr_lists(ConstructSources(iodata))
 {
@@ -183,11 +185,12 @@ std::unique_ptr<Operator> LaplaceOperator::GetStiffnessMatrix()
 
 std::unique_ptr<Operator> LaplaceOperator::GetGradMatrix()
 {
-  // XX TODO: Skip zeros option?
+  constexpr bool skip_zeros_interp = true;
   DiscreteLinearOperator grad(GetH1Space(), GetNDSpace());
   grad.AddDomainInterpolator(std::make_unique<GradientInterpolator>());
-  return std::make_unique<ParOperator>(grad.Assemble(pa_order_threshold, true),
-                                       GetH1Space(), GetNDSpace(), true);
+  return std::make_unique<ParOperator>(
+      grad.Assemble(pa_discrete_interp ? pa_order_threshold : 99, skip_zeros_interp),
+      GetH1Space(), GetNDSpace(), true);
 }
 
 void LaplaceOperator::GetExcitationVector(int idx, const Operator &K, Vector &X,

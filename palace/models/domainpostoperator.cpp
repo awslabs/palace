@@ -18,13 +18,13 @@ DomainPostOperator::DomainPostOperator(const IoData &iodata, const MaterialOpera
                                        const mfem::ParFiniteElementSpace *rt_fespace,
                                        int pa_order_threshold)
 {
+  constexpr bool skip_zeros = false;
   if (nd_fespace)
   {
     // Construct ND mass matrix to compute the electric field energy integral as:
     //              E_elec = 1/2 Re{∫_Ω Dᴴ E dV} as (M_eps * e)ᴴ e.
     // Only the real part of the permeability contributes to the energy (imaginary part
     // cancels out in the inner product due to symmetry).
-    constexpr int skip_zeros = 0;
     constexpr auto MatTypeEpsReal = MaterialPropertyType::PERMITTIVITY_REAL;
     constexpr auto MatTypeEpsImag = MaterialPropertyType::PERMITTIVITY_IMAG;
     MaterialPropertyCoefficient<MatTypeEpsReal> epsilon_func(mat_op);
@@ -64,7 +64,6 @@ DomainPostOperator::DomainPostOperator(const IoData &iodata, const MaterialOpera
   {
     // Construct RT mass matrix to compute the magnetic field energy integral as:
     //              E_mag = 1/2 Re{∫_Ω Bᴴ H dV} as (M_muinv * b)ᴴ b.
-    constexpr int skip_zeros = 0;
     constexpr auto MatTypeMuInv = MaterialPropertyType::INV_PERMEABILITY;
     MaterialPropertyCoefficient<MatTypeMuInv> muinv_func(mat_op);
     BilinearForm m_rt(*rt_fespace);
