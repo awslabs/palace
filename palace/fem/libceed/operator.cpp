@@ -356,16 +356,13 @@ void CeedOperatorAssembleCOO(const Operator &op, bool skip_zeros, CeedSize *nnz,
     PalaceCeedCall(ceed, CeedVectorRestoreArray(*vals, &vals_array));
   }
 
-  // XX TODO WIP DEBUG
-  std::cout << "  Operator full assembly has " << *nnz << " NNZ\n";
-
+  // std::cout << "  Operator full assembly has " << *nnz << " NNZ";
   if (skip_zeros && *nnz > 0)
   {
     CeedOperatorAssembleCOORemoveZeros(ceed, nnz, rows, cols, vals, mem);
-
-    // XX TODO WIP DEBUG
-    std::cout << "    New NNZ after removal is " << *nnz << "\n";
+    // std::cout << " (new NNZ after removal: " << *nnz << ")";
   }
+  // std::cout << "\n";
 }
 
 }  // namespace
@@ -490,21 +487,12 @@ std::unique_ptr<mfem::SparseMatrix> CeedOperatorFullAssemble(const Operator &op,
     }
     else
     {
-
-      // //XX TODO DEBUG
-      // std::cout << "Assembled matrix nonzeros (large values):\n\n";
-
       mfem::forall(nnz_new,
                    [=] MFEM_HOST_DEVICE(int k)
                    {
                      double sum = 0.0;
                      for (int p = d_Jmap[k]; p < d_Jmap[k + 1]; p++)
                      {
-
-                       // //XX TODO DEBUG
-                       // if (vals_array[d_perm[p]] > 100.)
-                       //   std::cout << vals_array[d_perm[p]] << "\n";
-
                        sum += vals_array[d_perm[p]];
                      }
                      d_A[k] = sum;

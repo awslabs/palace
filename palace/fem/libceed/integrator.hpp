@@ -176,17 +176,6 @@ AssembleCeedQuadratureData(const CeedIntegratorInfo &info,
 
   PalaceCeedCall(ceed, CeedVectorDestroy(&nodes));
   PalaceCeedCall(ceed, CeedOperatorDestroy(&build_op));
-
-  // //XX TODO DEBUG
-  // CeedScalar *qdata_array;
-  // CeedVectorGetArray(*qdata, CEED_MEM_HOST, &qdata_array);
-  // std::cout << "Quadrature data (large values):\n\n";
-  // for (int k = 0; k < ne * nqpts * qdata_size; k++)
-  // {
-  //   if (qdata_array[k] > 100.)
-  //     std::cout << qdata_array[k] << "\n";
-  // }
-  // CeedVectorRestoreArray(*qdata, &qdata_array);
 }
 
 // Create libCEED operator using the given quadrature data and element restriction.
@@ -226,11 +215,6 @@ inline void AssembleCeedOperator(const CeedIntegratorInfo &info,
   PalaceCeedCall(ceed, CeedElemRestrictionGetNumComponents(qdata_restr, &qdata_size));
   MFEM_VERIFY(trial_nqpts == test_nqpts && trial_nqpts == mesh_nqpts,
               "Trial and test basis must have the same number of quadrature points!");
-
-  // //XX TODO DEBUGGING
-  // std::cout << "Integration rule has Q = " << trial_nqpts << " for P = "
-  //           << trial_fespace.GetMaxElementOrder() << ", " <<
-  //           test_fespace.GetMaxElementOrder() << "\n";
 
   // Create the QFunction that defines the action of the operator.
   CeedQFunction apply_qf;

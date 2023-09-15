@@ -58,10 +58,6 @@ void Initialize(const char *resource, const char *jit_source_dir)
     // Configure QFunction search path.
     if (jit_source_dir)
     {
-
-      // // XX TODO WIP DEBUG
-      // std::cout << "CEED JIT source directory: " << jit_source_dir << "\n";
-
       PalaceCeedCall(ceed, CeedAddJitSourceRoot(ceed, jit_source_dir));
     }
 

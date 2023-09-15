@@ -14,6 +14,7 @@ void DiscreteInterpolator::Assemble(const mfem::FiniteElementSpace &trial_fespac
                                     const std::vector<int> &indices, Ceed ceed,
                                     CeedOperator *op, CeedOperator *op_t)
 {
+  // Interpolators do not use an integration rule to map between the test and trial spaces.
   ceed::AssembleCeedInterpolator(trial_fespace, test_fespace, indices, ceed, op, op_t);
 }
 
