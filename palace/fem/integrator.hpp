@@ -27,6 +27,10 @@ inline int GetDefaultIntegrationOrder(const mfem::FiniteElement &trial_fe,
                                       const mfem::FiniteElement &test_fe,
                                       const mfem::ElementTransformation &T, int q_extra = 0)
 {
+
+  // //XX TODO DEBUG
+  // std::cout << "Mesh geometry order: " << T.OrderW() << "\n";
+
   return trial_fe.GetOrder() + test_fe.GetOrder() + T.OrderW() + q_extra;
 }
 

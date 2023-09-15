@@ -21,7 +21,7 @@ protected:
   std::vector<CeedOperator> ops, ops_t;
   std::vector<CeedVector> u, v;
   Vector dof_multiplicity;
-  mutable Vector temp_x, temp_y;
+  mutable Vector temp_u, temp_v;
 
 public:
   Operator() = default;
@@ -36,19 +36,11 @@ public:
 
   void AssembleDiagonal(Vector &diag) const override;
 
-  void Mult(const Vector &x, Vector &y) const override
-  {
-    y = 0.0;
-    AddMult(x, y);
-  }
+  void Mult(const Vector &x, Vector &y) const override;
 
   void AddMult(const Vector &x, Vector &y, const double a = 1.0) const override;
 
-  void MultTranspose(const Vector &x, Vector &y) const override
-  {
-    y = 0.0;
-    AddMultTranspose(x, y);
-  }
+  void MultTranspose(const Vector &x, Vector &y) const override;
 
   void AddMultTranspose(const Vector &x, Vector &y, const double a = 1.0) const override;
 };
@@ -61,15 +53,15 @@ public:
   using Operator::Operator;
 
   void MultTranspose(const Vector &x, Vector &y) const override { Mult(x, y); }
-  void AddMultTranspose(const Vector &x, Vector &y, double c = 1.0) const override
+  void AddMultTranspose(const Vector &x, Vector &y, double a = 1.0) const override
   {
-    AddMult(x, y, c);
+    AddMult(x, y, a);
   }
 };
 
 // Assemble a ceed::Operator as an mfem::SparseMatrix.
-std::unique_ptr<mfem::SparseMatrix>
-CeedOperatorFullAssemble(const Operator &op, bool skip_zeros = false, bool set = false);
+std::unique_ptr<mfem::SparseMatrix> CeedOperatorFullAssemble(const Operator &op,
+                                                             bool skip_zeros, bool set);
 
 }  // namespace palace::ceed
 

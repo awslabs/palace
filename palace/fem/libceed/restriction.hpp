@@ -17,16 +17,16 @@ namespace palace::ceed
 namespace internal
 {
 
-using RestrKey = std::tuple<Ceed, void *, int, int, int>;
+using RestrKey = std::tuple<Ceed, void *, void *, int, int>;
 
 struct RestrHash
 {
   std::size_t operator()(const RestrKey &k) const
   {
     return CeedHashCombine(
-        CeedHashCombine(CeedHash(std::get<0>(k)), CeedHash(std::get<1>(k))),
+        CeedHash(std::get<0>(k)),
         CeedHashCombine(
-            CeedHash(std::get<2>(k)),
+            CeedHashCombine(CeedHash(std::get<1>(k)), CeedHash(std::get<2>(k))),
             CeedHashCombine(CeedHash(std::get<3>(k)), CeedHash(std::get<4>(k)))));
   }
 };
