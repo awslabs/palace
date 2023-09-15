@@ -20,9 +20,6 @@ if(PALACE_BUILD_EXTERNAL_DEPS)
 else()
   set(MFEM_DEPENDENCIES)
 endif()
-if(PALACE_WITH_LIBCEED)
-  list(APPEND MFEM_DEPENDENCIES libCEED)
-endif()
 if(PALACE_WITH_GSLIB)
   list(APPEND MFEM_DEPENDENCIES gslib)
 endif()
@@ -70,6 +67,7 @@ list(APPEND MFEM_OPTIONS
   "-DMFEM_USE_ZLIB=${PALACE_MFEM_WITH_ZLIB}"
   "-DMFEM_USE_LIBUNWIND=${PALACE_MFEM_WITH_LIBUNWIND}"
   "-DMFEM_USE_METIS_5=YES"
+  "-DMFEM_USE_CEED=NO"
 )
 if(PALACE_WITH_STRUMPACK OR PALACE_WITH_MUMPS)
   list(APPEND MFEM_OPTIONS
@@ -84,20 +82,6 @@ if(NOT "${BLAS_LAPACK_LIBRARIES}" STREQUAL "")
     "-DBLAS_LIBRARIES=${BLAS_LAPACK_LIBRARIES}"
     "-DLAPACK_LIBRARIES=${BLAS_LAPACK_LIBRARIES}"
   )
-endif()
-
-# MFEM with libCEED is always built internally
-if(PALACE_WITH_LIBCEED)
-  list(APPEND MFEM_OPTIONS
-    "-DMFEM_USE_CEED=YES"
-    "-DCEED_DIR=${CMAKE_INSTALL_PREFIX}"
-  )
-  if(NOT "${LIBCEED_EXTRA_LIBRARIES}" STREQUAL "")
-    list(APPEND MFEM_OPTIONS
-      "-DlibCEED_REQUIRED_LIBRARIES=${LIBCEED_EXTRA_LIBRARIES}"
-      # "-DlibCEED_REQUIRED_PACKAGES=BLAS"
-    )
-  endif()
 endif()
 
 # MFEM with GSLIB is always built internally
@@ -254,11 +238,7 @@ set(MFEM_PATCH_FILES
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_fecoll_vdim_fix.diff"
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_stateless_doftrans_threadsafe.diff"
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_global_variables_threadsafe.diff"
-  "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_assembly_cleanup_prereqs.diff"
-  "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_legacy_features_cleanup.diff"
-  "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_integ_getrule_interface.diff"
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_mfem_device_fixes.diff"
-  "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_pa_libceed_dev.diff"
 )
 
 include(ExternalProject)

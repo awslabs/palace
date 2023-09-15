@@ -748,7 +748,7 @@ index 231c050a7..b7e33fec3 100644
     H1_TriangleElement H1TriangleFE;
     ND_TriangleElement NDTriangleFE;
 diff --git a/fem/fespace.cpp b/fem/fespace.cpp
-index a46a60dcd..c141956b5 100644
+index 8a637f9cf..b9b3b5dc5 100644
 --- a/fem/fespace.cpp
 +++ b/fem/fespace.cpp
 @@ -63,7 +63,7 @@ FiniteElementSpace::FiniteElementSpace()
@@ -1179,7 +1179,7 @@ index a46a60dcd..c141956b5 100644
        }
     }
  
-@@ -2804,48 +2806,18 @@ FiniteElementSpace::GetElementDofs(int elem, Array<int> &dofs) const
+@@ -2804,54 +2806,18 @@ FiniteElementSpace::GetElementDofs(int elem, Array<int> &dofs) const
           dofs.Append(bbase + j);
        }
     }
@@ -1197,9 +1197,15 @@ index a46a60dcd..c141956b5 100644
 -
 -const FiniteElement *FiniteElementSpace::GetFE(int i) const
 -{
--   if (i < 0 || !mesh->GetNE()) { return NULL; }
--   MFEM_VERIFY(i < mesh->GetNE(),
--               "Invalid element id " << i << ", maximum allowed " << mesh->GetNE()-1);
+-   if (i < 0 || i >= mesh->GetNE())
+-   {
+-      if (mesh->GetNE() == 0)
+-      {
+-         MFEM_ABORT("Empty MPI partitions are not permitted!");
+-      }
+-      MFEM_ABORT("Invalid element id:" << i << "; minimum allowed:" << 0 <<
+-                 ", maximum allowed:" << mesh->GetNE()-1);
+-   }
 -
 -   const FiniteElement *FE =
 -      fec->GetFE(mesh->GetElementGeometry(i), GetElementOrderImpl(i));
@@ -1235,7 +1241,7 @@ index a46a60dcd..c141956b5 100644
  {
     MFEM_VERIFY(!orders_changed, msg_orders_changed);
  
-@@ -2853,17 +2825,18 @@ FiniteElementSpace::GetBdrElementDofs(int bel, Array<int> &dofs) const
+@@ -2859,17 +2825,18 @@ FiniteElementSpace::GetBdrElementDofs(int bel, Array<int> &dofs) const
     {
        bdr_elem_dof->GetRow(bel, dofs);
  
@@ -1259,7 +1265,7 @@ index a46a60dcd..c141956b5 100644
     int F, oF;
  
     int dim = mesh->Dimension();
-@@ -2887,11 +2860,13 @@ FiniteElementSpace::GetBdrElementDofs(int bel, Array<int> &dofs) const
+@@ -2893,11 +2860,13 @@ FiniteElementSpace::GetBdrElementDofs(int bel, Array<int> &dofs) const
     {
        mesh->GetBdrElementFace(bel, &F, &oF);
  
@@ -1277,7 +1283,7 @@ index a46a60dcd..c141956b5 100644
        }
     }
  
-@@ -2933,8 +2908,14 @@ FiniteElementSpace::GetBdrElementDofs(int bel, Array<int> &dofs) const
+@@ -2939,8 +2908,14 @@ FiniteElementSpace::GetBdrElementDofs(int bel, Array<int> &dofs) const
           dofs.Append(EncodeDof(nvdofs + nedofs + fbase, ind[j]));
        }
     }
@@ -1293,7 +1299,7 @@ index a46a60dcd..c141956b5 100644
  }
  
  int FiniteElementSpace::GetFaceDofs(int face, Array<int> &dofs,
-@@ -3097,18 +3078,6 @@ int FiniteElementSpace::GetNumElementInteriorDofs(int i) const
+@@ -3103,18 +3078,6 @@ int FiniteElementSpace::GetNumElementInteriorDofs(int i) const
                           GetElementOrderImpl(i));
  }
  
@@ -1312,7 +1318,7 @@ index a46a60dcd..c141956b5 100644
  void FiniteElementSpace::GetFaceInteriorDofs(int i, Array<int> &dofs) const
  {
     MFEM_VERIFY(!IsVariableOrder(), "not implemented");
-@@ -3133,6 +3102,55 @@ void FiniteElementSpace::GetFaceInteriorDofs(int i, Array<int> &dofs) const
+@@ -3139,6 +3102,61 @@ void FiniteElementSpace::GetFaceInteriorDofs(int i, Array<int> &dofs) const
     }
  }
  
@@ -1337,9 +1343,15 @@ index a46a60dcd..c141956b5 100644
 +
 +const FiniteElement *FiniteElementSpace::GetFE(int i) const
 +{
-+   if (i < 0 || !mesh->GetNE()) { return NULL; }
-+   MFEM_VERIFY(i < mesh->GetNE(),
-+               "Invalid element id " << i << ", maximum allowed " << mesh->GetNE()-1);
++   if (i < 0 || i >= mesh->GetNE())
++   {
++      if (mesh->GetNE() == 0)
++      {
++         MFEM_ABORT("Empty MPI partitions are not permitted!");
++      }
++      MFEM_ABORT("Invalid element id:" << i << "; minimum allowed:" << 0 <<
++                 ", maximum allowed:" << mesh->GetNE()-1);
++   }
 +
 +   const FiniteElement *FE =
 +      fec->GetFE(mesh->GetElementGeometry(i), GetElementOrderImpl(i));
@@ -1368,7 +1380,7 @@ index a46a60dcd..c141956b5 100644
  const FiniteElement *FiniteElementSpace::GetBE(int i) const
  {
     int order = fec->GetOrder();
-@@ -3205,8 +3223,8 @@ const FiniteElement *FiniteElementSpace::GetEdgeElement(int i,
+@@ -3211,8 +3229,8 @@ const FiniteElement *FiniteElementSpace::GetEdgeElement(int i,
     return fec->GetFE(Geometry::SEGMENT, eo);
  }
  
@@ -1379,7 +1391,7 @@ index a46a60dcd..c141956b5 100644
  {
     return fec->TraceFiniteElementForGeometry(geom_type);
  }
-@@ -3244,7 +3262,7 @@ void FiniteElementSpace::Destroy()
+@@ -3250,7 +3268,7 @@ void FiniteElementSpace::Destroy()
     }
     E2BFQ_array.SetSize(0);
  
@@ -1388,7 +1400,7 @@ index a46a60dcd..c141956b5 100644
  
     dof_elem_array.DeleteAll();
     dof_ldof_array.DeleteAll();
-@@ -3262,19 +3280,18 @@ void FiniteElementSpace::Destroy()
+@@ -3268,19 +3286,18 @@ void FiniteElementSpace::Destroy()
        delete bdr_elem_dof;
        delete bdr_elem_fos;
        delete face_dof;
@@ -1413,7 +1425,7 @@ index a46a60dcd..c141956b5 100644
  
  void FiniteElementSpace::GetTransferOperator(
 diff --git a/fem/fespace.hpp b/fem/fespace.hpp
-index 8b1d651da..23d737294 100644
+index d465ff099..2f95d8b4c 100644
 --- a/fem/fespace.hpp
 +++ b/fem/fespace.hpp
 @@ -271,7 +271,8 @@ protected:

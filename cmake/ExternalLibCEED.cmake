@@ -32,7 +32,6 @@ set(LIBCEED_OPTIONS
   "CC=${CMAKE_C_COMPILER}"
   "OPT=${LIBCEED_C_FLAGS}"
   "STATIC="
-  "VERBOSE=1"
 )
 
 # Configure OpenMP
@@ -73,7 +72,8 @@ message(STATUS "LIBCEED_OPTIONS: ${LIBCEED_OPTIONS_PRINT}")
 
 # Add OpenMP support to libCEED
 set(LIBCEED_PATCH_FILES
-  "${CMAKE_SOURCE_DIR}/extern/patch/libCEED/patch_openmp.diff"
+  "${CMAKE_SOURCE_DIR}/extern/patch/libCEED/patch_gpu_restriction_dev.diff"
+  "${CMAKE_SOURCE_DIR}/extern/patch/libCEED/patch_hcurl_hdiv_basis.diff"
 )
 
 include(ExternalProject)
@@ -92,13 +92,3 @@ ExternalProject_Add(libCEED
   INSTALL_COMMAND   ${CMAKE_MAKE_PROGRAM} ${LIBCEED_OPTIONS} install
   TEST_COMMAND      ""
 )
-
-if(PALACE_WITH_LIBXSMM)
-  if(PALACE_BUILD_EXTERNAL_DEPS)
-    include(GNUInstallDirs)
-    set(_LIBXSMM_LIBRARIES ${CMAKE_INSTALL_PREFIX}/lib/libxsmm${CMAKE_SHARED_LIBRARY_SUFFIX})
-  else()
-    set(_LIBXSMM_LIBRARIES "-lxsmm")
-  endif()
-  set(LIBCEED_EXTRA_LIBRARIES ${_LIBXSMM_LIBRARIES} CACHE STRING "List of extra library files for libCEED")
-endif()

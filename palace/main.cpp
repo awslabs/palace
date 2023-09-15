@@ -12,6 +12,7 @@
 #include "drivers/electrostaticsolver.hpp"
 #include "drivers/magnetostaticsolver.hpp"
 #include "drivers/transientsolver.hpp"
+#include "fem/libceed/utils.hpp"
 #include "linalg/slepc.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
@@ -21,22 +22,61 @@
 #if defined(MFEM_USE_OPENMP)
 #include <omp.h>
 #endif
-#if defined(PALACE_GIT_COMMIT)
-#include "gitversion.hpp"
-#endif
 
 using namespace palace;
 
-void PrintBanner(MPI_Comm comm, int np, int nt, const char *git_tag)
+static const char *GetPalaceGitTag()
+{
+#if defined(PALACE_GIT_COMMIT)
+  static const char *commit = PALACE_GIT_COMMIT_ID;
+#else
+  static const char *commit = "UNKNOWN";
+#endif
+  return commit;
+}
+
+static const char *GetPalaceCeedJitSourceDir()
+{
+#if defined(PALACE_LIBCEED_JIT_SOURCE)
+  static const char *path = PALACE_LIBCEED_JIT_SOURCE_DIR;
+#else
+  static const char *path = "";
+#endif
+  return path;
+}
+
+static int ConfigureOmp()
+{
+#if defined(MFEM_USE_OPENMP)
+  int nt;
+  const char *env = std::getenv("OMP_NUM_THREADS");
+  if (env)
+  {
+    std::sscanf(env, "%d", &nt);
+  }
+  else
+  {
+    nt = 1;
+    omp_set_num_threads(nt);
+  }
+  omp_set_nested(0);
+  omp_set_dynamic(0);
+  return nt;
+#else
+  return 1;
+#endif
+}
+
+static void PrintPalaceBanner(MPI_Comm comm, int np, int nt)
 {
   Mpi::Print(comm, "_____________     _______\n"
                    "_____   __   \\____ __   /____ ____________\n"
                    "____   /_/  /  __ ` /  /  __ ` /  ___/  _ \\\n"
                    "___   _____/  /_/  /  /  /_/  /  /__/  ___/\n"
                    "  /__/     \\___,__/__/\\___,__/\\_____\\_____/\n\n");
-  if (git_tag)
+  if (std::strcmp(GetPalaceGitTag(), "UNKNOWN"))
   {
-    Mpi::Print(comm, "Git changeset ID: {}\n", git_tag);
+    Mpi::Print(comm, "Git changeset ID: {}\n", GetPalaceGitTag());
   }
   if (nt > 0)
   {
@@ -108,25 +148,8 @@ int main(int argc, char *argv[])
   }
 
   // Parse configuration file.
-  int num_thread = 0;
-#if defined(MFEM_USE_OPENMP)
-  const char *env = std::getenv("OMP_NUM_THREADS");
-  if (env)
-  {
-    std::sscanf(env, "%d", &num_thread);
-  }
-  else
-  {
-    num_thread = 1;
-    omp_set_num_threads(num_thread);
-  }
-#endif
-#if defined(PALACE_GIT_COMMIT)
-  const char *git_tag = GetGitCommit();
-#else
-  const char *git_tag = nullptr;
-#endif
-  PrintBanner(world_comm, world_size, num_thread, git_tag);
+  int omp_threads = ConfigureOmp();
+  PrintPalaceBanner(world_comm, world_size, omp_threads);
   IoData iodata(argv[1], false);
 
   // XX TODO: Better device defaults?
@@ -140,6 +163,11 @@ int main(int argc, char *argv[])
   }
 #endif
   mfem::Device device(iodata.solver.device.c_str());
+
+  // XX TODO WIP CEED RESOURCE SPEC FROM CONFIG FILE (Defaults with MFEM)
+
+  // Initialize libCEED.
+  ceed::Initialize("/cpu/self", GetPalaceCeedJitSourceDir());
 
   // Initialize Hypre and, optionally, SLEPc/PETSc.
   mfem::Hypre::Init();
@@ -157,24 +185,24 @@ int main(int argc, char *argv[])
   switch (iodata.problem.type)
   {
     case config::ProblemData::Type::DRIVEN:
-      solver = std::make_unique<DrivenSolver>(iodata, world_root, world_size, num_thread,
-                                              git_tag);
+      solver = std::make_unique<DrivenSolver>(iodata, world_root, world_size, omp_threads,
+                                              GetPalaceGitTag());
       break;
     case config::ProblemData::Type::EIGENMODE:
-      solver = std::make_unique<EigenSolver>(iodata, world_root, world_size, num_thread,
-                                             git_tag);
+      solver = std::make_unique<EigenSolver>(iodata, world_root, world_size, omp_threads,
+                                             GetPalaceGitTag());
       break;
     case config::ProblemData::Type::ELECTROSTATIC:
       solver = std::make_unique<ElectrostaticSolver>(iodata, world_root, world_size,
-                                                     num_thread, git_tag);
+                                                     omp_threads, GetPalaceGitTag());
       break;
     case config::ProblemData::Type::MAGNETOSTATIC:
       solver = std::make_unique<MagnetostaticSolver>(iodata, world_root, world_size,
-                                                     num_thread, git_tag);
+                                                     omp_threads, GetPalaceGitTag());
       break;
     case config::ProblemData::Type::TRANSIENT:
-      solver = std::make_unique<TransientSolver>(iodata, world_root, world_size, num_thread,
-                                                 git_tag);
+      solver = std::make_unique<TransientSolver>(iodata, world_root, world_size,
+                                                 omp_threads, GetPalaceGitTag());
       break;
   }
 
@@ -192,6 +220,9 @@ int main(int argc, char *argv[])
   BlockTimer::Print(world_comm);
   solver->SaveMetadata(BlockTimer::GlobalTimer());
   Mpi::Print(world_comm, "\n");
+
+  // Finalize libCEED.
+  ceed::Finalize();
 
   // Finalize SLEPc/PETSc.
 #if defined(PALACE_WITH_SLEPC)

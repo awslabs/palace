@@ -32,6 +32,7 @@ set(ANALYZE_SOURCES_CPPCHECK OFF CACHE BOOL "Run static analysis checks using cp
 
 # Help find third-party dependencies
 set(MFEM_DIR "" CACHE STRING "Path to MFEM build or installation directory (not required if already on CMAKE_PREFIX_PATH)")
+set(LIBCEED_DIR "" CACHE STRING "Path to libCEED build or installation directory (not required if already on CMAKE_PREFIX_PATH or PKG_CONFIG_PATH)")
 set(PETSC_DIR "" CACHE STRING "Path to PETSc build or installation directory (not required if already on CMAKE_PREFIX_PATH or PKG_CONFIG_PATH)")
 set(SLEPC_DIR "" CACHE STRING "Path to SLEPc build or installation directory (not required if already on CMAKE_PREFIX_PATH or PKG_CONFIG_PATH)")
 set(ARPACK_DIR "" CACHE STRING "Path to ARPACK build or installation directory (not required if already on CMAKE_PREFIX_PATH)")
@@ -84,9 +85,19 @@ endif()
 #   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${MFEM_CXX_FLAGS}")
 # endif()
 
+# Find libCEED
+include(PkgConfigHelpers)
+set(LIBCEED_TEST_DEPS)
+if(PALACE_WITH_OPENMP)
+  list(APPEND LIBCEED_TEST_DEPS OpenMP::OpenMP_CXX)
+endif()
+find_libceed_pkgconfig("${LIBCEED_TEST_DEPS}" LIBCEED_TARGET)
+if("${LIBCEED_TARGET}" STREQUAL "")
+  message(FATAL_ERROR "libCEED could not be found, be sure to set LIBCEED_DIR")
+endif()
+
 # Find PETSc and SLEPc
 if(PALACE_WITH_SLEPC)
-  include(PkgConfigHelpers)
   set(PETSC_TEST_DEPS MPI::MPI_CXX)
   if(PALACE_WITH_OPENMP)
     list(APPEND PETSC_TEST_DEPS OpenMP::OpenMP_CXX)
@@ -131,15 +142,10 @@ add_subdirectory(linalg)
 add_subdirectory(models)
 add_subdirectory(utils)
 
-# Add binary extension for build architecture
-if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm")
-  set(TARGET_EXTENSION "arm64")
-else()
-  set(TARGET_EXTENSION "x86_64")
-endif()
-set_target_properties(${TARGET_NAME} PROPERTIES
-  OUTPUT_NAME "${TARGET_NAME}-${TARGET_EXTENSION}"
-  SUFFIX ".bin"
+# Add JIT source file path definition for libCEED
+set_property(
+  SOURCE ${CMAKE_SOURCE_DIR}/main.cpp
+  APPEND PROPERTY COMPILE_DEFINITIONS "PALACE_LIBCEED_JIT_SOURCE;PALACE_LIBCEED_JIT_SOURCE_DIR=\"${CMAKE_INSTALL_PREFIX}/include/palace\""
 )
 
 # Add Git revision information (forces reconfigure when Git status changes)
@@ -147,20 +153,9 @@ include(GetGitDescription)
 git_describe(GIT_COMMIT_ID)
 message(STATUS "Git string: ${GIT_COMMIT_ID}")
 if(NOT GIT_COMMIT_ID MATCHES "NOTFOUND")
-  file(WRITE ${CMAKE_BINARY_DIR}/config/gitversion.hpp
-"#pragma once
-const char *GetGitCommit()
-{
-  static const char *commit = \"@GIT_COMMIT_ID@\";
-  return commit;
-}
-")
-  configure_file(${CMAKE_BINARY_DIR}/config/gitversion.hpp ${CMAKE_BINARY_DIR}/config @ONLY)
-  target_include_directories(${TARGET_NAME}
-    PRIVATE ${CMAKE_BINARY_DIR}/config
-  )
-  target_compile_definitions(${TARGET_NAME}
-    PRIVATE PALACE_GIT_COMMIT
+  set_property(
+    SOURCE ${CMAKE_SOURCE_DIR}/main.cpp
+    APPEND PROPERTY COMPILE_DEFINITIONS "PALACE_GIT_COMMIT;PALACE_GIT_COMMIT_ID=\"${GIT_COMMIT_ID}\""
   )
 endif()
 
@@ -206,11 +201,23 @@ if(PALACE_WITH_ARPACK)
   )
 endif()
 target_link_libraries(${TARGET_NAME}
-  PRIVATE mfem nlohmann_json::nlohmann_json fmt::fmt Eigen3::Eigen MPI::MPI_CXX
+  PRIVATE mfem ${LIBCEED_TARGET} nlohmann_json::nlohmann_json fmt::fmt Eigen3::Eigen MPI::MPI_CXX
+)
+
+# Add binary extension for build architecture
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm")
+  set(TARGET_EXTENSION "arm64")
+else()
+  set(TARGET_EXTENSION "x86_64")
+endif()
+set_target_properties(${TARGET_NAME} PROPERTIES
+  OUTPUT_NAME "${TARGET_NAME}-${TARGET_EXTENSION}"
+  SUFFIX ".bin"
 )
 
 # Install target and helper scripts
-install(TARGETS ${TARGET_NAME}
+install(TARGETS
+  ${TARGET_NAME}
   RUNTIME DESTINATION bin
 )
 install(FILES
@@ -222,6 +229,11 @@ install(FILES
 install(DIRECTORY
   ${CMAKE_SOURCE_DIR}/../scripts/schema
   DESTINATION bin
+  FILE_PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ
+)
+install(DIRECTORY
+  ${CMAKE_SOURCE_DIR}/fem/qfunctions
+  DESTINATION include/palace
   FILE_PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ
 )
 

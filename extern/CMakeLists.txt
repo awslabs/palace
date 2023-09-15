@@ -51,7 +51,7 @@ if(PALACE_WITH_ARPACK)
 endif()
 
 # Add LIBXSMM (for libCEED)
-if(PALACE_WITH_LIBCEED AND PALACE_WITH_LIBXSMM)
+if(PALACE_WITH_LIBXSMM)
   message(STATUS "==================== Configuring LIBXSMM dependency ====================")
   include(ExternalLIBXSMM)
 endif()
