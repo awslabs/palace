@@ -33,7 +33,7 @@ void Operator::AddOper(CeedOperator op, CeedOperator op_t)
   {
     CeedSize l_in_t, l_out_t;
     PalaceCeedCall(ceed, CeedOperatorGetActiveVectorLengths(op_t, &l_in_t, &l_out_t));
-    MFEM_VERIFY(l_in_t == l_out && l_out_t == l_in,
+    MFEM_VERIFY((l_in_t == 0 && l_out_t == 0) || (l_in_t == l_out && l_out_t == l_in),
                 "Dimensions mismatch for transpose CeedOperator!");
   }
   PalaceCeedCall(ceed, CeedVectorCreate(ceed, l_in, &loc_u));
@@ -268,10 +268,6 @@ void CeedOperatorAssembleCOORemoveZeros(Ceed ceed, CeedSize *nnz, CeedInt **rows
   *rows = new_rows;
   *cols = new_cols;
   *vals = new_vals;
-
-  // XX TODO WIP DEBUG
-  std::cout << "New nnz " << q << " of " << *nnz << " in assembly\n";
-
   *nnz = q;
 }
 
@@ -360,9 +356,15 @@ void CeedOperatorAssembleCOO(const Operator &op, bool skip_zeros, CeedSize *nnz,
     PalaceCeedCall(ceed, CeedVectorRestoreArray(*vals, &vals_array));
   }
 
+  // XX TODO WIP DEBUG
+  std::cout << "  Operator full assembly has " << *nnz << " NNZ\n";
+
   if (skip_zeros && *nnz > 0)
   {
     CeedOperatorAssembleCOORemoveZeros(ceed, nnz, rows, cols, vals, mem);
+
+    // XX TODO WIP DEBUG
+    std::cout << "    New NNZ after removal is " << *nnz << "\n";
   }
 }
 
@@ -386,10 +388,13 @@ std::unique_ptr<mfem::SparseMatrix> CeedOperatorFullAssemble(const Operator &op,
   mat->OverrideSize(op.Height(), op.Width());
   mat->GetMemoryI().New(op.Height() + 1);
   auto *I = mat->GetI();
-
   mfem::Array<int> J(nnz), perm(nnz), Jmap(nnz + 1);
   mfem::Array<int> perm2, backup_perm, backup_cols;
 
+  for (int i = 0; i < op.Height() + 1; i++)
+  {
+    I[i] = 0;
+  }
   for (int k = 0; k < nnz; k++)
   {
     perm[k] = k;

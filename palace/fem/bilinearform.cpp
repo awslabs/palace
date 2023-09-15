@@ -119,8 +119,9 @@ std::unique_ptr<Operator> BilinearForm::Assemble() const
     const int tid = 0;
 #endif
     Ceed ceed = ceed::internal::ceed[tid];
-    CeedOperator loc_op, loc_op_t = nullptr;
+    CeedOperator loc_op, loc_op_t;
     PalaceCeedCall(ceed, CeedCompositeOperatorCreate(ceed, &loc_op));
+    PalaceCeedCall(ceed, CeedCompositeOperatorCreate(ceed, &loc_op_t));
 
     // Domain integrators first.
     if (!domain_integs.empty())
@@ -150,10 +151,6 @@ std::unique_ptr<Operator> BilinearForm::Assemble() const
           PalaceCeedCall(ceed, CeedOperatorDestroy(&sub_op));
           if (sub_op_t)
           {
-            if (!loc_op_t)
-            {
-              PalaceCeedCall(ceed, CeedCompositeOperatorCreate(ceed, &loc_op_t));
-            }
             PalaceCeedCall(ceed, CeedCompositeOperatorAddSub(loc_op_t, sub_op_t));
             PalaceCeedCall(ceed, CeedOperatorDestroy(&sub_op_t));
           }
@@ -189,10 +186,6 @@ std::unique_ptr<Operator> BilinearForm::Assemble() const
           PalaceCeedCall(ceed, CeedOperatorDestroy(&sub_op));
           if (sub_op_t)
           {
-            if (!loc_op_t)
-            {
-              PalaceCeedCall(ceed, CeedCompositeOperatorCreate(ceed, &loc_op_t));
-            }
             PalaceCeedCall(ceed, CeedCompositeOperatorAddSub(loc_op_t, sub_op_t));
             PalaceCeedCall(ceed, CeedOperatorDestroy(&sub_op_t));
           }
@@ -201,10 +194,7 @@ std::unique_ptr<Operator> BilinearForm::Assemble() const
     }
 
     PalaceCeedCall(ceed, CeedOperatorCheckReady(loc_op));
-    if (loc_op_t)
-    {
-      PalaceCeedCall(ceed, CeedOperatorCheckReady(loc_op_t));
-    }
+    PalaceCeedCall(ceed, CeedOperatorCheckReady(loc_op_t));
     op->AddOper(loc_op, loc_op_t);  // Thread-safe
   }
 
