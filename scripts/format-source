@@ -85,7 +85,7 @@ if $FORMAT_CPP; then
         echo "Error: Could not locate $CLANG_FORMAT executable"
         exit 1
     fi
-    FORMAT_CPP_FILES=$(find $SOURCE_DIR/palace -type f \( -iname \*.hpp -o -iname \*.cpp \))
+    FORMAT_CPP_FILES=$(find $SOURCE_DIR/palace -type f \( -iname \*.hpp -o -iname \*.cpp -o -iname \*.h -o -iname \*.c \))
     $CLANG_FORMAT $DRY_RUN --style=file --verbose -i $FORMAT_CPP_FILES
 fi
 
