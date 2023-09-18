@@ -92,10 +92,6 @@ std::unique_ptr<Operator> BilinearForm::Assemble() const
               "Trial and test finite element spaces must correspond to the same mesh!");
   mfem::Mesh &mesh = *trial_fespace.GetMesh();
   mesh.EnsureNodes();
-  if (q_order < 0)
-  {
-    q_order = fem::GetDefaultIntegrationOrder(trial_fespace, test_fespace);
-  }
 
   // //XX TODO
   // std::cout << "BilinearForm::Assemble with q_order = " << q_order << "\n";
@@ -142,6 +138,10 @@ std::unique_ptr<Operator> BilinearForm::Assemble() const
       for (const auto &value : element_indices)
       {
         const std::vector<int> &indices = value.second;
+        if (q_order < 0)
+        {
+          q_order = fem::GetDefaultIntegrationOrder(trial_fespace, test_fespace);
+        }
         const mfem::IntegrationRule &ir =
             mfem::IntRules.Get(mesh.GetElementGeometry(indices[0]), q_order);
 
@@ -177,6 +177,10 @@ std::unique_ptr<Operator> BilinearForm::Assemble() const
       for (const auto &value : element_indices)
       {
         const std::vector<int> &indices = value.second;
+        if (q_order < 0)
+        {
+          q_order = fem::GetDefaultIntegrationOrder(trial_fespace, test_fespace);
+        }
         const mfem::IntegrationRule &ir =
             mfem::IntRules.Get(mesh.GetBdrElementGeometry(indices[0]), q_order);
 
