@@ -3,6 +3,7 @@
 
 #include "operator.hpp"
 
+#include <ceed.h>
 #include <mfem/general/forall.hpp>
 #include "utils.hpp"
 
@@ -162,7 +163,7 @@ void Operator::AddMult(const Vector &x, Vector &y, const double a) const
     {
       temp *= dof_multiplicity;
     }
-    linalg::AXPY(a, temp, y);
+    y.Add(a, temp);
   }
 }
 
@@ -196,7 +197,7 @@ void Operator::AddMultTranspose(const Vector &x, Vector &y, const double a) cons
       temp.UseDevice(true);
       temp = 0.0;
       CeedAddMult(ops_t, v, u, x_, temp);
-      linalg::AXPY(a_, temp, y_);
+      y_.Add(a_, temp);
     }
   };
   if (dof_multiplicity.Size() > 0)

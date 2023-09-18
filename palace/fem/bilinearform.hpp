@@ -8,7 +8,7 @@
 #include <vector>
 #include <mfem.hpp>
 #include "fem/integrator.hpp"
-#include "linalg/operator.hpp"
+#include "fem/libceed/operator.hpp"
 
 namespace palace
 {
@@ -33,12 +33,12 @@ protected:
   mutable int q_order;
 
 public:
-  BilinearForm(const mfem::ParFiniteElementSpace &trial_fespace,
-               const mfem::ParFiniteElementSpace &test_fespace, int q_order = -1)
+  BilinearForm(const mfem::FiniteElementSpace &trial_fespace,
+               const mfem::FiniteElementSpace &test_fespace, int q_order = -1)
     : trial_fespace(trial_fespace), test_fespace(test_fespace), q_order(q_order)
   {
   }
-  BilinearForm(const mfem::ParFiniteElementSpace &fespace, int q_order = -1)
+  BilinearForm(const mfem::FiniteElementSpace &fespace, int q_order = -1)
     : BilinearForm(fespace, fespace, q_order)
   {
   }
@@ -88,8 +88,8 @@ private:
   BilinearForm a;
 
 public:
-  DiscreteLinearOperator(const mfem::ParFiniteElementSpace &trial_fespace,
-                         const mfem::ParFiniteElementSpace &test_fespace)
+  DiscreteLinearOperator(const mfem::FiniteElementSpace &trial_fespace,
+                         const mfem::FiniteElementSpace &test_fespace)
     : a(trial_fespace, test_fespace)
   {
   }

@@ -6,12 +6,19 @@
 
 #include <memory>
 #include <vector>
-#include <ceed.h>
 #include <mfem.hpp>
-#include "linalg/operator.hpp"
-#include "linalg/vector.hpp"
 
-namespace palace::ceed
+// Forward declarations of libCEED objects.
+typedef struct CeedOperator_private *CeedOperator;
+typedef struct CeedVector_private *CeedVector;
+
+namespace palace
+{
+
+using Operator = mfem::Operator;
+using Vector = mfem::Vector;
+
+namespace ceed
 {
 
 // Wrapper class for libCEED's CeedOperator.
@@ -63,6 +70,8 @@ public:
 std::unique_ptr<mfem::SparseMatrix> CeedOperatorFullAssemble(const Operator &op,
                                                              bool skip_zeros, bool set);
 
-}  // namespace palace::ceed
+}  // namespace ceed
+
+}  // namespace palace
 
 #endif  // PALACE_LIBCEED_OPERATOR_HPP

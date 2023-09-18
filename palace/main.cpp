@@ -116,9 +116,18 @@ static std::string ConfigureDeviceAndBackend(config::SolverData::Device device,
 #endif
 
   // Initialize libCEED.
-  ceed::Initialize(!ceed_backend.empty() ? ceed_backend.c_str()
-                                         : default_ceed_backend.c_str(),
-                   GetPalaceCeedJitSourceDir());
+  const std::string &backend =
+      !ceed_backend.empty() ? ceed_backend.c_str() : default_ceed_backend.c_str();
+  ceed::Initialize(backend.c_str(), GetPalaceCeedJitSourceDir());
+
+  // Check that the provided resource matches the requested one.
+  std::string ceed_resource = ceed::Print();
+  if (backend.compare(0, backend.length(), ceed_resource, 0, backend.length()))
+  {
+    Mpi::Warning(
+        "libCEED is not using the requested backend (requested \"{}\", got \"{}\")!\n",
+        backend, ceed_resource);
+  }
 
   return device_str;
 }

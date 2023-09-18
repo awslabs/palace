@@ -5,7 +5,6 @@
 
 #include "basis.hpp"
 #include "restriction.hpp"
-#include "utils/communication.hpp"
 
 #if defined(MFEM_USE_OPENMP)
 #include <omp.h>
@@ -43,17 +42,6 @@ void Initialize(const char *resource, const char *jit_source_dir)
     int ierr = CeedInit(resource, &internal::ceed[i]);
     MFEM_VERIFY(!ierr, "Failed to initialize libCEED with resource " << resource << "!");
     Ceed ceed = internal::ceed[i];
-
-    // Check that the provided resource matches the requested one.
-    const char *ceed_resource;
-    PalaceCeedCall(ceed, CeedGetResource(ceed, &ceed_resource));
-    std::size_t resource_len = strlen(resource);
-    if (strncmp(resource, ceed_resource, resource_len))
-    {
-      Mpi::Warning(
-          "libCEED is not using the requested backend (requested \"{}\", got \"{}\")!\n",
-          resource, ceed_resource);
-    }
 
     // Configure QFunction search path.
     if (jit_source_dir)

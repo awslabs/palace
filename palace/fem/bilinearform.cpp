@@ -8,7 +8,6 @@
 #include <ceed.h>
 #include "fem/libceed/operator.hpp"
 #include "fem/libceed/utils.hpp"
-#include "linalg/vector.hpp"
 
 #if defined(MFEM_USE_OPENMP)
 #include <omp.h>
