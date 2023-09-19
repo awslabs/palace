@@ -243,10 +243,12 @@ void BenchmarkCeedIntegrator(mfem::FiniteElementSpace &fespace, T1 AssembleTest,
   std::size_t nnz = 0;
   {
     BilinearForm a_test(fespace, q_extra), a_test_ref(fespace, q_extra);
-    const auto &mat_test = *a_test.FullAssemble(*AssembleTest(a_test, true), skip_zeros);
-    nnz = mat_test.NumNonZeroElems();
-    TestCeedOperatorFullAssemble(
-        mat_test, *a_test_ref.FullAssemble(*AssembleTestRef(a_test_ref, true), skip_zeros));
+    const auto op_test = AssembleTest(a_test, true);
+    const auto op_test_ref = AssembleTestRef(a_test_ref, true);
+    const auto &mat_test = a_test.FullAssemble(*op_test, skip_zeros);
+    const auto &mat_test_ref = a_test_ref.FullAssemble(*op_test_ref, skip_zeros);
+    nnz = mat_test->NumNonZeroElems();
+    TestCeedOperatorFullAssemble(*mat_test, *mat_test_ref);
   }
 
   // Benchmark MFEM legacy assembly.
@@ -322,9 +324,11 @@ void BenchmarkCeedIntegrator(mfem::FiniteElementSpace &fespace, T1 AssembleTest,
     // restriction.
     std::size_t mem_ref = nnz * (8 + 4) + (y_ref.Size() + 1) * 4;
     std::size_t mem_test = (Q * qdata_size * 8 + P * 4) * (std::size_t)mesh.GetNE();
-    WARN("Memory usage: Full assembly = " << mem_ref / (1024 * 1024) << " MB\n"
-                                          << "              Partial assembly = "
-                                          << mem_test / (1024 * 1024) << " MB\n");
+    WARN("benchmark memory footprint:\n"
+         << "  N = " << fespace.GetVSize() << "\n"
+         << "  Full Assembly = " << mem_ref / (double)(1024 * 1024) << " MB (" << nnz
+         << " NNZ)\n"
+         << "  Partial Assembly = " << mem_test / (double)(1024 * 1024) << " MB\n");
   }
 }
 
@@ -346,10 +350,12 @@ void BenchmarkCeedInterpolator(mfem::FiniteElementSpace &trial_fespace,
   {
     DiscreteLinearOperator a_test(trial_fespace, test_fespace);
     mfem::DiscreteLinearOperator a_ref(&trial_fespace, &test_fespace);
-    const auto &mat_test = *a_test.FullAssemble(*AssembleTest(a_test), skip_zeros);
-    nnz = mat_test.NumNonZeroElems();
-    TestCeedOperatorFullAssemble(
-        mat_test, AssembleRef(a_ref, mfem::AssemblyLevel::PARTIAL, skip_zeros)->SpMat());
+    const auto op_test = AssembleTest(a_test);
+    const auto &mat_test = a_test.FullAssemble(*op_test, skip_zeros);
+    const auto *mat_ref =
+        &AssembleRef(a_ref, mfem::AssemblyLevel::LEGACY, skip_zeros)->SpMat();
+    nnz = mat_test->NumNonZeroElems();
+    TestCeedOperatorFullAssemble(*mat_test, *mat_ref);
   }
 
   // Benchmark MFEM legacy assembly.
@@ -419,13 +425,14 @@ void BenchmarkCeedInterpolator(mfem::FiniteElementSpace &trial_fespace,
     const int trial_P = trial_fe.GetDof();
     const int test_P = test_fe.GetDof();
 
-    // Rough estimate for memory consumption as quadrature data + offsets for element
-    // restriction.
+    // Rough estimate for memory consumption.
     std::size_t mem_ref = nnz * (8 + 4) + (y_ref.Size() + 1) * 4;
     std::size_t mem_test = (trial_P * 4 + test_P * 4) * (std::size_t)mesh.GetNE();
-    WARN("Memory usage: Full assembly = " << mem_ref / (1024 * 1024) << " MB\n"
-                                          << "              Partial assembly = "
-                                          << mem_test / (1024 * 1024) << " MB\n");
+    WARN("benchmark memory footprint:\n"
+         << "  N = " << trial_fespace.GetVSize() << ", " << test_fespace.GetVSize() << "\n"
+         << "  Full Assembly = " << mem_ref / (double)(1024 * 1024) << " MB (" << nnz
+         << " NNZ)\n"
+         << "  Partial Assembly = " << mem_test / (double)(1024 * 1024) << " MB\n");
   }
 }
 
@@ -920,6 +927,8 @@ void RunCeedBenchmarks(const std::string &input, int ref_levels, int order)
                         "Refinement levels: " + std::to_string(ref_levels) + "\n" +
                         "Order: " + std::to_string(order) + "\n";
   INFO(section);
+  auto pos = input.find_last_of('/');
+  WARN("benchmark input mesh: " << input.substr(pos + 1) << "\n");
 
   // Diffusion + mass benchmark.
   SECTION("Diffusion + Mass Integrator Benchmark")
@@ -1057,7 +1066,7 @@ void RunCeedBenchmarks(const std::string &input, int ref_levels, int order)
 
     mfem::H1_FECollection h1_fec(order, dim);
     mfem::ND_FECollection nd_fec(order, dim);
-    mfem::FiniteElementSpace h1_fespace(&mesh, &nd_fec), nd_fespace(&mesh, &nd_fec);
+    mfem::FiniteElementSpace h1_fespace(&mesh, &h1_fec), nd_fespace(&mesh, &nd_fec);
     BenchmarkCeedInterpolator(h1_fespace, nd_fespace, AssembleTest, AssembleRef);
   }
 
