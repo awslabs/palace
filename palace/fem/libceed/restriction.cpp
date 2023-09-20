@@ -210,9 +210,11 @@ void InitRestriction(const mfem::FiniteElementSpace &fespace,
   // The restriction for an interpolator range space is slightly different as
   // the output is a primal vector instead of a dual vector, and lexicographic
   // ordering is never used (no use of tensor-product basis).
+  const int ncomp = fespace.GetVDim();
   const mfem::FiniteElement &fe =
       use_bdr ? *fespace.GetBE(indices[0]) : *fespace.GetFE(indices[0]);
-  const int ncomp = fespace.GetVDim();
+  const mfem::TensorBasisElement *tfe = dynamic_cast<const mfem::TensorBasisElement *>(&fe);
+  const bool vector = fe.GetRangeType() == mfem::FiniteElement::VECTOR;
   mfem::Array<int> dofs;
   mfem::DofTransformation dof_trans;
   if (use_bdr)
@@ -224,8 +226,11 @@ void InitRestriction(const mfem::FiniteElementSpace &fespace,
     fespace.GetElementDofs(indices[0], dofs, dof_trans);
   }
   const bool has_dof_trans = dof_trans.GetDofTransformation() && !dof_trans.IsEmpty();
-  const bool unique_range_restr = (is_interp && is_range && has_dof_trans);
-  internal::RestrKey key = {ceed, &fespace, &fe, ncomp, unique_range_restr};
+  const bool unique_interp_restr =
+      (is_interp && tfe && tfe->GetDofMap().Size() > 0 && !vector);
+  const bool unique_interp_range_restr = (is_interp && is_range && has_dof_trans);
+  internal::RestrKey key = {
+      ceed, &fespace, &fe, ncomp, unique_interp_restr, unique_interp_range_restr};
 
   // Initialize or retrieve key values (avoid simultaneous search and write).
   auto restr_itr = internal::restr_map.end();
@@ -235,9 +240,6 @@ void InitRestriction(const mfem::FiniteElementSpace &fespace,
   }
   if (restr_itr == internal::restr_map.end())
   {
-    const mfem::TensorBasisElement *tfe =
-        dynamic_cast<const mfem::TensorBasisElement *>(&fe);
-    const bool vector = fe.GetRangeType() == mfem::FiniteElement::VECTOR;
     const bool lexico = (tfe && tfe->GetDofMap().Size() > 0 && !vector && !is_interp);
     if (lexico)
     {
