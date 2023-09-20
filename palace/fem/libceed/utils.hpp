@@ -61,19 +61,31 @@ void Finalize();
 // Get the configured libCEED backend.
 std::string Print();
 
-// Wrapper for std::hash.
-template <typename T>
-inline std::size_t CeedHash(const T key)
-{
-  return std::hash<T>{}(key);
+// // Wrapper for std::hash.
+// template <typename T>
+// inline std::size_t CeedHash(const T key)
+// {
+//   return std::hash<T>{}(key);
+// }
+
+// // Effective way to combine hashes (from libCEED).
+// inline std::size_t CeedHashCombine(std::size_t seed, std::size_t hash)
+// {
+//   // See https://doi.org/10.1002/asi.10170 or https://dl.acm.org/citation.cfm?id=759509.
+//   return seed ^ (hash + (seed << 6) + (seed >> 2));
+// }
+
+inline void CeedHashCombine(std::size_t &seed) {}
+
+template <typename T, typename... U>
+inline void CeedHashCombine(std::size_t &seed, const T &v, U... rest) {
+    std::hash<T> hasher;
+    seed ^= hasher(v) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+    CeedHashCombine(seed, rest...);
 }
 
-// Effective way to combine hashes (from libCEED).
-inline std::size_t CeedHashCombine(std::size_t seed, std::size_t hash)
-{
-  // See https://doi.org/10.1002/asi.10170 or https://dl.acm.org/citation.cfm?id=759509.
-  return seed ^ (hash + (seed << 6) + (seed >> 2));
-}
+// Clear the global basis and restriction cache objects.
+void ClearBasisRestrictionCache();
 
 // Initialize a CeedVector from an mfem::Vector
 void InitCeedVector(const mfem::Vector &v, Ceed ceed, CeedVector *cv);

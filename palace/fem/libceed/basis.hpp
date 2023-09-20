@@ -4,7 +4,6 @@
 #ifndef PALACE_LIBCEED_BASIS_HPP
 #define PALACE_LIBCEED_BASIS_HPP
 
-#include <tuple>
 #include <unordered_map>
 #include <vector>
 #include <ceed.h>
@@ -17,17 +16,36 @@ namespace palace::ceed
 namespace internal
 {
 
-using BasisKey = std::tuple<Ceed, void *, void *, int>;
+struct BasisKey
+{
+  Ceed ceed;
+  const mfem::FiniteElement *trial_fe;
+  const mfem::FiniteElement *test_fe;
+  const mfem::IntegrationRule *ir;
+  int ncomp;
+  bool operator==(const BasisKey &k) const
+  {
+    return (ceed == k.ceed && trial_fe == k.trial_fe && test_fe == k.test_fe && ir == k.ir && ncomp == k.ncomp);
+  }
+};
 
 struct BasisHash
 {
   std::size_t operator()(const BasisKey &k) const
   {
-    return CeedHashCombine(
-        CeedHashCombine(CeedHash(std::get<0>(k)), CeedHash(std::get<1>(k))),
-        CeedHashCombine(CeedHash(std::get<2>(k)), CeedHash(std::get<3>(k))));
+    std::size_t hash = 0;
+    CeedHashCombine(hash, k.ceed, k.trial_fe, k.test_fe, k.ir, k.ncomp);
+    return hash;
   }
 };
+
+// struct BasisEqual : public std::binary_function<BasisKey, BasisKey, bool>
+// {
+//   bool operator()(const BasisKey &k0, const BasisKey &k1) const
+//   {
+//     return (k0.ceed == k1.ceed && k0.trial_fe == k1.trial_fe && k0.test_fe == k1.test_fe && k0.ir == k1.ir && k0.ncomp == k1.ncomp);
+//   }
+// };
 
 extern std::unordered_map<BasisKey, CeedBasis, BasisHash> basis_map;
 

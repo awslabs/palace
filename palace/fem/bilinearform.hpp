@@ -27,19 +27,29 @@ protected:
   // List of domain and boundary integrators making up the bilinear form.
   std::vector<std::unique_ptr<BilinearFormIntegrator>> domain_integs, boundary_integs;
 
-  // Integration order for quadrature rules, defaults to p_trial + p_test + w, where p_test
-  // and p_trial are the test and trial space basis function orders and w is the geometry
-  // order.
-  mutable int q_order;
+  // Integration order for quadrature rules is calculated as p_trial + p_test + w + q_extra,
+  // where p_test and p_trial are the test and trial space basis function orders and w is
+  // the geometry order.
+  int q_extra_pk, q_extra_qk;
 
 public:
   BilinearForm(const mfem::FiniteElementSpace &trial_fespace,
-               const mfem::FiniteElementSpace &test_fespace, int q_order = -1)
-    : trial_fespace(trial_fespace), test_fespace(test_fespace), q_order(q_order)
+               const mfem::FiniteElementSpace &test_fespace, int q_extra_pk, int q_extra_qk)
+    : trial_fespace(trial_fespace), test_fespace(test_fespace), q_extra_pk(q_extra_pk),
+      q_extra_qk(q_extra_qk)
   {
   }
-  BilinearForm(const mfem::FiniteElementSpace &fespace, int q_order = -1)
-    : BilinearForm(fespace, fespace, q_order)
+  BilinearForm(const mfem::FiniteElementSpace &trial_fespace,
+               const mfem::FiniteElementSpace &test_fespace, int q_extra = 0)
+    : BilinearForm(trial_fespace, test_fespace, q_extra, q_extra)
+  {
+  }
+  BilinearForm(const mfem::FiniteElementSpace &fespace, int q_extra_pk, int q_extra_qk)
+    : BilinearForm(fespace, fespace, q_extra_pk, q_extra_qk)
+  {
+  }
+  BilinearForm(const mfem::FiniteElementSpace &fespace, int q_extra = 0)
+    : BilinearForm(fespace, fespace, q_extra, q_extra)
   {
   }
 
@@ -71,13 +81,25 @@ public:
 
   std::unique_ptr<Operator> Assemble(int pa_order_threshold, bool skip_zeros) const
   {
-    return (GetMaxElementOrder() >= pa_order_threshold) ? Assemble()
-                                                        : FullAssemble(skip_zeros);
+    if (GetMaxElementOrder() >= pa_order_threshold)
+    {
+      return Assemble();
+    }
+    else
+    {
+      return FullAssemble(skip_zeros);
+    }
   }
 
-  std::unique_ptr<Operator> Assemble() const;
+  std::unique_ptr<mfem::SparseMatrix> FullAssemble(bool skip_zeros) const
+  {
+    return FullAssemble(*Assemble(), skip_zeros);
+  }
 
-  std::unique_ptr<mfem::SparseMatrix> FullAssemble(bool skip_zeros) const;
+  std::unique_ptr<ceed::Operator> Assemble() const;
+
+  std::unique_ptr<mfem::SparseMatrix> FullAssemble(const ceed::Operator &op,
+                                                   bool skip_zeros) const;
 };
 
 // Discrete linear operators map primal vectors to primal vectors for interpolation between
@@ -101,13 +123,25 @@ public:
 
   std::unique_ptr<Operator> Assemble(int pa_order_threshold, bool skip_zeros) const
   {
-    return (a.GetMaxElementOrder() >= pa_order_threshold) ? Assemble()
-                                                          : FullAssemble(skip_zeros);
+    if (a.GetMaxElementOrder() >= pa_order_threshold)
+    {
+      return Assemble();
+    }
+    else
+    {
+      return FullAssemble(skip_zeros);
+    }
   }
 
-  std::unique_ptr<Operator> Assemble() const;
+  std::unique_ptr<mfem::SparseMatrix> FullAssemble(bool skip_zeros) const
+  {
+    return FullAssemble(*Assemble(), skip_zeros);
+  }
 
-  std::unique_ptr<mfem::SparseMatrix> FullAssemble(bool skip_zeros) const;
+  std::unique_ptr<ceed::Operator> Assemble() const;
+
+  std::unique_ptr<mfem::SparseMatrix> FullAssemble(const ceed::Operator &op,
+                                                   bool skip_zeros) const;
 };
 
 }  // namespace palace

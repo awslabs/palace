@@ -30,6 +30,9 @@ void Operator::AddOper(CeedOperator op, CeedOperator op_t)
   CeedVector loc_u, loc_v;
   PalaceCeedCallBackend(CeedOperatorGetCeed(op, &ceed));
   PalaceCeedCall(ceed, CeedOperatorGetActiveVectorLengths(op, &l_in, &l_out));
+  MFEM_VERIFY((l_in == 0 && l_out == 0) || (mfem::internal::to_int(l_in) == width &&
+                                            mfem::internal::to_int(l_out) == height),
+              "Dimensions mismatch for CeedOperator!");
   if (op_t)
   {
     CeedSize l_in_t, l_out_t;
@@ -42,17 +45,6 @@ void Operator::AddOper(CeedOperator op, CeedOperator op_t)
 
   PalacePragmaOmp(critical(AddOper))
   {
-    if (ops.empty())
-    {
-      height = mfem::internal::to_int(l_out);
-      width = mfem::internal::to_int(l_in);
-    }
-    else
-    {
-      MFEM_VERIFY(mfem::internal::to_int(l_in) == width &&
-                      mfem::internal::to_int(l_out) == height,
-                  "Dimensions mismatch for CeedOperator!");
-    }
     ops.push_back(op);
     ops_t.push_back(op_t);
     u.push_back(loc_u);

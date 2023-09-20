@@ -31,7 +31,7 @@ protected:
   mutable Vector temp_u, temp_v;
 
 public:
-  Operator() = default;
+  Operator(int h, int w) : palace::Operator(h, w) {}
   ~Operator() override;
 
   CeedOperator operator[](std::size_t i) const { return ops[i]; }

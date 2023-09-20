@@ -60,20 +60,7 @@ void Initialize(const char *resource, const char *jit_source_dir)
 void Finalize()
 {
   // Destroy global basis and element restriction caches.
-  for (auto [k, v] : internal::basis_map)
-  {
-    Ceed ceed;
-    PalaceCeedCallBackend(CeedBasisGetCeed(v, &ceed));
-    PalaceCeedCall(ceed, CeedBasisDestroy(&v));
-  }
-  for (auto [k, v] : internal::restr_map)
-  {
-    Ceed ceed;
-    PalaceCeedCallBackend(CeedElemRestrictionGetCeed(v, &ceed));
-    PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&v));
-  }
-  internal::basis_map.clear();
-  internal::restr_map.clear();
+  ClearBasisRestrictionCache();
 
   // Destroy Ceed context(s).
   for (std::size_t i = 0; i < internal::ceed.size(); i++)
@@ -92,6 +79,24 @@ std::string Print()
   const char *ceed_resource;
   PalaceCeedCall(ceed, CeedGetResource(ceed, &ceed_resource));
   return std::string(ceed_resource);
+}
+
+void ClearBasisRestrictionCache()
+{
+  for (auto [k, v] : internal::basis_map)
+  {
+    Ceed ceed;
+    PalaceCeedCallBackend(CeedBasisGetCeed(v, &ceed));
+    PalaceCeedCall(ceed, CeedBasisDestroy(&v));
+  }
+  for (auto [k, v] : internal::restr_map)
+  {
+    Ceed ceed;
+    PalaceCeedCallBackend(CeedElemRestrictionGetCeed(v, &ceed));
+    PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&v));
+  }
+  internal::basis_map.clear();
+  internal::restr_map.clear();
 }
 
 void InitCeedVector(const mfem::Vector &v, Ceed ceed, CeedVector *cv)

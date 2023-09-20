@@ -194,10 +194,20 @@ void InitBasis(const mfem::FiniteElementSpace &fespace, const mfem::FiniteElemen
 {
   // Check for fespace -> basis in hash table.
   const int ncomp = fespace.GetVDim();
-  internal::BasisKey key(ceed, (void *)&fe, (void *)&ir, ncomp);
+  internal::BasisKey key = {ceed, &fe, nullptr, &ir, ncomp};
+
+
+  //XX TODO DEBUG
+  // std::cout << "Basis key: " << ceed << " " << &fe << " " << nullptr << " " << &ir << " " << ncomp << "\n";
+
 
   // Initialize or retrieve key values.
-  auto basis_itr = internal::basis_map.find(key);
+  // auto basis_itr = internal::basis_map.find(key);  //XX TODO
+  auto basis_itr = internal::basis_map.end();
+  PalacePragmaOmp(critical(InitBasis))
+  {
+    basis_itr = internal::basis_map.find(key);
+  }
   if (basis_itr == internal::basis_map.end())
   {
     const bool tensor = dynamic_cast<const mfem::TensorBasisElement *>(&fe) != nullptr;
@@ -228,10 +238,20 @@ void InitInterpolatorBasis(const mfem::FiniteElementSpace &trial_fespace,
 {
   // Check for fespace -> basis in hash table.
   const int ncomp = trial_fespace.GetVDim();  // Assumed same as test_fespace
-  internal::BasisKey key(ceed, (void *)&trial_fe, (void *)&test_fe, ncomp);
+  internal::BasisKey key = {ceed, &trial_fe, &test_fe, nullptr, ncomp};
+
+
+  //XX TODO DEBUG
+  std::cout << "Basis key: " << ceed << " " << &trial_fe << " " << &test_fe << " " << nullptr << " " << ncomp << "\n";
+
 
   // Initialize or retrieve key values.
-  auto basis_itr = internal::basis_map.find(key);
+  // auto basis_itr = internal::basis_map.find(key);  //XX TODO
+  auto basis_itr = internal::basis_map.end();
+  PalacePragmaOmp(critical(InitBasis))
+  {
+    basis_itr = internal::basis_map.find(key);
+  }
   if (basis_itr == internal::basis_map.end())
   {
 #if 0

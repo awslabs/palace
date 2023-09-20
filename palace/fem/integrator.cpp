@@ -24,10 +24,7 @@ void VectorFEBoundaryLFIntegrator::AssembleRHSElementVect(const mfem::FiniteElem
 {
   const int dof = fe.GetDof();
   const int dim = fe.GetDim();
-  if (q_order < 0)
-  {
-    q_order = fem::GetDefaultIntegrationOrder(fe, fe, T);
-  }
+  const int q_order = fem::GetDefaultIntegrationOrder(fe, fe, T, q_extra);
   const mfem::IntegrationRule &ir = mfem::IntRules.Get(fe.GetGeomType(), q_order);
   vshape.SetSize(dof, dim);
   elvect.SetSize(dof);
@@ -53,10 +50,7 @@ void BoundaryLFIntegrator::AssembleRHSElementVect(const mfem::FiniteElement &fe,
                                                   mfem::Vector &elvect)
 {
   const int dof = fe.GetDof();
-  if (q_order < 0)
-  {
-    q_order = fem::GetDefaultIntegrationOrder(fe, fe, T);
-  }
+  const int q_order = fem::GetDefaultIntegrationOrder(fe, fe, T, q_extra);
   const mfem::IntegrationRule &ir = mfem::IntRules.Get(fe.GetGeomType(), q_order);
   shape.SetSize(dof);
   elvect.SetSize(dof);
