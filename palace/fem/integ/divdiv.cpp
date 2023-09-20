@@ -30,7 +30,7 @@ InitializeIntegratorInfo(const mfem::FiniteElementSpace &fespace,
   MFEM_VERIFY(fespace.GetVDim() == 1,
               "libCEED interface for DivDivIntegrator does not support vdim > 1!");
 
-  DivDivIntegratorInfo info = {0};
+  DivDivIntegratorInfo info = {{0}};
 
   mfem::Mesh &mesh = *fespace.GetMesh();
   info.ctx.dim = mesh.Dimension() - use_bdr;

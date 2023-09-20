@@ -29,7 +29,7 @@ MassIntegratorInfo InitializeIntegratorInfo(const mfem::FiniteElementSpace &fesp
                                             mfem::MatrixCoefficient *MQ,
                                             std::vector<ceed::QuadratureCoefficient> &coeff)
 {
-  MassIntegratorInfo info = {0};
+  MassIntegratorInfo info = {{0}};
 
   mfem::Mesh &mesh = *fespace.GetMesh();
   info.ctx.dim = mesh.Dimension() - use_bdr;

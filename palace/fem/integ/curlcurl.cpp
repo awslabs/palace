@@ -31,7 +31,7 @@ InitializeIntegratorInfo(const mfem::FiniteElementSpace &fespace,
   MFEM_VERIFY(fespace.GetVDim() == 1,
               "libCEED interface for CurlCurlIntegrator does not support vdim > 1!");
 
-  CurlCurlIntegratorInfo info = {0};
+  CurlCurlIntegratorInfo info = {{0}};
 
   mfem::Mesh &mesh = *fespace.GetMesh();
   info.ctx.dim = mesh.Dimension() - use_bdr;

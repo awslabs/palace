@@ -34,7 +34,7 @@ InitializeIntegratorInfo(const mfem::FiniteElementSpace &trial_fespace,
       "libCEED interface for MixedVectorCurlIntegrator/MixedVectorWeakCurlIntegrator does "
       "not support vdim > 1!");
 
-  MixedVectorCurlIntegratorInfo info = {0};
+  MixedVectorCurlIntegratorInfo info = {{0}};
 
   mfem::Mesh &mesh = *trial_fespace.GetMesh();
   info.ctx.dim = mesh.Dimension() - use_bdr;

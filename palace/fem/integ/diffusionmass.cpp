@@ -31,7 +31,7 @@ InitializeIntegratorInfo(const mfem::FiniteElementSpace &fespace,
   MFEM_VERIFY(fespace.GetVDim() == 1,
               "libCEED interface for DiffusionMassIntegrator does not support vdim > 1!");
 
-  DiffusionMassIntegratorInfo info = {0};
+  DiffusionMassIntegratorInfo info = {{0}};
 
   mfem::Mesh &mesh = *fespace.GetMesh();
   info.ctx.dim = mesh.Dimension() - use_bdr;
