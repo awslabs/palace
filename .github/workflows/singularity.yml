@@ -39,8 +39,8 @@ jobs:
           export PALACE_TEST="singularity run $(pwd)/$CONTAINER_NAME"
 
           # Run tests
-          julia --project=test -e 'using Pkg; Pkg.instantiate()'
-          julia --project=test --color=yes test/runtests.jl
+          julia --project=test/examples -e 'using Pkg; Pkg.instantiate()'
+          julia --project=test/examples --color=yes test/examples/runtests.jl
 
       - uses: actions/upload-artifact@v3
         with:

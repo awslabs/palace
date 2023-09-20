@@ -38,6 +38,9 @@ string(REPLACE ";" "; " PALACE_OPTIONS_PRINT "${PALACE_OPTIONS}")
 message(STATUS "PALACE_OPTIONS: ${PALACE_OPTIONS_PRINT}")
 
 include(ExternalProject)
+if(POLICY CMP0114)
+  cmake_policy(SET CMP0114 NEW)
+endif()
 ExternalProject_Add(palace
   DEPENDS           ${PALACE_DEPENDENCIES}
   SOURCE_DIR        ${CMAKE_SOURCE_DIR}/palace
@@ -49,3 +52,14 @@ ExternalProject_Add(palace
   CONFIGURE_COMMAND ${CMAKE_COMMAND} <SOURCE_DIR> "${PALACE_OPTIONS}"
   TEST_COMMAND      ""
 )
+
+# Add target for Palace unit tests
+ExternalProject_Add_Step(palace tests
+  COMMAND           ${CMAKE_MAKE_PROGRAM} unit-tests
+  DEPENDEES         install
+  DEPENDERS         ""
+  COMMENT           "Building unit tests for 'palace'"
+  WORKING_DIRECTORY <BINARY_DIR>
+  EXCLUDE_FROM_MAIN TRUE
+)
+ExternalProject_Add_StepTargets(palace tests)

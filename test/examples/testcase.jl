@@ -14,7 +14,7 @@ function testcase(
         @info "$testdir/ is empty, skipping tests"
         return
     end
-    palacedir     = dirname(@__DIR__)
+    palacedir     = dirname(dirname(@__DIR__))
     refdir        = joinpath(@__DIR__, "ref", testdir)
     refpostprodir = joinpath(refdir, testpostpro)
     exampledir    = joinpath(palacedir, "examples", testdir)
