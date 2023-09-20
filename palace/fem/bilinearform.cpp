@@ -100,10 +100,6 @@ std::unique_ptr<ceed::Operator> BilinearForm::Assemble() const
         std::make_unique<ceed::Operator>(test_fespace.GetVSize(), trial_fespace.GetVSize());
   }
 
-
-  // XX TODO OPENMP BUGS IN UNIT TESTS.....
-
-
   // Assemble the libCEED operator in parallel, each thread builds a composite operator.
   // This should work fine if some threads create an empty operator (no elements or bounday
   // elements).
@@ -111,12 +107,6 @@ std::unique_ptr<ceed::Operator> BilinearForm::Assemble() const
   PalacePragmaOmp(parallel for schedule(static))
   for (std::size_t i = 0; i < nt; i++)
   {
-
-
-    // //XX TODO DEBUG
-    // std::cout << "Hello from thread " << i << "\n";
-
-
     Ceed ceed = ceed::internal::ceed[i];
     CeedOperator loc_op, loc_op_t;
     PalaceCeedCall(ceed, CeedCompositeOperatorCreate(ceed, &loc_op));
@@ -141,10 +131,6 @@ std::unique_ptr<ceed::Operator> BilinearForm::Assemble() const
             trial_fespace, test_fespace, indices, use_bdr, q_extra_pk, q_extra_qk);
         const mfem::IntegrationRule &ir =
             mfem::IntRules.Get(mesh.GetElementGeometry(indices[0]), q_order);
-
-        // //XX TODO DEBUG
-        // std::cout << "Integration rule order = " << ir.GetOrder()
-        //           << " (Q = " << ir.GetNPoints() << ")\n";
 
         for (const auto &integ : domain_integs)
         {
@@ -182,10 +168,6 @@ std::unique_ptr<ceed::Operator> BilinearForm::Assemble() const
             trial_fespace, test_fespace, indices, use_bdr, q_extra_pk, q_extra_qk);
         const mfem::IntegrationRule &ir =
             mfem::IntRules.Get(mesh.GetBdrElementGeometry(indices[0]), q_order);
-
-        // //XX TODO DEBUG
-        // std::cout << "Integration rule order = " << ir.GetOrder()
-        //           << " (Q = " << ir.GetNPoints() << ")\n";
 
         for (const auto &integ : boundary_integs)
         {

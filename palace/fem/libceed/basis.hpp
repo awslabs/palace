@@ -25,7 +25,8 @@ struct BasisKey
   int ncomp;
   bool operator==(const BasisKey &k) const
   {
-    return (ceed == k.ceed && trial_fe == k.trial_fe && test_fe == k.test_fe && ir == k.ir && ncomp == k.ncomp);
+    return (ceed == k.ceed && trial_fe == k.trial_fe && test_fe == k.test_fe &&
+            ir == k.ir && ncomp == k.ncomp);
   }
 };
 
@@ -38,14 +39,6 @@ struct BasisHash
     return hash;
   }
 };
-
-// struct BasisEqual : public std::binary_function<BasisKey, BasisKey, bool>
-// {
-//   bool operator()(const BasisKey &k0, const BasisKey &k1) const
-//   {
-//     return (k0.ceed == k1.ceed && k0.trial_fe == k1.trial_fe && k0.test_fe == k1.test_fe && k0.ir == k1.ir && k0.ncomp == k1.ncomp);
-//   }
-// };
 
 extern std::unordered_map<BasisKey, CeedBasis, BasisHash> basis_map;
 

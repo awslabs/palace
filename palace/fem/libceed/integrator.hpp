@@ -93,30 +93,12 @@ AssembleCeedQuadratureData(const CeedIntegratorInfo &info,
   CeedInt dim = mesh.Dimension() - use_bdr;
   CeedInt space_dim = mesh.SpaceDimension();
 
-  // //XX TODO DEBUG
-  // std::cout << "AssembleCeedQuadratureData: ne = " << ne
-  //           << " (bdr = " << use_bdr << ")\n";
-
   CeedElemRestriction mesh_restr;
   CeedBasis mesh_basis;
   CeedInt nqpts, qdata_size = info.qdata_size;
   InitRestriction(mesh_fespace, indices, use_bdr, ceed, &mesh_restr);
   InitBasis(mesh_fespace, ir, indices, use_bdr, ceed, &mesh_basis);
   PalaceCeedCall(ceed, CeedBasisGetNumQuadraturePoints(mesh_basis, &nqpts));
-
-  // //XX TODO DEBUG
-  // {
-  //   CeedSize l_size;
-  //   CeedInt elem_size;
-  //   PalaceCeedCall(ceed, CeedElemRestrictionGetLVectorSize(mesh_restr, &l_size));
-  //   PalaceCeedCall(ceed, CeedElemRestrictionGetElementSize(mesh_restr, &elem_size));
-  //   std::cout << "Mesh rstr: l_size = " << l_size << ", elem_size = " << elem_size << "
-  //   (nodes.Size() = " << mesh.GetNodes()->Size() << ")\n";
-  // }
-
-  // //XX TODO DEBUG
-  // std::cout << "CeedElemRestrictionCreateStrided: " << ne << " " << nqpts << " " <<
-  // qdata_size << "\n";
 
   // Strided restrictions are cheap to construct and not stored in the global cache.
   PalaceCeedCall(ceed, CeedVectorCreate(ceed, ne * nqpts * qdata_size, qdata));
@@ -196,11 +178,6 @@ AssembleCeedQuadratureData(const CeedIntegratorInfo &info,
   PalaceCeedCall(ceed, CeedOperatorDestroy(&build_op));
 }
 
-
-//XX TOOD DEBUG
-#include <omp.h>
-
-
 // Create libCEED operator using the given quadrature data and element restriction.
 template <typename CeedIntegratorInfo>
 inline void AssembleCeedOperator(const CeedIntegratorInfo &info,
@@ -224,10 +201,6 @@ inline void AssembleCeedOperator(const CeedIntegratorInfo &info,
   bool test_vectorfe =
       (test_fespace.FEColl()->GetRangeType(dim) == mfem::FiniteElement::VECTOR);
 
-  // //XX TODO DEBUG
-  // std::cout << "AssembleCeedOperator: ne = " << indices.size() << " (bdr = " << use_bdr
-  // << ")\n";
-
   CeedElemRestriction trial_restr, test_restr;
   CeedBasis trial_basis, test_basis;
   InitRestriction(trial_fespace, indices, use_bdr, ceed, &trial_restr);
@@ -242,49 +215,6 @@ inline void AssembleCeedOperator(const CeedIntegratorInfo &info,
   PalaceCeedCall(ceed, CeedElemRestrictionGetNumComponents(qdata_restr, &qdata_size));
   MFEM_VERIFY(trial_nqpts == test_nqpts && trial_nqpts == mesh_nqpts,
               "Trial and test basis must have the same number of quadrature points!");
-
-
-  //XX TODO DEBUG
-  if (&trial_fespace == &test_fespace && !(trial_restr == test_restr))
-  {
-    {
-      Ceed rstr_ceed;
-      CeedSize l_size;
-      CeedInt num_elem, elem_size, num_comp;
-      PalaceCeedCall(ceed, CeedElemRestrictionGetCeed(trial_restr, &rstr_ceed));
-      PalaceCeedCall(ceed, CeedElemRestrictionGetLVectorSize(trial_restr, &l_size));
-      PalaceCeedCall(ceed, CeedElemRestrictionGetNumElements(trial_restr, &num_elem));
-      PalaceCeedCall(ceed, CeedElemRestrictionGetElementSize(trial_restr, &elem_size));
-      PalaceCeedCall(ceed, CeedElemRestrictionGetNumComponents(trial_restr, &num_comp));
-      std::cout << "rstr " << trial_restr << ", l_size = " << l_size << ", num_elem = " << num_elem << ", elem_size = " << elem_size << ", num_comp = " << num_comp << " (Ceed = " << ceed << ", " << rstr_ceed << ")\n";
-    }
-    {
-      Ceed rstr_ceed;
-      CeedSize l_size;
-      CeedInt num_elem, elem_size, num_comp;
-      PalaceCeedCall(ceed, CeedElemRestrictionGetCeed(test_restr, &rstr_ceed));
-      PalaceCeedCall(ceed, CeedElemRestrictionGetLVectorSize(test_restr, &l_size));
-      PalaceCeedCall(ceed, CeedElemRestrictionGetNumElements(test_restr, &num_elem));
-      PalaceCeedCall(ceed, CeedElemRestrictionGetElementSize(test_restr, &elem_size));
-      PalaceCeedCall(ceed, CeedElemRestrictionGetNumComponents(test_restr, &num_comp));
-      std::cout << "rstr " << test_restr << ", l_size = " << l_size << ", num_elem = " << num_elem << ", elem_size = " << elem_size << ", num_comp = " << num_comp << " (Ceed = " << ceed << ", " << rstr_ceed << ")\n";
-    }
-
-    std::cout << "Global Ceed (tid = " << omp_get_thread_num() << "):";
-    for (auto thread_ceed : internal::ceed)
-    {
-      std::cout << " " << thread_ceed;
-    }
-    std::cout << "\n";
-
-    MFEM_ABORT("Mismatch for expected equivalent element restrictions!");
-
-
-
-  }
-
-
-
 
   // Create the QFunction that defines the action of the operator.
   CeedQFunction apply_qf;

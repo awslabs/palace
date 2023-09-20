@@ -324,8 +324,9 @@ void BenchmarkCeedIntegrator(mfem::FiniteElementSpace &fespace, T1 AssembleTest,
     // restriction.
     std::size_t mem_ref = nnz * (8 + 4) + (y_ref.Size() + 1) * 4;
     std::size_t mem_test = (Q * qdata_size * 8 + P * 4) * (std::size_t)mesh.GetNE();
-    WARN("benchmark memory footprint:\n"
-         << "  N = " << fespace.GetVSize() << "\n"
+    WARN("benchmark memory estimate:\n"
+         << "  N = " << fespace.GetVSize() << " (NE = " << mesh.GetNE() << ", P = " << P
+         << ", Q = " << Q << ")\n"
          << "  Full Assembly = " << mem_ref / (double)(1024 * 1024) << " MB (" << nnz
          << " NNZ)\n"
          << "  Partial Assembly = " << mem_test / (double)(1024 * 1024) << " MB\n");
@@ -428,8 +429,9 @@ void BenchmarkCeedInterpolator(mfem::FiniteElementSpace &trial_fespace,
     // Rough estimate for memory consumption.
     std::size_t mem_ref = nnz * (8 + 4) + (y_ref.Size() + 1) * 4;
     std::size_t mem_test = (trial_P * 4 + test_P * 4) * (std::size_t)mesh.GetNE();
-    WARN("benchmark memory footprint:\n"
-         << "  N = " << trial_fespace.GetVSize() << ", " << test_fespace.GetVSize() << "\n"
+    WARN("benchmark memory estimate:\n"
+         << "  N = " << trial_fespace.GetVSize() << ", " << test_fespace.GetVSize()
+         << " (NE = " << mesh.GetNE() << ", P = " << trial_P << ", " << test_P << ")\n"
          << "  Full Assembly = " << mem_ref / (double)(1024 * 1024) << " MB (" << nnz
          << " NNZ)\n"
          << "  Partial Assembly = " << mem_test / (double)(1024 * 1024) << " MB\n");
@@ -468,7 +470,7 @@ void RunCeedIntegratorTests(const std::string &input, int ref_levels, int order)
   const int order_w_qk = mesh_order * (dim - bdr_integ) - 1;
 
   // Tests on H1 spaces.
-  SECTION("H1 Space Integrators")
+  SECTION("H1 Integrators")
   {
     mfem::H1_FECollection h1_fec(order, dim);
     mfem::FiniteElementSpace h1_fespace(&mesh, &h1_fec),
@@ -550,7 +552,7 @@ void RunCeedIntegratorTests(const std::string &input, int ref_levels, int order)
   }
 
   // Tests on H(curl) spaces.
-  SECTION("H(curl) Space Integrators")
+  SECTION("H(curl) Integrators")
   {
     mfem::ND_FECollection nd_fec(order, dim);
     mfem::FiniteElementSpace nd_fespace(&mesh, &nd_fec);
@@ -618,7 +620,7 @@ void RunCeedIntegratorTests(const std::string &input, int ref_levels, int order)
   }
 
   // Tests on H(div) spaces.
-  SECTION("H(div) Space Integrators")
+  SECTION("H(div) Integrators")
   {
     mfem::RT_FECollection rt_fec(order - 1, dim);
     mfem::FiniteElementSpace rt_fespace(&mesh, &rt_fec);
@@ -818,11 +820,6 @@ void RunCeedIntegratorTests(const std::string &input, int ref_levels, int order)
       TestCeedOperator(a_test, a_ref);
     }
   }
-
-  // Clear the global libCEED objects cache between meshes (if we heap allocated the
-  // FiniteElementSpace objects so their pointers changed between function calls, this would
-  // not be needed).
-  ceed::ClearBasisRestrictionCache();
 }
 
 void RunCeedInterpolatorTests(const std::string &input, int ref_levels, int order)
@@ -900,11 +897,6 @@ void RunCeedInterpolatorTests(const std::string &input, int ref_levels, int orde
     }
     TestCeedOperator(curl_test, curl_ref);
   }
-
-  // Clear the global libCEED objects cache between meshes (if we heap allocated the
-  // FiniteElementSpace objects so their pointers changed between function calls, this would
-  // not be needed).
-  ceed::ClearBasisRestrictionCache();
 }
 
 void RunCeedBenchmarks(const std::string &input, int ref_levels, int order)
@@ -1069,11 +1061,6 @@ void RunCeedBenchmarks(const std::string &input, int ref_levels, int order)
     mfem::FiniteElementSpace h1_fespace(&mesh, &h1_fec), nd_fespace(&mesh, &nd_fec);
     BenchmarkCeedInterpolator(h1_fespace, nd_fespace, AssembleTest, AssembleRef);
   }
-
-  // Clear the global libCEED objects cache between meshes (if we heap allocated the
-  // FiniteElementSpace objects so their pointers changed between function calls, this would
-  // not be needed).
-  ceed::ClearBasisRestrictionCache();
 }
 
 }  // namespace
@@ -1084,7 +1071,13 @@ TEST_CASE("2D libCEED Operators", "[libCEED]")
       GENERATE("star-quad.mesh", "star-tri.mesh", "star-mixed-p2.mesh", "star-amr.mesh");
   auto ref_levels = GENERATE(0);
   auto order = GENERATE(1, 2);
-  RunCeedIntegratorTests(std::string(PALACE_TEST_MESH_DIR "/") + mesh, ref_levels, order);
+  {
+    // Clear the global libCEED objects cache between meshes (if we heap allocated the
+    // FiniteElementSpace objects so their pointers changed between function calls, this
+    // would not be needed).
+    RunCeedIntegratorTests(std::string(PALACE_TEST_MESH_DIR "/") + mesh, ref_levels, order);
+    ceed::ClearBasisRestrictionCache();
+  }
 }
 
 TEST_CASE("3D libCEED Operators", "[libCEED]")
@@ -1093,33 +1086,47 @@ TEST_CASE("3D libCEED Operators", "[libCEED]")
                        "fichera-amr.mesh");
   auto ref_levels = GENERATE(0);
   auto order = GENERATE(1, 2);
-  RunCeedIntegratorTests(std::string(PALACE_TEST_MESH_DIR "/") + mesh, ref_levels, order);
+  {
+    RunCeedIntegratorTests(std::string(PALACE_TEST_MESH_DIR "/") + mesh, ref_levels, order);
+    ceed::ClearBasisRestrictionCache();
+  }
 }
 
-TEST_CASE("2D libCEED Interpolators", "[libCEED]")
+TEST_CASE("2D libCEED Interpolators", "[libCEED][Interpolator]")
 {
   auto mesh =
       GENERATE("star-quad.mesh", "star-tri.mesh", "star-mixed-p2.mesh", "star-amr.mesh");
   auto ref_levels = GENERATE(0);
   auto order = GENERATE(1, 2);
-  RunCeedInterpolatorTests(std::string(PALACE_TEST_MESH_DIR "/") + mesh, ref_levels, order);
+  {
+    RunCeedInterpolatorTests(std::string(PALACE_TEST_MESH_DIR "/") + mesh, ref_levels,
+                             order);
+    ceed::ClearBasisRestrictionCache();
+  }
 }
 
-TEST_CASE("3D libCEED Interpolators", "[libCEED]")
+TEST_CASE("3D libCEED Interpolators", "[libCEED][Interpolator]")
 {
   auto mesh = GENERATE("fichera-hex.mesh", "fichera-tet.mesh", "fichera-mixed-p2.mesh",
                        "fichera-amr.mesh");
   auto ref_levels = GENERATE(0);
   auto order = GENERATE(1, 2);
-  RunCeedInterpolatorTests(std::string(PALACE_TEST_MESH_DIR "/") + mesh, ref_levels, order);
+  {
+    RunCeedInterpolatorTests(std::string(PALACE_TEST_MESH_DIR "/") + mesh, ref_levels,
+                             order);
+    ceed::ClearBasisRestrictionCache();
+  }
 }
 
 TEST_CASE("3D libCEED Benchmarks", "[libCEED][Benchmark]")
 {
   auto mesh = GENERATE("fichera-hex.mesh", "fichera-tet.mesh");
-  auto ref_levels = GENERATE(0);
-  auto order = GENERATE(3);
-  RunCeedBenchmarks(std::string(PALACE_TEST_MESH_DIR "/") + mesh, ref_levels, order);
+  auto ref_levels = GENERATE(1);
+  auto order = GENERATE(4);
+  {
+    RunCeedBenchmarks(std::string(PALACE_TEST_MESH_DIR "/") + mesh, ref_levels, order);
+    ceed::ClearBasisRestrictionCache();
+  }
 }
 
 }  // namespace palace

@@ -61,27 +61,15 @@ void Finalize();
 // Get the configured libCEED backend.
 std::string Print();
 
-// // Wrapper for std::hash.
-// template <typename T>
-// inline std::size_t CeedHash(const T key)
-// {
-//   return std::hash<T>{}(key);
-// }
-
-// // Effective way to combine hashes (from libCEED).
-// inline std::size_t CeedHashCombine(std::size_t seed, std::size_t hash)
-// {
-//   // See https://doi.org/10.1002/asi.10170 or https://dl.acm.org/citation.cfm?id=759509.
-//   return seed ^ (hash + (seed << 6) + (seed >> 2));
-// }
-
+// See https://www.boost.org/doc/libs/1_35_0/doc/html/boost/hash_combine_id241013.html.
 inline void CeedHashCombine(std::size_t &seed) {}
 
 template <typename T, typename... U>
-inline void CeedHashCombine(std::size_t &seed, const T &v, U... rest) {
-    std::hash<T> hasher;
-    seed ^= hasher(v) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
-    CeedHashCombine(seed, rest...);
+inline void CeedHashCombine(std::size_t &seed, const T &v, U... args)
+{
+  std::hash<T> hasher;
+  seed ^= hasher(v) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+  CeedHashCombine(seed, args...);
 }
 
 // Clear the global basis and restriction cache objects.

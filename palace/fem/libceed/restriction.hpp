@@ -16,9 +16,6 @@ namespace palace::ceed
 namespace internal
 {
 
-
-///XX TODO WIP
-
 struct RestrKey
 {
   Ceed ceed;
@@ -28,7 +25,8 @@ struct RestrKey
   int unique_range_restr;
   bool operator==(const RestrKey &k) const
   {
-    return (ceed == k.ceed && fespace == k.fespace && fe == k.fe && ncomp == k.ncomp && unique_range_restr == k.unique_range_restr);
+    return (ceed == k.ceed && fespace == k.fespace && fe == k.fe && ncomp == k.ncomp &&
+            unique_range_restr == k.unique_range_restr);
   }
 };
 
@@ -41,14 +39,6 @@ struct RestrHash
     return hash;
   }
 };
-
-// struct RestrEqual : public std::binary_function<RestrKey, RestrKey, bool>
-// {
-//   bool operator()(const RestrKey &k0, const RestrKey &k1) const
-//   {
-//     return (k0.ceed == k1.ceed && k0.fespace == k1.fespace && k0.fe == k1.fe && k0.ncomp == k1.ncomp && k0.unique_range_restr == k1.unique_range_restr);
-//   }
-// };
 
 extern std::unordered_map<RestrKey, CeedElemRestriction, RestrHash> restr_map;
 

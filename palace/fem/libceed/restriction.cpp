@@ -175,7 +175,7 @@ void InitNativeRestr(const mfem::FiniteElementSpace &fespace,
     }
   }
 
-  if (tp_el_curl_orients.Size())
+  if (has_dof_trans)
   {
     PalaceCeedCall(ceed, CeedElemRestrictionCreateCurlOriented(
                              ceed, ne, P, fespace.GetVDim(), compstride,
@@ -202,14 +202,6 @@ void InitNativeRestr(const mfem::FiniteElementSpace &fespace,
 
 }  // namespace
 
-
-//XX TODO DEEBUG...
-#define STR(x) #x
-#define XSTR(x) STR(x)
-#pragma message "The value of PalacePragmaOmp(critical(InitRestriction)): " XSTR(PalacePragmaOmp(critical(InitRestriction)))
-
-
-
 void InitRestriction(const mfem::FiniteElementSpace &fespace,
                      const std::vector<int> &indices, bool use_bdr, bool is_interp,
                      bool is_range, Ceed ceed, CeedElemRestriction *restr)
@@ -218,8 +210,6 @@ void InitRestriction(const mfem::FiniteElementSpace &fespace,
   // The restriction for an interpolator range space is slightly different as
   // the output is a primal vector instead of a dual vector, and lexicographic
   // ordering is never used (no use of tensor-product basis).
-  // const std::size_t l_size = fespace.GetVDim() * fespace.GetNDofs();
-  // const std::size_t ne = indices.size();  //XX TODO WIP REMOVE
   const mfem::FiniteElement &fe =
       use_bdr ? *fespace.GetBE(indices[0]) : *fespace.GetFE(indices[0]);
   const int ncomp = fespace.GetVDim();
@@ -235,20 +225,9 @@ void InitRestriction(const mfem::FiniteElementSpace &fespace,
   }
   const bool has_dof_trans = dof_trans.GetDofTransformation() && !dof_trans.IsEmpty();
   const bool unique_range_restr = (is_interp && is_range && has_dof_trans);
-
-  // //XX TODO DEBUG
-  // std::cout << "Restriction key: " << ceed << " " << &fespace << " " << &fe
-  //           << " " << ncomp << " " << unique_range_restr << "\n";
-  // // std::cout << "Restriction key: " << ceed << " " << l_size << " " << ne
-  // //           << " " << &fe << " " << ncomp << " " << unique_range_restr << "\n";
-
   internal::RestrKey key = {ceed, &fespace, &fe, ncomp, unique_range_restr};
-  // internal::RestrKey key = {ceed, l_size, ne, &fe, ncomp, unique_range_restr};
 
-  // Initialize or retrieve key values.
-  // PalacePragmaOmp(critical(InitRestriction))
-  {
-
+  // Initialize or retrieve key values (avoid simultaneous search and write).
   auto restr_itr = internal::restr_map.end();
   PalacePragmaOmp(critical(InitRestriction))
   {
@@ -280,33 +259,6 @@ void InitRestriction(const mfem::FiniteElementSpace &fespace,
   {
     *restr = restr_itr->second;
   }
-
-
-  // {
-  //   Ceed rstr_ceed;
-  //   PalaceCeedCall(ceed, CeedElemRestrictionGetCeed(*restr, &rstr_ceed));
-  //   if (rstr_ceed != ceed)
-  //   {
-
-  //     std::cout << "Restriction key: " << ceed << " " << &fespace << " " << &fe
-  //               << " " << ncomp << " " << unique_range_restr << "\n";
-
-  //     std::cout << "Restriction Ceed = " << ceed << ", " << rstr_ceed << " (restr_itr == end ? " << (restr_itr == internal::restr_map.end()) << ")\n";
-
-  //     std::cout << "Global Ceed (tid = " << omp_get_thread_num() << "):";
-  //     for (auto thread_ceed : internal::ceed)
-  //     {
-  //       std::cout << " " << thread_ceed;
-  //     }
-  //     std::cout << "\n";
-
-  //     MFEM_ABORT("Mismatch for expected equivalent element restriction Ceeds!");
-
-  //   }
-  // }
-
-  }
-
 }
 
 }  // namespace palace::ceed

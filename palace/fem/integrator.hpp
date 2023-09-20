@@ -28,13 +28,6 @@ inline int GetDefaultIntegrationOrder(const mfem::FiniteElement &trial_fe,
                                       const mfem::ElementTransformation &T, int q_extra_pk,
                                       int q_extra_qk)
 {
-
-  // //XX TODO DEBUG
-  // std::cout << "Integration order: " << T.GetGeometryType() << " " << trial_fe.GetOrder()
-  //           << " " << test_fe.GetOrder() << " " << T.OrderW() << " "
-  //           << (trial_fe.Space() == mfem::FunctionSpace::Pk ? q_extra_pk : q_extra_qk)
-  //           << "\n";
-
   return trial_fe.GetOrder() + test_fe.GetOrder() + T.OrderW() +
          (trial_fe.Space() == mfem::FunctionSpace::Pk ? q_extra_pk : q_extra_qk);
 }
