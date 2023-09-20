@@ -58,8 +58,8 @@ The resulting extracted Maxwell capacitance matrix is saved to disk in the CSV f
 
 ```
             i,             C[i][1] (F),             C[i][2] (F)
- 1.000000e+00,        +1.237470540e-12,        -4.771229894e-13
- 2.000000e+00,        -4.771229894e-13,        +2.478512490e-12
+ 1.000000e+00,        +1.237470440e-12,        -4.771229193e-13
+ 2.000000e+00,        -4.771229193e-13,        +2.478512278e-12
 ```
 
 In this case, the analytic solution yields
@@ -81,8 +81,8 @@ The mutual capacitance matrix can be computed from its Maxwell counterpart, and 
 
 ```
             i,           C_m[i][1] (F),           C_m[i][2] (F)
- 1.000000e+00,        +7.603475504e-13,        +4.771229894e-13
- 2.000000e+00,        +4.771229894e-13,        +2.001389500e-12
+ 1.000000e+00,        +7.603475205e-13,        +4.771229193e-13
+ 2.000000e+00,        +4.771229193e-13,        +2.001389358e-12
 ```
 
 Additionally, while the typical approach used by *Palace* for lumped parameter extraction
@@ -95,8 +95,8 @@ capacitances are written to `postpro/surface-C.csv`:
 
 ```
             i,                C[1] (F),                C[2] (F)
- 1.000000e+00,        +1.210962236e-12,        -4.677852948e-13
- 2.000000e+00,        -4.669431918e-13,        +2.425918151e-12
+ 1.000000e+00,        +1.219433080e-12,        -4.711763113e-13
+ 2.000000e+00,        -4.701805852e-13,        +2.443652512e-12
 ```
 
 and agree closely with the values computed using the default method above, as expected.
