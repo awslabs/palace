@@ -3,9 +3,10 @@
 
 #include "bilinearform.hpp"
 
-#include <array>
 #include <unordered_map>
+#include <utility>
 #include <ceed.h>
+#include "fem/libceed/hash.hpp"
 #include "fem/libceed/operator.hpp"
 #include "fem/libceed/utils.hpp"
 
@@ -15,27 +16,27 @@ namespace palace
 namespace
 {
 
-using ElementKey = std::array<int, 3>;
+using ElementPairKey =
+    std::pair<ceed::internal::FiniteElementKey, ceed::internal::FiniteElementKey>;
 
-struct ElementHash
+struct ElementPairHash
 {
-  std::size_t operator()(const ElementKey &k) const
+  std::size_t operator()(const ElementPairKey &k) const
   {
     std::size_t hash = 0;
-    ceed::CeedHashCombine(hash, k[0], k[1], k[2]);
+    ceed::CeedHashCombine(hash, k.first, k.second);
     return hash;
   }
 };
 
 // Count the number of elements of each type in the local mesh.
-std::unordered_map<ElementKey, std::vector<int>, ElementHash>
+std::unordered_map<ElementPairKey, std::vector<int>, ElementPairHash>
 GetElementIndices(const mfem::FiniteElementSpace &trial_fespace,
                   const mfem::FiniteElementSpace &test_fespace, bool use_bdr, int start,
                   int stop)
 {
-  const mfem::Mesh &mesh = *trial_fespace.GetMesh();
-  std::unordered_map<ElementKey, int, ElementHash> counts, offsets;
-  std::unordered_map<ElementKey, std::vector<int>, ElementHash> element_indices;
+  std::unordered_map<ElementPairKey, int, ElementPairHash> counts, offsets;
+  std::unordered_map<ElementPairKey, std::vector<int>, ElementPairHash> element_indices;
 
   // Count the number of elements of each type and order.
   for (int i = start; i < stop; i++)
@@ -44,8 +45,8 @@ GetElementIndices(const mfem::FiniteElementSpace &trial_fespace,
         use_bdr ? *trial_fespace.GetBE(i) : *trial_fespace.GetFE(i);
     const mfem::FiniteElement &test_fe =
         use_bdr ? *test_fespace.GetBE(i) : *test_fespace.GetFE(i);
-    mfem::Element::Type type = use_bdr ? mesh.GetBdrElementType(i) : mesh.GetElementType(i);
-    ElementKey key = {type, trial_fe.GetOrder(), test_fe.GetOrder()};
+    ElementPairKey key = std::make_pair(ceed::internal::FiniteElementKey(trial_fe),
+                                        ceed::internal::FiniteElementKey(test_fe));
     auto value = counts.find(key);
     if (value == counts.end())
     {
@@ -69,8 +70,8 @@ GetElementIndices(const mfem::FiniteElementSpace &trial_fespace,
         use_bdr ? *trial_fespace.GetBE(i) : *trial_fespace.GetFE(i);
     const mfem::FiniteElement &test_fe =
         use_bdr ? *test_fespace.GetBE(i) : *test_fespace.GetFE(i);
-    mfem::Element::Type type = use_bdr ? mesh.GetBdrElementType(i) : mesh.GetElementType(i);
-    ElementKey key = {type, trial_fe.GetOrder(), test_fe.GetOrder()};
+    ElementPairKey key = std::make_pair(ceed::internal::FiniteElementKey(trial_fe),
+                                        ceed::internal::FiniteElementKey(test_fe));
     int &offset = offsets[key];
     std::vector<int> &indices = element_indices[key];
     indices[offset++] = i;

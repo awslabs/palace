@@ -10,6 +10,25 @@ namespace internal
 {
 
 std::unordered_map<BasisKey, CeedBasis, BasisHash> basis_map;
+std::unordered_map<InterpBasisKey, CeedBasis, InterpBasisHash> interp_basis_map;
+
+void ClearBasisCache()
+{
+  for (auto [k, v] : basis_map)
+  {
+    Ceed ceed;
+    PalaceCeedCallBackend(CeedBasisGetCeed(v, &ceed));
+    PalaceCeedCall(ceed, CeedBasisDestroy(&v));
+  }
+  for (auto [k, v] : interp_basis_map)
+  {
+    Ceed ceed;
+    PalaceCeedCallBackend(CeedBasisGetCeed(v, &ceed));
+    PalaceCeedCall(ceed, CeedBasisDestroy(&v));
+  }
+  basis_map.clear();
+  interp_basis_map.clear();
+}
 
 }  // namespace internal
 
@@ -193,8 +212,7 @@ void InitBasis(const mfem::FiniteElementSpace &fespace, const mfem::FiniteElemen
                const mfem::IntegrationRule &ir, Ceed ceed, CeedBasis *basis)
 {
   // Check for fespace -> basis in hash table.
-  const int ncomp = fespace.GetVDim();
-  internal::BasisKey key = {ceed, &fe, nullptr, &ir, ncomp};
+  internal::BasisKey key(ceed, fespace, fe, ir);
 
   // Initialize or retrieve key values (avoid simultaneous search and write).
   auto basis_itr = internal::basis_map.end();
@@ -218,10 +236,12 @@ void InitBasis(const mfem::FiniteElementSpace &fespace, const mfem::FiniteElemen
     {
       internal::basis_map[key] = *basis;
     }
+    // std::cout << "New basis (" << ceed << ", " << &fe  << ", " << &ir << ")\n";
   }
   else
   {
     *basis = basis_itr->second;
+    // std::cout << "Reusing basis (" << ceed << ", " << &fe  << ", " << &ir << ")\n";
   }
 }
 
@@ -231,16 +251,15 @@ void InitInterpolatorBasis(const mfem::FiniteElementSpace &trial_fespace,
                            const mfem::FiniteElement &test_fe, Ceed ceed, CeedBasis *basis)
 {
   // Check for fespace -> basis in hash table.
-  const int ncomp = trial_fespace.GetVDim();  // Assumed same as test_fespace
-  internal::BasisKey key = {ceed, &trial_fe, &test_fe, nullptr, ncomp};
+  internal::InterpBasisKey key(ceed, trial_fespace, test_fespace, trial_fe, test_fe);
 
   // Initialize or retrieve key values (avoid simultaneous search and write).
-  auto basis_itr = internal::basis_map.end();
+  auto basis_itr = internal::interp_basis_map.end();
   PalacePragmaOmp(critical(InitBasis))
   {
-    basis_itr = internal::basis_map.find(key);
+    basis_itr = internal::interp_basis_map.find(key);
   }
-  if (basis_itr == internal::basis_map.end())
+  if (basis_itr == internal::interp_basis_map.end())
   {
 #if 0
        if (trial_fe.GetMapType() == test_fe.GetMapType())
@@ -255,12 +274,16 @@ void InitInterpolatorBasis(const mfem::FiniteElementSpace &trial_fespace,
     }
     PalacePragmaOmp(critical(InitBasis))
     {
-      internal::basis_map[key] = *basis;
+      internal::interp_basis_map[key] = *basis;
     }
+    // std::cout << "New interpolator basis (" << ceed << ", " << &trial_fe
+    //           << ", " << &test_fe << ")\n";
   }
   else
   {
     *basis = basis_itr->second;
+    // std::cout << "Reusing interpolator basis (" << ceed << ", " << &trial_fe
+    //           << ", " << &test_fe << ")\n";
   }
 }
 

@@ -1214,11 +1214,11 @@ std::unique_ptr<int[]> GetMeshPartitioning(mfem::Mesh &mesh, int size,
   //     ...
   //   <part[NE-1]>
   //
-  int nel, np;
+  int ne, np;
   std::ifstream part_ifs(partition);
   part_ifs.ignore(std::numeric_limits<std::streamsize>::max(), ' ');
-  part_ifs >> nel;
-  if (nel != mesh.GetNE())
+  part_ifs >> ne;
+  if (ne != mesh.GetNE())
   {
     MFEM_ABORT("Invalid partitioning file (number of elements)!");
   }
@@ -1458,26 +1458,26 @@ std::map<int, std::array<int, 2>> CheckMesh(std::unique_ptr<mfem::Mesh> &orig_me
   {
     if (!elem_delete[e])
     {
-      mfem::Element *ne = orig_mesh->GetElement(e)->Duplicate(new_mesh.get());
-      new_mesh->AddElement(ne);
+      mfem::Element *el = orig_mesh->GetElement(e)->Duplicate(new_mesh.get());
+      new_mesh->AddElement(el);
     }
   }
   for (int be = 0; be < orig_mesh->GetNBE(); be++)
   {
     if (!bdr_delete[be])
     {
-      mfem::Element *ne = orig_mesh->GetBdrElement(be)->Duplicate(new_mesh.get());
-      new_mesh->AddBdrElement(ne);
+      mfem::Element *el = orig_mesh->GetBdrElement(be)->Duplicate(new_mesh.get());
+      new_mesh->AddBdrElement(el);
     }
   }
 
   // Add new boundary elements.
   if (add_bdr || add_subdomain)
   {
-    auto FlipVertices = [](mfem::Element *e)
+    auto FlipVertices = [](mfem::Element *el)
     {
       mfem::Array<int> v;
-      e->GetVertices(v);
+      el->GetVertices(v);
       int start = 0, end = v.Size() - 1;
       while (start < end)
       {
@@ -1487,7 +1487,7 @@ std::map<int, std::array<int, 2>> CheckMesh(std::unique_ptr<mfem::Mesh> &orig_me
         start++;
         end--;
       }
-      e->SetVertices(v.HostRead());
+      el->SetVertices(v.HostRead());
     };
 
     // 1-based, some boundary attributes may be empty since they were removed from the
@@ -1533,16 +1533,16 @@ std::map<int, std::array<int, 2>> CheckMesh(std::unique_ptr<mfem::Mesh> &orig_me
         }
 
         // Add the boundary elements with the new boundary attribute.
-        mfem::Element *ne = orig_mesh->GetFace(f)->Duplicate(new_mesh.get());
-        ne->SetAttribute(new_attr);
-        new_mesh->AddBdrElement(ne);
+        mfem::Element *el = orig_mesh->GetFace(f)->Duplicate(new_mesh.get());
+        el->SetAttribute(new_attr);
+        new_mesh->AddBdrElement(el);
         if (add_bdr_faces[f] > 1)
         {
           // Flip order of vertices to reverse normal direction of second added element.
-          ne = orig_mesh->GetFace(f)->Duplicate(new_mesh.get());
-          FlipVertices(ne);
-          ne->SetAttribute(new_attr);
-          new_mesh->AddBdrElement(ne);
+          el = orig_mesh->GetFace(f)->Duplicate(new_mesh.get());
+          FlipVertices(el);
+          el->SetAttribute(new_attr);
+          new_mesh->AddBdrElement(el);
           // Mpi::Print("Adding two BE with attr {:d} from elements {:d} and {:d}\n",
           //            new_attr, a, b);
         }

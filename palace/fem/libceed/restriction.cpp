@@ -11,6 +11,17 @@ namespace internal
 
 std::unordered_map<RestrKey, CeedElemRestriction, RestrHash> restr_map;
 
+void ClearRestrictionCache()
+{
+  for (auto [k, v] : restr_map)
+  {
+    Ceed ceed;
+    PalaceCeedCallBackend(CeedElemRestrictionGetCeed(v, &ceed));
+    PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&v));
+  }
+  restr_map.clear();
+}
+
 }  // namespace internal
 
 namespace
@@ -210,7 +221,12 @@ void InitRestriction(const mfem::FiniteElementSpace &fespace,
   // The restriction for an interpolator range space is slightly different as
   // the output is a primal vector instead of a dual vector, and lexicographic
   // ordering is never used (no use of tensor-product basis).
-  const int ncomp = fespace.GetVDim();
+  // Note: We know this hashing approach is risky. Different spaces might have element 0 of
+  // the same geometry type and with the same dofs even if this is not true for all of the
+  // elements.
+  const std::size_t ne = indices.size();
+  const mfem::Element &el = use_bdr ? *fespace.GetMesh()->GetBdrElement(indices[0])
+                                    : *fespace.GetMesh()->GetElement(indices[0]);
   const mfem::FiniteElement &fe =
       use_bdr ? *fespace.GetBE(indices[0]) : *fespace.GetFE(indices[0]);
   const mfem::TensorBasisElement *tfe = dynamic_cast<const mfem::TensorBasisElement *>(&fe);
@@ -229,8 +245,8 @@ void InitRestriction(const mfem::FiniteElementSpace &fespace,
   const bool unique_interp_restr =
       (is_interp && tfe && tfe->GetDofMap().Size() > 0 && !vector);
   const bool unique_interp_range_restr = (is_interp && is_range && has_dof_trans);
-  internal::RestrKey key = {
-      ceed, &fespace, &fe, ncomp, unique_interp_restr, unique_interp_range_restr};
+  internal::RestrKey key(ceed, fespace, el, fe, dofs, ne, unique_interp_restr,
+                         unique_interp_range_restr);
 
   // Initialize or retrieve key values (avoid simultaneous search and write).
   auto restr_itr = internal::restr_map.end();
@@ -256,10 +272,16 @@ void InitRestriction(const mfem::FiniteElementSpace &fespace,
     {
       internal::restr_map[key] = *restr;
     }
+    // std::cout << "New element restriction (" << ceed << ", " << &el << ", " << &fe
+    //           << ", " << unique_interp_restr
+    //           << ", " << unique_interp_range_restr << ")\n";
   }
   else
   {
     *restr = restr_itr->second;
+    // std::cout << "Reusing element restriction (" << ceed << ", " << &el << ", " << &fe
+    //           << ", " << unique_interp_restr
+    //           << ", " << unique_interp_range_restr << ")\n";
   }
 }
 

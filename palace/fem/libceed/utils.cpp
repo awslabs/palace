@@ -43,24 +43,23 @@ void Initialize(const char *resource, const char *jit_source_dir)
     MFEM_VERIFY(!ierr, "Failed to initialize libCEED with resource " << resource << "!");
     Ceed ceed = internal::ceed[i];
 
+    // Configure error handling (allow errors to be handled by PalaceCeedCallBackend or
+    // PalaceCeedCall).
+    PalaceCeedCall(ceed, CeedSetErrorHandler(ceed, CeedErrorStore));
+
     // Configure QFunction search path.
     if (jit_source_dir)
     {
       PalaceCeedCall(ceed, CeedAddJitSourceRoot(ceed, jit_source_dir));
     }
-
-    // XX TODO: Do this always even not in debug?
-    // Configure error handling.
-#ifdef MFEM_DEBUG
-    PalaceCeedCall(ceed, CeedSetErrorHandler(ceed, CeedErrorAbort));
-#endif
   }
 }
 
 void Finalize()
 {
   // Destroy global basis and element restriction caches.
-  ClearBasisRestrictionCache();
+  internal::ClearBasisCache();
+  internal::ClearRestrictionCache();
 
   // Destroy Ceed context(s).
   for (std::size_t i = 0; i < internal::ceed.size(); i++)
@@ -79,24 +78,6 @@ std::string Print()
   const char *ceed_resource;
   PalaceCeedCall(ceed, CeedGetResource(ceed, &ceed_resource));
   return std::string(ceed_resource);
-}
-
-void ClearBasisRestrictionCache()
-{
-  for (auto [k, v] : internal::basis_map)
-  {
-    Ceed ceed;
-    PalaceCeedCallBackend(CeedBasisGetCeed(v, &ceed));
-    PalaceCeedCall(ceed, CeedBasisDestroy(&v));
-  }
-  for (auto [k, v] : internal::restr_map)
-  {
-    Ceed ceed;
-    PalaceCeedCallBackend(CeedElemRestrictionGetCeed(v, &ceed));
-    PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&v));
-  }
-  internal::basis_map.clear();
-  internal::restr_map.clear();
 }
 
 void InitCeedVector(const mfem::Vector &v, Ceed ceed, CeedVector *cv)

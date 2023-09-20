@@ -8,6 +8,7 @@
 #include <vector>
 #include <ceed.h>
 #include <mfem.hpp>
+#include "hash.hpp"
 #include "utils.hpp"
 
 namespace palace::ceed
@@ -16,31 +17,10 @@ namespace palace::ceed
 namespace internal
 {
 
-struct BasisKey
-{
-  Ceed ceed;
-  const mfem::FiniteElement *trial_fe;
-  const mfem::FiniteElement *test_fe;
-  const mfem::IntegrationRule *ir;
-  int ncomp;
-  bool operator==(const BasisKey &k) const
-  {
-    return (ceed == k.ceed && trial_fe == k.trial_fe && test_fe == k.test_fe &&
-            ir == k.ir && ncomp == k.ncomp);
-  }
-};
-
-struct BasisHash
-{
-  std::size_t operator()(const BasisKey &k) const
-  {
-    std::size_t hash = 0;
-    CeedHashCombine(hash, k.ceed, k.trial_fe, k.test_fe, k.ir, k.ncomp);
-    return hash;
-  }
-};
-
 extern std::unordered_map<BasisKey, CeedBasis, BasisHash> basis_map;
+extern std::unordered_map<InterpBasisKey, CeedBasis, InterpBasisHash> interp_basis_map;
+
+void ClearBasisCache();
 
 }  // namespace internal
 

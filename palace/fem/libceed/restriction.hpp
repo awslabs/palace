@@ -8,6 +8,7 @@
 #include <vector>
 #include <ceed.h>
 #include <mfem.hpp>
+#include "hash.hpp"
 #include "utils.hpp"
 
 namespace palace::ceed
@@ -16,34 +17,9 @@ namespace palace::ceed
 namespace internal
 {
 
-struct RestrKey
-{
-  Ceed ceed;
-  const mfem::FiniteElementSpace *fespace;
-  const mfem::FiniteElement *fe;
-  int ncomp;
-  bool unique_interp_restr;
-  bool unique_interp_range_restr;
-  bool operator==(const RestrKey &k) const
-  {
-    return (ceed == k.ceed && fespace == k.fespace && fe == k.fe && ncomp == k.ncomp &&
-            unique_interp_restr == k.unique_interp_restr &&
-            unique_interp_range_restr == k.unique_interp_range_restr);
-  }
-};
-
-struct RestrHash
-{
-  std::size_t operator()(const RestrKey &k) const
-  {
-    std::size_t hash = 0;
-    CeedHashCombine(hash, k.ceed, k.fespace, k.fe, k.ncomp, k.unique_interp_restr,
-                    k.unique_interp_range_restr);
-    return hash;
-  }
-};
-
 extern std::unordered_map<RestrKey, CeedElemRestriction, RestrHash> restr_map;
+
+void ClearRestrictionCache();
 
 }  // namespace internal
 

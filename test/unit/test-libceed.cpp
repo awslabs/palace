@@ -8,7 +8,6 @@
 #include <catch2/generators/catch_generators_all.hpp>
 #include "fem/bilinearform.hpp"
 #include "fem/integrator.hpp"
-#include "fem/libceed/utils.hpp"
 
 namespace palace
 {
@@ -1071,13 +1070,7 @@ TEST_CASE("2D libCEED Operators", "[libCEED]")
       GENERATE("star-quad.mesh", "star-tri.mesh", "star-mixed-p2.mesh", "star-amr.mesh");
   auto ref_levels = GENERATE(0);
   auto order = GENERATE(1, 2);
-  {
-    // Clear the global libCEED objects cache between meshes (if we heap allocated the
-    // FiniteElementSpace objects so their pointers changed between function calls, this
-    // would not be needed).
-    RunCeedIntegratorTests(std::string(PALACE_TEST_MESH_DIR "/") + mesh, ref_levels, order);
-    ceed::ClearBasisRestrictionCache();
-  }
+  RunCeedIntegratorTests(std::string(PALACE_TEST_MESH_DIR "/") + mesh, ref_levels, order);
 }
 
 TEST_CASE("3D libCEED Operators", "[libCEED]")
@@ -1086,10 +1079,7 @@ TEST_CASE("3D libCEED Operators", "[libCEED]")
                        "fichera-amr.mesh");
   auto ref_levels = GENERATE(0);
   auto order = GENERATE(1, 2);
-  {
-    RunCeedIntegratorTests(std::string(PALACE_TEST_MESH_DIR "/") + mesh, ref_levels, order);
-    ceed::ClearBasisRestrictionCache();
-  }
+  RunCeedIntegratorTests(std::string(PALACE_TEST_MESH_DIR "/") + mesh, ref_levels, order);
 }
 
 TEST_CASE("2D libCEED Interpolators", "[libCEED][Interpolator]")
@@ -1098,11 +1088,7 @@ TEST_CASE("2D libCEED Interpolators", "[libCEED][Interpolator]")
       GENERATE("star-quad.mesh", "star-tri.mesh", "star-mixed-p2.mesh", "star-amr.mesh");
   auto ref_levels = GENERATE(0);
   auto order = GENERATE(1, 2);
-  {
-    RunCeedInterpolatorTests(std::string(PALACE_TEST_MESH_DIR "/") + mesh, ref_levels,
-                             order);
-    ceed::ClearBasisRestrictionCache();
-  }
+  RunCeedInterpolatorTests(std::string(PALACE_TEST_MESH_DIR "/") + mesh, ref_levels, order);
 }
 
 TEST_CASE("3D libCEED Interpolators", "[libCEED][Interpolator]")
@@ -1111,11 +1097,7 @@ TEST_CASE("3D libCEED Interpolators", "[libCEED][Interpolator]")
                        "fichera-amr.mesh");
   auto ref_levels = GENERATE(0);
   auto order = GENERATE(1, 2);
-  {
-    RunCeedInterpolatorTests(std::string(PALACE_TEST_MESH_DIR "/") + mesh, ref_levels,
-                             order);
-    ceed::ClearBasisRestrictionCache();
-  }
+  RunCeedInterpolatorTests(std::string(PALACE_TEST_MESH_DIR "/") + mesh, ref_levels, order);
 }
 
 TEST_CASE("3D libCEED Benchmarks", "[libCEED][Benchmark]")
@@ -1123,10 +1105,7 @@ TEST_CASE("3D libCEED Benchmarks", "[libCEED][Benchmark]")
   auto mesh = GENERATE("fichera-hex.mesh", "fichera-tet.mesh");
   auto ref_levels = GENERATE(1);
   auto order = GENERATE(4);
-  {
-    RunCeedBenchmarks(std::string(PALACE_TEST_MESH_DIR "/") + mesh, ref_levels, order);
-    ceed::ClearBasisRestrictionCache();
-  }
+  RunCeedBenchmarks(std::string(PALACE_TEST_MESH_DIR "/") + mesh, ref_levels, order);
 }
 
 }  // namespace palace
