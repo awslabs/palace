@@ -8,8 +8,8 @@
 namespace palace
 {
 
-void DiscreteInterpolator::Assemble(const mfem::FiniteElementSpace &trial_fespace,
-                                    const mfem::FiniteElementSpace &test_fespace,
+void DiscreteInterpolator::Assemble(const mfem::ParFiniteElementSpace &trial_fespace,
+                                    const mfem::ParFiniteElementSpace &test_fespace,
                                     const mfem::IntegrationRule &ir,
                                     const std::vector<int> &indices, Ceed ceed,
                                     CeedOperator *op, CeedOperator *op_t)

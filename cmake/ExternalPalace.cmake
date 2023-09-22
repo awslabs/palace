@@ -6,7 +6,7 @@
 #
 
 # Force build order
-set(PALACE_DEPENDENCIES mfem libCEED)
+set(PALACE_DEPENDENCIES mfem libCEED stduuid)
 if(PALACE_BUILD_EXTERNAL_DEPS)
   list(APPEND PALACE_DEPENDENCIES json fmt eigen)
   if(PALACE_WITH_SLEPC)

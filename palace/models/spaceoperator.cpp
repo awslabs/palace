@@ -5,6 +5,7 @@
 
 #include <type_traits>
 #include "fem/bilinearform.hpp"
+#include "fem/fespace.hpp"
 #include "fem/integrator.hpp"
 #include "fem/multigrid.hpp"
 #include "linalg/rap.hpp"
@@ -84,7 +85,8 @@ SpaceOperator::SpaceOperator(const IoData &iodata,
     h1_fecs(fem::ConstructFECollections<mfem::H1_FECollection>(
         iodata.solver.order, mesh.back()->Dimension(), iodata.solver.linear.mg_max_levels,
         iodata.solver.linear.mg_coarsen_type, false)),
-    rt_fec(iodata.solver.order - 1, mesh.back()->Dimension()),
+    rt_fec(std::make_unique<mfem::RT_FECollection>(iodata.solver.order - 1,
+                                                   mesh.back()->Dimension())),
     nd_fespaces(fem::ConstructFiniteElementSpaceHierarchy<mfem::ND_FECollection>(
         iodata.solver.linear.mg_max_levels, iodata.solver.linear.mg_legacy_transfer,
         pa_order_threshold, pa_discrete_interp, mesh, nd_fecs, &dbc_marker,
@@ -93,9 +95,10 @@ SpaceOperator::SpaceOperator(const IoData &iodata,
         iodata.solver.linear.mg_max_levels, iodata.solver.linear.mg_legacy_transfer,
         pa_order_threshold, pa_discrete_interp, mesh, h1_fecs, &dbc_marker,
         &h1_dbc_tdof_lists)),
-    rt_fespace(mesh.back().get(), &rt_fec), mat_op(iodata, *mesh.back()),
-    farfield_op(iodata, mat_op, *mesh.back()), surf_sigma_op(iodata, *mesh.back()),
-    surf_z_op(iodata, *mesh.back()), lumped_port_op(iodata, GetH1Space()),
+    rt_fespace(std::make_unique<FiniteElementSpace>(mesh.back().get(), rt_fec.get())),
+    mat_op(iodata, *mesh.back()), farfield_op(iodata, mat_op, *mesh.back()),
+    surf_sigma_op(iodata, *mesh.back()), surf_z_op(iodata, *mesh.back()),
+    lumped_port_op(iodata, GetH1Space()),
     wave_port_op(iodata, mat_op, GetNDSpace(), GetH1Space()),
     surf_j_op(iodata, GetH1Space())
 {
@@ -132,9 +135,9 @@ void SpaceOperator::CheckBoundaryProperties()
   // aux_bdr_marker = 1;  // Mark all boundaries (including material interfaces
   //                      // added during mesh preprocessing)
   //                      // As tested, this does not eliminate all DC modes!
-  for (int l = 0; l < h1_fespaces.GetNumLevels(); l++)
+  for (int l = 0; l < GetH1Spaces().GetNumLevels(); l++)
   {
-    h1_fespaces.GetFESpaceAtLevel(l).GetEssentialTrueDofs(
+    GetH1Spaces().GetFESpaceAtLevel(l).GetEssentialTrueDofs(
         aux_bdr_marker, aux_bdr_tdof_lists.emplace_back());
   }
 
@@ -641,12 +644,12 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(double a0, doub
   {
     Mpi::Print("\nAssembling multigrid hierarchy:\n");
   }
-  MFEM_VERIFY(h1_fespaces.GetNumLevels() == nd_fespaces.GetNumLevels(),
+  MFEM_VERIFY(GetH1Spaces().GetNumLevels() == GetNDSpaces().GetNumLevels(),
               "Multigrid hierarchy mismatch for auxiliary space preconditioning!");
-  auto B = std::make_unique<BaseMultigridOperator<OperType>>(nd_fespaces.GetNumLevels());
+  auto B = std::make_unique<BaseMultigridOperator<OperType>>(GetNDSpaces().GetNumLevels());
   for (int s = 0; s < 2; s++)
   {
-    auto &fespaces = (s == 0) ? nd_fespaces : h1_fespaces;
+    auto &fespaces = (s == 0) ? GetNDSpaces() : GetH1Spaces();
     auto &dbc_tdof_lists = (s == 0) ? nd_dbc_tdof_lists : h1_dbc_tdof_lists;
     for (int l = 0; l < fespaces.GetNumLevels(); l++)
     {

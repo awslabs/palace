@@ -22,7 +22,7 @@ class BilinearForm
 {
 protected:
   // Domain and range finite element spaces.
-  const mfem::FiniteElementSpace &trial_fespace, &test_fespace;
+  const mfem::ParFiniteElementSpace &trial_fespace, &test_fespace;
 
   // List of domain and boundary integrators making up the bilinear form.
   std::vector<std::unique_ptr<BilinearFormIntegrator>> domain_integs, boundary_integs;
@@ -33,22 +33,23 @@ protected:
   int q_extra_pk, q_extra_qk;
 
 public:
-  BilinearForm(const mfem::FiniteElementSpace &trial_fespace,
-               const mfem::FiniteElementSpace &test_fespace, int q_extra_pk, int q_extra_qk)
+  BilinearForm(const mfem::ParFiniteElementSpace &trial_fespace,
+               const mfem::ParFiniteElementSpace &test_fespace, int q_extra_pk,
+               int q_extra_qk)
     : trial_fespace(trial_fespace), test_fespace(test_fespace), q_extra_pk(q_extra_pk),
       q_extra_qk(q_extra_qk)
   {
   }
-  BilinearForm(const mfem::FiniteElementSpace &trial_fespace,
-               const mfem::FiniteElementSpace &test_fespace, int q_extra = 0)
+  BilinearForm(const mfem::ParFiniteElementSpace &trial_fespace,
+               const mfem::ParFiniteElementSpace &test_fespace, int q_extra = 0)
     : BilinearForm(trial_fespace, test_fespace, q_extra, q_extra)
   {
   }
-  BilinearForm(const mfem::FiniteElementSpace &fespace, int q_extra_pk, int q_extra_qk)
+  BilinearForm(const mfem::ParFiniteElementSpace &fespace, int q_extra_pk, int q_extra_qk)
     : BilinearForm(fespace, fespace, q_extra_pk, q_extra_qk)
   {
   }
-  BilinearForm(const mfem::FiniteElementSpace &fespace, int q_extra = 0)
+  BilinearForm(const mfem::ParFiniteElementSpace &fespace, int q_extra = 0)
     : BilinearForm(fespace, fespace, q_extra, q_extra)
   {
   }
@@ -110,8 +111,8 @@ private:
   BilinearForm a;
 
 public:
-  DiscreteLinearOperator(const mfem::FiniteElementSpace &trial_fespace,
-                         const mfem::FiniteElementSpace &test_fespace)
+  DiscreteLinearOperator(const mfem::ParFiniteElementSpace &trial_fespace,
+                         const mfem::ParFiniteElementSpace &test_fespace)
     : a(trial_fespace, test_fespace)
   {
   }

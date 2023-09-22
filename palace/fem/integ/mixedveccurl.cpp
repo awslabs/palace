@@ -22,8 +22,8 @@ namespace
 {
 
 MixedVectorCurlIntegratorInfo
-InitializeIntegratorInfo(const mfem::FiniteElementSpace &trial_fespace,
-                         const mfem::FiniteElementSpace &test_fespace,
+InitializeIntegratorInfo(const mfem::ParFiniteElementSpace &trial_fespace,
+                         const mfem::ParFiniteElementSpace &test_fespace,
                          const mfem::IntegrationRule &ir, const std::vector<int> &indices,
                          bool use_bdr, mfem::Coefficient *Q, mfem::VectorCoefficient *VQ,
                          mfem::MatrixCoefficient *MQ,
@@ -36,7 +36,7 @@ InitializeIntegratorInfo(const mfem::FiniteElementSpace &trial_fespace,
 
   MixedVectorCurlIntegratorInfo info = {{0}};
 
-  mfem::Mesh &mesh = *trial_fespace.GetMesh();
+  mfem::ParMesh &mesh = *trial_fespace.GetParMesh();
   info.ctx.dim = mesh.Dimension() - use_bdr;
   info.ctx.space_dim = mesh.SpaceDimension();
   info.ctx.curl_dim = (info.ctx.dim < 3) ? 1 : info.ctx.dim;
@@ -106,8 +106,8 @@ InitializeIntegratorInfo(const mfem::FiniteElementSpace &trial_fespace,
 
 }  // namespace
 
-void MixedVectorCurlIntegrator::Assemble(const mfem::FiniteElementSpace &trial_fespace,
-                                         const mfem::FiniteElementSpace &test_fespace,
+void MixedVectorCurlIntegrator::Assemble(const mfem::ParFiniteElementSpace &trial_fespace,
+                                         const mfem::ParFiniteElementSpace &test_fespace,
                                          const mfem::IntegrationRule &ir,
                                          const std::vector<int> &indices, Ceed ceed,
                                          CeedOperator *op, CeedOperator *op_t)
@@ -121,8 +121,8 @@ void MixedVectorCurlIntegrator::Assemble(const mfem::FiniteElementSpace &trial_f
 }
 
 void MixedVectorCurlIntegrator::AssembleBoundary(
-    const mfem::FiniteElementSpace &trial_fespace,
-    const mfem::FiniteElementSpace &test_fespace, const mfem::IntegrationRule &ir,
+    const mfem::ParFiniteElementSpace &trial_fespace,
+    const mfem::ParFiniteElementSpace &test_fespace, const mfem::IntegrationRule &ir,
     const std::vector<int> &indices, Ceed ceed, CeedOperator *op, CeedOperator *op_t)
 {
   constexpr bool use_bdr = true;
@@ -133,11 +133,10 @@ void MixedVectorCurlIntegrator::AssembleBoundary(
                              ceed, op, op_t);
 }
 
-void MixedVectorWeakCurlIntegrator::Assemble(const mfem::FiniteElementSpace &trial_fespace,
-                                             const mfem::FiniteElementSpace &test_fespace,
-                                             const mfem::IntegrationRule &ir,
-                                             const std::vector<int> &indices, Ceed ceed,
-                                             CeedOperator *op, CeedOperator *op_t)
+void MixedVectorWeakCurlIntegrator::Assemble(
+    const mfem::ParFiniteElementSpace &trial_fespace,
+    const mfem::ParFiniteElementSpace &test_fespace, const mfem::IntegrationRule &ir,
+    const std::vector<int> &indices, Ceed ceed, CeedOperator *op, CeedOperator *op_t)
 {
   constexpr bool use_bdr = false;
   std::vector<ceed::QuadratureCoefficient> coeff;
@@ -148,8 +147,8 @@ void MixedVectorWeakCurlIntegrator::Assemble(const mfem::FiniteElementSpace &tri
 }
 
 void MixedVectorWeakCurlIntegrator::AssembleBoundary(
-    const mfem::FiniteElementSpace &trial_fespace,
-    const mfem::FiniteElementSpace &test_fespace, const mfem::IntegrationRule &ir,
+    const mfem::ParFiniteElementSpace &trial_fespace,
+    const mfem::ParFiniteElementSpace &test_fespace, const mfem::IntegrationRule &ir,
     const std::vector<int> &indices, Ceed ceed, CeedOperator *op, CeedOperator *op_t)
 {
   constexpr bool use_bdr = true;

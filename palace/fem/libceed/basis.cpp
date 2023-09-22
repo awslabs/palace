@@ -59,8 +59,9 @@ inline CeedElemTopology GetCeedTopology(mfem::Geometry::Type geom)
   }
 }
 
-void InitTensorBasis(const mfem::FiniteElementSpace &fespace, const mfem::FiniteElement &fe,
-                     const mfem::IntegrationRule &ir, Ceed ceed, CeedBasis *basis)
+void InitTensorBasis(const mfem::ParFiniteElementSpace &fespace,
+                     const mfem::FiniteElement &fe, const mfem::IntegrationRule &ir,
+                     Ceed ceed, CeedBasis *basis)
 {
   const mfem::DofToQuad &maps = fe.GetDofToQuad(ir, mfem::DofToQuad::TENSOR);
   const int dim = fe.GetDim();
@@ -84,7 +85,7 @@ void InitTensorBasis(const mfem::FiniteElementSpace &fespace, const mfem::Finite
                                                qW.GetData(), basis));
 }
 
-void InitNonTensorBasis(const mfem::FiniteElementSpace &fespace,
+void InitNonTensorBasis(const mfem::ParFiniteElementSpace &fespace,
                         const mfem::FiniteElement &fe, const mfem::IntegrationRule &ir,
                         Ceed ceed, CeedBasis *basis)
 {
@@ -131,8 +132,8 @@ void InitNonTensorBasis(const mfem::FiniteElementSpace &fespace,
 }
 
 #if 0
-void InitCeedInterpolatorBasis(const mfem::FiniteElementSpace &trial_fespace,
-                                      const mfem::FiniteElementSpace &test_fespace,
+void InitCeedInterpolatorBasis(const mfem::ParFiniteElementSpace &trial_fespace,
+                                      const mfem::ParFiniteElementSpace &test_fespace,
                                       const mfem::FiniteElement &trial_fe,
                                       const mfem::FiniteElement &test_fe,
                                       Ceed ceed,
@@ -153,8 +154,8 @@ void InitCeedInterpolatorBasis(const mfem::FiniteElementSpace &trial_fespace,
 }
 #endif
 
-void InitMFEMInterpolatorBasis(const mfem::FiniteElementSpace &trial_fespace,
-                               const mfem::FiniteElementSpace &test_fespace,
+void InitMFEMInterpolatorBasis(const mfem::ParFiniteElementSpace &trial_fespace,
+                               const mfem::ParFiniteElementSpace &test_fespace,
                                const mfem::FiniteElement &trial_fe,
                                const mfem::FiniteElement &test_fe, Ceed ceed,
                                CeedBasis *basis)
@@ -208,7 +209,7 @@ void InitMFEMInterpolatorBasis(const mfem::FiniteElementSpace &trial_fespace,
 
 }  // namespace
 
-void InitBasis(const mfem::FiniteElementSpace &fespace, const mfem::FiniteElement &fe,
+void InitBasis(const mfem::ParFiniteElementSpace &fespace, const mfem::FiniteElement &fe,
                const mfem::IntegrationRule &ir, Ceed ceed, CeedBasis *basis)
 {
   // Check for fespace -> basis in hash table.
@@ -245,8 +246,8 @@ void InitBasis(const mfem::FiniteElementSpace &fespace, const mfem::FiniteElemen
   }
 }
 
-void InitInterpolatorBasis(const mfem::FiniteElementSpace &trial_fespace,
-                           const mfem::FiniteElementSpace &test_fespace,
+void InitInterpolatorBasis(const mfem::ParFiniteElementSpace &trial_fespace,
+                           const mfem::ParFiniteElementSpace &test_fespace,
                            const mfem::FiniteElement &trial_fe,
                            const mfem::FiniteElement &test_fe, Ceed ceed, CeedBasis *basis)
 {

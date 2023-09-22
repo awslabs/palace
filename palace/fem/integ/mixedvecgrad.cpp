@@ -22,8 +22,8 @@ namespace
 {
 
 MixedVectorGradientIntegratorInfo
-InitializeIntegratorInfo(const mfem::FiniteElementSpace &trial_fespace,
-                         const mfem::FiniteElementSpace &test_fespace,
+InitializeIntegratorInfo(const mfem::ParFiniteElementSpace &trial_fespace,
+                         const mfem::ParFiniteElementSpace &test_fespace,
                          const mfem::IntegrationRule &ir, const std::vector<int> &indices,
                          bool use_bdr, mfem::Coefficient *Q, mfem::VectorCoefficient *VQ,
                          mfem::MatrixCoefficient *MQ,
@@ -36,7 +36,7 @@ InitializeIntegratorInfo(const mfem::FiniteElementSpace &trial_fespace,
 
   MixedVectorGradientIntegratorInfo info = {{0}};
 
-  mfem::Mesh &mesh = *trial_fespace.GetMesh();
+  mfem::ParMesh &mesh = *trial_fespace.GetParMesh();
   info.ctx.dim = mesh.Dimension() - use_bdr;
   info.ctx.space_dim = mesh.SpaceDimension();
 
@@ -105,11 +105,10 @@ InitializeIntegratorInfo(const mfem::FiniteElementSpace &trial_fespace,
 
 }  // namespace
 
-void MixedVectorGradientIntegrator::Assemble(const mfem::FiniteElementSpace &trial_fespace,
-                                             const mfem::FiniteElementSpace &test_fespace,
-                                             const mfem::IntegrationRule &ir,
-                                             const std::vector<int> &indices, Ceed ceed,
-                                             CeedOperator *op, CeedOperator *op_t)
+void MixedVectorGradientIntegrator::Assemble(
+    const mfem::ParFiniteElementSpace &trial_fespace,
+    const mfem::ParFiniteElementSpace &test_fespace, const mfem::IntegrationRule &ir,
+    const std::vector<int> &indices, Ceed ceed, CeedOperator *op, CeedOperator *op_t)
 {
   constexpr bool use_bdr = false;
   std::vector<ceed::QuadratureCoefficient> coeff;
@@ -120,8 +119,8 @@ void MixedVectorGradientIntegrator::Assemble(const mfem::FiniteElementSpace &tri
 }
 
 void MixedVectorGradientIntegrator::AssembleBoundary(
-    const mfem::FiniteElementSpace &trial_fespace,
-    const mfem::FiniteElementSpace &test_fespace, const mfem::IntegrationRule &ir,
+    const mfem::ParFiniteElementSpace &trial_fespace,
+    const mfem::ParFiniteElementSpace &test_fespace, const mfem::IntegrationRule &ir,
     const std::vector<int> &indices, Ceed ceed, CeedOperator *op, CeedOperator *op_t)
 {
   constexpr bool use_bdr = true;
@@ -133,8 +132,8 @@ void MixedVectorGradientIntegrator::AssembleBoundary(
 }
 
 void MixedVectorWeakDivergenceIntegrator::Assemble(
-    const mfem::FiniteElementSpace &trial_fespace,
-    const mfem::FiniteElementSpace &test_fespace, const mfem::IntegrationRule &ir,
+    const mfem::ParFiniteElementSpace &trial_fespace,
+    const mfem::ParFiniteElementSpace &test_fespace, const mfem::IntegrationRule &ir,
     const std::vector<int> &indices, Ceed ceed, CeedOperator *op, CeedOperator *op_t)
 {
   // Negative coefficient comes from definition of integrator as -(Q u, grad v).
@@ -152,8 +151,8 @@ void MixedVectorWeakDivergenceIntegrator::Assemble(
 }
 
 void MixedVectorWeakDivergenceIntegrator::AssembleBoundary(
-    const mfem::FiniteElementSpace &trial_fespace,
-    const mfem::FiniteElementSpace &test_fespace, const mfem::IntegrationRule &ir,
+    const mfem::ParFiniteElementSpace &trial_fespace,
+    const mfem::ParFiniteElementSpace &test_fespace, const mfem::IntegrationRule &ir,
     const std::vector<int> &indices, Ceed ceed, CeedOperator *op, CeedOperator *op_t)
 {
   // Negative coefficient comes from definition of integrator as -(Q u, grad v).

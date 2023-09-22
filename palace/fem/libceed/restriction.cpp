@@ -3,6 +3,8 @@
 
 #include "restriction.hpp"
 
+#include "fem/fespace.hpp"
+
 namespace palace::ceed
 {
 
@@ -27,7 +29,7 @@ void ClearRestrictionCache()
 namespace
 {
 
-void InitLexicoRestr(const mfem::FiniteElementSpace &fespace,
+void InitLexicoRestr(const mfem::ParFiniteElementSpace &fespace,
                      const std::vector<int> &indices, bool use_bdr, Ceed ceed,
                      CeedElemRestriction *restr)
 {
@@ -89,7 +91,7 @@ void InitLexicoRestr(const mfem::FiniteElementSpace &fespace,
   }
 }
 
-void InitNativeRestr(const mfem::FiniteElementSpace &fespace,
+void InitNativeRestr(const mfem::ParFiniteElementSpace &fespace,
                      const std::vector<int> &indices, bool use_bdr, bool has_dof_trans,
                      bool is_interp_range, Ceed ceed, CeedElemRestriction *restr)
 {
@@ -213,7 +215,7 @@ void InitNativeRestr(const mfem::FiniteElementSpace &fespace,
 
 }  // namespace
 
-void InitRestriction(const mfem::FiniteElementSpace &fespace,
+void InitRestriction(const mfem::ParFiniteElementSpace &fespace,
                      const std::vector<int> &indices, bool use_bdr, bool is_interp,
                      bool is_range, Ceed ceed, CeedElemRestriction *restr)
 {
@@ -221,12 +223,15 @@ void InitRestriction(const mfem::FiniteElementSpace &fespace,
   // The restriction for an interpolator range space is slightly different as
   // the output is a primal vector instead of a dual vector, and lexicographic
   // ordering is never used (no use of tensor-product basis).
-  // Note: We know this hashing approach is risky. Different spaces might have element 0 of
-  // the same geometry type and with the same dofs even if this is not true for all of the
-  // elements.
-  const std::size_t ne = indices.size();
-  const mfem::Element &el = use_bdr ? *fespace.GetMesh()->GetBdrElement(indices[0])
-                                    : *fespace.GetMesh()->GetElement(indices[0]);
+  // A palace::FiniteElementSpace can be checked for uniqueness so we can use this to reuse
+  // restrictions across different libCEED operators. For mixed meshes or multiple threads,
+  // the space elements are partitioned in a non-overlapping manner so we just need the
+  // index of the first element, and if it is a domain or boundary element, to determine the
+  // partition.
+  const FiniteElementSpace *restr_fespace =
+      dynamic_cast<const FiniteElementSpace *>(&fespace);
+  MFEM_VERIFY(restr_fespace, "ceed::InitRestriction requires a palace::FiniteElementSpace "
+                             "object for space comparisons!");
   const mfem::FiniteElement &fe =
       use_bdr ? *fespace.GetBE(indices[0]) : *fespace.GetFE(indices[0]);
   const mfem::TensorBasisElement *tfe = dynamic_cast<const mfem::TensorBasisElement *>(&fe);
@@ -245,7 +250,7 @@ void InitRestriction(const mfem::FiniteElementSpace &fespace,
   const bool unique_interp_restr =
       (is_interp && tfe && tfe->GetDofMap().Size() > 0 && !vector);
   const bool unique_interp_range_restr = (is_interp && is_range && has_dof_trans);
-  internal::RestrKey key(ceed, fespace, el, fe, dofs, ne, unique_interp_restr,
+  internal::RestrKey key(ceed, *restr_fespace, indices[0], use_bdr, unique_interp_restr,
                          unique_interp_range_restr);
 
   // Initialize or retrieve key values (avoid simultaneous search and write).

@@ -5,11 +5,6 @@
 # Download and build third-party dependencies
 #
 
-# Avoid DOWNLOAD_EXTRACT_TIMESTAMP warning
-if(POLICY CMP0135)
-  cmake_policy(SET CMP0135 NEW)
-endif()
-
 # Add METIS/ParMETIS libraries
 message(STATUS "================ Configuring METIS/ParMETIS dependencies ===============")
 include(ExternalMETIS)

@@ -7,6 +7,7 @@
 #include <unordered_map>
 #include "fem/bilinearform.hpp"
 #include "fem/coefficient.hpp"
+#include "fem/fespace.hpp"
 #include "fem/integrator.hpp"
 #include "linalg/arpack.hpp"
 #include "linalg/iterative.hpp"
@@ -486,9 +487,9 @@ WavePortData::WavePortData(const config::WavePortData &data, const MaterialOpera
   port_nd_fec = std::make_unique<mfem::ND_FECollection>(p_nd, mesh.Dimension() - 1);
   port_h1_fec = std::make_unique<mfem::H1_FECollection>(p_h1, mesh.Dimension() - 1);
   port_nd_fespace =
-      std::make_unique<mfem::ParFiniteElementSpace>(port_mesh.get(), port_nd_fec.get());
+      std::make_unique<FiniteElementSpace>(port_mesh.get(), port_nd_fec.get());
   port_h1_fespace =
-      std::make_unique<mfem::ParFiniteElementSpace>(port_mesh.get(), port_h1_fec.get());
+      std::make_unique<FiniteElementSpace>(port_mesh.get(), port_h1_fec.get());
 
   mfem::ParGridFunction E0t(const_cast<mfem::ParFiniteElementSpace *>(&nd_fespace)),
       E0n(const_cast<mfem::ParFiniteElementSpace *>(&h1_fespace));

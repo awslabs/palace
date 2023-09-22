@@ -37,9 +37,9 @@ private:
   // Objects defining the finite element spaces for the electrostatic potential (H1) and
   // electric field (Nedelec) on the given mesh.
   std::vector<std::unique_ptr<mfem::H1_FECollection>> h1_fecs;
-  mfem::ND_FECollection nd_fec;
-  mfem::ParFiniteElementSpaceHierarchy h1_fespaces;
-  mfem::ParFiniteElementSpace nd_fespace;
+  std::unique_ptr<mfem::ND_FECollection> nd_fec;
+  std::unique_ptr<mfem::ParFiniteElementSpaceHierarchy> h1_fespaces;
+  std::unique_ptr<mfem::ParFiniteElementSpace> nd_fespace;
 
   // Operator for domain material properties.
   MaterialOperator mat_op;
@@ -58,11 +58,11 @@ public:
   const auto &GetSources() const { return source_attr_lists; }
 
   // Return the parallel finite element space objects.
-  auto &GetH1Spaces() { return h1_fespaces; }
-  auto &GetH1Space() { return h1_fespaces.GetFinestFESpace(); }
-  const auto &GetH1Space() const { return h1_fespaces.GetFinestFESpace(); }
-  auto &GetNDSpace() { return nd_fespace; }
-  const auto &GetNDSpace() const { return nd_fespace; }
+  auto &GetH1Spaces() { return *h1_fespaces; }
+  auto &GetH1Space() { return h1_fespaces->GetFinestFESpace(); }
+  const auto &GetH1Space() const { return h1_fespaces->GetFinestFESpace(); }
+  auto &GetNDSpace() { return *nd_fespace; }
+  const auto &GetNDSpace() const { return *nd_fespace; }
 
   // Construct and return system matrix representing discretized Laplace operator for
   // Gauss's law.

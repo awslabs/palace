@@ -8,6 +8,7 @@
 #include <vector>
 #include <mfem.hpp>
 #include "fem/bilinearform.hpp"
+#include "fem/fespace.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/rap.hpp"
 #include "utils/iodata.hpp"
@@ -75,7 +76,8 @@ std::vector<std::unique_ptr<FECollection>> inline ConstructFECollections(
 // finite element collections. Dirichlet boundary conditions are additionally
 // marked.
 template <typename FECollection>
-inline mfem::ParFiniteElementSpaceHierarchy ConstructFiniteElementSpaceHierarchy(
+inline std::unique_ptr<mfem::ParFiniteElementSpaceHierarchy>
+ConstructFiniteElementSpaceHierarchy(
     int mg_max_levels, bool mg_legacy_transfer, int pa_order_threshold,
     bool pa_discrete_interp, const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
     const std::vector<std::unique_ptr<FECollection>> &fecs,
@@ -87,32 +89,32 @@ inline mfem::ParFiniteElementSpaceHierarchy ConstructFiniteElementSpaceHierarchy
               "Empty mesh or FE collection for FE space construction!");
   int coarse_mesh_l =
       std::max(0, static_cast<int>(mesh.size() + fecs.size()) - 1 - mg_max_levels);
-  auto *fespace = new mfem::ParFiniteElementSpace(mesh[coarse_mesh_l].get(), fecs[0].get());
+  auto *fespace = new FiniteElementSpace(mesh[coarse_mesh_l].get(), fecs[0].get());
   if (dbc_marker && dbc_tdof_lists)
   {
     fespace->GetEssentialTrueDofs(*dbc_marker, dbc_tdof_lists->emplace_back());
   }
-  mfem::ParFiniteElementSpaceHierarchy fespaces(mesh[coarse_mesh_l].get(), fespace, false,
-                                                true);
+  auto fespaces = std::make_unique<mfem::ParFiniteElementSpaceHierarchy>(
+      mesh[coarse_mesh_l].get(), fespace, false, true);
 
   // h-refinement
   for (std::size_t l = coarse_mesh_l + 1; l < mesh.size(); l++)
   {
-    fespace = new mfem::ParFiniteElementSpace(mesh[l].get(), fecs[0].get());
+    fespace = new FiniteElementSpace(mesh[l].get(), fecs[0].get());
     if (dbc_marker && dbc_tdof_lists)
     {
       fespace->GetEssentialTrueDofs(*dbc_marker, dbc_tdof_lists->emplace_back());
     }
     auto *P = new ParOperator(
-        std::make_unique<mfem::TransferOperator>(fespaces.GetFinestFESpace(), *fespace),
-        fespaces.GetFinestFESpace(), *fespace, true);
-    fespaces.AddLevel(mesh[l].get(), fespace, P, false, true, true);
+        std::make_unique<mfem::TransferOperator>(fespaces->GetFinestFESpace(), *fespace),
+        fespaces->GetFinestFESpace(), *fespace, true);
+    fespaces->AddLevel(mesh[l].get(), fespace, P, false, true, true);
   }
 
   // p-refinement
   for (std::size_t l = 1; l < fecs.size(); l++)
   {
-    fespace = new mfem::ParFiniteElementSpace(mesh.back().get(), fecs[l].get());
+    fespace = new FiniteElementSpace(mesh.back().get(), fecs[l].get());
     if (dbc_marker && dbc_tdof_lists)
     {
       fespace->GetEssentialTrueDofs(*dbc_marker, dbc_tdof_lists->emplace_back());
@@ -121,19 +123,19 @@ inline mfem::ParFiniteElementSpaceHierarchy ConstructFiniteElementSpaceHierarchy
     if (!mg_legacy_transfer)
     {
       constexpr bool skip_zeros_interp = true;
-      DiscreteLinearOperator p(fespaces.GetFinestFESpace(), *fespace);
+      DiscreteLinearOperator p(fespaces->GetFinestFESpace(), *fespace);
       p.AddDomainInterpolator(std::make_unique<IdentityInterpolator>());
       P = new ParOperator(
           p.Assemble(pa_discrete_interp ? pa_order_threshold : 99, skip_zeros_interp),
-          fespaces.GetFinestFESpace(), *fespace, true);
+          fespaces->GetFinestFESpace(), *fespace, true);
     }
     else
     {
       P = new ParOperator(
-          std::make_unique<mfem::TransferOperator>(fespaces.GetFinestFESpace(), *fespace),
-          fespaces.GetFinestFESpace(), *fespace, true);
+          std::make_unique<mfem::TransferOperator>(fespaces->GetFinestFESpace(), *fespace),
+          fespaces->GetFinestFESpace(), *fespace, true);
     }
-    fespaces.AddLevel(mesh.back().get(), fespace, P, false, true, true);
+    fespaces->AddLevel(mesh.back().get(), fespace, P, false, true, true);
   }
   return fespaces;
 }

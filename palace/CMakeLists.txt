@@ -71,6 +71,10 @@ message(STATUS "Found fmt: ${fmt_VERSION} in ${fmt_DIR}")
 find_package(Eigen3 REQUIRED CONFIG)
 message(STATUS "Found Eigen: ${Eigen3_VERSION} in ${Eigen3_DIR}")
 
+# Find mariusbancila/stduuid
+find_package(stduuid REQUIRED CONFIG)
+message(STATUS "Found mariusbancila/stduuid: ${stduuid_DIR}")
+
 # Find MFEM
 if(NOT "${MFEM_DIR}" STREQUAL "")
   set(MFEM_ROOT ${MFEM_DIR})
@@ -206,7 +210,8 @@ if(PALACE_WITH_OPENMP)
   )
 endif()
 target_link_libraries(${TARGET_NAME}
-  PRIVATE mfem ${LIBCEED_TARGET} nlohmann_json::nlohmann_json fmt::fmt Eigen3::Eigen MPI::MPI_CXX
+  PRIVATE mfem ${LIBCEED_TARGET} nlohmann_json::nlohmann_json fmt::fmt
+          Eigen3::Eigen stduuid MPI::MPI_CXX
 )
 
 # Add binary extension for build architecture

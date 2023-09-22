@@ -22,7 +22,7 @@ namespace
 {
 
 CurlCurlMassIntegratorInfo
-InitializeIntegratorInfo(const mfem::FiniteElementSpace &fespace,
+InitializeIntegratorInfo(const mfem::ParFiniteElementSpace &fespace,
                          const mfem::IntegrationRule &ir, const std::vector<int> &indices,
                          bool use_bdr, mfem::Coefficient *Qc, mfem::VectorCoefficient *VQc,
                          mfem::MatrixCoefficient *MQc, mfem::Coefficient *Qm,
@@ -34,7 +34,7 @@ InitializeIntegratorInfo(const mfem::FiniteElementSpace &fespace,
 
   CurlCurlMassIntegratorInfo info = {{0}};
 
-  mfem::Mesh &mesh = *fespace.GetMesh();
+  mfem::ParMesh &mesh = *fespace.GetParMesh();
   info.ctx.dim = mesh.Dimension() - use_bdr;
   info.ctx.space_dim = mesh.SpaceDimension();
   info.ctx.curl_dim = (info.ctx.dim < 3) ? 1 : info.ctx.dim;
@@ -171,8 +171,8 @@ InitializeIntegratorInfo(const mfem::FiniteElementSpace &fespace,
 
 }  // namespace
 
-void CurlCurlMassIntegrator::Assemble(const mfem::FiniteElementSpace &trial_fespace,
-                                      const mfem::FiniteElementSpace &test_fespace,
+void CurlCurlMassIntegrator::Assemble(const mfem::ParFiniteElementSpace &trial_fespace,
+                                      const mfem::ParFiniteElementSpace &test_fespace,
                                       const mfem::IntegrationRule &ir,
                                       const std::vector<int> &indices, Ceed ceed,
                                       CeedOperator *op, CeedOperator *op_t)
@@ -187,11 +187,10 @@ void CurlCurlMassIntegrator::Assemble(const mfem::FiniteElementSpace &trial_fesp
                              ceed, op, op_t);
 }
 
-void CurlCurlMassIntegrator::AssembleBoundary(const mfem::FiniteElementSpace &trial_fespace,
-                                              const mfem::FiniteElementSpace &test_fespace,
-                                              const mfem::IntegrationRule &ir,
-                                              const std::vector<int> &indices, Ceed ceed,
-                                              CeedOperator *op, CeedOperator *op_t)
+void CurlCurlMassIntegrator::AssembleBoundary(
+    const mfem::ParFiniteElementSpace &trial_fespace,
+    const mfem::ParFiniteElementSpace &test_fespace, const mfem::IntegrationRule &ir,
+    const std::vector<int> &indices, Ceed ceed, CeedOperator *op, CeedOperator *op_t)
 {
   MFEM_VERIFY(&trial_fespace == &test_fespace,
               "CurlCurlMassIntegrator requires the same test and trial spaces!");

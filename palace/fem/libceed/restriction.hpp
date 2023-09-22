@@ -23,11 +23,11 @@ void ClearRestrictionCache();
 
 }  // namespace internal
 
-void InitRestriction(const mfem::FiniteElementSpace &fespace,
+void InitRestriction(const mfem::ParFiniteElementSpace &fespace,
                      const std::vector<int> &indices, bool use_bdr, bool is_interp,
                      bool is_range, Ceed ceed, CeedElemRestriction *restr);
 
-inline void InitRestriction(const mfem::FiniteElementSpace &fespace,
+inline void InitRestriction(const mfem::ParFiniteElementSpace &fespace,
                             const std::vector<int> &indices, bool use_bdr, Ceed ceed,
                             CeedElemRestriction *restr)
 {

@@ -22,7 +22,7 @@ namespace
 {
 
 DivDivIntegratorInfo
-InitializeIntegratorInfo(const mfem::FiniteElementSpace &fespace,
+InitializeIntegratorInfo(const mfem::ParFiniteElementSpace &fespace,
                          const mfem::IntegrationRule &ir, const std::vector<int> &indices,
                          bool use_bdr, mfem::Coefficient *Q,
                          std::vector<ceed::QuadratureCoefficient> &coeff)
@@ -32,7 +32,7 @@ InitializeIntegratorInfo(const mfem::FiniteElementSpace &fespace,
 
   DivDivIntegratorInfo info = {{0}};
 
-  mfem::Mesh &mesh = *fespace.GetMesh();
+  mfem::ParMesh &mesh = *fespace.GetParMesh();
   info.ctx.dim = mesh.Dimension() - use_bdr;
   info.ctx.space_dim = mesh.SpaceDimension();
 
@@ -65,8 +65,8 @@ InitializeIntegratorInfo(const mfem::FiniteElementSpace &fespace,
 
 }  // namespace
 
-void DivDivIntegrator::Assemble(const mfem::FiniteElementSpace &trial_fespace,
-                                const mfem::FiniteElementSpace &test_fespace,
+void DivDivIntegrator::Assemble(const mfem::ParFiniteElementSpace &trial_fespace,
+                                const mfem::ParFiniteElementSpace &test_fespace,
                                 const mfem::IntegrationRule &ir,
                                 const std::vector<int> &indices, Ceed ceed,
                                 CeedOperator *op, CeedOperator *op_t)
@@ -80,8 +80,8 @@ void DivDivIntegrator::Assemble(const mfem::FiniteElementSpace &trial_fespace,
                              ceed, op, op_t);
 }
 
-void DivDivIntegrator::AssembleBoundary(const mfem::FiniteElementSpace &trial_fespace,
-                                        const mfem::FiniteElementSpace &test_fespace,
+void DivDivIntegrator::AssembleBoundary(const mfem::ParFiniteElementSpace &trial_fespace,
+                                        const mfem::ParFiniteElementSpace &test_fespace,
                                         const mfem::IntegrationRule &ir,
                                         const std::vector<int> &indices, Ceed ceed,
                                         CeedOperator *op, CeedOperator *op_t)

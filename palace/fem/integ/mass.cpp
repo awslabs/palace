@@ -21,7 +21,7 @@ struct MassIntegratorInfo : public ceed::IntegratorInfo
 namespace
 {
 
-MassIntegratorInfo InitializeIntegratorInfo(const mfem::FiniteElementSpace &fespace,
+MassIntegratorInfo InitializeIntegratorInfo(const mfem::ParFiniteElementSpace &fespace,
                                             const mfem::IntegrationRule &ir,
                                             const std::vector<int> &indices, bool use_bdr,
                                             mfem::Coefficient *Q,
@@ -31,7 +31,7 @@ MassIntegratorInfo InitializeIntegratorInfo(const mfem::FiniteElementSpace &fesp
 {
   MassIntegratorInfo info = {{0}};
 
-  mfem::Mesh &mesh = *fespace.GetMesh();
+  mfem::ParMesh &mesh = *fespace.GetParMesh();
   info.ctx.dim = mesh.Dimension() - use_bdr;
   info.ctx.space_dim = mesh.SpaceDimension();
   info.ctx.vdim = fespace.GetVDim();
@@ -97,8 +97,8 @@ MassIntegratorInfo InitializeIntegratorInfo(const mfem::FiniteElementSpace &fesp
 
 }  // namespace
 
-void MassIntegrator::Assemble(const mfem::FiniteElementSpace &trial_fespace,
-                              const mfem::FiniteElementSpace &test_fespace,
+void MassIntegrator::Assemble(const mfem::ParFiniteElementSpace &trial_fespace,
+                              const mfem::ParFiniteElementSpace &test_fespace,
                               const mfem::IntegrationRule &ir,
                               const std::vector<int> &indices, Ceed ceed, CeedOperator *op,
                               CeedOperator *op_t)
@@ -113,8 +113,8 @@ void MassIntegrator::Assemble(const mfem::FiniteElementSpace &trial_fespace,
                              ceed, op, op_t);
 }
 
-void MassIntegrator::AssembleBoundary(const mfem::FiniteElementSpace &trial_fespace,
-                                      const mfem::FiniteElementSpace &test_fespace,
+void MassIntegrator::AssembleBoundary(const mfem::ParFiniteElementSpace &trial_fespace,
+                                      const mfem::ParFiniteElementSpace &test_fespace,
                                       const mfem::IntegrationRule &ir,
                                       const std::vector<int> &indices, Ceed ceed,
                                       CeedOperator *op, CeedOperator *op_t)

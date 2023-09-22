@@ -24,10 +24,10 @@ void ClearBasisCache();
 
 }  // namespace internal
 
-void InitBasis(const mfem::FiniteElementSpace &fespace, const mfem::FiniteElement &fe,
+void InitBasis(const mfem::ParFiniteElementSpace &fespace, const mfem::FiniteElement &fe,
                const mfem::IntegrationRule &ir, Ceed ceed, CeedBasis *basis);
 
-inline void InitBasis(const mfem::FiniteElementSpace &fespace,
+inline void InitBasis(const mfem::ParFiniteElementSpace &fespace,
                       const mfem::IntegrationRule &ir, const std::vector<int> &indices,
                       bool use_bdr, Ceed ceed, CeedBasis *basis)
 {
@@ -36,13 +36,13 @@ inline void InitBasis(const mfem::FiniteElementSpace &fespace,
   InitBasis(fespace, fe, ir, ceed, basis);
 }
 
-void InitInterpolatorBasis(const mfem::FiniteElementSpace &trial_fes,
-                           const mfem::FiniteElementSpace &test_fes,
+void InitInterpolatorBasis(const mfem::ParFiniteElementSpace &trial_fes,
+                           const mfem::ParFiniteElementSpace &test_fes,
                            const mfem::FiniteElement &trial_fe,
                            const mfem::FiniteElement &test_fe, Ceed ceed, CeedBasis *basis);
 
-inline void InitInterpolatorBasis(const mfem::FiniteElementSpace &trial_fespace,
-                                  const mfem::FiniteElementSpace &test_fespace,
+inline void InitInterpolatorBasis(const mfem::ParFiniteElementSpace &trial_fespace,
+                                  const mfem::ParFiniteElementSpace &test_fespace,
                                   const std::vector<int> &indices, Ceed ceed,
                                   CeedBasis *basis)
 {

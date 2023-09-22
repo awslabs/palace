@@ -6,6 +6,7 @@
 #include <unordered_map>
 #include <utility>
 #include <ceed.h>
+#include "fem/fespace.hpp"
 #include "fem/libceed/hash.hpp"
 #include "fem/libceed/operator.hpp"
 #include "fem/libceed/utils.hpp"
@@ -31,8 +32,8 @@ struct ElementPairHash
 
 // Count the number of elements of each type in the local mesh.
 std::unordered_map<ElementPairKey, std::vector<int>, ElementPairHash>
-GetElementIndices(const mfem::FiniteElementSpace &trial_fespace,
-                  const mfem::FiniteElementSpace &test_fespace, bool use_bdr, int start,
+GetElementIndices(const mfem::ParFiniteElementSpace &trial_fespace,
+                  const mfem::ParFiniteElementSpace &test_fespace, bool use_bdr, int start,
                   int stop)
 {
   std::unordered_map<ElementPairKey, int, ElementPairHash> counts, offsets;
@@ -84,10 +85,35 @@ GetElementIndices(const mfem::FiniteElementSpace &trial_fespace,
 
 std::unique_ptr<ceed::Operator> BilinearForm::Assemble() const
 {
-  MFEM_VERIFY(trial_fespace.GetMesh() == test_fespace.GetMesh(),
+  MFEM_VERIFY(trial_fespace.GetParMesh() == test_fespace.GetParMesh(),
               "Trial and test finite element spaces must correspond to the same mesh!");
-  mfem::Mesh &mesh = *trial_fespace.GetMesh();
-  mesh.EnsureNodes();
+  mfem::ParMesh &mesh = *trial_fespace.GetParMesh();
+  {
+    // In the following, we copy the mesh FE space for the nodes as a
+    // palace::FiniteElementSpace and replace it in the nodal grid function. Unfortunately
+    // mfem::ParFiniteElementSpace does not have a move constructor to make this more
+    // efficient, but it's only done once for the lifetime of the mesh.
+    mesh.EnsureNodes();
+    mfem::GridFunction *mesh_nodes = mesh.GetNodes();
+    mfem::FiniteElementSpace *mesh_fespace = mesh_nodes->FESpace();
+    MFEM_VERIFY(dynamic_cast<mfem::ParFiniteElementSpace *>(mesh_fespace),
+                "Unexpected non-parallel FiniteElementSpace for mesh nodes!");
+    if (!dynamic_cast<FiniteElementSpace *>(mesh_fespace))
+    {
+      // Ensure the FiniteElementCollection associated with the original nodes is not
+      // deleted.
+      auto *new_mesh_fespace =
+          new FiniteElementSpace(*static_cast<mfem::ParFiniteElementSpace *>(mesh_fespace));
+      mfem::FiniteElementCollection *mesh_fec = mesh_nodes->OwnFEC();
+      MFEM_VERIFY(mesh_fec, "Replacing the FiniteElementSpace for mesh nodes is only "
+                            "possible when it owns its fec/fes members!");
+      mesh_nodes->MakeOwner(nullptr);
+      mesh.SetNodalFESpace(new_mesh_fespace);
+      mfem::GridFunction *new_mesh_nodes = mesh.GetNodes();
+      new_mesh_nodes->MakeOwner(mesh_fec);
+      delete mesh_fespace;
+    }
+  }
 
   std::unique_ptr<ceed::Operator> op;
   if (&trial_fespace == &test_fespace)

@@ -101,6 +101,7 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(MPI_Comm comm, const IoData &iodata, boo
   // root process. The serial mesh and partitioning are deleted inside.
   std::unique_ptr<mfem::ParMesh> mesh =
       DistributeMesh(comm, smesh, partitioning, iodata.problem.output);
+
 #if 0
   {
     std::string tmp = iodata.problem.output;

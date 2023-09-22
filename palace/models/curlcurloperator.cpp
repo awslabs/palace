@@ -5,6 +5,7 @@
 
 #include "fem/bilinearform.hpp"
 #include "fem/coefficient.hpp"
+#include "fem/fespace.hpp"
 #include "fem/integrator.hpp"
 #include "fem/multigrid.hpp"
 #include "linalg/rap.hpp"
@@ -80,7 +81,8 @@ CurlCurlOperator::CurlCurlOperator(const IoData &iodata,
     h1_fecs(fem::ConstructFECollections<mfem::H1_FECollection>(
         iodata.solver.order, mesh.back()->Dimension(), iodata.solver.linear.mg_max_levels,
         iodata.solver.linear.mg_coarsen_type, false)),
-    rt_fec(iodata.solver.order - 1, mesh.back()->Dimension()),
+    rt_fec(std::make_unique<mfem::RT_FECollection>(iodata.solver.order - 1,
+                                                   mesh.back()->Dimension())),
     nd_fespaces(fem::ConstructFiniteElementSpaceHierarchy<mfem::ND_FECollection>(
         iodata.solver.linear.mg_max_levels, iodata.solver.linear.mg_legacy_transfer,
         pa_order_threshold, pa_discrete_interp, mesh, nd_fecs, &dbc_marker,
@@ -88,8 +90,8 @@ CurlCurlOperator::CurlCurlOperator(const IoData &iodata,
     h1_fespaces(fem::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
         iodata.solver.linear.mg_max_levels, iodata.solver.linear.mg_legacy_transfer,
         pa_order_threshold, pa_discrete_interp, mesh, h1_fecs, nullptr, nullptr)),
-    rt_fespace(mesh.back().get(), &rt_fec), mat_op(iodata, *mesh.back()),
-    surf_j_op(iodata, GetH1Space())
+    rt_fespace(std::make_unique<FiniteElementSpace>(mesh.back().get(), rt_fec.get())),
+    mat_op(iodata, *mesh.back()), surf_j_op(iodata, GetH1Space())
 {
   // Finalize setup.
   CheckBoundaryProperties();
@@ -124,11 +126,11 @@ std::unique_ptr<Operator> CurlCurlOperator::GetStiffnessMatrix()
                GetNDSpace().GetMaxElementOrder() > pa_order_threshold ? "Partial" : "Full");
     Mpi::Print("\nAssembling multigrid hierarchy:\n");
   }
-  auto K = std::make_unique<MultigridOperator>(nd_fespaces.GetNumLevels());
-  for (int l = 0; l < nd_fespaces.GetNumLevels(); l++)
+  auto K = std::make_unique<MultigridOperator>(GetNDSpaces().GetNumLevels());
+  for (int l = 0; l < GetNDSpaces().GetNumLevels(); l++)
   {
     // Force coarse level operator to be fully assembled always.
-    const auto &nd_fespace_l = nd_fespaces.GetFESpaceAtLevel(l);
+    const auto &nd_fespace_l = GetNDSpaces().GetFESpaceAtLevel(l);
     if (print_hdr)
     {
       Mpi::Print(" Level {:d} (p = {:d}): {:d} unknowns", l,

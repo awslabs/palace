@@ -40,9 +40,9 @@ private:
   // are used for various purposes throughout the code including postprocessing.
   std::vector<std::unique_ptr<mfem::ND_FECollection>> nd_fecs;
   std::vector<std::unique_ptr<mfem::H1_FECollection>> h1_fecs;
-  mfem::RT_FECollection rt_fec;
-  mfem::ParFiniteElementSpaceHierarchy nd_fespaces, h1_fespaces;
-  mfem::ParFiniteElementSpace rt_fespace;
+  std::unique_ptr<mfem::RT_FECollection> rt_fec;
+  std::unique_ptr<mfem::ParFiniteElementSpaceHierarchy> nd_fespaces, h1_fespaces;
+  std::unique_ptr<mfem::ParFiniteElementSpace> rt_fespace;
 
   // Operator for domain material properties.
   MaterialOperator mat_op;
@@ -61,14 +61,14 @@ public:
   const auto &GetSurfaceCurrentOp() const { return surf_j_op; }
 
   // Return the parallel finite element space objects.
-  auto &GetNDSpaces() { return nd_fespaces; }
-  auto &GetNDSpace() { return nd_fespaces.GetFinestFESpace(); }
-  const auto &GetNDSpace() const { return nd_fespaces.GetFinestFESpace(); }
-  auto &GetH1Spaces() { return h1_fespaces; }
-  auto &GetH1Space() { return h1_fespaces.GetFinestFESpace(); }
-  const auto &GetH1Space() const { return h1_fespaces.GetFinestFESpace(); }
-  auto &GetRTSpace() { return rt_fespace; }
-  const auto &GetRTSpace() const { return rt_fespace; }
+  auto &GetNDSpaces() { return *nd_fespaces; }
+  auto &GetNDSpace() { return nd_fespaces->GetFinestFESpace(); }
+  const auto &GetNDSpace() const { return nd_fespaces->GetFinestFESpace(); }
+  auto &GetH1Spaces() { return *h1_fespaces; }
+  auto &GetH1Space() { return h1_fespaces->GetFinestFESpace(); }
+  const auto &GetH1Space() const { return h1_fespaces->GetFinestFESpace(); }
+  auto &GetRTSpace() { return *rt_fespace; }
+  const auto &GetRTSpace() const { return *rt_fespace; }
 
   // Construct and return system matrix representing discretized curl-curl operator for
   // Ampere's law.

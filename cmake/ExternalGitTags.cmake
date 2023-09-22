@@ -265,3 +265,9 @@ set(EXTERN_EIGEN_URL
   "https://gitlab.com/libeigen/eigen/-/archive/3.4.0/eigen-3.4.0.tar.gz" CACHE STRING
   "URL for external Eigen build"
 )
+
+# mariusbancila/stduuid
+set(EXTERN_STDUUID_URL
+  "https://github.com/mariusbancila/stduuid/archive/refs/tags/v1.2.3.tar.gz" CACHE STRING
+  "URL for external mariusbancila/stduuid build"
+)

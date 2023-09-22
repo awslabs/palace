@@ -22,7 +22,7 @@ namespace
 {
 
 DiffusionMassIntegratorInfo
-InitializeIntegratorInfo(const mfem::FiniteElementSpace &fespace,
+InitializeIntegratorInfo(const mfem::ParFiniteElementSpace &fespace,
                          const mfem::IntegrationRule &ir, const std::vector<int> &indices,
                          bool use_bdr, mfem::Coefficient *Qd, mfem::VectorCoefficient *VQd,
                          mfem::MatrixCoefficient *MQd, mfem::Coefficient *Qm,
@@ -33,7 +33,7 @@ InitializeIntegratorInfo(const mfem::FiniteElementSpace &fespace,
 
   DiffusionMassIntegratorInfo info = {{0}};
 
-  mfem::Mesh &mesh = *fespace.GetMesh();
+  mfem::ParMesh &mesh = *fespace.GetParMesh();
   info.ctx.dim = mesh.Dimension() - use_bdr;
   info.ctx.space_dim = mesh.SpaceDimension();
 
@@ -82,8 +82,8 @@ InitializeIntegratorInfo(const mfem::FiniteElementSpace &fespace,
 
 }  // namespace
 
-void DiffusionMassIntegrator::Assemble(const mfem::FiniteElementSpace &trial_fespace,
-                                       const mfem::FiniteElementSpace &test_fespace,
+void DiffusionMassIntegrator::Assemble(const mfem::ParFiniteElementSpace &trial_fespace,
+                                       const mfem::ParFiniteElementSpace &test_fespace,
                                        const mfem::IntegrationRule &ir,
                                        const std::vector<int> &indices, Ceed ceed,
                                        CeedOperator *op, CeedOperator *op_t)
@@ -99,8 +99,8 @@ void DiffusionMassIntegrator::Assemble(const mfem::FiniteElementSpace &trial_fes
 }
 
 void DiffusionMassIntegrator::AssembleBoundary(
-    const mfem::FiniteElementSpace &trial_fespace,
-    const mfem::FiniteElementSpace &test_fespace, const mfem::IntegrationRule &ir,
+    const mfem::ParFiniteElementSpace &trial_fespace,
+    const mfem::ParFiniteElementSpace &test_fespace, const mfem::IntegrationRule &ir,
     const std::vector<int> &indices, Ceed ceed, CeedOperator *op, CeedOperator *op_t)
 {
   MFEM_VERIFY(&trial_fespace == &test_fespace,
