@@ -122,10 +122,6 @@ if(PALACE_WITH_GSLIB)
   include(ExternalGSLIB)
 endif()
 
-# Add stduuid (always built as part of Palace)
-message(STATUS "============== Configuring mariusbancila/stduuid dependency ==============")
-include(ExternalStduuid)
-
 # Add libCEED (always built as part of Palace)
 message(STATUS "==================== Configuring libCEED dependency ====================")
 include(ExternalLibCEED)

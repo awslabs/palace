@@ -9,8 +9,8 @@ namespace palace::ceed
 namespace internal
 {
 
-std::unordered_map<BasisKey, CeedBasis, BasisHash> basis_map;
-std::unordered_map<InterpBasisKey, CeedBasis, InterpBasisHash> interp_basis_map;
+static std::unordered_map<BasisKey, CeedBasis, BasisHash> basis_map;
+static std::unordered_map<InterpBasisKey, CeedBasis, InterpBasisHash> interp_basis_map;
 
 void ClearBasisCache()
 {

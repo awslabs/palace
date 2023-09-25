@@ -44,13 +44,6 @@
 namespace palace::ceed
 {
 
-namespace internal
-{
-
-extern std::vector<Ceed> ceed;
-
-}  // namespace internal
-
 // Call libCEED's CeedInit for the given resource. The specific device to use is set prior
 // to this using mfem::Device.
 void Initialize(const char *resource, const char *jit_source_dir);
@@ -63,6 +56,14 @@ std::string Print();
 
 // Initialize a CeedVector from an mfem::Vector.
 void InitCeedVector(const mfem::Vector &v, Ceed ceed, CeedVector *cv);
+
+namespace internal
+{
+
+// Access the Ceed objects initialized by CeedInit.
+const std::vector<Ceed> &GetCeedObjects();
+
+}  // namespace internal
 
 }  // namespace palace::ceed
 

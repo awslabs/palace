@@ -18,11 +18,10 @@ namespace palace
 class FiniteElementSpace : public mfem::ParFiniteElementSpace
 {
 private:
-  mutable std::string id;
+  static std::size_t global_id;
+  mutable std::size_t id;
   mutable long int prev_sequence;
-
-  // Generate a unique UUID (using system generator).
-  static std::string GenerateId();
+  mutable bool init = false;
 
 public:
   using mfem::ParFiniteElementSpace::ParFiniteElementSpace;
@@ -33,15 +32,7 @@ public:
 
   // Get the ID associated with the instance of this class. If the underlying sequence has
   // changed (due to a mesh update, for example), regenerate the ID.
-  std::string GetId() const
-  {
-    if (id.empty() || GetSequence() != prev_sequence)
-    {
-      id = GenerateId();
-      prev_sequence = GetSequence();
-    }
-    return id;
-  }
+  std::size_t GetId() const;
 };
 
 }  // namespace palace

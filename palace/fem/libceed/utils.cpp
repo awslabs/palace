@@ -16,7 +16,12 @@ namespace palace::ceed
 namespace internal
 {
 
-std::vector<Ceed> ceed;
+static std::vector<Ceed> ceeds;
+
+const std::vector<Ceed> &GetCeedObjects()
+{
+  return ceeds;
+}
 
 }  // namespace internal
 
@@ -31,17 +36,17 @@ void Initialize(const char *resource, const char *jit_source_dir)
 #else
       const int nt = 1;
 #endif
-      internal::ceed.resize(nt, nullptr);
+      internal::ceeds.resize(nt, nullptr);
     }
   }
 
   // Master thread initializes all Ceed objects (ineherently sequential anyway due to shared
   // resources).
-  for (std::size_t i = 0; i < internal::ceed.size(); i++)
+  for (std::size_t i = 0; i < internal::ceeds.size(); i++)
   {
-    int ierr = CeedInit(resource, &internal::ceed[i]);
+    int ierr = CeedInit(resource, &internal::ceeds[i]);
     MFEM_VERIFY(!ierr, "Failed to initialize libCEED with resource " << resource << "!");
-    Ceed ceed = internal::ceed[i];
+    Ceed ceed = internal::ceeds[i];
 
     // Configure error handling (allow errors to be handled by PalaceCeedCallBackend or
     // PalaceCeedCall).
@@ -62,19 +67,19 @@ void Finalize()
   internal::ClearRestrictionCache();
 
   // Destroy Ceed context(s).
-  for (std::size_t i = 0; i < internal::ceed.size(); i++)
+  for (std::size_t i = 0; i < internal::ceeds.size(); i++)
   {
-    int ierr = CeedDestroy(&internal::ceed[i]);
+    int ierr = CeedDestroy(&internal::ceeds[i]);
     MFEM_VERIFY(!ierr, "Failed to finalize libCEED!");
   }
-  internal::ceed.clear();
+  internal::ceeds.clear();
 }
 
 std::string Print()
 {
-  MFEM_VERIFY(internal::ceed.size() > 0,
+  MFEM_VERIFY(internal::GetCeedObjects().size() > 0,
               "libCEED must be initialized before querying the active backend!");
-  Ceed ceed = internal::ceed[0];
+  Ceed ceed = internal::GetCeedObjects()[0];
   const char *ceed_resource;
   PalaceCeedCall(ceed, CeedGetResource(ceed, &ceed_resource));
   return std::string(ceed_resource);

@@ -14,16 +14,6 @@
 namespace palace::ceed
 {
 
-namespace internal
-{
-
-extern std::unordered_map<BasisKey, CeedBasis, BasisHash> basis_map;
-extern std::unordered_map<InterpBasisKey, CeedBasis, InterpBasisHash> interp_basis_map;
-
-void ClearBasisCache();
-
-}  // namespace internal
-
 void InitBasis(const mfem::ParFiniteElementSpace &fespace, const mfem::FiniteElement &fe,
                const mfem::IntegrationRule &ir, Ceed ceed, CeedBasis *basis);
 
@@ -50,6 +40,14 @@ inline void InitInterpolatorBasis(const mfem::ParFiniteElementSpace &trial_fespa
   const mfem::FiniteElement &test_fe = *test_fespace.GetFE(indices[0]);
   InitInterpolatorBasis(trial_fespace, test_fespace, trial_fe, test_fe, ceed, basis);
 }
+
+namespace internal
+{
+
+// Destroy the cached CeedBasis objects.
+void ClearBasisCache();
+
+}  // namespace internal
 
 }  // namespace palace::ceed
 

@@ -4,7 +4,6 @@
 #include "bilinearform.hpp"
 
 #include <unordered_map>
-#include <utility>
 #include <ceed.h>
 #include "fem/fespace.hpp"
 #include "fem/libceed/hash.hpp"
@@ -17,27 +16,19 @@ namespace palace
 namespace
 {
 
-using ElementPairKey =
-    std::pair<ceed::internal::FiniteElementKey, ceed::internal::FiniteElementKey>;
-
-struct ElementPairHash
-{
-  std::size_t operator()(const ElementPairKey &k) const
-  {
-    std::size_t hash = 0;
-    ceed::CeedHashCombine(hash, k.first, k.second);
-    return hash;
-  }
-};
+using ceed::internal::FiniteElementKey;
+using ceed::internal::FiniteElementPairHash;
+using ceed::internal::FiniteElementPairKey;
 
 // Count the number of elements of each type in the local mesh.
-std::unordered_map<ElementPairKey, std::vector<int>, ElementPairHash>
+std::unordered_map<FiniteElementPairKey, std::vector<int>, FiniteElementPairHash>
 GetElementIndices(const mfem::ParFiniteElementSpace &trial_fespace,
                   const mfem::ParFiniteElementSpace &test_fespace, bool use_bdr, int start,
                   int stop)
 {
-  std::unordered_map<ElementPairKey, int, ElementPairHash> counts, offsets;
-  std::unordered_map<ElementPairKey, std::vector<int>, ElementPairHash> element_indices;
+  std::unordered_map<FiniteElementPairKey, int, FiniteElementPairHash> counts, offsets;
+  std::unordered_map<FiniteElementPairKey, std::vector<int>, FiniteElementPairHash>
+      element_indices;
 
   // Count the number of elements of each type and order.
   for (int i = start; i < stop; i++)
@@ -46,8 +37,8 @@ GetElementIndices(const mfem::ParFiniteElementSpace &trial_fespace,
         use_bdr ? *trial_fespace.GetBE(i) : *trial_fespace.GetFE(i);
     const mfem::FiniteElement &test_fe =
         use_bdr ? *test_fespace.GetBE(i) : *test_fespace.GetFE(i);
-    ElementPairKey key = std::make_pair(ceed::internal::FiniteElementKey(trial_fe),
-                                        ceed::internal::FiniteElementKey(test_fe));
+    FiniteElementPairKey key =
+        std::make_pair(FiniteElementKey(trial_fe), FiniteElementKey(test_fe));
     auto value = counts.find(key);
     if (value == counts.end())
     {
@@ -71,8 +62,8 @@ GetElementIndices(const mfem::ParFiniteElementSpace &trial_fespace,
         use_bdr ? *trial_fespace.GetBE(i) : *trial_fespace.GetFE(i);
     const mfem::FiniteElement &test_fe =
         use_bdr ? *test_fespace.GetBE(i) : *test_fespace.GetFE(i);
-    ElementPairKey key = std::make_pair(ceed::internal::FiniteElementKey(trial_fe),
-                                        ceed::internal::FiniteElementKey(test_fe));
+    FiniteElementPairKey key =
+        std::make_pair(FiniteElementKey(trial_fe), FiniteElementKey(test_fe));
     int &offset = offsets[key];
     std::vector<int> &indices = element_indices[key];
     indices[offset++] = i;
@@ -130,11 +121,11 @@ std::unique_ptr<ceed::Operator> BilinearForm::Assemble() const
   // Assemble the libCEED operator in parallel, each thread builds a composite operator.
   // This should work fine if some threads create an empty operator (no elements or bounday
   // elements).
-  const std::size_t nt = ceed::internal::ceed.size();
+  const std::size_t nt = ceed::internal::GetCeedObjects().size();
   PalacePragmaOmp(parallel for schedule(static))
   for (std::size_t i = 0; i < nt; i++)
   {
-    Ceed ceed = ceed::internal::ceed[i];
+    Ceed ceed = ceed::internal::GetCeedObjects()[i];
     CeedOperator loc_op, loc_op_t;
     PalaceCeedCall(ceed, CeedCompositeOperatorCreate(ceed, &loc_op));
     PalaceCeedCall(ceed, CeedCompositeOperatorCreate(ceed, &loc_op_t));

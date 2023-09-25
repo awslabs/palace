@@ -14,15 +14,6 @@
 namespace palace::ceed
 {
 
-namespace internal
-{
-
-extern std::unordered_map<RestrKey, CeedElemRestriction, RestrHash> restr_map;
-
-void ClearRestrictionCache();
-
-}  // namespace internal
-
 void InitRestriction(const mfem::ParFiniteElementSpace &fespace,
                      const std::vector<int> &indices, bool use_bdr, bool is_interp,
                      bool is_range, Ceed ceed, CeedElemRestriction *restr);
@@ -33,6 +24,14 @@ inline void InitRestriction(const mfem::ParFiniteElementSpace &fespace,
 {
   InitRestriction(fespace, indices, use_bdr, false, false, ceed, restr);
 }
+
+namespace internal
+{
+
+// Destroy the cached CeedElemRestriction objects.
+void ClearRestrictionCache();
+
+}  // namespace internal
 
 }  // namespace palace::ceed
 

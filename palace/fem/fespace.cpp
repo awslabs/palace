@@ -3,14 +3,25 @@
 
 #include "fespace.hpp"
 
-#include <uuid.h>
+#include "fem/libceed/utils.hpp"
 
 namespace palace
 {
 
-std::string FiniteElementSpace::GenerateId()
+std::size_t FiniteElementSpace::global_id = 0;
+
+std::size_t FiniteElementSpace::GetId() const
 {
-  return uuids::to_string(uuids::uuid_system_generator{}());
+  PalacePragmaOmp(critical(GetId))
+  {
+    if (!init || GetSequence() != prev_sequence)
+    {
+      id = global_id++;
+      prev_sequence = GetSequence();
+      init = true;
+    }
+  }
+  return id;
 }
 
 }  // namespace palace

@@ -11,7 +11,7 @@ namespace palace::ceed
 namespace internal
 {
 
-std::unordered_map<RestrKey, CeedElemRestriction, RestrHash> restr_map;
+static std::unordered_map<RestrKey, CeedElemRestriction, RestrHash> restr_map;
 
 void ClearRestrictionCache()
 {

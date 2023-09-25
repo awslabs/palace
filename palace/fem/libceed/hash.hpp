@@ -6,6 +6,7 @@
 
 #include <functional>
 #include <string>
+#include <utility>
 #include <mfem.hpp>
 #include "fem/fespace.hpp"
 
@@ -46,6 +47,18 @@ struct FiniteElementKey
             range_type == k.range_type && map_type == k.map_type &&
             deriv_type == k.deriv_type && deriv_range_type == k.deriv_range_type &&
             deriv_map_type == k.deriv_map_type);
+  }
+};
+
+using FiniteElementPairKey = std::pair<FiniteElementKey, FiniteElementKey>;
+
+struct FiniteElementPairHash
+{
+  std::size_t operator()(const FiniteElementPairKey &k) const
+  {
+    std::size_t hash = 0;
+    CeedHashCombine(hash, k.first, k.second);
+    return hash;
   }
 };
 
@@ -108,11 +121,10 @@ struct InterpBasisHash
 struct RestrKey
 {
   Ceed ceed;
-  std::string fespace;
-  int first_elem;
+  std::size_t fespace, first_elem;
   bool use_bdr, unique_interp_restr, unique_interp_range_restr;
-  RestrKey(Ceed ceed, const FiniteElementSpace &fespace, int first_elem, bool use_bdr,
-           bool unique_interp_restr, bool unique_interp_range_restr)
+  RestrKey(Ceed ceed, const FiniteElementSpace &fespace, std::size_t first_elem,
+           bool use_bdr, bool unique_interp_restr, bool unique_interp_range_restr)
     : ceed(ceed), fespace(fespace.GetId()), first_elem(first_elem), use_bdr(use_bdr),
       unique_interp_restr(unique_interp_restr),
       unique_interp_range_restr(unique_interp_range_restr)
