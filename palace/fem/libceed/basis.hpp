@@ -9,7 +9,6 @@
 #include <ceed.h>
 #include <mfem.hpp>
 #include "hash.hpp"
-#include "utils.hpp"
 
 namespace palace::ceed
 {

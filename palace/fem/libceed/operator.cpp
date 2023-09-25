@@ -6,6 +6,7 @@
 #include <ceed.h>
 #include <mfem/general/forall.hpp>
 #include "utils.hpp"
+#include "utils/omp.hpp"
 
 namespace palace::ceed
 {
@@ -109,7 +110,7 @@ inline void CeedAddMult(const std::vector<CeedOperator> &ops,
     mem = CEED_MEM_HOST;
   }
 
-  PalacePragmaOmp(for private(ceed) schedule(static))
+  PalacePragmaOmp(parallel for private(ceed) schedule(static))
   for (std::size_t i = 0; i < ops.size(); i++)
   {
     if (ops[i])  // No-op for an empty operator

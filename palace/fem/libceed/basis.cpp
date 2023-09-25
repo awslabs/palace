@@ -3,6 +3,9 @@
 
 #include "basis.hpp"
 
+#include "utils.hpp"
+#include "utils/omp.hpp"
+
 namespace palace::ceed
 {
 
@@ -256,7 +259,7 @@ void InitInterpolatorBasis(const mfem::ParFiniteElementSpace &trial_fespace,
 
   // Initialize or retrieve key values (avoid simultaneous search and write).
   auto basis_itr = internal::interp_basis_map.end();
-  PalacePragmaOmp(critical(InitBasis))
+  PalacePragmaOmp(critical(InitInterpBasis))
   {
     basis_itr = internal::interp_basis_map.find(key);
   }
@@ -273,7 +276,7 @@ void InitInterpolatorBasis(const mfem::ParFiniteElementSpace &trial_fespace,
       InitMFEMInterpolatorBasis(trial_fespace, test_fespace, trial_fe, test_fe, ceed,
                                 basis);
     }
-    PalacePragmaOmp(critical(InitBasis))
+    PalacePragmaOmp(critical(InitInterpBasis))
     {
       internal::interp_basis_map[key] = *basis;
     }

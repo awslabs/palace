@@ -125,37 +125,37 @@ public:
   void Eval(mfem::DenseMatrix &K, mfem::ElementTransformation &T,
             const mfem::IntegrationPoint &ip) override
   {
+    const int attr = GetAttribute(T);
     if constexpr (MatType == MaterialPropertyType::INV_PERMEABILITY)
     {
-      K = mat_op.GetInvPermeability(GetAttribute(T));
+      K = mat_op.GetInvPermeability(attr);
     }
     else if constexpr (MatType == MaterialPropertyType::PERMITTIVITY_REAL)
     {
-      K = mat_op.GetPermittivityReal(GetAttribute(T));
+      K = mat_op.GetPermittivityReal(attr);
     }
     else if constexpr (MatType == MaterialPropertyType::PERMITTIVITY_IMAG)
     {
-      K = mat_op.GetPermittivityImag(GetAttribute(T));
+      K = mat_op.GetPermittivityImag(attr);
     }
     else if constexpr (MatType == MaterialPropertyType::PERMITTIVITY_ABS)
     {
-      K = mat_op.GetPermittivityAbs(GetAttribute(T));
+      K = mat_op.GetPermittivityAbs(attr);
     }
     else if constexpr (MatType == MaterialPropertyType::CONDUCTIVITY)
     {
-      K = mat_op.GetConductivity(GetAttribute(T));
+      K = mat_op.GetConductivity(attr);
     }
     else if constexpr (MatType == MaterialPropertyType::INV_LONDON_DEPTH)
     {
-      K = mat_op.GetInvLondonDepth(GetAttribute(T));
+      K = mat_op.GetInvLondonDepth(attr);
     }
     else if constexpr (MatType == MaterialPropertyType::INV_Z0)
     {
-      K = mat_op.GetInvImpedance(GetAttribute(T));
+      K = mat_op.GetInvImpedance(attr);
     }
     else if constexpr (MatType == MaterialPropertyType::INV_PERMEABILITY_C0)
     {
-      const int attr = GetAttribute(T);
       K.SetSize(height, width);
       Mult(mat_op.GetInvPermeability(attr), mat_op.GetLightSpeed(attr), K);
     }
@@ -782,7 +782,6 @@ class SumVectorCoefficient : public mfem::VectorCoefficient
 private:
   std::vector<std::pair<std::unique_ptr<mfem::VectorCoefficient>, const mfem::Array<int> *>>
       c;
-  mutable mfem::Vector U;
 
   void AddCoefficient(std::unique_ptr<mfem::VectorCoefficient> &&coef,
                       const mfem::Array<int> *marker)
@@ -800,7 +799,7 @@ private:
   }
 
 public:
-  SumVectorCoefficient(int d) : mfem::VectorCoefficient(d), U(d) {}
+  SumVectorCoefficient(int d) : mfem::VectorCoefficient(d) {}
 
   bool empty() const { return c.empty(); }
 
@@ -838,6 +837,7 @@ public:
   void Eval(mfem::Vector &V, mfem::ElementTransformation &T,
             const mfem::IntegrationPoint &ip) override
   {
+    mfem::Vector U(vdim);
     V.SetSize(vdim);
     V = 0.0;
     for (auto &[coef, marker] : c)
@@ -856,7 +856,6 @@ class SumMatrixCoefficient : public mfem::MatrixCoefficient
 private:
   std::vector<std::pair<std::unique_ptr<mfem::MatrixCoefficient>, const mfem::Array<int> *>>
       c;
-  mutable mfem::DenseMatrix M;
 
   void AddCoefficient(std::unique_ptr<mfem::MatrixCoefficient> &&coef,
                       const mfem::Array<int> *marker)
@@ -876,8 +875,8 @@ private:
   }
 
 public:
-  SumMatrixCoefficient(int d) : mfem::MatrixCoefficient(d), M(d) {}
-  SumMatrixCoefficient(int h, int w) : mfem::MatrixCoefficient(h, w), M(h, w) {}
+  SumMatrixCoefficient(int d) : mfem::MatrixCoefficient(d) {}
+  SumMatrixCoefficient(int h, int w) : mfem::MatrixCoefficient(h, w) {}
 
   bool empty() const { return c.empty(); }
 
@@ -915,6 +914,7 @@ public:
   void Eval(mfem::DenseMatrix &K, mfem::ElementTransformation &T,
             const mfem::IntegrationPoint &ip) override
   {
+    mfem::DenseMatrix M(height, width);
     K.SetSize(height, width);
     K = 0.0;
     for (auto &[coef, marker] : c)

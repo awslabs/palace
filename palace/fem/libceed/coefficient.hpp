@@ -60,7 +60,7 @@ inline void InitCoefficient(mfem::VectorCoefficient &VQ, mfem::ParMesh &mesh,
   coeff.data.SetSize(ne * nqpts * vdim);
   auto C = mfem::Reshape(coeff.data.HostWrite(), vdim, nqpts, ne);
   mfem::IsoparametricTransformation T;
-  mfem::DenseMatrix Q_ip;
+  mfem::DenseMatrix Q_ip(vdim, nqpts);
   for (std::size_t i = 0; i < ne; ++i)
   {
     const auto e = indices[i];
@@ -97,7 +97,7 @@ inline void InitCoefficient(mfem::MatrixCoefficient &MQ, mfem::ParMesh &mesh,
   coeff.data.SetSize(ne * nqpts * ncomp);
   auto C = mfem::Reshape(coeff.data.HostWrite(), ncomp, nqpts, ne);
   mfem::IsoparametricTransformation T;
-  mfem::DenseMatrix Q_ip;
+  mfem::DenseMatrix Q_ip(vdim);
   for (std::size_t i = 0; i < ne; ++i)
   {
     const auto e = indices[i];

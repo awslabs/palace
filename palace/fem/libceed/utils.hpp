@@ -34,13 +34,6 @@
 
 #define PalaceQFunctionRelativePath(path) strstr(path, "qfunctions")
 
-#if defined(MFEM_USE_OPENMP)
-#define PalacePragmaOmpHelper(x) _Pragma(#x)
-#define PalacePragmaOmp(x) PalacePragmaOmpHelper(omp x)
-#else
-#define PalacePragmaOmp(x)
-#endif
-
 namespace palace::ceed
 {
 

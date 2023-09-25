@@ -4,6 +4,8 @@
 #include "restriction.hpp"
 
 #include "fem/fespace.hpp"
+#include "utils.hpp"
+#include "utils/omp.hpp"
 
 namespace palace::ceed
 {
@@ -277,14 +279,16 @@ void InitRestriction(const mfem::ParFiniteElementSpace &fespace,
     {
       internal::restr_map[key] = *restr;
     }
-    // std::cout << "New element restriction (" << ceed << ", " << &el << ", " << &fe
+    // std::cout << "New element restriction (" << ceed << ", " << &fespace
+    //           << ", " << indices[0] << ", " << use_bdr
     //           << ", " << unique_interp_restr
     //           << ", " << unique_interp_range_restr << ")\n";
   }
   else
   {
     *restr = restr_itr->second;
-    // std::cout << "Reusing element restriction (" << ceed << ", " << &el << ", " << &fe
+    // std::cout << "Reusing element restriction (" << ceed << ", " << &fespace
+    //           << ", " << indices[0] << ", " << use_bdr << ", "
     //           << ", " << unique_interp_restr
     //           << ", " << unique_interp_range_restr << ")\n";
   }

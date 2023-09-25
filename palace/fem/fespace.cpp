@@ -3,7 +3,7 @@
 
 #include "fespace.hpp"
 
-#include "fem/libceed/utils.hpp"
+#include "utils/omp.hpp"
 
 namespace palace
 {

@@ -5,6 +5,7 @@
 
 #include "basis.hpp"
 #include "restriction.hpp"
+#include "utils/omp.hpp"
 
 #if defined(MFEM_USE_OPENMP)
 #include <omp.h>
