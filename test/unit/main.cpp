@@ -5,11 +5,15 @@
 #include <mfem.hpp>
 #include <catch2/catch_session.hpp>
 #include "fem/libceed/utils.hpp"
+#include "utils/communication.hpp"
 
 using namespace palace;
 
 int main(int argc, char *argv[])
 {
+  // Initialize MPI.
+  Mpi::Init(argc, argv);
+
   // See https://github.com/catchorg/Catch2/blob/devel/docs/own-main.md.
   Catch::Session session;
 

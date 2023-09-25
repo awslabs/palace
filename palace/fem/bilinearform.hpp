@@ -117,6 +117,9 @@ public:
   {
   }
 
+  const auto &GetTrialSpace() const { return a.GetTrialSpace(); }
+  const auto &GetTestSpace() const { return a.GetTestSpace(); }
+
   void AddDomainInterpolator(std::unique_ptr<DiscreteInterpolator> &&di)
   {
     a.AddDomainIntegrator(std::move(di));

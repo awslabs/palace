@@ -22,6 +22,7 @@ target_sources(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/main.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-libceed.cpp
   ${CMAKE_SOURCE_DIR}/fem/bilinearform.cpp
+  ${CMAKE_SOURCE_DIR}/fem/fespace.cpp
   ${CMAKE_SOURCE_DIR}/fem/integrator.cpp
   ${CMAKE_SOURCE_DIR}/fem/integ/curlcurl.cpp
   ${CMAKE_SOURCE_DIR}/fem/integ/curlcurlmass.cpp
@@ -61,7 +62,7 @@ if(PALACE_WITH_OPENMP)
   )
 endif()
 target_link_libraries(unit-tests
-  PRIVATE mfem ${LIBCEED_TARGET} Catch2::Catch2
+  PRIVATE mfem ${LIBCEED_TARGET} MPI::MPI_CXX Catch2::Catch2
 )
 
 # Status messages for test target

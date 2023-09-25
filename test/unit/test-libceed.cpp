@@ -3,11 +3,13 @@
 
 #include <memory>
 #include <mfem.hpp>
-#include <catch2/benchmark/catch_benchmark_all.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/benchmark/catch_benchmark_all.hpp>
 #include <catch2/generators/catch_generators_all.hpp>
 #include "fem/bilinearform.hpp"
+#include "fem/fespace.hpp"
 #include "fem/integrator.hpp"
+#include "utils/communication.hpp"
 
 namespace palace
 {
@@ -165,7 +167,7 @@ void TestCeedOperator(T1 &a_test, T2 &a_ref, bool test_transpose, bool skip_zero
   TestCeedOperatorFullAssemble(*mat_test, *mat_ref);
 
   // Test diagonal assembly if possible.
-  if (a_ref.Height() == a_ref.Width())
+  if (&a_test.GetTrialSpace() == &a_test.GetTestSpace())
   {
     Vector d_ref(mat_ref->Height()), d_test(mat_ref->Height());
     d_ref.UseDevice(true);
@@ -179,31 +181,17 @@ void TestCeedOperator(T1 &a_test, T2 &a_ref, bool test_transpose, bool skip_zero
     // Diagonal assembly for high-order Nedelec spaces is only approximate due to face
     // dofs in 3D.
     double rtol = 1.0e-12;
-    if constexpr (std::is_base_of<mfem::BilinearForm, T2>::value)
+    const auto &trial_fespace = a_test.GetTrialSpace();
+    const auto &test_fespace = a_test.GetTestSpace();
+    const auto &trial_fec = *trial_fespace.FEColl();
+    const auto &test_fec = *test_fespace.FEColl();
+    if (trial_fespace.GetParMesh()->Dimension() == 3 &&
+        ((dynamic_cast<const mfem::ND_FECollection *>(&trial_fec) &&
+          trial_fec.GetOrder() > 1 && !mfem::UsesTensorBasis(trial_fespace)) ||
+         (dynamic_cast<const mfem::ND_FECollection *>(&test_fec) &&
+          test_fec.GetOrder() > 1 && !mfem::UsesTensorBasis(test_fespace))))
     {
-      const auto &fespace = *a_ref.FESpace();
-      const auto &fec = *fespace.FEColl();
-      if (fespace.GetMesh()->Dimension() == 3 &&
-          dynamic_cast<const mfem::ND_FECollection *>(&fec) && fec.GetOrder() > 1 &&
-          !mfem::UsesTensorBasis(fespace))
-      {
-        rtol = 1.0;
-      }
-    }
-    else if constexpr (std::is_base_of<mfem::MixedBilinearForm, T2>::value)
-    {
-      const auto &trial_fespace = *a_ref.TrialFESpace();
-      const auto &test_fespace = *a_ref.TestFESpace();
-      const auto &trial_fec = *trial_fespace.FEColl();
-      const auto &test_fec = *test_fespace.FEColl();
-      if (trial_fespace.GetMesh()->Dimension() == 3 &&
-          ((dynamic_cast<const mfem::ND_FECollection *>(&trial_fec) &&
-            trial_fec.GetOrder() > 1 && !mfem::UsesTensorBasis(trial_fespace)) ||
-           (dynamic_cast<const mfem::ND_FECollection *>(&test_fec) &&
-            test_fec.GetOrder() > 1 && !mfem::UsesTensorBasis(test_fespace))))
-      {
-        rtol = 1.0;
-      }
+      rtol = 1.0;
     }
 
     // REQUIRE(d_ref.Norml2() > 0.0);
@@ -227,7 +215,7 @@ void TestCeedOperator(DiscreteLinearOperator &op_test, mfem::DiscreteLinearOpera
 }
 
 template <typename T1, typename T2, typename T3>
-void BenchmarkCeedIntegrator(mfem::FiniteElementSpace &fespace, T1 AssembleTest,
+void BenchmarkCeedIntegrator(FiniteElementSpace &fespace, T1 AssembleTest,
                              T2 AssembleTestRef, T3 AssembleRef, int qdata_size)
 {
   const int q_extra = 0;
@@ -309,7 +297,7 @@ void BenchmarkCeedIntegrator(mfem::FiniteElementSpace &fespace, T1 AssembleTest,
   };
 
   // Memory estimate (only for non-mixed meshes).
-  mfem::Mesh &mesh = *fespace.GetMesh();
+  mfem::ParMesh &mesh = *fespace.GetParMesh();
   if (mesh.GetNumGeometries(mesh.Dimension()) == 1)
   {
     // Integration rule gives the complete non-tensor number of points.
@@ -333,8 +321,8 @@ void BenchmarkCeedIntegrator(mfem::FiniteElementSpace &fespace, T1 AssembleTest,
 }
 
 template <typename T1, typename T2>
-void BenchmarkCeedInterpolator(mfem::FiniteElementSpace &trial_fespace,
-                               mfem::FiniteElementSpace &test_fespace, T1 AssembleTest,
+void BenchmarkCeedInterpolator(FiniteElementSpace &trial_fespace,
+                               FiniteElementSpace &test_fespace, T1 AssembleTest,
                                T2 AssembleRef)
 {
   const bool skip_zeros = true;
@@ -417,7 +405,7 @@ void BenchmarkCeedInterpolator(mfem::FiniteElementSpace &trial_fespace,
   };
 
   // Memory estimate (only for non-mixed meshes).
-  mfem::Mesh &mesh = *trial_fespace.GetMesh();
+  mfem::ParMesh &mesh = *trial_fespace.GetParMesh();
   if (mesh.GetNumGeometries(mesh.Dimension()) == 1)
   {
     const mfem::FiniteElement &trial_fe = *trial_fespace.GetFE(0);
@@ -437,16 +425,22 @@ void BenchmarkCeedInterpolator(mfem::FiniteElementSpace &trial_fespace,
   }
 }
 
-void RunCeedIntegratorTests(const std::string &input, int ref_levels, int order)
+void RunCeedIntegratorTests(MPI_Comm comm, const std::string &input, int ref_levels,
+                            int order)
 {
   // Load the mesh.
-  mfem::Mesh mesh(input, 1, 1);
-  mesh.EnsureNodes();
-  for (int l = 0; l < ref_levels; l++)
+  std::unique_ptr<mfem::ParMesh> mesh;
   {
-    mesh.UniformRefinement();
+    mfem::Mesh smesh(input, 1, 1);
+    smesh.EnsureNodes();
+    REQUIRE(Mpi::Size(comm) <= smesh.GetNE());
+    mesh = std::make_unique<mfem::ParMesh>(comm, smesh);
+    for (int l = 0; l < ref_levels; l++)
+    {
+      mesh->UniformRefinement();
+    }
   }
-  const int dim = mesh.Dimension();
+  const int dim = mesh->Dimension();
 
   // Initialize coefficients.
   mfem::FunctionCoefficient Q(coeff_function);
@@ -464,7 +458,7 @@ void RunCeedIntegratorTests(const std::string &input, int ref_levels, int order)
   INFO(section);
 
   // Used in some hacks to match MFEM's default integration order on mixed meshes.
-  const int mesh_order = mesh.GetNodalFESpace()->GetMaxElementOrder();
+  const int mesh_order = mesh->GetNodalFESpace()->GetMaxElementOrder();
   const int order_w_pk = (mesh_order - 1) * (dim - bdr_integ);
   const int order_w_qk = mesh_order * (dim - bdr_integ) - 1;
 
@@ -472,8 +466,8 @@ void RunCeedIntegratorTests(const std::string &input, int ref_levels, int order)
   SECTION("H1 Integrators")
   {
     mfem::H1_FECollection h1_fec(order, dim);
-    mfem::FiniteElementSpace h1_fespace(&mesh, &h1_fec),
-        vector_h1_fespace(&mesh, &h1_fec, dim);
+    FiniteElementSpace h1_fespace(mesh.get(), &h1_fec),
+        vector_h1_fespace(mesh.get(), &h1_fec, dim);
     SECTION("H1 Mass Integrator")
     {
       const auto q_extra = 0;
@@ -554,7 +548,7 @@ void RunCeedIntegratorTests(const std::string &input, int ref_levels, int order)
   SECTION("H(curl) Integrators")
   {
     mfem::ND_FECollection nd_fec(order, dim);
-    mfem::FiniteElementSpace nd_fespace(&mesh, &nd_fec);
+    FiniteElementSpace nd_fespace(mesh.get(), &nd_fec);
     SECTION("ND Mass Integrator")
     {
       const auto q_extra = 0;
@@ -622,7 +616,7 @@ void RunCeedIntegratorTests(const std::string &input, int ref_levels, int order)
   SECTION("H(div) Integrators")
   {
     mfem::RT_FECollection rt_fec(order - 1, dim);
-    mfem::FiniteElementSpace rt_fespace(&mesh, &rt_fec);
+    FiniteElementSpace rt_fespace(mesh.get(), &rt_fec);
     SECTION("RT Mass Integrator")
     {
       const auto q_extra = 0;
@@ -683,7 +677,7 @@ void RunCeedIntegratorTests(const std::string &input, int ref_levels, int order)
   {
     mfem::H1_FECollection h1_fec(order, dim);
     mfem::ND_FECollection nd_fec(order, dim);
-    mfem::FiniteElementSpace h1_fespace(&mesh, &h1_fec), nd_fespace(&mesh, &nd_fec);
+    FiniteElementSpace h1_fespace(mesh.get(), &h1_fec), nd_fespace(mesh.get(), &nd_fec);
     SECTION("Mixed Vector Gradient Integrator")
     {
       const auto q_extra = 0;
@@ -756,7 +750,7 @@ void RunCeedIntegratorTests(const std::string &input, int ref_levels, int order)
   {
     mfem::ND_FECollection nd_fec(order, dim);
     mfem::RT_FECollection rt_fec(order - 1, dim);
-    mfem::FiniteElementSpace nd_fespace(&mesh, &nd_fec), rt_fespace(&mesh, &rt_fec);
+    FiniteElementSpace nd_fespace(mesh.get(), &nd_fec), rt_fespace(mesh.get(), &rt_fec);
     SECTION("Mixed Vector Curl Integrator")
     {
       const auto q_extra = 0;
@@ -821,16 +815,22 @@ void RunCeedIntegratorTests(const std::string &input, int ref_levels, int order)
   }
 }
 
-void RunCeedInterpolatorTests(const std::string &input, int ref_levels, int order)
+void RunCeedInterpolatorTests(MPI_Comm comm, const std::string &input, int ref_levels,
+                              int order)
 {
   // Load the mesh.
-  mfem::Mesh mesh(input, 1, 1);
-  mesh.EnsureNodes();
-  for (int l = 0; l < ref_levels; l++)
+  std::unique_ptr<mfem::ParMesh> mesh;
   {
-    mesh.UniformRefinement();
+    mfem::Mesh smesh(input, 1, 1);
+    smesh.EnsureNodes();
+    REQUIRE(Mpi::Size(comm) <= smesh.GetNE());
+    mesh = std::make_unique<mfem::ParMesh>(comm, smesh);
+    for (int l = 0; l < ref_levels; l++)
+    {
+      mesh->UniformRefinement();
+    }
   }
-  const int dim = mesh.Dimension();
+  const int dim = mesh->Dimension();
 
   // Run the tests.
   std::string section = "Mesh: " + input + "\n" +
@@ -842,8 +842,8 @@ void RunCeedInterpolatorTests(const std::string &input, int ref_levels, int orde
   SECTION("H1 Prolongation")
   {
     mfem::H1_FECollection coarse_h1_fec(order, dim), fine_h1_fec(order + 1, dim);
-    mfem::FiniteElementSpace coarse_h1_fespace(&mesh, &coarse_h1_fec),
-        fine_h1_fespace(&mesh, &fine_h1_fec);
+    FiniteElementSpace coarse_h1_fespace(mesh.get(), &coarse_h1_fec),
+        fine_h1_fespace(mesh.get(), &fine_h1_fec);
     DiscreteLinearOperator id_test(coarse_h1_fespace, fine_h1_fespace);
     id_test.AddDomainInterpolator(std::make_unique<IdentityInterpolator>());
     mfem::PRefinementTransferOperator id_ref(coarse_h1_fespace, fine_h1_fespace);
@@ -852,8 +852,8 @@ void RunCeedInterpolatorTests(const std::string &input, int ref_levels, int orde
   SECTION("H(curl) Prolongation")
   {
     mfem::ND_FECollection coarse_nd_fec(order, dim), fine_nd_fec(order + 1, dim);
-    mfem::FiniteElementSpace coarse_nd_fespace(&mesh, &coarse_nd_fec),
-        fine_nd_fespace(&mesh, &fine_nd_fec);
+    FiniteElementSpace coarse_nd_fespace(mesh.get(), &coarse_nd_fec),
+        fine_nd_fespace(mesh.get(), &fine_nd_fec);
     DiscreteLinearOperator id_test(coarse_nd_fespace, fine_nd_fespace);
     id_test.AddDomainInterpolator(std::make_unique<IdentityInterpolator>());
     mfem::PRefinementTransferOperator id_ref(coarse_nd_fespace, fine_nd_fespace);
@@ -862,8 +862,8 @@ void RunCeedInterpolatorTests(const std::string &input, int ref_levels, int orde
   SECTION("H(div) Prolongation")
   {
     mfem::RT_FECollection coarse_rt_fec(order - 1, dim), fine_rt_fec(order, dim);
-    mfem::FiniteElementSpace coarse_rt_fespace(&mesh, &coarse_rt_fec),
-        fine_rt_fespace(&mesh, &fine_rt_fec);
+    FiniteElementSpace coarse_rt_fespace(mesh.get(), &coarse_rt_fec),
+        fine_rt_fespace(mesh.get(), &fine_rt_fec);
     DiscreteLinearOperator id_test(coarse_rt_fespace, fine_rt_fespace);
     id_test.AddDomainInterpolator(std::make_unique<IdentityInterpolator>());
     mfem::PRefinementTransferOperator id_ref(coarse_rt_fespace, fine_rt_fespace);
@@ -875,7 +875,7 @@ void RunCeedInterpolatorTests(const std::string &input, int ref_levels, int orde
   {
     mfem::H1_FECollection h1_fec(order, dim);
     mfem::ND_FECollection nd_fec(order, dim);
-    mfem::FiniteElementSpace h1_fespace(&mesh, &h1_fec), nd_fespace(&mesh, &nd_fec);
+    FiniteElementSpace h1_fespace(mesh.get(), &h1_fec), nd_fespace(mesh.get(), &nd_fec);
     DiscreteLinearOperator grad_test(h1_fespace, nd_fespace);
     mfem::DiscreteLinearOperator grad_ref(&h1_fespace, &nd_fespace);
     grad_test.AddDomainInterpolator(std::make_unique<GradientInterpolator>());
@@ -886,7 +886,7 @@ void RunCeedInterpolatorTests(const std::string &input, int ref_levels, int orde
   {
     mfem::ND_FECollection nd_fec(order, dim);
     mfem::RT_FECollection rt_fec(order - 1, dim);
-    mfem::FiniteElementSpace nd_fespace(&mesh, &nd_fec), rt_fespace(&mesh, &rt_fec);
+    FiniteElementSpace nd_fespace(mesh.get(), &nd_fec), rt_fespace(mesh.get(), &rt_fec);
     DiscreteLinearOperator curl_test(nd_fespace, rt_fespace);
     mfem::DiscreteLinearOperator curl_ref(&nd_fespace, &rt_fespace);
     if (dim == 3)
@@ -898,16 +898,21 @@ void RunCeedInterpolatorTests(const std::string &input, int ref_levels, int orde
   }
 }
 
-void RunCeedBenchmarks(const std::string &input, int ref_levels, int order)
+void RunCeedBenchmarks(MPI_Comm comm, const std::string &input, int ref_levels, int order)
 {
   // Load the mesh.
-  mfem::Mesh mesh(input, 1, 1);
-  mesh.EnsureNodes();
-  for (int l = 0; l < ref_levels; l++)
+  std::unique_ptr<mfem::ParMesh> mesh;
   {
-    mesh.UniformRefinement();
+    mfem::Mesh smesh(input, 1, 1);
+    smesh.EnsureNodes();
+    REQUIRE(Mpi::Size(comm) <= smesh.GetNE());
+    mesh = std::make_unique<mfem::ParMesh>(comm, smesh);
+    for (int l = 0; l < ref_levels; l++)
+    {
+      mesh->UniformRefinement();
+    }
   }
-  const int dim = mesh.Dimension();
+  const int dim = mesh->Dimension();
 
   // Initialize coefficients.
   mfem::FunctionCoefficient Q(coeff_function);
@@ -959,7 +964,7 @@ void RunCeedBenchmarks(const std::string &input, int ref_levels, int order)
     };
 
     mfem::H1_FECollection h1_fec(order, dim);
-    mfem::FiniteElementSpace h1_fespace(&mesh, &h1_fec);
+    FiniteElementSpace h1_fespace(mesh.get(), &h1_fec);
     BenchmarkCeedIntegrator(h1_fespace, AssembleTest, AssembleTestRef, AssembleRef,
                             (dim * (dim + 1)) / 2 + 1);
   }
@@ -1002,7 +1007,7 @@ void RunCeedBenchmarks(const std::string &input, int ref_levels, int order)
     };
 
     mfem::ND_FECollection nd_fec(order, dim);
-    mfem::FiniteElementSpace nd_fespace(&mesh, &nd_fec);
+    FiniteElementSpace nd_fespace(mesh.get(), &nd_fec);
     BenchmarkCeedIntegrator(nd_fespace, AssembleTest, AssembleTestRef, AssembleRef,
                             2 * (dim * (dim + 1)) / 2);
   }
@@ -1033,7 +1038,7 @@ void RunCeedBenchmarks(const std::string &input, int ref_levels, int order)
     };
 
     mfem::RT_FECollection rt_fec(order - 1, dim);
-    mfem::FiniteElementSpace rt_fespace(&mesh, &rt_fec);
+    FiniteElementSpace rt_fespace(mesh.get(), &rt_fec);
     BenchmarkCeedIntegrator(rt_fespace, AssembleTest, AssembleTestRef, AssembleRef, 2);
   }
 
@@ -1057,7 +1062,7 @@ void RunCeedBenchmarks(const std::string &input, int ref_levels, int order)
 
     mfem::H1_FECollection h1_fec(order, dim);
     mfem::ND_FECollection nd_fec(order, dim);
-    mfem::FiniteElementSpace h1_fespace(&mesh, &h1_fec), nd_fespace(&mesh, &nd_fec);
+    FiniteElementSpace h1_fespace(mesh.get(), &h1_fec), nd_fespace(mesh.get(), &nd_fec);
     BenchmarkCeedInterpolator(h1_fespace, nd_fespace, AssembleTest, AssembleRef);
   }
 }
@@ -1070,7 +1075,8 @@ TEST_CASE("2D libCEED Operators", "[libCEED]")
       GENERATE("star-quad.mesh", "star-tri.mesh", "star-mixed-p2.mesh", "star-amr.mesh");
   auto ref_levels = GENERATE(0);
   auto order = GENERATE(1, 2);
-  RunCeedIntegratorTests(std::string(PALACE_TEST_MESH_DIR "/") + mesh, ref_levels, order);
+  RunCeedIntegratorTests(MPI_COMM_WORLD, std::string(PALACE_TEST_MESH_DIR "/") + mesh,
+                         ref_levels, order);
 }
 
 TEST_CASE("3D libCEED Operators", "[libCEED]")
@@ -1079,7 +1085,8 @@ TEST_CASE("3D libCEED Operators", "[libCEED]")
                        "fichera-amr.mesh");
   auto ref_levels = GENERATE(0);
   auto order = GENERATE(1, 2);
-  RunCeedIntegratorTests(std::string(PALACE_TEST_MESH_DIR "/") + mesh, ref_levels, order);
+  RunCeedIntegratorTests(MPI_COMM_WORLD, std::string(PALACE_TEST_MESH_DIR "/") + mesh,
+                         ref_levels, order);
 }
 
 TEST_CASE("2D libCEED Interpolators", "[libCEED][Interpolator]")
@@ -1088,7 +1095,8 @@ TEST_CASE("2D libCEED Interpolators", "[libCEED][Interpolator]")
       GENERATE("star-quad.mesh", "star-tri.mesh", "star-mixed-p2.mesh", "star-amr.mesh");
   auto ref_levels = GENERATE(0);
   auto order = GENERATE(1, 2);
-  RunCeedInterpolatorTests(std::string(PALACE_TEST_MESH_DIR "/") + mesh, ref_levels, order);
+  RunCeedInterpolatorTests(MPI_COMM_WORLD, std::string(PALACE_TEST_MESH_DIR "/") + mesh,
+                           ref_levels, order);
 }
 
 TEST_CASE("3D libCEED Interpolators", "[libCEED][Interpolator]")
@@ -1097,7 +1105,8 @@ TEST_CASE("3D libCEED Interpolators", "[libCEED][Interpolator]")
                        "fichera-amr.mesh");
   auto ref_levels = GENERATE(0);
   auto order = GENERATE(1, 2);
-  RunCeedInterpolatorTests(std::string(PALACE_TEST_MESH_DIR "/") + mesh, ref_levels, order);
+  RunCeedInterpolatorTests(MPI_COMM_WORLD, std::string(PALACE_TEST_MESH_DIR "/") + mesh,
+                           ref_levels, order);
 }
 
 TEST_CASE("3D libCEED Benchmarks", "[libCEED][Benchmark]")
@@ -1105,7 +1114,8 @@ TEST_CASE("3D libCEED Benchmarks", "[libCEED][Benchmark]")
   auto mesh = GENERATE("fichera-hex.mesh", "fichera-tet.mesh");
   auto ref_levels = GENERATE(1);
   auto order = GENERATE(4);
-  RunCeedBenchmarks(std::string(PALACE_TEST_MESH_DIR "/") + mesh, ref_levels, order);
+  RunCeedBenchmarks(MPI_COMM_WORLD, std::string(PALACE_TEST_MESH_DIR "/") + mesh,
+                    ref_levels, order);
 }
 
 }  // namespace palace
