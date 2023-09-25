@@ -3,8 +3,8 @@
 
 #include "utils.hpp"
 
-#include "basis.hpp"
-#include "restriction.hpp"
+#include "fem/libceed/basis.hpp"
+#include "fem/libceed/restriction.hpp"
 #include "utils/omp.hpp"
 
 #if defined(MFEM_USE_OPENMP)

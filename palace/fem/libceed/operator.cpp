@@ -5,7 +5,7 @@
 
 #include <ceed.h>
 #include <mfem/general/forall.hpp>
-#include "utils.hpp"
+#include "fem/libceed/utils.hpp"
 #include "utils/omp.hpp"
 
 namespace palace::ceed

@@ -8,7 +8,6 @@
 #include <vector>
 #include <ceed.h>
 #include <mfem.hpp>
-#include "hash.hpp"
 
 namespace palace::ceed
 {

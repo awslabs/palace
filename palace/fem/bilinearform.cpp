@@ -7,7 +7,6 @@
 #include <ceed.h>
 #include "fem/fespace.hpp"
 #include "fem/libceed/hash.hpp"
-#include "fem/libceed/operator.hpp"
 #include "fem/libceed/utils.hpp"
 #include "utils/omp.hpp"
 

@@ -3,8 +3,8 @@
 
 #include "iterative.hpp"
 
-#include <cmath>
 #include <algorithm>
+#include <cmath>
 #include <limits>
 #include <string>
 #include "linalg/orthog.hpp"

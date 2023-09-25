@@ -8,10 +8,10 @@
 #include <vector>
 #include <ceed.h>
 #include <mfem.hpp>
-#include "basis.hpp"
-#include "coefficient.hpp"
-#include "restriction.hpp"
-#include "utils.hpp"
+#include "fem/libceed/basis.hpp"
+#include "fem/libceed/coefficient.hpp"
+#include "fem/libceed/restriction.hpp"
+#include "fem/libceed/utils.hpp"
 
 namespace palace::ceed
 {

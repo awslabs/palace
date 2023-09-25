@@ -4,7 +4,8 @@
 #include "restriction.hpp"
 
 #include "fem/fespace.hpp"
-#include "utils.hpp"
+#include "fem/libceed/hash.hpp"
+#include "fem/libceed/utils.hpp"
 #include "utils/omp.hpp"
 
 namespace palace::ceed
