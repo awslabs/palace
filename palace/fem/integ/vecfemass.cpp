@@ -22,7 +22,7 @@ namespace
 {
 
 VectorFEMassIntegratorInfo
-InitializeIntegratorInfo(const mfem::FiniteElementSpace &fespace,
+InitializeIntegratorInfo(const mfem::ParFiniteElementSpace &fespace,
                          const mfem::IntegrationRule &ir, const std::vector<int> &indices,
                          bool use_bdr, mfem::Coefficient *Q, mfem::VectorCoefficient *VQ,
                          mfem::MatrixCoefficient *MQ,
@@ -33,7 +33,7 @@ InitializeIntegratorInfo(const mfem::FiniteElementSpace &fespace,
 
   VectorFEMassIntegratorInfo info = {{0}};
 
-  mfem::Mesh &mesh = *fespace.GetMesh();
+  mfem::ParMesh &mesh = *fespace.GetParMesh();
   info.ctx.dim = mesh.Dimension() - use_bdr;
   info.ctx.space_dim = mesh.SpaceDimension();
 
@@ -123,8 +123,8 @@ InitializeIntegratorInfo(const mfem::FiniteElementSpace &fespace,
 
 }  // namespace
 
-void VectorFEMassIntegrator::Assemble(const mfem::FiniteElementSpace &trial_fespace,
-                                      const mfem::FiniteElementSpace &test_fespace,
+void VectorFEMassIntegrator::Assemble(const mfem::ParFiniteElementSpace &trial_fespace,
+                                      const mfem::ParFiniteElementSpace &test_fespace,
                                       const mfem::IntegrationRule &ir,
                                       const std::vector<int> &indices, Ceed ceed,
                                       CeedOperator *op, CeedOperator *op_t)
@@ -139,11 +139,10 @@ void VectorFEMassIntegrator::Assemble(const mfem::FiniteElementSpace &trial_fesp
                              ceed, op, op_t);
 }
 
-void VectorFEMassIntegrator::AssembleBoundary(const mfem::FiniteElementSpace &trial_fespace,
-                                              const mfem::FiniteElementSpace &test_fespace,
-                                              const mfem::IntegrationRule &ir,
-                                              const std::vector<int> &indices, Ceed ceed,
-                                              CeedOperator *op, CeedOperator *op_t)
+void VectorFEMassIntegrator::AssembleBoundary(
+    const mfem::ParFiniteElementSpace &trial_fespace,
+    const mfem::ParFiniteElementSpace &test_fespace, const mfem::IntegrationRule &ir,
+    const std::vector<int> &indices, Ceed ceed, CeedOperator *op, CeedOperator *op_t)
 {
   MFEM_VERIFY(&trial_fespace == &test_fespace,
               "VectorFEMassIntegrator requires the same test and trial spaces!");

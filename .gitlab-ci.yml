@@ -49,8 +49,8 @@ test-build:
     - make -j$NUM_PROC_BUILD
     - cd ..
     - export PATH=$(pwd)/build/bin:$PATH
-    - julia --project=test -e 'using Pkg; Pkg.instantiate()'
-    - julia --project=test --color=yes test/runtests.jl
+    - julia --project=test/examples -e 'using Pkg; Pkg.instantiate()'
+    - julia --project=test/examples --color=yes test/examples/runtests.jl
   artifacts:
     paths:
       - build
@@ -71,8 +71,8 @@ test-build-clang:
     - make -j$NUM_PROC_BUILD
     - cd ..
     - export PATH=$(pwd)/build/bin:$PATH
-    - julia --project=test -e 'using Pkg; Pkg.instantiate()'
-    - julia --project=test --color=yes test/runtests.jl
+    - julia --project=test/examples -e 'using Pkg; Pkg.instantiate()'
+    - julia --project=test/examples --color=yes test/examples/runtests.jl
 
 test-build-mpicc:
   stage: build
@@ -89,8 +89,8 @@ test-build-mpicc:
     - make -j$NUM_PROC_BUILD
     - cd ..
     - export PATH=$(pwd)/build/bin:$PATH
-    - julia --project=test -e 'using Pkg; Pkg.instantiate()'
-    - julia --project=test --color=yes test/runtests.jl
+    - julia --project=test/examples -e 'using Pkg; Pkg.instantiate()'
+    - julia --project=test/examples --color=yes test/examples/runtests.jl
 
 test-build-shared:
   stage: build
@@ -105,8 +105,8 @@ test-build-shared:
     - make -j$NUM_PROC_BUILD
     - cd ..
     - export PATH=$(pwd)/build/bin:$PATH
-    - julia --project=test -e 'using Pkg; Pkg.instantiate()'
-    - julia --project=test --color=yes test/runtests.jl
+    - julia --project=test/examples -e 'using Pkg; Pkg.instantiate()'
+    - julia --project=test/examples --color=yes test/examples/runtests.jl
 
 test-build-openmp:
   stage: build
@@ -118,8 +118,8 @@ test-build-openmp:
     - make -j$NUM_PROC_BUILD
     - cd ..
     - export PATH=$(pwd)/build/bin:$PATH
-    - julia --project=test -e 'using Pkg; Pkg.instantiate()'
-    - julia --project=test --color=yes test/runtests.jl
+    - julia --project=test/examples -e 'using Pkg; Pkg.instantiate()'
+    - julia --project=test/examples --color=yes test/examples/runtests.jl
 
 test-build-bigint:
   stage: build
@@ -131,8 +131,8 @@ test-build-bigint:
     - make -j$NUM_PROC_BUILD
     - cd ..
     - export PATH=$(pwd)/build/bin:$PATH
-    - julia --project=test -e 'using Pkg; Pkg.instantiate()'
-    - julia --project=test --color=yes test/runtests.jl
+    - julia --project=test/examples -e 'using Pkg; Pkg.instantiate()'
+    - julia --project=test/examples --color=yes test/examples/runtests.jl
 
 test-build-openmpi:
   stage: build
@@ -145,8 +145,8 @@ test-build-openmpi:
     - make -j$NUM_PROC_BUILD
     - cd ..
     - export PATH=$(pwd)/build/bin:$PATH
-    - julia --project=test -e 'using Pkg; Pkg.instantiate()'
-    - julia --project=test --color=yes test/runtests.jl
+    - julia --project=test/examples -e 'using Pkg; Pkg.instantiate()'
+    - julia --project=test/examples --color=yes test/examples/runtests.jl
 
 test-build-intel-oneapi:
   stage: build
@@ -160,8 +160,8 @@ test-build-intel-oneapi:
     - make -j$NUM_PROC_BUILD
     - cd ..
     - export PATH=$(pwd)/build/bin:$PATH
-    - julia --project=test -e 'using Pkg; Pkg.instantiate()'
-    - julia --project=test --color=yes test/runtests.jl
+    - julia --project=test/examples -e 'using Pkg; Pkg.instantiate()'
+    - julia --project=test/examples --color=yes test/examples/runtests.jl
 
 test-build-aocl:
   stage: build
@@ -178,8 +178,8 @@ test-build-aocl:
     - make -j$NUM_PROC_BUILD
     - cd ..
     - export PATH=$(pwd)/build/bin:$PATH
-    - julia --project=test -e 'using Pkg; Pkg.instantiate()'
-    - julia --project=test --color=yes test/runtests.jl
+    - julia --project=test/examples -e 'using Pkg; Pkg.instantiate()'
+    - julia --project=test/examples --color=yes test/examples/runtests.jl
 
 test-build-arm64:
   stage: build
@@ -193,8 +193,8 @@ test-build-arm64:
     - make -j$NUM_PROC_BUILD
     - cd ..
     - export PATH=$(pwd)/build/bin:$PATH
-    - julia --project=test -e 'using Pkg; Pkg.instantiate()'
-    - julia --project=test --color=yes test/runtests.jl
+    - julia --project=test/examples -e 'using Pkg; Pkg.instantiate()'
+    - julia --project=test/examples --color=yes test/examples/runtests.jl
 
 test-build-arm64-shared:
   stage: build
@@ -209,8 +209,8 @@ test-build-arm64-shared:
     - make -j$NUM_PROC_BUILD
     - cd ..
     - export PATH=$(pwd)/build/bin:$PATH
-    - julia --project=test -e 'using Pkg; Pkg.instantiate()'
-    - julia --project=test --color=yes test/runtests.jl
+    - julia --project=test/examples -e 'using Pkg; Pkg.instantiate()'
+    - julia --project=test/examples --color=yes test/examples/runtests.jl
 
 test-build-arm64-armpl:
   stage: build
@@ -230,8 +230,8 @@ test-build-arm64-armpl:
     - make -j$NUM_PROC_BUILD
     - cd ..
     - export PATH=$(pwd)/build/bin:$PATH
-    - julia --project=test -e 'using Pkg; Pkg.instantiate()'
-    - julia --project=test --color=yes test/runtests.jl
+    - julia --project=test/examples -e 'using Pkg; Pkg.instantiate()'
+    - julia --project=test/examples --color=yes test/examples/runtests.jl
 
 test-format:
   stage: check

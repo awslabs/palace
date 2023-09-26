@@ -200,6 +200,11 @@ if(PALACE_WITH_ARPACK)
     PRIVATE PALACE_WITH_ARPACK
   )
 endif()
+if(PALACE_WITH_OPENMP)
+  target_link_libraries(${TARGET_NAME}
+    PRIVATE OpenMP::OpenMP_CXX
+  )
+endif()
 target_link_libraries(${TARGET_NAME}
   PRIVATE mfem ${LIBCEED_TARGET} nlohmann_json::nlohmann_json fmt::fmt Eigen3::Eigen MPI::MPI_CXX
 )
@@ -236,6 +241,9 @@ install(DIRECTORY
   DESTINATION include/palace
   FILE_PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ
 )
+
+# Add tests (disabled by default)
+add_subdirectory(../test/unit ${CMAKE_BINARY_DIR}/test/unit EXCLUDE_FROM_ALL)
 
 # Optionally configure static analysis
 include(StaticAnalysisHelpers)

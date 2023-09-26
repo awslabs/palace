@@ -21,7 +21,7 @@ struct MassIntegratorInfo : public ceed::IntegratorInfo
 namespace
 {
 
-MassIntegratorInfo InitializeIntegratorInfo(const mfem::FiniteElementSpace &fespace,
+MassIntegratorInfo InitializeIntegratorInfo(const mfem::ParFiniteElementSpace &fespace,
                                             const mfem::IntegrationRule &ir,
                                             const std::vector<int> &indices, bool use_bdr,
                                             mfem::Coefficient *Q,
@@ -31,18 +31,18 @@ MassIntegratorInfo InitializeIntegratorInfo(const mfem::FiniteElementSpace &fesp
 {
   MassIntegratorInfo info = {{0}};
 
-  mfem::Mesh &mesh = *fespace.GetMesh();
+  mfem::ParMesh &mesh = *fespace.GetParMesh();
   info.ctx.dim = mesh.Dimension() - use_bdr;
   info.ctx.space_dim = mesh.SpaceDimension();
   info.ctx.vdim = fespace.GetVDim();
 
   info.trial_op = ceed::EvalMode::Interp;
   info.test_op = ceed::EvalMode::Interp;
-  info.qdata_size = 1;
 
   mfem::ConstantCoefficient *const_coeff = dynamic_cast<mfem::ConstantCoefficient *>(Q);
   if (const_coeff || !(Q || VQ || MQ))
   {
+    info.qdata_size = 1;
     info.ctx.coeff = const_coeff ? const_coeff->constant : 1.0;
 
     info.build_qf = f_build_mass_const_scalar;
@@ -53,6 +53,7 @@ MassIntegratorInfo InitializeIntegratorInfo(const mfem::FiniteElementSpace &fesp
   }
   else if (Q)
   {
+    info.qdata_size = 1;
     coeff.emplace_back();
     ceed::InitCoefficient(*Q, mesh, ir, indices, use_bdr, coeff.back());
 
@@ -66,6 +67,7 @@ MassIntegratorInfo InitializeIntegratorInfo(const mfem::FiniteElementSpace &fesp
   {
     MFEM_VERIFY(VQ->GetVDim() == info.ctx.vdim,
                 "Invalid vector coefficient dimension for vector MassIntegrator!");
+    info.qdata_size = info.ctx.vdim;
     coeff.emplace_back();
     ceed::InitCoefficient(*VQ, mesh, ir, indices, use_bdr, coeff.back());
 
@@ -79,6 +81,7 @@ MassIntegratorInfo InitializeIntegratorInfo(const mfem::FiniteElementSpace &fesp
   {
     MFEM_VERIFY(MQ->GetVDim() == info.ctx.vdim,
                 "Invalid matrix coefficient dimension for vector MassIntegrator!");
+    info.qdata_size = (info.ctx.vdim * (info.ctx.vdim + 1)) / 2;
     coeff.emplace_back();
     ceed::InitCoefficient(*MQ, mesh, ir, indices, use_bdr, coeff.back());
 
@@ -94,8 +97,8 @@ MassIntegratorInfo InitializeIntegratorInfo(const mfem::FiniteElementSpace &fesp
 
 }  // namespace
 
-void MassIntegrator::Assemble(const mfem::FiniteElementSpace &trial_fespace,
-                              const mfem::FiniteElementSpace &test_fespace,
+void MassIntegrator::Assemble(const mfem::ParFiniteElementSpace &trial_fespace,
+                              const mfem::ParFiniteElementSpace &test_fespace,
                               const mfem::IntegrationRule &ir,
                               const std::vector<int> &indices, Ceed ceed, CeedOperator *op,
                               CeedOperator *op_t)
@@ -110,8 +113,8 @@ void MassIntegrator::Assemble(const mfem::FiniteElementSpace &trial_fespace,
                              ceed, op, op_t);
 }
 
-void MassIntegrator::AssembleBoundary(const mfem::FiniteElementSpace &trial_fespace,
-                                      const mfem::FiniteElementSpace &test_fespace,
+void MassIntegrator::AssembleBoundary(const mfem::ParFiniteElementSpace &trial_fespace,
+                                      const mfem::ParFiniteElementSpace &test_fespace,
                                       const mfem::IntegrationRule &ir,
                                       const std::vector<int> &indices, Ceed ceed,
                                       CeedOperator *op, CeedOperator *op_t)

@@ -3,16 +3,12 @@
 
 #include "bilinearform.hpp"
 
-#include <array>
 #include <unordered_map>
 #include <ceed.h>
-#include "fem/libceed/operator.hpp"
+#include "fem/fespace.hpp"
+#include "fem/libceed/hash.hpp"
 #include "fem/libceed/utils.hpp"
-#include "linalg/vector.hpp"
-
-#if defined(MFEM_USE_OPENMP)
-#include <omp.h>
-#endif
+#include "utils/omp.hpp"
 
 namespace palace
 {
@@ -20,27 +16,19 @@ namespace palace
 namespace
 {
 
-using ElementKey = std::array<int, 3>;
-
-struct ElementHash
-{
-  std::size_t operator()(const ElementKey &k) const
-  {
-    return ceed::CeedHashCombine(
-        ceed::CeedHashCombine(ceed::CeedHash(k[0]), ceed::CeedHash(k[1])),
-        ceed::CeedHash(k[2]));
-  }
-};
+using ceed::internal::FiniteElementKey;
+using ceed::internal::FiniteElementPairHash;
+using ceed::internal::FiniteElementPairKey;
 
 // Count the number of elements of each type in the local mesh.
-std::unordered_map<ElementKey, std::vector<int>, ElementHash>
-GetElementIndices(const mfem::FiniteElementSpace &trial_fespace,
-                  const mfem::FiniteElementSpace &test_fespace, bool use_bdr, int start,
+std::unordered_map<FiniteElementPairKey, std::vector<int>, FiniteElementPairHash>
+GetElementIndices(const mfem::ParFiniteElementSpace &trial_fespace,
+                  const mfem::ParFiniteElementSpace &test_fespace, bool use_bdr, int start,
                   int stop)
 {
-  mfem::Mesh &mesh = *trial_fespace.GetMesh();
-  std::unordered_map<ElementKey, int, ElementHash> counts, offsets;
-  std::unordered_map<ElementKey, std::vector<int>, ElementHash> element_indices;
+  std::unordered_map<FiniteElementPairKey, int, FiniteElementPairHash> counts, offsets;
+  std::unordered_map<FiniteElementPairKey, std::vector<int>, FiniteElementPairHash>
+      element_indices;
 
   // Count the number of elements of each type and order.
   for (int i = start; i < stop; i++)
@@ -49,8 +37,8 @@ GetElementIndices(const mfem::FiniteElementSpace &trial_fespace,
         use_bdr ? *trial_fespace.GetBE(i) : *trial_fespace.GetFE(i);
     const mfem::FiniteElement &test_fe =
         use_bdr ? *test_fespace.GetBE(i) : *test_fespace.GetFE(i);
-    mfem::Element::Type type = use_bdr ? mesh.GetBdrElementType(i) : mesh.GetElementType(i);
-    ElementKey key = {type, trial_fe.GetOrder(), test_fe.GetOrder()};
+    FiniteElementPairKey key =
+        std::make_pair(FiniteElementKey(trial_fe), FiniteElementKey(test_fe));
     auto value = counts.find(key);
     if (value == counts.end())
     {
@@ -74,8 +62,8 @@ GetElementIndices(const mfem::FiniteElementSpace &trial_fespace,
         use_bdr ? *trial_fespace.GetBE(i) : *trial_fespace.GetFE(i);
     const mfem::FiniteElement &test_fe =
         use_bdr ? *test_fespace.GetBE(i) : *test_fespace.GetFE(i);
-    mfem::Element::Type type = use_bdr ? mesh.GetBdrElementType(i) : mesh.GetElementType(i);
-    ElementKey key = {type, trial_fe.GetOrder(), test_fe.GetOrder()};
+    FiniteElementPairKey key =
+        std::make_pair(FiniteElementKey(trial_fe), FiniteElementKey(test_fe));
     int &offset = offsets[key];
     std::vector<int> &indices = element_indices[key];
     indices[offset++] = i;
@@ -86,39 +74,58 @@ GetElementIndices(const mfem::FiniteElementSpace &trial_fespace,
 
 }  // namespace
 
-std::unique_ptr<Operator> BilinearForm::Assemble() const
+std::unique_ptr<ceed::Operator> BilinearForm::Assemble() const
 {
-  MFEM_VERIFY(trial_fespace.GetMesh() == test_fespace.GetMesh(),
+  MFEM_VERIFY(trial_fespace.GetParMesh() == test_fespace.GetParMesh(),
               "Trial and test finite element spaces must correspond to the same mesh!");
-  mfem::Mesh &mesh = *trial_fespace.GetMesh();
-  mesh.EnsureNodes();
-
-  // //XX TODO
-  // std::cout << "BilinearForm::Assemble with q_order = " << q_order << "\n";
+  mfem::ParMesh &mesh = *trial_fespace.GetParMesh();
+  {
+    // In the following, we copy the mesh FE space for the nodes as a
+    // palace::FiniteElementSpace and replace it in the nodal grid function. Unfortunately
+    // mfem::ParFiniteElementSpace does not have a move constructor to make this more
+    // efficient, but it's only done once for the lifetime of the mesh.
+    mesh.EnsureNodes();
+    mfem::GridFunction *mesh_nodes = mesh.GetNodes();
+    mfem::FiniteElementSpace *mesh_fespace = mesh_nodes->FESpace();
+    MFEM_VERIFY(dynamic_cast<mfem::ParFiniteElementSpace *>(mesh_fespace),
+                "Unexpected non-parallel FiniteElementSpace for mesh nodes!");
+    if (!dynamic_cast<FiniteElementSpace *>(mesh_fespace))
+    {
+      // Ensure the FiniteElementCollection associated with the original nodes is not
+      // deleted.
+      auto *new_mesh_fespace =
+          new FiniteElementSpace(*static_cast<mfem::ParFiniteElementSpace *>(mesh_fespace));
+      mfem::FiniteElementCollection *mesh_fec = mesh_nodes->OwnFEC();
+      MFEM_VERIFY(mesh_fec, "Replacing the FiniteElementSpace for mesh nodes is only "
+                            "possible when it owns its fec/fes members!");
+      mesh_nodes->MakeOwner(nullptr);
+      mesh.SetNodalFESpace(new_mesh_fespace);
+      mfem::GridFunction *new_mesh_nodes = mesh.GetNodes();
+      new_mesh_nodes->MakeOwner(mesh_fec);
+      delete mesh_fespace;
+    }
+  }
 
   std::unique_ptr<ceed::Operator> op;
   if (&trial_fespace == &test_fespace)
   {
-    op = std::make_unique<ceed::SymmetricOperator>();
+    op = std::make_unique<ceed::SymmetricOperator>(test_fespace.GetVSize(),
+                                                   trial_fespace.GetVSize());
   }
   else
   {
-    op = std::make_unique<ceed::Operator>();
+    op =
+        std::make_unique<ceed::Operator>(test_fespace.GetVSize(), trial_fespace.GetVSize());
   }
 
   // Assemble the libCEED operator in parallel, each thread builds a composite operator.
   // This should work fine if some threads create an empty operator (no elements or bounday
   // elements).
-  PalacePragmaOmp(parallel)
+  const std::size_t nt = ceed::internal::GetCeedObjects().size();
+  PalacePragmaOmp(parallel for schedule(static))
+  for (std::size_t i = 0; i < nt; i++)
   {
-#if defined(MFEM_USE_OPENMP)
-    const int nt = omp_get_num_threads();
-    const int tid = omp_get_thread_num();
-#else
-    const int nt = 1;
-    const int tid = 0;
-#endif
-    Ceed ceed = ceed::internal::ceed[tid];
+    Ceed ceed = ceed::internal::GetCeedObjects()[i];
     CeedOperator loc_op, loc_op_t;
     PalaceCeedCall(ceed, CeedCompositeOperatorCreate(ceed, &loc_op));
     PalaceCeedCall(ceed, CeedCompositeOperatorCreate(ceed, &loc_op_t));
@@ -128,7 +135,7 @@ std::unique_ptr<Operator> BilinearForm::Assemble() const
     {
       const int ne = mesh.GetNE();
       const int stride = (ne + nt - 1) / nt;
-      const int start = tid * stride;
+      const int start = i * stride;
       const int stop = std::min(start + stride, ne);
       const bool use_bdr = false;
 
@@ -138,10 +145,8 @@ std::unique_ptr<Operator> BilinearForm::Assemble() const
       for (const auto &value : element_indices)
       {
         const std::vector<int> &indices = value.second;
-        if (q_order < 0)
-        {
-          q_order = fem::GetDefaultIntegrationOrder(trial_fespace, test_fespace);
-        }
+        const int q_order = fem::GetDefaultIntegrationOrder(
+            trial_fespace, test_fespace, indices, use_bdr, q_extra_pk, q_extra_qk);
         const mfem::IntegrationRule &ir =
             mfem::IntRules.Get(mesh.GetElementGeometry(indices[0]), q_order);
 
@@ -167,7 +172,7 @@ std::unique_ptr<Operator> BilinearForm::Assemble() const
     {
       const int nbe = mesh.GetNBE();
       const int stride = (nbe + nt - 1) / nt;
-      const int start = tid * stride;
+      const int start = i * stride;
       const int stop = std::min(start + stride, nbe);
       const bool use_bdr = true;
 
@@ -177,10 +182,8 @@ std::unique_ptr<Operator> BilinearForm::Assemble() const
       for (const auto &value : element_indices)
       {
         const std::vector<int> &indices = value.second;
-        if (q_order < 0)
-        {
-          q_order = fem::GetDefaultIntegrationOrder(trial_fespace, test_fespace);
-        }
+        const int q_order = fem::GetDefaultIntegrationOrder(
+            trial_fespace, test_fespace, indices, use_bdr, q_extra_pk, q_extra_qk);
         const mfem::IntegrationRule &ir =
             mfem::IntRules.Get(mesh.GetBdrElementGeometry(indices[0]), q_order);
 
@@ -209,14 +212,13 @@ std::unique_ptr<Operator> BilinearForm::Assemble() const
   return op;
 }
 
-std::unique_ptr<mfem::SparseMatrix> BilinearForm::FullAssemble(bool skip_zeros) const
+std::unique_ptr<mfem::SparseMatrix> BilinearForm::FullAssemble(const ceed::Operator &op,
+                                                               bool skip_zeros) const
 {
-  auto op = Assemble();
-  return ceed::CeedOperatorFullAssemble(*static_cast<ceed::Operator *>(op.get()),
-                                        skip_zeros, false);
+  return ceed::CeedOperatorFullAssemble(op, skip_zeros, false);
 }
 
-std::unique_ptr<Operator> DiscreteLinearOperator::Assemble() const
+std::unique_ptr<ceed::Operator> DiscreteLinearOperator::Assemble() const
 {
   // Construct dof multiplicity vector for scaling to account for dofs shared between
   // elements (on host, then copy to device).
@@ -238,16 +240,14 @@ std::unique_ptr<Operator> DiscreteLinearOperator::Assemble() const
   test_multiplicity.Reciprocal();
 
   auto op = a.Assemble();
-  static_cast<ceed::Operator *>(op.get())->SetDofMultiplicity(std::move(test_multiplicity));
+  op->SetDofMultiplicity(std::move(test_multiplicity));
   return op;
 }
 
 std::unique_ptr<mfem::SparseMatrix>
-DiscreteLinearOperator::FullAssemble(bool skip_zeros) const
+DiscreteLinearOperator::FullAssemble(const ceed::Operator &op, bool skip_zeros) const
 {
-  auto op = a.Assemble();
-  return ceed::CeedOperatorFullAssemble(*static_cast<ceed::Operator *>(op.get()),
-                                        skip_zeros, true);
+  return ceed::CeedOperatorFullAssemble(op, skip_zeros, true);
 }
 
 }  // namespace palace

@@ -17,7 +17,7 @@ struct QuadratureCoefficient
   mfem::Vector data;
 };
 
-inline void InitCoefficient(mfem::Coefficient &Q, mfem::Mesh &mesh,
+inline void InitCoefficient(mfem::Coefficient &Q, mfem::ParMesh &mesh,
                             const mfem::IntegrationRule &ir,
                             const std::vector<int> &indices, bool use_bdr,
                             QuadratureCoefficient &coeff)
@@ -48,7 +48,7 @@ inline void InitCoefficient(mfem::Coefficient &Q, mfem::Mesh &mesh,
   }
 }
 
-inline void InitCoefficient(mfem::VectorCoefficient &VQ, mfem::Mesh &mesh,
+inline void InitCoefficient(mfem::VectorCoefficient &VQ, mfem::ParMesh &mesh,
                             const mfem::IntegrationRule &ir,
                             const std::vector<int> &indices, bool use_bdr,
                             QuadratureCoefficient &coeff)
@@ -60,7 +60,7 @@ inline void InitCoefficient(mfem::VectorCoefficient &VQ, mfem::Mesh &mesh,
   coeff.data.SetSize(ne * nqpts * vdim);
   auto C = mfem::Reshape(coeff.data.HostWrite(), vdim, nqpts, ne);
   mfem::IsoparametricTransformation T;
-  mfem::DenseMatrix Q_ip;
+  mfem::DenseMatrix Q_ip(vdim, nqpts);
   for (std::size_t i = 0; i < ne; ++i)
   {
     const auto e = indices[i];
@@ -83,7 +83,7 @@ inline void InitCoefficient(mfem::VectorCoefficient &VQ, mfem::Mesh &mesh,
   }
 }
 
-inline void InitCoefficient(mfem::MatrixCoefficient &MQ, mfem::Mesh &mesh,
+inline void InitCoefficient(mfem::MatrixCoefficient &MQ, mfem::ParMesh &mesh,
                             const mfem::IntegrationRule &ir,
                             const std::vector<int> &indices, bool use_bdr,
                             QuadratureCoefficient &coeff)
@@ -97,7 +97,7 @@ inline void InitCoefficient(mfem::MatrixCoefficient &MQ, mfem::Mesh &mesh,
   coeff.data.SetSize(ne * nqpts * ncomp);
   auto C = mfem::Reshape(coeff.data.HostWrite(), ncomp, nqpts, ne);
   mfem::IsoparametricTransformation T;
-  mfem::DenseMatrix Q_ip;
+  mfem::DenseMatrix Q_ip(vdim);
   for (std::size_t i = 0; i < ne; ++i)
   {
     const auto e = indices[i];

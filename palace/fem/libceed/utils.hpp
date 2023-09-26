@@ -10,16 +10,6 @@
 #include <ceed.h>
 #include <mfem.hpp>
 
-namespace palace::ceed
-{
-
-namespace internal
-{
-
-extern std::vector<Ceed> ceed;
-
-}  // namespace internal
-
 #define PalaceCeedCall(ceed, ...)      \
   do                                   \
   {                                    \
@@ -44,12 +34,8 @@ extern std::vector<Ceed> ceed;
 
 #define PalaceQFunctionRelativePath(path) strstr(path, "qfunctions")
 
-#if defined(MFEM_USE_OPENMP)
-#define PalacePragmaOmpHelper(x) _Pragma(#x)
-#define PalacePragmaOmp(x) PalacePragmaOmpHelper(omp x)
-#else
-#define PalacePragmaOmp(x)
-#endif
+namespace palace::ceed
+{
 
 // Call libCEED's CeedInit for the given resource. The specific device to use is set prior
 // to this using mfem::Device.
@@ -61,22 +47,16 @@ void Finalize();
 // Get the configured libCEED backend.
 std::string Print();
 
-// Wrapper for std::hash.
-template <typename T>
-inline std::size_t CeedHash(const T key)
-{
-  return std::hash<T>{}(key);
-}
-
-// Effective way to combine hashes (from libCEED).
-inline std::size_t CeedHashCombine(std::size_t seed, std::size_t hash)
-{
-  // See https://doi.org/10.1002/asi.10170 or https://dl.acm.org/citation.cfm?id=759509.
-  return seed ^ (hash + (seed << 6) + (seed >> 2));
-}
-
-// Initialize a CeedVector from an mfem::Vector
+// Initialize a CeedVector from an mfem::Vector.
 void InitCeedVector(const mfem::Vector &v, Ceed ceed, CeedVector *cv);
+
+namespace internal
+{
+
+// Access the Ceed objects initialized by CeedInit.
+const std::vector<Ceed> &GetCeedObjects();
+
+}  // namespace internal
 
 }  // namespace palace::ceed
 

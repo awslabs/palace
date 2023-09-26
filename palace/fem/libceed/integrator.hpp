@@ -8,10 +8,10 @@
 #include <vector>
 #include <ceed.h>
 #include <mfem.hpp>
-#include "basis.hpp"
-#include "coefficient.hpp"
-#include "restriction.hpp"
-#include "utils.hpp"
+#include "fem/libceed/basis.hpp"
+#include "fem/libceed/coefficient.hpp"
+#include "fem/libceed/restriction.hpp"
+#include "fem/libceed/utils.hpp"
 
 namespace palace::ceed
 {
@@ -49,8 +49,8 @@ struct IntegratorInfo
 // method.
 template <typename CeedIntegratorInfo>
 inline void AssembleCeedOperator(const CeedIntegratorInfo &info,
-                                 const mfem::FiniteElementSpace &trial_fespace,
-                                 const mfem::FiniteElementSpace &test_fespace,
+                                 const mfem::ParFiniteElementSpace &trial_fespace,
+                                 const mfem::ParFiniteElementSpace &test_fespace,
                                  const mfem::IntegrationRule &ir,
                                  const std::vector<int> &indices, const bool use_bdr,
                                  const std::vector<QuadratureCoefficient> &Q, Ceed ceed,
@@ -77,17 +77,21 @@ inline void AssembleCeedOperator(const CeedIntegratorInfo &info,
 template <typename CeedIntegratorInfo>
 inline void
 AssembleCeedQuadratureData(const CeedIntegratorInfo &info,
-                           const mfem::FiniteElementSpace &trial_fespace,
-                           const mfem::FiniteElementSpace &test_fespace,
+                           const mfem::ParFiniteElementSpace &trial_fespace,
+                           const mfem::ParFiniteElementSpace &test_fespace,
                            const mfem::IntegrationRule &ir, const std::vector<int> &indices,
                            const bool use_bdr, const std::vector<QuadratureCoefficient> &Q,
                            Ceed ceed, CeedVector *qdata, CeedElemRestriction *qdata_restr)
 {
-  MFEM_VERIFY(trial_fespace.GetMesh() == test_fespace.GetMesh(),
+  MFEM_VERIFY(trial_fespace.GetParMesh() == test_fespace.GetParMesh(),
               "Trial and test finite element spaces must correspond to the same mesh!");
-  mfem::Mesh &mesh = *trial_fespace.GetMesh();
+  const mfem::ParMesh &mesh = *trial_fespace.GetParMesh();
   MFEM_VERIFY(mesh.GetNodes(), "The mesh has no nodal FE space!");
-  const mfem::FiniteElementSpace &mesh_fespace = *mesh.GetNodalFESpace();
+  const mfem::GridFunction &mesh_nodes = *mesh.GetNodes();
+  MFEM_VERIFY(dynamic_cast<const mfem::ParFiniteElementSpace *>(mesh_nodes.FESpace()),
+              "Unexpected non-parallel FiniteElementSpace for mesh nodes!");
+  const mfem::ParFiniteElementSpace &mesh_fespace =
+      *dynamic_cast<const mfem::ParFiniteElementSpace *>(mesh_nodes.FESpace());
 
   CeedInt ne = static_cast<CeedInt>(indices.size());
   CeedInt dim = mesh.Dimension() - use_bdr;
@@ -170,7 +174,7 @@ AssembleCeedQuadratureData(const CeedIntegratorInfo &info,
 
   // Compute the quadrature data for the operator.
   CeedVector nodes;
-  InitCeedVector(*mesh.GetNodes(), ceed, &nodes);
+  InitCeedVector(mesh_nodes, ceed, &nodes);
 
   PalaceCeedCall(ceed, CeedOperatorApply(build_op, nodes, *qdata, CEED_REQUEST_IMMEDIATE));
 
@@ -181,16 +185,16 @@ AssembleCeedQuadratureData(const CeedIntegratorInfo &info,
 // Create libCEED operator using the given quadrature data and element restriction.
 template <typename CeedIntegratorInfo>
 inline void AssembleCeedOperator(const CeedIntegratorInfo &info,
-                                 const mfem::FiniteElementSpace &trial_fespace,
-                                 const mfem::FiniteElementSpace &test_fespace,
+                                 const mfem::ParFiniteElementSpace &trial_fespace,
+                                 const mfem::ParFiniteElementSpace &test_fespace,
                                  const mfem::IntegrationRule &ir,
                                  const std::vector<int> &indices, const bool use_bdr,
                                  CeedVector qdata, CeedElemRestriction qdata_restr,
                                  Ceed ceed, CeedOperator *op)
 {
-  MFEM_VERIFY(trial_fespace.GetMesh() == test_fespace.GetMesh(),
+  MFEM_VERIFY(trial_fespace.GetParMesh() == test_fespace.GetParMesh(),
               "Trial and test finite element spaces must correspond to the same mesh!");
-  mfem::Mesh &mesh = *trial_fespace.GetMesh();
+  const mfem::ParMesh &mesh = *trial_fespace.GetParMesh();
 
   CeedInt dim = mesh.Dimension() - use_bdr;
   CeedInt curl_dim = (dim < 3) ? 1 : dim;
@@ -424,8 +428,8 @@ inline void AssembleCeedOperator(const CeedIntegratorInfo &info,
 // Construct libCEED operators for interpolation operations and their transpose between
 // the two spaces. The operation for interpolation is decided by the conformity of the trial
 // and test spaces.
-inline void AssembleCeedInterpolator(const mfem::FiniteElementSpace &trial_fespace,
-                                     const mfem::FiniteElementSpace &test_fespace,
+inline void AssembleCeedInterpolator(const mfem::ParFiniteElementSpace &trial_fespace,
+                                     const mfem::ParFiniteElementSpace &test_fespace,
                                      const std::vector<int> &indices, Ceed ceed,
                                      CeedOperator *op, CeedOperator *op_t)
 {

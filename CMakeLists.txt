@@ -104,6 +104,12 @@ if(NOT "${CMAKE_INSTALL_RPATH_USE_LINK_PATH}" STREQUAL "")
   )
 endif()
 
+include(ExternalGitTags)
+# Avoid DOWNLOAD_EXTRACT_TIMESTAMP warning
+if(POLICY CMP0135)
+  cmake_policy(SET CMP0135 NEW)
+endif()
+
 # Add other third-party dependency builds
 include(ExternalGitTags)
 if(PALACE_BUILD_EXTERNAL_DEPS)

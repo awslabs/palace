@@ -5,6 +5,7 @@
 
 #include "fem/bilinearform.hpp"
 #include "fem/coefficient.hpp"
+#include "fem/fespace.hpp"
 #include "fem/multigrid.hpp"
 #include "linalg/rap.hpp"
 #include "utils/communication.hpp"
@@ -120,13 +121,14 @@ LaplaceOperator::LaplaceOperator(const IoData &iodata,
     h1_fecs(fem::ConstructFECollections<mfem::H1_FECollection>(
         iodata.solver.order, mesh.back()->Dimension(), iodata.solver.linear.mg_max_levels,
         iodata.solver.linear.mg_coarsen_type, false)),
-    nd_fec(iodata.solver.order, mesh.back()->Dimension()),
+    nd_fec(std::make_unique<mfem::ND_FECollection>(iodata.solver.order,
+                                                   mesh.back()->Dimension())),
     h1_fespaces(fem::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
         iodata.solver.linear.mg_max_levels, iodata.solver.linear.mg_legacy_transfer,
         pa_order_threshold, pa_discrete_interp, mesh, h1_fecs, &dbc_marker,
         &dbc_tdof_lists)),
-    nd_fespace(mesh.back().get(), &nd_fec), mat_op(iodata, *mesh.back()),
-    source_attr_lists(ConstructSources(iodata))
+    nd_fespace(std::make_unique<FiniteElementSpace>(mesh.back().get(), nd_fec.get())),
+    mat_op(iodata, *mesh.back()), source_attr_lists(ConstructSources(iodata))
 {
   // Print essential BC information.
   if (dbc_marker.Size() && dbc_marker.Max() > 0)
@@ -146,11 +148,11 @@ std::unique_ptr<Operator> LaplaceOperator::GetStiffnessMatrix()
                GetH1Space().GetMaxElementOrder() > pa_order_threshold ? "Partial" : "Full");
     Mpi::Print("\nAssembling multigrid hierarchy:\n");
   }
-  auto K = std::make_unique<MultigridOperator>(h1_fespaces.GetNumLevels());
-  for (int l = 0; l < h1_fespaces.GetNumLevels(); l++)
+  auto K = std::make_unique<MultigridOperator>(GetH1Spaces().GetNumLevels());
+  for (int l = 0; l < GetH1Spaces().GetNumLevels(); l++)
   {
     // Force coarse level operator to be fully assembled always.
-    const auto &h1_fespace_l = h1_fespaces.GetFESpaceAtLevel(l);
+    const auto &h1_fespace_l = GetH1Spaces().GetFESpaceAtLevel(l);
     if (print_hdr)
     {
       Mpi::Print(" Level {:d} (p = {:d}): {:d} unknowns", l,

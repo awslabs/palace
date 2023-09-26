@@ -25,22 +25,43 @@ namespace fem
 // order 2p + w + q_extra.
 inline int GetDefaultIntegrationOrder(const mfem::FiniteElement &trial_fe,
                                       const mfem::FiniteElement &test_fe,
-                                      const mfem::ElementTransformation &T, int q_extra = 0)
+                                      const mfem::ElementTransformation &T, int q_extra_pk,
+                                      int q_extra_qk)
 {
-  return trial_fe.GetOrder() + test_fe.GetOrder() + T.OrderW() + q_extra;
+  return trial_fe.GetOrder() + test_fe.GetOrder() + T.OrderW() +
+         (trial_fe.Space() == mfem::FunctionSpace::Pk ? q_extra_pk : q_extra_qk);
 }
 
-inline int GetDefaultIntegrationOrder(const mfem::FiniteElementSpace &trial_fespace,
-                                      const mfem::FiniteElementSpace &test_fespace,
-                                      int q_extra = 0)
+inline int GetDefaultIntegrationOrder(const mfem::FiniteElement &trial_fe,
+                                      const mfem::FiniteElement &test_fe,
+                                      const mfem::ElementTransformation &T, int q_extra = 0)
+{
+  return GetDefaultIntegrationOrder(trial_fe, test_fe, T, q_extra, q_extra);
+}
+
+inline int GetDefaultIntegrationOrder(const mfem::ParFiniteElementSpace &trial_fespace,
+                                      const mfem::ParFiniteElementSpace &test_fespace,
+                                      const std::vector<int> &indices, bool use_bdr,
+                                      int q_extra_pk = 0, int q_extra_qk = 0)
 {
   // Every process is guaranteed to have at least one element, and assumes no variable order
   // spaces are used.
-  mfem::Mesh &mesh = *trial_fespace.GetMesh();
-  const mfem::FiniteElement &trial_fe = *trial_fespace.GetFE(0);
-  const mfem::FiniteElement &test_fe = *test_fespace.GetFE(0);
-  const mfem::ElementTransformation &T = *mesh.GetElementTransformation(0);
-  return GetDefaultIntegrationOrder(trial_fe, test_fe, T, q_extra);
+  mfem::ParMesh &mesh = *trial_fespace.GetParMesh();
+  mfem::IsoparametricTransformation T;
+  if (use_bdr)
+  {
+    const mfem::FiniteElement &trial_fe = *trial_fespace.GetBE(indices[0]);
+    const mfem::FiniteElement &test_fe = *test_fespace.GetBE(indices[0]);
+    mesh.GetBdrElementTransformation(indices[0], &T);
+    return GetDefaultIntegrationOrder(trial_fe, test_fe, T, q_extra_pk, q_extra_qk);
+  }
+  else
+  {
+    const mfem::FiniteElement &trial_fe = *trial_fespace.GetFE(indices[0]);
+    const mfem::FiniteElement &test_fe = *test_fespace.GetFE(indices[0]);
+    mesh.GetElementTransformation(indices[0], &T);
+    return GetDefaultIntegrationOrder(trial_fe, test_fe, T, q_extra_pk, q_extra_qk);
+  }
 }
 
 }  // namespace fem
@@ -51,13 +72,13 @@ class BilinearFormIntegrator
 public:
   virtual ~BilinearFormIntegrator() = default;
 
-  virtual void Assemble(const mfem::FiniteElementSpace &trial_fespace,
-                        const mfem::FiniteElementSpace &test_fespace,
+  virtual void Assemble(const mfem::ParFiniteElementSpace &trial_fespace,
+                        const mfem::ParFiniteElementSpace &test_fespace,
                         const mfem::IntegrationRule &ir, const std::vector<int> &indices,
                         Ceed ceed, CeedOperator *op, CeedOperator *op_t) = 0;
 
-  virtual void AssembleBoundary(const mfem::FiniteElementSpace &trial_fespace,
-                                const mfem::FiniteElementSpace &test_fespace,
+  virtual void AssembleBoundary(const mfem::ParFiniteElementSpace &trial_fespace,
+                                const mfem::ParFiniteElementSpace &test_fespace,
                                 const mfem::IntegrationRule &ir,
                                 const std::vector<int> &indices, Ceed ceed,
                                 CeedOperator *op, CeedOperator *op_t) = 0;
@@ -77,13 +98,13 @@ public:
   MassIntegrator(mfem::VectorCoefficient &VQ) : Q(nullptr), VQ(&VQ), MQ(nullptr) {}
   MassIntegrator(mfem::MatrixCoefficient &MQ) : Q(nullptr), VQ(nullptr), MQ(&MQ) {}
 
-  void Assemble(const mfem::FiniteElementSpace &trial_fespace,
-                const mfem::FiniteElementSpace &test_fespace,
+  void Assemble(const mfem::ParFiniteElementSpace &trial_fespace,
+                const mfem::ParFiniteElementSpace &test_fespace,
                 const mfem::IntegrationRule &ir, const std::vector<int> &indices, Ceed ceed,
                 CeedOperator *op, CeedOperator *op_t) override;
 
-  void AssembleBoundary(const mfem::FiniteElementSpace &trial_fespace,
-                        const mfem::FiniteElementSpace &test_fespace,
+  void AssembleBoundary(const mfem::ParFiniteElementSpace &trial_fespace,
+                        const mfem::ParFiniteElementSpace &test_fespace,
                         const mfem::IntegrationRule &ir, const std::vector<int> &indices,
                         Ceed ceed, CeedOperator *op, CeedOperator *op_t) override;
 };
@@ -102,13 +123,13 @@ public:
   VectorFEMassIntegrator(mfem::VectorCoefficient &VQ) : Q(nullptr), VQ(&VQ), MQ(nullptr) {}
   VectorFEMassIntegrator(mfem::MatrixCoefficient &MQ) : Q(nullptr), VQ(nullptr), MQ(&MQ) {}
 
-  void Assemble(const mfem::FiniteElementSpace &trial_fespace,
-                const mfem::FiniteElementSpace &test_fespace,
+  void Assemble(const mfem::ParFiniteElementSpace &trial_fespace,
+                const mfem::ParFiniteElementSpace &test_fespace,
                 const mfem::IntegrationRule &ir, const std::vector<int> &indices, Ceed ceed,
                 CeedOperator *op, CeedOperator *op_t) override;
 
-  void AssembleBoundary(const mfem::FiniteElementSpace &trial_fespace,
-                        const mfem::FiniteElementSpace &test_fespace,
+  void AssembleBoundary(const mfem::ParFiniteElementSpace &trial_fespace,
+                        const mfem::ParFiniteElementSpace &test_fespace,
                         const mfem::IntegrationRule &ir, const std::vector<int> &indices,
                         Ceed ceed, CeedOperator *op, CeedOperator *op_t) override;
 };
@@ -127,13 +148,13 @@ public:
   CurlCurlIntegrator(mfem::VectorCoefficient &VQ) : Q(nullptr), VQ(&VQ), MQ(nullptr) {}
   CurlCurlIntegrator(mfem::MatrixCoefficient &MQ) : Q(nullptr), VQ(nullptr), MQ(&MQ) {}
 
-  void Assemble(const mfem::FiniteElementSpace &trial_fespace,
-                const mfem::FiniteElementSpace &test_fespace,
+  void Assemble(const mfem::ParFiniteElementSpace &trial_fespace,
+                const mfem::ParFiniteElementSpace &test_fespace,
                 const mfem::IntegrationRule &ir, const std::vector<int> &indices, Ceed ceed,
                 CeedOperator *op, CeedOperator *op_t) override;
 
-  void AssembleBoundary(const mfem::FiniteElementSpace &trial_fespace,
-                        const mfem::FiniteElementSpace &test_fespace,
+  void AssembleBoundary(const mfem::ParFiniteElementSpace &trial_fespace,
+                        const mfem::ParFiniteElementSpace &test_fespace,
                         const mfem::IntegrationRule &ir, const std::vector<int> &indices,
                         Ceed ceed, CeedOperator *op, CeedOperator *op_t) override;
 };
@@ -147,10 +168,6 @@ protected:
   mfem::MatrixCoefficient *MQc, *MQm;
 
 public:
-  CurlCurlMassIntegrator()
-    : Qc(nullptr), Qm(nullptr), VQc(nullptr), VQm(nullptr), MQc(nullptr), MQm(nullptr)
-  {
-  }
   CurlCurlMassIntegrator(mfem::Coefficient &Qc, mfem::Coefficient &Qm)
     : Qc(&Qc), Qm(&Qm), VQc(nullptr), VQm(nullptr), MQc(nullptr), MQm(nullptr)
   {
@@ -188,13 +205,13 @@ public:
   {
   }
 
-  void Assemble(const mfem::FiniteElementSpace &trial_fespace,
-                const mfem::FiniteElementSpace &test_fespace,
+  void Assemble(const mfem::ParFiniteElementSpace &trial_fespace,
+                const mfem::ParFiniteElementSpace &test_fespace,
                 const mfem::IntegrationRule &ir, const std::vector<int> &indices, Ceed ceed,
                 CeedOperator *op, CeedOperator *op_t) override;
 
-  void AssembleBoundary(const mfem::FiniteElementSpace &trial_fespace,
-                        const mfem::FiniteElementSpace &test_fespace,
+  void AssembleBoundary(const mfem::ParFiniteElementSpace &trial_fespace,
+                        const mfem::ParFiniteElementSpace &test_fespace,
                         const mfem::IntegrationRule &ir, const std::vector<int> &indices,
                         Ceed ceed, CeedOperator *op, CeedOperator *op_t) override;
 };
@@ -213,13 +230,13 @@ public:
   DiffusionIntegrator(mfem::VectorCoefficient &VQ) : Q(nullptr), VQ(&VQ), MQ(nullptr) {}
   DiffusionIntegrator(mfem::MatrixCoefficient &MQ) : Q(nullptr), VQ(nullptr), MQ(&MQ) {}
 
-  void Assemble(const mfem::FiniteElementSpace &trial_fespace,
-                const mfem::FiniteElementSpace &test_fespace,
+  void Assemble(const mfem::ParFiniteElementSpace &trial_fespace,
+                const mfem::ParFiniteElementSpace &test_fespace,
                 const mfem::IntegrationRule &ir, const std::vector<int> &indices, Ceed ceed,
                 CeedOperator *op, CeedOperator *op_t) override;
 
-  void AssembleBoundary(const mfem::FiniteElementSpace &trial_fespace,
-                        const mfem::FiniteElementSpace &test_fespace,
+  void AssembleBoundary(const mfem::ParFiniteElementSpace &trial_fespace,
+                        const mfem::ParFiniteElementSpace &test_fespace,
                         const mfem::IntegrationRule &ir, const std::vector<int> &indices,
                         Ceed ceed, CeedOperator *op, CeedOperator *op_t) override;
 };
@@ -233,7 +250,6 @@ protected:
   mfem::MatrixCoefficient *MQd;
 
 public:
-  DiffusionMassIntegrator() : Qd(nullptr), Qm(nullptr), VQd(nullptr), MQd(nullptr) {}
   DiffusionMassIntegrator(mfem::Coefficient &Qd, mfem::Coefficient &Qm)
     : Qd(&Qd), Qm(&Qm), VQd(nullptr), MQd(nullptr)
   {
@@ -247,13 +263,13 @@ public:
   {
   }
 
-  void Assemble(const mfem::FiniteElementSpace &trial_fespace,
-                const mfem::FiniteElementSpace &test_fespace,
+  void Assemble(const mfem::ParFiniteElementSpace &trial_fespace,
+                const mfem::ParFiniteElementSpace &test_fespace,
                 const mfem::IntegrationRule &ir, const std::vector<int> &indices, Ceed ceed,
                 CeedOperator *op, CeedOperator *op_t) override;
 
-  void AssembleBoundary(const mfem::FiniteElementSpace &trial_fespace,
-                        const mfem::FiniteElementSpace &test_fespace,
+  void AssembleBoundary(const mfem::ParFiniteElementSpace &trial_fespace,
+                        const mfem::ParFiniteElementSpace &test_fespace,
                         const mfem::IntegrationRule &ir, const std::vector<int> &indices,
                         Ceed ceed, CeedOperator *op, CeedOperator *op_t) override;
 };
@@ -268,13 +284,13 @@ public:
   DivDivIntegrator() : Q(nullptr) {}
   DivDivIntegrator(mfem::Coefficient &Q) : Q(&Q) {}
 
-  void Assemble(const mfem::FiniteElementSpace &trial_fespace,
-                const mfem::FiniteElementSpace &test_fespace,
+  void Assemble(const mfem::ParFiniteElementSpace &trial_fespace,
+                const mfem::ParFiniteElementSpace &test_fespace,
                 const mfem::IntegrationRule &ir, const std::vector<int> &indices, Ceed ceed,
                 CeedOperator *op, CeedOperator *op_t) override;
 
-  void AssembleBoundary(const mfem::FiniteElementSpace &trial_fespace,
-                        const mfem::FiniteElementSpace &test_fespace,
+  void AssembleBoundary(const mfem::ParFiniteElementSpace &trial_fespace,
+                        const mfem::ParFiniteElementSpace &test_fespace,
                         const mfem::IntegrationRule &ir, const std::vector<int> &indices,
                         Ceed ceed, CeedOperator *op, CeedOperator *op_t) override;
 };
@@ -288,7 +304,6 @@ protected:
   mfem::MatrixCoefficient *MQm;
 
 public:
-  DivDivMassIntegrator() : Qd(nullptr), Qm(nullptr), VQm(nullptr), MQm(nullptr) {}
   DivDivMassIntegrator(mfem::Coefficient &Qd, mfem::Coefficient &Qm)
     : Qd(&Qd), Qm(&Qm), VQm(nullptr), MQm(nullptr)
   {
@@ -302,13 +317,13 @@ public:
   {
   }
 
-  void Assemble(const mfem::FiniteElementSpace &trial_fespace,
-                const mfem::FiniteElementSpace &test_fespace,
+  void Assemble(const mfem::ParFiniteElementSpace &trial_fespace,
+                const mfem::ParFiniteElementSpace &test_fespace,
                 const mfem::IntegrationRule &ir, const std::vector<int> &indices, Ceed ceed,
                 CeedOperator *op, CeedOperator *op_t) override;
 
-  void AssembleBoundary(const mfem::FiniteElementSpace &trial_fespace,
-                        const mfem::FiniteElementSpace &test_fespace,
+  void AssembleBoundary(const mfem::ParFiniteElementSpace &trial_fespace,
+                        const mfem::ParFiniteElementSpace &test_fespace,
                         const mfem::IntegrationRule &ir, const std::vector<int> &indices,
                         Ceed ceed, CeedOperator *op, CeedOperator *op_t) override;
 };
@@ -333,13 +348,13 @@ public:
   {
   }
 
-  void Assemble(const mfem::FiniteElementSpace &trial_fespace,
-                const mfem::FiniteElementSpace &test_fespace,
+  void Assemble(const mfem::ParFiniteElementSpace &trial_fespace,
+                const mfem::ParFiniteElementSpace &test_fespace,
                 const mfem::IntegrationRule &ir, const std::vector<int> &indices, Ceed ceed,
                 CeedOperator *op, CeedOperator *op_t) override;
 
-  void AssembleBoundary(const mfem::FiniteElementSpace &trial_fespace,
-                        const mfem::FiniteElementSpace &test_fespace,
+  void AssembleBoundary(const mfem::ParFiniteElementSpace &trial_fespace,
+                        const mfem::ParFiniteElementSpace &test_fespace,
                         const mfem::IntegrationRule &ir, const std::vector<int> &indices,
                         Ceed ceed, CeedOperator *op, CeedOperator *op_t) override;
 };
@@ -367,13 +382,13 @@ public:
   {
   }
 
-  void Assemble(const mfem::FiniteElementSpace &trial_fespace,
-                const mfem::FiniteElementSpace &test_fespace,
+  void Assemble(const mfem::ParFiniteElementSpace &trial_fespace,
+                const mfem::ParFiniteElementSpace &test_fespace,
                 const mfem::IntegrationRule &ir, const std::vector<int> &indices, Ceed ceed,
                 CeedOperator *op, CeedOperator *op_t) override;
 
-  void AssembleBoundary(const mfem::FiniteElementSpace &trial_fespace,
-                        const mfem::FiniteElementSpace &test_fespace,
+  void AssembleBoundary(const mfem::ParFiniteElementSpace &trial_fespace,
+                        const mfem::ParFiniteElementSpace &test_fespace,
                         const mfem::IntegrationRule &ir, const std::vector<int> &indices,
                         Ceed ceed, CeedOperator *op, CeedOperator *op_t) override;
 };
@@ -396,13 +411,13 @@ public:
   {
   }
 
-  void Assemble(const mfem::FiniteElementSpace &trial_fespace,
-                const mfem::FiniteElementSpace &test_fespace,
+  void Assemble(const mfem::ParFiniteElementSpace &trial_fespace,
+                const mfem::ParFiniteElementSpace &test_fespace,
                 const mfem::IntegrationRule &ir, const std::vector<int> &indices, Ceed ceed,
                 CeedOperator *op, CeedOperator *op_t) override;
 
-  void AssembleBoundary(const mfem::FiniteElementSpace &trial_fespace,
-                        const mfem::FiniteElementSpace &test_fespace,
+  void AssembleBoundary(const mfem::ParFiniteElementSpace &trial_fespace,
+                        const mfem::ParFiniteElementSpace &test_fespace,
                         const mfem::IntegrationRule &ir, const std::vector<int> &indices,
                         Ceed ceed, CeedOperator *op, CeedOperator *op_t) override;
 };
@@ -427,13 +442,13 @@ public:
   {
   }
 
-  void Assemble(const mfem::FiniteElementSpace &trial_fespace,
-                const mfem::FiniteElementSpace &test_fespace,
+  void Assemble(const mfem::ParFiniteElementSpace &trial_fespace,
+                const mfem::ParFiniteElementSpace &test_fespace,
                 const mfem::IntegrationRule &ir, const std::vector<int> &indices, Ceed ceed,
                 CeedOperator *op, CeedOperator *op_t) override;
 
-  void AssembleBoundary(const mfem::FiniteElementSpace &trial_fespace,
-                        const mfem::FiniteElementSpace &test_fespace,
+  void AssembleBoundary(const mfem::ParFiniteElementSpace &trial_fespace,
+                        const mfem::ParFiniteElementSpace &test_fespace,
                         const mfem::IntegrationRule &ir, const std::vector<int> &indices,
                         Ceed ceed, CeedOperator *op, CeedOperator *op_t) override;
 };
@@ -442,13 +457,13 @@ public:
 class DiscreteInterpolator : public BilinearFormIntegrator
 {
 public:
-  void Assemble(const mfem::FiniteElementSpace &trial_fespace,
-                const mfem::FiniteElementSpace &test_fespace,
+  void Assemble(const mfem::ParFiniteElementSpace &trial_fespace,
+                const mfem::ParFiniteElementSpace &test_fespace,
                 const mfem::IntegrationRule &ir, const std::vector<int> &indices, Ceed ceed,
                 CeedOperator *op, CeedOperator *op_t) override;
 
-  void AssembleBoundary(const mfem::FiniteElementSpace &trial_fespace,
-                        const mfem::FiniteElementSpace &test_fespace,
+  void AssembleBoundary(const mfem::ParFiniteElementSpace &trial_fespace,
+                        const mfem::ParFiniteElementSpace &test_fespace,
                         const mfem::IntegrationRule &ir, const std::vector<int> &indices,
                         Ceed ceed, CeedOperator *op, CeedOperator *op_t) override
   {
@@ -475,11 +490,11 @@ private:
   mfem::VectorCoefficient &Q;
   mfem::DenseMatrix vshape;
   mfem::Vector f_loc, f_hat;
-  int q_order;
+  int q_extra;
 
 public:
-  VectorFEBoundaryLFIntegrator(mfem::VectorCoefficient &QG, int q_order = -1)
-    : Q(QG), f_loc(QG.GetVDim()), q_order(q_order)
+  VectorFEBoundaryLFIntegrator(mfem::VectorCoefficient &QG, int q_extra = 0)
+    : Q(QG), f_loc(QG.GetVDim()), q_extra(q_extra)
   {
   }
 
@@ -494,10 +509,10 @@ class BoundaryLFIntegrator : public mfem::LinearFormIntegrator
 private:
   mfem::Coefficient &Q;
   mfem::Vector shape;
-  int q_order;
+  int q_extra;
 
 public:
-  BoundaryLFIntegrator(mfem::Coefficient &QG, int q_order = -1) : Q(QG), q_order(q_order) {}
+  BoundaryLFIntegrator(mfem::Coefficient &QG, int q_extra = 0) : Q(QG), q_extra(q_extra) {}
 
   void AssembleRHSElementVect(const mfem::FiniteElement &fe, mfem::ElementTransformation &T,
                               mfem::Vector &elvect) override;

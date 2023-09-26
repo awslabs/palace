@@ -3,8 +3,10 @@
 
 #include "operator.hpp"
 
+#include <ceed.h>
 #include <mfem/general/forall.hpp>
-#include "utils.hpp"
+#include "fem/libceed/utils.hpp"
+#include "utils/omp.hpp"
 
 namespace palace::ceed
 {
@@ -29,6 +31,9 @@ void Operator::AddOper(CeedOperator op, CeedOperator op_t)
   CeedVector loc_u, loc_v;
   PalaceCeedCallBackend(CeedOperatorGetCeed(op, &ceed));
   PalaceCeedCall(ceed, CeedOperatorGetActiveVectorLengths(op, &l_in, &l_out));
+  MFEM_VERIFY((l_in == 0 && l_out == 0) || (mfem::internal::to_int(l_in) == width &&
+                                            mfem::internal::to_int(l_out) == height),
+              "Dimensions mismatch for CeedOperator!");
   if (op_t)
   {
     CeedSize l_in_t, l_out_t;
@@ -41,17 +46,6 @@ void Operator::AddOper(CeedOperator op, CeedOperator op_t)
 
   PalacePragmaOmp(critical(AddOper))
   {
-    if (ops.empty())
-    {
-      height = mfem::internal::to_int(l_out);
-      width = mfem::internal::to_int(l_in);
-    }
-    else
-    {
-      MFEM_VERIFY(mfem::internal::to_int(l_in) == width &&
-                      mfem::internal::to_int(l_out) == height,
-                  "Dimensions mismatch for CeedOperator!");
-    }
     ops.push_back(op);
     ops_t.push_back(op_t);
     u.push_back(loc_u);
@@ -116,7 +110,7 @@ inline void CeedAddMult(const std::vector<CeedOperator> &ops,
     mem = CEED_MEM_HOST;
   }
 
-  PalacePragmaOmp(for private(ceed) schedule(static))
+  PalacePragmaOmp(parallel for private(ceed) schedule(static))
   for (std::size_t i = 0; i < ops.size(); i++)
   {
     if (ops[i])  // No-op for an empty operator
@@ -162,7 +156,7 @@ void Operator::AddMult(const Vector &x, Vector &y, const double a) const
     {
       temp *= dof_multiplicity;
     }
-    linalg::AXPY(a, temp, y);
+    y.Add(a, temp);
   }
 }
 
@@ -196,7 +190,7 @@ void Operator::AddMultTranspose(const Vector &x, Vector &y, const double a) cons
       temp.UseDevice(true);
       temp = 0.0;
       CeedAddMult(ops_t, v, u, x_, temp);
-      linalg::AXPY(a_, temp, y_);
+      y_.Add(a_, temp);
     }
   };
   if (dof_multiplicity.Size() > 0)
@@ -279,6 +273,7 @@ void CeedOperatorAssembleCOO(const Operator &op, bool skip_zeros, CeedSize *nnz,
   CeedScalar *vals_array;
   std::vector<CeedSize> loc_nnz(op.Size()), loc_offsets(op.Size() + 1);
   std::vector<CeedInt *> loc_rows(op.Size()), loc_cols(op.Size());
+  std::vector<CeedVector> loc_vals(op.Size());
 
   PalaceCeedCallBackend(CeedOperatorGetCeed(op[0], &ceed));
   PalaceCeedCall(ceed, CeedGetPreferredMemType(ceed, mem));
@@ -294,6 +289,10 @@ void CeedOperatorAssembleCOO(const Operator &op, bool skip_zeros, CeedSize *nnz,
     PalaceCeedCallBackend(CeedOperatorGetCeed(op[i], &ceed));
     PalaceCeedCall(ceed, CeedOperatorLinearAssembleSymbolic(op[i], &loc_nnz[i],
                                                             &loc_rows[i], &loc_cols[i]));
+
+    // Assemble values.
+    PalaceCeedCall(ceed, CeedVectorCreate(ceed, loc_nnz[i], &loc_vals[i]));
+    PalaceCeedCall(ceed, CeedOperatorLinearAssemble(op[i], loc_vals[i]));
   }
 
   loc_offsets[0] = 0;
@@ -304,8 +303,7 @@ void CeedOperatorAssembleCOO(const Operator &op, bool skip_zeros, CeedSize *nnz,
     // Assemble values.
     *rows = loc_rows[0];
     *cols = loc_cols[0];
-    PalaceCeedCall(ceed, CeedVectorCreate(ceed, *nnz, vals));
-    PalaceCeedCall(ceed, CeedOperatorLinearAssemble(op[0], *vals));
+    *vals = loc_vals[0];
   }
   else
   {
@@ -318,12 +316,6 @@ void CeedOperatorAssembleCOO(const Operator &op, bool skip_zeros, CeedSize *nnz,
     PalacePragmaOmp(parallel for private(ceed) schedule(static))
     for (std::size_t i = 0; i < op.Size(); i++)
     {
-      // Assemble values.
-      CeedVector loc_vals;
-      PalaceCeedCallBackend(CeedOperatorGetCeed(op[i], &ceed));
-      PalaceCeedCall(ceed, CeedVectorCreate(ceed, loc_nnz[i], &loc_vals));
-      PalaceCeedCall(ceed, CeedOperatorLinearAssemble(op[i], loc_vals));
-
       const auto start = loc_offsets[i];
       const auto end = loc_offsets[i + 1];
       for (auto k = start; k < end; k++)
@@ -331,12 +323,11 @@ void CeedOperatorAssembleCOO(const Operator &op, bool skip_zeros, CeedSize *nnz,
         (*rows)[k] = loc_rows[i][k - start];
         (*cols)[k] = loc_cols[i][k - start];
       }
-      PalaceCeedCall(ceed, CeedInternalFree(&loc_rows[i]));
-      PalaceCeedCall(ceed, CeedInternalFree(&loc_cols[i]));
 
       // The CeedVector is on only on device when MFEM is also using the device.
       const CeedScalar *loc_vals_array;
-      PalaceCeedCall(ceed, CeedVectorGetArrayRead(loc_vals, *mem, &loc_vals_array));
+      PalaceCeedCallBackend(CeedVectorGetCeed(loc_vals[i], &ceed));
+      PalaceCeedCall(ceed, CeedVectorGetArrayRead(loc_vals[i], *mem, &loc_vals_array));
       if (*mem != CEED_MEM_HOST)
       {
         mfem::forall(end - start, [=] MFEM_HOST_DEVICE(int k)
@@ -349,8 +340,10 @@ void CeedOperatorAssembleCOO(const Operator &op, bool skip_zeros, CeedSize *nnz,
           vals_array[k] = loc_vals_array[k - start];
         }
       }
-      PalaceCeedCall(ceed, CeedVectorRestoreArrayRead(loc_vals, &loc_vals_array));
-      PalaceCeedCall(ceed, CeedVectorDestroy(&loc_vals));
+      PalaceCeedCall(ceed, CeedVectorRestoreArrayRead(loc_vals[i], &loc_vals_array));
+      PalaceCeedCall(ceed, CeedInternalFree(&loc_rows[i]));
+      PalaceCeedCall(ceed, CeedInternalFree(&loc_cols[i]));
+      PalaceCeedCall(ceed, CeedVectorDestroy(&loc_vals[i]));
     }
 
     PalaceCeedCall(ceed, CeedVectorRestoreArray(*vals, &vals_array));

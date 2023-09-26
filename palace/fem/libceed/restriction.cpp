@@ -3,20 +3,36 @@
 
 #include "restriction.hpp"
 
+#include "fem/fespace.hpp"
+#include "fem/libceed/hash.hpp"
+#include "fem/libceed/utils.hpp"
+#include "utils/omp.hpp"
+
 namespace palace::ceed
 {
 
 namespace internal
 {
 
-std::unordered_map<RestrKey, CeedElemRestriction, RestrHash> restr_map;
+static std::unordered_map<RestrKey, CeedElemRestriction, RestrHash> restr_map;
+
+void ClearRestrictionCache()
+{
+  for (auto [k, v] : restr_map)
+  {
+    Ceed ceed;
+    PalaceCeedCallBackend(CeedElemRestrictionGetCeed(v, &ceed));
+    PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&v));
+  }
+  restr_map.clear();
+}
 
 }  // namespace internal
 
 namespace
 {
 
-void InitLexicoRestr(const mfem::FiniteElementSpace &fespace,
+void InitLexicoRestr(const mfem::ParFiniteElementSpace &fespace,
                      const std::vector<int> &indices, bool use_bdr, Ceed ceed,
                      CeedElemRestriction *restr)
 {
@@ -78,7 +94,7 @@ void InitLexicoRestr(const mfem::FiniteElementSpace &fespace,
   }
 }
 
-void InitNativeRestr(const mfem::FiniteElementSpace &fespace,
+void InitNativeRestr(const mfem::ParFiniteElementSpace &fespace,
                      const std::vector<int> &indices, bool use_bdr, bool has_dof_trans,
                      bool is_interp_range, Ceed ceed, CeedElemRestriction *restr)
 {
@@ -175,7 +191,7 @@ void InitNativeRestr(const mfem::FiniteElementSpace &fespace,
     }
   }
 
-  if (tp_el_curl_orients.Size())
+  if (has_dof_trans)
   {
     PalaceCeedCall(ceed, CeedElemRestrictionCreateCurlOriented(
                              ceed, ne, P, fespace.GetVDim(), compstride,
@@ -202,7 +218,7 @@ void InitNativeRestr(const mfem::FiniteElementSpace &fespace,
 
 }  // namespace
 
-void InitRestriction(const mfem::FiniteElementSpace &fespace,
+void InitRestriction(const mfem::ParFiniteElementSpace &fespace,
                      const std::vector<int> &indices, bool use_bdr, bool is_interp,
                      bool is_range, Ceed ceed, CeedElemRestriction *restr)
 {
@@ -210,9 +226,19 @@ void InitRestriction(const mfem::FiniteElementSpace &fespace,
   // The restriction for an interpolator range space is slightly different as
   // the output is a primal vector instead of a dual vector, and lexicographic
   // ordering is never used (no use of tensor-product basis).
+  // A palace::FiniteElementSpace can be checked for uniqueness so we can use this to reuse
+  // restrictions across different libCEED operators. For mixed meshes or multiple threads,
+  // the space elements are partitioned in a non-overlapping manner so we just need the
+  // index of the first element, and if it is a domain or boundary element, to determine the
+  // partition.
+  const FiniteElementSpace *restr_fespace =
+      dynamic_cast<const FiniteElementSpace *>(&fespace);
+  MFEM_VERIFY(restr_fespace, "ceed::InitRestriction requires a palace::FiniteElementSpace "
+                             "object for space comparisons!");
   const mfem::FiniteElement &fe =
       use_bdr ? *fespace.GetBE(indices[0]) : *fespace.GetFE(indices[0]);
-  const int ncomp = fespace.GetVDim();
+  const mfem::TensorBasisElement *tfe = dynamic_cast<const mfem::TensorBasisElement *>(&fe);
+  const bool vector = fe.GetRangeType() == mfem::FiniteElement::VECTOR;
   mfem::Array<int> dofs;
   mfem::DofTransformation dof_trans;
   if (use_bdr)
@@ -224,16 +250,20 @@ void InitRestriction(const mfem::FiniteElementSpace &fespace,
     fespace.GetElementDofs(indices[0], dofs, dof_trans);
   }
   const bool has_dof_trans = dof_trans.GetDofTransformation() && !dof_trans.IsEmpty();
-  const bool unique_range_restr = (is_interp && is_range && has_dof_trans);
-  internal::RestrKey key(ceed, (void *)&fespace, (void *)&fe, ncomp, unique_range_restr);
+  const bool unique_interp_restr =
+      (is_interp && tfe && tfe->GetDofMap().Size() > 0 && !vector);
+  const bool unique_interp_range_restr = (is_interp && is_range && has_dof_trans);
+  internal::RestrKey key(ceed, *restr_fespace, indices[0], use_bdr, unique_interp_restr,
+                         unique_interp_range_restr);
 
-  // Initialize or retrieve key values.
-  auto restr_itr = internal::restr_map.find(key);
+  // Initialize or retrieve key values (avoid simultaneous search and write).
+  auto restr_itr = internal::restr_map.end();
+  PalacePragmaOmp(critical(InitRestriction))
+  {
+    restr_itr = internal::restr_map.find(key);
+  }
   if (restr_itr == internal::restr_map.end())
   {
-    const mfem::TensorBasisElement *tfe =
-        dynamic_cast<const mfem::TensorBasisElement *>(&fe);
-    const bool vector = fe.GetRangeType() == mfem::FiniteElement::VECTOR;
     const bool lexico = (tfe && tfe->GetDofMap().Size() > 0 && !vector && !is_interp);
     if (lexico)
     {
@@ -250,10 +280,18 @@ void InitRestriction(const mfem::FiniteElementSpace &fespace,
     {
       internal::restr_map[key] = *restr;
     }
+    // std::cout << "New element restriction (" << ceed << ", " << &fespace
+    //           << ", " << indices[0] << ", " << use_bdr
+    //           << ", " << unique_interp_restr
+    //           << ", " << unique_interp_range_restr << ")\n";
   }
   else
   {
     *restr = restr_itr->second;
+    // std::cout << "Reusing element restriction (" << ceed << ", " << &fespace
+    //           << ", " << indices[0] << ", " << use_bdr << ", "
+    //           << ", " << unique_interp_restr
+    //           << ", " << unique_interp_range_restr << ")\n";
   }
 }
 

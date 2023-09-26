@@ -22,7 +22,7 @@ namespace
 {
 
 DiffusionIntegratorInfo
-InitializeIntegratorInfo(const mfem::FiniteElementSpace &fespace,
+InitializeIntegratorInfo(const mfem::ParFiniteElementSpace &fespace,
                          const mfem::IntegrationRule &ir, const std::vector<int> &indices,
                          bool use_bdr, mfem::Coefficient *Q, mfem::VectorCoefficient *VQ,
                          mfem::MatrixCoefficient *MQ,
@@ -33,7 +33,7 @@ InitializeIntegratorInfo(const mfem::FiniteElementSpace &fespace,
 
   DiffusionIntegratorInfo info = {{0}};
 
-  mfem::Mesh &mesh = *fespace.GetMesh();
+  mfem::ParMesh &mesh = *fespace.GetParMesh();
   info.ctx.dim = mesh.Dimension() - use_bdr;
   info.ctx.space_dim = mesh.SpaceDimension();
 
@@ -86,8 +86,8 @@ InitializeIntegratorInfo(const mfem::FiniteElementSpace &fespace,
 
 }  // namespace
 
-void DiffusionIntegrator::Assemble(const mfem::FiniteElementSpace &trial_fespace,
-                                   const mfem::FiniteElementSpace &test_fespace,
+void DiffusionIntegrator::Assemble(const mfem::ParFiniteElementSpace &trial_fespace,
+                                   const mfem::ParFiniteElementSpace &test_fespace,
                                    const mfem::IntegrationRule &ir,
                                    const std::vector<int> &indices, Ceed ceed,
                                    CeedOperator *op, CeedOperator *op_t)
@@ -102,8 +102,8 @@ void DiffusionIntegrator::Assemble(const mfem::FiniteElementSpace &trial_fespace
                              ceed, op, op_t);
 }
 
-void DiffusionIntegrator::AssembleBoundary(const mfem::FiniteElementSpace &trial_fespace,
-                                           const mfem::FiniteElementSpace &test_fespace,
+void DiffusionIntegrator::AssembleBoundary(const mfem::ParFiniteElementSpace &trial_fespace,
+                                           const mfem::ParFiniteElementSpace &test_fespace,
                                            const mfem::IntegrationRule &ir,
                                            const std::vector<int> &indices, Ceed ceed,
                                            CeedOperator *op, CeedOperator *op_t)
