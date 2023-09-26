@@ -71,6 +71,35 @@ which behaves as a stopwatch with some memory functions. It is the responsibilit
 objects may be created for local timing purposes, but these will not count toward time
 reported at the end of a log file or in the metadata JSON.
 
+## Testing
+
+We use [Catch2](https://github.com/catchorg/Catch2) to perform unit testing of the [libCEED]
+(https://libceed.org/en/latest/) integration in Palace against the legacy MFEM assembly
+routines. The unit tests source code is located in the [`test/unit/`]
+(https://github.com/awslabs/palace/blob/main/test/unit/) directory, and can be built from
+within the *Palace* build directory using `make unit-tests`, or from the superbuild as
+`make palace-tests`. The unit tests can be accelerated using MPI and/or OpenMP parallelism
+(when configured with `PALACE_WITH_OPENMP=ON`), but in all cases they are only testing the
+local operator assembly on each process. The 2D and 3D sample meshes in [`test/unit/mesh/`]
+(https://github.com/awslabs/palace/blob/main/test/unit/mesh/) come from the
+[MFEM repository](https://github.com/mfem/mfem/tree/master/data).
+
+The unit test application also includes a small number of benchmarks to compare performance
+between MFEM's legacy assembly backend, MFEM's partial assembly backend, and the specified
+libCEED backend (specified with the `--backend` option, use `-h`/`--help` to list all
+command line options for the `unit-tests` executable). These can be run using, for
+example:
+
+```bash
+./unit-tests "[Benchmark]" --benchmark-samples 10
+```
+
+The unit tests are run automatically as part of the project's continuous integration (CI)
+workflows. Also run as part of the CI are regression tests based on the provided example
+applications in the [`examples/`](https://github.com/awslabs/palace/blob/main/examples/)
+directory. These are executed based on the code in [`test/examples/`]
+(https://github.com/awslabs/palace/blob/main/test/examples/).
+
 ## Changelog
 
 Code contributions should generally be accompanied by an entry in the [changelog]

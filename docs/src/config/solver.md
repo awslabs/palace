@@ -11,6 +11,7 @@
     "Order": <int>,
     "PartialAssemblyOrder": <int>,
     "Device": <string>,
+    "Backend": <string>,
     "Eigenmode":
     {
         ...
@@ -46,11 +47,24 @@ with
 element operators to [partial assembly](https://mfem.org/howto/assembly_levels/). Setting
 this parameter equal to 1 will fully activate operator partial assembly on all levels.
 
-`"Device" ["cpu"]` :  The device configuration passed to [MFEM]
-(https://mfem.org/howto/assembly_levels/) in order to activate different backends at
-runtime. CPU-based partial assembly is supported by the `"cpu"` backend for tensor-product
-meshes using the native MFEM kernels and `"ceed-cpu"` backend for all mesh types using
-libCEED.
+`"Device" ["CPU"]` :  The runtime device configuration passed to [MFEM]
+(https://mfem.org/howto/assembly_levels/) in order to activate different options specified
+during configuration. The available options are:
+
+  - `"CPU"`
+  - `"GPU"`
+  - `"Debug"`
+
+The `"GPU"` option will automatically activate the `cuda` or `hip` device based on whether
+MFEM is built with CUDA (`MFEM_USE_CUDA=ON`) or HIP (`MFEM_USE_HIP=ON`) support. When
+*Palace* is built with OpenMP support (`PALACE_WITH_OPENMP=ON`), `omp` is automatically
+added to the list of activated MFEM devices. The `"Debug"` option for MFEM's `debug` device
+is useful for debugging issues associated with GPU-based runs of *Palace*.
+
+`"Backend" [""]` :  Specifies the [libCEED backend]
+(https://libceed.org/en/latest/gettingstarted/#backends) to use for the simulation. If no
+backend is specified, a suitable default backend is selected based on the given
+`config["Solver"]["Device"]`.
 
 `"Eigenmode"` :  Top-level object for configuring the eigenvalue solver for the eigenmode
 simulation type. Thus, this object is only relevant for
@@ -74,6 +88,10 @@ Thus, this object is only relevant for [`config["Problem"]["Type"]: "Magnetostat
 
 `"Linear"` :  Top-level object for configuring the linear solver employed by all simulation
 types.
+
+### Advanced solver options
+
+  - `"PartialAssemblyInterpolators" [true]`
 
 ## `solver["Eigenmode"]`
 
@@ -435,7 +453,6 @@ vectors in Krylov subspace methods or other parts of the code.
   - `"MGSmoothEigScaleMax" [1.0]`
   - `"MGSmoothEigScaleMin" [0.0]`
   - `"MGSmoothChebyshev4th" [true]`
-  - `"PCLowOrderRefined" [false]`
   - `"ColumnOrdering" ["Default"]` :  `"METIS"`, `"ParMETIS"`,`"Scotch"`, `"PTScotch"`,
     `"Default"`
   - `"STRUMPACKCompressionType" ["None"]` :  `"None"`, `"BLR"`, `"HSS"`, `"HODLR"`, `"ZFP"`,

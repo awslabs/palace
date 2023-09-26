@@ -8,7 +8,9 @@
   {
     "Order": { "type": "integer", "minimum": 1 },
     "PartialAssemblyOrder": { "type": "integer", "minimum": 1 },
-    "Device": { "type": "string" },
+    "PartialAssemblyInterpolators": { "type": "boolean" },
+    "Device": { "type": "string", "enum": ["CPU", "GPU", "Debug"] },
+    "Backend": { "type": "string" },
     "Eigenmode":
     {
       "type": "object",
@@ -115,7 +117,6 @@
         "MGSmoothChebyshev4th": { "type": "boolean" },
         "PCMatReal": { "type": "boolean" },
         "PCMatShifted": { "type": "boolean" },
-        "PCLowOrderRefined": { "type": "boolean" },
         "PCSide": { "type": "string" },
         "ColumnOrdering": { "type": "string" },
         "STRUMPACKCompressionType": { "type": "string" },
