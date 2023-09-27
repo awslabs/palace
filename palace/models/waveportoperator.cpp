@@ -26,6 +26,9 @@ namespace palace
 
 using namespace std::complex_literals;
 
+// XX TODO: All these tiny solves should happen only on the CPU (if we can configure Hypre
+//          device at runtime).
+
 namespace
 {
 
@@ -50,6 +53,8 @@ void GetEssentialTrueDofs(mfem::ParGridFunction &E0t, mfem::ParGridFunction &E0n
   h1_fespace.GetEssentialTrueDofs(dbc_marker, h1_dbc_tdof_list);
 
   Vector tE0t(nd_fespace.GetTrueVSize()), tE0n(h1_fespace.GetTrueVSize());
+  tE0t.UseDevice(true);
+  tE0n.UseDevice(true);
   tE0t = 0.0;
   tE0n = 0.0;
   linalg::SetSubVector(tE0t, nd_dbc_tdof_list, 1.0);
@@ -61,20 +66,26 @@ void GetEssentialTrueDofs(mfem::ParGridFunction &E0t, mfem::ParGridFunction &E0n
 
   Vector port_tE0t(port_nd_fespace.GetTrueVSize()),
       port_tE0n(port_h1_fespace.GetTrueVSize());
+  port_tE0t.UseDevice(true);
+  port_tE0n.UseDevice(true);
   port_E0t.ParallelProject(port_tE0t);
   port_E0n.ParallelProject(port_tE0n);
-  for (int i = 0; i < port_tE0t.Size(); i++)
   {
-    if (port_tE0t[i] != 0.0)
+    const auto *h_port_tE0t = port_tE0t.HostRead();
+    const auto *h_port_tE0n = port_tE0n.HostRead();
+    for (int i = 0; i < port_tE0t.Size(); i++)
     {
-      port_nd_dbc_tdof_list.Append(i);
+      if (h_port_tE0t[i] != 0.0)
+      {
+        port_nd_dbc_tdof_list.Append(i);
+      }
     }
-  }
-  for (int i = 0; i < port_tE0n.Size(); i++)
-  {
-    if (port_tE0n[i] != 0.0)
+    for (int i = 0; i < port_tE0n.Size(); i++)
     {
-      port_h1_dbc_tdof_list.Append(i);
+      if (h_port_tE0n[i] != 0.0)
+      {
+        port_h1_dbc_tdof_list.Append(i);
+      }
     }
   }
 }
@@ -934,8 +945,6 @@ void WavePortData::Initialize(double omega)
     port_si->Assemble();
     Normalize(*port_S0t, *port_E0t, *port_E0n, *port_sr, *port_si);
   }
-
-  // XX TODO UNSURE IF NEED DEVICE-HOST TRANSFER HERE
 }
 
 std::unique_ptr<mfem::VectorCoefficient>

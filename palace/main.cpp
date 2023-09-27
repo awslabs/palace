@@ -24,6 +24,9 @@
 #if defined(MFEM_USE_OPENMP)
 #include <omp.h>
 #endif
+#if defined(MFEM_USE_STRUMPACK)
+#include <StrumpackConfig.hpp>
+#endif
 
 using namespace palace;
 
@@ -68,7 +71,16 @@ static int ConfigureOmp()
 #endif
 }
 
-static int GetDeviceId(MPI_Comm comm)
+static int GetNumGpu()
+{
+#if defined(MFEM_USE_CUDA) || defined(MFEM_USE_HIP)
+  return mfem::Device::GetNumGPU();
+#else
+  return 0;
+#endif
+}
+
+static int GetDeviceId(MPI_Comm comm, int ngpu)
 {
   // Assign devices round-robin over MPI ranks if GPU support is enabled.
 #if defined(MFEM_USE_CUDA) || defined(MFEM_USE_HIP)
@@ -77,45 +89,61 @@ static int GetDeviceId(MPI_Comm comm)
                       &node_comm);
   int node_size = Mpi::Rank(node_comm);
   MPI_Comm_free(&node_comm);
-  return node_size % mfem::Device::GetNumGPU();
+  return node_size % ngpu;
 #else
   return 0;
 #endif
 }
 
-static std::string ConfigureDeviceAndBackend(config::SolverData::Device device,
-                                             const std::string &ceed_backend)
+static std::string ConfigureDevice(config::SolverData::Device device)
 {
-  // Configure
-  std::string device_str, default_ceed_backend;
+  std::string device_str;
   switch (device)
   {
     case config::SolverData::Device::CPU:
       device_str = "cpu";
-      default_ceed_backend = "/cpu/self";
       break;
     case config::SolverData::Device::GPU:
 #if defined(MFEM_USE_CUDA)
       device_str = "cuda";
-      default_ceed_backend = "/gpu/cuda/magma";
 #elif defined(MFEM_USE_HIP)
       device_str = "hip";
-      default_ceed_backend = "/gpu/hip/magma";
 #else
-      MFEM_ABORT(
-          "Palace must be built with either CUDA or HIP support for GPU device usage!");
+      Mpi::Warning("Palace must be built with either CUDA or HIP support for GPU device "
+                   "usage, reverting to CPU!\n");
+      device_str = "cpu";
 #endif
       break;
     case config::SolverData::Device::DEBUG:
       device_str = "cpu,debug";
-      default_ceed_backend = "/cpu/self/ref";
       break;
   }
 #if defined(MFEM_USE_OPENMP)
   device_str += ",omp";
 #endif
+  return device_str;
+}
 
-  // Initialize libCEED.
+static void ConfigureCeedBackend(const std::string &ceed_backend)
+{
+  // Initialize libCEED (only after MFEM device is configured).
+  std::string default_ceed_backend;
+  if (mfem::Device::Allows(mfem::Backend::CUDA_MASK))
+  {
+    default_ceed_backend = "/gpu/cuda/magma";
+  }
+  else if (mfem::Device::Allows(mfem::Backend::HIP_MASK))
+  {
+    default_ceed_backend = "/gpu/hip/magma";
+  }
+  else if (mfem::Device::Allows(mfem::Backend::DEBUG_DEVICE))
+  {
+    default_ceed_backend = "/cpu/self/ref/serial";
+  }
+  else
+  {
+    default_ceed_backend = "/cpu/self";
+  }
   const std::string &backend =
       !ceed_backend.empty() ? ceed_backend.c_str() : default_ceed_backend.c_str();
   ceed::Initialize(backend.c_str(), GetPalaceCeedJitSourceDir());
@@ -128,8 +156,6 @@ static std::string ConfigureDeviceAndBackend(config::SolverData::Device device,
         "libCEED is not using the requested backend!\nRequested \"{}\", got \"{}\"!\n",
         backend, ceed_resource);
   }
-
-  return device_str;
 }
 
 static void PrintPalaceBanner(MPI_Comm comm)
@@ -141,7 +167,7 @@ static void PrintPalaceBanner(MPI_Comm comm)
                    "  /__/     \\___,__/__/\\___,__/\\_____\\_____/\n\n");
 }
 
-static void PrintPalaceInfo(MPI_Comm comm, int np, int nt, mfem::Device &device)
+static void PrintPalaceInfo(MPI_Comm comm, int np, int nt, int ngpu, mfem::Device &device)
 {
   if (std::strcmp(GetPalaceGitTag(), "UNKNOWN"))
   {
@@ -153,14 +179,13 @@ static void PrintPalaceInfo(MPI_Comm comm, int np, int nt, mfem::Device &device)
     Mpi::Print(comm, ", {:d} OpenMP thread{}", nt, (nt > 1) ? "s" : "");
   }
 #if defined(MFEM_USE_CUDA) || defined(MFEM_USE_HIP)
-  int ngpu = mfem::Device::GetNumGPU();
 #if defined(MFEM_USE_CUDA)
   const char *device_name = "CUDA";
 #else
   const char *device_name = "HIP";
 #endif
-  Mpi::Print(comm, "\n{:d} detected {} device{}{}", ngpu, device_name,
-             (ngpu > 1) ? "s" : "",
+  Mpi::Print(comm, "\nDetected {:d} {} device{}{}", ngpu, device_name,
+             (ngpu != 1) ? "s" : "",
              mfem::Device::GetGPUAwareMPI() ? " (MPI is GPU aware)" : "");
 #endif
   std::ostringstream resource(std::stringstream::out);
@@ -174,6 +199,10 @@ static void PrintPalaceInfo(MPI_Comm comm, int np, int nt, mfem::Device &device)
 int main(int argc, char *argv[])
 {
   // Initialize MPI.
+#if defined(MFEM_USE_STRUMPACK) && \
+    (defined(STRUMPACK_USE_PTSCOTCH) || defined(STRUMPACK_USE_SLATE_SCALAPACK))
+  Mpi::default_thread_required = MPI_THREAD_MULTIPLE;
+#endif
   Mpi::Init(argc, argv);
   MPI_Comm world_comm = Mpi::World();
   bool world_root = Mpi::Root(world_comm);
@@ -233,10 +262,9 @@ int main(int argc, char *argv[])
   IoData iodata(argv[1], false);
 
   // Initialize the MFEM device and configure libCEED backend.
-  int omp_threads = ConfigureOmp(), device_id = GetDeviceId(world_comm);
-  mfem::Device device(
-      ConfigureDeviceAndBackend(iodata.solver.device, iodata.solver.ceed_backend),
-      device_id);
+  int omp_threads = ConfigureOmp(), ngpu = GetNumGpu();
+  mfem::Device device(ConfigureDevice(iodata.solver.device), GetDeviceId(world_comm, ngpu));
+  ConfigureCeedBackend(iodata.solver.ceed_backend);
 #if defined(HYPRE_WITH_GPU_AWARE_MPI)
   device.SetGPUAwareMPI(true);
 #endif
@@ -253,7 +281,7 @@ int main(int argc, char *argv[])
 #endif
 
   // Initialize the problem driver.
-  PrintPalaceInfo(world_comm, world_size, omp_threads, device);
+  PrintPalaceInfo(world_comm, world_size, omp_threads, ngpu, device);
   const auto solver = [&]() -> std::unique_ptr<BaseSolver>
   {
     switch (iodata.problem.type)

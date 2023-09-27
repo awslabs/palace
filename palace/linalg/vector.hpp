@@ -22,8 +22,7 @@ using Vector = mfem::Vector;
 class ComplexVector
 {
 private:
-  // XX TODO WIP REMOVE FOR NOW (NO ALIAS) -> Vector x;
-  Vector xr, xi;
+  Vector xr_, xi_;
 
 public:
   // Create a vector with the given size.
@@ -41,27 +40,23 @@ public:
   // Flag for runtime execution on the mfem::Device. See the documentation for mfem::Vector.
   void UseDevice(bool use_dev)
   {
-    xr.UseDevice(use_dev);
-    xi.UseDevice(use_dev);
+    xr_.UseDevice(use_dev);
+    xi_.UseDevice(use_dev);
   }
-  bool UseDevice() const { return xr.UseDevice() || xi.UseDevice(); }
+  bool UseDevice() const { return xr_.UseDevice(); }
 
   // Return the size of the vector.
-  int Size() const { return xr.Size(); }
+  int Size() const { return xr_.Size(); }
 
   // Set the size of the vector. See the notes for Vector::SetSize for behavior in the cases
   // where n is less than or greater than Size() or Capacity().
-  void SetSize(int n)
-  {
-    xr.SetSize(n);
-    xi.SetSize(n);
-  }
+  void SetSize(int n);
 
   // Get access to the real and imaginary vector parts.
-  const Vector &Real() const { return xr; }
-  Vector &Real() { return xr; }
-  const Vector &Imag() const { return xi; }
-  Vector &Imag() { return xi; }
+  const Vector &Real() const { return xr_; }
+  Vector &Real() { return xr_; }
+  const Vector &Imag() const { return xi_; }
+  Vector &Imag() { return xi_; }
 
   // Set from a ComplexVector, without resizing.
   ComplexVector &operator=(const ComplexVector &y) { return Set(y); }
@@ -75,12 +70,10 @@ public:
   void Set(const Vector &yr, const Vector &yi);
 
   // Set from an array of complex values, without resizing.
-  void Set(const std::complex<double> *py, int n,
-           bool on_dev);  // XX TODO MEMORY LOCATION....
+  void Set(const std::complex<double> *py, int n, bool on_dev);
 
   // Copy the vector into an array of complex values.
-  void Get(std::complex<double> *py, int n,
-           bool on_dev) const;  // XX TODO MEMORY LOCATION....
+  void Get(std::complex<double> *py, int n, bool on_dev) const;
 
   // Set all entries equal to s.
   ComplexVector &operator=(std::complex<double> s);

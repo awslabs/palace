@@ -10,7 +10,7 @@
 namespace palace
 {
 
-ComplexVector::ComplexVector(int n) : xr(n), xi(n) {}
+ComplexVector::ComplexVector(int n) : xr_(n), xi_(n) {}
 
 ComplexVector::ComplexVector(const ComplexVector &y) : ComplexVector(y.Size())
 {
@@ -30,6 +30,12 @@ ComplexVector::ComplexVector(const std::complex<double> *py, int n, bool on_dev)
   : ComplexVector(n)
 {
   Set(py, n, on_dev);
+}
+
+void ComplexVector::SetSize(int n)
+{
+  xr_.SetSize(n);
+  xi_.SetSize(n);
 }
 
 void ComplexVector::Set(const Vector &yr, const Vector &yi)
@@ -481,7 +487,7 @@ template <>
 void SetSubVector(Vector &x, int start, int end, double s)
 {
   const bool use_dev = x.UseDevice();
-  MFEM_ASSERT(start >= 0 && end < x.Size() && start <= end,
+  MFEM_ASSERT(start >= 0 && end <= x.Size() && start <= end,
               "Invalid range for SetSubVector!");
   const int N = end - start;
   const double sr = s;
@@ -493,7 +499,7 @@ template <>
 void SetSubVector(ComplexVector &x, int start, int end, double s)
 {
   const bool use_dev = x.UseDevice();
-  MFEM_ASSERT(start >= 0 && end < x.Size() && start <= end,
+  MFEM_ASSERT(start >= 0 && end <= x.Size() && start <= end,
               "Invalid range for SetSubVector!");
   const int N = end - start;
   const double sr = s;

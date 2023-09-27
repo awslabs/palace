@@ -164,6 +164,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   std::unique_ptr<DivFreeSolver<ComplexVector>> divfree;
   if (iodata.solver.linear.divfree_max_it > 0)
   {
+    Mpi::Print(" Configuring divergence-free projection\n");
     constexpr int divfree_verbose = 0;
     divfree = std::make_unique<DivFreeSolver<ComplexVector>>(
         spaceop.GetMaterialOp(), spaceop.GetNDSpace(), spaceop.GetH1Spaces(),

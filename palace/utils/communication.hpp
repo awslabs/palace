@@ -181,8 +181,14 @@ class Mpi
 {
 public:
   // Singleton creation.
-  static void Init() { Init(nullptr, nullptr); }
-  static void Init(int &argc, char **&argv) { Init(&argc, &argv); }
+  static void Init(int requested = default_thread_required)
+  {
+    Init(nullptr, nullptr, requested);
+  }
+  static void Init(int &argc, char **&argv, int requested = default_thread_required)
+  {
+    Init(&argc, &argv, requested);
+  }
 
   // Finalize MPI (if it has been initialized and not yet already finalized).
   static void Finalize()
@@ -365,6 +371,13 @@ public:
   // Return the global communicator.
   static MPI_Comm World() { return MPI_COMM_WORLD; }
 
+  // Default level of threading used in MPI_Init_thread unless provided to Init.
+#if defined(MFEM_USE_OPENMP)
+  inline static int default_thread_required = MPI_THREAD_FUNNELED;
+#else
+  inline static int default_thread_required = MPI_THREAD_SINGLE;
+#endif
+
 private:
   // Prevent direct construction of objects of this class.
   Mpi() = default;
@@ -377,19 +390,15 @@ private:
     return mpi;
   }
 
-  static void Init(int *argc, char ***argv)
+  static void Init(int *argc, char ***argv, int requested)
   {
     // The Mpi object below needs to be created after MPI_Init() for some MPI
     // implementations.
     MFEM_VERIFY(!IsInitialized(), "MPI should not be initialized more than once!");
-#if defined(MFEM_USE_OPENMP)
-    int provided, requested = MPI_THREAD_FUNNELED;  // MPI_THREAD_MULTIPLE
+    int provided;
     MPI_Init_thread(argc, argv, requested, &provided);
     MFEM_VERIFY(provided >= requested,
                 "MPI could not provide the requested level of thread support!");
-#else
-    MPI_Init(argc, argv);
-#endif
     // Initialize the singleton Instance.
     Instance();
   }
