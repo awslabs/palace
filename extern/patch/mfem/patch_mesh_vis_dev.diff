@@ -481,7 +481,7 @@ index c216188af..9f40e52af 100644
     /// preserve timestep metadata for any solutions prior to the currently
     /// defined time.
 diff --git a/mesh/mesh.cpp b/mesh/mesh.cpp
-index f5d4dd89a..3948e4df6 100644
+index d79ee99cf..3b2dec898 100644
 --- a/mesh/mesh.cpp
 +++ b/mesh/mesh.cpp
 @@ -10886,7 +10886,8 @@ void Mesh::PrintVTU(std::string fname,
@@ -576,10 +576,10 @@ index 42032e05a..b373fb72d 100644
     /** @brief Prints the mesh with boundary elements given by the boundary of
         the subdomains, so that the boundary of subdomain i has boundary
 diff --git a/mesh/pmesh.cpp b/mesh/pmesh.cpp
-index 64b50dbd9..cffe6828e 100644
+index b341be9a8..0cb8996fb 100644
 --- a/mesh/pmesh.cpp
 +++ b/mesh/pmesh.cpp
-@@ -6393,7 +6393,8 @@ void ParMesh::PrintVTU(std::string pathname,
+@@ -6379,7 +6379,8 @@ void ParMesh::PrintVTU(std::string pathname,
                         VTKFormat format,
                         bool high_order_output,
                         int compression_level,
@@ -589,7 +589,7 @@ index 64b50dbd9..cffe6828e 100644
  {
     int pad_digits_rank = 6;
     DataCollection::create_directory(pathname, this, MyRank);
-@@ -6453,7 +6454,8 @@ void ParMesh::PrintVTU(std::string pathname,
+@@ -6439,7 +6440,8 @@ void ParMesh::PrintVTU(std::string pathname,
  
     std::string vtu_fname = pathname + "/" + fname + ".proc"
                             + to_padded_string(MyRank, pad_digits_rank);

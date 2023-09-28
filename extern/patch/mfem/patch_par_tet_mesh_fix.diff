@@ -61,7 +61,7 @@ index 44390f76c..e1aef168b 100644
  
  }
 diff --git a/fem/pfespace.cpp b/fem/pfespace.cpp
-index fa6a31a9e..4d64559c6 100644
+index 9e0a9faaf..4bbbcdb42 100644
 --- a/fem/pfespace.cpp
 +++ b/fem/pfespace.cpp
 @@ -43,7 +43,7 @@ ParFiniteElementSpace::ParFiniteElementSpace(
@@ -74,10 +74,10 @@ index fa6a31a9e..4d64559c6 100644
     : FiniteElementSpace(pm, MakeLocalNURBSext(global_fes->GetNURBSext(),
                                                pm->NURBSext),
 diff --git a/fem/pfespace.hpp b/fem/pfespace.hpp
-index 1fbc7ccd1..ee82b0891 100644
+index d3b4061e8..bdfc155e9 100644
 --- a/fem/pfespace.hpp
 +++ b/fem/pfespace.hpp
-@@ -247,14 +247,11 @@ public:
+@@ -243,14 +243,11 @@ public:
     /** @brief Construct the *local* ParFiniteElementSpace corresponding to the
         global FE space, @a global_fes. */
     /** The parameter @a pm is the *local* ParMesh obtained by decomposing the
@@ -109,6 +109,9 @@ index d49187457..0a58530c1 100644
     SetSize(pfes->GetVSize());
  
     if (partitioning)
+diff --git a/fem/tmop_amr.cpp b/fem/tmop_amr.cpp
+old mode 100755
+new mode 100644
 diff --git a/mesh/element.cpp b/mesh/element.cpp
 index c21b8f9bd..1e5ee7706 100644
 --- a/mesh/element.cpp
@@ -230,7 +233,7 @@ index a8186c0c8..6b62a14d6 100644
  
     virtual int GetNFaceVertices(int) const { return 4; }
 diff --git a/mesh/mesh.cpp b/mesh/mesh.cpp
-index 45871a66e..9673e7575 100644
+index 1f26c6587..4e027654c 100644
 --- a/mesh/mesh.cpp
 +++ b/mesh/mesh.cpp
 @@ -484,6 +484,7 @@ void Mesh::GetBdrElementTransformation(int i, IsoparametricTransformation* ElTr)
@@ -658,7 +661,7 @@ index 419745f1b..088147d89 100644
     // Methods used to prepare and apply permutation of the mesh nodes assuming
     // that the mesh elements may be rotated (e.g. to mark triangle or tet edges
 diff --git a/mesh/pmesh.cpp b/mesh/pmesh.cpp
-index d9f0df7b1..206b53f96 100644
+index ac1df211e..206b53f96 100644
 --- a/mesh/pmesh.cpp
 +++ b/mesh/pmesh.cpp
 @@ -20,6 +20,7 @@
@@ -725,8 +728,7 @@ index d9f0df7b1..206b53f96 100644
 -   // create a GroupCommunicator on the shared edges
 +   // create a GroupCommunicator over shared edges
     GroupCommunicator sedge_comm(gtopo);
--   GetSharedEdgeCommunicator(sedge_comm);
-+   GetSharedEdgeCommunicator(0, sedge_comm);
+    GetSharedEdgeCommunicator(0, sedge_comm);
  
 -   Array<int> sedge_ord(shared_edges.Size());
 -   Array<Pair<int,int> > sedge_ord_map(shared_edges.Size());
@@ -911,14 +913,7 @@ index d9f0df7b1..206b53f96 100644
        delete Nodes;
        Nodes = new_nodes;
     }
-@@ -3288,23 +3256,21 @@ void ParMesh::ReorientTetMesh()
- 
-    // create a GroupCommunicator over shared vertices
-    GroupCommunicator svert_comm(gtopo);
--   GetSharedVertexCommunicator(svert_comm);
-+   GetSharedVertexCommunicator(0, svert_comm);
- 
-    // communicate the local index of each shared vertex from the group master to
+@@ -3294,17 +3262,15 @@ void ParMesh::ReorientTetMesh()
     // other ranks in the group
     Array<int> svert_master_rank(svert_lvert.Size());
     Array<int> svert_master_index(svert_lvert);
@@ -941,31 +936,6 @@ index d9f0df7b1..206b53f96 100644
  
     // the pairs (master rank, master local index) define a globally consistent
     // vertex ordering
-@@ -3370,22 +3336,8 @@ void ParMesh::ReorientTetMesh()
-    {
-       // create a GroupCommunicator on the shared triangles
-       GroupCommunicator stria_comm(gtopo);
--      {
--         // initialize stria_comm
--         Table &gr_stria = stria_comm.GroupLDofTable();
--         // gr_stria differs from group_stria - the latter does not store gr. 0
--         gr_stria.SetDims(GetNGroups(), shared_trias.Size());
--         gr_stria.GetI()[0] = 0;
--         for (int gr = 1; gr <= GetNGroups(); gr++)
--         {
--            gr_stria.GetI()[gr] = group_stria.GetI()[gr-1];
--         }
--         for (int k = 0; k < shared_trias.Size(); k++)
--         {
--            gr_stria.GetJ()[k] = group_stria.GetJ()[k];
--         }
--         stria_comm.Finalize();
--      }
-+      GetSharedTriCommunicator(0, stria_comm);
-+
-       Array<int> stria_flag(shared_trias.Size());
-       for (int i = 0; i < stria_flag.Size(); i++)
-       {
 diff --git a/mesh/pmesh.hpp b/mesh/pmesh.hpp
 index 0aab7982e..2ed8b00ec 100644
 --- a/mesh/pmesh.hpp
@@ -1137,7 +1107,7 @@ index d67841564..038a3c378 100644
 -
  }
 diff --git a/mesh/pyramid.hpp b/mesh/pyramid.hpp
-index 8e171a31d..1a8af4ed3 100644
+index 8e171a31d..d6b6afa3e 100644
 --- a/mesh/pyramid.hpp
 +++ b/mesh/pyramid.hpp
 @@ -18,7 +18,7 @@
@@ -1149,6 +1119,15 @@ index 8e171a31d..1a8af4ed3 100644
  class Pyramid : public Element
  {
  protected:
+@@ -42,7 +42,7 @@ public:
+    /// Set the vertices according to the given input.
+    virtual void SetVertices(const int *ind);
+ 
+-   /// Returns the indices of the element's  vertices.
++   /// Returns the indices of the element's vertices.
+    virtual void GetVertices(Array<int> &v) const;
+ 
+    virtual int *GetVertices() { return indices; }
 @@ -54,13 +54,10 @@ public:
     virtual const int *GetEdgeVertices(int ei) const
     { return geom_t::Edges[ei]; }
@@ -1305,10 +1284,18 @@ index 717245907..82bdbdf3b 100644
 -
  }
 diff --git a/mesh/segment.hpp b/mesh/segment.hpp
-index 6ca918758..3cefa7edc 100644
+index 6ca918758..9d58704e4 100644
 --- a/mesh/segment.hpp
 +++ b/mesh/segment.hpp
-@@ -48,14 +48,10 @@ public:
+@@ -41,21 +41,17 @@ public:
+    /// Return element's type.
+    virtual Type GetType() const { return Element::SEGMENT; }
+ 
+-   /// Returns the indices of the element's  vertices.
++   /// Returns the indices of the element's vertices.
+    virtual void GetVertices(Array<int> &v) const;
+ 
+    virtual int *GetVertices() { return indices; }
  
     virtual int GetNVertices() const { return 2; }
  
@@ -1431,7 +1418,7 @@ index 7c9c8de7a..75c40197f 100644
 +
  }
 diff --git a/mesh/tetrahedron.hpp b/mesh/tetrahedron.hpp
-index b72e5db55..c9b44a8f5 100644
+index b72e5db55..731cefb96 100644
 --- a/mesh/tetrahedron.hpp
 +++ b/mesh/tetrahedron.hpp
 @@ -77,7 +77,9 @@ public:
@@ -1445,7 +1432,15 @@ index b72e5db55..c9b44a8f5 100644
  
     virtual void ResetTransform(int tr) { transform = tr; }
     virtual unsigned GetTransform() const { return transform; }
-@@ -96,15 +98,11 @@ public:
+@@ -89,22 +91,18 @@ public:
+    /// Calculate point matrix corresponding to a chain of transformations.
+    static void GetPointMatrix(unsigned transform, DenseMatrix &pm);
+ 
+-   /// Returns the indices of the element's  vertices.
++   /// Returns the indices of the element's vertices.
+    virtual void GetVertices(Array<int> &v) const;
+ 
+    virtual int *GetVertices() { return indices; }
  
     virtual int GetNVertices() const { return 4; }
  
@@ -1585,7 +1580,7 @@ index 5ce32cb31..6eb8c7e59 100644
 +
 +}
 diff --git a/mesh/triangle.hpp b/mesh/triangle.hpp
-index 363bd4503..919b491f9 100644
+index 363bd4503..ae20dd9b7 100644
 --- a/mesh/triangle.hpp
 +++ b/mesh/triangle.hpp
 @@ -13,7 +13,6 @@
@@ -1617,7 +1612,15 @@ index 363bd4503..919b491f9 100644
  
     virtual void ResetTransform(int tr) { transform = tr; }
     virtual unsigned GetTransform() const { return transform; }
-@@ -75,21 +75,16 @@ public:
+@@ -68,28 +68,23 @@ public:
+    /// Calculate point matrix corresponding to a chain of transformations.
+    static void GetPointMatrix(unsigned transform, DenseMatrix &pm);
+ 
+-   /// Returns the indices of the element's  vertices.
++   /// Returns the indices of the element's vertices.
+    virtual void GetVertices(Array<int> &v) const;
+ 
+    virtual int *GetVertices() { return indices; }
  
     virtual int GetNVertices() const { return 3; }
  
@@ -1741,7 +1744,7 @@ index 898da7653..0f7335aa6 100644
 -
  }
 diff --git a/mesh/wedge.hpp b/mesh/wedge.hpp
-index fb8583f8e..764a681a4 100644
+index fb8583f8e..49cc5e7d7 100644
 --- a/mesh/wedge.hpp
 +++ b/mesh/wedge.hpp
 @@ -18,7 +18,7 @@
@@ -1753,6 +1756,15 @@ index fb8583f8e..764a681a4 100644
  class Wedge : public Element
  {
  protected:
+@@ -42,7 +42,7 @@ public:
+    /// Set the vertices according to the given input.
+    virtual void SetVertices(const int *ind);
+ 
+-   /// Returns the indices of the element's  vertices.
++   /// Returns the indices of the element's vertices.
+    virtual void GetVertices(Array<int> &v) const;
+ 
+    virtual int *GetVertices() { return indices; }
 @@ -54,9 +54,6 @@ public:
     virtual const int *GetEdgeVertices(int ei) const
     { return geom_t::Edges[ei]; }
@@ -1763,3 +1775,6 @@ index fb8583f8e..764a681a4 100644
     virtual int GetNFaces() const { return 5; }
  
     virtual int GetNFaceVertices(int fi) const
+diff --git a/miniapps/meshing/mesh-quality.cpp b/miniapps/meshing/mesh-quality.cpp
+old mode 100755
+new mode 100644

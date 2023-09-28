@@ -1913,10 +1913,10 @@ index 698912d97..1290f4e2a 100644
     ~GeometryRefiner();
  };
 diff --git a/fem/intrules.cpp b/fem/intrules.cpp
-index 61f5b9a2a..faee69c96 100644
+index ebab7466a..c240edf44 100644
 --- a/fem/intrules.cpp
 +++ b/fem/intrules.cpp
-@@ -726,7 +726,7 @@ void QuadratureFunctions1D::GivePolyPoints(const int np, double *pts,
+@@ -737,7 +737,7 @@ void QuadratureFunctions1D::GivePolyPoints(const int np, double *pts,
           ClosedGL(np, &ir);
           break;
        }
@@ -1925,7 +1925,7 @@ index 61f5b9a2a..faee69c96 100644
        {
           MFEM_ABORT("Asking for an unknown type of 1D Quadrature points, "
                      "type = " << type);
-@@ -820,7 +820,10 @@ void QuadratureFunctions1D::CalculateUniformWeights(IntegrationRule *ir,
+@@ -831,7 +831,10 @@ void QuadratureFunctions1D::CalculateUniformWeights(IntegrationRule *ir,
           hinv = p+1;
           ihoffset = 1;
           break;
@@ -1937,7 +1937,7 @@ index 61f5b9a2a..faee69c96 100644
           MFEM_ABORT("invalid Quadrature1D type: " << type);
     }
     // set w0 = (-1)^p*(p!)/(hinv^p)
-@@ -929,10 +932,10 @@ IntegrationRules IntRules(0, Quadrature1D::GaussLegendre);
+@@ -940,10 +943,10 @@ IntegrationRules IntRules(0, Quadrature1D::GaussLegendre);
  
  IntegrationRules RefinedIntRules(1, Quadrature1D::GaussLegendre);
  
@@ -1951,7 +1951,7 @@ index 61f5b9a2a..faee69c96 100644
  
     if (refined < 0) { own_rules = 0; return; }
  
-@@ -964,11 +967,19 @@ IntegrationRules::IntegrationRules(int Ref, int type_):
+@@ -975,11 +978,19 @@ IntegrationRules::IntegrationRules(int Ref, int type_):
  
     CubeIntRules.SetSize(32, h_mt);
     CubeIntRules = NULL;
@@ -1972,7 +1972,7 @@ index 61f5b9a2a..faee69c96 100644
  
     switch (GeomType)
     {
-@@ -980,9 +991,9 @@ const IntegrationRule &IntegrationRules::Get(int GeomType, int Order)
+@@ -991,9 +1002,9 @@ const IntegrationRule &IntegrationRules::Get(int GeomType, int Order)
        case Geometry::CUBE:        ir_array = &CubeIntRules; break;
        case Geometry::PRISM:       ir_array = &PrismIntRules; break;
        case Geometry::PYRAMID:     ir_array = &PyramidIntRules; break;
@@ -1985,7 +1985,7 @@ index 61f5b9a2a..faee69c96 100644
     }
  
     if (Order < 0)
-@@ -990,32 +1001,31 @@ const IntegrationRule &IntegrationRules::Get(int GeomType, int Order)
+@@ -1001,36 +1012,35 @@ const IntegrationRule &IntegrationRules::Get(int GeomType, int Order)
        Order = 0;
     }
  
@@ -1998,24 +1998,31 @@ index 61f5b9a2a..faee69c96 100644
 -#ifdef MFEM_USE_LEGACY_OPENMP
 -      #pragma omp critical
 -#endif
-+      IntegrationRule *ir = GenerateIntegrationRule(GeomType, Order);
-+      int RealOrder = Order;
-+      while (RealOrder+1 < ir_array->Size() && (*ir_array)[RealOrder+1] == ir)
-       {
+-      {
 -         if (!HaveIntRule(*ir_array, Order))
 -         {
 -            IntegrationRule *ir = GenerateIntegrationRule(GeomType, Order);
++      IntegrationRule *ir = GenerateIntegrationRule(GeomType, Order);
+ #ifdef MFEM_DEBUG
 -            int RealOrder = Order;
 -            while (RealOrder+1 < ir_array->Size() &&
 -                   (*ir_array)[RealOrder+1] == ir)
 -            {
 -               RealOrder++;
 -            }
--            ir->SetOrder(RealOrder);
--         }
+-            MFEM_VERIFY(RealOrder == ir->GetOrder(), "internal error");
++      int RealOrder = Order;
++      while (RealOrder+1 < ir_array->Size() && (*ir_array)[RealOrder+1] == ir)
++      {
 +         RealOrder++;
-       }
-+      ir->SetOrder(RealOrder);
++      }
++      MFEM_VERIFY(RealOrder == ir->GetOrder(), "internal error");
+ #else
+-            MFEM_CONTRACT_VAR(ir);
++      MFEM_CONTRACT_VAR(ir);
+ #endif
+-         }
+-      }
     }
  
 +#if defined(MFEM_THREAD_SAFE) && defined(MFEM_USE_OPENMP)
@@ -2032,7 +2039,7 @@ index 61f5b9a2a..faee69c96 100644
  
     switch (GeomType)
     {
-@@ -1027,11 +1037,15 @@ void IntegrationRules::Set(int GeomType, int Order, IntegrationRule &IntRule)
+@@ -1042,11 +1052,15 @@ void IntegrationRules::Set(int GeomType, int Order, IntegrationRule &IntRule)
        case Geometry::CUBE:        ir_array = &CubeIntRules; break;
        case Geometry::PRISM:       ir_array = &PrismIntRules; break;
        case Geometry::PYRAMID:     ir_array = &PyramidIntRules; break;
@@ -2051,7 +2058,7 @@ index 61f5b9a2a..faee69c96 100644
     if (HaveIntRule(*ir_array, Order))
     {
        MFEM_ABORT("Overwriting set rules is not supported!");
-@@ -1040,16 +1054,19 @@ void IntegrationRules::Set(int GeomType, int Order, IntegrationRule &IntRule)
+@@ -1055,16 +1069,19 @@ void IntegrationRules::Set(int GeomType, int Order, IntegrationRule &IntRule)
     AllocIntRule(*ir_array, Order);
  
     (*ir_array)[Order] = &IntRule;
@@ -2076,7 +2083,7 @@ index 61f5b9a2a..faee69c96 100644
     {
        if (ir_array[i] != NULL && ir_array[i] != ir)
        {
-@@ -1061,6 +1078,13 @@ void IntegrationRules::DeleteIntRuleArray(Array<IntegrationRule *> &ir_array)
+@@ -1076,6 +1093,13 @@ void IntegrationRules::DeleteIntRuleArray(Array<IntegrationRule *> &ir_array)
  
  IntegrationRules::~IntegrationRules()
  {
@@ -2090,7 +2097,7 @@ index 61f5b9a2a..faee69c96 100644
     if (!own_rules) { return; }
  
     DeleteIntRuleArray(PointIntRules);
-@@ -1095,10 +1119,11 @@ IntegrationRule *IntegrationRules::GenerateIntegrationRule(int GeomType,
+@@ -1110,10 +1134,11 @@ IntegrationRule *IntegrationRules::GenerateIntegrationRule(int GeomType,
           return PrismIntegrationRule(Order);
        case Geometry::PYRAMID:
           return PyramidIntegrationRule(Order);
@@ -2105,7 +2112,7 @@ index 61f5b9a2a..faee69c96 100644
  }
  
  
-@@ -1107,7 +1132,7 @@ IntegrationRule *IntegrationRules::PointIntegrationRule(int Order)
+@@ -1122,7 +1147,7 @@ IntegrationRule *IntegrationRules::PointIntegrationRule(int Order)
  {
     if (Order > 1)
     {
@@ -2114,7 +2121,7 @@ index 61f5b9a2a..faee69c96 100644
        return NULL;
     }
  
-@@ -1169,7 +1194,7 @@ IntegrationRule *IntegrationRules::SegmentIntegrationRule(int Order)
+@@ -1185,7 +1210,7 @@ IntegrationRule *IntegrationRules::SegmentIntegrationRule(int Order)
           QuadratureFunctions1D::OpenHalfUniform(n, ir);
           break;
        }
@@ -2123,7 +2130,7 @@ index 61f5b9a2a..faee69c96 100644
        {
           MFEM_ABORT("unknown Quadrature1D type: " << quad_type);
        }
-@@ -1717,8 +1742,8 @@ IntegrationRule *IntegrationRules::PyramidIntegrationRule(int Order)
+@@ -1762,8 +1787,8 @@ IntegrationRule *IntegrationRules::PyramidIntegrationRule(int Order)
  
     for (int k=0; k<npts; k++)
     {
@@ -2134,7 +2141,7 @@ index 61f5b9a2a..faee69c96 100644
        ipp.x = ipc.x * (1.0 - ipc.z);
        ipp.y = ipc.y * (1.0 - ipc.z);
        ipp.z = ipc.z;
-@@ -1730,8 +1755,8 @@ IntegrationRule *IntegrationRules::PyramidIntegrationRule(int Order)
+@@ -1775,8 +1800,8 @@ IntegrationRule *IntegrationRules::PyramidIntegrationRule(int Order)
  // Integration rules for reference prism
  IntegrationRule *IntegrationRules::PrismIntegrationRule(int Order)
  {
@@ -2145,7 +2152,7 @@ index 61f5b9a2a..faee69c96 100644
     int nt = irt.GetNPoints();
     int ns = irs.GetNPoints();
     AllocIntRule(PrismIntRules, Order);
-@@ -1739,12 +1764,12 @@ IntegrationRule *IntegrationRules::PrismIntegrationRule(int Order)
+@@ -1785,12 +1810,12 @@ IntegrationRule *IntegrationRules::PrismIntegrationRule(int Order)
  
     for (int ks=0; ks<ns; ks++)
     {
@@ -2162,7 +2169,7 @@ index 61f5b9a2a..faee69c96 100644
           ipp.y = ipt.y;
           ipp.z = ips.x;
 diff --git a/fem/intrules.hpp b/fem/intrules.hpp
-index 1bb650f6a..5ff8e5de7 100644
+index bf38766d7..1d5757994 100644
 --- a/fem/intrules.hpp
 +++ b/fem/intrules.hpp
 @@ -14,6 +14,9 @@
@@ -2219,10 +2226,10 @@ index 1bb650f6a..5ff8e5de7 100644
  
     /// Returns an integration rule for given GeomType and Order.
 diff --git a/mesh/mesh.cpp b/mesh/mesh.cpp
-index 45871a66e..559fb16b4 100644
+index 4e027654c..5aac3e112 100644
 --- a/mesh/mesh.cpp
 +++ b/mesh/mesh.cpp
-@@ -4435,9 +4435,7 @@ void Mesh::MakeRefined_(Mesh &orig_mesh, const Array<int> ref_factors,
+@@ -4458,9 +4458,7 @@ void Mesh::MakeRefined_(Mesh &orig_mesh, const Array<int> ref_factors,
  
     Array<int> rdofs;
     DenseMatrix phys_pts;

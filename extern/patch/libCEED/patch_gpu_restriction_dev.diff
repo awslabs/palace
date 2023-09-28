@@ -1174,7 +1174,7 @@ index f47c52b7..29d3b083 100644
  }
  
 diff --git a/backends/cuda-ref/ceed-cuda-ref-restriction.c b/backends/cuda-ref/ceed-cuda-ref-restriction.c
-index 71ed2821..63713146 100644
+index 71ed2821..41e1fcc0 100644
 --- a/backends/cuda-ref/ceed-cuda-ref-restriction.c
 +++ b/backends/cuda-ref/ceed-cuda-ref-restriction.c
 @@ -19,22 +19,23 @@
@@ -1210,7 +1210,7 @@ index 71ed2821..63713146 100644
    const CeedInt num_nodes = impl->num_nodes;
  
    // Get vectors
-@@ -50,45 +51,124 @@ static int CeedElemRestrictionApply_Cuda(CeedElemRestriction r, CeedTransposeMod
+@@ -50,45 +51,134 @@ static int CeedElemRestrictionApply_Cuda(CeedElemRestriction r, CeedTransposeMod
    // Restrict
    if (t_mode == CEED_NOTRANSPOSE) {
      // L-vector -> E-vector
@@ -1274,6 +1274,11 @@ index 71ed2821..63713146 100644
 +
 +          CeedCallBackend(CeedRunKernel_Cuda(ceed, kernel, grid, block_size, args));
 +        }
++      } break;
++      case CEED_RESTRICTION_POINTS: {
++        // LCOV_EXCL_START
++        return CeedError(ceed, CEED_ERROR_UNSUPPORTED, "Backend does not implement restriction CeedElemRestrictionAtPoints");
++        // LCOV_EXCL_STOP
 +      } break;
      }
    } else {
@@ -1368,10 +1373,15 @@ index 71ed2821..63713146 100644
 +          }
 +        }
 +      } break;
++      case CEED_RESTRICTION_POINTS: {
++        // LCOV_EXCL_START
++        return CeedError(ceed, CEED_ERROR_UNSUPPORTED, "Backend does not implement restriction CeedElemRestrictionAtPoints");
++        // LCOV_EXCL_STOP
++      } break;
      }
    }
  
-@@ -100,6 +180,29 @@ static int CeedElemRestrictionApply_Cuda(CeedElemRestriction r, CeedTransposeMod
+@@ -100,6 +190,29 @@ static int CeedElemRestrictionApply_Cuda(CeedElemRestriction r, CeedTransposeMod
    return CEED_ERROR_SUCCESS;
  }
  
@@ -1401,7 +1411,7 @@ index 71ed2821..63713146 100644
  //------------------------------------------------------------------------------
  // Get offsets
  //------------------------------------------------------------------------------
-@@ -118,21 +221,61 @@ static int CeedElemRestrictionGetOffsets_Cuda(CeedElemRestriction rstr, CeedMemT
+@@ -118,21 +231,61 @@ static int CeedElemRestrictionGetOffsets_Cuda(CeedElemRestriction rstr, CeedMemT
    return CEED_ERROR_SUCCESS;
  }
  
@@ -1466,7 +1476,7 @@ index 71ed2821..63713146 100644
    CeedCallBackend(CeedFree(&impl));
    return CEED_ERROR_SUCCESS;
  }
-@@ -140,7 +283,7 @@ static int CeedElemRestrictionDestroy_Cuda(CeedElemRestriction r) {
+@@ -140,7 +293,7 @@ static int CeedElemRestrictionDestroy_Cuda(CeedElemRestriction r) {
  //------------------------------------------------------------------------------
  // Create transpose offsets and indices
  //------------------------------------------------------------------------------
@@ -1475,7 +1485,7 @@ index 71ed2821..63713146 100644
    Ceed                      ceed;
    bool                     *is_node;
    CeedSize                  l_size;
-@@ -148,12 +291,12 @@ static int CeedElemRestrictionOffset_Cuda(const CeedElemRestriction r, const Cee
+@@ -148,12 +301,12 @@ static int CeedElemRestrictionOffset_Cuda(const CeedElemRestriction r, const Cee
    CeedInt                  *ind_to_offset, *l_vec_indices, *t_offsets, *t_indices;
    CeedElemRestriction_Cuda *impl;
  
@@ -1494,7 +1504,7 @@ index 71ed2821..63713146 100644
    const CeedInt size_indices = num_elem * elem_size;
  
    // Count num_nodes
-@@ -221,135 +364,194 @@ static int CeedElemRestrictionOffset_Cuda(const CeedElemRestriction r, const Cee
+@@ -221,135 +374,194 @@ static int CeedElemRestrictionOffset_Cuda(const CeedElemRestriction r, const Cee
  // Create restriction
  //------------------------------------------------------------------------------
  int CeedElemRestrictionCreate_Cuda(CeedMemType mem_type, CeedCopyMode copy_mode, const CeedInt *indices, const bool *orients,
@@ -1782,7 +1792,7 @@ index 71ed2821..63713146 100644
                                     strides[0], "RSTR_STRIDE_COMP", strides[1], "RSTR_STRIDE_ELEM", strides[2]));
    CeedCallBackend(CeedGetKernel_Cuda(ceed, impl->module, "StridedNoTranspose", &impl->StridedNoTranspose));
    CeedCallBackend(CeedGetKernel_Cuda(ceed, impl->module, "StridedTranspose", &impl->StridedTranspose));
-@@ -359,15 +561,23 @@ int CeedElemRestrictionCreate_Cuda(CeedMemType mem_type, CeedCopyMode copy_mode,
+@@ -359,15 +571,23 @@ int CeedElemRestrictionCreate_Cuda(CeedMemType mem_type, CeedCopyMode copy_mode,
    } else {
      CeedCallBackend(CeedGetKernel_Cuda(ceed, impl->module, "OffsetTransposeDet", &impl->OffsetTransposeDet));
    }
@@ -3030,7 +3040,7 @@ index 486269bb..023b3d8a 100644
  }
  
 diff --git a/backends/hip-ref/ceed-hip-ref-restriction.c b/backends/hip-ref/ceed-hip-ref-restriction.c
-index 0dd11b16..898d2281 100644
+index 0dd11b16..f0bcd151 100644
 --- a/backends/hip-ref/ceed-hip-ref-restriction.c
 +++ b/backends/hip-ref/ceed-hip-ref-restriction.c
 @@ -18,22 +18,23 @@
@@ -3065,7 +3075,7 @@ index 0dd11b16..898d2281 100644
    const CeedInt num_nodes = impl->num_nodes;
  
    // Get vectors
-@@ -49,45 +50,124 @@ static int CeedElemRestrictionApply_Hip(CeedElemRestriction r, CeedTransposeMode
+@@ -49,45 +50,134 @@ static int CeedElemRestrictionApply_Hip(CeedElemRestriction r, CeedTransposeMode
    // Restrict
    if (t_mode == CEED_NOTRANSPOSE) {
      // L-vector -> E-vector
@@ -3129,6 +3139,11 @@ index 0dd11b16..898d2281 100644
 +
 +          CeedCallBackend(CeedRunKernel_Hip(ceed, kernel, grid, block_size, args));
 +        }
++      } break;
++      case CEED_RESTRICTION_POINTS: {
++        // LCOV_EXCL_START
++        return CeedError(ceed, CEED_ERROR_UNSUPPORTED, "Backend does not implement restriction CeedElemRestrictionAtPoints");
++        // LCOV_EXCL_STOP
 +      } break;
      }
    } else {
@@ -3223,10 +3238,15 @@ index 0dd11b16..898d2281 100644
 +          }
 +        }
 +      } break;
++      case CEED_RESTRICTION_POINTS: {
++        // LCOV_EXCL_START
++        return CeedError(ceed, CEED_ERROR_UNSUPPORTED, "Backend does not implement restriction CeedElemRestrictionAtPoints");
++        // LCOV_EXCL_STOP
++      } break;
      }
    }
  
-@@ -99,6 +179,29 @@ static int CeedElemRestrictionApply_Hip(CeedElemRestriction r, CeedTransposeMode
+@@ -99,6 +189,29 @@ static int CeedElemRestrictionApply_Hip(CeedElemRestriction r, CeedTransposeMode
    return CEED_ERROR_SUCCESS;
  }
  
@@ -3256,7 +3276,7 @@ index 0dd11b16..898d2281 100644
  //------------------------------------------------------------------------------
  // Get offsets
  //------------------------------------------------------------------------------
-@@ -117,21 +220,61 @@ static int CeedElemRestrictionGetOffsets_Hip(CeedElemRestriction rstr, CeedMemTy
+@@ -117,21 +230,61 @@ static int CeedElemRestrictionGetOffsets_Hip(CeedElemRestriction rstr, CeedMemTy
    return CEED_ERROR_SUCCESS;
  }
  
@@ -3321,7 +3341,7 @@ index 0dd11b16..898d2281 100644
    CeedCallBackend(CeedFree(&impl));
    return CEED_ERROR_SUCCESS;
  }
-@@ -139,23 +282,25 @@ static int CeedElemRestrictionDestroy_Hip(CeedElemRestriction r) {
+@@ -139,23 +292,25 @@ static int CeedElemRestrictionDestroy_Hip(CeedElemRestriction r) {
  //------------------------------------------------------------------------------
  // Create transpose offsets and indices
  //------------------------------------------------------------------------------
@@ -3355,7 +3375,7 @@ index 0dd11b16..898d2281 100644
    for (CeedInt i = 0; i < size_indices; i++) is_node[indices[i]] = 1;
    for (CeedInt i = 0; i < l_size; i++) num_nodes += is_node[i];
    impl->num_nodes = num_nodes;
-@@ -218,119 +363,195 @@ static int CeedElemRestrictionOffset_Hip(const CeedElemRestriction r, const Ceed
+@@ -218,119 +373,195 @@ static int CeedElemRestrictionOffset_Hip(const CeedElemRestriction r, const Ceed
  // Create restriction
  //------------------------------------------------------------------------------
  int CeedElemRestrictionCreate_Hip(CeedMemType mem_type, CeedCopyMode copy_mode, const CeedInt *indices, const bool *orients,
@@ -3630,7 +3650,7 @@ index 0dd11b16..898d2281 100644
    CeedCallBackend(CeedGetKernel_Hip(ceed, impl->module, "StridedNoTranspose", &impl->StridedNoTranspose));
    CeedCallBackend(CeedGetKernel_Hip(ceed, impl->module, "StridedTranspose", &impl->StridedTranspose));
    CeedCallBackend(CeedGetKernel_Hip(ceed, impl->module, "OffsetNoTranspose", &impl->OffsetNoTranspose));
-@@ -339,15 +560,23 @@ int CeedElemRestrictionCreate_Hip(CeedMemType mem_type, CeedCopyMode copy_mode,
+@@ -339,15 +570,23 @@ int CeedElemRestrictionCreate_Hip(CeedMemType mem_type, CeedCopyMode copy_mode,
    } else {
      CeedCallBackend(CeedGetKernel_Hip(ceed, impl->module, "OffsetTransposeDet", &impl->OffsetTransposeDet));
    }
@@ -4148,7 +4168,7 @@ index 05d73e59..b6d2aa19 100644
  CEED_EXTERN int CeedQFunctionAssemblyDataCreate(Ceed ceed, CeedQFunctionAssemblyData *data);
  CEED_EXTERN int CeedQFunctionAssemblyDataReference(CeedQFunctionAssemblyData data);
 diff --git a/include/ceed/ceed.h b/include/ceed/ceed.h
-index 00088431..655d85ce 100644
+index 36aecb23..82efb0b0 100644
 --- a/include/ceed/ceed.h
 +++ b/include/ceed/ceed.h
 @@ -392,7 +392,7 @@ CEED_EXTERN int CeedQFunctionContextDestroy(CeedQFunctionContext *ctx);
@@ -5347,7 +5367,7 @@ index c34aa980..cdd3b770 100644
  }
  
 diff --git a/interface/ceed-operator.c b/interface/ceed-operator.c
-index 5550b1e1..18c133bc 100644
+index 7b2ee1b3..0e321689 100644
 --- a/interface/ceed-operator.c
 +++ b/interface/ceed-operator.c
 @@ -26,41 +26,41 @@
@@ -5506,22 +5526,22 @@ index 5550b1e1..18c133bc 100644
  
    CeedCall(CeedVectorReferenceCopy(v, &(*op_field)->vec));
 -  CeedCall(CeedElemRestrictionReferenceCopy(r, &(*op_field)->elem_rstr));
--  if (r != CEED_ELEMRESTRICTION_NONE) {
+-  if (r != CEED_ELEMRESTRICTION_NONE && !op->has_restriction) {
 +  CeedCall(CeedElemRestrictionReferenceCopy(rstr, &(*op_field)->elem_rstr));
-+  if (rstr != CEED_ELEMRESTRICTION_NONE) {
++  if (rstr != CEED_ELEMRESTRICTION_NONE && !op->has_restriction) {
      op->num_elem        = num_elem;
      op->has_restriction = true;  // Restriction set, but num_elem may be 0
    }
 -  CeedCall(CeedBasisReferenceCopy(b, &(*op_field)->basis));
 +  CeedCall(CeedBasisReferenceCopy(basis, &(*op_field)->basis));
-   if (op->num_qpts == 0) CeedCall(CeedOperatorSetNumQuadraturePoints(op, num_qpts));
- 
+   if (op->num_qpts == 0) op->num_qpts = num_qpts;
    op->num_fields += 1;
+   CeedCall(CeedStringAllocCopy(field_name, (char **)&(*op_field)->field_name));
 diff --git a/interface/ceed-preconditioning.c b/interface/ceed-preconditioning.c
-index a8eed73c..f29d4c20 100644
+index 86ed103b..c560c17f 100644
 --- a/interface/ceed-preconditioning.c
 +++ b/interface/ceed-preconditioning.c
-@@ -205,40 +205,6 @@ int CeedOperatorGetFallbackParentCeed(CeedOperator op, Ceed *parent) {
+@@ -204,40 +204,6 @@ int CeedOperatorGetFallbackParentCeed(CeedOperator op, Ceed *parent) {
    return CEED_ERROR_SUCCESS;
  }
  
@@ -5562,7 +5582,7 @@ index a8eed73c..f29d4c20 100644
  /**
    @brief Core logic for assembling operator diagonal or point block diagonal
  
-@@ -1052,6 +1018,40 @@ CeedPragmaOptimizeOn
+@@ -1058,6 +1024,40 @@ CeedPragmaOptimizeOn
  /// @addtogroup CeedOperatorBackend
  /// @{
  
@@ -5603,7 +5623,7 @@ index a8eed73c..f29d4c20 100644
  /**
    @brief Create point block restriction for active operator field
  
-@@ -1318,10 +1318,10 @@ int CeedOperatorAssemblyDataCreate(Ceed ceed, CeedOperator op, CeedOperatorAssem
+@@ -1324,10 +1324,10 @@ int CeedOperatorAssemblyDataCreate(Ceed ceed, CeedOperator op, CeedOperatorAssem
  
    // Build OperatorAssembly data
    CeedCall(CeedOperatorGetQFunction(op, &qf));

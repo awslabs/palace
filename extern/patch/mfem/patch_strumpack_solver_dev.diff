@@ -1,5 +1,5 @@
 diff --git a/INSTALL b/INSTALL
-index 1a325fdf6..ee3f7c03c 100644
+index b7fdfa3af..aad927a56 100644
 --- a/INSTALL
 +++ b/INSTALL
 @@ -659,8 +659,7 @@ The specific libraries and their options are:
@@ -143,7 +143,7 @@ index 51238c4d7..e6f4730fe 100644
              strumpack->SetFromCommandLine();
              precond = strumpack;
 diff --git a/general/communication.cpp b/general/communication.cpp
-index 10fa6988c..0c2fffc1f 100644
+index 95235edd3..e8002a273 100644
 --- a/general/communication.cpp
 +++ b/general/communication.cpp
 @@ -26,6 +26,10 @@
@@ -244,10 +244,10 @@ index 474486f1b..46d4f9f21 100644
  
  /** @brief A simple convenience class based on the Mpi singleton class above.
 diff --git a/linalg/strumpack.cpp b/linalg/strumpack.cpp
-index f0ff11ab4..5b54994aa 100644
+index f0ff11ab4..270a4483a 100644
 --- a/linalg/strumpack.cpp
 +++ b/linalg/strumpack.cpp
-@@ -16,238 +16,470 @@
+@@ -16,238 +16,471 @@
  
  #include "strumpack.hpp"
  
@@ -771,6 +771,7 @@ index f0ff11ab4..5b54994aa 100644
 +                  "STRUMPACK: Missing or invalid sized RHS Vector in solve!");
 +      Vector s(rhs_, i * ldx, ldx);
 +      s = *X[i];
++      rhs_.SyncMemory(s);  // Update flags for rhs_ if updated on device
 +   }
 +   const double *xPtr = rhs_.HostRead();
 +   double *yPtr       = sol_.HostReadWrite();
@@ -1177,6 +1178,18 @@ index 300b8415e..42ae555c7 100644
  
  #endif // MFEM_USE_MPI
  #endif // MFEM_USE_STRUMPACK
+diff --git a/linalg/superlu.cpp b/linalg/superlu.cpp
+index 4633eb9ef..c120c4f22 100644
+--- a/linalg/superlu.cpp
++++ b/linalg/superlu.cpp
+@@ -650,6 +650,7 @@ void SuperLUSolver::ArrayMult(const Array<const Vector *> &X,
+          MFEM_ASSERT(X[i], "Missing Vector in SuperLUSolver::Mult!");
+          Vector s(sol_, i * ldx, ldx);
+          s = *X[i];
++         sol_.SyncMemory(s);  // Update flags for sol_ if updated on device
+       }
+    }
+ 
 diff --git a/miniapps/multidomain/multidomain.cpp b/miniapps/multidomain/multidomain.cpp
 index dfb669224..83ebb9813 100644
 --- a/miniapps/multidomain/multidomain.cpp

@@ -1,8 +1,8 @@
 diff --git a/Makefile b/Makefile
-index 846b93b8..390c6457 100644
+index d6070e5e..8ca9952a 100644
 --- a/Makefile
 +++ b/Makefile
-@@ -274,8 +274,6 @@ cuda-gen.cu    := $(sort $(wildcard backends/cuda-gen/kernels/*.cu))
+@@ -275,8 +275,6 @@ cuda-gen.cu    := $(sort $(wildcard backends/cuda-gen/kernels/*.cu))
  occa.cpp       := $(sort $(shell find backends/occa -type f -name *.cpp))
  magma.c        := $(sort $(wildcard backends/magma/*.c))
  magma.cpp      := $(sort $(wildcard backends/magma/*.cpp))
@@ -22,14 +22,14 @@ index 846b93b8..390c6457 100644
        MAGMA_BACKENDS = /gpu/cuda/magma /gpu/cuda/magma/det
      endif
    else  # HIP MAGMA
-@@ -509,10 +505,8 @@ ifneq ($(wildcard $(MAGMA_DIR)/lib/libmagma.*),)
+@@ -507,10 +503,8 @@ ifneq ($(wildcard $(MAGMA_DIR)/lib/libmagma.*),)
        PKG_LIBS += $(magma_link)
        libceed.c   += $(magma.c)
        libceed.cpp += $(magma.cpp)
 -      libceed.hip += $(magma.hip)
-       $(magma.c:%.c=$(OBJDIR)/%.o) $(magma.c:%=%.tidy) : CPPFLAGS += $(HIPCONFIG_CPPFLAGS) -I$(MAGMA_DIR)/include -I$(HIP_INC_DIR_MAGMA)/include -DCEED_MAGMA_USE_HIP -DADD_
-       $(magma.cpp:%.cpp=$(OBJDIR)/%.o) $(magma.cpp:%=%.tidy) : CPPFLAGS += $(HIPCONFIG_CPPFLAGS) -I$(MAGMA_DIR)/include -I$(HIP_INC_DIR_MAGMA)/include -DCEED_MAGMA_USE_HIP -DADD_
--      $(magma.hip:%.hip.cpp=$(OBJDIR)/%.o) : CPPFLAGS += -I$(MAGMA_DIR)/include -I$(MAGMA_DIR)/magmablas -I$(HIP_INC_DIR_MAGMA)/include -DCEED_MAGMA_USE_HIP -DADD_
+       $(magma.c:%.c=$(OBJDIR)/%.o) $(magma.c:%=%.tidy) : CPPFLAGS += $(HIPCONFIG_CPPFLAGS) -I$(MAGMA_DIR)/include -I$(ROCM_DIR)/include -DCEED_MAGMA_USE_HIP -DADD_
+       $(magma.cpp:%.cpp=$(OBJDIR)/%.o) $(magma.cpp:%=%.tidy) : CPPFLAGS += $(HIPCONFIG_CPPFLAGS) -I$(MAGMA_DIR)/include -I$(ROCM_DIR)/include -DCEED_MAGMA_USE_HIP -DADD_
+-      $(magma.hip:%.hip.cpp=$(OBJDIR)/%.o) : CPPFLAGS += -I$(MAGMA_DIR)/include -I$(MAGMA_DIR)/magmablas -I$(ROCM_DIR)/include -DCEED_MAGMA_USE_HIP -DADD_
        MAGMA_BACKENDS = /gpu/hip/magma /gpu/hip/magma/det
      endif
    endif
@@ -393,6 +393,19 @@ index c60ca79b..72eec7ff 100644
  
  CEED_INTERN int CeedQFunctionCreate_Cuda(CeedQFunction qf);
  
+diff --git a/backends/hip-gen/ceed-hip-gen-operator-build.cpp b/backends/hip-gen/ceed-hip-gen-operator-build.cpp
+index 4a7477c3..16e1de93 100644
+--- a/backends/hip-gen/ceed-hip-gen-operator-build.cpp
++++ b/backends/hip-gen/ceed-hip-gen-operator-build.cpp
+@@ -222,7 +222,7 @@ extern "C" int CeedOperatorBuildKernel_Hip_gen(CeedOperator op) {
+   code << "  const CeedInt dim = " << dim << ";\n";
+   code << "  const CeedInt Q_1d = " << Q_1d << ";\n";
+ 
+-  code << "  HIP_DYNAMIC_SHARED( CeedScalar, slice)\n";
++  code << "  HIP_DYNAMIC_SHARED(CeedScalar, slice)\n";
+   // TODO put in a function? InitSharedData_Hip?
+   code << "  SharedData_Hip data;\n";
+   code << "  data.t_id_x = threadIdx.x;\n";
 diff --git a/backends/hip-ref/ceed-hip-ref-basis.c b/backends/hip-ref/ceed-hip-ref-basis.c
 index 4927f1e4..e854e8dc 100644
 --- a/backends/hip-ref/ceed-hip-ref-basis.c
@@ -766,7 +779,7 @@ index a21a90bb..8218532a 100644
  CEED_INTERN int CeedQFunctionCreate_Hip(CeedQFunction qf);
  
 diff --git a/backends/magma/ceed-magma-basis.c b/backends/magma/ceed-magma-basis.c
-index 3cb651f2..ba44b79b 100644
+index 3cb651f2..15de490e 100644
 --- a/backends/magma/ceed-magma-basis.c
 +++ b/backends/magma/ceed-magma-basis.c
 @@ -20,57 +20,56 @@
@@ -883,7 +896,7 @@ index 3cb651f2..ba44b79b 100644
 -          shared_mem += P * Q * sizeof(CeedScalar);                      // for sT
 -          shared_mem += num_t_col * (P * max_P_Q * sizeof(CeedScalar));  // for reforming rU we need PxP, and for the intermediate output we need PxQ
 +          shared_mem += P * Q * sizeof(CeedScalar);  // for sT
-+          // for reforming rU we need PxP, and for the intermediate output we need PxQ
++          // for reforming rU we need P x P, and for the intermediate output we need PxQ
 +          shared_mem += num_t_col * (P * max_P_Q * sizeof(CeedScalar));
            break;
          case 3:
@@ -893,7 +906,7 @@ index 3cb651f2..ba44b79b 100644
 -          shared_mem += sizeof(CeedScalar) * num_t_col *
 -                        (CeedIntMax(P * P * max_P_Q,
 -                                    P * Q * Q));  // rU needs P^2xP, the intermediate output needs max(P^2xQ,PQ^2)
-+          // rU needs P^2xP, the intermediate output needs max(P^2xQ,PQ^2)
++          // rU needs P^2xP, the intermediate output needs max(P^2 x Q, P x Q^2)
 +          shared_mem += sizeof(CeedScalar) * num_t_col * (CeedIntMax(P * P * max_P_Q, P * Q * Q));
 +          break;
        }
@@ -962,7 +975,7 @@ index 3cb651f2..ba44b79b 100644
 -          shared_mem += sizeof(CeedScalar) * 2 * P * Q;                  // for sTinterp and sTgrad
 -          shared_mem += sizeof(CeedScalar) * num_t_col * (P * max_P_Q);  // for reforming rU we need PxP, and for the intermediate output we need PxQ
 +          shared_mem += sizeof(CeedScalar) * 2 * P * Q;  // for sTinterp and sTgrad
-+          // for reforming rU we need PxP, and for the intermediate output we need PxQ
++          // for reforming rU we need P x P, and for the intermediate output we need P x Q
 +          shared_mem += sizeof(CeedScalar) * num_t_col * (P * max_P_Q);
            break;
          case 3:
@@ -972,7 +985,7 @@ index 3cb651f2..ba44b79b 100644
 -          shared_mem += sizeof(CeedScalar) * num_t_col *
 -                        CeedIntMax(P * P * P,
 -                                   (P * P * Q) + (P * Q * Q));  // rU needs P^2xP, the intermediate outputs need (P^2.Q + P.Q^2)
-+          // rU needs P^2xP, the intermediate outputs need (P^2.Q + P.Q^2)
++          // rU needs P^2 x P, the intermediate outputs need (P^2 x Q + P x Q^2)
 +          shared_mem += sizeof(CeedScalar) * num_t_col * CeedIntMax(P * P * P, (P * P * Q) + (P * Q * Q));
 +          break;
        }
@@ -1013,7 +1026,7 @@ index 3cb651f2..ba44b79b 100644
      } break;
      // LCOV_EXCL_START
      case CEED_EVAL_DIV:
-@@ -259,400 +250,495 @@ CEED_INTERN "C"
+@@ -259,400 +250,534 @@ CEED_INTERN "C"
        // LCOV_EXCL_STOP
    }
  
@@ -1105,15 +1118,7 @@ index 3cb651f2..ba44b79b 100644
 -      iN   = in;
 -      diff = idiff;
 +  // Apply basis operation
-+  if (e_mode == CEED_EVAL_WEIGHT) {
-+    CeedCheck(t_mode != CEED_TRANSPOSE, ceed, CEED_ERROR_BACKEND, "CEED_EVAL_WEIGHT incompatible with CEED_TRANSPOSE");
-+    CeedInt num_t_col  = MAGMA_BASIS_NTCOL(Q, MAGMA_MAXTHREADS_1D);
-+    CeedInt grid       = CeedDivUpInt(num_elem, num_t_col);
-+    CeedInt shared_mem = Q * sizeof(CeedScalar) + num_t_col * Q * sizeof(CeedScalar);
-+    void   *args[]     = {&num_elem, &impl->d_q_weight, &d_v, &Q};
-+
-+    CeedCallBackend(CeedRunKernelDimSharedMagma(ceed, impl->Weight, grid, Q, num_t_col, 1, shared_mem, args));
-+  } else {
++  if (e_mode != CEED_EVAL_WEIGHT) {
 +    const CeedScalar *d_b = NULL;
 +    switch (e_mode) {
 +      case CEED_EVAL_INTERP:
@@ -1142,10 +1147,9 @@ index 3cb651f2..ba44b79b 100644
 -  grad   = (t_mode == CEED_TRANSPOSE) ? &impl->magma_grad_tr_nontensor[iN] : &impl->magma_grad_nontensor[iN];
 +    // Apply basis operation
 +    if (P <= MAGMA_NONTENSOR_CUSTOM_KERNEL_MAX_P && Q <= MAGMA_NONTENSOR_CUSTOM_KERNEL_MAX_Q) {
-+      CeedInt     n_array[MAGMA_NONTENSOR_KERNEL_INSTANCES] = {MAGMA_NONTENSOR_KERNEL_N_VALUES};
-+      CeedInt     iN = 0, diff = abs(n_array[iN] - N), idiff, NB;
-+      CeedInt     M = (t_mode == CEED_TRANSPOSE) ? P : Q, K = (t_mode == CEED_TRANSPOSE) ? Q : P;
-+      magma_int_t arch = magma_getdevice_arch();
++      CeedInt n_array[MAGMA_NONTENSOR_KERNEL_INSTANCES] = {MAGMA_NONTENSOR_KERNEL_N_VALUES};
++      CeedInt iN = 0, diff = abs(n_array[iN] - N), idiff;
++      CeedInt M = (t_mode == CEED_TRANSPOSE) ? P : Q, K = (t_mode == CEED_TRANSPOSE) ? Q : P;
 +
 +      for (CeedInt in = iN + 1; in < MAGMA_NONTENSOR_KERNEL_INSTANCES; in++) {
 +        idiff = abs(n_array[in] - N);
@@ -1154,56 +1158,6 @@ index 3cb651f2..ba44b79b 100644
 +          diff = idiff;
 +        }
 +      }
-+      NB = nontensor_rtc_get_nb(arch, (t_mode == CEED_TRANSPOSE) ? 't' : 'n', q_comp, P, n_array[iN], Q);
-+
-+      // Compile kernels for N as needed
-+      if (!impl->module_interp[iN]) {
-+        // Tuning parameters for NB
-+        CeedFESpace fe_space;
-+        CeedInt     q_comp_interp, q_comp_deriv, nb_interp_n, nb_interp_t, nb_deriv_n, nb_deriv_t;
-+        Ceed        ceed_delegate;
-+        char       *basis_kernel_path, *basis_kernel_source;
-+
-+        CeedCallBackend(CeedBasisGetFESpace(basis, &fe_space));
-+        CeedCallBackend(CeedBasisGetNumQuadratureComponents(basis, CEED_EVAL_INTERP, &q_comp_interp));
-+        switch (fe_space) {
-+          case CEED_FE_SPACE_H1:
-+            CeedCallBackend(CeedBasisGetNumQuadratureComponents(basis, CEED_EVAL_GRAD, &q_comp_deriv));
-+            break;
-+          case CEED_FE_SPACE_HDIV:
-+            CeedCallBackend(CeedBasisGetNumQuadratureComponents(basis, CEED_EVAL_DIV, &q_comp_deriv));
-+            break;
-+          case CEED_FE_SPACE_HCURL:
-+            CeedCallBackend(CeedBasisGetNumQuadratureComponents(basis, CEED_EVAL_CURL, &q_comp_deriv));
-+            break;
-+        }
-+        nb_interp_n = nontensor_rtc_get_nb(arch, 'n', q_comp_interp, P, n_array[iN], Q);
-+        nb_interp_t = nontensor_rtc_get_nb(arch, 't', q_comp_interp, P, n_array[iN], Q);
-+        nb_deriv_n  = nontensor_rtc_get_nb(arch, 'n', q_comp_deriv, P, n_array[iN], Q);
-+        nb_deriv_t  = nontensor_rtc_get_nb(arch, 't', q_comp_deriv, P, n_array[iN], Q);
-+
-+        // The RTC compilation code expects a Ceed with the common Ceed_Cuda or Ceed_Hip data
-+        CeedCallBackend(CeedGetDelegate(ceed, &ceed_delegate));
-+
-+        // Compile kernels
-+        CeedCallBackend(CeedGetJitAbsolutePath(ceed, "ceed/jit-source/magma/magma-basis-interp-deriv-nontensor.h", &basis_kernel_path));
-+        CeedDebug256(ceed, CEED_DEBUG_COLOR_SUCCESS, "----- Loading Basis Kernel Source -----\n");
-+        CeedCallBackend(CeedLoadSourceToBuffer(ceed, basis_kernel_path, &basis_kernel_source));
-+        CeedDebug256(ceed, CEED_DEBUG_COLOR_SUCCESS, "----- Loading Basis Kernel Source Complete! -----\n");
-+        CeedCallBackend(CeedCompileMagma(ceed_delegate, basis_kernel_source, &impl->module_interp[iN], 8, "BASIS_Q_COMP_INTERP", q_comp_interp,
-+                                         "BASIS_Q_COMP_DERIV", q_comp_deriv, "BASIS_P", P, "BASIS_Q", Q, "BASIS_NB_INTERP_N", nb_interp_n,
-+                                         "BASIS_NB_INTERP_T", nb_interp_t, "BASIS_NB_DERIV_N", nb_deriv_n, "BASIS_NB_DERIV_T", nb_deriv_t));
-+        CeedCallBackend(CeedGetKernelMagma(ceed, impl->module_interp[iN], "magma_interp_nontensor_n", &impl->Interp[iN]));
-+        CeedCallBackend(CeedGetKernelMagma(ceed, impl->module_interp[iN], "magma_interp_nontensor_t", &impl->InterpTranspose[iN]));
-+        CeedCallBackend(CeedGetKernelMagma(ceed, impl->module_interp[iN], "magma_deriv_nontensor_n", &impl->Deriv[iN]));
-+        CeedCallBackend(CeedGetKernelMagma(ceed, impl->module_interp[iN], "magma_deriv_nontensor_t", &impl->DerivTranspose[iN]));
-+        CeedCallBackend(CeedFree(&basis_kernel_path));
-+        CeedCallBackend(CeedFree(&basis_kernel_source));
-+      }
-+      CeedInt num_t_col  = MAGMA_BASIS_NTCOL(M, MAGMA_MAXTHREADS_1D);
-+      CeedInt grid       = CeedDivUpInt(CeedDivUpInt(N, NB), num_t_col);
-+      CeedInt shared_mem = num_t_col * K * NB * sizeof(CeedScalar) + ((t_mode == CEED_TRANSPOSE) ? 0 : K * M * sizeof(CeedScalar));
-+      void   *args[]     = {&N, &d_b, &P, &d_u, &K, &d_v, &M};
  
 -  switch (e_mode) {
 -    case CEED_EVAL_INTERP: {
@@ -1224,18 +1178,85 @@ index 3cb651f2..ba44b79b 100644
 -
 -        void *args[] = {&trans_A, &trans_B, &N, &alpha, &impl->d_interp, &P, &du, &K, &beta, &dv, &M};
 -        CeedCallBackend(CeedRunKernelDimSharedMagma(ceed, *interp, grid, M, num_t_col, 1, shared_mem, args));
++      // Compile kernels for N as needed
++      if (!impl->NB_interp[iN]) {
++        CeedFESpace fe_space;
++        CeedInt     q_comp_interp, q_comp_deriv;
++        Ceed        ceed_delegate;
++        char       *basis_kernel_path, *basis_kernel_source;
++        magma_int_t arch = magma_getdevice_arch();
++
++        // Tuning parameters for NB
++        CeedCallBackend(CeedBasisGetFESpace(basis, &fe_space));
++        CeedCallBackend(CeedBasisGetNumQuadratureComponents(basis, CEED_EVAL_INTERP, &q_comp_interp));
++        switch (fe_space) {
++          case CEED_FE_SPACE_H1:
++            CeedCallBackend(CeedBasisGetNumQuadratureComponents(basis, CEED_EVAL_GRAD, &q_comp_deriv));
++            break;
++          case CEED_FE_SPACE_HDIV:
++            CeedCallBackend(CeedBasisGetNumQuadratureComponents(basis, CEED_EVAL_DIV, &q_comp_deriv));
++            break;
++          case CEED_FE_SPACE_HCURL:
++            CeedCallBackend(CeedBasisGetNumQuadratureComponents(basis, CEED_EVAL_CURL, &q_comp_deriv));
++            break;
++        }
++        impl->NB_interp[iN]   = nontensor_rtc_get_nb(arch, 'n', q_comp_interp, Q, n_array[iN], P);
++        impl->NB_interp_t[iN] = nontensor_rtc_get_nb(arch, 't', q_comp_interp, P, n_array[iN], Q);
++        impl->NB_deriv[iN]    = nontensor_rtc_get_nb(arch, 'n', q_comp_deriv, Q, n_array[iN], P);
++        impl->NB_deriv_t[iN]  = nontensor_rtc_get_nb(arch, 't', q_comp_deriv, P, n_array[iN], Q);
++
++        // The RTC compilation code expects a Ceed with the common Ceed_Cuda or Ceed_Hip data
++        CeedCallBackend(CeedGetDelegate(ceed, &ceed_delegate));
++
++        // Compile kernels
++#ifdef CEED_MAGMA_USE_HIP
++        CeedInt magma_use_hip = 1;
++#else
++        CeedInt magma_use_hip = 0;
++#endif
++        CeedCallBackend(CeedGetJitAbsolutePath(ceed, "ceed/jit-source/magma/magma-basis-interp-deriv-nontensor.h", &basis_kernel_path));
++        CeedDebug256(ceed, CEED_DEBUG_COLOR_SUCCESS, "----- Loading Basis Kernel Source -----\n");
++        CeedCallBackend(CeedLoadSourceToBuffer(ceed, basis_kernel_path, &basis_kernel_source));
++        CeedDebug256(ceed, CEED_DEBUG_COLOR_SUCCESS, "----- Loading Basis Kernel Source Complete! -----\n");
++        CeedCallBackend(CeedCompileMagma(ceed_delegate, basis_kernel_source, &impl->module_interp[iN], 9, "BASIS_Q_COMP_INTERP", q_comp_interp,
++                                         "BASIS_Q_COMP_DERIV", q_comp_deriv, "BASIS_P", P, "BASIS_Q", Q, "BASIS_NB_INTERP_N", impl->NB_interp[iN],
++                                         "BASIS_NB_INTERP_T", impl->NB_interp_t[iN], "BASIS_NB_DERIV_N", impl->NB_deriv[iN], "BASIS_NB_DERIV_T",
++                                         impl->NB_deriv_t[iN], "CEED_MAGMA_USE_HIP", magma_use_hip));
++        CeedCallBackend(CeedGetKernelMagma(ceed, impl->module_interp[iN], "magma_interp_nontensor_n", &impl->Interp[iN]));
++        CeedCallBackend(CeedGetKernelMagma(ceed, impl->module_interp[iN], "magma_interp_nontensor_t", &impl->InterpTranspose[iN]));
++        CeedCallBackend(CeedGetKernelMagma(ceed, impl->module_interp[iN], "magma_deriv_nontensor_n", &impl->Deriv[iN]));
++        CeedCallBackend(CeedGetKernelMagma(ceed, impl->module_interp[iN], "magma_deriv_nontensor_t", &impl->DerivTranspose[iN]));
++        CeedCallBackend(CeedFree(&basis_kernel_path));
++        CeedCallBackend(CeedFree(&basis_kernel_source));
++      }
++      CeedInt num_t_col  = MAGMA_BASIS_NTCOL(M, MAGMA_MAXTHREADS_1D);
++      CeedInt shared_mem = (t_mode == CEED_TRANSPOSE) ? 0 : P * Q * sizeof(CeedScalar);
++      void   *args[]     = {&N, &d_b, &d_u, &d_v};
++
 +      if (e_mode == CEED_EVAL_INTERP) {
 +        if (t_mode == CEED_TRANSPOSE) {
++          CeedInt grid = CeedDivUpInt(CeedDivUpInt(N, impl->NB_interp_t[iN]), num_t_col);
++          shared_mem += num_t_col * K * impl->NB_interp_t[iN] * sizeof(CeedScalar);
++
 +          CeedCallBackend(CeedRunKernelDimSharedMagma(ceed, impl->InterpTranspose[iN], grid, M, num_t_col, 1, shared_mem, args));
 +        } else {
++          CeedInt grid = CeedDivUpInt(CeedDivUpInt(N, impl->NB_interp[iN]), num_t_col);
++          shared_mem += num_t_col * K * impl->NB_interp[iN] * sizeof(CeedScalar);
++
 +          CeedCallBackend(CeedRunKernelDimSharedMagma(ceed, impl->Interp[iN], grid, M, num_t_col, 1, shared_mem, args));
 +        }
        } else {
          if (t_mode == CEED_TRANSPOSE) {
 -          magma_gemm_nontensor(MagmaNoTrans, MagmaNoTrans, P, num_elem * num_comp, Q, 1.0, impl->d_interp, P, du, Q, 0.0, dv, P, data->queue);
++          CeedInt grid = CeedDivUpInt(CeedDivUpInt(N, impl->NB_deriv_t[iN]), num_t_col);
++          shared_mem += num_t_col * K * impl->NB_deriv_t[iN] * sizeof(CeedScalar);
++
 +          CeedCallBackend(CeedRunKernelDimSharedMagma(ceed, impl->DerivTranspose[iN], grid, M, num_t_col, 1, shared_mem, args));
          } else {
 -          magma_gemm_nontensor(MagmaTrans, MagmaNoTrans, Q, num_elem * num_comp, P, 1.0, impl->d_interp, P, du, P, 0.0, dv, Q, data->queue);
++          CeedInt grid = CeedDivUpInt(CeedDivUpInt(N, impl->NB_deriv[iN]), num_t_col);
++          shared_mem += num_t_col * K * impl->NB_deriv[iN] * sizeof(CeedScalar);
++
 +          CeedCallBackend(CeedRunKernelDimSharedMagma(ceed, impl->Deriv[iN], grid, M, num_t_col, 1, shared_mem, args));
          }
        }
@@ -1297,6 +1318,14 @@ index 3cb651f2..ba44b79b 100644
 -      return CeedError(ceed, CEED_ERROR_BACKEND, "CEED_EVAL_NONE does not make sense in this context");
 -      // LCOV_EXCL_STOP
 +    }
++  } else {
++    CeedCheck(t_mode != CEED_TRANSPOSE, ceed, CEED_ERROR_BACKEND, "CEED_EVAL_WEIGHT incompatible with CEED_TRANSPOSE");
++    CeedInt num_t_col  = MAGMA_BASIS_NTCOL(Q, MAGMA_MAXTHREADS_1D);
++    CeedInt grid       = CeedDivUpInt(num_elem, num_t_col);
++    CeedInt shared_mem = Q * sizeof(CeedScalar) + num_t_col * Q * sizeof(CeedScalar);
++    void   *args[]     = {&num_elem, &impl->d_q_weight, &d_v};
++
++    CeedCallBackend(CeedRunKernelDimSharedMagma(ceed, impl->Weight, grid, Q, num_t_col, 1, shared_mem, args));
    }
  
 -  // must sync to ensure completeness
@@ -1430,6 +1459,11 @@ index 3cb651f2..ba44b79b 100644
  
    // Compile kernels
 -  CeedCallBackend(CeedGetJitAbsolutePath(ceed, "ceed/jit-source/magma/magma_common_defs.h", &magma_common_path));
++#ifdef CEED_MAGMA_USE_HIP
++  CeedInt magma_use_hip = 1;
++#else
++  CeedInt magma_use_hip = 0;
++#endif
 +  CeedCallBackend(CeedBasisGetNumComponents(basis, &num_comp));
 +  {
 +    char   *interp_kernel_name_base = "ceed/jit-source/magma/magma-basis-interp";
@@ -1491,8 +1525,8 @@ index 3cb651f2..ba44b79b 100644
 -                                   CeedIntMax(P_1d, Q_1d)));
 -
 -  // Kernel setup
-+  CeedCallBackend(CeedCompileMagma(ceed_delegate, basis_kernel_source, &impl->module, 5, "BASIS_DIM", dim, "BASIS_NUM_COMP", num_comp, "BASIS_P",
-+                                   P_1d, "BASIS_Q", Q_1d, "BASIS_MAX_P_Q", CeedIntMax(P_1d, Q_1d)));
++  CeedCallBackend(CeedCompileMagma(ceed_delegate, basis_kernel_source, &impl->module, 6, "BASIS_DIM", dim, "BASIS_NUM_COMP", num_comp, "BASIS_P",
++                                   P_1d, "BASIS_Q", Q_1d, "BASIS_MAX_P_Q", CeedIntMax(P_1d, Q_1d), "CEED_MAGMA_USE_HIP", magma_use_hip));
    switch (dim) {
      case 1:
 -      CeedCallBackend(CeedGetKernelMagma(ceed, impl->module, "magma_interpn_1d_kernel", &impl->magma_interp));
@@ -1596,11 +1630,17 @@ index 3cb651f2..ba44b79b 100644
 +  CeedCallBackend(CeedGetDelegate(ceed, &ceed_delegate));
 +
 +  // Compile weight kernel (the remainder of kernel compilation happens at first call to CeedBasisApply)
++#ifdef CEED_MAGMA_USE_HIP
++  CeedInt magma_use_hip = 1;
++#else
++  CeedInt magma_use_hip = 0;
++#endif
 +  CeedCallBackend(CeedGetJitAbsolutePath(ceed, "ceed/jit-source/magma/magma-basis-weight-nontensor.h", &basis_kernel_path));
 +  CeedDebug256(ceed, CEED_DEBUG_COLOR_SUCCESS, "----- Loading Basis Kernel Source -----\n");
 +  CeedCallBackend(CeedLoadSourceToBuffer(ceed, basis_kernel_path, &basis_kernel_source));
 +  CeedDebug256(ceed, CEED_DEBUG_COLOR_SUCCESS, "----- Loading Basis Kernel Source Complete! -----\n");
-+  CeedCallBackend(CeedCompileMagma(ceed_delegate, basis_kernel_source, &impl->module_weight, 1, "BASIS_Q", num_qpts));
++  CeedCallBackend(
++      CeedCompileMagma(ceed_delegate, basis_kernel_source, &impl->module_weight, 2, "BASIS_Q", num_qpts, "CEED_MAGMA_USE_HIP", magma_use_hip));
 +  CeedCallBackend(CeedGetKernelMagma(ceed, impl->module_weight, "magma_weight_nontensor", &impl->Weight));
 +  CeedCallBackend(CeedFree(&basis_kernel_path));
    CeedCallBackend(CeedFree(&basis_kernel_source));
@@ -1693,11 +1733,17 @@ index 3cb651f2..ba44b79b 100644
 +  CeedCallBackend(CeedGetDelegate(ceed, &ceed_delegate));
 +
 +  // Compile weight kernel (the remainder of kernel compilation happens at first call to CeedBasisApply)
++#ifdef CEED_MAGMA_USE_HIP
++  CeedInt magma_use_hip = 1;
++#else
++  CeedInt magma_use_hip = 0;
++#endif
 +  CeedCallBackend(CeedGetJitAbsolutePath(ceed, "ceed/jit-source/magma/magma-basis-weight-nontensor.h", &basis_kernel_path));
 +  CeedDebug256(ceed, CEED_DEBUG_COLOR_SUCCESS, "----- Loading Basis Kernel Source -----\n");
 +  CeedCallBackend(CeedLoadSourceToBuffer(ceed, basis_kernel_path, &basis_kernel_source));
 +  CeedDebug256(ceed, CEED_DEBUG_COLOR_SUCCESS, "----- Loading Basis Kernel Source Complete! -----\n");
-+  CeedCallBackend(CeedCompileMagma(ceed_delegate, basis_kernel_source, &impl->module_weight, 1, "BASIS_Q", num_qpts));
++  CeedCallBackend(
++      CeedCompileMagma(ceed_delegate, basis_kernel_source, &impl->module_weight, 2, "BASIS_Q", num_qpts, "CEED_MAGMA_USE_HIP", magma_use_hip));
 +  CeedCallBackend(CeedGetKernelMagma(ceed, impl->module_weight, "magma_weight_nontensor", &impl->Weight));
 +  CeedCallBackend(CeedFree(&basis_kernel_path));
 +  CeedCallBackend(CeedFree(&basis_kernel_source));
@@ -1761,11 +1807,17 @@ index 3cb651f2..ba44b79b 100644
 +  CeedCallBackend(CeedGetDelegate(ceed, &ceed_delegate));
 +
 +  // Compile weight kernel (the remainder of kernel compilation happens at first call to CeedBasisApply)
++#ifdef CEED_MAGMA_USE_HIP
++  CeedInt magma_use_hip = 1;
++#else
++  CeedInt magma_use_hip = 0;
++#endif
 +  CeedCallBackend(CeedGetJitAbsolutePath(ceed, "ceed/jit-source/magma/magma-basis-weight-nontensor.h", &basis_kernel_path));
 +  CeedDebug256(ceed, CEED_DEBUG_COLOR_SUCCESS, "----- Loading Basis Kernel Source -----\n");
 +  CeedCallBackend(CeedLoadSourceToBuffer(ceed, basis_kernel_path, &basis_kernel_source));
 +  CeedDebug256(ceed, CEED_DEBUG_COLOR_SUCCESS, "----- Loading Basis Kernel Source Complete! -----\n");
-+  CeedCallBackend(CeedCompileMagma(ceed_delegate, basis_kernel_source, &impl->module_weight, 1, "BASIS_Q", num_qpts));
++  CeedCallBackend(
++      CeedCompileMagma(ceed_delegate, basis_kernel_source, &impl->module_weight, 2, "BASIS_Q", num_qpts, "CEED_MAGMA_USE_HIP", magma_use_hip));
 +  CeedCallBackend(CeedGetKernelMagma(ceed, impl->module_weight, "magma_weight_nontensor", &impl->Weight));
 +  CeedCallBackend(CeedFree(&basis_kernel_path));
    CeedCallBackend(CeedFree(&basis_kernel_source));
@@ -1807,7 +1859,7 @@ diff --git a/backends/magma/magma_gemm_nontensor.c b/backends/magma/ceed-magma-g
 similarity index 76%
 rename from backends/magma/magma_gemm_nontensor.c
 rename to backends/magma/ceed-magma-gemm-nontensor.cpp
-index 9ff77676..38e26ed0 100644
+index e3b600ae..170d346c 100644
 --- a/backends/magma/magma_gemm_nontensor.c
 +++ b/backends/magma/ceed-magma-gemm-nontensor.cpp
 @@ -5,7 +5,9 @@
@@ -1825,61 +1877,61 @@ index 9ff77676..38e26ed0 100644
  #endif
  
  ////////////////////////////////////////////////////////////////////////////////
--static int magmablas_gemm(magma_trans_t transA, magma_trans_t transB, magma_int_t m, magma_int_t n, magma_int_t k, CeedScalar alpha,
--                          const CeedScalar *dA, magma_int_t ldda, const CeedScalar *dB, magma_int_t lddb, CeedScalar beta, CeedScalar *dC,
+-static int magmablas_gemm(magma_trans_t trans_A, magma_trans_t trans_B, magma_int_t m, magma_int_t n, magma_int_t k, CeedScalar alpha,
+-                          const CeedScalar *d_A, magma_int_t ldda, const CeedScalar *d_B, magma_int_t lddb, CeedScalar beta, CeedScalar *d_C,
 -                          magma_int_t lddc, magma_queue_t queue) {
-+static inline int magmablas_gemm(magma_trans_t transA, magma_trans_t transB, magma_int_t m, magma_int_t n, magma_int_t k, CeedScalar alpha,
-+                                 const CeedScalar *dA, magma_int_t ldda, const CeedScalar *dB, magma_int_t lddb, CeedScalar beta, CeedScalar *dC,
++static inline int magmablas_gemm(magma_trans_t trans_A, magma_trans_t trans_B, magma_int_t m, magma_int_t n, magma_int_t k, CeedScalar alpha,
++                                 const CeedScalar *d_A, magma_int_t ldda, const CeedScalar *d_B, magma_int_t lddb, CeedScalar beta, CeedScalar *d_C,
 +                                 magma_int_t lddc, magma_queue_t queue) {
    if (CEED_SCALAR_TYPE == CEED_SCALAR_FP32) {
-     magmablas_sgemm(transA, transB, m, n, k, (float)alpha, (const float *)dA, ldda, (const float *)dB, lddb, (float)beta, (float *)dC, lddc, queue);
-   } else {
-@@ -33,10 +35,10 @@ static int magmablas_gemm(magma_trans_t transA, magma_trans_t transB, magma_int_
+     magmablas_sgemm(trans_A, trans_B, m, n, k, (float)alpha, (const float *)d_A, ldda, (const float *)d_B, lddb, (float)beta, (float *)d_C, lddc,
+                     queue);
+@@ -34,10 +36,10 @@ static int magmablas_gemm(magma_trans_t trans_A, magma_trans_t trans_B, magma_in
  }
  
  ////////////////////////////////////////////////////////////////////////////////
--static int magmablas_gemm_batched_strided(magma_trans_t transA, magma_trans_t transB, magma_int_t m, magma_int_t n, magma_int_t k, CeedScalar alpha,
--                                          const CeedScalar *dA, magma_int_t ldda, magma_int_t strideA, const CeedScalar *dB, magma_int_t lddb,
--                                          magma_int_t strideB, CeedScalar beta, CeedScalar *dC, magma_int_t lddc, magma_int_t strideC,
+-static int magmablas_gemm_batched_strided(magma_trans_t trans_A, magma_trans_t trans_B, magma_int_t m, magma_int_t n, magma_int_t k, CeedScalar alpha,
+-                                          const CeedScalar *d_A, magma_int_t ldda, magma_int_t strideA, const CeedScalar *d_B, magma_int_t lddb,
+-                                          magma_int_t strideB, CeedScalar beta, CeedScalar *d_C, magma_int_t lddc, magma_int_t strideC,
 -                                          magma_int_t batchCount, magma_queue_t queue) {
-+static inline int magmablas_gemm_batched_strided(magma_trans_t transA, magma_trans_t transB, magma_int_t m, magma_int_t n, magma_int_t k,
-+                                                 CeedScalar alpha, const CeedScalar *dA, magma_int_t ldda, magma_int_t strideA, const CeedScalar *dB,
-+                                                 magma_int_t lddb, magma_int_t strideB, CeedScalar beta, CeedScalar *dC, magma_int_t lddc,
-+                                                 magma_int_t strideC, magma_int_t batchCount, magma_queue_t queue) {
++static inline int magmablas_gemm_batched_strided(magma_trans_t trans_A, magma_trans_t trans_B, magma_int_t m, magma_int_t n, magma_int_t k,
++                                                 CeedScalar alpha, const CeedScalar *d_A, magma_int_t ldda, magma_int_t strideA,
++                                                 const CeedScalar *d_B, magma_int_t lddb, magma_int_t strideB, CeedScalar beta, CeedScalar *d_C,
++                                                 magma_int_t lddc, magma_int_t strideC, magma_int_t batchCount, magma_queue_t queue) {
    if (CEED_SCALAR_TYPE == CEED_SCALAR_FP32) {
-     magmablas_sgemm_batched_strided(transA, transB, m, n, k, (float)alpha, (const float *)dA, ldda, strideA, (const float *)dB, lddb, strideB,
-                                     (float)beta, (float *)dC, lddc, strideC, batchCount, queue);
-@@ -48,9 +50,9 @@ static int magmablas_gemm_batched_strided(magma_trans_t transA, magma_trans_t tr
+     magmablas_sgemm_batched_strided(trans_A, trans_B, m, n, k, (float)alpha, (const float *)d_A, ldda, strideA, (const float *)d_B, lddb, strideB,
+                                     (float)beta, (float *)d_C, lddc, strideC, batchCount, queue);
+@@ -49,9 +51,9 @@ static int magmablas_gemm_batched_strided(magma_trans_t trans_A, magma_trans_t t
  }
  
  ////////////////////////////////////////////////////////////////////////////////
--static int devblas_gemm(magma_trans_t transA, magma_trans_t transB, magma_int_t m, magma_int_t n, magma_int_t k, CeedScalar alpha,
--                        const CeedScalar *dA, magma_int_t ldda, const CeedScalar *dB, magma_int_t lddb, CeedScalar beta, CeedScalar *dC,
+-static int devblas_gemm(magma_trans_t trans_A, magma_trans_t trans_B, magma_int_t m, magma_int_t n, magma_int_t k, CeedScalar alpha,
+-                        const CeedScalar *d_A, magma_int_t ldda, const CeedScalar *d_B, magma_int_t lddb, CeedScalar beta, CeedScalar *d_C,
 -                        magma_int_t lddc, magma_queue_t queue) {
-+static inline int devblas_gemm(magma_trans_t transA, magma_trans_t transB, magma_int_t m, magma_int_t n, magma_int_t k, CeedScalar alpha,
-+                               const CeedScalar *dA, magma_int_t ldda, const CeedScalar *dB, magma_int_t lddb, CeedScalar beta, CeedScalar *dC,
++static inline int devblas_gemm(magma_trans_t trans_A, magma_trans_t trans_B, magma_int_t m, magma_int_t n, magma_int_t k, CeedScalar alpha,
++                               const CeedScalar *d_A, magma_int_t ldda, const CeedScalar *d_B, magma_int_t lddb, CeedScalar beta, CeedScalar *d_C,
 +                               magma_int_t lddc, magma_queue_t queue) {
    if (CEED_SCALAR_TYPE == CEED_SCALAR_FP32) {
-     magma_sgemm(transA, transB, m, n, k, (float)alpha, (const float *)dA, ldda, (const float *)dB, lddb, (float)beta, (float *)dC, lddc, queue);
+     magma_sgemm(trans_A, trans_B, m, n, k, (float)alpha, (const float *)d_A, ldda, (const float *)d_B, lddb, (float)beta, (float *)d_C, lddc, queue);
    } else {
-@@ -60,10 +62,10 @@ static int devblas_gemm(magma_trans_t transA, magma_trans_t transB, magma_int_t
+@@ -62,10 +64,10 @@ static int devblas_gemm(magma_trans_t trans_A, magma_trans_t trans_B, magma_int_
  }
  
  ////////////////////////////////////////////////////////////////////////////////
--static int devblas_gemm_batched_strided(magma_trans_t transA, magma_trans_t transB, magma_int_t m, magma_int_t n, magma_int_t k, CeedScalar alpha,
--                                        const CeedScalar *dA, magma_int_t ldda, magma_int_t strideA, const CeedScalar *dB, magma_int_t lddb,
--                                        magma_int_t strideB, CeedScalar beta, CeedScalar *dC, magma_int_t lddc, magma_int_t strideC,
+-static int devblas_gemm_batched_strided(magma_trans_t trans_A, magma_trans_t trans_B, magma_int_t m, magma_int_t n, magma_int_t k, CeedScalar alpha,
+-                                        const CeedScalar *d_A, magma_int_t ldda, magma_int_t strideA, const CeedScalar *d_B, magma_int_t lddb,
+-                                        magma_int_t strideB, CeedScalar beta, CeedScalar *d_C, magma_int_t lddc, magma_int_t strideC,
 -                                        magma_int_t batchCount, magma_queue_t queue) {
-+static inline int devblas_gemm_batched_strided(magma_trans_t transA, magma_trans_t transB, magma_int_t m, magma_int_t n, magma_int_t k,
-+                                               CeedScalar alpha, const CeedScalar *dA, magma_int_t ldda, magma_int_t strideA, const CeedScalar *dB,
-+                                               magma_int_t lddb, magma_int_t strideB, CeedScalar beta, CeedScalar *dC, magma_int_t lddc,
++static inline int devblas_gemm_batched_strided(magma_trans_t trans_A, magma_trans_t trans_B, magma_int_t m, magma_int_t n, magma_int_t k,
++                                               CeedScalar alpha, const CeedScalar *d_A, magma_int_t ldda, magma_int_t strideA, const CeedScalar *d_B,
++                                               magma_int_t lddb, magma_int_t strideB, CeedScalar beta, CeedScalar *d_C, magma_int_t lddc,
 +                                               magma_int_t strideC, magma_int_t batchCount, magma_queue_t queue) {
    if (CEED_SCALAR_TYPE == CEED_SCALAR_FP32) {
-     devblasSgemmStridedBatched(magma_queue_get_devblas_handle(queue), devblas_trans_const(transA), devblas_trans_const(transB), (int)m, (int)n,
-                                (int)k, (const float *)&alpha, (const float *)dA, (int)ldda, strideA, (const float *)dB, (int)lddb, strideB,
+     devblasSgemmStridedBatched(magma_queue_get_devblas_handle(queue), devblas_trans_const(trans_A), devblas_trans_const(trans_B), (int)m, (int)n,
+                                (int)k, (const float *)&alpha, (const float *)d_A, (int)ldda, strideA, (const float *)d_B, (int)lddb, strideB,
 diff --git a/backends/magma/ceed-magma-gemm-nontensor.h b/backends/magma/ceed-magma-gemm-nontensor.h
 new file mode 100644
-index 00000000..3b300825
+index 00000000..d7e83a5f
 --- /dev/null
 +++ b/backends/magma/ceed-magma-gemm-nontensor.h
 @@ -0,0 +1,18 @@
@@ -1896,17 +1948,17 @@ index 00000000..3b300825
 +#include "ceed-magma.h"
 +
 +////////////////////////////////////////////////////////////////////////////////
-+CEED_INTERN int magma_gemm_nontensor(magma_trans_t transA, magma_trans_t transB, magma_int_t m, magma_int_t n, magma_int_t k, CeedScalar alpha,
-+                                     const CeedScalar *dA, magma_int_t ldda, const CeedScalar *dB, magma_int_t lddb, CeedScalar beta, CeedScalar *dC,
-+                                     magma_int_t lddc, magma_queue_t queue);
++CEED_INTERN int magma_gemm_nontensor(magma_trans_t trans_A, magma_trans_t trans_B, magma_int_t m, magma_int_t n, magma_int_t k, CeedScalar alpha,
++                                     const CeedScalar *d_A, magma_int_t ldda, const CeedScalar *d_B, magma_int_t lddb, CeedScalar beta,
++                                     CeedScalar *d_C, magma_int_t lddc, magma_queue_t queue);
 +
 +#endif  // CEED_MAGMA_GEMM_NONTENSOR_H
 diff --git a/backends/magma/ceed-magma-gemm-selector.cpp b/backends/magma/ceed-magma-gemm-selector.cpp
 new file mode 100644
-index 00000000..27674a35
+index 00000000..368a9b33
 --- /dev/null
 +++ b/backends/magma/ceed-magma-gemm-selector.cpp
-@@ -0,0 +1,150 @@
+@@ -0,0 +1,141 @@
 +// Copyright (c) 2017-2022, Lawrence Livermore National Security, LLC and other CEED contributors.
 +// All Rights Reserved. See the top-level LICENSE and NOTICE files for details.
 +//
@@ -1935,53 +1987,49 @@ index 00000000..27674a35
 +
 +////////////////////////////////////////////////////////////////////////////////
 +#ifdef CEED_MAGMA_USE_HIP
-+static inline auto gemm_selector_get_data(int gpu_arch, char precision, char transA) -> decltype(dgemm_nn_mi250x) {
++static inline auto gemm_selector_get_data(int gpu_arch, char precision, char trans_A) -> decltype(dgemm_nn_mi250x) {
 +  if (gpu_arch >= 910) {
 +    // gfx90a or newer
-+    return (precision == 's') ? ((transA == 'n') ? sgemm_nn_mi250x : sgemm_tn_mi250x) : ((transA == 'n') ? dgemm_nn_mi250x : dgemm_tn_mi250x);
++    return (precision == 's') ? ((trans_A == 'n') ? sgemm_nn_mi250x : sgemm_tn_mi250x) : ((trans_A == 'n') ? dgemm_nn_mi250x : dgemm_tn_mi250x);
 +  } else {
 +    // gfx908 or older
-+    return (precision == 's') ? ((transA == 'n') ? sgemm_nn_mi100 : sgemm_tn_mi100) : ((transA == 'n') ? dgemm_nn_mi100 : dgemm_tn_mi100);
++    return (precision == 's') ? ((trans_A == 'n') ? sgemm_nn_mi100 : sgemm_tn_mi100) : ((trans_A == 'n') ? dgemm_nn_mi100 : dgemm_tn_mi100);
 +  }
 +}
 +#else
-+static inline auto gemm_selector_get_data(int gpu_arch, char precision, char transA) -> decltype(dgemm_nn_a100) {
++static inline auto gemm_selector_get_data(int gpu_arch, char precision, char trans_A) -> decltype(dgemm_nn_a100) {
 +  if (gpu_arch >= 800) {
 +    // sm80 or newer
-+    return (precision == 's') ? ((transA == 'n') ? sgemm_nn_a100 : sgemm_tn_a100) : ((transA == 'n') ? dgemm_nn_a100 : dgemm_tn_a100);
++    return (precision == 's') ? ((trans_A == 'n') ? sgemm_nn_a100 : sgemm_tn_a100) : ((trans_A == 'n') ? dgemm_nn_a100 : dgemm_tn_a100);
 +  } else {
 +    // sm70 or older
-+    return (precision == 's') ? ((transA == 'n') ? sgemm_nn_v100 : sgemm_tn_v100) : ((transA == 'n') ? dgemm_nn_v100 : dgemm_tn_v100);
++    return (precision == 's') ? ((trans_A == 'n') ? sgemm_nn_v100 : sgemm_tn_v100) : ((trans_A == 'n') ? dgemm_nn_v100 : dgemm_tn_v100);
 +  }
 +}
 +#endif
 +
 +////////////////////////////////////////////////////////////////////////////////
-+void gemm_selector(int gpu_arch, char precision, char transA, int m, int n, int k, int *nbatch, int *use_magma) {
-+  *nbatch    = n;
-+  *use_magma = 0;
-+
-+  const auto &data = gemm_selector_get_data(gpu_arch, precision, transA);
++void gemm_selector(int gpu_arch, char precision, char trans_A, int m, int n, int k, int *n_batch, int *use_magma) {
++  const auto &data = gemm_selector_get_data(gpu_arch, precision, trans_A);
 +  int         ir   = -1;
 +  double      norm = std::numeric_limits<double>::max();
 +
 +  for (size_t i = 0; i < data.size(); i++) {
-+    int im = data[i][M_INDEX];
-+    int in = data[i][N_INDEX];
-+    int ik = data[i][K_INDEX];
++    const int &im = data[i][M_INDEX];
++    const int &in = data[i][N_INDEX];
++    const int &ik = data[i][K_INDEX];
 +
 +    double mdiff = (double)(im - m);
 +    double ndiff = (double)(in - n);
 +    double kdiff = (double)(ik - k);
-+
-+    double nrm = sqrt(mdiff * mdiff + ndiff * ndiff + kdiff * kdiff);
++    double nrm   = mdiff * mdiff + ndiff * ndiff + kdiff * kdiff;
 +
 +    if (nrm < norm) {
 +      norm = nrm;
 +      ir   = i;
 +    }
 +
-+    if (nrm == 0) {
++    if (im == m && in == n && ik == k) {
 +      // the input (m, n, k) exactly matches a record in `data`
 +      // no need to search further
 +      break;
@@ -1989,77 +2037,72 @@ index 00000000..27674a35
 +  }
 +
 +  if (ir >= 0) {
-+    // if the closest match indicates that n = nbatch,
++    // if the closest match indicates that n = n_batch,
 +    // that means calling the regular non-batch gemm.
-+    // So nbatch is set to n instead of the 'nbatch'
++    // So n_batch is set to n instead of the 'n_batch'
 +    // entry of the matching record
-+    int n_      = data[ir][N_INDEX];
-+    int nbatch_ = data[ir][N_BATCH_INDEX];
-+    *nbatch     = (n_ == nbatch_) ? n : nbatch_;
-+    *use_magma  = data[ir][USE_MAGMA_INDEX];
++    int n_       = data[ir][N_INDEX];
++    int n_batch_ = data[ir][N_BATCH_INDEX];
++    *n_batch     = (n_ == n_batch_) ? n : n_batch_;
++    *use_magma   = data[ir][USE_MAGMA_INDEX];
++  } else {
++    *n_batch   = n;
++    *use_magma = 0;
 +  }
 +}
 +
 +////////////////////////////////////////////////////////////////////////////////
 +#ifdef CEED_MAGMA_USE_HIP
-+static inline auto nontensor_rtc_get_data(int gpu_arch, char transA, int qcomp) -> decltype(dinterp_n_mi250x) {
-+  if (qcomp == 1) {
-+    return (transA == 'n') ? dinterp_n_mi250x : dinterp_t_mi250x;
++static inline auto nontensor_rtc_get_data(int gpu_arch, char trans_A, int q_comp) -> decltype(dinterp_n_mi250x) {
++  if (q_comp == 1) {
++    return (trans_A == 'n') ? dinterp_n_mi250x : dinterp_t_mi250x;
 +  } else {
-+    return (transA == 'n') ? dgrad_n_mi250x : dgrad_t_mi250x;
++    return (trans_A == 'n') ? dgrad_n_mi250x : dgrad_t_mi250x;
 +  }
 +}
 +#else
-+static inline auto nontensor_rtc_get_data(int gpu_arch, char transA, int qcomp) -> decltype(dinterp_n_a100) {
-+  if (qcomp == 1) {
-+    return (transA == 'n') ? dinterp_n_a100 : dinterp_t_a100;
++static inline auto nontensor_rtc_get_data(int gpu_arch, char trans_A, int q_comp) -> decltype(dinterp_n_a100) {
++  if (q_comp == 1) {
++    return (trans_A == 'n') ? dinterp_n_a100 : dinterp_t_a100;
 +  } else {
-+    return (transA == 'n') ? dgrad_n_a100 : dgrad_t_a100;
++    return (trans_A == 'n') ? dgrad_n_a100 : dgrad_t_a100;
 +  }
 +}
 +#endif
 +
 +////////////////////////////////////////////////////////////////////////////////
-+CeedInt nontensor_rtc_get_nb(int gpu_arch, char transA, int qcomp, int P_, int N, int Q_) {
-+  CeedInt P  = (transA == 'n') ? P_ : Q_;
-+  CeedInt Q  = (transA == 'n') ? Q_ : P_;
-+  CeedInt NB = 1;
-+
-+  const auto &data = nontensor_rtc_get_data(gpu_arch, transA, qcomp);
++CeedInt nontensor_rtc_get_nb(int gpu_arch, char trans_A, int q_comp, int m, int n, int k) {
++  const auto &data = nontensor_rtc_get_data(gpu_arch, trans_A, q_comp);
 +  int         ir   = -1;
 +  double      norm = std::numeric_limits<double>::max();
 +
 +  for (size_t i = 0; i < data.size(); i++) {
-+    int ip = data[i][M_INDEX_RTC];
-+    int in = data[i][N_INDEX_RTC];
-+    int iq = data[i][K_INDEX_RTC];
++    const int &im = data[i][M_INDEX_RTC];
++    const int &in = data[i][N_INDEX_RTC];
++    const int &ik = data[i][K_INDEX_RTC];
 +
-+    double pdiff = (double)(ip - P);
-+    double ndiff = (double)(in - N);
-+    double qdiff = (double)(iq - Q);
-+    double nrm   = sqrt(pdiff * pdiff + ndiff * ndiff + qdiff * qdiff);
++    double mdiff = (double)(im - m);
++    double ndiff = (double)(in - n);
++    double kdiff = (double)(ik - k);
++    double nrm   = mdiff * mdiff + ndiff * ndiff + kdiff * kdiff;
 +
 +    if (nrm < norm) {
 +      norm = nrm;
 +      ir   = i;
 +    }
 +
-+    if (nrm == 0) {
++    if (im == m && in == n && ik == k) {
 +      // the input (m, n, k) exactly matches a record in `data`
 +      // no need to search further
 +      break;
 +    }
 +  }
 +
-+  if (ir >= 0) {
-+    NB = data[ir][NB_INDEX_RTC];
-+  }
-+
-+  return NB;
++  return (ir >= 0) ? data[ir][NB_INDEX_RTC] : 1;
 +}
 diff --git a/backends/magma/ceed-magma-gemm-selector.h b/backends/magma/ceed-magma-gemm-selector.h
 new file mode 100644
-index 00000000..6e07bea5
+index 00000000..676212c1
 --- /dev/null
 +++ b/backends/magma/ceed-magma-gemm-selector.h
 @@ -0,0 +1,19 @@
@@ -2076,10 +2119,10 @@ index 00000000..6e07bea5
 +#include "ceed-magma.h"
 +
 +////////////////////////////////////////////////////////////////////////////////
-+CEED_INTERN void gemm_selector(int gpu_arch, char precision, char transA, int m, int n, int k, int *nbatch, int *use_magma);
++CEED_INTERN void gemm_selector(int gpu_arch, char precision, char trans_A, int m, int n, int k, int *n_batch, int *use_magma);
 +
 +////////////////////////////////////////////////////////////////////////////////
-+CEED_INTERN CeedInt nontensor_rtc_get_nb(int gpu_arch, char transA, int qcomp, int P_, int N, int Q_);
++CEED_INTERN CeedInt nontensor_rtc_get_nb(int gpu_arch, char trans_A, int q_comp, int m, int n, int k);
 +
 +#endif  // CEED_MAGMA_GEMM_SELECTOR_H
 diff --git a/backends/magma/ceed-magma.c b/backends/magma/ceed-magma.c
@@ -2096,7 +2139,7 @@ index 92fc1b3d..8abaf838 100644
    return CEED_ERROR_SUCCESS;
  }
 diff --git a/backends/magma/ceed-magma.h b/backends/magma/ceed-magma.h
-index fcba887f..7fbdcfb4 100644
+index fcba887f..536d3f5d 100644
 --- a/backends/magma/ceed-magma.h
 +++ b/backends/magma/ceed-magma.h
 @@ -16,24 +16,15 @@
@@ -2130,7 +2173,7 @@ index fcba887f..7fbdcfb4 100644
  
  #ifdef CEED_MAGMA_USE_HIP
  typedef hipModule_t   CeedMagmaModule;
-@@ -55,47 +46,40 @@ typedef CUfunction CeedMagmaFunction;
+@@ -55,47 +46,42 @@ typedef CUfunction CeedMagmaFunction;
  
  typedef struct {
    CeedMagmaModule   module;
@@ -2163,6 +2206,8 @@ index fcba887f..7fbdcfb4 100644
 +  CeedMagmaFunction Deriv[MAGMA_NONTENSOR_KERNEL_INSTANCES];
 +  CeedMagmaFunction DerivTranspose[MAGMA_NONTENSOR_KERNEL_INSTANCES];
 +  CeedMagmaFunction Weight;
++  CeedInt           NB_interp[MAGMA_NONTENSOR_KERNEL_INSTANCES], NB_interp_t[MAGMA_NONTENSOR_KERNEL_INSTANCES];
++  CeedInt           NB_deriv[MAGMA_NONTENSOR_KERNEL_INSTANCES], NB_deriv_t[MAGMA_NONTENSOR_KERNEL_INSTANCES];
    CeedScalar       *d_interp;
    CeedScalar       *d_grad;
 +  CeedScalar       *d_div;
@@ -2199,7 +2244,7 @@ index fcba887f..7fbdcfb4 100644
  #define magma_is_devptr magma_isdevptr
 diff --git a/backends/magma/gemm_selector.cpp b/backends/magma/gemm_selector.cpp
 deleted file mode 100644
-index ade459dd..00000000
+index ee45bb2f..00000000
 --- a/backends/magma/gemm_selector.cpp
 +++ /dev/null
 @@ -1,165 +0,0 @@
@@ -2225,7 +2270,7 @@ index ade459dd..00000000
 -#endif
 -
 -////////////////////////////////////////////////////////////////////////////////
--static void *gemm_selector_get_data(int gpu_arch, char precision, char transA) {
+-static void *gemm_selector_get_data(int gpu_arch, char precision, char trans_A) {
 -// a default
 -#ifdef CEED_MAGMA_USE_HIP
 -  void *data = (void *)&sgemm_nn_mi250x;
@@ -2236,22 +2281,22 @@ index ade459dd..00000000
 -#ifdef CEED_MAGMA_USE_HIP
 -  if (gpu_arch >= 910) {
 -    // gfx90a or newer
--    data = (precision == 's') ? ((transA == 'n') ? (void *)&sgemm_nn_mi250x : (void *)&sgemm_tn_mi250x)
--                              : ((transA == 'n') ? (void *)&dgemm_nn_mi250x : (void *)&dgemm_tn_mi250x);
+-    data = (precision == 's') ? ((trans_A == 'n') ? (void *)&sgemm_nn_mi250x : (void *)&sgemm_tn_mi250x)
+-                              : ((trans_A == 'n') ? (void *)&dgemm_nn_mi250x : (void *)&dgemm_tn_mi250x);
 -  } else {
 -    // gfx908 or older
--    data = (precision == 's') ? ((transA == 'n') ? (void *)&sgemm_nn_mi100 : (void *)&sgemm_tn_mi100)
--                              : ((transA == 'n') ? (void *)&dgemm_nn_mi100 : (void *)&dgemm_tn_mi100);
+-    data = (precision == 's') ? ((trans_A == 'n') ? (void *)&sgemm_nn_mi100 : (void *)&sgemm_tn_mi100)
+-                              : ((trans_A == 'n') ? (void *)&dgemm_nn_mi100 : (void *)&dgemm_tn_mi100);
 -  }
 -#else
 -  if (gpu_arch >= 800) {
 -    // sm80 or newer
--    data = (precision == 's') ? ((transA == 'n') ? (void *)&sgemm_nn_a100 : (void *)&sgemm_tn_a100)
--                              : ((transA == 'n') ? (void *)&dgemm_nn_a100 : (void *)&dgemm_tn_a100);
+-    data = (precision == 's') ? ((trans_A == 'n') ? (void *)&sgemm_nn_a100 : (void *)&sgemm_tn_a100)
+-                              : ((trans_A == 'n') ? (void *)&dgemm_nn_a100 : (void *)&dgemm_tn_a100);
 -  } else {
 -    // sm70 or older
--    data = (precision == 's') ? ((transA == 'n') ? (void *)&sgemm_nn_v100 : (void *)&sgemm_tn_v100)
--                              : ((transA == 'n') ? (void *)&dgemm_nn_v100 : (void *)&dgemm_tn_v100);
+-    data = (precision == 's') ? ((trans_A == 'n') ? (void *)&sgemm_nn_v100 : (void *)&sgemm_tn_v100)
+-                              : ((trans_A == 'n') ? (void *)&dgemm_nn_v100 : (void *)&dgemm_tn_v100);
 -  }
 -#endif
 -
@@ -2259,12 +2304,12 @@ index ade459dd..00000000
 -}
 -
 -////////////////////////////////////////////////////////////////////////////////
--void gemm_selector(int gpu_arch, char precision, char transA, int m, int n, int k, int *nbatch, int *use_magma) {
+-void gemm_selector(int gpu_arch, char precision, char trans_A, int m, int n, int k, int *n_batch, int *use_magma) {
 -  // defaults
--  *nbatch                                            = n;
+-  *n_batch                                           = n;
 -  *use_magma                                         = 0;
 -  std::vector<std::array<int, RECORD_LENGTH> > *data = NULL;
--  data = (std::vector<std::array<int, RECORD_LENGTH> > *)gemm_selector_get_data(gpu_arch, precision, transA);
+-  data = (std::vector<std::array<int, RECORD_LENGTH> > *)gemm_selector_get_data(gpu_arch, precision, trans_A);
 -
 -  int    ir   = -1;
 -  double norm = std::numeric_limits<double>::max();
@@ -2293,18 +2338,18 @@ index ade459dd..00000000
 -
 -  if (ir >= 0) {
 -    *use_magma = (*data)[ir][USE_MAGMA_INDEX];
--    // if the closest match indicates that n = nbatch,
+-    // if the closest match indicates that n = n_batch,
 -    // that means calling the regular non-batch gemm.
--    // So nbatch is set to n instead of the 'nbatch'
+-    // So n_batch is set to n instead of the 'n_batch'
 -    // entry of the matching record
--    int n_      = (*data)[ir][N_INDEX];
--    int nbatch_ = (*data)[ir][N_BATCH_INDEX];
--    *nbatch     = (n_ == nbatch_) ? n : nbatch_;
+-    int n_       = (*data)[ir][N_INDEX];
+-    int n_batch_ = (*data)[ir][N_BATCH_INDEX];
+-    *n_batch     = (n_ == n_batch_) ? n : n_batch_;
 -  }
 -}
 -
 -////////////////////////////////////////////////////////////////////////////////
--static void *nontensor_rtc_get_data(int gpu_arch, char precision, CeedEvalMode emode, CeedTransposeMode tmode) {
+-static void *nontensor_rtc_get_data(int gpu_arch, char precision, CeedEvalMode e_mode, CeedTransposeMode t_mode) {
 -// a default
 -#ifdef CEED_MAGMA_USE_HIP
 -  void *data = (void *)&dinterp_n_mi250x;
@@ -2313,16 +2358,16 @@ index ade459dd..00000000
 -#endif
 -
 -#ifdef CEED_MAGMA_USE_HIP
--  if (emode == CEED_EVAL_INTERP) {
--    data = (tmode == CEED_TRANSPOSE) ? (void *)&dinterp_t_mi250x : (void *)&dinterp_n_mi250x;
--  } else if (emode == CEED_EVAL_GRAD) {
--    data = (tmode == CEED_TRANSPOSE) ? (void *)&dgrad_t_mi250x : (void *)&dgrad_n_mi250x;
+-  if (e_mode == CEED_EVAL_INTERP) {
+-    data = (t_mode == CEED_TRANSPOSE) ? (void *)&dinterp_t_mi250x : (void *)&dinterp_n_mi250x;
+-  } else if (e_mode == CEED_EVAL_GRAD) {
+-    data = (t_mode == CEED_TRANSPOSE) ? (void *)&dgrad_t_mi250x : (void *)&dgrad_n_mi250x;
 -  }
 -#else
--  if (emode == CEED_EVAL_INTERP) {
--    data = (tmode == CEED_TRANSPOSE) ? (void *)&dinterp_t_a100 : (void *)&dinterp_n_a100;
--  } else if (emode == CEED_EVAL_GRAD) {
--    data = (tmode == CEED_TRANSPOSE) ? (void *)&dgrad_t_a100 : (void *)&dgrad_n_a100;
+-  if (e_mode == CEED_EVAL_INTERP) {
+-    data = (t_mode == CEED_TRANSPOSE) ? (void *)&dinterp_t_a100 : (void *)&dinterp_n_a100;
+-  } else if (e_mode == CEED_EVAL_GRAD) {
+-    data = (t_mode == CEED_TRANSPOSE) ? (void *)&dgrad_t_a100 : (void *)&dgrad_n_a100;
 -  }
 -#endif
 -
@@ -2330,13 +2375,13 @@ index ade459dd..00000000
 -}
 -
 -////////////////////////////////////////////////////////////////////////////////
--CeedInt nontensor_rtc_get_nb(int gpu_arch, char precision, CeedEvalMode emode, CeedTransposeMode tmode, int P_, int N, int Q_) {
--  CeedInt P  = (tmode == CEED_TRANSPOSE) ? P_ : Q_;
--  CeedInt Q  = (tmode == CEED_TRANSPOSE) ? Q_ : P_;
+-CeedInt nontensor_rtc_get_nb(int gpu_arch, char precision, CeedEvalMode e_mode, CeedTransposeMode t_mode, int P_, int N, int Q_) {
+-  CeedInt P  = (t_mode == CEED_TRANSPOSE) ? P_ : Q_;
+-  CeedInt Q  = (t_mode == CEED_TRANSPOSE) ? Q_ : P_;
 -  CeedInt NB = 1;
 -
 -  std::vector<std::array<int, RECORD_LENGTH_RTC> > *data = NULL;
--  data = (std::vector<std::array<int, RECORD_LENGTH_RTC> > *)nontensor_rtc_get_data(gpu_arch, precision, emode, tmode);
+-  data = (std::vector<std::array<int, RECORD_LENGTH_RTC> > *)nontensor_rtc_get_data(gpu_arch, precision, e_mode, t_mode);
 -
 -  int    ir   = -1;
 -  double norm = std::numeric_limits<double>::max();
@@ -2449,13 +2494,212 @@ similarity index 100%
 rename from backends/magma/gemm_tuning/a100.h
 rename to backends/magma/tuning/a100.h
 diff --git a/backends/magma/gemm_tuning/a100_grad_rtc.h b/backends/magma/tuning/a100_grad_rtc.h
-similarity index 100%
+similarity index 97%
 rename from backends/magma/gemm_tuning/a100_grad_rtc.h
 rename to backends/magma/tuning/a100_grad_rtc.h
+index cfda2cf0..be7d85c5 100644
+--- a/backends/magma/gemm_tuning/a100_grad_rtc.h
++++ b/backends/magma/tuning/a100_grad_rtc.h
+@@ -2,88 +2,7 @@
+ // auto-generated from data on a100-cuda11.2
+ 
+ ////////////////////////////////////////////////////////////////////////////////
+-std::vector<std::array<int, 4> > dgrad_n_a100 = {
+-    {1,  1024,    3,  5 },
+-    {1,  5120,    3,  2 },
+-    {1,  10240,   3,  1 },
+-    {1,  51200,   3,  1 },
+-    {1,  102400,  3,  3 },
+-    {1,  512000,  3,  1 },
+-    {1,  1024000, 3,  1 },
+-    {1,  1024,    4,  3 },
+-    {1,  5120,    4,  5 },
+-    {1,  10240,   4,  1 },
+-    {1,  51200,   4,  3 },
+-    {1,  102400,  4,  1 },
+-    {1,  512000,  4,  1 },
+-    {1,  1024000, 4,  1 },
+-    {3,  1024,    6,  3 },
+-    {3,  5120,    6,  4 },
+-    {3,  10240,   6,  3 },
+-    {3,  51200,   6,  2 },
+-    {3,  102400,  6,  2 },
+-    {3,  512000,  6,  3 },
+-    {3,  1024000, 6,  2 },
+-    {4,  1024,    10, 5 },
+-    {4,  5120,    10, 15},
+-    {4,  10240,   10, 3 },
+-    {4,  51200,   10, 22},
+-    {4,  102400,  10, 6 },
+-    {4,  512000,  10, 10},
+-    {4,  1024000, 10, 10},
+-    {6,  1024,    10, 1 },
+-    {6,  5120,    10, 9 },
+-    {6,  10240,   10, 1 },
+-    {6,  51200,   10, 3 },
+-    {6,  102400,  10, 3 },
+-    {6,  512000,  10, 6 },
+-    {6,  1024000, 10, 6 },
+-    {12, 1024,    15, 5 },
+-    {12, 5120,    15, 3 },
+-    {12, 10240,   15, 13},
+-    {12, 51200,   15, 26},
+-    {12, 102400,  15, 7 },
+-    {12, 512000,  15, 13},
+-    {12, 1024000, 15, 18},
+-    {11, 1024,    20, 2 },
+-    {11, 5120,    20, 2 },
+-    {11, 10240,   20, 6 },
+-    {11, 51200,   20, 9 },
+-    {11, 102400,  20, 29},
+-    {11, 512000,  20, 23},
+-    {11, 1024000, 20, 27},
+-    {16, 1024,    21, 5 },
+-    {16, 5120,    21, 4 },
+-    {16, 10240,   21, 12},
+-    {16, 51200,   21, 20},
+-    {16, 102400,  21, 20},
+-    {16, 512000,  21, 20},
+-    {16, 1024000, 21, 16},
+-    {25, 1024,    28, 2 },
+-    {25, 5120,    28, 11},
+-    {25, 10240,   28, 21},
+-    {25, 51200,   28, 21},
+-    {25, 102400,  28, 19},
+-    {25, 512000,  28, 31},
+-    {25, 1024000, 28, 31},
+-    {24, 1024,    35, 4 },
+-    {24, 5120,    35, 4 },
+-    {24, 10240,   35, 20},
+-    {24, 51200,   35, 10},
+-    {24, 102400,  35, 12},
+-    {24, 512000,  35, 22},
+-    {24, 1024000, 35, 24},
+-    {33, 1024,    36, 1 },
+-    {33, 5120,    36, 16},
+-    {33, 10240,   36, 8 },
+-    {33, 51200,   36, 27},
+-    {33, 102400,  36, 14},
+-    {33, 512000,  36, 14},
+-    {33, 1024000, 36, 30}
+-};
+-
+-////////////////////////////////////////////////////////////////////////////////
+-std::vector<std::array<int, 4> > dgrad_t_a100 = {
++std::vector<std::array<int, RECORD_LENGTH_RTC> > dgrad_t_a100 = {
+     {3,  1024,    1,  2 },
+     {3,  5120,    1,  3 },
+     {3,  10240,   1,  13},
+@@ -162,3 +81,84 @@ std::vector<std::array<int, 4> > dgrad_t_a100 = {
+     {36, 512000,  33, 20},
+     {36, 1024000, 33, 20}
+ };
++
++////////////////////////////////////////////////////////////////////////////////
++std::vector<std::array<int, RECORD_LENGTH_RTC> > dgrad_n_a100 = {
++    {1,  1024,    3,  5 },
++    {1,  5120,    3,  2 },
++    {1,  10240,   3,  1 },
++    {1,  51200,   3,  1 },
++    {1,  102400,  3,  3 },
++    {1,  512000,  3,  1 },
++    {1,  1024000, 3,  1 },
++    {1,  1024,    4,  3 },
++    {1,  5120,    4,  5 },
++    {1,  10240,   4,  1 },
++    {1,  51200,   4,  3 },
++    {1,  102400,  4,  1 },
++    {1,  512000,  4,  1 },
++    {1,  1024000, 4,  1 },
++    {3,  1024,    6,  3 },
++    {3,  5120,    6,  4 },
++    {3,  10240,   6,  3 },
++    {3,  51200,   6,  2 },
++    {3,  102400,  6,  2 },
++    {3,  512000,  6,  3 },
++    {3,  1024000, 6,  2 },
++    {4,  1024,    10, 5 },
++    {4,  5120,    10, 15},
++    {4,  10240,   10, 3 },
++    {4,  51200,   10, 22},
++    {4,  102400,  10, 6 },
++    {4,  512000,  10, 10},
++    {4,  1024000, 10, 10},
++    {6,  1024,    10, 1 },
++    {6,  5120,    10, 9 },
++    {6,  10240,   10, 1 },
++    {6,  51200,   10, 3 },
++    {6,  102400,  10, 3 },
++    {6,  512000,  10, 6 },
++    {6,  1024000, 10, 6 },
++    {12, 1024,    15, 5 },
++    {12, 5120,    15, 3 },
++    {12, 10240,   15, 13},
++    {12, 51200,   15, 26},
++    {12, 102400,  15, 7 },
++    {12, 512000,  15, 13},
++    {12, 1024000, 15, 18},
++    {11, 1024,    20, 2 },
++    {11, 5120,    20, 2 },
++    {11, 10240,   20, 6 },
++    {11, 51200,   20, 9 },
++    {11, 102400,  20, 29},
++    {11, 512000,  20, 23},
++    {11, 1024000, 20, 27},
++    {16, 1024,    21, 5 },
++    {16, 5120,    21, 4 },
++    {16, 10240,   21, 12},
++    {16, 51200,   21, 20},
++    {16, 102400,  21, 20},
++    {16, 512000,  21, 20},
++    {16, 1024000, 21, 16},
++    {25, 1024,    28, 2 },
++    {25, 5120,    28, 11},
++    {25, 10240,   28, 21},
++    {25, 51200,   28, 21},
++    {25, 102400,  28, 19},
++    {25, 512000,  28, 31},
++    {25, 1024000, 28, 31},
++    {24, 1024,    35, 4 },
++    {24, 5120,    35, 4 },
++    {24, 10240,   35, 20},
++    {24, 51200,   35, 10},
++    {24, 102400,  35, 12},
++    {24, 512000,  35, 22},
++    {24, 1024000, 35, 24},
++    {33, 1024,    36, 1 },
++    {33, 5120,    36, 16},
++    {33, 10240,   36, 8 },
++    {33, 51200,   36, 27},
++    {33, 102400,  36, 14},
++    {33, 512000,  36, 14},
++    {33, 1024000, 36, 30}
++};
 diff --git a/backends/magma/gemm_tuning/a100_interp_rtc.h b/backends/magma/tuning/a100_interp_rtc.h
-similarity index 100%
+similarity index 97%
 rename from backends/magma/gemm_tuning/a100_interp_rtc.h
 rename to backends/magma/tuning/a100_interp_rtc.h
+index b73fa55e..91a2e968 100644
+--- a/backends/magma/gemm_tuning/a100_interp_rtc.h
++++ b/backends/magma/tuning/a100_interp_rtc.h
+@@ -2,7 +2,7 @@
+ // auto-generated from data on a100-cuda11.2
+ 
+ ////////////////////////////////////////////////////////////////////////////////
+-std::vector<std::array<int, 4> > dinterp_t_a100 = {
++std::vector<std::array<int, RECORD_LENGTH_RTC> > dinterp_t_a100 = {
+     {3,  1024,    1,  12},
+     {3,  5120,    1,  11},
+     {3,  10240,   1,  5 },
+@@ -83,7 +83,7 @@ std::vector<std::array<int, 4> > dinterp_t_a100 = {
+ };
+ 
+ ////////////////////////////////////////////////////////////////////////////////
+-std::vector<std::array<int, 4> > dinterp_n_a100 = {
++std::vector<std::array<int, RECORD_LENGTH_RTC> > dinterp_n_a100 = {
+     {1,  1024,    3,  2 },
+     {1,  5120,    3,  6 },
+     {1,  10240,   3,  6 },
 diff --git a/backends/magma/gemm_tuning/indices.h b/backends/magma/tuning/indices.h
 similarity index 100%
 rename from backends/magma/gemm_tuning/indices.h
@@ -2473,15 +2717,36 @@ similarity index 100%
 rename from backends/magma/gemm_tuning/mi250x_grad_rtc.h
 rename to backends/magma/tuning/mi250x_grad_rtc.h
 diff --git a/backends/magma/gemm_tuning/mi250x_interp_rtc.h b/backends/magma/tuning/mi250x_interp_rtc.h
-similarity index 100%
+similarity index 96%
 rename from backends/magma/gemm_tuning/mi250x_interp_rtc.h
 rename to backends/magma/tuning/mi250x_interp_rtc.h
+index e706d893..fb8c0421 100644
+--- a/backends/magma/gemm_tuning/mi250x_interp_rtc.h
++++ b/backends/magma/tuning/mi250x_interp_rtc.h
+@@ -2,7 +2,7 @@
+ // auto-generated from data on mi210-rocm5.2
+ 
+ ////////////////////////////////////////////////////////////////////////////////
+-std::vector<std::array<int, 4> > dinterp_t_mi250x = {
++std::vector<std::array<int, RECORD_LENGTH_RTC> > dinterp_t_mi250x = {
+     {3,  1024,    1,  1 },
+     {3,  5120,    1,  4 },
+     {3,  10240,   1,  7 },
+@@ -83,7 +83,7 @@ std::vector<std::array<int, 4> > dinterp_t_mi250x = {
+ };
+ 
+ ////////////////////////////////////////////////////////////////////////////////
+-std::vector<std::array<int, 4> > dinterp_n_mi250x = {
++std::vector<std::array<int, RECORD_LENGTH_RTC> > dinterp_n_mi250x = {
+     {1,  1024,    3,  1 },
+     {1,  5120,    3,  2 },
+     {1,  10240,   3,  4 },
 diff --git a/backends/magma/gemm_tuning/v100.h b/backends/magma/tuning/v100.h
 similarity index 100%
 rename from backends/magma/gemm_tuning/v100.h
 rename to backends/magma/tuning/v100.h
 diff --git a/backends/ref/ceed-ref-basis.c b/backends/ref/ceed-ref-basis.c
-index b6e40627..199c1481 100644
+index 8cfaa8b3..a001091d 100644
 --- a/backends/ref/ceed-ref-basis.c
 +++ b/backends/ref/ceed-ref-basis.c
 @@ -109,7 +109,8 @@ static int CeedBasisApply_Ref(CeedBasis basis, CeedInt num_elem, CeedTransposeMo
@@ -2496,7 +2761,7 @@ index b6e40627..199c1481 100644
              Q = P_1d;
 diff --git a/include/ceed/jit-source/cuda/cuda-ref-basis-nontensor-templates.h b/include/ceed/jit-source/cuda/cuda-ref-basis-nontensor-templates.h
 new file mode 100644
-index 00000000..43ebd701
+index 00000000..7e6450fb
 --- /dev/null
 +++ b/include/ceed/jit-source/cuda/cuda-ref-basis-nontensor-templates.h
 @@ -0,0 +1,67 @@
@@ -2566,7 +2831,7 @@ index 00000000..43ebd701
 +
 +//------------------------------------------------------------------------------
 +
-+#endif
++#endif  // CEED_CUDA_REF_BASIS_NONTENSOR_TEMPLATES_H
 diff --git a/include/ceed/jit-source/cuda/cuda-ref-basis-nontensor.h b/include/ceed/jit-source/cuda/cuda-ref-basis-nontensor.h
 index 484d755f..4b5c7f94 100644
 --- a/include/ceed/jit-source/cuda/cuda-ref-basis-nontensor.h
@@ -2680,7 +2945,7 @@ index 484d755f..4b5c7f94 100644
    }
 diff --git a/include/ceed/jit-source/hip/hip-ref-basis-nontensor-templates.h b/include/ceed/jit-source/hip/hip-ref-basis-nontensor-templates.h
 new file mode 100644
-index 00000000..c40fee36
+index 00000000..4e568369
 --- /dev/null
 +++ b/include/ceed/jit-source/hip/hip-ref-basis-nontensor-templates.h
 @@ -0,0 +1,67 @@
@@ -2750,7 +3015,7 @@ index 00000000..c40fee36
 +
 +//------------------------------------------------------------------------------
 +
-+#endif
++#endif  // CEED_HIP_REF_BASIS_NONTENSOR_TEMPLATES_H
 diff --git a/include/ceed/jit-source/hip/hip-ref-basis-nontensor.h b/include/ceed/jit-source/hip/hip-ref-basis-nontensor.h
 index 101f898e..fd389f8a 100644
 --- a/include/ceed/jit-source/hip/hip-ref-basis-nontensor.h
@@ -2862,6 +3127,141 @@ index 101f898e..fd389f8a 100644
    for (CeedInt elem = blockIdx.x * blockDim.z + threadIdx.z; elem < num_elem; elem += gridDim.x * blockDim.z) {
      d_V[elem * BASIS_Q + t_id] = q_weight[t_id];
    }
+diff --git a/include/ceed/jit-source/magma/grad-1d.h b/include/ceed/jit-source/magma/grad-1d.h
+deleted file mode 100644
+index 5eea0ee2..00000000
+--- a/include/ceed/jit-source/magma/grad-1d.h
++++ /dev/null
+@@ -1,129 +0,0 @@
+-// Copyright (c) 2017-2022, Lawrence Livermore National Security, LLC and other CEED contributors.
+-// All Rights Reserved. See the top-level LICENSE and NOTICE files for details.
+-//
+-// SPDX-License-Identifier: BSD-2-Clause
+-//
+-// This file is part of CEED:  http://github.com/ceed
+-
+-// macros to abstract access of shared memory and reg. file
+-#define sT(i, j) sT[(j)*P_ + (i)]
+-
+-//////////////////////////////////////////////////////////////////////////////////////////
+-// grad basis action (1D)
+-template <typename T, int DIM_, int NCOMP_, int P_, int Q_>
+-static __device__ __inline__ void magma_grad_1d_device(const T *sT, magma_trans_t transT, T *sU[NCOMP_], T *sV[NCOMP_], const int tx) {
+-  // Assumptions
+-  // 1. 1D threads of size max(P_,Q_)
+-  // 2. sU[i] is 1xP_: in shared memory
+-  // 3. sV[i] is 1xQ_: in shared memory
+-  // 4. P_roduct per component is one row (1xP_) times T matrix (P_xQ_) => one row (1xQ_)
+-  // 5. Each thread computes one entry in sV[i]
+-  // 6. Must sync before and after call
+-  // 7. Note that the layout for U and V is different from 2D/3D problem
+-
+-  T rv;
+-  if (tx < Q_) {
+-    for (int icomp = 0; icomp < NCOMP_; icomp++) {
+-      rv = (transT == MagmaTrans) ? sV[icomp][tx] : 0.0;
+-      for (int i = 0; i < P_; i++) {
+-        rv += sU[icomp][i] * sT(i, tx);
+-      }
+-      sV[icomp][tx] = rv;
+-    }
+-  }
+-}
+-
+-//////////////////////////////////////////////////////////////////////////////////////////
+-extern "C" __launch_bounds__(MAGMA_BASIS_BOUNDS(MAXPQ, MAGMA_MAXTHREADS_1D)) __global__
+-    void magma_gradn_1d_kernel(const CeedScalar *dTinterp, const CeedScalar *dTgrad, const CeedScalar *dU, const int estrdU, const int cstrdU,
+-                               const int dstrdU, CeedScalar *dV, const int estrdV, const int cstrdV, const int dstrdV, const int nelem) {
+-  MAGMA_DEVICE_SHARED(CeedScalar, shared_data)
+-
+-  const int     tx      = threadIdx.x;
+-  const int     ty      = threadIdx.y;
+-  const int     elem_id = (blockIdx.x * blockDim.y) + ty;
+-  magma_trans_t transT  = MagmaNoTrans;
+-
+-  if (elem_id >= nelem) return;
+-
+-  CeedScalar *sU[NCOMP];
+-  CeedScalar *sV[NCOMP];
+-
+-  // shift global memory pointers by elem stride
+-  dU += elem_id * estrdU;
+-  dV += elem_id * estrdV;
+-
+-  // assign shared memory pointers
+-  CeedScalar *sT = (CeedScalar *)(shared_data);
+-  CeedScalar *sW = sT + P * Q;
+-  sU[0]          = sW + ty * NCOMP * (P + Q);
+-  sV[0]          = sU[0] + (NCOMP * 1 * P);
+-  for (int icomp = 1; icomp < NCOMP; icomp++) {
+-    sU[icomp] = sU[icomp - 1] + (1 * P);
+-    sV[icomp] = sV[icomp - 1] + (1 * Q);
+-  }
+-
+-  // read T
+-  if (ty == 0) {
+-    dread_T_gm2sm<P, Q>(tx, transT, dTgrad, sT);
+-  }
+-
+-  // read U
+-  read_1d<CeedScalar, P, NCOMP>(dU, cstrdU, sU, tx);
+-
+-  __syncthreads();
+-  magma_grad_1d_device<CeedScalar, DIM, NCOMP, P, Q>(sT, transT, sU, sV, tx);
+-  __syncthreads();
+-
+-  // write V
+-  write_1d<CeedScalar, Q, NCOMP>(sV, dV, cstrdV, tx);
+-}
+-
+-//////////////////////////////////////////////////////////////////////////////////////////
+-extern "C" __launch_bounds__(MAGMA_BASIS_BOUNDS(MAXPQ, MAGMA_MAXTHREADS_1D)) __global__
+-    void magma_gradt_1d_kernel(const CeedScalar *dTinterp, const CeedScalar *dTgrad, const CeedScalar *dU, const int estrdU, const int cstrdU,
+-                               const int dstrdU, CeedScalar *dV, const int estrdV, const int cstrdV, const int dstrdV, const int nelem) {
+-  MAGMA_DEVICE_SHARED(CeedScalar, shared_data)
+-
+-  const int     tx      = threadIdx.x;
+-  const int     ty      = threadIdx.y;
+-  const int     elem_id = (blockIdx.x * blockDim.y) + ty;
+-  magma_trans_t transT  = MagmaTrans;
+-
+-  if (elem_id >= nelem) return;
+-
+-  CeedScalar *sU[NCOMP];
+-  CeedScalar *sV[NCOMP];
+-
+-  // shift global memory pointers by elem stride
+-  dU += elem_id * estrdU;
+-  dV += elem_id * estrdV;
+-
+-  // assign shared memory pointers
+-  CeedScalar *sT = (CeedScalar *)(shared_data);
+-  CeedScalar *sW = sT + Q * P;
+-  sU[0]          = sW + ty * NCOMP * (Q + P);
+-  sV[0]          = sU[0] + (NCOMP * 1 * Q);
+-  for (int icomp = 1; icomp < NCOMP; icomp++) {
+-    sU[icomp] = sU[icomp - 1] + (1 * Q);
+-    sV[icomp] = sV[icomp - 1] + (1 * P);
+-  }
+-
+-  // read T
+-  if (ty == 0) {
+-    dread_T_gm2sm<Q, P>(tx, transT, dTgrad, sT);
+-  }
+-
+-  // read U
+-  read_1d<CeedScalar, Q, NCOMP>(dU, cstrdU, sU, tx);
+-
+-  // read V
+-  read_1d<CeedScalar, P, NCOMP>(dV, cstrdV, sV, tx);
+-
+-  __syncthreads();
+-  magma_grad_1d_device<CeedScalar, DIM, NCOMP, Q, P>(sT, transT, sU, sV, tx);
+-  __syncthreads();
+-
+-  // write V
+-  write_1d<CeedScalar, P, NCOMP>(sV, dV, cstrdV, tx);
+-}
 diff --git a/include/ceed/jit-source/magma/grad-2d.h b/include/ceed/jit-source/magma/grad-2d.h
 deleted file mode 100644
 index 1f2763ac..00000000
@@ -3965,17 +4365,19 @@ index e715986a..00000000
 -
 -#endif  // CEED_MAGMA_INTERP_NONTENSOR_H
 \ No newline at end of file
-diff --git a/include/ceed/jit-source/magma/grad-1d.h b/include/ceed/jit-source/magma/magma-basis-grad-1d.h
-similarity index 50%
-rename from include/ceed/jit-source/magma/grad-1d.h
-rename to include/ceed/jit-source/magma/magma-basis-grad-1d.h
-index 5eea0ee2..3e499314 100644
---- a/include/ceed/jit-source/magma/grad-1d.h
+diff --git a/include/ceed/jit-source/magma/magma-basis-grad-1d.h b/include/ceed/jit-source/magma/magma-basis-grad-1d.h
+new file mode 100644
+index 00000000..89a11211
+--- /dev/null
 +++ b/include/ceed/jit-source/magma/magma-basis-grad-1d.h
-@@ -5,36 +5,43 @@
- //
- // This file is part of CEED:  http://github.com/ceed
- 
+@@ -0,0 +1,138 @@
++// Copyright (c) 2017-2022, Lawrence Livermore National Security, LLC and other CEED contributors.
++// All Rights Reserved. See the top-level LICENSE and NOTICE files for details.
++//
++// SPDX-License-Identifier: BSD-2-Clause
++//
++// This file is part of CEED:  http://github.com/ceed
++
 +/// @file
 +/// Internal header for MAGMA tensor basis gradient in 1D
 +#ifndef CEED_MAGMA_BASIS_GRAD_1D_H
@@ -3983,74 +4385,55 @@ index 5eea0ee2..3e499314 100644
 +
 +#include "magma-common-tensor.h"
 +
- // macros to abstract access of shared memory and reg. file
--#define sT(i, j) sT[(j)*P_ + (i)]
++// macros to abstract access of shared memory and reg. file
 +#define sT(i, j) sT[(j)*P + (i)]
- 
- //////////////////////////////////////////////////////////////////////////////////////////
- // grad basis action (1D)
--template <typename T, int DIM_, int NCOMP_, int P_, int Q_>
--static __device__ __inline__ void magma_grad_1d_device(const T *sT, magma_trans_t transT, T *sU[NCOMP_], T *sV[NCOMP_], const int tx) {
++
++//////////////////////////////////////////////////////////////////////////////////////////
++// grad basis action (1D)
 +template <typename T, int DIM, int NUM_COMP, int P, int Q>
 +static __device__ __inline__ void magma_grad_1d_device(const T *sT, magma_trans_t transT, T *sU[NUM_COMP], T *sV[NUM_COMP], const int tx) {
-   // Assumptions
--  // 1. 1D threads of size max(P_,Q_)
--  // 2. sU[i] is 1xP_: in shared memory
--  // 3. sV[i] is 1xQ_: in shared memory
--  // 4. P_roduct per component is one row (1xP_) times T matrix (P_xQ_) => one row (1xQ_)
++  // Assumptions
 +  // 1. 1D threads of size max(P,Q)
 +  // 2. sU[i] is 1xP: in shared memory
 +  // 3. sV[i] is 1xQ: in shared memory
 +  // 4. P_roduct per component is one row (1xP) times T matrix (PxQ) => one row (1xQ)
-   // 5. Each thread computes one entry in sV[i]
-   // 6. Must sync before and after call
-   // 7. Note that the layout for U and V is different from 2D/3D problem
- 
-   T rv;
--  if (tx < Q_) {
--    for (int icomp = 0; icomp < NCOMP_; icomp++) {
--      rv = (transT == MagmaTrans) ? sV[icomp][tx] : 0.0;
--      for (int i = 0; i < P_; i++) {
--        rv += sU[icomp][i] * sT(i, tx);
++  // 5. Each thread computes one entry in sV[i]
++  // 6. Must sync before and after call
++  // 7. Note that the layout for U and V is different from 2D/3D problem
++
++  T rv;
 +  if (tx < Q) {
 +    for (int comp = 0; comp < NUM_COMP; comp++) {
 +      rv = (transT == MagmaTrans) ? sV[comp][tx] : 0.0;
 +      for (int i = 0; i < P; i++) {
 +        rv += sU[comp][i] * sT(i, tx);
-       }
--      sV[icomp][tx] = rv;
++      }
 +      sV[comp][tx] = rv;
-     }
-   }
- }
- 
- //////////////////////////////////////////////////////////////////////////////////////////
--extern "C" __launch_bounds__(MAGMA_BASIS_BOUNDS(MAXPQ, MAGMA_MAXTHREADS_1D)) __global__
++    }
++  }
++}
++
++//////////////////////////////////////////////////////////////////////////////////////////
 +extern "C" __launch_bounds__(MAGMA_BASIS_BOUNDS(BASIS_MAX_P_Q, MAGMA_MAXTHREADS_1D)) __global__
-     void magma_gradn_1d_kernel(const CeedScalar *dTinterp, const CeedScalar *dTgrad, const CeedScalar *dU, const int estrdU, const int cstrdU,
-                                const int dstrdU, CeedScalar *dV, const int estrdV, const int cstrdV, const int dstrdV, const int nelem) {
-   MAGMA_DEVICE_SHARED(CeedScalar, shared_data)
-@@ -46,41 +53,41 @@ extern "C" __launch_bounds__(MAGMA_BASIS_BOUNDS(MAXPQ, MAGMA_MAXTHREADS_1D)) __g
- 
-   if (elem_id >= nelem) return;
- 
--  CeedScalar *sU[NCOMP];
--  CeedScalar *sV[NCOMP];
++    void magma_gradn_1d_kernel(const CeedScalar *dTinterp, const CeedScalar *dTgrad, const CeedScalar *dU, const int estrdU, const int cstrdU,
++                               const int dstrdU, CeedScalar *dV, const int estrdV, const int cstrdV, const int dstrdV, const int nelem) {
++  MAGMA_DEVICE_SHARED(CeedScalar, shared_data)
++
++  const int     tx      = threadIdx.x;
++  const int     ty      = threadIdx.y;
++  const int     elem_id = (blockIdx.x * blockDim.y) + ty;
++  magma_trans_t transT  = MagmaNoTrans;
++
++  if (elem_id >= nelem) return;
++
 +  CeedScalar *sU[BASIS_NUM_COMP];
 +  CeedScalar *sV[BASIS_NUM_COMP];
- 
-   // shift global memory pointers by elem stride
-   dU += elem_id * estrdU;
-   dV += elem_id * estrdV;
- 
-   // assign shared memory pointers
--  CeedScalar *sT = (CeedScalar *)(shared_data);
--  CeedScalar *sW = sT + P * Q;
--  sU[0]          = sW + ty * NCOMP * (P + Q);
--  sV[0]          = sU[0] + (NCOMP * 1 * P);
--  for (int icomp = 1; icomp < NCOMP; icomp++) {
--    sU[icomp] = sU[icomp - 1] + (1 * P);
--    sV[icomp] = sV[icomp - 1] + (1 * Q);
++
++  // shift global memory pointers by elem stride
++  dU += elem_id * estrdU;
++  dV += elem_id * estrdV;
++
++  // assign shared memory pointers
 +  CeedScalar *sT = (CeedScalar *)shared_data;
 +  CeedScalar *sW = sT + BASIS_P * BASIS_Q;
 +  sU[0]          = sW + ty * BASIS_NUM_COMP * (BASIS_P + BASIS_Q);
@@ -4058,55 +4441,45 @@ index 5eea0ee2..3e499314 100644
 +  for (int comp = 1; comp < BASIS_NUM_COMP; comp++) {
 +    sU[comp] = sU[comp - 1] + (1 * BASIS_P);
 +    sV[comp] = sV[comp - 1] + (1 * BASIS_Q);
-   }
- 
-   // read T
-   if (ty == 0) {
--    dread_T_gm2sm<P, Q>(tx, transT, dTgrad, sT);
++  }
++
++  // read T
++  if (ty == 0) {
 +    dread_T_gm2sm<BASIS_P, BASIS_Q>(tx, transT, dTgrad, sT);
-   }
- 
-   // read U
--  read_1d<CeedScalar, P, NCOMP>(dU, cstrdU, sU, tx);
++  }
++
++  // read U
 +  read_1d<CeedScalar, BASIS_P, BASIS_NUM_COMP>(dU, cstrdU, sU, tx);
- 
-   __syncthreads();
--  magma_grad_1d_device<CeedScalar, DIM, NCOMP, P, Q>(sT, transT, sU, sV, tx);
++
++  __syncthreads();
 +  magma_grad_1d_device<CeedScalar, BASIS_DIM, BASIS_NUM_COMP, BASIS_P, BASIS_Q>(sT, transT, sU, sV, tx);
-   __syncthreads();
- 
-   // write V
--  write_1d<CeedScalar, Q, NCOMP>(sV, dV, cstrdV, tx);
++  __syncthreads();
++
++  // write V
 +  write_1d<CeedScalar, BASIS_Q, BASIS_NUM_COMP>(sV, dV, cstrdV, tx);
- }
- 
- //////////////////////////////////////////////////////////////////////////////////////////
--extern "C" __launch_bounds__(MAGMA_BASIS_BOUNDS(MAXPQ, MAGMA_MAXTHREADS_1D)) __global__
++}
++
++//////////////////////////////////////////////////////////////////////////////////////////
 +extern "C" __launch_bounds__(MAGMA_BASIS_BOUNDS(BASIS_MAX_P_Q, MAGMA_MAXTHREADS_1D)) __global__
-     void magma_gradt_1d_kernel(const CeedScalar *dTinterp, const CeedScalar *dTgrad, const CeedScalar *dU, const int estrdU, const int cstrdU,
-                                const int dstrdU, CeedScalar *dV, const int estrdV, const int cstrdV, const int dstrdV, const int nelem) {
-   MAGMA_DEVICE_SHARED(CeedScalar, shared_data)
-@@ -92,38 +99,40 @@ extern "C" __launch_bounds__(MAGMA_BASIS_BOUNDS(MAXPQ, MAGMA_MAXTHREADS_1D)) __g
- 
-   if (elem_id >= nelem) return;
- 
--  CeedScalar *sU[NCOMP];
--  CeedScalar *sV[NCOMP];
++    void magma_gradt_1d_kernel(const CeedScalar *dTinterp, const CeedScalar *dTgrad, const CeedScalar *dU, const int estrdU, const int cstrdU,
++                               const int dstrdU, CeedScalar *dV, const int estrdV, const int cstrdV, const int dstrdV, const int nelem) {
++  MAGMA_DEVICE_SHARED(CeedScalar, shared_data)
++
++  const int     tx      = threadIdx.x;
++  const int     ty      = threadIdx.y;
++  const int     elem_id = (blockIdx.x * blockDim.y) + ty;
++  magma_trans_t transT  = MagmaTrans;
++
++  if (elem_id >= nelem) return;
++
 +  CeedScalar *sU[BASIS_NUM_COMP];
 +  CeedScalar *sV[BASIS_NUM_COMP];
- 
-   // shift global memory pointers by elem stride
-   dU += elem_id * estrdU;
-   dV += elem_id * estrdV;
- 
-   // assign shared memory pointers
--  CeedScalar *sT = (CeedScalar *)(shared_data);
--  CeedScalar *sW = sT + Q * P;
--  sU[0]          = sW + ty * NCOMP * (Q + P);
--  sV[0]          = sU[0] + (NCOMP * 1 * Q);
--  for (int icomp = 1; icomp < NCOMP; icomp++) {
--    sU[icomp] = sU[icomp - 1] + (1 * Q);
--    sV[icomp] = sV[icomp - 1] + (1 * P);
++
++  // shift global memory pointers by elem stride
++  dU += elem_id * estrdU;
++  dV += elem_id * estrdV;
++
++  // assign shared memory pointers
 +  CeedScalar *sT = (CeedScalar *)shared_data;
 +  CeedScalar *sW = sT + BASIS_Q * BASIS_P;
 +  sU[0]          = sW + ty * BASIS_NUM_COMP * (BASIS_Q + BASIS_P);
@@ -4114,36 +4487,31 @@ index 5eea0ee2..3e499314 100644
 +  for (int comp = 1; comp < BASIS_NUM_COMP; comp++) {
 +    sU[comp] = sU[comp - 1] + (1 * BASIS_Q);
 +    sV[comp] = sV[comp - 1] + (1 * BASIS_P);
-   }
- 
-   // read T
-   if (ty == 0) {
--    dread_T_gm2sm<Q, P>(tx, transT, dTgrad, sT);
-+    dread_T_gm2sm<BASIS_Q, BASIS_P>(tx, transT, dTgrad, sT);
-   }
- 
-   // read U
--  read_1d<CeedScalar, Q, NCOMP>(dU, cstrdU, sU, tx);
-+  read_1d<CeedScalar, BASIS_Q, BASIS_NUM_COMP>(dU, cstrdU, sU, tx);
- 
-   // read V
--  read_1d<CeedScalar, P, NCOMP>(dV, cstrdV, sV, tx);
-+  read_1d<CeedScalar, BASIS_P, BASIS_NUM_COMP>(dV, cstrdV, sV, tx);
- 
-   __syncthreads();
--  magma_grad_1d_device<CeedScalar, DIM, NCOMP, Q, P>(sT, transT, sU, sV, tx);
-+  magma_grad_1d_device<CeedScalar, BASIS_DIM, BASIS_NUM_COMP, BASIS_Q, BASIS_P>(sT, transT, sU, sV, tx);
-   __syncthreads();
- 
-   // write V
--  write_1d<CeedScalar, P, NCOMP>(sV, dV, cstrdV, tx);
-+  write_1d<CeedScalar, BASIS_P, BASIS_NUM_COMP>(sV, dV, cstrdV, tx);
- }
++  }
 +
-+#endif
++  // read T
++  if (ty == 0) {
++    dread_T_gm2sm<BASIS_Q, BASIS_P>(tx, transT, dTgrad, sT);
++  }
++
++  // read U
++  read_1d<CeedScalar, BASIS_Q, BASIS_NUM_COMP>(dU, cstrdU, sU, tx);
++
++  // read V
++  read_1d<CeedScalar, BASIS_P, BASIS_NUM_COMP>(dV, cstrdV, sV, tx);
++
++  __syncthreads();
++  magma_grad_1d_device<CeedScalar, BASIS_DIM, BASIS_NUM_COMP, BASIS_Q, BASIS_P>(sT, transT, sU, sV, tx);
++  __syncthreads();
++
++  // write V
++  write_1d<CeedScalar, BASIS_P, BASIS_NUM_COMP>(sV, dV, cstrdV, tx);
++}
++
++#endif  // CEED_MAGMA_BASIS_GRAD_1D_H
 diff --git a/include/ceed/jit-source/magma/magma-basis-grad-2d.h b/include/ceed/jit-source/magma/magma-basis-grad-2d.h
 new file mode 100644
-index 00000000..a6ec1b78
+index 00000000..042e41b0
 --- /dev/null
 +++ b/include/ceed/jit-source/magma/magma-basis-grad-2d.h
 @@ -0,0 +1,189 @@
@@ -4335,10 +4703,10 @@ index 00000000..a6ec1b78
 +  writeV_2d<CeedScalar, BASIS_P, 1, BASIS_NUM_COMP, BASIS_P, 0>(dV + (0 * dstrdV), cstrdV, rV, tx);
 +}
 +
-+#endif
++#endif  // CEED_MAGMA_BASIS_GRAD_2D_H
 diff --git a/include/ceed/jit-source/magma/magma-basis-grad-3d.h b/include/ceed/jit-source/magma/magma-basis-grad-3d.h
 new file mode 100644
-index 00000000..c638d2bb
+index 00000000..063ee7bc
 --- /dev/null
 +++ b/include/ceed/jit-source/magma/magma-basis-grad-3d.h
 @@ -0,0 +1,224 @@
@@ -4565,10 +4933,10 @@ index 00000000..c638d2bb
 +  writeV_3d<CeedScalar, BASIS_P, 1, BASIS_NUM_COMP, BASIS_P, 0>(dV + (0 * dstrdV), cstrdV, rV, tx);
 +}
 +
-+#endif
++#endif  // CEED_MAGMA_BASIS_GRAD_3D_H
 diff --git a/include/ceed/jit-source/magma/magma-basis-interp-1d.h b/include/ceed/jit-source/magma/magma-basis-interp-1d.h
 new file mode 100644
-index 00000000..cecc5a07
+index 00000000..074efd94
 --- /dev/null
 +++ b/include/ceed/jit-source/magma/magma-basis-interp-1d.h
 @@ -0,0 +1,138 @@
@@ -4709,10 +5077,10 @@ index 00000000..cecc5a07
 +  write_1d<CeedScalar, BASIS_P, BASIS_NUM_COMP>(sV, dV, cstrdV, tx);
 +}
 +
-+#endif
++#endif  // CEED_MAGMA_BASIS_INTERP_1D_H
 diff --git a/include/ceed/jit-source/magma/magma-basis-interp-2d.h b/include/ceed/jit-source/magma/magma-basis-interp-2d.h
 new file mode 100644
-index 00000000..1517752a
+index 00000000..bb3475df
 --- /dev/null
 +++ b/include/ceed/jit-source/magma/magma-basis-interp-2d.h
 @@ -0,0 +1,155 @@
@@ -4870,10 +5238,10 @@ index 00000000..1517752a
 +  writeV_2d<CeedScalar, BASIS_P, 1, BASIS_NUM_COMP, BASIS_P, 0>(dV, cstrdV, rV, tx);
 +}
 +
-+#endif
++#endif  // CEED_MAGMA_BASIS_INTERP_2D_H
 diff --git a/include/ceed/jit-source/magma/magma-basis-interp-3d.h b/include/ceed/jit-source/magma/magma-basis-interp-3d.h
 new file mode 100644
-index 00000000..7d0e36d4
+index 00000000..8f2fd398
 --- /dev/null
 +++ b/include/ceed/jit-source/magma/magma-basis-interp-3d.h
 @@ -0,0 +1,183 @@
@@ -5059,13 +5427,13 @@ index 00000000..7d0e36d4
 +  writeV_3d<CeedScalar, BASIS_P, 1, BASIS_NUM_COMP, BASIS_P, 0>(dV, cstrdV, rV, tx);
 +}
 +
-+#endif
++#endif  // CEED_MAGMA_BASIS_INTERP_3D_H
 diff --git a/include/ceed/jit-source/magma/magma-basis-interp-deriv-nontensor.h b/include/ceed/jit-source/magma/magma-basis-interp-deriv-nontensor.h
 new file mode 100644
-index 00000000..873f35ac
+index 00000000..13ba057d
 --- /dev/null
 +++ b/include/ceed/jit-source/magma/magma-basis-interp-deriv-nontensor.h
-@@ -0,0 +1,149 @@
+@@ -0,0 +1,131 @@
 +// Copyright (c) 2017-2022, Lawrence Livermore National Security, LLC and other CEED contributors.
 +// All Rights Reserved. See the top-level LICENSE and NOTICE files for details.
 +//
@@ -5082,52 +5450,49 @@ index 00000000..873f35ac
 +
 +//////////////////////////////////////////////////////////////////////////////////////////
 +template <typename T, int Q_COMP, int P, int Q, int NB>
-+static __device__ __inline__ void magma_basis_nontensor_device_n(const int n, CeedScalar const *dA, int ldda, CeedScalar const *dB, int lddb,
-+                                                                 CeedScalar *dC, int lddc, CeedScalar *shared_data) {
++static __device__ __inline__ void magma_basis_nontensor_device_n(const int n, CeedScalar const *dA, CeedScalar const *dB, CeedScalar *dC,
++                                                                 CeedScalar *shared_data) {
 +  const int tx      = threadIdx.x;
 +  const int ty      = threadIdx.y;
 +  const int id      = blockIdx.x * blockDim.y + ty;
 +  const int nblocks = MAGMA_CEILDIV(n, NB);
 +  const int myn     = min(NB, n - id * NB);
 +
-+  dB += id * NB * lddb;
-+  dC += id * NB * lddc;
++  dB += id * P * NB;
++  dC += id * Q * NB;
 +
 +  // A is P x Q
-+  const int   slda = P;
-+  const int   sldb = P;
-+  CeedScalar *sA   = (CeedScalar *)shared_data;
-+  CeedScalar *sB   = sA + Q * P;
-+  sB += ty * sldb * NB;
++  CeedScalar *sA = (CeedScalar *)shared_data;
++  CeedScalar *sB = sA + Q * P;
++  sB += ty * P * NB;
 +
 +  // read B once for all C's
 +  if (id < nblocks) {
-+    read_B_g2s_1D_nosync<CeedScalar, Q, P, NB>(tx, myn, dB, lddb, sB, sldb);
++    read_B_g2s_1D_nosync<CeedScalar, Q, P, NB>(tx, myn, dB, sB);
 +  }
-+
-+  // init rA, rC
-+  CeedScalar rA[P], rC[NB];
 +
 +  // unrolling this loop yields dramatic performance drop using hipcc, so let the compiler decide (no pragma unroll)
 +  for (int d = 0; d < Q_COMP; d++, dA += Q * P, dC += Q * n) {
-+    // read A (P x Q) using all threads
-+    read_A_trans_g2r_1D_nosync<CeedScalar, Q, P, NB>(tx, ty, dA, ldda, sA, slda, rA);
++    // init rA, rC
++    CeedScalar rA[P], rC[NB];
 +
++    // read A using all threads
 +    __syncthreads();
++    read_A_trans_g2r_1D_nosync<CeedScalar, Q, P, MAGMA_BASIS_NTCOL(Q, MAGMA_MAXTHREADS_1D)>(tx, ty, dA, sA, rA);
++
 +    if (id < nblocks) {
-+      mul_rAsBrC_1D_nosync<CeedScalar, Q, P, NB>(tx, rA, sB, sldb, rC);
++      mul_rAsBrC_1D_nosync<CeedScalar, Q, P, NB>(rA, sB, rC);
 +
 +      // write C
-+      write_C_r2g_1D_nosync<CeedScalar, Q, P, NB>(tx, myn, rC, dC, lddc);
++      write_C_r2g_1D_nosync<CeedScalar, Q, P, NB>(tx, myn, rC, dC);
 +    }
-+    __syncthreads();
 +  }
 +}
 +
 +//////////////////////////////////////////////////////////////////////////////////////////
 +template <typename T, int Q_COMP, int P, int Q, int NB>
-+static __device__ __inline__ void magma_basis_nontensor_device_t(const int n, CeedScalar const *dA, int ldda, CeedScalar const *dB, int lddb,
-+                                                                 CeedScalar *dC, int lddc, CeedScalar *shared_data) {
++static __device__ __inline__ void magma_basis_nontensor_device_t(const int n, CeedScalar const *dA, CeedScalar const *dB, CeedScalar *dC,
++                                                                 CeedScalar *shared_data) {
 +  const int tx      = threadIdx.x;
 +  const int ty      = threadIdx.y;
 +  const int id      = blockIdx.x * blockDim.y + ty;
@@ -5137,89 +5502,74 @@ index 00000000..873f35ac
 +  // terminate threads with no work
 +  if (id >= nblocks) return;
 +
-+  dB += id * NB * lddb;
-+  dC += id * NB * lddc;
++  dB += id * Q * NB;
++  dC += id * P * NB;
 +
 +  // A is P x Q
-+  const int   sldb = Q;
-+  CeedScalar *sB   = (CeedScalar *)shared_data;
-+  sB += ty * sldb * NB;
++  CeedScalar *sB = (CeedScalar *)shared_data;
++  sB += ty * Q * NB;
 +
-+  // init rA, rC
-+  CeedScalar rA[Q], rC[NB];
-+
-+  // read A (unroll first iteration)
-+  read_A_notrans_g2r_1D_nosync<CeedScalar, P, Q, NB>(tx, dA, ldda, NULL, 0, rA);
-+
-+  // read B
-+  read_B_g2s_1D_nosync<CeedScalar, P, Q, NB>(tx, myn, dB, lddb, sB, sldb);
-+
-+  __syncthreads();
-+  mul_rAsBrC_1D_nosync<CeedScalar, P, Q, NB>(tx, rA, sB, sldb, rC);
-+  __syncthreads();
++  // init rC
++  CeedScalar rC[NB] = {0.0};
 +
 +  // unrolling this loop yields dramatic performance drop using hipcc, so let the compiler decide (no pragma unroll)
-+  for (int d = 1; d < Q_COMP; d++) {
-+    dA += P * Q;
-+    dB += Q * n;
++  for (int d = 0; d < Q_COMP; d++, dA += P * Q, dB += Q * n) {
++    // init rA
++    CeedScalar rA[Q];
 +
 +    // read A
-+    read_A_notrans_g2r_1D_nosync<CeedScalar, P, Q, NB>(tx, dA, ldda, NULL, 0, rA);
++    read_A_notrans_g2r_1D_nosync<CeedScalar, P, Q, NB>(tx, dA, rA);
 +
 +    // read B
-+    read_B_g2s_1D_nosync<CeedScalar, P, Q, NB>(tx, myn, dB, lddb, sB, sldb);
++    __syncthreads();
++    read_B_g2s_1D_nosync<CeedScalar, P, Q, NB>(tx, myn, dB, sB);
++    __syncthreads();
 +
-+    __syncthreads();
-+    addmul_rAsBrC_1D_nosync<CeedScalar, P, Q, NB>(tx, rA, sB, sldb, rC);
-+    __syncthreads();
++    addmul_rAsBrC_1D_nosync<CeedScalar, P, Q, NB>(rA, sB, rC);
 +  }
 +
 +  // write C
-+  write_C_r2g_1D_nosync<CeedScalar, P, Q, NB>(tx, myn, rC, dC, lddc);
++  write_C_r2g_1D_nosync<CeedScalar, P, Q, NB>(tx, myn, rC, dC);
 +}
 +
 +////////////////////////////////////////////////////////////////////////////////
 +extern "C" __launch_bounds__(MAGMA_BASIS_BOUNDS(BASIS_Q, MAGMA_MAXTHREADS_1D)) __global__
-+    void magma_interp_nontensor_n(const int n, CeedScalar const *dA, int ldda, CeedScalar const *dB, int lddb, CeedScalar *dC, int lddc) {
++    void magma_interp_nontensor_n(const int n, CeedScalar const *__restrict__ dA, CeedScalar const *__restrict__ dB, CeedScalar *__restrict__ dC) {
 +  MAGMA_DEVICE_SHARED(CeedScalar, shared_data);
 +
-+  magma_basis_nontensor_device_n<CeedScalar, BASIS_Q_COMP_INTERP, BASIS_P, BASIS_Q, BASIS_NB_INTERP_N>(n, dA, ldda, dB, lddb, dC, lddc,
-+                                                                                                       (CeedScalar *)shared_data);
++  magma_basis_nontensor_device_n<CeedScalar, BASIS_Q_COMP_INTERP, BASIS_P, BASIS_Q, BASIS_NB_INTERP_N>(n, dA, dB, dC, (CeedScalar *)shared_data);
 +}
 +
 +////////////////////////////////////////////////////////////////////////////////
 +extern "C" __launch_bounds__(MAGMA_BASIS_BOUNDS(BASIS_P, MAGMA_MAXTHREADS_1D)) __global__
-+    void magma_interp_nontensor_t(const int n, CeedScalar const *dA, int ldda, CeedScalar const *dB, int lddb, CeedScalar *dC, int lddc) {
++    void magma_interp_nontensor_t(const int n, CeedScalar const *__restrict__ dA, CeedScalar const *__restrict__ dB, CeedScalar *__restrict__ dC) {
 +  MAGMA_DEVICE_SHARED(CeedScalar, shared_data);
 +
-+  magma_basis_nontensor_device_t<CeedScalar, BASIS_Q_COMP_INTERP, BASIS_P, BASIS_Q, BASIS_NB_INTERP_T>(n, dA, ldda, dB, lddb, dC, lddc,
-+                                                                                                       (CeedScalar *)shared_data);
++  magma_basis_nontensor_device_t<CeedScalar, BASIS_Q_COMP_INTERP, BASIS_P, BASIS_Q, BASIS_NB_INTERP_T>(n, dA, dB, dC, (CeedScalar *)shared_data);
 +}
 +
 +////////////////////////////////////////////////////////////////////////////////
 +extern "C" __launch_bounds__(MAGMA_BASIS_BOUNDS(BASIS_Q, MAGMA_MAXTHREADS_1D)) __global__
-+    void magma_deriv_nontensor_n(const int n, CeedScalar const *dA, int ldda, CeedScalar const *dB, int lddb, CeedScalar *dC, int lddc) {
++    void magma_deriv_nontensor_n(const int n, CeedScalar const *__restrict__ dA, CeedScalar const *__restrict__ dB, CeedScalar *__restrict__ dC) {
 +  MAGMA_DEVICE_SHARED(CeedScalar, shared_data);
 +
-+  magma_basis_nontensor_device_n<CeedScalar, BASIS_Q_COMP_DERIV, BASIS_P, BASIS_Q, BASIS_NB_DERIV_N>(n, dA, ldda, dB, lddb, dC, lddc,
-+                                                                                                     (CeedScalar *)shared_data);
++  magma_basis_nontensor_device_n<CeedScalar, BASIS_Q_COMP_DERIV, BASIS_P, BASIS_Q, BASIS_NB_DERIV_N>(n, dA, dB, dC, (CeedScalar *)shared_data);
 +}
 +
 +////////////////////////////////////////////////////////////////////////////////
 +extern "C" __launch_bounds__(MAGMA_BASIS_BOUNDS(BASIS_P, MAGMA_MAXTHREADS_1D)) __global__
-+    void magma_deriv_nontensor_t(const int n, CeedScalar const *dA, int ldda, CeedScalar const *dB, int lddb, CeedScalar *dC, int lddc) {
++    void magma_deriv_nontensor_t(const int n, CeedScalar const *__restrict__ dA, CeedScalar const *__restrict__ dB, CeedScalar *__restrict__ dC) {
 +  MAGMA_DEVICE_SHARED(CeedScalar, shared_data);
 +
-+  magma_basis_nontensor_device_t<CeedScalar, BASIS_Q_COMP_DERIV, BASIS_P, BASIS_Q, BASIS_NB_DERIV_T>(n, dA, ldda, dB, lddb, dC, lddc,
-+                                                                                                     (CeedScalar *)shared_data);
++  magma_basis_nontensor_device_t<CeedScalar, BASIS_Q_COMP_DERIV, BASIS_P, BASIS_Q, BASIS_NB_DERIV_T>(n, dA, dB, dC, (CeedScalar *)shared_data);
 +}
 +
-+#endif
++#endif  // CEED_MAGMA_BASIS_INTERP_DERIV_NONTENSOR_H
 diff --git a/include/ceed/jit-source/magma/weight-1d.h b/include/ceed/jit-source/magma/magma-basis-weight-1d.h
-similarity index 62%
+similarity index 61%
 rename from include/ceed/jit-source/magma/weight-1d.h
 rename to include/ceed/jit-source/magma/magma-basis-weight-1d.h
-index e4a7abe1..938623a2 100644
+index e4a7abe1..9f77dd4a 100644
 --- a/include/ceed/jit-source/magma/weight-1d.h
 +++ b/include/ceed/jit-source/magma/magma-basis-weight-1d.h
 @@ -5,20 +5,27 @@
@@ -5280,12 +5630,12 @@ index e4a7abe1..938623a2 100644
    dV[tx] = sV[tx];
  }
 +
-+#endif
++#endif  // CEED_MAGMA_BASIS_WEIGHT_1D_H
 diff --git a/include/ceed/jit-source/magma/weight-2d.h b/include/ceed/jit-source/magma/magma-basis-weight-2d.h
-similarity index 60%
+similarity index 59%
 rename from include/ceed/jit-source/magma/weight-2d.h
 rename to include/ceed/jit-source/magma/magma-basis-weight-2d.h
-index 7ad62d73..f4462e56 100644
+index 7ad62d73..721b50f9 100644
 --- a/include/ceed/jit-source/magma/weight-2d.h
 +++ b/include/ceed/jit-source/magma/magma-basis-weight-2d.h
 @@ -5,28 +5,35 @@
@@ -5366,12 +5716,12 @@ index 7ad62d73..f4462e56 100644
    }
  }
 +
-+#endif
++#endif  // CEED_MAGMA_BASIS_WEIGHT_2D_H
 diff --git a/include/ceed/jit-source/magma/weight-3d.h b/include/ceed/jit-source/magma/magma-basis-weight-3d.h
 similarity index 55%
 rename from include/ceed/jit-source/magma/weight-3d.h
 rename to include/ceed/jit-source/magma/magma-basis-weight-3d.h
-index 07fc2286..bc4dec54 100644
+index 07fc2286..835bca44 100644
 --- a/include/ceed/jit-source/magma/weight-3d.h
 +++ b/include/ceed/jit-source/magma/magma-basis-weight-3d.h
 @@ -5,29 +5,36 @@
@@ -5455,10 +5805,10 @@ index 07fc2286..bc4dec54 100644
    }
  }
 +
-+#endif
++#endif  // CEED_MAGMA_BASIS_WEIGHT_3D_H
 diff --git a/include/ceed/jit-source/magma/magma-basis-weight-nontensor.h b/include/ceed/jit-source/magma/magma-basis-weight-nontensor.h
 new file mode 100644
-index 00000000..8d4d697f
+index 00000000..96e95380
 --- /dev/null
 +++ b/include/ceed/jit-source/magma/magma-basis-weight-nontensor.h
 @@ -0,0 +1,48 @@
@@ -5478,7 +5828,7 @@ index 00000000..8d4d697f
 +
 +////////////////////////////////////////////////////////////////////////////////
 +extern "C" __launch_bounds__(MAGMA_BASIS_BOUNDS(BASIS_Q, MAGMA_MAXTHREADS_1D)) __global__
-+    void magma_weight_nontensor(int n, const CeedScalar *dqweight, CeedScalar *dV, int lddv) {
++    void magma_weight_nontensor(int n, const CeedScalar *__restrict__ dqweight, CeedScalar *__restrict__ dV) {
 +  MAGMA_DEVICE_SHARED(CeedScalar, shared_data);
 +
 +  const int tx = threadIdx.x;
@@ -5488,7 +5838,7 @@ index 00000000..8d4d697f
 +  // terminate threads with no work
 +  if (id >= n) return;
 +
-+  dV += id * lddv;
++  dV += id * BASIS_Q;
 +
 +  // shared memory pointers
 +  CeedScalar *sTweight = (CeedScalar *)shared_data;
@@ -5509,15 +5859,15 @@ index 00000000..8d4d697f
 +  dV[tx] = sV[tx];
 +}
 +
-+#endif
++#endif  // CEED_MAGMA_BASIS_WEIGHT_NONTENSOR_H
 diff --git a/include/ceed/jit-source/magma/magma_common_defs.h b/include/ceed/jit-source/magma/magma-common-defs.h
-similarity index 63%
+similarity index 60%
 rename from include/ceed/jit-source/magma/magma_common_defs.h
 rename to include/ceed/jit-source/magma/magma-common-defs.h
-index a0cf1f93..f6fc3767 100644
+index a0cf1f93..d42e8053 100644
 --- a/include/ceed/jit-source/magma/magma_common_defs.h
 +++ b/include/ceed/jit-source/magma/magma-common-defs.h
-@@ -5,6 +5,8 @@
+@@ -5,22 +5,30 @@
  //
  // This file is part of CEED:  http://github.com/ceed
  
@@ -5526,28 +5876,39 @@ index a0cf1f93..f6fc3767 100644
  #ifndef CEED_MAGMA_COMMON_DEFS_H
  #define CEED_MAGMA_COMMON_DEFS_H
  
-@@ -23,4 +25,14 @@ typedef enum { MagmaNoTrans = 111, MagmaTrans = 112, MagmaConjTrans = 113, Magma
- #define MAGMA_ROUNDUP(A, B) MAGMA_CEILDIV((A), (B)) * (B)
- #define MAGMA_MAX(A, B) ((A) > (B) ? (A) : (B))
+-#ifdef CEED_MAGMA_USE_HIP
++#if CEED_MAGMA_USE_HIP
+ #define MAGMA_DEVICE_SHARED(type, name) HIP_DYNAMIC_SHARED(type, name)
+ #else
+ #define MAGMA_DEVICE_SHARED(type, name) extern __shared__ type name[];
+ #endif
  
--#endif  // CEED_MAGMA_COMMON_DEFS_H
+-typedef enum { MagmaNoTrans = 111, MagmaTrans = 112, MagmaConjTrans = 113, Magma_ConjTrans = MagmaConjTrans } magma_trans_t;
 +#define MAGMA_MAXTHREADS_1D 128
 +#define MAGMA_MAXTHREADS_2D 128
 +#define MAGMA_MAXTHREADS_3D 64
 +
 +// Define macro for determining number of threads in y-direction for basis kernels
 +#define MAGMA_BASIS_NTCOL(x, maxt) (((maxt) < (x)) ? 1 : ((maxt) / (x)))
-+
+ 
+-#define MAGMA_D_ZERO 0.0
+-#define MAGMA_D_ONE 1.0
 +// Define macro for computing the total threads in a block for use with __launch_bounds__()
 +#define MAGMA_BASIS_BOUNDS(x, maxt) (x * MAGMA_BASIS_NTCOL(x, maxt))
+ 
+ #define MAGMA_CEILDIV(A, B) (((A) + (B)-1) / (B))
+ #define MAGMA_ROUNDUP(A, B) MAGMA_CEILDIV((A), (B)) * (B)
+-#define MAGMA_MAX(A, B) ((A) > (B) ? (A) : (B))
 +
-+#endif
++typedef enum { MagmaNoTrans = 111, MagmaTrans = 112, MagmaConjTrans = 113, Magma_ConjTrans = MagmaConjTrans } magma_trans_t;
+ 
+ #endif  // CEED_MAGMA_COMMON_DEFS_H
 diff --git a/include/ceed/jit-source/magma/magma-common-nontensor.h b/include/ceed/jit-source/magma/magma-common-nontensor.h
 new file mode 100644
-index 00000000..ff9dd950
+index 00000000..244abd2c
 --- /dev/null
 +++ b/include/ceed/jit-source/magma/magma-common-nontensor.h
-@@ -0,0 +1,161 @@
+@@ -0,0 +1,131 @@
 +// Copyright (c) 2017-2022, Lawrence Livermore National Security, LLC and other CEED contributors.
 +// All Rights Reserved. See the top-level LICENSE and NOTICE files for details.
 +//
@@ -5562,47 +5923,41 @@ index 00000000..ff9dd950
 +
 +#include "magma-common-defs.h"
 +
-+#define dA(i, j) dA[(j)*ldda + (i)]
-+#define sA(i, j) sA[(j)*slda + (i)]
-+#define dB(i, j) dB[(j)*lddb + (i)]
-+#define sB(i, j) sB[(j)*sldb + (i)]
-+
 +////////////////////////////////////////////////////////////////////////////////
 +// read A (no-trans) from global to reg.
 +// A is (P x Q)
 +// 1D thread config. with (P x 1) threads
 +// no sync at the end of the function
 +template <typename T, int P, int Q, int NB>
-+static __device__ __inline__ void read_A_notrans_g2r_1D_nosync(const int tx, const T *dA, int ldda, T *sA, int slda, T rA[Q]) {
++static __device__ __inline__ void read_A_notrans_g2r_1D_nosync(const int tx, const T *dA, T rA[Q]) {
 +#pragma unroll
 +  for (int j = 0; j < Q; j++) {
-+    rA[j] = dA(tx, j);
++    rA[j] = dA[j * P + tx];
 +  }
 +}
 +
 +////////////////////////////////////////////////////////////////////////////////
 +// read A (trans) from global to reg.
 +// A is (P x Q)
-+// 1D thread config. with (P x 1) threads
++// 2D thread config. with (P x DY) threads
 +// no sync at the end of the function
-+template <typename T, int P, int Q, int NB>
-+static __device__ __inline__ void read_A_trans_g2r_1D_nosync(const int tx, const int ty, const T *dA, int ldda, T *sA, int slda, T rA[Q]) {
-+  const int nTH = MAGMA_BASIS_BOUNDS(P, MAGMA_MAXTHREADS_1D);
++template <typename T, int P, int Q, int DY>
++static __device__ __inline__ void read_A_trans_g2r_1D_nosync(const int tx, const int ty, const T *dA, T *sA, T rA[Q]) {
 +  const int tid = ty * blockDim.x + tx;
 +  int       i;
 +
 +#pragma unroll
-+  for (i = 0; i < (Q * P) - nTH; i += nTH) {
++  for (i = 0; i < P * Q - P * DY; i += P * DY) {
 +    sA[i + tid] = dA[i + tid];
 +  }
-+  if (tid < ((Q * P) - i)) {
++  if (i + tid < P * Q) {
 +    sA[i + tid] = dA[i + tid];
 +  }
 +  __syncthreads();
 +
 +#pragma unroll
 +  for (int j = 0; j < Q; j++) {
-+    rA[j] = sA[tx * slda + j];
++    rA[j] = sA[tx * Q + j];
 +  }
 +}
 +
@@ -5612,21 +5967,20 @@ index 00000000..ff9dd950
 +// 1D thread config. with (P x 1) threads
 +// no sync at the end of the function
 +template <typename T, int P, int Q, int NB>
-+static __device__ __inline__ void read_B_g2s_1D_nosync(const int tx, const int n, const T *dB, int lddb, T *sB, int sldb) {
++static __device__ __inline__ void read_B_g2s_1D_nosync(const int tx, const int n, const T *dB, T *sB) {
++  const int stride = MAGMA_ROUNDUP(Q * n - P, P);
++
 +  if (n != NB) {
-+    for (int i = 0; i < (Q * n) - P; i += P) {
++    for (int i = 0; i < Q * n - P; i += P) {
 +      sB[i + tx] = dB[i + tx];
 +    }
 +  } else {
 +#pragma unroll
-+    for (int i = 0; i < (Q * NB) - P; i += P) {
++    for (int i = 0; i < Q * NB - P; i += P) {
 +      sB[i + tx] = dB[i + tx];
 +    }
 +  }
-+
-+  // cleanup for B
-+  const int stride = MAGMA_ROUNDUP(Q * n - P, P);
-+  if (tx < (Q * n) - stride) {
++  if (stride + tx < Q * n) {
 +    sB[stride + tx] = dB[stride + tx];
 +  }
 +}
@@ -5637,18 +5991,15 @@ index 00000000..ff9dd950
 +// 1D thread config. with (P x 1) threads
 +// no sync at the end of the function
 +template <typename T, int P, int Q, int NB>
-+static __device__ __inline__ void write_C_r2g_1D_nosync(const int tx, const int n, T rC[NB], T *dC, int lddc) {
++static __device__ __inline__ void write_C_r2g_1D_nosync(const int tx, const int n, T rC[NB], T *dC) {
 +  if (n != NB) {
-+#pragma unroll
-+    for (int j = 0; j < NB; j++) {
-+      if (j < n) {
-+        dC[j * lddc + tx] = rC[j];
-+      }
++    for (int j = 0; j < n; j++) {
++      dC[j * P + tx] = rC[j];
 +    }
 +  } else {
 +#pragma unroll
 +    for (int j = 0; j < NB; j++) {
-+      dC[j * lddc + tx] = rC[j];
++      dC[j * P + tx] = rC[j];
 +    }
 +  }
 +}
@@ -5660,21 +6011,14 @@ index 00000000..ff9dd950
 +// C in registers -- one row per thread
 +// no sync at the end of the function
 +template <typename T, int P, int Q, int NB>
-+static __device__ __inline__ void mul_rAsBrC_1D_nosync(const int tx, T rA[Q], T *sB, int sldb, T rC[NB]) {
-+  T rB[Q] = {0};
++static __device__ __inline__ void mul_rAsBrC_1D_nosync(T rA[Q], T *sB, T rC[NB]) {
 +#pragma unroll
 +  for (int i = 0; i < NB; i++) {
++    rC[i] = 0.0;
 +#pragma unroll
 +    for (int k = 0; k < Q; k++) {
-+      rB[k] = sB[i * sldb + k];
++      rC[i] += rA[k] * sB[i * Q + k];
 +    }
-+
-+    T rTmp = 0;
-+#pragma unroll
-+    for (int k = 0; k < Q; k++) {
-+      rTmp += rA[k] * rB[k];
-+    }
-+    rC[i] = rTmp;
 +  }
 +}
 +
@@ -5685,33 +6029,20 @@ index 00000000..ff9dd950
 +// C in registers -- one row per thread
 +// no sync at the end of the function
 +template <typename T, int P, int Q, int NB>
-+static __device__ __inline__ void addmul_rAsBrC_1D_nosync(const int tx, T rA[Q], T *sB, int sldb, T rC[NB]) {
-+  T rB[Q] = {0};
++static __device__ __inline__ void addmul_rAsBrC_1D_nosync(T rA[Q], T *sB, T rC[NB]) {
 +#pragma unroll
 +  for (int i = 0; i < NB; i++) {
 +#pragma unroll
 +    for (int k = 0; k < Q; k++) {
-+      rB[k] = sB[i * sldb + k];
++      rC[i] += rA[k] * sB[i * Q + k];
 +    }
-+
-+    T rTmp = 0;
-+#pragma unroll
-+    for (int k = 0; k < Q; k++) {
-+      rTmp += rA[k] * rB[k];
-+    }
-+    rC[i] += rTmp;
 +  }
 +}
 +
-+#undef dA
-+#undef sA
-+#undef dB
-+#undef sB
-+
-+#endif
++#endif  // CEED_MAGMA_COMMON_NONTENSOR_H
 diff --git a/include/ceed/jit-source/magma/magma-common-tensor.h b/include/ceed/jit-source/magma/magma-common-tensor.h
 new file mode 100644
-index 00000000..3bba67a7
+index 00000000..1ca3f527
 --- /dev/null
 +++ b/include/ceed/jit-source/magma/magma-common-tensor.h
 @@ -0,0 +1,207 @@
@@ -5921,7 +6252,7 @@ index 00000000..3bba67a7
 +  // must sync after call
 +}
 +
-+#endif
++#endif  // CEED_MAGMA_COMMON_TENSOR_H
 diff --git a/include/ceed/jit-source/magma/magma_common_nontensor.h b/include/ceed/jit-source/magma/magma_common_nontensor.h
 deleted file mode 100644
 index edfd805d..00000000

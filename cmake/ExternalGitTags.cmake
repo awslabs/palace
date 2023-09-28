@@ -90,7 +90,7 @@ set(EXTERN_LIBCEED_GIT_BRANCH
   "Git branch for external libCEED build"
 )
 set(EXTERN_LIBCEED_GIT_TAG
-  "5b89cb6732d9042822ce9e837fca204cc7224f5f" CACHE STRING  # main @ 09/20/2023
+  "2bc6469880c9a85ea757b18808a9311af8c3b635" CACHE STRING  # main @ 10/06/2023
   "Git tag for external libCEED build"
 )
 
@@ -132,7 +132,7 @@ set(EXTERN_MFEM_GIT_BRANCH
   "Git branch for external MFEM build"
 )
 set(EXTERN_MFEM_GIT_TAG
-  "d063a4a02e34a8d1a7616a1d78a63fcc382105db" CACHE STRING  # master @ 09/19/2023
+  "c0867ca009e9b5fafb5585318648f430b1d6eef0" CACHE STRING  # master @ 10/02/2023
   "Git tag for external MFEM build"
 )
 

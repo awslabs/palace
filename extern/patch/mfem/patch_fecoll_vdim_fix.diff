@@ -1,17 +1,252 @@
+diff --git a/fem/bilininteg.cpp b/fem/bilininteg.cpp
+index 3eb8b704d..eb2a7ce04 100644
+--- a/fem/bilininteg.cpp
++++ b/fem/bilininteg.cpp
+@@ -2456,7 +2456,7 @@ void VectorFEMassIntegrator::AssembleElementMatrix(
+ {
+    int dof = el.GetDof();
+    int spaceDim = Trans.GetSpaceDim();
+-   int vdim = std::max(spaceDim, el.GetVDim());
++   int vdim = std::max(spaceDim, el.GetRangeDim());
+ 
+    double w;
+ 
+@@ -2524,7 +2524,7 @@ void VectorFEMassIntegrator::AssembleElementMatrix2(
+    {
+       // assume test_fe is scalar FE and trial_fe is vector FE
+       int spaceDim = Trans.GetSpaceDim();
+-      int vdim = std::max(spaceDim, trial_fe.GetVDim());
++      int vdim = std::max(spaceDim, trial_fe.GetRangeDim());
+       int trial_dof = trial_fe.GetDof();
+       int test_dof = test_fe.GetDof();
+       double w;
+@@ -2622,8 +2622,8 @@ void VectorFEMassIntegrator::AssembleElementMatrix2(
+    {
+       // assume both test_fe and trial_fe are vector FE
+       int spaceDim = Trans.GetSpaceDim();
+-      int trial_vdim = std::max(spaceDim, trial_fe.GetVDim());
+-      int test_vdim = std::max(spaceDim, test_fe.GetVDim());
++      int trial_vdim = std::max(spaceDim, trial_fe.GetRangeDim());
++      int test_vdim = std::max(spaceDim, test_fe.GetRangeDim());
+       int trial_dof = trial_fe.GetDof();
+       int test_dof = test_fe.GetDof();
+       double w;
+diff --git a/fem/bilininteg.hpp b/fem/bilininteg.hpp
+index a36109f00..81ae788f7 100644
+--- a/fem/bilininteg.hpp
++++ b/fem/bilininteg.hpp
+@@ -580,7 +580,7 @@ protected:
+ 
+ 
+    inline virtual int GetTestVDim(const FiniteElement & test_fe)
+-   { return std::max(space_dim, test_fe.GetVDim()); }
++   { return std::max(space_dim, test_fe.GetRangeDim()); }
+ 
+    inline virtual void CalcTestShape(const FiniteElement & test_fe,
+                                      ElementTransformation &Trans,
+@@ -588,7 +588,7 @@ protected:
+    { test_fe.CalcVShape(Trans, shape); }
+ 
+    inline virtual int GetTrialVDim(const FiniteElement & trial_fe)
+-   { return std::max(space_dim, trial_fe.GetVDim()); }
++   { return std::max(space_dim, trial_fe.GetRangeDim()); }
+ 
+    inline virtual void CalcTrialShape(const FiniteElement & trial_fe,
+                                       ElementTransformation &Trans,
+@@ -678,7 +678,7 @@ protected:
+ 
+ 
+    inline virtual int GetVDim(const FiniteElement & vector_fe)
+-   { return std::max(space_dim, vector_fe.GetVDim()); }
++   { return std::max(space_dim, vector_fe.GetRangeDim()); }
+ 
+    inline virtual void CalcVShape(const FiniteElement & vector_fe,
+                                   ElementTransformation &Trans,
+@@ -1105,7 +1105,7 @@ public:
+       const FiniteElement & trial_fe,
+       const FiniteElement & test_fe) const
+    {
+-      return (trial_fe.GetVDim() == 3 &&
++      return (trial_fe.GetRangeDim() == 3 &&
+               trial_fe.GetRangeType() == mfem::FiniteElement::VECTOR &&
+               test_fe.GetRangeType()  == mfem::FiniteElement::SCALAR &&
+               test_fe.GetDerivType()  == mfem::FiniteElement::GRAD );
+@@ -1288,8 +1288,8 @@ public:
+       const FiniteElement & trial_fe,
+       const FiniteElement & test_fe) const
+    {
+-      return (trial_fe.GetCurlDim() == 3 && trial_fe.GetVDim() == 3 &&
+-              test_fe.GetCurlDim() == 3 && test_fe.GetVDim() == 3 &&
++      return (trial_fe.GetCurlDim() == 3 && trial_fe.GetRangeDim() == 3 &&
++              test_fe.GetCurlDim() == 3 && test_fe.GetRangeDim() == 3 &&
+               trial_fe.GetRangeType() == mfem::FiniteElement::VECTOR &&
+               trial_fe.GetDerivType() == mfem::FiniteElement::CURL &&
+               test_fe.GetRangeType()  == mfem::FiniteElement::VECTOR &&
+@@ -1419,7 +1419,7 @@ public:
+       const FiniteElement & trial_fe,
+       const FiniteElement & test_fe) const
+    {
+-      return (trial_fe.GetVDim() == 3 && test_fe.GetCurlDim() == 3 &&
++      return (trial_fe.GetRangeDim() == 3 && test_fe.GetCurlDim() == 3 &&
+               trial_fe.GetRangeType() == mfem::FiniteElement::VECTOR &&
+               test_fe.GetRangeType()  == mfem::FiniteElement::VECTOR &&
+               test_fe.GetDerivType()  == mfem::FiniteElement::CURL );
+@@ -1489,7 +1489,7 @@ public:
+       const FiniteElement & trial_fe,
+       const FiniteElement & test_fe) const
+    {
+-      return (test_fe.GetVDim() == 3 &&
++      return (test_fe.GetRangeDim() == 3 &&
+               trial_fe.GetRangeType() == mfem::FiniteElement::SCALAR &&
+               trial_fe.GetDerivType() == mfem::FiniteElement::GRAD &&
+               test_fe.GetRangeType()  == mfem::FiniteElement::VECTOR );
+@@ -1529,7 +1529,7 @@ public:
+       const FiniteElement & trial_fe,
+       const FiniteElement & test_fe) const
+    {
+-      return (trial_fe.GetCurlDim() == 3 && test_fe.GetVDim() == 3 &&
++      return (trial_fe.GetCurlDim() == 3 && test_fe.GetRangeDim() == 3 &&
+               trial_fe.GetRangeType() == mfem::FiniteElement::VECTOR &&
+               trial_fe.GetDerivType() == mfem::FiniteElement::CURL   &&
+               test_fe.GetRangeType()  == mfem::FiniteElement::VECTOR );
+@@ -1900,7 +1900,7 @@ protected:
+       const FiniteElement & trial_fe,
+       const FiniteElement & test_fe) const
+    {
+-      return (trial_fe.GetCurlDim() == 3 && test_fe.GetVDim() == 3 &&
++      return (trial_fe.GetCurlDim() == 3 && test_fe.GetRangeDim() == 3 &&
+               trial_fe.GetDerivType() == mfem::FiniteElement::CURL  &&
+               test_fe.GetRangeType()  == mfem::FiniteElement::VECTOR );
+    }
+@@ -1959,7 +1959,7 @@ protected:
+       const FiniteElement & trial_fe,
+       const FiniteElement & test_fe) const
+    {
+-      return (trial_fe.GetVDim() == 3 && test_fe.GetCurlDim() == 3 &&
++      return (trial_fe.GetRangeDim() == 3 && test_fe.GetCurlDim() == 3 &&
+               trial_fe.GetRangeType() == mfem::FiniteElement::VECTOR &&
+               test_fe.GetDerivType()  == mfem::FiniteElement::CURL );
+    }
+diff --git a/fem/fe/fe_base.cpp b/fem/fe/fe_base.cpp
+index 6ac215902..4387ae775 100644
+--- a/fem/fe/fe_base.cpp
++++ b/fem/fe/fe_base.cpp
+@@ -820,7 +820,7 @@ void NodalFiniteElement::Project(
+    else
+    {
+       DenseMatrix vshape(fe.GetDof(), std::max(Trans.GetSpaceDim(),
+-                                               fe.GetVDim()));
++                                               fe.GetRangeDim()));
+ 
+       I.SetSize(vshape.Width()*dof, fe.GetDof());
+       for (int k = 0; k < dof; k++)
+diff --git a/fem/fe/fe_base.hpp b/fem/fe/fe_base.hpp
+index 74d9eebc1..f9e31b457 100644
+--- a/fem/fe/fe_base.hpp
++++ b/fem/fe/fe_base.hpp
+@@ -307,19 +307,20 @@ public:
+    FiniteElement(int D, Geometry::Type G, int Do, int O,
+                  int F = FunctionSpace::Pk);
+ 
+-   /// Returns the reference space dimension for the finite element
++   /// Returns the reference space dimension for the finite element.
+    int GetDim() const { return dim; }
+ 
+-   /// Returns the vector dimension for vector-valued finite elements
+-   int GetVDim() const { return vdim; }
++   /** @brief Returns the vector dimension for vector-valued finite elements,
++       which is also the dimension of the interpolation operatrion. */
++   int GetRangeDim() const { return vdim; }
+ 
+-   /// Returns the dimension of the curl for vector-valued finite elements
++   /// Returns the dimension of the curl for vector-valued finite elements.
+    int GetCurlDim() const { return cdim; }
+ 
+-   /// Returns the Geometry::Type of the reference element
++   /// Returns the Geometry::Type of the reference element.
+    Geometry::Type GetGeomType() const { return geom_type; }
+ 
+-   /// Returns the number of degrees of freedom in the finite element
++   /// Returns the number of degrees of freedom in the finite element.
+    int GetDof() const { return dof; }
+ 
+    /** @brief Returns the order of the finite element. In the case of
+diff --git a/fem/fe/fe_nd.cpp b/fem/fe/fe_nd.cpp
+index 3bff03cb6..7522b5a76 100644
+--- a/fem/fe/fe_nd.cpp
++++ b/fem/fe/fe_nd.cpp
+@@ -1852,7 +1852,7 @@ void ND_R1D_SegmentElement::Project(const FiniteElement &fe,
+    else
+    {
+       double vk[Geometry::MaxDim];
+-      DenseMatrix vshape(fe.GetDof(), fe.GetVDim());
++      DenseMatrix vshape(fe.GetDof(), fe.GetRangeDim());
+ 
+       double * tk_ptr = const_cast<double*>(tk);
+ 
+@@ -2293,7 +2293,7 @@ void ND_R2D_FiniteElement::Project(const FiniteElement &fe,
+    else
+    {
+       double vk[Geometry::MaxDim];
+-      DenseMatrix vshape(fe.GetDof(), fe.GetVDim());
++      DenseMatrix vshape(fe.GetDof(), fe.GetRangeDim());
+ 
+       double * tk_ptr = const_cast<double*>(tk);
+ 
+diff --git a/fem/fe/fe_rt.cpp b/fem/fe/fe_rt.cpp
+index af4287932..e38dc7de0 100644
+--- a/fem/fe/fe_rt.cpp
++++ b/fem/fe/fe_rt.cpp
+@@ -1486,7 +1486,7 @@ void RT_R1D_SegmentElement::Project(const FiniteElement &fe,
+    else
+    {
+       double vk[Geometry::MaxDim];
+-      DenseMatrix vshape(fe.GetDof(), fe.GetVDim());
++      DenseMatrix vshape(fe.GetDof(), fe.GetRangeDim());
+ 
+       double * nk_ptr = const_cast<double*>(nk);
+ 
+@@ -1523,7 +1523,7 @@ void RT_R1D_SegmentElement::ProjectCurl(const FiniteElement &fe,
+                                         ElementTransformation &Trans,
+                                         DenseMatrix &curl) const
+ {
+-   DenseMatrix curl_shape(fe.GetDof(), fe.GetVDim());
++   DenseMatrix curl_shape(fe.GetDof(), fe.GetRangeDim());
+    Vector curl_k(fe.GetDof());
+ 
+    double * nk_ptr = const_cast<double*>(nk);
+@@ -1849,7 +1849,7 @@ void RT_R2D_FiniteElement::Project(const FiniteElement &fe,
+    else
+    {
+       double vk[Geometry::MaxDim];
+-      DenseMatrix vshape(fe.GetDof(), fe.GetVDim());
++      DenseMatrix vshape(fe.GetDof(), fe.GetRangeDim());
+ 
+       double * nk_ptr = const_cast<double*>(nk);
+ 
+@@ -1888,7 +1888,7 @@ void RT_R2D_FiniteElement::ProjectCurl(const FiniteElement &fe,
+                                        ElementTransformation &Trans,
+                                        DenseMatrix &curl) const
+ {
+-   DenseMatrix curl_shape(fe.GetDof(), fe.GetVDim());
++   DenseMatrix curl_shape(fe.GetDof(), fe.GetRangeDim());
+    Vector curl_k(fe.GetDof());
+ 
+    double * nk_ptr = const_cast<double*>(nk);
 diff --git a/fem/fe_coll.cpp b/fem/fe_coll.cpp
-index 483fb9b8f..4322a0379 100644
+index 483fb9b8f..2b5ed6f46 100644
 --- a/fem/fe_coll.cpp
 +++ b/fem/fe_coll.cpp
 @@ -87,6 +87,16 @@ int FiniteElementCollection::GetDerivMapType(int dim) const
     return FiniteElement::UNKNOWN_MAP_TYPE;
  }
  
-+int FiniteElementCollection::GetVDim(int dim) const
++int FiniteElementCollection::GetRangeDim(int dim) const
 +{
 +   const FiniteElement *fe = FiniteElementForDim(dim);
 +   if (fe)
 +   {
-+      return fe->GetVDim();
++      return fe->GetRangeDim();
 +   }
 +   return 0;
 +}
@@ -20,7 +255,7 @@ index 483fb9b8f..4322a0379 100644
  {
     switch (geom)
 diff --git a/fem/fe_coll.hpp b/fem/fe_coll.hpp
-index 86c1f4e66..1efd9bffc 100644
+index 86c1f4e66..96c7921c4 100644
 --- a/fem/fe_coll.hpp
 +++ b/fem/fe_coll.hpp
 @@ -56,8 +56,7 @@ public:
@@ -56,7 +291,7 @@ index 86c1f4e66..1efd9bffc 100644
 +   int GetMapType(int dim) const;
 +   int GetDerivType(int dim) const;
 +   int GetDerivMapType(int dim) const;
-+   int GetVDim(int dim) const;
++   int GetRangeDim(int dim) const;
     /** @} */
  
     int HasFaceDofs(Geometry::Type geom, int p) const;
@@ -1106,8 +1341,74 @@ index 86c1f4e66..1efd9bffc 100644
  };
  
  }
+diff --git a/fem/gridfunc.cpp b/fem/gridfunc.cpp
+index cd79780cf..233113c7e 100644
+--- a/fem/gridfunc.cpp
++++ b/fem/gridfunc.cpp
+@@ -340,7 +340,7 @@ int GridFunction::VectorDim() const
+       return fes->GetVDim();
+    }
+    return fes->GetVDim()*std::max(fes->GetMesh()->SpaceDimension(),
+-                                  fe->GetVDim());
++                                  fe->GetRangeDim());
+ }
+ 
+ int GridFunction::CurlDim() const
+@@ -1041,7 +1041,7 @@ void GridFunction::GetVectorValue(ElementTransformation &T,
+    else
+    {
+       int spaceDim = fes->GetMesh()->SpaceDimension();
+-      int vdim = std::max(spaceDim, fe->GetVDim());
++      int vdim = std::max(spaceDim, fe->GetRangeDim());
+       DenseMatrix vshape(dof, vdim);
+       fe->CalcVShape(T, vshape);
+       val.SetSize(vdim);
+@@ -1093,7 +1093,7 @@ void GridFunction::GetVectorValues(ElementTransformation &T,
+    else
+    {
+       int spaceDim = fes->GetMesh()->SpaceDimension();
+-      int vdim = std::max(spaceDim, FElem->GetVDim());
++      int vdim = std::max(spaceDim, FElem->GetRangeDim());
+       DenseMatrix vshape(dof, vdim);
+ 
+       vals.SetSize(vdim, nip);
+diff --git a/fem/lininteg.cpp b/fem/lininteg.cpp
+index c9b6b4699..c54b7c25f 100644
+--- a/fem/lininteg.cpp
++++ b/fem/lininteg.cpp
+@@ -455,7 +455,7 @@ void VectorFEDomainLFIntegrator::AssembleRHSElementVect(
+ {
+    int dof = el.GetDof();
+    int spaceDim = Tr.GetSpaceDim();
+-   int vdim = std::max(spaceDim, el.GetVDim());
++   int vdim = std::max(spaceDim, el.GetRangeDim());
+ 
+    vshape.SetSize(dof,vdim);
+    vec.SetSize(vdim);
+@@ -656,7 +656,7 @@ void VectorFEBoundaryTangentLFIntegrator::AssembleRHSElementVect(
+ {
+    int dof = el.GetDof();
+    int dim = el.GetDim();
+-   int vdim = el.GetVDim();
++   int vdim = el.GetRangeDim();
+    DenseMatrix vshape(dof, vdim);
+    Vector f_loc(3);
+    Vector f_hat(2);
+diff --git a/fem/pgridfunc.cpp b/fem/pgridfunc.cpp
+index 0a58530c1..caff1beac 100644
+--- a/fem/pgridfunc.cpp
++++ b/fem/pgridfunc.cpp
+@@ -501,7 +501,7 @@ void ParGridFunction::GetVectorValue(ElementTransformation &T,
+    else
+    {
+       int spaceDim = pfes->GetMesh()->SpaceDimension();
+-      int vdim = std::max(spaceDim, fe->GetVDim());
++      int vdim = std::max(spaceDim, fe->GetRangeDim());
+       DenseMatrix vshape(dof, vdim);
+       fe->CalcVShape(T, vshape);
+       val.SetSize(vdim);
 diff --git a/linalg/hypre.cpp b/linalg/hypre.cpp
-index fd1972f54..dfde03bf3 100644
+index fd1972f54..e478a4aa4 100644
 --- a/linalg/hypre.cpp
 +++ b/linalg/hypre.cpp
 @@ -5269,7 +5269,6 @@ HypreAMS::HypreAMS(const HypreParMatrix &A, HypreParMatrix *G_,
@@ -1143,7 +1444,7 @@ index fd1972f54..dfde03bf3 100644
 +      edge_fespace = new ParFiniteElementSpace(pmesh, nd_tr_fec);
 +   }
 +
-+   int vdim = edge_fespace->FEColl()->GetVDim(trace_space ? dim - 1 : dim);
++   int vdim = edge_fespace->FEColl()->GetRangeDim(trace_space ? dim - 1 : dim);
 +
 +   MakeSolver(std::max(sdim, vdim), cycle_type);
 +   MakeGradientAndInterpolation(edge_fespace, cycle_type);
@@ -1184,7 +1485,7 @@ index fd1972f54..dfde03bf3 100644
 -   }
 +   int dim = pmesh->Dimension();
 +   int sdim = pmesh->SpaceDimension();
-+   int vdim = edge_fespace->FEColl()->GetVDim(trace_space ? dim - 1 : dim);
++   int vdim = edge_fespace->FEColl()->GetRangeDim(trace_space ? dim - 1 : dim);
 +
 +   // For dim = 1, ND_FECollection::GetOrder() returns p - 1
 +   MFEM_VERIFY(!edge_fespace->IsVariableOrder(),

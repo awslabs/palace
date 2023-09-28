@@ -239,6 +239,8 @@ set(MFEM_PATCH_FILES
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_stateless_doftrans_threadsafe.diff"
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_global_variables_threadsafe.diff"
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_mfem_device_fixes.diff"
+  "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_kdtree_fix_gcc_13.diff"
+  "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_intrules_order_fix.diff"
 )
 
 include(ExternalProject)
