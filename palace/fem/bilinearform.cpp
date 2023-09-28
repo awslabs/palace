@@ -213,7 +213,7 @@ std::unique_ptr<ceed::Operator> BilinearForm::Assemble() const
 }
 
 std::unique_ptr<mfem::SparseMatrix> BilinearForm::FullAssemble(const ceed::Operator &op,
-                                                               bool skip_zeros) const
+                                                               bool skip_zeros)
 {
   return ceed::CeedOperatorFullAssemble(op, skip_zeros, false);
 }
@@ -245,7 +245,7 @@ std::unique_ptr<ceed::Operator> DiscreteLinearOperator::Assemble() const
 }
 
 std::unique_ptr<mfem::SparseMatrix>
-DiscreteLinearOperator::FullAssemble(const ceed::Operator &op, bool skip_zeros) const
+DiscreteLinearOperator::FullAssemble(const ceed::Operator &op, bool skip_zeros)
 {
   return ceed::CeedOperatorFullAssemble(op, skip_zeros, true);
 }

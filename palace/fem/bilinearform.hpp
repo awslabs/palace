@@ -99,8 +99,8 @@ public:
 
   std::unique_ptr<ceed::Operator> Assemble() const;
 
-  std::unique_ptr<mfem::SparseMatrix> FullAssemble(const ceed::Operator &op,
-                                                   bool skip_zeros) const;
+  static std::unique_ptr<mfem::SparseMatrix> FullAssemble(const ceed::Operator &op,
+                                                          bool skip_zeros);
 };
 
 // Discrete linear operators map primal vectors to primal vectors for interpolation between
@@ -144,8 +144,8 @@ public:
 
   std::unique_ptr<ceed::Operator> Assemble() const;
 
-  std::unique_ptr<mfem::SparseMatrix> FullAssemble(const ceed::Operator &op,
-                                                   bool skip_zeros) const;
+  static std::unique_ptr<mfem::SparseMatrix> FullAssemble(const ceed::Operator &op,
+                                                          bool skip_zeros);
 };
 
 }  // namespace palace

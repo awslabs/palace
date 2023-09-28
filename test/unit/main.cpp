@@ -9,6 +9,12 @@
 
 using namespace palace;
 
+// Global test options configurable from command line.
+int benchmark_ref_levels = 0;
+int benchmark_order = 4;
+bool benchmark_no_fa = false;
+bool benchmark_no_mfem_pa = false;
+
 int main(int argc, char *argv[])
 {
   // Initialize MPI.
@@ -23,10 +29,18 @@ int main(int argc, char *argv[])
 
   // Build a new parser on top of Catch2's.
   using namespace Catch::Clara;
-  auto cli =
-      session.cli() |
-      Opt(device_str, "device")["--device"]("MFEM device (default: \"cpu\")") |
-      Opt(ceed_backend, "backend")["--backend"]("libCEED backend (default: \"/cpu/self\")");
+  auto cli = session.cli() |
+             Opt(device_str, "device")["--device"]("MFEM device (default: \"cpu\")") |
+             Opt(ceed_backend,
+                 "backend")["--backend"]("libCEED backend (default: \"/cpu/self\")") |
+             Opt(benchmark_ref_levels, "levels")["--benchmark-ref-levels"](
+                 "Levels of uniform mesh refinement for benchmarks (default: 0)") |
+             Opt(benchmark_order, "order")["--benchmark-order"](
+                 "Element order for benchmarks (default: 4)") |
+             Opt(benchmark_no_fa)["--benchmark-skip-full-assembly"](
+                 "Skip full assembly tests in benchmarks") |
+             Opt(benchmark_no_mfem_pa)["--benchmark-skip-mfem-partial-assembly"](
+                 "Skip MFEM partial assembly tests in benchmarks");
 
   // Now pass the new composite back to Catch2 so it uses that.
   session.cli(cli);

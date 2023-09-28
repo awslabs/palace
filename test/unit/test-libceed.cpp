@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <memory>
+#include <sstream>
+#include <string>
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/benchmark/catch_benchmark_all.hpp>
@@ -10,6 +12,11 @@
 #include "fem/fespace.hpp"
 #include "fem/integrator.hpp"
 #include "utils/communication.hpp"
+
+extern int benchmark_ref_levels;
+extern int benchmark_order;
+extern bool benchmark_no_fa;
+extern bool benchmark_no_mfem_pa;
 
 namespace palace
 {
@@ -143,6 +150,9 @@ void TestCeedOperatorFullAssemble(const mfem::SparseMatrix &mat_test,
   mat_test.HostReadI();
   mat_test.HostReadJ();
   mat_test.HostReadData();
+  mat_ref.HostReadI();
+  mat_ref.HostReadJ();
+  mat_ref.HostReadData();
 
   std::unique_ptr<mfem::SparseMatrix> mat_diff(mfem::Add(1.0, mat_test, -1.0, mat_ref));
 
@@ -218,7 +228,6 @@ template <typename T1, typename T2, typename T3>
 void BenchmarkCeedIntegrator(FiniteElementSpace &fespace, T1 AssembleTest,
                              T2 AssembleTestRef, T3 AssembleRef, int qdata_size)
 {
-  const int q_extra = 0;
   const bool skip_zeros = false;
   Vector x(fespace.GetVSize()), y_ref(fespace.GetVSize()), y_test(fespace.GetVSize());
   x.UseDevice(true);
@@ -228,43 +237,44 @@ void BenchmarkCeedIntegrator(FiniteElementSpace &fespace, T1 AssembleTest,
 
   // Check correctness (with boundary integrators).
   std::size_t nnz = 0;
+  if (!benchmark_no_fa)
   {
-    BilinearForm a_test(fespace, q_extra), a_test_ref(fespace, q_extra);
-    const auto op_test = AssembleTest(a_test, true);
-    const auto op_test_ref = AssembleTestRef(a_test_ref, true);
-    const auto &mat_test = a_test.FullAssemble(*op_test, skip_zeros);
-    const auto &mat_test_ref = a_test_ref.FullAssemble(*op_test_ref, skip_zeros);
+    const auto op_test = AssembleTest(fespace, true);
+    const auto op_test_ref = AssembleTestRef(fespace, true);
+    const auto mat_test = BilinearForm::FullAssemble(*op_test, skip_zeros);
+    const auto mat_test_ref = BilinearForm::FullAssemble(*op_test_ref, skip_zeros);
     nnz = mat_test->NumNonZeroElems();
     TestCeedOperatorFullAssemble(*mat_test, *mat_test_ref);
   }
 
   // Benchmark MFEM legacy assembly.
-  BENCHMARK("Assemble (MFEM Legacy)")
+  if (!benchmark_no_fa)
   {
-    mfem::BilinearForm a_ref(&fespace);
-    return AssembleRef(a_ref, mfem::AssemblyLevel::LEGACY, skip_zeros);
-  };
-  {
-    mfem::BilinearForm a_ref(&fespace);
-    const auto *op_ref = AssembleRef(a_ref, mfem::AssemblyLevel::LEGACY, skip_zeros);
-    y_ref = 0.0;
-    BENCHMARK("AddMult (MFEM Legacy)")
+    BENCHMARK("Assemble (MFEM Legacy)")
     {
-      op_ref->AddMult(x, y_ref);
+      const auto op_ref = AssembleRef(fespace, mfem::AssemblyLevel::LEGACY, skip_zeros);
+      return op_ref->Height();
     };
+    {
+      const auto op_ref = AssembleRef(fespace, mfem::AssemblyLevel::LEGACY, skip_zeros);
+      y_ref = 0.0;
+      BENCHMARK("AddMult (MFEM Legacy)")
+      {
+        op_ref->AddMult(x, y_ref);
+      };
+    }
   }
 
   // Benchmark MFEM PA (tensor-product elements only).
-  if (mfem::UsesTensorBasis(fespace))
+  if (!benchmark_no_mfem_pa && mfem::UsesTensorBasis(fespace))
   {
     BENCHMARK("Assemble (MFEM Partial)")
     {
-      mfem::BilinearForm a_ref(&fespace);
-      return AssembleRef(a_ref, mfem::AssemblyLevel::PARTIAL, skip_zeros);
+      const auto op_ref = AssembleRef(fespace, mfem::AssemblyLevel::PARTIAL, skip_zeros);
+      return op_ref->Height();
     };
     {
-      mfem::BilinearForm a_ref(&fespace);
-      const auto *op_ref = AssembleRef(a_ref, mfem::AssemblyLevel::PARTIAL, skip_zeros);
+      const auto op_ref = AssembleRef(fespace, mfem::AssemblyLevel::PARTIAL, skip_zeros);
       y_ref = 0.0;
       BENCHMARK("AddMult (MFEM Partial)")
       {
@@ -278,23 +288,26 @@ void BenchmarkCeedIntegrator(FiniteElementSpace &fespace, T1 AssembleTest,
   // Benchmark libCEED assembly.
   BENCHMARK("Assemble (libCEED)")
   {
-    BilinearForm a_test(fespace, q_extra);
-    return AssembleTest(a_test);
+    const auto op_test = AssembleTest(fespace);
+    return op_test->Height();
   };
   {
-    BilinearForm a_test(fespace, q_extra);
-    const auto op_test = AssembleTest(a_test);
+    const auto op_test = AssembleTest(fespace);
     y_test = 0.0;
     BENCHMARK("AddMult (libCEED)")
     {
       op_test->AddMult(x, y_test);
     };
   }
-  BENCHMARK("Full Assemble (libCEED)")
+  if (!benchmark_no_fa)
   {
-    BilinearForm a_test(fespace, q_extra);
-    return a_test.FullAssemble(*AssembleTest(a_test), skip_zeros);
-  };
+    BENCHMARK("Full Assemble (libCEED)")
+    {
+      const auto op_test = AssembleTest(fespace);
+      const auto mat_test = BilinearForm::FullAssemble(*op_test, skip_zeros);
+      return mat_test->NumNonZeroElems();
+    };
+  }
 
   // Memory estimate (only for non-mixed meshes).
   mfem::ParMesh &mesh = *fespace.GetParMesh();
@@ -311,12 +324,21 @@ void BenchmarkCeedIntegrator(FiniteElementSpace &fespace, T1 AssembleTest,
     // restriction.
     std::size_t mem_ref = nnz * (8 + 4) + (y_ref.Size() + 1) * 4;
     std::size_t mem_test = (Q * qdata_size * 8 + P * 4) * (std::size_t)mesh.GetNE();
-    WARN("benchmark memory estimate:\n"
-         << "  N = " << fespace.GetVSize() << " (NE = " << mesh.GetNE() << ", P = " << P
-         << ", Q = " << Q << ")\n"
-         << "  Full Assembly = " << mem_ref / (double)(1024 * 1024) << " MB (" << nnz
-         << " NNZ)\n"
-         << "  Partial Assembly = " << mem_test / (double)(1024 * 1024) << " MB\n");
+    std::stringstream msg;
+    msg << "benchmark memory estimate:\n"
+        << "  N = " << fespace.GetVSize() << " (NE = " << mesh.GetNE() << ", P = " << P
+        << ", Q = " << Q << ")\n";
+    if (nnz > 0)
+    {
+      msg << "  Full Assembly = " << mem_ref / (double)(1024 * 1024) << " MB (" << nnz
+          << " NNZ)\n";
+    }
+    else
+    {
+      msg << "  Full Assembly = N/A (skipped)\n";
+    }
+    msg << "  Partial Assembly = " << mem_test / (double)(1024 * 1024) << " MB\n";
+    WARN(msg.str());
   }
 }
 
@@ -335,44 +357,50 @@ void BenchmarkCeedInterpolator(FiniteElementSpace &trial_fespace,
 
   // Check correctness.
   std::size_t nnz = 0;
+  if (!benchmark_no_fa)
   {
-    DiscreteLinearOperator a_test(trial_fespace, test_fespace);
-    mfem::DiscreteLinearOperator a_ref(&trial_fespace, &test_fespace);
-    const auto op_test = AssembleTest(a_test);
-    const auto &mat_test = a_test.FullAssemble(*op_test, skip_zeros);
-    const auto *mat_ref =
-        &AssembleRef(a_ref, mfem::AssemblyLevel::LEGACY, skip_zeros)->SpMat();
+    const auto op_test = AssembleTest(trial_fespace, test_fespace);
+    const auto op_ref =
+        AssembleRef(trial_fespace, test_fespace, mfem::AssemblyLevel::LEGACY, skip_zeros);
+    const auto mat_test = DiscreteLinearOperator::FullAssemble(*op_test, skip_zeros);
+    const auto *mat_ref = &op_ref->SpMat();
     nnz = mat_test->NumNonZeroElems();
     TestCeedOperatorFullAssemble(*mat_test, *mat_ref);
   }
 
   // Benchmark MFEM legacy assembly.
-  BENCHMARK("Assemble (MFEM Legacy)")
+  if (!benchmark_no_fa)
   {
-    mfem::DiscreteLinearOperator a_ref(&trial_fespace, &test_fespace);
-    return AssembleRef(a_ref, mfem::AssemblyLevel::LEGACY, skip_zeros);
-  };
-  {
-    mfem::DiscreteLinearOperator a_ref(&trial_fespace, &test_fespace);
-    const auto *op_ref = AssembleRef(a_ref, mfem::AssemblyLevel::LEGACY, skip_zeros);
-    y_ref = 0.0;
-    BENCHMARK("AddMult (MFEM Legacy)")
+    BENCHMARK("Assemble (MFEM Legacy)")
     {
-      op_ref->AddMult(x, y_ref);
+      const auto op_ref =
+          AssembleRef(trial_fespace, test_fespace, mfem::AssemblyLevel::LEGACY, skip_zeros);
+      return op_ref->Height();
     };
+    {
+      const auto op_ref =
+          AssembleRef(trial_fespace, test_fespace, mfem::AssemblyLevel::LEGACY, skip_zeros);
+      y_ref = 0.0;
+      BENCHMARK("AddMult (MFEM Legacy)")
+      {
+        op_ref->AddMult(x, y_ref);
+      };
+    }
   }
 
   // Benchmark MFEM PA (tensor-product elements only).
-  if (mfem::UsesTensorBasis(trial_fespace) && mfem::UsesTensorBasis(test_fespace))
+  if (!benchmark_no_mfem_pa && mfem::UsesTensorBasis(trial_fespace) &&
+      mfem::UsesTensorBasis(test_fespace))
   {
     BENCHMARK("Assemble (MFEM Partial)")
     {
-      mfem::DiscreteLinearOperator a_ref(&trial_fespace, &test_fespace);
-      return AssembleRef(a_ref, mfem::AssemblyLevel::PARTIAL, skip_zeros);
+      const auto op_ref = AssembleRef(trial_fespace, test_fespace,
+                                      mfem::AssemblyLevel::PARTIAL, skip_zeros);
+      return op_ref->Height();
     };
     {
-      mfem::DiscreteLinearOperator a_ref(&trial_fespace, &test_fespace);
-      const auto *op_ref = AssembleRef(a_ref, mfem::AssemblyLevel::PARTIAL, skip_zeros);
+      const auto op_ref = AssembleRef(trial_fespace, test_fespace,
+                                      mfem::AssemblyLevel::PARTIAL, skip_zeros);
       y_ref = 0.0;
       BENCHMARK("AddMult (MFEM Partial)")
       {
@@ -386,23 +414,26 @@ void BenchmarkCeedInterpolator(FiniteElementSpace &trial_fespace,
   // Benchmark libCEED assembly.
   BENCHMARK("Assemble (libCEED)")
   {
-    DiscreteLinearOperator a_test(trial_fespace, test_fespace);
-    return AssembleTest(a_test);
+    const auto op_test = AssembleTest(trial_fespace, test_fespace);
+    return op_test->Height();
   };
   {
-    DiscreteLinearOperator a_test(trial_fespace, test_fespace);
-    const auto op_test = AssembleTest(a_test);
+    const auto op_test = AssembleTest(trial_fespace, test_fespace);
     y_test = 0.0;
     BENCHMARK("AddMult (libCEED)")
     {
       op_test->AddMult(x, y_test);
     };
   }
-  BENCHMARK("Full Assemble (libCEED)")
+  if (!benchmark_no_fa)
   {
-    DiscreteLinearOperator a_test(trial_fespace, test_fespace);
-    return a_test.FullAssemble(*AssembleTest(a_test), skip_zeros);
-  };
+    BENCHMARK("Full Assemble (libCEED)")
+    {
+      const auto op_test = AssembleTest(trial_fespace, test_fespace);
+      const auto mat_test = DiscreteLinearOperator::FullAssemble(*op_test, skip_zeros);
+      return mat_test->NumNonZeroElems();
+    };
+  }
 
   // Memory estimate (only for non-mixed meshes).
   mfem::ParMesh &mesh = *trial_fespace.GetParMesh();
@@ -413,15 +444,25 @@ void BenchmarkCeedInterpolator(FiniteElementSpace &trial_fespace,
     const int trial_P = trial_fe.GetDof();
     const int test_P = test_fe.GetDof();
 
-    // Rough estimate for memory consumption.
+    // Rough estimate for memory consumption as quadrature data + offsets for element
+    // restriction.
     std::size_t mem_ref = nnz * (8 + 4) + (y_ref.Size() + 1) * 4;
     std::size_t mem_test = (trial_P * 4 + test_P * 4) * (std::size_t)mesh.GetNE();
-    WARN("benchmark memory estimate:\n"
-         << "  N = " << trial_fespace.GetVSize() << ", " << test_fespace.GetVSize()
-         << " (NE = " << mesh.GetNE() << ", P = " << trial_P << ", " << test_P << ")\n"
-         << "  Full Assembly = " << mem_ref / (double)(1024 * 1024) << " MB (" << nnz
-         << " NNZ)\n"
-         << "  Partial Assembly = " << mem_test / (double)(1024 * 1024) << " MB\n");
+    std::stringstream msg;
+    msg << "benchmark memory estimate:\n"
+        << "  N = " << trial_fespace.GetVSize() << ", " << test_fespace.GetVSize()
+        << " (NE = " << mesh.GetNE() << ", P = " << trial_P << ", " << test_P << ")\n";
+    if (nnz > 0)
+    {
+      msg << "  Full Assembly = " << mem_ref / (double)(1024 * 1024) << " MB (" << nnz
+          << " NNZ)\n";
+    }
+    else
+    {
+      msg << "  Full Assembly = N/A (skipped)\n";
+    }
+    msg << "  Partial Assembly = " << mem_test / (double)(1024 * 1024) << " MB\n";
+    WARN(msg.str());
   }
 }
 
@@ -929,8 +970,9 @@ void RunCeedBenchmarks(MPI_Comm comm, const std::string &input, int ref_levels, 
   // Diffusion + mass benchmark.
   SECTION("Diffusion + Mass Integrator Benchmark")
   {
-    auto AssembleTest = [&](BilinearForm &a_test, bool bdr_integ = false)
+    auto AssembleTest = [&](const FiniteElementSpace &fespace, bool bdr_integ = false)
     {
+      BilinearForm a_test(fespace);
       a_test.AddDomainIntegrator(std::make_unique<DiffusionMassIntegrator>(MQ, Q));
       if (bdr_integ)
       {
@@ -938,8 +980,9 @@ void RunCeedBenchmarks(MPI_Comm comm, const std::string &input, int ref_levels, 
       }
       return a_test.Assemble();
     };
-    auto AssembleTestRef = [&](BilinearForm &a_test_ref, bool bdr_integ = false)
+    auto AssembleTestRef = [&](const FiniteElementSpace &fespace, bool bdr_integ = false)
     {
+      BilinearForm a_test_ref(fespace);
       a_test_ref.AddDomainIntegrator(std::make_unique<DiffusionIntegrator>(MQ));
       a_test_ref.AddDomainIntegrator(std::make_unique<MassIntegrator>(Q));
       if (bdr_integ)
@@ -948,19 +991,20 @@ void RunCeedBenchmarks(MPI_Comm comm, const std::string &input, int ref_levels, 
       }
       return a_test_ref.Assemble();
     };
-    auto AssembleRef = [&](mfem::BilinearForm &a_ref, mfem::AssemblyLevel assembly_level,
+    auto AssembleRef = [&](FiniteElementSpace &fespace, mfem::AssemblyLevel assembly_level,
                            bool skip_zeros, bool bdr_integ = false)
     {
-      a_ref.AddDomainIntegrator(new mfem::DiffusionIntegrator(MQ));
-      a_ref.AddDomainIntegrator(new mfem::MassIntegrator(Q));
+      auto a_ref = std::make_unique<mfem::BilinearForm>(&fespace);
+      a_ref->AddDomainIntegrator(new mfem::DiffusionIntegrator(MQ));
+      a_ref->AddDomainIntegrator(new mfem::MassIntegrator(Q));
       if (bdr_integ)
       {
-        a_ref.AddBoundaryIntegrator(new mfem::MassIntegrator());
+        a_ref->AddBoundaryIntegrator(new mfem::MassIntegrator());
       }
-      a_ref.SetAssemblyLevel(assembly_level);
-      a_ref.Assemble(skip_zeros);
-      a_ref.Finalize(skip_zeros);
-      return &a_ref;
+      a_ref->SetAssemblyLevel(assembly_level);
+      a_ref->Assemble(skip_zeros);
+      a_ref->Finalize(skip_zeros);
+      return a_ref;
     };
 
     mfem::H1_FECollection h1_fec(order, dim);
@@ -972,8 +1016,9 @@ void RunCeedBenchmarks(MPI_Comm comm, const std::string &input, int ref_levels, 
   // Curl-curl + mass benchmark.
   SECTION("Curl-Curl + Mass Integrator Benchmark")
   {
-    auto AssembleTest = [&](BilinearForm &a_test, bool bdr_integ = false)
+    auto AssembleTest = [&](const FiniteElementSpace &fespace, bool bdr_integ = false)
     {
+      BilinearForm a_test(fespace);
       a_test.AddDomainIntegrator(std::make_unique<CurlCurlMassIntegrator>(MQ, Q));
       if (bdr_integ)
       {
@@ -981,8 +1026,9 @@ void RunCeedBenchmarks(MPI_Comm comm, const std::string &input, int ref_levels, 
       }
       return a_test.Assemble();
     };
-    auto AssembleTestRef = [&](BilinearForm &a_test_ref, bool bdr_integ = false)
+    auto AssembleTestRef = [&](const FiniteElementSpace &fespace, bool bdr_integ = false)
     {
+      BilinearForm a_test_ref(fespace);
       a_test_ref.AddDomainIntegrator(std::make_unique<CurlCurlIntegrator>(MQ));
       a_test_ref.AddDomainIntegrator(std::make_unique<VectorFEMassIntegrator>(Q));
       if (bdr_integ)
@@ -991,19 +1037,20 @@ void RunCeedBenchmarks(MPI_Comm comm, const std::string &input, int ref_levels, 
       }
       return a_test_ref.Assemble();
     };
-    auto AssembleRef = [&](mfem::BilinearForm &a_ref, mfem::AssemblyLevel assembly_level,
+    auto AssembleRef = [&](FiniteElementSpace &fespace, mfem::AssemblyLevel assembly_level,
                            bool skip_zeros, bool bdr_integ = false)
     {
-      a_ref.AddDomainIntegrator(new mfem::CurlCurlIntegrator(MQ));
-      a_ref.AddDomainIntegrator(new mfem::VectorFEMassIntegrator(Q));
+      auto a_ref = std::make_unique<mfem::BilinearForm>(&fespace);
+      a_ref->AddDomainIntegrator(new mfem::CurlCurlIntegrator(MQ));
+      a_ref->AddDomainIntegrator(new mfem::VectorFEMassIntegrator(Q));
       if (bdr_integ)
       {
-        a_ref.AddBoundaryIntegrator(new mfem::VectorFEMassIntegrator());
+        a_ref->AddBoundaryIntegrator(new mfem::VectorFEMassIntegrator());
       }
-      a_ref.SetAssemblyLevel(assembly_level);
-      a_ref.Assemble(skip_zeros);
-      a_ref.Finalize(skip_zeros);
-      return &a_ref;
+      a_ref->SetAssemblyLevel(assembly_level);
+      a_ref->Assemble(skip_zeros);
+      a_ref->Finalize(skip_zeros);
+      return a_ref;
     };
 
     mfem::ND_FECollection nd_fec(order, dim);
@@ -1015,26 +1062,29 @@ void RunCeedBenchmarks(MPI_Comm comm, const std::string &input, int ref_levels, 
   // Div-div + mass benchmark.
   SECTION("Div-Div + Mass Integrator Benchmark")
   {
-    auto AssembleTest = [&](BilinearForm &a_test, bool bdr_integ = false)
+    auto AssembleTest = [&](const FiniteElementSpace &fespace, bool bdr_integ = false)
     {
+      BilinearForm a_test(fespace);
       a_test.AddDomainIntegrator(std::make_unique<DivDivMassIntegrator>(Q, Q));
       return a_test.Assemble();
     };
-    auto AssembleTestRef = [&](BilinearForm &a_test_ref, bool bdr_integ = false)
+    auto AssembleTestRef = [&](const FiniteElementSpace &fespace, bool bdr_integ = false)
     {
+      BilinearForm a_test_ref(fespace);
       a_test_ref.AddDomainIntegrator(std::make_unique<DivDivIntegrator>(Q));
       a_test_ref.AddDomainIntegrator(std::make_unique<VectorFEMassIntegrator>(Q));
       return a_test_ref.Assemble();
     };
-    auto AssembleRef = [&](mfem::BilinearForm &a_ref, mfem::AssemblyLevel assembly_level,
+    auto AssembleRef = [&](FiniteElementSpace &fespace, mfem::AssemblyLevel assembly_level,
                            bool skip_zeros, bool bdr_integ = false)
     {
-      a_ref.AddDomainIntegrator(new mfem::DivDivIntegrator(Q));
-      a_ref.AddDomainIntegrator(new mfem::VectorFEMassIntegrator(Q));
-      a_ref.SetAssemblyLevel(assembly_level);
-      a_ref.Assemble(skip_zeros);
-      a_ref.Finalize(skip_zeros);
-      return &a_ref;
+      auto a_ref = std::make_unique<mfem::BilinearForm>(&fespace);
+      a_ref->AddDomainIntegrator(new mfem::DivDivIntegrator(Q));
+      a_ref->AddDomainIntegrator(new mfem::VectorFEMassIntegrator(Q));
+      a_ref->SetAssemblyLevel(assembly_level);
+      a_ref->Assemble(skip_zeros);
+      a_ref->Finalize(skip_zeros);
+      return a_ref;
     };
 
     mfem::RT_FECollection rt_fec(order - 1, dim);
@@ -1045,19 +1095,24 @@ void RunCeedBenchmarks(MPI_Comm comm, const std::string &input, int ref_levels, 
   // Discrete gradient benchmark.
   SECTION("Discrete Gradient Benchmark")
   {
-    auto AssembleTest = [&](DiscreteLinearOperator &a_test)
+    auto AssembleTest =
+        [&](const FiniteElementSpace &trial_fespace, const FiniteElementSpace &test_fespace)
     {
+      DiscreteLinearOperator a_test(trial_fespace, test_fespace);
       a_test.AddDomainInterpolator(std::make_unique<GradientInterpolator>());
       return a_test.Assemble();
     };
-    auto AssembleRef = [&](mfem::DiscreteLinearOperator &a_ref,
+    auto AssembleRef = [&](FiniteElementSpace &trial_fespace,
+                           FiniteElementSpace &test_fespace,
                            mfem::AssemblyLevel assembly_level, bool skip_zeros)
     {
-      a_ref.AddDomainInterpolator(new mfem::GradientInterpolator());
-      a_ref.SetAssemblyLevel(assembly_level);
-      a_ref.Assemble(skip_zeros);
-      a_ref.Finalize(skip_zeros);
-      return &a_ref;
+      auto a_ref =
+          std::make_unique<mfem::DiscreteLinearOperator>(&trial_fespace, &test_fespace);
+      a_ref->AddDomainInterpolator(new mfem::GradientInterpolator());
+      a_ref->SetAssemblyLevel(assembly_level);
+      a_ref->Assemble(skip_zeros);
+      a_ref->Finalize(skip_zeros);
+      return a_ref;
     };
 
     mfem::H1_FECollection h1_fec(order, dim);
@@ -1073,49 +1128,43 @@ TEST_CASE("2D libCEED Operators", "[libCEED]")
 {
   auto mesh =
       GENERATE("star-quad.mesh", "star-tri.mesh", "star-mixed-p2.mesh", "star-amr.mesh");
-  auto ref_levels = GENERATE(0);
   auto order = GENERATE(1, 2);
-  RunCeedIntegratorTests(MPI_COMM_WORLD, std::string(PALACE_TEST_MESH_DIR "/") + mesh,
-                         ref_levels, order);
+  RunCeedIntegratorTests(MPI_COMM_WORLD, std::string(PALACE_TEST_MESH_DIR "/") + mesh, 0,
+                         order);
 }
 
 TEST_CASE("3D libCEED Operators", "[libCEED]")
 {
   auto mesh = GENERATE("fichera-hex.mesh", "fichera-tet.mesh", "fichera-mixed-p2.mesh",
                        "fichera-amr.mesh");
-  auto ref_levels = GENERATE(0);
   auto order = GENERATE(1, 2);
-  RunCeedIntegratorTests(MPI_COMM_WORLD, std::string(PALACE_TEST_MESH_DIR "/") + mesh,
-                         ref_levels, order);
+  RunCeedIntegratorTests(MPI_COMM_WORLD, std::string(PALACE_TEST_MESH_DIR "/") + mesh, 0,
+                         order);
 }
 
 TEST_CASE("2D libCEED Interpolators", "[libCEED][Interpolator]")
 {
   auto mesh =
       GENERATE("star-quad.mesh", "star-tri.mesh", "star-mixed-p2.mesh", "star-amr.mesh");
-  auto ref_levels = GENERATE(0);
   auto order = GENERATE(1, 2);
-  RunCeedInterpolatorTests(MPI_COMM_WORLD, std::string(PALACE_TEST_MESH_DIR "/") + mesh,
-                           ref_levels, order);
+  RunCeedInterpolatorTests(MPI_COMM_WORLD, std::string(PALACE_TEST_MESH_DIR "/") + mesh, 0,
+                           order);
 }
 
 TEST_CASE("3D libCEED Interpolators", "[libCEED][Interpolator]")
 {
   auto mesh = GENERATE("fichera-hex.mesh", "fichera-tet.mesh", "fichera-mixed-p2.mesh",
                        "fichera-amr.mesh");
-  auto ref_levels = GENERATE(0);
   auto order = GENERATE(1, 2);
-  RunCeedInterpolatorTests(MPI_COMM_WORLD, std::string(PALACE_TEST_MESH_DIR "/") + mesh,
-                           ref_levels, order);
+  RunCeedInterpolatorTests(MPI_COMM_WORLD, std::string(PALACE_TEST_MESH_DIR "/") + mesh, 0,
+                           order);
 }
 
 TEST_CASE("3D libCEED Benchmarks", "[libCEED][Benchmark]")
 {
   auto mesh = GENERATE("fichera-hex.mesh", "fichera-tet.mesh");
-  auto ref_levels = GENERATE(1);
-  auto order = GENERATE(4);
   RunCeedBenchmarks(MPI_COMM_WORLD, std::string(PALACE_TEST_MESH_DIR "/") + mesh,
-                    ref_levels, order);
+                    benchmark_ref_levels, benchmark_order);
 }
 
 }  // namespace palace
