@@ -26,7 +26,8 @@ namespace palace
 
 using namespace std::complex_literals;
 
-ErrorIndicators DrivenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const
+ErrorIndicators
+DrivenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const
 {
   // Set up the spatial discretization and frequency sweep.
   BlockTimer bt0(Timer::CONSTRUCT);
@@ -95,18 +96,18 @@ ErrorIndicators DrivenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParM
     MFEM_VERIFY(excitations > 0, "No excitation specified for driven simulation!");
   }
   Mpi::Print("\n");
-
-  auto estimator = [&](){
-    BlockTimer bt_estconstruct(Timer::ESTCONSTRUCT);
+  // Initalize the error estimation operator.
+  auto estimator = [&]()
+  {
+    BlockTimer bt(Timer::ESTCONSTRUCT);
     return CurlFluxErrorEstimator(iodata, spaceop.GetMaterialOp(), mesh,
-                                    spaceop.GetNDSpace());
+                                  spaceop.GetNDSpace());
   }();
 
   // Main frequency sweep loop.
-  return adaptive ? SweepAdaptive(spaceop, postop, estimator, nstep, step0, omega0,
-                                  delta_omega)
-                  : SweepUniform(spaceop, postop, estimator, nstep, step0, omega0,
-                                 delta_omega);
+  return adaptive
+             ? SweepAdaptive(spaceop, postop, estimator, nstep, step0, omega0, delta_omega)
+             : SweepUniform(spaceop, postop, estimator, nstep, step0, omega0, delta_omega);
 }
 
 ErrorIndicators DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator &postop,
@@ -144,15 +145,20 @@ ErrorIndicators DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator 
   B = 0.0;
 
   // Initialize structures for storing and reducing the results of error estimation.
-  ErrorIndicators indicators(spaceop.GlobalTrueVSize());
-  const auto error_reducer = ErrorReductionOperator();
-  auto UpdateErrorIndicators =
-      [&estimator, &indicators, &error_reducer, &postop](const auto &E)
+  ErrorIndicators indicators(spaceop.GlobalTrueVSize(), spaceop.GetComm());
+  const ErrorReductionOperator ErrorReducer;
+  auto UpdateErrorIndicators = [this, &estimator, &indicators, &ErrorReducer,
+                                &postop](const auto &E, int step, double f)
   {
-    BlockTimer bt(Timer::ESTSOLVE);
-    auto ind = estimator(E);
-    postop.SetIndicatorGridFunction(ind);
-    error_reducer(indicators, std::move(ind));
+    BlockTimer bt0(Timer::ESTSOLVE);
+    auto estimate = estimator(E);
+    BlockTimer bt1(Timer::POSTPRO);
+    // Write the indicator for this mode.
+    postop.SetIndicatorGridFunction(estimate.indicators);
+    PostprocessErrorIndicators(
+        "f (GHz)", step, f,
+        ErrorIndicators{estimate, indicators.GlobalTrueVSize(), indicators.GetComm()});
+    ErrorReducer(indicators, std::move(estimate));
   };
 
   // Main frequency sweep loop.
@@ -181,7 +187,10 @@ ErrorIndicators DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator 
     BlockTimer bt1(Timer::SOLVE);
     Mpi::Print("\n");
     ksp.Mult(RHS, E);
-    UpdateErrorIndicators(E);
+
+    // Compute the error indicators, and post process the indicator field.
+    UpdateErrorIndicators(E, step,
+                          iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, omega));
 
     // Compute B = -1/(iω) ∇ x E on the true dofs, and set the internal GridFunctions in
     // PostOperator for all postprocessing operations.
@@ -212,6 +221,7 @@ ErrorIndicators DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator 
     omega += delta_omega;
   }
   SaveMetadata(ksp);
+  PostprocessErrorIndicators("Mean", indicators);
   return indicators;
 }
 
@@ -221,7 +231,6 @@ ErrorIndicators DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator
                                             double delta_omega) const
 {
   // Configure default parameters if not specified.
-  BlockTimer bt0(Timer::CONSTRUCT);
   double offline_tol = iodata.solver.driven.adaptive_tol;
   int nmax = iodata.solver.driven.adaptive_nmax;
   int ncand = iodata.solver.driven.adaptive_ncand;
@@ -268,14 +277,21 @@ ErrorIndicators DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator
   prom.Initialize(omega0, delta_omega, nstep - step0, nmax);
   spaceop.GetWavePortOp().SetSuppressOutput(true);  // Suppress wave port output for offline
 
- // The error indicators will be calculated for each HDM sample rather than for
+  // The error indicators will be calculated for each HDM sample rather than for
   // the online stage.
-  ErrorIndicators indicators(spaceop.GlobalTrueVSize());
-  ErrorReductionOperator error_reducer;
-  auto UpdateErrorIndicators = [&estimator, &indicators, &error_reducer](const auto &E)
+  ErrorIndicators indicators(spaceop.GlobalTrueVSize(), spaceop.GetComm());
+  ErrorReductionOperator ErrorReducer;
+  auto UpdateErrorIndicators = [this, &estimator, &indicators,
+                                &ErrorReducer](const auto &E, int step, double frequency)
   {
-    BlockTimer bt(Timer::ESTSOLVE);
-    error_reducer(indicators, estimator(E));
+    BlockTimer bt0(Timer::ESTSOLVE);
+    auto estimate = estimator(E);
+    BlockTimer bt1(Timer::POSTPRO);
+    // Write the indicator for this mode.
+    PostprocessErrorIndicators(
+        "f (GHz)", step, frequency,
+        ErrorIndicators{estimate, indicators.GlobalTrueVSize(), indicators.GetComm()});
+    ErrorReducer(indicators, std::move(estimate));
   };
 
   // Initialize the basis with samples from the top and bottom of the frequency
@@ -284,10 +300,10 @@ ErrorIndicators DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator
   // of the RomOperator.
   BlockTimer bt1(Timer::CONSTRUCTPROM);
   prom.SolveHDM(omega0, E);  // Print matrix stats at first HDM solve
-  UpdateErrorIndicators(E);
+  UpdateErrorIndicators(E, 0, omega0 * f0);
   prom.AddHDMSample(omega0, E);
   prom.SolveHDM(omega0 + (nstep - step0 - 1) * delta_omega, E);
-  UpdateErrorIndicators(E);
+  UpdateErrorIndicators(E, 1, (omega0 + (nstep - step0 - 1) * delta_omega) * f0);
   prom.AddHDMSample(omega0 + (nstep - step0 - 1) * delta_omega, E);
 
   // Greedy procedure for basis construction (offline phase). Basis is initialized with
@@ -310,7 +326,7 @@ ErrorIndicators DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator
         iter - iter0 + 1, prom.GetReducedDimension(), omega_star * f0, omega_star,
         max_error);
     prom.SolveHDM(omega_star, E);
-    UpdateErrorIndicators(E);
+    UpdateErrorIndicators(E, iter - iter0 + 1, omega_star * f0);
     prom.AddHDMSample(omega_star, E);
     iter++;
   }
@@ -322,7 +338,8 @@ ErrorIndicators DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator
   SaveMetadata(prom.GetLinearSolver());
 
   // Set the indicator field to the combined field for postprocessing.
-  postop.SetIndicatorGridFunction(indicators.local_error_indicators);
+  PostprocessErrorIndicators("Mean", indicators);  // Report the mean value
+  postop.SetIndicatorGridFunction(indicators.GetLocalErrorIndicators());
 
   // Main fast frequency sweep loop (online phase).
   BlockTimer bt2(Timer::CONSTRUCT);

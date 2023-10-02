@@ -67,13 +67,21 @@ protected:
                          double time) const;
   void PostprocessFields(const PostOperator &postop, int step, double time) const;
 
+  // Postprocess granular error indicator to file.
+  void PostprocessErrorIndicators(const std::string &name, int step, double time,
+                                  const ErrorIndicators &indicators) const;
+  // Append combined error indicator to file.
+  void PostprocessErrorIndicators(const std::string &name,
+                                  const ErrorIndicators &indicators) const;
+
 public:
   BaseSolver(const IoData &iodata, bool root, int size = 0, int num_thread = 0,
              const char *git_tag = nullptr);
   virtual ~BaseSolver() = default;
 
   // Performs a solve using the mesh sequence, and report error indicators.
-  virtual ErrorIndicators Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const = 0;
+  virtual ErrorIndicators
+  Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const = 0;
 
   // These methods write different simulation metadata to a JSON file in post_dir.
   void SaveMetadata(const mfem::ParFiniteElementSpaceHierarchy &fespaces) const;

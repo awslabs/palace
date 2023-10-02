@@ -566,6 +566,69 @@ void BaseSolver::PostprocessFields(const PostOperator &postop, int step, double 
   Mpi::Barrier();
 }
 
+void BaseSolver::PostprocessErrorIndicators(const std::string &name, int step, double time,
+                                            const ErrorIndicators &indicators) const
+{
+  if (post_dir.length() == 0)
+  {
+    return;
+  }
+
+  // Write the indicator statistics
+  if (root)
+  {
+    std::string path = post_dir + "error-indicators.csv";
+    auto output = OutputFile(path, (step > 0));
+    if (step == 0)
+    {
+      // clang-format off
+      output.print("{:>{}s},{:>{}s},{:>{}s},{:>{}s},{:>{}s},{:>{}s}\n",
+                   name, table.w1,
+                   "Global Rel.", table.w,
+                   "Element Min.", table.w,
+                   "Element Max.", table.w,
+                   "Element Mean", table.w,
+                   "Normalization", table.w);
+      // clang-format on
+    }
+
+    // clang-format off
+    output.print("{:{}.{}e},{:+{}.{}e},{:+{}.{}e},{:+{}.{}e},{:+{}.{}e},{:+{}.{}e}\n",
+                time, table.w1, table.p1,
+                indicators.GetGlobalErrorIndicator(), table.w, table.p,
+                indicators.GetMinErrorIndicator(), table.w, table.p,
+                indicators.GetMaxErrorIndicator(), table.w, table.p,
+                indicators.GetMeanErrorIndicator(), table.w, table.p,
+                indicators.GetNormalization(), table.w, table.p);
+    // clang-format on
+  }
+}
+
+void BaseSolver::PostprocessErrorIndicators(const std::string &name,
+                                            const ErrorIndicators &indicators) const
+{
+  if (post_dir.length() == 0)
+  {
+    return;
+  }
+
+  // Write the indicator statistics
+  if (root)
+  {
+    std::string path = post_dir + "error-indicators.csv";
+    auto output = OutputFile(path, true);
+    // clang-format off
+    output.print("{:>{}s},{:+{}.{}e},{:+{}.{}e},{:+{}.{}e},{:+{}.{}e},{:+{}.{}e}\n",
+                name, table.w1,
+                indicators.GetGlobalErrorIndicator(), table.w, table.p,
+                indicators.GetMinErrorIndicator(), table.w, table.p,
+                indicators.GetMaxErrorIndicator(), table.w, table.p,
+                indicators.GetMeanErrorIndicator(), table.w, table.p,
+                indicators.GetNormalization(), table.w, table.p);
+    // clang-format on
+  }
+}
+
 template void BaseSolver::SaveMetadata<KspSolver>(const KspSolver &) const;
 template void BaseSolver::SaveMetadata<ComplexKspSolver>(const ComplexKspSolver &) const;
 

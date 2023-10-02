@@ -77,6 +77,28 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) 
   }
   Mpi::Print("\n");
 
+  // Initialize structures for storing and reducing the results of error estimation.
+  auto estimator = [&]()
+  {
+    BlockTimer bt(Timer::ESTCONSTRUCT);
+    return CurlFluxErrorEstimator(iodata, spaceop.GetMaterialOp(), mesh,
+                                  spaceop.GetNDSpace());
+  }();
+  ErrorIndicators indicators(spaceop.GlobalTrueVSize(), spaceop.GetComm());
+  ErrorReductionOperator ErrorReducer;
+  auto UpdateErrorIndicators = [this, &estimator, &indicators, &ErrorReducer,
+                                &postop](const auto &E, int step, double time)
+  {
+    BlockTimer bt0(Timer::ESTSOLVE);
+    auto estimate = estimator(E);
+    BlockTimer bt1(Timer::POSTPRO);
+    postop.SetIndicatorGridFunction(estimate.indicators);
+    PostprocessErrorIndicators(
+        "t (ns)", step, time,
+        ErrorIndicators{estimate, indicators.GlobalTrueVSize(), indicators.GetComm()});
+    ErrorReducer(indicators, std::move(estimate));
+  };
+
   // Main time integration loop.
   int step = 0;
   double t = -delta_t;
@@ -118,6 +140,12 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) 
                  E_elec + E_mag);
     }
 
+    if (step > 0)
+    {
+      // Calculate and record the error indicators.
+      UpdateErrorIndicators(E, step, t);
+    }
+
     // Postprocess port voltages/currents and optionally write solution to disk.
     Postprocess(postop, spaceop.GetLumpedPortOp(), spaceop.GetSurfaceCurrentOp(), step, t,
                 J_coef(t), E_elec, E_mag, !iodata.solver.transient.only_port_post);
@@ -126,7 +154,8 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) 
     step++;
   }
   SaveMetadata(timeop.GetLinearSolver());
-  return ErrorIndicators(spaceop.GlobalTrueVSize());
+  PostprocessErrorIndicators("Mean", step, t, indicators);
+  return indicators;
 }
 std::function<double(double)> TransientSolver::GetTimeExcitation(bool dot) const
 {

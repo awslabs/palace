@@ -28,8 +28,8 @@ public:
   {
     INIT = 0,
     CONSTRUCT,
-    WAVEPORT,  // Wave port solver
-    ESTCONSTRUCT,    // Construction of estimate operator
+    WAVEPORT,      // Wave port solver
+    ESTCONSTRUCT,  // Construction of estimate operator
     SOLVE,
     PRECONDITIONER,  // Linear solver
     COARSESOLVE,     // Linear solver

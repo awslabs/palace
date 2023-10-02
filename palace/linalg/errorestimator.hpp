@@ -7,6 +7,7 @@
 #include <mfem.hpp>
 
 #include "linalg/fluxprojector.hpp"
+#include "utils/errorindicators.hpp"
 
 namespace palace
 {
@@ -21,11 +22,11 @@ class PetscParVector;
 
 // Class used for computing curl flux error estimate,
 // i.e. || μ⁻¹∇ × V - F ||_K
-// where F denotes a smooth reconstruction of μ⁻¹∇ × V
+// where F denotes a smooth reconstruction of μ⁻¹∇ × V.
 class CurlFluxErrorEstimator
 {
   const MaterialOperator &mat_op;
-  // The finite element space used to represent V
+  // The finite element space used to represent V.
   mfem::ParFiniteElementSpace &fes;
 
   std::vector<std::unique_ptr<mfem::ND_FECollection>> smooth_flux_fecs;
@@ -45,19 +46,19 @@ public:
                          mfem::ParFiniteElementSpace &fes);
 
   // Compute elemental error indicators given a complex vector of true DOF.
-  Vector operator()(const ComplexVector &v) const;
+  IndicatorsAndNormalization operator()(const ComplexVector &v) const;
 
   // Compute elemental error indicators given a vector of true DOF.
-  Vector operator()(const Vector &v) const;
+  IndicatorsAndNormalization operator()(const Vector &v) const;
 };
 
 // Class used for computing grad flux error estimate,
 // i.e. || ϵ ∇ ϕ - F ||_K
-// where F denotes a smooth reconstruction of ϵ ∇ ϕ
+// where F denotes a smooth reconstruction of ϵ ∇ ϕ.
 class GradFluxErrorEstimator
 {
   const MaterialOperator &mat_op;
-  // The finite element space used to represent ϕ
+  // The finite element space used to represent ϕ.
   mfem::ParFiniteElementSpace &fes;
 
   // Collections and spaces for the smooth flux. Note the hierarchy uses the
@@ -81,7 +82,7 @@ public:
                          mfem::ParFiniteElementSpace &fes);
 
   // Compute elemental error indicators given a vector of true DOF.
-  Vector operator()(const Vector &v) const;
+  IndicatorsAndNormalization operator()(const Vector &v) const;
 };
 
 }  // namespace palace

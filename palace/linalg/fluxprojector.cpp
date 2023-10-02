@@ -43,7 +43,9 @@ std::unique_ptr<Operator> BuildMassMatrixOperator(mfem::ParFiniteElementSpaceHie
     }
 
     auto M_l = std::make_unique<ParOperator>(
-      fem::AssembleOperator(std::move(m), true, (l > 0) ? pa_order_threshold : 100, skip_zeros), h_l);
+        fem::AssembleOperator(std::move(m), true, (l > 0) ? pa_order_threshold : 100,
+                              skip_zeros),
+        h_l);
 
     // Set the essential dofs (none).
     M->AddOperator(std::move(M_l));

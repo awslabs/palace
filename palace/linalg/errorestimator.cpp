@@ -47,7 +47,7 @@ CurlFluxErrorEstimator::CurlFluxErrorEstimator(
   }
 }
 
-Vector CurlFluxErrorEstimator::operator()(const ComplexVector &v) const
+IndicatorsAndNormalization CurlFluxErrorEstimator::operator()(const ComplexVector &v) const
 {
   mfem::ParComplexGridFunction field(&fes);
   field.real().SetFromTrueDofs(v.Real());
@@ -154,10 +154,10 @@ Vector CurlFluxErrorEstimator::operator()(const ComplexVector &v) const
   normalization = std::sqrt(normalization);
   std::for_each(estimates.begin(), estimates.end(),
                 [&normalization](auto &x) { x /= normalization; });
-  return estimates;
+  return {estimates, normalization};
 }
 
-Vector CurlFluxErrorEstimator::operator()(const Vector &v) const
+IndicatorsAndNormalization CurlFluxErrorEstimator::operator()(const Vector &v) const
 {
   mfem::ParGridFunction field(&fes);
   field.SetFromTrueDofs(v);
@@ -238,8 +238,7 @@ Vector CurlFluxErrorEstimator::operator()(const Vector &v) const
   normalization = std::sqrt(normalization);
   std::for_each(estimates.begin(), estimates.end(),
                 [&normalization](auto &x) { x /= normalization; });
-
-  return estimates;
+  return {estimates, normalization};
 }
 
 GradFluxErrorEstimator::GradFluxErrorEstimator(
@@ -250,10 +249,9 @@ GradFluxErrorEstimator::GradFluxErrorEstimator(
     smooth_flux_fecs(ConstructFECollections<mfem::H1_FECollection>(
         iodata.solver.order, mesh.back()->Dimension(), iodata.solver.linear.mg_max_levels,
         iodata.solver.linear.mg_coarsen_type, false)),
-    smooth_flux_component_fes(
-        ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
-            iodata.solver.linear.mg_max_levels, iodata.solver.linear.mg_legacy_transfer,
-            iodata.solver.pa_order_threshold, mesh, smooth_flux_fecs)),
+    smooth_flux_component_fes(ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
+        iodata.solver.linear.mg_max_levels, iodata.solver.linear.mg_legacy_transfer,
+        iodata.solver.pa_order_threshold, mesh, smooth_flux_fecs)),
     smooth_flux_fes(mesh.back().get(), smooth_flux_fecs.back().get(),
                     mesh.back()->Dimension()),
     smooth_projector(smooth_flux_component_fes, iodata.solver.linear.tol, 200, 0,
@@ -278,7 +276,7 @@ GradFluxErrorEstimator::GradFluxErrorEstimator(
   }
 }
 
-Vector GradFluxErrorEstimator::operator()(const Vector &v) const
+IndicatorsAndNormalization GradFluxErrorEstimator::operator()(const Vector &v) const
 {
   mfem::ParGridFunction field(&fes);
   field.SetFromTrueDofs(v);
@@ -369,12 +367,8 @@ Vector GradFluxErrorEstimator::operator()(const Vector &v) const
 
     estimates[e] = std::sqrt(estimates[e]);
   }
-
   Mpi::GlobalSum(1, &normalization, field.ParFESpace()->GetComm());
   normalization = std::sqrt(normalization);
-
-  std::for_each(estimates.begin(), estimates.end(),
-                [&normalization](auto &x) { x /= normalization; });
 
   if constexpr (false)
   {
@@ -394,6 +388,8 @@ Vector GradFluxErrorEstimator::operator()(const Vector &v) const
 
     paraview.Save();
   }
-  return estimates;
+  std::for_each(estimates.begin(), estimates.end(),
+                [&normalization](auto &x) { x /= normalization; });
+  return {estimates, normalization};
 }
 }  // namespace palace
