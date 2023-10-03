@@ -8,7 +8,8 @@ function testcase(
     palace="palace",
     np=1,
     rtol=1.0e-6,
-    atol=1.0e-18
+    atol=1.0e-18,
+    excluded_columns=[]
 )
     if isempty(testdir)
         @info "$testdir/ is empty, skipping tests"
@@ -52,22 +53,22 @@ function testcase(
         @test proc.exitcode == 0
     end
 
-    # Convert variables to Float64, or replace with zeros
+    # Convert variables to Float64, or replace with zeros.
     function asfloat(x::Float64)
         return x
     end
-    function asfloat(str)
+    function asfloat(str)::Float64
         try
             return parse(Float64, str)
         catch
             return 0.0
         end
     end
-    # Convert variables to String15, or replace with empty
+    # Convert variables to String15, or replace with empty.
     function asstring(x::String15)
         return x
     end
-    function asstring(str)
+    function asstring(str)::String15
         try
             return parse(String15, str)
         catch
@@ -90,6 +91,13 @@ function testcase(
             dataref = CSV.File(joinpath(refpostprodir, file); header=1) |> DataFrame
             data    = CSV.File(joinpath(postprodir, file); header=1) |> DataFrame
             data    = data[1:size(dataref, 1), :]
+
+            # Check the number of columns matches, before removing any excluded_columns
+            @test ncol(data) == ncol(dataref)
+            for col ∈ excluded_columns
+                select!(data, Not(Cols(contains(col))))
+                select!(dataref, Not(Cols(contains(col))))
+            end
 
             fdata = asfloat.(data)
             fdataref = asfloat.(dataref)

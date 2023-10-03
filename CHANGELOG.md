@@ -42,6 +42,10 @@ The format of this changelog is based on
     based for now).
   - Added improved OpenMP support in `palace` wrapper script and CI tests.
   - Added Apptainer/Singularity container build definition for Palace.
+  - Added flux-based error estimation, reported in `error-estimate.csv`. This computes the
+    difference between the numerical gradient (electrostatics) or curl (otherwise) of the
+    solution, and a smoother approximation obtained through a global mass matrix inversion.
+    The results are reported in `error-estimates.csv` within the `"Output"` folder.
 
 ## [0.11.2] - 2023-07-14
 
