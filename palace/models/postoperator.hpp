@@ -168,9 +168,8 @@ public:
 
   // Write to disk the E- and B-fields extracted from the solution vectors. Note that fields
   // are not redimensionalized, to do so one needs to compute: B <= B * (μ₀ H₀), E <= E *
-  // (Z₀ H₀), V <= V * (Z₀ H₀ L₀), etc. Optionally also write error indicator field.
+  // (Z₀ H₀), V <= V * (Z₀ H₀ L₀), etc.
   void WriteFields(int step, double time) const;
-  void WriteFields(int step, double time, ErrorIndicators &indicators) const;
 
   // Probe the E- and B-fields for their vector-values at speceified locations in space.
   // Locations of probes are set up in constructor from configuration file data. If

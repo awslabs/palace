@@ -21,8 +21,8 @@ class PetscParVector;
 }  // namespace petsc
 
 // Class used for computing curl flux error estimate,
-// i.e. || μ⁻¹∇ × V - F ||_K
-// where F denotes a smooth reconstruction of μ⁻¹∇ × V.
+// i.e. || μ⁻¹∇ × Vₕ - F ||_K
+// where F denotes a smooth reconstruction of μ⁻¹∇ × Vₕ.
 class CurlFluxErrorEstimator
 {
   const MaterialOperator &mat_op;
@@ -54,8 +54,8 @@ public:
 };
 
 // Class used for computing grad flux error estimate,
-// i.e. || ϵ ∇ ϕ - F ||_K
-// where F denotes a smooth reconstruction of ϵ ∇ ϕ.
+// i.e. || ϵ ∇ ϕₕ - F ||_K
+// where F denotes a smooth reconstruction of ϵ ∇ ϕₕ.
 class GradFluxErrorEstimator
 {
   const MaterialOperator &mat_op;

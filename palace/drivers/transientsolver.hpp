@@ -51,7 +51,7 @@ public:
   using BaseSolver::BaseSolver;
 
   ErrorIndicators
-  Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const override;
+  Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const final;
 };
 
 }  // namespace palace

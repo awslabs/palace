@@ -120,6 +120,7 @@ ErrorIndicators DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator 
   // Because the Dirichlet BC is always homogenous, no special elimination is required on
   // the RHS. Assemble the linear system for the initial frequency (so we can call
   // KspSolver::SetOperators). Compute everything at the first frequency step.
+  BlockTimer bt0(Timer::CONSTRUCT);
   auto K = spaceop.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE);
   auto C = spaceop.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
   auto M = spaceop.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
@@ -165,11 +166,12 @@ ErrorIndicators DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator 
 
   // Main frequency sweep loop.
   double omega = omega0;
+  auto t0 = Timer::Now();
   for (int step = step0; step < nstep; step++)
   {
-    // const double freq = iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, omega);
-    // Mpi::Print("\nIt {:d}/{:d}: ω/2π = {:.3e} GHz (elapsed time = {:.2e} s)\n", step + 1,
-    //            nstep, freq, Timer::Duration(Timer::Now() - t0).count());
+    const double freq = iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, omega);
+    Mpi::Print("\nIt {:d}/{:d}: ω/2π = {:.3e} GHz (elapsed time = {:.2e} s)\n", step + 1,
+               nstep, freq, Timer::Duration(Timer::Now() - t0).count());
 
     // Assemble the linear system.
     if (step > step0)
@@ -191,8 +193,7 @@ ErrorIndicators DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator 
     ksp.Mult(RHS, E);
 
     // Compute the error indicators, and post process the indicator field.
-    UpdateErrorIndicators(E, step,
-                          iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, omega));
+    UpdateErrorIndicators(E, step, freq);
 
     // Compute B = -1/(iω) ∇ x E on the true dofs, and set the internal GridFunctions in
     // PostOperator for all postprocessing operations.
@@ -233,6 +234,7 @@ ErrorIndicators DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator
                                             double delta_omega) const
 {
   // Configure default parameters if not specified.
+  BlockTimer bt0(Timer::CONSTRUCT);
   double offline_tol = iodata.solver.driven.adaptive_tol;
   int nmax = iodata.solver.driven.adaptive_nmax;
   int ncand = iodata.solver.driven.adaptive_ncand;
@@ -339,6 +341,8 @@ ErrorIndicators DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator
              (iter == nmax) ? " reached maximum" : " converged with", iter,
              prom.GetReducedDimension(), max_error, offline_tol);
   utils::PrettyPrint(prom.GetSampleFrequencies(), f0, " Sampled frequencies (GHz):");
+  Mpi::Print(" Total offline phase elapsed time: {:.2e} s\n",
+             Timer::Duration(Timer::Now() - t0).count());  // Timing on root
   SaveMetadata(prom.GetLinearSolver());
 
   // Set the indicator field to the combined field for postprocessing.

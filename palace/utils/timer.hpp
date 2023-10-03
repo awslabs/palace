@@ -81,6 +81,7 @@ public:
 
   // Return the time elapsed since timer creation.
   Duration TimeFromStart() const { return Now() - start_time; }
+
   // Save a timing step by adding a duration, without lapping; optionally, count it.
   Duration SaveTime(Index idx, Duration time, bool count_it = true)
   {

@@ -66,7 +66,6 @@ public:
       fe.CalcVShape(ip, vshape);
 
       Q.Eval(f_loc, Tr, ip);
-
       Tr.InverseJacobian().Mult(f_loc, f_hat);
       f_hat *= ip.weight * Tr.Weight();
       vshape.AddMult(f_hat, elvect);

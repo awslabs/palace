@@ -484,7 +484,6 @@ class CurlFluxCoefficient : public mfem::VectorCoefficient
 private:
   const mfem::ParGridFunction &X;
   MaterialPropertyCoefficient<MaterialPropertyType::INV_PERMEABILITY> coef;
-
   mfem::DenseMatrix muinv;
   mfem::Vector curl;
 
@@ -511,7 +510,6 @@ class GradFluxCoefficient : public mfem::VectorCoefficient
 private:
   const mfem::ParGridFunction &phi;
   MaterialPropertyCoefficient<MaterialPropertyType::PERMITTIVITY_REAL> coef;
-
   mfem::Vector grad;
   mfem::DenseMatrix eps;
 

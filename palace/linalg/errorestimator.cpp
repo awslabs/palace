@@ -53,7 +53,6 @@ IndicatorsAndNormalization CurlFluxErrorEstimator::operator()(const ComplexVecto
   mfem::ParComplexGridFunction field(&fes);
   field.real().SetFromTrueDofs(v.Real());
   field.imag().SetFromTrueDofs(v.Imag());
-
   const int nelem = smooth_flux_fes.GetFinestFESpace().GetNE();
 
   // Coefficients for computing the discontinuous flux., i.e. (W, μ⁻¹∇ × V).
@@ -97,11 +96,8 @@ IndicatorsAndNormalization CurlFluxErrorEstimator::operator()(const ComplexVecto
     flux.imag().ExchangeFaceNbrData();
     return flux;
   };
-
   auto smooth_flux_func = build_func(smooth_flux, smooth_flux_fes.GetFinestFESpace());
-
   mfem::ParComplexGridFunction coarse_flux_func(&coarse_flux_fes);
-
   coarse_flux_func.real().ProjectCoefficient(real_coef);
   coarse_flux_func.imag().ProjectCoefficient(imag_coef);
 
@@ -166,7 +162,6 @@ IndicatorsAndNormalization CurlFluxErrorEstimator::operator()(const Vector &v,
 {
   mfem::ParGridFunction field(&fes);
   field.SetFromTrueDofs(v);
-
   const int nelem = smooth_flux_fes.GetFinestFESpace().GetNE();
 
   // Coefficients for computing the discontinuous flux., i.e. (W, μ⁻¹∇ × V).
@@ -183,7 +178,6 @@ IndicatorsAndNormalization CurlFluxErrorEstimator::operator()(const Vector &v,
 
     return RHS;
   };
-
   const auto smooth_flux_rhs = rhs_from_coef(smooth_flux_fes.GetFinestFESpace(), coef);
 
   // Given the RHS vector of non-smooth flux, construct a flux projector and perform mass
@@ -207,7 +201,6 @@ IndicatorsAndNormalization CurlFluxErrorEstimator::operator()(const Vector &v,
     return flux;
   };
   auto smooth_flux_func = build_func(smooth_flux, smooth_flux_fes.GetFinestFESpace());
-
   mfem::ParGridFunction coarse_flux_func(&coarse_flux_fes);
   coarse_flux_func.ProjectCoefficient(coef);
 
@@ -289,7 +282,6 @@ IndicatorsAndNormalization GradFluxErrorEstimator::operator()(const Vector &v,
 {
   mfem::ParGridFunction field(&fes);
   field.SetFromTrueDofs(v);
-
   const int nelem = smooth_flux_fes.GetNE();
 
   // Coefficients for computing the discontinuous flux., i.e. (V, ϵ ∇ ϕ).
@@ -328,7 +320,6 @@ IndicatorsAndNormalization GradFluxErrorEstimator::operator()(const Vector &v,
       rhs_comp.MakeRef(rhs, i * stride, stride);
       proj.Mult(rhs_comp, flux_comp);
     }
-
     return flux;
   };
   auto smooth_flux = build_flux(smooth_projector, smooth_flux_rhs);
@@ -362,7 +353,6 @@ IndicatorsAndNormalization GradFluxErrorEstimator::operator()(const Vector &v,
     const int ndof = coarse_vec.Size() / 3;
     coarse_sub_vec.SetSize(ndof);
     smooth_sub_vec.SetSize(ndof);
-
     for (int c = 0; c < 3; c++)
     {
       coarse_sub_vec.MakeRef(coarse_vec, c * ndof);
@@ -373,7 +363,6 @@ IndicatorsAndNormalization GradFluxErrorEstimator::operator()(const Vector &v,
       estimates[e] += scalar_mass_matrices[e].InnerProduct(coarse_sub_vec,
                                                            coarse_sub_vec);  // Integrate
     }
-
     estimates[e] = std::sqrt(estimates[e]);
   }
   Mpi::GlobalSum(1, &normalization, field.ParFESpace()->GetComm());
@@ -394,7 +383,6 @@ IndicatorsAndNormalization GradFluxErrorEstimator::operator()(const Vector &v,
     est_field.SetFromTrueDofs(estimates);
 
     paraview.RegisterField("ErrorIndicator", &est_field);
-
     paraview.Save();
   }
   if (normalize)

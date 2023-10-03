@@ -70,8 +70,6 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &me
     // Next terminal.
     step++;
   }
-
-  // Construct estimator and reducer for error indicators.
   auto estimator = [&]()
   {
     BlockTimer bt(Timer::ESTCONSTRUCT);

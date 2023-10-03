@@ -155,7 +155,7 @@ int main(int argc, char *argv[])
 #endif
 
   // Initialize the problem driver.
-  const std::unique_ptr<BaseSolver> solver = [&]() -> std::unique_ptr<BaseSolver>
+  const auto solver = [&]() -> std::unique_ptr<BaseSolver>
   {
     switch (iodata.problem.type)
     {

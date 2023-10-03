@@ -251,7 +251,6 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) cons
   ksp->SetOperators(*A, *P);
   eigen->SetLinearSolver(*ksp);
 
-  // TODO: Add a block timer for estimate construction
   auto estimator = [&]()
   {
     BlockTimer bt(Timer::ESTCONSTRUCT);
