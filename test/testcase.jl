@@ -52,6 +52,29 @@ function testcase(
         @test proc.exitcode == 0
     end
 
+    # Convert variables to Float64, or replace with zeros
+    function asfloat(x::Float64)
+        return x
+    end
+    function asfloat(str)
+        try
+            return parse(Float64, str)
+        catch
+            return 0.0
+        end
+    end
+    # Convert variables to String15, or replace with empty
+    function asstring(x::String15)
+        return x
+    end
+    function asstring(str)
+        try
+            return parse(String15, str)
+        catch
+            return ""
+        end
+    end
+
     @testset "Results" begin
         # Test that directories were created
         @test isdir(postprodir)
@@ -68,7 +91,15 @@ function testcase(
             data    = CSV.File(joinpath(postprodir, file); header=1) |> DataFrame
             data    = data[1:size(dataref, 1), :]
 
-            test = isapprox.(data, dataref; rtol=rtol, atol=atol)
+            fdata = asfloat.(data)
+            fdataref = asfloat.(dataref)
+            sdata = asstring.(data)
+            sdataref = asstring.(dataref)
+
+            test = isapprox.(fdata, fdataref; rtol=rtol, atol=atol)
+            if (atol < Inf && rtol < Inf)
+                test .&= (sdata .== sdataref)
+            end
             for (row, rowdataref, rowdata) in
                 zip(eachrow(test), eachrow(dataref), eachrow(data))
                 for (rowcol, rowcoldataref, rowcoldata) in
