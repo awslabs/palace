@@ -151,13 +151,15 @@ ErrorIndicators DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator 
                                 &postop](const auto &E, int step, double f)
   {
     BlockTimer bt0(Timer::ESTSOLVE);
-    auto estimate = estimator(E);
+    constexpr bool normalized = true;
+    auto estimate = estimator(E, normalized);
     BlockTimer bt1(Timer::POSTPRO);
     // Write the indicator for this mode.
     postop.SetIndicatorGridFunction(estimate.indicators);
     PostprocessErrorIndicators(
         "f (GHz)", step, f,
-        ErrorIndicators{estimate, indicators.GlobalTrueVSize(), indicators.GetComm()});
+        ErrorIndicators{estimate, indicators.GlobalTrueVSize(), indicators.GetComm()},
+        normalized);
     ErrorReducer(indicators, std::move(estimate));
   };
 
@@ -285,12 +287,14 @@ ErrorIndicators DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator
                                 &ErrorReducer](const auto &E, int step, double frequency)
   {
     BlockTimer bt0(Timer::ESTSOLVE);
-    auto estimate = estimator(E);
+    constexpr bool normalized = true;
+    auto estimate = estimator(E, normalized);
     BlockTimer bt1(Timer::POSTPRO);
     // Write the indicator for this mode.
     PostprocessErrorIndicators(
         "f (GHz)", step, frequency,
-        ErrorIndicators{estimate, indicators.GlobalTrueVSize(), indicators.GetComm()});
+        ErrorIndicators{estimate, indicators.GlobalTrueVSize(), indicators.GetComm()},
+        normalized);
     ErrorReducer(indicators, std::move(estimate));
   };
 

@@ -108,14 +108,16 @@ ErrorIndicators ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop,
                                 &postop](const auto &V, int i, double idx)
   {
     BlockTimer bt0(Timer::ESTSOLVE);
-    auto estimate = estimator(V);
+    constexpr bool normalized = true;
+    auto estimate = estimator(V, normalized);
     ErrorReducer(indicators, estimate);
     BlockTimer bt1(Timer::POSTPRO);
     // Write the indicator for this mode.
     postop.SetIndicatorGridFunction(estimate.indicators);
     PostprocessErrorIndicators(
         "i", i, idx,
-        ErrorIndicators{estimate, indicators.GlobalTrueVSize(), indicators.GetComm()});
+        ErrorIndicators{estimate, indicators.GlobalTrueVSize(), indicators.GetComm()},
+        normalized);
     ErrorReducer(indicators, std::move(estimate));
   };
   if (iodata.solver.electrostatic.n_post > 0)

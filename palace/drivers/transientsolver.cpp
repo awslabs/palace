@@ -90,12 +90,15 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) 
                                 &postop](const auto &E, int step, double time)
   {
     BlockTimer bt0(Timer::ESTSOLVE);
-    auto estimate = estimator(E);
+    // Initial flux of zero would return nan.
+    bool constexpr normalized = false;
+    auto estimate = estimator(E, normalized);
     BlockTimer bt1(Timer::POSTPRO);
     postop.SetIndicatorGridFunction(estimate.indicators);
     PostprocessErrorIndicators(
         "t (ns)", step, time,
-        ErrorIndicators{estimate, indicators.GlobalTrueVSize(), indicators.GetComm()});
+        ErrorIndicators{estimate, indicators.GlobalTrueVSize(), indicators.GetComm()},
+        normalized);
     ErrorReducer(indicators, std::move(estimate));
   };
 
@@ -140,11 +143,8 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) 
                  E_elec + E_mag);
     }
 
-    if (step > 0)
-    {
-      // Calculate and record the error indicators.
-      UpdateErrorIndicators(E, step, t);
-    }
+    // Calculate and record the error indicators.
+    UpdateErrorIndicators(E, step, t);
 
     // Postprocess port voltages/currents and optionally write solution to disk.
     Postprocess(postop, spaceop.GetLumpedPortOp(), spaceop.GetSurfaceCurrentOp(), step, t,
@@ -154,7 +154,7 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) 
     step++;
   }
   SaveMetadata(timeop.GetLinearSolver());
-  PostprocessErrorIndicators("Mean", step, t, indicators);
+  PostprocessErrorIndicators("Mean", indicators);
   return indicators;
 }
 std::function<double(double)> TransientSolver::GetTimeExcitation(bool dot) const

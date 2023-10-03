@@ -272,13 +272,15 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) cons
       [this, &estimator, &indicators, &ErrorReducer, &postop](const auto &E, int i)
   {
     BlockTimer bt0(Timer::ESTSOLVE);
-    auto ind = estimator(E);
+    constexpr bool normalized = true;
+    auto ind = estimator(E, normalized);
     BlockTimer bt1(Timer::POSTPRO);
     postop.SetIndicatorGridFunction(ind.indicators);
     // Write the indicator for this mode.
     PostprocessErrorIndicators(
         "m", i, i + 1,
-        ErrorIndicators{ind, indicators.GlobalTrueVSize(), indicators.GetComm()});
+        ErrorIndicators{ind, indicators.GlobalTrueVSize(), indicators.GetComm()},
+        normalized);
     ErrorReducer(indicators, std::move(ind));
   };
 

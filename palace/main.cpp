@@ -188,7 +188,7 @@ int main(int argc, char *argv[])
   // Run the problem driver.
   auto solver_output = solver->Solve(mesh);
 
-  Mpi::Print(world_comm, "Normalized Error Indicator: {:.3e}",
+  Mpi::Print(world_comm, "Error Estimate: {:.3e}\n",
              solver_output.GetGlobalErrorIndicator());
 
   // Print timing summary.

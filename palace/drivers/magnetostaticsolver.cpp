@@ -110,13 +110,15 @@ ErrorIndicators MagnetostaticSolver::Postprocess(CurlCurlOperator &curlcurlop,
                                 &postop](const auto &A, int i, double idx)
   {
     BlockTimer bt0(Timer::ESTSOLVE);
-    auto estimate = estimator(A);
+    constexpr bool normalized = true;
+    auto estimate = estimator(A, normalized);
     BlockTimer bt1(Timer::POSTPRO);
     // Write the indicator for this mode.
     postop.SetIndicatorGridFunction(estimate.indicators);
     PostprocessErrorIndicators(
         "i", i, idx,
-        ErrorIndicators{estimate, indicators.GlobalTrueVSize(), indicators.GetComm()});
+        ErrorIndicators{estimate, indicators.GlobalTrueVSize(), indicators.GetComm()},
+        normalized);
     ErrorReducer(indicators, std::move(estimate));
   };
   if (iodata.solver.magnetostatic.n_post > 0)

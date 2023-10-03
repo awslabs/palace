@@ -47,7 +47,8 @@ CurlFluxErrorEstimator::CurlFluxErrorEstimator(
   }
 }
 
-IndicatorsAndNormalization CurlFluxErrorEstimator::operator()(const ComplexVector &v) const
+IndicatorsAndNormalization CurlFluxErrorEstimator::operator()(const ComplexVector &v,
+                                                              bool normalize) const
 {
   mfem::ParComplexGridFunction field(&fes);
   field.real().SetFromTrueDofs(v.Real());
@@ -152,12 +153,16 @@ IndicatorsAndNormalization CurlFluxErrorEstimator::operator()(const ComplexVecto
 
   Mpi::GlobalSum(1, &normalization, field.ParFESpace()->GetComm());
   normalization = std::sqrt(normalization);
-  std::for_each(estimates.begin(), estimates.end(),
-                [&normalization](auto &x) { x /= normalization; });
+  if (normalize)
+  {
+    std::for_each(estimates.begin(), estimates.end(),
+                  [&normalization](auto &x) { x /= normalization; });
+  }
   return {estimates, normalization};
 }
 
-IndicatorsAndNormalization CurlFluxErrorEstimator::operator()(const Vector &v) const
+IndicatorsAndNormalization CurlFluxErrorEstimator::operator()(const Vector &v,
+                                                              bool normalize) const
 {
   mfem::ParGridFunction field(&fes);
   field.SetFromTrueDofs(v);
@@ -236,8 +241,11 @@ IndicatorsAndNormalization CurlFluxErrorEstimator::operator()(const Vector &v) c
 
   Mpi::GlobalSum(1, &normalization, field.ParFESpace()->GetComm());
   normalization = std::sqrt(normalization);
-  std::for_each(estimates.begin(), estimates.end(),
-                [&normalization](auto &x) { x /= normalization; });
+  if (normalize)
+  {
+    std::for_each(estimates.begin(), estimates.end(),
+                  [&normalization](auto &x) { x /= normalization; });
+  }
   return {estimates, normalization};
 }
 
@@ -276,7 +284,8 @@ GradFluxErrorEstimator::GradFluxErrorEstimator(
   }
 }
 
-IndicatorsAndNormalization GradFluxErrorEstimator::operator()(const Vector &v) const
+IndicatorsAndNormalization GradFluxErrorEstimator::operator()(const Vector &v,
+                                                              bool normalize) const
 {
   mfem::ParGridFunction field(&fes);
   field.SetFromTrueDofs(v);
@@ -388,8 +397,11 @@ IndicatorsAndNormalization GradFluxErrorEstimator::operator()(const Vector &v) c
 
     paraview.Save();
   }
-  std::for_each(estimates.begin(), estimates.end(),
-                [&normalization](auto &x) { x /= normalization; });
+  if (normalize)
+  {
+    std::for_each(estimates.begin(), estimates.end(),
+                  [&normalization](auto &x) { x /= normalization; });
+  }
   return {estimates, normalization};
 }
 }  // namespace palace
