@@ -217,6 +217,11 @@ if(NOT "${TARGET_SOURCES_DEVICE}" STREQUAL "" AND (PALACE_WITH_CUDA OR PALACE_WI
   )
 endif()
 
+# Resolve linker error with CUDA and static linkage
+if(PALACE_WITH_CUDA)
+  set_target_properties(${TARGET_NAME} PROPERTIES CUDA_RESOLVE_DEVICE_SYMBOLS ON)
+endif()
+
 # Add JIT source file path definition for libCEED
 set_property(
   SOURCE ${CMAKE_SOURCE_DIR}/main.cpp

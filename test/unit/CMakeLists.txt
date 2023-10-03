@@ -44,6 +44,11 @@ if(PALACE_WITH_CUDA OR PALACE_WITH_HIP)
   )
 endif()
 
+# Resolve linker error with CUDA and static linkage
+if(PALACE_WITH_CUDA)
+  set_target_properties(unit-tests PROPERTIES CUDA_RESOLVE_DEVICE_SYMBOLS ON)
+endif()
+
 # Add JIT source file path definition for libCEED
 set_property(
   SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/main.cpp
