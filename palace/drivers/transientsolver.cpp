@@ -81,8 +81,7 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) 
   auto estimator = [&]()
   {
     BlockTimer bt(Timer::ESTCONSTRUCT);
-    return CurlFluxErrorEstimator(iodata, spaceop.GetMaterialOp(), mesh,
-                                  spaceop.GetNDSpace());
+    return CurlFluxErrorEstimator(iodata, spaceop.GetMaterialOp(), spaceop.GetNDSpaces());
   }();
   ErrorIndicators indicators(spaceop.GlobalTrueVSize(), spaceop.GetComm());
   auto UpdateErrorIndicators = [this, &estimator, &indicators,

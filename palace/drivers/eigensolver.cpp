@@ -254,8 +254,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) cons
   auto estimator = [&]()
   {
     BlockTimer bt(Timer::ESTCONSTRUCT);
-    return CurlFluxErrorEstimator(iodata, spaceop.GetMaterialOp(), mesh,
-                                  spaceop.GetNDSpace());
+    return CurlFluxErrorEstimator(iodata, spaceop.GetMaterialOp(), spaceop.GetNDSpaces());
   }();
 
   // Eigenvalue problem solve.
@@ -269,7 +268,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) cons
   auto UpdateErrorIndicators =
       [this, &estimator, &indicators, &postop](const auto &E, int i)
   {
-    BlockTimer bt0(Timer::ESTSOLVE);
+    BlockTimer bt0(Timer::ESTIMATION);
     constexpr bool normalized = true;
     auto estimate = estimator.ComputeIndicators(E, normalized);
     BlockTimer bt1(Timer::POSTPRO);

@@ -64,30 +64,18 @@ class CurlFluxErrorEstimator
 {
   const MaterialOperator &mat_op;
   // The finite element space used to represent V, and F.
-  mfem::ParFiniteElementSpace &fespace;
-
-  std::vector<std::unique_ptr<mfem::ND_FECollection>> smooth_flux_fecs;
-  mutable mfem::ParFiniteElementSpaceHierarchy smooth_flux_fespace;
+  mfem::ParFiniteElementSpaceHierarchy &nd_fespaces;
   mutable FluxProjector<mfem::ND_FECollection> smooth_projector;
-
-  mfem::L2_FECollection coarse_flux_fec;
-  mutable mfem::ParFiniteElementSpace coarse_flux_fespace;
-
-  std::vector<mfem::DenseMatrix> scalar_mass_matrices;
-  std::vector<mfem::DenseMatrix> smooth_to_coarse_embed;
-
-  mutable ComplexVector complex_flux;
-  mutable Vector real_flux;
+  mutable Vector smooth_flux, flux_rhs;
 
 public:
   // Constructor for using geometric and p multigrid.
   CurlFluxErrorEstimator(const IoData &iodata, const MaterialOperator &mat_op,
-                         const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
-                         mfem::ParFiniteElementSpace &fespace);
+    mfem::ParFiniteElementSpaceHierarchy &nd_fespaces);
 
   // Compute elemental error indicators given a complex vector of true DOF.
   template <typename VectorType>
-  IndicatorsAndNormalization ComputeIndicators(const VectorType &v, bool normalize) const;
+  IndicatorsAndNormalization ComputeIndicators(const VectorType &v, bool normalize);
 };
 
 // Class used for computing grad flux error estimate, i.e. || ϵ ∇ ϕₕ - F ||_K where F

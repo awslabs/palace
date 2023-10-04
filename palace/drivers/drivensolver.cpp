@@ -100,8 +100,7 @@ DrivenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) con
   auto estimator = [&]()
   {
     BlockTimer bt(Timer::ESTCONSTRUCT);
-    return CurlFluxErrorEstimator(iodata, spaceop.GetMaterialOp(), mesh,
-                                  spaceop.GetNDSpace());
+    return CurlFluxErrorEstimator(iodata, spaceop.GetMaterialOp(), spaceop.GetNDSpaces());
   }();
 
   // Main frequency sweep loop.
@@ -111,7 +110,7 @@ DrivenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) con
 }
 
 ErrorIndicators DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator &postop,
-                                           const CurlFluxErrorEstimator &estimator,
+                                           CurlFluxErrorEstimator &estimator,
                                            int nstep, int step0, double omega0,
                                            double delta_omega) const
 {
@@ -150,7 +149,7 @@ ErrorIndicators DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator 
   auto UpdateErrorIndicators = [this, &estimator, &indicators,
                                 &postop](const auto &E, int step, double f)
   {
-    BlockTimer bt0(Timer::ESTSOLVE);
+    BlockTimer bt0(Timer::ESTIMATION);
     constexpr bool normalized = true;
     auto estimate = estimator.ComputeIndicators(E, normalized);
     BlockTimer bt1(Timer::POSTPRO);
@@ -228,7 +227,7 @@ ErrorIndicators DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator 
 }
 
 ErrorIndicators DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator &postop,
-                                            const CurlFluxErrorEstimator &estimator,
+                                            CurlFluxErrorEstimator &estimator,
                                             int nstep, int step0, double omega0,
                                             double delta_omega) const
 {

@@ -35,7 +35,7 @@ class MagnetostaticSolver : public BaseSolver
 {
 private:
   ErrorIndicators Postprocess(CurlCurlOperator &curlcurlop, PostOperator &postop,
-                              const CurlFluxErrorEstimator &estimator,
+                              CurlFluxErrorEstimator &estimator,
                               const std::vector<Vector> &A) const;
 
   void PostprocessTerminals(const SurfaceCurrentOperator &surf_j_op,

@@ -37,10 +37,10 @@ private:
   int GetNumSteps(double start, double end, double delta) const;
 
   ErrorIndicators SweepUniform(SpaceOperator &spaceop, PostOperator &postop,
-                               const CurlFluxErrorEstimator &estimator, int nstep,
+                               CurlFluxErrorEstimator &estimator, int nstep,
                                int step0, double omega0, double delta_omega) const;
   ErrorIndicators SweepAdaptive(SpaceOperator &spaceop, PostOperator &postop,
-                                const CurlFluxErrorEstimator &estimator, int nstep,
+                                CurlFluxErrorEstimator &estimator, int nstep,
                                 int step0, double omega0, double delta_omega) const;
 
   void Postprocess(const PostOperator &postop, const LumpedPortOperator &lumped_port_op,

@@ -74,8 +74,8 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &me
   auto estimator = [&]()
   {
     BlockTimer bt(Timer::ESTCONSTRUCT);
-    return CurlFluxErrorEstimator(iodata, curlcurlop.GetMaterialOp(), mesh,
-                                  curlcurlop.GetNDSpace());
+    return CurlFluxErrorEstimator(iodata, curlcurlop.GetMaterialOp(),
+                                  curlcurlop.GetNDSpaces());
   }();
 
   // Postprocess the capacitance matrix from the computed field solutions.
@@ -86,7 +86,7 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &me
 
 ErrorIndicators MagnetostaticSolver::Postprocess(CurlCurlOperator &curlcurlop,
                                                  PostOperator &postop,
-                                                 const CurlFluxErrorEstimator &estimator,
+                                                 CurlFluxErrorEstimator &estimator,
                                                  const std::vector<Vector> &A) const
 {
   // Postprocess the Maxwell inductance matrix. See p. 97 of the COMSOL AC/DC Module manual
@@ -108,7 +108,7 @@ ErrorIndicators MagnetostaticSolver::Postprocess(CurlCurlOperator &curlcurlop,
   auto UpdateErrorIndicators = [this, &estimator, &indicators,
                                 &postop](const auto &A, int i, double idx)
   {
-    BlockTimer bt0(Timer::ESTSOLVE);
+    BlockTimer bt(Timer::ESTIMATION);
     constexpr bool normalized = true;
     auto estimate = estimator.ComputeIndicators(A, normalized);
     BlockTimer bt1(Timer::POSTPRO);
