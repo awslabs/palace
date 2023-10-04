@@ -105,10 +105,10 @@ ErrorIndicators MagnetostaticSolver::Postprocess(CurlCurlOperator &curlcurlop,
 
   // Initialize structures for storing and reducing the results of error estimation.
   ErrorIndicators indicators(curlcurlop.GlobalTrueVSize(), curlcurlop.GetComm());
-  auto UpdateErrorIndicators = [this, &estimator, &indicators,
-                                &postop](const auto &A, int i, double idx)
+  auto UpdateErrorIndicators =
+      [this, &estimator, &indicators, &postop](const auto &A, int i, double idx)
   {
-    BlockTimer bt(Timer::ESTIMATION);
+    BlockTimer bt0(Timer::ESTIMATION);
     constexpr bool normalized = true;
     auto estimate = estimator.ComputeIndicators(A, normalized);
     BlockTimer bt1(Timer::POSTPRO);

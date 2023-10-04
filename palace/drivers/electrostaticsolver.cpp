@@ -101,7 +101,8 @@ ErrorIndicators ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop,
   mfem::DenseMatrix C(nstep), Cm(nstep);
   Vector E(Grad->Height()), Vij(Grad->Width());
   ErrorIndicators indicators(laplaceop.GlobalTrueVSize(), laplaceop.GetComm());
-  auto UpdateErrorIndicators = [this, &estimator, &indicators, &postop](const auto &V, int i, double idx)
+  auto UpdateErrorIndicators =
+      [this, &estimator, &indicators, &postop](const auto &V, int i, double idx)
   {
     BlockTimer bt0(Timer::ESTSOLVE);
     constexpr bool normalized = true;

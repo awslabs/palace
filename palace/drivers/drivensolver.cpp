@@ -110,8 +110,8 @@ DrivenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) con
 }
 
 ErrorIndicators DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator &postop,
-                                           CurlFluxErrorEstimator &estimator,
-                                           int nstep, int step0, double omega0,
+                                           CurlFluxErrorEstimator &estimator, int nstep,
+                                           int step0, double omega0,
                                            double delta_omega) const
 {
   // Construct the system matrices defining the linear operator. PEC boundaries are handled
@@ -146,8 +146,8 @@ ErrorIndicators DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator 
 
   // Initialize structures for storing and reducing the results of error estimation.
   ErrorIndicators indicators(spaceop.GlobalTrueVSize(), spaceop.GetComm());
-  auto UpdateErrorIndicators = [this, &estimator, &indicators,
-                                &postop](const auto &E, int step, double f)
+  auto UpdateErrorIndicators =
+      [this, &estimator, &indicators, &postop](const auto &E, int step, double f)
   {
     BlockTimer bt0(Timer::ESTIMATION);
     constexpr bool normalized = true;
@@ -227,8 +227,8 @@ ErrorIndicators DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator 
 }
 
 ErrorIndicators DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator &postop,
-                                            CurlFluxErrorEstimator &estimator,
-                                            int nstep, int step0, double omega0,
+                                            CurlFluxErrorEstimator &estimator, int nstep,
+                                            int step0, double omega0,
                                             double delta_omega) const
 {
   // Configure default parameters if not specified.
@@ -282,7 +282,8 @@ ErrorIndicators DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator
   // The error indicators will be calculated for each HDM sample rather than for
   // the online stage.
   ErrorIndicators indicators(spaceop.GlobalTrueVSize(), spaceop.GetComm());
-  auto UpdateErrorIndicators = [this, &estimator, &indicators](const auto &E, int step, double frequency)
+  auto UpdateErrorIndicators =
+      [this, &estimator, &indicators](const auto &E, int step, double frequency)
   {
     BlockTimer bt0(Timer::ESTSOLVE);
     constexpr bool normalized = true;

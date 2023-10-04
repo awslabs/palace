@@ -29,8 +29,7 @@ ErrorIndicators::ErrorIndicators(const IndicatorsAndNormalization &indicators,
   mean = global_error_indicator / size;
 }
 
-void
-ErrorIndicators::Reset()
+void ErrorIndicators::Reset()
 {
   n = 0;
   local_error_indicators = Vector();
@@ -38,8 +37,7 @@ ErrorIndicators::Reset()
   mean_normalization = 0.0;
 }
 
-void
-ErrorIndicators::AddEstimates(const Vector &indicators, double normalization)
+void ErrorIndicators::AddEstimates(const Vector &indicators, double normalization)
 {
   // Compute the global indicator across all processors.
   constexpr int p = 2;
@@ -64,8 +62,7 @@ ErrorIndicators::AddEstimates(const Vector &indicators, double normalization)
                 "Local error indicator vectors mismatch.");
     // Combine these error indicators into the current average.
     std::transform(local_error_indicators.begin(), local_error_indicators.end(),
-                  indicators.begin(), local_error_indicators.begin(),
-                  running_average);
+                   indicators.begin(), local_error_indicators.begin(), running_average);
   }
   else
   {

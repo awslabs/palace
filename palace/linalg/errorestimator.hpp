@@ -71,7 +71,7 @@ class CurlFluxErrorEstimator
 public:
   // Constructor for using geometric and p multigrid.
   CurlFluxErrorEstimator(const IoData &iodata, const MaterialOperator &mat_op,
-    mfem::ParFiniteElementSpaceHierarchy &nd_fespaces);
+                         mfem::ParFiniteElementSpaceHierarchy &nd_fespaces);
 
   // Compute elemental error indicators given a complex vector of true DOF.
   template <typename VectorType>
@@ -92,7 +92,7 @@ class GradFluxErrorEstimator
   std::vector<std::unique_ptr<mfem::H1_FECollection>> smooth_flux_fecs;
   mutable mfem::ParFiniteElementSpaceHierarchy smooth_flux_component_fespace;
   mutable mfem::ParFiniteElementSpace smooth_flux_fespace;
-  mutable FluxProjector<mfem::H1_FECollection>smooth_projector;
+  mutable FluxProjector<mfem::H1_FECollection> smooth_projector;
 
   mfem::L2_FECollection coarse_flux_fec;
   mutable mfem::ParFiniteElementSpace coarse_flux_fespace;

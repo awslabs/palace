@@ -1,19 +1,19 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#include <limits>
 #include "errorestimator.hpp"
+#include <limits>
 #include "fem/coefficient.hpp"
 #include "fem/integrator.hpp"
 #include "fem/multigrid.hpp"
-#include "models/materialoperator.hpp"
-#include "utils/communication.hpp"
-#include "utils/errorindicators.hpp"
-#include "utils/iodata.hpp"
 #include "linalg/amg.hpp"
 #include "linalg/gmg.hpp"
 #include "linalg/iterative.hpp"
 #include "linalg/rap.hpp"
+#include "models/materialoperator.hpp"
+#include "utils/communication.hpp"
+#include "utils/errorindicators.hpp"
+#include "utils/iodata.hpp"
 #include "utils/timer.hpp"
 
 namespace palace
@@ -29,8 +29,9 @@ std::unique_ptr<Operator> BuildMassMatrixOperator(mfem::ParFiniteElementSpaceHie
 {
   constexpr int skip_zeros = 0;
 
-  constexpr bool ScalarFESpace = std::is_same<SmoothFluxFiniteElementCollection, mfem::H1_FECollection>::value
-    || std::is_same<SmoothFluxFiniteElementCollection, mfem::L2_FECollection>::value;
+  constexpr bool ScalarFESpace =
+      std::is_same<SmoothFluxFiniteElementCollection, mfem::H1_FECollection>::value ||
+      std::is_same<SmoothFluxFiniteElementCollection, mfem::L2_FECollection>::value;
 
   // Assemble the bilinear form operator
   auto M = std::make_unique<MultigridOperator>(h.GetNumLevels());
@@ -61,8 +62,11 @@ std::unique_ptr<Operator> BuildMassMatrixOperator(mfem::ParFiniteElementSpaceHie
 }
 
 template <typename SmoothFluxFiniteElementCollection>
-FluxProjector<SmoothFluxFiniteElementCollection>::FluxProjector(mfem::ParFiniteElementSpaceHierarchy &smooth_flux_fespace, double tol, int max_it, int print, int pa_order_threshold)
-  : M(BuildMassMatrixOperator<SmoothFluxFiniteElementCollection>(smooth_flux_fespace, pa_order_threshold))
+FluxProjector<SmoothFluxFiniteElementCollection>::FluxProjector(
+    mfem::ParFiniteElementSpaceHierarchy &smooth_flux_fespace, double tol, int max_it,
+    int print, int pa_order_threshold)
+  : M(BuildMassMatrixOperator<SmoothFluxFiniteElementCollection>(smooth_flux_fespace,
+                                                                 pa_order_threshold))
 {
   // The system matrix for the projection is real and SPD. For the coarse-level AMG solve,
   // we don't use an exact solve on the coarsest level.
@@ -98,8 +102,8 @@ CurlFluxErrorEstimator::CurlFluxErrorEstimator(
 }
 
 template <>
-IndicatorsAndNormalization CurlFluxErrorEstimator::ComputeIndicators(
-  const ComplexVector& v, bool normalize)
+IndicatorsAndNormalization CurlFluxErrorEstimator::ComputeIndicators(const ComplexVector &v,
+                                                                     bool normalize)
 {
   auto &nd_fespace = nd_fespaces.GetFinestFESpace();
   mfem::ParComplexGridFunction field(&nd_fespace);
@@ -116,7 +120,7 @@ IndicatorsAndNormalization CurlFluxErrorEstimator::ComputeIndicators(
   {
     auto &field_component = real ? field.real() : field.imag();
 
-    // Coefficients for computing the discontinuous flux., i.e. (W, μ⁻¹∇ × V).
+    // Coefficients for computing the discontinuous flux component, i.e. (W, μ⁻¹∇ × V).
     CurlFluxCoefficient coef(field_component, mat_op);
     {
       mfem::LinearForm rhs(&nd_fespace);
@@ -137,7 +141,8 @@ IndicatorsAndNormalization CurlFluxErrorEstimator::ComputeIndicators(
     {
       auto &T = *nd_fespace.GetElementTransformation(e);
       // integration order 2p + q
-      const auto &ir = mfem::IntRules.Get(T.GetGeometryType(), 2 * nd_fespace.GetFE(e)->GetOrder() + T.Order());
+      const auto &ir = mfem::IntRules.Get(T.GetGeometryType(),
+                                          2 * nd_fespace.GetFE(e)->GetOrder() + T.Order());
       for (const auto &ip : ir)
       {
         T.SetIntPoint(&ip);
@@ -169,8 +174,8 @@ IndicatorsAndNormalization CurlFluxErrorEstimator::ComputeIndicators(
 }
 
 template <>
-IndicatorsAndNormalization
-CurlFluxErrorEstimator::ComputeIndicators(const Vector &v, bool normalize)
+IndicatorsAndNormalization CurlFluxErrorEstimator::ComputeIndicators(const Vector &v,
+                                                                     bool normalize)
 {
   auto &nd_fespace = nd_fespaces.GetFinestFESpace();
   mfem::ParGridFunction field(&nd_fespace);
@@ -209,16 +214,18 @@ CurlFluxErrorEstimator::ComputeIndicators(const Vector &v, bool normalize)
   {
     auto &T = *nd_fespace.GetElementTransformation(e);
     // integration order 2p + q
-    const auto &ir = mfem::IntRules.Get(T.GetGeometryType(), 2 * nd_fespace.GetFE(e)->GetOrder() + T.Order());
+    const auto &ir = mfem::IntRules.Get(T.GetGeometryType(),
+                                        2 * nd_fespace.GetFE(e)->GetOrder() + T.Order());
     for (const auto &ip : ir)
     {
       T.SetIntPoint(&ip);
       smooth_flux_func.GetVectorValue(e, ip, smooth_vec);
       coef.Eval(coarse_vec, T, ip);
+      const double w_i = ip.weight * T.Weight();
       for (int c = 0; c < 3; c++)
       {
-        estimates[e] += ip.weight * T.Weight() * std::pow(smooth_vec[c] - coarse_vec[c], 2.0);
-        normalization += ip.weight * T.Weight() * coarse_vec[c] * coarse_vec[c];
+        estimates[e] += w_i * std::pow(smooth_vec[c] - coarse_vec[c], 2.0);
+        normalization += w_i * coarse_vec[c] * coarse_vec[c];
       }
     }
     estimates[e] = std::sqrt(estimates[e]);
@@ -242,11 +249,12 @@ GradFluxErrorEstimator::GradFluxErrorEstimator(
     smooth_flux_fecs(ConstructFECollections<mfem::H1_FECollection>(
         iodata.solver.order, mesh.back()->Dimension(), iodata.solver.linear.mg_max_levels,
         iodata.solver.linear.mg_coarsen_type, false)),
-    smooth_flux_component_fespace(ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
-        iodata.solver.linear.mg_max_levels, iodata.solver.linear.mg_legacy_transfer,
-        iodata.solver.pa_order_threshold, mesh, smooth_flux_fecs)),
+    smooth_flux_component_fespace(
+        ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
+            iodata.solver.linear.mg_max_levels, iodata.solver.linear.mg_legacy_transfer,
+            iodata.solver.pa_order_threshold, mesh, smooth_flux_fecs)),
     smooth_flux_fespace(mesh.back().get(), smooth_flux_fecs.back().get(),
-                    mesh.back()->Dimension()),
+                        mesh.back()->Dimension()),
     smooth_projector(smooth_flux_component_fespace, iodata.solver.linear.tol, 200, 0,
                      iodata.solver.pa_order_threshold),
     coarse_flux_fec(iodata.solver.order, mesh.back()->Dimension(),
@@ -270,7 +278,7 @@ GradFluxErrorEstimator::GradFluxErrorEstimator(
 }
 
 IndicatorsAndNormalization GradFluxErrorEstimator::ComputeIndicators(const Vector &v,
-                                                              bool normalize) const
+                                                                     bool normalize) const
 {
   const int sdim = fespace.GetMesh()->SpaceDimension();
   mfem::ParGridFunction field(&fespace);
@@ -385,6 +393,5 @@ IndicatorsAndNormalization GradFluxErrorEstimator::ComputeIndicators(const Vecto
   }
   return {estimates, normalization};
 }
-
 
 }  // namespace palace

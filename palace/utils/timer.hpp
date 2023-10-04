@@ -28,7 +28,7 @@ public:
   {
     INIT = 0,
     CONSTRUCT,
-    WAVEPORT,      // Wave port solver
+    WAVEPORT,  // Wave port solver
     SOLVE,
     PRECONDITIONER,  // Linear solver
     COARSESOLVE,     // Linear solver
@@ -43,20 +43,14 @@ public:
     NUMTIMINGS
   };
 
-  inline static const std::vector<std::string> descriptions{"Initialization",
-                                                            "Operator Construction",
-                                                            "  Wave Ports",
-                                                            "Solve",
-                                                            "  Preconditioner",
-                                                            "  Coarse Solve",
-                                                            "Estimation",
-                                                            "  Construction",
-                                                            "  Evaluation",
-                                                            "PROM Construction",
-                                                            "PROM Solve",
-                                                            "Postprocessing",
-                                                            "Disk IO",
-                                                            "Total"};
+  inline static const std::vector<std::string> descriptions{
+      "Initialization",   "Operator Construction",
+      "  Wave Ports",     "Solve",
+      "  Preconditioner", "  Coarse Solve",
+      "Estimation",       "  Construction",
+      "  Evaluation",     "PROM Construction",
+      "PROM Solve",       "Postprocessing",
+      "Disk IO",          "Total"};
 
 private:
   const TimePoint start_time;

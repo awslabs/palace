@@ -84,8 +84,8 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) 
     return CurlFluxErrorEstimator(iodata, spaceop.GetMaterialOp(), spaceop.GetNDSpaces());
   }();
   ErrorIndicators indicators(spaceop.GlobalTrueVSize(), spaceop.GetComm());
-  auto UpdateErrorIndicators = [this, &estimator, &indicators,
-                                &postop](const auto &E, int step, double time)
+  auto UpdateErrorIndicators =
+      [this, &estimator, &indicators, &postop](const auto &E, int step, double time)
   {
     BlockTimer bt0(Timer::ESTSOLVE);
     // Initial flux of zero would return nan.
