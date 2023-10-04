@@ -189,7 +189,7 @@ int main(int argc, char *argv[])
   auto solver_output = solver->Solve(mesh);
 
   Mpi::Print(world_comm, "Error Estimate: {:.3e}\n",
-             solver_output.GetGlobalErrorIndicator());
+             solver_output.GetGlobalErrorIndicator(world_comm));
 
   // Print timing summary.
   BlockTimer::Print(world_comm);

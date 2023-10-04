@@ -264,21 +264,24 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) cons
   SaveMetadata(*ksp);
 
   // Initialize structures for storing and reducing the results of error estimation.
-  ErrorIndicators indicators(spaceop.GlobalTrueVSize(), spaceop.GetComm());
+  ErrorIndicators combined_indicators;
   auto UpdateErrorIndicators =
-      [this, &estimator, &indicators, &postop](const auto &E, int i)
+      [this, &estimator, &combined_indicators, &postop, &spaceop](const auto &E, int i)
   {
     BlockTimer bt0(Timer::ESTIMATION);
     constexpr bool normalized = true;
-    auto estimate = estimator.ComputeIndicators(E, normalized);
+    auto indicators = estimator.ComputeIndicators(E, normalized);
     BlockTimer bt1(Timer::POSTPRO);
-    postop.SetIndicatorGridFunction(estimate.indicators);
-    // Write the indicator for this mode.
+    postop.SetIndicatorGridFunction(indicators.GetLocalErrorIndicators());
     PostprocessErrorIndicators(
         "m", i, i + 1,
-        ErrorIndicators{estimate, indicators.GlobalTrueVSize(), indicators.GetComm()},
+        indicators.GetGlobalErrorIndicator(spaceop.GetComm()),
+        indicators.GetMinErrorIndicator(spaceop.GetComm()),
+        indicators.GetMaxErrorIndicator(spaceop.GetComm()),
+        indicators.GetMeanErrorIndicator(spaceop.GetComm()),
+        indicators.GetNormalization(),
         normalized);
-    indicators.AddEstimates(estimate.indicators, estimate.normalization);
+    combined_indicators.AddIndicators(indicators);
   };
 
   // Postprocess the results.
@@ -315,6 +318,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) cons
     if (i < iodata.solver.eigenmode.n)
     {
       // Only update the error indicator for targeted modes.
+      Mpi::Print("Computing error estimates for mode {:d}\n", i);
       UpdateErrorIndicators(E, i);
     }
 
@@ -325,8 +329,13 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) cons
     // Postprocess the mode.
     Postprocess(postop, spaceop.GetLumpedPortOp(), i, omega, error1, error2, num_conv);
   }
-  PostprocessErrorIndicators("Mean", indicators);
-  return indicators;
+  PostprocessErrorIndicators("Mean",
+        combined_indicators.GetGlobalErrorIndicator(spaceop.GetComm()),
+        combined_indicators.GetMinErrorIndicator(spaceop.GetComm()),
+        combined_indicators.GetMaxErrorIndicator(spaceop.GetComm()),
+        combined_indicators.GetMeanErrorIndicator(spaceop.GetComm()),
+        combined_indicators.GetNormalization());
+  return combined_indicators;
 }
 
 void EigenSolver::Postprocess(const PostOperator &postop,

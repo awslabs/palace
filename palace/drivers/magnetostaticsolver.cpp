@@ -104,21 +104,25 @@ ErrorIndicators MagnetostaticSolver::Postprocess(CurlCurlOperator &curlcurlop,
   Vector Iinc(nstep);
 
   // Initialize structures for storing and reducing the results of error estimation.
-  ErrorIndicators indicators(curlcurlop.GlobalTrueVSize(), curlcurlop.GetComm());
+  ErrorIndicators combined_indicators;
   auto UpdateErrorIndicators =
-      [this, &estimator, &indicators, &postop](const auto &A, int i, double idx)
+      [this, &estimator, &combined_indicators, &postop, &curlcurlop](const auto &A, int i, double idx)
   {
     BlockTimer bt0(Timer::ESTIMATION);
     constexpr bool normalized = true;
-    auto estimate = estimator.ComputeIndicators(A, normalized);
+    auto indicators = estimator.ComputeIndicators(A, normalized);
     BlockTimer bt1(Timer::POSTPRO);
     // Write the indicator for this mode.
-    postop.SetIndicatorGridFunction(estimate.indicators);
+    postop.SetIndicatorGridFunction(indicators.GetLocalErrorIndicators());
     PostprocessErrorIndicators(
         "i", i, idx,
-        ErrorIndicators{estimate, indicators.GlobalTrueVSize(), indicators.GetComm()},
+        indicators.GetGlobalErrorIndicator(curlcurlop.GetComm()),
+        indicators.GetMinErrorIndicator(curlcurlop.GetComm()),
+        indicators.GetMaxErrorIndicator(curlcurlop.GetComm()),
+        indicators.GetMeanErrorIndicator(curlcurlop.GetComm()),
+        indicators.GetNormalization(),
         normalized);
-    indicators.AddEstimates(estimate.indicators, estimate.normalization);
+    combined_indicators.AddIndicators(indicators);
   };
   if (iodata.solver.magnetostatic.n_post > 0)
   {
@@ -141,6 +145,7 @@ ErrorIndicators MagnetostaticSolver::Postprocess(CurlCurlOperator &curlcurlop,
     PostprocessDomains(postop, "i", i, idx, 0.0, Um, 0.0, 0.0);
     PostprocessSurfaces(postop, "i", i, idx, 0.0, Um, 0.0, Iinc(i));
     PostprocessProbes(postop, "i", i, idx);
+    Mpi::Print("Computing error estimates for terminal {:d}\n", idx);
     UpdateErrorIndicators(A[i], i, idx);
     if (i < iodata.solver.magnetostatic.n_post)
     {
@@ -181,8 +186,13 @@ ErrorIndicators MagnetostaticSolver::Postprocess(CurlCurlOperator &curlcurlop,
   mfem::DenseMatrix Minv(M);
   Minv.Invert();  // In-place, uses LAPACK (when available) and should be cheap
   PostprocessTerminals(surf_j_op, M, Minv, Mm);
-  PostprocessErrorIndicators("Mean", indicators);
-  return indicators;
+  PostprocessErrorIndicators("Mean",
+        combined_indicators.GetGlobalErrorIndicator(curlcurlop.GetComm()),
+        combined_indicators.GetMinErrorIndicator(curlcurlop.GetComm()),
+        combined_indicators.GetMaxErrorIndicator(curlcurlop.GetComm()),
+        combined_indicators.GetMeanErrorIndicator(curlcurlop.GetComm()),
+        combined_indicators.GetNormalization());
+  return combined_indicators;
 }
 
 void MagnetostaticSolver::PostprocessTerminals(const SurfaceCurrentOperator &surf_j_op,

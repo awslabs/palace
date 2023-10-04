@@ -101,7 +101,7 @@ CurlFluxErrorEstimator::CurlFluxErrorEstimator(
 }
 
 template <>
-IndicatorsAndNormalization CurlFluxErrorEstimator::ComputeIndicators(const ComplexVector &v,
+ErrorIndicators CurlFluxErrorEstimator::ComputeIndicators(const ComplexVector &v,
                                                                      bool normalize)
 {
   auto &nd_fespace = nd_fespaces.GetFinestFESpace();
@@ -174,7 +174,7 @@ IndicatorsAndNormalization CurlFluxErrorEstimator::ComputeIndicators(const Compl
 }
 
 template <>
-IndicatorsAndNormalization CurlFluxErrorEstimator::ComputeIndicators(const Vector &v,
+ErrorIndicators CurlFluxErrorEstimator::ComputeIndicators(const Vector &v,
                                                                      bool normalize)
 {
   auto &nd_fespace = nd_fespaces.GetFinestFESpace();
@@ -252,7 +252,7 @@ GradFluxErrorEstimator::GradFluxErrorEstimator(
 {
 }
 
-IndicatorsAndNormalization GradFluxErrorEstimator::ComputeIndicators(const Vector &v,
+ErrorIndicators GradFluxErrorEstimator::ComputeIndicators(const Vector &v,
                                                                      bool normalize) const
 {
   auto &h1_fespace = h1_fespaces.GetFinestFESpace();

@@ -99,21 +99,24 @@ ErrorIndicators ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop,
   int nstep = static_cast<int>(terminal_sources.size());
   mfem::DenseMatrix C(nstep), Cm(nstep);
   Vector E(Grad->Height()), Vij(Grad->Width());
-  ErrorIndicators indicators(laplaceop.GlobalTrueVSize(), laplaceop.GetComm());
+  ErrorIndicators combined_indicators;
   auto UpdateErrorIndicators =
-      [this, &estimator, &indicators, &postop](const auto &V, int i, double idx)
+      [this, &estimator, &combined_indicators, &postop, &laplaceop](const auto &V, int i, double idx)
   {
     BlockTimer bt0(Timer::ESTIMATION);
     constexpr bool normalized = true;
-    auto estimate = estimator.ComputeIndicators(V, normalized);
+    auto indicators = estimator.ComputeIndicators(V, normalized);
     BlockTimer bt1(Timer::POSTPRO);
-    // Write the indicator for this mode.
-    postop.SetIndicatorGridFunction(estimate.indicators);
+    postop.SetIndicatorGridFunction(indicators.GetLocalErrorIndicators());
     PostprocessErrorIndicators(
         "i", i, idx,
-        ErrorIndicators{estimate, indicators.GlobalTrueVSize(), indicators.GetComm()},
+        indicators.GetGlobalErrorIndicator(laplaceop.GetComm()),
+        indicators.GetMinErrorIndicator(laplaceop.GetComm()),
+        indicators.GetMaxErrorIndicator(laplaceop.GetComm()),
+        indicators.GetMeanErrorIndicator(laplaceop.GetComm()),
+        indicators.GetNormalization(),
         normalized);
-    indicators.AddEstimates(estimate.indicators, estimate.normalization);
+    combined_indicators.AddIndicators(indicators);
   };
   if (iodata.solver.electrostatic.n_post > 0)
   {
@@ -173,8 +176,13 @@ ErrorIndicators ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop,
   mfem::DenseMatrix Cinv(C);
   Cinv.Invert();  // In-place, uses LAPACK (when available) and should be cheap
   PostprocessTerminals(terminal_sources, C, Cinv, Cm);
-  PostprocessErrorIndicators("Mean", indicators);
-  return indicators;
+  PostprocessErrorIndicators("Mean",
+        combined_indicators.GetGlobalErrorIndicator(laplaceop.GetComm()),
+        combined_indicators.GetMinErrorIndicator(laplaceop.GetComm()),
+        combined_indicators.GetMaxErrorIndicator(laplaceop.GetComm()),
+        combined_indicators.GetMeanErrorIndicator(laplaceop.GetComm()),
+        combined_indicators.GetNormalization());
+  return combined_indicators;
 }
 
 void ElectrostaticSolver::PostprocessTerminals(

@@ -83,21 +83,25 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) 
     BlockTimer bt(Timer::ESTCONSTRUCT);
     return CurlFluxErrorEstimator(iodata, spaceop.GetMaterialOp(), spaceop.GetNDSpaces());
   }();
-  ErrorIndicators indicators(spaceop.GlobalTrueVSize(), spaceop.GetComm());
+  ErrorIndicators combined_indicators;
   auto UpdateErrorIndicators =
-      [this, &estimator, &indicators, &postop](const auto &E, int step, double time)
+      [this, &estimator, &combined_indicators, &postop, &spaceop](const auto &E, int step, double time)
   {
     BlockTimer bt0(Timer::ESTSOLVE);
     // Initial flux of zero would return nan.
     bool constexpr normalized = false;
-    auto estimate = estimator.ComputeIndicators(E, normalized);
+    auto indicators = estimator.ComputeIndicators(E, normalized);
     BlockTimer bt1(Timer::POSTPRO);
-    postop.SetIndicatorGridFunction(estimate.indicators);
+    postop.SetIndicatorGridFunction(indicators.GetLocalErrorIndicators());
     PostprocessErrorIndicators(
         "t (ns)", step, time,
-        ErrorIndicators{estimate, indicators.GlobalTrueVSize(), indicators.GetComm()},
+        indicators.GetGlobalErrorIndicator(spaceop.GetComm()),
+        indicators.GetMinErrorIndicator(spaceop.GetComm()),
+        indicators.GetMaxErrorIndicator(spaceop.GetComm()),
+        indicators.GetMeanErrorIndicator(spaceop.GetComm()),
+        indicators.GetNormalization(),
         normalized);
-    indicators.AddEstimates(estimate.indicators, estimate.normalization);
+    combined_indicators.AddIndicators(indicators);
   };
 
   // Main time integration loop.
@@ -152,8 +156,13 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) 
     step++;
   }
   SaveMetadata(timeop.GetLinearSolver());
-  PostprocessErrorIndicators("Mean", indicators);
-  return indicators;
+  PostprocessErrorIndicators("Mean",
+        combined_indicators.GetGlobalErrorIndicator(spaceop.GetComm()),
+        combined_indicators.GetMinErrorIndicator(spaceop.GetComm()),
+        combined_indicators.GetMaxErrorIndicator(spaceop.GetComm()),
+        combined_indicators.GetMeanErrorIndicator(spaceop.GetComm()),
+        combined_indicators.GetNormalization());
+  return combined_indicators;
 }
 std::function<double(double)> TransientSolver::GetTimeExcitation(bool dot) const
 {

@@ -75,7 +75,7 @@ public:
 
   // Compute elemental error indicators given a complex vector of true DOF.
   template <typename VectorType>
-  IndicatorsAndNormalization ComputeIndicators(const VectorType &v, bool normalize);
+  ErrorIndicators ComputeIndicators(const VectorType &v, bool normalize);
 };
 
 // Class used for computing grad flux error estimate, i.e. || ϵ ∇ ϕₕ - F ||_K where F
@@ -95,7 +95,7 @@ public:
                          mfem::ParFiniteElementSpaceHierarchy &h1_fespaces);
 
   // Compute elemental error indicators given a vector of true DOF.
-  IndicatorsAndNormalization ComputeIndicators(const Vector &v, bool normalize) const;
+  ErrorIndicators ComputeIndicators(const Vector &v, bool normalize) const;
 };
 
 }  // namespace palace

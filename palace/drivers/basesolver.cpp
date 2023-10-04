@@ -567,7 +567,7 @@ void BaseSolver::PostprocessFields(const PostOperator &postop, int step, double 
 }
 
 void BaseSolver::PostprocessErrorIndicators(const std::string &name, int step, double time,
-                                            const ErrorIndicators &indicators,
+                                            double global, double min, double max, double mean, double normalization,
                                             bool normalized) const
 {
   if (post_dir.length() == 0)
@@ -596,17 +596,17 @@ void BaseSolver::PostprocessErrorIndicators(const std::string &name, int step, d
     // clang-format off
     output.print("{:{}.{}e},{:+{}.{}e},{:+{}.{}e},{:+{}.{}e},{:+{}.{}e},{:+{}.{}e}\n",
                 time, table.w1, table.p1,
-                indicators.GetGlobalErrorIndicator(), table.w, table.p,
-                indicators.GetMinErrorIndicator(), table.w, table.p,
-                indicators.GetMaxErrorIndicator(), table.w, table.p,
-                indicators.GetMeanErrorIndicator(), table.w, table.p,
-                indicators.GetNormalization(), table.w, table.p);
+                global, table.w, table.p,
+                min, table.w, table.p,
+                max, table.w, table.p,
+                mean, table.w, table.p,
+                normalization, table.w, table.p);
     // clang-format on
   }
 }
 
 void BaseSolver::PostprocessErrorIndicators(const std::string &name,
-                                            const ErrorIndicators &indicators) const
+                                            double global, double min, double max, double mean, double normalization) const
 {
   if (post_dir.length() == 0)
   {
@@ -621,11 +621,11 @@ void BaseSolver::PostprocessErrorIndicators(const std::string &name,
     // clang-format off
     output.print("{:>{}s},{:+{}.{}e},{:+{}.{}e},{:+{}.{}e},{:+{}.{}e},{:+{}.{}e}\n",
                 name, table.w1,
-                indicators.GetGlobalErrorIndicator(), table.w, table.p,
-                indicators.GetMinErrorIndicator(), table.w, table.p,
-                indicators.GetMaxErrorIndicator(), table.w, table.p,
-                indicators.GetMeanErrorIndicator(), table.w, table.p,
-                indicators.GetNormalization(), table.w, table.p);
+                global, table.w, table.p,
+                min, table.w, table.p,
+                max, table.w, table.p,
+                mean, table.w, table.p,
+                normalization, table.w, table.p);
     // clang-format on
   }
 }
