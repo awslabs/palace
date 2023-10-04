@@ -152,7 +152,6 @@ ErrorIndicators DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator 
     BlockTimer bt0(Timer::ESTIMATION);
     constexpr bool normalized = true;
     auto indicators = estimator.ComputeIndicators(E, normalized);
-    BlockTimer bt1(Timer::POSTPRO);
     postop.SetIndicatorGridFunction(indicators.GetLocalErrorIndicators());
     PostprocessErrorIndicators("f (GHz)", step, f,
                                indicators.GetGlobalErrorIndicator(spaceop.GetComm()),
@@ -294,7 +293,6 @@ ErrorIndicators DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator
     BlockTimer bt0(Timer::ESTIMATION);
     constexpr bool normalized = true;
     auto indicators = estimator.ComputeIndicators(E, normalized);
-    BlockTimer bt1(Timer::POSTPRO);
     PostprocessErrorIndicators("f (GHz)", step, frequency,
                                indicators.GetGlobalErrorIndicator(spaceop.GetComm()),
                                indicators.GetMinErrorIndicator(spaceop.GetComm()),
@@ -310,12 +308,9 @@ ErrorIndicators DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator
   // of the RomOperator.
   BlockTimer bt1(Timer::CONSTRUCTPROM);
   prom.SolveHDM(omega0, E);  // Print matrix stats at first HDM solve
-  Mpi::Print("Computing error estimates for frequency {:d} (GHz)\n", omega0 * f0);
   UpdateErrorIndicators(E, 0, omega0 * f0);
   prom.AddHDMSample(omega0, E);
   prom.SolveHDM(omega0 + (nstep - step0 - 1) * delta_omega, E);
-  Mpi::Print("Computing error estimates for frequency {:d} (GHz)\n",
-             (omega0 + (nstep - step0 - 1) * delta_omega) * f0);
   UpdateErrorIndicators(E, 1, (omega0 + (nstep - step0 - 1) * delta_omega) * f0);
   prom.AddHDMSample(omega0 + (nstep - step0 - 1) * delta_omega, E);
 

@@ -107,7 +107,6 @@ ErrorIndicators ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop,
     BlockTimer bt0(Timer::ESTIMATION);
     constexpr bool normalized = true;
     auto indicators = estimator.ComputeIndicators(V, normalized);
-    BlockTimer bt1(Timer::POSTPRO);
     postop.SetIndicatorGridFunction(indicators.GetLocalErrorIndicators());
     PostprocessErrorIndicators("i", i, idx,
                                indicators.GetGlobalErrorIndicator(laplaceop.GetComm()),

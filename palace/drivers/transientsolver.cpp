@@ -87,11 +87,10 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) 
   auto UpdateErrorIndicators = [this, &estimator, &combined_indicators, &postop,
                                 &spaceop](const auto &E, int step, double time)
   {
-    BlockTimer bt0(Timer::ESTSOLVE);
+    BlockTimer bt0(Timer::ESTIMATION);
     // Initial flux of zero would return nan.
     bool constexpr normalized = false;
     auto indicators = estimator.ComputeIndicators(E, normalized);
-    BlockTimer bt1(Timer::POSTPRO);
     postop.SetIndicatorGridFunction(indicators.GetLocalErrorIndicators());
     PostprocessErrorIndicators("t (ns)", step, time,
                                indicators.GetGlobalErrorIndicator(spaceop.GetComm()),

@@ -27,7 +27,7 @@ public:
   ErrorIndicators &operator=(ErrorIndicators &&) = default;
   ~ErrorIndicators() = default;
 
-  // Return the average normalized local error indicators.
+  // Return the local error indicators.
   const auto &GetLocalErrorIndicators() const { return local; }
   // Return the global error indicator.
   inline auto GetGlobalErrorIndicator(MPI_Comm comm) const
@@ -39,21 +39,21 @@ public:
     Mpi::GlobalSum(1, &global_error_indicator, comm);
     return std::pow(global_error_indicator, 1.0 / p);
   }
-  // Return the largest normalized local error indicator.
+  // Return the largest local error indicator.
   inline auto GetMaxErrorIndicator(MPI_Comm comm) const
   {
     double max = local.Max();
     Mpi::GlobalMax(1, &max, comm);
     return max;
   }
-  // Return the smallest normalized local error indicator.
+  // Return the smallest local error indicator.
   inline auto GetMinErrorIndicator(MPI_Comm comm) const
   {
     double min = local.Min();
     Mpi::GlobalMin(1, &min, comm);
     return min;
   }
-  // Return the mean normalized local error indicator.
+  // Return the mean local error indicator.
   inline auto GetMeanErrorIndicator(MPI_Comm comm) const
   {
     int size = local.Size();

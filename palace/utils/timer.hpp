@@ -43,14 +43,24 @@ public:
     NUMTIMINGS
   };
 
+
+  // clang-format off
   inline static const std::vector<std::string> descriptions{
-      "Initialization",   "Operator Construction",
-      "  Wave Ports",     "Solve",
-      "  Preconditioner", "  Coarse Solve",
-      "Estimation",       "  Construction",
-      "  Evaluation",     "PROM Construction",
-      "PROM Solve",       "Postprocessing",
-      "Disk IO",          "Total"};
+      "Initialization",
+      "Operator Construction",
+      "  Wave Ports",
+      "Solve",
+      "  Preconditioner",
+      "  Coarse Solve",
+      "Estimation",
+      "  Construction",
+      "  Solve",
+      "PROM Construction",
+      "PROM Solve",
+      "Postprocessing",
+      "Disk IO",
+      "Total"};
+  // clang-format on
 
 private:
   const TimePoint start_time;

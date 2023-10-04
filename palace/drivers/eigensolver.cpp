@@ -271,7 +271,6 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) cons
     BlockTimer bt0(Timer::ESTIMATION);
     constexpr bool normalized = true;
     auto indicators = estimator.ComputeIndicators(E, normalized);
-    BlockTimer bt1(Timer::POSTPRO);
     postop.SetIndicatorGridFunction(indicators.GetLocalErrorIndicators());
     PostprocessErrorIndicators("m", i, i + 1,
                                indicators.GetGlobalErrorIndicator(spaceop.GetComm()),

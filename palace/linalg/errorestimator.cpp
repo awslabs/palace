@@ -155,7 +155,7 @@ ErrorIndicators CurlFluxErrorEstimator::ComputeIndicators(const ComplexVector &v
         coef.Eval(coarse_vec, T, ip);
         double w_i = ip.weight * T.Weight();
         constexpr int vdim = 3;
-        for (int c = 0; c < 3; c++)
+        for (int c = 0; c < vdim; c++)
         {
           estimates[e] += w_i * std::pow(smooth_vec[c] - coarse_vec[c], 2.0);
           normalization += w_i * coarse_vec[c] * coarse_vec[c];
