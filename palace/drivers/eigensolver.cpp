@@ -282,9 +282,17 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) cons
     combined_indicators.AddIndicators(indicators);
   };
 
+  // Save the eigenvalue estimates.
+  for (int i = 0; i < iodata.solver.eigenmode.n; i++)
+  {
+    eigen->GetEigenvector(i, E);
+    // Only update the error indicator for targeted modes.
+    Mpi::Print("\nComputing error estimates for mode {:d}\n", i);
+    UpdateErrorIndicators(E, i);
+  }
+
   // Postprocess the results.
   BlockTimer bt2(Timer::POSTPRO);
-
   for (int i = 0; i < num_conv; i++)
   {
     // Get the eigenvalue and relative error.
@@ -313,12 +321,6 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) cons
     eigen->GetEigenvector(i, E);
     Curl->Mult(E, B);
     B *= -1.0 / (1i * omega);
-    if (i < iodata.solver.eigenmode.n)
-    {
-      // Only update the error indicator for targeted modes.
-      Mpi::Print("Computing error estimates for mode {:d}\n", i);
-      UpdateErrorIndicators(E, i);
-    }
 
     postop.SetEGridFunction(E);
     postop.SetBGridFunction(B);
