@@ -47,7 +47,7 @@ CurlFluxErrorEstimator::CurlFluxErrorEstimator(
   }
 }
 
-IndicatorsAndNormalization CurlFluxErrorEstimator::operator()(const ComplexVector &v,
+IndicatorsAndNormalization CurlFluxErrorEstimator::ComputeIndicators(const ComplexVector &v,
                                                               bool normalize) const
 {
   mfem::ParComplexGridFunction field(&fes);
@@ -157,7 +157,7 @@ IndicatorsAndNormalization CurlFluxErrorEstimator::operator()(const ComplexVecto
   return {estimates, normalization};
 }
 
-IndicatorsAndNormalization CurlFluxErrorEstimator::operator()(const Vector &v,
+IndicatorsAndNormalization CurlFluxErrorEstimator::ComputeIndicators(const Vector &v,
                                                               bool normalize) const
 {
   mfem::ParGridFunction field(&fes);
@@ -277,7 +277,7 @@ GradFluxErrorEstimator::GradFluxErrorEstimator(
   }
 }
 
-IndicatorsAndNormalization GradFluxErrorEstimator::operator()(const Vector &v,
+IndicatorsAndNormalization GradFluxErrorEstimator::ComputeIndicators(const Vector &v,
                                                               bool normalize) const
 {
   mfem::ParGridFunction field(&fes);

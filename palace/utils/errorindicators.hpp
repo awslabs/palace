@@ -50,14 +50,17 @@ public:
   // Return the mean normalized local error indicator.
   auto GetMeanErrorIndicator() const { return mean; }
   // Return the normalization constant for the absolute error.
-  auto GetNormalization() const { return normalization; }
+  auto GetNormalization() const { return mean_normalization; }
   // The communicator used in any reductions over processors.
   const MPI_Comm &GetComm() { return comm; }
   // Return the global number of true dofs associated with this set of error indicators.
   auto GlobalTrueVSize() const { return global_true_v_size; }
+  // Add a set of indicators to the running totals.
+  void AddEstimates(const Vector &indicators, double normalization);
+  // Reset a running total of error indicators ready for computing a new running average.
+  void Reset();
 
 protected:
-  friend class ErrorReductionOperator;
   // Elemental localized error indicators. Used for marking elements for
   // refinement and coarsening.
   Vector local_error_indicators;
@@ -71,24 +74,26 @@ protected:
   // Statistics, updated simultaneously with the global error indicator.
   double min, max, mean;
   // Mean normalization constant.
-  double normalization;
-};
-
-// Operator for performing reduction of a vector of local indicators into a
-// global running total for use in adaptation.
-class ErrorReductionOperator
-{
+  double mean_normalization;
   // Number of samples. Mutability required to guarantee operation.
   mutable int n = 0;
-
-public:
-  // Reduce a vector indicators, i, computed with norm p, into the combined
-  // error indicator e.
-  void operator()(ErrorIndicators &e, const IndicatorsAndNormalization &i,
-                  double p = 2) const;
-  // Resets the internal counter for number of samples.
-  void Reset() { n = 0; }
 };
+
+// // Operator for performing reduction of a vector of local indicators into a
+// // global running total for use in adaptation.
+// class ErrorReductionOperator
+// {
+//   // Number of samples. Mutability required to guarantee operation.
+//   mutable int n = 0;
+
+// public:
+//   // Reduce a vector indicators, i, computed with norm p, into the combined
+//   // error indicator e.
+//   void operator()(ErrorIndicators &e, const IndicatorsAndNormalization &i,
+//                   double p = 2) const;
+//   // Resets the internal counter for number of samples.
+//   void Reset() { n = 0; }
+// };
 
 }  // namespace palace
 

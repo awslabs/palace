@@ -266,21 +266,20 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) cons
 
   // Initialize structures for storing and reducing the results of error estimation.
   ErrorIndicators indicators(spaceop.GlobalTrueVSize(), spaceop.GetComm());
-  const ErrorReductionOperator ErrorReducer;
   auto UpdateErrorIndicators =
-      [this, &estimator, &indicators, &ErrorReducer, &postop](const auto &E, int i)
+      [this, &estimator, &indicators, &postop](const auto &E, int i)
   {
     BlockTimer bt0(Timer::ESTSOLVE);
     constexpr bool normalized = true;
-    auto ind = estimator(E, normalized);
+    auto estimate = estimator.ComputeIndicators(E, normalized);
     BlockTimer bt1(Timer::POSTPRO);
-    postop.SetIndicatorGridFunction(ind.indicators);
+    postop.SetIndicatorGridFunction(estimate.indicators);
     // Write the indicator for this mode.
     PostprocessErrorIndicators(
         "m", i, i + 1,
-        ErrorIndicators{ind, indicators.GlobalTrueVSize(), indicators.GetComm()},
+        ErrorIndicators{estimate, indicators.GlobalTrueVSize(), indicators.GetComm()},
         normalized);
-    ErrorReducer(indicators, std::move(ind));
+    indicators.AddEstimates(estimate.indicators, estimate.normalization);
   };
 
   // Postprocess the results.

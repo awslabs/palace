@@ -101,14 +101,11 @@ ErrorIndicators ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop,
   mfem::DenseMatrix C(nstep), Cm(nstep);
   Vector E(Grad->Height()), Vij(Grad->Width());
   ErrorIndicators indicators(laplaceop.GlobalTrueVSize(), laplaceop.GetComm());
-  const ErrorReductionOperator ErrorReducer;
-  auto UpdateErrorIndicators = [this, &estimator, &indicators, &ErrorReducer,
-                                &postop](const auto &V, int i, double idx)
+  auto UpdateErrorIndicators = [this, &estimator, &indicators, &postop](const auto &V, int i, double idx)
   {
     BlockTimer bt0(Timer::ESTSOLVE);
     constexpr bool normalized = true;
-    auto estimate = estimator(V, normalized);
-    ErrorReducer(indicators, estimate);
+    auto estimate = estimator.ComputeIndicators(V, normalized);
     BlockTimer bt1(Timer::POSTPRO);
     // Write the indicator for this mode.
     postop.SetIndicatorGridFunction(estimate.indicators);
@@ -116,7 +113,7 @@ ErrorIndicators ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop,
         "i", i, idx,
         ErrorIndicators{estimate, indicators.GlobalTrueVSize(), indicators.GetComm()},
         normalized);
-    ErrorReducer(indicators, std::move(estimate));
+    indicators.AddEstimates(estimate.indicators, estimate.normalization);
   };
   if (iodata.solver.electrostatic.n_post > 0)
   {

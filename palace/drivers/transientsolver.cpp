@@ -85,21 +85,20 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) 
                                   spaceop.GetNDSpace());
   }();
   ErrorIndicators indicators(spaceop.GlobalTrueVSize(), spaceop.GetComm());
-  ErrorReductionOperator ErrorReducer;
-  auto UpdateErrorIndicators = [this, &estimator, &indicators, &ErrorReducer,
+  auto UpdateErrorIndicators = [this, &estimator, &indicators,
                                 &postop](const auto &E, int step, double time)
   {
     BlockTimer bt0(Timer::ESTSOLVE);
     // Initial flux of zero would return nan.
     bool constexpr normalized = false;
-    auto estimate = estimator(E, normalized);
+    auto estimate = estimator.ComputeIndicators(E, normalized);
     BlockTimer bt1(Timer::POSTPRO);
     postop.SetIndicatorGridFunction(estimate.indicators);
     PostprocessErrorIndicators(
         "t (ns)", step, time,
         ErrorIndicators{estimate, indicators.GlobalTrueVSize(), indicators.GetComm()},
         normalized);
-    ErrorReducer(indicators, std::move(estimate));
+    indicators.AddEstimates(estimate.indicators, estimate.normalization);
   };
 
   // Main time integration loop.

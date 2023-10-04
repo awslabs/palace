@@ -147,13 +147,12 @@ ErrorIndicators DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator 
 
   // Initialize structures for storing and reducing the results of error estimation.
   ErrorIndicators indicators(spaceop.GlobalTrueVSize(), spaceop.GetComm());
-  const ErrorReductionOperator ErrorReducer;
-  auto UpdateErrorIndicators = [this, &estimator, &indicators, &ErrorReducer,
+  auto UpdateErrorIndicators = [this, &estimator, &indicators,
                                 &postop](const auto &E, int step, double f)
   {
     BlockTimer bt0(Timer::ESTSOLVE);
     constexpr bool normalized = true;
-    auto estimate = estimator(E, normalized);
+    auto estimate = estimator.ComputeIndicators(E, normalized);
     BlockTimer bt1(Timer::POSTPRO);
     // Write the indicator for this mode.
     postop.SetIndicatorGridFunction(estimate.indicators);
@@ -161,7 +160,7 @@ ErrorIndicators DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator 
         "f (GHz)", step, f,
         ErrorIndicators{estimate, indicators.GlobalTrueVSize(), indicators.GetComm()},
         normalized);
-    ErrorReducer(indicators, std::move(estimate));
+    indicators.AddEstimates(estimate.indicators, estimate.normalization);
   };
 
   // Main frequency sweep loop.
@@ -284,20 +283,18 @@ ErrorIndicators DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator
   // The error indicators will be calculated for each HDM sample rather than for
   // the online stage.
   ErrorIndicators indicators(spaceop.GlobalTrueVSize(), spaceop.GetComm());
-  ErrorReductionOperator ErrorReducer;
-  auto UpdateErrorIndicators = [this, &estimator, &indicators,
-                                &ErrorReducer](const auto &E, int step, double frequency)
+  auto UpdateErrorIndicators = [this, &estimator, &indicators](const auto &E, int step, double frequency)
   {
     BlockTimer bt0(Timer::ESTSOLVE);
     constexpr bool normalized = true;
-    auto estimate = estimator(E, normalized);
+    auto estimate = estimator.ComputeIndicators(E, normalized);
     BlockTimer bt1(Timer::POSTPRO);
     // Write the indicator for this mode.
     PostprocessErrorIndicators(
         "f (GHz)", step, frequency,
         ErrorIndicators{estimate, indicators.GlobalTrueVSize(), indicators.GetComm()},
         normalized);
-    ErrorReducer(indicators, std::move(estimate));
+    indicators.AddEstimates(estimate.indicators, estimate.normalization);
   };
 
   // Initialize the basis with samples from the top and bottom of the frequency

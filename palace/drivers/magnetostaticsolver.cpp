@@ -105,13 +105,12 @@ ErrorIndicators MagnetostaticSolver::Postprocess(CurlCurlOperator &curlcurlop,
 
   // Initialize structures for storing and reducing the results of error estimation.
   ErrorIndicators indicators(curlcurlop.GlobalTrueVSize(), curlcurlop.GetComm());
-  ErrorReductionOperator ErrorReducer;
-  auto UpdateErrorIndicators = [this, &estimator, &indicators, &ErrorReducer,
+  auto UpdateErrorIndicators = [this, &estimator, &indicators,
                                 &postop](const auto &A, int i, double idx)
   {
     BlockTimer bt0(Timer::ESTSOLVE);
     constexpr bool normalized = true;
-    auto estimate = estimator(A, normalized);
+    auto estimate = estimator.ComputeIndicators(A, normalized);
     BlockTimer bt1(Timer::POSTPRO);
     // Write the indicator for this mode.
     postop.SetIndicatorGridFunction(estimate.indicators);
@@ -119,7 +118,7 @@ ErrorIndicators MagnetostaticSolver::Postprocess(CurlCurlOperator &curlcurlop,
         "i", i, idx,
         ErrorIndicators{estimate, indicators.GlobalTrueVSize(), indicators.GetComm()},
         normalized);
-    ErrorReducer(indicators, std::move(estimate));
+    indicators.AddEstimates(estimate.indicators, estimate.normalization);
   };
   if (iodata.solver.magnetostatic.n_post > 0)
   {

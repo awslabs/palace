@@ -41,11 +41,11 @@ public:
                          mfem::ParFiniteElementSpace &fes);
 
   // Compute elemental error indicators given a complex vector of true DOF.
-  IndicatorsAndNormalization operator()(const ComplexVector &v,
-                                        bool normalize = true) const;
+  IndicatorsAndNormalization ComputeIndicators(const ComplexVector &v,
+                                        bool normalize) const;
 
   // Compute elemental error indicators given a vector of true DOF.
-  IndicatorsAndNormalization operator()(const Vector &v, bool normalize = true) const;
+  IndicatorsAndNormalization ComputeIndicators(const Vector &v, bool normalize ) const;
 };
 
 // Class used for computing grad flux error estimate,
@@ -78,7 +78,7 @@ public:
                          mfem::ParFiniteElementSpace &fes);
 
   // Compute elemental error indicators given a vector of true DOF.
-  IndicatorsAndNormalization operator()(const Vector &v, bool normalize = true) const;
+  IndicatorsAndNormalization ComputeIndicators(const Vector &v, bool normalize) const;
 };
 
 }  // namespace palace
