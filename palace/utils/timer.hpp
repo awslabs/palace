@@ -43,7 +43,6 @@ public:
     NUMTIMINGS
   };
 
-
   // clang-format off
   inline static const std::vector<std::string> descriptions{
       "Initialization",

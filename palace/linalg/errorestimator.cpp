@@ -63,8 +63,8 @@ std::unique_ptr<Operator> BuildMassMatrixOperator(mfem::ParFiniteElementSpaceHie
 
 template <typename SmoothFluxFiniteElementCollection>
 FluxProjector<SmoothFluxFiniteElementCollection>::FluxProjector(
-    mfem::ParFiniteElementSpaceHierarchy &fespaces, double tol, int max_it,
-    int print, int pa_order_threshold)
+    mfem::ParFiniteElementSpaceHierarchy &fespaces, double tol, int max_it, int print,
+    int pa_order_threshold)
   : M(BuildMassMatrixOperator<SmoothFluxFiniteElementCollection>(fespaces,
                                                                  pa_order_threshold))
 {
@@ -83,7 +83,8 @@ FluxProjector<SmoothFluxFiniteElementCollection>::FluxProjector(
     pc = std::move(amg);
   }
 
-  auto pcg = std::make_unique<CgSolver<Operator>>(fespaces.GetFinestFESpace().GetComm(), print);
+  auto pcg =
+      std::make_unique<CgSolver<Operator>>(fespaces.GetFinestFESpace().GetComm(), print);
   pcg->SetInitialGuess(false);
   pcg->SetRelTol(tol);
   pcg->SetAbsTol(std::numeric_limits<double>::epsilon());
