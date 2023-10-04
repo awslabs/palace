@@ -53,9 +53,6 @@ ErrorIndicators::AddEstimates(const Vector &indicators, double normalization)
   // values. The average local indicator is used rather than the indicator for the maximum
   // error to drive the adaptation, to account for a local error that might be marginally
   // important to many solves, rather than only large in one solve.
-
-  // TODO: Could alternatively consider the maximum.
-
   if (n > 0)
   {
     global_error_indicator =

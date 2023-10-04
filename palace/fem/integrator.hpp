@@ -44,7 +44,7 @@ private:
 
 public:
   VectorFEBoundaryLFIntegrator(mfem::VectorCoefficient &QG)
-    : Q(QG), f_loc(QG.GetVDim()), f_hat(QG.GetVDim() - 1)
+    : Q(QG), f_loc(QG.GetVDim())
   {
   }
 
@@ -59,6 +59,7 @@ public:
     vshape.SetSize(dof, dim);
     elvect.SetSize(dof);
     elvect = 0.0;
+    f_hat.SetSize(dim);
 
     for (int i = 0; i < ir->GetNPoints(); i++)
     {

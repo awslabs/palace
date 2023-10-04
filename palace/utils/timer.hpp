@@ -29,11 +29,12 @@ public:
     INIT = 0,
     CONSTRUCT,
     WAVEPORT,      // Wave port solver
-    ESTCONSTRUCT,  // Construction of estimate operator
     SOLVE,
     PRECONDITIONER,  // Linear solver
     COARSESOLVE,     // Linear solver
-    ESTSOLVE,        // Estimation calculation
+    ESTIMATION,      // Estimation
+    ESTCONSTRUCT,    // Construction of estimator
+    ESTSOLVE,        // Evaluation of estimator
     CONSTRUCTPROM,   // Adaptive frequency sweep
     SOLVEPROM,       // Adaptive frequency sweep
     POSTPRO,
@@ -45,11 +46,12 @@ public:
   inline static const std::vector<std::string> descriptions{"Initialization",
                                                             "Operator Construction",
                                                             "  Wave Ports",
-                                                            "  Error Estimate",
                                                             "Solve",
                                                             "  Preconditioner",
                                                             "  Coarse Solve",
-                                                            "  Error Estimate",
+                                                            "Estimation",
+                                                            "  Construction",
+                                                            "  Evaluation",
                                                             "PROM Construction",
                                                             "PROM Solve",
                                                             "Postprocessing",

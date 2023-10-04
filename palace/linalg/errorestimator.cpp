@@ -1,6 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <limits>
 #include "errorestimator.hpp"
 #include "fem/coefficient.hpp"
 #include "fem/integrator.hpp"
@@ -9,40 +10,111 @@
 #include "utils/communication.hpp"
 #include "utils/errorindicators.hpp"
 #include "utils/iodata.hpp"
+#include "linalg/amg.hpp"
+#include "linalg/gmg.hpp"
+#include "linalg/iterative.hpp"
+#include "linalg/rap.hpp"
 
 namespace palace
 {
 
 using namespace fem;
 
+// Given a finite element space hierarchy, construct a vector of mass matrix
+// operators corresponding to each level.
+std::unique_ptr<Operator> BuildMassMatrixOperator(mfem::ParFiniteElementSpaceHierarchy &h,
+                                                  int pa_order_threshold)
+{
+  constexpr int skip_zeros = 0;
+  const bool is_scalar_FE_space =
+      h.GetFESpaceAtLevel(0).GetFE(0)->GetRangeType() == mfem::FiniteElement::SCALAR;
+
+  // Assemble the bilinear form operator
+  auto M = std::make_unique<MultigridOperator>(h.GetNumLevels());
+  for (int l = 0; l < h.GetNumLevels(); l++)
+  {
+    auto &h_l = h.GetFESpaceAtLevel(l);
+    auto m = std::make_unique<mfem::SymmetricBilinearForm>(&h_l);
+
+    if (is_scalar_FE_space)
+    {
+      MFEM_ASSERT(h_l.GetVDim() == 1,
+                  "Scalar mass matrix hierarchy assumes a component-wise solve.");
+      m->AddDomainIntegrator(new mfem::MassIntegrator);
+    }
+    else
+    {
+      m->AddDomainIntegrator(new mfem::VectorFEMassIntegrator);
+    }
+
+    auto M_l = std::make_unique<ParOperator>(
+        fem::AssembleOperator(std::move(m), true, (l > 0) ? pa_order_threshold : 100,
+                              skip_zeros),
+        h_l);
+
+    // Set the essential dofs (none).
+    M->AddOperator(std::move(M_l));
+  }
+  return M;
+}
+
+FluxProjector::FluxProjector(mfem::ParFiniteElementSpaceHierarchy &smooth_flux_fespace,
+                             double tol, int max_it, int print,
+                             int pa_order_threshold)
+  : M(BuildMassMatrixOperator(smooth_flux_fespace, pa_order_threshold))
+{
+  // The system matrix for the projection is real and SPD. For the coarse-level AMG solve,
+  // we don't use an exact solve on the coarsest level.
+  auto amg =
+      std::make_unique<WrapperSolver<Operator>>(std::make_unique<BoomerAmgSolver>(1, 1, 0));
+  auto gmg = std::make_unique<GeometricMultigridSolver<Operator>>(
+      std::move(amg), smooth_flux_fespace, nullptr, 1, 1, 2, 1.0, 0.0, true,
+      pa_order_threshold);
+
+  auto pcg = std::make_unique<CgSolver<Operator>>(
+      smooth_flux_fespace.GetFinestFESpace().GetComm(), print);
+
+  pcg->SetInitialGuess(false);
+  pcg->SetRelTol(tol);
+  pcg->SetAbsTol(std::numeric_limits<double>::epsilon());
+  pcg->SetMaxIter(max_it);
+
+  ksp = std::make_unique<KspSolver>(std::move(pcg), std::move(gmg));
+  ksp->SetOperators(*M, *M);
+
+  tmp.SetSize(smooth_flux_fespace.GetFinestFESpace().GetTrueVSize());
+}
+
+
+
 CurlFluxErrorEstimator::CurlFluxErrorEstimator(
     const IoData &iodata, const MaterialOperator &mat_op,
     const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
-    mfem::ParFiniteElementSpace &fes)
-  : mat_op(mat_op), fes(fes),
+    mfem::ParFiniteElementSpace &fespace)
+  : mat_op(mat_op), fespace(fespace),
     smooth_flux_fecs(ConstructFECollections<mfem::ND_FECollection>(
         iodata.solver.order, mesh.back()->Dimension(), iodata.solver.linear.mg_max_levels,
         iodata.solver.linear.mg_coarsen_type, iodata.solver.linear.pc_mat_lor)),
-    smooth_flux_fes(ConstructFiniteElementSpaceHierarchy<mfem::ND_FECollection>(
+    smooth_flux_fespace(ConstructFiniteElementSpaceHierarchy<mfem::ND_FECollection>(
         iodata.solver.linear.mg_max_levels, iodata.solver.linear.mg_legacy_transfer,
         iodata.solver.pa_order_threshold, mesh, smooth_flux_fecs)),
-    smooth_projector(smooth_flux_fes, iodata.solver.linear.tol, 200, 0,
+    smooth_projector(smooth_flux_fespace, iodata.solver.linear.tol, 200, 0,
                      iodata.solver.pa_order_threshold),
     coarse_flux_fec(iodata.solver.order, mesh.back()->Dimension(),
                     mfem::BasisType::GaussLobatto),
-    coarse_flux_fes(mesh.back().get(), &coarse_flux_fec, mesh.back()->Dimension()),
-    scalar_mass_matrices(fes.GetNE()), smooth_to_coarse_embed(fes.GetNE())
+    coarse_flux_fespace(mesh.back().get(), &coarse_flux_fec, mesh.back()->Dimension()),
+    scalar_mass_matrices(fespace.GetNE()), smooth_to_coarse_embed(fespace.GetNE())
 {
   mfem::MassIntegrator mass_integrator;
-  for (int e = 0; e < fes.GetNE(); e++)
+  for (int e = 0; e < fespace.GetNE(); e++)
   {
     // Loop over each element, and save an elemental mass matrix.
     // Will exploit the fact that vector L2 mass matrix components are independent.
-    const auto &coarse_fe = *coarse_flux_fes.GetFE(e);
-    auto &T = *coarse_flux_fes.GetElementTransformation(e);
+    const auto &coarse_fe = *coarse_flux_fespace.GetFE(e);
+    auto &T = *coarse_flux_fespace.GetElementTransformation(e);
     mass_integrator.AssembleElementMatrix(coarse_fe, T, scalar_mass_matrices[e]);
 
-    const auto &smooth_fe = *smooth_flux_fes.GetFinestFESpace().GetFE(e);
+    const auto &smooth_fe = *smooth_flux_fespace.GetFinestFESpace().GetFE(e);
     coarse_fe.Project(smooth_fe, T, smooth_to_coarse_embed[e]);
   }
 }
@@ -50,29 +122,30 @@ CurlFluxErrorEstimator::CurlFluxErrorEstimator(
 IndicatorsAndNormalization CurlFluxErrorEstimator::ComputeIndicators(const ComplexVector &v,
                                                               bool normalize) const
 {
-  mfem::ParComplexGridFunction field(&fes);
+  const int sdim = fespace.GetMesh()->SpaceDimension();
+  mfem::ParComplexGridFunction field(&fespace);
   field.real().SetFromTrueDofs(v.Real());
   field.imag().SetFromTrueDofs(v.Imag());
-  const int nelem = smooth_flux_fes.GetFinestFESpace().GetNE();
+  const int nelem = smooth_flux_fespace.GetFinestFESpace().GetNE();
 
   // Coefficients for computing the discontinuous flux., i.e. (W, μ⁻¹∇ × V).
   CurlFluxCoefficient real_coef(field.real(), mat_op), imag_coef(field.imag(), mat_op);
-  auto rhs_from_coef = [](mfem::ParFiniteElementSpace &flux_fes, auto &coef)
+  auto rhs_from_coef = [](mfem::ParFiniteElementSpace &flux_fespace, auto &coef)
   {
-    Vector RHS(flux_fes.GetTrueVSize());
+    Vector RHS(flux_fespace.GetTrueVSize());
 
-    mfem::LinearForm rhs(&flux_fes);
+    mfem::LinearForm rhs(&flux_fespace);
     rhs.AddDomainIntegrator(new VectorFEDomainLFIntegrator(coef));
     rhs.UseFastAssembly(false);
     rhs.Assemble();
-    flux_fes.GetProlongationMatrix()->MultTranspose(rhs, RHS);
+    flux_fespace.GetProlongationMatrix()->MultTranspose(rhs, RHS);
 
     return RHS;
   };
 
   const auto smooth_flux_rhs =
-      ComplexVector(rhs_from_coef(smooth_flux_fes.GetFinestFESpace(), real_coef),
-                    rhs_from_coef(smooth_flux_fes.GetFinestFESpace(), imag_coef));
+      ComplexVector(rhs_from_coef(smooth_flux_fespace.GetFinestFESpace(), real_coef),
+                    rhs_from_coef(smooth_flux_fespace.GetFinestFESpace(), imag_coef));
 
   // Given the RHS vector of non-smooth flux, construct a flux projector and perform mass
   // matrix inversion in the appropriate space, giving f = M⁻¹ f̂.
@@ -87,17 +160,17 @@ IndicatorsAndNormalization CurlFluxErrorEstimator::ComputeIndicators(const Compl
 
   // Given a complex solution represented with a ComplexVector, build a ComplexGridFunction
   // for evaluation.
-  auto build_func = [](const ComplexVector &f, mfem::ParFiniteElementSpace &fes)
+  auto build_func = [](const ComplexVector &f, mfem::ParFiniteElementSpace &fespace)
   {
-    mfem::ParComplexGridFunction flux(&fes);
+    mfem::ParComplexGridFunction flux(&fespace);
     flux.real().SetFromTrueDofs(f.Real());
     flux.imag().SetFromTrueDofs(f.Imag());
     flux.real().ExchangeFaceNbrData();
     flux.imag().ExchangeFaceNbrData();
     return flux;
   };
-  auto smooth_flux_func = build_func(smooth_flux, smooth_flux_fes.GetFinestFESpace());
-  mfem::ParComplexGridFunction coarse_flux_func(&coarse_flux_fes);
+  auto smooth_flux_func = build_func(smooth_flux, smooth_flux_fespace.GetFinestFESpace());
+  mfem::ParComplexGridFunction coarse_flux_func(&coarse_flux_fespace);
   coarse_flux_func.real().ProjectCoefficient(real_coef);
   coarse_flux_func.imag().ProjectCoefficient(imag_coef);
 
@@ -106,13 +179,13 @@ IndicatorsAndNormalization CurlFluxErrorEstimator::ComputeIndicators(const Compl
   Vector smooth_vec, coarse_vec, sub_vec, estimates(nelem);
   estimates = 0.0;
   double normalization = 0.0;
-  for (int e = 0; e < fes.GetNE(); e++)
+  for (int e = 0; e < fespace.GetNE(); e++)
   {
     // real
     smooth_flux_func.real().GetElementDofValues(e, smooth_vec);
     coarse_flux_func.real().GetElementDofValues(e, coarse_vec);
 
-    const int ndof = coarse_vec.Size() / 3;
+    const int ndof = coarse_vec.Size() / sdim;
     sub_vec.SetSize(ndof);
     for (int c = 0; c < 3; c++)
     {
@@ -160,25 +233,26 @@ IndicatorsAndNormalization CurlFluxErrorEstimator::ComputeIndicators(const Compl
 IndicatorsAndNormalization CurlFluxErrorEstimator::ComputeIndicators(const Vector &v,
                                                               bool normalize) const
 {
-  mfem::ParGridFunction field(&fes);
+  const int sdim = fespace.GetMesh()->SpaceDimension();
+  mfem::ParGridFunction field(&fespace);
   field.SetFromTrueDofs(v);
-  const int nelem = smooth_flux_fes.GetFinestFESpace().GetNE();
+  const int nelem = smooth_flux_fespace.GetFinestFESpace().GetNE();
 
   // Coefficients for computing the discontinuous flux., i.e. (W, μ⁻¹∇ × V).
   CurlFluxCoefficient coef(field, mat_op);
-  auto rhs_from_coef = [](mfem::ParFiniteElementSpace &flux_fes, auto &coef)
+  auto rhs_from_coef = [](mfem::ParFiniteElementSpace &flux_fespace, auto &coef)
   {
-    Vector RHS(flux_fes.GetTrueVSize());
+    Vector RHS(flux_fespace.GetTrueVSize());
 
-    mfem::LinearForm rhs(&flux_fes);
+    mfem::LinearForm rhs(&flux_fespace);
     rhs.AddDomainIntegrator(new VectorFEDomainLFIntegrator(coef));
     rhs.UseFastAssembly(false);
     rhs.Assemble();
-    flux_fes.GetProlongationMatrix()->MultTranspose(rhs, RHS);
+    flux_fespace.GetProlongationMatrix()->MultTranspose(rhs, RHS);
 
     return RHS;
   };
-  const auto smooth_flux_rhs = rhs_from_coef(smooth_flux_fes.GetFinestFESpace(), coef);
+  const auto smooth_flux_rhs = rhs_from_coef(smooth_flux_fespace.GetFinestFESpace(), coef);
 
   // Given the RHS vector of non-smooth flux, construct a flux projector and perform mass
   // matrix inversion in the appropriate space, giving f = M⁻¹ f̂.
@@ -193,15 +267,15 @@ IndicatorsAndNormalization CurlFluxErrorEstimator::ComputeIndicators(const Vecto
 
   // Given a complex solution represented with a ComplexVector, build a ComplexGridFunction
   // for evaluation.
-  auto build_func = [](const Vector &f, mfem::ParFiniteElementSpace &fes)
+  auto build_func = [](const Vector &f, mfem::ParFiniteElementSpace &fespace)
   {
-    mfem::ParGridFunction flux(&fes);
+    mfem::ParGridFunction flux(&fespace);
     flux.SetFromTrueDofs(f);
     flux.ExchangeFaceNbrData();
     return flux;
   };
-  auto smooth_flux_func = build_func(smooth_flux, smooth_flux_fes.GetFinestFESpace());
-  mfem::ParGridFunction coarse_flux_func(&coarse_flux_fes);
+  auto smooth_flux_func = build_func(smooth_flux, smooth_flux_fespace.GetFinestFESpace());
+  mfem::ParGridFunction coarse_flux_func(&coarse_flux_fespace);
   coarse_flux_func.ProjectCoefficient(coef);
 
   // Loop over elements, embed the smooth flux into the coarse flux space, then compute
@@ -209,12 +283,12 @@ IndicatorsAndNormalization CurlFluxErrorEstimator::ComputeIndicators(const Vecto
   Vector smooth_vec, coarse_vec, sub_vec, estimates(nelem);
   estimates = 0.0;
   double normalization = 0.0;
-  for (int e = 0; e < fes.GetNE(); e++)
+  for (int e = 0; e < fespace.GetNE(); e++)
   {
     smooth_flux_func.GetElementDofValues(e, smooth_vec);
     coarse_flux_func.GetElementDofValues(e, coarse_vec);
 
-    const int ndof = coarse_vec.Size() / 3;
+    const int ndof = coarse_vec.Size() / sdim;
     sub_vec.SetSize(ndof);
     for (int c = 0; c < 3; c++)
     {
@@ -245,34 +319,34 @@ IndicatorsAndNormalization CurlFluxErrorEstimator::ComputeIndicators(const Vecto
 GradFluxErrorEstimator::GradFluxErrorEstimator(
     const IoData &iodata, const MaterialOperator &mat_op,
     const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
-    mfem::ParFiniteElementSpace &fes)
-  : mat_op(mat_op), fes(fes),
+    mfem::ParFiniteElementSpace &fespace)
+  : mat_op(mat_op), fespace(fespace),
     smooth_flux_fecs(ConstructFECollections<mfem::H1_FECollection>(
         iodata.solver.order, mesh.back()->Dimension(), iodata.solver.linear.mg_max_levels,
         iodata.solver.linear.mg_coarsen_type, false)),
-    smooth_flux_component_fes(ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
+    smooth_flux_component_fespace(ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
         iodata.solver.linear.mg_max_levels, iodata.solver.linear.mg_legacy_transfer,
         iodata.solver.pa_order_threshold, mesh, smooth_flux_fecs)),
-    smooth_flux_fes(mesh.back().get(), smooth_flux_fecs.back().get(),
+    smooth_flux_fespace(mesh.back().get(), smooth_flux_fecs.back().get(),
                     mesh.back()->Dimension()),
-    smooth_projector(smooth_flux_component_fes, iodata.solver.linear.tol, 200, 0,
+    smooth_projector(smooth_flux_component_fespace, iodata.solver.linear.tol, 200, 0,
                      iodata.solver.pa_order_threshold),
     coarse_flux_fec(iodata.solver.order, mesh.back()->Dimension(),
                     mfem::BasisType::GaussLobatto),
-    coarse_flux_fes(mesh.back().get(), &coarse_flux_fec, mesh.back()->Dimension()),
-    scalar_mass_matrices(fes.GetNE()), smooth_to_coarse_embed(fes.GetNE())
+    coarse_flux_fespace(mesh.back().get(), &coarse_flux_fec, mesh.back()->Dimension()),
+    scalar_mass_matrices(fespace.GetNE()), smooth_to_coarse_embed(fespace.GetNE())
 {
   mfem::MassIntegrator mass_integrator;
 
-  for (int e = 0; e < fes.GetNE(); e++)
+  for (int e = 0; e < fespace.GetNE(); e++)
   {
     // Loop over each element, and save an elemental mass matrix.
     // Will exploit the fact that vector L2 mass matrix components are independent.
-    const auto &coarse_fe = *coarse_flux_fes.GetFE(e);
-    auto &T = *fes.GetElementTransformation(e);
+    const auto &coarse_fe = *coarse_flux_fespace.GetFE(e);
+    auto &T = *fespace.GetElementTransformation(e);
     mass_integrator.AssembleElementMatrix(coarse_fe, T, scalar_mass_matrices[e]);
 
-    const auto &smooth_fe = *smooth_flux_component_fes.GetFinestFESpace().GetFE(e);
+    const auto &smooth_fe = *smooth_flux_component_fespace.GetFinestFESpace().GetFE(e);
     coarse_fe.Project(smooth_fe, T, smooth_to_coarse_embed[e]);
   }
 }
@@ -280,29 +354,30 @@ GradFluxErrorEstimator::GradFluxErrorEstimator(
 IndicatorsAndNormalization GradFluxErrorEstimator::ComputeIndicators(const Vector &v,
                                                               bool normalize) const
 {
-  mfem::ParGridFunction field(&fes);
+  const int sdim = fespace.GetMesh()->SpaceDimension();
+  mfem::ParGridFunction field(&fespace);
   field.SetFromTrueDofs(v);
-  const int nelem = smooth_flux_fes.GetNE();
+  const int nelem = smooth_flux_fespace.GetNE();
 
   // Coefficients for computing the discontinuous flux., i.e. (V, ϵ ∇ ϕ).
   GradFluxCoefficient coef(field, mat_op);
-  auto rhs_from_coef = [](mfem::ParFiniteElementSpace &fes, auto &coef)
+  auto rhs_from_coef = [](mfem::ParFiniteElementSpace &fespace, auto &coef)
   {
-    Vector RHS(fes.GetTrueVSize());
+    Vector RHS(fespace.GetTrueVSize());
 
-    mfem::LinearForm rhs(&fes);
+    mfem::LinearForm rhs(&fespace);
     rhs.AddDomainIntegrator(new mfem::VectorDomainLFIntegrator(coef));
     rhs.UseFastAssembly(false);
     rhs.Assemble();
-    fes.GetProlongationMatrix()->MultTranspose(rhs, RHS);
+    fespace.GetProlongationMatrix()->MultTranspose(rhs, RHS);
 
     return RHS;
   };
-  auto smooth_flux_rhs = rhs_from_coef(smooth_flux_fes, coef);
+  auto smooth_flux_rhs = rhs_from_coef(smooth_flux_fespace, coef);
 
   // Given the RHS vector of non-smooth flux, construct a flux projector and perform
   // component wise mass matrix inversion in the appropriate space, giving fᵢ = M⁻¹ f̂ᵢ.
-  auto build_flux = [](const FluxProjector &proj, Vector &rhs)
+  auto build_flux = [sdim](const FluxProjector &proj, Vector &rhs)
   {
     // Use a copy construction to match appropriate size.
     Vector flux(rhs.Size());
@@ -310,7 +385,7 @@ IndicatorsAndNormalization GradFluxErrorEstimator::ComputeIndicators(const Vecto
 
     // Apply the flux projector component wise.
     const int ndof = flux.Size();
-    const int stride = ndof / 3;
+    const int stride = ndof / sdim;
     MFEM_ASSERT(ndof % 3 == 0, "!");
 
     Vector flux_comp, rhs_comp;
@@ -325,22 +400,22 @@ IndicatorsAndNormalization GradFluxErrorEstimator::ComputeIndicators(const Vecto
   auto smooth_flux = build_flux(smooth_projector, smooth_flux_rhs);
 
   // Given a solution represented with a Vector, build a GridFunction for evaluation.
-  auto build_func = [](const Vector &f, mfem::ParFiniteElementSpace &fes)
+  auto build_func = [](const Vector &f, mfem::ParFiniteElementSpace &fespace)
   {
-    mfem::ParGridFunction flux(&fes);
+    mfem::ParGridFunction flux(&fespace);
     flux.SetFromTrueDofs(f);
     flux.ExchangeFaceNbrData();
     return flux;
   };
-  auto smooth_flux_func = build_func(smooth_flux, smooth_flux_fes);
+  auto smooth_flux_func = build_func(smooth_flux, smooth_flux_fespace);
 
-  mfem::ParGridFunction coarse_flux(&coarse_flux_fes);
+  mfem::ParGridFunction coarse_flux(&coarse_flux_fespace);
   coarse_flux.ProjectCoefficient(coef);
 
   Vector coarse_vec, smooth_vec, coarse_sub_vec, smooth_sub_vec, estimates(nelem);
   estimates = 0.0;
   double normalization = 0.0;
-  for (int e = 0; e < fes.GetNE(); e++)
+  for (int e = 0; e < fespace.GetNE(); e++)
   {
     coarse_flux.GetElementDofValues(e, coarse_vec);
     smooth_flux_func.GetElementDofValues(e, smooth_vec);
@@ -350,7 +425,7 @@ IndicatorsAndNormalization GradFluxErrorEstimator::ComputeIndicators(const Vecto
                 "and should be exactly divisible by 3: "
                     << coarse_vec.Size() << " " << smooth_vec.Size());
 
-    const int ndof = coarse_vec.Size() / 3;
+    const int ndof = coarse_vec.Size() / sdim;
     coarse_sub_vec.SetSize(ndof);
     smooth_sub_vec.SetSize(ndof);
     for (int c = 0; c < 3; c++)
@@ -371,15 +446,15 @@ IndicatorsAndNormalization GradFluxErrorEstimator::ComputeIndicators(const Vecto
   if constexpr (false)
   {
     // Debugging branch generates some intermediate fields for paraview.
-    mfem::ParaViewDataCollection paraview("debug", fes.GetParMesh());
+    mfem::ParaViewDataCollection paraview("debug", fespace.GetParMesh());
     paraview.RegisterVCoeffField("Flux", &coef);
 
-    auto smooth_flux_func = build_func(smooth_flux, smooth_flux_fes);
+    auto smooth_flux_func = build_func(smooth_flux, smooth_flux_fespace);
     paraview.RegisterField("SmoothFlux", &smooth_flux_func);
 
     mfem::L2_FECollection est_fec(0, 3);
-    mfem::ParFiniteElementSpace est_fes(fes.GetParMesh(), &est_fec);
-    mfem::ParGridFunction est_field(&est_fes);
+    mfem::ParFiniteElementSpace est_fespace(fespace.GetParMesh(), &est_fec);
+    mfem::ParGridFunction est_field(&est_fespace);
     est_field.SetFromTrueDofs(estimates);
 
     paraview.RegisterField("ErrorIndicator", &est_field);
@@ -392,4 +467,6 @@ IndicatorsAndNormalization GradFluxErrorEstimator::ComputeIndicators(const Vecto
   }
   return {estimates, normalization};
 }
+
+
 }  // namespace palace
