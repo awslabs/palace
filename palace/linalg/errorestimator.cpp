@@ -63,31 +63,36 @@ std::unique_ptr<Operator> BuildMassMatrixOperator(mfem::ParFiniteElementSpaceHie
 
 template <typename SmoothFluxFiniteElementCollection>
 FluxProjector<SmoothFluxFiniteElementCollection>::FluxProjector(
-    mfem::ParFiniteElementSpaceHierarchy &smooth_flux_fespace, double tol, int max_it,
+    mfem::ParFiniteElementSpaceHierarchy &fespaces, double tol, int max_it,
     int print, int pa_order_threshold)
-  : M(BuildMassMatrixOperator<SmoothFluxFiniteElementCollection>(smooth_flux_fespace,
+  : M(BuildMassMatrixOperator<SmoothFluxFiniteElementCollection>(fespaces,
                                                                  pa_order_threshold))
 {
   // The system matrix for the projection is real and SPD. For the coarse-level AMG solve,
   // we don't use an exact solve on the coarsest level.
   auto amg =
       std::make_unique<WrapperSolver<Operator>>(std::make_unique<BoomerAmgSolver>(1, 1, 0));
-  auto gmg = std::make_unique<GeometricMultigridSolver<Operator>>(
-      std::move(amg), smooth_flux_fespace, nullptr, 1, 1, 2, 1.0, 0.0, true,
-      pa_order_threshold);
+  std::unique_ptr<Solver<Operator>> pc;
+  if (fespaces.GetNumLevels() > 1)
+  {
+    pc = std::make_unique<GeometricMultigridSolver<Operator>>(
+        std::move(amg), fespaces, nullptr, 1, 1, 2, 1.0, 0.0, true, pa_order_threshold);
+  }
+  else
+  {
+    pc = std::move(amg);
+  }
 
-  auto pcg = std::make_unique<CgSolver<Operator>>(
-      smooth_flux_fespace.GetFinestFESpace().GetComm(), print);
-
+  auto pcg = std::make_unique<CgSolver<Operator>>(fespaces.GetFinestFESpace().GetComm(), print);
   pcg->SetInitialGuess(false);
   pcg->SetRelTol(tol);
   pcg->SetAbsTol(std::numeric_limits<double>::epsilon());
   pcg->SetMaxIter(max_it);
 
-  ksp = std::make_unique<KspSolver>(std::move(pcg), std::move(gmg));
+  ksp = std::make_unique<KspSolver>(std::move(pcg), std::move(pc));
   ksp->SetOperators(*M, *M);
 
-  tmp.SetSize(smooth_flux_fespace.GetFinestFESpace().GetTrueVSize());
+  tmp.SetSize(fespaces.GetFinestFESpace().GetTrueVSize());
 }
 
 CurlFluxErrorEstimator::CurlFluxErrorEstimator(
