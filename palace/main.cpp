@@ -7,7 +7,6 @@
 #include <string_view>
 #include <vector>
 #include <mfem.hpp>
-
 #include "drivers/drivensolver.hpp"
 #include "drivers/eigensolver.hpp"
 #include "drivers/electrostaticsolver.hpp"

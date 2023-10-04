@@ -65,8 +65,9 @@ class CurlFluxErrorEstimator
   const MaterialOperator &mat_op;
   // The finite element space used to represent V, and F.
   mfem::ParFiniteElementSpaceHierarchy &nd_fespaces;
-  mutable FluxProjector<mfem::ND_FECollection> smooth_projector;
+  FluxProjector<mfem::ND_FECollection> smooth_projector;
   mutable Vector smooth_flux, flux_rhs;
+  mutable mfem::ParGridFunction field_gf, smooth_flux_gf;
 
 public:
   // Constructor for using geometric and p multigrid.
@@ -75,7 +76,7 @@ public:
 
   // Compute elemental error indicators given a complex vector of true DOF.
   template <typename VectorType>
-  ErrorIndicators ComputeIndicators(const VectorType &v, bool normalize);
+  ErrorIndicators ComputeIndicators(const VectorType &v, bool normalize) const;
 };
 
 // Class used for computing grad flux error estimate, i.e. || ϵ ∇ ϕₕ - F ||_K where F
@@ -86,8 +87,9 @@ class GradFluxErrorEstimator
   // The finite element space used to represent ϕ, and components of F
   mfem::ParFiniteElementSpaceHierarchy &h1_fespaces;
 
-  mutable FluxProjector<mfem::H1_FECollection> smooth_projector;
+  FluxProjector<mfem::H1_FECollection> smooth_projector;
   mutable Vector smooth_flux, flux_rhs;
+  mutable mfem::ParGridFunction field_gf, smooth_flux_gf;
 
 public:
   // Constructor for using geometric and p multigrid.
