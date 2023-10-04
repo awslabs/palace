@@ -73,8 +73,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &me
   auto estimator = [&]()
   {
     BlockTimer bt(Timer::ESTCONSTRUCT);
-    return GradFluxErrorEstimator(iodata, laplaceop.GetMaterialOp(), mesh,
-                                  laplaceop.GetH1Space());
+    return GradFluxErrorEstimator(iodata, laplaceop.GetMaterialOp(), laplaceop.GetH1Spaces());
   }();
 
   // Postprocess the capacitance matrix from the computed field solutions.
@@ -85,7 +84,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &me
 
 ErrorIndicators ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop,
                                                  PostOperator &postop,
-                                                 const GradFluxErrorEstimator &estimator,
+                                                 GradFluxErrorEstimator &estimator,
                                                  const std::vector<Vector> &V) const
 {
   // Postprocess the Maxwell capacitance matrix. See p. 97 of the COMSOL AC/DC Module manual
@@ -104,7 +103,7 @@ ErrorIndicators ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop,
   auto UpdateErrorIndicators =
       [this, &estimator, &indicators, &postop](const auto &V, int i, double idx)
   {
-    BlockTimer bt0(Timer::ESTSOLVE);
+    BlockTimer bt0(Timer::ESTIMATION);
     constexpr bool normalized = true;
     auto estimate = estimator.ComputeIndicators(V, normalized);
     BlockTimer bt1(Timer::POSTPRO);
@@ -133,6 +132,7 @@ ErrorIndicators ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop,
     PostprocessDomains(postop, "i", i, idx, Ue, 0.0, 0.0, 0.0);
     PostprocessSurfaces(postop, "i", i, idx, Ue, 0.0, 1.0, 0.0);
     PostprocessProbes(postop, "i", i, idx);
+    Mpi::Print("Computing error estimates for terminal {:d}\n", idx);
     UpdateErrorIndicators(V[i], i, idx);
     if (i < iodata.solver.electrostatic.n_post)
     {

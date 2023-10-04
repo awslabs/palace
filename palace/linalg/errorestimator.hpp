@@ -83,28 +83,16 @@ public:
 class GradFluxErrorEstimator
 {
   const MaterialOperator &mat_op;
-  // The finite element space used to represent ϕ.
-  mfem::ParFiniteElementSpace &fespace;
+  // The finite element space used to represent ϕ, and components of F
+  mfem::ParFiniteElementSpaceHierarchy &h1_fespaces;
 
-  // Collections and spaces for the smooth flux. Note the hierarchy uses the SCALAR finite
-  // element space, whilst the true flux is in the VECTOR finite element space. This allows
-  // for a component wise inversion.
-  std::vector<std::unique_ptr<mfem::H1_FECollection>> smooth_flux_fecs;
-  mutable mfem::ParFiniteElementSpaceHierarchy smooth_flux_component_fespace;
-  mutable mfem::ParFiniteElementSpace smooth_flux_fespace;
   mutable FluxProjector<mfem::H1_FECollection> smooth_projector;
-
-  mfem::L2_FECollection coarse_flux_fec;
-  mutable mfem::ParFiniteElementSpace coarse_flux_fespace;
-
-  std::vector<mfem::DenseMatrix> scalar_mass_matrices;
-  std::vector<mfem::DenseMatrix> smooth_to_coarse_embed;
+  mutable Vector smooth_flux, flux_rhs;
 
 public:
   // Constructor for using geometric and p multigrid.
   GradFluxErrorEstimator(const IoData &iodata, const MaterialOperator &mat_op,
-                         const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh,
-                         mfem::ParFiniteElementSpace &fespace);
+                         mfem::ParFiniteElementSpaceHierarchy &h1_fespaces);
 
   // Compute elemental error indicators given a vector of true DOF.
   IndicatorsAndNormalization ComputeIndicators(const Vector &v, bool normalize) const;

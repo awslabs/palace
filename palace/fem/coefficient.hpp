@@ -503,26 +503,35 @@ public:
 };
 
 // Computes the flux, ϵ ∇ ϕ, of the electrostatic potential ϕ.
-class GradFluxCoefficient : public mfem::VectorCoefficient
+class GradFluxCoefficient : public mfem::Coefficient
 {
 private:
-  const mfem::ParGridFunction &phi;
+  const mfem::ParGridFunction &gf;
   const MaterialOperator &mat_op;
-  mfem::Vector grad;
+  mfem::Vector grad, V;
+  int component;
 
 public:
   GradFluxCoefficient(const mfem::ParGridFunction &gf, const MaterialOperator &mat_op)
-    : mfem::VectorCoefficient(gf.ParFESpace()->GetParMesh()->SpaceDimension()), phi(gf),
-      mat_op(mat_op), grad(3)
+    : mfem::Coefficient(), gf(gf), mat_op(mat_op),
+    grad(gf.ParFESpace()->GetParMesh()->SpaceDimension()),
+    V(gf.ParFESpace()->GetParMesh()->SpaceDimension()), component(-1)
   {
   }
 
-  void Eval(mfem::Vector &V, mfem::ElementTransformation &T,
-            const mfem::IntegrationPoint &ip) override
+  // Specify the component
+  void SetComponent(int i)
   {
-    V.SetSize(3);
-    phi.GetGradient(T, grad);
+    MFEM_ASSERT(i >= 0 && i < gf.ParFESpace()->GetParMesh()->SpaceDimension(), "Invalid component index!");
+    component = i;
+  }
+
+  double Eval(mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip) override
+  {
+    MFEM_ASSERT(component >= 0 && component < gf.ParFESpace()->GetParMesh()->SpaceDimension(), "Invalid component index, try calling SetComponent(int)!");
+    gf.GetGradient(T, grad);
     mat_op.GetPermittivityReal(T.Attribute).Mult(grad, V);
+    return V(component);
   }
 };
 

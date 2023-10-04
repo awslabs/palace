@@ -79,22 +79,6 @@ protected:
   mutable int n = 0;
 };
 
-// // Operator for performing reduction of a vector of local indicators into a
-// // global running total for use in adaptation.
-// class ErrorReductionOperator
-// {
-//   // Number of samples. Mutability required to guarantee operation.
-//   mutable int n = 0;
-
-// public:
-//   // Reduce a vector indicators, i, computed with norm p, into the combined
-//   // error indicator e.
-//   void operator()(ErrorIndicators &e, const IndicatorsAndNormalization &i,
-//                   double p = 2) const;
-//   // Resets the internal counter for number of samples.
-//   void Reset() { n = 0; }
-// };
-
 }  // namespace palace
 
 #endif  // PALACE_UTILS_ERROR_INDICATORS_HPP

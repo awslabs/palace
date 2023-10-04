@@ -37,7 +37,7 @@ class ElectrostaticSolver : public BaseSolver
 {
 private:
   ErrorIndicators Postprocess(LaplaceOperator &laplaceop, PostOperator &postop,
-                              const GradFluxErrorEstimator &estimator,
+                              GradFluxErrorEstimator &estimator,
                               const std::vector<Vector> &V) const;
 
   void PostprocessTerminals(const std::map<int, mfem::Array<int>> &terminal_sources,
