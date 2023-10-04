@@ -57,8 +57,10 @@ public:
   inline auto GetMeanErrorIndicator(MPI_Comm comm) const
   {
     int size = local.Size();
-    auto global_error_indicator = GetGlobalErrorIndicator(comm);
-    return global_error_indicator / size;
+    Mpi::GlobalSum(1, &size, comm);
+    auto sum = std::accumulate(local.begin(), local.end(), 0.0);
+    Mpi::GlobalSum(1, &sum, comm);
+    return sum / size;
   }
   // Return the normalization constant for the absolute error.
   inline auto GetNormalization() const { return normalization; }
