@@ -567,7 +567,8 @@ void BaseSolver::PostprocessFields(const PostOperator &postop, int step, double 
 }
 
 void BaseSolver::PostprocessErrorIndicators(const std::string &name, int step, double time,
-                                            double global, double min, double max, double mean, double normalization,
+                                            double global, double min, double max,
+                                            double mean, double normalization,
                                             bool normalized) const
 {
   if (post_dir.length() == 0)
@@ -605,8 +606,9 @@ void BaseSolver::PostprocessErrorIndicators(const std::string &name, int step, d
   }
 }
 
-void BaseSolver::PostprocessErrorIndicators(const std::string &name,
-                                            double global, double min, double max, double mean, double normalization) const
+void BaseSolver::PostprocessErrorIndicators(const std::string &name, double global,
+                                            double min, double max, double mean,
+                                            double normalization) const
 {
   if (post_dir.length() == 0)
   {

@@ -146,22 +146,20 @@ ErrorIndicators DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator 
 
   // Initialize structures for storing and reducing the results of error estimation.
   ErrorIndicators combined_indicators;
-  auto UpdateErrorIndicators =
-      [this, &estimator, &combined_indicators, &postop, &spaceop](const auto &E, int step, double f)
+  auto UpdateErrorIndicators = [this, &estimator, &combined_indicators, &postop,
+                                &spaceop](const auto &E, int step, double f)
   {
     BlockTimer bt0(Timer::ESTIMATION);
     constexpr bool normalized = true;
     auto indicators = estimator.ComputeIndicators(E, normalized);
     BlockTimer bt1(Timer::POSTPRO);
     postop.SetIndicatorGridFunction(indicators.GetLocalErrorIndicators());
-    PostprocessErrorIndicators(
-        "f (GHz)", step, f,
-        indicators.GetGlobalErrorIndicator(spaceop.GetComm()),
-        indicators.GetMinErrorIndicator(spaceop.GetComm()),
-        indicators.GetMaxErrorIndicator(spaceop.GetComm()),
-        indicators.GetMeanErrorIndicator(spaceop.GetComm()),
-        indicators.GetNormalization(),
-        normalized);
+    PostprocessErrorIndicators("f (GHz)", step, f,
+                               indicators.GetGlobalErrorIndicator(spaceop.GetComm()),
+                               indicators.GetMinErrorIndicator(spaceop.GetComm()),
+                               indicators.GetMaxErrorIndicator(spaceop.GetComm()),
+                               indicators.GetMeanErrorIndicator(spaceop.GetComm()),
+                               indicators.GetNormalization(), normalized);
     combined_indicators.AddIndicators(indicators);
   };
 
@@ -226,11 +224,11 @@ ErrorIndicators DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator 
   }
   SaveMetadata(ksp);
   PostprocessErrorIndicators("Mean",
-        combined_indicators.GetGlobalErrorIndicator(spaceop.GetComm()),
-        combined_indicators.GetMinErrorIndicator(spaceop.GetComm()),
-        combined_indicators.GetMaxErrorIndicator(spaceop.GetComm()),
-        combined_indicators.GetMeanErrorIndicator(spaceop.GetComm()),
-        combined_indicators.GetNormalization());
+                             combined_indicators.GetGlobalErrorIndicator(spaceop.GetComm()),
+                             combined_indicators.GetMinErrorIndicator(spaceop.GetComm()),
+                             combined_indicators.GetMaxErrorIndicator(spaceop.GetComm()),
+                             combined_indicators.GetMeanErrorIndicator(spaceop.GetComm()),
+                             combined_indicators.GetNormalization());
   return combined_indicators;
 }
 
@@ -290,21 +288,19 @@ ErrorIndicators DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator
   // The error indicators will be calculated for each HDM sample rather than for
   // the online stage.
   ErrorIndicators combined_indicators;
-  auto UpdateErrorIndicators =
-      [this, &estimator, &combined_indicators, &spaceop](const auto &E, int step, double frequency)
+  auto UpdateErrorIndicators = [this, &estimator, &combined_indicators,
+                                &spaceop](const auto &E, int step, double frequency)
   {
     BlockTimer bt0(Timer::ESTIMATION);
     constexpr bool normalized = true;
     auto indicators = estimator.ComputeIndicators(E, normalized);
     BlockTimer bt1(Timer::POSTPRO);
-    PostprocessErrorIndicators(
-        "f (GHz)", step, frequency,
-        indicators.GetGlobalErrorIndicator(spaceop.GetComm()),
-        indicators.GetMinErrorIndicator(spaceop.GetComm()),
-        indicators.GetMaxErrorIndicator(spaceop.GetComm()),
-        indicators.GetMeanErrorIndicator(spaceop.GetComm()),
-        indicators.GetNormalization(),
-        normalized);
+    PostprocessErrorIndicators("f (GHz)", step, frequency,
+                               indicators.GetGlobalErrorIndicator(spaceop.GetComm()),
+                               indicators.GetMinErrorIndicator(spaceop.GetComm()),
+                               indicators.GetMaxErrorIndicator(spaceop.GetComm()),
+                               indicators.GetMeanErrorIndicator(spaceop.GetComm()),
+                               indicators.GetNormalization(), normalized);
     combined_indicators.AddIndicators(indicators);
   };
 
@@ -318,7 +314,8 @@ ErrorIndicators DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator
   UpdateErrorIndicators(E, 0, omega0 * f0);
   prom.AddHDMSample(omega0, E);
   prom.SolveHDM(omega0 + (nstep - step0 - 1) * delta_omega, E);
-  Mpi::Print("Computing error estimates for frequency {:d} (GHz)\n", (omega0 + (nstep - step0 - 1) * delta_omega) * f0);
+  Mpi::Print("Computing error estimates for frequency {:d} (GHz)\n",
+             (omega0 + (nstep - step0 - 1) * delta_omega) * f0);
   UpdateErrorIndicators(E, 1, (omega0 + (nstep - step0 - 1) * delta_omega) * f0);
   prom.AddHDMSample(omega0 + (nstep - step0 - 1) * delta_omega, E);
 
@@ -358,11 +355,11 @@ ErrorIndicators DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator
 
   // Set the indicator field to the combined field for postprocessing.
   PostprocessErrorIndicators("Mean",
-        combined_indicators.GetGlobalErrorIndicator(spaceop.GetComm()),
-        combined_indicators.GetMinErrorIndicator(spaceop.GetComm()),
-        combined_indicators.GetMaxErrorIndicator(spaceop.GetComm()),
-        combined_indicators.GetMeanErrorIndicator(spaceop.GetComm()),
-        combined_indicators.GetNormalization());
+                             combined_indicators.GetGlobalErrorIndicator(spaceop.GetComm()),
+                             combined_indicators.GetMinErrorIndicator(spaceop.GetComm()),
+                             combined_indicators.GetMaxErrorIndicator(spaceop.GetComm()),
+                             combined_indicators.GetMeanErrorIndicator(spaceop.GetComm()),
+                             combined_indicators.GetNormalization());
   postop.SetIndicatorGridFunction(combined_indicators.GetLocalErrorIndicators());
 
   // Main fast frequency sweep loop (online phase).

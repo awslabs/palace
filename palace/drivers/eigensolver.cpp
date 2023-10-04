@@ -273,14 +273,12 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) cons
     auto indicators = estimator.ComputeIndicators(E, normalized);
     BlockTimer bt1(Timer::POSTPRO);
     postop.SetIndicatorGridFunction(indicators.GetLocalErrorIndicators());
-    PostprocessErrorIndicators(
-        "m", i, i + 1,
-        indicators.GetGlobalErrorIndicator(spaceop.GetComm()),
-        indicators.GetMinErrorIndicator(spaceop.GetComm()),
-        indicators.GetMaxErrorIndicator(spaceop.GetComm()),
-        indicators.GetMeanErrorIndicator(spaceop.GetComm()),
-        indicators.GetNormalization(),
-        normalized);
+    PostprocessErrorIndicators("m", i, i + 1,
+                               indicators.GetGlobalErrorIndicator(spaceop.GetComm()),
+                               indicators.GetMinErrorIndicator(spaceop.GetComm()),
+                               indicators.GetMaxErrorIndicator(spaceop.GetComm()),
+                               indicators.GetMeanErrorIndicator(spaceop.GetComm()),
+                               indicators.GetNormalization(), normalized);
     combined_indicators.AddIndicators(indicators);
   };
 
@@ -330,11 +328,11 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) cons
     Postprocess(postop, spaceop.GetLumpedPortOp(), i, omega, error1, error2, num_conv);
   }
   PostprocessErrorIndicators("Mean",
-        combined_indicators.GetGlobalErrorIndicator(spaceop.GetComm()),
-        combined_indicators.GetMinErrorIndicator(spaceop.GetComm()),
-        combined_indicators.GetMaxErrorIndicator(spaceop.GetComm()),
-        combined_indicators.GetMeanErrorIndicator(spaceop.GetComm()),
-        combined_indicators.GetNormalization());
+                             combined_indicators.GetGlobalErrorIndicator(spaceop.GetComm()),
+                             combined_indicators.GetMinErrorIndicator(spaceop.GetComm()),
+                             combined_indicators.GetMaxErrorIndicator(spaceop.GetComm()),
+                             combined_indicators.GetMeanErrorIndicator(spaceop.GetComm()),
+                             combined_indicators.GetNormalization());
   return combined_indicators;
 }
 

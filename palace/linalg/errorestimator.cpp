@@ -94,16 +94,18 @@ CurlFluxErrorEstimator::CurlFluxErrorEstimator(
     const IoData &iodata, const MaterialOperator &mat_op,
     mfem::ParFiniteElementSpaceHierarchy &nd_fespaces)
   : mat_op(mat_op), nd_fespaces(nd_fespaces),
-    smooth_projector(nd_fespaces, iodata.solver.linear.tol, 200, 1, iodata.solver.pa_order_threshold),
+    smooth_projector(nd_fespaces, iodata.solver.linear.tol, 200, 1,
+                     iodata.solver.pa_order_threshold),
     smooth_flux(nd_fespaces.GetFinestFESpace().GetTrueVSize()),
     flux_rhs(nd_fespaces.GetFinestFESpace().GetTrueVSize()),
-    field_gf(&nd_fespaces.GetFinestFESpace()), smooth_flux_gf(&nd_fespaces.GetFinestFESpace())
+    field_gf(&nd_fespaces.GetFinestFESpace()),
+    smooth_flux_gf(&nd_fespaces.GetFinestFESpace())
 {
 }
 
 template <>
 ErrorIndicators CurlFluxErrorEstimator::ComputeIndicators(const ComplexVector &v,
-                                                                     bool normalize) const
+                                                          bool normalize) const
 {
   auto &nd_fespace = nd_fespaces.GetFinestFESpace();
   const int nelem = nd_fespace.GetNE();
@@ -118,9 +120,10 @@ ErrorIndicators CurlFluxErrorEstimator::ComputeIndicators(const ComplexVector &v
     // Coefficients for computing the discontinuous flux component, i.e. (W, μ⁻¹∇ × V).
     CurlFluxCoefficient coef(field_gf, mat_op);
     {
-      // Given the RHS vector of non-smooth flux, construct a flux projector and perform mass
-      // matrix inversion in the appropriate space, giving f = M⁻¹ f̂.
-      Mpi::Print("Computing smooth flux approximation of {} component\n", real ? "real" : "imaginary" );
+      // Given the RHS vector of non-smooth flux, construct a flux projector and perform
+      // mass matrix inversion in the appropriate space, giving f = M⁻¹ f̂.
+      Mpi::Print("Computing smooth flux approximation of {} component\n",
+                 real ? "real" : "imaginary");
       BlockTimer bt(Timer::ESTSOLVE);
       mfem::LinearForm rhs(&nd_fespace);
       rhs.AddDomainIntegrator(new VectorFEDomainLFIntegrator(coef));
@@ -146,6 +149,7 @@ ErrorIndicators CurlFluxErrorEstimator::ComputeIndicators(const ComplexVector &v
         smooth_flux_gf.GetVectorValue(e, ip, smooth_vec);
         coef.Eval(coarse_vec, T, ip);
         double w_i = ip.weight * T.Weight();
+        constexpr int vdim = 3;
         for (int c = 0; c < 3; c++)
         {
           estimates[e] += w_i * std::pow(smooth_vec[c] - coarse_vec[c], 2.0);
@@ -170,7 +174,8 @@ ErrorIndicators CurlFluxErrorEstimator::ComputeIndicators(const ComplexVector &v
 }
 
 template <>
-ErrorIndicators CurlFluxErrorEstimator::ComputeIndicators(const Vector &v, bool normalize) const
+ErrorIndicators CurlFluxErrorEstimator::ComputeIndicators(const Vector &v,
+                                                          bool normalize) const
 {
   auto &nd_fespace = nd_fespaces.GetFinestFESpace();
   field_gf.SetFromTrueDofs(v);
@@ -211,7 +216,8 @@ ErrorIndicators CurlFluxErrorEstimator::ComputeIndicators(const Vector &v, bool 
       smooth_flux_gf.GetVectorValue(e, ip, smooth_vec);
       coef.Eval(coarse_vec, T, ip);
       const double w_i = ip.weight * T.Weight();
-      for (int c = 0; c < 3; c++)
+      constexpr int vdim = 3;
+      for (int c = 0; c < vdim; c++)
       {
         estimates[e] += w_i * std::pow(smooth_vec[c] - coarse_vec[c], 2.0);
         normalization += w_i * coarse_vec[c] * coarse_vec[c];
@@ -234,15 +240,17 @@ GradFluxErrorEstimator::GradFluxErrorEstimator(
     const IoData &iodata, const MaterialOperator &mat_op,
     mfem::ParFiniteElementSpaceHierarchy &h1_fespaces)
   : mat_op(mat_op), h1_fespaces(h1_fespaces),
-    smooth_projector(h1_fespaces, iodata.solver.linear.tol, 200, 1, iodata.solver.pa_order_threshold),
+    smooth_projector(h1_fespaces, iodata.solver.linear.tol, 200, 1,
+                     iodata.solver.pa_order_threshold),
     smooth_flux(h1_fespaces.GetFinestFESpace().GetTrueVSize()),
     flux_rhs(h1_fespaces.GetFinestFESpace().GetTrueVSize()),
-    field_gf(&h1_fespaces.GetFinestFESpace()), smooth_flux_gf(&h1_fespaces.GetFinestFESpace())
+    field_gf(&h1_fespaces.GetFinestFESpace()),
+    smooth_flux_gf(&h1_fespaces.GetFinestFESpace())
 {
 }
 
 ErrorIndicators GradFluxErrorEstimator::ComputeIndicators(const Vector &v,
-                                                                     bool normalize) const
+                                                          bool normalize) const
 {
   auto &h1_fespace = h1_fespaces.GetFinestFESpace();
   const int sdim = h1_fespace.GetMesh()->SpaceDimension();
@@ -255,7 +263,7 @@ ErrorIndicators GradFluxErrorEstimator::ComputeIndicators(const Vector &v,
 
   // Coefficient for computing the discontinuous flux., i.e. (Vᵢ, (ϵ ∇ ϕ)ᵢ).
   GradFluxCoefficient coef(field_gf, mat_op);
-  for (int c = 0; c < 3; c++)
+  for (int c = 0; c < sdim; c++)
   {
     coef.SetComponent(c);
     {
@@ -290,7 +298,8 @@ ErrorIndicators GradFluxErrorEstimator::ComputeIndicators(const Vector &v,
     if constexpr (false)
     {
       // Debugging branch generates some intermediate fields for paraview.
-      mfem::ParaViewDataCollection paraview("debug_coeff" + std::to_string(c), h1_fespace.GetParMesh());
+      mfem::ParaViewDataCollection paraview("debug_coeff" + std::to_string(c),
+                                            h1_fespace.GetParMesh());
       paraview.RegisterCoeffField("Flux", &coef);
       paraview.RegisterField("SmoothFlux", &smooth_flux_gf);
 

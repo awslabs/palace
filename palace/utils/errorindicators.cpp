@@ -14,7 +14,9 @@ void ErrorIndicators::AddIndicators(const ErrorIndicators &error_indicators)
   // important to many solves, rather than only large in one solve.
   if (n > 0)
   {
-    normalization = (n * normalization + error_indicators.normalization * error_indicators.n) / (n + error_indicators.n);
+    normalization =
+        (n * normalization + error_indicators.normalization * error_indicators.n) /
+        (n + error_indicators.n);
 
     // The local indicators must be squared before combining, so that the global error
     // calculation is valid:
@@ -28,13 +30,14 @@ void ErrorIndicators::AddIndicators(const ErrorIndicators &error_indicators)
     //    e_K = sqrt(1/N sum_N eta_{Kn}^2)
     auto running_average = [this, error_indicators](const auto &xbar, const auto &x)
     {
-      return std::sqrt((xbar * xbar * n + x * x * error_indicators.n) / (n + error_indicators.n));
+      return std::sqrt((xbar * xbar * n + x * x * error_indicators.n) /
+                       (n + error_indicators.n));
     };
     MFEM_VERIFY(local.Size() == error_indicators.local.Size(),
                 "Local error indicator vectors mismatch.");
     // Combine these error indicators into the current average.
-    std::transform(local.begin(), local.end(),
-                   error_indicators.local.begin(), local.begin(), running_average);
+    std::transform(local.begin(), local.end(), error_indicators.local.begin(),
+                   local.begin(), running_average);
 
     // More samples have been added, update for the running average lambda.
     n += error_indicators.n;
@@ -44,7 +47,6 @@ void ErrorIndicators::AddIndicators(const ErrorIndicators &error_indicators)
     // This indicator was empty, just steal.
     (*this) = error_indicators;
   }
-
 }
 
 }  // namespace palace

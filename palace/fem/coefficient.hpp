@@ -514,21 +514,24 @@ private:
 public:
   GradFluxCoefficient(const mfem::ParGridFunction &gf, const MaterialOperator &mat_op)
     : mfem::Coefficient(), gf(gf), mat_op(mat_op),
-    grad(gf.ParFESpace()->GetParMesh()->SpaceDimension()),
-    V(gf.ParFESpace()->GetParMesh()->SpaceDimension()), component(-1)
+      grad(gf.ParFESpace()->GetParMesh()->SpaceDimension()),
+      V(gf.ParFESpace()->GetParMesh()->SpaceDimension()), component(-1)
   {
   }
 
   // Specify the component
   void SetComponent(int i)
   {
-    MFEM_ASSERT(i >= 0 && i < gf.ParFESpace()->GetParMesh()->SpaceDimension(), "Invalid component index!");
+    MFEM_ASSERT(i >= 0 && i < gf.ParFESpace()->GetParMesh()->SpaceDimension(),
+                "Invalid component index!");
     component = i;
   }
 
   double Eval(mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip) override
   {
-    MFEM_ASSERT(component >= 0 && component < gf.ParFESpace()->GetParMesh()->SpaceDimension(), "Invalid component index, try calling SetComponent(int)!");
+    MFEM_ASSERT(component >= 0 &&
+                    component < gf.ParFESpace()->GetParMesh()->SpaceDimension(),
+                "Invalid component index, try calling SetComponent(int)!");
     gf.GetGradient(T, grad);
     mat_op.GetPermittivityReal(T.Attribute).Mult(grad, V);
     return V(component);

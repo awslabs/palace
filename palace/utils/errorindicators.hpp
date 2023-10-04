@@ -16,7 +16,9 @@ class ErrorIndicators
 {
 public:
   ErrorIndicators(Vector local, double normalization)
-  : local(std::move(local)), normalization(normalization), n(1) {}
+    : local(std::move(local)), normalization(normalization), n(1)
+  {
+  }
 
   ErrorIndicators() = default;
   ErrorIndicators(const ErrorIndicators &) = default;
@@ -32,8 +34,8 @@ public:
   {
     constexpr int p = 2;
     double global_error_indicator =
-      std::transform_reduce(local.begin(), local.end(),
-                              0.0, std::plus(), [](auto val) { return std::pow(val, p); });
+        std::transform_reduce(local.begin(), local.end(), 0.0, std::plus(),
+                              [](auto val) { return std::pow(val, p); });
     Mpi::GlobalSum(1, &global_error_indicator, comm);
     return std::pow(global_error_indicator, 1.0 / p);
   }

@@ -105,8 +105,8 @@ ErrorIndicators MagnetostaticSolver::Postprocess(CurlCurlOperator &curlcurlop,
 
   // Initialize structures for storing and reducing the results of error estimation.
   ErrorIndicators combined_indicators;
-  auto UpdateErrorIndicators =
-      [this, &estimator, &combined_indicators, &postop, &curlcurlop](const auto &A, int i, double idx)
+  auto UpdateErrorIndicators = [this, &estimator, &combined_indicators, &postop,
+                                &curlcurlop](const auto &A, int i, double idx)
   {
     BlockTimer bt0(Timer::ESTIMATION);
     constexpr bool normalized = true;
@@ -114,14 +114,12 @@ ErrorIndicators MagnetostaticSolver::Postprocess(CurlCurlOperator &curlcurlop,
     BlockTimer bt1(Timer::POSTPRO);
     // Write the indicator for this mode.
     postop.SetIndicatorGridFunction(indicators.GetLocalErrorIndicators());
-    PostprocessErrorIndicators(
-        "i", i, idx,
-        indicators.GetGlobalErrorIndicator(curlcurlop.GetComm()),
-        indicators.GetMinErrorIndicator(curlcurlop.GetComm()),
-        indicators.GetMaxErrorIndicator(curlcurlop.GetComm()),
-        indicators.GetMeanErrorIndicator(curlcurlop.GetComm()),
-        indicators.GetNormalization(),
-        normalized);
+    PostprocessErrorIndicators("i", i, idx,
+                               indicators.GetGlobalErrorIndicator(curlcurlop.GetComm()),
+                               indicators.GetMinErrorIndicator(curlcurlop.GetComm()),
+                               indicators.GetMaxErrorIndicator(curlcurlop.GetComm()),
+                               indicators.GetMeanErrorIndicator(curlcurlop.GetComm()),
+                               indicators.GetNormalization(), normalized);
     combined_indicators.AddIndicators(indicators);
   };
   if (iodata.solver.magnetostatic.n_post > 0)
@@ -186,12 +184,12 @@ ErrorIndicators MagnetostaticSolver::Postprocess(CurlCurlOperator &curlcurlop,
   mfem::DenseMatrix Minv(M);
   Minv.Invert();  // In-place, uses LAPACK (when available) and should be cheap
   PostprocessTerminals(surf_j_op, M, Minv, Mm);
-  PostprocessErrorIndicators("Mean",
-        combined_indicators.GetGlobalErrorIndicator(curlcurlop.GetComm()),
-        combined_indicators.GetMinErrorIndicator(curlcurlop.GetComm()),
-        combined_indicators.GetMaxErrorIndicator(curlcurlop.GetComm()),
-        combined_indicators.GetMeanErrorIndicator(curlcurlop.GetComm()),
-        combined_indicators.GetNormalization());
+  PostprocessErrorIndicators(
+      "Mean", combined_indicators.GetGlobalErrorIndicator(curlcurlop.GetComm()),
+      combined_indicators.GetMinErrorIndicator(curlcurlop.GetComm()),
+      combined_indicators.GetMaxErrorIndicator(curlcurlop.GetComm()),
+      combined_indicators.GetMeanErrorIndicator(curlcurlop.GetComm()),
+      combined_indicators.GetNormalization());
   return combined_indicators;
 }
 
