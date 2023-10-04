@@ -85,7 +85,7 @@ IndicatorsAndNormalization CurlFluxErrorEstimator::operator()(const ComplexVecto
   };
   auto smooth_flux = build_flux(smooth_projector, smooth_flux_rhs);
 
-  // Given a complex solution represented with a PetscParVector, build a ComplexGridFunction
+  // Given a complex solution represented with a ComplexVector, build a ComplexGridFunction
   // for evaluation.
   auto build_func = [](const ComplexVector &f, mfem::ParFiniteElementSpace &fes)
   {
@@ -191,7 +191,7 @@ IndicatorsAndNormalization CurlFluxErrorEstimator::operator()(const Vector &v,
   };
   auto smooth_flux = build_flux(smooth_projector, smooth_flux_rhs);
 
-  // Given a complex solution represented with a PetscParVector, build a ComplexGridFunction
+  // Given a complex solution represented with a ComplexVector, build a ComplexGridFunction
   // for evaluation.
   auto build_func = [](const Vector &f, mfem::ParFiniteElementSpace &fes)
   {

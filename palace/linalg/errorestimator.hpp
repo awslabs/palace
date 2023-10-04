@@ -15,11 +15,6 @@ namespace palace
 class IoData;
 class MaterialOperator;
 
-namespace petsc
-{
-class PetscParVector;
-}  // namespace petsc
-
 // Class used for computing curl flux error estimate,
 // i.e. || μ⁻¹∇ × Vₕ - F ||_K
 // where F denotes a smooth reconstruction of μ⁻¹∇ × Vₕ.

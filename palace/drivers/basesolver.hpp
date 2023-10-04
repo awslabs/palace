@@ -11,8 +11,10 @@
 
 namespace mfem
 {
+
 class ParFiniteElementSpaceHierarchy;
 class ParMesh;
+
 }  // namespace mfem
 
 namespace palace
@@ -80,7 +82,7 @@ public:
              const char *git_tag = nullptr);
   virtual ~BaseSolver() = default;
 
-  // Performs a solve using the mesh sequence, and report error indicators.
+  // Performs a solve using the mesh sequence, and reports error indicators.
   virtual ErrorIndicators
   Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const = 0;
 
