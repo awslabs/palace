@@ -9,34 +9,33 @@
 namespace palace
 {
 
-namespace fem
-{
-// Helper functions for creating an integration rule to exactly integrate 2p + q
-// polynomials. order_increment can be used to raise or lower the order, e.g. in
-// the case of derivative fes.
-inline const mfem::IntegrationRule *GetDefaultRule(const mfem::FiniteElement &trial_fe,
-                                                   const mfem::FiniteElement &test_fe,
-                                                   mfem::ElementTransformation &Tr,
-                                                   int order_increment = 0)
-{
-  const int ir_order =
-      trial_fe.GetOrder() + test_fe.GetOrder() + Tr.OrderW() + order_increment;
-  MFEM_ASSERT(ir_order >= 0, "Negative integration order not allowed");
-  return &mfem::IntRules.Get(trial_fe.GetGeomType(), ir_order);
-}
-inline const mfem::IntegrationRule *GetDefaultRule(const mfem::FiniteElement &fe,
-                                                   mfem::ElementTransformation &Tr,
-                                                   int order_increment = 0)
-{
-  return GetDefaultRule(fe, fe, Tr, order_increment);
-}
+//
+// Derived integrator classes extending the linear and bilinear form integrators of MFEM.
+//
 
-}  // namespace fem
+class DefaultIntegrationRule
+{
+protected:
+  static const mfem::IntegrationRule *GetDefaultRule(const mfem::FiniteElement &trial_fe,
+                                                     const mfem::FiniteElement &test_fe,
+                                                     mfem::ElementTransformation &Tr)
+  {
+    const int ir_order = trial_fe.GetOrder() + test_fe.GetOrder() + Tr.OrderW();
+    return &mfem::IntRules.Get(trial_fe.GetGeomType(), ir_order);
+  }
+
+  static const mfem::IntegrationRule *GetDefaultRule(const mfem::FiniteElement &fe,
+                                                     mfem::ElementTransformation &Tr)
+  {
+    return GetDefaultRule(fe, fe, Tr);
+  }
+};
 
 // Similar to MFEM's VectorFEBoundaryTangentLFIntegrator for ND spaces, but instead of
 // computing (n x f, v), this just computes (f, v). Also eliminates the a and b quadrature
-// parameters and uses fem::GetDefaultRule instead.
-class VectorFEBoundaryLFIntegrator : public mfem::LinearFormIntegrator
+// parameters and uses GetDefaultRule instead.
+class VectorFEBoundaryLFIntegrator : public mfem::LinearFormIntegrator,
+                                     public DefaultIntegrationRule
 {
 private:
   mfem::VectorCoefficient &Q;
@@ -44,7 +43,10 @@ private:
   mfem::Vector f_loc, f_hat;
 
 public:
-  VectorFEBoundaryLFIntegrator(mfem::VectorCoefficient &QG) : Q(QG), f_loc(QG.GetVDim()) {}
+  VectorFEBoundaryLFIntegrator(mfem::VectorCoefficient &QG)
+    : Q(QG), f_loc(QG.GetVDim()), f_hat(QG.GetVDim() - 1)
+  {
+  }
 
   void AssembleRHSElementVect(const mfem::FiniteElement &fe,
                               mfem::ElementTransformation &Tr,
@@ -53,11 +55,10 @@ public:
     const int dof = fe.GetDof();
     const int dim = fe.GetDim();
     const mfem::IntegrationRule *ir =
-        (IntRule != nullptr) ? IntRule : fem::GetDefaultRule(fe, Tr);
+        (IntRule != nullptr) ? IntRule : GetDefaultRule(fe, Tr);
     vshape.SetSize(dof, dim);
     elvect.SetSize(dof);
     elvect = 0.0;
-    f_hat.SetSize(dim);
 
     for (int i = 0; i < ir->GetNPoints(); i++)
     {
@@ -74,8 +75,9 @@ public:
 };
 
 // Similar to MFEM's BoundaryLFIntegrator for H1 spaces, but eliminates the a and b
-// quadrature parameters and uses fem::GetDefaultRule instead.
-class BoundaryLFIntegrator : public mfem::LinearFormIntegrator
+// quadrature parameters and uses GetDefaultRule instead.
+class BoundaryLFIntegrator : public mfem::LinearFormIntegrator,
+                             public DefaultIntegrationRule
 {
 private:
   mfem::Coefficient &Q;
@@ -90,7 +92,7 @@ public:
   {
     const int dof = fe.GetDof();
     const mfem::IntegrationRule *ir =
-        (IntRule != nullptr) ? IntRule : fem::GetDefaultRule(fe, Tr);
+        (IntRule != nullptr) ? IntRule : GetDefaultRule(fe, Tr);
     shape.SetSize(dof);
     elvect.SetSize(dof);
     elvect = 0.0;
