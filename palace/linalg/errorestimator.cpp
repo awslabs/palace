@@ -22,12 +22,14 @@ using namespace fem;
 
 // Given a finite element space hierarchy, construct a vector of mass matrix
 // operators corresponding to each level.
+template <typename SmoothFluxFiniteElementCollection>
 std::unique_ptr<Operator> BuildMassMatrixOperator(mfem::ParFiniteElementSpaceHierarchy &h,
                                                   int pa_order_threshold)
 {
   constexpr int skip_zeros = 0;
-  const bool is_scalar_FE_space =
-      h.GetFESpaceAtLevel(0).GetFE(0)->GetRangeType() == mfem::FiniteElement::SCALAR;
+
+  constexpr bool ScalarFESpace = std::is_same<SmoothFluxFiniteElementCollection, mfem::H1_FECollection>::value
+    || std::is_same<SmoothFluxFiniteElementCollection, mfem::L2_FECollection>::value;
 
   // Assemble the bilinear form operator
   auto M = std::make_unique<MultigridOperator>(h.GetNumLevels());
@@ -36,7 +38,7 @@ std::unique_ptr<Operator> BuildMassMatrixOperator(mfem::ParFiniteElementSpaceHie
     auto &h_l = h.GetFESpaceAtLevel(l);
     auto m = std::make_unique<mfem::SymmetricBilinearForm>(&h_l);
 
-    if (is_scalar_FE_space)
+    if constexpr (ScalarFESpace)
     {
       MFEM_ASSERT(h_l.GetVDim() == 1,
                   "Scalar mass matrix hierarchy assumes a component-wise solve.");
@@ -46,7 +48,6 @@ std::unique_ptr<Operator> BuildMassMatrixOperator(mfem::ParFiniteElementSpaceHie
     {
       m->AddDomainIntegrator(new mfem::VectorFEMassIntegrator);
     }
-
     auto M_l = std::make_unique<ParOperator>(
         fem::AssembleOperator(std::move(m), true, (l > 0) ? pa_order_threshold : 100,
                               skip_zeros),
@@ -58,10 +59,11 @@ std::unique_ptr<Operator> BuildMassMatrixOperator(mfem::ParFiniteElementSpaceHie
   return M;
 }
 
-FluxProjector::FluxProjector(mfem::ParFiniteElementSpaceHierarchy &smooth_flux_fespace,
+template <typename SmoothFluxFiniteElementCollection>
+FluxProjector<SmoothFluxFiniteElementCollection>::FluxProjector(mfem::ParFiniteElementSpaceHierarchy &smooth_flux_fespace,
                              double tol, int max_it, int print,
                              int pa_order_threshold)
-  : M(BuildMassMatrixOperator(smooth_flux_fespace, pa_order_threshold))
+  : M(BuildMassMatrixOperator<SmoothFluxFiniteElementCollection>(smooth_flux_fespace, pa_order_threshold))
 {
   // The system matrix for the projection is real and SPD. For the coarse-level AMG solve,
   // we don't use an exact solve on the coarsest level.
@@ -84,7 +86,6 @@ FluxProjector::FluxProjector(mfem::ParFiniteElementSpaceHierarchy &smooth_flux_f
 
   tmp.SetSize(smooth_flux_fespace.GetFinestFESpace().GetTrueVSize());
 }
-
 
 
 CurlFluxErrorEstimator::CurlFluxErrorEstimator(
@@ -119,6 +120,7 @@ CurlFluxErrorEstimator::CurlFluxErrorEstimator(
   }
 }
 
+template <>
 IndicatorsAndNormalization CurlFluxErrorEstimator::ComputeIndicators(const ComplexVector &v,
                                                               bool normalize) const
 {
@@ -149,7 +151,7 @@ IndicatorsAndNormalization CurlFluxErrorEstimator::ComputeIndicators(const Compl
 
   // Given the RHS vector of non-smooth flux, construct a flux projector and perform mass
   // matrix inversion in the appropriate space, giving f = M⁻¹ f̂.
-  auto build_flux = [](const FluxProjector &proj, const ComplexVector &flux_coef)
+  auto build_flux = [](const FluxProjector<mfem::ND_FECollection>&proj, const ComplexVector &flux_coef)
   {
     // Use a copy construction to match appropriate size.
     ComplexVector flux(flux_coef);
@@ -230,6 +232,7 @@ IndicatorsAndNormalization CurlFluxErrorEstimator::ComputeIndicators(const Compl
   return {estimates, normalization};
 }
 
+template <>
 IndicatorsAndNormalization CurlFluxErrorEstimator::ComputeIndicators(const Vector &v,
                                                               bool normalize) const
 {
@@ -256,7 +259,7 @@ IndicatorsAndNormalization CurlFluxErrorEstimator::ComputeIndicators(const Vecto
 
   // Given the RHS vector of non-smooth flux, construct a flux projector and perform mass
   // matrix inversion in the appropriate space, giving f = M⁻¹ f̂.
-  auto build_flux = [](const FluxProjector &proj, const Vector &flux_coef)
+  auto build_flux = [](const FluxProjector<mfem::ND_FECollection> &proj, const Vector &flux_coef)
   {
     // Use a copy construction to match appropriate size.
     Vector flux(flux_coef);
@@ -377,7 +380,7 @@ IndicatorsAndNormalization GradFluxErrorEstimator::ComputeIndicators(const Vecto
 
   // Given the RHS vector of non-smooth flux, construct a flux projector and perform
   // component wise mass matrix inversion in the appropriate space, giving fᵢ = M⁻¹ f̂ᵢ.
-  auto build_flux = [sdim](const FluxProjector &proj, Vector &rhs)
+  auto build_flux = [sdim](const FluxProjector<mfem::H1_FECollection> &proj, Vector &rhs)
   {
     // Use a copy construction to match appropriate size.
     Vector flux(rhs.Size());

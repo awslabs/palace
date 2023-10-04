@@ -22,6 +22,8 @@ class MaterialOperator;
 // between this resulting smooth flux and the original non-smooth flux provides a
 // localizable error estimate. An instance  of FluxProjector can be reused across solutions,
 // thus the construction of the operator is separated from the construction of the flux RHS.
+
+template <typename SmoothFluxFiniteElementCollection>
 class FluxProjector
 {
 private:
@@ -35,40 +37,38 @@ private:
   mutable Vector tmp;
 
 public:
-  FluxProjector(mfem::ParFiniteElementSpaceHierarchy &smooth_flux_fes, double tol = 1e-12,
-                int max_it = 200, int print_level = 1, int pa_order_threshold = 1);
+  FluxProjector(mfem::ParFiniteElementSpaceHierarchy &smooth_flux_fes, double tol,
+                int max_it, int print_level, int pa_order_threshold);
 
-  // Given a vector of dof defining the flux, compute the smooth flux IN PLACE.
-  void Mult(Vector &x) const
+  inline void Mult(Vector &x) const
   {
     tmp = x;
     Mult(tmp, x);
   }
-  void Mult(const Vector &x, Vector &y) const { ksp->Mult(x, y); }
-  void Mult(ComplexVector &x) const
+  inline void Mult(const Vector &x, Vector &y) const { ksp->Mult(x, y); }
+  inline void Mult(ComplexVector &x) const
   {
     Mult(x.Real());
     Mult(x.Imag());
   }
-  void Mult(const ComplexVector &x, ComplexVector &y) const
+  inline void Mult(const ComplexVector &x, ComplexVector &y) const
   {
     y = x;
     Mult(y);
   }
 };
 
-// Class used for computing curl flux error estimate,
-// i.e. || μ⁻¹∇ × Vₕ - F ||_K
-// where F denotes a smooth reconstruction of μ⁻¹∇ × Vₕ.
+// Class used for computing curl flux error estimate, i.e. || μ⁻¹∇ × Vₕ - F ||_K where F
+// denotes a smooth reconstruction of μ⁻¹∇ × Vₕ.
 class CurlFluxErrorEstimator
 {
   const MaterialOperator &mat_op;
-  // The finite element space used to represent V.
+  // The finite element space used to represent V, and F.
   mfem::ParFiniteElementSpace &fespace;
 
   std::vector<std::unique_ptr<mfem::ND_FECollection>> smooth_flux_fecs;
   mutable mfem::ParFiniteElementSpaceHierarchy smooth_flux_fespace;
-  mutable FluxProjector smooth_projector;
+  mutable FluxProjector<mfem::ND_FECollection> smooth_projector;
 
   mfem::L2_FECollection coarse_flux_fec;
   mutable mfem::ParFiniteElementSpace coarse_flux_fespace;
@@ -86,29 +86,25 @@ public:
                          mfem::ParFiniteElementSpace &fespace);
 
   // Compute elemental error indicators given a complex vector of true DOF.
-  IndicatorsAndNormalization ComputeIndicators(const ComplexVector &v,
-                                        bool normalize) const;
-
-  // Compute elemental error indicators given a vector of true DOF.
-  IndicatorsAndNormalization ComputeIndicators(const Vector &v, bool normalize ) const;
+  template <typename VectorType>
+  IndicatorsAndNormalization ComputeIndicators(const VectorType &v, bool normalize) const;
 };
 
-// Class used for computing grad flux error estimate,
-// i.e. || ϵ ∇ ϕₕ - F ||_K
-// where F denotes a smooth reconstruction of ϵ ∇ ϕₕ.
+// Class used for computing grad flux error estimate, i.e. || ϵ ∇ ϕₕ - F ||_K where F
+// denotes a smooth reconstruction of ϵ ∇ ϕₕ.
 class GradFluxErrorEstimator
 {
   const MaterialOperator &mat_op;
   // The finite element space used to represent ϕ.
   mfem::ParFiniteElementSpace &fespace;
 
-  // Collections and spaces for the smooth flux. Note the hierarchy uses the
-  // SCALAR finite element space, whilst the true flux is in the VECTOR finite
-  // element space. This allows for a component wise inversion.
+  // Collections and spaces for the smooth flux. Note the hierarchy uses the SCALAR finite
+  // element space, whilst the true flux is in the VECTOR finite element space. This allows
+  // for a component wise inversion.
   std::vector<std::unique_ptr<mfem::H1_FECollection>> smooth_flux_fecs;
   mutable mfem::ParFiniteElementSpaceHierarchy smooth_flux_component_fespace;
   mutable mfem::ParFiniteElementSpace smooth_flux_fespace;
-  mutable FluxProjector smooth_projector;
+  mutable FluxProjector<mfem::H1_FECollection>smooth_projector;
 
   mfem::L2_FECollection coarse_flux_fec;
   mutable mfem::ParFiniteElementSpace coarse_flux_fespace;
