@@ -567,8 +567,7 @@ void BaseSolver::PostprocessFields(const PostOperator &postop, int step, double 
 }
 
 void BaseSolver::PostprocessErrorIndicators(const std::string &name, int step, double time,
-                                            double global, double min, double max,
-                                            double mean, double normalization,
+                                            const std::array<double, 5> &data,
                                             bool normalized) const
 {
   if (post_dir.length() == 0)
@@ -597,11 +596,11 @@ void BaseSolver::PostprocessErrorIndicators(const std::string &name, int step, d
     // clang-format off
     output.print("{:{}.{}e},{:+{}.{}e},{:+{}.{}e},{:+{}.{}e},{:+{}.{}e},{:+{}.{}e}\n",
                 time, table.w1, table.p1,
-                global, table.w, table.p,
-                min, table.w, table.p,
-                max, table.w, table.p,
-                mean, table.w, table.p,
-                normalization, table.w, table.p);
+                data[0], table.w, table.p,
+                data[1], table.w, table.p,
+                data[2], table.w, table.p,
+                data[3], table.w, table.p,
+                data[4], table.w, table.p);
     // clang-format on
   }
 }

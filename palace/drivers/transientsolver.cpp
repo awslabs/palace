@@ -83,22 +83,19 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) 
     BlockTimer bt(Timer::ESTCONSTRUCT);
     return CurlFluxErrorEstimator(iodata, spaceop.GetMaterialOp(), spaceop.GetNDSpaces());
   }();
-  ErrorIndicators combined_indicators;
-  auto UpdateErrorIndicators = [this, &estimator, &combined_indicators, &postop,
+  ErrorIndicators indicators;
+  auto UpdateErrorIndicators = [this, &estimator, &indicators, &postop,
                                 &spaceop](const auto &E, int step, double time)
   {
     BlockTimer bt0(Timer::ESTIMATION);
     // Initial flux of zero would return nan.
     bool constexpr normalized = false;
-    auto indicators = estimator.ComputeIndicators(E, normalized);
-    postop.SetIndicatorGridFunction(indicators.GetLocalErrorIndicators());
+    auto sample_indicators = estimator.ComputeIndicators(E, normalized);
+    postop.SetIndicatorGridFunction(sample_indicators.GetLocalErrorIndicators());
     PostprocessErrorIndicators("t (ns)", step, time,
-                               indicators.GetGlobalErrorIndicator(spaceop.GetComm()),
-                               indicators.GetMinErrorIndicator(spaceop.GetComm()),
-                               indicators.GetMaxErrorIndicator(spaceop.GetComm()),
-                               indicators.GetMeanErrorIndicator(spaceop.GetComm()),
-                               indicators.GetNormalization(), normalized);
-    combined_indicators.AddIndicators(indicators);
+                               sample_indicators.GetPostprocessData(spaceop.GetComm()),
+                               normalized);
+    indicators.AddIndicators(sample_indicators);
   };
 
   // Main time integration loop.
@@ -153,7 +150,7 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) 
     step++;
   }
   SaveMetadata(timeop.GetLinearSolver());
-  return combined_indicators;
+  return indicators;
 }
 std::function<double(double)> TransientSolver::GetTimeExcitation(bool dot) const
 {

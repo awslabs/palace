@@ -104,23 +104,18 @@ ErrorIndicators MagnetostaticSolver::Postprocess(CurlCurlOperator &curlcurlop,
   Vector Iinc(nstep);
 
   // Initialize structures for storing and reducing the results of error estimation.
-  ErrorIndicators combined_indicators;
-  auto UpdateErrorIndicators = [this, &estimator, &combined_indicators, &postop,
+  ErrorIndicators indicators;
+  auto UpdateErrorIndicators = [this, &estimator, &indicators, &postop,
                                 &curlcurlop](const auto &A, int i, double idx)
   {
     BlockTimer bt0(Timer::ESTIMATION);
     constexpr bool normalized = true;
-    auto indicators = estimator.ComputeIndicators(A, normalized);
-    BlockTimer bt1(Timer::POSTPRO);
-    // Write the indicator for this mode.
-    postop.SetIndicatorGridFunction(indicators.GetLocalErrorIndicators());
-    PostprocessErrorIndicators("i", i, idx,
-                               indicators.GetGlobalErrorIndicator(curlcurlop.GetComm()),
-                               indicators.GetMinErrorIndicator(curlcurlop.GetComm()),
-                               indicators.GetMaxErrorIndicator(curlcurlop.GetComm()),
-                               indicators.GetMeanErrorIndicator(curlcurlop.GetComm()),
-                               indicators.GetNormalization(), normalized);
-    combined_indicators.AddIndicators(indicators);
+    auto sample_indicators = estimator.ComputeIndicators(A, normalized);
+    postop.SetIndicatorGridFunction(sample_indicators.GetLocalErrorIndicators());
+    PostprocessErrorIndicators("i", i, i + 1,
+                               sample_indicators.GetPostprocessData(curlcurlop.GetComm()),
+                               normalized);
+    indicators.AddIndicators(sample_indicators);
   };
   if (iodata.solver.magnetostatic.n_post > 0)
   {
@@ -184,7 +179,7 @@ ErrorIndicators MagnetostaticSolver::Postprocess(CurlCurlOperator &curlcurlop,
   mfem::DenseMatrix Minv(M);
   Minv.Invert();  // In-place, uses LAPACK (when available) and should be cheap
   PostprocessTerminals(surf_j_op, M, Minv, Mm);
-  return combined_indicators;
+  return indicators;
 }
 
 void MagnetostaticSolver::PostprocessTerminals(const SurfaceCurrentOperator &surf_j_op,

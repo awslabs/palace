@@ -73,6 +73,12 @@ public:
     local = Vector();
     normalization = 0;
   }
+  // Return a vector of postprocess data.
+  std::array<double, 5> GetPostprocessData(MPI_Comm comm) const
+  {
+    return {GetGlobalErrorIndicator(comm), GetMinErrorIndicator(comm),
+            GetMaxErrorIndicator(comm), GetMeanErrorIndicator(comm), GetNormalization()};
+  }
 
 protected:
   // Elemental localized error indicators. Used for marking elements for

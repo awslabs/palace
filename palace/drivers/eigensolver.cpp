@@ -264,21 +264,17 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) cons
   SaveMetadata(*ksp);
 
   // Initialize structures for storing and reducing the results of error estimation.
-  ErrorIndicators combined_indicators;
+  ErrorIndicators indicators;
   auto UpdateErrorIndicators =
-      [this, &estimator, &combined_indicators, &postop, &spaceop](const auto &E, int i)
+      [this, &estimator, &indicators, &postop, &spaceop](const auto &E, int i)
   {
     BlockTimer bt0(Timer::ESTIMATION);
     constexpr bool normalized = true;
-    auto indicators = estimator.ComputeIndicators(E, normalized);
-    postop.SetIndicatorGridFunction(indicators.GetLocalErrorIndicators());
-    PostprocessErrorIndicators("m", i, i + 1,
-                               indicators.GetGlobalErrorIndicator(spaceop.GetComm()),
-                               indicators.GetMinErrorIndicator(spaceop.GetComm()),
-                               indicators.GetMaxErrorIndicator(spaceop.GetComm()),
-                               indicators.GetMeanErrorIndicator(spaceop.GetComm()),
-                               indicators.GetNormalization(), normalized);
-    combined_indicators.AddIndicators(indicators);
+    auto sample_indicators = estimator.ComputeIndicators(E, normalized);
+    postop.SetIndicatorGridFunction(sample_indicators.GetLocalErrorIndicators());
+    PostprocessErrorIndicators(
+        "m", i, i + 1, sample_indicators.GetPostprocessData(spaceop.GetComm()), normalized);
+    indicators.AddIndicators(sample_indicators);
   };
 
   // Save the eigenvalue estimates.
@@ -328,7 +324,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) cons
     // Postprocess the mode.
     Postprocess(postop, spaceop.GetLumpedPortOp(), i, omega, error1, error2, num_conv);
   }
-  return combined_indicators;
+  return indicators;
 }
 
 void EigenSolver::Postprocess(const PostOperator &postop,

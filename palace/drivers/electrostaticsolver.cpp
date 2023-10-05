@@ -100,21 +100,18 @@ ErrorIndicators ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop,
   int nstep = static_cast<int>(terminal_sources.size());
   mfem::DenseMatrix C(nstep), Cm(nstep);
   Vector E(Grad->Height()), Vij(Grad->Width());
-  ErrorIndicators combined_indicators;
-  auto UpdateErrorIndicators = [this, &estimator, &combined_indicators, &postop,
-                                &laplaceop](const auto &V, int i, double idx)
+  ErrorIndicators indicators;
+  auto UpdateErrorIndicators =
+      [this, &estimator, &indicators, &postop, &laplaceop](const auto &V, int i, double idx)
   {
     BlockTimer bt0(Timer::ESTIMATION);
     constexpr bool normalized = true;
-    auto indicators = estimator.ComputeIndicators(V, normalized);
-    postop.SetIndicatorGridFunction(indicators.GetLocalErrorIndicators());
-    PostprocessErrorIndicators("i", i, idx,
-                               indicators.GetGlobalErrorIndicator(laplaceop.GetComm()),
-                               indicators.GetMinErrorIndicator(laplaceop.GetComm()),
-                               indicators.GetMaxErrorIndicator(laplaceop.GetComm()),
-                               indicators.GetMeanErrorIndicator(laplaceop.GetComm()),
-                               indicators.GetNormalization(), normalized);
-    combined_indicators.AddIndicators(indicators);
+    auto sample_indicators = estimator.ComputeIndicators(V, normalized);
+    postop.SetIndicatorGridFunction(sample_indicators.GetLocalErrorIndicators());
+    PostprocessErrorIndicators("i", i, i + 1,
+                               sample_indicators.GetPostprocessData(laplaceop.GetComm()),
+                               normalized);
+    indicators.AddIndicators(sample_indicators);
   };
   if (iodata.solver.electrostatic.n_post > 0)
   {
@@ -174,7 +171,7 @@ ErrorIndicators ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop,
   mfem::DenseMatrix Cinv(C);
   Cinv.Invert();  // In-place, uses LAPACK (when available) and should be cheap
   PostprocessTerminals(terminal_sources, C, Cinv, Cm);
-  return combined_indicators;
+  return indicators;
 }
 
 void ElectrostaticSolver::PostprocessTerminals(

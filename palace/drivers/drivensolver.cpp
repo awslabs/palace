@@ -145,21 +145,18 @@ ErrorIndicators DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator 
   B = 0.0;
 
   // Initialize structures for storing and reducing the results of error estimation.
-  ErrorIndicators combined_indicators;
-  auto UpdateErrorIndicators = [this, &estimator, &combined_indicators, &postop,
-                                &spaceop](const auto &E, int step, double f)
+  ErrorIndicators indicators;
+  auto UpdateErrorIndicators = [this, &estimator, &indicators, &postop,
+                                &spaceop](const auto &E, int step, double frequency)
   {
     BlockTimer bt0(Timer::ESTIMATION);
     constexpr bool normalized = true;
-    auto indicators = estimator.ComputeIndicators(E, normalized);
-    postop.SetIndicatorGridFunction(indicators.GetLocalErrorIndicators());
-    PostprocessErrorIndicators("f (GHz)", step, f,
-                               indicators.GetGlobalErrorIndicator(spaceop.GetComm()),
-                               indicators.GetMinErrorIndicator(spaceop.GetComm()),
-                               indicators.GetMaxErrorIndicator(spaceop.GetComm()),
-                               indicators.GetMeanErrorIndicator(spaceop.GetComm()),
-                               indicators.GetNormalization(), normalized);
-    combined_indicators.AddIndicators(indicators);
+    auto sample_indicators = estimator.ComputeIndicators(E, normalized);
+    postop.SetIndicatorGridFunction(sample_indicators.GetLocalErrorIndicators());
+    PostprocessErrorIndicators("f (GHz)", step, frequency,
+                               sample_indicators.GetPostprocessData(spaceop.GetComm()),
+                               normalized);
+    indicators.AddIndicators(sample_indicators);
   };
 
   // Main frequency sweep loop.
@@ -222,7 +219,7 @@ ErrorIndicators DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator 
     omega += delta_omega;
   }
   SaveMetadata(ksp);
-  return combined_indicators;
+  return indicators;
 }
 
 ErrorIndicators DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator &postop,
@@ -280,20 +277,17 @@ ErrorIndicators DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator
 
   // The error indicators will be calculated for each HDM sample rather than for
   // the online stage.
-  ErrorIndicators combined_indicators;
-  auto UpdateErrorIndicators = [this, &estimator, &combined_indicators,
-                                &spaceop](const auto &E, int step, double frequency)
+  ErrorIndicators indicators;
+  auto UpdateErrorIndicators =
+      [this, &estimator, &indicators, &spaceop](const auto &E, int step, double frequency)
   {
     BlockTimer bt0(Timer::ESTIMATION);
     constexpr bool normalized = true;
-    auto indicators = estimator.ComputeIndicators(E, normalized);
+    auto sample_indicators = estimator.ComputeIndicators(E, normalized);
     PostprocessErrorIndicators("f (GHz)", step, frequency,
-                               indicators.GetGlobalErrorIndicator(spaceop.GetComm()),
-                               indicators.GetMinErrorIndicator(spaceop.GetComm()),
-                               indicators.GetMaxErrorIndicator(spaceop.GetComm()),
-                               indicators.GetMeanErrorIndicator(spaceop.GetComm()),
-                               indicators.GetNormalization(), normalized);
-    combined_indicators.AddIndicators(indicators);
+                               sample_indicators.GetPostprocessData(spaceop.GetComm()),
+                               normalized);
+    indicators.AddIndicators(sample_indicators);
   };
 
   // Initialize the basis with samples from the top and bottom of the frequency
@@ -343,7 +337,7 @@ ErrorIndicators DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator
   SaveMetadata(prom.GetLinearSolver());
 
   // Set the indicator field to the combined field for postprocessing.
-  postop.SetIndicatorGridFunction(combined_indicators.GetLocalErrorIndicators());
+  postop.SetIndicatorGridFunction(indicators.GetLocalErrorIndicators());
 
   // Main fast frequency sweep loop (online phase).
   BlockTimer bt2(Timer::CONSTRUCT);
@@ -392,7 +386,7 @@ ErrorIndicators DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator
     step++;
     omega += delta_omega;
   }
-  return combined_indicators;
+  return indicators;
 }
 
 int DrivenSolver::GetNumSteps(double start, double end, double delta) const
