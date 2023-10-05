@@ -24,7 +24,6 @@ namespace palace
 {
 
 class ErrorIndicators;
-class GradFluxErrorEstimator;
 class IoData;
 class LaplaceOperator;
 class PostOperator;
@@ -36,9 +35,9 @@ class Timer;
 class ElectrostaticSolver : public BaseSolver
 {
 private:
-  ErrorIndicators Postprocess(LaplaceOperator &laplaceop, PostOperator &postop,
-                              GradFluxErrorEstimator &estimator,
-                              const std::vector<Vector> &V) const;
+  void Postprocess(LaplaceOperator &laplaceop, PostOperator &postop,
+                   const std::vector<Vector> &V,
+                   const std::vector<ErrorIndicators> &indicators) const;
 
   void PostprocessTerminals(const std::map<int, mfem::Array<int>> &terminal_sources,
                             const mfem::DenseMatrix &C, const mfem::DenseMatrix &Cinv,

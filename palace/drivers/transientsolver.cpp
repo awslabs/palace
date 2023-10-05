@@ -90,6 +90,7 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) 
     BlockTimer bt0(Timer::ESTIMATION);
     auto sample_indicators = estimator.ComputeIndicators(E);
     postop.SetIndicatorGridFunction(sample_indicators.GetLocalErrorIndicators());
+    BlockTimer bt_post(Timer::POSTPRO);
     PostprocessErrorIndicators("t (ns)", step, time,
                                sample_indicators.GetPostprocessData(spaceop.GetComm()));
     indicators.AddIndicators(sample_indicators);

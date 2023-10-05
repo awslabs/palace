@@ -173,7 +173,7 @@ ErrorIndicators CurlFluxErrorEstimator::ComputeIndicators(const ComplexVector &v
     std::for_each(estimates.begin(), estimates.end(),
                   [&normalization](auto &x) { x /= normalization; });
   }
-  return {estimates, normalization};
+  return ErrorIndicators(std::move(estimates), normalization);
 }
 
 template <>
@@ -235,7 +235,7 @@ ErrorIndicators CurlFluxErrorEstimator::ComputeIndicators(const Vector &v) const
     std::for_each(estimates.begin(), estimates.end(),
                   [&normalization](auto &x) { x /= normalization; });
   }
-  return {estimates, normalization};
+  return ErrorIndicators(std::move(estimates), normalization);
 }
 
 GradFluxErrorEstimator::GradFluxErrorEstimator(
@@ -326,7 +326,7 @@ ErrorIndicators GradFluxErrorEstimator::ComputeIndicators(const Vector &v) const
     std::for_each(estimates.begin(), estimates.end(),
                   [&normalization](auto &x) { x /= normalization; });
   }
-  return {estimates, normalization};
+  return ErrorIndicators(std::move(estimates), normalization);
 }
 
 }  // namespace palace

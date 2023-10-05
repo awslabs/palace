@@ -263,26 +263,16 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) cons
   int num_conv = eigen->Solve();
   SaveMetadata(*ksp);
 
-  // Initialize structures for storing and reducing the results of error estimation.
-  ErrorIndicators indicators;
-  auto UpdateErrorIndicators =
-      [this, &estimator, &indicators, &postop, &spaceop](const auto &E, int i)
-  {
-    BlockTimer bt0(Timer::ESTIMATION);
-    auto sample_indicators = estimator.ComputeIndicators(E);
-    postop.SetIndicatorGridFunction(sample_indicators.GetLocalErrorIndicators());
-    PostprocessErrorIndicators(
-        "m", i, i + 1, sample_indicators.GetPostprocessData(spaceop.GetComm()));
-    indicators.AddIndicators(sample_indicators);
-  };
-
   // Save the eigenvalue estimates.
+  BlockTimer bt_est(Timer::ESTIMATION);
+  std::vector<ErrorIndicators> indicators;
+  indicators.reserve(num_conv);
   for (int i = 0; i < iodata.solver.eigenmode.n; i++)
   {
     eigen->GetEigenvector(i, E);
     // Only update the error indicator for targeted modes.
     Mpi::Print("\nComputing error estimates for mode {:d}\n", i);
-    UpdateErrorIndicators(E, i);
+    indicators.emplace_back(estimator.ComputeIndicators(E));
   }
 
   // Postprocess the results.
@@ -322,6 +312,13 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) cons
 
     // Postprocess the mode.
     Postprocess(postop, spaceop.GetLumpedPortOp(), i, omega, error1, error2, num_conv);
+
+    if (i < iodata.solver.eigenmode.n)
+    {
+      postop.SetIndicatorGridFunction(indicators[i].GetLocalErrorIndicators());
+      PostprocessErrorIndicators("m", i, i + 1,
+                                indicators[i].GetPostprocessData(spaceop.GetComm()));
+    }
   }
   return indicators;
 }

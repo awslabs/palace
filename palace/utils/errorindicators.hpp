@@ -15,9 +15,16 @@ namespace palace
 class ErrorIndicators
 {
 public:
-  ErrorIndicators(Vector local, double normalization)
+  ErrorIndicators(Vector &&local, double normalization)
     : local(std::move(local)), normalization(normalization), n(1)
   {
+  }
+  ErrorIndicators(const std::vector<ErrorIndicators> &ind)
+  {
+    for (const auto &i : ind)
+    {
+      AddIndicators(i);
+    }
   }
 
   ErrorIndicators() = default;

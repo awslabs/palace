@@ -152,6 +152,7 @@ ErrorIndicators DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator 
     BlockTimer bt0(Timer::ESTIMATION);
     auto sample_indicators = estimator.ComputeIndicators(E);
     postop.SetIndicatorGridFunction(sample_indicators.GetLocalErrorIndicators());
+    BlockTimer bt_post(Timer::POSTPRO);
     PostprocessErrorIndicators("f (GHz)", step, frequency,
                                sample_indicators.GetPostprocessData(spaceop.GetComm()));
     indicators.AddIndicators(sample_indicators);
@@ -281,6 +282,7 @@ ErrorIndicators DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator
   {
     BlockTimer bt0(Timer::ESTIMATION);
     auto sample_indicators = estimator.ComputeIndicators(E);
+    BlockTimer bt_post(Timer::POSTPRO);
     PostprocessErrorIndicators("f (GHz)", step, frequency,
                                sample_indicators.GetPostprocessData(spaceop.GetComm()));
     indicators.AddIndicators(sample_indicators);
