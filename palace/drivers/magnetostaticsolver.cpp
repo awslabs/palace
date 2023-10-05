@@ -184,12 +184,6 @@ ErrorIndicators MagnetostaticSolver::Postprocess(CurlCurlOperator &curlcurlop,
   mfem::DenseMatrix Minv(M);
   Minv.Invert();  // In-place, uses LAPACK (when available) and should be cheap
   PostprocessTerminals(surf_j_op, M, Minv, Mm);
-  PostprocessErrorIndicators(
-      "Mean", combined_indicators.GetGlobalErrorIndicator(curlcurlop.GetComm()),
-      combined_indicators.GetMinErrorIndicator(curlcurlop.GetComm()),
-      combined_indicators.GetMaxErrorIndicator(curlcurlop.GetComm()),
-      combined_indicators.GetMeanErrorIndicator(curlcurlop.GetComm()),
-      combined_indicators.GetNormalization());
   return combined_indicators;
 }
 

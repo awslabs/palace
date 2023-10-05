@@ -74,9 +74,6 @@ protected:
   void PostprocessErrorIndicators(const std::string &name, int step, double time,
                                   double global, double min, double max, double mean,
                                   double normalization, bool normalized) const;
-  // Write a string labeled error indicator. Used for writing statistics.
-  void PostprocessErrorIndicators(const std::string &name, double global, double min,
-                                  double max, double mean, double normalization) const;
 
 public:
   BaseSolver(const IoData &iodata, bool root, int size = 0, int num_thread = 0,

@@ -174,12 +174,6 @@ ErrorIndicators ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop,
   mfem::DenseMatrix Cinv(C);
   Cinv.Invert();  // In-place, uses LAPACK (when available) and should be cheap
   PostprocessTerminals(terminal_sources, C, Cinv, Cm);
-  PostprocessErrorIndicators(
-      "Mean", combined_indicators.GetGlobalErrorIndicator(laplaceop.GetComm()),
-      combined_indicators.GetMinErrorIndicator(laplaceop.GetComm()),
-      combined_indicators.GetMaxErrorIndicator(laplaceop.GetComm()),
-      combined_indicators.GetMeanErrorIndicator(laplaceop.GetComm()),
-      combined_indicators.GetNormalization());
   return combined_indicators;
 }
 

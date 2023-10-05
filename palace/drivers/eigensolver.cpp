@@ -328,12 +328,6 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) cons
     // Postprocess the mode.
     Postprocess(postop, spaceop.GetLumpedPortOp(), i, omega, error1, error2, num_conv);
   }
-  PostprocessErrorIndicators("Mean",
-                             combined_indicators.GetGlobalErrorIndicator(spaceop.GetComm()),
-                             combined_indicators.GetMinErrorIndicator(spaceop.GetComm()),
-                             combined_indicators.GetMaxErrorIndicator(spaceop.GetComm()),
-                             combined_indicators.GetMeanErrorIndicator(spaceop.GetComm()),
-                             combined_indicators.GetNormalization());
   return combined_indicators;
 }
 

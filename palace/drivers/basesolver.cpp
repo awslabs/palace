@@ -606,32 +606,6 @@ void BaseSolver::PostprocessErrorIndicators(const std::string &name, int step, d
   }
 }
 
-void BaseSolver::PostprocessErrorIndicators(const std::string &name, double global,
-                                            double min, double max, double mean,
-                                            double normalization) const
-{
-  if (post_dir.length() == 0)
-  {
-    return;
-  }
-
-  // Write the indicator statistics
-  if (root)
-  {
-    std::string path = post_dir + "error-indicators.csv";
-    auto output = OutputFile(path, true);
-    // clang-format off
-    output.print("{:>{}s},{:+{}.{}e},{:+{}.{}e},{:+{}.{}e},{:+{}.{}e},{:+{}.{}e}\n",
-                name, table.w1,
-                global, table.w, table.p,
-                min, table.w, table.p,
-                max, table.w, table.p,
-                mean, table.w, table.p,
-                normalization, table.w, table.p);
-    // clang-format on
-  }
-}
-
 template void BaseSolver::SaveMetadata<KspSolver>(const KspSolver &) const;
 template void BaseSolver::SaveMetadata<ComplexKspSolver>(const ComplexKspSolver &) const;
 

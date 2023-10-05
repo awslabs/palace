@@ -153,12 +153,6 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) 
     step++;
   }
   SaveMetadata(timeop.GetLinearSolver());
-  PostprocessErrorIndicators("Mean",
-                             combined_indicators.GetGlobalErrorIndicator(spaceop.GetComm()),
-                             combined_indicators.GetMinErrorIndicator(spaceop.GetComm()),
-                             combined_indicators.GetMaxErrorIndicator(spaceop.GetComm()),
-                             combined_indicators.GetMeanErrorIndicator(spaceop.GetComm()),
-                             combined_indicators.GetNormalization());
   return combined_indicators;
 }
 std::function<double(double)> TransientSolver::GetTimeExcitation(bool dot) const

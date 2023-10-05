@@ -222,12 +222,6 @@ ErrorIndicators DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator 
     omega += delta_omega;
   }
   SaveMetadata(ksp);
-  PostprocessErrorIndicators("Mean",
-                             combined_indicators.GetGlobalErrorIndicator(spaceop.GetComm()),
-                             combined_indicators.GetMinErrorIndicator(spaceop.GetComm()),
-                             combined_indicators.GetMaxErrorIndicator(spaceop.GetComm()),
-                             combined_indicators.GetMeanErrorIndicator(spaceop.GetComm()),
-                             combined_indicators.GetNormalization());
   return combined_indicators;
 }
 
@@ -349,12 +343,6 @@ ErrorIndicators DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator
   SaveMetadata(prom.GetLinearSolver());
 
   // Set the indicator field to the combined field for postprocessing.
-  PostprocessErrorIndicators("Mean",
-                             combined_indicators.GetGlobalErrorIndicator(spaceop.GetComm()),
-                             combined_indicators.GetMinErrorIndicator(spaceop.GetComm()),
-                             combined_indicators.GetMaxErrorIndicator(spaceop.GetComm()),
-                             combined_indicators.GetMeanErrorIndicator(spaceop.GetComm()),
-                             combined_indicators.GetNormalization());
   postop.SetIndicatorGridFunction(combined_indicators.GetLocalErrorIndicators());
 
   // Main fast frequency sweep loop (online phase).
