@@ -150,12 +150,10 @@ ErrorIndicators DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator 
                                 &spaceop](const auto &E, int step, double frequency)
   {
     BlockTimer bt0(Timer::ESTIMATION);
-    constexpr bool normalized = true;
-    auto sample_indicators = estimator.ComputeIndicators(E, normalized);
+    auto sample_indicators = estimator.ComputeIndicators(E);
     postop.SetIndicatorGridFunction(sample_indicators.GetLocalErrorIndicators());
     PostprocessErrorIndicators("f (GHz)", step, frequency,
-                               sample_indicators.GetPostprocessData(spaceop.GetComm()),
-                               normalized);
+                               sample_indicators.GetPostprocessData(spaceop.GetComm()));
     indicators.AddIndicators(sample_indicators);
   };
 
@@ -282,11 +280,9 @@ ErrorIndicators DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator
       [this, &estimator, &indicators, &spaceop](const auto &E, int step, double frequency)
   {
     BlockTimer bt0(Timer::ESTIMATION);
-    constexpr bool normalized = true;
-    auto sample_indicators = estimator.ComputeIndicators(E, normalized);
+    auto sample_indicators = estimator.ComputeIndicators(E);
     PostprocessErrorIndicators("f (GHz)", step, frequency,
-                               sample_indicators.GetPostprocessData(spaceop.GetComm()),
-                               normalized);
+                               sample_indicators.GetPostprocessData(spaceop.GetComm()));
     indicators.AddIndicators(sample_indicators);
   };
 

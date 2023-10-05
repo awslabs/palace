@@ -567,8 +567,7 @@ void BaseSolver::PostprocessFields(const PostOperator &postop, int step, double 
 }
 
 void BaseSolver::PostprocessErrorIndicators(const std::string &name, int step, double time,
-                                            const std::array<double, 5> &data,
-                                            bool normalized) const
+                                            const std::array<double, 5> &data) const
 {
   if (post_dir.length() == 0)
   {
@@ -585,10 +584,10 @@ void BaseSolver::PostprocessErrorIndicators(const std::string &name, int step, d
       // clang-format off
       output.print("{:>{}s},{:>{}s},{:>{}s},{:>{}s},{:>{}s},{:>{}s}\n",
                    name, table.w1,
-                   normalized ? "Sum Rel." : "Sum Abs.", table.w,
-                   normalized ? "Min Elem Rel." : "Min Elem Abs.", table.w,
-                   normalized ? "Max Elem Rel." : "Max Elem Abs.", table.w,
-                   normalized ? "Mean Elem Rel." : "Mean Elem Abs.", table.w,
+                   "Sum Rel.", table.w,
+                   "Min Elem Rel.", table.w,
+                   "Max Elem Rel.", table.w,
+                   "Mean Elem Rel.", table.w,
                    "Normalization", table.w);
       // clang-format on
     }

@@ -110,8 +110,7 @@ CurlFluxErrorEstimator::CurlFluxErrorEstimator(
 }
 
 template <>
-ErrorIndicators CurlFluxErrorEstimator::ComputeIndicators(const ComplexVector &v,
-                                                          bool normalize) const
+ErrorIndicators CurlFluxErrorEstimator::ComputeIndicators(const ComplexVector &v) const
 {
   auto &nd_fespace = nd_fespaces.GetFinestFESpace();
   const int nelem = nd_fespace.GetNE();
@@ -171,7 +170,7 @@ ErrorIndicators CurlFluxErrorEstimator::ComputeIndicators(const ComplexVector &v
 
   Mpi::GlobalSum(1, &normalization, nd_fespace.GetComm());
   normalization = std::sqrt(normalization);
-  if (normalize)
+  if (normalization > 0)
   {
     std::for_each(estimates.begin(), estimates.end(),
                   [&normalization](auto &x) { x /= normalization; });
@@ -180,8 +179,7 @@ ErrorIndicators CurlFluxErrorEstimator::ComputeIndicators(const ComplexVector &v
 }
 
 template <>
-ErrorIndicators CurlFluxErrorEstimator::ComputeIndicators(const Vector &v,
-                                                          bool normalize) const
+ErrorIndicators CurlFluxErrorEstimator::ComputeIndicators(const Vector &v) const
 {
   auto &nd_fespace = nd_fespaces.GetFinestFESpace();
   field_gf.SetFromTrueDofs(v);
@@ -234,7 +232,7 @@ ErrorIndicators CurlFluxErrorEstimator::ComputeIndicators(const Vector &v,
 
   Mpi::GlobalSum(1, &normalization, nd_fespace.GetComm());
   normalization = std::sqrt(normalization);
-  if (normalize)
+  if (normalization > 0)
   {
     std::for_each(estimates.begin(), estimates.end(),
                   [&normalization](auto &x) { x /= normalization; });
@@ -255,8 +253,7 @@ GradFluxErrorEstimator::GradFluxErrorEstimator(
 {
 }
 
-ErrorIndicators GradFluxErrorEstimator::ComputeIndicators(const Vector &v,
-                                                          bool normalize) const
+ErrorIndicators GradFluxErrorEstimator::ComputeIndicators(const Vector &v) const
 {
   auto &h1_fespace = h1_fespaces.GetFinestFESpace();
   const int sdim = h1_fespace.GetMesh()->SpaceDimension();
@@ -326,7 +323,7 @@ ErrorIndicators GradFluxErrorEstimator::ComputeIndicators(const Vector &v,
   Mpi::GlobalSum(1, &normalization, h1_fespace.GetComm());
   normalization = std::sqrt(normalization);
 
-  if (normalize)
+  if (normalization > 0)
   {
     std::for_each(estimates.begin(), estimates.end(),
                   [&normalization](auto &x) { x /= normalization; });

@@ -269,11 +269,10 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) cons
       [this, &estimator, &indicators, &postop, &spaceop](const auto &E, int i)
   {
     BlockTimer bt0(Timer::ESTIMATION);
-    constexpr bool normalized = true;
-    auto sample_indicators = estimator.ComputeIndicators(E, normalized);
+    auto sample_indicators = estimator.ComputeIndicators(E);
     postop.SetIndicatorGridFunction(sample_indicators.GetLocalErrorIndicators());
     PostprocessErrorIndicators(
-        "m", i, i + 1, sample_indicators.GetPostprocessData(spaceop.GetComm()), normalized);
+        "m", i, i + 1, sample_indicators.GetPostprocessData(spaceop.GetComm()));
     indicators.AddIndicators(sample_indicators);
   };
 

@@ -109,12 +109,10 @@ ErrorIndicators MagnetostaticSolver::Postprocess(CurlCurlOperator &curlcurlop,
                                 &curlcurlop](const auto &A, int i, double idx)
   {
     BlockTimer bt0(Timer::ESTIMATION);
-    constexpr bool normalized = true;
-    auto sample_indicators = estimator.ComputeIndicators(A, normalized);
+    auto sample_indicators = estimator.ComputeIndicators(A);
     postop.SetIndicatorGridFunction(sample_indicators.GetLocalErrorIndicators());
     PostprocessErrorIndicators("i", i, i + 1,
-                               sample_indicators.GetPostprocessData(curlcurlop.GetComm()),
-                               normalized);
+                               sample_indicators.GetPostprocessData(curlcurlop.GetComm()));
     indicators.AddIndicators(sample_indicators);
   };
   if (iodata.solver.magnetostatic.n_post > 0)

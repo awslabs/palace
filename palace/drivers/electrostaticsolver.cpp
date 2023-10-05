@@ -105,12 +105,10 @@ ErrorIndicators ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop,
       [this, &estimator, &indicators, &postop, &laplaceop](const auto &V, int i, double idx)
   {
     BlockTimer bt0(Timer::ESTIMATION);
-    constexpr bool normalized = true;
-    auto sample_indicators = estimator.ComputeIndicators(V, normalized);
+    auto sample_indicators = estimator.ComputeIndicators(V);
     postop.SetIndicatorGridFunction(sample_indicators.GetLocalErrorIndicators());
     PostprocessErrorIndicators("i", i, i + 1,
-                               sample_indicators.GetPostprocessData(laplaceop.GetComm()),
-                               normalized);
+                               sample_indicators.GetPostprocessData(laplaceop.GetComm()));
     indicators.AddIndicators(sample_indicators);
   };
   if (iodata.solver.electrostatic.n_post > 0)
