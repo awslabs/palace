@@ -92,8 +92,6 @@ FluxProjector<SmoothFluxFiniteElementCollection>::FluxProjector(
 
   ksp = std::make_unique<KspSolver>(std::move(pcg), std::move(pc));
   ksp->SetOperators(*M, *M);
-
-  tmp.SetSize(fespaces.GetFinestFESpace().GetTrueVSize());
 }
 
 CurlFluxErrorEstimator::CurlFluxErrorEstimator(

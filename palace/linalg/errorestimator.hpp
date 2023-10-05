@@ -33,28 +33,15 @@ private:
   // Linear solver and preconditioner for the projected linear system M σ = σ̂.
   std::unique_ptr<KspSolver> ksp;
 
-  // Intermediate storage vector used in Mult.
-  mutable Vector tmp;
-
 public:
   FluxProjector(mfem::ParFiniteElementSpaceHierarchy &smooth_flux_fes, double tol,
                 int max_it, int print_level, int pa_order_threshold);
 
-  inline void Mult(Vector &x) const
-  {
-    tmp = x;
-    Mult(tmp, x);
-  }
   inline void Mult(const Vector &x, Vector &y) const { ksp->Mult(x, y); }
-  inline void Mult(ComplexVector &x) const
-  {
-    Mult(x.Real());
-    Mult(x.Imag());
-  }
   inline void Mult(const ComplexVector &x, ComplexVector &y) const
   {
-    y = x;
-    Mult(y);
+    Mult(x.Real(), y.Real());
+    Mult(x.Imag(), y.Imag());
   }
 };
 
