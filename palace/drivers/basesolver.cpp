@@ -6,12 +6,12 @@
 #include <complex>
 #include <mfem.hpp>
 #include <nlohmann/json.hpp>
+#include "fem/errorindicators.hpp"
 #include "linalg/ksp.hpp"
 #include "models/domainpostoperator.hpp"
 #include "models/postoperator.hpp"
 #include "models/surfacepostoperator.hpp"
 #include "utils/communication.hpp"
-#include "utils/errorindicators.hpp"
 #include "utils/filesystem.hpp"
 #include "utils/iodata.hpp"
 #include "utils/timer.hpp"

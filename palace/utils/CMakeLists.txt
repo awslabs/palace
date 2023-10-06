@@ -8,7 +8,6 @@
 target_sources(${TARGET_NAME}
   PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/configfile.cpp
-  ${CMAKE_CURRENT_SOURCE_DIR}/errorindicators.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/geodata.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/iodata.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/meshio.cpp

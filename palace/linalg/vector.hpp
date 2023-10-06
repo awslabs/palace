@@ -139,6 +139,9 @@ void SetRandomReal(MPI_Comm comm, VecType &x, int seed = 0);
 template <typename VecType>
 void SetRandomSign(MPI_Comm comm, VecType &x, int seed = 0);
 
+// Component-wise square root.
+void CwiseSqrt(Vector &x);
+
 // Calculate the inner product yᴴ x or yᵀ x.
 template <typename VecType>
 inline auto Dot(MPI_Comm comm, const VecType &x, const VecType &y)

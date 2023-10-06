@@ -6,10 +6,10 @@
 
 #include <memory>
 #include <mfem.hpp>
+#include "fem/errorindicators.hpp"
 #include "linalg/ksp.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
-#include "utils/errorindicators.hpp"
 
 namespace palace
 {

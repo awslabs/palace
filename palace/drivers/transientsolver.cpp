@@ -4,6 +4,7 @@
 #include "transientsolver.hpp"
 
 #include <mfem.hpp>
+#include "fem/errorindicators.hpp"
 #include "linalg/errorestimator.hpp"
 #include "linalg/vector.hpp"
 #include "models/lumpedportoperator.hpp"
@@ -12,7 +13,6 @@
 #include "models/surfacecurrentoperator.hpp"
 #include "models/timeoperator.hpp"
 #include "utils/communication.hpp"
-#include "utils/errorindicators.hpp"
 #include "utils/excitations.hpp"
 #include "utils/iodata.hpp"
 #include "utils/timer.hpp"

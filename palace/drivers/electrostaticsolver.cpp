@@ -4,6 +4,7 @@
 #include "electrostaticsolver.hpp"
 
 #include <mfem.hpp>
+#include "fem/errorindicators.hpp"
 #include "linalg/errorestimator.hpp"
 #include "linalg/ksp.hpp"
 #include "linalg/operator.hpp"
@@ -11,7 +12,6 @@
 #include "models/laplaceoperator.hpp"
 #include "models/postoperator.hpp"
 #include "utils/communication.hpp"
-#include "utils/errorindicators.hpp"
 #include "utils/iodata.hpp"
 #include "utils/timer.hpp"
 

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include "errorindicators.hpp"
-
+#include <fmt/os.h>
 #include "utils/communication.hpp"
 
 namespace palace
@@ -48,5 +48,4 @@ void ErrorIndicators::AddIndicators(const ErrorIndicators &error_indicators)
     (*this) = error_indicators;
   }
 }
-
 }  // namespace palace

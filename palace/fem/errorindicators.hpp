@@ -1,8 +1,8 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#ifndef PALACE_UTILS_ERROR_INDICATORS_HPP
-#define PALACE_UTILS_ERROR_INDICATORS_HPP
+#ifndef PALACE_FEM_ERROR_INDICATORS_HPP
+#define PALACE_FEM_ERROR_INDICATORS_HPP
 
 #include "linalg/vector.hpp"
 #include "utils/communication.hpp"
@@ -81,4 +81,4 @@ protected:
 
 }  // namespace palace
 
-#endif  // PALACE_UTILS_ERROR_INDICATORS_HPP
+#endif  // PALACE_FEM_ERROR_INDICATORS_HPP

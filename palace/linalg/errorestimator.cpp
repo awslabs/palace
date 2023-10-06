@@ -4,6 +4,7 @@
 #include "errorestimator.hpp"
 #include <limits>
 #include "fem/coefficient.hpp"
+#include "fem/errorindicators.hpp"
 #include "fem/integrator.hpp"
 #include "fem/multigrid.hpp"
 #include "linalg/amg.hpp"
@@ -12,7 +13,6 @@
 #include "linalg/rap.hpp"
 #include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
-#include "utils/errorindicators.hpp"
 #include "utils/iodata.hpp"
 #include "utils/timer.hpp"
 
@@ -162,10 +162,7 @@ ErrorIndicators CurlFluxErrorEstimator::ComputeIndicators(const ComplexVector &v
       }
     }
   }
-  for (auto &e : estimates)
-  {
-    e = std::sqrt(e);
-  }
+  linalg::CwiseSqrt(estimates);
 
   Mpi::GlobalSum(1, &normalization, nd_fespace.GetComm());
   normalization = std::sqrt(normalization);
@@ -306,10 +303,7 @@ ErrorIndicators GradFluxErrorEstimator::ComputeIndicators(const Vector &v) const
       paraview.Save();
     }
   }
-  for (auto &e : estimates)
-  {
-    e = std::sqrt(e);
-  }
+  linalg::CwiseSqrt(estimates);
 
   Mpi::GlobalSum(1, &normalization, h1_fespace.GetComm());
   normalization = std::sqrt(normalization);

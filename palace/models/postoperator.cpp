@@ -4,6 +4,7 @@
 #include "postoperator.hpp"
 
 #include "fem/coefficient.hpp"
+#include "fem/errorindicators.hpp"
 #include "models/curlcurloperator.hpp"
 #include "models/laplaceoperator.hpp"
 #include "models/lumpedportoperator.hpp"
@@ -12,7 +13,6 @@
 #include "models/surfacecurrentoperator.hpp"
 #include "models/waveportoperator.hpp"
 #include "utils/communication.hpp"
-#include "utils/errorindicators.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
 
