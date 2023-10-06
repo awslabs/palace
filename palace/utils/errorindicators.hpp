@@ -26,25 +26,14 @@ public:
       AddIndicators(i);
     }
   }
-
   ErrorIndicators() = default;
-  ErrorIndicators(const ErrorIndicators &) = default;
-  ErrorIndicators(ErrorIndicators &&) = default;
-  ErrorIndicators &operator=(const ErrorIndicators &) = default;
-  ErrorIndicators &operator=(ErrorIndicators &&) = default;
-  ~ErrorIndicators() = default;
 
   // Return the local error indicators.
   const auto &GetLocalErrorIndicators() const { return local; }
   // Return the global error indicator.
   inline auto GetGlobalErrorIndicator(MPI_Comm comm) const
   {
-    constexpr int p = 2;
-    double global_error_indicator =
-        std::transform_reduce(local.begin(), local.end(), 0.0, std::plus(),
-                              [](auto val) { return std::pow(val, p); });
-    Mpi::GlobalSum(1, &global_error_indicator, comm);
-    return std::pow(global_error_indicator, 1.0 / p);
+    return linalg::Norml2(comm, local);
   }
   // Return the largest local error indicator.
   inline auto GetMaxErrorIndicator(MPI_Comm comm) const
