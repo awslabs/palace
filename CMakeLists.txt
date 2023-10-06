@@ -20,7 +20,6 @@ project(palace-superbuild LANGUAGES CXX C VERSION 0.11.2)
 set(PALACE_WITH_64BIT_INT OFF CACHE BOOL "Use 64 bit integers")
 set(PALACE_WITH_64BIT_BLAS_INT OFF CACHE BOOL "Use ILP64 BLAS/LAPACK interface instead of LP64 (not recommended)")
 set(PALACE_WITH_OPENMP OFF CACHE BOOL "Use OpenMP")
-set(PALACE_WITH_GSLIB ON CACHE BOOL "Build with GSLIB library for high-order field interpolation")
 
 set(PALACE_BUILD_EXTERNAL_DEPS ON CACHE BOOL "Build external third-party dependency libraries")
 set(PALACE_WITH_SUPERLU ON CACHE BOOL "Build with SuperLU_DIST sparse direct solver")
@@ -29,6 +28,7 @@ set(PALACE_WITH_MUMPS OFF CACHE BOOL "Build with MUMPS sparse direct solver")
 set(PALACE_WITH_SLEPC ON CACHE BOOL "Build with SLEPc eigenvalue solver")
 set(PALACE_WITH_ARPACK OFF CACHE BOOL "Build with ARPACK eigenvalue solver")
 set(PALACE_WITH_LIBXSMM ON CACHE BOOL "Build with LIBXSMM backend for libCEED")
+set(PALACE_WITH_GSLIB ON CACHE BOOL "Build with GSLIB library for high-order field interpolation")
 
 set(ANALYZE_SOURCES_CLANG_TIDY OFF CACHE BOOL "Run static analysis checks using clang-tidy")
 set(ANALYZE_SOURCES_CPPCHECK OFF CACHE BOOL "Run static analysis checks using cppcheck")
@@ -38,22 +38,42 @@ if(PALACE_WITH_STRUMPACK OR PALACE_WITH_MUMPS OR PALACE_WITH_ARPACK)
   enable_language(Fortran)
 endif()
 
-# Set a default installation location if none was provided
-if(NOT CMAKE_INSTALL_PREFIX OR CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
-  message(STATUS "Setting CMAKE_INSTALL_PREFIX to '${CMAKE_BINARY_DIR}' as none was specified")
-  set(CMAKE_INSTALL_PREFIX "${CMAKE_BINARY_DIR}" CACHE STRING "Install directory used by install()" FORCE)
-endif()
-
 # Set a default build type if none was provided
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   message(STATUS "Setting CMAKE_BUILD_TYPE to 'Release' as none was specified")
-  set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Specifies the build type ('Debug' or 'Release', for example)" FORCE)
+  set(CMAKE_BUILD_TYPE "Release" CACHE STRING
+    "Specifies the build type ('Debug' or 'Release', for example)" FORCE
+  )
+endif()
+
+# Set a default installation location if none was provided
+if(NOT CMAKE_INSTALL_PREFIX OR CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
+  message(STATUS "Setting CMAKE_INSTALL_PREFIX to '${CMAKE_BINARY_DIR}' as none was specified")
+  set(CMAKE_INSTALL_PREFIX "${CMAKE_BINARY_DIR}" CACHE STRING
+    "Install directory used by install()" FORCE
+  )
 endif()
 
 # Set a default for dependency library builds if none was provided
 if(NOT DEFINED BUILD_SHARED_LIBS)
   message(STATUS "Setting BUILD_SHARED_LIBS to 'OFF' as it was not specified")
-  set(BUILD_SHARED_LIBS OFF CACHE BOOL "Global flag to cause add_library() to create shared libraries if ON")
+  set(BUILD_SHARED_LIBS OFF CACHE BOOL
+    "Global flag to cause add_library() to create shared libraries if ON"
+  )
+endif()
+
+# Configure default RPATH for installed targets if not provided
+if(NOT DEFINED CMAKE_INSTALL_RPATH)
+  message(STATUS "Setting CMAKE_INSTALL_RPATH to '\${CMAKE_INSTALL_PREFIX}/lib;\${CMAKE_INSTALL_PREFIX}/lib64' as it was not specified")
+  set(CMAKE_INSTALL_RPATH "${CMAKE_INSTALL_PREFIX}/lib$<SEMICOLON>${CMAKE_INSTALL_PREFIX}/lib64" CACHE STRING
+    "Global RPATH to use for installed targets"
+  )
+endif()
+if(NOT DEFINED CMAKE_INSTALL_RPATH_USE_LINK_PATH)
+  message(STATUS "Setting CMAKE_INSTALL_RPATH_USE_LINK_PATH to 'ON' as it was not specified")
+  set(CMAKE_INSTALL_RPATH_USE_LINK_PATH ON CACHE BOOL
+    "Global flag to append to the RPATH of installed binaries any directories which linked library files if ON"
+  )
 endif()
 
 # Add extra CMake modules

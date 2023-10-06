@@ -116,26 +116,6 @@ if [[ -n "$DRY_RUN" ]]; then
     PALACE="$PALACE $DRY_RUN"
 fi
 
-# Configure shared library runtime locations
-LIB_DIR=$(dirname $PALACE_DIR)/lib
-LIB64_DIR=$(dirname $PALACE_DIR)/lib64
-if [[ -d $LIB_DIR ]]; then
-    PALACE_LIB_PATH="$LIB_DIR"
-fi
-if [[ -d $LIB64_DIR ]]; then
-    [[ "$PALACE_LIB_PATH" == '' ]] && PALACE_LIB_PATH="$LIB64_DIR" || \
-                                      PALACE_LIB_PATH="$LIB64_DIR;$PALACE_LIB_PATH"
-fi
-if [[ "$(uname)" == "Darwin" ]]; then
-    LIB_PATH_BACKUP=$DYLD_LIBRARY_PATH
-    [[ "$LIB_PATH_BACKUP" == '' ]] && export DYLD_LIBRARY_PATH="$PALACE_LIB_PATH" || \
-                                      export DYLD_LIBRARY_PATH="$PALACE_LIB_PATH;$LIB_PATH_BACKUP"
-else
-    LIB_PATH_BACKUP=$LD_LIBRARY_PATH
-    [[ "$LIB_PATH_BACKUP" == '' ]] && export LD_LIBRARY_PATH="$PALACE_LIB_PATH" || \
-                                      export LD_LIBRARY_PATH="$PALACE_LIB_PATH;$LIB_PATH_BACKUP"
-fi
-
 # Configure OpenMP threads
 NUM_THREADS_BACKUP=$OMP_NUM_THREADS
 if [[ -z "$NUM_THREADS" ]]; then
@@ -197,9 +177,4 @@ else
 fi
 
 # Reset user environment
-if [[ "$(uname)" == "Darwin" ]]; then
-    DYLD_LIBRARY_PATH=$LIB_PATH_BACKUP
-else
-    LD_LIBRARY_PATH=$LIB_PATH_BACKUP
-fi
 OMP_NUM_THREADS=$NUM_THREADS_BACKUP
