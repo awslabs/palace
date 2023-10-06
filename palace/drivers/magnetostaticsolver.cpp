@@ -4,7 +4,7 @@
 #include "magnetostaticsolver.hpp"
 
 #include <mfem.hpp>
-#include "fem/errorindicators.hpp"
+#include "fem/errorindicator.hpp"
 #include "linalg/errorestimator.hpp"
 #include "linalg/ksp.hpp"
 #include "linalg/operator.hpp"
@@ -18,7 +18,7 @@
 namespace palace
 {
 
-ErrorIndicators
+ErrorIndicator
 MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const
 {
   // Construct the system matrix defining the linear operator. Dirichlet boundaries are
@@ -50,7 +50,7 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &me
   // Source term and solution vector storage.
   Vector RHS(K->Height());
   std::vector<Vector> A(nstep);
-  std::vector<ErrorIndicators> indicators(nstep);
+  std::vector<ErrorIndicator> indicators(nstep);
 
   // Main loop over current source boundaries.
   Mpi::Print("\nComputing magnetostatic fields for {:d} source boundar{}\n", nstep,
@@ -92,7 +92,7 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &me
 
 void MagnetostaticSolver::Postprocess(CurlCurlOperator &curlcurlop, PostOperator &postop,
                                       const std::vector<Vector> &A,
-                                      const std::vector<ErrorIndicators> &indicators) const
+                                      const std::vector<ErrorIndicator> &indicators) const
 {
   // Postprocess the Maxwell inductance matrix. See p. 97 of the COMSOL AC/DC Module manual
   // for the associated formulas based on the magnetic field energy based on a current
@@ -128,8 +128,8 @@ void MagnetostaticSolver::Postprocess(CurlCurlOperator &curlcurlop, PostOperator
     PostprocessDomains(postop, "i", i, idx, 0.0, Um, 0.0, 0.0);
     PostprocessSurfaces(postop, "i", i, idx, 0.0, Um, 0.0, Iinc(i));
     PostprocessProbes(postop, "i", i, idx);
-    PostprocessErrorIndicators("i", i, idx,
-                               indicators[i].GetPostprocessData(curlcurlop.GetComm()));
+    PostprocessErrorIndicator("i", i, idx,
+                              indicators[i].GetPostprocessData(curlcurlop.GetComm()));
     if (i < iodata.solver.magnetostatic.n_post)
     {
       PostprocessFields(postop, i, idx);

@@ -20,7 +20,7 @@ class ParMesh;
 namespace palace
 {
 
-class ErrorIndicators;
+class ErrorIndicator;
 class IoData;
 class PostOperator;
 class Timer;
@@ -71,8 +71,8 @@ protected:
 
   // Postprocess granular error indicator to file. The argument normalized indicates if
   // supplied indicators have already been normalized.
-  void PostprocessErrorIndicators(const std::string &name, int step, double time,
-                                  const std::array<double, 5> &data) const;
+  void PostprocessErrorIndicator(const std::string &name, int step, double time,
+                                 const std::array<double, 5> &data) const;
 
 public:
   BaseSolver(const IoData &iodata, bool root, int size = 0, int num_thread = 0,
@@ -80,7 +80,7 @@ public:
   virtual ~BaseSolver() = default;
 
   // Performs a solve using the mesh sequence, then reports error indicators.
-  virtual ErrorIndicators
+  virtual ErrorIndicator
   Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const = 0;
 
   // These methods write different simulation metadata to a JSON file in post_dir.

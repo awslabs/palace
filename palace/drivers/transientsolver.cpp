@@ -4,7 +4,7 @@
 #include "transientsolver.hpp"
 
 #include <mfem.hpp>
-#include "fem/errorindicators.hpp"
+#include "fem/errorindicator.hpp"
 #include "linalg/errorestimator.hpp"
 #include "linalg/vector.hpp"
 #include "models/lumpedportoperator.hpp"
@@ -20,7 +20,7 @@
 namespace palace
 {
 
-ErrorIndicators
+ErrorIndicator
 TransientSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const
 {
   // Set up the spatial discretization and time integrators for the E and B fields.
@@ -83,17 +83,17 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) 
     BlockTimer bt(Timer::ESTCONSTRUCT);
     return CurlFluxErrorEstimator(iodata, spaceop.GetMaterialOp(), spaceop.GetNDSpaces());
   }();
-  ErrorIndicators indicators;
-  auto UpdateErrorIndicators = [this, &estimator, &indicators, &postop,
-                                &spaceop](const auto &E, int step, double time)
+  ErrorIndicator indicators;
+  auto UpdateErrorIndicator = [this, &estimator, &indicators, &postop,
+                               &spaceop](const auto &E, int step, double time)
   {
     BlockTimer bt0(Timer::ESTIMATION);
     auto sample_indicators = estimator.ComputeIndicators(E);
-    postop.SetIndicatorGridFunction(sample_indicators.GetLocalErrorIndicators());
+    postop.SetIndicatorGridFunction(sample_indicators.Local());
     BlockTimer bt_post(Timer::POSTPRO);
-    PostprocessErrorIndicators("t (ns)", step, time,
-                               sample_indicators.GetPostprocessData(spaceop.GetComm()));
-    indicators.AddIndicators(sample_indicators);
+    PostprocessErrorIndicator("t (ns)", step, time,
+                              sample_indicators.GetPostprocessData(spaceop.GetComm()));
+    indicators.AddIndicator(sample_indicators);
   };
 
   // Main time integration loop.
@@ -138,7 +138,7 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) 
     }
 
     // Calculate and record the error indicators.
-    UpdateErrorIndicators(E, step, t);
+    UpdateErrorIndicator(E, step, t);
 
     // Postprocess port voltages/currents and optionally write solution to disk.
     Postprocess(postop, spaceop.GetLumpedPortOp(), spaceop.GetSurfaceCurrentOp(), step, t,

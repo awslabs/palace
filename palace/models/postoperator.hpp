@@ -21,7 +21,7 @@ namespace palace
 {
 
 class CurlCurlOperator;
-class ErrorIndicators;
+class ErrorIndicator;
 class IoData;
 class LaplaceOperator;
 class LumpedPortOperator;

@@ -820,10 +820,10 @@ public:
   int divfree_max_it = 1000;
 
   // Relative tolerance for solving linear systems in the error estimator.
-  double estimator_tol = tol;
+  double estimator_tol = 1e-6;
 
   // Maximum number of iterations for solving linear systems in the error estimator.
-  int estimator_max_it = max_it;
+  int estimator_max_it = 100;
 
   // Enable different variants of Gram-Schmidt orthogonalization for GMRES/FGMRES iterative
   // solvers and SLEPc eigenvalue solver.

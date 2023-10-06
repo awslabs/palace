@@ -417,7 +417,7 @@ iterative solver choices, and the default choice depends on the iterative solver
 `"DivFreeTol" [1.0e-12]` :  Relative tolerance for divergence-free cleaning used in the
 eigenmode simulation type.
 
-`"DivFreeMaxIts" [100]` :  Maximum number of iterations for divergence-free cleaning use in
+`"DivFreeMaxIts" [1000]` :  Maximum number of iterations for divergence-free cleaning use in
 the eigenmode simulation type.
 
 `"EstimatorTol" [1e-6]` :  Relative tolerance for flux projection used in the

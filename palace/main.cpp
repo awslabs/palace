@@ -12,7 +12,7 @@
 #include "drivers/electrostaticsolver.hpp"
 #include "drivers/magnetostaticsolver.hpp"
 #include "drivers/transientsolver.hpp"
-#include "fem/errorindicators.hpp"
+#include "fem/errorindicator.hpp"
 #include "linalg/slepc.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"

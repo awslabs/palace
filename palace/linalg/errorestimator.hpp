@@ -6,7 +6,7 @@
 
 #include <memory>
 #include <mfem.hpp>
-#include "fem/errorindicators.hpp"
+#include "fem/errorindicator.hpp"
 #include "linalg/ksp.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
@@ -63,7 +63,7 @@ public:
 
   // Compute elemental error indicators given a complex vector of true DOF.
   template <typename VectorType>
-  ErrorIndicators ComputeIndicators(const VectorType &v) const;
+  ErrorIndicator ComputeIndicators(const VectorType &v) const;
 };
 
 // Class used for computing grad flux error estimate, i.e. || ϵ ∇ ϕₕ - F ||_K where F
@@ -84,7 +84,7 @@ public:
                          mfem::ParFiniteElementSpaceHierarchy &h1_fespaces);
 
   // Compute elemental error indicators given a vector of true DOF.
-  ErrorIndicators ComputeIndicators(const Vector &v) const;
+  ErrorIndicator ComputeIndicators(const Vector &v) const;
 };
 
 }  // namespace palace

@@ -7,5 +7,5 @@
 
 target_sources(${TARGET_NAME}
   PRIVATE
-  ${CMAKE_CURRENT_SOURCE_DIR}/errorindicators.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/errorindicator.cpp
 )

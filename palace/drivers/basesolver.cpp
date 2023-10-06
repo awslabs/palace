@@ -6,7 +6,7 @@
 #include <complex>
 #include <mfem.hpp>
 #include <nlohmann/json.hpp>
-#include "fem/errorindicators.hpp"
+#include "fem/errorindicator.hpp"
 #include "linalg/ksp.hpp"
 #include "models/domainpostoperator.hpp"
 #include "models/postoperator.hpp"
@@ -566,8 +566,8 @@ void BaseSolver::PostprocessFields(const PostOperator &postop, int step, double 
   Mpi::Barrier();
 }
 
-void BaseSolver::PostprocessErrorIndicators(const std::string &name, int step, double time,
-                                            const std::array<double, 5> &data) const
+void BaseSolver::PostprocessErrorIndicator(const std::string &name, int step, double time,
+                                           const std::array<double, 5> &data) const
 {
   if (post_dir.length() == 0)
   {
@@ -584,10 +584,10 @@ void BaseSolver::PostprocessErrorIndicators(const std::string &name, int step, d
       // clang-format off
       output.print("{:>{}s},{:>{}s},{:>{}s},{:>{}s},{:>{}s},{:>{}s}\n",
                    name, table.w1,
-                   "Sum Rel.", table.w,
-                   "Min Elem Rel.", table.w,
-                   "Max Elem Rel.", table.w,
-                   "Mean Elem Rel.", table.w,
+                   "Sum", table.w,
+                   "Min", table.w,
+                   "Max", table.w,
+                   "Mean", table.w,
                    "Normalization", table.w);
       // clang-format on
     }

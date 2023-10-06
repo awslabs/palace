@@ -1665,13 +1665,13 @@ void LinearSolverData::SetUp(json &solver)
   strumpack_butterfly_l = linear->value("STRUMPACKButterflyLevels", strumpack_butterfly_l);
   superlu_3d = linear->value("SuperLU3D", superlu_3d);
   ams_vector = linear->value("AMSVector", ams_vector);
+
+  // Other linear solver options.
   divfree_tol = linear->value("DivFreeTol", divfree_tol);
   divfree_max_it = linear->value("DivFreeMaxIts", divfree_max_it);
-  gs_orthog_type = linear->value("GSOrthogonalization", gs_orthog_type);
-
-  // Options related to the estimator.
   estimator_tol = linear->value("EstimatorTol", estimator_tol);
   estimator_max_it = linear->value("EstimatorMaxIts", estimator_max_it);
+  gs_orthog_type = linear->value("GSOrthogonalization", gs_orthog_type);
 
   // Cleanup
   linear->erase("Type");
@@ -1703,12 +1703,12 @@ void LinearSolverData::SetUp(json &solver)
   linear->erase("STRUMPACKButterflyLevels");
   linear->erase("SuperLU3D");
   linear->erase("AMSVector");
+
   linear->erase("DivFreeTol");
   linear->erase("DivFreeMaxIts");
-  linear->erase("GSOrthogonalization");
-
   linear->erase("EstimatorTol");
   linear->erase("EstimatorMaxIts");
+  linear->erase("GSOrthogonalization");
   MFEM_VERIFY(linear->empty(),
               "Found an unsupported configuration file keyword under \"Linear\"!\n"
                   << linear->dump(2));

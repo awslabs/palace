@@ -12,45 +12,42 @@ namespace palace
 // Storage for error estimation results from the solve. Required in the AMR loop. This is
 // richer than the IndicatorsAndNormalization because it stores derived quantities, and a
 // communicator for use in adaptation.
-class ErrorIndicators
+class ErrorIndicator
 {
 public:
-  ErrorIndicators(Vector &&local, double normalization)
+  ErrorIndicator(Vector &&local, double normalization)
     : local(std::move(local)), normalization(normalization), n(1)
   {
   }
-  ErrorIndicators(const std::vector<ErrorIndicators> &ind)
+  ErrorIndicator(const std::vector<ErrorIndicator> &ind)
   {
     for (const auto &i : ind)
     {
-      AddIndicators(i);
+      AddIndicator(i);
     }
   }
-  ErrorIndicators() = default;
+  ErrorIndicator() = default;
 
   // Return the local error indicators.
-  const auto &GetLocalErrorIndicators() const { return local; }
+  const auto &Local() const { return local; }
   // Return the global error indicator.
-  inline auto GetGlobalErrorIndicator(MPI_Comm comm) const
-  {
-    return linalg::Norml2(comm, local);
-  }
+  inline auto Norml2(MPI_Comm comm) const { return linalg::Norml2(comm, local); }
   // Return the largest local error indicator.
-  inline auto GetMaxErrorIndicator(MPI_Comm comm) const
+  inline auto Max(MPI_Comm comm) const
   {
     double max = local.Max();
     Mpi::GlobalMax(1, &max, comm);
     return max;
   }
   // Return the smallest local error indicator.
-  inline auto GetMinErrorIndicator(MPI_Comm comm) const
+  inline auto Min(MPI_Comm comm) const
   {
     double min = local.Min();
     Mpi::GlobalMin(1, &min, comm);
     return min;
   }
   // Return the mean local error indicator.
-  inline auto GetMeanErrorIndicator(MPI_Comm comm) const
+  inline auto Mean(MPI_Comm comm) const
   {
     int size = local.Size();
     Mpi::GlobalSum(1, &size, comm);
@@ -61,12 +58,11 @@ public:
   // Return the normalization constant for the absolute error.
   inline auto GetNormalization() const { return normalization; }
   // Add a set of indicators to the running totals.
-  void AddIndicators(const ErrorIndicators &indicators);
+  void AddIndicator(const ErrorIndicator &indicators);
   // Return a vector of postprocess data.
   std::array<double, 5> GetPostprocessData(MPI_Comm comm) const
   {
-    return {GetGlobalErrorIndicator(comm), GetMinErrorIndicator(comm),
-            GetMaxErrorIndicator(comm), GetMeanErrorIndicator(comm), GetNormalization()};
+    return {Norml2(comm), Min(comm), Max(comm), Mean(comm), GetNormalization()};
   }
 
 protected:

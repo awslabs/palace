@@ -1,13 +1,13 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#include "errorindicators.hpp"
+#include "errorindicator.hpp"
 #include <fmt/os.h>
 #include "utils/communication.hpp"
 
 namespace palace
 {
-void ErrorIndicators::AddIndicators(const ErrorIndicators &error_indicators)
+void ErrorIndicator::AddIndicator(const ErrorIndicator &error_indicators)
 {
   // The average local indicator is used rather than the indicator for the maximum
   // error to drive the adaptation, to account for a local error that might be marginally

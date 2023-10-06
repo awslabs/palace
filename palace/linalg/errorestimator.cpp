@@ -4,7 +4,7 @@
 #include "errorestimator.hpp"
 #include <limits>
 #include "fem/coefficient.hpp"
-#include "fem/errorindicators.hpp"
+#include "fem/errorindicator.hpp"
 #include "fem/integrator.hpp"
 #include "fem/multigrid.hpp"
 #include "linalg/amg.hpp"
@@ -109,7 +109,7 @@ CurlFluxErrorEstimator::CurlFluxErrorEstimator(
 }
 
 template <>
-ErrorIndicators CurlFluxErrorEstimator::ComputeIndicators(const ComplexVector &v) const
+ErrorIndicator CurlFluxErrorEstimator::ComputeIndicators(const ComplexVector &v) const
 {
   auto &nd_fespace = nd_fespaces.GetFinestFESpace();
   const int nelem = nd_fespace.GetNE();
@@ -162,7 +162,7 @@ ErrorIndicators CurlFluxErrorEstimator::ComputeIndicators(const ComplexVector &v
       }
     }
   }
-  linalg::CwiseSqrt(estimates);
+  linalg::Sqrt(estimates);
 
   Mpi::GlobalSum(1, &normalization, nd_fespace.GetComm());
   normalization = std::sqrt(normalization);
@@ -170,11 +170,11 @@ ErrorIndicators CurlFluxErrorEstimator::ComputeIndicators(const ComplexVector &v
   {
     estimates /= normalization;
   }
-  return ErrorIndicators(std::move(estimates), normalization);
+  return ErrorIndicator(std::move(estimates), normalization);
 }
 
 template <>
-ErrorIndicators CurlFluxErrorEstimator::ComputeIndicators(const Vector &v) const
+ErrorIndicator CurlFluxErrorEstimator::ComputeIndicators(const Vector &v) const
 {
   auto &nd_fespace = nd_fespaces.GetFinestFESpace();
   field_gf.SetFromTrueDofs(v);
@@ -231,7 +231,7 @@ ErrorIndicators CurlFluxErrorEstimator::ComputeIndicators(const Vector &v) const
   {
     estimates /= normalization;
   }
-  return ErrorIndicators(std::move(estimates), normalization);
+  return ErrorIndicator(std::move(estimates), normalization);
 }
 
 GradFluxErrorEstimator::GradFluxErrorEstimator(
@@ -248,7 +248,7 @@ GradFluxErrorEstimator::GradFluxErrorEstimator(
 {
 }
 
-ErrorIndicators GradFluxErrorEstimator::ComputeIndicators(const Vector &v) const
+ErrorIndicator GradFluxErrorEstimator::ComputeIndicators(const Vector &v) const
 {
   auto &h1_fespace = h1_fespaces.GetFinestFESpace();
   const int sdim = h1_fespace.GetMesh()->SpaceDimension();
@@ -303,7 +303,7 @@ ErrorIndicators GradFluxErrorEstimator::ComputeIndicators(const Vector &v) const
       paraview.Save();
     }
   }
-  linalg::CwiseSqrt(estimates);
+  linalg::Sqrt(estimates);
 
   Mpi::GlobalSum(1, &normalization, h1_fespace.GetComm());
   normalization = std::sqrt(normalization);
@@ -312,7 +312,7 @@ ErrorIndicators GradFluxErrorEstimator::ComputeIndicators(const Vector &v) const
   {
     estimates /= normalization;
   }
-  return ErrorIndicators(std::move(estimates), normalization);
+  return ErrorIndicator(std::move(estimates), normalization);
 }
 
 }  // namespace palace

@@ -4,7 +4,7 @@
 #include "electrostaticsolver.hpp"
 
 #include <mfem.hpp>
-#include "fem/errorindicators.hpp"
+#include "fem/errorindicator.hpp"
 #include "linalg/errorestimator.hpp"
 #include "linalg/ksp.hpp"
 #include "linalg/operator.hpp"
@@ -18,7 +18,7 @@
 namespace palace
 {
 
-ErrorIndicators
+ErrorIndicator
 ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const
 {
   // Construct the system matrix defining the linear operator. Dirichlet boundaries are
@@ -51,7 +51,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &me
   // Right-hand side term and solution vector storage.
   Vector RHS(K->Height());
   std::vector<Vector> V(nstep);
-  std::vector<ErrorIndicators> indicators(nstep);
+  std::vector<ErrorIndicator> indicators(nstep);
 
   // Main loop over terminal boundaries.
   Mpi::Print("\nComputing electrostatic fields for {:d} terminal boundar{}\n", nstep,
@@ -92,7 +92,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &me
 
 void ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop, PostOperator &postop,
                                       const std::vector<Vector> &V,
-                                      const std::vector<ErrorIndicators> &indicators) const
+                                      const std::vector<ErrorIndicator> &indicators) const
 {
   // Postprocess the Maxwell capacitance matrix. See p. 97 of the COMSOL AC/DC Module manual
   // for the associated formulas based on the electric field energy based on a unit voltage
@@ -123,8 +123,8 @@ void ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop, PostOperator &
     PostprocessDomains(postop, "i", i, idx, Ue, 0.0, 0.0, 0.0);
     PostprocessSurfaces(postop, "i", i, idx, Ue, 0.0, 1.0, 0.0);
     PostprocessProbes(postop, "i", i, idx);
-    PostprocessErrorIndicators("i", i, idx,
-                               indicators[i].GetPostprocessData(laplaceop.GetComm()));
+    PostprocessErrorIndicator("i", i, idx,
+                              indicators[i].GetPostprocessData(laplaceop.GetComm()));
     if (i < iodata.solver.electrostatic.n_post)
     {
       PostprocessFields(postop, i, idx);

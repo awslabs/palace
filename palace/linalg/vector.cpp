@@ -356,7 +356,7 @@ void SetRandomSign(MPI_Comm comm, ComplexVector &x, int seed)
                { XI[i] = (XI[i] > 0.0) ? 1.0 : ((XI[i] < 0.0) ? -1.0 : 0.0); });
 }
 
-void CwiseSqrt(Vector &x)
+void Sqrt(Vector &x)
 {
   const int N = x.Size();
   auto *X = x.ReadWrite();

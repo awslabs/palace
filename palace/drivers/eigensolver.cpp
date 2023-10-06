@@ -4,7 +4,7 @@
 #include "eigensolver.hpp"
 
 #include <mfem.hpp>
-#include "fem/errorindicators.hpp"
+#include "fem/errorindicator.hpp"
 #include "linalg/arpack.hpp"
 #include "linalg/divfree.hpp"
 #include "linalg/errorestimator.hpp"
@@ -24,7 +24,7 @@ namespace palace
 
 using namespace std::complex_literals;
 
-ErrorIndicators
+ErrorIndicator
 EigenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const
 {
   // Construct and extract the system matrices defining the eigenvalue problem. The diagonal
@@ -265,7 +265,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) cons
 
   // Save the eigenvalue estimates.
   BlockTimer bt_est(Timer::ESTIMATION);
-  std::vector<ErrorIndicators> indicators;
+  std::vector<ErrorIndicator> indicators;
   indicators.reserve(num_conv);
   for (int i = 0; i < iodata.solver.eigenmode.n; i++)
   {
@@ -315,8 +315,8 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) cons
 
     if (i < iodata.solver.eigenmode.n)
     {
-      postop.SetIndicatorGridFunction(indicators[i].GetLocalErrorIndicators());
-      PostprocessErrorIndicators("m", i, i + 1,
+      postop.SetIndicatorGridFunction(indicators[i].Local());
+      PostprocessErrorIndicator("m", i, i + 1,
                                 indicators[i].GetPostprocessData(spaceop.GetComm()));
     }
   }

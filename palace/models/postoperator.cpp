@@ -4,7 +4,7 @@
 #include "postoperator.hpp"
 
 #include "fem/coefficient.hpp"
-#include "fem/errorindicators.hpp"
+#include "fem/errorindicator.hpp"
 #include "models/curlcurloperator.hpp"
 #include "models/laplaceoperator.hpp"
 #include "models/lumpedportoperator.hpp"
