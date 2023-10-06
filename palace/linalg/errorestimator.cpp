@@ -98,7 +98,8 @@ CurlFluxErrorEstimator::CurlFluxErrorEstimator(
     const IoData &iodata, const MaterialOperator &mat_op,
     mfem::ParFiniteElementSpaceHierarchy &nd_fespaces)
   : mat_op(mat_op), nd_fespaces(nd_fespaces),
-    smooth_projector(nd_fespaces, iodata.solver.linear.tol, 200, 1,
+    smooth_projector(nd_fespaces, iodata.solver.linear.estimator_tol,
+                     iodata.solver.linear.estimator_max_it, iodata.problem.verbose,
                      iodata.solver.pa_order_threshold),
     smooth_flux(nd_fespaces.GetFinestFESpace().GetTrueVSize()),
     flux_rhs(nd_fespaces.GetFinestFESpace().GetTrueVSize()),
@@ -170,8 +171,7 @@ ErrorIndicators CurlFluxErrorEstimator::ComputeIndicators(const ComplexVector &v
   normalization = std::sqrt(normalization);
   if (normalization > 0)
   {
-    std::for_each(estimates.begin(), estimates.end(),
-                  [&normalization](auto &x) { x /= normalization; });
+    estimates /= normalization;
   }
   return ErrorIndicators(std::move(estimates), normalization);
 }
@@ -232,8 +232,7 @@ ErrorIndicators CurlFluxErrorEstimator::ComputeIndicators(const Vector &v) const
   normalization = std::sqrt(normalization);
   if (normalization > 0)
   {
-    std::for_each(estimates.begin(), estimates.end(),
-                  [&normalization](auto &x) { x /= normalization; });
+    estimates /= normalization;
   }
   return ErrorIndicators(std::move(estimates), normalization);
 }
@@ -242,7 +241,8 @@ GradFluxErrorEstimator::GradFluxErrorEstimator(
     const IoData &iodata, const MaterialOperator &mat_op,
     mfem::ParFiniteElementSpaceHierarchy &h1_fespaces)
   : mat_op(mat_op), h1_fespaces(h1_fespaces),
-    smooth_projector(h1_fespaces, iodata.solver.linear.tol, 200, 1,
+    smooth_projector(h1_fespaces, iodata.solver.linear.estimator_tol,
+                     iodata.solver.linear.estimator_max_it, iodata.problem.verbose,
                      iodata.solver.pa_order_threshold),
     smooth_flux(h1_fespaces.GetFinestFESpace().GetTrueVSize()),
     flux_rhs(h1_fespaces.GetFinestFESpace().GetTrueVSize()),
@@ -303,13 +303,6 @@ ErrorIndicators GradFluxErrorEstimator::ComputeIndicators(const Vector &v) const
                                             h1_fespace.GetParMesh());
       paraview.RegisterCoeffField("Flux", &coef);
       paraview.RegisterField("SmoothFlux", &smooth_flux_gf);
-
-      mfem::L2_FECollection est_fec(0, sdim);
-      mfem::ParFiniteElementSpace est_fespace(h1_fespace.GetParMesh(), &est_fec);
-      mfem::ParGridFunction est_field(&est_fespace);
-      est_field.SetFromTrueDofs(estimates);
-
-      paraview.RegisterField("ErrorIndicator", &est_field);
       paraview.Save();
     }
   }
@@ -323,8 +316,7 @@ ErrorIndicators GradFluxErrorEstimator::ComputeIndicators(const Vector &v) const
 
   if (normalization > 0)
   {
-    std::for_each(estimates.begin(), estimates.end(),
-                  [&normalization](auto &x) { x /= normalization; });
+    estimates /= normalization;
   }
   return ErrorIndicators(std::move(estimates), normalization);
 }

@@ -489,7 +489,7 @@ private:
 public:
   CurlFluxCoefficient(const mfem::ParGridFunction &gf, const MaterialOperator &mat_op)
     : mfem::VectorCoefficient(gf.ParFESpace()->GetParMesh()->SpaceDimension()), U(gf),
-      mat_op(mat_op), curl(3)
+      mat_op(mat_op), curl(gf.ParFESpace()->GetParMesh()->SpaceDimension())
   {
   }
 

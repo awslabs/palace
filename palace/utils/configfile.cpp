@@ -1639,7 +1639,7 @@ void LinearSolverData::SetUp(json &solver)
   max_size = linear->value("MaxSize", max_size);
   initial_guess = linear->value("InitialGuess", initial_guess);
 
-  // Options related to multigrid
+  // Options related to multigrid.
   mg_max_levels = linear->value("MGMaxLevels", mg_max_levels);
   mg_coarsen_type = linear->value("MGCoarsenType", mg_coarsen_type);
   mg_legacy_transfer = linear->value("MGLegacyTransfer", mg_legacy_transfer);
@@ -1651,7 +1651,7 @@ void LinearSolverData::SetUp(json &solver)
   mg_smooth_sf_min = linear->value("MGSmoothEigScaleMin", mg_smooth_sf_min);
   mg_smooth_cheby_4th = linear->value("MGSmoothChebyshev4th", mg_smooth_cheby_4th);
 
-  // Preconditioner-specific options
+  // Preconditioner-specific options.
   pc_mat_real = linear->value("PCMatReal", pc_mat_real);
   pc_mat_shifted = linear->value("PCMatShifted", pc_mat_shifted);
   pc_mat_lor = linear->value("PCLowOrderRefined", pc_mat_lor);
@@ -1668,6 +1668,10 @@ void LinearSolverData::SetUp(json &solver)
   divfree_tol = linear->value("DivFreeTol", divfree_tol);
   divfree_max_it = linear->value("DivFreeMaxIts", divfree_max_it);
   gs_orthog_type = linear->value("GSOrthogonalization", gs_orthog_type);
+
+  // Options related to the estimator.
+  estimator_tol = linear->value("EstimatorTol", estimator_tol);
+  estimator_max_it = linear->value("EstimatorMaxIts", estimator_max_it);
 
   // Cleanup
   linear->erase("Type");
@@ -1702,6 +1706,9 @@ void LinearSolverData::SetUp(json &solver)
   linear->erase("DivFreeTol");
   linear->erase("DivFreeMaxIts");
   linear->erase("GSOrthogonalization");
+
+  linear->erase("EstimatorTol");
+  linear->erase("EstimatorMaxIts");
   MFEM_VERIFY(linear->empty(),
               "Found an unsupported configuration file keyword under \"Linear\"!\n"
                   << linear->dump(2));

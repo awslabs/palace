@@ -54,7 +54,7 @@ public:
   {
     int size = local.Size();
     Mpi::GlobalSum(1, &size, comm);
-    auto sum = std::accumulate(local.begin(), local.end(), 0.0);
+    auto sum = local.Sum();
     Mpi::GlobalSum(1, &sum, comm);
     return sum / size;
   }
@@ -62,13 +62,6 @@ public:
   inline auto GetNormalization() const { return normalization; }
   // Add a set of indicators to the running totals.
   void AddIndicators(const ErrorIndicators &indicators);
-  // Reset a running total of error indicators ready for computing a new running average.
-  inline void Reset()
-  {
-    n = 0;
-    local = Vector();
-    normalization = 0;
-  }
   // Return a vector of postprocess data.
   std::array<double, 5> GetPostprocessData(MPI_Comm comm) const
   {
