@@ -251,28 +251,23 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) cons
   ksp->SetOperators(*A, *P);
   eigen->SetLinearSolver(*ksp);
 
-  auto estimator = [&]()
-  {
-    BlockTimer bt(Timer::ESTCONSTRUCT);
-    return CurlFluxErrorEstimator(iodata, spaceop.GetMaterialOp(), spaceop.GetNDSpaces());
-  }();
-
   // Eigenvalue problem solve.
   BlockTimer bt1(Timer::SOLVE);
   Mpi::Print("\n");
   int num_conv = eigen->Solve();
   SaveMetadata(*ksp);
 
-  // Save the eigenvalue estimates.
-  BlockTimer bt_est(Timer::ESTIMATION);
-  std::vector<ErrorIndicator> indicators;
-  indicators.reserve(iodata.solver.eigenmode.n);
+  // Calculate and record the error indicators.
+  auto estimator = [&]()
+  {
+    BlockTimer bt(Timer::CONSTRUCTESTIMATE);
+    return CurlFluxErrorEstimator(iodata, spaceop.GetMaterialOp(), spaceop.GetNDSpaces());
+  }();
+  ErrorIndicator indicator;
   for (int i = 0; i < iodata.solver.eigenmode.n; i++)
   {
-    // Only update the error indicator for targeted modes.
-    Mpi::Print("\nComputing error estimates for mode {:d}\n", i);
     eigen->GetEigenvector(i, E);
-    indicators.emplace_back(estimator.ComputeIndicators(E));
+    estimator.AddErrorIndicator(E, indicator);
   }
 
   // Postprocess the results.
@@ -295,9 +290,8 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) cons
     }
     if (i == 0)
     {
-      Mpi::Print(" Found {:d} converged eigenvalue{} (first = {:.3e}{:+.3e}i)\n", num_conv,
-                 (num_conv > 1) ? "s" : "", omega.real(), omega.imag());
-      Mpi::Print("\n");
+      Mpi::Print(" Found {:d} converged eigenvalue{} (first = {:.3e}{:+.3e}i)\n\n",
+                 num_conv, (num_conv > 1) ? "s" : "", omega.real(), omega.imag());
     }
 
     // Compute B = -1/(iω) ∇ x E on the true dofs, and set the internal GridFunctions in
@@ -305,27 +299,21 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) cons
     eigen->GetEigenvector(i, E);
     Curl->Mult(E, B);
     B *= -1.0 / (1i * omega);
-
     postop.SetEGridFunction(E);
     postop.SetBGridFunction(B);
     postop.UpdatePorts(spaceop.GetLumpedPortOp(), omega.real());
-    if (i < iodata.solver.eigenmode.n_post)
-    {
-      postop.SetIndicatorGridFunction(indicators[i].Local());
-    }
 
     // Postprocess the mode.
-    Postprocess(postop, spaceop.GetLumpedPortOp(), i, omega, error1, error2, num_conv);
+    Postprocess(postop, spaceop.GetLumpedPortOp(), i, omega, error1, error2, num_conv,
+                (i == 0) ? &indicator : nullptr);
   }
-  PostprocessErrorIndicator(
-      ErrorIndicator(indicators).GetPostprocessData(spaceop.GetComm()));
-  return indicators;
+  return indicator;
 }
 
 void EigenSolver::Postprocess(const PostOperator &postop,
                               const LumpedPortOperator &lumped_port_op, int i,
                               std::complex<double> omega, double error1, double error2,
-                              int num_conv) const
+                              int num_conv, const ErrorIndicator *indicator) const
 {
   // The internal GridFunctions for PostOperator have already been set from the E and B
   // solutions in the main loop over converged eigenvalues. Note: The energies output are
@@ -343,8 +331,12 @@ void EigenSolver::Postprocess(const PostOperator &postop,
   PostprocessProbes(postop, "m", i, i + 1);
   if (i < iodata.solver.eigenmode.n_post)
   {
-    PostprocessFields(postop, i, i + 1);
+    PostprocessFields(postop, i, i + 1, indicator);
     Mpi::Print(" Wrote mode {:d} to disk\n", i + 1);
+  }
+  if (indicator)
+  {
+    PostprocessErrorIndicator(postop, *indicator);
   }
 }
 
