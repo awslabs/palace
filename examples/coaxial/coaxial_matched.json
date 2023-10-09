@@ -48,6 +48,7 @@
   "Solver":
   {
     "Order": 3,
+    "Device": "CPU",
     "Transient":
     {
       "Type": "GeneralizedAlpha",
