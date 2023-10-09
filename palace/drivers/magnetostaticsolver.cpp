@@ -29,14 +29,6 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &me
   auto K = curlcurlop.GetStiffnessMatrix();
   SaveMetadata(curlcurlop.GetNDSpaces());
 
-  // Construct the error estimator.
-  auto estimator = [&]()
-  {
-    BlockTimer bt(Timer::ESTCONSTRUCT);
-    return CurlFluxErrorEstimator(iodata, curlcurlop.GetMaterialOp(),
-                                  curlcurlop.GetNDSpaces());
-  }();
-
   // Set up the linear solver.
   KspSolver ksp(iodata, curlcurlop.GetNDSpaces(), &curlcurlop.GetH1Spaces());
   ksp.SetOperators(*K, *K);
@@ -47,10 +39,9 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &me
   MFEM_VERIFY(nstep > 0,
               "No surface current boundaries specified for magnetostatic simulation!");
 
-  // Source term, solution vector storage and error indicators storage.
+  // Source term and solution vector storage.
   Vector RHS(K->Height());
   std::vector<Vector> A(nstep);
-  std::vector<ErrorIndicator> indicators(nstep);
 
   // Main loop over current source boundaries.
   Mpi::Print("\nComputing magnetostatic fields for {:d} source boundar{}\n", nstep,
@@ -70,7 +61,6 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &me
 
     BlockTimer bt1(Timer::SOLVE);
     ksp.Mult(RHS, A[step]);
-    indicators[step] = estimator.ComputeIndicators(A[step]);
 
     BlockTimer bt2(Timer::POSTPRO);
     Mpi::Print(" Sol. ||A|| = {:.6e} (||RHS|| = {:.6e})\n",
@@ -84,15 +74,12 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &me
   // Postprocess the capacitance matrix from the computed field solutions.
   BlockTimer bt1(Timer::POSTPRO);
   SaveMetadata(ksp);
-  Postprocess(curlcurlop, postop, A, indicators);
-  PostprocessErrorIndicator(
-      ErrorIndicator(indicators).GetPostprocessData(curlcurlop.GetComm()));
-  return indicators;
+  return Postprocess(curlcurlop, postop, A);
 }
 
-void MagnetostaticSolver::Postprocess(CurlCurlOperator &curlcurlop, PostOperator &postop,
-                                      const std::vector<Vector> &A,
-                                      const std::vector<ErrorIndicator> &indicators) const
+ErrorIndicator MagnetostaticSolver::Postprocess(CurlCurlOperator &curlcurlop,
+                                                PostOperator &postop,
+                                                const std::vector<Vector> &A) const
 {
   // Postprocess the Maxwell inductance matrix. See p. 97 of the COMSOL AC/DC Module manual
   // for the associated formulas based on the magnetic field energy based on a current
@@ -111,6 +98,20 @@ void MagnetostaticSolver::Postprocess(CurlCurlOperator &curlcurlop, PostOperator
   {
     Mpi::Print("\n");
   }
+
+  // Calculate and record the error indicators.
+  auto estimator = [&]()
+  {
+    BlockTimer bt(Timer::CONSTRUCTESTIMATE);
+    return CurlFluxErrorEstimator(iodata, curlcurlop.GetMaterialOp(),
+                                  curlcurlop.GetNDSpaces());
+  }();
+  ErrorIndicator indicator;
+  for (int i = 0; i < nstep; i++)
+  {
+    estimator.AddErrorIndicator(A[i], indicator);
+  }
+
   int i = 0;
   for (const auto &[idx, data] : surf_j_op)
   {
@@ -130,9 +131,12 @@ void MagnetostaticSolver::Postprocess(CurlCurlOperator &curlcurlop, PostOperator
     PostprocessProbes(postop, "i", i, idx);
     if (i < iodata.solver.magnetostatic.n_post)
     {
-      postop.SetIndicatorGridFunction(indicators[i].Local());
-      PostprocessFields(postop, i, idx);
+      PostprocessFields(postop, i, idx, (i == 0) ? &indicator : nullptr);
       Mpi::Print(" Wrote fields to disk for terminal {:d}\n", idx);
+    }
+    if (i == 0)
+    {
+      PostprocessErrorIndicator(postop, indicator);
     }
 
     // Diagonal: M_ii = 2 U_m(A_i) / I_i².

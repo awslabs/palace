@@ -33,10 +33,11 @@ class EigenSolver : public BaseSolver
 private:
   void Postprocess(const PostOperator &postop, const LumpedPortOperator &lumped_port_op,
                    int i, std::complex<double> omega, double error1, double error2,
-                   int num_conv) const;
+                   int num_conv, const ErrorIndicator *indicator) const;
 
   void PostprocessEigen(int i, std::complex<double> omega, double error1, double error2,
                         int num_conv) const;
+
   void PostprocessEPR(const PostOperator &postop, const LumpedPortOperator &lumped_port_op,
                       int i, std::complex<double> omega, double Em) const;
 

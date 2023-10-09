@@ -8,7 +8,6 @@
 #include "linalg/errorestimator.hpp"
 #include "linalg/ksp.hpp"
 #include "linalg/operator.hpp"
-#include "linalg/vector.hpp"
 #include "models/laplaceoperator.hpp"
 #include "models/postoperator.hpp"
 #include "utils/communication.hpp"
@@ -30,14 +29,6 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &me
   auto K = laplaceop.GetStiffnessMatrix();
   SaveMetadata(laplaceop.GetH1Spaces());
 
-  // Construct the error estimator.
-  auto estimator = [&]()
-  {
-    BlockTimer bt(Timer::ESTCONSTRUCT);
-    return GradFluxErrorEstimator(iodata, laplaceop.GetMaterialOp(),
-                                  laplaceop.GetH1Spaces());
-  }();
-
   // Set up the linear solver.
   KspSolver ksp(iodata, laplaceop.GetH1Spaces());
   ksp.SetOperators(*K, *K);
@@ -51,7 +42,6 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &me
   // Right-hand side term and solution vector storage.
   Vector RHS(K->Height());
   std::vector<Vector> V(nstep);
-  std::vector<ErrorIndicator> indicators(nstep);
 
   // Main loop over terminal boundaries.
   Mpi::Print("\nComputing electrostatic fields for {:d} terminal boundar{}\n", nstep,
@@ -70,7 +60,6 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &me
 
     BlockTimer bt1(Timer::SOLVE);
     ksp.Mult(RHS, V[step]);
-    indicators[step] = estimator.ComputeIndicators(V[step]);
 
     BlockTimer bt2(Timer::POSTPRO);
     Mpi::Print(" Sol. ||V|| = {:.6e} (||RHS|| = {:.6e})\n",
@@ -84,15 +73,12 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &me
   // Postprocess the capacitance matrix from the computed field solutions.
   BlockTimer bt1(Timer::POSTPRO);
   SaveMetadata(ksp);
-  Postprocess(laplaceop, postop, V, indicators);
-  PostprocessErrorIndicator(
-      ErrorIndicator(indicators).GetPostprocessData(laplaceop.GetComm()));
-  return indicators;
+  return Postprocess(laplaceop, postop, V);
 }
 
-void ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop, PostOperator &postop,
-                                      const std::vector<Vector> &V,
-                                      const std::vector<ErrorIndicator> &indicators) const
+ErrorIndicator ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop,
+                                                PostOperator &postop,
+                                                const std::vector<Vector> &V) const
 {
   // Postprocess the Maxwell capacitance matrix. See p. 97 of the COMSOL AC/DC Module manual
   // for the associated formulas based on the electric field energy based on a unit voltage
@@ -110,6 +96,20 @@ void ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop, PostOperator &
   {
     Mpi::Print("\n");
   }
+
+  // Calculate and record the error indicators.
+  auto estimator = [&]()
+  {
+    BlockTimer bt(Timer::CONSTRUCTESTIMATE);
+    return GradFluxErrorEstimator(iodata, laplaceop.GetMaterialOp(),
+                                  laplaceop.GetH1Spaces());
+  }();
+  ErrorIndicator indicator;
+  for (int i = 0; i < nstep; i++)
+  {
+    estimator.AddErrorIndicator(V[i], indicator);
+  }
+
   int i = 0;
   for (const auto &[idx, data] : terminal_sources)
   {
@@ -125,9 +125,12 @@ void ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop, PostOperator &
     PostprocessProbes(postop, "i", i, idx);
     if (i < iodata.solver.electrostatic.n_post)
     {
-      postop.SetIndicatorGridFunction(indicators[i].Local());
-      PostprocessFields(postop, i, idx);
+      PostprocessFields(postop, i, idx, (i == 0) ? &indicator : nullptr);
       Mpi::Print(" Wrote fields to disk for terminal {:d}\n", idx);
+    }
+    if (i == 0)
+    {
+      PostprocessErrorIndicator(postop, indicator);
     }
 
     // Diagonal: C_ii = 2 U_e(V_i) / V_i².
@@ -163,6 +166,7 @@ void ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop, PostOperator &
   mfem::DenseMatrix Cinv(C);
   Cinv.Invert();  // In-place, uses LAPACK (when available) and should be cheap
   PostprocessTerminals(terminal_sources, C, Cinv, Cm);
+  return indicator;
 }
 
 void ElectrostaticSolver::PostprocessTerminals(

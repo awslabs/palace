@@ -38,11 +38,13 @@ private:
 
   void Postprocess(const PostOperator &postop, const LumpedPortOperator &lumped_port_op,
                    const SurfaceCurrentOperator &surf_j_op, int step, double t,
-                   double J_coef, double E_elec, double E_mag, bool ful) const;
+                   double J_coef, double E_elec, double E_mag, bool full,
+                   const ErrorIndicator *indicator) const;
 
   void PostprocessCurrents(const PostOperator &postop,
                            const SurfaceCurrentOperator &surf_j_op, int step, double t,
                            double J_coef) const;
+
   void PostprocessPorts(const PostOperator &postop,
                         const LumpedPortOperator &lumped_port_op, int step, double t,
                         double J_coef) const;

@@ -18,7 +18,6 @@ class ParMesh;
 namespace palace
 {
 
-class CurlFluxErrorEstimator;
 class ErrorIndicator;
 class IoData;
 class LumpedPortOperator;
@@ -36,24 +35,26 @@ class DrivenSolver : public BaseSolver
 private:
   int GetNumSteps(double start, double end, double delta) const;
 
-  ErrorIndicator SweepUniform(SpaceOperator &spaceop, PostOperator &postop,
-                              CurlFluxErrorEstimator &estimator, int nstep, int step0,
-                              double omega0, double delta_omega) const;
-  ErrorIndicator SweepAdaptive(SpaceOperator &spaceop, PostOperator &postop,
-                               CurlFluxErrorEstimator &estimator, int nstep, int step0,
-                               double omega0, double delta_omega) const;
+  ErrorIndicator SweepUniform(SpaceOperator &spaceop, PostOperator &postop, int nstep,
+                              int step0, double omega0, double delta_omega) const;
+
+  ErrorIndicator SweepAdaptive(SpaceOperator &spaceop, PostOperator &postop, int nstep,
+                               int step0, double omega0, double delta_omega) const;
 
   void Postprocess(const PostOperator &postop, const LumpedPortOperator &lumped_port_op,
                    const WavePortOperator &wave_port_op,
                    const SurfaceCurrentOperator &surf_j_op, int step, double omega,
-                   double E_elec, double E_mag, bool full) const;
+                   double E_elec, double E_mag, bool full,
+                   const ErrorIndicator *indicator) const;
 
   void PostprocessCurrents(const PostOperator &postop,
                            const SurfaceCurrentOperator &surf_j_op, int step,
                            double omega) const;
+
   void PostprocessPorts(const PostOperator &postop,
                         const LumpedPortOperator &lumped_port_op, int step,
                         double omega) const;
+
   void PostprocessSParameters(const PostOperator &postop,
                               const LumpedPortOperator &lumped_port_op,
                               const WavePortOperator &wave_port_op, int step,

@@ -80,7 +80,7 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) 
   // Initialize structures for storing and reducing the results of error estimation.
   auto estimator = [&]()
   {
-    BlockTimer bt(Timer::ESTCONSTRUCT);
+    BlockTimer bt(Timer::CONSTRUCTESTIMATE);
     return CurlFluxErrorEstimator(iodata, spaceop.GetMaterialOp(), spaceop.GetNDSpaces());
   }();
   ErrorIndicator indicator;
@@ -127,19 +127,20 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) 
     }
 
     // Calculate and record the error indicators.
-    estimator.AddErrorIndicator(indicator, postop, E);
+    estimator.AddErrorIndicator(E, indicator);
 
     // Postprocess port voltages/currents and optionally write solution to disk.
     Postprocess(postop, spaceop.GetLumpedPortOp(), spaceop.GetSurfaceCurrentOp(), step, t,
-                J_coef(t), E_elec, E_mag, !iodata.solver.transient.only_port_post);
+                J_coef(t), E_elec, E_mag, !iodata.solver.transient.only_port_post,
+                (step == nstep - 1) ? &indicator : nullptr);
 
     // Increment time step.
     step++;
   }
   SaveMetadata(timeop.GetLinearSolver());
-  PostprocessErrorIndicator(indicator.GetPostprocessData(spaceop.GetComm()));
   return indicator;
 }
+
 std::function<double(double)> TransientSolver::GetTimeExcitation(bool dot) const
 {
   using namespace excitations;
@@ -249,7 +250,7 @@ void TransientSolver::Postprocess(const PostOperator &postop,
                                   const LumpedPortOperator &lumped_port_op,
                                   const SurfaceCurrentOperator &surf_j_op, int step,
                                   double t, double J_coef, double E_elec, double E_mag,
-                                  bool full) const
+                                  bool full, const ErrorIndicator *indicator) const
 {
   // The internal GridFunctions for PostOperator have already been set from the E and B
   // solutions in the main time integration loop.
@@ -269,8 +270,12 @@ void TransientSolver::Postprocess(const PostOperator &postop,
       step % iodata.solver.transient.delta_post == 0)
   {
     Mpi::Print("\n");
-    PostprocessFields(postop, step / iodata.solver.transient.delta_post, ts);
+    PostprocessFields(postop, step / iodata.solver.transient.delta_post, ts, indicator);
     Mpi::Print(" Wrote fields to disk at step {:d}\n", step);
+  }
+  if (indicator)
+  {
+    PostprocessErrorIndicator(postop, *indicator);
   }
 }
 
