@@ -266,12 +266,12 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) cons
   // Save the eigenvalue estimates.
   BlockTimer bt_est(Timer::ESTIMATION);
   std::vector<ErrorIndicator> indicators;
-  indicators.reserve(num_conv);
+  indicators.reserve(iodata.solver.eigenmode.n);
   for (int i = 0; i < iodata.solver.eigenmode.n; i++)
   {
-    eigen->GetEigenvector(i, E);
     // Only update the error indicator for targeted modes.
     Mpi::Print("\nComputing error estimates for mode {:d}\n", i);
+    eigen->GetEigenvector(i, E);
     indicators.emplace_back(estimator.ComputeIndicators(E));
   }
 
@@ -309,17 +309,16 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) cons
     postop.SetEGridFunction(E);
     postop.SetBGridFunction(B);
     postop.UpdatePorts(spaceop.GetLumpedPortOp(), omega.real());
+    if (i < iodata.solver.eigenmode.n_post)
+    {
+      postop.SetIndicatorGridFunction(indicators[i].Local());
+    }
 
     // Postprocess the mode.
     Postprocess(postop, spaceop.GetLumpedPortOp(), i, omega, error1, error2, num_conv);
-
-    if (i < iodata.solver.eigenmode.n)
-    {
-      postop.SetIndicatorGridFunction(indicators[i].Local());
-      PostprocessErrorIndicator("m", i, i + 1,
-                                indicators[i].GetPostprocessData(spaceop.GetComm()));
-    }
   }
+  PostprocessErrorIndicator(
+      ErrorIndicator(indicators).GetPostprocessData(spaceop.GetComm()));
   return indicators;
 }
 

@@ -9,7 +9,8 @@ function testcase(
     np=1,
     rtol=1.0e-6,
     atol=1.0e-18,
-    excluded_columns=[]
+    excluded_columns=[],
+    skip_rowcount=false
 )
     if isempty(testdir)
         @info "$testdir/ is empty, skipping tests"
@@ -67,11 +68,10 @@ function testcase(
         for file in filesref
             dataref = CSV.File(joinpath(refpostprodir, file); header=1) |> DataFrame
             data    = CSV.File(joinpath(postprodir, file); header=1) |> DataFrame
-            if (size(data, 1) < size(dataref, 1))
-                # pad the data with duplicates of final row.
-                append!(data, [data[end, :] for _ ∈ 1:(size(dataref, 1) - size(data, 1))])
+            if !skip_rowcount
+                @test size(dataref, 1) <= size(data, 1)
             end
-            data = data[1:size(dataref, 1), :]
+            data = data[1:min(size(dataref, 1), size(data, 1)), :]
 
             # Check the number of columns matches, before removing any excluded_columns
             @test ncol(data) == ncol(dataref)

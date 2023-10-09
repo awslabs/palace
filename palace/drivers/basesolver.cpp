@@ -566,8 +566,7 @@ void BaseSolver::PostprocessFields(const PostOperator &postop, int step, double 
   Mpi::Barrier();
 }
 
-void BaseSolver::PostprocessErrorIndicator(const std::string &name, int step, double time,
-                                           const std::array<double, 5> &data) const
+void BaseSolver::PostprocessErrorIndicator(const std::array<double, 5> &data) const
 {
   if (post_dir.length() == 0)
   {
@@ -578,23 +577,19 @@ void BaseSolver::PostprocessErrorIndicator(const std::string &name, int step, do
   if (root)
   {
     std::string path = post_dir + "error-indicators.csv";
-    auto output = OutputFile(path, (step > 0));
-    if (step == 0)
-    {
-      // clang-format off
-      output.print("{:>{}s},{:>{}s},{:>{}s},{:>{}s},{:>{}s},{:>{}s}\n",
-                   name, table.w1,
-                   "Sum", table.w,
-                   "Min", table.w,
-                   "Max", table.w,
-                   "Mean", table.w,
-                   "Normalization", table.w);
-      // clang-format on
-    }
+    auto output = OutputFile(path, false);
 
     // clang-format off
-    output.print("{:{}.{}e},{:+{}.{}e},{:+{}.{}e},{:+{}.{}e},{:+{}.{}e},{:+{}.{}e}\n",
-                time, table.w1, table.p1,
+    output.print("{:>{}s},{:>{}s},{:>{}s},{:>{}s},{:>{}s}\n",
+                  "Sum", table.w,
+                  "Min", table.w,
+                  "Max", table.w,
+                  "Mean", table.w,
+                  "Normalization", table.w);
+    // clang-format on
+
+    // clang-format off
+    output.print("{:+{}.{}e},{:+{}.{}e},{:+{}.{}e},{:+{}.{}e},{:+{}.{}e}\n",
                 data[0], table.w, table.p,
                 data[1], table.w, table.p,
                 data[2], table.w, table.p,

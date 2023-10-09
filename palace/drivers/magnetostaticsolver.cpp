@@ -47,7 +47,7 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &me
   MFEM_VERIFY(nstep > 0,
               "No surface current boundaries specified for magnetostatic simulation!");
 
-  // Source term and solution vector storage.
+  // Source term, solution vector storage and error indicators storage.
   Vector RHS(K->Height());
   std::vector<Vector> A(nstep);
   std::vector<ErrorIndicator> indicators(nstep);
@@ -70,11 +70,9 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &me
 
     BlockTimer bt1(Timer::SOLVE);
     ksp.Mult(RHS, A[step]);
-
-    BlockTimer bt2(Timer::ESTIMATION);
     indicators[step] = estimator.ComputeIndicators(A[step]);
 
-    BlockTimer bt3(Timer::POSTPRO);
+    BlockTimer bt2(Timer::POSTPRO);
     Mpi::Print(" Sol. ||A|| = {:.6e} (||RHS|| = {:.6e})\n",
                linalg::Norml2(curlcurlop.GetComm(), A[step]),
                linalg::Norml2(curlcurlop.GetComm(), RHS));
@@ -87,6 +85,8 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &me
   BlockTimer bt1(Timer::POSTPRO);
   SaveMetadata(ksp);
   Postprocess(curlcurlop, postop, A, indicators);
+  PostprocessErrorIndicator(
+      ErrorIndicator(indicators).GetPostprocessData(curlcurlop.GetComm()));
   return indicators;
 }
 
@@ -128,10 +128,9 @@ void MagnetostaticSolver::Postprocess(CurlCurlOperator &curlcurlop, PostOperator
     PostprocessDomains(postop, "i", i, idx, 0.0, Um, 0.0, 0.0);
     PostprocessSurfaces(postop, "i", i, idx, 0.0, Um, 0.0, Iinc(i));
     PostprocessProbes(postop, "i", i, idx);
-    PostprocessErrorIndicator("i", i, idx,
-                              indicators[i].GetPostprocessData(curlcurlop.GetComm()));
     if (i < iodata.solver.magnetostatic.n_post)
     {
+      postop.SetIndicatorGridFunction(indicators[i].Local());
       PostprocessFields(postop, i, idx);
       Mpi::Print(" Wrote fields to disk for terminal {:d}\n", idx);
     }

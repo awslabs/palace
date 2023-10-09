@@ -12,6 +12,7 @@
 #include "linalg/iterative.hpp"
 #include "linalg/rap.hpp"
 #include "models/materialoperator.hpp"
+#include "models/postoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
 #include "utils/timer.hpp"
@@ -111,6 +112,7 @@ CurlFluxErrorEstimator::CurlFluxErrorEstimator(
 template <>
 ErrorIndicator CurlFluxErrorEstimator::ComputeIndicators(const ComplexVector &v) const
 {
+  BlockTimer bt_est(Timer::ESTIMATION);
   auto &nd_fespace = nd_fespaces.GetFinestFESpace();
   const int nelem = nd_fespace.GetNE();
 
@@ -176,6 +178,7 @@ ErrorIndicator CurlFluxErrorEstimator::ComputeIndicators(const ComplexVector &v)
 template <>
 ErrorIndicator CurlFluxErrorEstimator::ComputeIndicators(const Vector &v) const
 {
+  BlockTimer bt_est(Timer::ESTIMATION);
   auto &nd_fespace = nd_fespaces.GetFinestFESpace();
   field_gf.SetFromTrueDofs(v);
   const int nelem = nd_fespace.GetNE();
@@ -234,6 +237,37 @@ ErrorIndicator CurlFluxErrorEstimator::ComputeIndicators(const Vector &v) const
   return ErrorIndicator(std::move(estimates), normalization);
 }
 
+template <typename VectorType>
+void CurlFluxErrorEstimator::AddErrorIndicator(ErrorIndicator &indicator,
+                                               PostOperator &postop,
+                                               const VectorType &v) const
+{
+  auto i = ComputeIndicators(v);
+  BlockTimer bt(Timer::POSTPRO);
+  postop.SetIndicatorGridFunction(i.Local());
+  indicator.AddIndicator(i);
+}
+
+template <typename VectorType>
+void CurlFluxErrorEstimator::AddErrorIndicator(ErrorIndicator &indicator,
+                                               const VectorType &v) const
+{
+  BlockTimer bt(Timer::POSTPRO);
+  indicator.AddIndicator(ComputeIndicators(v));
+}
+
+template void
+CurlFluxErrorEstimator::AddErrorIndicator<ComplexVector>(ErrorIndicator &, PostOperator &,
+                                                         const ComplexVector &) const;
+template void CurlFluxErrorEstimator::AddErrorIndicator<Vector>(ErrorIndicator &,
+                                                                PostOperator &,
+                                                                const Vector &) const;
+template void
+CurlFluxErrorEstimator::AddErrorIndicator<ComplexVector>(ErrorIndicator &,
+                                                         const ComplexVector &) const;
+template void CurlFluxErrorEstimator::AddErrorIndicator<Vector>(ErrorIndicator &,
+                                                                const Vector &) const;
+
 GradFluxErrorEstimator::GradFluxErrorEstimator(
     const IoData &iodata, const MaterialOperator &mat_op,
     mfem::ParFiniteElementSpaceHierarchy &h1_fespaces)
@@ -250,6 +284,7 @@ GradFluxErrorEstimator::GradFluxErrorEstimator(
 
 ErrorIndicator GradFluxErrorEstimator::ComputeIndicators(const Vector &v) const
 {
+  BlockTimer bt_est(Timer::ESTIMATION);
   auto &h1_fespace = h1_fespaces.GetFinestFESpace();
   const int sdim = h1_fespace.GetMesh()->SpaceDimension();
   field_gf.SetFromTrueDofs(v);

@@ -83,18 +83,7 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) 
     BlockTimer bt(Timer::ESTCONSTRUCT);
     return CurlFluxErrorEstimator(iodata, spaceop.GetMaterialOp(), spaceop.GetNDSpaces());
   }();
-  ErrorIndicator indicators;
-  auto UpdateErrorIndicator = [this, &estimator, &indicators, &postop,
-                               &spaceop](const auto &E, int step, double time)
-  {
-    BlockTimer bt0(Timer::ESTIMATION);
-    auto sample_indicators = estimator.ComputeIndicators(E);
-    postop.SetIndicatorGridFunction(sample_indicators.Local());
-    BlockTimer bt_post(Timer::POSTPRO);
-    PostprocessErrorIndicator("t (ns)", step, time,
-                              sample_indicators.GetPostprocessData(spaceop.GetComm()));
-    indicators.AddIndicator(sample_indicators);
-  };
+  ErrorIndicator indicator;
 
   // Main time integration loop.
   int step = 0;
@@ -138,7 +127,7 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) 
     }
 
     // Calculate and record the error indicators.
-    UpdateErrorIndicator(E, step, t);
+    estimator.AddErrorIndicator(indicator, postop, E);
 
     // Postprocess port voltages/currents and optionally write solution to disk.
     Postprocess(postop, spaceop.GetLumpedPortOp(), spaceop.GetSurfaceCurrentOp(), step, t,
@@ -148,7 +137,8 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) 
     step++;
   }
   SaveMetadata(timeop.GetLinearSolver());
-  return indicators;
+  PostprocessErrorIndicator(indicator.GetPostprocessData(spaceop.GetComm()));
+  return indicator;
 }
 std::function<double(double)> TransientSolver::GetTimeExcitation(bool dot) const
 {

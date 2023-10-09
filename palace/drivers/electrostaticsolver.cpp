@@ -70,11 +70,9 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &me
 
     BlockTimer bt1(Timer::SOLVE);
     ksp.Mult(RHS, V[step]);
-
-    BlockTimer bt2(Timer::ESTIMATION);
     indicators[step] = estimator.ComputeIndicators(V[step]);
 
-    BlockTimer bt3(Timer::POSTPRO);
+    BlockTimer bt2(Timer::POSTPRO);
     Mpi::Print(" Sol. ||V|| = {:.6e} (||RHS|| = {:.6e})\n",
                linalg::Norml2(laplaceop.GetComm(), V[step]),
                linalg::Norml2(laplaceop.GetComm(), RHS));
@@ -87,6 +85,8 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &me
   BlockTimer bt1(Timer::POSTPRO);
   SaveMetadata(ksp);
   Postprocess(laplaceop, postop, V, indicators);
+  PostprocessErrorIndicator(
+      ErrorIndicator(indicators).GetPostprocessData(laplaceop.GetComm()));
   return indicators;
 }
 
@@ -123,10 +123,9 @@ void ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop, PostOperator &
     PostprocessDomains(postop, "i", i, idx, Ue, 0.0, 0.0, 0.0);
     PostprocessSurfaces(postop, "i", i, idx, Ue, 0.0, 1.0, 0.0);
     PostprocessProbes(postop, "i", i, idx);
-    PostprocessErrorIndicator("i", i, idx,
-                              indicators[i].GetPostprocessData(laplaceop.GetComm()));
     if (i < iodata.solver.electrostatic.n_post)
     {
+      postop.SetIndicatorGridFunction(indicators[i].Local());
       PostprocessFields(postop, i, idx);
       Mpi::Print(" Wrote fields to disk for terminal {:d}\n", idx);
     }

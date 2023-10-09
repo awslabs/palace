@@ -34,7 +34,7 @@ abstol = 1.0e-16
     np=numprocs,
     rtol=reltol,
     atol=abstol,
-    excluded_columns=["Max Elem", "Min Elem"]
+    excluded_columns=["Max", "Min"]
 )
 
 @info "Testing rings..."
@@ -46,7 +46,7 @@ abstol = 1.0e-16
     np=numprocs,
     rtol=reltol,
     atol=abstol,
-    excluded_columns=["Max Elem", "Min Elem"]
+    excluded_columns=["Max", "Min"]
 )
 
 @info "Testing cavity (PEC)..."
@@ -58,7 +58,8 @@ abstol = 1.0e-16
     np=numprocs,
     rtol=reltol,
     atol=abstol,
-    excluded_columns=["Max Elem", "Min Elem"]
+    excluded_columns=["Max", "Min"],
+    skip_rowcount=true
 )
 
 @info "Testing cavity (impedance)..."
@@ -70,7 +71,8 @@ abstol = 1.0e-16
     np=numprocs,
     rtol=reltol,
     atol=abstol,
-    excluded_columns=["Max Elem", "Min Elem"]
+    excluded_columns=["Max", "Min"],
+    skip_rowcount=true
 )
 
 # Coarser test tolerances for driven simulations with ports
@@ -86,7 +88,7 @@ abstol = 2.0e-12
     np=numprocs,
     rtol=reltol,
     atol=abstol,
-    excluded_columns=["Max Elem", "Min Elem"]
+    excluded_columns=["Max", "Min"]
 )
 
 @info "Testing coaxial (matched)..."
@@ -98,7 +100,7 @@ abstol = 2.0e-12
     np=numprocs,
     rtol=reltol,
     atol=abstol,
-    excluded_columns=["Max Elem", "Min Elem"]
+    excluded_columns=["Max", "Min"]
 )
 
 @info "Testing CPW (lumped ports)"
@@ -110,7 +112,7 @@ abstol = 2.0e-12
     np=numprocs,
     rtol=reltol,
     atol=abstol,
-    excluded_columns=["Max Elem", "Min Elem"]
+    excluded_columns=["Max", "Min"]
 )
 
 @info "Testing CPW (wave ports)"
@@ -122,7 +124,7 @@ abstol = 2.0e-12
     np=numprocs,
     rtol=reltol,
     atol=abstol,
-    excluded_columns=["Max Elem", "Min Elem"]
+    excluded_columns=["Max", "Min"]
 )
 
 # Don't check accuracy for adaptive frequency sweep simulations

@@ -16,6 +16,7 @@ namespace palace
 
 class IoData;
 class MaterialOperator;
+class PostOperator;
 
 //
 // This solver computes a smooth reconstruction of a discontinuous flux. The difference
@@ -61,9 +62,17 @@ public:
   CurlFluxErrorEstimator(const IoData &iodata, const MaterialOperator &mat_op,
                          mfem::ParFiniteElementSpaceHierarchy &nd_fespaces);
 
-  // Compute elemental error indicators given a complex vector of true DOF.
+  // Compute elemental error indicators given a vector of true DOF.
   template <typename VectorType>
   ErrorIndicator ComputeIndicators(const VectorType &v) const;
+
+  // Compute elemental error indicators given a vector of true DOF, v, and fold into an
+  // existing indicator. Optionally set the error indicator field within a PostOperator.
+  template <typename VectorType>
+  void AddErrorIndicator(ErrorIndicator &indicator, PostOperator &postop,
+                         const VectorType &v) const;
+  template <typename VectorType>
+  void AddErrorIndicator(ErrorIndicator &indicator, const VectorType &v) const;
 };
 
 // Class used for computing grad flux error estimate, i.e. || ϵ ∇ ϕₕ - F ||_K where F
@@ -85,6 +94,13 @@ public:
 
   // Compute elemental error indicators given a vector of true DOF.
   ErrorIndicator ComputeIndicators(const Vector &v) const;
+
+  // Compute elemental error indicators given a vector of true DOF, v, and fold into an
+  // existing indicator.
+  void AddErrorIndicator(ErrorIndicator &indicator, const Vector &v) const
+  {
+    indicator.AddIndicator(ComputeIndicators(v));
+  }
 };
 
 }  // namespace palace

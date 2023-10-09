@@ -68,11 +68,7 @@ protected:
   void PostprocessProbes(const PostOperator &postop, const std::string &name, int step,
                          double time) const;
   void PostprocessFields(const PostOperator &postop, int step, double time) const;
-
-  // Postprocess granular error indicator to file. The argument normalized indicates if
-  // supplied indicators have already been normalized.
-  void PostprocessErrorIndicator(const std::string &name, int step, double time,
-                                 const std::array<double, 5> &data) const;
+  void PostprocessErrorIndicator(const std::array<double, 5> &data) const;
 
 public:
   BaseSolver(const IoData &iodata, bool root, int size = 0, int num_thread = 0,
