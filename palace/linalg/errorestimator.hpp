@@ -85,7 +85,8 @@ class GradFluxErrorEstimator
 
   FluxProjector<mfem::H1_FECollection> smooth_projector;
   mutable Vector smooth_flux, flux_rhs;
-  mutable mfem::ParGridFunction field_gf, smooth_flux_gf;
+  mutable mfem::ParGridFunction field_gf;
+  mutable std::array<mfem::ParGridFunction, 3> smooth_flux_gf;
 
 public:
   // Constructor for using geometric and p multigrid.

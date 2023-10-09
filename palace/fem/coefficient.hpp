@@ -508,14 +508,14 @@ class GradFluxCoefficient : public mfem::Coefficient
 private:
   const mfem::ParGridFunction &gf;
   const MaterialOperator &mat_op;
-  mfem::Vector grad, V;
+  mfem::Vector grad, tmp;
   int component;
 
 public:
   GradFluxCoefficient(const mfem::ParGridFunction &gf, const MaterialOperator &mat_op)
     : mfem::Coefficient(), gf(gf), mat_op(mat_op),
       grad(gf.ParFESpace()->GetParMesh()->SpaceDimension()),
-      V(gf.ParFESpace()->GetParMesh()->SpaceDimension()), component(-1)
+      tmp(gf.ParFESpace()->GetParMesh()->SpaceDimension()), component(-1)
   {
   }
 
@@ -532,9 +532,16 @@ public:
     MFEM_ASSERT(component >= 0 &&
                     component < gf.ParFESpace()->GetParMesh()->SpaceDimension(),
                 "Invalid component index, try calling SetComponent(int)!");
+    Eval(tmp, T, ip);
+    return tmp(component);
+  }
+
+  // VectorCoefficient style Eval method for use in elemental integral evaluation.
+  inline void Eval(mfem::Vector &V, mfem::ElementTransformation &T,
+                   const mfem::IntegrationPoint &ip)
+  {
     gf.GetGradient(T, grad);
     mat_op.GetPermittivityReal(T.Attribute).Mult(grad, V);
-    return V(component);
   }
 };
 

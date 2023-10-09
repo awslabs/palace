@@ -278,7 +278,8 @@ GradFluxErrorEstimator::GradFluxErrorEstimator(
     smooth_flux(h1_fespaces.GetFinestFESpace().GetTrueVSize()),
     flux_rhs(h1_fespaces.GetFinestFESpace().GetTrueVSize()),
     field_gf(&h1_fespaces.GetFinestFESpace()),
-    smooth_flux_gf(&h1_fespaces.GetFinestFESpace())
+    smooth_flux_gf{&h1_fespaces.GetFinestFESpace(), &h1_fespaces.GetFinestFESpace(),
+                   &h1_fespaces.GetFinestFESpace()}
 {
 }
 
@@ -310,39 +311,35 @@ ErrorIndicator GradFluxErrorEstimator::ComputeIndicators(const Vector &v) const
       h1_fespace.GetProlongationMatrix()->MultTranspose(rhs, flux_rhs);
       smooth_projector.Mult(flux_rhs, smooth_flux);
     }
-    smooth_flux_gf.SetFromTrueDofs(smooth_flux);
-    smooth_flux_gf.ExchangeFaceNbrData();
-    for (int e = 0; e < h1_fespace.GetNE(); e++)
+    smooth_flux_gf[c].SetFromTrueDofs(smooth_flux);
+    smooth_flux_gf[c].ExchangeFaceNbrData();
+  }
+
+  Vector coef_eval(3);
+  for (int e = 0; e < h1_fespace.GetNE(); e++)
+  {
+    auto &T = *h1_fespace.GetElementTransformation(e);
+    // integration order 2p + q
+    const auto &ir = mfem::IntRules.Get(T.GetGeometryType(),
+                                        2 * h1_fespace.GetFE(e)->GetOrder() + T.Order());
+    for (const auto &ip : ir)
     {
-      auto &T = *h1_fespace.GetElementTransformation(e);
-      // integration order 2p + q
-      const auto &ir = mfem::IntRules.Get(T.GetGeometryType(),
-                                          2 * h1_fespace.GetFE(e)->GetOrder() + T.Order());
-      for (const auto &ip : ir)
+      T.SetIntPoint(&ip);
+      coef.Eval(coef_eval, T, ip);
+      for (int c = 0; c < sdim; c++)
       {
-        T.SetIntPoint(&ip);
-        double smooth_val = smooth_flux_gf.GetValue(e, ip);
-        double coarse_val = coef.Eval(T, ip);
+        coef.SetComponent(c);
+        double smooth_val = smooth_flux_gf[c].GetValue(e, ip);
         const double w_i = ip.weight * T.Weight();
-        estimates[e] += w_i * std::pow(smooth_val - coarse_val, 2.0);
-        normalization += w_i * std::pow(coarse_val, 2.0);
+        estimates[e] += w_i * std::pow(smooth_val - coef_eval(c), 2.0);
+        normalization += w_i * std::pow(coef_eval(c), 2.0);
       }
     }
-    if constexpr (false)
-    {
-      // Debugging branch generates some intermediate fields for paraview.
-      mfem::ParaViewDataCollection paraview("debug_coeff" + std::to_string(c),
-                                            h1_fespace.GetParMesh());
-      paraview.RegisterCoeffField("Flux", &coef);
-      paraview.RegisterField("SmoothFlux", &smooth_flux_gf);
-      paraview.Save();
-    }
+    estimates[e] = std::sqrt(estimates[e]);
   }
-  linalg::Sqrt(estimates);
 
   Mpi::GlobalSum(1, &normalization, h1_fespace.GetComm());
   normalization = std::sqrt(normalization);
-
   if (normalization > 0)
   {
     estimates /= normalization;
