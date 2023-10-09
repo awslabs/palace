@@ -42,6 +42,10 @@ the frequency or time domain, using the
     [high-order operator partial assembly](https://mfem.org/performance/), parallel sparse
     direct solvers, and algebraic multigrid (AMG) preconditioners, for fast performance on
     platforms ranging from laptops to HPC systems.
+  - Support for
+    [hardware acceleration using NVIDIA or AMD GPUs](https://libceed.org/en/latest/intro/),
+    including multi-GPU parallelism, using pure CUDA and HIP code as well as
+    [MAGMA](https://icl.utk.edu/magma/) and other libraries.
 
 ## Contents
 

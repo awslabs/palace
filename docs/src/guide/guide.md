@@ -14,3 +14,4 @@ which can be performed with *Palace* and the various features available in the s
   - [Simulation Models](model.md)
   - [Boundary Conditions](boundaries.md)
   - [Postprocessing and Visualization](postprocessing.md)
+  - [Parallelism and GPU Support](parallelism.md)

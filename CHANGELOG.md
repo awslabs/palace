@@ -21,6 +21,12 @@ The format of this changelog is based on
   - Added documentation for various timer categories and improved timing breakdown of
     various sections of a simulation.
   - Fixed bug in implementation of numeric wave ports for driven simulations.
+  - Added GPU support for *Palace* via its dependencies, and added the
+    `config["Solver"]["Device"]` and `config["Solver"]["Backend"]` options for runtime
+    configuration of the MFEM device (`"CPU"` or `"GPU"`) and libCEED backend, with suitable
+    defaults for users.
+  - Added a new section to the documentation on
+    [Parallelism and GPU support](https://awslabs.github.io/palace/dev/guide/parallelism/).
 
 ## [0.12.0] - 2023-12-21
 
