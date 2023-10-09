@@ -58,17 +58,27 @@ protected:
                                                fmt::file::TRUNC);
   }
 
-  // Common postprocessing functions for all simulation types.
+  // Common domain postprocessing for all simulation types.
   void PostprocessDomains(const PostOperator &postop, const std::string &name, int step,
                           double time, double E_elec, double E_mag, double E_cap,
                           double E_ind) const;
+
+  // Common surface postprocessing for all simulation types.
   void PostprocessSurfaces(const PostOperator &postop, const std::string &name, int step,
                            double time, double E_elec, double E_mag, double Vinc,
                            double Iinc) const;
+
+  // Common probe postprocessing for all simulation types.
   void PostprocessProbes(const PostOperator &postop, const std::string &name, int step,
                          double time) const;
-  void PostprocessFields(const PostOperator &postop, int step, double time) const;
-  void PostprocessErrorIndicator(const std::array<double, 5> &data) const;
+
+  // Common field visualization postprocessing for all simulation types.
+  void PostprocessFields(const PostOperator &postop, int step, double time,
+                         const ErrorIndicator *indicator = nullptr) const;
+
+  // Common error indicator postprocessing for all simulation types.
+  void PostprocessErrorIndicator(const PostOperator &postop,
+                                 const ErrorIndicator &indicator) const;
 
 public:
   BaseSolver(const IoData &iodata, bool root, int size = 0, int num_thread = 0,

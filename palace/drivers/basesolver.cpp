@@ -3,6 +3,7 @@
 
 #include "basesolver.hpp"
 
+#include <array>
 #include <complex>
 #include <mfem.hpp>
 #include <nlohmann/json.hpp>
@@ -552,49 +553,51 @@ void BaseSolver::PostprocessProbes(const PostOperator &postop, const std::string
 #endif
 }
 
-void BaseSolver::PostprocessFields(const PostOperator &postop, int step, double time) const
+void BaseSolver::PostprocessFields(const PostOperator &postop, int step, double time,
+                                   const ErrorIndicator *indicator) const
 {
   // Save the computed fields in parallel in format for viewing with ParaView.
   BlockTimer bt(Timer::IO);
   if (post_dir.length() == 0)
   {
-    Mpi::Warning("No file specified under [\"Problem\"][\"Output\"]!\nSkipping saving of "
+    Mpi::Warning(postop.GetComm(),
+                 "No file specified under [\"Problem\"][\"Output\"]!\nSkipping saving of "
                  "fields to disk!\n");
     return;
   }
-  postop.WriteFields(step, time);
-  Mpi::Barrier();
+  postop.WriteFields(step, time, indicator);
+  Mpi::Barrier(postop.GetComm());
 }
 
-void BaseSolver::PostprocessErrorIndicator(const std::array<double, 5> &data) const
+void BaseSolver::PostprocessErrorIndicator(const PostOperator &postop,
+                                           const ErrorIndicator &indicator) const
 {
+  // Write the indicator statistics.
   if (post_dir.length() == 0)
   {
     return;
   }
-
-  // Write the indicator statistics
+  MPI_Comm comm = postop.GetComm();
+  std::array<double, 5> data = {indicator.Sum(comm), indicator.Min(comm),
+                                indicator.Max(comm), indicator.Mean(comm),
+                                indicator.Normalization()};
   if (root)
   {
     std::string path = post_dir + "error-indicators.csv";
     auto output = OutputFile(path, false);
-
     // clang-format off
     output.print("{:>{}s},{:>{}s},{:>{}s},{:>{}s},{:>{}s}\n",
-                  "Sum", table.w,
-                  "Min", table.w,
-                  "Max", table.w,
-                  "Mean", table.w,
-                  "Normalization", table.w);
-    // clang-format on
-
-    // clang-format off
+                 "Sum", table.w,
+                 "Min.", table.w,
+                 "Max.", table.w,
+                 "Mean", table.w,
+                 "Normalization", table.w);
     output.print("{:+{}.{}e},{:+{}.{}e},{:+{}.{}e},{:+{}.{}e},{:+{}.{}e}\n",
-                data[0], table.w, table.p,
-                data[1], table.w, table.p,
-                data[2], table.w, table.p,
-                data[3], table.w, table.p,
-                data[4], table.w, table.p);
+                 data[0], table.w, table.p,
+                 data[1], table.w, table.p,
+                 data[2], table.w, table.p,
+                 data[3], table.w, table.p,
+                 data[4], table.w, table.p);
     // clang-format on
   }
 }

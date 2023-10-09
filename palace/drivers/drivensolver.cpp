@@ -432,8 +432,8 @@ struct PortVIData
 
 struct PortSData
 {
-  int idx;                   // Port index
-  std::complex<double> Sij;  // Scattering parameter
+  const int idx;                   // Port index
+  const std::complex<double> Sij;  // Scattering parameter
 };
 
 }  // namespace

@@ -45,9 +45,7 @@ PostOperator::PostOperator(const IoData &iodata, SpaceOperator &spaceop,
                 &spaceop.GetRTSpace(), iodata.solver.pa_order_threshold),
     has_imaginary(iodata.problem.type != config::ProblemData::Type::TRANSIENT),
     E(&spaceop.GetNDSpace()), B(&spaceop.GetRTSpace()), V(std::nullopt), A(std::nullopt),
-    indicator_fec(0, spaceop.GetNDSpace().GetParMesh()->Dimension()),
-    indicator_fes(spaceop.GetNDSpace().GetParMesh(), &indicator_fec),
-    indicator_field(&indicator_fes), lumped_port_init(false), wave_port_init(false),
+    lumped_port_init(false), wave_port_init(false),
     paraview(CreateParaviewPath(iodata, name), spaceop.GetNDSpace().GetParMesh()),
     paraview_bdr(CreateParaviewPath(iodata, name) + "_boundary",
                  spaceop.GetNDSpace().GetParMesh()),
@@ -101,10 +99,8 @@ PostOperator::PostOperator(const IoData &iodata, LaplaceOperator &laplaceop,
     dom_post_op(iodata, laplaceop.GetMaterialOp(), &laplaceop.GetNDSpace(), nullptr,
                 iodata.solver.pa_order_threshold),
     has_imaginary(false), E(&laplaceop.GetNDSpace()), B(std::nullopt),
-    V(&laplaceop.GetH1Space()), A(std::nullopt),
-    indicator_fec(0, laplaceop.GetH1Space().GetParMesh()->Dimension()),
-    indicator_fes(laplaceop.GetH1Space().GetParMesh(), &indicator_fec),
-    indicator_field(&indicator_fes), lumped_port_init(false), wave_port_init(false),
+    V(&laplaceop.GetH1Space()), A(std::nullopt), lumped_port_init(false),
+    wave_port_init(false),
     paraview(CreateParaviewPath(iodata, name), laplaceop.GetNDSpace().GetParMesh()),
     paraview_bdr(CreateParaviewPath(iodata, name) + "_boundary",
                  laplaceop.GetNDSpace().GetParMesh()),
@@ -131,10 +127,7 @@ PostOperator::PostOperator(const IoData &iodata, CurlCurlOperator &curlcurlop,
     dom_post_op(iodata, curlcurlop.GetMaterialOp(), nullptr, &curlcurlop.GetRTSpace(),
                 iodata.solver.pa_order_threshold),
     has_imaginary(false), E(std::nullopt), B(&curlcurlop.GetRTSpace()), V(std::nullopt),
-    A(&curlcurlop.GetNDSpace()),
-    indicator_fec(0, curlcurlop.GetNDSpace().GetParMesh()->Dimension()),
-    indicator_fes(curlcurlop.GetNDSpace().GetParMesh(), &indicator_fec),
-    indicator_field(&indicator_fes), lumped_port_init(false), wave_port_init(false),
+    A(&curlcurlop.GetNDSpace()), lumped_port_init(false), wave_port_init(false),
     paraview(CreateParaviewPath(iodata, name), curlcurlop.GetNDSpace().GetParMesh()),
     paraview_bdr(CreateParaviewPath(iodata, name) + "_boundary",
                  curlcurlop.GetNDSpace().GetParMesh()),
@@ -231,7 +224,6 @@ void PostOperator::InitializeDataCollection(const IoData &iodata)
     paraview.RegisterField("A", &*A);
     paraview_bdr.RegisterVCoeffField("A", As.get());
   }
-  paraview.RegisterField("ErrorIndicator", &*indicator_field);
 
   // Extract surface charge from normally discontinuous ND E-field. Also extract surface
   // currents from tangentially discontinuous RT B-field The surface charge and surface
@@ -337,13 +329,6 @@ void PostOperator::SetAGridFunction(const Vector &a)
   MFEM_VERIFY(A, "Incorrect usage of PostOperator::SetAGridFunction!");
   A->SetFromTrueDofs(a);
   A->ExchangeFaceNbrData();
-}
-
-void PostOperator::SetIndicatorGridFunction(const mfem::Vector &i)
-{
-  MFEM_VERIFY(indicator_field,
-              "Incorrect usage of PostOperator::SetIndicatorGridFunction!");
-  indicator_field->SetFromTrueDofs(i);
 }
 
 void PostOperator::UpdatePorts(const LumpedPortOperator &lumped_port_op, double omega)
@@ -648,7 +633,7 @@ double PostOperator::GetSurfaceFlux(int idx) const
   return Phi;
 }
 
-void PostOperator::WriteFields(int step, double time) const
+void PostOperator::WriteFields(int step, double time, const ErrorIndicator *indicator) const
 {
   // Given the electric field and magnetic flux density, write the fields to disk for
   // visualization.
@@ -657,17 +642,36 @@ void PostOperator::WriteFields(int step, double time) const
   paraview.SetTime(time);
   paraview_bdr.SetCycle(step);
   paraview_bdr.SetTime(time);
-  if (first_save)
+  if (first_save || indicator)
   {
     mfem::ParMesh &mesh =
         (E) ? *E->ParFESpace()->GetParMesh() : *B->ParFESpace()->GetParMesh();
     mfem::L2_FECollection pwconst_fec(0, mesh.Dimension());
     mfem::ParFiniteElementSpace pwconst_fespace(&mesh, &pwconst_fec);
-    mfem::ParGridFunction rank(&pwconst_fespace);
-    rank = mesh.GetMyRank() + 1;
-    paraview.RegisterField("rank", &rank);
+    std::unique_ptr<mfem::ParGridFunction> rank, eta;
+    if (first_save)
+    {
+      rank = std::make_unique<mfem::ParGridFunction>(&pwconst_fespace);
+      *rank = mesh.GetMyRank() + 1;
+      paraview.RegisterField("Rank", rank.get());
+    }
+    if (indicator)
+    {
+      eta = std::make_unique<mfem::ParGridFunction>(&pwconst_fespace);
+      MFEM_VERIFY(eta.Size() == indicator->Size(),
+                  "Size mismatch for provided ErrorIndicator for postprocessing!");
+      *eta = indicator->Local();
+      paraview.RegisterField("Indicator", eta.get());
+    }
     paraview.Save();
-    paraview.DeregisterField("rank");
+    if (rank)
+    {
+      paraview.DeregisterField("Rank");
+    }
+    if (eta)
+    {
+      paraview.DeregisterField("Indicator");
+    }
   }
   else
   {

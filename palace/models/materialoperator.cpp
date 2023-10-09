@@ -373,14 +373,14 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata, mfem::ParMe
       mfem::DenseMatrix mu_r = ToDenseMatrix(data.mu_r);
       mfem::DenseMatrixInverse(mu_r, true).GetInverseMatrix(mat_muinv.at(attr - 1));
 
-      // Material permittivity: Im{ϵ} = - ϵ * tan(δ)
+      // Material permittivity: Im{ε} = - ε * tan(δ)
       mfem::DenseMatrix T(sdim, sdim);
       mat_epsilon.at(attr - 1) = ToDenseMatrix(data.epsilon_r);
       Mult(mat_epsilon.at(attr - 1), ToDenseMatrix(data.tandelta), T);
       T *= -1.0;
       mat_epsilon_imag.at(attr - 1) = T;
 
-      // ϵ * √(I + tan(δ) * tan(δ)ᵀ)
+      // ε * √(I + tan(δ) * tan(δ)ᵀ)
       MultAAt(ToDenseMatrix(data.tandelta), T);
       for (int i = 0; i < T.Height(); i++)
       {
@@ -388,11 +388,11 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata, mfem::ParMe
       }
       Mult(mat_epsilon.at(attr - 1), MatrixSqrt(T), mat_epsilon_abs.at(attr - 1));
 
-      // √μ⁻¹ ϵ
+      // √μ⁻¹ ε
       Mult(mat_muinv.at(attr - 1), mat_epsilon.at(attr - 1), mat_invz0.at(attr - 1));
       mat_invz0.at(attr - 1) = MatrixSqrt(mat_invz0.at(attr - 1));
 
-      // (√μ ϵ)⁻¹
+      // (√μ ε)⁻¹
       mfem::DenseMatrixInverse(mat_epsilon.at(attr - 1), true).GetInverseMatrix(T);
       Mult(mat_muinv.at(attr - 1), T, mat_c0.at(attr - 1));
       mat_c0.at(attr - 1) = MatrixSqrt(mat_c0.at(attr - 1));

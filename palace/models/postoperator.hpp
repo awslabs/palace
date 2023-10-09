@@ -50,11 +50,6 @@ private:
   std::unique_ptr<mfem::VectorCoefficient> Esr, Esi, Bsr, Bsi, As, Jsr, Jsi;
   std::unique_ptr<mfem::Coefficient> Vs, Ue, Um, Qsr, Qsi;
 
-  // Objects for storing the error indicator field for plotting
-  mfem::L2_FECollection indicator_fec;
-  mfem::ParFiniteElementSpace indicator_fes;
-  std::optional<mfem::ParGridFunction> indicator_field;
-
   // Lumped and wave port voltage and current (R, L, and C branches) caches updated when
   // the grid functions are set.
   struct PortPostData
@@ -93,8 +88,6 @@ public:
   void SetBGridFunction(const Vector &b);
   void SetVGridFunction(const Vector &v);
   void SetAGridFunction(const Vector &a);
-
-  void SetIndicatorGridFunction(const Vector &i);
 
   // Update cached port voltages and currents for lumped and wave port operators.
   void UpdatePorts(const LumpedPortOperator &lumped_port_op,
@@ -169,7 +162,7 @@ public:
   // Write to disk the E- and B-fields extracted from the solution vectors. Note that fields
   // are not redimensionalized, to do so one needs to compute: B <= B * (μ₀ H₀), E <= E *
   // (Z₀ H₀), V <= V * (Z₀ H₀ L₀), etc.
-  void WriteFields(int step, double time) const;
+  void WriteFields(int step, double time, const ErrorIndicator *indicator = nullptr) const;
 
   // Probe the E- and B-fields for their vector-values at speceified locations in space.
   // Locations of probes are set up in constructor from configuration file data. If
@@ -178,6 +171,12 @@ public:
   const auto &GetProbes() const { return interp_op.GetProbes(); }
   std::vector<std::complex<double>> ProbeEField() const;
   std::vector<std::complex<double>> ProbeBField() const;
+
+  // Get the associated MPI communicator.
+  MPI_Comm GetComm() const
+  {
+    return (E) ? *E->ParFESpace()->GetComm() : *B->ParFESpace()->GetComm();
+  }
 };
 
 }  // namespace palace
