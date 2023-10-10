@@ -80,8 +80,7 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) 
   // Initialize structures for storing and reducing the results of error estimation.
   CurlFluxErrorEstimator<Vector> estimator(
       spaceop.GetMaterialOp(), spaceop.GetNDSpaces(), iodata.solver.linear.estimator_tol,
-      iodata.solver.linear.estimator_max_it, iodata.problem.verbose,
-      iodata.solver.pa_order_threshold);
+      iodata.solver.linear.estimator_max_it, 0, iodata.solver.pa_order_threshold);
   ErrorIndicator indicator;
 
   // Main time integration loop.

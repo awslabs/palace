@@ -152,22 +152,16 @@ void FluxProjector::Mult(const VecType &x, VecType &y) const
     Flux->Mult(x_, rhs);
     if (vdim == 1)
     {
-
-      // XX TODO WIP PRINT STATEMENTS...
-      Mpi::Print("Computing smooth flux projection for error estimation\n");
-
+      // Mpi::Print(" Computing smooth flux projection for error estimation\n");
       ksp->Mult(rhs, y_);
     }
     else
     {
       for (int i = 0; i < vdim; i++)
       {
-
-        // XX TODO WIP PRINT STATEMENTS...
-        Mpi::Print("Computing smooth flux projection of flux component {:d}/{:d} for error "
-                   "estimation\n",
-                   i + 1, vdim);
-
+        // Mpi::Print(" Computing smooth flux projection of flux component {:d}/{:d} for "
+        //            "error estimation\n",
+        //            i + 1, vdim);
         const Vector rhsb(rhs, i * x_.Size(), x_.Size());
         Vector yb(y_, i * x_.Size(), x_.Size());
         ksp->Mult(rhsb, yb);
@@ -220,7 +214,7 @@ ErrorIndicator CurlFluxErrorEstimator<VecType>::ComputeIndicators(const VecType 
   // flux is μ⁻¹ ∇ × U.
   auto &nd_fespace = nd_fespaces.GetFinestFESpace();
   auto &mesh = *nd_fespace.GetParMesh();
-  Vector estimates(mesh.GetNE()), V_smooth, V_ip;
+  Vector estimates(mesh.GetNE()), V_ip(mesh.SpaceDimension()), V_smooth;
   double normalization = 0.0;
   for (int e = 0; e < mesh.GetNE(); e++)
   {
@@ -228,6 +222,7 @@ ErrorIndicator CurlFluxErrorEstimator<VecType>::ComputeIndicators(const VecType 
     mfem::ElementTransformation &T = *mesh.GetElementTransformation(e);
     const int q_order = 2 * fe.GetOrder() + T.OrderW();
     const mfem::IntegrationRule &ir = mfem::IntRules.Get(T.GetGeometryType(), q_order);
+    double err = 0.0;
     for (int i = 0; i < ir.GetNPoints(); i++)
     {
       const mfem::IntegrationPoint &ip = ir.IntPoint(i);
@@ -239,29 +234,29 @@ ErrorIndicator CurlFluxErrorEstimator<VecType>::ComputeIndicators(const VecType 
         U_gf.real().GetCurl(T, V_smooth);
         mat_op.GetInvPermeability(T.Attribute).Mult(V_smooth, V_ip);
         F_gf.real().GetVectorValue(T, ip, V_smooth);
-        V_ip -= V_smooth;
-        estimates[e] = w * (V_ip * V_ip);
-        normalization += w * (V_smooth * V_smooth);
+        V_smooth -= V_ip;
+        err += w * (V_smooth * V_smooth);
+        normalization += w * (V_ip * V_ip);
 
         // Imaginary part
         U_gf.imag().GetCurl(T, V_smooth);
         mat_op.GetInvPermeability(T.Attribute).Mult(V_smooth, V_ip);
         F_gf.imag().GetVectorValue(T, ip, V_smooth);
-        V_ip -= V_smooth;
-        estimates[e] += w * (V_ip * V_ip);
-        normalization += w * (V_smooth * V_smooth);
+        V_smooth -= V_ip;
+        err += w * (V_smooth * V_smooth);
+        normalization += w * (V_ip * V_ip);
       }
       else
       {
         U_gf.GetCurl(T, V_smooth);
         mat_op.GetInvPermeability(T.Attribute).Mult(V_smooth, V_ip);
         F_gf.GetVectorValue(T, ip, V_smooth);
-        V_ip -= V_smooth;
-        estimates[e] = w * (V_ip * V_ip);
-        normalization += w * (V_smooth * V_smooth);
+        V_smooth -= V_ip;
+        err += w * (V_smooth * V_smooth);
+        normalization += w * (V_ip * V_ip);
       }
     }
-    estimates[e] = std::sqrt(estimates[e]);
+    estimates[e] = std::sqrt(err);
   }
 
   // Finalize the element-wise error estimates.
@@ -299,8 +294,9 @@ ErrorIndicator GradFluxErrorEstimator::ComputeIndicators(const Vector &U) const
 
   // Loop over elements and accumulate the estimates from this component. The discontinuous
   // flux is ε ∇U.
-  auto &mesh = *h1d_fespace.GetParMesh();
-  Vector estimates(mesh.GetNE()), V_smooth, V_ip;
+  auto &h1_fespace = h1_fespaces.GetFinestFESpace();
+  auto &mesh = *h1_fespace.GetParMesh();
+  Vector estimates(mesh.GetNE()), V_ip(mesh.SpaceDimension()), V_smooth;
   double normalization = 0.0;
   for (int e = 0; e < mesh.GetNE(); e++)
   {
@@ -308,6 +304,7 @@ ErrorIndicator GradFluxErrorEstimator::ComputeIndicators(const Vector &U) const
     mfem::ElementTransformation &T = *mesh.GetElementTransformation(e);
     const int q_order = 2 * fe.GetOrder() + T.OrderW();
     const mfem::IntegrationRule &ir = mfem::IntRules.Get(T.GetGeometryType(), q_order);
+    double err = 0.0;
     for (int i = 0; i < ir.GetNPoints(); i++)
     {
       // XX TODO: For now the flux is just ∇U since the coefficient support for
@@ -320,11 +317,11 @@ ErrorIndicator GradFluxErrorEstimator::ComputeIndicators(const Vector &U) const
       // mat_op.GetPermittivityReal(T.Attribute).Mult(V_smooth, V_ip);
       V_ip = V_smooth;
       F_gf.GetVectorValue(T, ip, V_smooth);
-      V_ip -= V_smooth;
-      estimates[e] = w * (V_ip * V_ip);
-      normalization += w * (V_smooth * V_smooth);
+      V_smooth -= V_ip;
+      err += w * (V_smooth * V_smooth);
+      normalization += w * (V_ip * V_ip);
     }
-    estimates[e] = std::sqrt(estimates[e]);
+    estimates[e] = std::sqrt(err);
   }
 
   // Finalize the element-wise error estimates.

@@ -69,11 +69,11 @@ function testcase(
             dataref = CSV.File(joinpath(refpostprodir, file); header=1) |> DataFrame
             data    = CSV.File(joinpath(postprodir, file); header=1) |> DataFrame
             if !skip_rowcount
-                @test size(dataref, 1) <= size(data, 1)
+                @test nrow(data) == nrow(dataref)
             end
-            data = data[1:min(size(dataref, 1), size(data, 1)), :]
+            data = data[1:min(nrow(data), nrow(dataref)), :]
 
-            # Check the number of columns matches, before removing any excluded_columns
+            # Check the number of columns matches, before removing any excluded columns
             @test ncol(data) == ncol(dataref)
             for col ∈ excluded_columns
                 select!(data, Not(Cols(contains(col))))

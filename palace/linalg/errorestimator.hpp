@@ -23,15 +23,14 @@ class MaterialOperator;
 
 // This solver computes a smooth reconstruction of a discontinuous flux. The difference
 // between this resulting smooth flux and the original non-smooth flux provides a
-// localizable error estimate. An instance  of FluxProjector can be reused across solutions,
-// thus the construction of the operator is separated from the construction of the flux RHS.
+// localizable error estimate.
 class FluxProjector
 {
 private:
   // Operator for the mass matrix inversion.
   std::unique_ptr<Operator> Flux, M;
 
-  // Linear solver and preconditioner for the projected linear system M σ = σ̂.
+  // Linear solver and preconditioner for the projected linear system.
   std::unique_ptr<KspSolver> ksp;
 
   // Workspace object for solver application.
