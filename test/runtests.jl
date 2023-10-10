@@ -34,7 +34,7 @@ abstol = 1.0e-16
     np=numprocs,
     rtol=reltol,
     atol=abstol,
-    excluded_columns=["Max", "Min"]
+    excluded_columns=["Maximum", "Minimum"]
 )
 
 @info "Testing rings..."
@@ -46,7 +46,7 @@ abstol = 1.0e-16
     np=numprocs,
     rtol=reltol,
     atol=abstol,
-    excluded_columns=["Max", "Min"]
+    excluded_columns=["Maximum", "Minimum"]
 )
 
 @info "Testing cavity (PEC)..."
@@ -58,7 +58,7 @@ abstol = 1.0e-16
     np=numprocs,
     rtol=reltol,
     atol=abstol,
-    excluded_columns=["Max", "Min"],
+    excluded_columns=["Maximum", "Minimum"],
     skip_rowcount=true
 )
 
@@ -71,7 +71,7 @@ abstol = 1.0e-16
     np=numprocs,
     rtol=reltol,
     atol=abstol,
-    excluded_columns=["Max", "Min"],
+    excluded_columns=["Maximum", "Minimum"],
     skip_rowcount=true
 )
 
@@ -88,7 +88,7 @@ abstol = 2.0e-12
     np=numprocs,
     rtol=reltol,
     atol=abstol,
-    excluded_columns=["Max", "Min"]
+    excluded_columns=["Maximum", "Minimum"]
 )
 
 @info "Testing coaxial (matched)..."
@@ -100,7 +100,7 @@ abstol = 2.0e-12
     np=numprocs,
     rtol=reltol,
     atol=abstol,
-    excluded_columns=["Max", "Min"]
+    excluded_columns=["Maximum", "Minimum"]
 )
 
 @info "Testing CPW (lumped ports)"
@@ -112,7 +112,7 @@ abstol = 2.0e-12
     np=numprocs,
     rtol=reltol,
     atol=abstol,
-    excluded_columns=["Max", "Min"]
+    excluded_columns=["Maximum", "Minimum"]
 )
 
 @info "Testing CPW (wave ports)"
@@ -124,7 +124,7 @@ abstol = 2.0e-12
     np=numprocs,
     rtol=reltol,
     atol=abstol,
-    excluded_columns=["Max", "Min"]
+    excluded_columns=["Maximum", "Minimum"]
 )
 
 # Don't check accuracy for adaptive frequency sweep simulations

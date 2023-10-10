@@ -588,8 +588,8 @@ void BaseSolver::PostprocessErrorIndicator(const PostOperator &postop,
     // clang-format off
     output.print("{:>{}s},{:>{}s},{:>{}s},{:>{}s},{:>{}s}\n",
                  "Norm", table.w,
-                 "Min.", table.w,
-                 "Max.", table.w,
+                 "Minimum", table.w,
+                 "Maximum", table.w,
                  "Mean", table.w,
                  "Normalization", table.w);
     output.print("{:+{}.{}e},{:+{}.{}e},{:+{}.{}e},{:+{}.{}e},{:+{}.{}e}\n",

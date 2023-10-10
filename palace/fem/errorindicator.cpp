@@ -46,7 +46,7 @@ void ErrorIndicator::AddIndicator(const ErrorIndicator &indicator)
 
   // More samples have been added, update for the running average.
   normalization =
-      (n * normalization + indicator.normalization * indicator.n) / (n + indicator.n);
+      (normalization * n + indicator.normalization * indicator.n) / (n + indicator.n);
   n += indicator.n;
 }
 

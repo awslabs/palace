@@ -86,7 +86,6 @@ ErrorIndicator ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop,
   // charges from the prescribed voltage to get C directly as:
   //         Q_i = ∫ ρ dV = ∫ ∇ ⋅ (ε E) dV = ∫ (ε E) ⋅ n dS
   // and C_ij = Q_i/V_j. The energy formulation avoids having to locally integrate E = -∇V.
-  // Additionally compute error estimates for each terminal.
   auto Grad = laplaceop.GetGradMatrix();
   const std::map<int, mfem::Array<int>> &terminal_sources = laplaceop.GetSources();
   int nstep = static_cast<int>(terminal_sources.size());
@@ -98,10 +97,10 @@ ErrorIndicator ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop,
   }
 
   // Calculate and record the error indicators.
-  GradFluxErrorEstimator estimator(
-      laplaceop.GetMaterialOp(), laplaceop.GetH1Spaces(),
-      iodata.solver.linear.estimator_tol, iodata.solver.linear.estimator_max_it,
-      iodata.problem.verbose, iodata.solver.pa_order_threshold);
+  GradFluxErrorEstimator estimator(laplaceop.GetMaterialOp(), laplaceop.GetH1Spaces(),
+                                   iodata.solver.linear.estimator_tol,
+                                   iodata.solver.linear.estimator_max_it, 0,
+                                   iodata.solver.pa_order_threshold);
   ErrorIndicator indicator;
   for (int i = 0; i < nstep; i++)
   {
