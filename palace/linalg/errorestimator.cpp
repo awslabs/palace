@@ -266,7 +266,7 @@ ErrorIndicator CurlFluxErrorEstimator<VecType>::ComputeIndicators(const VecType 
   {
     estimates *= 1.0 / normalization;
   }
-  return ErrorIndicator(std::move(estimates), normalization);
+  return ErrorIndicator(std::move(estimates));
 }
 
 GradFluxErrorEstimator::GradFluxErrorEstimator(
@@ -331,7 +331,7 @@ ErrorIndicator GradFluxErrorEstimator::ComputeIndicators(const Vector &U) const
   {
     estimates *= 1.0 / normalization;
   }
-  return ErrorIndicator(std::move(estimates), normalization);
+  return ErrorIndicator(std::move(estimates));
 }
 
 template void FluxProjector::Mult(const Vector &, Vector &) const;

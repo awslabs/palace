@@ -13,7 +13,6 @@ void ErrorIndicator::AddIndicator(const ErrorIndicator &indicator)
   if (n == 0)
   {
     local = indicator.local;
-    normalization = indicator.normalization;
     n = indicator.n;
     return;
   }
@@ -45,8 +44,6 @@ void ErrorIndicator::AddIndicator(const ErrorIndicator &indicator)
                });
 
   // More samples have been added, update for the running average.
-  normalization =
-      (normalization * n + indicator.normalization * indicator.n) / (n + indicator.n);
   n += indicator.n;
 }
 

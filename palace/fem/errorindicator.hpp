@@ -23,18 +23,12 @@ protected:
   // refinement and coarsening.
   Vector local;
 
-  // Normalization constant.
-  double normalization;
-
   // Number of samples.
   int n;
 
 public:
-  ErrorIndicator(Vector &&local, double normalization)
-    : local(std::move(local)), normalization(normalization), n(1)
-  {
-  }
-  ErrorIndicator() : normalization(0.0), n(0) {}
+  ErrorIndicator(Vector &&local) : local(std::move(local)), n(1) {}
+  ErrorIndicator() : n(0) {}
 
   // Add an indicator to the running total.
   void AddIndicator(const ErrorIndicator &indicator);
@@ -68,9 +62,6 @@ public:
     Mpi::GlobalSum(1, &sum, comm);
     return sum / linalg::GlobalSize(comm, local);
   }
-
-  // Return the normalization constant for the absolute error.
-  auto Normalization() const { return normalization; }
 };
 
 }  // namespace palace
