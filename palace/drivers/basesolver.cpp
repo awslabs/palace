@@ -578,26 +578,23 @@ void BaseSolver::PostprocessErrorIndicator(const PostOperator &postop,
     return;
   }
   MPI_Comm comm = postop.GetComm();
-  std::array<double, 5> data = {indicator.Norml2(comm), indicator.Min(comm),
-                                indicator.Max(comm), indicator.Mean(comm),
-                                indicator.Normalization()};
+  std::array<double, 4> data = {indicator.Norml2(comm), indicator.Min(comm),
+                                indicator.Max(comm), indicator.Mean(comm)};
   if (root)
   {
     std::string path = post_dir + "error-indicators.csv";
     auto output = OutputFile(path, false);
     // clang-format off
-    output.print("{:>{}s},{:>{}s},{:>{}s},{:>{}s},{:>{}s}\n",
+    output.print("{:>{}s},{:>{}s},{:>{}s},{:>{}s}\n",
                  "Norm", table.w,
                  "Minimum", table.w,
                  "Maximum", table.w,
-                 "Mean", table.w,
-                 "Normalization", table.w);
-    output.print("{:+{}.{}e},{:+{}.{}e},{:+{}.{}e},{:+{}.{}e},{:+{}.{}e}\n",
+                 "Mean", table.w);
+    output.print("{:+{}.{}e},{:+{}.{}e},{:+{}.{}e},{:+{}.{}e}\n",
                  data[0], table.w, table.p,
                  data[1], table.w, table.p,
                  data[2], table.w, table.p,
-                 data[3], table.w, table.p,
-                 data[4], table.w, table.p);
+                 data[3], table.w, table.p);
     // clang-format on
   }
 }
