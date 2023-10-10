@@ -175,7 +175,7 @@ public:
   // Get the associated MPI communicator.
   MPI_Comm GetComm() const
   {
-    return (E) ? *E->ParFESpace()->GetComm() : *B->ParFESpace()->GetComm();
+    return (E) ? E->ParFESpace()->GetComm() : B->ParFESpace()->GetComm();
   }
 };
 

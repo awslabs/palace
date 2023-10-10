@@ -258,11 +258,10 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) cons
   SaveMetadata(*ksp);
 
   // Calculate and record the error indicators.
-  auto estimator = [&]()
-  {
-    BlockTimer bt(Timer::CONSTRUCTESTIMATE);
-    return CurlFluxErrorEstimator(iodata, spaceop.GetMaterialOp(), spaceop.GetNDSpaces());
-  }();
+  CurlFluxErrorEstimator<ComplexVector> estimator(
+      spaceop.GetMaterialOp(), spaceop.GetNDSpaces(), iodata.solver.linear.estimator_tol,
+      iodata.solver.linear.estimator_max_it, iodata.problem.verbose,
+      iodata.solver.pa_order_threshold);
   ErrorIndicator indicator;
   for (int i = 0; i < iodata.solver.eigenmode.n; i++)
   {

@@ -356,13 +356,6 @@ void SetRandomSign(MPI_Comm comm, ComplexVector &x, int seed)
                { XI[i] = (XI[i] > 0.0) ? 1.0 : ((XI[i] < 0.0) ? -1.0 : 0.0); });
 }
 
-void Sqrt(Vector &x)
-{
-  const int N = x.Size();
-  auto *X = x.ReadWrite();
-  mfem::forall(N, [=] MFEM_HOST_DEVICE(int i) { X[i] = std::sqrt(X[i]); });
-}
-
 template <>
 void SetSubVector(Vector &x, const mfem::Array<int> &rows, double s)
 {

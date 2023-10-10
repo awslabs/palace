@@ -98,12 +98,10 @@ ErrorIndicator ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop,
   }
 
   // Calculate and record the error indicators.
-  auto estimator = [&]()
-  {
-    BlockTimer bt(Timer::CONSTRUCTESTIMATE);
-    return GradFluxErrorEstimator(iodata, laplaceop.GetMaterialOp(),
-                                  laplaceop.GetH1Spaces());
-  }();
+  GradFluxErrorEstimator estimator(
+      laplaceop.GetMaterialOp(), laplaceop.GetH1Spaces(),
+      iodata.solver.linear.estimator_tol, iodata.solver.linear.estimator_max_it,
+      iodata.problem.verbose, iodata.solver.pa_order_threshold);
   ErrorIndicator indicator;
   for (int i = 0; i < nstep; i++)
   {

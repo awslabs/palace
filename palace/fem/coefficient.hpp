@@ -477,69 +477,6 @@ inline double DielectricInterfaceCoefficient<DielectricInterfaceType::DEFAULT>::
   return 0.5 * ts * epsilon * (V * V);
 }
 
-// Computes the flux, μ⁻¹ ∇ × U, of a field, U, where U can be the electric field E, or the
-// magnetic vector potential A.
-class CurlFluxCoefficient : public mfem::VectorCoefficient
-{
-private:
-  const mfem::ParGridFunction &U;
-  const MaterialOperator &mat_op;
-  mfem::Vector curl;
-
-public:
-  CurlFluxCoefficient(const mfem::ParGridFunction &gf, const MaterialOperator &mat_op)
-    : mfem::VectorCoefficient(gf.ParFESpace()->GetParMesh()->SpaceDimension()), U(gf),
-      mat_op(mat_op)
-  {
-  }
-
-  void Eval(mfem::Vector &V, mfem::ElementTransformation &T,
-            const mfem::IntegrationPoint &ip) override
-  {
-    V.SetSize(vdim);
-    U.GetCurl(T, curl);
-    mat_op.GetInvPermeability(T.Attribute).Mult(curl, V);
-  }
-};
-
-// Computes the flux, ε ∇ϕ, of the electrostatic potential ϕ.
-class GradFluxCoefficient : public mfem::Coefficient
-{
-private:
-  const mfem::ParGridFunction &Phi;
-  const MaterialOperator &mat_op;
-  mfem::Vector grad, W;
-  int component;
-
-public:
-  GradFluxCoefficient(const mfem::ParGridFunction &gf, const MaterialOperator &mat_op)
-    : mfem::Coefficient(), Phi(gf), mat_op(mat_op), component(-1)
-  {
-  }
-
-  void SetComponent(int i)
-  {
-    MFEM_ASSERT(i >= 0 && i < mat_op.SpaceDimension(), "Invalid component index!");
-    component = i;
-  }
-
-  double Eval(mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip) override
-  {
-    MFEM_ASSERT(component >= 0 && component < mat_op.SpaceDimension(),
-                "Invalid component index, try calling SetComponent!");
-    Eval(W, T, ip);
-    return W(component);
-  }
-
-  void Eval(mfem::Vector &V, mfem::ElementTransformation &T,
-            const mfem::IntegrationPoint &ip)
-  {
-    V.SetSize(mat_op.SpaceDimension());
-    Phi.GetGradient(T, grad);
-    mat_op.GetPermittivityReal(T.Attribute).Mult(grad, V);
-  }
-};
-
 enum class EnergyDensityType
 {
   ELECTRIC,

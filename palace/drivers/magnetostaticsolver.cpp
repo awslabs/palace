@@ -100,12 +100,10 @@ ErrorIndicator MagnetostaticSolver::Postprocess(CurlCurlOperator &curlcurlop,
   }
 
   // Calculate and record the error indicators.
-  auto estimator = [&]()
-  {
-    BlockTimer bt(Timer::CONSTRUCTESTIMATE);
-    return CurlFluxErrorEstimator(iodata, curlcurlop.GetMaterialOp(),
-                                  curlcurlop.GetNDSpaces());
-  }();
+  CurlFluxErrorEstimator<Vector> estimator(
+      curlcurlop.GetMaterialOp(), curlcurlop.GetNDSpaces(),
+      iodata.solver.linear.estimator_tol, iodata.solver.linear.estimator_max_it,
+      iodata.problem.verbose, iodata.solver.pa_order_threshold);
   ErrorIndicator indicator;
   for (int i = 0; i < nstep; i++)
   {
@@ -172,6 +170,7 @@ ErrorIndicator MagnetostaticSolver::Postprocess(CurlCurlOperator &curlcurlop,
   mfem::DenseMatrix Minv(M);
   Minv.Invert();  // In-place, uses LAPACK (when available) and should be cheap
   PostprocessTerminals(surf_j_op, M, Minv, Mm);
+  return indicator;
 }
 
 void MagnetostaticSolver::PostprocessTerminals(const SurfaceCurrentOperator &surf_j_op,

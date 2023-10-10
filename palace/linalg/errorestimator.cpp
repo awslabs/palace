@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include "errorestimator.hpp"
+
 #include <limits>
 #include "fem/coefficient.hpp"
-#include "fem/errorindicator.hpp"
 #include "fem/integrator.hpp"
 #include "fem/multigrid.hpp"
 #include "linalg/amg.hpp"
@@ -12,38 +12,29 @@
 #include "linalg/iterative.hpp"
 #include "linalg/rap.hpp"
 #include "models/materialoperator.hpp"
-#include "models/postoperator.hpp"
 #include "utils/communication.hpp"
-#include "utils/iodata.hpp"
 #include "utils/timer.hpp"
 
 namespace palace
 {
 
-using namespace fem;
-
-// Given a finite element space hierarchy, construct a vector of mass matrix
-// operators corresponding to each level.
-template <typename SmoothFluxFiniteElementCollection>
-std::unique_ptr<Operator> BuildMassMatrixOperator(mfem::ParFiniteElementSpaceHierarchy &h,
-                                                  int pa_order_threshold)
+namespace
 {
-  constexpr int skip_zeros = 0;
 
-  constexpr bool ScalarFESpace =
-      std::is_same<SmoothFluxFiniteElementCollection, mfem::H1_FECollection>::value ||
-      std::is_same<SmoothFluxFiniteElementCollection, mfem::L2_FECollection>::value;
-
-  // Assemble the bilinear form operator
-  auto M = std::make_unique<MultigridOperator>(h.GetNumLevels());
-  for (int l = 0; l < h.GetNumLevels(); l++)
+std::unique_ptr<Operator> GetMassMatrix(mfem::ParFiniteElementSpaceHierarchy &fespaces,
+                                        int pa_order_threshold, int skip_zeros)
+{
+  const int dim = fespaces.GetFinestFESpace().GetParMesh()->Dimension();
+  const auto type = fespaces.GetFinestFESpace().FEColl()->GetRangeType(dim);
+  auto M = std::make_unique<MultigridOperator>(fespaces.GetNumLevels());
+  for (int l = 0; l < fespaces.GetNumLevels(); l++)
   {
-    auto &h_l = h.GetFESpaceAtLevel(l);
-    auto m = std::make_unique<mfem::SymmetricBilinearForm>(&h_l);
-
-    if constexpr (ScalarFESpace)
+    // Force coarse level operator to be fully assembled always.
+    auto &fespace_l = fespaces.GetFESpaceAtLevel(l);
+    auto m = std::make_unique<mfem::SymmetricBilinearForm>(&fespace_l);
+    if (type == mfem::FiniteElement::SCALAR)
     {
-      MFEM_VERIFY(h_l.GetVDim() == 1,
+      MFEM_VERIFY(fespace_l.GetVDim() == 1,
                   "Scalar mass matrix hierarchy assumes a component-wise solve.");
       m->AddDomainIntegrator(new mfem::MassIntegrator);
     }
@@ -54,20 +45,15 @@ std::unique_ptr<Operator> BuildMassMatrixOperator(mfem::ParFiniteElementSpaceHie
     auto M_l = std::make_unique<ParOperator>(
         fem::AssembleOperator(std::move(m), true, (l > 0) ? pa_order_threshold : 100,
                               skip_zeros),
-        h_l);
-
-    // Set the essential dofs (none).
+        fespace_l);
     M->AddOperator(std::move(M_l));
   }
   return M;
 }
 
-template <typename SmoothFluxFiniteElementCollection>
-FluxProjector<SmoothFluxFiniteElementCollection>::FluxProjector(
-    mfem::ParFiniteElementSpaceHierarchy &fespaces, double tol, int max_it, int print,
-    int pa_order_threshold)
-  : M(BuildMassMatrixOperator<SmoothFluxFiniteElementCollection>(fespaces,
-                                                                 pa_order_threshold))
+std::unique_ptr<KspSolver>
+ConfigureLinearSolver(mfem::ParFiniteElementSpaceHierarchy &fespaces, double tol,
+                      int max_it, int print, int pa_order_threshold)
 {
   // The system matrix for the projection is real and SPD. For the coarse-level AMG solve,
   // we don't use an exact solve on the coarsest level.
@@ -91,260 +77,270 @@ FluxProjector<SmoothFluxFiniteElementCollection>::FluxProjector(
   pcg->SetAbsTol(std::numeric_limits<double>::epsilon());
   pcg->SetMaxIter(max_it);
 
-  ksp = std::make_unique<KspSolver>(std::move(pcg), std::move(pc));
-  ksp->SetOperators(*M, *M);
+  return std::make_unique<KspSolver>(std::move(pcg), std::move(pc));
 }
 
-CurlFluxErrorEstimator::CurlFluxErrorEstimator(
-    const IoData &iodata, const MaterialOperator &mat_op,
-    mfem::ParFiniteElementSpaceHierarchy &nd_fespaces)
-  : mat_op(mat_op), nd_fespaces(nd_fespaces),
-    smooth_projector(nd_fespaces, iodata.solver.linear.estimator_tol,
-                     iodata.solver.linear.estimator_max_it, iodata.problem.verbose,
-                     iodata.solver.pa_order_threshold),
-    smooth_flux(nd_fespaces.GetFinestFESpace().GetTrueVSize()),
-    flux_rhs(nd_fespaces.GetFinestFESpace().GetTrueVSize()),
-    field_gf(&nd_fespaces.GetFinestFESpace()),
-    smooth_flux_gf(&nd_fespaces.GetFinestFESpace())
-{
-}
+}  // namespace
 
-template <>
-ErrorIndicator CurlFluxErrorEstimator::ComputeIndicators(const ComplexVector &v) const
+FluxProjector::FluxProjector(const MaterialOperator &mat_op,
+                             mfem::ParFiniteElementSpaceHierarchy &nd_fespaces, double tol,
+                             int max_it, int print, int pa_order_threshold)
 {
-  BlockTimer bt_est(Timer::ESTIMATION);
-  auto &nd_fespace = nd_fespaces.GetFinestFESpace();
-  const int nelem = nd_fespace.GetNE();
-
-  Vector smooth_vec, coarse_vec, estimates(nelem);
-  estimates = 0.0;
-  double normalization = 0.0;
-  for (bool real : {true, false})
+  BlockTimer bt(Timer::CONSTRUCTESTIMATOR);
+  constexpr int skip_zeros = 0;
   {
-    field_gf.SetFromTrueDofs(real ? v.Real() : v.Imag());
+    // XX TODO: No partial assembly is available yet for this operator.
+    constexpr auto MatType = MaterialPropertyType::INV_PERMEABILITY;
+    MaterialPropertyCoefficient<MatType> muinv_func(mat_op);
+    auto flux = std::make_unique<mfem::MixedBilinearForm>(&nd_fespaces.GetFinestFESpace(),
+                                                          &nd_fespaces.GetFinestFESpace());
+    flux->AddDomainIntegrator(new mfem::MixedVectorCurlIntegrator(muinv_func));
+    flux->SetAssemblyLevel(mfem::AssemblyLevel::LEGACY);
+    flux->Assemble(skip_zeros);
+    flux->Finalize(skip_zeros);
+    Flux = std::make_unique<ParOperator>(std::move(flux), nd_fespaces.GetFinestFESpace(),
+                                         nd_fespaces.GetFinestFESpace(), false);
+  }
+  M = GetMassMatrix(nd_fespaces, pa_order_threshold, skip_zeros);
 
-    // Coefficients for computing the discontinuous flux component, i.e. (W, μ⁻¹∇ × V).
-    CurlFluxCoefficient coef(field_gf, mat_op);
+  ksp = ConfigureLinearSolver(nd_fespaces, tol, max_it, print, pa_order_threshold);
+  ksp->SetOperators(*M, *M);
+
+  rhs.SetSize(nd_fespaces.GetFinestFESpace().GetTrueVSize());
+}
+
+FluxProjector::FluxProjector(const MaterialOperator &mat_op,
+                             mfem::ParFiniteElementSpaceHierarchy &h1_fespaces,
+                             mfem::ParFiniteElementSpace &h1d_fespace, double tol,
+                             int max_it, int print, int pa_order_threshold)
+{
+  BlockTimer bt(Timer::CONSTRUCTESTIMATOR);
+  constexpr int skip_zeros = 0;
+  {
+    // XX TODO: Matrix coefficient support for GradientIntegrator.
+    // XX TODO: No partial assembly is available yet for this operator.
+    //  constexpr auto MatType = MaterialPropertyType::PERMITTIVITY_REAL;
+    //  MaterialPropertyCoefficient<MatType> epsilon_func(mat_op);
+    auto flux = std::make_unique<mfem::MixedBilinearForm>(&h1_fespaces.GetFinestFESpace(),
+                                                          &h1d_fespace);
+    flux->AddDomainIntegrator(new mfem::GradientIntegrator);
+    flux->SetAssemblyLevel(mfem::AssemblyLevel::LEGACY);
+    flux->Assemble(skip_zeros);
+    flux->Finalize(skip_zeros);
+    Flux = std::make_unique<ParOperator>(std::move(flux), h1_fespaces.GetFinestFESpace(),
+                                         h1d_fespace, false);
+  }
+  M = GetMassMatrix(h1_fespaces, pa_order_threshold, skip_zeros);
+
+  ksp = ConfigureLinearSolver(h1_fespaces, tol, max_it, print, pa_order_threshold);
+  ksp->SetOperators(*M, *M);
+
+  rhs.SetSize(h1d_fespace.GetTrueVSize());
+}
+
+template <typename VecType>
+void FluxProjector::Mult(const VecType &x, VecType &y) const
+{
+  BlockTimer bt(Timer::SOLVEESTIMATOR);
+  MFEM_ASSERT(y.Size() == rhs.Size(), "Invalid vector dimensions for FluxProjector::Mult!");
+  MFEM_ASSERT(
+      y.Size() % x.Size() == 0,
+      "Invalid vector dimension for FluxProjector::Mult, does not yield even blocking!");
+  auto MultImpl = [this](const Vector &x_, Vector &y_)
+  {
+    const int vdim = y_.Size() / x_.Size();
+    Flux->Mult(x_, rhs);
+    if (vdim == 1)
     {
-      // Given the RHS vector of non-smooth flux, construct a flux projector and perform
-      // mass matrix inversion in the appropriate space, giving f = M⁻¹ f̂.
-      Mpi::Print("Computing smooth flux approximation of {} component\n",
-                 real ? "real" : "imaginary");
-      BlockTimer bt(Timer::ESTSOLVE);
-      mfem::LinearForm rhs(&nd_fespace);
-      rhs.AddDomainIntegrator(new VectorFEDomainLFIntegrator(coef));
-      rhs.UseFastAssembly(false);
-      rhs.Assemble();
-      nd_fespace.GetProlongationMatrix()->MultTranspose(rhs, flux_rhs);
-      smooth_projector.Mult(flux_rhs, smooth_flux);
+
+      // XX TODO WIP PRINT STATEMENTS...
+      Mpi::Print("Computing smooth flux projection for error estimation\n");
+
+      ksp->Mult(rhs, y_);
     }
-    smooth_flux_gf.SetFromTrueDofs(smooth_flux);
-    smooth_flux_gf.ExchangeFaceNbrData();
-
-    // Loop over elements and accumulate the estimates from this component
-    for (int e = 0; e < nd_fespace.GetNE(); e++)
+    else
     {
-      auto &T = *nd_fespace.GetElementTransformation(e);
-      // integration order 2p + q
-      const auto &ir = mfem::IntRules.Get(T.GetGeometryType(),
-                                          2 * nd_fespace.GetFE(e)->GetOrder() + T.Order());
-      for (const auto &ip : ir)
+      for (int i = 0; i < vdim; i++)
       {
-        T.SetIntPoint(&ip);
 
-        smooth_flux_gf.GetVectorValue(e, ip, smooth_vec);
-        coef.Eval(coarse_vec, T, ip);
-        double w_i = ip.weight * T.Weight();
-        constexpr int vdim = 3;
-        for (int c = 0; c < vdim; c++)
-        {
-          estimates[e] += w_i * std::pow(smooth_vec[c] - coarse_vec[c], 2.0);
-          normalization += w_i * coarse_vec[c] * coarse_vec[c];
-        }
+        // XX TODO WIP PRINT STATEMENTS...
+        Mpi::Print("Computing smooth flux projection of flux component {:d}/{:d} for error "
+                   "estimation\n",
+                   i + 1, vdim);
+
+        const Vector rhsb(rhs, i * x_.Size(), x_.Size());
+        Vector yb(y_, i * x_.Size(), x_.Size());
+        ksp->Mult(rhsb, yb);
       }
     }
-  }
-  linalg::Sqrt(estimates);
-
-  Mpi::GlobalSum(1, &normalization, nd_fespace.GetComm());
-  normalization = std::sqrt(normalization);
-  if (normalization > 0)
+  };
+  if constexpr (std::is_same<VecType, ComplexVector>::value)
   {
-    estimates /= normalization;
+    MultImpl(x.Real(), y.Real());
+    MultImpl(x.Imag(), y.Imag());
   }
-  return ErrorIndicator(std::move(estimates), normalization);
+  else
+  {
+    MultImpl(x, y);
+  }
 }
 
-template <>
-ErrorIndicator CurlFluxErrorEstimator::ComputeIndicators(const Vector &v) const
+template <typename VecType>
+CurlFluxErrorEstimator<VecType>::CurlFluxErrorEstimator(
+    const MaterialOperator &mat_op, mfem::ParFiniteElementSpaceHierarchy &nd_fespaces,
+    double tol, int max_it, int print_level, int pa_order_threshold)
+  : mat_op(mat_op), nd_fespaces(nd_fespaces),
+    projector(mat_op, nd_fespaces, tol, max_it, print_level, pa_order_threshold),
+    F(nd_fespaces.GetFinestFESpace().GetTrueVSize()), F_gf(&nd_fespaces.GetFinestFESpace()),
+    U_gf(&nd_fespaces.GetFinestFESpace())
 {
-  BlockTimer bt_est(Timer::ESTIMATION);
-  auto &nd_fespace = nd_fespaces.GetFinestFESpace();
-  field_gf.SetFromTrueDofs(v);
-  const int nelem = nd_fespace.GetNE();
+}
 
-  // Coefficients for computing the discontinuous flux., i.e. (W, μ⁻¹∇ × V).
-  CurlFluxCoefficient coef(field_gf, mat_op);
+template <typename VecType>
+ErrorIndicator CurlFluxErrorEstimator<VecType>::ComputeIndicators(const VecType &U) const
+{
+  // Compute the projection of the discontinuous flux onto the smooth finite element space
+  // and populate the corresponding grid functions.
+  BlockTimer bt(Timer::ESTIMATION);
+  projector.Mult(U, F);
+  if constexpr (std::is_same<VecType, ComplexVector>::value)
   {
-    // Given the RHS vector of non-smooth flux, construct a flux projector and perform mass
-    // matrix inversion in the appropriate space, giving f = M⁻¹ f̂.
-    Mpi::Print("Computing smooth flux approximation\n");
-    BlockTimer bt(Timer::ESTSOLVE);
-    mfem::LinearForm rhs(&nd_fespace);
-    rhs.AddDomainIntegrator(new VectorFEDomainLFIntegrator(coef));
-    rhs.UseFastAssembly(false);
-    rhs.Assemble();
-    nd_fespace.GetProlongationMatrix()->MultTranspose(rhs, flux_rhs);
-    smooth_projector.Mult(flux_rhs, smooth_flux);
+    F_gf.real().SetFromTrueDofs(F.Real());
+    F_gf.imag().SetFromTrueDofs(F.Imag());
+    U_gf.real().SetFromTrueDofs(U.Real());
+    U_gf.imag().SetFromTrueDofs(U.Imag());
+  }
+  else
+  {
+    F_gf.SetFromTrueDofs(F);
+    U_gf.SetFromTrueDofs(U);
   }
 
-  // Given a complex solution represented with a ComplexVector, build a ComplexGridFunction
-  // for evaluation.
-  smooth_flux_gf.SetFromTrueDofs(smooth_flux);
-  smooth_flux_gf.ExchangeFaceNbrData();
-
-  Vector smooth_vec, coarse_vec, estimates(nelem);
-  estimates = 0.0;
+  // Loop over elements and accumulate the estimates from this component. The discontinuous
+  // flux is μ⁻¹ ∇ × U.
+  auto &nd_fespace = nd_fespaces.GetFinestFESpace();
+  auto &mesh = *nd_fespace.GetParMesh();
+  Vector estimates(mesh.GetNE()), V_smooth, V_ip;
   double normalization = 0.0;
-  for (int e = 0; e < nd_fespace.GetNE(); e++)
+  for (int e = 0; e < mesh.GetNE(); e++)
   {
-    auto &T = *nd_fespace.GetElementTransformation(e);
-    // integration order 2p + q
-    const auto &ir = mfem::IntRules.Get(T.GetGeometryType(),
-                                        2 * nd_fespace.GetFE(e)->GetOrder() + T.Order());
-    for (const auto &ip : ir)
+    const mfem::FiniteElement &fe = *nd_fespace.GetFE(e);
+    mfem::ElementTransformation &T = *mesh.GetElementTransformation(e);
+    const int q_order = 2 * fe.GetOrder() + T.OrderW();
+    const mfem::IntegrationRule &ir = mfem::IntRules.Get(T.GetGeometryType(), q_order);
+    for (int i = 0; i < ir.GetNPoints(); i++)
     {
+      const mfem::IntegrationPoint &ip = ir.IntPoint(i);
       T.SetIntPoint(&ip);
-      smooth_flux_gf.GetVectorValue(e, ip, smooth_vec);
-      coef.Eval(coarse_vec, T, ip);
-      const double w_i = ip.weight * T.Weight();
-      constexpr int vdim = 3;
-      for (int c = 0; c < vdim; c++)
+      const double w = ip.weight * T.Weight();
+      if constexpr (std::is_same<VecType, ComplexVector>::value)
       {
-        estimates[e] += w_i * std::pow(smooth_vec[c] - coarse_vec[c], 2.0);
-        normalization += w_i * coarse_vec[c] * coarse_vec[c];
+        // Real part
+        U_gf.real().GetCurl(T, V_smooth);
+        mat_op.GetInvPermeability(T.Attribute).Mult(V_smooth, V_ip);
+        F_gf.real().GetVectorValue(T, ip, V_smooth);
+        V_ip -= V_smooth;
+        estimates[e] = w * (V_ip * V_ip);
+        normalization += w * (V_smooth * V_smooth);
+
+        // Imaginary part
+        U_gf.imag().GetCurl(T, V_smooth);
+        mat_op.GetInvPermeability(T.Attribute).Mult(V_smooth, V_ip);
+        F_gf.imag().GetVectorValue(T, ip, V_smooth);
+        V_ip -= V_smooth;
+        estimates[e] += w * (V_ip * V_ip);
+        normalization += w * (V_smooth * V_smooth);
+      }
+      else
+      {
+        U_gf.GetCurl(T, V_smooth);
+        mat_op.GetInvPermeability(T.Attribute).Mult(V_smooth, V_ip);
+        F_gf.GetVectorValue(T, ip, V_smooth);
+        V_ip -= V_smooth;
+        estimates[e] = w * (V_ip * V_ip);
+        normalization += w * (V_smooth * V_smooth);
       }
     }
     estimates[e] = std::sqrt(estimates[e]);
   }
 
-  Mpi::GlobalSum(1, &normalization, nd_fespace.GetComm());
+  // Finalize the element-wise error estimates.
+  Mpi::GlobalSum(1, &normalization, mesh.GetComm());
   normalization = std::sqrt(normalization);
-  if (normalization > 0)
+  if (normalization > 0.0)
   {
-    estimates /= normalization;
+    estimates *= 1.0 / normalization;
   }
   return ErrorIndicator(std::move(estimates), normalization);
 }
-
-template <typename VectorType>
-void CurlFluxErrorEstimator::AddErrorIndicator(ErrorIndicator &indicator,
-                                               PostOperator &postop,
-                                               const VectorType &v) const
-{
-  auto i = ComputeIndicators(v);
-  BlockTimer bt(Timer::POSTPRO);
-  postop.SetIndicatorGridFunction(i.Local());
-  indicator.AddIndicator(i);
-}
-
-template <typename VectorType>
-void CurlFluxErrorEstimator::AddErrorIndicator(ErrorIndicator &indicator,
-                                               const VectorType &v) const
-{
-  BlockTimer bt(Timer::POSTPRO);
-  indicator.AddIndicator(ComputeIndicators(v));
-}
-
-template void
-CurlFluxErrorEstimator::AddErrorIndicator<ComplexVector>(ErrorIndicator &, PostOperator &,
-                                                         const ComplexVector &) const;
-template void CurlFluxErrorEstimator::AddErrorIndicator<Vector>(ErrorIndicator &,
-                                                                PostOperator &,
-                                                                const Vector &) const;
-template void
-CurlFluxErrorEstimator::AddErrorIndicator<ComplexVector>(ErrorIndicator &,
-                                                         const ComplexVector &) const;
-template void CurlFluxErrorEstimator::AddErrorIndicator<Vector>(ErrorIndicator &,
-                                                                const Vector &) const;
 
 GradFluxErrorEstimator::GradFluxErrorEstimator(
-    const IoData &iodata, const MaterialOperator &mat_op,
-    mfem::ParFiniteElementSpaceHierarchy &h1_fespaces)
+    const MaterialOperator &mat_op, mfem::ParFiniteElementSpaceHierarchy &h1_fespaces,
+    double tol, int max_it, int print_level, int pa_order_threshold)
   : mat_op(mat_op), h1_fespaces(h1_fespaces),
-    smooth_projector(h1_fespaces, iodata.solver.linear.estimator_tol,
-                     iodata.solver.linear.estimator_max_it, iodata.problem.verbose,
-                     iodata.solver.pa_order_threshold),
-    smooth_flux(h1_fespaces.GetFinestFESpace().GetTrueVSize()),
-    flux_rhs(h1_fespaces.GetFinestFESpace().GetTrueVSize()),
-    field_gf(&h1_fespaces.GetFinestFESpace()),
-    smooth_flux_gf{&h1_fespaces.GetFinestFESpace(), &h1_fespaces.GetFinestFESpace(),
-                   &h1_fespaces.GetFinestFESpace()}
+    h1d_fespace(h1_fespaces.GetFinestFESpace().GetParMesh(),
+                h1_fespaces.GetFinestFESpace().FEColl(),
+                h1_fespaces.GetFinestFESpace().GetParMesh()->SpaceDimension(),
+                mfem::Ordering::byNODES),
+    projector(mat_op, h1_fespaces, h1d_fespace, tol, max_it, print_level,
+              pa_order_threshold),
+    F(h1d_fespace.GetTrueVSize()), F_gf(&h1d_fespace), U_gf(&h1_fespaces.GetFinestFESpace())
 {
 }
 
-ErrorIndicator GradFluxErrorEstimator::ComputeIndicators(const Vector &v) const
+ErrorIndicator GradFluxErrorEstimator::ComputeIndicators(const Vector &U) const
 {
-  BlockTimer bt_est(Timer::ESTIMATION);
-  auto &h1_fespace = h1_fespaces.GetFinestFESpace();
-  const int sdim = h1_fespace.GetMesh()->SpaceDimension();
-  field_gf.SetFromTrueDofs(v);
-  const int nelem = h1_fespace.GetNE();
+  // Compute the projection of the discontinuous flux onto the smooth finite element space
+  // and populate the corresponding grid functions.
+  BlockTimer bt(Timer::ESTIMATION);
+  projector.Mult(U, F);
+  F_gf.SetFromTrueDofs(F);
+  U_gf.SetFromTrueDofs(U);
 
-  Vector estimates(nelem);
-  estimates = 0.0;
+  // Loop over elements and accumulate the estimates from this component. The discontinuous
+  // flux is ε ∇U.
+  auto &mesh = *h1d_fespace.GetParMesh();
+  Vector estimates(mesh.GetNE()), V_smooth, V_ip;
   double normalization = 0.0;
-
-  // Coefficient for computing the discontinuous flux., i.e. (Vᵢ, (ϵ ∇ ϕ)ᵢ).
-  GradFluxCoefficient coef(field_gf, mat_op);
-  for (int c = 0; c < sdim; c++)
+  for (int e = 0; e < mesh.GetNE(); e++)
   {
-    coef.SetComponent(c);
+    const mfem::FiniteElement &fe = *h1d_fespace.GetFE(e);
+    mfem::ElementTransformation &T = *mesh.GetElementTransformation(e);
+    const int q_order = 2 * fe.GetOrder() + T.OrderW();
+    const mfem::IntegrationRule &ir = mfem::IntRules.Get(T.GetGeometryType(), q_order);
+    for (int i = 0; i < ir.GetNPoints(); i++)
     {
-      // Given the RHS vector of non-smooth flux component, compute fᵢ = M⁻¹ f̂ᵢ.
-      Mpi::Print("Computing smooth flux approximation of component {}\n", c);
-      BlockTimer bt0(Timer::ESTSOLVE);
-      mfem::LinearForm rhs(&h1_fespace);
-      rhs.AddDomainIntegrator(new mfem::DomainLFIntegrator(coef));
-      rhs.UseFastAssembly(false);
-      rhs.Assemble();
-      h1_fespace.GetProlongationMatrix()->MultTranspose(rhs, flux_rhs);
-      smooth_projector.Mult(flux_rhs, smooth_flux);
-    }
-    smooth_flux_gf[c].SetFromTrueDofs(smooth_flux);
-    smooth_flux_gf[c].ExchangeFaceNbrData();
-  }
-
-  Vector coef_eval(3);
-  for (int e = 0; e < h1_fespace.GetNE(); e++)
-  {
-    auto &T = *h1_fespace.GetElementTransformation(e);
-    // integration order 2p + q
-    const auto &ir = mfem::IntRules.Get(T.GetGeometryType(),
-                                        2 * h1_fespace.GetFE(e)->GetOrder() + T.Order());
-    for (const auto &ip : ir)
-    {
+      // XX TODO: For now the flux is just ∇U since the coefficient support for
+      // matrix-valued
+      //          permittivity is not yet there (coming soon).
+      const mfem::IntegrationPoint &ip = ir.IntPoint(i);
       T.SetIntPoint(&ip);
-      coef.Eval(coef_eval, T, ip);
-      for (int c = 0; c < sdim; c++)
-      {
-        coef.SetComponent(c);
-        double smooth_val = smooth_flux_gf[c].GetValue(e, ip);
-        const double w_i = ip.weight * T.Weight();
-        estimates[e] += w_i * std::pow(smooth_val - coef_eval(c), 2.0);
-        normalization += w_i * std::pow(coef_eval(c), 2.0);
-      }
+      const double w = ip.weight * T.Weight();
+      U_gf.GetGradient(T, V_smooth);
+      // mat_op.GetPermittivityReal(T.Attribute).Mult(V_smooth, V_ip);
+      V_ip = V_smooth;
+      F_gf.GetVectorValue(T, ip, V_smooth);
+      V_ip -= V_smooth;
+      estimates[e] = w * (V_ip * V_ip);
+      normalization += w * (V_smooth * V_smooth);
     }
     estimates[e] = std::sqrt(estimates[e]);
   }
 
-  Mpi::GlobalSum(1, &normalization, h1_fespace.GetComm());
+  // Finalize the element-wise error estimates.
+  Mpi::GlobalSum(1, &normalization, mesh.GetComm());
   normalization = std::sqrt(normalization);
-  if (normalization > 0)
+  if (normalization > 0.0)
   {
-    estimates /= normalization;
+    estimates *= 1.0 / normalization;
   }
   return ErrorIndicator(std::move(estimates), normalization);
 }
+
+template void FluxProjector::Mult(const Vector &, Vector &) const;
+template void FluxProjector::Mult(const ComplexVector &, ComplexVector &) const;
+
+template class CurlFluxErrorEstimator<Vector>;
+template class CurlFluxErrorEstimator<ComplexVector>;
 
 }  // namespace palace

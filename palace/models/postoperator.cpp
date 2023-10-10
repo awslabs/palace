@@ -658,7 +658,7 @@ void PostOperator::WriteFields(int step, double time, const ErrorIndicator *indi
     if (indicator)
     {
       eta = std::make_unique<mfem::ParGridFunction>(&pwconst_fespace);
-      MFEM_VERIFY(eta.Size() == indicator->Size(),
+      MFEM_VERIFY(eta->Size() == indicator->Local().Size(),
                   "Size mismatch for provided ErrorIndicator for postprocessing!");
       *eta = indicator->Local();
       paraview.RegisterField("Indicator", eta.get());
