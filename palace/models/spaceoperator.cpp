@@ -202,32 +202,32 @@ std::unique_ptr<Operator> BuildOperator(const mfem::ParFiniteElementSpace &fespa
   BilinearForm a(fespace);
   if (df && !df->empty() && f && !f->empty())
   {
-    a.AddDomainIntegrator(std::make_unique<CurlCurlMassIntegrator>(*df, *f));
+    a.AddDomainIntegrator<CurlCurlMassIntegrator>(*df, *f);
   }
   else
   {
     if (df && !df->empty())
     {
-      a.AddDomainIntegrator(std::make_unique<CurlCurlIntegrator>(*df));
+      a.AddDomainIntegrator<CurlCurlIntegrator>(*df);
     }
     if (f && !f->empty())
     {
-      a.AddDomainIntegrator(std::make_unique<VectorFEMassIntegrator>(*f));
+      a.AddDomainIntegrator<VectorFEMassIntegrator>(*f);
     }
   }
   if (dfb && !dfb->empty() && fb && !fb->empty())
   {
-    a.AddBoundaryIntegrator(std::make_unique<CurlCurlMassIntegrator>(*dfb, *fb));
+    a.AddBoundaryIntegrator<CurlCurlMassIntegrator>(*dfb, *fb);
   }
   else
   {
     if (dfb && !dfb->empty())
     {
-      a.AddBoundaryIntegrator(std::make_unique<CurlCurlIntegrator>(*dfb));
+      a.AddBoundaryIntegrator<CurlCurlIntegrator>(*dfb);
     }
     if (fb && !fb->empty())
     {
-      a.AddBoundaryIntegrator(std::make_unique<VectorFEMassIntegrator>(*fb));
+      a.AddBoundaryIntegrator<VectorFEMassIntegrator>(*fb);
     }
   }
   return a.Assemble(pa_order_threshold, skip_zeros);
@@ -241,11 +241,11 @@ std::unique_ptr<Operator> BuildAuxOperator(const mfem::ParFiniteElementSpace &fe
   BilinearForm a(fespace);
   if (f && !f->empty())
   {
-    a.AddDomainIntegrator(std::make_unique<DiffusionIntegrator>(*f));
+    a.AddDomainIntegrator<DiffusionIntegrator>(*f);
   }
   if (fb && !fb->empty())
   {
-    a.AddBoundaryIntegrator(std::make_unique<DiffusionIntegrator>(*fb));
+    a.AddBoundaryIntegrator<DiffusionIntegrator>(*fb);
   }
   return a.Assemble(pa_order_threshold, skip_zeros);
 }
@@ -740,7 +740,7 @@ auto BuildCurl(const mfem::ParFiniteElementSpace &nd_fespace,
                bool skip_zeros)
 {
   DiscreteLinearOperator curl(nd_fespace, rt_fespace);
-  curl.AddDomainInterpolator(std::make_unique<CurlInterpolator>());
+  curl.AddDomainInterpolator<CurlInterpolator>();
   return curl.Assemble(pa_order_threshold, skip_zeros);
 }
 
@@ -749,7 +749,7 @@ auto BuildGrad(const mfem::ParFiniteElementSpace &h1_fespace,
                bool skip_zeros)
 {
   DiscreteLinearOperator grad(h1_fespace, nd_fespace);
-  grad.AddDomainInterpolator(std::make_unique<GradientInterpolator>());
+  grad.AddDomainInterpolator<GradientInterpolator>();
   return grad.Assemble(pa_order_threshold, skip_zeros);
 }
 

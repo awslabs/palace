@@ -54,8 +54,7 @@ MassIntegratorInfo InitializeIntegratorInfo(const mfem::ParFiniteElementSpace &f
   else if (Q)
   {
     info.qdata_size = 1;
-    coeff.emplace_back();
-    ceed::InitCoefficient(*Q, mesh, ir, indices, use_bdr, coeff.back());
+    ceed::InitCoefficient(*Q, mesh, ir, indices, use_bdr, coeff.emplace_back());
 
     info.build_qf = f_build_mass_quad_scalar;
     info.build_qf_path = PalaceQFunctionRelativePath(f_build_mass_quad_scalar_loc);
@@ -68,8 +67,7 @@ MassIntegratorInfo InitializeIntegratorInfo(const mfem::ParFiniteElementSpace &f
     MFEM_VERIFY(VQ->GetVDim() == info.ctx.vdim,
                 "Invalid vector coefficient dimension for vector MassIntegrator!");
     info.qdata_size = info.ctx.vdim;
-    coeff.emplace_back();
-    ceed::InitCoefficient(*VQ, mesh, ir, indices, use_bdr, coeff.back());
+    ceed::InitCoefficient(*VQ, mesh, ir, indices, use_bdr, coeff.emplace_back());
 
     info.build_qf = f_build_mass_quad_vector;
     info.build_qf_path = PalaceQFunctionRelativePath(f_build_mass_quad_vector_loc);
@@ -82,8 +80,7 @@ MassIntegratorInfo InitializeIntegratorInfo(const mfem::ParFiniteElementSpace &f
     MFEM_VERIFY(MQ->GetVDim() == info.ctx.vdim,
                 "Invalid matrix coefficient dimension for vector MassIntegrator!");
     info.qdata_size = (info.ctx.vdim * (info.ctx.vdim + 1)) / 2;
-    coeff.emplace_back();
-    ceed::InitCoefficient(*MQ, mesh, ir, indices, use_bdr, coeff.back());
+    ceed::InitCoefficient(*MQ, mesh, ir, indices, use_bdr, coeff.emplace_back());
 
     info.build_qf = f_build_mass_quad_matrix;
     info.build_qf_path = PalaceQFunctionRelativePath(f_build_mass_quad_matrix_loc);

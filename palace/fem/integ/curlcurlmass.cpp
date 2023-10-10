@@ -49,13 +49,11 @@ InitializeIntegratorInfo(const mfem::ParFiniteElementSpace &fespace,
               "curl-curl and a mass integrator coefficient!");
   if (Qc)
   {
-    coeff.emplace_back();
-    ceed::InitCoefficient(*Qc, mesh, ir, indices, use_bdr, coeff.back());
+    ceed::InitCoefficient(*Qc, mesh, ir, indices, use_bdr, coeff.emplace_back());
 
     if (Qm)
     {
-      coeff.emplace_back();
-      ceed::InitCoefficient(*Qm, mesh, ir, indices, use_bdr, coeff.back());
+      ceed::InitCoefficient(*Qm, mesh, ir, indices, use_bdr, coeff.emplace_back());
 
       info.build_qf = f_build_curlcurl_mass_quad_scalar_scalar;
       info.build_qf_path =
@@ -65,8 +63,7 @@ InitializeIntegratorInfo(const mfem::ParFiniteElementSpace &fespace,
     {
       MFEM_VERIFY(VQm->GetVDim() == info.ctx.space_dim,
                   "Invalid vector coefficient dimension for CurlCurlMassIntegrator!");
-      coeff.emplace_back();
-      ceed::InitCoefficient(*VQm, mesh, ir, indices, use_bdr, coeff.back());
+      ceed::InitCoefficient(*VQm, mesh, ir, indices, use_bdr, coeff.emplace_back());
 
       info.build_qf = f_build_curlcurl_mass_quad_scalar_vector;
       info.build_qf_path =
@@ -76,8 +73,7 @@ InitializeIntegratorInfo(const mfem::ParFiniteElementSpace &fespace,
     {
       MFEM_VERIFY(MQm->GetVDim() == info.ctx.space_dim,
                   "Invalid matrix coefficient dimension for CurlCurlMassIntegrator!");
-      coeff.emplace_back();
-      ceed::InitCoefficient(*MQm, mesh, ir, indices, use_bdr, coeff.back());
+      ceed::InitCoefficient(*MQm, mesh, ir, indices, use_bdr, coeff.emplace_back());
 
       info.build_qf = f_build_curlcurl_mass_quad_scalar_matrix;
       info.build_qf_path =
@@ -88,13 +84,11 @@ InitializeIntegratorInfo(const mfem::ParFiniteElementSpace &fespace,
   {
     MFEM_VERIFY(VQc->GetVDim() == info.ctx.curl_dim,
                 "Invalid vector coefficient dimension for CurlCurlMassIntegrator!");
-    coeff.emplace_back();
-    ceed::InitCoefficient(*VQc, mesh, ir, indices, use_bdr, coeff.back());
+    ceed::InitCoefficient(*VQc, mesh, ir, indices, use_bdr, coeff.emplace_back());
 
     if (Qm)
     {
-      coeff.emplace_back();
-      ceed::InitCoefficient(*Qm, mesh, ir, indices, use_bdr, coeff.back());
+      ceed::InitCoefficient(*Qm, mesh, ir, indices, use_bdr, coeff.emplace_back());
 
       info.build_qf = f_build_curlcurl_mass_quad_vector_scalar;
       info.build_qf_path =
@@ -104,8 +98,7 @@ InitializeIntegratorInfo(const mfem::ParFiniteElementSpace &fespace,
     {
       MFEM_VERIFY(VQm->GetVDim() == info.ctx.space_dim,
                   "Invalid vector coefficient dimension for CurlCurlMassIntegrator!");
-      coeff.emplace_back();
-      ceed::InitCoefficient(*VQm, mesh, ir, indices, use_bdr, coeff.back());
+      ceed::InitCoefficient(*VQm, mesh, ir, indices, use_bdr, coeff.emplace_back());
 
       info.build_qf = f_build_curlcurl_mass_quad_vector_vector;
       info.build_qf_path =
@@ -115,8 +108,7 @@ InitializeIntegratorInfo(const mfem::ParFiniteElementSpace &fespace,
     {
       MFEM_VERIFY(MQm->GetVDim() == info.ctx.space_dim,
                   "Invalid matrix coefficient dimension for CurlCurlMassIntegrator!");
-      coeff.emplace_back();
-      ceed::InitCoefficient(*MQm, mesh, ir, indices, use_bdr, coeff.back());
+      ceed::InitCoefficient(*MQm, mesh, ir, indices, use_bdr, coeff.emplace_back());
 
       info.build_qf = f_build_curlcurl_mass_quad_vector_matrix;
       info.build_qf_path =
@@ -127,13 +119,11 @@ InitializeIntegratorInfo(const mfem::ParFiniteElementSpace &fespace,
   {
     MFEM_VERIFY(MQc->GetVDim() == info.ctx.curl_dim,
                 "Invalid matrix coefficient dimension for CurlCurlMassIntegrator!");
-    coeff.emplace_back();
-    ceed::InitCoefficient(*MQc, mesh, ir, indices, use_bdr, coeff.back());
+    ceed::InitCoefficient(*MQc, mesh, ir, indices, use_bdr, coeff.emplace_back());
 
     if (Qm)
     {
-      coeff.emplace_back();
-      ceed::InitCoefficient(*Qm, mesh, ir, indices, use_bdr, coeff.back());
+      ceed::InitCoefficient(*Qm, mesh, ir, indices, use_bdr, coeff.emplace_back());
 
       info.build_qf = f_build_curlcurl_mass_quad_matrix_scalar;
       info.build_qf_path =
@@ -143,8 +133,7 @@ InitializeIntegratorInfo(const mfem::ParFiniteElementSpace &fespace,
     {
       MFEM_VERIFY(VQm->GetVDim() == info.ctx.space_dim,
                   "Invalid vector coefficient dimension for CurlCurlMassIntegrator!");
-      coeff.emplace_back();
-      ceed::InitCoefficient(*VQm, mesh, ir, indices, use_bdr, coeff.back());
+      ceed::InitCoefficient(*VQm, mesh, ir, indices, use_bdr, coeff.emplace_back());
 
       info.build_qf = f_build_curlcurl_mass_quad_matrix_vector;
       info.build_qf_path =
@@ -154,8 +143,7 @@ InitializeIntegratorInfo(const mfem::ParFiniteElementSpace &fespace,
     {
       MFEM_VERIFY(MQm->GetVDim() == info.ctx.space_dim,
                   "Invalid matrix coefficient dimension for CurlCurlMassIntegrator!");
-      coeff.emplace_back();
-      ceed::InitCoefficient(*MQm, mesh, ir, indices, use_bdr, coeff.back());
+      ceed::InitCoefficient(*MQm, mesh, ir, indices, use_bdr, coeff.emplace_back());
 
       info.build_qf = f_build_curlcurl_mass_quad_matrix_matrix;
       info.build_qf_path =

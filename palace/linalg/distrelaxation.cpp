@@ -22,7 +22,7 @@ DistRelaxationSmoother<OperType>::DistRelaxationSmoother(
   // Construct discrete gradient matrix for the auxiliary space.
   constexpr bool skip_zeros_interp = true;
   DiscreteLinearOperator grad(h1_fespace, nd_fespace);
-  grad.AddDomainInterpolator(std::make_unique<GradientInterpolator>());
+  grad.AddDomainInterpolator<GradientInterpolator>();
   G = std::make_unique<ParOperator>(
       grad.Assemble(pa_discrete_interp ? pa_order_threshold : 99, skip_zeros_interp),
       h1_fespace, nd_fespace, true);

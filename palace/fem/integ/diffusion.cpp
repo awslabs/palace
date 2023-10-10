@@ -51,8 +51,7 @@ InitializeIntegratorInfo(const mfem::ParFiniteElementSpace &fespace,
   }
   else if (Q)
   {
-    coeff.emplace_back();
-    ceed::InitCoefficient(*Q, mesh, ir, indices, use_bdr, coeff.back());
+    ceed::InitCoefficient(*Q, mesh, ir, indices, use_bdr, coeff.emplace_back());
 
     info.build_qf = f_build_diff_quad_scalar;
     info.build_qf_path = PalaceQFunctionRelativePath(f_build_diff_quad_scalar_loc);
@@ -61,8 +60,7 @@ InitializeIntegratorInfo(const mfem::ParFiniteElementSpace &fespace,
   {
     MFEM_VERIFY(VQ->GetVDim() == info.ctx.space_dim,
                 "Invalid vector coefficient dimension for DiffusionIntegrator!");
-    coeff.emplace_back();
-    ceed::InitCoefficient(*VQ, mesh, ir, indices, use_bdr, coeff.back());
+    ceed::InitCoefficient(*VQ, mesh, ir, indices, use_bdr, coeff.emplace_back());
 
     info.build_qf = f_build_diff_quad_vector;
     info.build_qf_path = PalaceQFunctionRelativePath(f_build_diff_quad_vector_loc);
@@ -71,8 +69,7 @@ InitializeIntegratorInfo(const mfem::ParFiniteElementSpace &fespace,
   {
     MFEM_VERIFY(MQ->GetVDim() == info.ctx.space_dim,
                 "Invalid matrix coefficient dimension for DiffusionIntegrator!");
-    coeff.emplace_back();
-    ceed::InitCoefficient(*MQ, mesh, ir, indices, use_bdr, coeff.back());
+    ceed::InitCoefficient(*MQ, mesh, ir, indices, use_bdr, coeff.emplace_back());
 
     info.build_qf = f_build_diff_quad_matrix;
     info.build_qf_path = PalaceQFunctionRelativePath(f_build_diff_quad_matrix_loc);

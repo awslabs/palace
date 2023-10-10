@@ -161,7 +161,7 @@ std::unique_ptr<Operator> LaplaceOperator::GetStiffnessMatrix()
     constexpr auto MatType = MaterialPropertyType::PERMITTIVITY_REAL;
     MaterialPropertyCoefficient<MatType> epsilon_func(mat_op);
     BilinearForm k(h1_fespace_l);
-    k.AddDomainIntegrator(std::make_unique<DiffusionIntegrator>(epsilon_func));
+    k.AddDomainIntegrator<DiffusionIntegrator>(epsilon_func);
     auto K_l = std::make_unique<ParOperator>(
         k.Assemble((l > 0) ? pa_order_threshold : 99, skip_zeros), h1_fespace_l);
     if (print_hdr)
@@ -189,7 +189,7 @@ std::unique_ptr<Operator> LaplaceOperator::GetGradMatrix()
 {
   constexpr bool skip_zeros_interp = true;
   DiscreteLinearOperator grad(GetH1Space(), GetNDSpace());
-  grad.AddDomainInterpolator(std::make_unique<GradientInterpolator>());
+  grad.AddDomainInterpolator<GradientInterpolator>();
   return std::make_unique<ParOperator>(
       grad.Assemble(pa_discrete_interp ? pa_order_threshold : 99, skip_zeros_interp),
       GetH1Space(), GetNDSpace(), true);

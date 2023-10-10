@@ -973,21 +973,21 @@ void RunCeedBenchmarks(MPI_Comm comm, const std::string &input, int ref_levels, 
     auto AssembleTest = [&](const FiniteElementSpace &fespace, bool bdr_integ = false)
     {
       BilinearForm a_test(fespace);
-      a_test.AddDomainIntegrator(std::make_unique<DiffusionMassIntegrator>(MQ, Q));
+      a_test.AddDomainIntegrator<DiffusionMassIntegrator>(MQ, Q);
       if (bdr_integ)
       {
-        a_test.AddBoundaryIntegrator(std::make_unique<MassIntegrator>());
+        a_test.AddBoundaryIntegrator<MassIntegrator>();
       }
       return a_test.Assemble();
     };
     auto AssembleTestRef = [&](const FiniteElementSpace &fespace, bool bdr_integ = false)
     {
       BilinearForm a_test_ref(fespace);
-      a_test_ref.AddDomainIntegrator(std::make_unique<DiffusionIntegrator>(MQ));
-      a_test_ref.AddDomainIntegrator(std::make_unique<MassIntegrator>(Q));
+      a_test_ref.AddDomainIntegrator<DiffusionIntegrator>(MQ);
+      a_test_ref.AddDomainIntegrator<MassIntegrator>(Q);
       if (bdr_integ)
       {
-        a_test_ref.AddBoundaryIntegrator(std::make_unique<MassIntegrator>());
+        a_test_ref.AddBoundaryIntegrator<MassIntegrator>();
       }
       return a_test_ref.Assemble();
     };
@@ -1019,21 +1019,21 @@ void RunCeedBenchmarks(MPI_Comm comm, const std::string &input, int ref_levels, 
     auto AssembleTest = [&](const FiniteElementSpace &fespace, bool bdr_integ = false)
     {
       BilinearForm a_test(fespace);
-      a_test.AddDomainIntegrator(std::make_unique<CurlCurlMassIntegrator>(MQ, Q));
+      a_test.AddDomainIntegrator<CurlCurlMassIntegrator>(MQ, Q);
       if (bdr_integ)
       {
-        a_test.AddBoundaryIntegrator(std::make_unique<VectorFEMassIntegrator>());
+        a_test.AddBoundaryIntegrator<VectorFEMassIntegrator>();
       }
       return a_test.Assemble();
     };
     auto AssembleTestRef = [&](const FiniteElementSpace &fespace, bool bdr_integ = false)
     {
       BilinearForm a_test_ref(fespace);
-      a_test_ref.AddDomainIntegrator(std::make_unique<CurlCurlIntegrator>(MQ));
-      a_test_ref.AddDomainIntegrator(std::make_unique<VectorFEMassIntegrator>(Q));
+      a_test_ref.AddDomainIntegrator<CurlCurlIntegrator>(MQ);
+      a_test_ref.AddDomainIntegrator<VectorFEMassIntegrator>(Q);
       if (bdr_integ)
       {
-        a_test_ref.AddBoundaryIntegrator(std::make_unique<VectorFEMassIntegrator>());
+        a_test_ref.AddBoundaryIntegrator<VectorFEMassIntegrator>();
       }
       return a_test_ref.Assemble();
     };
@@ -1065,14 +1065,14 @@ void RunCeedBenchmarks(MPI_Comm comm, const std::string &input, int ref_levels, 
     auto AssembleTest = [&](const FiniteElementSpace &fespace, bool bdr_integ = false)
     {
       BilinearForm a_test(fespace);
-      a_test.AddDomainIntegrator(std::make_unique<DivDivMassIntegrator>(Q, Q));
+      a_test.AddDomainIntegrator<DivDivMassIntegrator>(Q, Q);
       return a_test.Assemble();
     };
     auto AssembleTestRef = [&](const FiniteElementSpace &fespace, bool bdr_integ = false)
     {
       BilinearForm a_test_ref(fespace);
-      a_test_ref.AddDomainIntegrator(std::make_unique<DivDivIntegrator>(Q));
-      a_test_ref.AddDomainIntegrator(std::make_unique<VectorFEMassIntegrator>(Q));
+      a_test_ref.AddDomainIntegrator<DivDivIntegrator>(Q);
+      a_test_ref.AddDomainIntegrator<VectorFEMassIntegrator>(Q);
       return a_test_ref.Assemble();
     };
     auto AssembleRef = [&](FiniteElementSpace &fespace, mfem::AssemblyLevel assembly_level,

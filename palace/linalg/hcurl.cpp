@@ -40,12 +40,11 @@ WeightedHCurlNormSolver::WeightedHCurlNormSolver(
         BilinearForm a(fespace_l);
         if (s == 0)
         {
-          a.AddDomainIntegrator(
-              std::make_unique<CurlCurlMassIntegrator>(muinv_func, epsilon_func));
+          a.AddDomainIntegrator<CurlCurlMassIntegrator>(muinv_func, epsilon_func);
         }
         else
         {
-          a.AddDomainIntegrator(std::make_unique<DiffusionIntegrator>(epsilon_func));
+          a.AddDomainIntegrator<DiffusionIntegrator>(epsilon_func);
         }
         auto A_l = std::make_unique<ParOperator>(
             a.Assemble((l > 0) ? pa_order_threshold : 99, skip_zeros), fespace_l);

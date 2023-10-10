@@ -139,7 +139,7 @@ std::unique_ptr<Operator> CurlCurlOperator::GetStiffnessMatrix()
     constexpr auto MatType = MaterialPropertyType::INV_PERMEABILITY;
     MaterialPropertyCoefficient<MatType> muinv_func(mat_op);
     BilinearForm k(nd_fespace_l);
-    k.AddDomainIntegrator(std::make_unique<CurlCurlIntegrator>(muinv_func));
+    k.AddDomainIntegrator<CurlCurlIntegrator>(muinv_func);
     auto K_l = std::make_unique<ParOperator>(
         k.Assemble((l > 0) ? pa_order_threshold : 99, skip_zeros), nd_fespace_l);
     if (print_hdr)
@@ -167,7 +167,7 @@ std::unique_ptr<Operator> CurlCurlOperator::GetCurlMatrix()
 {
   constexpr bool skip_zeros_interp = true;
   DiscreteLinearOperator curl(GetNDSpace(), GetRTSpace());
-  curl.AddDomainInterpolator(std::make_unique<CurlInterpolator>());
+  curl.AddDomainInterpolator<CurlInterpolator>();
   return std::make_unique<ParOperator>(
       curl.Assemble(pa_discrete_interp ? pa_order_threshold : 99, skip_zeros_interp),
       GetNDSpace(), GetRTSpace(), true);

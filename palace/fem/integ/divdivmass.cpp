@@ -43,12 +43,10 @@ InitializeIntegratorInfo(const mfem::ParFiniteElementSpace &fespace,
 
   MFEM_VERIFY(Qd && (Qm || VQm || MQm), "libCEED DivDivMassIntegrator requires both a "
                                         "div-div and a mass integrator coefficient!");
-  coeff.emplace_back();
-  ceed::InitCoefficient(*Qd, mesh, ir, indices, use_bdr, coeff.back());
+  ceed::InitCoefficient(*Qd, mesh, ir, indices, use_bdr, coeff.emplace_back());
   if (Qm)
   {
-    coeff.emplace_back();
-    ceed::InitCoefficient(*Qm, mesh, ir, indices, use_bdr, coeff.back());
+    ceed::InitCoefficient(*Qm, mesh, ir, indices, use_bdr, coeff.emplace_back());
 
     info.build_qf = f_build_divdiv_mass_quad_scalar;
     info.build_qf_path = PalaceQFunctionRelativePath(f_build_divdiv_mass_quad_scalar_loc);
@@ -57,8 +55,7 @@ InitializeIntegratorInfo(const mfem::ParFiniteElementSpace &fespace,
   {
     MFEM_VERIFY(VQm->GetVDim() == info.ctx.space_dim,
                 "Invalid vector coefficient dimension for DivDivMassIntegrator!");
-    coeff.emplace_back();
-    ceed::InitCoefficient(*VQm, mesh, ir, indices, use_bdr, coeff.back());
+    ceed::InitCoefficient(*VQm, mesh, ir, indices, use_bdr, coeff.emplace_back());
 
     info.build_qf = f_build_divdiv_mass_quad_vector;
     info.build_qf_path = PalaceQFunctionRelativePath(f_build_divdiv_mass_quad_vector_loc);
@@ -67,8 +64,7 @@ InitializeIntegratorInfo(const mfem::ParFiniteElementSpace &fespace,
   {
     MFEM_VERIFY(MQm->GetVDim() == info.ctx.space_dim,
                 "Invalid matrix coefficient dimension for DivDivMassIntegrator!");
-    coeff.emplace_back();
-    ceed::InitCoefficient(*MQm, mesh, ir, indices, use_bdr, coeff.back());
+    ceed::InitCoefficient(*MQm, mesh, ir, indices, use_bdr, coeff.emplace_back());
 
     info.build_qf = f_build_divdiv_mass_quad_matrix;
     info.build_qf_path = PalaceQFunctionRelativePath(f_build_divdiv_mass_quad_matrix_loc);

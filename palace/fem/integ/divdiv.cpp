@@ -50,8 +50,7 @@ InitializeIntegratorInfo(const mfem::ParFiniteElementSpace &fespace,
   }
   else if (Q)
   {
-    coeff.emplace_back();
-    ceed::InitCoefficient(*Q, mesh, ir, indices, use_bdr, coeff.back());
+    ceed::InitCoefficient(*Q, mesh, ir, indices, use_bdr, coeff.emplace_back());
 
     info.build_qf = f_build_divdiv_quad;
     info.build_qf_path = PalaceQFunctionRelativePath(f_build_divdiv_quad_loc);

@@ -88,7 +88,7 @@ std::unique_ptr<ParOperator> GetBtt(const MaterialOperator &mat_op,
   constexpr auto ElemType = MeshElementType::BDR_SUBMESH;
   MaterialPropertyCoefficient<MatType, ElemType> muinv_func(mat_op);
   BilinearForm btt(nd_fespace);
-  btt.AddDomainIntegrator(std::make_unique<VectorFEMassIntegrator>(muinv_func));
+  btt.AddDomainIntegrator<VectorFEMassIntegrator>(muinv_func);
   return std::make_unique<ParOperator>(btt.FullAssemble(skip_zeros), nd_fespace);
 }
 
@@ -101,7 +101,7 @@ std::unique_ptr<ParOperator> GetBtn(const MaterialOperator &mat_op,
   constexpr auto ElemType = MeshElementType::BDR_SUBMESH;
   MaterialPropertyCoefficient<MatType, ElemType> muinv_func(mat_op);
   BilinearForm btn(h1_fespace, nd_fespace);
-  btn.AddDomainIntegrator(std::make_unique<MixedVectorGradientIntegrator>(muinv_func));
+  btn.AddDomainIntegrator<MixedVectorGradientIntegrator>(muinv_func);
   return std::make_unique<ParOperator>(btn.FullAssemble(skip_zeros), h1_fespace, nd_fespace,
                                        false);
 }
@@ -114,13 +114,13 @@ GetBnn(const MaterialOperator &mat_op, const mfem::ParFiniteElementSpace &h1_fes
   constexpr auto ElemType = MeshElementType::BDR_SUBMESH;
   MaterialPropertyCoefficient<MatTypeMuInv, ElemType> muinv_func(mat_op);
   BilinearForm bnn1(h1_fespace);
-  bnn1.AddDomainIntegrator(std::make_unique<DiffusionIntegrator>(muinv_func));
+  bnn1.AddDomainIntegrator<DiffusionIntegrator>(muinv_func);
 
   constexpr auto MatTypeEpsReal = MaterialPropertyType::PERMITTIVITY_REAL;
   NormalProjectedCoefficient epsilon_func(
       std::make_unique<MaterialPropertyCoefficient<MatTypeEpsReal, ElemType>>(mat_op));
   BilinearForm bnn2r(h1_fespace);
-  bnn2r.AddDomainIntegrator(std::make_unique<MassIntegrator>(epsilon_func));
+  bnn2r.AddDomainIntegrator<MassIntegrator>(epsilon_func);
 
   // Contribution for loss tangent: ε -> ε * (1 - i tan(δ)).
   if (!mat_op.HasLossTangent())
@@ -133,7 +133,7 @@ GetBnn(const MaterialOperator &mat_op, const mfem::ParFiniteElementSpace &h1_fes
   NormalProjectedCoefficient negepstandelta_func(
       std::make_unique<MaterialPropertyCoefficient<MatTypeEpsImag, ElemType>>(mat_op));
   BilinearForm bnn2i(h1_fespace);
-  bnn2i.AddDomainIntegrator(std::make_unique<MassIntegrator>(negepstandelta_func));
+  bnn2i.AddDomainIntegrator<MassIntegrator>(negepstandelta_func);
   return {std::make_unique<ParOperator>(bnn1.FullAssemble(skip_zeros), h1_fespace),
           std::make_unique<ParOperator>(bnn2r.FullAssemble(skip_zeros), h1_fespace),
           std::make_unique<ParOperator>(bnn2i.FullAssemble(skip_zeros), h1_fespace)};
@@ -148,12 +148,12 @@ GetAtt(const MaterialOperator &mat_op, const mfem::ParFiniteElementSpace &nd_fes
   NormalProjectedCoefficient muinv_func(
       std::make_unique<MaterialPropertyCoefficient<MatTypeMuInv, ElemType>>(mat_op));
   BilinearForm att1(nd_fespace);
-  att1.AddDomainIntegrator(std::make_unique<CurlCurlIntegrator>(muinv_func));
+  att1.AddDomainIntegrator<CurlCurlIntegrator>(muinv_func);
 
   constexpr auto MatTypeEpsReal = MaterialPropertyType::PERMITTIVITY_REAL;
   MaterialPropertyCoefficient<MatTypeEpsReal, ElemType> epsilon_func(mat_op);
   BilinearForm att2r(nd_fespace);
-  att2r.AddDomainIntegrator(std::make_unique<VectorFEMassIntegrator>(epsilon_func));
+  att2r.AddDomainIntegrator<VectorFEMassIntegrator>(epsilon_func);
 
   // Contribution for loss tangent: ε -> ε * (1 - i tan(δ)).
   if (!mat_op.HasLossTangent())
@@ -165,7 +165,7 @@ GetAtt(const MaterialOperator &mat_op, const mfem::ParFiniteElementSpace &nd_fes
   constexpr auto MatTypeEpsImag = MaterialPropertyType::PERMITTIVITY_IMAG;
   MaterialPropertyCoefficient<MatTypeEpsImag, ElemType> negepstandelta_func(mat_op);
   BilinearForm att2i(nd_fespace);
-  att2i.AddDomainIntegrator(std::make_unique<VectorFEMassIntegrator>(negepstandelta_func));
+  att2i.AddDomainIntegrator<VectorFEMassIntegrator>(negepstandelta_func);
   return {std::make_unique<ParOperator>(att1.FullAssemble(skip_zeros), nd_fespace),
           std::make_unique<ParOperator>(att2r.FullAssemble(skip_zeros), nd_fespace),
           std::make_unique<ParOperator>(att2i.FullAssemble(skip_zeros), nd_fespace)};

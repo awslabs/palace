@@ -54,7 +54,7 @@ void HypreAmsSolver::ConstructAuxiliaryMatrices(
   {
     constexpr bool skip_zeros_interp = true;
     DiscreteLinearOperator grad(h1_fespace, nd_fespace);
-    grad.AddDomainInterpolator(std::make_unique<GradientInterpolator>());
+    grad.AddDomainInterpolator<GradientInterpolator>();
     ParOperator RAP_G(grad.FullAssemble(skip_zeros_interp), h1_fespace, nd_fespace, true);
     G = RAP_G.StealParallelAssemble();
   }

@@ -70,14 +70,16 @@ public:
                                                                : test_fec.GetOrder());
   }
 
-  void AddDomainIntegrator(std::unique_ptr<BilinearFormIntegrator> &&bfi)
+  template <typename T, typename... U>
+  void AddDomainIntegrator(U &&...args)
   {
-    domain_integs.push_back(std::move(bfi));
+    domain_integs.push_back(std::make_unique<T>(std::forward<U>(args)...));
   }
 
-  void AddBoundaryIntegrator(std::unique_ptr<BilinearFormIntegrator> &&bfi)
+  template <typename T, typename... U>
+  void AddBoundaryIntegrator(U &&...args)
   {
-    boundary_integs.push_back(std::move(bfi));
+    boundary_integs.push_back(std::make_unique<T>(std::forward<U>(args)...));
   }
 
   std::unique_ptr<Operator> Assemble(int pa_order_threshold, bool skip_zeros) const
@@ -120,9 +122,10 @@ public:
   const auto &GetTrialSpace() const { return a.GetTrialSpace(); }
   const auto &GetTestSpace() const { return a.GetTestSpace(); }
 
-  void AddDomainInterpolator(std::unique_ptr<DiscreteInterpolator> &&di)
+  template <typename T, typename... U>
+  void AddDomainInterpolator(U &&...args)
   {
-    a.AddDomainIntegrator(std::move(di));
+    a.AddDomainIntegrator<T>(std::forward<U>(args)...);
   }
 
   std::unique_ptr<Operator> Assemble(int pa_order_threshold, bool skip_zeros) const

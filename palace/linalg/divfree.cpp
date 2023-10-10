@@ -33,7 +33,7 @@ DivFreeSolver::DivFreeSolver(const MaterialOperator &mat_op,
       // Force coarse level operator to be fully assembled always.
       const auto &h1_fespace_l = h1_fespaces.GetFESpaceAtLevel(l);
       BilinearForm m(h1_fespace_l);
-      m.AddDomainIntegrator(std::make_unique<DiffusionIntegrator>(epsilon_func));
+      m.AddDomainIntegrator<DiffusionIntegrator>(epsilon_func);
       auto M_l = std::make_unique<ParOperator>(
           m.Assemble((l > 0) ? pa_order_threshold : 99, skip_zeros), h1_fespace_l);
       M_l->SetEssentialTrueDofs(h1_bdr_tdof_lists[l], Operator::DiagonalPolicy::DIAG_ONE);
@@ -43,8 +43,7 @@ DivFreeSolver::DivFreeSolver(const MaterialOperator &mat_op,
   }
   {
     BilinearForm weakdiv(nd_fespace, h1_fespaces.GetFinestFESpace());
-    weakdiv.AddDomainIntegrator(
-        std::make_unique<MixedVectorWeakDivergenceIntegrator>(epsilon_func));
+    weakdiv.AddDomainIntegrator<MixedVectorWeakDivergenceIntegrator>(epsilon_func);
     WeakDiv =
         std::make_unique<ParOperator>(weakdiv.Assemble(pa_order_threshold, skip_zeros),
                                       nd_fespace, h1_fespaces.GetFinestFESpace(), false);
@@ -52,7 +51,7 @@ DivFreeSolver::DivFreeSolver(const MaterialOperator &mat_op,
   {
     constexpr bool skip_zeros_interp = true;
     DiscreteLinearOperator grad(h1_fespaces.GetFinestFESpace(), nd_fespace);
-    grad.AddDomainInterpolator(std::make_unique<GradientInterpolator>());
+    grad.AddDomainInterpolator<GradientInterpolator>();
     Grad = std::make_unique<ParOperator>(
         grad.Assemble(pa_discrete_interp ? pa_order_threshold : 99, skip_zeros_interp),
         h1_fespaces.GetFinestFESpace(), nd_fespace, true);

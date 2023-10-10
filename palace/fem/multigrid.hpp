@@ -124,7 +124,7 @@ ConstructFiniteElementSpaceHierarchy(
     {
       constexpr bool skip_zeros_interp = true;
       DiscreteLinearOperator p(fespaces->GetFinestFESpace(), *fespace);
-      p.AddDomainInterpolator(std::make_unique<IdentityInterpolator>());
+      p.AddDomainInterpolator<IdentityInterpolator>();
       P = new ParOperator(
           p.Assemble(pa_discrete_interp ? pa_order_threshold : 99, skip_zeros_interp),
           fespaces->GetFinestFESpace(), *fespace, true);

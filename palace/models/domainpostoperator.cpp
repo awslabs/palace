@@ -29,7 +29,7 @@ DomainPostOperator::DomainPostOperator(const IoData &iodata, const MaterialOpera
     constexpr auto MatTypeEpsImag = MaterialPropertyType::PERMITTIVITY_IMAG;
     MaterialPropertyCoefficient<MatTypeEpsReal> epsilon_func(mat_op);
     BilinearForm m_nd(*nd_fespace);
-    m_nd.AddDomainIntegrator(std::make_unique<VectorFEMassIntegrator>(epsilon_func));
+    m_nd.AddDomainIntegrator<VectorFEMassIntegrator>(epsilon_func);
     M_ND = m_nd.Assemble(pa_order_threshold, skip_zeros);
     D.SetSize(M_ND->Height());
 
@@ -53,8 +53,8 @@ DomainPostOperator::DomainPostOperator(const IoData &iodata, const MaterialOpera
           std::make_unique<MaterialPropertyCoefficient<MatTypeEpsImag>>(mat_op, -1.0),
           attr_marker);
       BilinearForm mr_nd(*nd_fespace), mi_nd(*nd_fespace);
-      mr_nd.AddDomainIntegrator(std::make_unique<VectorFEMassIntegrator>(epsilon_func_r));
-      mi_nd.AddDomainIntegrator(std::make_unique<VectorFEMassIntegrator>(epsilon_func_i));
+      mr_nd.AddDomainIntegrator<VectorFEMassIntegrator>(epsilon_func_r);
+      mi_nd.AddDomainIntegrator<VectorFEMassIntegrator>(epsilon_func_i);
       M_NDi.emplace(idx, std::make_pair(mr_nd.Assemble(pa_order_threshold, skip_zeros),
                                         mi_nd.Assemble(pa_order_threshold, skip_zeros)));
     }
@@ -67,7 +67,7 @@ DomainPostOperator::DomainPostOperator(const IoData &iodata, const MaterialOpera
     constexpr auto MatTypeMuInv = MaterialPropertyType::INV_PERMEABILITY;
     MaterialPropertyCoefficient<MatTypeMuInv> muinv_func(mat_op);
     BilinearForm m_rt(*rt_fespace);
-    m_rt.AddDomainIntegrator(std::make_unique<VectorFEMassIntegrator>(muinv_func));
+    m_rt.AddDomainIntegrator<VectorFEMassIntegrator>(muinv_func);
     M_RT = m_rt.Assemble(pa_order_threshold - 1, skip_zeros);
     H.SetSize(M_RT->Height());
   }
