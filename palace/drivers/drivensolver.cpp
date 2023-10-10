@@ -98,9 +98,8 @@ DrivenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) con
   Mpi::Print("\n");
 
   // Main frequency sweep loop.
-  return adaptive
-             ? SweepAdaptive(spaceop, postop, estimator, nstep, step0, omega0, delta_omega)
-             : SweepUniform(spaceop, postop, estimator, nstep, step0, omega0, delta_omega);
+  return adaptive ? SweepAdaptive(spaceop, postop, nstep, step0, omega0, delta_omega)
+                  : SweepUniform(spaceop, postop, nstep, step0, omega0, delta_omega);
 }
 
 ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator &postop,
@@ -138,11 +137,10 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator &
   B = 0.0;
 
   // Initialize structures for storing and reducing the results of error estimation.
-  auto estimator = [&]()
-  {
-    BlockTimer bt(Timer::CONSTRUCTESTIMATE);
-    return CurlFluxErrorEstimator(iodata, spaceop.GetMaterialOp(), spaceop.GetNDSpaces());
-  }();
+  CurlFluxErrorEstimator<ComplexVector> estimator(
+      spaceop.GetMaterialOp(), spaceop.GetNDSpaces(), iodata.solver.linear.estimator_tol,
+      iodata.solver.linear.estimator_max_it, iodata.problem.verbose,
+      iodata.solver.pa_order_threshold);
   ErrorIndicator indicator;
 
   // Main frequency sweep loop.
@@ -252,11 +250,10 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator 
   B = 0.0;
 
   // Initialize structures for storing and reducing the results of error estimation.
-  auto estimator = [&]()
-  {
-    BlockTimer bt(Timer::CONSTRUCTESTIMATE);
-    return CurlFluxErrorEstimator(iodata, spaceop.GetMaterialOp(), spaceop.GetNDSpaces());
-  }();
+  CurlFluxErrorEstimator<ComplexVector> estimator(
+      spaceop.GetMaterialOp(), spaceop.GetNDSpaces(), iodata.solver.linear.estimator_tol,
+      iodata.solver.linear.estimator_max_it, iodata.problem.verbose,
+      iodata.solver.pa_order_threshold);
   ErrorIndicator indicator;
 
   // Configure the PROM operator which performs the parameter space sampling and basis
@@ -382,7 +379,8 @@ void DrivenSolver::Postprocess(const PostOperator &postop,
                                const LumpedPortOperator &lumped_port_op,
                                const WavePortOperator &wave_port_op,
                                const SurfaceCurrentOperator &surf_j_op, int step,
-                               double omega, double E_elec, double E_mag, bool full) const
+                               double omega, double E_elec, double E_mag, bool full,
+                               const ErrorIndicator *indicator) const
 {
   // The internal GridFunctions for PostOperator have already been set from the E and B
   // solutions in the main frequency sweep loop.
@@ -405,8 +403,12 @@ void DrivenSolver::Postprocess(const PostOperator &postop,
   if (iodata.solver.driven.delta_post > 0 && step % iodata.solver.driven.delta_post == 0)
   {
     Mpi::Print("\n");
-    PostprocessFields(postop, step / iodata.solver.driven.delta_post, freq);
+    PostprocessFields(postop, step / iodata.solver.driven.delta_post, freq, indicator);
     Mpi::Print(" Wrote fields to disk at step {:d}\n", step + 1);
+  }
+  if (indicator)
+  {
+    PostprocessErrorIndicator(postop, *indicator);
   }
 }
 

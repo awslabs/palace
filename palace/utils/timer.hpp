@@ -30,13 +30,13 @@ public:
     CONSTRUCT,
     WAVEPORT,  // Wave port solver
     SOLVE,
-    PRECONDITIONER,     // Linear solver
-    COARSESOLVE,        // Linear solver
-    ESTIMATION,         // Estimation
-    CONSTRUCTESTIMATE,  // Construction of estimator
-    SOLVEESTIMATE,      // Evaluation of estimator
-    CONSTRUCTPROM,      // Adaptive frequency sweep
-    SOLVEPROM,          // Adaptive frequency sweep
+    PRECONDITIONER,      // Linear solver
+    COARSESOLVE,         // Linear solver
+    ESTIMATION,          // Estimation
+    CONSTRUCTESTIMATOR,  // Construction of estimator
+    SOLVEESTIMATOR,      // Evaluation of estimator
+    CONSTRUCTPROM,       // Adaptive frequency sweep
+    SOLVEPROM,           // Adaptive frequency sweep
     POSTPRO,
     IO,
     TOTAL,

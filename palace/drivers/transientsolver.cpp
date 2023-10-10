@@ -78,11 +78,10 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) 
   Mpi::Print("\n");
 
   // Initialize structures for storing and reducing the results of error estimation.
-  auto estimator = [&]()
-  {
-    BlockTimer bt(Timer::CONSTRUCTESTIMATE);
-    return CurlFluxErrorEstimator(iodata, spaceop.GetMaterialOp(), spaceop.GetNDSpaces());
-  }();
+  CurlFluxErrorEstimator<Vector> estimator(
+      spaceop.GetMaterialOp(), spaceop.GetNDSpaces(), iodata.solver.linear.estimator_tol,
+      iodata.solver.linear.estimator_max_it, iodata.problem.verbose,
+      iodata.solver.pa_order_threshold);
   ErrorIndicator indicator;
 
   // Main time integration loop.

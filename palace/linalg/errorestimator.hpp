@@ -14,93 +14,113 @@
 namespace palace
 {
 
-class IoData;
 class MaterialOperator;
-class PostOperator;
 
 //
+// Classes used in the estimation of element-wise solution errors via a global L2 projection
+// of a discontinuous flux onto a smooth space.
+//
+
 // This solver computes a smooth reconstruction of a discontinuous flux. The difference
 // between this resulting smooth flux and the original non-smooth flux provides a
 // localizable error estimate. An instance  of FluxProjector can be reused across solutions,
 // thus the construction of the operator is separated from the construction of the flux RHS.
-
-template <typename SmoothFluxFiniteElementCollection>
 class FluxProjector
 {
 private:
   // Operator for the mass matrix inversion.
-  std::unique_ptr<Operator> M;
+  std::unique_ptr<Operator> Flux, M;
 
   // Linear solver and preconditioner for the projected linear system M σ = σ̂.
   std::unique_ptr<KspSolver> ksp;
 
-public:
-  FluxProjector(mfem::ParFiniteElementSpaceHierarchy &smooth_flux_fes, double tol,
-                int max_it, int print_level, int pa_order_threshold);
+  // Workspace object for solver application.
+  mutable Vector rhs;
 
-  inline void Mult(const Vector &x, Vector &y) const { ksp->Mult(x, y); }
-  inline void Mult(const ComplexVector &x, ComplexVector &y) const
+public:
+  FluxProjector(const MaterialOperator &mat_op,
+                mfem::ParFiniteElementSpaceHierarchy &nd_fespaces, double tol, int max_it,
+                int print_level, int pa_order_threshold);
+  FluxProjector(const MaterialOperator &mat_op,
+                mfem::ParFiniteElementSpaceHierarchy &h1_fespaces,
+                mfem::ParFiniteElementSpace &h1d_fespace, double tol, int max_it,
+                int print_level, int pa_order_threshold);
+
+  template <typename VecType>
+  void Mult(const VecType &x, VecType &y) const;
+};
+
+// Class used for computing curl flux error estimate, i.e. || μ⁻¹ ∇ × Uₕ - F ||_K where F
+// denotes a smooth reconstruction of μ⁻¹ ∇ × Uₕ.
+template <typename VecType>
+class CurlFluxErrorEstimator
+{
+  using GridFunctionType =
+      typename std::conditional<std::is_same<VecType, ComplexVector>::value,
+                                mfem::ParComplexGridFunction, mfem::ParGridFunction>::type;
+
+  // Reference to input data (not owned).
+  const MaterialOperator &mat_op;
+
+  // Finite element space used to represent U and F.
+  mfem::ParFiniteElementSpaceHierarchy &nd_fespaces;
+
+  // Global L2 projection solver.
+  FluxProjector projector;
+
+  // Temporary vectors for error estimation.
+  mutable VecType F;
+  mutable GridFunctionType F_gf, U_gf;
+
+public:
+  CurlFluxErrorEstimator(const MaterialOperator &mat_op,
+                         mfem::ParFiniteElementSpaceHierarchy &nd_fespaces, double tol,
+                         int max_it, int print_level, int pa_order_threshold);
+
+  // Compute elemental error indicators given a vector of true DOF.
+  ErrorIndicator ComputeIndicators(const VecType &U) const;
+
+  // Compute elemental error indicators given a vector of true DOF and fold into an existing
+  // indicator.
+  void AddErrorIndicator(const VecType &U, ErrorIndicator &indicator) const
   {
-    Mult(x.Real(), y.Real());
-    Mult(x.Imag(), y.Imag());
+    indicator.AddIndicator(ComputeIndicators(U));
   }
 };
 
-// Class used for computing curl flux error estimate, i.e. || μ⁻¹∇ × Vₕ - F ||_K where F
-// denotes a smooth reconstruction of μ⁻¹∇ × Vₕ.
-class CurlFluxErrorEstimator
-{
-  const MaterialOperator &mat_op;
-  // The finite element space used to represent V, and F.
-  mfem::ParFiniteElementSpaceHierarchy &nd_fespaces;
-  FluxProjector<mfem::ND_FECollection> smooth_projector;
-  mutable Vector smooth_flux, flux_rhs;
-  mutable mfem::ParGridFunction field_gf, smooth_flux_gf;
-
-public:
-  // Constructor for using geometric and p multigrid.
-  CurlFluxErrorEstimator(const IoData &iodata, const MaterialOperator &mat_op,
-                         mfem::ParFiniteElementSpaceHierarchy &nd_fespaces);
-
-  // Compute elemental error indicators given a vector of true DOF.
-  template <typename VectorType>
-  ErrorIndicator ComputeIndicators(const VectorType &v) const;
-
-  // Compute elemental error indicators given a vector of true DOF, v, and fold into an
-  // existing indicator. Optionally set the error indicator field within a PostOperator.
-  template <typename VectorType>
-  void AddErrorIndicator(ErrorIndicator &indicator, PostOperator &postop,
-                         const VectorType &v) const;
-  template <typename VectorType>
-  void AddErrorIndicator(ErrorIndicator &indicator, const VectorType &v) const;
-};
-
-// Class used for computing grad flux error estimate, i.e. || ϵ ∇ ϕₕ - F ||_K where F
-// denotes a smooth reconstruction of ϵ ∇ ϕₕ.
+// Class used for computing gradient flux error estimate, i.e. || ε ∇Uₕ - F ||_K, where F
+// denotes a smooth reconstruction of ε ∇Uₕ.
 class GradFluxErrorEstimator
 {
+  // Reference to input data (not owned).
   const MaterialOperator &mat_op;
-  // The finite element space used to represent ϕ, and components of F
+
+  // Finite element space used to represent U.
   mfem::ParFiniteElementSpaceHierarchy &h1_fespaces;
 
-  FluxProjector<mfem::H1_FECollection> smooth_projector;
-  mutable Vector smooth_flux, flux_rhs;
-  mutable mfem::ParGridFunction field_gf;
-  mutable std::array<mfem::ParGridFunction, 3> smooth_flux_gf;
+  // Vector H1 space used to represent the components of F, ordered by component.
+  mfem::ParFiniteElementSpace h1d_fespace;
+
+  // Global L2 projection solver.
+  FluxProjector projector;
+
+  // Temporary vectors for error estimation.
+  mutable Vector F;
+  mutable mfem::ParGridFunction F_gf, U_gf;
 
 public:
-  // Constructor for using geometric and p multigrid.
-  GradFluxErrorEstimator(const IoData &iodata, const MaterialOperator &mat_op,
-                         mfem::ParFiniteElementSpaceHierarchy &h1_fespaces);
+  GradFluxErrorEstimator(const MaterialOperator &mat_op,
+                         mfem::ParFiniteElementSpaceHierarchy &h1_fespaces, double tol,
+                         int max_it, int print_level, int pa_order_threshold);
 
   // Compute elemental error indicators given a vector of true DOF.
-  ErrorIndicator ComputeIndicators(const Vector &v) const;
+  ErrorIndicator ComputeIndicators(const Vector &U) const;
 
-  // Compute elemental error indicators given a vector of true DOF, v, and fold into an
-  // existing indicator.
-  void AddErrorIndicator(ErrorIndicator &indicator, const Vector &v) const
+  // Compute elemental error indicators given a vector of true DOF and fold into an existing
+  // indicator.
+  void AddErrorIndicator(const Vector &U, ErrorIndicator &indicator) const
   {
-    indicator.AddIndicator(ComputeIndicators(v));
+    indicator.AddIndicator(ComputeIndicators(U));
   }
 };
 

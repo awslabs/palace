@@ -578,7 +578,7 @@ void BaseSolver::PostprocessErrorIndicator(const PostOperator &postop,
     return;
   }
   MPI_Comm comm = postop.GetComm();
-  std::array<double, 5> data = {indicator.Sum(comm), indicator.Min(comm),
+  std::array<double, 5> data = {indicator.Norml2(comm), indicator.Min(comm),
                                 indicator.Max(comm), indicator.Mean(comm),
                                 indicator.Normalization()};
   if (root)
@@ -587,7 +587,7 @@ void BaseSolver::PostprocessErrorIndicator(const PostOperator &postop,
     auto output = OutputFile(path, false);
     // clang-format off
     output.print("{:>{}s},{:>{}s},{:>{}s},{:>{}s},{:>{}s}\n",
-                 "Sum", table.w,
+                 "Norm", table.w,
                  "Min.", table.w,
                  "Max.", table.w,
                  "Mean", table.w,
