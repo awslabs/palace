@@ -26,10 +26,10 @@ void VectorFEBoundaryLFIntegrator::AssembleRHSElementVect(const mfem::FiniteElem
   const int dim = fe.GetDim();
   const int q_order = fem::GetDefaultIntegrationOrder(fe, fe, T, q_extra);
   const mfem::IntegrationRule &ir = mfem::IntRules.Get(fe.GetGeomType(), q_order);
+  f_hat.SetSize(dim);
   vshape.SetSize(dof, dim);
   elvect.SetSize(dof);
   elvect = 0.0;
-  f_hat.SetSize(dim);
 
   for (int i = 0; i < ir.GetNPoints(); i++)
   {
@@ -38,7 +38,6 @@ void VectorFEBoundaryLFIntegrator::AssembleRHSElementVect(const mfem::FiniteElem
     fe.CalcVShape(ip, vshape);
 
     Q.Eval(f_loc, T, ip);
-
     T.InverseJacobian().Mult(f_loc, f_hat);
     f_hat *= ip.weight * T.Weight();
     vshape.AddMult(f_hat, elvect);

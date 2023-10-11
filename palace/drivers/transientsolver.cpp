@@ -4,6 +4,8 @@
 #include "transientsolver.hpp"
 
 #include <mfem.hpp>
+#include "fem/errorindicator.hpp"
+#include "linalg/errorestimator.hpp"
 #include "linalg/vector.hpp"
 #include "models/lumpedportoperator.hpp"
 #include "models/postoperator.hpp"
@@ -18,7 +20,8 @@
 namespace palace
 {
 
-void TransientSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const
+ErrorIndicator
+TransientSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const
 {
   // Set up the spatial discretization and time integrators for the E and B fields.
   BlockTimer bt0(Timer::CONSTRUCT);
@@ -74,6 +77,12 @@ void TransientSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) c
   }
   Mpi::Print("\n");
 
+  // Initialize structures for storing and reducing the results of error estimation.
+  CurlFluxErrorEstimator<Vector> estimator(
+      spaceop.GetMaterialOp(), spaceop.GetNDSpaces(), iodata.solver.linear.estimator_tol,
+      iodata.solver.linear.estimator_max_it, 0, iodata.solver.pa_order_threshold);
+  ErrorIndicator indicator;
+
   // Main time integration loop.
   int step = 0;
   double t = -delta_t;
@@ -115,14 +124,19 @@ void TransientSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) c
                  E_elec + E_mag);
     }
 
+    // Calculate and record the error indicators.
+    estimator.AddErrorIndicator(E, indicator);
+
     // Postprocess port voltages/currents and optionally write solution to disk.
     Postprocess(postop, spaceop.GetLumpedPortOp(), spaceop.GetSurfaceCurrentOp(), step, t,
-                J_coef(t), E_elec, E_mag, !iodata.solver.transient.only_port_post);
+                J_coef(t), E_elec, E_mag, !iodata.solver.transient.only_port_post,
+                (step == nstep - 1) ? &indicator : nullptr);
 
     // Increment time step.
     step++;
   }
   SaveMetadata(timeop.GetLinearSolver());
+  return indicator;
 }
 
 std::function<double(double)> TransientSolver::GetTimeExcitation(bool dot) const
@@ -234,7 +248,7 @@ void TransientSolver::Postprocess(const PostOperator &postop,
                                   const LumpedPortOperator &lumped_port_op,
                                   const SurfaceCurrentOperator &surf_j_op, int step,
                                   double t, double J_coef, double E_elec, double E_mag,
-                                  bool full) const
+                                  bool full, const ErrorIndicator *indicator) const
 {
   // The internal GridFunctions for PostOperator have already been set from the E and B
   // solutions in the main time integration loop.
@@ -254,8 +268,12 @@ void TransientSolver::Postprocess(const PostOperator &postop,
       step % iodata.solver.transient.delta_post == 0)
   {
     Mpi::Print("\n");
-    PostprocessFields(postop, step / iodata.solver.transient.delta_post, ts);
+    PostprocessFields(postop, step / iodata.solver.transient.delta_post, ts, indicator);
     Mpi::Print(" Wrote fields to disk at step {:d}\n", step);
+  }
+  if (indicator)
+  {
+    PostprocessErrorIndicator(postop, *indicator);
   }
 }
 

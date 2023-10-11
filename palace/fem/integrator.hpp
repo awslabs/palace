@@ -519,7 +519,7 @@ private:
 
 public:
   VectorFEBoundaryLFIntegrator(mfem::VectorCoefficient &QG, int q_extra = 0)
-    : Q(QG), f_loc(QG.GetVDim()), q_extra(q_extra)
+    : Q(QG), q_extra(q_extra)
   {
   }
 

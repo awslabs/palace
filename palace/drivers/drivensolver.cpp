@@ -5,6 +5,8 @@
 
 #include <complex>
 #include <mfem.hpp>
+#include "fem/errorindicator.hpp"
+#include "linalg/errorestimator.hpp"
 #include "linalg/ksp.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
@@ -24,7 +26,8 @@ namespace palace
 
 using namespace std::complex_literals;
 
-void DrivenSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const
+ErrorIndicator
+DrivenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const
 {
   // Set up the spatial discretization and frequency sweep.
   BlockTimer bt0(Timer::CONSTRUCT);
@@ -95,18 +98,13 @@ void DrivenSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) cons
   Mpi::Print("\n");
 
   // Main frequency sweep loop.
-  if (adaptive)
-  {
-    SweepAdaptive(spaceop, postop, nstep, step0, omega0, delta_omega);
-  }
-  else
-  {
-    SweepUniform(spaceop, postop, nstep, step0, omega0, delta_omega);
-  }
+  return adaptive ? SweepAdaptive(spaceop, postop, nstep, step0, omega0, delta_omega)
+                  : SweepUniform(spaceop, postop, nstep, step0, omega0, delta_omega);
 }
 
-void DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator &postop, int nstep,
-                                int step0, double omega0, double delta_omega) const
+ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator &postop,
+                                          int nstep, int step0, double omega0,
+                                          double delta_omega) const
 {
   // Construct the system matrices defining the linear operator. PEC boundaries are handled
   // simply by setting diagonal entries of the system matrix for the corresponding dofs.
@@ -137,6 +135,12 @@ void DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator &postop, in
   ComplexVector RHS(Curl->Width()), E(Curl->Width()), B(Curl->Height());
   E = 0.0;
   B = 0.0;
+
+  // Initialize structures for storing and reducing the results of error estimation.
+  CurlFluxErrorEstimator<ComplexVector> estimator(
+      spaceop.GetMaterialOp(), spaceop.GetNDSpaces(), iodata.solver.linear.estimator_tol,
+      iodata.solver.linear.estimator_max_it, 0, iodata.solver.pa_order_threshold);
+  ErrorIndicator indicator;
 
   // Main frequency sweep loop.
   int step = step0;
@@ -187,20 +191,26 @@ void DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator &postop, in
                  E_elec + E_mag);
     }
 
+    // Calculate and record the error indicators.
+    estimator.AddErrorIndicator(E, indicator);
+
     // Postprocess S-parameters and optionally write solution to disk.
     Postprocess(postop, spaceop.GetLumpedPortOp(), spaceop.GetWavePortOp(),
                 spaceop.GetSurfaceCurrentOp(), step, omega, E_elec, E_mag,
-                !iodata.solver.driven.only_port_post);
+                !iodata.solver.driven.only_port_post,
+                (step == nstep - 1) ? &indicator : nullptr);
 
     // Increment frequency.
     step++;
     omega += delta_omega;
   }
   SaveMetadata(ksp);
+  return indicator;
 }
 
-void DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator &postop, int nstep,
-                                 int step0, double omega0, double delta_omega) const
+ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator &postop,
+                                           int nstep, int step0, double omega0,
+                                           double delta_omega) const
 {
   // Configure default parameters if not specified.
   BlockTimer bt0(Timer::CONSTRUCT);
@@ -238,6 +248,12 @@ void DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator &postop, i
   E = 0.0;
   B = 0.0;
 
+  // Initialize structures for storing and reducing the results of error estimation.
+  CurlFluxErrorEstimator<ComplexVector> estimator(
+      spaceop.GetMaterialOp(), spaceop.GetNDSpaces(), iodata.solver.linear.estimator_tol,
+      iodata.solver.linear.estimator_max_it, 0, iodata.solver.pa_order_threshold);
+  ErrorIndicator indicator;
+
   // Configure the PROM operator which performs the parameter space sampling and basis
   // construction during the offline phase as well as the PROM solution during the online
   // phase.
@@ -257,8 +273,10 @@ void DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator &postop, i
   BlockTimer bt1(Timer::CONSTRUCTPROM);
   prom.SolveHDM(omega0, E);  // Print matrix stats at first HDM solve
   prom.AddHDMSample(omega0, E);
+  estimator.AddErrorIndicator(E, indicator);
   prom.SolveHDM(omega0 + (nstep - step0 - 1) * delta_omega, E);
   prom.AddHDMSample(omega0 + (nstep - step0 - 1) * delta_omega, E);
+  estimator.AddErrorIndicator(E, indicator);
 
   // Greedy procedure for basis construction (offline phase). Basis is initialized with
   // solutions at frequency sweep endpoints.
@@ -281,6 +299,7 @@ void DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator &postop, i
         max_error);
     prom.SolveHDM(omega_star, E);
     prom.AddHDMSample(omega_star, E);
+    estimator.AddErrorIndicator(E, indicator);
     iter++;
   }
   Mpi::Print("\nAdaptive sampling{} {:d} frequency samples:\n"
@@ -333,12 +352,14 @@ void DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator &postop, i
     // Postprocess S-parameters and optionally write solution to disk.
     Postprocess(postop, spaceop.GetLumpedPortOp(), spaceop.GetWavePortOp(),
                 spaceop.GetSurfaceCurrentOp(), step, omega, E_elec, E_mag,
-                !iodata.solver.driven.only_port_post);
+                !iodata.solver.driven.only_port_post,
+                (step == nstep - 1) ? &indicator : nullptr);
 
     // Increment frequency.
     step++;
     omega += delta_omega;
   }
+  return indicator;
 }
 
 int DrivenSolver::GetNumSteps(double start, double end, double delta) const
@@ -356,7 +377,8 @@ void DrivenSolver::Postprocess(const PostOperator &postop,
                                const LumpedPortOperator &lumped_port_op,
                                const WavePortOperator &wave_port_op,
                                const SurfaceCurrentOperator &surf_j_op, int step,
-                               double omega, double E_elec, double E_mag, bool full) const
+                               double omega, double E_elec, double E_mag, bool full,
+                               const ErrorIndicator *indicator) const
 {
   // The internal GridFunctions for PostOperator have already been set from the E and B
   // solutions in the main frequency sweep loop.
@@ -379,8 +401,12 @@ void DrivenSolver::Postprocess(const PostOperator &postop,
   if (iodata.solver.driven.delta_post > 0 && step % iodata.solver.driven.delta_post == 0)
   {
     Mpi::Print("\n");
-    PostprocessFields(postop, step / iodata.solver.driven.delta_post, freq);
+    PostprocessFields(postop, step / iodata.solver.driven.delta_post, freq, indicator);
     Mpi::Print(" Wrote fields to disk at step {:d}\n", step + 1);
+  }
+  if (indicator)
+  {
+    PostprocessErrorIndicator(postop, *indicator);
   }
 }
 

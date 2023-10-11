@@ -4,8 +4,10 @@
 #include "eigensolver.hpp"
 
 #include <mfem.hpp>
+#include "fem/errorindicator.hpp"
 #include "linalg/arpack.hpp"
 #include "linalg/divfree.hpp"
+#include "linalg/errorestimator.hpp"
 #include "linalg/ksp.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/slepc.hpp"
@@ -22,7 +24,8 @@ namespace palace
 
 using namespace std::complex_literals;
 
-void EigenSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const
+ErrorIndicator
+EigenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const
 {
   // Construct and extract the system matrices defining the eigenvalue problem. The diagonal
   // values for the mass matrix PEC dof shift the Dirichlet eigenvalues out of the
@@ -254,6 +257,17 @@ void EigenSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const
   int num_conv = eigen->Solve();
   SaveMetadata(*ksp);
 
+  // Calculate and record the error indicators.
+  CurlFluxErrorEstimator<ComplexVector> estimator(
+      spaceop.GetMaterialOp(), spaceop.GetNDSpaces(), iodata.solver.linear.estimator_tol,
+      iodata.solver.linear.estimator_max_it, 0, iodata.solver.pa_order_threshold);
+  ErrorIndicator indicator;
+  for (int i = 0; i < iodata.solver.eigenmode.n; i++)
+  {
+    eigen->GetEigenvector(i, E);
+    estimator.AddErrorIndicator(E, indicator);
+  }
+
   // Postprocess the results.
   BlockTimer bt2(Timer::POSTPRO);
   for (int i = 0; i < num_conv; i++)
@@ -274,9 +288,8 @@ void EigenSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const
     }
     if (i == 0)
     {
-      Mpi::Print(" Found {:d} converged eigenvalue{} (first = {:.3e}{:+.3e}i)\n", num_conv,
-                 (num_conv > 1) ? "s" : "", omega.real(), omega.imag());
-      Mpi::Print("\n");
+      Mpi::Print(" Found {:d} converged eigenvalue{} (first = {:.3e}{:+.3e}i)\n\n",
+                 num_conv, (num_conv > 1) ? "s" : "", omega.real(), omega.imag());
     }
 
     // Compute B = -1/(iω) ∇ x E on the true dofs, and set the internal GridFunctions in
@@ -289,14 +302,16 @@ void EigenSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const
     postop.UpdatePorts(spaceop.GetLumpedPortOp(), omega.real());
 
     // Postprocess the mode.
-    Postprocess(postop, spaceop.GetLumpedPortOp(), i, omega, error1, error2, num_conv);
+    Postprocess(postop, spaceop.GetLumpedPortOp(), i, omega, error1, error2, num_conv,
+                (i == 0) ? &indicator : nullptr);
   }
+  return indicator;
 }
 
 void EigenSolver::Postprocess(const PostOperator &postop,
                               const LumpedPortOperator &lumped_port_op, int i,
                               std::complex<double> omega, double error1, double error2,
-                              int num_conv) const
+                              int num_conv, const ErrorIndicator *indicator) const
 {
   // The internal GridFunctions for PostOperator have already been set from the E and B
   // solutions in the main loop over converged eigenvalues. Note: The energies output are
@@ -314,8 +329,12 @@ void EigenSolver::Postprocess(const PostOperator &postop,
   PostprocessProbes(postop, "m", i, i + 1);
   if (i < iodata.solver.eigenmode.n_post)
   {
-    PostprocessFields(postop, i, i + 1);
+    PostprocessFields(postop, i, i + 1, indicator);
     Mpi::Print(" Wrote mode {:d} to disk\n", i + 1);
+  }
+  if (indicator)
+  {
+    PostprocessErrorIndicator(postop, *indicator);
   }
 }
 

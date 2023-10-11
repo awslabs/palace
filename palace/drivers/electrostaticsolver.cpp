@@ -4,6 +4,8 @@
 #include "electrostaticsolver.hpp"
 
 #include <mfem.hpp>
+#include "fem/errorindicator.hpp"
+#include "linalg/errorestimator.hpp"
 #include "linalg/ksp.hpp"
 #include "linalg/operator.hpp"
 #include "models/laplaceoperator.hpp"
@@ -15,7 +17,8 @@
 namespace palace
 {
 
-void ElectrostaticSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const
+ErrorIndicator
+ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const
 {
   // Construct the system matrix defining the linear operator. Dirichlet boundaries are
   // handled eliminating the rows and columns of the system matrix for the corresponding
@@ -70,11 +73,12 @@ void ElectrostaticSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mes
   // Postprocess the capacitance matrix from the computed field solutions.
   BlockTimer bt1(Timer::POSTPRO);
   SaveMetadata(ksp);
-  Postprocess(laplaceop, postop, V);
+  return Postprocess(laplaceop, postop, V);
 }
 
-void ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop, PostOperator &postop,
-                                      const std::vector<Vector> &V) const
+ErrorIndicator ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop,
+                                                PostOperator &postop,
+                                                const std::vector<Vector> &V) const
 {
   // Postprocess the Maxwell capacitance matrix. See p. 97 of the COMSOL AC/DC Module manual
   // for the associated formulas based on the electric field energy based on a unit voltage
@@ -91,6 +95,18 @@ void ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop, PostOperator &
   {
     Mpi::Print("\n");
   }
+
+  // Calculate and record the error indicators.
+  GradFluxErrorEstimator estimator(laplaceop.GetMaterialOp(), laplaceop.GetH1Spaces(),
+                                   iodata.solver.linear.estimator_tol,
+                                   iodata.solver.linear.estimator_max_it, 0,
+                                   iodata.solver.pa_order_threshold);
+  ErrorIndicator indicator;
+  for (int i = 0; i < nstep; i++)
+  {
+    estimator.AddErrorIndicator(V[i], indicator);
+  }
+
   int i = 0;
   for (const auto &[idx, data] : terminal_sources)
   {
@@ -106,8 +122,12 @@ void ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop, PostOperator &
     PostprocessProbes(postop, "i", i, idx);
     if (i < iodata.solver.electrostatic.n_post)
     {
-      PostprocessFields(postop, i, idx);
+      PostprocessFields(postop, i, idx, (i == 0) ? &indicator : nullptr);
       Mpi::Print(" Wrote fields to disk for terminal {:d}\n", idx);
+    }
+    if (i == 0)
+    {
+      PostprocessErrorIndicator(postop, indicator);
     }
 
     // Diagonal: C_ii = 2 U_e(V_i) / V_i².
@@ -143,6 +163,7 @@ void ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop, PostOperator &
   mfem::DenseMatrix Cinv(C);
   Cinv.Invert();  // In-place, uses LAPACK (when available) and should be cheap
   PostprocessTerminals(terminal_sources, C, Cinv, Cm);
+  return indicator;
 }
 
 void ElectrostaticSolver::PostprocessTerminals(

@@ -4,6 +4,7 @@
 #include "postoperator.hpp"
 
 #include "fem/coefficient.hpp"
+#include "fem/errorindicator.hpp"
 #include "models/curlcurloperator.hpp"
 #include "models/laplaceoperator.hpp"
 #include "models/lumpedportoperator.hpp"
@@ -632,7 +633,7 @@ double PostOperator::GetSurfaceFlux(int idx) const
   return Phi;
 }
 
-void PostOperator::WriteFields(int step, double time) const
+void PostOperator::WriteFields(int step, double time, const ErrorIndicator *indicator) const
 {
   // Given the electric field and magnetic flux density, write the fields to disk for
   // visualization.
@@ -641,17 +642,36 @@ void PostOperator::WriteFields(int step, double time) const
   paraview.SetTime(time);
   paraview_bdr.SetCycle(step);
   paraview_bdr.SetTime(time);
-  if (first_save)
+  if (first_save || indicator)
   {
     mfem::ParMesh &mesh =
         (E) ? *E->ParFESpace()->GetParMesh() : *B->ParFESpace()->GetParMesh();
     mfem::L2_FECollection pwconst_fec(0, mesh.Dimension());
     mfem::ParFiniteElementSpace pwconst_fespace(&mesh, &pwconst_fec);
-    mfem::ParGridFunction rank(&pwconst_fespace);
-    rank = mesh.GetMyRank() + 1;
-    paraview.RegisterField("rank", &rank);
+    std::unique_ptr<mfem::ParGridFunction> rank, eta;
+    if (first_save)
+    {
+      rank = std::make_unique<mfem::ParGridFunction>(&pwconst_fespace);
+      *rank = mesh.GetMyRank() + 1;
+      paraview.RegisterField("Rank", rank.get());
+    }
+    if (indicator)
+    {
+      eta = std::make_unique<mfem::ParGridFunction>(&pwconst_fespace);
+      MFEM_VERIFY(eta->Size() == indicator->Local().Size(),
+                  "Size mismatch for provided ErrorIndicator for postprocessing!");
+      *eta = indicator->Local();
+      paraview.RegisterField("Indicator", eta.get());
+    }
     paraview.Save();
-    paraview.DeregisterField("rank");
+    if (rank)
+    {
+      paraview.DeregisterField("Rank");
+    }
+    if (eta)
+    {
+      paraview.DeregisterField("Indicator");
+    }
   }
   else
   {

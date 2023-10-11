@@ -20,6 +20,7 @@ class ParMesh;
 namespace palace
 {
 
+class ErrorIndicator;
 class IoData;
 class PostOperator;
 class Timer;
@@ -57,23 +58,36 @@ protected:
                                                fmt::file::TRUNC);
   }
 
-  // Common postprocessing functions for all simulation types.
+  // Common domain postprocessing for all simulation types.
   void PostprocessDomains(const PostOperator &postop, const std::string &name, int step,
                           double time, double E_elec, double E_mag, double E_cap,
                           double E_ind) const;
+
+  // Common surface postprocessing for all simulation types.
   void PostprocessSurfaces(const PostOperator &postop, const std::string &name, int step,
                            double time, double E_elec, double E_mag, double Vinc,
                            double Iinc) const;
+
+  // Common probe postprocessing for all simulation types.
   void PostprocessProbes(const PostOperator &postop, const std::string &name, int step,
                          double time) const;
-  void PostprocessFields(const PostOperator &postop, int step, double time) const;
+
+  // Common field visualization postprocessing for all simulation types.
+  void PostprocessFields(const PostOperator &postop, int step, double time,
+                         const ErrorIndicator *indicator = nullptr) const;
+
+  // Common error indicator postprocessing for all simulation types.
+  void PostprocessErrorIndicator(const PostOperator &postop,
+                                 const ErrorIndicator &indicator) const;
 
 public:
   BaseSolver(const IoData &iodata, bool root, int size = 0, int num_thread = 0,
              const char *git_tag = nullptr);
   virtual ~BaseSolver() = default;
 
-  virtual void Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const = 0;
+  // Performs a solve using the mesh sequence, then reports error indicators.
+  virtual ErrorIndicator
+  Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const = 0;
 
   // These methods write different simulation metadata to a JSON file in post_dir.
   void SaveMetadata(const mfem::ParFiniteElementSpaceHierarchy &fespaces) const;

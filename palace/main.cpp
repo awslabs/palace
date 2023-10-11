@@ -13,6 +13,7 @@
 #include "drivers/electrostaticsolver.hpp"
 #include "drivers/magnetostaticsolver.hpp"
 #include "drivers/transientsolver.hpp"
+#include "fem/errorindicator.hpp"
 #include "fem/libceed/utils.hpp"
 #include "linalg/slepc.hpp"
 #include "utils/communication.hpp"
@@ -253,31 +254,29 @@ int main(int argc, char *argv[])
 #endif
 
   // Initialize the problem driver.
-  std::unique_ptr<BaseSolver> solver;
   PrintPalaceInfo(world_comm, world_size, omp_threads, device);
-  switch (iodata.problem.type)
+  const auto solver = [&]() -> std::unique_ptr<BaseSolver>
   {
-    case config::ProblemData::Type::DRIVEN:
-      solver = std::make_unique<DrivenSolver>(iodata, world_root, world_size, omp_threads,
+    switch (iodata.problem.type)
+    {
+      case config::ProblemData::Type::DRIVEN:
+        return std::make_unique<DrivenSolver>(iodata, world_root, world_size, omp_threads,
                                               GetPalaceGitTag());
-      break;
-    case config::ProblemData::Type::EIGENMODE:
-      solver = std::make_unique<EigenSolver>(iodata, world_root, world_size, omp_threads,
+      case config::ProblemData::Type::EIGENMODE:
+        return std::make_unique<EigenSolver>(iodata, world_root, world_size, omp_threads,
                                              GetPalaceGitTag());
-      break;
-    case config::ProblemData::Type::ELECTROSTATIC:
-      solver = std::make_unique<ElectrostaticSolver>(iodata, world_root, world_size,
+      case config::ProblemData::Type::ELECTROSTATIC:
+        return std::make_unique<ElectrostaticSolver>(iodata, world_root, world_size,
                                                      omp_threads, GetPalaceGitTag());
-      break;
-    case config::ProblemData::Type::MAGNETOSTATIC:
-      solver = std::make_unique<MagnetostaticSolver>(iodata, world_root, world_size,
+      case config::ProblemData::Type::MAGNETOSTATIC:
+        return std::make_unique<MagnetostaticSolver>(iodata, world_root, world_size,
                                                      omp_threads, GetPalaceGitTag());
-      break;
-    case config::ProblemData::Type::TRANSIENT:
-      solver = std::make_unique<TransientSolver>(iodata, world_root, world_size,
-                                                 omp_threads, GetPalaceGitTag());
-      break;
-  }
+      case config::ProblemData::Type::TRANSIENT:
+        return std::make_unique<TransientSolver>(iodata, world_root, world_size, omp_threads,
+                                                 GetPalaceGitTag());
+    }
+    return nullptr;
+  }();
 
   // Read the mesh from file, refine, partition, and distribute it. Then nondimensionalize
   // it and the input parameters.
@@ -287,7 +286,7 @@ int main(int argc, char *argv[])
   mesh::RefineMesh(iodata, mesh);
 
   // Run the problem driver.
-  solver->Solve(mesh);
+  auto indicators = solver->Solve(mesh);
 
   // Print timing summary.
   BlockTimer::Print(world_comm);

@@ -36,6 +36,10 @@ The format of this changelog is based on
     directions can be specified as vectors with 3 components. Users will be warned, and
     ultimately errored, if the specified directions do not agree with axis directions
     discovered from the geometry.
+  - Added flux-based error estimation, reported in `error-estimate.csv`. This computes the
+    difference between the numerical gradient (electrostatics) or curl (otherwise) of the
+    solution, and a smoother approximation obtained through a global mass matrix inversion.
+    The results are reported in `error-estimates.csv` within the `"Output"` folder.
   - Fixed bugs for simulations using tetrahedral meshes associated with unexpected mesh
     toplogy changes during parallel mesh construction.
   - Added improved `Timer` and `BlockTimer` classes with more timing categories for

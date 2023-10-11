@@ -9,6 +9,7 @@ target_sources(${TARGET_NAME}
   PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/bilinearform.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/coefficient.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/errorindicator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/fespace.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/integrator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/interpolator.cpp

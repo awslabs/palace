@@ -4,6 +4,8 @@
 #include "magnetostaticsolver.hpp"
 
 #include <mfem.hpp>
+#include "fem/errorindicator.hpp"
+#include "linalg/errorestimator.hpp"
 #include "linalg/ksp.hpp"
 #include "linalg/operator.hpp"
 #include "models/curlcurloperator.hpp"
@@ -16,7 +18,8 @@
 namespace palace
 {
 
-void MagnetostaticSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const
+ErrorIndicator
+MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const
 {
   // Construct the system matrix defining the linear operator. Dirichlet boundaries are
   // handled eliminating the rows and columns of the system matrix for the corresponding
@@ -71,11 +74,12 @@ void MagnetostaticSolver::Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mes
   // Postprocess the capacitance matrix from the computed field solutions.
   BlockTimer bt1(Timer::POSTPRO);
   SaveMetadata(ksp);
-  Postprocess(curlcurlop, postop, A);
+  return Postprocess(curlcurlop, postop, A);
 }
 
-void MagnetostaticSolver::Postprocess(CurlCurlOperator &curlcurlop, PostOperator &postop,
-                                      const std::vector<Vector> &A) const
+ErrorIndicator MagnetostaticSolver::Postprocess(CurlCurlOperator &curlcurlop,
+                                                PostOperator &postop,
+                                                const std::vector<Vector> &A) const
 {
   // Postprocess the Maxwell inductance matrix. See p. 97 of the COMSOL AC/DC Module manual
   // for the associated formulas based on the magnetic field energy based on a current
@@ -94,6 +98,18 @@ void MagnetostaticSolver::Postprocess(CurlCurlOperator &curlcurlop, PostOperator
   {
     Mpi::Print("\n");
   }
+
+  // Calculate and record the error indicators.
+  CurlFluxErrorEstimator<Vector> estimator(
+      curlcurlop.GetMaterialOp(), curlcurlop.GetNDSpaces(),
+      iodata.solver.linear.estimator_tol, iodata.solver.linear.estimator_max_it, 0,
+      iodata.solver.pa_order_threshold);
+  ErrorIndicator indicator;
+  for (int i = 0; i < nstep; i++)
+  {
+    estimator.AddErrorIndicator(A[i], indicator);
+  }
+
   int i = 0;
   for (const auto &[idx, data] : surf_j_op)
   {
@@ -113,8 +129,12 @@ void MagnetostaticSolver::Postprocess(CurlCurlOperator &curlcurlop, PostOperator
     PostprocessProbes(postop, "i", i, idx);
     if (i < iodata.solver.magnetostatic.n_post)
     {
-      PostprocessFields(postop, i, idx);
+      PostprocessFields(postop, i, idx, (i == 0) ? &indicator : nullptr);
       Mpi::Print(" Wrote fields to disk for terminal {:d}\n", idx);
+    }
+    if (i == 0)
+    {
+      PostprocessErrorIndicator(postop, indicator);
     }
 
     // Diagonal: M_ii = 2 U_m(A_i) / I_i².
@@ -150,6 +170,7 @@ void MagnetostaticSolver::Postprocess(CurlCurlOperator &curlcurlop, PostOperator
   mfem::DenseMatrix Minv(M);
   Minv.Invert();  // In-place, uses LAPACK (when available) and should be cheap
   PostprocessTerminals(surf_j_op, M, Minv, Mm);
+  return indicator;
 }
 
 void MagnetostaticSolver::PostprocessTerminals(const SurfaceCurrentOperator &surf_j_op,

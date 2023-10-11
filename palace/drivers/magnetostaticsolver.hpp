@@ -21,6 +21,7 @@ namespace palace
 {
 
 class CurlCurlOperator;
+class ErrorIndicator;
 class IoData;
 class PostOperator;
 class SurfaceCurrentOperator;
@@ -32,21 +33,18 @@ class Timer;
 class MagnetostaticSolver : public BaseSolver
 {
 private:
-  void Postprocess(CurlCurlOperator &curlcurlop, PostOperator &postop,
-                   const std::vector<Vector> &A) const;
+  ErrorIndicator Postprocess(CurlCurlOperator &curlcurlop, PostOperator &postop,
+                             const std::vector<Vector> &A) const;
 
   void PostprocessTerminals(const SurfaceCurrentOperator &surf_j_op,
                             const mfem::DenseMatrix &M, const mfem::DenseMatrix &Minv,
                             const mfem::DenseMatrix &Mm) const;
 
 public:
-  MagnetostaticSolver(const IoData &iodata, bool root, int size = 0, int num_thread = 0,
-                      const char *git_tag = nullptr)
-    : BaseSolver(iodata, root, size, num_thread, git_tag)
-  {
-  }
+  using BaseSolver::BaseSolver;
 
-  void Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const override;
+  ErrorIndicator
+  Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const override;
 };
 
 }  // namespace palace

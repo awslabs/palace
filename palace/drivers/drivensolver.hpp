@@ -18,6 +18,7 @@ class ParMesh;
 namespace palace
 {
 
+class ErrorIndicator;
 class IoData;
 class LumpedPortOperator;
 class PostOperator;
@@ -34,35 +35,35 @@ class DrivenSolver : public BaseSolver
 private:
   int GetNumSteps(double start, double end, double delta) const;
 
-  void SweepUniform(SpaceOperator &spaceop, PostOperator &postop, int nstep, int step0,
-                    double omega0, double delta_omega) const;
-  void SweepAdaptive(SpaceOperator &spaceop, PostOperator &postop, int nstep, int step0,
-                     double omega0, double delta_omega) const;
+  ErrorIndicator SweepUniform(SpaceOperator &spaceop, PostOperator &postop, int nstep,
+                              int step0, double omega0, double delta_omega) const;
+
+  ErrorIndicator SweepAdaptive(SpaceOperator &spaceop, PostOperator &postop, int nstep,
+                               int step0, double omega0, double delta_omega) const;
 
   void Postprocess(const PostOperator &postop, const LumpedPortOperator &lumped_port_op,
                    const WavePortOperator &wave_port_op,
                    const SurfaceCurrentOperator &surf_j_op, int step, double omega,
-                   double E_elec, double E_mag, bool full) const;
+                   double E_elec, double E_mag, bool full,
+                   const ErrorIndicator *indicator) const;
 
   void PostprocessCurrents(const PostOperator &postop,
                            const SurfaceCurrentOperator &surf_j_op, int step,
                            double omega) const;
+
   void PostprocessPorts(const PostOperator &postop,
                         const LumpedPortOperator &lumped_port_op, int step,
                         double omega) const;
+
   void PostprocessSParameters(const PostOperator &postop,
                               const LumpedPortOperator &lumped_port_op,
                               const WavePortOperator &wave_port_op, int step,
                               double omega) const;
 
 public:
-  DrivenSolver(const IoData &iodata, bool root, int size = 0, int num_thread = 0,
-               const char *git_tag = nullptr)
-    : BaseSolver(iodata, root, size, num_thread, git_tag)
-  {
-  }
+  using BaseSolver::BaseSolver;
 
-  void Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const override;
+  ErrorIndicator Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const final;
 };
 
 }  // namespace palace
