@@ -4,6 +4,7 @@
 #include "ams.hpp"
 
 #include "fem/bilinearform.hpp"
+#include "fem/integrator.hpp"
 #include "linalg/rap.hpp"
 
 namespace palace

@@ -103,7 +103,7 @@ ErrorIndicator MagnetostaticSolver::Postprocess(CurlCurlOperator &curlcurlop,
   CurlFluxErrorEstimator<Vector> estimator(
       curlcurlop.GetMaterialOp(), curlcurlop.GetNDSpaces(),
       iodata.solver.linear.estimator_tol, iodata.solver.linear.estimator_max_it, 0,
-      iodata.solver.pa_order_threshold);
+      iodata.solver.pa_order_threshold, iodata.solver.pa_discrete_interp);
   ErrorIndicator indicator;
   for (int i = 0; i < nstep; i++)
   {

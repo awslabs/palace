@@ -5,6 +5,7 @@
 
 #include <mfem.hpp>
 #include "fem/bilinearform.hpp"
+#include "fem/integrator.hpp"
 #include "linalg/chebyshev.hpp"
 #include "linalg/rap.hpp"
 

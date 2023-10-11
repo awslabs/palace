@@ -61,7 +61,6 @@ static int ConfigureOmp()
     nt = 1;
     omp_set_num_threads(nt);
   }
-  omp_set_nested(0);
   omp_set_dynamic(0);
   return nt;
 #else
@@ -272,8 +271,8 @@ int main(int argc, char *argv[])
         return std::make_unique<MagnetostaticSolver>(iodata, world_root, world_size,
                                                      omp_threads, GetPalaceGitTag());
       case config::ProblemData::Type::TRANSIENT:
-        return std::make_unique<TransientSolver>(iodata, world_root, world_size, omp_threads,
-                                                 GetPalaceGitTag());
+        return std::make_unique<TransientSolver>(iodata, world_root, world_size,
+                                                 omp_threads, GetPalaceGitTag());
     }
     return nullptr;
   }();

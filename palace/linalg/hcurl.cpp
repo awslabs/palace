@@ -6,6 +6,7 @@
 #include <mfem.hpp>
 #include "fem/bilinearform.hpp"
 #include "fem/coefficient.hpp"
+#include "fem/integrator.hpp"
 #include "linalg/ams.hpp"
 #include "linalg/gmg.hpp"
 #include "linalg/iterative.hpp"

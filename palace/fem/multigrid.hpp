@@ -9,6 +9,7 @@
 #include <mfem.hpp>
 #include "fem/bilinearform.hpp"
 #include "fem/fespace.hpp"
+#include "fem/integrator.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/rap.hpp"
 #include "utils/iodata.hpp"

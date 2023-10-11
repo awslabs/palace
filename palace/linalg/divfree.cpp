@@ -7,6 +7,7 @@
 #include <mfem.hpp>
 #include "fem/bilinearform.hpp"
 #include "fem/coefficient.hpp"
+#include "fem/integrator.hpp"
 #include "linalg/amg.hpp"
 #include "linalg/gmg.hpp"
 #include "linalg/iterative.hpp"
@@ -58,8 +59,7 @@ DivFreeSolver::DivFreeSolver(const MaterialOperator &mat_op,
   }
   bdr_tdof_list_M = &h1_bdr_tdof_lists.back();
 
-  // The system matrix for the projection is real and SPD. For the coarse-level AMG solve,
-  // we don't use an exact solve on the coarsest level.
+  // The system matrix for the projection is real and SPD.
   auto amg =
       std::make_unique<WrapperSolver<Operator>>(std::make_unique<BoomerAmgSolver>(1, 1, 0));
   std::unique_ptr<Solver<Operator>> pc;
