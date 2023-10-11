@@ -8,14 +8,14 @@
 #include "fem/libceed/coefficient.hpp"
 #include "fem/libceed/integrator.hpp"
 
-#include "fem/qfunctions/diffusion_qf.h"
+#include "fem/qfunctions/hcurl_qf.h"
 
 namespace palace
 {
 
 struct MixedVectorGradientIntegratorInfo : public ceed::IntegratorInfo
 {
-  DiffusionContext ctx;
+  VectorFEMassContext ctx;
 };
 
 namespace
@@ -57,21 +57,22 @@ InitializeIntegratorInfo(const mfem::ParFiniteElementSpace &trial_fespace,
   info.test_op = (test_map_type == mfem::FiniteElement::H_CURL) ? ceed::EvalMode::Interp
                                                                 : ceed::EvalMode::Grad;
   info.qdata_size = (info.ctx.dim * (info.ctx.dim + 1)) / 2;
+  info.ctx.sym = true;
 
   mfem::ConstantCoefficient *const_coeff = dynamic_cast<mfem::ConstantCoefficient *>(Q);
   if (const_coeff || !(Q || VQ || MQ))
   {
     info.ctx.coeff = const_coeff ? const_coeff->constant : 1.0;
 
-    info.build_qf = f_build_diff_const_scalar;
-    info.build_qf_path = PalaceQFunctionRelativePath(f_build_diff_const_scalar_loc);
+    info.build_qf = f_build_hcurl_const_scalar;
+    info.build_qf_path = PalaceQFunctionRelativePath(f_build_hcurl_const_scalar_loc);
   }
   else if (Q)
   {
     ceed::InitCoefficient(*Q, mesh, ir, indices, use_bdr, coeff.emplace_back());
 
-    info.build_qf = f_build_diff_quad_scalar;
-    info.build_qf_path = PalaceQFunctionRelativePath(f_build_diff_quad_scalar_loc);
+    info.build_qf = f_build_hcurl_quad_scalar;
+    info.build_qf_path = PalaceQFunctionRelativePath(f_build_hcurl_quad_scalar_loc);
   }
   else if (VQ)
   {
@@ -80,8 +81,8 @@ InitializeIntegratorInfo(const mfem::ParFiniteElementSpace &trial_fespace,
                 "MixedVectorGradient/MixedVectorWeakDivergenceIntegrator integrator!");
     ceed::InitCoefficient(*VQ, mesh, ir, indices, use_bdr, coeff.emplace_back());
 
-    info.build_qf = f_build_diff_quad_vector;
-    info.build_qf_path = PalaceQFunctionRelativePath(f_build_diff_quad_vector_loc);
+    info.build_qf = f_build_hcurl_quad_vector;
+    info.build_qf_path = PalaceQFunctionRelativePath(f_build_hcurl_quad_vector_loc);
   }
   else if (MQ)
   {
@@ -90,12 +91,12 @@ InitializeIntegratorInfo(const mfem::ParFiniteElementSpace &trial_fespace,
                 "MixedVectorGradient/MixedVectorWeakDivergenceIntegrator integrator!");
     ceed::InitCoefficient(*MQ, mesh, ir, indices, use_bdr, coeff.emplace_back());
 
-    info.build_qf = f_build_diff_quad_matrix;
-    info.build_qf_path = PalaceQFunctionRelativePath(f_build_diff_quad_matrix_loc);
+    info.build_qf = f_build_hcurl_quad_matrix;
+    info.build_qf_path = PalaceQFunctionRelativePath(f_build_hcurl_quad_matrix_loc);
   }
 
-  info.apply_qf = f_apply_diff;
-  info.apply_qf_path = PalaceQFunctionRelativePath(f_apply_diff_loc);
+  info.apply_qf = f_apply_vecfemass;
+  info.apply_qf_path = PalaceQFunctionRelativePath(f_apply_vecfemass_loc);
 
   return info;
 }

@@ -453,6 +453,31 @@ public:
                         Ceed ceed, CeedOperator *op, CeedOperator *op_t) override;
 };
 
+// Integrator for a(u, v) = (Q grad u, v) for u in H1 and v in (H1)ᵈ.
+class GradientIntegrator : public BilinearFormIntegrator
+{
+protected:
+  mfem::Coefficient *Q;
+  mfem::VectorCoefficient *VQ;
+  mfem::MatrixCoefficient *MQ;
+
+public:
+  GradientIntegrator() : Q(nullptr), VQ(nullptr), MQ(nullptr) {}
+  GradientIntegrator(mfem::Coefficient &Q) : Q(&Q), VQ(nullptr), MQ(nullptr) {}
+  GradientIntegrator(mfem::VectorCoefficient &VQ) : Q(nullptr), VQ(&VQ), MQ(nullptr) {}
+  GradientIntegrator(mfem::MatrixCoefficient &MQ) : Q(nullptr), VQ(nullptr), MQ(&MQ) {}
+
+  void Assemble(const mfem::ParFiniteElementSpace &trial_fespace,
+                const mfem::ParFiniteElementSpace &test_fespace,
+                const mfem::IntegrationRule &ir, const std::vector<int> &indices, Ceed ceed,
+                CeedOperator *op, CeedOperator *op_t) override;
+
+  void AssembleBoundary(const mfem::ParFiniteElementSpace &trial_fespace,
+                        const mfem::ParFiniteElementSpace &test_fespace,
+                        const mfem::IntegrationRule &ir, const std::vector<int> &indices,
+                        Ceed ceed, CeedOperator *op, CeedOperator *op_t) override;
+};
+
 // Base class for all discrete interpolators.
 class DiscreteInterpolator : public BilinearFormIntegrator
 {

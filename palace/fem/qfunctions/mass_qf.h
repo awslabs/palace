@@ -113,7 +113,7 @@ CEED_QFUNCTION(f_build_mass_quad_scalar)(void *ctx, CeedInt Q, const CeedScalar 
 CEED_QFUNCTION(f_build_mass_quad_vector)(void *ctx, CeedInt Q, const CeedScalar *const *in,
                                          CeedScalar *const *out)
 {
-  // At every quadrature point, compute and store qw * C * det(J).
+  // At every quadrature point, compute and store qw * det(J) C.
   // in[0] is coefficients with shape [ncomp=vdim, Q]
   // in[1] is Jacobians with shape [dim, ncomp=space_dim, Q]
   // in[2] is quadrature weights, size (Q)
@@ -128,7 +128,7 @@ CEED_QFUNCTION(f_build_mass_quad_vector)(void *ctx, CeedInt Q, const CeedScalar 
         const CeedScalar wdetJi = qw[i] * DetJ21(J + i, Q);
         CeedPragmaSIMD for (CeedInt d = 0; d < 2; d++)
         {
-          qd[i + Q * d] = c[i + Q * d] * wdetJi;
+          qd[i + Q * d] = wdetJi * c[i + Q * d];
         }
       }
       break;
@@ -138,7 +138,7 @@ CEED_QFUNCTION(f_build_mass_quad_vector)(void *ctx, CeedInt Q, const CeedScalar 
         const CeedScalar wdetJi = qw[i] * DetJ22(J + i, Q);
         CeedPragmaSIMD for (CeedInt d = 0; d < 2; d++)
         {
-          qd[i + Q * d] = c[i + Q * d] * wdetJi;
+          qd[i + Q * d] = wdetJi * c[i + Q * d];
         }
       }
       break;
@@ -148,7 +148,7 @@ CEED_QFUNCTION(f_build_mass_quad_vector)(void *ctx, CeedInt Q, const CeedScalar 
         const CeedScalar wdetJi = qw[i] * DetJ32(J + i, Q);
         CeedPragmaSIMD for (CeedInt d = 0; d < 3; d++)
         {
-          qd[i + Q * d] = c[i + Q * d] * wdetJi;
+          qd[i + Q * d] = wdetJi * c[i + Q * d];
         }
       }
       break;
@@ -158,7 +158,7 @@ CEED_QFUNCTION(f_build_mass_quad_vector)(void *ctx, CeedInt Q, const CeedScalar 
         const CeedScalar wdetJi = qw[i] * DetJ33(J + i, Q);
         CeedPragmaSIMD for (CeedInt d = 0; d < 3; d++)
         {
-          qd[i + Q * d] = c[i + Q * d] * wdetJi;
+          qd[i + Q * d] = wdetJi * c[i + Q * d];
         }
       }
       break;
@@ -171,7 +171,7 @@ CEED_QFUNCTION(f_build_mass_quad_vector)(void *ctx, CeedInt Q, const CeedScalar 
 CEED_QFUNCTION(f_build_mass_quad_matrix)(void *ctx, CeedInt Q, const CeedScalar *const *in,
                                          CeedScalar *const *out)
 {
-  // At every quadrature point, compute and store qw * C * det(J).
+  // At every quadrature point, compute and store qw * det(J) C.
   // in[0] is coefficients with shape [ncomp=vdim*(vdim+1)/2, Q]
   // in[1] is Jacobians with shape [dim, ncomp=space_dim, Q]
   // in[2] is quadrature weights, size (Q)
@@ -186,7 +186,7 @@ CEED_QFUNCTION(f_build_mass_quad_matrix)(void *ctx, CeedInt Q, const CeedScalar 
         const CeedScalar wdetJi = qw[i] * DetJ21(J + i, Q);
         CeedPragmaSIMD for (CeedInt d = 0; d < 3; d++)
         {
-          qd[i + Q * d] = c[i + Q * d] * wdetJi;
+          qd[i + Q * d] = wdetJi * c[i + Q * d];
         }
       }
       break;
@@ -196,7 +196,7 @@ CEED_QFUNCTION(f_build_mass_quad_matrix)(void *ctx, CeedInt Q, const CeedScalar 
         const CeedScalar wdetJi = qw[i] * DetJ22(J + i, Q);
         CeedPragmaSIMD for (CeedInt d = 0; d < 3; d++)
         {
-          qd[i + Q * d] = c[i + Q * d] * wdetJi;
+          qd[i + Q * d] = wdetJi * c[i + Q * d];
         }
       }
       break;
@@ -206,7 +206,7 @@ CEED_QFUNCTION(f_build_mass_quad_matrix)(void *ctx, CeedInt Q, const CeedScalar 
         const CeedScalar wdetJi = qw[i] * DetJ32(J + i, Q);
         CeedPragmaSIMD for (CeedInt d = 0; d < 6; d++)
         {
-          qd[i + Q * d] = c[i + Q * d] * wdetJi;
+          qd[i + Q * d] = wdetJi * c[i + Q * d];
         }
       }
       break;
@@ -216,7 +216,7 @@ CEED_QFUNCTION(f_build_mass_quad_matrix)(void *ctx, CeedInt Q, const CeedScalar 
         const CeedScalar wdetJi = qw[i] * DetJ33(J + i, Q);
         CeedPragmaSIMD for (CeedInt d = 0; d < 6; d++)
         {
-          qd[i + Q * d] = c[i + Q * d] * wdetJi;
+          qd[i + Q * d] = wdetJi * c[i + Q * d];
         }
       }
       break;

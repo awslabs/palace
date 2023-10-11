@@ -19,6 +19,7 @@ target_sources(${TARGET_NAME}
   ${CMAKE_CURRENT_SOURCE_DIR}/integ/diffusionmass.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/integ/divdiv.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/integ/divdivmass.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/integ/grad.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/integ/mass.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/integ/mixedveccurl.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/integ/mixedvecgrad.cpp
