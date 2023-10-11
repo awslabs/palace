@@ -30,6 +30,7 @@ target_sources(unit-tests
   ${CMAKE_SOURCE_DIR}/fem/integ/diffusionmass.cpp
   ${CMAKE_SOURCE_DIR}/fem/integ/divdiv.cpp
   ${CMAKE_SOURCE_DIR}/fem/integ/divdivmass.cpp
+  ${CMAKE_SOURCE_DIR}/fem/integ/grad.cpp
   ${CMAKE_SOURCE_DIR}/fem/integ/mass.cpp
   ${CMAKE_SOURCE_DIR}/fem/integ/mixedveccurl.cpp
   ${CMAKE_SOURCE_DIR}/fem/integ/mixedvecgrad.cpp
