@@ -19,6 +19,7 @@ class ParMesh;
 namespace palace
 {
 
+class ErrorIndicator;
 class IoData;
 class LumpedPortOperator;
 class PostOperator;
@@ -37,23 +38,22 @@ private:
 
   void Postprocess(const PostOperator &postop, const LumpedPortOperator &lumped_port_op,
                    const SurfaceCurrentOperator &surf_j_op, int step, double t,
-                   double J_coef, double E_elec, double E_mag, bool ful) const;
+                   double J_coef, double E_elec, double E_mag, bool full,
+                   const ErrorIndicator *indicator) const;
 
   void PostprocessCurrents(const PostOperator &postop,
                            const SurfaceCurrentOperator &surf_j_op, int step, double t,
                            double J_coef) const;
+
   void PostprocessPorts(const PostOperator &postop,
                         const LumpedPortOperator &lumped_port_op, int step, double t,
                         double J_coef) const;
 
 public:
-  TransientSolver(const IoData &iodata, bool root, int size = 0, int num_thread = 0,
-                  const char *git_tag = nullptr)
-    : BaseSolver(iodata, root, size, num_thread, git_tag)
-  {
-  }
+  using BaseSolver::BaseSolver;
 
-  void Solve(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const override;
+  ErrorIndicator
+  Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const override;
 };
 
 }  // namespace palace

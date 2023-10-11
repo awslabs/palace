@@ -126,6 +126,8 @@
         "AMSVector": { "type": "boolean" },
         "DivFreeTol": { "type": "number", "minimum": 0.0 },
         "DivFreeMaxIts": { "type": "integer", "minimum": 0 },
+        "EstimatorTol": { "type": "number", "minimum": 0.0 },
+        "EstimatorMaxIts": { "type": "integer", "minimum": 0 },
         "GSOrthogonalization": { "type": "string" }
       }
     }

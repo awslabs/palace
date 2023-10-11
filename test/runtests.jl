@@ -33,7 +33,8 @@ abstol = 1.0e-16
     palace=palace,
     np=numprocs,
     rtol=reltol,
-    atol=abstol
+    atol=abstol,
+    excluded_columns=["Maximum", "Minimum"]
 )
 
 @info "Testing rings..."
@@ -44,7 +45,8 @@ abstol = 1.0e-16
     palace=palace,
     np=numprocs,
     rtol=reltol,
-    atol=abstol
+    atol=abstol,
+    excluded_columns=["Maximum", "Minimum"]
 )
 
 @info "Testing cavity (PEC)..."
@@ -55,7 +57,9 @@ abstol = 1.0e-16
     palace=palace,
     np=numprocs,
     rtol=reltol,
-    atol=abstol
+    atol=abstol,
+    excluded_columns=["Maximum", "Minimum"],
+    skip_rowcount=true
 )
 
 @info "Testing cavity (impedance)..."
@@ -66,7 +70,9 @@ abstol = 1.0e-16
     palace=palace,
     np=numprocs,
     rtol=reltol,
-    atol=abstol
+    atol=abstol,
+    excluded_columns=["Maximum", "Minimum"],
+    skip_rowcount=true
 )
 
 # Coarser test tolerances for driven simulations with ports
@@ -81,7 +87,8 @@ abstol = 2.0e-12
     palace=palace,
     np=numprocs,
     rtol=reltol,
-    atol=abstol
+    atol=abstol,
+    excluded_columns=["Maximum", "Minimum"]
 )
 
 @info "Testing coaxial (matched)..."
@@ -92,7 +99,8 @@ abstol = 2.0e-12
     palace=palace,
     np=numprocs,
     rtol=reltol,
-    atol=abstol
+    atol=abstol,
+    excluded_columns=["Maximum", "Minimum"]
 )
 
 @info "Testing CPW (lumped ports)"
@@ -103,7 +111,8 @@ abstol = 2.0e-12
     palace=palace,
     np=numprocs,
     rtol=reltol,
-    atol=abstol
+    atol=abstol,
+    excluded_columns=["Maximum", "Minimum"]
 )
 
 @info "Testing CPW (wave ports)"
@@ -114,7 +123,8 @@ abstol = 2.0e-12
     palace=palace,
     np=numprocs,
     rtol=reltol,
-    atol=abstol
+    atol=abstol,
+    excluded_columns=["Maximum", "Minimum"]
 )
 
 # Don't check accuracy for adaptive frequency sweep simulations

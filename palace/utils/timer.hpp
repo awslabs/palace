@@ -30,27 +30,36 @@ public:
     CONSTRUCT,
     WAVEPORT,  // Wave port solver
     SOLVE,
-    PRECONDITIONER,  // Linear solver
-    COARSESOLVE,     // Linear solver
-    CONSTRUCTPROM,   // Adaptive frequency sweep
-    SOLVEPROM,       // Adaptive frequency sweep
+    PRECONDITIONER,      // Linear solver
+    COARSESOLVE,         // Linear solver
+    ESTIMATION,          // Estimation
+    CONSTRUCTESTIMATOR,  // Construction of estimator
+    SOLVEESTIMATOR,      // Evaluation of estimator
+    CONSTRUCTPROM,       // Adaptive frequency sweep
+    SOLVEPROM,           // Adaptive frequency sweep
     POSTPRO,
     IO,
     TOTAL,
     NUMTIMINGS
   };
 
-  inline static const std::vector<std::string> descriptions{"Initialization",
-                                                            "Operator Construction",
-                                                            "  Wave Ports",
-                                                            "Solve",
-                                                            "  Preconditioner",
-                                                            "  Coarse Solve",
-                                                            "PROM Construction",
-                                                            "PROM Solve",
-                                                            "Postprocessing",
-                                                            "Disk IO",
-                                                            "Total"};
+  // clang-format off
+  inline static const std::vector<std::string> descriptions{
+      "Initialization",
+      "Operator Construction",
+      "  Wave Ports",
+      "Solve",
+      "  Preconditioner",
+      "  Coarse Solve",
+      "Estimation",
+      "  Construction",
+      "  Solve",
+      "PROM Construction",
+      "PROM Solve",
+      "Postprocessing",
+      "Disk IO",
+      "Total"};
+  // clang-format on
 
 private:
   const TimePoint start_time;

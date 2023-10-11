@@ -43,10 +43,7 @@ private:
   mfem::Vector f_loc, f_hat;
 
 public:
-  VectorFEBoundaryLFIntegrator(mfem::VectorCoefficient &QG)
-    : Q(QG), f_loc(QG.GetVDim()), f_hat(QG.GetVDim() - 1)
-  {
-  }
+  VectorFEBoundaryLFIntegrator(mfem::VectorCoefficient &QG) : Q(QG) {}
 
   void AssembleRHSElementVect(const mfem::FiniteElement &fe,
                               mfem::ElementTransformation &Tr,
@@ -56,6 +53,7 @@ public:
     const int dim = fe.GetDim();
     const mfem::IntegrationRule *ir =
         (IntRule != nullptr) ? IntRule : GetDefaultRule(fe, Tr);
+    f_hat.SetSize(dim);
     vshape.SetSize(dof, dim);
     elvect.SetSize(dof);
     elvect = 0.0;

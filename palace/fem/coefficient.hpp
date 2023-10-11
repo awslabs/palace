@@ -209,7 +209,7 @@ class BdrCurrentVectorCoefficient : public mfem::VectorCoefficient,
 private:
   const mfem::ParGridFunction &B;
   const MaterialOperator &mat_op;
-  mutable mfem::Vector C1, W, VU, VL, nor;
+  mfem::Vector C1, W, VU, VL, nor;
 
 public:
   BdrCurrentVectorCoefficient(const mfem::ParGridFunction &gf, const MaterialOperator &op)
@@ -267,7 +267,7 @@ class BdrChargeCoefficient : public mfem::Coefficient, public BdrGridFunctionCoe
 private:
   const mfem::ParGridFunction &E;
   const MaterialOperator &mat_op;
-  mutable mfem::Vector C1, W, VU, VL, nor;
+  mfem::Vector C1, W, VU, VL, nor;
 
 public:
   BdrChargeCoefficient(const mfem::ParGridFunction &gf, const MaterialOperator &op)
@@ -309,7 +309,7 @@ class BdrFluxCoefficient : public mfem::Coefficient, public BdrGridFunctionCoeff
 private:
   const mfem::ParGridFunction &B;
   const mfem::Vector dir;
-  mutable mfem::Vector V, VL, nor;
+  mfem::Vector V, VL, nor;
 
 public:
   BdrFluxCoefficient(const mfem::ParGridFunction &gf, mfem::Vector d,
@@ -367,7 +367,7 @@ private:
   const MaterialOperator &mat_op;
   const double ts, epsilon;
   const mfem::Vector side;
-  mutable mfem::Vector C1, V, nor;
+  mfem::Vector C1, V, nor;
 
   int Initialize(mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip,
                  mfem::Vector &V)
@@ -433,7 +433,7 @@ inline double DielectricInterfaceCoefficient<DielectricInterfaceType::MA>::Eval(
   Initialize(T, ip, V);
   GetNormal(T, ip, nor);
 
-  // Metal-air interface: 0.5 * t / ϵ_MA * |E_n|² .
+  // Metal-air interface: 0.5 * t / ε_MA * |E_n|² .
   double Vn = V * nor;
   return 0.5 * ts / epsilon * (Vn * Vn);
 }
@@ -446,7 +446,7 @@ inline double DielectricInterfaceCoefficient<DielectricInterfaceType::MS>::Eval(
   int attr = Initialize(T, ip, V);
   GetNormal(T, ip, nor);
 
-  // Metal-substrate interface: 0.5 * t * (ϵ_S)² / ϵ_MS * |E_n|² .
+  // Metal-substrate interface: 0.5 * t * (ε_S)² / ε_MS * |E_n|² .
   const double Vn = V * nor;
   const double epsilon_S = mat_op.GetPermittivityReal(attr).InnerProduct(nor, nor);
   return 0.5 * ts * std::pow(epsilon_S, 2) / epsilon * (Vn * Vn);
@@ -460,7 +460,7 @@ inline double DielectricInterfaceCoefficient<DielectricInterfaceType::SA>::Eval(
   Initialize(T, ip, V);
   GetNormal(T, ip, nor);
 
-  // Substrate-air interface: 0.5 * t * (ϵ_SA * |E_t|² + 1 / ϵ_MS * |E_n|²) .
+  // Substrate-air interface: 0.5 * t * (ε_SA * |E_t|² + 1 / ε_MS * |E_n|²) .
   double Vn = V * nor;
   V.Add(-Vn, nor);
   return 0.5 * ts * (epsilon * (V * V) + (Vn * Vn) / epsilon);
@@ -473,7 +473,7 @@ inline double DielectricInterfaceCoefficient<DielectricInterfaceType::DEFAULT>::
   // Get single-sided solution and neighboring element attribute.
   Initialize(T, ip, V);
 
-  // No specific interface, use full field evaluation: 0.5 * t * ϵ * |E|² .
+  // No specific interface, use full field evaluation: 0.5 * t * ε * |E|² .
   return 0.5 * ts * epsilon * (V * V);
 }
 
@@ -492,7 +492,7 @@ class EnergyDensityCoefficient : public mfem::Coefficient, public BdrGridFunctio
 private:
   const GridFunctionType &U;
   const MaterialOperator &mat_op;
-  mutable mfem::Vector V;
+  mfem::Vector V;
 
   double GetLocalEnergyDensity(mfem::ElementTransformation &T,
                                const mfem::IntegrationPoint &ip, int attr);
@@ -660,8 +660,8 @@ public:
 class NormalProjectedCoefficient : public mfem::Coefficient
 {
   std::unique_ptr<mfem::MatrixCoefficient> c;
-  mutable mfem::DenseMatrix K;
-  mutable mfem::Vector nor;
+  mfem::DenseMatrix K;
+  mfem::Vector nor;
 
 public:
   NormalProjectedCoefficient(std::unique_ptr<mfem::MatrixCoefficient> &&coef)
@@ -782,7 +782,7 @@ class SumVectorCoefficient : public mfem::VectorCoefficient
 private:
   std::vector<std::pair<std::unique_ptr<mfem::VectorCoefficient>, const mfem::Array<int> *>>
       c;
-  mutable mfem::Vector U;
+  mfem::Vector U;
 
   void AddCoefficient(std::unique_ptr<mfem::VectorCoefficient> &&coef,
                       const mfem::Array<int> *marker)
@@ -856,7 +856,7 @@ class SumMatrixCoefficient : public mfem::MatrixCoefficient
 private:
   std::vector<std::pair<std::unique_ptr<mfem::MatrixCoefficient>, const mfem::Array<int> *>>
       c;
-  mutable mfem::DenseMatrix M;
+  mfem::DenseMatrix M;
 
   void AddCoefficient(std::unique_ptr<mfem::MatrixCoefficient> &&coef,
                       const mfem::Array<int> *marker)
