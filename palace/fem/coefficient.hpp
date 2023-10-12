@@ -189,12 +189,12 @@ public:
   {
   }
 
-  static void GetNormal(mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip,
-                        mfem::Vector &normal)
+  // Return normal vector to the boundary element at an integration point (it is assumed
+  // that the element transformation has already been configured at the integration point of
+  // interest).
+  static void GetNormal(mfem::ElementTransformation &T, mfem::Vector &normal)
   {
-    // Return normal vector to the boundary element at the provided integration point.
     normal.SetSize(T.GetSpaceDim());
-    T.SetIntPoint(&ip);
     mfem::CalcOrtho(T.Jacobian(), normal);
     normal /= normal.Norml2();
   }
@@ -242,7 +242,7 @@ public:
     }
 
     // Orient with normal pointing into el1.
-    GetNormal(T, ip, nor);
+    GetNormal(T, nor);
     V.SetSize(vdim);
     if (C1 * nor < 0.0)
     {
@@ -296,7 +296,7 @@ public:
     }
 
     // Orient with normal pointing into el1.
-    GetNormal(T, ip, nor);
+    GetNormal(T, nor);
     return (C1 * nor < 0.0) ? -(VU * nor) : VU * nor;
   }
 };
@@ -338,7 +338,7 @@ public:
     }
 
     // Orient sign with the global direction.
-    GetNormal(T, ip, nor);
+    GetNormal(T, nor);
     return (dir * nor < 0.0) ? -(V * nor) : V * nor;
   }
 };
@@ -431,7 +431,7 @@ inline double DielectricInterfaceCoefficient<DielectricInterfaceType::MA>::Eval(
 {
   // Get single-sided solution and neighboring element attribute.
   Initialize(T, ip, V);
-  GetNormal(T, ip, nor);
+  GetNormal(T, nor);
 
   // Metal-air interface: 0.5 * t / ε_MA * |E_n|² .
   double Vn = V * nor;
@@ -444,7 +444,7 @@ inline double DielectricInterfaceCoefficient<DielectricInterfaceType::MS>::Eval(
 {
   // Get single-sided solution and neighboring element attribute.
   int attr = Initialize(T, ip, V);
-  GetNormal(T, ip, nor);
+  GetNormal(T, nor);
 
   // Metal-substrate interface: 0.5 * t * (ε_S)² / ε_MS * |E_n|² .
   const double Vn = V * nor;
@@ -458,7 +458,7 @@ inline double DielectricInterfaceCoefficient<DielectricInterfaceType::SA>::Eval(
 {
   // Get single-sided solution and neighboring element attribute.
   Initialize(T, ip, V);
-  GetNormal(T, ip, nor);
+  GetNormal(T, nor);
 
   // Substrate-air interface: 0.5 * t * (ε_SA * |E_t|² + 1 / ε_MS * |E_n|²) .
   double Vn = V * nor;
@@ -509,7 +509,6 @@ public:
   {
     if (T.ElementType == mfem::ElementTransformation::ELEMENT)
     {
-      T.SetIntPoint(&ip);
       return GetLocalEnergyDensity(T, ip, T.Attribute);
     }
     if (T.ElementType == mfem::ElementTransformation::BDR_ELEMENT)
@@ -673,7 +672,7 @@ public:
   double Eval(mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip) override
   {
     c->Eval(K, T, ip);
-    BdrGridFunctionCoefficient::GetNormal(T, ip, nor);
+    BdrGridFunctionCoefficient::GetNormal(T, nor);
     return K.InnerProduct(nor, nor);
   }
 };

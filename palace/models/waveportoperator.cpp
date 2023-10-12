@@ -397,6 +397,7 @@ public:
       else
       {
         submesh_T = submesh.GetElementTransformation(it->second);
+        submesh_T->SetIntPoint(&ip);
       }
 
       int i, o, iel1, iel2;
@@ -423,7 +424,6 @@ public:
 
     // Compute Re/Im{-1/i (ikₙ Eₜ + ∇ₜ Eₙ)}.
     mfem::Vector U;
-    submesh_T->SetIntPoint(&ip);
     if constexpr (RealPart)
     {
       Et.real().GetVectorValue(*submesh_T, ip, U);
