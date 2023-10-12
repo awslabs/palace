@@ -196,11 +196,11 @@ public:
   {
   }
 
+  // Return normal vector to the boundary element at an integration point (it is assumed
+  // that the element transformation has already been configured at the integration point of
+  // interest).
   static void GetNormal(mfem::ElementTransformation &T, mfem::Vector &normal)
   {
-    // Return normal vector to the boundary element at an integration point (it is assumed
-    // that the element transformation has already been configured at the integration point
-    // of interest).
     normal.SetSize(T.GetSpaceDim());
     mfem::CalcOrtho(T.Jacobian(), normal);
     normal /= normal.Norml2();
