@@ -63,8 +63,8 @@ scale based on the bounding box of the computational domain.
         "DOFLimit": <int>,
         "SaveStep": <int>,
         "MaximumImbalance": <float>,
-        "WritePostBalanceMesh": <bool>,
-        "WritePreBalanceMesh": <bool>,
+        "Nonconformal": <bool>,
+        "UseCoarsening": <bool>,
         "WriteSerialMesh": <bool>
     }
 }
@@ -122,10 +122,19 @@ minimum number of elements on a processor before a rebalance is performed. A val
 would result in rebalancing occurring only if one processor had more than double the number
 of elements on another.
 
+`"Nonconformal" [false]` : Whether the adaptation should use nonconformal refinement.
+`"Nonconformal"` is necessary to enable `"UseCoarsening"`.
+
+`"UseCoarsening" [false]` : Whether or not to perform coarsening if the total number of DOF
+exceeds the `"DOFLimit"`. Coarsening may be useful to improve the efficiency of the mesh if
+a large value of `"UpdateFraction"` is used. Requires `"Nonconformal"` mesh refinement to be
+enabled.
+
 `"WriteSerialMesh" [true]` : Whether to write a serialized mesh to file after adaptation.
 
 ### Advanced model options
 
+  - `"MaxNCLevels" [0]`
   - `"Partition" [""]`
   - `"ReorientTetMesh" [false]`
   - `"RemoveCurvature" [false]`

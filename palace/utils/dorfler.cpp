@@ -148,7 +148,7 @@ double ComputeDorflerThreshold(double fraction, const mfem::Vector &e)
   elem_marked = max_elem_marked;
   error_marked = max_error_marked;
 
-  Mpi::Print("Indicator threshold {:.3e} marked {} of {} elements and {:.3f}% error\n",
+  Mpi::Print("Threshold {:.3e} marked {} of {} and {:.2f}%\n",
              error_threshold, elem_marked, total_elem, 100 * error_marked / total_error);
 
   MFEM_ASSERT(error_threshold > 0, "error_threshold must be positive");

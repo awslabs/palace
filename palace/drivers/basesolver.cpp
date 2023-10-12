@@ -103,9 +103,7 @@ std::string BaseSolver::IterationPostDir(int iter) const
 namespace
 {
 
-// Helper function that returns an array of indices corresponding to marked elements. If gt
-// is true, then marked elements are greater than threshold, otherwise marked elements are
-// less than threshold.
+// Helper function that returns an array of indices corresponding to marked elements.
 mfem::Array<int> MarkedElements(double threshold, const mfem::Vector &e)
 {
   mfem::Array<int> ind;
@@ -363,6 +361,7 @@ BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<mfem::ParMesh>> 
       // this set is then the largest number of elements that make up θ of the total error.
       const double threshold =
           utils::ComputeDorflerThreshold(1 - param.update_fraction, coarse_error);
+
       const auto initial_elem_count = mesh.back()->GetGlobalNE();
       mesh.back()->DerefineByError(indicators.Local(), threshold, param.max_nc_levels);
       const auto final_elem_count = mesh.back()->GetGlobalNE();
@@ -381,8 +380,7 @@ BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<mfem::ParMesh>> 
       SavePostProcess(iter);
     }
   }
-  Mpi::Print("\nFinal Error Indicator: {:.3e}, DOF: {}, DOF Limit: {}\n",
-             indicators.Norml2(comm), ntdof, param.dof_limit);
+  Mpi::Print("\nFinal Error Indicator: {:.3e}, DOF: {}\n", indicators.Norml2(comm), ntdof);
   return indicators;
 }
 void BaseSolver::SaveMetadata(const mfem::ParFiniteElementSpaceHierarchy &fespaces) const

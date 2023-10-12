@@ -244,6 +244,8 @@ set(MFEM_PATCH_FILES
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_mfem_device_fixes.diff"
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_kdtree_fix_gcc_13.diff"
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_intrules_order_fix.diff"
+  "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_nc_ho_nedelec_tet_dev.diff"
+  "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_ncmesh_interior_boundary_dev.diff"
 )
 
 include(ExternalProject)
