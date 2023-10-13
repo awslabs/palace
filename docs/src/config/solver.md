@@ -413,8 +413,10 @@ multigrid preconditioners (when `"UseMultigrid"` is `true` or `"Type"` is `"AMS"
 `"MGSmoothIts" [1]` :  Number of pre- and post-smooth iterations used for multigrid
 preconditioners (when `"UseMultigrid"` is `true` or `"Type"` is `"AMS"` or `"BoomerAMG"`).
 
-`"MGSmoothOrder" [4]` :  Order of polynomial smoothing for geometric multigrid
-preconditioning (when `"UseMultigrid"` is `true`).
+`"MGSmoothOrder" [0]` :  Order of polynomial smoothing for geometric multigrid
+preconditioning (when `"UseMultigrid"` is `true`). A value less than 1 defaults to twice
+the solution order given in [`config["Solver"]["Order"]`]
+(problem.md#config%5B%22Solver%22%5D) or 4, whichever is larger.
 
 `"PCMatReal" [false]` :  When set to `true`, constructs the preconditioner for frequency
 domain problems using a real-valued approximation of the system matrix. This is always

@@ -63,9 +63,15 @@ ConfigureLinearSolver(const mfem::ParFiniteElementSpaceHierarchy &fespaces, doub
   std::unique_ptr<Solver<Operator>> pc;
   if (fespaces.GetNumLevels() > 1)
   {
+    const int dim = fespaces.GetFinestFESpace().GetParMesh()->Dimension();
+    const auto type = fespaces.GetFinestFESpace().FEColl()->GetRangeType(dim);
+    const int mg_smooth_order =
+        (type == mfem::FiniteElement::SCALAR)
+            ? 2
+            : std::max(fespaces.GetFinestFESpace().GetMaxElementOrder(), 2);
     pc = std::make_unique<GeometricMultigridSolver<Operator>>(
-        std::move(amg), fespaces, nullptr, 1, 1, 2, 1.0, 0.0, true, pa_order_threshold,
-        pa_discrete_interp);
+        std::move(amg), fespaces, nullptr, 1, 1, mg_smooth_order, 1.0, 0.0, true,
+        pa_order_threshold, pa_discrete_interp);
   }
   else
   {
@@ -90,14 +96,13 @@ FluxProjector::FluxProjector(const MaterialOperator &mat_op,
                              bool pa_discrete_interp)
 {
   BlockTimer bt(Timer::CONSTRUCTESTIMATOR);
-  constexpr int skip_zeros = 0;
+  constexpr int skip_zeros = false;
   {
     constexpr auto MatType = MaterialPropertyType::INV_PERMEABILITY;
     MaterialPropertyCoefficient<MatType> muinv_func(mat_op);
     BilinearForm flux(nd_fespaces.GetFinestFESpace());
     flux.AddDomainIntegrator<MixedVectorCurlIntegrator>(muinv_func);
-    Flux = std::make_unique<ParOperator>(flux.Assemble(pa_order_threshold, skip_zeros),
-                                         nd_fespaces.GetFinestFESpace());
+    Flux = std::make_unique<ParOperator>(flux.Assemble(), nd_fespaces.GetFinestFESpace());
   }
   M = GetMassMatrix(nd_fespaces, pa_order_threshold, skip_zeros);
 
@@ -115,15 +120,14 @@ FluxProjector::FluxProjector(const MaterialOperator &mat_op,
                              bool pa_discrete_interp)
 {
   BlockTimer bt(Timer::CONSTRUCTESTIMATOR);
-  constexpr int skip_zeros = 0;
+  constexpr int skip_zeros = false;
   {
     constexpr auto MatType = MaterialPropertyType::PERMITTIVITY_REAL;
     MaterialPropertyCoefficient<MatType> epsilon_func(mat_op);
     BilinearForm flux(h1_fespaces.GetFinestFESpace(), h1d_fespace);
     flux.AddDomainIntegrator<GradientIntegrator>(epsilon_func);
-    Flux =
-        std::make_unique<ParOperator>(flux.Assemble(pa_order_threshold, skip_zeros),
-                                      h1_fespaces.GetFinestFESpace(), h1d_fespace, false);
+    Flux = std::make_unique<ParOperator>(flux.Assemble(), h1_fespaces.GetFinestFESpace(),
+                                         h1d_fespace, false);
   }
   M = GetMassMatrix(h1_fespaces, pa_order_threshold, skip_zeros);
 

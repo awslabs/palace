@@ -746,7 +746,7 @@ public:
   int mg_smooth_it = 1;
 
   // Order of polynomial smoothing for geometric multigrid.
-  int mg_smooth_order = 4;
+  int mg_smooth_order = -1;
 
   // Safety factors for eigenvalue estimates associated with Chebyshev smoothing for
   // geometric multigrid.

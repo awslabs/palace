@@ -71,8 +71,10 @@ WeightedHCurlNormSolver::WeightedHCurlNormSolver(
   std::unique_ptr<Solver<Operator>> pc;
   if (nd_fespaces.GetNumLevels() > 1)
   {
+    const int mg_smooth_order =
+        std::max(nd_fespaces.GetFinestFESpace().GetMaxElementOrder(), 2);
     pc = std::make_unique<GeometricMultigridSolver<Operator>>(
-        std::move(ams), nd_fespaces, &h1_fespaces, 1, 1, 2, 1.0, 0.0, true,
+        std::move(ams), nd_fespaces, &h1_fespaces, 1, 1, mg_smooth_order, 1.0, 0.0, true,
         pa_order_threshold, pa_discrete_interp);
   }
   else
