@@ -49,16 +49,16 @@ std::string ToString(CoeffType type)
 }
 
 // Scalar coefficient
-double coeff_function(const Vector &x)
+double CoefficientFunction(const Vector &x)
 {
   return 1.0 + x[0] * x[0];
 }
 
 // Vector coefficient
-void vector_coeff_function(const Vector &x, Vector &v)
+void VectorCoefficientFunction(const Vector &x, Vector &v)
 {
   const int dim = x.Size();
-  const double w = coeff_function(x);
+  const double w = CoefficientFunction(x);
   v.SetSize(dim);
   switch (dim)
   {
@@ -77,19 +77,19 @@ void vector_coeff_function(const Vector &x, Vector &v)
   }
 }
 
-void scalar_vector_coeff_function(const Vector &x, Vector &v)
+void ScalarVectorCoefficientFunction(const Vector &x, Vector &v)
 {
   const int dim = x.Size();
   v.SetSize(dim);
-  v = coeff_function(x);
+  v = CoefficientFunction(x);
 }
 
 // Matrix coefficient
-void matrix_coeff_function(const Vector &x, mfem::DenseMatrix &m)
+void MatrixCoefficientFunction(const Vector &x, mfem::DenseMatrix &m)
 {
   const int dim = x.Size();
   Vector v(dim);
-  vector_coeff_function(x, v);
+  VectorCoefficientFunction(x, v);
   m.SetSize(dim);
   m = 0.1;
   for (int i = 0; i < dim; i++)
@@ -98,10 +98,10 @@ void matrix_coeff_function(const Vector &x, mfem::DenseMatrix &m)
   }
 }
 
-void scalar_matrix_coeff_function(const Vector &x, mfem::DenseMatrix &m)
+void ScalarMatrixCoefficientFunction(const Vector &x, mfem::DenseMatrix &m)
 {
   const int dim = x.Size();
-  const double w = coeff_function(x);
+  const double w = CoefficientFunction(x);
   m.SetSize(dim);
   m = 0.0;
   for (int i = 0; i < dim; i++)
@@ -503,9 +503,9 @@ void RunCeedIntegratorTests(MPI_Comm comm, const std::string &input, int ref_lev
   const int dim = mesh->Dimension();
 
   // Initialize coefficients.
-  mfem::FunctionCoefficient Q(coeff_function);
-  mfem::VectorFunctionCoefficient VQ(dim, vector_coeff_function);
-  mfem::MatrixFunctionCoefficient MQ(dim, matrix_coeff_function);
+  mfem::FunctionCoefficient Q(CoefficientFunction);
+  mfem::VectorFunctionCoefficient VQ(dim, VectorCoefficientFunction);
+  mfem::MatrixFunctionCoefficient MQ(dim, MatrixCoefficientFunction);
 
   // Run the tests.
   auto coeff_type =
@@ -1005,10 +1005,10 @@ void RunCeedIntegratorTests(MPI_Comm comm, const std::string &input, int ref_lev
     {
       // Test special coefficients because MFEM's GradientIntegrator only supports scalar
       // coefficients.
-      mfem::VectorFunctionCoefficient sVQ(dim, scalar_vector_coeff_function);
-      mfem::MatrixFunctionCoefficient sMQ(dim, scalar_matrix_coeff_function);
-      const auto q_extra_pk = -1 + order_adj_pk - order_w_pk + order_j_pk,
-                 q_extra_qk = -1 + order_adj_qk - order_w_qk + order_j_qk;
+      mfem::VectorFunctionCoefficient sVQ(dim, ScalarVectorCoefficientFunction);
+      mfem::MatrixFunctionCoefficient sMQ(dim, ScalarMatrixCoefficientFunction);
+      const auto q_extra_pk = -1 + order_adj_pk + order_j_pk - order_w_pk,
+                 q_extra_qk = -1 + order_adj_qk + order_j_qk - order_w_qk;
       BilinearForm a_test(h1_fespace, vector_h1_fespace, q_extra_pk, q_extra_qk);
       mfem::MixedBilinearForm a_ref(&h1_fespace, &vector_h1_fespace);
       if (!bdr_integ)  // MFEM's GradientIntegrator only supports square Jacobians
@@ -1154,8 +1154,8 @@ void RunCeedBenchmarks(MPI_Comm comm, const std::string &input, int ref_levels, 
   const int dim = mesh->Dimension();
 
   // Initialize coefficients.
-  mfem::FunctionCoefficient Q(coeff_function);
-  mfem::MatrixFunctionCoefficient MQ(dim, matrix_coeff_function);
+  mfem::FunctionCoefficient Q(CoefficientFunction);
+  mfem::MatrixFunctionCoefficient MQ(dim, MatrixCoefficientFunction);
 
   // Run the benchmarks.
   std::string section = "Mesh: " + input + "\n" +
