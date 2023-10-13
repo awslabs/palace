@@ -61,7 +61,7 @@ index 44390f76c..e1aef168b 100644
  
  }
 diff --git a/fem/pfespace.cpp b/fem/pfespace.cpp
-index 9e0a9faaf..4bbbcdb42 100644
+index 71c1273e0..da376ceee 100644
 --- a/fem/pfespace.cpp
 +++ b/fem/pfespace.cpp
 @@ -43,7 +43,7 @@ ParFiniteElementSpace::ParFiniteElementSpace(
@@ -74,7 +74,7 @@ index 9e0a9faaf..4bbbcdb42 100644
     : FiniteElementSpace(pm, MakeLocalNURBSext(global_fes->GetNURBSext(),
                                                pm->NURBSext),
 diff --git a/fem/pfespace.hpp b/fem/pfespace.hpp
-index d3b4061e8..bdfc155e9 100644
+index 10508097c..ee2de2921 100644
 --- a/fem/pfespace.hpp
 +++ b/fem/pfespace.hpp
 @@ -243,14 +243,11 @@ public:
@@ -109,9 +109,6 @@ index d49187457..0a58530c1 100644
     SetSize(pfes->GetVSize());
  
     if (partitioning)
-diff --git a/fem/tmop_amr.cpp b/fem/tmop_amr.cpp
-old mode 100755
-new mode 100644
 diff --git a/mesh/element.cpp b/mesh/element.cpp
 index c21b8f9bd..1e5ee7706 100644
 --- a/mesh/element.cpp
@@ -233,10 +230,10 @@ index a8186c0c8..6b62a14d6 100644
  
     virtual int GetNFaceVertices(int) const { return 4; }
 diff --git a/mesh/mesh.cpp b/mesh/mesh.cpp
-index 1f26c6587..4e027654c 100644
+index d79ee99cf..a8da852b9 100644
 --- a/mesh/mesh.cpp
 +++ b/mesh/mesh.cpp
-@@ -484,6 +484,7 @@ void Mesh::GetBdrElementTransformation(int i, IsoparametricTransformation* ElTr)
+@@ -489,6 +489,7 @@ void Mesh::GetBdrElementTransformation(int i, IsoparametricTransformation* ElTr)
              Nodes->FESpace()->GetTraceElement(elem_id, face_geom);
           MFEM_VERIFY(dynamic_cast<const NodalFiniteElement*>(face_el),
                       "Mesh requires nodal Finite Element.");
@@ -244,7 +241,7 @@ index 1f26c6587..4e027654c 100644
           IntegrationRule eir(face_el->GetDof());
           FaceElemTr.Loc1.Transf.ElementNo = elem_id;
           FaceElemTr.Loc1.Transf.mesh = this;
-@@ -1964,7 +1965,7 @@ void Mesh::FinalizeTriMesh(int generate_edges, int refine, bool fix_orientation)
+@@ -1963,7 +1964,7 @@ void Mesh::FinalizeTriMesh(int generate_edges, int refine, bool fix_orientation)
  
     if (refine)
     {
@@ -253,7 +250,7 @@ index 1f26c6587..4e027654c 100644
     }
  
     if (generate_edges)
-@@ -2419,82 +2420,109 @@ void Mesh::ReorderElements(const Array<int> &ordering, bool reorder_vertices)
+@@ -2418,82 +2419,109 @@ void Mesh::ReorderElements(const Array<int> &ordering, bool reorder_vertices)
  }
  
  
@@ -400,7 +397,7 @@ index 1f26c6587..4e027654c 100644
        }
     }
  }
-@@ -2844,9 +2872,7 @@ void Mesh::FinalizeTetMesh(int generate_edges, int refine, bool fix_orientation)
+@@ -2843,9 +2871,7 @@ void Mesh::FinalizeTetMesh(int generate_edges, int refine, bool fix_orientation)
  
     if (refine)
     {
@@ -411,7 +408,7 @@ index 1f26c6587..4e027654c 100644
     }
  
     GetElementToFaceTable();
-@@ -3104,8 +3130,7 @@ void Mesh::Finalize(bool refine, bool fix_orientation)
+@@ -3103,8 +3129,7 @@ void Mesh::Finalize(bool refine, bool fix_orientation)
     // only perform it when Dim == spaceDim.
     if (Dim >= 2 && Dim == spaceDim)
     {
@@ -421,7 +418,7 @@ index 1f26c6587..4e027654c 100644
        {
           MFEM_VERIFY(faces_info[i].Elem2No < 0 ||
                       faces_info[i].Elem2Inf%2 != 0, "Invalid mesh topology."
-@@ -3542,8 +3567,6 @@ void Mesh::Make2D(int nx, int ny, Element::Type type,
+@@ -3541,8 +3566,6 @@ void Mesh::Make2D(int nx, int ny, Element::Type type,
           boundary[2*nx+j] = new Segment((j+1)*m, j*m, 4);
           boundary[2*nx+ny+j] = new Segment(j*m+nx, (j+1)*m+nx, 2);
        }
@@ -430,7 +427,7 @@ index 1f26c6587..4e027654c 100644
     }
     else
     {
-@@ -5718,37 +5741,21 @@ static const char *fixed_or_not[] = { "fixed", "NOT FIXED" };
+@@ -5711,37 +5734,21 @@ static const char *fixed_or_not[] = { "fixed", "NOT FIXED" };
  
  int Mesh::CheckElementOrientation(bool fix_it)
  {
@@ -473,7 +470,7 @@ index 1f26c6587..4e027654c 100644
                 switch (GetElementType(i))
                 {
                    case Element::TRIANGLE:
-@@ -5768,88 +5775,41 @@ int Mesh::CheckElementOrientation(bool fix_it)
+@@ -5761,88 +5768,41 @@ int Mesh::CheckElementOrientation(bool fix_it)
           }
        }
     }
@@ -585,7 +582,7 @@ index 1f26c6587..4e027654c 100644
           }
        }
     }
-@@ -6686,24 +6646,12 @@ void Mesh::GetBdrPointMatrix(int i,DenseMatrix &pointmat) const
+@@ -6679,24 +6639,12 @@ void Mesh::GetBdrPointMatrix(int i,DenseMatrix &pointmat) const
  
     pointmat.SetSize(spaceDim, nv);
     for (k = 0; k < spaceDim; k++)
@@ -612,10 +609,10 @@ index 1f26c6587..4e027654c 100644
  
  // static method
 diff --git a/mesh/mesh.hpp b/mesh/mesh.hpp
-index 419745f1b..088147d89 100644
+index 42032e05a..28910bfbf 100644
 --- a/mesh/mesh.hpp
 +++ b/mesh/mesh.hpp
-@@ -32,8 +32,6 @@
+@@ -31,8 +31,6 @@
  namespace mfem
  {
  
@@ -624,7 +621,7 @@ index 419745f1b..088147d89 100644
  class GeometricFactors;
  class FaceGeometricFactors;
  class KnotVector;
-@@ -50,15 +48,15 @@ class ParMesh;
+@@ -49,15 +47,15 @@ class ParMesh;
  class ParNCMesh;
  #endif
  
@@ -643,7 +640,7 @@ index 419745f1b..088147d89 100644
  #ifdef MFEM_USE_ADIOS2
     friend class adios2stream;
  #endif
-@@ -334,13 +332,10 @@ protected:
+@@ -331,13 +329,10 @@ protected:
     /** Also, initializes #mesh_geoms. */
     void SetMeshGen();
  
@@ -661,7 +658,7 @@ index 419745f1b..088147d89 100644
     // Methods used to prepare and apply permutation of the mesh nodes assuming
     // that the mesh elements may be rotated (e.g. to mark triangle or tet edges
 diff --git a/mesh/pmesh.cpp b/mesh/pmesh.cpp
-index ac1df211e..206b53f96 100644
+index b341be9a8..66d98d9dc 100644
 --- a/mesh/pmesh.cpp
 +++ b/mesh/pmesh.cpp
 @@ -20,6 +20,7 @@
@@ -672,7 +669,7 @@ index ac1df211e..206b53f96 100644
  #include <iostream>
  #include <fstream>
  
-@@ -753,8 +754,10 @@ void ParMesh::BuildSharedFaceElems(int ntri_faces, int nquad_faces,
+@@ -751,8 +752,10 @@ void ParMesh::BuildSharedFaceElems(int ntri_faces, int nquad_faces,
              sface_lface[stria_counter] = lface;
              if (meshgen == 1) // Tet-only mesh
              {
@@ -685,7 +682,7 @@ index ac1df211e..206b53f96 100644
                 // mark the shared face for refinement by reorienting
                 // it according to the refinement flag in the tetrahedron
                 // to which this shared face belongs to.
-@@ -923,22 +926,21 @@ void ParMesh::FinalizeParTopo()
+@@ -921,7 +924,8 @@ void ParMesh::FinalizeParTopo()
     }
  }
  
@@ -695,25 +692,18 @@ index ac1df211e..206b53f96 100644
     : face_nbr_el_to_face(NULL)
     , glob_elem_offset(-1)
     , glob_offset_sequence(-1)
-    , gtopo(comm)
-+   , pncmesh(NULL)
- {
-    MyComm = comm;
-    MPI_Comm_size(MyComm, &NRanks);
-    MPI_Comm_rank(MyComm, &MyRank);
+@@ -934,9 +938,7 @@ ParMesh::ParMesh(MPI_Comm comm, istream &input, bool refine)
+    have_face_nbr_data = false;
+    pncmesh = NULL;
  
--   have_face_nbr_data = false;
--   pncmesh = NULL;
--
 -   const int gen_edges = 1;
-+   Load(input, generate_edges, refine, fix_orientation);
- 
+-
 -   Load(input, gen_edges, refine, true);
-+   have_face_nbr_data = false;
++   Load(input, generate_edges, refine, fix_orientation);
  }
  
  void ParMesh::Load(istream &input, int generate_edges, int refine,
-@@ -1733,99 +1735,61 @@ void ParMesh::GetSharedTriCommunicator(int ordering,
+@@ -1730,99 +1732,61 @@ void ParMesh::GetSharedTriCommunicator(int ordering,
     stria_comm.Finalize();
  }
  
@@ -738,9 +728,7 @@ index ac1df211e..206b53f96 100644
 +   Array<int> sedge_master_rank(shared_edges.Size());
 +   Array<int> sedge_master_index(shared_edges.Size());
 +   for (int i = 0; i < group_sedge.Size(); i++)
-    {
--      // sedge_ledge may be undefined -- use shared_edges and v_to_v instead
--      const int sedge = group_sedge.GetJ()[k];
++   {
 +      int rank = gtopo.GetGroupMasterRank(i+1);
 +      for (int j = 0; j < group_sedge.RowSize(i); j++)
 +      {
@@ -748,7 +736,9 @@ index ac1df211e..206b53f96 100644
 +      }
 +   }
 +   for (int i = 0; i < shared_edges.Size(); i++)
-+   {
+    {
+-      // sedge_ledge may be undefined -- use shared_edges and v_to_v instead
+-      const int sedge = group_sedge.GetJ()[k];
 +      // sedge_ledge may be undefined so use shared_edges and v_to_v instead
 +      const int sedge = group_sedge.GetJ()[i];
        const int *v = shared_edges[sedge]->GetVertices();
@@ -849,7 +839,7 @@ index ac1df211e..206b53f96 100644
        }
     }
  
-@@ -1833,13 +1797,16 @@ void ParMesh::MarkTetMeshForRefinement(DSTable &v_to_v)
+@@ -1830,13 +1794,16 @@ void ParMesh::MarkTetMeshForRefinement(DSTable &v_to_v)
     {
        if (boundary[i]->GetType() == Element::TRIANGLE)
        {
@@ -868,7 +858,7 @@ index ac1df211e..206b53f96 100644
     }
  }
  
-@@ -2058,6 +2025,7 @@ void ParMesh::DeleteFaceNbrData()
+@@ -2055,6 +2022,7 @@ void ParMesh::DeleteFaceNbrData()
  
  void ParMesh::SetCurvature(int order, bool discont, int space_dim, int ordering)
  {
@@ -876,7 +866,7 @@ index ac1df211e..206b53f96 100644
     space_dim = (space_dim == -1) ? spaceDim : space_dim;
     FiniteElementCollection* nfec;
     if (discont)
-@@ -2078,6 +2046,7 @@ void ParMesh::SetCurvature(int order, bool discont, int space_dim, int ordering)
+@@ -2075,6 +2043,7 @@ void ParMesh::SetCurvature(int order, bool discont, int space_dim, int ordering)
  
  void ParMesh::SetNodalFESpace(FiniteElementSpace *nfes)
  {
@@ -884,7 +874,7 @@ index ac1df211e..206b53f96 100644
     ParFiniteElementSpace *npfes = dynamic_cast<ParFiniteElementSpace*>(nfes);
     if (npfes)
     {
-@@ -2091,6 +2060,7 @@ void ParMesh::SetNodalFESpace(FiniteElementSpace *nfes)
+@@ -2088,6 +2057,7 @@ void ParMesh::SetNodalFESpace(FiniteElementSpace *nfes)
  
  void ParMesh::SetNodalFESpace(ParFiniteElementSpace *npfes)
  {
@@ -892,7 +882,7 @@ index ac1df211e..206b53f96 100644
     ParGridFunction *nodes = new ParGridFunction(npfes);
     SetNodalGridFunction(nodes, true);
  }
-@@ -2099,19 +2069,17 @@ void ParMesh::EnsureParNodes()
+@@ -2096,19 +2066,17 @@ void ParMesh::EnsureParNodes()
  {
     if (Nodes && dynamic_cast<ParFiniteElementSpace*>(Nodes->FESpace()) == NULL)
     {
@@ -913,7 +903,7 @@ index ac1df211e..206b53f96 100644
        delete Nodes;
        Nodes = new_nodes;
     }
-@@ -3294,17 +3262,15 @@ void ParMesh::ReorientTetMesh()
+@@ -3291,17 +3259,15 @@ void ParMesh::ReorientTetMesh()
     // other ranks in the group
     Array<int> svert_master_rank(svert_lvert.Size());
     Array<int> svert_master_index(svert_lvert);
@@ -937,7 +927,7 @@ index ac1df211e..206b53f96 100644
     // the pairs (master rank, master local index) define a globally consistent
     // vertex ordering
 diff --git a/mesh/pmesh.hpp b/mesh/pmesh.hpp
-index 0aab7982e..2ed8b00ec 100644
+index f6139ff13..bdf72c8e4 100644
 --- a/mesh/pmesh.hpp
 +++ b/mesh/pmesh.hpp
 @@ -24,6 +24,7 @@
@@ -966,7 +956,7 @@ index 0aab7982e..2ed8b00ec 100644
     MPI_Comm MyComm;
     int NRanks, MyRank;
  
-@@ -104,7 +112,7 @@ protected:
+@@ -102,7 +110,7 @@ protected:
  
     // Mark all tets to ensure consistency across MPI tasks; also mark the
     // shared and boundary triangle faces using the consistently marked tets.
@@ -975,7 +965,7 @@ index 0aab7982e..2ed8b00ec 100644
  
     /// Return a number(0-1) identifying how the given edge has been split
     int GetEdgeSplittings(Element *edge, const DSTable &v_to_v, int *middle);
-@@ -311,7 +319,8 @@ public:
+@@ -309,7 +317,8 @@ public:
  
     /// Read a parallel mesh, each MPI rank from its own file/stream.
     /** The @a refine parameter is passed to the method Mesh::Finalize(). */
@@ -985,7 +975,7 @@ index 0aab7982e..2ed8b00ec 100644
  
     /// Deprecated: see @a ParMesh::MakeRefined
     MFEM_DEPRECATED
-@@ -668,14 +677,6 @@ public:
+@@ -665,14 +674,6 @@ public:
     void PrintSharedEntities(const std::string &fname_prefix) const;
  
     virtual ~ParMesh();
@@ -1322,7 +1312,7 @@ index 6ca918758..9d58704e4 100644
  }
  
 diff --git a/mesh/tetrahedron.cpp b/mesh/tetrahedron.cpp
-index 7c9c8de7a..75c40197f 100644
+index c7ebc064b..27e634545 100644
 --- a/mesh/tetrahedron.cpp
 +++ b/mesh/tetrahedron.cpp
 @@ -9,9 +9,12 @@
@@ -1340,7 +1330,7 @@ index 7c9c8de7a..75c40197f 100644
  
  namespace mfem
  {
-@@ -185,19 +188,30 @@ void Tetrahedron::SetVertices(const int *ind)
+@@ -184,19 +187,30 @@ void Tetrahedron::SetVertices(const int *ind)
     }
  }
  
@@ -1382,7 +1372,7 @@ index 7c9c8de7a..75c40197f 100644
     {
        ind[i] = indices[i];
     }
-@@ -229,13 +243,14 @@ void Tetrahedron::MarkEdge(const DSTable &v_to_v, const int *length)
+@@ -228,13 +242,14 @@ void Tetrahedron::MarkEdge(const DSTable &v_to_v, const int *length)
     // Determine the two longest edges for the other two faces and
     // store them in ind[0] and ind[1]
     ind[0] = 2; ind[1] = 1;
@@ -1403,7 +1393,7 @@ index 7c9c8de7a..75c40197f 100644
  
     j = 0;
     switch (ind[0])
-@@ -346,4 +361,13 @@ Element *Tetrahedron::Duplicate(Mesh *m) const
+@@ -345,4 +360,13 @@ Element *Tetrahedron::Duplicate(Mesh *m) const
     return tet;
  }
  
@@ -1418,10 +1408,10 @@ index 7c9c8de7a..75c40197f 100644
 +
  }
 diff --git a/mesh/tetrahedron.hpp b/mesh/tetrahedron.hpp
-index b72e5db55..731cefb96 100644
+index c434ae903..2bca1a37b 100644
 --- a/mesh/tetrahedron.hpp
 +++ b/mesh/tetrahedron.hpp
-@@ -77,7 +77,9 @@ public:
+@@ -76,7 +76,9 @@ public:
     /** Reorder the vertices so that the longest edge is from vertex 0
         to vertex 1. If called it should be once from the mesh constructor,
         because the order may be used later for setting the edges. **/
@@ -1432,7 +1422,7 @@ index b72e5db55..731cefb96 100644
  
     virtual void ResetTransform(int tr) { transform = tr; }
     virtual unsigned GetTransform() const { return transform; }
-@@ -89,22 +91,18 @@ public:
+@@ -88,22 +90,18 @@ public:
     /// Calculate point matrix corresponding to a chain of transformations.
     static void GetPointMatrix(unsigned transform, DenseMatrix &pm);
  
@@ -1457,7 +1447,7 @@ index b72e5db55..731cefb96 100644
     virtual int GetNFaces() const { return 4; }
  
     virtual int GetNFaceVertices(int) const { return 3; }
-@@ -117,7 +115,6 @@ public:
+@@ -116,7 +114,6 @@ public:
     virtual ~Tetrahedron() { }
  };
  
@@ -1775,6 +1765,3 @@ index fb8583f8e..49cc5e7d7 100644
     virtual int GetNFaces() const { return 5; }
  
     virtual int GetNFaceVertices(int fi) const
-diff --git a/miniapps/meshing/mesh-quality.cpp b/miniapps/meshing/mesh-quality.cpp
-old mode 100755
-new mode 100644
