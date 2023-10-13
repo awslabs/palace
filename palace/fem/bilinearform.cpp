@@ -226,7 +226,7 @@ std::unique_ptr<ceed::Operator> DiscreteLinearOperator::Assemble() const
   Vector test_multiplicity(test_fespace.GetVSize());
   test_multiplicity = 0.0;
   mfem::Array<int> dofs;
-  auto h_mult = test_multiplicity.HostReadWrite();
+  auto *h_mult = test_multiplicity.HostReadWrite();
   for (int i = 0; i < test_fespace.GetNE(); i++)
   {
     test_fespace.GetElementVDofs(i, dofs);

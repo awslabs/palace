@@ -62,8 +62,6 @@ void DistRelaxationSmoother<OperType>::SetOperators(const OperType &op,
   r.SetSize(op.Height());
   x_G.SetSize(op_G.Height());
   y_G.SetSize(op_G.Height());
-  this->height = op.Height();
-  this->width = op.Width();
 
   const auto *PtAP_G = dynamic_cast<const ParOperType *>(&op_G);
   MFEM_VERIFY(PtAP_G,
@@ -73,6 +71,9 @@ void DistRelaxationSmoother<OperType>::SetOperators(const OperType &op,
   // Set up smoothers for A and A_G.
   B->SetOperator(op);
   B_G->SetOperator(op_G);
+
+  this->height = op.Height();
+  this->width = op.Width();
 }
 
 namespace

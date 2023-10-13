@@ -12,30 +12,6 @@ namespace palace
 namespace
 {
 
-void GetInverseDiagonal(const ParOperator &A, Vector &dinv)
-{
-  dinv.SetSize(A.Height());
-  A.AssembleDiagonal(dinv);
-  dinv.Reciprocal();
-}
-
-void GetInverseDiagonal(const ComplexParOperator &A, ComplexVector &dinv)
-{
-  MFEM_VERIFY(A.HasReal() || A.HasImag(),
-              "Invalid zero ComplexOperator for JacobiSmoother!");
-  dinv.SetSize(A.Height());
-  dinv = 0.0;
-  if (A.HasReal())
-  {
-    A.Real()->AssembleDiagonal(dinv.Real());
-  }
-  if (A.HasImag())
-  {
-    A.Imag()->AssembleDiagonal(dinv.Imag());
-  }
-  dinv.Reciprocal();
-}
-
 template <bool Transpose = false>
 inline void Apply(const Vector &dinv, const Vector &x, Vector &y)
 {
@@ -85,13 +61,15 @@ void JacobiSmoother<OperType>::SetOperator(const OperType &op)
       typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
                                 ComplexParOperator, ParOperator>::type;
 
-  this->height = op.Height();
-  this->width = op.Width();
-
   const auto *PtAP = dynamic_cast<const ParOperType *>(&op);
   MFEM_VERIFY(PtAP,
               "JacobiSmoother requires a ParOperator or ComplexParOperator operator!");
-  GetInverseDiagonal(*PtAP, dinv);
+  dinv.SetSize(op.Height());
+  PtAP->AssembleDiagonal(dinv);
+  dinv.Reciprocal();
+
+  this->height = op.Height();
+  this->width = op.Width();
 }
 
 template <typename OperType>

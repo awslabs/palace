@@ -379,7 +379,6 @@ std::unique_ptr<mfem::SparseMatrix> CeedOperatorFullAssemble(const Operator &op,
   mat->GetMemoryI().New(op.Height() + 1);
   auto *I = mat->GetI();
   mfem::Array<int> J(nnz), perm(nnz), Jmap(nnz + 1);
-  mfem::Array<int> perm2, backup_perm, backup_cols;
 
   for (int i = 0; i < op.Height() + 1; i++)
   {
@@ -395,32 +394,15 @@ std::unique_ptr<mfem::SparseMatrix> CeedOperatorFullAssemble(const Operator &op,
   int q = -1;  // True nnz index
   for (int k = 0; k < nnz;)
   {
+    // Sort column entries in the row.
     const int row = rows[perm[k]];
     const int start = k;
     while (k < nnz && rows[perm[k]] == row)
     {
       k++;
     }
-    const int row_nnz = k - start;
-
-    // Sort column entries in the row.
-    perm2.SetSize(row_nnz);
-    backup_perm.SetSize(row_nnz);
-    backup_cols.SetSize(row_nnz);
-    for (int p = 0; p < row_nnz; p++)
-    {
-      perm2[p] = p;
-      backup_perm[p] = perm[start + p];
-      backup_cols[p] = cols[perm[start + p]];
-    }
-    std::sort(perm2.begin(), perm2.end(),
-              [&](const int &i, const int &j)
-              { return (backup_cols[i] < backup_cols[j]); });
-    for (int p = 0; p < row_nnz; p++)
-    {
-      perm[start + p] = backup_perm[perm2[p]];
-      cols[perm[start + p]] = backup_cols[perm2[p]];
-    }
+    std::sort(perm.begin() + start, perm.begin() + k,
+              [&](const int &i, const int &j) { return (cols[i] < cols[j]); });
 
     q++;
     I[row + 1] = 1;
