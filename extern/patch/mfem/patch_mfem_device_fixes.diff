@@ -1,16 +1,3 @@
-diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 9e9aa895d..a163c66b6 100644
---- a/CMakeLists.txt
-+++ b/CMakeLists.txt
-@@ -138,7 +138,7 @@ if (MFEM_USE_CUDA)
-       set(CUDA_FLAGS "-ccbin=${CMAKE_CXX_COMPILER} ${CUDA_FLAGS}")
-       set(CMAKE_CUDA_HOST_LINK_LAUNCHER ${CMAKE_CXX_COMPILER})
-    endif()
--   set(CMAKE_CUDA_FLAGS ${CMAKE_CUDA_FLAGS} ${CUDA_FLAGS})
-+   set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} ${CUDA_FLAGS}")
-    set(CUSPARSE_FOUND TRUE)
-    set(CUSPARSE_LIBRARIES "cusparse")
-    set(CUBLAS_FOUND TRUE)
 diff --git a/general/device.cpp b/general/device.cpp
 index ccee71cd7..25e91b22f 100644
 --- a/general/device.cpp

@@ -43,10 +43,11 @@ private:
   mutable Vector psi, rhs;
 
 public:
-  DivFreeSolver(const MaterialOperator &mat_op, mfem::ParFiniteElementSpace &nd_fespace,
-                mfem::ParFiniteElementSpaceHierarchy &h1_fespaces,
+  DivFreeSolver(const MaterialOperator &mat_op,
+                const mfem::ParFiniteElementSpace &nd_fespace,
+                const mfem::ParFiniteElementSpaceHierarchy &h1_fespaces,
                 const std::vector<mfem::Array<int>> &h1_bdr_tdof_lists, double tol,
-                int max_it, int print, int pa_order_threshold);
+                int max_it, int print, int pa_order_threshold, bool pa_discrete_interp);
 
   // Given a vector of Nedelec dofs for an arbitrary vector field, compute the Nedelec dofs
   // of the irrotational portion of this vector field. The resulting vector will satisfy

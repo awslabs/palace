@@ -2,7 +2,7 @@ build*/
 examples/**/postpro*/
 examples/**/log*/
 spack/local/packages/palace/__pycache__/
-test/ref/**/*.json
+test/examples/ref/**/*.json
 .*.swp
 *.sif
 .DS_Store

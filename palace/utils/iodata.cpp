@@ -328,6 +328,7 @@ void IoData::CheckConfiguration()
   }
 
   // XX TODO: Default value for pa_order_threshold if we want PA enabled by default
+  // XX TODO: Enable Device::GPU by default if MFEM built with CUDA/HIP support?
 
   // Resolve default values in configuration file.
   if (solver.linear.type == config::LinearSolverData::Type::DEFAULT)

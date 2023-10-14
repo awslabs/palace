@@ -5,11 +5,6 @@
 # Download and build third-party dependencies
 #
 
-# Avoid DOWNLOAD_EXTRACT_TIMESTAMP warning
-if(CMAKE_VERSION VERSION_GREATER_EQUAL "3.24.0")
-  cmake_policy(SET CMP0135 NEW)
-endif()
-
 # Add METIS/ParMETIS libraries
 message(STATUS "================ Configuring METIS/ParMETIS dependencies ===============")
 include(ExternalMETIS)
@@ -51,7 +46,7 @@ if(PALACE_WITH_ARPACK)
 endif()
 
 # Add LIBXSMM (for libCEED)
-if(PALACE_WITH_LIBCEED AND PALACE_WITH_LIBXSMM)
+if(PALACE_WITH_LIBXSMM)
   message(STATUS "==================== Configuring LIBXSMM dependency ====================")
   include(ExternalLIBXSMM)
 endif()

@@ -60,5 +60,5 @@ jobs:
           spack load palace
 
           # Run tests
-          julia --project=test -e 'using Pkg; Pkg.instantiate()'
-          julia --project=test --color=yes test/runtests.jl
+          julia --project=test/examples -e 'using Pkg; Pkg.instantiate()'
+          julia --project=test/examples --color=yes test/examples/runtests.jl

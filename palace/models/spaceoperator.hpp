@@ -30,11 +30,11 @@ class IoData;
 class SpaceOperator
 {
 private:
-  const int pa_order_threshold;  // Order above which to use partial assembly vs. full
-  const int skip_zeros;          // Skip zeros during full assembly of operators
-  const bool pc_mat_real;        // Use real-valued matrix for preconditioner
-  const bool pc_mat_shifted;     // Use shifted mass matrix for preconditioner
-  const bool pc_mat_lor;         // Use low-order refined (LOR) space for preconditioner
+  const int pa_order_threshold;   // Order above which to use partial assembly vs. full
+  const bool pa_discrete_interp;  // Use partial assembly for discrete interpolators
+  const bool skip_zeros;          // Skip zeros during full assembly of matrices
+  const bool pc_mat_real;         // Use real-valued matrix for preconditioner
+  const bool pc_mat_shifted;      // Use shifted mass matrix for preconditioner
 
   // Helper variables for log file printing.
   bool print_hdr, print_prec_hdr;
@@ -49,9 +49,9 @@ private:
   // various purposes throughout the code including postprocessing.
   std::vector<std::unique_ptr<mfem::ND_FECollection>> nd_fecs;
   std::vector<std::unique_ptr<mfem::H1_FECollection>> h1_fecs;
-  mfem::RT_FECollection rt_fec;
-  mfem::ParFiniteElementSpaceHierarchy nd_fespaces, h1_fespaces;
-  mfem::ParFiniteElementSpace rt_fespace;
+  std::unique_ptr<mfem::RT_FECollection> rt_fec;
+  std::unique_ptr<mfem::ParFiniteElementSpaceHierarchy> nd_fespaces, h1_fespaces;
+  std::unique_ptr<mfem::ParFiniteElementSpace> rt_fespace;
 
   // Operator for domain material properties.
   MaterialOperator mat_op;
@@ -117,14 +117,14 @@ public:
   const auto &GetSurfaceCurrentOp() const { return surf_j_op; }
 
   // Return the parallel finite element space objects.
-  auto &GetNDSpaces() { return nd_fespaces; }
-  auto &GetNDSpace() { return nd_fespaces.GetFinestFESpace(); }
-  const auto &GetNDSpace() const { return nd_fespaces.GetFinestFESpace(); }
-  auto &GetH1Spaces() { return h1_fespaces; }
-  auto &GetH1Space() { return h1_fespaces.GetFinestFESpace(); }
-  const auto &GetH1Space() const { return h1_fespaces.GetFinestFESpace(); }
-  auto &GetRTSpace() { return rt_fespace; }
-  const auto &GetRTSpace() const { return rt_fespace; }
+  auto &GetNDSpaces() { return *nd_fespaces; }
+  auto &GetNDSpace() { return nd_fespaces->GetFinestFESpace(); }
+  const auto &GetNDSpace() const { return nd_fespaces->GetFinestFESpace(); }
+  auto &GetH1Spaces() { return *h1_fespaces; }
+  auto &GetH1Space() { return h1_fespaces->GetFinestFESpace(); }
+  const auto &GetH1Space() const { return h1_fespaces->GetFinestFESpace(); }
+  auto &GetRTSpace() { return *rt_fespace; }
+  const auto &GetRTSpace() const { return *rt_fespace; }
 
   // Return the number of true (conforming) dofs on the finest ND space.
   auto GlobalTrueVSize() { return GetNDSpace().GlobalTrueVSize(); }

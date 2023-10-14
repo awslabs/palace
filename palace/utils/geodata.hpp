@@ -4,8 +4,8 @@
 #ifndef PALACE_UTILS_GEODATA_HPP
 #define PALACE_UTILS_GEODATA_HPP
 
-#include <cmath>
 #include <array>
+#include <cmath>
 #include <memory>
 #include <vector>
 #include <mpi.h>

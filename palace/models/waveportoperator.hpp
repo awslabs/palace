@@ -74,8 +74,9 @@ private:
 
 public:
   WavePortData(const config::WavePortData &data, const MaterialOperator &mat_op,
-               mfem::ParFiniteElementSpace &nd_fespace,
-               mfem::ParFiniteElementSpace &h1_fespace, const mfem::Array<int> &dbc_marker);
+               const mfem::ParFiniteElementSpace &nd_fespace,
+               const mfem::ParFiniteElementSpace &h1_fespace,
+               const mfem::Array<int> &dbc_marker);
   ~WavePortData();
 
   const mfem::Array<int> &GetMarker() const { return attr_marker; }
@@ -139,8 +140,8 @@ private:
   std::map<int, WavePortData> ports;
   mfem::Array<int> port_marker;
   void SetUpBoundaryProperties(const IoData &iodata, const MaterialOperator &mat_op,
-                               mfem::ParFiniteElementSpace &nd_fespace,
-                               mfem::ParFiniteElementSpace &h1_fespace);
+                               const mfem::ParFiniteElementSpace &nd_fespace,
+                               const mfem::ParFiniteElementSpace &h1_fespace);
   void PrintBoundaryInfo(const IoData &iodata, mfem::ParMesh &mesh);
 
   // Compute boundary modes for all wave port boundaries at the specified frequency.
@@ -148,8 +149,8 @@ private:
 
 public:
   WavePortOperator(const IoData &iod, const MaterialOperator &mat,
-                   mfem::ParFiniteElementSpace &nd_fespace,
-                   mfem::ParFiniteElementSpace &h1_fespace);
+                   const mfem::ParFiniteElementSpace &nd_fespace,
+                   const mfem::ParFiniteElementSpace &h1_fespace);
 
   // Access data structures for the wave port with the given index.
   const WavePortData &GetPort(int idx) const;

@@ -27,12 +27,19 @@ The format of this changelog is based on
   - Added support for operator partial assembly for high-order finite element spaces based
     on libCEED for non-tensor product element meshes. This option is disabled by default,
     but can be activated using `config["Solver"]["PartialAssemblyOrder"]` set to some number
-    less than `"Order"` and `config["Solver"]["Device"]: "ceed-cpu"`.
+    less than or equal to `"Order"`.
+  - Added `config["Solver"]["Device"]` and `config["Solver"]["Backend"]` options for runtime
+    configuration of the MFEM device (CPU or GPU) and corresponding libCEED backend, with
+    suitable defaults for users.
   - Added support for non axis aligned lumped ports and current sources. Key words `"X"`,
     `"Y"`, `"Z"` and `"R"`, with optional prefix `"+"` or `"-"` still work, but now
     directions can be specified as vectors with 3 components. Users will be warned, and
     ultimately errored, if the specified directions do not agree with axis directions
     discovered from the geometry.
+  - Added flux-based error estimation, reported in `error-estimate.csv`. This computes the
+    difference between the numerical gradient (electrostatics) or curl (otherwise) of the
+    solution, and a smoother approximation obtained through a global mass matrix inversion.
+    The results are reported in `error-estimates.csv` within the `"Output"` folder.
   - Fixed bugs for simulations using tetrahedral meshes associated with unexpected mesh
     toplogy changes during parallel mesh construction.
   - Added improved `Timer` and `BlockTimer` classes with more timing categories for
@@ -40,12 +47,13 @@ The format of this changelog is based on
   - Added build dependencies on [libCEED](https://github.com/CEED/libCEED) and
     [LIBXSMM](https://github.com/libxsmm/libxsmm) to support operator partial assembly (CPU-
     based for now).
+  - Added unit test framework for all integrators based on
+    [Catch2](https://github.com/catchorg/Catch2), which also includes some automated
+    benchmarking capabilities for operator assembly and application.
   - Added improved OpenMP support in `palace` wrapper script and CI tests.
   - Added Apptainer/Singularity container build definition for Palace.
-  - Added flux-based error estimation, reported in `error-estimate.csv`. This computes the
-    difference between the numerical gradient (electrostatics) or curl (otherwise) of the
-    solution, and a smoother approximation obtained through a global mass matrix inversion.
-    The results are reported in `error-estimates.csv` within the `"Output"` folder.
+  - Fixed bugs related to thread-safety for OpenMP builds and parallel tetrahedral meshes in
+    the upstream MFEM library.
 
 ## [0.11.2] - 2023-07-14
 

@@ -23,5 +23,5 @@ docs:
 
 # Tests
 tests:
-	$(JULIA) --project=test -e 'using Pkg; Pkg.instantiate()'
-	$(JULIA) --project=test --color=yes test/runtests.jl
+	$(JULIA) --project=test/examples -e 'using Pkg; Pkg.instantiate()'
+	$(JULIA) --project=test/examples --color=yes test/examples/runtests.jl

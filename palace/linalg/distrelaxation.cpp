@@ -4,7 +4,8 @@
 #include "distrelaxation.hpp"
 
 #include <mfem.hpp>
-#include "fem/multigrid.hpp"
+#include "fem/bilinearform.hpp"
+#include "fem/integrator.hpp"
 #include "linalg/chebyshev.hpp"
 #include "linalg/rap.hpp"
 
@@ -13,20 +14,19 @@ namespace palace
 
 template <typename OperType>
 DistRelaxationSmoother<OperType>::DistRelaxationSmoother(
-    mfem::ParFiniteElementSpace &nd_fespace, mfem::ParFiniteElementSpace &h1_fespace,
-    int smooth_it, int cheby_smooth_it, int cheby_order, double cheby_sf_max,
-    double cheby_sf_min, bool cheby_4th_kind, int pa_order_threshold)
+    const mfem::ParFiniteElementSpace &nd_fespace,
+    const mfem::ParFiniteElementSpace &h1_fespace, int smooth_it, int cheby_smooth_it,
+    int cheby_order, double cheby_sf_max, double cheby_sf_min, bool cheby_4th_kind,
+    int pa_order_threshold, bool pa_discrete_interp)
   : Solver<OperType>(), pc_it(smooth_it), A(nullptr), A_G(nullptr), dbc_tdof_list_G(nullptr)
 {
   // Construct discrete gradient matrix for the auxiliary space.
-  {
-    // XX TODO: Separate interpolator partial assembly option?
-    auto grad = std::make_unique<mfem::DiscreteLinearOperator>(&h1_fespace, &nd_fespace);
-    grad->AddDomainInterpolator(new mfem::GradientInterpolator);
-    G = std::make_unique<ParOperator>(
-        fem::AssembleOperator(std::move(grad), true, pa_order_threshold), h1_fespace,
-        nd_fespace, true);
-  }
+  constexpr bool skip_zeros_interp = true;
+  DiscreteLinearOperator grad(h1_fespace, nd_fespace);
+  grad.AddDomainInterpolator<GradientInterpolator>();
+  G = std::make_unique<ParOperator>(
+      grad.Assemble(pa_discrete_interp ? pa_order_threshold : 99, skip_zeros_interp),
+      h1_fespace, nd_fespace, true);
 
   // Initialize smoothers.
   if (cheby_4th_kind)
@@ -62,8 +62,6 @@ void DistRelaxationSmoother<OperType>::SetOperators(const OperType &op,
   r.SetSize(op.Height());
   x_G.SetSize(op_G.Height());
   y_G.SetSize(op_G.Height());
-  this->height = op.Height();
-  this->width = op.Width();
 
   const auto *PtAP_G = dynamic_cast<const ParOperType *>(&op_G);
   MFEM_VERIFY(PtAP_G,
@@ -73,6 +71,9 @@ void DistRelaxationSmoother<OperType>::SetOperators(const OperType &op,
   // Set up smoothers for A and A_G.
   B->SetOperator(op);
   B_G->SetOperator(op_G);
+
+  this->height = op.Height();
+  this->width = op.Width();
 }
 
 namespace

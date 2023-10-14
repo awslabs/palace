@@ -3,7 +3,10 @@
 
 #include "laplaceoperator.hpp"
 
+#include "fem/bilinearform.hpp"
 #include "fem/coefficient.hpp"
+#include "fem/fespace.hpp"
+#include "fem/integrator.hpp"
 #include "fem/multigrid.hpp"
 #include "linalg/rap.hpp"
 #include "utils/communication.hpp"
@@ -113,17 +116,20 @@ std::map<int, mfem::Array<int>> ConstructSources(const IoData &iodata)
 
 LaplaceOperator::LaplaceOperator(const IoData &iodata,
                                  const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh)
-  : pa_order_threshold(iodata.solver.pa_order_threshold), skip_zeros(0), print_hdr(true),
-    dbc_marker(SetUpBoundaryProperties(iodata, *mesh.back())),
+  : pa_order_threshold(iodata.solver.pa_order_threshold),
+    pa_discrete_interp(iodata.solver.pa_discrete_interp), skip_zeros(false),
+    print_hdr(true), dbc_marker(SetUpBoundaryProperties(iodata, *mesh.back())),
     h1_fecs(fem::ConstructFECollections<mfem::H1_FECollection>(
         iodata.solver.order, mesh.back()->Dimension(), iodata.solver.linear.mg_max_levels,
         iodata.solver.linear.mg_coarsen_type, false)),
-    nd_fec(iodata.solver.order, mesh.back()->Dimension()),
+    nd_fec(std::make_unique<mfem::ND_FECollection>(iodata.solver.order,
+                                                   mesh.back()->Dimension())),
     h1_fespaces(fem::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
         iodata.solver.linear.mg_max_levels, iodata.solver.linear.mg_legacy_transfer,
-        pa_order_threshold, mesh, h1_fecs, &dbc_marker, &dbc_tdof_lists)),
-    nd_fespace(mesh.back().get(), &nd_fec), mat_op(iodata, *mesh.back()),
-    source_attr_lists(ConstructSources(iodata))
+        pa_order_threshold, pa_discrete_interp, mesh, h1_fecs, &dbc_marker,
+        &dbc_tdof_lists)),
+    nd_fespace(std::make_unique<FiniteElementSpace>(mesh.back().get(), nd_fec.get())),
+    mat_op(iodata, *mesh.back()), source_attr_lists(ConstructSources(iodata))
 {
   // Print essential BC information.
   if (dbc_marker.Size() && dbc_marker.Max() > 0)
@@ -143,11 +149,11 @@ std::unique_ptr<Operator> LaplaceOperator::GetStiffnessMatrix()
                GetH1Space().GetMaxElementOrder() > pa_order_threshold ? "Partial" : "Full");
     Mpi::Print("\nAssembling multigrid hierarchy:\n");
   }
-  auto K = std::make_unique<MultigridOperator>(h1_fespaces.GetNumLevels());
-  for (int l = 0; l < h1_fespaces.GetNumLevels(); l++)
+  auto K = std::make_unique<MultigridOperator>(GetH1Spaces().GetNumLevels());
+  for (int l = 0; l < GetH1Spaces().GetNumLevels(); l++)
   {
     // Force coarse level operator to be fully assembled always.
-    auto &h1_fespace_l = h1_fespaces.GetFESpaceAtLevel(l);
+    const auto &h1_fespace_l = GetH1Spaces().GetFESpaceAtLevel(l);
     if (print_hdr)
     {
       Mpi::Print(" Level {:d} (p = {:d}): {:d} unknowns", l,
@@ -155,12 +161,10 @@ std::unique_ptr<Operator> LaplaceOperator::GetStiffnessMatrix()
     }
     constexpr auto MatType = MaterialPropertyType::PERMITTIVITY_REAL;
     MaterialPropertyCoefficient<MatType> epsilon_func(mat_op);
-    auto k = std::make_unique<mfem::SymmetricBilinearForm>(&h1_fespace_l);
-    k->AddDomainIntegrator(new mfem::DiffusionIntegrator(epsilon_func));
+    BilinearForm k(h1_fespace_l);
+    k.AddDomainIntegrator<DiffusionIntegrator>(epsilon_func);
     auto K_l = std::make_unique<ParOperator>(
-        fem::AssembleOperator(std::move(k), true, (l > 0) ? pa_order_threshold : 100,
-                              skip_zeros),
-        h1_fespace_l);
+        k.Assemble((l > 0) ? pa_order_threshold : 99, skip_zeros), h1_fespace_l);
     if (print_hdr)
     {
       if (const auto *k_spm =
@@ -184,11 +188,12 @@ std::unique_ptr<Operator> LaplaceOperator::GetStiffnessMatrix()
 
 std::unique_ptr<Operator> LaplaceOperator::GetGradMatrix()
 {
-  auto grad = std::make_unique<mfem::DiscreteLinearOperator>(&GetH1Space(), &GetNDSpace());
-  grad->AddDomainInterpolator(new mfem::GradientInterpolator);
+  constexpr bool skip_zeros_interp = true;
+  DiscreteLinearOperator grad(GetH1Space(), GetNDSpace());
+  grad.AddDomainInterpolator<GradientInterpolator>();
   return std::make_unique<ParOperator>(
-      fem::AssembleOperator(std::move(grad), true, pa_order_threshold), GetH1Space(),
-      GetNDSpace(), true);
+      grad.Assemble(pa_discrete_interp ? pa_order_threshold : 99, skip_zeros_interp),
+      GetH1Space(), GetNDSpace(), true);
 }
 
 void LaplaceOperator::GetExcitationVector(int idx, const Operator &K, Vector &X,

@@ -174,7 +174,7 @@ jobs:
           [[ "${{ matrix.with-eigensolver }}" == 'slepc' ]] && WITH_SLEPC='ON' || WITH_SLEPC='OFF'
           [[ "${{ matrix.with-eigensolver }}" == 'arpack' ]] && WITH_ARPACK='ON' || WITH_ARPACK='OFF'
 
-          # Build and install
+          # Build and install (with unit tests)
           mkdir palace-build && cd palace-build
           cmake .. \
             -DCMAKE_INSTALL_PREFIX=$(pwd)/../palace-install \
@@ -186,9 +186,31 @@ jobs:
             -DPALACE_WITH_MUMPS=$WITH_MUMPS \
             -DPALACE_WITH_SLEPC=$WITH_SLEPC \
             -DPALACE_WITH_ARPACK=$WITH_ARPACK
-          make -j$NUM_PROC_BUILD
+          make -j$NUM_PROC_BUILD palace-tests
 
-      - name: Run tests
+      - name: Run unit tests
+        env:
+          NUM_PROC_TEST_MAX: '2'
+        run: |
+          # Configure environment
+          if [[ "${{ matrix.compiler }}" == 'intel' ]] || \
+             [[ "${{ matrix.mpi }}" == 'intelmpi' ]] || \
+             [[ "${{ matrix.math-libs }}" == 'intelmkl' ]]; then
+            source /opt/intel/oneapi/setvars.sh  # Sets PATH, MKLROOT
+          fi
+          if [[ "${{ matrix.with-openmp }}" == 'true' ]]; then
+            export OMP_NUM_THREADS=2
+          else
+            export OMP_NUM_THREADS=1
+          fi
+          export LD_LIBRARY_PATH=$(pwd)/palace-install/lib:$LD_LIBRARY_PATH
+          export LD_LIBRARY_PATH=$(pwd)/palace-install/lib64:$LD_LIBRARY_PATH
+          cd $(pwd)/palace-build/palace-build/test/unit
+
+          # Run tests
+          mpirun -np $NUM_PROC_TEST_MAX ./unit-tests --skip-benchmarks
+
+      - name: Run regression tests for examples/
         env:
           NUM_PROC_TEST_MAX: '8'
         run: |
@@ -197,6 +219,10 @@ jobs:
              [[ "${{ matrix.mpi }}" == 'intelmpi' ]] || \
              [[ "${{ matrix.math-libs }}" == 'intelmkl' ]]; then
             source /opt/intel/oneapi/setvars.sh  # Sets PATH, MKLROOT
+          fi
+          if [[ "${{ matrix.math-libs }}" == 'aocl' ]]; then
+            export AOCLROOT=/opt/AMD/aocl/aocl-linux-gcc-4.1.0/gcc
+            export LD_LIBRARY_PATH=$AOCLROOT/lib:$LD_LIBRARY_PATH
           fi
           export NUM_PROC_TEST=$(nproc 2> /dev/null || sysctl -n hw.ncpu)
           if [[ "$NUM_PROC_TEST" -gt "$NUM_PROC_TEST_MAX" ]]; then
@@ -208,12 +234,8 @@ jobs:
           else
             export OMP_NUM_THREADS=1
           fi
-          if [[ "${{ matrix.math-libs }}" == 'aocl' ]]; then
-            export AOCLROOT=/opt/AMD/aocl/aocl-linux-gcc-4.1.0/gcc
-            export LD_LIBRARY_PATH=$AOCLROOT/lib:$LD_LIBRARY_PATH
-          fi
           export PATH=$(pwd)/palace-install/bin:$PATH
 
           # Run tests
-          julia --project=test -e 'using Pkg; Pkg.instantiate()'
-          julia --project=test --color=yes test/runtests.jl
+          julia --project=test/examples -e 'using Pkg; Pkg.instantiate()'
+          julia --project=test/examples --color=yes test/examples/runtests.jl

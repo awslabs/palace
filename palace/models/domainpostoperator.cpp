@@ -3,9 +3,9 @@
 
 #include "domainpostoperator.hpp"
 
+#include "fem/bilinearform.hpp"
 #include "fem/coefficient.hpp"
 #include "fem/integrator.hpp"
-#include "fem/multigrid.hpp"
 #include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
@@ -14,23 +14,23 @@ namespace palace
 {
 
 DomainPostOperator::DomainPostOperator(const IoData &iodata, const MaterialOperator &mat_op,
-                                       mfem::ParFiniteElementSpace *nd_fespace,
-                                       mfem::ParFiniteElementSpace *rt_fespace,
+                                       const mfem::ParFiniteElementSpace *nd_fespace,
+                                       const mfem::ParFiniteElementSpace *rt_fespace,
                                        int pa_order_threshold)
 {
+  constexpr bool skip_zeros = false;
   if (nd_fespace)
   {
     // Construct ND mass matrix to compute the electric field energy integral as:
     //              E_elec = 1/2 Re{∫_Ω Dᴴ E dV} as (M_eps * e)ᴴ e.
     // Only the real part of the permeability contributes to the energy (imaginary part
     // cancels out in the inner product due to symmetry).
-    constexpr int skip_zeros = 0;
     constexpr auto MatTypeEpsReal = MaterialPropertyType::PERMITTIVITY_REAL;
     constexpr auto MatTypeEpsImag = MaterialPropertyType::PERMITTIVITY_IMAG;
     MaterialPropertyCoefficient<MatTypeEpsReal> epsilon_func(mat_op);
-    auto m_nd = std::make_unique<mfem::SymmetricBilinearForm>(nd_fespace);
-    m_nd->AddDomainIntegrator(new mfem::VectorFEMassIntegrator(epsilon_func));
-    M_ND = fem::AssembleOperator(std::move(m_nd), true, pa_order_threshold, skip_zeros);
+    BilinearForm m_nd(*nd_fespace);
+    m_nd.AddDomainIntegrator<VectorFEMassIntegrator>(epsilon_func);
+    M_ND = m_nd.Assemble(pa_order_threshold, skip_zeros);
     D.SetSize(M_ND->Height());
 
     // Use the provided domain postprocessing indices to group for postprocessing bulk
@@ -52,15 +52,11 @@ DomainPostOperator::DomainPostOperator(const IoData &iodata, const MaterialOpera
       epsilon_func_i.AddCoefficient(
           std::make_unique<MaterialPropertyCoefficient<MatTypeEpsImag>>(mat_op, -1.0),
           attr_marker);
-      auto mr_nd = std::make_unique<mfem::SymmetricBilinearForm>(nd_fespace);
-      auto mi_nd = std::make_unique<mfem::SymmetricBilinearForm>(nd_fespace);
-      mr_nd->AddDomainIntegrator(new mfem::VectorFEMassIntegrator(epsilon_func_r));
-      mi_nd->AddDomainIntegrator(new mfem::VectorFEMassIntegrator(epsilon_func_i));
-      M_NDi.emplace(idx,
-                    std::make_pair(fem::AssembleOperator(std::move(mr_nd), true,
-                                                         pa_order_threshold, skip_zeros),
-                                   fem::AssembleOperator(std::move(mi_nd), true,
-                                                         pa_order_threshold, skip_zeros)));
+      BilinearForm mr_nd(*nd_fespace), mi_nd(*nd_fespace);
+      mr_nd.AddDomainIntegrator<VectorFEMassIntegrator>(epsilon_func_r);
+      mi_nd.AddDomainIntegrator<VectorFEMassIntegrator>(epsilon_func_i);
+      M_NDi.emplace(idx, std::make_pair(mr_nd.Assemble(pa_order_threshold, skip_zeros),
+                                        mi_nd.Assemble(pa_order_threshold, skip_zeros)));
     }
   }
 
@@ -68,12 +64,11 @@ DomainPostOperator::DomainPostOperator(const IoData &iodata, const MaterialOpera
   {
     // Construct RT mass matrix to compute the magnetic field energy integral as:
     //              E_mag = 1/2 Re{∫_Ω Bᴴ H dV} as (M_muinv * b)ᴴ b.
-    constexpr int skip_zeros = 0;
     constexpr auto MatTypeMuInv = MaterialPropertyType::INV_PERMEABILITY;
     MaterialPropertyCoefficient<MatTypeMuInv> muinv_func(mat_op);
-    auto m_rt = std::make_unique<mfem::SymmetricBilinearForm>(rt_fespace);
-    m_rt->AddDomainIntegrator(new mfem::VectorFEMassIntegrator(muinv_func));
-    M_RT = fem::AssembleOperator(std::move(m_rt), true, pa_order_threshold - 1, skip_zeros);
+    BilinearForm m_rt(*rt_fespace);
+    m_rt.AddDomainIntegrator<VectorFEMassIntegrator>(muinv_func);
+    M_RT = m_rt.Assemble(pa_order_threshold - 1, skip_zeros);
     H.SetSize(M_RT->Height());
   }
 }

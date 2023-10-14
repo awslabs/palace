@@ -1654,7 +1654,6 @@ void LinearSolverData::SetUp(json &solver)
   // Preconditioner-specific options.
   pc_mat_real = linear->value("PCMatReal", pc_mat_real);
   pc_mat_shifted = linear->value("PCMatShifted", pc_mat_shifted);
-  pc_mat_lor = linear->value("PCLowOrderRefined", pc_mat_lor);
   pc_side_type = linear->value("PCSide", pc_side_type);
   sym_fact_type = linear->value("ColumnOrdering", sym_fact_type);
   strumpack_compression_type =
@@ -1694,7 +1693,6 @@ void LinearSolverData::SetUp(json &solver)
 
   linear->erase("PCMatReal");
   linear->erase("PCMatShifted");
-  linear->erase("PCLowOrderRefined");
   linear->erase("PCSide");
   linear->erase("ColumnOrdering");
   linear->erase("STRUMPACKCompressionType");
@@ -1734,7 +1732,6 @@ void LinearSolverData::SetUp(json &solver)
 
   // std::cout << "PCMatReal: " << pc_mat_real << '\n';
   // std::cout << "PCMatShifted: " << pc_mat_shifted << '\n';
-  // std::cout << "PCLowOrderRefined: " << pc_mat_lor << '\n';
   // std::cout << "PCSide: " << pc_side_type << '\n';
   // std::cout << "ColumnOrdering: " << sym_fact_type << '\n';
   // std::cout << "STRUMPACKCompressionType: " << strumpack_compression_type << '\n';
@@ -1748,6 +1745,11 @@ void LinearSolverData::SetUp(json &solver)
   // std::cout << "GSOrthogonalization: " << gs_orthog_type << '\n';
 }
 
+// Helpers for converting string keys to enum for SolverData::Device.
+PALACE_JSON_SERIALIZE_ENUM(SolverData::Device, {{SolverData::Device::CPU, "CPU"},
+                                                {SolverData::Device::GPU, "GPU"},
+                                                {SolverData::Device::DEBUG, "Debug"}})
+
 void SolverData::SetUp(json &config)
 {
   auto solver = config.find("Solver");
@@ -1757,7 +1759,9 @@ void SolverData::SetUp(json &config)
   }
   order = solver->value("Order", order);
   pa_order_threshold = solver->value("PartialAssemblyOrder", pa_order_threshold);
+  pa_discrete_interp = solver->value("PartialAssemblyInterpolators", pa_discrete_interp);
   device = solver->value("Device", device);
+  ceed_backend = solver->value("Backend", ceed_backend);
 
   driven.SetUp(*solver);
   eigenmode.SetUp(*solver);
@@ -1769,7 +1773,9 @@ void SolverData::SetUp(json &config)
   // Cleanup
   solver->erase("Order");
   solver->erase("PartialAssemblyOrder");
+  solver->erase("PartialAssemblyInterpolators");
   solver->erase("Device");
+  solver->erase("Backend");
 
   solver->erase("Driven");
   solver->erase("Eigenmode");
@@ -1784,7 +1790,9 @@ void SolverData::SetUp(json &config)
   // Debug
   // std::cout << "Order: " << order << '\n';
   // std::cout << "PartialAssemblyOrder: " << pa_order_threshold << '\n';
+  // std::cout << "PartialAssemblyInterpolators: " << pa_discrete_interp << '\n';
   // std::cout << "Device: " << device << '\n';
+  // std::cout << "Backend: " << ceed_backend << '\n';
 }
 
 }  // namespace palace::config

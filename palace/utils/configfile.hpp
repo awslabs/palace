@@ -765,10 +765,6 @@ public:
   // (makes the preconditoner matrix SPD).
   int pc_mat_shifted = -1;
 
-  // Enable low-order refined (LOR) preconditioner construction. Only available for meshes
-  // based on tensor-product elements.
-  bool pc_mat_lor = false;
-
   // Choose left or right preconditioning.
   enum class SideType
   {
@@ -844,13 +840,23 @@ public:
   // Approximation order.
   int order = 1;
 
-  // Order above which to always use partial assembly instead of full assembly.
+  // Order above which to use partial assembly instead of full assembly.
   int pa_order_threshold = 100;
 
-  // XX TODO: Separate interpolator partial assembly option?
+  // Enable partial assembly for discrete linear operators.
+  bool pa_discrete_interp = true;
 
-  // Device used to configure the MFEM backend.
-  std::string device = "cpu";
+  // Device used to configure MFEM.
+  enum class Device
+  {
+    CPU,
+    GPU,
+    DEBUG
+  };
+  Device device = Device::CPU;
+
+  // Backend for libCEED (https://libceed.org/en/latest/gettingstarted/#backends).
+  std::string ceed_backend = "";
 
   // Solver objects.
   DrivenSolverData driven = {};

@@ -31,8 +31,8 @@ private:
 
 public:
   DomainPostOperator(const IoData &iodata, const MaterialOperator &mat_op,
-                     mfem::ParFiniteElementSpace *nd_fespace,
-                     mfem::ParFiniteElementSpace *rt_fespace, int pa_order_threshold);
+                     const mfem::ParFiniteElementSpace *nd_fespace,
+                     const mfem::ParFiniteElementSpace *rt_fespace, int pa_order_threshold);
 
   // Access underlying bulk loss postprocessing data structures (for keys).
   const auto &GetEps() const { return M_NDi; }

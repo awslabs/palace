@@ -24,22 +24,20 @@ ColumnLimit: 92
 ConstructorInitializerIndentWidth: 2
 ContinuationIndentWidth: 4
 IncludeCategories:
-  - Regex:           '^<.*/.*\.hpp>'
+  - Regex:           '^<.*/.*/.*\.hpp>'
     Priority:        6
-  - Regex:           '^<.*\.hpp>'
+  - Regex:           '^<.*/.*\.hpp>'
     Priority:        5
-  - Regex:           '^<.*/.*\.h>'
+  - Regex:           '^<.*\.hpp>'
     Priority:        4
-  - Regex:           '^<.*\.h>'
+  - Regex:           '^<.*/.*\.h>'
     Priority:        3
-  - Regex:           '^<(complex|chrono)>'
-    Priority:        1
-  - Regex:           '^<c.*>'
-    Priority:        0
-  - Regex:           '^<.*/.*>'
+  - Regex:           '^<.*\.h>'
     Priority:        2
-  - Regex:           '^<.*>'
+  - Regex:           '^<.*/.*>'
     Priority:        1
+  - Regex:           '^<.*>'
+    Priority:        0
   - Regex:           '^".*"'
     Priority:        7
   - Regex:           '.*'
@@ -51,4 +49,6 @@ PackConstructorInitializers: BinPack
 QualifierAlignment: Left
 ShortNamespaceLines: 0
 SpacesBeforeTrailingComments: 2
+StatementMacros: ['PalacePragmaOmp']
+TypenameMacros: ['CEED_QFUNCTION']
 UseTab: Never

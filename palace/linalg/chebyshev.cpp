@@ -12,31 +12,6 @@ namespace palace
 namespace
 {
 
-void GetInverseDiagonal(const ParOperator &A, Vector &dinv)
-{
-  dinv.SetSize(A.Height());
-  A.AssembleDiagonal(dinv);
-  dinv.Reciprocal();
-}
-
-void GetInverseDiagonal(const ComplexParOperator &A, ComplexVector &dinv)
-{
-  MFEM_VERIFY(A.HasReal() || A.HasImag(),
-              "Invalid zero ComplexOperator for ChebyshevSmoother!");
-  dinv.SetSize(A.Height());
-  dinv.SetSize(A.Height());
-  dinv = 0.0;
-  if (A.HasReal())
-  {
-    A.Real()->AssembleDiagonal(dinv.Real());
-  }
-  if (A.HasImag())
-  {
-    A.Imag()->AssembleDiagonal(dinv.Imag());
-  }
-  dinv.Reciprocal();
-}
-
 double GetLambdaMax(MPI_Comm comm, const Operator &A, const Vector &dinv)
 {
   DiagonalOperator Dinv(dinv);
@@ -193,17 +168,20 @@ void ChebyshevSmoother<OperType>::SetOperator(const OperType &op)
   A = &op;
   r.SetSize(op.Height());
   d.SetSize(op.Height());
-  this->height = op.Height();
-  this->width = op.Width();
 
   const auto *PtAP = dynamic_cast<const ParOperType *>(&op);
   MFEM_VERIFY(PtAP,
               "ChebyshevSmoother requires a ParOperator or ComplexParOperator operator!");
-  GetInverseDiagonal(*PtAP, dinv);
+  dinv.SetSize(op.Height());
+  PtAP->AssembleDiagonal(dinv);
+  dinv.Reciprocal();
 
   // Set up Chebyshev coefficients using the computed maximum eigenvalue estimate. See
   // mfem::OperatorChebyshevSmoother or Adams et al. (2003).
   lambda_max = sf_max * GetLambdaMax(PtAP->GetComm(), *A, dinv);
+
+  this->height = op.Height();
+  this->width = op.Width();
 }
 
 template <typename OperType>
@@ -257,14 +235,14 @@ void ChebyshevSmoother1stKind<OperType>::SetOperator(const OperType &op)
   A = &op;
   r.SetSize(op.Height());
   d.SetSize(op.Height());
-  this->height = op.Height();
-  this->width = op.Width();
 
   const auto *PtAP = dynamic_cast<const ParOperType *>(&op);
   MFEM_VERIFY(
       PtAP,
       "ChebyshevSmoother1stKind requires a ParOperator or ComplexParOperator operator!");
-  GetInverseDiagonal(*PtAP, dinv);
+  dinv.SetSize(op.Height());
+  PtAP->AssembleDiagonal(dinv);
+  dinv.Reciprocal();
 
   // Set up Chebyshev coefficients using the computed maximum eigenvalue estimate. The
   // optimized estimate of lambda_min comes from (2.24) of Phillips and Fischer (2022).
@@ -276,6 +254,9 @@ void ChebyshevSmoother1stKind<OperType>::SetOperator(const OperType &op)
   const double lambda_min = sf_min * lambda_max;
   theta = 0.5 * (lambda_max + lambda_min);
   delta = 0.5 * (lambda_max - lambda_min);
+
+  this->height = op.Height();
+  this->width = op.Width();
 }
 
 template <typename OperType>

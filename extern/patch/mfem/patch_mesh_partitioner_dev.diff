@@ -1,5 +1,5 @@
 diff --git a/.gitignore b/.gitignore
-index 3b27c313b..c1b41301e 100644
+index d92cf5f27..1a9e62964 100644
 --- a/.gitignore
 +++ b/.gitignore
 @@ -227,7 +227,7 @@ miniapps/meshing/mobius-strip.mesh
@@ -319,10 +319,10 @@ index 000000000..9b17ae982
 +   return 0;
 +}
 diff --git a/fem/pfespace.cpp b/fem/pfespace.cpp
-index 99ec4eaac..fa6a31a9e 100644
+index 71c1273e0..703e2f3ba 100644
 --- a/fem/pfespace.cpp
 +++ b/fem/pfespace.cpp
-@@ -731,13 +731,10 @@ void ParFiniteElementSpace::CheckNDSTriaDofs()
+@@ -715,13 +715,10 @@ void ParFiniteElementSpace::CheckNDSTriaDofs()
     }
  
     // Check for shared triangle faces
@@ -379,10 +379,10 @@ index 0f16b3023..a19b099a1 100644
  
  template <class T>
 diff --git a/general/communication.cpp b/general/communication.cpp
-index 0c2fffc1f..e8002a273 100644
+index 10fa6988c..95235edd3 100644
 --- a/general/communication.cpp
 +++ b/general/communication.cpp
-@@ -275,7 +275,7 @@ void GroupTopology::Save(ostream &os) const
+@@ -263,7 +263,7 @@ void GroupTopology::Save(ostream &os) const
     os << "\ncommunication_groups\n";
     os << "number_of_groups " << NGroups() << "\n\n";
  
@@ -404,7 +404,7 @@ index 2ed9f4a1b..96373b2d1 100644
  
  ///  C = A * B  (as boolean matrices)
 diff --git a/mesh/mesh.cpp b/mesh/mesh.cpp
-index 36a3063cb..45871a66e 100644
+index 3b2dec898..292cb89ea 100644
 --- a/mesh/mesh.cpp
 +++ b/mesh/mesh.cpp
 @@ -19,6 +19,7 @@
@@ -423,7 +423,7 @@ index 36a3063cb..45871a66e 100644
  
  // Include the METIS header, if using version 5. If using METIS 4, the needed
  // declarations are inlined below, i.e. no header is needed.
-@@ -1307,7 +1309,7 @@ Mesh::FaceInformation::operator Mesh::FaceInfo() const
+@@ -1308,7 +1310,7 @@ Mesh::FaceInformation::operator Mesh::FaceInfo() const
     return res;
  }
  
@@ -432,7 +432,7 @@ index 36a3063cb..45871a66e 100644
  {
     os << "face topology=";
     switch (info.topology)
-@@ -2985,7 +2987,7 @@ void Mesh::FinalizeTopology(bool generate_bdr)
+@@ -2986,7 +2988,7 @@ void Mesh::FinalizeTopology(bool generate_bdr)
     {
        GetElementToFaceTable();
        GenerateFaces();
@@ -441,7 +441,7 @@ index 36a3063cb..45871a66e 100644
        {
           GenerateBoundaryElements();
           GetElementToFaceTable(); // update be_to_face
-@@ -3005,7 +3007,7 @@ void Mesh::FinalizeTopology(bool generate_bdr)
+@@ -3006,7 +3008,7 @@ void Mesh::FinalizeTopology(bool generate_bdr)
        if (Dim == 2)
        {
           GenerateFaces(); // 'Faces' in 2D refers to the edges
@@ -450,7 +450,7 @@ index 36a3063cb..45871a66e 100644
           {
              GenerateBoundaryElements();
           }
-@@ -3019,7 +3021,7 @@ void Mesh::FinalizeTopology(bool generate_bdr)
+@@ -3020,7 +3022,7 @@ void Mesh::FinalizeTopology(bool generate_bdr)
     if (Dim == 1)
     {
        GenerateFaces();
@@ -459,7 +459,7 @@ index 36a3063cb..45871a66e 100644
        {
           GenerateBoundaryElements();
        }
-@@ -5633,6 +5635,12 @@ const FiniteElementSpace *Mesh::GetNodalFESpace() const
+@@ -5634,6 +5636,12 @@ const FiniteElementSpace *Mesh::GetNodalFESpace() const
  
  void Mesh::SetCurvature(int order, bool discont, int space_dim, int ordering)
  {
@@ -472,7 +472,7 @@ index 36a3063cb..45871a66e 100644
     space_dim = (space_dim == -1) ? spaceDim : space_dim;
     FiniteElementCollection* nfec;
     if (discont)
-@@ -10659,7 +10667,7 @@ void Mesh::Printer(std::ostream &os, std::string section_delimiter) const
+@@ -10660,7 +10668,7 @@ void Mesh::Printer(std::ostream &os, std::string section_delimiter) const
     }
  }
  
@@ -481,7 +481,7 @@ index 36a3063cb..45871a66e 100644
  {
     int i;
     Array<int> vert;
-@@ -12550,6 +12558,878 @@ void Mesh::GetGeometricParametersFromJacobian(const DenseMatrix &J,
+@@ -12551,6 +12559,878 @@ void Mesh::GetGeometricParametersFromJacobian(const DenseMatrix &J,
  }
  
  
@@ -1699,7 +1699,7 @@ index b373fb72d..419745f1b 100644
  }
  
 diff --git a/mesh/pmesh.cpp b/mesh/pmesh.cpp
-index cffe6828e..d9f0df7b1 100644
+index 0cb8996fb..ac1df211e 100644
 --- a/mesh/pmesh.cpp
 +++ b/mesh/pmesh.cpp
 @@ -238,6 +238,8 @@ ParMesh::ParMesh(MPI_Comm comm, Mesh &mesh, int *partitioning_,
@@ -1719,7 +1719,7 @@ index cffe6828e..d9f0df7b1 100644
  
     Mesh::Finalize(refine, fix_orientation);
  
-@@ -6339,6 +6342,7 @@ void ParMesh::ParPrint(ostream &os) const
+@@ -6325,6 +6328,7 @@ void ParMesh::ParPrint(ostream &os) const
     {
        os << "total_shared_faces " << sface_lface.Size() << '\n';
     }

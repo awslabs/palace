@@ -23,8 +23,8 @@ class ParOperator : public Operator
 {
 private:
   // Storage and access for the local operator.
-  std::unique_ptr<Operator> data_A;
-  Operator *A;
+  mutable std::unique_ptr<Operator> data_A;
+  mutable Operator *A;
 
   // Finite element spaces for parallel prolongation and restriction.
   const mfem::ParFiniteElementSpace &trial_fespace, &test_fespace;
@@ -181,6 +181,9 @@ public:
   // Get the essential boundary condition true dofs associated with the operator. May be
   // nullptr.
   const mfem::Array<int> *GetEssentialTrueDofs() const { return dbc_tdof_list; }
+
+  // Assemble the diagonal for the parallel operator.
+  void AssembleDiagonal(ComplexVector &diag) const;
 
   bool IsReal() const override { return A->IsReal(); }
   bool IsImag() const override { return A->IsImag(); }

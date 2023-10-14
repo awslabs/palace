@@ -3,8 +3,8 @@
 
 #include "iterative.hpp"
 
-#include <cmath>
 #include <algorithm>
+#include <cmath>
 #include <limits>
 #include <string>
 #include "linalg/orthog.hpp"
@@ -45,7 +45,7 @@ inline constexpr T SafeMin()
   constexpr int expm = std::numeric_limits<T>::min_exponent;
   constexpr int expM = std::numeric_limits<T>::max_exponent;
   // Note: pow is not constexpr in C++17 so this actually might not return a constexpr for
-  //       all compilers.
+  // all compilers.
   return std::max(std::pow(fradix, T(expm - 1)), std::pow(fradix, T(1 - expM)));
 }
 
@@ -64,7 +64,7 @@ inline constexpr T SafeMax()
   constexpr int expm = std::numeric_limits<T>::min_exponent;
   constexpr int expM = std::numeric_limits<T>::max_exponent;
   // Note: pow is not constexpr in C++17 so this actually might not return a constexpr for
-  //       all compilers.
+  // all compilers.
   return std::min(std::pow(fradix, T(1 - expm)), std::pow(fradix, T(expM - 1)));
 }
 

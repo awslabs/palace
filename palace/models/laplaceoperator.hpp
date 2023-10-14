@@ -23,8 +23,9 @@ class IoData;
 class LaplaceOperator
 {
 private:
-  const int pa_order_threshold;  // Order above which to use partial assembly vs. full
-  const int skip_zeros;          // Skip zeros during full assembly of operators
+  const int pa_order_threshold;   // Order above which to use partial assembly vs. full
+  const bool pa_discrete_interp;  // Use partial assembly for discrete interpolators
+  const bool skip_zeros;          // Skip zeros during full assembly of matrices
 
   // Helper variable for log file printing.
   bool print_hdr;
@@ -36,9 +37,9 @@ private:
   // Objects defining the finite element spaces for the electrostatic potential (H1) and
   // electric field (Nedelec) on the given mesh.
   std::vector<std::unique_ptr<mfem::H1_FECollection>> h1_fecs;
-  mfem::ND_FECollection nd_fec;
-  mfem::ParFiniteElementSpaceHierarchy h1_fespaces;
-  mfem::ParFiniteElementSpace nd_fespace;
+  std::unique_ptr<mfem::ND_FECollection> nd_fec;
+  std::unique_ptr<mfem::ParFiniteElementSpaceHierarchy> h1_fespaces;
+  std::unique_ptr<mfem::ParFiniteElementSpace> nd_fespace;
 
   // Operator for domain material properties.
   MaterialOperator mat_op;
@@ -57,11 +58,11 @@ public:
   const auto &GetSources() const { return source_attr_lists; }
 
   // Return the parallel finite element space objects.
-  auto &GetH1Spaces() { return h1_fespaces; }
-  auto &GetH1Space() { return h1_fespaces.GetFinestFESpace(); }
-  const auto &GetH1Space() const { return h1_fespaces.GetFinestFESpace(); }
-  auto &GetNDSpace() { return nd_fespace; }
-  const auto &GetNDSpace() const { return nd_fespace; }
+  auto &GetH1Spaces() { return *h1_fespaces; }
+  auto &GetH1Space() { return h1_fespaces->GetFinestFESpace(); }
+  const auto &GetH1Space() const { return h1_fespaces->GetFinestFESpace(); }
+  auto &GetNDSpace() { return *nd_fespace; }
+  const auto &GetNDSpace() const { return *nd_fespace; }
 
   // Return the number of true (conforming) dofs on the finest H1 space.
   auto GlobalTrueVSize() { return GetH1Space().GlobalTrueVSize(); }

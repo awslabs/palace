@@ -38,13 +38,13 @@ ParOperator::ParOperator(Operator &A, const mfem::ParFiniteElementSpace &trial_f
 
 const Operator &ParOperator::LocalOperator() const
 {
-  MFEM_ASSERT(A, "No local matrix available for ParOperator::LocalOperator!");
+  MFEM_VERIFY(A, "No local matrix available for ParOperator::LocalOperator!");
   return *A;
 }
 
 Operator &ParOperator::LocalOperator()
 {
-  MFEM_ASSERT(A, "No local matrix available for ParOperator::LocalOperator!");
+  MFEM_VERIFY(A, "No local matrix available for ParOperator::LocalOperator!");
   return *A;
 }
 
@@ -62,33 +62,23 @@ void ParOperator::SetEssentialTrueDofs(const mfem::Array<int> &tdof_list,
 
 void ParOperator::AssembleDiagonal(Vector &diag) const
 {
+  if (RAP)
+  {
+    RAP->AssembleDiagonal(diag);
+    return;
+  }
+
   // For an AMR mesh, a convergent diagonal is assembled with |P|ᵀ dₗ, where |P| has
   // entry-wise absolute values of the conforming prolongation operator.
   MFEM_VERIFY(&trial_fespace == &test_fespace,
               "Diagonal assembly is only available for square ParOperator!");
-  if (const auto *bfA = dynamic_cast<const mfem::BilinearForm *>(A))
-  {
-    if (bfA->HasSpMat())
-    {
-      bfA->SpMat().GetDiag(ly);
-    }
-    else if (bfA->HasExt())
-    {
-      bfA->Ext().AssembleDiagonal(ly);
-    }
-    else
-    {
-      MFEM_ABORT("Unable to assemble the local operator diagonal of BilinearForm!");
-    }
-  }
-  else if (const auto *sA = dynamic_cast<const mfem::SparseMatrix *>(A))
+  if (const auto *sA = dynamic_cast<const mfem::SparseMatrix *>(A))
   {
     sA->GetDiag(ly);
   }
   else
   {
-    MFEM_ABORT("ParOperator::AssembleDiagonal requires A as a BilinearForm or "
-               "SparseMatrix!");
+    A->AssembleDiagonal(ly);
   }
 
   // Parallel assemble and eliminate essential true dofs.
@@ -159,6 +149,12 @@ mfem::HypreParMatrix &ParOperator::ParallelAssemble() const
     }
     delete hA;
   }
+  if (data_A)
+  {
+    // The local matrix is no longer needed now that we have the parallel-assembled one.
+    data_A.reset();
+    A = nullptr;
+  }
   hypre_ParCSRMatrixSetNumNonzeros(*RAP);
 
   // Eliminate boundary conditions on the assembled (square) matrix.
@@ -199,6 +195,12 @@ void ParOperator::Mult(const Vector &x, Vector &y) const
 {
   MFEM_ASSERT(x.Size() == width && y.Size() == height,
               "Incompatible dimensions for ParOperator::Mult!");
+  if (RAP)
+  {
+    RAP->Mult(x, y);
+    return;
+  }
+
   if (dbc_tdof_list)
   {
     ty = x;
@@ -231,6 +233,12 @@ void ParOperator::AddMult(const Vector &x, Vector &y, const double a) const
 {
   MFEM_ASSERT(x.Size() == width && y.Size() == height,
               "Incompatible dimensions for ParOperator::AddMult!");
+  if (RAP)
+  {
+    RAP->AddMult(x, y, a);
+    return;
+  }
+
   if (dbc_tdof_list)
   {
     ty = x;
@@ -268,6 +276,12 @@ void ParOperator::MultTranspose(const Vector &x, Vector &y) const
 {
   MFEM_ASSERT(x.Size() == height && y.Size() == width,
               "Incompatible dimensions for ParOperator::MultTranspose!");
+  if (RAP)
+  {
+    RAP->MultTranspose(x, y);
+    return;
+  }
+
   if (dbc_tdof_list)
   {
     ty = x;
@@ -300,6 +314,12 @@ void ParOperator::AddMultTranspose(const Vector &x, Vector &y, const double a) c
 {
   MFEM_ASSERT(x.Size() == height && y.Size() == width,
               "Incompatible dimensions for ParOperator::AddMultTranspose!");
+  if (RAP)
+  {
+    RAP->AddMultTranspose(x, y, a);
+    return;
+  }
+
   if (dbc_tdof_list)
   {
     ty = x;
@@ -449,6 +469,19 @@ void ComplexParOperator::SetEssentialTrueDofs(const mfem::Array<int> &tdof_list,
   if (RAPi)
   {
     RAPi->SetEssentialTrueDofs(tdof_list, Operator::DiagonalPolicy::DIAG_ZERO);
+  }
+}
+
+void ComplexParOperator::AssembleDiagonal(ComplexVector &diag) const
+{
+  diag = 0.0;
+  if (RAPr)
+  {
+    RAPr->AssembleDiagonal(diag.Real());
+  }
+  if (RAPi)
+  {
+    RAPi->AssembleDiagonal(diag.Imag());
   }
 }
 
