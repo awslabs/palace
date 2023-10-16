@@ -183,5 +183,10 @@ else()
   message(STATUS "Using BLAS/LAPACK located by CMake")
 endif()
 
-set(BLAS_LAPACK_LIBRARIES ${_BLAS_LAPACK_LIBRARIES} CACHE STRING "List of library files for BLAS/LAPACK")
-set(BLAS_LAPACK_INCLUDE_DIRS ${_BLAS_LAPACK_INCLUDE_DIRS} CACHE STRING "Path to BLAS/LAPACK include directories")
+# Save variables to cache
+set(BLAS_LAPACK_LIBRARIES ${_BLAS_LAPACK_LIBRARIES} CACHE STRING
+  "List of library files for BLAS/LAPACK"
+)
+set(BLAS_LAPACK_INCLUDE_DIRS ${_BLAS_LAPACK_INCLUDE_DIRS} CACHE STRING
+  "Path to BLAS/LAPACK include directories"
+)

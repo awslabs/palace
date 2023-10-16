@@ -31,11 +31,21 @@ set(ANALYZE_SOURCES_CLANG_TIDY OFF CACHE BOOL "Run static analysis checks using 
 set(ANALYZE_SOURCES_CPPCHECK OFF CACHE BOOL "Run static analysis checks using cppcheck")
 
 # Help find third-party dependencies
-set(MFEM_DIR "" CACHE STRING "Path to MFEM build or installation directory (not required if already on CMAKE_PREFIX_PATH)")
-set(LIBCEED_DIR "" CACHE STRING "Path to libCEED build or installation directory (not required if already on CMAKE_PREFIX_PATH or PKG_CONFIG_PATH)")
-set(PETSC_DIR "" CACHE STRING "Path to PETSc build or installation directory (not required if already on CMAKE_PREFIX_PATH or PKG_CONFIG_PATH)")
-set(SLEPC_DIR "" CACHE STRING "Path to SLEPc build or installation directory (not required if already on CMAKE_PREFIX_PATH or PKG_CONFIG_PATH)")
-set(ARPACK_DIR "" CACHE STRING "Path to ARPACK build or installation directory (not required if already on CMAKE_PREFIX_PATH)")
+set(MFEM_DIR "" CACHE STRING
+  "Path to MFEM build or installation directory (not required if already on CMAKE_PREFIX_PATH)"
+)
+set(LIBCEED_DIR "" CACHE STRING
+  "Path to libCEED build or installation directory (not required if already on CMAKE_PREFIX_PATH or PKG_CONFIG_PATH)"
+)
+set(PETSC_DIR "" CACHE STRING
+  "Path to PETSc build or installation directory (not required if already on CMAKE_PREFIX_PATH or PKG_CONFIG_PATH)"
+)
+set(SLEPC_DIR "" CACHE STRING
+  "Path to SLEPc build or installation directory (not required if already on CMAKE_PREFIX_PATH or PKG_CONFIG_PATH)"
+)
+set(ARPACK_DIR "" CACHE STRING
+  "Path to ARPACK build or installation directory (not required if already on CMAKE_PREFIX_PATH)"
+)
 
 # Enable Fortran if required
 if(PALACE_WITH_ARPACK)
@@ -45,7 +55,9 @@ endif()
 # Set a default build type if none was provided
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   message(STATUS "Setting CMAKE_BUILD_TYPE to 'Release' as none was specified")
-  set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Specifies the build type ('Debug' or 'Release', for example)" FORCE)
+  set(CMAKE_BUILD_TYPE "Release" CACHE STRING
+    "Specifies the build type ('Debug' or 'Release', for example)" FORCE
+  )
 endif()
 
 # Add extra CMake modules
