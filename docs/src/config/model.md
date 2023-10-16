@@ -119,8 +119,8 @@ output folder. `"SaveStep"` of 1 specifies to save all iterations, while for exa
 
 `"MaximumImbalance" [1.0]` : The ratio between maximum number of elements on a processor and
 minimum number of elements on a processor before a rebalance is performed. A value of `2.0`
-would result in rebalancing occurring only if one processor had more than double the number
-of elements on another.
+would result in rebalancing occurring if one processor exceeds twice the number of elements
+on another processor.
 
 `"Nonconformal" [false]` : Whether the adaptation should use nonconformal refinement.
 `"Nonconformal"` is necessary to enable `"UseCoarsening"`.
@@ -138,5 +138,3 @@ enabled.
   - `"Partition" [""]`
   - `"ReorientTetMesh" [false]`
   - `"RemoveCurvature" [false]`
-  - `"WritePostBalanceMesh" [false]`
-  - `"WritePreBalanceMesh" [false]`

@@ -48,6 +48,7 @@ inline MPI_Datatype DataType<unsigned short>()
 {
   return MPI_UNSIGNED_SHORT;
 }
+
 template <>
 inline MPI_Datatype DataType<signed int>()
 {

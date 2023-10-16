@@ -36,8 +36,6 @@
             "MaxNCLevels": {"type": "integer", "inclusiveMinimum": 0},
             "Nonconformal": {"type": "boolean"},
             "MaximumImbalance": {"type": "number", "inclusiveMinimum": 1.0},
-            "WritePostBalanceMesh": {"type": "boolean"},
-            "WritePreBalanceMesh": {"type": "boolean"},
             "WriteSerialMesh": {"type": "boolean"}
           }
         },

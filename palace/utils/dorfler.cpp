@@ -10,7 +10,7 @@
 namespace palace::utils
 {
 
-double ComputeDorflerThreshold(double fraction, const mfem::Vector &e)
+double ComputeDorflerThreshold(double fraction, const Vector &e)
 {
   // Precompute the sort and partial sum to make evaluating a candidate partition fast.
   e.HostRead();  // Pull the data out to the host
@@ -72,9 +72,8 @@ double ComputeDorflerThreshold(double fraction, const mfem::Vector &e)
               "min: " << min_threshold << " max " << max_threshold);
   auto [elem_marked, error_marked] = marked(error_threshold);
 
-  // Keep track of the number of elements marked by the threshold bounds. If the
-  // top and bottom values are equal (or separated by only 1), there's no point further
-  // bisecting.
+  // Keep track of the number of elements marked by the threshold bounds. If the top and
+  // bottom values are equal (or separated by only 1), there's no point further bisecting.
   auto [max_elem_marked, max_error_marked] = marked(min_threshold);
   auto [min_elem_marked, min_error_marked] = marked(max_threshold);
   Mpi::GlobalSum(1, &min_elem_marked, comm);
@@ -149,8 +148,8 @@ double ComputeDorflerThreshold(double fraction, const mfem::Vector &e)
   elem_marked = max_elem_marked;
   error_marked = max_error_marked;
 
-  Mpi::Print("Threshold {:.3e} marked {} of {} and {:.2f}%\n",
-             error_threshold, elem_marked, total_elem, 100 * error_marked / total_error);
+  Mpi::Print("Threshold {:.3e} marked {} of {} and {:.2f}%\n", error_threshold, elem_marked,
+             total_elem, 100 * error_marked / total_error);
 
   MFEM_VERIFY(error_marked >= fraction * total_error,
               "Marked error: " << error_marked << " total error: " << total_error

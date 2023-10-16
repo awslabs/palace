@@ -95,14 +95,11 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(MPI_Comm comm, const IoData &iodata, boo
     BlockTimer bt(Timer::IO);
     if (Mpi::Root(comm) || !use_mesh_partitioner)
     {
-      // If using the mesh partitioner, only the root node needs to load the mesh.
       // Optionally reorder elements (and vertices) based on spatial location after loading
       // the serial mesh.
       smesh = LoadMesh(iodata.model.mesh, iodata.model.remove_curvature);
       if (reorder)
       {
-        // Optionally reorder elements (and vertices) based on spatial location after
-        // loading the serial mesh.
         smesh = LoadMesh(iodata.model.mesh, iodata.model.remove_curvature);
         if (reorder)
         {

@@ -148,7 +148,7 @@ struct AdaptiveRefinementData
   int dof_limit = 0;
   // Frequency with which to store the post processing results for a given adaptation, e.g.
   // save_step = 3 means save every third adaptation.
-  int save_step = 0;
+  int save_step = 1;
   // Whether or not to perform nonconformal adaptation.
   bool nonconformal = false;
   // Maximum allowable ratio of number of elements across processors before rebalancing is
@@ -156,10 +156,6 @@ struct AdaptiveRefinementData
   double maximum_imbalance = 1.0;
   // Whether to write a serialized mesh to file after mesh modification.
   bool write_serial_mesh = true;
-  // Whether to write the refined mesh to file in parallel, before rebalancing.
-  bool write_pre_balance_mesh = false;
-  // Whether to write the refined mesh to file in parallel, after rebalancing.
-  bool write_post_balance_mesh = false;
 };
 
 struct RefinementData

@@ -4,7 +4,7 @@
 #ifndef PALACE_UTILS_DORFLER_HPP
 #define PALACE_UTILS_DORFLER_HPP
 
-#include <mfem.hpp>
+#include "linalg/vector.hpp"
 
 namespace palace::utils
 {
@@ -15,7 +15,7 @@ namespace palace::utils
 // will mark the top fraction of the sum of the squared error.
 // Reference: Willy Dörfler. A convergent adaptive algorithm for Poisson’s equation. SIAM J.
 //            Numer. Anal. (1996).
-double ComputeDorflerThreshold(double fraction, const mfem::Vector &e);
+double ComputeDorflerThreshold(double fraction, const Vector &e);
 
 }  // namespace palace::utils
 

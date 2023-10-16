@@ -104,7 +104,7 @@ namespace
 {
 
 // Helper function that returns an array of indices corresponding to marked elements.
-mfem::Array<int> MarkedElements(double threshold, const mfem::Vector &e)
+mfem::Array<int> MarkedElements(double threshold, const Vector &e)
 {
   mfem::Array<int> ind;
   ind.Reserve(e.Size());
@@ -142,16 +142,6 @@ void RebalanceMesh(std::unique_ptr<mfem::ParMesh> &mesh, const IoData &iodata,
       iodata.NondimensionalizeMesh(*mesh);
     }
   }
-  if (param.write_pre_balance_mesh)
-  {
-    std::ofstream pfile(
-        mfem::MakeParFilename(output_dir + "prebalance.", Mpi::Rank(comm), ".mesh", width));
-    mesh->SetPrintShared(false);  // Do not mark processor boundaries in the save
-    BlockTimer bt(Timer::IO);
-    iodata.DimensionalizeMesh(*mesh);
-    mesh->ParPrint(pfile);
-    iodata.NondimensionalizeMesh(*mesh);
-  }
 
   // If there is more than one processor, may perform rebalancing.
   if (Mpi::Size(comm) > 1)
@@ -170,7 +160,6 @@ void RebalanceMesh(std::unique_ptr<mfem::ParMesh> &mesh, const IoData &iodata,
       if (mesh->Nonconforming() && param.write_serial_mesh)
       {
         // Do not need to duplicate the mesh, as rebalancing will undo this.
-        BlockTimer bt_post(Timer::POSTPRO);
         mfem::Array<int> serial_partition(mesh->GetNE());
         serial_partition = 0;
         mesh->Rebalance(serial_partition);
@@ -182,7 +171,7 @@ void RebalanceMesh(std::unique_ptr<mfem::ParMesh> &mesh, const IoData &iodata,
           mesh->Mesh::Print(serial);
           iodata.NondimensionalizeMesh(*mesh);
         }
-        MPI_Barrier(comm);
+        Mpi::Barrier(comm);
       }
 
       Mpi::Print("Ratio {:.3f} exceeds maximum allowed value {}: Performing rebalancing.\n",
@@ -197,16 +186,6 @@ void RebalanceMesh(std::unique_ptr<mfem::ParMesh> &mesh, const IoData &iodata,
         // root processor and then redistributed.
         mesh::RebalanceConformalMesh(mesh, iodata, serial_mesh_filename);
       }
-      if (param.write_post_balance_mesh)
-      {
-        BlockTimer bt_io(Timer::IO);
-        std::ofstream pfile(mfem::MakeParFilename(output_dir + "postbalance.",
-                                                  Mpi::Rank(comm), ".mesh", width));
-        mesh->SetPrintShared(false);  // Do not mark processor boundaries in the save
-        iodata.DimensionalizeMesh(*mesh);
-        mesh->ParPrint(pfile);
-        iodata.NondimensionalizeMesh(*mesh);
-      }
     }
     else if (param.write_serial_mesh)
     {
@@ -214,7 +193,6 @@ void RebalanceMesh(std::unique_ptr<mfem::ParMesh> &mesh, const IoData &iodata,
       {
         // Given no rebalancing will be done, need to handle the serial write more
         // carefully. For NC, this requires creating a duplicate mesh.
-        BlockTimer bt_post(Timer::POSTPRO);
         mfem::ParMesh smesh(*mesh);
         mfem::Array<int> serial_partition(mesh->GetNE());
         smesh.FinalizeTopology();
@@ -229,6 +207,7 @@ void RebalanceMesh(std::unique_ptr<mfem::ParMesh> &mesh, const IoData &iodata,
           iodata.DimensionalizeMesh(smesh);
           smesh.Mesh::Print(serial);
         }
+        Mpi::Barrier(comm);
       }
       else
       {
@@ -321,7 +300,7 @@ BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<mfem::ParMesh>> 
 
   while (indicators.Norml2(comm) > param.tolerance && !exhausted_resources())
   {
-    BlockTimer bt_adapt(Timer::ADAPT);
+    BlockTimer bt_adapt(Timer::ADAPTATION);
     Mpi::Print("Adaptation iteration {}: Initial Error Indicator: {:.3e}, DOF: {}, DOF "
                "Limit: {}\n",
                ++iter, indicators.Norml2(comm), ntdof, param.dof_limit);
@@ -345,7 +324,7 @@ BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<mfem::ParMesh>> 
       // Perform a Dörfler style marking looking for the largest number of derefinement
       // opportunities to represent a fraction of the derefinable error.
       const auto &derefinement_table = mesh.back()->pncmesh->GetDerefinementTable();
-      mfem::Vector coarse_error(derefinement_table.Size());
+      Vector coarse_error(derefinement_table.Size());
       mfem::Array<int> row;
       for (int i = 0; i < derefinement_table.Size(); i++)
       {

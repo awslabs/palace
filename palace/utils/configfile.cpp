@@ -411,10 +411,6 @@ void RefinementData::SetUp(json &model)
     adaptation.nonconformal = adapt->value("Nonconformal", adaptation.nonconformal);
     adaptation.maximum_imbalance =
         adapt->value("MaximumImbalance", adaptation.maximum_imbalance);
-    adaptation.write_post_balance_mesh =
-        adapt->value("WritePostBalanceMesh", adaptation.write_post_balance_mesh);
-    adaptation.write_pre_balance_mesh =
-        adapt->value("WritePreBalanceMesh", adaptation.write_pre_balance_mesh);
     adaptation.write_serial_mesh =
         adapt->value("WriteSerialMesh", adaptation.write_serial_mesh);
 
@@ -432,18 +428,9 @@ void RefinementData::SetUp(json &model)
                 "\"MaximumImbalance\" must be greater than or equal to 1");
 
     // Cleanup
-    const auto fields = {"Tol",
-                         "MaxIts",
-                         "UpdateFraction",
-                         "UseCoarsening",
-                         "MaxNCLevels",
-                         "DOFLimit",
-                         "SaveStep",
-                         "Nonconformal",
-                         "MaximumImbalance",
-                         "WritePostBalanceMesh",
-                         "WritePreBalanceMesh",
-                         "WriteSerialMesh"};
+    const auto fields = {
+        "Tol",      "MaxIts",   "UpdateFraction", "UseCoarsening",    "MaxNCLevels",
+        "DOFLimit", "SaveStep", "Nonconformal",   "MaximumImbalance", "WriteSerialMesh"};
     for (const auto &f : fields)
     {
       adapt->erase(f);

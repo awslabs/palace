@@ -35,7 +35,7 @@ public:
     ESTIMATION,          // Estimation
     CONSTRUCTESTIMATOR,  // Construction of estimator
     SOLVEESTIMATOR,      // Evaluation of estimator
-    ADAPT,               // Adaptation
+    ADAPTATION,          // Adaptation
     REBALANCE,           // Rebalancing
     CONSTRUCTPROM,       // Adaptive frequency sweep
     SOLVEPROM,           // Adaptive frequency sweep
