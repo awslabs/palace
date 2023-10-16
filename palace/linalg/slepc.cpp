@@ -139,12 +139,18 @@ void ConfigureRG(RG rg, PetscReal lr, PetscReal ur, PetscReal li, PetscReal ui,
 
 void Initialize(int &argc, char **&argv, const char rc_file[], const char help[])
 {
+  // Remove default PETSc signal handling, since it can be confusing when the errors occur
+  // not from within SLEPc/PETSc.
   PalacePetscCall(SlepcInitialize(&argc, &argv, rc_file, help));
+  PalacePetscCall(PetscPopSignalHandler());
 }
 
 void Initialize()
 {
+  // Remove default PETSc signal handling, since it can be confusing when the errors occur
+  // not from within SLEPc/PETSc.
   PalacePetscCall(SlepcInitializeNoArguments());
+  PalacePetscCall(PetscPopSignalHandler());
 }
 
 void Finalize()
