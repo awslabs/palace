@@ -351,19 +351,24 @@ BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<mfem::ParMesh>> 
       {
         // Sum the error for all sub elements that can be combined.
         derefinement_table.GetRow(i, row);
-        coarse_error[i] = std::accumulate(row.begin(), row.end(), 0.0,
-                                          [&indicators](double s, int i)
-                                          { return s += indicators.Local()[i]; });
+        coarse_error[i] =
+            std::sqrt(std::accumulate(row.begin(), row.end(), 0.0,
+                                      [&indicators](double s, int i) {
+                                        return s += std::pow(indicators.Local()[i], 2.0);
+                                      }));
       }
 
       // Given the coarse errors, we use the Dörfler marking strategy to identify the
-      // smallest set of elements that make up (1 - θ) of the total error. The complement of
-      // this set is then the largest number of elements that make up θ of the total error.
+      // smallest set of original elements that make up (1 - θ) of the total error. The
+      // complement of this set is then the largest number of elements that make up θ of the
+      // total error.
       const double threshold =
           utils::ComputeDorflerThreshold(1 - param.update_fraction, coarse_error);
 
       const auto initial_elem_count = mesh.back()->GetGlobalNE();
-      mesh.back()->DerefineByError(indicators.Local(), threshold, param.max_nc_levels);
+      constexpr int aggregate_operation = 3;  // sum of squares
+      mesh.back()->DerefineByError(indicators.Local(), threshold, param.max_nc_levels,
+                                   aggregate_operation);
       const auto final_elem_count = mesh.back()->GetGlobalNE();
       Mpi::Print("Mesh coarsening removed {} elements. Initial: {}, Final: {}\n",
                  initial_elem_count - final_elem_count, initial_elem_count,

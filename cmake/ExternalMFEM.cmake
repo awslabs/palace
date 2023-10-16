@@ -246,6 +246,7 @@ set(MFEM_PATCH_FILES
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_intrules_order_fix.diff"
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_nc_ho_nedelec_tet_dev.diff"
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_ncmesh_interior_boundary_dev.diff"
+  "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_square_aggregation_dev.diff"
 )
 
 include(ExternalProject)

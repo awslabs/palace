@@ -12,16 +12,16 @@ namespace palace::utils
 
 double ComputeDorflerThreshold(double fraction, const mfem::Vector &e)
 {
-  // Pre compute the sort and partial sum to make evaluating a candidate partition fast.
+  // Precompute the sort and partial sum to make evaluating a candidate partition fast.
   e.HostRead();  // Pull the data out to the host
   std::vector<double> estimates(e.begin(), e.end());
   std::sort(estimates.begin(), estimates.end());
-
   MFEM_ASSERT(estimates.size() > 0, "Estimates must be non-empty");
-  MFEM_ASSERT(estimates.front() >= 0, "Indicators must be non-negative");
 
+  // Accumulate the squares of the estimates.
   std::vector<double> sum(estimates.size());
-  std::partial_sum(estimates.begin(), estimates.end(), sum.begin());
+  std::partial_sum(estimates.begin(), estimates.end(), sum.begin(),
+                   [](auto x, auto y) { return x + y * y; });
 
   // The pivot is the first point which leaves (1-θ) of the total sum after it.
   auto pivot = std::lower_bound(sum.begin(), sum.end(), (1 - fraction) * sum.back());
@@ -39,11 +39,12 @@ double ComputeDorflerThreshold(double fraction, const mfem::Vector &e)
     return {elems_marked, error_marked};
   };
 
-  // Each rank has computed a different threshold, if a given rank has lots of low error
-  // elements, their value will be lower and if a rank has high error, their value will be
-  // higher. Thus using the value from the low error rank will give too many elements, and
-  // using the value from the high error rank will give too few. The correct threshold value
-  // will be an intermediate between the min and max over ranks.
+  // Each processor will compute a different threshold: if a given processor has lots of low
+  // error elements, their value will be lower and if a processor has high error, their
+  // value will be higher. Thus using the value from the low error processor will give too
+  // many elements, and using the value from the high error processor will give too few. The
+  // correct threshold value will be an intermediate between the min and max over
+  // processors.
   auto comm = Mpi::World();
   const double total_error = [&]()
   {
@@ -54,7 +55,7 @@ double ComputeDorflerThreshold(double fraction, const mfem::Vector &e)
   const double max_indicator = [&]()
   {
     double max_indicator = estimates.back();
-    Mpi::GlobalSum(1, &max_indicator, comm);
+    Mpi::GlobalMax(1, &max_indicator, comm);
     return max_indicator;
   }();
   double min_threshold = error_threshold;
@@ -151,6 +152,9 @@ double ComputeDorflerThreshold(double fraction, const mfem::Vector &e)
   Mpi::Print("Threshold {:.3e} marked {} of {} and {:.2f}%\n",
              error_threshold, elem_marked, total_elem, 100 * error_marked / total_error);
 
+  MFEM_VERIFY(error_marked >= fraction * total_error,
+              "Marked error: " << error_marked << " total error: " << total_error
+                               << ". Dorfler marking predicate failed!");
   MFEM_ASSERT(error_threshold > 0, "error_threshold must be positive");
   return error_threshold;
 }

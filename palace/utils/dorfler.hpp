@@ -10,9 +10,11 @@ namespace palace::utils
 {
 
 // Given a vector of estimates, e, and a fraction, compute a partition value E, such that
-// that the set of all estimates with value greater than e, K_E is the smallest number to
-// achieve sum_{K_E} e >= fraction * sum e. Namely the smallest set of elements that will
-// mark the top fraction of the sum of the error.
+// that the set of all estimates with value greater than E, K_E, is the smallest set to
+// achieve sum_{K_E} e² >= fraction * sum e². Namely the smallest set of elements that
+// will mark the top fraction of the sum of the squared error.
+// Reference: Willy Dörfler. A convergent adaptive algorithm for Poisson’s equation. SIAM J.
+//            Numer. Anal. (1996).
 double ComputeDorflerThreshold(double fraction, const mfem::Vector &e);
 
 }  // namespace palace::utils
