@@ -10,8 +10,8 @@
     "L0": { "type": "number", "exclusiveMinimum": 0.0 },
     "Lc": { "type": "number", "exclusiveMinimum": 0.0 },
     "Partition": { "type": "string" },
-    "ReorientTetMesh": { "type": "boolean" },
     "RemoveCurvature": { "type": "boolean" },
+    "ReorientTetMesh": { "type": "boolean" },
     "Refinement":
     {
       "type": "object",
@@ -20,25 +20,16 @@
       "properties":
       {
         "UniformLevels": { "type": "integer", "minimum": 0 },
-        "Adaptation":
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["MaxIts"],
-          "properties":
-          {
-            "Tol": {"type": "number", "exclusiveMinimum": 0.0},
-            "MaxIts": {"type": "integer", "inclusiveMinimum": 0},
-            "UpdateFraction": {"type": "number", "exclusiveMinimum": 0.0, "exclusiveMaximum": 1.0},
-            "UseCoarsening": {"type": "boolean"},
-            "DOFLimit": {"type": "number", "inclusiveMinimum": 0},
-            "SaveStep": {"type": "integer", "inclusiveMinimum": 0},
-            "MaxNCLevels": {"type": "integer", "inclusiveMinimum": 0},
-            "Nonconformal": {"type": "boolean"},
-            "MaximumImbalance": {"type": "number", "inclusiveMinimum": 1.0},
-            "WriteSerialMesh": {"type": "boolean"}
-          }
-        },
+        "AdaptTol": {"type": "number", "exclusiveMinimum": 0.0},
+        "AdaptMaxIts": {"type": "integer", "inclusiveMinimum": 0},
+        "DOFLimit": {"type": "number", "inclusiveMinimum": 0},
+        "MaximumImbalance": {"type": "number", "inclusiveMinimum": 1.0},
+        "MaxNCLevels": {"type": "integer", "inclusiveMinimum": 0},
+        "Nonconformal": {"type": "boolean"},
+        "SaveAdaptIterations": {"type": "boolean"},
+        "UpdateFraction": {"type": "number", "exclusiveMinimum": 0.0, "exclusiveMaximum": 1.0},
+        "UseCoarsening": {"type": "boolean"},
+        "WriteSerialMesh": {"type": "boolean"},
         "Boxes":
         {
           "type": "array",

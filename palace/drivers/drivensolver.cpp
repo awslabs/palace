@@ -26,7 +26,7 @@ namespace palace
 
 using namespace std::complex_literals;
 
-std::pair<ErrorIndicator, int>
+std::pair<ErrorIndicator, long long int>
 DrivenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const
 {
   // Set up the spatial discretization and frequency sweep.
@@ -98,10 +98,9 @@ DrivenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) con
   Mpi::Print("\n");
 
   // Main frequency sweep loop.
-  return std::make_pair(
-      adaptive ? SweepAdaptive(spaceop, postop, nstep, step0, omega0, delta_omega)
-               : SweepUniform(spaceop, postop, nstep, step0, omega0, delta_omega),
-      spaceop.GlobalTrueVSize());
+  return {adaptive ? SweepAdaptive(spaceop, postop, nstep, step0, omega0, delta_omega)
+                   : SweepUniform(spaceop, postop, nstep, step0, omega0, delta_omega),
+          spaceop.GlobalTrueVSize()};
 }
 
 ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator &postop,

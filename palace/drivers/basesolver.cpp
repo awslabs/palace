@@ -123,7 +123,7 @@ mfem::Array<int> MarkedElements(double threshold, const Vector &e)
 void RebalanceMesh(std::unique_ptr<mfem::ParMesh> &mesh, const IoData &iodata,
                    std::string output_dir)
 {
-  const auto &param = iodata.model.refinement.adaptation;
+  const auto &param = iodata.model.refinement;
   auto comm = mesh->GetComm();
   const int width = 1 + static_cast<int>(std::log10(Mpi::Size(comm) - 1));
   if (output_dir.back() != '/')
@@ -137,9 +137,10 @@ void RebalanceMesh(std::unique_ptr<mfem::ParMesh> &mesh, const IoData &iodata,
     if (Mpi::Size(comm) == 1)
     {
       std::ofstream serial(serial_mesh_filename);
-      iodata.DimensionalizeMesh(*mesh);
-      mesh->Mesh::Print(serial);
-      iodata.NondimensionalizeMesh(*mesh);
+      serial.precision(mesh::MSH_FLT_PRECISION);
+      mesh::DimensionalizeMesh(*mesh, iodata.GetMeshScaleFactor());
+      mesh->mfem::Mesh::Print(serial);
+      mesh::NondimensionalizeMesh(*mesh, iodata.GetMeshScaleFactor());
     }
   }
 
@@ -153,7 +154,7 @@ void RebalanceMesh(std::unique_ptr<mfem::ParMesh> &mesh, const IoData &iodata,
     Mpi::GlobalMin(1, &min_elem, comm);
     Mpi::GlobalMax(1, &max_elem, comm);
     const double ratio = double(max_elem) / min_elem;
-    Mpi::Print("Min Elem per processor: {}, Max Elem per processor: {}, Ratio: {:.3e}\n",
+    Mpi::Print("Min Elem per processor: {}, Max Elem per processor: {}, Ratio: {:.3f}\n",
                min_elem, max_elem, double(max_elem) / min_elem);
     if (ratio > param.maximum_imbalance)
     {
@@ -167,9 +168,10 @@ void RebalanceMesh(std::unique_ptr<mfem::ParMesh> &mesh, const IoData &iodata,
         if (Mpi::Root(comm))
         {
           std::ofstream serial(serial_mesh_filename);
-          iodata.DimensionalizeMesh(*mesh);
+          serial.precision(mesh::MSH_FLT_PRECISION);
+          mesh::DimensionalizeMesh(*mesh, iodata.GetMeshScaleFactor());
           mesh->Mesh::Print(serial);
-          iodata.NondimensionalizeMesh(*mesh);
+          mesh::NondimensionalizeMesh(*mesh, iodata.GetMeshScaleFactor());
         }
         Mpi::Barrier(comm);
       }
@@ -195,27 +197,29 @@ void RebalanceMesh(std::unique_ptr<mfem::ParMesh> &mesh, const IoData &iodata,
         // carefully. For NC, this requires creating a duplicate mesh.
         mfem::ParMesh smesh(*mesh);
         mfem::Array<int> serial_partition(mesh->GetNE());
-        smesh.FinalizeTopology();
-        smesh.Finalize();
-        smesh.ExchangeFaceNbrData();
         serial_partition = 0;
         smesh.Rebalance(serial_partition);
         BlockTimer bt_io(Timer::IO);
         if (Mpi::Root(comm))
         {
           std::ofstream serial(serial_mesh_filename);
-          iodata.DimensionalizeMesh(smesh);
-          smesh.Mesh::Print(serial);
+          serial.precision(mesh::MSH_FLT_PRECISION);
+          mesh::DimensionalizeMesh(smesh, iodata.GetMeshScaleFactor());
+          smesh.Mesh::Print(serial);  // Do not need to nondimensionalize the temporary
         }
         Mpi::Barrier(comm);
       }
       else
       {
-        std::ofstream serial(serial_mesh_filename);
-        serial.precision(std::numeric_limits<double>::max_digits10);
-        iodata.DimensionalizeMesh(*mesh);
-        mesh->PrintAsSerial(serial);
-        iodata.NondimensionalizeMesh(*mesh);
+        auto smesh = std::make_unique<mfem::Mesh>(mesh->GetSerialMesh(0));
+        BlockTimer bt(Timer::IO);
+        if (Mpi::Rank(comm) == 0)
+        {
+          std::ofstream serial(serial_mesh_filename);
+          serial.precision(mesh::MSH_FLT_PRECISION);
+          mesh::DimensionalizeMesh(*smesh, iodata.GetMeshScaleFactor());
+          smesh->Print(serial);  // Do not need to nondimensionalize the temporary
+        }
       }
     }
     mesh->ExchangeFaceNbrData();
@@ -224,16 +228,17 @@ void RebalanceMesh(std::unique_ptr<mfem::ParMesh> &mesh, const IoData &iodata,
 
 }  // namespace
 
-ErrorIndicator
-BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const
+void BaseSolver::SolveEstimateMarkRefine(
+    std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const
 {
+  const auto &param = iodata.model.refinement;
   auto comm = mesh.back()->GetComm();
   // Helper to save off postprocess data.
   auto SavePostProcess = [&](int iter)
   {
     Mpi::Barrier(comm);
     BlockTimer bt_io(Timer::IO);
-    if (Mpi::Root(comm))
+    if (Mpi::Root(comm) && param.save_adapt_iterations)
     {
       // Create a subfolder for the results of this adaptation.
       namespace fs = std::filesystem;
@@ -256,8 +261,7 @@ BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<mfem::ParMesh>> 
     Mpi::Barrier(comm);
   };
 
-  const auto &param = iodata.model.refinement.adaptation;
-  const bool use_amr = param.max_its > 0;
+  const bool use_amr = param.adapt_max_its > 0;
   const bool use_coarsening = mesh.back()->Nonconforming() && param.use_coarsening;
   if (use_amr && mesh.size() > 1)
   {
@@ -282,7 +286,8 @@ BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<mfem::ParMesh>> 
     else
     {
       Mpi::Print("\nAdaptive Mesh Refinement Parameters:\n");
-      Mpi::Print("MaxIter: {}, Tolerance: {:.3e}\n\n", param.max_its, param.tolerance);
+      Mpi::Print("MaxIter: {}, Tolerance: {:.3e}\n\n", param.adapt_max_its,
+                 param.adapt_tolerance);
       SavePostProcess(iter);  // Save the initial solution
     }
   }
@@ -294,11 +299,11 @@ BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<mfem::ParMesh>> 
     // Run out of DOFs, and coarsening isn't allowed.
     ret |= (!use_coarsening && ntdof > param.dof_limit);
     // Run out of iterations.
-    ret |= iter >= param.max_its;
+    ret |= iter >= param.adapt_max_its;
     return ret;
   };
 
-  while (indicators.Norml2(comm) > param.tolerance && !exhausted_resources())
+  while (indicators.Norml2(comm) > param.adapt_tolerance && !exhausted_resources())
   {
     BlockTimer bt_adapt(Timer::ADAPTATION);
     Mpi::Print("Adaptation iteration {}: Initial Error Indicator: {:.3e}, DOF: {}, DOF "
@@ -357,15 +362,9 @@ BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<mfem::ParMesh>> 
 
     // Solve + estimate.
     indicators_and_ntdof = Solve(mesh);
-
-    // Optionally save solution off.
-    if (param.save_step > 0 && iter % param.save_step == 0)
-    {
-      SavePostProcess(iter);
-    }
+    SavePostProcess(iter);
   }
   Mpi::Print("\nFinal Error Indicator: {:.3e}, DOF: {}\n", indicators.Norml2(comm), ntdof);
-  return indicators;
 }
 void BaseSolver::SaveMetadata(const mfem::ParFiniteElementSpaceHierarchy &fespaces) const
 {

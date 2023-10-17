@@ -17,7 +17,7 @@
 namespace palace
 {
 
-std::pair<ErrorIndicator, int>
+std::pair<ErrorIndicator, long long int>
 ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const
 {
   // Construct the system matrix defining the linear operator. Dirichlet boundaries are

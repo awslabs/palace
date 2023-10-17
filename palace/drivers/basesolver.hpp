@@ -86,7 +86,7 @@ protected:
 
   // Performs a solve using the mesh sequence, then reports error indicators and the number
   // of global true dofs.
-  virtual std::pair<ErrorIndicator, int>
+  virtual std::pair<ErrorIndicator, long long int>
   Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const = 0;
 
 public:
@@ -96,8 +96,7 @@ public:
 
   // Performs adaptive mesh refinement using the solve-estimate-mark-refine paradigm.
   // Dispatches to the Solve method for the driver specific calculations.
-  ErrorIndicator
-  SolveEstimateMarkRefine(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const;
+  void SolveEstimateMarkRefine(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const;
 
   // These methods write different simulation metadata to a JSON file in post_dir.
   void SaveMetadata(const mfem::ParFiniteElementSpaceHierarchy &fespaces) const;

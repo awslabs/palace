@@ -36,6 +36,13 @@ scale based on the bounding box of the computational domain.
 "Refinement":
 {
     "UniformLevels": <int>,
+    "AdaptTol": <float>,
+    "AdaptMaxIts": <int>,
+    "UpdateFraction": <float>,
+    "DOFLimit": <int>,
+    "MaximumImbalance": <float>,
+    "Nonconformal": <bool>,
+    "UseCoarsening": <bool>,
     "Boxes":
     [
         {
@@ -54,26 +61,30 @@ scale based on the bounding box of the computational domain.
             "Radius": float
         },
         ...
-    ],
-    "Adaptation":
-    {
-        "Tol": <float>,
-        "MaxIts": <int>,
-        "UpdateFraction": <float>,
-        "DOFLimit": <int>,
-        "SaveStep": <int>,
-        "MaximumImbalance": <float>,
-        "Nonconformal": <bool>,
-        "UseCoarsening": <bool>,
-        "WriteSerialMesh": <bool>
-    }
+    ]
 }
 ```
 
 with
 
 `"UniformLevels" [0]` :  Levels of uniform parallel mesh refinement to be performed on the
-input mesh.
+input mesh. If not performing AMR, these may be used as levels within a geometric multigrid
+scheme.
+
+`"AdaptTol" [1e-2]` : Relative error convergence tolerance for mesh adaptation.
+
+`"AdaptMaxIts" [0]` : Maximum number of iterations to perform of adaptive mesh refinement.
+
+`"UpdateFraction" [0.4]` : Dörfler marking fraction used to specify which elements to
+refine. This marking strategy will mark the smallest number of elements that make up
+`"UpdateFraction"` of the total error in the mesh. A larger value will refine more elements
+per iteration, at the cost of the final mesh being less efficient.
+
+`"DOFLimit" [0]` : The maximum allowable number of DOF within an AMR loop, if an adapted
+mesh exceeds this value no further adaptation will occur.
+
+`"Nonconformal" [false]` : Whether the adaptation should use nonconformal refinement.
+`"Nonconformal"` is necessary to enable `"UseCoarsening"`.
 
 `"Boxes"` :  Array of box region refinement objects. All elements with a node inside the box
 region will be marked for refinement.
@@ -102,39 +113,13 @@ Specified in mesh length units.
 `"Radius" [None]` : The radius of the sphere for this sphere refinement region, specified in
 mesh length units.
 
-`"Tol" [1e-3]` : Relative error convergence tolerance for mesh adaptation.
-
-`"MaxIts" [0]` : Maximum number of iterations to perform of adaptive mesh refinement.
-
-`"UpdateFraction" [0.4]` : Dörfler marking fraction used to specify which elements to
-refine. This marking strategy will mark the smallest number of elements that make up
-`"UpdateFraction"` of the total error in the mesh.
-
-`"DOFLimit" [0]` : The maximum allowable number of DOF within an AMR loop, if an adapted
-mesh exceeds this value no further adaptation will occur.
-
-`"SaveStep" [1]` : Specify which adaptive iterations to save off within the post processing
-output folder. `"SaveStep"` of 1 specifies to save all iterations, while for example
-`"SaveStep"` of 3 would save every third iteration.
-
-`"MaximumImbalance" [1.0]` : The ratio between maximum number of elements on a processor and
-minimum number of elements on a processor before a rebalance is performed. A value of `2.0`
-would result in rebalancing occurring if one processor exceeds twice the number of elements
-on another processor.
-
-`"Nonconformal" [false]` : Whether the adaptation should use nonconformal refinement.
-`"Nonconformal"` is necessary to enable `"UseCoarsening"`.
-
-`"UseCoarsening" [false]` : Whether or not to perform coarsening if the total number of DOF
-exceeds the `"DOFLimit"`. Coarsening may be useful to improve the efficiency of the mesh if
-a large value of `"UpdateFraction"` is used. Requires `"Nonconformal"` mesh refinement to be
-enabled.
-
-`"WriteSerialMesh" [true]` : Whether to write a serialized mesh to file after adaptation.
-
 ### Advanced model options
 
+  - `"MaximumImbalance" [1.0]`
   - `"MaxNCLevels" [0]`
   - `"Partition" [""]`
-  - `"ReorientTetMesh" [false]`
   - `"RemoveCurvature" [false]`
+  - `"ReorientTetMesh" [false]`
+  - `"SaveStep" [1]`
+  - `"UseCoarsening" [false]`
+  - `"WriteSerialMesh" [true]`

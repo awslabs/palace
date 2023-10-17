@@ -16,6 +16,7 @@ namespace mfem
 template <typename T>
 class Array;
 class ParMesh;
+class Mesh;
 class Vector;
 
 }  // namespace mfem
@@ -27,6 +28,10 @@ class IoData;
 
 namespace mesh
 {
+
+// Floating point precision for mesh IO. This precision is important, make sure nothing is
+// lost!
+constexpr auto MSH_FLT_PRECISION = std::numeric_limits<double>::max_digits10;
 
 //
 // Functions for mesh related functionality.
@@ -42,6 +47,11 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(MPI_Comm comm, const IoData &iodata, boo
 // of the initial coarse mesh is inherited by the fine meshes and it should not be deleted.
 // The fine mesh hierarchy is owned by the user.
 void RefineMesh(const IoData &iodata, std::vector<std::unique_ptr<mfem::ParMesh>> &mesh);
+
+// Dimensionalize a mesh for use in exporting a mesh. Scales vertices and nodes by L.
+void DimensionalizeMesh(mfem::Mesh &mesh, double L);
+// Nondimensionalize a mesh for use in the solver. Scales vertices and nodes by 1/L.
+void NondimensionalizeMesh(mfem::Mesh &mesh, double L);
 
 // Helper function to convert a set of attribute numbers to a marker array. The marker array
 // will be of size max_attr and it will contain only zeroes and ones. Ones indicate which

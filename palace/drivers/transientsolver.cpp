@@ -20,7 +20,7 @@
 namespace palace
 {
 
-std::pair<ErrorIndicator, int>
+std::pair<ErrorIndicator, long long int>
 TransientSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const
 {
   // Set up the spatial discretization and time integrators for the E and B fields.

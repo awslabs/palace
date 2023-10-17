@@ -45,10 +45,8 @@ public:
   // Nondimensionalize input values for use in the solver, including the mesh coordinates.
   void NondimensionalizeInputs(mfem::ParMesh &mesh);
 
-  // Redimensionalize a mesh for use in exporting a mesh.
-  void DimensionalizeMesh(mfem::Mesh &mesh) const;
-  // Nondimensionalize a mesh for use in the solver.
-  void NondimensionalizeMesh(mfem::Mesh &mesh) const;
+  // Return the mesh scaling factor, (Lc / L0), for mesh IO.
+  double GetMeshScaleFactor() const { return Lc / model.L0; }
 
   // Redimensionalize values for output.
   enum class ValueType

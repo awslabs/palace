@@ -24,7 +24,7 @@ namespace palace
 
 using namespace std::complex_literals;
 
-std::pair<ErrorIndicator, int>
+std::pair<ErrorIndicator, long long int>
 EigenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const
 {
   // Construct and extract the system matrices defining the eigenvalue problem. The diagonal

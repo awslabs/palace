@@ -60,7 +60,7 @@ private:
                               const WavePortOperator &wave_port_op, int step,
                               double omega) const;
 
-  std::pair<ErrorIndicator, int>
+  std::pair<ErrorIndicator, long long int>
   Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const override;
 
 public:

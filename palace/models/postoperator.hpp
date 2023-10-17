@@ -62,6 +62,7 @@ private:
   // Data collection for writing fields to disk for visualization and sampling points.
   mutable mfem::ParaViewDataCollection paraview, paraview_bdr;
   mutable InterpolationOperator interp_op;
+  double mesh_scale_factor;  // Length scale for redimensionalization of the mesh.
   void InitializeDataCollection(const IoData &iodata);
 
 public:

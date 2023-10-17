@@ -128,13 +128,15 @@ struct SphereRefinementData
   std::vector<double> center = {};
 };
 
-// Stores data specifying the adaptive mesh refinement algorithm.
-struct AdaptiveRefinementData
+struct RefinementData
 {
+public:
+  // Parallel uniform mesh refinement levels.
+  int uniform_ref_levels = 0;
   // Non-dimensional tolerance used to specify convergence of the AMR.
-  double tolerance = 1e-2;
+  double adapt_tolerance = 1e-2;
   // Maximum number of iterations to perform during the AMR.
-  int max_its = 0;
+  int adapt_max_its = 0;
   // Dörfler update fraction. The set of marked elements is the minimum set that contains
   // update_fraction of the total error.
   double update_fraction = 0.4;
@@ -146,25 +148,16 @@ struct AdaptiveRefinementData
   // If a refinement results in a greater number of DOFs than this value, no future
   // refinement will be allowed unless coarsening is allowed to occur.
   int dof_limit = 0;
-  // Frequency with which to store the post processing results for a given adaptation, e.g.
-  // save_step = 3 means save every third adaptation.
-  int save_step = 1;
+  // Whether to save off results of each adaptation iteration as a subfolder within the post
+  // processing directory.
+  bool save_adapt_iterations = true;
   // Whether or not to perform nonconformal adaptation.
   bool nonconformal = false;
   // Maximum allowable ratio of number of elements across processors before rebalancing is
   // performed.
   double maximum_imbalance = 1.0;
-  // Whether to write a serialized mesh to file after mesh modification.
+  // Whether to write a serialized mesh to file after mesh modification during AMR.
   bool write_serial_mesh = true;
-};
-
-struct RefinementData
-{
-public:
-  // Parallel uniform mesh refinement levels.
-  int uniform_ref_levels = 0;
-  // Adaptive refinement configuration data.
-  AdaptiveRefinementData adaptation;
 
 private:
   // Refinement data for mesh regions.

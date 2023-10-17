@@ -42,7 +42,7 @@ private:
                             const mfem::DenseMatrix &C, const mfem::DenseMatrix &Cinv,
                             const mfem::DenseMatrix &Cm) const;
 
-  std::pair<ErrorIndicator, int>
+  std::pair<ErrorIndicator, long long int>
   Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const override;
 
 public:

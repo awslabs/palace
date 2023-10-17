@@ -16,6 +16,7 @@
 #include <nlohmann/json.hpp>
 #include "utils/communication.hpp"
 #include "utils/constants.hpp"
+#include "utils/geodata.hpp"
 
 namespace palace
 {
@@ -543,42 +544,12 @@ void IoData::NondimensionalizeInputs(mfem::ParMesh &mesh)
   solver.transient.delta_t /= tc;
 
   // Scale mesh vertices for correct nondimensionalization.
-  NondimensionalizeMesh(mesh);
+  mesh::NondimensionalizeMesh(mesh, GetMeshScaleFactor());
 
   // Print some information.
   Mpi::Print(mesh.GetComm(),
              "\nCharacteristic length and time scales:\n L₀ = {:.3e} m, t₀ = {:.3e} ns\n",
              Lc, tc);
-}
-
-void IoData::NondimensionalizeMesh(mfem::Mesh &mesh) const
-{
-  // Scale mesh vertices for correct nondimensionalization.
-  for (int i = 0; i < mesh.GetNV(); i++)
-  {
-    double *v = mesh.GetVertex(i);
-    std::transform(v, v + mesh.SpaceDimension(), v,
-                   [this](double val) { return val / (Lc / model.L0); });
-  }
-  if (mesh.GetNodes())
-  {
-    *mesh.GetNodes() /= (Lc / model.L0);
-  }
-}
-
-void IoData::DimensionalizeMesh(mfem::Mesh &mesh) const
-{
-  // Scale mesh vertices for correct dimensionalization.
-  for (int i = 0; i < mesh.GetNV(); i++)
-  {
-    double *v = mesh.GetVertex(i);
-    std::transform(v, v + mesh.SpaceDimension(), v,
-                   [this](double val) { return val * (Lc / model.L0); });
-  }
-  if (mesh.GetNodes())
-  {
-    *mesh.GetNodes() *= (Lc / model.L0);
-  }
 }
 
 double IoData::DimensionalizeValue(IoData::ValueType type, double v) const

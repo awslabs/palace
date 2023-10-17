@@ -41,7 +41,7 @@ private:
   void PostprocessEPR(const PostOperator &postop, const LumpedPortOperator &lumped_port_op,
                       int i, std::complex<double> omega, double Em) const;
 
-  std::pair<ErrorIndicator, int>
+  std::pair<ErrorIndicator, long long int>
   Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const override;
 
 public:

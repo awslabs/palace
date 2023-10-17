@@ -25,40 +25,46 @@ using CVector3dMap = Eigen::Map<const Eigen::Vector3d>;
 namespace
 {
 
-// Floating point precision for mesh IO. This precision is important, make sure nothing is
-// lost!
-constexpr auto MSH_FLT_PRECISION = std::numeric_limits<double>::max_digits10;
-
 // Load the serial mesh from disk.
-std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &path, bool remove_curvature);
+std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &, bool);
 
 // Optionally reorder mesh elements based on MFEM's internal reordeing tools for improved
 // cache usage.
 void ReorderMesh(mfem::Mesh &mesh);
 
 // Generate element-based mesh partitioning, using either a provided file or METIS.
-std::unique_ptr<int[]> GetMeshPartitioning(mfem::Mesh &mesh, int size,
-                                           const std::string &partition = "");
+std::unique_ptr<int[]> GetMeshPartitioning(mfem::Mesh &, int, const std::string & = "");
 
 // Cleanup the provided serial mesh by removing unnecessary domain and elements, adding
 // boundary elements for material interfaces and exterior boundaries, and adding boundary
 // elements for subdomain interfaces.
-std::map<int, std::array<int, 2>> CheckMesh(mfem::Mesh &orig_mesh,
-                                            const std::unique_ptr<int[]> &partitioning,
-                                            const IoData &iodata, bool clean_elem,
-                                            bool add_bdr, bool add_subdomain);
+std::map<int, std::array<int, 2>> CheckMesh(mfem::Mesh &, const std::unique_ptr<int[]> &,
+                                            const IoData &, bool, bool, bool);
 
 // Given a serial mesh on the root processor and element partitioning, create a parallel
 // mesh over the given communicator.
-std::unique_ptr<mfem::ParMesh>
-DistributeMesh(MPI_Comm comm, const std::unique_ptr<mfem::Mesh> &mesh,
-               const std::unique_ptr<int[]> &partitioning = nullptr,
-               const std::string &output_dir = "");
+std::unique_ptr<mfem::ParMesh> DistributeMesh(MPI_Comm, const std::unique_ptr<mfem::Mesh> &,
+                                              const std::unique_ptr<int[]> & = nullptr,
+                                              const std::string & = "");
 
 // Get list of domain and boundary attribute markers used in configuration file for mesh
 // cleaning.
-void GetUsedAttributeMarkers(const IoData &iodata, int n_mat, int n_bdr,
-                             mfem::Array<int> &mat_marker, mfem::Array<int> &bdr_marker);
+void GetUsedAttributeMarkers(const IoData &, int, int, mfem::Array<int> &,
+                             mfem::Array<int> &);
+
+// Apply a scaling factor to the mesh vertices and nodes.
+void ScaleMesh(mfem::Mesh &mesh, double L)
+{
+  for (int i = 0; i < mesh.GetNV(); i++)
+  {
+    double *v = mesh.GetVertex(i);
+    std::transform(v, v + mesh.SpaceDimension(), v, [L](double val) { return val * L; });
+  }
+  if (mesh.GetNodes())
+  {
+    *mesh.GetNodes() *= L;
+  }
+}
 
 // Simplified helper for describing the element types in a mesh
 struct ElementTypeInfo
@@ -88,9 +94,9 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(MPI_Comm comm, const IoData &iodata, boo
 
   // If not adapting, or performing conformal adaptation, can use the mesh partitioner.
   std::unique_ptr<mfem::Mesh> smesh;
-  const auto use_amr = iodata.model.refinement.adaptation.max_its > 0;
-  const bool use_mesh_partitioner =
-      !use_amr || !iodata.model.refinement.adaptation.nonconformal;
+  const auto &refinement = iodata.model.refinement;
+  const auto use_amr = refinement.adapt_max_its > 0;
+  const bool use_mesh_partitioner = !use_amr || !refinement.nonconformal;
   {
     BlockTimer bt(Timer::IO);
     if (Mpi::Root(comm) || !use_mesh_partitioner)
@@ -117,21 +123,19 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(MPI_Comm comm, const IoData &iodata, boo
   {
     // Check the the AMR specification and the mesh elements are compatible.
     const auto element_types = CheckElements(*smesh);
-    MFEM_VERIFY(!use_amr || !element_types.has_tensors ||
-                    iodata.model.refinement.adaptation.nonconformal,
+    MFEM_VERIFY(!use_amr || !element_types.has_tensors || refinement.nonconformal,
                 "If there are tensor elements, AMR must be nonconformal");
-    MFEM_VERIFY(!use_amr || !element_types.has_pyramids ||
-                    iodata.model.refinement.adaptation.nonconformal,
+    MFEM_VERIFY(!use_amr || !element_types.has_pyramids || refinement.nonconformal,
                 "If there are pyramid elements, AMR must be nonconformal");
-    MFEM_VERIFY(!use_amr || !element_types.has_wedges ||
-                    iodata.model.refinement.adaptation.nonconformal,
+    MFEM_VERIFY(!use_amr || !element_types.has_wedges || refinement.nonconformal,
                 "If there are wedge elements, AMR must be nonconformal");
 
     partitioning = GetMeshPartitioning(*smesh, Mpi::Size(comm), iodata.model.partition);
 
     // Clean up unused domain elements from the mesh, add new boundary elements for material
     // interfaces if not present, and optionally (when running unassembled) add subdomain
-    // interface boundary elements.
+    // interface boundary elements. Can only clean up conforming meshes, assumes that any
+    // nonconformal mesh was generated by adaptation and thus does not need checking.
     if (smesh->Conforming())
     {
       static_cast<void>(
@@ -146,7 +150,7 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(MPI_Comm comm, const IoData &iodata, boo
   }
   else
   {
-    if (iodata.model.refinement.adaptation.nonconformal && use_amr)
+    if (refinement.nonconformal && use_amr)
     {
       smesh->EnsureNCMesh(true);
     }
@@ -175,7 +179,7 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(MPI_Comm comm, const IoData &iodata, boo
           mfem::MakeParFilename(tmp + "part.", Mpi::Rank(comm), ".mesh", width);
       std::ofstream fo(pfile);
       // mfem::ofgzstream fo(pfile, true);  // Use zlib compression if available
-      fo.precision(MSH_FLT_PRECISION);
+      fo.precision(mesh::MSH_FLT_PRECISION);
       gpmesh.ParPrint(fo);
     }
     {
@@ -183,7 +187,7 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(MPI_Comm comm, const IoData &iodata, boo
           mfem::MakeParFilename(tmp + "final.", Mpi::Rank(comm), ".mesh", width);
       std::ofstream fo(pfile);
       // mfem::ofgzstream fo(pfile, true);  // Use zlib compression if available
-      fo.precision(MSH_FLT_PRECISION);
+      fo.precision(mesh::MSH_FLT_PRECISION);
       pmesh->ParPrint(fo);
     }
   }
@@ -405,6 +409,16 @@ void RefineMesh(const IoData &iodata, std::vector<std::unique_ptr<mfem::ParMesh>
     Mpi::Print(mesh[0]->GetComm(), "\nRefined ");
     mesh.back()->PrintInfo();
   }
+}
+
+void DimensionalizeMesh(mfem::Mesh &mesh, double L)
+{
+  ScaleMesh(mesh, L);
+}
+
+void NondimensionalizeMesh(mfem::Mesh &mesh, double L)
+{
+  ScaleMesh(mesh, 1.0 / L);
 }
 
 void AttrToMarker(int max_attr, const mfem::Array<int> &attrs, mfem::Array<int> &marker)
@@ -1141,14 +1155,8 @@ void RebalanceConformalMesh(std::unique_ptr<mfem::ParMesh> &mesh, const IoData &
   {
     // Write the serial mesh to a stream and read that through the Mesh constructor.
     std::stringstream msg;
-    msg.precision(MSH_FLT_PRECISION);
+    msg.precision(mesh::MSH_FLT_PRECISION);
     mesh->PrintAsSerial(msg);
-    if (save_serial_mesh)
-    {
-      std::ofstream serial(output_serial_mesh_file);
-      iodata.DimensionalizeMesh(*mesh);
-      mesh->PrintAsSerial(serial);
-    }
     mesh.reset();  // Release the no longer needed memory
     if (Mpi::Root(comm))
     {
@@ -1159,20 +1167,10 @@ void RebalanceConformalMesh(std::unique_ptr<mfem::ParMesh> &mesh, const IoData &
   {
     // Directly ingest the generated Mesh.
     smesh = std::make_unique<mfem::Mesh>(mesh->GetSerialMesh(0));
-
-    Mpi::Barrier(comm);
     mesh.reset();  // Release the no longer needed memory
     if (Mpi::Rank(comm) != 0)
     {
       smesh.reset();
-    }
-    else if (save_serial_mesh)
-    {
-      std::ofstream serial(output_serial_mesh_file);
-      BlockTimer bt_io(Timer::IO);
-      iodata.DimensionalizeMesh(*smesh);
-      smesh->Print(serial);
-      iodata.NondimensionalizeMesh(*smesh);
     }
   }
 
@@ -1182,7 +1180,20 @@ void RebalanceConformalMesh(std::unique_ptr<mfem::ParMesh> &mesh, const IoData &
     smesh->Finalize(refine, fix_orientation);
     partitioning = GetMeshPartitioning(*smesh, Mpi::Size(comm));
   }
+
   mesh = DistributeMesh(comm, smesh, partitioning);
+  if (save_serial_mesh)
+  {
+    BlockTimer bt(Timer::IO);
+    if (Mpi::Root(comm))
+    {
+      std::ofstream serial(output_serial_mesh_file);
+      serial.precision(mesh::MSH_FLT_PRECISION);
+      mesh::DimensionalizeMesh(*smesh, iodata.GetMeshScaleFactor());
+      smesh->Print(serial);  // Do not need to nondimensionalize the temporary
+    }
+    Mpi::Barrier(comm);
+  }
 }
 
 }  // namespace mesh
@@ -1207,7 +1218,7 @@ std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &path, bool remove_curvat
     std::stringstream fi(std::stringstream::in | std::stringstream::out);
     // fi << std::fixed;
     fi << std::scientific;
-    fi.precision(MSH_FLT_PRECISION);
+    fi.precision(mesh::MSH_FLT_PRECISION);
 
 #if 0
     // Put translated mesh in temporary storage (directory is created and destroyed in
@@ -1222,7 +1233,7 @@ std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &path, bool remove_curvat
     // mfem::ofgzstream fo(tmp, true);  // Use zlib compression if available
     // fo << std::fixed;
     fo << std::scientific;
-    fo.precision(MSH_FLT_PRECISION);
+    fo.precision(mesh::MSH_FLT_PRECISION);
 #endif
 
     if (mfile.extension() == ".mphtxt" || mfile.extension() == ".mphbin")
@@ -1740,7 +1751,7 @@ std::unique_ptr<mfem::ParMesh> DistributeMesh(MPI_Comm comm,
         // mfem::ofgzstream fo(pfile, true);  // Use zlib compression if available
         // fo << std::fixed;
         fo << std::scientific;
-        fo.precision(MSH_FLT_PRECISION);
+        fo.precision(mesh::MSH_FLT_PRECISION);
         part.Print(fo);
       }
     }
@@ -1786,7 +1797,7 @@ std::unique_ptr<mfem::ParMesh> DistributeMesh(MPI_Comm comm,
         std::ostringstream fo(std::stringstream::out);
         // fo << std::fixed;
         fo << std::scientific;
-        fo.precision(MSH_FLT_PRECISION);
+        fo.precision(mesh::MSH_FLT_PRECISION);
         part.Print(fo);
         so.push_back(fo.str());
         // so.push_back((i > 0) ? zlib::CompressString(fo.str()) : fo.str());
