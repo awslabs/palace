@@ -125,7 +125,6 @@ void RebalanceMesh(std::unique_ptr<mfem::ParMesh> &mesh, const IoData &iodata,
 {
   const auto &param = iodata.model.refinement;
   auto comm = mesh->GetComm();
-  const int width = 1 + static_cast<int>(std::log10(Mpi::Size(comm) - 1));
   if (output_dir.back() != '/')
   {
     output_dir += '/';

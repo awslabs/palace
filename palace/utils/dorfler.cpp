@@ -20,8 +20,15 @@ double ComputeDorflerThreshold(double fraction, const Vector &e)
 
   // Accumulate the squares of the estimates.
   std::vector<double> sum(estimates.size());
-  std::partial_sum(estimates.begin(), estimates.end(), sum.begin(),
-                   [](auto x, auto y) { return x + y * y; });
+  for (auto &x : estimates)
+  {
+    x *= x;
+  }
+  std::partial_sum(estimates.begin(), estimates.end(), sum.begin());
+  for (auto &x : estimates)
+  {
+    x = std::sqrt(x);
+  }
 
   // The pivot is the first point which leaves (1-θ) of the total sum after it.
   auto pivot = std::lower_bound(sum.begin(), sum.end(), (1 - fraction) * sum.back());
