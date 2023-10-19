@@ -64,7 +64,7 @@ static int ConfigureOmp()
   omp_set_dynamic(0);
   return nt;
 #else
-  return 1;
+  return 0;
 #endif
 }
 
