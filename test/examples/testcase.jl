@@ -1,6 +1,10 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+using Test
+using CSV
+using DataFrames
+
 function testcase(
     testdir,
     testconfig,
@@ -57,8 +61,8 @@ function testcase(
     @testset "Results" begin
         # Test that directories were created
         @test isdir(postprodir)
-        (~, ~, filesref) = first(walkdir(refpostprodir))
         (~, dirs, files) = first(walkdir(postprodir))
+        (~, ~, filesref) = first(walkdir(refpostprodir))
         metafiles = filter(x -> last(splitext(x)) != ".csv", files)
         @test length(dirs) == 1 && first(dirs) == "paraview"
         @test length(metafiles) == 1 && first(metafiles) == "palace.json"
@@ -66,8 +70,8 @@ function testcase(
 
         # Test the simulation outputs
         for file in filesref
-            dataref = CSV.File(joinpath(refpostprodir, file); header=1) |> DataFrame
             data    = CSV.File(joinpath(postprodir, file); header=1) |> DataFrame
+            dataref = CSV.File(joinpath(refpostprodir, file); header=1) |> DataFrame
             if !skip_rowcount
                 @test nrow(data) == nrow(dataref)
             end
@@ -79,6 +83,8 @@ function testcase(
                 select!(data, Not(Cols(contains(col))))
                 select!(dataref, Not(Cols(contains(col))))
             end
+            rename!(data, strip.(names(data)))
+            rename!(dataref, strip.(names(dataref)))
 
             test = isapprox.(data, dataref; rtol=rtol, atol=atol)
             for (row, rowdataref, rowdata) in
