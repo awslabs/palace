@@ -16,43 +16,81 @@ mfem::IntegrationPoint be_to_bfe(mfem::Geometry::Type geom, int o,
   mfem::IntegrationPoint fip = {};
   if (geom == mfem::Geometry::TRIANGLE)
   {
-    if (o == 2)
+    MFEM_ASSERT(o < 6, "Invalid orientation for mfem::Geometry::TRIANGLE!");
+    if (o == 0)  // 0, 1, 2
     {
-      fip.x = 1.0 - ip.x - ip.y;
+      fip.x = ip.x;
+      fip.y = ip.y;
+    }
+    else if (o == 5)  // 0, 2, 1
+    {
+      fip.x = ip.y;
       fip.y = ip.x;
     }
-    else if (o == 4)
+    else if (o == 2)  // 1, 2, 0
     {
       fip.x = ip.y;
       fip.y = 1.0 - ip.x - ip.y;
     }
-    else
+    else if (o == 1)  // 1, 0, 2
+    {
+      fip.x = 1.0 - ip.x - ip.y;
+      fip.y = ip.y;
+    }
+    else if (o == 4)  // 2, 0, 1
+    {
+      fip.x = 1.0 - ip.x - ip.y;
+      fip.y = ip.x;
+    }
+    else if (o == 3)  // 2, 1, 0
+    {
+      fip.x = ip.x;
+      fip.y = 1.0 - ip.x - ip.y;
+    }
+  }
+  else  // mfem::Geometry::SQUARE
+  {
+    MFEM_ASSERT(geom == mfem::Geometry::SQUARE && o < 8,
+                "Invalid orientation for mfem::Geometry::SQUARE!");
+    if (o == 0)  // 0, 1, 2, 3
     {
       fip.x = ip.x;
       fip.y = ip.y;
     }
-  }
-  else
-  {
-    if (o == 2)
+    else if (o == 1)  // 0, 3, 2, 1
+    {
+      fip.x = ip.y;
+      fip.y = ip.x;
+    }
+    else if (o == 2)  // 1, 2, 3, 0
     {
       fip.x = ip.y;
       fip.y = 1.0 - ip.x;
     }
-    else if (o == 4)
+    else if (o == 3)  // 1, 0, 3, 2
+    {
+      fip.x = 1.0 - ip.x;
+      fip.y = ip.y;
+    }
+    else if (o == 4)  // 2, 3, 0, 1
     {
       fip.x = 1.0 - ip.x;
       fip.y = 1.0 - ip.y;
     }
-    else if (o == 6)
+    else if (o == 5)  // 2, 1, 0, 3
+    {
+      fip.x = 1.0 - ip.y;
+      fip.y = 1.0 - ip.x;
+    }
+    else if (o == 6)  // 3, 0, 1, 2
     {
       fip.x = 1.0 - ip.y;
       fip.y = ip.x;
     }
-    else
+    else if (o == 7)  // 3, 2, 1, 0
     {
       fip.x = ip.x;
-      fip.y = ip.y;
+      fip.y = 1.0 - ip.y;
     }
   }
   fip.z = ip.z;
