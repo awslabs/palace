@@ -175,7 +175,7 @@ void PostOperator::InitializeDataCollection(const IoData &iodata)
   paraview_bdr.SetHighOrderOutput(use_ho);
   paraview_bdr.SetLevelsOfDetail(refine_ho);
 
-  mesh_scale_factor = iodata.GetMeshScaleFactor();
+  mesh_scale_factor = iodata.GetLengthScaleFactor();
 
   // Output fields @ phase = 0 and π/2 for frequency domain (rather than, for example,
   // peak phasors or magnitude = sqrt(2) * RMS). Also output fields evaluated on mesh

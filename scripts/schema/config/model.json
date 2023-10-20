@@ -10,8 +10,8 @@
     "L0": { "type": "number", "exclusiveMinimum": 0.0 },
     "Lc": { "type": "number", "exclusiveMinimum": 0.0 },
     "Partition": { "type": "string" },
-    "RemoveCurvature": { "type": "boolean" },
     "ReorientTetMesh": { "type": "boolean" },
+    "RemoveCurvature": { "type": "boolean" },
     "Refinement":
     {
       "type": "object",

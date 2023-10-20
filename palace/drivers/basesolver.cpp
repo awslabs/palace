@@ -26,6 +26,7 @@ namespace palace
 {
 
 using json = nlohmann::json;
+namespace fs = std::filesystem;
 
 namespace
 {
@@ -57,6 +58,34 @@ void WriteMetadata(const std::string &post_dir, const json &meta)
   fo << meta.dump(2) << '\n';
 }
 
+// Creates a directory for storing postprocessing data for a given adaptation
+// iteration, and returns a path
+fs::path IterationPostDir(bool root, const std::string &post_dir, int iter)
+{
+  std::string dir = fmt::format("{}Adapt{:0>3d}/", post_dir, iter);
+  // Create directory for output.
+  if (!fs::exists(dir))
+  {
+    fs::create_directories(dir);
+  }
+  return fs::path(dir);
+}
+
+// Returns an array of indices corresponding to marked elements.
+mfem::Array<int> MarkedElements(double threshold, const Vector &e)
+{
+  mfem::Array<int> ind;
+  ind.Reserve(e.Size());
+  for (int i = 0; i < e.Size(); i++)
+  {
+    if (e[i] >= threshold)
+    {
+      ind.Append(i);
+    }
+  }
+  return ind;
+}
+
 }  // namespace
 
 BaseSolver::BaseSolver(const IoData &iodata, bool root, int size, int num_thread,
@@ -64,9 +93,9 @@ BaseSolver::BaseSolver(const IoData &iodata, bool root, int size, int num_thread
   : iodata(iodata), post_dir(GetPostDir(iodata.problem.output)), root(root), table(8, 9, 9)
 {
   // Create directory for output.
-  if (root && !std::filesystem::exists(post_dir))
+  if (root && !fs::exists(post_dir))
   {
-    std::filesystem::create_directories(post_dir);
+    fs::create_directories(post_dir);
   }
 
   // Initialize simulation metadata for this simulation.
@@ -89,144 +118,6 @@ BaseSolver::BaseSolver(const IoData &iodata, bool root, int size, int num_thread
   }
 }
 
-std::string BaseSolver::IterationPostDir(int iter) const
-{
-  std::string dir = fmt::format("{}Adapt{:0>3d}/", post_dir, iter);
-  // Create directory for output.
-  if (root && !std::filesystem::exists(dir))
-  {
-    std::filesystem::create_directories(dir);
-  }
-  return dir;
-}
-
-namespace
-{
-
-// Helper function that returns an array of indices corresponding to marked elements.
-mfem::Array<int> MarkedElements(double threshold, const Vector &e)
-{
-  mfem::Array<int> ind;
-  ind.Reserve(e.Size());
-  for (int i = 0; i < e.Size(); i++)
-  {
-    if (e[i] >= threshold)
-    {
-      ind.Append(i);
-    }
-  }
-  return ind;
-}
-
-// Helper function responsible for rebalancing the mesh, and optionally writing meshes from
-// the intermediate stages to disk.
-void RebalanceMesh(std::unique_ptr<mfem::ParMesh> &mesh, const IoData &iodata,
-                   std::string output_dir)
-{
-  const auto &param = iodata.model.refinement;
-  auto comm = mesh->GetComm();
-  if (output_dir.back() != '/')
-  {
-    output_dir += '/';
-  }
-  std::string serial_mesh_filename;
-  if (param.write_serial_mesh)
-  {
-    serial_mesh_filename += (output_dir + "serial.mesh");
-    if (Mpi::Size(comm) == 1)
-    {
-      std::ofstream serial(serial_mesh_filename);
-      serial.precision(mesh::MSH_FLT_PRECISION);
-      mesh::DimensionalizeMesh(*mesh, iodata.GetMeshScaleFactor());
-      mesh->mfem::Mesh::Print(serial);
-      mesh::NondimensionalizeMesh(*mesh, iodata.GetMeshScaleFactor());
-    }
-  }
-
-  // If there is more than one processor, may perform rebalancing.
-  if (Mpi::Size(comm) > 1)
-  {
-    BlockTimer bt(Timer::REBALANCE);
-    mesh->ExchangeFaceNbrData();
-    int min_elem, max_elem;
-    min_elem = max_elem = mesh->GetNE();
-    Mpi::GlobalMin(1, &min_elem, comm);
-    Mpi::GlobalMax(1, &max_elem, comm);
-    const double ratio = double(max_elem) / min_elem;
-    Mpi::Print("Min Elem per processor: {}, Max Elem per processor: {}, Ratio: {:.3f}\n",
-               min_elem, max_elem, double(max_elem) / min_elem);
-    if (ratio > param.maximum_imbalance)
-    {
-      if (mesh->Nonconforming() && param.write_serial_mesh)
-      {
-        // Do not need to duplicate the mesh, as rebalancing will undo this.
-        mfem::Array<int> serial_partition(mesh->GetNE());
-        serial_partition = 0;
-        mesh->Rebalance(serial_partition);
-        BlockTimer bt_io(Timer::IO);
-        if (Mpi::Root(comm))
-        {
-          std::ofstream serial(serial_mesh_filename);
-          serial.precision(mesh::MSH_FLT_PRECISION);
-          mesh::DimensionalizeMesh(*mesh, iodata.GetMeshScaleFactor());
-          mesh->Mesh::Print(serial);
-          mesh::NondimensionalizeMesh(*mesh, iodata.GetMeshScaleFactor());
-        }
-        Mpi::Barrier(comm);
-      }
-
-      Mpi::Print("Ratio {:.3f} exceeds maximum allowed value {}: Performing rebalancing.\n",
-                 ratio, param.maximum_imbalance);
-      if (mesh->Nonconforming())
-      {
-        mesh->Rebalance();
-      }
-      else
-      {
-        // Without access to a refinement tree, partitioning must be done on the
-        // root processor and then redistributed.
-        mesh::RebalanceConformalMesh(mesh, iodata, serial_mesh_filename);
-      }
-    }
-    else if (param.write_serial_mesh)
-    {
-      if (mesh->Nonconforming())
-      {
-        // Given no rebalancing will be done, need to handle the serial write more
-        // carefully. For NC, this requires creating a duplicate mesh.
-        mfem::ParMesh smesh(*mesh);
-        mfem::Array<int> serial_partition(mesh->GetNE());
-        serial_partition = 0;
-        smesh.Rebalance(serial_partition);
-        BlockTimer bt_io(Timer::IO);
-        if (Mpi::Root(comm))
-        {
-          std::ofstream serial(serial_mesh_filename);
-          serial.precision(mesh::MSH_FLT_PRECISION);
-          mesh::DimensionalizeMesh(smesh, iodata.GetMeshScaleFactor());
-          smesh.Mesh::Print(serial);  // Do not need to nondimensionalize the temporary
-        }
-        Mpi::Barrier(comm);
-      }
-      else
-      {
-        auto smesh = std::make_unique<mfem::Mesh>(mesh->GetSerialMesh(0));
-        BlockTimer bt(Timer::IO);
-        if (Mpi::Rank(comm) == 0)
-        {
-          std::ofstream serial(serial_mesh_filename);
-          serial.precision(mesh::MSH_FLT_PRECISION);
-          mesh::DimensionalizeMesh(*smesh, iodata.GetMeshScaleFactor());
-          smesh->Print(serial);  // Do not need to nondimensionalize the temporary
-        }
-      }
-    }
-    mesh->ExchangeFaceNbrData();
-  }
-}
-
-}  // namespace
-
 void BaseSolver::SolveEstimateMarkRefine(
     std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const
 {
@@ -235,13 +126,12 @@ void BaseSolver::SolveEstimateMarkRefine(
   // Helper to save off postprocess data.
   auto SavePostProcess = [&](int iter)
   {
-    Mpi::Barrier(comm);
     BlockTimer bt_io(Timer::IO);
+    Mpi::Barrier(comm);
     if (Mpi::Root(comm) && param.save_adapt_iterations)
     {
       // Create a subfolder for the results of this adaptation.
-      namespace fs = std::filesystem;
-      const auto out_dir = fs::path(IterationPostDir(iter));
+      const auto out_dir = IterationPostDir(true, post_dir, iter);
       constexpr auto options =
           fs::copy_options::recursive | fs::copy_options::overwrite_existing;
       const fs::path root_dir(post_dir);
@@ -271,7 +161,6 @@ void BaseSolver::SolveEstimateMarkRefine(
     mesh.back()->Finalize(refine, fix_orientation);
   }
 
-  int iter = 0;
   auto indicators_and_ntdof = Solve(mesh);
   const auto &indicators = indicators_and_ntdof.first;
   const auto &ntdof = indicators_and_ntdof.second;
@@ -287,10 +176,10 @@ void BaseSolver::SolveEstimateMarkRefine(
       Mpi::Print("\nAdaptive Mesh Refinement Parameters:\n");
       Mpi::Print("MaxIter: {}, Tolerance: {:.3e}\n\n", param.adapt_max_its,
                  param.adapt_tolerance);
-      SavePostProcess(iter);  // Save the initial solution
     }
   }
 
+  int iter = 0;
   // Collection of all tests that might exhaust resources.
   auto exhausted_resources = [&]()
   {
@@ -301,10 +190,10 @@ void BaseSolver::SolveEstimateMarkRefine(
     ret |= iter >= param.adapt_max_its;
     return ret;
   };
-
   while (indicators.Norml2(comm) > param.adapt_tolerance && !exhausted_resources())
   {
     BlockTimer bt_adapt(Timer::ADAPTATION);
+    SavePostProcess(iter);  // Optionally save of the previous solution
     Mpi::Print("Adaptation iteration {}: Initial Error Indicator: {:.3e}, DOF: {}, DOF "
                "Limit: {}\n",
                ++iter, indicators.Norml2(comm), ntdof, param.dof_limit);
@@ -312,7 +201,7 @@ void BaseSolver::SolveEstimateMarkRefine(
     {
       // Mark.
       const auto threshold =
-          utils::ComputeDorflerThreshold(param.update_fraction, indicators.Local());
+          utils::ComputeDorflerThreshold(comm, param.update_fraction, indicators.Local());
       const auto marked_elements = MarkedElements(threshold, indicators.Local());
 
       // Refine.
@@ -346,7 +235,7 @@ void BaseSolver::SolveEstimateMarkRefine(
       // complement of this set is then the largest number of elements that make up θ of the
       // total error.
       const double threshold =
-          utils::ComputeDorflerThreshold(1 - param.update_fraction, coarse_error);
+          utils::ComputeDorflerThreshold(comm, 1 - param.update_fraction, coarse_error);
 
       const auto initial_elem_count = mesh.back()->GetGlobalNE();
       constexpr int aggregate_operation = 3;  // sum of squares
@@ -357,11 +246,10 @@ void BaseSolver::SolveEstimateMarkRefine(
                  initial_elem_count - final_elem_count, initial_elem_count,
                  final_elem_count);
     }
-    RebalanceMesh(mesh.back(), iodata, post_dir);
+    mesh::RebalanceMesh(mesh.back(), iodata, post_dir);
 
     // Solve + estimate.
     indicators_and_ntdof = Solve(mesh);
-    SavePostProcess(iter);
   }
   Mpi::Print("\nFinal Error Indicator: {:.3e}, DOF: {}\n", indicators.Norml2(comm), ntdof);
 }

@@ -9,7 +9,6 @@
 namespace mfem
 {
 
-class Mesh;
 class ParMesh;
 
 }  // namespace mfem
@@ -46,7 +45,7 @@ public:
   void NondimensionalizeInputs(mfem::ParMesh &mesh);
 
   // Return the mesh scaling factor, (Lc / L0), for mesh IO.
-  double GetMeshScaleFactor() const { return Lc / model.L0; }
+  double GetLengthScaleFactor() const { return Lc / model.L0; }
 
   // Redimensionalize values for output.
   enum class ValueType

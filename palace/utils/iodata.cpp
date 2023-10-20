@@ -544,7 +544,7 @@ void IoData::NondimensionalizeInputs(mfem::ParMesh &mesh)
   solver.transient.delta_t /= tc;
 
   // Scale mesh vertices for correct nondimensionalization.
-  mesh::NondimensionalizeMesh(mesh, GetMeshScaleFactor());
+  mesh::NondimensionalizeMesh(mesh, GetLengthScaleFactor());
 
   // Print some information.
   Mpi::Print(mesh.GetComm(),

@@ -80,10 +80,6 @@ protected:
   void PostprocessErrorIndicator(const PostOperator &postop,
                                  const ErrorIndicator &indicator) const;
 
-  // Returns a path to the directory for storing postprocessing data for a given adaptation
-  // iteration.
-  std::string IterationPostDir(int iter) const;
-
   // Performs a solve using the mesh sequence, then reports error indicators and the number
   // of global true dofs.
   virtual std::pair<ErrorIndicator, long long int>
