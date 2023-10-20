@@ -29,8 +29,8 @@ mfem::IntegrationPoint be_to_bfe(mfem::Geometry::Type geom, int o,
     }
     else if (o == 2)  // 1, 2, 0
     {
-      fip.x = ip.y;
-      fip.y = 1.0 - ip.x - ip.y;
+      fip.x = 1.0 - ip.x - ip.y;
+      fip.y = ip.x;
     }
     else if (o == 1)  // 1, 0, 2
     {
@@ -39,8 +39,8 @@ mfem::IntegrationPoint be_to_bfe(mfem::Geometry::Type geom, int o,
     }
     else if (o == 4)  // 2, 0, 1
     {
-      fip.x = 1.0 - ip.x - ip.y;
-      fip.y = ip.x;
+      fip.x = ip.y;
+      fip.y = 1.0 - ip.x - ip.y;
     }
     else if (o == 3)  // 2, 1, 0
     {
