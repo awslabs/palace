@@ -5,7 +5,6 @@
 
 #include "fem/bilinearform.hpp"
 #include "fem/coefficient.hpp"
-#include "fem/fespace.hpp"
 #include "fem/integrator.hpp"
 #include "fem/multigrid.hpp"
 #include "linalg/rap.hpp"
@@ -125,10 +124,8 @@ LaplaceOperator::LaplaceOperator(const IoData &iodata,
     nd_fec(std::make_unique<mfem::ND_FECollection>(iodata.solver.order,
                                                    mesh.back()->Dimension())),
     h1_fespaces(fem::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
-        iodata.solver.linear.mg_max_levels, iodata.solver.linear.mg_legacy_transfer,
-        pa_order_threshold, pa_discrete_interp, mesh, h1_fecs, &dbc_marker,
-        &dbc_tdof_lists)),
-    nd_fespace(std::make_unique<FiniteElementSpace>(mesh.back().get(), nd_fec.get())),
+        iodata.solver.linear.mg_max_levels, mesh, h1_fecs, &dbc_marker, &dbc_tdof_lists)),
+    nd_fespace(h1_fespaces.GetFinestFESpace(), mesh.back().get(), nd_fec.get()),
     mat_op(iodata, *mesh.back()), source_attr_lists(ConstructSources(iodata))
 {
   // Print essential BC information.
@@ -150,7 +147,7 @@ std::unique_ptr<Operator> LaplaceOperator::GetStiffnessMatrix()
     Mpi::Print("\nAssembling multigrid hierarchy:\n");
   }
   auto K = std::make_unique<MultigridOperator>(GetH1Spaces().GetNumLevels());
-  for (int l = 0; l < GetH1Spaces().GetNumLevels(); l++)
+  for (std::size_t l = 0; l < GetH1Spaces().GetNumLevels(); l++)
   {
     // Force coarse level operator to be fully assembled always.
     const auto &h1_fespace_l = GetH1Spaces().GetFESpaceAtLevel(l);
@@ -184,16 +181,6 @@ std::unique_ptr<Operator> LaplaceOperator::GetStiffnessMatrix()
   }
   print_hdr = false;
   return K;
-}
-
-std::unique_ptr<Operator> LaplaceOperator::GetGradMatrix()
-{
-  constexpr bool skip_zeros_interp = true;
-  DiscreteLinearOperator grad(GetH1Space(), GetNDSpace());
-  grad.AddDomainInterpolator<GradientInterpolator>();
-  return std::make_unique<ParOperator>(
-      grad.Assemble(pa_discrete_interp ? pa_order_threshold : 99, skip_zeros_interp),
-      GetH1Space(), GetNDSpace(), true);
 }
 
 void LaplaceOperator::GetExcitationVector(int idx, const Operator &K, Vector &X,

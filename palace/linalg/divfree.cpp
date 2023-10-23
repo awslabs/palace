@@ -7,6 +7,7 @@
 #include <mfem.hpp>
 #include "fem/bilinearform.hpp"
 #include "fem/coefficient.hpp"
+#include "fem/fespace.hpp"
 #include "fem/integrator.hpp"
 #include "linalg/amg.hpp"
 #include "linalg/gmg.hpp"
@@ -18,18 +19,17 @@ namespace palace
 {
 
 DivFreeSolver::DivFreeSolver(const MaterialOperator &mat_op,
-                             const mfem::ParFiniteElementSpace &nd_fespace,
-                             const mfem::ParFiniteElementSpaceHierarchy &h1_fespaces,
+                             const FiniteElementSpace &nd_fespace,
+                             const AuxiliaryFiniteElementSpaceHierarchy &h1_fespaces,
                              const std::vector<mfem::Array<int>> &h1_bdr_tdof_lists,
-                             double tol, int max_it, int print, int pa_order_threshold,
-                             bool pa_discrete_interp)
+                             double tol, int max_it, int print, int pa_order_threshold)
 {
   constexpr bool skip_zeros = false;
   constexpr auto MatType = MaterialPropertyType::PERMITTIVITY_REAL;
   MaterialPropertyCoefficient<MatType> epsilon_func(mat_op);
   {
     auto M_mg = std::make_unique<MultigridOperator>(h1_fespaces.GetNumLevels());
-    for (int l = 0; l < h1_fespaces.GetNumLevels(); l++)
+    for (std::size_t l = 0; l < h1_fespaces.GetNumLevels(); l++)
     {
       // Force coarse level operator to be fully assembled always.
       const auto &h1_fespace_l = h1_fespaces.GetFESpaceAtLevel(l);
@@ -49,14 +49,7 @@ DivFreeSolver::DivFreeSolver(const MaterialOperator &mat_op,
         std::make_unique<ParOperator>(weakdiv.Assemble(pa_order_threshold, skip_zeros),
                                       nd_fespace, h1_fespaces.GetFinestFESpace(), false);
   }
-  {
-    constexpr bool skip_zeros_interp = true;
-    DiscreteLinearOperator grad(h1_fespaces.GetFinestFESpace(), nd_fespace);
-    grad.AddDomainInterpolator<GradientInterpolator>();
-    Grad = std::make_unique<ParOperator>(
-        grad.Assemble(pa_discrete_interp ? pa_order_threshold : 99, skip_zeros_interp),
-        h1_fespaces.GetFinestFESpace(), nd_fespace, true);
-  }
+  Grad = &h1_fespaces.GetFinestAuxiliaryFESpace().GetDiscreteInterpolator();
   bdr_tdof_list_M = &h1_bdr_tdof_lists.back();
 
   // The system matrix for the projection is real and SPD.
@@ -68,8 +61,8 @@ DivFreeSolver::DivFreeSolver(const MaterialOperator &mat_op,
     const int mg_smooth_order =
         std::max(h1_fespaces.GetFinestFESpace().GetMaxElementOrder(), 2);
     pc = std::make_unique<GeometricMultigridSolver<Operator>>(
-        std::move(amg), h1_fespaces, nullptr, 1, 1, mg_smooth_order, 1.0, 0.0, true,
-        pa_order_threshold, pa_discrete_interp);
+        std::move(amg), h1_fespaces.GetProlongationOperators(), nullptr, 1, 1,
+        mg_smooth_order, 1.0, 0.0, true);
   }
   else
   {

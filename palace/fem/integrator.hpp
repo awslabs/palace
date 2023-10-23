@@ -506,6 +506,9 @@ using GradientInterpolator = DiscreteInterpolator;
 // Interpolator for the discrete curl map from an H(curl) space to an H(div) space.
 using CurlInterpolator = DiscreteInterpolator;
 
+// Interpolator for the discrete divergence map from an H(div) space to an L2 space.
+using DivergenceInterpolator = DiscreteInterpolator;
+
 // Similar to MFEM's VectorFEBoundaryTangentLFIntegrator for ND spaces, but instead of
 // computing (n x f, v), this just computes (f, v). Also eliminates the a and b quadrature
 // parameters and uses fem::GetDefaultIntegrationOrder instead.

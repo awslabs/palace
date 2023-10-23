@@ -12,7 +12,6 @@
 namespace mfem
 {
 
-class ParFiniteElementSpaceHierarchy;
 class ParMesh;
 
 }  // namespace mfem
@@ -21,6 +20,7 @@ namespace palace
 {
 
 class ErrorIndicator;
+class FiniteElementSpaceHierarchy;
 class IoData;
 class PostOperator;
 class Timer;
@@ -90,7 +90,7 @@ public:
   Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const = 0;
 
   // These methods write different simulation metadata to a JSON file in post_dir.
-  void SaveMetadata(const mfem::ParFiniteElementSpaceHierarchy &fespaces) const;
+  void SaveMetadata(const FiniteElementSpaceHierarchy &fespaces) const;
   template <typename SolverType>
   void SaveMetadata(const SolverType &ksp) const;
   void SaveMetadata(const Timer &timer) const;

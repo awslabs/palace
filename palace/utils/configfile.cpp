@@ -1642,7 +1642,6 @@ void LinearSolverData::SetUp(json &solver)
   // Options related to multigrid.
   mg_max_levels = linear->value("MGMaxLevels", mg_max_levels);
   mg_coarsen_type = linear->value("MGCoarsenType", mg_coarsen_type);
-  mg_legacy_transfer = linear->value("MGLegacyTransfer", mg_legacy_transfer);
   mg_cycle_it = linear->value("MGCycleIts", mg_cycle_it);
   mg_smooth_aux = linear->value("MGAuxiliarySmoother", mg_smooth_aux);
   mg_smooth_it = linear->value("MGSmoothIts", mg_smooth_it);
@@ -1682,7 +1681,6 @@ void LinearSolverData::SetUp(json &solver)
 
   linear->erase("MGMaxLevels");
   linear->erase("MGCoarsenType");
-  linear->erase("MGLegacyTransfer");
   linear->erase("MGCycleIts");
   linear->erase("MGAuxiliarySmoother");
   linear->erase("MGSmoothIts");
@@ -1721,7 +1719,6 @@ void LinearSolverData::SetUp(json &solver)
 
   // std::cout << "MGMaxLevels: " << mg_max_levels << '\n';
   // std::cout << "MGCoarsenType: " << mg_coarsen_type << '\n';
-  // std::cout << "MGLegacyTransfer: " << mg_legacy_transfer << '\n';
   // std::cout << "MGCycleIts: " << mg_cycle_it << '\n';
   // std::cout << "MGAuxiliarySmoother: " << mg_smooth_aux << '\n';
   // std::cout << "MGSmoothIts: " << mg_smooth_it << '\n';

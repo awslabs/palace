@@ -107,7 +107,6 @@
         "InitialGuess": { "type": "boolean" },
         "MGMaxLevels": { "type": "int", "minimum": 1 },
         "MGCoarsenType": { "type": "string" },
-        "MGLegacyTransfer": { "type": "boolean" },
         "MGAuxiliarySmoother": { "type": "boolean" },
         "MGCycleIts": { "type": "integer", "exclusiveMinimum": 0 },
         "MGSmoothIts": { "type": "integer", "exclusiveMinimum": 0 },

@@ -88,11 +88,11 @@ ErrorIndicator MagnetostaticSolver::Postprocess(CurlCurlOperator &curlcurlop,
   //                         Φ_i = ∫ B ⋅ n_j dS
   // and M_ij = Φ_i/I_j. The energy formulation avoids having to locally integrate B =
   // ∇ x A.
-  auto Curl = curlcurlop.GetCurlMatrix();
+  const auto &Curl = curlcurlop.GetCurlMatrix();
   const SurfaceCurrentOperator &surf_j_op = curlcurlop.GetSurfaceCurrentOp();
   int nstep = static_cast<int>(surf_j_op.Size());
   mfem::DenseMatrix M(nstep), Mm(nstep);
-  Vector B(Curl->Height()), Aij(Curl->Width());
+  Vector B(Curl.Height()), Aij(Curl.Width());
   Vector Iinc(nstep);
   if (iodata.solver.magnetostatic.n_post > 0)
   {
@@ -103,7 +103,7 @@ ErrorIndicator MagnetostaticSolver::Postprocess(CurlCurlOperator &curlcurlop,
   CurlFluxErrorEstimator<Vector> estimator(
       curlcurlop.GetMaterialOp(), curlcurlop.GetNDSpaces(),
       iodata.solver.linear.estimator_tol, iodata.solver.linear.estimator_max_it, 0,
-      iodata.solver.pa_order_threshold, iodata.solver.pa_discrete_interp);
+      iodata.solver.pa_order_threshold);
   ErrorIndicator indicator;
   for (int i = 0; i < nstep; i++)
   {
@@ -120,7 +120,7 @@ ErrorIndicator MagnetostaticSolver::Postprocess(CurlCurlOperator &curlcurlop,
 
     // Compute B = ∇ x A on the true dofs, and set the internal GridFunctions in
     // PostOperator for all postprocessing operations.
-    Curl->Mult(A[i], B);
+    Curl.Mult(A[i], B);
     postop.SetBGridFunction(B);
     postop.SetAGridFunction(A[i]);
     double Um = postop.GetHFieldEnergy();
@@ -157,7 +157,7 @@ ErrorIndicator MagnetostaticSolver::Postprocess(CurlCurlOperator &curlcurlop,
       else if (j > i)
       {
         linalg::AXPBYPCZ(1.0, A[i], 1.0, A[j], 0.0, Aij);
-        Curl->Mult(Aij, B);
+        Curl.Mult(Aij, B);
         postop.SetBGridFunction(B);
         double Um = postop.GetHFieldEnergy();
         M(i, j) = Um / (Iinc(i) * Iinc(j)) -

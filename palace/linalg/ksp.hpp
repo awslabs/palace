@@ -10,16 +10,11 @@
 #include "linalg/operator.hpp"
 #include "linalg/solver.hpp"
 
-namespace mfem
-{
-
-class ParFiniteElementSpaceHierarchy;
-
-}  // namespace mfem
-
 namespace palace
 {
 
+class AuxiliaryFiniteElementSpaceHierarchy;
+class FiniteElementSpaceHierarchy;
 class IoData;
 
 //
@@ -45,8 +40,8 @@ protected:
   mutable int ksp_mult, ksp_mult_it;
 
 public:
-  BaseKspSolver(const IoData &iodata, mfem::ParFiniteElementSpaceHierarchy &fespaces,
-                mfem::ParFiniteElementSpaceHierarchy *aux_fespaces = nullptr);
+  BaseKspSolver(const IoData &iodata, const FiniteElementSpaceHierarchy &fespaces,
+                const AuxiliaryFiniteElementSpaceHierarchy *aux_fespaces = nullptr);
   BaseKspSolver(std::unique_ptr<IterativeSolver<OperType>> &&ksp,
                 std::unique_ptr<Solver<OperType>> &&pc);
 
