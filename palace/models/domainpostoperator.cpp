@@ -15,10 +15,9 @@ namespace palace
 
 DomainPostOperator::DomainPostOperator(const IoData &iodata, const MaterialOperator &mat_op,
                                        const mfem::ParFiniteElementSpace *nd_fespace,
-                                       const mfem::ParFiniteElementSpace *rt_fespace,
-                                       int pa_order_threshold)
+                                       const mfem::ParFiniteElementSpace *rt_fespace)
 {
-  constexpr bool skip_zeros = false;
+  // Mass operators are always partially assembled.
   if (nd_fespace)
   {
     // Construct ND mass matrix to compute the electric field energy integral as:
@@ -30,7 +29,7 @@ DomainPostOperator::DomainPostOperator(const IoData &iodata, const MaterialOpera
     MaterialPropertyCoefficient<MatTypeEpsReal> epsilon_func(mat_op);
     BilinearForm m_nd(*nd_fespace);
     m_nd.AddDomainIntegrator<VectorFEMassIntegrator>(epsilon_func);
-    M_ND = m_nd.Assemble(pa_order_threshold, skip_zeros);
+    M_ND = m_nd.Assemble();
     D.SetSize(M_ND->Height());
 
     // Use the provided domain postprocessing indices to group for postprocessing bulk
@@ -55,8 +54,7 @@ DomainPostOperator::DomainPostOperator(const IoData &iodata, const MaterialOpera
       BilinearForm mr_nd(*nd_fespace), mi_nd(*nd_fespace);
       mr_nd.AddDomainIntegrator<VectorFEMassIntegrator>(epsilon_func_r);
       mi_nd.AddDomainIntegrator<VectorFEMassIntegrator>(epsilon_func_i);
-      M_NDi.emplace(idx, std::make_pair(mr_nd.Assemble(pa_order_threshold, skip_zeros),
-                                        mi_nd.Assemble(pa_order_threshold, skip_zeros)));
+      M_NDi.emplace(idx, std::make_pair(mr_nd.Assemble(), mi_nd.Assemble()));
     }
   }
 
@@ -68,7 +66,7 @@ DomainPostOperator::DomainPostOperator(const IoData &iodata, const MaterialOpera
     MaterialPropertyCoefficient<MatTypeMuInv> muinv_func(mat_op);
     BilinearForm m_rt(*rt_fespace);
     m_rt.AddDomainIntegrator<VectorFEMassIntegrator>(muinv_func);
-    M_RT = m_rt.Assemble(pa_order_threshold - 1, skip_zeros);
+    M_RT = m_rt.Assemble();
     H.SetSize(M_RT->Height());
   }
 }
