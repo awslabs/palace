@@ -12,6 +12,9 @@
 namespace palace
 {
 
+class AuxiliaryFiniteElementSpace;
+class FiniteElementSpace;
+
 //
 // A wrapper for Hypre's AMS solver.
 //
@@ -28,8 +31,8 @@ private:
   // Control print level for debugging.
   const int print;
 
-  // Discrete gradient matrix.
-  std::unique_ptr<mfem::HypreParMatrix> G;
+  // Discrete gradient matrix (not owned).
+  const mfem::HypreParMatrix *G;
 
   // Nedelec interpolation matrix and its components, or, for p = 1, the mesh vertex
   // coordinates.
@@ -37,8 +40,8 @@ private:
   std::unique_ptr<mfem::HypreParVector> x, y, z;
 
   // Helper function to set up the auxiliary objects required by the AMS solver.
-  void ConstructAuxiliaryMatrices(const mfem::ParFiniteElementSpace &nd_fespace,
-                                  const mfem::ParFiniteElementSpace &h1_fespace);
+  void ConstructAuxiliaryMatrices(const FiniteElementSpace &nd_fespace,
+                                  const AuxiliaryFiniteElementSpace &h1_fespace);
 
   // Helper function to construct and configure the AMS solver.
   void InitializeSolver();
@@ -46,12 +49,12 @@ private:
 public:
   // Constructor requires the ND space, but will construct the H1 and (H1)ᵈ spaces
   // internally as needed.
-  HypreAmsSolver(const mfem::ParFiniteElementSpace &nd_fespace,
-                 const mfem::ParFiniteElementSpace &h1_fespace, int cycle_it, int smooth_it,
+  HypreAmsSolver(const FiniteElementSpace &nd_fespace,
+                 const AuxiliaryFiniteElementSpace &h1_fespace, int cycle_it, int smooth_it,
                  int agg_coarsen, bool vector_interp, bool op_singular, int print);
   HypreAmsSolver(const IoData &iodata, bool coarse_solver,
-                 const mfem::ParFiniteElementSpace &nd_fespace,
-                 const mfem::ParFiniteElementSpace &h1_fespace, int print)
+                 const FiniteElementSpace &nd_fespace,
+                 const AuxiliaryFiniteElementSpace &h1_fespace, int print)
     : HypreAmsSolver(
           nd_fespace, h1_fespace, coarse_solver ? 1 : iodata.solver.linear.mg_cycle_it,
           iodata.solver.linear.mg_smooth_it,

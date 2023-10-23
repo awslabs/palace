@@ -8,6 +8,7 @@
 #include <memory>
 #include <vector>
 #include <mfem.hpp>
+#include "fem/fespace.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
 #include "models/materialoperator.hpp"
@@ -38,8 +39,8 @@ private:
   // electric field (Nedelec) on the given mesh.
   std::vector<std::unique_ptr<mfem::H1_FECollection>> h1_fecs;
   std::unique_ptr<mfem::ND_FECollection> nd_fec;
-  std::unique_ptr<mfem::ParFiniteElementSpaceHierarchy> h1_fespaces;
-  std::unique_ptr<mfem::ParFiniteElementSpace> nd_fespace;
+  FiniteElementSpaceHierarchy h1_fespaces;
+  AuxiliaryFiniteElementSpace nd_fespace;
 
   // Operator for domain material properties.
   MaterialOperator mat_op;
@@ -58,11 +59,12 @@ public:
   const auto &GetSources() const { return source_attr_lists; }
 
   // Return the parallel finite element space objects.
-  auto &GetH1Spaces() { return *h1_fespaces; }
-  auto &GetH1Space() { return h1_fespaces->GetFinestFESpace(); }
-  const auto &GetH1Space() const { return h1_fespaces->GetFinestFESpace(); }
-  auto &GetNDSpace() { return *nd_fespace; }
-  const auto &GetNDSpace() const { return *nd_fespace; }
+  auto &GetH1Spaces() { return h1_fespaces; }
+  const auto &GetH1Spaces() const { return h1_fespaces; }
+  auto &GetH1Space() { return h1_fespaces.GetFinestFESpace(); }
+  const auto &GetH1Space() const { return h1_fespaces.GetFinestFESpace(); }
+  auto &GetNDSpace() { return nd_fespace; }
+  const auto &GetNDSpace() const { return nd_fespace; }
 
   // Return the number of true (conforming) dofs on the finest H1 space.
   auto GlobalTrueVSize() { return GetH1Space().GlobalTrueVSize(); }
@@ -72,7 +74,7 @@ public:
   std::unique_ptr<Operator> GetStiffnessMatrix();
 
   // Construct and return the discrete gradient matrix.
-  std::unique_ptr<Operator> GetGradMatrix();
+  const Operator &GetGradMatrix() const { return GetNDSpace().GetDiscreteInterpolator(); }
 
   // Assemble the solution boundary conditions and right-hand side vector for a nonzero
   // prescribed voltage on the specified surface index.

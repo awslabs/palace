@@ -15,13 +15,14 @@ namespace mfem
 
 template <typename T>
 class Array;
-class ParFiniteElementSpaceHierarchy;
 
 }  // namespace mfem
 
 namespace palace
 {
 
+class AuxiliaryFiniteElementSpaceHierarchy;
+class FiniteElementSpaceHierarchy;
 class MaterialOperator;
 
 //
@@ -38,12 +39,11 @@ private:
 
 public:
   WeightedHCurlNormSolver(const MaterialOperator &mat_op,
-                          const mfem::ParFiniteElementSpaceHierarchy &nd_fespaces,
-                          const mfem::ParFiniteElementSpaceHierarchy &h1_fespaces,
+                          const FiniteElementSpaceHierarchy &nd_fespaces,
+                          const AuxiliaryFiniteElementSpaceHierarchy &h1_fespaces,
                           const std::vector<mfem::Array<int>> &nd_dbc_tdof_lists,
                           const std::vector<mfem::Array<int>> &h1_dbc_tdof_lists,
-                          double tol, int max_it, int print, int pa_order_threshold,
-                          bool pa_discrete_interp);
+                          double tol, int max_it, int print, int pa_order_threshold);
 
   const Operator &GetOperator() { return *A; }
 

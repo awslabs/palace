@@ -7,6 +7,7 @@
 #include <memory>
 #include <mfem.hpp>
 #include "fem/errorindicator.hpp"
+#include "fem/fespace.hpp"
 #include "linalg/ksp.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
@@ -38,12 +39,12 @@ private:
 
 public:
   FluxProjector(const MaterialOperator &mat_op,
-                const mfem::ParFiniteElementSpaceHierarchy &nd_fespaces, double tol,
-                int max_it, int print, int pa_order_threshold, bool pa_discrete_interp);
+                const FiniteElementSpaceHierarchy &nd_fespaces, double tol, int max_it,
+                int print, int pa_order_threshold);
   FluxProjector(const MaterialOperator &mat_op,
-                const mfem::ParFiniteElementSpaceHierarchy &h1_fespaces,
-                const mfem::ParFiniteElementSpace &h1d_fespace, double tol, int max_it,
-                int print, int pa_order_threshold, bool pa_discrete_interp);
+                const FiniteElementSpaceHierarchy &h1_fespaces,
+                const FiniteElementSpace &h1d_fespace, double tol, int max_it, int print,
+                int pa_order_threshold);
 
   template <typename VecType>
   void Mult(const VecType &x, VecType &y) const;
@@ -62,7 +63,7 @@ class CurlFluxErrorEstimator
   const MaterialOperator &mat_op;
 
   // Finite element space used to represent U and F.
-  mfem::ParFiniteElementSpace &nd_fespace;
+  const FiniteElementSpace &nd_fespace;
 
   // Global L2 projection solver.
   FluxProjector projector;
@@ -73,9 +74,8 @@ class CurlFluxErrorEstimator
 
 public:
   CurlFluxErrorEstimator(const MaterialOperator &mat_op,
-                         mfem::ParFiniteElementSpaceHierarchy &nd_fespaces, double tol,
-                         int max_it, int print, int pa_order_threshold,
-                         bool pa_discrete_interp);
+                         const FiniteElementSpaceHierarchy &nd_fespaces, double tol,
+                         int max_it, int print, int pa_order_threshold);
 
   // Compute elemental error indicators given a vector of true DOF.
   ErrorIndicator ComputeIndicators(const VecType &U) const;
@@ -96,10 +96,10 @@ class GradFluxErrorEstimator
   const MaterialOperator &mat_op;
 
   // Finite element space used to represent U.
-  mfem::ParFiniteElementSpace &h1_fespace;
+  const FiniteElementSpace &h1_fespace;
 
   // Vector H1 space used to represent the components of F, ordered by component.
-  std::unique_ptr<mfem::ParFiniteElementSpace> h1d_fespace;
+  std::unique_ptr<FiniteElementSpace> h1d_fespace;
 
   // Global L2 projection solver.
   FluxProjector projector;
@@ -110,9 +110,8 @@ class GradFluxErrorEstimator
 
 public:
   GradFluxErrorEstimator(const MaterialOperator &mat_op,
-                         mfem::ParFiniteElementSpaceHierarchy &h1_fespaces, double tol,
-                         int max_it, int print, int pa_order_threshold,
-                         bool pa_discrete_interp);
+                         const FiniteElementSpaceHierarchy &h1_fespaces, double tol,
+                         int max_it, int print, int pa_order_threshold);
 
   // Compute elemental error indicators given a vector of true DOF.
   ErrorIndicator ComputeIndicators(const Vector &U) const;

@@ -456,7 +456,6 @@ vectors in Krylov subspace methods or other parts of the code.
 ### Advanced linear solver options
 
   - `"InitialGuess" [true]`
-  - `"MGLegacyTransfer" [false]`
   - `"MGAuxiliarySmoother" [true]`
   - `"MGSmoothEigScaleMax" [1.0]`
   - `"MGSmoothEigScaleMin" [0.0]`

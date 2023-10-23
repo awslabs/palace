@@ -86,21 +86,21 @@ ErrorIndicator ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop,
   // charges from the prescribed voltage to get C directly as:
   //         Q_i = ∫ ρ dV = ∫ ∇ ⋅ (ε E) dV = ∫ (ε E) ⋅ n dS
   // and C_ij = Q_i/V_j. The energy formulation avoids having to locally integrate E = -∇V.
-  auto Grad = laplaceop.GetGradMatrix();
+  const auto &Grad = laplaceop.GetGradMatrix();
   const std::map<int, mfem::Array<int>> &terminal_sources = laplaceop.GetSources();
   int nstep = static_cast<int>(terminal_sources.size());
   mfem::DenseMatrix C(nstep), Cm(nstep);
-  Vector E(Grad->Height()), Vij(Grad->Width());
+  Vector E(Grad.Height()), Vij(Grad.Width());
   if (iodata.solver.electrostatic.n_post > 0)
   {
     Mpi::Print("\n");
   }
 
   // Calculate and record the error indicators.
-  GradFluxErrorEstimator estimator(
-      laplaceop.GetMaterialOp(), laplaceop.GetH1Spaces(),
-      iodata.solver.linear.estimator_tol, iodata.solver.linear.estimator_max_it, 0,
-      iodata.solver.pa_order_threshold, iodata.solver.pa_discrete_interp);
+  GradFluxErrorEstimator estimator(laplaceop.GetMaterialOp(), laplaceop.GetH1Spaces(),
+                                   iodata.solver.linear.estimator_tol,
+                                   iodata.solver.linear.estimator_max_it, 0,
+                                   iodata.solver.pa_order_threshold);
   ErrorIndicator indicator;
   for (int i = 0; i < nstep; i++)
   {
@@ -113,7 +113,7 @@ ErrorIndicator ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop,
     // Compute E = -∇V on the true dofs, and set the internal GridFunctions in PostOperator
     // for all postprocessing operations.
     E = 0.0;
-    Grad->AddMult(V[i], E, -1.0);
+    Grad.AddMult(V[i], E, -1.0);
     postop.SetEGridFunction(E);
     postop.SetVGridFunction(V[i]);
     double Ue = postop.GetEFieldEnergy();
@@ -151,7 +151,7 @@ ErrorIndicator ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop,
       {
         linalg::AXPBYPCZ(1.0, V[i], 1.0, V[j], 0.0, Vij);
         E = 0.0;
-        Grad->AddMult(Vij, E, -1.0);
+        Grad.AddMult(Vij, E, -1.0);
         postop.SetEGridFunction(E);
         double Ue = postop.GetEFieldEnergy();
         C(i, j) = Ue - 0.5 * (C(i, i) + C(j, j));

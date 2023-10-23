@@ -7,6 +7,7 @@
 #include <memory>
 #include <vector>
 #include <mfem.hpp>
+#include "fem/fespace.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
 #include "models/materialoperator.hpp"
@@ -41,8 +42,9 @@ private:
   std::vector<std::unique_ptr<mfem::ND_FECollection>> nd_fecs;
   std::vector<std::unique_ptr<mfem::H1_FECollection>> h1_fecs;
   std::unique_ptr<mfem::RT_FECollection> rt_fec;
-  std::unique_ptr<mfem::ParFiniteElementSpaceHierarchy> nd_fespaces, h1_fespaces;
-  std::unique_ptr<mfem::ParFiniteElementSpace> rt_fespace;
+  FiniteElementSpaceHierarchy nd_fespaces;
+  AuxiliaryFiniteElementSpaceHierarchy h1_fespaces;
+  AuxiliaryFiniteElementSpace rt_fespace;
 
   // Operator for domain material properties.
   MaterialOperator mat_op;
@@ -61,14 +63,16 @@ public:
   const auto &GetSurfaceCurrentOp() const { return surf_j_op; }
 
   // Return the parallel finite element space objects.
-  auto &GetNDSpaces() { return *nd_fespaces; }
-  auto &GetNDSpace() { return nd_fespaces->GetFinestFESpace(); }
-  const auto &GetNDSpace() const { return nd_fespaces->GetFinestFESpace(); }
-  auto &GetH1Spaces() { return *h1_fespaces; }
-  auto &GetH1Space() { return h1_fespaces->GetFinestFESpace(); }
-  const auto &GetH1Space() const { return h1_fespaces->GetFinestFESpace(); }
-  auto &GetRTSpace() { return *rt_fespace; }
-  const auto &GetRTSpace() const { return *rt_fespace; }
+  auto &GetNDSpaces() { return nd_fespaces; }
+  const auto &GetNDSpaces() const { return nd_fespaces; }
+  auto &GetNDSpace() { return nd_fespaces.GetFinestFESpace(); }
+  const auto &GetNDSpace() const { return nd_fespaces.GetFinestFESpace(); }
+  auto &GetH1Spaces() { return h1_fespaces; }
+  const auto &GetH1Spaces() const { return h1_fespaces; }
+  auto &GetH1Space() { return h1_fespaces.GetFinestFESpace(); }
+  const auto &GetH1Space() const { return h1_fespaces.GetFinestFESpace(); }
+  auto &GetRTSpace() { return rt_fespace; }
+  const auto &GetRTSpace() const { return rt_fespace; }
 
   // Return the number of true (conforming) dofs on the finest ND space.
   auto GlobalTrueVSize() { return GetNDSpace().GlobalTrueVSize(); }
@@ -78,7 +82,7 @@ public:
   std::unique_ptr<Operator> GetStiffnessMatrix();
 
   // Construct and return the discrete curl matrix.
-  std::unique_ptr<Operator> GetCurlMatrix();
+  const Operator &GetCurlMatrix() const { return GetRTSpace().GetDiscreteInterpolator(); }
 
   // Assemble the right-hand side source term vector for a current source applied on
   // specified excited boundaries.

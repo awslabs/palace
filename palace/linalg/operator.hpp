@@ -264,7 +264,7 @@ private:
   std::vector<std::unique_ptr<OperType>> ops, aux_ops;
 
 public:
-  BaseMultigridOperator(int l) : OperType(0)
+  BaseMultigridOperator(std::size_t l) : OperType(0)
   {
     ops.reserve(l);
     aux_ops.reserve(l);
@@ -284,19 +284,19 @@ public:
 
   bool HasAuxiliaryOperators() const { return !aux_ops.empty(); }
 
-  int GetNumLevels() const { return static_cast<int>(ops.size()); }
-  int GetNumAuxiliaryLevels() const { return static_cast<int>(aux_ops.size()); }
+  auto GetNumLevels() const { return ops.size(); }
+  auto GetNumAuxiliaryLevels() const { return aux_ops.size(); }
 
   const OperType &GetFinestOperator() const { return *ops.back(); }
   const OperType &GetFinestAuxiliaryOperator() const { return *aux_ops.back(); }
 
-  const OperType &GetOperatorAtLevel(int l) const
+  const OperType &GetOperatorAtLevel(std::size_t l) const
   {
     MFEM_ASSERT(l >= 0 && l < GetNumLevels(),
                 "Out of bounds multigrid level operator requested!");
     return *ops[l];
   }
-  const OperType &GetAuxiliaryOperatorAtLevel(int l) const
+  const OperType &GetAuxiliaryOperatorAtLevel(std::size_t l) const
   {
     MFEM_ASSERT(l < GetNumAuxiliaryLevels(),
                 "Out of bounds multigrid level auxiliary operator requested!");

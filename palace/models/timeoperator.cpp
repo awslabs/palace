@@ -143,7 +143,7 @@ TimeOperator::TimeOperator(const IoData &iodata, SpaceOperator &spaceop,
                            std::function<double(double)> &djcoef)
 {
   // Construct discrete curl matrix for B-field time integration.
-  Curl = spaceop.GetCurlMatrix<Operator>();
+  Curl = &spaceop.GetCurlMatrix();
 
   // Allocate space for solution vectors.
   E.SetSize(Curl->Width());

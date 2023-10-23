@@ -116,7 +116,7 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator &
   auto C = spaceop.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
   auto M = spaceop.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
   auto A2 = spaceop.GetExtraSystemMatrix<ComplexOperator>(omega0, Operator::DIAG_ZERO);
-  auto Curl = spaceop.GetCurlMatrix<ComplexOperator>();
+  const auto &Curl = spaceop.GetCurlMatrix();
 
   // Set up the linear solver and set operators for the first frequency step. The
   // preconditioner for the complex linear system is constructed from a real approximation
@@ -132,15 +132,14 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator &
 
   // Set up RHS vector for the incident field at port boundaries, and the vector for the
   // first frequency step.
-  ComplexVector RHS(Curl->Width()), E(Curl->Width()), B(Curl->Height());
+  ComplexVector RHS(Curl.Width()), E(Curl.Width()), B(Curl.Height());
   E = 0.0;
   B = 0.0;
 
   // Initialize structures for storing and reducing the results of error estimation.
   CurlFluxErrorEstimator<ComplexVector> estimator(
       spaceop.GetMaterialOp(), spaceop.GetNDSpaces(), iodata.solver.linear.estimator_tol,
-      iodata.solver.linear.estimator_max_it, 0, iodata.solver.pa_order_threshold,
-      iodata.solver.pa_discrete_interp);
+      iodata.solver.linear.estimator_max_it, 0, iodata.solver.pa_order_threshold);
   ErrorIndicator indicator;
 
   // Main frequency sweep loop.
@@ -176,7 +175,8 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator &
     // PostOperator for all postprocessing operations.
     BlockTimer bt2(Timer::POSTPRO);
     double E_elec = 0.0, E_mag = 0.0;
-    Curl->Mult(E, B);
+    Curl.Mult(E.Real(), B.Real());
+    Curl.Mult(E.Imag(), B.Imag());
     B *= -1.0 / (1i * omega);
     postop.SetEGridFunction(E);
     postop.SetBGridFunction(B);
@@ -244,16 +244,15 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator 
 
   // Allocate negative curl matrix for postprocessing the B-field and vectors for the
   // high-dimensional field solution.
-  auto Curl = spaceop.GetCurlMatrix<ComplexOperator>();
-  ComplexVector E(Curl->Width()), B(Curl->Height());
+  const auto &Curl = spaceop.GetCurlMatrix();
+  ComplexVector E(Curl.Width()), B(Curl.Height());
   E = 0.0;
   B = 0.0;
 
   // Initialize structures for storing and reducing the results of error estimation.
   CurlFluxErrorEstimator<ComplexVector> estimator(
       spaceop.GetMaterialOp(), spaceop.GetNDSpaces(), iodata.solver.linear.estimator_tol,
-      iodata.solver.linear.estimator_max_it, 0, iodata.solver.pa_order_threshold,
-      iodata.solver.pa_discrete_interp);
+      iodata.solver.linear.estimator_max_it, 0, iodata.solver.pa_order_threshold);
   ErrorIndicator indicator;
 
   // Configure the PROM operator which performs the parameter space sampling and basis
@@ -337,7 +336,8 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator 
     // PostOperator for all postprocessing operations.
     BlockTimer bt4(Timer::POSTPRO);
     double E_elec = 0.0, E_mag = 0.0;
-    Curl->Mult(E, B);
+    Curl.Mult(E.Real(), B.Real());
+    Curl.Mult(E.Imag(), B.Imag());
     B *= -1.0 / (1i * omega);
     postop.SetEGridFunction(E);
     postop.SetBGridFunction(B);

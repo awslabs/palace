@@ -88,13 +88,13 @@ public:
   void AssembleDiagonal(Vector &diag) const override;
 
   // Assemble the operator as a parallel sparse matrix. The memory associated with the
-  // local operator is not freed.
-  mfem::HypreParMatrix &ParallelAssemble() const;
+  // local operator is free'd.
+  mfem::HypreParMatrix &ParallelAssemble(bool skip_zeros = false) const;
 
   // Steal the assembled parallel sparse matrix.
-  std::unique_ptr<mfem::HypreParMatrix> StealParallelAssemble() const
+  std::unique_ptr<mfem::HypreParMatrix> StealParallelAssemble(bool skip_zeros = false) const
   {
-    ParallelAssemble();
+    ParallelAssemble(skip_zeros);
     return std::move(RAP);
   }
 

@@ -32,8 +32,8 @@ private:
   // Time-dependent operator for the E-field.
   std::unique_ptr<mfem::SecondOrderTimeDependentOperator> op;
 
-  // Discrete curl for B-field time integration.
-  std::unique_ptr<Operator> Curl;
+  // Discrete curl for B-field time integration (not owned).
+  const Operator *Curl;
 
 public:
   TimeOperator(const IoData &iodata, SpaceOperator &spaceop,

@@ -15,13 +15,14 @@ namespace mfem
 
 template <typename T>
 class Array;
-class ParFiniteElementSpaceHierarchy;
 
 }  // namespace mfem
 
 namespace palace
 {
 
+class AuxiliaryFiniteElementSpaceHierarchy;
+class FiniteElementSpace;
 class MaterialOperator;
 
 //
@@ -33,7 +34,8 @@ class DivFreeSolver
 {
 private:
   // Operators for the divergence-free projection.
-  std::unique_ptr<Operator> WeakDiv, Grad, M;
+  std::unique_ptr<Operator> WeakDiv, M;
+  const Operator *Grad;
   const mfem::Array<int> *bdr_tdof_list_M;
 
   // Linear solver for the projected linear system (Gᵀ M G) y = x.
@@ -43,11 +45,10 @@ private:
   mutable Vector psi, rhs;
 
 public:
-  DivFreeSolver(const MaterialOperator &mat_op,
-                const mfem::ParFiniteElementSpace &nd_fespace,
-                const mfem::ParFiniteElementSpaceHierarchy &h1_fespaces,
+  DivFreeSolver(const MaterialOperator &mat_op, const FiniteElementSpace &nd_fespace,
+                const AuxiliaryFiniteElementSpaceHierarchy &h1_fespaces,
                 const std::vector<mfem::Array<int>> &h1_bdr_tdof_lists, double tol,
-                int max_it, int print, int pa_order_threshold, bool pa_discrete_interp);
+                int max_it, int print, int pa_order_threshold);
 
   // Given a vector of Nedelec dofs for an arbitrary vector field, compute the Nedelec dofs
   // of the irrotational portion of this vector field. The resulting vector will satisfy
