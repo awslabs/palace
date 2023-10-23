@@ -137,22 +137,50 @@ elseif(NOT PALACE_WITH_SLEPC)
   message(FATAL_ERROR "Build requires at least one of ARPACK or SLEPc dependencies")
 endif()
 
-# Add executable target
-set(TARGET_NAME palace)
-add_executable(${TARGET_NAME} "")
+# Optionally configure static analysis
+include(StaticAnalysisHelpers)
+if(ANALYZE_SOURCES_CLANG_TIDY)
+  configure_clang_tidy()
+else()
+  message(STATUS "Static analysis with clang-tidy not requested")
+endif()
+if(ANALYZE_SOURCES_CPPCHECK)
+  configure_cppcheck()
+else()
+  message(STATUS "Static analysis with cppcheck not requested")
+endif()
+
+# Add library target
+set(LIB_TARGET_NAME libpalace)
+add_library(${LIB_TARGET_NAME} "")
+target_include_directories(${LIB_TARGET_NAME} PUBLIC ${CMAKE_SOURCE_DIR})
 
 # Add source files
-target_sources(${TARGET_NAME}
-  PRIVATE ${CMAKE_SOURCE_DIR}/main.cpp
-)
-target_include_directories(${TARGET_NAME}
-  PRIVATE ${CMAKE_SOURCE_DIR}
-)
 add_subdirectory(drivers)
 add_subdirectory(fem)
 add_subdirectory(linalg)
 add_subdirectory(models)
 add_subdirectory(utils)
+
+# Add executable target
+set(TARGET_NAME palace)
+add_executable(${TARGET_NAME} ${CMAKE_SOURCE_DIR}/main.cpp)
+target_link_libraries(${TARGET_NAME} PRIVATE ${LIB_TARGET_NAME})
+
+# Add binary extension for build architecture
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm")
+  set(TARGET_EXTENSION "arm64")
+else()
+  set(TARGET_EXTENSION "x86_64")
+endif()
+set_target_properties(${TARGET_NAME}
+  PROPERTIES
+  OUTPUT_NAME "${TARGET_NAME}-${TARGET_EXTENSION}"
+  SUFFIX ".bin"
+)
+set_target_properties(${LIB_TARGET_NAME}
+  PROPERTIES OUTPUT_NAME "${TARGET_NAME}"
+)
 
 # Add JIT source file path definition for libCEED
 set_property(
@@ -178,8 +206,8 @@ if(NOT DEFINED CONSTEXPR_SQRT_SUPPORT_CACHE)
   set(CONSTEXPR_SQRT_SUPPORT_CACHE ${CONSTEXPR_SQRT_SUPPORT} CACHE INTERNAL "")
 endif()
 if(CONSTEXPR_SQRT_SUPPORT_CACHE)
-  target_compile_definitions(${TARGET_NAME}
-    PRIVATE PALACE_WITH_CONSTEXPR_SQRT
+  target_compile_definitions(${LIB_TARGET_NAME}
+    PUBLIC PALACE_WITH_CONSTEXPR_SQRT
   )
 endif()
 if(NOT DEFINED STD_FS_LIBRARIES_CACHE)
@@ -190,49 +218,41 @@ if(NOT DEFINED STD_FS_LIBRARIES_CACHE)
   set(STD_FS_LIBRARIES_CACHE ${STD_FS_LIBRARIES} CACHE INTERNAL "")
 endif()
 if(NOT "${STD_FS_LIBRARIES_CACHE}" STREQUAL "")
-  target_link_libraries(${TARGET_NAME}
-    PRIVATE ${STD_FS_LIBRARIES_CACHE}
+  target_link_libraries(${LIB_TARGET_NAME}
+    PUBLIC ${STD_FS_LIBRARIES_CACHE}
   )
 endif()
 
 # Link with third-party dependencies
 if(PALACE_WITH_SLEPC)
-  target_link_libraries(${TARGET_NAME}
-    PRIVATE ${SLEPC_TARGET} ${PETSC_TARGET}
+  target_link_libraries(${LIB_TARGET_NAME}
+    PUBLIC ${SLEPC_TARGET} ${PETSC_TARGET}
   )
-  target_compile_definitions(${TARGET_NAME}
-    PRIVATE PALACE_WITH_SLEPC
+  target_compile_definitions(${LIB_TARGET_NAME}
+    PUBLIC PALACE_WITH_SLEPC
   )
 endif()
 if(PALACE_WITH_ARPACK)
-  target_link_libraries(${TARGET_NAME}
-    PRIVATE PARPACK::PARPACK ARPACK::ARPACK ${MPI_Fortran_LIBRARIES}
+  target_link_libraries(${LIB_TARGET_NAME}
+    PUBLIC PARPACK::PARPACK ARPACK::ARPACK ${MPI_Fortran_LIBRARIES}
   )
-  target_compile_definitions(${TARGET_NAME}
-    PRIVATE PALACE_WITH_ARPACK
+  target_compile_definitions(${LIB_TARGET_NAME}
+    PUBLIC PALACE_WITH_ARPACK
   )
 endif()
 if(PALACE_WITH_OPENMP)
-  target_link_libraries(${TARGET_NAME}
-    PRIVATE OpenMP::OpenMP_CXX
+  target_link_libraries(${LIB_TARGET_NAME}
+    PUBLIC OpenMP::OpenMP_CXX
   )
 endif()
-target_link_libraries(${TARGET_NAME}
-  PRIVATE mfem ${LIBCEED_TARGET} nlohmann_json::nlohmann_json fmt::fmt Eigen3::Eigen MPI::MPI_CXX
-)
-
-# Add binary extension for build architecture
-if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm")
-  set(TARGET_EXTENSION "arm64")
-else()
-  set(TARGET_EXTENSION "x86_64")
-endif()
-set_target_properties(${TARGET_NAME} PROPERTIES
-  OUTPUT_NAME "${TARGET_NAME}-${TARGET_EXTENSION}"
-  SUFFIX ".bin"
+target_link_libraries(${LIB_TARGET_NAME}
+  PUBLIC mfem ${LIBCEED_TARGET} nlohmann_json::nlohmann_json fmt::fmt Eigen3::Eigen MPI::MPI_CXX
 )
 
 # Install target and helper scripts
+install(TARGETS
+  ${LIB_TARGET_NAME}
+)
 install(TARGETS
   ${TARGET_NAME}
   RUNTIME DESTINATION bin
@@ -256,19 +276,6 @@ install(DIRECTORY
 
 # Add tests (disabled by default)
 add_subdirectory(../test/unit ${CMAKE_BINARY_DIR}/test/unit EXCLUDE_FROM_ALL)
-
-# Optionally configure static analysis
-include(StaticAnalysisHelpers)
-if(ANALYZE_SOURCES_CLANG_TIDY)
-  configure_clang_tidy(${TARGET_NAME})
-else()
-  message(STATUS "Static analysis with clang-tidy not requested")
-endif()
-if(ANALYZE_SOURCES_CPPCHECK)
-  configure_cppcheck(${TARGET_NAME})
-else()
-  message(STATUS "Static analysis with cppcheck not requested")
-endif()
 
 # Status messages for build settings
 message(STATUS "CMake build type: ${CMAKE_BUILD_TYPE}")

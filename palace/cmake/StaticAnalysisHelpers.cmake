@@ -10,7 +10,7 @@ if(__static_analysis_helpers)
 endif()
 set(__static_analysis_helpers YES)
 
-function(configure_clang_tidy _target_name)
+function(configure_clang_tidy)
   find_program(CLANG_TIDY_EXE
     NAMES clang-tidy
   )
@@ -55,16 +55,14 @@ function(configure_clang_tidy _target_name)
         )
       endif()
     endif()
-    set_target_properties(${_target_name} PROPERTIES
-      CXX_CLANG_TIDY "${CLANG_TIDY_COMMAND}"
-    )
+    set(CMAKE_CXX_CLANG_TIDY "${CLANG_TIDY_COMMAND}" CACHE STRING "" FORCE)
   else()
     message(WARNING "Static analysis with clang-tidy requested, but skipped because the \
 executable clang-tidy was not found")
   endif()
 endfunction()
 
-function(configure_cppcheck _target_name)
+function(configure_cppcheck)
   find_program(CPPCHECK_EXE
     NAMES cppcheck
   )
@@ -84,9 +82,7 @@ function(configure_cppcheck _target_name)
       "--enable=warning,style,performance,portability"
       "--suppressions-list=${CMAKE_BINARY_DIR}/CMakeFiles/cppcheck/suppressions.txt"
     )
-    set_target_properties(${_target_name} PROPERTIES
-      CXX_CPPCHECK "${CPPCHECK_COMMAND}"
-    )
+    set(CMAKE_CXX_CPPCHECK "${CPPCHECK_COMMAND}" CACHE STRING "" FORCE)
   else()
     message(WARNING "Static analysis with cppcheck requested, but skipped because the \
 executable cppcheck was not found")
