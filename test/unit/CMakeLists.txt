@@ -14,7 +14,10 @@ FetchContent_Declare(Catch2
 FetchContent_MakeAvailable(Catch2)
 
 # Add executable target
-add_executable(unit-tests ${CMAKE_CURRENT_SOURCE_DIR}/main.cpp)
+add_executable(unit-tests
+  ${CMAKE_CURRENT_SOURCE_DIR}/main.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-libceed.cpp
+)
 target_link_libraries(unit-tests PRIVATE ${LIB_TARGET_NAME} Catch2::Catch2)
 
 # Add JIT source file path definition for libCEED
