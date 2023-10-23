@@ -5,7 +5,7 @@
 # Add source files and subdirectories.
 #
 
-target_sources(${TARGET_NAME}
+target_sources(${LIB_TARGET_NAME}
   PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/curlcurloperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/domainpostoperator.cpp
