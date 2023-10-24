@@ -22,7 +22,7 @@ WeightedHCurlNormSolver::WeightedHCurlNormSolver(
     const AuxiliaryFiniteElementSpaceHierarchy &h1_fespaces,
     const std::vector<mfem::Array<int>> &nd_dbc_tdof_lists,
     const std::vector<mfem::Array<int>> &h1_dbc_tdof_lists, double tol, int max_it,
-    int print, int pa_order_threshold)
+    int print)
 {
   constexpr bool skip_zeros = false;
   constexpr auto MatTypeMuInv = MaterialPropertyType::INV_PERMEABILITY;
@@ -51,8 +51,7 @@ WeightedHCurlNormSolver::WeightedHCurlNormSolver(
         {
           a.AddDomainIntegrator<CurlCurlMassIntegrator>(muinv_func, epsilon_func);
         }
-        auto A_l = std::make_unique<ParOperator>(
-            a.Assemble((l > 0) ? pa_order_threshold : 99, skip_zeros), fespace_l);
+        auto A_l = std::make_unique<ParOperator>(a.Assemble(skip_zeros), fespace_l);
         A_l->SetEssentialTrueDofs(dbc_tdof_lists_l, Operator::DiagonalPolicy::DIAG_ONE);
         if (aux)
         {

@@ -1797,6 +1797,8 @@ void SolverData::SetUp(json &config)
   }
   order = solver->value("Order", order);
   pa_order_threshold = solver->value("PartialAssemblyOrder", pa_order_threshold);
+  q_order_jac = solver->value("QuadratureOrderJacobian", q_order_jac);
+  q_order_extra = solver->value("QuadratureOrderExtra", q_order_extra);
   device = solver->value("Device", device);
   ceed_backend = solver->value("Backend", ceed_backend);
 
@@ -1810,6 +1812,8 @@ void SolverData::SetUp(json &config)
   // Cleanup
   solver->erase("Order");
   solver->erase("PartialAssemblyOrder");
+  solver->erase("QuadratureOrderJacobian");
+  solver->erase("QuadratureOrderExtra");
   solver->erase("Device");
   solver->erase("Backend");
 
@@ -1826,6 +1830,8 @@ void SolverData::SetUp(json &config)
   // Debug
   // std::cout << "Order: " << order << '\n';
   // std::cout << "PartialAssemblyOrder: " << pa_order_threshold << '\n';
+  // std::cout << "QuadratureOrderJacobian: " << q_order_jac << '\n';
+  // std::cout << "QuadratureOrderExtra: " << q_order_extra << '\n';
   // std::cout << "Device: " << device << '\n';
   // std::cout << "Backend: " << ceed_backend << '\n';
 }

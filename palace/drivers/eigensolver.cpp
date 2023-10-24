@@ -165,8 +165,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) cons
     divfree = std::make_unique<DivFreeSolver>(
         spaceop.GetMaterialOp(), spaceop.GetNDSpace(), spaceop.GetH1Spaces(),
         spaceop.GetAuxBdrTDofLists(), iodata.solver.linear.divfree_tol,
-        iodata.solver.linear.divfree_max_it, divfree_verbose,
-        iodata.solver.pa_order_threshold);
+        iodata.solver.linear.divfree_max_it, divfree_verbose);
     eigen->SetDivFreeProjector(*divfree);
   }
 
@@ -270,7 +269,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) cons
   Mpi::Print("Computing solution error estimates\n\n");
   CurlFluxErrorEstimator<ComplexVector> estimator(
       spaceop.GetMaterialOp(), spaceop.GetNDSpaces(), iodata.solver.linear.estimator_tol,
-      iodata.solver.linear.estimator_max_it, 0, iodata.solver.pa_order_threshold);
+      iodata.solver.linear.estimator_max_it, 0);
   ErrorIndicator indicator;
   for (int i = 0; i < iodata.solver.eigenmode.n; i++)
   {

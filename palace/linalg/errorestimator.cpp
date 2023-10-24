@@ -21,8 +21,7 @@ namespace palace
 namespace
 {
 
-std::unique_ptr<Operator> GetMassMatrix(const FiniteElementSpaceHierarchy &fespaces,
-                                        int pa_order_threshold)
+std::unique_ptr<Operator> GetMassMatrix(const FiniteElementSpaceHierarchy &fespaces)
 {
   constexpr bool skip_zeros = false;
   const int dim = fespaces.GetFinestFESpace().GetParMesh()->Dimension();
@@ -43,8 +42,7 @@ std::unique_ptr<Operator> GetMassMatrix(const FiniteElementSpaceHierarchy &fespa
     {
       m.AddDomainIntegrator<VectorFEMassIntegrator>();
     }
-    auto M_l = std::make_unique<ParOperator>(
-        m.Assemble((l > 0) ? pa_order_threshold : 99, skip_zeros), fespace_l);
+    auto M_l = std::make_unique<ParOperator>(m.Assemble(skip_zeros), fespace_l);
     M->AddOperator(std::move(M_l));
   }
   return M;
@@ -71,7 +69,7 @@ ConfigureLinearSolver(const FiniteElementSpaceHierarchy &fespaces, double tol, i
 
 FluxProjector::FluxProjector(const MaterialOperator &mat_op,
                              const FiniteElementSpaceHierarchy &nd_fespaces, double tol,
-                             int max_it, int print, int pa_order_threshold)
+                             int max_it, int print)
 {
   BlockTimer bt(Timer::CONSTRUCTESTIMATOR);
   {
@@ -80,9 +78,10 @@ FluxProjector::FluxProjector(const MaterialOperator &mat_op,
     MaterialPropertyCoefficient<MatType> muinv_func(mat_op);
     BilinearForm flux(nd_fespaces.GetFinestFESpace());
     flux.AddDomainIntegrator<MixedVectorCurlIntegrator>(muinv_func);
-    Flux = std::make_unique<ParOperator>(flux.Assemble(), nd_fespaces.GetFinestFESpace());
+    Flux = std::make_unique<ParOperator>(flux.PartialAssemble(),
+                                         nd_fespaces.GetFinestFESpace());
   }
-  M = GetMassMatrix(nd_fespaces, pa_order_threshold);
+  M = GetMassMatrix(nd_fespaces);
 
   ksp = ConfigureLinearSolver(nd_fespaces, tol, max_it, print);
   ksp->SetOperators(*M, *M);
@@ -93,7 +92,7 @@ FluxProjector::FluxProjector(const MaterialOperator &mat_op,
 FluxProjector::FluxProjector(const MaterialOperator &mat_op,
                              const FiniteElementSpaceHierarchy &h1_fespaces,
                              const FiniteElementSpace &h1d_fespace, double tol, int max_it,
-                             int print, int pa_order_threshold)
+                             int print)
 {
   BlockTimer bt(Timer::CONSTRUCTESTIMATOR);
   {
@@ -102,10 +101,10 @@ FluxProjector::FluxProjector(const MaterialOperator &mat_op,
     MaterialPropertyCoefficient<MatType> epsilon_func(mat_op);
     BilinearForm flux(h1_fespaces.GetFinestFESpace(), h1d_fespace);
     flux.AddDomainIntegrator<GradientIntegrator>(epsilon_func);
-    Flux = std::make_unique<ParOperator>(flux.Assemble(), h1_fespaces.GetFinestFESpace(),
-                                         h1d_fespace, false);
+    Flux = std::make_unique<ParOperator>(
+        flux.PartialAssemble(), h1_fespaces.GetFinestFESpace(), h1d_fespace, false);
   }
-  M = GetMassMatrix(h1_fespaces, pa_order_threshold);
+  M = GetMassMatrix(h1_fespaces);
 
   ksp = ConfigureLinearSolver(h1_fespaces, tol, max_it, print);
   ksp->SetOperators(*M, *M);
@@ -157,10 +156,10 @@ void FluxProjector::Mult(const VecType &x, VecType &y) const
 template <typename VecType>
 CurlFluxErrorEstimator<VecType>::CurlFluxErrorEstimator(
     const MaterialOperator &mat_op, const FiniteElementSpaceHierarchy &nd_fespaces,
-    double tol, int max_it, int print, int pa_order_threshold)
+    double tol, int max_it, int print)
   : mat_op(mat_op), nd_fespace(nd_fespaces.GetFinestFESpace()),
-    projector(mat_op, nd_fespaces, tol, max_it, print, pa_order_threshold),
-    F(nd_fespace.GetTrueVSize()), F_gf(const_cast<FiniteElementSpace *>(&nd_fespace)),
+    projector(mat_op, nd_fespaces, tol, max_it, print), F(nd_fespace.GetTrueVSize()),
+    F_gf(const_cast<FiniteElementSpace *>(&nd_fespace)),
     U_gf(const_cast<FiniteElementSpace *>(&nd_fespace))
 {
 }
@@ -209,7 +208,7 @@ ErrorIndicator CurlFluxErrorEstimator<VecType>::ComputeIndicators(const VecType 
       nd_fespace.GetElementDofs(e, dofs, dof_trans);
       Interp.SetSize(fe.GetDof(), V_ip.Size());
       Curl.SetSize(fe.GetDof(), V_ip.Size());
-      const int q_order = fem::GetDefaultIntegrationOrder(fe, fe, T);
+      const int q_order = fem::DefaultIntegrationOrder::Get(fe, fe, T);
       const mfem::IntegrationRule &ir =
           mfem::IntRules.Get(mesh.GetElementGeometry(e), q_order);
 
@@ -275,12 +274,12 @@ ErrorIndicator CurlFluxErrorEstimator<VecType>::ComputeIndicators(const VecType 
 
 GradFluxErrorEstimator::GradFluxErrorEstimator(
     const MaterialOperator &mat_op, const FiniteElementSpaceHierarchy &h1_fespaces,
-    double tol, int max_it, int print, int pa_order_threshold)
+    double tol, int max_it, int print)
   : mat_op(mat_op), h1_fespace(h1_fespaces.GetFinestFESpace()),
     h1d_fespace(std::make_unique<FiniteElementSpace>(
         h1_fespace.GetParMesh(), h1_fespace.FEColl(),
         h1_fespace.GetParMesh()->SpaceDimension(), mfem::Ordering::byNODES)),
-    projector(mat_op, h1_fespaces, *h1d_fespace, tol, max_it, print, pa_order_threshold),
+    projector(mat_op, h1_fespaces, *h1d_fespace, tol, max_it, print),
     F(h1d_fespace->GetTrueVSize()), F_gf(h1d_fespace.get()),
     U_gf(const_cast<FiniteElementSpace *>(&h1_fespace))
 {
@@ -320,7 +319,7 @@ ErrorIndicator GradFluxErrorEstimator::ComputeIndicators(const Vector &U) const
       h1d_fespace->DofsToVDofs(vdofs);
       Interp.SetSize(fe.GetDof());
       Grad.SetSize(fe.GetDof(), V_ip.Size());
-      const int q_order = fem::GetDefaultIntegrationOrder(fe, fe, T);
+      const int q_order = fem::DefaultIntegrationOrder::Get(fe, fe, T);
       const mfem::IntegrationRule &ir =
           mfem::IntRules.Get(mesh.GetElementGeometry(e), q_order);
 

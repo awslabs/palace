@@ -71,8 +71,7 @@ mfem::Array<int> SetUpBoundaryProperties(const IoData &iodata, const mfem::ParMe
 
 CurlCurlOperator::CurlCurlOperator(const IoData &iodata,
                                    const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh)
-  : pa_order_threshold(iodata.solver.pa_order_threshold), skip_zeros(false),
-    print_hdr(true), dbc_marker(SetUpBoundaryProperties(iodata, *mesh.back())),
+  : print_hdr(true), dbc_marker(SetUpBoundaryProperties(iodata, *mesh.back())),
     nd_fecs(fem::ConstructFECollections<mfem::ND_FECollection>(
         iodata.solver.order, mesh.back()->Dimension(), iodata.solver.linear.mg_max_levels,
         iodata.solver.linear.mg_coarsen_type, false)),
@@ -89,6 +88,9 @@ CurlCurlOperator::CurlCurlOperator(const IoData &iodata,
     mat_op(iodata, *mesh.back()), surf_j_op(iodata, GetH1Space())
 {
   // Finalize setup.
+  BilinearForm::pa_order_threshold = iodata.solver.pa_order_threshold;
+  fem::DefaultIntegrationOrder::q_order_jac = iodata.solver.q_order_jac;
+  fem::DefaultIntegrationOrder::q_order_extra = iodata.solver.q_order_extra;
   CheckBoundaryProperties();
 
   // Print essential BC information.
@@ -110,17 +112,67 @@ void CurlCurlOperator::CheckBoundaryProperties()
   }
 }
 
-std::unique_ptr<Operator> CurlCurlOperator::GetStiffnessMatrix()
+namespace
+{
+
+void PrintHeader(const FiniteElementSpace &h1_fespace, const FiniteElementSpace &nd_fespace,
+                 const FiniteElementSpace &rt_fespace, bool &print_hdr)
 {
   if (print_hdr)
   {
     Mpi::Print("\nAssembling system matrices, number of global unknowns:\n"
-               " H1: {:d}, ND: {:d}, RT: {:d}\n Operator assembly level: {}\n",
-               GetH1Space().GlobalTrueVSize(), GetNDSpace().GlobalTrueVSize(),
-               GetRTSpace().GlobalTrueVSize(),
-               GetNDSpace().GetMaxElementOrder() > pa_order_threshold ? "Partial" : "Full");
+               " H1 (p = {:d}): {:d}, ND (p = {:d}): {:d}, RT (p = {:d}): {:d}\n Operator "
+               "assembly level: {}\n",
+               h1_fespace.GetMaxElementOrder(), h1_fespace.GlobalTrueVSize(),
+               nd_fespace.GetMaxElementOrder(), nd_fespace.GlobalTrueVSize(),
+               rt_fespace.GetMaxElementOrder(), rt_fespace.GlobalTrueVSize(),
+               nd_fespace.GetMaxElementOrder() > BilinearForm::pa_order_threshold
+                   ? "Partial"
+                   : "Full");
+
+    // Every process is guaranteed to have at least one element, and assumes no variable
+    // order spaces are used.
+    mfem::ParMesh &mesh = *nd_fespace.GetParMesh();
+    const int q_order = fem::DefaultIntegrationOrder::Get(
+        *nd_fespace.GetFE(0), *nd_fespace.GetFE(0), *mesh.GetElementTransformation(0));
+    Mpi::Print(" Default integration order: {:d}\n Mesh geometries:\n", q_order);
+    for (int b = 0; b < 4; b++)
+    {
+      if (mesh.MeshGenerator() & (1 << b))
+      {
+        mfem::Geometry::Type geom = mfem::Geometry::INVALID;
+        switch (b)
+        {
+          case 0:
+            geom = mfem::Geometry::TETRAHEDRON;
+            break;
+          case 1:
+            geom = mfem::Geometry::CUBE;
+            break;
+          case 2:
+            geom = mfem::Geometry::PRISM;
+            break;
+          case 3:
+            geom = mfem::Geometry::PYRAMID;
+            break;
+        }
+        const auto *fe = nd_fespace.FEColl()->FiniteElementForGeometry(geom);
+        MFEM_VERIFY(fe, "MFEM does not support ND spaces on geometry = "
+                            << mfem::Geometry::Name[geom] << "!");
+        Mpi::Print("  {}: P = {:d}, Q = {:d}\n", mfem::Geometry::Name[geom], fe->GetDof(),
+                   mfem::IntRules.Get(geom, q_order).GetNPoints());
+      }
+    }
+
     Mpi::Print("\nAssembling multigrid hierarchy:\n");
   }
+}
+
+}  // namespace
+
+std::unique_ptr<Operator> CurlCurlOperator::GetStiffnessMatrix()
+{
+  PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
   auto K = std::make_unique<MultigridOperator>(GetNDSpaces().GetNumLevels());
   for (std::size_t l = 0; l < GetNDSpaces().GetNumLevels(); l++)
   {
@@ -131,12 +183,13 @@ std::unique_ptr<Operator> CurlCurlOperator::GetStiffnessMatrix()
       Mpi::Print(" Level {:d} (p = {:d}): {:d} unknowns", l,
                  nd_fespace_l.GetMaxElementOrder(), nd_fespace_l.GlobalTrueVSize());
     }
+    constexpr bool skip_zeros = false;
     constexpr auto MatType = MaterialPropertyType::INV_PERMEABILITY;
     MaterialPropertyCoefficient<MatType> muinv_func(mat_op);
     BilinearForm k(nd_fespace_l);
     k.AddDomainIntegrator<CurlCurlIntegrator>(muinv_func);
     auto K_l = std::make_unique<ParOperator>(
-        k.Assemble((l > 0) ? pa_order_threshold : 99, skip_zeros), nd_fespace_l);
+        (l > 0) ? k.Assemble(skip_zeros) : k.FullAssemble(skip_zeros), nd_fespace_l);
     if (print_hdr)
     {
       if (const auto *k_spm =

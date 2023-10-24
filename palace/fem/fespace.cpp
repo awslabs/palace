@@ -39,7 +39,8 @@ const Operator &AuxiliaryFiniteElementSpace::BuildDiscreteInterpolator() const
     // Discrete gradient interpolator
     DiscreteLinearOperator interp(*this, primal_fespace);
     interp.AddDomainInterpolator<GradientInterpolator>();
-    G = std::make_unique<ParOperator>(interp.Assemble(), *this, primal_fespace, true);
+    G = std::make_unique<ParOperator>(interp.PartialAssemble(), *this, primal_fespace,
+                                      true);
   }
   else if (primal_map_type == mfem::FiniteElement::VALUE &&
            aux_map_type == mfem::FiniteElement::H_CURL)
@@ -47,7 +48,8 @@ const Operator &AuxiliaryFiniteElementSpace::BuildDiscreteInterpolator() const
     // Discrete gradient interpolator (spaces reversed)
     DiscreteLinearOperator interp(primal_fespace, *this);
     interp.AddDomainInterpolator<GradientInterpolator>();
-    G = std::make_unique<ParOperator>(interp.Assemble(), primal_fespace, *this, true);
+    G = std::make_unique<ParOperator>(interp.PartialAssemble(), primal_fespace, *this,
+                                      true);
   }
   else if (aux_map_type == mfem::FiniteElement::H_CURL &&
            primal_map_type == mfem::FiniteElement::H_DIV)
@@ -55,7 +57,8 @@ const Operator &AuxiliaryFiniteElementSpace::BuildDiscreteInterpolator() const
     // Discrete curl interpolator
     DiscreteLinearOperator interp(*this, primal_fespace);
     interp.AddDomainInterpolator<CurlInterpolator>();
-    G = std::make_unique<ParOperator>(interp.Assemble(), *this, primal_fespace, true);
+    G = std::make_unique<ParOperator>(interp.PartialAssemble(), *this, primal_fespace,
+                                      true);
   }
   else if (primal_map_type == mfem::FiniteElement::H_CURL &&
            aux_map_type == mfem::FiniteElement::H_DIV)
@@ -63,7 +66,8 @@ const Operator &AuxiliaryFiniteElementSpace::BuildDiscreteInterpolator() const
     // Discrete curl interpolator (spaces reversed)
     DiscreteLinearOperator interp(primal_fespace, *this);
     interp.AddDomainInterpolator<CurlInterpolator>();
-    G = std::make_unique<ParOperator>(interp.Assemble(), primal_fespace, *this, true);
+    G = std::make_unique<ParOperator>(interp.PartialAssemble(), primal_fespace, *this,
+                                      true);
   }
   else if (aux_map_type == mfem::FiniteElement::H_DIV &&
            primal_map_type == mfem::FiniteElement::INTEGRAL)
@@ -71,7 +75,8 @@ const Operator &AuxiliaryFiniteElementSpace::BuildDiscreteInterpolator() const
     // Discrete divergence interpolator
     DiscreteLinearOperator interp(*this, primal_fespace);
     interp.AddDomainInterpolator<DivergenceInterpolator>();
-    G = std::make_unique<ParOperator>(interp.Assemble(), *this, primal_fespace, true);
+    G = std::make_unique<ParOperator>(interp.PartialAssemble(), *this, primal_fespace,
+                                      true);
   }
   else if (primal_map_type == mfem::FiniteElement::H_DIV &&
            aux_map_type == mfem::FiniteElement::INTEGRAL)
@@ -79,7 +84,8 @@ const Operator &AuxiliaryFiniteElementSpace::BuildDiscreteInterpolator() const
     // Discrete divergence interpolator (spaces reversed)
     DiscreteLinearOperator interp(primal_fespace, *this);
     interp.AddDomainInterpolator<DivergenceInterpolator>();
-    G = std::make_unique<ParOperator>(interp.Assemble(), primal_fespace, *this, true);
+    G = std::make_unique<ParOperator>(interp.PartialAssemble(), primal_fespace, *this,
+                                      true);
   }
   else
   {
@@ -108,8 +114,8 @@ BaseFiniteElementSpaceHierarchy<FESpace>::BuildProlongationAtLevel(std::size_t l
   {
     DiscreteLinearOperator p(*fespaces[l], *fespaces[l + 1]);
     p.AddDomainInterpolator<IdentityInterpolator>();
-    P[l] =
-        std::make_unique<ParOperator>(p.Assemble(), *fespaces[l], *fespaces[l + 1], true);
+    P[l] = std::make_unique<ParOperator>(p.PartialAssemble(), *fespaces[l],
+                                         *fespaces[l + 1], true);
   }
 
   return *P[l];
