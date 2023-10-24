@@ -26,13 +26,15 @@ namespace fem
 struct DefaultIntegrationOrder
 {
   inline static bool q_order_jac = true;
-  inline static int q_order_extra = 0;
+  inline static int q_order_extra_pk = 0;
+  inline static int q_order_extra_qk = 0;
 
   static int Get(const mfem::FiniteElement &trial_fe, const mfem::FiniteElement &test_fe,
                  const mfem::ElementTransformation &T)
   {
     return trial_fe.GetOrder() + test_fe.GetOrder() + (q_order_jac ? T.OrderW() : 0) +
-           q_order_extra;
+           (trial_fe.Space() == mfem::FunctionSpace::Pk ? q_order_extra_pk
+                                                        : q_order_extra_qk);
   }
 
   static int Get(const mfem::ParFiniteElementSpace &trial_fespace,

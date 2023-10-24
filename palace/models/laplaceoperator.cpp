@@ -129,7 +129,8 @@ LaplaceOperator::LaplaceOperator(const IoData &iodata,
   // Finalize setup.
   BilinearForm::pa_order_threshold = iodata.solver.pa_order_threshold;
   fem::DefaultIntegrationOrder::q_order_jac = iodata.solver.q_order_jac;
-  fem::DefaultIntegrationOrder::q_order_extra = iodata.solver.q_order_extra;
+  fem::DefaultIntegrationOrder::q_order_extra_pk = iodata.solver.q_order_extra;
+  fem::DefaultIntegrationOrder::q_order_extra_qk = iodata.solver.q_order_extra;
 
   // Print essential BC information.
   if (dbc_marker.Size() && dbc_marker.Max() > 0)

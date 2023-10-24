@@ -188,7 +188,7 @@ void TestCeedOperator(T1 &a_test, T2 &a_ref, bool test_transpose, bool skip_zero
   const Operator *op_ref = mat_ref;
 
   // Test operator application.
-  const auto op_test = a_test.Assemble();
+  const auto op_test = a_test.PartialAssemble();
   TestCeedOperatorMult(*op_test, *op_ref, test_transpose);
 
   // Test full assembly.
@@ -335,7 +335,7 @@ void BenchmarkCeedIntegrator(FiniteElementSpace &fespace, T1 AssembleTest,
     // Integration rule gives the complete non-tensor number of points.
     const mfem::FiniteElement &fe = *fespace.GetFE(0);
     const mfem::ElementTransformation &T = *mesh.GetElementTransformation(0);
-    const int q_order = fem::GetDefaultIntegrationOrder(fe, fe, T);
+    const int q_order = fem::DefaultIntegrationOrder::Get(fe, fe, T);
     const int Q = mfem::IntRules.Get(mesh.GetElementGeometry(0), q_order).GetNPoints();
     const int P = fe.GetDof();
 
@@ -518,14 +518,10 @@ void RunCeedIntegratorTests(MPI_Comm comm, const std::string &input, int ref_lev
       "\n" + "Integrator: " + (bdr_integ ? "Boundary" : "Domain") + "\n";
   INFO(section);
 
-  // Used in some hacks to match MFEM's default integration order on mixed meshes.
-  const int mesh_order = mesh->GetNodalFESpace()->GetMaxElementOrder();
-  const int order_j_pk = mesh_order - 1;
-  const int order_j_qk = mesh_order;
-  const int order_w_pk = order_j_pk * (dim - bdr_integ);
-  const int order_w_qk = order_j_qk * (dim - bdr_integ) - 1;
-  const int order_adj_pk = order_j_pk * (dim - bdr_integ - 1);
-  const int order_adj_qk = order_j_qk * (dim - bdr_integ - 1);
+  // Match MFEM's default integration orders.
+  fem::DefaultIntegrationOrder::q_order_jac = true;
+  fem::DefaultIntegrationOrder::q_order_extra_pk = 0;
+  fem::DefaultIntegrationOrder::q_order_extra_qk = 0;
 
   // Tests on H1 spaces.
   SECTION("H1 Integrators")
@@ -535,8 +531,7 @@ void RunCeedIntegratorTests(MPI_Comm comm, const std::string &input, int ref_lev
         vector_h1_fespace(mesh.get(), &h1_fec, dim);
     SECTION("H1 Mass Integrator")
     {
-      const auto q_extra = 0;
-      BilinearForm a_test(h1_fespace, q_extra);
+      BilinearForm a_test(h1_fespace);
       mfem::BilinearForm a_ref(&h1_fespace);
       switch (coeff_type)
       {
@@ -554,8 +549,7 @@ void RunCeedIntegratorTests(MPI_Comm comm, const std::string &input, int ref_lev
     }
     SECTION("Vector H1 Mass Integrator")
     {
-      const auto q_extra = 0;
-      BilinearForm a_test(vector_h1_fespace, q_extra);
+      BilinearForm a_test(vector_h1_fespace);
       mfem::BilinearForm a_ref(&vector_h1_fespace);
       switch (coeff_type)
       {
@@ -580,9 +574,10 @@ void RunCeedIntegratorTests(MPI_Comm comm, const std::string &input, int ref_lev
     }
     SECTION("H1 Diffusion Integrator")
     {
-      const auto q_extra_pk = -2 - order_w_pk,
-                 q_extra_qk = dim - bdr_integ - 1 - order_w_qk;
-      BilinearForm a_test(h1_fespace, q_extra_pk, q_extra_qk);
+      fem::DefaultIntegrationOrder::q_order_jac = false;
+      fem::DefaultIntegrationOrder::q_order_extra_pk = -2;
+      fem::DefaultIntegrationOrder::q_order_extra_qk = dim - bdr_integ - 1;
+      BilinearForm a_test(h1_fespace);
       mfem::BilinearForm a_ref(&h1_fespace);
       switch (coeff_type)
       {
@@ -614,8 +609,7 @@ void RunCeedIntegratorTests(MPI_Comm comm, const std::string &input, int ref_lev
     FiniteElementSpace nd_fespace(mesh.get(), &nd_fec);
     SECTION("ND Mass Integrator")
     {
-      const auto q_extra = 0;
-      BilinearForm a_test(nd_fespace, q_extra);
+      BilinearForm a_test(nd_fespace);
       mfem::BilinearForm a_ref(&nd_fespace);
       switch (coeff_type)
       {
@@ -640,8 +634,10 @@ void RunCeedIntegratorTests(MPI_Comm comm, const std::string &input, int ref_lev
     }
     SECTION("ND Curl-Curl Integrator")
     {
-      const auto q_extra_pk = -2 - order_w_pk, q_extra_qk = -order_w_qk;
-      BilinearForm a_test(nd_fespace, q_extra_pk, q_extra_qk);
+      fem::DefaultIntegrationOrder::q_order_jac = false;
+      fem::DefaultIntegrationOrder::q_order_extra_pk = -2;
+      fem::DefaultIntegrationOrder::q_order_extra_qk = 0;
+      BilinearForm a_test(nd_fespace);
       mfem::BilinearForm a_ref(&nd_fespace);
       if (dim == 3 || (dim == 2 && !bdr_integ))  // No 1D ND curl shape
       {
@@ -682,8 +678,7 @@ void RunCeedIntegratorTests(MPI_Comm comm, const std::string &input, int ref_lev
     FiniteElementSpace rt_fespace(mesh.get(), &rt_fec);
     SECTION("RT Mass Integrator")
     {
-      const auto q_extra = 0;
-      BilinearForm a_test(rt_fespace, q_extra);
+      BilinearForm a_test(rt_fespace);
       mfem::BilinearForm a_ref(&rt_fespace);
       if (!bdr_integ)  // Boundary RT elements in 2D and 3D are actually L2
       {
@@ -711,8 +706,11 @@ void RunCeedIntegratorTests(MPI_Comm comm, const std::string &input, int ref_lev
     }
     SECTION("RT Div-Div Integrator")
     {
-      const auto q_extra_pk = -2 - order_w_pk, q_extra_qk = -2 - order_w_qk;
-      BilinearForm a_test(rt_fespace, q_extra_pk, q_extra_qk);
+      fem::DefaultIntegrationOrder::q_order_jac = false;
+      fem::DefaultIntegrationOrder::q_order_extra_pk = -2;
+      fem::DefaultIntegrationOrder::q_order_extra_qk = -2;
+      // WIP
+      BilinearForm a_test(rt_fespace);
       mfem::BilinearForm a_ref(&rt_fespace);
       if (!bdr_integ)  // Boundary RT elements in 2D and 3D are actually L2
       {
@@ -743,8 +741,7 @@ void RunCeedIntegratorTests(MPI_Comm comm, const std::string &input, int ref_lev
     FiniteElementSpace h1_fespace(mesh.get(), &h1_fec), nd_fespace(mesh.get(), &nd_fec);
     SECTION("Mixed Vector Gradient Integrator")
     {
-      const auto q_extra = 0;
-      BilinearForm a_test(h1_fespace, nd_fespace, q_extra);
+      BilinearForm a_test(h1_fespace, nd_fespace);
       mfem::MixedBilinearForm a_ref(&h1_fespace, &nd_fespace);
       if (dim == 3 || (dim == 2 && !bdr_integ))  // Only in 2D or 3D
       {
@@ -775,8 +772,7 @@ void RunCeedIntegratorTests(MPI_Comm comm, const std::string &input, int ref_lev
     }
     SECTION("Mixed Vector Weak Divergence Integrator")
     {
-      const auto q_extra = 0;
-      BilinearForm a_test(nd_fespace, h1_fespace, q_extra);
+      BilinearForm a_test(nd_fespace, h1_fespace);
       mfem::MixedBilinearForm a_ref(&nd_fespace, &h1_fespace);
       if (dim == 3 || (dim == 2 && !bdr_integ))  // Only in 2D or 3D
       {
@@ -816,8 +812,7 @@ void RunCeedIntegratorTests(MPI_Comm comm, const std::string &input, int ref_lev
     FiniteElementSpace nd_fespace(mesh.get(), &nd_fec), rt_fespace(mesh.get(), &rt_fec);
     SECTION("Mixed H(curl)-H(div) Mass Integrator")
     {
-      const auto q_extra = 0;
-      BilinearForm a_test(nd_fespace, rt_fespace, q_extra);
+      BilinearForm a_test(nd_fespace, rt_fespace);
       mfem::MixedBilinearForm a_ref(&nd_fespace, &rt_fespace);
       if (!bdr_integ)  // Boundary RT elements in 2D and 3D are actually L2
       {
@@ -845,8 +840,7 @@ void RunCeedIntegratorTests(MPI_Comm comm, const std::string &input, int ref_lev
     }
     SECTION("Mixed H(div)-H(curl) Mass Integrator")
     {
-      const auto q_extra = 0;
-      BilinearForm a_test(rt_fespace, nd_fespace, q_extra);
+      BilinearForm a_test(rt_fespace, nd_fespace);
       mfem::MixedBilinearForm a_ref(&rt_fespace, &nd_fespace);
       if (!bdr_integ)  // Boundary RT elements in 2D and 3D are actually L2
       {
@@ -874,8 +868,7 @@ void RunCeedIntegratorTests(MPI_Comm comm, const std::string &input, int ref_lev
     }
     SECTION("Mixed Vector Curl Integrator")
     {
-      const auto q_extra = 0;
-      BilinearForm a_test(nd_fespace, rt_fespace, q_extra);
+      BilinearForm a_test(nd_fespace, rt_fespace);
       mfem::MixedBilinearForm a_ref(&nd_fespace, &rt_fespace);
       if (dim == 3 && !bdr_integ)  // Only in 3D
       {
@@ -903,8 +896,7 @@ void RunCeedIntegratorTests(MPI_Comm comm, const std::string &input, int ref_lev
     }
     SECTION("Mixed Vector Weak Curl Integrator")
     {
-      const auto q_extra = 0;
-      BilinearForm a_test(rt_fespace, nd_fespace, q_extra);
+      BilinearForm a_test(rt_fespace, nd_fespace);
       mfem::MixedBilinearForm a_ref(&rt_fespace, &nd_fespace);
       if (dim == 3 && !bdr_integ)  // Only in 3D
       {
@@ -935,8 +927,7 @@ void RunCeedIntegratorTests(MPI_Comm comm, const std::string &input, int ref_lev
     }
     SECTION("Mixed Vector Curl Integrator (H(curl) range)")
     {
-      const auto q_extra = 0;
-      BilinearForm a_test(nd_fespace, nd_fespace, q_extra);
+      BilinearForm a_test(nd_fespace, nd_fespace);
       mfem::MixedBilinearForm a_ref(&nd_fespace, &nd_fespace);
       if (dim == 3 && !bdr_integ)  // Only in 3D
       {
@@ -964,8 +955,7 @@ void RunCeedIntegratorTests(MPI_Comm comm, const std::string &input, int ref_lev
     }
     SECTION("Mixed Vector Weak Curl Integrator (H(curl) domain)")
     {
-      const auto q_extra = 0;
-      BilinearForm a_test(nd_fespace, nd_fespace, q_extra);
+      BilinearForm a_test(nd_fespace, nd_fespace);
       mfem::MixedBilinearForm a_ref(&nd_fespace, &nd_fespace);
       if (dim == 3 && !bdr_integ)  // Only in 3D
       {
@@ -1008,9 +998,10 @@ void RunCeedIntegratorTests(MPI_Comm comm, const std::string &input, int ref_lev
       // coefficients.
       mfem::VectorFunctionCoefficient sVQ(dim, ScalarVectorCoefficientFunction);
       mfem::MatrixFunctionCoefficient sMQ(dim, ScalarMatrixCoefficientFunction);
-      const auto q_extra_pk = -1 + order_adj_pk + order_j_pk - order_w_pk,
-                 q_extra_qk = -1 + order_adj_qk + order_j_qk - order_w_qk;
-      BilinearForm a_test(h1_fespace, vector_h1_fespace, q_extra_pk, q_extra_qk);
+      fem::DefaultIntegrationOrder::q_order_jac = true;
+      fem::DefaultIntegrationOrder::q_order_extra_pk = -1;
+      fem::DefaultIntegrationOrder::q_order_extra_qk = 0;
+      BilinearForm a_test(h1_fespace, vector_h1_fespace);
       mfem::MixedBilinearForm a_ref(&h1_fespace, &vector_h1_fespace);
       if (!bdr_integ)  // MFEM's GradientIntegrator only supports square Jacobians
       {
@@ -1087,7 +1078,7 @@ void RunCeedInterpolatorTests(MPI_Comm comm, const std::string &input, int ref_l
     DiscreteLinearOperator id_test(coarse_h1_fespace, fine_h1_fespace);
     id_test.AddDomainInterpolator<IdentityInterpolator>();
     mfem::PRefinementTransferOperator id_ref(coarse_h1_fespace, fine_h1_fespace);
-    TestCeedOperatorMult(*id_test.Assemble(), id_ref, true);
+    TestCeedOperatorMult(*id_test.PartialAssemble(), id_ref, true);
   }
   SECTION("H(curl) Prolongation")
   {
@@ -1097,7 +1088,7 @@ void RunCeedInterpolatorTests(MPI_Comm comm, const std::string &input, int ref_l
     DiscreteLinearOperator id_test(coarse_nd_fespace, fine_nd_fespace);
     id_test.AddDomainInterpolator<IdentityInterpolator>();
     mfem::PRefinementTransferOperator id_ref(coarse_nd_fespace, fine_nd_fespace);
-    TestCeedOperatorMult(*id_test.Assemble(), id_ref, true);
+    TestCeedOperatorMult(*id_test.PartialAssemble(), id_ref, true);
   }
   SECTION("H(div) Prolongation")
   {
@@ -1107,7 +1098,7 @@ void RunCeedInterpolatorTests(MPI_Comm comm, const std::string &input, int ref_l
     DiscreteLinearOperator id_test(coarse_rt_fespace, fine_rt_fespace);
     id_test.AddDomainInterpolator<IdentityInterpolator>();
     mfem::PRefinementTransferOperator id_ref(coarse_rt_fespace, fine_rt_fespace);
-    TestCeedOperatorMult(*id_test.Assemble(), id_ref, true);
+    TestCeedOperatorMult(*id_test.PartialAssemble(), id_ref, true);
   }
 
   // Linear interpolators for differentiation.
@@ -1166,6 +1157,11 @@ void RunCeedBenchmarks(MPI_Comm comm, const std::string &input, int ref_levels, 
   auto pos = input.find_last_of('/');
   WARN("benchmark input mesh: " << input.substr(pos + 1) << "\n");
 
+  // Match MFEM's default integration orders.
+  fem::DefaultIntegrationOrder::q_order_jac = false;
+  fem::DefaultIntegrationOrder::q_order_extra_pk = 0;
+  fem::DefaultIntegrationOrder::q_order_extra_qk = 0;
+
   // Diffusion + mass benchmark.
   SECTION("Diffusion + Mass Integrator Benchmark")
   {
@@ -1177,7 +1173,7 @@ void RunCeedBenchmarks(MPI_Comm comm, const std::string &input, int ref_levels, 
       {
         a_test.AddBoundaryIntegrator<MassIntegrator>();
       }
-      return a_test.Assemble();
+      return a_test.PartialAssemble();
     };
     auto AssembleTestRef = [&](const FiniteElementSpace &fespace, bool bdr_integ = false)
     {
@@ -1188,7 +1184,7 @@ void RunCeedBenchmarks(MPI_Comm comm, const std::string &input, int ref_levels, 
       {
         a_test_ref.AddBoundaryIntegrator<MassIntegrator>();
       }
-      return a_test_ref.Assemble();
+      return a_test_ref.PartialAssemble();
     };
     auto AssembleRef = [&](FiniteElementSpace &fespace, mfem::AssemblyLevel assembly_level,
                            bool skip_zeros, bool bdr_integ = false)
@@ -1223,7 +1219,7 @@ void RunCeedBenchmarks(MPI_Comm comm, const std::string &input, int ref_levels, 
       {
         a_test.AddBoundaryIntegrator<VectorFEMassIntegrator>();
       }
-      return a_test.Assemble();
+      return a_test.PartialAssemble();
     };
     auto AssembleTestRef = [&](const FiniteElementSpace &fespace, bool bdr_integ = false)
     {
@@ -1234,7 +1230,7 @@ void RunCeedBenchmarks(MPI_Comm comm, const std::string &input, int ref_levels, 
       {
         a_test_ref.AddBoundaryIntegrator<VectorFEMassIntegrator>();
       }
-      return a_test_ref.Assemble();
+      return a_test_ref.PartialAssemble();
     };
     auto AssembleRef = [&](FiniteElementSpace &fespace, mfem::AssemblyLevel assembly_level,
                            bool skip_zeros, bool bdr_integ = false)
@@ -1265,14 +1261,14 @@ void RunCeedBenchmarks(MPI_Comm comm, const std::string &input, int ref_levels, 
     {
       BilinearForm a_test(fespace);
       a_test.AddDomainIntegrator<DivDivMassIntegrator>(Q, Q);
-      return a_test.Assemble();
+      return a_test.PartialAssemble();
     };
     auto AssembleTestRef = [&](const FiniteElementSpace &fespace, bool bdr_integ = false)
     {
       BilinearForm a_test_ref(fespace);
       a_test_ref.AddDomainIntegrator<DivDivIntegrator>(Q);
       a_test_ref.AddDomainIntegrator<VectorFEMassIntegrator>(Q);
-      return a_test_ref.Assemble();
+      return a_test_ref.PartialAssemble();
     };
     auto AssembleRef = [&](FiniteElementSpace &fespace, mfem::AssemblyLevel assembly_level,
                            bool skip_zeros, bool bdr_integ = false)
@@ -1299,7 +1295,7 @@ void RunCeedBenchmarks(MPI_Comm comm, const std::string &input, int ref_levels, 
     {
       DiscreteLinearOperator a_test(trial_fespace, test_fespace);
       a_test.AddDomainInterpolator<GradientInterpolator>();
-      return a_test.Assemble();
+      return a_test.PartialAssemble();
     };
     auto AssembleRef = [&](FiniteElementSpace &trial_fespace,
                            FiniteElementSpace &test_fespace,
