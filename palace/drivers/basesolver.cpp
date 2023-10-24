@@ -216,26 +216,8 @@ void BaseSolver::SolveEstimateMarkRefine(
     {
       // Perform a Dörfler style marking looking for the largest number of derefinement
       // opportunities to represent a fraction of the derefinable error.
-      const auto &derefinement_table = mesh.back()->pncmesh->GetDerefinementTable();
-      Vector coarse_error(derefinement_table.Size());
-      mfem::Array<int> row;
-      for (int i = 0; i < derefinement_table.Size(); i++)
-      {
-        // Sum the error for all sub elements that can be combined.
-        derefinement_table.GetRow(i, row);
-        coarse_error[i] =
-            std::sqrt(std::accumulate(row.begin(), row.end(), 0.0,
-                                      [&indicators](double s, int i) {
-                                        return s += std::pow(indicators.Local()[i], 2.0);
-                                      }));
-      }
-
-      // Given the coarse errors, we use the Dörfler marking strategy to identify the
-      // smallest set of original elements that make up (1 - θ) of the total error. The
-      // complement of this set is then the largest number of elements that make up θ of the
-      // total error.
-      const double threshold =
-          utils::ComputeDorflerThreshold(comm, 1 - param.update_fraction, coarse_error);
+      const double threshold = utils::ComputeDorflerCoarseningThreshold(
+          *mesh.back(), param.update_fraction, indicators.Local());
 
       const auto initial_elem_count = mesh.back()->GetGlobalNE();
       constexpr int aggregate_operation = 3;  // sum of squares

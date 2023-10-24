@@ -7,6 +7,12 @@
 #include "linalg/vector.hpp"
 #include "utils/communication.hpp"
 
+namespace mfem
+{
+
+class ParMesh;
+
+}  // namespace mfem
 namespace palace::utils
 {
 
@@ -17,6 +23,13 @@ namespace palace::utils
 // Reference: Willy Dörfler. A convergent adaptive algorithm for Poisson’s equation. SIAM J.
 //            Numer. Anal. (1996).
 double ComputeDorflerThreshold(MPI_Comm comm, double fraction, const Vector &e);
+
+// Given a nonconforming mesh, target fraction and error estimates, compute a threshold
+// value that will mark the largest number of elements that make up the specified fraction
+// of the total coarsening opportunities. This is analogous to ComputeDorflerThreshold, but
+// operates only the list of available derefinement opportunities within the mesh.
+double ComputeDorflerCoarseningThreshold(const mfem::ParMesh &mesh, double fraction,
+                                         const Vector &e);
 
 }  // namespace palace::utils
 

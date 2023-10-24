@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <limits>
 #include <numeric>
+#include <mfem.hpp>
 #include "utils/communication.hpp"
 
 namespace palace::utils
@@ -17,7 +18,6 @@ double ComputeDorflerThreshold(MPI_Comm comm, double fraction, const Vector &e)
   e.HostRead();  // Pull the data out to the host
   std::vector<double> estimates(e.begin(), e.end());
   std::sort(estimates.begin(), estimates.end());
-  MFEM_ASSERT(estimates.size() > 0, "Estimates must be non-empty");
 
   // Accumulate the squares of the estimates.
   std::vector<double> sum(estimates.size());
@@ -32,19 +32,27 @@ double ComputeDorflerThreshold(MPI_Comm comm, double fraction, const Vector &e)
   }
 
   // The pivot is the first point which leaves (1-θ) of the total sum after it.
-  auto pivot = std::lower_bound(sum.begin(), sum.end(), (1 - fraction) * sum.back());
+  const double local_total = sum.size() > 0 ? sum.back() : 0.0;
+  auto pivot = std::lower_bound(sum.begin(), sum.end(), (1 - fraction) * local_total);
   auto index = std::distance(sum.begin(), pivot);
-  double error_threshold = estimates[index];
+  double error_threshold = estimates.size() > 0 ? estimates[index] : 0.0;
 
-  // Compute the number of elements, and error, marked by threshold value e.
-  auto marked = [&estimates, &sum](double e) -> std::pair<std::size_t, double>
+  // Compute the number of elements, and amount of error, marked by threshold value e.
+  auto marked = [&estimates, &sum, &local_total](double e) -> std::pair<std::size_t, double>
   {
-    const auto lb = std::lower_bound(estimates.begin(), estimates.end(), e);
-    const auto elems_marked = std::distance(lb, estimates.end());
-    const double error_unmarked =
-        lb != estimates.begin() ? sum[sum.size() - elems_marked - 1] : 0;
-    const double error_marked = sum.back() - error_unmarked;
-    return {elems_marked, error_marked};
+    if (local_total > 0)
+    {
+      const auto lb = std::lower_bound(estimates.begin(), estimates.end(), e);
+      const auto elems_marked = std::distance(lb, estimates.end());
+      const double error_unmarked =
+          lb != estimates.begin() ? sum[sum.size() - elems_marked - 1] : 0;
+      const double error_marked = local_total - error_unmarked;
+      return {elems_marked, error_marked};
+    }
+    else
+    {
+      return {0, 0.0};
+    }
   };
 
   // Each processor will compute a different threshold: if a given processor has lots of low
@@ -70,14 +78,14 @@ double ComputeDorflerThreshold(MPI_Comm comm, double fraction, const Vector &e)
     double min_marked;
     double max_marked;
   } error;
-  error.total = sum.back();
+  error.total = local_total;
   std::tie(elements.max_marked, error.max_marked) = marked(min_threshold);
   std::tie(elements.min_marked, error.min_marked) = marked(max_threshold);
   Mpi::GlobalSum(3, &elements.total, comm);
   Mpi::GlobalSum(3, &error.total, comm);
   const double max_indicator = [&]()
   {
-    double max_indicator = estimates.back();
+    double max_indicator = estimates.size() > 0 ? estimates.back() : 0.0;
     Mpi::GlobalMax(1, &max_indicator, comm);
     return max_indicator;
   }();
@@ -161,6 +169,34 @@ double ComputeDorflerThreshold(MPI_Comm comm, double fraction, const Vector &e)
                                << ". Dorfler marking predicate failed!");
   MFEM_ASSERT(error_threshold > 0, "error_threshold must be positive");
   return error_threshold;
+}
+
+double ComputeDorflerCoarseningThreshold(const mfem::ParMesh &mesh, double fraction,
+                                         const Vector &e)
+{
+  MFEM_VERIFY(mesh.Nonconforming(), "Can only perform coarsening on a Nonconforming mesh!");
+  const auto &derefinement_table = mesh.pncmesh->GetDerefinementTable();
+  mfem::Array<double> elem_error(e.Size());
+  for (int i = 0; i < e.Size(); i++)
+  {
+    elem_error[i] = e[i];
+  }
+  mesh.pncmesh->SynchronizeDerefinementData(elem_error, derefinement_table);
+  Vector coarse_error(derefinement_table.Size());
+  mfem::Array<int> row;
+  for (int i = 0; i < derefinement_table.Size(); i++)
+  {
+    derefinement_table.GetRow(i, row);
+    coarse_error[i] = std::sqrt(std::accumulate(
+        row.begin(), row.end(), 0.0,
+        [&elem_error](double s, int i) { return s += std::pow(elem_error[i], 2.0); }));
+  }
+
+  // Given the coarse errors, we use the Dörfler marking strategy to identify the
+  // smallest set of original elements that make up (1 - θ) of the total error. The
+  // complement of this set is then the largest number of elements that make up θ of the
+  // total error.
+  return ComputeDorflerThreshold(mesh.GetComm(), 1 - fraction, coarse_error);
 }
 
 }  // namespace palace::utils
