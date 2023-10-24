@@ -57,9 +57,9 @@ The computed inductance matrix is saved to disk as `postpro/terminal-M.csv`, and
 show its contents:
 
 ```
-            i,             M[i][1] (H),             M[i][2] (H)
- 1.000000e+00,        +4.272291158e-11,        +1.959927760e-12
- 2.000000e+00,        +1.959927760e-12,        +7.131293160e-10
+               i,             M[i][1] (H),             M[i][2] (H)
+ 1.000000000e+00,        +4.271874130e-11,        +1.959879250e-12
+ 2.000000000e+00,        +1.959879250e-12,        +7.131301882e-10
 ```
 
 According to the analytic expressions above, for this geometry we should have
@@ -89,9 +89,9 @@ under [`config["Boundaries"]["Postprocessing"]["Inductance"]`]
 file. The resulting postprocessed values are written to `postpro/surface-M.csv`:
 
 ```
-            i,                M[1] (H),                M[2] (H)
- 1.000000e+00,        +4.260888637e-11,        +1.890068391e-12
- 2.000000e+00,        +1.955578068e-12,        +7.130510941e-10
+               i,                M[1] (H),                M[2] (H)
+ 1.000000000e+00,        +4.260888932e-11,        +1.890068508e-12
+ 2.000000000e+00,        +1.955578103e-12,        +7.130510940e-10
 ```
 
 The values computed using the flux integral method are in close agreement to those above, as
