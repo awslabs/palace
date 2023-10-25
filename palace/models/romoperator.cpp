@@ -3,14 +3,23 @@
 
 #include "romoperator.hpp"
 
-#include <algorithm>
-#include <chrono>
+#include <Eigen/SVD>
 #include <mfem.hpp>
 #include "linalg/orthog.hpp"
 #include "models/spaceoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
 #include "utils/timer.hpp"
+
+// Eigen does not provide a complex-valued genearlized eigenvalue solver, so we use LAPACK
+// for this.
+extern "C"
+{
+  void zggev_(char *, char *, int *, std::complex<double> *, int *, std::complex<double> *,
+              int *, std::complex<double> *, std::complex<double> *, std::complex<double> *,
+              int *, std::complex<double> *, int *, std::complex<double> *, int *, double *,
+              int *);
+}
 
 namespace palace
 {
@@ -20,6 +29,28 @@ using namespace std::complex_literals;
 namespace
 {
 
+constexpr auto ORTHOG_TOL = 1.0e-12;
+
+template <typename VecType, typename ScalarType>
+inline void OrthogonalizeColumn(GmresSolverBase::OrthogType type, MPI_Comm comm,
+                                const std::vector<VecType> &V, VecType &w, ScalarType *Rj,
+                                int j)
+{
+  // Orthogonalize w against the leading j columns of V.
+  switch (type)
+  {
+    case GmresSolverBase::OrthogType::MGS:
+      linalg::OrthogonalizeColumnMGS(comm, V, w, Rj, j);
+      break;
+    case GmresSolverBase::OrthogType::CGS:
+      linalg::OrthogonalizeColumnCGS(comm, V, w, Rj, j);
+      break;
+    case GmresSolverBase::OrthogType::CGS2:
+      linalg::OrthogonalizeColumnCGS(comm, V, w, Rj, j, true);
+      break;
+  }
+}
+
 inline void ProjectMatInternal(MPI_Comm comm, const std::vector<Vector> &V,
                                const ComplexOperator &A, Eigen::MatrixXcd &Ar,
                                ComplexVector &r, int n0)
@@ -28,7 +59,7 @@ inline void ProjectMatInternal(MPI_Comm comm, const std::vector<Vector> &V,
   // is complex symmetric if A is symmetric (which we assume is the case). Ar is replicated
   // across all processes as a sequential n x n matrix.
   const auto n = Ar.rows();
-  MFEM_VERIFY(n0 < n, "Unexpected dimensions in PROM matrix projection!");
+  MFEM_VERIFY(n0 < n, "Invalid dimensions in PROM matrix projection!");
   for (int j = n0; j < n; j++)
   {
     // Fill block of Vᴴ A V = [  | Vᴴ A vj ] . We can optimize the matrix-vector product
@@ -68,7 +99,7 @@ inline void ProjectVecInternal(MPI_Comm comm, const std::vector<Vector> &V,
   // Update br = Vᴴ b for the new basis dimension n0 -> n. br is replicated across all
   // processes as a sequential n-dimensional vector.
   const auto n = br.size();
-  MFEM_VERIFY(n0 < n, "Unexpected dimensions in PROM vector projection!");
+  MFEM_VERIFY(n0 < n, "Invalid dimensions in PROM vector projection!");
   for (int i = n0; i < n; i++)
   {
     br(i).real(V[i] * b.Real());  // Local inner product
@@ -77,9 +108,86 @@ inline void ProjectVecInternal(MPI_Comm comm, const std::vector<Vector> &V,
   Mpi::GlobalSum(n - n0, br.data() + n0, comm);
 }
 
+inline void ComputeMRI(const Eigen::MatrixXcd &R, Eigen::VectorXcd &q)
+{
+  // Compute the coefficients of the minimal rational interpolation (MRI):
+  // u = [sum_i u_i q_i / (z - z_i)] / [sum_i q_i / (z - z_i)]. The coefficients are given
+  // by the right singular vector of R corresponding to the minimum singular value.
+  const auto S = R.rows();
+  MFEM_ASSERT(S > 0 && R.cols() == S, "Invalid dimension mismatch when computing MRI!");
+  // For Eigen = v3.4.0 (latest tagged release as of 10/2023)
+  Eigen::JacobiSVD<Eigen::MatrixXcd> svd;
+  svd.compute(R, Eigen::ComputeFullV);
+  // For Eigen > v3.4.0 (GitLab repo is at v3.4.90 as of 10/2023)
+  // Eigen::JacobiSVD<Eigen::MatrixXcd, Eigen::ComputeFullV> svd;
+  // svd.compute(R);
+  const auto &sigma = svd.singularValues();
+  auto m = S - 1;
+  while (m > 0 && sigma[m] < ORTHOG_TOL * sigma[0])
+  {
+    Mpi::Warning("Minimal rational interpolation encountered rank-deficient matrix: "
+                 "σ[{:d}] = {:.3e} (σ[0] = {:.3e})!\n",
+                 m, sigma[m], sigma[0]);
+    m--;
+  }
+  q = svd.matrixV().col(m);
+}
+
+template <typename MatType, typename VecType>
+inline void ZGGEV(MatType &A, MatType &B, VecType &D, MatType &VR)
+{
+  // Wrapper for LAPACK's (z)ggev. A and B are overwritten by their Schur decompositions.
+  MFEM_VERIFY(A.rows() == A.cols() && B.rows() == B.cols() && A.rows() == B.rows(),
+              "Generalized eigenvalue problem expects A, B matrices to be square and have "
+              "same dimensions!");
+  char jobvl = 'N', jobvr = 'V';
+  int n = static_cast<int>(A.rows()), lwork = 2 * n;
+  std::vector<std::complex<double>> alpha(n), beta(n), work(lwork);
+  std::vector<double> rwork(8 * n);
+  MatType VL(0, 0);
+  VR.resize(n, n);
+  int info = 0;
+
+  zggev_(&jobvl, &jobvr, &n, A.data(), &n, B.data(), &n, alpha.data(), beta.data(),
+         VL.data(), &n, VR.data(), &n, work.data(), &lwork, rwork.data(), &info);
+  MFEM_VERIFY(info == 0, "ZGGEV failed with info = " << info << "!");
+
+  // Postprocess the eigenvalues and eigenvectors (return unit 2-norm eigenvectors).
+  D.resize(n);
+  for (int i = 0; i < n; i++)
+  {
+    D(i) = (beta[i] == 0.0)
+               ? ((alpha[i] == 0.0) ? std::numeric_limits<std::complex<double>>::quiet_NaN()
+                                    : mfem::infinity())
+               : alpha[i] / beta[i];
+    VR.col(i) /= VR.col(i).norm();
+  }
+}
+
+template <typename VecType>
+inline void ProlongatePROMSolution(std::size_t n, const std::vector<Vector> &V,
+                                   const VecType &y, ComplexVector &u)
+{
+  u = 0.0;
+  for (std::size_t j = 0; j < n; j += 2)
+  {
+    if (j + 1 < n)
+    {
+      linalg::AXPBYPCZ(y(j).real(), V[j], y(j + 1).real(), V[j + 1], 1.0, u.Real());
+      linalg::AXPBYPCZ(y(j).imag(), V[j], y(j + 1).imag(), V[j + 1], 1.0, u.Imag());
+    }
+    else
+    {
+      linalg::AXPY(y(j).real(), V[j], u.Real());
+      linalg::AXPY(y(j).imag(), V[j], u.Imag());
+    }
+  }
+}
+
 }  // namespace
 
-RomOperator::RomOperator(const IoData &iodata, SpaceOperator &spaceop) : spaceop(spaceop)
+RomOperator::RomOperator(const IoData &iodata, SpaceOperator &spaceop, int max_size)
+  : spaceop(spaceop)
 {
   // Construct the system matrices defining the linear operator. PEC boundaries are handled
   // simply by setting diagonal entries of the system matrix for the corresponding dofs.
@@ -98,11 +206,9 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &spaceop) : spaceop
   }
   has_A2 = has_RHS2 = true;
 
-  // Initialize temporary vector storage.
+  // Initialize working vector storage.
   r.SetSize(K->Height());
-  w.SetSize(K->Height());
   r.UseDevice(true);
-  w.UseDevice(true);
 
   // Set up the linear solver and set operators but don't set the operators yet (this will
   // be done during an HDM solve at a given parameter point). The preconditioner for the
@@ -111,54 +217,28 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &spaceop) : spaceop
   ksp = std::make_unique<ComplexKspSolver>(iodata, spaceop.GetNDSpaces(),
                                            &spaceop.GetH1Spaces());
 
-  // Initialize solver for inner product solves. The system matrix for the inner product is
-  // real and SPD. This uses the dual norm from https://ieeexplore.ieee.org/document/5313818
-  // in the error estimate.
-  if (iodata.solver.driven.adaptive_metric_aposteriori)
+  // The initial PROM basis is empty. The provided maximum dimension is the number of sample
+  // points (2 basis vectors per point). Basis orthogonalization method is configured using
+  // GMRES/FGMRES settings.
+  MFEM_VERIFY(max_size > 0, "Reduced order basis storage must have > 0 columns!");
+  V.resize(2 * max_size, Vector());
+  Q.resize(max_size, ComplexVector());
+  dim_V = dim_Q = 0;
+  switch (iodata.solver.linear.gs_orthog_type)
   {
-    constexpr int curlcurl_verbose = 0;
-    kspKM = std::make_unique<WeightedHCurlNormSolver<ComplexVector>>(
-        spaceop.GetMaterialOp(), spaceop.GetNDSpaces(), spaceop.GetH1Spaces(),
-        spaceop.GetNDDbcTDofLists(), spaceop.GetH1DbcTDofLists(), iodata.solver.linear.tol,
-        iodata.solver.linear.max_it, curlcurl_verbose);
+    case config::LinearSolverData::OrthogType::MGS:
+      orthog_type = GmresSolverBase::OrthogType::MGS;
+      break;
+    case config::LinearSolverData::OrthogType::CGS:
+      orthog_type = GmresSolverBase::OrthogType::CGS;
+      break;
+    case config::LinearSolverData::OrthogType::CGS2:
+      orthog_type = GmresSolverBase::OrthogType::CGS2;
+      break;
   }
-
-  // The initial PROM basis is empty. Orthogonalization uses MGS by default, else CGS2.
-  dim_V = 0;
-  orthog_mgs =
-      (iodata.solver.linear.gs_orthog_type == config::LinearSolverData::OrthogType::MGS);
-
-  // Seed the random number generator for parameter space sampling.
-  engine.seed(std::chrono::system_clock::now().time_since_epoch().count());
 }
 
-void RomOperator::Initialize(double start, double delta, int num_steps, int max_dim)
-{
-  // Initialize P = {ω_L, ω_L+δ, ..., ω_R}. Always insert in ascending order.
-  BlockTimer bt(Timer::CONSTRUCT_PROM);
-  MFEM_VERIFY(PS.empty() && P_m_PS.empty(),
-              "RomOperator::Initialize should only be called once!");
-  MFEM_VERIFY(
-      num_steps > 2,
-      "RomOperator adaptive frequency sweep should have more than two frequency steps!");
-  if (delta < 0.0)
-  {
-    start = start + (num_steps - 1) * delta;
-    delta = -delta;
-  }
-  auto it = P_m_PS.begin();
-  for (int step = 0; step < num_steps; step++)
-  {
-    it = P_m_PS.emplace_hint(it, start + step * delta);
-  }
-
-  // PROM operators Ar = Vᴴ A V when assembled is complex symmetric for real V. The provided
-  // max_dim is the number of sample points (2 basis vectors per point).
-  MFEM_VERIFY(max_dim > 0, "Reduced order basis storage must have > 0 columns!");
-  V.resize(2 * max_dim, Vector());
-}
-
-void RomOperator::SolveHDM(double omega, ComplexVector &e)
+void RomOperator::SolveHDM(double omega, ComplexVector &u)
 {
   // Compute HDM solution at the given frequency. The system matrix, A = K + iω C - ω² M +
   // A2(ω) is built by summing the underlying operator contributions.
@@ -187,58 +267,37 @@ void RomOperator::SolveHDM(double omega, ComplexVector &e)
   }
 
   // Solve the linear system.
-  ksp->Mult(r, e);
+  ksp->Mult(r, u);
 }
 
-void RomOperator::AddHDMSample(double omega, ComplexVector &e)
+void RomOperator::UpdatePROM(double omega, ComplexVector &u)
 {
-  // Use the given HDM solution at the given frequency to update the reduced-order basis
-  // updating the PROM operators.
-  BlockTimer bt(Timer::CONSTRUCT_PROM);
-  auto it = P_m_PS.lower_bound(omega);
-  MFEM_VERIFY(it != P_m_PS.end(),
-              "Sample frequency " << omega << " not found in parameter set!");
-  P_m_PS.erase(it);
-  auto ret = PS.insert(omega);
-  MFEM_VERIFY(ret.second, "Sample frequency "
-                              << omega << " already exists in the sampled parameter set!");
-
   // Update V. The basis is always real (each complex solution adds two basis vectors if it
   // has a nonzero real and imaginary parts).
-  const double normr = linalg::Norml2(spaceop.GetComm(), e.Real());
-  const double normi = linalg::Norml2(spaceop.GetComm(), e.Imag());
-  const bool has_real = (normr > 1.0e-12 * std::sqrt(normr * normr + normi * normi));
-  const bool has_imag = (normi > 1.0e-12 * std::sqrt(normr * normr + normi * normi));
-  MFEM_VERIFY(dim_V + has_real + has_imag <= static_cast<int>(V.size()),
+  BlockTimer bt(Timer::CONSTRUCT_PROM);
+  MPI_Comm comm = spaceop.GetComm();
+  const double normr = linalg::Norml2(comm, u.Real());
+  const double normi = linalg::Norml2(comm, u.Imag());
+  const bool has_real = (normr > ORTHOG_TOL * std::sqrt(normr * normr + normi * normi));
+  const bool has_imag = (normi > ORTHOG_TOL * std::sqrt(normr * normr + normi * normi));
+  MFEM_VERIFY(dim_V + has_real + has_imag <= V.size(),
               "Unable to increase basis storage size, increase maximum number of vectors!");
-  const int dim_V0 = dim_V;
-  std::vector<double> H(dim_V + 1);
+  const std::size_t dim_V0 = dim_V;
+  std::vector<double> H(dim_V + has_real + has_imag);
   if (has_real)
   {
-    V[dim_V] = e.Real();
-    if (orthog_mgs)
-    {
-      linalg::OrthogonalizeColumnMGS(spaceop.GetComm(), V, V[dim_V], H.data(), dim_V);
-    }
-    else
-    {
-      linalg::OrthogonalizeColumnCGS(spaceop.GetComm(), V, V[dim_V], H.data(), dim_V, true);
-    }
-    V[dim_V] *= 1.0 / linalg::Norml2(spaceop.GetComm(), V[dim_V]);
+    V[dim_V] = u.Real();
+    OrthogonalizeColumn(orthog_type, comm, V, V[dim_V], H.data(), dim_V);
+    H[dim_V] = linalg::Norml2(comm, V[dim_V]);
+    V[dim_V] *= 1.0 / H[dim_V];
     dim_V++;
   }
   if (has_imag)
   {
-    V[dim_V] = e.Imag();
-    if (orthog_mgs)
-    {
-      linalg::OrthogonalizeColumnMGS(spaceop.GetComm(), V, V[dim_V], H.data(), dim_V);
-    }
-    else
-    {
-      linalg::OrthogonalizeColumnCGS(spaceop.GetComm(), V, V[dim_V], H.data(), dim_V, true);
-    }
-    V[dim_V] *= 1.0 / linalg::Norml2(spaceop.GetComm(), V[dim_V]);
+    V[dim_V] = u.Imag();
+    OrthogonalizeColumn(orthog_type, comm, V, V[dim_V], H.data(), dim_V);
+    H[dim_V] = linalg::Norml2(comm, V[dim_V]);
+    V[dim_V] *= 1.0 / H[dim_V];
     dim_V++;
   }
 
@@ -246,24 +305,44 @@ void RomOperator::AddHDMSample(double omega, ComplexVector &e)
   // matrix and first dim0 entries of each vector and the projection uses the values
   // computed for the unchanged basis vectors.
   Kr.conservativeResize(dim_V, dim_V);
-  ProjectMatInternal(spaceop.GetComm(), V, *K, Kr, r, dim_V0);
+  ProjectMatInternal(comm, V, *K, Kr, r, dim_V0);
   if (C)
   {
     Cr.conservativeResize(dim_V, dim_V);
-    ProjectMatInternal(spaceop.GetComm(), V, *C, Cr, r, dim_V0);
+    ProjectMatInternal(comm, V, *C, Cr, r, dim_V0);
   }
   Mr.conservativeResize(dim_V, dim_V);
-  ProjectMatInternal(spaceop.GetComm(), V, *M, Mr, r, dim_V0);
+  ProjectMatInternal(comm, V, *M, Mr, r, dim_V0);
   Ar.resize(dim_V, dim_V);
   if (RHS1.Size())
   {
     RHS1r.conservativeResize(dim_V);
-    ProjectVecInternal(spaceop.GetComm(), V, RHS1, RHS1r, dim_V0);
+    ProjectVecInternal(comm, V, RHS1, RHS1r, dim_V0);
   }
   RHSr.resize(dim_V);
+
+  // Compute the coefficients for the minimal rational interpolation of the state u used
+  // as an error indicator. The complex-valued snapshot matrix U = [{u_i}] is stored by its
+  // QR decomposition.
+  MFEM_VERIFY(dim_Q + 1 <= Q.size(),
+              "Unable to increase basis storage size, increase maximum number of vectors!");
+  R.conservativeResizeLike(Eigen::MatrixXd::Zero(dim_Q + 1, dim_Q + 1));
+  Q[dim_Q] = u;
+  OrthogonalizeColumn(orthog_type, comm, Q, Q[dim_Q], R.col(dim_Q).data(), dim_Q);
+  R(dim_Q, dim_Q) = linalg::Norml2(comm, Q[dim_Q]);
+  Q[dim_Q] *= 1.0 / R(dim_Q, dim_Q);
+  dim_Q++;
+  ComputeMRI(R, q);
+  // if (Mpi::Root(comm))
+  // {
+  //   std::cout << "MRI (S = " << dim_Q << "):\n"
+  //   std::cout << "R =\n" << R << "\n";
+  //   std::cout << "q =\n" << q << "\n";
+  // }
+  z.push_back(omega);
 }
 
-void RomOperator::AssemblePROM(double omega)
+void RomOperator::SolvePROM(double omega, ComplexVector &u)
 {
   // Assemble the PROM linear system at the given frequency. The PROM system is defined by
   // the matrix Aᵣ(ω) = Kᵣ + iω Cᵣ - ω² Mᵣ + Vᴴ A2 V(ω) and source vector RHSᵣ(ω) =
@@ -298,155 +377,96 @@ void RomOperator::AssemblePROM(double omega)
   {
     RHSr += (1i * omega) * RHS1r;
   }
-}
 
-void RomOperator::SolvePROM(ComplexVector &e)
-{
   // Compute PROM solution at the given frequency and expand into high-dimensional space.
   // The PROM is solved on every process so the matrix-vector product for vector expansion
   // does not require communication.
   BlockTimer bt(Timer::SOLVE_PROM);
-  RHSr = Ar.partialPivLu().solve(RHSr);
-  // RHSr = Ar.ldlt().solve(RHSr);
-  // RHSr = Ar.selfadjointView<Eigen::Lower>().ldlt().solve(RHSr);
-
-  e = 0.0;
-  for (int j = 0; j < dim_V; j++)
+  if constexpr (false)
   {
-    e.Real().Add(RHSr(j).real(), V[j]);
-    e.Imag().Add(RHSr(j).imag(), V[j]);
-  }
-}
-
-double RomOperator::ComputeError(double omega)
-{
-  // Compute the error metric associated with the approximate PROM solution at the given
-  // frequency. The HDM residual -r = [K + iω C - ω² M + A2(ω)] x - [iω RHS1 + RHS2(ω)] is
-  // computed using the most recently computed A2(ω) and RHS2(ω).
-  BlockTimer bt(Timer::CONSTRUCT_PROM);
-  AssemblePROM(omega);
-  SolvePROM(w);
-
-  // Residual error.
-  r = 0.0;
-  if (RHS1.Size())
-  {
-    r.Add(-1i * omega, RHS1);
-  }
-  if (has_RHS2)
-  {
-    r.Add(-1.0, RHS2);
-  }
-  double den = !kspKM ? linalg::Norml2(spaceop.GetComm(), r) : 0.0;
-
-  K->AddMult(w, r, 1.0);
-  if (C)
-  {
-    C->AddMult(w, r, 1i * omega);
-  }
-  M->AddMult(w, r, -omega * omega);
-  if (has_A2)
-  {
-    A2->AddMult(w, r, 1.0);
-  }
-
-  double num;
-  if (!kspKM)
-  {
-    num = linalg::Norml2(spaceop.GetComm(), r);
+    // LDLT solve
+    RHSr = Ar.ldlt().solve(RHSr);
+    RHSr = Ar.selfadjointView<Eigen::Lower>().ldlt().solve(RHSr);
   }
   else
   {
-    z.SetSize(r.Size());
-    z.UseDevice(true);
-    kspKM->Mult(r, z);
-    auto dot = linalg::Dot(spaceop.GetComm(), z, r);
-    MFEM_ASSERT(dot.real() > 0.0 && std::abs(dot.imag()) < 1.0e-9 * dot.real(),
-                "Non-positive vector norm in normalization (dot = " << dot << ")!");
-    num = std::sqrt(dot.real());
-    den = linalg::Norml2(spaceop.GetComm(), w, *kspKM->GetOperator().Real(), z);
+    // LU solve
+    RHSr = Ar.partialPivLu().solve(RHSr);
   }
-  MFEM_VERIFY(den > 0.0, "Unexpected zero denominator in HDM residual!");
-  return num / den;
+  ProlongatePROMSolution(dim_V, V, RHSr, u);
 }
 
-double RomOperator::ComputeMaxError(int num_cand, double &omega_star)
+double RomOperator::FindMaxError() const
 {
-  // Greedy iteration: Find argmax_{ω ∈ P_C} η(e; ω). We sample num_cand candidates from
-  // P \ P_S.
+  // Return an estimate for argmax_z ||u(z) - V y(z)|| as argmin_z |Q(z)| with Q(z) =
+  // sum_i q_z / (z - z_i) (denominator of the barycentric interpolation of u). The roots of
+  // Q are given analytically as the solution to an S + 1 dimensional eigenvalue problem.
   BlockTimer bt(Timer::CONSTRUCT_PROM);
-  num_cand = std::min(num_cand, static_cast<int>(P_m_PS.size()));
-  std::vector<double> PC;
-  if (Mpi::Root(spaceop.GetComm()))
+  const auto S = dim_Q;
+  MFEM_VERIFY(S >= 2, "Maximum error can only be found once two sample points have been "
+                      "added to the PROM to define the parameter domain!");
+  double start = *std::min_element(z.begin(), z.end());
+  double end = *std::max_element(z.begin(), z.end());
+  Eigen::Map<const Eigen::VectorXd> z_map(z.data(), S);
+
+  Eigen::MatrixXcd A = Eigen::MatrixXcd::Zero(S + 1, S + 1);
+  A.col(0).tail(S) = Eigen::VectorXcd::Ones(S);
+  A.row(0).tail(S) = q;
+  A.diagonal().tail(S) = z_map.array();
+
+  Eigen::MatrixXcd B = Eigen::MatrixXcd::Identity(S + 1, S + 1);
+  B(0, 0) = 0.0;
+
+  Eigen::VectorXcd D;
+  Eigen::MatrixXcd X;
+  ZGGEV(A, B, D, X);
+
+  // If there are multiple roots in [start, end], pick the one furthest from the existing
+  // set of samples.
+  double dist_star = 0.0, z_star = 0.0;
+  for (auto d : D)
   {
-    if constexpr (false)
+    if (std::real(d) >= start && std::real(d) <= end)
     {
-      // Sample with weighted probability by distance from the set of already sampled
-      // points.
-      std::vector<double> weights(P_m_PS.size());
-      PC.reserve(num_cand);
-      for (auto sample : PS)
+      const double dist = (z_map.array() - std::real(d)).abs().maxCoeff();
+      if (dist > dist_star)
       {
-        int i = std::distance(P_m_PS.begin(), P_m_PS.lower_bound(sample));
-        int il = i - 1;
-        while (il >= 0)
-        {
-          weights[il] = std::min(weights[il], static_cast<double>(i - il));
-          il--;
-        }
-        int iu = i;
-        while (iu < weights.size())
-        {
-          weights[iu] = std::min(weights[iu], static_cast<double>(1 + iu - i));
-          iu++;
-        }
-      }
-      for (int i = 0; i < num_cand; i++)
-      {
-        std::discrete_distribution<std::size_t> dist(weights.begin(), weights.end());
-        auto res = dist(engine);
-        auto it = P_m_PS.begin();
-        std::advance(it, res);
-        PC.push_back(*it);
-        weights[res] = 0.0;  // No replacement
+        z_star = std::real(d);
+        dist_star = dist;
       }
     }
-    else
-    {
-      // Sample with uniform probability.
-      PC.reserve(num_cand);
-      std::sample(P_m_PS.begin(), P_m_PS.end(), std::back_inserter(PC), num_cand, engine);
-    }
   }
-  else
+  if (z_star > 0.0)
   {
-    PC.resize(num_cand);
+    return z_star;
   }
-  Mpi::Broadcast(num_cand, PC.data(), 0, spaceop.GetComm());
 
-  // Debug
-  // Mpi::Print("Candidate sampling:\n");
-  // Mpi::Print(" P_S: {}", PS);
-  // Mpi::Print(" P\\P_S: {}\n", P_m_PS);
-  // Mpi::Print(" P_C: {}\n", PC);
-  // Mpi::Print("\n");
+  // XX TODO DEBUG: FALLBACK TO SAMPLING ON GRID WITH NO POLES
+  Mpi::Print("\nFalling back to sampling z* on grid [{:.3e}, {:.3e}]\n", start, end);
 
-  // For each candidate, compute the PROM solution and associated error metric.
-  double err_max = 0.0;
-  for (auto omega : PC)
+  // Fall back to sampling Q on discrete points if no roots exist in [start, end].
+  const auto delta = (end - start) / 1000.0;
+  double Q_star = mfem::infinity();
+  while (start <= end)
   {
-    double err = ComputeError(omega);
-
-    // Debug
-    // Mpi::Print("ω = {:.3e}, error = {:.3e}\n", omega, err);
-
-    if (err > err_max)
+    const double Q = std::abs((q.array() / (z_map.array() - start)).sum());
+    if (Q < Q_star)
     {
-      err_max = err;
-      omega_star = omega;
+      z_star = start;
+      Q_star = Q;
     }
+    start += delta;
   }
-  return err_max;
+  MFEM_VERIFY(z_star > 0.0, "Could not locate a maximum error in the range ["
+                                << start << ", " << end << "]!");
+  return z_star;
+}
+
+std::vector<std::complex<double>> RomOperator::ComputeEigenvalueEstimates() const
+{
+  // XX TODO: Not yet implemented
+  MFEM_ABORT("Eigenvalue estimates for PROM operators are not yet implemented!");
+  return {};
 }
 
 }  // namespace palace

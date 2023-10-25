@@ -142,10 +142,8 @@ public:
   void Mult(const VecType &b, VecType &x) const override;
 };
 
-// Preconditioned Generalized Minimum Residual Method (GMRES) for general nonsymmetric
-// linear systems.
-template <typename OperType>
-class GmresSolver : public IterativeSolver<OperType>
+// Base class defining enums for GMRES.
+class GmresSolverBase
 {
 public:
   enum class OrthogType
@@ -160,7 +158,13 @@ public:
     LEFT,
     RIGHT
   };
+};
 
+// Preconditioned Generalized Minimum Residual Method (GMRES) for general nonsymmetric
+// linear systems.
+template <typename OperType>
+class GmresSolver : public IterativeSolver<OperType>, GmresSolverBase
+{
 protected:
   using VecType = typename Solver<OperType>::VecType;
   using RealType = typename IterativeSolver<OperType>::RealType;
@@ -229,8 +233,8 @@ template <typename OperType>
 class FgmresSolver : public GmresSolver<OperType>
 {
 public:
-  using OrthogType = typename GmresSolver<OperType>::OrthogType;
-  using PrecSide = typename GmresSolver<OperType>::PrecSide;
+  using OrthogType = typename GmresSolverBase::OrthogType;
+  using PrecSide = typename GmresSolverBase::PrecSide;
 
 protected:
   using VecType = typename GmresSolver<OperType>::VecType;
