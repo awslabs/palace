@@ -31,6 +31,10 @@ ComplexVector::ComplexVector(const std::complex<double> *py, int n) : ComplexVec
 
 void ComplexVector::SetSize(int n)
 {
+  if (n == Size())
+  {
+    return;
+  }
   x.SetSize(2 * n);
   xr.MakeRef(x, 0, n);
   xi.MakeRef(x, n, n);

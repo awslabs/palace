@@ -4,12 +4,10 @@
 #ifndef PALACE_MODELS_ROM_OPERATOR_HPP
 #define PALACE_MODELS_ROM_OPERATOR_HPP
 
+#include <complex>
 #include <memory>
-#include <random>
-#include <set>
 #include <vector>
 #include <Eigen/Dense>
-#include "linalg/hcurl.hpp"
 #include "linalg/ksp.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
@@ -32,17 +30,11 @@ private:
 
   // HDM system matrices and excitation RHS.
   std::unique_ptr<ComplexOperator> K, M, C, A2;
-  ComplexVector RHS1, RHS2;
+  ComplexVector RHS1, RHS2, r;
   bool has_A2, has_RHS2;
-
-  // Working storage for HDM vectors.
-  ComplexVector r, w, z;
 
   // HDM linear system solver and preconditioner.
   std::unique_ptr<ComplexKspSolver> ksp;
-
-  // Linear solver for inner product solves for error metric.
-  std::unique_ptr<WeightedHCurlNormSolver> kspKM;
 
   // PROM matrices and vectors.
   Eigen::MatrixXcd Kr, Mr, Cr, Ar;
@@ -50,15 +42,22 @@ private:
 
   // PROM reduced-order basis (real-valued) and active dimension.
   std::vector<Vector> V;
-  int dim_V;
-  bool orthog_mgs;
+  std::size_t dim_V;
+  GmresSolverBase::OrthogType orthog_type;
 
-  // Data structures for parameter domain sampling.
-  std::set<double> PS, P_m_PS;
-  std::default_random_engine engine;
+  // (Complex-valued) upper-trianglar matrix R from orthogonalization of the HDM samples.
+  // Minimal rational interpolant (MRI) defined by the vector q of interpolation weights and
+  // support points z is used as an error indicator.
+  std::vector<ComplexVector> Q;
+  std::size_t dim_Q;
+  Eigen::MatrixXcd R;
+  Eigen::VectorXcd q, z;
+
+  // Sample parameter points.
+  std::vector<double> S;
 
 public:
-  RomOperator(const IoData &iodata, SpaceOperator &sp);
+  RomOperator(const IoData &iodata, SpaceOperator &spaceop, int max_size);
 
   // Return the HDM linear solver.
   const ComplexKspSolver &GetLinearSolver() const { return *ksp; }
@@ -67,30 +66,24 @@ public:
   int GetReducedDimension() const { return dim_V; }
 
   // Return set of sampled parameter points for basis construction.
-  const std::set<double> &GetSampleFrequencies() const { return PS; }
-
-  // Initialize the parameter domain P = {ω_L, ω_L + δ, ..., ω_R}. Also sets the maximum
-  // number of sample points for the PROM construction.
-  void Initialize(double start, double delta, int num_steps, int max_dim);
+  const std::vector<double> &GetSamplePoints() const { return S; }
 
   // Assemble and solve the HDM at the specified frequency.
-  void SolveHDM(double omega, ComplexVector &e);
+  void SolveHDM(double omega, ComplexVector &u);
 
   // Add the solution vector to the reduced-order basis and update the PROM.
-  void AddHDMSample(double omega, ComplexVector &e);
+  void UpdatePROM(double omega, ComplexVector &u);
 
   // Assemble and solve the PROM at the specified frequency, expanding the solution back
-  // into the high-dimensional solution space.
-  void AssemblePROM(double omega);
-  void SolvePROM(ComplexVector &e);
+  // into the high-dimensional space.
+  void SolvePROM(double omega, ComplexVector &u);
 
-  // Compute the error metric for the PROM at the specified frequency.
-  double ComputeError(double omega);
+  // Compute the location of the maximum error over the given range of parameter points,
+  // specified as P = {ω_L, ω_L + δ, ..., ω_R}.
+  double FindMaxError(double start, double delta, int num_steps) const;
 
-  // Compute the maximum error over a randomly sampled set of candidate points. Returns the
-  // maximum error and its correcponding frequency, as well as the number of candidate
-  // points used (if fewer than those availble in the unsampled parameter domain).
-  double ComputeMaxError(int num_cand, double &omega_star);
+  // Compute eigenvalue estimates for the current PROM system.
+  std::vector<std::complex<double>> ComputeEigenvalueEstimates() const;
 };
 
 }  // namespace palace

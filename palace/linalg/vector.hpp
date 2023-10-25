@@ -51,8 +51,14 @@ public:
   const Vector &Imag() const { return xi; }
   Vector &Imag() { return xi; }
 
+  // Copy assignment.
+  ComplexVector &operator=(const ComplexVector &y)
+  {
+    SetSize(y.Size());
+    return Set(y);
+  }
+
   // Set from a ComplexVector, without resizing.
-  ComplexVector &operator=(const ComplexVector &y) { return Set(y); }
   ComplexVector &Set(const ComplexVector &y)
   {
     Set(y.Real(), y.Imag());

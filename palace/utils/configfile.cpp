@@ -1403,12 +1403,10 @@ void DrivenSolverData::SetUp(json &solver)
   delta_f = driven->at("FreqStep");  // Required
   delta_post = driven->value("SaveStep", delta_post);
   only_port_post = driven->value("SaveOnlyPorts", only_port_post);
-  adaptive_tol = driven->value("AdaptiveTol", adaptive_tol);
-  adaptive_nmax = driven->value("AdaptiveMaxSamples", adaptive_nmax);
-  adaptive_ncand = driven->value("AdaptiveMaxCandidates", adaptive_ncand);
-  adaptive_metric_aposteriori =
-      driven->value("AdaptiveAPosterioriError", adaptive_metric_aposteriori);
   rst = driven->value("Restart", rst);
+  adaptive_tol = driven->value("AdaptiveTol", adaptive_tol);
+  adaptive_max_size = driven->value("AdaptiveMaxSamples", adaptive_max_size);
+  adaptive_memory = driven->value("AdaptiveConvergenceMemory", adaptive_memory);
 
   // Cleanup
   driven->erase("MinFreq");
@@ -1416,11 +1414,10 @@ void DrivenSolverData::SetUp(json &solver)
   driven->erase("FreqStep");
   driven->erase("SaveStep");
   driven->erase("SaveOnlyPorts");
+  driven->erase("Restart");
   driven->erase("AdaptiveTol");
   driven->erase("AdaptiveMaxSamples");
-  driven->erase("AdaptiveMaxCandidates");
-  driven->erase("AdaptiveAPosterioriError");
-  driven->erase("Restart");
+  driven->erase("AdaptiveConvergenceMemory");
   MFEM_VERIFY(driven->empty(),
               "Found an unsupported configuration file keyword under \"Driven\"!\n"
                   << driven->dump(2));
@@ -1431,11 +1428,10 @@ void DrivenSolverData::SetUp(json &solver)
   // std::cout << "FreqStep: " << delta_f << '\n';
   // std::cout << "SaveStep: " << delta_post << '\n';
   // std::cout << "SaveOnlyPorts: " << only_port_post << '\n';
-  // std::cout << "AdaptiveTol: " << adaptive_tol << '\n';
-  // std::cout << "AdaptiveMaxSamples: " << adaptive_nmax << '\n';
-  // std::cout << "AdaptiveMaxCandidates: " << adaptive_ncand << '\n';
-  // std::cout << "AdaptiveAPosterioriError: " << adaptive_metric_aposteriori << '\n';
   // std::cout << "Restart: " << rst << '\n';
+  // std::cout << "AdaptiveTol: " << adaptive_tol << '\n';
+  // std::cout << "AdaptiveMaxSamples: " << adaptive_max_size << '\n';
+  // std::cout << "AdaptiveConvergenceMemory: " << adaptive_memory << '\n';
 }
 
 // Helper for converting string keys to enum for EigenSolverData::Type.

@@ -71,10 +71,10 @@ std::unique_ptr<IterativeSolver<OperType>> ConfigureKrylovSolver(MPI_Comm comm,
     switch (iodata.solver.linear.pc_side_type)
     {
       case config::LinearSolverData::SideType::LEFT:
-        gmres->SetPrecSide(GmresSolver<OperType>::PrecSide::LEFT);
+        gmres->SetPrecSide(GmresSolverBase::PrecSide::LEFT);
         break;
       case config::LinearSolverData::SideType::RIGHT:
-        gmres->SetPrecSide(GmresSolver<OperType>::PrecSide::RIGHT);
+        gmres->SetPrecSide(GmresSolverBase::PrecSide::RIGHT);
         break;
       case config::LinearSolverData::SideType::DEFAULT:
         // Do nothing
@@ -91,13 +91,13 @@ std::unique_ptr<IterativeSolver<OperType>> ConfigureKrylovSolver(MPI_Comm comm,
     switch (iodata.solver.linear.gs_orthog_type)
     {
       case config::LinearSolverData::OrthogType::MGS:
-        gmres->SetOrthogonalization(GmresSolver<OperType>::OrthogType::MGS);
+        gmres->SetOrthogonalization(GmresSolverBase::OrthogType::MGS);
         break;
       case config::LinearSolverData::OrthogType::CGS:
-        gmres->SetOrthogonalization(GmresSolver<OperType>::OrthogType::CGS);
+        gmres->SetOrthogonalization(GmresSolverBase::OrthogType::CGS);
         break;
       case config::LinearSolverData::OrthogType::CGS2:
-        gmres->SetOrthogonalization(GmresSolver<OperType>::OrthogType::CGS2);
+        gmres->SetOrthogonalization(GmresSolverBase::OrthogType::CGS2);
         break;
     }
   }
