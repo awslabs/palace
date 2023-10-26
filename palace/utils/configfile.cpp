@@ -292,7 +292,6 @@ void RefinementData::SetUp(json &model)
   update_fraction = refinement->value("UpdateFraction", update_fraction);
   max_nc_levels = refinement->value("MaxNCLevels", max_nc_levels);
   dof_limit = refinement->value("DOFLimit", dof_limit);
-  use_coarsening = refinement->value("UseCoarsening", use_coarsening);
   save_adapt_iterations = refinement->value("SaveAdaptIterations", save_adapt_iterations);
   nonconformal = refinement->value("Nonconformal", nonconformal);
   maximum_imbalance = refinement->value("MaximumImbalance", maximum_imbalance);
@@ -301,8 +300,6 @@ void RefinementData::SetUp(json &model)
   MFEM_VERIFY(adapt_max_its >= 0, "\"AdaptMaxIts\" must be non-negative");
   MFEM_VERIFY(update_fraction > 0 && update_fraction < 1,
               "\"UpdateFraction\" must be in (0,1)");
-  MFEM_VERIFY(!use_coarsening || nonconformal,
-              "\"UseCoarsening\" can only be used with \"Nonconformal\"");
   MFEM_VERIFY(max_nc_levels >= 0, "\"MaxNCLevels\" must non-negative");
   MFEM_VERIFY(dof_limit >= 0, "\"DOFLimit\" must be non-negative");
   MFEM_VERIFY(maximum_imbalance >= 1,
@@ -418,11 +415,10 @@ void RefinementData::SetUp(json &model)
   }
 
   // Cleanup
-  const auto fields = {"UniformLevels",  "AdaptTol",       "AdaptMaxIts",
-                       "Boxes",          "UpdateFraction", "UseCoarsening",
-                       "MaxNCLevels",    "DOFLimit",       "SaveAdaptIterations",
-                       "Spheres",        "Nonconformal",   "MaximumImbalance",
-                       "WriteSerialMesh"};
+  const auto fields = {
+      "UniformLevels",  "AdaptTol",     "AdaptMaxIts",      "Boxes",
+      "UpdateFraction", "MaxNCLevels",  "DOFLimit",         "SaveAdaptIterations",
+      "Spheres",        "Nonconformal", "MaximumImbalance", "WriteSerialMesh"};
   for (const auto &f : fields)
   {
     refinement->erase(f);
@@ -437,7 +433,6 @@ void RefinementData::SetUp(json &model)
   // std::cout << "AdaptTol: " << adapt_tolerance << '\n';
   // std::cout << "AdaptMaxIts: " << adapt_max_its << '\n';
   // std::cout << "UpdateFraction: " << update_fraction << '\n';
-  // std::cout << "UseCoarsening: " << use_coarsening << '\n';
   // std::cout << "MaxNCLevels: " << max_nc_levels << '\n';
   // std::cout << "DOFLimit: " << dof_limit << '\n';
   // std::cout << "SaveAdaptIterations: " << save_adapt_iterations << '\n';

@@ -151,7 +151,6 @@ void BaseSolver::SolveEstimateMarkRefine(
   };
 
   const bool use_amr = param.adapt_max_its > 0;
-  const bool use_coarsening = mesh.back()->Nonconforming() && param.use_coarsening;
   if (use_amr && mesh.size() > 1)
   {
     Mpi::Print("{}\n", "Flattening mesh sequence: AMR will start from the final mesh in "
@@ -184,8 +183,8 @@ void BaseSolver::SolveEstimateMarkRefine(
   auto exhausted_resources = [&]()
   {
     bool ret = false;
-    // Run out of DOFs, and coarsening isn't allowed.
-    ret |= (!use_coarsening && ntdof > param.dof_limit);
+    // Run out of DOFs.
+    ret |= ntdof > param.dof_limit;
     // Run out of iterations.
     ret |= iter >= param.adapt_max_its;
     return ret;
@@ -197,40 +196,21 @@ void BaseSolver::SolveEstimateMarkRefine(
     Mpi::Print("Adaptation iteration {}: Initial Error Indicator: {:.3e}, DOF: {}, DOF "
                "Limit: {}\n",
                ++iter, indicators.Norml2(comm), ntdof, param.dof_limit);
-    if (ntdof < param.dof_limit)
-    {
-      // Mark.
-      const auto threshold =
-          utils::ComputeDorflerThreshold(comm, param.update_fraction, indicators.Local());
-      const auto marked_elements = MarkedElements(threshold, indicators.Local());
 
-      // Refine.
-      const auto initial_elem_count = mesh.back()->GetGlobalNE();
-      mesh.back()->GeneralRefinement(marked_elements, -1, param.max_nc_levels);
-      const auto final_elem_count = mesh.back()->GetGlobalNE();
-      Mpi::Print("Mesh refinement added {} elements. Initial: {}, Final: {}\n",
-                 final_elem_count - initial_elem_count, initial_elem_count,
-                 final_elem_count);
-    }
-    else if (use_coarsening)
-    {
-      // Perform a Dörfler style marking looking for the largest number of derefinement
-      // opportunities to represent a fraction of the derefinable error.
-      const double threshold = utils::ComputeDorflerCoarseningThreshold(
-          *mesh.back(), param.update_fraction, indicators.Local());
+    // Mark.
+    const auto threshold =
+        utils::ComputeDorflerThreshold(comm, param.update_fraction, indicators.Local());
+    const auto marked_elements = MarkedElements(threshold, indicators.Local());
 
-      const auto initial_elem_count = mesh.back()->GetGlobalNE();
-      constexpr int aggregate_operation = 3;  // sum of squares
-      mesh.back()->DerefineByError(indicators.Local(), threshold, param.max_nc_levels,
-                                   aggregate_operation);
-      const auto final_elem_count = mesh.back()->GetGlobalNE();
-      Mpi::Print("Mesh coarsening removed {} elements. Initial: {}, Final: {}\n",
-                 initial_elem_count - final_elem_count, initial_elem_count,
-                 final_elem_count);
-    }
-    mesh::RebalanceMesh(mesh.back(), iodata, post_dir);
+    // Refine.
+    const auto initial_elem_count = mesh.back()->GetGlobalNE();
+    mesh.back()->GeneralRefinement(marked_elements, -1, param.max_nc_levels);
+    const auto final_elem_count = mesh.back()->GetGlobalNE();
+    Mpi::Print("Mesh refinement added {} elements. Initial: {}, Final: {}\n",
+               final_elem_count - initial_elem_count, initial_elem_count, final_elem_count);
 
     // Solve + estimate.
+    mesh::RebalanceMesh(mesh.back(), iodata, post_dir);
     indicators_and_ntdof = Solve(mesh);
   }
   Mpi::Print("\nFinal Error Indicator: {:.3e}, DOF: {}\n", indicators.Norml2(comm), ntdof);
