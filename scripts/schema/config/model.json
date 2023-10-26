@@ -28,7 +28,6 @@
         "Nonconformal": {"type": "boolean"},
         "SaveAdaptIterations": {"type": "boolean"},
         "UpdateFraction": {"type": "number", "exclusiveMinimum": 0.0, "exclusiveMaximum": 1.0},
-        "UseCoarsening": {"type": "boolean"},
         "WriteSerialMesh": {"type": "boolean"},
         "Boxes":
         {

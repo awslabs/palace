@@ -75,7 +75,7 @@ scheme.
 
 `"AdaptMaxIts" [0]` : Maximum number of iterations to perform of adaptive mesh refinement.
 
-`"UpdateFraction" [0.4]` : Dörfler marking fraction used to specify which elements to
+`"UpdateFraction" [0.7]` : Dörfler marking fraction used to specify which elements to
 refine. This marking strategy will mark the smallest number of elements that make up
 `"UpdateFraction"` of the total error in the mesh. A larger value will refine more elements
 per iteration, at the cost of the final mesh being less efficient.
@@ -83,8 +83,7 @@ per iteration, at the cost of the final mesh being less efficient.
 `"DOFLimit" [0]` : The maximum allowable number of DOF within an AMR loop, if an adapted
 mesh exceeds this value no further adaptation will occur.
 
-`"Nonconformal" [false]` : Whether the adaptation should use nonconformal refinement.
-`"Nonconformal"` is necessary to enable `"UseCoarsening"`.
+`"Nonconformal" [true]` : Whether the adaptation should use nonconformal refinement.
 
 `"Boxes"` :  Array of box region refinement objects. All elements with a node inside the box
 region will be marked for refinement.
@@ -116,10 +115,9 @@ mesh length units.
 ### Advanced model options
 
   - `"MaximumImbalance" [1.0]`
-  - `"MaxNCLevels" [0]`
+  - `"MaxNCLevels" [1]`
   - `"Partition" [""]`
   - `"RemoveCurvature" [false]`
   - `"ReorientTetMesh" [false]`
-  - `"SaveStep" [1]`
-  - `"UseCoarsening" [false]`
+  - `"SaveAdaptIterations" [true]`
   - `"WriteSerialMesh" [true]`
