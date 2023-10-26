@@ -139,12 +139,12 @@ public:
   int adapt_max_its = 0;
   // Dörfler update fraction. The set of marked elements is the minimum set that contains
   // update_fraction of the total error.
-  double update_fraction = 0.4;
+  double update_fraction = 0.7;
   // Whether or not to perform Dörfler style coarsening.
   bool use_coarsening = false;
   // Maximum difference in non-conformal refinements between two adjacent elements. Default
   // = 0 implies there is no constraint on local non-conformity.
-  int max_nc_levels = 0;
+  int max_nc_levels = 1;
   // If a refinement results in a greater number of DOFs than this value, no future
   // refinement will be allowed unless coarsening is allowed to occur.
   int dof_limit = 0;
@@ -152,7 +152,7 @@ public:
   // processing directory.
   bool save_adapt_iterations = true;
   // Whether or not to perform nonconformal adaptation.
-  bool nonconformal = false;
+  bool nonconformal = true;
   // Maximum allowable ratio of number of elements across processors before rebalancing is
   // performed.
   double maximum_imbalance = 1.0;
