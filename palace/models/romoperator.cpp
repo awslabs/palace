@@ -3,6 +3,7 @@
 
 #include "romoperator.hpp"
 
+#include <Eigen/Eigenvalues>
 #include <Eigen/SVD>
 #include <mfem.hpp>
 #include "linalg/orthog.hpp"
@@ -291,9 +292,9 @@ void RomOperator::UpdatePROM(double omega, ComplexVector &u)
 void RomOperator::SolvePROM(double omega, ComplexVector &u)
 {
   // Assemble the PROM linear system at the given frequency. The PROM system is defined by
-  // the matrix Aᵣ(ω) = Kᵣ + iω Cᵣ - ω² Mᵣ + Vᴴ A2 V(ω) and source vector RHSᵣ(ω) =
-  // iω RHS1ᵣ + Vᴴ RHS2(ω). A2(ω) and RHS2(ω) are constructed only if required and are
-  // only nonzero on boundaries, will be empty if not needed.
+  // the matrix Aᵣ(ω) = Kᵣ + iω Cᵣ - ω² Mᵣ + Vᴴ A2 V(ω) and source vector RHSᵣ(ω) = iω RHS1ᵣ
+  // + Vᴴ RHS2(ω). A2(ω) and RHS2(ω) are constructed only if required and are only nonzero
+  // on boundaries, will be empty if not needed.
   if (has_A2)
   {
     A2 = spaceop.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO);
@@ -331,7 +332,7 @@ void RomOperator::SolvePROM(double omega, ComplexVector &u)
   {
     // LDLT solve
     RHSr = Ar.ldlt().solve(RHSr);
-    RHSr = Ar.selfadjointView<Eigen::Lower>().ldlt().solve(RHSr);
+    // RHSr = Ar.selfadjointView<Eigen::Lower>().ldlt().solve(RHSr);
   }
   else
   {
@@ -380,9 +381,44 @@ double RomOperator::FindMaxError(double start, double delta, int num_steps) cons
 
 std::vector<std::complex<double>> RomOperator::ComputeEigenvalueEstimates() const
 {
-  // XX TODO: Not yet implemented
-  MFEM_ABORT("Eigenvalue estimates for PROM operators are not yet implemented!");
-  return {};
+  if (!has_A2)
+  {
+    if (Cr.rows() == 0)
+    {
+      // Linear generalized EVP: M⁻¹ K x = λ x (Eigen does not support complex-valued
+      // generalized EVPs).
+      Eigen::ComplexEigenSolver<Eigen::MatrixXcd> eps;
+      eps.compute(Mr.partialPivLu().solve(Kr), false);
+      const auto lambda = eps.eigenvalues();
+      return {lambda.begin(), lambda.end()};
+    }
+    else
+    {
+      // Quadratic EVP: P(λ) x = (K + λ C + λ² M) x = 0 , solved via linearization.
+      Eigen::MatrixXcd L0 = Eigen::MatrixXcd::Zero(2 * dim_V, 2 * dim_V);
+      L0.topRightCorner(dim_V, dim_V) = Eigen::MatrixXcd::Identity(dim_V, dim_V);
+      L0.bottomLeftCorner(dim_V, dim_V) = -Kr;
+      L0.bottomRightCorner(dim_V, dim_V) = -Cr;
+
+      Eigen::MatrixXcd L1 = Eigen::MatrixXcd::Zero(2 * dim_V, 2 * dim_V);
+      L1.topLeftCorner(dim_V, dim_V) = Eigen::MatrixXcd::Identity(dim_V, dim_V);
+      L1.bottomRightCorner(dim_V, dim_V) = Mr;
+
+      Eigen::ComplexEigenSolver<Eigen::MatrixXcd> eps;
+      eps.compute(L1.partialPivLu().solve(L0), false);
+      const auto lambda = eps.eigenvalues();
+      return {lambda.begin(), lambda.end()};
+    }
+  }
+  else
+  {
+    // General nonlinear EVP: T(λ) x = (K + λ C + λ² M + A2(λ)) x = 0 .
+
+    // XX TODO: Not yet implemented
+    MFEM_ABORT("NEVP estimates for PROM operators are not yet implemented!");
+
+    return {};
+  }
 }
 
 }  // namespace palace
