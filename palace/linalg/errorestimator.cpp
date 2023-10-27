@@ -63,12 +63,8 @@ ConfigureLinearSolver(const mfem::ParFiniteElementSpaceHierarchy &fespaces, doub
   std::unique_ptr<Solver<Operator>> pc;
   if (fespaces.GetNumLevels() > 1)
   {
-    const int dim = fespaces.GetFinestFESpace().GetParMesh()->Dimension();
-    const auto type = fespaces.GetFinestFESpace().FEColl()->GetRangeType(dim);
     const int mg_smooth_order =
-        (type == mfem::FiniteElement::SCALAR)
-            ? 2
-            : std::max(fespaces.GetFinestFESpace().GetMaxElementOrder(), 2);
+        std::max(fespaces.GetFinestFESpace().GetMaxElementOrder(), 2);
     pc = std::make_unique<GeometricMultigridSolver<Operator>>(
         std::move(amg), fespaces, nullptr, 1, 1, mg_smooth_order, 1.0, 0.0, true,
         pa_order_threshold, pa_discrete_interp);

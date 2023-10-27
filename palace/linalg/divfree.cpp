@@ -65,9 +65,11 @@ DivFreeSolver::DivFreeSolver(const MaterialOperator &mat_op,
   std::unique_ptr<Solver<Operator>> pc;
   if (h1_fespaces.GetNumLevels() > 1)
   {
+    const int mg_smooth_order =
+        std::max(h1_fespaces.GetFinestFESpace().GetMaxElementOrder(), 2);
     pc = std::make_unique<GeometricMultigridSolver<Operator>>(
-        std::move(amg), h1_fespaces, nullptr, 1, 1, 2, 1.0, 0.0, true, pa_order_threshold,
-        pa_discrete_interp);
+        std::move(amg), h1_fespaces, nullptr, 1, 1, mg_smooth_order, 1.0, 0.0, true,
+        pa_order_threshold, pa_discrete_interp);
   }
   else
   {
