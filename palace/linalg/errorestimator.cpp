@@ -96,7 +96,7 @@ FluxProjector::FluxProjector(const MaterialOperator &mat_op,
                              bool pa_discrete_interp)
 {
   BlockTimer bt(Timer::CONSTRUCTESTIMATOR);
-  constexpr int skip_zeros = false;
+  constexpr bool skip_zeros = false;
   {
     constexpr auto MatType = MaterialPropertyType::INV_PERMEABILITY;
     MaterialPropertyCoefficient<MatType> muinv_func(mat_op);
@@ -120,7 +120,7 @@ FluxProjector::FluxProjector(const MaterialOperator &mat_op,
                              bool pa_discrete_interp)
 {
   BlockTimer bt(Timer::CONSTRUCTESTIMATOR);
-  constexpr int skip_zeros = false;
+  constexpr bool skip_zeros = false;
   {
     constexpr auto MatType = MaterialPropertyType::PERMITTIVITY_REAL;
     MaterialPropertyCoefficient<MatType> epsilon_func(mat_op);
