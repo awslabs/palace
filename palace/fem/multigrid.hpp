@@ -129,7 +129,7 @@ inline AuxiliaryFiniteElementSpaceHierarchy ConstructAuxiliaryFiniteElementSpace
     const mfem::Array<int> *dbc_marker = nullptr,
     std::vector<mfem::Array<int>> *dbc_tdof_lists = nullptr)
 {
-  MFEM_VERIFY(!primal_fespaces.empty() && !fecs.empty() &&
+  MFEM_VERIFY((primal_fespaces.GetNumLevels() > 0) && !fecs.empty() &&
                   (!dbc_tdof_lists || dbc_tdof_lists->empty()),
               "Empty mesh or FE collection for FE space construction!");
   mfem::ParMesh *mesh = primal_fespaces.GetFESpaceAtLevel(0).GetParMesh();
@@ -144,7 +144,7 @@ inline AuxiliaryFiniteElementSpaceHierarchy ConstructAuxiliaryFiniteElementSpace
 
   // h-refinement
   std::size_t l;
-  for (l = 1; l < primal_fespaces.size(); l++)
+  for (l = 1; l < primal_fespaces.GetNumLevels(); l++)
   {
     if (primal_fespaces.GetFESpaceAtLevel(l).GetParMesh() == mesh)
     {
@@ -163,7 +163,7 @@ inline AuxiliaryFiniteElementSpaceHierarchy ConstructAuxiliaryFiniteElementSpace
 
   // p-refinement
   const auto l0 = l - 1;
-  for (; l < primal_fespaces.size(); l++)
+  for (; l < primal_fespaces.GetNumLevels(); l++)
   {
     fespaces.AddLevel(std::make_unique<AuxiliaryFiniteElementSpace>(
         primal_fespaces.GetFESpaceAtLevel(l), mesh, fecs[l - l0].get()));

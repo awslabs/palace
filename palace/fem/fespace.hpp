@@ -39,7 +39,7 @@ public:
 };
 
 //
-// An AuxiliaryFiniteElement space is just a FiniteElementSpace which allows for lazy
+// An AuxiliaryFiniteElement space is a FiniteElementSpace which allows for lazy
 // construction of the interpolation operator (discrete gradient or curl) from the primal
 // space to this one.
 //
@@ -71,26 +71,27 @@ public:
 // to construct the prolongation operators between them as needed.
 //
 template <typename FESpace>
-class Hierarchy
+class BaseFiniteElementSpaceHierarchy
 {
+  static_assert(std::is_base_of<FiniteElementSpace, FESpace>::value,
+                "A space hierarchy can only be constructed of FiniteElementSpace objects!");
+
 protected:
   std::vector<std::unique_ptr<FESpace>> fespaces;
   mutable std::vector<std::unique_ptr<Operator>> P;
 
-  static_assert(std::is_convertible_v<FESpace *, FiniteElementSpace *>,
-                "A hierarchy can only be constructed of FiniteElementSpaces");
-
   const Operator &BuildProlongationAtLevel(std::size_t l) const;
 
 public:
-  Hierarchy<FESpace>() = default;
-  Hierarchy<FESpace>(std::unique_ptr<FESpace> &&fespace) { AddLevel(std::move(fespace)); }
+  BaseFiniteElementSpaceHierarchy<FESpace>() = default;
+  BaseFiniteElementSpaceHierarchy<FESpace>(std::unique_ptr<FESpace> &&fespace)
+  {
+    AddLevel(std::move(fespace));
+  }
 
   auto GetNumLevels() const { return fespaces.size(); }
-  auto size() const { return GetNumLevels(); }
-  bool empty() const { return GetNumLevels() == 0; }
 
-  virtual void AddLevel(std::unique_ptr<FESpace> &&fespace)
+  void AddLevel(std::unique_ptr<FESpace> &&fespace)
   {
     fespaces.push_back(std::move(fespace));
     P.push_back(nullptr);
@@ -111,12 +112,14 @@ public:
 
   FESpace &GetFinestFESpace()
   {
-    MFEM_ASSERT(!empty(), "Out of bounds request for finite element space at level 0!");
+    MFEM_ASSERT(GetNumLevels() > 0,
+                "Out of bounds request for finite element space at level 0!");
     return *fespaces.back();
   }
   const FESpace &GetFinestFESpace() const
   {
-    MFEM_ASSERT(!empty(), "Out of bounds request for finite element space at level 0!");
+    MFEM_ASSERT(GetNumLevels() > 0,
+                "Out of bounds request for finite element space at level 0!");
     return *fespaces.back();
   }
 
@@ -139,30 +142,28 @@ public:
   }
 };
 
-class FiniteElementSpaceHierarchy : public Hierarchy<FiniteElementSpace>
+class FiniteElementSpaceHierarchy
+  : public BaseFiniteElementSpaceHierarchy<FiniteElementSpace>
 {
 public:
-  using Hierarchy<FiniteElementSpace>::Hierarchy;
+  using BaseFiniteElementSpaceHierarchy<
+      FiniteElementSpace>::BaseFiniteElementSpaceHierarchy;
 };
 
 //
 // A special type of FiniteElementSpaceHierarchy where all members are auxiliary finite
 // element spaces.
 //
-class AuxiliaryFiniteElementSpaceHierarchy : public Hierarchy<AuxiliaryFiniteElementSpace>
+class AuxiliaryFiniteElementSpaceHierarchy
+  : public BaseFiniteElementSpaceHierarchy<AuxiliaryFiniteElementSpace>
 {
-
 public:
-  using Hierarchy<AuxiliaryFiniteElementSpace>::Hierarchy;
+  using BaseFiniteElementSpaceHierarchy<
+      AuxiliaryFiniteElementSpace>::BaseFiniteElementSpaceHierarchy;
 
   const Operator &GetDiscreteInterpolatorAtLevel(std::size_t l) const
   {
     return GetFESpaceAtLevel(l).GetDiscreteInterpolator();
-  }
-
-  const Operator &GetDiscreteInterpolatorAtFinestLevel() const
-  {
-    return GetFinestFESpace().GetDiscreteInterpolator();
   }
 
   std::vector<const Operator *> GetDiscreteInterpolators() const

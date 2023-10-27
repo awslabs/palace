@@ -30,18 +30,18 @@ WeightedHCurlNormSolver::WeightedHCurlNormSolver(
   MaterialPropertyCoefficient<MatTypeMuInv> muinv_func(mat_op);
   MaterialPropertyCoefficient<MatTypeEps> epsilon_func(mat_op);
   {
-    auto A_mg = std::make_unique<MultigridOperator>(nd_fespaces.GetNumLevels());
-    MFEM_VERIFY(h1_fespaces.GetNumLevels() == nd_fespaces.GetNumLevels(), "!");
-    auto num_levels = h1_fespaces.GetNumLevels();
+    MFEM_VERIFY(h1_fespaces.GetNumLevels() == nd_fespaces.GetNumLevels(),
+                "Multigrid hierarchy mismatch for auxiliary space preconditioning!");
+    const auto n_levels = nd_fespaces.GetNumLevels();
+    auto A_mg = std::make_unique<MultigridOperator>(n_levels);
     for (bool aux : {false, true})
     {
-      // const auto &fespaces = aux ?  h1_fespaces : nd_fespaces;
-      const auto &dbc_tdof_lists = aux ? h1_dbc_tdof_lists : nd_dbc_tdof_lists;
-      for (std::size_t l = 0; l < num_levels; l++)
+      for (std::size_t l = 0; l < n_levels; l++)
       {
         // Force coarse level operator to be fully assembled always.
         const auto &fespace_l =
             aux ? h1_fespaces.GetFESpaceAtLevel(l) : nd_fespaces.GetFESpaceAtLevel(l);
+        const auto &dbc_tdof_lists_l = aux ? h1_dbc_tdof_lists[l] : nd_dbc_tdof_lists[l];
         BilinearForm a(fespace_l);
         if (aux)
         {
@@ -53,7 +53,7 @@ WeightedHCurlNormSolver::WeightedHCurlNormSolver(
         }
         auto A_l = std::make_unique<ParOperator>(
             a.Assemble((l > 0) ? pa_order_threshold : 99, skip_zeros), fespace_l);
-        A_l->SetEssentialTrueDofs(dbc_tdof_lists[l], Operator::DiagonalPolicy::DIAG_ONE);
+        A_l->SetEssentialTrueDofs(dbc_tdof_lists_l, Operator::DiagonalPolicy::DIAG_ONE);
         if (aux)
         {
           A_mg->AddAuxiliaryOperator(std::move(A_l));

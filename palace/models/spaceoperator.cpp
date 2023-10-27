@@ -638,18 +638,16 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(double a0, doub
   }
   MFEM_VERIFY(GetH1Spaces().GetNumLevels() == GetNDSpaces().GetNumLevels(),
               "Multigrid hierarchy mismatch for auxiliary space preconditioning!");
-  auto B = std::make_unique<BaseMultigridOperator<OperType>>(GetNDSpaces().GetNumLevels());
-  MFEM_VERIFY(GetH1Spaces().GetNumLevels() == GetNDSpaces().GetNumLevels(), "!");
-  auto num_levels = GetNDSpaces().GetNumLevels();
+  const auto n_levels = GetNDSpaces().GetNumLevels();
+  auto B = std::make_unique<BaseMultigridOperator<OperType>>(n_levels);
   for (bool aux : {false, true})
   {
-    // auto &fespaces = aux ? GetH1Spaces() : GetNDSpaces();
-    auto &dbc_tdof_lists = aux ? h1_dbc_tdof_lists : nd_dbc_tdof_lists;
-    for (std::size_t l = 0; l < num_levels; l++)
+    for (std::size_t l = 0; l < n_levels; l++)
     {
       // Force coarse level operator to be fully assembled always.
-      auto &fespace_l =
+      const auto &fespace_l =
           aux ? GetH1Spaces().GetFESpaceAtLevel(l) : GetNDSpaces().GetFESpaceAtLevel(l);
+      const auto &dbc_tdof_lists_l = aux ? h1_dbc_tdof_lists[l] : nd_dbc_tdof_lists[l];
       if (print_prec_hdr)
       {
         Mpi::Print(" Level {:d}{} (p = {:d}): {:d} unknowns", l, aux ? " (auxiliary)" : "",
@@ -711,7 +709,7 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(double a0, doub
         }
       }
       auto B_l = BuildLevelOperator(*B, std::move(br), std::move(bi), fespace_l);
-      B_l->SetEssentialTrueDofs(dbc_tdof_lists[l], Operator::DiagonalPolicy::DIAG_ONE);
+      B_l->SetEssentialTrueDofs(dbc_tdof_lists_l, Operator::DiagonalPolicy::DIAG_ONE);
       if (aux)
       {
         B->AddAuxiliaryOperator(std::move(B_l));

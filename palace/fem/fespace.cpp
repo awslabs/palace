@@ -91,7 +91,8 @@ const Operator &AuxiliaryFiniteElementSpace::BuildDiscreteInterpolator() const
 }
 
 template <typename FESpace>
-const Operator &Hierarchy<FESpace>::BuildProlongationAtLevel(std::size_t l) const
+const Operator &
+BaseFiniteElementSpaceHierarchy<FESpace>::BuildProlongationAtLevel(std::size_t l) const
 {
   // P is always partially assembled.
   MFEM_VERIFY(l >= 0 && l < GetNumLevels() - 1,
@@ -114,7 +115,7 @@ const Operator &Hierarchy<FESpace>::BuildProlongationAtLevel(std::size_t l) cons
   return *P[l];
 }
 
-template class Hierarchy<FiniteElementSpace>;
-template class Hierarchy<AuxiliaryFiniteElementSpace>;
+template class BaseFiniteElementSpaceHierarchy<FiniteElementSpace>;
+template class BaseFiniteElementSpaceHierarchy<AuxiliaryFiniteElementSpace>;
 
 }  // namespace palace
