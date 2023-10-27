@@ -8,7 +8,6 @@
   {
     "Order": { "type": "integer", "minimum": 1 },
     "PartialAssemblyOrder": { "type": "integer", "minimum": 1 },
-    "PartialAssemblyInterpolators": { "type": "boolean" },
     "Device": { "type": "string", "enum": ["CPU", "GPU", "Debug"] },
     "Backend": { "type": "string" },
     "Eigenmode":

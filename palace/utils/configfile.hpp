@@ -839,9 +839,6 @@ public:
   // Order above which to use partial assembly instead of full assembly.
   int pa_order_threshold = 100;
 
-  // Enable partial assembly for discrete linear operators.
-  bool pa_discrete_interp = true;
-
   // Device used to configure MFEM.
   enum class Device
   {

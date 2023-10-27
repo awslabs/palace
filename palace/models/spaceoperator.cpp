@@ -74,8 +74,7 @@ mfem::Array<int> SetUpBoundaryProperties(const IoData &iodata, const mfem::ParMe
 
 SpaceOperator::SpaceOperator(const IoData &iodata,
                              const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh)
-  : pa_order_threshold(iodata.solver.pa_order_threshold),
-    pa_discrete_interp(iodata.solver.pa_discrete_interp), skip_zeros(false),
+  : pa_order_threshold(iodata.solver.pa_order_threshold), skip_zeros(false),
     pc_mat_real(iodata.solver.linear.pc_mat_real),
     pc_mat_shifted(iodata.solver.linear.pc_mat_shifted), print_hdr(true),
     print_prec_hdr(true), dbc_marker(SetUpBoundaryProperties(iodata, *mesh.back())),

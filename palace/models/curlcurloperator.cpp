@@ -71,8 +71,7 @@ mfem::Array<int> SetUpBoundaryProperties(const IoData &iodata, const mfem::ParMe
 
 CurlCurlOperator::CurlCurlOperator(const IoData &iodata,
                                    const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh)
-  : pa_order_threshold(iodata.solver.pa_order_threshold),
-    pa_discrete_interp(iodata.solver.pa_discrete_interp), skip_zeros(false),
+  : pa_order_threshold(iodata.solver.pa_order_threshold), skip_zeros(false),
     print_hdr(true), dbc_marker(SetUpBoundaryProperties(iodata, *mesh.back())),
     nd_fecs(fem::ConstructFECollections<mfem::ND_FECollection>(
         iodata.solver.order, mesh.back()->Dimension(), iodata.solver.linear.mg_max_levels,

@@ -115,8 +115,7 @@ std::map<int, mfem::Array<int>> ConstructSources(const IoData &iodata)
 
 LaplaceOperator::LaplaceOperator(const IoData &iodata,
                                  const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh)
-  : pa_order_threshold(iodata.solver.pa_order_threshold),
-    pa_discrete_interp(iodata.solver.pa_discrete_interp), skip_zeros(false),
+  : pa_order_threshold(iodata.solver.pa_order_threshold), skip_zeros(false),
     print_hdr(true), dbc_marker(SetUpBoundaryProperties(iodata, *mesh.back())),
     h1_fecs(fem::ConstructFECollections<mfem::H1_FECollection>(
         iodata.solver.order, mesh.back()->Dimension(), iodata.solver.linear.mg_max_levels,
