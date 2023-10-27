@@ -70,50 +70,51 @@ public:
 // A collection of FiniteElementSpace objects constructed on the same mesh with the ability
 // to construct the prolongation operators between them as needed.
 //
-class FiniteElementSpaceHierarchy
+template <typename FESpace>
+class Hierarchy
 {
 protected:
-  std::vector<std::unique_ptr<FiniteElementSpace>> fespaces;
+  std::vector<std::unique_ptr<FESpace>> fespaces;
   mutable std::vector<std::unique_ptr<Operator>> P;
+
+  static_assert(std::is_convertible_v<FESpace *, FiniteElementSpace *>,
+                "A hierarchy can only be constructed of FiniteElementSpaces");
 
   const Operator &BuildProlongationAtLevel(std::size_t l) const;
 
 public:
-  FiniteElementSpaceHierarchy() = default;
-  FiniteElementSpaceHierarchy(std::unique_ptr<FiniteElementSpace> &&fespace)
-  {
-    AddLevel(std::move(fespace));
-  }
+  Hierarchy<FESpace>() = default;
+  Hierarchy<FESpace>(std::unique_ptr<FESpace> &&fespace) { AddLevel(std::move(fespace)); }
 
   auto GetNumLevels() const { return fespaces.size(); }
   auto size() const { return GetNumLevels(); }
   bool empty() const { return GetNumLevels() == 0; }
 
-  virtual void AddLevel(std::unique_ptr<FiniteElementSpace> &&fespace)
+  virtual void AddLevel(std::unique_ptr<FESpace> &&fespace)
   {
     fespaces.push_back(std::move(fespace));
     P.push_back(nullptr);
   }
 
-  FiniteElementSpace &GetFESpaceAtLevel(std::size_t l)
+  FESpace &GetFESpaceAtLevel(std::size_t l)
   {
     MFEM_ASSERT(l >= 0 && l < GetNumLevels(),
                 "Out of bounds request for finite element space at level " << l << "!");
     return *fespaces[l];
   }
-  const FiniteElementSpace &GetFESpaceAtLevel(std::size_t l) const
+  const FESpace &GetFESpaceAtLevel(std::size_t l) const
   {
     MFEM_ASSERT(l >= 0 && l < GetNumLevels(),
                 "Out of bounds request for finite element space at level " << l << "!");
     return *fespaces[l];
   }
 
-  FiniteElementSpace &GetFinestFESpace()
+  FESpace &GetFinestFESpace()
   {
     MFEM_ASSERT(!empty(), "Out of bounds request for finite element space at level 0!");
     return *fespaces.back();
   }
-  const FiniteElementSpace &GetFinestFESpace() const
+  const FESpace &GetFinestFESpace() const
   {
     MFEM_ASSERT(!empty(), "Out of bounds request for finite element space at level 0!");
     return *fespaces.back();
@@ -138,54 +139,30 @@ public:
   }
 };
 
+class FiniteElementSpaceHierarchy : public Hierarchy<FiniteElementSpace>
+{
+public:
+  using Hierarchy<FiniteElementSpace>::Hierarchy;
+};
+
 //
 // A special type of FiniteElementSpaceHierarchy where all members are auxiliary finite
 // element spaces.
 //
-class AuxiliaryFiniteElementSpaceHierarchy : public FiniteElementSpaceHierarchy
+class AuxiliaryFiniteElementSpaceHierarchy : public Hierarchy<AuxiliaryFiniteElementSpace>
 {
+
 public:
-  AuxiliaryFiniteElementSpaceHierarchy() = default;
-  AuxiliaryFiniteElementSpaceHierarchy(
-      std::unique_ptr<AuxiliaryFiniteElementSpace> &&fespace)
-  {
-    AddLevel(std::move(fespace));
-  }
-
-  void AddLevel(std::unique_ptr<FiniteElementSpace> &&fespace) override
-  {
-    MFEM_ABORT("All finite element spaces in an AuxiliaryFiniteElementSpaceHierarchy must "
-               "inherit from AuxiliaryFiniteElementSpace!");
-  }
-
-  void AddLevel(std::unique_ptr<AuxiliaryFiniteElementSpace> &&fespace)
-  {
-    // Guarantees that every object in fespaces is an AuxiliaryFiniteElementSpace.
-    fespaces.push_back(std::move(fespace));
-    P.push_back(nullptr);
-  }
-
-  AuxiliaryFiniteElementSpace &GetAuxiliaryFESpaceAtLevel(std::size_t l)
-  {
-    return *static_cast<AuxiliaryFiniteElementSpace *>(&GetFESpaceAtLevel(l));
-  }
-  const AuxiliaryFiniteElementSpace &GetAuxiliaryFESpaceAtLevel(std::size_t l) const
-  {
-    return *static_cast<const AuxiliaryFiniteElementSpace *>(&GetFESpaceAtLevel(l));
-  }
-
-  AuxiliaryFiniteElementSpace &GetFinestAuxiliaryFESpace()
-  {
-    return *static_cast<AuxiliaryFiniteElementSpace *>(&GetFinestFESpace());
-  }
-  const AuxiliaryFiniteElementSpace &GetFinestAuxiliaryFESpace() const
-  {
-    return *static_cast<const AuxiliaryFiniteElementSpace *>(&GetFinestFESpace());
-  }
+  using Hierarchy<AuxiliaryFiniteElementSpace>::Hierarchy;
 
   const Operator &GetDiscreteInterpolatorAtLevel(std::size_t l) const
   {
-    return GetAuxiliaryFESpaceAtLevel(l).GetDiscreteInterpolator();
+    return GetFESpaceAtLevel(l).GetDiscreteInterpolator();
+  }
+
+  const Operator &GetDiscreteInterpolatorAtFinestLevel() const
+  {
+    return GetFinestFESpace().GetDiscreteInterpolator();
   }
 
   std::vector<const Operator *> GetDiscreteInterpolators() const

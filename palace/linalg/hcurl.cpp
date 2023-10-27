@@ -31,14 +31,17 @@ WeightedHCurlNormSolver::WeightedHCurlNormSolver(
   MaterialPropertyCoefficient<MatTypeEps> epsilon_func(mat_op);
   {
     auto A_mg = std::make_unique<MultigridOperator>(nd_fespaces.GetNumLevels());
+    MFEM_VERIFY(h1_fespaces.GetNumLevels() == nd_fespaces.GetNumLevels(), "!");
+    auto num_levels = h1_fespaces.GetNumLevels();
     for (bool aux : {false, true})
     {
-      const auto &fespaces = aux ? h1_fespaces : nd_fespaces;
+      // const auto &fespaces = aux ?  h1_fespaces : nd_fespaces;
       const auto &dbc_tdof_lists = aux ? h1_dbc_tdof_lists : nd_dbc_tdof_lists;
-      for (std::size_t l = 0; l < fespaces.GetNumLevels(); l++)
+      for (std::size_t l = 0; l < num_levels; l++)
       {
         // Force coarse level operator to be fully assembled always.
-        const auto &fespace_l = fespaces.GetFESpaceAtLevel(l);
+        const auto &fespace_l =
+            aux ? h1_fespaces.GetFESpaceAtLevel(l) : nd_fespaces.GetFESpaceAtLevel(l);
         BilinearForm a(fespace_l);
         if (aux)
         {
@@ -67,8 +70,8 @@ WeightedHCurlNormSolver::WeightedHCurlNormSolver(
   // The system matrix K + M is real and SPD. We use Hypre's AMS solver as the coarse-level
   // multigrid solve.
   auto ams = std::make_unique<WrapperSolver<Operator>>(std::make_unique<HypreAmsSolver>(
-      nd_fespaces.GetFESpaceAtLevel(0), h1_fespaces.GetAuxiliaryFESpaceAtLevel(0), 1, 1, 1,
-      false, false, 0));
+      nd_fespaces.GetFESpaceAtLevel(0), h1_fespaces.GetFESpaceAtLevel(0), 1, 1, 1, false,
+      false, 0));
   std::unique_ptr<Solver<Operator>> pc;
   if (nd_fespaces.GetNumLevels() > 1)
   {

@@ -49,7 +49,7 @@ DivFreeSolver::DivFreeSolver(const MaterialOperator &mat_op,
         std::make_unique<ParOperator>(weakdiv.Assemble(pa_order_threshold, skip_zeros),
                                       nd_fespace, h1_fespaces.GetFinestFESpace(), false);
   }
-  Grad = &h1_fespaces.GetFinestAuxiliaryFESpace().GetDiscreteInterpolator();
+  Grad = &h1_fespaces.GetDiscreteInterpolatorAtFinestLevel();
   bdr_tdof_list_M = &h1_bdr_tdof_lists.back();
 
   // The system matrix for the projection is real and SPD.

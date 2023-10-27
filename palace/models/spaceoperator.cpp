@@ -639,14 +639,17 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(double a0, doub
   MFEM_VERIFY(GetH1Spaces().GetNumLevels() == GetNDSpaces().GetNumLevels(),
               "Multigrid hierarchy mismatch for auxiliary space preconditioning!");
   auto B = std::make_unique<BaseMultigridOperator<OperType>>(GetNDSpaces().GetNumLevels());
+  MFEM_VERIFY(GetH1Spaces().GetNumLevels() == GetNDSpaces().GetNumLevels(), "!");
+  auto num_levels = GetNDSpaces().GetNumLevels();
   for (bool aux : {false, true})
   {
-    auto &fespaces = aux ? GetH1Spaces() : GetNDSpaces();
+    // auto &fespaces = aux ? GetH1Spaces() : GetNDSpaces();
     auto &dbc_tdof_lists = aux ? h1_dbc_tdof_lists : nd_dbc_tdof_lists;
-    for (std::size_t l = 0; l < fespaces.GetNumLevels(); l++)
+    for (std::size_t l = 0; l < num_levels; l++)
     {
       // Force coarse level operator to be fully assembled always.
-      auto &fespace_l = fespaces.GetFESpaceAtLevel(l);
+      auto &fespace_l =
+          aux ? GetH1Spaces().GetFESpaceAtLevel(l) : GetNDSpaces().GetFESpaceAtLevel(l);
       if (print_prec_hdr)
       {
         Mpi::Print(" Level {:d}{} (p = {:d}): {:d} unknowns", l, aux ? " (auxiliary)" : "",

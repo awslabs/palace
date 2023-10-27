@@ -179,7 +179,7 @@ public:
   // Construct and return the discrete curl or gradient matrices.
   const Operator &GetGradMatrix() const
   {
-    return GetH1Spaces().GetFinestAuxiliaryFESpace().GetDiscreteInterpolator();
+    return GetH1Spaces().GetDiscreteInterpolatorAtFinestLevel();
   }
   const Operator &GetCurlMatrix() const { return GetRTSpace().GetDiscreteInterpolator(); }
 
