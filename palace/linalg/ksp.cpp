@@ -121,9 +121,9 @@ ConfigurePreconditionerSolver(MPI_Comm comm, const IoData &iodata,
       // space (in which case fespaces.GetNumLevels() == 1).
       MFEM_VERIFY(aux_fespaces, "AMS solver relies on both primary space "
                                 "and auxiliary spaces for construction!");
-      pc0 = std::make_unique<HypreAmsSolver>(
-          iodata, fespaces.GetNumLevels() > 1, fespaces.GetFESpaceAtLevel(0),
-          aux_fespaces->GetAuxiliaryFESpaceAtLevel(0), print);
+      pc0 = std::make_unique<HypreAmsSolver>(iodata, fespaces.GetNumLevels() > 1,
+                                             fespaces.GetFESpaceAtLevel(0),
+                                             aux_fespaces->GetFESpaceAtLevel(0), print);
       break;
     case config::LinearSolverData::Type::BOOMER_AMG:
       pc0 = std::make_unique<BoomerAmgSolver>(iodata, fespaces.GetNumLevels() > 1, print);
