@@ -730,10 +730,6 @@ public:
   };
   MultigridCoarsenType mg_coarsen_type = MultigridCoarsenType::LOGARITHMIC;
 
-  // Switch to use mfem::TransferOperator or enable partial assembly for the multigrid
-  // transfer operators.
-  bool mg_legacy_transfer = false;
-
   // Number of iterations for preconditioners which support it. For multigrid, this is the
   // number of V-cycles per Krylov solver iteration.
   int mg_cycle_it = 1;
@@ -842,9 +838,6 @@ public:
 
   // Order above which to use partial assembly instead of full assembly.
   int pa_order_threshold = 100;
-
-  // Enable partial assembly for discrete linear operators.
-  bool pa_discrete_interp = true;
 
   // Device used to configure MFEM.
   enum class Device

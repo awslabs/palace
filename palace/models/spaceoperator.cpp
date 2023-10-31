@@ -5,7 +5,7 @@
 
 #include <type_traits>
 #include "fem/bilinearform.hpp"
-#include "fem/fespace.hpp"
+#include "fem/coefficient.hpp"
 #include "fem/integrator.hpp"
 #include "fem/multigrid.hpp"
 #include "linalg/rap.hpp"
@@ -74,8 +74,7 @@ mfem::Array<int> SetUpBoundaryProperties(const IoData &iodata, const mfem::ParMe
 
 SpaceOperator::SpaceOperator(const IoData &iodata,
                              const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh)
-  : pa_order_threshold(iodata.solver.pa_order_threshold),
-    pa_discrete_interp(iodata.solver.pa_discrete_interp), skip_zeros(false),
+  : pa_order_threshold(iodata.solver.pa_order_threshold), skip_zeros(false),
     pc_mat_real(iodata.solver.linear.pc_mat_real),
     pc_mat_shifted(iodata.solver.linear.pc_mat_shifted), print_hdr(true),
     print_prec_hdr(true), dbc_marker(SetUpBoundaryProperties(iodata, *mesh.back())),
@@ -88,14 +87,11 @@ SpaceOperator::SpaceOperator(const IoData &iodata,
     rt_fec(std::make_unique<mfem::RT_FECollection>(iodata.solver.order - 1,
                                                    mesh.back()->Dimension())),
     nd_fespaces(fem::ConstructFiniteElementSpaceHierarchy<mfem::ND_FECollection>(
-        iodata.solver.linear.mg_max_levels, iodata.solver.linear.mg_legacy_transfer,
-        pa_order_threshold, pa_discrete_interp, mesh, nd_fecs, &dbc_marker,
+        iodata.solver.linear.mg_max_levels, mesh, nd_fecs, &dbc_marker,
         &nd_dbc_tdof_lists)),
-    h1_fespaces(fem::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
-        iodata.solver.linear.mg_max_levels, iodata.solver.linear.mg_legacy_transfer,
-        pa_order_threshold, pa_discrete_interp, mesh, h1_fecs, &dbc_marker,
-        &h1_dbc_tdof_lists)),
-    rt_fespace(std::make_unique<FiniteElementSpace>(mesh.back().get(), rt_fec.get())),
+    h1_fespaces(fem::ConstructAuxiliaryFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
+        nd_fespaces, h1_fecs, &dbc_marker, &h1_dbc_tdof_lists)),
+    rt_fespace(nd_fespaces.GetFinestFESpace(), mesh.back().get(), rt_fec.get()),
     mat_op(iodata, *mesh.back()), farfield_op(iodata, mat_op, *mesh.back()),
     surf_sigma_op(iodata, *mesh.back()), surf_z_op(iodata, *mesh.back()),
     lumped_port_op(iodata, GetH1Space()),
@@ -135,7 +131,7 @@ void SpaceOperator::CheckBoundaryProperties()
   // aux_bdr_marker = 1;  // Mark all boundaries (including material interfaces
   //                      // added during mesh preprocessing)
   //                      // As tested, this does not eliminate all DC modes!
-  for (int l = 0; l < GetH1Spaces().GetNumLevels(); l++)
+  for (std::size_t l = 0; l < GetH1Spaces().GetNumLevels(); l++)
   {
     GetH1Spaces().GetFESpaceAtLevel(l).GetEssentialTrueDofs(
         aux_bdr_marker, aux_bdr_tdof_lists.emplace_back());
@@ -178,9 +174,8 @@ void SpaceOperator::CheckBoundaryProperties()
 namespace
 {
 
-void PrintHeader(mfem::ParFiniteElementSpace &h1_fespace,
-                 mfem::ParFiniteElementSpace &nd_fespace,
-                 mfem::ParFiniteElementSpace &rt_fespace, int pa_order_threshold,
+void PrintHeader(const FiniteElementSpace &h1_fespace, const FiniteElementSpace &nd_fespace,
+                 const FiniteElementSpace &rt_fespace, int pa_order_threshold,
                  bool &print_hdr)
 {
   if (print_hdr)
@@ -195,9 +190,9 @@ void PrintHeader(mfem::ParFiniteElementSpace &h1_fespace,
 }
 
 template <typename T1, typename T2, typename T3, typename T4>
-std::unique_ptr<Operator> BuildOperator(const mfem::ParFiniteElementSpace &fespace, T1 *df,
-                                        T2 *f, T3 *dfb, T4 *fb, int pa_order_threshold,
-                                        int skip_zeros)
+std::unique_ptr<Operator> BuildOperator(const FiniteElementSpace &fespace, T1 *df, T2 *f,
+                                        T3 *dfb, T4 *fb, int pa_order_threshold,
+                                        bool skip_zeros)
 {
   BilinearForm a(fespace);
   if (df && !df->empty() && f && !f->empty())
@@ -234,9 +229,8 @@ std::unique_ptr<Operator> BuildOperator(const mfem::ParFiniteElementSpace &fespa
 }
 
 template <typename T1, typename T2>
-std::unique_ptr<Operator> BuildAuxOperator(const mfem::ParFiniteElementSpace &fespace,
-                                           T1 *f, T2 *fb, int pa_order_threshold,
-                                           int skip_zeros)
+std::unique_ptr<Operator> BuildAuxOperator(const FiniteElementSpace &fespace, T1 *f, T2 *fb,
+                                           int pa_order_threshold, bool skip_zeros)
 {
   BilinearForm a(fespace);
   if (f && !f->empty())
@@ -402,7 +396,7 @@ namespace
 
 auto BuildParSumOperator(int h, int w, double a0, double a1, double a2,
                          const ParOperator *K, const ParOperator *C, const ParOperator *M,
-                         const ParOperator *A2, const mfem::ParFiniteElementSpace &fespace)
+                         const ParOperator *A2, const FiniteElementSpace &fespace)
 {
   auto sum = std::make_unique<SumOperator>(h, w);
   if (K && a0 != 0.0)
@@ -427,8 +421,7 @@ auto BuildParSumOperator(int h, int w, double a0, double a1, double a2,
 auto BuildParSumOperator(int h, int w, std::complex<double> a0, std::complex<double> a1,
                          std::complex<double> a2, const ComplexParOperator *K,
                          const ComplexParOperator *C, const ComplexParOperator *M,
-                         const ComplexParOperator *A2,
-                         const mfem::ParFiniteElementSpace &fespace)
+                         const ComplexParOperator *A2, const FiniteElementSpace &fespace)
 {
   // Block 2 x 2 equivalent-real formulation for each term in the sum:
   //                    [ sumr ]  +=  [ ar  -ai ] [ Ar ]
@@ -619,15 +612,13 @@ namespace
 {
 
 auto BuildLevelOperator(const MultigridOperator &B, std::unique_ptr<Operator> &&br,
-                        std::unique_ptr<Operator> &&bi,
-                        const mfem::ParFiniteElementSpace &fespace)
+                        std::unique_ptr<Operator> &&bi, const FiniteElementSpace &fespace)
 {
   return std::make_unique<ParOperator>(std::move(br), fespace);
 }
 
 auto BuildLevelOperator(const ComplexMultigridOperator &B, std::unique_ptr<Operator> &&br,
-                        std::unique_ptr<Operator> &&bi,
-                        const mfem::ParFiniteElementSpace &fespace)
+                        std::unique_ptr<Operator> &&bi, const FiniteElementSpace &fespace)
 {
   return std::make_unique<ComplexParOperator>(std::move(br), std::move(bi), fespace);
 }
@@ -646,20 +637,20 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(double a0, doub
   }
   MFEM_VERIFY(GetH1Spaces().GetNumLevels() == GetNDSpaces().GetNumLevels(),
               "Multigrid hierarchy mismatch for auxiliary space preconditioning!");
-  auto B = std::make_unique<BaseMultigridOperator<OperType>>(GetNDSpaces().GetNumLevels());
-  for (int s = 0; s < 2; s++)
+  const auto n_levels = GetNDSpaces().GetNumLevels();
+  auto B = std::make_unique<BaseMultigridOperator<OperType>>(n_levels);
+  for (bool aux : {false, true})
   {
-    auto &fespaces = (s == 0) ? GetNDSpaces() : GetH1Spaces();
-    auto &dbc_tdof_lists = (s == 0) ? nd_dbc_tdof_lists : h1_dbc_tdof_lists;
-    for (int l = 0; l < fespaces.GetNumLevels(); l++)
+    for (std::size_t l = 0; l < n_levels; l++)
     {
       // Force coarse level operator to be fully assembled always.
-      auto &fespace_l = fespaces.GetFESpaceAtLevel(l);
+      const auto &fespace_l =
+          aux ? GetH1Spaces().GetFESpaceAtLevel(l) : GetNDSpaces().GetFESpaceAtLevel(l);
+      const auto &dbc_tdof_lists_l = aux ? h1_dbc_tdof_lists[l] : nd_dbc_tdof_lists[l];
       if (print_prec_hdr)
       {
-        Mpi::Print(" Level {:d}{} (p = {:d}): {:d} unknowns", l,
-                   (s == 0) ? "" : " (auxiliary)", fespace_l.GetMaxElementOrder(),
-                   fespace_l.GlobalTrueVSize());
+        Mpi::Print(" Level {:d}{} (p = {:d}): {:d} unknowns", l, aux ? " (auxiliary)" : "",
+                   fespace_l.GetMaxElementOrder(), fespace_l.GlobalTrueVSize());
       }
       const int sdim = GetNDSpace().GetParMesh()->SpaceDimension();
       SumMatrixCoefficient dfr(sdim), fr(sdim), fi(sdim), fbr(sdim), fbi(sdim);
@@ -691,17 +682,17 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(double a0, doub
       std::unique_ptr<Operator> br, bi;
       if (!dfr.empty() || !fr.empty() || !dfbr.empty() || !fbr.empty())
       {
-        br = (s == 0) ? BuildOperator(fespace_l, &dfr, &fr, &dfbr, &fbr,
-                                      (l > 0) ? pa_order_threshold : 99, skip_zeros)
-                      : BuildAuxOperator(fespace_l, &fr, &fbr,
-                                         (l > 0) ? pa_order_threshold : 99, skip_zeros);
+        br = aux ? BuildAuxOperator(fespace_l, &fr, &fbr, (l > 0) ? pa_order_threshold : 99,
+                                    skip_zeros)
+                 : BuildOperator(fespace_l, &dfr, &fr, &dfbr, &fbr,
+                                 (l > 0) ? pa_order_threshold : 99, skip_zeros);
       }
       if (!fi.empty() || !dfbi.empty() || !fbi.empty())
       {
-        bi = (s == 0) ? BuildOperator(fespace_l, (SumCoefficient *)nullptr, &fi, &dfbi,
-                                      &fbi, (l > 0) ? pa_order_threshold : 99, skip_zeros)
-                      : BuildAuxOperator(fespace_l, &fi, &fbi,
-                                         (l > 0) ? pa_order_threshold : 99, skip_zeros);
+        bi = aux ? BuildAuxOperator(fespace_l, &fi, &fbi, (l > 0) ? pa_order_threshold : 99,
+                                    skip_zeros)
+                 : BuildOperator(fespace_l, (SumCoefficient *)nullptr, &fi, &dfbi, &fbi,
+                                 (l > 0) ? pa_order_threshold : 99, skip_zeros);
       }
       if (print_prec_hdr)
       {
@@ -717,82 +708,19 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(double a0, doub
         }
       }
       auto B_l = BuildLevelOperator(*B, std::move(br), std::move(bi), fespace_l);
-      B_l->SetEssentialTrueDofs(dbc_tdof_lists[l], Operator::DiagonalPolicy::DIAG_ONE);
-      if (s == 0)
+      B_l->SetEssentialTrueDofs(dbc_tdof_lists_l, Operator::DiagonalPolicy::DIAG_ONE);
+      if (aux)
       {
-        B->AddOperator(std::move(B_l));
+        B->AddAuxiliaryOperator(std::move(B_l));
       }
       else
       {
-        B->AddAuxiliaryOperator(std::move(B_l));
+        B->AddOperator(std::move(B_l));
       }
     }
   }
   print_prec_hdr = false;
   return B;
-}
-
-namespace
-{
-
-auto BuildCurl(const mfem::ParFiniteElementSpace &nd_fespace,
-               const mfem::ParFiniteElementSpace &rt_fespace, int pa_order_threshold,
-               bool skip_zeros)
-{
-  DiscreteLinearOperator curl(nd_fespace, rt_fespace);
-  curl.AddDomainInterpolator<CurlInterpolator>();
-  return curl.Assemble(pa_order_threshold, skip_zeros);
-}
-
-auto BuildGrad(const mfem::ParFiniteElementSpace &h1_fespace,
-               const mfem::ParFiniteElementSpace &nd_fespace, int pa_order_threshold,
-               bool skip_zeros)
-{
-  DiscreteLinearOperator grad(h1_fespace, nd_fespace);
-  grad.AddDomainInterpolator<GradientInterpolator>();
-  return grad.Assemble(pa_order_threshold, skip_zeros);
-}
-
-}  // namespace
-
-template <>
-std::unique_ptr<Operator> SpaceOperator::GetCurlMatrix()
-{
-  constexpr bool skip_zeros_interp = true;
-  return std::make_unique<ParOperator>(
-      BuildCurl(GetNDSpace(), GetRTSpace(), pa_discrete_interp ? pa_order_threshold : 99,
-                skip_zeros_interp),
-      GetNDSpace(), GetRTSpace(), true);
-}
-
-template <>
-std::unique_ptr<ComplexOperator> SpaceOperator::GetCurlMatrix()
-{
-  constexpr bool skip_zeros_interp = true;
-  return std::make_unique<ComplexParOperator>(
-      BuildCurl(GetNDSpace(), GetRTSpace(), pa_discrete_interp ? pa_order_threshold : 99,
-                skip_zeros_interp),
-      nullptr, GetNDSpace(), GetRTSpace(), true);
-}
-
-template <>
-std::unique_ptr<Operator> SpaceOperator::GetGradMatrix()
-{
-  constexpr bool skip_zeros_interp = true;
-  return std::make_unique<ParOperator>(
-      BuildGrad(GetH1Space(), GetNDSpace(), pa_discrete_interp ? pa_order_threshold : 99,
-                skip_zeros_interp),
-      GetH1Space(), GetNDSpace(), true);
-}
-
-template <>
-std::unique_ptr<ComplexOperator> SpaceOperator::GetGradMatrix()
-{
-  constexpr bool skip_zeros_interp = true;
-  return std::make_unique<ComplexParOperator>(
-      BuildGrad(GetH1Space(), GetNDSpace(), pa_discrete_interp ? pa_order_threshold : 99,
-                skip_zeros_interp),
-      nullptr, GetH1Space(), GetNDSpace(), true);
 }
 
 void SpaceOperator::AddStiffnessCoefficients(double coef, SumMatrixCoefficient &df,

@@ -35,12 +35,12 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) cons
   auto K = spaceop.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE);
   auto C = spaceop.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
   auto M = spaceop.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
-  auto Curl = spaceop.GetCurlMatrix<ComplexOperator>();
+  const auto &Curl = spaceop.GetCurlMatrix();
   SaveMetadata(spaceop.GetNDSpaces());
 
   // Configure objects for postprocessing.
   PostOperator postop(iodata, spaceop, "eigenmode");
-  ComplexVector E(Curl->Width()), B(Curl->Height());
+  ComplexVector E(Curl.Width()), B(Curl.Height());
 
   // Define and configure the eigensolver to solve the eigenvalue problem:
   //         (K + λ C + λ² M) u = 0    or    K u = -λ² M u
@@ -166,7 +166,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) cons
         spaceop.GetMaterialOp(), spaceop.GetNDSpace(), spaceop.GetH1Spaces(),
         spaceop.GetAuxBdrTDofLists(), iodata.solver.linear.divfree_tol,
         iodata.solver.linear.divfree_max_it, divfree_verbose,
-        iodata.solver.pa_order_threshold, iodata.solver.pa_discrete_interp);
+        iodata.solver.pa_order_threshold);
     eigen->SetDivFreeProjector(*divfree);
   }
 
@@ -192,9 +192,10 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) cons
     eigen->SetInitialSpace(v0);  // Copies the vector
 
     // Debug
-    // auto Grad = spaceop.GetGradMatrix<ComplexOperator>();
+    // const auto &Grad = spaceop.GetGradMatrix();
     // ComplexVector r0(Grad->Width());
-    // Grad->MultTranspose(v0, r0);
+    // Grad.MultTranspose(v0.Real(), r0.Real());
+    // Grad.MultTranspose(v0.Imag(), r0.Imag());
     // r0.Print();
   }
 
@@ -260,8 +261,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) cons
   // Calculate and record the error indicators.
   CurlFluxErrorEstimator<ComplexVector> estimator(
       spaceop.GetMaterialOp(), spaceop.GetNDSpaces(), iodata.solver.linear.estimator_tol,
-      iodata.solver.linear.estimator_max_it, 0, iodata.solver.pa_order_threshold,
-      iodata.solver.pa_discrete_interp);
+      iodata.solver.linear.estimator_max_it, 0, iodata.solver.pa_order_threshold);
   ErrorIndicator indicator;
   for (int i = 0; i < iodata.solver.eigenmode.n; i++)
   {
@@ -296,7 +296,8 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) cons
     // Compute B = -1/(iω) ∇ x E on the true dofs, and set the internal GridFunctions in
     // PostOperator for all postprocessing operations.
     eigen->GetEigenvector(i, E);
-    Curl->Mult(E, B);
+    Curl.Mult(E.Real(), B.Real());
+    Curl.Mult(E.Imag(), B.Imag());
     B *= -1.0 / (1i * omega);
     postop.SetEGridFunction(E);
     postop.SetBGridFunction(B);

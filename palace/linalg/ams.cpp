@@ -4,14 +4,15 @@
 #include "ams.hpp"
 
 #include "fem/bilinearform.hpp"
+#include "fem/fespace.hpp"
 #include "fem/integrator.hpp"
 #include "linalg/rap.hpp"
 
 namespace palace
 {
 
-HypreAmsSolver::HypreAmsSolver(const mfem::ParFiniteElementSpace &nd_fespace,
-                               const mfem::ParFiniteElementSpace &h1_fespace, int cycle_it,
+HypreAmsSolver::HypreAmsSolver(const FiniteElementSpace &nd_fespace,
+                               const AuxiliaryFiniteElementSpace &h1_fespace, int cycle_it,
                                int smooth_it, int agg_coarsen, bool vector_interp,
                                bool op_singular, int print)
   : mfem::HypreSolver(),
@@ -47,17 +48,18 @@ HypreAmsSolver::~HypreAmsSolver()
 }
 
 void HypreAmsSolver::ConstructAuxiliaryMatrices(
-    const mfem::ParFiniteElementSpace &nd_fespace,
-    const mfem::ParFiniteElementSpace &h1_fespace)
+    const FiniteElementSpace &nd_fespace, const AuxiliaryFiniteElementSpace &h1_fespace)
 {
   // Set up the auxiliary space objects for the preconditioner. Mostly the same as MFEM's
   // HypreAMS:Init. Start with the discrete gradient matrix.
   {
     constexpr bool skip_zeros_interp = true;
-    DiscreteLinearOperator grad(h1_fespace, nd_fespace);
-    grad.AddDomainInterpolator<GradientInterpolator>();
-    ParOperator RAP_G(grad.FullAssemble(skip_zeros_interp), h1_fespace, nd_fespace, true);
-    G = RAP_G.StealParallelAssemble();
+    const auto *PtGP =
+        dynamic_cast<const ParOperator *>(&h1_fespace.GetDiscreteInterpolator());
+    MFEM_VERIFY(
+        PtGP,
+        "HypreAmsSolver requires the discrete gradient matrix as a ParOperator operator!");
+    G = &PtGP->ParallelAssemble(skip_zeros_interp);
   }
 
   // Vertex coordinates for the lowest order case, or Nedelec interpolation matrix or
@@ -65,9 +67,9 @@ void HypreAmsSolver::ConstructAuxiliaryMatrices(
   mfem::ParMesh &mesh = *h1_fespace.GetParMesh();
   if (h1_fespace.GetMaxElementOrder() == 1)
   {
-    mfem::ParGridFunction x_coord(const_cast<mfem::ParFiniteElementSpace *>(&h1_fespace)),
-        y_coord(const_cast<mfem::ParFiniteElementSpace *>(&h1_fespace)),
-        z_coord(const_cast<mfem::ParFiniteElementSpace *>(&h1_fespace));
+    mfem::ParGridFunction x_coord(const_cast<AuxiliaryFiniteElementSpace *>(&h1_fespace)),
+        y_coord(const_cast<AuxiliaryFiniteElementSpace *>(&h1_fespace)),
+        z_coord(const_cast<AuxiliaryFiniteElementSpace *>(&h1_fespace));
     if (mesh.GetNodes())
     {
       mesh.GetNodes()->GetNodalValues(x_coord, 1);
@@ -118,7 +120,7 @@ void HypreAmsSolver::ConstructAuxiliaryMatrices(
     mfem::ParFiniteElementSpace h1d_fespace(&mesh, h1_fespace.FEColl(), space_dim,
                                             mfem::Ordering::byVDIM);
     mfem::DiscreteLinearOperator pi(&h1d_fespace,
-                                    const_cast<mfem::ParFiniteElementSpace *>(&nd_fespace));
+                                    const_cast<FiniteElementSpace *>(&nd_fespace));
     pi.AddDomainInterpolator(new mfem::IdentityInterpolator);
     pi.SetAssemblyLevel(mfem::AssemblyLevel::LEGACY);
     pi.Assemble();

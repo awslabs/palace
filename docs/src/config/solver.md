@@ -89,10 +89,6 @@ Thus, this object is only relevant for [`config["Problem"]["Type"]: "Magnetostat
 `"Linear"` :  Top-level object for configuring the linear solver employed by all simulation
 types.
 
-### Advanced solver options
-
-  - `"PartialAssemblyInterpolators" [true]`
-
 ## `solver["Eigenmode"]`
 
 ```json
@@ -456,7 +452,6 @@ vectors in Krylov subspace methods or other parts of the code.
 ### Advanced linear solver options
 
   - `"InitialGuess" [true]`
-  - `"MGLegacyTransfer" [false]`
   - `"MGAuxiliarySmoother" [true]`
   - `"MGSmoothEigScaleMax" [1.0]`
   - `"MGSmoothEigScaleMin" [0.0]`

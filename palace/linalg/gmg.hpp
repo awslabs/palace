@@ -16,7 +16,6 @@ namespace mfem
 
 template <typename T>
 class Array;
-class ParFiniteElementSpaceHierarchy;
 
 }  // namespace mfem
 
@@ -37,9 +36,11 @@ private:
   // Number of V-cycles per preconditioner application.
   const int pc_it;
 
-  // System matrices at each multigrid level and prolongation operators (not owned).
-  std::vector<const OperType *> A;
+  // Prolongation operators (not owned).
   std::vector<const Operator *> P;
+
+  // System matrices at each multigrid level (not owned).
+  std::vector<const OperType *> A;
   std::vector<const mfem::Array<int> *> dbc_tdof_lists;
 
   // Smoothers for each level. Coarse level solver is B[0].
@@ -54,21 +55,19 @@ private:
 
 public:
   GeometricMultigridSolver(std::unique_ptr<Solver<OperType>> &&coarse_solver,
-                           const mfem::ParFiniteElementSpaceHierarchy &fespaces,
-                           const mfem::ParFiniteElementSpaceHierarchy *aux_fespaces,
-                           int cycle_it, int smooth_it, int cheby_order,
-                           double cheby_sf_max, double cheby_sf_min, bool cheby_4th_kind,
-                           int pa_order_threshold, bool pa_discrete_interp);
+                           const std::vector<const Operator *> &P,
+                           const std::vector<const Operator *> *G, int cycle_it,
+                           int smooth_it, int cheby_order, double cheby_sf_max,
+                           double cheby_sf_min, bool cheby_4th_kind);
   GeometricMultigridSolver(const IoData &iodata,
                            std::unique_ptr<Solver<OperType>> &&coarse_solver,
-                           const mfem::ParFiniteElementSpaceHierarchy &fespaces,
-                           const mfem::ParFiniteElementSpaceHierarchy *aux_fespaces)
+                           const std::vector<const Operator *> &P,
+                           const std::vector<const Operator *> *G = nullptr)
     : GeometricMultigridSolver(
-          std::move(coarse_solver), fespaces, aux_fespaces,
-          iodata.solver.linear.mg_cycle_it, iodata.solver.linear.mg_smooth_it,
-          iodata.solver.linear.mg_smooth_order, iodata.solver.linear.mg_smooth_sf_max,
-          iodata.solver.linear.mg_smooth_sf_min, iodata.solver.linear.mg_smooth_cheby_4th,
-          iodata.solver.pa_order_threshold, iodata.solver.pa_discrete_interp)
+          std::move(coarse_solver), P, G, iodata.solver.linear.mg_cycle_it,
+          iodata.solver.linear.mg_smooth_it, iodata.solver.linear.mg_smooth_order,
+          iodata.solver.linear.mg_smooth_sf_max, iodata.solver.linear.mg_smooth_sf_min,
+          iodata.solver.linear.mg_smooth_cheby_4th)
   {
   }
 

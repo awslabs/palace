@@ -14,7 +14,6 @@ namespace mfem
 
 template <typename T>
 class Array;
-class ParFiniteElementSpace;
 
 }  // namespace mfem
 
@@ -36,12 +35,12 @@ private:
   // Number of smoother iterations.
   const int pc_it;
 
+  // Discrete gradient matrix (not owned).
+  const Operator *G;
+
   // System matrix and its projection GᵀAG (not owned).
   const OperType *A, *A_G;
   const mfem::Array<int> *dbc_tdof_list_G;
-
-  // Discrete gradient matrix.
-  std::unique_ptr<Operator> G;
 
   // Point smoother objects for each matrix.
   mutable std::unique_ptr<Solver<OperType>> B;
@@ -51,11 +50,9 @@ private:
   mutable VecType r, x_G, y_G;
 
 public:
-  DistRelaxationSmoother(const mfem::ParFiniteElementSpace &nd_fespace,
-                         const mfem::ParFiniteElementSpace &h1_fespace, int smooth_it,
-                         int cheby_smooth_it, int cheby_order, double cheby_sf_max,
-                         double cheby_sf_min, bool cheby_4th_kind, int pa_order_threshold,
-                         bool pa_discrete_interp);
+  DistRelaxationSmoother(const Operator &G, int smooth_it, int cheby_smooth_it,
+                         int cheby_order, double cheby_sf_max, double cheby_sf_min,
+                         bool cheby_4th_kind);
 
   void SetOperator(const OperType &op) override
   {

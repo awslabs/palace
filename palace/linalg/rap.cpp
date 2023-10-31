@@ -3,6 +3,8 @@
 
 #include "rap.hpp"
 
+#include "fem/bilinearform.hpp"
+
 namespace palace
 {
 
@@ -104,7 +106,7 @@ void ParOperator::AssembleDiagonal(Vector &diag) const
   }
 }
 
-mfem::HypreParMatrix &ParOperator::ParallelAssemble() const
+mfem::HypreParMatrix &ParOperator::ParallelAssemble(bool skip_zeros) const
 {
   if (RAP)
   {
@@ -112,8 +114,17 @@ mfem::HypreParMatrix &ParOperator::ParallelAssemble() const
   }
 
   // Build the square or rectangular assembled HypreParMatrix.
-  mfem::SparseMatrix *sA = dynamic_cast<mfem::SparseMatrix *>(A);
-  MFEM_VERIFY(sA, "ParOperator::ParallelAssemble requires A as a SparseMatrix!");
+  auto *sA = dynamic_cast<mfem::SparseMatrix *>(A);
+  std::unique_ptr<mfem::SparseMatrix> data_sA;
+  if (!sA)
+  {
+    auto *cA = dynamic_cast<ceed::Operator *>(A);
+    MFEM_VERIFY(cA, "ParOperator::ParallelAssemble requires A as an mfem::SparseMatrix or "
+                    "ceed::Operator!");
+    data_sA = use_R ? DiscreteLinearOperator::FullAssemble(*cA, skip_zeros)
+                    : BilinearForm::FullAssemble(*cA, skip_zeros);
+    sA = data_sA.get();
+  }
   if (&trial_fespace == &test_fespace)
   {
     mfem::HypreParMatrix *hA =

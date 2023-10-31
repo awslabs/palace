@@ -4,6 +4,7 @@
 #include "ksp.hpp"
 
 #include <mfem.hpp>
+#include "fem/fespace.hpp"
 #include "linalg/amg.hpp"
 #include "linalg/ams.hpp"
 #include "linalg/gmg.hpp"
@@ -106,8 +107,8 @@ std::unique_ptr<IterativeSolver<OperType>> ConfigureKrylovSolver(MPI_Comm comm,
 template <typename OperType>
 std::unique_ptr<Solver<OperType>>
 ConfigurePreconditionerSolver(MPI_Comm comm, const IoData &iodata,
-                              mfem::ParFiniteElementSpaceHierarchy &fespaces,
-                              mfem::ParFiniteElementSpaceHierarchy *aux_fespaces)
+                              const FiniteElementSpaceHierarchy &fespaces,
+                              const AuxiliaryFiniteElementSpaceHierarchy *aux_fespaces)
 {
   // Create the real-valued solver first.
   std::unique_ptr<mfem::Solver> pc0;
@@ -176,13 +177,14 @@ ConfigurePreconditionerSolver(MPI_Comm comm, const IoData &iodata,
     {
       MFEM_VERIFY(aux_fespaces, "Multigrid with auxiliary space smoothers requires both "
                                 "primary space and auxiliary spaces for construction!");
-      return std::make_unique<GeometricMultigridSolver<OperType>>(iodata, std::move(pc),
-                                                                  fespaces, aux_fespaces);
+      const auto G = aux_fespaces->GetDiscreteInterpolators();
+      return std::make_unique<GeometricMultigridSolver<OperType>>(
+          iodata, std::move(pc), fespaces.GetProlongationOperators(), &G);
     }
     else
     {
-      return std::make_unique<GeometricMultigridSolver<OperType>>(iodata, std::move(pc),
-                                                                  fespaces, nullptr);
+      return std::make_unique<GeometricMultigridSolver<OperType>>(
+          iodata, std::move(pc), fespaces.GetProlongationOperators());
     }
   }
   else
@@ -194,9 +196,9 @@ ConfigurePreconditionerSolver(MPI_Comm comm, const IoData &iodata,
 }  // namespace
 
 template <typename OperType>
-BaseKspSolver<OperType>::BaseKspSolver(const IoData &iodata,
-                                       mfem::ParFiniteElementSpaceHierarchy &fespaces,
-                                       mfem::ParFiniteElementSpaceHierarchy *aux_fespaces)
+BaseKspSolver<OperType>::BaseKspSolver(
+    const IoData &iodata, const FiniteElementSpaceHierarchy &fespaces,
+    const AuxiliaryFiniteElementSpaceHierarchy *aux_fespaces)
   : BaseKspSolver(
         ConfigureKrylovSolver<OperType>(fespaces.GetFinestFESpace().GetComm(), iodata),
         ConfigurePreconditionerSolver<OperType>(fespaces.GetFinestFESpace().GetComm(),
