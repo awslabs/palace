@@ -320,6 +320,21 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator 
 
   // XX TODO: Add output of eigenvalue estimates from the PROM system (and nonlinear EVP in
   //          the general case with wave ports, etc.?)
+  const auto eigs = promop.ComputeEigenvalueEstimates(omega0);
+  if (Mpi::Root(spaceop.GetComm()))
+  {
+    std::cout << "Eigenvalues (nev = " << eigs.size() << "):\n";
+    for (auto omega : eigs)
+    {
+      const std::complex<double> f = {
+          iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, omega.real()),
+          iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, omega.imag())};
+      const double Q =
+          (f.imag() == 0.0) ? mfem::infinity() : 0.5 * std::abs(f) / std::abs(f.imag());
+      std::cout << f << ", " << Q << "\n";
+    }
+  }
+  return indicator;
 
   // Main fast frequency sweep loop (online phase).
   BlockTimer bt2(Timer::CONSTRUCT);

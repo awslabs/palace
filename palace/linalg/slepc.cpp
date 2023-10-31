@@ -60,7 +60,7 @@ PetscErrorCode __mat_apply_shell(Mat A, Vec x, Vec y)
   ctx->y.Get(py, n);
   PetscCall(VecRestoreArrayWrite(y, &py));
 
-  PetscFunctionReturn(0);
+  PetscFunctionReturn(PETSC_SUCCESS);
 }
 
 PetscErrorCode __mat_apply_transpose_shell(Mat A, Vec x, Vec y)
@@ -85,7 +85,7 @@ PetscErrorCode __mat_apply_transpose_shell(Mat A, Vec x, Vec y)
   ctx->y.Get(py, n);
   PetscCall(VecRestoreArrayWrite(y, &py));
 
-  PetscFunctionReturn(0);
+  PetscFunctionReturn(PETSC_SUCCESS);
 }
 
 PetscErrorCode __mat_apply_hermitian_transpose_shell(Mat A, Vec x, Vec y)
@@ -110,7 +110,7 @@ PetscErrorCode __mat_apply_hermitian_transpose_shell(Mat A, Vec x, Vec y)
   ctx->y.Get(py, n);
   PetscCall(VecRestoreArrayWrite(y, &py));
 
-  PetscFunctionReturn(0);
+  PetscFunctionReturn(PETSC_SUCCESS);
 };
 
 void ConfigurePCShell(ST st, void *ctx, PetscErrorCode (*__pc_apply)(PC, Vec, Vec))
@@ -232,6 +232,83 @@ PetscReal GetMaxSingularValue(MPI_Comm comm, const ComplexOperator &A, bool herm
     PalacePetscCall(MatDestroy(&A0));
     return sigma;
   }
+}
+
+std::vector<PetscScalar>
+SolveDenseNEP(MPI_Comm comm, PetscInt n,
+              PetscErrorCode (*__nep_function)(NEP, PetscScalar, Mat, Mat, void *),
+              PetscErrorCode (*__nep_jacobian)(NEP, PetscScalar, Mat, void *), void *ctx,
+              PetscScalar sigma, PetscInt num_eig, PetscReal tol, PetscInt max_it)
+{
+
+  // XX TODO WIP PETSC COMM
+
+  // Set up the NEP.
+  NEP nep;
+  Mat F, J;
+  PalacePetscCall(NEPCreate(comm, &nep));
+  PalacePetscCall(
+      MatCreateDense(comm, Mpi::Root(comm) ? n : 0, n, n, PETSC_DECIDE, NULL, &F));
+  PalacePetscCall(
+      MatCreateDense(comm, Mpi::Root(comm) ? n : 0, n, n, PETSC_DECIDE, NULL, &J));
+  PalacePetscCall(NEPSetFunction(nep, F, F, __nep_function, ctx));
+  PalacePetscCall(NEPSetJacobian(nep, J, __nep_jacobian, ctx));
+
+  // Configure the NEP solver.
+  if constexpr (false)  // XX TODO WIP...
+  {
+    // Residual inverse iteration (RII). Update the Jacobian each step, since it is cheap.
+    // Dense linear solves use LAPACK.
+    KSP ksp;
+    PC pc;
+    PalacePetscCall(NEPSetType(nep, NEPRII));
+    PalacePetscCall(NEPRIISetLagPreconditioner(nep, 1));
+    PalacePetscCall(NEPRIIGetKSP(nep, &ksp));
+    PalacePetscCall(KSPSetType(ksp, KSPPREONLY));
+    PalacePetscCall(KSPGetPC(ksp, &pc));
+    PalacePetscCall(PCSetType(pc, PCLU));
+  }
+  else
+  {
+    // Method of successive linear problems (MSLP). Each dense linear eigenvalue problem is
+    // solved with LAPACK.
+    EPS eps;
+    KSP ksp;
+    PC pc;
+    PalacePetscCall(NEPSetType(nep, NEPSLP));
+    PalacePetscCall(NEPSLPGetEPS(nep, &eps));
+    PalacePetscCall(EPSSetType(eps, EPSLAPACK));
+    PalacePetscCall(NEPSLPGetKSP(nep, &ksp));
+    PalacePetscCall(KSPSetType(ksp, KSPPREONLY));
+    PalacePetscCall(KSPGetPC(ksp, &pc));
+    PalacePetscCall(PCSetType(pc, PCLU));
+  }
+  PalacePetscCall(NEPSetTarget(nep, sigma));
+  PalacePetscCall(
+      NEPSetDimensions(nep, (num_eig > 0) ? num_eig : n, PETSC_DEFAULT, PETSC_DEFAULT));
+  PalacePetscCall(NEPSetTolerances(nep, tol, max_it));
+
+  // XX TODO WIP FOR DEBUG
+  std::string opts = "-nep_monitor -nep_view";
+  PalacePetscCall(PetscOptionsInsertString(nullptr, opts.c_str()));
+  PalacePetscCall(NEPSetFromOptions(nep));
+
+  // Solve the eigenvalue problem.
+  PetscInt num_conv;
+  PalacePetscCall(NEPSolve(nep));
+  PalacePetscCall(NEPGetConverged(nep, &num_conv));
+
+  // XX TODO WIP FOR DEBUG
+  PalacePetscCall(NEPConvergedReasonView(nep, PETSC_VIEWER_STDOUT_(comm)));
+
+  std::vector<PetscScalar> l(num_conv);
+  for (int i = 0; i < num_conv; i++)
+  {
+    PalacePetscCall(NEPGetEigenpair(nep, i, &l[i], NULL, NULL, NULL));
+  }
+  PalacePetscCall(NEPDestroy(&nep));
+
+  return l;
 }
 
 // Eigensolver base class methods
@@ -408,12 +485,12 @@ SlepcEPSSolverBase::SlepcEPSSolverBase(MPI_Comm comm, int print, const std::stri
     }
     if (prefix.length() > 0)
     {
-      PetscOptionsPrefixPush(nullptr, prefix.c_str());
+      PalacePetscCall(PetscOptionsPrefixPush(nullptr, prefix.c_str()));
     }
-    PetscOptionsInsertString(nullptr, opts.c_str());
+    PalacePetscCall(PetscOptionsInsertString(nullptr, opts.c_str()));
     if (prefix.length() > 0)
     {
-      PetscOptionsPrefixPop(nullptr);
+      PalacePetscCall(PetscOptionsPrefixPop(nullptr));
     }
   }
   A0 = A1 = nullptr;
@@ -567,7 +644,7 @@ void SlepcEPSSolverBase::Customize()
     PalacePetscCall(EPSSetFromOptions(eps));
     if (print > 0)
     {
-      PetscOptionsView(nullptr, PETSC_VIEWER_STDOUT_(GetComm()));
+      PalacePetscCall(PetscOptionsView(nullptr, PETSC_VIEWER_STDOUT_(GetComm())));
       Mpi::Print(GetComm(), "\n");
     }
     cl_custom = true;
@@ -921,12 +998,12 @@ SlepcPEPSolverBase::SlepcPEPSolverBase(MPI_Comm comm, int print, const std::stri
     }
     if (prefix.length() > 0)
     {
-      PetscOptionsPrefixPush(nullptr, prefix.c_str());
+      PalacePetscCall(PetscOptionsPrefixPush(nullptr, prefix.c_str()));
     }
-    PetscOptionsInsertString(nullptr, opts.c_str());
+    PalacePetscCall(PetscOptionsInsertString(nullptr, opts.c_str()));
     if (prefix.length() > 0)
     {
-      PetscOptionsPrefixPop(nullptr);
+      PalacePetscCall(PetscOptionsPrefixPop(nullptr));
     }
   }
   A0 = A1 = A2 = nullptr;
@@ -1075,7 +1152,7 @@ void SlepcPEPSolverBase::Customize()
     PalacePetscCall(PEPSetFromOptions(pep));
     if (print > 0)
     {
-      PetscOptionsView(nullptr, PETSC_VIEWER_STDOUT_(GetComm()));
+      PalacePetscCall(PetscOptionsView(nullptr, PETSC_VIEWER_STDOUT_(GetComm())));
       Mpi::Print(GetComm(), "\n");
     }
     cl_custom = true;
@@ -1291,7 +1368,7 @@ PetscErrorCode __mat_apply_EPS_A0(Mat A, Vec x, Vec y)
   ctx->y.Get(py, n);
   PetscCall(VecRestoreArrayWrite(y, &py));
 
-  PetscFunctionReturn(0);
+  PetscFunctionReturn(PETSC_SUCCESS);
 }
 
 PetscErrorCode __mat_apply_EPS_A1(Mat A, Vec x, Vec y)
@@ -1317,7 +1394,7 @@ PetscErrorCode __mat_apply_EPS_A1(Mat A, Vec x, Vec y)
   ctx->y.Get(py, n);
   PetscCall(VecRestoreArrayWrite(y, &py));
 
-  PetscFunctionReturn(0);
+  PetscFunctionReturn(PETSC_SUCCESS);
 }
 
 PetscErrorCode __mat_apply_EPS_B(Mat A, Vec x, Vec y)
@@ -1344,7 +1421,7 @@ PetscErrorCode __mat_apply_EPS_B(Mat A, Vec x, Vec y)
   ctx->y.Get(py, n);
   PetscCall(VecRestoreArrayWrite(y, &py));
 
-  PetscFunctionReturn(0);
+  PetscFunctionReturn(PETSC_SUCCESS);
 }
 
 PetscErrorCode __pc_apply_EPS(PC pc, Vec x, Vec y)
@@ -1386,7 +1463,7 @@ PetscErrorCode __pc_apply_EPS(PC pc, Vec x, Vec y)
   ctx->y.Get(py, n);
   PetscCall(VecRestoreArrayWrite(y, &py));
 
-  PetscFunctionReturn(0);
+  PetscFunctionReturn(PETSC_SUCCESS);
 }
 
 PetscErrorCode __mat_apply_PEPLinear_L0(Mat A, Vec x, Vec y)
@@ -1419,7 +1496,7 @@ PetscErrorCode __mat_apply_PEPLinear_L0(Mat A, Vec x, Vec y)
   ctx->y2.Get(py + n / 2, n / 2);
   PetscCall(VecRestoreArrayWrite(y, &py));
 
-  PetscFunctionReturn(0);
+  PetscFunctionReturn(PETSC_SUCCESS);
 }
 
 PetscErrorCode __mat_apply_PEPLinear_L1(Mat A, Vec x, Vec y)
@@ -1450,7 +1527,7 @@ PetscErrorCode __mat_apply_PEPLinear_L1(Mat A, Vec x, Vec y)
   ctx->y2.Get(py + n / 2, n / 2);
   PetscCall(VecRestoreArrayWrite(y, &py));
 
-  PetscFunctionReturn(0);
+  PetscFunctionReturn(PETSC_SUCCESS);
 }
 
 PetscErrorCode __mat_apply_PEPLinear_B(Mat A, Vec x, Vec y)
@@ -1482,7 +1559,7 @@ PetscErrorCode __mat_apply_PEPLinear_B(Mat A, Vec x, Vec y)
   ctx->y2.Get(py + n / 2, n / 2);
   PetscCall(VecRestoreArrayWrite(y, &py));
 
-  PetscFunctionReturn(0);
+  PetscFunctionReturn(PETSC_SUCCESS);
 }
 
 PetscErrorCode __pc_apply_PEPLinear(PC pc, Vec x, Vec y)
@@ -1554,7 +1631,7 @@ PetscErrorCode __pc_apply_PEPLinear(PC pc, Vec x, Vec y)
   ctx->y2.Get(py + n / 2, n / 2);
   PetscCall(VecRestoreArrayWrite(y, &py));
 
-  PetscFunctionReturn(0);
+  PetscFunctionReturn(PETSC_SUCCESS);
 }
 
 PetscErrorCode __mat_apply_PEP_A0(Mat A, Vec x, Vec y)
@@ -1580,7 +1657,7 @@ PetscErrorCode __mat_apply_PEP_A0(Mat A, Vec x, Vec y)
   ctx->y.Get(py, n);
   PetscCall(VecRestoreArrayWrite(y, &py));
 
-  PetscFunctionReturn(0);
+  PetscFunctionReturn(PETSC_SUCCESS);
 }
 
 PetscErrorCode __mat_apply_PEP_A1(Mat A, Vec x, Vec y)
@@ -1606,7 +1683,7 @@ PetscErrorCode __mat_apply_PEP_A1(Mat A, Vec x, Vec y)
   ctx->y.Get(py, n);
   PetscCall(VecRestoreArrayWrite(y, &py));
 
-  PetscFunctionReturn(0);
+  PetscFunctionReturn(PETSC_SUCCESS);
 }
 
 PetscErrorCode __mat_apply_PEP_A2(Mat A, Vec x, Vec y)
@@ -1632,7 +1709,7 @@ PetscErrorCode __mat_apply_PEP_A2(Mat A, Vec x, Vec y)
   ctx->y.Get(py, n);
   PetscCall(VecRestoreArrayWrite(y, &py));
 
-  PetscFunctionReturn(0);
+  PetscFunctionReturn(PETSC_SUCCESS);
 }
 
 PetscErrorCode __mat_apply_PEP_B(Mat A, Vec x, Vec y)
@@ -1659,7 +1736,7 @@ PetscErrorCode __mat_apply_PEP_B(Mat A, Vec x, Vec y)
   ctx->y.Get(py, n);
   PetscCall(VecRestoreArrayWrite(y, &py));
 
-  PetscFunctionReturn(0);
+  PetscFunctionReturn(PETSC_SUCCESS);
 }
 
 PetscErrorCode __pc_apply_PEP(PC pc, Vec x, Vec y)
@@ -1702,7 +1779,7 @@ PetscErrorCode __pc_apply_PEP(PC pc, Vec x, Vec y)
   ctx->y.Get(py, n);
   PetscCall(VecRestoreArrayWrite(y, &py));
 
-  PetscFunctionReturn(0);
+  PetscFunctionReturn(PETSC_SUCCESS);
 }
 
 #endif

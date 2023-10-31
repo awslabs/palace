@@ -14,6 +14,7 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 #include <mpi.h>
 #include "linalg/eps.hpp"
 #include "linalg/ksp.hpp"
@@ -23,6 +24,7 @@
 // Forward declarations of SLEPc objects.
 typedef struct _p_EPS *EPS;
 typedef struct _p_PEP *PEP;
+typedef struct _p_NEP *NEP;
 typedef struct _p_BV *BV;
 typedef struct _p_ST *ST;
 typedef struct _p_RG *RG;
@@ -44,6 +46,16 @@ void Finalize();
 PetscReal GetMaxSingularValue(MPI_Comm comm, const ComplexOperator &A, bool herm = false,
                               PetscReal tol = PETSC_DEFAULT,
                               PetscInt max_it = PETSC_DEFAULT);
+
+// Solve a dense nonlinear eigenvalue problem defined by the function T(λ) and its
+// derivative, T'(λ). Expects all processes to call with the same inputs. Returns the
+// converged eigenvalues.
+std::vector<PetscScalar>
+SolveDenseNEP(MPI_Comm comm, PetscInt n,
+              PetscErrorCode (*__nep_function)(NEP, PetscScalar, Mat, Mat, void *),
+              PetscErrorCode (*__nep_jacobian)(NEP, PetscScalar, Mat, void *), void *ctx,
+              PetscScalar sigma, PetscInt num_eig = 0, PetscReal tol = PETSC_DEFAULT,
+              PetscInt max_it = PETSC_DEFAULT);
 
 //
 // A wrapper for the SLEPc library for generalized linear eigenvalue problems or quadratic

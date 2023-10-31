@@ -29,15 +29,17 @@ private:
   SpaceOperator &spaceop;
 
   // HDM system matrices and excitation RHS.
-  std::unique_ptr<ComplexOperator> K, M, C, A2;
-  ComplexVector RHS1, RHS2, r;
+  std::unique_ptr<ComplexOperator> K, M, C;
+  ComplexVector RHS1;
+  mutable ComplexVector r;
   bool has_A2, has_RHS2;
 
   // HDM linear system solver and preconditioner.
   std::unique_ptr<ComplexKspSolver> ksp;
 
   // PROM matrices and vectors.
-  Eigen::MatrixXcd Kr, Mr, Cr, Ar;
+  Eigen::MatrixXcd Kr, Mr, Cr;
+  mutable Eigen::MatrixXcd Ar;
   Eigen::VectorXcd RHS1r, RHSr;
 
   // PROM reduced-order basis (real-valued) and active dimension.
@@ -82,8 +84,9 @@ public:
   // specified as P = {ω_L, ω_L + δ, ..., ω_R}.
   double FindMaxError(double start, double delta, int num_steps) const;
 
-  // Compute eigenvalue estimates for the current PROM system.
-  std::vector<std::complex<double>> ComputeEigenvalueEstimates() const;
+  // Compute eigenvalue estimates for the current PROM system. The parameter omega is
+  // passed as an initial guess, relevant for nonlinear eigenvalue problems.
+  std::vector<std::complex<double>> ComputeEigenvalueEstimates(double omega) const;
 };
 
 }  // namespace palace
