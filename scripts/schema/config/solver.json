@@ -8,7 +8,6 @@
   {
     "Order": { "type": "integer", "minimum": 1 },
     "PartialAssemblyOrder": { "type": "integer", "minimum": 1 },
-    "PartialAssemblyInterpolators": { "type": "boolean" },
     "Device": { "type": "string", "enum": ["CPU", "GPU", "Debug"] },
     "Backend": { "type": "string" },
     "Eigenmode":
@@ -107,7 +106,6 @@
         "InitialGuess": { "type": "boolean" },
         "MGMaxLevels": { "type": "int", "minimum": 1 },
         "MGCoarsenType": { "type": "string" },
-        "MGLegacyTransfer": { "type": "boolean" },
         "MGAuxiliarySmoother": { "type": "boolean" },
         "MGCycleIts": { "type": "integer", "exclusiveMinimum": 0 },
         "MGSmoothIts": { "type": "integer", "exclusiveMinimum": 0 },

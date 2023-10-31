@@ -10,7 +10,7 @@
 #include <nlohmann/json.hpp>
 #include "drivers/transientsolver.hpp"
 #include "fem/errorindicator.hpp"
-#include "linalg/errorestimator.hpp"
+#include "fem/fespace.hpp"
 #include "linalg/ksp.hpp"
 #include "models/domainpostoperator.hpp"
 #include "models/postoperator.hpp"
@@ -216,17 +216,17 @@ void BaseSolver::SolveEstimateMarkRefine(
   }
   Mpi::Print("\nFinal Error Indicator: {:.3e}, Size: {}\n", indicators.Norml2(comm), ntdof);
 }
-void BaseSolver::SaveMetadata(const mfem::ParFiniteElementSpaceHierarchy &fespaces) const
+void BaseSolver::SaveMetadata(const FiniteElementSpaceHierarchy &fespaces) const
 {
   if (post_dir.length() == 0)
   {
     return;
   }
-  const mfem::ParFiniteElementSpace &fespace = fespaces.GetFinestFESpace();
+  const auto &fespace = fespaces.GetFinestFESpace();
   HYPRE_BigInt ne = fespace.GetParMesh()->GetNE();
   Mpi::GlobalSum(1, &ne, fespace.GetComm());
   std::vector<HYPRE_BigInt> ndofs(fespaces.GetNumLevels());
-  for (int l = 0; l < fespaces.GetNumLevels(); l++)
+  for (std::size_t l = 0; l < fespaces.GetNumLevels(); l++)
   {
     ndofs[l] = fespaces.GetFESpaceAtLevel(l).GlobalTrueVSize();
   }

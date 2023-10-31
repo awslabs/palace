@@ -89,10 +89,6 @@ Thus, this object is only relevant for [`config["Problem"]["Type"]: "Magnetostat
 `"Linear"` :  Top-level object for configuring the linear solver employed by all simulation
 types.
 
-### Advanced solver options
-
-  - `"PartialAssemblyInterpolators" [true]`
-
 ## `solver["Eigenmode"]`
 
 ```json
@@ -413,8 +409,10 @@ multigrid preconditioners (when `"UseMultigrid"` is `true` or `"Type"` is `"AMS"
 `"MGSmoothIts" [1]` :  Number of pre- and post-smooth iterations used for multigrid
 preconditioners (when `"UseMultigrid"` is `true` or `"Type"` is `"AMS"` or `"BoomerAMG"`).
 
-`"MGSmoothOrder" [4]` :  Order of polynomial smoothing for geometric multigrid
-preconditioning (when `"UseMultigrid"` is `true`).
+`"MGSmoothOrder" [0]` :  Order of polynomial smoothing for geometric multigrid
+preconditioning (when `"UseMultigrid"` is `true`). A value less than 1 defaults to twice
+the solution order given in [`config["Solver"]["Order"]`]
+(problem.md#config%5B%22Solver%22%5D) or 4, whichever is larger.
 
 `"PCMatReal" [false]` :  When set to `true`, constructs the preconditioner for frequency
 domain problems using a real-valued approximation of the system matrix. This is always
@@ -454,7 +452,6 @@ vectors in Krylov subspace methods or other parts of the code.
 ### Advanced linear solver options
 
   - `"InitialGuess" [true]`
-  - `"MGLegacyTransfer" [false]`
   - `"MGAuxiliarySmoother" [true]`
   - `"MGSmoothEigScaleMax" [1.0]`
   - `"MGSmoothEigScaleMin" [0.0]`

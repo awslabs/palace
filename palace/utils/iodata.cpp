@@ -421,6 +421,10 @@ void IoData::CheckConfiguration()
       solver.linear.mg_smooth_aux = 1;
     }
   }
+  if (solver.linear.mg_smooth_order < 0)
+  {
+    solver.linear.mg_smooth_order = std::max(2 * solver.order, 4);
+  }
 }
 
 namespace

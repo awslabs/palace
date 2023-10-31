@@ -349,7 +349,7 @@ void CeedOperatorAssembleCOO(const Operator &op, bool skip_zeros, CeedSize *nnz,
     PalaceCeedCall(ceed, CeedVectorRestoreArray(*vals, &vals_array));
   }
 
-  // std::cout << "  Operator full assembly has " << *nnz << " NNZ";
+  // std::cout << "  Operator full assembly (COO) has " << *nnz << " NNZ";
   if (skip_zeros && *nnz > 0)
   {
     CeedOperatorAssembleCOORemoveZeros(ceed, nnz, rows, cols, vals, mem);

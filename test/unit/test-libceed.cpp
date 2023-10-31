@@ -366,7 +366,7 @@ void BenchmarkCeedInterpolator(FiniteElementSpace &trial_fespace,
                                FiniteElementSpace &test_fespace, T1 AssembleTest,
                                T2 AssembleRef)
 {
-  const bool skip_zeros = true;
+  const bool skip_zeros_interp = true;
   Vector x(trial_fespace.GetVSize()), y_ref(test_fespace.GetVSize()),
       y_test(test_fespace.GetVSize());
   x.UseDevice(true);
@@ -379,9 +379,9 @@ void BenchmarkCeedInterpolator(FiniteElementSpace &trial_fespace,
   if (!benchmark_no_fa)
   {
     const auto op_test = AssembleTest(trial_fespace, test_fespace);
-    const auto op_ref =
-        AssembleRef(trial_fespace, test_fespace, mfem::AssemblyLevel::LEGACY, skip_zeros);
-    const auto mat_test = DiscreteLinearOperator::FullAssemble(*op_test, skip_zeros);
+    const auto op_ref = AssembleRef(trial_fespace, test_fespace,
+                                    mfem::AssemblyLevel::LEGACY, skip_zeros_interp);
+    const auto mat_test = DiscreteLinearOperator::FullAssemble(*op_test, skip_zeros_interp);
     const auto *mat_ref = &op_ref->SpMat();
     nnz = mat_test->NumNonZeroElems();
     TestCeedOperatorFullAssemble(*mat_test, *mat_ref);
@@ -392,13 +392,13 @@ void BenchmarkCeedInterpolator(FiniteElementSpace &trial_fespace,
   {
     BENCHMARK("Assemble (MFEM Legacy)")
     {
-      const auto op_ref =
-          AssembleRef(trial_fespace, test_fespace, mfem::AssemblyLevel::LEGACY, skip_zeros);
+      const auto op_ref = AssembleRef(trial_fespace, test_fespace,
+                                      mfem::AssemblyLevel::LEGACY, skip_zeros_interp);
       return op_ref->Height();
     };
     {
-      const auto op_ref =
-          AssembleRef(trial_fespace, test_fespace, mfem::AssemblyLevel::LEGACY, skip_zeros);
+      const auto op_ref = AssembleRef(trial_fespace, test_fespace,
+                                      mfem::AssemblyLevel::LEGACY, skip_zeros_interp);
       y_ref = 0.0;
       BENCHMARK("AddMult (MFEM Legacy)")
       {
@@ -414,12 +414,12 @@ void BenchmarkCeedInterpolator(FiniteElementSpace &trial_fespace,
     BENCHMARK("Assemble (MFEM Partial)")
     {
       const auto op_ref = AssembleRef(trial_fespace, test_fespace,
-                                      mfem::AssemblyLevel::PARTIAL, skip_zeros);
+                                      mfem::AssemblyLevel::PARTIAL, skip_zeros_interp);
       return op_ref->Height();
     };
     {
       const auto op_ref = AssembleRef(trial_fespace, test_fespace,
-                                      mfem::AssemblyLevel::PARTIAL, skip_zeros);
+                                      mfem::AssemblyLevel::PARTIAL, skip_zeros_interp);
       y_ref = 0.0;
       BENCHMARK("AddMult (MFEM Partial)")
       {
@@ -449,7 +449,8 @@ void BenchmarkCeedInterpolator(FiniteElementSpace &trial_fespace,
     BENCHMARK("Full Assemble (libCEED)")
     {
       const auto op_test = AssembleTest(trial_fespace, test_fespace);
-      const auto mat_test = DiscreteLinearOperator::FullAssemble(*op_test, skip_zeros);
+      const auto mat_test =
+          DiscreteLinearOperator::FullAssemble(*op_test, skip_zeros_interp);
       return mat_test->NumNonZeroElems();
     };
   }
