@@ -23,8 +23,9 @@ namespace
 {
 
 std::unique_ptr<Operator> GetMassMatrix(const FiniteElementSpaceHierarchy &fespaces,
-                                        int pa_order_threshold, int skip_zeros)
+                                        int pa_order_threshold)
 {
+  constexpr bool skip_zeros = false;
   const int dim = fespaces.GetFinestFESpace().GetParMesh()->Dimension();
   const auto type = fespaces.GetFinestFESpace().FEColl()->GetRangeType(dim);
   auto M = std::make_unique<MultigridOperator>(fespaces.GetNumLevels());
@@ -96,8 +97,7 @@ FluxProjector::FluxProjector(const MaterialOperator &mat_op,
     flux.AddDomainIntegrator<MixedVectorCurlIntegrator>(muinv_func);
     Flux = std::make_unique<ParOperator>(flux.Assemble(), nd_fespaces.GetFinestFESpace());
   }
-  constexpr int skip_zeros = false;
-  M = GetMassMatrix(nd_fespaces, pa_order_threshold, skip_zeros);
+  M = GetMassMatrix(nd_fespaces, pa_order_threshold);
 
   ksp = ConfigureLinearSolver(nd_fespaces, tol, max_it, print);
   ksp->SetOperators(*M, *M);
@@ -120,8 +120,7 @@ FluxProjector::FluxProjector(const MaterialOperator &mat_op,
     Flux = std::make_unique<ParOperator>(flux.Assemble(), h1_fespaces.GetFinestFESpace(),
                                          h1d_fespace, false);
   }
-  constexpr int skip_zeros = false;
-  M = GetMassMatrix(h1_fespaces, pa_order_threshold, skip_zeros);
+  M = GetMassMatrix(h1_fespaces, pa_order_threshold);
 
   ksp = ConfigureLinearSolver(h1_fespaces, tol, max_it, print);
   ksp->SetOperators(*M, *M);

@@ -192,7 +192,7 @@ void PrintHeader(const FiniteElementSpace &h1_fespace, const FiniteElementSpace 
 template <typename T1, typename T2, typename T3, typename T4>
 std::unique_ptr<Operator> BuildOperator(const FiniteElementSpace &fespace, T1 *df, T2 *f,
                                         T3 *dfb, T4 *fb, int pa_order_threshold,
-                                        int skip_zeros)
+                                        bool skip_zeros)
 {
   BilinearForm a(fespace);
   if (df && !df->empty() && f && !f->empty())
@@ -230,7 +230,7 @@ std::unique_ptr<Operator> BuildOperator(const FiniteElementSpace &fespace, T1 *d
 
 template <typename T1, typename T2>
 std::unique_ptr<Operator> BuildAuxOperator(const FiniteElementSpace &fespace, T1 *f, T2 *fb,
-                                           int pa_order_threshold, int skip_zeros)
+                                           int pa_order_threshold, bool skip_zeros)
 {
   BilinearForm a(fespace);
   if (f && !f->empty())
