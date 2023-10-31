@@ -150,7 +150,7 @@ void BaseSolver::SolveEstimateMarkRefine(
     Mpi::Barrier(comm);
   };
 
-  const bool use_amr = param.adapt_max_its > 0;
+  const bool use_amr = param.max_its > 0;
   if (use_amr && mesh.size() > 1)
   {
     Mpi::Print("{}\n", "Flattening mesh sequence: AMR will start from the final mesh in "
@@ -173,8 +173,9 @@ void BaseSolver::SolveEstimateMarkRefine(
     else
     {
       Mpi::Print("\nAdaptive Mesh Refinement Parameters:\n");
-      Mpi::Print("MaxIter: {}, Tolerance: {:.3e}\n\n", param.adapt_max_its,
-                 param.adapt_tolerance);
+      Mpi::Print(
+          "MaxIter: {}, Tolerance: {:.3e}{}\n\n", param.max_its, param.tolerance,
+          (param.max_size >= 1 ? ", MaxSize: " + std::to_string(param.max_size) : ""));
     }
   }
 
@@ -183,19 +184,19 @@ void BaseSolver::SolveEstimateMarkRefine(
   auto exhausted_resources = [&]()
   {
     bool ret = false;
-    // Run out of DOFs.
-    ret |= ntdof > param.dof_limit;
+    // Run out of DOFs if a limit was set.
+    ret |= ((param.max_size >= 1) && (ntdof > param.max_size));
     // Run out of iterations.
-    ret |= iter >= param.adapt_max_its;
+    ret |= iter >= param.max_its;
     return ret;
   };
-  while (indicators.Norml2(comm) > param.adapt_tolerance && !exhausted_resources())
+  while (indicators.Norml2(comm) > param.tolerance && !exhausted_resources())
   {
     BlockTimer bt_adapt(Timer::ADAPTATION);
     SavePostProcess(iter);  // Optionally save of the previous solution
-    Mpi::Print("Adaptation iteration {}: Initial Error Indicator: {:.3e}, DOF: {}, DOF "
-               "Limit: {}\n",
-               ++iter, indicators.Norml2(comm), ntdof, param.dof_limit);
+
+    Mpi::Print("Adaptation iteration {}: Initial Error Indicator: {:.3e}, Size: {}\n",
+               ++iter, indicators.Norml2(comm), ntdof);
 
     // Mark.
     const auto threshold =
@@ -213,7 +214,7 @@ void BaseSolver::SolveEstimateMarkRefine(
     mesh::RebalanceMesh(mesh.back(), iodata, post_dir);
     indicators_and_ntdof = Solve(mesh);
   }
-  Mpi::Print("\nFinal Error Indicator: {:.3e}, DOF: {}\n", indicators.Norml2(comm), ntdof);
+  Mpi::Print("\nFinal Error Indicator: {:.3e}, Size: {}\n", indicators.Norml2(comm), ntdof);
 }
 void BaseSolver::SaveMetadata(const mfem::ParFiniteElementSpaceHierarchy &fespaces) const
 {

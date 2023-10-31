@@ -133,19 +133,19 @@ struct RefinementData
 public:
   // Parallel uniform mesh refinement levels.
   int uniform_ref_levels = 0;
-  // Non-dimensional tolerance used to specify convergence of the AMR.
-  double adapt_tolerance = 1e-2;
-  // Maximum number of iterations to perform during the AMR.
-  int adapt_max_its = 0;
+  // Non-dimensional tolerance used to specify convergence of adaptive mesh refinement.
+  double tolerance = 1e-2;
+  // Maximum number of iterations to perform during adaptive mesh refinement.
+  int max_its = 0;
   // Dörfler update fraction. The set of marked elements is the minimum set that contains
   // update_fraction of the total error.
   double update_fraction = 0.7;
-  // Maximum difference in non-conformal refinements between two adjacent elements. Default
-  // = 0 implies there is no constraint on local non-conformity.
+  // Maximum difference in nonconformal refinements between two adjacent elements. Zero
+  // implies there is no constraint on local non-conformity.
   int max_nc_levels = 1;
   // If a refinement results in a greater number of DOFs than this value, no future
   // refinement will be allowed.
-  int dof_limit = 0;
+  int max_size = 0;
   // Whether to save off results of each adaptation iteration as a subfolder within the post
   // processing directory.
   bool save_adapt_iterations = true;

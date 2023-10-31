@@ -20,13 +20,13 @@
       "properties":
       {
         "UniformLevels": { "type": "integer", "minimum": 0 },
-        "AdaptTol": {"type": "number", "exclusiveMinimum": 0.0},
-        "AdaptMaxIts": {"type": "integer", "inclusiveMinimum": 0},
-        "DOFLimit": {"type": "number", "inclusiveMinimum": 0},
         "MaximumImbalance": {"type": "number", "inclusiveMinimum": 1.0},
+        "MaxIts": {"type": "integer", "inclusiveMinimum": 0},
         "MaxNCLevels": {"type": "integer", "inclusiveMinimum": 0},
+        "MaxSize": {"type": "number", "inclusiveMinimum": 0},
         "Nonconformal": {"type": "boolean"},
         "SaveAdaptIterations": {"type": "boolean"},
+        "Tol": {"type": "number", "exclusiveMinimum": 0.0},
         "UpdateFraction": {"type": "number", "exclusiveMinimum": 0.0, "exclusiveMaximum": 1.0},
         "WriteSerialMesh": {"type": "boolean"},
         "Boxes":

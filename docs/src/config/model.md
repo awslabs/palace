@@ -36,13 +36,11 @@ scale based on the bounding box of the computational domain.
 "Refinement":
 {
     "UniformLevels": <int>,
-    "AdaptTol": <float>,
-    "AdaptMaxIts": <int>,
-    "UpdateFraction": <float>,
-    "DOFLimit": <int>,
-    "MaximumImbalance": <float>,
+    "Tol": <float>,
+    "MaxIts": <int>,
+    "MaxSize": <int>,
     "Nonconformal": <bool>,
-    "UseCoarsening": <bool>,
+    "UpdateFraction": <float>,
     "Boxes":
     [
         {
@@ -71,19 +69,20 @@ with
 input mesh. If not performing AMR, these may be used as levels within a geometric multigrid
 scheme.
 
-`"AdaptTol" [1e-2]` : Relative error convergence tolerance for mesh adaptation.
+`"Tol" [1e-2]` : Relative error convergence tolerance for mesh adaptation.
 
-`"AdaptMaxIts" [0]` : Maximum number of iterations to perform of adaptive mesh refinement.
+`"MaxIts" [0]` : Maximum number of iterations to perform of adaptive mesh refinement.
+
+`"MaxSize" [0]` : The maximum allowable number of degrees of freedom within an AMR loop, if
+an adapted mesh exceeds this value no further adaptation will occur. A value less than 1
+means that no maximum size constraint will be imposed.
+
+`"Nonconformal" [true]` : Whether the adaptation should use nonconformal refinement.
 
 `"UpdateFraction" [0.7]` : Dörfler marking fraction used to specify which elements to
 refine. This marking strategy will mark the smallest number of elements that make up
 `"UpdateFraction"` of the total error in the mesh. A larger value will refine more elements
 per iteration, at the cost of the final mesh being less efficient.
-
-`"DOFLimit" [0]` : The maximum allowable number of DOF within an AMR loop, if an adapted
-mesh exceeds this value no further adaptation will occur.
-
-`"Nonconformal" [true]` : Whether the adaptation should use nonconformal refinement.
 
 `"Boxes"` :  Array of box region refinement objects. All elements with a node inside the box
 region will be marked for refinement.

@@ -287,23 +287,23 @@ void RefinementData::SetUp(json &model)
   uniform_ref_levels = refinement->value("UniformLevels", uniform_ref_levels);
   MFEM_VERIFY(uniform_ref_levels >= 0,
               "Number of uniform mesh refinement levels must be non-negative!");
-  adapt_tolerance = refinement->value("AdaptTol", adapt_tolerance);
-  adapt_max_its = refinement->value("AdaptMaxIts", adapt_max_its);
+  tolerance = refinement->value("Tol", tolerance);
+  max_its = refinement->value("MaxIts", max_its);
   update_fraction = refinement->value("UpdateFraction", update_fraction);
   max_nc_levels = refinement->value("MaxNCLevels", max_nc_levels);
-  dof_limit = refinement->value("DOFLimit", dof_limit);
+  max_size = refinement->value("MaxSize", max_size);
   save_adapt_iterations = refinement->value("SaveAdaptIterations", save_adapt_iterations);
   nonconformal = refinement->value("Nonconformal", nonconformal);
   maximum_imbalance = refinement->value("MaximumImbalance", maximum_imbalance);
   write_serial_mesh = refinement->value("WriteSerialMesh", write_serial_mesh);
-  MFEM_VERIFY(adapt_tolerance > 0, "\"AdaptTol\" must be strictly positive");
-  MFEM_VERIFY(adapt_max_its >= 0, "\"AdaptMaxIts\" must be non-negative");
+  MFEM_VERIFY(tolerance > 0, "\"Tol\" must be strictly positive!");
+  MFEM_VERIFY(max_its >= 0, "\"MaxIts\" must be non-negative!");
   MFEM_VERIFY(update_fraction > 0 && update_fraction < 1,
-              "\"UpdateFraction\" must be in (0,1)");
-  MFEM_VERIFY(max_nc_levels >= 0, "\"MaxNCLevels\" must non-negative");
-  MFEM_VERIFY(dof_limit >= 0, "\"DOFLimit\" must be non-negative");
+              "\"UpdateFraction\" must be in (0,1)!");
+  MFEM_VERIFY(max_nc_levels >= 0, "\"MaxNCLevels\" must be non-negative!");
+  MFEM_VERIFY(max_size >= 0, "\"MaxSize\" must be non-negative!");
   MFEM_VERIFY(maximum_imbalance >= 1,
-              "\"MaximumImbalance\" must be greater than or equal to 1");
+              "\"MaximumImbalance\" must be greater than or equal to 1!");
   auto boxes = refinement->find("Boxes");
   if (boxes != refinement->end())
   {
@@ -416,8 +416,8 @@ void RefinementData::SetUp(json &model)
 
   // Cleanup
   const auto fields = {
-      "UniformLevels",  "AdaptTol",     "AdaptMaxIts",      "Boxes",
-      "UpdateFraction", "MaxNCLevels",  "DOFLimit",         "SaveAdaptIterations",
+      "UniformLevels",  "Tol",          "MaxIts",           "Boxes",
+      "UpdateFraction", "MaxNCLevels",  "MaxSize",          "SaveAdaptIterations",
       "Spheres",        "Nonconformal", "MaximumImbalance", "WriteSerialMesh"};
   for (const auto &f : fields)
   {
@@ -430,11 +430,11 @@ void RefinementData::SetUp(json &model)
 
   // Debug
   // std::cout << "UniformLevels: " << uniform_ref_levels << '\n';
-  // std::cout << "AdaptTol: " << adapt_tolerance << '\n';
-  // std::cout << "AdaptMaxIts: " << adapt_max_its << '\n';
+  // std::cout << "Tol: " << tolerance << '\n';
+  // std::cout << "MaxIts: " << max_its << '\n';
   // std::cout << "UpdateFraction: " << update_fraction << '\n';
   // std::cout << "MaxNCLevels: " << max_nc_levels << '\n';
-  // std::cout << "DOFLimit: " << dof_limit << '\n';
+  // std::cout << "MaxSize: " << max_size << '\n';
   // std::cout << "SaveAdaptIterations: " << save_adapt_iterations << '\n';
   // std::cout << "Nonconformal: " << nonconformal << '\n';
   // std::cout << "MaximumImbalance: " << maximum_imbalance << '\n';

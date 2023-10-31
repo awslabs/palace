@@ -105,7 +105,7 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(MPI_Comm comm, const IoData &iodata, boo
   // If not adapting, or performing conformal adaptation, can use the mesh partitioner.
   std::unique_ptr<mfem::Mesh> smesh;
   const auto &refinement = iodata.model.refinement;
-  const auto use_amr = refinement.adapt_max_its > 0;
+  const auto use_amr = refinement.max_its > 0;
   const bool use_mesh_partitioner = !use_amr || !refinement.nonconformal;
   {
     BlockTimer bt(Timer::IO);
