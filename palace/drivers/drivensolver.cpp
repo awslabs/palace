@@ -320,10 +320,11 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator 
 
   // XX TODO: Add output of eigenvalue estimates from the PROM system (and nonlinear EVP in
   //          the general case with wave ports, etc.?)
-  const auto eigs = promop.ComputeEigenvalueEstimates(omega0);
+  const auto eigs =
+      promop.ComputeEigenvalueEstimates(omega0, omega0 + (nstep - step0 - 1) * delta_omega);
   if (Mpi::Root(spaceop.GetComm()))
   {
-    std::cout << "Eigenvalues (nev = " << eigs.size() << "):\n";
+    std::cout << "\n\nEigenvalues (nev = " << eigs.size() << "):\n";
     for (auto omega : eigs)
     {
       const std::complex<double> f = {
@@ -333,6 +334,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator 
           (f.imag() == 0.0) ? mfem::infinity() : 0.5 * std::abs(f) / std::abs(f.imag());
       std::cout << f << ", " << Q << "\n";
     }
+    std::cout << "\n";
   }
   return indicator;
 

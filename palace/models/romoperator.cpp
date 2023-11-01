@@ -3,8 +3,6 @@
 
 #include "romoperator.hpp"
 
-#include <algorithm>
-#include <limits>
 #include <Eigen/Eigenvalues>
 #include <Eigen/SVD>
 #include <mfem.hpp>
@@ -13,6 +11,10 @@
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
 #include "utils/timer.hpp"
+
+// XX TODO WIP
+//  #include <algorithm>
+//  #include <limits>
 
 namespace palace
 {
@@ -387,740 +389,264 @@ double RomOperator::FindMaxError(double start, double delta, int num_steps) cons
 namespace
 {
 
-template <typename F>
-void MSLP(int n, F EvalFunction, std::complex<double> &lambda, Eigen::VectorXcd &x)
+enum class BasisType
 {
+  MONOMIAL,
+  CHEBYSHEV_1
+};
 
-  // XX TODO
-  constexpr auto max_it = 100;
-  constexpr auto tol = 1.0e-9;
+struct Eigenpairs
+{
+  Eigen::VectorXcd D;
+  Eigen::MatrixXcd X;
+};
 
-  Eigen::MatrixXcd T(n, n), dT(n, n);
-  Eigen::VectorXcd r(n);
-  Eigen::ComplexEigenSolver<Eigen::MatrixXcd> eps;
-
-  // Random initial guess.
-  x = Eigen::VectorXcd::Random(n);
-  x /= x.norm();
-
-  int it = 0;
-  double res = 1.0;
-
-  while (it < max_it)
+Eigenpairs SolvePEP(const std::vector<const Eigen::MatrixXcd *> &P, BasisType type)
+{
+  // Solve the polynomial EVP: P(λ) x = (∑ᵢ λⁱ Pᵢ) x = 0 by linearization. If provided in
+  // the Chebyshev basis instead of the monomial basis, the problem is: P(λ) x =
+  // (∑ᵢ Tᵢ(λ) Pᵢ) x = 0, where Tᵢ are the Chebyshev polynomials of the first or second
+  // kind.
+  const std::size_t d = P.size() - 1;
+  const std::size_t n = [&P]()
   {
-    // Check convergence.
-    EvalFunction(lambda, T, dT, true, res);
-    r = T * x;
-
-    // XX TODO DEBUG WIP
-    Mpi::Print("MSLP iteration {:d}, l = {:e}{:+e}i, ||r|| = {:e}\n", it, lambda.real(),
-               lambda.imag(), r.norm());
-
-    res = r.norm() / (T.norm() * x.norm());
-    if (res < tol)
+    for (const auto Pi : P)
     {
+      if (Pi)
+      {
+        return Pi->rows();
+      }
+    }
+    return 0l;
+  }();
+  MFEM_VERIFY(d > 0 && n > 0 && P[d], "Invalid inputs for polynomial eigenvalue problem!");
+
+  Eigen::MatrixXcd L0 = Eigen::MatrixXcd::Zero(d * n, d * n),
+                   L1 = Eigen::MatrixXcd::Zero(d * n, d * n);
+  switch (type)
+  {
+    case BasisType::MONOMIAL:
+      for (std::size_t i = 0; i < d - 1; i++)
+      {
+        L0.block(i * n, (i + 1) * n, n, n) = Eigen::MatrixXcd::Identity(n, n);
+      }
+      for (std::size_t i = 0; i < d; i++)
+      {
+        if (P[i])
+        {
+          L0.block((d - 1) * n, i * n, n, n) = -(*P[i]);
+        }
+      }
+      for (std::size_t i = 0; i < d - 1; i++)
+      {
+        L1.block(i * n, i * n, n, n) = Eigen::MatrixXcd::Identity(n, n);
+      }
+      L1.block((d - 1) * n, (d - 1) * n, n, n) = *P[d];
       break;
-    }
-
-    // Set up and solve the linear EVP.
-    eps.compute(dT.partialPivLu().solve(T));
-    // eps.compute(dT.fullPivLu().solve(T));  // XX TODO WIP JACOBIAN CAN BE SINGULAR...
-    // eps.compute(dT.colPivHouseholderQr().solve(T));  // XX TODO QR?
-    const auto mu = eps.eigenvalues();
-
-    // Update eigenpair estimates.
-    // const auto scale = std::abs(*std::max_element(
-    //     mu.begin(), mu.end(), [](auto l, auto r) { return std::abs(l) < std::abs(r); }));
-    // const auto i = std::distance(
-    //     mu.begin(),
-    //     std::min_element(mu.begin(), mu.end(),
-    //                      [scale](auto l, auto r)
-    //                      {
-    //                        if (std::abs(l) < std::numeric_limits<double>::epsilon() *
-    //                        scale)
-    //                        {
-    //                          return false;
-    //                        }
-    //                        if (std::abs(r) < std::numeric_limits<double>::epsilon() *
-    //                        scale)
-    //                        {
-    //                          return true;
-    //                        }
-    //                        return std::abs(l) < std::abs(r);
-    //                      }));
-    const auto i =
-        std::distance(mu.begin(), std::min_element(mu.begin(), mu.end(),
-                                                   [](auto l, auto r)
-                                                   { return std::abs(l) < std::abs(r); }));
-
-    // XX TODO: WANT TO CONVERGE TO THE SECOND SMALLEST mu (to avoid zero eigenvalues)
-    if (Mpi::Root(Mpi::World()))
-    {
-      std::cout << "mu (i = " << i << ") =\n" << mu << "\n";
-    }
-
-    lambda -= mu(i);
-    x = eps.eigenvectors().col(i);
-    // int imin = 0, imin2 = 0;
-    // double lmin = mfem::infinity(), lmin2 = mfem::infinity();
-    // for (int i = 0; i < n; i++)
-    // {
-    //   if (std::abs(mu(i)) < lmin)
-    //   {
-    //     lmin2 = lmin;
-    //     imin2 = imin;
-    //     lmin = std::abs(mu(i));
-    //     imin = i;
-    //   }
-    //   else if (std::abs(mu(i)) < lmin2)
-    //   {
-    //     lmin2 = std::abs(mu(i));
-    //     imin2 = i;
-    //   }
-    // }
-    // lambda -= mu(imin2);
-    // x = eps.eigenvectors().col(imin2);
-    it++;
+    case BasisType::CHEBYSHEV_1:
+      for (std::size_t i = 0; i < d - 1; i++)
+      {
+        L0.block(i * n, (i + 1) * n, n, n) = Eigen::MatrixXcd::Identity(n, n);
+        if (i > 0)
+        {
+          L0.block(i * n, (i - 1) * n, n, n) = Eigen::MatrixXcd::Identity(n, n);
+        }
+      }
+      for (std::size_t i = 0; i < d; i++)
+      {
+        if (P[i])
+        {
+          L0.block((d - 1) * n, i * n, n, n) = -(*P[i]);
+        }
+      }
+      L0.block((d - 1) * n, (d - 2) * n, n, n) += *P[d];
+      for (std::size_t i = 0; i < d - 1; i++)
+      {
+        L1.block(i * n, i * n, n, n) =
+            (i > 0 ? 2.0 : 1.0) * Eigen::MatrixXcd::Identity(n, n);
+      }
+      L1.block((d - 1) * n, (d - 1) * n, n, n) = 2.0 * (*P[d]);
+      break;
   }
-  if (it == max_it)
-  {
-    // XX TODO WARNING...
-  }
+
+  // Solve the eigenvalue problem.
+  Eigen::ComplexEigenSolver<Eigen::MatrixXcd> eps;
+  eps.compute(L1.partialPivLu().solve(L0));
+  return {eps.eigenvalues(), eps.eigenvectors()};
 }
 
-template <typename F>
-void RII(int n, F EvalFunction, std::complex<double> &lambda, Eigen::VectorXcd &x)
+std::vector<double> Chebyshev1Nodes(int d, double a, double b)
 {
-
-  // XX TODO
-  constexpr auto max_it = 100;
-  constexpr auto tol = 1.0e-9;
-
-  Eigen::MatrixXcd T(n, n), dT(n, n);
-  Eigen::VectorXcd r(n);
-
-  int it = 0;
-  double res = 1.0;
-
-  // Initialize the linear solver and eigenvector estimate.
-  EvalFunction(lambda, T, dT, true, res);
-  Eigen::PartialPivLU<Eigen::MatrixXcd> lu;
-  // Eigen::FullPivLU<Eigen::MatrixXcd> lu;  // XX TODO IS THIS EVER SINGULAR?
-  lu.compute(T);
-  x = lu.solve(Eigen::VectorXcd::Random(n));
-  x /= x.norm();
-
-  while (it < max_it)
+  // Chebyshev nodes of the first kind.
+  std::vector<double> nodes(d + 1);
+  for (int i = 0; i <= d; i++)
   {
-    // Compute nonlinear Rayleigh functional, with current eigenvalue as the initial guess.
-    int inner_it = 0;
-    while (inner_it < max_it)
-    {
-      if (inner_it > 0)
-      {
-        EvalFunction(lambda, T, dT, true, res);
-      }
-      r = T * x;
-      const std::complex<double> num = x.adjoint() * lu.solve(r);
-      r = dT * x;
-      const std::complex<double> den = x.adjoint() * lu.solve(r);
-      const auto mu = num / den;
-
-      // XX TODO DEBUG WIP
-      Mpi::Print(
-          "RII inner iteration {:d}, l = {:e}{:+e}i, num = {:e}{:+e}i, den = {:e}{:+e}i\n",
-          inner_it, lambda.real(), lambda.imag(), num.real(), num.imag(), den.real(),
-          den.imag());
-
-      if (std::abs(mu) <
-          std::sqrt(std::numeric_limits<double>::epsilon()) * std::abs(lambda))
-      {
-        break;
-      }
-      lambda -= mu;
-      inner_it++;
-    }
-    if (inner_it == max_it)
-    {
-      // XX TODO WARNING...
-    }
-
-    // Check convergence.
-    EvalFunction(lambda, T, dT, true, res);
-    r = T * x;
-
-    // XX TODO DEBUG WIP
-    Mpi::Print("RII iteration {:d} (inner iterations = {:d}), l = {:e}{:+e}i, ||r|| = {:e} "
-               "(||T|| = {:e})\n",
-               it, inner_it, lambda.real(), lambda.imag(), r.norm(), T.norm());
-
-    res = r.norm() / (T.norm() * x.norm());
-    if (res < tol)
-    {
-      break;
-    }
-
-    // Update linear solver and eigenvector estimate.
-    lu.compute(T);
-    x -= lu.solve(r);
-    x /= x.norm();
-    it++;
+    nodes[i] = 0.5 * (a + b) + 0.5 * (b - a) * std::cos((i + 0.5) * M_PI / (d + 1.0));
   }
-  if (it == max_it)
-  {
-    // XX TODO WARNING...
-  }
+  return nodes;
 }
 
-// template <typename F>
-// void SolveNEP(int n, int num_eig, std::complex<double> sigma, F EvalFunction,
-//                      Eigen::VectorXcd &lambda, Eigen::MatrixXcd &X)
-// {
-
-//   // XX TODO REFERENCE EFFENBERGER AND SLEPc NEP
-
-//   // Note: The minimality index of (X, H) is always assumed to be 1 (linearly independent
-//   // eigenvectors).
-
-//   Eigen::MatrixXcd T(n, n), dT(n, n), H(0, 0);
-
-//   for (int k = 0; k < num_eig; k++)
-//   {
-//     auto EvalDeflated = [&](std::complex<double> l, Eigen::MatrixXcd &Tp,
-//                             Eigen::MatrixXcd &dTp, bool jacobian)
-//     {
-//       if (k == 0)
-//       {
-//         EvalFunction(l, Tp, dTp, jacobian);
-//         return;
-//       }
-
-//       // Compute the extended operators of the deflated problem, with explicit
-//       computation
-//       // of S = (λ I - H)⁻¹ for U(λ) and U'(λ).
-//       EvalFunction(l, T, dT, jacobian);
-//       const auto S = (l * Eigen::MatrixXcd::Identity(k, k) - H)
-//                          .inverse();  // XX TODO WIP, THIS WORKS BETTER?...
-//       // const auto S = (l * Eigen::MatrixXcd::Identity(k, k) - H)
-//       //                    .triangularView<Eigen::Upper>()
-//       //                    .solve(Eigen::MatrixXcd::Identity(k, k));
-//       Tp.topLeftCorner(n, n) = T;
-//       Tp.topRightCorner(n, k) = T * X * S;
-//       Tp.bottomLeftCorner(k, n) = X.adjoint();
-//       Tp.bottomRightCorner(k, k) = Eigen::MatrixXcd::Zero(k, k);
-
-//       // // XX TODO INDEX INCREASE FOR NONSINGULAR DERIVATIVE?
-//       // Eigen::MatrixXcd XH;
-//       // for (int i = 1; i <= k; i++)
-//       // {
-//       //   XH = (i == 1) ? X * H : XH * H;
-//       //   Tp.bottomLeftCorner(k, n) += std::pow(l, i) * XH.adjoint();
-
-//       //   double qi = 0.0;
-//       //   for (int j = 0; j <= i - 1)
-//       //   {
-//       //     for (int p = 0)
-//       //     qi += std::pow(l, j) * H;
-//       //   }
-
-//       //   Tp.bottomRightCorner(k, k) = XH.adjoint() * X;
-//       // }
-
-//       // //XX TODO DEBUG
-//       // if (Mpi::Root(Mpi::World()))
-//       // {
-//       //   std::cout << "Tp (l = " << l << ", k = " << k << "):\n" << Tp << "\n";
-//       // }
-
-//       if (jacobian)
-//       {
-//         dTp.topLeftCorner(n, n) = dT;
-//         dTp.topRightCorner(n, k) = dT * X * S;
-//         dTp.topRightCorner(n, k) -= Tp.topRightCorner(n, k) * S;
-//         dTp.bottomRows(k) = Eigen::MatrixXcd::Zero(k, n + k);
-
-//         // dTp.bottomLeftCorner(k, n) = (X * H).adjoint();  // XX TODO INDEX
-//         // dTp.bottomRightCorner(k, k) = Eigen::MatrixXcd::Zero(k, k);
-
-//         // //XX TODO DEBUG
-//         // if (Mpi::Root(Mpi::World()))
-//         // {
-//         //   std::cout << "Tp' (l = " << l << ", k = " << k << "):\n" << dTp << "\n";
-//         // }
-//       }
-//     };
-
-//     // Solve the deflated NEP with initial guess σ.
-//     Eigen::VectorXcd u(n + k);
-//     std::complex<double> l = sigma;
-//     MSLP(n + k, EvalDeflated, l, u);  // XX TODO WIP TESTING...
-//     // RII(n + k, EvalDeflated, l, u);
-
-//     // XX TODO DEBUG WIP
-//     Mpi::Print("Eigenvalue {:d}/{:d}, l = {:e}{:+e}i\n", k + 1, num_eig, l.real(),
-//                l.imag());
-
-//     // Update the invariant pair with normalization.
-//     X.conservativeResize(n, k + 1);
-//     H.conservativeResizeLike(Eigen::MatrixXd::Zero(k + 1, k + 1));
-//     X.col(k) = u.head(n);
-//     const auto scale = X.col(k).norm();
-//     X.col(k) /= scale;
-//     H.col(k).head(k) = u.tail(k) / scale;
-//     H(k, k) = l;
-
-
-//     // // XX TODO UNSURE IF NEEDED...
-//     // Eigen::ColPivHouseholderQR<Eigen::MatrixXcd> qr(X);
-//     // const auto &R = qr.matrixR().triangularView<Eigen::Upper>();
-//     // X = qr.householderQ();
-//     // // H = R.solve(R * H);  //XX TODO?
-//   }
-
-//   // Eigenpair extraction from the invariant pair (X, H).
-//   Eigen::ComplexEigenSolver<Eigen::MatrixXcd> eps;
-//   eps.compute(H);
-//   lambda = eps.eigenvalues();
-//   X *= eps.eigenvectors();
-// }
-
-// template <typename F>
-// void SolveNEP(int n, int num_eig, std::complex<double> sigma, F EvalFunction,
-//               Eigen::VectorXcd &lambda, Eigen::MatrixXcd &X)
-// {
-
-//   // XX TODO USE DEFLATION FROM TISSEUR PAPER...
-
-//   Eigen::MatrixXcd T(n, n), dT(n, n);
-//   Eigen::MatrixXcd P(n, n), dP(n, n), XXt(n, n);
-//   lambda.resize(num_eig);
-//   X.resize(n, num_eig);
-
-//   constexpr auto deflation_tol = 1.0e-6;
-
-//   for (int k = 0; k < num_eig; k++)
-//   {
-//     auto EvalDeflated = [&](std::complex<double> l, Eigen::MatrixXcd &Tp,
-//                             Eigen::MatrixXcd &dTp, bool jacobian, double res)
-//     {
-//       // XX TODO ADD NOTE ON DEFLATION
-//       EvalFunction(l, T, dT, jacobian);
-//       Tp = T;
-//       if (jacobian)
-//       {
-//         dTp = dT;
-//       }
-
-//       if (k == 0 || res < deflation_tol)
-//       {
-//         return;
-//       }
-
-//       for (int i = 0; i < k; i++)
-//       {
-//         XXt = X.col(i) * X.col(i).adjoint();
-//         P = Eigen::MatrixXcd::Identity(n, n);
-//         P -= ((l - lambda(i) - 1.0) / (l - lambda(i))) * XXt;
-//         Tp = Tp * P;
-//         if (jacobian)
-//         {
-//           dTp = dTp * P;
-//         }
-//       }
-
-//       // //XX TODO JACOBIAN DEBUGGING
-//       // if (jacobian)
-//       // {
-//       //   const auto eps = std::sqrt(std::numeric_limits<double>::epsilon());
-//       //   EvalFunction(l * (1.0 + eps), T, dT, false);
-//       //   for (int i = 0; i < k; i++)
-//       //   {
-//       //     XXt = X.col(i) * X.col(i).adjoint();
-//       //     P = Eigen::MatrixXcd::Identity(n, n);
-//       //     P -= ((l * (1.0 + eps) - lambda(i) - 1.0) / (l * (1.0 + eps) - lambda(i))) *
-//       //     XXt; T = T * P;
-//       //   }
-//       //   dTp = (1.0 / eps) * (T - Tp);
-//       // }
-
-//       // //XX TODO DEBUG
-//       // if (Mpi::Root(Mpi::World()))
-//       // {
-//       //   std::cout << "Tp (l = " << l << ", k = " << k << "):\n" << Tp << "\n";
-//       // }
-
-//       if (jacobian)
-//       {
-//         for (int i = 0; i < k; i++)
-//         {
-//           XXt = X.col(i) * X.col(i).adjoint();
-//           dP =
-//               ((l - lambda(i) - 1.0) / std::pow(l - lambda(i), 2) - 1.0 / (l - lambda(i))) *
-//               XXt;
-//           for (int j = 0; j < k; j++)
-//           {
-//             if (j != i)
-//             {
-//               XXt = X.col(j) * X.col(j).adjoint();
-//               P = Eigen::MatrixXcd::Identity(n, n);
-//               P -= ((l - lambda(j) - 1.0) / (l - lambda(j))) * XXt;
-//               dP = dP * P;
-//             }
-//           }
-//           dTp += T * dP;
-//         }
-
-//         // //XX TODO DEBUG
-//         // if (Mpi::Root(Mpi::World()))
-//         // {
-//         //   std::cout << "Tp' (l = " << l << ", k = " << k << "):\n" << dTp << "\n";
-//         // }
-//       }
-//     };
-
-//     // Solve the deflated NEP with initial guess σ.
-//     Eigen::VectorXcd x;
-//     lambda(k) = sigma;
-//     MSLP(n, EvalDeflated, lambda(k), x);  // XX TODO WIP TESTING...
-//     // RII(n, EvalDeflated, lambda(k), x);
-
-//     // XX TODO DEBUG WIP
-//     Mpi::Print("Eigenvalue {:d}/{:d}, l = {:e}{:+e}i\n", k + 1, num_eig, lambda(k).real(),
-//                lambda(k).imag());
-
-//     // Transform the eigenvector back for the original (non-deflated) problem.
-//     for (int i = 0; i < k; i++)
-//     {
-//       XXt = X.col(i) * X.col(i).adjoint();
-//       P = Eigen::MatrixXcd::Identity(n, n);
-//       P -= ((lambda(k) - lambda(i) - 1.0) / (lambda(k) - lambda(i))) * XXt;
-//       x = P * x;
-//     }
-//     x /= x.norm();
-//     X.col(k) = x;
-
-//     // // XX TODO UNSURE IF NEEDED...
-//     // Eigen::ColPivHouseholderQR<Eigen::MatrixXcd> qr(X);
-//     // const auto &R = qr.matrixR().triangularView<Eigen::Upper>();
-//     // X = qr.householderQ();
-//     // // H = R.solve(R * H);  //XX TODO?
-//   }
-// }
-
-template <typename F>
-void SolveNEP(int n, int num_eig, std::complex<double> sigma, F EvalFunction,
-              Eigen::VectorXcd &lambda, Eigen::MatrixXcd &X)
+template <typename MatType>
+void DCTIII(double a, double b, const std::vector<double> &nodes,
+            const std::vector<MatType> &T, std::vector<MatType> &P)
 {
-
-  // XX TODO BLOCK NEWTON....
-
-  // XX TODO
-  constexpr auto max_it = 100;
-  constexpr auto tol = 1.0e-9;
-
-  // Assume minimality index is 1 (linearly independent eigenvectors).
-  // const auto p = 1;
-  const auto p = k;  //XX TODO TEST
-
-  // Initialize the invariant pair, (X, S), and scaling matrix W.
-  Eigen::MatrixXcd S(k, k), W(n * p, k), R(n, k), T(n + k, n + k), RT(n, k), RV(k, k);
-  X.resize(n, k);
-
-  //XX TODO X0, S0
-
-  W.topRows(n) = X;
-  for (int j = 1; j < p; j++)
+  // Inverse transform for Chebyshev nodes of the first kind.
+  const std::size_t d = T.size() - 1;
+  for (std::size_t i = 0; i <= d; i++)
   {
-    W.block(n, k, j * n, 0) = W.block(n, k, (j - 1) * n, 0) * S;
-  }
+    P[i] = MatType::Zero(T[0].rows(), T[0].cols());
+    const double p = (i > 0) ? 2.0 : 1.0;
+    for (std::size_t j = 0; j <= d; j++)
+    {
+      const double xj = (2.0 * (nodes[j] - a) / (b - a)) - 1.0;
+      P[i] += (p / (d + 1.0) * std::cos(i * std::acos(xj))) * T[j];
+    }
 
-  int it = 0;
-  double res;
-
-  while (it < max_it)
-  {
-
-    // Evaluate block residual.
-    EvalResidual(S, X, R);
-
-    // // Check for convergence.  //XX TODO...
-    // res = ...
-    // if (  )
+    // // XX TODO UNCLEAR IF NEED DOMAIN [-1, 1] -> [a, b] SCALING HERE TOO?
+    // P[i] = (1.0 / (d + 1.0)) * T[0];
+    // for (std::size_t j = 1; j <= d; j++)
     // {
-    //   break;
+    //   P[i] += (2.0 / (d + 1.0) * std::cos((i + 0.5) * j * M_PI / (d + 1.0))) * T[j];
     // }
-
-    // Solve for the Newton step, (DX, DS).
-    {
-      // First put S in Schur form (upper triangular), and after the step is computed,
-      // transform it back.
-      Eigen::ComplexSchur<Eigen::MatrixXcd> schur(S);
-      const auto &SS = schur.matrixT();
-      const auto &QQ = schur.matrixU();
-      const auto XX = X * QQ;
-      RT = R * QQ;
-      RV.setZero();
-
-      // Precompute powers of S.
-      Eigen::MatrixXcd PS((p - 1) * k, k);
-      PS.topRows(k) = SS;
-      for (int j = 1; j < p; j++)
-      {
-        PS.block(k, k, j * k, 0) = PS.block(k, k, (j - 1) * k, 0) * SS;
-      }
-
-      // Algorithm Appendix A of Kressner's 2009 paper. Work column by column through DX and
-      // DS.
-      for (int i = 0; i < k; i++)
-      {
-        // Form the linear system matrix.
-        const auto s11 = SS(i, i);
-
-        Eigen::MatrixXcd &T11 = T.topLeft(n, n);
-        EvalFunction(s11, T11);
-
-        Eigen::MatrixXcd &T12 = T.topRight(n, k);
-
-        T12.setZero(); // XX TODO DERIVATIVE TERM (DF)....
-
-        Eigen::MatrixXcd &T21 = T.bottomLeft(k, n);
-        T21 = W.topRows(n).adjoint();
-        for (int j = 1; j < p; j++)
-        {
-          T21 += std::pow(s11, j) * W.block(n, k, j * n, 0).adjoint();
-        }
-
-        Eigen::MatrixXcd &T22 = T.bottomLeft(k, k);
-        T22.setZero();
-        Eigen::MatrixXcd DS11 = Eigen::MatrixXcd::Identity(k, k);
-        for (int j = 1; j < p; j++)
-        {
-          T22 += (W.block(n, k, j * n, 0).adjoint() * XX) * DS11;
-          DS11 = s11 * DS11 + PS.block(k, k, (j - 1) * k, 0);
-        }
-
-        // Form the RHS and solve the linear system.
-        {
-          Eigen::VectorXcd RHS(n + k), DXDS(n + k);
-          RHS.head(n) = RT.col(i);
-          RHS.tail(n) = RV.col(i);
-          DXDS = T.partialPivLu().solve(RHS);
-          DX.col(i) = DXDS.head(n);
-          DS.col(i) = DXDS.tail(k);
-        }
-
-        // Update the RHS.
-        Eigen::MatrixXcd Z = Eigen::MatrixXcd::Zero(k, k);
-        Z.col(i) = DS.col(i);
-        DS = Z;
-
-        //XX TODO DERIVATIVE TERM.... (DF, RT)
-
-        for (int j = 1; j < p; j++)
-        {
-          RV.block(k, k - i - 1, 0, i + 1) -= W.block(n, k, j * n, 0).adjoint() *
-            (DX.col(i) * PS.row((j - 1) * k + i).tail(k - i - 1) + XX * DS.block(k, k - i - 1, 0, i + 1));
-          DS = DS * SS + PS.block(k, k, (j - 1) * k, 0) * DS;
-        }
-      }
-
-
-      // % Main loop for computing the ith columns of dX and dS
-      // for i = 1:k
-      //   % Set up and solve linear system
-      //   s = S(i,i);
-      //   T11 = zeros(n);
-      //   for j = 1:m
-      //     T11 = T11 + A(:,:,j)*feval(f,j,s);
-      //   end
-      //   T12 = zeros(n,k);
-      //   for j = 1:m
-      //     DF = feval(f,j,[S, eye(k);zeros(k) s*eye(k) ]);
-      //     T12 = T12 + A(:,:,j)*X*DF(1:k,k+1:2*k);
-      //   end
-      //   T21 = W(:,:,1)’;
-      //   for j = 2:l
-      //     T21 = T21 + sˆ(j-1) * W(:,:,j)’;
-      //   end
-      //   DS = eye(k); T22 = zeros(k);
-      //   for j = 2:l
-      //     T22 = T22 + W(:,:,j)’*X*DS;
-      //     DS = s*DS + pS(:,:,j-1);
-      //   end
-      //   sol = [T11 T12; T21 T22] \ [RT(:,i);RV(:,i)];
-      //   dX(:,i) = sol(1:n);
-      //   dS(:,i) = sol(n+1:end);
-
-      //   % Update right-hand side
-      //   Z = zeros(k);
-      //   Z(:,i) = dS(:,i);
-      //   DS = Z;
-      //   for j = 1:m
-      //     DF = feval(f,j,[S, Z;zeros(k) S ]);
-      //     RT(:,i+1:k) = RT(:,i+1:k) - A(:,:,j) * ( dX(:,i)*fS(i,i+1:k,j)+ X*DF(1:k,k+i+1:2*k) );
-      //   end
-      //   for j = 2:l
-      //     RV(:,i+1:k) = RV(:,i+1:k) - W(:,:,j)’ * ( dX(:,i)*pS(i,i+1:k,j-1) + X*DS(:,i+1:k) );
-      //     DS = DS*S + pS(:,:,j-1)*DS;
-      //   end
-      // end
-
-
-      // Transform back and perform the update.
-      DX = DX * QQ.adjoint();
-      DS = (QQ * DS) * QQ.adjoint();
-      X -= DX;
-      S -= DS;
-    }
-
-    {
-      Eigen::MatrixXcd Vl(n * p, p);
-      Vl.topRows(n) = X;
-      for (int k = 1; k < p; k++)
-      {
-        Vl.block(n, p, k * n, 0) = Vl.block(n, p, (k - 1) * n, 0) * S;
-      }
-      Eigen::ColPivHouseholderQR<Eigen::MatrixXcd> qr(Vl);
-      W = qr.householderQ();
-      const auto R = qr.matrixR().triangularView<Eigen::Upper>();
-      const auto Rinv = R.solve(Eigen::MatrixXcd::Identity(n, n));
-      X = X * Rinv;
-      S = (R * S) * Rinv;
-    }
   }
-
-  // Eigenpair extraction from the invariant pair (X, S).
-  Eigen::ComplexEigenSolver<Eigen::MatrixXcd> eps;
-  eps.compute(S);
-  lambda = eps.eigenvalues();
-  X *= eps.eigenvectors();
 }
 
 }  // namespace
 
-std::vector<std::complex<double>>
-RomOperator::ComputeEigenvalueEstimates(double omega) const
+std::vector<std::complex<double>> RomOperator::ComputeEigenvalueEstimates(double start,
+                                                                          double end) const
 {
-  MFEM_VERIFY(dim_V > 0,
-              "Eigenvalue estimates are only available for a PROM with nonzero dimension!");
-  // if (!has_A2)
-  // {
-  //   // if (Cr.rows() == 0)
-  //   // {
-  //   //   // Linear generalized EVP: M⁻¹ K x = μ x (Eigen does not support complex-valued
-  //   //   // generalized EVPs). Linear EVP has eigenvalue μ = -λ² = ω².
-  //   //   Eigen::ComplexEigenSolver<Eigen::MatrixXcd> eps;
-  //   //   eps.compute(Mr.partialPivLu().solve(Kr), false);
-  //   //   auto lambda = eps.eigenvalues();
-  //   //   std::vector<std::complex<double>> lambda_t;
-  //   //   lambda_t.reserve(lambda.size());
-  //   //   for (auto l : lambda)
-  //   //   {
-  //   //     // if (l.real() >= 0.0)  //XX TODO WIP...
-  //   //     {
-  //   //       lambda_t.push_back(std::sqrt(l));
-  //   //     }
-  //   //   }
-  //   //   return lambda_t;
-  //   // }
-  //   // else
-  //   {
-  //     // Quadratic EVP: P(λ) x = (K + λ C + λ² M) x = 0 , solved via linearization.
-  //     Eigen::MatrixXcd L0 = Eigen::MatrixXcd::Zero(2 * dim_V, 2 * dim_V);
-  //     L0.topRightCorner(dim_V, dim_V) = Eigen::MatrixXcd::Identity(dim_V, dim_V);
-  //     L0.bottomLeftCorner(dim_V, dim_V) = -Kr;
-  //     L0.bottomRightCorner(dim_V, dim_V) = -Cr;
-
-  //     Eigen::MatrixXcd L1 = Eigen::MatrixXcd::Zero(2 * dim_V, 2 * dim_V);
-  //     L1.topLeftCorner(dim_V, dim_V) = Eigen::MatrixXcd::Identity(dim_V, dim_V);
-  //     L1.bottomRightCorner(dim_V, dim_V) = Mr;
-
-  //     Eigen::ComplexEigenSolver<Eigen::MatrixXcd> eps;
-  //     eps.compute(L1.partialPivLu().solve(L0), false);
-  //     auto lambda = eps.eigenvalues();
-  //     std::vector<std::complex<double>> lambda_t;
-  //     lambda_t.reserve(lambda.size());
-  //     for (auto l : lambda)
-  //     {
-  //       // if (l.imag() >= 0.0)  //XX TODO WIP...
-  //       {
-  //         lambda_t.push_back(l / 1i);
-  //       }
-  //     }
-  //     return lambda_t;
-  //   }
-  // }
-  // else
-  {
-    // General nonlinear EVP: T(λ) x = (K + λ C + λ² M + A2(Im{λ})) x = 0 . If C != 0, the
-    // problem is at least quadratic. The all processes solve the eigenvalue problem
-    // together.
-    auto EvalFunction = [this](std::complex<double> l, Eigen::MatrixXcd &T,
-                               Eigen::MatrixXcd &dT, bool jacobian, double = 0.0)
-    {
-      // Assemble T(λ) = K + λ C + λ² M + A2(Im{λ}) and/or T'(λ) = C + 2 λ M + A2'(Im{λ}) .
-      if (has_A2)
-      {
-        // All processes participate in this.
-        auto A2 = spaceop.GetExtraSystemMatrix<ComplexOperator>(std::abs(l.imag()),
-                                                                Operator::DIAG_ZERO);
-        ProjectMatInternal(spaceop.GetComm(), V, *A2, Ar, r, 0);
-        T = Ar;
-      }
-      else
-      {
-        T.setZero();
-      }
-      T += Kr;
-      if (Cr.rows() > 0)
-      {
-        T += l * Cr;
-      }
-      T += (l * l) * Mr;
-      if (jacobian)
-      {
-        if (has_A2)
-        {
-          // Evaluate A2' by finite differencing, and reuse the existing evaluation at l
-          // from the residual.
-          const auto eps = std::sqrt(std::numeric_limits<double>::epsilon());
-          auto A2 = spaceop.GetExtraSystemMatrix<ComplexOperator>(
-              std::abs(l.imag()) * (1.0 + eps), Operator::DIAG_ZERO);
-          ProjectMatInternal(spaceop.GetComm(), V, *A2, dT, r, 0);
-          dT -= Ar;
-          dT *= (1.0 / eps);
-
-          // XX TODO DEBUG WIP
-          Mpi::Print("FD Jacobian: eps = {}, l = {:e}{:+e}i\n", eps, l.real(), l.imag());
-        }
-        else
-        {
-          dT.setZero();
-        }
-        if (Cr.rows() > 0)
-        {
-          dT += Cr;
-        }
-        dT += (2.0 * l) * Mr;
-      }
-    };
-    const int num_eig = dim_V;
-    Eigen::VectorXcd lambda;
-    Eigen::MatrixXcd X;
-    SolveNEP(dim_V, num_eig, 1i * omega, EvalFunction, lambda, X);
-    std::vector<std::complex<double>> lambda_t;
-    lambda_t.reserve(lambda.size());
-    for (auto l : lambda)
-    {
-      // if (l.imag() >= 0.0)  //XX TODO REMOVE FOR TESTING
-      {
-        lambda_t.push_back(l / 1i);
-      }
-    }
-    return lambda_t;
-  }
 
   // XX TODO ADD EIGENVECTORS TO COMPUTE HDM RESIDUAL ERROR?
+
+  MFEM_VERIFY(dim_V > 0,
+              "Eigenvalue estimates are only available for a PROM with nonzero dimension!");
+  if (!has_A2)
+  {
+    if (Cr.rows() == 0)
+    {
+      // Linear generalized EVP: M⁻¹ K x = ω² x (Eigen does not support complex-valued
+      // generalized EVPs).
+      Eigen::ComplexEigenSolver<Eigen::MatrixXcd> eps;
+      eps.compute(Mr.partialPivLu().solve(Kr));
+      auto D = eps.eigenvalues();
+      std::vector<std::complex<double>> omega(D.size());
+      for (auto eig : D)
+      {
+        omega.push_back(std::sqrt(eig));
+      }
+      std::sort(omega.begin(), omega.end(),
+                [](auto l, auto r) { return std::abs(l) < std::abs(r); });
+      return omega;
+    }
+    else
+    {
+      // Quadratic EVP: P(ω) x = (K + iω C - ω² M) x = 0 , solved via linearization.
+      const Eigen::MatrixXcd iCr = 1i * Cr;
+      const Eigen::MatrixXcd nMr = -Mr;
+      std::vector<const Eigen::MatrixXcd *> P = {&Kr, &iCr, &nMr};
+      auto [D, X] = SolvePEP(P, BasisType::MONOMIAL);
+      std::vector<std::complex<double>> omega;
+      omega.reserve(D.size());
+      for (auto eig : D)
+      {
+        if (eig.real() >= -0.1 * std::abs(eig.imag()))
+        {
+          omega.push_back(eig);
+        }
+      }
+      std::sort(omega.begin(), omega.end(),
+                [](auto l, auto r) { return std::abs(l) < std::abs(r); });
+      return omega;
+    }
+  }
+  else
+  {
+    // General nonlinear EVP: T(ω) x = (K + iω C - ω² M + A2(Re{ω})) x = 0 . We first
+    // interpolate A2 as a polynomial function of ω, using the first d + 1 Chebyshev
+    // polynomials, and then solve the polynomial EVP via linearization.
+    constexpr std::size_t d = 4;
+    const auto nodes = Chebyshev1Nodes(d, start, end);
+    MFEM_VERIFY(nodes.size() == d + 1,
+                "Unexpected number of Chebyshev interpolation nodes for order " << d
+                                                                                << "!");
+
+    // Get Chebyshev polynomial coefficients by inverse DCT.
+    std::vector<Eigen::MatrixXcd> T2(d + 1), P2(d + 1);
+    for (std::size_t i = 0; i <= d; i++)
+    {
+      auto A2 =
+          spaceop.GetExtraSystemMatrix<ComplexOperator>(nodes[i], Operator::DIAG_ZERO);
+      T2[i].resize(dim_V, dim_V);
+      ProjectMatInternal(spaceop.GetComm(), V, *A2, T2[i], r, 0);
+
+      // //XX TODO TEST INTERPOLATION EXACT
+      // T2[i] = Kr;
+      // // if (Cr.rows() > 0)
+      // // {
+      // //   T2[i] += 1i * nodes[i] * Cr;
+      // // }
+      // T2[i] -= nodes[i] * nodes[i] * Mr;
+    }
+    DCTIII(start, end, nodes, T2, P2);
+
+    // Add contributions of the quadratic EVP in the Chebyshev basis.
+    const std::size_t d_min = 2;
+    if (d < d_min)
+    {
+      const auto P2b(P2);
+      P2.resize(d_min + 1);
+      for (std::size_t i = 0; i <= d; i++)
+      {
+        P2[i] = P2b[i];
+      }
+      for (std::size_t i = d + 1; i <= d_min; i++)
+      {
+        P2[i] = Eigen::MatrixXcd::Zero(dim_V, dim_V);
+      }
+    }
+    P2[0] += Kr;
+    P2[0] += -0.5 * Mr;
+    if (Cr.rows() > 0)
+    {
+      P2[1] += 1i * Cr;
+    }
+    P2[2] += -0.5 * Mr;
+
+    // P2[0] = Kr;  //XX TODO FOR TESTING...
+    // P2[0] += -0.5 * Mr;
+    // P2[1].setZero();
+    // P2[2] = -0.5 * Mr;
+
+    // // XX TODO WIP DEBUG
+    // if (Mpi::Root(Mpi::World()))
+    // {
+    //   for (std::size_t i = 0; i <= std::max(d, d_min); i++)
+    //   {
+    //     std::cout << "P[" << i << "]:\n" << P2[i] << "\n";
+    //   }
+    // }
+
+    // Solve the polynomial EVP.
+    std::vector<const Eigen::MatrixXcd *> P(std::max(d, d_min) + 1);
+    for (std::size_t i = 0; i <= std::max(d, d_min); i++)
+    {
+      P[i] = &P2[i];
+    }
+    auto [D, X] = SolvePEP(P, BasisType::CHEBYSHEV_1);
+    std::vector<std::complex<double>> omega;
+    omega.reserve(D.size());
+    for (auto eig : D)
+    {
+      if (eig.real() >= -0.1 * std::abs(eig.imag()))
+      {
+        omega.push_back(eig);
+      }
+    }
+    std::sort(omega.begin(), omega.end(),
+              [](auto l, auto r) { return std::abs(l) < std::abs(r); });
+    return omega;
+  }
 }
 
 }  // namespace palace
