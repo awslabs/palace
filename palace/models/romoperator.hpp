@@ -84,9 +84,8 @@ public:
   // specified as P = {ω_L, ω_L + δ, ..., ω_R}.
   double FindMaxError(double start, double delta, int num_steps) const;
 
-  // Compute eigenvalue estimates for the current PROM system. The parameter omega is
-  // passed as an initial guess, relevant for nonlinear eigenvalue problems.
-  std::vector<std::complex<double>> ComputeEigenvalueEstimates(double omega) const;
+  // Compute eigenvalue estimates for the current PROM system.
+  std::vector<std::complex<double>> ComputeEigenvalueEstimates() const;
 };
 
 }  // namespace palace
