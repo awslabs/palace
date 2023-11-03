@@ -591,7 +591,7 @@ public:
   int adaptive_max_size = 0;
 
   // Memory required for adaptive sampling convergence.
-  int adaptive_memory = 1;
+  int adaptive_memory = 2;
 
   void SetUp(json &solver);
 };

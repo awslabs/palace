@@ -210,7 +210,7 @@ of interest.
 reduced-order model for adaptive fast frequency sweep, if the specified tolerance
 (`"AdaptiveTol"`) is not met first.
 
-`"AdaptiveConvergenceMemory" [1]` :  Memory used for assessing convergence of the adaptive
+`"AdaptiveConvergenceMemory" [2]` :  Memory used for assessing convergence of the adaptive
 sampling algorithm for constructing the reduced-order model for adaptive fast frequency
 sweep. For example, a memory of "2" requires two consecutive samples which satisfy the
 error tolerance.
