@@ -273,7 +273,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator 
   while (true)
   {
     // Compute the location of the maximum error in parameter domain.
-    double omega_star = promop.FindMaxError(omega0, delta_omega, nstep - step0);
+    double omega_star = promop.FindMaxError(delta_omega);
 
     // Compute the actual solution error at the given parameter point.
     promop.SolveHDM(omega_star, E);

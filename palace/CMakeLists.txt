@@ -71,6 +71,9 @@ if(PALACE_WITH_OPENMP)
   find_package(OpenMP REQUIRED)
 endif()
 
+# Find LAPACK
+find_package(LAPACK REQUIRED)
+
 # Find nlohmann/json
 find_package(nlohmann_json REQUIRED CONFIG)
 message(STATUS "Found nlohmann/json: ${nlohmann_json_VERSION} in ${nlohmann_json_DIR}")
@@ -247,7 +250,8 @@ if(PALACE_WITH_OPENMP)
   )
 endif()
 target_link_libraries(${LIB_TARGET_NAME}
-  PUBLIC mfem ${LIBCEED_TARGET} nlohmann_json::nlohmann_json fmt::fmt Eigen3::Eigen MPI::MPI_CXX
+  PUBLIC mfem ${LIBCEED_TARGET} nlohmann_json::nlohmann_json fmt::fmt
+         Eigen3::Eigen LAPACK::LAPACK MPI::MPI_CXX
 )
 
 # Install target and helper scripts

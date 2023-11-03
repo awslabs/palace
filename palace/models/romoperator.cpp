@@ -14,6 +14,16 @@
 #include "utils/iodata.hpp"
 #include "utils/timer.hpp"
 
+// Eigen does not provide a complex-valued genearlized eigenvalue solver, so we use LAPACK
+// for this.
+extern "C"
+{
+  void zggev_(char *, char *, int *, std::complex<double> *, int *, std::complex<double> *,
+              int *, std::complex<double> *, std::complex<double> *, std::complex<double> *,
+              int *, std::complex<double> *, int *, std::complex<double> *, int *, double *,
+              int *);
+}
+
 namespace palace
 {
 
@@ -107,17 +117,16 @@ template <typename MatType, typename VecType>
 inline void ComputeMRI(const MatType &R, VecType &q)
 {
   // Compute the coefficients of the minimal rational interpolation (MRI):
-  // u = [sum_s u_s q_s / (z - z_s)] / [sum_s q_s / (z - z_s)]. The coefficients are given
+  // u = [sum_i u_i q_i / (z - z_i)] / [sum_i q_i / (z - z_i)]. The coefficients are given
   // by the right singular vector of R corresponding to the minimum singular value.
-  // solution to the
   const auto S = R.rows();
   MFEM_ASSERT(S > 0 && R.cols() == S, "Invalid dimension mismatch when computing MRI!");
   // For Eigen = v3.4.0 (latest tagged release as of 10/2023)
   Eigen::JacobiSVD<Eigen::MatrixXcd> svd;
-  svd.compute(R, Eigen::ComputeFullV | Eigen::NoQRPreconditioner);
+  svd.compute(R, Eigen::ComputeFullV);
   // For Eigen > v3.4.0 (GitLab repo is at v3.4.90 as of 10/2023)
-  // Eigen::JacobiSVD<Eigen::MatrixXcd, Eigen::ComputeFullV | Eigen::NoQRPreconditioner>
-  // svd; svd.compute(R);
+  // Eigen::JacobiSVD<Eigen::MatrixXcd, Eigen::ComputeFullV> svd;
+  // svd.compute(R);
   const auto &sigma = svd.singularValues();
   auto m = S - 1;
   while (m > 0 && sigma[m] < ORTHOG_TOL * sigma[0])
@@ -128,6 +137,37 @@ inline void ComputeMRI(const MatType &R, VecType &q)
     m--;
   }
   q = svd.matrixV().col(m);
+}
+
+template <typename MatType, typename VecType>
+inline void ZGGEV(MatType &A, MatType &B, VecType &D, MatType &VR)
+{
+  // Wrapper for LAPACK's (z)ggev. A and B are overwritten by their Schur decompositions.
+  MFEM_VERIFY(A.rows() == A.cols() && B.rows() == B.cols() && A.rows() == B.rows(),
+              "Generalized eigenvalue problem expects A, B matrices to be square and have "
+              "same dimensions!");
+  char jobvl = 'N', jobvr = 'V';
+  int n = static_cast<int>(A.rows()), lwork = 2 * n;
+  std::vector<std::complex<double>> alpha(n), beta(n), work(lwork);
+  std::vector<double> rwork(8 * n);
+  MatType VL(0, 0);
+  VR.resize(n, n);
+  int info = 0;
+
+  zggev_(&jobvl, &jobvr, &n, A.data(), &n, B.data(), &n, alpha.data(), beta.data(),
+         VL.data(), &n, VR.data(), &n, work.data(), &lwork, rwork.data(), &info);
+  MFEM_VERIFY(info == 0, "ZGGEV failed with info = " << info << "!");
+
+  // Postprocess the eigenvalues and eigenvectors (return unit 2-norm eigenvectors).
+  D.resize(n);
+  for (int i = 0; i < n; i++)
+  {
+    D(i) = (beta[i] == 0.0)
+               ? ((alpha[i] == 0.0) ? std::numeric_limits<std::complex<double>>::quiet_NaN()
+                                    : mfem::infinity())
+               : alpha[i] / beta[i];
+    VR.col(i) /= VR.col(i).norm();
+  }
 }
 
 }  // namespace
@@ -268,20 +308,16 @@ void RomOperator::UpdatePROM(double omega, ComplexVector &u)
   RHSr.resize(dim_V);
 
   // Compute the coefficients for the minimal rational interpolation of the state u used
-  // as an error indicator. The complex-valued snapshot matrix U = [{u_s}] is stored by its
+  // as an error indicator. The complex-valued snapshot matrix U = [{u_i}] is stored by its
   // QR decomposition.
   MFEM_VERIFY(dim_Q + 1 <= Q.size(),
               "Unable to increase basis storage size, increase maximum number of vectors!");
   R.conservativeResizeLike(Eigen::MatrixXd::Zero(dim_Q + 1, dim_Q + 1));
-  z.conservativeResize(dim_Q + 1);
-  z(dim_Q) = omega;
-  {
-    Q[dim_Q] = u;
-    OrthogonalizeColumn(orthog_type, comm, Q, Q[dim_Q], R.col(dim_Q).data(), dim_Q);
-    R(dim_Q, dim_Q) = linalg::Norml2(comm, Q[dim_Q]);
-    Q[dim_Q] *= 1.0 / R(dim_Q, dim_Q);
-    dim_Q++;
-  }
+  Q[dim_Q] = u;
+  OrthogonalizeColumn(orthog_type, comm, Q, Q[dim_Q], R.col(dim_Q).data(), dim_Q);
+  R(dim_Q, dim_Q) = linalg::Norml2(comm, Q[dim_Q]);
+  Q[dim_Q] *= 1.0 / R(dim_Q, dim_Q);
+  dim_Q++;
   ComputeMRI(R, q);
   // if (Mpi::Root(comm))
   // {
@@ -289,9 +325,7 @@ void RomOperator::UpdatePROM(double omega, ComplexVector &u)
   //   std::cout << "R =\n" << R << "\n";
   //   std::cout << "q =\n" << q << "\n";
   // }
-
-  // Update the set of sampled parameter points.
-  S.push_back(omega);
+  z.push_back(omega);
 }
 
 void RomOperator::SolvePROM(double omega, ComplexVector &u)
@@ -360,70 +394,108 @@ void RomOperator::SolvePROM(double omega, ComplexVector &u)
   }
 }
 
-double RomOperator::FindMaxError(double start, double delta, int num_steps) const
+double RomOperator::FindMaxError(double delta) const
 {
-  // Return an estimate for argmax_z ||u(z) - V y(z)|| as argmin_z |Q(z)| with
-  // Q(z) = sum_s q_z / (z - z_s) (denominator of the barycentric interpolation of u).
-  if (delta < 0.0)
+  // Return an estimate for argmax_z ||u(z) - V y(z)|| as argmin_z |Q(z)| with Q(z) =
+  // sum_i q_z / (z - z_i) (denominator of the barycentric interpolation of u). The roots of
+  // Q are given analytically as the solution to an S + 1 dimensional eigenvalue problem.
+  const auto S = dim_Q;
+  MFEM_VERIFY(S >= 2, "Maximum error can only be found once two sample points have been "
+                      "added to the PROM to define the parameter domain!");
+  double start = *std::min_element(z.begin(), z.end());
+  double end = *std::max_element(z.begin(), z.end());
+  Eigen::Map<const Eigen::VectorXd> z_map(z.data(), S);
+
+  Eigen::MatrixXcd A = Eigen::MatrixXcd::Zero(S + 1, S + 1);
+  A.col(0).tail(S) = Eigen::VectorXcd::Ones(S);
+  A.row(0).tail(S) = q;
+  A.diagonal().tail(S) = z_map.array();
+
+  Eigen::MatrixXcd B = Eigen::MatrixXcd::Identity(S + 1, S + 1);
+  B(0, 0) = 0.0;
+
+  Eigen::VectorXcd D;
+  Eigen::MatrixXcd X;
+  ZGGEV(A, B, D, X);
+
+  // If there are multiple roots in [start, end], pick the one furthest from the existing
+  // set of samples.
+  double dist_star = 0.0, z_star = 0.0;
+  for (auto d : D)
   {
-    start = start + (num_steps - 1) * delta;
-    delta = -delta;
-  }
-  double omega_star = 0.0, Q_star = mfem::infinity();
-  for (int step = 0; step < num_steps; step++)
-  {
-    const double omega = start + step * delta;
-    const double Q = std::abs((q.array() / (z.array() - omega)).sum());
-    if (Q < Q_star)
+    if (std::real(d) >= start && std::real(d) <= end)
     {
-      omega_star = omega;
-      Q_star = Q;
+      const double dist = (z_map.array() - std::real(d)).abs().maxCoeff();
+      if (dist > dist_star)
+      {
+        z_star = std::real(d);
+        dist_star = dist;
+      }
     }
   }
-  MFEM_VERIFY(omega_star > 0.0, "Unable to find location for maximum error!");
-  return omega_star;
+  if (z_star > 0.0)
+  {
+    return z_star;
+  }
+
+  // XX TODO DEBUG: FALLBACK TO SAMPLING ON GRID WITH NO POLES
+  Mpi::Print("Falling back to sampling z* on grid [{:.3e}, {:.3e}]\n", start, end);
+
+  // Fall back to sampling Q on discrete points if no roots exist in [start, end].
+  double Q_star = mfem::infinity();
+  if (delta < 0.0)
+  {
+    delta = -delta;
+  }
+  while (start <= end)
+  {
+    const double Q = std::abs((q.array() / (z_map.array() - start)).sum());
+    if (Q < Q_star)
+    {
+      z_star = start;
+      Q_star = Q;
+    }
+    start += delta;
+  }
+  MFEM_VERIFY(z_star > 0.0, "Could not locate a maximum error in the range ["
+                                << start << ", " << end << "]!");
+  return z_star;
 }
 
 namespace
 {
 
 template <typename F, typename VecType>
-void MSLP(int n, F EvalFunction, std::complex<double> &lambda, VecType &x)
+void MSLP(int n, F EvalFunction, std::complex<double> &lambda, VecType &x,
+          double tol = 1.0e-6, int max_it = 100)
 {
+  MFEM_VERIFY(x.size() == n,
+              "Must provide an initial guess for the eigenvector x in MSLP solver!");
+
   using MatType = Eigen::MatrixXcd;
-
-  // XX TODO @ RUNTIME
-  constexpr auto max_it = 100;
-  constexpr auto tol = 1.0e-10;
-
-  MatType T(n, n), dT(n, n);
-  VecType r(n);
+  MatType T(n, n), dT(n, n), X(n, n);
+  VecType r(n), mu(n);
   Eigen::ComplexEigenSolver<MatType> eps;
-
-  // Random initial guess for the eigenvector.
-  x = VecType::Random(n);
-  x /= x.norm();
 
   int it = 0;
   while (it < max_it)
   {
     // Check convergence.
-    EvalFunction(lambda, T, dT, true);
+    EvalFunction(lambda, T, dT, true, (it == 0));
     r = T * x;
 
     // XX TODO DEBUG WIP
     Mpi::Print("MSLP iteration {:d}, l = {:e}{:+e}i, ||r|| = {:e}, ||T|| = {:e}\n", it,
                lambda.real(), lambda.imag(), r.norm(), T.norm());
 
-    double res = r.norm() / T.norm();
+    double res = r.norm() / (T.norm() * x.norm());
     if (res < tol)
     {
       break;
     }
 
     // Set up and solve the linear EVP.
-    eps.compute(dT.partialPivLu().solve(T));
-    const auto &mu = eps.eigenvalues();
+    ZGGEV(T, dT, mu, X);
 
     // Update eigenpair estimates.
     const auto i =
@@ -431,16 +503,16 @@ void MSLP(int n, F EvalFunction, std::complex<double> &lambda, VecType &x)
                                                    [](auto l, auto r)
                                                    { return std::abs(l) < std::abs(r); }));
     lambda -= mu(i);
-    x = eps.eigenvectors().col(i);
+    x = X.col(i);
     it++;
   }
   if (it == max_it)
   {
-    EvalFunction(lambda, T, dT, false);
+    EvalFunction(lambda, T, dT, false, false);
     r = T * x;
     Mpi::Warning(
         "MSLP solver did not converge, ||Tx|| / ||T|| ||x|| = {:.3e} (tol = {:.3e})!\n",
-        r.norm() / T.norm(), tol);
+        r.norm() / (T.norm() * x.norm()), tol);
   }
 }
 
@@ -448,14 +520,138 @@ template <typename F, typename MatType, typename VecType>
 void SolveNEP(int n, int num_eig, std::complex<double> sigma, F EvalFunction, VecType &D,
               MatType &X)
 {
+  // This is the deflation scheme used by SLEPc's NEP solver.
+  // Reference: Effenberger, Robust successive computation of eigenpairs for nonlinear
+  //                eigenvalue problems, SIAM J. Matrix Anal. Appl. (2013).
+  MatType T(n, n), dT(n, n), H;
+  for (int k = 0; k < num_eig; k++)
+  {
+    // Precompute all required powers of H. The minimality index of (X, H) is 1 if
+    // the eigenvectors are linearly independent.
+    int p = 1;
+    if constexpr (false)
+    {
+      if (k > 0)
+      {
+        MatType Vl = X;
+        Eigen::ColPivHouseholderQR<MatType> qr;
+        qr.compute(Vl);
+        while (qr.rank() < k)
+        {
+          Vl.conservativeResize((p + 1) * n, k);
+          Vl.bottomRows(n) = Vl.block((p - 1) * n, 0, n, k) * H;
+          qr.compute(Vl);
+          p++;
+        }
+      }
+    }
+    std::vector<MatType> HH(p);
+    HH[0] = MatType::Identity(k, k);
+    for (int i = 1; i < p; i++)
+    {
+      HH[i] = HH[i - 1] * H;
+    }
+
+    auto EvalDeflated =
+        [&](std::complex<double> l, MatType &Tp, MatType &dTp, bool jacobian, bool first)
+    {
+      if (k == 0)
+      {
+        EvalFunction(l, Tp, dTp, jacobian, first);
+        return;
+      }
+
+      // Compute the extended operators of the deflated problem, with explicit computation
+      // of S = (λ I - H)⁻¹ for U(λ) and U'(λ). When constructing S, for some reason the
+      // matrix inverse works more nicely than triangularView<Eigen::Upper>().solve().
+      EvalFunction(l, T, dT, jacobian, first);
+      const auto S = (l * MatType::Identity(k, k) - H).inverse();
+      Tp.topLeftCorner(n, n) = T;
+      Tp.topRightCorner(n, k) = T * (X * S);
+
+      // Second row: A(λ) x + B(λ) t = 0.
+      Tp.bottomRows(k) = MatType::Zero(k, n + k);
+      MatType XH(n, k);
+      for (int i = 0; i < p; i++)
+      {
+        XH = (X * HH[i]).adjoint();
+        Tp.bottomLeftCorner(k, n) += std::pow(l, i) * XH;
+        if (i > 0)
+        {
+          MatType qi = MatType::Zero(k, k);
+          for (int j = 0; j <= i - 1; j++)
+          {
+            qi += std::pow(l, j) * HH[i - j - 1];
+          }
+          Tp.bottomRightCorner(k, k) += XH * (X * qi);
+        }
+      }
+
+      if (jacobian)
+      {
+        dTp.topLeftCorner(n, n) = dT;
+        dTp.topRightCorner(n, k) = dT * X * S;
+        dTp.topRightCorner(n, k) -= Tp.topRightCorner(n, k) * S;
+        dTp.bottomRows(k) = MatType::Zero(k, n + k);
+        for (int i = 1; i < p; i++)
+        {
+          XH = (X * HH[i]).adjoint();
+          dTp.bottomLeftCorner(k, n) += (std::pow(l, i - 1) * (double)i) * XH;
+          if (i > 1)
+          {
+            MatType qi = MatType::Zero(k, k);
+            for (int j = 1; j <= i - 1; j++)
+            {
+              qi += (std::pow(l, j - 1) * (double)j) * HH[i - j - 1];
+            }
+            dTp.bottomRightCorner(k, k) += XH * (X * qi);
+          }
+        }
+      }
+    };
+
+    // Solve the deflated NEP with initial guess σ.
+    auto lambda = sigma;
+    VecType x = VecType::Random(n + k);
+    MSLP(n + k, EvalDeflated, lambda, x);
+
+    // XX TODO DEBUG WIP
+    Mpi::Print("Eigenvalue {:d}/{:d}, l = {:e}{:+e}i\n", k + 1, num_eig, lambda.real(),
+               lambda.imag());
+
+    // Update the invariant pair with normalization. This seems to work better than taking
+    // the pair (X, H) and normalizing it via a QR decomposition of X.
+    X.conservativeResize(n, k + 1);
+    H.conservativeResizeLike(Eigen::MatrixXd::Zero(k + 1, k + 1));
+    const auto scale = x.head(n).norm();
+    X.col(k) = x.head(n) / scale;
+    H.col(k).head(k) = x.tail(k) / scale;
+    H(k, k) = lambda;
+  }
+
+  // Eigenpair extraction from the invariant pair (X, H).
+  Eigen::ComplexEigenSolver<Eigen::MatrixXcd> eps;
+  eps.compute(H);
+  D = eps.eigenvalues();
+  X *= eps.eigenvectors();
+  X *= X.colwise().norm().cwiseInverse().asDiagonal();
+}
+
+template <typename F, typename MatType, typename VecType>
+void SolveNEP2(int n, int num_eig, std::complex<double> sigma, F EvalFunction, VecType &D,
+               MatType &X)
+{
+  // Deflate the converged eigenvectors explicitly (works as long as eigenvectors are
+  // independent).
   MatType QQ;
   D.resize(num_eig);
   X.resize(n, num_eig);
   for (int k = 0; k < num_eig; k++)
   {
-    auto EvalDeflated = [&](std::complex<double> l, MatType &T, MatType &dT, bool jacobian)
+    auto EvalDeflated =
+        [&](std::complex<double> l, MatType &T, MatType &dT, bool jacobian, bool first)
     {
-      EvalFunction(l, T, dT, jacobian);
+      EvalFunction(l, T, dT, jacobian, first);
       if (k == 0)
       {
         return;
@@ -466,7 +662,7 @@ void SolveNEP(int n, int num_eig, std::complex<double> sigma, F EvalFunction, Ve
 
     // Solve the deflated NEP with initial guess σ.
     auto lambda = sigma;
-    VecType x;
+    VecType x = VecType::Random(n);
     MSLP(n, EvalDeflated, lambda, x);
     D(k) = lambda;
     X.col(k) = x;
@@ -495,11 +691,11 @@ std::vector<std::complex<double>> RomOperator::ComputeEigenvalueEstimates() cons
   {
     if (Cr.rows() == 0)
     {
-      // Linear generalized EVP: M⁻¹ K x = μ x (Eigen does not support complex-valued
-      // generalized EVPs). Linear EVP has eigenvalue μ = -λ² = ω².
-      Eigen::ComplexEigenSolver<Eigen::MatrixXcd> eps;
-      eps.compute(Mr.partialPivLu().solve(Kr));
-      const auto &D = eps.eigenvalues();
+      // Linear generalized EVP: M⁻¹ K x = μ x. Linear EVP has eigenvalue μ = -λ² = ω².
+      Eigen::MatrixXcd cKr(Kr), cMr(Mr);
+      Eigen::VectorXcd D;
+      Eigen::MatrixXcd X;
+      ZGGEV(cKr, cMr, D, X);
 
       std::vector<std::complex<double>> omega;
       omega.reserve(D.size());
@@ -513,7 +709,7 @@ std::vector<std::complex<double>> RomOperator::ComputeEigenvalueEstimates() cons
     }
     else
     {
-      // Quadratic EVP: P(λ) x = (K + λ C + λ² M) x = 0 , solved via linearization.
+      // Quadratic EVP: P(λ) x = (K + λ C + λ² M) x = 0, solved via linearization.
       Eigen::MatrixXcd L0 = Eigen::MatrixXcd::Zero(2 * dim_V, 2 * dim_V);
       L0.topRightCorner(dim_V, dim_V) = Eigen::MatrixXcd::Identity(dim_V, dim_V);
       L0.bottomLeftCorner(dim_V, dim_V) = -Kr;
@@ -523,9 +719,9 @@ std::vector<std::complex<double>> RomOperator::ComputeEigenvalueEstimates() cons
       L1.topLeftCorner(dim_V, dim_V) = Eigen::MatrixXcd::Identity(dim_V, dim_V);
       L1.bottomRightCorner(dim_V, dim_V) = Mr;
 
-      Eigen::ComplexEigenSolver<Eigen::MatrixXcd> eps;
-      eps.compute(L1.partialPivLu().solve(L0));
-      const auto &D = eps.eigenvalues();
+      Eigen::VectorXcd D;
+      Eigen::MatrixXcd X;
+      ZGGEV(L0, L1, D, X);
 
       std::vector<std::complex<double>> omega;
       omega.reserve(D.size());
@@ -543,14 +739,14 @@ std::vector<std::complex<double>> RomOperator::ComputeEigenvalueEstimates() cons
   }
   else
   {
-    // General nonlinear EVP: T(λ) x = (K + λ C + λ² M + A2(Im{λ})) x = 0 . If C != 0, the
+    // General nonlinear EVP: T(λ) x = (K + λ C + λ² M + A2(Im{λ})) x = 0. If C != 0, the
     // problem is at least quadratic. The all processes solve the eigenvalue problem
     // together.
     std::complex<double> l_prev;
     Eigen::MatrixXcd Ar_prev;
     auto EvalFunction = [&l_prev, &Ar_prev, this](std::complex<double> l,
                                                   Eigen::MatrixXcd &T, Eigen::MatrixXcd &dT,
-                                                  bool jacobian)
+                                                  bool jacobian, bool first)
     {
       // Assemble T(λ) = K + λ C + λ² M + A2(Im{λ}) and T'(λ) = C + 2 λ M + A2'(Im{λ}) .
       if (has_A2)
@@ -576,7 +772,7 @@ std::vector<std::complex<double>> RomOperator::ComputeEigenvalueEstimates() cons
         {
           // Evaluate A2' by finite differencing, and reuse the existing evaluation from the
           // residual evaluation.
-          if (Ar_prev.rows() > 0)
+          if (!first && Ar_prev.rows() > 0)
           {
             dT = Ar_prev;
             dT -= Ar;
@@ -609,10 +805,10 @@ std::vector<std::complex<double>> RomOperator::ComputeEigenvalueEstimates() cons
       }
     };
 
-    // For the initial guess, we choose the second smallest entry of the sample points, S.
-    // We could also use the center of the sample range.
-    double sigma = *std::min_element(S.begin(), S.end());
-    sigma = *std::min_element(S.begin(), S.end(),
+    // For the initial guess, we choose the second smallest entry of the sample points. We
+    // could alternatively use the center of the sample range.
+    double sigma = *std::min_element(z.begin(), z.end());
+    sigma = *std::min_element(z.begin(), z.end(),
                               [sigma](auto l, auto r)
                               {
                                 if (l == sigma)
@@ -621,10 +817,19 @@ std::vector<std::complex<double>> RomOperator::ComputeEigenvalueEstimates() cons
                                   return true;
                                 return l < r;
                               });
-    const int num_eig = dim_V;  // XX TODO @ RUNTIME
+    const int num_eig = dim_V;  // XX TODO SPECIFY AT RUNTIME WITH TOLERANCES
     Eigen::VectorXcd D;
     Eigen::MatrixXcd X;
-    SolveNEP(dim_V, num_eig, 1i * sigma, EvalFunction, D, X);
+    if constexpr (false)
+    {
+      // Variant with explicit deflation of eigenbasis.
+      SolveNEP2(dim_V, num_eig, 1i * sigma, EvalFunction, D, X);
+    }
+    else
+    {
+      // Variant with extended problem deflation from Effenberger.
+      SolveNEP(dim_V, num_eig, 1i * sigma, EvalFunction, D, X);
+    }
 
     std::vector<std::complex<double>> omega;
     omega.reserve(D.size());

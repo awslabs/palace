@@ -53,10 +53,8 @@ private:
   std::vector<ComplexVector> Q;
   std::size_t dim_Q;
   Eigen::MatrixXcd R;
-  Eigen::VectorXcd q, z;
-
-  // Sample parameter points.
-  std::vector<double> S;
+  Eigen::VectorXcd q;
+  std::vector<double> z;
 
 public:
   RomOperator(const IoData &iodata, SpaceOperator &spaceop, int max_size);
@@ -68,7 +66,7 @@ public:
   int GetReducedDimension() const { return dim_V; }
 
   // Return set of sampled parameter points for basis construction.
-  const std::vector<double> &GetSamplePoints() const { return S; }
+  const auto &GetSamplePoints() const { return z; }
 
   // Assemble and solve the HDM at the specified frequency.
   void SolveHDM(double omega, ComplexVector &u);
@@ -80,9 +78,9 @@ public:
   // into the high-dimensional space.
   void SolvePROM(double omega, ComplexVector &u);
 
-  // Compute the location of the maximum error over the given range of parameter points,
+  // Compute the location of the maximum error in the given range of parameter points,
   // specified as P = {ω_L, ω_L + δ, ..., ω_R}.
-  double FindMaxError(double start, double delta, int num_steps) const;
+  double FindMaxError(double delta) const;
 
   // Compute eigenvalue estimates for the current PROM system.
   std::vector<std::complex<double>> ComputeEigenvalueEstimates() const;
