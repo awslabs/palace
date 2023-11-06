@@ -1,5 +1,5 @@
 diff --git a/fem/eltrans.cpp b/fem/eltrans.cpp
-index a4af691d7..b0bf84145 100644
+index b812e22eb..96aa854a5 100644
 --- a/fem/eltrans.cpp
 +++ b/fem/eltrans.cpp
 @@ -355,15 +355,11 @@ int InverseElementTransformation::Transform(const Vector &pt,
@@ -59,7 +59,7 @@ index 198e20df3..43eccd499 100644
  
     const FiniteElement *FElem;
 diff --git a/fem/fe/fe_base.cpp b/fem/fe/fe_base.cpp
-index ded2ffc9c..6ac215902 100644
+index b2f49a4bc..4387ae775 100644
 --- a/fem/fe/fe_base.cpp
 +++ b/fem/fe/fe_base.cpp
 @@ -359,135 +359,148 @@ void  FiniteElement::CalcPhysHessian(ElementTransformation &Trans,
@@ -527,7 +527,7 @@ index ded2ffc9c..6ac215902 100644
  }
  
 diff --git a/fem/fe/fe_base.hpp b/fem/fe/fe_base.hpp
-index 73b948ce9..74d9eebc1 100644
+index b948b4f8d..f9e31b457 100644
 --- a/fem/fe/fe_base.hpp
 +++ b/fem/fe/fe_base.hpp
 @@ -250,7 +250,7 @@ protected:
@@ -539,7 +539,7 @@ index 73b948ce9..74d9eebc1 100644
  
  public:
     /// Enumeration for range_type and deriv_range_type
-@@ -1025,8 +1025,8 @@ public:
+@@ -1026,8 +1026,8 @@ public:
     };
  
  private:
@@ -1913,7 +1913,7 @@ index 698912d97..1290f4e2a 100644
     ~GeometryRefiner();
  };
 diff --git a/fem/intrules.cpp b/fem/intrules.cpp
-index ebab7466a..c240edf44 100644
+index 8c5c354e3..cb9544852 100644
 --- a/fem/intrules.cpp
 +++ b/fem/intrules.cpp
 @@ -737,7 +737,7 @@ void QuadratureFunctions1D::GivePolyPoints(const int np, double *pts,
@@ -2152,7 +2152,7 @@ index ebab7466a..c240edf44 100644
     int nt = irt.GetNPoints();
     int ns = irs.GetNPoints();
     AllocIntRule(PrismIntRules, Order);
-@@ -1785,12 +1810,12 @@ IntegrationRule *IntegrationRules::PrismIntegrationRule(int Order)
+@@ -1790,12 +1815,12 @@ IntegrationRule *IntegrationRules::PrismIntegrationRule(int Order)
  
     for (int ks=0; ks<ns; ks++)
     {
@@ -2226,10 +2226,10 @@ index bf38766d7..1d5757994 100644
  
     /// Returns an integration rule for given GeomType and Order.
 diff --git a/mesh/mesh.cpp b/mesh/mesh.cpp
-index 4e027654c..5aac3e112 100644
+index 5e96c3f39..600f2fc2a 100644
 --- a/mesh/mesh.cpp
 +++ b/mesh/mesh.cpp
-@@ -4458,9 +4458,7 @@ void Mesh::MakeRefined_(Mesh &orig_mesh, const Array<int> ref_factors,
+@@ -4446,9 +4446,7 @@ void Mesh::MakeRefined_(Mesh &orig_mesh, const Array<int> ref_factors,
  
     Array<int> rdofs;
     DenseMatrix phys_pts;

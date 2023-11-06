@@ -1,169 +1,8 @@
-diff --git a/fem/fe.cpp b/fem/fe.cpp
-index 44390f76c..e1aef168b 100644
---- a/fem/fe.cpp
-+++ b/fem/fe.cpp
-@@ -9,17 +9,11 @@
- // terms of the BSD-3 license. We welcome feedback and contributions, see file
- // CONTRIBUTING.md for details.
- 
--// Finite Element classes
--
- #include "fe.hpp"
- 
--#include <cmath>
--
- namespace mfem
- {
- 
--using namespace std;
--
- // Global object definitions
- 
- // Static member data declared in fe_base.hpp
-@@ -27,14 +21,30 @@ using namespace std;
- Array2D<int> Poly_1D::binom;
- Poly_1D poly1d;
- 
-+// Object declared in mesh/point.hpp.
-+// Defined here to ensure it is constructed before 'Geometries'.
-+PointFiniteElement PointFE;
-+
-+// Object declared in mesh/segment.hpp.
-+// Defined here to ensure it is constructed before 'Geometries'.
-+Linear1DFiniteElement SegmentFE;
-+
- // Object declared in mesh/triangle.hpp.
- // Defined here to ensure it is constructed before 'Geometries'.
- Linear2DFiniteElement TriangleFE;
- 
-+// Object declared in mesh/quadrilateral.hpp.
-+// Defined here to ensure it is constructed before 'Geometries'.
-+BiLinear2DFiniteElement QuadrilateralFE;
-+
- // Object declared in mesh/tetrahedron.hpp.
- // Defined here to ensure it is constructed before 'Geometries'.
- Linear3DFiniteElement TetrahedronFE;
- 
-+// Object declared in mesh/hexahedron.hpp.
-+// Defined here to ensure it is constructed before 'Geometries'.
-+TriLinear3DFiniteElement HexahedronFE;
-+
- // Object declared in mesh/wedge.hpp.
- // Defined here to ensure it is constructed before 'Geometries'.
- LinearWedgeFiniteElement WedgeFE;
-@@ -44,8 +54,6 @@ LinearWedgeFiniteElement WedgeFE;
- LinearPyramidFiniteElement PyramidFE;
- 
- // Object declared in geom.hpp.
--// Construct 'Geometries' after 'TriangleFE', 'TetrahedronFE', 'WedgeFE', and
--// PyramidFE.
- Geometry Geometries;
- 
- }
-diff --git a/fem/pfespace.cpp b/fem/pfespace.cpp
-index 71c1273e0..da376ceee 100644
---- a/fem/pfespace.cpp
-+++ b/fem/pfespace.cpp
-@@ -43,7 +43,7 @@ ParFiniteElementSpace::ParFiniteElementSpace(
- }
- 
- ParFiniteElementSpace::ParFiniteElementSpace(
--   ParMesh *pm, const FiniteElementSpace *global_fes, const int *partitioning,
-+   ParMesh *pm, const FiniteElementSpace *global_fes,
-    const FiniteElementCollection *f)
-    : FiniteElementSpace(pm, MakeLocalNURBSext(global_fes->GetNURBSext(),
-                                               pm->NURBSext),
-diff --git a/fem/pfespace.hpp b/fem/pfespace.hpp
-index 10508097c..ee2de2921 100644
---- a/fem/pfespace.hpp
-+++ b/fem/pfespace.hpp
-@@ -243,14 +243,11 @@ public:
-    /** @brief Construct the *local* ParFiniteElementSpace corresponding to the
-        global FE space, @a global_fes. */
-    /** The parameter @a pm is the *local* ParMesh obtained by decomposing the
--       global Mesh used by @a global_fes. The array @a partitioning represents
--       the parallel decomposition - it maps global element ids to MPI ranks.
--       If the FiniteElementCollection, @a f, is NULL (default), the FE
--       collection used by @a global_fes will be reused. If @a f is not NULL, it
--       must be the same as, or a copy of, the FE collection used by
--       @a global_fes. */
-+       global Mesh used by @a global_fes. If the FiniteElementCollection, @a f,
-+       is NULL (default), the FE collection used by @a global_fes will be
-+       reused. If @a f is not NULL, it must be the same as, or a copy of, the FE
-+       collection used by @a global_fes. */
-    ParFiniteElementSpace(ParMesh *pm, const FiniteElementSpace *global_fes,
--                         const int *partitioning,
-                          const FiniteElementCollection *f = NULL);
- 
-    ParFiniteElementSpace(ParMesh *pm, const FiniteElementCollection *f,
-diff --git a/fem/pgridfunc.cpp b/fem/pgridfunc.cpp
-index d49187457..0a58530c1 100644
---- a/fem/pgridfunc.cpp
-+++ b/fem/pgridfunc.cpp
-@@ -41,7 +41,7 @@ ParGridFunction::ParGridFunction(ParMesh *pmesh, const GridFunction *gf,
-    // duplicate the FiniteElementCollection from 'gf'
-    fec = FiniteElementCollection::New(glob_fes->FEColl()->Name());
-    // create a local ParFiniteElementSpace from the global one:
--   fes = pfes = new ParFiniteElementSpace(pmesh, glob_fes, partitioning, fec);
-+   fes = pfes = new ParFiniteElementSpace(pmesh, glob_fes, fec);
-    SetSize(pfes->GetVSize());
- 
-    if (partitioning)
-diff --git a/mesh/element.cpp b/mesh/element.cpp
-index c21b8f9bd..1e5ee7706 100644
---- a/mesh/element.cpp
-+++ b/mesh/element.cpp
-@@ -9,7 +9,7 @@
- // terms of the BSD-3 license. We welcome feedback and contributions, see file
- // CONTRIBUTING.md for details.
- 
--#include "mesh_headers.hpp"
-+#include "element.hpp"
- 
- namespace mfem
- {
 diff --git a/mesh/element.hpp b/mesh/element.hpp
-index c37205eb1..49a4cad61 100644
+index c37205eb1..f1b003cae 100644
 --- a/mesh/element.hpp
 +++ b/mesh/element.hpp
-@@ -13,10 +13,9 @@
- #define MFEM_ELEMENT
- 
- #include "../config/config.hpp"
-+#include "../fem/geom.hpp"
- #include "../general/array.hpp"
- #include "../general/table.hpp"
--#include "../linalg/densemat.hpp"
--#include "../fem/geom.hpp"
- #include "../general/hash.hpp"
- 
- namespace mfem
-@@ -28,7 +27,6 @@ class Mesh;
- class Element
- {
- protected:
--
-    /// Element's attribute (specifying material property, etc).
-    int attribute;
- 
-@@ -36,7 +34,6 @@ protected:
-    Geometry::Type base_geom;
- 
- public:
--
-    /// Constants for the classes derived from Element.
-    enum Type { POINT, SEGMENT, TRIANGLE, QUADRILATERAL,
-                TETRAHEDRON, HEXAHEDRON, WEDGE, PYRAMID
-@@ -75,26 +72,20 @@ public:
- 
-    virtual const int *GetEdgeVertices(int) const = 0;
- 
--   /// @deprecated Use GetNFaces(void) and GetNFaceVertices(int) instead.
--   MFEM_DEPRECATED virtual int GetNFaces(int &nFaceVertices) const = 0;
--
-    virtual int GetNFaces() const = 0;
- 
-    virtual int GetNFaceVertices(int fi) const = 0;
+@@ -84,9 +84,6 @@ public:
  
     virtual const int *GetFaceVertices(int fi) const = 0;
  
@@ -173,64 +12,8 @@ index c37205eb1..49a4cad61 100644
     /// Return 1 if the element needs refinement in order to get conforming mesh.
     virtual int NeedRefinement(HashTable<Hashed2> &v_to_v) const { return 0; }
  
-    /// Set current coarse-fine transformation number.
--   virtual void ResetTransform(int tr) {}
-+   virtual void ResetTransform(int tr) { }
- 
-    /// Add 'tr' to the current chain of coarse-fine transformations.
--   virtual void PushTransform(int tr) {}
-+   virtual void PushTransform(int tr) { }
- 
-    /// Return current coarse-fine transformation.
-    virtual unsigned GetTransform() const { return 0; }
-diff --git a/mesh/hexahedron.cpp b/mesh/hexahedron.cpp
-index beeab3b6a..96287d6c2 100644
---- a/mesh/hexahedron.cpp
-+++ b/mesh/hexahedron.cpp
-@@ -9,8 +9,7 @@
- // terms of the BSD-3 license. We welcome feedback and contributions, see file
- // CONTRIBUTING.md for details.
- 
--
--#include "mesh_headers.hpp"
-+#include "hexahedron.hpp"
- 
- namespace mfem
- {
-@@ -27,7 +26,8 @@ Hexahedron::Hexahedron(const int *ind, int attr)
- 
- Hexahedron::Hexahedron(int ind1, int ind2, int ind3, int ind4,
-                        int ind5, int ind6, int ind7, int ind8,
--                       int attr) : Element(Geometry::CUBE)
-+                       int attr)
-+   : Element(Geometry::CUBE)
- {
-    attribute  = attr;
-    indices[0] = ind1;
-@@ -49,6 +49,4 @@ void Hexahedron::GetVertices(Array<int> &v) const
-    }
- }
- 
--TriLinear3DFiniteElement HexahedronFE;
--
- }
-diff --git a/mesh/hexahedron.hpp b/mesh/hexahedron.hpp
-index a8186c0c8..6b62a14d6 100644
---- a/mesh/hexahedron.hpp
-+++ b/mesh/hexahedron.hpp
-@@ -51,10 +51,6 @@ public:
-    virtual const int *GetEdgeVertices(int ei) const
-    { return geom_t::Edges[ei]; }
- 
--   /// @deprecated Use GetNFaces(void) and GetNFaceVertices(int) instead.
--   MFEM_DEPRECATED virtual int GetNFaces(int &nFaceVertices) const
--   { nFaceVertices = 4; return 6; }
--
-    virtual int GetNFaces() const { return 6; }
- 
-    virtual int GetNFaceVertices(int) const { return 4; }
 diff --git a/mesh/mesh.cpp b/mesh/mesh.cpp
-index d79ee99cf..a8da852b9 100644
+index f76104da3..5e96c3f39 100644
 --- a/mesh/mesh.cpp
 +++ b/mesh/mesh.cpp
 @@ -489,6 +489,7 @@ void Mesh::GetBdrElementTransformation(int i, IsoparametricTransformation* ElTr)
@@ -241,7 +24,7 @@ index d79ee99cf..a8da852b9 100644
           IntegrationRule eir(face_el->GetDof());
           FaceElemTr.Loc1.Transf.ElementNo = elem_id;
           FaceElemTr.Loc1.Transf.mesh = this;
-@@ -1963,7 +1964,7 @@ void Mesh::FinalizeTriMesh(int generate_edges, int refine, bool fix_orientation)
+@@ -1941,7 +1942,7 @@ void Mesh::FinalizeTriMesh(int generate_edges, int refine, bool fix_orientation)
  
     if (refine)
     {
@@ -250,7 +33,7 @@ index d79ee99cf..a8da852b9 100644
     }
  
     if (generate_edges)
-@@ -2418,82 +2419,109 @@ void Mesh::ReorderElements(const Array<int> &ordering, bool reorder_vertices)
+@@ -2395,82 +2396,110 @@ void Mesh::ReorderElements(const Array<int> &ordering, bool reorder_vertices)
  }
  
  
@@ -287,7 +70,8 @@ index d79ee99cf..a8da852b9 100644
 +   {
 +      for (DSTable::RowIterator it(v_to_v, i); !it; ++it)
 +      {
-+         lengths[it.Index()] = GetLength(i, it.Column());
++         int j = it.Index();
++         lengths[j] = GetLength(i, it.Column());
 +      }
 +   }
 +};
@@ -331,7 +115,7 @@ index d79ee99cf..a8da852b9 100644
 +   Array<double> lengths;
 +   GetEdgeLengths(v_to_v, lengths);
  
--void Mesh::GetEdgeOrdering(DSTable &v_to_v, Array<int> &order)
+-void Mesh::GetEdgeOrdering(const DSTable &v_to_v, Array<int> &order)
 -{
 -   NumOfEdges = v_to_v.NumberOfEntries();
 -   order.SetSize(NumOfEdges);
@@ -363,8 +147,7 @@ index d79ee99cf..a8da852b9 100644
 -   }
  }
  
--void Mesh::MarkTetMeshForRefinement(DSTable &v_to_v)
-+void Mesh::MarkTetMeshForRefinement(const DSTable &v_to_v)
+ void Mesh::MarkTetMeshForRefinement(const DSTable &v_to_v)
  {
     // Mark the longest tetrahedral edge by rotating the indices so that
     // vertex 0 - vertex 1 is the longest edge in the element.
@@ -397,7 +180,7 @@ index d79ee99cf..a8da852b9 100644
        }
     }
  }
-@@ -2843,9 +2871,7 @@ void Mesh::FinalizeTetMesh(int generate_edges, int refine, bool fix_orientation)
+@@ -2820,9 +2849,7 @@ void Mesh::FinalizeTetMesh(int generate_edges, int refine, bool fix_orientation)
  
     if (refine)
     {
@@ -408,7 +191,7 @@ index d79ee99cf..a8da852b9 100644
     }
  
     GetElementToFaceTable();
-@@ -3103,8 +3129,7 @@ void Mesh::Finalize(bool refine, bool fix_orientation)
+@@ -3089,8 +3116,7 @@ void Mesh::Finalize(bool refine, bool fix_orientation)
     // only perform it when Dim == spaceDim.
     if (Dim >= 2 && Dim == spaceDim)
     {
@@ -418,7 +201,7 @@ index d79ee99cf..a8da852b9 100644
        {
           MFEM_VERIFY(faces_info[i].Elem2No < 0 ||
                       faces_info[i].Elem2Inf%2 != 0, "Invalid mesh topology."
-@@ -3541,8 +3566,6 @@ void Mesh::Make2D(int nx, int ny, Element::Type type,
+@@ -3527,8 +3553,6 @@ void Mesh::Make2D(int nx, int ny, Element::Type type,
           boundary[2*nx+j] = new Segment((j+1)*m, j*m, 4);
           boundary[2*nx+ny+j] = new Segment(j*m+nx, (j+1)*m+nx, 2);
        }
@@ -427,7 +210,7 @@ index d79ee99cf..a8da852b9 100644
     }
     else
     {
-@@ -5711,37 +5734,21 @@ static const char *fixed_or_not[] = { "fixed", "NOT FIXED" };
+@@ -5699,37 +5723,21 @@ static const char *fixed_or_not[] = { "fixed", "NOT FIXED" };
  
  int Mesh::CheckElementOrientation(bool fix_it)
  {
@@ -470,7 +253,7 @@ index d79ee99cf..a8da852b9 100644
                 switch (GetElementType(i))
                 {
                    case Element::TRIANGLE:
-@@ -5761,88 +5768,41 @@ int Mesh::CheckElementOrientation(bool fix_it)
+@@ -5749,88 +5757,41 @@ int Mesh::CheckElementOrientation(bool fix_it)
           }
        }
     }
@@ -582,7 +365,7 @@ index d79ee99cf..a8da852b9 100644
           }
        }
     }
-@@ -6679,24 +6639,12 @@ void Mesh::GetBdrPointMatrix(int i,DenseMatrix &pointmat) const
+@@ -6756,24 +6717,12 @@ void Mesh::GetBdrPointMatrix(int i,DenseMatrix &pointmat) const
  
     pointmat.SetSize(spaceDim, nv);
     for (k = 0; k < spaceDim; k++)
@@ -609,38 +392,10 @@ index d79ee99cf..a8da852b9 100644
  
  // static method
 diff --git a/mesh/mesh.hpp b/mesh/mesh.hpp
-index 42032e05a..28910bfbf 100644
+index 8be58b232..b9c5538c3 100644
 --- a/mesh/mesh.hpp
 +++ b/mesh/mesh.hpp
-@@ -31,8 +31,6 @@
- namespace mfem
- {
- 
--// Data type mesh
--
- class GeometricFactors;
- class FaceGeometricFactors;
- class KnotVector;
-@@ -49,15 +47,15 @@ class ParMesh;
- class ParNCMesh;
- #endif
- 
-+/// Mesh data type
- class Mesh
- {
-+   friend class NCMesh;
-+   friend class NURBSExtension;
- #ifdef MFEM_USE_MPI
-    friend class ParMesh;
-    friend class ParNCMesh;
- #endif
--   friend class NCMesh;
--   friend class NURBSExtension;
--
- #ifdef MFEM_USE_ADIOS2
-    friend class adios2stream;
- #endif
-@@ -331,13 +329,10 @@ protected:
+@@ -358,12 +358,9 @@ protected:
     /** Also, initializes #mesh_geoms. */
     void SetMeshGen();
  
@@ -650,15 +405,13 @@ index 42032e05a..28910bfbf 100644
 +   void GetEdgeLengths(const DSTable &v_to_v, Array<double> &lengths) const;
     void MarkForRefinement();
 -   void MarkTriMeshForRefinement();
--   void GetEdgeOrdering(DSTable &v_to_v, Array<int> &order);
--   virtual void MarkTetMeshForRefinement(DSTable &v_to_v);
+-   void GetEdgeOrdering(const DSTable &v_to_v, Array<int> &order);
 +   void MarkTriMeshForRefinement(const DSTable &v_to_v);
-+   virtual void MarkTetMeshForRefinement(const DSTable &v_to_v);
+    virtual void MarkTetMeshForRefinement(const DSTable &v_to_v);
  
     // Methods used to prepare and apply permutation of the mesh nodes assuming
-    // that the mesh elements may be rotated (e.g. to mark triangle or tet edges
 diff --git a/mesh/pmesh.cpp b/mesh/pmesh.cpp
-index b341be9a8..66d98d9dc 100644
+index 28b8a1bf8..26e2f4655 100644
 --- a/mesh/pmesh.cpp
 +++ b/mesh/pmesh.cpp
 @@ -20,6 +20,7 @@
@@ -669,7 +422,7 @@ index b341be9a8..66d98d9dc 100644
  #include <iostream>
  #include <fstream>
  
-@@ -751,8 +752,10 @@ void ParMesh::BuildSharedFaceElems(int ntri_faces, int nquad_faces,
+@@ -762,8 +763,10 @@ void ParMesh::BuildSharedFaceElems(int ntri_faces, int nquad_faces,
              sface_lface[stria_counter] = lface;
              if (meshgen == 1) // Tet-only mesh
              {
@@ -682,33 +435,9 @@ index b341be9a8..66d98d9dc 100644
                 // mark the shared face for refinement by reorienting
                 // it according to the refinement flag in the tetrahedron
                 // to which this shared face belongs to.
-@@ -921,7 +924,8 @@ void ParMesh::FinalizeParTopo()
-    }
- }
+@@ -1739,97 +1742,59 @@ void ParMesh::GetSharedTriCommunicator(int ordering,
  
--ParMesh::ParMesh(MPI_Comm comm, istream &input, bool refine)
-+ParMesh::ParMesh(MPI_Comm comm, istream &input, int generate_edges,
-+                 int refine, bool fix_orientation)
-    : face_nbr_el_to_face(NULL)
-    , glob_elem_offset(-1)
-    , glob_offset_sequence(-1)
-@@ -934,9 +938,7 @@ ParMesh::ParMesh(MPI_Comm comm, istream &input, bool refine)
-    have_face_nbr_data = false;
-    pncmesh = NULL;
- 
--   const int gen_edges = 1;
--
--   Load(input, gen_edges, refine, true);
-+   Load(input, generate_edges, refine, fix_orientation);
- }
- 
- void ParMesh::Load(istream &input, int generate_edges, int refine,
-@@ -1730,99 +1732,61 @@ void ParMesh::GetSharedTriCommunicator(int ordering,
-    stria_comm.Finalize();
- }
- 
--void ParMesh::MarkTetMeshForRefinement(DSTable &v_to_v)
-+void ParMesh::MarkTetMeshForRefinement(const DSTable &v_to_v)
+ void ParMesh::MarkTetMeshForRefinement(const DSTable &v_to_v)
  {
 -   Array<int> order;
 -   GetEdgeOrdering(v_to_v, order); // local edge ordering
@@ -839,7 +568,7 @@ index b341be9a8..66d98d9dc 100644
        }
     }
  
-@@ -1830,13 +1794,16 @@ void ParMesh::MarkTetMeshForRefinement(DSTable &v_to_v)
+@@ -1837,13 +1802,16 @@ void ParMesh::MarkTetMeshForRefinement(const DSTable &v_to_v)
     {
        if (boundary[i]->GetType() == Element::TRIANGLE)
        {
@@ -858,479 +587,20 @@ index b341be9a8..66d98d9dc 100644
     }
  }
  
-@@ -2055,6 +2022,7 @@ void ParMesh::DeleteFaceNbrData()
- 
- void ParMesh::SetCurvature(int order, bool discont, int space_dim, int ordering)
- {
-+   DeleteFaceNbrData();
-    space_dim = (space_dim == -1) ? spaceDim : space_dim;
-    FiniteElementCollection* nfec;
-    if (discont)
-@@ -2075,6 +2043,7 @@ void ParMesh::SetCurvature(int order, bool discont, int space_dim, int ordering)
- 
- void ParMesh::SetNodalFESpace(FiniteElementSpace *nfes)
- {
-+   DeleteFaceNbrData();
-    ParFiniteElementSpace *npfes = dynamic_cast<ParFiniteElementSpace*>(nfes);
-    if (npfes)
-    {
-@@ -2088,6 +2057,7 @@ void ParMesh::SetNodalFESpace(FiniteElementSpace *nfes)
- 
- void ParMesh::SetNodalFESpace(ParFiniteElementSpace *npfes)
- {
-+   DeleteFaceNbrData();
-    ParGridFunction *nodes = new ParGridFunction(npfes);
-    SetNodalGridFunction(nodes, true);
- }
-@@ -2096,19 +2066,17 @@ void ParMesh::EnsureParNodes()
- {
-    if (Nodes && dynamic_cast<ParFiniteElementSpace*>(Nodes->FESpace()) == NULL)
-    {
-+      DeleteFaceNbrData();
-       ParFiniteElementSpace *pfes =
-          new ParFiniteElementSpace(*Nodes->FESpace(), *this);
-       ParGridFunction *new_nodes = new ParGridFunction(pfes);
--
-       *new_nodes = *Nodes;
--
-       if (Nodes->OwnFEC())
-       {
-          new_nodes->MakeOwner(Nodes->OwnFEC());
-          Nodes->MakeOwner(NULL); // takes away ownership of 'fec' and 'fes'
-          delete Nodes->FESpace();
-       }
--
-       delete Nodes;
-       Nodes = new_nodes;
-    }
-@@ -3291,17 +3259,15 @@ void ParMesh::ReorientTetMesh()
-    // other ranks in the group
-    Array<int> svert_master_rank(svert_lvert.Size());
-    Array<int> svert_master_index(svert_lvert);
-+   for (int i = 0; i < group_svert.Size(); i++)
-    {
--      for (int i = 0; i < group_svert.Size(); i++)
-+      int rank = gtopo.GetGroupMasterRank(i+1);
-+      for (int j = 0; j < group_svert.RowSize(i); j++)
-       {
--         int rank = gtopo.GetGroupMasterRank(i+1);
--         for (int j = 0; j < group_svert.RowSize(i); j++)
--         {
--            svert_master_rank[group_svert.GetRow(i)[j]] = rank;
--         }
-+         svert_master_rank[group_svert.GetRow(i)[j]] = rank;
-       }
--      svert_comm.Bcast(svert_master_index);
-    }
-+   svert_comm.Bcast(svert_master_index);
- 
-    // the pairs (master rank, master local index) define a globally consistent
-    // vertex ordering
-diff --git a/mesh/pmesh.hpp b/mesh/pmesh.hpp
-index f6139ff13..bdf72c8e4 100644
---- a/mesh/pmesh.hpp
-+++ b/mesh/pmesh.hpp
-@@ -24,6 +24,7 @@
- 
- namespace mfem
- {
-+
- #ifdef MFEM_USE_PUMI
- class ParPumiMesh;
- #endif
-@@ -31,9 +32,16 @@ class ParPumiMesh;
- /// Class for parallel meshes
- class ParMesh : public Mesh
- {
--protected:
-+   friend class ParNCMesh;
-    friend class ParSubMesh;
-+#ifdef MFEM_USE_PUMI
-+   friend class ParPumiMesh;
-+#endif
-+#ifdef MFEM_USE_ADIOS2
-+   friend class adios2stream;
-+#endif
- 
-+protected:
-    MPI_Comm MyComm;
-    int NRanks, MyRank;
- 
-@@ -102,7 +110,7 @@ protected:
- 
-    // Mark all tets to ensure consistency across MPI tasks; also mark the
-    // shared and boundary triangle faces using the consistently marked tets.
--   void MarkTetMeshForRefinement(DSTable &v_to_v) override;
-+   void MarkTetMeshForRefinement(const DSTable &v_to_v) override;
- 
-    /// Return a number(0-1) identifying how the given edge has been split
-    int GetEdgeSplittings(Element *edge, const DSTable &v_to_v, int *middle);
-@@ -309,7 +317,8 @@ public:
- 
-    /// Read a parallel mesh, each MPI rank from its own file/stream.
-    /** The @a refine parameter is passed to the method Mesh::Finalize(). */
--   ParMesh(MPI_Comm comm, std::istream &input, bool refine = true);
-+   ParMesh(MPI_Comm comm, std::istream &input, int generate_edges = 0,
-+           int refine = 1, bool fix_orientation = true);
- 
-    /// Deprecated: see @a ParMesh::MakeRefined
-    MFEM_DEPRECATED
-@@ -665,14 +674,6 @@ public:
-    void PrintSharedEntities(const std::string &fname_prefix) const;
- 
-    virtual ~ParMesh();
--
--   friend class ParNCMesh;
--#ifdef MFEM_USE_PUMI
--   friend class ParPumiMesh;
--#endif
--#ifdef MFEM_USE_ADIOS2
--   friend class adios2stream;
--#endif
- };
- 
- }
-diff --git a/mesh/point.cpp b/mesh/point.cpp
-index ecf6a4dd0..93df9f9f4 100644
---- a/mesh/point.cpp
-+++ b/mesh/point.cpp
-@@ -9,24 +9,21 @@
- // terms of the BSD-3 license. We welcome feedback and contributions, see file
- // CONTRIBUTING.md for details.
- 
--
--#include "mesh_headers.hpp"
-+#include "point.hpp"
- 
- namespace mfem
- {
- 
--Point::Point( const int *ind, int attr ) : Element(Geometry::POINT)
-+Point::Point(const int *ind, int attr) : Element(Geometry::POINT)
- {
-    attribute = attr;
-    indices[0] = ind[0];
- }
- 
--void Point::GetVertices( Array<int> &v ) const
-+void Point::GetVertices(Array<int> &v) const
- {
--   v.SetSize( 1 );
-+   v.SetSize(1);
-    v[0] = indices[0];
- }
- 
--PointFiniteElement PointFE;
--
- }
-diff --git a/mesh/point.hpp b/mesh/point.hpp
-index f154e205e..db14bfb77 100644
---- a/mesh/point.hpp
-+++ b/mesh/point.hpp
-@@ -30,26 +30,22 @@ public:
-    Point() : Element(Geometry::POINT) {}
- 
-    /// Constructs point by specifying the indices and the attribute.
--   Point( const int *ind, int attr = -1 );
-+   Point(const int *ind, int attr = 1);
- 
-    /// Return element's type.
-    virtual Type GetType() const { return Element::POINT; }
- 
--   /// Returns the indices of the element's  vertices.
--   virtual void GetVertices( Array<int> &v ) const;
-+   /// Returns the indices of the element's vertices.
-+   virtual void GetVertices(Array<int> &v) const;
- 
--   virtual int * GetVertices () { return indices; }
-+   virtual int *GetVertices() { return indices; }
- 
-    virtual int GetNVertices() const { return 1; }
- 
--   virtual int GetNEdges() const { return (0); }
-+   virtual int GetNEdges() const { return 0; }
- 
-    virtual const int *GetEdgeVertices(int ei) const { return NULL; }
- 
--   /// @deprecated Use GetNFaces(void) and GetNFaceVertices(int) instead.
--   MFEM_DEPRECATED virtual int GetNFaces(int &nFaceVertices) const
--   { nFaceVertices = 0; return 0; }
--
-    virtual int GetNFaces() const { return 0; }
- 
-    virtual int GetNFaceVertices(int) const { return 0; }
-@@ -62,8 +58,7 @@ public:
-    virtual ~Point() { }
- };
- 
--class PointFiniteElement;
--extern MFEM_EXPORT PointFiniteElement PointFE;
-+extern MFEM_EXPORT class PointFiniteElement PointFE;
- 
- }
- 
-diff --git a/mesh/pyramid.cpp b/mesh/pyramid.cpp
-index d67841564..038a3c378 100644
---- a/mesh/pyramid.cpp
-+++ b/mesh/pyramid.cpp
-@@ -9,9 +9,7 @@
- // terms of the BSD-3 license. We welcome feedback and contributions, see file
- // CONTRIBUTING.md for details.
- 
--// Implementation of class Pyramid
--
--#include "mesh_headers.hpp"
-+#include "pyramid.hpp"
- 
- namespace mfem
- {
-@@ -54,11 +52,4 @@ void Pyramid::GetVertices(Array<int> &v) const
-    }
- }
- 
--int Pyramid::GetNFaces(int &nFaceVertices) const
--{
--   MFEM_ABORT("this method is not valid for Pyramid elements");
--   nFaceVertices = 4;
--   return 5;
--}
--
- }
-diff --git a/mesh/pyramid.hpp b/mesh/pyramid.hpp
-index 8e171a31d..d6b6afa3e 100644
---- a/mesh/pyramid.hpp
-+++ b/mesh/pyramid.hpp
-@@ -18,7 +18,7 @@
- namespace mfem
- {
- 
--/// Data type Pyramid element
-+/// Data type pyramid element
- class Pyramid : public Element
- {
- protected:
-@@ -42,7 +42,7 @@ public:
-    /// Set the vertices according to the given input.
-    virtual void SetVertices(const int *ind);
- 
--   /// Returns the indices of the element's  vertices.
-+   /// Returns the indices of the element's vertices.
-    virtual void GetVertices(Array<int> &v) const;
- 
-    virtual int *GetVertices() { return indices; }
-@@ -54,13 +54,10 @@ public:
-    virtual const int *GetEdgeVertices(int ei) const
-    { return geom_t::Edges[ei]; }
- 
--   /// @deprecated Use GetNFaces(void) and GetNFaceVertices(int) instead.
--   MFEM_DEPRECATED virtual int GetNFaces(int &nFaceVertices) const;
--
-    virtual int GetNFaces() const { return 5; }
- 
-    virtual int GetNFaceVertices(int fi) const
--   { return ( ( fi < 1 ) ? 4 : 3); }
-+   { return (fi < 1) ? 4 : 3; }
- 
-    virtual const int *GetFaceVertices(int fi) const
-    { return geom_t::FaceVert[fi]; }
-@@ -71,7 +68,7 @@ public:
-    virtual ~Pyramid() { }
- };
- 
--extern class LinearPyramidFiniteElement PyramidFE;
-+extern MFEM_EXPORT class LinearPyramidFiniteElement PyramidFE;
- 
- }
- 
-diff --git a/mesh/quadrilateral.cpp b/mesh/quadrilateral.cpp
-index 1a69cf179..57f14800f 100644
---- a/mesh/quadrilateral.cpp
-+++ b/mesh/quadrilateral.cpp
-@@ -9,24 +9,23 @@
- // terms of the BSD-3 license. We welcome feedback and contributions, see file
- // CONTRIBUTING.md for details.
- 
--
--#include "mesh_headers.hpp"
-+#include "quadrilateral.hpp"
- 
- namespace mfem
- {
- 
--Quadrilateral::Quadrilateral( const int *ind, int attr )
-+Quadrilateral::Quadrilateral(const int *ind, int attr)
-    : Element(Geometry::SQUARE)
- {
-    attribute = attr;
--   for (int i=0; i<4; i++)
-+   for (int i = 0; i < 4; i++)
-    {
-       indices[i] = ind[i];
-    }
- }
- 
--Quadrilateral::Quadrilateral( int ind1, int ind2, int ind3, int ind4,
--                              int attr ) : Element(Geometry::SQUARE)
-+Quadrilateral::Quadrilateral(int ind1, int ind2, int ind3, int ind4, int attr)
-+   : Element(Geometry::SQUARE)
- {
-    attribute  = attr;
-    indices[0] = ind1;
-@@ -37,21 +36,19 @@ Quadrilateral::Quadrilateral( int ind1, int ind2, int ind3, int ind4,
- 
- void Quadrilateral::SetVertices(const int *ind)
- {
--   for (int i=0; i<4; i++)
-+   for (int i = 0; i < 4; i++)
-    {
-       indices[i] = ind[i];
-    }
- }
- 
--void Quadrilateral::GetVertices( Array<int> &v ) const
-+void Quadrilateral::GetVertices(Array<int> &v) const
- {
--   v.SetSize( 4 );
--   for (int i=0; i<4; i++)
-+   v.SetSize(4);
-+   for (int i = 0; i < 4; i++)
-    {
-       v[i] = indices[i];
-    }
- }
- 
--BiLinear2DFiniteElement QuadrilateralFE;
--
- }
-diff --git a/mesh/quadrilateral.hpp b/mesh/quadrilateral.hpp
-index 9f6b9a442..4ad31c33d 100644
---- a/mesh/quadrilateral.hpp
-+++ b/mesh/quadrilateral.hpp
-@@ -48,15 +48,11 @@ public:
- 
-    virtual int GetNVertices() const { return 4; }
- 
--   virtual int GetNEdges() const { return (4); }
-+   virtual int GetNEdges() const { return 4; }
- 
-    virtual const int *GetEdgeVertices(int ei) const
-    { return geom_t::Edges[ei]; }
- 
--   /// @deprecated Use GetNFaces(void) and GetNFaceVertices(int) instead.
--   MFEM_DEPRECATED virtual int GetNFaces(int &nFaceVertices) const
--   { nFaceVertices = 0; return 0; }
--
-    virtual int GetNFaces() const { return 0; }
- 
-    virtual int GetNFaceVertices(int) const { return 0; }
-diff --git a/mesh/segment.cpp b/mesh/segment.cpp
-index 717245907..82bdbdf3b 100644
---- a/mesh/segment.cpp
-+++ b/mesh/segment.cpp
-@@ -9,22 +9,21 @@
- // terms of the BSD-3 license. We welcome feedback and contributions, see file
- // CONTRIBUTING.md for details.
- 
--
--#include "mesh_headers.hpp"
-+#include "segment.hpp"
- 
- namespace mfem
- {
- 
--Segment::Segment( const int *ind, int attr ) : Element(Geometry::SEGMENT)
-+Segment::Segment(const int *ind, int attr) : Element(Geometry::SEGMENT)
- {
-    attribute = attr;
--   for (int i=0; i<2; i++)
-+   for (int i = 0; i < 2; i++)
-    {
-       indices[i] = ind[i];
-    }
- }
- 
--Segment::Segment( int ind1, int ind2, int attr ) : Element(Geometry::SEGMENT)
-+Segment::Segment(int ind1, int ind2, int attr) : Element(Geometry::SEGMENT)
- {
-    attribute  = attr;
-    indices[0] = ind1;
-@@ -37,15 +36,13 @@ void Segment::SetVertices(const int *ind)
-    indices[1] = ind[1];
- }
- 
--void Segment::GetVertices( Array<int> &v ) const
-+void Segment::GetVertices(Array<int> &v) const
- {
--   v.SetSize( 2 );
--   for (int i=0; i<2; i++)
-+   v.SetSize(2);
-+   for (int i = 0; i < 2; i++)
-    {
-       v[i] = indices[i];
-    }
- }
- 
--Linear1DFiniteElement SegmentFE;
--
- }
-diff --git a/mesh/segment.hpp b/mesh/segment.hpp
-index 6ca918758..9d58704e4 100644
---- a/mesh/segment.hpp
-+++ b/mesh/segment.hpp
-@@ -41,21 +41,17 @@ public:
-    /// Return element's type.
-    virtual Type GetType() const { return Element::SEGMENT; }
- 
--   /// Returns the indices of the element's  vertices.
-+   /// Returns the indices of the element's vertices.
-    virtual void GetVertices(Array<int> &v) const;
- 
-    virtual int *GetVertices() { return indices; }
- 
-    virtual int GetNVertices() const { return 2; }
- 
--   virtual int GetNEdges() const { return (0); }
-+   virtual int GetNEdges() const { return 0; }
- 
-    virtual const int *GetEdgeVertices(int ei) const { return NULL; }
- 
--   /// @deprecated Use GetNFaces(void) and GetNFaceVertices(int) instead.
--   MFEM_DEPRECATED virtual int GetNFaces(int &nFaceVertices) const
--   { nFaceVertices = 0; return 0; }
--
-    virtual int GetNFaces() const { return 0; }
- 
-    virtual int GetNFaceVertices(int) const { return 0; }
-@@ -68,8 +64,7 @@ public:
-    virtual ~Segment() { }
- };
- 
--class Linear1DFiniteElement;
--extern MFEM_EXPORT Linear1DFiniteElement SegmentFE;
-+extern MFEM_EXPORT class Linear1DFiniteElement SegmentFE;
- 
- }
- 
 diff --git a/mesh/tetrahedron.cpp b/mesh/tetrahedron.cpp
-index c7ebc064b..27e634545 100644
+index c7ebc064b..0815fc0a7 100644
 --- a/mesh/tetrahedron.cpp
 +++ b/mesh/tetrahedron.cpp
-@@ -9,9 +9,12 @@
- // terms of the BSD-3 license. We welcome feedback and contributions, see file
- // CONTRIBUTING.md for details.
+@@ -13,6 +13,8 @@
  
--// Implementation of class Tetrahedron
-+#include "tetrahedron.hpp"
+ #include "mesh_headers.hpp"
  
--#include "mesh_headers.hpp"
-+#include "../mesh/mesh.hpp"
-+#include "../linalg/densemat.hpp"
-+
 +#include <cstdint>
- 
++
  namespace mfem
  {
-@@ -184,19 +187,30 @@ void Tetrahedron::SetVertices(const int *ind)
+ 
+@@ -184,19 +186,30 @@ void Tetrahedron::SetVertices(const int *ind)
     }
  }
  
@@ -1372,7 +642,7 @@ index c7ebc064b..27e634545 100644
     {
        ind[i] = indices[i];
     }
-@@ -228,13 +242,14 @@ void Tetrahedron::MarkEdge(const DSTable &v_to_v, const int *length)
+@@ -228,13 +241,14 @@ void Tetrahedron::MarkEdge(const DSTable &v_to_v, const int *length)
     // Determine the two longest edges for the other two faces and
     // store them in ind[0] and ind[1]
     ind[0] = 2; ind[1] = 1;
@@ -1393,7 +663,7 @@ index c7ebc064b..27e634545 100644
  
     j = 0;
     switch (ind[0])
-@@ -345,4 +360,13 @@ Element *Tetrahedron::Duplicate(Mesh *m) const
+@@ -345,4 +359,13 @@ Element *Tetrahedron::Duplicate(Mesh *m) const
     return tet;
  }
  
@@ -1408,7 +678,7 @@ index c7ebc064b..27e634545 100644
 +
  }
 diff --git a/mesh/tetrahedron.hpp b/mesh/tetrahedron.hpp
-index c434ae903..2bca1a37b 100644
+index c434ae903..ad018a037 100644
 --- a/mesh/tetrahedron.hpp
 +++ b/mesh/tetrahedron.hpp
 @@ -76,7 +76,9 @@ public:
@@ -1422,57 +692,20 @@ index c434ae903..2bca1a37b 100644
  
     virtual void ResetTransform(int tr) { transform = tr; }
     virtual unsigned GetTransform() const { return transform; }
-@@ -88,22 +90,18 @@ public:
-    /// Calculate point matrix corresponding to a chain of transformations.
-    static void GetPointMatrix(unsigned transform, DenseMatrix &pm);
- 
--   /// Returns the indices of the element's  vertices.
-+   /// Returns the indices of the element's vertices.
-    virtual void GetVertices(Array<int> &v) const;
- 
-    virtual int *GetVertices() { return indices; }
- 
-    virtual int GetNVertices() const { return 4; }
- 
--   virtual int GetNEdges() const { return (6); }
-+   virtual int GetNEdges() const { return 6; }
- 
-    virtual const int *GetEdgeVertices(int ei) const
-    { return geom_t::Edges[ei]; }
- 
--   /// @deprecated Use GetNFaces(void) and GetNFaceVertices(int) instead.
--   MFEM_DEPRECATED virtual int GetNFaces(int &nFaceVertices) const
--   { nFaceVertices = 3; return 4; }
--
-    virtual int GetNFaces() const { return 4; }
- 
-    virtual int GetNFaceVertices(int) const { return 3; }
-@@ -116,7 +114,6 @@ public:
-    virtual ~Tetrahedron() { }
- };
- 
--// Defined in fe.cpp to ensure construction before 'mfem::Geometries'.
- extern MFEM_EXPORT class Linear3DFiniteElement TetrahedronFE;
- 
- }
 diff --git a/mesh/triangle.cpp b/mesh/triangle.cpp
-index 5ce32cb31..6eb8c7e59 100644
+index 5ce32cb31..abd2b4379 100644
 --- a/mesh/triangle.cpp
 +++ b/mesh/triangle.cpp
-@@ -9,7 +9,11 @@
- // terms of the BSD-3 license. We welcome feedback and contributions, see file
- // CONTRIBUTING.md for details.
+@@ -11,6 +11,8 @@
  
--#include "mesh_headers.hpp"
-+#include "triangle.hpp"
-+
-+#include "../linalg/densemat.hpp"
-+
+ #include "mesh_headers.hpp"
+ 
 +#include <cstdint>
- 
++
  namespace mfem
  {
-@@ -50,63 +54,28 @@ void Triangle::SetVertices(const int *ind)
+ 
+@@ -50,63 +52,28 @@ void Triangle::SetVertices(const int *ind)
     }
  }
  
@@ -1554,11 +787,10 @@ index 5ce32cb31..6eb8c7e59 100644
     {
        ind[i] = indices[i];
     }
-@@ -194,4 +163,13 @@ void Triangle::GetVertices(Array<int> &v) const
+@@ -194,4 +161,13 @@ void Triangle::GetVertices(Array<int> &v) const
     }
  }
  
--} // namespace mfem
 +// @cond DOXYGEN_SKIP
 +
 +template void Triangle::MarkEdge(int *, const DSTable &, const Array<double> &,
@@ -1568,200 +800,30 @@ index 5ce32cb31..6eb8c7e59 100644
 +
 +// @endcond
 +
-+}
+ } // namespace mfem
 diff --git a/mesh/triangle.hpp b/mesh/triangle.hpp
-index 363bd4503..ae20dd9b7 100644
+index 363bd4503..49fb4fe99 100644
 --- a/mesh/triangle.hpp
 +++ b/mesh/triangle.hpp
-@@ -13,7 +13,6 @@
- #define MFEM_TRIANGLE
- 
- #include "../config/config.hpp"
--#include "../fem/fe.hpp"
- #include "element.hpp"
- 
- namespace mfem
-@@ -50,13 +49,14 @@ public:
+@@ -50,13 +50,14 @@ public:
     /** Reorder the vertices so that the longest edge is from vertex 0
         to vertex 1. If called it should be once from the mesh constructor,
         because the order may be used later for setting the edges. **/
 -   void MarkEdge(DenseMatrix & pmat);
-+   template <typename T1, typename T2>
-+   void MarkEdge(const DSTable &v_to_v, const Array<T1> &length,
-+                 const Array<T2> &length2)
-+   { MarkEdge(indices, v_to_v, length, length2); }
- 
+-
 -   static void MarkEdge(int *indices, const DSTable &v_to_v, const int *length);
 -
 -   /// Mark the longest edge by assuming/changing the order of the vertices.
 -   virtual void MarkEdge(const DSTable &v_to_v, const int *length)
 -   { MarkEdge(indices, v_to_v, length); }
 +   template <typename T1, typename T2>
++   void MarkEdge(const DSTable &v_to_v, const Array<T1> &length,
++                 const Array<T2> &length2)
++   { MarkEdge(indices, v_to_v, length, length2); }
++
++   template <typename T1, typename T2>
 +   static void MarkEdge(int *indices, const DSTable &v_to_v,
 +                        const Array<T1> &length, const Array<T2> &length2);
  
     virtual void ResetTransform(int tr) { transform = tr; }
     virtual unsigned GetTransform() const { return transform; }
-@@ -68,28 +68,23 @@ public:
-    /// Calculate point matrix corresponding to a chain of transformations.
-    static void GetPointMatrix(unsigned transform, DenseMatrix &pm);
- 
--   /// Returns the indices of the element's  vertices.
-+   /// Returns the indices of the element's vertices.
-    virtual void GetVertices(Array<int> &v) const;
- 
-    virtual int *GetVertices() { return indices; }
- 
-    virtual int GetNVertices() const { return 3; }
- 
--   virtual int GetNEdges() const { return (3); }
-+   virtual int GetNEdges() const { return 3; }
- 
-    virtual const int *GetEdgeVertices(int ei) const
-    { return geom_t::Edges[ei]; }
- 
--   /// @deprecated Use GetNFaces(void) and GetNFaceVertices(int) instead.
--   MFEM_DEPRECATED virtual int GetNFaces(int &nFaceVertices) const
--   { nFaceVertices = 0; return 0; }
--
-    virtual int GetNFaces() const { return 0; }
- 
-    virtual int GetNFaceVertices(int) const { return 0; }
- 
--   virtual const int *GetFaceVertices(int fi) const
--   { MFEM_ABORT("not implemented"); return NULL; }
-+   virtual const int *GetFaceVertices(int fi) const { return NULL; }
- 
-    virtual Element *Duplicate(Mesh *m) const
-    { return new Triangle(indices, attribute); }
-@@ -97,8 +92,7 @@ public:
-    virtual ~Triangle() { }
- };
- 
--// Defined in fe.cpp to ensure construction before 'mfem::Geometries'.
--extern MFEM_EXPORT Linear2DFiniteElement TriangleFE;
-+extern MFEM_EXPORT class Linear2DFiniteElement TriangleFE;
- 
- }
- 
-diff --git a/mesh/vertex.cpp b/mesh/vertex.cpp
-index e5c1a5739..8be65774a 100644
---- a/mesh/vertex.cpp
-+++ b/mesh/vertex.cpp
-@@ -9,13 +9,12 @@
- // terms of the BSD-3 license. We welcome feedback and contributions, see file
- // CONTRIBUTING.md for details.
- 
--
- #include "vertex.hpp"
- 
- namespace mfem
- {
- 
--Vertex::Vertex (double *xx, int dim)
-+Vertex::Vertex(const double *xx, int dim)
- {
-    for (int i = 0; i < dim; i++)
-    {
-diff --git a/mesh/vertex.hpp b/mesh/vertex.hpp
-index 3267b904f..117beaa36 100644
---- a/mesh/vertex.hpp
-+++ b/mesh/vertex.hpp
-@@ -13,7 +13,6 @@
- #define MFEM_VERTEX
- 
- #include "../config/config.hpp"
--#include "../general/globals.hpp"
- 
- namespace mfem
- {
-@@ -29,24 +28,19 @@ public:
- 
-    // Trivial copy constructor and trivial copy assignment operator
- 
--   Vertex (double *xx, int dim);
--   Vertex( double x, double y) { coord[0] = x; coord[1] = y; coord[2] = 0.; }
--   Vertex( double x, double y, double z)
-+   Vertex(const double *xx, int dim);
-+   Vertex(double x, double y) { coord[0] = x; coord[1] = y; coord[2] = 0.; }
-+   Vertex(double x, double y, double z)
-    { coord[0] = x; coord[1] = y; coord[2] = z; }
- 
-    /// Returns pointer to the coordinates of the vertex.
--   inline double * operator() () const { return (double*)coord; }
-+   inline double *operator()() const { return (double *)coord; }
- 
-    /// Returns the i'th coordinate of the vertex.
--   inline double & operator() (int i) { return coord[i]; }
-+   inline double &operator()(int i) { return coord[i]; }
- 
-    /// Returns the i'th coordinate of the vertex.
--   inline const double & operator() (int i) const { return coord[i]; }
--
--   /// (DEPRECATED) Set the coordinates of the Vertex.
--   /** @deprecated This old version of SetCoords is not always memory safe. */
--   MFEM_DEPRECATED void SetCoords(const double *p)
--   { coord[0] = p[0]; coord[1] = p[1]; coord[2] = p[2]; }
-+   inline const double &operator()(int i) const { return coord[i]; }
- 
-    /// Sets vertex location based on given point p
-    void SetCoords(int dim, const double *p)
-diff --git a/mesh/wedge.cpp b/mesh/wedge.cpp
-index 898da7653..0f7335aa6 100644
---- a/mesh/wedge.cpp
-+++ b/mesh/wedge.cpp
-@@ -9,9 +9,7 @@
- // terms of the BSD-3 license. We welcome feedback and contributions, see file
- // CONTRIBUTING.md for details.
- 
--// Implementation of class Wedge
--
--#include "mesh_headers.hpp"
-+#include "wedge.hpp"
- 
- namespace mfem
- {
-@@ -56,11 +54,4 @@ void Wedge::GetVertices(Array<int> &v) const
-    }
- }
- 
--int Wedge::GetNFaces(int &nFaceVertices) const
--{
--   MFEM_ABORT("this method is not valid for Wedge elements");
--   nFaceVertices = 4;
--   return 5;
--}
--
- }
-diff --git a/mesh/wedge.hpp b/mesh/wedge.hpp
-index fb8583f8e..49cc5e7d7 100644
---- a/mesh/wedge.hpp
-+++ b/mesh/wedge.hpp
-@@ -18,7 +18,7 @@
- namespace mfem
- {
- 
--/// Data type Wedge element
-+/// Data type wedge element
- class Wedge : public Element
- {
- protected:
-@@ -42,7 +42,7 @@ public:
-    /// Set the vertices according to the given input.
-    virtual void SetVertices(const int *ind);
- 
--   /// Returns the indices of the element's  vertices.
-+   /// Returns the indices of the element's vertices.
-    virtual void GetVertices(Array<int> &v) const;
- 
-    virtual int *GetVertices() { return indices; }
-@@ -54,9 +54,6 @@ public:
-    virtual const int *GetEdgeVertices(int ei) const
-    { return geom_t::Edges[ei]; }
- 
--   /// @deprecated Use GetNFaces(void) and GetNFaceVertices(int) instead.
--   MFEM_DEPRECATED virtual int GetNFaces(int &nFaceVertices) const;
--
-    virtual int GetNFaces() const { return 5; }
- 
-    virtual int GetNFaceVertices(int fi) const
