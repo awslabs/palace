@@ -44,6 +44,9 @@ public:
   // Nondimensionalize input values for use in the solver, including the mesh coordinates.
   void NondimensionalizeInputs(mfem::ParMesh &mesh);
 
+  // Return the mesh scaling factor in units model.L0 x [m] for mesh IO.
+  double GetLengthScale() const { return Lc / model.L0; }
+
   // Redimensionalize values for output.
   enum class ValueType
   {

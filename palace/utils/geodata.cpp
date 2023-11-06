@@ -354,6 +354,34 @@ void RefineMesh(const IoData &iodata, std::vector<std::unique_ptr<mfem::ParMesh>
   }
 }
 
+namespace
+{
+
+void ScaleMesh(mfem::Mesh &mesh, double L)
+{
+  for (int i = 0; i < mesh.GetNV(); i++)
+  {
+    double *v = mesh.GetVertex(i);
+    std::transform(v, v + mesh.SpaceDimension(), v, [L](double val) { return val * L; });
+  }
+  if (mesh.GetNodes())
+  {
+    *mesh.GetNodes() *= L;
+  }
+}
+
+}  // namespace
+
+void DimensionalizeMesh(mfem::ParMesh &mesh, double L)
+{
+  ScaleMesh(mesh, L);
+}
+
+void NondimensionalizeMesh(mfem::ParMesh &mesh, double L)
+{
+  ScaleMesh(mesh, 1.0 / L);
+}
+
 void AttrToMarker(int max_attr, const mfem::Array<int> &attrs, mfem::Array<int> &marker)
 {
   MFEM_VERIFY(attrs.Size() == 0 || attrs.Max() <= max_attr,
