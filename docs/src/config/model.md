@@ -35,12 +35,12 @@ scale based on the bounding box of the computational domain.
 ```json
 "Refinement":
 {
-    "UniformLevels": <int>,
     "Tol": <float>,
     "MaxIts": <int>,
     "MaxSize": <int>,
     "Nonconformal": <bool>,
     "UpdateFraction": <float>,
+    "UniformLevels": <int>,
     "Boxes":
     [
         {
@@ -65,24 +65,25 @@ scale based on the bounding box of the computational domain.
 
 with
 
-`"UniformLevels" [0]` :  Levels of uniform parallel mesh refinement to be performed on the
-input mesh. If not performing AMR, these may be used as levels within a geometric multigrid
-scheme.
+`"Tol" [1e-2]` : Relative error convergence tolerance for adaptive mesh refinement (AMR).
 
-`"Tol" [1e-2]` : Relative error convergence tolerance for mesh adaptation.
+`"MaxIts" [0]` : Maximum number of iterations of AMR to perform.
 
-`"MaxIts" [0]` : Maximum number of iterations to perform of adaptive mesh refinement.
+`"MaxSize" [0]` : The maximum allowable number of degrees of freedom for AMR. If an adapted
+mesh exceeds this value no further adaptation will occur. A value less than 1 means that no
+maximum size constraint will be imposed.
 
-`"MaxSize" [0]` : The maximum allowable number of degrees of freedom within an AMR loop, if
-an adapted mesh exceeds this value no further adaptation will occur. A value less than 1
-means that no maximum size constraint will be imposed.
-
-`"Nonconformal" [true]` : Whether the adaptation should use nonconformal refinement.
+`"Nonconformal" [true]` : Chose whether the adaptation should use nonconformal refinement
+for simplex meshes.
 
 `"UpdateFraction" [0.7]` : Dörfler marking fraction used to specify which elements to
 refine. This marking strategy will mark the smallest number of elements that make up
 `"UpdateFraction"` of the total error in the mesh. A larger value will refine more elements
 per iteration, at the cost of the final mesh being less efficient.
+
+`"UniformLevels" [0]` :  Levels of uniform parallel mesh refinement to be performed on the
+input mesh. If not performing AMR, these may be used as levels within a geometric multigrid
+scheme.
 
 `"Boxes"` :  Array of box region refinement objects. All elements with a node inside the box
 region will be marked for refinement.
@@ -113,10 +114,10 @@ mesh length units.
 
 ### Advanced model options
 
-  - `"MaximumImbalance" [1.0]`
-  - `"MaxNCLevels" [1]`
   - `"Partition" [""]`
   - `"RemoveCurvature" [false]`
   - `"ReorientTetMesh" [false]`
+  - `"MaxNCLevels" [1]`
+  - `"MaximumImbalance" [1.1]`
   - `"SaveAdaptIterations" [true]`
-  - `"WriteSerialMesh" [true]`
+  - `"SaveAdaptMesh" [false]`

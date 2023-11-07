@@ -26,7 +26,6 @@ namespace palace
 {
 
 using json = nlohmann::json;
-namespace fs = std::filesystem;
 
 namespace
 {
@@ -34,6 +33,38 @@ namespace
 std::string GetPostDir(const std::string &output)
 {
   return (output.length() > 0 && output.back() != '/') ? output + '/' : output;
+}
+
+std::string GetIterationPostDir(const std::string &output, int step, int width)
+{
+  return fmt::format("{}adapt{:0{}d}/", output, step, width);
+}
+
+void SaveIteration(MPI_Comm comm, const std::string &output, int step, int width)
+{
+  namespace fs = std::filesystem;
+  BlockTimer bt(Timer::IO);
+  Mpi::Barrier(comm);  // Wait for all processes to write postprocessing files
+  if (Mpi::Root(comm))
+  {
+    // Create a subfolder for the results of this adaptation.
+    const std::string step_output = GetIterationPostDir(output, step, width);
+    if (!fs::exists(step_output))
+    {
+      fs::create_directories(step_output);
+    }
+    constexpr auto options =
+        fs::copy_options::recursive | fs::copy_options::overwrite_existing;
+    for (const auto &f : fs::directory_iterator(output))
+    {
+      if (f.path().filename().string().rfind("adapt") == 0)
+      {
+        continue;
+      }
+      fs::copy(f, step_output + f.path().filename().string(), options);
+    }
+  }
+  Mpi::Barrier(comm);
 }
 
 json LoadMetadata(const std::string &post_dir)
@@ -58,21 +89,8 @@ void WriteMetadata(const std::string &post_dir, const json &meta)
   fo << meta.dump(2) << '\n';
 }
 
-// Creates a directory for storing postprocessing data for a given adaptation
-// iteration, and returns a path
-fs::path IterationPostDir(bool root, const std::string &post_dir, int iter)
-{
-  std::string dir = fmt::format("{}Adapt{:0>3d}/", post_dir, iter);
-  // Create directory for output.
-  if (!fs::exists(dir))
-  {
-    fs::create_directories(dir);
-  }
-  return fs::path(dir);
-}
-
 // Returns an array of indices corresponding to marked elements.
-mfem::Array<int> MarkedElements(double threshold, const Vector &e)
+mfem::Array<int> MarkedElements(const Vector &e, double threshold)
 {
   mfem::Array<int> ind;
   ind.Reserve(e.Size());
@@ -93,9 +111,9 @@ BaseSolver::BaseSolver(const IoData &iodata, bool root, int size, int num_thread
   : iodata(iodata), post_dir(GetPostDir(iodata.problem.output)), root(root), table(8, 9, 9)
 {
   // Create directory for output.
-  if (root && !fs::exists(post_dir))
+  if (root && !std::filesystem::exists(post_dir))
   {
-    fs::create_directories(post_dir);
+    std::filesystem::create_directories(post_dir);
   }
 
   // Initialize simulation metadata for this simulation.
@@ -121,101 +139,108 @@ BaseSolver::BaseSolver(const IoData &iodata, bool root, int size, int num_thread
 void BaseSolver::SolveEstimateMarkRefine(
     std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const
 {
-  const auto &param = iodata.model.refinement;
-  auto comm = mesh.back()->GetComm();
-  // Helper to save off postprocess data.
-  auto SavePostProcess = [&](int iter)
+  const auto &refinement = iodata.model.refinement;
+  const bool use_amr = [&]()
   {
-    BlockTimer bt_io(Timer::IO);
-    Mpi::Barrier(comm);
-    if (Mpi::Root(comm) && param.save_adapt_iterations)
+    if (dynamic_cast<const TransientSolver *>(this) != nullptr)
     {
-      // Create a subfolder for the results of this adaptation.
-      const auto out_dir = IterationPostDir(true, post_dir, iter);
-      constexpr auto options =
-          fs::copy_options::recursive | fs::copy_options::overwrite_existing;
-      const fs::path root_dir(post_dir);
-      for (const auto &f : fs::directory_iterator(root_dir))
-      {
-        if (f.is_regular_file())
-        {
-          fs::copy(f, out_dir / fs::path(f).filename(), options);
-        }
-      }
-      if (fs::exists(root_dir / "paraview"))
-      {
-        fs::copy(root_dir / "paraview", out_dir / "paraview", options);
-      }
+      Mpi::Warning("AMR is not currently supported for transient simulations!\n");
+      return false;
     }
-    Mpi::Barrier(comm);
-  };
-
-  const bool use_amr = param.max_its > 0;
+    return refinement.max_it > 0;
+  }();
   if (use_amr && mesh.size() > 1)
   {
-    Mpi::Print("{}\n", "Flattening mesh sequence: AMR will start from the final mesh in "
-                       "the refinement sequence.");
+    Mpi::Print("\nFlattening mesh sequence:\n AMR will start from the final mesh in "
+               "the sequence of a priori refinements\n");
     mesh.erase(mesh.begin(), mesh.end() - 1);
     constexpr bool refine = true, fix_orientation = true;
     mesh.back()->Finalize(refine, fix_orientation);
   }
 
-  auto indicators_and_ntdof = Solve(mesh);
-  const auto &indicators = indicators_and_ntdof.first;
-  const auto &ntdof = indicators_and_ntdof.second;
-  if (use_amr)
-  {
-    const auto is_transient = dynamic_cast<const TransientSolver *>(this) != nullptr;
-    if (is_transient)
-    {
-      MFEM_ABORT("AMR is not currently supported for transient simulations!");
-    }
-    else
-    {
-      Mpi::Print("\nAdaptive Mesh Refinement Parameters:\n");
-      Mpi::Print(
-          "MaxIter: {}, Tolerance: {:.3e}{}\n\n", param.max_its, param.tolerance,
-          (param.max_size >= 1 ? ", MaxSize: " + std::to_string(param.max_size) : ""));
-    }
-  }
+  // Perform initial solve and estimation.
+  MPI_Comm comm = mesh.back()->GetComm();
+  auto [indicators, ntdof] = Solve(mesh);
+  double err = indicators.Norml2(comm);
 
-  int iter = 0;
   // Collection of all tests that might exhaust resources.
-  auto exhausted_resources = [&]()
+  auto ExhaustedResources = [&refinement](auto it, auto ntdof)
   {
     bool ret = false;
-    // Run out of DOFs if a limit was set.
-    ret |= ((param.max_size >= 1) && (ntdof > param.max_size));
     // Run out of iterations.
-    ret |= iter >= param.max_its;
+    ret |= (it >= refinement.max_it);
+    // Run out of DOFs if a limit was set.
+    ret |= (refinement.max_size >= 1 && ntdof > refinement.max_size);
     return ret;
   };
-  while (indicators.Norml2(comm) > param.tolerance && !exhausted_resources())
-  {
-    BlockTimer bt_adapt(Timer::ADAPTATION);
-    SavePostProcess(iter);  // Optionally save of the previous solution
 
-    Mpi::Print("Adaptation iteration {}: Initial Error Indicator: {:.3e}, Size: {}\n",
-               ++iter, indicators.Norml2(comm), ntdof);
+  // Main AMR loop.
+  int it = 0;
+  while (!ExhaustedResources(it, ntdof) && err >= refinement.tol)
+  {
+    BlockTimer bt(Timer::ADAPTATION);
+    Mpi::Print("\nAdaptive mesh refinement (AMR) iteration {:d}:\n"
+               " Indicator norm = {:.3e}, size = {:d}\n"
+               " Maximum iterations = {:d}, tol. = {:.3e}{}\n",
+               ++it, err, ntdof, refinement.max_it, refinement.tol,
+               (refinement.max_size > 0
+                    ? ", maximum size = " + std::to_string(refinement.max_size)
+                    : ""));
+
+    // Optionally save of the previous solution.
+    if (refinement.save_adapt_iterations)
+    {
+      SaveIteration(comm, post_dir, it,
+                    1 + static_cast<int>(std::log10(refinement.max_it)));
+    }
 
     // Mark.
-    const auto threshold =
-        utils::ComputeDorflerThreshold(comm, param.update_fraction, indicators.Local());
-    const auto marked_elements = MarkedElements(threshold, indicators.Local());
+    const auto [threshold, marked_error] = utils::ComputeDorflerThreshold(
+        comm, indicators.Local(), refinement.update_fraction);
+    const auto marked_elements = MarkedElements(indicators.Local(), threshold);
+    const auto [glob_marked_elements, glob_elements] =
+        linalg::GlobalSize2(comm, marked_elements, indicators.Local());
+    Mpi::Print(
+        " Marked {:d}/{:d} elements for refinement ({:.2f}% of the error, θ = {:.2f})\n",
+        glob_marked_elements, glob_elements, 100 * marked_error,
+        refinement.update_fraction);
 
     // Refine.
     const auto initial_elem_count = mesh.back()->GetGlobalNE();
-    mesh.back()->GeneralRefinement(marked_elements, -1, param.max_nc_levels);
+    mesh.back()->GeneralRefinement(marked_elements, -1, refinement.max_nc_levels);
     const auto final_elem_count = mesh.back()->GetGlobalNE();
-    Mpi::Print("Mesh refinement added {} elements. Initial: {}, Final: {}\n",
+    Mpi::Print(" Mesh refinement added {:d} elements (initial: {}, final: {})\n",
                final_elem_count - initial_elem_count, initial_elem_count, final_elem_count);
 
+    // Optionally rebalance and write the adapted mesh to file.
+    const auto ratio_pre =
+        mesh::RebalanceMesh(iodata, mesh.back(), refinement.maximum_imbalance);
+    if (ratio_pre > refinement.maximum_imbalance)
+    {
+      int min_elem, max_elem;
+      min_elem = max_elem = mesh.back()->GetNE();
+      Mpi::GlobalMin(1, &min_elem, comm);
+      Mpi::GlobalMax(1, &max_elem, comm);
+      const auto ratio_post = double(max_elem) / min_elem;
+      Mpi::Print(" Rebalanced mesh: Ratio {:.3f} exceeded maximum allowed value {:.3f} "
+                 "(new ratio = {:.3f})\n",
+                 ratio_pre, refinement.maximum_imbalance, ratio_post);
+    }
+
     // Solve + estimate.
-    mesh::RebalanceMesh(mesh.back(), iodata, post_dir);
-    indicators_and_ntdof = Solve(mesh);
+    Mpi::Print("\nProceeding with solve/estimate iteration {}...\n", 1 + it);
+    std::tie(indicators, ntdof) = Solve(mesh);
+    err = indicators.Norml2(comm);
   }
-  Mpi::Print("\nFinal Error Indicator: {:.3e}, Size: {}\n", indicators.Norml2(comm), ntdof);
+  Mpi::Print("\nCompleted {:d} iteration{} of adaptive mesh refinement (AMR):\n"
+             " Indicator norm = {:.3e}, size = {:d}\n"
+             " Maximum iterations = {:d}, tol. = {:.3e}{}\n",
+             it, (it == 1 ? "" : "s"), err, ntdof, refinement.max_it, refinement.tol,
+             (refinement.max_size > 0
+                  ? ", maximum size = " + std::to_string(refinement.max_size)
+                  : ""));
 }
+
 void BaseSolver::SaveMetadata(const FiniteElementSpaceHierarchy &fespaces) const
 {
   if (post_dir.length() == 0)

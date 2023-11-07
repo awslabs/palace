@@ -7,6 +7,7 @@
 #include <array>
 #include <cmath>
 #include <memory>
+#include <string>
 #include <vector>
 #include <mpi.h>
 
@@ -133,9 +134,9 @@ void GetSurfaceNormal(mfem::ParMesh &mesh, const mfem::Array<int> &marker,
                       mfem::Vector &normal);
 
 // Helper function responsible for rebalancing the mesh, and optionally writing meshes from
-// the intermediate stages to disk.
-void RebalanceMesh(std::unique_ptr<mfem::ParMesh> &mesh, const IoData &iodata,
-                   std::string output_dir);
+// the intermediate stages to disk. Returns the imbalance ratio before rebalancing.
+double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh,
+                     double tol);
 
 }  // namespace mesh
 

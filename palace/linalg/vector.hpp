@@ -123,6 +123,16 @@ inline HYPRE_BigInt GlobalSize(MPI_Comm comm, const VecType &x)
   return N;
 }
 
+// Returns the global vector size for two vectors.
+template <typename VecType1, typename VecType2>
+inline std::pair<HYPRE_BigInt, HYPRE_BigInt> GlobalSize2(MPI_Comm comm, const VecType1 &x1,
+                                                         const VecType2 &x2)
+{
+  HYPRE_BigInt N[2] = {x1.Size(), x2.Size()};
+  Mpi::GlobalSum(2, N, comm);
+  return {N[0], N[1]};
+}
+
 // Sets all entries of the vector corresponding to the given indices to the given (real)
 // value.
 template <typename VecType>

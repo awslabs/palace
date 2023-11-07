@@ -8,7 +8,6 @@
 #include <limits>
 #include <map>
 #include <sstream>
-#include <string>
 #include <Eigen/Dense>
 #include "utils/communication.hpp"
 #include "utils/filesystem.hpp"
@@ -34,7 +33,7 @@ std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &, bool);
 
 // Optionally reorder mesh elements based on MFEM's internal reordeing tools for improved
 // cache usage.
-void ReorderMesh(mfem::Mesh &mesh);
+void ReorderMesh(mfem::Mesh &);
 
 // Generate element-based mesh partitioning, using either a provided file or METIS.
 std::unique_ptr<int[]> GetMeshPartitioning(mfem::Mesh &, int, const std::string & = "");
@@ -74,7 +73,6 @@ void ScaleMesh(mfem::Mesh &mesh, double L)
   }
 }
 
-// Simplified helper for describing the element types in a mesh
 struct ElementTypeInfo
 {
   bool has_simplices;
@@ -82,6 +80,8 @@ struct ElementTypeInfo
   bool has_wedges;
   bool has_pyramids;
 };
+
+// Simplified helper for describing the element types in a mesh.
 ElementTypeInfo CheckElements(mfem::Mesh &mesh)
 {
   // MeshGenerator is reduced over the communicator. This checks for geometries on any
@@ -105,7 +105,7 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(MPI_Comm comm, const IoData &iodata, boo
   // If not adapting, or performing conformal adaptation, can use the mesh partitioner.
   std::unique_ptr<mfem::Mesh> smesh;
   const auto &refinement = iodata.model.refinement;
-  const auto use_amr = refinement.max_its > 0;
+  const bool use_amr = refinement.max_it > 0;
   const bool use_mesh_partitioner = !use_amr || !refinement.nonconformal;
   {
     BlockTimer bt(Timer::IO);
@@ -140,6 +140,7 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(MPI_Comm comm, const IoData &iodata, boo
     MFEM_VERIFY(!use_amr || !element_types.has_wedges || refinement.nonconformal,
                 "If there are wedge elements, AMR must be nonconformal");
 
+    // Generate the mesh partitioning.
     partitioning = GetMeshPartitioning(*smesh, Mpi::Size(comm), iodata.model.partition);
 
     // Clean up unused domain elements from the mesh, add new boundary elements for material
@@ -1150,111 +1151,115 @@ void GetSurfaceNormal(mfem::ParMesh &mesh, const mfem::Array<int> &marker,
   // }
 }
 
-void RebalanceMesh(std::unique_ptr<mfem::ParMesh> &mesh, const IoData &iodata,
-                   std::string output_dir)
+double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh, double tol)
 {
-  const auto &param = iodata.model.refinement;
-  auto comm = mesh->GetComm();
-  if (output_dir.back() != '/')
+  BlockTimer bt0(Timer::REBALANCE);
+  const bool save_adapt_mesh = iodata.model.refinement.save_adapt_mesh;
+  std::string serial_mesh_file;
+  if (save_adapt_mesh)
   {
-    output_dir += '/';
-  }
-  std::string serial_mesh_filename;
-  if (param.write_serial_mesh)
-  {
-    serial_mesh_filename += (output_dir + "serial.mesh");
-    if (Mpi::Size(comm) == 1)
+    serial_mesh_file = iodata.problem.output;
+    if (serial_mesh_file.back() != '/')
     {
-      BlockTimer bt_io(Timer::IO);
-      std::ofstream serial(serial_mesh_filename);
-      serial.precision(MSH_FLT_PRECISION);
+      serial_mesh_file += '/';
+    }
+    serial_mesh_file += "serial.mesh";
+  }
+
+  MPI_Comm comm = mesh->GetComm();
+  if (Mpi::Size(comm) == 1)
+  {
+    if (save_adapt_mesh)
+    {
+      BlockTimer bt1(Timer::IO);
+      std::ofstream fo(serial_mesh_file);
+      fo.precision(MSH_FLT_PRECISION);
       mesh::DimensionalizeMesh(*mesh, iodata.GetLengthScaleFactor());
-      mesh->mfem::Mesh::Print(serial);
+      mesh->mfem::Mesh::Print(fo);
       mesh::NondimensionalizeMesh(*mesh, iodata.GetLengthScaleFactor());
     }
+    return 1.0;
   }
 
   // If there is more than one processor, may perform rebalancing.
-  if (Mpi::Size(comm) > 1)
+  mesh->ExchangeFaceNbrData();
+  int min_elem, max_elem;
+  min_elem = max_elem = mesh->GetNE();
+  Mpi::GlobalMin(1, &min_elem, comm);
+  Mpi::GlobalMax(1, &max_elem, comm);
+  const double ratio = double(max_elem) / min_elem;
+  if constexpr (false)
   {
-    BlockTimer bt(Timer::REBALANCE);
-    mesh->ExchangeFaceNbrData();
-    int min_elem, max_elem;
-    min_elem = max_elem = mesh->GetNE();
-    Mpi::GlobalMin(1, &min_elem, comm);
-    Mpi::GlobalMax(1, &max_elem, comm);
-    const double ratio = double(max_elem) / min_elem;
-    Mpi::Print("Min Elem per processor: {}, Max Elem per processor: {}, Ratio: {:.3f}\n",
-               min_elem, max_elem, double(max_elem) / min_elem);
-    if (ratio > param.maximum_imbalance)
-    {
-      if (mesh->Nonconforming() && param.write_serial_mesh)
-      {
-        // Do not need to duplicate the mesh, as rebalancing will undo this.
-        mfem::Array<int> serial_partition(mesh->GetNE());
-        serial_partition = 0;
-        mesh->Rebalance(serial_partition);
-        BlockTimer bt_io(Timer::IO);
-        if (Mpi::Root(comm))
-        {
-          std::ofstream serial(serial_mesh_filename);
-          serial.precision(MSH_FLT_PRECISION);
-          mesh::DimensionalizeMesh(*mesh, iodata.GetLengthScaleFactor());
-          mesh->Mesh::Print(serial);
-          mesh::NondimensionalizeMesh(*mesh, iodata.GetLengthScaleFactor());
-        }
-        Mpi::Barrier(comm);
-      }
-
-      Mpi::Print("Ratio {:.3f} exceeds maximum allowed value {}: Performing rebalancing.\n",
-                 ratio, param.maximum_imbalance);
-      if (mesh->Nonconforming())
-      {
-        mesh->Rebalance();
-      }
-      else
-      {
-        // Without access to a refinement tree, partitioning must be done on the
-        // root processor and then redistributed.
-        RebalanceConformalMesh(mesh, iodata.GetLengthScaleFactor(), serial_mesh_filename);
-      }
-    }
-    else if (param.write_serial_mesh)
-    {
-      // Given no rebalancing will be done, need to handle the serial write more
-      // carefully. This requires creating a separate serial mesh.
-      if (mesh->Nonconforming())
-      {
-        mfem::ParMesh smesh(*mesh);
-        mfem::Array<int> serial_partition(mesh->GetNE());
-        serial_partition = 0;
-        smesh.Rebalance(serial_partition);
-        BlockTimer bt_io(Timer::IO);
-        if (Mpi::Root(comm))
-        {
-          std::ofstream serial(serial_mesh_filename);
-          serial.precision(MSH_FLT_PRECISION);
-          mesh::DimensionalizeMesh(smesh, iodata.GetLengthScaleFactor());
-          smesh.Mesh::Print(serial);  // Do not need to nondimensionalize the temporary
-        }
-        Mpi::Barrier(comm);
-      }
-      else
-      {
-        auto smesh = std::make_unique<mfem::Mesh>(mesh->GetSerialMesh(0));
-        BlockTimer bt(Timer::IO);
-        if (Mpi::Rank(comm) == 0)
-        {
-          std::ofstream serial(serial_mesh_filename);
-          serial.precision(MSH_FLT_PRECISION);
-          mesh::DimensionalizeMesh(*smesh, iodata.GetLengthScaleFactor());
-          smesh->Print(serial);  // Do not need to nondimensionalize the temporary
-        }
-        Mpi::Barrier(comm);
-      }
-    }
-    mesh->ExchangeFaceNbrData();
+    Mpi::Print("Rebalancing: max/min elements per processor = {:d}/{:d} (ratio = {:.3e}, "
+               "tol = {:.3e})\n",
+               max_elem, min_elem, ratio, tol);
   }
+  if (ratio > tol)
+  {
+    if (mesh->Nonconforming() && save_adapt_mesh)
+    {
+      // Do not need to duplicate the mesh, as rebalancing will undo this.
+      mfem::Array<int> serial_partition(mesh->GetNE());
+      serial_partition = 0;
+      mesh->Rebalance(serial_partition);
+      BlockTimer bt1(Timer::IO);
+      if (Mpi::Root(comm))
+      {
+        std::ofstream fo(serial_mesh_file);
+        fo.precision(MSH_FLT_PRECISION);
+        mesh::DimensionalizeMesh(*mesh, iodata.GetLengthScaleFactor());
+        mesh->Mesh::Print(fo);
+        mesh::NondimensionalizeMesh(*mesh, iodata.GetLengthScaleFactor());
+      }
+      Mpi::Barrier(comm);
+    }
+    if (mesh->Nonconforming())
+    {
+      mesh->Rebalance();
+    }
+    else
+    {
+      // Without access to a refinement tree, partitioning must be done on the root
+      // processor and then redistributed.
+      RebalanceConformalMesh(mesh, iodata.GetLengthScaleFactor(), serial_mesh_file);
+    }
+  }
+  else if (save_adapt_mesh)
+  {
+    // Given no rebalancing will be done, need to handle the serial write more carefully.
+    // This requires creating a separate serial mesh.
+    if (mesh->Nonconforming())
+    {
+      mfem::ParMesh smesh(*mesh);
+      mfem::Array<int> serial_partition(mesh->GetNE());
+      serial_partition = 0;
+      smesh.Rebalance(serial_partition);
+      BlockTimer bt1(Timer::IO);
+      if (Mpi::Root(comm))
+      {
+        std::ofstream fo(serial_mesh_file);
+        fo.precision(MSH_FLT_PRECISION);
+        mesh::DimensionalizeMesh(smesh, iodata.GetLengthScaleFactor());
+        smesh.Mesh::Print(fo);  // Do not need to nondimensionalize the temporary mesh
+      }
+      Mpi::Barrier(comm);
+    }
+    else
+    {
+      auto smesh = std::make_unique<mfem::Mesh>(mesh->GetSerialMesh(0));
+      BlockTimer bt1(Timer::IO);
+      if (Mpi::Rank(comm) == 0)
+      {
+        std::ofstream fo(serial_mesh_file);
+        fo.precision(MSH_FLT_PRECISION);
+        mesh::DimensionalizeMesh(*smesh, iodata.GetLengthScaleFactor());
+        smesh->Print(fo);  // Do not need to nondimensionalize the temporary mesh
+      }
+      Mpi::Barrier(comm);
+    }
+  }
+  mesh->ExchangeFaceNbrData();
+  return ratio;
 }
 
 }  // namespace mesh
@@ -1635,9 +1640,8 @@ std::map<int, std::array<int, 2>> CheckMesh(mfem::Mesh &orig_mesh,
   {
     return new_attr_map;
   }
-
-  auto new_mesh = mfem::Mesh(orig_mesh.Dimension(), orig_mesh.GetNV(), new_ne, new_nbdr,
-                             orig_mesh.SpaceDimension());
+  mfem::Mesh new_mesh(orig_mesh.Dimension(), orig_mesh.GetNV(), new_ne, new_nbdr,
+                      orig_mesh.SpaceDimension());
 
   // Copy vertices and non-deleted domain and boundary elements.
   for (int v = 0; v < orig_mesh.GetNV(); v++)
@@ -1912,40 +1916,38 @@ void GetUsedAttributeMarkers(const IoData &iodata, int n_mat, int n_bdr,
   mesh::AttrToMarker(n_bdr, bdr_attr, bdr_marker);
 }
 
-void RebalanceConformalMesh(std::unique_ptr<mfem::ParMesh> &mesh, double length_scale,
-                            const std::string &output_serial_mesh_file)
+void RebalanceConformalMesh(std::unique_ptr<mfem::ParMesh> &pmesh, double length_scale,
+                            const std::string &serial_mesh_file)
 {
   // Write the parallel mesh to a stream as a serial mesh, then read back in and partition
   // using METIS.
-  auto comm = mesh->GetComm();
-  constexpr bool generate_bdr = false, generate_edges = true, refine = true,
-                 fix_orientation = true;
-  const bool save_serial_mesh = !output_serial_mesh_file.empty();
+  MPI_Comm comm = pmesh->GetComm();
+  constexpr bool generate_edges = true, refine = true, fix_orientation = true,
+                 generate_bdr = false;
   std::unique_ptr<mfem::Mesh> smesh;
   std::unique_ptr<int[]> partitioning;
   if constexpr (false)
   {
     // Write the serial mesh to a stream and read that through the Mesh constructor.
-    std::stringstream msg;
-    msg.precision(MSH_FLT_PRECISION);
-    mesh->PrintAsSerial(msg);
-    mesh.reset();  // Release the no longer needed memory
+    std::stringstream fo;
+    fo.precision(MSH_FLT_PRECISION);
+    pmesh->PrintAsSerial(fo);
+    pmesh.reset();
     if (Mpi::Root(comm))
     {
-      smesh = std::make_unique<mfem::Mesh>(msg, generate_edges, refine, fix_orientation);
+      smesh = std::make_unique<mfem::Mesh>(fo, generate_edges, refine, fix_orientation);
     }
   }
   else
   {
-    // Directly ingest the generated Mesh.
-    smesh = std::make_unique<mfem::Mesh>(mesh->GetSerialMesh(0));
-    mesh.reset();  // Release the no longer needed memory
-    if (Mpi::Rank(comm) != 0)
+    // Directly ingest the generated Mesh and release the no longer needed memory.
+    smesh = std::make_unique<mfem::Mesh>(pmesh->GetSerialMesh(0));
+    pmesh.reset();
+    if (!Mpi::Root(comm))
     {
       smesh.reset();
     }
   }
-
   if (Mpi::Root(comm))
   {
     smesh->FinalizeTopology(generate_bdr);
@@ -1953,16 +1955,17 @@ void RebalanceConformalMesh(std::unique_ptr<mfem::ParMesh> &mesh, double length_
     partitioning = GetMeshPartitioning(*smesh, Mpi::Size(comm));
   }
 
-  mesh = DistributeMesh(comm, smesh, partitioning);
-  if (save_serial_mesh)
+  // Construct the parallel mesh.
+  pmesh = DistributeMesh(comm, smesh, partitioning);
+  if (!serial_mesh_file.empty())
   {
     BlockTimer bt(Timer::IO);
     if (Mpi::Root(comm))
     {
-      std::ofstream serial(output_serial_mesh_file);
-      serial.precision(MSH_FLT_PRECISION);
+      std::ofstream fo(serial_mesh_file);
+      fo.precision(MSH_FLT_PRECISION);
       mesh::DimensionalizeMesh(*smesh, length_scale);
-      smesh->Print(serial);  // Do not need to nondimensionalize the temporary
+      smesh->Print(fo);  // Do not need to nondimensionalize the temporary mesh
     }
     Mpi::Barrier(comm);
   }

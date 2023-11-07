@@ -282,14 +282,14 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator 
 
   // Greedy procedure for basis construction (offline phase). Basis is initialized with
   // solutions at frequency sweep endpoints.
-  int iter = static_cast<int>(prom.GetSampleFrequencies().size()), iter0 = iter;
+  int it = static_cast<int>(prom.GetSampleFrequencies().size()), it0 = it;
   double max_error;
   while (true)
   {
     // Compute maximum error in parameter domain with current PROM.
     double omega_star;
     max_error = prom.ComputeMaxError(ncand, omega_star);
-    if (max_error < offline_tol || iter == nmax)
+    if (max_error < offline_tol || it == nmax)
     {
       break;
     }
@@ -297,16 +297,15 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator 
     // Sample HDM and add solution to basis.
     Mpi::Print(
         "\nGreedy iteration {:d} (n = {:d}): ω* = {:.3e} GHz ({:.3e}), error = {:.3e}\n",
-        iter - iter0 + 1, prom.GetReducedDimension(), omega_star * f0, omega_star,
-        max_error);
+        it - it0 + 1, prom.GetReducedDimension(), omega_star * f0, omega_star, max_error);
     prom.SolveHDM(omega_star, E);
     prom.AddHDMSample(omega_star, E);
     estimator.AddErrorIndicator(E, indicator);
-    iter++;
+    it++;
   }
   Mpi::Print("\nAdaptive sampling{} {:d} frequency samples:\n"
-             " n = {:d}, error = {:.3e}, tol = {:.3e}\n",
-             (iter == nmax) ? " reached maximum" : " converged with", iter,
+             " n = {:d}, error = {:.3e}, tol. = {:.3e}\n",
+             (it == nmax) ? " reached maximum" : " converged with", it,
              prom.GetReducedDimension(), max_error, offline_tol);
   utils::PrettyPrint(prom.GetSampleFrequencies(), f0, " Sampled frequencies (GHz):");
   Mpi::Print(" Total offline phase elapsed time: {:.2e} s\n",

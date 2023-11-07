@@ -7,15 +7,15 @@
 #include <limits>
 #include <numeric>
 #include <mfem.hpp>
-#include "utils/communication.hpp"
 
 namespace palace::utils
 {
 
-double ComputeDorflerThreshold(MPI_Comm comm, double fraction, const Vector &e)
+std::array<double, 2> ComputeDorflerThreshold(MPI_Comm comm, const Vector &e,
+                                              double fraction)
 {
   // Precompute the sort and partial sum to make evaluating a candidate partition fast.
-  e.HostRead();  // Pull the data out to the host
+  e.HostRead();
   std::vector<double> estimates(e.begin(), e.end());
   std::sort(estimates.begin(), estimates.end());
 
@@ -38,7 +38,7 @@ double ComputeDorflerThreshold(MPI_Comm comm, double fraction, const Vector &e)
   double error_threshold = estimates.size() > 0 ? estimates[index] : 0.0;
 
   // Compute the number of elements, and amount of error, marked by threshold value e.
-  auto marked = [&estimates, &sum, &local_total](double e) -> std::pair<std::size_t, double>
+  auto Marked = [&estimates, &sum, &local_total](double e) -> std::pair<std::size_t, double>
   {
     if (local_total > 0)
     {
@@ -79,8 +79,8 @@ double ComputeDorflerThreshold(MPI_Comm comm, double fraction, const Vector &e)
     double max_marked;
   } error;
   error.total = local_total;
-  std::tie(elements.max_marked, error.max_marked) = marked(min_threshold);
-  std::tie(elements.min_marked, error.min_marked) = marked(max_threshold);
+  std::tie(elements.max_marked, error.max_marked) = Marked(min_threshold);
+  std::tie(elements.min_marked, error.min_marked) = Marked(max_threshold);
   Mpi::GlobalSum(3, &elements.total, comm);
   Mpi::GlobalSum(3, &error.total, comm);
   const double max_indicator = [&]()
@@ -90,28 +90,31 @@ double ComputeDorflerThreshold(MPI_Comm comm, double fraction, const Vector &e)
     return max_indicator;
   }();
   MFEM_ASSERT(min_threshold <= max_threshold,
-              "min: " << min_threshold << " max " << max_threshold);
-  auto [elem_marked, error_marked] = marked(error_threshold);
+              "Error in Dorfler marking: min: " << min_threshold << " max " << max_threshold
+                                                << "!");
+  auto [elem_marked, error_marked] = Marked(error_threshold);
 
   // Keep track of the number of elements marked by the threshold bounds. If the top and
   // bottom values are equal (or separated by only 1), there's no point further bisecting.
-  constexpr int maxiter = 100;  // Maximum limit to prevent runaway
-  for (int i = 0; i < maxiter; i++)
+  // The maximum iterations is just to prevert runaway.
+  constexpr int max_it = 100;
+  for (int i = 0; i < max_it; i++)
   {
     error_threshold = (min_threshold + max_threshold) / 2;
-    std::tie(elem_marked, error_marked) = marked(error_threshold);
+    std::tie(elem_marked, error_marked) = Marked(error_threshold);
 
     // All processors need the values used for the stopping criteria.
     Mpi::GlobalSum(1, &elem_marked, comm);
     Mpi::GlobalSum(1, &error_marked, comm);
-    MFEM_ASSERT(elem_marked > 0, "Some elements must have been marked");
-    MFEM_ASSERT(error_marked > 0, "Some error must have been marked");
+    MFEM_ASSERT(elem_marked > 0, "Some elements must have been marked!");
+    MFEM_ASSERT(error_marked > 0, "Some error must have been marked!");
     const auto candidate_fraction = error_marked / error.total;
     if constexpr (false)
     {
-      Mpi::Print("Threshold: {:e} < {:e} < {:e}, Marked Elems: {} <= {} <= {}\n",
-                 min_threshold, error_threshold, max_threshold, elements.min_marked,
-                 elem_marked, elements.max_marked);
+      Mpi::Print(
+          "Marking threshold: {:e} < {:e} < {:e}\nMarked elements: {:d} <= {:d} <= {:d}\n",
+          min_threshold, error_threshold, max_threshold, elements.min_marked, elem_marked,
+          elements.max_marked);
     }
 
     // Set the tolerance based off of the largest local indicator value. These tolerance
@@ -127,8 +130,8 @@ double ComputeDorflerThreshold(MPI_Comm comm, double fraction, const Vector &e)
       // longer changing.
       if constexpr (false)
       {
-        Mpi::Print("ΔFraction: {:.3e}, Tol {:.3e}, ΔThreshold: {:.3e}, Tol {:.3e},  "
-                   "ΔElements: {}\n",
+        Mpi::Print("ΔFraction: {:.3e} (tol = {:.3e})\nΔThreshold: {:.3e} (tol = "
+                   "{:.3e})\nΔElements: {:d}\n",
                    candidate_fraction - fraction, frac_tol, max_threshold - min_threshold,
                    error_tol, elements.max_marked - elements.min_marked);
       }
@@ -158,21 +161,17 @@ double ComputeDorflerThreshold(MPI_Comm comm, double fraction, const Vector &e)
   // and fraction of the total error. Would rather over mark than under mark, as Dörfler
   // marking is the smallest set that covers at least the specified fraction of the error.
   error_threshold = min_threshold;
-  elem_marked = elements.max_marked;
   error_marked = error.max_marked;
-
-  Mpi::Print("Threshold {:.3e} marked {} of {} and {:.2f}%\n", error_threshold, elem_marked,
-             elements.total, 100 * error_marked / error.total);
-
+  MFEM_ASSERT(error_threshold > 0.0,
+              "Error threshold result from marking must be positive!");
   MFEM_VERIFY(error_marked >= fraction * error.total,
-              "Marked error: " << error_marked << " total error: " << error.total
-                               << ". Dorfler marking predicate failed!");
-  MFEM_ASSERT(error_threshold > 0, "error_threshold must be positive");
-  return error_threshold;
+              "Marked error = " << error_marked << ", total error =" << error.total
+                                << ". Dorfler marking predicate failed!");
+  return {error_threshold, error_marked / error.total};
 }
 
-double ComputeDorflerCoarseningThreshold(const mfem::ParMesh &mesh, double fraction,
-                                         const Vector &e)
+std::array<double, 2> ComputeDorflerCoarseningThreshold(const mfem::ParMesh &mesh,
+                                                        const Vector &e, double fraction)
 {
   MFEM_VERIFY(mesh.Nonconforming(), "Can only perform coarsening on a Nonconforming mesh!");
   const auto &derefinement_table = mesh.pncmesh->GetDerefinementTable();
@@ -196,7 +195,7 @@ double ComputeDorflerCoarseningThreshold(const mfem::ParMesh &mesh, double fract
   // smallest set of original elements that make up (1 - θ) of the total error. The
   // complement of this set is then the largest number of elements that make up θ of the
   // total error.
-  return ComputeDorflerThreshold(mesh.GetComm(), 1 - fraction, coarse_error);
+  return ComputeDorflerThreshold(mesh.GetComm(), coarse_error, 1.0 - fraction);
 }
 
 }  // namespace palace::utils
