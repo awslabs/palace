@@ -82,7 +82,7 @@ SOURCE_DIR=$(dirname $(cd "$(dirname "${BASH_SOURCE[0]}")" ; pwd -P ))
 
 if $FORMAT_CPP; then
     if ! command -v $CLANG_FORMAT &> /dev/null; then
-        echo "Error: Could not locate $CLANG_FORMAT executable"
+        echo "Error: Could not locate '$CLANG_FORMAT' executable"
         exit 1
     fi
     FORMAT_CPP_FILES=$(find $SOURCE_DIR/palace $SOURCE_DIR/test -type f \( -iname \*.hpp -o -iname \*.cpp -o -iname \*.h -o -iname \*.c \))
@@ -91,7 +91,7 @@ fi
 
 if $FORMAT_JL; then
     if ! command -v $JULIA &> /dev/null; then
-        echo "Error: Could not locate $JULIA executable"
+        echo "Error: Could not locate '$JULIA' executable"
         exit 1
     fi
     FORMAT_JL_ARGS="verbose=true, format_markdown=true"

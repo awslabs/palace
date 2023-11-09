@@ -53,7 +53,7 @@ fi
 SCRIPT_DIR=$( cd "$(dirname "${BASH_SOURCE[0]}")" ; pwd -P )
 
 if ! command -v $JULIA &> /dev/null; then
-    echo "Error: Could not locate $JULIA executable"
+    echo "Error: Could not locate '$JULIA' executable"
     exit 1
 fi
 
