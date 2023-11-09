@@ -284,8 +284,8 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) cons
   {
     // Get the eigenvalue and relative error.
     std::complex<double> omega = eigen->GetEigenvalue(i);
-    double error1 = eigen->GetError(i, EigenvalueSolver::ErrorType::BACKWARD);
-    double error2 = eigen->GetError(i, EigenvalueSolver::ErrorType::ABSOLUTE);
+    double error_bkwd = eigen->GetError(i, EigenvalueSolver::ErrorType::BACKWARD);
+    double error_abs = eigen->GetError(i, EigenvalueSolver::ErrorType::ABSOLUTE);
     if (!C)
     {
       // Linear EVP has eigenvalue μ = -λ² = ω².
@@ -308,16 +308,17 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) cons
     postop.UpdatePorts(spaceop.GetLumpedPortOp(), omega.real());
 
     // Postprocess the mode.
-    Postprocess(postop, spaceop.GetLumpedPortOp(), i, omega, error1, error2, num_conv,
-                (i == 0) ? &indicator : nullptr);
+    Postprocess(postop, spaceop.GetLumpedPortOp(), i, omega, error_bkwd, error_abs,
+                num_conv, (i == 0) ? &indicator : nullptr);
   }
   return {indicator, spaceop.GlobalTrueVSize()};
 }
 
 void EigenSolver::Postprocess(const PostOperator &postop,
                               const LumpedPortOperator &lumped_port_op, int i,
-                              std::complex<double> omega, double error1, double error2,
-                              int num_conv, const ErrorIndicator *indicator) const
+                              std::complex<double> omega, double error_bkwd,
+                              double error_abs, int num_conv,
+                              const ErrorIndicator *indicator) const
 {
   // The internal GridFunctions for PostOperator have already been set from the E and B
   // solutions in the main loop over converged eigenvalues. Note: The energies output are
@@ -328,7 +329,8 @@ void EigenSolver::Postprocess(const PostOperator &postop,
   double E_mag = postop.GetHFieldEnergy();
   double E_cap = postop.GetLumpedCapacitorEnergy(lumped_port_op);
   double E_ind = postop.GetLumpedInductorEnergy(lumped_port_op);
-  PostprocessEigen(i, omega, error1, error2, num_conv);
+  PostprocessEigen(i, omega, error_bkwd, error_abs, num_conv);
+  PostprocessPorts(postop, lumped_port_op, i);
   PostprocessEPR(postop, lumped_port_op, i, omega, E_elec + E_cap);
   PostprocessDomains(postop, "m", i, i + 1, E_elec, E_mag, E_cap, E_ind);
   PostprocessSurfaces(postop, "m", i, i + 1, E_elec + E_cap, E_mag + E_ind, 1.0, 1.0);
@@ -347,23 +349,29 @@ void EigenSolver::Postprocess(const PostOperator &postop,
 namespace
 {
 
+struct PortVIData
+{
+  const int idx;                      // Lumped port index
+  const std::complex<double> Vi, Ii;  // Port voltage, current
+};
+
 struct EprLData
 {
-  const int idx;    // Lumped inductor index
+  const int idx;    // Lumped port index
   const double pj;  // Inductor energy-participation ratio
 };
 
 struct EprIOData
 {
-  const int idx;    // Lumped resistor index
+  const int idx;    // Lumped port index
   const double Ql;  // Quality factor
   const double Kl;  // κ for loss rate
 };
 
 }  // namespace
 
-void EigenSolver::PostprocessEigen(int i, std::complex<double> omega, double error1,
-                                   double error2, int num_conv) const
+void EigenSolver::PostprocessEigen(int i, std::complex<double> omega, double error_bkwd,
+                                   double error_abs, int num_conv) const
 {
   // Dimensionalize the result and print in a nice table of frequencies and Q-factors. Save
   // to file if user has specified.
@@ -395,8 +403,8 @@ void EigenSolver::PostprocessEigen(int i, std::complex<double> omega, double err
                i + 1, int_width,
                f.real(), w, p,
                f.imag(), w, p,
-               error1, w, p,
-               error2, w, p);
+               error_bkwd, w, p,
+               error_abs, w, p);
     // clang-format on
   }
 
@@ -408,20 +416,114 @@ void EigenSolver::PostprocessEigen(int i, std::complex<double> omega, double err
     if (i == 0)
     {
       // clang-format off
-      output.print("{:>{}s},{:>{}s},{:>{}s},{:>{}s}\n",
+      output.print("{:>{}s},{:>{}s},{:>{}s},{:>{}s},{:>{}s},{:>{}s}\n",
                    "m", table.w1,
                    "Re{f} (GHz)", table.w,
                    "Im{f} (GHz)", table.w,
-                   "Q", table.w);
+                   "Q", table.w,
+                   "Error (Bkwd.)", table.w,
+                   "Error (Abs.)", table.w);
       // clang-format on
     }
     // clang-format off
-    output.print("{:{}.{}e},{:+{}.{}e},{:+{}.{}e},{:+{}.{}e}\n",
+    output.print("{:{}.{}e},{:+{}.{}e},{:+{}.{}e},{:+{}.{}e},{:+{}.{}e},{:+{}.{}e}\n",
                  static_cast<double>(i + 1), table.w1, table.p1,
                  f.real(), table.w, table.p,
                  f.imag(), table.w, table.p,
-                 Q, table.w, table.p);
+                 Q, table.w, table.p,
+                 error_bkwd, table.w, table.p,
+                 error_abs, table.w, table.p);
     // clang-format on
+  }
+}
+
+void EigenSolver::PostprocessPorts(const PostOperator &postop,
+                                   const LumpedPortOperator &lumped_port_op, int i) const
+{
+  // Postprocess the frequency domain lumped port voltages and currents (complex magnitude
+  // = sqrt(2) * RMS).
+  if (post_dir.length() == 0)
+  {
+    return;
+  }
+  std::vector<PortVIData> port_data;
+  port_data.reserve(lumped_port_op.Size());
+  for (const auto &[idx, data] : lumped_port_op)
+  {
+    const std::complex<double> Vi = postop.GetPortVoltage(lumped_port_op, idx);
+    const std::complex<double> Ii = postop.GetPortCurrent(lumped_port_op, idx);
+    port_data.push_back({idx, iodata.DimensionalizeValue(IoData::ValueType::VOLTAGE, Vi),
+                         iodata.DimensionalizeValue(IoData::ValueType::CURRENT, Ii)});
+  }
+  if (root && !port_data.empty())
+  {
+    // Write the port voltages.
+    {
+      std::string path = post_dir + "port-V.csv";
+      auto output = OutputFile(path, (i > 0));
+      if (i == 0)
+      {
+        output.print("{:>{}s},", "m", table.w1);
+        for (const auto &data : port_data)
+        {
+          // clang-format off
+          output.print("{:>{}s},{:>{}s}{}",
+                       "Re{V[" + std::to_string(data.idx) + "]} (V)", table.w,
+                       "Im{V[" + std::to_string(data.idx) + "]} (V)", table.w,
+                       (data.idx == port_data.back().idx) ? "" : ",");
+          // clang-format on
+        }
+        output.print("\n");
+      }
+      // clang-format off
+      output.print("{:{}.{}e},",
+                   static_cast<double>(i + 1), table.w1, table.p1);
+      // clang-format on
+      for (const auto &data : port_data)
+      {
+        // clang-format off
+        output.print("{:+{}.{}e},{:+{}.{}e}{}",
+                     data.Vi.real(), table.w, table.p,
+                     data.Vi.imag(), table.w, table.p,
+                     (data.idx == port_data.back().idx) ? "" : ",");
+        // clang-format on
+      }
+      output.print("\n");
+    }
+
+    // Write the port currents.
+    {
+      std::string path = post_dir + "port-I.csv";
+      auto output = OutputFile(path, (i > 0));
+      if (i == 0)
+      {
+        output.print("{:>{}s},", "m", table.w1);
+        for (const auto &data : port_data)
+        {
+          // clang-format off
+          output.print("{:>{}s},{:>{}s}{}",
+                       "Re{I[" + std::to_string(data.idx) + "]} (A)", table.w,
+                       "Im{I[" + std::to_string(data.idx) + "]} (A)", table.w,
+                       (data.idx == port_data.back().idx) ? "" : ",");
+          // clang-format on
+        }
+        output.print("\n");
+      }
+      // clang-format off
+      output.print("{:{}.{}e},",
+                   static_cast<double>(i + 1), table.w1, table.p1);
+      // clang-format on
+      for (const auto &data : port_data)
+      {
+        // clang-format off
+        output.print("{:+{}.{}e},{:+{}.{}e}{}",
+                     data.Ii.real(), table.w, table.p,
+                     data.Ii.imag(), table.w, table.p,
+                     (data.idx == port_data.back().idx) ? "" : ",");
+        // clang-format on
+      }
+      output.print("\n");
+    }
   }
 }
 
