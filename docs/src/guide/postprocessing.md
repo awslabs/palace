@@ -14,6 +14,10 @@ element parameters. In addition, each simulation type will write a file called
 as well as lumped element energies, for each step of the simulation (eigenmode, frequency,
 or time step, for examples).
 
+Models containing ports lumped or wave port boundaries or surface current excitations will
+automatically postprocess quantities related to those boundaries. This is described in
+[Ports and surface currents](#Ports-and-surface-currents).
+
 The participation ratios for bulk dielectrics and interface dielectric layers can be
 computed for simulations involving the electric field. For model boundaries, the integrated
 surface charge or magnetic flux can also be postprocessed. These features are described
@@ -29,6 +33,19 @@ on the 3D computational domain as well as 2D domain boundaries and material inte
 written to disk when requested using the relevant parameters under [`config["Solver"]`]
 (../config/solver.md). These fields are meant to be visualized with [ParaView]
 (https://www.paraview.org/).
+
+## Ports and surface currents
+
+When lumped ports are present in a model, the lumped port voltages and currents computed for
+each step of the simulation (eigenmode, frequency, or time step) are written to ASCII files
+named `port-V.csv` and `port-I.csv`, respectively. These files also include the excitation
+voltage and current corresponding to the incident wave on excited port boundaries.
+
+Additionally, when surface current excitations are present, the excitations are written to
+`surface-I.csv`.
+
+For frequency domain problems, the values output are the complex-valued peak voltages and
+currents, computed from the field phasors.
 
 ## Domain postprocessing
 

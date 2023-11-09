@@ -44,6 +44,9 @@ The format of this changelog is based on
     for all problem types aside from transient. To enable AMR, a user must specify
     `"MaxIts"`, while all other options have reasonable defaults. Nonconformal(all mesh
     types) and conformal (simplex meshes) refinement are supported.
+  - Added output of lumped port voltage and current for eigenmode simulations.
+  - Added dimensionalized output for energies, voltages, currents, and field values based on
+    a choice of the characteristic magnetic field strength used for nondimensionalization.
   - Fixed bugs for simulations using tetrahedral meshes associated with unexpected mesh
     toplogy changes during parallel mesh construction.
   - Added improved `Timer` and `BlockTimer` classes with more timing categories for

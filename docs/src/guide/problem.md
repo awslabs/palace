@@ -11,7 +11,9 @@ For eigenmode simulations, [`config["Problem"]["Type"]: "Eigenmode"`]
 (../config/problem.md#config["Problem"]), the user should specify a
 nonzero (but arbitrarily small) frequency above which to search for eigenmodes. The computed
 eigenvalues are written to an ASCII file named `eig.csv`, in the directory specified by
-[`config["Problem"]["Output"]`](../config/problem.md#config%5B%22Problem%22%5D).
+[`config["Problem"]["Output"]`](../config/problem.md#config%5B%22Problem%22%5D). Also in
+this file are the mode quality factors and errors (absolute and backward) computed for each
+eigenpair.
 
 Calculations related to [energy-participation ratio (EPR) quantization]
 (https://www.nature.com/articles/s41534-021-00461-8) can be performed with *Palace* when
@@ -56,11 +58,10 @@ scattering matrix corresponding to the driven port index automatically for this 
 type and stored in an ASCII file named `port-S.csv`, in the directory specified by
 [`config["Problem"]["Output"]`](../config/problem.md#config%5B%22Problem%22%5D). In the case
 that more than a single lumped or wave port is excited or surface current excitations are
-used, scattering parameter output will be disabled for the simulation(though other
-quantities of interest are still postprocessed). When lumped ports are present, the peak
-complex lumped port voltages and currents computed for each excitation frequency are written
-to ASCII files named `port-V.csv` and `port-I.csv`, respectively, Additionally, the surface
-current excitations are written to `surface-I.csv`.
+used, scattering parameter output will be disabled for the simulation (though other
+quantities of interest are still postprocessed). Further postprocessing of quantities
+related to ports in the model is described in the section on [Ports and surface currents]
+(postprocessing.md#Ports-and-surface-currents).
 
 ## Driven problems in the time domain
 
@@ -76,11 +77,9 @@ available excitation types which define the time dependence of the pulse or exci
 waveform. These are specified under the [`config["Solver"]["Transient"]`]
 (../config/solver.md#solver["Transient"]) object using the `"Excitation"` keyword.
 
-The time histories of the lumped port voltages and currents are postprocessed and
-automatically written to ASCII files named `port-V.csv` and `port-I.csv`, respectively, in
-the directory specified by [`config["Problem"]["Output"]`]
-(../config/problem.md#config["Problem"]). Additionally, surface current excitation time
-histories are written to `surface-I.csv`.
+As for the frequency domain driven case, postprocessing of quantities related to ports is
+described in the section on [Ports and surface currents]
+(postprocessing.md#Ports-and-surface-currents).
 
 ## Electrostatic problems
 
