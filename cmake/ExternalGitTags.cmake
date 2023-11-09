@@ -90,7 +90,7 @@ set(EXTERN_LIBCEED_GIT_BRANCH
   "Git branch for external libCEED build"
 )
 set(EXTERN_LIBCEED_GIT_TAG
-  "2bc6469880c9a85ea757b18808a9311af8c3b635" CACHE STRING  # main @ 10/06/2023
+  "e5a301d7f3b471e9fc19701d6f25d22876a6f6b4" CACHE STRING  # main @ 11/06/2023
   "Git tag for external libCEED build"
 )
 

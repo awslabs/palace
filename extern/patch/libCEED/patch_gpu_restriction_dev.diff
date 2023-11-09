@@ -1174,7 +1174,7 @@ index f47c52b7..29d3b083 100644
  }
  
 diff --git a/backends/cuda-ref/ceed-cuda-ref-restriction.c b/backends/cuda-ref/ceed-cuda-ref-restriction.c
-index 71ed2821..41e1fcc0 100644
+index 71ed2821..f2b190e5 100644
 --- a/backends/cuda-ref/ceed-cuda-ref-restriction.c
 +++ b/backends/cuda-ref/ceed-cuda-ref-restriction.c
 @@ -19,22 +19,23 @@
@@ -1210,7 +1210,7 @@ index 71ed2821..41e1fcc0 100644
    const CeedInt num_nodes = impl->num_nodes;
  
    // Get vectors
-@@ -50,45 +51,134 @@ static int CeedElemRestrictionApply_Cuda(CeedElemRestriction r, CeedTransposeMod
+@@ -50,45 +51,155 @@ static int CeedElemRestrictionApply_Cuda(CeedElemRestriction r, CeedTransposeMod
    // Restrict
    if (t_mode == CEED_NOTRANSPOSE) {
      // L-vector -> E-vector
@@ -1286,25 +1286,6 @@ index 71ed2821..41e1fcc0 100644
 -    if (impl->d_ind) {
 -      // -- Offsets provided
 -      CeedInt block_size = 32;
--
--      if (impl->OffsetTranspose) {
--        kernel       = impl->OffsetTranspose;
--        void *args[] = {&num_elem, &impl->d_ind, &d_u, &d_v};
--
--        CeedCallBackend(CeedRunKernel_Cuda(ceed, kernel, CeedDivUpInt(num_nodes, block_size), block_size, args));
--      } else {
--        kernel       = impl->OffsetTransposeDet;
--        void *args[] = {&impl->d_l_vec_indices, &impl->d_t_indices, &impl->d_t_offsets, &d_u, &d_v};
--
--        CeedCallBackend(CeedRunKernel_Cuda(ceed, kernel, CeedDivUpInt(num_nodes, block_size), block_size, args));
--      }
--    } else {
--      // -- Strided restriction
--      kernel             = impl->StridedTranspose;
--      void   *args[]     = {&num_elem, &d_u, &d_v};
--      CeedInt block_size = 32;
--
--      CeedCallBackend(CeedRunKernel_Cuda(ceed, kernel, CeedDivUpInt(num_nodes, block_size), block_size, args));
 +    const CeedInt block_size = 32;
 +    const CeedInt grid       = CeedDivUpInt(num_nodes, block_size);
 +
@@ -1330,40 +1311,76 @@ index 71ed2821..41e1fcc0 100644
 +      } break;
 +      case CEED_RESTRICTION_ORIENTED: {
 +        if (use_signs) {
-+          kernel       = impl->OrientedTranspose;
-+          void *args[] = {&num_elem, &impl->d_ind, &impl->d_orients, &d_u, &d_v};
++          if (impl->OrientedTranspose) {
++            kernel       = impl->OrientedTranspose;
++            void *args[] = {&num_elem, &impl->d_ind, &impl->d_orients, &d_u, &d_v};
 +
-+          CeedCallBackend(CeedRunKernel_Cuda(ceed, kernel, grid, block_size, args));
++            CeedCallBackend(CeedRunKernel_Cuda(ceed, kernel, grid, block_size, args));
++          } else {
++            kernel       = impl->OrientedTransposeDet;
++            void *args[] = {&impl->d_l_vec_indices, &impl->d_t_indices, &impl->d_t_offsets, &impl->d_orients, &d_u, &d_v};
++
++            CeedCallBackend(CeedRunKernel_Cuda(ceed, kernel, grid, block_size, args));
++          }
 +        } else {
 +          if (impl->OffsetTranspose) {
 +            kernel       = impl->OffsetTranspose;
 +            void *args[] = {&num_elem, &impl->d_ind, &d_u, &d_v};
-+
+ 
+-      if (impl->OffsetTranspose) {
+-        kernel       = impl->OffsetTranspose;
+-        void *args[] = {&num_elem, &impl->d_ind, &d_u, &d_v};
 +            CeedCallBackend(CeedRunKernel_Cuda(ceed, kernel, grid, block_size, args));
 +          } else {
 +            kernel       = impl->OffsetTransposeDet;
 +            void *args[] = {&impl->d_l_vec_indices, &impl->d_t_indices, &impl->d_t_offsets, &d_u, &d_v};
-+
+ 
+-        CeedCallBackend(CeedRunKernel_Cuda(ceed, kernel, CeedDivUpInt(num_nodes, block_size), block_size, args));
+-      } else {
+-        kernel       = impl->OffsetTransposeDet;
+-        void *args[] = {&impl->d_l_vec_indices, &impl->d_t_indices, &impl->d_t_offsets, &d_u, &d_v};
 +            CeedCallBackend(CeedRunKernel_Cuda(ceed, kernel, grid, block_size, args));
 +          }
 +        }
 +      } break;
 +      case CEED_RESTRICTION_CURL_ORIENTED: {
 +        if (use_signs && use_orients) {
-+          kernel       = impl->CurlOrientedTranspose;
-+          void *args[] = {&num_elem, &impl->d_ind, &impl->d_curl_orients, &d_u, &d_v};
++          if (impl->CurlOrientedTranspose) {
++            kernel       = impl->CurlOrientedTranspose;
++            void *args[] = {&num_elem, &impl->d_ind, &impl->d_curl_orients, &d_u, &d_v};
 +
-+          CeedCallBackend(CeedRunKernel_Cuda(ceed, kernel, grid, block_size, args));
++            CeedCallBackend(CeedRunKernel_Cuda(ceed, kernel, grid, block_size, args));
++          } else {
++            kernel       = impl->CurlOrientedTransposeDet;
++            void *args[] = {&impl->d_l_vec_indices, &impl->d_t_indices, &impl->d_t_offsets, &impl->d_curl_orients, &d_u, &d_v};
++
++            CeedCallBackend(CeedRunKernel_Cuda(ceed, kernel, grid, block_size, args));
++          }
 +        } else if (use_orients) {
-+          kernel       = impl->CurlOrientedUnsignedTranspose;
-+          void *args[] = {&num_elem, &impl->d_ind, &impl->d_curl_orients, &d_u, &d_v};
++          if (impl->CurlOrientedUnsignedTranspose) {
++            kernel       = impl->CurlOrientedUnsignedTranspose;
++            void *args[] = {&num_elem, &impl->d_ind, &impl->d_curl_orients, &d_u, &d_v};
+ 
+-        CeedCallBackend(CeedRunKernel_Cuda(ceed, kernel, CeedDivUpInt(num_nodes, block_size), block_size, args));
+-      }
+-    } else {
+-      // -- Strided restriction
+-      kernel             = impl->StridedTranspose;
+-      void   *args[]     = {&num_elem, &d_u, &d_v};
+-      CeedInt block_size = 32;
++            CeedCallBackend(CeedRunKernel_Cuda(ceed, kernel, grid, block_size, args));
++          } else {
++            kernel       = impl->CurlOrientedUnsignedTransposeDet;
++            void *args[] = {&impl->d_l_vec_indices, &impl->d_t_indices, &impl->d_t_offsets, &impl->d_curl_orients, &d_u, &d_v};
 +
-+          CeedCallBackend(CeedRunKernel_Cuda(ceed, kernel, grid, block_size, args));
++            CeedCallBackend(CeedRunKernel_Cuda(ceed, kernel, grid, block_size, args));
++          }
 +        } else {
 +          if (impl->OffsetTranspose) {
 +            kernel       = impl->OffsetTranspose;
 +            void *args[] = {&num_elem, &impl->d_ind, &d_u, &d_v};
-+
+ 
+-      CeedCallBackend(CeedRunKernel_Cuda(ceed, kernel, CeedDivUpInt(num_nodes, block_size), block_size, args));
 +            CeedCallBackend(CeedRunKernel_Cuda(ceed, kernel, grid, block_size, args));
 +          } else {
 +            kernel       = impl->OffsetTransposeDet;
@@ -1381,7 +1398,7 @@ index 71ed2821..41e1fcc0 100644
      }
    }
  
-@@ -100,6 +190,29 @@ static int CeedElemRestrictionApply_Cuda(CeedElemRestriction r, CeedTransposeMod
+@@ -100,6 +211,29 @@ static int CeedElemRestrictionApply_Cuda(CeedElemRestriction r, CeedTransposeMod
    return CEED_ERROR_SUCCESS;
  }
  
@@ -1411,7 +1428,7 @@ index 71ed2821..41e1fcc0 100644
  //------------------------------------------------------------------------------
  // Get offsets
  //------------------------------------------------------------------------------
-@@ -118,21 +231,61 @@ static int CeedElemRestrictionGetOffsets_Cuda(CeedElemRestriction rstr, CeedMemT
+@@ -118,21 +252,61 @@ static int CeedElemRestrictionGetOffsets_Cuda(CeedElemRestriction rstr, CeedMemT
    return CEED_ERROR_SUCCESS;
  }
  
@@ -1476,7 +1493,7 @@ index 71ed2821..41e1fcc0 100644
    CeedCallBackend(CeedFree(&impl));
    return CEED_ERROR_SUCCESS;
  }
-@@ -140,7 +293,7 @@ static int CeedElemRestrictionDestroy_Cuda(CeedElemRestriction r) {
+@@ -140,7 +314,7 @@ static int CeedElemRestrictionDestroy_Cuda(CeedElemRestriction r) {
  //------------------------------------------------------------------------------
  // Create transpose offsets and indices
  //------------------------------------------------------------------------------
@@ -1485,7 +1502,7 @@ index 71ed2821..41e1fcc0 100644
    Ceed                      ceed;
    bool                     *is_node;
    CeedSize                  l_size;
-@@ -148,12 +301,12 @@ static int CeedElemRestrictionOffset_Cuda(const CeedElemRestriction r, const Cee
+@@ -148,12 +322,12 @@ static int CeedElemRestrictionOffset_Cuda(const CeedElemRestriction r, const Cee
    CeedInt                  *ind_to_offset, *l_vec_indices, *t_offsets, *t_indices;
    CeedElemRestriction_Cuda *impl;
  
@@ -1504,7 +1521,7 @@ index 71ed2821..41e1fcc0 100644
    const CeedInt size_indices = num_elem * elem_size;
  
    // Count num_nodes
-@@ -221,135 +374,194 @@ static int CeedElemRestrictionOffset_Cuda(const CeedElemRestriction r, const Cee
+@@ -221,153 +395,223 @@ static int CeedElemRestrictionOffset_Cuda(const CeedElemRestriction r, const Cee
  // Create restriction
  //------------------------------------------------------------------------------
  int CeedElemRestrictionCreate_Cuda(CeedMemType mem_type, CeedCopyMode copy_mode, const CeedInt *indices, const bool *orients,
@@ -1792,16 +1809,21 @@ index 71ed2821..41e1fcc0 100644
                                     strides[0], "RSTR_STRIDE_COMP", strides[1], "RSTR_STRIDE_ELEM", strides[2]));
    CeedCallBackend(CeedGetKernel_Cuda(ceed, impl->module, "StridedNoTranspose", &impl->StridedNoTranspose));
    CeedCallBackend(CeedGetKernel_Cuda(ceed, impl->module, "StridedTranspose", &impl->StridedTranspose));
-@@ -359,15 +571,23 @@ int CeedElemRestrictionCreate_Cuda(CeedMemType mem_type, CeedCopyMode copy_mode,
-   } else {
-     CeedCallBackend(CeedGetKernel_Cuda(ceed, impl->module, "OffsetTransposeDet", &impl->OffsetTransposeDet));
-   }
+   CeedCallBackend(CeedGetKernel_Cuda(ceed, impl->module, "OffsetNoTranspose", &impl->OffsetNoTranspose));
 +  CeedCallBackend(CeedGetKernel_Cuda(ceed, impl->module, "OrientedNoTranspose", &impl->OrientedNoTranspose));
-+  CeedCallBackend(CeedGetKernel_Cuda(ceed, impl->module, "OrientedTranspose", &impl->OrientedTranspose));
 +  CeedCallBackend(CeedGetKernel_Cuda(ceed, impl->module, "CurlOrientedNoTranspose", &impl->CurlOrientedNoTranspose));
 +  CeedCallBackend(CeedGetKernel_Cuda(ceed, impl->module, "CurlOrientedUnsignedNoTranspose", &impl->CurlOrientedUnsignedNoTranspose));
-+  CeedCallBackend(CeedGetKernel_Cuda(ceed, impl->module, "CurlOrientedTranspose", &impl->CurlOrientedTranspose));
-+  CeedCallBackend(CeedGetKernel_Cuda(ceed, impl->module, "CurlOrientedUnsignedTranspose", &impl->CurlOrientedUnsignedTranspose));
+   if (!is_deterministic) {
+     CeedCallBackend(CeedGetKernel_Cuda(ceed, impl->module, "OffsetTranspose", &impl->OffsetTranspose));
++    CeedCallBackend(CeedGetKernel_Cuda(ceed, impl->module, "OrientedTranspose", &impl->OrientedTranspose));
++    CeedCallBackend(CeedGetKernel_Cuda(ceed, impl->module, "CurlOrientedTranspose", &impl->CurlOrientedTranspose));
++    CeedCallBackend(CeedGetKernel_Cuda(ceed, impl->module, "CurlOrientedUnsignedTranspose", &impl->CurlOrientedUnsignedTranspose));
+   } else {
+     CeedCallBackend(CeedGetKernel_Cuda(ceed, impl->module, "OffsetTransposeDet", &impl->OffsetTransposeDet));
++    CeedCallBackend(CeedGetKernel_Cuda(ceed, impl->module, "OrientedTransposeDet", &impl->OrientedTransposeDet));
++    CeedCallBackend(CeedGetKernel_Cuda(ceed, impl->module, "CurlOrientedTransposeDet", &impl->CurlOrientedTransposeDet));
++    CeedCallBackend(CeedGetKernel_Cuda(ceed, impl->module, "CurlOrientedUnsignedTransposeDet", &impl->CurlOrientedUnsignedTransposeDet));
+   }
    CeedCallBackend(CeedFree(&restriction_kernel_path));
    CeedCallBackend(CeedFree(&restriction_kernel_source));
  
@@ -1822,26 +1844,31 @@ index 71ed2821..41e1fcc0 100644
  }
  
 diff --git a/backends/cuda-ref/ceed-cuda-ref.h b/backends/cuda-ref/ceed-cuda-ref.h
-index 309c1056..c60ca79b 100644
+index 309c1056..93008817 100644
 --- a/backends/cuda-ref/ceed-cuda-ref.h
 +++ b/backends/cuda-ref/ceed-cuda-ref.h
-@@ -30,6 +30,12 @@ typedef struct {
+@@ -30,6 +30,15 @@ typedef struct {
    CUfunction OffsetNoTranspose;
    CUfunction OffsetTranspose;
    CUfunction OffsetTransposeDet;
 +  CUfunction OrientedNoTranspose;
 +  CUfunction OrientedTranspose;
++  CUfunction OrientedTransposeDet;
 +  CUfunction CurlOrientedNoTranspose;
 +  CUfunction CurlOrientedTranspose;
++  CUfunction CurlOrientedTransposeDet;
 +  CUfunction CurlOrientedUnsignedNoTranspose;
 +  CUfunction CurlOrientedUnsignedTranspose;
++  CUfunction CurlOrientedUnsignedTransposeDet;
    CeedInt    num_nodes;
    CeedInt   *h_ind;
    CeedInt   *h_ind_allocated;
-@@ -38,6 +44,14 @@ typedef struct {
+@@ -37,7 +46,15 @@ typedef struct {
+   CeedInt   *d_ind_allocated;
    CeedInt   *d_t_offsets;
    CeedInt   *d_t_indices;
-   CeedInt   *d_l_vec_indices;
+-  CeedInt   *d_l_vec_indices;
++  CeedInt   *d_l_indices;
 +  bool      *h_orients;
 +  bool      *h_orients_allocated;
 +  bool      *d_orients;
@@ -1853,7 +1880,7 @@ index 309c1056..c60ca79b 100644
  } CeedElemRestriction_Cuda;
  
  typedef struct {
-@@ -80,21 +94,19 @@ typedef struct {
+@@ -80,21 +97,19 @@ typedef struct {
  
  typedef struct {
    CUmodule            module;
@@ -3040,7 +3067,7 @@ index 486269bb..023b3d8a 100644
  }
  
 diff --git a/backends/hip-ref/ceed-hip-ref-restriction.c b/backends/hip-ref/ceed-hip-ref-restriction.c
-index 0dd11b16..f0bcd151 100644
+index 0dd11b16..5824fa48 100644
 --- a/backends/hip-ref/ceed-hip-ref-restriction.c
 +++ b/backends/hip-ref/ceed-hip-ref-restriction.c
 @@ -18,22 +18,23 @@
@@ -3075,7 +3102,7 @@ index 0dd11b16..f0bcd151 100644
    const CeedInt num_nodes = impl->num_nodes;
  
    // Get vectors
-@@ -49,45 +50,134 @@ static int CeedElemRestrictionApply_Hip(CeedElemRestriction r, CeedTransposeMode
+@@ -49,45 +50,155 @@ static int CeedElemRestrictionApply_Hip(CeedElemRestriction r, CeedTransposeMode
    // Restrict
    if (t_mode == CEED_NOTRANSPOSE) {
      // L-vector -> E-vector
@@ -3151,25 +3178,6 @@ index 0dd11b16..f0bcd151 100644
 -    if (impl->d_ind) {
 -      // -- Offsets provided
 -      CeedInt block_size = 64;
--
--      if (impl->OffsetTranspose) {
--        kernel       = impl->OffsetTranspose;
--        void *args[] = {&num_elem, &impl->d_ind, &d_u, &d_v};
--
--        CeedCallBackend(CeedRunKernel_Hip(ceed, kernel, CeedDivUpInt(num_nodes, block_size), block_size, args));
--      } else {
--        kernel       = impl->OffsetTransposeDet;
--        void *args[] = {&impl->d_l_vec_indices, &impl->d_t_indices, &impl->d_t_offsets, &d_u, &d_v};
--
--        CeedCallBackend(CeedRunKernel_Hip(ceed, kernel, CeedDivUpInt(num_nodes, block_size), block_size, args));
--      }
--    } else {
--      // -- Strided restriction
--      kernel             = impl->StridedTranspose;
--      void   *args[]     = {&num_elem, &d_u, &d_v};
--      CeedInt block_size = 64;
--
--      CeedCallBackend(CeedRunKernel_Hip(ceed, kernel, CeedDivUpInt(num_nodes, block_size), block_size, args));
 +    const CeedInt block_size = 64;
 +    const CeedInt grid       = CeedDivUpInt(num_nodes, block_size);
 +
@@ -3195,35 +3203,71 @@ index 0dd11b16..f0bcd151 100644
 +      } break;
 +      case CEED_RESTRICTION_ORIENTED: {
 +        if (use_signs) {
-+          kernel       = impl->OrientedTranspose;
-+          void *args[] = {&num_elem, &impl->d_ind, &impl->d_orients, &d_u, &d_v};
++          if (impl->OrientedTranspose) {
++            kernel       = impl->OrientedTranspose;
++            void *args[] = {&num_elem, &impl->d_ind, &impl->d_orients, &d_u, &d_v};
 +
-+          CeedCallBackend(CeedRunKernel_Hip(ceed, kernel, grid, block_size, args));
++            CeedCallBackend(CeedRunKernel_Hip(ceed, kernel, grid, block_size, args));
++          } else {
++            kernel       = impl->OrientedTransposeDet;
++            void *args[] = {&impl->d_l_vec_indices, &impl->d_t_indices, &impl->d_t_offsets, &impl->d_orients, &d_u, &d_v};
++
++            CeedCallBackend(CeedRunKernel_Hip(ceed, kernel, grid, block_size, args));
++          }
 +        } else {
 +          if (impl->OffsetTranspose) {
 +            kernel       = impl->OffsetTranspose;
 +            void *args[] = {&num_elem, &impl->d_ind, &d_u, &d_v};
-+
+ 
+-      if (impl->OffsetTranspose) {
+-        kernel       = impl->OffsetTranspose;
+-        void *args[] = {&num_elem, &impl->d_ind, &d_u, &d_v};
 +            CeedCallBackend(CeedRunKernel_Hip(ceed, kernel, grid, block_size, args));
 +          } else {
 +            kernel       = impl->OffsetTransposeDet;
 +            void *args[] = {&impl->d_l_vec_indices, &impl->d_t_indices, &impl->d_t_offsets, &d_u, &d_v};
-+
+ 
+-        CeedCallBackend(CeedRunKernel_Hip(ceed, kernel, CeedDivUpInt(num_nodes, block_size), block_size, args));
+-      } else {
+-        kernel       = impl->OffsetTransposeDet;
+-        void *args[] = {&impl->d_l_vec_indices, &impl->d_t_indices, &impl->d_t_offsets, &d_u, &d_v};
 +            CeedCallBackend(CeedRunKernel_Hip(ceed, kernel, grid, block_size, args));
 +          }
 +        }
 +      } break;
 +      case CEED_RESTRICTION_CURL_ORIENTED: {
 +        if (use_signs && use_orients) {
-+          kernel       = impl->CurlOrientedTranspose;
-+          void *args[] = {&num_elem, &impl->d_ind, &impl->d_curl_orients, &d_u, &d_v};
++          if (impl->CurlOrientedTranspose) {
++            kernel       = impl->CurlOrientedTranspose;
++            void *args[] = {&num_elem, &impl->d_ind, &impl->d_curl_orients, &d_u, &d_v};
 +
-+          CeedCallBackend(CeedRunKernel_Hip(ceed, kernel, grid, block_size, args));
++            CeedCallBackend(CeedRunKernel_Hip(ceed, kernel, grid, block_size, args));
++          } else {
++            kernel       = impl->CurlOrientedTransposeDet;
++            void *args[] = {&impl->d_l_vec_indices, &impl->d_t_indices, &impl->d_t_offsets, &impl->d_curl_orients, &d_u, &d_v};
++
++            CeedCallBackend(CeedRunKernel_Hip(ceed, kernel, grid, block_size, args));
++          }
 +        } else if (use_orients) {
-+          kernel       = impl->CurlOrientedUnsignedTranspose;
-+          void *args[] = {&num_elem, &impl->d_ind, &impl->d_curl_orients, &d_u, &d_v};
-+
-+          CeedCallBackend(CeedRunKernel_Hip(ceed, kernel, grid, block_size, args));
++          if (impl->CurlOrientedUnsignedTranspose) {
++            kernel       = impl->CurlOrientedUnsignedTranspose;
++            void *args[] = {&num_elem, &impl->d_ind, &impl->d_curl_orients, &d_u, &d_v};
+ 
+-        CeedCallBackend(CeedRunKernel_Hip(ceed, kernel, CeedDivUpInt(num_nodes, block_size), block_size, args));
+-      }
+-    } else {
+-      // -- Strided restriction
+-      kernel             = impl->StridedTranspose;
+-      void   *args[]     = {&num_elem, &d_u, &d_v};
+-      CeedInt block_size = 64;
++            CeedCallBackend(CeedRunKernel_Hip(ceed, kernel, grid, block_size, args));
++          } else {
++            kernel       = impl->CurlOrientedUnsignedTransposeDet;
++            void *args[] = {&impl->d_l_vec_indices, &impl->d_t_indices, &impl->d_t_offsets, &impl->d_curl_orients, &d_u, &d_v};
+ 
+-      CeedCallBackend(CeedRunKernel_Hip(ceed, kernel, CeedDivUpInt(num_nodes, block_size), block_size, args));
++            CeedCallBackend(CeedRunKernel_Hip(ceed, kernel, grid, block_size, args));
++          }
 +        } else {
 +          if (impl->OffsetTranspose) {
 +            kernel       = impl->OffsetTranspose;
@@ -3246,7 +3290,7 @@ index 0dd11b16..f0bcd151 100644
      }
    }
  
-@@ -99,6 +189,29 @@ static int CeedElemRestrictionApply_Hip(CeedElemRestriction r, CeedTransposeMode
+@@ -99,6 +210,29 @@ static int CeedElemRestrictionApply_Hip(CeedElemRestriction r, CeedTransposeMode
    return CEED_ERROR_SUCCESS;
  }
  
@@ -3276,7 +3320,7 @@ index 0dd11b16..f0bcd151 100644
  //------------------------------------------------------------------------------
  // Get offsets
  //------------------------------------------------------------------------------
-@@ -117,21 +230,61 @@ static int CeedElemRestrictionGetOffsets_Hip(CeedElemRestriction rstr, CeedMemTy
+@@ -117,21 +251,61 @@ static int CeedElemRestrictionGetOffsets_Hip(CeedElemRestriction rstr, CeedMemTy
    return CEED_ERROR_SUCCESS;
  }
  
@@ -3341,7 +3385,7 @@ index 0dd11b16..f0bcd151 100644
    CeedCallBackend(CeedFree(&impl));
    return CEED_ERROR_SUCCESS;
  }
-@@ -139,23 +292,25 @@ static int CeedElemRestrictionDestroy_Hip(CeedElemRestriction r) {
+@@ -139,23 +313,25 @@ static int CeedElemRestrictionDestroy_Hip(CeedElemRestriction r) {
  //------------------------------------------------------------------------------
  // Create transpose offsets and indices
  //------------------------------------------------------------------------------
@@ -3375,7 +3419,7 @@ index 0dd11b16..f0bcd151 100644
    for (CeedInt i = 0; i < size_indices; i++) is_node[indices[i]] = 1;
    for (CeedInt i = 0; i < l_size; i++) num_nodes += is_node[i];
    impl->num_nodes = num_nodes;
-@@ -218,119 +373,195 @@ static int CeedElemRestrictionOffset_Hip(const CeedElemRestriction r, const Ceed
+@@ -218,136 +394,223 @@ static int CeedElemRestrictionOffset_Hip(const CeedElemRestriction r, const Ceed
  // Create restriction
  //------------------------------------------------------------------------------
  int CeedElemRestrictionCreate_Hip(CeedMemType mem_type, CeedCopyMode copy_mode, const CeedInt *indices, const bool *orients,
@@ -3650,16 +3694,20 @@ index 0dd11b16..f0bcd151 100644
    CeedCallBackend(CeedGetKernel_Hip(ceed, impl->module, "StridedNoTranspose", &impl->StridedNoTranspose));
    CeedCallBackend(CeedGetKernel_Hip(ceed, impl->module, "StridedTranspose", &impl->StridedTranspose));
    CeedCallBackend(CeedGetKernel_Hip(ceed, impl->module, "OffsetNoTranspose", &impl->OffsetNoTranspose));
-@@ -339,15 +570,23 @@ int CeedElemRestrictionCreate_Hip(CeedMemType mem_type, CeedCopyMode copy_mode,
-   } else {
-     CeedCallBackend(CeedGetKernel_Hip(ceed, impl->module, "OffsetTransposeDet", &impl->OffsetTransposeDet));
-   }
 +  CeedCallBackend(CeedGetKernel_Hip(ceed, impl->module, "OrientedNoTranspose", &impl->OrientedNoTranspose));
-+  CeedCallBackend(CeedGetKernel_Hip(ceed, impl->module, "OrientedTranspose", &impl->OrientedTranspose));
 +  CeedCallBackend(CeedGetKernel_Hip(ceed, impl->module, "CurlOrientedNoTranspose", &impl->CurlOrientedNoTranspose));
 +  CeedCallBackend(CeedGetKernel_Hip(ceed, impl->module, "CurlOrientedUnsignedNoTranspose", &impl->CurlOrientedUnsignedNoTranspose));
-+  CeedCallBackend(CeedGetKernel_Hip(ceed, impl->module, "CurlOrientedTranspose", &impl->CurlOrientedTranspose));
-+  CeedCallBackend(CeedGetKernel_Hip(ceed, impl->module, "CurlOrientedUnsignedTranspose", &impl->CurlOrientedUnsignedTranspose));
+   if (!is_deterministic) {
+     CeedCallBackend(CeedGetKernel_Hip(ceed, impl->module, "OffsetTranspose", &impl->OffsetTranspose));
++    CeedCallBackend(CeedGetKernel_Hip(ceed, impl->module, "OrientedTranspose", &impl->OrientedTranspose));
++    CeedCallBackend(CeedGetKernel_Hip(ceed, impl->module, "CurlOrientedTranspose", &impl->CurlOrientedTranspose));
++    CeedCallBackend(CeedGetKernel_Hip(ceed, impl->module, "CurlOrientedUnsignedTranspose", &impl->CurlOrientedUnsignedTranspose));
+   } else {
+     CeedCallBackend(CeedGetKernel_Hip(ceed, impl->module, "OffsetTransposeDet", &impl->OffsetTransposeDet));
++    CeedCallBackend(CeedGetKernel_Hip(ceed, impl->module, "OrientedTransposeDet", &impl->OrientedTransposeDet));
++    CeedCallBackend(CeedGetKernel_Hip(ceed, impl->module, "CurlOrientedTransposeDet", &impl->CurlOrientedTransposeDet));
++    CeedCallBackend(CeedGetKernel_Hip(ceed, impl->module, "CurlOrientedUnsignedTransposeDet", &impl->CurlOrientedUnsignedTransposeDet));
+   }
    CeedCallBackend(CeedFree(&restriction_kernel_path));
    CeedCallBackend(CeedFree(&restriction_kernel_source));
  
@@ -3680,23 +3728,26 @@ index 0dd11b16..f0bcd151 100644
  }
  
 diff --git a/backends/hip-ref/ceed-hip-ref.h b/backends/hip-ref/ceed-hip-ref.h
-index 634bb68d..a21a90bb 100644
+index 634bb68d..ecfa8874 100644
 --- a/backends/hip-ref/ceed-hip-ref.h
 +++ b/backends/hip-ref/ceed-hip-ref.h
-@@ -34,6 +34,12 @@ typedef struct {
+@@ -34,6 +34,15 @@ typedef struct {
    hipFunction_t OffsetNoTranspose;
    hipFunction_t OffsetTranspose;
    hipFunction_t OffsetTransposeDet;
 +  hipFunction_t OrientedNoTranspose;
 +  hipFunction_t OrientedTranspose;
++  hipFunction_t OrientedTransposeDet;
 +  hipFunction_t CurlOrientedNoTranspose;
 +  hipFunction_t CurlOrientedTranspose;
++  hipFunction_t CurlOrientedTransposeDet;
 +  hipFunction_t CurlOrientedUnsignedNoTranspose;
 +  hipFunction_t CurlOrientedUnsignedTranspose;
++  hipFunction_t CurlOrientedUnsignedTransposeDet;
    CeedInt       num_nodes;
    CeedInt      *h_ind;
    CeedInt      *h_ind_allocated;
-@@ -42,6 +48,14 @@ typedef struct {
+@@ -42,6 +51,14 @@ typedef struct {
    CeedInt      *d_t_offsets;
    CeedInt      *d_t_indices;
    CeedInt      *d_l_vec_indices;
@@ -3711,7 +3762,7 @@ index 634bb68d..a21a90bb 100644
  } CeedElemRestriction_Hip;
  
  typedef struct {
-@@ -84,21 +98,19 @@ typedef struct {
+@@ -84,21 +101,19 @@ typedef struct {
  
  typedef struct {
    hipModule_t         module;
@@ -3741,7 +3792,7 @@ index 634bb68d..a21a90bb 100644
  } CeedOperatorAssemble_Hip;
  
 diff --git a/backends/ref/ceed-ref-restriction.c b/backends/ref/ceed-ref-restriction.c
-index 9c9ae7cd..fda3cbd7 100644
+index 1bf604c4..8deebe3f 100644
 --- a/backends/ref/ceed-ref-restriction.c
 +++ b/backends/ref/ceed-ref-restriction.c
 @@ -55,9 +55,9 @@ static inline int CeedElemRestrictionApplyStridedNoTranspose_Ref_Core(CeedElemRe
@@ -3872,7 +3923,7 @@ index 9c9ae7cd..fda3cbd7 100644
  
    // Offsets data
    CeedCallBackend(CeedElemRestrictionGetType(rstr, &rstr_type));
-@@ -804,20 +806,6 @@ int CeedElemRestrictionCreate_Ref(CeedMemType mem_type, CeedCopyMode copy_mode,
+@@ -813,20 +815,6 @@ int CeedElemRestrictionCreate_Ref(CeedMemType mem_type, CeedCopyMode copy_mode,
      }
    }
  
@@ -3893,7 +3944,7 @@ index 9c9ae7cd..fda3cbd7 100644
    // Set apply function based upon num_comp, block_size, and comp_stride
    CeedInt index = -1;
  
-@@ -867,6 +855,19 @@ int CeedElemRestrictionCreate_Ref(CeedMemType mem_type, CeedCopyMode copy_mode,
+@@ -876,6 +864,19 @@ int CeedElemRestrictionCreate_Ref(CeedMemType mem_type, CeedCopyMode copy_mode,
        impl->Apply = CeedElemRestrictionApply_Ref_Core;
        break;
    }
@@ -4156,7 +4207,7 @@ index 4ace9976..8aac0678 100644
    return CEED_ERROR_SUCCESS;
  }
 diff --git a/include/ceed/backend.h b/include/ceed/backend.h
-index 05d73e59..b6d2aa19 100644
+index b3d2f97e..ff1f82c1 100644
 --- a/include/ceed/backend.h
 +++ b/include/ceed/backend.h
 @@ -368,6 +368,7 @@ CEED_EXTERN int CeedQFunctionContextRestoreInt32Read(CeedQFunctionContext ctx, C
@@ -4168,7 +4219,7 @@ index 05d73e59..b6d2aa19 100644
  CEED_EXTERN int CeedQFunctionAssemblyDataCreate(Ceed ceed, CeedQFunctionAssemblyData *data);
  CEED_EXTERN int CeedQFunctionAssemblyDataReference(CeedQFunctionAssemblyData data);
 diff --git a/include/ceed/ceed.h b/include/ceed/ceed.h
-index 36aecb23..82efb0b0 100644
+index f75c31de..6535c733 100644
 --- a/include/ceed/ceed.h
 +++ b/include/ceed/ceed.h
 @@ -392,7 +392,7 @@ CEED_EXTERN int CeedQFunctionContextDestroy(CeedQFunctionContext *ctx);
@@ -4521,7 +4572,7 @@ index eeb256fe..60d641ed 100644
  
  //------------------------------------------------------------------------------
 diff --git a/include/ceed/jit-source/cuda/cuda-ref-restriction.h b/include/ceed/jit-source/cuda/cuda-ref-restriction.h
-index 1df6f049..48bbd206 100644
+index 1df6f049..80011148 100644
 --- a/include/ceed/jit-source/cuda/cuda-ref-restriction.h
 +++ b/include/ceed/jit-source/cuda/cuda-ref-restriction.h
 @@ -28,38 +28,107 @@ extern "C" __global__ void StridedNoTranspose(const CeedInt num_elem, const Ceed
@@ -4652,7 +4703,7 @@ index 1df6f049..48bbd206 100644
  
        for (CeedInt comp = 0; comp < RSTR_NUM_COMP; comp++) {
          value[comp] += u[loc_node + comp * RSTR_ELEM_SIZE * RSTR_NUM_ELEM + elem * RSTR_ELEM_SIZE];
-@@ -99,6 +168,74 @@ extern "C" __global__ void OffsetTransposeDet(const CeedInt *__restrict__ l_vec_
+@@ -99,6 +168,165 @@ extern "C" __global__ void OffsetTransposeDet(const CeedInt *__restrict__ l_vec_
    }
  }
  
@@ -4674,6 +4725,33 @@ index 1df6f049..48bbd206 100644
 +  }
 +}
 +
++extern "C" __global__ void OrientedTransposeDet(const CeedInt *__restrict__ l_vec_indices, const CeedInt *__restrict__ t_indices,
++                                                const CeedInt *__restrict__ t_offsets, const bool *__restrict__ orients,
++                                                const CeedScalar *__restrict__ u, CeedScalar *__restrict__ v) {
++  CeedScalar value[RSTR_NUM_COMP];
++
++  for (CeedInt i = blockIdx.x * blockDim.x + threadIdx.x; i < RSTR_NUM_NODES; i += blockDim.x * gridDim.x) {
++    const CeedInt ind     = l_vec_indices[i];
++    const CeedInt range_1 = t_offsets[i];
++    const CeedInt range_N = t_offsets[i + 1];
++
++    for (CeedInt comp = 0; comp < RSTR_NUM_COMP; comp++) value[comp] = 0.0;
++
++    for (CeedInt j = range_1; j < range_N; j++) {
++      const CeedInt t_ind    = t_indices[j];
++      const bool    orient   = orients[t_ind];
++      const CeedInt loc_node = t_ind % RSTR_ELEM_SIZE;
++      const CeedInt elem     = t_ind / RSTR_ELEM_SIZE;
++
++      for (CeedInt comp = 0; comp < RSTR_NUM_COMP; comp++) {
++        value[comp] += u[loc_node + comp * RSTR_ELEM_SIZE * RSTR_NUM_ELEM + elem * RSTR_ELEM_SIZE] * (orient ? -1.0 : 1.0);
++      }
++    }
++
++    for (CeedInt comp = 0; comp < RSTR_NUM_COMP; comp++) v[ind + comp * RSTR_COMP_STRIDE] += value[comp];
++  }
++}
++
 +//------------------------------------------------------------------------------
 +// E-vector -> L-vector, curl-oriented
 +//------------------------------------------------------------------------------
@@ -4681,9 +4759,9 @@ index 1df6f049..48bbd206 100644
 +                                                 const CeedInt8 *__restrict__ curl_orients, const CeedScalar *__restrict__ u,
 +                                                 CeedScalar *__restrict__ v) {
 +  for (CeedInt node = blockIdx.x * blockDim.x + threadIdx.x; node < num_elem * RSTR_ELEM_SIZE; node += blockDim.x * gridDim.x) {
++    const CeedInt  ind            = indices[node];
 +    const CeedInt  loc_node       = node % RSTR_ELEM_SIZE;
 +    const CeedInt  elem           = node / RSTR_ELEM_SIZE;
-+    const CeedInt  ind            = indices[node];
 +    const CeedInt8 curl_orient_du = loc_node > 0 ? curl_orients[3 * node - 1] : 0.0;
 +    const CeedInt8 curl_orient_d  = curl_orients[3 * node + 1];
 +    const CeedInt8 curl_orient_dl = loc_node < (RSTR_ELEM_SIZE - 1) ? curl_orients[3 * node + 3] : 0.0;
@@ -4696,6 +4774,38 @@ index 1df6f049..48bbd206 100644
 +          loc_node < (RSTR_ELEM_SIZE - 1) ? u[loc_node + 1 + comp * RSTR_ELEM_SIZE * RSTR_NUM_ELEM + elem * RSTR_ELEM_SIZE] * curl_orient_dl : 0.0;
 +      atomicAdd(v + ind + comp * RSTR_COMP_STRIDE, value);
 +    }
++  }
++}
++
++extern "C" __global__ void CurlOrientedTransposeDet(const CeedInt *__restrict__ l_vec_indices, const CeedInt *__restrict__ t_indices,
++                                                    const CeedInt *__restrict__ t_offsets, const CeedInt8 *__restrict__ curl_orients,
++                                                    const CeedScalar *__restrict__ u, CeedScalar *__restrict__ v) {
++  CeedScalar value[RSTR_NUM_COMP];
++
++  for (CeedInt i = blockIdx.x * blockDim.x + threadIdx.x; i < RSTR_NUM_NODES; i += blockDim.x * gridDim.x) {
++    const CeedInt ind     = l_vec_indices[i];
++    const CeedInt range_1 = t_offsets[i];
++    const CeedInt range_N = t_offsets[i + 1];
++
++    for (CeedInt comp = 0; comp < RSTR_NUM_COMP; comp++) value[comp] = 0.0;
++
++    for (CeedInt j = range_1; j < range_N; j++) {
++      const CeedInt  t_ind          = t_indices[j];
++      const CeedInt  loc_node       = t_ind % RSTR_ELEM_SIZE;
++      const CeedInt  elem           = t_ind / RSTR_ELEM_SIZE;
++      const CeedInt8 curl_orient_du = loc_node > 0 ? curl_orients[3 * t_ind - 1] : 0.0;
++      const CeedInt8 curl_orient_d  = curl_orients[3 * t_ind + 1];
++      const CeedInt8 curl_orient_dl = loc_node < (RSTR_ELEM_SIZE - 1) ? curl_orients[3 * t_ind + 3] : 0.0;
++
++      for (CeedInt comp = 0; comp < RSTR_NUM_COMP; comp++) {
++        value[comp] += loc_node > 0 ? u[loc_node - 1 + comp * RSTR_ELEM_SIZE * RSTR_NUM_ELEM + elem * RSTR_ELEM_SIZE] * curl_orient_du : 0.0;
++        value[comp] += u[loc_node + comp * RSTR_ELEM_SIZE * RSTR_NUM_ELEM + elem * RSTR_ELEM_SIZE] * curl_orient_d;
++        value[comp] +=
++            loc_node < (RSTR_ELEM_SIZE - 1) ? u[loc_node + 1 + comp * RSTR_ELEM_SIZE * RSTR_NUM_ELEM + elem * RSTR_ELEM_SIZE] * curl_orient_dl : 0.0;
++      }
++    }
++
++    for (CeedInt comp = 0; comp < RSTR_NUM_COMP; comp++) v[ind + comp * RSTR_COMP_STRIDE] += value[comp];
 +  }
 +}
 +
@@ -4721,6 +4831,38 @@ index 1df6f049..48bbd206 100644
 +          loc_node < (RSTR_ELEM_SIZE - 1) ? u[loc_node + 1 + comp * RSTR_ELEM_SIZE * RSTR_NUM_ELEM + elem * RSTR_ELEM_SIZE] * curl_orient_dl : 0.0;
 +      atomicAdd(v + ind + comp * RSTR_COMP_STRIDE, value);
 +    }
++  }
++}
++
++extern "C" __global__ void CurlOrientedUnsignedTransposeDet(const CeedInt *__restrict__ l_vec_indices, const CeedInt *__restrict__ t_indices,
++                                                            const CeedInt *__restrict__ t_offsets, const CeedInt8 *__restrict__ curl_orients,
++                                                            const CeedScalar *__restrict__ u, CeedScalar *__restrict__ v) {
++  CeedScalar value[RSTR_NUM_COMP];
++
++  for (CeedInt i = blockIdx.x * blockDim.x + threadIdx.x; i < RSTR_NUM_NODES; i += blockDim.x * gridDim.x) {
++    const CeedInt ind     = l_vec_indices[i];
++    const CeedInt range_1 = t_offsets[i];
++    const CeedInt range_N = t_offsets[i + 1];
++
++    for (CeedInt comp = 0; comp < RSTR_NUM_COMP; comp++) value[comp] = 0.0;
++
++    for (CeedInt j = range_1; j < range_N; j++) {
++      const CeedInt  t_ind          = t_indices[j];
++      const CeedInt  loc_node       = t_ind % RSTR_ELEM_SIZE;
++      const CeedInt  elem           = t_ind / RSTR_ELEM_SIZE;
++      const CeedInt8 curl_orient_du = loc_node > 0 ? abs(curl_orients[3 * t_ind - 1]) : 0.0;
++      const CeedInt8 curl_orient_d  = abs(curl_orients[3 * t_ind + 1]);
++      const CeedInt8 curl_orient_dl = loc_node < (RSTR_ELEM_SIZE - 1) ? abs(curl_orients[3 * t_ind + 3]) : 0.0;
++
++      for (CeedInt comp = 0; comp < RSTR_NUM_COMP; comp++) {
++        value[comp] += loc_node > 0 ? u[loc_node - 1 + comp * RSTR_ELEM_SIZE * RSTR_NUM_ELEM + elem * RSTR_ELEM_SIZE] * curl_orient_du : 0.0;
++        value[comp] += u[loc_node + comp * RSTR_ELEM_SIZE * RSTR_NUM_ELEM + elem * RSTR_ELEM_SIZE] * curl_orient_d;
++        value[comp] +=
++            loc_node < (RSTR_ELEM_SIZE - 1) ? u[loc_node + 1 + comp * RSTR_ELEM_SIZE * RSTR_NUM_ELEM + elem * RSTR_ELEM_SIZE] * curl_orient_dl : 0.0;
++      }
++    }
++
++    for (CeedInt comp = 0; comp < RSTR_NUM_COMP; comp++) v[ind + comp * RSTR_COMP_STRIDE] += value[comp];
 +  }
 +}
 +
@@ -5103,10 +5245,10 @@ index 005fa6f7..a0c21f9d 100644
  
  //------------------------------------------------------------------------------
 diff --git a/include/ceed/jit-source/hip/hip-ref-restriction.h b/include/ceed/jit-source/hip/hip-ref-restriction.h
-index c34aa980..cdd3b770 100644
+index c34aa980..e1de6d87 100644
 --- a/include/ceed/jit-source/hip/hip-ref-restriction.h
 +++ b/include/ceed/jit-source/hip/hip-ref-restriction.h
-@@ -16,86 +16,223 @@
+@@ -16,86 +16,314 @@
  // L-vector -> E-vector, strided
  //------------------------------------------------------------------------------
  extern "C" __global__ void StridedNoTranspose(const CeedInt num_elem, const CeedScalar *__restrict__ u, CeedScalar *__restrict__ v) {
@@ -5285,15 +5427,12 @@ index c34aa980..cdd3b770 100644
 -      CeedInt       elem     = t_ind / RESTR_ELEM_SIZE;
 +      const CeedInt loc_node = t_ind % RSTR_ELEM_SIZE;
 +      const CeedInt elem     = t_ind / RSTR_ELEM_SIZE;
- 
--      for (CeedInt comp = 0; comp < RESTR_NUM_COMP; comp++) {
--        value[comp] += u[loc_node + comp * RESTR_ELEM_SIZE * RESTR_NUM_ELEM + elem * RESTR_ELEM_SIZE];
++
 +      for (CeedInt comp = 0; comp < RSTR_NUM_COMP; comp++) {
 +        value[comp] += u[loc_node + comp * RSTR_ELEM_SIZE * RSTR_NUM_ELEM + elem * RSTR_ELEM_SIZE];
-       }
-     }
- 
--    for (CeedInt comp = 0; comp < RESTR_NUM_COMP; comp++) v[ind + comp * RESTR_COMP_STRIDE] += value[comp];
++      }
++    }
++
 +    for (CeedInt comp = 0; comp < RSTR_NUM_COMP; comp++) v[ind + comp * RSTR_COMP_STRIDE] += value[comp];
 +  }
 +}
@@ -5316,6 +5455,33 @@ index c34aa980..cdd3b770 100644
 +  }
 +}
 +
++extern "C" __global__ void OrientedTransposeDet(const CeedInt *__restrict__ l_vec_indices, const CeedInt *__restrict__ t_indices,
++                                                const CeedInt *__restrict__ t_offsets, const bool *__restrict__ orients,
++                                                const CeedScalar *__restrict__ u, CeedScalar *__restrict__ v) {
++  CeedScalar value[RSTR_NUM_COMP];
++
++  for (CeedInt i = blockIdx.x * blockDim.x + threadIdx.x; i < RSTR_NUM_NODES; i += blockDim.x * gridDim.x) {
++    const CeedInt ind     = l_vec_indices[i];
++    const CeedInt range_1 = t_offsets[i];
++    const CeedInt range_N = t_offsets[i + 1];
++
++    for (CeedInt comp = 0; comp < RSTR_NUM_COMP; comp++) value[comp] = 0.0;
++
++    for (CeedInt j = range_1; j < range_N; j++) {
++      const CeedInt t_ind    = t_indices[j];
++      const bool    orient   = orients[t_ind];
++      const CeedInt loc_node = t_ind % RSTR_ELEM_SIZE;
++      const CeedInt elem     = t_ind / RSTR_ELEM_SIZE;
++
++      for (CeedInt comp = 0; comp < RSTR_NUM_COMP; comp++) {
++        value[comp] += u[loc_node + comp * RSTR_ELEM_SIZE * RSTR_NUM_ELEM + elem * RSTR_ELEM_SIZE] * (orient ? -1.0 : 1.0);
++      }
++    }
++
++    for (CeedInt comp = 0; comp < RSTR_NUM_COMP; comp++) v[ind + comp * RSTR_COMP_STRIDE] += value[comp];
++  }
++}
++
 +//------------------------------------------------------------------------------
 +// E-vector -> L-vector, curl-oriented
 +//------------------------------------------------------------------------------
@@ -5323,9 +5489,9 @@ index c34aa980..cdd3b770 100644
 +                                                 const CeedInt8 *__restrict__ curl_orients, const CeedScalar *__restrict__ u,
 +                                                 CeedScalar *__restrict__ v) {
 +  for (CeedInt node = blockIdx.x * blockDim.x + threadIdx.x; node < num_elem * RSTR_ELEM_SIZE; node += blockDim.x * gridDim.x) {
++    const CeedInt  ind            = indices[node];
 +    const CeedInt  loc_node       = node % RSTR_ELEM_SIZE;
 +    const CeedInt  elem           = node / RSTR_ELEM_SIZE;
-+    const CeedInt  ind            = indices[node];
 +    const CeedInt8 curl_orient_du = loc_node > 0 ? curl_orients[3 * node - 1] : 0.0;
 +    const CeedInt8 curl_orient_d  = curl_orients[3 * node + 1];
 +    const CeedInt8 curl_orient_dl = loc_node < (RSTR_ELEM_SIZE - 1) ? curl_orients[3 * node + 3] : 0.0;
@@ -5338,6 +5504,38 @@ index c34aa980..cdd3b770 100644
 +          loc_node < (RSTR_ELEM_SIZE - 1) ? u[loc_node + 1 + comp * RSTR_ELEM_SIZE * RSTR_NUM_ELEM + elem * RSTR_ELEM_SIZE] * curl_orient_dl : 0.0;
 +      atomicAdd(v + ind + comp * RSTR_COMP_STRIDE, value);
 +    }
++  }
++}
++
++extern "C" __global__ void CurlOrientedTransposeDet(const CeedInt *__restrict__ l_vec_indices, const CeedInt *__restrict__ t_indices,
++                                                    const CeedInt *__restrict__ t_offsets, const CeedInt8 *__restrict__ curl_orients,
++                                                    const CeedScalar *__restrict__ u, CeedScalar *__restrict__ v) {
++  CeedScalar value[RSTR_NUM_COMP];
++
++  for (CeedInt i = blockIdx.x * blockDim.x + threadIdx.x; i < RSTR_NUM_NODES; i += blockDim.x * gridDim.x) {
++    const CeedInt ind     = l_vec_indices[i];
++    const CeedInt range_1 = t_offsets[i];
++    const CeedInt range_N = t_offsets[i + 1];
++
++    for (CeedInt comp = 0; comp < RSTR_NUM_COMP; comp++) value[comp] = 0.0;
++
++    for (CeedInt j = range_1; j < range_N; j++) {
++      const CeedInt  t_ind          = t_indices[j];
++      const CeedInt  loc_node       = t_ind % RSTR_ELEM_SIZE;
++      const CeedInt  elem           = t_ind / RSTR_ELEM_SIZE;
++      const CeedInt8 curl_orient_du = loc_node > 0 ? curl_orients[3 * t_ind - 1] : 0.0;
++      const CeedInt8 curl_orient_d  = curl_orients[3 * t_ind + 1];
++      const CeedInt8 curl_orient_dl = loc_node < (RSTR_ELEM_SIZE - 1) ? curl_orients[3 * t_ind + 3] : 0.0;
++
++      for (CeedInt comp = 0; comp < RSTR_NUM_COMP; comp++) {
++        value[comp] += loc_node > 0 ? u[loc_node - 1 + comp * RSTR_ELEM_SIZE * RSTR_NUM_ELEM + elem * RSTR_ELEM_SIZE] * curl_orient_du : 0.0;
++        value[comp] += u[loc_node + comp * RSTR_ELEM_SIZE * RSTR_NUM_ELEM + elem * RSTR_ELEM_SIZE] * curl_orient_d;
++        value[comp] +=
++            loc_node < (RSTR_ELEM_SIZE - 1) ? u[loc_node + 1 + comp * RSTR_ELEM_SIZE * RSTR_NUM_ELEM + elem * RSTR_ELEM_SIZE] * curl_orient_dl : 0.0;
++      }
++    }
++
++    for (CeedInt comp = 0; comp < RSTR_NUM_COMP; comp++) v[ind + comp * RSTR_COMP_STRIDE] += value[comp];
 +  }
 +}
 +
@@ -5363,11 +5561,46 @@ index c34aa980..cdd3b770 100644
 +          loc_node < (RSTR_ELEM_SIZE - 1) ? u[loc_node + 1 + comp * RSTR_ELEM_SIZE * RSTR_NUM_ELEM + elem * RSTR_ELEM_SIZE] * curl_orient_dl : 0.0;
 +      atomicAdd(v + ind + comp * RSTR_COMP_STRIDE, value);
 +    }
++  }
++}
++
++extern "C" __global__ void CurlOrientedUnsignedTransposeDet(const CeedInt *__restrict__ l_vec_indices, const CeedInt *__restrict__ t_indices,
++                                                            const CeedInt *__restrict__ t_offsets, const CeedInt8 *__restrict__ curl_orients,
++                                                            const CeedScalar *__restrict__ u, CeedScalar *__restrict__ v) {
++  CeedScalar value[RSTR_NUM_COMP];
++
++  for (CeedInt i = blockIdx.x * blockDim.x + threadIdx.x; i < RSTR_NUM_NODES; i += blockDim.x * gridDim.x) {
++    const CeedInt ind     = l_vec_indices[i];
++    const CeedInt range_1 = t_offsets[i];
++    const CeedInt range_N = t_offsets[i + 1];
++
++    for (CeedInt comp = 0; comp < RSTR_NUM_COMP; comp++) value[comp] = 0.0;
++
++    for (CeedInt j = range_1; j < range_N; j++) {
++      const CeedInt  t_ind          = t_indices[j];
++      const CeedInt  loc_node       = t_ind % RSTR_ELEM_SIZE;
++      const CeedInt  elem           = t_ind / RSTR_ELEM_SIZE;
++      const CeedInt8 curl_orient_du = loc_node > 0 ? abs(curl_orients[3 * t_ind - 1]) : 0.0;
++      const CeedInt8 curl_orient_d  = abs(curl_orients[3 * t_ind + 1]);
++      const CeedInt8 curl_orient_dl = loc_node < (RSTR_ELEM_SIZE - 1) ? abs(curl_orients[3 * t_ind + 3]) : 0.0;
+ 
+-      for (CeedInt comp = 0; comp < RESTR_NUM_COMP; comp++) {
+-        value[comp] += u[loc_node + comp * RESTR_ELEM_SIZE * RESTR_NUM_ELEM + elem * RESTR_ELEM_SIZE];
++      for (CeedInt comp = 0; comp < RSTR_NUM_COMP; comp++) {
++        value[comp] += loc_node > 0 ? u[loc_node - 1 + comp * RSTR_ELEM_SIZE * RSTR_NUM_ELEM + elem * RSTR_ELEM_SIZE] * curl_orient_du : 0.0;
++        value[comp] += u[loc_node + comp * RSTR_ELEM_SIZE * RSTR_NUM_ELEM + elem * RSTR_ELEM_SIZE] * curl_orient_d;
++        value[comp] +=
++            loc_node < (RSTR_ELEM_SIZE - 1) ? u[loc_node + 1 + comp * RSTR_ELEM_SIZE * RSTR_NUM_ELEM + elem * RSTR_ELEM_SIZE] * curl_orient_dl : 0.0;
+       }
+     }
+ 
+-    for (CeedInt comp = 0; comp < RESTR_NUM_COMP; comp++) v[ind + comp * RESTR_COMP_STRIDE] += value[comp];
++    for (CeedInt comp = 0; comp < RSTR_NUM_COMP; comp++) v[ind + comp * RSTR_COMP_STRIDE] += value[comp];
    }
  }
  
 diff --git a/interface/ceed-operator.c b/interface/ceed-operator.c
-index 7b2ee1b3..0e321689 100644
+index 909d9d51..129f5017 100644
 --- a/interface/ceed-operator.c
 +++ b/interface/ceed-operator.c
 @@ -26,41 +26,41 @@
@@ -5436,7 +5669,7 @@ index 7b2ee1b3..0e321689 100644
        break;
      case CEED_EVAL_WEIGHT:
        // No additional checks required
-@@ -671,12 +671,12 @@ int CeedOperatorReferenceCopy(CeedOperator op, CeedOperator *op_copy) {
+@@ -672,12 +672,12 @@ int CeedOperatorReferenceCopy(CeedOperator op, CeedOperator *op_copy) {
    There can be at most one active input CeedVector and at most one active output CeedVector passed to CeedOperatorApply().
  
    The number of quadrature points must agree across all points.
@@ -5452,7 +5685,7 @@ index 7b2ee1b3..0e321689 100644
    @param[in]     v          CeedVector to be used by CeedOperator or @ref CEED_VECTOR_ACTIVE if field is active or @ref CEED_VECTOR_NONE
                                if using @ref CEED_EVAL_WEIGHT in the QFunction
  
-@@ -684,35 +684,31 @@ int CeedOperatorReferenceCopy(CeedOperator op, CeedOperator *op_copy) {
+@@ -685,35 +685,31 @@ int CeedOperatorReferenceCopy(CeedOperator op, CeedOperator *op_copy) {
  
    @ref User
  **/
@@ -5505,7 +5738,7 @@ index 7b2ee1b3..0e321689 100644
    for (CeedInt i = 0; i < op->qf->num_input_fields; i++) {
      if (!strcmp(field_name, (*op->qf->input_fields[i]).field_name)) {
        qf_field = op->qf->input_fields[i];
-@@ -732,13 +728,13 @@ int CeedOperatorSetField(CeedOperator op, const char *field_name, CeedElemRestri
+@@ -733,13 +729,13 @@ int CeedOperatorSetField(CeedOperator op, const char *field_name, CeedElemRestri
    return CeedError(op->ceed, CEED_ERROR_INCOMPLETE, "QFunction has no knowledge of field '%s'", field_name);
    // LCOV_EXCL_STOP
  found:
@@ -5521,7 +5754,7 @@ index 7b2ee1b3..0e321689 100644
      if (is_input) {
        if (op->input_size == -1) op->input_size = l_size;
        CeedCheck(l_size == op->input_size, op->ceed, CEED_ERROR_INCOMPATIBLE, "LVector size %td does not match previous size %td", l_size,
-@@ -751,12 +747,12 @@ found:
+@@ -752,12 +748,12 @@ found:
    }
  
    CeedCall(CeedVectorReferenceCopy(v, &(*op_field)->vec));
@@ -5538,10 +5771,10 @@ index 7b2ee1b3..0e321689 100644
    op->num_fields += 1;
    CeedCall(CeedStringAllocCopy(field_name, (char **)&(*op_field)->field_name));
 diff --git a/interface/ceed-preconditioning.c b/interface/ceed-preconditioning.c
-index 86ed103b..c560c17f 100644
+index 5a09a3b8..549c2432 100644
 --- a/interface/ceed-preconditioning.c
 +++ b/interface/ceed-preconditioning.c
-@@ -204,40 +204,6 @@ int CeedOperatorGetFallbackParentCeed(CeedOperator op, Ceed *parent) {
+@@ -139,40 +139,6 @@ static int CeedOperatorCreateFallback(CeedOperator op) {
    return CEED_ERROR_SUCCESS;
  }
  
@@ -5582,7 +5815,7 @@ index 86ed103b..c560c17f 100644
  /**
    @brief Core logic for assembling operator diagonal or point block diagonal
  
-@@ -1058,6 +1024,40 @@ CeedPragmaOptimizeOn
+@@ -1000,6 +966,40 @@ CeedPragmaOptimizeOn
  /// @addtogroup CeedOperatorBackend
  /// @{
  
@@ -5623,7 +5856,7 @@ index 86ed103b..c560c17f 100644
  /**
    @brief Create point block restriction for active operator field
  
-@@ -1324,10 +1324,10 @@ int CeedOperatorAssemblyDataCreate(Ceed ceed, CeedOperator op, CeedOperatorAssem
+@@ -1277,10 +1277,10 @@ int CeedOperatorAssemblyDataCreate(Ceed ceed, CeedOperator op, CeedOperatorAssem
  
    // Build OperatorAssembly data
    CeedCall(CeedOperatorGetQFunction(op, &qf));
