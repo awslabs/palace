@@ -187,10 +187,11 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator &
                linalg::Norml2(spaceop.GetComm(), RHS));
     if (!iodata.solver.driven.only_port_post)
     {
+      const double J = iodata.DimensionalizeValue(IoData::ValueType::ENERGY, 1.0);
       E_elec = postop.GetEFieldEnergy();
       E_mag = postop.GetHFieldEnergy();
-      Mpi::Print(" Field energy E ({:.3e}) + H ({:.3e}) = {:.3e}\n", E_elec, E_mag,
-                 E_elec + E_mag);
+      Mpi::Print(" Field energy E ({:.3e} J) + H ({:.3e} J) = {:.3e} J\n", E_elec * J,
+                 E_mag * J, (E_elec + E_mag) * J);
     }
 
     // Calculate and record the error indicators.
@@ -346,10 +347,11 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator 
     Mpi::Print(" Sol. ||E|| = {:.6e}\n", linalg::Norml2(spaceop.GetComm(), E));
     if (!iodata.solver.driven.only_port_post)
     {
+      const double J = iodata.DimensionalizeValue(IoData::ValueType::ENERGY, 1.0);
       E_elec = postop.GetEFieldEnergy();
       E_mag = postop.GetHFieldEnergy();
-      Mpi::Print(" Field energy E ({:.3e}) + H ({:.3e}) = {:.3e}\n", E_elec, E_mag,
-                 E_elec + E_mag);
+      Mpi::Print(" Field energy E ({:.3e} J) + H ({:.3e} J) = {:.3e} J\n", E_elec * J,
+                 E_mag * J, (E_elec + E_mag) * J);
     }
 
     // Postprocess S-parameters and optionally write solution to disk.

@@ -598,6 +598,18 @@ T IoData::DimensionalizeValue(IoData::ValueType type, T v) const
     case ValueType::ENERGY:
       sf = Hc * Hc * electromagnetics::Z0_ * Lc * Lc * tc;  // [J]
       break;
+    case ValueType::FIELD_E:
+      sf = Hc * electromagnetics::Z0_;  // [V/m]
+      break;
+    case ValueType::FIELD_D:
+      sf = electromagnetics::epsilon0_ * Hc * electromagnetics::Z0_;  // [C/m²]
+      break;
+    case ValueType::FIELD_H:
+      sf = Hc;  // [A/m]
+      break;
+    case ValueType::FIELD_B:
+      sf = electromagnetics::mu0_ * Hc;  // [Wb/m²]
+      break;
   }
   return v * sf;
 }

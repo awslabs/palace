@@ -63,7 +63,11 @@ public:
     VOLTAGE,       // [V]
     CURRENT,       // [A]
     POWER,         // [W]
-    ENERGY         // [J]
+    ENERGY,        // [J]
+    FIELD_E,       // [V/m]
+    FIELD_D,       // [C/m²] = [A⋅s/m²]
+    FIELD_H,       // [A/m]
+    FIELD_B        // [Wb/m²] = [V⋅s/m²]
   };
   template <typename T>
   T DimensionalizeValue(ValueType type, T v) const;
