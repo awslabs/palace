@@ -256,9 +256,18 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) cons
   BlockTimer bt1(Timer::SOLVE);
   Mpi::Print("\n");
   int num_conv = eigen->Solve();
+  {
+    std::complex<double> lambda = (num_conv > 0) ? eigen->GetEigenvalue(0) : 0.0;
+    Mpi::Print(" Found {:d} converged eigenvalue{}{}\n\n", num_conv,
+               (num_conv > 1) ? "s" : "",
+               (num_conv > 0)
+                   ? fmt::format(" (first = {:.3e}{:+.3e}i)", lambda.real(), lambda.imag())
+                   : "");
+  }
   SaveMetadata(*ksp);
 
   // Calculate and record the error indicators.
+  Mpi::Print("Computing solution error estimates\n\n");
   CurlFluxErrorEstimator<ComplexVector> estimator(
       spaceop.GetMaterialOp(), spaceop.GetNDSpaces(), iodata.solver.linear.estimator_tol,
       iodata.solver.linear.estimator_max_it, 0, iodata.solver.pa_order_threshold);
@@ -286,11 +295,6 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) cons
     {
       // Quadratic EVP solves for eigenvalue λ = iω.
       omega /= 1i;
-    }
-    if (i == 0)
-    {
-      Mpi::Print(" Found {:d} converged eigenvalue{} (first = {:.3e}{:+.3e}i)\n\n",
-                 num_conv, (num_conv > 1) ? "s" : "", omega.real(), omega.imag());
     }
 
     // Compute B = -1/(iω) ∇ x E on the true dofs, and set the internal GridFunctions in
