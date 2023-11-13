@@ -194,6 +194,7 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator &
     }
 
     // Calculate and record the error indicators.
+    Mpi::Print(" Updating solution error estimates\n");
     estimator.AddErrorIndicator(E, indicator);
 
     // Postprocess S-parameters and optionally write solution to disk.

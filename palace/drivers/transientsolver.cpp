@@ -125,6 +125,7 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) 
     }
 
     // Calculate and record the error indicators.
+    Mpi::Print(" Updating solution error estimates\n");
     estimator.AddErrorIndicator(E, indicator);
 
     // Postprocess port voltages/currents and optionally write solution to disk.

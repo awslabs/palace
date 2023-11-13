@@ -100,6 +100,7 @@ ErrorIndicator MagnetostaticSolver::Postprocess(CurlCurlOperator &curlcurlop,
   }
 
   // Calculate and record the error indicators.
+  Mpi::Print("Computing solution error estimates\n\n");
   CurlFluxErrorEstimator<Vector> estimator(
       curlcurlop.GetMaterialOp(), curlcurlop.GetNDSpaces(),
       iodata.solver.linear.estimator_tol, iodata.solver.linear.estimator_max_it, 0,
@@ -130,7 +131,7 @@ ErrorIndicator MagnetostaticSolver::Postprocess(CurlCurlOperator &curlcurlop,
     if (i < iodata.solver.magnetostatic.n_post)
     {
       PostprocessFields(postop, i, idx, (i == 0) ? &indicator : nullptr);
-      Mpi::Print(" Wrote fields to disk for terminal {:d}\n", idx);
+      Mpi::Print("Wrote fields to disk for terminal {:d}\n", idx);
     }
     if (i == 0)
     {
