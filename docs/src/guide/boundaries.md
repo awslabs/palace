@@ -104,6 +104,8 @@ only for frequency domain driven simulations.
     (they are to be  "one-sided" in the sense that mesh elements only exist on one side of
     the boundary).
 
+    Wave ports are not currently compatible with nonconformal mesh refinement.
+
 The incident field excitation at a lumped or wave port is controlled by setting
 [`config["Boundaries"]["LumpedPort"][]["Excitation"]: true`]
 (../config/boundaries.md#boundaries["LumpedPort"]) or

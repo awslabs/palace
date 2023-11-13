@@ -115,8 +115,8 @@ mesh length units.
 ### Advanced model options
 
   - `"Partition" [""]`
-  - `"RemoveCurvature" [false]`
   - `"ReorientTetMesh" [false]`
+  - `"RemoveCurvature" [false]`
   - `"MaxNCLevels" [1]`
   - `"MaximumImbalance" [1.1]`
   - `"SaveAdaptIterations" [true]`
