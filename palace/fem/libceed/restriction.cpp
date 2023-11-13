@@ -249,7 +249,7 @@ void InitRestriction(const mfem::ParFiniteElementSpace &fespace,
   {
     fespace.GetElementDofs(indices[0], dofs, dof_trans);
   }
-  const bool has_dof_trans = dof_trans.GetDofTransformation() && !dof_trans.IsEmpty();
+  const bool has_dof_trans = dof_trans.GetDofTransformation() && !dof_trans.IsIdentity();
   const bool unique_interp_restr =
       (is_interp && tfe && tfe->GetDofMap().Size() > 0 && !vector);
   const bool unique_interp_range_restr = (is_interp && is_range && has_dof_trans);

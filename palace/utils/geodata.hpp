@@ -43,6 +43,12 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(MPI_Comm comm, const IoData &iodata, boo
 // The fine mesh hierarchy is owned by the user.
 void RefineMesh(const IoData &iodata, std::vector<std::unique_ptr<mfem::ParMesh>> &mesh);
 
+// Dimensionalize a mesh for use in exporting a mesh. Scales vertices and nodes by L.
+void DimensionalizeMesh(mfem::ParMesh &mesh, double L);
+
+// Nondimensionalize a mesh for use in the solver. Scales vertices and nodes by 1/L.
+void NondimensionalizeMesh(mfem::ParMesh &mesh, double L);
+
 // Helper function to convert a set of attribute numbers to a marker array. The marker array
 // will be of size max_attr and it will contain only zeroes and ones. Ones indicate which
 // attribute numbers are present in the attrs array. In the special case when attrs has a

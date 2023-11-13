@@ -158,8 +158,7 @@ void PostOperator::InitializeDataCollection(const IoData &iodata)
   const bool use_ho = true;
   const int refine_ho =
       (E) ? E->ParFESpace()->GetMaxElementOrder() : B->ParFESpace()->GetMaxElementOrder();
-  const double mesh_Lc0 =
-      iodata.DimensionalizeValue(IoData::ValueType::LENGTH, 1.0 / iodata.model.L0);
+  mesh_Lc0 = iodata.GetLengthScale();
 
   // Output mesh coordinate units same as input.
   paraview.SetCycle(-1);
@@ -167,7 +166,6 @@ void PostOperator::InitializeDataCollection(const IoData &iodata)
   paraview.SetCompressionLevel(compress);
   paraview.SetHighOrderOutput(use_ho);
   paraview.SetLevelsOfDetail(refine_ho);
-  paraview.SetLengthScale(mesh_Lc0);
 
   paraview_bdr.SetBoundaryOutput(true);
   paraview_bdr.SetCycle(-1);
@@ -175,7 +173,6 @@ void PostOperator::InitializeDataCollection(const IoData &iodata)
   paraview_bdr.SetCompressionLevel(compress);
   paraview_bdr.SetHighOrderOutput(use_ho);
   paraview_bdr.SetLevelsOfDetail(refine_ho);
-  paraview_bdr.SetLengthScale(mesh_Lc0);
 
   // Output fields @ phase = 0 and π/2 for frequency domain (rather than, for example,
   // peak phasors or magnitude = sqrt(2) * RMS). Also output fields evaluated on mesh
@@ -634,16 +631,18 @@ double PostOperator::GetSurfaceFlux(int idx) const
 void PostOperator::WriteFields(int step, double time, const ErrorIndicator *indicator) const
 {
   // Given the electric field and magnetic flux density, write the fields to disk for
-  // visualization.
+  // visualization. Write the mesh coordinates in the same units as originally input.
   bool first_save = (paraview.GetCycle() < 0);
+  mfem::ParMesh &mesh =
+      (E) ? *E->ParFESpace()->GetParMesh() : *B->ParFESpace()->GetParMesh();
+  mesh::DimensionalizeMesh(mesh, mesh_Lc0);
+
   paraview.SetCycle(step);
   paraview.SetTime(time);
   paraview_bdr.SetCycle(step);
   paraview_bdr.SetTime(time);
   if (first_save || indicator)
   {
-    mfem::ParMesh &mesh =
-        (E) ? *E->ParFESpace()->GetParMesh() : *B->ParFESpace()->GetParMesh();
     mfem::L2_FECollection pwconst_fec(0, mesh.Dimension());
     mfem::ParFiniteElementSpace pwconst_fespace(&mesh, &pwconst_fec);
     std::unique_ptr<mfem::ParGridFunction> rank, eta;
@@ -676,6 +675,9 @@ void PostOperator::WriteFields(int step, double time, const ErrorIndicator *indi
     paraview.Save();
   }
   paraview_bdr.Save();
+
+  // Restore the mesh nondimensionalization.
+  mesh::NondimensionalizeMesh(mesh, mesh_Lc0);
 }
 
 std::vector<std::complex<double>> PostOperator::ProbeEField() const

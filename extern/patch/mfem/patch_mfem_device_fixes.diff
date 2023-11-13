@@ -1,5 +1,5 @@
 diff --git a/general/device.cpp b/general/device.cpp
-index ccee71cd7..25e91b22f 100644
+index ccee71cd7..f664f70c3 100644
 --- a/general/device.cpp
 +++ b/general/device.cpp
 @@ -9,14 +9,13 @@
@@ -216,7 +216,7 @@ index ccee71cd7..25e91b22f 100644
  
 -void Device::Enable()
 +// static method
-+int Device::GetNgpu()
++int Device::GetNumGPU()
  {
 -   const bool accelerated = Get().backends & ~(Backend::CPU);
 -   if (accelerated) { Get().mode = Device::ACCELERATED;}
@@ -462,7 +462,7 @@ index ccee71cd7..25e91b22f 100644
 -} // mfem
 +} // namespace mfem
 diff --git a/general/device.hpp b/general/device.hpp
-index baa27397f..113562505 100644
+index baa27397f..a2d89e22e 100644
 --- a/general/device.hpp
 +++ b/general/device.hpp
 @@ -14,6 +14,7 @@
@@ -625,7 +625,7 @@ index baa27397f..113562505 100644
 -   /// Get the device id of the configured device.
 -   static inline int GetId() { return Get().dev; }
 +   /// Get the number of available devices (may be called before configuration).
-+   static int GetNgpu();
++   static int GetNumGPU();
  
     /** @brief Return true if any of the backends in the backend mask, @a b_mask,
         are allowed. */

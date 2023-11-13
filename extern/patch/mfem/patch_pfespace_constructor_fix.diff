@@ -1,0 +1,297 @@
+diff --git a/fem/pfespace.cpp b/fem/pfespace.cpp
+index b0fdfe2c0..81b5bd5b2 100644
+--- a/fem/pfespace.cpp
++++ b/fem/pfespace.cpp
+@@ -43,7 +43,7 @@ ParFiniteElementSpace::ParFiniteElementSpace(
+ }
+ 
+ ParFiniteElementSpace::ParFiniteElementSpace(
+-   ParMesh *pm, const FiniteElementSpace *global_fes, const int *partitioning,
++   ParMesh *pm, const FiniteElementSpace *global_fes,
+    const FiniteElementCollection *f)
+    : FiniteElementSpace(pm, MakeLocalNURBSext(global_fes->GetNURBSext(),
+                                               pm->NURBSext),
+diff --git a/fem/pfespace.hpp b/fem/pfespace.hpp
+index 44d512f73..7c7b49b7e 100644
+--- a/fem/pfespace.hpp
++++ b/fem/pfespace.hpp
+@@ -243,14 +243,11 @@ public:
+    /** @brief Construct the *local* ParFiniteElementSpace corresponding to the
+        global FE space, @a global_fes. */
+    /** The parameter @a pm is the *local* ParMesh obtained by decomposing the
+-       global Mesh used by @a global_fes. The array @a partitioning represents
+-       the parallel decomposition - it maps global element ids to MPI ranks.
+-       If the FiniteElementCollection, @a f, is NULL (default), the FE
+-       collection used by @a global_fes will be reused. If @a f is not NULL, it
+-       must be the same as, or a copy of, the FE collection used by
+-       @a global_fes. */
++       global Mesh used by @a global_fes. If the FiniteElementCollection, @a f,
++       is NULL (default), the FE collection used by @a global_fes will be
++       reused. If @a f is not NULL, it must be the same as, or a copy of, the FE
++       collection used by @a global_fes. */
+    ParFiniteElementSpace(ParMesh *pm, const FiniteElementSpace *global_fes,
+-                         const int *partitioning,
+                          const FiniteElementCollection *f = NULL);
+ 
+    ParFiniteElementSpace(ParMesh *pm, const FiniteElementCollection *f,
+diff --git a/fem/pgridfunc.cpp b/fem/pgridfunc.cpp
+index 3631579ea..38b57a3e1 100644
+--- a/fem/pgridfunc.cpp
++++ b/fem/pgridfunc.cpp
+@@ -41,7 +41,7 @@ ParGridFunction::ParGridFunction(ParMesh *pmesh, const GridFunction *gf,
+    // duplicate the FiniteElementCollection from 'gf'
+    fec = FiniteElementCollection::New(glob_fes->FEColl()->Name());
+    // create a local ParFiniteElementSpace from the global one:
+-   fes = pfes = new ParFiniteElementSpace(pmesh, glob_fes, partitioning, fec);
++   fes = pfes = new ParFiniteElementSpace(pmesh, glob_fes, fec);
+    SetSize(pfes->GetVSize());
+ 
+    if (partitioning)
+diff --git a/mesh/mesh.cpp b/mesh/mesh.cpp
+index a1403e5d5..f76104da3 100644
+--- a/mesh/mesh.cpp
++++ b/mesh/mesh.cpp
+@@ -2427,7 +2427,7 @@ void Mesh::MarkTriMeshForRefinement()
+    }
+ }
+ 
+-void Mesh::GetEdgeOrdering(DSTable &v_to_v, Array<int> &order)
++void Mesh::GetEdgeOrdering(const DSTable &v_to_v, Array<int> &order)
+ {
+    NumOfEdges = v_to_v.NumberOfEntries();
+    order.SetSize(NumOfEdges);
+@@ -2452,7 +2452,7 @@ void Mesh::GetEdgeOrdering(DSTable &v_to_v, Array<int> &order)
+    }
+ }
+ 
+-void Mesh::MarkTetMeshForRefinement(DSTable &v_to_v)
++void Mesh::MarkTetMeshForRefinement(const DSTable &v_to_v)
+ {
+    // Mark the longest tetrahedral edge by rotating the indices so that
+    // vertex 0 - vertex 1 is the longest edge in the element.
+diff --git a/mesh/mesh.hpp b/mesh/mesh.hpp
+index 208501345..8be58b232 100644
+--- a/mesh/mesh.hpp
++++ b/mesh/mesh.hpp
+@@ -31,8 +31,6 @@
+ namespace mfem
+ {
+ 
+-// Data type mesh
+-
+ class GeometricFactors;
+ class FaceGeometricFactors;
+ class KnotVector;
+@@ -49,15 +47,15 @@ class ParMesh;
+ class ParNCMesh;
+ #endif
+ 
++/// Mesh data type
+ class Mesh
+ {
++   friend class NCMesh;
++   friend class NURBSExtension;
+ #ifdef MFEM_USE_MPI
+    friend class ParMesh;
+    friend class ParNCMesh;
+ #endif
+-   friend class NCMesh;
+-   friend class NURBSExtension;
+-
+ #ifdef MFEM_USE_ADIOS2
+    friend class adios2stream;
+ #endif
+@@ -365,8 +363,8 @@ protected:
+ 
+    void MarkForRefinement();
+    void MarkTriMeshForRefinement();
+-   void GetEdgeOrdering(DSTable &v_to_v, Array<int> &order);
+-   virtual void MarkTetMeshForRefinement(DSTable &v_to_v);
++   void GetEdgeOrdering(const DSTable &v_to_v, Array<int> &order);
++   virtual void MarkTetMeshForRefinement(const DSTable &v_to_v);
+ 
+    // Methods used to prepare and apply permutation of the mesh nodes assuming
+    // that the mesh elements may be rotated (e.g. to mark triangle or tet edges
+diff --git a/mesh/pmesh.cpp b/mesh/pmesh.cpp
+index 6490793f3..28b8a1bf8 100644
+--- a/mesh/pmesh.cpp
++++ b/mesh/pmesh.cpp
+@@ -930,7 +930,8 @@ void ParMesh::FinalizeParTopo()
+    }
+ }
+ 
+-ParMesh::ParMesh(MPI_Comm comm, istream &input, bool refine)
++ParMesh::ParMesh(MPI_Comm comm, istream &input, int generate_edges,
++                 int refine, bool fix_orientation)
+    : glob_elem_offset(-1)
+    , glob_offset_sequence(-1)
+    , gtopo(comm)
+@@ -942,9 +943,7 @@ ParMesh::ParMesh(MPI_Comm comm, istream &input, bool refine)
+    have_face_nbr_data = false;
+    pncmesh = NULL;
+ 
+-   const int gen_edges = 1;
+-
+-   Load(input, gen_edges, refine, true);
++   Load(input, generate_edges, refine, fix_orientation);
+ }
+ 
+ void ParMesh::Load(istream &input, int generate_edges, int refine,
+@@ -1738,7 +1737,7 @@ void ParMesh::GetSharedTriCommunicator(int ordering,
+    stria_comm.Finalize();
+ }
+ 
+-void ParMesh::MarkTetMeshForRefinement(DSTable &v_to_v)
++void ParMesh::MarkTetMeshForRefinement(const DSTable &v_to_v)
+ {
+    Array<int> order;
+    GetEdgeOrdering(v_to_v, order); // local edge ordering
+@@ -2063,6 +2062,7 @@ void ParMesh::DeleteFaceNbrData()
+ 
+ void ParMesh::SetCurvature(int order, bool discont, int space_dim, int ordering)
+ {
++   DeleteFaceNbrData();
+    space_dim = (space_dim == -1) ? spaceDim : space_dim;
+    FiniteElementCollection* nfec;
+    if (discont)
+@@ -2083,6 +2083,7 @@ void ParMesh::SetCurvature(int order, bool discont, int space_dim, int ordering)
+ 
+ void ParMesh::SetNodalFESpace(FiniteElementSpace *nfes)
+ {
++   DeleteFaceNbrData();
+    ParFiniteElementSpace *npfes = dynamic_cast<ParFiniteElementSpace*>(nfes);
+    if (npfes)
+    {
+@@ -2096,6 +2097,7 @@ void ParMesh::SetNodalFESpace(FiniteElementSpace *nfes)
+ 
+ void ParMesh::SetNodalFESpace(ParFiniteElementSpace *npfes)
+ {
++   DeleteFaceNbrData();
+    ParGridFunction *nodes = new ParGridFunction(npfes);
+    SetNodalGridFunction(nodes, true);
+ }
+@@ -2104,19 +2106,17 @@ void ParMesh::EnsureParNodes()
+ {
+    if (Nodes && dynamic_cast<ParFiniteElementSpace*>(Nodes->FESpace()) == NULL)
+    {
++      DeleteFaceNbrData();
+       ParFiniteElementSpace *pfes =
+          new ParFiniteElementSpace(*Nodes->FESpace(), *this);
+       ParGridFunction *new_nodes = new ParGridFunction(pfes);
+-
+       *new_nodes = *Nodes;
+-
+       if (Nodes->OwnFEC())
+       {
+          new_nodes->MakeOwner(Nodes->OwnFEC());
+          Nodes->MakeOwner(NULL); // takes away ownership of 'fec' and 'fes'
+          delete Nodes->FESpace();
+       }
+-
+       delete Nodes;
+       Nodes = new_nodes;
+    }
+@@ -3212,17 +3212,15 @@ void ParMesh::ReorientTetMesh()
+    // other ranks in the group
+    Array<int> svert_master_rank(svert_lvert.Size());
+    Array<int> svert_master_index(svert_lvert);
++   for (int i = 0; i < group_svert.Size(); i++)
+    {
+-      for (int i = 0; i < group_svert.Size(); i++)
++      int rank = gtopo.GetGroupMasterRank(i+1);
++      for (int j = 0; j < group_svert.RowSize(i); j++)
+       {
+-         int rank = gtopo.GetGroupMasterRank(i+1);
+-         for (int j = 0; j < group_svert.RowSize(i); j++)
+-         {
+-            svert_master_rank[group_svert.GetRow(i)[j]] = rank;
+-         }
++         svert_master_rank[group_svert.GetRow(i)[j]] = rank;
+       }
+-      svert_comm.Bcast(svert_master_index);
+    }
++   svert_comm.Bcast(svert_master_index);
+ 
+    // the pairs (master rank, master local index) define a globally consistent
+    // vertex ordering
+diff --git a/mesh/pmesh.hpp b/mesh/pmesh.hpp
+index e8e0955c8..06f09dc0c 100644
+--- a/mesh/pmesh.hpp
++++ b/mesh/pmesh.hpp
+@@ -24,6 +24,7 @@
+ 
+ namespace mfem
+ {
++
+ #ifdef MFEM_USE_PUMI
+ class ParPumiMesh;
+ #endif
+@@ -31,9 +32,16 @@ class ParPumiMesh;
+ /// Class for parallel meshes
+ class ParMesh : public Mesh
+ {
+-protected:
++   friend class ParNCMesh;
+    friend class ParSubMesh;
++#ifdef MFEM_USE_PUMI
++   friend class ParPumiMesh;
++#endif
++#ifdef MFEM_USE_ADIOS2
++   friend class adios2stream;
++#endif
+ 
++protected:
+    MPI_Comm MyComm;
+    int NRanks, MyRank;
+ 
+@@ -105,7 +113,7 @@ protected:
+ 
+    // Mark all tets to ensure consistency across MPI tasks; also mark the
+    // shared and boundary triangle faces using the consistently marked tets.
+-   void MarkTetMeshForRefinement(DSTable &v_to_v) override;
++   void MarkTetMeshForRefinement(const DSTable &v_to_v) override;
+ 
+    /// Return a number(0-1) identifying how the given edge has been split
+    int GetEdgeSplittings(Element *edge, const DSTable &v_to_v, int *middle);
+@@ -337,7 +345,8 @@ public:
+ 
+    /// Read a parallel mesh, each MPI rank from its own file/stream.
+    /** The @a refine parameter is passed to the method Mesh::Finalize(). */
+-   ParMesh(MPI_Comm comm, std::istream &input, bool refine = true);
++   ParMesh(MPI_Comm comm, std::istream &input, int generate_edges = 0,
++           int refine = 1, bool fix_orientation = true);
+ 
+    /// Deprecated: see @a ParMesh::MakeRefined
+    MFEM_DEPRECATED
+@@ -694,14 +703,6 @@ public:
+    void PrintSharedEntities(const std::string &fname_prefix) const;
+ 
+    virtual ~ParMesh();
+-
+-   friend class ParNCMesh;
+-#ifdef MFEM_USE_PUMI
+-   friend class ParPumiMesh;
+-#endif
+-#ifdef MFEM_USE_ADIOS2
+-   friend class adios2stream;
+-#endif
+ };
+ 
+ }
+diff --git a/tests/unit/mesh/test_ncmesh.cpp b/tests/unit/mesh/test_ncmesh.cpp
+index 63e10f743..c1bb54e13 100644
+--- a/tests/unit/mesh/test_ncmesh.cpp
++++ b/tests/unit/mesh/test_ncmesh.cpp
+@@ -937,11 +937,9 @@ void TestVectorValueInVolume(Mesh &smesh, int nc_level, int skip, bool use_ND)
+    // along the processor boundary.
+ 
+    // Create a grid function of the mesh coordinates
+-   pmesh.ExchangeFaceNbrData();
+    pmesh.EnsureNodes();
+-   REQUIRE(pmesh.OwnsNodes());
++   pmesh.ExchangeFaceNbrData();
+    GridFunction * const coords = pmesh.GetNodes();
+-   dynamic_cast<ParGridFunction *>(pmesh.GetNodes())->ExchangeFaceNbrData();
+ 
+    // Project the linear function onto the mesh. Quadratic ND tetrahedral
+    // elements are the first to require face orientations.

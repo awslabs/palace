@@ -16,6 +16,7 @@
 #include <nlohmann/json.hpp>
 #include "utils/communication.hpp"
 #include "utils/constants.hpp"
+#include "utils/geodata.hpp"
 
 namespace palace
 {
@@ -547,15 +548,7 @@ void IoData::NondimensionalizeInputs(mfem::ParMesh &mesh)
   solver.transient.delta_t /= tc;
 
   // Scale mesh vertices for correct nondimensionalization.
-  for (int i = 0; i < mesh.GetNV(); i++)
-  {
-    double *v = mesh.GetVertex(i);
-    std::transform(v, v + mesh.SpaceDimension(), v, Divides);
-  }
-  if (mesh.GetNodes())
-  {
-    *mesh.GetNodes() /= Lc / model.L0;
-  }
+  mesh::NondimensionalizeMesh(mesh, GetLengthScale());
 
   // Print some information.
   Mpi::Print(mesh.GetComm(),
