@@ -8,6 +8,7 @@
 #include <limits>
 #include <map>
 #include <sstream>
+#include <string>
 #include <Eigen/Dense>
 #include "utils/communication.hpp"
 #include "utils/filesystem.hpp"
@@ -58,20 +59,6 @@ void GetUsedAttributeMarkers(const IoData &, int, int, mfem::Array<int> &,
 // Rebalance a conformal mesh across processor ranks, using the MeshPartitioner. Gathers the
 // mesh onto the root rank before scattering the partitioned mesh.
 void RebalanceConformalMesh(std::unique_ptr<mfem::ParMesh> &, double, const std::string &);
-
-// Apply a scaling factor to the mesh vertices and nodes.
-void ScaleMesh(mfem::Mesh &mesh, double L)
-{
-  for (int i = 0; i < mesh.GetNV(); i++)
-  {
-    double *v = mesh.GetVertex(i);
-    std::transform(v, v + mesh.SpaceDimension(), v, [L](double val) { return val * L; });
-  }
-  if (mesh.GetNodes())
-  {
-    *mesh.GetNodes() *= L;
-  }
-}
 
 struct ElementTypeInfo
 {
@@ -421,6 +408,24 @@ void RefineMesh(const IoData &iodata, std::vector<std::unique_ptr<mfem::ParMesh>
     mesh.back()->PrintInfo();
   }
 }
+
+namespace
+{
+
+void ScaleMesh(mfem::Mesh &mesh, double L)
+{
+  for (int i = 0; i < mesh.GetNV(); i++)
+  {
+    double *v = mesh.GetVertex(i);
+    std::transform(v, v + mesh.SpaceDimension(), v, [L](double val) { return val * L; });
+  }
+  if (mesh.GetNodes())
+  {
+    *mesh.GetNodes() *= L;
+  }
+}
+
+}  // namespace
 
 void DimensionalizeMesh(mfem::Mesh &mesh, double L)
 {
@@ -1174,9 +1179,9 @@ double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh,
       BlockTimer bt1(Timer::IO);
       std::ofstream fo(serial_mesh_file);
       fo.precision(MSH_FLT_PRECISION);
-      mesh::DimensionalizeMesh(*mesh, iodata.GetLengthScaleFactor());
+      mesh::DimensionalizeMesh(*mesh, iodata.GetLengthScale());
       mesh->mfem::Mesh::Print(fo);
-      mesh::NondimensionalizeMesh(*mesh, iodata.GetLengthScaleFactor());
+      mesh::NondimensionalizeMesh(*mesh, iodata.GetLengthScale());
     }
     return 1.0;
   }
@@ -1207,9 +1212,9 @@ double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh,
       {
         std::ofstream fo(serial_mesh_file);
         fo.precision(MSH_FLT_PRECISION);
-        mesh::DimensionalizeMesh(*mesh, iodata.GetLengthScaleFactor());
+        mesh::DimensionalizeMesh(*mesh, iodata.GetLengthScale());
         mesh->Mesh::Print(fo);
-        mesh::NondimensionalizeMesh(*mesh, iodata.GetLengthScaleFactor());
+        mesh::NondimensionalizeMesh(*mesh, iodata.GetLengthScale());
       }
       Mpi::Barrier(comm);
     }
@@ -1221,7 +1226,7 @@ double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh,
     {
       // Without access to a refinement tree, partitioning must be done on the root
       // processor and then redistributed.
-      RebalanceConformalMesh(mesh, iodata.GetLengthScaleFactor(), serial_mesh_file);
+      RebalanceConformalMesh(mesh, iodata.GetLengthScale(), serial_mesh_file);
     }
   }
   else if (save_adapt_mesh)
@@ -1239,7 +1244,7 @@ double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh,
       {
         std::ofstream fo(serial_mesh_file);
         fo.precision(MSH_FLT_PRECISION);
-        mesh::DimensionalizeMesh(smesh, iodata.GetLengthScaleFactor());
+        mesh::DimensionalizeMesh(smesh, iodata.GetLengthScale());
         smesh.Mesh::Print(fo);  // Do not need to nondimensionalize the temporary mesh
       }
       Mpi::Barrier(comm);
@@ -1252,7 +1257,7 @@ double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh,
       {
         std::ofstream fo(serial_mesh_file);
         fo.precision(MSH_FLT_PRECISION);
-        mesh::DimensionalizeMesh(*smesh, iodata.GetLengthScaleFactor());
+        mesh::DimensionalizeMesh(*smesh, iodata.GetLengthScale());
         smesh->Print(fo);  // Do not need to nondimensionalize the temporary mesh
       }
       Mpi::Barrier(comm);

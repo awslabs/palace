@@ -158,6 +158,7 @@ void PostOperator::InitializeDataCollection(const IoData &iodata)
   const bool use_ho = true;
   const int refine_ho =
       (E) ? E->ParFESpace()->GetMaxElementOrder() : B->ParFESpace()->GetMaxElementOrder();
+  mesh_Lc0 = iodata.GetLengthScale();
 
   // Output mesh coordinate units same as input.
   paraview.SetCycle(-1);
@@ -172,8 +173,6 @@ void PostOperator::InitializeDataCollection(const IoData &iodata)
   paraview_bdr.SetCompressionLevel(compress);
   paraview_bdr.SetHighOrderOutput(use_ho);
   paraview_bdr.SetLevelsOfDetail(refine_ho);
-
-  mesh_scale_factor = iodata.GetLengthScaleFactor();
 
   // Output fields @ phase = 0 and π/2 for frequency domain (rather than, for example,
   // peak phasors or magnitude = sqrt(2) * RMS). Also output fields evaluated on mesh
@@ -632,11 +631,12 @@ double PostOperator::GetSurfaceFlux(int idx) const
 void PostOperator::WriteFields(int step, double time, const ErrorIndicator *indicator) const
 {
   // Given the electric field and magnetic flux density, write the fields to disk for
-  // visualization.
+  // visualization. Write the mesh coordinates in the same units as originally input.
+  bool first_save = (paraview.GetCycle() < 0);
   mfem::ParMesh &mesh =
       (E) ? *E->ParFESpace()->GetParMesh() : *B->ParFESpace()->GetParMesh();
-  mesh::DimensionalizeMesh(mesh, mesh_scale_factor);
-  bool first_save = (paraview.GetCycle() < 0);
+  mesh::DimensionalizeMesh(mesh, mesh_Lc0);
+
   paraview.SetCycle(step);
   paraview.SetTime(time);
   paraview_bdr.SetCycle(step);
@@ -675,7 +675,9 @@ void PostOperator::WriteFields(int step, double time, const ErrorIndicator *indi
     paraview.Save();
   }
   paraview_bdr.Save();
-  mesh::NondimensionalizeMesh(mesh, mesh_scale_factor);
+
+  // Restore the mesh nondimensionalization.
+  mesh::NondimensionalizeMesh(mesh, mesh_Lc0);
 }
 
 std::vector<std::complex<double>> PostOperator::ProbeEField() const

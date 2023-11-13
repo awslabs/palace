@@ -13,10 +13,10 @@ index b7fdfa3af..aad927a56 100644
    Options: STRUMPACK_OPT, STRUMPACK_LIB.
    Versions: STRUMPACK >= 3.0.0.
 diff --git a/config/defaults.cmake b/config/defaults.cmake
-index 06531934d..526c87c4f 100644
+index 4bd4cdf8d..3985ebd93 100644
 --- a/config/defaults.cmake
 +++ b/config/defaults.cmake
-@@ -157,7 +157,8 @@ set(STRUMPACK_DIR "${MFEM_DIR}/../STRUMPACK-build" CACHE PATH
+@@ -152,7 +152,8 @@ set(STRUMPACK_DIR "${MFEM_DIR}/../STRUMPACK-build" CACHE PATH
  # STRUMPACK may also depend on "OpenMP", depending on how it was compiled.
  # Starting with v2.2.0 of STRUMPACK, ParMETIS and Scotch are optional.
  set(STRUMPACK_REQUIRED_PACKAGES "MPI" "MPI_Fortran" "ParMETIS" "METIS"
@@ -143,7 +143,7 @@ index 51238c4d7..e6f4730fe 100644
              strumpack->SetFromCommandLine();
              precond = strumpack;
 diff --git a/general/communication.cpp b/general/communication.cpp
-index 95235edd3..e8002a273 100644
+index 10fa6988c..0c2fffc1f 100644
 --- a/general/communication.cpp
 +++ b/general/communication.cpp
 @@ -26,6 +26,10 @@

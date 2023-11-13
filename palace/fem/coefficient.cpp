@@ -6,63 +6,6 @@
 namespace palace
 {
 
-namespace
-{
-
-// From mfem::GridFunction::GetVectorValue.
-mfem::IntegrationPoint be_to_bfe(mfem::Geometry::Type geom, int o,
-                                 const mfem::IntegrationPoint &ip)
-{
-  mfem::IntegrationPoint fip = {};
-  if (geom == mfem::Geometry::TRIANGLE)
-  {
-    if (o == 2)
-    {
-      fip.x = 1.0 - ip.x - ip.y;
-      fip.y = ip.x;
-    }
-    else if (o == 4)
-    {
-      fip.x = ip.y;
-      fip.y = 1.0 - ip.x - ip.y;
-    }
-    else
-    {
-      fip.x = ip.x;
-      fip.y = ip.y;
-    }
-  }
-  else
-  {
-    if (o == 2)
-    {
-      fip.x = ip.y;
-      fip.y = 1.0 - ip.x;
-    }
-    else if (o == 4)
-    {
-      fip.x = 1.0 - ip.x;
-      fip.y = 1.0 - ip.y;
-    }
-    else if (o == 6)
-    {
-      fip.x = 1.0 - ip.y;
-      fip.y = ip.x;
-    }
-    else
-    {
-      fip.x = ip.x;
-      fip.y = ip.y;
-    }
-  }
-  fip.z = ip.z;
-  fip.weight = ip.weight;
-  fip.index = ip.index;
-  return fip;
-}
-
-}  // namespace
-
 void BdrGridFunctionCoefficient::GetElementTransformations(mfem::ElementTransformation &T,
                                                            const mfem::IntegrationPoint &ip,
                                                            mfem::ElementTransformation *&T1,
@@ -98,7 +41,8 @@ void BdrGridFunctionCoefficient::GetElementTransformations(mfem::ElementTransfor
 
   // Boundary elements and boundary faces may have different orientations so adjust the
   // integration point if necessary. See mfem::GridFunction::GetValue and GetVectorValue.
-  mfem::IntegrationPoint fip = be_to_bfe(FET->GetGeometryType(), o, ip);
+  mfem::IntegrationPoint fip =
+      mfem::Mesh::TransformBdrElementToFace(FET->GetGeometryType(), o, ip);
   FET->SetAllIntPoints(&fip);
   T1 = &FET->GetElement1Transformation();
   T2 = (info2 >= 0) ? &FET->GetElement2Transformation() : nullptr;

@@ -1,5 +1,5 @@
 diff --git a/CHANGELOG b/CHANGELOG
-index c1fd97ff2..4c4b44d5f 100644
+index cd5f1333f..d2f362c06 100644
 --- a/CHANGELOG
 +++ b/CHANGELOG
 @@ -15,6 +15,8 @@ Discretization improvements
@@ -9,8 +9,8 @@ index c1fd97ff2..4c4b44d5f 100644
 +- Introduced support for internal boundary elements in nonconformal adapted
 +  meshes.
  
- Version 4.6, released on September 27, 2023
- ===========================================
+ Miscellaneous
+ -------------
 diff --git a/fem/bilinearform.cpp b/fem/bilinearform.cpp
 index 6eae233bc..caaafaac8 100644
 --- a/fem/bilinearform.cpp
@@ -36,16 +36,15 @@ index 6eae233bc..caaafaac8 100644
     for (int i = 0; i < ess_dofs.Size(); i++)
        if (ess_dofs[i] < 0)
 diff --git a/fem/fespace.cpp b/fem/fespace.cpp
-index f2d7c6614..686d99ac5 100644
+index 660fec17a..1462adc81 100644
 --- a/fem/fespace.cpp
 +++ b/fem/fespace.cpp
-@@ -507,13 +507,12 @@ void FiniteElementSpace::BuildDofToArrays()
+@@ -503,13 +503,11 @@ void FiniteElementSpace::BuildDofToArrays()
     }
  }
  
 -static void mark_dofs(const Array<int> &dofs, Array<int> &mark_array)
-+void
-+FiniteElementSpace::MarkDofs(const Array<int> &dofs, Array<int> &mark_array)
++static void MarkDofs(const Array<int> &dofs, Array<int> &mark_array)
  {
 -   for (int i = 0; i < dofs.Size(); i++)
 +   for (auto d : dofs)
@@ -57,7 +56,7 @@ index f2d7c6614..686d99ac5 100644
     }
  }
  
-@@ -521,11 +520,9 @@ void FiniteElementSpace::GetEssentialVDofs(const Array<int> &bdr_attr_is_ess,
+@@ -517,11 +515,9 @@ void FiniteElementSpace::GetEssentialVDofs(const Array<int> &bdr_attr_is_ess,
                                             Array<int> &ess_vdofs,
                                             int component) const
  {
@@ -70,7 +69,7 @@ index f2d7c6614..686d99ac5 100644
     for (int i = 0; i < GetNBE(); i++)
     {
        if (bdr_attr_is_ess[GetBdrAttribute(i)-1])
-@@ -533,16 +530,14 @@ void FiniteElementSpace::GetEssentialVDofs(const Array<int> &bdr_attr_is_ess,
+@@ -529,16 +525,14 @@ void FiniteElementSpace::GetEssentialVDofs(const Array<int> &bdr_attr_is_ess,
           if (component < 0)
           {
              // Mark all components.
@@ -90,7 +89,7 @@ index f2d7c6614..686d99ac5 100644
        }
     }
  
-@@ -550,38 +545,47 @@ void FiniteElementSpace::GetEssentialVDofs(const Array<int> &bdr_attr_is_ess,
+@@ -546,38 +540,47 @@ void FiniteElementSpace::GetEssentialVDofs(const Array<int> &bdr_attr_is_ess,
     // local DOFs affected by boundary elements on other processors
     if (Nonconforming())
     {
@@ -102,12 +101,25 @@ index f2d7c6614..686d99ac5 100644
 +      mesh->ncmesh->GetBoundaryClosure(bdr_attr_is_ess, bdr_verts, bdr_edges,
 +                                       bdr_faces);
 +      for (auto v : bdr_verts)
++      {
++         if (component < 0)
++         {
++            GetVertexVDofs(v, dofs);
++         }
++         else
++         {
++            GetVertexDofs(v, dofs);
++            for (auto &d : dofs) { d = DofToVDof(d, component); }
++         }
++         MarkDofs(dofs, ess_vdofs);
++      }
++      for (auto e : bdr_edges)
        {
           if (component < 0)
           {
 -            GetVertexVDofs(bdr_verts[i], vdofs);
 -            mark_dofs(vdofs, ess_vdofs);
-+            GetVertexVDofs(v, dofs);
++            GetEdgeVDofs(e, dofs);
           }
           else
           {
@@ -115,19 +127,19 @@ index f2d7c6614..686d99ac5 100644
 -            for (int d = 0; d < dofs.Size(); d++)
 -            { dofs[d] = DofToVDof(dofs[d], component); }
 -            mark_dofs(dofs, ess_vdofs);
-+            GetVertexDofs(v, dofs);
++            GetEdgeDofs(e, dofs);
 +            for (auto &d : dofs) { d = DofToVDof(d, component); }
           }
 +         MarkDofs(dofs, ess_vdofs);
        }
 -      for (int i = 0; i < bdr_edges.Size(); i++)
-+      for (auto e : bdr_edges)
++      for (auto f : bdr_faces)
        {
           if (component < 0)
           {
 -            GetEdgeVDofs(bdr_edges[i], vdofs);
 -            mark_dofs(vdofs, ess_vdofs);
-+            GetEdgeVDofs(e, dofs);
++            GetEntityVDofs(2, f, dofs);
           }
           else
           {
@@ -135,27 +147,14 @@ index f2d7c6614..686d99ac5 100644
 -            for (int d = 0; d < dofs.Size(); d++)
 -            { dofs[d] = DofToVDof(dofs[d], component); }
 -            mark_dofs(dofs, ess_vdofs);
-+            GetEdgeDofs(e, dofs);
-+            for (auto &d : dofs) { d = DofToVDof(d, component); }
-          }
-+         MarkDofs(dofs, ess_vdofs);
-+      }
-+      for (auto f : bdr_faces)
-+      {
-+         if (component < 0)
-+         {
-+            GetEntityVDofs(2, f, dofs);
-+         }
-+         else
-+         {
 +            GetEntityDofs(2, f, dofs);
 +            for (auto &d : dofs) { d = DofToVDof(d, component); }
-+         }
+          }
 +         MarkDofs(dofs, ess_vdofs);
        }
     }
  }
-@@ -600,6 +604,30 @@ void FiniteElementSpace::GetEssentialTrueDofs(const Array<int> &bdr_attr_is_ess,
+@@ -596,6 +599,30 @@ void FiniteElementSpace::GetEssentialTrueDofs(const Array<int> &bdr_attr_is_ess,
     else
     {
        R->BooleanMult(ess_vdofs, ess_tdofs);
@@ -186,7 +185,7 @@ index f2d7c6614..686d99ac5 100644
     }
     MarkerToList(ess_tdofs, ess_tdof_list);
  }
-@@ -948,6 +976,15 @@ int FiniteElementSpace::GetEntityDofs(int entity, int index, Array<int> &dofs,
+@@ -944,6 +971,15 @@ int FiniteElementSpace::GetEntityDofs(int entity, int index, Array<int> &dofs,
     }
  }
  
@@ -202,59 +201,11 @@ index f2d7c6614..686d99ac5 100644
  void FiniteElementSpace::BuildConformingInterpolation() const
  {
  #ifdef MFEM_USE_MPI
-@@ -2428,6 +2465,7 @@ void FiniteElementSpace::Construct()
-       {
-          // the simple case: all edges are of the same order
-          nedofs = mesh->GetNEdges() * fec->GetNumDof(Geometry::SEGMENT, order);
-+         var_edge_dofs.Clear(); // ensure any old var_edge_dof table is dumped.
-       }
-    }
- 
-@@ -2446,6 +2484,7 @@ void FiniteElementSpace::Construct()
-          // the simple case: all faces are of the same geometry and order
-          uni_fdof = fec->GetNumDof(mesh->GetFaceGeometry(0), order);
-          nfdofs = mesh->GetNFaces() * uni_fdof;
-+         var_face_dofs.Clear(); // ensure any old var_face_dof table is dumped.
-       }
-    }
- 
-@@ -2655,7 +2694,6 @@ int FiniteElementSpace::MakeDofTable(int ent_dim,
-             int dofs = fec->GetNumDof(geom, order);
-             list.Append(Connection(i, total_dofs));
-             total_dofs += dofs;
--
-             if (var_ent_order) { var_ent_order->Append(order); }
-          }
-       }
-@@ -2666,7 +2704,6 @@ int FiniteElementSpace::MakeDofTable(int ent_dim,
- 
-    // build the table
-    entity_dofs.MakeFromList(num_ent+1, list);
--
-    return total_dofs;
- }
- 
-@@ -2971,7 +3008,14 @@ int FiniteElementSpace::GetFaceDofs(int face, Array<int> &dofs,
- 
-       order = !IsVariableOrder() ? fec->GetOrder() :
-               var_face_orders[var_face_dofs.GetI()[face] + variant];
--      MFEM_ASSERT(fec->GetNumDof(fgeom, order) == nf, "");
-+      MFEM_ASSERT(fec->GetNumDof(fgeom, order) == nf, [&]()
-+      {
-+         std::stringstream msg;
-+         msg << "fec->GetNumDof(" << (fgeom == Geometry::SQUARE ? "square" : "triangle")
-+             << ", " << order << ") = " << fec->GetNumDof(fgeom, order) << " nf " << nf;
-+         msg << " face " << face << " variant " << variant << std::endl;
-+         return msg.str();
-+      }());
-    }
-    else
-    {
 diff --git a/fem/fespace.hpp b/fem/fespace.hpp
-index bd1b6ae49..fb9dde997 100644
+index 0fd44b613..cd0f861a0 100644
 --- a/fem/fespace.hpp
 +++ b/fem/fespace.hpp
-@@ -384,6 +384,10 @@ protected:
+@@ -383,6 +383,10 @@ protected:
     int GetEntityDofs(int entity, int index, Array<int> &dofs,
                       Geometry::Type master_geom = Geometry::INVALID,
                       int variant = 0) const;
@@ -265,7 +216,7 @@ index bd1b6ae49..fb9dde997 100644
  
     // Get degenerate face DOFs: see explanation in method implementation.
     int GetDegenerateFaceDofs(int index, Array<int> &dofs,
-@@ -843,6 +847,7 @@ public:
+@@ -840,6 +844,7 @@ public:
     /// @brief Returns the indices of the degrees of freedom for the specified
     /// face, including the DOFs for the edges and the vertices of the face.
     ///
@@ -273,27 +224,11 @@ index bd1b6ae49..fb9dde997 100644
     /// In variable order spaces, multiple variants of DOFs can be returned.
     /// See GetEdgeDofs() for more details.
     /// @return Order of the selected variant, or -1 if there are no more
-@@ -1198,6 +1203,15 @@ public:
-    static void ListToMarker(const Array<int> &list, int marker_size,
-                             Array<int> &marker, int mark_val = -1);
- 
-+   /**
-+    * @brief Helper for looping over entries in mark_array, and setting equal
-+    * to -1 if present in dofs. Used in GetEssentialVDofs.
-+    *
-+    * @param[in] dofs The set of dofs to mark
-+    * @param[out] mark_array Array of dofs to mark, indices with
-+    */
-+   static void MarkDofs(const Array<int> &dofs, Array<int> &mark_array);
-+
-    /** @brief For a partially conforming FE space, convert a marker array (nonzero
-        entries are true) on the partially conforming dofs to a marker array on
-        the conforming dofs. A conforming dofs is marked iff at least one of its
 diff --git a/fem/gridfunc.cpp b/fem/gridfunc.cpp
-index ded9578bd..fc20b3f6c 100644
+index 52620452f..310d8d704 100644
 --- a/fem/gridfunc.cpp
 +++ b/fem/gridfunc.cpp
-@@ -2203,8 +2203,8 @@ void GridFunction::AccumulateAndCountBdrValues(
+@@ -2125,8 +2125,8 @@ void GridFunction::AccumulateAndCountBdrValues(
        Vector vals;
        Mesh *mesh = fes->GetMesh();
        NCMesh *ncmesh = mesh->ncmesh;
@@ -304,7 +239,7 @@ index ded9578bd..fc20b3f6c 100644
  
        for (i = 0; i < bdr_edges.Size(); i++)
        {
-@@ -2310,8 +2310,8 @@ void GridFunction::AccumulateAndCountBdrTangentValues(
+@@ -2232,8 +2232,8 @@ void GridFunction::AccumulateAndCountBdrTangentValues(
     {
        Mesh *mesh = fes->GetMesh();
        NCMesh *ncmesh = mesh->ncmesh;
@@ -331,7 +266,7 @@ index 245d00078..50d7c1105 100644
                                   const IntegrationRule *irs[] = NULL) const
     { return ComputeLpError(1.0, exsol, NULL, irs); }
 diff --git a/fem/pfespace.cpp b/fem/pfespace.cpp
-index 1abb9e65f..89296e5cb 100644
+index 8761e1489..3fa9fe5c7 100644
 --- a/fem/pfespace.cpp
 +++ b/fem/pfespace.cpp
 @@ -90,20 +90,19 @@ ParNURBSExtension *ParFiniteElementSpace::MakeLocalNURBSext(
@@ -361,7 +296,7 @@ index 1abb9e65f..89296e5cb 100644
     num_face_nbr_dofs = -1;
  
     if (NURBSext && !pNURBSext())
-@@ -533,12 +532,14 @@ ParFiniteElementSpace::GetBdrElementDofs(int i, Array<int> &dofs) const
+@@ -519,7 +518,7 @@ void ParFiniteElementSpace::GetBdrElementDofs(int i, Array<int> &dofs,
  int ParFiniteElementSpace::GetFaceDofs(int i, Array<int> &dofs,
                                         int variant) const
  {
@@ -370,14 +305,7 @@ index 1abb9e65f..89296e5cb 100644
     {
        face_dof->GetRow(i, dofs);
        return fec->GetOrder();
-    }
-+
-    int p = FiniteElementSpace::GetFaceDofs(i, dofs, variant);
-+
-    if (Conforming())
-    {
-       ApplyLDofSigns(dofs);
-@@ -1053,18 +1054,28 @@ void ParFiniteElementSpace::GetEssentialTrueDofs(const Array<int>
+@@ -1039,18 +1038,28 @@ void ParFiniteElementSpace::GetEssentialTrueDofs(const Array<int>
  #ifdef MFEM_DEBUG
     // Verify that in boolean arithmetic: P^T ess_dofs = R ess_dofs.
     Array<int> true_ess_dofs2(true_ess_dofs.Size());
@@ -410,7 +338,7 @@ index 1abb9e65f..89296e5cb 100644
  #endif
  
     MarkerToList(true_ess_dofs, ess_tdof_list);
-@@ -1964,8 +1975,7 @@ struct PMatrixRow
+@@ -1945,8 +1954,7 @@ struct PMatrixRow
        elems.reserve(elems.size() + other.elems.size());
        for (const PMatrixElement &oei : other.elems)
        {
@@ -420,7 +348,7 @@ index 1abb9e65f..89296e5cb 100644
        }
     }
  
-@@ -2041,7 +2051,7 @@ public:
+@@ -2022,7 +2030,7 @@ public:
     void AddRow(int entity, int index, int edof, GroupId group,
                 const PMatrixRow &row)
     {
@@ -429,7 +357,7 @@ index 1abb9e65f..89296e5cb 100644
     }
  
     const std::vector<RowInfo>& GetRows() const { return rows; }
-@@ -2057,8 +2067,8 @@ protected:
+@@ -2038,8 +2046,8 @@ protected:
     ParNCMesh *pncmesh;
     const FiniteElementCollection* fec;
  
@@ -440,16 +368,7 @@ index 1abb9e65f..89296e5cb 100644
  };
  
  void NeighborRowMessage::Encode(int rank)
-@@ -2073,7 +2083,7 @@ void NeighborRowMessage::Encode(int rank)
-    for (unsigned i = 0; i < rows.size(); i++)
-    {
-       const RowInfo &ri = rows[i];
--      const MeshId &id = pncmesh->GetNCList(ri.entity).LookUp(ri.index);
-+      const MeshId &id = *pncmesh->GetNCList(ri.entity).GetMeshIdAndType(ri.index).id;
-       ent_ids[ri.entity].Append(id);
-       row_idx[ri.entity].Append(i);
-       group_ids[ri.entity].Append(ri.group);
-@@ -2182,6 +2192,11 @@ void NeighborRowMessage::Decode(int rank)
+@@ -2158,6 +2166,11 @@ void NeighborRowMessage::Decode(int rank)
              int fo = pncmesh->GetFaceOrientation(id.index);
              ind = fec->DofOrderForOrientation(geom, fo);
           }
@@ -461,16 +380,16 @@ index 1abb9e65f..89296e5cb 100644
  
  #ifdef MFEM_DEBUG_PMATRIX
           mfem::out << "Rank " << pncmesh->MyRank << " receiving from " << rank
-@@ -2201,7 +2216,7 @@ void NeighborRowMessage::Decode(int rank)
-          }
+@@ -2177,7 +2190,7 @@ void NeighborRowMessage::Decode(int rank)
  
-          // Create a row for this entity, recording the index of the mesh element
+          // Create a row for this entity, recording the index of the mesh
+          // element
 -         rows.push_back(RowInfo(ent, id.index, edof, group_ids[gi++]));
 +         rows.emplace_back(ent, id.index, edof, group_ids[gi++]);
           rows.back().row.read(stream, s);
  
  #ifdef MFEM_DEBUG_PMATRIX
-@@ -2211,8 +2226,7 @@ void NeighborRowMessage::Decode(int rank)
+@@ -2187,8 +2200,7 @@ void NeighborRowMessage::Decode(int rank)
                     << std::endl;
  #endif
  
@@ -480,65 +399,54 @@ index 1abb9e65f..89296e5cb 100644
           {
              // ND face dofs need to be processed together, as the transformation
              // is given by a 2x2 matrix, so we manually apply an extra increment
-@@ -2233,33 +2247,50 @@ void NeighborRowMessage::Decode(int rank)
+@@ -2209,8 +2221,10 @@ void NeighborRowMessage::Decode(int rank)
+             // there is no hidden copying that could result in a dangling
+             // reference.
              auto &first_row = rows.back().row;
++
              // This is the first "fundamental unit" used in the transformation.
              const auto initial_first_row = first_row;
--            // Extract the next dof too, and apply any dof order transformation expected.
 +
+             // Extract the next dof too, and apply any dof order transformation
+             // expected.
              const MeshId &next_id = ids[++i];
-             int fo = pncmesh->GetFaceOrientation(next_id.index);
--            ind = fec->DofOrderForOrientation(geom, fo);
--
--            s = 1.0;
-             edof = bin_io::read<int>(stream);
-+
-+            // If edof arrived with a negative index, flip it, and the scaling.
-+            double s2 = (edof < 0) ? -1.0 : 1.0;
-+            edof = (edof < 0) ? -1 - edof : edof;
-+
-             if (ind && (edof = ind[edof]) < 0)
-             {
+@@ -2226,15 +2240,34 @@ void NeighborRowMessage::Decode(int rank)
                 edof = -1 - edof;
--               s = -1.0;
-+               s2 *= -1.0;
+                s *= -1.0;
              }
 -            rows.push_back(RowInfo(ent, next_id.index, edof, group_ids[gi++]));
--            rows.back().row.read(stream, s);
- 
++
 +            rows.emplace_back(ent, next_id.index, edof, group_ids[gi++]);
-+            rows.back().row.read(stream, s2);
+             rows.back().row.read(stream, s);
              auto &second_row = rows.back().row;
  
              // This is the second "fundamental unit" used in the transformation.
              const auto initial_second_row = second_row;
- 
-+            // Transform the received dofs by the primal transform. This is because
-+            // within mfem as a face is visited its orientation is asigned to match the
-+            // element that visited it first. Thus on processor boundaries, the transform
-+            // will always be identity going into the element. However, the sending
-+            // processor also thought the face orientation was zero, so it has sent the
-+            // information in a different orientation. To map onto the local orientation
-+            // definition, extract the orientation of the sending rank (the lower rank face
-+            // defines the orientation fo), then apply the transform to the dependencies.
-+            // The action of this transform on the dependencies is performed by adding
-+            // scaled versions of the original two rows (which by the mfem assumption of
-+            // face orientation, represent the identity transform).
-             const auto T = [&fo]()
-             {
-                auto T = ND_DofTransformation::GetFaceTransform(fo);
-+               // Remove the identity transform.
-                T(0,0) -= 1;
-                T(1,1) -= 1;
-                return T;
-             }();
-+            MFEM_ASSERT(fo != 2 &&
-+                        fo != 4, "This code branch is ambiguous for face orientations 2 and 4."
++
++            // Transform the received dofs by the primal transform. This is
++            // because within mfem as a face is visited its orientation is
++            // asigned to match the element that visited it first. Thus on
++            // processor boundaries, the transform will always be identity
++            // going into the element. However, the sending processor also
++            // thought the face orientation was zero, so it has sent the
++            // information in a different orientation. To map onto the local
++            // orientation definition, extract the orientation of the sending
++            // rank (the lower rank face defines the orientation fo), then
++            // apply the transform to the dependencies. The action of this
++            // transform on the dependencies is performed by adding scaled
++            // versions of the original two rows (which by the mfem assumption
++            // of face orientation, represent the identity transform).
++            MFEM_ASSERT(fo != 2 && fo != 4,
++                        "This code branch is ambiguous for face orientations 2 and 4."
 +                        " Please report this mesh for further testing.\n");
+             const double *T =
+                ND_DofTransformation::GetFaceTransform(fo).GetData();
  
-             first_row.AddRow(initial_first_row, T(0,0));
-             first_row.AddRow(initial_second_row, T(0,1));
-@@ -2436,7 +2467,7 @@ int ParFiniteElementSpace
++            // Remove the identity matrix from the transformation.
+             first_row.AddRow(initial_first_row, T[0] - 1.0);
+             first_row.AddRow(initial_second_row, T[2]);
+             second_row.AddRow(initial_first_row, T[1]);
+@@ -2410,7 +2443,7 @@ int ParFiniteElementSpace
  
              if (master_dofs.Size() == 0) { continue; }
  
@@ -547,7 +455,7 @@ index 1abb9e65f..89296e5cb 100644
              if (fe == nullptr) { continue; }
  
              switch (mf.Geom())
-@@ -2465,7 +2496,6 @@ int ParFiniteElementSpace
+@@ -2439,7 +2472,6 @@ int ParFiniteElementSpace
              }
           }
        }
@@ -555,7 +463,7 @@ index 1abb9e65f..89296e5cb 100644
        deps.Finalize();
     }
  
-@@ -2594,15 +2624,15 @@ int ParFiniteElementSpace
+@@ -2568,15 +2600,15 @@ int ParFiniteElementSpace
  
     // big container for all messages we send (the list is for iterations)
     std::list<NeighborRowMessage::Map> send_msg;
@@ -574,7 +482,7 @@ index 1abb9e65f..89296e5cb 100644
  
           // prepare messages to neighbors with identity rows
           if (dof_group[dof] != 0)
-@@ -2646,7 +2676,7 @@ int ParFiniteElementSpace
+@@ -2620,7 +2652,7 @@ int ParFiniteElementSpace
        // prepare a new round of send buffers
        if (send_msg.back().size())
        {
@@ -584,7 +492,7 @@ index 1abb9e65f..89296e5cb 100644
  
        // check for incoming messages, receive PMatrixRows
 diff --git a/fem/pfespace.hpp b/fem/pfespace.hpp
-index f39ceefab..ff05a08ae 100644
+index 72029be56..e74f66622 100644
 --- a/fem/pfespace.hpp
 +++ b/fem/pfespace.hpp
 @@ -124,8 +124,8 @@ private:
@@ -598,10 +506,10 @@ index f39ceefab..ff05a08ae 100644
     void GetBareDofs(int entity, int index, Array<int> &dofs) const;
  
 diff --git a/fem/pgridfunc.cpp b/fem/pgridfunc.cpp
-index 9b71466eb..122e2e056 100644
+index 38b57a3e1..773221029 100644
 --- a/fem/pgridfunc.cpp
 +++ b/fem/pgridfunc.cpp
-@@ -737,7 +737,8 @@ void ParGridFunction::ProjectBdrCoefficientTangent(VectorCoefficient &vcoeff,
+@@ -736,7 +736,8 @@ void ParGridFunction::ProjectBdrCoefficientTangent(VectorCoefficient &vcoeff,
     {
        MFEM_ASSERT(pfes->GetLocalTDofNumber(i) == -1 ||
                    bool(values_counter[i]) == bool(ess_vdofs_marker[i]),
@@ -612,7 +520,7 @@ index 9b71466eb..122e2e056 100644
  #endif
  }
 diff --git a/fem/pgridfunc.hpp b/fem/pgridfunc.hpp
-index e582f29d1..37fc999cb 100644
+index bc422a260..041dc1c98 100644
 --- a/fem/pgridfunc.hpp
 +++ b/fem/pgridfunc.hpp
 @@ -112,12 +112,12 @@ public:
@@ -666,7 +574,7 @@ index e582f29d1..37fc999cb 100644
 +   double GetValue(int i, const IntegrationPoint &ip,
 +                   int vdim = 1) const override;
     double GetValue(ElementTransformation &T)
-    { return GetValue(T.ElementNo, T.GetIntPoint()); }
+    { return GetValue(T, T.GetIntPoint()); }
  
     // Redefine to handle the case when T describes a face-neighbor element
 -   virtual double GetValue(ElementTransformation &T, const IntegrationPoint &ip,
@@ -1010,10 +918,10 @@ index 288d51288..b517172aa 100644
     const_iterator cbegin() const { return const_iterator(Base::cbegin()); }
     const_iterator cend() const { return const_iterator(); }
 diff --git a/mesh/element.hpp b/mesh/element.hpp
-index 49a4cad61..ef180cf8c 100644
+index f1b003cae..ccd72724a 100644
 --- a/mesh/element.hpp
 +++ b/mesh/element.hpp
-@@ -54,12 +54,15 @@ public:
+@@ -57,12 +57,15 @@ public:
     /// Set element's attribute.
     inline void SetAttribute(const int attr) { attribute = attr; }
  
@@ -1034,7 +942,7 @@ index 49a4cad61..ef180cf8c 100644
     virtual int *GetVertices() = 0;
  
 diff --git a/mesh/hexahedron.cpp b/mesh/hexahedron.cpp
-index 96287d6c2..46a2707a7 100644
+index beeab3b6a..e86e209c1 100644
 --- a/mesh/hexahedron.cpp
 +++ b/mesh/hexahedron.cpp
 @@ -43,10 +43,18 @@ Hexahedron::Hexahedron(int ind1, int ind2, int ind3, int ind4,
@@ -1059,12 +967,12 @@ index 96287d6c2..46a2707a7 100644
 +   std::copy(ind, ind + 8, indices);
  }
  
- }
+ TriLinear3DFiniteElement HexahedronFE;
 diff --git a/mesh/hexahedron.hpp b/mesh/hexahedron.hpp
-index 6b62a14d6..f8902864e 100644
+index a8186c0c8..450cac0ce 100644
 --- a/mesh/hexahedron.hpp
 +++ b/mesh/hexahedron.hpp
-@@ -37,31 +37,38 @@ public:
+@@ -37,35 +37,42 @@ public:
                int ind5, int ind6, int ind7, int ind8, int attr = 1);
  
     /// Return element's type
@@ -1096,6 +1004,11 @@ index 6b62a14d6..f8902864e 100644
 +   const int *GetEdgeVertices(int ei) const override
     { return geom_t::Edges[ei]; }
  
+    /// @deprecated Use GetNFaces(void) and GetNFaceVertices(int) instead.
+-   MFEM_DEPRECATED virtual int GetNFaces(int &nFaceVertices) const
++   MFEM_DEPRECATED int GetNFaces(int &nFaceVertices) const override
+    { nFaceVertices = 4; return 6; }
+ 
 -   virtual int GetNFaces() const { return 6; }
 +   int GetNFaces() const override { return 6; }
  
@@ -1116,10 +1029,10 @@ index 6b62a14d6..f8902864e 100644
  
  extern MFEM_EXPORT class TriLinear3DFiniteElement HexahedronFE;
 diff --git a/mesh/mesh.cpp b/mesh/mesh.cpp
-index 5831188f9..a14676382 100644
+index 5f82de812..bf2fce576 100644
 --- a/mesh/mesh.cpp
 +++ b/mesh/mesh.cpp
-@@ -1434,6 +1434,7 @@ Geometry::Type Mesh::GetFaceGeometry(int Face) const
+@@ -1415,6 +1415,7 @@ Geometry::Type Mesh::GetFaceGeometry(int Face) const
           }
           // ghost face
           const int nc_face_id = faces_info[Face].NCFace;
@@ -1127,16 +1040,11 @@ index 5831188f9..a14676382 100644
           MFEM_ASSERT(nc_face_id >= 0, "parent ghost faces are not supported");
           return faces[nc_faces_info[nc_face_id].MasterFace]->GetGeometryType();
     }
-@@ -1909,14 +1910,11 @@ int Mesh::AddBdrPoint(int v, int attr)
+@@ -1889,9 +1890,9 @@ int Mesh::AddBdrPoint(int v, int attr)
  
  void Mesh::GenerateBoundaryElements()
  {
--   int i, j;
-    Array<int> &be2face = (Dim == 2) ? be_to_edge : be_to_face;
- 
--   // GenerateFaces();
--
--   for (i = 0; i < boundary.Size(); i++)
+-   for (int i = 0; i < boundary.Size(); i++)
 +   for (auto &b : boundary)
     {
 -      FreeElement(boundary[i]);
@@ -1144,25 +1052,19 @@ index 5831188f9..a14676382 100644
     }
  
     if (Dim == 3)
-@@ -1927,14 +1925,14 @@ void Mesh::GenerateBoundaryElements()
+@@ -1902,9 +1903,9 @@ void Mesh::GenerateBoundaryElements()
  
     // count the 'NumOfBdrElements'
     NumOfBdrElements = 0;
--   for (i = 0; i < faces_info.Size(); i++)
+-   for (int i = 0; i < faces_info.Size(); i++)
 +   for (const auto &fi : faces_info)
     {
 -      if (faces_info[i].Elem2No < 0) { NumOfBdrElements++; }
 +      if (fi.Elem2No < 0) { ++NumOfBdrElements; }
     }
  
-    boundary.SetSize(NumOfBdrElements);
-    be2face.SetSize(NumOfBdrElements);
--   for (j = i = 0; i < faces_info.Size(); i++)
-+   for (int j = 0, i = 0; i < faces_info.Size(); ++i)
-    {
-       if (faces_info[i].Elem2No < 0)
-       {
-@@ -4415,7 +4413,7 @@ Mesh::Mesh(Mesh *orig_mesh, int ref_factor, int ref_type)
+    // Add the boundary elements
+@@ -4403,7 +4404,7 @@ Mesh::Mesh(Mesh *orig_mesh, int ref_factor, int ref_type)
     MakeRefined_(*orig_mesh, ref_factors, ref_type);
  }
  
@@ -1171,35 +1073,35 @@ index 5831188f9..a14676382 100644
                          int ref_type)
  {
     SetEmpty();
-@@ -6201,22 +6199,22 @@ int Mesh::CheckBdrElementOrientation(bool fix_it)
+@@ -6189,22 +6190,22 @@ int Mesh::CheckBdrElementOrientation(bool fix_it)
              {
                 // swap vertices 0 and 1 so that we don't change the marked edge:
                 // (0,1,2) -> (1,0,2)
 -               mfem::Swap<int>(bv[0], bv[1]);
-+               std::swap(bv[0], bv[1]);
++               mfem::Swap(bv[0], bv[1]);
                 if (bel_to_edge)
                 {
                    int *be = bel_to_edge->GetRow(i);
 -                  mfem::Swap<int>(be[1], be[2]);
-+                  std::swap(be[1], be[2]);
++                  mfem::Swap(be[1], be[2]);
                 }
                 break;
              }
              case Element::QUADRILATERAL:
              {
 -               mfem::Swap<int>(bv[0], bv[2]);
-+               std::swap(bv[0], bv[2]);
++               mfem::Swap(bv[0], bv[2]);
                 if (bel_to_edge)
                 {
                    int *be = bel_to_edge->GetRow(i);
 -                  mfem::Swap<int>(be[0], be[1]);
 -                  mfem::Swap<int>(be[2], be[3]);
-+                  std::swap(be[0], be[1]);
-+                  std::swap(be[2], be[3]);
++                  mfem::Swap(be[0], be[1]);
++                  mfem::Swap(be[2], be[3]);
                 }
                 break;
              }
-@@ -6920,9 +6918,9 @@ void Mesh::AddQuadFaceElement(int lf, int gf, int el,
+@@ -6997,26 +6998,27 @@ void Mesh::AddQuadFaceElement(int lf, int gf, int el,
  
  void Mesh::GenerateFaces()
  {
@@ -1207,11 +1109,12 @@ index 5831188f9..a14676382 100644
 +   int nfaces = GetNumFaces();
  
 -   for (i = 0; i < faces.Size(); i++)
-+   for (int i = 0; i < faces.Size(); ++i)
++   for (auto &f : faces)
     {
-       FreeElement(faces[i]);
+-      FreeElement(faces[i]);
++      FreeElement(f);
     }
-@@ -6930,16 +6928,17 @@ void Mesh::GenerateFaces()
+ 
     // (re)generate the interior faces and the info for them
     faces.SetSize(nfaces);
     faces_info.SetSize(nfaces);
@@ -1233,7 +1136,7 @@ index 5831188f9..a14676382 100644
        if (Dim == 1)
        {
           AddPointFaceElement(0, v[0], i);
-@@ -6947,7 +6946,7 @@ void Mesh::GenerateFaces()
+@@ -7024,7 +7026,7 @@ void Mesh::GenerateFaces()
        }
        else if (Dim == 2)
        {
@@ -1242,7 +1145,7 @@ index 5831188f9..a14676382 100644
           const int ne = elements[i]->GetNEdges();
           for (int j = 0; j < ne; j++)
           {
-@@ -6957,7 +6956,7 @@ void Mesh::GenerateFaces()
+@@ -7034,7 +7036,7 @@ void Mesh::GenerateFaces()
        }
        else
        {
@@ -1251,7 +1154,7 @@ index 5831188f9..a14676382 100644
           switch (GetElementType(i))
           {
              case Element::TETRAHEDRON:
-@@ -7023,9 +7022,9 @@ void Mesh::GenerateNCFaceInfo()
+@@ -7100,9 +7102,9 @@ void Mesh::GenerateNCFaceInfo()
  {
     MFEM_VERIFY(ncmesh, "missing NCMesh.");
  
@@ -1263,7 +1166,7 @@ index 5831188f9..a14676382 100644
     }
  
     const NCMesh::NCList &list =
-@@ -7037,9 +7036,8 @@ void Mesh::GenerateNCFaceInfo()
+@@ -7114,9 +7116,8 @@ void Mesh::GenerateNCFaceInfo()
     int nfaces = GetNumFaces();
  
     // add records for master faces
@@ -1274,7 +1177,7 @@ index 5831188f9..a14676382 100644
        if (master.index >= nfaces) { continue; }
  
        FaceInfo &master_fi = faces_info[master.index];
-@@ -7051,10 +7049,8 @@ void Mesh::GenerateNCFaceInfo()
+@@ -7128,10 +7129,8 @@ void Mesh::GenerateNCFaceInfo()
     }
  
     // add records for slave faces
@@ -1286,7 +1189,7 @@ index 5831188f9..a14676382 100644
        if (slave.index < 0 || // degenerate slave face
            slave.index >= nfaces || // ghost slave
            slave.master >= nfaces) // has ghost master
-@@ -7145,7 +7141,7 @@ STable3D *Mesh::GetFacesTable()
+@@ -7222,7 +7221,7 @@ STable3D *Mesh::GetFacesTable()
  
  STable3D *Mesh::GetElementToFaceTable(int ret_ftbl)
  {
@@ -1295,7 +1198,7 @@ index 5831188f9..a14676382 100644
     STable3D *faces_tbl;
  
     if (el_to_face != NULL)
-@@ -7154,9 +7150,9 @@ STable3D *Mesh::GetElementToFaceTable(int ret_ftbl)
+@@ -7231,9 +7230,9 @@ STable3D *Mesh::GetElementToFaceTable(int ret_ftbl)
     }
     el_to_face = new Table(NumOfElements, 6);  // must be 6 for hexahedra
     faces_tbl = new STable3D(NumOfVertices);
@@ -1307,7 +1210,7 @@ index 5831188f9..a14676382 100644
        switch (GetElementType(i))
        {
           case Element::TETRAHEDRON:
-@@ -7220,9 +7216,10 @@ STable3D *Mesh::GetElementToFaceTable(int ret_ftbl)
+@@ -7297,9 +7296,10 @@ STable3D *Mesh::GetElementToFaceTable(int ret_ftbl)
     el_to_face->Finalize();
     NumOfFaces = faces_tbl->NumberOfElements();
     be_to_face.SetSize(NumOfBdrElements);
@@ -1321,10 +1224,10 @@ index 5831188f9..a14676382 100644
        {
           case Element::TRIANGLE:
 diff --git a/mesh/mesh.hpp b/mesh/mesh.hpp
-index 088147d89..de50be954 100644
+index a6957720a..81324399b 100644
 --- a/mesh/mesh.hpp
 +++ b/mesh/mesh.hpp
-@@ -563,7 +563,7 @@ protected:
+@@ -592,7 +592,7 @@ protected:
     void Make1D(int n, double sx = 1.0);
  
     /// Internal function used in Mesh::MakeRefined
@@ -1333,22 +1236,7 @@ index 088147d89..de50be954 100644
                       int ref_type);
  
     /// Initialize vertices/elements/boundary/tables from a nonconforming mesh.
-@@ -1162,6 +1162,14 @@ public:
-    /// the Element object itself should not be deleted by the caller.
-    Element *GetBdrElement(int i) { return boundary[i]; }
- 
-+   inline int GetNCMasterFaceIndex(int i) const
-+   {
-+      MFEM_ASSERT(i < nc_faces_info.Size() &&
-+                  i >= 0, i << " not in [0, " << nc_faces_info.Size() << ")");
-+      const auto &ncf = nc_faces_info[i];
-+      MFEM_VERIFY(ncf.Slave, "If the master face is requested, must be slave");
-+      return ncf.MasterFace;
-+   }
-    const Element *GetFace(int i) const { return faces[i]; }
- 
-    /// @}
-@@ -1650,7 +1658,7 @@ public:
+@@ -1698,7 +1698,7 @@ public:
                            };
  
     /** @brief This structure is used as a human readable output format that
@@ -1358,15 +1246,52 @@ index 088147d89..de50be954 100644
  
         The element indices in this structure don't need further processing,
 diff --git a/mesh/ncmesh.cpp b/mesh/ncmesh.cpp
-index 381e73f60..f5cf35d8a 100644
+index ecb5fb90b..5c57adc4a 100644
 --- a/mesh/ncmesh.cpp
 +++ b/mesh/ncmesh.cpp
-@@ -2449,18 +2449,21 @@ void NCMesh::GetMeshComponents(Mesh &mesh) const
+@@ -19,6 +19,36 @@
+ 
+ #include "ncmesh_tables.hpp"
+ 
++
++namespace
++{
++/**
++ * @brief Base case of convenience variadic max function.
++ *
++ * @tparam T Base type
++ * @param arg Recursion base value
++ * @return T value to max over
++ */
++template<typename T>
++T max(T&& arg)
++{
++   return arg;
++}
++/**
++ * @brief Convenience variadic max function.
++ *
++ * @tparam T Base Type
++ * @tparam Ts Parameter pack of other types
++ * @param arg Singular argument
++ * @param args Pack of arguments
++ * @return T maximum value
++ */
++template<typename T, typename... Ts>
++T max(T arg, Ts... args)
++{
++   return std::max(std::forward<T>(arg), max(args...));
++}
++} // namespace
+ namespace mfem
+ {
+ 
+@@ -2449,18 +2479,21 @@ void NCMesh::GetMeshComponents(Mesh &mesh) const
     // left uninitialized here; they will be initialized later by the Mesh from
     // Nodes -- here we just make sure mesh.vertices has the correct size.
  
 -   for (int i = 0; i < mesh.NumOfElements; i++)
-+   for (auto elem : mesh.elements)
++   for (auto &elem : mesh.elements)
     {
 -      mesh.FreeElement(mesh.elements[i]);
 +      mesh.FreeElement(elem);
@@ -1374,7 +1299,7 @@ index 381e73f60..f5cf35d8a 100644
     mesh.elements.SetSize(0);
  
 -   for (int i = 0; i < mesh.NumOfBdrElements; i++)
-+   for (auto elem : mesh.boundary)
++   for (auto &elem : mesh.boundary)
     {
 -      mesh.FreeElement(mesh.boundary[i]);
 +      mesh.FreeElement(elem);
@@ -1387,7 +1312,7 @@ index 381e73f60..f5cf35d8a 100644
     // create an mfem::Element for each leaf Element
     for (int i = 0; i < NElements; i++)
     {
-@@ -2478,65 +2481,83 @@ void NCMesh::GetMeshComponents(Mesh &mesh) const
+@@ -2478,65 +2511,83 @@ void NCMesh::GetMeshComponents(Mesh &mesh) const
           elem->GetVertices()[j] = nodes[node[j]].vert_index;
        }
  
@@ -1516,7 +1441,7 @@ index 381e73f60..f5cf35d8a 100644
  void NCMesh::OnMeshUpdated(Mesh *mesh)
  {
     //// PART 1: pull indices of regular edges/faces from the Mesh
-@@ -2651,13 +2672,14 @@ void NCMesh::OnMeshUpdated(Mesh *mesh)
+@@ -2651,13 +2702,14 @@ void NCMesh::OnMeshUpdated(Mesh *mesh)
        for (int j = 0; j < gi.nf; j++)
        {
           const int *fv = gi.faces[j];
@@ -1536,7 +1461,7 @@ index 381e73f60..f5cf35d8a 100644
  
              // store the face geometry
              static const Geometry::Type types[5] =
-@@ -2665,7 +2687,7 @@ void NCMesh::OnMeshUpdated(Mesh *mesh)
+@@ -2665,7 +2717,7 @@ void NCMesh::OnMeshUpdated(Mesh *mesh)
                 Geometry::INVALID, Geometry::INVALID,
                 Geometry::SEGMENT, Geometry::TRIANGLE, Geometry::SQUARE
              };
@@ -1545,7 +1470,7 @@ index 381e73f60..f5cf35d8a 100644
           }
        }
     }
-@@ -2741,7 +2763,7 @@ bool NCMesh::TriFaceSplit(int v1, int v2, int v3, int mid[3]) const
+@@ -2741,7 +2793,7 @@ bool NCMesh::TriFaceSplit(int v1, int v2, int v3, int mid[3]) const
  
     if (mid) { mid[0] = e1, mid[1] = e2, mid[2] = e3; }
  
@@ -1554,87 +1479,7 @@ index 381e73f60..f5cf35d8a 100644
     return true;
  }
  
-@@ -3021,13 +3043,13 @@ void NCMesh::TraverseTetEdge(int vn0, int vn1, const Point &p0, const Point &p1,
-    if (nd.HasEdge())
-    {
-       // check if the edge is already a master in 'edge_list'
--      int type;
--      const MeshId &eid = edge_list.LookUp(nd.edge_index, &type);
--      if (type == 1)
-+      const auto eid_and_type = edge_list.GetMeshIdAndType(nd.edge_index);
-+      if (eid_and_type.type == NCList::MeshIdType::MASTER
-+          || eid_and_type.type == NCList::MeshIdType::CONFORMING)
-       {
-          // in this case we need to add an edge-face constraint, because the
--         // master edge is really a (face-)slave itself
--
-+         // non-slave edge is really a (face-)slave itself.
-+         const MeshId &eid = *eid_and_type.id;
-          face_list.slaves.Append(
-             Slave(-1 - eid.index, eid.element, eid.local, Geometry::TRIANGLE));
- 
-@@ -3048,9 +3070,10 @@ void NCMesh::TraverseTetEdge(int vn0, int vn1, const Point &p0, const Point &p1,
-    TraverseTetEdge(mid, vn1, pmid, p1, matrix_map);
- }
- 
--bool NCMesh::TraverseTriFace(int vn0, int vn1, int vn2,
--                             const PointMatrix& pm, int level,
--                             MatrixMap &matrix_map)
-+NCMesh::TriFaceTraverseResults NCMesh::TraverseTriFace(int vn0, int vn1,
-+                                                       int vn2,
-+                                                       const PointMatrix& pm, int level,
-+                                                       MatrixMap &matrix_map)
- {
-    if (level > 0)
-    {
-@@ -3069,7 +3092,7 @@ bool NCMesh::TraverseTriFace(int vn0, int vn1, int vn2,
-          sl.local = ReorderFacePointMat(vn0, vn1, vn2, -1, elem, pm, pm_r);
-          sl.matrix = matrix_map.GetIndex(pm_r);
- 
--         return true;
-+         return {true, elements[elem].rank != MyRank};
-       }
-    }
- 
-@@ -3077,7 +3100,7 @@ bool NCMesh::TraverseTriFace(int vn0, int vn1, int vn2,
-    if (TriFaceSplit(vn0, vn1, vn2, mid))
-    {
-       Point pmid0(pm(0), pm(1)), pmid1(pm(1), pm(2)), pmid2(pm(2), pm(0));
--      bool b[4];
-+      TriFaceTraverseResults b[4];
- 
-       b[0] = TraverseTriFace(vn0, mid[0], mid[2],
-                              PointMatrix(pm(0), pmid0, pmid2),
-@@ -3095,16 +3118,21 @@ bool NCMesh::TraverseTriFace(int vn0, int vn1, int vn2,
-                              PointMatrix(pmid1, pmid2, pmid0),
-                              level+1, matrix_map);
- 
--      // traverse possible tet edges constrained by the master face
--      if (HaveTets() && !b[3])
-+      // Traverse possible tet edges constrained by the master face. This needs to occur if
-+      // none of these first NC level faces are split further, OR if they are on different
-+      // processors. The different processor constraint is needed in the case of local
-+      // elements constrained by this face via the edge alone. Cannot know this a priori, so
-+      // just constrain any edge attached to two neighbors.
-+      if (HaveTets() && (!b[3].unsplit || b[3].ghost_neighbor))
-       {
--         if (!b[1]) { TraverseTetEdge(mid[0],mid[1], pmid0,pmid1, matrix_map); }
--         if (!b[2]) { TraverseTetEdge(mid[1],mid[2], pmid1,pmid2, matrix_map); }
--         if (!b[0]) { TraverseTetEdge(mid[2],mid[0], pmid2,pmid0, matrix_map); }
-+         // If the faces have no further splits, so would not be captured by normal face
-+         // relations, add possible edge constraints.
-+         if (!b[1].unsplit || b[1].ghost_neighbor) { TraverseTetEdge(mid[0],mid[1], pmid0,pmid1, matrix_map); }
-+         if (!b[2].unsplit || b[2].ghost_neighbor) { TraverseTetEdge(mid[1],mid[2], pmid1,pmid2, matrix_map); }
-+         if (!b[0].unsplit || b[0].ghost_neighbor) { TraverseTetEdge(mid[2],mid[0], pmid2,pmid0, matrix_map); }
-       }
-    }
--
--   return false;
-+   return {false, false};
- }
- 
- void NCMesh::BuildFaceList()
-@@ -3151,6 +3179,7 @@ void NCMesh::BuildFaceList()
+@@ -3157,6 +3209,7 @@ void NCMesh::BuildFaceList()
           int fgeom = (node[3] >= 0) ? Geometry::SQUARE : Geometry::TRIANGLE;
  
           Face &fa = faces[face];
@@ -1642,7 +1487,7 @@ index 381e73f60..f5cf35d8a 100644
           if (fa.elem[0] >= 0 && fa.elem[1] >= 0)
           {
              // this is a conforming face, add it to the list
-@@ -3177,6 +3206,7 @@ void NCMesh::BuildFaceList()
+@@ -3183,6 +3236,7 @@ void NCMesh::BuildFaceList()
              if (sb < se)
              {
                 // found slaves, so this is a master face; add it to the list
@@ -1650,7 +1495,7 @@ index 381e73f60..f5cf35d8a 100644
                 face_list.masters.Append(
                    Master(fa.index, elem, j, fgeom, sb, se));
  
-@@ -3188,7 +3218,8 @@ void NCMesh::BuildFaceList()
+@@ -3194,7 +3248,8 @@ void NCMesh::BuildFaceList()
              }
           }
  
@@ -1660,7 +1505,7 @@ index 381e73f60..f5cf35d8a 100644
        }
     }
  
-@@ -3264,20 +3295,22 @@ void NCMesh::BuildEdgeList()
+@@ -3270,20 +3325,22 @@ void NCMesh::BuildEdgeList()
           // tell ParNCMesh about the edge
           ElementSharesEdge(elem, j, enode);
  
@@ -1692,7 +1537,7 @@ index 381e73f60..f5cf35d8a 100644
  
           // have we already processed this edge? skip if yes
           if (processed_edges[enode]) { continue; }
-@@ -3310,6 +3343,13 @@ void NCMesh::BuildEdgeList()
+@@ -3316,6 +3373,13 @@ void NCMesh::BuildEdgeList()
           {
              // no slaves, this is a conforming edge
              edge_list.conforming.Append(MeshId(nd.edge_index, elem, j));
@@ -1706,139 +1551,15 @@ index 381e73f60..f5cf35d8a 100644
           }
        }
     }
-@@ -3402,77 +3442,81 @@ void NCMesh::NCList::Clear()
-       point_matrices[i].DeleteAll();
-    }
- 
--   inv_index.DeleteAll();
-+   inv_index.clear();
- }
- 
--long NCMesh::NCList::TotalSize() const
-+NCMesh::NCList::MeshIdAndType
-+NCMesh::NCList::GetMeshIdAndType(int index) const
- {
--   return conforming.Size() + masters.Size() + slaves.Size();
-+   BuildIndex();
-+   if (inv_index.size() == 0)
-+   {
-+      MFEM_ABORT("Inverse index not built.");
-+   }
-+   const auto it = inv_index.find(index);
-+   auto ft = it != inv_index.end() ? it->second.first : MeshIdType::UNRECOGNIZED;
-+   switch (ft)
-+   {
-+      case MeshIdType::CONFORMING:
-+         return {&conforming[it->second.second], it->second.first};
-+      case MeshIdType::MASTER:
-+         return {&masters[it->second.second], it->second.first};
-+      case MeshIdType::SLAVE:
-+         return {&slaves[it->second.second], it->second.first};
-+      case MeshIdType::UNRECOGNIZED:
-+      default:
-+         return {nullptr, MeshIdType::UNRECOGNIZED};
-+   }
- }
- 
--const NCMesh::MeshId& NCMesh::NCList::LookUp(int index, int *type) const
-+NCMesh::NCList::MeshIdType
-+NCMesh::NCList::GetMeshIdType(int index) const
- {
--   if (!inv_index.Size())
-+   BuildIndex();
-+   auto it = inv_index.find(index);
-+   return (it != inv_index.end()) ? it->second.first : MeshIdType::UNRECOGNIZED;
-+}
-+
-+bool
-+NCMesh::NCList::CheckMeshIdType(int index, MeshIdType ft) const
-+{
-+   return GetMeshIdType(index) == ft;
-+}
-+
-+void
-+NCMesh::NCList::BuildIndex() const
-+{
-+   if (inv_index.size() == 0)
-    {
--      int max_index = -1;
--      for (int i = 0; i < conforming.Size(); i++)
--      {
--         max_index = std::max(conforming[i].index, max_index);
--      }
--      for (int i = 0; i < masters.Size(); i++)
--      {
--         max_index = std::max(masters[i].index, max_index);
--      }
--      for (int i = 0; i < slaves.Size(); i++)
--      {
--         if (slaves[i].index < 0) { continue; }
--         max_index = std::max(slaves[i].index, max_index);
--      }
-+      auto index_compare = [](const MeshId &a, const MeshId &b) { return a.index < b.index; };
-+      auto max_conforming = std::max_element(conforming.begin(), conforming.end(),
-+                                             index_compare);
-+      auto max_master = std::max_element(masters.begin(), masters.end(),
-+                                         index_compare);
-+      auto max_slave = std::max_element(slaves.begin(), slaves.end(), index_compare);
- 
--      inv_index.SetSize(max_index + 1);
--      inv_index = -1;
-+      int max_conforming_index = max_conforming != nullptr ? max_conforming->index :
-+                                 -1;
-+      int max_master_index = max_master != nullptr ? max_master->index : -1;
-+      int max_slave_index = max_slave != nullptr ? max_slave->index : -1;
- 
-+      inv_index.reserve(std::max({max_conforming_index, max_master_index, max_slave_index}));
-       for (int i = 0; i < conforming.Size(); i++)
-       {
--         inv_index[conforming[i].index] = (i << 2);
-+         inv_index.emplace(conforming[i].index, std::make_pair(MeshIdType::CONFORMING,
-+                                                               i));
-       }
-       for (int i = 0; i < masters.Size(); i++)
-       {
--         inv_index[masters[i].index] = (i << 2) + 1;
-+         inv_index.emplace(masters[i].index, std::make_pair(MeshIdType::MASTER, i));
-       }
-       for (int i = 0; i < slaves.Size(); i++)
-       {
--         if (slaves[i].index < 0) { continue; }
--         inv_index[slaves[i].index] = (i << 2) + 2;
-+         inv_index.emplace(slaves[i].index, std::make_pair(MeshIdType::SLAVE, i));
+@@ -3477,7 +3541,6 @@ NCMesh::NCList::BuildIndex() const
+          inv_index.emplace(slaves[i].index, std::make_pair(MeshIdType::SLAVE, i));
        }
     }
 -
--   MFEM_ASSERT(index >= 0 && index < inv_index.Size(), "");
--   int key = inv_index[index];
--
--   if (!type)
--   {
--      MFEM_VERIFY(key >= 0, "index " << index << " not found.");
--   }
--   else // return entity type if requested, don't abort when not found
--   {
--      *type = (key >= 0) ? (key & 0x3) : -1;
--
--      static MeshId invalid;
--      if (*type < 0) { return invalid; } // not found
--   }
--
--   // return found entity MeshId
--   switch (key & 0x3)
--   {
--      case 0: return conforming[key >> 2];
--      case 1: return masters[key >> 2];
--      case 2: return slaves[key >> 2];
--      default: MFEM_ABORT("internal error"); return conforming[0];
--   }
+    MFEM_ASSERT(inv_index.size() > 0,
+                "Empty inverse index, member lists must be populated before BuildIndex is called!");
  }
- 
--
- //// Neighbors /////////////////////////////////////////////////////////////////
- 
- void NCMesh::CollectEdgeVertices(int v0, int v1, Array<int> &indices)
-@@ -5186,22 +5230,23 @@ void NCMesh::FindFaceNodes(int face, int node[4])
+@@ -5195,22 +5258,23 @@ void NCMesh::FindFaceNodes(int face, int node[4])
  }
  
  void NCMesh::GetBoundaryClosure(const Array<int> &bdr_attr_is_ess,
@@ -1867,7 +1588,7 @@ index 381e73f60..f5cf35d8a 100644
              int nfv = (node[3] < 0) ? 3 : 4;
  
              for (int j = 0; j < nfv; j++)
-@@ -5219,6 +5264,17 @@ void NCMesh::GetBoundaryClosure(const Array<int> &bdr_attr_is_ess,
+@@ -5228,6 +5292,17 @@ void NCMesh::GetBoundaryClosure(const Array<int> &bdr_attr_is_ess,
                    bdr_edges.Append(nodes[enode].edge_index);
                 }
              }
@@ -1885,7 +1606,7 @@ index 381e73f60..f5cf35d8a 100644
           }
        }
     }
-@@ -5226,37 +5282,69 @@ void NCMesh::GetBoundaryClosure(const Array<int> &bdr_attr_is_ess,
+@@ -5235,36 +5310,38 @@ void NCMesh::GetBoundaryClosure(const Array<int> &bdr_attr_is_ess,
     {
        GetEdgeList(); // make sure 'boundary_faces' is up to date
  
@@ -1897,16 +1618,16 @@ index 381e73f60..f5cf35d8a 100644
 -         if (bdr_attr_is_ess[fc.attribute - 1])
 +         Face &face = faces[f];
 +         if (bdr_attr_is_ess[face.attribute - 1])
-          {
--            bdr_vertices.Append(nodes[fc.p1].vert_index);
--            bdr_vertices.Append(nodes[fc.p3].vert_index);
++         {
 +            bdr_vertices.Append(nodes[face.p1].vert_index);
 +            bdr_vertices.Append(nodes[face.p3].vert_index);
 +         }
 +
 +         const auto id_and_type = GetEdgeList().GetMeshIdAndType(face.index);
 +         if (id_and_type.type == NCList::MeshIdType::SLAVE)
-+         {
+          {
+-            bdr_vertices.Append(nodes[fc.p1].vert_index);
+-            bdr_vertices.Append(nodes[fc.p3].vert_index);
 +            // A slave face must mark any masters
 +            const auto &slave_edge_id = static_cast<const Slave&>(*id_and_type.id);
 +            bdr_edges.Append(slave_edge_id.master);
@@ -1916,6 +1637,10 @@ index 381e73f60..f5cf35d8a 100644
  
 -   bdr_vertices.Sort();
 -   bdr_vertices.Unique();
+-
+-   bdr_edges.Sort();
+-   bdr_edges.Unique();
+-}
 +   // Filter, sort and unique an array, so it contains only local unique values.
 +   auto FilterSortUnique = [](Array<int> &v, int N)
 +   {
@@ -1926,55 +1651,24 @@ index 381e73f60..f5cf35d8a 100644
 +      v.SetSize(std::distance(v.begin(), std::unique(v.begin(), it)));
 +   };
  
--   bdr_edges.Sort();
--   bdr_edges.Unique();
-+   FilterSortUnique(bdr_vertices, NVertices);
-+   FilterSortUnique(bdr_edges, NEdges);
-+   FilterSortUnique(bdr_faces, NFaces);
- }
- 
 -static int max4(int a, int b, int c, int d)
 -{
 -   return std::max(std::max(a, b), std::max(c, d));
 -}
 -static int max6(int a, int b, int c, int d, int e, int f)
-+namespace
- {
+-{
 -   return std::max(max4(a, b, c, d), std::max(e, f));
 -}
 -static int max8(int a, int b, int c, int d, int e, int f, int g, int h)
-+/**
-+ * @brief Base case of convenience variadic max function.
-+ *
-+ * @tparam T Base type
-+ * @param arg Recursion base value
-+ * @return T value to max over
-+ */
-+template<typename T>
-+T max(T&& arg)
-+{
-+   return arg;
-+}
-+/**
-+ * @brief Convenience variadic max function.
-+ *
-+ * @tparam T Base Type
-+ * @tparam Ts Parameter pack of other types
-+ * @param arg Singular argument
-+ * @param args Pack of arguments
-+ * @return T maximum value
-+ */
-+template<typename T, typename... Ts>
-+T max(T arg, Ts... args)
- {
+-{
 -   return std::max(max4(a, b, c, d), max4(e, f, g, h));
-+   return std::max(std::forward<T>(arg), max(args...));
++   FilterSortUnique(bdr_vertices, NVertices);
++   FilterSortUnique(bdr_edges, NEdges);
++   FilterSortUnique(bdr_faces, NFaces);
  }
-+} // namespace
  
  int NCMesh::EdgeSplitLevel(int vn1, int vn2) const
- {
-@@ -5271,15 +5359,13 @@ int NCMesh::TriFaceSplitLevel(int vn1, int vn2, int vn3) const
+@@ -5280,15 +5357,13 @@ int NCMesh::TriFaceSplitLevel(int vn1, int vn2, int vn3) const
     if (TriFaceSplit(vn1, vn2, vn3, mid) &&
         faces.FindId(vn1, vn2, vn3) < 0)
     {
@@ -1996,7 +1690,7 @@ index 381e73f60..f5cf35d8a 100644
  }
  
  void NCMesh::QuadFaceSplitLevel(int vn1, int vn2, int vn3, int vn4,
-@@ -5309,6 +5395,13 @@ void NCMesh::QuadFaceSplitLevel(int vn1, int vn2, int vn3, int vn4,
+@@ -5318,6 +5393,13 @@ void NCMesh::QuadFaceSplitLevel(int vn1, int vn2, int vn3, int vn4,
     }
  }
  
@@ -2010,7 +1704,7 @@ index 381e73f60..f5cf35d8a 100644
  void NCMesh::CountSplits(int elem, int splits[3]) const
  {
     const Element &el = elements[elem];
-@@ -5345,57 +5438,52 @@ void NCMesh::CountSplits(int elem, int splits[3]) const
+@@ -5354,57 +5436,52 @@ void NCMesh::CountSplits(int elem, int splits[3]) const
  
     if (el.Geom() == Geometry::CUBE)
     {
@@ -2090,7 +1784,7 @@ index 381e73f60..f5cf35d8a 100644
        splits[1] = splits[0];
     }
     else
-@@ -6368,17 +6456,17 @@ void NCMesh::DebugDump(std::ostream &os) const
+@@ -6377,17 +6454,17 @@ void NCMesh::DebugDump(std::ostream &os) const
  
     // dump faces
     os << faces.Size() << "\n";
@@ -2114,7 +1808,7 @@ index 381e73f60..f5cf35d8a 100644
  
        const int* fv = GI[el.Geom()].faces[lf];
        const int nfv = GI[el.Geom()].nfv[lf];
-@@ -6388,7 +6476,7 @@ void NCMesh::DebugDump(std::ostream &os) const
+@@ -6397,7 +6474,7 @@ void NCMesh::DebugDump(std::ostream &os) const
        {
           os << " " << el.node[fv[i]];
        }
@@ -2124,101 +1818,18 @@ index 381e73f60..f5cf35d8a 100644
     }
  }
 diff --git a/mesh/ncmesh.hpp b/mesh/ncmesh.hpp
-index ddd423bfa..0933131dd 100644
+index 8ac50d342..b004cf43e 100644
 --- a/mesh/ncmesh.hpp
 +++ b/mesh/ncmesh.hpp
-@@ -24,6 +24,7 @@
- #include <vector>
- #include <map>
- #include <iostream>
-+#include <unordered_map>
- 
- namespace mfem
- {
-@@ -223,32 +224,72 @@ public:
-          , master(-1), matrix(0), edge_flags(0) {}
-    };
- 
-+
-    /// Lists all edges/faces in the nonconforming mesh.
-    struct NCList
-    {
--      Array<MeshId> conforming;
--      Array<Master> masters;
--      Array<Slave> slaves;
-+      Array<MeshId> conforming; ///< All MeshIds corresponding to conformal faces
-+      Array<Master> masters; ///< All MeshIds corresponding to master faces
-+      Array<Slave> slaves; ///< All MeshIds corresponding to slave faces
- 
-       /// List of unique point matrices for each slave geometry.
-       Array<DenseMatrix*> point_matrices[Geometry::NumGeom];
- 
--      /// Return the point matrix oriented according to the master and slave edges
-       void OrientedPointMatrix(const Slave &slave,
-                                DenseMatrix &oriented_matrix) const;
- 
--      void Clear();
--      bool Empty() const { return !conforming.Size() && !masters.Size(); }
--      long TotalSize() const;
--      long MemoryUsage() const;
-+      /// Particular MeshId type, used for allowing static casting to the appropriate
-+      /// child type after searching the NCList. UNRECOGNIZED denotes that an instance is not
-+      /// known within the NCList, meaning that it does not play a part in NC mechanics.
-+      /// This can be because the index did not exist in the original Mesh, or because the
-+      /// entry is a boundary face, whose NC status is always conforming.
-+      enum class MeshIdType : char {CONFORMING, MASTER, SLAVE, UNRECOGNIZED};
-+
-+      /// Helper storing a reference to a MeshId type, and the face type it can be cast to
-+      struct MeshIdAndType
-+      {
-+         const MeshId * const id; ///< Pointer to a possible MeshId, nullptr if not found
-+         /// MeshIdType corresponding to the MeshId. UNRECOGNIZED if unfound.
-+         const MeshIdType type;
-+      };
-+      /// Return a mesh id and type for a given nc index.
-+      MeshIdAndType GetMeshIdAndType(int index) const;
-+
-+      /// Return a face type for a given nc index.
-+      MeshIdType GetMeshIdType(int index) const;
- 
--      const MeshId& LookUp(int index, int *type = NULL) const;
-+      /// Given an index, check if this is a certain face type.
-+      bool CheckMeshIdType(int index, MeshIdType type) const;
- 
-+      /// Erase the contents of the conforming, master and slave arrays.
-+      void Clear();
-+      /// Whether the NCList is empty.
-+      bool Empty() const
-+      {
-+         return conforming.Size() == 0
-+                && masters.Size() == 0
-+                && slaves.Size() == 0;
-+      }
-+      /// The total size of the component arrays in the NCList.
-+      long TotalSize() const
-+      {
-+         return conforming.Size() + masters.Size() + slaves.Size();
-+      }
-+      /// The memory usage of the three public arrays. Does not account for the inverse index.
-+      long MemoryUsage() const;
-       ~NCList() { Clear(); }
-    private:
--      mutable Array<int> inv_index;
-+      // Check for existence or construct the inv_index list map if necessary. const because only
-+      // modifies the mutable member inv_index.
-+      void BuildIndex() const;
-+
-+      /// A lazily constructed map from index to MeshId. Built whenever GetMeshIdAndType, GetMeshIdType or
-+      /// CheckMeshIdType is called for the first time. The MeshIdType is stored with, to enable
-+      /// casting to Slave or Master elements appropriately.
-+      mutable std::unordered_map<int, std::pair<MeshIdType, int>> inv_index;
+@@ -293,6 +293,7 @@ public:
+       mutable std::unordered_map<int, std::pair<MeshIdType, int>> inv_index;
     };
  
 +
     /// Return the current list of conforming and nonconforming faces.
     const NCList& GetFaceList()
     {
-@@ -348,11 +389,13 @@ public:
+@@ -392,11 +393,13 @@ public:
     /** Get a list of vertices (2D/3D) and edges (3D) that coincide with boundary
         elements with the specified attributes (marked in 'bdr_attr_is_ess').
         In 3D this function also reveals "hidden" boundary edges. In parallel it
@@ -2235,7 +1846,7 @@ index ddd423bfa..0933131dd 100644
  
     /// Return element geometry type. @a index is the Mesh element number.
     Geometry::Type GetElementGeometry(int index) const
-@@ -412,7 +455,6 @@ protected: // non-public interface for the Mesh class
+@@ -456,7 +459,6 @@ protected: // non-public interface for the Mesh class
         by calling Mesh::SetCurvature or otherwise setting the Nodes. */
     void MakeTopologyOnly() { coordinates.DeleteAll(); }
  
@@ -2243,7 +1854,7 @@ index ddd423bfa..0933131dd 100644
  protected: // implementation
  
     int Dim, spaceDim; ///< dimensions of the elements and the vertex coordinates
-@@ -550,7 +592,6 @@ protected: // implementation
+@@ -594,7 +596,6 @@ protected: // implementation
  
     Table element_vertex; ///< leaf-element to vertex table, see FindSetNeighbors
  
@@ -2251,7 +1862,7 @@ index ddd423bfa..0933131dd 100644
     /// Update the leaf elements indices in leaf_elements
     void UpdateLeafElements();
  
-@@ -668,10 +709,79 @@ protected: // implementation
+@@ -712,10 +713,79 @@ protected: // implementation
  
     mfem::Element* NewMeshElement(int geom) const;
  
@@ -2333,25 +1944,7 @@ index ddd423bfa..0933131dd 100644
  
     void ForceRefinement(int vn1, int vn2, int vn3, int vn4);
  
-@@ -727,9 +837,14 @@ protected: // implementation
-    void TraverseQuadFace(int vn0, int vn1, int vn2, int vn3,
-                          const PointMatrix& pm, int level, Face* eface[4],
-                          MatrixMap &matrix_map);
--   bool TraverseTriFace(int vn0, int vn1, int vn2,
--                        const PointMatrix& pm, int level,
--                        MatrixMap &matrix_map);
-+   struct TriFaceTraverseResults
-+   {
-+      bool unsplit; ///< Whether this face has no further splits.
-+      bool ghost_neighbor; ///< Whether the face neighbor is a ghost.
-+   };
-+   TriFaceTraverseResults TraverseTriFace(int vn0, int vn1, int vn2,
-+                                          const PointMatrix& pm, int level,
-+                                          MatrixMap &matrix_map);
-    void TraverseTetEdge(int vn0, int vn1, const Point &p0, const Point &p1,
-                         MatrixMap &matrix_map);
-    void TraverseEdge(int vn0, int vn1, double t0, double t1, int flags,
-@@ -743,7 +858,6 @@ protected: // implementation
+@@ -792,7 +862,6 @@ protected: // implementation
     virtual void ElementSharesEdge(int elem, int local, int enode) {} // ParNCMesh
     virtual void ElementSharesVertex(int elem, int local, int vnode) {} // ParNCMesh
  
@@ -2359,7 +1952,7 @@ index ddd423bfa..0933131dd 100644
     // neighbors / element_vertex table
  
     /** Return all vertex-, edge- and face-neighbors of a set of elements.
-@@ -932,9 +1046,7 @@ protected: // implementation
+@@ -981,9 +1050,7 @@ protected: // implementation
     void InitDerefTransforms();
     void SetDerefMatrixCodes(int parent, Array<int> &fine_coarse);
  
@@ -2369,7 +1962,7 @@ index ddd423bfa..0933131dd 100644
     struct TmpVertex
     {
        bool valid, visited;
-@@ -953,10 +1065,56 @@ protected: // implementation
+@@ -1002,10 +1069,56 @@ protected: // implementation
  
     void FindFaceNodes(int face, int node[4]);
  
@@ -2426,7 +2019,7 @@ index ddd423bfa..0933131dd 100644
  
     void CountSplits(int elem, int splits[3]) const;
     void GetLimitRefinements(Array<Refinement> &refinements, int max_level);
-@@ -993,7 +1151,6 @@ protected: // implementation
+@@ -1042,7 +1155,6 @@ protected: // implementation
     /// Load the deprecated MFEM mesh v1.1 format for backward compatibility.
     void LoadLegacyFormat(std::istream &input, int &curved, int &is_nc);
  
@@ -2435,10 +2028,10 @@ index ddd423bfa..0933131dd 100644
  
     /// This holds in one place the constants about the geometries we support
 diff --git a/mesh/pmesh.cpp b/mesh/pmesh.cpp
-index f1afacb43..c9becd67c 100644
+index 47a091c04..967b448fc 100644
 --- a/mesh/pmesh.cpp
 +++ b/mesh/pmesh.cpp
-@@ -351,11 +351,8 @@ int ParMesh::BuildLocalVertices(const mfem::Mesh &mesh,
+@@ -364,11 +364,8 @@ int ParMesh::BuildLocalVertices(const mfem::Mesh &mesh,
  int ParMesh::BuildLocalElements(const Mesh& mesh, const int* partitioning,
                                  const Array<int>& vert_global_local)
  {
@@ -2452,7 +2045,7 @@ index f1afacb43..c9becd67c 100644
  
     elements.SetSize(nelems);
  
-@@ -374,7 +371,7 @@ int ParMesh::BuildLocalElements(const Mesh& mesh, const int* partitioning,
+@@ -387,7 +384,7 @@ int ParMesh::BuildLocalElements(const Mesh& mesh, const int* partitioning,
           {
              v[j] = vert_global_local[v[j]];
           }
@@ -2461,7 +2054,7 @@ index f1afacb43..c9becd67c 100644
        }
     }
  
-@@ -387,7 +384,6 @@ int ParMesh::BuildLocalBoundary(const Mesh& mesh, const int* partitioning,
+@@ -400,7 +397,6 @@ int ParMesh::BuildLocalBoundary(const Mesh& mesh, const int* partitioning,
                                  Table*& edge_element)
  {
     int nbdry = 0;
@@ -2469,7 +2062,7 @@ index f1afacb43..c9becd67c 100644
     if (mesh.NURBSext)
     {
        activeBdrElem.SetSize(mesh.GetNBE());
-@@ -2089,7 +2085,7 @@ void ParMesh::ExchangeFaceNbrData()
+@@ -2102,7 +2098,7 @@ void ParMesh::ExchangeFaceNbrData()
  
     if (Nonconforming())
     {
@@ -2479,7 +2072,7 @@ index f1afacb43..c9becd67c 100644
        have_face_nbr_data = true;
  
 diff --git a/mesh/pncmesh.cpp b/mesh/pncmesh.cpp
-index 3cf2a3a47..6c211427b 100644
+index cd6625e9c..169c5c6bb 100644
 --- a/mesh/pncmesh.cpp
 +++ b/mesh/pncmesh.cpp
 @@ -577,41 +577,81 @@ void ParNCMesh::CalcFaceOrientations()
@@ -2606,15 +2199,6 @@ index 3cf2a3a47..6c211427b 100644
        }
     }
  
-@@ -936,7 +978,7 @@ void ParNCMesh::GetFaceNeighbors(ParMesh &pmesh)
-       for (int j = mf.slaves_begin; j < mf.slaves_end; j++)
-       {
-          const Slave &sf = full_list.slaves[j];
--         if (sf.element < 0) { continue; }
-+         if (sf.element < 0 || sf.index < 0) { continue; }
- 
-          MFEM_ASSERT(mf.element >= 0, "");
-          Element* e[2] = { &elements[mf.element], &elements[sf.element] };
 @@ -1119,7 +1161,7 @@ void ParNCMesh::GetFaceNeighbors(ParMesh &pmesh)
              bool sloc = (sfe.rank == MyRank);
              bool mloc = (mfe.rank == MyRank);
@@ -2624,7 +2208,7 @@ index 3cf2a3a47..6c211427b 100644
              {
                 continue;
              }
-@@ -1308,8 +1350,6 @@ void ParNCMesh::GetFaceNeighbors(ParMesh &pmesh)
+@@ -1307,8 +1349,6 @@ void ParNCMesh::GetFaceNeighbors(ParMesh &pmesh)
           MPI_Waitall(int(send_requests.size()), send_requests.data(), status.data());
        }
     }
@@ -2633,7 +2217,7 @@ index 3cf2a3a47..6c211427b 100644
     // NOTE: this function skips ParMesh::send_face_nbr_vertices and
     // ParMesh::face_nbr_vertices_offset, these are not used outside of ParMesh
  }
-@@ -1323,7 +1363,6 @@ void ParNCMesh::ClearAuxPM()
+@@ -1322,7 +1362,6 @@ void ParNCMesh::ClearAuxPM()
     aux_pm_store.DeleteAll();
  }
  
@@ -2641,7 +2225,7 @@ index 3cf2a3a47..6c211427b 100644
  //// Prune, Refine, Derefine ///////////////////////////////////////////////////
  
  bool ParNCMesh::PruneTree(int elem)
-@@ -1954,10 +1993,9 @@ void ParNCMesh::RedistributeElements(Array<int> &new_ranks, int target_elements,
+@@ -1953,10 +1992,9 @@ void ParNCMesh::RedistributeElements(Array<int> &new_ranks, int target_elements,
     NeighborElementRankMessage::RecvAll(recv_ghost_ranks, MyComm);
  
     // read new ranks for the ghost layer from messages received
@@ -2654,7 +2238,7 @@ index 3cf2a3a47..6c211427b 100644
        for (int i = 0; i < msg.Size(); i++)
        {
           int ghost_index = elements[msg.elements[i]].index;
-@@ -2484,9 +2522,8 @@ void ParNCMesh::AdjustMeshIds(Array<MeshId> ids[], int rank)
+@@ -2483,9 +2521,8 @@ void ParNCMesh::AdjustMeshIds(Array<MeshId> ids[], int rank)
  
     // find vertices/edges of master faces shared with 'rank', and modify their
     // MeshIds so their element/local matches the element of the master face
@@ -2693,10 +2277,18 @@ index df5fb929e..d33f5cbbe 100644
  
     MPI_Comm MyComm;
 diff --git a/mesh/point.cpp b/mesh/point.cpp
-index 93df9f9f4..0e97a1756 100644
+index ecf6a4dd0..473655b11 100644
 --- a/mesh/point.cpp
 +++ b/mesh/point.cpp
-@@ -26,4 +26,15 @@ void Point::GetVertices(Array<int> &v) const
+@@ -21,12 +21,24 @@ Point::Point( const int *ind, int attr ) : Element(Geometry::POINT)
+    indices[0] = ind[0];
+ }
+ 
+-void Point::GetVertices( Array<int> &v ) const
++void Point::GetVertices(Array<int> &v) const
+ {
+-   v.SetSize( 1 );
++   v.SetSize(1);
     v[0] = indices[0];
  }
  
@@ -2706,29 +2298,32 @@ index 93df9f9f4..0e97a1756 100644
 +   indices[0] = v[0];
 +}
 +
++
 +void Point::SetVertices(const int *ind)
 +{
 +   indices[0] = ind[0];
 +}
 +
+ PointFiniteElement PointFE;
+ 
  }
 diff --git a/mesh/point.hpp b/mesh/point.hpp
-index db14bfb77..6ef31f0cb 100644
+index f154e205e..be00c9c84 100644
 --- a/mesh/point.hpp
 +++ b/mesh/point.hpp
-@@ -33,29 +33,36 @@ public:
-    Point(const int *ind, int attr = 1);
+@@ -33,33 +33,40 @@ public:
+    Point( const int *ind, int attr = -1 );
  
     /// Return element's type.
 -   virtual Type GetType() const { return Element::POINT; }
 +   Type GetType() const override { return Element::POINT; }
  
--   /// Returns the indices of the element's vertices.
--   virtual void GetVertices(Array<int> &v) const;
+-   /// Returns the indices of the element's  vertices.
+-   virtual void GetVertices( Array<int> &v ) const;
 +   /// Get the indices defining the vertices
 +   void GetVertices(Array<int> &v) const override;
  
--   virtual int *GetVertices() { return indices; }
+-   virtual int * GetVertices () { return indices; }
 +   /// Set the indices defining the vertices
 +   void SetVertices(const Array<int> &v) override;
  
@@ -2736,27 +2331,32 @@ index db14bfb77..6ef31f0cb 100644
 +   /// @note The returned array should NOT be deleted by the caller.
 +   int * GetVertices () override { return indices; }
  
--   virtual int GetNEdges() const { return 0; }
+-   virtual int GetNEdges() const { return (0); }
 +   /// Set the vertices according to the given input.
 +   void SetVertices(const int *ind) override;
  
 -   virtual const int *GetEdgeVertices(int ei) const { return NULL; }
 +   int GetNVertices() const override { return 1; }
- 
--   virtual int GetNFaces() const { return 0; }
++
 +   int GetNEdges() const override { return (0); }
- 
--   virtual int GetNFaceVertices(int) const { return 0; }
++
 +   const int *GetEdgeVertices(int ei) const override { return NULL; }
  
--   virtual const int *GetFaceVertices(int fi) const { return NULL; }
+    /// @deprecated Use GetNFaces(void) and GetNFaceVertices(int) instead.
+-   MFEM_DEPRECATED virtual int GetNFaces(int &nFaceVertices) const
++   MFEM_DEPRECATED int GetNFaces(int &nFaceVertices) const override
+    { nFaceVertices = 0; return 0; }
+ 
+-   virtual int GetNFaces() const { return 0; }
 +   int GetNFaces() const override { return 0; }
  
--   virtual Element *Duplicate(Mesh *m) const
+-   virtual int GetNFaceVertices(int) const { return 0; }
 +   int GetNFaceVertices(int) const override { return 0; }
-+
+ 
+-   virtual const int *GetFaceVertices(int fi) const { return NULL; }
 +   const int *GetFaceVertices(int fi) const override { return NULL; }
-+
+ 
+-   virtual Element *Duplicate(Mesh *m) const
 +   Element *Duplicate(Mesh *m) const override
     { return new Point (indices, attribute); }
  
@@ -2764,12 +2364,12 @@ index db14bfb77..6ef31f0cb 100644
 +   virtual ~Point() = default;
  };
  
- extern MFEM_EXPORT class PointFiniteElement PointFE;
+ class PointFiniteElement;
 diff --git a/mesh/pyramid.cpp b/mesh/pyramid.cpp
-index 038a3c378..fed726f13 100644
+index d67841564..f64f2afe9 100644
 --- a/mesh/pyramid.cpp
 +++ b/mesh/pyramid.cpp
-@@ -46,10 +46,13 @@ void Pyramid::SetVertices(const int *ind)
+@@ -48,10 +48,13 @@ void Pyramid::SetVertices(const int *ind)
  void Pyramid::GetVertices(Array<int> &v) const
  {
     v.SetSize(5);
@@ -2786,12 +2386,12 @@ index 038a3c378..fed726f13 100644
 +   std::copy(v.begin(), v.end(), indices);
  }
  
- }
+ int Pyramid::GetNFaces(int &nFaceVertices) const
 diff --git a/mesh/pyramid.hpp b/mesh/pyramid.hpp
-index d6b6afa3e..b583e0532 100644
+index 8e171a31d..adcc540ed 100644
 --- a/mesh/pyramid.hpp
 +++ b/mesh/pyramid.hpp
-@@ -37,35 +37,39 @@ public:
+@@ -37,38 +37,42 @@ public:
             int attr = 1);
  
     /// Return element's type.
@@ -2806,7 +2406,7 @@ index d6b6afa3e..b583e0532 100644
 +   /// Set the indices defining the vertices
 +   void SetVertices(const Array<int> &v) override;
  
--   /// Returns the indices of the element's vertices.
+-   /// Returns the indices of the element's  vertices.
 -   virtual void GetVertices(Array<int> &v) const;
 +   /// @note The returned array should NOT be deleted by the caller.
 +   int * GetVertices () override { return indices; }
@@ -2825,13 +2425,16 @@ index d6b6afa3e..b583e0532 100644
 +   const int *GetEdgeVertices(int ei) const override
     { return geom_t::Edges[ei]; }
  
+    /// @deprecated Use GetNFaces(void) and GetNFaceVertices(int) instead.
+-   MFEM_DEPRECATED virtual int GetNFaces(int &nFaceVertices) const;
++   MFEM_DEPRECATED int GetNFaces(int &nFaceVertices) const override;
+ 
 -   virtual int GetNFaces() const { return 5; }
 +   int GetNFaces() const override { return 5; }
  
 -   virtual int GetNFaceVertices(int fi) const
--   { return (fi < 1) ? 4 : 3; }
 +   int GetNFaceVertices(int fi) const override
-+   { return ( ( fi < 1 ) ? 4 : 3); }
+    { return ( ( fi < 1 ) ? 4 : 3); }
  
 -   virtual const int *GetFaceVertices(int fi) const
 +   const int *GetFaceVertices(int fi) const override
@@ -2845,31 +2448,34 @@ index d6b6afa3e..b583e0532 100644
 +   virtual ~Pyramid() = default;
  };
  
- extern MFEM_EXPORT class LinearPyramidFiniteElement PyramidFE;
+ extern class LinearPyramidFiniteElement PyramidFE;
 diff --git a/mesh/quadrilateral.cpp b/mesh/quadrilateral.cpp
-index 57f14800f..d65b14883 100644
+index 1a69cf179..29fa3bbe1 100644
 --- a/mesh/quadrilateral.cpp
 +++ b/mesh/quadrilateral.cpp
-@@ -36,19 +36,19 @@ Quadrilateral::Quadrilateral(int ind1, int ind2, int ind3, int ind4, int attr)
+@@ -37,19 +37,20 @@ Quadrilateral::Quadrilateral( int ind1, int ind2, int ind3, int ind4,
  
  void Quadrilateral::SetVertices(const int *ind)
  {
--   for (int i = 0; i < 4; i++)
+-   for (int i=0; i<4; i++)
 -   {
 -      indices[i] = ind[i];
 -   }
 +   std::copy(ind, ind + 4, indices);
  }
  
- void Quadrilateral::GetVertices(Array<int> &v) const
+-void Quadrilateral::GetVertices( Array<int> &v ) const
++void Quadrilateral::GetVertices(Array<int> &v) const
  {
-    v.SetSize(4);
--   for (int i = 0; i < 4; i++)
+-   v.SetSize( 4 );
+-   for (int i=0; i<4; i++)
 -   {
 -      v[i] = indices[i];
 -   }
++   v.SetSize(4);
 +   std::copy(indices, indices + 4, v.begin());
 +}
++
 +
 +void Quadrilateral::SetVertices(const Array<int> &v)
 +{
@@ -2877,12 +2483,12 @@ index 57f14800f..d65b14883 100644
 +   std::copy(v.begin(), v.end(), indices);
  }
  
- }
+ BiLinear2DFiniteElement QuadrilateralFE;
 diff --git a/mesh/quadrilateral.hpp b/mesh/quadrilateral.hpp
-index 4ad31c33d..d0d8b9743 100644
+index 9f6b9a442..70fcbfdcc 100644
 --- a/mesh/quadrilateral.hpp
 +++ b/mesh/quadrilateral.hpp
-@@ -36,33 +36,37 @@ public:
+@@ -36,37 +36,41 @@ public:
     Quadrilateral(int ind1, int ind2, int ind3, int ind4, int attr = 1);
  
     /// Return element's type
@@ -2909,12 +2515,17 @@ index 4ad31c33d..d0d8b9743 100644
 -   virtual int GetNVertices() const { return 4; }
 +   int GetNVertices() const override { return 4; }
  
--   virtual int GetNEdges() const { return 4; }
+-   virtual int GetNEdges() const { return (4); }
 +   int GetNEdges() const override { return (4); }
  
 -   virtual const int *GetEdgeVertices(int ei) const
 +   const int *GetEdgeVertices(int ei) const override
     { return geom_t::Edges[ei]; }
+ 
+    /// @deprecated Use GetNFaces(void) and GetNFaceVertices(int) instead.
+-   MFEM_DEPRECATED virtual int GetNFaces(int &nFaceVertices) const
++   MFEM_DEPRECATED int GetNFaces(int &nFaceVertices) const override
+    { nFaceVertices = 0; return 0; }
  
 -   virtual int GetNFaces() const { return 0; }
 +   int GetNFaces() const override { return 0; }
@@ -2935,17 +2546,22 @@ index 4ad31c33d..d0d8b9743 100644
  
  extern MFEM_EXPORT class BiLinear2DFiniteElement QuadrilateralFE;
 diff --git a/mesh/segment.cpp b/mesh/segment.cpp
-index 82bdbdf3b..4f68e2e31 100644
+index 717245907..910614770 100644
 --- a/mesh/segment.cpp
 +++ b/mesh/segment.cpp
-@@ -39,10 +39,13 @@ void Segment::SetVertices(const int *ind)
- void Segment::GetVertices(Array<int> &v) const
+@@ -37,13 +37,16 @@ void Segment::SetVertices(const int *ind)
+    indices[1] = ind[1];
+ }
+ 
+-void Segment::GetVertices( Array<int> &v ) const
++void Segment::GetVertices(Array<int> &v) const
  {
-    v.SetSize(2);
--   for (int i = 0; i < 2; i++)
+-   v.SetSize( 2 );
+-   for (int i=0; i<2; i++)
 -   {
 -      v[i] = indices[i];
 -   }
++   v.SetSize(2);
 +   std::copy(indices, indices + 2, v.begin());
 +}
 +
@@ -2955,12 +2571,12 @@ index 82bdbdf3b..4f68e2e31 100644
 +   std::copy(v.begin(), v.end(), indices);
  }
  
- }
+ Linear1DFiniteElement SegmentFE;
 diff --git a/mesh/segment.hpp b/mesh/segment.hpp
-index 9d58704e4..f95ed15a7 100644
+index 6ca918758..aafc4909f 100644
 --- a/mesh/segment.hpp
 +++ b/mesh/segment.hpp
-@@ -35,33 +35,37 @@ public:
+@@ -35,37 +35,41 @@ public:
     /// Constructs triangle by specifying the indices and the attribute.
     Segment(int ind1, int ind2, int attr = 1);
  
@@ -2977,7 +2593,7 @@ index 9d58704e4..f95ed15a7 100644
 +   /// Set the indices defining the vertices
 +   void SetVertices(const Array<int> &v) override;
  
--   /// Returns the indices of the element's vertices.
+-   /// Returns the indices of the element's  vertices.
 -   virtual void GetVertices(Array<int> &v) const;
 +   /// @note The returned array should NOT be deleted by the caller.
 +   int * GetVertices () override { return indices; }
@@ -2989,11 +2605,16 @@ index 9d58704e4..f95ed15a7 100644
 -   virtual int GetNVertices() const { return 2; }
 +   int GetNVertices() const override { return 2; }
  
--   virtual int GetNEdges() const { return 0; }
+-   virtual int GetNEdges() const { return (0); }
 +   int GetNEdges() const override { return 0; }
  
 -   virtual const int *GetEdgeVertices(int ei) const { return NULL; }
 +   const int *GetEdgeVertices(int ei) const override { return NULL; }
+ 
+    /// @deprecated Use GetNFaces(void) and GetNFaceVertices(int) instead.
+-   MFEM_DEPRECATED virtual int GetNFaces(int &nFaceVertices) const
++   MFEM_DEPRECATED int GetNFaces(int &nFaceVertices) const override
+    { nFaceVertices = 0; return 0; }
  
 -   virtual int GetNFaces() const { return 0; }
 +   int GetNFaces() const override { return 0; }
@@ -3012,12 +2633,12 @@ index 9d58704e4..f95ed15a7 100644
 +   virtual ~Segment() = default;
  };
  
- extern MFEM_EXPORT class Linear1DFiniteElement SegmentFE;
+ class Linear1DFiniteElement;
 diff --git a/mesh/tetrahedron.cpp b/mesh/tetrahedron.cpp
-index 75c40197f..10598ced3 100644
+index c1b0ae6d8..133a69b41 100644
 --- a/mesh/tetrahedron.cpp
 +++ b/mesh/tetrahedron.cpp
-@@ -342,10 +342,13 @@ void Tetrahedron::GetPointMatrix(unsigned transform, DenseMatrix &pm)
+@@ -341,10 +341,13 @@ void Tetrahedron::GetPointMatrix(unsigned transform, DenseMatrix &pm)
  void Tetrahedron::GetVertices(Array<int> &v) const
  {
     v.SetSize(4);
@@ -3036,7 +2657,7 @@ index 75c40197f..10598ced3 100644
  
  Element *Tetrahedron::Duplicate(Mesh *m) const
 diff --git a/mesh/tetrahedron.hpp b/mesh/tetrahedron.hpp
-index 731cefb96..3d091f42b 100644
+index ef8f36eb8..157c75895 100644
 --- a/mesh/tetrahedron.hpp
 +++ b/mesh/tetrahedron.hpp
 @@ -56,7 +56,7 @@ public:
@@ -3060,7 +2681,7 @@ index 731cefb96..3d091f42b 100644
  
     /** Reorder the vertices so that the longest edge is from vertex 0
         to vertex 1. If called it should be once from the mesh constructor,
-@@ -81,38 +78,45 @@ public:
+@@ -81,42 +78,49 @@ public:
     void MarkEdge(const DSTable &v_to_v, const Array<T1> &length,
                   const Array<T2> &length2);
  
@@ -3077,7 +2698,7 @@ index 731cefb96..3d091f42b 100644
     /// Calculate point matrix corresponding to a chain of transformations.
     static void GetPointMatrix(unsigned transform, DenseMatrix &pm);
  
--   /// Returns the indices of the element's vertices.
+-   /// Returns the indices of the element's  vertices.
 -   virtual void GetVertices(Array<int> &v) const;
 +   /// Get the indices defining the vertices
 +   void GetVertices(Array<int> &v) const override;
@@ -3095,12 +2716,17 @@ index 731cefb96..3d091f42b 100644
 -   virtual int GetNVertices() const { return 4; }
 +   int GetNVertices() const override { return 4; }
  
--   virtual int GetNEdges() const { return 6; }
+-   virtual int GetNEdges() const { return (6); }
 +   int GetNEdges() const override { return (6); }
  
 -   virtual const int *GetEdgeVertices(int ei) const
 +   const int *GetEdgeVertices(int ei) const override
     { return geom_t::Edges[ei]; }
+ 
+    /// @deprecated Use GetNFaces(void) and GetNFaceVertices(int) instead.
+-   MFEM_DEPRECATED virtual int GetNFaces(int &nFaceVertices) const
++   MFEM_DEPRECATED int GetNFaces(int &nFaceVertices) const override
+    { nFaceVertices = 3; return 4; }
  
 -   virtual int GetNFaces() const { return 4; }
 +   int GetNFaces() const override { return 4; }
@@ -3119,12 +2745,12 @@ index 731cefb96..3d091f42b 100644
 +   virtual ~Tetrahedron() = default;
  };
  
- extern MFEM_EXPORT class Linear3DFiniteElement TetrahedronFE;
+ // Defined in fe.cpp to ensure construction before 'mfem::Geometries'.
 diff --git a/mesh/triangle.cpp b/mesh/triangle.cpp
-index 6eb8c7e59..ce5a7325e 100644
+index abd2b4379..80d11f4b6 100644
 --- a/mesh/triangle.cpp
 +++ b/mesh/triangle.cpp
-@@ -157,10 +157,13 @@ void Triangle::GetPointMatrix(unsigned transform, DenseMatrix &pm)
+@@ -155,10 +155,13 @@ void Triangle::GetPointMatrix(unsigned transform, DenseMatrix &pm)
  void Triangle::GetVertices(Array<int> &v) const
  {
     v.SetSize(3);
@@ -3143,10 +2769,10 @@ index 6eb8c7e59..ce5a7325e 100644
  
  // @cond DOXYGEN_SKIP
 diff --git a/mesh/triangle.hpp b/mesh/triangle.hpp
-index ae20dd9b7..c283e218d 100644
+index 49fb4fe99..480c04118 100644
 --- a/mesh/triangle.hpp
 +++ b/mesh/triangle.hpp
-@@ -38,13 +38,10 @@ public:
+@@ -39,13 +39,10 @@ public:
     Triangle(int ind1, int ind2, int ind3, int attr = 1);
  
     /// Return element's type.
@@ -3162,7 +2788,7 @@ index ae20dd9b7..c283e218d 100644
  
     /** Reorder the vertices so that the longest edge is from vertex 0
         to vertex 1. If called it should be once from the mesh constructor,
-@@ -58,38 +55,46 @@ public:
+@@ -59,43 +56,51 @@ public:
     static void MarkEdge(int *indices, const DSTable &v_to_v,
                          const Array<T1> &length, const Array<T2> &length2);
  
@@ -3179,30 +2805,36 @@ index ae20dd9b7..c283e218d 100644
     /// Calculate point matrix corresponding to a chain of transformations.
     static void GetPointMatrix(unsigned transform, DenseMatrix &pm);
  
--   /// Returns the indices of the element's vertices.
+-   /// Returns the indices of the element's  vertices.
 -   virtual void GetVertices(Array<int> &v) const;
 +   /// Get the indices defining the vertices
 +   void GetVertices(Array<int> &v) const override;
 +
 +   /// Set the indices defining the vertices
 +   void SetVertices(const Array<int> &v) override;
- 
--   virtual int *GetVertices() { return indices; }
++
 +   /// @note The returned array should NOT be deleted by the caller.
 +   int * GetVertices () override { return indices; }
 +
 +   /// Set the vertices according to the given input.
 +   void SetVertices(const int *ind) override;
  
+-   virtual int *GetVertices() { return indices; }
+ 
 -   virtual int GetNVertices() const { return 3; }
 +   int GetNVertices() const override { return 3; }
  
--   virtual int GetNEdges() const { return 3; }
+-   virtual int GetNEdges() const { return (3); }
 +   int GetNEdges() const override { return (3); }
  
 -   virtual const int *GetEdgeVertices(int ei) const
 +   const int *GetEdgeVertices(int ei) const override
     { return geom_t::Edges[ei]; }
+ 
+    /// @deprecated Use GetNFaces(void) and GetNFaceVertices(int) instead.
+-   MFEM_DEPRECATED virtual int GetNFaces(int &nFaceVertices) const
++   MFEM_DEPRECATED int GetNFaces(int &nFaceVertices) const override
+    { nFaceVertices = 0; return 0; }
  
 -   virtual int GetNFaces() const { return 0; }
 +   int GetNFaces() const override { return 0; }
@@ -3210,9 +2842,9 @@ index ae20dd9b7..c283e218d 100644
 -   virtual int GetNFaceVertices(int) const { return 0; }
 +   int GetNFaceVertices(int) const override { return 0; }
  
--   virtual const int *GetFaceVertices(int fi) const { return NULL; }
+-   virtual const int *GetFaceVertices(int fi) const
 +   const int *GetFaceVertices(int fi) const override
-+   { MFEM_ABORT("not implemented"); return NULL; }
+    { MFEM_ABORT("not implemented"); return NULL; }
  
 -   virtual Element *Duplicate(Mesh *m) const
 +   Element *Duplicate(Mesh *m) const override
@@ -3222,12 +2854,12 @@ index ae20dd9b7..c283e218d 100644
 +   virtual ~Triangle() = default;
  };
  
- extern MFEM_EXPORT class Linear2DFiniteElement TriangleFE;
+ // Defined in fe.cpp to ensure construction before 'mfem::Geometries'.
 diff --git a/mesh/wedge.cpp b/mesh/wedge.cpp
-index 0f7335aa6..a2a903e24 100644
+index 898da7653..b1aea933d 100644
 --- a/mesh/wedge.cpp
 +++ b/mesh/wedge.cpp
-@@ -48,10 +48,13 @@ void Wedge::SetVertices(const int *ind)
+@@ -50,10 +50,13 @@ void Wedge::SetVertices(const int *ind)
  void Wedge::GetVertices(Array<int> &v) const
  {
     v.SetSize(6);
@@ -3244,12 +2876,12 @@ index 0f7335aa6..a2a903e24 100644
 +   std::copy(v.begin(), v.end(), indices);
  }
  
- }
+ int Wedge::GetNFaces(int &nFaceVertices) const
 diff --git a/mesh/wedge.hpp b/mesh/wedge.hpp
-index 49cc5e7d7..df2f205d9 100644
+index fb8583f8e..2eae6d104 100644
 --- a/mesh/wedge.hpp
 +++ b/mesh/wedge.hpp
-@@ -37,35 +37,39 @@ public:
+@@ -37,38 +37,42 @@ public:
           int attr = 1);
  
     /// Return element's type.
@@ -3264,7 +2896,7 @@ index 49cc5e7d7..df2f205d9 100644
 +   /// Set the indices defining the vertices
 +   void SetVertices(const Array<int> &v) override;
  
--   /// Returns the indices of the element's vertices.
+-   /// Returns the indices of the element's  vertices.
 -   virtual void GetVertices(Array<int> &v) const;
 +   /// @note The returned array should NOT be deleted by the caller.
 +   int * GetVertices () override { return indices; }
@@ -3282,6 +2914,10 @@ index 49cc5e7d7..df2f205d9 100644
 -   virtual const int *GetEdgeVertices(int ei) const
 +   const int *GetEdgeVertices(int ei) const override
     { return geom_t::Edges[ei]; }
+ 
+    /// @deprecated Use GetNFaces(void) and GetNFaceVertices(int) instead.
+-   MFEM_DEPRECATED virtual int GetNFaces(int &nFaceVertices) const;
++   MFEM_DEPRECATED int GetNFaces(int &nFaceVertices) const override;
  
 -   virtual int GetNFaces() const { return 5; }
 +   int GetNFaces() const override { return 5; }
@@ -3614,19 +3250,18 @@ index 000000000..e4088a788
 +#endif // MFEM_MESH_TEST_UTILS
 \ No newline at end of file
 diff --git a/tests/unit/mesh/test_ncmesh.cpp b/tests/unit/mesh/test_ncmesh.cpp
-index 1c512fcd4..8b542c544 100644
+index c1bb54e13..c38ab18b2 100644
 --- a/tests/unit/mesh/test_ncmesh.cpp
 +++ b/tests/unit/mesh/test_ncmesh.cpp
-@@ -10,13 +10,43 @@
+@@ -10,6 +10,7 @@
  // CONTRIBUTING.md for details.
  
  #include "mfem.hpp"
 +#include "mesh_test_utils.hpp"
  #include "unit_tests.hpp"
  
-+#include <array>
- namespace mfem
- {
+ #include <array>
+@@ -18,6 +19,34 @@ namespace mfem
  
  constexpr double EPS = 1e-10;
  
@@ -3661,7 +3296,7 @@ index 1c512fcd4..8b542c544 100644
  // Test case: Verify that a conforming mesh yields the same norm for the
  //            assembled diagonal with PA when using the standard (conforming)
  //            Mesh vs. the corresponding (non-conforming) NCMesh.
-@@ -113,7 +143,6 @@ TEST_CASE("NCMesh PA diagonal", "[NCMesh]")
+@@ -114,7 +143,6 @@ TEST_CASE("NCMesh PA diagonal", "[NCMesh]")
  
  } // test case
  
@@ -3669,7 +3304,7 @@ index 1c512fcd4..8b542c544 100644
  TEST_CASE("NCMesh 3D Refined Volume", "[NCMesh]")
  {
     auto mesh_fname = GENERATE("../../data/ref-tetrahedron.mesh",
-@@ -145,7 +174,6 @@ TEST_CASE("NCMesh 3D Refined Volume", "[NCMesh]")
+@@ -146,7 +174,6 @@ TEST_CASE("NCMesh 3D Refined Volume", "[NCMesh]")
     REQUIRE(summed_volume == MFEM_Approx(original_volume));
  } // test case
  
@@ -3677,7 +3312,7 @@ index 1c512fcd4..8b542c544 100644
  TEST_CASE("NCMesh 3D Derefined Volume", "[NCMesh]")
  {
     auto mesh_fname = GENERATE("../../data/ref-tetrahedron.mesh",
-@@ -175,6 +203,134 @@ TEST_CASE("NCMesh 3D Derefined Volume", "[NCMesh]")
+@@ -176,6 +203,134 @@ TEST_CASE("NCMesh 3D Derefined Volume", "[NCMesh]")
     REQUIRE(derefined_volume == MFEM_Approx(original_volume));
  } // test case
  
@@ -3768,7 +3403,7 @@ index 1c512fcd4..8b542c544 100644
 +   }
 +   mesh.FinalizeTopology();
 +   mesh.Finalize(true, true);
-+   return std::move(mesh);
++   return mesh;
 +}
 +
 +// Define a pair of tet with a shared triangle in the y-z plane.
@@ -3812,390 +3447,31 @@ index 1c512fcd4..8b542c544 100644
  
  #ifdef MFEM_USE_MPI
  
-@@ -296,11 +452,10 @@ TEST_CASE("pNCMesh PA diagonal",  "[Parallel], [NCMesh]")
+@@ -297,7 +452,6 @@ TEST_CASE("pNCMesh PA diagonal",  "[Parallel], [NCMesh]")
     }
  } // test case
  
 -
  // Given a parallel and a serial mesh, perform an L2 projection and check the
  // solutions match exactly.
--void CheckL2Projection(ParMesh& pmesh, Mesh& smesh, int order,
--                       std::function<double(Vector const&)> exact_soln)
-+std::array<double, 2> CheckL2Projection(ParMesh& pmesh, Mesh& smesh, int order,
-+                                        std::function<double(Vector const&)> exact_soln)
- {
-    REQUIRE(pmesh.GetGlobalNE() == smesh.GetNE());
-    REQUIRE(pmesh.Dimension() == smesh.Dimension());
-@@ -392,25 +547,11 @@ void CheckL2Projection(ParMesh& pmesh, Mesh& smesh, int order,
-       return x.ComputeL2Error(rhs_coef) / pnorm;
-    }();
- 
--   constexpr double test_tol = 1e-9;
--   CHECK(std::abs(serror - perror) < test_tol);
-+   return {serror, perror};
- };
- 
--TEST_CASE("FaceEdgeConstraint",  "[Parallel], [NCMesh]")
-+TEST_CASE("EdgeFaceConstraint",  "[Parallel], [NCMesh]")
- {
--   constexpr int refining_rank = 0;
--   auto smesh = Mesh("../../data/ref-tetrahedron.mesh");
--
--   REQUIRE(smesh.GetNE() == 1);
--   {
--      // Start the test with two tetrahedra attached by triangle.
--      auto single_edge_refine = Array<Refinement>(1);
--      single_edge_refine[0].index = 0;
--      single_edge_refine[0].ref_type = Refinement::X;
--
--      smesh.GeneralRefinement(single_edge_refine, 0); // conformal
--   }
--
-    auto exact_soln = [](const Vector& x)
-    {
-       // sin(|| x - d ||^2) -> non polynomial but very smooth.
-@@ -420,103 +561,241 @@ TEST_CASE("FaceEdgeConstraint",  "[Parallel], [NCMesh]")
-       return std::sin(d * d);
-    };
- 
--   REQUIRE(smesh.GetNE() == 2);
--   smesh.EnsureNCMesh(true);
--   smesh.Finalize();
--
--   auto partition = std::unique_ptr<int[]>(new int[smesh.GetNE()]);
--   partition[0] = 0;
--   partition[1] = Mpi::WorldSize() > 1 ? 1 : 0;
-+   SECTION("ReferenceTet")
-+   {
-+      constexpr int refining_rank = 0;
-+      auto smesh = Mesh("../../data/ref-tetrahedron.mesh");
- 
--   auto pmesh = ParMesh(MPI_COMM_WORLD, smesh, partition.get());
-+      REQUIRE(smesh.GetNE() == 1);
-+      {
-+         // Start the test with two tetrahedra attached by triangle.
-+         auto single_edge_refine = Array<Refinement>(1);
-+         single_edge_refine[0].index = 0;
-+         single_edge_refine[0].ref_type = Refinement::X;
- 
--   // Construct the NC refined mesh in parallel and serial. Once constructed a
--   // global L2 projected solution should match exactly on each.
--   Array<int> refines, serial_refines(1);
--   if (Mpi::WorldRank() == refining_rank)
--   {
--      refines.Append(0);
--   }
-+         smesh.GeneralRefinement(single_edge_refine, 0); // conformal
-+      }
- 
--   // Must be called on all ranks as it uses MPI calls internally.
--   // All ranks will use the global element number dictated by rank 0 though.
--   serial_refines[0] = pmesh.GetGlobalElementNum(0);
--   MPI_Bcast(&serial_refines[0], 1, MPI_INT, refining_rank, MPI_COMM_WORLD);
- 
--   // Rank 0 refines the parallel mesh, all ranks refine the serial mesh
--   smesh.GeneralRefinement(serial_refines, 1); // nonconformal
--   pmesh.GeneralRefinement(refines, 1); // nonconformal
-+      REQUIRE(smesh.GetNE() == 2);
-+      smesh.EnsureNCMesh(true);
-+      smesh.Finalize();
- 
--   REQUIRE(pmesh.GetGlobalNE() == 8 + 1);
--   REQUIRE(smesh.GetNE() == 8 + 1);
-+      auto partition = std::unique_ptr<int[]>(new int[smesh.GetNE()]);
-+      partition[0] = 0;
-+      partition[1] = Mpi::WorldSize() > 1 ? 1 : 0;
- 
--   // Each pair of indices here represents sequential element indices to refine.
--   // First the i element is refined, then in the resulting mesh the j element is
--   // refined. These pairs were arrived at by looping over all possible i,j pairs and
--   // checking for the addition of a face-edge constraint.
--   std::vector<std::pair<int,int>> indices{{2,13}, {3,13}, {6,2}, {6,3}};
-+      auto pmesh = ParMesh(MPI_COMM_WORLD, smesh, partition.get());
- 
--   // Rank 0 has all but one element in the parallel mesh. The remaining element
--   // is owned by another processor if the number of ranks is greater than one.
--   for (const auto &ij : indices)
--   {
--      int i = ij.first;
--      int j = ij.second;
-+      // Construct the NC refined mesh in parallel and serial. Once constructed a
-+      // global L2 projected solution should match exactly on each.
-+      Array<int> refines, serial_refines(1);
-       if (Mpi::WorldRank() == refining_rank)
-       {
--         refines[0] = i;
-+         refines.Append(0);
+ std::array<double, 2> CheckL2Projection(ParMesh& pmesh, Mesh& smesh, int order,
+@@ -618,7 +772,6 @@ TEST_CASE("EdgeFaceConstraint",  "[Parallel], [NCMesh]")
+          }
        }
--      // Inform all ranks of the serial mesh
--      serial_refines[0] = pmesh.GetGlobalElementNum(i);
--      MPI_Bcast(&serial_refines[0], 1, MPI_INT, 0, MPI_COMM_WORLD);
- 
--      ParMesh tmp(pmesh);
--      tmp.GeneralRefinement(refines);
-+      // Must be called on all ranks as it uses MPI calls internally.
-+      // All ranks will use the global element number dictated by rank 0 though.
-+      serial_refines[0] = pmesh.GetGlobalElementNum(0);
-+      MPI_Bcast(&serial_refines[0], 1, MPI_INT, refining_rank, MPI_COMM_WORLD);
- 
--      REQUIRE(tmp.GetGlobalNE() == 1 + 8 - 1 + 8); // 16 elements
-+      // Rank 0 refines the parallel mesh, all ranks refine the serial mesh
-+      smesh.GeneralRefinement(serial_refines, 1); // nonconformal
-+      pmesh.GeneralRefinement(refines, 1); // nonconformal
- 
--      Mesh stmp(smesh);
--      stmp.GeneralRefinement(serial_refines);
--      REQUIRE(stmp.GetNE() == 1 + 8 - 1 + 8); // 16 elements
-+      REQUIRE(pmesh.GetGlobalNE() == 8 + 1);
-+      REQUIRE(smesh.GetNE() == 8 + 1);
- 
--      if (Mpi::WorldRank() == refining_rank)
-+      // Each pair of indices here represents sequential element indices to refine.
-+      // First the i element is refined, then in the resulting mesh the j element is
-+      // refined. These pairs were arrived at by looping over all possible i,j pairs and
-+      // checking for the addition of a face-edge constraint.
-+      std::vector<std::pair<int,int>> indices{{2,13}, {3,13}, {6,2}, {6,3}};
-+
-+      // Rank 0 has all but one element in the parallel mesh. The remaining element
-+      // is owned by another processor if the number of ranks is greater than one.
-+      for (const auto &ij : indices)
+       ParMesh pmesh(MPI_COMM_WORLD, smesh, partition.get());
+-
        {
--         refines[0] = j;
--      }
--      // Inform all ranks of the serial mesh
--      serial_refines[0] = tmp.GetGlobalElementNum(j);
--      MPI_Bcast(&serial_refines[0], 1, MPI_INT, 0, MPI_COMM_WORLD);
-+         int i = ij.first;
-+         int j = ij.second;
-+         if (Mpi::WorldRank() == refining_rank)
-+         {
-+            refines[0] = i;
-+         }
-+         // Inform all ranks of the serial mesh
-+         serial_refines[0] = pmesh.GetGlobalElementNum(i);
-+         MPI_Bcast(&serial_refines[0], 1, MPI_INT, 0, MPI_COMM_WORLD);
- 
--      ParMesh ttmp(tmp);
--      ttmp.GeneralRefinement(refines);
-+         ParMesh tmp(pmesh);
-+         tmp.GeneralRefinement(refines);
- 
--      REQUIRE(ttmp.GetGlobalNE() == 1 + 8 - 1 + 8 - 1 + 8); // 23 elements
-+         REQUIRE(tmp.GetGlobalNE() == 1 + 8 - 1 + 8); // 16 elements
- 
--      Mesh sttmp(stmp);
--      sttmp.GeneralRefinement(serial_refines);
--      REQUIRE(sttmp.GetNE() == 1 + 8 - 1 + 8 - 1 + 8); // 23 elements
-+         Mesh stmp(smesh);
-+         stmp.GeneralRefinement(serial_refines);
-+         REQUIRE(stmp.GetNE() == 1 + 8 - 1 + 8); // 16 elements
- 
--      // Loop over interior faces, fill and check face transform on the serial.
--      for (int iface = 0; iface < sttmp.GetNumFaces(); ++iface)
--      {
--         const auto face_transform = sttmp.GetFaceElementTransformations(iface);
--         CHECK(face_transform->CheckConsistency(0) < 1e-12);
-+         if (Mpi::WorldRank() == refining_rank)
-+         {
-+            refines[0] = j;
-+         }
-+         // Inform all ranks of the serial mesh
-+         serial_refines[0] = tmp.GetGlobalElementNum(j);
-+         MPI_Bcast(&serial_refines[0], 1, MPI_INT, 0, MPI_COMM_WORLD);
-+
-+         ParMesh ttmp(tmp);
-+         ttmp.GeneralRefinement(refines);
-+
-+         REQUIRE(ttmp.GetGlobalNE() == 1 + 8 - 1 + 8 - 1 + 8); // 23 elements
-+
-+         Mesh sttmp(stmp);
-+         sttmp.GeneralRefinement(serial_refines);
-+         REQUIRE(sttmp.GetNE() == 1 + 8 - 1 + 8 - 1 + 8); // 23 elements
-+
-+         // Loop over interior faces, fill and check face transform on the serial.
-+         for (int iface = 0; iface < sttmp.GetNumFaces(); ++iface)
-+         {
-+            const auto face_transform = sttmp.GetFaceElementTransformations(iface);
-+            CHECK(face_transform->CheckConsistency(0) < 1e-12);
-+         }
-+
-+         for (int iface = 0; iface < ttmp.GetNumFacesWithGhost(); ++iface)
-+         {
-+            const auto face_transform = ttmp.GetFaceElementTransformations(iface);
-+            CHECK(face_transform->CheckConsistency(0) < 1e-12);
-+         }
-+
-+         // Use P4 to ensure there's a few fully interior DOF.
-+         {
-+            auto error = CheckL2Projection(ttmp, sttmp, 4, exact_soln);
-+            double constexpr tol = 1e-9;
-+            // std::cout << "R" << Mpi::WorldRank() << ": " << error[0] << " " << error[1] << std::endl;
-+            CHECK(std::abs(error[1] - error[0]) < tol);
-+         }
-+         ttmp.ExchangeFaceNbrData();
-+         ttmp.Rebalance();
-+         MPI_Barrier(MPI_COMM_WORLD);
-+
-+         {
-+            auto error = CheckL2Projection(ttmp, sttmp, 4, exact_soln);
-+            double constexpr tol = 1e-9;
-+            // std::cout << "R" << Mpi::WorldRank() << ": " << error[0] << " " << error[1] << std::endl;
-+            CHECK(std::abs(error[1] - error[0]) < tol);
-+         }
+          constexpr int dim = 3;
+          constexpr int order = 1;
+@@ -630,7 +783,6 @@ TEST_CASE("EdgeFaceConstraint",  "[Parallel], [NCMesh]")
+          const auto parallel_ntdof = pfes.GlobalTrueVSize();
+          CHECK(serial_ntdof == parallel_ntdof);
        }
-+   }
-+
-+   auto CheckSerialParalelH1Equivalence = [](Mesh &smesh)
-+   {
-+      constexpr int dim = 3;
-+      constexpr int order = 2;
-+      H1_FECollection nd_fec(order, dim);
-+      FiniteElementSpace fes(&smesh, &nd_fec);
-+      const auto serial_ntdof = fes.GetTrueVSize();
-+
-+      ParMesh mesh(MPI_COMM_WORLD, smesh);
-+      ParFiniteElementSpace pfes(&mesh, &nd_fec);
-+      const auto parallel_ntdof = pfes.GlobalTrueVSize();
-+
-+      // If nc constraints have been observed correctly, the number of true dof in
-+      // parallel should match the number of true dof in serial. If the number of
-+      // parallel dofs is greater, then a slave constraint has not been fully labeled.
-+      CHECK(serial_ntdof == parallel_ntdof);
-+   };
- 
--      for (int iface = 0; iface < ttmp.GetNumFacesWithGhost(); ++iface)
-+   auto CheckSerialParalelNDEquivalence = [](Mesh &smesh)
-+   {
-+      constexpr int dim = 3;
-+      constexpr int order = 1;
-+      ND_FECollection nd_fec(order, dim);
-+      FiniteElementSpace fes(&smesh, &nd_fec);
-+      const auto serial_ntdof = fes.GetTrueVSize();
-+
-+      ParMesh mesh(MPI_COMM_WORLD, smesh);
-+      ParFiniteElementSpace pfes(&mesh, &nd_fec);
-+      const auto parallel_ntdof = pfes.GlobalTrueVSize();
-+
-+      // If nc constraints have been observed correctly, the number of true dof in
-+      // parallel should match the number of true dof in serial. If the number of
-+      // parallel dofs is greater, then a slave constraint has not been fully labeled.
-+      CHECK(serial_ntdof == parallel_ntdof);
-+   };
-+
-+   SECTION("LevelTwoRefinement")
-+   {
-+      Mesh smesh("../../data/ref-tetrahedron.mesh");
-+      Array<Refinement> aniso_ref(1);
-+      aniso_ref[0].index = 0;
-+      aniso_ref[0].ref_type = Refinement::X;
-+      smesh.GeneralRefinement(aniso_ref);
-+      smesh.UniformRefinement();
-+      smesh.EnsureNCMesh(true);
-+      Array<int> el_to_refine(1);
-+
-+      for (int n = 0; n < smesh.GetNE(); n++)
+-
+       for (int order = 1; order <= 4; order++)
        {
--         const auto face_transform = ttmp.GetFaceElementTransformations(iface);
--         CHECK(face_transform->CheckConsistency(0) < 1e-12);
-+         Mesh smesh2(smesh);
-+         el_to_refine[0] = n;
-+         smesh2.GeneralRefinement(el_to_refine);
-+         for (int m = 0; m < smesh2.GetNE(); m++)
-+         {
-+            Mesh smesh3(smesh2);
-+            el_to_refine[0] = m;
-+            smesh3.GeneralRefinement(el_to_refine);
-+            CAPTURE(n,m);
-+            CheckSerialParalelNDEquivalence(smesh3);
-+            CheckSerialParalelH1Equivalence(smesh3);
-+         }
-       }
-+   }
- 
--      // Use P4 to ensure there's a few fully interior DOF.
--      CheckL2Projection(ttmp, sttmp, 4, exact_soln);
-+   SECTION("EdgeCasePartition")
-+   {
-+      Mesh smesh("../../data/ref-tetrahedron.mesh");
-+      smesh.UniformRefinement();
-+      smesh.EnsureNCMesh(true);
-+      Array<int> el_to_refine(1);
- 
--      ttmp.ExchangeFaceNbrData();
--      ttmp.Rebalance();
-+      el_to_refine[0] = 0;
-+      smesh.GeneralRefinement(el_to_refine);
- 
--      CheckL2Projection(ttmp, sttmp, 4, exact_soln);
-+      // This particular partition was found by brute force search. The default rebalancing
-+      // can in rare cases produce similar local patterns, particularly for highly adapted meshes.
-+      auto partition = std::unique_ptr<int[]>(new int[smesh.GetNE()]);
-+      if (Mpi::WorldSize() > 1)
-+      {
-+         auto bad_partition = std::vector<int> {0, 0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0};
-+         std::copy(bad_partition.begin(), bad_partition.end(), partition.get());
-+      }
-+      else
-+      {
-+         for (int i = 0; i < smesh.GetNE(); i++)
-+         {
-+            partition[i] = 0;
-+         }
-+      }
-+      ParMesh pmesh(MPI_COMM_WORLD, smesh, partition.get());
-+      {
-+         constexpr int dim = 3;
-+         constexpr int order = 1;
-+         ND_FECollection nd_fec(order, dim);
-+         FiniteElementSpace fes(&smesh, &nd_fec);
-+         const auto serial_ntdof = fes.GetTrueVSize();
-+         ParFiniteElementSpace pfes(&pmesh, &nd_fec);
-+         pfes.ExchangeFaceNbrData();
-+         const auto parallel_ntdof = pfes.GlobalTrueVSize();
-+         CHECK(serial_ntdof == parallel_ntdof);
-+      }
-+      for (int order = 1; order <= 4; order++)
-+      {
-+         CAPTURE(order);
-+         auto error = CheckL2Projection(pmesh, smesh, order, exact_soln);
-+         double constexpr tol = 1e-9;
-+         CHECK(std::abs(error[1] - error[0]) < tol);
-+      }
-    }
-+
- } // test case
- 
- Mesh CylinderMesh(Geometry::Type el_type, bool quadratic, int variant = 0)
-@@ -714,7 +993,8 @@ TEST_CASE("P2Q1PureTetHexPri",  "[Parallel], [NCMesh]")
-       auto pmesh = ParMesh(MPI_COMM_WORLD, smesh);
- 
-       // P2 ensures there are triangles without dofs
--      CheckL2Projection(pmesh, smesh, 2, exact_soln);
-+      auto error = CheckL2Projection(pmesh, smesh, 2, exact_soln);
-+      CHECK(std::abs(error[1] - error[0]) < 1e-9);
-    }
- } // test case
- 
-@@ -757,7 +1037,8 @@ TEST_CASE("PNQ2PureTetHexPri",  "[Parallel], [NCMesh]")
- 
-       for (int p = 1; p < 3; ++p)
-       {
--         CheckL2Projection(pmesh, smesh, p, exact_soln);
-+         auto error = CheckL2Projection(pmesh, smesh, p, exact_soln);
-+         CHECK(std::abs(error[1] - error[0]) < 1e-9);
-       }
-    }
- } // test case
-@@ -780,7 +1061,7 @@ void TestVectorValueInVolume(Mesh &smesh, int nc_level, int skip, bool use_ND)
-    };
- 
-    smesh.Finalize();
--   smesh.EnsureNCMesh(true); // uncomment this to trigger the failure
-+   smesh.EnsureNCMesh(true);
- 
-    auto pmesh = ParMesh(MPI_COMM_WORLD, smesh);
- 
-@@ -903,6 +1184,2624 @@ TEST_CASE("GetVectorValueInFaceNeighborElement", "[Parallel], [NCMesh]")
+          CAPTURE(order);
+@@ -1026,6 +1178,2607 @@ TEST_CASE("GetVectorValueInFaceNeighborElement", "[Parallel], [NCMesh]")
     }
  }
  
@@ -4293,10 +3569,8 @@ index 1c512fcd4..8b542c544 100644
 +
 +   Array<int> ess_tdof_list;
 +   pfes.GetEssentialTrueDofs(bdr_attr_is_ess, ess_tdof_list);
-+
 +   if (TDOF)
 +   {
-+      Array<int> ess_tdof_list;
 +      pfes.GetEssentialTrueDofs(bdr_attr_is_ess, ess_tdof_list);
 +      return ess_tdof_list.Size();
 +   }
@@ -5122,11 +4396,6 @@ index 1c512fcd4..8b542c544 100644
 +      const int initial_num_vert = 4;
 +      const int initial_num_edge = 5;
 +      const int initial_num_face = 2;
-+
-+      const int num_vert = ref_level == 1 ? 9 : 25;
-+      const int num_edge = ref_level == 1 ? 16 : 56;
-+      const int num_face = ref_level == 1 ? 8 : 32;
-+
 +      SECTION("H1Tet")
 +      {
 +         CHECK(ParCountEssentialDof<H1_FECollection>(*pmesh, 1,
@@ -5139,10 +4408,6 @@ index 1c512fcd4..8b542c544 100644
 +         CHECK(ParCountEssentialDof<H1_FECollection>(*pmesh, 4,
 +                                                     mesh.bdr_attributes.Max()) == initial_num_vert + 3*initial_num_edge +
 +               3*initial_num_face);
-+         // CHECK(ParCountEssentialDof<H1_FECollection, false>(*pmesh, 1, mesh.bdr_attributes.Max()) == initial_num_vert);
-+         // CHECK(ParCountEssentialDof<H1_FECollection, false>(*pmesh, 2, mesh.bdr_attributes.Max()) == initial_num_vert + initial_num_edge);
-+         // CHECK(ParCountEssentialDof<H1_FECollection, false>(*pmesh, 3, mesh.bdr_attributes.Max()) == initial_num_vert + 2*initial_num_edge + initial_num_face);
-+         // CHECK(ParCountEssentialDof<H1_FECollection, false>(*pmesh, 4, mesh.bdr_attributes.Max()) == initial_num_vert + 3*initial_num_edge + 3*initial_num_face);
 +
 +         RefineAttribute(*pmesh, attr, ref_level);
 +
@@ -5156,10 +4421,6 @@ index 1c512fcd4..8b542c544 100644
 +         CHECK(ParCountEssentialDof<H1_FECollection>(*pmesh, 4,
 +                                                     mesh.bdr_attributes.Max()) == initial_num_vert + 3*initial_num_edge +
 +               3*initial_num_face);
-+         // CHECK(ParCountEssentialDof<H1_FECollection, false>(*pmesh, 1, mesh.bdr_attributes.Max()) == num_vert);
-+         // CHECK(ParCountEssentialDof<H1_FECollection, false>(*pmesh, 2, mesh.bdr_attributes.Max()) == num_vert + num_edge + initial_num_edge);
-+         // CHECK(ParCountEssentialDof<H1_FECollection, false>(*pmesh, 3, mesh.bdr_attributes.Max()) == num_vert + 2*num_edge + num_face + 2*initial_num_edge + initial_num_face);
-+         // CHECK(ParCountEssentialDof<H1_FECollection, false>(*pmesh, 4, mesh.bdr_attributes.Max()) == num_vert + 3*num_edge + 3*num_face + 3*initial_num_edge + 3*initial_num_face);
 +      }
 +
 +      SECTION("NDTet")
@@ -5213,7 +4474,7 @@ index 1c512fcd4..8b542c544 100644
 +   // A smooth function in each vector component
 +   constexpr int order = 3, dim = 3, quadrature_order = 4;
 +   constexpr double kappa = 2 * M_PI;
-+   auto E_exact = [](const Vector &x, Vector &E)
++   auto E_exact = [=](const Vector &x, Vector &E)
 +   {
 +      E(0) = cos(kappa * x(1));
 +      E(1) = cos(kappa * x(2));
@@ -5223,7 +4484,7 @@ index 1c512fcd4..8b542c544 100644
 +
 +   // Helper for evaluating the ND grid function on either side of the first conformal shared face.
 +   // Specific to the pair of tet mesh described above, but can be generalized.
-+   auto CheckParallelNDConformal = [&E_coeff](ParMesh &mesh)
++   auto CheckParallelNDConformal = [&](ParMesh &mesh)
 +   {
 +      ND_FECollection fe_collection(order, dim);
 +      ParFiniteElementSpace fe_space(&mesh, &fe_collection);
@@ -5250,7 +4511,7 @@ index 1c512fcd4..8b542c544 100644
 +
 +      for (int n = 0; n < mesh.GetNBE(); n++)
 +      {
-+         auto f = mesh.GetBdrFace(n);
++         auto f = mesh.GetBdrElementFaceIndex(n);
 +
 +         auto finfo = mesh.GetFaceInformation(f);
 +         auto &face_element_transform = finfo.IsShared()
@@ -5497,7 +4758,6 @@ index 1c512fcd4..8b542c544 100644
 +   REQUIRE(hR->Width() == P->Height());
 +
 +   REQUIRE(hR != nullptr);
-+   REQUIRE(hR->OwnsDiag() == false);
 +   HypreParMatrix *I = ParMult(hR, P);
 +
 +   // Square matrix so the "diag" is the only bit we need.
@@ -6395,7 +5655,6 @@ index 1c512fcd4..8b542c544 100644
 +                                                         mesh.bdr_attributes.Max()) == 4*3 + 2*2*3);
 +
 +         mesh.UniformRefinement();
-+         const int initial_num_vert = 3*3;
 +         const int initial_num_edge = 12;
 +         const int initial_num_face = 4;
 +         CHECK(CountEssentialDof<ND_FECollection, true>(mesh, 1,
@@ -6547,7 +5806,7 @@ index 1c512fcd4..8b542c544 100644
 +   // A smooth function in each vector component
 +   constexpr int order = 3, dim = 3, quadrature_order = 4;
 +   constexpr double kappa = 2 * M_PI;
-+   auto E_exact = [](const Vector &x, Vector &E)
++   auto E_exact = [=](const Vector &x, Vector &E)
 +   {
 +      E(0) = cos(kappa * x(1));
 +      E(1) = cos(kappa * x(2));
@@ -6555,8 +5814,8 @@ index 1c512fcd4..8b542c544 100644
 +   };
 +   VectorFunctionCoefficient E_coeff(dim, E_exact);
 +
-+   auto CheckSerialNDConformal = [&E_coeff](Mesh &mesh,
-+                                            int num_essential_tdof = -1, int num_essential_vdof = -1)
++   auto CheckSerialNDConformal = [&](Mesh &mesh, int num_essential_tdof,
++                                     int num_essential_vdof)
 +   {
 +      ND_FECollection fe_collection(order, dim);
 +      FiniteElementSpace fe_space(&mesh, &fe_collection);
@@ -6599,7 +5858,7 @@ index 1c512fcd4..8b542c544 100644
 +         // NOTE: only works for internal boundaries
 +         if (bdr_attr_is_ess[mesh.GetBdrAttribute(n) - 1])
 +         {
-+            auto f = mesh.GetBdrFace(n);
++            auto f = mesh.GetBdrElementFaceIndex(n);
 +            auto &face_element_transform = *mesh.GetFaceElementTransformations(f);
 +
 +            if (face_element_transform.Elem2 == nullptr)
@@ -6709,14 +5968,14 @@ index 1c512fcd4..8b542c544 100644
 +         el_to_refine[0] = n;
 +         CAPTURE(n);
 +         smesh.GeneralRefinement(el_to_refine);
-+         CheckSerialNDConformal(smesh, ntdof);
++         CheckSerialNDConformal(smesh, ntdof, -1);
 +
 +         if (smesh.GetAttribute(m) == 2)
 +         {
 +            el_to_refine[0] = m;
 +            CAPTURE(m);
 +            smesh.GeneralRefinement(el_to_refine);
-+            CheckSerialNDConformal(smesh, ntdof);
++            CheckSerialNDConformal(smesh, ntdof, -1);
 +         }
 +      }
 +

@@ -7,7 +7,6 @@
 #include <array>
 #include <cmath>
 #include <memory>
-#include <string>
 #include <vector>
 #include <mpi.h>
 
@@ -46,6 +45,7 @@ void RefineMesh(const IoData &iodata, std::vector<std::unique_ptr<mfem::ParMesh>
 
 // Dimensionalize a mesh for use in exporting a mesh. Scales vertices and nodes by L.
 void DimensionalizeMesh(mfem::Mesh &mesh, double L);
+
 // Nondimensionalize a mesh for use in the solver. Scales vertices and nodes by 1/L.
 void NondimensionalizeMesh(mfem::Mesh &mesh, double L);
 
