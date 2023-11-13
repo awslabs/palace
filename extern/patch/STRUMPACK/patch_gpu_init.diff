@@ -1,8 +1,8 @@
 diff --git a/src/dense/CUDAWrapper.cpp b/src/dense/CUDAWrapper.cpp
-index a3786b82..0f5c39d9 100644
+index 56405d83..50d1f34c 100644
 --- a/src/dense/CUDAWrapper.cpp
 +++ b/src/dense/CUDAWrapper.cpp
-@@ -119,19 +119,19 @@ namespace strumpack {
+@@ -306,19 +306,19 @@ namespace strumpack {
      }
  
      void init() {
@@ -32,14 +32,14 @@ index a3786b82..0f5c39d9 100644
 +//         cudaSetDevice(rank % devs);
 +//       }
 +// #endif
-     }
- 
-     void gemm(BLASHandle& handle, cublasOperation_t transa,
+       //       gpu_check(cudaFree(0));
+       // #if defined(STRUMPACK_USE_MAGMA)
+       //       magma_init();
 diff --git a/src/dense/HIPWrapper.cpp b/src/dense/HIPWrapper.cpp
-index 3534131c..59e76434 100644
+index b0f6edf3..0025f9f5 100644
 --- a/src/dense/HIPWrapper.cpp
 +++ b/src/dense/HIPWrapper.cpp
-@@ -88,19 +88,19 @@ namespace strumpack {
+@@ -280,19 +280,19 @@ namespace strumpack {
      }
  
      void init() {
@@ -71,4 +71,4 @@ index 3534131c..59e76434 100644
 +// #endif
      }
  
-     void gemm(BLASHandle& handle, hipblasOperation_t transa,
+     void device_memset(void* dptr, int value, std::size_t count) {

@@ -20,7 +20,7 @@ set(EXTERN_ARPACK_GIT_BRANCH
   "Git branch for external ARPACK-NG build"
 )
 set(EXTERN_ARPACK_GIT_TAG
-  "e7cf106bc204ed7f7909d906fd9b1c3d18e86f76" CACHE STRING  # 08/14/2023
+  "569a3859c1bf79b303d830ada7b745de0f18512c" CACHE STRING  # 10/15/2023
   "Git tag for external ARPACK-NG build"
 )
 
@@ -34,7 +34,7 @@ set(EXTERN_BUTTERFLYPACK_GIT_BRANCH
   "Git branch for external ButterflyPACK build"
 )
 set(EXTERN_BUTTERFLYPACK_GIT_TAG
-  "6b0afaae91be4cd5e5cbc85f51f9c959921c0059" CACHE STRING  # 07/19/2023
+  "416774d13b2bfb62e0e0d9fde7c33a827dea2ed2" CACHE STRING  # 12/04/2023
   "Git tag for external ButterflyPACK build"
 )
 
@@ -76,7 +76,7 @@ set(EXTERN_HYPRE_GIT_BRANCH
   "Git branch for external HYPRE build"
 )
 set(EXTERN_HYPRE_GIT_TAG
-  "b372b31a116a25d1432c689cef75881aac145a8e" CACHE STRING  # 08/16/2023
+  "33524991d06f5e5b4c0c088ccf117aa09288867a" CACHE STRING  # 12/13/2023
   "Git tag for external HYPRE build"
 )
 
@@ -90,7 +90,7 @@ set(EXTERN_LIBCEED_GIT_BRANCH
   "Git branch for external libCEED build"
 )
 set(EXTERN_LIBCEED_GIT_TAG
-  "e5a301d7f3b471e9fc19701d6f25d22876a6f6b4" CACHE STRING  # main @ 11/06/2023
+  "3451ca54fe05d334f1044b007a59894b1a9bed54" CACHE STRING  # main @ 11/27/2023
   "Git tag for external libCEED build"
 )
 
@@ -104,8 +104,22 @@ set(EXTERN_LIBXSMM_GIT_BRANCH
   "Git branch for external LIBXSMM build"
 )
 set(EXTERN_LIBXSMM_GIT_TAG
-  "f4ba09230d84b78db0187320677d3c71d0d4854f" CACHE STRING  # 08/21/2023
+  "b520352e4be31ef71d4f24684c898b945f1c1a58" CACHE STRING  # 12/15/2023
   "Git tag for external LIBXSMM build"
+)
+
+# MAGMA
+set(EXTERN_MAGMA_URL
+  "https://bitbucket.org/icl/magma.git" CACHE STRING
+  "URL for external MAGMA build"
+)
+set(EXTERN_MAGMA_GIT_BRANCH
+  "master" CACHE STRING
+  "Git branch for external MAGMA build"
+)
+set(EXTERN_MAGMA_GIT_TAG
+  "cfc2a83c57bb16d83f5ba3f229a02cb1ebfc4a6b" CACHE STRING  # 12/11/2023
+  "Git tag for external MAGMA build"
 )
 
 # METIS
@@ -146,7 +160,7 @@ set(EXTERN_MUMPS_GIT_BRANCH
   "Git branch for external MUMPS build"
 )
 set(EXTERN_MUMPS_GIT_TAG
-  "1ea85fa01fd79cca8d06fefb52e0bfc2e996132f" CACHE STRING  # 11/09/2023
+  "44fb7e74b5780a3ea1c26a76a55298a2c34279fe" CACHE STRING  # 12/08/2023
   "Git tag for external MUMPS build"
 )
 
@@ -174,7 +188,7 @@ set(EXTERN_PETSC_GIT_BRANCH
   "Git branch for external PETSc build"
 )
 set(EXTERN_PETSC_GIT_TAG
-  "7b506345644a939af5723216e40ffcdd7780697d" CACHE STRING  # 11/14/2023
+  "9617a9bff32dac3e651f1a88b0773cde31a476b6" CACHE STRING  # 12/19/2023
   "Git tag for external PETSc build"
 )
 
@@ -188,8 +202,22 @@ set(EXTERN_SCALAPACK_GIT_BRANCH
   "Git branch for external ScaLAPACK build"
 )
 set(EXTERN_SCALAPACK_GIT_TAG
-  "acf286b783d53f73a42ec219ead74357e0b34501" CACHE STRING  # 11/09/2023
+  "c68c29d5f6a786ddbcee8a912f205f9880aee985" CACHE STRING  # 11/28/2023
   "Git tag for external ScaLAPACK build"
+)
+
+# SLATE (for STRUMPACK)
+set(EXTERN_SLATE_URL
+  "https://github.com/icl-utk-edu/slate.git" CACHE STRING
+  "URL for external SLATE build"
+)
+set(EXTERN_SLATE_GIT_BRANCH
+  "master" CACHE STRING
+  "Git branch for external SLATE build"
+)
+set(EXTERN_SLATE_GIT_TAG
+  "f9ac8c71f7dcc918cf3fb4c3955e2dab924ee654" CACHE STRING  # 12/14/2022
+  "Git tag for external SLATE build"
 )
 
 # SLEPc
@@ -202,7 +230,7 @@ set(EXTERN_SLEPC_GIT_BRANCH
   "Git branch for external SLEPc build"
 )
 set(EXTERN_SLEPC_GIT_TAG
-  "228ef2b053da4df23e47def33189f7d6381cd660" CACHE STRING  # 11/14/2023
+  "267bd1cd2687fe15592e8408731402b13343e3c5" CACHE STRING  # 12/19/2023
   "Git tag for external SLEPc build"
 )
 
@@ -216,7 +244,7 @@ set(EXTERN_STRUMPACK_GIT_BRANCH
   "Git branch for external STRUMPACK build"
 )
 set(EXTERN_STRUMPACK_GIT_TAG
-  "59d267964850b3dc3a97b37f2dba9d1b8228100f" CACHE STRING  # 08/25/2023
+  "90dcaaa3c7f06e69f94da43aa1043dd9e030cc2a" CACHE STRING  # 12/14/2023
   "Git tag for external STRUMPACK build"
 )
 
@@ -230,7 +258,7 @@ set(EXTERN_SUPERLU_GIT_BRANCH
   "Git branch for external SuperLU_DIST build"
 )
 set(EXTERN_SUPERLU_GIT_TAG
-  "7af577d8bfd6defb65a7e5c5d585214ced77959b" CACHE STRING  # 07/27/2023
+  "b3eecd3eaac3a1332d0d2c5fc052d1af114df192" CACHE STRING  # 11/17/2023
   "Git tag for external SuperLU_DIST build"
 )
 
@@ -244,19 +272,19 @@ set(EXTERN_ZFP_GIT_BRANCH
   "Git branch for external ZFP build"
 )
 set(EXTERN_ZFP_GIT_TAG
-  "bc5e24145ea6f168cf5dd672e0f11544013004da" CACHE STRING  # 08/24/2023
+  "3f8de269007ad5b32f81103cdfe780eacc20f9a8" CACHE STRING  # 12/15/2023
   "Git tag for external ZFP build"
 )
 
 # nlohmann/json
 set(EXTERN_JSON_URL
-  "https://github.com/nlohmann/json/releases/download/v3.11.2/json.tar.xz" CACHE STRING
+  "https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz" CACHE STRING
   "URL for external nlohmann/json build"
 )
 
 # fmt
 set(EXTERN_FMT_URL
-  "https://github.com/fmtlib/fmt/releases/download/10.0.0/fmt-10.0.0.zip" CACHE STRING
+  "https://github.com/fmtlib/fmt/releases/download/10.1.1/fmt-10.1.1.zip" CACHE STRING
   "URL for external fmt build"
 )
 
