@@ -73,8 +73,8 @@ with
 mesh exceeds this value no further adaptation will occur. A value less than 1 means that no
 maximum size constraint will be imposed.
 
-`"Nonconformal" [true]` : Chose whether the adaptation should use nonconformal refinement
-for simplex meshes.
+`"Nonconformal" [true]` : Chose whether the adaptation should use nonconformal refinement.
+Nonconformal refinement is required for non-simplex meshes.
 
 `"UpdateFraction" [0.7]` : Dörfler marking fraction used to specify which elements to
 refine. This marking strategy will mark the smallest number of elements that make up

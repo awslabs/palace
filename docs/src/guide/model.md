@@ -43,8 +43,11 @@ maintains a conforming mesh but meshes containing hexahedra, prism, or pyramid e
 will be nonconforming after local refinement (this is not supported at this time).
 
 [Adaptive mesh refinement (AMR)](https://en.wikipedia.org/wiki/Adaptive_mesh_refinement)
-according to error estimates in the computed solution is a work in progress for all
-simulation types.
+according to error estimates calculated from the computed solution can also be specified
+using the [`config["Model"]["Refinement"]`](../config/model.md#model%5B%22Refinement%22%5D)
+object. Nonconformal refinement is supported for all mesh types, and additionally conformal
+refinement is supported for simplex meshes. AMR is available for all problem types apart
+from driven problems in the time domain.
 
 ## Material models
 

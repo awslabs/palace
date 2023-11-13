@@ -99,8 +99,9 @@ ports can be specified on boundaries which are internal to the computational dom
 
 `"WavePort"` :  Array of objects for configuring numeric wave port boundary conditions. Wave
 ports can only be specified on boundaries which are on the true boundary of the
-computational domain. Addiitionally, wave port boundaries are only available for the
-frequency domain driven simulation type.
+computational domain. Additionally, wave port boundaries are only available for the
+frequency domain driven simulation type, and are presently not compatible with nonconformal
+mesh refinement.
 
 `"WavePortPEC"` :  Top-level object for configuring PEC boundary conditions for boundary
 mode analysis performed on the wave port boundaries. Thus, this object is only relevant

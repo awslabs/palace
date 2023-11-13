@@ -187,7 +187,7 @@ void BaseSolver::SolveEstimateMarkRefine(
                     ? ", maximum size = " + std::to_string(refinement.max_size)
                     : ""));
 
-    // Optionally save of the previous solution.
+    // Optionally save off the previous solution.
     if (refinement.save_adapt_iterations)
     {
       SaveIteration(comm, post_dir, it,

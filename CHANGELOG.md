@@ -54,6 +54,10 @@ The format of this changelog is based on
   - Added Apptainer/Singularity container build definition for Palace.
   - Fixed bugs related to thread-safety for OpenMP builds and parallel tetrahedral meshes in
     the upstream MFEM library.
+  - Introduced Adaptive Mesh Refinement, specified in the `config["Model"]["Refinement"]`,
+    for all problem types aside from transient. To enable AMR, a user must specify
+    `"MaxIts"`, while all other options have reasonable defaults. Nonconformal (all mesh
+    types) and conformal (simplex meshes) refinement are supported.
 
 ## [0.11.2] - 2023-07-14
 

@@ -38,6 +38,10 @@ the frequency or time domain, using the [MFEM finite element discretization libr
     (config/solver.md#solver["Linear"]), including geometric multigrid (GMG), parallel
     sparse direct solvers, and algebraic multigrid (AMG) preconditioners, for fast
     performance on platforms ranging from laptops to HPC systems.
+  - Solution based [Adaptive Mesh Refinement
+    (AMR)](config/model.md#model%5B%22Refinement%22%5D) for all simulation types aside
+    from transient. Nonconformal refinement is supported for all mesh types, and conformal
+    refinement for simplex meshes.
 
 ## Contents
 

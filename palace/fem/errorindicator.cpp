@@ -28,7 +28,7 @@ void ErrorIndicator::AddIndicator(const ErrorIndicator &indicator)
   //                            E = √(1/N ∑ₙ ∑ₖ ηₖₙ²)
   // from which it follows that:
   //                            E² = 1/N ∑ₙ ∑ₖ ηₖₙ²
-  //                               = 1/N ∑ₙ Eₙ
+  //                               = 1/N ∑ₙ Eₙ²
   // Namely the average of the global error indicators included in the reduction.
   // Squaring both sides means the summation can be rearranged, and then the local error
   // indicators become:
