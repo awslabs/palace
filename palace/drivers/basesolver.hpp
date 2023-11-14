@@ -80,14 +80,19 @@ protected:
   void PostprocessErrorIndicator(const PostOperator &postop,
                                  const ErrorIndicator &indicator) const;
 
+  // Performs a solve using the mesh sequence, then reports error indicators and the number
+  // of global true dofs.
+  virtual std::pair<ErrorIndicator, long long int>
+  Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const = 0;
+
 public:
   BaseSolver(const IoData &iodata, bool root, int size = 0, int num_thread = 0,
              const char *git_tag = nullptr);
   virtual ~BaseSolver() = default;
 
-  // Performs a solve using the mesh sequence, then reports error indicators.
-  virtual ErrorIndicator
-  Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const = 0;
+  // Performs adaptive mesh refinement using the solve-estimate-mark-refine paradigm.
+  // Dispatches to the Solve method for the driver specific calculations.
+  void SolveEstimateMarkRefine(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const;
 
   // These methods write different simulation metadata to a JSON file in post_dir.
   void SaveMetadata(const FiniteElementSpaceHierarchy &fespaces) const;

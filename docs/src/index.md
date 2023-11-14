@@ -32,6 +32,9 @@ the frequency or time domain, using the [MFEM finite element discretization libr
     (guide/model.md#Supported-mesh-formats) for structured and unstructured meshes,
     with built-in uniform or region-based parallel [mesh refinement]
     (guide/model.md#Mesh-refinement).
+  - Solution-based [Adaptive Mesh Refinement (AMR)](guide/model.md#Mesh-refinement) for all
+    simulation types aside from transient. Nonconformal refinement is supported for all
+    mesh types, and conformal refinement for simplex meshes.
   - Arbitrary high-order finite element spaces and curvilinear mesh support thanks to
     the [MFEM library](https://mfem.org/features/).
   - Scalable algorithms for the [solution of linear systems of equations]
@@ -51,7 +54,9 @@ the frequency or time domain, using the [MFEM finite element discretization libr
 
 ## Coming soon
 
-  - Adaptive and nonconforming mesh refinement
+  - Improved adaptive mesh refinement (AMR) support for transient simulation type and
+    numeric wave ports on nonconformal meshes
   - Efficient high-order operator assembly and GPU support
   - Perfectly matched layer (PML) boundaries
+  - Periodic boundaries with phase delay constraints
   - Automatic mesh generation

@@ -17,7 +17,7 @@
 namespace palace
 {
 
-ErrorIndicator
+std::pair<ErrorIndicator, long long int>
 ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const
 {
   // Construct the system matrix defining the linear operator. Dirichlet boundaries are
@@ -73,7 +73,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &me
   // Postprocess the capacitance matrix from the computed field solutions.
   BlockTimer bt1(Timer::POSTPRO);
   SaveMetadata(ksp);
-  return Postprocess(laplaceop, postop, V);
+  return {Postprocess(laplaceop, postop, V), laplaceop.GlobalTrueVSize()};
 }
 
 ErrorIndicator ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop,
@@ -97,6 +97,7 @@ ErrorIndicator ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop,
   }
 
   // Calculate and record the error indicators.
+  Mpi::Print("Computing solution error estimates\n\n");
   GradFluxErrorEstimator estimator(laplaceop.GetMaterialOp(), laplaceop.GetH1Spaces(),
                                    iodata.solver.linear.estimator_tol,
                                    iodata.solver.linear.estimator_max_it, 0,
@@ -123,7 +124,7 @@ ErrorIndicator ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop,
     if (i < iodata.solver.electrostatic.n_post)
     {
       PostprocessFields(postop, i, idx, (i == 0) ? &indicator : nullptr);
-      Mpi::Print(" Wrote fields to disk for terminal {:d}\n", idx);
+      Mpi::Print("Wrote fields to disk for terminal {:d}\n", idx);
     }
     if (i == 0)
     {

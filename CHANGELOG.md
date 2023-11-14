@@ -40,6 +40,10 @@ The format of this changelog is based on
     difference between the numerical gradient (electrostatics) or curl (otherwise) of the
     solution, and a smoother approximation obtained through a global mass matrix inversion.
     The results are reported in `error-estimates.csv` within the `"Output"` folder.
+  - Added Adaptive Mesh Refinement (AMR), specified in the `config["Model"]["Refinement"]`,
+    for all problem types aside from transient. To enable AMR, a user must specify
+    `"MaxIts"`, while all other options have reasonable defaults. Nonconformal(all mesh
+    types) and conformal (simplex meshes) refinement are supported.
   - Fixed bugs for simulations using tetrahedral meshes associated with unexpected mesh
     toplogy changes during parallel mesh construction.
   - Added improved `Timer` and `BlockTimer` classes with more timing categories for

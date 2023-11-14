@@ -284,6 +284,29 @@ void RefinementData::SetUp(json &model)
   {
     return;
   }
+
+  // Options for AMR.
+  tol = refinement->value("Tol", tol);
+  max_it = refinement->value("MaxIts", max_it);
+  max_size = refinement->value("MaxSize", max_size);
+  nonconformal = refinement->value("Nonconformal", nonconformal);
+  max_nc_levels = refinement->value("MaxNCLevels", max_nc_levels);
+  update_fraction = refinement->value("UpdateFraction", update_fraction);
+  maximum_imbalance = refinement->value("MaximumImbalance", maximum_imbalance);
+  save_adapt_iterations = refinement->value("SaveAdaptIterations", save_adapt_iterations);
+  save_adapt_mesh = refinement->value("SaveAdaptMesh", save_adapt_mesh);
+  MFEM_VERIFY(tol > 0.0, "config[\"Refinement\"][\"Tol\"] must be strictly positive!");
+  MFEM_VERIFY(max_it >= 0, "config[\"Refinement\"][\"MaxIts\"] must be non-negative!");
+  MFEM_VERIFY(max_size >= 0, "config[\"Refinement\"][\"MaxSize\"] must be non-negative!");
+  MFEM_VERIFY(max_nc_levels >= 0,
+              "config[\"Refinement\"][\"MaxNCLevels\"] must be non-negative!");
+  MFEM_VERIFY(update_fraction > 0 && update_fraction < 1,
+              "config[\"Refinement\"][\"UpdateFraction\" must be in (0,1)!");
+  MFEM_VERIFY(
+      maximum_imbalance >= 1,
+      "config[\"Refinement\"][\"MaximumImbalance\"] must be greater than or equal to 1!");
+
+  // Options for a priori refinement.
   uniform_ref_levels = refinement->value("UniformLevels", uniform_ref_levels);
   MFEM_VERIFY(uniform_ref_levels >= 0,
               "Number of uniform mesh refinement levels must be non-negative!");
@@ -398,6 +421,15 @@ void RefinementData::SetUp(json &model)
   }
 
   // Cleanup
+  refinement->erase("Tol");
+  refinement->erase("MaxIts");
+  refinement->erase("MaxSize");
+  refinement->erase("Nonconformal");
+  refinement->erase("MaxNCLevels");
+  refinement->erase("UpdateFraction");
+  refinement->erase("MaximumImbalance");
+  refinement->erase("SaveAdaptIterations");
+  refinement->erase("SaveAdaptMesh");
   refinement->erase("UniformLevels");
   refinement->erase("Boxes");
   refinement->erase("Spheres");
@@ -406,6 +438,15 @@ void RefinementData::SetUp(json &model)
                   << refinement->dump(2));
 
   // Debug
+  // std::cout << "Tol: " << tol << '\n';
+  // std::cout << "MaxIts: " << max_it << '\n';
+  // std::cout << "MaxSize: " << max_size << '\n';
+  // std::cout << "Nonconformal: " << nonconformal << '\n';
+  // std::cout << "MaxNCLevels: " << max_nc_levels << '\n';
+  // std::cout << "UpdateFraction: " << update_fraction << '\n';
+  // std::cout << "MaximumImbalance: " << maximum_imbalance << '\n';
+  // std::cout << "SaveAdaptIterations: " << save_adapt_iterations << '\n';
+  // std::cout << "SaveAdaptMesh: " << save_adapt_mesh << '\n';
   // std::cout << "UniformLevels: " << uniform_ref_levels << '\n';
 }
 

@@ -18,7 +18,7 @@
 namespace palace
 {
 
-ErrorIndicator
+std::pair<ErrorIndicator, long long int>
 MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const
 {
   // Construct the system matrix defining the linear operator. Dirichlet boundaries are
@@ -74,7 +74,7 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &me
   // Postprocess the capacitance matrix from the computed field solutions.
   BlockTimer bt1(Timer::POSTPRO);
   SaveMetadata(ksp);
-  return Postprocess(curlcurlop, postop, A);
+  return {Postprocess(curlcurlop, postop, A), curlcurlop.GlobalTrueVSize()};
 }
 
 ErrorIndicator MagnetostaticSolver::Postprocess(CurlCurlOperator &curlcurlop,
@@ -100,6 +100,7 @@ ErrorIndicator MagnetostaticSolver::Postprocess(CurlCurlOperator &curlcurlop,
   }
 
   // Calculate and record the error indicators.
+  Mpi::Print("Computing solution error estimates\n\n");
   CurlFluxErrorEstimator<Vector> estimator(
       curlcurlop.GetMaterialOp(), curlcurlop.GetNDSpaces(),
       iodata.solver.linear.estimator_tol, iodata.solver.linear.estimator_max_it, 0,
@@ -130,7 +131,7 @@ ErrorIndicator MagnetostaticSolver::Postprocess(CurlCurlOperator &curlcurlop,
     if (i < iodata.solver.magnetostatic.n_post)
     {
       PostprocessFields(postop, i, idx, (i == 0) ? &indicator : nullptr);
-      Mpi::Print(" Wrote fields to disk for terminal {:d}\n", idx);
+      Mpi::Print("Wrote fields to disk for terminal {:d}\n", idx);
     }
     if (i == 0)
     {

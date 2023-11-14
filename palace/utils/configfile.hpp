@@ -131,6 +131,38 @@ struct SphereRefinementData
 struct RefinementData
 {
 public:
+  // Non-dimensional tolerance used to specify convergence of adaptive mesh refinement.
+  double tol = 1e-2;
+
+  // Maximum number of iterations to perform during adaptive mesh refinement.
+  int max_it = 0;
+
+  // If a refinement results in a greater number of DOFs than this value, no future
+  // refinement will be allowed.
+  int max_size = 0;
+
+  // Whether or not to perform nonconformal adaptation.
+  bool nonconformal = true;
+
+  // Maximum difference in nonconformal refinements between two adjacent elements. Zero
+  // implies there is no constraint on local non-conformity.
+  int max_nc_levels = 1;
+
+  // Dörfler update fraction. The set of marked elements is the minimum set that contains
+  // update_fraction of the total error.
+  double update_fraction = 0.7;
+
+  // Maximum allowable ratio of number of elements across processors before rebalancing is
+  // performed.
+  double maximum_imbalance = 1.1;
+
+  // Whether to save off results of each adaptation iteration as a subfolder within the post
+  // processing directory.
+  bool save_adapt_iterations = true;
+
+  // Whether to write a (serial) mesh to file after mesh modification during AMR.
+  bool save_adapt_mesh = false;
+
   // Parallel uniform mesh refinement levels.
   int uniform_ref_levels = 0;
 

@@ -19,6 +19,15 @@
       "required": [],
       "properties":
       {
+        "Tol": {"type": "number", "exclusiveMinimum": 0.0},
+        "MaxIts": {"type": "integer", "inclusiveMinimum": 0},
+        "MaxSize": {"type": "number", "inclusiveMinimum": 0},
+        "UpdateFraction": {"type": "number", "exclusiveMinimum": 0.0, "exclusiveMaximum": 1.0},
+        "Nonconformal": {"type": "boolean"},
+        "MaxNCLevels": {"type": "integer", "inclusiveMinimum": 0},
+        "MaximumImbalance": {"type": "number", "inclusiveMinimum": 1.0},
+        "SaveAdaptIterations": {"type": "boolean"},
+        "SaveAdaptMesh": {"type": "boolean"},
         "UniformLevels": { "type": "integer", "minimum": 0 },
         "Boxes":
         {

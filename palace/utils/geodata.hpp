@@ -15,6 +15,7 @@ namespace mfem
 
 template <typename T>
 class Array;
+class Mesh;
 class ParMesh;
 class Vector;
 
@@ -27,7 +28,6 @@ class IoData;
 
 namespace mesh
 {
-
 //
 // Functions for mesh related functionality.
 //
@@ -44,10 +44,10 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(MPI_Comm comm, const IoData &iodata, boo
 void RefineMesh(const IoData &iodata, std::vector<std::unique_ptr<mfem::ParMesh>> &mesh);
 
 // Dimensionalize a mesh for use in exporting a mesh. Scales vertices and nodes by L.
-void DimensionalizeMesh(mfem::ParMesh &mesh, double L);
+void DimensionalizeMesh(mfem::Mesh &mesh, double L);
 
 // Nondimensionalize a mesh for use in the solver. Scales vertices and nodes by 1/L.
-void NondimensionalizeMesh(mfem::ParMesh &mesh, double L);
+void NondimensionalizeMesh(mfem::Mesh &mesh, double L);
 
 // Helper function to convert a set of attribute numbers to a marker array. The marker array
 // will be of size max_attr and it will contain only zeroes and ones. Ones indicate which
@@ -132,6 +132,11 @@ BoundingBall GetBoundingBall(mfem::ParMesh &mesh, int attr, bool bdr);
 void GetSurfaceNormal(mfem::ParMesh &mesh, int attr, mfem::Vector &normal);
 void GetSurfaceNormal(mfem::ParMesh &mesh, const mfem::Array<int> &marker,
                       mfem::Vector &normal);
+
+// Helper function responsible for rebalancing the mesh, and optionally writing meshes from
+// the intermediate stages to disk. Returns the imbalance ratio before rebalancing.
+double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh,
+                     double tol);
 
 }  // namespace mesh
 

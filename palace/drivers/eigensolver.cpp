@@ -24,7 +24,7 @@ namespace palace
 
 using namespace std::complex_literals;
 
-ErrorIndicator
+std::pair<ErrorIndicator, long long int>
 EigenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const
 {
   // Construct and extract the system matrices defining the eigenvalue problem. The diagonal
@@ -256,9 +256,18 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) cons
   BlockTimer bt1(Timer::SOLVE);
   Mpi::Print("\n");
   int num_conv = eigen->Solve();
+  {
+    std::complex<double> lambda = (num_conv > 0) ? eigen->GetEigenvalue(0) : 0.0;
+    Mpi::Print(" Found {:d} converged eigenvalue{}{}\n\n", num_conv,
+               (num_conv > 1) ? "s" : "",
+               (num_conv > 0)
+                   ? fmt::format(" (first = {:.3e}{:+.3e}i)", lambda.real(), lambda.imag())
+                   : "");
+  }
   SaveMetadata(*ksp);
 
   // Calculate and record the error indicators.
+  Mpi::Print("Computing solution error estimates\n\n");
   CurlFluxErrorEstimator<ComplexVector> estimator(
       spaceop.GetMaterialOp(), spaceop.GetNDSpaces(), iodata.solver.linear.estimator_tol,
       iodata.solver.linear.estimator_max_it, 0, iodata.solver.pa_order_threshold);
@@ -287,11 +296,6 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) cons
       // Quadratic EVP solves for eigenvalue λ = iω.
       omega /= 1i;
     }
-    if (i == 0)
-    {
-      Mpi::Print(" Found {:d} converged eigenvalue{} (first = {:.3e}{:+.3e}i)\n\n",
-                 num_conv, (num_conv > 1) ? "s" : "", omega.real(), omega.imag());
-    }
 
     // Compute B = -1/(iω) ∇ x E on the true dofs, and set the internal GridFunctions in
     // PostOperator for all postprocessing operations.
@@ -307,7 +311,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) cons
     Postprocess(postop, spaceop.GetLumpedPortOp(), i, omega, error1, error2, num_conv,
                 (i == 0) ? &indicator : nullptr);
   }
-  return indicator;
+  return {indicator, spaceop.GlobalTrueVSize()};
 }
 
 void EigenSolver::Postprocess(const PostOperator &postop,

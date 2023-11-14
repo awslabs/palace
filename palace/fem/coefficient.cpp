@@ -21,8 +21,11 @@ void BdrGridFunctionCoefficient::GetElementTransformations(mfem::ElementTransfor
   int iel1, iel2, info1, info2;
   mesh.GetBdrElementFace(T.ElementNo, &i, &o);
   mesh.GetFaceElements(i, &iel1, &iel2);
-  mesh.GetFaceInfos(i, &info1, &info2);  // XX TODO: Nonconforming support
+  mesh.GetFaceInfos(i, &info1, &info2);
 
+  // Master faces can never be boundary elements, thus only need to check for the state of
+  // info2 and el2, and do not need to access the ncface numbering. See mfem::Mesh::FaceInfo
+  // for details.
   mfem::FaceElementTransformations *FET;
   if (info2 >= 0 && iel2 < 0)
   {
