@@ -304,6 +304,13 @@ void BaseSolver::SaveMetadata(const Timer &timer) const
 namespace
 {
 
+struct BulkData
+{
+  const int idx;        // Domain or interface index
+  const double E_elec;  // Electric field energy
+  const double E_mag;   // Magnetic field energy
+};
+
 struct EpsData
 {
   const int idx;    // Domain or interface index
@@ -343,6 +350,16 @@ void BaseSolver::PostprocessDomains(const PostOperator &postop, const std::strin
   }
 
   // Write the field and lumped element energies.
+  std::vector<BulkData> bulk_data;
+  bulk_data.reserve(postop.GetDomainPostOp().GetBulkDomains().size());
+  for (const auto &[idx, data] : postop.GetDomainPostOp().GetBulkDomains())
+  {
+    const double E_elec_i = postop.GetEFieldEnergy(idx);
+    const double E_mag_i = postop.GetHFieldEnergy(idx);
+    bulk_data.push_back({idx,
+                         iodata.DimensionalizeValue(IoData::ValueType::ENERGY, E_elec_i),
+                         iodata.DimensionalizeValue(IoData::ValueType::ENERGY, E_mag_i)});
+  }
   if (root)
   {
     std::string path = post_dir + "domain-E.csv";
@@ -350,16 +367,27 @@ void BaseSolver::PostprocessDomains(const PostOperator &postop, const std::strin
     if (step == 0)
     {
       // clang-format off
-      output.print("{:>{}s},{:>{}s},{:>{}s},{:>{}s},{:>{}s}\n",
+      output.print("{:>{}s},{:>{}s},{:>{}s},{:>{}s},{:>{}s}{}",
                    name, table.w1,
                    "E_elec (J)", table.w,
                    "E_mag (J)", table.w,
                    "E_cap (J)", table.w,
-                   "E_ind (J)", table.w);
+                   "E_ind (J)", table.w,
+                   bulk_data.empty() ? "" : ",");
       // clang-format on
+      for (const auto &data : bulk_data)
+      {
+        // clang-format off
+        output.print("{:>{}s},{:>{}s}{}",
+                     "E_elec[" + std::to_string(data.idx) + "] (J)", table.w,
+                     "E_mag[" + std::to_string(data.idx) + "] (J)", table.w,
+                     (data.idx == bulk_data.back().idx) ? "" : ",");
+        // clang-format on
+      }
+      output.print("\n");
     }
     // clang-format off
-    output.print("{:{}.{}e},{:+{}.{}e},{:+{}.{}e},{:+{}.{}e},{:+{}.{}e}\n",
+    output.print("{:{}.{}e},{:+{}.{}e},{:+{}.{}e},{:+{}.{}e},{:+{}.{}e}{}",
                  time, table.w1, table.p1,
                  iodata.DimensionalizeValue(IoData::ValueType::ENERGY, E_elec),
                  table.w, table.p,
@@ -368,45 +396,16 @@ void BaseSolver::PostprocessDomains(const PostOperator &postop, const std::strin
                  iodata.DimensionalizeValue(IoData::ValueType::ENERGY, E_cap),
                  table.w, table.p,
                  iodata.DimensionalizeValue(IoData::ValueType::ENERGY, E_ind),
-                 table.w, table.p);
+                 table.w, table.p,
+                 bulk_data.empty() ? "" : ",");
     // clang-format on
-  }
-
-  // Write the Q-factors due to bulk dielectric loss.
-  std::vector<EpsData> eps_data;
-  eps_data.reserve(postop.GetDomainPostOp().GetEps().size());
-  for (const auto &[idx, data] : postop.GetDomainPostOp().GetEps())
-  {
-    const double pl = postop.GetBulkParticipation(idx, E_elec + E_cap);
-    const double Ql = postop.GetBulkQualityFactor(idx, E_elec + E_cap);
-    eps_data.push_back({idx, pl, Ql});
-  }
-  if (root && !eps_data.empty())
-  {
-    std::string path = post_dir + "domain-Q.csv";
-    auto output = OutputFile(path, (step > 0));
-    if (step == 0)
-    {
-      output.print("{:>{}s},", name, table.w1);
-      for (const auto &data : eps_data)
-      {
-        // clang-format off
-        output.print("{:>{}s},{:>{}s}{}",
-                     "p_bulk[" + std::to_string(data.idx) + "]", table.w,
-                     "Q_bulk[" + std::to_string(data.idx) + "]", table.w,
-                     (data.idx == eps_data.back().idx) ? "" : ",");
-        // clang-format on
-      }
-      output.print("\n");
-    }
-    output.print("{:{}.{}e},", time, table.w1, table.p1);
-    for (const auto &data : eps_data)
+    for (const auto &data : bulk_data)
     {
       // clang-format off
       output.print("{:+{}.{}e},{:+{}.{}e}{}",
-                   data.pl, table.w, table.p,
-                   data.Ql, table.w, table.p,
-                   (data.idx == eps_data.back().idx) ? "" : ",");
+                   data.E_elec, table.w, table.p,
+                   data.E_mag, table.w, table.p,
+                   (data.idx == bulk_data.back().idx) ? "" : ",");
       // clang-format on
     }
     output.print("\n");
@@ -575,21 +574,22 @@ void BaseSolver::PostprocessProbes(const PostOperator &postop, const std::string
     {
       continue;
     }
+    const std::string F = (f == 0) ? "E" : "B";
+    const std::string unit = (f == 0) ? "(V/m)" : "(Wb/m²)";
+    const auto type = (f == 0) ? IoData::ValueType::FIELD_E : IoData::ValueType::FIELD_B;
+    const auto vF = (f == 0) ? postop.ProbeEField() : postop.ProbeBField();
+    const int dim = vF.size() / postop.GetProbes().size();
     std::vector<ProbeData> probe_data;
     probe_data.reserve(postop.GetProbes().size());
-    const std::vector<std::complex<double>> vF =
-        (f == 0) ? postop.ProbeEField() : postop.ProbeBField();
-    const int dim = vF.size() / postop.GetProbes().size();
     int i = 0;
     for (const auto &idx : postop.GetProbes())
     {
       probe_data.push_back(
-          {idx, vF[i * dim], vF[i * dim + 1], (dim == 3) ? vF[i * dim + 2] : 0.0});
+          {idx, iodata.DimensionalizeValue(type, vF[i * dim]),
+           iodata.DimensionalizeValue(type, vF[i * dim + 1]),
+           (dim == 3) ? iodata.DimensionalizeValue(type, vF[i * dim + 2]) : 0.0});
       i++;
     }
-    const std::string F = (f == 0) ? "E" : "B";
-    const std::string unit = (f == 0) ? "(V/m)" : "(Wb/m²)";
-    const auto type = (f == 0) ? IoData::ValueType::FIELD_E : IoData::ValueType::FIELD_B;
     if (root && !probe_data.empty())
     {
       std::string path = post_dir + "probe-" + F + ".csv";
@@ -661,17 +661,17 @@ void BaseSolver::PostprocessProbes(const PostOperator &postop, const std::string
         {
           // clang-format off
           output.print("{:+{}.{}e},{:+{}.{}e},{:+{}.{}e},{:+{}.{}e}",
-                       iodata.DimensionalizeValue(type, data.Fx.real()), table.w, table.p,
-                       iodata.DimensionalizeValue(type, data.Fx.imag()), table.w, table.p,
-                       iodata.DimensionalizeValue(type, data.Fy.real()), table.w, table.p,
-                       iodata.DimensionalizeValue(type, data.Fy.imag()), table.w, table.p);
+                       data.Fx.real(), table.w, table.p,
+                       data.Fx.imag(), table.w, table.p,
+                       data.Fy.real(), table.w, table.p,
+                       data.Fy.imag(), table.w, table.p);
           // clang-format on
           if (dim == 3)
           {
             // clang-format off
             output.print(",{:+{}.{}e},{:+{}.{}e}{}",
-                         iodata.DimensionalizeValue(type, data.Fz.real()), table.w, table.p,
-                         iodata.DimensionalizeValue(type, data.Fz.imag()), table.w, table.p,
+                         data.Fz.real(), table.w, table.p,
+                         data.Fz.imag(), table.w, table.p,
                          (data.idx == probe_data.back().idx) ? "" : ",");
             // clang-format on
           }
@@ -690,14 +690,14 @@ void BaseSolver::PostprocessProbes(const PostOperator &postop, const std::string
         {
           // clang-format off
           output.print("{:+{}.{}e},{:+{}.{}e}",
-                       iodata.DimensionalizeValue(type, data.Fx.real()), table.w, table.p,
-                       iodata.DimensionalizeValue(type, data.Fy.real()), table.w, table.p);
+                       data.Fx.real(), table.w, table.p,
+                       data.Fy.real(), table.w, table.p);
           // clang-format on
           if (dim == 3)
           {
             // clang-format off
             output.print(",{:+{}.{}e}{}",
-                         iodata.DimensionalizeValue(type, data.Fz.real()), table.w, table.p,
+                         data.Fz.real(), table.w, table.p,
                          (data.idx == probe_data.back().idx) ? "" : ",");
             // clang-format on
           }

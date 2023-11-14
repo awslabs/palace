@@ -105,6 +105,11 @@ public:
   double GetEFieldEnergy() const;
   double GetHFieldEnergy() const;
 
+  // Postprocess the electric and magnetic field energies in the domain with the given
+  // index.
+  double GetEFieldEnergy(int idx) const;
+  double GetHFieldEnergy(int idx) const;
+
   // Postprocess the energy in lumped capacitor or inductor port boundaries with index in
   // the provided set.
   double GetLumpedInductorEnergy(const LumpedPortOperator &lumped_port_op) const;
@@ -145,11 +150,6 @@ public:
   // Postprocess the coupling rate for radiative loss to the given I-O port index.
   double GetExternalKappa(const LumpedPortOperator &lumped_port_op, int idx,
                           double Em) const;
-
-  // Postprocess the participation ratio or quality factor for bulk lossy dielectric losses
-  // in the electric field mode.
-  double GetBulkParticipation(int idx, double Em) const;
-  double GetBulkQualityFactor(int idx, double Em) const;
 
   // Postprocess the partitipation ratio for interface lossy dielectric losses in the
   // electric field mode.

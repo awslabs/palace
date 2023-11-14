@@ -397,6 +397,20 @@ double PostOperator::GetHFieldEnergy() const
                        : dom_post_op.GetMagneticFieldEnergy(B->real());
 }
 
+double PostOperator::GetEFieldEnergy(int idx) const
+{
+  MFEM_VERIFY(E, "PostOperator is not configured for electric field energy calculation!");
+  return has_imaginary ? dom_post_op.GetDomainElectricFieldEnergy(idx, *E)
+                       : dom_post_op.GetDomainElectricFieldEnergy(idx, E->real());
+}
+
+double PostOperator::GetHFieldEnergy(int idx) const
+{
+  MFEM_VERIFY(B, "PostOperator is not configured for magnetic field energy calculation!");
+  return has_imaginary ? dom_post_op.GetDomainMagneticFieldEnergy(idx, *B)
+                       : dom_post_op.GetDomainMagneticFieldEnergy(idx, B->real());
+}
+
 double PostOperator::GetLumpedInductorEnergy(const LumpedPortOperator &lumped_port_op) const
 {
   // Add contribution due to all capacitive lumped boundaries in the model:
@@ -564,29 +578,6 @@ double PostOperator::GetExternalKappa(const LumpedPortOperator &lumped_port_op, 
   std::complex<double> Imj = GetPortCurrent(lumped_port_op, idx);
   return std::copysign(0.5 * std::abs(data.GetR()) * std::real(Imj * std::conj(Imj)) / Em,
                        Imj.real());  // mean(I²) = (I_r² + I_i²) / 2
-}
-
-double PostOperator::GetBulkParticipation(int idx, double Em) const
-{
-  // Compute the bulk dielectric participation ratio material given by index idx. Here, we
-  // have:
-  //                     p_mj = E_elec,j / (E_elec + E_cap).
-  MFEM_VERIFY(E, "Bulk Q not defined, no electric field solution found!");
-  double Ebulk = has_imaginary ? dom_post_op.GetDomainElectricFieldEnergy(idx, *E)
-                               : dom_post_op.GetDomainElectricFieldEnergy(idx, E->real());
-  return Ebulk / Em;
-}
-
-double PostOperator::GetBulkQualityFactor(int idx, double Em) const
-{
-  // Compute the associated quality factor for the material given by index idx. Here, we
-  // have:
-  //             1/Q_mj = p_mj tan(δ)_j = tan(δ)_j E_elec,j / (E_elec + E_cap).
-  MFEM_VERIFY(E, "Bulk Q not defined, no electric field solution found!");
-  double Ebulki = has_imaginary
-                      ? dom_post_op.GetDomainElectricFieldEnergyLoss(idx, *E)
-                      : dom_post_op.GetDomainElectricFieldEnergyLoss(idx, E->real());
-  return (Ebulki == 0.0) ? mfem::infinity() : Em / Ebulki;
 }
 
 double PostOperator::GetInterfaceParticipation(int idx, double Em) const

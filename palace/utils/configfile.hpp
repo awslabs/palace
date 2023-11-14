@@ -257,14 +257,14 @@ public:
   void SetUp(json &domains);
 };
 
-struct DomainDielectricData
+struct DomainBulkData
 {
 public:
-  // List of domain attributes for this domain dielectric postprocessing index.
+  // List of domain attributes for this bulk postprocessing index.
   std::vector<int> attributes = {};
 };
 
-struct DomainDielectricPostData : public internal::DataMap<DomainDielectricData>
+struct DomainBulkPostData : public internal::DataMap<DomainBulkData>
 {
 public:
   void SetUp(json &postpro);
@@ -289,10 +289,10 @@ struct DomainPostData
 {
 public:
   // Set of all postprocessing domain attributes.
-  std::set<int> attributes;
+  std::set<int> attributes = {};
 
   // Domain postprocessing objects.
-  DomainDielectricPostData dielectric;
+  DomainBulkPostData bulk;
   ProbePostData probe;
 
   void SetUp(json &domains);
@@ -337,7 +337,7 @@ struct WavePortPecBoundaryData
 {
 public:
   // List of boundary attributes with PEC boundary conditions for wave ports.
-  std::vector<int> attributes;
+  std::vector<int> attributes = {};
 
   [[nodiscard]] auto empty() const { return attributes.empty(); }
 
@@ -441,7 +441,7 @@ public:
   double d_offset = 0.0;
 
   // List of boundary attributes for this wave port.
-  std::vector<int> attributes;
+  std::vector<int> attributes = {};
 };
 
 struct WavePortBoundaryData : public internal::DataMap<WavePortData>
@@ -468,7 +468,7 @@ struct CapacitanceData
 {
 public:
   // List of boundary attributes for this capacitance postprocessing index.
-  std::vector<int> attributes;
+  std::vector<int> attributes = {};
 };
 
 struct CapacitancePostData : public internal::DataMap<CapacitanceData>
@@ -521,7 +521,7 @@ struct BoundaryPostData
 {
 public:
   // Set of all postprocessing boundary attributes.
-  std::set<int> attributes;
+  std::set<int> attributes = {};
 
   // Boundary postprocessing objects.
   CapacitancePostData capacitance = {};

@@ -525,26 +525,26 @@ void MaterialDomainData::SetUp(json &domains)
   }
 }
 
-void DomainDielectricPostData::SetUp(json &postpro)
+void DomainBulkPostData::SetUp(json &postpro)
 {
-  auto dielectric = postpro.find("Dielectric");
-  if (dielectric == postpro.end())
+  auto bulk = postpro.find("Bulk");
+  if (bulk == postpro.end())
   {
     return;
   }
-  MFEM_VERIFY(dielectric->is_array(),
-              "\"Dielectric\" should specify an array in the configuration file!");
-  for (auto it = dielectric->begin(); it != dielectric->end(); ++it)
+  MFEM_VERIFY(bulk->is_array(),
+              "\"Bulk\" should specify an array in the configuration file!");
+  for (auto it = bulk->begin(); it != bulk->end(); ++it)
   {
     MFEM_VERIFY(it->find("Index") != it->end(),
-                "Missing \"Dielectric\" domain \"Index\" in configuration file!");
+                "Missing \"Bulk\" domain \"Index\" in configuration file!");
+    MFEM_VERIFY(it->find("Attributes") != it->end(),
+                "Missing \"Attributes\" list for \"Bulk\" domain in configuration file!");
+    auto ret = mapdata.insert(std::make_pair(it->at("Index"), DomainBulkData()));
     MFEM_VERIFY(
-        it->find("Attributes") != it->end(),
-        "Missing \"Attributes\" list for \"Dielectric\" domain in configuration file!");
-    auto ret = mapdata.insert(std::make_pair(it->at("Index"), DomainDielectricData()));
-    MFEM_VERIFY(ret.second, "Repeated \"Index\" found when processing \"Dielectric\" "
-                            "domains in configuration file!");
-    DomainDielectricData &data = ret.first->second;
+        ret.second,
+        "Repeated \"Index\" found when processing \"Bulk\" domains in configuration file!");
+    DomainBulkData &data = ret.first->second;
     data.attributes = it->at("Attributes").get<std::vector<int>>();  // Required
 
     // Debug
@@ -555,7 +555,7 @@ void DomainDielectricPostData::SetUp(json &postpro)
     it->erase("Index");
     it->erase("Attributes");
     MFEM_VERIFY(it->empty(),
-                "Found an unsupported configuration file keyword under \"Dielectric\"!\n"
+                "Found an unsupported configuration file keyword under \"Bulk\"!\n"
                     << it->dump(2));
   }
 }
@@ -609,17 +609,17 @@ void DomainPostData::SetUp(json &domains)
   {
     return;
   }
-  dielectric.SetUp(*postpro);
+  bulk.SetUp(*postpro);
   probe.SetUp(*postpro);
 
   // Store all unique postprocessing domain attributes.
-  for (const auto &[idx, data] : dielectric)
+  for (const auto &[idx, data] : bulk)
   {
     attributes.insert(data.attributes.begin(), data.attributes.end());
   }
 
   // Cleanup
-  postpro->erase("Dielectric");
+  postpro->erase("Bulk");
   postpro->erase("Probe");
   MFEM_VERIFY(postpro->empty(),
               "Found an unsupported configuration file keyword under \"Postprocessing\"!\n"
