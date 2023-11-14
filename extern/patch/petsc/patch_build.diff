@@ -1,0 +1,49 @@
+diff --git a/config/BuildSystem/config/packages/openmp.py b/config/BuildSystem/config/packages/openmp.py
+index 38e9f1c1695..616228ac5e0 100644
+--- a/config/BuildSystem/config/packages/openmp.py
++++ b/config/BuildSystem/config/packages/openmp.py
+@@ -28,6 +28,7 @@ class Configure(config.package.Package):
+               "-mp",      # Portland Group
+               "-Qopenmp", # Intel windows
+               "-openmp",  # Intel
++              "-qopenmp", # Intel
+               "-xopenmp", # Sun
+               "+Oopenmp", # HP
+               "/openmp"   # Microsoft Visual Studio
+diff --git a/config/BuildSystem/config/setCompilers.py b/config/BuildSystem/config/setCompilers.py
+index 5824b52ed23..44b4cb5abbf 100644
+--- a/config/BuildSystem/config/setCompilers.py
++++ b/config/BuildSystem/config/setCompilers.py
+@@ -1950,7 +1950,8 @@ class Configure(config.base.Configure):
+                   'invalid option','invalid suboption','bad ',' option','petsc error',
+                   'unbekannte option','linker input file unused because linking not done',
+                   'warning: // comments are not allowed in this language',
+-                  'no se reconoce la opci','non reconnue','warning: unsupported linker arg:','ignoring unknown option')
++                  'no se reconoce la opci','non reconnue','warning: unsupported linker arg:','ignoring unknown option',
++                  'warning: Use of \'-qopenmp\' recommended over \'-fopenmp\'')
+     outlo = output.lower()
+     return any(sub.lower() in outlo for sub in substrings)
+ 
+diff --git a/src/sys/objects/version.c b/src/sys/objects/version.c
+index 176da9ba1ad..9a28b765748 100644
+--- a/src/sys/objects/version.c
++++ b/src/sys/objects/version.c
+@@ -58,13 +58,12 @@ PetscErrorCode PetscGetVersionNumber(PetscInt *major, PetscInt *minor, PetscInt
+   if (release) *release = PETSC_VERSION_RELEASE;
+   return PETSC_SUCCESS;
+ }
+-#if defined(PETSC_HAVE_MKL_SET_NUM_THREADS)
++#if defined(PETSC_HAVE_BLI_THREAD_SET_NUM_THREADS)
++EXTERN_C_BEGIN
++void bli_thread_set_num_threads(int);
++EXTERN_C_END
++#elif defined(PETSC_HAVE_MKL_SET_NUM_THREADS)
+   #include <mkl.h>
+-#elif defined(PETSC_HAVE_BLI_THREAD_SET_NUM_THREADS)
+-  #pragma GCC diagnostic push
+-  #pragma GCC diagnostic ignored "-Wunused-function"
+-  #include <blis/blis.h>
+-  #pragma GCC diagnostic pop
+ #elif defined(PETSC_HAVE_OPENBLAS_SET_NUM_THREADS)
+ EXTERN_C_BEGIN
+ void openblas_set_num_threads(int);

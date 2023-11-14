@@ -75,6 +75,11 @@ endif()
 string(REPLACE ";" "; " PETSC_OPTIONS_PRINT "${PETSC_OPTIONS}")
 message(STATUS "PETSC_OPTIONS: ${PETSC_OPTIONS_PRINT}")
 
+# Fix build
+set(PETSC_PATCH_FILES
+  "${CMAKE_SOURCE_DIR}/extern/patch/petsc/patch_build.diff"
+)
+
 include(ExternalProject)
 ExternalProject_Add(petsc
   DEPENDS             ${PETSC_DEPENDENCIES}
@@ -85,6 +90,7 @@ ExternalProject_Add(petsc
   PREFIX              ${CMAKE_BINARY_DIR}/extern/petsc-cmake
   BUILD_IN_SOURCE     TRUE
   UPDATE_COMMAND      ""
+  PATCH_COMMAND       git apply "${PETSC_PATCH_FILES}"
   CONFIGURE_COMMAND   ./configure ${PETSC_OPTIONS}
   TEST_COMMAND        ${CMAKE_MAKE_PROGRAM} check  # Use auto-detected PETSC_DIR/PETSC_ARCH
   TEST_BEFORE_INSTALL TRUE

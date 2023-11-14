@@ -174,7 +174,7 @@ set(EXTERN_PETSC_GIT_BRANCH
   "Git branch for external PETSc build"
 )
 set(EXTERN_PETSC_GIT_TAG
-  "01a4aebd931b780f244a87406598026c571af919" CACHE STRING  # 08/27/2023
+  "7b506345644a939af5723216e40ffcdd7780697d" CACHE STRING  # 11/14/2023
   "Git tag for external PETSc build"
 )
 
@@ -202,7 +202,7 @@ set(EXTERN_SLEPC_GIT_BRANCH
   "Git branch for external SLEPc build"
 )
 set(EXTERN_SLEPC_GIT_TAG
-  "2f6668495ab0d84da740777486385283a890d952" CACHE STRING  # 08/27/2023
+  "228ef2b053da4df23e47def33189f7d6381cd660" CACHE STRING  # 11/14/2023
   "Git tag for external SLEPc build"
 )
 
