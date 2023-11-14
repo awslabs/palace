@@ -70,13 +70,12 @@ There are two configuration files for this problem, [`cavity_pec.json`]
 (https://github.com/awslabs/palace/blob/main/examples/cavity/cavity_impedance.json).
 
 In both, the [`config["Problem"]["Type"]`](../config/problem.md#config%5B%22Problem%22%5D)
-
 field is set to `"Eigenmode"`, and we use the mesh shown above with a single level of
 uniform mesh refinement (`"UniformLevels": 1`). The material properties for Teflon are
 entered under [`config["Domains"]["Materials"]`]
 (../config/domains.md#domains%5B%22Materials%22%5D). The
-[`config["Domains"]["Postprocessing"]["Dielectric]"`]
-(../config/domains.md#domains["Postprocessing"]["Dielectric"]) object is used to extract the
+[`config["Domains"]["Postprocessing"]["Bulk]"`]
+(../config/domains.md#domains["Postprocessing"]["Bulk"]) object is used to extract the
 quality factor due to bulk dielectric loss; in this problem since there is only one domain
 this is trivial, but in problems with multiple material domains this feature can be used to
 isolate the energy-participation ratio (EPR) and associated quality factor due to different
@@ -161,9 +160,9 @@ walls to the model:
  1.500000e+01,        +5.291624560e+00,        +1.207338551e-03,        +2.191441950e+03
 ```
 
-However, the bulk dielectric loss postprocessing results, written to
-`postpro/impedance/domain-Q.csv`, still give ``Q_d = 2.50\times 10^3`` for every mode as
-expected.
+However, the bulk dielectric loss postprocessing results, computed from the energies written
+to `postpro/impedance/domain-E.csv`, still give ``Q_d = 1/0.004 = 2.50\times 10^3`` for
+every mode as expected.
 
 Focusing on the ``\text{TE}_{011}`` mode with ``f_{\text{TE},010} = 5.00\text{ GHz}``, we
 can read the mode quality factor ``Q = 2.30\times 10^3``. Subtracting out the contribution

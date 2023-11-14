@@ -34,7 +34,7 @@
     ],
     "Postprocessing":
     {
-      "Dielectric":
+      "Bulk":
       [
         {
           "Index": 1,

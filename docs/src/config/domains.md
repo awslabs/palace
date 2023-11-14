@@ -14,7 +14,7 @@
     ],
     "Postprocessing":
     {
-        "Dielectric":
+        "Bulk":
         [
             ...
         ],
@@ -32,7 +32,7 @@ with
 
 `"Postprocessing"` :  Top-level object for configuring domain postprocessing.
 
-`"Dielectric"` :  Array of objects for postprocessing bulk dielectric loss.
+`"Bulk"` :  Array of objects for postprocessing bulk domain quantities.
 
 `"Probe"` :  Array of objects for postprocessing solution field values evaluated at a probe
 location in space.
@@ -82,12 +82,12 @@ electromagnetic fields in the material domain.
 for specification of anisotropic material properties. Required to be unit length
 and orthogonal.
 
-## `domains["Postprocessing"]["Dielectric"]`
+## `domains["Postprocessing"]["Bulk"]`
 
 ```json
 "Postprocessing":
 {
-    "Dielectric":
+    "Bulk":
     [
         {
             "Index": <int>,
@@ -100,9 +100,9 @@ and orthogonal.
 
 with
 
-`"Index" [None]` :  Index of this lossy domain, used in postprocessing output files.
+`"Index" [None]` :  Index of this bulk domain, used in postprocessing output files.
 
-`"Attributes" [None]` :  Integer array of mesh domain attributes for this lossy domain.
+`"Attributes" [None]` :  Integer array of mesh domain attributes for this bulk domain.
 
 ## `domains["Postprocessing"]["Probe"]`
 

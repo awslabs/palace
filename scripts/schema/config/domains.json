@@ -100,7 +100,7 @@
       "required": [],
       "properties":
       {
-        "Dielectric":
+        "Bulk":
         {
           "type": "array",
           "additionalItems": false,
