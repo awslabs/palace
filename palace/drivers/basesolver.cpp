@@ -588,7 +588,7 @@ void BaseSolver::PostprocessProbes(const PostOperator &postop, const std::string
       i++;
     }
     const std::string F = (f == 0) ? "E" : "B";
-    const std::string unit = (f == 0) ? "(C/m²)" : "(Wb/m²)";
+    const std::string unit = (f == 0) ? "(V/m)" : "(Wb/m²)";
     const auto type = (f == 0) ? IoData::ValueType::FIELD_E : IoData::ValueType::FIELD_B;
     if (root && !probe_data.empty())
     {

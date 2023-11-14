@@ -14,7 +14,7 @@ element parameters. In addition, each simulation type will write a file called
 as well as lumped element energies, for each step of the simulation (eigenmode, frequency,
 or time step, for examples).
 
-Models containing ports lumped or wave port boundaries or surface current excitations will
+Models containing lumped or wave port boundaries or surface current excitations will
 automatically postprocess quantities related to those boundaries. This is described in
 [Ports and surface currents](#Ports-and-surface-currents).
 
