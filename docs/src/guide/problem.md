@@ -77,7 +77,7 @@ available excitation types which define the time dependence of the pulse or exci
 waveform. These are specified under the [`config["Solver"]["Transient"]`]
 (../config/solver.md#solver["Transient"]) object using the `"Excitation"` keyword.
 
-As for the frequency domain driven case, postprocessing of quantities related to ports is
+As with the frequency domain driven case, postprocessing of quantities related to ports is
 described in the section on [Ports and surface currents]
 (postprocessing.md#Ports-and-surface-currents).
 
