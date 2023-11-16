@@ -6,7 +6,7 @@
 #
 
 # Force build order
-set(MUMPS_DEPENDENCIES scalapack metis)
+set(MUMPS_DEPENDENCIES scalapack parmetis)
 
 set(MUMPS_OPTIONS ${PALACE_SUPERBUILD_DEFAULT_ARGS})
 list(APPEND MUMPS_OPTIONS

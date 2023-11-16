@@ -192,7 +192,7 @@ message(STATUS "STRUMPACK_OPTIONS: ${STRUMPACK_OPTIONS_PRINT}")
 # Fix build
 set(STRUMPACK_PATCH_FILES
   "${CMAKE_SOURCE_DIR}/extern/patch/STRUMPACK/patch_build.diff"
-  "${CMAKE_SOURCE_DIR}/extern/patch/STRUMPACK/patch_parmetis.diff"
+  "${CMAKE_SOURCE_DIR}/extern/patch/STRUMPACK/patch_gpu_init.diff"
 )
 
 include(ExternalProject)

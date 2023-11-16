@@ -35,7 +35,6 @@ message(STATUS "SCALAPACK_OPTIONS: ${SCALAPACK_OPTIONS_PRINT}")
 # Fix build
 set(SCALAPACK_PATCH_FILES
   "${CMAKE_SOURCE_DIR}/extern/patch/scalapack/patch_build.diff"
-  "${CMAKE_SOURCE_DIR}/extern/patch/scalapack/patch_version.diff"
 )
 
 include(ExternalProject)
@@ -48,7 +47,7 @@ ExternalProject_Add(scalapack
   INSTALL_DIR       ${CMAKE_INSTALL_PREFIX}
   PREFIX            ${CMAKE_BINARY_DIR}/extern/scalapack-cmake
   UPDATE_COMMAND    ""
-  PATCH_COMMAND     git apply "${SCALAPACK_PATCH_FILES}"
+  PATCH_COMMAND     git apply "${SCALAPACK_PATCH_FILES}" && cd scalapack && git checkout master
   CONFIGURE_COMMAND ${CMAKE_COMMAND} <SOURCE_DIR> "${SCALAPACK_OPTIONS}"
   TEST_COMMAND      ""
 )
