@@ -146,7 +146,7 @@ set(EXTERN_MUMPS_GIT_BRANCH
   "Git branch for external MUMPS build"
 )
 set(EXTERN_MUMPS_GIT_TAG
-  "e7d12e84c35706433331c058c4bf00186d6b852d" CACHE STRING  # 08/23/2023
+  "1ea85fa01fd79cca8d06fefb52e0bfc2e996132f" CACHE STRING  # 11/09/2023
   "Git tag for external MUMPS build"
 )
 
@@ -188,7 +188,7 @@ set(EXTERN_SCALAPACK_GIT_BRANCH
   "Git branch for external ScaLAPACK build"
 )
 set(EXTERN_SCALAPACK_GIT_TAG
-  "c180ae76969a929a4ab7e95251cedd1f866edd48" CACHE STRING  # 07/24/2022
+  "acf286b783d53f73a42ec219ead74357e0b34501" CACHE STRING  # 11/09/2023
   "Git tag for external ScaLAPACK build"
 )
 

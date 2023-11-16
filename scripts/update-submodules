@@ -62,7 +62,7 @@ if [[ -n "$PKG_LIST" ]]; then
     GIT_URLS_TMP=""
     for PKG in $PKG_LIST; do
         PKG_URL=$(echo "$GIT_REMOTE_URLS" | grep -i $PKG)
-        GIT_URLS_TMP="$PKG_URL${GIT_URLS_TMP:+$'\n'$GIT_URLS_TMP}"
+        GIT_URLS_TMP="${GIT_URLS_TMP:+$GIT_URLS_TMP$'\n'}$PKG_URL"
     done
     GIT_REMOTE_URLS=$GIT_URLS_TMP
 fi
