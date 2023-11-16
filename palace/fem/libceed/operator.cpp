@@ -3,6 +3,7 @@
 
 #include "operator.hpp"
 
+#include <numeric>
 #include <ceed.h>
 #include <mfem/general/forall.hpp>
 #include "fem/libceed/utils.hpp"

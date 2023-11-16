@@ -77,7 +77,7 @@ private:
         int i, o, iel1, iel2;
         mesh.GetBdrElementFace(submesh.GetParentElementIDMap()[T.ElementNo], &i, &o);
         mesh.GetFaceElements(i, &iel1, &iel2);
-#ifdef MFEM_DEBUG
+#if defined(MFEM_DEBUG)
         int info1, info2, nc;
         mesh.GetFaceInfos(i, &info1, &info2, &nc);
         MFEM_VERIFY(nc == -1 && iel2 < 0 && info2 < 0,
@@ -103,7 +103,7 @@ private:
       const mfem::Mesh &mesh = *T.mesh;
       mesh.GetBdrElementFace(T.ElementNo, &i, &o);
       mesh.GetFaceElements(i, &iel1, &iel2);
-#ifdef MFEM_DEBUG
+#if defined(MFEM_DEBUG)
       int info1, info2, nc;
       mesh.GetFaceInfos(i, &info1, &info2, &nc);
       MFEM_VERIFY(nc == -1 && iel2 < 0 && info2 < 0,
