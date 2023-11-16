@@ -1,0 +1,118 @@
+#!/bin/bash
+
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+help()
+{
+    echo "Usage: baseline [OPTIONS]
+
+Re-baseline regression tests
+
+Options:
+  -h, --help                       Show this help message and exit
+  -dry-run, --dry-run              Run examples and exit without overwriting test data
+  -np, --np NUM_PROCS              How many MPI processes to use, default is 1
+  --julia COMMAND                  Executable command for julia
+  --palace COMMAND                 Executable command for palace
+"
+}
+
+# Parse arguments
+DRY_RUN=""
+NUM_PROCS=""
+JULIA="julia"
+PALACE="palace"
+POSITIONAL=()
+while [[ $# -gt 0 ]]; do
+    key="$1"
+    case $key in
+        -h|--help)
+        help
+        exit 0
+        ;;
+        -dry-run|--dry-run)
+        DRY_RUN="--dry-run"
+        shift
+        ;;
+        -np|--np)
+        NUM_PROCS="$2"
+        shift
+        shift
+        ;;
+        --julia)
+        JULIA="$2"
+        shift
+        shift
+        ;;
+        --palace)
+        PALACE="$2"
+        shift
+        shift
+        ;;
+        "-"|"--")
+        shift
+        break
+        ;;
+        *)
+        POSITIONAL+=("$1")  # Unknown option, save it in an array for later
+        shift
+        ;;
+    esac
+done
+set -- "${POSITIONAL[@]}"  # Restore positional parameters
+
+# Check arguments
+if [[ -n "$@" ]]; then
+    help
+    exit 1
+fi
+
+SCRIPT_DIR=$( cd "$(dirname "${BASH_SOURCE[0]}")" ; pwd -P )
+
+if ! command -v $JULIA &> /dev/null; then
+    echo "Error: Could not locate '$JULIA' executable"
+    exit 1
+fi
+
+if ! command -v $PALACE &> /dev/null; then
+    echo "Error: Could not locate '$PALACE' executable"
+    exit 1
+fi
+
+# Configure tests (use defaults set by runtests.jl otherwise)
+if [[ -n "$NUM_PROCS" ]]; then
+	export NUM_PROC_TEST=$NUM_PROCS
+fi
+if [[ -n "$PALACE" ]]; then
+	export PALACE_TEST=$PALACE
+fi
+
+TEST_DIRS=(
+    "spheres"
+    "rings"
+    "cavity/pec"
+    "cavity/impedance"
+    "coaxial/open"
+    "coaxial/matched"
+    "cpw/lumped_uniform"
+    "cpw/wave_uniform"
+    "cpw/lumped_adaptive"
+    "cpw/wave_adaptive"
+)
+for TEST_DIR in "${TEST_DIRS[@]}"; do
+    # Run test case
+    export TEST_CASES=$TEST_DIR
+    $JULIA $SCRIPT_DIR/runtests.jl
+    if [[ -n "$DRY_RUN" ]]; then
+        continue
+    fi
+
+    # Copy test data
+    TEST=$(echo $TEST_DIR | awk -F/ '{print $1}')
+    POSTPRO=$(echo $TEST_DIR | awk -F/ '{print $2}')
+    EXAMPLE_DIR=$SCRIPT_DIR/../../examples/$TEST/postpro/$POSTPRO
+    REF_DIR=$SCRIPT_DIR/ref/$TEST/$POSTPRO
+    rm -f $REF_DIR/*.csv
+    cp $EXAMPLE_DIR/*.csv $REF_DIR
+done

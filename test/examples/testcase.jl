@@ -86,6 +86,7 @@ function testcase(
             rename!(data, strip.(names(data)))
             rename!(dataref, strip.(names(dataref)))
 
+            @test names(data) == names(dataref)
             test = isapprox.(data, dataref; rtol=rtol, atol=atol)
             for (row, rowdataref, rowdata) in
                 zip(eachrow(test), eachrow(dataref), eachrow(data))

@@ -556,10 +556,13 @@ void IoData::NondimensionalizeInputs(mfem::ParMesh &mesh)
              Lc, tc);
 }
 
-double IoData::DimensionalizeValue(IoData::ValueType type, double v) const
+template <typename T>
+T IoData::DimensionalizeValue(IoData::ValueType type, T v) const
 {
-  // XX TODO: Add more for fields, currents, voltages, energies
-  double sf = 1.0;
+  // Characteristic reference magnetic field strength Hc² = 1 / (Zc * Lc²) A/m (with Ec =
+  // Hc Zc). Yields Pc = Hc² Zc Lc² = 1 W.
+  const T Hc = 1.0 / std::sqrt(electromagnetics::Z0_ * Lc * Lc);  // [A/m]
+  T sf = 1.0;
   switch (type)
   {
     case ValueType::TIME:
@@ -583,8 +586,34 @@ double IoData::DimensionalizeValue(IoData::ValueType type, double v) const
     case ValueType::CONDUCTIVITY:
       sf = 1.0 / (electromagnetics::Z0_ * Lc);  // [S/m]
       break;
+    case ValueType::VOLTAGE:
+      sf = Hc * electromagnetics::Z0_ * Lc;  // [V]
+      break;
+    case ValueType::CURRENT:
+      sf = Hc * Lc;  // [A]
+      break;
+    case ValueType::POWER:
+      sf = Hc * Hc * electromagnetics::Z0_ * Lc * Lc;  // [W]
+      break;
+    case ValueType::ENERGY:
+      sf = Hc * Hc * electromagnetics::Z0_ * Lc * Lc * tc;  // [J]
+      break;
+    case ValueType::FIELD_E:
+      sf = Hc * electromagnetics::Z0_;  // [V/m]
+      break;
+    case ValueType::FIELD_D:
+      sf = electromagnetics::epsilon0_ * Hc * electromagnetics::Z0_;  // [C/m²]
+      break;
+    case ValueType::FIELD_H:
+      sf = Hc;  // [A/m]
+      break;
+    case ValueType::FIELD_B:
+      sf = electromagnetics::mu0_ * Hc;  // [Wb/m²]
+      break;
   }
   return v * sf;
 }
+
+template double IoData::DimensionalizeValue(IoData::ValueType, double) const;
 
 }  // namespace palace

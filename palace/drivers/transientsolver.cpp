@@ -118,10 +118,11 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) 
                linalg::Norml2(spaceop.GetComm(), E), linalg::Norml2(spaceop.GetComm(), B));
     if (!iodata.solver.transient.only_port_post)
     {
+      const double J = iodata.DimensionalizeValue(IoData::ValueType::ENERGY, 1.0);
       E_elec = postop.GetEFieldEnergy();
       E_mag = postop.GetHFieldEnergy();
-      Mpi::Print(" Field energy E ({:.3e}) + H ({:.3e}) = {:.3e}\n", E_elec, E_mag,
-                 E_elec + E_mag);
+      Mpi::Print(" Field energy E ({:.3e} J) + H ({:.3e} J) = {:.3e} J\n", E_elec * J,
+                 E_mag * J, (E_elec + E_mag) * J);
     }
 
     // Calculate and record the error indicators.
@@ -311,7 +312,7 @@ void TransientSolver::PostprocessCurrents(const PostOperator &postop,
   for (const auto &[idx, data] : surf_j_op)
   {
     const double Iinc = data.GetExcitationCurrent() * J_coef;  // Iinc(t) = g(t) Iinc
-    j_data.push_back({idx, Iinc});
+    j_data.push_back({idx, iodata.DimensionalizeValue(IoData::ValueType::CURRENT, Iinc)});
   }
   if (root && !j_data.empty())
   {
@@ -324,7 +325,7 @@ void TransientSolver::PostprocessCurrents(const PostOperator &postop,
       {
         // clang-format off
         output.print("{:>{}s}{}",
-                     "Iinc[" + std::to_string(data.idx) + "]", table.w,
+                     "Iinc[" + std::to_string(data.idx) + "] (A)", table.w,
                      (data.idx == j_data.back().idx) ? "" : ",");
         // clang-format on
       }
@@ -366,7 +367,11 @@ void TransientSolver::PostprocessPorts(const PostOperator &postop,
         (std::abs(Vinc) > 0.0) ? data.GetExcitationPower() * J_coef * J_coef / Vinc : 0.0;
     const double Vi = postop.GetPortVoltage(lumped_port_op, idx).real();
     const double Ii = postop.GetPortCurrent(lumped_port_op, idx).real();
-    port_data.push_back({idx, data.IsExcited(), Vinc, Iinc, Vi, Ii});
+    port_data.push_back({idx, data.IsExcited(),
+                         iodata.DimensionalizeValue(IoData::ValueType::VOLTAGE, Vinc),
+                         iodata.DimensionalizeValue(IoData::ValueType::CURRENT, Iinc),
+                         iodata.DimensionalizeValue(IoData::ValueType::VOLTAGE, Vi),
+                         iodata.DimensionalizeValue(IoData::ValueType::CURRENT, Ii)});
   }
   if (root && !port_data.empty())
   {
@@ -383,7 +388,7 @@ void TransientSolver::PostprocessPorts(const PostOperator &postop,
           {
             // clang-format off
             output.print("{:>{}s},",
-                         "V_inc[" + std::to_string(data.idx) + "]", table.w);
+                         "V_inc[" + std::to_string(data.idx) + "] (V)", table.w);
             // clang-format on
           }
         }
@@ -391,7 +396,7 @@ void TransientSolver::PostprocessPorts(const PostOperator &postop,
         {
           // clang-format off
           output.print("{:>{}s}{}",
-                       "V[" + std::to_string(data.idx) + "]", table.w,
+                       "V[" + std::to_string(data.idx) + "] (V)", table.w,
                        (data.idx == port_data.back().idx) ? "" : ",");
           // clang-format on
         }
@@ -436,7 +441,7 @@ void TransientSolver::PostprocessPorts(const PostOperator &postop,
           {
             // clang-format off
             output.print("{:>{}s},",
-                         "I_inc[" + std::to_string(data.idx) + "]", table.w);
+                         "I_inc[" + std::to_string(data.idx) + "] (A)", table.w);
             // clang-format on
           }
         }
@@ -444,7 +449,7 @@ void TransientSolver::PostprocessPorts(const PostOperator &postop,
         {
           // clang-format off
           output.print("{:>{}s}{}",
-                       "I[" + std::to_string(data.idx) + "]", table.w,
+                       "I[" + std::to_string(data.idx) + "] (A)", table.w,
                        (data.idx == port_data.back().idx) ? "" : ",");
           // clang-format on
         }

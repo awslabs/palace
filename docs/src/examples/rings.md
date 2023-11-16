@@ -12,7 +12,7 @@
     source code.
 
 This example seeks to compute the inductance matrix for a system of two concentric
-current-carrying rings of radii ``r_a`` and ``r_b``, each with width ``w``. As for the
+current-carrying rings of radii ``r_a`` and ``r_b``, each with width ``w``. As with the
 previous example, the permeability of the surrounding medium is assumed to be the
 permeability of free space. The mutual inductance, ``M_{ab}``, can be easily computed for
 the case where ``r_a\ll r_b`` and ``w = 0`` using the Biot-Savart law as

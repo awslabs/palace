@@ -357,6 +357,7 @@ potential formulation:
 ```math
 \begin{aligned}
 \nabla\times(\mu_r^{-1}\nabla\times\bm{A}_i) &= 0 \,,\; \bm{x}\in\Omega \\
+\bm{n}\times\bm{A}_i &= 0 \,,\; \bm{x}\in\Gamma_{PEC} \\
 \bm{n}\times(\mu_r^{-1}\nabla\times\bm{A}_i) =
     \bm{n}\times\bm{H}_i &= \bm{J}_s^{inc} \,,\; \bm{x}\in\Gamma_i \\
 \bm{n}\times(\mu_r^{-1}\nabla\times\bm{A}_i) &= 0 \,,\; \bm{x}\in\Gamma_j \,,\; j\neq i \,.

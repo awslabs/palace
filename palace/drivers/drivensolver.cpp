@@ -187,10 +187,11 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator &
                linalg::Norml2(spaceop.GetComm(), RHS));
     if (!iodata.solver.driven.only_port_post)
     {
+      const double J = iodata.DimensionalizeValue(IoData::ValueType::ENERGY, 1.0);
       E_elec = postop.GetEFieldEnergy();
       E_mag = postop.GetHFieldEnergy();
-      Mpi::Print(" Field energy E ({:.3e}) + H ({:.3e}) = {:.3e}\n", E_elec, E_mag,
-                 E_elec + E_mag);
+      Mpi::Print(" Field energy E ({:.3e} J) + H ({:.3e} J) = {:.3e} J\n", E_elec * J,
+                 E_mag * J, (E_elec + E_mag) * J);
     }
 
     // Calculate and record the error indicators.
@@ -346,10 +347,11 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator 
     Mpi::Print(" Sol. ||E|| = {:.6e}\n", linalg::Norml2(spaceop.GetComm(), E));
     if (!iodata.solver.driven.only_port_post)
     {
+      const double J = iodata.DimensionalizeValue(IoData::ValueType::ENERGY, 1.0);
       E_elec = postop.GetEFieldEnergy();
       E_mag = postop.GetHFieldEnergy();
-      Mpi::Print(" Field energy E ({:.3e}) + H ({:.3e}) = {:.3e}\n", E_elec, E_mag,
-                 E_elec + E_mag);
+      Mpi::Print(" Field energy E ({:.3e} J) + H ({:.3e} J) = {:.3e} J\n", E_elec * J,
+                 E_mag * J, (E_elec + E_mag) * J);
     }
 
     // Postprocess S-parameters and optionally write solution to disk.
@@ -424,7 +426,7 @@ struct CurrentData
 
 struct PortVIData
 {
-  const int idx;                      // Port index
+  const int idx;                      // Lumped port index
   const bool excitation;              // Flag for excited ports
   const double Vinc, Iinc;            // Incident voltage, current
   const std::complex<double> Vi, Ii;  // Port voltage, current
@@ -452,7 +454,7 @@ void DrivenSolver::PostprocessCurrents(const PostOperator &postop,
   for (const auto &[idx, data] : surf_j_op)
   {
     const double Iinc = data.GetExcitationCurrent();
-    j_data.push_back({idx, Iinc});
+    j_data.push_back({idx, iodata.DimensionalizeValue(IoData::ValueType::CURRENT, Iinc)});
   }
   if (root && !j_data.empty())
   {
@@ -465,7 +467,7 @@ void DrivenSolver::PostprocessCurrents(const PostOperator &postop,
       {
         // clang-format off
         output.print("{:>{}s}{}",
-                     "Iinc[" + std::to_string(data.idx) + "]", table.w,
+                     "Iinc[" + std::to_string(data.idx) + "] (A)", table.w,
                      (data.idx == j_data.back().idx) ? "" : ",");
         // clang-format on
       }
@@ -506,7 +508,11 @@ void DrivenSolver::PostprocessPorts(const PostOperator &postop,
     const double Iinc = (std::abs(Vinc) > 0.0) ? data.GetExcitationPower() / Vinc : 0.0;
     const std::complex<double> Vi = postop.GetPortVoltage(lumped_port_op, idx);
     const std::complex<double> Ii = postop.GetPortCurrent(lumped_port_op, idx);
-    port_data.push_back({idx, data.IsExcited(), Vinc, Iinc, Vi, Ii});
+    port_data.push_back({idx, data.IsExcited(),
+                         iodata.DimensionalizeValue(IoData::ValueType::VOLTAGE, Vinc),
+                         iodata.DimensionalizeValue(IoData::ValueType::CURRENT, Iinc),
+                         iodata.DimensionalizeValue(IoData::ValueType::VOLTAGE, Vi),
+                         iodata.DimensionalizeValue(IoData::ValueType::CURRENT, Ii)});
   }
   if (root && !port_data.empty())
   {
@@ -523,7 +529,7 @@ void DrivenSolver::PostprocessPorts(const PostOperator &postop,
           {
             // clang-format off
             output.print("{:>{}s},",
-                         "V_inc[" + std::to_string(data.idx) + "]", table.w);
+                         "V_inc[" + std::to_string(data.idx) + "] (V)", table.w);
             // clang-format on
           }
         }
@@ -531,8 +537,8 @@ void DrivenSolver::PostprocessPorts(const PostOperator &postop,
         {
           // clang-format off
           output.print("{:>{}s},{:>{}s}{}",
-                       "Re{V[" + std::to_string(data.idx) + "]}", table.w,
-                       "Im{V[" + std::to_string(data.idx) + "]}", table.w,
+                       "Re{V[" + std::to_string(data.idx) + "]} (V)", table.w,
+                       "Im{V[" + std::to_string(data.idx) + "]} (V)", table.w,
                        (data.idx == port_data.back().idx) ? "" : ",");
           // clang-format on
         }
@@ -578,7 +584,7 @@ void DrivenSolver::PostprocessPorts(const PostOperator &postop,
           {
             // clang-format off
             output.print("{:>{}s},",
-                         "I_inc[" + std::to_string(data.idx) + "]", table.w);
+                         "I_inc[" + std::to_string(data.idx) + "] (A)", table.w);
             // clang-format on
           }
         }
@@ -586,8 +592,8 @@ void DrivenSolver::PostprocessPorts(const PostOperator &postop,
         {
           // clang-format off
           output.print("{:>{}s},{:>{}s}{}",
-                       "Re{I[" + std::to_string(data.idx) + "]}", table.w,
-                       "Im{I[" + std::to_string(data.idx) + "]}", table.w,
+                       "Re{I[" + std::to_string(data.idx) + "]} (A)", table.w,
+                       "Im{I[" + std::to_string(data.idx) + "]} (A)", table.w,
                        (data.idx == port_data.back().idx) ? "" : ",");
           // clang-format on
         }

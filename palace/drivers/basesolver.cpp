@@ -352,19 +352,23 @@ void BaseSolver::PostprocessDomains(const PostOperator &postop, const std::strin
       // clang-format off
       output.print("{:>{}s},{:>{}s},{:>{}s},{:>{}s},{:>{}s}\n",
                    name, table.w1,
-                   "E_elec", table.w,
-                   "E_mag", table.w,
-                   "E_cap", table.w,
-                   "E_ind", table.w);
+                   "E_elec (J)", table.w,
+                   "E_mag (J)", table.w,
+                   "E_cap (J)", table.w,
+                   "E_ind (J)", table.w);
       // clang-format on
     }
     // clang-format off
     output.print("{:{}.{}e},{:+{}.{}e},{:+{}.{}e},{:+{}.{}e},{:+{}.{}e}\n",
                  time, table.w1, table.p1,
-                 E_elec, table.w, table.p,
-                 E_mag, table.w, table.p,
-                 E_cap, table.w, table.p,
-                 E_ind, table.w, table.p);
+                 iodata.DimensionalizeValue(IoData::ValueType::ENERGY, E_elec),
+                 table.w, table.p,
+                 iodata.DimensionalizeValue(IoData::ValueType::ENERGY, E_mag),
+                 table.w, table.p,
+                 iodata.DimensionalizeValue(IoData::ValueType::ENERGY, E_cap),
+                 table.w, table.p,
+                 iodata.DimensionalizeValue(IoData::ValueType::ENERGY, E_ind),
+                 table.w, table.p);
     // clang-format on
   }
 
@@ -584,6 +588,8 @@ void BaseSolver::PostprocessProbes(const PostOperator &postop, const std::string
       i++;
     }
     const std::string F = (f == 0) ? "E" : "B";
+    const std::string unit = (f == 0) ? "(V/m)" : "(Wb/m²)";
+    const auto type = (f == 0) ? IoData::ValueType::FIELD_E : IoData::ValueType::FIELD_B;
     if (root && !probe_data.empty())
     {
       std::string path = post_dir + "probe-" + F + ".csv";
@@ -597,17 +603,17 @@ void BaseSolver::PostprocessProbes(const PostOperator &postop, const std::string
           {
             // clang-format off
             output.print("{:>{}s},{:>{}s},{:>{}s},{:>{}s}",
-                         "Re{" + F + "_x[" + std::to_string(data.idx) + "]}", table.w,
-                         "Im{" + F + "_x[" + std::to_string(data.idx) + "]}", table.w,
-                         "Re{" + F + "_y[" + std::to_string(data.idx) + "]}", table.w,
-                         "Im{" + F + "_y[" + std::to_string(data.idx) + "]}", table.w);
+                         "Re{" + F + "_x[" + std::to_string(data.idx) + "]} " + unit, table.w,
+                         "Im{" + F + "_x[" + std::to_string(data.idx) + "]} " + unit, table.w,
+                         "Re{" + F + "_y[" + std::to_string(data.idx) + "]} " + unit, table.w,
+                         "Im{" + F + "_y[" + std::to_string(data.idx) + "]} " + unit, table.w);
             // clang-format on
             if (dim == 3)
             {
               // clang-format off
               output.print(",{:>{}s},{:>{}s}{}",
-                           "Re{" + F + "_z[" + std::to_string(data.idx) + "]}", table.w,
-                           "Im{" + F + "_z[" + std::to_string(data.idx) + "]}", table.w,
+                           "Re{" + F + "_z[" + std::to_string(data.idx) + "]} " + unit, table.w,
+                           "Im{" + F + "_z[" + std::to_string(data.idx) + "]} " + unit, table.w,
                            (data.idx == probe_data.back().idx) ? "" : ",");
               // clang-format on
             }
@@ -626,14 +632,14 @@ void BaseSolver::PostprocessProbes(const PostOperator &postop, const std::string
           {
             // clang-format off
             output.print("{:>{}s},{:>{}s}",
-                         F + "_x[" + std::to_string(data.idx) + "]", table.w,
-                         F + "_y[" + std::to_string(data.idx) + "]", table.w);
+                         F + "_x[" + std::to_string(data.idx) + "] " + unit, table.w,
+                         F + "_y[" + std::to_string(data.idx) + "] " + unit, table.w);
             // clang-format on
             if (dim == 3)
             {
               // clang-format off
               output.print(",{:>{}s}{}",
-                           F + "_z[" + std::to_string(data.idx) + "]", table.w,
+                           F + "_z[" + std::to_string(data.idx) + "] " + unit, table.w,
                            (data.idx == probe_data.back().idx) ? "" : ",");
               // clang-format on
             }
@@ -655,17 +661,17 @@ void BaseSolver::PostprocessProbes(const PostOperator &postop, const std::string
         {
           // clang-format off
           output.print("{:+{}.{}e},{:+{}.{}e},{:+{}.{}e},{:+{}.{}e}",
-                       data.Fx.real(), table.w, table.p,
-                       data.Fx.imag(), table.w, table.p,
-                       data.Fy.real(), table.w, table.p,
-                       data.Fy.imag(), table.w, table.p);
+                       iodata.DimensionalizeValue(type, data.Fx.real()), table.w, table.p,
+                       iodata.DimensionalizeValue(type, data.Fx.imag()), table.w, table.p,
+                       iodata.DimensionalizeValue(type, data.Fy.real()), table.w, table.p,
+                       iodata.DimensionalizeValue(type, data.Fy.imag()), table.w, table.p);
           // clang-format on
           if (dim == 3)
           {
             // clang-format off
             output.print(",{:+{}.{}e},{:+{}.{}e}{}",
-                         data.Fz.real(), table.w, table.p,
-                         data.Fz.imag(), table.w, table.p,
+                         iodata.DimensionalizeValue(type, data.Fz.real()), table.w, table.p,
+                         iodata.DimensionalizeValue(type, data.Fz.imag()), table.w, table.p,
                          (data.idx == probe_data.back().idx) ? "" : ",");
             // clang-format on
           }
@@ -684,14 +690,14 @@ void BaseSolver::PostprocessProbes(const PostOperator &postop, const std::string
         {
           // clang-format off
           output.print("{:+{}.{}e},{:+{}.{}e}",
-                       data.Fx.real(), table.w, table.p,
-                       data.Fy.real(), table.w, table.p);
+                       iodata.DimensionalizeValue(type, data.Fx.real()), table.w, table.p,
+                       iodata.DimensionalizeValue(type, data.Fy.real()), table.w, table.p);
           // clang-format on
           if (dim == 3)
           {
             // clang-format off
             output.print(",{:+{}.{}e}{}",
-                         data.Fz.real(), table.w, table.p,
+                         iodata.DimensionalizeValue(type, data.Fz.real()), table.w, table.p,
                          (data.idx == probe_data.back().idx) ? "" : ",");
             // clang-format on
           }

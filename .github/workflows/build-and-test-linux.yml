@@ -106,8 +106,8 @@ jobs:
       - name: Configure Intel oneAPI compiler
         if: matrix.compiler == 'intel'
         run: |
-          sudo apt-get install -y intel-oneapi-compiler-dpcpp-cpp-2023.2.0 \
-                                  intel-oneapi-compiler-fortran-2023.2.0
+          sudo apt-get install -y intel-oneapi-compiler-dpcpp-cpp \
+                                  intel-oneapi-compiler-fortran
 
       - name: Install math libraries (OpenBLAS)
         if: matrix.math-libs == 'openblas'
