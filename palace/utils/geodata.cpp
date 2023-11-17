@@ -62,23 +62,6 @@ void GetUsedAttributeMarkers(const IoData &, int, int, mfem::Array<int> &,
 // mesh onto the root rank before scattering the partitioned mesh.
 void RebalanceConformalMesh(std::unique_ptr<mfem::ParMesh> &, double, const std::string &);
 
-struct ElementTypeInfo
-{
-  bool has_simplices;
-  bool has_tensors;
-  bool has_wedges;
-  bool has_pyramids;
-};
-
-// Simplified helper for describing the element types in a mesh.
-ElementTypeInfo CheckElements(mfem::Mesh &mesh)
-{
-  // MeshGenerator is reduced over the communicator. This checks for geometries on any
-  // processor.
-  auto meshgen = mesh.MeshGenerator();
-  return {bool(meshgen & 1), bool(meshgen & 2), bool(meshgen & 4), bool(meshgen & 8)};
-}
-
 }  // namespace
 
 namespace mesh
@@ -122,11 +105,11 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(MPI_Comm comm, const IoData &iodata, boo
   {
     // Check the the AMR specification and the mesh elements are compatible.
     const auto element_types = CheckElements(*smesh);
-    MFEM_VERIFY(!use_amr || !element_types.has_tensors || refinement.nonconformal,
+    MFEM_VERIFY(!use_amr || !element_types.has_hexahedra || refinement.nonconformal,
                 "If there are tensor elements, AMR must be nonconformal");
     MFEM_VERIFY(!use_amr || !element_types.has_pyramids || refinement.nonconformal,
                 "If there are pyramid elements, AMR must be nonconformal");
-    MFEM_VERIFY(!use_amr || !element_types.has_wedges || refinement.nonconformal,
+    MFEM_VERIFY(!use_amr || !element_types.has_prisms || refinement.nonconformal,
                 "If there are wedge elements, AMR must be nonconformal");
 
     // Generate the mesh partitioning.
@@ -437,6 +420,36 @@ void DimensionalizeMesh(mfem::Mesh &mesh, double L)
 void NondimensionalizeMesh(mfem::Mesh &mesh, double L)
 {
   ScaleMesh(mesh, 1.0 / L);
+}
+
+std::vector<mfem::Geometry::Type> ElementTypeInfo::GetGeomTypes() const
+{
+  std::vector<mfem::Geometry::Type> geom_types;
+  if (has_simplices)
+  {
+    geom_types.push_back(mfem::Geometry::TETRAHEDRON);
+  }
+  if (has_hexahedra)
+  {
+    geom_types.push_back(mfem::Geometry::CUBE);
+  }
+  if (has_prisms)
+  {
+    geom_types.push_back(mfem::Geometry::PRISM);
+  }
+  if (has_pyramids)
+  {
+    geom_types.push_back(mfem::Geometry::PYRAMID);
+  }
+  return geom_types;
+}
+
+ElementTypeInfo CheckElements(mfem::Mesh &mesh)
+{
+  // MeshGenerator is reduced over the communicator. This checks for geometries on any
+  // processor.
+  auto meshgen = mesh.MeshGenerator();
+  return {bool(meshgen & 1), bool(meshgen & 2), bool(meshgen & 4), bool(meshgen & 8)};
 }
 
 void AttrToMarker(int max_attr, const mfem::Array<int> &attrs, mfem::Array<int> &marker)

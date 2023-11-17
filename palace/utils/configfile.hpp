@@ -875,7 +875,8 @@ public:
   // Include the order of det(J) in the order of accuracy for quadrature rule selection.
   bool q_order_jac = false;
 
-  // Order of accuracy in addition to 2p + order(|J|) for quadrature rule selection.
+  // Additional quadrature order of accuracy (in addition to 2p or 2p + order(|J|)) for
+  // quadrature rule selection.
   int q_order_extra = 0;
 
   // Device used to configure MFEM.

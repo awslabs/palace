@@ -163,32 +163,13 @@ void PrintHeader(const FiniteElementSpace &h1_fespace, const FiniteElementSpace 
     const int q_order = fem::DefaultIntegrationOrder::Get(
         *h1_fespace.GetFE(0), *h1_fespace.GetFE(0), *mesh.GetElementTransformation(0));
     Mpi::Print(" Default integration order: {:d}\n Mesh geometries:\n", q_order);
-    for (int b = 0; b < 4; b++)
+    for (auto geom : mesh::CheckElements(mesh).GetGeomTypes())
     {
-      if (mesh.MeshGenerator() & (1 << b))
-      {
-        mfem::Geometry::Type geom = mfem::Geometry::INVALID;
-        switch (b)
-        {
-          case 0:
-            geom = mfem::Geometry::TETRAHEDRON;
-            break;
-          case 1:
-            geom = mfem::Geometry::CUBE;
-            break;
-          case 2:
-            geom = mfem::Geometry::PRISM;
-            break;
-          case 3:
-            geom = mfem::Geometry::PYRAMID;
-            break;
-        }
-        const auto *fe = h1_fespace.FEColl()->FiniteElementForGeometry(geom);
-        MFEM_VERIFY(fe, "MFEM does not support H1 spaces on geometry = "
-                            << mfem::Geometry::Name[geom] << "!");
-        Mpi::Print("  {}: P = {:d}, Q = {:d}\n", mfem::Geometry::Name[geom], fe->GetDof(),
-                   mfem::IntRules.Get(geom, q_order).GetNPoints());
-      }
+      const auto *fe = h1_fespace.FEColl()->FiniteElementForGeometry(geom);
+      MFEM_VERIFY(fe, "MFEM does not support H1 spaces on geometry = "
+                          << mfem::Geometry::Name[geom] << "!");
+      Mpi::Print("  {}: P = {:d}, Q = {:d}\n", mfem::Geometry::Name[geom], fe->GetDof(),
+                 mfem::IntRules.Get(geom, q_order).GetNPoints());
     }
 
     Mpi::Print("\nAssembling multigrid hierarchy:\n");

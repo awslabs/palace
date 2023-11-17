@@ -30,36 +30,11 @@ struct DefaultIntegrationOrder
   inline static int q_order_extra_qk = 0;
 
   static int Get(const mfem::FiniteElement &trial_fe, const mfem::FiniteElement &test_fe,
-                 const mfem::ElementTransformation &T)
-  {
-    return trial_fe.GetOrder() + test_fe.GetOrder() + (q_order_jac ? T.OrderW() : 0) +
-           (trial_fe.Space() == mfem::FunctionSpace::Pk ? q_order_extra_pk
-                                                        : q_order_extra_qk);
-  }
+                 const mfem::ElementTransformation &T);
 
   static int Get(const mfem::ParFiniteElementSpace &trial_fespace,
                  const mfem::ParFiniteElementSpace &test_fespace,
-                 const std::vector<int> &indices, bool use_bdr)
-  {
-    // Every process is guaranteed to have at least one element, and assumes no variable
-    // order spaces are used.
-    mfem::ParMesh &mesh = *trial_fespace.GetParMesh();
-    mfem::IsoparametricTransformation T;
-    if (use_bdr)
-    {
-      const mfem::FiniteElement &trial_fe = *trial_fespace.GetBE(indices[0]);
-      const mfem::FiniteElement &test_fe = *test_fespace.GetBE(indices[0]);
-      mesh.GetBdrElementTransformation(indices[0], &T);
-      return Get(trial_fe, test_fe, T);
-    }
-    else
-    {
-      const mfem::FiniteElement &trial_fe = *trial_fespace.GetFE(indices[0]);
-      const mfem::FiniteElement &test_fe = *test_fespace.GetFE(indices[0]);
-      mesh.GetElementTransformation(indices[0], &T);
-      return Get(trial_fe, test_fe, T);
-    }
-  }
+                 const std::vector<int> &indices, bool use_bdr);
 };
 
 }  // namespace fem
