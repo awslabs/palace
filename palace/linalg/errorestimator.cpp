@@ -194,7 +194,7 @@ ErrorIndicator CurlFluxErrorEstimator<VecType>::ComputeIndicators(const VecType 
       nd_fespace.GetElementDofs(e, dofs, dof_trans);
       Interp.SetSize(fe.GetDof(), V_ip.Size());
       Curl.SetSize(fe.GetDof(), V_ip.Size());
-      const int q_order = fem::DefaultIntegrationOrder::Get(fe, fe, T);
+      const int q_order = fem::DefaultIntegrationOrder::Get(T);
       const mfem::IntegrationRule &ir =
           mfem::IntRules.Get(mesh.GetElementGeometry(e), q_order);
 
@@ -305,7 +305,7 @@ ErrorIndicator GradFluxErrorEstimator::ComputeIndicators(const Vector &U) const
       h1d_fespace->DofsToVDofs(vdofs);
       Interp.SetSize(fe.GetDof());
       Grad.SetSize(fe.GetDof(), V_ip.Size());
-      const int q_order = fem::DefaultIntegrationOrder::Get(fe, fe, T);
+      const int q_order = fem::DefaultIntegrationOrder::Get(T);
       const mfem::IntegrationRule &ir =
           mfem::IntRules.Get(mesh.GetElementGeometry(e), q_order);
 

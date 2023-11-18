@@ -5,7 +5,11 @@
 
 #include "fem/bilinearform.hpp"
 #include "fem/integrator.hpp"
+#include "fem/libceed/basis.hpp"
+#include "fem/libceed/restriction.hpp"
+#include "fem/libceed/utils.hpp"
 #include "linalg/rap.hpp"
+#include "utils/geodata.hpp"
 #include "utils/omp.hpp"
 
 namespace palace
@@ -27,64 +31,118 @@ std::size_t FiniteElementSpace::GetId() const
   return id;
 }
 
+FiniteElementSpace::~FiniteElementSpace()
+{
+  for (auto [key, val] : basis)
+  {
+    Ceed ceed = key.first;
+    PalaceCeedCall(ceed, CeedBasisDestroy(&val));
+  }
+  basis.clear();
+  for (auto [key, val] : restr)
+  {
+    Ceed ceed = key.first;
+    PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&val));
+  }
+  restr.clear();
+  for (auto [key, val] : interp_restr)
+  {
+    Ceed ceed = key.first;
+    PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&val));
+  }
+  interp_restr.clear();
+  for (auto [key, val] : interp_range_restr)
+  {
+    Ceed ceed = key.first;
+    PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&val));
+  }
+  interp_range_restr.clear();
+}
+
+CeedBasis FiniteElementSpace::BuildCeedBasis(Ceed ceed, mfem::Geometry::Type geom) const
+{
+  // Find the appropriate integration rule for the element.
+  mfem::IsoparametricTransformation T;
+  T->SetFE(GetParMesh()->GetNodes()->FEColl()->FiniteElementForGeometry(geom));
+  const int q_order = fem::DefaultIntegrationOrder::Get(T);
+  const mfem::IntegrationRule &ir = mfem::IntRules.Get(geom, q_order);
+
+  // Build the libCEED basis.
+  const mfem::FiniteElement &fe = FEColl()->FiniteElementForGeometry(geom);
+  const int vdim = GetVDim();
+  const auto key = std::make_pair(ceed, geom);
+  CeedBasis val;
+  ceed::InitBasis(fe, ir, vdim, ceed, &val);
+  PalacePragmaOmp(critical(InitBasis))
+  {
+    basis.emplace(key, val);
+  }
+  return val;
+}
+
+CeedElemRestriction FiniteElementSpace::BuildCeedElemRestriction(
+    Ceed ceed, const std::vector<std::size_t> &indices, bool use_bdr, bool is_interp,
+    bool is_interp_range) const
+{
+  const auto geom = use_bdr ? GetParMesh()->GetBdrElementGeometry(indices[0])
+                            : GetParMesh()->GetElementGeometry(indices[0]);
+  const auto key = std::make_pair(ceed, geom);
+  CeedElementRestriction val;
+  ceed::InitRestriction(*this, indices, use_bdr, is_interp, is_interp_range, ceed, &val);
+  PalacePragmaOmp(critical(InitRestriction))
+  {
+    if (!is_interp && !is_interp_range)
+    {
+      restr.emplace(key, val);
+    }
+    else if (is_interp)
+    {
+      interp_restr.emplace(key, val);
+    }
+    else if (is_interp_range)
+    {
+      interp_range_restr.emplace(key, val);
+    }
+  }
+  return val;
+}
+
 const Operator &AuxiliaryFiniteElementSpace::BuildDiscreteInterpolator() const
 {
-  // G is always partially assembled.
+  // Allow finite element spaces to be swapped in their order (intended as deriv(aux) ->
+  // primal). G is always partially assembled.
   const int dim = GetParMesh()->Dimension();
-  const auto aux_map_type = FEColl()->GetMapType(dim);
-  const auto primal_map_type = primal_fespace.FEColl()->GetMapType(dim);
+  const bool swap =
+      (FEColl()->GetMapType(dim) == primal_fespace.FEColl()->GetDerivMapType(dim));
+  const FiniteElementSpace &trial_fespace = swap ? primal_fespace : *this;
+  const FiniteElementSpace &test_fespace = swap ? *this : primal_fespace;
+  const auto aux_map_type = trial_fespace.FEColl()->GetMapType(dim);
+  const auto primal_map_type = test_fespace.FEColl()->GetMapType(dim);
   if (aux_map_type == mfem::FiniteElement::VALUE &&
       primal_map_type == mfem::FiniteElement::H_CURL)
   {
     // Discrete gradient interpolator
-    DiscreteLinearOperator interp(*this, primal_fespace);
+    DiscreteLinearOperator interp(trial_fespace, test_fespace);
     interp.AddDomainInterpolator<GradientInterpolator>();
-    G = std::make_unique<ParOperator>(interp.PartialAssemble(), *this, primal_fespace,
-                                      true);
-  }
-  else if (primal_map_type == mfem::FiniteElement::VALUE &&
-           aux_map_type == mfem::FiniteElement::H_CURL)
-  {
-    // Discrete gradient interpolator (spaces reversed)
-    DiscreteLinearOperator interp(primal_fespace, *this);
-    interp.AddDomainInterpolator<GradientInterpolator>();
-    G = std::make_unique<ParOperator>(interp.PartialAssemble(), primal_fespace, *this,
+    G = std::make_unique<ParOperator>(interp.PartialAssemble(), trial_fespace, test_fespace,
                                       true);
   }
   else if (aux_map_type == mfem::FiniteElement::H_CURL &&
            primal_map_type == mfem::FiniteElement::H_DIV)
   {
     // Discrete curl interpolator
-    DiscreteLinearOperator interp(*this, primal_fespace);
+    DiscreteLinearOperator interp(trial_fespace, test_fespace);
     interp.AddDomainInterpolator<CurlInterpolator>();
-    G = std::make_unique<ParOperator>(interp.PartialAssemble(), *this, primal_fespace,
-                                      true);
-  }
-  else if (primal_map_type == mfem::FiniteElement::H_CURL &&
-           aux_map_type == mfem::FiniteElement::H_DIV)
-  {
-    // Discrete curl interpolator (spaces reversed)
-    DiscreteLinearOperator interp(primal_fespace, *this);
-    interp.AddDomainInterpolator<CurlInterpolator>();
-    G = std::make_unique<ParOperator>(interp.PartialAssemble(), primal_fespace, *this,
+    G = std::make_unique<ParOperator>(interp.PartialAssemble(), trial_fespace, test_fespace,
                                       true);
   }
   else if (aux_map_type == mfem::FiniteElement::H_DIV &&
            primal_map_type == mfem::FiniteElement::INTEGRAL)
   {
     // Discrete divergence interpolator
-    DiscreteLinearOperator interp(*this, primal_fespace);
+    DiscreteLinearOperator interp(trial_fespace, test_fespace);
     interp.AddDomainInterpolator<DivergenceInterpolator>();
-    G = std::make_unique<ParOperator>(interp.PartialAssemble(), *this, primal_fespace,
-                                      true);
-  }
-  else if (primal_map_type == mfem::FiniteElement::H_DIV &&
-           aux_map_type == mfem::FiniteElement::INTEGRAL)
-  {
-    // Discrete divergence interpolator (spaces reversed)
-    DiscreteLinearOperator interp(primal_fespace, *this);
-    interp.AddDomainInterpolator<DivergenceInterpolator>();
-    G = std::make_unique<ParOperator>(interp.PartialAssemble(), primal_fespace, *this,
+    G = std::make_unique<ParOperator>(interp.PartialAssemble(), trial_fespace, test_fespace,
                                       true);
   }
   else

@@ -7,6 +7,7 @@
 #include <memory>
 #include <vector>
 #include <mfem.hpp>
+#include "fem/fespace.hpp"
 #include "fem/integrator.hpp"
 #include "fem/libceed/operator.hpp"
 
@@ -22,7 +23,7 @@ class BilinearForm
 {
 protected:
   // Domain and range finite element spaces.
-  const mfem::ParFiniteElementSpace &trial_fespace, &test_fespace;
+  const FiniteElementSpace &trial_fespace, &test_fespace;
 
   // List of domain and boundary integrators making up the bilinear form.
   std::vector<std::unique_ptr<BilinearFormIntegrator>> domain_integs, boundary_integs;
@@ -32,14 +33,12 @@ public:
   inline static int pa_order_threshold = 1;
 
 public:
-  BilinearForm(const mfem::ParFiniteElementSpace &trial_fespace,
-               const mfem::ParFiniteElementSpace &test_fespace)
+  BilinearForm(const FiniteElementSpace &trial_fespace,
+               const FiniteElementSpace &test_fespace)
     : trial_fespace(trial_fespace), test_fespace(test_fespace)
   {
   }
-  BilinearForm(const mfem::ParFiniteElementSpace &fespace) : BilinearForm(fespace, fespace)
-  {
-  }
+  BilinearForm(const FiniteElementSpace &fespace) : BilinearForm(fespace, fespace) {}
 
   const auto &GetTrialSpace() const { return trial_fespace; }
   const auto &GetTestSpace() const { return test_fespace; }
@@ -100,8 +99,8 @@ private:
   BilinearForm a;
 
 public:
-  DiscreteLinearOperator(const mfem::ParFiniteElementSpace &trial_fespace,
-                         const mfem::ParFiniteElementSpace &test_fespace)
+  DiscreteLinearOperator(const FiniteElementSpace &trial_fespace,
+                         const FiniteElementSpace &test_fespace)
     : a(trial_fespace, test_fespace)
   {
   }

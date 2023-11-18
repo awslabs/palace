@@ -140,37 +140,18 @@ void SpaceOperator::CheckBoundaryProperties()
         aux_bdr_marker, aux_bdr_tdof_lists.emplace_back());
   }
 
-  // A final check that no boundary attribute is assigned multiple boundary conditions. The
-  // one exception is that a lumped port boundary attribute can be also be assigned some
-  // other condition, in which case the fact that it is a port is just used for
-  // postprocessing.
+  // A final check that no boundary attribute is assigned multiple boundary conditions.
   const auto &surf_z_marker = surf_z_op.GetMarker();
   const auto &lumped_port_marker = lumped_port_op.GetMarker();
   const auto &surf_j_marker = surf_j_op.GetMarker();
   bool first = true;
   for (int i = 0; i < dbc_marker.Size(); i++)
   {
-    if (lumped_port_marker[i])
-    {
-      if (dbc_marker[i])
-      {
-        if (first)
-        {
-          Mpi::Print("\n");
-          first = false;
-        }
-        Mpi::Warning("Lumped port boundary {:d} also marked as PEC!\nBoundary "
-                     "condition/excitation will be ignored!\n",
-                     i + 1);
-      }
-    }
-    else
-    {
-      MFEM_VERIFY(dbc_marker[i] + farfield_marker[i] + surf_sigma_marker[i] +
-                          surf_z_marker[i] + wave_port_marker[i] + surf_j_marker[i] <=
-                      1,
-                  "Boundary attributes should not be specified with multiple BC!");
-    }
+    MFEM_VERIFY(dbc_marker[i] + farfield_marker[i] + surf_sigma_marker[i] +
+                        surf_z_marker[i] + lumped_port_marker[i] + wave_port_marker[i] +
+                        surf_j_marker[i] <=
+                    1,
+                "Boundary attributes should not be specified with multiple BC!");
   }
 }
 
@@ -192,19 +173,17 @@ void PrintHeader(const FiniteElementSpace &h1_fespace, const FiniteElementSpace 
                    ? "Partial"
                    : "Full");
 
-    // Every process is guaranteed to have at least one element, and assumes no variable
-    // order spaces are used.
     mfem::ParMesh &mesh = *nd_fespace.GetParMesh();
-    const int q_order = fem::DefaultIntegrationOrder::Get(
-        *nd_fespace.GetFE(0), *nd_fespace.GetFE(0), *mesh.GetElementTransformation(0));
-    Mpi::Print(" Default integration order: {:d}\n Mesh geometries:\n", q_order);
+    Mpi::Print(" Mesh geometries:\n", q_order);
     for (auto geom : mesh::CheckElements(mesh).GetGeomTypes())
     {
       const auto *fe = nd_fespace.FEColl()->FiniteElementForGeometry(geom);
       MFEM_VERIFY(fe, "MFEM does not support ND spaces on geometry = "
                           << mfem::Geometry::Name[geom] << "!");
-      Mpi::Print("  {}: P = {:d}, Q = {:d}\n", mfem::Geometry::Name[geom], fe->GetDof(),
-                 mfem::IntRules.Get(geom, q_order).GetNPoints());
+      const int q_order = mfem::DefaultIntegrationOrder::Get(mesh, geom);
+      Mpi::Print("  {}: P = {:d}, Q = {:d} (quadrature order = {:d})\n",
+                 mfem::Geometry::Name[geom], fe->GetDof(),
+                 mfem::IntRules.Get(geom, q_order).GetNPoints(), q_order);
     }
   }
   print_hdr = false;

@@ -3,38 +3,10 @@
 
 #include "basis.hpp"
 
-#include "fem/libceed/hash.hpp"
 #include "fem/libceed/utils.hpp"
-#include "utils/omp.hpp"
 
 namespace palace::ceed
 {
-
-namespace internal
-{
-
-static std::unordered_map<BasisKey, CeedBasis, BasisHash> basis_map;
-static std::unordered_map<InterpBasisKey, CeedBasis, InterpBasisHash> interp_basis_map;
-
-void ClearBasisCache()
-{
-  for (auto [k, v] : basis_map)
-  {
-    Ceed ceed;
-    PalaceCeedCallBackend(CeedBasisGetCeed(v, &ceed));
-    PalaceCeedCall(ceed, CeedBasisDestroy(&v));
-  }
-  for (auto [k, v] : interp_basis_map)
-  {
-    Ceed ceed;
-    PalaceCeedCallBackend(CeedBasisGetCeed(v, &ceed));
-    PalaceCeedCall(ceed, CeedBasisDestroy(&v));
-  }
-  basis_map.clear();
-  interp_basis_map.clear();
-}
-
-}  // namespace internal
 
 namespace
 {
@@ -63,18 +35,16 @@ inline CeedElemTopology GetCeedTopology(mfem::Geometry::Type geom)
   }
 }
 
-void InitTensorBasis(const mfem::ParFiniteElementSpace &fespace,
-                     const mfem::FiniteElement &fe, const mfem::IntegrationRule &ir,
-                     Ceed ceed, CeedBasis *basis)
+void InitTensorBasis(const mfem::FiniteElement &fe, const mfem::IntegrationRule &ir,
+                     CeedInt ncomp, Ceed ceed, CeedBasis *basis)
 {
+  // The x-coordinates of the first `Q` points of the integration rule are the points of
+  // the corresponding 1D rule. We also scale the weights accordingly.
   const mfem::DofToQuad &maps = fe.GetDofToQuad(ir, mfem::DofToQuad::TENSOR);
   const int dim = fe.GetDim();
-  const int ncomp = fespace.GetVDim();
   const int P = maps.ndof;
   const int Q = maps.nqpt;
   mfem::Vector qX(Q), qW(Q);
-  // The x-coordinates of the first `Q` points of the integration rule are the points of
-  // the corresponding 1D rule. We also scale the weights accordingly.
   double w_sum = 0.0;
   for (int i = 0; i < Q; i++)
   {
@@ -84,18 +54,17 @@ void InitTensorBasis(const mfem::ParFiniteElementSpace &fespace,
     w_sum += ip.weight;
   }
   qW *= 1.0 / w_sum;
+
   PalaceCeedCall(ceed, CeedBasisCreateTensorH1(ceed, dim, ncomp, P, Q, maps.Bt.GetData(),
                                                maps.Gt.GetData(), qX.GetData(),
                                                qW.GetData(), basis));
 }
 
-void InitNonTensorBasis(const mfem::ParFiniteElementSpace &fespace,
-                        const mfem::FiniteElement &fe, const mfem::IntegrationRule &ir,
-                        Ceed ceed, CeedBasis *basis)
+void InitNonTensorBasis(const mfem::FiniteElement &fe, const mfem::IntegrationRule &ir,
+                        CeedInt ncomp, Ceed ceed, CeedBasis *basis)
 {
   const mfem::DofToQuad &maps = fe.GetDofToQuad(ir, mfem::DofToQuad::FULL);
   const int dim = fe.GetDim();
-  const int ncomp = fespace.GetVDim();
   const int P = maps.ndof;
   const int Q = maps.nqpt;
   mfem::DenseMatrix qX(dim, Q);
@@ -114,6 +83,7 @@ void InitNonTensorBasis(const mfem::ParFiniteElementSpace &fespace,
     }
     qW(i) = ip.weight;
   }
+
   if (fe.GetMapType() == mfem::FiniteElement::H_DIV)
   {
     PalaceCeedCall(ceed, CeedBasisCreateHdiv(ceed, GetCeedTopology(fe.GetGeomType()), ncomp,
@@ -135,40 +105,38 @@ void InitNonTensorBasis(const mfem::ParFiniteElementSpace &fespace,
   }
 }
 
-#if 0
-void InitCeedInterpolatorBasis(const mfem::ParFiniteElementSpace &trial_fespace,
-                                      const mfem::ParFiniteElementSpace &test_fespace,
-                                      const mfem::FiniteElement &trial_fe,
-                                      const mfem::FiniteElement &test_fe,
-                                      Ceed ceed,
-                                      CeedBasis *basis)
+void InitCeedInterpolatorBasis(const mfem::FiniteElement &trial_fe,
+                               const mfem::FiniteElement &test_fe, CeedInt trial_ncomp,
+                               CeedInt test_ncomp, Ceed ceed, CeedBasis *basis)
 {
-   // Basis projection operator using libCEED
-   CeedBasis trial_basis, test_basis;
-   const int P = std::max(trial_fe.GetDof(), test_fe.GetDof()), ir_order_max = 100;
-   int ir_order = std::max(trial_fe.GetOrder(), test_fe.GetOrder());
-   for (; ir_order < ir_order_max; ir_order++)
-   {
-      if (IntRules.Get(trial_fe.GetGeomType(), ir_order).GetNPoints() >= P) { break; }
-   }
-   const mfem::IntegrationRule &ir = IntRules.Get(trial_fe.GetGeomType(), ir_order);
-   InitBasis(trial_fespace, trial_fe, ir, ceed, &trial_basis);
-   InitBasis(test_fespace, test_fe, ir, ceed, &test_basis);
-   PalaceCeedCall(ceed, CeedBasisCreateProjection(trial_basis, test_basis, basis));
-}
-#endif
+  // Basis projection operator using libCEED
+  CeedBasis trial_basis, test_basis;
+  const int P = std::max(trial_fe.GetDof(), test_fe.GetDof()), ir_order_max = 100;
+  int ir_order = std::max(trial_fe.GetOrder(), test_fe.GetOrder());
+  for (; ir_order < ir_order_max; ir_order++)
+  {
+    if (IntRules.Get(trial_fe.GetGeomType(), ir_order).GetNPoints() >= P)
+    {
+      break;
+    }
+  }
+  const mfem::IntegrationRule &ir = IntRules.Get(trial_fe.GetGeomType(), ir_order);
 
-void InitMFEMInterpolatorBasis(const mfem::ParFiniteElementSpace &trial_fespace,
-                               const mfem::ParFiniteElementSpace &test_fespace,
-                               const mfem::FiniteElement &trial_fe,
-                               const mfem::FiniteElement &test_fe, Ceed ceed,
-                               CeedBasis *basis)
+  InitBasis(trial_fe, ir, trial_ncomp, ceed, &trial_basis),
+      InitBasis(test_fe, ir, test_ncomp, ceed, &test_basis);
+  PalaceCeedCall(ceed, CeedBasisCreateProjection(trial_basis, test_basis, basis));
+  PalaceCeedCall(ceed, CeedBasisDestroy(&trial_basis));
+  PalaceCeedCall(ceed, CeedBasisDestroy(&test_basis));
+}
+
+void InitMFEMInterpolatorBasis(const mfem::FiniteElement &trial_fe,
+                               const mfem::FiniteElement &test_fe, CeedInt trial_ncomp,
+                               CeedInt test_ncomp, Ceed ceed, CeedBasis *basis)
 {
-  MFEM_VERIFY(
-      trial_fespace.GetVDim() == test_fespace.GetVDim(),
-      "libCEED discrete linear operator requires same vdim for trial and test FE spaces!");
+  MFEM_VERIFY(trial_ncomp == test_ncomp && trial_ncomp == 1,
+              "libCEED discrete linear operator requires same vdim = 1 for trial and test "
+              "FE spaces!");
   const int dim = trial_fe.GetDim();
-  const int ncomp = trial_fespace.GetVDim();
   const int trial_P = trial_fe.GetDof();
   const int test_P = test_fe.GetDof();
   mfem::DenseMatrix qX(dim, test_P), Gt(trial_P, test_P * dim), Bt;
@@ -206,89 +174,50 @@ void InitMFEMInterpolatorBasis(const mfem::ParFiniteElementSpace &trial_fespace,
   Gt = 0.0;
   qX = 0.0;
   qW = 0.0;
+
   PalaceCeedCall(ceed, CeedBasisCreateH1(ceed, GetCeedTopology(trial_fe.GetGeomType()),
-                                         ncomp, trial_P, test_P, Bt.GetData(), Gt.GetData(),
-                                         qX.GetData(), qW.GetData(), basis));
+                                         trial_ncomp, trial_P, test_P, Bt.GetData(),
+                                         Gt.GetData(), qX.GetData(), qW.GetData(), basis));
 }
 
 }  // namespace
 
-void InitBasis(const mfem::ParFiniteElementSpace &fespace, const mfem::FiniteElement &fe,
-               const mfem::IntegrationRule &ir, Ceed ceed, CeedBasis *basis)
+void InitBasis(const mfem::FiniteElement &fe, const mfem::IntegrationRule &ir,
+               CeedInt ncomp, Ceed ceed, CeedBasis *basis)
 {
-  // Check for fespace -> basis in hash table.
-  internal::BasisKey key(ceed, fespace, fe, ir);
-
-  // Initialize or retrieve key values (avoid simultaneous search and write).
-  auto basis_itr = internal::basis_map.end();
-  PalacePragmaOmp(critical(InitBasis))
+  if constexpr (false)
   {
-    basis_itr = internal::basis_map.find(key);
+    std::cout << "New basis (" << ceed << ", " << &fe << ", " << &ir << ")\n";
   }
-  if (basis_itr == internal::basis_map.end())
+  const bool tensor = dynamic_cast<const mfem::TensorBasisElement *>(&fe) != nullptr;
+  const bool vector = fe.GetRangeType() == mfem::FiniteElement::VECTOR;
+  return (tensor && !vector) ? InitTensorBasis(fe, ir, ncomp, ceed)
+                             : InitNonTensorBasis(fe, ir, ncomp, ceed);
+}
+
+void InitInterpolatorBasis(const mfem::FiniteElement &trial_fe,
+                           const mfem::FiniteElement &test_fe, CeedInt trial_ncomp,
+                           CeedInt test_ncomp, Ceed ceed, CeedBasis *basis)
+{
+  if constexpr (false)
   {
-    const bool tensor = dynamic_cast<const mfem::TensorBasisElement *>(&fe) != nullptr;
-    const bool vector = fe.GetRangeType() == mfem::FiniteElement::VECTOR;
-    if (tensor && !vector)
+    std::cout << "New interpolator basis (" << ceed << ", " << &trial_fe << ", " << &test_fe
+              << ")\n";
+  }
+  if constexpr (false)
+  {
+    if (trial_fe.GetMapType() == test_fe.GetMapType())
     {
-      InitTensorBasis(fespace, fe, ir, ceed, basis);
+      InitCeedInterpolatorBasis(trial_fe, test_fe, trial_ncomp, test_ncomp, ceed, basis);
     }
     else
     {
-      InitNonTensorBasis(fespace, fe, ir, ceed, basis);
+      InitMFEMInterpolatorBasis(trial_fe, test_fe, trial_ncomp, test_ncomp, ceed, basis);
     }
-    PalacePragmaOmp(critical(InitBasis))
-    {
-      internal::basis_map[key] = *basis;
-    }
-    // std::cout << "New basis (" << ceed << ", " << &fe  << ", " << &ir << ")\n";
   }
   else
   {
-    *basis = basis_itr->second;
-    // std::cout << "Reusing basis (" << ceed << ", " << &fe  << ", " << &ir << ")\n";
-  }
-}
-
-void InitInterpolatorBasis(const mfem::ParFiniteElementSpace &trial_fespace,
-                           const mfem::ParFiniteElementSpace &test_fespace,
-                           const mfem::FiniteElement &trial_fe,
-                           const mfem::FiniteElement &test_fe, Ceed ceed, CeedBasis *basis)
-{
-  // Check for fespace -> basis in hash table.
-  internal::InterpBasisKey key(ceed, trial_fespace, test_fespace, trial_fe, test_fe);
-
-  // Initialize or retrieve key values (avoid simultaneous search and write).
-  auto basis_itr = internal::interp_basis_map.end();
-  PalacePragmaOmp(critical(InitInterpBasis))
-  {
-    basis_itr = internal::interp_basis_map.find(key);
-  }
-  if (basis_itr == internal::interp_basis_map.end())
-  {
-#if 0
-       if (trial_fe.GetMapType() == test_fe.GetMapType())
-       {
-          InitCeedInterpolatorBasis(trial_fespace, test_fespace, trial_fe, test_fe, ceed, basis);
-       }
-       else
-#endif
-    {
-      InitMFEMInterpolatorBasis(trial_fespace, test_fespace, trial_fe, test_fe, ceed,
-                                basis);
-    }
-    PalacePragmaOmp(critical(InitInterpBasis))
-    {
-      internal::interp_basis_map[key] = *basis;
-    }
-    // std::cout << "New interpolator basis (" << ceed << ", " << &trial_fe
-    //           << ", " << &test_fe << ")\n";
-  }
-  else
-  {
-    *basis = basis_itr->second;
-    // std::cout << "Reusing interpolator basis (" << ceed << ", " << &trial_fe
-    //           << ", " << &test_fe << ")\n";
+    InitMFEMInterpolatorBasis(trial_fe, test_fe, trial_ncomp, test_ncomp, ceed, basis);
   }
 }
 

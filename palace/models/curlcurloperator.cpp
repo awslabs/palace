@@ -131,19 +131,17 @@ void PrintHeader(const FiniteElementSpace &h1_fespace, const FiniteElementSpace 
                    ? "Partial"
                    : "Full");
 
-    // Every process is guaranteed to have at least one element, and assumes no variable
-    // order spaces are used.
     mfem::ParMesh &mesh = *nd_fespace.GetParMesh();
-    const int q_order = fem::DefaultIntegrationOrder::Get(
-        *nd_fespace.GetFE(0), *nd_fespace.GetFE(0), *mesh.GetElementTransformation(0));
-    Mpi::Print(" Default integration order: {:d}\n Mesh geometries:\n", q_order);
+    Mpi::Print(" Mesh geometries:\n");
     for (auto geom : mesh::CheckElements(mesh).GetGeomTypes())
     {
       const auto *fe = nd_fespace.FEColl()->FiniteElementForGeometry(geom);
       MFEM_VERIFY(fe, "MFEM does not support ND spaces on geometry = "
                           << mfem::Geometry::Name[geom] << "!");
-      Mpi::Print("  {}: P = {:d}, Q = {:d}\n", mfem::Geometry::Name[geom], fe->GetDof(),
-                 mfem::IntRules.Get(geom, q_order).GetNPoints());
+      const int q_order = mfem::DefaultIntegrationOrder::Get(mesh, geom);
+      Mpi::Print("  {}: P = {:d}, Q = {:d} (quadrature order = {:d})\n",
+                 mfem::Geometry::Name[geom], fe->GetDof(),
+                 mfem::IntRules.Get(geom, q_order).GetNPoints(), q_order);
     }
 
     Mpi::Print("\nAssembling multigrid hierarchy:\n");

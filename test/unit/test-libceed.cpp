@@ -335,7 +335,7 @@ void BenchmarkCeedIntegrator(FiniteElementSpace &fespace, T1 AssembleTest,
     // Integration rule gives the complete non-tensor number of points.
     const mfem::FiniteElement &fe = *fespace.GetFE(0);
     const mfem::ElementTransformation &T = *mesh.GetElementTransformation(0);
-    const int q_order = fem::DefaultIntegrationOrder::Get(fe, fe, T);
+    const int q_order = fem::DefaultIntegrationOrder::Get(T);
     const int Q = mfem::IntRules.Get(mesh.GetElementGeometry(0), q_order).GetNPoints();
     const int P = fe.GetDof();
 

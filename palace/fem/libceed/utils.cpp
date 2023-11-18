@@ -3,8 +3,6 @@
 
 #include "utils.hpp"
 
-#include "fem/libceed/basis.hpp"
-#include "fem/libceed/restriction.hpp"
 #include "utils/omp.hpp"
 
 #if defined(MFEM_USE_OPENMP)
@@ -63,10 +61,6 @@ void Initialize(const char *resource, const char *jit_source_dir)
 
 void Finalize()
 {
-  // Destroy global basis and element restriction caches.
-  internal::ClearBasisCache();
-  internal::ClearRestrictionCache();
-
   // Destroy Ceed context(s).
   for (std::size_t i = 0; i < internal::ceeds.size(); i++)
   {

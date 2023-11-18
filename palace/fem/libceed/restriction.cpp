@@ -3,37 +3,17 @@
 
 #include "restriction.hpp"
 
-#include "fem/fespace.hpp"
-#include "fem/libceed/hash.hpp"
+#include <mfem.hpp>
 #include "fem/libceed/utils.hpp"
-#include "utils/omp.hpp"
 
 namespace palace::ceed
 {
 
-namespace internal
-{
-
-static std::unordered_map<RestrKey, CeedElemRestriction, RestrHash> restr_map;
-
-void ClearRestrictionCache()
-{
-  for (auto [k, v] : restr_map)
-  {
-    Ceed ceed;
-    PalaceCeedCallBackend(CeedElemRestrictionGetCeed(v, &ceed));
-    PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&v));
-  }
-  restr_map.clear();
-}
-
-}  // namespace internal
-
 namespace
 {
 
-void InitLexicoRestr(const mfem::ParFiniteElementSpace &fespace,
-                     const std::vector<int> &indices, bool use_bdr, Ceed ceed,
+void InitLexicoRestr(const FiniteElementSpace &fespace,
+                     const std::vector<std::size_t> &indices, bool use_bdr, Ceed ceed,
                      CeedElemRestriction *restr)
 {
   const std::size_t ne = indices.size();
@@ -94,8 +74,8 @@ void InitLexicoRestr(const mfem::ParFiniteElementSpace &fespace,
   }
 }
 
-void InitNativeRestr(const mfem::ParFiniteElementSpace &fespace,
-                     const std::vector<int> &indices, bool use_bdr, bool has_dof_trans,
+void InitNativeRestr(const FiniteElementSpace &fespace,
+                     const std::vector<std::size_t> &indices, bool use_bdr,
                      bool is_interp_range, Ceed ceed, CeedElemRestriction *restr)
 {
   const std::size_t ne = indices.size();
@@ -111,6 +91,15 @@ void InitNativeRestr(const mfem::ParFiniteElementSpace &fespace,
   bool use_el_orients = false;
   mfem::DofTransformation dof_trans;
   mfem::Vector el_trans_j;
+  if (use_bdr)
+  {
+    fespace.GetBdrElementDofs(indices[0], dofs, dof_trans);
+  }
+  else
+  {
+    fespace.GetElementDofs(indices[0], dofs, dof_trans);
+  }
+  const bool has_dof_trans = dof_trans.GetDofTransformation() && !dof_trans.IsIdentity();
   if (!has_dof_trans)
   {
     tp_el_orients.SetSize(ne * P);
@@ -218,80 +207,30 @@ void InitNativeRestr(const mfem::ParFiniteElementSpace &fespace,
 
 }  // namespace
 
-void InitRestriction(const mfem::ParFiniteElementSpace &fespace,
-                     const std::vector<int> &indices, bool use_bdr, bool is_interp,
-                     bool is_range, Ceed ceed, CeedElemRestriction *restr)
+void InitRestriction(const FiniteElementSpace &fespace,
+                     const std::vector<std::size_t> &indices, bool use_bdr, bool is_interp,
+                     bool is_interp_range, Ceed ceed, CeedElemRestriction *restr)
 {
-  // Check for fespace -> restriction in hash table.
-  // The restriction for an interpolator range space is slightly different as
-  // the output is a primal vector instead of a dual vector, and lexicographic
-  // ordering is never used (no use of tensor-product basis).
-  // A palace::FiniteElementSpace can be checked for uniqueness so we can use this to reuse
-  // restrictions across different libCEED operators. For mixed meshes or multiple threads,
-  // the space elements are partitioned in a non-overlapping manner so we just need the
-  // index of the first element, and if it is a domain or boundary element, to determine the
-  // partition.
-  const FiniteElementSpace *restr_fespace =
-      dynamic_cast<const FiniteElementSpace *>(&fespace);
-  MFEM_VERIFY(restr_fespace, "ceed::InitRestriction requires a palace::FiniteElementSpace "
-                             "object for space comparisons!");
+  if constexpr (false)
+  {
+    std::cout << "New element restriction (" << ceed << ", " << &fespace << ", "
+              << indices[0] << ", " << use_bdr << ", " << is_interp << ", "
+              << is_interp_range << ")\n";
+  }
   const mfem::FiniteElement &fe =
       use_bdr ? *fespace.GetBE(indices[0]) : *fespace.GetFE(indices[0]);
   const mfem::TensorBasisElement *tfe = dynamic_cast<const mfem::TensorBasisElement *>(&fe);
   const bool vector = fe.GetRangeType() == mfem::FiniteElement::VECTOR;
-  mfem::Array<int> dofs;
-  mfem::DofTransformation dof_trans;
-  if (use_bdr)
+  const bool lexico = (tfe && tfe->GetDofMap().Size() > 0 && !vector && !is_interp);
+  if (lexico)
   {
-    fespace.GetBdrElementDofs(indices[0], dofs, dof_trans);
+    // Lexicographic ordering using dof_map.
+    InitLexicoRestr(fespace, indices, use_bdr, ceed, restr);
   }
   else
   {
-    fespace.GetElementDofs(indices[0], dofs, dof_trans);
-  }
-  const bool has_dof_trans = dof_trans.GetDofTransformation() && !dof_trans.IsIdentity();
-  const bool unique_interp_restr =
-      (is_interp && tfe && tfe->GetDofMap().Size() > 0 && !vector);
-  const bool unique_interp_range_restr = (is_interp && is_range && has_dof_trans);
-  internal::RestrKey key(ceed, *restr_fespace, indices[0], use_bdr, unique_interp_restr,
-                         unique_interp_range_restr);
-
-  // Initialize or retrieve key values (avoid simultaneous search and write).
-  auto restr_itr = internal::restr_map.end();
-  PalacePragmaOmp(critical(InitRestriction))
-  {
-    restr_itr = internal::restr_map.find(key);
-  }
-  if (restr_itr == internal::restr_map.end())
-  {
-    const bool lexico = (tfe && tfe->GetDofMap().Size() > 0 && !vector && !is_interp);
-    if (lexico)
-    {
-      // Lexicographic ordering using dof_map.
-      InitLexicoRestr(fespace, indices, use_bdr, ceed, restr);
-    }
-    else
-    {
-      // Native ordering.
-      InitNativeRestr(fespace, indices, use_bdr, has_dof_trans, is_interp && is_range, ceed,
-                      restr);
-    }
-    PalacePragmaOmp(critical(InitRestriction))
-    {
-      internal::restr_map[key] = *restr;
-    }
-    // std::cout << "New element restriction (" << ceed << ", " << &fespace
-    //           << ", " << indices[0] << ", " << use_bdr
-    //           << ", " << unique_interp_restr
-    //           << ", " << unique_interp_range_restr << ")\n";
-  }
-  else
-  {
-    *restr = restr_itr->second;
-    // std::cout << "Reusing element restriction (" << ceed << ", " << &fespace
-    //           << ", " << indices[0] << ", " << use_bdr << ", "
-    //           << ", " << unique_interp_restr
-    //           << ", " << unique_interp_range_restr << ")\n";
+    // Native ordering.
+    InitNativeRestr(fespace, indices, use_bdr, is_interp_range, ceed, restr);
   }
 }
 

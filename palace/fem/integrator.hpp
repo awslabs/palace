@@ -6,10 +6,7 @@
 
 #include <vector>
 #include <mfem.hpp>
-
-// Forward declarations of libCEED objects.
-typedef struct Ceed_private *Ceed;
-typedef struct CeedOperator_private *CeedOperator;
+#include "fem/libceed/ceed.hpp"
 
 namespace palace
 {
@@ -22,19 +19,15 @@ namespace fem
 {
 
 // Helper functions for creating an integration rule to exactly integrate polynomials of
-// order p_test + p_trial + order(|J|) + q_extra.
+// order 2 * p_trial + order(|J|) + q_extra.
 struct DefaultIntegrationOrder
 {
+  inline static int p_trial = 1;
   inline static bool q_order_jac = true;
   inline static int q_order_extra_pk = 0;
   inline static int q_order_extra_qk = 0;
-
-  static int Get(const mfem::FiniteElement &trial_fe, const mfem::FiniteElement &test_fe,
-                 const mfem::ElementTransformation &T);
-
-  static int Get(const mfem::ParFiniteElementSpace &trial_fespace,
-                 const mfem::ParFiniteElementSpace &test_fespace,
-                 const std::vector<int> &indices, bool use_bdr);
+  static int Get(const mfem::ElementTransformation &T);
+  static int Get(const mfem::Mesh &mesh, mfem::Geometry::Type geom);
 };
 
 }  // namespace fem
@@ -45,16 +38,21 @@ class BilinearFormIntegrator
 public:
   virtual ~BilinearFormIntegrator() = default;
 
-  virtual void Assemble(const mfem::ParFiniteElementSpace &trial_fespace,
-                        const mfem::ParFiniteElementSpace &test_fespace,
-                        const mfem::IntegrationRule &ir, const std::vector<int> &indices,
-                        Ceed ceed, CeedOperator *op, CeedOperator *op_t) = 0;
+  virtual void Assemble(CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
+                        CeedBasis trial_basis, CeedBasis test_basis, Ceed ceed,
+                        CeedOperator *op) = 0;
 
-  virtual void AssembleBoundary(const mfem::ParFiniteElementSpace &trial_fespace,
-                                const mfem::ParFiniteElementSpace &test_fespace,
-                                const mfem::IntegrationRule &ir,
-                                const std::vector<int> &indices, Ceed ceed,
-                                CeedOperator *op, CeedOperator *op_t) = 0;
+  virtual void AssembleBoundary(CeedElemRestriction trial_restr,
+                                CeedElemRestriction test_restr, CeedBasis trial_basis,
+                                CeedBasis test_basis, Ceed ceed, CeedOperator *op) = 0;
+
+  virtual void AssembleInterpolator(CeedElemRestriction trial_restr,
+                                    CeedElemRestriction test_restr, CeedBasis interp_basis,
+                                    Ceed ceed, CeedOperator *op, CeedOperator *op_t)
+  {
+    MFEM_ABORT(
+        "Interpolator assembly is not implemented for BilinearFormIntegrator objects!");
+  }
 };
 
 // Integrator for a(u, v) = (Q u, v) for H1 elements (also for vector (H1)ᵈ spaces).
@@ -71,15 +69,13 @@ public:
   MassIntegrator(mfem::VectorCoefficient &VQ) : Q(nullptr), VQ(&VQ), MQ(nullptr) {}
   MassIntegrator(mfem::MatrixCoefficient &MQ) : Q(nullptr), VQ(nullptr), MQ(&MQ) {}
 
-  void Assemble(const mfem::ParFiniteElementSpace &trial_fespace,
-                const mfem::ParFiniteElementSpace &test_fespace,
-                const mfem::IntegrationRule &ir, const std::vector<int> &indices, Ceed ceed,
-                CeedOperator *op, CeedOperator *op_t) override;
+  void Assemble(CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
+                CeedBasis trial_basis, CeedBasis test_basis, Ceed ceed,
+                CeedOperator *op) override;
 
-  void AssembleBoundary(const mfem::ParFiniteElementSpace &trial_fespace,
-                        const mfem::ParFiniteElementSpace &test_fespace,
-                        const mfem::IntegrationRule &ir, const std::vector<int> &indices,
-                        Ceed ceed, CeedOperator *op, CeedOperator *op_t) override;
+  void AssembleBoundary(CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
+                        CeedBasis trial_basis, CeedBasis test_basis, Ceed ceed,
+                        CeedOperator *op) override;
 };
 
 // Integrator for a(u, v) = (Q u, v) for vector finite elements.
@@ -96,15 +92,13 @@ public:
   VectorFEMassIntegrator(mfem::VectorCoefficient &VQ) : Q(nullptr), VQ(&VQ), MQ(nullptr) {}
   VectorFEMassIntegrator(mfem::MatrixCoefficient &MQ) : Q(nullptr), VQ(nullptr), MQ(&MQ) {}
 
-  void Assemble(const mfem::ParFiniteElementSpace &trial_fespace,
-                const mfem::ParFiniteElementSpace &test_fespace,
-                const mfem::IntegrationRule &ir, const std::vector<int> &indices, Ceed ceed,
-                CeedOperator *op, CeedOperator *op_t) override;
+  void Assemble(CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
+                CeedBasis trial_basis, CeedBasis test_basis, Ceed ceed,
+                CeedOperator *op) override;
 
-  void AssembleBoundary(const mfem::ParFiniteElementSpace &trial_fespace,
-                        const mfem::ParFiniteElementSpace &test_fespace,
-                        const mfem::IntegrationRule &ir, const std::vector<int> &indices,
-                        Ceed ceed, CeedOperator *op, CeedOperator *op_t) override;
+  void AssembleBoundary(CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
+                        CeedBasis trial_basis, CeedBasis test_basis, Ceed ceed,
+                        CeedOperator *op) override;
 };
 
 // Integrator for a(u, v) = (Q curl u, curl v) for Nedelec elements.
@@ -121,15 +115,13 @@ public:
   CurlCurlIntegrator(mfem::VectorCoefficient &VQ) : Q(nullptr), VQ(&VQ), MQ(nullptr) {}
   CurlCurlIntegrator(mfem::MatrixCoefficient &MQ) : Q(nullptr), VQ(nullptr), MQ(&MQ) {}
 
-  void Assemble(const mfem::ParFiniteElementSpace &trial_fespace,
-                const mfem::ParFiniteElementSpace &test_fespace,
-                const mfem::IntegrationRule &ir, const std::vector<int> &indices, Ceed ceed,
-                CeedOperator *op, CeedOperator *op_t) override;
+  void Assemble(CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
+                CeedBasis trial_basis, CeedBasis test_basis, Ceed ceed,
+                CeedOperator *op) override;
 
-  void AssembleBoundary(const mfem::ParFiniteElementSpace &trial_fespace,
-                        const mfem::ParFiniteElementSpace &test_fespace,
-                        const mfem::IntegrationRule &ir, const std::vector<int> &indices,
-                        Ceed ceed, CeedOperator *op, CeedOperator *op_t) override;
+  void AssembleBoundary(CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
+                        CeedBasis trial_basis, CeedBasis test_basis, Ceed ceed,
+                        CeedOperator *op) override;
 };
 
 // Integrator for a(u, v) = (Qc curl u, curl v) + (Qm u, v) for Nedelec elements.
@@ -178,15 +170,13 @@ public:
   {
   }
 
-  void Assemble(const mfem::ParFiniteElementSpace &trial_fespace,
-                const mfem::ParFiniteElementSpace &test_fespace,
-                const mfem::IntegrationRule &ir, const std::vector<int> &indices, Ceed ceed,
-                CeedOperator *op, CeedOperator *op_t) override;
+  void Assemble(CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
+                CeedBasis trial_basis, CeedBasis test_basis, Ceed ceed,
+                CeedOperator *op) override;
 
-  void AssembleBoundary(const mfem::ParFiniteElementSpace &trial_fespace,
-                        const mfem::ParFiniteElementSpace &test_fespace,
-                        const mfem::IntegrationRule &ir, const std::vector<int> &indices,
-                        Ceed ceed, CeedOperator *op, CeedOperator *op_t) override;
+  void AssembleBoundary(CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
+                        CeedBasis trial_basis, CeedBasis test_basis, Ceed ceed,
+                        CeedOperator *op) override;
 };
 
 // Integrator for a(u, v) = (Q grad u, grad v) for H1 elements.
@@ -203,15 +193,13 @@ public:
   DiffusionIntegrator(mfem::VectorCoefficient &VQ) : Q(nullptr), VQ(&VQ), MQ(nullptr) {}
   DiffusionIntegrator(mfem::MatrixCoefficient &MQ) : Q(nullptr), VQ(nullptr), MQ(&MQ) {}
 
-  void Assemble(const mfem::ParFiniteElementSpace &trial_fespace,
-                const mfem::ParFiniteElementSpace &test_fespace,
-                const mfem::IntegrationRule &ir, const std::vector<int> &indices, Ceed ceed,
-                CeedOperator *op, CeedOperator *op_t) override;
+  void Assemble(CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
+                CeedBasis trial_basis, CeedBasis test_basis, Ceed ceed,
+                CeedOperator *op) override;
 
-  void AssembleBoundary(const mfem::ParFiniteElementSpace &trial_fespace,
-                        const mfem::ParFiniteElementSpace &test_fespace,
-                        const mfem::IntegrationRule &ir, const std::vector<int> &indices,
-                        Ceed ceed, CeedOperator *op, CeedOperator *op_t) override;
+  void AssembleBoundary(CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
+                        CeedBasis trial_basis, CeedBasis test_basis, Ceed ceed,
+                        CeedOperator *op) override;
 };
 
 // Integrator for a(u, v) = (Qd grad u, grad v) + (Qm u, v) for H1 elements.
@@ -236,15 +224,13 @@ public:
   {
   }
 
-  void Assemble(const mfem::ParFiniteElementSpace &trial_fespace,
-                const mfem::ParFiniteElementSpace &test_fespace,
-                const mfem::IntegrationRule &ir, const std::vector<int> &indices, Ceed ceed,
-                CeedOperator *op, CeedOperator *op_t) override;
+  void Assemble(CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
+                CeedBasis trial_basis, CeedBasis test_basis, Ceed ceed,
+                CeedOperator *op) override;
 
-  void AssembleBoundary(const mfem::ParFiniteElementSpace &trial_fespace,
-                        const mfem::ParFiniteElementSpace &test_fespace,
-                        const mfem::IntegrationRule &ir, const std::vector<int> &indices,
-                        Ceed ceed, CeedOperator *op, CeedOperator *op_t) override;
+  void AssembleBoundary(CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
+                        CeedBasis trial_basis, CeedBasis test_basis, Ceed ceed,
+                        CeedOperator *op) override;
 };
 
 // Integrator for a(u, v) = (Q div u, div v) for Raviart-Thomas elements.
@@ -257,15 +243,13 @@ public:
   DivDivIntegrator() : Q(nullptr) {}
   DivDivIntegrator(mfem::Coefficient &Q) : Q(&Q) {}
 
-  void Assemble(const mfem::ParFiniteElementSpace &trial_fespace,
-                const mfem::ParFiniteElementSpace &test_fespace,
-                const mfem::IntegrationRule &ir, const std::vector<int> &indices, Ceed ceed,
-                CeedOperator *op, CeedOperator *op_t) override;
+  void Assemble(CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
+                CeedBasis trial_basis, CeedBasis test_basis, Ceed ceed,
+                CeedOperator *op) override;
 
-  void AssembleBoundary(const mfem::ParFiniteElementSpace &trial_fespace,
-                        const mfem::ParFiniteElementSpace &test_fespace,
-                        const mfem::IntegrationRule &ir, const std::vector<int> &indices,
-                        Ceed ceed, CeedOperator *op, CeedOperator *op_t) override;
+  void AssembleBoundary(CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
+                        CeedBasis trial_basis, CeedBasis test_basis, Ceed ceed,
+                        CeedOperator *op) override;
 };
 
 // Integrator for a(u, v) = (Qd div u, div v) + (Qm u, v) for Raviart-Thomas elements.
@@ -290,15 +274,13 @@ public:
   {
   }
 
-  void Assemble(const mfem::ParFiniteElementSpace &trial_fespace,
-                const mfem::ParFiniteElementSpace &test_fespace,
-                const mfem::IntegrationRule &ir, const std::vector<int> &indices, Ceed ceed,
-                CeedOperator *op, CeedOperator *op_t) override;
+  void Assemble(CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
+                CeedBasis trial_basis, CeedBasis test_basis, Ceed ceed,
+                CeedOperator *op) override;
 
-  void AssembleBoundary(const mfem::ParFiniteElementSpace &trial_fespace,
-                        const mfem::ParFiniteElementSpace &test_fespace,
-                        const mfem::IntegrationRule &ir, const std::vector<int> &indices,
-                        Ceed ceed, CeedOperator *op, CeedOperator *op_t) override;
+  void AssembleBoundary(CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
+                        CeedBasis trial_basis, CeedBasis test_basis, Ceed ceed,
+                        CeedOperator *op) override;
 };
 
 // Integrator for a(u, v) = (Q grad u, v) for u in H1 and v in H(curl).
@@ -321,15 +303,13 @@ public:
   {
   }
 
-  void Assemble(const mfem::ParFiniteElementSpace &trial_fespace,
-                const mfem::ParFiniteElementSpace &test_fespace,
-                const mfem::IntegrationRule &ir, const std::vector<int> &indices, Ceed ceed,
-                CeedOperator *op, CeedOperator *op_t) override;
+  void Assemble(CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
+                CeedBasis trial_basis, CeedBasis test_basis, Ceed ceed,
+                CeedOperator *op) override;
 
-  void AssembleBoundary(const mfem::ParFiniteElementSpace &trial_fespace,
-                        const mfem::ParFiniteElementSpace &test_fespace,
-                        const mfem::IntegrationRule &ir, const std::vector<int> &indices,
-                        Ceed ceed, CeedOperator *op, CeedOperator *op_t) override;
+  void AssembleBoundary(CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
+                        CeedBasis trial_basis, CeedBasis test_basis, Ceed ceed,
+                        CeedOperator *op) override;
 };
 
 // Integrator for a(u, v) = -(Q u, grad v) for u in H(curl) and v in H1.
@@ -355,15 +335,13 @@ public:
   {
   }
 
-  void Assemble(const mfem::ParFiniteElementSpace &trial_fespace,
-                const mfem::ParFiniteElementSpace &test_fespace,
-                const mfem::IntegrationRule &ir, const std::vector<int> &indices, Ceed ceed,
-                CeedOperator *op, CeedOperator *op_t) override;
+  void Assemble(CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
+                CeedBasis trial_basis, CeedBasis test_basis, Ceed ceed,
+                CeedOperator *op) override;
 
-  void AssembleBoundary(const mfem::ParFiniteElementSpace &trial_fespace,
-                        const mfem::ParFiniteElementSpace &test_fespace,
-                        const mfem::IntegrationRule &ir, const std::vector<int> &indices,
-                        Ceed ceed, CeedOperator *op, CeedOperator *op_t) override;
+  void AssembleBoundary(CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
+                        CeedBasis trial_basis, CeedBasis test_basis, Ceed ceed,
+                        CeedOperator *op) override;
 };
 
 // Integrator for a(u, v) = (Q curl u, v) for u in H(curl) and v in H(div).
@@ -384,15 +362,13 @@ public:
   {
   }
 
-  void Assemble(const mfem::ParFiniteElementSpace &trial_fespace,
-                const mfem::ParFiniteElementSpace &test_fespace,
-                const mfem::IntegrationRule &ir, const std::vector<int> &indices, Ceed ceed,
-                CeedOperator *op, CeedOperator *op_t) override;
+  void Assemble(CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
+                CeedBasis trial_basis, CeedBasis test_basis, Ceed ceed,
+                CeedOperator *op) override;
 
-  void AssembleBoundary(const mfem::ParFiniteElementSpace &trial_fespace,
-                        const mfem::ParFiniteElementSpace &test_fespace,
-                        const mfem::IntegrationRule &ir, const std::vector<int> &indices,
-                        Ceed ceed, CeedOperator *op, CeedOperator *op_t) override;
+  void AssembleBoundary(CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
+                        CeedBasis trial_basis, CeedBasis test_basis, Ceed ceed,
+                        CeedOperator *op) override;
 };
 
 // Integrator for a(u, v) = (Q u, curl v) for u in H(div) and v in H(curl).
@@ -415,15 +391,13 @@ public:
   {
   }
 
-  void Assemble(const mfem::ParFiniteElementSpace &trial_fespace,
-                const mfem::ParFiniteElementSpace &test_fespace,
-                const mfem::IntegrationRule &ir, const std::vector<int> &indices, Ceed ceed,
-                CeedOperator *op, CeedOperator *op_t) override;
+  void Assemble(CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
+                CeedBasis trial_basis, CeedBasis test_basis, Ceed ceed,
+                CeedOperator *op) override;
 
-  void AssembleBoundary(const mfem::ParFiniteElementSpace &trial_fespace,
-                        const mfem::ParFiniteElementSpace &test_fespace,
-                        const mfem::IntegrationRule &ir, const std::vector<int> &indices,
-                        Ceed ceed, CeedOperator *op, CeedOperator *op_t) override;
+  void AssembleBoundary(CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
+                        CeedBasis trial_basis, CeedBasis test_basis, Ceed ceed,
+                        CeedOperator *op) override;
 };
 
 // Integrator for a(u, v) = (Q grad u, v) for u in H1 and v in (H1)ᵈ.
@@ -440,32 +414,36 @@ public:
   GradientIntegrator(mfem::VectorCoefficient &VQ) : Q(nullptr), VQ(&VQ), MQ(nullptr) {}
   GradientIntegrator(mfem::MatrixCoefficient &MQ) : Q(nullptr), VQ(nullptr), MQ(&MQ) {}
 
-  void Assemble(const mfem::ParFiniteElementSpace &trial_fespace,
-                const mfem::ParFiniteElementSpace &test_fespace,
-                const mfem::IntegrationRule &ir, const std::vector<int> &indices, Ceed ceed,
-                CeedOperator *op, CeedOperator *op_t) override;
+  void Assemble(CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
+                CeedBasis trial_basis, CeedBasis test_basis, Ceed ceed,
+                CeedOperator *op) override;
 
-  void AssembleBoundary(const mfem::ParFiniteElementSpace &trial_fespace,
-                        const mfem::ParFiniteElementSpace &test_fespace,
-                        const mfem::IntegrationRule &ir, const std::vector<int> &indices,
-                        Ceed ceed, CeedOperator *op, CeedOperator *op_t) override;
+  void AssembleBoundary(CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
+                        CeedBasis trial_basis, CeedBasis test_basis, Ceed ceed,
+                        CeedOperator *op) override;
 };
 
 // Base class for all discrete interpolators.
 class DiscreteInterpolator : public BilinearFormIntegrator
 {
 public:
-  void Assemble(const mfem::ParFiniteElementSpace &trial_fespace,
-                const mfem::ParFiniteElementSpace &test_fespace,
-                const mfem::IntegrationRule &ir, const std::vector<int> &indices, Ceed ceed,
-                CeedOperator *op, CeedOperator *op_t) override;
+  void AssembleInterpolator(CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
+                            CeedBasis interp_basis, Ceed ceed, CeedOperator *op,
+                            CeedOperator *op_t) override;
 
-  void AssembleBoundary(const mfem::ParFiniteElementSpace &trial_fespace,
-                        const mfem::ParFiniteElementSpace &test_fespace,
-                        const mfem::IntegrationRule &ir, const std::vector<int> &indices,
-                        Ceed ceed, CeedOperator *op, CeedOperator *op_t) override
+  void Assemble(CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
+                CeedBasis trial_basis, CeedBasis test_basis, Ceed ceed,
+                CeedOperator *op) override
   {
-    MFEM_ABORT("Boundary assembly is not implemented for DiscreteInterpolator objects!");
+    MFEM_ABORT("Integrator assembly is not implemented for DiscreteInterpolator objects!");
+  }
+
+  void AssembleBoundary(CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
+                        CeedBasis trial_basis, CeedBasis test_basis, Ceed ceed,
+                        CeedOperator *op) override
+  {
+    MFEM_ABORT("Boundary integrator assembly is not implemented for DiscreteInterpolator "
+               "objects!");
   }
 };
 
