@@ -257,14 +257,14 @@ public:
   void SetUp(json &domains);
 };
 
-struct DomainBulkData
+struct DomainEnergyData
 {
 public:
-  // List of domain attributes for this bulk postprocessing index.
+  // List of domain attributes for this domain postprocessing index.
   std::vector<int> attributes = {};
 };
 
-struct DomainBulkPostData : public internal::DataMap<DomainBulkData>
+struct DomainEnergyPostData : public internal::DataMap<DomainEnergyData>
 {
 public:
   void SetUp(json &postpro);
@@ -292,7 +292,7 @@ public:
   std::set<int> attributes = {};
 
   // Domain postprocessing objects.
-  DomainBulkPostData bulk;
+  DomainEnergyPostData energy;
   ProbePostData probe;
 
   void SetUp(json &domains);

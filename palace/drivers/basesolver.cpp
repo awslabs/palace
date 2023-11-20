@@ -304,7 +304,7 @@ void BaseSolver::SaveMetadata(const Timer &timer) const
 namespace
 {
 
-struct BulkData
+struct EnergyData
 {
   const int idx;        // Domain or interface index
   const double E_elec;  // Electric field energy
@@ -350,15 +350,15 @@ void BaseSolver::PostprocessDomains(const PostOperator &postop, const std::strin
   }
 
   // Write the field and lumped element energies.
-  std::vector<BulkData> bulk_data;
-  bulk_data.reserve(postop.GetDomainPostOp().GetBulkDomains().size());
-  for (const auto &[idx, data] : postop.GetDomainPostOp().GetBulkDomains())
+  std::vector<EnergyData> energy_data;
+  energy_data.reserve(postop.GetDomainPostOp().GetDomains().size());
+  for (const auto &[idx, data] : postop.GetDomainPostOp().GetDomains())
   {
     const double E_elec_i = postop.GetEFieldEnergy(idx);
     const double E_mag_i = postop.GetHFieldEnergy(idx);
-    bulk_data.push_back({idx,
-                         iodata.DimensionalizeValue(IoData::ValueType::ENERGY, E_elec_i),
-                         iodata.DimensionalizeValue(IoData::ValueType::ENERGY, E_mag_i)});
+    energy_data.push_back({idx,
+                           iodata.DimensionalizeValue(IoData::ValueType::ENERGY, E_elec_i),
+                           iodata.DimensionalizeValue(IoData::ValueType::ENERGY, E_mag_i)});
   }
   if (root)
   {
@@ -373,15 +373,15 @@ void BaseSolver::PostprocessDomains(const PostOperator &postop, const std::strin
                    "E_mag (J)", table.w,
                    "E_cap (J)", table.w,
                    "E_ind (J)", table.w,
-                   bulk_data.empty() ? "" : ",");
+                   energy_data.empty() ? "" : ",");
       // clang-format on
-      for (const auto &data : bulk_data)
+      for (const auto &data : energy_data)
       {
         // clang-format off
         output.print("{:>{}s},{:>{}s}{}",
                      "E_elec[" + std::to_string(data.idx) + "] (J)", table.w,
                      "E_mag[" + std::to_string(data.idx) + "] (J)", table.w,
-                     (data.idx == bulk_data.back().idx) ? "" : ",");
+                     (data.idx == energy_data.back().idx) ? "" : ",");
         // clang-format on
       }
       output.print("\n");
@@ -397,15 +397,15 @@ void BaseSolver::PostprocessDomains(const PostOperator &postop, const std::strin
                  table.w, table.p,
                  iodata.DimensionalizeValue(IoData::ValueType::ENERGY, E_ind),
                  table.w, table.p,
-                 bulk_data.empty() ? "" : ",");
+                 energy_data.empty() ? "" : ",");
     // clang-format on
-    for (const auto &data : bulk_data)
+    for (const auto &data : energy_data)
     {
       // clang-format off
       output.print("{:+{}.{}e},{:+{}.{}e}{}",
                    data.E_elec, table.w, table.p,
                    data.E_mag, table.w, table.p,
-                   (data.idx == bulk_data.back().idx) ? "" : ",");
+                   (data.idx == energy_data.back().idx) ? "" : ",");
       // clang-format on
     }
     output.print("\n");

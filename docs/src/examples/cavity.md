@@ -74,7 +74,7 @@ field is set to `"Eigenmode"`, and we use the mesh shown above with a single lev
 uniform mesh refinement (`"UniformLevels": 1`). The material properties for Teflon are
 entered under [`config["Domains"]["Materials"]`]
 (../config/domains.md#domains%5B%22Materials%22%5D). The
-[`config["Domains"]["Postprocessing"]["Bulk]"`]
+[`config["Domains"]["Postprocessing"]["Energy]"`]
 (../config/domains.md#domains["Postprocessing"]["Energy"]) object is used to extract the
 quality factor due to bulk dielectric loss; in this problem since there is only one domain
 this is trivial, but in problems with multiple material domains this feature can be used to

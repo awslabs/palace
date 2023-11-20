@@ -32,7 +32,7 @@ with
 
 `"Postprocessing"` :  Top-level object for configuring domain postprocessing.
 
-`"Energy"` :  Array of objects for postprocessing bulk domain quantities.
+`"Energy"` :  Array of objects for postprocessing domain energies.
 
 `"Probe"` :  Array of objects for postprocessing solution field values evaluated at a probe
 location in space.
@@ -100,9 +100,11 @@ and orthogonal.
 
 with
 
-`"Index" [None]` :  Index of this bulk domain, used in postprocessing output files.
+`"Index" [None]` :  Index of this energy postprocessing domain, used in postprocessing
+output files.
 
-`"Attributes" [None]` :  Integer array of mesh domain attributes for this bulk domain.
+`"Attributes" [None]` :  Integer array of mesh domain attributes for this energy
+postprocessing domain.
 
 ## `domains["Postprocessing"]["Probe"]`
 

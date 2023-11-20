@@ -54,7 +54,7 @@ Domain postprocessing capabilities are enabled by including objects under
 These include:
 
   - [`config["Domains"]["Postprocessing"]["Energy"]`]
-    (../config/domains.md#domains["Postprocessing"]["Energy"]) :  Postprocessess the bulk
+    (../config/domains.md#domains["Postprocessing"]["Energy"]) :  Postprocessess the
     electric and magnetic field energy inside of a given domain (associated with the
     specified domain attributes and indexed by the specified integer `"Index"`). These are
     from the electric and magnetic field solutions and written to the same `domain-E.csv`

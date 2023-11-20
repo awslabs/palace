@@ -91,7 +91,7 @@ public:
   SurfacePostOperator(const IoData &iodata, const MaterialOperator &mat_op,
                       mfem::ParFiniteElementSpace &h1_fespace);
 
-  // Access data structures for the postprocessing the surface with the given type.
+  // Access data structures for postprocessing the surface with the given type.
   const auto &GetEps() const { return eps_surfs; }
   const auto &GetCap() const { return charge_surfs; }
   const auto &GetInd() const { return flux_surfs; }

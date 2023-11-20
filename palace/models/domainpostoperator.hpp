@@ -34,16 +34,17 @@ public:
                      const mfem::ParFiniteElementSpace *nd_fespace,
                      const mfem::ParFiniteElementSpace *rt_fespace);
 
-  // Access data structures for the postprocessing the domain with the given type.
-  const auto &GetBulkDomains() const { return M_i; }
+  // Access data structures for postprocessing domains.
+  const auto &GetDomains() const { return M_i; }
 
-  // Get volume integrals computing the electric or magnetic field energy in the domain.
+  // Get volume integrals computing the electric or magnetic field energy in the entire
+  // domain.
   double GetElectricFieldEnergy(const mfem::ParComplexGridFunction &E) const;
   double GetElectricFieldEnergy(const mfem::ParGridFunction &E) const;
   double GetMagneticFieldEnergy(const mfem::ParComplexGridFunction &B) const;
   double GetMagneticFieldEnergy(const mfem::ParGridFunction &B) const;
 
-  // Get volume integrals for bulk electric or magnetic field energy in a portion of the
+  // Get volume integrals for the electric or magnetic field energy in a portion of the
   // domain.
   double GetDomainElectricFieldEnergy(int idx, const mfem::ParComplexGridFunction &E) const;
   double GetDomainElectricFieldEnergy(int idx, const mfem::ParGridFunction &E) const;

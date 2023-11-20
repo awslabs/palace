@@ -525,7 +525,7 @@ void DomainMaterialData::SetUp(json &domains)
   }
 }
 
-void DomainBulkPostData::SetUp(json &postpro)
+void DomainEnergyPostData::SetUp(json &postpro)
 {
   auto energy = postpro.find("Energy");
   if (energy == postpro.end())
@@ -540,10 +540,10 @@ void DomainBulkPostData::SetUp(json &postpro)
                 "Missing \"Energy\" domain \"Index\" in configuration file!");
     MFEM_VERIFY(it->find("Attributes") != it->end(),
                 "Missing \"Attributes\" list for \"Energy\" domain in configuration file!");
-    auto ret = mapdata.insert(std::make_pair(it->at("Index"), DomainBulkData()));
+    auto ret = mapdata.insert(std::make_pair(it->at("Index"), DomainEnergyData()));
     MFEM_VERIFY(ret.second, "Repeated \"Index\" found when processing \"Energy\" domains "
                             "in configuration file!");
-    DomainBulkData &data = ret.first->second;
+    DomainEnergyData &data = ret.first->second;
     data.attributes = it->at("Attributes").get<std::vector<int>>();  // Required
 
     // Debug
@@ -608,11 +608,11 @@ void DomainPostData::SetUp(json &domains)
   {
     return;
   }
-  bulk.SetUp(*postpro);
+  energy.SetUp(*postpro);
   probe.SetUp(*postpro);
 
   // Store all unique postprocessing domain attributes.
-  for (const auto &[idx, data] : bulk)
+  for (const auto &[idx, data] : energy)
   {
     attributes.insert(data.attributes.begin(), data.attributes.end());
   }

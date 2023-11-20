@@ -50,7 +50,7 @@ DomainPostOperator::DomainPostOperator(const IoData &iodata, const MaterialOpera
   // magnetic field energy in specific regions of the domain.
   const auto &mesh = nd_fespace ? *nd_fespace->GetParMesh() : *rt_fespace->GetParMesh();
   int attr_max = mesh.attributes.Max();
-  for (const auto &[idx, data] : iodata.domains.postpro.bulk)
+  for (const auto &[idx, data] : iodata.domains.postpro.energy)
   {
     mfem::Array<int> attr_marker(attr_max);
     attr_marker = 0;
@@ -149,7 +149,7 @@ double DomainPostOperator::GetDomainElectricFieldEnergy(
   // Compute the electric field energy integral for only a portion of the domain.
   auto it = M_i.find(idx);
   MFEM_VERIFY(it != M_i.end() && it->second.first,
-              "Invalid domain index when postprocessing bulk electric field energy!");
+              "Invalid domain index when postprocessing domain electric field energy!");
   if (!it->second.first)
   {
     return 0.0;
@@ -168,7 +168,7 @@ DomainPostOperator::GetDomainElectricFieldEnergy(int idx,
 {
   auto it = M_i.find(idx);
   MFEM_VERIFY(it != M_i.end() && it->second.first,
-              "Invalid domain index when postprocessing bulk electric field energy!");
+              "Invalid domain index when postprocessing domain electric field energy!");
   if (!it->second.first)
   {
     return 0.0;
@@ -185,7 +185,7 @@ double DomainPostOperator::GetDomainMagneticFieldEnergy(
   // Compute the magnetic field energy integral for only a portion of the domain.
   auto it = M_i.find(idx);
   MFEM_VERIFY(it != M_i.end(),
-              "Invalid domain index when postprocessing bulk magnetic field energy!");
+              "Invalid domain index when postprocessing domain magnetic field energy!");
   if (!it->second.second)
   {
     return 0.0;
@@ -204,7 +204,7 @@ DomainPostOperator::GetDomainMagneticFieldEnergy(int idx,
 {
   auto it = M_i.find(idx);
   MFEM_VERIFY(it != M_i.end() && it->second.second,
-              "Invalid domain index when postprocessing bulk magnetic field energy!");
+              "Invalid domain index when postprocessing domain magnetic field energy!");
   if (!it->second.second)
   {
     return 0.0;
