@@ -100,7 +100,7 @@
       "required": [],
       "properties":
       {
-        "Bulk":
+        "Energy":
         {
           "type": "array",
           "additionalItems": false,

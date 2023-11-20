@@ -14,7 +14,7 @@
     ],
     "Postprocessing":
     {
-        "Bulk":
+        "Energy":
         [
             ...
         ],
@@ -32,7 +32,7 @@ with
 
 `"Postprocessing"` :  Top-level object for configuring domain postprocessing.
 
-`"Bulk"` :  Array of objects for postprocessing bulk domain quantities.
+`"Energy"` :  Array of objects for postprocessing bulk domain quantities.
 
 `"Probe"` :  Array of objects for postprocessing solution field values evaluated at a probe
 location in space.
@@ -82,12 +82,12 @@ electromagnetic fields in the material domain.
 for specification of anisotropic material properties. Required to be unit length
 and orthogonal.
 
-## `domains["Postprocessing"]["Bulk"]`
+## `domains["Postprocessing"]["Energy"]`
 
 ```json
 "Postprocessing":
 {
-    "Bulk":
+    "Energy":
     [
         {
             "Index": <int>,

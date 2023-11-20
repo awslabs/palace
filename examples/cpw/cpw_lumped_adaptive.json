@@ -34,7 +34,7 @@
     ],
     "Postprocessing":
     {
-      "Bulk":
+      "Energy":
       [
         {
           "Index": 1,

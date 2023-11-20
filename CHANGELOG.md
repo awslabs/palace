@@ -48,7 +48,7 @@ The format of this changelog is based on
   - Added dimensionalized output for energies, voltages, currents, and field values based on
     a choice of the characteristic magnetic field strength used for nondimensionalization.
   - Added output of electric and magnetic field energies in regions of the domain, specified
-    with `config["Domains"]["Postprocessing"]["Bulk"]` and written to `domain-E.csv`. This
+    with `config["Domains"]["Postprocessing"]["Energy"]` and written to `domain-E.csv`. This
     replaces `config["Domains"]["Postprocessing"]["Dielectric"]` and `domain-Q.csv`.
   - Fixed bugs for simulations using tetrahedral meshes associated with unexpected mesh
     toplogy changes during parallel mesh construction.

@@ -485,7 +485,7 @@ void ModelData::SetUp(json &config)
   // std::cout << "RemoveCurvature: " << remove_curvature << '\n';
 }
 
-void MaterialDomainData::SetUp(json &domains)
+void DomainMaterialData::SetUp(json &domains)
 {
   auto materials = domains.find("Materials");
   MFEM_VERIFY(materials != domains.end() && materials->is_array(),
@@ -527,23 +527,22 @@ void MaterialDomainData::SetUp(json &domains)
 
 void DomainBulkPostData::SetUp(json &postpro)
 {
-  auto bulk = postpro.find("Bulk");
-  if (bulk == postpro.end())
+  auto energy = postpro.find("Energy");
+  if (energy == postpro.end())
   {
     return;
   }
-  MFEM_VERIFY(bulk->is_array(),
-              "\"Bulk\" should specify an array in the configuration file!");
-  for (auto it = bulk->begin(); it != bulk->end(); ++it)
+  MFEM_VERIFY(energy->is_array(),
+              "\"Energy\" should specify an array in the configuration file!");
+  for (auto it = energy->begin(); it != energy->end(); ++it)
   {
     MFEM_VERIFY(it->find("Index") != it->end(),
-                "Missing \"Bulk\" domain \"Index\" in configuration file!");
+                "Missing \"Energy\" domain \"Index\" in configuration file!");
     MFEM_VERIFY(it->find("Attributes") != it->end(),
-                "Missing \"Attributes\" list for \"Bulk\" domain in configuration file!");
+                "Missing \"Attributes\" list for \"Energy\" domain in configuration file!");
     auto ret = mapdata.insert(std::make_pair(it->at("Index"), DomainBulkData()));
-    MFEM_VERIFY(
-        ret.second,
-        "Repeated \"Index\" found when processing \"Bulk\" domains in configuration file!");
+    MFEM_VERIFY(ret.second, "Repeated \"Index\" found when processing \"Energy\" domains "
+                            "in configuration file!");
     DomainBulkData &data = ret.first->second;
     data.attributes = it->at("Attributes").get<std::vector<int>>();  // Required
 
@@ -555,7 +554,7 @@ void DomainBulkPostData::SetUp(json &postpro)
     it->erase("Index");
     it->erase("Attributes");
     MFEM_VERIFY(it->empty(),
-                "Found an unsupported configuration file keyword under \"Bulk\"!\n"
+                "Found an unsupported configuration file keyword under \"Energy\"!\n"
                     << it->dump(2));
   }
 }
@@ -619,7 +618,7 @@ void DomainPostData::SetUp(json &domains)
   }
 
   // Cleanup
-  postpro->erase("Bulk");
+  postpro->erase("Energy");
   postpro->erase("Probe");
   MFEM_VERIFY(postpro->empty(),
               "Found an unsupported configuration file keyword under \"Postprocessing\"!\n"

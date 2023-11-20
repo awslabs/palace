@@ -251,7 +251,7 @@ public:
   std::vector<int> attributes = {};
 };
 
-struct MaterialDomainData : public internal::DataVector<MaterialData>
+struct DomainMaterialData : public internal::DataVector<MaterialData>
 {
 public:
   void SetUp(json &domains);
@@ -305,7 +305,7 @@ public:
   std::set<int> attributes = {};
 
   // Domain objects.
-  MaterialDomainData materials = {};
+  DomainMaterialData materials = {};
   DomainPostData postpro = {};
 
   void SetUp(json &config);

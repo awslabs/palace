@@ -75,7 +75,7 @@ uniform mesh refinement (`"UniformLevels": 1`). The material properties for Tefl
 entered under [`config["Domains"]["Materials"]`]
 (../config/domains.md#domains%5B%22Materials%22%5D). The
 [`config["Domains"]["Postprocessing"]["Bulk]"`]
-(../config/domains.md#domains["Postprocessing"]["Bulk"]) object is used to extract the
+(../config/domains.md#domains["Postprocessing"]["Energy"]) object is used to extract the
 quality factor due to bulk dielectric loss; in this problem since there is only one domain
 this is trivial, but in problems with multiple material domains this feature can be used to
 isolate the energy-participation ratio (EPR) and associated quality factor due to different
