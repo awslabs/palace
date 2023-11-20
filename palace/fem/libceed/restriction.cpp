@@ -175,7 +175,7 @@ void InitNativeRestr(const mfem::ParFiniteElementSpace &fespace,
           tp_el_curl_orients[3 * (j + 1 + P * i) + 0] =
               static_cast<int8_t>(sign_j * el_trans_j(j + 1));
         }
-#ifdef MFEM_DEBUG
+#if defined(MFEM_DEBUG)
         int nnz = 0;
         for (int k = 0; k < P; k++)
         {

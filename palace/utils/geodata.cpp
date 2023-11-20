@@ -7,10 +7,12 @@
 #include <array>
 #include <limits>
 #include <map>
+#include <numeric>
 #include <sstream>
 #include <string>
 #include <Eigen/Dense>
 #include "utils/communication.hpp"
+#include "utils/diagnostic.hpp"
 #include "utils/filesystem.hpp"
 #include "utils/iodata.hpp"
 #include "utils/meshio.hpp"
@@ -227,10 +229,10 @@ void RefineMesh(const IoData &iodata, std::vector<std::unique_ptr<mfem::ParMesh>
   // refinement.
   if (iodata.model.reorient_tet && mesh.capacity() > 1)
   {
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+    PalacePragmaDiagnosticPush
+    PalacePragmaDiagnosticDisableDeprecated
     mesh[0]->ReorientTetMesh();
-#pragma GCC diagnostic pop
+    PalacePragmaDiagnosticPop
   }
 
   // Uniformly refine the mesh further in parallel, saving the level meshes for geometric
@@ -371,10 +373,10 @@ void RefineMesh(const IoData &iodata, std::vector<std::unique_ptr<mfem::ParMesh>
   // h-refinement geometric multigrid).
   if (iodata.model.reorient_tet && mesh.size() == 1)
   {
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+    PalacePragmaDiagnosticPush
+    PalacePragmaDiagnosticDisableDeprecated
     mesh[0]->ReorientTetMesh();
-#pragma GCC diagnostic pop
+    PalacePragmaDiagnosticPop
   }
 
   // Print some mesh information.

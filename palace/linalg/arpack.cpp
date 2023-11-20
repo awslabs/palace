@@ -5,11 +5,6 @@
 
 #if defined(PALACE_WITH_ARPACK)
 
-#if defined(__GNUC__) && defined(__clang__)
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wc99-extensions"
-#endif
-
 #include <algorithm>
 #include <string>
 #include <mfem.hpp>
@@ -828,9 +823,5 @@ void ArpackPEPSolver::ExtractEigenvector(std::complex<double> l,
 }
 
 }  // namespace palace::arpack
-
-#if defined(__GNUC__) && defined(__clang__)
-#pragma GCC diagnostic pop
-#endif
 
 #endif
