@@ -24,30 +24,32 @@ class DomainPostOperator
 private:
   // Bilinear forms for computing field energy integrals over domains.
   std::unique_ptr<Operator> M_ND, M_RT;
-  std::map<int, std::pair<std::unique_ptr<Operator>, std::unique_ptr<Operator>>> M_NDi;
+  std::map<int, std::pair<std::unique_ptr<Operator>, std::unique_ptr<Operator>>> M_i;
 
   // Temporary vectors for inner product calculations.
-  mutable mfem::Vector D, H;
+  mutable Vector D, H;
 
 public:
   DomainPostOperator(const IoData &iodata, const MaterialOperator &mat_op,
                      const mfem::ParFiniteElementSpace *nd_fespace,
                      const mfem::ParFiniteElementSpace *rt_fespace);
 
-  // Access underlying bulk loss postprocessing data structures (for keys).
-  const auto &GetEps() const { return M_NDi; }
-  auto SizeEps() const { return M_NDi.size(); }
+  // Access data structures for postprocessing domains.
+  const auto &GetDomains() const { return M_i; }
 
-  // Get volume integrals computing bulk electric or magnetic field energy.
+  // Get volume integrals computing the electric or magnetic field energy in the entire
+  // domain.
   double GetElectricFieldEnergy(const mfem::ParComplexGridFunction &E) const;
   double GetElectricFieldEnergy(const mfem::ParGridFunction &E) const;
   double GetMagneticFieldEnergy(const mfem::ParComplexGridFunction &B) const;
   double GetMagneticFieldEnergy(const mfem::ParGridFunction &B) const;
+
+  // Get volume integrals for the electric or magnetic field energy in a portion of the
+  // domain.
   double GetDomainElectricFieldEnergy(int idx, const mfem::ParComplexGridFunction &E) const;
   double GetDomainElectricFieldEnergy(int idx, const mfem::ParGridFunction &E) const;
-  double GetDomainElectricFieldEnergyLoss(int idx,
-                                          const mfem::ParComplexGridFunction &E) const;
-  double GetDomainElectricFieldEnergyLoss(int idx, const mfem::ParGridFunction &E) const;
+  double GetDomainMagneticFieldEnergy(int idx, const mfem::ParComplexGridFunction &E) const;
+  double GetDomainMagneticFieldEnergy(int idx, const mfem::ParGridFunction &E) const;
 };
 
 }  // namespace palace

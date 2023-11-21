@@ -53,13 +53,13 @@ Domain postprocessing capabilities are enabled by including objects under
 [`config["Domains"]["Postprocessing"]`](../config/domains.md) in the configuration file.
 These include:
 
-  - [`config["Domains"]["Postprocessing"]["Dielectric"]`]
-    (../config/domains.md#domains["Postprocessing"]["Dielectric"]) :  Postprocessess bulk
-    dielectric loss based on the participation ratio of the electric field in a lossy
-    region. The respective participation ratios and quality factors for each domain
-    (associated with the specified domain attributes and indexed by the specified integer
-    `"Index"`) are computed using the material properties provided and are written to
-    `domain-Q.csv` in the specified postprocessing output directory.
+  - [`config["Domains"]["Postprocessing"]["Energy"]`]
+    (../config/domains.md#domains["Postprocessing"]["Energy"]) :  Postprocessess the
+    electric and magnetic field energy inside of a given domain (associated with the
+    specified domain attributes and indexed by the specified integer `"Index"`). These are
+    from the electric and magnetic field solutions and written to the same `domain-E.csv`
+    file in the specified postprocessing output directory used for the global energies
+    (described above).
   - [`config["Domains"]["Postprocessing"]["Probe"]`]
     (../config/domains.md#domains["Postprocessing"]["Probe"]) :  Probe the values of the
     computed electric field and magnetic flux density solutions at specified locations in

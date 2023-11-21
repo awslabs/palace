@@ -273,11 +273,6 @@ void IoData::CheckConfiguration()
   }
   else if (problem.type == config::ProblemData::Type::MAGNETOSTATIC)
   {
-    if (!domains.postpro.dielectric.empty())
-    {
-      Mpi::Warning("Magnetostatic problem type does not support domain bulk dielectric "
-                   "loss postprocessing!\n");
-    }
     if (!boundaries.farfield.empty())
     {
       Mpi::Warning(

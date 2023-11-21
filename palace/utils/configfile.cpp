@@ -485,7 +485,7 @@ void ModelData::SetUp(json &config)
   // std::cout << "RemoveCurvature: " << remove_curvature << '\n';
 }
 
-void MaterialDomainData::SetUp(json &domains)
+void DomainMaterialData::SetUp(json &domains)
 {
   auto materials = domains.find("Materials");
   MFEM_VERIFY(materials != domains.end() && materials->is_array(),
@@ -525,26 +525,25 @@ void MaterialDomainData::SetUp(json &domains)
   }
 }
 
-void DomainDielectricPostData::SetUp(json &postpro)
+void DomainEnergyPostData::SetUp(json &postpro)
 {
-  auto dielectric = postpro.find("Dielectric");
-  if (dielectric == postpro.end())
+  auto energy = postpro.find("Energy");
+  if (energy == postpro.end())
   {
     return;
   }
-  MFEM_VERIFY(dielectric->is_array(),
-              "\"Dielectric\" should specify an array in the configuration file!");
-  for (auto it = dielectric->begin(); it != dielectric->end(); ++it)
+  MFEM_VERIFY(energy->is_array(),
+              "\"Energy\" should specify an array in the configuration file!");
+  for (auto it = energy->begin(); it != energy->end(); ++it)
   {
     MFEM_VERIFY(it->find("Index") != it->end(),
-                "Missing \"Dielectric\" domain \"Index\" in configuration file!");
-    MFEM_VERIFY(
-        it->find("Attributes") != it->end(),
-        "Missing \"Attributes\" list for \"Dielectric\" domain in configuration file!");
-    auto ret = mapdata.insert(std::make_pair(it->at("Index"), DomainDielectricData()));
-    MFEM_VERIFY(ret.second, "Repeated \"Index\" found when processing \"Dielectric\" "
-                            "domains in configuration file!");
-    DomainDielectricData &data = ret.first->second;
+                "Missing \"Energy\" domain \"Index\" in configuration file!");
+    MFEM_VERIFY(it->find("Attributes") != it->end(),
+                "Missing \"Attributes\" list for \"Energy\" domain in configuration file!");
+    auto ret = mapdata.insert(std::make_pair(it->at("Index"), DomainEnergyData()));
+    MFEM_VERIFY(ret.second, "Repeated \"Index\" found when processing \"Energy\" domains "
+                            "in configuration file!");
+    DomainEnergyData &data = ret.first->second;
     data.attributes = it->at("Attributes").get<std::vector<int>>();  // Required
 
     // Debug
@@ -555,7 +554,7 @@ void DomainDielectricPostData::SetUp(json &postpro)
     it->erase("Index");
     it->erase("Attributes");
     MFEM_VERIFY(it->empty(),
-                "Found an unsupported configuration file keyword under \"Dielectric\"!\n"
+                "Found an unsupported configuration file keyword under \"Energy\"!\n"
                     << it->dump(2));
   }
 }
@@ -609,17 +608,17 @@ void DomainPostData::SetUp(json &domains)
   {
     return;
   }
-  dielectric.SetUp(*postpro);
+  energy.SetUp(*postpro);
   probe.SetUp(*postpro);
 
   // Store all unique postprocessing domain attributes.
-  for (const auto &[idx, data] : dielectric)
+  for (const auto &[idx, data] : energy)
   {
     attributes.insert(data.attributes.begin(), data.attributes.end());
   }
 
   // Cleanup
-  postpro->erase("Dielectric");
+  postpro->erase("Energy");
   postpro->erase("Probe");
   MFEM_VERIFY(postpro->empty(),
               "Found an unsupported configuration file keyword under \"Postprocessing\"!\n"
