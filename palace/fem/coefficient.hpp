@@ -22,6 +22,9 @@ namespace palace
 // comm on shared faces after a call to ExchangeFaceNbrData.
 //
 
+// XX TODO REVISIT ALL OF MaterialPropertyCoefficient, Sum*Coefficient AND
+// *WrappedCoefficient
+
 enum class MaterialPropertyType
 {
   INV_PERMEABILITY,
@@ -117,8 +120,8 @@ private:
   }
 
 public:
-  MaterialPropertyCoefficient(const MaterialOperator &op, double c = 1.0)
-    : mfem::MatrixCoefficient(op.SpaceDimension()), mat_op(op), coef(c)
+  MaterialPropertyCoefficient(const MaterialOperator &mat_op, double c = 1.0)
+    : mfem::MatrixCoefficient(mat_op.SpaceDimension()), mat_op(mat_op), coef(c)
   {
   }
 
@@ -212,11 +215,12 @@ private:
   mfem::Vector C1, W, VU, VL, nor;
 
 public:
-  BdrCurrentVectorCoefficient(const mfem::ParGridFunction &gf, const MaterialOperator &op)
+  BdrCurrentVectorCoefficient(const mfem::ParGridFunction &gf,
+                              const MaterialOperator &mat_op)
     : mfem::VectorCoefficient(gf.ParFESpace()->GetParMesh()->SpaceDimension()),
       BdrGridFunctionCoefficient(*gf.ParFESpace()->GetParMesh(),
-                                 op.GetLocalToSharedFaceMap()),
-      B(gf), mat_op(op), C1(gf.VectorDim()), W(gf.VectorDim()), VU(gf.VectorDim()),
+                                 mat_op.GetLocalToSharedFaceMap()),
+      B(gf), mat_op(mat_op), C1(gf.VectorDim()), W(gf.VectorDim()), VU(gf.VectorDim()),
       VL(gf.VectorDim()), nor(gf.VectorDim())
   {
   }
@@ -270,10 +274,10 @@ private:
   mfem::Vector C1, W, VU, VL, nor;
 
 public:
-  BdrChargeCoefficient(const mfem::ParGridFunction &gf, const MaterialOperator &op)
+  BdrChargeCoefficient(const mfem::ParGridFunction &gf, const MaterialOperator &mat_op)
     : mfem::Coefficient(), BdrGridFunctionCoefficient(*gf.ParFESpace()->GetParMesh(),
-                                                      op.GetLocalToSharedFaceMap()),
-      E(gf), mat_op(op), C1(gf.VectorDim()), W(gf.VectorDim()), VU(gf.VectorDim()),
+                                                      mat_op.GetLocalToSharedFaceMap()),
+      E(gf), mat_op(mat_op), C1(gf.VectorDim()), W(gf.VectorDim()), VU(gf.VectorDim()),
       VL(gf.VectorDim()), nor(gf.VectorDim())
   {
   }
@@ -408,11 +412,11 @@ private:
 
 public:
   DielectricInterfaceCoefficient(const mfem::ParGridFunction &gf,
-                                 const MaterialOperator &op, double ti, double ei,
+                                 const MaterialOperator &mat_op, double ti, double ei,
                                  mfem::Vector s)
     : mfem::Coefficient(), BdrGridFunctionCoefficient(*gf.ParFESpace()->GetParMesh(),
-                                                      op.GetLocalToSharedFaceMap()),
-      E(gf), mat_op(op), ts(ti), epsilon(ei), side(std::move(s)), C1(gf.VectorDim()),
+                                                      mat_op.GetLocalToSharedFaceMap()),
+      E(gf), mat_op(mat_op), ts(ti), epsilon(ei), side(std::move(s)), C1(gf.VectorDim()),
       V(gf.VectorDim()), nor(gf.VectorDim())
   {
   }
@@ -498,10 +502,10 @@ private:
                                const mfem::IntegrationPoint &ip, int attr);
 
 public:
-  EnergyDensityCoefficient(const GridFunctionType &gf, const MaterialOperator &op)
+  EnergyDensityCoefficient(const GridFunctionType &gf, const MaterialOperator &mat_op)
     : mfem::Coefficient(), BdrGridFunctionCoefficient(*gf.ParFESpace()->GetParMesh(),
-                                                      op.GetLocalToSharedFaceMap()),
-      U(gf), mat_op(op), V(gf.ParFESpace()->GetParMesh()->SpaceDimension())
+                                                      mat_op.GetLocalToSharedFaceMap()),
+      U(gf), mat_op(mat_op), V(gf.ParFESpace()->GetParMesh()->SpaceDimension())
   {
   }
 
@@ -591,11 +595,11 @@ private:
   const MaterialOperator &mat_op;
 
 public:
-  BdrFieldVectorCoefficient(const mfem::ParGridFunction &gf, const MaterialOperator &op)
+  BdrFieldVectorCoefficient(const mfem::ParGridFunction &gf, const MaterialOperator &mat_op)
     : mfem::VectorCoefficient(gf.ParFESpace()->GetParMesh()->SpaceDimension()),
       BdrGridFunctionCoefficient(*gf.ParFESpace()->GetParMesh(),
-                                 op.GetLocalToSharedFaceMap()),
-      U(gf), mat_op(op)
+                                 mat_op.GetLocalToSharedFaceMap()),
+      U(gf), mat_op(mat_op)
   {
   }
 
@@ -627,10 +631,10 @@ private:
   const MaterialOperator &mat_op;
 
 public:
-  BdrFieldCoefficient(const mfem::ParGridFunction &gf, const MaterialOperator &op)
+  BdrFieldCoefficient(const mfem::ParGridFunction &gf, const MaterialOperator &mat_op)
     : mfem::Coefficient(), BdrGridFunctionCoefficient(*gf.ParFESpace()->GetParMesh(),
-                                                      op.GetLocalToSharedFaceMap()),
-      U(gf), mat_op(op)
+                                                      mat_op.GetLocalToSharedFaceMap()),
+      U(gf), mat_op(mat_op)
   {
   }
 

@@ -30,6 +30,10 @@ protected:
   std::vector<DataType> vecdata = {};
 
 public:
+  [[nodiscard]] const auto &operator[](int i) const { return vecdata[i]; }
+  [[nodiscard]] auto &operator[](int i) { return vecdata[i]; }
+  [[nodiscard]] const auto &at(int i) const { return vecdata.at(i); }
+  [[nodiscard]] auto &at(int i) { return vecdata.at(i); }
   [[nodiscard]] auto size() const { return vecdata.size(); }
   [[nodiscard]] auto empty() const { return vecdata.empty(); }
   [[nodiscard]] auto begin() const { return vecdata.begin(); }
@@ -50,7 +54,9 @@ protected:
   std::map<int, DataType> mapdata = {};
 
 public:
+  [[nodiscard]] const auto &operator[](int i) const { return mapdata[i]; }
   [[nodiscard]] auto &operator[](int i) { return mapdata[i]; }
+  [[nodiscard]] const auto &at(int i) const { return mapdata.at(i); }
   [[nodiscard]] auto &at(int i) { return mapdata.at(i); }
   [[nodiscard]] auto size() const { return mapdata.size(); }
   [[nodiscard]] auto empty() const { return mapdata.empty(); }

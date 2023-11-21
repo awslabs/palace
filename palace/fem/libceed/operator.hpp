@@ -7,10 +7,7 @@
 #include <memory>
 #include <vector>
 #include <mfem.hpp>
-
-// Forward declarations of libCEED objects.
-typedef struct CeedOperator_private *CeedOperator;
-typedef struct CeedVector_private *CeedVector;
+#include "fem/libceed/ceed.hpp"
 
 namespace palace
 {

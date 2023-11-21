@@ -6,9 +6,12 @@
 #include <cmath>
 #include <functional>
 #include <limits>
+#include "fem/libceed/integrator.hpp"
+#include "fem/libceed/utils.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
+#include "utils/omp.hpp"
 
 namespace palace
 {
@@ -282,6 +285,27 @@ mfem::DenseMatrix ToDenseMatrix(const config::SymmetricMatrixData<N> &data)
 MaterialOperator::MaterialOperator(const IoData &iodata, mfem::ParMesh &mesh)
 {
   SetUpMaterialProperties(iodata, mesh);
+
+  // Compute data for partially-assembled libCEED integrators.
+  SetUpElementIndices(mesh);
+  SetUpGeomFactorData(mesh);
+}
+
+MaterialOperator::~MaterialOperator()
+{
+  // Cleanup libCEED objects.
+  for (auto &[key, val] : geom_data)
+  {
+    Ceed ceed = key.first;
+    PalaceCeedCall(ceed, CeedVectorDestroy(&val.wdetJ_vec));
+    PalaceCeedCall(ceed, CeedVectorDestroy(&val.J_vec));
+    PalaceCeedCall(ceed, CeedVectorDestroy(&val.adjJt_vec));
+    PalaceCeedCall(ceed, CeedVectorDestroy(&val.attr_vec));
+    PalaceCeedCall(ceed, CeedElemRestriction(&val.wdetJ_restr));
+    PalaceCeedCall(ceed, CeedElemRestriction(&val.J_restr));
+    PalaceCeedCall(ceed, CeedElemRestriction(&val.adjJt_restr));
+    PalaceCeedCall(ceed, CeedElemRestriction(&val.attr_restr));
+  }
 }
 
 void MaterialOperator::SetUpMaterialProperties(const IoData &iodata, mfem::ParMesh &mesh)
@@ -309,22 +333,25 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata, mfem::ParMe
     }
   }
 
-  // Set up material properties of the different domain regions, represented with piece-wise
-  // constant matrix-valued coefficients for the relative permeability and permittivity,
+  // Set up material properties of the different domain regions, represented with element-
+  // wise constant matrix-valued coefficients for the relative permeability, permittivity,
   // and other material properties.
   const int sdim = mesh.SpaceDimension();
-  mat_muinv.resize(attr_max, mfem::DenseMatrix(sdim));
-  mat_epsilon.resize(attr_max, mfem::DenseMatrix(sdim));
-  mat_epsilon_imag.resize(attr_max, mfem::DenseMatrix(sdim));
-  mat_epsilon_abs.resize(attr_max, mfem::DenseMatrix(sdim));
-  mat_invz0.resize(attr_max, mfem::DenseMatrix(sdim));
-  mat_c0.resize(attr_max, mfem::DenseMatrix(sdim));
-  mat_sigma.resize(attr_max, mfem::DenseMatrix(sdim));
-  mat_invLondon.resize(attr_max, mfem::DenseMatrix(sdim));
-  mat_c0_min.resize(attr_max, 0.0);
-  mat_c0_max.resize(attr_max, 0.0);
-  for (const auto &data : iodata.domains.materials)
+  const std::size_t nmats = iodata.domains.materials.size();
+  mat_idx.resize(attr_max, -1);
+  mat_muinv.resize(nmats, mfem::DenseMatrix(sdim));
+  mat_epsilon.resize(nmats, mfem::DenseMatrix(sdim));
+  mat_epsilon_imag.resize(nmats, mfem::DenseMatrix(sdim));
+  mat_epsilon_abs.resize(nmats, mfem::DenseMatrix(sdim));
+  mat_invz0.resize(nmats, mfem::DenseMatrix(sdim));
+  mat_c0.resize(nmats, mfem::DenseMatrix(sdim));
+  mat_sigma.resize(nmats, mfem::DenseMatrix(sdim));
+  mat_invLondon.resize(nmats, mfem::DenseMatrix(sdim));
+  mat_c0_min.resize(nmats, 0.0);
+  mat_c0_max.resize(nmats, 0.0);
+  for (std::size_t i = 0; i < nmats; i++)
   {
+    const auto &data = iodata.domains.materials[i];
     if (iodata.problem.type == config::ProblemData::Type::ELECTROSTATIC)
     {
       MFEM_VERIFY(IsValid(data.epsilon_r), "Material has no valid permittivity defined!");
@@ -362,51 +389,54 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata, mfem::ParMe
                     "electrical conductivity!");
       }
     }
+
+    // Map all attributes to this material.
     for (auto attr : data.attributes)
     {
       MFEM_VERIFY(
-          mat_c0_min.at(attr - 1) == 0.0 && mat_c0_max.at(attr - 1) == 0.0,
+          mat_idx[attr - 1] == -1,
           "Detected multiple definitions of material properties for domain attribute "
               << attr << "!");
-
-      // Compute the inverse of the input permeability matrix.
-      mfem::DenseMatrix mu_r = ToDenseMatrix(data.mu_r);
-      mfem::DenseMatrixInverse(mu_r, true).GetInverseMatrix(mat_muinv.at(attr - 1));
-
-      // Material permittivity: Im{ε} = - ε * tan(δ)
-      mfem::DenseMatrix T(sdim, sdim);
-      mat_epsilon.at(attr - 1) = ToDenseMatrix(data.epsilon_r);
-      Mult(mat_epsilon.at(attr - 1), ToDenseMatrix(data.tandelta), T);
-      T *= -1.0;
-      mat_epsilon_imag.at(attr - 1) = T;
-
-      // ε * √(I + tan(δ) * tan(δ)ᵀ)
-      MultAAt(ToDenseMatrix(data.tandelta), T);
-      for (int i = 0; i < T.Height(); i++)
-      {
-        T(i, i) += 1.0;
-      }
-      Mult(mat_epsilon.at(attr - 1), MatrixSqrt(T), mat_epsilon_abs.at(attr - 1));
-
-      // √μ⁻¹ ε
-      Mult(mat_muinv.at(attr - 1), mat_epsilon.at(attr - 1), mat_invz0.at(attr - 1));
-      mat_invz0.at(attr - 1) = MatrixSqrt(mat_invz0.at(attr - 1));
-
-      // (√μ ε)⁻¹
-      mfem::DenseMatrixInverse(mat_epsilon.at(attr - 1), true).GetInverseMatrix(T);
-      Mult(mat_muinv.at(attr - 1), T, mat_c0.at(attr - 1));
-      mat_c0.at(attr - 1) = MatrixSqrt(mat_c0.at(attr - 1));
-      mat_c0_min.at(attr - 1) = mat_c0.at(attr - 1).CalcSingularvalue(sdim - 1);
-      mat_c0_max.at(attr - 1) = mat_c0.at(attr - 1).CalcSingularvalue(0);
-
-      // Electrical conductivity, σ
-      mat_sigma.at(attr - 1) = ToDenseMatrix(data.sigma);
-
-      // λ⁻² * μ⁻¹
-      mat_invLondon.at(attr - 1) = mat_muinv.at(attr - 1);
-      mat_invLondon.at(attr - 1) *=
-          std::abs(data.lambda_L) > 0.0 ? std::pow(data.lambda_L, -2.0) : 0.0;
+      mat_idx[attr - 1] = i;
     }
+
+    // Compute the inverse of the input permeability matrix.
+    mfem::DenseMatrix mu_r = ToDenseMatrix(data.mu_r);
+    mfem::DenseMatrixInverse(mu_r, true).GetInverseMatrix(mat_muinv.at(i));
+
+    // Material permittivity: Im{ε} = - ε * tan(δ)
+    mfem::DenseMatrix T(sdim, sdim);
+    mat_epsilon.at(i) = ToDenseMatrix(data.epsilon_r);
+    Mult(mat_epsilon.at(i), ToDenseMatrix(data.tandelta), T);
+    T *= -1.0;
+    mat_epsilon_imag.at(i) = T;
+
+    // ε * √(I + tan(δ) * tan(δ)ᵀ)
+    MultAAt(ToDenseMatrix(data.tandelta), T);
+    for (int i = 0; i < T.Height(); i++)
+    {
+      T(i, i) += 1.0;
+    }
+    Mult(mat_epsilon.at(i), MatrixSqrt(T), mat_epsilon_abs.at(i));
+
+    // √μ⁻¹ ε
+    Mult(mat_muinv.at(i), mat_epsilon.at(i), mat_invz0.at(i));
+    mat_invz0.at(i) = MatrixSqrt(mat_invz0.at(i));
+
+    // (√μ ε)⁻¹
+    mfem::DenseMatrixInverse(mat_epsilon.at(i), true).GetInverseMatrix(T);
+    Mult(mat_muinv.at(i), T, mat_c0.at(i));
+    mat_c0.at(i) = MatrixSqrt(mat_c0.at(i));
+    mat_c0_min.at(i) = mat_c0.at(i).CalcSingularvalue(sdim - 1);
+    mat_c0_max.at(i) = mat_c0.at(i).CalcSingularvalue(0);
+
+    // Electrical conductivity, σ
+    mat_sigma.at(i) = ToDenseMatrix(data.sigma);
+
+    // λ⁻² * μ⁻¹
+    mat_invLondon.at(i) = mat_muinv.at(i);
+    mat_invLondon.at(i) *=
+        std::abs(data.lambda_L) > 0.0 ? std::pow(data.lambda_L, -2.0) : 0.0;
   }
 
   // Construct shared face mapping for boundary coefficients. This is useful to have in one
@@ -439,6 +469,206 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata, mfem::ParMe
   mesh::AttrToMarker(attr_max, losstan_mats, losstan_marker);
   mesh::AttrToMarker(attr_max, conductivity_mats, conductivity_marker);
   mesh::AttrToMarker(attr_max, london_mats, london_marker);
+}
+
+namespace
+{
+
+// Count the number of elements of each type in the local mesh.
+std::unordered_map<mfem::Geometry::Type, std::vector<int>>
+GetElementIndices(const mfem::ParMesh &mesh, bool use_bdr, int start, int stop)
+{
+  std::unordered_map<mfem::Geometry::Type, int> counts, offsets;
+  std::unordered_map<mfem::Geometry::Type, std::vector<int>> element_indices;
+
+  for (int i = start; i < stop; i++)
+  {
+    const auto key = use_bdr ? mesh.GetBdrElementGeometry(i) : mesh.GetElementGeometry(i);
+    auto val = counts.find(key);
+    if (val == counts.end())
+    {
+      counts[key] = 1;
+    }
+    else
+    {
+      val->second++;
+    }
+  }
+
+  // Populate the indices arrays for each element geometry.
+  for (const auto &[key, val] : counts)
+  {
+    offsets[key] = 0;
+    element_indices[key] = std::vector<int>(val);
+  }
+  for (int i = start; i < stop; i++)
+  {
+    const auto key = mesh.GetElementGeometry(i);
+    auto &offset = offsets[key];
+    auto &indices = element_indices[key];
+    indices[offset++] = i;
+  }
+
+  return element_indices;
+}
+
+}  // namespace
+
+void MaterialOperator::SetUpElementIndices(mfem::ParMesh &mesh)
+{
+  // In the following, we copy the mesh FE space for the nodes as a
+  // palace::FiniteElementSpace and replace it in the nodal grid function. Unfortunately
+  // mfem::ParFiniteElementSpace does not have a move constructor to make this more
+  // efficient, but it's only done once for the lifetime of the mesh.
+  {
+    mesh.EnsureNodes();
+    mfem::GridFunction *mesh_nodes = mesh.GetNodes();
+    mfem::FiniteElementSpace *mesh_fespace = mesh_nodes->FESpace();
+    MFEM_VERIFY(dynamic_cast<mfem::ParFiniteElementSpace *>(mesh_fespace),
+                "Unexpected non-parallel FiniteElementSpace for mesh nodes!");
+    if (!dynamic_cast<FiniteElementSpace *>(mesh_fespace))
+    {
+      // Ensure the FiniteElementCollection associated with the original nodes is not
+      // deleted.
+      auto *new_mesh_fespace =
+          new FiniteElementSpace(*static_cast<mfem::ParFiniteElementSpace *>(mesh_fespace));
+      mfem::FiniteElementCollection *mesh_fec = mesh_nodes->OwnFEC();
+      MFEM_VERIFY(mesh_fec, "Replacing the FiniteElementSpace for mesh nodes is only "
+                            "possible when it owns its fec/fes members!");
+      mesh_nodes->MakeOwner(nullptr);
+      mesh.SetNodalFESpace(new_mesh_fespace);
+      mfem::GridFunction *new_mesh_nodes = mesh.GetNodes();
+      new_mesh_nodes->MakeOwner(mesh_fec);
+      delete mesh_fespace;
+    }
+  }
+
+  // Create a list of the element indices in the mesh corresponding to a given thread and
+  // element geometry type. libCEED operators will be constructed in parallel over threads,
+  // where each thread builds a composite operator with sub-operators for each geometry.
+  const std::size_t nt = ceed::internal::GetCeedObjects().size();
+  PalacePragmaOmp(parallel for schedule(static))
+  for (std::size_t i = 0; i < nt; i++)
+  {
+    Ceed ceed = ceed::internal::GetCeedObjects()[i];
+
+    // First domain elements.
+    {
+      const int ne = mesh.GetNE();
+      const int stride = (ne + nt - 1) / nt;
+      const int start = i * stride;
+      const int stop = std::min(start + stride, ne);
+      constexpr bool use_bdr = false;
+      auto indices = GetElementIndices(mesh, use_bdr, start, stop);
+      for (auto &[key, val] : indices)
+      {
+        PalacePragmaOmp(critical(ElementIndices))
+        {
+          element_indices.emplace(std::make_pair(ceed, geom), std::move(val));
+        }
+      }
+    }
+
+    // Then boundary elements.
+    {
+      const int nbe = mesh.GetNBE();
+      const int stride = (nbe + nt - 1) / nt;
+      const int start = i * stride;
+      const int stop = std::min(start + stride, nbe);
+      constexpr bool use_bdr = true;
+      auto indices = GetElementIndices(mesh, use_bdr, start, stop);
+      for (auto &[key, val] : indices)
+      {
+        PalacePragmaOmp(critical(ElementIndices))
+        {
+          element_indices.emplace(std::make_pair(ceed, geom), std::move(val));
+        }
+      }
+    }
+  }
+}
+
+void MaterialOperator::SetUpGeomFactorData(mfem::ParMesh &mesh)
+{
+  MFEM_VERIFY(mesh.GetNodes(), "The mesh has no nodal FE space!");
+  const mfem::GridFunction &mesh_nodes = *mesh.GetNodes();
+  MFEM_VERIFY(dynamic_cast<const FiniteElementSpace *>(mesh_nodes.FESpace()),
+              "Unexpected non-FiniteElementSpace for mesh nodes!");
+  const FiniteElementSpace &mesh_fespace =
+      *dynamic_cast<const FiniteElementSpace *>(mesh_nodes.FESpace());
+
+  // Precompute the geometric factors at quadrature points required based on the simulation
+  // type.
+  const std::size_t nt = ceed::internal::GetCeedObjects().size();
+  PalacePragmaOmp(parallel for schedule(static))
+  for (std::size_t i = 0; i < nt; i++)
+  {
+    Ceed ceed = ceed::internal::GetCeedObjects()[i];
+
+    for (const auto &[key, val] : GetElementIndices())
+    {
+      if (key.first != ceed)
+      {
+        continue;
+      }
+      const auto geom = key.second;
+      const std::vector<int> &indices = val;
+      CeedElementRestriction mesh_restr =
+          (mfem::Geometry::Dimension[geom] == mesh.Dimension())
+              ? mesh_fespace.GetCeedElemRestriction(ceed, indices)
+              : mesh_fespace.GetBdrCeedElemRestriction(ceed, indices);
+      CeedBasis mesh_basis = mesh_fespace.GetCeedBasis(ceed, geom);
+
+      // XX TODO: In practice we do not need to compute all of these for every simulation
+      //          type.
+      constexpr bool compute_wdetJ = true;
+      constexpr bool compute_J = true;
+      constexpr bool compute_adjJt = true;
+
+      // Compute the required geometry factors at quadrature points.
+      ceed::CeedGeomFactorData data;
+      if (compute_wdetJ)
+      {
+        constexpr auto info = ceed::GeomFactorInfo::Determinant;
+        ceed::AssembleCeedGeometryData(info, ceed, mesh_restr, mesh_basis, mesh_nodes,
+                                       data.wdetJ, &data.wdetJ_vec, &data.wdetJ_restr);
+      }
+      if (compute_J)
+      {
+        constexpr auto info = ceed::GeomFactorInfo::Jacobian;
+        ceed::AssembleCeedGeometryData(info, ceed, mesh_restr, mesh_basis, mesh_nodes,
+                                       data.J, &data.J_vec, &data.J_restr);
+      }
+      if (compute_adjJt)
+      {
+        constexpr auto info = ceed::GeomFactorInfo::Adjugate;
+        ceed::AssembleCeedGeometryData(info, ceed, mesh_restr, mesh_basis, mesh_nodes,
+                                       data.adjJt, &data.adjJt_vec, &data.adjJt_restr);
+      }
+
+      // Always compute element attributes (single scalar per element).
+      {
+        const bool use_bdr = (mfem::Geometry::Dimension[geom] != mesh.Dimension());
+        const std::size_t ne = indices.size();
+        data.attr.SetSize(ne);
+        for (std::size_t j = 0; j < ne; j++)
+        {
+          const int e = indices[j];
+          data.attr[j] = use_bdr ? mesh->GetBdrAttribute(e) : mesh->GetAttribute(e);
+        }
+        PalaceCeedCall(ceed, CeedElemRestrictionCreateStrided(ceed, ne, 1, 1, ne,
+                                                              CEED_STRIDES_BACKEND,
+                                                              &data.attr_restr));
+        ceed::InitCeedVector(data.attr, ceed, &data.attr_vec);
+      }
+
+      // Insert into map.
+      PalacePragmaOmp(critical(GeomFactorData))
+      {
+        geom_data.emplace(std::make_pair(ceed, geom), std::move(data));
+      }
+    }
+  }
 }
 
 }  // namespace palace

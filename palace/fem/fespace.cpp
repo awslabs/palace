@@ -80,9 +80,10 @@ CeedBasis FiniteElementSpace::BuildCeedBasis(Ceed ceed, mfem::Geometry::Type geo
   return val;
 }
 
-CeedElemRestriction FiniteElementSpace::BuildCeedElemRestriction(
-    Ceed ceed, const std::vector<std::size_t> &indices, bool use_bdr, bool is_interp,
-    bool is_interp_range) const
+CeedElemRestriction
+FiniteElementSpace::BuildCeedElemRestriction(Ceed ceed, const std::vector<int> &indices,
+                                             bool use_bdr, bool is_interp,
+                                             bool is_interp_range) const
 {
   const auto geom = use_bdr ? GetParMesh()->GetBdrElementGeometry(indices[0])
                             : GetParMesh()->GetElementGeometry(indices[0]);

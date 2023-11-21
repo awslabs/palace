@@ -5,8 +5,6 @@
 #define PALACE_FEM_FESPACE_HPP
 
 #include <memory>
-#include <unordered_map>
-#include <utility>
 #include <vector>
 #include <mfem.hpp>
 #include "fem/libceed/ceed.hpp"
@@ -31,13 +29,11 @@ private:
   mutable bool init = false;
 
   // Members for constructing libCEED operators.
-  mutable std::unordered_map<std::pair<Ceed, mfem::Geometry::Type>, CeedBasis> basis;
-  mutable std::unordered_map<std::pair<Ceed, mfem::Geometry::Type>, CeedElemRestriction>
-      restr, interp_restr, interp_range_restr;
+  mutable ceed::CeedObjectMap<CeedBasis> basis;
+  mutable ceed::CeedObjectMap<CeedElemRestriction> restr, interp_restr, interp_range_restr;
 
   CeedBasis BuildCeedBasis(Ceed ceed, mfem::Geometry::Type geom) const;
-  CeedElemRestriction BuildCeedElemRestriction(Ceed ceed,
-                                               const std::vector<std::size_t> &indices,
+  CeedElemRestriction BuildCeedElemRestriction(Ceed ceed, const std::vector<int> &indices,
                                                bool use_bdr, bool is_interp = false,
                                                bool is_interp_range = false) const;
 
@@ -81,36 +77,35 @@ public:
   const auto GetCeedBasis(Ceed ceed, mfem::Geometry::Type geom) const
   {
     const auto it = basis.find(std::make_pair(ceed, geom));
-    return (it != basis.end()) ? *it : BuildCeedBasis(ceed, geom);
+    return (it != basis.end()) ? it->second : BuildCeedBasis(ceed, geom);
   }
+
   // Return the element restriction object for the given element set (all with the same
   // geometry type).
-  const auto GetCeedElemRestriction(Ceed ceed,
-                                    const std::vector<std::size_t> &indices) const
+  const auto GetCeedElemRestriction(Ceed ceed, const std::vector<int> &indices) const
   {
     MFEM_ASSERT(!indices.empty(),
                 "Cannot create CeedElemRestriction for an empty mesh partition!");
     const auto geom = GetParMesh()->GetElementGeometry(indices[0]);
     const auto it = restr.find(std::make_pair(ceed, geom));
-    return (it != restr.end()) ? *it : BuildCeedElemRestriction(ceed, indices, false);
+    return (it != restr.end()) ? it->second
+                               : BuildCeedElemRestriction(ceed, indices, false);
   }
 
   // Return the element restriction object for the given boundary element set (all with the
   // same geometry type).
-  const auto GetBdrCeedElemRestriction(Ceed ceed,
-                                       const std::vector<std::size_t> &indices) const
+  const auto GetBdrCeedElemRestriction(Ceed ceed, const std::vector<int> &indices) const
   {
     MFEM_ASSERT(!indices.empty(),
                 "Cannot create boundary CeedElemRestriction for an empty mesh partition!");
     const auto geom = GetParMesh()->GetBdrElementGeometry(indices[0]);
     const auto it = restr.find(std::make_pair(ceed, geom));
-    return (it != restr.end()) ? *it : BuildCeedElemRestriction(ceed, indices, true);
+    return (it != restr.end()) ? it->second : BuildCeedElemRestriction(ceed, indices, true);
   }
 
   // If the space has a special element restriction for discrete interpolators, return that.
   // Otherwise return the same restiction as given by GetCeedElemRestriction.
-  const auto GetInterpCeedElemRestriction(Ceed ceed,
-                                          const std::vector<std::size_t> &indices) const
+  const auto GetInterpCeedElemRestriction(Ceed ceed, const std::vector<int> &indices) const
   {
     MFEM_ASSERT(!indices.empty(),
                 "Cannot create boundary CeedElemRestriction for an empty mesh partition!");
@@ -122,16 +117,15 @@ public:
     }
     const auto it = interp_restr.find(std::make_pair(ceed, geom));
     return (it != interp_restr.end())
-               ? *it
+               ? it->second
                : BuildCeedElemRestriction(ceed, indices, true, true, false);
   }
 
   // If the space has a special element restriction for the range space of discrete
   // interpolators, return that. Otherwise return the same restiction as given by
   // GetCeedElemRestriction.
-  const auto
-  GetInterpRangeCeedElemRestriction(Ceed ceed,
-                                    const std::vector<std::size_t> &indices) const
+  const auto GetInterpRangeCeedElemRestriction(Ceed ceed,
+                                               const std::vector<int> &indices) const
   {
     MFEM_ASSERT(!indices.empty(),
                 "Cannot create boundary CeedElemRestriction for an empty mesh partition!");
@@ -143,7 +137,7 @@ public:
     }
     const auto it = interp_range_restr.find(std::make_pair(ceed, geom));
     return (it != interp_range_restr.end())
-               ? *it
+               ? it->second
                : BuildCeedElemRestriction(ceed, indices, true, true, true);
   }
 };

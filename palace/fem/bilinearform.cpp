@@ -3,16 +3,12 @@
 
 #include "bilinearform.hpp"
 
-#include <ceed.h>
 #include "fem/libceed/basis.hpp"
 #include "fem/libceed/utils.hpp"
 #include "utils/omp.hpp"
 
 namespace palace
 {
-
-// XX TODO WIP: ASSEMBLY REQUIRES QUADRATURE DATA, MAT OP, REDO INTEGRATION INTERFACE +
-// COEFFICIENT
 
 std::unique_ptr<ceed::Operator> BilinearForm::PartialAssemble() const
 {
@@ -34,7 +30,7 @@ std::unique_ptr<ceed::Operator> BilinearForm::PartialAssemble() const
   }
 
   // Assemble the libCEED operator in parallel, each thread builds a composite operator.
-  // This should work fine if some threads create an empty operator (no elements or bounday
+  // This should work fine if some threads create an empty operator (no elements or boundary
   // elements).
   const std::size_t nt = ceed::internal::GetCeedObjects().size();
   PalacePragmaOmp(parallel for schedule(static))
@@ -46,10 +42,15 @@ std::unique_ptr<ceed::Operator> BilinearForm::PartialAssemble() const
     CeedOperator loc_op;
     PalaceCeedCall(ceed, CeedCompositeOperatorCreate(ceed, &loc_op));
 
-    for (const auto &[key, val] : mat_op.GetIndices(ceed))
+    for (const auto &[key, val] : mat_op.GetElementIndices())
     {
-      const auto geom = key;
-      const std::vector<int> &indices = val;
+      if (key.first != ceed)
+      {
+        continue;
+      }
+      const auto geom = key.second;
+      const auto &indices = val;
+      const auto &geom_data = mat_op.GetGeomFactorData(ceed, geom);
       CeedBasis trial_basis = trial_fespace.GetCeedBasis(ceed, geom);
       CeedBasis test_basis = test_fespace.GetCeedBasis(ceed, geom);
 
@@ -64,7 +65,8 @@ std::unique_ptr<ceed::Operator> BilinearForm::PartialAssemble() const
         for (const auto &integ : domain_integs)
         {
           CeedOperator sub_op;
-          integ->Assemble(trial_restr, test_restr, trial_basis, test_basis, ceed, &sub_op);
+          integ->Assemble(geom_data, ceed, trial_restr, test_restr, trial_basis, test_basis,
+                          &sub_op);
           PalaceCeedCall(ceed, CeedCompositeOperatorAddSub(loc_op, sub_op));
           PalaceCeedCall(ceed, CeedOperatorDestroy(&sub_op));
         }
@@ -80,8 +82,8 @@ std::unique_ptr<ceed::Operator> BilinearForm::PartialAssemble() const
         for (const auto &integ : boundary_integs)
         {
           CeedOperator sub_op;
-          integ->AssembleBoundary(trial_restr, test_restr, trial_basis, test_basis, ceed,
-                                  &sub_op);
+          integ->AssembleBoundary(geom_data, ceed, trial_restr, test_restr, trial_basis,
+                                  test_basis, &sub_op);
           PalaceCeedCall(ceed, CeedCompositeOperatorAddSub(loc_op, sub_op));
           PalaceCeedCall(ceed, CeedOperatorDestroy(&sub_op));
         }
@@ -153,7 +155,7 @@ std::unique_ptr<ceed::Operator> DiscreteLinearOperator::PartialAssemble() const
         for (const auto &integ : domain_integs)
         {
           CeedOperator sub_op, sub_op_t;
-          integ->AssembleInterpolator(trial_restr, test_restr, interp_basis, ceed, &sub_op,
+          integ->AssembleInterpolator(ceed, trial_restr, test_restr, interp_basis, &sub_op,
                                       &sub_op_t);
           PalaceCeedCall(ceed, CeedCompositeOperatorAddSub(loc_op, sub_op));
           PalaceCeedCall(ceed, CeedCompositeOperatorAddSub(loc_op_t, sub_op_t));

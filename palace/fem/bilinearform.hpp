@@ -22,6 +22,9 @@ namespace palace
 class BilinearForm
 {
 protected:
+  // Data structure holds mesh element topologies and geometry factors for libCEED assembly.
+  const MaterialOperator &mat_op;
+
   // Domain and range finite element spaces.
   const FiniteElementSpace &trial_fespace, &test_fespace;
 
@@ -33,12 +36,15 @@ public:
   inline static int pa_order_threshold = 1;
 
 public:
-  BilinearForm(const FiniteElementSpace &trial_fespace,
+  BilinearForm(const MaterialOperator &mat_op, const FiniteElementSpace &trial_fespace,
                const FiniteElementSpace &test_fespace)
-    : trial_fespace(trial_fespace), test_fespace(test_fespace)
+    : mat_op(mat_op), trial_fespace(trial_fespace), test_fespace(test_fespace)
   {
   }
-  BilinearForm(const FiniteElementSpace &fespace) : BilinearForm(fespace, fespace) {}
+  BilinearForm(const MaterialOperator &matop, const FiniteElementSpace &fespace)
+    : BilinearForm(mat_op, fespace, fespace)
+  {
+  }
 
   const auto &GetTrialSpace() const { return trial_fespace; }
   const auto &GetTestSpace() const { return test_fespace; }

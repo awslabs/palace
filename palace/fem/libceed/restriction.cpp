@@ -33,14 +33,14 @@ void InitLexicoRestr(const FiniteElementSpace &fespace,
   for (std::size_t i = 0; i < ne; i++)
   {
     // No need to handle DofTransformation for tensor-product elements.
-    const int elem_index = indices[i];
+    const int e = indices[i];
     if (use_bdr)
     {
-      fespace.GetBdrElementDofs(elem_index, dofs, dof_trans);
+      fespace.GetBdrElementDofs(e, dofs, dof_trans);
     }
     else
     {
-      fespace.GetElementDofs(elem_index, dofs, dof_trans);
+      fespace.GetElementDofs(e, dofs, dof_trans);
     }
     MFEM_VERIFY(!dof_trans.GetDofTransformation(),
                 "Unexpected DofTransformation for lexicographic element "

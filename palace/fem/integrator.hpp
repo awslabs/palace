@@ -22,15 +22,21 @@ namespace fem
 // order 2 * p_trial + order(|J|) + q_extra.
 struct DefaultIntegrationOrder
 {
+
+  // XX TODO WIP: NEED TO SET FROM DRIVER
   inline static int p_trial = 1;
+
   inline static bool q_order_jac = true;
   inline static int q_order_extra_pk = 0;
   inline static int q_order_extra_qk = 0;
+  static int Get(const mfem::IsoparametricTransformation &T);
   static int Get(const mfem::ElementTransformation &T);
   static int Get(const mfem::Mesh &mesh, mfem::Geometry::Type geom);
 };
 
 }  // namespace fem
+
+// XX TODO WIP: FOR NOW, NO COEFFICIENTS IN ASSEMBLY
 
 // Base class for libCEED-based bilinear form integrators.
 class BilinearFormIntegrator
@@ -38,17 +44,18 @@ class BilinearFormIntegrator
 public:
   virtual ~BilinearFormIntegrator() = default;
 
-  virtual void Assemble(CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
-                        CeedBasis trial_basis, CeedBasis test_basis, Ceed ceed,
-                        CeedOperator *op) = 0;
+  virtual void Assemble(const ceed::CeedGeomFactorData &geom_data, Ceed ceed,
+                        CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
+                        CeedBasis trial_basis, CeedBasis test_basis, CeedOperator *op) = 0;
 
-  virtual void AssembleBoundary(CeedElemRestriction trial_restr,
+  virtual void AssembleBoundary(const ceed::CeedGeomFactorData &geom_data, Ceed ceed,
+                                CeedElemRestriction trial_restr,
                                 CeedElemRestriction test_restr, CeedBasis trial_basis,
-                                CeedBasis test_basis, Ceed ceed, CeedOperator *op) = 0;
+                                CeedBasis test_basis, CeedOperator *op) = 0;
 
-  virtual void AssembleInterpolator(CeedElemRestriction trial_restr,
+  virtual void AssembleInterpolator(Ceed ceed, CeedElemRestriction trial_restr,
                                     CeedElemRestriction test_restr, CeedBasis interp_basis,
-                                    Ceed ceed, CeedOperator *op, CeedOperator *op_t)
+                                    CeedOperator *op, CeedOperator *op_t)
   {
     MFEM_ABORT(
         "Interpolator assembly is not implemented for BilinearFormIntegrator objects!");
@@ -69,12 +76,13 @@ public:
   MassIntegrator(mfem::VectorCoefficient &VQ) : Q(nullptr), VQ(&VQ), MQ(nullptr) {}
   MassIntegrator(mfem::MatrixCoefficient &MQ) : Q(nullptr), VQ(nullptr), MQ(&MQ) {}
 
-  void Assemble(CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
-                CeedBasis trial_basis, CeedBasis test_basis, Ceed ceed,
-                CeedOperator *op) override;
+  void Assemble(const ceed::CeedGeomFactorData &geom_data, Ceed ceed,
+                CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
+                CeedBasis trial_basis, CeedBasis test_basis, CeedOperator *op) override;
 
-  void AssembleBoundary(CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
-                        CeedBasis trial_basis, CeedBasis test_basis, Ceed ceed,
+  void AssembleBoundary(const ceed::CeedGeomFactorData &geom_data, Ceed ceed,
+                        CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
+                        CeedBasis trial_basis, CeedBasis test_basis,
                         CeedOperator *op) override;
 };
 
@@ -92,12 +100,13 @@ public:
   VectorFEMassIntegrator(mfem::VectorCoefficient &VQ) : Q(nullptr), VQ(&VQ), MQ(nullptr) {}
   VectorFEMassIntegrator(mfem::MatrixCoefficient &MQ) : Q(nullptr), VQ(nullptr), MQ(&MQ) {}
 
-  void Assemble(CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
-                CeedBasis trial_basis, CeedBasis test_basis, Ceed ceed,
-                CeedOperator *op) override;
+  void Assemble(const ceed::CeedGeomFactorData &geom_data, Ceed ceed,
+                CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
+                CeedBasis trial_basis, CeedBasis test_basis, CeedOperator *op) override;
 
-  void AssembleBoundary(CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
-                        CeedBasis trial_basis, CeedBasis test_basis, Ceed ceed,
+  void AssembleBoundary(const ceed::CeedGeomFactorData &geom_data, Ceed ceed,
+                        CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
+                        CeedBasis trial_basis, CeedBasis test_basis,
                         CeedOperator *op) override;
 };
 
@@ -115,12 +124,13 @@ public:
   CurlCurlIntegrator(mfem::VectorCoefficient &VQ) : Q(nullptr), VQ(&VQ), MQ(nullptr) {}
   CurlCurlIntegrator(mfem::MatrixCoefficient &MQ) : Q(nullptr), VQ(nullptr), MQ(&MQ) {}
 
-  void Assemble(CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
-                CeedBasis trial_basis, CeedBasis test_basis, Ceed ceed,
-                CeedOperator *op) override;
+  void Assemble(const ceed::CeedGeomFactorData &geom_data, Ceed ceed,
+                CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
+                CeedBasis trial_basis, CeedBasis test_basis, CeedOperator *op) override;
 
-  void AssembleBoundary(CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
-                        CeedBasis trial_basis, CeedBasis test_basis, Ceed ceed,
+  void AssembleBoundary(const ceed::CeedGeomFactorData &geom_data, Ceed ceed,
+                        CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
+                        CeedBasis trial_basis, CeedBasis test_basis,
                         CeedOperator *op) override;
 };
 
@@ -170,12 +180,13 @@ public:
   {
   }
 
-  void Assemble(CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
-                CeedBasis trial_basis, CeedBasis test_basis, Ceed ceed,
-                CeedOperator *op) override;
+  void Assemble(const ceed::CeedGeomFactorData &geom_data, Ceed ceed,
+                CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
+                CeedBasis trial_basis, CeedBasis test_basis, CeedOperator *op) override;
 
-  void AssembleBoundary(CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
-                        CeedBasis trial_basis, CeedBasis test_basis, Ceed ceed,
+  void AssembleBoundary(const ceed::CeedGeomFactorData &geom_data, Ceed ceed,
+                        CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
+                        CeedBasis trial_basis, CeedBasis test_basis,
                         CeedOperator *op) override;
 };
 
@@ -193,12 +204,13 @@ public:
   DiffusionIntegrator(mfem::VectorCoefficient &VQ) : Q(nullptr), VQ(&VQ), MQ(nullptr) {}
   DiffusionIntegrator(mfem::MatrixCoefficient &MQ) : Q(nullptr), VQ(nullptr), MQ(&MQ) {}
 
-  void Assemble(CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
-                CeedBasis trial_basis, CeedBasis test_basis, Ceed ceed,
-                CeedOperator *op) override;
+  void Assemble(const ceed::CeedGeomFactorData &geom_data, Ceed ceed,
+                CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
+                CeedBasis trial_basis, CeedBasis test_basis, CeedOperator *op) override;
 
-  void AssembleBoundary(CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
-                        CeedBasis trial_basis, CeedBasis test_basis, Ceed ceed,
+  void AssembleBoundary(const ceed::CeedGeomFactorData &geom_data, Ceed ceed,
+                        CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
+                        CeedBasis trial_basis, CeedBasis test_basis,
                         CeedOperator *op) override;
 };
 
@@ -224,12 +236,13 @@ public:
   {
   }
 
-  void Assemble(CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
-                CeedBasis trial_basis, CeedBasis test_basis, Ceed ceed,
-                CeedOperator *op) override;
+  void Assemble(const ceed::CeedGeomFactorData &geom_data, Ceed ceed,
+                CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
+                CeedBasis trial_basis, CeedBasis test_basis, CeedOperator *op) override;
 
-  void AssembleBoundary(CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
-                        CeedBasis trial_basis, CeedBasis test_basis, Ceed ceed,
+  void AssembleBoundary(const ceed::CeedGeomFactorData &geom_data, Ceed ceed,
+                        CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
+                        CeedBasis trial_basis, CeedBasis test_basis,
                         CeedOperator *op) override;
 };
 
@@ -243,12 +256,13 @@ public:
   DivDivIntegrator() : Q(nullptr) {}
   DivDivIntegrator(mfem::Coefficient &Q) : Q(&Q) {}
 
-  void Assemble(CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
-                CeedBasis trial_basis, CeedBasis test_basis, Ceed ceed,
-                CeedOperator *op) override;
+  void Assemble(const ceed::CeedGeomFactorData &geom_data, Ceed ceed,
+                CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
+                CeedBasis trial_basis, CeedBasis test_basis, CeedOperator *op) override;
 
-  void AssembleBoundary(CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
-                        CeedBasis trial_basis, CeedBasis test_basis, Ceed ceed,
+  void AssembleBoundary(const ceed::CeedGeomFactorData &geom_data, Ceed ceed,
+                        CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
+                        CeedBasis trial_basis, CeedBasis test_basis,
                         CeedOperator *op) override;
 };
 
@@ -274,12 +288,13 @@ public:
   {
   }
 
-  void Assemble(CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
-                CeedBasis trial_basis, CeedBasis test_basis, Ceed ceed,
-                CeedOperator *op) override;
+  void Assemble(const ceed::CeedGeomFactorData &geom_data, Ceed ceed,
+                CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
+                CeedBasis trial_basis, CeedBasis test_basis, CeedOperator *op) override;
 
-  void AssembleBoundary(CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
-                        CeedBasis trial_basis, CeedBasis test_basis, Ceed ceed,
+  void AssembleBoundary(const ceed::CeedGeomFactorData &geom_data, Ceed ceed,
+                        CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
+                        CeedBasis trial_basis, CeedBasis test_basis,
                         CeedOperator *op) override;
 };
 
@@ -303,12 +318,13 @@ public:
   {
   }
 
-  void Assemble(CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
-                CeedBasis trial_basis, CeedBasis test_basis, Ceed ceed,
-                CeedOperator *op) override;
+  void Assemble(const ceed::CeedGeomFactorData &geom_data, Ceed ceed,
+                CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
+                CeedBasis trial_basis, CeedBasis test_basis, CeedOperator *op) override;
 
-  void AssembleBoundary(CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
-                        CeedBasis trial_basis, CeedBasis test_basis, Ceed ceed,
+  void AssembleBoundary(const ceed::CeedGeomFactorData &geom_data, Ceed ceed,
+                        CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
+                        CeedBasis trial_basis, CeedBasis test_basis,
                         CeedOperator *op) override;
 };
 
@@ -335,12 +351,13 @@ public:
   {
   }
 
-  void Assemble(CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
-                CeedBasis trial_basis, CeedBasis test_basis, Ceed ceed,
-                CeedOperator *op) override;
+  void Assemble(const ceed::CeedGeomFactorData &geom_data, Ceed ceed,
+                CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
+                CeedBasis trial_basis, CeedBasis test_basis, CeedOperator *op) override;
 
-  void AssembleBoundary(CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
-                        CeedBasis trial_basis, CeedBasis test_basis, Ceed ceed,
+  void AssembleBoundary(const ceed::CeedGeomFactorData &geom_data, Ceed ceed,
+                        CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
+                        CeedBasis trial_basis, CeedBasis test_basis,
                         CeedOperator *op) override;
 };
 
@@ -362,12 +379,13 @@ public:
   {
   }
 
-  void Assemble(CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
-                CeedBasis trial_basis, CeedBasis test_basis, Ceed ceed,
-                CeedOperator *op) override;
+  void Assemble(const ceed::CeedGeomFactorData &geom_data, Ceed ceed,
+                CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
+                CeedBasis trial_basis, CeedBasis test_basis, CeedOperator *op) override;
 
-  void AssembleBoundary(CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
-                        CeedBasis trial_basis, CeedBasis test_basis, Ceed ceed,
+  void AssembleBoundary(const ceed::CeedGeomFactorData &geom_data, Ceed ceed,
+                        CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
+                        CeedBasis trial_basis, CeedBasis test_basis,
                         CeedOperator *op) override;
 };
 
@@ -391,12 +409,13 @@ public:
   {
   }
 
-  void Assemble(CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
-                CeedBasis trial_basis, CeedBasis test_basis, Ceed ceed,
-                CeedOperator *op) override;
+  void Assemble(const ceed::CeedGeomFactorData &geom_data, Ceed ceed,
+                CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
+                CeedBasis trial_basis, CeedBasis test_basis, CeedOperator *op) override;
 
-  void AssembleBoundary(CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
-                        CeedBasis trial_basis, CeedBasis test_basis, Ceed ceed,
+  void AssembleBoundary(const ceed::CeedGeomFactorData &geom_data, Ceed ceed,
+                        CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
+                        CeedBasis trial_basis, CeedBasis test_basis,
                         CeedOperator *op) override;
 };
 
@@ -414,12 +433,13 @@ public:
   GradientIntegrator(mfem::VectorCoefficient &VQ) : Q(nullptr), VQ(&VQ), MQ(nullptr) {}
   GradientIntegrator(mfem::MatrixCoefficient &MQ) : Q(nullptr), VQ(nullptr), MQ(&MQ) {}
 
-  void Assemble(CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
-                CeedBasis trial_basis, CeedBasis test_basis, Ceed ceed,
-                CeedOperator *op) override;
+  void Assemble(const ceed::CeedGeomFactorData &geom_data, Ceed ceed,
+                CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
+                CeedBasis trial_basis, CeedBasis test_basis, CeedOperator *op) override;
 
-  void AssembleBoundary(CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
-                        CeedBasis trial_basis, CeedBasis test_basis, Ceed ceed,
+  void AssembleBoundary(const ceed::CeedGeomFactorData &geom_data, Ceed ceed,
+                        CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
+                        CeedBasis trial_basis, CeedBasis test_basis,
                         CeedOperator *op) override;
 };
 
@@ -427,19 +447,20 @@ public:
 class DiscreteInterpolator : public BilinearFormIntegrator
 {
 public:
-  void AssembleInterpolator(CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
-                            CeedBasis interp_basis, Ceed ceed, CeedOperator *op,
-                            CeedOperator *op_t) override;
+  void AssembleInterpolator(Ceed ceed, CeedElemRestriction trial_restr,
+                            CeedElemRestriction test_restr, CeedBasis interp_basis,
+                            CeedOperator *op, CeedOperator *op_t) override;
 
-  void Assemble(CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
-                CeedBasis trial_basis, CeedBasis test_basis, Ceed ceed,
-                CeedOperator *op) override
+  void Assemble(const ceed::CeedGeomFactorData &geom_data, Ceed ceed,
+                CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
+                CeedBasis trial_basis, CeedBasis test_basis, CeedOperator *op) override
   {
     MFEM_ABORT("Integrator assembly is not implemented for DiscreteInterpolator objects!");
   }
 
-  void AssembleBoundary(CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
-                        CeedBasis trial_basis, CeedBasis test_basis, Ceed ceed,
+  void AssembleBoundary(const ceed::CeedGeomFactorData &geom_data, Ceed ceed,
+                        CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
+                        CeedBasis trial_basis, CeedBasis test_basis,
                         CeedOperator *op) override
   {
     MFEM_ABORT("Boundary integrator assembly is not implemented for DiscreteInterpolator "

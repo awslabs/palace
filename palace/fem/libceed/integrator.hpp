@@ -7,26 +7,34 @@
 #include <string>
 #include <vector>
 #include <ceed.h>
-#include <mfem.hpp>
-#include "fem/libceed/basis.hpp"
-#include "fem/libceed/coefficient.hpp"
-#include "fem/libceed/restriction.hpp"
+#include "fem/libceed/ceed.hpp"
 #include "fem/libceed/utils.hpp"
+#include "linalg/vector.hpp"
+
+#include "fem/qfunctions/geom_qf.h"
+
+// XX TODO WIP: FOR NOW, NO COEFFICIENTS IN ASSEMBLY
 
 namespace palace::ceed
 {
 
-// Evaluation modes for CeedOperator fields for various integrators.
-enum class EvalMode
+// Geometry factor information as quadrature data.
+enum class GeomFactorInfo : unsigned int
 {
-  None,
-  Interp,
-  Grad,
-  Div,
-  Curl,
-  InterpAndGrad,
-  InterpAndDiv,
-  InterpAndCurl
+  Determinant = 1 << 0,
+  Jacobian = 1 << 1,
+  Adjugate = 1 << 2,
+  Weight = 1 << 3
+};
+
+// Evaluation modes for CeedOperator fields for various integrators.
+enum class EvalMode : unsigned int
+{
+  None = 1 << 0,
+  Interp = 1 << 1,
+  Grad = 1 << 2,
+  Div = 1 << 3,
+  Curl = 1 << 4
 };
 
 // Data structure for CeedOperator construction for various integrators.
@@ -38,102 +46,137 @@ struct IntegratorInfo
   // Path and name of the QFunctions for operator construction and application.
   std::string build_qf_path, apply_qf_path;
 
+  // Geometry factors required as QFunction inputs.
+  unsigned int geom_data;
+
   // Evaluation modes for the test and trial basis.
-  EvalMode trial_op, test_op;
-
-  // Size of the data at each quadrature point.
-  int qdata_size;
+  unsigned int trial_ops, test_ops;
 };
-
-// Helper function which combines quadrature data assembly and operator assembly in a single
-// method.
-template <typename CeedIntegratorInfo>
-inline void AssembleCeedOperator(const CeedIntegratorInfo &info,
-                                 const mfem::ParFiniteElementSpace &trial_fespace,
-                                 const mfem::ParFiniteElementSpace &test_fespace,
-                                 const mfem::IntegrationRule &ir,
-                                 const std::vector<int> &indices, const bool use_bdr,
-                                 const std::vector<QuadratureCoefficient> &Q, Ceed ceed,
-                                 CeedOperator *op, CeedOperator *op_t)
-{
-  // Assemble quadrature data.
-  CeedVector qdata;
-  CeedElemRestriction qdata_restr;
-  AssembleCeedQuadratureData(info, trial_fespace, test_fespace, ir, indices, use_bdr, Q,
-                             ceed, &qdata, &qdata_restr);
-
-  // Assemble the operator (no transpose).
-  AssembleCeedOperator(info, trial_fespace, test_fespace, ir, indices, use_bdr, qdata,
-                       qdata_restr, ceed, op);
-  *op_t = nullptr;
-
-  // Cleanup (these are now owned by the operator).
-  PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&qdata_restr));
-  PalaceCeedCall(ceed, CeedVectorDestroy(&qdata));
-}
 
 // Create libCEED quadrature data and element restriction for use in a partially assembled
 // libCEED operator.
-template <typename CeedIntegratorInfo>
-inline void
-AssembleCeedQuadratureData(const CeedIntegratorInfo &info,
-                           const mfem::ParFiniteElementSpace &trial_fespace,
-                           const mfem::ParFiniteElementSpace &test_fespace,
-                           const mfem::IntegrationRule &ir, const std::vector<int> &indices,
-                           const bool use_bdr, const std::vector<QuadratureCoefficient> &Q,
-                           Ceed ceed, CeedVector *qdata, CeedElemRestriction *qdata_restr)
+inline void AssembleCeedGeometryData(GeomFactorInfo info, Ceed ceed,
+                                     CeedElemRestriction mesh_restr, CeedBasis mesh_basis,
+                                     const Vector &mesh_nodes, Vector &qdata,
+                                     CeedVector *qdata_vec,
+                                     CeedElemRestriction *qdata_restr)
 {
-  MFEM_VERIFY(trial_fespace.GetParMesh() == test_fespace.GetParMesh(),
-              "Trial and test finite element spaces must correspond to the same mesh!");
-  const mfem::ParMesh &mesh = *trial_fespace.GetParMesh();
-  MFEM_VERIFY(mesh.GetNodes(), "The mesh has no nodal FE space!");
-  const mfem::GridFunction &mesh_nodes = *mesh.GetNodes();
-  MFEM_VERIFY(dynamic_cast<const mfem::ParFiniteElementSpace *>(mesh_nodes.FESpace()),
-              "Unexpected non-parallel FiniteElementSpace for mesh nodes!");
-  const mfem::ParFiniteElementSpace &mesh_fespace =
-      *dynamic_cast<const mfem::ParFiniteElementSpace *>(mesh_nodes.FESpace());
-
-  CeedInt ne = static_cast<CeedInt>(indices.size());
-  CeedInt dim = mesh.Dimension() - use_bdr;
-  CeedInt space_dim = mesh.SpaceDimension();
-
-  CeedElemRestriction mesh_restr;
-  CeedBasis mesh_basis;
-  CeedInt nqpts, qdata_size = info.qdata_size;
-  InitRestriction(mesh_fespace, indices, use_bdr, ceed, &mesh_restr);
-  InitBasis(mesh_fespace, ir, indices, use_bdr, ceed, &mesh_basis);
+  CeedInt ne, dim, space_dim, nqpts;
+  PalaceCeedCall(ceed, CeedElemRestrictionGetNumElements(mesh_restr, &ne));
+  PalaceCeedCall(ceed, CeedBasisGetDimension(mesh_basis, &dim));
+  PalaceCeedCall(ceed, CeedBasisGetNumComponents(mesh_basis, &space_dim));
   PalaceCeedCall(ceed, CeedBasisGetNumQuadraturePoints(mesh_basis, &nqpts));
 
-  // Strided restrictions are cheap to construct and not stored in the global cache.
-  PalaceCeedCall(ceed, CeedVectorCreate(ceed, ne * nqpts * qdata_size, qdata));
+  // Create storage for quadrature point data.
+  CeedInt qdata_size;
+  switch (info)
+  {
+    case GeomFactorInfo::Determinant:
+      qdata_size = 1;
+      break;
+    case GeomFactorInfo::Jacobian:
+    case GeomFactorInfo::Adjugate:
+      qdata_size = space_dim * dim;
+      break;
+    case GeomFactorInfo::Weight:
+      MFEM_ABORT(
+          "GeomFactorInfo::Weight is not a valid input for AssembleCeedGeometryData!");
+      break;
+  }
+  qdata.SetSize(ne * nqpts * qdata_size);
+  InitCeedVector(qdata, ceed, qdata_vec);
   PalaceCeedCall(ceed, CeedElemRestrictionCreateStrided(ceed, ne, nqpts, qdata_size,
                                                         ne * nqpts * qdata_size,
                                                         CEED_STRIDES_BACKEND, qdata_restr));
 
   // Create the QFunction that builds the operator (i.e. computes its quadrature data).
   CeedQFunction build_qf;
-  PalaceCeedCall(ceed, CeedQFunctionCreateInterior(ceed, 1, info.build_qf,
-                                                   info.build_qf_path.c_str(), &build_qf));
-
-  CeedQFunctionContext build_ctx;
-  PalaceCeedCall(ceed, CeedQFunctionContextCreate(ceed, &build_ctx));
-  PalaceCeedCall(ceed,
-                 CeedQFunctionContextSetData(build_ctx, CEED_MEM_HOST, CEED_COPY_VALUES,
-                                             sizeof(info.ctx), (void *)&info.ctx));
-  PalaceCeedCall(ceed, CeedQFunctionSetContext(build_qf, build_ctx));
-  PalaceCeedCall(ceed, CeedQFunctionContextDestroy(&build_ctx));
+  CeedQFunctionUser build_qf_func;
+  std::string build_qf_path;
+  switch (info)
+  {
+    case GeomFactorInfo::Determinant:
+      switch (10 * space_dim + dim)
+      {
+        case 22:
+          build_qf_func = f_build_geom_factor_detJ22;
+          build_qf_path = PalaceQFunctionRelativePath(f_build_geom_factor_detJ22_loc);
+          break;
+        case 21:
+          build_qf_func = f_build_geom_factor_detJ21;
+          build_qf_path = PalaceQFunctionRelativePath(f_build_geom_factor_detJ21_loc);
+          break;
+        case 33:
+          build_qf_func = f_build_geom_factor_detJ33;
+          build_qf_path = PalaceQFunctionRelativePath(f_build_geom_factor_detJ33_loc);
+          break;
+        case 32:
+          build_qf_func = f_build_geom_factor_detJ32;
+          build_qf_path = PalaceQFunctionRelativePath(f_build_geom_factor_detJ32_loc);
+          break;
+        default:
+          MFEM_ABORT("Invalid value of (dim, space_dim) = (" << dim << ", " << space_dim
+                                                             << ")!");
+      }
+      break;
+    case GeomFactorInfo::Jacobian:
+      switch (10 * space_dim + dim)
+      {
+        case 22:
+          build_qf_func = f_build_geom_factor_J22;
+          build_qf_path = PalaceQFunctionRelativePath(f_build_geom_factor_J22_loc);
+          break;
+        case 21:
+          build_qf_func = f_build_geom_factor_J21;
+          build_qf_path = PalaceQFunctionRelativePath(f_build_geom_factor_J21_loc);
+          break;
+        case 33:
+          build_qf_func = f_build_geom_factor_J33;
+          build_qf_path = PalaceQFunctionRelativePath(f_build_geom_factor_J33_loc);
+          break;
+        case 32:
+          build_qf_func = f_build_geom_factor_J32;
+          build_qf_path = PalaceQFunctionRelativePath(f_build_geom_factor_J32_loc);
+          break;
+        default:
+          MFEM_ABORT("Invalid value of (dim, space_dim) = (" << dim << ", " << space_dim
+                                                             << ")!");
+      }
+      break;
+    case GeomFactorInfo::Adjugate:
+      {
+        case 22:
+          build_qf_func = f_build_geom_factor_adjJt22;
+          build_qf_path = PalaceQFunctionRelativePath(f_build_geom_factor_adjJt22_loc);
+          break;
+        case 21:
+          build_qf_func = f_build_geom_factor_adjJt21;
+          build_qf_path = PalaceQFunctionRelativePath(f_build_geom_factor_adjJt21_loc);
+          break;
+        case 33:
+          build_qf_func = f_build_geom_factor_adjJt33;
+          build_qf_path = PalaceQFunctionRelativePath(f_build_geom_factor_adjJt33_loc);
+          break;
+        case 32:
+          build_qf_func = f_build_geom_factor_adjJt32;
+          build_qf_path = PalaceQFunctionRelativePath(f_build_geom_factor_adjJt32_loc);
+          break;
+        default:
+          MFEM_ABORT("Invalid value of (dim, space_dim) = (" << dim << ", " << space_dim
+                                                             << ")!");
+      }
+      break;
+  }
+  PalaceCeedCall(ceed, CeedQFunctionCreateInterior(ceed, 1, build_qf_func,
+                                                   build_qf_path.c_str(), &build_qf));
 
   // Inputs
-  for (std::size_t i = 0; i < Q.size(); i++)
+  PalaceCeedCall(
+      ceed, CeedQFunctionAddInput(build_qf, "grad_x", dim * space_dim, CEED_EVAL_GRAD));
+  if (info == GeomFactorInfo::Determinant)
   {
-    std::string name = "coeff" + std::to_string(i + 1);
-    const CeedInt ncomp = Q[i].ncomp;
-    PalaceCeedCall(ceed,
-                   CeedQFunctionAddInput(build_qf, name.c_str(), ncomp, CEED_EVAL_NONE));
+    PalaceCeedCall(ceed, CeedQFunctionAddInput(build_qf, "w", 1, CEED_EVAL_WEIGHT));
   }
-  PalaceCeedCall(ceed,
-                 CeedQFunctionAddInput(build_qf, "dx", dim * space_dim, CEED_EVAL_GRAD));
-  PalaceCeedCall(ceed, CeedQFunctionAddInput(build_qf, "weights", 1, CEED_EVAL_WEIGHT));
 
   // Output
   PalaceCeedCall(ceed,
@@ -144,82 +187,37 @@ AssembleCeedQuadratureData(const CeedIntegratorInfo &info,
   PalaceCeedCall(ceed, CeedOperatorCreate(ceed, build_qf, nullptr, nullptr, &build_op));
   PalaceCeedCall(ceed, CeedQFunctionDestroy(&build_qf));
 
-  for (std::size_t i = 0; i < Q.size(); i++)
-  {
-    std::string name = "coeff" + std::to_string(i + 1);
-    const CeedInt ncomp = Q[i].ncomp;
-    CeedInt strides[3] = {ncomp, 1, ncomp * nqpts};
-    CeedElemRestriction coeff_restr;
-    CeedVector coeff_vector;
-
-    PalaceCeedCall(ceed, CeedElemRestrictionCreateStrided(ceed, ne, nqpts, ncomp,
-                                                          ne * nqpts * ncomp, strides,
-                                                          &coeff_restr));
-    InitCeedVector(Q[i].data, ceed, &coeff_vector);
-
-    PalaceCeedCall(ceed, CeedOperatorSetField(build_op, name.c_str(), coeff_restr,
-                                              CEED_BASIS_NONE, coeff_vector));
-
-    PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&coeff_restr));
-    PalaceCeedCall(ceed, CeedVectorDestroy(&coeff_vector));
-  }
-  PalaceCeedCall(ceed, CeedOperatorSetField(build_op, "dx", mesh_restr, mesh_basis,
+  PalaceCeedCall(ceed, CeedOperatorSetField(build_op, "grad_x", mesh_restr, mesh_basis,
                                             CEED_VECTOR_ACTIVE));
-  PalaceCeedCall(ceed, CeedOperatorSetField(build_op, "weights", CEED_ELEMRESTRICTION_NONE,
-                                            mesh_basis, CEED_VECTOR_NONE));
+  if (info == GeomFactorInfo::Determinant)
+  {
+    PalaceCeedCall(ceed, CeedOperatorSetField(build_op, "w", CEED_ELEMRESTRICTION_NONE,
+                                              mesh_basis, CEED_VECTOR_NONE));
+  }
   PalaceCeedCall(ceed, CeedOperatorSetField(build_op, "qdata", *qdata_restr,
                                             CEED_BASIS_NONE, CEED_VECTOR_ACTIVE));
 
   PalaceCeedCall(ceed, CeedOperatorCheckReady(build_op));
 
   // Compute the quadrature data for the operator.
-  CeedVector nodes;
-  InitCeedVector(mesh_nodes, ceed, &nodes);
+  CeedVector nodes_vec;
+  InitCeedVector(mesh_nodes, ceed, &nodes_vec);
 
-  PalaceCeedCall(ceed, CeedOperatorApply(build_op, nodes, *qdata, CEED_REQUEST_IMMEDIATE));
+  PalaceCeedCall(
+      ceed, CeedOperatorApply(build_op, nodes_vec, *qdata_vec, CEED_REQUEST_IMMEDIATE));
 
-  PalaceCeedCall(ceed, CeedVectorDestroy(&nodes));
+  PalaceCeedCall(ceed, CeedVectorDestroy(&nodes_vec));
   PalaceCeedCall(ceed, CeedOperatorDestroy(&build_op));
 }
 
 // Create libCEED operator using the given quadrature data and element restriction.
 template <typename CeedIntegratorInfo>
 inline void AssembleCeedOperator(const CeedIntegratorInfo &info,
-                                 const mfem::ParFiniteElementSpace &trial_fespace,
-                                 const mfem::ParFiniteElementSpace &test_fespace,
-                                 const mfem::IntegrationRule &ir,
-                                 const std::vector<int> &indices, const bool use_bdr,
-                                 CeedVector qdata, CeedElemRestriction qdata_restr,
-                                 Ceed ceed, CeedOperator *op)
+                                 const CeedGeomFactorData &geom_data, Ceed ceed,
+                                 CeedElemRestriction trial_restr,
+                                 CeedElemRestriction test_restr, CeedBasis trial_basis,
+                                 CeedBasis test_basis, CeedOperator *op)
 {
-  MFEM_VERIFY(trial_fespace.GetParMesh() == test_fespace.GetParMesh(),
-              "Trial and test finite element spaces must correspond to the same mesh!");
-  const mfem::ParMesh &mesh = *trial_fespace.GetParMesh();
-
-  CeedInt dim = mesh.Dimension() - use_bdr;
-  CeedInt curl_dim = (dim < 3) ? 1 : dim;
-  CeedInt trial_vdim = trial_fespace.GetVDim();
-  CeedInt test_vdim = test_fespace.GetVDim();
-  bool trial_vectorfe =
-      (trial_fespace.FEColl()->GetRangeType(dim) == mfem::FiniteElement::VECTOR);
-  bool test_vectorfe =
-      (test_fespace.FEColl()->GetRangeType(dim) == mfem::FiniteElement::VECTOR);
-
-  CeedElemRestriction trial_restr, test_restr;
-  CeedBasis trial_basis, test_basis;
-  InitRestriction(trial_fespace, indices, use_bdr, ceed, &trial_restr);
-  InitRestriction(test_fespace, indices, use_bdr, ceed, &test_restr);
-  InitBasis(trial_fespace, ir, indices, use_bdr, ceed, &trial_basis);
-  InitBasis(test_fespace, ir, indices, use_bdr, ceed, &test_basis);
-
-  CeedInt trial_nqpts, test_nqpts, mesh_nqpts, qdata_size;
-  PalaceCeedCall(ceed, CeedBasisGetNumQuadraturePoints(trial_basis, &trial_nqpts));
-  PalaceCeedCall(ceed, CeedBasisGetNumQuadraturePoints(test_basis, &test_nqpts));
-  PalaceCeedCall(ceed, CeedElemRestrictionGetElementSize(qdata_restr, &mesh_nqpts));
-  PalaceCeedCall(ceed, CeedElemRestrictionGetNumComponents(qdata_restr, &qdata_size));
-  MFEM_VERIFY(trial_nqpts == test_nqpts && trial_nqpts == mesh_nqpts,
-              "Trial and test basis must have the same number of quadrature points!");
-
   // Create the QFunction that defines the action of the operator.
   CeedQFunction apply_qf;
   PalaceCeedCall(ceed, CeedQFunctionCreateInterior(ceed, 1, info.apply_qf,
@@ -234,193 +232,191 @@ inline void AssembleCeedOperator(const CeedIntegratorInfo &info,
   PalaceCeedCall(ceed, CeedQFunctionContextDestroy(&apply_ctx));
 
   // Inputs
-  switch (info.trial_op)
+  CeedInt trial_ncomp, test_ncomp;
+  PalaceCeedCall(ceed, CeedBasisGetNumComponents(trial_basis, &trial_ncomp));
+  PalaceCeedCall(ceed, CeedBasisGetNumComponents(test_basis, &test_ncomp));
+
+  if (info.geom_data & GeomFactorInfo::Determinant)
   {
-    case EvalMode::None:
-      PalaceCeedCall(ceed,
-                     CeedQFunctionAddInput(apply_qf, "u", trial_vdim, CEED_EVAL_NONE));
-      break;
-    case EvalMode::Interp:
-      PalaceCeedCall(ceed, CeedQFunctionAddInput(apply_qf, "u",
-                                                 trial_vdim * (trial_vectorfe ? dim : 1),
-                                                 CEED_EVAL_INTERP));
-      break;
-    case EvalMode::Grad:
-      MFEM_VERIFY(!trial_vectorfe, "EvalMode::Grad is not intended for vector FE!");
-      PalaceCeedCall(
-          ceed, CeedQFunctionAddInput(apply_qf, "gu", trial_vdim * dim, CEED_EVAL_GRAD));
-      break;
-    case EvalMode::Div:
-      PalaceCeedCall(ceed,
-                     CeedQFunctionAddInput(apply_qf, "du", trial_vdim, CEED_EVAL_DIV));
-      break;
-    case EvalMode::Curl:
-      PalaceCeedCall(ceed, CeedQFunctionAddInput(apply_qf, "cu", trial_vdim * curl_dim,
-                                                 CEED_EVAL_CURL));
-      break;
-    case EvalMode::InterpAndGrad:
-      MFEM_VERIFY(!trial_vectorfe,
-                  "EvalMode::InterpAndGrad is not intended for vector FE!");
-      PalaceCeedCall(ceed,
-                     CeedQFunctionAddInput(apply_qf, "u", trial_vdim, CEED_EVAL_INTERP));
-      PalaceCeedCall(
-          ceed, CeedQFunctionAddInput(apply_qf, "gu", trial_vdim * dim, CEED_EVAL_GRAD));
-      break;
-    case EvalMode::InterpAndDiv:
-      MFEM_VERIFY(trial_vectorfe, "EvalMode::InterpAndDiv is only intended for vector FE!");
-      PalaceCeedCall(
-          ceed, CeedQFunctionAddInput(apply_qf, "u", trial_vdim * dim, CEED_EVAL_INTERP));
-      PalaceCeedCall(ceed,
-                     CeedQFunctionAddInput(apply_qf, "du", trial_vdim, CEED_EVAL_DIV));
-      break;
-    case EvalMode::InterpAndCurl:
-      MFEM_VERIFY(trial_vectorfe,
-                  "EvalMode::InterpAndCurl is only intended for vector FE!");
-      PalaceCeedCall(
-          ceed, CeedQFunctionAddInput(apply_qf, "u", trial_vdim * dim, CEED_EVAL_INTERP));
-      PalaceCeedCall(ceed, CeedQFunctionAddInput(apply_qf, "cu", trial_vdim * curl_dim,
-                                                 CEED_EVAL_CURL));
-      break;
+    CeedInt qdata_size;
+    PalaceCeedCall(ceed,
+                   CeedElemRestrictionGetNumComponents(geom_data.wdetJ_restr, &qdata_size));
+    PalaceCeedCall(ceed,
+                   CeedQFunctionAddInput(apply_qf, "w_det_J", qdata_size, CEED_EVAL_NONE));
   }
-  PalaceCeedCall(ceed,
-                 CeedQFunctionAddInput(apply_qf, "qdata", qdata_size, CEED_EVAL_NONE));
+  if (info.geom_data & GeomFactorInfo::Jacobian)
+  {
+    CeedInt qdata_size;
+    PalaceCeedCall(ceed,
+                   CeedElemRestrictionGetNumComponents(geom_data.J_restr, &qdata_size));
+    PalaceCeedCall(ceed, CeedQFunctionAddInput(apply_qf, "J", qdata_size, CEED_EVAL_NONE));
+  }
+  if (info.geom_data & GeomFactorInfo::Adjugate)
+  {
+    CeedInt qdata_size;
+    PalaceCeedCall(ceed,
+                   CeedElemRestrictionGetNumComponents(geom_data.adjJt_restr, &qdata_size));
+    PalaceCeedCall(ceed,
+                   CeedQFunctionAddInput(apply_qf, "adj_Jt", qdata_size, CEED_EVAL_NONE));
+  }
+  if (info.geom_data & GeomFactorInfo::Weight)
+  {
+    PalaceCeedCall(ceed, CeedQFunctionAddInput(apply_qf, "w", 1, CEED_EVAL_WEIGHT));
+  }
+
+  if (info.trial_op & EvalMode::None):
+    {
+      PalaceCeedCall(ceed,
+                     CeedQFunctionAddInput(apply_qf, "u", trial_ncomp, CEED_EVAL_NONE));
+    }
+  if (info.trial_op & EvalMode::Interp):
+    {
+      CeedInt qcomp;
+      PalaceCeedCall(
+          ceed, CeedBasisGetNumQuadratureComponents(trial_basis, CEED_EVAL_INTERP, &qcomp));
+      PalaceCeedCall(ceed, CeedQFunctionAddInput(apply_qf, "u", trial_ncomp * qcomp,
+                                                 CEED_EVAL_INTERP));
+    }
+  if (info.trial_op & EvalMode::Grad):
+    {
+      CeedInt qcomp;
+      PalaceCeedCall(
+          ceed, CeedBasisGetNumQuadratureComponents(trial_basis, CEED_EVAL_GRAD, &qcomp));
+      PalaceCeedCall(ceed, CeedQFunctionAddInput(apply_qf, "grad_u", trial_ncomp * qcomp,
+                                                 CEED_EVAL_GRAD));
+    }
+  if (info.trial_op & EvalMode::Div):
+    {
+      CeedInt qcomp;
+      PalaceCeedCall(
+          ceed, CeedBasisGetNumQuadratureComponents(trial_basis, CEED_EVAL_DIV, &qcomp));
+      PalaceCeedCall(ceed, CeedQFunctionAddInput(apply_qf, "div_u", trial_ncomp * qcomp,
+                                                 CEED_EVAL_DIV));
+    }
+  if (info.trial_op & EvalMode::Curl):
+    {
+      CeedInt qcomp;
+      PalaceCeedCall(
+          ceed, CeedBasisGetNumQuadratureComponents(trial_basis, CEED_EVAL_CURL, &qcomp));
+      PalaceCeedCall(ceed, CeedQFunctionAddInput(apply_qf, "curl_u", trial_ncomp * qcomp,
+                                                 CEED_EVAL_CURL));
+    }
 
   // Output
-  switch (info.test_op)
-  {
-    case EvalMode::None:
+  if (info.test_op & EvalMode::None):
+    {
       PalaceCeedCall(ceed,
-                     CeedQFunctionAddOutput(apply_qf, "v", test_vdim, CEED_EVAL_NONE));
-      break;
-    case EvalMode::Interp:
-      PalaceCeedCall(ceed, CeedQFunctionAddOutput(apply_qf, "v",
-                                                  test_vdim * (test_vectorfe ? dim : 1),
+                     CeedQFunctionAddOutput(apply_qf, "v", test_ncomp, CEED_EVAL_NONE));
+    }
+  if (info.test_op & EvalMode::Interp):
+    {
+      CeedInt qcomp;
+      PalaceCeedCall(
+          ceed, CeedBasisGetNumQuadratureComponents(test_basis, CEED_EVAL_INTERP, &qcomp));
+      PalaceCeedCall(ceed, CeedQFunctionAddOutput(apply_qf, "v", test_ncomp * qcomp,
                                                   CEED_EVAL_INTERP));
-      break;
-    case EvalMode::Grad:
-      MFEM_VERIFY(!test_vectorfe, "EvalMode::Grad is not intended for vector FE!");
+    }
+  if (info.test_op & EvalMode::Grad):
+    {
+      CeedInt qcomp;
       PalaceCeedCall(
-          ceed, CeedQFunctionAddOutput(apply_qf, "gv", test_vdim * dim, CEED_EVAL_GRAD));
-      break;
-    case EvalMode::Div:
-      PalaceCeedCall(ceed,
-                     CeedQFunctionAddOutput(apply_qf, "dv", test_vdim, CEED_EVAL_DIV));
-      break;
-    case EvalMode::Curl:
-      PalaceCeedCall(ceed, CeedQFunctionAddOutput(apply_qf, "cv", test_vdim * curl_dim,
+          ceed, CeedBasisGetNumQuadratureComponents(test_basis, CEED_EVAL_GRAD, &qcomp));
+      PalaceCeedCall(ceed, CeedQFunctionAddOutput(apply_qf, "grad_v", test_ncomp * qcomp,
+                                                  CEED_EVAL_GRAD));
+    }
+  if (info.test_op & EvalMode::Div):
+    {
+      CeedInt qcomp;
+      PalaceCeedCall(
+          ceed, CeedBasisGetNumQuadratureComponents(test_basis, CEED_EVAL_DIV, &qcomp));
+      PalaceCeedCall(ceed, CeedQFunctionAddOutput(apply_qf, "div_v", test_ncomp * qcomp,
+                                                  CEED_EVAL_DIV));
+    }
+  if (info.test_op & EvalMode::Curl):
+    {
+      CeedInt qcomp;
+      PalaceCeedCall(
+          ceed, CeedBasisGetNumQuadratureComponents(test_basis, CEED_EVAL_CURL, &qcomp));
+      PalaceCeedCall(ceed, CeedQFunctionAddOutput(apply_qf, "curl_v", test_ncomp * qcomp,
                                                   CEED_EVAL_CURL));
-      break;
-    case EvalMode::InterpAndGrad:
-      MFEM_VERIFY(!test_vectorfe, "EvalMode::InterpAndGrad is not intended for vector FE!");
-      PalaceCeedCall(ceed,
-                     CeedQFunctionAddOutput(apply_qf, "v", test_vdim, CEED_EVAL_INTERP));
-      PalaceCeedCall(
-          ceed, CeedQFunctionAddOutput(apply_qf, "gv", test_vdim * dim, CEED_EVAL_GRAD));
-      break;
-    case EvalMode::InterpAndDiv:
-      MFEM_VERIFY(test_vectorfe, "EvalMode::InterpAndDiv is only intended for vector FE!");
-      PalaceCeedCall(
-          ceed, CeedQFunctionAddOutput(apply_qf, "v", test_vdim * dim, CEED_EVAL_INTERP));
-      PalaceCeedCall(ceed,
-                     CeedQFunctionAddOutput(apply_qf, "dv", test_vdim, CEED_EVAL_DIV));
-      break;
-    case EvalMode::InterpAndCurl:
-      MFEM_VERIFY(test_vectorfe, "EvalMode::InterpAndCurl is only intended for vector FE!");
-      PalaceCeedCall(
-          ceed, CeedQFunctionAddOutput(apply_qf, "v", test_vdim * dim, CEED_EVAL_INTERP));
-      PalaceCeedCall(ceed, CeedQFunctionAddOutput(apply_qf, "cv", test_vdim * curl_dim,
-                                                  CEED_EVAL_CURL));
-      break;
-  }
+    }
 
   // Create the operator.
   PalaceCeedCall(ceed, CeedOperatorCreate(ceed, apply_qf, nullptr, nullptr, op));
   PalaceCeedCall(ceed, CeedQFunctionDestroy(&apply_qf));
 
-  switch (info.trial_op)
+  if (info.geom_data & GeomFactorInfo::Determinant)
   {
-    case EvalMode::None:
-      PalaceCeedCall(ceed, CeedOperatorSetField(*op, "u", trial_restr, CEED_BASIS_NONE,
-                                                CEED_VECTOR_ACTIVE));
-      break;
-    case EvalMode::Interp:
-      PalaceCeedCall(ceed, CeedOperatorSetField(*op, "u", trial_restr, trial_basis,
-                                                CEED_VECTOR_ACTIVE));
-      break;
-    case EvalMode::Grad:
-      PalaceCeedCall(ceed, CeedOperatorSetField(*op, "gu", trial_restr, trial_basis,
-                                                CEED_VECTOR_ACTIVE));
-      break;
-    case EvalMode::Div:
-      PalaceCeedCall(ceed, CeedOperatorSetField(*op, "du", trial_restr, trial_basis,
-                                                CEED_VECTOR_ACTIVE));
-      break;
-    case EvalMode::Curl:
-      PalaceCeedCall(ceed, CeedOperatorSetField(*op, "cu", trial_restr, trial_basis,
-                                                CEED_VECTOR_ACTIVE));
-      break;
-    case EvalMode::InterpAndGrad:
-      PalaceCeedCall(ceed, CeedOperatorSetField(*op, "u", trial_restr, trial_basis,
-                                                CEED_VECTOR_ACTIVE));
-      PalaceCeedCall(ceed, CeedOperatorSetField(*op, "gu", trial_restr, trial_basis,
-                                                CEED_VECTOR_ACTIVE));
-      break;
-    case EvalMode::InterpAndDiv:
-      PalaceCeedCall(ceed, CeedOperatorSetField(*op, "u", trial_restr, trial_basis,
-                                                CEED_VECTOR_ACTIVE));
-      PalaceCeedCall(ceed, CeedOperatorSetField(*op, "du", trial_restr, trial_basis,
-                                                CEED_VECTOR_ACTIVE));
-      break;
-    case EvalMode::InterpAndCurl:
-      PalaceCeedCall(ceed, CeedOperatorSetField(*op, "u", trial_restr, trial_basis,
-                                                CEED_VECTOR_ACTIVE));
-      PalaceCeedCall(ceed, CeedOperatorSetField(*op, "cu", trial_restr, trial_basis,
-                                                CEED_VECTOR_ACTIVE));
-      break;
+    PalaceCeedCall(ceed, CeedOperatorSetField(*op, "w_det_J", geom_data.wdetJ_restr,
+                                              CEED_BASIS_NONE, geom_data.wdetJ_vec));
   }
-  PalaceCeedCall(ceed,
-                 CeedOperatorSetField(*op, "qdata", qdata_restr, CEED_BASIS_NONE, qdata));
-  switch (info.test_op)
+  if (info.geom_data & GeomFactorInfo::Jacobian)
   {
-    case EvalMode::None:
-      PalaceCeedCall(ceed, CeedOperatorSetField(*op, "v", test_restr, CEED_BASIS_NONE,
-                                                CEED_VECTOR_ACTIVE));
-      break;
-    case EvalMode::Interp:
-      PalaceCeedCall(
-          ceed, CeedOperatorSetField(*op, "v", test_restr, test_basis, CEED_VECTOR_ACTIVE));
-      break;
-    case EvalMode::Grad:
-      PalaceCeedCall(ceed, CeedOperatorSetField(*op, "gv", test_restr, test_basis,
-                                                CEED_VECTOR_ACTIVE));
-      break;
-    case EvalMode::Div:
-      PalaceCeedCall(ceed, CeedOperatorSetField(*op, "dv", test_restr, test_basis,
-                                                CEED_VECTOR_ACTIVE));
-      break;
-    case EvalMode::Curl:
-      PalaceCeedCall(ceed, CeedOperatorSetField(*op, "cv", test_restr, test_basis,
-                                                CEED_VECTOR_ACTIVE));
-      break;
-    case EvalMode::InterpAndGrad:
-      PalaceCeedCall(
-          ceed, CeedOperatorSetField(*op, "v", test_restr, test_basis, CEED_VECTOR_ACTIVE));
-      PalaceCeedCall(ceed, CeedOperatorSetField(*op, "gv", test_restr, test_basis,
-                                                CEED_VECTOR_ACTIVE));
-      break;
-    case EvalMode::InterpAndDiv:
-      PalaceCeedCall(
-          ceed, CeedOperatorSetField(*op, "v", test_restr, test_basis, CEED_VECTOR_ACTIVE));
-      PalaceCeedCall(ceed, CeedOperatorSetField(*op, "dv", test_restr, test_basis,
-                                                CEED_VECTOR_ACTIVE));
-      break;
-    case EvalMode::InterpAndCurl:
-      PalaceCeedCall(
-          ceed, CeedOperatorSetField(*op, "v", test_restr, test_basis, CEED_VECTOR_ACTIVE));
-      PalaceCeedCall(ceed, CeedOperatorSetField(*op, "cv", test_restr, test_basis,
-                                                CEED_VECTOR_ACTIVE));
-      break;
+    PalaceCeedCall(ceed, CeedOperatorSetField(*op, "J", geom_data.J_restr, CEED_BASIS_NONE,
+                                              geom_data.J_vec));
   }
+  if (info.geom_data & GeomFactorInfo::Adjugate)
+  {
+    PalaceCeedCall(ceed, CeedOperatorSetField(*op, "adj_Jt", geom_data.adjJt_restr,
+                                              CEED_BASIS_NONE, geom_data.adjJt_vec));
+  }
+  if (info.geom_data & GeomFactorInfo::Weight)
+  {
+    PalaceCeedCall(ceed, CeedOperatorSetField(*op, "w", CEED_ELEMRESTRICTION_NONE,
+                                              trial_basis, CEED_VECTOR_NONE));
+  }
+
+  if (info.trial_op & EvalMode::None):
+    {
+      PalaceCeedCall(ceed, CeedOperatorSetField(apply_qf, "u", trial_restr, CEED_BASIS_NONE,
+                                                CEED_VECTOR_ACTIVE));
+    }
+  if (info.trial_op & EvalMode::Interp):
+    {
+      PalaceCeedCall(ceed, CeedOperatorSetField(apply_qf, "u", trial_restr, trial_basis,
+                                                CEED_VECTOR_ACTIVE));
+    }
+  if (info.trial_op & EvalMode::Grad):
+    {
+      PalaceCeedCall(ceed, CeedOperatorSetField(apply_qf, "grad_u", trial_restr,
+                                                trial_basis, CEED_VECTOR_ACTIVE));
+    }
+  if (info.trial_op & EvalMode::Div):
+    {
+      PalaceCeedCall(ceed, CeedOperatorSetField(apply_qf, "div_u", trial_restr, trial_basis,
+                                                CEED_VECTOR_ACTIVE));
+    }
+  if (info.trial_op & EvalMode::Curl):
+    {
+      PalaceCeedCall(ceed, CeedOperatorSetField(apply_qf, "curl_u", trial_restr,
+                                                trial_basis, CEED_VECTOR_ACTIVE));
+    }
+
+  if (info.test_op & EvalMode::None):
+    {
+      PalaceCeedCall(ceed, CeedOperatorSetField(apply_qf, "v", test_restr, CEED_BASIS_NONE,
+                                                CEED_VECTOR_ACTIVE));
+    }
+  if (info.test_op & EvalMode::Interp):
+    {
+      PalaceCeedCall(ceed, CeedOperatorSetField(apply_qf, "v", test_restr, test_basis,
+                                                CEED_VECTOR_ACTIVE));
+    }
+  if (info.test_op & EvalMode::Grad):
+    {
+      PalaceCeedCall(ceed, CeedOperatorSetField(apply_qf, "grad_v", test_restr, test_basis,
+                                                CEED_VECTOR_ACTIVE));
+    }
+  if (info.test_op & EvalMode::Div):
+    {
+      PalaceCeedCall(ceed, CeedOperatorSetField(apply_qf, "div_v", test_restr, test_basis,
+                                                CEED_VECTOR_ACTIVE));
+    }
+  if (info.test_op & EvalMode::Curl):
+    {
+      PalaceCeedCall(ceed, CeedOperatorSetField(apply_qf, "curl_v", test_restr, test_basis,
+                                                CEED_VECTOR_ACTIVE));
+    }
 
   PalaceCeedCall(ceed, CeedOperatorCheckReady(*op));
 }
@@ -428,35 +424,23 @@ inline void AssembleCeedOperator(const CeedIntegratorInfo &info,
 // Construct libCEED operators for interpolation operations and their transpose between
 // the two spaces. The operation for interpolation is decided by the conformity of the trial
 // and test spaces.
-inline void AssembleCeedInterpolator(const mfem::ParFiniteElementSpace &trial_fespace,
-                                     const mfem::ParFiniteElementSpace &test_fespace,
-                                     const std::vector<int> &indices, Ceed ceed,
+inline void AssembleCeedInterpolator(Ceed ceed, CeedElemRestriction trial_restr,
+                                     CeedElemRestriction test_restr, CeedBasis interp_basis,
                                      CeedOperator *op, CeedOperator *op_t)
 {
-  CeedInt trial_vdim = trial_fespace.GetVDim();
-  CeedInt test_vdim = test_fespace.GetVDim();
-  MFEM_VERIFY(trial_vdim == 1 && test_vdim == 1,
-              "AssembleCeedInterpolator does not support spaces with vdim > 1!");
-
-  CeedElemRestriction trial_restr, test_restr;
-  CeedBasis basis_ctof;
-  InitRestriction(trial_fespace, indices, false, true, false, ceed, &trial_restr);
-  InitRestriction(test_fespace, indices, false, true, true, ceed, &test_restr);
-  InitInterpolatorBasis(trial_fespace, test_fespace, indices, ceed, &basis_ctof);
-
   // Create the QFunction that defines the action of the operator (only an identity as
   // element dof multiplicity is handled outside of libCEED).
   CeedQFunction apply_qf, apply_qf_t;
-  PalaceCeedCall(ceed, CeedQFunctionCreateIdentity(ceed, trial_vdim, CEED_EVAL_INTERP,
+  PalaceCeedCall(ceed, CeedQFunctionCreateIdentity(ceed, 1, CEED_EVAL_INTERP,
                                                    CEED_EVAL_NONE, &apply_qf));
-  PalaceCeedCall(ceed, CeedQFunctionCreateIdentity(ceed, trial_vdim, CEED_EVAL_NONE,
+  PalaceCeedCall(ceed, CeedQFunctionCreateIdentity(ceed, 1, CEED_EVAL_NONE,
                                                    CEED_EVAL_INTERP, &apply_qf_t));
 
   // Create the operator.
   PalaceCeedCall(ceed, CeedOperatorCreate(ceed, apply_qf, nullptr, nullptr, op));
   PalaceCeedCall(ceed, CeedQFunctionDestroy(&apply_qf));
 
-  PalaceCeedCall(ceed, CeedOperatorSetField(*op, "input", trial_restr, basis_ctof,
+  PalaceCeedCall(ceed, CeedOperatorSetField(*op, "input", trial_restr, interp_basis,
                                             CEED_VECTOR_ACTIVE));
   PalaceCeedCall(ceed, CeedOperatorSetField(*op, "output", test_restr, CEED_BASIS_NONE,
                                             CEED_VECTOR_ACTIVE));
@@ -469,7 +453,7 @@ inline void AssembleCeedInterpolator(const mfem::ParFiniteElementSpace &trial_fe
 
   PalaceCeedCall(ceed, CeedOperatorSetField(*op_t, "input", test_restr, CEED_BASIS_NONE,
                                             CEED_VECTOR_ACTIVE));
-  PalaceCeedCall(ceed, CeedOperatorSetField(*op_t, "output", trial_restr, basis_ctof,
+  PalaceCeedCall(ceed, CeedOperatorSetField(*op_t, "output", trial_restr, interp_basis,
                                             CEED_VECTOR_ACTIVE));
 
   PalaceCeedCall(ceed, CeedOperatorCheckReady(*op_t));

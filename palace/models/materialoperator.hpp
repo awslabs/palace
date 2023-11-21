@@ -7,6 +7,9 @@
 #include <map>
 #include <vector>
 #include <mfem.hpp>
+#include "fem/libceed/ceed.hpp"
+
+// XX TODO WIP MATERIAL PROPERTY COEFFICIENTS, ELEMENT ATTRIBUTE VECTORS
 
 namespace palace
 {
@@ -21,8 +24,9 @@ class MaterialOperator
 private:
   // Material properties for domain attributes: relative permeability, relative
   // permittivity, and others (like electrical conductivity and London penetration depth
-  // for superconductors. The i-1-th entry of each Vector is the property for mesh domain
-  // attribute i. Marker arrays contain a 1 for each domain attribute labeled, and 0 else.
+  // for superconductors. Marker arrays contain a 1 for each domain attribute labeled, and
+  // 0 else.
+  std::vector<int> mat_idx;
   std::vector<mfem::DenseMatrix> mat_muinv, mat_epsilon, mat_epsilon_imag, mat_epsilon_abs,
       mat_invz0, mat_c0, mat_sigma, mat_invLondon;
   std::vector<double> mat_c0_min, mat_c0_max;
@@ -32,23 +36,40 @@ private:
   // Shared face mapping for boundary coefficients.
   std::map<int, int> local_to_shared;
 
+  // Data structures for libCEED operators:
+  //   - Mesh element indices for threads and element geometry types.
+  //   - Geometric quadrature factor data (w |J|, J / |J|, adj(J)^T / |J|) for domain and
+  //     boundary elements.
+  //   - Attributes for domain and boundary elements. The attributes are not the same as the
+  //     mesh element attributes as they map to a compressed (1-based) list of used
+  //     attributes on this MPI process.
+  ceed::CeedObjectMap<std::vector<int>> element_indices;
+  ceed::CeedObjectMap<ceed::CeedGeomFactorData> geom_data;
+  void SetUpElementIndices(mfem::ParMesh &mesh);
+  void SetUpGeomFactorData(mfem::ParMesh &mesh);
+
 public:
   MaterialOperator(const IoData &iodata, mfem::ParMesh &mesh);
+  ~MaterialOperator();
 
   int SpaceDimension() const { return mat_muinv.front().Height(); }
 
-  const auto &GetLocalToSharedFaceMap() const { return local_to_shared; }
-
-  const auto &GetInvPermeability(int attr) const { return mat_muinv[attr - 1]; }
-  const auto &GetPermittivityReal(int attr) const { return mat_epsilon[attr - 1]; }
-  const auto &GetPermittivityImag(int attr) const { return mat_epsilon_imag[attr - 1]; }
-  const auto &GetPermittivityAbs(int attr) const { return mat_epsilon_abs[attr - 1]; }
-  const auto &GetInvImpedance(int attr) const { return mat_invz0[attr - 1]; }
-  const auto &GetLightSpeed(int attr) const { return mat_c0[attr - 1]; }
-  const auto &GetLightSpeedMin(int attr) const { return mat_c0_min[attr - 1]; }
-  const auto &GetLightSpeedMax(int attr) const { return mat_c0_max[attr - 1]; }
-  const auto &GetConductivity(int attr) const { return mat_sigma[attr - 1]; }
-  const auto &GetInvLondonDepth(int attr) const { return mat_invLondon[attr - 1]; }
+  const auto &GetInvPermeability(int attr) const { return mat_muinv[mat_idx[attr - 1]]; }
+  const auto &GetPermittivityReal(int attr) const { return mat_epsilon[mat_idx[attr - 1]]; }
+  const auto &GetPermittivityImag(int attr) const
+  {
+    return mat_epsilon_imag[mat_idx[attr - 1]];
+  }
+  const auto &GetPermittivityAbs(int attr) const
+  {
+    return mat_epsilon_abs[mat_idx[attr - 1]];
+  }
+  const auto &GetInvImpedance(int attr) const { return mat_invz0[mat_idx[attr - 1]]; }
+  const auto &GetLightSpeed(int attr) const { return mat_c0[mat_idx[attr - 1]]; }
+  const auto &GetLightSpeedMin(int attr) const { return mat_c0_min[mat_idx[attr - 1]]; }
+  const auto &GetLightSpeedMax(int attr) const { return mat_c0_max[mat_idx[attr - 1]]; }
+  const auto &GetConductivity(int attr) const { return mat_sigma[mat_idx[attr - 1]]; }
+  const auto &GetInvLondonDepth(int attr) const { return mat_invLondon[mat_idx[attr - 1]]; }
 
   bool HasLossTangent() const { return (losstan_marker.Max() > 0); }
   bool HasConductivity() const { return (conductivity_marker.Max() > 0); }
@@ -57,6 +78,27 @@ public:
   const auto &GetLossTangentMarker() const { return losstan_marker; }
   const auto &GetConductivityMarker() const { return conductivity_marker; }
   const auto &GetLondonDepthMarker() const { return london_marker; }
+
+  const auto &GetLocalToSharedFaceMap() const { return local_to_shared; }
+
+  const auto &GetElementIndices() const { return element_indices; }
+  const auto &GetElementIndices(Ceed ceed, mfem::Geometry::Type geom) const
+  {
+    const auto it = element_indices.find(std::make_pair(ceed, geom));
+    MFEM_ASSERT(it != element_indices.end(),
+                "Unable to locate element indices for geometry "
+                    << mfem::Geometry::Name[geom] << "!");
+    return it->second;
+  }
+
+  const auto &GetGeomFactorData() const { return geom_data; }
+  const auto &GetGeomFactorData(Ceed ceed, mfem::Geometry::Type geom) const
+  {
+    const auto it = geom_data.find(std::make_pair(ceed, geom));
+    MFEM_ASSERT(it != geom_data.end(), "Unable to geometry factor data for geometry "
+                                           << mfem::Geometry::Name[geom] << "!");
+    return it->second;
+  }
 };
 
 }  // namespace palace

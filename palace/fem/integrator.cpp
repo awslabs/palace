@@ -11,15 +11,20 @@ namespace palace
 namespace fem
 {
 
+int DefaultIntegrationOrder::Get(const mfem::IsoparametricTransformation &T)
+{
+  return 2 * p_trial + (q_order_jac ? T.OrderW() : 0) +
+         (T.GetFE()->Space() == mfem::FunctionSpace::Pk ? q_order_extra_pk
+                                                        : q_order_extra_qk);
+}
+
 int DefaultIntegrationOrder::Get(const mfem::ElementTransformation &T)
 {
   const auto *T_iso = dynamic_cast<const mfem::IsoparametricTransformation *>(&T);
   MFEM_VERIFY(
       T_iso,
       "Unexpected non-isoparametric element transformation to calculate quadrature order!");
-  return 2 * p_trial + (q_order_jac ? T.OrderW() : 0) +
-         (T_iso->GetFE()->Space() == mfem::FunctionSpace::Pk ? q_order_extra_pk
-                                                             : q_order_extra_qk);
+  return Get(*T_iso);
 }
 
 int DefaultIntegrationOrder::Get(const mfem::Mesh &mesh, mfem::Geometry::Type geom)
@@ -32,12 +37,13 @@ int DefaultIntegrationOrder::Get(const mfem::Mesh &mesh, mfem::Geometry::Type ge
 
 }  // namespace fem
 
-void DiscreteInterpolator::Assemble(CeedElemRestriction trial_restr,
-                                    CeedElemRestriction test_restr, CeedBasis interp_basis,
-                                    Ceed ceed, CeedOperator *op, CeedOperator *op_t)
+void DiscreteInterpolator::AssembleInterpolator(Ceed ceed, CeedElemRestriction trial_restr,
+                                                CeedElemRestriction test_restr,
+                                                CeedBasis interp_basis, CeedOperator *op,
+                                                CeedOperator *op_t)
 {
   // Interpolators do not use an integration rule to map between the test and trial spaces.
-  ceed::AssembleCeedInterpolator(trial_restr, test_restr, interp_basis, ceed, op, op_t);
+  ceed::AssembleCeedInterpolator(ceed, trial_restr, test_restr, interp_basis, op, op_t);
 }
 
 void VectorFEBoundaryLFIntegrator::AssembleRHSElementVect(const mfem::FiniteElement &fe,
