@@ -6,6 +6,8 @@
 
 #include <math.h>
 
+// XX TODO REMOVE qw ARGUMENT WHEN POSSIBLE
+
 struct GeomContext
 {
   bool compute_wdetJ, compute_J, compute_adjJt;
@@ -16,13 +18,6 @@ CEED_QFUNCTION_HELPER CeedScalar DetJ22(const CeedScalar *J, const CeedInt J_str
   // J: 0 2
   //    1 3
   return J[J_stride * 0] * J[J_stride * 3] - J[J_stride * 1] * J[J_stride * 2];
-}
-
-CEED_QFUNCTION_HELPER CeedScalar DetJ21(const CeedScalar *J, const CeedInt J_stride)
-{
-  // J: 0
-  //    1
-  return sqrt(J[J_stride * 0] * J[J_stride * 0] + J[J_stride * 1] * J[J_stride * 1]);
 }
 
 CEED_QFUNCTION_HELPER CeedScalar DetJ33(const CeedScalar *J, const CeedInt J_stride)
@@ -36,6 +31,13 @@ CEED_QFUNCTION_HELPER CeedScalar DetJ33(const CeedScalar *J, const CeedInt J_str
              (J[J_stride * 3] * J[J_stride * 8] - J[J_stride * 5] * J[J_stride * 6]) +
          J[J_stride * 2] *
              (J[J_stride * 3] * J[J_stride * 7] - J[J_stride * 4] * J[J_stride * 6]);
+}
+
+CEED_QFUNCTION_HELPER CeedScalar DetJ21(const CeedScalar *J, const CeedInt J_stride)
+{
+  // J: 0
+  //    1
+  return sqrt(J[J_stride * 0] * J[J_stride * 0] + J[J_stride * 1] * J[J_stride * 1]);
 }
 
 CEED_QFUNCTION_HELPER CeedScalar DetJ32(const CeedScalar *J, const CeedInt J_stride)
@@ -73,20 +75,6 @@ CEED_QFUNCTION_HELPER void J22(const CeedScalar *J, const CeedInt J_stride,
   // qd[qd_stride * 4] = qw * detJ;
 }
 
-CEED_QFUNCTION_HELPER void J21(const CeedScalar *J, const CeedInt J_stride,
-                               const CeedScalar qw, const CeedInt qd_stride, CeedScalar *qd)
-{
-  // Compute J / det(J) and store the result.
-  // J: 0   qd: 0
-  //    1       1
-  const CeedScalar J11 = J[J_stride * 0];
-  const CeedScalar J21 = J[J_stride * 1];
-  const CeedScalar d = sqrt(J11 * J11 + J21 * J21);
-  qd[qd_stride * 0] = J11 / d;
-  qd[qd_stride * 1] = J21 / d;
-  // qd[qd_stride * 2] = qw * d;
-}
-
 CEED_QFUNCTION_HELPER void J33(const CeedScalar *J, const CeedInt J_stride,
                                const CeedScalar qw, const CeedInt qd_stride, CeedScalar *qd)
 {
@@ -115,6 +103,20 @@ CEED_QFUNCTION_HELPER void J33(const CeedScalar *J, const CeedInt J_stride,
   qd[qd_stride * 7] = J23 / detJ;
   qd[qd_stride * 8] = J33 / detJ;
   // qd[qd_stride * 9] = qw * detJ;
+}
+
+CEED_QFUNCTION_HELPER void J21(const CeedScalar *J, const CeedInt J_stride,
+                               const CeedScalar qw, const CeedInt qd_stride, CeedScalar *qd)
+{
+  // Compute J / det(J) and store the result.
+  // J: 0   qd: 0
+  //    1       1
+  const CeedScalar J11 = J[J_stride * 0];
+  const CeedScalar J21 = J[J_stride * 1];
+  const CeedScalar d = sqrt(J11 * J11 + J21 * J21);
+  qd[qd_stride * 0] = J11 / d;
+  qd[qd_stride * 1] = J21 / d;
+  // qd[qd_stride * 2] = qw * d;
 }
 
 CEED_QFUNCTION_HELPER void J32(const CeedScalar *J, const CeedInt J_stride,
@@ -162,21 +164,6 @@ CEED_QFUNCTION_HELPER void AdjJt22(const CeedScalar *J, const CeedInt J_stride,
   // qd[qd_stride * 4] = qw * detJ;
 }
 
-CEED_QFUNCTION_HELPER void AdjJt21(const CeedScalar *J, const CeedInt J_stride,
-                                   const CeedScalar qw, const CeedInt qd_stride,
-                                   CeedScalar *qd)
-{
-  // Compute adj(J)^T / det(J) and store the result.
-  // J: 0   adj(J): 1/sqrt(J^T J) J^T   qd: 0
-  //    1                                   1
-  const CeedScalar J11 = J[J_stride * 0];
-  const CeedScalar J21 = J[J_stride * 1];
-  const CeedScalar d = sqrt(J11 * J11 + J21 * J21);
-  qd[qd_stride * 0] = J11 / d;
-  qd[qd_stride * 1] = J21 / d;
-  // qd[qd_stride * 2] = qw * d;
-}
-
 CEED_QFUNCTION_HELPER void AdjJt33(const CeedScalar *J, const CeedInt J_stride,
                                    const CeedScalar qw, const CeedInt qd_stride,
                                    CeedScalar *qd)
@@ -216,6 +203,21 @@ CEED_QFUNCTION_HELPER void AdjJt33(const CeedScalar *J, const CeedInt J_stride,
   // qd[qd_stride * 9] = qw * detJ;
 }
 
+CEED_QFUNCTION_HELPER void AdjJt21(const CeedScalar *J, const CeedInt J_stride,
+                                   const CeedScalar qw, const CeedInt qd_stride,
+                                   CeedScalar *qd)
+{
+  // Compute adj(J)^T / det(J) and store the result.
+  // J: 0   adj(J): 1/sqrt(J^T J) J^T   qd: 0
+  //    1                                   1
+  const CeedScalar J11 = J[J_stride * 0];
+  const CeedScalar J21 = J[J_stride * 1];
+  const CeedScalar d = J11 * J11 + J21 * J21;
+  qd[qd_stride * 0] = J11 / d;
+  qd[qd_stride * 1] = J21 / d;
+  // qd[qd_stride * 2] = qw * sqrt(d);
+}
+
 CEED_QFUNCTION_HELPER void AdjJt32(const CeedScalar *J, const CeedInt J_stride,
                                    const CeedScalar qw, const CeedInt qd_stride,
                                    CeedScalar *qd)
@@ -239,14 +241,14 @@ CEED_QFUNCTION_HELPER void AdjJt32(const CeedScalar *J, const CeedInt J_stride,
   const CeedScalar A21 = E * J12 - F * J11;
   const CeedScalar A22 = E * J22 - F * J21;
   const CeedScalar A23 = E * J32 - F * J31;
-  const CeedScalar d = sqrt(E * G - F * F);
+  const CeedScalar d = E * G - F * F;
   qd[qd_stride * 0] = A11 / d;
   qd[qd_stride * 1] = A12 / d;
   qd[qd_stride * 2] = A13 / d;
   qd[qd_stride * 3] = A21 / d;
   qd[qd_stride * 4] = A22 / d;
   qd[qd_stride * 5] = A23 / d;
-  // qd[qd_stride * 6] = qw * d;
+  // qd[qd_stride * 6] = qw * sqrt(d);
 }
 
 // libCEED QFunction for building geometry factors for integration and transformations.
@@ -290,38 +292,6 @@ CEED_QFUNCTION(f_build_geom_factor_22)(void *ctx, CeedInt Q, const CeedScalar *c
   }
 }
 
-CEED_QFUNCTION(f_build_geom_factor_21)(void *ctx, CeedInt Q, const CeedScalar *const *in,
-                                       CeedScalar *const *out)
-{
-  GeomContext *bc = (GeomContext *)ctx;
-  const CeedScalar *J = in[0], *qw = in[1];
-  if (bc->compute_wdetJ)
-  {
-    CeedScalar *qd = out[0];
-    CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
-    {
-      qd[i] = qw[i] * DetJ21(J + i, Q);
-    }
-  }
-  if (bc->compute_J)
-  {
-    CeedScalar *qd = bc->compute_wdetJ ? out[1] : out[0];
-    CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
-    {
-      J21(J + i, Q, 1.0, Q, qd + i);
-    }
-  }
-  if (bc->compute_adjJt)
-  {
-    CeedScalar *qd = bc->compute_J ? (bc->compute_wdetJ ? out[2] : out[1])
-                                   : (bc->compute_wdetJ ? out[1] : out[0]);
-    CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
-    {
-      adjJt21(J + i, Q, 1.0, Q, qd + i);
-    }
-  }
-}
-
 CEED_QFUNCTION(f_build_geom_factor_33)(void *ctx, CeedInt Q, const CeedScalar *const *in,
                                        CeedScalar *const *out)
 {
@@ -350,6 +320,38 @@ CEED_QFUNCTION(f_build_geom_factor_33)(void *ctx, CeedInt Q, const CeedScalar *c
     CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
     {
       adjJt33(J + i, Q, 1.0, Q, qd + i);
+    }
+  }
+}
+
+CEED_QFUNCTION(f_build_geom_factor_21)(void *ctx, CeedInt Q, const CeedScalar *const *in,
+                                       CeedScalar *const *out)
+{
+  GeomContext *bc = (GeomContext *)ctx;
+  const CeedScalar *J = in[0], *qw = in[1];
+  if (bc->compute_wdetJ)
+  {
+    CeedScalar *qd = out[0];
+    CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
+    {
+      qd[i] = qw[i] * DetJ21(J + i, Q);
+    }
+  }
+  if (bc->compute_J)
+  {
+    CeedScalar *qd = bc->compute_wdetJ ? out[1] : out[0];
+    CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
+    {
+      J21(J + i, Q, 1.0, Q, qd + i);
+    }
+  }
+  if (bc->compute_adjJt)
+  {
+    CeedScalar *qd = bc->compute_J ? (bc->compute_wdetJ ? out[2] : out[1])
+                                   : (bc->compute_wdetJ ? out[1] : out[0]);
+    CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
+    {
+      adjJt21(J + i, Q, 1.0, Q, qd + i);
     }
   }
 }

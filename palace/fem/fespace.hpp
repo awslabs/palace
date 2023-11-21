@@ -82,34 +82,26 @@ public:
 
   // Return the element restriction object for the given element set (all with the same
   // geometry type).
-  const auto GetCeedElemRestriction(Ceed ceed, const std::vector<int> &indices) const
+  const auto GetCeedElemRestriction(Ceed ceed, mfem::Geometry::Type geom,
+                                    const std::vector<int> &indices) const
   {
     MFEM_ASSERT(!indices.empty(),
                 "Cannot create CeedElemRestriction for an empty mesh partition!");
-    const auto geom = GetParMesh()->GetElementGeometry(indices[0]);
     const auto it = restr.find(std::make_pair(ceed, geom));
-    return (it != restr.end()) ? it->second
-                               : BuildCeedElemRestriction(ceed, indices, false);
-  }
-
-  // Return the element restriction object for the given boundary element set (all with the
-  // same geometry type).
-  const auto GetBdrCeedElemRestriction(Ceed ceed, const std::vector<int> &indices) const
-  {
-    MFEM_ASSERT(!indices.empty(),
-                "Cannot create boundary CeedElemRestriction for an empty mesh partition!");
-    const auto geom = GetParMesh()->GetBdrElementGeometry(indices[0]);
-    const auto it = restr.find(std::make_pair(ceed, geom));
-    return (it != restr.end()) ? it->second : BuildCeedElemRestriction(ceed, indices, true);
+    return (it != restr.end())
+               ? it->second
+               : BuildCeedElemRestriction(
+                     ceed, indices,
+                     (mfem::Geometry::Dimension[geom] != GetParMesh()->Dimension()));
   }
 
   // If the space has a special element restriction for discrete interpolators, return that.
   // Otherwise return the same restiction as given by GetCeedElemRestriction.
-  const auto GetInterpCeedElemRestriction(Ceed ceed, const std::vector<int> &indices) const
+  const auto GetInterpCeedElemRestriction(Ceed ceed, mfem::Geometry::Type geom,
+                                          const std::vector<int> &indices) const
   {
     MFEM_ASSERT(!indices.empty(),
                 "Cannot create boundary CeedElemRestriction for an empty mesh partition!");
-    const auto geom = GetParMesh()->GetElementGeometry(indices[0]);
     const mfem::FiniteElement &fe = *FEColl()->FiniteElementForGeometry(geom);
     if (!HasUniqueInterpRestriction(fe))
     {
@@ -124,7 +116,7 @@ public:
   // If the space has a special element restriction for the range space of discrete
   // interpolators, return that. Otherwise return the same restiction as given by
   // GetCeedElemRestriction.
-  const auto GetInterpRangeCeedElemRestriction(Ceed ceed,
+  const auto GetInterpRangeCeedElemRestriction(Ceed ceed, mfem::Geometry::Type geom,
                                                const std::vector<int> &indices) const
   {
     MFEM_ASSERT(!indices.empty(),

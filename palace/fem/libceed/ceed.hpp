@@ -6,6 +6,7 @@
 
 #include <unordered_map>
 #include <utility>
+#include <vector>
 #include <mfem.hpp>
 
 // Forward declarations of libCEED objects.
@@ -31,6 +32,10 @@ using CeedObjectMap = std::unordered_map<std::pair<Ceed, mfem::Geometry::Type>, 
 // dim x space_dim, the adjugate is space_dim x dim, column-major storage by component.
 struct CeedGeomFactorData
 {
+  // Element indices from the mfem::Mesh used to construct Ceed objects with these geometry
+  // factors.
+  std::vector<int> indices;
+
   mfem::Vector wdetJ;  // qw * |J|, H1 conformity
   mfem::Vector J;      // J / |J|, H(curl) conformity
   mfem::Vector adjJt;  // adj(J)^T / |J|, H(div) conformity

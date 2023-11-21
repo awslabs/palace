@@ -4,18 +4,25 @@
 #ifndef PALACE_LIBCEED_BASIS_HPP
 #define PALACE_LIBCEED_BASIS_HPP
 
-#include <ceed.h>
-#include <mfem.hpp>
+#include "fem/libceed/ceed.h"
+
+namespace mfem
+{
+
+class FiniteElement;
+class IntegrationRule;
+
+}  // namespace mfem
 
 namespace palace::ceed
 {
 
-void InitBasis(const mfem::FiniteElement &fe, const mfem::IntegrationRule &ir,
-               CeedInt ncomp, Ceed ceed, CeedBasis *basis);
+void InitBasis(const mfem::FiniteElement &fe, const mfem::IntegrationRule &ir, int ncomp,
+               Ceed ceed, CeedBasis *basis);
 
 void InitInterpolatorBasis(const mfem::FiniteElement &trial_fe,
-                           const mfem::FiniteElement &test_fe, CeedInt trial_ncomp,
-                           CeedInt test_ncomp, Ceed ceed, CeedBasis *basis);
+                           const mfem::FiniteElement &test_fe, int trial_ncomp,
+                           int test_ncomp, Ceed ceed, CeedBasis *basis);
 
 }  // namespace palace::ceed
 

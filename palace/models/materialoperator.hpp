@@ -11,6 +11,10 @@
 
 // XX TODO WIP MATERIAL PROPERTY COEFFICIENTS, ELEMENT ATTRIBUTE VECTORS
 
+// XX TODO WIP SHOULD LIBCEED STUFF  BE PART OF palace::Mesh INSTEAD (LIKE FESPACE)?
+//             EASIER TO CONSTRUCT/CAN EXTRACT DIRECTLY FROM FESPACE OBJECTS
+//             (NEED TO BUILD FOR TESTS...)
+
 namespace palace
 {
 
@@ -38,14 +42,12 @@ private:
 
   // Data structures for libCEED operators:
   //   - Mesh element indices for threads and element geometry types.
-  //   - Geometric quadrature factor data (w |J|, J / |J|, adj(J)^T / |J|) for domain and
-  //     boundary elements.
+  //   - Geometry factor quadrature point data (w |J|, J / |J|, adj(J)^T / |J|) for domain
+  //     and boundary elements.
   //   - Attributes for domain and boundary elements. The attributes are not the same as the
   //     mesh element attributes as they map to a compressed (1-based) list of used
   //     attributes on this MPI process.
-  ceed::CeedObjectMap<std::vector<int>> element_indices;
   ceed::CeedObjectMap<ceed::CeedGeomFactorData> geom_data;
-  void SetUpElementIndices(mfem::ParMesh &mesh);
   void SetUpGeomFactorData(mfem::ParMesh &mesh);
 
 public:
@@ -80,16 +82,6 @@ public:
   const auto &GetLondonDepthMarker() const { return london_marker; }
 
   const auto &GetLocalToSharedFaceMap() const { return local_to_shared; }
-
-  const auto &GetElementIndices() const { return element_indices; }
-  const auto &GetElementIndices(Ceed ceed, mfem::Geometry::Type geom) const
-  {
-    const auto it = element_indices.find(std::make_pair(ceed, geom));
-    MFEM_ASSERT(it != element_indices.end(),
-                "Unable to locate element indices for geometry "
-                    << mfem::Geometry::Name[geom] << "!");
-    return it->second;
-  }
 
   const auto &GetGeomFactorData() const { return geom_data; }
   const auto &GetGeomFactorData(Ceed ceed, mfem::Geometry::Type geom) const

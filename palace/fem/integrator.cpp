@@ -37,10 +37,9 @@ int DefaultIntegrationOrder::Get(const mfem::Mesh &mesh, mfem::Geometry::Type ge
 
 }  // namespace fem
 
-void DiscreteInterpolator::AssembleInterpolator(Ceed ceed, CeedElemRestriction trial_restr,
-                                                CeedElemRestriction test_restr,
-                                                CeedBasis interp_basis, CeedOperator *op,
-                                                CeedOperator *op_t)
+void DiscreteInterpolator::Assemble(Ceed ceed, CeedElemRestriction trial_restr,
+                                    CeedElemRestriction test_restr, CeedBasis interp_basis,
+                                    CeedOperator *op, CeedOperator *op_t)
 {
   // Interpolators do not use an integration rule to map between the test and trial spaces.
   ceed::AssembleCeedInterpolator(ceed, trial_restr, test_restr, interp_basis, op, op_t);

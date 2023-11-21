@@ -4,7 +4,6 @@
 #ifndef PALACE_LIBCEED_UTILS_HPP
 #define PALACE_LIBCEED_UTILS_HPP
 
-#include <functional>
 #include <string>
 #include <vector>
 #include <ceed.h>

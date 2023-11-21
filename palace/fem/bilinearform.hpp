@@ -49,19 +49,6 @@ public:
   const auto &GetTrialSpace() const { return trial_fespace; }
   const auto &GetTestSpace() const { return test_fespace; }
 
-  // Returns order such that the miniumum for all element types is 1. MFEM's RT_FECollection
-  // actually already returns order + 1 for GetOrder() for historical reasons.
-  auto GetMaxElementOrder() const
-  {
-    const auto &trial_fec = *trial_fespace.FEColl();
-    const auto &test_fec = *test_fespace.FEColl();
-    return std::max(
-        dynamic_cast<const mfem::L2_FECollection *>(&trial_fec) ? trial_fec.GetOrder() + 1
-                                                                : trial_fec.GetOrder(),
-        dynamic_cast<const mfem::L2_FECollection *>(&test_fec) ? test_fec.GetOrder() + 1
-                                                               : test_fec.GetOrder());
-  }
-
   template <typename T, typename... U>
   void AddDomainIntegrator(U &&...args)
   {
@@ -74,27 +61,46 @@ public:
     boundary_integs.push_back(std::make_unique<T>(std::forward<U>(args)...));
   }
 
-  std::unique_ptr<Operator> Assemble(bool skip_zeros) const
-  {
-    if (GetMaxElementOrder() >= pa_order_threshold)
-    {
-      return PartialAssemble();
-    }
-    else
-    {
-      return FullAssemble(skip_zeros);
-    }
-  }
-
   std::unique_ptr<ceed::Operator> PartialAssemble() const;
 
   std::unique_ptr<mfem::SparseMatrix> FullAssemble(bool skip_zeros) const
   {
-    return FullAssemble(*PartialAssemble(), skip_zeros);
+    return FullAssemble(*PartialAssemble(), skip_zeros, false);
   }
 
   static std::unique_ptr<mfem::SparseMatrix> FullAssemble(const ceed::Operator &op,
-                                                          bool skip_zeros);
+                                                          bool skip_zeros, bool set);
+
+  std::unique_ptr<Operator> Assemble(bool skip_zeros) const
+  {
+    return Assemble(*this, skip_zeros);
+  }
+
+  template <typename T>
+  static std::unique_ptr<Operator> Assemble(const T &a, bool skip_zeros)
+  {
+    if (GetMaxElementOrder(a) >= pa_order_threshold)
+    {
+      return a.PartialAssemble();
+    }
+    else
+    {
+      return a.FullAssemble(skip_zeros);
+    }
+  }
+
+  // Returns order such that the miniumum for all element types is 1. MFEM's RT_FECollection
+  // actually already returns order + 1 for GetOrder() for historical reasons.
+  static auto GetMaxElementOrder(const BilinearForm &a)
+  {
+    const auto &trial_fec = *a.GetTrialSpace().FEColl();
+    const auto &test_fec = *a.GetTestSpace().FEColl();
+    return std::max(
+        dynamic_cast<const mfem::L2_FECollection *>(&trial_fec) ? trial_fec.GetOrder() + 1
+                                                                : trial_fec.GetOrder(),
+        dynamic_cast<const mfem::L2_FECollection *>(&test_fec) ? test_fec.GetOrder() + 1
+                                                               : test_fec.GetOrder());
+  }
 };
 
 // Discrete linear operators map primal vectors to primal vectors for interpolation between
@@ -102,45 +108,39 @@ public:
 class DiscreteLinearOperator
 {
 private:
-  BilinearForm a;
+  // Domain and range finite element spaces.
+  const FiniteElementSpace &trial_fespace, &test_fespace;
+
+  // List of domain interpolators making up the discrete linear operator.
+  std::vector<std::unique_ptr<DiscreteInterpolator>> domain_interps;
 
 public:
   DiscreteLinearOperator(const FiniteElementSpace &trial_fespace,
                          const FiniteElementSpace &test_fespace)
-    : a(trial_fespace, test_fespace)
+    : trial_fespace(trial_fespace), test_fespace(test_fespace)
   {
   }
 
-  const auto &GetTrialSpace() const { return a.GetTrialSpace(); }
-  const auto &GetTestSpace() const { return a.GetTestSpace(); }
+  const auto &GetTrialSpace() const { return trial_fespace; }
+  const auto &GetTestSpace() const { return test_fespace; }
 
   template <typename T, typename... U>
   void AddDomainInterpolator(U &&...args)
   {
-    a.AddDomainIntegrator<T>(std::forward<U>(args)...);
-  }
-
-  std::unique_ptr<Operator> Assemble(bool skip_zeros) const
-  {
-    if (a.GetMaxElementOrder() >= a.pa_order_threshold)
-    {
-      return PartialAssemble();
-    }
-    else
-    {
-      return FullAssemble(skip_zeros);
-    }
+    domain_interps.push_back(std::make_unique<T>(std::forward<U>(args)...));
   }
 
   std::unique_ptr<ceed::Operator> PartialAssemble() const;
 
   std::unique_ptr<mfem::SparseMatrix> FullAssemble(bool skip_zeros) const
   {
-    return FullAssemble(*a.PartialAssemble(), skip_zeros);
+    return BilinearForm::FullAssemble(*PartialAssemble(), skip_zeros, true);
   }
 
-  static std::unique_ptr<mfem::SparseMatrix> FullAssemble(const ceed::Operator &op,
-                                                          bool skip_zeros);
+  std::unique_ptr<Operator> Assemble(bool skip_zeros) const
+  {
+    return BilinearForm::Assemble(*this, skip_zeros);
+  }
 };
 
 }  // namespace palace

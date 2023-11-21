@@ -5,8 +5,6 @@
 #define PALACE_LIBCEED_INTEGRATOR_HPP
 
 #include <string>
-#include <vector>
-#include <ceed.h>
 #include "fem/libceed/ceed.hpp"
 #include "fem/libceed/utils.hpp"
 #include "linalg/vector.hpp"
@@ -77,17 +75,17 @@ inline void AssembleCeedGeometryData(unsigned int info, Ceed ceed,
                                                          build_qf_path.c_str(), &build_qf));
       }
       break;
-    case 21:
-      {
-        std::string build_qf_path = PalaceQFunctionRelativePath(f_build_geom_factor_21_loc);
-        PalaceCeedCall(ceed, CeedQFunctionCreateInterior(ceed, 1, f_build_geom_factor_21,
-                                                         build_qf_path.c_str(), &build_qf));
-      }
-      break;
     case 33:
       {
         std::string build_qf_path = PalaceQFunctionRelativePath(f_build_geom_factor_33_loc);
         PalaceCeedCall(ceed, CeedQFunctionCreateInterior(ceed, 1, f_build_geom_factor_33,
+                                                         build_qf_path.c_str(), &build_qf));
+      }
+      break;
+    case 21:
+      {
+        std::string build_qf_path = PalaceQFunctionRelativePath(f_build_geom_factor_21_loc);
+        PalaceCeedCall(ceed, CeedQFunctionCreateInterior(ceed, 1, f_build_geom_factor_21,
                                                          build_qf_path.c_str(), &build_qf));
       }
       break;

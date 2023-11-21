@@ -51,17 +51,16 @@ std::unique_ptr<ceed::Operator> BilinearForm::PartialAssemble() const
       const auto geom = key.second;
       const auto &indices = val;
       const auto &geom_data = mat_op.GetGeomFactorData(ceed, geom);
+      CeedElementRestriction trial_restr =
+          trial_fespace.GetCeedElemRestriction(ceed, geom, indices);
+      CeedElementRestriction test_restr =
+          test_fespace.GetCeedElemRestriction(ceed, geom, indices);
       CeedBasis trial_basis = trial_fespace.GetCeedBasis(ceed, geom);
       CeedBasis test_basis = test_fespace.GetCeedBasis(ceed, geom);
 
       if (mfem::Geometry::Dimension[geom] == mesh.Dimension())
       {
         // Assemble domain integrators on this element geometry type.
-        CeedElementRestriction trial_restr =
-            trial_fespace.GetCeedElemRestriction(ceed, indices);
-        CeedElementRestriction test_restr =
-            test_fespace.GetCeedElemRestriction(ceed, indices);
-
         for (const auto &integ : domain_integs)
         {
           CeedOperator sub_op;
@@ -74,11 +73,6 @@ std::unique_ptr<ceed::Operator> BilinearForm::PartialAssemble() const
       else
       {
         // Assemble boundary integrators on this element geometry type.
-        CeedElementRestriction trial_restr =
-            trial_fespace.GetBdrCeedElemRestriction(ceed, indices);
-        CeedElementRestriction test_restr =
-            test_fespace.GetBdrCeedElemRestriction(ceed, indices);
-
         for (const auto &integ : boundary_integs)
         {
           CeedOperator sub_op;
@@ -97,9 +91,9 @@ std::unique_ptr<ceed::Operator> BilinearForm::PartialAssemble() const
 }
 
 std::unique_ptr<mfem::SparseMatrix> BilinearForm::FullAssemble(const ceed::Operator &op,
-                                                               bool skip_zeros)
+                                                               bool skip_zeros, bool set)
 {
-  return ceed::CeedOperatorFullAssemble(op, skip_zeros, false);
+  return ceed::CeedOperatorFullAssemble(op, skip_zeros, set);
 }
 
 std::unique_ptr<ceed::Operator> DiscreteLinearOperator::PartialAssemble() const
@@ -137,9 +131,9 @@ std::unique_ptr<ceed::Operator> DiscreteLinearOperator::PartialAssemble() const
       {
         // Assemble domain interpolators on this element geometry type.
         CeedElementRestriction trial_restr =
-            trial_fespace.GetInterpCeedElemRestriction(ceed, indices);
+            trial_fespace.GetInterpCeedElemRestriction(ceed, geom, indices);
         CeedElementRestriction test_restr =
-            test_fespace.GetInterpRangeCeedElemRestriction(ceed, indices);
+            test_fespace.GetInterpRangeCeedElemRestriction(ceed, geom, indices);
 
         // Construct the interpolator basis.
         CeedBasis interp_basis;
@@ -152,11 +146,10 @@ std::unique_ptr<ceed::Operator> DiscreteLinearOperator::PartialAssemble() const
         ceed::InitInterpolatorBasis(trial_fe, test_fe, trial_vdim, test_vdim, ceed,
                                     &interp_basis);
 
-        for (const auto &integ : domain_integs)
+        for (const auto &interp : domain_interps)
         {
           CeedOperator sub_op, sub_op_t;
-          integ->AssembleInterpolator(ceed, trial_restr, test_restr, interp_basis, &sub_op,
-                                      &sub_op_t);
+          interp->Assemble(ceed, trial_restr, test_restr, interp_basis, &sub_op, &sub_op_t);
           PalaceCeedCall(ceed, CeedCompositeOperatorAddSub(loc_op, sub_op));
           PalaceCeedCall(ceed, CeedCompositeOperatorAddSub(loc_op_t, sub_op_t));
           PalaceCeedCall(ceed, CeedOperatorDestroy(&sub_op));
@@ -174,7 +167,6 @@ std::unique_ptr<ceed::Operator> DiscreteLinearOperator::PartialAssemble() const
 
   // Construct dof multiplicity vector for scaling to account for dofs shared between
   // elements (on host, then copy to device).
-  const auto &test_fespace = a.GetTestSpace();
   Vector test_multiplicity(test_fespace.GetVSize());
   test_multiplicity = 0.0;
   mfem::Array<int> dofs;
@@ -193,12 +185,6 @@ std::unique_ptr<ceed::Operator> DiscreteLinearOperator::PartialAssemble() const
   op->SetDofMultiplicity(std::move(test_multiplicity));
 
   return op;
-}
-
-std::unique_ptr<mfem::SparseMatrix>
-DiscreteLinearOperator::FullAssemble(const ceed::Operator &op, bool skip_zeros)
-{
-  return ceed::CeedOperatorFullAssemble(op, skip_zeros, true);
 }
 
 }  // namespace palace

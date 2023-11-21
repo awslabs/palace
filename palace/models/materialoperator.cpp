@@ -287,7 +287,6 @@ MaterialOperator::MaterialOperator(const IoData &iodata, mfem::ParMesh &mesh)
   SetUpMaterialProperties(iodata, mesh);
 
   // Compute data for partially-assembled libCEED integrators.
-  SetUpElementIndices(mesh);
   SetUpGeomFactorData(mesh);
 }
 
@@ -514,7 +513,7 @@ GetElementIndices(const mfem::ParMesh &mesh, bool use_bdr, int start, int stop)
 
 }  // namespace
 
-void MaterialOperator::SetUpElementIndices(mfem::ParMesh &mesh)
+void MaterialOperator::SetUpGeomFactorData(mfem::ParMesh &mesh)
 {
   // In the following, we copy the mesh FE space for the nodes as a
   // palace::FiniteElementSpace and replace it in the nodal grid function. Unfortunately
@@ -542,6 +541,11 @@ void MaterialOperator::SetUpElementIndices(mfem::ParMesh &mesh)
       delete mesh_fespace;
     }
   }
+  const mfem::GridFunction &mesh_nodes = *mesh.GetNodes();
+  MFEM_VERIFY(dynamic_cast<const FiniteElementSpace *>(mesh_nodes.FESpace()),
+              "Unexpected non-FiniteElementSpace for mesh nodes!");
+  const FiniteElementSpace &mesh_fespace =
+      *dynamic_cast<const FiniteElementSpace *>(mesh_nodes.FESpace());
 
   // Create a list of the element indices in the mesh corresponding to a given thread and
   // element geometry type. libCEED operators will be constructed in parallel over threads,
@@ -552,6 +556,39 @@ void MaterialOperator::SetUpElementIndices(mfem::ParMesh &mesh)
   {
     Ceed ceed = ceed::internal::GetCeedObjects()[i];
 
+    auto AssembleGeometryData =
+        [&](auto geom, auto &indices, ceed::CeedGeomFactorData &data)
+    {
+      // XX TODO: In practice we do not need to compute all of the geometry data for every
+      //          simulation type.
+
+      // Compute the required geometry factors at quadrature points.
+      constexpr auto info = ceed::GeomFactorInfo::Determinant |
+                            ceed::GeomFactorInfo::Jacobian | ceed::GeomFactorInfo::Adjugate;
+      CeedElementRestriction mesh_restr =
+          mesh_fespace.GetCeedElemRestriction(ceed, geom, indices);
+      CeedBasis mesh_basis = mesh_fespace.GetCeedBasis(ceed, geom);
+      ceed::AssembleCeedGeometryData(info, ceed, mesh_restr, mesh_basis, mesh_nodes, data);
+
+      // Compute element attribute quadrature data (single scalar per element).
+      {
+        const auto ne = indices.size();
+        data.attr.SetSize(ne);
+        for (std::size_t j = 0; j < ne; j++)
+        {
+          const int e = indices[j];
+          data.attr[j] = mesh->GetAttribute(e);
+        }
+        PalaceCeedCall(ceed, CeedElemRestrictionCreateStrided(ceed, ne, 1, 1, ne,
+                                                              CEED_STRIDES_BACKEND,
+                                                              &data.attr_restr));
+        ceed::InitCeedVector(data.attr, ceed, &data.attr_vec);
+      }
+
+      // Save mesh element indices.
+      data.indices = std::move(indices);
+    };
+
     // First domain elements.
     {
       const int ne = mesh.GetNE();
@@ -559,12 +596,14 @@ void MaterialOperator::SetUpElementIndices(mfem::ParMesh &mesh)
       const int start = i * stride;
       const int stop = std::min(start + stride, ne);
       constexpr bool use_bdr = false;
-      auto indices = GetElementIndices(mesh, use_bdr, start, stop);
-      for (auto &[key, val] : indices)
+      auto element_indices = GetElementIndices(mesh, use_bdr, start, stop);
+      for (auto &[geom, indices] : element_indices)
       {
-        PalacePragmaOmp(critical(ElementIndices))
+        ceed::CeedGeomFactorData data;
+        AssembleGeometryData(geom, indices, data);
+        PalacePragmaOmp(critical(GeomFactorData))
         {
-          element_indices.emplace(std::make_pair(ceed, geom), std::move(val));
+          geom_data.emplace(std::make_pair(ceed, geom), std::move(data));
         }
       }
     }
@@ -576,78 +615,15 @@ void MaterialOperator::SetUpElementIndices(mfem::ParMesh &mesh)
       const int start = i * stride;
       const int stop = std::min(start + stride, nbe);
       constexpr bool use_bdr = true;
-      auto indices = GetElementIndices(mesh, use_bdr, start, stop);
-      for (auto &[key, val] : indices)
+      auto element_indices = GetElementIndices(mesh, use_bdr, start, stop);
+      for (auto &[geom, indices] : element_indices)
       {
-        PalacePragmaOmp(critical(ElementIndices))
+        ceed::CeedGeomFactorData data;
+        AssembleGeometryData(geom, indices, data);
+        PalacePragmaOmp(critical(GeomFactorData))
         {
-          element_indices.emplace(std::make_pair(ceed, geom), std::move(val));
+          geom_data.emplace(std::make_pair(ceed, geom), std::move(data));
         }
-      }
-    }
-  }
-}
-
-void MaterialOperator::SetUpGeomFactorData(mfem::ParMesh &mesh)
-{
-  MFEM_VERIFY(mesh.GetNodes(), "The mesh has no nodal FE space!");
-  const mfem::GridFunction &mesh_nodes = *mesh.GetNodes();
-  MFEM_VERIFY(dynamic_cast<const FiniteElementSpace *>(mesh_nodes.FESpace()),
-              "Unexpected non-FiniteElementSpace for mesh nodes!");
-  const FiniteElementSpace &mesh_fespace =
-      *dynamic_cast<const FiniteElementSpace *>(mesh_nodes.FESpace());
-
-  // Precompute the geometric factors at quadrature points required based on the simulation
-  // type.
-  const std::size_t nt = ceed::internal::GetCeedObjects().size();
-  PalacePragmaOmp(parallel for schedule(static))
-  for (std::size_t i = 0; i < nt; i++)
-  {
-    Ceed ceed = ceed::internal::GetCeedObjects()[i];
-
-    for (const auto &[key, val] : GetElementIndices())
-    {
-      if (key.first != ceed)
-      {
-        continue;
-      }
-      const auto geom = key.second;
-      const std::vector<int> &indices = val;
-      CeedElementRestriction mesh_restr =
-          (mfem::Geometry::Dimension[geom] == mesh.Dimension())
-              ? mesh_fespace.GetCeedElemRestriction(ceed, indices)
-              : mesh_fespace.GetBdrCeedElemRestriction(ceed, indices);
-      CeedBasis mesh_basis = mesh_fespace.GetCeedBasis(ceed, geom);
-
-      // XX TODO: In practice we do not need to compute all of the geometry data for every
-      //          simulation type.
-
-      // Compute the required geometry factors at quadrature points.
-      constexpr auto info = ceed::GeomFactorInfo::Determinant |
-                            ceed::GeomFactorInfo::Jacobian | ceed::GeomFactorInfo::Adjugate;
-      ceed::CeedGeomFactorData data;
-      ceed::AssembleCeedGeometryData(info, ceed, mesh_restr, mesh_basis, mesh_nodes, data);
-
-      // Compute element attribute quadrature data (single scalar per element).
-      {
-        const bool use_bdr = (mfem::Geometry::Dimension[geom] != mesh.Dimension());
-        const std::size_t ne = indices.size();
-        data.attr.SetSize(ne);
-        for (std::size_t j = 0; j < ne; j++)
-        {
-          const int e = indices[j];
-          data.attr[j] = use_bdr ? mesh->GetBdrAttribute(e) : mesh->GetAttribute(e);
-        }
-        PalaceCeedCall(ceed, CeedElemRestrictionCreateStrided(ceed, ne, 1, 1, ne,
-                                                              CEED_STRIDES_BACKEND,
-                                                              &data.attr_restr));
-        ceed::InitCeedVector(data.attr, ceed, &data.attr_vec);
-      }
-
-      // Insert into map.
-      PalacePragmaOmp(critical(GeomFactorData))
-      {
-        geom_data.emplace(std::make_pair(ceed, geom), std::move(data));
       }
     }
   }
