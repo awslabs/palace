@@ -6,6 +6,11 @@
 
 #include <math.h>
 
+struct GeomContext
+{
+  bool compute_wdetJ, compute_J, compute_adjJt;
+};
+
 CEED_QFUNCTION_HELPER CeedScalar DetJ22(const CeedScalar *J, const CeedInt J_stride)
 {
   // J: 0 2
@@ -244,159 +249,140 @@ CEED_QFUNCTION_HELPER void AdjJt32(const CeedScalar *J, const CeedInt J_stride,
   // qd[qd_stride * 6] = qw * d;
 }
 
-// libCEED QFunction for building geometry factors for H1 integration.
-// At every quadrature point, compute qw * det(J) and store the result.
+// libCEED QFunction for building geometry factors for integration and transformations.
+// At every quadrature point, compute qw * det(J), J / |J|, and adj(J)^T / |J| and store the
+// result.
 // in[0] is Jacobians, shape [qcomp=dim, ncomp=space_dim, Q]
 // in[1] is quadrature weights, shape [Q]
-// out[0] is quadrature data, shape [Q]
+// out[0] is Jacobian determinant quadrature data, shape [Q]
+// out[1] is Jacobian quadrature data, shape [ncomp=space_dim*dim, Q]
+// out[2] is (transpose) adjugate Jacobian data, shape [ncomp=space_dim*dim, Q]
 
-CEED_QFUNCTION(f_build_geom_factor_detJ22)(void *ctx, CeedInt Q,
-                                           const CeedScalar *const *in,
-                                           CeedScalar *const *out)
+CEED_QFUNCTION(f_build_geom_factor_22)(void *ctx, CeedInt Q, const CeedScalar *const *in,
+                                       CeedScalar *const *out)
 {
+  GeomContext *bc = (GeomContext *)ctx;
   const CeedScalar *J = in[0], *qw = in[1];
-  CeedScalar *qd = out[0];
-  CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
+  if (bc->compute_wdetJ)
   {
-    qd[i] = qw[i] * DetJ22(J + i, Q);
+    CeedScalar *qd = out[0];
+    CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
+    {
+      qd[i] = qw[i] * DetJ22(J + i, Q);
+    }
+  }
+  if (bc->compute_J)
+  {
+    CeedScalar *qd = bc->compute_wdetJ ? out[1] : out[0];
+    CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
+    {
+      J22(J + i, Q, 1.0, Q, qd + i);
+    }
+  }
+  if (bc->compute_adjJt)
+  {
+    CeedScalar *qd = bc->compute_J ? (bc->compute_wdetJ ? out[2] : out[1])
+                                   : (bc->compute_wdetJ ? out[1] : out[0]);
+    CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
+    {
+      adjJt22(J + i, Q, 1.0, Q, qd + i);
+    }
   }
 }
 
-CEED_QFUNCTION(f_build_geom_factor_detJ21)(void *ctx, CeedInt Q,
-                                           const CeedScalar *const *in,
-                                           CeedScalar *const *out)
+CEED_QFUNCTION(f_build_geom_factor_21)(void *ctx, CeedInt Q, const CeedScalar *const *in,
+                                       CeedScalar *const *out)
 {
+  GeomContext *bc = (GeomContext *)ctx;
   const CeedScalar *J = in[0], *qw = in[1];
-  CeedScalar *qd = out[0];
-  CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
+  if (bc->compute_wdetJ)
   {
-    qd[i] = qw[i] * DetJ21(J + i, Q);
+    CeedScalar *qd = out[0];
+    CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
+    {
+      qd[i] = qw[i] * DetJ21(J + i, Q);
+    }
+  }
+  if (bc->compute_J)
+  {
+    CeedScalar *qd = bc->compute_wdetJ ? out[1] : out[0];
+    CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
+    {
+      J21(J + i, Q, 1.0, Q, qd + i);
+    }
+  }
+  if (bc->compute_adjJt)
+  {
+    CeedScalar *qd = bc->compute_J ? (bc->compute_wdetJ ? out[2] : out[1])
+                                   : (bc->compute_wdetJ ? out[1] : out[0]);
+    CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
+    {
+      adjJt21(J + i, Q, 1.0, Q, qd + i);
+    }
   }
 }
 
-CEED_QFUNCTION(f_build_geom_factor_detJ33)(void *ctx, CeedInt Q,
-                                           const CeedScalar *const *in,
-                                           CeedScalar *const *out)
+CEED_QFUNCTION(f_build_geom_factor_33)(void *ctx, CeedInt Q, const CeedScalar *const *in,
+                                       CeedScalar *const *out)
 {
+  GeomContext *bc = (GeomContext *)ctx;
   const CeedScalar *J = in[0], *qw = in[1];
-  CeedScalar *qd = out[0];
-  CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
+  if (bc->compute_wdetJ)
   {
-    qd[i] = qw[i] * DetJ33(J + i, Q);
+    CeedScalar *qd = out[0];
+    CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
+    {
+      qd[i] = qw[i] * DetJ33(J + i, Q);
+    }
+  }
+  if (bc->compute_J)
+  {
+    CeedScalar *qd = bc->compute_wdetJ ? out[1] : out[0];
+    CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
+    {
+      J33(J + i, Q, 1.0, Q, qd + i);
+    }
+  }
+  if (bc->compute_adjJt)
+  {
+    CeedScalar *qd = bc->compute_J ? (bc->compute_wdetJ ? out[2] : out[1])
+                                   : (bc->compute_wdetJ ? out[1] : out[0]);
+    CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
+    {
+      adjJt33(J + i, Q, 1.0, Q, qd + i);
+    }
   }
 }
 
-CEED_QFUNCTION(f_build_geom_factor_detJ32)(void *ctx, CeedInt Q,
-                                           const CeedScalar *const *in,
-                                           CeedScalar *const *out)
+CEED_QFUNCTION(f_build_geom_factor_32)(void *ctx, CeedInt Q, const CeedScalar *const *in,
+                                       CeedScalar *const *out)
 {
+  GeomContext *bc = (GeomContext *)ctx;
   const CeedScalar *J = in[0], *qw = in[1];
-  CeedScalar *qd = out[0];
-  CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
+  if (bc->compute_wdetJ)
   {
-    qd[i] = qw[i] * DetJ32(J + i, Q);
+    CeedScalar *qd = out[0];
+    CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
+    {
+      qd[i] = qw[i] * DetJ32(J + i, Q);
+    }
   }
-}
-
-// libCEED QFunction for building geometry factors for H(div) integration.
-// At every quadrature point, compute J / |J| and store the result.
-// in[0] is Jacobians, shape [qcomp=dim, ncomp=space_dim, Q]
-// out[0] is quadrature data, shape [ncomp=space_dim*dim, Q]
-
-CEED_QFUNCTION(f_build_geom_factor_J22)(void *ctx, CeedInt Q, const CeedScalar *const *in,
-                                        CeedScalar *const *out)
-{
-  const CeedScalar *J = in[0];
-  CeedScalar *qd = out[0];
-  CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
+  if (bc->compute_J)
   {
-    J22(J + i, Q, 1.0, Q, qd + i);
+    CeedScalar *qd = bc->compute_wdetJ ? out[1] : out[0];
+    CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
+    {
+      J32(J + i, Q, 1.0, Q, qd + i);
+    }
   }
-}
-
-CEED_QFUNCTION(f_build_geom_factor_J21)(void *ctx, CeedInt Q, const CeedScalar *const *in,
-                                        CeedScalar *const *out)
-{
-  const CeedScalar *J = in[0];
-  CeedScalar *qd = out[0];
-  CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
+  if (bc->compute_adjJt)
   {
-    J21(J + i, Q, 1.0, Q, qd + i);
-  }
-}
-
-CEED_QFUNCTION(f_build_geom_factor_J33)(void *ctx, CeedInt Q, const CeedScalar *const *in,
-                                        CeedScalar *const *out)
-{
-  const CeedScalar *J = in[0];
-  CeedScalar *qd = out[0];
-  CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
-  {
-    J33(J + i, Q, 1.0, Q, qd + i);
-  }
-}
-
-CEED_QFUNCTION(f_build_geom_factor_J32)(void *ctx, CeedInt Q, const CeedScalar *const *in,
-                                        CeedScalar *const *out)
-{
-  const CeedScalar *J = in[0];
-  CeedScalar *qd = out[0];
-  CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
-  {
-    J32(J + i, Q, 1.0, Q, qd + i);
-  }
-}
-
-// libCEED QFunction for building geometry factors for H(curl) integration.
-// At every quadrature point, compute adj(J)^T / |J| and store the result.
-// in[0] is Jacobians, shape [qcomp=dim, ncomp=space_dim, Q]
-// out[0] is quadrature data, shape [ncomp=space_dim*dim, Q]
-
-CEED_QFUNCTION(f_build_geom_factor_adjJt22)(void *ctx, CeedInt Q,
-                                            const CeedScalar *const *in,
-                                            CeedScalar *const *out)
-{
-  const CeedScalar *J = in[0];
-  CeedScalar *qd = out[0];
-  CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
-  {
-    AdjJt22(J + i, Q, 1.0, Q, qd + i);
-  }
-}
-
-CEED_QFUNCTION(f_build_geom_factor_adjJt21)(void *ctx, CeedInt Q,
-                                            const CeedScalar *const *in,
-                                            CeedScalar *const *out)
-{
-  const CeedScalar *J = in[0];
-  CeedScalar *qd = out[0];
-  CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
-  {
-    AdjJt21(J + i, Q, 1.0, Q, qd + i);
-  }
-}
-
-CEED_QFUNCTION(f_build_geom_factor_adjJt33)(void *ctx, CeedInt Q,
-                                            const CeedScalar *const *in,
-                                            CeedScalar *const *out)
-{
-  const CeedScalar *J = in[0];
-  CeedScalar *qd = out[0];
-  CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
-  {
-    AdjJt33(J + i, Q, 1.0, Q, qd + i);
-  }
-}
-
-CEED_QFUNCTION(f_build_geom_factor_adjJt32)(void *ctx, CeedInt Q,
-                                            const CeedScalar *const *in,
-                                            CeedScalar *const *out)
-{
-  const CeedScalar *J = in[0];
-  CeedScalar *qd = out[0];
-  CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
-  {
-    AdjJt32(J + i, Q, 1.0, Q, qd + i);
+    CeedScalar *qd = bc->compute_J ? (bc->compute_wdetJ ? out[2] : out[1])
+                                   : (bc->compute_wdetJ ? out[1] : out[0]);
+    CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
+    {
+      adjJt32(J + i, Q, 1.0, Q, qd + i);
+    }
   }
 }
 

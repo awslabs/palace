@@ -301,10 +301,10 @@ MaterialOperator::~MaterialOperator()
     PalaceCeedCall(ceed, CeedVectorDestroy(&val.J_vec));
     PalaceCeedCall(ceed, CeedVectorDestroy(&val.adjJt_vec));
     PalaceCeedCall(ceed, CeedVectorDestroy(&val.attr_vec));
-    PalaceCeedCall(ceed, CeedElemRestriction(&val.wdetJ_restr));
-    PalaceCeedCall(ceed, CeedElemRestriction(&val.J_restr));
-    PalaceCeedCall(ceed, CeedElemRestriction(&val.adjJt_restr));
-    PalaceCeedCall(ceed, CeedElemRestriction(&val.attr_restr));
+    PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&val.wdetJ_restr));
+    PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&val.J_restr));
+    PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&val.adjJt_restr));
+    PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&val.attr_restr));
   }
 }
 
@@ -619,34 +619,16 @@ void MaterialOperator::SetUpGeomFactorData(mfem::ParMesh &mesh)
               : mesh_fespace.GetBdrCeedElemRestriction(ceed, indices);
       CeedBasis mesh_basis = mesh_fespace.GetCeedBasis(ceed, geom);
 
-      // XX TODO: In practice we do not need to compute all of these for every simulation
-      //          type.
-      constexpr bool compute_wdetJ = true;
-      constexpr bool compute_J = true;
-      constexpr bool compute_adjJt = true;
+      // XX TODO: In practice we do not need to compute all of the geometry data for every
+      //          simulation type.
 
       // Compute the required geometry factors at quadrature points.
+      constexpr auto info = ceed::GeomFactorInfo::Determinant |
+                            ceed::GeomFactorInfo::Jacobian | ceed::GeomFactorInfo::Adjugate;
       ceed::CeedGeomFactorData data;
-      if (compute_wdetJ)
-      {
-        constexpr auto info = ceed::GeomFactorInfo::Determinant;
-        ceed::AssembleCeedGeometryData(info, ceed, mesh_restr, mesh_basis, mesh_nodes,
-                                       data.wdetJ, &data.wdetJ_vec, &data.wdetJ_restr);
-      }
-      if (compute_J)
-      {
-        constexpr auto info = ceed::GeomFactorInfo::Jacobian;
-        ceed::AssembleCeedGeometryData(info, ceed, mesh_restr, mesh_basis, mesh_nodes,
-                                       data.J, &data.J_vec, &data.J_restr);
-      }
-      if (compute_adjJt)
-      {
-        constexpr auto info = ceed::GeomFactorInfo::Adjugate;
-        ceed::AssembleCeedGeometryData(info, ceed, mesh_restr, mesh_basis, mesh_nodes,
-                                       data.adjJt, &data.adjJt_vec, &data.adjJt_restr);
-      }
+      ceed::AssembleCeedGeometryData(info, ceed, mesh_restr, mesh_basis, mesh_nodes, data);
 
-      // Always compute element attributes (single scalar per element).
+      // Compute element attribute quadrature data (single scalar per element).
       {
         const bool use_bdr = (mfem::Geometry::Dimension[geom] != mesh.Dimension());
         const std::size_t ne = indices.size();

@@ -23,9 +23,9 @@ namespace palace::ceed
 template <typename T>
 using CeedObjectMap = std::unordered_map<std::pair<Ceed, mfem::Geometry::Type>, T>;
 
-// XX TODO: Do we need to store qw * |J| separately in each? Can we just use multiple inputs
-// to the QFunction?
-//        Can we skip adjugate storage and just compute from J on the fly?
+// XX TODO: Do we need to store qw * |J| separately in each? Is it significantly worse if we
+//          just use multiple inputs to the QFunction for the different quantities?
+// XX TODO: Can we skip adjugate storage and just compute from J on the fly?
 
 // Data structure for geometry information stored at quadrature points. Jacobian matrix is
 // dim x space_dim, the adjugate is space_dim x dim, column-major storage by component.
@@ -39,6 +39,12 @@ struct CeedGeomFactorData
   // Objects for libCEED interface to the quadrature data.
   CeedVector wdetJ_vec, J_vec, adjJt_vec, attr_vec;
   CeedElemRestriction wdetJ_restr, J_restr, adjJt_restr, attr_restr;
+
+  CeedGeomFactorData()
+    : wdetJ_vec(nullptr), J_vec(nullptr), adjJt_vec(nullptr), attr_vec(nullptr),
+      wdetJ_restr(nullptr), J_restr(nullptr), adjJt_restr(nullptr), attr_restr(nullptr)
+  {
+  }
 };
 
 }  // namespace palace::ceed
