@@ -111,8 +111,8 @@ conditions as well as any material interfaces in the computational domain.
 ## Adaptive Mesh Refinement
 
 At the start of an adaptive mesh refinement iteration, if
-[`config["Model"]["Refinement]["SaveAdaptIterations"]`]
+[`config["Model"]["Refinement"]["SaveAdaptIterations"]`]
 (../config/model.md#model%5B%22Refinement%22%5D) is enabled, the postprocessing results from
-the previous solve will be saved off within a subdirectory denoted `iterationX` where `X` is
-the iteration number. The results in the top level directory will always be those from the
-most recent successful solve.
+the solve on the previous mesh will be saved off within a subdirectory denoted `iterationX`,
+where `X` is the (1-based) iteration number. The results in the top level directory will
+always be those from the most recent successful solve.
