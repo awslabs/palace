@@ -37,7 +37,7 @@ std::string GetPostDir(const std::string &output)
 
 std::string GetIterationPostDir(const std::string &output, int step, int width)
 {
-  return fmt::format("{}adapt{:0{}d}/", output, step, width);
+  return fmt::format("{}iteration{:0{}d}/", output, step, width);
 }
 
 void SaveIteration(MPI_Comm comm, const std::string &output, int step, int width)
@@ -57,7 +57,7 @@ void SaveIteration(MPI_Comm comm, const std::string &output, int step, int width
         fs::copy_options::recursive | fs::copy_options::overwrite_existing;
     for (const auto &f : fs::directory_iterator(output))
     {
-      if (f.path().filename().string().rfind("adapt") == 0)
+      if (f.path().filename().string().rfind("iteration") == 0)
       {
         continue;
       }
