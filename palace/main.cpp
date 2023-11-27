@@ -74,10 +74,10 @@ static int GetDeviceId(MPI_Comm comm)
 #if defined(MFEM_USE_CUDA) || defined(MFEM_USE_HIP)
   MPI_Comm node_comm;
   MPI_Comm_split_type(comm, MPI_COMM_TYPE_SHARED, Mpi::Rank(comm), MPI_INFO_NULL,
-                      node_comm);
+                      &node_comm);
   int node_size = Mpi::Rank(node_comm);
   MPI_Comm_free(&node_comm);
-  return node_size % mfem::Device::GetNgpu();
+  return node_size % mfem::Device::GetNumGPU();
 #else
   return 0;
 #endif
@@ -153,11 +153,11 @@ static void PrintPalaceInfo(MPI_Comm comm, int np, int nt, mfem::Device &device)
     Mpi::Print(comm, ", {:d} OpenMP thread{}", nt, (nt > 1) ? "s" : "");
   }
 #if defined(MFEM_USE_CUDA) || defined(MFEM_USE_HIP)
-  int ngpu = mfem::Device::GetNgpu();
+  int ngpu = mfem::Device::GetNumGPU();
 #if defined(MFEM_USE_CUDA)
-  const char *device_name = "CUDA"
+  const char *device_name = "CUDA";
 #else
-  const char *device_name = "HIP"
+  const char *device_name = "HIP";
 #endif
       Mpi::Print(comm, "\n{:d} detected {} device{}{}", ngpu, device_name,
                  (ngpu > 1) ? "s" : "",
