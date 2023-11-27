@@ -14,7 +14,7 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_BINARY_DIR)
 endif()
 
 # Initialize the project
-project(palace-superbuild LANGUAGES CXX C VERSION 0.11.2)
+project(palace-superbuild LANGUAGES CXX C VERSION 0.12.0)
 
 # Define build settings and defaults
 set(PALACE_WITH_64BIT_INT OFF CACHE BOOL "Use 64 bit integers")
