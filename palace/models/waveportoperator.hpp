@@ -8,6 +8,7 @@
 #include <map>
 #include <memory>
 #include <mfem.hpp>
+#include "fem/fespace.hpp"
 #include "linalg/eps.hpp"
 #include "linalg/ksp.hpp"
 #include "linalg/operator.hpp"
@@ -47,7 +48,7 @@ private:
   // SubMesh corresponding to this port boundary.
   std::unique_ptr<mfem::ParSubMesh> port_mesh;
   std::unique_ptr<mfem::FiniteElementCollection> port_nd_fec, port_h1_fec;
-  std::unique_ptr<mfem::ParFiniteElementSpace> port_nd_fespace, port_h1_fespace;
+  std::unique_ptr<FiniteElementSpace> port_nd_fespace, port_h1_fespace;
   std::unique_ptr<mfem::ParTransferMap> port_nd_transfer, port_h1_transfer;
 
   // Operator storage for repeated boundary mode eigenvalue problem solves.

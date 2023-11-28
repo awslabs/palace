@@ -27,6 +27,7 @@ CEED_QFUNCTION(f_apply_h1_2)(void *ctx, CeedInt Q, const CeedScalar *const *in,
 {
   const CeedScalar *wdetJ = in[0], *u = in[1];
   CeedScalar *v = out[0];
+  const CeedScalar coeff = 1.0;  // XX TODO NON-IDENTITY COEFFICIENTS
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
     const CeedScalar qd = coeff * wdetJ[i];
@@ -43,6 +44,7 @@ CEED_QFUNCTION(f_apply_h1_3)(void *ctx, CeedInt Q, const CeedScalar *const *in,
 {
   const CeedScalar *wdetJ = in[0], *u = in[1];
   CeedScalar *v = out[0];
+  const CeedScalar coeff = 1.0;  // XX TODO NON-IDENTITY COEFFICIENTS
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
     const CeedScalar qd = coeff * wdetJ[i];

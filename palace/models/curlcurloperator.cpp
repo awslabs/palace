@@ -67,6 +67,17 @@ mfem::Array<int> SetUpBoundaryProperties(const IoData &iodata, const mfem::ParMe
   return dbc_marker;
 }
 
+MaterialOperator SetUpMaterialOperator(const IoData &iodata, mfem::ParMesh &mesh)
+{
+  // Must be called before geometry factor setup inside MaterialOperator constructor.
+  BilinearForm::pa_order_threshold = iodata.solver.pa_order_threshold;
+  fem::DefaultIntegrationOrder::p_trial = iodata.solver.order;
+  fem::DefaultIntegrationOrder::q_order_jac = iodata.solver.q_order_jac;
+  fem::DefaultIntegrationOrder::q_order_extra_pk = iodata.solver.q_order_extra;
+  fem::DefaultIntegrationOrder::q_order_extra_qk = iodata.solver.q_order_extra;
+  return MaterialOperator(iodata, mesh);
+}
+
 }  // namespace
 
 CurlCurlOperator::CurlCurlOperator(const IoData &iodata,
@@ -85,13 +96,12 @@ CurlCurlOperator::CurlCurlOperator(const IoData &iodata,
     h1_fespaces(fem::ConstructAuxiliaryFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
         nd_fespaces, h1_fecs)),
     rt_fespace(nd_fespaces.GetFinestFESpace(), mesh.back().get(), rt_fec.get()),
-    mat_op(iodata, *mesh.back()), surf_j_op(iodata, GetH1Space())
+    mat_op(SetUpMaterialOperator(iodata, *mesh.back())), surf_j_op(iodata, GetH1Space())
 {
   // Finalize setup.
-  BilinearForm::pa_order_threshold = iodata.solver.pa_order_threshold;
-  fem::DefaultIntegrationOrder::q_order_jac = iodata.solver.q_order_jac;
-  fem::DefaultIntegrationOrder::q_order_extra_pk = iodata.solver.q_order_extra;
-  fem::DefaultIntegrationOrder::q_order_extra_qk = iodata.solver.q_order_extra;
+  nd_fespaces.SetCeedGeomFactorData(mat_op.GetCeedGeomFactorData());
+  h1_fespaces.SetCeedGeomFactorData(mat_op.GetCeedGeomFactorData());
+  rt_fespace.SetCeedGeomFactorData(mat_op.GetCeedGeomFactorData());
   CheckBoundaryProperties();
 
   // Print essential BC information.
@@ -138,7 +148,7 @@ void PrintHeader(const FiniteElementSpace &h1_fespace, const FiniteElementSpace 
       const auto *fe = nd_fespace.FEColl()->FiniteElementForGeometry(geom);
       MFEM_VERIFY(fe, "MFEM does not support ND spaces on geometry = "
                           << mfem::Geometry::Name[geom] << "!");
-      const int q_order = mfem::DefaultIntegrationOrder::Get(mesh, geom);
+      const int q_order = fem::DefaultIntegrationOrder::Get(mesh, geom);
       Mpi::Print("  {}: P = {:d}, Q = {:d} (quadrature order = {:d})\n",
                  mfem::Geometry::Name[geom], fe->GetDof(),
                  mfem::IntRules.Get(geom, q_order).GetNPoints(), q_order);
@@ -152,6 +162,10 @@ void PrintHeader(const FiniteElementSpace &h1_fespace, const FiniteElementSpace 
 
 std::unique_ptr<Operator> CurlCurlOperator::GetStiffnessMatrix()
 {
+
+  // XX TODO EFFICIENT MULTIGRID ASSEMBLY ON SAME QUADRATURE SPACE (ONLY FINE LEVEL IS A
+  // REAL OPERATOR)
+
   PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
   auto K = std::make_unique<MultigridOperator>(GetNDSpaces().GetNumLevels());
   for (std::size_t l = 0; l < GetNDSpaces().GetNumLevels(); l++)

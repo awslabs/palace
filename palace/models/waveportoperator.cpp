@@ -7,7 +7,6 @@
 #include <unordered_map>
 #include "fem/bilinearform.hpp"
 #include "fem/coefficient.hpp"
-#include "fem/fespace.hpp"
 #include "fem/integrator.hpp"
 #include "linalg/arpack.hpp"
 #include "linalg/iterative.hpp"
@@ -81,7 +80,7 @@ void GetEssentialTrueDofs(mfem::ParGridFunction &E0t, mfem::ParGridFunction &E0n
 constexpr bool skip_zeros = false;
 
 std::unique_ptr<ParOperator> GetBtt(const MaterialOperator &mat_op,
-                                    const mfem::ParFiniteElementSpace &nd_fespace)
+                                    const FiniteElementSpace &nd_fespace)
 {
   // Mass matrix: Bₜₜ = (μ⁻¹ u, v).
   constexpr auto MatType = MaterialPropertyType::INV_PERMEABILITY;
@@ -93,8 +92,8 @@ std::unique_ptr<ParOperator> GetBtt(const MaterialOperator &mat_op,
 }
 
 std::unique_ptr<ParOperator> GetBtn(const MaterialOperator &mat_op,
-                                    const mfem::ParFiniteElementSpace &nd_fespace,
-                                    const mfem::ParFiniteElementSpace &h1_fespace)
+                                    const FiniteElementSpace &nd_fespace,
+                                    const FiniteElementSpace &h1_fespace)
 {
   // Mass matrix: Bₜₙ = (μ⁻¹ ∇ₜ u, v).
   constexpr auto MatType = MaterialPropertyType::INV_PERMEABILITY;
@@ -106,8 +105,8 @@ std::unique_ptr<ParOperator> GetBtn(const MaterialOperator &mat_op,
                                        false);
 }
 
-std::array<std::unique_ptr<ParOperator>, 3>
-GetBnn(const MaterialOperator &mat_op, const mfem::ParFiniteElementSpace &h1_fespace)
+std::array<std::unique_ptr<ParOperator>, 3> GetBnn(const MaterialOperator &mat_op,
+                                                   const FiniteElementSpace &h1_fespace)
 {
   // Mass matrix: Bₙₙ = (μ⁻¹ ∇ₜ u, ∇ₜ v) - ω² (ε u, v) = Bₙₙ₁ - ω² Bₙₙ₂.
   constexpr auto MatTypeMuInv = MaterialPropertyType::INV_PERMEABILITY;
@@ -139,8 +138,8 @@ GetBnn(const MaterialOperator &mat_op, const mfem::ParFiniteElementSpace &h1_fes
           std::make_unique<ParOperator>(bnn2i.FullAssemble(skip_zeros), h1_fespace)};
 }
 
-std::array<std::unique_ptr<ParOperator>, 3>
-GetAtt(const MaterialOperator &mat_op, const mfem::ParFiniteElementSpace &nd_fespace)
+std::array<std::unique_ptr<ParOperator>, 3> GetAtt(const MaterialOperator &mat_op,
+                                                   const FiniteElementSpace &nd_fespace)
 {
   // Stiffness matrix: Aₜₜ = (μ⁻¹ ∇ₜ x u, ∇ₜ x v) - ω² (ε u, v) = Aₜₜ₁ - ω² Aₜₜ₂.
   constexpr auto MatTypeMuInv = MaterialPropertyType::INV_PERMEABILITY;
@@ -266,8 +265,8 @@ GetSystemMatrices(std::unique_ptr<ParOperator> Btt, std::unique_ptr<ParOperator>
           std::move(B3), std::move(B4r), std::move(B4i)};
 }
 
-void GetInitialSpace(const mfem::ParFiniteElementSpace &nd_fespace,
-                     const mfem::ParFiniteElementSpace &h1_fespace,
+void GetInitialSpace(const FiniteElementSpace &nd_fespace,
+                     const FiniteElementSpace &h1_fespace,
                      const mfem::Array<int> &nd_dbc_tdof_list,
                      const mfem::Array<int> &h1_dbc_tdof_list, ComplexVector &v)
 {

@@ -31,7 +31,7 @@ int DefaultIntegrationOrder::Get(const mfem::Mesh &mesh, mfem::Geometry::Type ge
 {
   MFEM_VERIFY(mesh.GetNodes(), "The mesh has no nodal FE space!");
   mfem::IsoparametricTransformation T;
-  T->SetFE(mesh.GetNodes()->FEColl()->FiniteElementForGeometry(geom));
+  T.SetFE(mesh.GetNodalFESpace()->FEColl()->FiniteElementForGeometry(geom));
   return Get(T);
 }
 

@@ -669,18 +669,20 @@ void PostOperator::WriteFields(int step, double time, const ErrorIndicator *indi
   paraview_bdr.SetTime(time);
   if (first_save || indicator)
   {
+    // No need for these to be parallel objects, since the data is local to each process and
+    // there isn't a need to ever access the element neighbors.
     mfem::L2_FECollection pwconst_fec(0, mesh.Dimension());
-    mfem::ParFiniteElementSpace pwconst_fespace(&mesh, &pwconst_fec);
-    std::unique_ptr<mfem::ParGridFunction> rank, eta;
+    mfem::FiniteElementSpace pwconst_fespace(&mesh, &pwconst_fec);
+    std::unique_ptr<mfem::GridFunction> rank, eta;
     if (first_save)
     {
-      rank = std::make_unique<mfem::ParGridFunction>(&pwconst_fespace);
+      rank = std::make_unique<mfem::GridFunction>(&pwconst_fespace);
       *rank = mesh.GetMyRank() + 1;
       paraview.RegisterField("Rank", rank.get());
     }
     if (indicator)
     {
-      eta = std::make_unique<mfem::ParGridFunction>(&pwconst_fespace);
+      eta = std::make_unique<mfem::GridFunction>(&pwconst_fespace);
       MFEM_VERIFY(eta->Size() == indicator->Local().Size(),
                   "Size mismatch for provided ErrorIndicator for postprocessing!");
       *eta = indicator->Local();

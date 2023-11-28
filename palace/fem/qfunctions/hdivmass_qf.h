@@ -6,11 +6,11 @@
 
 #include "utils_qf.h"
 
-// libCEED QFunctions for H(div) + mass operators in 3D (Piola transformations u =
+// libCEED QFunctions for H(div) + H(curl) mass operators in 3D (Piola transformations u =
 // J / det(J) ̂u and u = adj(J)^T / det(J) ̂u).
 // in[0] is Jacobian determinant quadrature data, shape [Q]
-// in[1] is Jacobian quadrature data, shape [ncomp=space_dim*dim, Q]
-// in[2] is transpose adjugate Jacobian quadrature data, shape [ncomp=space_dim*dim, Q]
+// in[1] is transpose adjugate Jacobian quadrature data, shape [ncomp=space_dim*dim, Q]
+// in[2] is Jacobian quadrature data, shape [ncomp=space_dim*dim, Q]
 // in[3] is active vector, shape [qcomp=dim, ncomp=1, Q]
 // in[4] is active vector curl, shape [qcomp=dim, ncomp=1, Q]
 // out[0] is active vector, shape [qcomp=dim, ncomp=1, Q]
@@ -53,11 +53,11 @@ CEED_QFUNCTION(f_apply_hdivmass_22)(void *ctx, CeedInt Q, const CeedScalar *cons
 CEED_QFUNCTION(f_apply_hdivmass_33)(void *ctx, CeedInt Q, const CeedScalar *const *in,
                                     CeedScalar *const *out)
 {
-  const CeedScalar *wdetJ = in[0], *J = in[1], *adjJt = in[2], *u = in[3], *curlu = in[4];
+  const CeedScalar *wdetJ = in[0], *adjJt = in[1], *J = in[2], *u = in[3], *curlu = in[4];
   CeedScalar *v = out[0], *curlv = out[1];
   const CeedScalar coeff_mass[6] = {1.0, 0.0, 0.0, 1.0, 0.0, 1.0};
-  const CeedScalar coeff = {1.0, 0.0, 0.0,
-                            1.0, 0.0, 1.0};  // XX TODO NON-IDENTITY COEFFICIENTS
+  const CeedScalar coeff[6] = {1.0, 0.0, 0.0,
+                               1.0, 0.0, 1.0};  // XX TODO NON-IDENTITY COEFFICIENTS
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
     CeedScalar qd[6];

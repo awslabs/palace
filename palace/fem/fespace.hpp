@@ -13,6 +13,25 @@
 namespace palace
 {
 
+namespace fem
+{
+
+// Construct mesh data structures for assembling libCEED operators on a (mixed) mesh:
+//   - Mesh element indices for threads and element geometry types.
+//   - Geometry factor quadrature point data (w |J|, adj(J)^T / |J|, J / |J|) for domain
+//     and boundary elements.
+//   - Attributes for domain and boundary elements. The attributes are not the same as the
+//     mesh element attributes as they map to a compressed (1-based) list of used
+//     attributes on this MPI process.
+ceed::CeedObjectMap<ceed::CeedGeomFactorData> SetUpCeedGeomFactorData(mfem::ParMesh &mesh);
+
+// Regenerate mesh geometry factor data after a previous call to SetUpCeedGeomFactorData.
+// Can be used when changing to a new quadrature rule, for example.
+void UpdateCeedGeomFactorData(const mfem::ParMesh &mesh,
+                              ceed::CeedObjectMap<ceed::CeedGeomFactorData> &geom_data);
+
+}  // namespace fem
+
 //
 // Wrapper for MFEM's ParFiniteElementSpace class, where the finite element space object
 // is constructed with a unique ID associated with it. This is useful for defining equality
@@ -31,13 +50,9 @@ private:
   // Members for constructing libCEED operators.
   mutable ceed::CeedObjectMap<CeedBasis> basis;
   mutable ceed::CeedObjectMap<CeedElemRestriction> restr, interp_restr, interp_range_restr;
+  const ceed::CeedObjectMap<ceed::CeedGeomFactorData> *geom_data = nullptr;
 
-  CeedBasis BuildCeedBasis(Ceed ceed, mfem::Geometry::Type geom) const;
-  CeedElemRestriction BuildCeedElemRestriction(Ceed ceed, const std::vector<int> &indices,
-                                               bool use_bdr, bool is_interp = false,
-                                               bool is_interp_range = false) const;
-
-  bool HasUniqueInterpRestriction(const mfem::FiniteElement &fe)
+  bool HasUniqueInterpRestriction(const mfem::FiniteElement &fe) const
   {
     // For interpolation operators and tensor-product elements, we need native (not
     // lexicographic) ordering.
@@ -47,7 +62,7 @@ private:
             fe.GetRangeType() != mfem::FiniteElement::VECTOR);
   }
 
-  bool HasUniqueInterpRangeRestriction(const mfem::FiniteElement &fe)
+  bool HasUniqueInterpRangeRestriction(const mfem::FiniteElement &fe) const
   {
     // The range restriction for interpolation operators needs to use a special
     // DofTransformation (not equal to the transpose of the domain restriction).
@@ -61,7 +76,7 @@ public:
     : mfem::ParFiniteElementSpace(fespace)
   {
   }
-  ~FiniteElementSpace();
+  ~FiniteElementSpace() { DestroyCeedObjects(); }
 
   // Get the ID associated with the instance of this class. If the underlying sequence has
   // changed (due to a mesh update, for example), regenerate the ID.
@@ -73,64 +88,50 @@ public:
     return GetId() == fespace.GetId();
   }
 
+  // Clear the cached basis and element restriction objects owned by the finite element
+  // space.
+  void DestroyCeedObjects();
+
   // Return the basis object for elements of the given element geometry type.
-  const auto GetCeedBasis(Ceed ceed, mfem::Geometry::Type geom) const
-  {
-    const auto it = basis.find(std::make_pair(ceed, geom));
-    return (it != basis.end()) ? it->second : BuildCeedBasis(ceed, geom);
-  }
+  const CeedBasis GetCeedBasis(Ceed ceed, mfem::Geometry::Type geom) const;
 
   // Return the element restriction object for the given element set (all with the same
   // geometry type).
-  const auto GetCeedElemRestriction(Ceed ceed, mfem::Geometry::Type geom,
-                                    const std::vector<int> &indices) const
-  {
-    MFEM_ASSERT(!indices.empty(),
-                "Cannot create CeedElemRestriction for an empty mesh partition!");
-    const auto it = restr.find(std::make_pair(ceed, geom));
-    return (it != restr.end())
-               ? it->second
-               : BuildCeedElemRestriction(
-                     ceed, indices,
-                     (mfem::Geometry::Dimension[geom] != GetParMesh()->Dimension()));
-  }
+  const CeedElemRestriction GetCeedElemRestriction(Ceed ceed, mfem::Geometry::Type geom,
+                                                   const std::vector<int> &indices) const;
 
   // If the space has a special element restriction for discrete interpolators, return that.
   // Otherwise return the same restiction as given by GetCeedElemRestriction.
-  const auto GetInterpCeedElemRestriction(Ceed ceed, mfem::Geometry::Type geom,
-                                          const std::vector<int> &indices) const
-  {
-    MFEM_ASSERT(!indices.empty(),
-                "Cannot create boundary CeedElemRestriction for an empty mesh partition!");
-    const mfem::FiniteElement &fe = *FEColl()->FiniteElementForGeometry(geom);
-    if (!HasUniqueInterpRestriction(fe))
-    {
-      return GetCeedElemRestriction(ceed, indices);
-    }
-    const auto it = interp_restr.find(std::make_pair(ceed, geom));
-    return (it != interp_restr.end())
-               ? it->second
-               : BuildCeedElemRestriction(ceed, indices, true, true, false);
-  }
+  const CeedElemRestriction
+  GetInterpCeedElemRestriction(Ceed ceed, mfem::Geometry::Type geom,
+                               const std::vector<int> &indices) const;
 
   // If the space has a special element restriction for the range space of discrete
   // interpolators, return that. Otherwise return the same restiction as given by
   // GetCeedElemRestriction.
-  const auto GetInterpRangeCeedElemRestriction(Ceed ceed, mfem::Geometry::Type geom,
-                                               const std::vector<int> &indices) const
+  const CeedElemRestriction
+  GetInterpRangeCeedElemRestriction(Ceed ceed, mfem::Geometry::Type geom,
+                                    const std::vector<int> &indices) const;
+
+  static CeedBasis BuildCeedBasis(const mfem::FiniteElementSpace &fespace, Ceed ceed,
+                                  mfem::Geometry::Type geom);
+  static CeedElemRestriction
+  BuildCeedElemRestriction(const mfem::FiniteElementSpace &fespace, Ceed ceed,
+                           mfem::Geometry::Type geom, const std::vector<int> &indices,
+                           bool is_interp = false, bool is_interp_range = false);
+
+  // Set and access the (not owned) geometry factor data associated with the underlying mesh
+  // object for the space.
+  void SetCeedGeomFactorData(const ceed::CeedObjectMap<ceed::CeedGeomFactorData> &data)
   {
-    MFEM_ASSERT(!indices.empty(),
-                "Cannot create boundary CeedElemRestriction for an empty mesh partition!");
-    const auto geom = GetParMesh()->GetElementGeometry(indices[0]);
-    const mfem::FiniteElement &fe = *FEColl()->FiniteElementForGeometry(geom);
-    if (!HasUniqueInterpRangeRestriction(fe))
-    {
-      return GetInterpCeedElemRestriction(ceed, indices);
-    }
-    const auto it = interp_range_restr.find(std::make_pair(ceed, geom));
-    return (it != interp_range_restr.end())
-               ? it->second
-               : BuildCeedElemRestriction(ceed, indices, true, true, true);
+    geom_data = &data;
+  }
+  const auto &GetCeedGeomFactorData() const
+  {
+    MFEM_ASSERT(
+        geom_data,
+        "Must call SetCeedGeomFactorData before accessing with GetCeedGeomFactorData!");
+    return *geom_data;
   }
 };
 
@@ -235,6 +236,14 @@ public:
       P_[l] = &GetProlongationAtLevel(l);
     }
     return P_;
+  }
+
+  void SetCeedGeomFactorData(const ceed::CeedObjectMap<ceed::CeedGeomFactorData> &data)
+  {
+    for (auto &fespace : fespaces)
+    {
+      fespace->SetCeedGeomFactorData(data);
+    }
   }
 };
 

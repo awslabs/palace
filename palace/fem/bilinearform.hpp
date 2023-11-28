@@ -22,9 +22,6 @@ namespace palace
 class BilinearForm
 {
 protected:
-  // Data structure holds mesh element topologies and geometry factors for libCEED assembly.
-  const MaterialOperator &mat_op;
-
   // Domain and range finite element spaces.
   const FiniteElementSpace &trial_fespace, &test_fespace;
 
@@ -36,15 +33,12 @@ public:
   inline static int pa_order_threshold = 1;
 
 public:
-  BilinearForm(const MaterialOperator &mat_op, const FiniteElementSpace &trial_fespace,
+  BilinearForm(const FiniteElementSpace &trial_fespace,
                const FiniteElementSpace &test_fespace)
-    : mat_op(mat_op), trial_fespace(trial_fespace), test_fespace(test_fespace)
+    : trial_fespace(trial_fespace), test_fespace(test_fespace)
   {
   }
-  BilinearForm(const MaterialOperator &matop, const FiniteElementSpace &fespace)
-    : BilinearForm(mat_op, fespace, fespace)
-  {
-  }
+  BilinearForm(const FiniteElementSpace &fespace) : BilinearForm(fespace, fespace) {}
 
   const auto &GetTrialSpace() const { return trial_fespace; }
   const auto &GetTestSpace() const { return test_fespace; }
@@ -66,6 +60,12 @@ public:
   std::unique_ptr<mfem::SparseMatrix> FullAssemble(bool skip_zeros) const
   {
     return FullAssemble(*PartialAssemble(), skip_zeros, false);
+  }
+
+  std::unique_ptr<mfem::SparseMatrix> FullAssemble(const ceed::Operator &op,
+                                                   bool skip_zeros) const
+  {
+    return FullAssemble(op, skip_zeros, false);
   }
 
   static std::unique_ptr<mfem::SparseMatrix> FullAssemble(const ceed::Operator &op,
@@ -91,7 +91,8 @@ public:
 
   // Returns order such that the miniumum for all element types is 1. MFEM's RT_FECollection
   // actually already returns order + 1 for GetOrder() for historical reasons.
-  static auto GetMaxElementOrder(const BilinearForm &a)
+  template <typename T>
+  static auto GetMaxElementOrder(const T &a)
   {
     const auto &trial_fec = *a.GetTrialSpace().FEColl();
     const auto &test_fec = *a.GetTestSpace().FEColl();
@@ -135,6 +136,12 @@ public:
   std::unique_ptr<mfem::SparseMatrix> FullAssemble(bool skip_zeros) const
   {
     return BilinearForm::FullAssemble(*PartialAssemble(), skip_zeros, true);
+  }
+
+  std::unique_ptr<mfem::SparseMatrix> FullAssemble(const ceed::Operator &op,
+                                                   bool skip_zeros) const
+  {
+    return BilinearForm::FullAssemble(op, skip_zeros, true);
   }
 
   std::unique_ptr<Operator> Assemble(bool skip_zeros) const

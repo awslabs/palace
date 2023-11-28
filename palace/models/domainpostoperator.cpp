@@ -3,8 +3,10 @@
 
 #include "domainpostoperator.hpp"
 
+#include <mfem.hpp>
 #include "fem/bilinearform.hpp"
 #include "fem/coefficient.hpp"
+#include "fem/fespace.hpp"
 #include "fem/integrator.hpp"
 #include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
@@ -14,8 +16,8 @@ namespace palace
 {
 
 DomainPostOperator::DomainPostOperator(const IoData &iodata, const MaterialOperator &mat_op,
-                                       const mfem::ParFiniteElementSpace *nd_fespace,
-                                       const mfem::ParFiniteElementSpace *rt_fespace)
+                                       const FiniteElementSpace *nd_fespace,
+                                       const FiniteElementSpace *rt_fespace)
 {
   // Mass operators are always partially assembled.
   constexpr auto MatTypeEps = MaterialPropertyType::PERMITTIVITY_REAL;

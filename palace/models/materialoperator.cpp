@@ -6,8 +6,7 @@
 #include <cmath>
 #include <functional>
 #include <limits>
-#include "fem/libceed/integrator.hpp"
-#include "fem/libceed/utils.hpp"
+#include "fem/fespace.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
@@ -286,28 +285,19 @@ MaterialOperator::MaterialOperator(const IoData &iodata, mfem::ParMesh &mesh)
 {
   SetUpMaterialProperties(iodata, mesh);
 
-  // Compute data for partially-assembled libCEED integrators.
-  SetUpGeomFactorData(mesh);
-}
-
-MaterialOperator::~MaterialOperator()
-{
-  // Cleanup libCEED objects.
-  for (auto &[key, val] : geom_data)
+  // Construct shared face mapping for boundary coefficients. This is useful to have in one
+  // place alongside material properties so we construct and store it here.
+  for (int i = 0; i < mesh.GetNSharedFaces(); i++)
   {
-    Ceed ceed = key.first;
-    PalaceCeedCall(ceed, CeedVectorDestroy(&val.wdetJ_vec));
-    PalaceCeedCall(ceed, CeedVectorDestroy(&val.J_vec));
-    PalaceCeedCall(ceed, CeedVectorDestroy(&val.adjJt_vec));
-    PalaceCeedCall(ceed, CeedVectorDestroy(&val.attr_vec));
-    PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&val.wdetJ_restr));
-    PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&val.J_restr));
-    PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&val.adjJt_restr));
-    PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&val.attr_restr));
+    local_to_shared[mesh.GetSharedFace(i)] = i;
   }
+
+  // Set up geometry factor data for libCEED operators.
+  geom_data = fem::SetUpCeedGeomFactorData(mesh);
 }
 
-void MaterialOperator::SetUpMaterialProperties(const IoData &iodata, mfem::ParMesh &mesh)
+void MaterialOperator::SetUpMaterialProperties(const IoData &iodata,
+                                               const mfem::ParMesh &mesh)
 {
   // Check that material attributes have been specified correctly. The mesh attributes may
   // be non-contiguous and when no material attribute is specified the elements are deleted
@@ -438,13 +428,6 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata, mfem::ParMe
         std::abs(data.lambda_L) > 0.0 ? std::pow(data.lambda_L, -2.0) : 0.0;
   }
 
-  // Construct shared face mapping for boundary coefficients. This is useful to have in one
-  // place alongside material properties so we construct and store it here.
-  for (int i = 0; i < mesh.GetNSharedFaces(); i++)
-  {
-    local_to_shared[mesh.GetSharedFace(i)] = i;
-  }
-
   // Mark selected material attributes from the mesh as having certain local properties.
   mfem::Array<int> losstan_mats, conductivity_mats, london_mats;
   losstan_mats.Reserve(attr_max);
@@ -468,165 +451,6 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata, mfem::ParMe
   mesh::AttrToMarker(attr_max, losstan_mats, losstan_marker);
   mesh::AttrToMarker(attr_max, conductivity_mats, conductivity_marker);
   mesh::AttrToMarker(attr_max, london_mats, london_marker);
-}
-
-namespace
-{
-
-// Count the number of elements of each type in the local mesh.
-std::unordered_map<mfem::Geometry::Type, std::vector<int>>
-GetElementIndices(const mfem::ParMesh &mesh, bool use_bdr, int start, int stop)
-{
-  std::unordered_map<mfem::Geometry::Type, int> counts, offsets;
-  std::unordered_map<mfem::Geometry::Type, std::vector<int>> element_indices;
-
-  for (int i = start; i < stop; i++)
-  {
-    const auto key = use_bdr ? mesh.GetBdrElementGeometry(i) : mesh.GetElementGeometry(i);
-    auto val = counts.find(key);
-    if (val == counts.end())
-    {
-      counts[key] = 1;
-    }
-    else
-    {
-      val->second++;
-    }
-  }
-
-  // Populate the indices arrays for each element geometry.
-  for (const auto &[key, val] : counts)
-  {
-    offsets[key] = 0;
-    element_indices[key] = std::vector<int>(val);
-  }
-  for (int i = start; i < stop; i++)
-  {
-    const auto key = mesh.GetElementGeometry(i);
-    auto &offset = offsets[key];
-    auto &indices = element_indices[key];
-    indices[offset++] = i;
-  }
-
-  return element_indices;
-}
-
-}  // namespace
-
-void MaterialOperator::SetUpGeomFactorData(mfem::ParMesh &mesh)
-{
-  // In the following, we copy the mesh FE space for the nodes as a
-  // palace::FiniteElementSpace and replace it in the nodal grid function. Unfortunately
-  // mfem::ParFiniteElementSpace does not have a move constructor to make this more
-  // efficient, but it's only done once for the lifetime of the mesh.
-  {
-    mesh.EnsureNodes();
-    mfem::GridFunction *mesh_nodes = mesh.GetNodes();
-    mfem::FiniteElementSpace *mesh_fespace = mesh_nodes->FESpace();
-    MFEM_VERIFY(dynamic_cast<mfem::ParFiniteElementSpace *>(mesh_fespace),
-                "Unexpected non-parallel FiniteElementSpace for mesh nodes!");
-    if (!dynamic_cast<FiniteElementSpace *>(mesh_fespace))
-    {
-      // Ensure the FiniteElementCollection associated with the original nodes is not
-      // deleted.
-      auto *new_mesh_fespace =
-          new FiniteElementSpace(*static_cast<mfem::ParFiniteElementSpace *>(mesh_fespace));
-      mfem::FiniteElementCollection *mesh_fec = mesh_nodes->OwnFEC();
-      MFEM_VERIFY(mesh_fec, "Replacing the FiniteElementSpace for mesh nodes is only "
-                            "possible when it owns its fec/fes members!");
-      mesh_nodes->MakeOwner(nullptr);
-      mesh.SetNodalFESpace(new_mesh_fespace);
-      mfem::GridFunction *new_mesh_nodes = mesh.GetNodes();
-      new_mesh_nodes->MakeOwner(mesh_fec);
-      delete mesh_fespace;
-    }
-  }
-  const mfem::GridFunction &mesh_nodes = *mesh.GetNodes();
-  MFEM_VERIFY(dynamic_cast<const FiniteElementSpace *>(mesh_nodes.FESpace()),
-              "Unexpected non-FiniteElementSpace for mesh nodes!");
-  const FiniteElementSpace &mesh_fespace =
-      *dynamic_cast<const FiniteElementSpace *>(mesh_nodes.FESpace());
-
-  // Create a list of the element indices in the mesh corresponding to a given thread and
-  // element geometry type. libCEED operators will be constructed in parallel over threads,
-  // where each thread builds a composite operator with sub-operators for each geometry.
-  const std::size_t nt = ceed::internal::GetCeedObjects().size();
-  PalacePragmaOmp(parallel for schedule(static))
-  for (std::size_t i = 0; i < nt; i++)
-  {
-    Ceed ceed = ceed::internal::GetCeedObjects()[i];
-
-    auto AssembleGeometryData =
-        [&](auto geom, auto &indices, ceed::CeedGeomFactorData &data)
-    {
-      // XX TODO: In practice we do not need to compute all of the geometry data for every
-      //          simulation type.
-
-      // Compute the required geometry factors at quadrature points.
-      constexpr auto info = ceed::GeomFactorInfo::Determinant |
-                            ceed::GeomFactorInfo::Jacobian | ceed::GeomFactorInfo::Adjugate;
-      CeedElementRestriction mesh_restr =
-          mesh_fespace.GetCeedElemRestriction(ceed, geom, indices);
-      CeedBasis mesh_basis = mesh_fespace.GetCeedBasis(ceed, geom);
-      ceed::AssembleCeedGeometryData(info, ceed, mesh_restr, mesh_basis, mesh_nodes, data);
-
-      // Compute element attribute quadrature data (single scalar per element).
-      {
-        const auto ne = indices.size();
-        data.attr.SetSize(ne);
-        for (std::size_t j = 0; j < ne; j++)
-        {
-          const int e = indices[j];
-          data.attr[j] = mesh->GetAttribute(e);
-        }
-        PalaceCeedCall(ceed, CeedElemRestrictionCreateStrided(ceed, ne, 1, 1, ne,
-                                                              CEED_STRIDES_BACKEND,
-                                                              &data.attr_restr));
-        ceed::InitCeedVector(data.attr, ceed, &data.attr_vec);
-      }
-
-      // Save mesh element indices.
-      data.indices = std::move(indices);
-    };
-
-    // First domain elements.
-    {
-      const int ne = mesh.GetNE();
-      const int stride = (ne + nt - 1) / nt;
-      const int start = i * stride;
-      const int stop = std::min(start + stride, ne);
-      constexpr bool use_bdr = false;
-      auto element_indices = GetElementIndices(mesh, use_bdr, start, stop);
-      for (auto &[geom, indices] : element_indices)
-      {
-        ceed::CeedGeomFactorData data;
-        AssembleGeometryData(geom, indices, data);
-        PalacePragmaOmp(critical(GeomFactorData))
-        {
-          geom_data.emplace(std::make_pair(ceed, geom), std::move(data));
-        }
-      }
-    }
-
-    // Then boundary elements.
-    {
-      const int nbe = mesh.GetNBE();
-      const int stride = (nbe + nt - 1) / nt;
-      const int start = i * stride;
-      const int stop = std::min(start + stride, nbe);
-      constexpr bool use_bdr = true;
-      auto element_indices = GetElementIndices(mesh, use_bdr, start, stop);
-      for (auto &[geom, indices] : element_indices)
-      {
-        ceed::CeedGeomFactorData data;
-        AssembleGeometryData(geom, indices, data);
-        PalacePragmaOmp(critical(GeomFactorData))
-        {
-          geom_data.emplace(std::make_pair(ceed, geom), std::move(data));
-        }
-      }
-    }
-  }
 }
 
 }  // namespace palace

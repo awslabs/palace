@@ -6,7 +6,7 @@
 
 #include "utils_qf.h"
 
-// libCEED QFunctions for H(curl) + mass operators (Piola transformation u =
+// libCEED QFunctions for H(curl) + H1 mass operators (Piola transformation u =
 // adj(J)^T / det(J) ̂u and u = ̂u).
 // in[0] is Jacobian determinant quadrature data, shape [Q]
 // in[1] is transpose adjugate Jacobian quadrature data, shape [ncomp=space_dim*dim, Q]

@@ -121,8 +121,7 @@ mfem::HypreParMatrix &ParOperator::ParallelAssemble(bool skip_zeros) const
     auto *cA = dynamic_cast<ceed::Operator *>(A);
     MFEM_VERIFY(cA, "ParOperator::ParallelAssemble requires A as an mfem::SparseMatrix or "
                     "ceed::Operator!");
-    data_sA = use_R ? DiscreteLinearOperator::FullAssemble(*cA, skip_zeros)
-                    : BilinearForm::FullAssemble(*cA, skip_zeros);
+    data_sA = BilinearForm::FullAssemble(*cA, skip_zeros, use_R);
     sA = data_sA.get();
   }
   if (&trial_fespace == &test_fespace)

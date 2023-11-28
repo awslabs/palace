@@ -4,7 +4,6 @@
 #include "restriction.hpp"
 
 #include <mfem.hpp>
-#include "fem/fespace.hpp"
 #include "fem/libceed/utils.hpp"
 
 namespace palace::ceed
@@ -13,8 +12,9 @@ namespace palace::ceed
 namespace
 {
 
-void InitLexicoRestr(const FiniteElementSpace &fespace, const std::vector<int> &indices,
-                     bool use_bdr, Ceed ceed, CeedElemRestriction *restr)
+void InitLexicoRestr(const mfem::FiniteElementSpace &fespace,
+                     const std::vector<int> &indices, bool use_bdr, Ceed ceed,
+                     CeedElemRestriction *restr)
 {
   const std::size_t ne = indices.size();
   const mfem::FiniteElement &fe =
@@ -74,9 +74,9 @@ void InitLexicoRestr(const FiniteElementSpace &fespace, const std::vector<int> &
   }
 }
 
-void InitNativeRestr(const FiniteElementSpace &fespace, const std::vector<int> &indices,
-                     bool use_bdr, bool is_interp_range, Ceed ceed,
-                     CeedElemRestriction *restr)
+void InitNativeRestr(const mfem::FiniteElementSpace &fespace,
+                     const std::vector<int> &indices, bool use_bdr, bool is_interp_range,
+                     Ceed ceed, CeedElemRestriction *restr)
 {
   const std::size_t ne = indices.size();
   const mfem::FiniteElement &fe =
@@ -207,9 +207,9 @@ void InitNativeRestr(const FiniteElementSpace &fespace, const std::vector<int> &
 
 }  // namespace
 
-void InitRestriction(const FiniteElementSpace &fespace, const std::vector<int> &indices,
-                     bool use_bdr, bool is_interp, bool is_interp_range, Ceed ceed,
-                     CeedElemRestriction *restr)
+void InitRestriction(const mfem::FiniteElementSpace &fespace,
+                     const std::vector<int> &indices, bool use_bdr, bool is_interp,
+                     bool is_interp_range, Ceed ceed, CeedElemRestriction *restr)
 {
   if constexpr (false)
   {

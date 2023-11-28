@@ -6,7 +6,7 @@
 
 #include "utils_qf.h"
 
-// libCEED QFunctions for L2 + mass operators (Piola transformations u = 1 / det(J) ̂u
+// libCEED QFunctions for L2 + H(div) mass operators (Piola transformations u = 1 / det(J) ̂u
 // and u = J / det(J) ̂u).
 // in[0] is Jacobian determinant quadrature data, shape [Q]
 // in[1] is Jacobian quadrature data, shape [ncomp=space_dim*dim, Q]
@@ -19,7 +19,7 @@
 CEED_QFUNCTION(f_apply_l2mass_22)(void *ctx, CeedInt Q, const CeedScalar *const *in,
                                   CeedScalar *const *out)
 {
-  const CeedScalar *wdetJ = in[0], *J = in[1], *u = in[2], *divu = in[3];
+  const CeedScalar *wdetJ = in[0], *J = in[1], *qw = in[2], *u = in[3], *divu = in[4];
   CeedScalar *v = out[0], *divv = out[1];
   const CeedScalar coeff_mass[3] = {1.0, 0.0, 1.0};  // XX TODO NON-IDENTITY COEFFICIENTS
   const CeedScalar coeff = 1.0;
@@ -43,7 +43,7 @@ CEED_QFUNCTION(f_apply_l2mass_22)(void *ctx, CeedInt Q, const CeedScalar *const 
 CEED_QFUNCTION(f_apply_l2mass_33)(void *ctx, CeedInt Q, const CeedScalar *const *in,
                                   CeedScalar *const *out)
 {
-  const CeedScalar *wdetJ = in[0], *J = in[1], *u = in[2], *divu = in[3];
+  const CeedScalar *wdetJ = in[0], *J = in[1], *qw = in[2], *u = in[3], *divu = in[4];
   CeedScalar *v = out[0], *divv = out[1];
   const CeedScalar coeff_mass[6] = {1.0, 0.0, 0.0,
                                     1.0, 0.0, 1.0};  // XX TODO NON-IDENTITY COEFFICIENTS
@@ -70,7 +70,7 @@ CEED_QFUNCTION(f_apply_l2mass_33)(void *ctx, CeedInt Q, const CeedScalar *const 
 CEED_QFUNCTION(f_apply_l2mass_21)(void *ctx, CeedInt Q, const CeedScalar *const *in,
                                   CeedScalar *const *out)
 {
-  const CeedScalar *wdetJ = in[0], *J = in[1], *u = in[2], *divu = in[3];
+  const CeedScalar *wdetJ = in[0], *J = in[1], *qw = in[2], *u = in[3], *divu = in[4];
   CeedScalar *v = out[0], *divv = out[1];
   const CeedScalar coeff_mass[3] = {1.0, 0.0, 1.0};  // XX TODO NON-IDENTITY COEFFICIENTS
   const CeedScalar coeff = 1.0;
@@ -92,7 +92,7 @@ CEED_QFUNCTION(f_apply_l2mass_21)(void *ctx, CeedInt Q, const CeedScalar *const 
 CEED_QFUNCTION(f_apply_l2mass_32)(void *ctx, CeedInt Q, const CeedScalar *const *in,
                                   CeedScalar *const *out)
 {
-  const CeedScalar *wdetJ = in[0], *J = in[1], *u = in[2], *divu = in[3];
+  const CeedScalar *wdetJ = in[0], *J = in[1], *qw = in[2], *u = in[3], *divu = in[4];
   CeedScalar *v = out[0], *divv = out[1];
   const CeedScalar coeff_mass[6] = {1.0, 0.0, 0.0,
                                     1.0, 0.0, 1.0};  // XX TODO NON-IDENTITY COEFFICIENTS

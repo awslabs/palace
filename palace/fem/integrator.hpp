@@ -21,10 +21,7 @@ namespace fem
 // order 2 * p_trial + order(|J|) + q_extra.
 struct DefaultIntegrationOrder
 {
-
-  // XX TODO WIP: NEED TO SET FROM DRIVER
   inline static int p_trial = 1;
-
   inline static bool q_order_jac = true;
   inline static int q_order_extra_pk = 0;
   inline static int q_order_extra_qk = 0;
@@ -35,7 +32,8 @@ struct DefaultIntegrationOrder
 
 }  // namespace fem
 
-// XX TODO WIP: FOR NOW, NO COEFFICIENTS IN ASSEMBLY
+// XX TODO WIP FOR NOW, NO COEFFICIENTS IN ASSEMBLY
+// XX TODO WIP INITIALIZE ALL MEMBERS IN CONSTRUCTORS (MAP TYPE VARIABLES)
 
 // Base class for libCEED-based bilinear form integrators.
 class BilinearFormIntegrator
@@ -46,6 +44,8 @@ public:
   virtual void Assemble(const ceed::CeedGeomFactorData &geom_data, Ceed ceed,
                         CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
                         CeedBasis trial_basis, CeedBasis test_basis, CeedOperator *op) = 0;
+
+  virtual void SetMapTypes(int trial_type, int test_type) {}
 };
 
 // Integrator for a(u, v) = (Q u, v) for H1 elements (also for vector (H1)ᵈ spaces).
@@ -71,6 +71,8 @@ public:
 class VectorFEMassIntegrator : public BilinearFormIntegrator
 {
 protected:
+  int trial_map_type, test_map_type;
+
   mfem::Coefficient *Q;
   mfem::VectorCoefficient *VQ;
   mfem::MatrixCoefficient *MQ;
@@ -84,6 +86,12 @@ public:
   void Assemble(const ceed::CeedGeomFactorData &geom_data, Ceed ceed,
                 CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
                 CeedBasis trial_basis, CeedBasis test_basis, CeedOperator *op) override;
+
+  void SetMapTypes(int trial_type, int test_type) override
+  {
+    trial_map_type = trial_type;
+    test_map_type = test_type;
+  }
 };
 
 // Integrator for a(u, v) = (Q curl u, curl v) for Nedelec elements.
@@ -301,6 +309,8 @@ public:
 class MixedVectorCurlIntegrator : public BilinearFormIntegrator
 {
 protected:
+  int trial_map_type, test_map_type;
+
   mfem::Coefficient *Q;
   mfem::VectorCoefficient *VQ;
   mfem::MatrixCoefficient *MQ;
@@ -318,12 +328,20 @@ public:
   void Assemble(const ceed::CeedGeomFactorData &geom_data, Ceed ceed,
                 CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
                 CeedBasis trial_basis, CeedBasis test_basis, CeedOperator *op) override;
+
+  void SetMapTypes(int trial_type, int test_type) override
+  {
+    trial_map_type = trial_type;
+    test_map_type = test_type;
+  }
 };
 
 // Integrator for a(u, v) = (Q u, curl v) for u in H(div) and v in H(curl).
 class MixedVectorWeakCurlIntegrator : public BilinearFormIntegrator
 {
 protected:
+  int trial_map_type, test_map_type;
+
   mfem::Coefficient *Q;
   mfem::VectorCoefficient *VQ;
   mfem::MatrixCoefficient *MQ;
@@ -343,6 +361,12 @@ public:
   void Assemble(const ceed::CeedGeomFactorData &geom_data, Ceed ceed,
                 CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
                 CeedBasis trial_basis, CeedBasis test_basis, CeedOperator *op) override;
+
+  void SetMapTypes(int trial_type, int test_type) override
+  {
+    trial_map_type = trial_type;
+    test_map_type = test_type;
+  }
 };
 
 // Integrator for a(u, v) = (Q grad u, v) for u in H1 and v in (H1)ᵈ.

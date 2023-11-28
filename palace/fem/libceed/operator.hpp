@@ -8,12 +8,11 @@
 #include <vector>
 #include <mfem.hpp>
 #include "fem/libceed/ceed.hpp"
+#include "linalg/operator.hpp"
+#include "linalg/vector.hpp"
 
 namespace palace
 {
-
-using Operator = mfem::Operator;
-using Vector = mfem::Vector;
 
 namespace ceed
 {

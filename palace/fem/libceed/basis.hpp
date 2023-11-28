@@ -4,7 +4,7 @@
 #ifndef PALACE_LIBCEED_BASIS_HPP
 #define PALACE_LIBCEED_BASIS_HPP
 
-#include "fem/libceed/ceed.h"
+#include "fem/libceed/ceed.hpp"
 
 namespace mfem
 {

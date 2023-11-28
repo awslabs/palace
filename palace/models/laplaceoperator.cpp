@@ -93,6 +93,17 @@ mfem::Array<int> SetUpBoundaryProperties(const IoData &iodata, const mfem::ParMe
   return dbc_marker;
 }
 
+MaterialOperator SetUpMaterialOperator(const IoData &iodata, mfem::ParMesh &mesh)
+{
+  // Must be called before geometry factor setup inside MaterialOperator constructor.
+  BilinearForm::pa_order_threshold = iodata.solver.pa_order_threshold;
+  fem::DefaultIntegrationOrder::p_trial = iodata.solver.order;
+  fem::DefaultIntegrationOrder::q_order_jac = iodata.solver.q_order_jac;
+  fem::DefaultIntegrationOrder::q_order_extra_pk = iodata.solver.q_order_extra;
+  fem::DefaultIntegrationOrder::q_order_extra_qk = iodata.solver.q_order_extra;
+  return MaterialOperator(iodata, mesh);
+}
+
 std::map<int, mfem::Array<int>> ConstructSources(const IoData &iodata)
 {
   // Construct mapping from terminal index to list of associated attributes.
@@ -124,13 +135,12 @@ LaplaceOperator::LaplaceOperator(const IoData &iodata,
     h1_fespaces(fem::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
         iodata.solver.linear.mg_max_levels, mesh, h1_fecs, &dbc_marker, &dbc_tdof_lists)),
     nd_fespace(h1_fespaces.GetFinestFESpace(), mesh.back().get(), nd_fec.get()),
-    mat_op(iodata, *mesh.back()), source_attr_lists(ConstructSources(iodata))
+    mat_op(SetUpMaterialOperator(iodata, *mesh.back())),
+    source_attr_lists(ConstructSources(iodata))
 {
   // Finalize setup.
-  BilinearForm::pa_order_threshold = iodata.solver.pa_order_threshold;
-  fem::DefaultIntegrationOrder::q_order_jac = iodata.solver.q_order_jac;
-  fem::DefaultIntegrationOrder::q_order_extra_pk = iodata.solver.q_order_extra;
-  fem::DefaultIntegrationOrder::q_order_extra_qk = iodata.solver.q_order_extra;
+  h1_fespaces.SetCeedGeomFactorData(mat_op.GetCeedGeomFactorData());
+  nd_fespace.SetCeedGeomFactorData(mat_op.GetCeedGeomFactorData());
 
   // Print essential BC information.
   if (dbc_marker.Size() && dbc_marker.Max() > 0)
@@ -164,7 +174,7 @@ void PrintHeader(const FiniteElementSpace &h1_fespace, const FiniteElementSpace 
       const auto *fe = h1_fespace.FEColl()->FiniteElementForGeometry(geom);
       MFEM_VERIFY(fe, "MFEM does not support H1 spaces on geometry = "
                           << mfem::Geometry::Name[geom] << "!");
-      const int q_order = mfem::DefaultIntegrationOrder::Get(mesh, geom);
+      const int q_order = fem::DefaultIntegrationOrder::Get(mesh, geom);
       Mpi::Print("  {}: P = {:d}, Q = {:d} (quadrature order = {:d})\n",
                  mfem::Geometry::Name[geom], fe->GetDof(),
                  mfem::IntRules.Get(geom, q_order).GetNPoints(), q_order);
@@ -178,6 +188,10 @@ void PrintHeader(const FiniteElementSpace &h1_fespace, const FiniteElementSpace 
 
 std::unique_ptr<Operator> LaplaceOperator::GetStiffnessMatrix()
 {
+
+  // XX TODO EFFICIENT MULTIGRID ASSEMBLY ON SAME QUADRATURE SPACE (ONLY FINE LEVEL IS A
+  // REAL OPERATOR)
+
   PrintHeader(GetH1Space(), GetNDSpace(), print_hdr);
   auto K = std::make_unique<MultigridOperator>(GetH1Spaces().GetNumLevels());
   for (std::size_t l = 0; l < GetH1Spaces().GetNumLevels(); l++)

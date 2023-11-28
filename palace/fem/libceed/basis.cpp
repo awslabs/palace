@@ -116,12 +116,12 @@ void InitCeedInterpolatorBasis(const mfem::FiniteElement &trial_fe,
   int ir_order = std::max(trial_fe.GetOrder(), test_fe.GetOrder());
   for (; ir_order < ir_order_max; ir_order++)
   {
-    if (IntRules.Get(trial_fe.GetGeomType(), ir_order).GetNPoints() >= P)
+    if (mfem::IntRules.Get(trial_fe.GetGeomType(), ir_order).GetNPoints() >= P)
     {
       break;
     }
   }
-  const mfem::IntegrationRule &ir = IntRules.Get(trial_fe.GetGeomType(), ir_order);
+  const mfem::IntegrationRule &ir = mfem::IntRules.Get(trial_fe.GetGeomType(), ir_order);
 
   InitBasis(trial_fe, ir, trial_ncomp, ceed, &trial_basis),
       InitBasis(test_fe, ir, test_ncomp, ceed, &test_basis);
@@ -192,8 +192,14 @@ void InitBasis(const mfem::FiniteElement &fe, const mfem::IntegrationRule &ir,
   }
   const bool tensor = dynamic_cast<const mfem::TensorBasisElement *>(&fe) != nullptr;
   const bool vector = fe.GetRangeType() == mfem::FiniteElement::VECTOR;
-  return (tensor && !vector) ? InitTensorBasis(fe, ir, ncomp, ceed)
-                             : InitNonTensorBasis(fe, ir, ncomp, ceed);
+  if (tensor && !vector)
+  {
+    InitTensorBasis(fe, ir, ncomp, ceed, basis);
+  }
+  else
+  {
+    InitNonTensorBasis(fe, ir, ncomp, ceed, basis);
+  }
 }
 
 void InitInterpolatorBasis(const mfem::FiniteElement &trial_fe,

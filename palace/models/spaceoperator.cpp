@@ -70,6 +70,17 @@ mfem::Array<int> SetUpBoundaryProperties(const IoData &iodata, const mfem::ParMe
   return dbc_marker;
 }
 
+MaterialOperator SetUpMaterialOperator(const IoData &iodata, mfem::ParMesh &mesh)
+{
+  // Must be called before geometry factor setup inside MaterialOperator constructor.
+  BilinearForm::pa_order_threshold = iodata.solver.pa_order_threshold;
+  fem::DefaultIntegrationOrder::p_trial = iodata.solver.order;
+  fem::DefaultIntegrationOrder::q_order_jac = iodata.solver.q_order_jac;
+  fem::DefaultIntegrationOrder::q_order_extra_pk = iodata.solver.q_order_extra;
+  fem::DefaultIntegrationOrder::q_order_extra_qk = iodata.solver.q_order_extra;
+  return MaterialOperator(iodata, mesh);
+}
+
 }  // namespace
 
 SpaceOperator::SpaceOperator(const IoData &iodata,
@@ -91,17 +102,16 @@ SpaceOperator::SpaceOperator(const IoData &iodata,
     h1_fespaces(fem::ConstructAuxiliaryFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
         nd_fespaces, h1_fecs, &dbc_marker, &h1_dbc_tdof_lists)),
     rt_fespace(nd_fespaces.GetFinestFESpace(), mesh.back().get(), rt_fec.get()),
-    mat_op(iodata, *mesh.back()), farfield_op(iodata, mat_op, *mesh.back()),
-    surf_sigma_op(iodata, *mesh.back()), surf_z_op(iodata, *mesh.back()),
-    lumped_port_op(iodata, GetH1Space()),
+    mat_op(SetUpMaterialOperator(iodata, *mesh.back())),
+    farfield_op(iodata, mat_op, *mesh.back()), surf_sigma_op(iodata, *mesh.back()),
+    surf_z_op(iodata, *mesh.back()), lumped_port_op(iodata, GetH1Space()),
     wave_port_op(iodata, mat_op, GetNDSpace(), GetH1Space()),
     surf_j_op(iodata, GetH1Space())
 {
   // Finalize setup.
-  BilinearForm::pa_order_threshold = iodata.solver.pa_order_threshold;
-  fem::DefaultIntegrationOrder::q_order_jac = iodata.solver.q_order_jac;
-  fem::DefaultIntegrationOrder::q_order_extra_pk = iodata.solver.q_order_extra;
-  fem::DefaultIntegrationOrder::q_order_extra_qk = iodata.solver.q_order_extra;
+  nd_fespaces.SetCeedGeomFactorData(mat_op.GetCeedGeomFactorData());
+  h1_fespaces.SetCeedGeomFactorData(mat_op.GetCeedGeomFactorData());
+  rt_fespace.SetCeedGeomFactorData(mat_op.GetCeedGeomFactorData());
   CheckBoundaryProperties();
 
   // Print essential BC information.
@@ -144,7 +154,6 @@ void SpaceOperator::CheckBoundaryProperties()
   const auto &surf_z_marker = surf_z_op.GetMarker();
   const auto &lumped_port_marker = lumped_port_op.GetMarker();
   const auto &surf_j_marker = surf_j_op.GetMarker();
-  bool first = true;
   for (int i = 0; i < dbc_marker.Size(); i++)
   {
     MFEM_VERIFY(dbc_marker[i] + farfield_marker[i] + surf_sigma_marker[i] +
@@ -174,13 +183,13 @@ void PrintHeader(const FiniteElementSpace &h1_fespace, const FiniteElementSpace 
                    : "Full");
 
     mfem::ParMesh &mesh = *nd_fespace.GetParMesh();
-    Mpi::Print(" Mesh geometries:\n", q_order);
+    Mpi::Print(" Mesh geometries:\n");
     for (auto geom : mesh::CheckElements(mesh).GetGeomTypes())
     {
       const auto *fe = nd_fespace.FEColl()->FiniteElementForGeometry(geom);
       MFEM_VERIFY(fe, "MFEM does not support ND spaces on geometry = "
                           << mfem::Geometry::Name[geom] << "!");
-      const int q_order = mfem::DefaultIntegrationOrder::Get(mesh, geom);
+      const int q_order = fem::DefaultIntegrationOrder::Get(mesh, geom);
       Mpi::Print("  {}: P = {:d}, Q = {:d} (quadrature order = {:d})\n",
                  mfem::Geometry::Name[geom], fe->GetDof(),
                  mfem::IntRules.Get(geom, q_order).GetNPoints(), q_order);
@@ -637,6 +646,10 @@ template <typename OperType>
 std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(double a0, double a1,
                                                                  double a2, double a3)
 {
+
+  // XX TODO EFFICIENT MULTIGRID ASSEMBLY ON SAME QUADRATURE SPACE (ONLY FINE LEVEL IS A
+  // REAL OPERATOR)
+
   // XX TODO: Test complex PC matrix assembly for l == 0 if coarse solve supports it
   // XX TODO: Handle complex coeff a0/a1/a2/a3 (like GetSystemMatrix)
   if (print_prec_hdr)

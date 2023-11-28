@@ -109,7 +109,7 @@ CEED_QFUNCTION_HELPER void MultAtBA21(const CeedScalar *A, const CeedInt A_strid
   C[0] = A_loc[0] * R11 + A_loc[1] * R21;
 }
 
-CEED_QFUNCTION_HELPER void MultAtBA32(const CeedScalar *A_loc, const CeedInt A_stride,
+CEED_QFUNCTION_HELPER void MultAtBA32(const CeedScalar *A, const CeedInt A_stride,
                                       const CeedScalar B[6], CeedScalar C[3])
 {
   // A: 0 3   B: 0 1 2   C: 0 1
@@ -206,7 +206,7 @@ CEED_QFUNCTION_HELPER void MultAtBC21(const CeedScalar *A, const CeedInt A_strid
   D[0] = A_loc[0] * R11 + A_loc[1] * R21;
 }
 
-CEED_QFUNCTION_HELPER void MultAtBC32(const CeedScalar *A_loc, const CeedInt A_stride,
+CEED_QFUNCTION_HELPER void MultAtBC32(const CeedScalar *A, const CeedInt A_stride,
                                       const CeedScalar B[6], const CeedScalar *C,
                                       const CeedInt C_stride, CeedScalar D[4])
 {

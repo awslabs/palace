@@ -28,6 +28,11 @@ void MassIntegrator::Assemble(const ceed::CeedGeomFactorData &geom_data, Ceed ce
 {
   MassIntegratorInfo info;
 
+  // Set up geometry factor quadrature data.
+  MFEM_VERIFY(geom_data->wdetJ_vec && geom_data->wdetJ_restr,
+              "Missing geometry factor quadrature data for MassIntegrator!");
+  info.geom_info = ceed::GeomFactorInfo::Determinant;
+
   // Set up QFunctions.
   CeedInt trial_ncomp, test_ncomp;
   PalaceCeedCall(ceed, CeedBasisGetNumComponents(trial_basis, &trial_ncomp));
@@ -39,26 +44,21 @@ void MassIntegrator::Assemble(const ceed::CeedGeomFactorData &geom_data, Ceed ce
   {
     case 1:
       info.apply_qf = f_apply_h1_1;
-      info.apply_qf_path = f_apply_h1_1_loc;
+      info.apply_qf_path = PalaceQFunctionRelativePath(f_apply_h1_1_loc);
       break;
     case 2:
       info.apply_qf = f_apply_h1_2;
-      info.apply_qf_path = f_apply_h1_2_loc;
+      info.apply_qf_path = PalaceQFunctionRelativePath(f_apply_h1_2_loc);
       break;
     case 3:
       info.apply_qf = f_apply_h1_3;
-      info.apply_qf_path = f_apply_h1_3_loc;
+      info.apply_qf_path = PalaceQFunctionRelativePath(f_apply_h1_3_loc);
       break;
     default:
-      MFEM_ABORT("Invalid value of ncomp = " << trial_ncomp << "for MassIntegrator!");
+      MFEM_ABORT("Invalid value of ncomp = " << trial_ncomp << " for MassIntegrator!");
   }
   info.trial_ops = ceed::EvalMode::Interp;
   info.test_ops = ceed::EvalMode::Interp;
-
-  // Set up geometry factor quadrature data.
-  MFEM_VERIFY(geom_data.wdetJ_vec && geom_data.wdetJ_restr,
-              "Missing geometry factor quadrature data for MassIntegrator!");
-  info.geom_info = ceed::GeomFactorInfo::Determinant;
 
   ceed::AssembleCeedOperator(info, geom_data, ceed, trial_restr, test_restr, trial_basis,
                              test_basis, op);

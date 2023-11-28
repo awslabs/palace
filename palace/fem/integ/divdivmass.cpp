@@ -3,110 +3,73 @@
 
 #include "fem/integrator.hpp"
 
-#include <vector>
-#include <mfem.hpp>
-#include "fem/libceed/coefficient.hpp"
 #include "fem/libceed/integrator.hpp"
+#include "fem/libceed/utils.hpp"
 
-#include "fem/qfunctions/divdivmass_qf.h"
+#include "fem/qfunctions/l2mass_qf.h"
 
 namespace palace
 {
 
-struct DivDivMassIntegratorInfo : public ceed::IntegratorInfo
-{
-  DivDivMassContext ctx;
-};
-
 namespace
 {
 
-DivDivMassIntegratorInfo
-InitializeIntegratorInfo(const mfem::ParFiniteElementSpace &fespace,
-                         const mfem::IntegrationRule &ir, const std::vector<int> &indices,
-                         bool use_bdr, mfem::Coefficient *Qd, mfem::Coefficient *Qm,
-                         mfem::VectorCoefficient *VQm, mfem::MatrixCoefficient *MQm,
-                         std::vector<ceed::QuadratureCoefficient> &coeff)
+struct DivDivMassIntegratorInfo : public ceed::IntegratorInfo
 {
-  MFEM_VERIFY(fespace.GetVDim() == 1,
-              "libCEED interface for DivDivMassIntegrator does not support vdim > 1!");
-
-  DivDivMassIntegratorInfo info = {{0}};
-
-  mfem::ParMesh &mesh = *fespace.GetParMesh();
-  info.ctx.dim = mesh.Dimension() - use_bdr;
-  info.ctx.space_dim = mesh.SpaceDimension();
-
-  info.trial_op = ceed::EvalMode::InterpAndDiv;
-  info.test_op = ceed::EvalMode::InterpAndDiv;
-  info.qdata_size = 1 + (info.ctx.dim * (info.ctx.dim + 1)) / 2;
-
-  MFEM_VERIFY(Qd && (Qm || VQm || MQm), "libCEED DivDivMassIntegrator requires both a "
-                                        "div-div and a mass integrator coefficient!");
-  ceed::InitCoefficient(*Qd, mesh, ir, indices, use_bdr, coeff.emplace_back());
-  if (Qm)
-  {
-    ceed::InitCoefficient(*Qm, mesh, ir, indices, use_bdr, coeff.emplace_back());
-
-    info.build_qf = f_build_divdiv_mass_quad_scalar;
-    info.build_qf_path = PalaceQFunctionRelativePath(f_build_divdiv_mass_quad_scalar_loc);
-  }
-  else if (VQm)
-  {
-    MFEM_VERIFY(VQm->GetVDim() == info.ctx.space_dim,
-                "Invalid vector coefficient dimension for DivDivMassIntegrator!");
-    ceed::InitCoefficient(*VQm, mesh, ir, indices, use_bdr, coeff.emplace_back());
-
-    info.build_qf = f_build_divdiv_mass_quad_vector;
-    info.build_qf_path = PalaceQFunctionRelativePath(f_build_divdiv_mass_quad_vector_loc);
-  }
-  else if (MQm)
-  {
-    MFEM_VERIFY(MQm->GetVDim() == info.ctx.space_dim,
-                "Invalid matrix coefficient dimension for DivDivMassIntegrator!");
-    ceed::InitCoefficient(*MQm, mesh, ir, indices, use_bdr, coeff.emplace_back());
-
-    info.build_qf = f_build_divdiv_mass_quad_matrix;
-    info.build_qf_path = PalaceQFunctionRelativePath(f_build_divdiv_mass_quad_matrix_loc);
-  }
-
-  info.apply_qf = f_apply_divdiv_mass;
-  info.apply_qf_path = PalaceQFunctionRelativePath(f_apply_divdiv_mass_loc);
-
-  return info;
-}
+  bool ctx;  // XX TODO WIP COEFFICIENTS
+};
 
 }  // namespace
 
-void DivDivMassIntegrator::Assemble(const mfem::ParFiniteElementSpace &trial_fespace,
-                                    const mfem::ParFiniteElementSpace &test_fespace,
-                                    const mfem::IntegrationRule &ir,
-                                    const std::vector<int> &indices, Ceed ceed,
-                                    CeedOperator *op, CeedOperator *op_t)
+void DivDivMassIntegrator::Assemble(const ceed::CeedGeomFactorData &geom_data, Ceed ceed,
+                                    CeedElemRestriction trial_restr,
+                                    CeedElemRestriction test_restr, CeedBasis trial_basis,
+                                    CeedBasis test_basis, CeedOperator *op)
 {
-  MFEM_VERIFY(&trial_fespace == &test_fespace,
-              "DivDivMassIntegrator requires the same test and trial spaces!");
-  constexpr bool use_bdr = false;
-  std::vector<ceed::QuadratureCoefficient> coeff;
-  const auto info = InitializeIntegratorInfo(trial_fespace, ir, indices, use_bdr, Qd, Qm,
-                                             VQm, MQm, coeff);
-  ceed::AssembleCeedOperator(info, trial_fespace, test_fespace, ir, indices, use_bdr, coeff,
-                             ceed, op, op_t);
-}
+  DivDivMassIntegratorInfo info;
 
-void DivDivMassIntegrator::AssembleBoundary(
-    const mfem::ParFiniteElementSpace &trial_fespace,
-    const mfem::ParFiniteElementSpace &test_fespace, const mfem::IntegrationRule &ir,
-    const std::vector<int> &indices, Ceed ceed, CeedOperator *op, CeedOperator *op_t)
-{
-  MFEM_VERIFY(&trial_fespace == &test_fespace,
-              "DivDivMassIntegrator requires the same test and trial spaces!");
-  constexpr bool use_bdr = true;
-  std::vector<ceed::QuadratureCoefficient> coeff;
-  const auto info = InitializeIntegratorInfo(trial_fespace, ir, indices, use_bdr, Qd, Qm,
-                                             VQm, MQm, coeff);
-  ceed::AssembleCeedOperator(info, trial_fespace, test_fespace, ir, indices, use_bdr, coeff,
-                             ceed, op, op_t);
+  // Set up geometry factor quadrature data.
+  MFEM_VERIFY(geom_data->wdetJ_vec && geom_data->wdetJ_restr && geom_data->J_vec &&
+                  geom_data->J_restr,
+              "Missing geometry factor quadrature data for DivDivMassIntegrator!");
+  info.geom_info = ceed::GeomFactorInfo::Determinant | ceed::GeomFactorInfo::Jacobian |
+                   ceed::GeomFactorInfo::Weight;
+
+  // Set up QFunctions.
+  CeedInt trial_ncomp, test_ncomp;
+  PalaceCeedCall(ceed, CeedBasisGetNumComponents(trial_basis, &trial_ncomp));
+  PalaceCeedCall(ceed, CeedBasisGetNumComponents(test_basis, &test_ncomp));
+  MFEM_VERIFY(
+      trial_ncomp == test_ncomp && trial_ncomp == 1,
+      "DivDivMassIntegrator requires test and trial spaces with a single component!");
+  switch (10 * geom_data->space_dim + geom_data->dim)
+  {
+    case 22:
+      info.apply_qf = f_apply_l2mass_22;
+      info.apply_qf_path = PalaceQFunctionRelativePath(f_apply_l2mass_22_loc);
+      break;
+    case 33:
+      info.apply_qf = f_apply_l2mass_33;
+      info.apply_qf_path = PalaceQFunctionRelativePath(f_apply_l2mass_33_loc);
+      break;
+    case 21:
+      info.apply_qf = f_apply_l2mass_21;
+      info.apply_qf_path = PalaceQFunctionRelativePath(f_apply_l2mass_21_loc);
+      break;
+    case 32:
+      info.apply_qf = f_apply_l2mass_32;
+      info.apply_qf_path = PalaceQFunctionRelativePath(f_apply_l2mass_32_loc);
+      break;
+    default:
+      MFEM_ABORT("Invalid value of (dim, space_dim) = (" << geom_data->dim << ", "
+                                                         << geom_data->space_dim
+                                                         << ") for DivDivMassIntegrator!");
+  }
+  info.trial_ops = ceed::EvalMode::Div | ceed::EvalMode::Interp;
+  info.test_ops = ceed::EvalMode::Div | ceed::EvalMode::Interp;
+
+  ceed::AssembleCeedOperator(info, geom_data, ceed, trial_restr, test_restr, trial_basis,
+                             test_basis, op);
 }
 
 }  // namespace palace

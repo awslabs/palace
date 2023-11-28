@@ -11,10 +11,6 @@
 
 // XX TODO WIP MATERIAL PROPERTY COEFFICIENTS, ELEMENT ATTRIBUTE VECTORS
 
-// XX TODO WIP SHOULD LIBCEED STUFF  BE PART OF palace::Mesh INSTEAD (LIKE FESPACE)?
-//             EASIER TO CONSTRUCT/CAN EXTRACT DIRECTLY FROM FESPACE OBJECTS
-//             (NEED TO BUILD FOR TESTS...)
-
 namespace palace
 {
 
@@ -35,24 +31,16 @@ private:
       mat_invz0, mat_c0, mat_sigma, mat_invLondon;
   std::vector<double> mat_c0_min, mat_c0_max;
   mfem::Array<int> losstan_marker, conductivity_marker, london_marker;
-  void SetUpMaterialProperties(const IoData &iodata, mfem::ParMesh &mesh);
+  void SetUpMaterialProperties(const IoData &iodata, const mfem::ParMesh &mesh);
 
   // Shared face mapping for boundary coefficients.
   std::map<int, int> local_to_shared;
 
-  // Data structures for libCEED operators:
-  //   - Mesh element indices for threads and element geometry types.
-  //   - Geometry factor quadrature point data (w |J|, J / |J|, adj(J)^T / |J|) for domain
-  //     and boundary elements.
-  //   - Attributes for domain and boundary elements. The attributes are not the same as the
-  //     mesh element attributes as they map to a compressed (1-based) list of used
-  //     attributes on this MPI process.
+  // Data structure with information used to assemble libCEED operators.
   ceed::CeedObjectMap<ceed::CeedGeomFactorData> geom_data;
-  void SetUpGeomFactorData(mfem::ParMesh &mesh);
 
 public:
   MaterialOperator(const IoData &iodata, mfem::ParMesh &mesh);
-  ~MaterialOperator();
 
   int SpaceDimension() const { return mat_muinv.front().Height(); }
 
@@ -83,8 +71,8 @@ public:
 
   const auto &GetLocalToSharedFaceMap() const { return local_to_shared; }
 
-  const auto &GetGeomFactorData() const { return geom_data; }
-  const auto &GetGeomFactorData(Ceed ceed, mfem::Geometry::Type geom) const
+  const auto &GetCeedGeomFactorData() const { return geom_data; }
+  const auto &GetCeedGeomFactorData(Ceed ceed, mfem::Geometry::Type geom) const
   {
     const auto it = geom_data.find(std::make_pair(ceed, geom));
     MFEM_ASSERT(it != geom_data.end(), "Unable to geometry factor data for geometry "

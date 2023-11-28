@@ -5,22 +5,22 @@
 #define PALACE_LIBCEED_RESTRICTION_HPP
 
 #include <vector>
-#include "fem/libceed/ceed.h"
+#include "fem/libceed/ceed.hpp"
 
-namespace palace
+namespace mfem
 {
 
 class FiniteElementSpace;
 
-namespace ceed
+}  // namespace mfem
+
+namespace palace::ceed
 {
 
-void InitRestriction(const FiniteElementSpace &fespace, const std::vector<int> &indices,
-                     bool use_bdr, bool is_interp, bool is_interp_range, Ceed ceed,
-                     CeedElemRestriction *restr);
+void InitRestriction(const mfem::FiniteElementSpace &fespace,
+                     const std::vector<int> &indices, bool use_bdr, bool is_interp,
+                     bool is_interp_range, Ceed ceed, CeedElemRestriction *restr);
 
-}  // namespace ceed
-
-}  // namespace palace
+}  // namespace palace::ceed
 
 #endif  // PALACE_LIBCEED_RESTRICTION_HPP
