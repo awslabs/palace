@@ -7,13 +7,12 @@
 #include <string>
 #include <ceed.h>
 #include <ceed/backend.h>
+#include <mfem.hpp>
 #include "fem/libceed/ceed.hpp"
 #include "fem/libceed/utils.hpp"
 #include "linalg/vector.hpp"
 
 #include "fem/qfunctions/geom_qf.h"
-
-// XX TODO WIP FOR NOW, NO COEFFICIENTS IN ASSEMBLY
 
 namespace palace::ceed
 {
@@ -189,8 +188,8 @@ inline void AssembleCeedGeometryData(unsigned int info, Ceed ceed,
 }
 
 // Create libCEED operator using the given quadrature data and element restriction.
-template <typename CeedIntegratorInfo>
-inline void AssembleCeedOperator(const CeedIntegratorInfo &info,
+template <typename IntegratorContext>
+inline void AssembleCeedOperator(const IntegratorInfo &info, const IntegratorContext &ctx,
                                  const CeedGeomFactorData &geom_data, Ceed ceed,
                                  CeedElemRestriction trial_restr,
                                  CeedElemRestriction test_restr, CeedBasis trial_basis,
@@ -205,7 +204,7 @@ inline void AssembleCeedOperator(const CeedIntegratorInfo &info,
   PalaceCeedCall(ceed, CeedQFunctionContextCreate(ceed, &apply_ctx));
   PalaceCeedCall(ceed,
                  CeedQFunctionContextSetData(apply_ctx, CEED_MEM_HOST, CEED_COPY_VALUES,
-                                             sizeof(info.ctx), (void *)&info.ctx));
+                                             sizeof(ctx), (void *)&ctx));
   PalaceCeedCall(ceed, CeedQFunctionSetContext(apply_qf, apply_ctx));
   PalaceCeedCall(ceed, CeedQFunctionContextDestroy(&apply_ctx));
 
@@ -278,6 +277,9 @@ inline void AssembleCeedOperator(const CeedIntegratorInfo &info,
     PalaceCeedCall(ceed, CeedQFunctionAddInput(apply_qf, "curl_u", trial_ncomp * qcomp,
                                                CEED_EVAL_CURL));
   }
+
+  // Last input is always the element attribute data.
+  PalaceCeedCall(ceed, CeedQFunctionAddInput(apply_qf, "attr", 1, CEED_EVAL_NONE));
 
   // Outputs
   if (info.test_ops & EvalMode::None)
@@ -367,6 +369,9 @@ inline void AssembleCeedOperator(const CeedIntegratorInfo &info,
     PalaceCeedCall(ceed, CeedOperatorSetField(*op, "curl_u", trial_restr, trial_basis,
                                               CEED_VECTOR_ACTIVE));
   }
+
+  PalaceCeedCall(ceed, CeedOperatorSetField(*op, "attr", geom_data->attr_restr,
+                                            CEED_BASIS_NONE, geom_data->attr_vec));
 
   if (info.test_ops & EvalMode::None)
   {

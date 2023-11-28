@@ -4,7 +4,7 @@
 #include <memory>
 #include <sstream>
 #include <string>
-#include <utility>
+#include <utility>  //XX TODO REMOVE NEED
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/benchmark/catch_benchmark_all.hpp>
@@ -44,7 +44,7 @@ auto Initialize(MPI_Comm comm, const std::string &input, int ref_levels, int ord
   fem::DefaultIntegrationOrder::q_order_extra_qk = 0;
 
   // Construct mesh geometry factors for libCEED operator assembly.
-  auto geom_data = fem::SetUpCeedGeomFactorData(*pmesh);
+  auto geom_data = fem::SetUpCeedGeomFactorData(*pmesh);  // XX TODO REMOVE NEED
 
   return std::make_pair(std::move(pmesh), std::move(geom_data));
 }
@@ -540,7 +540,7 @@ void RunCeedIntegratorTests(MPI_Comm comm, const std::string &input, int ref_lev
     mfem::H1_FECollection h1_fec(order, dim);
     FiniteElementSpace h1_fespace(mesh.get(), &h1_fec),
         vector_h1_fespace(mesh.get(), &h1_fec, dim);
-    h1_fespace.SetCeedGeomFactorData(geom_data);
+    h1_fespace.SetCeedGeomFactorData(geom_data);  // XX TODO REMOVE NEED
     vector_h1_fespace.SetCeedGeomFactorData(geom_data);
     SECTION("H1 Mass Integrator")
     {
@@ -590,7 +590,7 @@ void RunCeedIntegratorTests(MPI_Comm comm, const std::string &input, int ref_lev
       fem::DefaultIntegrationOrder::q_order_jac = false;
       fem::DefaultIntegrationOrder::q_order_extra_pk = -2;
       fem::DefaultIntegrationOrder::q_order_extra_qk = dim - bdr_integ - 1;
-      fem::UpdateCeedGeomFactorData(*mesh, geom_data);
+      fem::UpdateCeedGeomFactorData(*mesh, geom_data);  // XX TODO JUST CLEAR AND REMOVE
       BilinearForm a_test(h1_fespace);
       mfem::BilinearForm a_ref(&h1_fespace);
       switch (coeff_type)
@@ -789,39 +789,38 @@ void RunCeedIntegratorTests(MPI_Comm comm, const std::string &input, int ref_lev
       }
       TestCeedOperator(a_test, a_ref);
     }
-    // XX TODO WIP WAITING ON -1 COEFFICIENT FACTOR
-    //  SECTION("Mixed Vector Weak Divergence Integrator")
-    //  {
-    //    BilinearForm a_test(nd_fespace, h1_fespace);
-    //    mfem::MixedBilinearForm a_ref(&nd_fespace, &h1_fespace);
-    //    if (dim == 3 || (dim == 2 && !bdr_integ))  // Only in 2D or 3D
-    //    {
-    //      switch (coeff_type)
-    //      {
-    //        case CoeffType::Const:
-    //          AddIntegrators<MixedVectorWeakDivergenceIntegrator,
-    //                         mfem::MixedVectorWeakDivergenceIntegrator>(bdr_integ, a_test,
-    //                                                                    a_ref);
-    //          break;
-    //        case CoeffType::Scalar:
-    //          AddIntegrators<MixedVectorWeakDivergenceIntegrator,
-    //                         mfem::MixedVectorWeakDivergenceIntegrator>(bdr_integ, a_test,
-    //                                                                    a_ref, Q);
-    //          break;
-    //        case CoeffType::Vector:
-    //          AddIntegrators<MixedVectorWeakDivergenceIntegrator,
-    //                         mfem::MixedVectorWeakDivergenceIntegrator>(bdr_integ, a_test,
-    //                                                                    a_ref, VQ);
-    //          break;
-    //        case CoeffType::Matrix:
-    //          AddIntegrators<MixedVectorWeakDivergenceIntegrator,
-    //                         mfem::MixedVectorWeakDivergenceIntegrator>(bdr_integ, a_test,
-    //                                                                    a_ref, MQ);
-    //          break;
-    //      }
-    //    }
-    //    TestCeedOperator(a_test, a_ref);
-    //  }
+    SECTION("Mixed Vector Weak Divergence Integrator")
+    {
+      BilinearForm a_test(nd_fespace, h1_fespace);
+      mfem::MixedBilinearForm a_ref(&nd_fespace, &h1_fespace);
+      if (dim == 3 || (dim == 2 && !bdr_integ))  // Only in 2D or 3D
+      {
+        switch (coeff_type)
+        {
+          case CoeffType::Const:
+            AddIntegrators<MixedVectorWeakDivergenceIntegrator,
+                           mfem::MixedVectorWeakDivergenceIntegrator>(bdr_integ, a_test,
+                                                                      a_ref);
+            break;
+          case CoeffType::Scalar:
+            AddIntegrators<MixedVectorWeakDivergenceIntegrator,
+                           mfem::MixedVectorWeakDivergenceIntegrator>(bdr_integ, a_test,
+                                                                      a_ref, Q);
+            break;
+          case CoeffType::Vector:
+            AddIntegrators<MixedVectorWeakDivergenceIntegrator,
+                           mfem::MixedVectorWeakDivergenceIntegrator>(bdr_integ, a_test,
+                                                                      a_ref, VQ);
+            break;
+          case CoeffType::Matrix:
+            AddIntegrators<MixedVectorWeakDivergenceIntegrator,
+                           mfem::MixedVectorWeakDivergenceIntegrator>(bdr_integ, a_test,
+                                                                      a_ref, MQ);
+            break;
+        }
+      }
+      TestCeedOperator(a_test, a_ref);
+    }
   }
 
   // Tests on mixed H(curl)-H(div) spaces.
@@ -1025,7 +1024,7 @@ void RunCeedIntegratorTests(MPI_Comm comm, const std::string &input, int ref_lev
       fem::DefaultIntegrationOrder::q_order_jac = true;
       fem::DefaultIntegrationOrder::q_order_extra_pk = -1;
       fem::DefaultIntegrationOrder::q_order_extra_qk = 0;
-      fem::UpdateCeedGeomFactorData(*mesh, geom_data);
+      fem::UpdateCeedGeomFactorData(*mesh, geom_data);  // XX TODO JUST CLEAR IT AND REMOVE
       BilinearForm a_test(h1_fespace, vector_h1_fespace);
       mfem::MixedBilinearForm a_ref(&h1_fespace, &vector_h1_fespace);
       if (!bdr_integ)  // MFEM's GradientIntegrator only supports square Jacobians
@@ -1084,45 +1083,43 @@ void RunCeedInterpolatorTests(MPI_Comm comm, const std::string &input, int ref_l
                         "Order: " + std::to_string(order) + "\n";
   INFO(section);
 
-  // XX TODO WIP: INTERPOLATOR BUGS
-
-  // // Linear interpolators for prolongation.
-  // SECTION("H1 Prolongation")
-  // {
-  //   mfem::H1_FECollection coarse_h1_fec(order, dim), fine_h1_fec(order + 1, dim);
-  //   FiniteElementSpace coarse_h1_fespace(mesh.get(), &coarse_h1_fec),
-  //       fine_h1_fespace(mesh.get(), &fine_h1_fec);
-  //   coarse_h1_fespace.SetCeedGeomFactorData(geom_data);
-  //   fine_h1_fespace.SetCeedGeomFactorData(geom_data);
-  //   DiscreteLinearOperator id_test(coarse_h1_fespace, fine_h1_fespace);
-  //   id_test.AddDomainInterpolator<IdentityInterpolator>();
-  //   mfem::PRefinementTransferOperator id_ref(coarse_h1_fespace, fine_h1_fespace);
-  //   TestCeedOperatorMult(*id_test.PartialAssemble(), id_ref, true);
-  // }
-  // SECTION("H(curl) Prolongation")
-  // {
-  //   mfem::ND_FECollection coarse_nd_fec(order, dim), fine_nd_fec(order + 1, dim);
-  //   FiniteElementSpace coarse_nd_fespace(mesh.get(), &coarse_nd_fec),
-  //       fine_nd_fespace(mesh.get(), &fine_nd_fec);
-  //   coarse_nd_fespace.SetCeedGeomFactorData(geom_data);
-  //   fine_nd_fespace.SetCeedGeomFactorData(geom_data);
-  //   DiscreteLinearOperator id_test(coarse_nd_fespace, fine_nd_fespace);
-  //   id_test.AddDomainInterpolator<IdentityInterpolator>();
-  //   mfem::PRefinementTransferOperator id_ref(coarse_nd_fespace, fine_nd_fespace);
-  //   TestCeedOperatorMult(*id_test.PartialAssemble(), id_ref, true);
-  // }
-  // SECTION("H(div) Prolongation")
-  // {
-  //   mfem::RT_FECollection coarse_rt_fec(order - 1, dim), fine_rt_fec(order, dim);
-  //   FiniteElementSpace coarse_rt_fespace(mesh.get(), &coarse_rt_fec),
-  //       fine_rt_fespace(mesh.get(), &fine_rt_fec);
-  //   coarse_rt_fespace.SetCeedGeomFactorData(geom_data);
-  //   fine_rt_fespace.SetCeedGeomFactorData(geom_data);
-  //   DiscreteLinearOperator id_test(coarse_rt_fespace, fine_rt_fespace);
-  //   id_test.AddDomainInterpolator<IdentityInterpolator>();
-  //   mfem::PRefinementTransferOperator id_ref(coarse_rt_fespace, fine_rt_fespace);
-  //   TestCeedOperatorMult(*id_test.PartialAssemble(), id_ref, true);
-  // }
+  // Linear interpolators for prolongation.
+  SECTION("H1 Prolongation")
+  {
+    mfem::H1_FECollection coarse_h1_fec(order, dim), fine_h1_fec(order + 1, dim);
+    FiniteElementSpace coarse_h1_fespace(mesh.get(), &coarse_h1_fec),
+        fine_h1_fespace(mesh.get(), &fine_h1_fec);
+    coarse_h1_fespace.SetCeedGeomFactorData(geom_data);
+    fine_h1_fespace.SetCeedGeomFactorData(geom_data);
+    DiscreteLinearOperator id_test(coarse_h1_fespace, fine_h1_fespace);
+    id_test.AddDomainInterpolator<IdentityInterpolator>();
+    mfem::PRefinementTransferOperator id_ref(coarse_h1_fespace, fine_h1_fespace);
+    TestCeedOperatorMult(*id_test.PartialAssemble(), id_ref, true);
+  }
+  SECTION("H(curl) Prolongation")
+  {
+    mfem::ND_FECollection coarse_nd_fec(order, dim), fine_nd_fec(order + 1, dim);
+    FiniteElementSpace coarse_nd_fespace(mesh.get(), &coarse_nd_fec),
+        fine_nd_fespace(mesh.get(), &fine_nd_fec);
+    coarse_nd_fespace.SetCeedGeomFactorData(geom_data);
+    fine_nd_fespace.SetCeedGeomFactorData(geom_data);
+    DiscreteLinearOperator id_test(coarse_nd_fespace, fine_nd_fespace);
+    id_test.AddDomainInterpolator<IdentityInterpolator>();
+    mfem::PRefinementTransferOperator id_ref(coarse_nd_fespace, fine_nd_fespace);
+    TestCeedOperatorMult(*id_test.PartialAssemble(), id_ref, true);
+  }
+  SECTION("H(div) Prolongation")
+  {
+    mfem::RT_FECollection coarse_rt_fec(order - 1, dim), fine_rt_fec(order, dim);
+    FiniteElementSpace coarse_rt_fespace(mesh.get(), &coarse_rt_fec),
+        fine_rt_fespace(mesh.get(), &fine_rt_fec);
+    coarse_rt_fespace.SetCeedGeomFactorData(geom_data);
+    fine_rt_fespace.SetCeedGeomFactorData(geom_data);
+    DiscreteLinearOperator id_test(coarse_rt_fespace, fine_rt_fespace);
+    id_test.AddDomainInterpolator<IdentityInterpolator>();
+    mfem::PRefinementTransferOperator id_ref(coarse_rt_fespace, fine_rt_fespace);
+    TestCeedOperatorMult(*id_test.PartialAssemble(), id_ref, true);
+  }
 
   // Linear interpolators for differentiation.
   SECTION("H1-H(curl) Discrete Gradient")

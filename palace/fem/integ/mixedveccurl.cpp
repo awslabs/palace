@@ -3,6 +3,7 @@
 
 #include "fem/integrator.hpp"
 
+#include "fem/libceed/coefficient.hpp"
 #include "fem/libceed/integrator.hpp"
 #include "fem/libceed/utils.hpp"
 #include "utils/diagnostic.hpp"
@@ -18,16 +19,6 @@ PalacePragmaDiagnosticPop
 namespace palace
 {
 
-namespace
-{
-
-struct MixedVectorCurlIntegratorInfo : public ceed::IntegratorInfo
-{
-  bool ctx;  // XX TODO WIP COEFFICIENTS
-};
-
-}  // namespace
-
 void MixedVectorCurlIntegrator::Assemble(const ceed::CeedGeomFactorData &geom_data,
                                          Ceed ceed, CeedElemRestriction trial_restr,
                                          CeedElemRestriction test_restr,
@@ -36,7 +27,7 @@ void MixedVectorCurlIntegrator::Assemble(const ceed::CeedGeomFactorData &geom_da
 {
   MFEM_VERIFY(geom_data->dim == 3 && geom_data->space_dim == 3,
               "MixedVectorCurlIntegrator is only availble in 3D!");
-  MixedVectorCurlIntegratorInfo info;
+  ceed::IntegratorInfo info;
 
   // Set up geometry factor quadrature data.
   MFEM_VERIFY(geom_data->wdetJ_vec && geom_data->wdetJ_restr && geom_data->J_vec &&
@@ -74,8 +65,10 @@ void MixedVectorCurlIntegrator::Assemble(const ceed::CeedGeomFactorData &geom_da
   info.trial_ops = ceed::EvalMode::Curl;
   info.test_ops = ceed::EvalMode::Interp;
 
-  ceed::AssembleCeedOperator(info, geom_data, ceed, trial_restr, test_restr, trial_basis,
-                             test_basis, op);
+  // Set up the coefficient and assemble.
+  auto ctx = ceed::PopulateCoefficientContext3();
+  ceed::AssembleCeedOperator(info, ctx, geom_data, ceed, trial_restr, test_restr,
+                             trial_basis, test_basis, op);
 }
 
 void MixedVectorWeakCurlIntegrator::Assemble(const ceed::CeedGeomFactorData &geom_data,
@@ -86,7 +79,7 @@ void MixedVectorWeakCurlIntegrator::Assemble(const ceed::CeedGeomFactorData &geo
 {
   MFEM_VERIFY(geom_data->dim == 3 && geom_data->space_dim == 3,
               "MixedVectorWeakCurlIntegrator is only availble in 3D!");
-  MixedVectorCurlIntegratorInfo info;
+  ceed::IntegratorInfo info;
 
   // Set up geometry factor quadrature data.
   MFEM_VERIFY(geom_data->wdetJ_vec && geom_data->wdetJ_restr && geom_data->J_vec &&
@@ -125,8 +118,10 @@ void MixedVectorWeakCurlIntegrator::Assemble(const ceed::CeedGeomFactorData &geo
   info.trial_ops = ceed::EvalMode::Interp;
   info.test_ops = ceed::EvalMode::Curl;
 
-  ceed::AssembleCeedOperator(info, geom_data, ceed, trial_restr, test_restr, trial_basis,
-                             test_basis, op);
+  // Set up the coefficient and assemble.
+  auto ctx = ceed::PopulateCoefficientContext3();
+  ceed::AssembleCeedOperator(info, ctx, geom_data, ceed, trial_restr, test_restr,
+                             trial_basis, test_basis, op);
 }
 
 }  // namespace palace

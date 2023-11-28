@@ -75,22 +75,34 @@ ceed::CeedGeomFactorData AssembleGeometryData(const mfem::GridFunction &mesh_nod
   CeedElemRestriction mesh_restr =
       FiniteElementSpace::BuildCeedElemRestriction(mesh_fespace, ceed, geom, indices);
   CeedBasis mesh_basis = FiniteElementSpace::BuildCeedBasis(mesh_fespace, ceed, geom);
+  CeedInt nqpts;
+  PalaceCeedCall(ceed, CeedBasisGetNumQuadraturePoints(mesh_basis, &nqpts));
   ceed::AssembleCeedGeometryData(info, ceed, mesh_restr, mesh_basis, mesh_nodes, data);
   PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&mesh_restr));
   PalaceCeedCall(ceed, CeedBasisDestroy(&mesh_basis));
 
-  // Compute element attribute quadrature data (single scalar per element).
+  // Compute element attribute quadrature data. This should ideally be a single scalar per
+  // element but all fields associated with a CeedOperator require the same number of
+  // quadrature points.
+
+  // XX TODO COMPRESS TO ONLY USED ATTRIBUTES FROM INDICES (this rank, this thread?)
+
   {
     const auto ne = indices.size();
     const bool use_bdr = (data->dim != mesh.Dimension());
-    data->attr.SetSize(ne);
+    data->attr.SetSize(ne * nqpts);
     for (std::size_t j = 0; j < ne; j++)
     {
       const int e = indices[j];
-      data->attr[j] = use_bdr ? mesh.GetBdrAttribute(e) : mesh.GetAttribute(e);
+      const int attr = use_bdr ? mesh.GetBdrAttribute(e) : mesh.GetAttribute(e);
+      for (CeedInt q = 0; q < nqpts; q++)
+      {
+        data->attr[j * nqpts + q] = attr;
+      }
     }
-    PalaceCeedCall(ceed, CeedElemRestrictionCreateStrided(
-                             ceed, ne, 1, 1, ne, CEED_STRIDES_BACKEND, &data->attr_restr));
+    PalaceCeedCall(ceed, CeedElemRestrictionCreateStrided(ceed, ne, nqpts, 1, ne * nqpts,
+                                                          CEED_STRIDES_BACKEND,
+                                                          &data->attr_restr));
     ceed::InitCeedVector(data->attr, ceed, &data->attr_vec);
   }
 

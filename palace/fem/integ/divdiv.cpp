@@ -3,6 +3,7 @@
 
 #include "fem/integrator.hpp"
 
+#include "fem/libceed/coefficient.hpp"
 #include "fem/libceed/integrator.hpp"
 #include "fem/libceed/utils.hpp"
 
@@ -11,22 +12,12 @@
 namespace palace
 {
 
-namespace
-{
-
-struct DivDivIntegratorInfo : public ceed::IntegratorInfo
-{
-  bool ctx;  // XX TODO WIP COEFFICIENTS
-};
-
-}  // namespace
-
 void DivDivIntegrator::Assemble(const ceed::CeedGeomFactorData &geom_data, Ceed ceed,
                                 CeedElemRestriction trial_restr,
                                 CeedElemRestriction test_restr, CeedBasis trial_basis,
                                 CeedBasis test_basis, CeedOperator *op)
 {
-  DivDivIntegratorInfo info;
+  ceed::IntegratorInfo info;
 
   // Set up geometry factor quadrature data.
   MFEM_VERIFY(geom_data->wdetJ_vec && geom_data->wdetJ_restr,
@@ -60,8 +51,31 @@ void DivDivIntegrator::Assemble(const ceed::CeedGeomFactorData &geom_data, Ceed 
   info.trial_ops = ceed::EvalMode::Div;
   info.test_ops = ceed::EvalMode::Div;
 
-  ceed::AssembleCeedOperator(info, geom_data, ceed, trial_restr, test_restr, trial_basis,
-                             test_basis, op);
+  // Set up the coefficient and assemble.
+  switch (trial_ncomp)
+  {
+    case 1:
+      {
+        auto ctx = ceed::PopulateCoefficientContext1();
+        ceed::AssembleCeedOperator(info, ctx, geom_data, ceed, trial_restr, test_restr,
+                                   trial_basis, test_basis, op);
+      }
+      break;
+    case 2:
+      {
+        auto ctx = ceed::PopulateCoefficientContext2();
+        ceed::AssembleCeedOperator(info, ctx, geom_data, ceed, trial_restr, test_restr,
+                                   trial_basis, test_basis, op);
+      }
+      break;
+    case 3:
+      {
+        auto ctx = ceed::PopulateCoefficientContext3();
+        ceed::AssembleCeedOperator(info, ctx, geom_data, ceed, trial_restr, test_restr,
+                                   trial_basis, test_basis, op);
+      }
+      break;
+  }
 }
 
 }  // namespace palace

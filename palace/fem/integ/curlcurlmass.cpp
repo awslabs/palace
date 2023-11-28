@@ -3,6 +3,7 @@
 
 #include "fem/integrator.hpp"
 
+#include "fem/libceed/coefficient.hpp"
 #include "fem/libceed/integrator.hpp"
 #include "fem/libceed/utils.hpp"
 
@@ -11,22 +12,12 @@
 namespace palace
 {
 
-namespace
-{
-
-struct CurlCurlMassIntegratorInfo : public ceed::IntegratorInfo
-{
-  bool ctx;  // XX TODO WIP COEFFICIENTS
-};
-
-}  // namespace
-
 void CurlCurlMassIntegrator::Assemble(const ceed::CeedGeomFactorData &geom_data, Ceed ceed,
                                       CeedElemRestriction trial_restr,
                                       CeedElemRestriction test_restr, CeedBasis trial_basis,
                                       CeedBasis test_basis, CeedOperator *op)
 {
-  CurlCurlMassIntegratorInfo info;
+  ceed::IntegratorInfo info;
 
   // Set up geometry factor quadrature data.
   MFEM_VERIFY(geom_data->wdetJ_vec && geom_data->wdetJ_restr && geom_data->adjJt_vec &&
@@ -74,8 +65,26 @@ void CurlCurlMassIntegrator::Assemble(const ceed::CeedGeomFactorData &geom_data,
   info.trial_ops = ceed::EvalMode::Curl | ceed::EvalMode::Interp;
   info.test_ops = ceed::EvalMode::Curl | ceed::EvalMode::Interp;
 
-  ceed::AssembleCeedOperator(info, geom_data, ceed, trial_restr, test_restr, trial_basis,
-                             test_basis, op);
+  // Set up the coefficient and assemble.
+  switch (geom_data->space_dim)
+  {
+    case 2:
+      {
+        MatCoeffPairContext21 ctx{ceed::PopulateCoefficientContext2(),
+                                  ceed::PopulateCoefficientContext1()};
+        ceed::AssembleCeedOperator(info, ctx, geom_data, ceed, trial_restr, test_restr,
+                                   trial_basis, test_basis, op);
+      }
+      break;
+    case 3:
+      {
+        MatCoeffPairContext33 ctx{ceed::PopulateCoefficientContext3(),
+                                  ceed::PopulateCoefficientContext3()};
+        ceed::AssembleCeedOperator(info, ctx, geom_data, ceed, trial_restr, test_restr,
+                                   trial_basis, test_basis, op);
+      }
+      break;
+  }
 }
 
 }  // namespace palace

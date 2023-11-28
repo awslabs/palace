@@ -4,6 +4,7 @@
 #ifndef PALACE_LIBCEED_HCURL_HDIV_QF_H
 #define PALACE_LIBCEED_HCURL_HDIV_QF_H
 
+#include "types_qf.h"
 #include "utils_qf.h"
 
 // libCEED QFunctions for mixed H(curl)-H(div) operators (Piola transformations u =
@@ -12,6 +13,7 @@
 // in[1] is transpose adjugate Jacobian quadrature data, shape [ncomp=space_dim*dim, Q]
 // in[2] is Jacobian quadrature data, shape [ncomp=space_dim*dim, Q]
 // in[3] is active vector, shape [qcomp=dim, ncomp=1, Q]
+// in[4] is element attribute, shape [1]
 // out[0] is active vector, shape [qcomp=dim, ncomp=1, Q]
 
 CEED_QFUNCTION(f_apply_hcurlhdiv_22)(void *ctx, CeedInt Q, const CeedScalar *const *in,
@@ -19,7 +21,11 @@ CEED_QFUNCTION(f_apply_hcurlhdiv_22)(void *ctx, CeedInt Q, const CeedScalar *con
 {
   const CeedScalar *wdetJ = in[0], *adjJt = in[1], *J = in[2], *u = in[3];
   CeedScalar *v = out[0];
-  const CeedScalar coeff[3] = {1.0, 0.0, 1.0};  // XX TODO NON-IDENTITY COEFFICIENTS
+
+  MatCoeffContext2 *bc = (MatCoeffContext2 *)ctx;
+  const CeedInt attr = (CeedInt)*in[4];
+  const CeedScalar *coeff = bc->mat_coeff[bc->attr_mat[attr]];
+
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
     CeedScalar qd[4];
@@ -38,8 +44,11 @@ CEED_QFUNCTION(f_apply_hcurlhdiv_33)(void *ctx, CeedInt Q, const CeedScalar *con
 {
   const CeedScalar *wdetJ = in[0], *adjJt = in[1], *J = in[2], *u = in[3];
   CeedScalar *v = out[0];
-  const CeedScalar coeff[6] = {1.0, 0.0, 0.0,
-                               1.0, 0.0, 1.0};  // XX TODO NON-IDENTITY COEFFICIENTS
+
+  MatCoeffContext3 *bc = (MatCoeffContext3 *)ctx;
+  const CeedInt attr = (CeedInt)*in[4];
+  const CeedScalar *coeff = bc->mat_coeff[bc->attr_mat[attr]];
+
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
     CeedScalar qd[9];
@@ -60,7 +69,11 @@ CEED_QFUNCTION(f_apply_hcurlhdiv_21)(void *ctx, CeedInt Q, const CeedScalar *con
 {
   const CeedScalar *wdetJ = in[0], *adjJt = in[1], *J = in[2], *u = in[3];
   CeedScalar *v = out[0];
-  const CeedScalar coeff[3] = {1.0, 0.0, 1.0};  // XX TODO NON-IDENTITY COEFFICIENTS
+
+  MatCoeffContext2 *bc = (MatCoeffContext2 *)ctx;
+  const CeedInt attr = (CeedInt)*in[4];
+  const CeedScalar *coeff = bc->mat_coeff[bc->attr_mat[attr]];
+
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
     CeedScalar qd[1];
@@ -77,8 +90,11 @@ CEED_QFUNCTION(f_apply_hcurlhdiv_32)(void *ctx, CeedInt Q, const CeedScalar *con
 {
   const CeedScalar *wdetJ = in[0], *adjJt = in[1], *J = in[2], *u = in[3];
   CeedScalar *v = out[0];
-  const CeedScalar coeff[6] = {1.0, 0.0, 0.0,
-                               1.0, 0.0, 1.0};  // XX TODO NON-IDENTITY COEFFICIENTS
+
+  MatCoeffContext3 *bc = (MatCoeffContext3 *)ctx;
+  const CeedInt attr = (CeedInt)*in[4];
+  const CeedScalar *coeff = bc->mat_coeff[bc->attr_mat[attr]];
+
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
     CeedScalar qd[4];
@@ -97,7 +113,11 @@ CEED_QFUNCTION(f_apply_hdivhcurl_22)(void *ctx, CeedInt Q, const CeedScalar *con
 {
   const CeedScalar *wdetJ = in[0], *adjJt = in[1], *J = in[2], *u = in[3];
   CeedScalar *v = out[0];
-  const CeedScalar coeff[3] = {1.0, 0.0, 1.0};  // XX TODO NON-IDENTITY COEFFICIENTS
+
+  MatCoeffContext2 *bc = (MatCoeffContext2 *)ctx;
+  const CeedInt attr = (CeedInt)*in[4];
+  const CeedScalar *coeff = bc->mat_coeff[bc->attr_mat[attr]];
+
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
     CeedScalar qd[4];
@@ -116,8 +136,11 @@ CEED_QFUNCTION(f_apply_hdivhcurl_33)(void *ctx, CeedInt Q, const CeedScalar *con
 {
   const CeedScalar *wdetJ = in[0], *adjJt = in[1], *J = in[2], *u = in[3];
   CeedScalar *v = out[0];
-  const CeedScalar coeff[6] = {1.0, 0.0, 0.0,
-                               1.0, 0.0, 1.0};  // XX TODO NON-IDENTITY COEFFICIENTS
+
+  MatCoeffContext3 *bc = (MatCoeffContext3 *)ctx;
+  const CeedInt attr = (CeedInt)*in[4];
+  const CeedScalar *coeff = bc->mat_coeff[bc->attr_mat[attr]];
+
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
     CeedScalar qd[9];
@@ -138,7 +161,11 @@ CEED_QFUNCTION(f_apply_hdivhcurl_21)(void *ctx, CeedInt Q, const CeedScalar *con
 {
   const CeedScalar *wdetJ = in[0], *adjJt = in[1], *J = in[2], *u = in[3];
   CeedScalar *v = out[0];
-  const CeedScalar coeff[3] = {1.0, 0.0, 1.0};  // XX TODO NON-IDENTITY COEFFICIENTS
+
+  MatCoeffContext2 *bc = (MatCoeffContext2 *)ctx;
+  const CeedInt attr = (CeedInt)*in[4];
+  const CeedScalar *coeff = bc->mat_coeff[bc->attr_mat[attr]];
+
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
     CeedScalar qd[1];
@@ -155,8 +182,11 @@ CEED_QFUNCTION(f_apply_hdivhcurl_32)(void *ctx, CeedInt Q, const CeedScalar *con
 {
   const CeedScalar *wdetJ = in[0], *adjJt = in[1], *J = in[2], *u = in[3];
   CeedScalar *v = out[0];
-  const CeedScalar coeff[6] = {1.0, 0.0, 0.0,
-                               1.0, 0.0, 1.0};  // XX TODO NON-IDENTITY COEFFICIENTS
+
+  MatCoeffContext3 *bc = (MatCoeffContext3 *)ctx;
+  const CeedInt attr = (CeedInt)*in[4];
+  const CeedScalar *coeff = bc->mat_coeff[bc->attr_mat[attr]];
+
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
     CeedScalar qd[4];

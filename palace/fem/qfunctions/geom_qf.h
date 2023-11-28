@@ -5,11 +5,7 @@
 #define PALACE_LIBCEED_GEOM_QF_H
 
 #include <math.h>
-
-struct GeomFactorContext
-{
-  bool compute_wdetJ, compute_adjJt, compute_J;
-};
+#include "types_qf.h"
 
 CEED_QFUNCTION_HELPER CeedScalar DetJ22(const CeedScalar *J, const CeedInt J_stride)
 {
