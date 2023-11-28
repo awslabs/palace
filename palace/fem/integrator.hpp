@@ -35,6 +35,10 @@ struct DefaultIntegrationOrder
 // XX TODO WIP FOR NOW, NO COEFFICIENTS IN ASSEMBLY
 // XX TODO WIP INITIALIZE ALL MEMBERS IN CONSTRUCTORS (MAP TYPE VARIABLES)
 
+// XX TODO CONST FOR ASSEMBLE METHOD?
+
+// XX TODO SHARED COEFFICIENT ASSEMBLY METHOD?
+
 // Base class for libCEED-based bilinear form integrators.
 class BilinearFormIntegrator
 {

@@ -5,11 +5,9 @@
 #define PALACE_LIBCEED_INTEGRATOR_HPP
 
 #include <string>
-#include <ceed.h>
 #include <ceed/backend.h>
 #include <mfem.hpp>
 #include "fem/libceed/ceed.hpp"
-#include "fem/libceed/utils.hpp"
 #include "linalg/vector.hpp"
 
 #include "fem/qfunctions/geom_qf.h"

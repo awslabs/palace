@@ -4,7 +4,7 @@
 #include <string>
 #include <mfem.hpp>
 #include <catch2/catch_session.hpp>
-#include "fem/libceed/utils.hpp"
+#include "fem/libceed/ceed.hpp"
 #include "utils/communication.hpp"
 
 using namespace palace;

@@ -5,7 +5,7 @@
 #define PALACE_LIBCEED_COEFFICIENT_HPP
 
 #include <mfem.hpp>
-#include "fem/libceed/utils.hpp"
+#include "fem/libceed/ceed.hpp"
 
 #include "fem/qfunctions/types_qf.h"
 

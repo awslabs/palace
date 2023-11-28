@@ -8,7 +8,6 @@
 #include "fem/libceed/basis.hpp"
 #include "fem/libceed/integrator.hpp"
 #include "fem/libceed/restriction.hpp"
-#include "fem/libceed/utils.hpp"
 #include "linalg/rap.hpp"
 #include "utils/omp.hpp"
 

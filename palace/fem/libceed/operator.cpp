@@ -5,7 +5,6 @@
 
 #include <numeric>
 #include <mfem/general/forall.hpp>
-#include "fem/libceed/utils.hpp"
 #include "utils/omp.hpp"
 
 namespace palace::ceed

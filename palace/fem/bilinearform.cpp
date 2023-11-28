@@ -4,7 +4,7 @@
 #include "bilinearform.hpp"
 
 #include "fem/libceed/basis.hpp"
-#include "fem/libceed/utils.hpp"
+#include "fem/libceed/ceed.hpp"
 #include "utils/omp.hpp"
 
 namespace palace

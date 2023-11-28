@@ -4,7 +4,6 @@
 #include "restriction.hpp"
 
 #include <mfem.hpp>
-#include "fem/libceed/utils.hpp"
 
 namespace palace::ceed
 {
