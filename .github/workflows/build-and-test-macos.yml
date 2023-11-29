@@ -49,13 +49,19 @@ jobs:
         with:
           submodules: 'recursive'
 
-      - uses: mpi4py/setup-mpi@v1
-        with:
-          mpi: ${{ matrix.mpi }}
-
-      - name: Install pkg-config
+      - name: Install dependencies
         run: |
           brew install pkg-config
+
+      - name: Configure Open MPI
+        if: matrix.mpi == 'openmpi'
+        run: |
+          brew install openmpi
+
+      - name: Configure MPICH
+        if: matrix.mpi == 'mpich'
+        run: |
+          brew install mpich
 
       - name: Install math libraries (OpenBLAS)
         if: matrix.math-libs == 'openblas'
@@ -71,11 +77,11 @@ jobs:
           if [[ "${{ matrix.compiler }}" == 'clang' ]]; then
             export CC=$(brew --prefix llvm@15)/bin/clang
             export CXX=$(brew --prefix llvm@15)/bin/clang++
-            export FC=gfortran-11
+            export FC=gfortran-12
           elif [[ "${{ matrix.compiler }}" == 'gcc' ]]; then
-            export CC=gcc-11
-            export CXX=g++-11
-            export FC=gfortran-11
+            export CC=gcc-12
+            export CXX=g++-12
+            export FC=gfortran-12
           fi
           if [[ "${{ matrix.math-libs }}" == 'openblas' ]]; then
             export OPENBLAS_DIR=/usr/local/opt/openblas
