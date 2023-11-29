@@ -159,9 +159,9 @@ static void PrintPalaceInfo(MPI_Comm comm, int np, int nt, mfem::Device &device)
 #else
   const char *device_name = "HIP";
 #endif
-      Mpi::Print(comm, "\n{:d} detected {} device{}{}", ngpu, device_name,
-                 (ngpu > 1) ? "s" : "",
-                 mfem::Device::GetGPUAwareMPI() ? " (MPI is GPU aware)" : "");
+  Mpi::Print(comm, "\n{:d} detected {} device{}{}", ngpu, device_name,
+             (ngpu > 1) ? "s" : "",
+             mfem::Device::GetGPUAwareMPI() ? " (MPI is GPU aware)" : "");
 #endif
   std::ostringstream resource(std::stringstream::out);
   resource << "\n";
