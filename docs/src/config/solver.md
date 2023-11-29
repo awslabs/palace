@@ -439,8 +439,8 @@ the eigenmode simulation type.
 `"EstimatorTol" [1e-6]` :  Relative tolerance for flux projection used in the
 error estimate calculation.
 
-`"EstimatorMaxIts" [100]` :  Maximum number of iterations for flux projection use in
-the error estimate calculation.
+`"EstimatorMaxIts" [1000]` :  Maximum number of iterations for flux projection use in the
+error estimate calculation.
 
 `"GSOrthogonalization" ["MGS"]` :  Gram-Schmidt variant used to explicitly orthogonalize
 vectors in Krylov subspace methods or other parts of the code.

@@ -8,8 +8,8 @@
 #include "fem/coefficient.hpp"
 #include "fem/integrator.hpp"
 #include "linalg/amg.hpp"
-#include "linalg/gmg.hpp"
 #include "linalg/iterative.hpp"
+#include "linalg/jacobi.hpp"
 #include "linalg/rap.hpp"
 #include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
@@ -55,22 +55,8 @@ std::unique_ptr<KspSolver>
 ConfigureLinearSolver(const FiniteElementSpaceHierarchy &fespaces, double tol, int max_it,
                       int print)
 {
-  // The system matrix for the projection is real and SPD.
-  auto amg =
-      std::make_unique<WrapperSolver<Operator>>(std::make_unique<BoomerAmgSolver>(1, 1, 0));
-  std::unique_ptr<Solver<Operator>> pc;
-  if (fespaces.GetNumLevels() > 1)
-  {
-    const int mg_smooth_order =
-        std::max(fespaces.GetFinestFESpace().GetMaxElementOrder(), 2);
-    pc = std::make_unique<GeometricMultigridSolver<Operator>>(
-        std::move(amg), fespaces.GetProlongationOperators(), nullptr, 1, 1, mg_smooth_order,
-        1.0, 0.0, true);
-  }
-  else
-  {
-    pc = std::move(amg);
-  }
+  // The system matrix for the projection is real, SPD and diagonally dominant.
+  auto pc = std::make_unique<JacobiSmoother<Operator>>();
 
   auto pcg =
       std::make_unique<CgSolver<Operator>>(fespaces.GetFinestFESpace().GetComm(), print);
