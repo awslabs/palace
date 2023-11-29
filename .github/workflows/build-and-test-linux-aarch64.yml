@@ -45,11 +45,14 @@ jobs:
             # Install dependencies
             apt-get update -q
             apt-get install -y build-essential clang cmake curl gfortran git lld \
-                               libmpich-dev pkg-config python3 wget
+                               pkg-config python3 wget
 
-            # Install Julia
-            curl -fsSL https://install.julialang.org | sh -s -- -y
-            export PATH=~/.juliaup/bin:$PATH
+            # Install MPI
+            if [[ "${{ matrix.mpi }}" == 'openmpi' ]]; then
+              apt-get install -y openmpi-bin libopenmpi-dev
+            elif [[ "${{ matrix.mpi }}" == 'mpich' ]]; then
+              apt-get install -y mpich libmpich-dev
+            fi
 
             # Install math libraries (OpenBLAS)
             if [[ "${{ matrix.math-libs }}" == 'openblas' ]]; then
@@ -110,3 +113,7 @@ jobs:
             make -j$NUM_PROC_BUILD
 
             # XX TODO: Disable tests for now since Julia precompilation fails
+
+            # # Install Julia
+            # curl -fsSL https://install.julialang.org | sh -s -- -y
+            # export PATH=~/.juliaup/bin:$PATH
