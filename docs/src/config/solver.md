@@ -366,6 +366,8 @@ for each simulation type. The available options are:
   - `"BoomerAMG"` :  The [BoomerAMG]
     (https://hypre.readthedocs.io/en/latest/solvers-boomeramg.html) algebraic multigrid
     solver from Hypre.
+  - `"Jacobi"` :  Diagonal scaling with a simple Jacobi preconditioner (not recommended in
+    general).
   - `"Default"` :  Use the default `"AMS"` solver for simulation types involving definite or
     semi-definite curl-curl operators (time domain problems as well as magnetostatics). For
     frequency domain problems, use a sparse direct solver if available, otherwise uses

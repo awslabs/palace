@@ -723,7 +723,8 @@ public:
     MUMPS,
     SUPERLU,
     STRUMPACK,
-    STRUMPACK_MP
+    STRUMPACK_MP,
+    JACOBI
   };
   Type type = Type::DEFAULT;
 
