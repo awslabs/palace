@@ -6,6 +6,7 @@
 #include "fem/bilinearform.hpp"
 #include "fem/coefficient.hpp"
 #include "fem/integrator.hpp"
+#include "fem/mesh.hpp"
 #include "fem/multigrid.hpp"
 #include "linalg/rap.hpp"
 #include "utils/communication.hpp"
@@ -67,41 +68,32 @@ mfem::Array<int> SetUpBoundaryProperties(const IoData &iodata, const mfem::ParMe
   return dbc_marker;
 }
 
-MaterialOperator SetUpMaterialOperator(const IoData &iodata, mfem::ParMesh &mesh)
+}  // namespace
+
+CurlCurlOperator::CurlCurlOperator(const IoData &iodata,
+                                   const std::vector<std::unique_ptr<Mesh>> &mesh)
+  : print_hdr(true), dbc_marker(SetUpBoundaryProperties(iodata, *mesh.back())),
+    nd_fecs(fem::ConstructFECollections<mfem::ND_FECollection>(
+        iodata.solver.order, mesh.back()->Get().Dimension(),
+        iodata.solver.linear.mg_max_levels, iodata.solver.linear.mg_coarsen_type, false)),
+    h1_fecs(fem::ConstructFECollections<mfem::H1_FECollection>(
+        iodata.solver.order, mesh.back()->Get().Dimension(),
+        iodata.solver.linear.mg_max_levels, iodata.solver.linear.mg_coarsen_type, false)),
+    rt_fec(std::make_unique<mfem::RT_FECollection>(iodata.solver.order - 1,
+                                                   mesh.back()->Get().Dimension())),
+    nd_fespaces(fem::ConstructFiniteElementSpaceHierarchy<mfem::ND_FECollection>(
+        iodata.solver.linear.mg_max_levels, mesh, nd_fecs, &dbc_marker, &dbc_tdof_lists)),
+    h1_fespaces(fem::ConstructAuxiliaryFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
+        nd_fespaces, h1_fecs)),
+    rt_fespace(nd_fespaces.GetFinestFESpace(), &mesh.back()->Get(), rt_fec.get()),
+    mat_op(iodata, *mesh.back()), surf_j_op(iodata, GetH1Space())
 {
-  // Must be called before geometry factor setup inside MaterialOperator constructor.
+  // Finalize setup.
   BilinearForm::pa_order_threshold = iodata.solver.pa_order_threshold;
   fem::DefaultIntegrationOrder::p_trial = iodata.solver.order;
   fem::DefaultIntegrationOrder::q_order_jac = iodata.solver.q_order_jac;
   fem::DefaultIntegrationOrder::q_order_extra_pk = iodata.solver.q_order_extra;
   fem::DefaultIntegrationOrder::q_order_extra_qk = iodata.solver.q_order_extra;
-  return MaterialOperator(iodata, mesh);
-}
-
-}  // namespace
-
-CurlCurlOperator::CurlCurlOperator(const IoData &iodata,
-                                   const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh)
-  : print_hdr(true), dbc_marker(SetUpBoundaryProperties(iodata, *mesh.back())),
-    nd_fecs(fem::ConstructFECollections<mfem::ND_FECollection>(
-        iodata.solver.order, mesh.back()->Dimension(), iodata.solver.linear.mg_max_levels,
-        iodata.solver.linear.mg_coarsen_type, false)),
-    h1_fecs(fem::ConstructFECollections<mfem::H1_FECollection>(
-        iodata.solver.order, mesh.back()->Dimension(), iodata.solver.linear.mg_max_levels,
-        iodata.solver.linear.mg_coarsen_type, false)),
-    rt_fec(std::make_unique<mfem::RT_FECollection>(iodata.solver.order - 1,
-                                                   mesh.back()->Dimension())),
-    nd_fespaces(fem::ConstructFiniteElementSpaceHierarchy<mfem::ND_FECollection>(
-        iodata.solver.linear.mg_max_levels, mesh, nd_fecs, &dbc_marker, &dbc_tdof_lists)),
-    h1_fespaces(fem::ConstructAuxiliaryFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
-        nd_fespaces, h1_fecs)),
-    rt_fespace(nd_fespaces.GetFinestFESpace(), mesh.back().get(), rt_fec.get()),
-    mat_op(SetUpMaterialOperator(iodata, *mesh.back())), surf_j_op(iodata, GetH1Space())
-{
-  // Finalize setup.
-  nd_fespaces.SetCeedGeomFactorData(mat_op.GetCeedGeomFactorData());
-  h1_fespaces.SetCeedGeomFactorData(mat_op.GetCeedGeomFactorData());
-  rt_fespace.SetCeedGeomFactorData(mat_op.GetCeedGeomFactorData());
   CheckBoundaryProperties();
 
   // Print essential BC information.
@@ -126,8 +118,9 @@ void CurlCurlOperator::CheckBoundaryProperties()
 namespace
 {
 
-void PrintHeader(const FiniteElementSpace &h1_fespace, const FiniteElementSpace &nd_fespace,
-                 const FiniteElementSpace &rt_fespace, bool &print_hdr)
+void PrintHeader(const mfem::ParFiniteElementSpace &h1_fespace,
+                 const mfem::ParFiniteElementSpace &nd_fespace,
+                 const mfem::ParFiniteElementSpace &rt_fespace, bool &print_hdr)
 {
   if (print_hdr)
   {
@@ -141,7 +134,7 @@ void PrintHeader(const FiniteElementSpace &h1_fespace, const FiniteElementSpace 
                    ? "Partial"
                    : "Full");
 
-    mfem::ParMesh &mesh = *nd_fespace.GetParMesh();
+    const auto &mesh = *nd_fespace.GetParMesh();
     Mpi::Print(" Mesh geometries:\n");
     for (auto geom : mesh::CheckElements(mesh).GetGeomTypes())
     {
@@ -162,9 +155,10 @@ void PrintHeader(const FiniteElementSpace &h1_fespace, const FiniteElementSpace 
 
 std::unique_ptr<Operator> CurlCurlOperator::GetStiffnessMatrix()
 {
-
-  // XX TODO EFFICIENT MULTIGRID ASSEMBLY ON SAME QUADRATURE SPACE (ONLY FINE LEVEL IS A
-  // REAL OPERATOR)
+  // XX TODO: Assemble coarse level operators using same QFunction and quadrature data as
+  //          fine operator (as in libCEED)
+  // CeedOperatorMultigridLevelCreate(op_fine, nullptr, rstr_coarse, basis_coarse,
+  //                                  &op_coarse, nullptr, nullptr)
 
   PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
   auto K = std::make_unique<MultigridOperator>(GetNDSpaces().GetNumLevels());
@@ -210,7 +204,7 @@ void CurlCurlOperator::GetExcitationVector(int idx, Vector &RHS)
   // Assemble the surface current excitation +J. The SurfaceCurrentOperator assembles -J
   // (meant for time or frequency domain Maxwell discretization, so we multiply by -1 to
   // retrieve +J).
-  SumVectorCoefficient fb(GetNDSpace().GetParMesh()->SpaceDimension());
+  SumVectorCoefficient fb(GetNDSpace().SpaceDimension());
   surf_j_op.AddExcitationBdrCoefficients(idx, fb);
   RHS.SetSize(GetNDSpace().GetTrueVSize());
   RHS = 0.0;
@@ -218,11 +212,11 @@ void CurlCurlOperator::GetExcitationVector(int idx, Vector &RHS)
   {
     return;
   }
-  mfem::LinearForm rhs(&GetNDSpace());
+  mfem::LinearForm rhs(&GetNDSpace().Get());
   rhs.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fb));
   rhs.UseFastAssembly(false);
   rhs.Assemble();
-  GetNDSpace().GetProlongationMatrix()->AddMultTranspose(rhs, RHS, -1.0);
+  GetNDSpace().Get().GetProlongationMatrix()->AddMultTranspose(rhs, RHS, -1.0);
   linalg::SetSubVector(RHS, dbc_tdof_lists.back(), 0.0);
 }
 

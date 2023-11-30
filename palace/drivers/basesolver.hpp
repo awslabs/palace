@@ -9,18 +9,12 @@
 #include <vector>
 #include <fmt/os.h>
 
-namespace mfem
-{
-
-class ParMesh;
-
-}  // namespace mfem
-
 namespace palace
 {
 
 class ErrorIndicator;
 class FiniteElementSpaceHierarchy;
+class Mesh;
 class IoData;
 class PostOperator;
 class Timer;
@@ -83,7 +77,7 @@ protected:
   // Performs a solve using the mesh sequence, then reports error indicators and the number
   // of global true dofs.
   virtual std::pair<ErrorIndicator, long long int>
-  Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const = 0;
+  Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const = 0;
 
 public:
   BaseSolver(const IoData &iodata, bool root, int size = 0, int num_thread = 0,
@@ -92,7 +86,7 @@ public:
 
   // Performs adaptive mesh refinement using the solve-estimate-mark-refine paradigm.
   // Dispatches to the Solve method for the driver specific calculations.
-  void SolveEstimateMarkRefine(std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const;
+  void SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mesh) const;
 
   // These methods write different simulation metadata to a JSON file in post_dir.
   void SaveMetadata(const FiniteElementSpaceHierarchy &fespaces) const;

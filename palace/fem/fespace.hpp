@@ -8,49 +8,35 @@
 #include <vector>
 #include <mfem.hpp>
 #include "fem/libceed/ceed.hpp"
+#include "fem/mesh.hpp"
 #include "linalg/operator.hpp"
 
 namespace palace
 {
 
-namespace fem
-{
-
-// Construct mesh data structures for assembling libCEED operators on a (mixed) mesh:
-//   - Mesh element indices for threads and element geometry types.
-//   - Geometry factor quadrature point data (w |J|, adj(J)^T / |J|, J / |J|) for domain
-//     and boundary elements.
-//   - Attributes for domain and boundary elements. The attributes are not the same as the
-//     mesh element attributes as they map to a compressed (1-based) list of used
-//     attributes on this MPI process.
-ceed::CeedObjectMap<ceed::CeedGeomFactorData> SetUpCeedGeomFactorData(mfem::ParMesh &mesh);
-
-// Regenerate mesh geometry factor data after a previous call to SetUpCeedGeomFactorData.
-// Can be used when changing to a new quadrature rule, for example.
-void UpdateCeedGeomFactorData(const mfem::ParMesh &mesh,
-                              ceed::CeedObjectMap<ceed::CeedGeomFactorData> &geom_data);
-
-}  // namespace fem
-
 //
 // Wrapper for MFEM's ParFiniteElementSpace class, where the finite element space object
-// is constructed with a unique ID associated with it. This is useful for defining equality
-// operations between spaces (either different spaces on the same mesh, or the same space
-// type on different meshes).
+// is constructed with a unique ID associated with it. The object also owns libCEED objects
+// used to define libCEED operators with the space.
 //
 class FiniteElementSpace : public mfem::ParFiniteElementSpace
 {
 private:
+  // Underlying MFEM object.
+  std::unique_ptr<mfem::ParFiniteElementSpace> fespace;
+
+  // Reference to the underlying mesh object (not owned).
+  Mesh &mesh;
+
   // Members used to define equality between two spaces.
-  static std::size_t global_id;
+  mutable long int sequence;
   mutable std::size_t id;
-  mutable long int prev_sequence;
-  mutable bool init = false;
+  static std::size_t global_id;
+  static std::size_t GetGlobalId();
 
   // Members for constructing libCEED operators.
   mutable ceed::CeedObjectMap<CeedBasis> basis;
   mutable ceed::CeedObjectMap<CeedElemRestriction> restr, interp_restr, interp_range_restr;
-  const ceed::CeedObjectMap<ceed::CeedGeomFactorData> *geom_data = nullptr;
 
   bool HasUniqueInterpRestriction(const mfem::FiniteElement &fe) const
   {
@@ -71,12 +57,31 @@ private:
   }
 
 public:
-  using mfem::ParFiniteElementSpace::ParFiniteElementSpace;
-  FiniteElementSpace(const mfem::ParFiniteElementSpace &fespace)
-    : mfem::ParFiniteElementSpace(fespace)
+  template <typename... T>
+  FiniteElementSpace(Mesh &mesh, T &&...args)
+    : fespace(
+          std::make_unique<mfem::ParFiniteElementSpace>(mesh, std::forward<T>(args)...)),
+      mesh(mesh), sequence(fespace->GetSequence()), id(GetGlobalId())
   {
   }
   ~FiniteElementSpace() { DestroyCeedObjects(); }
+
+  const auto &Get() const { return *fespace; }
+  auto &Get() { return *fespace; }
+
+  operator const mfem::ParFiniteElementSpace() const { return Get(); }
+  operator mfem::ParFiniteElementSpace() { return Get(); }
+
+  const auto &GetMesh() const { return mesh; }
+  auto &GetMesh() { return mesh; }
+
+  const auto &GetFEColl() const { return *Get().FEColl(); }
+  auto &GetFEColl() { return *Get().FEColl(); }
+
+  auto GetTrueVSize() const { return Get().GetTrueVSize(); }
+  auto GlobalTrueVSize() const { return Get().GlobalTrueVSize(); }
+  auto Dimension() const { return mesh.Get().Dimension(); }
+  auto SpaceDimension() const { return mesh.Get().SpaceDimension(); }
 
   // Get the ID associated with the instance of this class. If the underlying sequence has
   // changed (due to a mesh update, for example), regenerate the ID.
@@ -119,20 +124,6 @@ public:
   BuildCeedElemRestriction(const mfem::FiniteElementSpace &fespace, Ceed ceed,
                            mfem::Geometry::Type geom, const std::vector<int> &indices,
                            bool is_interp = false, bool is_interp_range = false);
-
-  // Set and access the (not owned) geometry factor data associated with the underlying mesh
-  // object for the space.
-  void SetCeedGeomFactorData(const ceed::CeedObjectMap<ceed::CeedGeomFactorData> &data)
-  {
-    geom_data = &data;
-  }
-  const auto &GetCeedGeomFactorData() const
-  {
-    MFEM_ASSERT(
-        geom_data,
-        "Must call SetCeedGeomFactorData before accessing with GetCeedGeomFactorData!");
-    return *geom_data;
-  }
 };
 
 //
@@ -236,14 +227,6 @@ public:
       P_[l] = &GetProlongationAtLevel(l);
     }
     return P_;
-  }
-
-  void SetCeedGeomFactorData(const ceed::CeedObjectMap<ceed::CeedGeomFactorData> &data)
-  {
-    for (auto &fespace : fespaces)
-    {
-      fespace->SetCeedGeomFactorData(data);
-    }
   }
 };
 

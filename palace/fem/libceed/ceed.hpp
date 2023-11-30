@@ -4,7 +4,6 @@
 #ifndef PALACE_LIBCEED_CEED_HPP
 #define PALACE_LIBCEED_CEED_HPP
 
-#include <memory>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -38,52 +37,6 @@
 
 namespace palace::ceed
 {
-
-// XX TODO: Do we need to store qw * |J| separately in each quadrature data? Is it
-//          significantly worse if we just use multiple inputs to the QFunction for the
-//          different quantities?
-
-// XX TODO: Can we skip adjugate storage and just compute from J on the fly? Or, probably
-//          better, can we skip J storage and compute from adj(adj(J)/|J|) = J?
-
-// XX TODO RENAME? CeedMeshData and SetUpCeedMeshData?
-
-// Data structure for geometry information stored at quadrature points. Jacobian matrix is
-// dim x space_dim, the adjugate is space_dim x dim, column-major storage by component.
-struct CeedGeomFactorData_private
-{
-  // Dimension and space dimension for this element topology.
-  int dim, space_dim;
-
-  // Element indices from the mfem::Mesh used to construct Ceed objects with these geometry
-  // factors.
-  std::vector<int> indices;
-
-  mfem::Vector wdetJ;  // qw * |J|, for H1 conformity with quadrature weights
-  mfem::Vector adjJt;  // adj(J)^T / |J|, for H(curl) conformity
-  mfem::Vector J;      // J / |J|, for H(div) conformity
-  mfem::Vector attr;   // Mesh element attributes
-
-  // Objects for libCEED interface to the quadrature data.
-  CeedVector wdetJ_vec, adjJt_vec, J_vec, attr_vec;
-  CeedElemRestriction wdetJ_restr, adjJt_restr, J_restr, attr_restr;
-  Ceed ceed;
-
-  CeedGeomFactorData_private(Ceed ceed)
-    : dim(0), space_dim(0), wdetJ_vec(nullptr), adjJt_vec(nullptr), J_vec(nullptr),
-      attr_vec(nullptr), wdetJ_restr(nullptr), adjJt_restr(nullptr), J_restr(nullptr),
-      attr_restr(nullptr), ceed(ceed)
-  {
-  }
-  ~CeedGeomFactorData_private();
-};
-
-using CeedGeomFactorData = std::unique_ptr<CeedGeomFactorData_private>;
-
-inline CeedGeomFactorData CeedGeomFactorDataCreate(Ceed ceed)
-{
-  return std::make_unique<CeedGeomFactorData_private>(ceed);
-}
 
 // Base case for combining hashes.
 inline void CeedHashCombine(std::size_t &seed) {}

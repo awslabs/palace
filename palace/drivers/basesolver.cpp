@@ -11,6 +11,7 @@
 #include "drivers/transientsolver.hpp"
 #include "fem/errorindicator.hpp"
 #include "fem/fespace.hpp"
+#include "fem/mesh.hpp"
 #include "linalg/ksp.hpp"
 #include "models/domainpostoperator.hpp"
 #include "models/postoperator.hpp"
@@ -136,8 +137,7 @@ BaseSolver::BaseSolver(const IoData &iodata, bool root, int size, int num_thread
   }
 }
 
-void BaseSolver::SolveEstimateMarkRefine(
-    std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const
+void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mesh) const
 {
   const auto &refinement = iodata.model.refinement;
   const bool use_amr = [&]()
@@ -155,11 +155,12 @@ void BaseSolver::SolveEstimateMarkRefine(
                "the sequence of a priori refinements\n");
     mesh.erase(mesh.begin(), mesh.end() - 1);
     constexpr bool refine = true, fix_orientation = true;
-    mesh.back()->Finalize(refine, fix_orientation);
+    mesh.back()->Get().Finalize(refine, fix_orientation);
   }
+  auto &mesh_obj = mesh.back()->Get();
+  MPI_Comm comm = mesh_obj.GetComm();
 
   // Perform initial solve and estimation.
-  MPI_Comm comm = mesh.back()->GetComm();
   auto [indicators, ntdof] = Solve(mesh);
   double err = indicators.Norml2(comm);
 
@@ -170,7 +171,7 @@ void BaseSolver::SolveEstimateMarkRefine(
     // Run out of iterations.
     ret |= (it >= refinement.max_it);
     // Run out of DOFs if a limit was set.
-    ret |= (refinement.max_size >= 1 && ntdof > refinement.max_size);
+    ret |= (refinement.max_size > 0 && ntdof > refinement.max_size);
     return ret;
   };
 
@@ -206,19 +207,19 @@ void BaseSolver::SolveEstimateMarkRefine(
         refinement.update_fraction);
 
     // Refine.
-    const auto initial_elem_count = mesh.back()->GetGlobalNE();
-    mesh.back()->GeneralRefinement(marked_elements, -1, refinement.max_nc_levels);
-    const auto final_elem_count = mesh.back()->GetGlobalNE();
+    const auto initial_elem_count = mesh_obj.GetGlobalNE();
+    mesh_obj.GeneralRefinement(marked_elements, -1, refinement.max_nc_levels);
+    const auto final_elem_count = mesh_obj.GetGlobalNE();
     Mpi::Print(" Mesh refinement added {:d} elements (initial: {}, final: {})\n",
                final_elem_count - initial_elem_count, initial_elem_count, final_elem_count);
 
     // Optionally rebalance and write the adapted mesh to file.
     const auto ratio_pre =
-        mesh::RebalanceMesh(iodata, mesh.back(), refinement.maximum_imbalance);
+        mesh::RebalanceMesh(iodata, mesh_obj, refinement.maximum_imbalance);
     if (ratio_pre > refinement.maximum_imbalance)
     {
       int min_elem, max_elem;
-      min_elem = max_elem = mesh.back()->GetNE();
+      min_elem = max_elem = mesh_obj.GetNE();
       Mpi::GlobalMin(1, &min_elem, comm);
       Mpi::GlobalMax(1, &max_elem, comm);
       const auto ratio_post = double(max_elem) / min_elem;
@@ -248,7 +249,7 @@ void BaseSolver::SaveMetadata(const FiniteElementSpaceHierarchy &fespaces) const
     return;
   }
   const auto &fespace = fespaces.GetFinestFESpace();
-  HYPRE_BigInt ne = fespace.GetParMesh()->GetNE();
+  HYPRE_BigInt ne = fespace.Get().GetParMesh()->GetNE();
   Mpi::GlobalSum(1, &ne, fespace.GetComm());
   std::vector<HYPRE_BigInt> ndofs(fespaces.GetNumLevels());
   for (std::size_t l = 0; l < fespaces.GetNumLevels(); l++)

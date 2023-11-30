@@ -12,18 +12,6 @@
 namespace palace::ceed
 {
 
-CeedGeomFactorData_private::~CeedGeomFactorData_private()
-{
-  PalaceCeedCall(ceed, CeedVectorDestroy(&wdetJ_vec));
-  PalaceCeedCall(ceed, CeedVectorDestroy(&adjJt_vec));
-  PalaceCeedCall(ceed, CeedVectorDestroy(&J_vec));
-  PalaceCeedCall(ceed, CeedVectorDestroy(&attr_vec));
-  PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&wdetJ_restr));
-  PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&adjJt_restr));
-  PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&J_restr));
-  PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&attr_restr));
-}
-
 namespace internal
 {
 

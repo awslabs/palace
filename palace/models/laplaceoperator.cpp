@@ -6,6 +6,7 @@
 #include "fem/bilinearform.hpp"
 #include "fem/coefficient.hpp"
 #include "fem/integrator.hpp"
+#include "fem/mesh.hpp"
 #include "fem/multigrid.hpp"
 #include "linalg/rap.hpp"
 #include "utils/communication.hpp"
@@ -93,17 +94,6 @@ mfem::Array<int> SetUpBoundaryProperties(const IoData &iodata, const mfem::ParMe
   return dbc_marker;
 }
 
-MaterialOperator SetUpMaterialOperator(const IoData &iodata, mfem::ParMesh &mesh)
-{
-  // Must be called before geometry factor setup inside MaterialOperator constructor.
-  BilinearForm::pa_order_threshold = iodata.solver.pa_order_threshold;
-  fem::DefaultIntegrationOrder::p_trial = iodata.solver.order;
-  fem::DefaultIntegrationOrder::q_order_jac = iodata.solver.q_order_jac;
-  fem::DefaultIntegrationOrder::q_order_extra_pk = iodata.solver.q_order_extra;
-  fem::DefaultIntegrationOrder::q_order_extra_qk = iodata.solver.q_order_extra;
-  return MaterialOperator(iodata, mesh);
-}
-
 std::map<int, mfem::Array<int>> ConstructSources(const IoData &iodata)
 {
   // Construct mapping from terminal index to list of associated attributes.
@@ -125,22 +115,24 @@ std::map<int, mfem::Array<int>> ConstructSources(const IoData &iodata)
 }  // namespace
 
 LaplaceOperator::LaplaceOperator(const IoData &iodata,
-                                 const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh)
+                                 const std::vector<std::unique_ptr<Mesh>> &mesh)
   : print_hdr(true), dbc_marker(SetUpBoundaryProperties(iodata, *mesh.back())),
     h1_fecs(fem::ConstructFECollections<mfem::H1_FECollection>(
-        iodata.solver.order, mesh.back()->Dimension(), iodata.solver.linear.mg_max_levels,
-        iodata.solver.linear.mg_coarsen_type, false)),
+        iodata.solver.order, mesh.back()->Get().Dimension(),
+        iodata.solver.linear.mg_max_levels, iodata.solver.linear.mg_coarsen_type, false)),
     nd_fec(std::make_unique<mfem::ND_FECollection>(iodata.solver.order,
-                                                   mesh.back()->Dimension())),
+                                                   mesh.back()->Get().Dimension())),
     h1_fespaces(fem::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
         iodata.solver.linear.mg_max_levels, mesh, h1_fecs, &dbc_marker, &dbc_tdof_lists)),
-    nd_fespace(h1_fespaces.GetFinestFESpace(), mesh.back().get(), nd_fec.get()),
-    mat_op(SetUpMaterialOperator(iodata, *mesh.back())),
-    source_attr_lists(ConstructSources(iodata))
+    nd_fespace(h1_fespaces.GetFinestFESpace(), &mesh.back().Get(), nd_fec.get()),
+    mat_op(iodata, *mesh.back()), source_attr_lists(ConstructSources(iodata))
 {
   // Finalize setup.
-  h1_fespaces.SetCeedGeomFactorData(mat_op.GetCeedGeomFactorData());
-  nd_fespace.SetCeedGeomFactorData(mat_op.GetCeedGeomFactorData());
+  BilinearForm::pa_order_threshold = iodata.solver.pa_order_threshold;
+  fem::DefaultIntegrationOrder::p_trial = iodata.solver.order;
+  fem::DefaultIntegrationOrder::q_order_jac = iodata.solver.q_order_jac;
+  fem::DefaultIntegrationOrder::q_order_extra_pk = iodata.solver.q_order_extra;
+  fem::DefaultIntegrationOrder::q_order_extra_qk = iodata.solver.q_order_extra;
 
   // Print essential BC information.
   if (dbc_marker.Size() && dbc_marker.Max() > 0)
@@ -153,8 +145,8 @@ LaplaceOperator::LaplaceOperator(const IoData &iodata,
 namespace
 {
 
-void PrintHeader(const FiniteElementSpace &h1_fespace, const FiniteElementSpace &nd_fespace,
-                 bool &print_hdr)
+void PrintHeader(const mfem::ParFiniteElementSpace &h1_fespace,
+                 const mfem::ParFiniteElementSpace &nd_fespace, bool &print_hdr)
 {
   if (print_hdr)
   {
@@ -167,7 +159,7 @@ void PrintHeader(const FiniteElementSpace &h1_fespace, const FiniteElementSpace 
                    ? "Partial"
                    : "Full");
 
-    mfem::ParMesh &mesh = *h1_fespace.GetParMesh();
+    const auto &mesh = *h1_fespace.GetParMesh();
     Mpi::Print(" Mesh geometries:\n");
     for (auto geom : mesh::CheckElements(mesh).GetGeomTypes())
     {
@@ -188,9 +180,10 @@ void PrintHeader(const FiniteElementSpace &h1_fespace, const FiniteElementSpace 
 
 std::unique_ptr<Operator> LaplaceOperator::GetStiffnessMatrix()
 {
-
-  // XX TODO EFFICIENT MULTIGRID ASSEMBLY ON SAME QUADRATURE SPACE (ONLY FINE LEVEL IS A
-  // REAL OPERATOR)
+  // XX TODO: Assemble coarse level operators using same QFunction and quadrature data as
+  //          fine operator (as in libCEED)
+  // CeedOperatorMultigridLevelCreate(op_fine, nullptr, rstr_coarse, basis_coarse,
+  //                                  &op_coarse, nullptr, nullptr)
 
   PrintHeader(GetH1Space(), GetNDSpace(), print_hdr);
   auto K = std::make_unique<MultigridOperator>(GetH1Spaces().GetNumLevels());
@@ -236,7 +229,7 @@ void LaplaceOperator::GetExcitationVector(int idx, const Operator &K, Vector &X,
 {
   // Apply the Dirichlet BCs to the solution vector: V = 1 on terminal boundaries with the
   // given index, V = 0 on all ground and other terminal boundaries.
-  mfem::ParGridFunction x(&GetH1Space());
+  mfem::ParGridFunction x(&GetH1Space().Get());
   x = 0.0;
 
   // Get a marker of all boundary attributes with the given source surface index.

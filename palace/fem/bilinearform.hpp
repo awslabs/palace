@@ -79,7 +79,17 @@ public:
   template <typename T>
   static std::unique_ptr<Operator> Assemble(const T &a, bool skip_zeros)
   {
-    if (GetMaxElementOrder(a) >= pa_order_threshold)
+    // Returns order such that the miniumum for all element types is 1. MFEM's
+    // RT_FECollection actually already returns order + 1 for GetOrder() for historical
+    // reasons.
+    const auto &trial_fec = a.GetTrialSpace().GetFEColl();
+    const auto &test_fec = a.GetTestSpace().GetFEColl();
+    int max_order = std::max(
+        dynamic_cast<const mfem::L2_FECollection *>(&trial_fec) ? trial_fec.GetOrder() + 1
+                                                                : trial_fec.GetOrder(),
+        dynamic_cast<const mfem::L2_FECollection *>(&test_fec) ? test_fec.GetOrder() + 1
+                                                               : test_fec.GetOrder());
+    if (max_order >= pa_order_threshold)
     {
       return a.PartialAssemble();
     }
@@ -87,20 +97,6 @@ public:
     {
       return a.FullAssemble(skip_zeros);
     }
-  }
-
-  // Returns order such that the miniumum for all element types is 1. MFEM's RT_FECollection
-  // actually already returns order + 1 for GetOrder() for historical reasons.
-  template <typename T>
-  static auto GetMaxElementOrder(const T &a)
-  {
-    const auto &trial_fec = *a.GetTrialSpace().FEColl();
-    const auto &test_fec = *a.GetTestSpace().FEColl();
-    return std::max(
-        dynamic_cast<const mfem::L2_FECollection *>(&trial_fec) ? trial_fec.GetOrder() + 1
-                                                                : trial_fec.GetOrder(),
-        dynamic_cast<const mfem::L2_FECollection *>(&test_fec) ? test_fec.GetOrder() + 1
-                                                               : test_fec.GetOrder());
   }
 };
 

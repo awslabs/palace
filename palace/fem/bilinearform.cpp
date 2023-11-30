@@ -12,9 +12,9 @@ namespace palace
 
 std::unique_ptr<ceed::Operator> BilinearForm::PartialAssemble() const
 {
-  MFEM_VERIFY(trial_fespace.GetParMesh() == test_fespace.GetParMesh(),
+  MFEM_VERIFY(&trial_fespace.GetMesh() == &test_fespace.GetMesh(),
               "Trial and test finite element spaces must correspond to the same mesh!");
-  const mfem::ParMesh &mesh = *trial_fespace.GetParMesh();
+  const auto &mesh = trial_fespace.GetMesh();
 
   // Initialize the operator.
   std::unique_ptr<ceed::Operator> op;
@@ -42,7 +42,7 @@ std::unique_ptr<ceed::Operator> BilinearForm::PartialAssemble() const
     CeedOperator loc_op;
     PalaceCeedCall(ceed, CeedCompositeOperatorCreate(ceed, &loc_op));
 
-    for (const auto &[key, val] : trial_fespace.GetCeedGeomFactorData())
+    for (const auto &[key, val] : mesh.GetCeedGeomFactorData())
     {
       if (key.first != ceed)
       {
@@ -51,9 +51,9 @@ std::unique_ptr<ceed::Operator> BilinearForm::PartialAssemble() const
       const auto geom = key.second;
       const auto &geom_data = val;
       const auto trial_map_type =
-          trial_fespace.FEColl()->GetMapType(mfem::Geometry::Dimension[geom]);
+          trial_fespace.GetFEColl().GetMapType(mfem::Geometry::Dimension[geom]);
       const auto test_map_type =
-          test_fespace.FEColl()->GetMapType(mfem::Geometry::Dimension[geom]);
+          test_fespace.GetFEColl().GetMapType(mfem::Geometry::Dimension[geom]);
 
       if (mfem::Geometry::Dimension[geom] == mesh.Dimension() && !domain_integs.empty())
       {
@@ -112,9 +112,9 @@ std::unique_ptr<mfem::SparseMatrix> BilinearForm::FullAssemble(const ceed::Opera
 
 std::unique_ptr<ceed::Operator> DiscreteLinearOperator::PartialAssemble() const
 {
-  MFEM_VERIFY(trial_fespace.GetParMesh() == test_fespace.GetParMesh(),
+  MFEM_VERIFY(&trial_fespace.GetMesh() == &test_fespace.GetMesh(),
               "Trial and test finite element spaces must correspond to the same mesh!");
-  const mfem::ParMesh &mesh = *trial_fespace.GetParMesh();
+  const auto &mesh = trial_fespace.GetMesh();
 
   // Initialize the operator.
   auto op =
@@ -134,7 +134,7 @@ std::unique_ptr<ceed::Operator> DiscreteLinearOperator::PartialAssemble() const
     PalaceCeedCall(ceed, CeedCompositeOperatorCreate(ceed, &loc_op));
     PalaceCeedCall(ceed, CeedCompositeOperatorCreate(ceed, &loc_op_t));
 
-    for (const auto &[key, val] : trial_fespace.GetCeedGeomFactorData())
+    for (const auto &[key, val] : mesh.GetCeedGeomFactorData())
     {
       if (key.first != ceed)
       {
@@ -154,9 +154,9 @@ std::unique_ptr<ceed::Operator> DiscreteLinearOperator::PartialAssemble() const
         // Construct the interpolator basis.
         CeedBasis interp_basis;
         const mfem::FiniteElement &trial_fe =
-            *trial_fespace.FEColl()->FiniteElementForGeometry(geom);
+            *trial_fespace.GetFEColl().FiniteElementForGeometry(geom);
         const mfem::FiniteElement &test_fe =
-            *test_fespace.FEColl()->FiniteElementForGeometry(geom);
+            *test_fespace.GetFEColl().FiniteElementForGeometry(geom);
         const int trial_vdim = trial_fespace.GetVDim();
         const int test_vdim = test_fespace.GetVDim();
         ceed::InitInterpolatorBasis(trial_fe, test_fe, trial_vdim, test_vdim, ceed,

@@ -23,6 +23,7 @@ namespace palace
 {
 
 class IoData;
+class Mesh;
 class SumCoefficient;
 class SumMatrixCoefficient;
 
@@ -41,7 +42,6 @@ private:
   // Perfect electrical conductor essential boundary condition markers.
   mfem::Array<int> dbc_marker, aux_bdr_marker;
   std::vector<mfem::Array<int>> nd_dbc_tdof_lists, h1_dbc_tdof_lists, aux_bdr_tdof_lists;
-  void CheckBoundaryProperties();
 
   // Objects defining the finite element spaces for the electric field (Nedelec) and
   // magnetic flux density (Raviart-Thomas) on the given mesh. The H1 spaces are used for
@@ -63,6 +63,8 @@ private:
   LumpedPortOperator lumped_port_op;
   WavePortOperator wave_port_op;
   SurfaceCurrentOperator surf_j_op;
+
+  void CheckBoundaryProperties();
 
   // Helper functions for building the bilinear forms corresponding to the discretized
   // operators in Maxwell's equations.
@@ -128,8 +130,11 @@ public:
   auto &GetRTSpace() { return rt_fespace; }
   const auto &GetRTSpace() const { return rt_fespace; }
 
+  // Access the underlying mesh object.
+  const auto &GetMesh() const { return GetNDSpace().GetMesh(); }
+
   // Return the number of true (conforming) dofs on the finest ND space.
-  auto GlobalTrueVSize() { return GetNDSpace().GlobalTrueVSize(); }
+  auto GlobalTrueVSize() const { return GetNDSpace().GlobalTrueVSize(); }
 
   // Construct any part of the frequency-dependent complex linear system matrix:
   //                     A = K + iω C - ω² (Mr + i Mi) + A2(ω) .
