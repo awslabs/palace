@@ -7,7 +7,6 @@
 #include "fem/bilinearform.hpp"
 #include "fem/coefficient.hpp"
 #include "fem/integrator.hpp"
-#include "linalg/amg.hpp"
 #include "linalg/iterative.hpp"
 #include "linalg/jacobi.hpp"
 #include "linalg/rap.hpp"
