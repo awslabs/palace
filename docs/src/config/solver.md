@@ -366,6 +366,8 @@ for each simulation type. The available options are:
   - `"BoomerAMG"` :  The [BoomerAMG]
     (https://hypre.readthedocs.io/en/latest/solvers-boomeramg.html) algebraic multigrid
     solver from Hypre.
+  - `"Jacobi"` :  Diagonal scaling with a simple Jacobi preconditioner (not recommended in
+    general).
   - `"Default"` :  Use the default `"AMS"` solver for simulation types involving definite or
     semi-definite curl-curl operators (time domain problems as well as magnetostatics). For
     frequency domain problems, use a sparse direct solver if available, otherwise uses
@@ -439,8 +441,8 @@ the eigenmode simulation type.
 `"EstimatorTol" [1e-6]` :  Relative tolerance for flux projection used in the
 error estimate calculation.
 
-`"EstimatorMaxIts" [100]` :  Maximum number of iterations for flux projection use in
-the error estimate calculation.
+`"EstimatorMaxIts" [1000]` :  Maximum number of iterations for flux projection use in the
+error estimate calculation.
 
 `"GSOrthogonalization" ["MGS"]` :  Gram-Schmidt variant used to explicitly orthogonalize
 vectors in Krylov subspace methods or other parts of the code.

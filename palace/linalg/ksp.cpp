@@ -8,6 +8,7 @@
 #include "linalg/amg.hpp"
 #include "linalg/ams.hpp"
 #include "linalg/gmg.hpp"
+#include "linalg/jacobi.hpp"
 #include "linalg/mumps.hpp"
 #include "linalg/strumpack.hpp"
 #include "linalg/superlu.hpp"
@@ -104,6 +105,13 @@ std::unique_ptr<IterativeSolver<OperType>> ConfigureKrylovSolver(MPI_Comm comm,
   return ksp;
 }
 
+template <typename OperType, typename T, typename... U>
+auto MakeWrapperSolver(U &&...args)
+{
+  return std::make_unique<WrapperSolver<OperType>>(
+      std::make_unique<T>(std::forward<U>(args)...));
+}
+
 template <typename OperType>
 std::unique_ptr<Solver<OperType>>
 ConfigurePreconditionerSolver(MPI_Comm comm, const IoData &iodata,
@@ -111,7 +119,7 @@ ConfigurePreconditionerSolver(MPI_Comm comm, const IoData &iodata,
                               const AuxiliaryFiniteElementSpaceHierarchy *aux_fespaces)
 {
   // Create the real-valued solver first.
-  std::unique_ptr<mfem::Solver> pc0;
+  std::unique_ptr<Solver<OperType>> pc;
   const auto type = iodata.solver.linear.type;
   const int print = iodata.problem.verbose - 1;
   switch (type)
@@ -121,16 +129,17 @@ ConfigurePreconditionerSolver(MPI_Comm comm, const IoData &iodata,
       // space (in which case fespaces.GetNumLevels() == 1).
       MFEM_VERIFY(aux_fespaces, "AMS solver relies on both primary space "
                                 "and auxiliary spaces for construction!");
-      pc0 = std::make_unique<HypreAmsSolver>(iodata, fespaces.GetNumLevels() > 1,
-                                             fespaces.GetFESpaceAtLevel(0),
-                                             aux_fespaces->GetFESpaceAtLevel(0), print);
+      pc = MakeWrapperSolver<OperType, HypreAmsSolver>(
+          iodata, fespaces.GetNumLevels() > 1, fespaces.GetFESpaceAtLevel(0),
+          aux_fespaces->GetFESpaceAtLevel(0), print);
       break;
     case config::LinearSolverData::Type::BOOMER_AMG:
-      pc0 = std::make_unique<BoomerAmgSolver>(iodata, fespaces.GetNumLevels() > 1, print);
+      pc = MakeWrapperSolver<OperType, BoomerAmgSolver>(iodata, fespaces.GetNumLevels() > 1,
+                                                        print);
       break;
     case config::LinearSolverData::Type::SUPERLU:
 #if defined(MFEM_USE_SUPERLU)
-      pc0 = std::make_unique<SuperLUSolver>(comm, iodata, print);
+      pc = MakeWrapperSolver<OperType, SuperLUSolver>(comm, iodata, print);
 #else
       MFEM_ABORT("Solver was not built with SuperLU_DIST support, please choose a "
                  "different solver!");
@@ -138,7 +147,7 @@ ConfigurePreconditionerSolver(MPI_Comm comm, const IoData &iodata,
       break;
     case config::LinearSolverData::Type::STRUMPACK:
 #if defined(MFEM_USE_STRUMPACK)
-      pc0 = std::make_unique<StrumpackSolver>(comm, iodata, print);
+      pc = MakeWrapperSolver<OperType, StrumpackSolver>(comm, iodata, print);
 #else
       MFEM_ABORT("Solver was not built with STRUMPACK support, please choose a "
                  "different solver!");
@@ -146,7 +155,7 @@ ConfigurePreconditionerSolver(MPI_Comm comm, const IoData &iodata,
       break;
     case config::LinearSolverData::Type::STRUMPACK_MP:
 #if defined(MFEM_USE_STRUMPACK)
-      pc0 = std::make_unique<StrumpackMixedPrecisionSolver>(comm, iodata, print);
+      pc = MakeWrapperSolver<OperType, StrumpackMixedPrecisionSolver>(comm, iodata, print);
 #else
       MFEM_ABORT("Solver was not built with STRUMPACK support, please choose a "
                  "different solver!");
@@ -154,11 +163,14 @@ ConfigurePreconditionerSolver(MPI_Comm comm, const IoData &iodata,
       break;
     case config::LinearSolverData::Type::MUMPS:
 #if defined(MFEM_USE_MUMPS)
-      pc0 = std::make_unique<MumpsSolver>(comm, iodata, print);
+      pc = MakeWrapperSolver<OperType, MumpsSolver>(comm, iodata, print);
 #else
       MFEM_ABORT(
           "Solver was not built with MUMPS support, please choose a different solver!");
 #endif
+      break;
+    case config::LinearSolverData::Type::JACOBI:
+      pc = std::make_unique<JacobiSmoother<OperType>>();
       break;
     case config::LinearSolverData::Type::DEFAULT:
       MFEM_ABORT("Unexpected solver type for preconditioner configuration!");
@@ -166,7 +178,6 @@ ConfigurePreconditionerSolver(MPI_Comm comm, const IoData &iodata,
   }
 
   // Construct the actual solver, which has the right value type.
-  auto pc = std::make_unique<WrapperSolver<OperType>>(std::move(pc0));
   if (fespaces.GetNumLevels() > 1)
   {
     // This will construct the multigrid hierarchy using pc as the coarse solver

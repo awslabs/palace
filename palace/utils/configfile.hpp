@@ -723,7 +723,8 @@ public:
     MUMPS,
     SUPERLU,
     STRUMPACK,
-    STRUMPACK_MP
+    STRUMPACK_MP,
+    JACOBI
   };
   Type type = Type::DEFAULT;
 
@@ -847,7 +848,7 @@ public:
   double estimator_tol = 1.0e-6;
 
   // Maximum number of iterations for solving linear systems in the error estimator.
-  int estimator_max_it = 100;
+  int estimator_max_it = 1000;
 
   // Enable different variants of Gram-Schmidt orthogonalization for GMRES/FGMRES iterative
   // solvers and SLEPc eigenvalue solver.
