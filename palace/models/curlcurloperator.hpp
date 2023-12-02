@@ -28,8 +28,8 @@ private:
   // Helper variable for log file printing.
   bool print_hdr;
 
-  // Essential boundary condition markers.
-  mfem::Array<int> dbc_marker;
+  // Essential boundary condition attributes.
+  mfem::Array<int> dbc_attr;
   std::vector<mfem::Array<int>> dbc_tdof_lists;
 
   // Objects defining the finite element spaces for the magnetic vector potential
@@ -48,6 +48,7 @@ private:
   // Operator for source current excitation.
   SurfaceCurrentOperator surf_j_op;
 
+  mfem::Array<int> SetUpBoundaryProperties(const IoData &iodata, const mfem::ParMesh &mesh);
   void CheckBoundaryProperties();
 
 public:

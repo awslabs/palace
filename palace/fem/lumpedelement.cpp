@@ -3,13 +3,17 @@
 
 #include "lumpedelement.hpp"
 
+#include "fem/coefficient.hpp"
 #include "fem/integrator.hpp"
 #include "utils/communication.hpp"
 
 namespace palace
 {
 
-double LumpedElementData::GetArea(mfem::ParFiniteElementSpace &fespace)
+namespace
+{
+
+double GetArea(mfem::ParFiniteElementSpace &fespace, const mfem::Array<int> &attr_marker)
 {
   mfem::ConstantCoefficient one_func(1.0);
   mfem::LinearForm s(&fespace);
@@ -24,16 +28,22 @@ double LumpedElementData::GetArea(mfem::ParFiniteElementSpace &fespace)
   return dot;
 }
 
+}  // namespace
+
 UniformElementData::UniformElementData(const std::array<double, 3> &input_dir,
-                                       const mfem::Array<int> &marker,
+                                       const mfem::Array<int> &attr_list,
                                        mfem::ParFiniteElementSpace &fespace)
-  : LumpedElementData(fespace.GetParMesh()->SpaceDimension(), marker),
-    bounding_box(mesh::GetBoundingBox(*fespace.GetParMesh(), marker, true)), direction(3)
+  : LumpedElementData(fespace.GetParMesh()->SpaceDimension(), attr_list), direction(3)
 {
+  const mfem::ParMesh &mesh = *fespace.GetParMesh();
+  int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+  mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, attr_list);
+  bounding_box = mesh::GetBoundingBox(*fespace.GetParMesh(), attr_marker, true);
+
   // Check that the bounding box discovered matches the area. This validates that the
   // boundary elements form a right angled quadrilateral port.
   constexpr double rel_tol = 1.0e-6;
-  double A = GetArea(fespace);
+  double A = GetArea(fespace, attr_marker);
   MFEM_VERIFY((!bounding_box.planar || (std::abs(A - bounding_box.Area()) / A < rel_tol)),
               "Discovered bounding box area "
                   << bounding_box.Area() << " and integrated area " << A
@@ -81,7 +91,8 @@ UniformElementData::UniformElementData(const std::array<double, 3> &input_dir,
   l = lengths[std::distance(deviation_deg.begin(),
                             std::min_element(deviation_deg.begin(), deviation_deg.end()))];
   MFEM_ASSERT(
-      (l - mesh::GetProjectedLength(*fespace.GetParMesh(), marker, true, input_dir)) / l <
+      (l - mesh::GetProjectedLength(*fespace.GetParMesh(), attr_marker, true, input_dir)) /
+              l <
           rel_tol,
       "Bounding box discovered length should match projected length!");
   w = A / l;
@@ -92,21 +103,25 @@ UniformElementData::GetModeCoefficient(double coef) const
 {
   mfem::Vector source = direction;
   source *= coef;
-  return std::make_unique<mfem::VectorConstantCoefficient>(source);
+  return std::make_unique<RestrictedVectorCoefficient>(
+      std::make_unique<mfem::VectorConstantCoefficient>(source), attr_list)
 }
 
 CoaxialElementData::CoaxialElementData(const std::array<double, 3> &direction,
-                                       const mfem::Array<int> &marker,
+                                       const mfem::Array<int> &attr_list,
                                        mfem::ParFiniteElementSpace &fespace)
-  : LumpedElementData(fespace.GetParMesh()->SpaceDimension(), marker),
-    bounding_ball(mesh::GetBoundingBall(*fespace.GetParMesh(), marker, true)),
+  : LumpedElementData(fespace.GetParMesh()->SpaceDimension(), attr_list),
     sign(direction[0] > 0)
 {
+  const mfem::ParMesh &mesh = *fespace.GetParMesh();
+  int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+  mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, attr_list);
+  bounding_ball = mesh::GetBoundingBall(*fespace.GetParMesh(), attr_marker, true);
   MFEM_VERIFY(bounding_ball.planar,
               "Boundary elements must be coplanar to define a coaxial lumped element!");
 
   // Get inner radius of annulus assuming full 2π circumference.
-  double A = GetArea(fespace);
+  double A = GetArea(fespace, attr_marker);
   MFEM_VERIFY(bounding_ball.radius > 0.0 &&
                   std::pow(bounding_ball.radius, 2) - A / M_PI > 0.0,
               "Coaxial element boundary is not defined correctly: Radius "
@@ -127,7 +142,8 @@ CoaxialElementData::GetModeCoefficient(double coef) const
     double oor = 1.0 / f.Norml2();
     f *= scoef * oor * oor;
   };
-  return std::make_unique<mfem::VectorFunctionCoefficient>(dim, Source);
+  return std::make_unique<RestrictedVectorCoefficient>(
+      std::make_unique<mfem::VectorFunctionCoefficient>(dim, Source), attr_list);
 }
 
 }  // namespace palace

@@ -21,17 +21,17 @@ protected:
   // Spatial dimension.
   const int dim;
 
-  // Marker for all boundary attributes making up this lumped element boundary.
-  mfem::Array<int> attr_marker;
-
-  double GetArea(mfem::ParFiniteElementSpace &fespace);
+  // List of all boundary attributes making up this lumped element boundary.
+  mfem::Array<int> attr_list;
 
 public:
-  LumpedElementData(int d, const mfem::Array<int> &marker) : dim(d), attr_marker(marker) {}
+  LumpedElementData(int dim, const mfem::Array<int> &attr_list)
+    : dim(dim), attr_list(attr_list)
+  {
+  }
   virtual ~LumpedElementData() = default;
 
-  mfem::Array<int> &GetMarker() { return attr_marker; }
-  const mfem::Array<int> &GetMarker() const { return attr_marker; }
+  const auto &GetAttrList() const { return attr_list; }
 
   virtual double GetGeometryLength() const = 0;
   virtual double GetGeometryWidth() const = 0;
@@ -53,7 +53,8 @@ protected:
   double l, w;
 
 public:
-  UniformElementData(const std::array<double, 3> &input_dir, const mfem::Array<int> &marker,
+  UniformElementData(const std::array<double, 3> &input_dir,
+                     const mfem::Array<int> &attr_list,
                      mfem::ParFiniteElementSpace &fespace);
 
   double GetGeometryLength() const override { return l; }
@@ -76,7 +77,8 @@ protected:
   double ra;
 
 public:
-  CoaxialElementData(const std::array<double, 3> &direction, const mfem::Array<int> &marker,
+  CoaxialElementData(const std::array<double, 3> &direction,
+                     const mfem::Array<int> &attr_list,
                      mfem::ParFiniteElementSpace &fespace);
 
   double GetGeometryLength() const override { return std::log(bounding_ball.radius / ra); }

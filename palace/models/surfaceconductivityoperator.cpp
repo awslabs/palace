@@ -3,9 +3,8 @@
 
 #include "surfaceconductivityoperator.hpp"
 
-#include "fem/coefficient.hpp"
+#include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
-#include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
 
 namespace palace
@@ -14,10 +13,11 @@ namespace palace
 using namespace std::complex_literals;
 
 SurfaceConductivityOperator::SurfaceConductivityOperator(const IoData &iodata,
+                                                         const MaterialOperator &mat_op,
                                                          mfem::ParMesh &mesh)
+  : mat_op(mat_op), conductivity_attr(SetUpBoundaryProperties(iodata, mesh))
 {
-  // Set up finite conductivity boundary conditions.
-  SetUpBoundaryProperties(iodata, mesh);
+  // Print out BC info for all finite conductivity boundary attributes.
   PrintBoundaryInfo(iodata, mesh);
 }
 
@@ -49,12 +49,9 @@ void SurfaceConductivityOperator::SetUpBoundaryProperties(const IoData &iodata,
 
   // Finite conductivity boundaries are defined using the user provided surface conductivity
   // and optionally conductor thickness.
-  bdr_sigma.SetSize(bdr_attr_max);
-  bdr_mu.SetSize(bdr_attr_max);
-  bdr_h.SetSize(bdr_attr_max);
-  bdr_sigma = 0.0;
-  bdr_mu = 0.0;
-  bdr_h = 0.0;
+  mfem::Array<bool> marker(bdr_attr_max);
+  marker = false;
+  conductivity_data.reserve(iodata.boundaries.conductivity.size());
   for (const auto &data : iodata.boundaries.conductivity)
   {
     MFEM_VERIFY(data.sigma > 0.0 && data.mu_r > 0.0,
@@ -64,58 +61,57 @@ void SurfaceConductivityOperator::SetUpBoundaryProperties(const IoData &iodata,
     for (auto attr : data.attributes)
     {
       MFEM_VERIFY(
-          bdr_sigma(attr - 1) == 0.0 && bdr_mu(attr - 1) == 0.0 && bdr_h(attr - 1) == 0.0,
+          !marker[attr - 1],
           "Multiple definitions of conductivity boundary properties for boundary attribute "
               << attr << "!");
-      bdr_sigma(attr - 1) = data.sigma;
-      bdr_mu(attr - 1) = data.mu_r;
-      bdr_h(attr - 1) = data.h;
-      if (data.external)
-      {
-        // External surfaces have twice the effective thickness since the BC is applied at
-        // one side.
-        bdr_h(attr - 1) *= 2.0;
-      }
+      marker[attr - 1] = true;
     }
+    auto &bdr = conductivity_data.emplace_back();
+    bdr.sigma = data.sigma;
+    bdr.mu = data.mu_r;
+    bdr.h = data.h;
+    if (data.external)
+    {
+      // External surfaces have twice the effective thickness since the BC is applied at one
+      // side.
+      bdr.h *= 2.0;
+    }
+    bdr.attr.Append(data.attributes.data(), data.attributes.size());
   }
 
   // Mark selected boundary attributes from the mesh as finite conductivity.
   mfem::Array<int> conductivity_bcs;
   for (const auto &data : iodata.boundaries.conductivity)
   {
-    for (auto attr : data.attributes)
-    {
-      conductivity_bcs.Append(attr);
-    }
+    conductivity_bcs.Append(data.attributes.data(), data.attributes.size());
   }
   MFEM_VERIFY(conductivity_bcs.Size() == 0 ||
                   iodata.problem.type == config::ProblemData::Type::DRIVEN,
               "Finite conductivity boundaries are only available for frequency "
               "domain driven simulations!");
-  mesh::AttrToMarker(bdr_attr_max, conductivity_bcs, conductivity_marker);
+  return conductivity_bcs;
 }
 
 void SurfaceConductivityOperator::PrintBoundaryInfo(const IoData &iodata,
                                                     mfem::ParMesh &mesh)
 {
-  if (conductivity_marker.Size() && conductivity_marker.Max() == 0)
+  if (conductivity_data.empty())
   {
     return;
   }
   Mpi::Print("\nConfiguring Robin finite conductivity BC at attributes:\n");
-  for (int i = 0; i < conductivity_marker.Size(); i++)
+  for (const auto &bdr : conductivity_data)
   {
-    if (conductivity_marker[i])
+    for (auto attr : bdr.attr)
     {
-      const int attr = i + 1;
       mfem::Vector nor;
       mesh::GetSurfaceNormal(mesh, attr, nor);
       Mpi::Print(" {:d}: σ = {:.3e} S/m", attr,
-                 iodata.DimensionalizeValue(IoData::ValueType::CONDUCTIVITY, bdr_sigma(i)));
-      if (bdr_h(i) > 0.0)
+                 iodata.DimensionalizeValue(IoData::ValueType::CONDUCTIVITY, bdr.sigma(i)));
+      if (bdr.h(i) > 0.0)
       {
         Mpi::Print(", h = {:.3e} m",
-                   iodata.DimensionalizeValue(IoData::ValueType::LENGTH, bdr_h(i)));
+                   iodata.DimensionalizeValue(IoData::ValueType::LENGTH, bdr.h(i)));
       }
       if (mesh.SpaceDimension() == 3)
       {
@@ -130,44 +126,33 @@ void SurfaceConductivityOperator::PrintBoundaryInfo(const IoData &iodata,
   }
 }
 
-void SurfaceConductivityOperator::AddExtraSystemBdrCoefficients(double omega,
-                                                                SumMatrixCoefficient &fbr,
-                                                                SumMatrixCoefficient &fbi)
+void SurfaceConductivityOperator::AddExtraSystemBdrCoefficients(
+    double omega, MaterialPropertyCoefficient &fbr, MaterialPropertyCoefficient &fbi)
 {
-  if (conductivity_marker.Size() && conductivity_marker.Max() > 0)
+  // If the provided conductor thickness is empty (zero), prescribe a surface impedance
+  // (1+i)/σδ, where δ is the skin depth. If it is nonzero, use a finite thickness
+  // modification which correctly produces the DC limit when h << δ. See the Ansys HFSS
+  // user manual section titled "Surface Impedance Boundary Condition for Metal Traces of
+  // Finite Thickness."
+  for (const auto &bdr : conductivity_data)
   {
-    // If the provided conductor thickness is empty (zero), prescribe a surface impedance
-    // (1+i)/σδ, where δ is the skin depth. If it is nonzero, use a finite thickness
-    // modification which correctly produces the DC limit when h << δ. See the Ansys HFSS
-    // user manual section titled "Surface Impedance Boundary Condition for Metal Traces of
-    // Finite Thickness."
-    mfem::Vector vr(bdr_sigma.Size()), vi(bdr_sigma.Size());
-    for (int i = 0; i < bdr_sigma.Size(); i++)
+    if (std::abs(bdr.sigma) > 0.0)
     {
-      if (bdr_sigma(i) > 0.0)
+      double delta = std::sqrt(2.0 / (bdr.mu(i) * bdr.sigma(i) * omega));
+      std::complex<double> Z = 1.0 / (bdr.sigma(i) * delta);
+      Z.imag(Z.real());
+      if (bdr.h(i) > 0.0)
       {
-        double delta = std::sqrt(2.0 / (bdr_mu(i) * bdr_sigma(i) * omega));
-        std::complex<double> Z = 1.0 / (bdr_sigma(i) * delta);
-        Z.imag(Z.real());
-        if (bdr_h(i) > 0.0)
-        {
-          double nu = bdr_h(i) / delta;
-          double den = std::cosh(nu) - std::cos(nu);
-          Z.real(Z.real() * (std::sinh(nu) + std::sin(nu)) / den);
-          Z.imag(Z.imag() * (std::sinh(nu) - std::sin(nu)) / den);
-        }
-        // The BC term has coefficient iω/Z (like for standard lumped surface impedance).
-        std::complex<double> s(1i * omega / Z);
-        vr(i) = s.real();
-        vi(i) = s.imag();
+        double nu = bdr.h(i) / delta;
+        double den = std::cosh(nu) - std::cos(nu);
+        Z.real(Z.real() * (std::sinh(nu) + std::sin(nu)) / den);
+        Z.imag(Z.imag() * (std::sinh(nu) - std::sin(nu)) / den);
       }
-      else
-      {
-        vr(i) = vi(i) = 0.0;  // Not a conductivity boundary
-      }
+      // The BC term has coefficient iω/Z (like for standard lumped surface impedance).
+      std::complex<double> s(1i * omega / Z);
+      fbr.AddMaterialProperty(mat_op.GetAttributeGlobalToLocal(bdr.attr), s.real());
+      fbi.AddMaterialProperty(mat_op.GetAttributeGlobalToLocal(bdr.attr), s.imag());
     }
-    fbr.AddCoefficient(std::make_unique<mfem::PWConstCoefficient>(vr), conductivity_marker);
-    fbi.AddCoefficient(std::make_unique<mfem::PWConstCoefficient>(vi), conductivity_marker);
   }
 }
 

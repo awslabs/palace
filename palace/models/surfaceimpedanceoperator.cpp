@@ -3,19 +3,19 @@
 
 #include "surfaceimpedanceoperator.hpp"
 
-#include "fem/coefficient.hpp"
+#include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
-#include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
 
 namespace palace
 {
 
 SurfaceImpedanceOperator::SurfaceImpedanceOperator(const IoData &iodata,
+                                                   const MaterialOperator &mat_op,
                                                    mfem::ParMesh &mesh)
+  : mat_op(mat_op), impedance_attr(SetUpBoundaryProperties(iodata, mesh))
 {
-  // Set up impedance boundary conditions.
-  SetUpBoundaryProperties(iodata, mesh);
+  // Print out BC info for all impedance boundary attributes.
   PrintBoundaryInfo(iodata, mesh);
 }
 
@@ -46,81 +46,75 @@ void SurfaceImpedanceOperator::SetUpBoundaryProperties(const IoData &iodata,
   }
 
   // Impedance boundaries are defined using the user provided impedance per square.
-  Z_Rsinv.SetSize(bdr_attr_max);
-  Z_Lsinv.SetSize(bdr_attr_max);
-  Z_Cs.SetSize(bdr_attr_max);
-  Z_Rsinv = 0.0;
-  Z_Lsinv = 0.0;
-  Z_Cs = 0.0;
+  mfem::Array<bool> marker(bdr_attr_max);
+  marker = false;
+  impedance_data.reserve(iodata.boundaries.impedance.size());
   for (const auto &data : iodata.boundaries.impedance)
   {
+    MFEM_VERIFY(std::abs(data.Rs) + std::abs(data.Ls) + std::abs(data.Cs) > 0.0,
+                "Impedance boundary has no Rs, Ls, or Cs defined!");
     for (auto attr : data.attributes)
     {
       MFEM_VERIFY(
-          Z_Rsinv(attr - 1) == 0.0 && Z_Lsinv(attr - 1) == 0.0 && Z_Cs(attr - 1) == 0.0,
+          !marker[attr - 1],
           "Multiple definitions of impedance boundary properties for boundary attribute "
               << attr << "!");
-      Z_Rsinv(attr - 1) = (std::abs(data.Rs) > 0.0) ? 1.0 / data.Rs : 0.0;
-      Z_Lsinv(attr - 1) = (std::abs(data.Ls) > 0.0) ? 1.0 / data.Ls : 0.0;
-      Z_Cs(attr - 1) = (std::abs(data.Cs) > 0.0) ? data.Cs : 0.0;
-      MFEM_VERIFY(std::abs(Z_Rsinv(attr - 1)) + std::abs(Z_Lsinv(attr - 1)) +
-                          std::abs(Z_Cs(attr - 1)) >
-                      0.0,
-                  "Impedance boundary has no Rs, Ls, or Cs defined!");
+      marker[attr - 1] = true;
     }
+    auto &Z = impedance_data.emplace_back();
+    Z.Rsinv = (std::abs(data.Rs) > 0.0) ? 1.0 / data.Rs : 0.0;
+    Z.Lsinv = (std::abs(data.Ls) > 0.0) ? 1.0 / data.Ls : 0.0;
+    Z.Cs = (std::abs(data.Cs) > 0.0) ? data.Cs : 0.0;
+    Z.attr.Append(data.attributes.data(), data.attributes.size());
   }
 
   // Mark selected boundary attributes from the mesh as impedance.
-  mfem::Array<int> impedance_bcs, impedance_Rs_bcs, impedance_Ls_bcs, impedance_Cs_bcs;
+  mfem::Array<int> impedance_bcs;
   for (const auto &data : iodata.boundaries.impedance)
   {
-    for (auto attr : data.attributes)
+    impedance_bcs.Append(data.attributes.data(), data.attributes.size());
+    if (std::abs(data.Rs) > 0.0)
     {
-      impedance_bcs.Append(attr);
-      if (std::abs(Z_Rsinv(attr - 1)) > 0.0)
-      {
-        impedance_Rs_bcs.Append(attr);
-      }
-      if (std::abs(Z_Lsinv(attr - 1)) > 0.0)
-      {
-        impedance_Ls_bcs.Append(attr);
-      }
-      if (std::abs(Z_Cs(attr - 1)) > 0.0)
-      {
-        impedance_Cs_bcs.Append(attr);
-      }
+      impedance_Rs_attr.Append(data.attributes.data(), data.attributes.size());
+    }
+    if (std::abs(data.Ls) > 0.0)
+    {
+      impedance_Ls_attr.Append(data.attributes.data(), data.attributes.size());
+    }
+    if (std::abs(data.Cs) > 0.0)
+    {
+      impedance_Cs_attr.Append(data.attributes.data(), data.attributes.size());
     }
   }
-  mesh::AttrToMarker(bdr_attr_max, impedance_bcs, impedance_marker);
-  mesh::AttrToMarker(bdr_attr_max, impedance_Rs_bcs, impedance_Rs_marker);
-  mesh::AttrToMarker(bdr_attr_max, impedance_Ls_bcs, impedance_Ls_marker);
-  mesh::AttrToMarker(bdr_attr_max, impedance_Cs_bcs, impedance_Cs_marker);
+  return impedance_bcs;
 }
 
 void SurfaceImpedanceOperator::PrintBoundaryInfo(const IoData &iodata, mfem::ParMesh &mesh)
 {
-  if (impedance_marker.Size() && impedance_marker.Max() == 0)
+
+  // XX TODO MARKER...
+
+  if (impedance_data.empty())
   {
     return;
   }
   Mpi::Print("\nConfiguring Robin impedance BC at attributes:\n");
-  for (int i = 0; i < impedance_marker.Size(); i++)
+  for (const auto &Z : impedance_data)
   {
-    if (impedance_marker[i])
+    for (auto attr : Z.attr)
     {
-      const int attr = i + 1;
       mfem::Vector nor;
       mesh::GetSurfaceNormal(mesh, attr, nor);
       bool comma = false;
       Mpi::Print(" {:d}:", attr);
-      if (std::abs(Z_Rsinv(i)) > 0.0)
+      if (std::abs(Z.Rsinv(i)) > 0.0)
       {
         Mpi::Print(
             " Rs = {:.3e} Ω/sq",
-            iodata.DimensionalizeValue(IoData::ValueType::IMPEDANCE, 1.0 / Z_Rsinv(i)));
+            iodata.DimensionalizeValue(IoData::ValueType::IMPEDANCE, 1.0 / Z.Rsinv(i)));
         comma = true;
       }
-      if (std::abs(Z_Lsinv(i)) > 0.0)
+      if (std::abs(Z.Lsinv(i)) > 0.0)
       {
         if (comma)
         {
@@ -128,17 +122,17 @@ void SurfaceImpedanceOperator::PrintBoundaryInfo(const IoData &iodata, mfem::Par
         }
         Mpi::Print(
             " Ls = {:.3e} H/sq",
-            iodata.DimensionalizeValue(IoData::ValueType::INDUCTANCE, 1.0 / Z_Lsinv(i)));
+            iodata.DimensionalizeValue(IoData::ValueType::INDUCTANCE, 1.0 / Z.Lsinv(i)));
         comma = true;
       }
-      if (std::abs(Z_Cs(i)) > 0.0)
+      if (std::abs(Z.Cs(i)) > 0.0)
       {
         if (comma)
         {
           Mpi::Print(",");
         }
         Mpi::Print(" Cs = {:.3e} F/sq",
-                   iodata.DimensionalizeValue(IoData::ValueType::CAPACITANCE, Z_Cs(i)));
+                   iodata.DimensionalizeValue(IoData::ValueType::CAPACITANCE, Z.Cs(i)));
         comma = true;
       }
       if (comma)
@@ -159,38 +153,41 @@ void SurfaceImpedanceOperator::PrintBoundaryInfo(const IoData &iodata, mfem::Par
 }
 
 void SurfaceImpedanceOperator::AddStiffnessBdrCoefficients(double coef,
-                                                           SumMatrixCoefficient &fb)
+                                                           MaterialPropertyCoefficient &fb)
 {
   // Lumped inductor boundaries.
-  if (impedance_Ls_marker.Size() && impedance_Ls_marker.Max() > 0)
+  for (const auto &Z : impedance_data)
   {
-    mfem::Vector v(Z_Lsinv);
-    v *= coef;
-    auto f = std::make_unique<mfem::PWConstCoefficient>(v);
-    fb.AddCoefficient(std::make_unique<mfem::PWConstCoefficient>(v), impedance_Ls_marker);
-  }
-}
-
-void SurfaceImpedanceOperator::AddMassBdrCoefficients(double coef, SumMatrixCoefficient &fb)
-{
-  // Lumped capacitor boundaries.
-  if (impedance_Cs_marker.Size() && impedance_Cs_marker.Max() > 0)
-  {
-    mfem::Vector v(Z_Cs);
-    v *= coef;
-    fb.AddCoefficient(std::make_unique<mfem::PWConstCoefficient>(v), impedance_Cs_marker);
+    if (std::abs(Z.Lsinv) > 0.0)
+    {
+      fb.AddMaterialProperty(mat_op.GetAttributeGlobalToLocal(Z.attr), Z.Lsinv, coef);
+    }
   }
 }
 
 void SurfaceImpedanceOperator::AddDampingBdrCoefficients(double coef,
-                                                         SumMatrixCoefficient &fb)
+                                                         MaterialPropertyCoefficient &fb)
 {
   // Lumped resistor boundaries.
-  if (impedance_Rs_marker.Size() && impedance_Rs_marker.Max() > 0)
+  for (const auto &Z : impedance_data)
   {
-    mfem::Vector v(Z_Rsinv);
-    v *= coef;
-    fb.AddCoefficient(std::make_unique<mfem::PWConstCoefficient>(v), impedance_Rs_marker);
+    if (std::abs(Z.Rsinv) > 0.0)
+    {
+      fb.AddMaterialProperty(mat_op.GetAttributeGlobalToLocal(Z.attr), Z.Rsinv, coef);
+    }
+  }
+}
+
+void SurfaceImpedanceOperator::AddMassBdrCoefficients(double coef,
+                                                      MaterialPropertyCoefficient &fb)
+{
+  // Lumped capacitor boundaries.
+  for (const auto &Z : impedance_data)
+  {
+    if (std::abs(Z.Cs) > 0.0)
+    {
+      fb.AddMaterialProperty(mat_op.GetAttributeGlobalToLocal(Z.attr), Z.Cs, coef);
+    }
   }
 }
 

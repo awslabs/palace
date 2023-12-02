@@ -4,17 +4,14 @@
 #ifndef PALACE_MODELS_MATERIAL_OPERATOR_HPP
 #define PALACE_MODELS_MATERIAL_OPERATOR_HPP
 
-#include <map>
-#include <vector>
+#include <unordered_map>
 #include <mfem.hpp>
-#include "fem/libceed/ceed.hpp"
-
-// XX TODO WIP MATERIAL PROPERTY COEFFICIENTS, ELEMENT ATTRIBUTE VECTORS
 
 namespace palace
 {
 
 class IoData;
+class Mesh;
 
 //
 // A class handling material attributes.
@@ -22,63 +19,167 @@ class IoData;
 class MaterialOperator
 {
 private:
-  // Material properties for domain attributes: relative permeability, relative
-  // permittivity, and others (like electrical conductivity and London penetration depth
-  // for superconductors. Marker arrays contain a 1 for each domain attribute labeled, and
-  // 0 else.
-  std::vector<int> mat_idx;
-  std::vector<mfem::DenseMatrix> mat_muinv, mat_epsilon, mat_epsilon_imag, mat_epsilon_abs,
-      mat_invz0, mat_c0, mat_sigma, mat_invLondon;
-  std::vector<double> mat_c0_min, mat_c0_max;
-  mfem::Array<int> losstan_marker, conductivity_marker, london_marker;
-  void SetUpMaterialProperties(const IoData &iodata, const mfem::ParMesh &mesh);
+  // Useful references to objects from the underlying mesh (not owned).
+  const std::unordered_map<int, int> &loc_attr, &loc_bdr_attr;
+  const std::unordered_map<int, int> &local_to_shared;
 
-  // Shared face mapping for boundary coefficients.
-  std::map<int, int> local_to_shared;
+  // Mapping from the local attribute to material index. For boundary elements, this is the
+  // material of the neighboring element (for internal boundaries, use the element which
+  // corresponds to the vacuum domain, or at least the one with the higher speed of light.
+  mfem::Array<int> attr_mat, bdr_attr_mat;
 
-  // Data structure with information used to assemble libCEED operators.
-  ceed::CeedObjectMap<ceed::CeedGeomFactorData> geom_data;
+  // Material properties: relative permeability, relative permittivity, and others (like
+  // electrical conductivity and London penetration depth for superconductors.
+  mfem::DenseTensor mat_muinv, mat_epsilon, mat_epsilon_imag, mat_epsilon_abs, mat_invz0,
+      mat_c0, mat_sigma, mat_invLondon;
+  mfem::Array<double> mat_c0_min, mat_c0_max;
+
+  // Domain attributes with nonzero loss tangent, electrical conductivity, London
+  // penetration depth.
+  mfem::Array<int> losstan_attr, conductivity_attr, london_attr;
+
+  void SetUpMaterialProperties(const IoData &iodata, const Mesh &mesh);
+
+  const auto AttrToMat(int attr, bool bdr)
+  {
+    if (bdr)
+    {
+      MFEM_ASSERT(loc_bdr_attr.find(attr) != loc_bdr_attr.end(),
+                  "Missing local boundary attribute for attribute " << attr << "!");
+      return bdr_attr_mat[loc_bdr_attr[attr] - 1];
+    }
+    else
+    {
+      MFEM_ASSERT(loc_attr.find(attr) != loc_attr.end(),
+                  "Missing local domain attribute for attribute " << attr << "!");
+      return attr_mat[loc_attr[attr] - 1];
+    }
+  }
+
+  const auto Wrap(const mfem::DenseTensor &data, int attr, bool bdr) const
+  {
+    const int k = AttrToMat(attr, bdr);
+    return mfem::DenseMatrix(const_cast<double *>(data.GetData(k)), data.SizeI(),
+                             data.SizeJ());
+  }
 
 public:
-  MaterialOperator(const IoData &iodata, mfem::ParMesh &mesh);
+  MaterialOperator(const IoData &iodata, const Mesh &mesh);
 
-  int SpaceDimension() const { return mat_muinv.front().Height(); }
+  int SpaceDimension() const { return mat_muinv.SizeI(); }
 
-  const auto &GetInvPermeability(int attr) const { return mat_muinv[mat_idx[attr - 1]]; }
-  const auto &GetPermittivityReal(int attr) const { return mat_epsilon[mat_idx[attr - 1]]; }
-  const auto &GetPermittivityImag(int attr) const
+  const auto GetInvPermeability(int attr, bool bdr = false) const
   {
-    return mat_epsilon_imag[mat_idx[attr - 1]];
+    return Wrap(mat_muinv, attr, bdr);
   }
-  const auto &GetPermittivityAbs(int attr) const
+  const auto GetPermittivityReal(int attr, bool bdr = false) const
   {
-    return mat_epsilon_abs[mat_idx[attr - 1]];
+    return Wrap(mat_epsilon, attr, bdr);
   }
-  const auto &GetInvImpedance(int attr) const { return mat_invz0[mat_idx[attr - 1]]; }
-  const auto &GetLightSpeed(int attr) const { return mat_c0[mat_idx[attr - 1]]; }
-  const auto &GetLightSpeedMin(int attr) const { return mat_c0_min[mat_idx[attr - 1]]; }
-  const auto &GetLightSpeedMax(int attr) const { return mat_c0_max[mat_idx[attr - 1]]; }
-  const auto &GetConductivity(int attr) const { return mat_sigma[mat_idx[attr - 1]]; }
-  const auto &GetInvLondonDepth(int attr) const { return mat_invLondon[mat_idx[attr - 1]]; }
+  const auto GetPermittivityImag(int attr, bool bdr = false) const
+  {
+    return Wrap(mat_epsilon_imag, attr, bdr);
+  }
+  const auto GetPermittivityAbs(int attr, bool bdr = false) const
+  {
+    return Wrap(mat_epsilon_abs, attr, bdr);
+  }
+  const auto GetInvImpedance(int attr, bool bdr = false) const
+  {
+    return Wrap(mat_invz0, attr, bdr);
+  }
+  const auto GetLightSpeed(int attr, bool bdr = false) const
+  {
+    return Wrap(mat_c0, attr, bdr);
+  }
+  const auto GetConductivity(int attr, bool bdr = false) const
+  {
+    return Wrap(mat_sigma, attr, bdr);
+  }
+  const auto GetInvLondonDepth(int attr, bool bdr = false) const
+  {
+    return Wrap(mat_invLondon, attr, bdr);
+  }
 
-  bool HasLossTangent() const { return (losstan_marker.Max() > 0); }
-  bool HasConductivity() const { return (conductivity_marker.Max() > 0); }
-  bool HasLondonDepth() const { return (london_marker.Max() > 0); }
+  auto GetLightSpeedMin(int attr, bool bdr = false) const
+  {
+    return mat_c0_min[AttrToMat(attr, bdr)];
+  }
+  auto GetLightSpeedMax(int attr, bool bdr = false) const
+  {
+    return mat_c0_max[AttrToMat(attr, bdr)];
+  }
 
-  const auto &GetLossTangentMarker() const { return losstan_marker; }
-  const auto &GetConductivityMarker() const { return conductivity_marker; }
-  const auto &GetLondonDepthMarker() const { return london_marker; }
+  const auto &GetInvPermeability() const { return mat_muinv; }
+  const auto &GetPermittivityReal() const { return mat_epsilon; }
+  const auto &GetPermittivityImag() const { return mat_epsilon_imag; }
+  const auto &GetPermittivityAbs() const { return mat_epsilon_abs; }
+  const auto &GetInvImpedance() const { return mat_invz0; }
+  const auto &GetLightSpeed() const { return mat_c0; }
+  const auto &GetConductivity() const { return mat_sigma; }
+  const auto &GetInvLondonDepth() const { return mat_invLondon; }
+
+  bool HasLossTangent() const { return (losstan_attr.Size() > 0); }
+  bool HasConductivity() const { return (conductivity_attr.Size() > 0); }
+  bool HasLondonDepth() const { return (london_attr.Size() > 0); }
+
+  const auto &GetAttributeToMaterial() const { return attr_mat; }
+  const auto &GetBdrAttributeToMaterial() const { return bdr_attr_mat; }
+
+  const auto &GetAttributeGlobalToLocal() const { return loc_attr; }
+  const auto &GetBdrAttributeGlobalToLocal() const { return loc_bdr_attr; }
+
+  auto GetAttributeGlobalToLocal(const mfem::Array<int> &attr_list) const
+  {
+    mfem::Array<int> loc_attr_list(attr_list.Size());
+    std::transform(attr_list.begin(), attr_list.end(), loc_attr_list.begin(),
+                   [&loc_attr](int attr) { return loc_attr[attr]; }) return loc_attr_list;
+  }
+  auto GetBdrAttributeGlobalToLocal(const mfem::Array<int> &attr_list) const
+  {
+    mfem::Array<int> loc_attr_list(attr_list.Size());
+    std::transform(attr_list.begin(), attr_list.end(), loc_attr_list.begin(),
+                   [&loc_bdr_attr](int attr)
+                   { return loc_bdr_attr[attr]; }) return loc_attr_list;
+  }
 
   const auto &GetLocalToSharedFaceMap() const { return local_to_shared; }
+};
 
-  const auto &GetCeedGeomFactorData() const { return geom_data; }
-  const auto &GetCeedGeomFactorData(Ceed ceed, mfem::Geometry::Type geom) const
-  {
-    const auto it = geom_data.find(std::make_pair(ceed, geom));
-    MFEM_ASSERT(it != geom_data.end(), "Unable to geometry factor data for geometry "
-                                           << mfem::Geometry::Name[geom] << "!");
-    return it->second;
-  }
+//
+// Material property represented as a piecewise constant coefficient over mesh elements. Can
+// be scalar-valued or matrix-valued.
+//
+class MaterialPropertyCoefficient
+{
+private:
+  // Map attribute to material index (coeff = mat_coeff[attr_mat[attr - 1]], for 1-based
+  // attributes).
+  mfem::Array<int> attr_mat;
+
+  // Material properry coefficients, ordered by material index.
+  mfem::DenseTensor mat_coeff;
+
+public:
+  MaterialPropertyCoefficient() {}
+  MaterialPropertyCoefficient(const mfem::Array<int> &attr_mat,
+                              const mfem::DenseTensor &mat_coeff, double a = 1.0);
+
+  bool empty() const { return mat_coeff.TotalSize() == 0; }
+
+  const auto &GetAttributeToMaterial() const { return attr_mat; }
+  const auto &GetMaterialProperties() const { return mat_coeff; }
+
+  void AddCoefficient(const mfem::Array<int> &attr_mat_,
+                      const mfem::DenseTensor &mat_coeff_, double a = 1.0);
+
+  template <typename T>
+  void AddMaterialProperty(const mfem::Array<int> &attr_list, const T &coeff,
+                           double a = 1.0);
+
+  void RestrictCoefficient(const mfem::Array<int> &attr_list);
+
+  void NormalProjectedCoefficient(const mfem::Vector &normal);
 };
 
 }  // namespace palace
