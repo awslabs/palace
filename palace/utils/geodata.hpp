@@ -54,10 +54,17 @@ ElementTypeInfo CheckElements(mfem::Mesh &mesh);
 
 // Helper function to convert a set of attribute numbers to a marker array. The marker array
 // will be of size max_attr and it will contain only zeroes and ones. Ones indicate which
-// attribute numbers are present in the attrs array. In the special case when attrs has a
+// attribute numbers are present in the list array. In the special case when list has a
 // single entry equal to -1 the marker array will contain all ones.
-void AttrToMarker(int max_attr, const mfem::Array<int> &attrs, mfem::Array<int> &marker);
-void AttrToMarker(int max_attr, const std::vector<int> &attrs, mfem::Array<int> &marker);
+template <typename T>
+void AttrToMarker(int max_attr, const T &attr_list, mfem::Array<int> &marker);
+template <typename T>
+mfem::Array<int> AttrToMarker(int max_attr, const T &attr_list)
+{
+  mfem::Array<int> marker;
+  AttrToMarker(max_attr, attr_list, marker);
+  return marker;
+}
 
 // Helper function to construct the bounding box for all elements with the given attribute.
 void GetAxisAlignedBoundingBox(mfem::ParMesh &mesh, int attr, bool bdr, mfem::Vector &min,

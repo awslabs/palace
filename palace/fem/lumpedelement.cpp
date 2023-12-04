@@ -33,12 +33,12 @@ double GetArea(mfem::ParFiniteElementSpace &fespace, const mfem::Array<int> &att
 UniformElementData::UniformElementData(const std::array<double, 3> &input_dir,
                                        const mfem::Array<int> &attr_list,
                                        mfem::ParFiniteElementSpace &fespace)
-  : LumpedElementData(fespace.GetParMesh()->SpaceDimension(), attr_list), direction(3)
+  : LumpedElementData(attr_list)
 {
   const mfem::ParMesh &mesh = *fespace.GetParMesh();
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, attr_list);
-  bounding_box = mesh::GetBoundingBox(*fespace.GetParMesh(), attr_marker, true);
+  bounding_box = mesh::GetBoundingBox(mesh, attr_marker, true);
 
   // Check that the bounding box discovered matches the area. This validates that the
   // boundary elements form a right angled quadrilateral port.
@@ -84,17 +84,16 @@ UniformElementData::UniformElementData(const std::array<double, 3> &input_dir,
               "Specified direction does not align sufficiently with bounding box axes: "
                   << deviation_deg[0] << ' ' << deviation_deg[1] << ' ' << deviation_deg[2]
                   << " tolerance " << angle_error_deg << '!');
+  direction.SetSize(input_dir.size());
   std::copy(input_dir.begin(), input_dir.end(), direction.begin());
   direction /= direction.Norml2();
 
   // Compute the length from the most aligned normal direction.
   l = lengths[std::distance(deviation_deg.begin(),
                             std::min_element(deviation_deg.begin(), deviation_deg.end()))];
-  MFEM_ASSERT(
-      (l - mesh::GetProjectedLength(*fespace.GetParMesh(), attr_marker, true, input_dir)) /
-              l <
-          rel_tol,
-      "Bounding box discovered length should match projected length!");
+  MFEM_ASSERT((l - mesh::GetProjectedLength(mesh, attr_marker, true, input_dir)) / l <
+                  rel_tol,
+              "Bounding box discovered length should match projected length!");
   w = A / l;
 }
 
@@ -110,15 +109,15 @@ UniformElementData::GetModeCoefficient(double coef) const
 CoaxialElementData::CoaxialElementData(const std::array<double, 3> &direction,
                                        const mfem::Array<int> &attr_list,
                                        mfem::ParFiniteElementSpace &fespace)
-  : LumpedElementData(fespace.GetParMesh()->SpaceDimension(), attr_list),
-    sign(direction[0] > 0)
+  : LumpedElementData(attr_list)
 {
   const mfem::ParMesh &mesh = *fespace.GetParMesh();
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, attr_list);
-  bounding_ball = mesh::GetBoundingBall(*fespace.GetParMesh(), attr_marker, true);
+  bounding_ball = mesh::GetBoundingBall(mesh, attr_marker, true);
   MFEM_VERIFY(bounding_ball.planar,
               "Boundary elements must be coplanar to define a coaxial lumped element!");
+  sign = (direction[0] > 0);
 
   // Get inner radius of annulus assuming full 2π circumference.
   double A = GetArea(fespace, attr_marker);
@@ -132,18 +131,18 @@ CoaxialElementData::CoaxialElementData(const std::array<double, 3> &direction,
 std::unique_ptr<mfem::VectorCoefficient>
 CoaxialElementData::GetModeCoefficient(double coef) const
 {
-  double scoef = (sign ? 1.0 : -1.0) * coef;
-  mfem::Vector x0(3);
+  coef = (sign ? 1.0 : -1.0) * coef;
+  mfem::Vector x0(bounding_ball.center.size());
   std::copy(bounding_ball.center.begin(), bounding_ball.center.end(), x0.begin());
-  auto Source = [scoef, x0](const mfem::Vector &x, mfem::Vector &f) -> void
+  auto Source = [coef, x0](const mfem::Vector &x, mfem::Vector &f) -> void
   {
     f = x;
     f -= x0;
     double oor = 1.0 / f.Norml2();
-    f *= scoef * oor * oor;
+    f *= coef * oor * oor;
   };
   return std::make_unique<RestrictedVectorCoefficient>(
-      std::make_unique<mfem::VectorFunctionCoefficient>(dim, Source), attr_list);
+      std::make_unique<mfem::VectorFunctionCoefficient>(x0.Size(), Source), attr_list);
 }
 
 }  // namespace palace

@@ -16,7 +16,7 @@ namespace palace
 
 class IoData;
 class MaterialOperator;
-class SumMatrixCoefficient;
+class MaterialPropertyCoefficient;
 class SumVectorCoefficient;
 
 namespace config
@@ -31,36 +31,32 @@ struct LumpedPortData;
 //
 class LumpedPortData
 {
-private:
-  bool excitation;
-  double R, L, C;
+public:
+  // Reference to material property data (not owned).
+  const MaterialOperator &mat_op;
 
   // To accomodate multielement lumped ports, a port may be made up of elements with
   // different attributes and directions which add in parallel.
   std::vector<std::unique_ptr<LumpedElementData>> elems;
 
+  // Lumped port properties.
+  double R, L, C;
+  bool excitation;
+
+private:
   // Linear forms for postprocessing integrated quantities on the port.
   mutable std::unique_ptr<mfem::LinearForm> s, v;
+
   void InitializeLinearForms(mfem::ParFiniteElementSpace &nd_fespace) const;
 
 public:
-  LumpedPortData(const config::LumpedPortData &data,
+  LumpedPortData(const config::LumpedPortData &data, const MaterialOperator &mat_op,
                  mfem::ParFiniteElementSpace &h1_fespace);
-
-  const std::vector<std::unique_ptr<LumpedElementData>> &GetElements() const
-  {
-    return elems;
-  }
 
   double GetToSquare(const LumpedElementData &elem) const
   {
     return elem.GetGeometryWidth() / elem.GetGeometryLength() * elems.size();
   }
-
-  bool IsExcited() const { return excitation; }
-  double GetR() const { return R; }
-  double GetL() const { return L; }
-  double GetC() const { return C; }
 
   std::complex<double> GetCharacteristicImpedance(double omega = 0.0) const;
 
@@ -69,10 +65,8 @@ public:
 
   std::complex<double> GetSParameter(mfem::ParComplexGridFunction &E) const;
   std::complex<double> GetPower(mfem::ParComplexGridFunction &E,
-                                mfem::ParComplexGridFunction &B,
-                                const MaterialOperator &mat_op) const;
-  double GetPower(mfem::ParGridFunction &E, mfem::ParGridFunction &B,
-                  const MaterialOperator &mat_op) const;
+                                mfem::ParComplexGridFunction &B) const;
+  double GetPower(mfem::ParGridFunction &E, mfem::ParGridFunction &B) const;
   std::complex<double> GetVoltage(mfem::ParComplexGridFunction &E) const;
   double GetVoltage(mfem::ParGridFunction &E) const;
 };
@@ -87,13 +81,14 @@ private:
   // calculate circuit properties like voltage and current on lumped or multielement lumped
   // ports.
   std::map<int, LumpedPortData> ports;
-  mfem::Array<int> port_marker, port_Rs_marker, port_Ls_marker, port_Cs_marker;
-  void SetUpBoundaryProperties(const IoData &iodata,
+
+  void SetUpBoundaryProperties(const IoData &iodata, const MaterialOperator &mat_op,
                                mfem::ParFiniteElementSpace &h1_fespace);
   void PrintBoundaryInfo(const IoData &iodata, mfem::ParMesh &mesh);
 
 public:
-  LumpedPortOperator(const IoData &iodata, mfem::ParFiniteElementSpace &h1_fespace);
+  LumpedPortOperator(const IoData &iodata, const MaterialOperator &mat_op,
+                     mfem::ParFiniteElementSpace &h1_fespace);
 
   // Access data structures for the lumped port with the given index.
   const LumpedPortData &GetPort(int idx) const;
@@ -103,17 +98,17 @@ public:
   auto rend() const { return ports.rend(); }
   auto Size() const { return ports.size(); }
 
-  // Returns array marking lumped port attributes.
-  const mfem::Array<int> &GetMarker() const { return port_marker; }
-  const mfem::Array<int> &GetRsMarker() const { return port_Rs_marker; }
-  const mfem::Array<int> &GetLsMarker() const { return port_Ls_marker; }
-  const mfem::Array<int> &GetCsMarker() const { return port_Cs_marker; }
+  // Returns array of lumped port attributes.
+  mfem::Array<int> GetAttrList() const;
+  mfem::Array<int> GetRsAttrList() const;
+  mfem::Array<int> GetLsAttrList() const;
+  mfem::Array<int> GetCsAttrList() const;
 
   // Add contributions to system matrices from lumped elements with nonzero inductance,
-  // capacitance, and/or resistance.
-  void AddStiffnessBdrCoefficients(double coef, SumMatrixCoefficient &fb);
-  void AddMassBdrCoefficients(double coef, SumMatrixCoefficient &fb);
-  void AddDampingBdrCoefficients(double coef, SumMatrixCoefficient &fb);
+  // resistance, and/or capacitance.
+  void AddStiffnessBdrCoefficients(double coef, MaterialPropertyCoefficient &fb);
+  void AddDampingBdrCoefficients(double coef, MaterialPropertyCoefficient &fb);
+  void AddMassBdrCoefficients(double coef, MaterialPropertyCoefficient &fb);
 
   // Add contributions to the right-hand side source term vector for an incident field at
   // excited port boundaries, -U_inc/(iω) for the real version (versus the full -U_inc for

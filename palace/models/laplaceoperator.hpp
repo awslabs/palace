@@ -29,7 +29,7 @@ private:
   bool print_hdr;
 
   // Essential boundary condition markers.
-  mfem::Array<int> dbc_marker;
+  mfem::Array<int> dbc_attr;
   std::vector<mfem::Array<int>> dbc_tdof_lists;
 
   // Objects defining the finite element spaces for the electrostatic potential (H1) and

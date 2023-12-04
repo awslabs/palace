@@ -28,6 +28,8 @@ private:
   // corresponds to the vacuum domain, or at least the one with the higher speed of light.
   mfem::Array<int> attr_mat, bdr_attr_mat;
 
+  // XX TODO COMPUTE ABS, INVz0, C0 ON THE FLY, CAN STILL STORE MAT_c0_min/max
+
   // Material properties: relative permeability, relative permittivity, and others (like
   // electrical conductivity and London penetration depth for superconductors.
   mfem::DenseTensor mat_muinv, mat_epsilon, mat_epsilon_imag, mat_epsilon_abs, mat_invz0,

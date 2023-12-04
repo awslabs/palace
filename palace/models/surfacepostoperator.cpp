@@ -4,7 +4,7 @@
 #include "surfacepostoperator.hpp"
 
 #include <complex>
-#include <string>
+#include "fem/coefficient.hpp"
 #include "fem/integrator.hpp"
 #include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
@@ -71,31 +71,36 @@ SurfacePostOperator::InterfaceDielectricData::InterfaceDielectricData(
       side /= side.Norml2();
     }
 
-    // Store markers for this element of the postprocessing boundary.
-    mesh::AttrToMarker(mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0,
-                       elem.attributes, attr_markers.emplace_back());
+    // Store boundary attributes for this element of the postprocessing boundary.
+    attr_lists.emplace_back(elem.attributes.begin(), elem.attributes.end());
   }
 }
 
 std::unique_ptr<mfem::Coefficient>
 SurfacePostOperator::InterfaceDielectricData::GetCoefficient(
-    int i, const mfem::ParGridFunction &U, const MaterialOperator &mat_op) const
+    std::size_t i, const mfem::ParGridFunction &U, const MaterialOperator &mat_op) const
 {
+  auto MakeRestricted = [&](std::unique_ptr<mfem::Coefficient> &&coeff)
+  { return std::make_unique<RestrictedCoefficient>(coeff, attr_lists[i]); };
   switch (type)
   {
     case DielectricInterfaceType::MA:
-      return std::make_unique<DielectricInterfaceCoefficient<DielectricInterfaceType::MA>>(
-          U, mat_op, ts, epsilon, sides[i]);
+      return MakeRestricted(
+          std::make_unique<DielectricInterfaceCoefficient<DielectricInterfaceType::MA>>(
+              U, mat_op, ts, epsilon, sides[i]));
     case DielectricInterfaceType::MS:
-      return std::make_unique<DielectricInterfaceCoefficient<DielectricInterfaceType::MS>>(
-          U, mat_op, ts, epsilon, sides[i]);
+      return MakeRestricted(
+          std::make_unique<DielectricInterfaceCoefficient<DielectricInterfaceType::MS>>(
+              U, mat_op, ts, epsilon, sides[i]));
     case DielectricInterfaceType::SA:
-      return std::make_unique<DielectricInterfaceCoefficient<DielectricInterfaceType::SA>>(
-          U, mat_op, ts, epsilon, sides[i]);
+      return MakeRestricted(
+          std::make_unique<DielectricInterfaceCoefficient<DielectricInterfaceType::SA>>(
+              U, mat_op, ts, epsilon, sides[i]));
     case DielectricInterfaceType::DEFAULT:
-      return std::make_unique<
-          DielectricInterfaceCoefficient<DielectricInterfaceType::DEFAULT>>(
-          U, mat_op, ts, epsilon, sides[i]);
+      return MakeRestricted(
+          std::make_unique<
+              DielectricInterfaceCoefficient<DielectricInterfaceType::DEFAULT>>(
+              U, mat_op, ts, epsilon, sides[i]));
   }
   return {};  // For compiler warning
 }
@@ -103,14 +108,15 @@ SurfacePostOperator::InterfaceDielectricData::GetCoefficient(
 SurfacePostOperator::SurfaceChargeData::SurfaceChargeData(
     const config::CapacitanceData &data, mfem::ParMesh &mesh)
 {
-  mesh::AttrToMarker(mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0,
-                     data.attributes, attr_markers.emplace_back());
+  // Store boundary attributes for this element of the postprocessing boundary.
+  attr_lists.emplace_back(data.attributes.begin(), data.attributes.end());
 }
 
 std::unique_ptr<mfem::Coefficient> SurfacePostOperator::SurfaceChargeData::GetCoefficient(
-    int i, const mfem::ParGridFunction &U, const MaterialOperator &mat_op) const
+    std::size_t i, const mfem::ParGridFunction &U, const MaterialOperator &mat_op) const
 {
-  return std::make_unique<BdrChargeCoefficient>(U, mat_op);
+  return std::make_unique<RestrictedCoefficient>(
+      std::make_unique<BdrChargeCoefficient>(U, mat_op), attr_lists[0]);
 }
 
 SurfacePostOperator::SurfaceFluxData::SurfaceFluxData(const config::InductanceData &data,
@@ -122,18 +128,15 @@ SurfacePostOperator::SurfaceFluxData::SurfaceFluxData(const config::InductanceDa
   std::copy(data.direction.begin(), data.direction.end(), direction.begin());
   direction /= direction.Norml2();
 
-  // Construct the coefficient for this postprocessing boundary (copies the direction
-  // vector).
-  mesh::AttrToMarker(mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0,
-                     data.attributes, attr_markers.emplace_back());
+  // Store boundary attributes for this element of the postprocessing boundary.
+  attr_lists.emplace_back(data.attributes.begin(), data.attributes.end());
 }
 
-std::unique_ptr<mfem::Coefficient>
-SurfacePostOperator::SurfaceFluxData::GetCoefficient(int i, const mfem::ParGridFunction &U,
-                                                     const MaterialOperator &mat_op) const
+std::unique_ptr<mfem::Coefficient> SurfacePostOperator::SurfaceFluxData::GetCoefficient(
+    std::size_t i, const mfem::ParGridFunction &U, const MaterialOperator &mat_op) const
 {
-  return std::make_unique<BdrFluxCoefficient>(U, direction,
-                                              mat_op.GetLocalToSharedFaceMap());
+  return std::make_unique<RestrictedCoefficient>(
+      std::make_unique<BdrFluxCoefficient>(U, mat_op, direction), attr_lists[0]);
 }
 
 SurfacePostOperator::SurfacePostOperator(const IoData &iodata,
@@ -248,13 +251,18 @@ double SurfacePostOperator::GetLocalSurfaceIntegral(const SurfaceData &data,
                                                     const mfem::ParGridFunction &U) const
 {
   // Integrate the coefficient over the boundary attributes making up this surface index.
-  std::vector<std::unique_ptr<mfem::Coefficient>> fb;
-  mfem::LinearForm s(const_cast<mfem::FiniteElementSpace *>(ones.FESpace()));
-  for (int i = 0; i < static_cast<int>(data.attr_markers.size()); i++)
+  const auto &mesh = *U.ParFESpace()->GetParMesh();
+  SumCoefficient fb;
+  mfem::Array<int> attr_list;
+  for (std::size_t i = 0; i < data.attr_markers.size(); i++)
   {
-    fb.emplace_back(data.GetCoefficient(i, U, mat_op));
-    s.AddBoundaryIntegrator(new BoundaryLFIntegrator(*fb.back()), data.attr_markers[i]);
+    fb.AddCoefficient(data.GetCoefficient(i, U, mat_op));
+    attr_list.Append(data.attr_lists[i]);
   }
+  int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+  mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, attr_list);
+  mfem::LinearForm s(ones.FESpace());
+  s.AddBoundaryIntegrator(new BoundaryLFIntegrator(*fb.back()), attr_marker);
   s.UseFastAssembly(false);
   s.Assemble();
   return s * ones;

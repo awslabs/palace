@@ -464,41 +464,45 @@ ElementTypeInfo CheckElements(mfem::Mesh &mesh)
   return {bool(meshgen & 1), bool(meshgen & 2), bool(meshgen & 4), bool(meshgen & 8)};
 }
 
-void AttrToMarker(int max_attr, const mfem::Array<int> &attrs, mfem::Array<int> &marker)
+namespace
 {
-  MFEM_VERIFY(attrs.Size() == 0 || attrs.Max() <= max_attr,
-              "Invalid attribute number present (" << attrs.Max() << ")!");
-  marker.SetSize(max_attr);
-  if (attrs.Size() == 1 && attrs[0] == -1)
-  {
-    marker = 1;
-  }
-  else
-  {
-    marker = 0;
-    for (auto attr : attrs)
-    {
-      MFEM_VERIFY(attr > 0, "Attribute number less than one!");
-      MFEM_VERIFY(marker[attr - 1] == 0, "Repeate attribute in attribute list!");
-      marker[attr - 1] = 1;
-    }
-  }
+
+auto AttrListSize(const mfem::Array<int> &attr_list)
+{
+  return attr_list.Size();
 }
 
-void AttrToMarker(int max_attr, const std::vector<int> &attrs, mfem::Array<int> &marker)
+auto AttrListSize(const std::vector<int> &attr_list)
 {
-  MFEM_VERIFY(attrs.empty() || *std::max_element(attrs.begin(), attrs.end()) <= max_attr,
-              "Invalid attribute number present ("
-                  << *std::max_element(attrs.begin(), attrs.end()) << ")!");
+  return attr_list.size();
+}
+
+auto AttrListMax(const mfem::Array<int> &attr_list)
+{
+  return attr_list.Max()
+}
+
+auto AttrListMax(const std::vector<int> &attr_list)
+{
+  return *std::max_element(attr_list.begin(), attr_list.end());
+}
+
+}  // namespace
+
+template <typename T>
+void AttrToMarker(int max_attr, const T &attr_list, mfem::Array<int> &marker)
+{
+  MFEM_VERIFY(AttrListSize(attr_list) == 0 || AttrListMax(attr_list) <= max_attr,
+              "Invalid attribute number present (" << AttrListMax(attr_list) << ")!");
   marker.SetSize(max_attr);
-  if (attrs.size() == 1 && attrs[0] == -1)
+  if (AttrListSize(attr_list) == 1 && attr_list[0] == -1)
   {
     marker = 1;
   }
   else
   {
     marker = 0;
-    for (auto attr : attrs)
+    for (auto attr : attr_list)
     {
       MFEM_VERIFY(attr > 0, "Attribute number less than one!");
       MFEM_VERIFY(marker[attr - 1] == 0, "Repeate attribute in attribute list!");
@@ -2004,5 +2008,8 @@ void RebalanceConformalMesh(std::unique_ptr<mfem::ParMesh> &pmesh, double length
 }
 
 }  // namespace
+
+template void AttrToMarker(int, const mfem::Array<int> &, mfem::Array<int> &);
+template void AttrToMarker(int, const std::vector<int> &, mfem::Array<int> &);
 
 }  // namespace palace

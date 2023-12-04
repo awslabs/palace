@@ -5,8 +5,8 @@
 #define PALACE_FEM_COEFFICIENT_HPP
 
 #include <complex>
-#include <map>
 #include <memory>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 #include <mfem.hpp>
@@ -178,7 +178,7 @@ class BdrGridFunctionCoefficient
 {
 protected:
   mfem::ParMesh &mesh;
-  const std::map<int, int> &local_to_shared;
+  const std::unordered_map<int, int> &local_to_shared;
 
   void GetElementTransformations(mfem::ElementTransformation &T,
                                  const mfem::IntegrationPoint &ip,
@@ -187,7 +187,8 @@ protected:
                                  mfem::Vector *C1 = nullptr);
 
 public:
-  BdrGridFunctionCoefficient(mfem::ParMesh &mesh, const std::map<int, int> &local_to_shared)
+  BdrGridFunctionCoefficient(mfem::ParMesh &mesh,
+                             const std::unordered_map<int, int> &local_to_shared)
     : mesh(mesh), local_to_shared(local_to_shared)
   {
   }
@@ -217,7 +218,7 @@ private:
 public:
   BdrCurrentVectorCoefficient(const mfem::ParGridFunction &gf,
                               const MaterialOperator &mat_op)
-    : mfem::VectorCoefficient(gf.ParFESpace()->GetParMesh()->SpaceDimension()),
+    : mfem::VectorCoefficient(mat_op.SpaceDimension()),
       BdrGridFunctionCoefficient(*gf.ParFESpace()->GetParMesh(),
                                  mat_op.GetLocalToSharedFaceMap()),
       B(gf), mat_op(mat_op), C1(gf.VectorDim()), W(gf.VectorDim()), VU(gf.VectorDim()),
@@ -316,11 +317,11 @@ private:
   mfem::Vector V, VL, nor;
 
 public:
-  BdrFluxCoefficient(const mfem::ParGridFunction &gf, mfem::Vector d,
-                     const std::map<int, int> &local_to_shared)
-    : mfem::Coefficient(),
-      BdrGridFunctionCoefficient(*gf.ParFESpace()->GetParMesh(), local_to_shared), B(gf),
-      dir(std::move(d)), V(gf.VectorDim()), VL(gf.VectorDim()), nor(gf.VectorDim())
+  BdrFluxCoefficient(const mfem::ParGridFunction &gf, const MaterialOperator &mat_op,
+                     const mfem::Vector &d)
+    : mfem::Coefficient(), BdrGridFunctionCoefficient(*gf.ParFESpace()->GetParMesh(),
+                                                      mat_op.GetLocalToSharedFaceMap()),
+      B(gf), dir(d), V(gf.VectorDim()), VL(gf.VectorDim()), nor(gf.VectorDim())
   {
   }
 
@@ -413,10 +414,10 @@ private:
 public:
   DielectricInterfaceCoefficient(const mfem::ParGridFunction &gf,
                                  const MaterialOperator &mat_op, double ti, double ei,
-                                 mfem::Vector s)
+                                 const mfem::Vector &s)
     : mfem::Coefficient(), BdrGridFunctionCoefficient(*gf.ParFESpace()->GetParMesh(),
                                                       mat_op.GetLocalToSharedFaceMap()),
-      E(gf), mat_op(mat_op), ts(ti), epsilon(ei), side(std::move(s)), C1(gf.VectorDim()),
+      E(gf), mat_op(mat_op), ts(ti), epsilon(ei), side(s), C1(gf.VectorDim()),
       V(gf.VectorDim()), nor(gf.VectorDim())
   {
   }
@@ -505,7 +506,7 @@ public:
   EnergyDensityCoefficient(const GridFunctionType &gf, const MaterialOperator &mat_op)
     : mfem::Coefficient(), BdrGridFunctionCoefficient(*gf.ParFESpace()->GetParMesh(),
                                                       mat_op.GetLocalToSharedFaceMap()),
-      U(gf), mat_op(mat_op), V(gf.ParFESpace()->GetParMesh()->SpaceDimension())
+      U(gf), mat_op(mat_op), V(mat_op.SpaceDimension())
   {
   }
 
@@ -596,7 +597,7 @@ private:
 
 public:
   BdrFieldVectorCoefficient(const mfem::ParGridFunction &gf, const MaterialOperator &mat_op)
-    : mfem::VectorCoefficient(gf.ParFESpace()->GetParMesh()->SpaceDimension()),
+    : mfem::VectorCoefficient(mat_op.SpaceDimension()),
       BdrGridFunctionCoefficient(*gf.ParFESpace()->GetParMesh(),
                                  mat_op.GetLocalToSharedFaceMap()),
       U(gf), mat_op(mat_op)
@@ -658,123 +659,146 @@ public:
   }
 };
 
-// Wraps a mfem::MatrixCoefficient to compute a scalar coefficient as nᵀ M n. Only works
-// for square matrix coefficients of size equal to the spatial dimension.
-class NormalProjectedCoefficient : public mfem::Coefficient
-{
-  std::unique_ptr<mfem::MatrixCoefficient> c;
-  mfem::DenseMatrix K;
-  mfem::Vector nor;
-
-public:
-  NormalProjectedCoefficient(std::unique_ptr<mfem::MatrixCoefficient> &&coef)
-    : mfem::Coefficient(), c(std::move(coef)), K(c->GetHeight(), c->GetWidth()),
-      nor(c->GetHeight())
-  {
-  }
-
-  double Eval(mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip) override
-  {
-    c->Eval(K, T, ip);
-    BdrGridFunctionCoefficient::GetNormal(T, nor);
-    return K.InnerProduct(nor, nor);
-  }
-};
+//
+// More helpful coefficient types. Wrapper coefficients allow additions of scalar and vector
+// or matrix coefficients. Restricted coefficients only compute the coefficient if for the
+// given list of attributes. Sum coefficients own a list of coefficients to add.
+//
 
 class VectorWrappedCoefficient : public mfem::VectorCoefficient
 {
 private:
-  std::unique_ptr<mfem::Coefficient> c;
+  std::unique_ptr<mfem::Coefficient> coeff;
 
 public:
-  VectorWrappedCoefficient(int d, std::unique_ptr<mfem::Coefficient> &&coef)
-    : mfem::VectorCoefficient(d), c(std::move(coef))
+  VectorWrappedCoefficient(int dim, std::unique_ptr<mfem::Coefficient> &&coeff)
+    : mfem::VectorCoefficient(dim), coeff(std::move(coeff))
   {
-  }
-
-  void SetTime(double t) override
-  {
-    mfem::VectorCoefficient::SetTime(t);
-    c->SetTime(t);
   }
 
   void Eval(mfem::Vector &V, mfem::ElementTransformation &T,
             const mfem::IntegrationPoint &ip) override
   {
     V.SetSize(vdim);
-    V = c->Eval(T, ip);
+    V = coeff->Eval(T, ip);
   }
 };
 
 class MatrixWrappedCoefficient : public mfem::MatrixCoefficient
 {
 private:
-  std::unique_ptr<mfem::Coefficient> c;
+  std::unique_ptr<mfem::Coefficient> coeff;
 
 public:
-  MatrixWrappedCoefficient(int d, std::unique_ptr<mfem::Coefficient> &&coef)
-    : mfem::MatrixCoefficient(d), c(std::move(coef))
+  MatrixWrappedCoefficient(int dim, std::unique_ptr<mfem::Coefficient> &&coeff)
+    : mfem::MatrixCoefficient(dim), coeff(std::move(coeff))
   {
-  }
-
-  void SetTime(double t) override
-  {
-    mfem::MatrixCoefficient::SetTime(t);
-    c->SetTime(t);
   }
 
   void Eval(mfem::DenseMatrix &K, mfem::ElementTransformation &T,
             const mfem::IntegrationPoint &ip) override
   {
-    K.Diag(c->Eval(T, ip), height);
+    K.Diag(coeff->Eval(T, ip), height);
+  }
+};
+
+class RestrictedCoefficient : public mfem::Coefficient
+{
+private:
+  std::unique_ptr<mfem::Coefficient> coeff;
+  const mfem::Array<int> &attr;
+
+public:
+  RestrictedCoefficient(std::unique_ptr<mfem::Coefficient> &&coeff,
+                        const mfem::Array<int> &attr)
+    : mfem::Coefficient(), coeff(std::move(coeff)), attr(attr)
+  {
+  }
+
+  double Eval(mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip) override
+  {
+    return (attr.Find(T.Attribute) < 0) ? 0.0 : coeff->Eval(T, ip);
+  }
+};
+
+class RestrictedVectorCoefficient : public mfem::VectorCoefficient
+{
+private:
+  std::unique_ptr<mfem::VectorCoefficient> coeff;
+  const mfem::Array<int> &attr;
+
+public:
+  RestrictedVectorCoefficient(std::unique_ptr<mfem::VectorCoefficient> &&coeff,
+                              const mfem::Array<int> &attr)
+    : mfem::VectorCoefficient(coeff->GetVDim()), coeff(std::move(coeff)), attr(attr)
+  {
+  }
+
+  void Eval(mfem::Vector &V, mfem::ElementTransformation &T,
+            const mfem::IntegrationPoint &ip) override
+  {
+    if (attr.Find(T.Attribute) < 0)
+    {
+      V.SetSize(vdim);
+      V = 0.0;
+    }
+    else
+    {
+      coeff->Eval(V, T, ip);
+    }
+  }
+};
+
+class RestrictedMatrixCoefficient : public mfem::MatrixCoefficient
+{
+private:
+  std::unique_ptr<mfem::MatrixCoefficient> coeff;
+  const mfem::Array<int> &attr;
+
+public:
+  RestrictedMatrixCoefficient(std::unique_ptr<mfem::MatrixCoefficient> &&coeff,
+                              const mfem::Array<int> &attr)
+    : mfem::MatrixCoefficient(coeff->GetHeight(), coeff->GetWidth()),
+      coeff(std::move(coeff)), attr(attr)
+  {
+  }
+
+  void Eval(mfem::DenseMatrix &K, mfem::ElementTransformation &T,
+            const mfem::IntegrationPoint &ip) override
+  {
+    if (attr.Find(T.Attribute) < 0)
+    {
+      K.SetSize(height, width);
+      K = 0.0;
+    }
+    else
+    {
+      coeff->Eval(K, T, ip);
+    }
   }
 };
 
 class SumCoefficient : public mfem::Coefficient
 {
 private:
-  std::vector<std::pair<std::unique_ptr<mfem::Coefficient>, const mfem::Array<int> *>> c;
-
-  void AddCoefficient(std::unique_ptr<mfem::Coefficient> &&coef,
-                      const mfem::Array<int> *marker)
-  {
-    c.emplace_back(std::move(coef), marker);
-  }
+  std::vector<std::pair<std::unique_ptr<mfem::Coefficient>, double>> c;
 
 public:
   SumCoefficient() : mfem::Coefficient() {}
 
   bool empty() const { return c.empty(); }
 
-  void AddCoefficient(std::unique_ptr<mfem::Coefficient> &&coef)
+  void AddCoefficient(std::unique_ptr<mfem::Coefficient> &&coeff, double a = 1.0)
   {
-    AddCoefficient(std::move(coef), nullptr);
-  }
-
-  void AddCoefficient(std::unique_ptr<mfem::Coefficient> &&coef,
-                      const mfem::Array<int> &marker)
-  {
-    AddCoefficient(std::move(coef), &marker);
-  }
-
-  void SetTime(double t) override
-  {
-    mfem::Coefficient::SetTime(t);
-    for (auto &[coef, marker] : c)
-    {
-      coef->SetTime(t);
-    }
+    c.emplace_back(std::move(coeff), a);
   }
 
   double Eval(mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip) override
   {
     double val = 0.0;
-    for (auto &[coef, marker] : c)
+    for (auto &[coeff, a] : c)
     {
-      if (!marker || (*marker)[T.Attribute - 1])
-      {
-        val += coef->Eval(T, ip);
-      }
+      val += a * coeff->Eval(T, ip);
     }
     return val;
   }
@@ -783,21 +807,12 @@ public:
 class SumVectorCoefficient : public mfem::VectorCoefficient
 {
 private:
-  std::vector<std::pair<std::unique_ptr<mfem::VectorCoefficient>, const mfem::Array<int> *>>
-      c;
+  std::vector<std::pair<std::unique_ptr<mfem::VectorCoefficient>, double>> c;
 
-  void AddCoefficient(std::unique_ptr<mfem::VectorCoefficient> &&coef,
+  void AddCoefficient(std::unique_ptr<mfem::Coefficient> &&coeff,
                       const mfem::Array<int> *marker)
   {
-    MFEM_VERIFY(coef->GetVDim() == vdim,
-                "Invalid VectorCoefficient dimensions for SumVectorCoefficient!");
-    c.emplace_back(std::move(coef), marker);
-  }
-
-  void AddCoefficient(std::unique_ptr<mfem::Coefficient> &&coef,
-                      const mfem::Array<int> *marker)
-  {
-    c.emplace_back(std::make_unique<VectorWrappedCoefficient>(vdim, std::move(coef)),
+    c.emplace_back(std::make_unique<VectorWrappedCoefficient>(vdim, std::move(coeff)),
                    marker);
   }
 
@@ -806,35 +821,16 @@ public:
 
   bool empty() const { return c.empty(); }
 
-  void AddCoefficient(std::unique_ptr<mfem::VectorCoefficient> &&coef)
+  void AddCoefficient(std::unique_ptr<mfem::VectorCoefficient> &&coeff, double a = 1.0)
   {
-    AddCoefficient(std::move(coef), nullptr);
+    MFEM_VERIFY(coeff->GetVDim() == vdim,
+                "Invalid VectorCoefficient dimensions for SumVectorCoefficient!");
+    c.emplace_back(std::move(coeff), a);
   }
 
-  void AddCoefficient(std::unique_ptr<mfem::VectorCoefficient> &&coef,
-                      const mfem::Array<int> &marker)
+  void AddCoefficient(std::unique_ptr<mfem::Coefficient> &&coeff, double a = 1.0)
   {
-    AddCoefficient(std::move(coef), &marker);
-  }
-
-  void AddCoefficient(std::unique_ptr<mfem::Coefficient> &&coef)
-  {
-    AddCoefficient(std::move(coef), nullptr);
-  }
-
-  void AddCoefficient(std::unique_ptr<mfem::Coefficient> &&coef,
-                      const mfem::Array<int> &marker)
-  {
-    AddCoefficient(std::move(coef), &marker);
-  }
-
-  void SetTime(double t) override
-  {
-    mfem::VectorCoefficient::SetTime(t);
-    for (auto &[coef, marker] : c)
-    {
-      coef->SetTime(t);
-    }
+    c.emplace_back(std::make_unique<VectorWrappedCoefficient>(vdim, std::move(coeff)), a);
   }
 
   void Eval(mfem::Vector &V, mfem::ElementTransformation &T,
@@ -843,13 +839,10 @@ public:
     mfem::Vector U(vdim);
     V.SetSize(vdim);
     V = 0.0;
-    for (auto &[coef, marker] : c)
+    for (auto &[coeff, a] : c)
     {
-      if (!marker || (*marker)[T.Attribute - 1])
-      {
-        coef->Eval(U, T, ip);
-        V += U;
-      }
+      coeff->Eval(U, T, ip);
+      V.Add(a, U);
     }
   }
 };
@@ -857,25 +850,7 @@ public:
 class SumMatrixCoefficient : public mfem::MatrixCoefficient
 {
 private:
-  std::vector<std::pair<std::unique_ptr<mfem::MatrixCoefficient>, const mfem::Array<int> *>>
-      c;
-
-  void AddCoefficient(std::unique_ptr<mfem::MatrixCoefficient> &&coef,
-                      const mfem::Array<int> *marker)
-  {
-    MFEM_VERIFY(coef->GetHeight() == height && coef->GetWidth() == width,
-                "Invalid MatrixCoefficient dimensions for SumMatrixCoefficient!");
-    c.emplace_back(std::move(coef), marker);
-  }
-
-  void AddCoefficient(std::unique_ptr<mfem::Coefficient> &&coef,
-                      const mfem::Array<int> *marker)
-  {
-    MFEM_VERIFY(width == height, "MatrixWrappedCoefficient can only be constructed for "
-                                 "square MatrixCoefficient objects!");
-    c.emplace_back(std::make_unique<MatrixWrappedCoefficient>(height, std::move(coef)),
-                   marker);
-  }
+  std::vector<std::pair<std::unique_ptr<mfem::MatrixCoefficient>, double>> c;
 
 public:
   SumMatrixCoefficient(int d) : mfem::MatrixCoefficient(d) {}
@@ -883,35 +858,18 @@ public:
 
   bool empty() const { return c.empty(); }
 
-  void AddCoefficient(std::unique_ptr<mfem::MatrixCoefficient> &&coef)
+  void AddCoefficient(std::unique_ptr<mfem::MatrixCoefficient> &&coeff, double a)
   {
-    AddCoefficient(std::move(coef), nullptr);
+    MFEM_VERIFY(coeff->GetHeight() == height && coeff->GetWidth() == width,
+                "Invalid MatrixCoefficient dimensions for SumMatrixCoefficient!");
+    c.emplace_back(std::move(coeff), a);
   }
 
-  void AddCoefficient(std::unique_ptr<mfem::MatrixCoefficient> &&coef,
-                      const mfem::Array<int> &marker)
+  void AddCoefficient(std::unique_ptr<mfem::Coefficient> &&coeff, double a)
   {
-    AddCoefficient(std::move(coef), &marker);
-  }
-
-  void AddCoefficient(std::unique_ptr<mfem::Coefficient> &&coef)
-  {
-    AddCoefficient(std::move(coef), nullptr);
-  }
-
-  void AddCoefficient(std::unique_ptr<mfem::Coefficient> &&coef,
-                      const mfem::Array<int> &marker)
-  {
-    AddCoefficient(std::move(coef), &marker);
-  }
-
-  void SetTime(double t) override
-  {
-    mfem::MatrixCoefficient::SetTime(t);
-    for (auto &[coef, marker] : c)
-    {
-      coef->SetTime(t);
-    }
+    MFEM_VERIFY(width == height, "MatrixWrappedCoefficient can only be constructed for "
+                                 "square MatrixCoefficient objects!");
+    c.emplace_back(std::make_unique<MatrixWrappedCoefficient>(height, std::move(coeff)), a);
   }
 
   void Eval(mfem::DenseMatrix &K, mfem::ElementTransformation &T,
@@ -920,13 +878,10 @@ public:
     mfem::DenseMatrix M(height, width);
     K.SetSize(height, width);
     K = 0.0;
-    for (auto &[coef, marker] : c)
+    for (auto &[coeff, a] : c)
     {
-      if (!marker || (*marker)[T.Attribute - 1])
-      {
-        coef->Eval(M, T, ip);
-        K += M;
-      }
+      coeff->Eval(M, T, ip);
+      K.Add(a, M);
     }
   }
 };

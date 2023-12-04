@@ -23,19 +23,16 @@ private:
   // Reference to material property data (not owned).
   const MaterialOperator &mat_op;
 
-  // List of all finite conductivity boundary attributes.
-  mfem::Array<int> conductivity_attr;
-
   // Surface properties for finite conductivity boundary attributes: conductor conductivity
   // and permeability, and (optionally) thickness.
   struct ConductivityData
   {
     double sigma, mu, h;
-    mfem::Array<int> attr;
+    mfem::Array<int> attr_list;
   };
-  std::vector<ConductivityData> conductivty_data;
+  std::vector<ConductivityData> boundaries;
 
-  mfem::Array<int> SetUpBoundaryProperties(const IoData &iodata, const mfem::ParMesh &mesh);
+  void SetUpBoundaryProperties(const IoData &iodata, const mfem::ParMesh &mesh);
   void PrintBoundaryInfo(const IoData &iodata, mfem::ParMesh &mesh);
 
 public:
@@ -43,7 +40,7 @@ public:
                               mfem::ParMesh &mesh);
 
   // Returns array of finite conductivity boundary attributes.
-  const auto &GetAttrList() const { return conductivity_attr; }
+  mfem::Array<int> GetAttrList() const;
 
   // Add contributions to system matrix for a finite conductivity boundary condition.
   void AddExtraSystemBdrCoefficients(double omega, MaterialPropertyCoefficient &fbr,

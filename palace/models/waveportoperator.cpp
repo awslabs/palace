@@ -34,16 +34,19 @@ void GetEssentialTrueDofs(mfem::ParGridFunction &E0t, mfem::ParGridFunction &E0n
                           mfem::ParGridFunction &port_E0t, mfem::ParGridFunction &port_E0n,
                           mfem::ParTransferMap &port_nd_transfer,
                           mfem::ParTransferMap &port_h1_transfer,
-                          const mfem::Array<int> &dbc_marker,
+                          const mfem::Array<int> &dbc_attr,
                           mfem::Array<int> &port_nd_dbc_tdof_list,
                           mfem::Array<int> &port_h1_dbc_tdof_list)
 {
-  mfem::ParFiniteElementSpace &nd_fespace = *E0t.ParFESpace();
-  mfem::ParFiniteElementSpace &h1_fespace = *E0n.ParFESpace();
-  mfem::ParFiniteElementSpace &port_nd_fespace = *port_E0t.ParFESpace();
-  mfem::ParFiniteElementSpace &port_h1_fespace = *port_E0n.ParFESpace();
+  const auto &nd_fespace = *E0t.ParFESpace();
+  const auto &h1_fespace = *E0n.ParFESpace();
+  const auto &port_nd_fespace = *port_E0t.ParFESpace();
+  const auto &port_h1_fespace = *port_E0n.ParFESpace();
+  const auto &mesh = *nd_fespace.GetParMesh();
 
-  mfem::Array<int> nd_dbc_tdof_list, h1_dbc_tdof_list;
+  mfem::Array<int> dbc_marker, nd_dbc_tdof_list, h1_dbc_tdof_list;
+  mesh::AttrToMarker(mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0, dbc_attr,
+                     dbc_marker);
   nd_fespace.GetEssentialTrueDofs(dbc_marker, nd_dbc_tdof_list);
   h1_fespace.GetEssentialTrueDofs(dbc_marker, h1_dbc_tdof_list);
 
@@ -77,15 +80,35 @@ void GetEssentialTrueDofs(mfem::ParGridFunction &E0t, mfem::ParGridFunction &E0n
   }
 }
 
+void GetInitialSpace(const mfem::ParFiniteElementSpace &nd_fespace,
+                     const mfem::ParFiniteElementSpace &h1_fespace,
+                     const mfem::Array<int> &nd_dbc_tdof_list,
+                     const mfem::Array<int> &h1_dbc_tdof_list, ComplexVector &v)
+{
+  // Initial space chosen as such that B v₀ = y₀, with y₀ = [y₀ₜ, 0, ... 0]ᵀ ⟂ null(A)
+  // (with Aₜₜ nonsingular). See Lee, Sun, and Cendes, 1991 for reference.
+  // Note: When the eigenvalue solver uses a standard ℓ²-inner product instead of B-inner
+  // product (since we use a general non-Hermitian solver due to complex symmetric B), then
+  // we just use v0 = y0 directly.
+  v.SetSize(nd_fespace.GetTrueVSize() + h1_fespace.GetTrueVSize());
+  // linalg::SetRandomReal(nd_fespace.GetComm(), v);
+  v = std::complex<double>(1.0, 0.0);
+  linalg::SetSubVector(v, nd_dbc_tdof_list, 0.0);
+  for (int i = nd_fespace.GetTrueVSize();
+       i < nd_fespace.GetTrueVSize() + h1_fespace.GetTrueVSize(); i++)
+  {
+    v.Real()[i] = v.Imag()[i] = 0.0;
+  }
+}
+
 constexpr bool skip_zeros = false;
 
 std::unique_ptr<ParOperator> GetBtt(const MaterialOperator &mat_op,
                                     const FiniteElementSpace &nd_fespace)
 {
   // Mass matrix: Bₜₜ = (μ⁻¹ u, v).
-  constexpr auto MatType = MaterialPropertyType::INV_PERMEABILITY;
-  constexpr auto ElemType = MeshElementType::BDR_SUBMESH;
-  MaterialPropertyCoefficient<MatType, ElemType> muinv_func(mat_op);
+  MaterialPropertyCoefficient muinv_func(mat_op.GetBdrAttributeToMaterial(),
+                                         mat_op.GetInvPermeability());
   BilinearForm btt(nd_fespace);
   btt.AddDomainIntegrator<VectorFEMassIntegrator>(muinv_func);
   return std::make_unique<ParOperator>(btt.FullAssemble(skip_zeros), nd_fespace);
@@ -96,9 +119,8 @@ std::unique_ptr<ParOperator> GetBtn(const MaterialOperator &mat_op,
                                     const FiniteElementSpace &h1_fespace)
 {
   // Mass matrix: Bₜₙ = (μ⁻¹ ∇ₜ u, v).
-  constexpr auto MatType = MaterialPropertyType::INV_PERMEABILITY;
-  constexpr auto ElemType = MeshElementType::BDR_SUBMESH;
-  MaterialPropertyCoefficient<MatType, ElemType> muinv_func(mat_op);
+  MaterialPropertyCoefficient muinv_func(mat_op.GetBdrAttributeToMaterial(),
+                                         mat_op.GetInvPermeability());
   BilinearForm btn(h1_fespace, nd_fespace);
   btn.AddDomainIntegrator<MixedVectorGradientIntegrator>(muinv_func);
   return std::make_unique<ParOperator>(btn.FullAssemble(skip_zeros), h1_fespace, nd_fespace,
@@ -109,15 +131,13 @@ std::array<std::unique_ptr<ParOperator>, 3> GetBnn(const MaterialOperator &mat_o
                                                    const FiniteElementSpace &h1_fespace)
 {
   // Mass matrix: Bₙₙ = (μ⁻¹ ∇ₜ u, ∇ₜ v) - ω² (ε u, v) = Bₙₙ₁ - ω² Bₙₙ₂.
-  constexpr auto MatTypeMuInv = MaterialPropertyType::INV_PERMEABILITY;
-  constexpr auto ElemType = MeshElementType::BDR_SUBMESH;
-  MaterialPropertyCoefficient<MatTypeMuInv, ElemType> muinv_func(mat_op);
+  MaterialPropertyCoefficient muinv_func(mat_op.GetBdrAttributeToMaterial(),
+                                         mat_op.GetInvPermeability());
   BilinearForm bnn1(h1_fespace);
   bnn1.AddDomainIntegrator<DiffusionIntegrator>(muinv_func);
 
-  constexpr auto MatTypeEpsReal = MaterialPropertyType::PERMITTIVITY_REAL;
-  NormalProjectedCoefficient epsilon_func(
-      std::make_unique<MaterialPropertyCoefficient<MatTypeEpsReal, ElemType>>(mat_op));
+  MaterialPropertyCoefficient epsilon_func(mat_op.GetBdrAttributeToMaterial(),
+                                           mat_op.GetPermittivityReal());
   BilinearForm bnn2r(h1_fespace);
   bnn2r.AddDomainIntegrator<MassIntegrator>(epsilon_func);
 
@@ -128,9 +148,8 @@ std::array<std::unique_ptr<ParOperator>, 3> GetBnn(const MaterialOperator &mat_o
             std::make_unique<ParOperator>(bnn2r.FullAssemble(skip_zeros), h1_fespace),
             nullptr};
   }
-  constexpr auto MatTypeEpsImag = MaterialPropertyType::PERMITTIVITY_IMAG;
-  NormalProjectedCoefficient negepstandelta_func(
-      std::make_unique<MaterialPropertyCoefficient<MatTypeEpsImag, ElemType>>(mat_op));
+  MaterialPropertyCoefficient negepstandelta_func(mat_op.GetBdrAttributeToMaterial(),
+                                                  mat_op.GetPermittivityImag());
   BilinearForm bnn2i(h1_fespace);
   bnn2i.AddDomainIntegrator<MassIntegrator>(negepstandelta_func);
   return {std::make_unique<ParOperator>(bnn1.FullAssemble(skip_zeros), h1_fespace),
@@ -142,15 +161,13 @@ std::array<std::unique_ptr<ParOperator>, 3> GetAtt(const MaterialOperator &mat_o
                                                    const FiniteElementSpace &nd_fespace)
 {
   // Stiffness matrix: Aₜₜ = (μ⁻¹ ∇ₜ x u, ∇ₜ x v) - ω² (ε u, v) = Aₜₜ₁ - ω² Aₜₜ₂.
-  constexpr auto MatTypeMuInv = MaterialPropertyType::INV_PERMEABILITY;
-  constexpr auto ElemType = MeshElementType::BDR_SUBMESH;
-  NormalProjectedCoefficient muinv_func(
-      std::make_unique<MaterialPropertyCoefficient<MatTypeMuInv, ElemType>>(mat_op));
+  MaterialPropertyCoefficient muinv_func(mat_op.GetBdrAttributeToMaterial(),
+                                         mat_op.GetInvPermeability());
   BilinearForm att1(nd_fespace);
   att1.AddDomainIntegrator<CurlCurlIntegrator>(muinv_func);
 
-  constexpr auto MatTypeEpsReal = MaterialPropertyType::PERMITTIVITY_REAL;
-  MaterialPropertyCoefficient<MatTypeEpsReal, ElemType> epsilon_func(mat_op);
+  MaterialPropertyCoefficient epsilon_func(mat_op.GetBdrAttributeToMaterial(),
+                                           mat_op.GetPermittivityReal());
   BilinearForm att2r(nd_fespace);
   att2r.AddDomainIntegrator<VectorFEMassIntegrator>(epsilon_func);
 
@@ -161,8 +178,8 @@ std::array<std::unique_ptr<ParOperator>, 3> GetAtt(const MaterialOperator &mat_o
             std::make_unique<ParOperator>(att2r.FullAssemble(skip_zeros), nd_fespace),
             nullptr};
   }
-  constexpr auto MatTypeEpsImag = MaterialPropertyType::PERMITTIVITY_IMAG;
-  MaterialPropertyCoefficient<MatTypeEpsImag, ElemType> negepstandelta_func(mat_op);
+  MaterialPropertyCoefficient negepstandelta_func(mat_op.GetBdrAttributeToMaterial(),
+                                                  mat_op.GetPermittivityImag());
   BilinearForm att2i(nd_fespace);
   att2i.AddDomainIntegrator<VectorFEMassIntegrator>(negepstandelta_func);
   return {std::make_unique<ParOperator>(att1.FullAssemble(skip_zeros), nd_fespace),
@@ -265,27 +282,6 @@ GetSystemMatrices(std::unique_ptr<ParOperator> Btt, std::unique_ptr<ParOperator>
           std::move(B3), std::move(B4r), std::move(B4i)};
 }
 
-void GetInitialSpace(const FiniteElementSpace &nd_fespace,
-                     const FiniteElementSpace &h1_fespace,
-                     const mfem::Array<int> &nd_dbc_tdof_list,
-                     const mfem::Array<int> &h1_dbc_tdof_list, ComplexVector &v)
-{
-  // Initial space chosen as such that B v₀ = y₀, with y₀ = [y₀ₜ, 0, ... 0]ᵀ ⟂ null(A)
-  // (with Aₜₜ nonsingular). See Lee, Sun, and Cendes, 1991 for reference.
-  // Note: When the eigenvalue solver uses a standard ℓ²-inner product instead of B-inner
-  // product (since we use a general non-Hermitian solver due to complex symmetric B), then
-  // we just use v0 = y0 directly.
-  v.SetSize(nd_fespace.GetTrueVSize() + h1_fespace.GetTrueVSize());
-  // linalg::SetRandomReal(nd_fespace.GetComm(), v);
-  v = std::complex<double>(1.0, 0.0);
-  linalg::SetSubVector(v, nd_dbc_tdof_list, 0.0);
-  for (int i = nd_fespace.GetTrueVSize();
-       i < nd_fespace.GetTrueVSize() + h1_fespace.GetTrueVSize(); i++)
-  {
-    v.Real()[i] = v.Imag()[i] = 0.0;
-  }
-}
-
 void NormalizeWithSign(const mfem::ParGridFunction &S0t, mfem::ParComplexGridFunction &E0t,
                        mfem::ParComplexGridFunction &E0n, mfem::LinearForm &sr,
                        mfem::LinearForm &si)
@@ -293,12 +289,8 @@ void NormalizeWithSign(const mfem::ParGridFunction &S0t, mfem::ParComplexGridFun
   // Normalize grid functions to a chosen polarization direction and unit power, |E x H⋆| ⋅
   // n, integrated over the port surface (+n is the direction of propagation). The n x H
   // coefficients are updated implicitly as the only store references to the Et, En grid
-  // functions as well as kₙ, ω. We choose a (rather arbitrary) sign constraint to at least
-  // make results for the same port consistent between frequencies/meshes.
-  sr = 0.0;
-  si = 0.0;
-  sr.Assemble();
-  si.Assemble();
+  // functions. We choose a (rather arbitrary) sign constraint to at least make results for
+  // the same port consistent between frequencies/meshes.
 
   // |E x H⋆| ⋅ n = |E ⋅ (-n x H⋆)|
   double sign = sr * S0t;
@@ -339,40 +331,21 @@ private:
   const MaterialOperator &mat_op;
 
   mfem::ParSubMesh &submesh;
-  const mfem::ParMesh &parent;
-  std::unordered_map<int, int> submesh_elem_ids;
+  const std::unordered_map<int, int> &submesh_elems;
 
   std::complex<double> kn;
   double omega;
 
-  mfem::ParSubMesh &GetSubMesh(mfem::ParMesh &mesh)
-  {
-    MFEM_ASSERT(
-        mfem::ParSubMesh::IsParSubMesh(&mesh),
-        "BdrSubmeshHVectorCoefficient requires the input grid function coefficients "
-        "to be defined on a SubMesh!");
-    mfem::ParSubMesh &submesh = *static_cast<mfem::ParSubMesh *>(&mesh);
-    MFEM_ASSERT(submesh.GetFrom() == mfem::SubMesh::From::Boundary,
-                "BdrSubmeshHVectorCoefficient requires a SubMesh created using "
-                "CreateFromBoundary!");
-    return submesh;
-  }
-
 public:
   BdrSubmeshHVectorCoefficient(const mfem::ParComplexGridFunction &Et,
                                const mfem::ParComplexGridFunction &En,
-                               const MaterialOperator &mat_op)
-    : mfem::VectorCoefficient(Et.ParFESpace()->GetParMesh()->SpaceDimension()), Et(Et),
-      En(En), mat_op(mat_op), submesh(GetSubMesh(*Et.ParFESpace()->GetParMesh())),
-      parent(*submesh.GetParent()), kn(0.0), omega(0.0)
+                               const MaterialOperator &mat_op,
+                               const mfem::ParSubMesh &submesh,
+                               const std::unordered_map<int, int> &submesh_elems,
+                               std::complex<double> kn, double omega)
+    : mfem::VectorCoefficient(mat_op.SpaceDimension()), Et(Et), En(En), mat_op(mat_op),
+      submesh(submesh), submesh_elems(submesh_elems), kn(kn), omega(omega)
   {
-    // Construct mapping from parent (boundary) element indices to submesh (domain)
-    // elements.
-    const mfem::Array<int> &parent_element_ids = submesh.GetParentElementIDMap();
-    for (int i = 0; i < parent_element_ids.Size(); i++)
-    {
-      submesh_elem_ids[parent_element_ids[i]] = i;
-    }
   }
 
   void Eval(mfem::Vector &V, mfem::ElementTransformation &T,
@@ -380,15 +353,15 @@ public:
   {
     mfem::ElementTransformation *submesh_T = nullptr;
     int attr = 0;
-    if (T.mesh == &parent)
+    if (T.mesh == submesh.GetParent())
     {
       MFEM_ASSERT(T.ElementType == mfem::ElementTransformation::BDR_ELEMENT,
                   "BdrSubmeshHVectorCoefficient requires ElementType::BDR_ELEMENT when not "
                   "used on a SubMesh!");
-      auto it = submesh_elem_ids.find(T.ElementNo);
-      if (it == submesh_elem_ids.end())
+      auto it = submesh_elems.find(T.ElementNo);
+      if (it == submesh_elems.end())
       {
-        // Just return zero for a boundary face not in the submesh.
+        // Just return zero for a boundary element not in the submesh.
         V.SetSize(vdim);
         V = 0.0;
         return;
@@ -400,9 +373,9 @@ public:
       }
 
       int i, o, iel1, iel2;
-      parent.GetBdrElementFace(T.ElementNo, &i, &o);
-      parent.GetFaceElements(i, &iel1, &iel2);
-      attr = parent.GetAttribute(iel1);
+      submesh.GetParent()->GetBdrElementFace(T.ElementNo, &i, &o);
+      submesh.GetParent()->GetFaceElements(i, &iel1, &iel2);
+      attr = submesh.GetParent()->GetAttribute(iel1);
     }
     else if (T.mesh == &submesh)
     {
@@ -412,9 +385,10 @@ public:
       submesh_T = &T;
 
       int i, o, iel1, iel2;
-      parent.GetBdrElementFace(submesh.GetParentElementIDMap()[T.ElementNo], &i, &o);
-      parent.GetFaceElements(i, &iel1, &iel2);
-      attr = parent.GetAttribute(iel1);
+      submesh.GetParent()->GetBdrElementFace(submesh.GetParentElementIDMap()[T.ElementNo],
+                                             &i, &o);
+      submesh.GetParent()->GetFaceElements(i, &iel1, &iel2);
+      attr = submesh.GetParent()->GetAttribute(iel1);
     }
     else
     {
@@ -447,53 +421,37 @@ public:
     mat_op.GetInvPermeability(attr).Mult(U, V);
     V *= (1.0 / omega);
   }
-
-  void SetFrequency(double w, std::complex<double> k)
-  {
-    omega = w;
-    kn = k;
-  }
 };
 
 }  // namespace
 
 WavePortData::WavePortData(const config::WavePortData &data, const MaterialOperator &mat_op,
-                           const mfem::ParFiniteElementSpace &nd_fespace,
-                           const mfem::ParFiniteElementSpace &h1_fespace,
-                           const mfem::Array<int> &dbc_marker)
+                           mfem::ParFiniteElementSpace &nd_fespace,
+                           mfem::ParFiniteElementSpace &h1_fespace,
+                           const mfem::Array<int> &dbc_attr)
 {
-  excitation = data.excitation;
   mode_idx = data.mode_idx;
   d_offset = data.d_offset;
+  excitation = data.excitation;
+  kn0 = 0.0;
+  omega0 = 0.0;
 
   // Construct the SubMesh.
   MFEM_VERIFY(!data.attributes.empty(), "Wave port boundary found with no attributes!");
-  mfem::ParMesh &mesh = *nd_fespace.GetParMesh();
-  attr_list.Reserve(data.attributes.size());
-  for (auto attr : data.attributes)
-  {
-    attr_list.Append(attr);
-  }
-  mesh::AttrToMarker(nd_fespace.GetParMesh()->bdr_attributes.Size()
-                         ? nd_fespace.GetParMesh()->bdr_attributes.Max()
-                         : 0,
-                     attr_list, attr_marker);
-  port_mesh = std::make_unique<mfem::ParSubMesh>(
-      mfem::ParSubMesh::CreateFromBoundary(mesh, attr_list));
+  const auto &mesh = *nd_fespace.GetParMesh();
+  attr_list = mfem::Array<int>(data.attributes.begin(), data.attributes.end());
+  port_mesh = std::make_unique<Mesh>(std::make_unique<mfem::ParSubMesh>(
+      mfem::ParSubMesh::CreateFromBoundary(mesh, attr_list)));
+  port_nd_fec = std::make_unique<mfem::ND_FECollection>(nd_fespace.GetMaxElementOrder(),
+                                                        mesh.Dimension() - 1);
+  port_h1_fec = std::make_unique<mfem::H1_FECollection>(h1_fespace.GetMaxElementOrder(),
+                                                        mesh.Dimension() - 1);
+  port_nd_fespace = std::make_unique<FiniteElementSpace>(*port_mesh, port_nd_fec.get());
+  port_h1_fespace = std::make_unique<FiniteElementSpace>(*port_mesh, port_h1_fec.get());
 
-  int p_nd = nd_fespace.GetMaxElementOrder();
-  int p_h1 = h1_fespace.GetMaxElementOrder();
-  port_nd_fec = std::make_unique<mfem::ND_FECollection>(p_nd, mesh.Dimension() - 1);
-  port_h1_fec = std::make_unique<mfem::H1_FECollection>(p_h1, mesh.Dimension() - 1);
-  port_nd_fespace =
-      std::make_unique<FiniteElementSpace>(port_mesh.get(), port_nd_fec.get());
-  port_h1_fespace =
-      std::make_unique<FiniteElementSpace>(port_mesh.get(), port_h1_fec.get());
-
-  mfem::ParGridFunction E0t(const_cast<mfem::ParFiniteElementSpace *>(&nd_fespace)),
-      E0n(const_cast<mfem::ParFiniteElementSpace *>(&h1_fespace));
-  port_E0t = std::make_unique<mfem::ParComplexGridFunction>(port_nd_fespace.get());
-  port_E0n = std::make_unique<mfem::ParComplexGridFunction>(port_h1_fespace.get());
+  mfem::ParGridFunction E0t(&nd_fespace), E0n(&h1_fespace);
+  port_E0t = std::make_unique<mfem::ParComplexGridFunction>(&port_nd_fespace->Get());
+  port_E0n = std::make_unique<mfem::ParComplexGridFunction>(&port_h1_fespace->Get());
 
   port_nd_transfer = std::make_unique<mfem::ParTransferMap>(
       mfem::ParSubMesh::CreateTransferMap(E0t, port_E0t->real()));
@@ -503,8 +461,17 @@ WavePortData::WavePortData(const config::WavePortData &data, const MaterialOpera
   // Extract Dirichlet BC true dofs for the port FE spaces.
   mfem::Array<int> port_nd_dbc_tdof_list, port_h1_dbc_tdof_list;
   GetEssentialTrueDofs(E0t, E0n, port_E0t->real(), port_E0n->real(), *port_nd_transfer,
-                       *port_h1_transfer, dbc_marker, port_nd_dbc_tdof_list,
+                       *port_h1_transfer, dbc_attr, port_nd_dbc_tdof_list,
                        port_h1_dbc_tdof_list);
+
+  // Construct mapping from parent (boundary) element indices to submesh (domain)
+  // elements (used for boundary mode coefficient).
+  const mfem::Array<int> &parent_elems =
+      static_cast<mfem::ParSubMesh *>(&port_mesh->Get())->GetParentElementIDMap();
+  for (int i = 0; i < parent_elems.Size(); i++)
+  {
+    submesh_elems[parent_elems[i]] = i;
+  }
 
   // Construct operators for the generalized eigenvalue problem:
   //                [Aₜₜ  0] [eₜ]  = -kₙ² [Bₜₜ   Bₜₙ] [eₜ]
@@ -700,21 +667,6 @@ WavePortData::WavePortData(const config::WavePortData &data, const MaterialOpera
     eigen->SetLinearSolver(*ksp);
   }
 
-  // Coefficients store references to kₙ, ω so they are updated implicitly at each new
-  // solve. Also, μ⁻¹ is persistent, so no copy is OK.
-  kn0 = 0.0;
-  omega0 = 0.0;
-  port_nxH0r_func =
-      std::make_unique<BdrSubmeshHVectorCoefficient<true>>(*port_E0t, *port_E0n, mat_op);
-  port_nxH0i_func =
-      std::make_unique<BdrSubmeshHVectorCoefficient<false>>(*port_E0t, *port_E0n, mat_op);
-  port_sr = std::make_unique<mfem::LinearForm>(port_nd_fespace.get());
-  port_si = std::make_unique<mfem::LinearForm>(port_nd_fespace.get());
-  port_sr->AddDomainIntegrator(new VectorFEDomainLFIntegrator(*port_nxH0r_func));
-  port_si->AddDomainIntegrator(new VectorFEDomainLFIntegrator(*port_nxH0i_func));
-  port_sr->UseFastAssembly(false);
-  port_si->UseFastAssembly(false);
-
   // Configure port mode sign convention: 1ᵀ Re{-n x H} >= 0 on the "upper-right quadrant"
   // of the wave port boundary, in order to deal with symmetry effectively.
   {
@@ -759,7 +711,7 @@ WavePortData::WavePortData(const config::WavePortData &data, const MaterialOpera
       }
     };
     mfem::VectorFunctionCoefficient tfunc(dim, TDirection);
-    port_S0t = std::make_unique<mfem::ParGridFunction>(port_nd_fespace.get());
+    port_S0t = std::make_unique<mfem::ParGridFunction>(&port_nd_fespace->Get());
     port_S0t->ProjectCoefficient(tfunc);
   }
 }
@@ -827,10 +779,6 @@ void WavePortData::Initialize(double omega)
                   << "(λ = " << lambda << ")!");
   kn0 = std::sqrt(theta2 - theta2 / lambda);
   omega0 = omega;
-  static_cast<BdrSubmeshHVectorCoefficient<true> *>(port_nxH0r_func.get())
-      ->SetFrequency(omega0, kn0);
-  static_cast<BdrSubmeshHVectorCoefficient<false> *>(port_nxH0i_func.get())
-      ->SetFrequency(omega0, kn0);
 
   // Separate the computed field out into eₜ and eₙ and and transform back to true
   // electric field variables: Eₜ = eₜ/kₙ and Eₙ = ieₙ.
@@ -859,9 +807,36 @@ void WavePortData::Initialize(double omega)
   port_E0n->real().SetFromTrueDofs(e0n.Real());
   port_E0n->imag().SetFromTrueDofs(e0n.Imag());
 
-  // Normalize the mode for a chosen polarization direction and unit power, |E x H⋆| ⋅ n,
-  // integrated over the port surface (+n is the direction of propagation).
+  // Configure the linear forms for computing S-parameters (projection of the field onto the
+  // port mode). Normalize the mode for a chosen polarization direction and unit power,
+  // |E x H⋆| ⋅ n, integrated over the port surface (+n is the direction of propagation).
+  BdrSubmeshHVectorCoefficient<true> port_nxH0r_func(
+      *port_E0t, *port_E0n, mat_op, *port_mesh, submesh_elems, kn0, omega0);
+  BdrSubmeshHVectorCoefficient<false> port_nxH0i_func(
+      *port_E0t, *port_E0n, mat_op, *port_mesh, submesh_elems, kn0, omega0);
+  port_sr = std::make_unique<mfem::LinearForm>(&port_nd_fespace->Get());
+  port_si = std::make_unique<mfem::LinearForm>(&port_nd_fespace->Get());
+  port_sr->AddDomainIntegrator(new VectorFEDomainLFIntegrator(port_nxH0r_func));
+  port_si->AddDomainIntegrator(new VectorFEDomainLFIntegrator(port_nxH0i_func));
+  port_sr->Assemble();
+  port_si->Assemble();
   NormalizeWithSign(*port_S0t, *port_E0t, *port_E0n, *port_sr, *port_si);
+}
+
+std::unique_ptr<mfem::VectorCoefficient> WavePortData::GetModeCoefficientReal() const
+{
+  return std::make_unique<RestrictedVectorCoefficient>(
+      std::make_unique<BdrSubmeshHVectorCoefficient<true>>(
+          *port_E0t, *port_E0n, mat_op, *port_mesh, submesh_elems, kn0, omega0),
+      attr_list);
+}
+
+std::unique_ptr<mfem::VectorCoefficient> WavePortData::GetModeCoefficientImag() const
+{
+  return std::make_unique<RestrictedVectorCoefficient>(
+      std::make_unique<BdrSubmeshHVectorCoefficient<false>>(
+          *port_E0t, *port_E0n, mat_op, *port_mesh, submesh_elems, kn0, omega0),
+      attr_list);
 }
 
 double WavePortData::GetExcitationPower() const
@@ -893,8 +868,11 @@ std::complex<double> WavePortData::GetPower(mfem::ParComplexGridFunction &E,
   // scratch each time due to changing H. The BdrCurrentVectorCoefficient computes -n x H,
   // where n is an outward normal.
   auto &nd_fespace = *E.ParFESpace();
+  const auto &mesh = *nd_fespace.GetParMesh();
   BdrCurrentVectorCoefficient nxHr_func(B.real(), mat_op);
   BdrCurrentVectorCoefficient nxHi_func(B.imag(), mat_op);
+  int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+  mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, attr_list);
   mfem::LinearForm pr(&nd_fespace), pi(&nd_fespace);
   pr.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(nxHr_func), attr_marker);
   pi.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(nxHi_func), attr_marker);
@@ -908,10 +886,12 @@ std::complex<double> WavePortData::GetPower(mfem::ParComplexGridFunction &E,
   return dot;
 }
 
-WavePortOperator::WavePortOperator(const IoData &iod, const MaterialOperator &mat,
-                                   const mfem::ParFiniteElementSpace &nd_fespace,
-                                   const mfem::ParFiniteElementSpace &h1_fespace)
-  : iodata(iod), mat_op(mat), suppress_output(false)
+WavePortOperator::WavePortOperator(const IoData &iodata, const MaterialOperator &mat_op,
+                                   mfem::ParFiniteElementSpace &nd_fespace,
+                                   mfem::ParFiniteElementSpace &h1_fespace)
+  : suppress_output(false),
+    fc(iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, 1.0)),
+    kc(1.0 / iodata.DimensionalizeValue(IoData::ValueType::LENGTH, 1.0))
 {
   // Set up wave port boundary conditions.
   MFEM_VERIFY(nd_fespace.GetParMesh() == h1_fespace.GetParMesh(),
@@ -920,20 +900,20 @@ WavePortOperator::WavePortOperator(const IoData &iod, const MaterialOperator &ma
   PrintBoundaryInfo(iodata, *nd_fespace.GetParMesh());
 }
 
-void WavePortOperator::SetUpBoundaryProperties(
-    const IoData &iodata, const MaterialOperator &mat_op,
-    const mfem::ParFiniteElementSpace &nd_fespace,
-    const mfem::ParFiniteElementSpace &h1_fespace)
+void WavePortOperator::SetUpBoundaryProperties(const IoData &iodata,
+                                               const MaterialOperator &mat_op,
+                                               mfem::ParFiniteElementSpace &nd_fespace,
+                                               mfem::ParFiniteElementSpace &h1_fespace)
 {
   // Check that wave port boundary attributes have been specified correctly.
-  int bdr_attr_max = nd_fespace.GetParMesh()->bdr_attributes.Size()
-                         ? nd_fespace.GetParMesh()->bdr_attributes.Max()
-                         : 0;
+  const auto &mesh = *nd_fespace.GetParMesh();
+  int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   if (!iodata.boundaries.waveport.empty())
   {
-    mfem::Array<int> bdr_attr_marker(bdr_attr_max);
+    mfem::Array<int> bdr_attr_marker(bdr_attr_max), port_marker(bdr_attr_max);
     bdr_attr_marker = 0;
-    for (auto attr : nd_fespace.GetParMesh()->bdr_attributes)
+    port_marker = 0;
+    for (auto attr : mesh.bdr_attributes)
     {
       bdr_attr_marker[attr - 1] = 1;
     }
@@ -946,6 +926,9 @@ void WavePortOperator::SetUpBoundaryProperties(
                     "boundaries in the mesh!");
         MFEM_VERIFY(bdr_attr_marker[attr - 1],
                     "Unknown port boundary attribute " << attr << "!");
+        MFEM_VERIFY(!port_marker[attr - 1],
+                    "Boundary attribute is assigned to more than one wave port!");
+        port_marker[attr - 1] = 1;
       }
     }
   }
@@ -954,7 +937,7 @@ void WavePortOperator::SetUpBoundaryProperties(
   // wave port modes. This includes all PEC surfaces, but may also include others like when
   // a kinetic inductance or other BC is applied for the 3D simulation but should be
   // considered as PEC for the 2D problem.
-  mfem::Array<int> dbc_bcs, dbc_marker;
+  mfem::Array<int> dbc_bcs;
   dbc_bcs.Reserve(static_cast<int>(iodata.boundaries.pec.attributes.size() +
                                    iodata.boundaries.auxpec.attributes.size()));
   for (auto attr : iodata.boundaries.pec.attributes)
@@ -977,29 +960,15 @@ void WavePortOperator::SetUpBoundaryProperties(
   // so allow for duplicates in the attribute list.
   dbc_bcs.Sort();
   dbc_bcs.Unique();
-  mesh::AttrToMarker(bdr_attr_max, dbc_bcs, dbc_marker);
 
   // Set up wave port data structures.
   for (const auto &[idx, data] : iodata.boundaries.waveport)
   {
-    ports.try_emplace(idx, data, mat_op, nd_fespace, h1_fespace, dbc_marker);
+    ports.try_emplace(idx, data, mat_op, nd_fespace, h1_fespace, dbc_bcs);
   }
   MFEM_VERIFY(
       ports.empty() || iodata.problem.type == config::ProblemData::Type::DRIVEN,
       "Wave port boundaries are only available for frequency domain driven simulations!");
-
-  // Mark selected boundary attributes from the mesh for wave ports.
-  port_marker.SetSize(bdr_attr_max);
-  port_marker = 0;
-  for (const auto &[idx, data] : ports)
-  {
-    for (int i = 0; i < data.GetMarker().Size(); i++)
-    {
-      MFEM_VERIFY(!(port_marker[i] && data.GetMarker()[i]),
-                  "Boundary attribute is assigned to more than one wave port!");
-      port_marker[i] = port_marker[i] || data.GetMarker()[i];
-    }
-  }
 }
 
 void WavePortOperator::PrintBoundaryInfo(const IoData &iodata, mfem::ParMesh &mesh)
@@ -1012,18 +981,12 @@ void WavePortOperator::PrintBoundaryInfo(const IoData &iodata, mfem::ParMesh &me
   Mpi::Print("\nConfiguring Robin impedance BC for wave ports at attributes:\n");
   for (const auto &[idx, data] : ports)
   {
-    for (int i = 0; i < data.GetMarker().Size(); i++)
+    for (auto attr : data.attr_list)
     {
-      if (!data.GetMarker()[i])
-      {
-        continue;
-      }
-      const int attr = i + 1;
       mfem::Vector nor;
       mesh::GetSurfaceNormal(mesh, attr, nor);
-      Mpi::Print(
-          " {:d}: Index = {:d}, mode = {:d}, d = {:.3e} m", attr, idx, data.GetModeIndex(),
-          iodata.DimensionalizeValue(IoData::ValueType::LENGTH, data.GetOffsetDistance()));
+      Mpi::Print(" {:d}: Index = {:d}, mode = {:d}, d = {:.3e} m", attr, idx, data.mode_idx,
+                 iodata.DimensionalizeValue(IoData::ValueType::LENGTH, data.d_offset));
       if (mesh.SpaceDimension() == 3)
       {
         Mpi::Print(", n = ({:+.1f}, {:+.1f}, {:+.1f})", nor(0), nor(1), nor(2));
@@ -1040,7 +1003,7 @@ void WavePortOperator::PrintBoundaryInfo(const IoData &iodata, mfem::ParMesh &me
   bool first = true;
   for (const auto &[idx, data] : ports)
   {
-    if (!data.IsExcited())
+    if (!data.excitation)
     {
       continue;
     }
@@ -1049,12 +1012,9 @@ void WavePortOperator::PrintBoundaryInfo(const IoData &iodata, mfem::ParMesh &me
       Mpi::Print("\nConfiguring wave port excitation source term at attributes:\n");
       first = false;
     }
-    for (int i = 0; i < data.GetMarker().Size(); i++)
+    for (auto attr : data.attr_list)
     {
-      if (data.GetMarker()[i])
-      {
-        Mpi::Print(" {:d}: Index = {:d}\n", i + 1, idx);
-      }
+      Mpi::Print(" {:d}: Index = {:d}\n", attr, idx);
     }
   }
 }
@@ -1066,13 +1026,23 @@ const WavePortData &WavePortOperator::GetPort(int idx) const
   return it->second;
 }
 
+mfem::Array<int> WavePortData::GetAttrList() const
+{
+  mfem::Array<int> attr_list;
+  for (const auto &[idx, data] : ports)
+  {
+    attr_list.Append(data.attr_list);
+  }
+  return attr_list;
+}
+
 void WavePortOperator::Initialize(double omega)
 {
   bool init = false, first = true;
   for (const auto &[idx, data] : ports)
   {
-    init = init || (data.GetOperatingFrequency() != omega);
-    first = first && (data.GetOperatingFrequency() == 0.0);
+    init = init || (data.omega0 != omega);
+    first = first && (data.omega0 == 0.0);
   }
   if (!init)
   {
@@ -1081,10 +1051,9 @@ void WavePortOperator::Initialize(double omega)
   BlockTimer bt(Timer::WAVEPORT);
   if (!suppress_output)
   {
-    const double freq = iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, omega);
     Mpi::Print(
-        "\nCalculating boundary modes at wave ports for ω/2π = {:.3e} GHz ({:.3e})\n", freq,
-        omega);
+        "\nCalculating boundary modes at wave ports for ω/2π = {:.3e} GHz ({:.3e})\n",
+        omega * fc, omega);
   }
   for (auto &[idx, data] : ports)
   {
@@ -1097,17 +1066,15 @@ void WavePortOperator::Initialize(double omega)
                    "  H1: {:d}, ND: {:d}\n",
                    idx, data.GlobalTrueH1Size(), data.GlobalTrueNDSize());
       }
-      double k0 = 1.0 / iodata.DimensionalizeValue(IoData::ValueType::LENGTH, 1.0);
-      Mpi::Print(" Port {:d}, mode {:d}: kₙ = {:.3e}{:+.3e}i m⁻¹\n", idx,
-                 data.GetModeIndex(), k0 * data.GetPropagationConstant().real(),
-                 k0 * data.GetPropagationConstant().imag());
+      Mpi::Print(" Port {:d}, mode {:d}: kₙ = {:.3e}{:+.3e}i m⁻¹\n", idx, data.mode_idx,
+                 data.kn0.real() * kc, data.kn0.imag() * kc);
     }
   }
 }
 
 void WavePortOperator::AddExtraSystemBdrCoefficients(double omega,
-                                                     SumMatrixCoefficient &fbr,
-                                                     SumMatrixCoefficient &fbi)
+                                                     MaterialPropertyCoefficient &fbr,
+                                                     MaterialPropertyCoefficient &fbi)
 {
   // Add wave port boundaries to the bilinear form. This looks a lot like the lumped port
   // boundary, except the iω / Z_s coefficient goes to ikₙ / μ where kₙ is specific to the
@@ -1116,11 +1083,15 @@ void WavePortOperator::AddExtraSystemBdrCoefficients(double omega,
   Initialize(omega);
   for (auto &[idx, data] : ports)
   {
-    constexpr auto MatType = MaterialPropertyType::INV_PERMEABILITY;
-    constexpr auto ElemType = MeshElementType::BDR_ELEMENT;
-    fbi.AddCoefficient(std::make_unique<MaterialPropertyCoefficient<MatType, ElemType>>(
-                           mat_op, data.GetPropagationConstant().real()),
-                       data.GetMarker());
+    const MaterialOperator &mat_op = data.mat_op;
+    MaterialPropertyCoefficient muinv_func(mat_op.GetBdrAttributeToMaterial(),
+                                           mat_op.GetInvPermeability());
+    muinv_func.RestrictCoefficient(mat_op.GetBdrAttributeGlobalToLocal(data.attr_list));
+    // fbr.AddCoefficient(muinv_func.GetAttributeToMaterial(),
+    //                    muinv_func.GetMaterialProperties(),
+    //                    -data.kn0.imag());
+    fbi.AddCoefficient(muinv_func.GetAttributeToMaterial(),
+                       muinv_func.GetMaterialProperties(), data.kn0.real());
   }
 }
 
@@ -1133,16 +1104,12 @@ void WavePortOperator::AddExcitationBdrCoefficients(double omega, SumVectorCoeff
   Initialize(omega);
   for (auto &[idx, data] : ports)
   {
-    if (!data.IsExcited())
+    if (!data.excitation)
     {
       continue;
     }
-    fbr.AddCoefficient(std::make_unique<mfem::ScalarVectorProductCoefficient>(
-                           2.0 * omega, data.GetModeCoefficientImag()),
-                       data.GetMarker());
-    fbi.AddCoefficient(std::make_unique<mfem::ScalarVectorProductCoefficient>(
-                           -2.0 * omega, data.GetModeCoefficientReal()),
-                       data.GetMarker());
+    fbr.AddCoefficient(data.GetModeCoefficientImag(), 2.0 * omega);
+    fbi.AddCoefficient(data.GetModeCoefficientReal(), -2.0 * omega);
   }
 }
 

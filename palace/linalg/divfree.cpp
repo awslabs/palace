@@ -6,7 +6,6 @@
 #include <limits>
 #include <mfem.hpp>
 #include "fem/bilinearform.hpp"
-#include "fem/coefficient.hpp"
 #include "fem/fespace.hpp"
 #include "fem/integrator.hpp"
 #include "linalg/amg.hpp"
@@ -25,8 +24,8 @@ DivFreeSolver::DivFreeSolver(const MaterialOperator &mat_op,
                              double tol, int max_it, int print)
 {
   constexpr bool skip_zeros = false;
-  constexpr auto MatType = MaterialPropertyType::PERMITTIVITY_REAL;
-  MaterialPropertyCoefficient<MatType> epsilon_func(mat_op);
+  MaterialPropertyCoefficient epsilon_func(mat_op.GetAttributeToMaterial(),
+                                           mat_op.GetPermittivityReal());
   {
     auto M_mg = std::make_unique<MultigridOperator>(h1_fespaces.GetNumLevels());
     for (std::size_t l = 0; l < h1_fespaces.GetNumLevels(); l++)

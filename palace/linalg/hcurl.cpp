@@ -5,7 +5,6 @@
 
 #include <mfem.hpp>
 #include "fem/bilinearform.hpp"
-#include "fem/coefficient.hpp"
 #include "fem/fespace.hpp"
 #include "fem/integrator.hpp"
 #include "linalg/ams.hpp"
@@ -25,10 +24,10 @@ WeightedHCurlNormSolver::WeightedHCurlNormSolver(
     int print)
 {
   constexpr bool skip_zeros = false;
-  constexpr auto MatTypeMuInv = MaterialPropertyType::INV_PERMEABILITY;
-  constexpr auto MatTypeEps = MaterialPropertyType::PERMITTIVITY_REAL;
-  MaterialPropertyCoefficient<MatTypeMuInv> muinv_func(mat_op);
-  MaterialPropertyCoefficient<MatTypeEps> epsilon_func(mat_op);
+  MaterialPropertyCoefficient muinv_func(mat_op.GetAttributeToMaterial(),
+                                         mat_op.GetInvPermeability());
+  MaterialPropertyCoefficient epsilon_func(mat_op.GetAttributeToMaterial(),
+                                           mat_op.GetPermittivityReal());
   {
     MFEM_VERIFY(h1_fespaces.GetNumLevels() == nd_fespaces.GetNumLevels(),
                 "Multigrid hierarchy mismatch for auxiliary space preconditioning!");

@@ -18,17 +18,11 @@ namespace palace
 class LumpedElementData
 {
 protected:
-  // Spatial dimension.
-  const int dim;
-
   // List of all boundary attributes making up this lumped element boundary.
   mfem::Array<int> attr_list;
 
 public:
-  LumpedElementData(int dim, const mfem::Array<int> &attr_list)
-    : dim(dim), attr_list(attr_list)
-  {
-  }
+  LumpedElementData(const mfem::Array<int> &attr_list) : attr_list(attr_list) {}
   virtual ~LumpedElementData() = default;
 
   const auto &GetAttrList() const { return attr_list; }
@@ -42,7 +36,7 @@ public:
 
 class UniformElementData : public LumpedElementData
 {
-protected:
+private:
   // Bounding box defining the rectangular lumped port.
   mesh::BoundingBox bounding_box;
 
@@ -66,7 +60,7 @@ public:
 
 class CoaxialElementData : public LumpedElementData
 {
-protected:
+private:
   // Bounding ball defined by boundary element.
   mesh::BoundingBall bounding_ball;
 

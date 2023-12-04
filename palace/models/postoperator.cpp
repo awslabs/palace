@@ -83,6 +83,9 @@ PostOperator::PostOperator(const IoData &iodata, SpaceOperator &spaceop,
   InitializeDataCollection(iodata);
   for (const auto &[idx, data] : spaceop.GetWavePortOp())
   {
+
+    // XX TODO...
+
     paraview_bdr.RegisterVCoeffField(
         "nxH^0_" + std::to_string(idx) + "_real",
         const_cast<mfem::VectorCoefficient *>(&data.GetModeCoefficientReal()));
@@ -342,13 +345,13 @@ void PostOperator::UpdatePorts(const LumpedPortOperator &lumped_port_op, double 
           omega > 0.0,
           "Frequency domain lumped port postprocessing requires nonzero frequency!");
       vi.S = data.GetSParameter(*E);
-      vi.P = data.GetPower(*E, *B, mat_op);
+      vi.P = data.GetPower(*E, *B);
       vi.V = data.GetVoltage(*E);
       vi.Z = data.GetCharacteristicImpedance(omega);
     }
     else
     {
-      vi.P = data.GetPower(E->real(), B->real(), mat_op);
+      vi.P = data.GetPower(E->real(), B->real());
       vi.V = data.GetVoltage(E->real());
       vi.S = vi.Z = 0.0;
     }
@@ -369,7 +372,7 @@ void PostOperator::UpdatePorts(const WavePortOperator &wave_port_op, double omeg
                 "Frequency domain wave port postprocessing requires nonzero frequency!");
     auto &vi = wave_port_vi[idx];
     vi.S = data.GetSParameter(*E);
-    vi.P = data.GetPower(*E, *B, mat_op);
+    vi.P = data.GetPower(*E, *B);
     vi.V = vi.Z = 0.0;  // Not yet implemented (Z = V² / P, I = V / Z)
   }
   wave_port_init = true;

@@ -13,9 +13,10 @@ namespace palace
 SurfaceImpedanceOperator::SurfaceImpedanceOperator(const IoData &iodata,
                                                    const MaterialOperator &mat_op,
                                                    mfem::ParMesh &mesh)
-  : mat_op(mat_op), impedance_attr(SetUpBoundaryProperties(iodata, mesh))
+  : mat_op(mat_op)
 {
   // Print out BC info for all impedance boundary attributes.
+  SetUpBoundaryProperties(iodata, mesh);
   PrintBoundaryInfo(iodata, mesh);
 }
 
@@ -23,11 +24,12 @@ void SurfaceImpedanceOperator::SetUpBoundaryProperties(const IoData &iodata,
                                                        const mfem::ParMesh &mesh)
 {
   // Check that impedance boundary attributes have been specified correctly.
-  int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   if (!iodata.boundaries.impedance.empty())
   {
-    mfem::Array<int> bdr_attr_marker(bdr_attr_max);
+    int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+    mfem::Array<int> bdr_attr_marker(bdr_attr_max), impedance_marker(bdr_attr_max);
     bdr_attr_marker = 0;
+    impedance_marker = 0;
     for (auto attr : mesh.bdr_attributes)
     {
       bdr_attr_marker[attr - 1] = 1;
@@ -41,98 +43,68 @@ void SurfaceImpedanceOperator::SetUpBoundaryProperties(const IoData &iodata,
                     "to attributes in the mesh!");
         MFEM_VERIFY(bdr_attr_marker[attr - 1],
                     "Unknown impedance boundary attribute " << attr << "!");
+        MFEM_VERIFY(
+            !impedance_marker[attr - 1],
+            "Multiple definitions of impedance boundary properties for boundary attribute "
+                << attr << "!");
+        impedance_marker[attr - 1] = 1;
       }
     }
   }
 
   // Impedance boundaries are defined using the user provided impedance per square.
-  mfem::Array<bool> marker(bdr_attr_max);
-  marker = false;
-  impedance_data.reserve(iodata.boundaries.impedance.size());
+  boundaries.reserve(iodata.boundaries.impedance.size());
   for (const auto &data : iodata.boundaries.impedance)
   {
     MFEM_VERIFY(std::abs(data.Rs) + std::abs(data.Ls) + std::abs(data.Cs) > 0.0,
                 "Impedance boundary has no Rs, Ls, or Cs defined!");
-    for (auto attr : data.attributes)
-    {
-      MFEM_VERIFY(
-          !marker[attr - 1],
-          "Multiple definitions of impedance boundary properties for boundary attribute "
-              << attr << "!");
-      marker[attr - 1] = true;
-    }
-    auto &Z = impedance_data.emplace_back();
-    Z.Rsinv = (std::abs(data.Rs) > 0.0) ? 1.0 / data.Rs : 0.0;
-    Z.Lsinv = (std::abs(data.Ls) > 0.0) ? 1.0 / data.Ls : 0.0;
-    Z.Cs = (std::abs(data.Cs) > 0.0) ? data.Cs : 0.0;
-    Z.attr.Append(data.attributes.data(), data.attributes.size());
+    auto &bdr = boundaries.emplace_back();
+    bdr.Rs = data.Rs;
+    bdr.Ls = data.Ls;
+    bdr.Cs = data.Cs;
+    bdr.attr_list.Append(data.attributes.data(), data.attributes.size());
   }
-
-  // Mark selected boundary attributes from the mesh as impedance.
-  mfem::Array<int> impedance_bcs;
-  for (const auto &data : iodata.boundaries.impedance)
-  {
-    impedance_bcs.Append(data.attributes.data(), data.attributes.size());
-    if (std::abs(data.Rs) > 0.0)
-    {
-      impedance_Rs_attr.Append(data.attributes.data(), data.attributes.size());
-    }
-    if (std::abs(data.Ls) > 0.0)
-    {
-      impedance_Ls_attr.Append(data.attributes.data(), data.attributes.size());
-    }
-    if (std::abs(data.Cs) > 0.0)
-    {
-      impedance_Cs_attr.Append(data.attributes.data(), data.attributes.size());
-    }
-  }
-  return impedance_bcs;
 }
 
 void SurfaceImpedanceOperator::PrintBoundaryInfo(const IoData &iodata, mfem::ParMesh &mesh)
 {
-
-  // XX TODO MARKER...
-
-  if (impedance_data.empty())
+  if (boundaries.empty())
   {
     return;
   }
   Mpi::Print("\nConfiguring Robin impedance BC at attributes:\n");
-  for (const auto &Z : impedance_data)
+  for (const auto &bdr : boundaries)
   {
-    for (auto attr : Z.attr)
+    for (auto attr : bdr.attr_list)
     {
       mfem::Vector nor;
       mesh::GetSurfaceNormal(mesh, attr, nor);
       bool comma = false;
       Mpi::Print(" {:d}:", attr);
-      if (std::abs(Z.Rsinv(i)) > 0.0)
+      if (std::abs(bdr.Rs) > 0.0)
       {
-        Mpi::Print(
-            " Rs = {:.3e} Ω/sq",
-            iodata.DimensionalizeValue(IoData::ValueType::IMPEDANCE, 1.0 / Z.Rsinv(i)));
+        Mpi::Print(" Rs = {:.3e} Ω/sq",
+                   iodata.DimensionalizeValue(IoData::ValueType::IMPEDANCE, bdr.Rs));
         comma = true;
       }
-      if (std::abs(Z.Lsinv(i)) > 0.0)
+      if (std::abs(bdr.Ls) > 0.0)
       {
         if (comma)
         {
           Mpi::Print(",");
         }
-        Mpi::Print(
-            " Ls = {:.3e} H/sq",
-            iodata.DimensionalizeValue(IoData::ValueType::INDUCTANCE, 1.0 / Z.Lsinv(i)));
+        Mpi::Print(" Ls = {:.3e} H/sq",
+                   iodata.DimensionalizeValue(IoData::ValueType::INDUCTANCE, bdr.Ls));
         comma = true;
       }
-      if (std::abs(Z.Cs(i)) > 0.0)
+      if (std::abs(bdr.Cs) > 0.0)
       {
         if (comma)
         {
           Mpi::Print(",");
         }
         Mpi::Print(" Cs = {:.3e} F/sq",
-                   iodata.DimensionalizeValue(IoData::ValueType::CAPACITANCE, Z.Cs(i)));
+                   iodata.DimensionalizeValue(IoData::ValueType::CAPACITANCE, bdr.Cs));
         comma = true;
       }
       if (comma)
@@ -152,15 +124,65 @@ void SurfaceImpedanceOperator::PrintBoundaryInfo(const IoData &iodata, mfem::Par
   }
 }
 
+mfem::Array<int> SurfaceImpedanceOperator::GetAttrList() const
+{
+  mfem::Array<int> attr_list;
+  for (const auto &bdr : boundaries)
+  {
+    attr_list.Append(bdr.attr_list);
+  }
+  return attr_list;
+}
+
+mfem::Array<int> SurfaceImpedanceOperator::GetRsAttrList() const
+{
+  mfem::Array<int> attr_list;
+  for (const auto &bdr : boundaries)
+  {
+    if (std::abs(bdr.Rs) > 0.0)
+    {
+      attr_list.Append(bdr.attr_list);
+    }
+  }
+  return attr_list;
+}
+
+mfem::Array<int> SurfaceImpedanceOperator::GetLsAttrList() const
+{
+  mfem::Array<int> attr_list;
+  for (const auto &bdr : boundaries)
+  {
+    if (std::abs(bdr.Ls) > 0.0)
+    {
+      attr_list.Append(bdr.attr_list);
+    }
+  }
+  return attr_list;
+}
+
+mfem::Array<int> SurfaceImpedanceOperator::GetCsAttrList() const
+{
+  mfem::Array<int> attr_list;
+  for (const auto &bdr : boundaries)
+  {
+    if (std::abs(bdr.Cs) > 0.0)
+    {
+      attr_list.Append(bdr.attr_list);
+    }
+  }
+  return attr_list;
+}
+
 void SurfaceImpedanceOperator::AddStiffnessBdrCoefficients(double coef,
                                                            MaterialPropertyCoefficient &fb)
 {
   // Lumped inductor boundaries.
-  for (const auto &Z : impedance_data)
+  for (const auto &bdr : boundaries)
   {
-    if (std::abs(Z.Lsinv) > 0.0)
+    if (std::abs(bdr.Ls) > 0.0)
     {
-      fb.AddMaterialProperty(mat_op.GetAttributeGlobalToLocal(Z.attr), Z.Lsinv, coef);
+      fb.AddMaterialProperty(mat_op.GetAttributeGlobalToLocal(bdr.attr_list),
+                             coef / bdr.Ls);
     }
   }
 }
@@ -169,11 +191,12 @@ void SurfaceImpedanceOperator::AddDampingBdrCoefficients(double coef,
                                                          MaterialPropertyCoefficient &fb)
 {
   // Lumped resistor boundaries.
-  for (const auto &Z : impedance_data)
+  for (const auto &bdr : boundaries)
   {
-    if (std::abs(Z.Rsinv) > 0.0)
+    if (std::abs(bdr.Rs) > 0.0)
     {
-      fb.AddMaterialProperty(mat_op.GetAttributeGlobalToLocal(Z.attr), Z.Rsinv, coef);
+      fb.AddMaterialProperty(mat_op.GetAttributeGlobalToLocal(bdr.attr_list),
+                             coef / bdr.Rs);
     }
   }
 }
@@ -182,11 +205,12 @@ void SurfaceImpedanceOperator::AddMassBdrCoefficients(double coef,
                                                       MaterialPropertyCoefficient &fb)
 {
   // Lumped capacitor boundaries.
-  for (const auto &Z : impedance_data)
+  for (const auto &bdr : boundaries)
   {
-    if (std::abs(Z.Cs) > 0.0)
+    if (std::abs(bdr.Cs) > 0.0)
     {
-      fb.AddMaterialProperty(mat_op.GetAttributeGlobalToLocal(Z.attr), Z.Cs, coef);
+      fb.AddMaterialProperty(mat_op.GetAttributeGlobalToLocal(bdr.attr_list),
+                             coef * bdr.Cs);
     }
   }
 }

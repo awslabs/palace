@@ -23,19 +23,16 @@ private:
   // Reference to material property data (not owned).
   const MaterialOperator &mat_op;
 
-  // List of all impedance boundary attributes.
-  mfem::Array<int> impedance_attr, impedance_Rs_attr, impedance_Ls_attr, impedance_Cs_attr;
-
   // Surface properties for impedance boundary attributes: surface resistance, capacitance,
   // and inductance.
   struct ImpedanceData
   {
-    double Rsinv, Lsinv, Cs;
-    mfem::Array<int> attr;
+    double Rs, Ls, Cs;
+    mfem::Array<int> attr_list;
   };
-  std::vector<ImpedanceData> impedance_data;
+  std::vector<ImpedanceData> boundaries;
 
-  mfem::Array<int> SetUpBoundaryProperties(const IoData &iodata, const mfem::ParMesh &mesh);
+  void SetUpBoundaryProperties(const IoData &iodata, const mfem::ParMesh &mesh);
   void PrintBoundaryInfo(const IoData &iodata, mfem::ParMesh &mesh);
 
 public:
@@ -43,13 +40,13 @@ public:
                            mfem::ParMesh &mesh);
 
   // Returns array of surface impedance attributes.
-  const auto &GetAttrList() const { return impedance_attr; }
-  const auto &GetRsAttrList() const { return impedance_Rs_attr; }
-  const auto &GetLsAttrList() const { return impedance_Ls_attr; }
-  const auto &GetCsAttrList() const { return impedance_Cs_attr; }
+  mfem::Array<int> GetAttrList() const;
+  mfem::Array<int> GetRsAttrList() const;
+  mfem::Array<int> GetLsAttrList() const;
+  mfem::Array<int> GetCsAttrList() const;
 
   // Add contributions to system matrices from impedance boundaries with nonzero inductance,
-  // capacitance, and/or resistance. For boundaries with more than R/L/C, impedances add in
+  // resistance, and/or capacitance. For boundaries with more than R/L/C, impedances add in
   // parallel.
   void AddStiffnessBdrCoefficients(double coef, MaterialPropertyCoefficient &fb);
   void AddDampingBdrCoefficients(double coef, MaterialPropertyCoefficient &fb);

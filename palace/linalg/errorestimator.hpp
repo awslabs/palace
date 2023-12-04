@@ -56,7 +56,7 @@ class CurlFluxErrorEstimator
       typename std::conditional<std::is_same<VecType, ComplexVector>::value,
                                 mfem::ParComplexGridFunction, mfem::ParGridFunction>::type;
 
-  // Reference to input data (not owned).
+  // Reference to material property data (not owned).
   const MaterialOperator &mat_op;
 
   // Finite element space used to represent U and F.
@@ -89,7 +89,7 @@ public:
 // denotes a smooth reconstruction of ε ∇Uₕ.
 class GradFluxErrorEstimator
 {
-  // Reference to input data (not owned).
+  // Reference to material property data (not owned).
   const MaterialOperator &mat_op;
 
   // Finite element space used to represent U.
