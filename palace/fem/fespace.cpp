@@ -104,7 +104,7 @@ const CeedElemRestriction
 FiniteElementSpace::GetInterpCeedElemRestriction(Ceed ceed, mfem::Geometry::Type geom,
                                                  const std::vector<int> &indices) const
 {
-  const mfem::FiniteElement &fe = GetFEColl().FiniteElementForGeometry(geom);
+  const mfem::FiniteElement &fe = *GetFEColl().FiniteElementForGeometry(geom);
   if (!HasUniqueInterpRestriction(fe))
   {
     return GetCeedElemRestriction(ceed, geom, indices);
@@ -127,7 +127,7 @@ const CeedElemRestriction
 FiniteElementSpace::GetInterpRangeCeedElemRestriction(Ceed ceed, mfem::Geometry::Type geom,
                                                       const std::vector<int> &indices) const
 {
-  const mfem::FiniteElement &fe = GetFEColl().FiniteElementForGeometry(geom);
+  const mfem::FiniteElement &fe = *GetFEColl().FiniteElementForGeometry(geom);
   if (!HasUniqueInterpRangeRestriction(fe))
   {
     return GetInterpCeedElemRestriction(ceed, geom, indices);

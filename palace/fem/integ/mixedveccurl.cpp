@@ -22,7 +22,7 @@ void MixedVectorCurlIntegrator::Assemble(const ceed::CeedGeomFactorData &geom_da
                                          Ceed ceed, CeedElemRestriction trial_restr,
                                          CeedElemRestriction test_restr,
                                          CeedBasis trial_basis, CeedBasis test_basis,
-                                         CeedOperator *op)
+                                         CeedOperator *op) const
 {
   MFEM_VERIFY(geom_data->dim == 3 && geom_data->space_dim == 3,
               "MixedVectorCurlIntegrator is only availble in 3D!");
@@ -74,7 +74,7 @@ void MixedVectorWeakCurlIntegrator::Assemble(const ceed::CeedGeomFactorData &geo
                                              Ceed ceed, CeedElemRestriction trial_restr,
                                              CeedElemRestriction test_restr,
                                              CeedBasis trial_basis, CeedBasis test_basis,
-                                             CeedOperator *op)
+                                             CeedOperator *op) const
 {
   MFEM_VERIFY(geom_data->dim == 3 && geom_data->space_dim == 3,
               "MixedVectorWeakCurlIntegrator is only availble in 3D!");

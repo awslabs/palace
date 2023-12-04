@@ -109,8 +109,8 @@ public:
   {
   }
 
-  Mesh(std::unique_ptr<mfem::ParMesh> &&mesh)
-    : mesh(std::move(mesh)), sequence(mesh->GetSequence())
+  template <typename T>
+  Mesh(std::unique_ptr<T> &&mesh) : mesh(std::move(mesh)), sequence(mesh->GetSequence())
   {
     mesh->EnsureNodes();
   }
@@ -118,11 +118,19 @@ public:
   const auto &Get() const { return *mesh; }
   auto &Get() { return *mesh; }
 
-  operator const mfem::ParMesh() const { return Get(); }
-  operator mfem::ParMesh() { return Get(); }
+  operator const mfem::ParMesh &() const { return Get(); }
+  operator mfem::ParMesh &() { return Get(); }
+
+  operator const std::unique_ptr<mfem::ParMesh> &() const { return mesh; }
+  operator std::unique_ptr<mfem::ParMesh> &() { return mesh; }
 
   auto Dimension() const { return Get().Dimension(); }
   auto SpaceDimension() const { return Get().SpaceDimension(); }
+
+  auto GetNE() const { return Get().GetNE(); }
+  auto GetNBE() const { return Get().GetNBE(); }
+  auto GetNumFaces() const { return Get().GetNumFaces(); }
+  auto GetNV() const { return Get().GetNV(); }
 
   const auto &GetAttributeGlobalToLocal() const
   {
@@ -148,14 +156,16 @@ public:
     return !geom_data.empty() ? geom_data : BuildCeedGeomFactorData();
   }
 
-  void ClearData()
+  void ClearData() const
   {
     loc_attr.clear();
     loc_bdr_attr.clear();
     local_to_shared.clear();
     geom_data.clear();
   }
-  void ClearCeedGeomFactorData() { geom_data.clear(); }
+  void ClearCeedGeomFactorData() const { geom_data.clear(); }
+
+  MPI_Comm GetComm() const { return mesh->GetComm(); }
 };
 
 }  // namespace palace

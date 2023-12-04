@@ -5,6 +5,7 @@
 
 #include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
+#include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
 
 namespace palace

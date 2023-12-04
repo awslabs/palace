@@ -50,7 +50,8 @@ LumpedPortData::LumpedPortData(const config::LumpedPortData &data,
   // Construct the port elements allowing for a possible multielement lumped port.
   for (const auto &elem : data.elements)
   {
-    mfem::Array<int> attr_list(elem.attributes.begin(), elem.attributes.end());
+    mfem::Array<int> attr_list;
+    attr_list.Append(elem.attributes.data(), elem.attributes.size());
     switch (elem.coordinate_system)
     {
       case config::internal::ElementData::CoordinateSystem::CYLINDRICAL:
@@ -257,10 +258,10 @@ std::complex<double> LumpedPortData::GetPower(mfem::ParComplexGridFunction &E,
   mfem::Array<int> attr_list;
   for (const auto &elem : elems)
   {
-    fb.AddCoefficient(std::make_unique<RestrictedVectorCoefficient>(
+    fbr.AddCoefficient(std::make_unique<RestrictedVectorCoefficient>(
         std::make_unique<BdrCurrentVectorCoefficient>(B.real(), mat_op),
         elem->GetAttrList()));
-    fb.AddCoefficient(std::make_unique<RestrictedVectorCoefficient>(
+    fbi.AddCoefficient(std::make_unique<RestrictedVectorCoefficient>(
         std::make_unique<BdrCurrentVectorCoefficient>(B.imag(), mat_op),
         elem->GetAttrList()));
     attr_list.Append(elem->GetAttrList());
@@ -476,7 +477,7 @@ const LumpedPortData &LumpedPortOperator::GetPort(int idx) const
   return it->second;
 }
 
-mfem::Array<int> LumpedPortData::GetAttrList() const
+mfem::Array<int> LumpedPortOperator::GetAttrList() const
 {
   mfem::Array<int> attr_list;
   for (const auto &[idx, data] : ports)
@@ -489,7 +490,7 @@ mfem::Array<int> LumpedPortData::GetAttrList() const
   return attr_list;
 }
 
-mfem::Array<int> LumpedPortData::GetRsAttrList() const
+mfem::Array<int> LumpedPortOperator::GetRsAttrList() const
 {
   mfem::Array<int> attr_list;
   for (const auto &[idx, data] : ports)
@@ -505,7 +506,7 @@ mfem::Array<int> LumpedPortData::GetRsAttrList() const
   return attr_list;
 }
 
-mfem::Array<int> LumpedPortData::GetLsAttrList() const
+mfem::Array<int> LumpedPortOperator::GetLsAttrList() const
 {
   mfem::Array<int> attr_list;
   for (const auto &[idx, data] : ports)
@@ -521,7 +522,7 @@ mfem::Array<int> LumpedPortData::GetLsAttrList() const
   return attr_list;
 }
 
-mfem::Array<int> LumpedPortData::GetCsAttrList() const
+mfem::Array<int> LumpedPortOperator::GetCsAttrList() const
 {
   mfem::Array<int> attr_list;
   for (const auto &[idx, data] : ports)
@@ -548,7 +549,7 @@ void LumpedPortOperator::AddStiffnessBdrCoefficients(double coef,
       for (const auto &elem : data.elems)
       {
         const double Ls = data.L * data.GetToSquare(*elem);
-        fb.AddMaterialProperty(mat_op.GetAttributeGlobalToLocal(elem->GetAttrList()),
+        fb.AddMaterialProperty(data.mat_op.GetAttributeGlobalToLocal(elem->GetAttrList()),
                                coef / Ls);
       }
     }

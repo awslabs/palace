@@ -28,8 +28,6 @@ private:
   // corresponds to the vacuum domain, or at least the one with the higher speed of light.
   mfem::Array<int> attr_mat, bdr_attr_mat;
 
-  // XX TODO COMPUTE ABS, INVz0, C0 ON THE FLY, CAN STILL STORE MAT_c0_min/max
-
   // Material properties: relative permeability, relative permittivity, and others (like
   // electrical conductivity and London penetration depth for superconductors.
   mfem::DenseTensor mat_muinv, mat_epsilon, mat_epsilon_imag, mat_epsilon_abs, mat_invz0,
@@ -40,21 +38,21 @@ private:
   // penetration depth.
   mfem::Array<int> losstan_attr, conductivity_attr, london_attr;
 
-  void SetUpMaterialProperties(const IoData &iodata, const Mesh &mesh);
+  void SetUpMaterialProperties(const IoData &iodata, mfem::ParMesh &mesh);
 
-  const auto AttrToMat(int attr, bool bdr)
+  const auto AttrToMat(int attr, bool bdr) const
   {
     if (bdr)
     {
       MFEM_ASSERT(loc_bdr_attr.find(attr) != loc_bdr_attr.end(),
                   "Missing local boundary attribute for attribute " << attr << "!");
-      return bdr_attr_mat[loc_bdr_attr[attr] - 1];
+      return bdr_attr_mat[loc_bdr_attr.at(attr) - 1];
     }
     else
     {
       MFEM_ASSERT(loc_attr.find(attr) != loc_attr.end(),
                   "Missing local domain attribute for attribute " << attr << "!");
-      return attr_mat[loc_attr[attr] - 1];
+      return attr_mat[loc_attr.at(attr) - 1];
     }
   }
 
@@ -66,7 +64,7 @@ private:
   }
 
 public:
-  MaterialOperator(const IoData &iodata, const Mesh &mesh);
+  MaterialOperator(const IoData &iodata, Mesh &mesh);
 
   int SpaceDimension() const { return mat_muinv.SizeI(); }
 
@@ -131,18 +129,21 @@ public:
   const auto &GetAttributeGlobalToLocal() const { return loc_attr; }
   const auto &GetBdrAttributeGlobalToLocal() const { return loc_bdr_attr; }
 
-  auto GetAttributeGlobalToLocal(const mfem::Array<int> &attr_list) const
+  template <typename T>
+  auto GetAttributeGlobalToLocal(const T &attr_list) const
   {
-    mfem::Array<int> loc_attr_list(attr_list.Size());
+    mfem::Array<int> loc_attr_list(std::distance(attr_list.begin(), attr_list.end()));
     std::transform(attr_list.begin(), attr_list.end(), loc_attr_list.begin(),
-                   [&loc_attr](int attr) { return loc_attr[attr]; }) return loc_attr_list;
+                   [this](int attr) { return loc_attr.at(attr); });
+    return loc_attr_list;
   }
-  auto GetBdrAttributeGlobalToLocal(const mfem::Array<int> &attr_list) const
+  template <typename T>
+  auto GetBdrAttributeGlobalToLocal(const T &attr_list) const
   {
-    mfem::Array<int> loc_attr_list(attr_list.Size());
+    mfem::Array<int> loc_attr_list(std::distance(attr_list.begin(), attr_list.end()));
     std::transform(attr_list.begin(), attr_list.end(), loc_attr_list.begin(),
-                   [&loc_bdr_attr](int attr)
-                   { return loc_bdr_attr[attr]; }) return loc_attr_list;
+                   [this](int attr) { return loc_bdr_attr.at(attr); });
+    return loc_attr_list;
   }
 
   const auto &GetLocalToSharedFaceMap() const { return local_to_shared; }
@@ -164,8 +165,8 @@ private:
 
 public:
   MaterialPropertyCoefficient() {}
-  MaterialPropertyCoefficient(const mfem::Array<int> &attr_mat,
-                              const mfem::DenseTensor &mat_coeff, double a = 1.0);
+  MaterialPropertyCoefficient(const mfem::Array<int> &attr_mat_,
+                              const mfem::DenseTensor &mat_coeff_, double a = 1.0);
 
   bool empty() const { return mat_coeff.TotalSize() == 0; }
 

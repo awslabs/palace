@@ -456,11 +456,11 @@ std::vector<mfem::Geometry::Type> ElementTypeInfo::GetGeomTypes() const
   return geom_types;
 }
 
-ElementTypeInfo CheckElements(mfem::Mesh &mesh)
+ElementTypeInfo CheckElements(const mfem::Mesh &mesh)
 {
   // MeshGenerator is reduced over the communicator. This checks for geometries on any
   // processor.
-  auto meshgen = mesh.MeshGenerator();
+  auto meshgen = const_cast<mfem::Mesh &>(mesh).MeshGenerator();
   return {bool(meshgen & 1), bool(meshgen & 2), bool(meshgen & 4), bool(meshgen & 8)};
 }
 
@@ -479,7 +479,7 @@ auto AttrListSize(const std::vector<int> &attr_list)
 
 auto AttrListMax(const mfem::Array<int> &attr_list)
 {
-  return attr_list.Max()
+  return attr_list.Max();
 }
 
 auto AttrListMax(const std::vector<int> &attr_list)
@@ -1298,6 +1298,9 @@ double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh,
   return ratio;
 }
 
+template void AttrToMarker(int, const mfem::Array<int> &, mfem::Array<int> &);
+template void AttrToMarker(int, const std::vector<int> &, mfem::Array<int> &);
+
 }  // namespace mesh
 
 namespace
@@ -2008,8 +2011,5 @@ void RebalanceConformalMesh(std::unique_ptr<mfem::ParMesh> &pmesh, double length
 }
 
 }  // namespace
-
-template void AttrToMarker(int, const mfem::Array<int> &, mfem::Array<int> &);
-template void AttrToMarker(int, const std::vector<int> &, mfem::Array<int> &);
 
 }  // namespace palace

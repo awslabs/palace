@@ -26,7 +26,7 @@ LaplaceOperator::LaplaceOperator(const IoData &iodata,
                                                    mesh.back()->Get().Dimension())),
     h1_fespaces(fem::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
         iodata.solver.linear.mg_max_levels, mesh, h1_fecs, &dbc_attr, &dbc_tdof_lists)),
-    nd_fespace(h1_fespaces.GetFinestFESpace(), &mesh.back().Get(), nd_fec.get()),
+    nd_fespace(h1_fespaces.GetFinestFESpace(), *mesh.back(), nd_fec.get()),
     mat_op(iodata, *mesh.back()), source_attr_lists(ConstructSources(iodata))
 {
   // Finalize setup.

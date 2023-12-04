@@ -3,6 +3,7 @@
 
 #include "mesh.hpp"
 
+#include "fem/fespace.hpp"
 #include "fem/libceed/integrator.hpp"
 #include "utils/omp.hpp"
 
@@ -11,6 +12,16 @@ namespace palace
 
 namespace ceed
 {
+
+namespace
+{
+
+CeedGeomFactorData CeedGeomFactorDataCreate(Ceed ceed)
+{
+  return std::make_unique<CeedGeomFactorData_private>(ceed);
+}
+
+}  // namespace
 
 CeedGeomFactorData_private::~CeedGeomFactorData_private()
 {
@@ -67,11 +78,6 @@ GetElementIndices(const mfem::ParMesh &mesh, bool use_bdr, int start, int stop)
   return element_indices;
 }
 
-CeedGeomFactorData CeedGeomFactorDataCreate(Ceed ceed)
-{
-  return std::make_unique<CeedGeomFactorData_private>(ceed);
-}
-
 ceed::CeedGeomFactorData AssembleGeometryData(const mfem::GridFunction &mesh_nodes,
                                               const std::unordered_map<int, int> &loc_attr,
                                               Ceed ceed, mfem::Geometry::Type geom,
@@ -112,7 +118,7 @@ ceed::CeedGeomFactorData AssembleGeometryData(const mfem::GridFunction &mesh_nod
       MFEM_ASSERT(loc_attr.find(attr) != loc_attr.end(),
                   "Missing local domain or boundary attribute for attribute " << attr
                                                                               << "!");
-      attr = loc_attr[attr] - 1;  // Convert to 0-based indexing for libCEED QFunctions
+      attr = loc_attr.at(attr) - 1;  // Convert to 0-based indexing for libCEED QFunctions
       for (CeedInt q = 0; q < nqpts; q++)
       {
         data->attr[j * nqpts + q] = attr;
@@ -134,6 +140,7 @@ ceed::CeedGeomFactorData AssembleGeometryData(const mfem::GridFunction &mesh_nod
 
 std::unordered_map<int, int> &Mesh::BuildAttributesGlobalToLocal(bool use_bdr) const
 {
+  const auto &mesh_obj = Get();
   if (!use_bdr)
   {
     // Set up sparse map from global domain attributes to local ones on this process.
@@ -141,18 +148,19 @@ std::unordered_map<int, int> &Mesh::BuildAttributesGlobalToLocal(bool use_bdr) c
     // stored locally.
     loc_attr.clear();
     int count = 0;
-    for (int i = 0; i < Mesh().GetNE(); i++)
+    for (int i = 0; i < mesh_obj.GetNE(); i++)
     {
-      const int attr = Mesh().GetAttribute(i);
+      const int attr = mesh_obj.GetAttribute(i);
       auto it = loc_attr.find(attr);
       if (it == loc_attr.end())
       {
         loc_attr[attr] = ++count;
       }
     }
-    for (int i = 0; i < Mesh().GetNSharedFaces(); i++)
+    for (int i = 0; i < mesh_obj.GetNSharedFaces(); i++)
     {
-      const mfem::FaceElementTransformations &FET = *Mesh().GetSharedFaceTransformations(i);
+      mfem::FaceElementTransformations &FET =
+          *const_cast<mfem::ParMesh &>(mesh_obj).GetSharedFaceTransformations(i);
       int attr = FET.GetElement1Transformation().Attribute;
       auto it = loc_attr.find(attr);
       if (it == loc_attr.end())
@@ -173,9 +181,9 @@ std::unordered_map<int, int> &Mesh::BuildAttributesGlobalToLocal(bool use_bdr) c
     // Set up sparse map from global boundary attributes to local ones on this process.
     loc_bdr_attr.clear();
     int count = 0;
-    for (int i = 0; i < Mesh().GetNBE(); i++)
+    for (int i = 0; i < mesh_obj.GetNBE(); i++)
     {
-      const int attr = Mesh().GetBdrAttribute(i);
+      const int attr = mesh_obj.GetBdrAttribute(i);
       auto it = loc_bdr_attr.find(attr);
       if (it == loc_bdr_attr.end())
       {
@@ -191,18 +199,20 @@ std::unordered_map<int, int> &Mesh::BuildLocalToSharedFaceMap() const
   // Construct shared face mapping for boundary coefficients. The inverse mapping is
   // constructed as part of mfem::ParMesh, but we need this mapping when looping over
   // all mesh faces.
+  const auto &mesh_obj = Get();
   local_to_shared.clear();
-  local_to_shared.reserve(Mesh().GetNSharedFaces());
-  for (int i = 0; i < Mesh().GetNSharedFaces(); i++)
+  local_to_shared.reserve(mesh_obj.GetNSharedFaces());
+  for (int i = 0; i < mesh_obj.GetNSharedFaces(); i++)
   {
-    local_to_shared[Mesh().GetSharedFace(i)] = i;
+    local_to_shared[mesh_obj.GetSharedFace(i)] = i;
   }
   return local_to_shared;
 }
 
 ceed::CeedObjectMap<ceed::CeedGeomFactorData> &Mesh::BuildCeedGeomFactorData() const
 {
-  const mfem::GridFunction &mesh_nodes = *Mesh().GetNodes();
+  const auto &mesh_obj = Get();
+  const mfem::GridFunction &mesh_nodes = *mesh_obj.GetNodes();
   geom_data.clear();
 
   // Create a list of the element indices in the mesh corresponding to a given thread and
@@ -216,12 +226,12 @@ ceed::CeedObjectMap<ceed::CeedGeomFactorData> &Mesh::BuildCeedGeomFactorData() c
 
     // First domain elements.
     {
-      const int ne = Mesh().GetNE();
+      const int ne = mesh_obj.GetNE();
       const int stride = (ne + nt - 1) / nt;
       const int start = i * stride;
       const int stop = std::min(start + stride, ne);
       constexpr bool use_bdr = false;
-      auto element_indices = GetElementIndices(Mesh(), use_bdr, start, stop);
+      auto element_indices = GetElementIndices(mesh_obj, use_bdr, start, stop);
       for (auto &[geom, indices] : element_indices)
       {
         ceed::CeedGeomFactorData data =
@@ -235,12 +245,12 @@ ceed::CeedObjectMap<ceed::CeedGeomFactorData> &Mesh::BuildCeedGeomFactorData() c
 
     // Then boundary elements.
     {
-      const int nbe = Mesh().GetNBE();
+      const int nbe = mesh_obj.GetNBE();
       const int stride = (nbe + nt - 1) / nt;
       const int start = i * stride;
       const int stop = std::min(start + stride, nbe);
       constexpr bool use_bdr = true;
-      auto element_indices = GetElementIndices(Mesh(), use_bdr, start, stop);
+      auto element_indices = GetElementIndices(mesh_obj, use_bdr, start, stop);
       for (auto &[geom, indices] : element_indices)
       {
         ceed::CeedGeomFactorData data =

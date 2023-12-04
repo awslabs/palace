@@ -93,10 +93,12 @@ inline FiniteElementSpaceHierarchy ConstructFiniteElementSpaceHierarchy(
   mfem::Array<int> dbc_marker;
   if (dbc_attr && dbc_tdof_lists)
   {
-    int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+    int bdr_attr_max = mesh[coarse_mesh_l]->Get().bdr_attributes.Size()
+                           ? mesh[coarse_mesh_l]->Get().bdr_attributes.Max()
+                           : 0;
     dbc_marker = mesh::AttrToMarker(bdr_attr_max, *dbc_attr);
-    fespaces.GetFinestFESpace().GetEssentialTrueDofs(dbc_marker,
-                                                     dbc_tdof_lists->emplace_back());
+    fespaces.GetFinestFESpace().Get().GetEssentialTrueDofs(dbc_marker,
+                                                           dbc_tdof_lists->emplace_back());
   }
 
   // h-refinement
@@ -105,8 +107,8 @@ inline FiniteElementSpaceHierarchy ConstructFiniteElementSpaceHierarchy(
     fespaces.AddLevel(std::make_unique<FiniteElementSpace>(*mesh[l], fecs[0].get()));
     if (dbc_attr && dbc_tdof_lists)
     {
-      fespaces.GetFinestFESpace().GetEssentialTrueDofs(dbc_marker,
-                                                       dbc_tdof_lists->emplace_back());
+      fespaces.GetFinestFESpace().Get().GetEssentialTrueDofs(
+          dbc_marker, dbc_tdof_lists->emplace_back());
     }
   }
 
@@ -116,8 +118,8 @@ inline FiniteElementSpaceHierarchy ConstructFiniteElementSpaceHierarchy(
     fespaces.AddLevel(std::make_unique<FiniteElementSpace>(*mesh.back(), fecs[l].get()));
     if (dbc_attr && dbc_tdof_lists)
     {
-      fespaces.GetFinestFESpace().GetEssentialTrueDofs(dbc_marker,
-                                                       dbc_tdof_lists->emplace_back());
+      fespaces.GetFinestFESpace().Get().GetEssentialTrueDofs(
+          dbc_marker, dbc_tdof_lists->emplace_back());
     }
   }
 
@@ -129,7 +131,7 @@ inline FiniteElementSpaceHierarchy ConstructFiniteElementSpaceHierarchy(
 // of the provided finite element space objects.
 template <typename FECollection>
 inline AuxiliaryFiniteElementSpaceHierarchy ConstructAuxiliaryFiniteElementSpaceHierarchy(
-    const FiniteElementSpaceHierarchy &primal_fespaces,
+    FiniteElementSpaceHierarchy &primal_fespaces,
     const std::vector<std::unique_ptr<FECollection>> &fecs,
     const mfem::Array<int> *dbc_attr = nullptr,
     std::vector<mfem::Array<int>> *dbc_tdof_lists = nullptr)
@@ -145,10 +147,11 @@ inline AuxiliaryFiniteElementSpaceHierarchy ConstructAuxiliaryFiniteElementSpace
   mfem::Array<int> dbc_marker;
   if (dbc_attr && dbc_tdof_lists)
   {
-    int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+    int bdr_attr_max =
+        mesh->Get().bdr_attributes.Size() ? mesh->Get().bdr_attributes.Max() : 0;
     dbc_marker = mesh::AttrToMarker(bdr_attr_max, *dbc_attr);
-    fespaces.GetFinestFESpace().GetEssentialTrueDofs(dbc_marker,
-                                                     dbc_tdof_lists->emplace_back());
+    fespaces.GetFinestFESpace().Get().GetEssentialTrueDofs(dbc_marker,
+                                                           dbc_tdof_lists->emplace_back());
   }
 
   // h-refinement
@@ -164,8 +167,8 @@ inline AuxiliaryFiniteElementSpaceHierarchy ConstructAuxiliaryFiniteElementSpace
         primal_fespaces.GetFESpaceAtLevel(l).GetMesh(), fecs[0].get()));
     if (dbc_attr && dbc_tdof_lists)
     {
-      fespaces.GetFinestFESpace().GetEssentialTrueDofs(dbc_marker,
-                                                       dbc_tdof_lists->emplace_back());
+      fespaces.GetFinestFESpace().Get().GetEssentialTrueDofs(
+          dbc_marker, dbc_tdof_lists->emplace_back());
     }
 
     mesh = &primal_fespaces.GetFESpaceAtLevel(l).GetMesh();
@@ -179,8 +182,8 @@ inline AuxiliaryFiniteElementSpaceHierarchy ConstructAuxiliaryFiniteElementSpace
         primal_fespaces.GetFESpaceAtLevel(l), *mesh, fecs[l - l0].get()));
     if (dbc_attr && dbc_tdof_lists)
     {
-      fespaces.GetFinestFESpace().GetEssentialTrueDofs(dbc_marker,
-                                                       dbc_tdof_lists->emplace_back());
+      fespaces.GetFinestFESpace().Get().GetEssentialTrueDofs(
+          dbc_marker, dbc_tdof_lists->emplace_back());
     }
   }
 

@@ -16,7 +16,7 @@ void MixedVectorGradientIntegrator::Assemble(const ceed::CeedGeomFactorData &geo
                                              Ceed ceed, CeedElemRestriction trial_restr,
                                              CeedElemRestriction test_restr,
                                              CeedBasis trial_basis, CeedBasis test_basis,
-                                             CeedOperator *op)
+                                             CeedOperator *op) const
 {
   ceed::IntegratorInfo info;
 
@@ -82,7 +82,7 @@ void MixedVectorGradientIntegrator::Assemble(const ceed::CeedGeomFactorData &geo
 void MixedVectorWeakDivergenceIntegrator::Assemble(
     const ceed::CeedGeomFactorData &geom_data, Ceed ceed, CeedElemRestriction trial_restr,
     CeedElemRestriction test_restr, CeedBasis trial_basis, CeedBasis test_basis,
-    CeedOperator *op)
+    CeedOperator *op) const
 {
   ceed::IntegratorInfo info;
 

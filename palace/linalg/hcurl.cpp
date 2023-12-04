@@ -17,8 +17,8 @@ namespace palace
 {
 
 WeightedHCurlNormSolver::WeightedHCurlNormSolver(
-    const MaterialOperator &mat_op, const FiniteElementSpaceHierarchy &nd_fespaces,
-    const AuxiliaryFiniteElementSpaceHierarchy &h1_fespaces,
+    const MaterialOperator &mat_op, FiniteElementSpaceHierarchy &nd_fespaces,
+    AuxiliaryFiniteElementSpaceHierarchy &h1_fespaces,
     const std::vector<mfem::Array<int>> &nd_dbc_tdof_lists,
     const std::vector<mfem::Array<int>> &h1_dbc_tdof_lists, double tol, int max_it,
     int print)

@@ -18,7 +18,8 @@ SurfaceCurrentData::SurfaceCurrentData(const config::SurfaceCurrentData &data,
   // sources.
   for (const auto &elem : data.elements)
   {
-    mfem::Array<int> attr_list(elem.attributes.begin(), elem.attributes.end());
+    mfem::Array<int> attr_list;
+    attr_list.Append(elem.attributes.data(), elem.attributes.size());
     switch (elem.coordinate_system)
     {
       case config::internal::ElementData::CoordinateSystem::CYLINDRICAL:

@@ -6,9 +6,12 @@
 
 #include <mfem.hpp>
 #include "fem/libceed/ceed.hpp"
+#include "fem/mesh.hpp"
 
 namespace palace
 {
+
+class MaterialPropertyCoefficient;
 
 //
 // Classes which implement or extend bilinear and linear form integrators.
@@ -32,22 +35,21 @@ struct DefaultIntegrationOrder
 
 }  // namespace fem
 
-// XX TODO WIP FOR NOW, NO COEFFICIENTS IN ASSEMBLY
-// XX TODO WIP INITIALIZE ALL MEMBERS IN CONSTRUCTORS (MAP TYPE VARIABLES)
-
-// XX TODO CONST FOR ASSEMBLE METHOD?
-
-// XX TODO SHARED COEFFICIENT ASSEMBLY METHOD?
-
 // Base class for libCEED-based bilinear form integrators.
 class BilinearFormIntegrator
 {
+protected:
+  const MaterialPropertyCoefficient *Q;
+
 public:
+  BilinearFormIntegrator(const MaterialPropertyCoefficient *Q = nullptr) : Q(Q) {}
+  BilinearFormIntegrator(const MaterialPropertyCoefficient &Q) : Q(&Q) {}
   virtual ~BilinearFormIntegrator() = default;
 
   virtual void Assemble(const ceed::CeedGeomFactorData &geom_data, Ceed ceed,
                         CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
-                        CeedBasis trial_basis, CeedBasis test_basis, CeedOperator *op) = 0;
+                        CeedBasis trial_basis, CeedBasis test_basis,
+                        CeedOperator *op) const = 0;
 
   virtual void SetMapTypes(int trial_type, int test_type) {}
 };
@@ -55,20 +57,14 @@ public:
 // Integrator for a(u, v) = (Q u, v) for H1 elements (also for vector (H1)ᵈ spaces).
 class MassIntegrator : public BilinearFormIntegrator
 {
-protected:
-  mfem::Coefficient *Q;
-  mfem::VectorCoefficient *VQ;
-  mfem::MatrixCoefficient *MQ;
-
 public:
-  MassIntegrator() : Q(nullptr), VQ(nullptr), MQ(nullptr) {}
-  MassIntegrator(mfem::Coefficient &Q) : Q(&Q), VQ(nullptr), MQ(nullptr) {}
-  MassIntegrator(mfem::VectorCoefficient &VQ) : Q(nullptr), VQ(&VQ), MQ(nullptr) {}
-  MassIntegrator(mfem::MatrixCoefficient &MQ) : Q(nullptr), VQ(nullptr), MQ(&MQ) {}
+  MassIntegrator() = default;
+  MassIntegrator(const MaterialPropertyCoefficient &Q) : BilinearFormIntegrator(Q) {}
 
   void Assemble(const ceed::CeedGeomFactorData &geom_data, Ceed ceed,
                 CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
-                CeedBasis trial_basis, CeedBasis test_basis, CeedOperator *op) override;
+                CeedBasis trial_basis, CeedBasis test_basis,
+                CeedOperator *op) const override;
 };
 
 // Integrator for a(u, v) = (Q u, v) for vector finite elements.
@@ -77,19 +73,16 @@ class VectorFEMassIntegrator : public BilinearFormIntegrator
 protected:
   int trial_map_type, test_map_type;
 
-  mfem::Coefficient *Q;
-  mfem::VectorCoefficient *VQ;
-  mfem::MatrixCoefficient *MQ;
-
 public:
-  VectorFEMassIntegrator() : Q(nullptr), VQ(nullptr), MQ(nullptr) {}
-  VectorFEMassIntegrator(mfem::Coefficient &Q) : Q(&Q), VQ(nullptr), MQ(nullptr) {}
-  VectorFEMassIntegrator(mfem::VectorCoefficient &VQ) : Q(nullptr), VQ(&VQ), MQ(nullptr) {}
-  VectorFEMassIntegrator(mfem::MatrixCoefficient &MQ) : Q(nullptr), VQ(nullptr), MQ(&MQ) {}
+  VectorFEMassIntegrator() = default;
+  VectorFEMassIntegrator(const MaterialPropertyCoefficient &Q) : BilinearFormIntegrator(Q)
+  {
+  }
 
   void Assemble(const ceed::CeedGeomFactorData &geom_data, Ceed ceed,
                 CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
-                CeedBasis trial_basis, CeedBasis test_basis, CeedOperator *op) override;
+                CeedBasis trial_basis, CeedBasis test_basis,
+                CeedOperator *op) const override;
 
   void SetMapTypes(int trial_type, int test_type) override
   {
@@ -98,215 +91,135 @@ public:
   }
 };
 
-// Integrator for a(u, v) = (Q curl u, curl v) for Nedelec elements.
-class CurlCurlIntegrator : public BilinearFormIntegrator
-{
-protected:
-  mfem::Coefficient *Q;
-  mfem::VectorCoefficient *VQ;
-  mfem::MatrixCoefficient *MQ;
-
-public:
-  CurlCurlIntegrator() : Q(nullptr), VQ(nullptr), MQ(nullptr) {}
-  CurlCurlIntegrator(mfem::Coefficient &Q) : Q(&Q), VQ(nullptr), MQ(nullptr) {}
-  CurlCurlIntegrator(mfem::VectorCoefficient &VQ) : Q(nullptr), VQ(&VQ), MQ(nullptr) {}
-  CurlCurlIntegrator(mfem::MatrixCoefficient &MQ) : Q(nullptr), VQ(nullptr), MQ(&MQ) {}
-
-  void Assemble(const ceed::CeedGeomFactorData &geom_data, Ceed ceed,
-                CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
-                CeedBasis trial_basis, CeedBasis test_basis, CeedOperator *op) override;
-};
-
-// Integrator for a(u, v) = (Qc curl u, curl v) + (Qm u, v) for Nedelec elements.
-class CurlCurlMassIntegrator : public BilinearFormIntegrator
-{
-protected:
-  mfem::Coefficient *Qc, *Qm;
-  mfem::VectorCoefficient *VQc, *VQm;
-  mfem::MatrixCoefficient *MQc, *MQm;
-
-public:
-  CurlCurlMassIntegrator(mfem::Coefficient &Qc, mfem::Coefficient &Qm)
-    : Qc(&Qc), Qm(&Qm), VQc(nullptr), VQm(nullptr), MQc(nullptr), MQm(nullptr)
-  {
-  }
-  CurlCurlMassIntegrator(mfem::Coefficient &Qc, mfem::VectorCoefficient &VQm)
-    : Qc(&Qc), Qm(nullptr), VQc(nullptr), VQm(&VQm), MQc(nullptr), MQm(nullptr)
-  {
-  }
-  CurlCurlMassIntegrator(mfem::Coefficient &Qc, mfem::MatrixCoefficient &MQm)
-    : Qc(&Qc), Qm(nullptr), VQc(nullptr), VQm(nullptr), MQc(nullptr), MQm(&MQm)
-  {
-  }
-  CurlCurlMassIntegrator(mfem::VectorCoefficient &VQc, mfem::Coefficient &Qm)
-    : Qc(nullptr), Qm(&Qm), VQc(&VQc), VQm(nullptr), MQc(nullptr), MQm(nullptr)
-  {
-  }
-  CurlCurlMassIntegrator(mfem::VectorCoefficient &VQc, mfem::VectorCoefficient &VQm)
-    : Qc(nullptr), Qm(nullptr), VQc(&VQc), VQm(&VQm), MQc(nullptr), MQm(nullptr)
-  {
-  }
-  CurlCurlMassIntegrator(mfem::VectorCoefficient &VQc, mfem::MatrixCoefficient &MQm)
-    : Qc(nullptr), Qm(nullptr), VQc(&VQc), VQm(nullptr), MQc(nullptr), MQm(&MQm)
-  {
-  }
-  CurlCurlMassIntegrator(mfem::MatrixCoefficient &MQc, mfem::Coefficient &Qm)
-    : Qc(nullptr), Qm(&Qm), VQc(nullptr), VQm(nullptr), MQc(&MQc), MQm(nullptr)
-  {
-  }
-  CurlCurlMassIntegrator(mfem::MatrixCoefficient &MQc, mfem::VectorCoefficient &VQm)
-    : Qc(nullptr), Qm(nullptr), VQc(nullptr), VQm(&VQm), MQc(&MQc), MQm(nullptr)
-  {
-  }
-  CurlCurlMassIntegrator(mfem::MatrixCoefficient &MQc, mfem::MatrixCoefficient &MQm)
-    : Qc(nullptr), Qm(nullptr), VQc(nullptr), VQm(nullptr), MQc(&MQc), MQm(&MQm)
-  {
-  }
-
-  void Assemble(const ceed::CeedGeomFactorData &geom_data, Ceed ceed,
-                CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
-                CeedBasis trial_basis, CeedBasis test_basis, CeedOperator *op) override;
-};
-
 // Integrator for a(u, v) = (Q grad u, grad v) for H1 elements.
 class DiffusionIntegrator : public BilinearFormIntegrator
 {
-protected:
-  mfem::Coefficient *Q;
-  mfem::VectorCoefficient *VQ;
-  mfem::MatrixCoefficient *MQ;
-
 public:
-  DiffusionIntegrator() : Q(nullptr), VQ(nullptr), MQ(nullptr) {}
-  DiffusionIntegrator(mfem::Coefficient &Q) : Q(&Q), VQ(nullptr), MQ(nullptr) {}
-  DiffusionIntegrator(mfem::VectorCoefficient &VQ) : Q(nullptr), VQ(&VQ), MQ(nullptr) {}
-  DiffusionIntegrator(mfem::MatrixCoefficient &MQ) : Q(nullptr), VQ(nullptr), MQ(&MQ) {}
+  DiffusionIntegrator() = default;
+  DiffusionIntegrator(const MaterialPropertyCoefficient &Q) : BilinearFormIntegrator(Q) {}
 
   void Assemble(const ceed::CeedGeomFactorData &geom_data, Ceed ceed,
                 CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
-                CeedBasis trial_basis, CeedBasis test_basis, CeedOperator *op) override;
+                CeedBasis trial_basis, CeedBasis test_basis,
+                CeedOperator *op) const override;
+};
+
+// Integrator for a(u, v) = (Q curl u, curl v) for Nedelec elements.
+class CurlCurlIntegrator : public BilinearFormIntegrator
+{
+public:
+  CurlCurlIntegrator() = default;
+  CurlCurlIntegrator(const MaterialPropertyCoefficient &Q) : BilinearFormIntegrator(Q) {}
+
+  void Assemble(const ceed::CeedGeomFactorData &geom_data, Ceed ceed,
+                CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
+                CeedBasis trial_basis, CeedBasis test_basis,
+                CeedOperator *op) const override;
+};
+
+// Integrator for a(u, v) = (Q div u, div v) for Raviart-Thomas elements.
+class DivDivIntegrator : public BilinearFormIntegrator
+{
+public:
+  DivDivIntegrator() = default;
+  DivDivIntegrator(const MaterialPropertyCoefficient &Q) : BilinearFormIntegrator(Q) {}
+
+  void Assemble(const ceed::CeedGeomFactorData &geom_data, Ceed ceed,
+                CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
+                CeedBasis trial_basis, CeedBasis test_basis,
+                CeedOperator *op) const override;
 };
 
 // Integrator for a(u, v) = (Qd grad u, grad v) + (Qm u, v) for H1 elements.
 class DiffusionMassIntegrator : public BilinearFormIntegrator
 {
 protected:
-  mfem::Coefficient *Qd, *Qm;
-  mfem::VectorCoefficient *VQd;
-  mfem::MatrixCoefficient *MQd;
+  const MaterialPropertyCoefficient *Q_mass;
 
 public:
-  DiffusionMassIntegrator(mfem::Coefficient &Qd, mfem::Coefficient &Qm)
-    : Qd(&Qd), Qm(&Qm), VQd(nullptr), MQd(nullptr)
-  {
-  }
-  DiffusionMassIntegrator(mfem::VectorCoefficient &VQd, mfem::Coefficient &Qm)
-    : Qd(nullptr), Qm(&Qm), VQd(&VQd), MQd(nullptr)
-  {
-  }
-  DiffusionMassIntegrator(mfem::MatrixCoefficient &MQd, mfem::Coefficient &Qm)
-    : Qd(nullptr), Qm(&Qm), VQd(nullptr), MQd(&MQd)
+  DiffusionMassIntegrator() = default;
+  DiffusionMassIntegrator(const MaterialPropertyCoefficient &Q,
+                          const MaterialPropertyCoefficient &Q_mass)
+    : BilinearFormIntegrator(Q), Q_mass(&Q_mass)
   {
   }
 
   void Assemble(const ceed::CeedGeomFactorData &geom_data, Ceed ceed,
                 CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
-                CeedBasis trial_basis, CeedBasis test_basis, CeedOperator *op) override;
+                CeedBasis trial_basis, CeedBasis test_basis,
+                CeedOperator *op) const override;
 };
 
-// Integrator for a(u, v) = (Q div u, div v) for Raviart-Thomas elements.
-class DivDivIntegrator : public BilinearFormIntegrator
+// Integrator for a(u, v) = (Qc curl u, curl v) + (Qm u, v) for Nedelec elements.
+class CurlCurlMassIntegrator : public BilinearFormIntegrator
 {
 protected:
-  mfem::Coefficient *Q;
+  const MaterialPropertyCoefficient *Q_mass;
 
 public:
-  DivDivIntegrator() : Q(nullptr) {}
-  DivDivIntegrator(mfem::Coefficient &Q) : Q(&Q) {}
+  CurlCurlMassIntegrator() = default;
+  CurlCurlMassIntegrator(const MaterialPropertyCoefficient &Q,
+                         const MaterialPropertyCoefficient &Q_mass)
+    : BilinearFormIntegrator(Q), Q_mass(&Q_mass)
+  {
+  }
 
   void Assemble(const ceed::CeedGeomFactorData &geom_data, Ceed ceed,
                 CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
-                CeedBasis trial_basis, CeedBasis test_basis, CeedOperator *op) override;
+                CeedBasis trial_basis, CeedBasis test_basis,
+                CeedOperator *op) const override;
 };
 
 // Integrator for a(u, v) = (Qd div u, div v) + (Qm u, v) for Raviart-Thomas elements.
 class DivDivMassIntegrator : public BilinearFormIntegrator
 {
 protected:
-  mfem::Coefficient *Qd, *Qm;
-  mfem::VectorCoefficient *VQm;
-  mfem::MatrixCoefficient *MQm;
+  const MaterialPropertyCoefficient *Q_mass;
 
 public:
-  DivDivMassIntegrator(mfem::Coefficient &Qd, mfem::Coefficient &Qm)
-    : Qd(&Qd), Qm(&Qm), VQm(nullptr), MQm(nullptr)
-  {
-  }
-  DivDivMassIntegrator(mfem::Coefficient &Qd, mfem::VectorCoefficient &VQm)
-    : Qd(&Qd), Qm(nullptr), VQm(&VQm), MQm(nullptr)
-  {
-  }
-  DivDivMassIntegrator(mfem::Coefficient &Qd, mfem::MatrixCoefficient &MQm)
-    : Qd(&Qd), Qm(nullptr), VQm(nullptr), MQm(&MQm)
+  DivDivMassIntegrator() = default;
+  DivDivMassIntegrator(const MaterialPropertyCoefficient &Q,
+                       const MaterialPropertyCoefficient &Q_mass)
+    : BilinearFormIntegrator(Q), Q_mass(&Q_mass)
   {
   }
 
   void Assemble(const ceed::CeedGeomFactorData &geom_data, Ceed ceed,
                 CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
-                CeedBasis trial_basis, CeedBasis test_basis, CeedOperator *op) override;
+                CeedBasis trial_basis, CeedBasis test_basis,
+                CeedOperator *op) const override;
 };
 
 // Integrator for a(u, v) = (Q grad u, v) for u in H1 and v in H(curl).
 class MixedVectorGradientIntegrator : public BilinearFormIntegrator
 {
-protected:
-  mfem::Coefficient *Q;
-  mfem::VectorCoefficient *VQ;
-  mfem::MatrixCoefficient *MQ;
-
 public:
-  MixedVectorGradientIntegrator() : Q(nullptr), VQ(nullptr), MQ(nullptr) {}
-  MixedVectorGradientIntegrator(mfem::Coefficient &Q) : Q(&Q), VQ(nullptr), MQ(nullptr) {}
-  MixedVectorGradientIntegrator(mfem::VectorCoefficient &VQ)
-    : Q(nullptr), VQ(&VQ), MQ(nullptr)
-  {
-  }
-  MixedVectorGradientIntegrator(mfem::MatrixCoefficient &MQ)
-    : Q(nullptr), VQ(nullptr), MQ(&MQ)
+  MixedVectorGradientIntegrator() = default;
+  MixedVectorGradientIntegrator(const MaterialPropertyCoefficient &Q)
+    : BilinearFormIntegrator(Q)
   {
   }
 
   void Assemble(const ceed::CeedGeomFactorData &geom_data, Ceed ceed,
                 CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
-                CeedBasis trial_basis, CeedBasis test_basis, CeedOperator *op) override;
+                CeedBasis trial_basis, CeedBasis test_basis,
+                CeedOperator *op) const override;
 };
 
 // Integrator for a(u, v) = -(Q u, grad v) for u in H(curl) and v in H1.
 class MixedVectorWeakDivergenceIntegrator : public BilinearFormIntegrator
 {
-protected:
-  mfem::Coefficient *Q;
-  mfem::VectorCoefficient *VQ;
-  mfem::MatrixCoefficient *MQ;
-
 public:
-  MixedVectorWeakDivergenceIntegrator() : Q(nullptr), VQ(nullptr), MQ(nullptr) {}
-  MixedVectorWeakDivergenceIntegrator(mfem::Coefficient &Q)
-    : Q(&Q), VQ(nullptr), MQ(nullptr)
-  {
-  }
-  MixedVectorWeakDivergenceIntegrator(mfem::VectorCoefficient &VQ)
-    : Q(nullptr), VQ(&VQ), MQ(nullptr)
-  {
-  }
-  MixedVectorWeakDivergenceIntegrator(mfem::MatrixCoefficient &MQ)
-    : Q(nullptr), VQ(nullptr), MQ(&MQ)
+  MixedVectorWeakDivergenceIntegrator() = default;
+  MixedVectorWeakDivergenceIntegrator(const MaterialPropertyCoefficient &Q)
+    : BilinearFormIntegrator(Q)
   {
   }
 
   void Assemble(const ceed::CeedGeomFactorData &geom_data, Ceed ceed,
                 CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
-                CeedBasis trial_basis, CeedBasis test_basis, CeedOperator *op) override;
+                CeedBasis trial_basis, CeedBasis test_basis,
+                CeedOperator *op) const override;
 };
 
 // Integrator for a(u, v) = (Q curl u, v) for u in H(curl) and v in H(div).
@@ -315,23 +228,17 @@ class MixedVectorCurlIntegrator : public BilinearFormIntegrator
 protected:
   int trial_map_type, test_map_type;
 
-  mfem::Coefficient *Q;
-  mfem::VectorCoefficient *VQ;
-  mfem::MatrixCoefficient *MQ;
-
 public:
-  MixedVectorCurlIntegrator() : Q(nullptr), VQ(nullptr), MQ(nullptr) {}
-  MixedVectorCurlIntegrator(mfem::Coefficient &Q) : Q(&Q), VQ(nullptr), MQ(nullptr) {}
-  MixedVectorCurlIntegrator(mfem::VectorCoefficient &VQ) : Q(nullptr), VQ(&VQ), MQ(nullptr)
-  {
-  }
-  MixedVectorCurlIntegrator(mfem::MatrixCoefficient &MQ) : Q(nullptr), VQ(nullptr), MQ(&MQ)
+  MixedVectorCurlIntegrator() = default;
+  MixedVectorCurlIntegrator(const MaterialPropertyCoefficient &Q)
+    : BilinearFormIntegrator(Q)
   {
   }
 
   void Assemble(const ceed::CeedGeomFactorData &geom_data, Ceed ceed,
                 CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
-                CeedBasis trial_basis, CeedBasis test_basis, CeedOperator *op) override;
+                CeedBasis trial_basis, CeedBasis test_basis,
+                CeedOperator *op) const override;
 
   void SetMapTypes(int trial_type, int test_type) override
   {
@@ -346,25 +253,17 @@ class MixedVectorWeakCurlIntegrator : public BilinearFormIntegrator
 protected:
   int trial_map_type, test_map_type;
 
-  mfem::Coefficient *Q;
-  mfem::VectorCoefficient *VQ;
-  mfem::MatrixCoefficient *MQ;
-
 public:
-  MixedVectorWeakCurlIntegrator() : Q(nullptr), VQ(nullptr), MQ(nullptr) {}
-  MixedVectorWeakCurlIntegrator(mfem::Coefficient &Q) : Q(&Q), VQ(nullptr), MQ(nullptr) {}
-  MixedVectorWeakCurlIntegrator(mfem::VectorCoefficient &VQ)
-    : Q(nullptr), VQ(&VQ), MQ(nullptr)
-  {
-  }
-  MixedVectorWeakCurlIntegrator(mfem::MatrixCoefficient &MQ)
-    : Q(nullptr), VQ(nullptr), MQ(&MQ)
+  MixedVectorWeakCurlIntegrator() = default;
+  MixedVectorWeakCurlIntegrator(const MaterialPropertyCoefficient &Q)
+    : BilinearFormIntegrator(Q)
   {
   }
 
   void Assemble(const ceed::CeedGeomFactorData &geom_data, Ceed ceed,
                 CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
-                CeedBasis trial_basis, CeedBasis test_basis, CeedOperator *op) override;
+                CeedBasis trial_basis, CeedBasis test_basis,
+                CeedOperator *op) const override;
 
   void SetMapTypes(int trial_type, int test_type) override
   {
@@ -376,20 +275,14 @@ public:
 // Integrator for a(u, v) = (Q grad u, v) for u in H1 and v in (H1)ᵈ.
 class GradientIntegrator : public BilinearFormIntegrator
 {
-protected:
-  mfem::Coefficient *Q;
-  mfem::VectorCoefficient *VQ;
-  mfem::MatrixCoefficient *MQ;
-
 public:
-  GradientIntegrator() : Q(nullptr), VQ(nullptr), MQ(nullptr) {}
-  GradientIntegrator(mfem::Coefficient &Q) : Q(&Q), VQ(nullptr), MQ(nullptr) {}
-  GradientIntegrator(mfem::VectorCoefficient &VQ) : Q(nullptr), VQ(&VQ), MQ(nullptr) {}
-  GradientIntegrator(mfem::MatrixCoefficient &MQ) : Q(nullptr), VQ(nullptr), MQ(&MQ) {}
+  GradientIntegrator() = default;
+  GradientIntegrator(const MaterialPropertyCoefficient &Q) : BilinearFormIntegrator(Q) {}
 
   void Assemble(const ceed::CeedGeomFactorData &geom_data, Ceed ceed,
                 CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
-                CeedBasis trial_basis, CeedBasis test_basis, CeedOperator *op) override;
+                CeedBasis trial_basis, CeedBasis test_basis,
+                CeedOperator *op) const override;
 };
 
 // Base class for all discrete interpolators.

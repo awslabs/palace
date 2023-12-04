@@ -118,8 +118,8 @@ auto MakeWrapperSolver(U &&...args)
 template <typename OperType>
 std::unique_ptr<Solver<OperType>>
 ConfigurePreconditionerSolver(MPI_Comm comm, const IoData &iodata,
-                              const FiniteElementSpaceHierarchy &fespaces,
-                              const AuxiliaryFiniteElementSpaceHierarchy *aux_fespaces)
+                              FiniteElementSpaceHierarchy &fespaces,
+                              AuxiliaryFiniteElementSpaceHierarchy *aux_fespaces)
 {
   // Create the real-valued solver first.
   std::unique_ptr<Solver<OperType>> pc;
@@ -215,9 +215,9 @@ ConfigurePreconditionerSolver(MPI_Comm comm, const IoData &iodata,
 }  // namespace
 
 template <typename OperType>
-BaseKspSolver<OperType>::BaseKspSolver(
-    const IoData &iodata, const FiniteElementSpaceHierarchy &fespaces,
-    const AuxiliaryFiniteElementSpaceHierarchy *aux_fespaces)
+BaseKspSolver<OperType>::BaseKspSolver(const IoData &iodata,
+                                       FiniteElementSpaceHierarchy &fespaces,
+                                       AuxiliaryFiniteElementSpaceHierarchy *aux_fespaces)
   : BaseKspSolver(
         ConfigureKrylovSolver<OperType>(fespaces.GetFinestFESpace().GetComm(), iodata),
         ConfigurePreconditionerSolver<OperType>(fespaces.GetFinestFESpace().GetComm(),

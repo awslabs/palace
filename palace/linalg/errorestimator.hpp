@@ -60,7 +60,7 @@ class CurlFluxErrorEstimator
   const MaterialOperator &mat_op;
 
   // Finite element space used to represent U and F.
-  const FiniteElementSpace &nd_fespace;
+  FiniteElementSpace &nd_fespace;
 
   // Global L2 projection solver.
   FluxProjector projector;
@@ -70,9 +70,8 @@ class CurlFluxErrorEstimator
   mutable GridFunctionType F_gf, U_gf;
 
 public:
-  CurlFluxErrorEstimator(const MaterialOperator &mat_op,
-                         const FiniteElementSpace &nd_fespace, double tol, int max_it,
-                         int print);
+  CurlFluxErrorEstimator(const MaterialOperator &mat_op, FiniteElementSpace &nd_fespace,
+                         double tol, int max_it, int print);
 
   // Compute elemental error indicators given a vector of true DOF.
   ErrorIndicator ComputeIndicators(const VecType &U) const;
@@ -93,7 +92,7 @@ class GradFluxErrorEstimator
   const MaterialOperator &mat_op;
 
   // Finite element space used to represent U.
-  const FiniteElementSpace &h1_fespace;
+  FiniteElementSpace &h1_fespace;
 
   // Vector H1 space used to represent the components of F, ordered by component.
   std::unique_ptr<FiniteElementSpace> h1d_fespace;
@@ -106,9 +105,8 @@ class GradFluxErrorEstimator
   mutable mfem::ParGridFunction F_gf, U_gf;
 
 public:
-  GradFluxErrorEstimator(const MaterialOperator &mat_op,
-                         const FiniteElementSpace &h1_fespace, double tol, int max_it,
-                         int print);
+  GradFluxErrorEstimator(const MaterialOperator &mat_op, FiniteElementSpace &h1_fespace,
+                         double tol, int max_it, int print);
 
   // Compute elemental error indicators given a vector of true DOF.
   ErrorIndicator ComputeIndicators(const Vector &U) const;

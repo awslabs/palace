@@ -13,7 +13,7 @@ namespace palace
 namespace
 {
 
-double GetArea(mfem::ParFiniteElementSpace &fespace, const mfem::Array<int> &attr_marker)
+double GetArea(mfem::ParFiniteElementSpace &fespace, mfem::Array<int> &attr_marker)
 {
   mfem::ConstantCoefficient one_func(1.0);
   mfem::LinearForm s(&fespace);
@@ -35,7 +35,7 @@ UniformElementData::UniformElementData(const std::array<double, 3> &input_dir,
                                        mfem::ParFiniteElementSpace &fespace)
   : LumpedElementData(attr_list)
 {
-  const mfem::ParMesh &mesh = *fespace.GetParMesh();
+  mfem::ParMesh &mesh = *fespace.GetParMesh();
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, attr_list);
   bounding_box = mesh::GetBoundingBox(mesh, attr_marker, true);
@@ -103,7 +103,7 @@ UniformElementData::GetModeCoefficient(double coef) const
   mfem::Vector source = direction;
   source *= coef;
   return std::make_unique<RestrictedVectorCoefficient>(
-      std::make_unique<mfem::VectorConstantCoefficient>(source), attr_list)
+      std::make_unique<mfem::VectorConstantCoefficient>(source), attr_list);
 }
 
 CoaxialElementData::CoaxialElementData(const std::array<double, 3> &direction,
@@ -111,7 +111,7 @@ CoaxialElementData::CoaxialElementData(const std::array<double, 3> &direction,
                                        mfem::ParFiniteElementSpace &fespace)
   : LumpedElementData(attr_list)
 {
-  const mfem::ParMesh &mesh = *fespace.GetParMesh();
+  mfem::ParMesh &mesh = *fespace.GetParMesh();
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, attr_list);
   bounding_ball = mesh::GetBoundingBall(mesh, attr_marker, true);

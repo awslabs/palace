@@ -8,6 +8,7 @@
 #include <memory>
 #include <vector>
 #include <mfem.hpp>
+#include "fem/coefficient.hpp"
 
 // XX TODO: Rename BoundaryPostOperator for config file consistency?
 

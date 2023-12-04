@@ -281,7 +281,7 @@ mfem::DenseMatrix ToDenseMatrix(const config::SymmetricMatrixData<N> &data)
 
 }  // namespace
 
-MaterialOperator::MaterialOperator(const IoData &iodata, const Mesh &mesh)
+MaterialOperator::MaterialOperator(const IoData &iodata, Mesh &mesh)
   : loc_attr(mesh.GetAttributeGlobalToLocal()),
     loc_bdr_attr(mesh.GetBdrAttributeGlobalToLocal()),
     local_to_shared(mesh.GetLocalToSharedFaceMap())
@@ -289,7 +289,7 @@ MaterialOperator::MaterialOperator(const IoData &iodata, const Mesh &mesh)
   SetUpMaterialProperties(iodata, mesh);
 }
 
-void MaterialOperator::SetUpMaterialProperties(const IoData &iodata, const Mesh &mesh)
+void MaterialOperator::SetUpMaterialProperties(const IoData &iodata, mfem::ParMesh &mesh)
 {
   // Check that material attributes have been specified correctly. The mesh attributes may
   // be non-contiguous and when no material attribute is specified the elements are deleted
@@ -350,7 +350,7 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata, const Mesh 
   mat_c0_min.SetSize(nmats);
   mat_c0_max.SetSize(nmats);
 
-  count = 0;
+  int count = 0;
   for (std::size_t i = 0; i < iodata.domains.materials.size(); i++)
   {
     if (!mat_marker[i])
@@ -479,7 +479,7 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata, const Mesh 
   for (int i = 0; i < mesh.GetNBE(); i++)
   {
     const int attr = mesh.GetBdrAttribute(i);
-    if (bdr_attr_mat[loc_bdr_attr[attr] - 1] >= 0)
+    if (bdr_attr_mat[loc_bdr_attr.at(attr) - 1] >= 0)
     {
       continue;
     }
@@ -504,20 +504,20 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata, const Mesh 
       FET = mesh.GetFaceElementTransformations(f);
     }
 
-    T1 = &FET->GetElement1Transformation();
-    T2 = (info2 >= 0) ? &FET->GetElement2Transformation() : nullptr;
+    auto *T1 = &FET->GetElement1Transformation();
+    auto *T2 = (info2 >= 0) ? &FET->GetElement2Transformation() : nullptr;
 
     const int nbr_attr =
         (T2 && GetLightSpeedMin(T2->Attribute) > GetLightSpeedMax(T1->Attribute))
             ? T2->Attribute
             : T1->Attribute;
-    bdr_attr_mat[loc_bdr_attr[attr] - 1] = attr_mat[loc_attr[nbr_attr] - 1];
+    bdr_attr_mat[loc_bdr_attr.at(attr) - 1] = attr_mat[loc_attr.at(nbr_attr) - 1];
   }
 }
 
-MaterialPropertyCoefficient::MaterialPropertyCoefficient(const mfem::Array<int> &attr_mat,
-                                                         const mfem::DenseTensor &mat_coeff)
-  : attr_mat(attr_mat), mat_coeff(mat_coeff)
+MaterialPropertyCoefficient::MaterialPropertyCoefficient(
+    const mfem::Array<int> &attr_mat_, const mfem::DenseTensor &mat_coeff_, double a)
+  : attr_mat(attr_mat_), mat_coeff(mat_coeff_)
 {
   for (int k = 0; k < mat_coeff.SizeK(); k++)
   {
@@ -535,7 +535,7 @@ void UpdateProperty(mfem::DenseTensor &mat_coeff, int k, double coeff, double a 
               "Invalid dimensions for MaterialPropertyCoefficient update!");
   for (int i = 0; i < mat_coeff.SizeI(); i++)
   {
-    mat_coeff(k)(i, i) += a * coeff[k];
+    mat_coeff(k)(i, i) += a * coeff;
   }
 }
 
@@ -547,15 +547,15 @@ void UpdateProperty(mfem::DenseTensor &mat_coeff, int k, const mfem::DenseMatrix
     // Initialize the coefficient material properties.
     MFEM_VERIFY(k == 0 && mat_coeff.SizeK() == 1,
                 "Unexpected initial size for MaterialPropertyCoefficient!");
-    mat_coeff.SetSize(coeff.Rows(), coeff.Cols(), mat_coeff.SizeK());
+    mat_coeff.SetSize(coeff.Height(), coeff.Width(), mat_coeff.SizeK());
     mat_coeff(k).Set(a, coeff);
   }
-  else if (coeff.Rows() == mat_coeff.SizeI() && coeff.Cols() == mat_coeff.SizeJ())
+  else if (coeff.Height() == mat_coeff.SizeI() && coeff.Width() == mat_coeff.SizeJ())
   {
     // Add as full matrix.
     mat_coeff(k).Add(a, coeff);
   }
-  else if (coeff.Rows() == 1 && coeff.Cols() == 1)
+  else if (coeff.Height() == 1 && coeff.Width() == 1)
   {
     // Add as diagonal.
     UpdateProperty(mat_coeff, k, coeff(0, 0), a);
@@ -564,7 +564,7 @@ void UpdateProperty(mfem::DenseTensor &mat_coeff, int k, const mfem::DenseMatrix
   {
     // Convert to matrix coefficient and previous data add as diagonal.
     mfem::DenseTensor mat_coeff_scalar(mat_coeff);
-    mat_coeff.SetSize(coeff.Rows(), coeff.Cols(), mat_coeff_scalar.SizeK());
+    mat_coeff.SetSize(coeff.Height(), coeff.Width(), mat_coeff_scalar.SizeK());
     mat_coeff = 0.0;
     for (int l = 0; l < mat_coeff.SizeK(); l++)
     {
@@ -588,6 +588,10 @@ void MaterialPropertyCoefficient::AddCoefficient(const mfem::Array<int> &attr_ma
   {
     attr_mat = attr_mat_;
     mat_coeff = mat_coeff_;
+    for (int k = 0; k < mat_coeff.SizeK(); k++)
+    {
+      mat_coeff(k) *= a;
+    }
   }
   else if (attr_mat_ == attr_mat)
   {
@@ -614,7 +618,7 @@ void MaterialPropertyCoefficient::AddCoefficient(const mfem::Array<int> &attr_ma
       }
 
       // Add or update the material property.
-      AddMaterialProperty(attr_list, mat_coeff_(k), c);
+      AddMaterialProperty(attr_list, mat_coeff_(k), a);
     }
   }
 }
@@ -716,8 +720,10 @@ void MaterialPropertyCoefficient::NormalProjectedCoefficient(const mfem::Vector 
   }
 }
 
-template void MaterialPropertyCoefficient::AddMaterialProperty(const mfem::DenseMatrix &,
+template void MaterialPropertyCoefficient::AddMaterialProperty(const mfem::Array<int> &,
+                                                               const mfem::DenseMatrix &,
                                                                double);
-template void MaterialPropertyCoefficient::AddMaterialProperty(const double &, double);
+template void MaterialPropertyCoefficient::AddMaterialProperty(const mfem::Array<int> &,
+                                                               const double &, double);
 
 }  // namespace palace

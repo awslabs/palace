@@ -543,7 +543,7 @@ void EigenSolver::PostprocessEPR(const PostOperator &postop,
   epr_L_data.reserve(lumped_port_op.Size());
   for (const auto &[idx, data] : lumped_port_op)
   {
-    if (std::abs(data.GetL()) > 0.0)
+    if (std::abs(data.L) > 0.0)
     {
       const double pj = postop.GetInductorParticipation(lumped_port_op, idx, Em);
       epr_L_data.push_back({idx, pj});
@@ -583,7 +583,7 @@ void EigenSolver::PostprocessEPR(const PostOperator &postop,
   epr_IO_data.reserve(lumped_port_op.Size());
   for (const auto &[idx, data] : lumped_port_op)
   {
-    if (std::abs(data.GetR()) > 0.0)
+    if (std::abs(data.R) > 0.0)
     {
       const double Kl = postop.GetExternalKappa(lumped_port_op, idx, Em);
       const double Ql = (Kl == 0.0) ? mfem::infinity() : omega.real() / std::abs(Kl);

@@ -16,7 +16,7 @@ namespace palace
 void VectorFEMassIntegrator::Assemble(const ceed::CeedGeomFactorData &geom_data, Ceed ceed,
                                       CeedElemRestriction trial_restr,
                                       CeedElemRestriction test_restr, CeedBasis trial_basis,
-                                      CeedBasis test_basis, CeedOperator *op)
+                                      CeedBasis test_basis, CeedOperator *op) const
 {
   ceed::IntegratorInfo info;
 

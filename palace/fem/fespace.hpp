@@ -19,7 +19,7 @@ namespace palace
 // is constructed with a unique ID associated with it. The object also owns libCEED objects
 // used to define libCEED operators with the space.
 //
-class FiniteElementSpace : public mfem::ParFiniteElementSpace
+class FiniteElementSpace
 {
 private:
   // Underlying MFEM object.
@@ -53,14 +53,15 @@ private:
     // The range restriction for interpolation operators needs to use a special
     // DofTransformation (not equal to the transpose of the domain restriction).
     const auto geom = fe.GetGeomType();
-    return (DoFTransArray[geom] && !DoFTransArray[geom]->IsIdentity());
+    const auto *dof_trans = fespace->FEColl()->DofTransformationForGeometry(geom);
+    return (dof_trans && !dof_trans->IsIdentity());
   }
 
 public:
   template <typename... T>
   FiniteElementSpace(Mesh &mesh, T &&...args)
-    : fespace(
-          std::make_unique<mfem::ParFiniteElementSpace>(mesh, std::forward<T>(args)...)),
+    : fespace(std::make_unique<mfem::ParFiniteElementSpace>(&mesh.Get(),
+                                                            std::forward<T>(args)...)),
       mesh(mesh), sequence(fespace->GetSequence()), id(GetGlobalId())
   {
   }
@@ -69,19 +70,25 @@ public:
   const auto &Get() const { return *fespace; }
   auto &Get() { return *fespace; }
 
-  operator const mfem::ParFiniteElementSpace() const { return Get(); }
-  operator mfem::ParFiniteElementSpace() { return Get(); }
-
-  const auto &GetMesh() const { return mesh; }
-  auto &GetMesh() { return mesh; }
+  operator const mfem::ParFiniteElementSpace &() const { return Get(); }
+  operator mfem::ParFiniteElementSpace &() { return Get(); }
 
   const auto &GetFEColl() const { return *Get().FEColl(); }
   auto &GetFEColl() { return *Get().FEColl(); }
 
+  const auto &GetMesh() const { return mesh; }
+  auto &GetMesh() { return mesh; }
+
+  const auto &GetParMesh() const { return mesh.Get(); }
+  auto &GetParMesh() { return mesh.Get(); }
+
+  auto GetVDim() const { return Get().GetVDim(); }
+  auto GetVSize() const { return Get().GetVSize(); }
   auto GetTrueVSize() const { return Get().GetTrueVSize(); }
   auto GlobalTrueVSize() const { return Get().GlobalTrueVSize(); }
   auto Dimension() const { return mesh.Get().Dimension(); }
   auto SpaceDimension() const { return mesh.Get().SpaceDimension(); }
+  auto GetMaxElementOrder() const { return Get().GetMaxElementOrder(); }
 
   // Get the ID associated with the instance of this class. If the underlying sequence has
   // changed (due to a mesh update, for example), regenerate the ID.
@@ -124,6 +131,8 @@ public:
   BuildCeedElemRestriction(const mfem::FiniteElementSpace &fespace, Ceed ceed,
                            mfem::Geometry::Type geom, const std::vector<int> &indices,
                            bool is_interp = false, bool is_interp_range = false);
+
+  MPI_Comm GetComm() const { return fespace->GetComm(); }
 };
 
 //

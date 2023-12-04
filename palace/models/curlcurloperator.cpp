@@ -32,7 +32,7 @@ CurlCurlOperator::CurlCurlOperator(const IoData &iodata,
         iodata.solver.linear.mg_max_levels, mesh, nd_fecs, &dbc_attr, &dbc_tdof_lists)),
     h1_fespaces(fem::ConstructAuxiliaryFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
         nd_fespaces, h1_fecs)),
-    rt_fespace(nd_fespaces.GetFinestFESpace(), &mesh.back()->Get(), rt_fec.get()),
+    rt_fespace(nd_fespaces.GetFinestFESpace(), *mesh.back(), rt_fec.get()),
     mat_op(iodata, *mesh.back()), surf_j_op(iodata, GetH1Space())
 {
   // Finalize setup.
@@ -105,7 +105,7 @@ void CurlCurlOperator::CheckBoundaryProperties()
   // A final check that no boundary attribute is assigned multiple boundary conditions.
   const mfem::ParMesh &mesh = GetMesh();
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
-  const auto dbc_marker = mesh::AttrToMarker(bdr_attr_max, dbc_bcs);
+  const auto dbc_marker = mesh::AttrToMarker(bdr_attr_max, dbc_attr);
   const auto surf_j_marker = mesh::AttrToMarker(bdr_attr_max, surf_j_op.GetAttrList());
   for (int i = 0; i < dbc_marker.Size(); i++)
   {

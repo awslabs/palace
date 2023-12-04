@@ -15,7 +15,7 @@ void DiffusionMassIntegrator::Assemble(const ceed::CeedGeomFactorData &geom_data
                                        CeedElemRestriction trial_restr,
                                        CeedElemRestriction test_restr,
                                        CeedBasis trial_basis, CeedBasis test_basis,
-                                       CeedOperator *op)
+                                       CeedOperator *op) const
 {
   ceed::IntegratorInfo info;
 

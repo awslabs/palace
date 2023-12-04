@@ -50,6 +50,9 @@ public:
   // List of all boundary attributes making up this port boundary.
   mfem::Array<int> attr_list;
 
+  // Grid functions storing the last computed electric field mode on the port.
+  std::unique_ptr<mfem::ParComplexGridFunction> E0t, E0n, port_E0t, port_E0n;
+
 private:
   // SubMesh data structures to define finite element spaces and grid functions on the
   // SubMesh corresponding to this port boundary.
@@ -57,7 +60,6 @@ private:
   std::unique_ptr<mfem::FiniteElementCollection> port_nd_fec, port_h1_fec;
   std::unique_ptr<FiniteElementSpace> port_nd_fespace, port_h1_fespace;
   std::unique_ptr<mfem::ParTransferMap> port_nd_transfer, port_h1_transfer;
-  std::unordered_map<int, int> submesh_elems;
 
   // Operator storage for repeated boundary mode eigenvalue problem solves.
   double mu_eps_max;
@@ -71,9 +73,8 @@ private:
   std::unique_ptr<EigenvalueSolver> eigen;
   std::unique_ptr<ComplexKspSolver> ksp;
 
-  // Grid functions storing the last computed electric field mode on the port and the
-  // associated propagation constant.
-  std::unique_ptr<mfem::ParComplexGridFunction> port_E0t, port_E0n;
+  // Stored objects for computing functions of the port modes for use as an excitation or
+  // in postprocessing.
   std::unique_ptr<mfem::ParGridFunction> port_S0t;
   std::unique_ptr<mfem::LinearForm> port_sr, port_si;
 
@@ -106,8 +107,7 @@ public:
 
   std::complex<double> GetSParameter(mfem::ParComplexGridFunction &E) const;
   std::complex<double> GetPower(mfem::ParComplexGridFunction &E,
-                                mfem::ParComplexGridFunction &B,
-                                const MaterialOperator &mat_op) const;
+                                mfem::ParComplexGridFunction &B) const;
   std::complex<double> GetVoltage(mfem::ParComplexGridFunction &E) const
   {
     MFEM_ABORT("GetVoltage is not yet implemented for wave port boundaries!");

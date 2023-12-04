@@ -53,11 +53,14 @@ FarfieldBoundaryOperator::SetUpBoundaryProperties(const IoData &iodata,
   order = iodata.boundaries.farfield.order;
 
   // Mark selected boundary attributes from the mesh as farfield.
-  MFEM_VERIFY(iodata.boundaries.farfield.attributes.empty() || order < 2 ||
+  mfem::Array<int> farfield_bcs;
+  farfield_bcs.Append(iodata.boundaries.farfield.attributes.data(),
+                      iodata.boundaries.farfield.attributes.size());
+  MFEM_VERIFY(farfield_bcs.Size() == 0 || order < 2 ||
                   iodata.problem.type == config::ProblemData::Type::DRIVEN,
               "Second-order farfield boundaries are only available for frequency "
               "domain driven simulations!");
-  return iodata.boundaries.farfield.attributes;
+  return farfield_bcs;
 }
 
 void FarfieldBoundaryOperator::AddDampingBdrCoefficients(double coef,
@@ -89,14 +92,14 @@ void FarfieldBoundaryOperator::AddExtraSystemBdrCoefficients(
     mfem::DenseMatrix T(muinvc0.SizeI(), muinvc0.SizeJ());
     for (int k = 0; k < muinvc0.SizeK(); k++)
     {
-      Mult(mat_op.GetInvPermeability()(k), muinvc0(k), K);
+      Mult(mat_op.GetInvPermeability()(k), muinvc0(k), T);
       muinvc0(k) = T;
     }
 
     MaterialPropertyCoefficient muinvc0_func(mat_op.GetBdrAttributeToMaterial(), muinvc0);
     muinvc0_func.RestrictCoefficient(mat_op.GetBdrAttributeGlobalToLocal(farfield_attr));
-    fb.AddCoefficient(muinvc0_func.GetAttributeToMaterial(),
-                      muinvc0_func.GetMaterialProperties(), coef);
+    dfbi.AddCoefficient(muinvc0_func.GetAttributeToMaterial(),
+                        muinvc0_func.GetMaterialProperties(), 0.5 / omega);
   }
 }
 

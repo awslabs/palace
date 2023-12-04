@@ -37,10 +37,10 @@ SpaceOperator::SpaceOperator(const IoData &iodata,
         iodata.solver.linear.mg_max_levels, mesh, nd_fecs, &dbc_attr, &nd_dbc_tdof_lists)),
     h1_fespaces(fem::ConstructAuxiliaryFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
         nd_fespaces, h1_fecs, &dbc_attr, &h1_dbc_tdof_lists)),
-    rt_fespace(nd_fespaces.GetFinestFESpace(), &mesh.back().Get(), rt_fec.get()),
+    rt_fespace(nd_fespaces.GetFinestFESpace(), *mesh.back(), rt_fec.get()),
     mat_op(iodata, *mesh.back()), farfield_op(iodata, mat_op, *mesh.back()),
-    surf_sigma_op(iodata, *mesh.back()), surf_z_op(iodata, *mesh.back()),
-    lumped_port_op(iodata, GetH1Space()),
+    surf_sigma_op(iodata, mat_op, *mesh.back()), surf_z_op(iodata, mat_op, *mesh.back()),
+    lumped_port_op(iodata, mat_op, GetH1Space()),
     wave_port_op(iodata, mat_op, GetNDSpace(), GetH1Space()),
     surf_j_op(iodata, GetH1Space())
 {
@@ -115,7 +115,7 @@ void SpaceOperator::CheckBoundaryProperties()
   // mixed BC applied.
   const mfem::ParMesh &mesh = GetMesh();
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
-  const auto dbc_marker = mesh::AttrToMarker(bdr_attr_max, dbc_bcs);
+  const auto dbc_marker = mesh::AttrToMarker(bdr_attr_max, dbc_attr);
   const auto farfield_marker = mesh::AttrToMarker(bdr_attr_max, farfield_op.GetAttrList());
   const auto surf_sigma_marker =
       mesh::AttrToMarker(bdr_attr_max, surf_sigma_op.GetAttrList());
@@ -144,7 +144,7 @@ void SpaceOperator::CheckBoundaryProperties()
   //                      // As tested, this does not eliminate all DC modes!
   for (std::size_t l = 0; l < GetH1Spaces().GetNumLevels(); l++)
   {
-    GetH1Spaces().GetFESpaceAtLevel(l).GetEssentialTrueDofs(
+    GetH1Spaces().GetFESpaceAtLevel(l).Get().GetEssentialTrueDofs(
         aux_bdr_marker, aux_bdr_tdof_lists.emplace_back());
   }
 
@@ -198,9 +198,10 @@ void PrintHeader(const mfem::ParFiniteElementSpace &h1_fespace,
   print_hdr = false;
 }
 
-template <typename T1, typename T2, typename T3, typename T4>
-std::unique_ptr<Operator> BuildOperator(const FiniteElementSpace &fespace, T1 *df, T2 *f,
-                                        T3 *dfb, T4 *fb, std::size_t l, bool skip_zeros)
+std::unique_ptr<Operator>
+BuildOperator(const FiniteElementSpace &fespace, const MaterialPropertyCoefficient *df,
+              const MaterialPropertyCoefficient *f, const MaterialPropertyCoefficient *dfb,
+              const MaterialPropertyCoefficient *fb, std::size_t l, bool skip_zeros)
 {
   BilinearForm a(fespace);
   if (df && !df->empty() && f && !f->empty())
@@ -773,7 +774,7 @@ void SpaceOperator::AddDampingBdrCoefficients(double coef, MaterialPropertyCoeff
 
 void SpaceOperator::AddRealMassCoefficients(double coef, MaterialPropertyCoefficient &f)
 {
-  f.AddCoefficient(mmat_op.GetAttributeToMaterial(), at_op.GetPermittivityReal(), coef);
+  f.AddCoefficient(mat_op.GetAttributeToMaterial(), mat_op.GetPermittivityReal(), coef);
 }
 
 void SpaceOperator::AddRealMassBdrCoefficients(double coef, MaterialPropertyCoefficient &fb)

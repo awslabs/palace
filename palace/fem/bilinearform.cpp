@@ -5,6 +5,7 @@
 
 #include "fem/libceed/basis.hpp"
 #include "fem/libceed/ceed.hpp"
+#include "fem/mesh.hpp"
 #include "utils/omp.hpp"
 
 namespace palace
@@ -187,9 +188,9 @@ std::unique_ptr<ceed::Operator> DiscreteLinearOperator::PartialAssemble() const
   test_multiplicity = 0.0;
   mfem::Array<int> dofs;
   auto *h_mult = test_multiplicity.HostReadWrite();
-  for (int i = 0; i < test_fespace.GetNE(); i++)
+  for (int i = 0; i < test_fespace.GetMesh().GetNE(); i++)
   {
-    test_fespace.GetElementVDofs(i, dofs);
+    test_fespace.Get().GetElementVDofs(i, dofs);
     for (int j = 0; j < dofs.Size(); j++)
     {
       const int k = dofs[j];

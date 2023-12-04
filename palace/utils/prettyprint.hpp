@@ -62,41 +62,43 @@ template <template <typename...> class Container, typename T, typename... U>
 inline void PrettyPrint(const Container<T, U...> &data, T scale,
                         const std::string &prefix = "", MPI_Comm comm = MPI_COMM_WORLD)
 {
-  std::size_t i = 0, w = 0, lead = prefix.length();
+  std::size_t w = 0, lead = prefix.length();
   Mpi::Print(comm, prefix);
-  while (i < internal::GetSize(data))
+  auto i = data.begin();
+  while (i != data.end())
   {
     if constexpr (std::is_integral<T>::value)
     {
       auto j = i;
       if (scale == 1)
       {
-        while ((j + 1 < internal::GetSize(data)) && data[j + 1] = data[j] + 1)
+        while ((j + 1 != data.end()) && *(j + 1) == (*j) + 1)
         {
           j++;
         }
       }
       if (i == j)
       {
-        auto wi = 1 + static_cast<T>(std::log10(i + 1));
+        auto wi = 1 + static_cast<T>(std::log10((*i) + 1));
         w = internal::PrePrint(comm, w, wi, lead) + wi;
-        Mpi::Print(comm, "{:d}", data[i] * scale);
-        i++;
+        Mpi::Print(comm, "{:d}", (*i) * scale);
       }
       else
       {
-        auto wi = 3 + static_cast<T>(std::log10(i + 1)) + static_cast<T>(std::log10(j + 1));
+        auto wi =
+            3 + static_cast<T>(std::log10((*i) + 1)) + static_cast<T>(std::log10((*j) + 1));
         w = internal::PrePrint(comm, w, wi, lead) + wi;
-        Mpi::Print(comm, "{:d}-{:d}", data[i] * scale, data[j] * scale);
-        i = j + 1;
+        Mpi::Print(comm, "{:d}-{:d}", (*i) * scale, (*j) * scale);
       }
+      i = j + 1;
     }
     else
     {
       constexpr auto pv = 3;       // Value precision
       constexpr auto wv = pv + 6;  // Total printed width of a value
       w = internal::PrePrint(comm, w, wv, lead) + wv;
-      Mpi::Print(comm, "{:.{}e}", data[i] * scale, pv);
+      Mpi::Print(comm, "{:.{}e}", (*i) * scale, pv);
+      i++;
     }
   }
   Mpi::Print(comm, "\n");

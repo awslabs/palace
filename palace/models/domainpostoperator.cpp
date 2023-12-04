@@ -67,7 +67,7 @@ DomainPostOperator::DomainPostOperator(const IoData &iodata, const MaterialOpera
                                              mat_op.GetInvPermeability());
       muinv_func.RestrictCoefficient(mat_op.GetAttributeGlobalToLocal(data.attributes));
       BilinearForm m_rt_i(*rt_fespace);
-      m_rt_i.AddDomainIntegrator<VectorFEMassIntegrator>(muinv_func_i);
+      m_rt_i.AddDomainIntegrator<VectorFEMassIntegrator>(muinv_func);
       M_RT_i = m_rt_i.PartialAssemble();
     }
     M_i.emplace(idx, std::make_pair(std::move(M_ND_i), std::move(M_RT_i)));

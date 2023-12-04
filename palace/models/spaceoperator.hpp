@@ -86,8 +86,7 @@ private:
   bool AddExcitationVector2Internal(double omega, ComplexVector &RHS);
 
 public:
-  SpaceOperator(const IoData &iodata,
-                const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh);
+  SpaceOperator(const IoData &iodata, const std::vector<std::unique_ptr<Mesh>> &mesh);
 
   // Return list of all PEC boundary true dofs for all finite element space levels.
   const std::vector<mfem::Array<int>> &GetNDDbcTDofLists() const

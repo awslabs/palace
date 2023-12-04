@@ -4,7 +4,6 @@
 #include "surfacepostoperator.hpp"
 
 #include <complex>
-#include "fem/coefficient.hpp"
 #include "fem/integrator.hpp"
 #include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
@@ -72,7 +71,8 @@ SurfacePostOperator::InterfaceDielectricData::InterfaceDielectricData(
     }
 
     // Store boundary attributes for this element of the postprocessing boundary.
-    attr_lists.emplace_back(elem.attributes.begin(), elem.attributes.end());
+    auto &attr_list = attr_lists.emplace_back();
+    attr_list.Append(elem.attributes.data(), elem.attributes.size());
   }
 }
 
@@ -81,7 +81,7 @@ SurfacePostOperator::InterfaceDielectricData::GetCoefficient(
     std::size_t i, const mfem::ParGridFunction &U, const MaterialOperator &mat_op) const
 {
   auto MakeRestricted = [&](std::unique_ptr<mfem::Coefficient> &&coeff)
-  { return std::make_unique<RestrictedCoefficient>(coeff, attr_lists[i]); };
+  { return std::make_unique<RestrictedCoefficient>(std::move(coeff), attr_lists[i]); };
   switch (type)
   {
     case DielectricInterfaceType::MA:
@@ -109,7 +109,8 @@ SurfacePostOperator::SurfaceChargeData::SurfaceChargeData(
     const config::CapacitanceData &data, mfem::ParMesh &mesh)
 {
   // Store boundary attributes for this element of the postprocessing boundary.
-  attr_lists.emplace_back(data.attributes.begin(), data.attributes.end());
+  auto &attr_list = attr_lists.emplace_back();
+  attr_list.Append(data.attributes.data(), data.attributes.size());
 }
 
 std::unique_ptr<mfem::Coefficient> SurfacePostOperator::SurfaceChargeData::GetCoefficient(
@@ -129,7 +130,8 @@ SurfacePostOperator::SurfaceFluxData::SurfaceFluxData(const config::InductanceDa
   direction /= direction.Norml2();
 
   // Store boundary attributes for this element of the postprocessing boundary.
-  attr_lists.emplace_back(data.attributes.begin(), data.attributes.end());
+  auto &attr_list = attr_lists.emplace_back();
+  attr_list.Append(data.attributes.data(), data.attributes.size());
 }
 
 std::unique_ptr<mfem::Coefficient> SurfacePostOperator::SurfaceFluxData::GetCoefficient(
@@ -254,7 +256,7 @@ double SurfacePostOperator::GetLocalSurfaceIntegral(const SurfaceData &data,
   const auto &mesh = *U.ParFESpace()->GetParMesh();
   SumCoefficient fb;
   mfem::Array<int> attr_list;
-  for (std::size_t i = 0; i < data.attr_markers.size(); i++)
+  for (std::size_t i = 0; i < data.attr_lists.size(); i++)
   {
     fb.AddCoefficient(data.GetCoefficient(i, U, mat_op));
     attr_list.Append(data.attr_lists[i]);
@@ -262,7 +264,7 @@ double SurfacePostOperator::GetLocalSurfaceIntegral(const SurfaceData &data,
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, attr_list);
   mfem::LinearForm s(ones.FESpace());
-  s.AddBoundaryIntegrator(new BoundaryLFIntegrator(*fb.back()), attr_marker);
+  s.AddBoundaryIntegrator(new BoundaryLFIntegrator(fb), attr_marker);
   s.UseFastAssembly(false);
   s.Assemble();
   return s * ones;

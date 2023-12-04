@@ -809,13 +809,6 @@ class SumVectorCoefficient : public mfem::VectorCoefficient
 private:
   std::vector<std::pair<std::unique_ptr<mfem::VectorCoefficient>, double>> c;
 
-  void AddCoefficient(std::unique_ptr<mfem::Coefficient> &&coeff,
-                      const mfem::Array<int> *marker)
-  {
-    c.emplace_back(std::make_unique<VectorWrappedCoefficient>(vdim, std::move(coeff)),
-                   marker);
-  }
-
 public:
   SumVectorCoefficient(int d) : mfem::VectorCoefficient(d) {}
 

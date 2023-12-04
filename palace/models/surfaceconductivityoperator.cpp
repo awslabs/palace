@@ -5,6 +5,7 @@
 
 #include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
+#include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
 
 namespace palace
@@ -29,8 +30,9 @@ void SurfaceConductivityOperator::SetUpBoundaryProperties(const IoData &iodata,
   if (!iodata.boundaries.conductivity.empty())
   {
     int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
-    mfem::Array<int> bdr_attr_marker(bdr_attr_max);
+    mfem::Array<int> bdr_attr_marker(bdr_attr_max), conductivity_marker(bdr_attr_max);
     bdr_attr_marker = 0;
+    conductivity_marker = 0;
     for (auto attr : mesh.bdr_attributes)
     {
       bdr_attr_marker[attr - 1] = 1;
@@ -44,14 +46,17 @@ void SurfaceConductivityOperator::SetUpBoundaryProperties(const IoData &iodata,
                     "correspond to attributes in the mesh!");
         MFEM_VERIFY(bdr_attr_marker[attr - 1],
                     "Unknown conductivity boundary attribute " << attr << "!");
+        MFEM_VERIFY(!conductivity_marker[attr - 1],
+                    "Multiple definitions of conductivity boundary properties for boundary "
+                    "attribute "
+                        << attr << "!");
+        conductivity_marker[attr - 1] = 1;
       }
     }
   }
 
   // Finite conductivity boundaries are defined using the user provided surface conductivity
   // and optionally conductor thickness.
-  mfem::Array<int> conductivity_marker(bdr_attr_max);
-  conductivity_marker = 0;
   boundaries.reserve(iodata.boundaries.conductivity.size());
   for (const auto &data : iodata.boundaries.conductivity)
   {
@@ -59,14 +64,6 @@ void SurfaceConductivityOperator::SetUpBoundaryProperties(const IoData &iodata,
                 "Conductivity boundary has no conductivity or no "
                 "permeability defined!");
     MFEM_VERIFY(data.h >= 0.0, "Conductivity boundary should have non-negative thickness!");
-    for (auto attr : data.attributes)
-    {
-      MFEM_VERIFY(
-          !conductivity_marker[attr - 1],
-          "Multiple definitions of conductivity boundary properties for boundary attribute "
-              << attr << "!");
-      conductivity_marker[attr - 1] = 1;
-    }
     auto &bdr = boundaries.emplace_back();
     bdr.sigma = data.sigma;
     bdr.mu = data.mu_r;
@@ -79,7 +76,7 @@ void SurfaceConductivityOperator::SetUpBoundaryProperties(const IoData &iodata,
     }
     bdr.attr_list.Append(data.attributes.data(), data.attributes.size());
   }
-  MFEM_VERIFY(boundaries.Size() == 0 ||
+  MFEM_VERIFY(boundaries.empty() ||
                   iodata.problem.type == config::ProblemData::Type::DRIVEN,
               "Finite conductivity boundaries are only available for frequency "
               "domain driven simulations!");
@@ -100,11 +97,11 @@ void SurfaceConductivityOperator::PrintBoundaryInfo(const IoData &iodata,
       mfem::Vector nor;
       mesh::GetSurfaceNormal(mesh, attr, nor);
       Mpi::Print(" {:d}: σ = {:.3e} S/m", attr,
-                 iodata.DimensionalizeValue(IoData::ValueType::CONDUCTIVITY, bdr.sigma(i)));
-      if (bdr.h(i) > 0.0)
+                 iodata.DimensionalizeValue(IoData::ValueType::CONDUCTIVITY, bdr.sigma));
+      if (bdr.h > 0.0)
       {
         Mpi::Print(", h = {:.3e} m",
-                   iodata.DimensionalizeValue(IoData::ValueType::LENGTH, bdr.h(i)));
+                   iodata.DimensionalizeValue(IoData::ValueType::LENGTH, bdr.h));
       }
       if (mesh.SpaceDimension() == 3)
       {
@@ -126,7 +123,7 @@ mfem::Array<int> SurfaceConductivityOperator::GetAttrList() const
   {
     attr_list.Append(bdr.attr_list);
   }
-  return;
+  return attr_list;
 }
 
 void SurfaceConductivityOperator::AddExtraSystemBdrCoefficients(
@@ -141,12 +138,12 @@ void SurfaceConductivityOperator::AddExtraSystemBdrCoefficients(
   {
     if (std::abs(bdr.sigma) > 0.0)
     {
-      double delta = std::sqrt(2.0 / (bdr.mu(i) * bdr.sigma(i) * omega));
-      std::complex<double> Z = 1.0 / (bdr.sigma(i) * delta);
+      double delta = std::sqrt(2.0 / (bdr.mu * bdr.sigma * omega));
+      std::complex<double> Z = 1.0 / (bdr.sigma * delta);
       Z.imag(Z.real());
-      if (bdr.h(i) > 0.0)
+      if (bdr.h > 0.0)
       {
-        double nu = bdr.h(i) / delta;
+        double nu = bdr.h / delta;
         double den = std::cosh(nu) - std::cos(nu);
         Z.real(Z.real() * (std::sinh(nu) + std::sin(nu)) / den);
         Z.imag(Z.imag() * (std::sinh(nu) - std::sin(nu)) / den);
