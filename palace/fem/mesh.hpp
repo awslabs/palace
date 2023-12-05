@@ -67,7 +67,8 @@ using CeedGeomFactorData = std::unique_ptr<CeedGeomFactorData_private>;
 class Mesh
 {
 private:
-  // Underlying MFEM object.
+  // Underlying MFEM object (can also point to a derived class of mfem::ParMesh, such as
+  // mfem::ParSubMesh).
   std::unique_ptr<mfem::ParMesh> mesh;
 
   // Sequence to track mfem::Mesh::sequence and determine if geometry factors need updating.
@@ -104,15 +105,16 @@ private:
   ceed::CeedObjectMap<ceed::CeedGeomFactorData> &BuildCeedGeomFactorData() const;
 
 public:
+  template <typename T>
+  Mesh(std::unique_ptr<T> &&mesh_) : mesh(std::move(mesh_))
+  {
+    sequence = mesh->GetSequence();
+    mesh->EnsureNodes();
+  }
+
   template <typename... T>
   Mesh(T &&...args) : Mesh(std::make_unique<mfem::ParMesh>(std::forward<T>(args)...))
   {
-  }
-
-  template <typename T>
-  Mesh(std::unique_ptr<T> &&mesh) : mesh(std::move(mesh)), sequence(mesh->GetSequence())
-  {
-    mesh->EnsureNodes();
   }
 
   const auto &Get() const { return *mesh; }
@@ -129,8 +131,6 @@ public:
 
   auto GetNE() const { return Get().GetNE(); }
   auto GetNBE() const { return Get().GetNBE(); }
-  auto GetNumFaces() const { return Get().GetNumFaces(); }
-  auto GetNV() const { return Get().GetNV(); }
 
   const auto &GetAttributeGlobalToLocal() const
   {

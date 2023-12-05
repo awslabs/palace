@@ -94,6 +94,7 @@ inline void AssembleCeedGeometryData(unsigned int info, Ceed ceed,
     default:
       MFEM_ABORT("Invalid value of (dim, space_dim) = ("
                  << dim << ", " << space_dim << ") for geometry factor quadrature data!");
+      build_qf = nullptr;  // Silence compiler warning
   }
 
   CeedQFunctionContext build_ctx;

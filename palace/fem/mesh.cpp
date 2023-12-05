@@ -140,7 +140,8 @@ ceed::CeedGeomFactorData AssembleGeometryData(const mfem::GridFunction &mesh_nod
 
 std::unordered_map<int, int> &Mesh::BuildAttributesGlobalToLocal(bool use_bdr) const
 {
-  const auto &mesh_obj = Get();
+  auto &mesh_obj = Get();
+  const_cast<mfem::ParMesh &>(mesh_obj).ExchangeFaceNbrData();
   if (!use_bdr)
   {
     // Set up sparse map from global domain attributes to local ones on this process.
@@ -234,8 +235,8 @@ ceed::CeedObjectMap<ceed::CeedGeomFactorData> &Mesh::BuildCeedGeomFactorData() c
       auto element_indices = GetElementIndices(mesh_obj, use_bdr, start, stop);
       for (auto &[geom, indices] : element_indices)
       {
-        ceed::CeedGeomFactorData data =
-            AssembleGeometryData(mesh_nodes, loc_attr, ceed, geom, indices);
+        ceed::CeedGeomFactorData data = AssembleGeometryData(
+            mesh_nodes, GetAttributeGlobalToLocal(), ceed, geom, indices);
         PalacePragmaOmp(critical(GeomFactorData))
         {
           geom_data.emplace(std::make_pair(ceed, geom), std::move(data));
@@ -253,8 +254,8 @@ ceed::CeedObjectMap<ceed::CeedGeomFactorData> &Mesh::BuildCeedGeomFactorData() c
       auto element_indices = GetElementIndices(mesh_obj, use_bdr, start, stop);
       for (auto &[geom, indices] : element_indices)
       {
-        ceed::CeedGeomFactorData data =
-            AssembleGeometryData(mesh_nodes, loc_bdr_attr, ceed, geom, indices);
+        ceed::CeedGeomFactorData data = AssembleGeometryData(
+            mesh_nodes, GetBdrAttributeGlobalToLocal(), ceed, geom, indices);
         PalacePragmaOmp(critical(GeomFactorData))
         {
           geom_data.emplace(std::make_pair(ceed, geom), std::move(data));

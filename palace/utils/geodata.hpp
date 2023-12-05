@@ -145,8 +145,7 @@ void GetSurfaceNormal(mfem::ParMesh &mesh, const mfem::Array<int> &marker,
 
 // Helper function responsible for rebalancing the mesh, and optionally writing meshes from
 // the intermediate stages to disk. Returns the imbalance ratio before rebalancing.
-double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh,
-                     double tol);
+double RebalanceMesh(const IoData &iodata, double tol, mfem::ParMesh &mesh);
 
 }  // namespace mesh
 

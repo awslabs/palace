@@ -23,7 +23,7 @@ class FiniteElementSpace
 {
 private:
   // Underlying MFEM object.
-  std::unique_ptr<mfem::ParFiniteElementSpace> fespace;
+  mfem::ParFiniteElementSpace fespace;
 
   // Reference to the underlying mesh object (not owned).
   Mesh &mesh;
@@ -53,22 +53,21 @@ private:
     // The range restriction for interpolation operators needs to use a special
     // DofTransformation (not equal to the transpose of the domain restriction).
     const auto geom = fe.GetGeomType();
-    const auto *dof_trans = fespace->FEColl()->DofTransformationForGeometry(geom);
+    const auto *dof_trans = fespace.FEColl()->DofTransformationForGeometry(geom);
     return (dof_trans && !dof_trans->IsIdentity());
   }
 
 public:
   template <typename... T>
   FiniteElementSpace(Mesh &mesh, T &&...args)
-    : fespace(std::make_unique<mfem::ParFiniteElementSpace>(&mesh.Get(),
-                                                            std::forward<T>(args)...)),
-      mesh(mesh), sequence(fespace->GetSequence()), id(GetGlobalId())
+    : fespace(&mesh.Get(), std::forward<T>(args)...), mesh(mesh),
+      sequence(fespace.GetSequence()), id(GetGlobalId())
   {
   }
   ~FiniteElementSpace() { DestroyCeedObjects(); }
 
-  const auto &Get() const { return *fespace; }
-  auto &Get() { return *fespace; }
+  const auto &Get() const { return fespace; }
+  auto &Get() { return fespace; }
 
   operator const mfem::ParFiniteElementSpace &() const { return Get(); }
   operator mfem::ParFiniteElementSpace &() { return Get(); }
@@ -132,7 +131,7 @@ public:
                            mfem::Geometry::Type geom, const std::vector<int> &indices,
                            bool is_interp = false, bool is_interp_range = false);
 
-  MPI_Comm GetComm() const { return fespace->GetComm(); }
+  MPI_Comm GetComm() const { return fespace.GetComm(); }
 };
 
 //

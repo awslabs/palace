@@ -29,10 +29,10 @@ std::size_t FiniteElementSpace::GetId() const
 {
   PalacePragmaOmp(critical(GetId))
   {
-    if (sequence != fespace->GetSequence())
+    if (sequence != fespace.GetSequence())
     {
       id = GetGlobalId();
-      sequence = fespace->GetSequence();
+      sequence = fespace.GetSequence();
     }
   }
   return id;
