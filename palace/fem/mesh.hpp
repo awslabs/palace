@@ -91,15 +91,7 @@ private:
   //		 to 0-based indexing.
   mutable ceed::CeedObjectMap<ceed::CeedGeomFactorData> geom_data;
 
-  void CheckSequence() const
-  {
-    if (sequence != mesh->GetSequence())
-    {
-      ClearData();
-      sequence = mesh->GetSequence();
-    }
-  }
-
+  void CheckSequence() const;
   std::unordered_map<int, int> &BuildAttributesGlobalToLocal(bool use_bdr = false) const;
   std::unordered_map<int, int> &BuildLocalToSharedFaceMap() const;
   ceed::CeedObjectMap<ceed::CeedGeomFactorData> &BuildCeedGeomFactorData() const;

@@ -13,10 +13,9 @@
 namespace palace
 {
 
-std::size_t FiniteElementSpace::global_id = 0;
-
 std::size_t FiniteElementSpace::GetGlobalId()
 {
+  static std::size_t global_id = 0;
   std::size_t id;
   PalacePragmaOmp(critical(GetGlobalId))
   {

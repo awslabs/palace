@@ -138,6 +138,18 @@ ceed::CeedGeomFactorData AssembleGeometryData(const mfem::GridFunction &mesh_nod
 
 }  // namespace
 
+void Mesh::CheckSequence() const
+{
+  PalacePragmaOmp(critical(CheckSequence))
+  {
+    if (sequence != mesh->GetSequence())
+    {
+      ClearData();
+      sequence = mesh->GetSequence();
+    }
+  }
+}
+
 std::unordered_map<int, int> &Mesh::BuildAttributesGlobalToLocal(bool use_bdr) const
 {
   auto &mesh_obj = Get();
@@ -212,9 +224,12 @@ std::unordered_map<int, int> &Mesh::BuildLocalToSharedFaceMap() const
 
 ceed::CeedObjectMap<ceed::CeedGeomFactorData> &Mesh::BuildCeedGeomFactorData() const
 {
+  // Initialize shared objects outside of the OpenMP region.
   const auto &mesh_obj = Get();
   const mfem::GridFunction &mesh_nodes = *mesh_obj.GetNodes();
   geom_data.clear();
+  GetAttributeGlobalToLocal();
+  GetBdrAttributeGlobalToLocal();
 
   // Create a list of the element indices in the mesh corresponding to a given thread and
   // element geometry type. libCEED operators will be constructed in parallel over threads,

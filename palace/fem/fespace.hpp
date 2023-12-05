@@ -31,7 +31,6 @@ private:
   // Members used to define equality between two spaces.
   mutable long int sequence;
   mutable std::size_t id;
-  static std::size_t global_id;
   static std::size_t GetGlobalId();
 
   // Members for constructing libCEED operators.
