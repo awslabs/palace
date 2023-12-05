@@ -48,7 +48,7 @@ CEED_QFUNCTION(f_apply_hdivmass_22)(void *ctx, CeedInt Q, const CeedScalar *cons
     const CeedScalar u0 = u[i + Q * 0];
     const CeedScalar u1 = u[i + Q * 1];
     v[i + Q * 0] = wdetJ[i] * (qd[0] * u0 + qd[1] * u1);
-    v[i + Q * 1] = wdetJ[i] * (qd[1] * u0 + qd[3] * u1);
+    v[i + Q * 1] = wdetJ[i] * (qd[1] * u0 + qd[2] * u1);
   }
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {

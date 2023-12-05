@@ -67,18 +67,22 @@ std::unique_ptr<IterativeSolver<OperType>> ConfigureKrylovSolver(MPI_Comm comm,
   }
   else
   {
-    auto *gmres = static_cast<GmresSolver<OperType> *>(ksp.get());
-    switch (iodata.solver.linear.pc_side_type)
+    if (type == config::LinearSolverData::KspType::GMRES ||
+        type == config::LinearSolverData::KspType::FGMRES)
     {
-      case config::LinearSolverData::SideType::LEFT:
-        gmres->SetPrecSide(GmresSolver<OperType>::PrecSide::LEFT);
-        break;
-      case config::LinearSolverData::SideType::RIGHT:
-        gmres->SetPrecSide(GmresSolver<OperType>::PrecSide::RIGHT);
-        break;
-      case config::LinearSolverData::SideType::DEFAULT:
-        // Do nothing
-        break;
+      auto *gmres = static_cast<GmresSolver<OperType> *>(ksp.get());
+      switch (iodata.solver.linear.pc_side_type)
+      {
+        case config::LinearSolverData::SideType::LEFT:
+          gmres->SetPrecSide(GmresSolver<OperType>::PrecSide::LEFT);
+          break;
+        case config::LinearSolverData::SideType::RIGHT:
+          gmres->SetPrecSide(GmresSolver<OperType>::PrecSide::RIGHT);
+          break;
+        case config::LinearSolverData::SideType::DEFAULT:
+          // Do nothing
+          break;
+      }
     }
   }
 

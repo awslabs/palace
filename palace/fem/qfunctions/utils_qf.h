@@ -25,7 +25,6 @@ CEED_QFUNCTION_HELPER void MatUnpack33(const CeedScalar *A, const CeedInt A_stri
   A_loc[6] = A[A_stride * 6];
   A_loc[7] = A[A_stride * 7];
   A_loc[8] = A[A_stride * 8];
-  A_loc[9] = A[A_stride * 9];
 }
 
 CEED_QFUNCTION_HELPER void MatUnpack21(const CeedScalar *A, const CeedInt A_stride,
@@ -44,7 +43,6 @@ CEED_QFUNCTION_HELPER void MatUnpack32(const CeedScalar *A, const CeedInt A_stri
   A_loc[3] = A[A_stride * 3];
   A_loc[4] = A[A_stride * 4];
   A_loc[5] = A[A_stride * 5];
-  A_loc[6] = A[A_stride * 6];
 }
 
 CEED_QFUNCTION_HELPER void MultAtBA22(const CeedScalar *A, const CeedInt A_stride,
