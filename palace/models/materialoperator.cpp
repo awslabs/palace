@@ -337,7 +337,13 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata, mfem::ParMe
     }
   }
 
-  attr_mat.SetSize(loc_attr.size());
+  attr_mat.SetSize(loc_attr.size());  // XX TODO WIP...
+  // int attr_max = 0;
+  // for (auto &[attr, l_attr] : loc_attr)
+  // {
+  //   attr_max = std::max(attr_max, attr);
+  // }
+  // attr_mat.SetSize(attr_max);
   attr_mat = -1;
 
   const int sdim = mesh.SpaceDimension();
@@ -476,8 +482,16 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata, mfem::ParMe
 
   // Set up map from boundary attributes (local) to material indices based on the
   // neighboring elements.
-  bdr_attr_mat.SetSize(loc_bdr_attr.size());
+
+  bdr_attr_mat.SetSize(loc_bdr_attr.size());  // XX TODO WIP...
+  // int bdr_attr_max = 0;
+  // for (auto &[attr, l_attr] : loc_bdr_attr)
+  // {
+  //   bdr_attr_max = std::max(bdr_attr_max, attr);
+  // }
+  // bdr_attr_mat.SetSize(bdr_attr_max);
   bdr_attr_mat = -1;
+
   for (int i = 0; i < mesh.GetNBE(); i++)
   {
     const int attr = mesh.GetBdrAttribute(i);

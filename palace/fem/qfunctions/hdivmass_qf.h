@@ -35,14 +35,19 @@ CEED_QFUNCTION(f_apply_hdivmass_22)(void *ctx, CeedInt Q, const CeedScalar *cons
   const CeedScalar *wdetJ = in[0], *adjJt = in[1], *qw = in[2], *u = in[3], *curlu = in[4];
   CeedScalar *v = out[0], *curlv = out[1];
 
+  const CeedScalar *attr = in[5];
   MatCoeffPairContext21 *bc = (MatCoeffPairContext21 *)ctx;
-  const CeedInt attr = (CeedInt)*in[5];
-  const CeedScalar *coeff_mass = bc->ctx1.mat_coeff[bc->ctx1.attr_mat[attr]];
-  const CeedScalar coeff = *bc->ctx2.mat_coeff[bc->ctx2.attr_mat[attr]];
+  // const CeedInt attr = (CeedInt)*in[5];
+  // const CeedScalar *coeff_mass = bc->ctx1.mat_coeff[bc->ctx1.attr_mat[attr]];
+  // const CeedScalar coeff = *bc->ctx2.mat_coeff[bc->ctx2.attr_mat[attr]];
 
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
     CeedScalar qd[3];
+
+    // XXX TODO TESTING
+    const CeedScalar *coeff_mass = bc->ctx1.mat_coeff[bc->ctx1.attr_mat[(CeedInt)attr[i]]];
+
     MultAtBA22(adjJt + i, Q, coeff_mass, qd);
 
     const CeedScalar u0 = u[i + Q * 0];
@@ -52,6 +57,10 @@ CEED_QFUNCTION(f_apply_hdivmass_22)(void *ctx, CeedInt Q, const CeedScalar *cons
   }
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
+
+    // XXX TODO TESTING
+    const CeedScalar coeff = *bc->ctx2.mat_coeff[bc->ctx2.attr_mat[(CeedInt)attr[i]]];
+
     curlv[i] = (coeff * qw[i] * qw[i] / wdetJ[i]) * curlu[i];
   }
   return 0;
@@ -63,14 +72,19 @@ CEED_QFUNCTION(f_apply_hdivmass_33)(void *ctx, CeedInt Q, const CeedScalar *cons
   const CeedScalar *wdetJ = in[0], *adjJt = in[1], *J = in[2], *u = in[3], *curlu = in[4];
   CeedScalar *v = out[0], *curlv = out[1];
 
+  const CeedScalar *attr = in[5];
   MatCoeffPairContext33 *bc = (MatCoeffPairContext33 *)ctx;
-  const CeedInt attr = (CeedInt)*in[5];
-  const CeedScalar *coeff_mass = bc->ctx1.mat_coeff[bc->ctx1.attr_mat[attr]];
-  const CeedScalar *coeff = bc->ctx2.mat_coeff[bc->ctx2.attr_mat[attr]];
+  // const CeedInt attr = (CeedInt)*in[5];
+  // const CeedScalar *coeff_mass = bc->ctx1.mat_coeff[bc->ctx1.attr_mat[attr]];
+  // const CeedScalar *coeff = bc->ctx2.mat_coeff[bc->ctx2.attr_mat[attr]];
 
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
     CeedScalar qd[6];
+
+    // XXX TODO TESTING
+    const CeedScalar *coeff_mass = bc->ctx1.mat_coeff[bc->ctx1.attr_mat[(CeedInt)attr[i]]];
+
     MultAtBA33(adjJt + i, Q, coeff_mass, qd);
 
     const CeedScalar u0 = u[i + Q * 0];
@@ -83,6 +97,10 @@ CEED_QFUNCTION(f_apply_hdivmass_33)(void *ctx, CeedInt Q, const CeedScalar *cons
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
     CeedScalar qd[6];
+
+    // XXX TODO TESTING
+    const CeedScalar *coeff = bc->ctx2.mat_coeff[bc->ctx2.attr_mat[(CeedInt)attr[i]]];
+
     MultAtBA33(J + i, Q, coeff, qd);
 
     const CeedScalar curlu0 = curlu[i + Q * 0];
@@ -101,14 +119,19 @@ CEED_QFUNCTION(f_apply_hdivmass_32)(void *ctx, CeedInt Q, const CeedScalar *cons
   const CeedScalar *wdetJ = in[0], *adjJt = in[1], *qw = in[2], *u = in[3], *curlu = in[4];
   CeedScalar *v = out[0], *curlv = out[1];
 
+  const CeedScalar *attr = in[5];
   MatCoeffPairContext31 *bc = (MatCoeffPairContext31 *)ctx;
-  const CeedInt attr = (CeedInt)*in[5];
-  const CeedScalar *coeff_mass = bc->ctx1.mat_coeff[bc->ctx1.attr_mat[attr]];
-  const CeedScalar coeff = *bc->ctx2.mat_coeff[bc->ctx2.attr_mat[attr]];
+  // const CeedInt attr = (CeedInt)*in[5];
+  // const CeedScalar *coeff_mass = bc->ctx1.mat_coeff[bc->ctx1.attr_mat[attr]];
+  // const CeedScalar coeff = *bc->ctx2.mat_coeff[bc->ctx2.attr_mat[attr]];
 
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
     CeedScalar qd[3];
+
+    // XXX TODO TESTING
+    const CeedScalar *coeff_mass = bc->ctx1.mat_coeff[bc->ctx1.attr_mat[(CeedInt)attr[i]]];
+
     MultAtBA32(adjJt + i, Q, coeff_mass, qd);
 
     const CeedScalar u0 = u[i + Q * 0];
@@ -118,6 +141,10 @@ CEED_QFUNCTION(f_apply_hdivmass_32)(void *ctx, CeedInt Q, const CeedScalar *cons
   }
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
+
+    // XXX TODO TESTING
+    const CeedScalar coeff = *bc->ctx2.mat_coeff[bc->ctx2.attr_mat[(CeedInt)attr[i]]];
+
     curlv[i] = (coeff * qw[i] * qw[i] / wdetJ[i]) * curlu[i];
   }
   return 0;

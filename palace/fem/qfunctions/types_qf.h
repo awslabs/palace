@@ -26,8 +26,10 @@ struct MatCoeffPairContext
   MatCoeffContext<MAX_ATTR, MAX_NUM_MAT, NUM_COEFF_COMP2> ctx2;
 };
 
-#define MAT_COEFF_MAX_ATTR 64
-#define MAT_COEFF_MAX_NUM_MAT (16 + 1)
+// XX TODO RUNTIME SCALABLE? MAYBE WITH TYPEDEFS?
+
+#define MAT_COEFF_MAX_ATTR 32
+#define MAT_COEFF_MAX_NUM_MAT (8 + 1)
 
 template <int NUM_COEFF_COMP>
 using MatCoeffContextN =

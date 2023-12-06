@@ -11,30 +11,6 @@ namespace palace::ceed
 namespace
 {
 
-inline CeedElemTopology GetCeedTopology(mfem::Geometry::Type geom)
-{
-  switch (geom)
-  {
-    case mfem::Geometry::SEGMENT:
-      return CEED_TOPOLOGY_LINE;
-    case mfem::Geometry::TRIANGLE:
-      return CEED_TOPOLOGY_TRIANGLE;
-    case mfem::Geometry::SQUARE:
-      return CEED_TOPOLOGY_QUAD;
-    case mfem::Geometry::TETRAHEDRON:
-      return CEED_TOPOLOGY_TET;
-    case mfem::Geometry::CUBE:
-      return CEED_TOPOLOGY_HEX;
-    case mfem::Geometry::PRISM:
-      return CEED_TOPOLOGY_PRISM;
-    case mfem::Geometry::PYRAMID:
-      return CEED_TOPOLOGY_PYRAMID;
-    default:
-      MFEM_ABORT("This type of element is not supported!");
-      return CEED_TOPOLOGY_LINE;  // Silence compiler warning
-  }
-}
-
 void InitTensorBasis(const mfem::FiniteElement &fe, const mfem::IntegrationRule &ir,
                      CeedInt ncomp, Ceed ceed, CeedBasis *basis)
 {

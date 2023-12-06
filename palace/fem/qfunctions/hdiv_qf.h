@@ -20,13 +20,18 @@ CEED_QFUNCTION(f_apply_hdiv_22)(void *ctx, CeedInt Q, const CeedScalar *const *i
   const CeedScalar *wdetJ = in[0], *J = in[1], *u = in[2];
   CeedScalar *v = out[0];
 
+  const CeedScalar *attr = in[3];
   MatCoeffContext2 *bc = (MatCoeffContext2 *)ctx;
-  const CeedInt attr = (CeedInt)*in[3];
-  const CeedScalar *coeff = bc->mat_coeff[bc->attr_mat[attr]];
+  // const CeedInt attr = (CeedInt)*in[3];
+  // const CeedScalar *coeff = bc->mat_coeff[bc->attr_mat[attr]];
 
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
     CeedScalar qd[3];
+
+    // XXX TODO TESTING
+    const CeedScalar *coeff = bc->mat_coeff[bc->attr_mat[(CeedInt)attr[i]]];
+
     MultAtBA22(J + i, Q, coeff, qd);
 
     const CeedScalar u0 = u[i + Q * 0];
@@ -43,13 +48,18 @@ CEED_QFUNCTION(f_apply_hdiv_33)(void *ctx, CeedInt Q, const CeedScalar *const *i
   const CeedScalar *wdetJ = in[0], *J = in[1], *u = in[2];
   CeedScalar *v = out[0];
 
+  const CeedScalar *attr = in[3];
   MatCoeffContext3 *bc = (MatCoeffContext3 *)ctx;
-  const CeedInt attr = (CeedInt)*in[3];
-  const CeedScalar *coeff = bc->mat_coeff[bc->attr_mat[attr]];
+  // const CeedInt attr = (CeedInt)*in[3];
+  // const CeedScalar *coeff = bc->mat_coeff[bc->attr_mat[attr]];
 
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
     CeedScalar qd[6];
+
+    // XXX TODO TESTING
+    const CeedScalar *coeff = bc->mat_coeff[bc->attr_mat[(CeedInt)attr[i]]];
+
     MultAtBA33(J + i, Q, coeff, qd);
 
     const CeedScalar u0 = u[i + Q * 0];
@@ -68,13 +78,18 @@ CEED_QFUNCTION(f_apply_hdiv_21)(void *ctx, CeedInt Q, const CeedScalar *const *i
   const CeedScalar *wdetJ = in[0], *J = in[1], *u = in[2];
   CeedScalar *v = out[0];
 
+  const CeedScalar *attr = in[3];
   MatCoeffContext2 *bc = (MatCoeffContext2 *)ctx;
-  const CeedInt attr = (CeedInt)*in[3];
-  const CeedScalar *coeff = bc->mat_coeff[bc->attr_mat[attr]];
+  // const CeedInt attr = (CeedInt)*in[3];
+  // const CeedScalar *coeff = bc->mat_coeff[bc->attr_mat[attr]];
 
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
     CeedScalar qd[1];
+
+    // XXX TODO TESTING
+    const CeedScalar *coeff = bc->mat_coeff[bc->attr_mat[(CeedInt)attr[i]]];
+
     MultAtBA21(J + i, Q, coeff, qd);
 
     const CeedScalar u0 = u[i + Q * 0];
@@ -89,13 +104,18 @@ CEED_QFUNCTION(f_apply_hdiv_32)(void *ctx, CeedInt Q, const CeedScalar *const *i
   const CeedScalar *wdetJ = in[0], *J = in[1], *u = in[2];
   CeedScalar *v = out[0];
 
+  const CeedScalar *attr = in[3];
   MatCoeffContext3 *bc = (MatCoeffContext3 *)ctx;
-  const CeedInt attr = (CeedInt)*in[3];
-  const CeedScalar *coeff = bc->mat_coeff[bc->attr_mat[attr]];
+  // const CeedInt attr = (CeedInt)*in[3];
+  // const CeedScalar *coeff = bc->mat_coeff[bc->attr_mat[attr]];
 
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
     CeedScalar qd[3];
+
+    // XXX TODO TESTING
+    const CeedScalar *coeff = bc->mat_coeff[bc->attr_mat[(CeedInt)attr[i]]];
+
     MultAtBA32(J + i, Q, coeff, qd);
 
     const CeedScalar u0 = u[i + Q * 0];

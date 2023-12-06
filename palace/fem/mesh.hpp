@@ -44,12 +44,13 @@ struct CeedGeomFactorData_private
   // Objects for libCEED interface to the quadrature data.
   CeedVector wdetJ_vec, adjJt_vec, J_vec, attr_vec;
   CeedElemRestriction wdetJ_restr, adjJt_restr, J_restr, attr_restr;
+  CeedBasis attr_basis;
   Ceed ceed;
 
   CeedGeomFactorData_private(Ceed ceed)
     : dim(0), space_dim(0), wdetJ_vec(nullptr), adjJt_vec(nullptr), J_vec(nullptr),
       attr_vec(nullptr), wdetJ_restr(nullptr), adjJt_restr(nullptr), J_restr(nullptr),
-      attr_restr(nullptr), ceed(ceed)
+      attr_restr(nullptr), attr_basis(nullptr), ceed(ceed)
   {
   }
   ~CeedGeomFactorData_private();

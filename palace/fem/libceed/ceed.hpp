@@ -81,6 +81,9 @@ std::string Print();
 // Initialize a CeedVector from an mfem::Vector.
 void InitCeedVector(const mfem::Vector &v, Ceed ceed, CeedVector *cv);
 
+// Convert an MFEM geometry type to a libCEED one.
+CeedElemTopology GetCeedTopology(mfem::Geometry::Type geom);
+
 namespace internal
 {
 

@@ -279,6 +279,7 @@ inline void AssembleCeedOperator(const IntegratorInfo &info, const IntegratorCon
 
   // Last input is always the element attribute data.
   PalaceCeedCall(ceed, CeedQFunctionAddInput(apply_qf, "attr", 1, CEED_EVAL_NONE));
+  // PalaceCeedCall(ceed, CeedQFunctionAddInput(apply_qf, "attr", 1, CEED_EVAL_INTERP));
 
   // Outputs
   if (info.test_ops & EvalMode::None)
@@ -371,6 +372,8 @@ inline void AssembleCeedOperator(const IntegratorInfo &info, const IntegratorCon
 
   PalaceCeedCall(ceed, CeedOperatorSetField(*op, "attr", geom_data->attr_restr,
                                             CEED_BASIS_NONE, geom_data->attr_vec));
+  // PalaceCeedCall(ceed, CeedOperatorSetField(*op, "attr", geom_data->attr_restr,
+  //                                           geom_data->attr_basis, geom_data->attr_vec));
 
   if (info.test_ops & EvalMode::None)
   {

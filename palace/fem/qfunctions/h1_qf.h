@@ -18,12 +18,17 @@ CEED_QFUNCTION(f_apply_h1_1)(void *ctx, CeedInt Q, const CeedScalar *const *in,
   const CeedScalar *wdetJ = in[0], *u = in[1];
   CeedScalar *v = out[0];
 
+  const CeedScalar *attr = in[2];
   MatCoeffContext1 *bc = (MatCoeffContext1 *)ctx;
-  const CeedInt attr = (CeedInt)*in[2];
-  const CeedScalar coeff = *bc->mat_coeff[bc->attr_mat[attr]];
+  // const CeedInt attr = (CeedInt)*in[2];
+  // const CeedScalar coeff = *bc->mat_coeff[bc->attr_mat[attr]];
 
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
+
+    // XXX TODO TESTING
+    const CeedScalar coeff = *bc->mat_coeff[bc->attr_mat[(CeedInt)attr[i]]];
+
     v[i] = coeff * wdetJ[i] * u[i];
   }
   return 0;
@@ -35,12 +40,17 @@ CEED_QFUNCTION(f_apply_h1_2)(void *ctx, CeedInt Q, const CeedScalar *const *in,
   const CeedScalar *wdetJ = in[0], *u = in[1];
   CeedScalar *v = out[0];
 
+  const CeedScalar *attr = in[2];
   MatCoeffContext2 *bc = (MatCoeffContext2 *)ctx;
-  const CeedInt attr = (CeedInt)*in[2];
-  const CeedScalar *coeff = bc->mat_coeff[bc->attr_mat[attr]];
+  // const CeedInt attr = (CeedInt)*in[2];
+  // const CeedScalar *coeff = bc->mat_coeff[bc->attr_mat[attr]];
 
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
+
+    // XXX TODO TESTING
+    const CeedScalar *coeff = bc->mat_coeff[bc->attr_mat[(CeedInt)attr[i]]];
+
     const CeedScalar u0 = u[i + Q * 0];
     const CeedScalar u1 = u[i + Q * 1];
     v[i + Q * 0] = wdetJ[i] * (coeff[0] * u0 + coeff[1] * u1);
@@ -55,12 +65,17 @@ CEED_QFUNCTION(f_apply_h1_3)(void *ctx, CeedInt Q, const CeedScalar *const *in,
   const CeedScalar *wdetJ = in[0], *u = in[1];
   CeedScalar *v = out[0];
 
+  const CeedScalar *attr = in[2];
   MatCoeffContext2 *bc = (MatCoeffContext2 *)ctx;
-  const CeedInt attr = (CeedInt)*in[2];
-  const CeedScalar *coeff = bc->mat_coeff[bc->attr_mat[attr]];
+  // const CeedInt attr = (CeedInt)*in[2];
+  // const CeedScalar *coeff = bc->mat_coeff[bc->attr_mat[attr]];
 
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
+
+    // XXX TODO TESTING
+    const CeedScalar *coeff = bc->mat_coeff[bc->attr_mat[(CeedInt)attr[i]]];
+
     const CeedScalar u0 = u[i + Q * 0];
     const CeedScalar u1 = u[i + Q * 1];
     const CeedScalar u2 = u[i + Q * 2];

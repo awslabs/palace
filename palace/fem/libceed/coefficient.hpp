@@ -101,6 +101,32 @@ PopulateCoefficientContext(const MaterialPropertyCoefficient *Q)
         }
       }
     }
+
+    // // XX TODO WIP DEBUG
+    // std::cout << "\nMaterial property coefficient:\n";
+    // attr_mat.Print(std::cout, 1);
+    // for (int k = 0; k < mat_coeff.SizeK(); k++)
+    // {
+    //   std::cout << "Material " << k << ":\n";
+    //   mat_coeff(k).Print(std::cout, 1);
+    // }
+    // std::cout << "\n";
+
+    // // XX TODO WIP DEBUG
+    // std::cout << "\nlibCEED material property context:\n";
+    // for (int i = 0; i < ctx.MaxAttr(); i++)
+    // {
+    //   std::cout << ctx.attr_mat[i] << "\n";
+    // }
+    // for (int k = 0; k < ctx.MaxNumMat(); k++)
+    // {
+    //   std::cout << "Material " << k << ":\n";
+    //   for (int i = 0; i < NUM_COEFF_COMP; i++)
+    //   {
+    //     std::cout << ctx.mat_coeff[k][i] << "\n";
+    //   }
+    // }
+    // std::cout << "\n";
   }
   return ctx;
 }

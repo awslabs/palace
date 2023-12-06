@@ -132,17 +132,31 @@ public:
   template <typename T>
   auto GetAttributeGlobalToLocal(const T &attr_list) const
   {
-    mfem::Array<int> loc_attr_list(std::distance(attr_list.begin(), attr_list.end()));
-    std::transform(attr_list.begin(), attr_list.end(), loc_attr_list.begin(),
-                   [this](int attr) { return loc_attr.at(attr); });
+    // Skip any entries in the input global attribute list which are not on local to this
+    // process.
+    mfem::Array<int> loc_attr_list;
+    for (auto attr : attr_list)
+    {
+      if (loc_attr.find(attr) != loc_attr.end())
+      {
+        loc_attr_list.Append(loc_attr.at(attr));
+      }
+    }
     return loc_attr_list;
   }
   template <typename T>
   auto GetBdrAttributeGlobalToLocal(const T &attr_list) const
   {
-    mfem::Array<int> loc_attr_list(std::distance(attr_list.begin(), attr_list.end()));
-    std::transform(attr_list.begin(), attr_list.end(), loc_attr_list.begin(),
-                   [this](int attr) { return loc_bdr_attr.at(attr); });
+    // Skip any entries in the input global attribute list which are not on local to this
+    // process.
+    mfem::Array<int> loc_attr_list;
+    for (auto attr : attr_list)
+    {
+      if (loc_bdr_attr.find(attr) != loc_bdr_attr.end())
+      {
+        loc_attr_list.Append(loc_bdr_attr.at(attr));
+      }
+    }
     return loc_attr_list;
   }
 
