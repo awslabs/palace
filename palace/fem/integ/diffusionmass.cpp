@@ -63,16 +63,16 @@ void DiffusionMassIntegrator::Assemble(const ceed::CeedGeomFactorData &geom_data
   {
     case 2:
       {
-        MatCoeffPairContext21 ctx{ceed::PopulateCoefficientContext2(),
-                                  ceed::PopulateCoefficientContext1()};
+        MatCoeffPairContext21 ctx{ceed::PopulateCoefficientContext2(Q),
+                                  ceed::PopulateCoefficientContext1(Q_mass)};
         ceed::AssembleCeedOperator(info, ctx, geom_data, ceed, trial_restr, test_restr,
                                    trial_basis, test_basis, op);
       }
       break;
     case 3:
       {
-        MatCoeffPairContext31 ctx{ceed::PopulateCoefficientContext3(),
-                                  ceed::PopulateCoefficientContext1()};
+        MatCoeffPairContext31 ctx{ceed::PopulateCoefficientContext3(Q),
+                                  ceed::PopulateCoefficientContext1(Q_mass)};
         ceed::AssembleCeedOperator(info, ctx, geom_data, ceed, trial_restr, test_restr,
                                    trial_basis, test_basis, op);
       }

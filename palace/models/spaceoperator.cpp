@@ -667,7 +667,7 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(double a0, doub
         Mpi::Print(" Level {:d}{} (p = {:d}): {:d} unknowns", l, aux ? " (auxiliary)" : "",
                    fespace_l.GetMaxElementOrder(), fespace_l.GlobalTrueVSize());
       }
-      MaterialPropertyCoefficient dfr, fr, fi, dfbr, dfbi, fbr, fbi;
+      MaterialPropertyCoefficient dfr, fr, dfi, fi, dfbr, dfbi, fbr, fbi;
       if (!std::is_same<OperType, ComplexOperator>::value || pc_mat_real || l == 0)
       {
         // Real-valued system matrix (approximation) for preconditioning.
@@ -699,10 +699,10 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(double a0, doub
         br = aux ? BuildAuxOperator(fespace_l, &fr, &fbr, l, skip_zeros)
                  : BuildOperator(fespace_l, &dfr, &fr, &dfbr, &fbr, l, skip_zeros);
       }
-      if (!fi.empty() || !dfbi.empty() || !fbi.empty())
+      if (!dfi.empty() || !fi.empty() || !dfbi.empty() || !fbi.empty())
       {
         bi = aux ? BuildAuxOperator(fespace_l, &fi, &fbi, l, skip_zeros)
-                 : BuildOperator(fespace_l, nullptr, &fi, &dfbi, &fbi, l, skip_zeros);
+                 : BuildOperator(fespace_l, &dfi, &fi, &dfbi, &fbi, l, skip_zeros);
       }
       if (print_prec_hdr)
       {

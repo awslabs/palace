@@ -65,7 +65,7 @@ void MixedVectorCurlIntegrator::Assemble(const ceed::CeedGeomFactorData &geom_da
   info.test_ops = ceed::EvalMode::Interp;
 
   // Set up the coefficient and assemble.
-  auto ctx = ceed::PopulateCoefficientContext3();
+  auto ctx = ceed::PopulateCoefficientContext3(Q);
   ceed::AssembleCeedOperator(info, ctx, geom_data, ceed, trial_restr, test_restr,
                              trial_basis, test_basis, op);
 }
@@ -118,7 +118,7 @@ void MixedVectorWeakCurlIntegrator::Assemble(const ceed::CeedGeomFactorData &geo
   info.test_ops = ceed::EvalMode::Curl;
 
   // Set up the coefficient and assemble.
-  auto ctx = ceed::PopulateCoefficientContext3();
+  auto ctx = ceed::PopulateCoefficientContext3(Q);
   ceed::AssembleCeedOperator(info, ctx, geom_data, ceed, trial_restr, test_restr,
                              trial_basis, test_basis, op);
 }

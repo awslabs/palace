@@ -55,21 +55,21 @@ void MassIntegrator::Assemble(const ceed::CeedGeomFactorData &geom_data, Ceed ce
   {
     case 1:
       {
-        auto ctx = ceed::PopulateCoefficientContext1();
+        auto ctx = ceed::PopulateCoefficientContext1(Q);
         ceed::AssembleCeedOperator(info, ctx, geom_data, ceed, trial_restr, test_restr,
                                    trial_basis, test_basis, op);
       }
       break;
     case 2:
       {
-        auto ctx = ceed::PopulateCoefficientContext2();
+        auto ctx = ceed::PopulateCoefficientContext2(Q);
         ceed::AssembleCeedOperator(info, ctx, geom_data, ceed, trial_restr, test_restr,
                                    trial_basis, test_basis, op);
       }
       break;
     case 3:
       {
-        auto ctx = ceed::PopulateCoefficientContext3();
+        auto ctx = ceed::PopulateCoefficientContext3(Q);
         ceed::AssembleCeedOperator(info, ctx, geom_data, ceed, trial_restr, test_restr,
                                    trial_basis, test_basis, op);
       }

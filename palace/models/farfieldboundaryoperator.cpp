@@ -89,13 +89,10 @@ void FarfieldBoundaryOperator::AddExtraSystemBdrCoefficients(
   if (farfield_attr.Size() && order > 1)
   {
     mfem::DenseTensor muinvc0(mat_op.GetLightSpeed());
-    mfem::DenseMatrix T(muinvc0.SizeI(), muinvc0.SizeJ());
     for (int k = 0; k < muinvc0.SizeK(); k++)
     {
-      Mult(mat_op.GetInvPermeability()(k), muinvc0(k), T);
-      muinvc0(k) = T;
+      Mult(mat_op.GetInvPermeability()(k), mat_op.GetLightSpeed()(k), muinvc0(k));
     }
-
     MaterialPropertyCoefficient muinvc0_func(mat_op.GetBdrAttributeToMaterial(), muinvc0);
     muinvc0_func.RestrictCoefficient(mat_op.GetBdrAttributeGlobalToLocal(farfield_attr));
     dfbi.AddCoefficient(muinvc0_func.GetAttributeToMaterial(),

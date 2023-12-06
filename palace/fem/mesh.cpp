@@ -83,37 +83,28 @@ ceed::CeedGeomFactorData AssembleGeometryData(const mfem::GridFunction &mesh_nod
                                               Ceed ceed, mfem::Geometry::Type geom,
                                               std::vector<int> &indices)
 {
+  // Create libCEED basis and element restriction for mesh nodes grid function.
   const mfem::FiniteElementSpace &mesh_fespace = *mesh_nodes.FESpace();
   const mfem::Mesh &mesh = *mesh_fespace.GetMesh();
-
-  // XX TODO: In practice we do not need to compute all of the geometry data for every
-  //          simulation type.
-  auto data = ceed::CeedGeomFactorDataCreate(ceed);
-  data->dim = mfem::Geometry::Dimension[geom];
-  data->space_dim = mesh.SpaceDimension();
-
-  // Compute the required geometry factors at quadrature points.
-  constexpr auto info = ceed::GeomFactorInfo::Determinant | ceed::GeomFactorInfo::Adjugate |
-                        ceed::GeomFactorInfo::Jacobian;
   CeedElemRestriction mesh_restr =
       FiniteElementSpace::BuildCeedElemRestriction(mesh_fespace, ceed, geom, indices);
   CeedBasis mesh_basis = FiniteElementSpace::BuildCeedBasis(mesh_fespace, ceed, geom);
   CeedInt nqpts;
   PalaceCeedCall(ceed, CeedBasisGetNumQuadraturePoints(mesh_basis, &nqpts));
-  ceed::AssembleCeedGeometryData(info, ceed, mesh_restr, mesh_basis, mesh_nodes, data);
-  PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&mesh_restr));
-  PalaceCeedCall(ceed, CeedBasisDestroy(&mesh_basis));
 
   // Compute element attribute quadrature data. This should ideally be a single scalar per
   // element but all fields associated with a CeedOperator require the same number of
   // quadrature points.
+  auto data = ceed::CeedGeomFactorDataCreate(ceed);
+  data->dim = mfem::Geometry::Dimension[geom];
+  data->space_dim = mesh.SpaceDimension();
   {
     const auto ne = indices.size();
     const bool use_bdr = (data->dim != mesh.Dimension());
     data->attr.SetSize(ne * nqpts);
-    for (std::size_t j = 0; j < ne; j++)
+    for (std::size_t i = 0; i < ne; i++)
     {
-      const int e = indices[j];
+      const int e = indices[i];
       int attr = use_bdr ? mesh.GetBdrAttribute(e) : mesh.GetAttribute(e);
       MFEM_ASSERT(loc_attr.find(attr) != loc_attr.end(),
                   "Missing local domain or boundary attribute for attribute " << attr
@@ -121,17 +112,27 @@ ceed::CeedGeomFactorData AssembleGeometryData(const mfem::GridFunction &mesh_nod
       attr = loc_attr.at(attr) - 1;  // Convert to 0-based indexing for libCEED QFunctions
       for (CeedInt q = 0; q < nqpts; q++)
       {
-        data->attr[j * nqpts + q] = attr;
+        data->attr[i * nqpts + q] = attr;
       }
     }
+    CeedInt strides[3] = {1, 1, nqpts};
     PalaceCeedCall(ceed, CeedElemRestrictionCreateStrided(ceed, ne, nqpts, 1, ne * nqpts,
-                                                          CEED_STRIDES_BACKEND,
-                                                          &data->attr_restr));
+                                                          strides, &data->attr_restr));
     ceed::InitCeedVector(data->attr, ceed, &data->attr_vec);
   }
 
   // Save mesh element indices.
   data->indices = std::move(indices);
+
+  // XX TODO: In practice we do not need to compute all of the geometry data for every
+  //          simulation type.
+  constexpr auto info = ceed::GeomFactorInfo::Determinant | ceed::GeomFactorInfo::Adjugate |
+                        ceed::GeomFactorInfo::Jacobian;
+
+  // Compute the required geometry factors at quadrature points and cleanup.
+  ceed::AssembleCeedGeometryData(info, ceed, mesh_restr, mesh_basis, mesh_nodes, data);
+  PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&mesh_restr));
+  PalaceCeedCall(ceed, CeedBasisDestroy(&mesh_basis));
 
   return data;
 }

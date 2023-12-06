@@ -182,7 +182,7 @@ void SurfaceImpedanceOperator::AddStiffnessBdrCoefficients(double coef,
   {
     if (std::abs(bdr.Ls) > 0.0)
     {
-      fb.AddMaterialProperty(mat_op.GetAttributeGlobalToLocal(bdr.attr_list),
+      fb.AddMaterialProperty(mat_op.GetBdrAttributeGlobalToLocal(bdr.attr_list),
                              coef / bdr.Ls);
     }
   }
@@ -196,7 +196,7 @@ void SurfaceImpedanceOperator::AddDampingBdrCoefficients(double coef,
   {
     if (std::abs(bdr.Rs) > 0.0)
     {
-      fb.AddMaterialProperty(mat_op.GetAttributeGlobalToLocal(bdr.attr_list),
+      fb.AddMaterialProperty(mat_op.GetBdrAttributeGlobalToLocal(bdr.attr_list),
                              coef / bdr.Rs);
     }
   }
@@ -210,7 +210,7 @@ void SurfaceImpedanceOperator::AddMassBdrCoefficients(double coef,
   {
     if (std::abs(bdr.Cs) > 0.0)
     {
-      fb.AddMaterialProperty(mat_op.GetAttributeGlobalToLocal(bdr.attr_list),
+      fb.AddMaterialProperty(mat_op.GetBdrAttributeGlobalToLocal(bdr.attr_list),
                              coef * bdr.Cs);
     }
   }

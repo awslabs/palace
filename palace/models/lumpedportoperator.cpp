@@ -549,8 +549,8 @@ void LumpedPortOperator::AddStiffnessBdrCoefficients(double coef,
       for (const auto &elem : data.elems)
       {
         const double Ls = data.L * data.GetToSquare(*elem);
-        fb.AddMaterialProperty(data.mat_op.GetAttributeGlobalToLocal(elem->GetAttrList()),
-                               coef / Ls);
+        fb.AddMaterialProperty(
+            data.mat_op.GetBdrAttributeGlobalToLocal(elem->GetAttrList()), coef / Ls);
       }
     }
   }
@@ -567,8 +567,8 @@ void LumpedPortOperator::AddDampingBdrCoefficients(double coef,
       for (const auto &elem : data.elems)
       {
         const double Rs = data.R * data.GetToSquare(*elem);
-        fb.AddMaterialProperty(data.mat_op.GetAttributeGlobalToLocal(elem->GetAttrList()),
-                               coef / Rs);
+        fb.AddMaterialProperty(
+            data.mat_op.GetBdrAttributeGlobalToLocal(elem->GetAttrList()), coef / Rs);
       }
     }
   }
@@ -585,8 +585,8 @@ void LumpedPortOperator::AddMassBdrCoefficients(double coef,
       for (const auto &elem : data.elems)
       {
         const double Cs = data.C / data.GetToSquare(*elem);
-        fb.AddMaterialProperty(data.mat_op.GetAttributeGlobalToLocal(elem->GetAttrList()),
-                               coef * Cs);
+        fb.AddMaterialProperty(
+            data.mat_op.GetBdrAttributeGlobalToLocal(elem->GetAttrList()), coef * Cs);
       }
     }
   }

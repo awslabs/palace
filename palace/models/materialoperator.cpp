@@ -295,22 +295,24 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata, mfem::ParMe
   // be non-contiguous and when no material attribute is specified the elements are deleted
   // from the mesh so as to not cause problems.
   MFEM_VERIFY(!iodata.domains.materials.empty(), "Materials must be non-empty!");
-  int attr_max = mesh.attributes.Size() ? mesh.attributes.Max() : 0;
-  mfem::Array<int> attr_marker(attr_max);
-  attr_marker = 0;
-  for (auto attr : mesh.attributes)
   {
-    attr_marker[attr - 1] = 1;
-  }
-  for (const auto &data : iodata.domains.materials)
-  {
-    for (auto attr : data.attributes)
+    int attr_max = mesh.attributes.Size() ? mesh.attributes.Max() : 0;
+    mfem::Array<int> attr_marker(attr_max);
+    attr_marker = 0;
+    for (auto attr : mesh.attributes)
     {
-      MFEM_VERIFY(
-          attr > 0 && attr <= attr_max,
-          "Material attribute tags must be non-negative and correspond to attributes "
-          "in the mesh!");
-      MFEM_VERIFY(attr_marker[attr - 1], "Unknown material attribute " << attr << "!");
+      attr_marker[attr - 1] = 1;
+    }
+    for (const auto &data : iodata.domains.materials)
+    {
+      for (auto attr : data.attributes)
+      {
+        MFEM_VERIFY(
+            attr > 0 && attr <= attr_max,
+            "Material attribute tags must be non-negative and correspond to attributes "
+            "in the mesh!");
+        MFEM_VERIFY(attr_marker[attr - 1], "Unknown material attribute " << attr << "!");
+      }
     }
   }
 
@@ -507,6 +509,8 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata, mfem::ParMe
     auto *T1 = &FET->GetElement1Transformation();
     auto *T2 = (info2 >= 0) ? &FET->GetElement2Transformation() : nullptr;
 
+    // For internal boundaries, use the element which corresponds to the vacuum domain, or
+    // at least the one with the higher speed of light.
     const int nbr_attr =
         (T2 && GetLightSpeedMin(T2->Attribute) > GetLightSpeedMax(T1->Attribute))
             ? T2->Attribute
@@ -528,19 +532,30 @@ MaterialPropertyCoefficient::MaterialPropertyCoefficient(
 namespace
 {
 
-void UpdateProperty(mfem::DenseTensor &mat_coeff, int k, double coeff, double a = 1.0)
+void UpdateProperty(mfem::DenseTensor &mat_coeff, int k, double coeff, double a)
 {
   // Constant diagonal coefficient.
-  MFEM_VERIFY(mat_coeff.SizeI() == mat_coeff.SizeJ(),
-              "Invalid dimensions for MaterialPropertyCoefficient update!");
-  for (int i = 0; i < mat_coeff.SizeI(); i++)
+  if (mat_coeff.SizeI() == 0 && mat_coeff.SizeJ() == 0)
   {
-    mat_coeff(k)(i, i) += a * coeff;
+    // Initialize the coefficient material properties.
+    MFEM_VERIFY(k == 0 && mat_coeff.SizeK() == 1,
+                "Unexpected initial size for MaterialPropertyCoefficient!");
+    mat_coeff.SetSize(1, 1, mat_coeff.SizeK());
+    mat_coeff(0, 0, k) = a * coeff;
+  }
+  else
+  {
+    MFEM_VERIFY(mat_coeff.SizeI() == mat_coeff.SizeJ(),
+                "Invalid dimensions for MaterialPropertyCoefficient update!");
+    for (int i = 0; i < mat_coeff.SizeI(); i++)
+    {
+      mat_coeff(i, i, k) += a * coeff;
+    }
   }
 }
 
 void UpdateProperty(mfem::DenseTensor &mat_coeff, int k, const mfem::DenseMatrix &coeff,
-                    double a = 1.0)
+                    double a)
 {
   if (mat_coeff.SizeI() == 0 && mat_coeff.SizeJ() == 0)
   {
@@ -575,6 +590,43 @@ void UpdateProperty(mfem::DenseTensor &mat_coeff, int k, const mfem::DenseMatrix
   else
   {
     MFEM_ABORT("Invalid dimensions when updating material property at index " << k << "!");
+  }
+}
+
+bool Equals(const mfem::DenseMatrix &mat_coeff, double coeff, double a)
+{
+  MFEM_VERIFY(mat_coeff.Height() == mat_coeff.Width(),
+              "Invalid dimensions for MaterialPropertyCoefficient update!");
+  constexpr double tol = 1.0e-9;
+  for (int i = 0; i < mat_coeff.Height(); i++)
+  {
+    if (std::abs(mat_coeff(i, i) - a * coeff) >= tol * std::abs(mat_coeff(i, i)))
+    {
+      return false;
+    }
+    for (int j = 0; j < mat_coeff.Width(); j++)
+    {
+      if (j != i && std::abs(mat_coeff(i, j)) > 0.0)
+      {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+bool Equals(const mfem::DenseMatrix &mat_coeff, const mfem::DenseMatrix &coeff, double a)
+{
+  if (coeff.Height() == 1 && coeff.Width() == 1)
+  {
+    return Equals(mat_coeff, coeff(0, 0), a);
+  }
+  else
+  {
+    constexpr double tol = 1.0e-9;
+    mfem::DenseMatrix T(mat_coeff);
+    T.Add(-a, coeff);
+    return (T.MaxMaxNorm() < tol * mat_coeff.MaxMaxNorm());
   }
 }
 
@@ -648,23 +700,35 @@ void MaterialPropertyCoefficient::AddMaterialProperty(const mfem::Array<int> &at
 
   if (mat_idx < 0)
   {
-    // Append a new material and assign the attributes to it.
-    const mfem::DenseTensor mat_coeff_backup(mat_coeff);
-    mat_coeff.SetSize(mat_coeff_backup.SizeI(), mat_coeff_backup.SizeJ(),
-                      mat_coeff_backup.SizeK() + 1);
-    for (int k = 0; k < mat_coeff_backup.SizeK(); k++)
+    // Check if we can reuse an existing material.
+    for (int k = 0; k < mat_coeff.SizeK(); k++)
     {
-      mat_coeff(k) = mat_coeff_backup(k);
+      if (Equals(mat_coeff(k), coeff, a))
+      {
+        mat_idx = k;
+        break;
+      }
     }
-    mat_idx = mat_coeff.SizeK() - 1;
-    mat_coeff(mat_idx) = 0.0;
+    if (mat_idx < 0)
+    {
+      // Append a new material and assign the attributes to it.
+      const mfem::DenseTensor mat_coeff_backup(mat_coeff);
+      mat_coeff.SetSize(mat_coeff_backup.SizeI(), mat_coeff_backup.SizeJ(),
+                        mat_coeff_backup.SizeK() + 1);
+      for (int k = 0; k < mat_coeff_backup.SizeK(); k++)
+      {
+        mat_coeff(k) = mat_coeff_backup(k);
+      }
+      mat_idx = mat_coeff.SizeK() - 1;
+    }
+    mat_coeff(mat_idx) = 0.0;  // Zero out so we can add
 
     // Copy the previous attribute materials, initialize no material to all new ones, then
     // populate.
     attr_mat.SetSize(attr_max, -1);
     for (auto attr : attr_list)
     {
-      attr_mat[attr - 1] = mat_coeff.SizeK();
+      attr_mat[attr - 1] = mat_idx;
     }
   }
   UpdateProperty(mat_coeff, mat_idx, coeff, a);

@@ -64,14 +64,14 @@ void MixedVectorGradientIntegrator::Assemble(const ceed::CeedGeomFactorData &geo
   {
     case 2:
       {
-        auto ctx = ceed::PopulateCoefficientContext2();
+        auto ctx = ceed::PopulateCoefficientContext2(Q);
         ceed::AssembleCeedOperator(info, ctx, geom_data, ceed, trial_restr, test_restr,
                                    trial_basis, test_basis, op);
       }
       break;
     case 3:
       {
-        auto ctx = ceed::PopulateCoefficientContext3();
+        auto ctx = ceed::PopulateCoefficientContext3(Q);
         ceed::AssembleCeedOperator(info, ctx, geom_data, ceed, trial_restr, test_restr,
                                    trial_basis, test_basis, op);
       }
@@ -132,18 +132,20 @@ void MixedVectorWeakDivergenceIntegrator::Assemble(
   {
     case 2:
       {
-        auto ctx = ceed::PopulateCoefficientContext2();
-        std::transform(ctx.begin(), ctx.end(), ctx.begin(),
-                       [](CeedScalar v) { return -v; });
+        auto ctx = ceed::PopulateCoefficientContext2(Q);
+        std::transform(&ctx.mat_coeff[0][0],
+                       &ctx.mat_coeff[0][0] + ctx.MaxNumMat() * ctx.NumCoeffComp(),
+                       &ctx.mat_coeff[0][0], [](CeedScalar v) { return -v; });
         ceed::AssembleCeedOperator(info, ctx, geom_data, ceed, trial_restr, test_restr,
                                    trial_basis, test_basis, op);
       }
       break;
     case 3:
       {
-        auto ctx = ceed::PopulateCoefficientContext3();
-        std::transform(ctx.begin(), ctx.end(), ctx.begin(),
-                       [](CeedScalar v) { return -v; });
+        auto ctx = ceed::PopulateCoefficientContext3(Q);
+        std::transform(&ctx.mat_coeff[0][0],
+                       &ctx.mat_coeff[0][0] + ctx.MaxNumMat() * ctx.NumCoeffComp(),
+                       &ctx.mat_coeff[0][0], [](CeedScalar v) { return -v; });
         ceed::AssembleCeedOperator(info, ctx, geom_data, ceed, trial_restr, test_restr,
                                    trial_basis, test_basis, op);
       }
