@@ -104,7 +104,7 @@
         "MaxIts": { "type": "integer", "exclusiveMinimum": 0 },
         "MaxSize": { "type": "integer", "exclusiveMinimum": 0 },
         "InitialGuess": { "type": "boolean" },
-        "MGMaxLevels": { "type": "int", "minimum": 1 },
+        "MGMaxLevels": { "type": "integer", "minimum": 1 },
         "MGCoarsenType": { "type": "string" },
         "MGAuxiliarySmoother": { "type": "boolean" },
         "MGCycleIts": { "type": "integer", "exclusiveMinimum": 0 },
