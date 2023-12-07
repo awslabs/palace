@@ -10,6 +10,9 @@
 #include <vector>
 #include <mfem.hpp>
 
+// XX TODO CONST CORRECTNESS FOR MESH IF GETELEMENTTRANSFORMATION IS CONST AND THREAD SAFE
+//         VERSION IS USED
+
 namespace palace
 {
 
@@ -67,10 +70,10 @@ mfem::Array<int> AttrToMarker(int max_attr, const T &attr_list)
 }
 
 // Helper function to construct the bounding box for all elements with the given attribute.
-void GetAxisAlignedBoundingBox(mfem::ParMesh &mesh, int attr, bool bdr, mfem::Vector &min,
-                               mfem::Vector &max);
 void GetAxisAlignedBoundingBox(mfem::ParMesh &mesh, const mfem::Array<int> &marker,
                                bool bdr, mfem::Vector &min, mfem::Vector &max);
+void GetAxisAlignedBoundingBox(mfem::ParMesh &mesh, int attr, bool bdr, mfem::Vector &min,
+                               mfem::Vector &max);
 
 // Struct describing a bounding box in terms of the center and face normals. The normals
 // specify the direction from the center of the box.
@@ -139,9 +142,10 @@ BoundingBall GetBoundingBall(mfem::ParMesh &mesh, int attr, bool bdr);
 
 // Helper function to compute the average surface normal for all elements with the given
 // attribute.
-void GetSurfaceNormal(mfem::ParMesh &mesh, int attr, mfem::Vector &normal);
-void GetSurfaceNormal(mfem::ParMesh &mesh, const mfem::Array<int> &marker,
-                      mfem::Vector &normal);
+mfem::Vector GetSurfaceNormal(mfem::ParMesh &mesh, const mfem::Array<int> &attr_list,
+                              bool average = true);
+mfem::Vector GetSurfaceNormal(mfem::ParMesh &mesh, int attr, bool average = true);
+mfem::Vector GetSurfaceNormal(mfem::ParMesh &mesh, bool average = true);
 
 // Helper function responsible for rebalancing the mesh, and optionally writing meshes from
 // the intermediate stages to disk. Returns the imbalance ratio before rebalancing.

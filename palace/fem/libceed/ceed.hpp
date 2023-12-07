@@ -6,7 +6,6 @@
 
 #include <string>
 #include <unordered_map>
-#include <utility>
 #include <vector>
 #include <ceed.h>
 #include <mfem.hpp>
@@ -38,35 +37,12 @@
 namespace palace::ceed
 {
 
-// Base case for combining hashes.
-inline void CeedHashCombine(std::size_t &seed) {}
-
-// See for example https://onlinelibrary.wiley.com/doi/abs/10.1002/asi.10170, the source
-// of https://www.boost.org/doc/libs/1_35_0/doc/html/boost/hash_combine_id241013.html.
-template <typename T, typename... U>
-inline void CeedHashCombine(std::size_t &seed, const T &v, const U &...args)
-{
-  std::hash<T> hasher;
-  seed ^= hasher(v) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
-  (CeedHashCombine(seed, args), ...);
-}
-
-// Hash function for the CeedObjectMap type.
-struct CeedObjectHash
-{
-  std::size_t operator()(const std::pair<Ceed, mfem::Geometry::Type> &k) const
-  {
-    std::size_t hash = 0;
-    CeedHashCombine(hash, k.first, k.second);
-    return hash;
-  }
-};
-
-// Useful alias template for libCEED objects specific to a specific Ceed context and element
-// geometry type.
+// Useful alias templates for libCEED objects specific to a specific Ceed context and
+// element geometry type.
 template <typename T>
-using CeedObjectMap =
-    std::unordered_map<std::pair<Ceed, mfem::Geometry::Type>, T, CeedObjectHash>;
+using CeedGeomObjectMap = std::unordered_map<mfem::Geometry::Type, T>;
+template <typename T>
+using CeedObjectMap = std::unordered_map<Ceed, CeedGeomObjectMap<T>>;
 
 // Call libCEED's CeedInit for the given resource. The specific device to use is set prior
 // to this using mfem::Device.

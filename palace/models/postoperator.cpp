@@ -81,19 +81,17 @@ PostOperator::PostOperator(const IoData &iodata, SpaceOperator &spaceop,
   // Add wave port boundary mode postprocessing when available.
   for (const auto &[idx, data] : spaceop.GetWavePortOp())
   {
-    auto ret = port_E0.insert(std::make_pair(idx, WavePortFieldData()));
+    auto ret = port_E0s.insert(std::make_pair(idx, WavePortFieldData()));
     ret.first->second.E0tr = std::make_unique<RestrictedVectorCoefficient>(
-        std::make_unique<BdrFieldVectorCoefficient>(data.port_E0t->real(), mat_op),
+        std::make_unique<BdrFieldVectorCoefficient>(data.E0t->real(), mat_op),
         data.attr_list);
     ret.first->second.E0ti = std::make_unique<RestrictedVectorCoefficient>(
-        std::make_unique<BdrFieldVectorCoefficient>(data.port_E0t->imag(), mat_op),
+        std::make_unique<BdrFieldVectorCoefficient>(data.E0t->imag(), mat_op),
         data.attr_list);
     ret.first->second.E0nr = std::make_unique<RestrictedCoefficient>(
-        std::make_unique<BdrFieldCoefficient>(data.port_E0n->real(), mat_op),
-        data.attr_list);
+        std::make_unique<BdrFieldCoefficient>(data.E0n->real(), mat_op), data.attr_list);
     ret.first->second.E0ni = std::make_unique<RestrictedCoefficient>(
-        std::make_unique<BdrFieldCoefficient>(data.port_E0n->imag(), mat_op),
-        data.attr_list);
+        std::make_unique<BdrFieldCoefficient>(data.E0n->imag(), mat_op), data.attr_list);
   }
 
   // Initialize data collection objects.
@@ -271,7 +269,7 @@ void PostOperator::InitializeDataCollection(const IoData &iodata)
   }
 
   // Add wave port boundary mode postprocessing when available.
-  for (const auto &[idx, data] : port_E0)
+  for (const auto &[idx, data] : port_E0s)
   {
     paraview_bdr.RegisterVCoeffField("Et^0_" + std::to_string(idx) + "_real",
                                      data.E0tr.get());

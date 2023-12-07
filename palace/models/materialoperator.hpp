@@ -6,12 +6,12 @@
 
 #include <unordered_map>
 #include <mfem.hpp>
+#include "fem/mesh.hpp"
 
 namespace palace
 {
 
 class IoData;
-class Mesh;
 
 //
 // A class handling material attributes.
@@ -19,14 +19,11 @@ class Mesh;
 class MaterialOperator
 {
 private:
-  // Useful references to objects from the underlying mesh (not owned).
-  const std::unordered_map<int, int> &loc_attr, &loc_bdr_attr;
-  const std::unordered_map<int, int> &local_to_shared;
+  // Reference to underlying mesh object (not owned).
+  const Mesh &mesh;
 
-  // Mapping from the local attribute to material index. For boundary elements, this is the
-  // material of the neighboring element (for internal boundaries, use the element which
-  // corresponds to the vacuum domain, or at least the one with the higher speed of light.
-  mfem::Array<int> attr_mat, bdr_attr_mat;
+  // Mapping from the local attribute to material index.
+  mfem::Array<int> attr_mat;
 
   // Material properties: relative permeability, relative permittivity, and others (like
   // electrical conductivity and London penetration depth for superconductors.
@@ -38,77 +35,39 @@ private:
   // penetration depth.
   mfem::Array<int> losstan_attr, conductivity_attr, london_attr;
 
-  void SetUpMaterialProperties(const IoData &iodata, mfem::ParMesh &mesh);
+  void SetUpMaterialProperties(const IoData &iodata, const mfem::ParMesh &mesh);
 
-  const auto AttrToMat(int attr, bool bdr) const
+  const auto AttrToMat(int attr) const
   {
-    if (bdr)
-    {
-      MFEM_ASSERT(loc_bdr_attr.find(attr) != loc_bdr_attr.end(),
-                  "Missing local boundary attribute for attribute " << attr << "!");
-      return bdr_attr_mat[loc_bdr_attr.at(attr) - 1];
-    }
-    else
-    {
-      MFEM_ASSERT(loc_attr.find(attr) != loc_attr.end(),
-                  "Missing local domain attribute for attribute " << attr << "!");
-      return attr_mat[loc_attr.at(attr) - 1];
-    }
+    const auto &loc_attr = mesh.GetAttributeGlobalToLocal();
+    MFEM_ASSERT(loc_attr.find(attr) != loc_attr.end(),
+                "Missing local domain attribute for attribute " << attr << "!");
+    return attr_mat[loc_attr.at(attr) - 1];
   }
 
-  const auto Wrap(const mfem::DenseTensor &data, int attr, bool bdr) const
+  const auto Wrap(const mfem::DenseTensor &data, int attr) const
   {
-    const int k = AttrToMat(attr, bdr);
+    const int k = AttrToMat(attr);
     return mfem::DenseMatrix(const_cast<double *>(data.GetData(k)), data.SizeI(),
                              data.SizeJ());
   }
 
 public:
-  MaterialOperator(const IoData &iodata, Mesh &mesh);
+  MaterialOperator(const IoData &iodata, const Mesh &mesh);
 
   int SpaceDimension() const { return mat_muinv.SizeI(); }
 
-  const auto GetInvPermeability(int attr, bool bdr = false) const
-  {
-    return Wrap(mat_muinv, attr, bdr);
-  }
-  const auto GetPermittivityReal(int attr, bool bdr = false) const
-  {
-    return Wrap(mat_epsilon, attr, bdr);
-  }
-  const auto GetPermittivityImag(int attr, bool bdr = false) const
-  {
-    return Wrap(mat_epsilon_imag, attr, bdr);
-  }
-  const auto GetPermittivityAbs(int attr, bool bdr = false) const
-  {
-    return Wrap(mat_epsilon_abs, attr, bdr);
-  }
-  const auto GetInvImpedance(int attr, bool bdr = false) const
-  {
-    return Wrap(mat_invz0, attr, bdr);
-  }
-  const auto GetLightSpeed(int attr, bool bdr = false) const
-  {
-    return Wrap(mat_c0, attr, bdr);
-  }
-  const auto GetConductivity(int attr, bool bdr = false) const
-  {
-    return Wrap(mat_sigma, attr, bdr);
-  }
-  const auto GetInvLondonDepth(int attr, bool bdr = false) const
-  {
-    return Wrap(mat_invLondon, attr, bdr);
-  }
+  const auto GetInvPermeability(int attr) const { return Wrap(mat_muinv, attr); }
+  const auto GetPermittivityReal(int attr) const { return Wrap(mat_epsilon, attr); }
+  const auto GetPermittivityImag(int attr) const { return Wrap(mat_epsilon_imag, attr); }
+  const auto GetPermittivityAbs(int attr) const { return Wrap(mat_epsilon_abs, attr); }
+  const auto GetInvImpedance(int attr) const { return Wrap(mat_invz0, attr); }
+  const auto GetLightSpeed(int attr) const { return Wrap(mat_c0, attr); }
+  const auto GetConductivity(int attr) const { return Wrap(mat_sigma, attr); }
+  const auto GetInvLondonDepth(int attr) const { return Wrap(mat_invLondon, attr); }
 
-  auto GetLightSpeedMin(int attr, bool bdr = false) const
-  {
-    return mat_c0_min[AttrToMat(attr, bdr)];
-  }
-  auto GetLightSpeedMax(int attr, bool bdr = false) const
-  {
-    return mat_c0_max[AttrToMat(attr, bdr)];
-  }
+  auto GetLightSpeedMin(int attr) const { return mat_c0_min[AttrToMat(attr)]; }
+  auto GetLightSpeedMax(int attr) const { return mat_c0_max[AttrToMat(attr)]; }
 
   const auto &GetInvPermeability() const { return mat_muinv; }
   const auto &GetPermittivityReal() const { return mat_epsilon; }
@@ -124,43 +83,20 @@ public:
   bool HasLondonDepth() const { return (london_attr.Size() > 0); }
 
   const auto &GetAttributeToMaterial() const { return attr_mat; }
-  const auto &GetBdrAttributeToMaterial() const { return bdr_attr_mat; }
+  mfem::Array<int> GetBdrAttributeToMaterial() const;
 
-  const auto &GetAttributeGlobalToLocal() const { return loc_attr; }
-  const auto &GetBdrAttributeGlobalToLocal() const { return loc_bdr_attr; }
+  const auto &GetMesh() const { return mesh; }
 
   template <typename T>
   auto GetAttributeGlobalToLocal(const T &attr_list) const
   {
-    // Skip any entries in the input global attribute list which are not on local to this
-    // process.
-    mfem::Array<int> loc_attr_list;
-    for (auto attr : attr_list)
-    {
-      if (loc_attr.find(attr) != loc_attr.end())
-      {
-        loc_attr_list.Append(loc_attr.at(attr));
-      }
-    }
-    return loc_attr_list;
+    return mesh.GetAttributeGlobalToLocal(attr_list);
   }
   template <typename T>
   auto GetBdrAttributeGlobalToLocal(const T &attr_list) const
   {
-    // Skip any entries in the input global attribute list which are not on local to this
-    // process.
-    mfem::Array<int> loc_attr_list;
-    for (auto attr : attr_list)
-    {
-      if (loc_bdr_attr.find(attr) != loc_bdr_attr.end())
-      {
-        loc_attr_list.Append(loc_bdr_attr.at(attr));
-      }
-    }
-    return loc_attr_list;
+    return mesh.GetBdrAttributeGlobalToLocal(attr_list);
   }
-
-  const auto &GetLocalToSharedFaceMap() const { return local_to_shared; }
 };
 
 //
@@ -193,6 +129,13 @@ public:
   template <typename T>
   void AddMaterialProperty(const mfem::Array<int> &attr_list, const T &coeff,
                            double a = 1.0);
+  template <typename T>
+  void AddMaterialProperty(int attr, const T &coeff, double a = 1.0)
+  {
+    mfem::Array<int> attr_list(1);
+    attr_list[0] = attr;
+    AddMaterialProperty(attr_list, coeff, a);
+  }
 
   void RestrictCoefficient(const mfem::Array<int> &attr_list);
 

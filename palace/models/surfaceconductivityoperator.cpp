@@ -94,8 +94,7 @@ void SurfaceConductivityOperator::PrintBoundaryInfo(const IoData &iodata,
   {
     for (auto attr : bdr.attr_list)
     {
-      mfem::Vector nor;
-      mesh::GetSurfaceNormal(mesh, attr, nor);
+      mfem::Vector normal = mesh::GetSurfaceNormal(mesh, attr);
       Mpi::Print(" {:d}: σ = {:.3e} S/m", attr,
                  iodata.DimensionalizeValue(IoData::ValueType::CONDUCTIVITY, bdr.sigma));
       if (bdr.h > 0.0)
@@ -105,11 +104,11 @@ void SurfaceConductivityOperator::PrintBoundaryInfo(const IoData &iodata,
       }
       if (mesh.SpaceDimension() == 3)
       {
-        Mpi::Print(", n = ({:+.1f}, {:+.1f}, {:+.1f})", nor(0), nor(1), nor(2));
+        Mpi::Print(", n = ({:+.1f}, {:+.1f}, {:+.1f})", normal(0), normal(1), normal(2));
       }
       else
       {
-        Mpi::Print(", n = ({:+.1f}, {:+.1f})", nor(0), nor(1));
+        Mpi::Print(", n = ({:+.1f}, {:+.1f})", normal(0), normal(1));
       }
       Mpi::Print("\n");
     }

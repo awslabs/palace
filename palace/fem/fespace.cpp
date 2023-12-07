@@ -13,71 +13,25 @@
 namespace palace
 {
 
-std::size_t FiniteElementSpace::GetGlobalId()
-{
-  static std::size_t global_id = 0;
-  std::size_t id;
-  PalacePragmaOmp(critical(GetGlobalId))
-  {
-    id = global_id++;
-  }
-  return id;
-}
-
-std::size_t FiniteElementSpace::GetId() const
-{
-  PalacePragmaOmp(critical(GetId))
-  {
-    if (sequence != fespace.GetSequence())
-    {
-      id = GetGlobalId();
-      sequence = fespace.GetSequence();
-    }
-  }
-  return id;
-}
-
-void FiniteElementSpace::DestroyCeedObjects()
-{
-  for (auto [key, val] : basis)
-  {
-    Ceed ceed = key.first;
-    PalaceCeedCall(ceed, CeedBasisDestroy(&val));
-  }
-  basis.clear();
-  for (auto [key, val] : restr)
-  {
-    Ceed ceed = key.first;
-    PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&val));
-  }
-  restr.clear();
-  for (auto [key, val] : interp_restr)
-  {
-    Ceed ceed = key.first;
-    PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&val));
-  }
-  interp_restr.clear();
-  for (auto [key, val] : interp_range_restr)
-  {
-    Ceed ceed = key.first;
-    PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&val));
-  }
-  interp_range_restr.clear();
-}
-
 const CeedBasis FiniteElementSpace::GetCeedBasis(Ceed ceed, mfem::Geometry::Type geom) const
 {
-  const auto key = std::make_pair(ceed, geom);
-  const auto it = basis.find(key);
-  if (it != basis.end())
+  // No two threads should ever be calling this simultaneously with the same Ceed context.
+  auto it = basis.find(ceed);
+  if (it == basis.end())
   {
-    return it->second;
+    PalacePragmaOmp(critical(InitBasis))
+    {
+      it = basis.emplace(ceed, ceed::CeedGeomObjectMap<CeedBasis>()).first;
+    }
+  }
+  auto &basis_map = it->second;
+  auto basis_it = basis_map.find(geom);
+  if (basis_it != basis_map.end())
+  {
+    return basis_it->second;
   }
   auto val = BuildCeedBasis(*this, ceed, geom);
-  PalacePragmaOmp(critical(InitBasis))
-  {
-    basis.emplace(key, val);
-  }
+  basis_map.emplace(geom, val);
   return val;
 }
 
@@ -85,17 +39,23 @@ const CeedElemRestriction
 FiniteElementSpace::GetCeedElemRestriction(Ceed ceed, mfem::Geometry::Type geom,
                                            const std::vector<int> &indices) const
 {
-  const auto key = std::make_pair(ceed, geom);
-  const auto it = restr.find(key);
-  if (it != restr.end())
+  // No two threads should ever be calling this simultaneously with the same Ceed context.
+  auto it = restr.find(ceed);
+  if (it == restr.end())
   {
-    return it->second;
+    PalacePragmaOmp(critical(InitRestriction))
+    {
+      it = restr.emplace(ceed, ceed::CeedGeomObjectMap<CeedElemRestriction>()).first;
+    }
+  }
+  auto &restr_map = it->second;
+  auto restr_it = restr_map.find(geom);
+  if (restr_it != restr_map.end())
+  {
+    return restr_it->second;
   }
   auto val = BuildCeedElemRestriction(*this, ceed, geom, indices);
-  PalacePragmaOmp(critical(InitRestriction))
-  {
-    restr.emplace(key, val);
-  }
+  restr_map.emplace(geom, val);
   return val;
 }
 
@@ -108,17 +68,23 @@ FiniteElementSpace::GetInterpCeedElemRestriction(Ceed ceed, mfem::Geometry::Type
   {
     return GetCeedElemRestriction(ceed, geom, indices);
   }
-  const auto key = std::make_pair(ceed, geom);
-  const auto it = interp_restr.find(key);
-  if (it != interp_restr.end())
+  // No two threads should ever be calling this simultaneously with the same Ceed context.
+  auto it = interp_restr.find(ceed);
+  if (it == interp_restr.end())
   {
-    return it->second;
+    PalacePragmaOmp(critical(InitInterpRestriction))
+    {
+      it = interp_restr.emplace(ceed, ceed::CeedGeomObjectMap<CeedElemRestriction>()).first;
+    }
+  }
+  auto &restr_map = it->second;
+  auto restr_it = restr_map.find(geom);
+  if (restr_it != restr_map.end())
+  {
+    return restr_it->second;
   }
   auto val = BuildCeedElemRestriction(*this, ceed, geom, indices, true, false);
-  PalacePragmaOmp(critical(InitInterpRestriction))
-  {
-    interp_restr.emplace(key, val);
-  }
+  restr_map.emplace(geom, val);
   return val;
 }
 
@@ -131,18 +97,61 @@ FiniteElementSpace::GetInterpRangeCeedElemRestriction(Ceed ceed, mfem::Geometry:
   {
     return GetInterpCeedElemRestriction(ceed, geom, indices);
   }
-  const auto key = std::make_pair(ceed, geom);
-  const auto it = interp_range_restr.find(key);
-  if (it != interp_range_restr.end())
+  // No two threads should ever be calling this simultaneously with the same Ceed context.
+  auto it = interp_range_restr.find(ceed);
+  if (it == interp_range_restr.end())
   {
-    return it->second;
+    PalacePragmaOmp(critical(InitInterpRangeRestriction))
+    {
+      it = interp_range_restr.emplace(ceed, ceed::CeedGeomObjectMap<CeedElemRestriction>())
+               .first;
+    }
+  }
+  auto &restr_map = it->second;
+  auto restr_it = restr_map.find(geom);
+  if (restr_it != restr_map.end())
+  {
+    return restr_it->second;
   }
   auto val = BuildCeedElemRestriction(*this, ceed, geom, indices, true, true);
-  PalacePragmaOmp(critical(InitInterpRangeRestriction))
-  {
-    interp_range_restr.emplace(key, val);
-  }
+  restr_map.emplace(geom, val);
   return val;
+}
+
+void FiniteElementSpace::DestroyCeedObjects()
+{
+  for (auto &[ceed, basis_map] : basis)
+  {
+    for (auto &[key, val] : basis_map)
+    {
+      PalaceCeedCall(ceed, CeedBasisDestroy(&val));
+    }
+  }
+  basis.clear();
+  for (auto &[ceed, restr_map] : restr)
+  {
+    for (auto &[key, val] : restr_map)
+    {
+      PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&val));
+    }
+  }
+  restr.clear();
+  for (auto &[ceed, restr_map] : interp_restr)
+  {
+    for (auto &[key, val] : restr_map)
+    {
+      PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&val));
+    }
+  }
+  interp_restr.clear();
+  for (auto &[ceed, restr_map] : interp_range_restr)
+  {
+    for (auto &[key, val] : restr_map)
+    {
+      PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&val));
+    }
+  }
+  interp_range_restr.clear();
 }
 
 CeedBasis FiniteElementSpace::BuildCeedBasis(const mfem::FiniteElementSpace &fespace,

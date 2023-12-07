@@ -56,7 +56,7 @@ private:
     std::unique_ptr<mfem::VectorCoefficient> E0tr, E0ti;
     std::unique_ptr<mfem::Coefficient> E0nr, E0ni;
   };
-  std::map<int, WavePortFieldData> port_E0;
+  std::map<int, WavePortFieldData> port_E0s;
 
   // Lumped and wave port voltage and current (R, L, and C branches) caches updated when
   // the grid functions are set.

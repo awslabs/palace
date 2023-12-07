@@ -257,10 +257,10 @@ void RefineMesh(const IoData &iodata, std::vector<std::unique_ptr<mfem::ParMesh>
       mfem::DenseMatrix pointmat;
       if (use_nodes)
       {
-        mfem::ElementTransformation *T = mesh.back()->GetElementTransformation(i);
-        mfem::Geometry::Type geo = mesh.back()->GetElementGeometry(i);
-        mfem::RefinedGeometry *RefG = mfem::GlobGeometryRefiner.Refine(geo, ref);
-        T->Transform(RefG->RefPts, pointmat);
+        mfem::ElementTransformation &T = *mesh.back()->GetElementTransformation(i);
+        mfem::Geometry::Type geom = mesh.back()->GetElementGeometry(i);
+        mfem::RefinedGeometry *RefG = mfem::GlobGeometryRefiner.Refine(geom, ref);
+        T.Transform(RefG->RefPts, pointmat);
       }
       else
       {
@@ -511,15 +511,6 @@ void AttrToMarker(int max_attr, const T &attr_list, mfem::Array<int> &marker)
   }
 }
 
-void GetAxisAlignedBoundingBox(mfem::ParMesh &mesh, int attr, bool bdr, mfem::Vector &min,
-                               mfem::Vector &max)
-{
-  mfem::Array<int> marker(bdr ? mesh.bdr_attributes.Max() : mesh.attributes.Max());
-  marker = 0;
-  marker[attr - 1] = 1;
-  GetAxisAlignedBoundingBox(mesh, marker, bdr, min, max);
-}
-
 void GetAxisAlignedBoundingBox(mfem::ParMesh &mesh, const mfem::Array<int> &marker,
                                bool bdr, mfem::Vector &min, mfem::Vector &max)
 {
@@ -533,7 +524,7 @@ void GetAxisAlignedBoundingBox(mfem::ParMesh &mesh, const mfem::Array<int> &mark
   }
   if (!mesh.GetNodes())
   {
-    auto BBUpdate = [&mesh, &dim, &min, &max](mfem::Array<int> &verts) -> void
+    auto BBUpdate = [&mesh, &dim, &min, &max](const mfem::Array<int> &verts) -> void
     {
       for (int j = 0; j < verts.Size(); j++)
       {
@@ -581,12 +572,12 @@ void GetAxisAlignedBoundingBox(mfem::ParMesh &mesh, const mfem::Array<int> &mark
   else
   {
     const int ref = mesh.GetNodes()->FESpace()->GetMaxElementOrder();
-    auto BBUpdate = [&ref, &min, &max](mfem::ElementTransformation *T,
-                                       mfem::Geometry::Type &geo) -> void
+    auto BBUpdate = [&ref, &min, &max](mfem::ElementTransformation &T,
+                                       mfem::Geometry::Type &geom) -> void
     {
       mfem::DenseMatrix pointmat;
-      mfem::RefinedGeometry *RefG = mfem::GlobGeometryRefiner.Refine(geo, ref);
-      T->Transform(RefG->RefPts, pointmat);
+      mfem::RefinedGeometry *RefG = mfem::GlobGeometryRefiner.Refine(geom, ref);
+      T.Transform(RefG->RefPts, pointmat);
       for (int j = 0; j < pointmat.Width(); j++)
       {
         for (int d = 0; d < pointmat.Height(); d++)
@@ -610,9 +601,9 @@ void GetAxisAlignedBoundingBox(mfem::ParMesh &mesh, const mfem::Array<int> &mark
         {
           continue;
         }
-        mfem::ElementTransformation *T = mesh.GetBdrElementTransformation(i);
-        mfem::Geometry::Type geo = mesh.GetBdrElementGeometry(i);
-        BBUpdate(T, geo);
+        mfem::ElementTransformation &T = *mesh.GetBdrElementTransformation(i);
+        mfem::Geometry::Type geom = mesh.GetBdrElementGeometry(i);
+        BBUpdate(T, geom);
       }
     }
     else
@@ -623,16 +614,23 @@ void GetAxisAlignedBoundingBox(mfem::ParMesh &mesh, const mfem::Array<int> &mark
         {
           continue;
         }
-        mfem::ElementTransformation *T = mesh.GetElementTransformation(i);
-        mfem::Geometry::Type geo = mesh.GetElementGeometry(i);
-        BBUpdate(T, geo);
+        mfem::ElementTransformation &T = *mesh.GetElementTransformation(i);
+        mfem::Geometry::Type geom = mesh.GetElementGeometry(i);
+        BBUpdate(T, geom);
       }
     }
   }
-  auto *Min = min.HostReadWrite();
-  auto *Max = max.HostReadWrite();
-  Mpi::GlobalMin(dim, Min, mesh.GetComm());
-  Mpi::GlobalMax(dim, Max, mesh.GetComm());
+  Mpi::GlobalMin(dim, min.HostReadWrite(), mesh.GetComm());
+  Mpi::GlobalMax(dim, max.HostReadWrite(), mesh.GetComm());
+}
+
+void GetAxisAlignedBoundingBox(mfem::ParMesh &mesh, int attr, bool bdr, mfem::Vector &min,
+                               mfem::Vector &max)
+{
+  mfem::Array<int> marker(bdr ? mesh.bdr_attributes.Max() : mesh.attributes.Max());
+  marker = 0;
+  marker[attr - 1] = 1;
+  GetAxisAlignedBoundingBox(mesh, marker, bdr, min, max);
 }
 
 double BoundingBox::Area() const
@@ -731,8 +729,8 @@ int CollectPointCloudOnRoot(mfem::ParMesh &mesh, const mfem::Array<int> &marker,
         {
           continue;
         }
-        mfem::ElementTransformation *T = mesh.GetBdrElementTransformation(i);
-        T->Transform(
+        mfem::ElementTransformation &T = *mesh.GetBdrElementTransformation(i);
+        T.Transform(
             mfem::GlobGeometryRefiner.Refine(mesh.GetBdrElementGeometry(i), ref)->RefPts,
             pointmat);
         for (int j = 0; j < pointmat.Width(); j++)
@@ -749,8 +747,8 @@ int CollectPointCloudOnRoot(mfem::ParMesh &mesh, const mfem::Array<int> &marker,
         {
           continue;
         }
-        mfem::ElementTransformation *T = mesh.GetElementTransformation(i);
-        T->Transform(
+        mfem::ElementTransformation &T = *mesh.GetElementTransformation(i);
+        T.Transform(
             mfem::GlobGeometryRefiner.Refine(mesh.GetElementGeometry(i), ref)->RefPts,
             pointmat);
         for (int j = 0; j < pointmat.Width(); j++)
@@ -1095,52 +1093,72 @@ BoundingBall GetBoundingBall(mfem::ParMesh &mesh, int attr, bool bdr)
   return GetBoundingBall(mesh, marker, bdr);
 }
 
-void GetSurfaceNormal(mfem::ParMesh &mesh, int attr, mfem::Vector &normal)
-{
-  mfem::Array<int> marker(mesh.bdr_attributes.Max());
-  marker = 0;
-  marker[attr - 1] = 1;
-  GetSurfaceNormal(mesh, marker, normal);
-}
-
-void GetSurfaceNormal(mfem::ParMesh &mesh, const mfem::Array<int> &marker,
-                      mfem::Vector &normal)
+mfem::Vector GetSurfaceNormal(mfem::ParMesh &mesh, const mfem::Array<int> &attr_list,
+                              bool average)
 {
   int dim = mesh.SpaceDimension();
-  mfem::Vector nor(dim);
-  normal.SetSize(dim);
+  mfem::Vector loc_normal(dim), normal(dim);
   normal = 0.0;
   bool init = false;
-  for (int i = 0; i < mesh.GetNBE(); i++)
+  auto UpdateNormal = [&](mfem::ElementTransformation &T, mfem::Geometry::Type geom)
   {
-    if (!marker[mesh.GetBdrAttribute(i) - 1])
-    {
-      continue;
-    }
-    mfem::ElementTransformation *T = mesh.GetBdrElementTransformation(i);
-    const mfem::IntegrationPoint &ip =
-        mfem::Geometries.GetCenter(mesh.GetBdrElementGeometry(i));
-    T->SetIntPoint(&ip);
-    mfem::CalcOrtho(T->Jacobian(), nor);
+    const mfem::IntegrationPoint &ip = mfem::Geometries.GetCenter(geom);
+    T.SetIntPoint(&ip);
+    mfem::CalcOrtho(T.Jacobian(), loc_normal);
     if (!init)
     {
-      normal = nor;
+      normal = loc_normal;
       init = true;
     }
     else
     {
       // Check orientation and make sure consistent on this process. If a boundary has
       // conflicting normal definitions, use the first value.
-      if (nor * normal < 0.0)
+      if (loc_normal * normal < 0.0)
       {
-        normal -= nor;
+        normal -= loc_normal;
       }
       else
       {
-        normal += nor;
+        normal += loc_normal;
+      }
+    }
+  };
+  if (mesh.Dimension() == mesh.SpaceDimension())
+  {
+    // Loop over boundary elements.
+    for (int i = 0; i < mesh.GetNBE(); i++)
+    {
+      if (attr_list.Find(mesh.GetBdrAttribute(i)) < 0)
+      {
+        continue;
+      }
+      mfem::ElementTransformation &T = *mesh.GetBdrElementTransformation(i);
+      UpdateNormal(T, mesh.GetBdrElementGeometry(i));
+      if (!average)
+      {
+        break;
       }
     }
   }
+  else
+  {
+    // Loop over domain elements.
+    for (int i = 0; i < mesh.GetNE(); i++)
+    {
+      if (attr_list.Find(mesh.GetAttribute(i)) < 0)
+      {
+        continue;
+      }
+      mfem::ElementTransformation &T = *mesh.GetElementTransformation(i);
+      UpdateNormal(T, mesh.GetElementGeometry(i));
+      if (!average)
+      {
+        break;
+      }
+    }
+  }
+
   // If different processors have different normal orientations, take that from the lowest
   // rank processor.
   MPI_Comm comm = mesh.GetComm();
@@ -1155,36 +1173,58 @@ void GetSurfaceNormal(mfem::ParMesh &mesh, const mfem::Array<int> &marker,
   {
     // No boundary elements of attribute attr.
     normal = 0.0;
-    return;
+    return normal;
   }
   if (rank == Mpi::Rank(comm))
   {
     glob_normal = normal;
   }
+  Mpi::Broadcast(dim, glob_normal.HostReadWrite(), rank, comm);
+  if (average)
   {
-    auto *GlobNormal = glob_normal.HostReadWrite();
-    Mpi::Broadcast(dim, GlobNormal, rank, comm);
+    if (init && normal * glob_normal < 0.0)
+    {
+      normal.Neg();
+    }
+    Mpi::GlobalSum(dim, normal.HostReadWrite(), comm);
   }
-  if (init && normal * glob_normal < 0.0)
+  else
   {
-    normal.Neg();
-  }
-  {
-    auto *Normal = normal.HostReadWrite();
-    Mpi::GlobalSum(dim, Normal, comm);
+    normal = glob_normal;
   }
   normal /= normal.Norml2();
+
   // if (dim == 3)
   // {
   //   Mpi::Print(comm, " Surface normal {:d} = ({:+.3e}, {:+.3e}, {:+.3e})", attr,
-  //   normal(0),
-  //              normal(1), normal(2));
+  //              normal(0), normal(1), normal(2));
   // }
   // else
   // {
   //   Mpi::Print(comm, " Surface normal {:d} = ({:+.3e}, {:+.3e})", attr, normal(0),
   //              normal(1));
   // }
+
+  return normal;
+}
+
+mfem::Vector GetSurfaceNormal(mfem::ParMesh &mesh, int attr, bool average)
+{
+  mfem::Array<int> attr_list(1);
+  attr_list[0] = attr;
+  return GetSurfaceNormal(mesh, attr_list, average);
+}
+
+mfem::Vector GetSurfaceNormal(mfem::ParMesh &mesh, bool average)
+{
+  if (mesh.Dimension() == mesh.SpaceDimension())
+  {
+    return GetSurfaceNormal(mesh, mesh.bdr_attributes, average);
+  }
+  else
+  {
+    return GetSurfaceNormal(mesh, mesh.attributes, average);
+  }
 }
 
 double RebalanceMesh(const IoData &iodata, double tol, mfem::ParMesh &mesh)

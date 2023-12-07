@@ -363,8 +363,7 @@ void LumpedPortOperator::PrintBoundaryInfo(const IoData &iodata, mfem::ParMesh &
     {
       for (auto attr : elem->GetAttrList())
       {
-        mfem::Vector nor;
-        mesh::GetSurfaceNormal(mesh, attr, nor);
+        mfem::Vector normal = mesh::GetSurfaceNormal(mesh, attr);
         const double Rs = data.R * data.GetToSquare(*elem);
         const double Ls = data.L * data.GetToSquare(*elem);
         const double Cs = data.C / data.GetToSquare(*elem);
@@ -402,11 +401,11 @@ void LumpedPortOperator::PrintBoundaryInfo(const IoData &iodata, mfem::ParMesh &
         }
         if (mesh.SpaceDimension() == 3)
         {
-          Mpi::Print(" n = ({:+.1f}, {:+.1f}, {:+.1f})", nor(0), nor(1), nor(2));
+          Mpi::Print(" n = ({:+.1f}, {:+.1f}, {:+.1f})", normal(0), normal(1), normal(2));
         }
         else
         {
-          Mpi::Print(" n = ({:+.1f}, {:+.1f})", nor(0), nor(1));
+          Mpi::Print(" n = ({:+.1f}, {:+.1f})", normal(0), normal(1));
         }
         Mpi::Print("\n");
       }

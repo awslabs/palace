@@ -10,6 +10,7 @@
 #include <utility>
 #include <vector>
 #include <mfem.hpp>
+#include "fem/mesh.hpp"
 #include "models/materialoperator.hpp"
 
 namespace palace
@@ -180,11 +181,11 @@ protected:
   mfem::ParMesh &mesh;
   const std::unordered_map<int, int> &local_to_shared;
 
-  void GetElementTransformations(mfem::ElementTransformation &T,
-                                 const mfem::IntegrationPoint &ip,
-                                 mfem::ElementTransformation *&T1,
-                                 mfem::ElementTransformation *&T2,
-                                 mfem::Vector *C1 = nullptr);
+  void GetBdrElementNeighborTransformations(mfem::ElementTransformation &T,
+                                            const mfem::IntegrationPoint &ip,
+                                            mfem::ElementTransformation *&T1,
+                                            mfem::ElementTransformation *&T2,
+                                            mfem::Vector *C1 = nullptr);
 
 public:
   BdrGridFunctionCoefficient(mfem::ParMesh &mesh,
@@ -192,6 +193,15 @@ public:
     : mesh(mesh), local_to_shared(local_to_shared)
   {
   }
+
+  // For a boundary element, return the element transformation objects for the neighboring
+  // domain elements. T2 may be nullptr if the boundary is a true one- sided boundary, but
+  // if it is shared with another subdomain then it will be populated. Expects
+  // ParMesh::ExchangeFaceNbrData has been called already.
+  static void GetBdrElementNeighborTransformations(
+      int i, mfem::ParMesh &mesh, const std::unordered_map<int, int> &local_to_shraed,
+      mfem::ElementTransformation *&T1, mfem::ElementTransformation *&T2,
+      const mfem::IntegrationPoint *ip = nullptr);
 
   // Return normal vector to the boundary element at an integration point (it is assumed
   // that the element transformation has already been configured at the integration point of
@@ -220,7 +230,7 @@ public:
                               const MaterialOperator &mat_op)
     : mfem::VectorCoefficient(mat_op.SpaceDimension()),
       BdrGridFunctionCoefficient(*gf.ParFESpace()->GetParMesh(),
-                                 mat_op.GetLocalToSharedFaceMap()),
+                                 mat_op.GetMesh().GetLocalToSharedFaceMap()),
       B(gf), mat_op(mat_op), C1(gf.VectorDim()), W(gf.VectorDim()), VU(gf.VectorDim()),
       VL(gf.VectorDim()), nor(gf.VectorDim())
   {
@@ -232,7 +242,7 @@ public:
     // Get neighboring elements.
     MFEM_ASSERT(vdim == 3, "BdrJVectorCoefficient expects a mesh in 3D space!");
     mfem::ElementTransformation *T1, *T2;
-    GetElementTransformations(T, ip, T1, T2, &C1);
+    GetBdrElementNeighborTransformations(T, ip, T1, T2, &C1);
 
     // For interior faces, compute J_s = -n x H = -n x μ⁻¹(B1 - B2), where B1 (B2) is B in
     // el1 (el2) and n points out from el1.
@@ -276,8 +286,9 @@ private:
 
 public:
   BdrChargeCoefficient(const mfem::ParGridFunction &gf, const MaterialOperator &mat_op)
-    : mfem::Coefficient(), BdrGridFunctionCoefficient(*gf.ParFESpace()->GetParMesh(),
-                                                      mat_op.GetLocalToSharedFaceMap()),
+    : mfem::Coefficient(),
+      BdrGridFunctionCoefficient(*gf.ParFESpace()->GetParMesh(),
+                                 mat_op.GetMesh().GetLocalToSharedFaceMap()),
       E(gf), mat_op(mat_op), C1(gf.VectorDim()), W(gf.VectorDim()), VU(gf.VectorDim()),
       VL(gf.VectorDim()), nor(gf.VectorDim())
   {
@@ -287,7 +298,7 @@ public:
   {
     // Get neighboring elements.
     mfem::ElementTransformation *T1, *T2;
-    GetElementTransformations(T, ip, T1, T2, &C1);
+    GetBdrElementNeighborTransformations(T, ip, T1, T2, &C1);
 
     // For interior faces, compute D ⋅ n = ε (E1 - E2) ⋅ n, where E1 (E2) is E in el1 (el2)
     // to get a single-valued function.
@@ -319,8 +330,9 @@ private:
 public:
   BdrFluxCoefficient(const mfem::ParGridFunction &gf, const MaterialOperator &mat_op,
                      const mfem::Vector &d)
-    : mfem::Coefficient(), BdrGridFunctionCoefficient(*gf.ParFESpace()->GetParMesh(),
-                                                      mat_op.GetLocalToSharedFaceMap()),
+    : mfem::Coefficient(),
+      BdrGridFunctionCoefficient(*gf.ParFESpace()->GetParMesh(),
+                                 mat_op.GetMesh().GetLocalToSharedFaceMap()),
       B(gf), dir(d), V(gf.VectorDim()), VL(gf.VectorDim()), nor(gf.VectorDim())
   {
   }
@@ -329,7 +341,7 @@ public:
   {
     // Get neighboring elements.
     mfem::ElementTransformation *T1, *T2;
-    GetElementTransformations(T, ip, T1, T2);
+    GetBdrElementNeighborTransformations(T, ip, T1, T2);
 
     // For interior faces, compute the average value. Since this is only used for
     // continuous (normal or tangential) values, we don't care that we average out the
@@ -379,7 +391,7 @@ private:
   {
     // Get neighboring elements.
     mfem::ElementTransformation *T1, *T2;
-    GetElementTransformations(T, ip, T1, T2, &C1);
+    GetBdrElementNeighborTransformations(T, ip, T1, T2, &C1);
 
     // Get the single-sided solution.
     if (!T2)
@@ -415,8 +427,9 @@ public:
   DielectricInterfaceCoefficient(const mfem::ParGridFunction &gf,
                                  const MaterialOperator &mat_op, double ti, double ei,
                                  const mfem::Vector &s)
-    : mfem::Coefficient(), BdrGridFunctionCoefficient(*gf.ParFESpace()->GetParMesh(),
-                                                      mat_op.GetLocalToSharedFaceMap()),
+    : mfem::Coefficient(),
+      BdrGridFunctionCoefficient(*gf.ParFESpace()->GetParMesh(),
+                                 mat_op.GetMesh().GetLocalToSharedFaceMap()),
       E(gf), mat_op(mat_op), ts(ti), epsilon(ei), side(s), C1(gf.VectorDim()),
       V(gf.VectorDim()), nor(gf.VectorDim())
   {
@@ -504,8 +517,9 @@ private:
 
 public:
   EnergyDensityCoefficient(const GridFunctionType &gf, const MaterialOperator &mat_op)
-    : mfem::Coefficient(), BdrGridFunctionCoefficient(*gf.ParFESpace()->GetParMesh(),
-                                                      mat_op.GetLocalToSharedFaceMap()),
+    : mfem::Coefficient(),
+      BdrGridFunctionCoefficient(*gf.ParFESpace()->GetParMesh(),
+                                 mat_op.GetMesh().GetLocalToSharedFaceMap()),
       U(gf), mat_op(mat_op), V(mat_op.SpaceDimension())
   {
   }
@@ -520,10 +534,10 @@ public:
     {
       // Get neighboring elements.
       mfem::ElementTransformation *T1, *T2;
-      GetElementTransformations(T, ip, T1, T2);
+      GetBdrElementNeighborTransformations(T, ip, T1, T2);
 
-      // For interior faces, compute the value on the side where the material property is
-      // larger (typically should choose the non-vacuum side).
+      // For interior faces, compute the value on the side where the speed of light is
+      // smaller (typically should choose the non-vacuum side).
       if (T2 &&
           mat_op.GetLightSpeedMax(T2->Attribute) < mat_op.GetLightSpeedMin(T1->Attribute))
       {
@@ -599,7 +613,7 @@ public:
   BdrFieldVectorCoefficient(const mfem::ParGridFunction &gf, const MaterialOperator &mat_op)
     : mfem::VectorCoefficient(mat_op.SpaceDimension()),
       BdrGridFunctionCoefficient(*gf.ParFESpace()->GetParMesh(),
-                                 mat_op.GetLocalToSharedFaceMap()),
+                                 mat_op.GetMesh().GetLocalToSharedFaceMap()),
       U(gf), mat_op(mat_op)
   {
   }
@@ -609,10 +623,10 @@ public:
   {
     // Get neighboring elements.
     mfem::ElementTransformation *T1, *T2;
-    GetElementTransformations(T, ip, T1, T2);
+    GetBdrElementNeighborTransformations(T, ip, T1, T2);
 
-    // For interior faces, compute the value on the side where the material property is
-    // larger (typically should choose the non-vacuum side).
+    // For interior faces, compute the value on the side where the speed of light is
+    // smaller (typically should choose the non-vacuum side).
     if (T2 &&
         mat_op.GetLightSpeedMax(T2->Attribute) < mat_op.GetLightSpeedMin(T1->Attribute))
     {
@@ -633,8 +647,9 @@ private:
 
 public:
   BdrFieldCoefficient(const mfem::ParGridFunction &gf, const MaterialOperator &mat_op)
-    : mfem::Coefficient(), BdrGridFunctionCoefficient(*gf.ParFESpace()->GetParMesh(),
-                                                      mat_op.GetLocalToSharedFaceMap()),
+    : mfem::Coefficient(),
+      BdrGridFunctionCoefficient(*gf.ParFESpace()->GetParMesh(),
+                                 mat_op.GetMesh().GetLocalToSharedFaceMap()),
       U(gf), mat_op(mat_op)
   {
   }
@@ -643,10 +658,10 @@ public:
   {
     // Get neighboring elements.
     mfem::ElementTransformation *T1, *T2;
-    GetElementTransformations(T, ip, T1, T2);
+    GetBdrElementNeighborTransformations(T, ip, T1, T2);
 
-    // For interior faces, compute the value on the side where the material property is
-    // larger (typically should choose the non-vacuum side).
+    // For interior faces, compute the value on the side where the speed of light is
+    // smaller (typically should choose the non-vacuum side).
     if (T2 &&
         mat_op.GetLightSpeedMax(T2->Attribute) < mat_op.GetLightSpeedMin(T1->Attribute))
     {

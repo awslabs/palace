@@ -5,6 +5,7 @@
 
 #include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
+#include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
 #include "utils/prettyprint.hpp"
 
@@ -95,6 +96,15 @@ void FarfieldBoundaryOperator::AddExtraSystemBdrCoefficients(
     }
     MaterialPropertyCoefficient muinvc0_func(mat_op.GetBdrAttributeToMaterial(), muinvc0);
     muinvc0_func.RestrictCoefficient(mat_op.GetBdrAttributeGlobalToLocal(farfield_attr));
+
+    // Instead getting the correct normal of farfield boundary elements, just pick the
+    // the first element normal. This is fine as long as the farfield material properties
+    // are not anisotropic.
+    mfem::Vector normal(mat_op.SpaceDimension());
+    normal = 0.0;
+    normal(0) = 1.0;
+    muinvc0_func.NormalProjectedCoefficient(normal);
+
     dfbi.AddCoefficient(muinvc0_func.GetAttributeToMaterial(),
                         muinvc0_func.GetMaterialProperties(), 0.5 / omega);
   }

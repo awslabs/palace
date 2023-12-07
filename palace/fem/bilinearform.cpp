@@ -13,11 +13,9 @@ namespace palace
 
 std::unique_ptr<ceed::Operator> BilinearForm::PartialAssemble() const
 {
-  // Initialize mesh geometry factor data outside of the OpenMP region.
   MFEM_VERIFY(&trial_fespace.GetMesh() == &test_fespace.GetMesh(),
               "Trial and test finite element spaces must correspond to the same mesh!");
   const auto &mesh = trial_fespace.GetMesh();
-  const auto &geom_data = mesh.GetCeedGeomFactorData();
 
   // Initialize the operator.
   std::unique_ptr<ceed::Operator> op;
@@ -45,14 +43,8 @@ std::unique_ptr<ceed::Operator> BilinearForm::PartialAssemble() const
     CeedOperator loc_op;
     PalaceCeedCall(ceed, CeedCompositeOperatorCreate(ceed, &loc_op));
 
-    for (const auto &[key, val] : geom_data)
+    for (const auto &[geom, geom_data] : mesh.GetCeedGeomFactorData(ceed))
     {
-      if (key.first != ceed)
-      {
-        continue;
-      }
-      const auto geom = key.second;
-      const auto &data = val;
       const auto trial_map_type =
           trial_fespace.GetFEColl().GetMapType(mfem::Geometry::Dimension[geom]);
       const auto test_map_type =
@@ -62,9 +54,9 @@ std::unique_ptr<ceed::Operator> BilinearForm::PartialAssemble() const
       {
         // Assemble domain integrators on this element geometry type.
         CeedElemRestriction trial_restr =
-            trial_fespace.GetCeedElemRestriction(ceed, geom, data->indices);
+            trial_fespace.GetCeedElemRestriction(ceed, geom, geom_data->indices);
         CeedElemRestriction test_restr =
-            test_fespace.GetCeedElemRestriction(ceed, geom, data->indices);
+            test_fespace.GetCeedElemRestriction(ceed, geom, geom_data->indices);
         CeedBasis trial_basis = trial_fespace.GetCeedBasis(ceed, geom);
         CeedBasis test_basis = test_fespace.GetCeedBasis(ceed, geom);
 
@@ -72,7 +64,7 @@ std::unique_ptr<ceed::Operator> BilinearForm::PartialAssemble() const
         {
           CeedOperator sub_op;
           integ->SetMapTypes(trial_map_type, test_map_type);
-          integ->Assemble(data, ceed, trial_restr, test_restr, trial_basis, test_basis,
+          integ->Assemble(geom_data, ceed, trial_restr, test_restr, trial_basis, test_basis,
                           &sub_op);
           PalaceCeedCall(ceed, CeedCompositeOperatorAddSub(loc_op, sub_op));
           PalaceCeedCall(ceed, CeedOperatorDestroy(&sub_op));
@@ -83,9 +75,9 @@ std::unique_ptr<ceed::Operator> BilinearForm::PartialAssemble() const
       {
         // Assemble boundary integrators on this element geometry type.
         CeedElemRestriction trial_restr =
-            trial_fespace.GetCeedElemRestriction(ceed, geom, data->indices);
+            trial_fespace.GetCeedElemRestriction(ceed, geom, geom_data->indices);
         CeedElemRestriction test_restr =
-            test_fespace.GetCeedElemRestriction(ceed, geom, data->indices);
+            test_fespace.GetCeedElemRestriction(ceed, geom, geom_data->indices);
         CeedBasis trial_basis = trial_fespace.GetCeedBasis(ceed, geom);
         CeedBasis test_basis = test_fespace.GetCeedBasis(ceed, geom);
 
@@ -93,7 +85,7 @@ std::unique_ptr<ceed::Operator> BilinearForm::PartialAssemble() const
         {
           CeedOperator sub_op;
           integ->SetMapTypes(trial_map_type, test_map_type);
-          integ->Assemble(data, ceed, trial_restr, test_restr, trial_basis, test_basis,
+          integ->Assemble(geom_data, ceed, trial_restr, test_restr, trial_basis, test_basis,
                           &sub_op);
           PalaceCeedCall(ceed, CeedCompositeOperatorAddSub(loc_op, sub_op));
           PalaceCeedCall(ceed, CeedOperatorDestroy(&sub_op));
@@ -115,11 +107,9 @@ std::unique_ptr<mfem::SparseMatrix> BilinearForm::FullAssemble(const ceed::Opera
 
 std::unique_ptr<ceed::Operator> DiscreteLinearOperator::PartialAssemble() const
 {
-  // Initialize mesh geometry factor data outside of the OpenMP region.
   MFEM_VERIFY(&trial_fespace.GetMesh() == &test_fespace.GetMesh(),
               "Trial and test finite element spaces must correspond to the same mesh!");
   const auto &mesh = trial_fespace.GetMesh();
-  const auto &geom_data = mesh.GetCeedGeomFactorData();
 
   // Initialize the operator.
   auto op =
@@ -139,22 +129,15 @@ std::unique_ptr<ceed::Operator> DiscreteLinearOperator::PartialAssemble() const
     PalaceCeedCall(ceed, CeedCompositeOperatorCreate(ceed, &loc_op));
     PalaceCeedCall(ceed, CeedCompositeOperatorCreate(ceed, &loc_op_t));
 
-    for (const auto &[key, val] : geom_data)
+    for (const auto &[geom, geom_data] : mesh.GetCeedGeomFactorData(ceed))
     {
-      if (key.first != ceed)
-      {
-        continue;
-      }
-      const auto geom = key.second;
-      const auto &data = val;
-
       if (mfem::Geometry::Dimension[geom] == mesh.Dimension() && !domain_interps.empty())
       {
         // Assemble domain interpolators on this element geometry type.
         CeedElemRestriction trial_restr =
-            trial_fespace.GetInterpCeedElemRestriction(ceed, geom, data->indices);
+            trial_fespace.GetInterpCeedElemRestriction(ceed, geom, geom_data->indices);
         CeedElemRestriction test_restr =
-            test_fespace.GetInterpRangeCeedElemRestriction(ceed, geom, data->indices);
+            test_fespace.GetInterpRangeCeedElemRestriction(ceed, geom, geom_data->indices);
 
         // Construct the interpolator basis.
         CeedBasis interp_basis;

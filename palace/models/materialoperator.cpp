@@ -6,7 +6,6 @@
 #include <cmath>
 #include <functional>
 #include <limits>
-#include "fem/mesh.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
@@ -281,15 +280,13 @@ mfem::DenseMatrix ToDenseMatrix(const config::SymmetricMatrixData<N> &data)
 
 }  // namespace
 
-MaterialOperator::MaterialOperator(const IoData &iodata, Mesh &mesh)
-  : loc_attr(mesh.GetAttributeGlobalToLocal()),
-    loc_bdr_attr(mesh.GetBdrAttributeGlobalToLocal()),
-    local_to_shared(mesh.GetLocalToSharedFaceMap())
+MaterialOperator::MaterialOperator(const IoData &iodata, const Mesh &mesh) : mesh(mesh)
 {
   SetUpMaterialProperties(iodata, mesh);
 }
 
-void MaterialOperator::SetUpMaterialProperties(const IoData &iodata, mfem::ParMesh &mesh)
+void MaterialOperator::SetUpMaterialProperties(const IoData &iodata,
+                                               const mfem::ParMesh &mesh)
 {
   // Check that material attributes have been specified correctly. The mesh attributes may
   // be non-contiguous and when no material attribute is specified the elements are deleted
@@ -319,6 +316,7 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata, mfem::ParMe
   // Set up material properties of the different domain regions, represented with element-
   // wise constant matrix-valued coefficients for the relative permeability, permittivity,
   // and other material properties.
+  const auto &loc_attr = this->mesh.GetAttributeGlobalToLocal();
   mfem::Array<int> mat_marker(iodata.domains.materials.size());
   mat_marker = 0;
   int nmats = 0;
@@ -327,8 +325,7 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata, mfem::ParMe
     const auto &data = iodata.domains.materials[i];
     for (auto attr : data.attributes)
     {
-      auto it = loc_attr.find(attr);
-      if (it != loc_attr.end())
+      if (loc_attr.find(attr) != loc_attr.end())
       {
         mat_marker[i] = 1;
         nmats++;
@@ -336,14 +333,7 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata, mfem::ParMe
       }
     }
   }
-
-  attr_mat.SetSize(loc_attr.size());  // XX TODO WIP...
-  // int attr_max = 0;
-  // for (auto &[attr, l_attr] : loc_attr)
-  // {
-  //   attr_max = std::max(attr_max, attr);
-  // }
-  // attr_mat.SetSize(attr_max);
+  attr_mat.SetSize(loc_attr.size());
   attr_mat = -1;
 
   const int sdim = mesh.SpaceDimension();
@@ -479,58 +469,30 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata, mfem::ParMe
 
     count++;
   }
+}
 
-  // Set up map from boundary attributes (local) to material indices based on the
-  // neighboring elements.
-
-  bdr_attr_mat.SetSize(loc_bdr_attr.size());  // XX TODO WIP...
-  // int bdr_attr_max = 0;
-  // for (auto &[attr, l_attr] : loc_bdr_attr)
-  // {
-  //   bdr_attr_max = std::max(bdr_attr_max, attr);
-  // }
-  // bdr_attr_mat.SetSize(bdr_attr_max);
-  bdr_attr_mat = -1;
-
-  for (int i = 0; i < mesh.GetNBE(); i++)
+mfem::Array<int> MaterialOperator::GetBdrAttributeToMaterial() const
+{
+  // Construct map from all (contiguous) local boundary attributes to the material index in
+  // the neighboring element.
+  const auto &loc_bdr_attr = mesh.GetBdrAttributeGlobalToLocal();
+  int bdr_attr_max = 0;
+  for (const auto &[attr, bdr_attr_map] : loc_bdr_attr)
   {
-    const int attr = mesh.GetBdrAttribute(i);
-    if (bdr_attr_mat[loc_bdr_attr.at(attr) - 1] >= 0)
-    {
-      continue;
-    }
-
-    // See also BdrGridFunctionCoefficient::GetElementTransformations.
-    int f, o;
-    int iel1, iel2, info1, info2;
-    mesh.GetBdrElementFace(i, &f, &o);
-    mesh.GetFaceElements(f, &iel1, &iel2);
-    mesh.GetFaceInfos(f, &info1, &info2);
-
-    mfem::FaceElementTransformations *FET;
-    if (info2 >= 0 && iel2 < 0)
-    {
-      // Face is shared with another subdomain.
-      const int &ishared = local_to_shared.at(f);
-      FET = mesh.GetSharedFaceTransformations(ishared);
-    }
-    else
-    {
-      // Face is either internal to the subdomain, or a true one-sided boundary.
-      FET = mesh.GetFaceElementTransformations(f);
-    }
-
-    auto *T1 = &FET->GetElement1Transformation();
-    auto *T2 = (info2 >= 0) ? &FET->GetElement2Transformation() : nullptr;
-
-    // For internal boundaries, use the element which corresponds to the vacuum domain, or
-    // at least the one with the higher speed of light.
-    const int nbr_attr =
-        (T2 && GetLightSpeedMin(T2->Attribute) > GetLightSpeedMax(T1->Attribute))
-            ? T2->Attribute
-            : T1->Attribute;
-    bdr_attr_mat[loc_bdr_attr.at(attr) - 1] = attr_mat[loc_attr.at(nbr_attr) - 1];
+    bdr_attr_max += bdr_attr_map.size();
   }
+  mfem::Array<int> bdr_attr_mat(bdr_attr_max);
+  bdr_attr_mat = -1;
+  for (const auto &[attr, bdr_attr_map] : loc_bdr_attr)
+  {
+    for (auto it = bdr_attr_map.begin(); it != bdr_attr_map.end(); ++it)
+    {
+      MFEM_ASSERT(it->second > 0 && it->second <= bdr_attr_max,
+                  "Invalid local boundary attribute " << it->second << "!");
+      bdr_attr_mat[it->second - 1] = AttrToMat(it->first);
+    }
+  }
+  return bdr_attr_mat;
 }
 
 MaterialPropertyCoefficient::MaterialPropertyCoefficient(
@@ -792,7 +754,7 @@ void MaterialPropertyCoefficient::NormalProjectedCoefficient(const mfem::Vector 
 {
   mfem::DenseTensor mat_coeff_backup(mat_coeff);
   mat_coeff.SetSize(1, 1, mat_coeff_backup.SizeK());
-  for (int k = 0; k < mat_coeff_backup.SizeK(); k++)
+  for (int k = 0; k < mat_coeff.SizeK(); k++)
   {
     mat_coeff(k) = mat_coeff_backup(k).InnerProduct(normal, normal);
   }

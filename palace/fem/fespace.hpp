@@ -28,11 +28,6 @@ private:
   // Reference to the underlying mesh object (not owned).
   Mesh &mesh;
 
-  // Members used to define equality between two spaces.
-  mutable long int sequence;
-  mutable std::size_t id;
-  static std::size_t GetGlobalId();
-
   // Members for constructing libCEED operators.
   mutable ceed::CeedObjectMap<CeedBasis> basis;
   mutable ceed::CeedObjectMap<CeedElemRestriction> restr, interp_restr, interp_range_restr;
@@ -59,8 +54,7 @@ private:
 public:
   template <typename... T>
   FiniteElementSpace(Mesh &mesh, T &&...args)
-    : fespace(&mesh.Get(), std::forward<T>(args)...), mesh(mesh),
-      sequence(fespace.GetSequence()), id(GetGlobalId())
+    : fespace(&mesh.Get(), std::forward<T>(args)...), mesh(mesh)
   {
   }
   ~FiniteElementSpace() { DestroyCeedObjects(); }
@@ -88,20 +82,6 @@ public:
   auto SpaceDimension() const { return mesh.Get().SpaceDimension(); }
   auto GetMaxElementOrder() const { return Get().GetMaxElementOrder(); }
 
-  // Get the ID associated with the instance of this class. If the underlying sequence has
-  // changed (due to a mesh update, for example), regenerate the ID.
-  std::size_t GetId() const;
-
-  // Operator overload for equality comparisons between two spaces.
-  bool operator==(const FiniteElementSpace &fespace) const
-  {
-    return GetId() == fespace.GetId();
-  }
-
-  // Clear the cached basis and element restriction objects owned by the finite element
-  // space.
-  void DestroyCeedObjects();
-
   // Return the basis object for elements of the given element geometry type.
   const CeedBasis GetCeedBasis(Ceed ceed, mfem::Geometry::Type geom) const;
 
@@ -122,6 +102,10 @@ public:
   const CeedElemRestriction
   GetInterpRangeCeedElemRestriction(Ceed ceed, mfem::Geometry::Type geom,
                                     const std::vector<int> &indices) const;
+
+  // Clear the cached basis and element restriction objects owned by the finite element
+  // space.
+  void DestroyCeedObjects();
 
   static CeedBasis BuildCeedBasis(const mfem::FiniteElementSpace &fespace, Ceed ceed,
                                   mfem::Geometry::Type geom);
