@@ -16,8 +16,6 @@ namespace palace
 namespace ceed
 {
 
-// XX TODO: Can we skip adjugate storage and just compute from J on the fly? Or, probably
-//          better, can we skip J storage and compute from adj(adj(J)/|J|) = J?
 // XX TODO: Rename to CeedMeshData or something like that?
 
 //
@@ -35,21 +33,21 @@ struct CeedGeomFactorData_private
 
   mfem::Vector wdetJ;  // qw * |J|, for H1 conformity with quadrature weights
   mfem::Vector adjJt;  // adj(J)^T / |J|, for H(curl) conformity
-  mfem::Vector J;      // J / |J|, for H(div) conformity
+                       // (Note: J / |J| = adj(adj(J)^T / |J|)^T)
   mfem::Vector attr;   // Mesh element attributes
 
   // Objects for libCEED interface to the quadrature data.
-  CeedVector wdetJ_vec, adjJt_vec, J_vec, attr_vec;
-  CeedElemRestriction wdetJ_restr, adjJt_restr, J_restr, attr_restr;
+  CeedVector wdetJ_vec, adjJt_vec, attr_vec;
+  CeedElemRestriction wdetJ_restr, adjJt_restr, attr_restr;
   CeedBasis attr_basis;
 
   // Ceed context.
   Ceed ceed;
 
   CeedGeomFactorData_private(Ceed ceed)
-    : dim(0), space_dim(0), wdetJ_vec(nullptr), adjJt_vec(nullptr), J_vec(nullptr),
-      attr_vec(nullptr), wdetJ_restr(nullptr), adjJt_restr(nullptr), J_restr(nullptr),
-      attr_restr(nullptr), attr_basis(nullptr), ceed(ceed)
+    : dim(0), space_dim(0), wdetJ_vec(nullptr), adjJt_vec(nullptr), attr_vec(nullptr),
+      wdetJ_restr(nullptr), adjJt_restr(nullptr), attr_restr(nullptr), attr_basis(nullptr),
+      ceed(ceed)
   {
   }
   ~CeedGeomFactorData_private();

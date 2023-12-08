@@ -11,34 +11,26 @@
 // adj(J)^T / det(J) ̂u and u = ̂u)
 // in[0] is Jacobian determinant quadrature data, shape [Q]
 // in[1] is transpose adjugate Jacobian quadrature data, shape [ncomp=space_dim*dim, Q]
-// in[2] is active vector, shape [qcomp=dim, ncomp=1, Q]
-// in[3] is element attribute, shape [1]
+// in[2] is element attribute, shape [Q]
+// in[3] is active vector, shape [qcomp=dim, ncomp=1, Q]
 // out[0] is active vector, shape [ncomp=space_dim, Q]
 
 CEED_QFUNCTION(f_apply_hcurlh1d_22)(void *ctx, CeedInt Q, const CeedScalar *const *in,
                                     CeedScalar *const *out)
 {
-  const CeedScalar *wdetJ = in[0], *adjJt = in[1], *u = in[2];
+  const CeedScalar *wdetJ = in[0], *adjJt = in[1], *attr = in[2], *u = in[3];
   CeedScalar *v = out[0];
-
-  const CeedScalar *attr = in[3];
-  MatCoeffContext2 *bc = (MatCoeffContext2 *)ctx;
-  // const CeedInt attr = (CeedInt)*in[3];
-  // const CeedScalar *coeff = bc->mat_coeff[bc->attr_mat[attr]];
 
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
-    CeedScalar qd[4];
+    const CeedScalar u_loc[2] = {u[i + Q * 0], u[i + Q * 1]};
+    CeedScalar coeff[3], adjJt_loc[4], v_loc[2];
+    CoeffUnpack((const MatCoeffContext2 *)ctx, (CeedInt)attr[i], coeff);
+    MatUnpack22(adjJt + i, Q, adjJt_loc);
+    MultBAx22(adjJt_loc, coeff, u_loc, v_loc);
 
-    // XXX TODO TESTING
-    const CeedScalar *coeff = bc->mat_coeff[bc->attr_mat[(CeedInt)attr[i]]];
-
-    MultBA22(adjJt + i, Q, coeff, qd);
-
-    const CeedScalar u0 = u[i + Q * 0];
-    const CeedScalar u1 = u[i + Q * 1];
-    v[i + Q * 0] = wdetJ[i] * (qd[0] * u0 + qd[2] * u1);
-    v[i + Q * 1] = wdetJ[i] * (qd[1] * u0 + qd[3] * u1);
+    v[i + Q * 0] = wdetJ[i] * v_loc[0];
+    v[i + Q * 1] = wdetJ[i] * v_loc[1];
   }
   return 0;
 }
@@ -46,29 +38,20 @@ CEED_QFUNCTION(f_apply_hcurlh1d_22)(void *ctx, CeedInt Q, const CeedScalar *cons
 CEED_QFUNCTION(f_apply_hcurlh1d_33)(void *ctx, CeedInt Q, const CeedScalar *const *in,
                                     CeedScalar *const *out)
 {
-  const CeedScalar *wdetJ = in[0], *adjJt = in[1], *u = in[2];
+  const CeedScalar *wdetJ = in[0], *adjJt = in[1], *attr = in[2], *u = in[3];
   CeedScalar *v = out[0];
-
-  const CeedScalar *attr = in[3];
-  MatCoeffContext3 *bc = (MatCoeffContext3 *)ctx;
-  // const CeedInt attr = (CeedInt)*in[3];
-  // const CeedScalar *coeff = bc->mat_coeff[bc->attr_mat[attr]];
 
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
-    CeedScalar qd[9];
+    const CeedScalar u_loc[3] = {u[i + Q * 0], u[i + Q * 1], u[i + Q * 2]};
+    CeedScalar coeff[6], adjJt_loc[9], v_loc[3];
+    CoeffUnpack((const MatCoeffContext3 *)ctx, (CeedInt)attr[i], coeff);
+    MatUnpack33(adjJt + i, Q, adjJt_loc);
+    MultBAx33(adjJt_loc, coeff, u_loc, v_loc);
 
-    // XXX TODO TESTING
-    const CeedScalar *coeff = bc->mat_coeff[bc->attr_mat[(CeedInt)attr[i]]];
-
-    MultBA33(adjJt + i, Q, coeff, qd);
-
-    const CeedScalar u0 = u[i + Q * 0];
-    const CeedScalar u1 = u[i + Q * 1];
-    const CeedScalar u2 = u[i + Q * 2];
-    v[i + Q * 0] = wdetJ[i] * (qd[0] * u0 + qd[3] * u1 + qd[6] * u2);
-    v[i + Q * 1] = wdetJ[i] * (qd[1] * u0 + qd[4] * u1 + qd[7] * u2);
-    v[i + Q * 2] = wdetJ[i] * (qd[2] * u0 + qd[5] * u1 + qd[8] * u2);
+    v[i + Q * 0] = wdetJ[i] * v_loc[0];
+    v[i + Q * 1] = wdetJ[i] * v_loc[1];
+    v[i + Q * 2] = wdetJ[i] * v_loc[2];
   }
   return 0;
 }
@@ -76,26 +59,18 @@ CEED_QFUNCTION(f_apply_hcurlh1d_33)(void *ctx, CeedInt Q, const CeedScalar *cons
 CEED_QFUNCTION(f_apply_hcurlh1d_21)(void *ctx, CeedInt Q, const CeedScalar *const *in,
                                     CeedScalar *const *out)
 {
-  const CeedScalar *wdetJ = in[0], *adjJt = in[1], *u = in[2];
+  const CeedScalar *wdetJ = in[0], *adjJt = in[1], *attr = in[2], *u = in[3];
   CeedScalar *v = out[0];
-
-  const CeedScalar *attr = in[3];
-  MatCoeffContext2 *bc = (MatCoeffContext2 *)ctx;
-  // const CeedInt attr = (CeedInt)*in[3];
-  // const CeedScalar *coeff = bc->mat_coeff[bc->attr_mat[attr]];
 
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
-    CeedScalar qd[2];
+    const CeedScalar u_loc[1] = {u[i + Q * 0]};
+    CeedScalar coeff[3], adjJt_loc[2], v_loc[1];
+    CoeffUnpack((const MatCoeffContext2 *)ctx, (CeedInt)attr[i], coeff);
+    MatUnpack21(adjJt + i, Q, adjJt_loc);
+    MultBAx21(adjJt_loc, coeff, u_loc, v_loc);
 
-    // XXX TODO TESTING
-    const CeedScalar *coeff = bc->mat_coeff[bc->attr_mat[(CeedInt)attr[i]]];
-
-    MultBA21(adjJt + i, Q, coeff, qd);
-
-    const CeedScalar u0 = u[i + Q * 0];
-    v[i + Q * 0] = wdetJ[i] * qd[0] * u0;
-    v[i + Q * 1] = wdetJ[i] * qd[1] * u0;
+    v[i + Q * 0] = wdetJ[i] * v_loc[0];
   }
   return 0;
 }
@@ -103,28 +78,19 @@ CEED_QFUNCTION(f_apply_hcurlh1d_21)(void *ctx, CeedInt Q, const CeedScalar *cons
 CEED_QFUNCTION(f_apply_hcurlh1d_32)(void *ctx, CeedInt Q, const CeedScalar *const *in,
                                     CeedScalar *const *out)
 {
-  const CeedScalar *wdetJ = in[0], *adjJt = in[1], *u = in[2];
+  const CeedScalar *wdetJ = in[0], *adjJt = in[1], *attr = in[2], *u = in[3];
   CeedScalar *v = out[0];
-
-  const CeedScalar *attr = in[3];
-  MatCoeffContext3 *bc = (MatCoeffContext3 *)ctx;
-  // const CeedInt attr = (CeedInt)*in[3];
-  // const CeedScalar *coeff = bc->mat_coeff[bc->attr_mat[attr]];
 
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
-    CeedScalar qd[6];
+    const CeedScalar u_loc[2] = {u[i + Q * 0], u[i + Q * 1]};
+    CeedScalar coeff[6], adjJt_loc[6], v_loc[2];
+    CoeffUnpack((const MatCoeffContext3 *)ctx, (CeedInt)attr[i], coeff);
+    MatUnpack32(adjJt + i, Q, adjJt_loc);
+    MultBAx32(adjJt_loc, coeff, u_loc, v_loc);
 
-    // XXX TODO TESTING
-    const CeedScalar *coeff = bc->mat_coeff[bc->attr_mat[(CeedInt)attr[i]]];
-
-    MultBA33(adjJt + i, Q, coeff, qd);
-
-    const CeedScalar u0 = u[i + Q * 0];
-    const CeedScalar u1 = u[i + Q * 1];
-    v[i + Q * 0] = wdetJ[i] * (qd[0] * u0 + qd[3] * u1);
-    v[i + Q * 1] = wdetJ[i] * (qd[1] * u0 + qd[4] * u1);
-    v[i + Q * 2] = wdetJ[i] * (qd[2] * u0 + qd[5] * u1);
+    v[i + Q * 0] = wdetJ[i] * v_loc[0];
+    v[i + Q * 1] = wdetJ[i] * v_loc[1];
   }
   return 0;
 }

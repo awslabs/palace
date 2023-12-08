@@ -31,9 +31,9 @@ void CurlCurlIntegrator::Assemble(const ceed::CeedGeomFactorData &geom_data, Cee
   info.geom_info = ceed::GeomFactorInfo::Determinant;
   if (geom_data->dim == 3)
   {
-    MFEM_VERIFY(geom_data->J_vec && geom_data->J_restr,
+    MFEM_VERIFY(geom_data->adjJt_vec && geom_data->adjJt_restr,
                 "Missing geometry factor quadrature data for CurlCurlIntegrator!");
-    info.geom_info |= ceed::GeomFactorInfo::Jacobian;
+    info.geom_info |= ceed::GeomFactorInfo::Adjugate;
   }
   else
   {

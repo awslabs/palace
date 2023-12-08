@@ -23,13 +23,7 @@ void CurlCurlMassIntegrator::Assemble(const ceed::CeedGeomFactorData &geom_data,
                   geom_data->adjJt_restr,
               "Missing geometry factor quadrature data for CurlCurlIntegrator!");
   info.geom_info = ceed::GeomFactorInfo::Determinant | ceed::GeomFactorInfo::Adjugate;
-  if (geom_data->dim == 3)
-  {
-    MFEM_VERIFY(geom_data->J_vec && geom_data->J_restr,
-                "Missing geometry factor quadrature data for CurlCurlIntegrator!");
-    info.geom_info |= ceed::GeomFactorInfo::Jacobian;
-  }
-  else
+  if (geom_data->dim < 3)
   {
     // Curl in 2D has a single component.
     info.geom_info |= ceed::GeomFactorInfo::Weight;

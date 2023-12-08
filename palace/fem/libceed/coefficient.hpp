@@ -20,33 +20,33 @@ namespace internal
 inline void MakeDiagonalCoefficient(MatCoeffContext1 &ctx, CeedInt k = 0,
                                     CeedScalar a = 1.0)
 {
-  ctx.mat_coeff[k][0] = a;
+  ctx.mat_coeff[k] = a;
 }
 
 inline void MakeDiagonalCoefficient(MatCoeffContext2 &ctx, CeedInt k = 0,
                                     CeedScalar a = 1.0)
 {
-  ctx.mat_coeff[k][0] = a;
-  ctx.mat_coeff[k][1] = 0.0;
-  ctx.mat_coeff[k][2] = a;
+  ctx.mat_coeff[3 * k + 0] = a;
+  ctx.mat_coeff[3 * k + 1] = 0.0;
+  ctx.mat_coeff[3 * k + 2] = a;
 }
 
 inline void MakeDiagonalCoefficient(MatCoeffContext3 &ctx, CeedInt k = 0,
                                     CeedScalar a = 1.0)
 {
-  ctx.mat_coeff[k][0] = a;
-  ctx.mat_coeff[k][1] = 0.0;
-  ctx.mat_coeff[k][2] = 0.0;
-  ctx.mat_coeff[k][3] = a;
-  ctx.mat_coeff[k][4] = 0.0;
-  ctx.mat_coeff[k][5] = a;
+  ctx.mat_coeff[6 * k + 0] = a;
+  ctx.mat_coeff[6 * k + 1] = 0.0;
+  ctx.mat_coeff[6 * k + 2] = 0.0;
+  ctx.mat_coeff[6 * k + 3] = a;
+  ctx.mat_coeff[6 * k + 4] = 0.0;
+  ctx.mat_coeff[6 * k + 5] = a;
 }
 
-template <int NUM_COEFF_COMP>
-inline MatCoeffContextN<NUM_COEFF_COMP>
+template <int DIM>
+inline MatCoeffContextN<DIM>
 PopulateCoefficientContext(const MaterialPropertyCoefficient *Q)
 {
-  MatCoeffContextN<NUM_COEFF_COMP> ctx = {{0}};
+  MatCoeffContextN<DIM> ctx = {{0}};
   if (!Q)
   {
     // All attributes map to identity coefficient.
@@ -79,7 +79,7 @@ PopulateCoefficientContext(const MaterialPropertyCoefficient *Q)
     MFEM_VERIFY(
         mat_coeff.SizeI() == mat_coeff.SizeJ() &&
             (mat_coeff.SizeI() == 1 ||
-             mat_coeff.SizeI() * (mat_coeff.SizeI() + 1) / 2 == NUM_COEFF_COMP),
+             mat_coeff.SizeI() * (mat_coeff.SizeI() + 1) / 2 == DIM),
         "Dimension mismatch for MaterialPropertyCoefficient and ceed::MatCoeffContext!");
     const int dim = mat_coeff.SizeI();
     for (int k = 0; k < mat_coeff.SizeK(); k++)
@@ -96,7 +96,7 @@ PopulateCoefficientContext(const MaterialPropertyCoefficient *Q)
           for (int di = dj; di < dim; ++di)
           {
             const int idx = (dj * dim) - (((dj - 1) * dj) / 2) + di - dj;
-            ctx.mat_coeff[k][idx] = mat_coeff(di, dj, k);  // Column-major
+            ctx.mat_coeff[DIM * k + idx] = mat_coeff(di, dj, k);  // Column-major
           }
         }
       }

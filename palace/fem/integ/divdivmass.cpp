@@ -19,10 +19,10 @@ void DivDivMassIntegrator::Assemble(const ceed::CeedGeomFactorData &geom_data, C
   ceed::IntegratorInfo info;
 
   // Set up geometry factor quadrature data.
-  MFEM_VERIFY(geom_data->wdetJ_vec && geom_data->wdetJ_restr && geom_data->J_vec &&
-                  geom_data->J_restr,
+  MFEM_VERIFY(geom_data->wdetJ_vec && geom_data->wdetJ_restr && geom_data->adjJt_vec &&
+                  geom_data->adjJt_restr,
               "Missing geometry factor quadrature data for DivDivMassIntegrator!");
-  info.geom_info = ceed::GeomFactorInfo::Determinant | ceed::GeomFactorInfo::Jacobian |
+  info.geom_info = ceed::GeomFactorInfo::Determinant | ceed::GeomFactorInfo::Adjugate |
                    ceed::GeomFactorInfo::Weight;
 
   // Set up QFunctions.

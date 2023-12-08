@@ -11,45 +11,36 @@
 // adj(J)^T / det(J) ̂u and u = ̂u).
 // in[0] is Jacobian determinant quadrature data, shape [Q]
 // in[1] is transpose adjugate Jacobian quadrature data, shape [ncomp=space_dim*dim, Q]
-// in[2] is active vector, shape [ncomp=1, Q]
-// in[3] is active vector gradient, shape [qcomp=dim, ncomp=1, Q]
-// in[4] is element attribute, shape [1]
+// in[2] is element attribute, shape [Q]
+// in[3] is active vector, shape [ncomp=1, Q]
+// in[4] is active vector gradient, shape [qcomp=dim, ncomp=1, Q]
 // out[0] is active vector, shape [ncomp=1, Q]
 // out[1] is active vector gradient, shape [qcomp=dim, ncomp=1, Q]
 
 CEED_QFUNCTION(f_apply_hcurlmass_22)(void *ctx, CeedInt Q, const CeedScalar *const *in,
                                      CeedScalar *const *out)
 {
-  const CeedScalar *wdetJ = in[0], *adjJt = in[1], *u = in[2], *gradu = in[3];
+  const MatCoeffPairContext21 *bc = (const MatCoeffPairContext21 *)ctx;
+  const CeedScalar *wdetJ = in[0], *adjJt = in[1], *attr = in[2], *u = in[3],
+                   *gradu = in[4];
   CeedScalar *v = out[0], *gradv = out[1];
-
-  const CeedScalar *attr = in[4];
-  MatCoeffPairContext21 *bc = (MatCoeffPairContext21 *)ctx;
-  // const CeedInt attr = (CeedInt)*in[4];
-  // const CeedScalar *coeff = bc->ctx1.mat_coeff[bc->ctx1.attr_mat[attr]];
-  // const CeedScalar coeff_mass = *bc->ctx2.mat_coeff[bc->ctx2.attr_mat[attr]];
 
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
+    const CeedScalar coeff = CoeffUnpack(&bc->second, (CeedInt)attr[i]);
 
-    // XXX TODO TESTING
-    const CeedScalar coeff_mass = *bc->ctx2.mat_coeff[bc->ctx2.attr_mat[(CeedInt)attr[i]]];
-
-    v[i] = coeff_mass * wdetJ[i] * u[i];
+    v[i] = coeff * wdetJ[i] * u[i];
   }
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
-    CeedScalar qd[3];
+    const CeedScalar u_loc[2] = {gradu[i + Q * 0], gradu[i + Q * 1]};
+    CeedScalar coeff[3], adjJt_loc[4], v_loc[2];
+    CoeffUnpack(&bc->first, (CeedInt)attr[i], coeff);
+    MatUnpack22(adjJt + i, Q, adjJt_loc);
+    MultAtBCx22(adjJt_loc, coeff, adjJt_loc, u_loc, v_loc);
 
-    // XXX TODO TESTING
-    const CeedScalar *coeff = bc->ctx1.mat_coeff[bc->ctx1.attr_mat[(CeedInt)attr[i]]];
-
-    MultAtBA22(adjJt + i, Q, coeff, qd);
-
-    const CeedScalar gradu0 = gradu[i + Q * 0];
-    const CeedScalar gradu1 = gradu[i + Q * 1];
-    gradv[i + Q * 0] = wdetJ[i] * (qd[0] * gradu0 + qd[1] * gradu1);
-    gradv[i + Q * 1] = wdetJ[i] * (qd[1] * gradu0 + qd[2] * gradu1);
+    gradv[i + Q * 0] = wdetJ[i] * v_loc[0];
+    gradv[i + Q * 1] = wdetJ[i] * v_loc[1];
   }
   return 0;
 }
@@ -57,38 +48,28 @@ CEED_QFUNCTION(f_apply_hcurlmass_22)(void *ctx, CeedInt Q, const CeedScalar *con
 CEED_QFUNCTION(f_apply_hcurlmass_33)(void *ctx, CeedInt Q, const CeedScalar *const *in,
                                      CeedScalar *const *out)
 {
-  const CeedScalar *wdetJ = in[0], *adjJt = in[1], *u = in[2], *gradu = in[3];
+  const MatCoeffPairContext31 *bc = (const MatCoeffPairContext31 *)ctx;
+  const CeedScalar *wdetJ = in[0], *adjJt = in[1], *attr = in[2], *u = in[3],
+                   *gradu = in[4];
   CeedScalar *v = out[0], *gradv = out[1];
-
-  const CeedScalar *attr = in[4];
-  MatCoeffPairContext31 *bc = (MatCoeffPairContext31 *)ctx;
-  // const CeedInt attr = (CeedInt)*in[4];
-  // const CeedScalar *coeff = bc->ctx1.mat_coeff[bc->ctx1.attr_mat[attr]];
-  // const CeedScalar coeff_mass = *bc->ctx2.mat_coeff[bc->ctx2.attr_mat[attr]];
 
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
+    const CeedScalar coeff = CoeffUnpack(&bc->second, (CeedInt)attr[i]);
 
-    // XXX TODO TESTING
-    const CeedScalar coeff_mass = *bc->ctx2.mat_coeff[bc->ctx2.attr_mat[(CeedInt)attr[i]]];
-
-    v[i] = coeff_mass * wdetJ[i] * u[i];
+    v[i] = coeff * wdetJ[i] * u[i];
   }
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
-    CeedScalar qd[6];
+    const CeedScalar u_loc[3] = {gradu[i + Q * 0], gradu[i + Q * 1], gradu[i + Q * 2]};
+    CeedScalar coeff[6], adjJt_loc[9], v_loc[3];
+    CoeffUnpack(&bc->first, (CeedInt)attr[i], coeff);
+    MatUnpack33(adjJt + i, Q, adjJt_loc);
+    MultAtBCx33(adjJt_loc, coeff, adjJt_loc, u_loc, v_loc);
 
-    // XXX TODO TESTING
-    const CeedScalar *coeff = bc->ctx1.mat_coeff[bc->ctx1.attr_mat[(CeedInt)attr[i]]];
-
-    MultAtBA33(adjJt + i, Q, coeff, qd);
-
-    const CeedScalar gradu0 = gradu[i + Q * 0];
-    const CeedScalar gradu1 = gradu[i + Q * 1];
-    const CeedScalar gradu2 = gradu[i + Q * 2];
-    gradv[i + Q * 0] = wdetJ[i] * (qd[0] * gradu0 + qd[1] * gradu1 + qd[2] * gradu2);
-    gradv[i + Q * 1] = wdetJ[i] * (qd[1] * gradu0 + qd[3] * gradu1 + qd[4] * gradu2);
-    gradv[i + Q * 2] = wdetJ[i] * (qd[2] * gradu0 + qd[4] * gradu1 + qd[5] * gradu2);
+    gradv[i + Q * 0] = wdetJ[i] * v_loc[0];
+    gradv[i + Q * 1] = wdetJ[i] * v_loc[1];
+    gradv[i + Q * 2] = wdetJ[i] * v_loc[2];
   }
   return 0;
 }
@@ -96,34 +77,26 @@ CEED_QFUNCTION(f_apply_hcurlmass_33)(void *ctx, CeedInt Q, const CeedScalar *con
 CEED_QFUNCTION(f_apply_hcurlmass_21)(void *ctx, CeedInt Q, const CeedScalar *const *in,
                                      CeedScalar *const *out)
 {
-  const CeedScalar *wdetJ = in[0], *adjJt = in[1], *u = in[2], *gradu = in[3];
+  const MatCoeffPairContext21 *bc = (const MatCoeffPairContext21 *)ctx;
+  const CeedScalar *wdetJ = in[0], *adjJt = in[1], *attr = in[2], *u = in[3],
+                   *gradu = in[4];
   CeedScalar *v = out[0], *gradv = out[1];
-
-  const CeedScalar *attr = in[4];
-  MatCoeffPairContext21 *bc = (MatCoeffPairContext21 *)ctx;
-  // const CeedInt attr = (CeedInt)*in[4];
-  // const CeedScalar *coeff = bc->ctx1.mat_coeff[bc->ctx1.attr_mat[attr]];
-  // const CeedScalar coeff_mass = *bc->ctx2.mat_coeff[bc->ctx2.attr_mat[attr]];
 
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
+    const CeedScalar coeff = CoeffUnpack(&bc->second, (CeedInt)attr[i]);
 
-    // XXX TODO TESTING
-    const CeedScalar coeff_mass = *bc->ctx2.mat_coeff[bc->ctx2.attr_mat[(CeedInt)attr[i]]];
-
-    v[i] = coeff_mass * wdetJ[i] * u[i];
+    v[i] = coeff * wdetJ[i] * u[i];
   }
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
-    CeedScalar qd[1];
+    const CeedScalar u_loc[1] = {gradu[i + Q * 0]};
+    CeedScalar coeff[3], adjJt_loc[2], v_loc[2];
+    CoeffUnpack(&bc->first, (CeedInt)attr[i], coeff);
+    MatUnpack21(adjJt + i, Q, adjJt_loc);
+    MultAtBCx21(adjJt_loc, coeff, adjJt_loc, u_loc, v_loc);
 
-    // XXX TODO TESTING
-    const CeedScalar *coeff = bc->ctx1.mat_coeff[bc->ctx1.attr_mat[(CeedInt)attr[i]]];
-
-    MultAtBA21(adjJt + i, Q, coeff, qd);
-
-    const CeedScalar gradu0 = gradu[i + Q * 0];
-    gradv[i + Q * 0] = wdetJ[i] * qd[0] * gradu0;
+    gradv[i + Q * 0] = wdetJ[i] * v_loc[0];
   }
   return 0;
 }
@@ -131,36 +104,27 @@ CEED_QFUNCTION(f_apply_hcurlmass_21)(void *ctx, CeedInt Q, const CeedScalar *con
 CEED_QFUNCTION(f_apply_hcurlmass_32)(void *ctx, CeedInt Q, const CeedScalar *const *in,
                                      CeedScalar *const *out)
 {
-  const CeedScalar *wdetJ = in[0], *adjJt = in[1], *u = in[2], *gradu = in[3];
+  const MatCoeffPairContext31 *bc = (const MatCoeffPairContext31 *)ctx;
+  const CeedScalar *wdetJ = in[0], *adjJt = in[1], *attr = in[2], *u = in[3],
+                   *gradu = in[4];
   CeedScalar *v = out[0], *gradv = out[1];
-
-  const CeedScalar *attr = in[4];
-  MatCoeffPairContext31 *bc = (MatCoeffPairContext31 *)ctx;
-  // const CeedInt attr = (CeedInt)*in[4];
-  // const CeedScalar *coeff = bc->ctx1.mat_coeff[bc->ctx1.attr_mat[attr]];
-  // const CeedScalar coeff_mass = *bc->ctx2.mat_coeff[bc->ctx2.attr_mat[attr]];
 
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
+    const CeedScalar coeff = CoeffUnpack(&bc->second, (CeedInt)attr[i]);
 
-    // XXX TODO TESTING
-    const CeedScalar coeff_mass = *bc->ctx2.mat_coeff[bc->ctx2.attr_mat[(CeedInt)attr[i]]];
-
-    v[i] = coeff_mass * wdetJ[i] * u[i];
+    v[i] = coeff * wdetJ[i] * u[i];
   }
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
-    CeedScalar qd[3];
+    const CeedScalar u_loc[2] = {gradu[i + Q * 0], gradu[i + Q * 1]};
+    CeedScalar coeff[6], adjJt_loc[6], v_loc[3];
+    CoeffUnpack(&bc->first, (CeedInt)attr[i], coeff);
+    MatUnpack32(adjJt + i, Q, adjJt_loc);
+    MultAtBCx32(adjJt_loc, coeff, adjJt_loc, u_loc, v_loc);
 
-    // XXX TODO TESTING
-    const CeedScalar *coeff = bc->ctx1.mat_coeff[bc->ctx1.attr_mat[(CeedInt)attr[i]]];
-
-    MultAtBA32(adjJt + i, Q, coeff, qd);
-
-    const CeedScalar gradu0 = gradu[i + Q * 0];
-    const CeedScalar gradu1 = gradu[i + Q * 1];
-    gradv[i + Q * 0] = wdetJ[i] * (qd[0] * gradu0 + qd[1] * gradu1);
-    gradv[i + Q * 1] = wdetJ[i] * (qd[1] * gradu0 + qd[2] * gradu1);
+    gradv[i + Q * 0] = wdetJ[i] * v_loc[0];
+    gradv[i + Q * 1] = wdetJ[i] * v_loc[1];
   }
   return 0;
 }

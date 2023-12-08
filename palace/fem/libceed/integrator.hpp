@@ -20,8 +20,7 @@ enum GeomFactorInfo : unsigned int
 {
   Determinant = 1 << 0,
   Adjugate = 1 << 1,
-  Jacobian = 1 << 2,
-  Weight = 1 << 3
+  Weight = 1 << 2
 };
 
 // Evaluation modes for CeedOperator fields for various integrators.
@@ -52,9 +51,8 @@ struct IntegratorInfo
 
 // Create libCEED quadrature data and element restriction for use in a partially assembled
 // libCEED operator.
-inline void AssembleCeedGeometryData(unsigned int info, Ceed ceed,
-                                     CeedElemRestriction mesh_restr, CeedBasis mesh_basis,
-                                     const Vector &mesh_nodes,
+inline void AssembleCeedGeometryData(Ceed ceed, CeedElemRestriction mesh_restr,
+                                     CeedBasis mesh_basis, const Vector &mesh_nodes,
                                      CeedGeomFactorData &geom_data)
 {
   CeedInt ne, dim, space_dim, nqpts;
@@ -97,24 +95,12 @@ inline void AssembleCeedGeometryData(unsigned int info, Ceed ceed,
       build_qf = nullptr;  // Silence compiler warning
   }
 
-  CeedQFunctionContext build_ctx;
-  GeomFactorContext geom_ctx = {(info & GeomFactorInfo::Determinant) != 0,
-                                (info & GeomFactorInfo::Adjugate) != 0,
-                                (info & GeomFactorInfo::Jacobian) != 0};
-  PalaceCeedCall(ceed, CeedQFunctionContextCreate(ceed, &build_ctx));
-  PalaceCeedCall(ceed,
-                 CeedQFunctionContextSetData(build_ctx, CEED_MEM_HOST, CEED_COPY_VALUES,
-                                             sizeof(geom_ctx), (void *)&geom_ctx));
-  PalaceCeedCall(ceed, CeedQFunctionSetContext(build_qf, build_ctx));
-  PalaceCeedCall(ceed, CeedQFunctionContextDestroy(&build_ctx));
-
   // Inputs
   PalaceCeedCall(
       ceed, CeedQFunctionAddInput(build_qf, "grad_x", space_dim * dim, CEED_EVAL_GRAD));
   PalaceCeedCall(ceed, CeedQFunctionAddInput(build_qf, "w", 1, CEED_EVAL_WEIGHT));
 
   // Outputs
-  if (info & GeomFactorInfo::Determinant)
   {
     CeedInt qdata_size = 1;
     geom_data->wdetJ.SetSize(ne * nqpts * qdata_size);
@@ -125,7 +111,6 @@ inline void AssembleCeedGeometryData(unsigned int info, Ceed ceed,
     PalaceCeedCall(ceed,
                    CeedQFunctionAddOutput(build_qf, "w_det_J", qdata_size, CEED_EVAL_NONE));
   }
-  if (info & GeomFactorInfo::Adjugate)
   {
     CeedInt qdata_size = space_dim * dim;
     geom_data->adjJt.SetSize(ne * nqpts * qdata_size);
@@ -135,16 +120,6 @@ inline void AssembleCeedGeometryData(unsigned int info, Ceed ceed,
                              CEED_STRIDES_BACKEND, &geom_data->adjJt_restr));
     PalaceCeedCall(ceed,
                    CeedQFunctionAddOutput(build_qf, "adj_Jt", qdata_size, CEED_EVAL_NONE));
-  }
-  if (info & GeomFactorInfo::Jacobian)
-  {
-    CeedInt qdata_size = space_dim * dim;
-    geom_data->J.SetSize(ne * nqpts * qdata_size);
-    InitCeedVector(geom_data->J, ceed, &geom_data->J_vec);
-    PalaceCeedCall(ceed, CeedElemRestrictionCreateStrided(
-                             ceed, ne, nqpts, qdata_size, ne * nqpts * qdata_size,
-                             CEED_STRIDES_BACKEND, &geom_data->J_restr));
-    PalaceCeedCall(ceed, CeedQFunctionAddOutput(build_qf, "J", qdata_size, CEED_EVAL_NONE));
   }
 
   // Create the operator that builds the quadrature data.
@@ -157,20 +132,13 @@ inline void AssembleCeedGeometryData(unsigned int info, Ceed ceed,
   PalaceCeedCall(ceed, CeedOperatorSetField(build_op, "w", CEED_ELEMRESTRICTION_NONE,
                                             mesh_basis, CEED_VECTOR_NONE));
 
-  if (info & GeomFactorInfo::Determinant)
   {
     PalaceCeedCall(ceed, CeedOperatorSetField(build_op, "w_det_J", geom_data->wdetJ_restr,
                                               CEED_BASIS_NONE, geom_data->wdetJ_vec));
   }
-  if (info & GeomFactorInfo::Adjugate)
   {
     PalaceCeedCall(ceed, CeedOperatorSetField(build_op, "adj_Jt", geom_data->adjJt_restr,
                                               CEED_BASIS_NONE, geom_data->adjJt_vec));
-  }
-  if (info & GeomFactorInfo::Jacobian)
-  {
-    PalaceCeedCall(ceed, CeedOperatorSetField(build_op, "J", geom_data->J_restr,
-                                              CEED_BASIS_NONE, geom_data->J_vec));
   }
 
   PalaceCeedCall(ceed, CeedOperatorCheckReady(build_op));
@@ -194,6 +162,9 @@ inline void AssembleCeedOperator(const IntegratorInfo &info, const IntegratorCon
                                  CeedElemRestriction test_restr, CeedBasis trial_basis,
                                  CeedBasis test_basis, CeedOperator *op)
 {
+  // XX TODO: Add quadrature data assembly option which computes once all the quadrature
+  //          data and creates the "simple" operator to just multiply
+
   // Create the QFunction that defines the action of the operator.
   CeedQFunction apply_qf;
   PalaceCeedCall(ceed, CeedQFunctionCreateInterior(ceed, 1, info.apply_qf,
@@ -228,17 +199,13 @@ inline void AssembleCeedOperator(const IntegratorInfo &info, const IntegratorCon
     PalaceCeedCall(ceed,
                    CeedQFunctionAddInput(apply_qf, "adj_Jt", qdata_size, CEED_EVAL_NONE));
   }
-  if (info.geom_info & GeomFactorInfo::Jacobian)
-  {
-    CeedInt qdata_size;
-    PalaceCeedCall(ceed,
-                   CeedElemRestrictionGetNumComponents(geom_data->J_restr, &qdata_size));
-    PalaceCeedCall(ceed, CeedQFunctionAddInput(apply_qf, "J", qdata_size, CEED_EVAL_NONE));
-  }
   if (info.geom_info & GeomFactorInfo::Weight)
   {
     PalaceCeedCall(ceed, CeedQFunctionAddInput(apply_qf, "w", 1, CEED_EVAL_WEIGHT));
   }
+
+  // Last non-active input is always the element attribute data.
+  PalaceCeedCall(ceed, CeedQFunctionAddInput(apply_qf, "attr", 1, CEED_EVAL_INTERP));
 
   if (info.trial_ops & EvalMode::None)
   {
@@ -276,10 +243,6 @@ inline void AssembleCeedOperator(const IntegratorInfo &info, const IntegratorCon
     PalaceCeedCall(ceed, CeedQFunctionAddInput(apply_qf, "curl_u", trial_ncomp * qcomp,
                                                CEED_EVAL_CURL));
   }
-
-  // Last input is always the element attribute data.
-  PalaceCeedCall(ceed, CeedQFunctionAddInput(apply_qf, "attr", 1, CEED_EVAL_NONE));
-  // PalaceCeedCall(ceed, CeedQFunctionAddInput(apply_qf, "attr", 1, CEED_EVAL_INTERP));
 
   // Outputs
   if (info.test_ops & EvalMode::None)
@@ -333,16 +296,14 @@ inline void AssembleCeedOperator(const IntegratorInfo &info, const IntegratorCon
     PalaceCeedCall(ceed, CeedOperatorSetField(*op, "adj_Jt", geom_data->adjJt_restr,
                                               CEED_BASIS_NONE, geom_data->adjJt_vec));
   }
-  if (info.geom_info & GeomFactorInfo::Jacobian)
-  {
-    PalaceCeedCall(ceed, CeedOperatorSetField(*op, "J", geom_data->J_restr, CEED_BASIS_NONE,
-                                              geom_data->J_vec));
-  }
   if (info.geom_info & GeomFactorInfo::Weight)
   {
     PalaceCeedCall(ceed, CeedOperatorSetField(*op, "w", CEED_ELEMRESTRICTION_NONE,
                                               trial_basis, CEED_VECTOR_NONE));
   }
+
+  PalaceCeedCall(ceed, CeedOperatorSetField(*op, "attr", geom_data->attr_restr,
+                                            geom_data->attr_basis, geom_data->attr_vec));
 
   if (info.trial_ops & EvalMode::None)
   {
@@ -369,11 +330,6 @@ inline void AssembleCeedOperator(const IntegratorInfo &info, const IntegratorCon
     PalaceCeedCall(ceed, CeedOperatorSetField(*op, "curl_u", trial_restr, trial_basis,
                                               CEED_VECTOR_ACTIVE));
   }
-
-  PalaceCeedCall(ceed, CeedOperatorSetField(*op, "attr", geom_data->attr_restr,
-                                            CEED_BASIS_NONE, geom_data->attr_vec));
-  // PalaceCeedCall(ceed, CeedOperatorSetField(*op, "attr", geom_data->attr_restr,
-  //                                           geom_data->attr_basis, geom_data->attr_vec));
 
   if (info.test_ops & EvalMode::None)
   {

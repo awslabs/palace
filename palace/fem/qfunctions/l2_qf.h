@@ -9,26 +9,19 @@
 // libCEED QFunctions for L2 operators (Piola transformation u = 1 / det(J) ̂u).
 // in[0] is Jacobian determinant quadrature data, shape [Q]
 // in[1] is quadrature weights, shape [Q]
-// in[2] is active vector, shape [ncomp=vdim, Q]
-// in[3] is element attribute, shape [1]
+// in[2] is element attribute, shape [Q]
+// in[3] is active vector, shape [ncomp=vdim, Q]
 // out[0] is active vector, shape [ncomp=vdim, Q]
 
 CEED_QFUNCTION(f_apply_l2_1)(void *ctx, CeedInt Q, const CeedScalar *const *in,
                              CeedScalar *const *out)
 {
-  const CeedScalar *wdetJ = in[0], *qw = in[1], *u = in[2];
+  const CeedScalar *wdetJ = in[0], *qw = in[1], *attr = in[2], *u = in[3];
   CeedScalar *v = out[0];
-
-  const CeedScalar *attr = in[3];
-  MatCoeffContext1 *bc = (MatCoeffContext1 *)ctx;
-  // const CeedInt attr = (CeedInt)*in[3];
-  // const CeedScalar coeff = *bc->mat_coeff[bc->attr_mat[attr]];
 
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
-
-    // XXX TODO TESTING
-    const CeedScalar coeff = *bc->mat_coeff[bc->attr_mat[(CeedInt)attr[i]]];
+    const CeedScalar coeff = CoeffUnpack((const MatCoeffContext1 *)ctx, (CeedInt)attr[i]);
 
     v[i] = (coeff * qw[i] * qw[i] / wdetJ[i]) * u[i];
   }
@@ -38,20 +31,13 @@ CEED_QFUNCTION(f_apply_l2_1)(void *ctx, CeedInt Q, const CeedScalar *const *in,
 CEED_QFUNCTION(f_apply_l2_2)(void *ctx, CeedInt Q, const CeedScalar *const *in,
                              CeedScalar *const *out)
 {
-  const CeedScalar *wdetJ = in[0], *qw = in[1], *u = in[2];
+  const CeedScalar *wdetJ = in[0], *qw = in[1], *attr = in[2], *u = in[3];
   CeedScalar *v = out[0];
-
-  const CeedScalar *attr = in[3];
-  MatCoeffContext2 *bc = (MatCoeffContext2 *)ctx;
-  // const CeedInt attr = (CeedInt)*in[3];
-  // const CeedScalar *coeff = bc->mat_coeff[bc->attr_mat[attr]];
 
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
-
-    // XXX TODO TESTING
-    const CeedScalar *coeff = bc->mat_coeff[bc->attr_mat[(CeedInt)attr[i]]];
-
+    CeedScalar coeff[3];
+    CoeffUnpack((const MatCoeffContext2 *)ctx, (CeedInt)attr[i], coeff);
     const CeedScalar qd = qw[i] * qw[i] / wdetJ[i];
 
     const CeedScalar u0 = u[i + Q * 0];
@@ -65,20 +51,13 @@ CEED_QFUNCTION(f_apply_l2_2)(void *ctx, CeedInt Q, const CeedScalar *const *in,
 CEED_QFUNCTION(f_apply_l2_3)(void *ctx, CeedInt Q, const CeedScalar *const *in,
                              CeedScalar *const *out)
 {
-  const CeedScalar *wdetJ = in[0], *qw = in[1], *u = in[2];
+  const CeedScalar *wdetJ = in[0], *qw = in[1], *attr = in[2], *u = in[3];
   CeedScalar *v = out[0];
-
-  const CeedScalar *attr = in[3];
-  MatCoeffContext3 *bc = (MatCoeffContext3 *)ctx;
-  // const CeedInt attr = (CeedInt)*in[3];
-  // const CeedScalar *coeff = bc->mat_coeff[bc->attr_mat[attr]];
 
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
-
-    // XXX TODO TESTING
-    const CeedScalar *coeff = bc->mat_coeff[bc->attr_mat[(CeedInt)attr[i]]];
-
+    CeedScalar coeff[6];
+    CoeffUnpack((const MatCoeffContext3 *)ctx, (CeedInt)attr[i], coeff);
     const CeedScalar qd = qw[i] * qw[i] / wdetJ[i];
 
     const CeedScalar u0 = u[i + Q * 0];

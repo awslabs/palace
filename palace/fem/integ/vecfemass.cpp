@@ -21,23 +21,10 @@ void VectorFEMassIntegrator::Assemble(const ceed::CeedGeomFactorData &geom_data,
   ceed::IntegratorInfo info;
 
   // Set up geometry factor quadrature data.
-  MFEM_VERIFY(geom_data->wdetJ_vec && geom_data->wdetJ_restr,
+  MFEM_VERIFY(geom_data->wdetJ_vec && geom_data->wdetJ_restr && geom_data->adjJt_vec &&
+                  geom_data->adjJt_restr,
               "Missing geometry factor quadrature data for VectorFEMassIntegrator!");
-  info.geom_info = ceed::GeomFactorInfo::Determinant;
-  if (trial_map_type == mfem::FiniteElement::H_CURL ||
-      test_map_type == mfem::FiniteElement::H_CURL)
-  {
-    MFEM_VERIFY(geom_data->adjJt_vec && geom_data->adjJt_restr,
-                "Missing geometry factor quadrature data for VectorFEMassIntegrator!");
-    info.geom_info |= ceed::GeomFactorInfo::Adjugate;
-  }
-  if (trial_map_type == mfem::FiniteElement::H_DIV ||
-      test_map_type == mfem::FiniteElement::H_DIV)
-  {
-    MFEM_VERIFY(geom_data->J_vec && geom_data->J_restr,
-                "Missing geometry factor quadrature data for VectorFEMassIntegrator!");
-    info.geom_info |= ceed::GeomFactorInfo::Jacobian;
-  }
+  info.geom_info = ceed::GeomFactorInfo::Determinant | ceed::GeomFactorInfo::Adjugate;
 
   // Set up QFunctions.
   CeedInt trial_ncomp, test_ncomp;
