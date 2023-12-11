@@ -196,6 +196,7 @@ std::unique_ptr<Operator> LaplaceOperator::GetStiffnessMatrix()
                                              mat_op.GetPermittivityReal());
     BilinearForm k(h1_fespace_l);
     k.AddDomainIntegrator<DiffusionIntegrator>(epsilon_func);
+    k.AssembleQuadratureData();
     auto K_l = std::make_unique<ParOperator>(
         (l > 0) ? k.Assemble(skip_zeros) : k.FullAssemble(skip_zeros), h1_fespace_l);
     if (print_hdr)

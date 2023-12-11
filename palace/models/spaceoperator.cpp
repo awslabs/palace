@@ -201,7 +201,8 @@ void PrintHeader(const mfem::ParFiniteElementSpace &h1_fespace,
 std::unique_ptr<Operator>
 BuildOperator(const FiniteElementSpace &fespace, const MaterialPropertyCoefficient *df,
               const MaterialPropertyCoefficient *f, const MaterialPropertyCoefficient *dfb,
-              const MaterialPropertyCoefficient *fb, std::size_t l, bool skip_zeros)
+              const MaterialPropertyCoefficient *fb, std::size_t l, bool skip_zeros = false,
+              bool assemble_qdata = false)
 {
   BilinearForm a(fespace);
   if (df && !df->empty() && f && !f->empty())
@@ -234,21 +235,27 @@ BuildOperator(const FiniteElementSpace &fespace, const MaterialPropertyCoefficie
       a.AddBoundaryIntegrator<VectorFEMassIntegrator>(*fb);
     }
   }
+  if (assemble_qdata)
+  {
+    a.AssembleQuadratureData();
+  }
   return (l > 0) ? a.Assemble(skip_zeros) : a.FullAssemble(skip_zeros);
 }
 
 std::unique_ptr<Operator>
 BuildOperator(const FiniteElementSpace &fespace, const MaterialPropertyCoefficient *df,
               const MaterialPropertyCoefficient *f, const MaterialPropertyCoefficient *dfb,
-              const MaterialPropertyCoefficient *fb, bool skip_zeros)
+              const MaterialPropertyCoefficient *fb, bool skip_zeros = false,
+              bool assemble_qdata = false)
 {
-  return BuildOperator(fespace, df, f, dfb, fb, 1, skip_zeros);
+  return BuildOperator(fespace, df, f, dfb, fb, 1, skip_zeros, assemble_qdata);
 }
 
 std::unique_ptr<Operator> BuildAuxOperator(const FiniteElementSpace &fespace,
                                            const MaterialPropertyCoefficient *f,
                                            const MaterialPropertyCoefficient *fb,
-                                           std::size_t l, bool skip_zeros)
+                                           std::size_t l, bool skip_zeros = false,
+                                           bool assemble_qdata = false)
 {
   BilinearForm a(fespace);
   if (f && !f->empty())
@@ -258,6 +265,10 @@ std::unique_ptr<Operator> BuildAuxOperator(const FiniteElementSpace &fespace,
   if (fb && !fb->empty())
   {
     a.AddBoundaryIntegrator<DiffusionIntegrator>(*fb);
+  }
+  if (assemble_qdata)
+  {
+    a.AssembleQuadratureData();
   }
   return (l > 0) ? a.Assemble(skip_zeros) : a.FullAssemble(skip_zeros);
 }
@@ -696,13 +707,13 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(double a0, doub
       std::unique_ptr<Operator> br, bi;
       if (!dfr.empty() || !fr.empty() || !dfbr.empty() || !fbr.empty())
       {
-        br = aux ? BuildAuxOperator(fespace_l, &fr, &fbr, l, skip_zeros)
-                 : BuildOperator(fespace_l, &dfr, &fr, &dfbr, &fbr, l, skip_zeros);
+        br = aux ? BuildAuxOperator(fespace_l, &fr, &fbr, l, skip_zeros, true)
+                 : BuildOperator(fespace_l, &dfr, &fr, &dfbr, &fbr, l, skip_zeros, true);
       }
       if (!dfi.empty() || !fi.empty() || !dfbi.empty() || !fbi.empty())
       {
-        bi = aux ? BuildAuxOperator(fespace_l, &fi, &fbi, l, skip_zeros)
-                 : BuildOperator(fespace_l, &dfi, &fi, &dfbi, &fbi, l, skip_zeros);
+        bi = aux ? BuildAuxOperator(fespace_l, &fi, &fbi, l, skip_zeros, true)
+                 : BuildOperator(fespace_l, &dfi, &fi, &dfbi, &fbi, l, skip_zeros, true);
       }
       if (print_prec_hdr)
       {

@@ -38,12 +38,12 @@ CEED_QFUNCTION(f_apply_l2_2)(void *ctx, CeedInt Q, const CeedScalar *const *in,
   {
     CeedScalar coeff[3];
     CoeffUnpack((const MatCoeffContext2 *)ctx, (CeedInt)attr[i], coeff);
-    const CeedScalar qd = qw[i] * qw[i] / wdetJ[i];
+    const CeedScalar w = qw[i] * qw[i] / wdetJ[i];
 
     const CeedScalar u0 = u[i + Q * 0];
     const CeedScalar u1 = u[i + Q * 1];
-    v[i + Q * 0] = qd * (coeff[0] * u0 + coeff[1] * u1);
-    v[i + Q * 1] = qd * (coeff[1] * u0 + coeff[2] * u1);
+    v[i + Q * 0] = w * (coeff[0] * u0 + coeff[1] * u1);
+    v[i + Q * 1] = w * (coeff[1] * u0 + coeff[2] * u1);
   }
   return 0;
 }
@@ -58,14 +58,14 @@ CEED_QFUNCTION(f_apply_l2_3)(void *ctx, CeedInt Q, const CeedScalar *const *in,
   {
     CeedScalar coeff[6];
     CoeffUnpack((const MatCoeffContext3 *)ctx, (CeedInt)attr[i], coeff);
-    const CeedScalar qd = qw[i] * qw[i] / wdetJ[i];
+    const CeedScalar w = qw[i] * qw[i] / wdetJ[i];
 
     const CeedScalar u0 = u[i + Q * 0];
     const CeedScalar u1 = u[i + Q * 1];
     const CeedScalar u2 = u[i + Q * 2];
-    v[i + Q * 0] = qd * (coeff[0] * u0 + coeff[1] * u1 + coeff[2] * u2);
-    v[i + Q * 1] = qd * (coeff[1] * u0 + coeff[3] * u1 + coeff[4] * u2);
-    v[i + Q * 2] = qd * (coeff[2] * u0 + coeff[4] * u1 + coeff[5] * u2);
+    v[i + Q * 0] = w * (coeff[0] * u0 + coeff[1] * u1 + coeff[2] * u2);
+    v[i + Q * 1] = w * (coeff[1] * u0 + coeff[3] * u1 + coeff[4] * u2);
+    v[i + Q * 2] = w * (coeff[2] * u0 + coeff[4] * u1 + coeff[5] * u2);
   }
   return 0;
 }

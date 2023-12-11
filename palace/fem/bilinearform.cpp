@@ -11,6 +11,18 @@
 namespace palace
 {
 
+void BilinearForm::AssembleQuadratureData()
+{
+  for (auto &integ : domain_integs)
+  {
+    integ->AssembleQuadratureData();
+  }
+  for (auto &integ : boundary_integs)
+  {
+    integ->AssembleQuadratureData();
+  }
+}
+
 std::unique_ptr<ceed::Operator> BilinearForm::PartialAssemble() const
 {
   MFEM_VERIFY(&trial_fespace.GetMesh() == &test_fespace.GetMesh(),

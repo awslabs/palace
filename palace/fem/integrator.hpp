@@ -40,10 +40,17 @@ class BilinearFormIntegrator
 {
 protected:
   const MaterialPropertyCoefficient *Q;
+  bool assemble_qdata;
 
 public:
-  BilinearFormIntegrator(const MaterialPropertyCoefficient *Q = nullptr) : Q(Q) {}
-  BilinearFormIntegrator(const MaterialPropertyCoefficient &Q) : Q(&Q) {}
+  BilinearFormIntegrator(const MaterialPropertyCoefficient *Q = nullptr)
+    : Q(Q), assemble_qdata(false)
+  {
+  }
+  BilinearFormIntegrator(const MaterialPropertyCoefficient &Q)
+    : Q(&Q), assemble_qdata(false)
+  {
+  }
   virtual ~BilinearFormIntegrator() = default;
 
   virtual void Assemble(const ceed::CeedGeomFactorData &geom_data, Ceed ceed,
@@ -52,6 +59,8 @@ public:
                         CeedOperator *op) const = 0;
 
   virtual void SetMapTypes(int trial_type, int test_type) {}
+
+  void AssembleQuadratureData() { assemble_qdata = true; }
 };
 
 // Integrator for a(u, v) = (Q u, v) for H1 elements (also for vector (H1)ᵈ spaces).
@@ -71,7 +80,8 @@ public:
 class VectorFEMassIntegrator : public BilinearFormIntegrator
 {
 protected:
-  int trial_map_type, test_map_type;
+  int trial_map_type = mfem::FiniteElement::UNKNOWN_MAP_TYPE;
+  int test_map_type = mfem::FiniteElement::UNKNOWN_MAP_TYPE;
 
 public:
   VectorFEMassIntegrator() = default;
@@ -226,7 +236,8 @@ public:
 class MixedVectorCurlIntegrator : public BilinearFormIntegrator
 {
 protected:
-  int trial_map_type, test_map_type;
+  int trial_map_type = mfem::FiniteElement::UNKNOWN_MAP_TYPE;
+  int test_map_type = mfem::FiniteElement::UNKNOWN_MAP_TYPE;
 
 public:
   MixedVectorCurlIntegrator() = default;
@@ -251,7 +262,8 @@ public:
 class MixedVectorWeakCurlIntegrator : public BilinearFormIntegrator
 {
 protected:
-  int trial_map_type, test_map_type;
+  int trial_map_type = mfem::FiniteElement::UNKNOWN_MAP_TYPE;
+  int test_map_type = mfem::FiniteElement::UNKNOWN_MAP_TYPE;
 
 public:
   MixedVectorWeakCurlIntegrator() = default;

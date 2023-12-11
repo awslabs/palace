@@ -9,6 +9,10 @@
 // in[1] is active vector, shape [ncomp=vdim, Q]
 // out[0] is active vector, shape [ncomp=vdim, Q]
 
+// For pairwise apply functions, the inputs and outputs come in pairs and the quadrature
+// data is arranged to be applied with the first vdim*(vdim+1)/2 components for the first
+// input/output and the remainder for the second.
+
 CEED_QFUNCTION(f_apply_1)(void *ctx, CeedInt Q, const CeedScalar *const *in,
                           CeedScalar *const *out)
 {
@@ -52,6 +56,146 @@ CEED_QFUNCTION(f_apply_3)(void *ctx, CeedInt Q, const CeedScalar *const *in,
     v[i + Q * 0] = qd[i + Q * 0] * u0 + qd[i + Q * 1] * u1 + qd[i + Q * 2] * u2;
     v[i + Q * 1] = qd[i + Q * 1] * u0 + qd[i + Q * 3] * u1 + qd[i + Q * 4] * u2;
     v[i + Q * 2] = qd[i + Q * 2] * u0 + qd[i + Q * 4] * u1 + qd[i + Q * 5] * u2;
+  }
+  return 0;
+}
+
+CEED_QFUNCTION(f_apply_22)(void *ctx, CeedInt Q, const CeedScalar *const *in,
+                           CeedScalar *const *out)
+{
+  const CeedScalar *qd = in[0], *u1 = in[1], *u2 = in[2];
+  CeedScalar *v1 = out[0], *v2 = out[1];
+
+  CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
+  {
+    const CeedScalar u10 = u1[i + Q * 0];
+    const CeedScalar u11 = u1[i + Q * 1];
+    v1[i + Q * 0] = qd[i + Q * 0] * u10 + qd[i + Q * 1] * u11;
+    v1[i + Q * 1] = qd[i + Q * 1] * u10 + qd[i + Q * 2] * u11;
+  }
+  qd += 3 * Q;
+  CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
+  {
+    const CeedScalar u20 = u2[i + Q * 0];
+    const CeedScalar u21 = u2[i + Q * 1];
+    v2[i + Q * 0] = qd[i + Q * 0] * u20 + qd[i + Q * 1] * u21;
+    v2[i + Q * 1] = qd[i + Q * 1] * u20 + qd[i + Q * 2] * u21;
+  }
+  return 0;
+}
+
+CEED_QFUNCTION(f_apply_33)(void *ctx, CeedInt Q, const CeedScalar *const *in,
+                           CeedScalar *const *out)
+{
+  const CeedScalar *qd = in[0], *u1 = in[1], *u2 = in[2];
+  CeedScalar *v1 = out[0], *v2 = out[1];
+
+  CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
+  {
+    const CeedScalar u10 = u1[i + Q * 0];
+    const CeedScalar u11 = u1[i + Q * 1];
+    const CeedScalar u12 = u1[i + Q * 2];
+    v1[i + Q * 0] = qd[i + Q * 0] * u10 + qd[i + Q * 1] * u11 + qd[i + Q * 2] * u12;
+    v1[i + Q * 1] = qd[i + Q * 1] * u10 + qd[i + Q * 3] * u11 + qd[i + Q * 4] * u12;
+    v1[i + Q * 2] = qd[i + Q * 2] * u10 + qd[i + Q * 4] * u11 + qd[i + Q * 5] * u12;
+  }
+  qd += 6 * Q;
+  CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
+  {
+    const CeedScalar u20 = u2[i + Q * 0];
+    const CeedScalar u21 = u2[i + Q * 1];
+    const CeedScalar u22 = u2[i + Q * 2];
+    v2[i + Q * 0] = qd[i + Q * 0] * u20 + qd[i + Q * 1] * u21 + qd[i + Q * 2] * u22;
+    v2[i + Q * 1] = qd[i + Q * 1] * u20 + qd[i + Q * 3] * u21 + qd[i + Q * 4] * u22;
+    v2[i + Q * 2] = qd[i + Q * 2] * u20 + qd[i + Q * 4] * u21 + qd[i + Q * 5] * u22;
+  }
+  return 0;
+}
+
+CEED_QFUNCTION(f_apply_12)(void *ctx, CeedInt Q, const CeedScalar *const *in,
+                           CeedScalar *const *out)
+{
+  const CeedScalar *qd = in[0], *u1 = in[1], *u2 = in[2];
+  CeedScalar *v1 = out[0], *v2 = out[1];
+
+  CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
+  {
+    v1[i] = qd[i] * u1[i];
+  }
+  qd += Q;
+  CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
+  {
+    const CeedScalar u20 = u2[i + Q * 0];
+    const CeedScalar u21 = u2[i + Q * 1];
+    v2[i + Q * 0] = qd[i + Q * 0] * u20 + qd[i + Q * 1] * u21;
+    v2[i + Q * 1] = qd[i + Q * 1] * u20 + qd[i + Q * 2] * u21;
+  }
+  return 0;
+}
+
+CEED_QFUNCTION(f_apply_13)(void *ctx, CeedInt Q, const CeedScalar *const *in,
+                           CeedScalar *const *out)
+{
+  const CeedScalar *qd = in[0], *u1 = in[1], *u2 = in[2];
+  CeedScalar *v1 = out[0], *v2 = out[1];
+
+  CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
+  {
+    v1[i] = qd[i] * u1[i];
+  }
+  qd += Q;
+  CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
+  {
+    const CeedScalar u20 = u2[i + Q * 0];
+    const CeedScalar u21 = u2[i + Q * 1];
+    const CeedScalar u22 = u2[i + Q * 2];
+    v2[i + Q * 0] = qd[i + Q * 0] * u20 + qd[i + Q * 1] * u21 + qd[i + Q * 2] * u22;
+    v2[i + Q * 1] = qd[i + Q * 1] * u20 + qd[i + Q * 3] * u21 + qd[i + Q * 4] * u22;
+    v2[i + Q * 2] = qd[i + Q * 2] * u20 + qd[i + Q * 4] * u21 + qd[i + Q * 5] * u22;
+  }
+  return 0;
+}
+
+CEED_QFUNCTION(f_apply_21)(void *ctx, CeedInt Q, const CeedScalar *const *in,
+                           CeedScalar *const *out)
+{
+  const CeedScalar *qd = in[0], *u1 = in[1], *u2 = in[2];
+  CeedScalar *v1 = out[0], *v2 = out[1];
+
+  CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
+  {
+    const CeedScalar u10 = u1[i + Q * 0];
+    const CeedScalar u11 = u1[i + Q * 1];
+    v1[i + Q * 0] = qd[i + Q * 0] * u10 + qd[i + Q * 1] * u11;
+    v1[i + Q * 1] = qd[i + Q * 1] * u10 + qd[i + Q * 2] * u11;
+  }
+  qd += 3 * Q;
+  CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
+  {
+    v2[i] = qd[i] * u2[i];
+  }
+  return 0;
+}
+
+CEED_QFUNCTION(f_apply_31)(void *ctx, CeedInt Q, const CeedScalar *const *in,
+                           CeedScalar *const *out)
+{
+  const CeedScalar *qd = in[0], *u1 = in[1], *u2 = in[2];
+  CeedScalar *v1 = out[0], *v2 = out[1];
+
+  CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
+  {
+    const CeedScalar u10 = u1[i + Q * 0];
+    const CeedScalar u11 = u1[i + Q * 1];
+    const CeedScalar u12 = u1[i + Q * 2];
+    v1[i + Q * 0] = qd[i + Q * 0] * u10 + qd[i + Q * 1] * u11 + qd[i + Q * 2] * u12;
+    v1[i + Q * 1] = qd[i + Q * 1] * u10 + qd[i + Q * 3] * u11 + qd[i + Q * 4] * u12;
+    v1[i + Q * 2] = qd[i + Q * 2] * u10 + qd[i + Q * 4] * u11 + qd[i + Q * 5] * u12;
+  }
+  qd += 6 * Q;
+  CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
+  {
+    v2[i] = qd[i] * u2[i];
   }
   return 0;
 }

@@ -55,6 +55,8 @@ public:
     boundary_integs.push_back(std::make_unique<T>(std::forward<U>(args)...));
   }
 
+  void AssembleQuadratureData();
+
   std::unique_ptr<ceed::Operator> PartialAssemble() const;
 
   std::unique_ptr<mfem::SparseMatrix> FullAssemble(bool skip_zeros) const

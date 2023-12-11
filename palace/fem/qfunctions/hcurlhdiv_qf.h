@@ -184,4 +184,5 @@ CEED_QFUNCTION(f_apply_hdivhcurl_32)(void *ctx, CeedInt Q, const CeedScalar *con
   }
   return 0;
 }
+
 #endif  // PALACE_LIBCEED_HCURL_HDIV_QF_H

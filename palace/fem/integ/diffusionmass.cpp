@@ -6,6 +6,7 @@
 #include "fem/libceed/coefficient.hpp"
 #include "fem/libceed/integrator.hpp"
 
+#include "fem/qfunctions/hcurlmass_build_qf.h"
 #include "fem/qfunctions/hcurlmass_qf.h"
 
 namespace palace
@@ -18,6 +19,7 @@ void DiffusionMassIntegrator::Assemble(const ceed::CeedGeomFactorData &geom_data
                                        CeedOperator *op) const
 {
   ceed::IntegratorInfo info;
+  info.assemble_qdata = assemble_qdata;
 
   // Set up geometry factor quadrature data.
   MFEM_VERIFY(geom_data->wdetJ_vec && geom_data->wdetJ_restr && geom_data->adjJt_vec &&
@@ -35,20 +37,24 @@ void DiffusionMassIntegrator::Assemble(const ceed::CeedGeomFactorData &geom_data
   switch (10 * geom_data->space_dim + geom_data->dim)
   {
     case 22:
-      info.apply_qf = f_apply_hcurlmass_22;
-      info.apply_qf_path = PalaceQFunctionRelativePath(f_apply_hcurlmass_22_loc);
+      info.apply_qf = assemble_qdata ? f_build_hcurlmass_22 : f_apply_hcurlmass_22;
+      info.apply_qf_path = PalaceQFunctionRelativePath(
+          assemble_qdata ? f_build_hcurlmass_22_loc : f_apply_hcurlmass_22_loc);
       break;
     case 33:
-      info.apply_qf = f_apply_hcurlmass_33;
-      info.apply_qf_path = PalaceQFunctionRelativePath(f_apply_hcurlmass_33_loc);
+      info.apply_qf = assemble_qdata ? f_build_hcurlmass_33 : f_apply_hcurlmass_33;
+      info.apply_qf_path = PalaceQFunctionRelativePath(
+          assemble_qdata ? f_build_hcurlmass_33_loc : f_apply_hcurlmass_33_loc);
       break;
     case 21:
-      info.apply_qf = f_apply_hcurlmass_21;
-      info.apply_qf_path = PalaceQFunctionRelativePath(f_apply_hcurlmass_21_loc);
+      info.apply_qf = assemble_qdata ? f_build_hcurlmass_21 : f_apply_hcurlmass_21;
+      info.apply_qf_path = PalaceQFunctionRelativePath(
+          assemble_qdata ? f_build_hcurlmass_21_loc : f_apply_hcurlmass_21_loc);
       break;
     case 32:
-      info.apply_qf = f_apply_hcurlmass_32;
-      info.apply_qf_path = PalaceQFunctionRelativePath(f_apply_hcurlmass_32_loc);
+      info.apply_qf = assemble_qdata ? f_build_hcurlmass_32 : f_apply_hcurlmass_32;
+      info.apply_qf_path = PalaceQFunctionRelativePath(
+          assemble_qdata ? f_build_hcurlmass_32_loc : f_apply_hcurlmass_32_loc);
       break;
     default:
       MFEM_ABORT("Invalid value of (dim, space_dim) = ("

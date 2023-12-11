@@ -10,7 +10,9 @@
 PalacePragmaDiagnosticPush
 PalacePragmaDiagnosticDisableUnused
 
+#include "fem/qfunctions/hcurlhdiv_build_qf.h"
 #include "fem/qfunctions/hcurlhdiv_qf.h"
+#include "fem/qfunctions/hdiv_build_qf.h"
 #include "fem/qfunctions/hdiv_qf.h"
 
 PalacePragmaDiagnosticPop
@@ -27,6 +29,7 @@ void MixedVectorCurlIntegrator::Assemble(const ceed::CeedGeomFactorData &geom_da
   MFEM_VERIFY(geom_data->dim == 3 && geom_data->space_dim == 3,
               "MixedVectorCurlIntegrator is only availble in 3D!");
   ceed::IntegratorInfo info;
+  info.assemble_qdata = assemble_qdata;
 
   // Set up geometry factor quadrature data.
   MFEM_VERIFY(geom_data->wdetJ_vec && geom_data->wdetJ_restr && geom_data->adjJt_vec &&
@@ -43,13 +46,15 @@ void MixedVectorCurlIntegrator::Assemble(const ceed::CeedGeomFactorData &geom_da
       "MixedVectorCurlIntegrator requires test and trial spaces with a single component!");
   if (test_map_type == mfem::FiniteElement::H_DIV)
   {
-    info.apply_qf = f_apply_hdiv_33;
-    info.apply_qf_path = PalaceQFunctionRelativePath(f_apply_hdiv_33_loc);
+    info.apply_qf = assemble_qdata ? f_build_hdiv_33 : f_apply_hdiv_33;
+    info.apply_qf_path = PalaceQFunctionRelativePath(assemble_qdata ? f_build_hdiv_33_loc
+                                                                    : f_apply_hdiv_33_loc);
   }
   else if (test_map_type == mfem::FiniteElement::H_CURL)
   {
-    info.apply_qf = f_apply_hdivhcurl_33;
-    info.apply_qf_path = PalaceQFunctionRelativePath(f_apply_hdivhcurl_33_loc);
+    info.apply_qf = assemble_qdata ? f_build_hdivhcurl_33 : f_apply_hdivhcurl_33;
+    info.apply_qf_path = PalaceQFunctionRelativePath(
+        assemble_qdata ? f_build_hdivhcurl_33_loc : f_apply_hdivhcurl_33_loc);
   }
   else
   {
@@ -73,6 +78,7 @@ void MixedVectorWeakCurlIntegrator::Assemble(const ceed::CeedGeomFactorData &geo
   MFEM_VERIFY(geom_data->dim == 3 && geom_data->space_dim == 3,
               "MixedVectorWeakCurlIntegrator is only availble in 3D!");
   ceed::IntegratorInfo info;
+  info.assemble_qdata = assemble_qdata;
 
   // Set up geometry factor quadrature data.
   MFEM_VERIFY(geom_data->wdetJ_vec && geom_data->wdetJ_restr && geom_data->adjJt_vec &&
@@ -89,13 +95,15 @@ void MixedVectorWeakCurlIntegrator::Assemble(const ceed::CeedGeomFactorData &geo
               "component!");
   if (trial_map_type == mfem::FiniteElement::H_DIV)
   {
-    info.apply_qf = f_apply_hdiv_33;
-    info.apply_qf_path = PalaceQFunctionRelativePath(f_apply_hdiv_33_loc);
+    info.apply_qf = assemble_qdata ? f_build_hdiv_33 : f_apply_hdiv_33;
+    info.apply_qf_path = PalaceQFunctionRelativePath(assemble_qdata ? f_build_hdiv_33_loc
+                                                                    : f_apply_hdiv_33_loc);
   }
   else if (trial_map_type == mfem::FiniteElement::H_CURL)
   {
-    info.apply_qf = f_apply_hcurlhdiv_33;
-    info.apply_qf_path = PalaceQFunctionRelativePath(f_apply_hcurlhdiv_33_loc);
+    info.apply_qf = assemble_qdata ? f_build_hcurlhdiv_33 : f_apply_hcurlhdiv_33;
+    info.apply_qf_path = PalaceQFunctionRelativePath(
+        assemble_qdata ? f_build_hcurlhdiv_33_loc : f_apply_hcurlhdiv_33_loc);
   }
   else
   {

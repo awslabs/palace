@@ -43,18 +43,21 @@ using MatCoeffPairContext33 = MatCoeffPairContextMN<6, 6>;
 using MatCoeffPairContext21 = MatCoeffPairContextMN<3, 1>;
 using MatCoeffPairContext31 = MatCoeffPairContextMN<6, 1>;
 
-CEED_QFUNCTION_HELPER CeedScalar CoeffUnpack(const MatCoeffContext1 *ctx, const CeedInt attr)
+CEED_QFUNCTION_HELPER CeedScalar CoeffUnpack(const MatCoeffContext1 *ctx,
+                                             const CeedInt attr)
 {
   const CeedInt k = ctx->attr_mat[attr];
   return ctx->mat_coeff[6 * k + 0];
 }
 
-CEED_QFUNCTION_HELPER void CoeffUnpack(const MatCoeffContext1 *ctx, const CeedInt attr, CeedScalar coeff[1])
+CEED_QFUNCTION_HELPER void CoeffUnpack(const MatCoeffContext1 *ctx, const CeedInt attr,
+                                       CeedScalar coeff[1])
 {
   coeff[0] = CoeffUnpack(ctx, attr);
 }
 
-CEED_QFUNCTION_HELPER void CoeffUnpack(const MatCoeffContext2 *ctx, const CeedInt attr, CeedScalar coeff[3])
+CEED_QFUNCTION_HELPER void CoeffUnpack(const MatCoeffContext2 *ctx, const CeedInt attr,
+                                       CeedScalar coeff[3])
 {
   const CeedInt k = ctx->attr_mat[attr];
   coeff[0] = ctx->mat_coeff[6 * k + 0];
@@ -62,7 +65,8 @@ CEED_QFUNCTION_HELPER void CoeffUnpack(const MatCoeffContext2 *ctx, const CeedIn
   coeff[2] = ctx->mat_coeff[6 * k + 2];
 }
 
-CEED_QFUNCTION_HELPER void CoeffUnpack(const MatCoeffContext3 *ctx, const CeedInt attr, CeedScalar coeff[6])
+CEED_QFUNCTION_HELPER void CoeffUnpack(const MatCoeffContext3 *ctx, const CeedInt attr,
+                                       CeedScalar coeff[6])
 {
   const CeedInt k = ctx->attr_mat[attr];
   coeff[0] = ctx->mat_coeff[6 * k + 0];

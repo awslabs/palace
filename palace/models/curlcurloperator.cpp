@@ -175,6 +175,7 @@ std::unique_ptr<Operator> CurlCurlOperator::GetStiffnessMatrix()
                                            mat_op.GetInvPermeability());
     BilinearForm k(nd_fespace_l);
     k.AddDomainIntegrator<CurlCurlIntegrator>(muinv_func);
+    k.AssembleQuadratureData();
     auto K_l = std::make_unique<ParOperator>(
         (l > 0) ? k.Assemble(skip_zeros) : k.FullAssemble(skip_zeros), nd_fespace_l);
     if (print_hdr)

@@ -10,7 +10,9 @@
 PalacePragmaDiagnosticPush
 PalacePragmaDiagnosticDisableUnused
 
+#include "fem/qfunctions/hdiv_build_qf.h"
 #include "fem/qfunctions/hdiv_qf.h"
+#include "fem/qfunctions/l2_build_qf.h"
 #include "fem/qfunctions/l2_qf.h"
 
 PalacePragmaDiagnosticPop
@@ -24,6 +26,7 @@ void CurlCurlIntegrator::Assemble(const ceed::CeedGeomFactorData &geom_data, Cee
                                   CeedBasis test_basis, CeedOperator *op) const
 {
   ceed::IntegratorInfo info;
+  info.assemble_qdata = assemble_qdata;
 
   // Set up geometry factor quadrature data.
   MFEM_VERIFY(geom_data->wdetJ_vec && geom_data->wdetJ_restr,
@@ -50,16 +53,19 @@ void CurlCurlIntegrator::Assemble(const ceed::CeedGeomFactorData &geom_data, Cee
   switch (10 * geom_data->space_dim + geom_data->dim)
   {
     case 22:
-      info.apply_qf = f_apply_l2_1;
-      info.apply_qf_path = PalaceQFunctionRelativePath(f_apply_l2_1_loc);
+      info.apply_qf = assemble_qdata ? f_build_l2_1 : f_apply_l2_1;
+      info.apply_qf_path =
+          PalaceQFunctionRelativePath(assemble_qdata ? f_build_l2_1_loc : f_apply_l2_1_loc);
       break;
     case 33:
-      info.apply_qf = f_apply_hdiv_33;
-      info.apply_qf_path = PalaceQFunctionRelativePath(f_apply_hdiv_33_loc);
+      info.apply_qf = assemble_qdata ? f_build_hdiv_33 : f_apply_hdiv_33;
+      info.apply_qf_path = PalaceQFunctionRelativePath(
+          assemble_qdata ? f_build_hdiv_33_loc : f_apply_hdiv_33_loc);
       break;
     case 32:
-      info.apply_qf = f_apply_l2_1;
-      info.apply_qf_path = PalaceQFunctionRelativePath(f_apply_l2_1_loc);
+      info.apply_qf = assemble_qdata ? f_build_l2_1 : f_apply_l2_1;
+      info.apply_qf_path =
+          PalaceQFunctionRelativePath(assemble_qdata ? f_build_l2_1_loc : f_apply_l2_1_loc);
       break;
     default:
       MFEM_ABORT("Invalid value of (dim, space_dim) = (" << geom_data->dim << ", "

@@ -6,6 +6,7 @@
 #include "fem/libceed/coefficient.hpp"
 #include "fem/libceed/integrator.hpp"
 
+#include "fem/qfunctions/l2_build_qf.h"
 #include "fem/qfunctions/l2_qf.h"
 
 namespace palace
@@ -17,6 +18,7 @@ void DivDivIntegrator::Assemble(const ceed::CeedGeomFactorData &geom_data, Ceed 
                                 CeedBasis test_basis, CeedOperator *op) const
 {
   ceed::IntegratorInfo info;
+  info.assemble_qdata = assemble_qdata;
 
   // Set up geometry factor quadrature data.
   MFEM_VERIFY(geom_data->wdetJ_vec && geom_data->wdetJ_restr,
@@ -33,16 +35,19 @@ void DivDivIntegrator::Assemble(const ceed::CeedGeomFactorData &geom_data, Ceed 
   switch (trial_ncomp)
   {
     case 1:
-      info.apply_qf = f_apply_l2_1;
-      info.apply_qf_path = PalaceQFunctionRelativePath(f_apply_l2_1_loc);
+      info.apply_qf = assemble_qdata ? f_build_l2_1 : f_apply_l2_1;
+      info.apply_qf_path =
+          PalaceQFunctionRelativePath(assemble_qdata ? f_build_l2_1_loc : f_apply_l2_1_loc);
       break;
     case 2:
-      info.apply_qf = f_apply_l2_2;
-      info.apply_qf_path = PalaceQFunctionRelativePath(f_apply_l2_2_loc);
+      info.apply_qf = assemble_qdata ? f_build_l2_2 : f_apply_l2_2;
+      info.apply_qf_path =
+          PalaceQFunctionRelativePath(assemble_qdata ? f_build_l2_2_loc : f_apply_l2_2_loc);
       break;
     case 3:
-      info.apply_qf = f_apply_l2_3;
-      info.apply_qf_path = PalaceQFunctionRelativePath(f_apply_l2_3_loc);
+      info.apply_qf = assemble_qdata ? f_build_l2_3 : f_apply_l2_3;
+      info.apply_qf_path =
+          PalaceQFunctionRelativePath(assemble_qdata ? f_build_l2_3_loc : f_apply_l2_3_loc);
       break;
     default:
       MFEM_ABORT("Invalid value of ncomp = " << trial_ncomp << " for DivDivIntegrator!");
