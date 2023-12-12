@@ -23,34 +23,30 @@ WeightedHCurlNormSolver::WeightedHCurlNormSolver(
     const std::vector<mfem::Array<int>> &h1_dbc_tdof_lists, double tol, int max_it,
     int print)
 {
-  constexpr bool skip_zeros = false;
-  MaterialPropertyCoefficient muinv_func(mat_op.GetAttributeToMaterial(),
-                                         mat_op.GetInvPermeability());
-  MaterialPropertyCoefficient epsilon_func(mat_op.GetAttributeToMaterial(),
-                                           mat_op.GetPermittivityReal());
+  MFEM_VERIFY(h1_fespaces.GetNumLevels() == nd_fespaces.GetNumLevels(),
+              "Multigrid hierarchy mismatch for auxiliary space preconditioning!");
+  const auto n_levels = nd_fespaces.GetNumLevels();
   {
-    MFEM_VERIFY(h1_fespaces.GetNumLevels() == nd_fespaces.GetNumLevels(),
-                "Multigrid hierarchy mismatch for auxiliary space preconditioning!");
-    const auto n_levels = nd_fespaces.GetNumLevels();
+    constexpr bool skip_zeros = false;
+    MaterialPropertyCoefficient muinv_func(mat_op.GetAttributeToMaterial(),
+                                           mat_op.GetInvPermeability());
+    MaterialPropertyCoefficient epsilon_func(mat_op.GetAttributeToMaterial(),
+                                             mat_op.GetPermittivityReal());
+    BilinearForm a(nd_fespaces.GetFinestFESpace()), a_aux(h1_fespaces.GetFinestFESpace());
+    a.AddDomainIntegrator<CurlCurlMassIntegrator>(muinv_func, epsilon_func);
+    a_aux.AddDomainIntegrator<DiffusionIntegrator>(epsilon_func);
+    auto a_vec = a.Assemble(nd_fespaces, skip_zeros);
+    auto a_aux_vec = a_aux.Assemble(h1_fespaces, skip_zeros);
     auto A_mg = std::make_unique<MultigridOperator>(n_levels);
     for (bool aux : {false, true})
     {
       for (std::size_t l = 0; l < n_levels; l++)
       {
-        // Force coarse level operator to be fully assembled always.
         const auto &fespace_l =
             aux ? h1_fespaces.GetFESpaceAtLevel(l) : nd_fespaces.GetFESpaceAtLevel(l);
         const auto &dbc_tdof_lists_l = aux ? h1_dbc_tdof_lists[l] : nd_dbc_tdof_lists[l];
-        BilinearForm a(fespace_l);
-        if (aux)
-        {
-          a.AddDomainIntegrator<DiffusionIntegrator>(epsilon_func);
-        }
-        else
-        {
-          a.AddDomainIntegrator<CurlCurlMassIntegrator>(muinv_func, epsilon_func);
-        }
-        auto A_l = std::make_unique<ParOperator>(a.Assemble(skip_zeros), fespace_l);
+        auto A_l = std::make_unique<ParOperator>(std::move(aux ? a_aux_vec[l] : a_vec[l]),
+                                                 fespace_l);
         A_l->SetEssentialTrueDofs(dbc_tdof_lists_l, Operator::DiagonalPolicy::DIAG_ONE);
         if (aux)
         {
@@ -71,7 +67,7 @@ WeightedHCurlNormSolver::WeightedHCurlNormSolver(
       nd_fespaces.GetFESpaceAtLevel(0), h1_fespaces.GetFESpaceAtLevel(0), 1, 1, 1, false,
       false, 0));
   std::unique_ptr<Solver<Operator>> pc;
-  if (nd_fespaces.GetNumLevels() > 1)
+  if (n_levels > 1)
   {
     const auto G = h1_fespaces.GetDiscreteInterpolators();
     const int mg_smooth_order =

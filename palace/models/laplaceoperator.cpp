@@ -175,34 +175,26 @@ void PrintHeader(const mfem::ParFiniteElementSpace &h1_fespace,
 
 std::unique_ptr<Operator> LaplaceOperator::GetStiffnessMatrix()
 {
-  // XX TODO: Assemble coarse level operators using same QFunction and quadrature data as
-  //          fine operator (as in libCEED)
-  // CeedOperatorMultigridLevelCreate(op_fine, nullptr, rstr_coarse, basis_coarse,
-  //                                  &op_coarse, nullptr, nullptr)
-
+  // When partially assembled, the coarse operators can reuse the fine operator quadrature
+  // data if the spaces correspond to the same mesh.
   PrintHeader(GetH1Space(), GetNDSpace(), print_hdr);
+
+  constexpr bool skip_zeros = false;
+  MaterialPropertyCoefficient epsilon_func(mat_op.GetAttributeToMaterial(),
+                                           mat_op.GetPermittivityReal());
+  BilinearForm k(GetH1Space());
+  k.AddDomainIntegrator<DiffusionIntegrator>(epsilon_func);
+  k.AssembleQuadratureData();
+  auto k_vec = k.Assemble(GetH1Spaces(), skip_zeros);
   auto K = std::make_unique<MultigridOperator>(GetH1Spaces().GetNumLevels());
   for (std::size_t l = 0; l < GetH1Spaces().GetNumLevels(); l++)
   {
-    // Force coarse level operator to be fully assembled always.
     const auto &h1_fespace_l = GetH1Spaces().GetFESpaceAtLevel(l);
     if (print_hdr)
     {
       Mpi::Print(" Level {:d} (p = {:d}): {:d} unknowns", l,
                  h1_fespace_l.GetMaxElementOrder(), h1_fespace_l.GlobalTrueVSize());
-    }
-    constexpr bool skip_zeros = false;
-    MaterialPropertyCoefficient epsilon_func(mat_op.GetAttributeToMaterial(),
-                                             mat_op.GetPermittivityReal());
-    BilinearForm k(h1_fespace_l);
-    k.AddDomainIntegrator<DiffusionIntegrator>(epsilon_func);
-    k.AssembleQuadratureData();
-    auto K_l = std::make_unique<ParOperator>(
-        (l > 0) ? k.Assemble(skip_zeros) : k.FullAssemble(skip_zeros), h1_fespace_l);
-    if (print_hdr)
-    {
-      if (const auto *k_spm =
-              dynamic_cast<const mfem::SparseMatrix *>(&K_l->LocalOperator()))
+      if (const auto *k_spm = dynamic_cast<const mfem::SparseMatrix *>(k_vec[l].get()))
       {
         HYPRE_BigInt nnz = k_spm->NumNonZeroElems();
         Mpi::GlobalSum(1, &nnz, h1_fespace_l.GetComm());
@@ -213,9 +205,11 @@ std::unique_ptr<Operator> LaplaceOperator::GetStiffnessMatrix()
         Mpi::Print("\n");
       }
     }
+    auto K_l = std::make_unique<ParOperator>(std::move(k_vec[l]), h1_fespace_l);
     K_l->SetEssentialTrueDofs(dbc_tdof_lists[l], Operator::DiagonalPolicy::DIAG_ONE);
     K->AddOperator(std::move(K_l));
   }
+
   print_hdr = false;
   return K;
 }

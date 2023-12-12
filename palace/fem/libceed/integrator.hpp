@@ -6,7 +6,6 @@
 
 #include <string>
 #include <vector>
-#include <ceed/backend.h>
 #include "fem/libceed/ceed.hpp"
 #include "fem/mesh.hpp"
 #include "linalg/vector.hpp"

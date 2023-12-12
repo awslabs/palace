@@ -123,4 +123,28 @@ CeedElemTopology GetCeedTopology(mfem::Geometry::Type geom)
   }
 }
 
+mfem::Geometry::Type GetMFEMTopology(CeedElemTopology geom)
+{
+  switch (geom)
+  {
+    case CEED_TOPOLOGY_LINE:
+      return mfem::Geometry::SEGMENT;
+    case CEED_TOPOLOGY_TRIANGLE:
+      return mfem::Geometry::TRIANGLE;
+    case CEED_TOPOLOGY_QUAD:
+      return mfem::Geometry::SQUARE;
+    case CEED_TOPOLOGY_TET:
+      return mfem::Geometry::TETRAHEDRON;
+    case CEED_TOPOLOGY_HEX:
+      return mfem::Geometry::CUBE;
+    case CEED_TOPOLOGY_PRISM:
+      return mfem::Geometry::PRISM;
+    case CEED_TOPOLOGY_PYRAMID:
+      return mfem::Geometry::PYRAMID;
+    default:
+      MFEM_ABORT("This type of element is not supported!");
+      return mfem::Geometry::SEGMENT;  // Silence compiler warning
+  }
+}
+
 }  // namespace palace::ceed

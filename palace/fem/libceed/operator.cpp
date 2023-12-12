@@ -4,7 +4,9 @@
 #include "operator.hpp"
 
 #include <numeric>
+#include <ceed/backend.h>
 #include <mfem/general/forall.hpp>
+#include "fem/fespace.hpp"
 #include "utils/omp.hpp"
 
 namespace palace::ceed
@@ -477,6 +479,79 @@ std::unique_ptr<mfem::SparseMatrix> CeedOperatorFullAssemble(const Operator &op,
   PalaceCeedCall(ceed, CeedVectorDestroy(&vals));
 
   return mat;
+}
+
+std::unique_ptr<ceed::Operator>
+CeedOperatorCoarsen(const Operator &op_fine, const FiniteElementSpace &fespace_coarse)
+{
+  auto SingleOperatorCoarsen =
+      [&fespace_coarse](Ceed ceed, CeedOperator op_fine, CeedOperator *op_coarse)
+  {
+    CeedBasis basis_fine;
+    CeedElemTopology geom;
+    PalaceCeedCall(ceed, CeedOperatorGetActiveBasis(op_fine, &basis_fine));
+    PalaceCeedCall(ceed, CeedBasisGetTopology(basis_fine, &geom));
+
+    const auto &geom_data =
+        fespace_coarse.GetMesh().GetCeedGeomFactorData(ceed).at(GetMFEMTopology(geom));
+    CeedElemRestriction restr_coarse = fespace_coarse.GetCeedElemRestriction(
+        ceed, GetMFEMTopology(geom), geom_data->indices);
+    CeedBasis basis_coarse = fespace_coarse.GetCeedBasis(ceed, GetMFEMTopology(geom));
+
+    PalaceCeedCall(ceed, CeedOperatorMultigridLevelCreate(op_fine, nullptr, restr_coarse,
+                                                          basis_coarse, op_coarse, nullptr,
+                                                          nullptr));
+  };
+
+  // Initialize the coarse operator.
+  auto op_coarse = std::make_unique<SymmetricOperator>(fespace_coarse.GetVSize(),
+                                                       fespace_coarse.GetVSize());
+
+  // Assemble the coarse operator by coarsening each sub-operator (over threads, geometry
+  // types, integrators) of the original fine operator. We loop over Ceed contexts because
+  // extracting the Ceed context from a CeedOperator returns a different pointer (created
+  // with CeedReferenceCopy) and we need the original ones to access the FiniteElementSpace
+  // and Mesh object caches.
+  MFEM_VERIFY(internal::GetCeedObjects().size() == op_fine.Size(),
+              "Unexpected size mismatch in multithreaded libCEED contexts!");
+  const std::size_t nt = ceed::internal::GetCeedObjects().size();
+  PalacePragmaOmp(parallel for schedule(static))
+  for (std::size_t i = 0; i < nt; i++)
+  {
+    Ceed ceed = ceed::internal::GetCeedObjects()[i];
+
+    // Initialize the composite operator on each thread.
+    CeedOperator loc_op;
+    PalaceCeedCall(ceed, CeedCompositeOperatorCreate(ceed, &loc_op));
+
+    bool composite;
+    PalaceCeedCall(ceed, CeedOperatorIsComposite(op_fine[i], &composite));
+    if (composite)
+    {
+      CeedInt nloc_ops_fine;
+      CeedOperator *loc_ops_fine;
+      PalaceCeedCall(ceed, CeedCompositeOperatorGetNumSub(op_fine[i], &nloc_ops_fine));
+      PalaceCeedCall(ceed, CeedCompositeOperatorGetSubList(op_fine[i], &loc_ops_fine));
+      for (CeedInt k = 0; k < nloc_ops_fine; k++)
+      {
+        CeedOperator sub_op;
+        SingleOperatorCoarsen(ceed, loc_ops_fine[k], &sub_op);
+        PalaceCeedCall(ceed, CeedCompositeOperatorAddSub(loc_op, sub_op));
+        PalaceCeedCall(ceed, CeedOperatorDestroy(&sub_op));
+      }
+    }
+    else
+    {
+      CeedOperator sub_op;
+      SingleOperatorCoarsen(ceed, op_fine[i], &sub_op);
+      PalaceCeedCall(ceed, CeedCompositeOperatorAddSub(loc_op, sub_op));
+      PalaceCeedCall(ceed, CeedOperatorDestroy(&sub_op));
+    }
+    PalaceCeedCall(ceed, CeedOperatorCheckReady(loc_op));
+    op_coarse->AddOper(loc_op);  // Thread-safe
+  }
+
+  return op_coarse;
 }
 
 }  // namespace palace::ceed

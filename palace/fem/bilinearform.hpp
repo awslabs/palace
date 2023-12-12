@@ -7,12 +7,15 @@
 #include <memory>
 #include <vector>
 #include <mfem.hpp>
-#include "fem/fespace.hpp"
 #include "fem/integrator.hpp"
 #include "fem/libceed/operator.hpp"
 
 namespace palace
 {
+
+class FiniteElementSpace;
+template <typename T>
+class BaseFiniteElementSpaceHierarchy;
 
 //
 // This class implements bilinear and mixed bilinear forms based on integrators assembled
@@ -27,6 +30,10 @@ protected:
 
   // List of domain and boundary integrators making up the bilinear form.
   std::vector<std::unique_ptr<BilinearFormIntegrator>> domain_integs, boundary_integs;
+
+  std::unique_ptr<ceed::Operator>
+  PartialAssemble(const FiniteElementSpace &trial_fespace,
+                  const FiniteElementSpace &test_fespace) const;
 
 public:
   // Order above which to use partial assembly vs. full.
@@ -57,15 +64,18 @@ public:
 
   void AssembleQuadratureData();
 
-  std::unique_ptr<ceed::Operator> PartialAssemble() const;
+  std::unique_ptr<ceed::Operator> PartialAssemble() const
+  {
+    return PartialAssemble(GetTrialSpace(), GetTestSpace());
+  }
 
   std::unique_ptr<mfem::SparseMatrix> FullAssemble(bool skip_zeros) const
   {
     return FullAssemble(*PartialAssemble(), skip_zeros, false);
   }
 
-  std::unique_ptr<mfem::SparseMatrix> FullAssemble(const ceed::Operator &op,
-                                                   bool skip_zeros) const
+  static std::unique_ptr<mfem::SparseMatrix> FullAssemble(const ceed::Operator &op,
+                                                          bool skip_zeros)
   {
     return FullAssemble(op, skip_zeros, false);
   }
@@ -73,33 +83,12 @@ public:
   static std::unique_ptr<mfem::SparseMatrix> FullAssemble(const ceed::Operator &op,
                                                           bool skip_zeros, bool set);
 
-  std::unique_ptr<Operator> Assemble(bool skip_zeros) const
-  {
-    return Assemble(*this, skip_zeros);
-  }
+  std::unique_ptr<Operator> Assemble(bool skip_zeros) const;
 
   template <typename T>
-  static std::unique_ptr<Operator> Assemble(const T &a, bool skip_zeros)
-  {
-    // Returns order such that the miniumum for all element types is 1. MFEM's
-    // RT_FECollection actually already returns order + 1 for GetOrder() for historical
-    // reasons.
-    const auto &trial_fec = a.GetTrialSpace().GetFEColl();
-    const auto &test_fec = a.GetTestSpace().GetFEColl();
-    int max_order = std::max(
-        dynamic_cast<const mfem::L2_FECollection *>(&trial_fec) ? trial_fec.GetOrder() + 1
-                                                                : trial_fec.GetOrder(),
-        dynamic_cast<const mfem::L2_FECollection *>(&test_fec) ? test_fec.GetOrder() + 1
-                                                               : test_fec.GetOrder());
-    if (max_order >= pa_order_threshold)
-    {
-      return a.PartialAssemble();
-    }
-    else
-    {
-      return a.FullAssemble(skip_zeros);
-    }
-  }
+  std::vector<std::unique_ptr<Operator>>
+  Assemble(const BaseFiniteElementSpaceHierarchy<T> &fespaces, bool skip_zeros,
+           std::size_t l0 = 0) const;
 };
 
 // Discrete linear operators map primal vectors to primal vectors for interpolation between
@@ -136,15 +125,10 @@ public:
     return BilinearForm::FullAssemble(*PartialAssemble(), skip_zeros, true);
   }
 
-  std::unique_ptr<mfem::SparseMatrix> FullAssemble(const ceed::Operator &op,
-                                                   bool skip_zeros) const
+  static std::unique_ptr<mfem::SparseMatrix> FullAssemble(const ceed::Operator &op,
+                                                          bool skip_zeros)
   {
     return BilinearForm::FullAssemble(op, skip_zeros, true);
-  }
-
-  std::unique_ptr<Operator> Assemble(bool skip_zeros) const
-  {
-    return BilinearForm::Assemble(*this, skip_zeros);
   }
 };
 

@@ -3,6 +3,7 @@
 
 #include "integrator.hpp"
 
+#include <ceed/backend.h>
 #include <mfem.hpp>
 #include "utils/diagnostic.hpp"
 

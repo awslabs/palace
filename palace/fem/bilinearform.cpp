@@ -3,6 +3,7 @@
 
 #include "bilinearform.hpp"
 
+#include "fem/fespace.hpp"
 #include "fem/libceed/basis.hpp"
 #include "fem/libceed/ceed.hpp"
 #include "fem/mesh.hpp"
@@ -23,7 +24,9 @@ void BilinearForm::AssembleQuadratureData()
   }
 }
 
-std::unique_ptr<ceed::Operator> BilinearForm::PartialAssemble() const
+std::unique_ptr<ceed::Operator>
+BilinearForm::PartialAssemble(const FiniteElementSpace &trial_fespace,
+                              const FiniteElementSpace &test_fespace) const
 {
   MFEM_VERIFY(&trial_fespace.GetMesh() == &test_fespace.GetMesh(),
               "Trial and test finite element spaces must correspond to the same mesh!");
@@ -117,6 +120,92 @@ std::unique_ptr<mfem::SparseMatrix> BilinearForm::FullAssemble(const ceed::Opera
   return ceed::CeedOperatorFullAssemble(op, skip_zeros, set);
 }
 
+namespace
+{
+
+bool UseFullAssembly(const FiniteElementSpace &trial_fespace,
+                     const FiniteElementSpace &test_fespace, int pa_order_threshold)
+{
+  // Returns order such that the miniumum for all element types is 1. MFEM's
+  // RT_FECollection actually already returns order + 1 for GetOrder() for historical
+  // reasons.
+  const auto &trial_fec = trial_fespace.GetFEColl();
+  const auto &test_fec = test_fespace.GetFEColl();
+  int max_order = std::max(
+      dynamic_cast<const mfem::L2_FECollection *>(&trial_fec) ? trial_fec.GetOrder() + 1
+                                                              : trial_fec.GetOrder(),
+      dynamic_cast<const mfem::L2_FECollection *>(&test_fec) ? test_fec.GetOrder() + 1
+                                                             : test_fec.GetOrder());
+  return (max_order < pa_order_threshold);
+}
+
+bool UseFullAssembly(const FiniteElementSpace &fespace, int pa_order_threshold)
+{
+  return UseFullAssembly(fespace, fespace, pa_order_threshold);
+}
+
+}  // namespace
+
+std::unique_ptr<Operator> BilinearForm::Assemble(bool skip_zeros) const
+{
+  if (UseFullAssembly(trial_fespace, test_fespace, pa_order_threshold))
+  {
+    return FullAssemble(skip_zeros);
+  }
+  else
+  {
+    return PartialAssemble();
+  }
+}
+
+template <typename T>
+std::vector<std::unique_ptr<Operator>>
+BilinearForm::Assemble(const BaseFiniteElementSpaceHierarchy<T> &fespaces, bool skip_zeros,
+                       std::size_t l0) const
+{
+  // Only available for square operators (same teset and trial spaces).
+  MFEM_VERIFY(&trial_fespace == &test_fespace &&
+                  &fespaces.GetFinestFESpace() == &trial_fespace,
+              "Assembly on a FiniteElementSpaceHierarchy should have the same BilinearForm "
+              "spaces and fine space of the hierarchy!");
+
+  // First partially assemble all of the operators.
+  std::vector<std::unique_ptr<ceed::Operator>> pa_ops;
+  pa_ops.reserve(fespaces.GetNumLevels() - l0);
+  for (std::size_t l = l0; l < fespaces.GetNumLevels(); l++)
+  {
+    if (l > l0 && &fespaces.GetFESpaceAtLevel(l).GetMesh() ==
+                      &fespaces.GetFESpaceAtLevel(l - 1).GetMesh())
+    {
+      pa_ops.push_back(
+          ceed::CeedOperatorCoarsen(*pa_ops.back(), fespaces.GetFESpaceAtLevel(l)));
+    }
+    else
+    {
+      pa_ops.push_back(
+          PartialAssemble(fespaces.GetFESpaceAtLevel(l), fespaces.GetFESpaceAtLevel(l)));
+    }
+  }
+
+  // Construct the final operators using full or partial assemble as needed. Force the
+  // coarse-level operator to be fully assembled always.
+  std::vector<std::unique_ptr<Operator>> ops;
+  ops.reserve(fespaces.GetNumLevels() - 1);
+  for (std::size_t l = l0; l < fespaces.GetNumLevels(); l++)
+  {
+    if (l == 0 || UseFullAssembly(fespaces.GetFESpaceAtLevel(l), pa_order_threshold))
+    {
+      ops.push_back(FullAssemble(*pa_ops[l - l0], skip_zeros));
+    }
+    else
+    {
+      ops.push_back(std::move(pa_ops[l - l0]));
+    }
+  }
+
+  return ops;
+}
+
 std::unique_ptr<ceed::Operator> DiscreteLinearOperator::PartialAssemble() const
 {
   MFEM_VERIFY(&trial_fespace.GetMesh() == &test_fespace.GetMesh(),
@@ -202,5 +291,12 @@ std::unique_ptr<ceed::Operator> DiscreteLinearOperator::PartialAssemble() const
 
   return op;
 }
+
+template std::vector<std::unique_ptr<Operator>>
+BilinearForm::Assemble(const BaseFiniteElementSpaceHierarchy<FiniteElementSpace> &, bool,
+                       std::size_t) const;
+template std::vector<std::unique_ptr<Operator>>
+BilinearForm::Assemble(const BaseFiniteElementSpaceHierarchy<AuxiliaryFiniteElementSpace> &,
+                       bool, std::size_t) const;
 
 }  // namespace palace
