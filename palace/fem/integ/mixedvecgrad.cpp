@@ -3,7 +3,6 @@
 
 #include "fem/integrator.hpp"
 
-#include <algorithm>
 #include "fem/libceed/coefficient.hpp"
 #include "fem/libceed/integrator.hpp"
 
@@ -66,23 +65,20 @@ void MixedVectorGradientIntegrator::Assemble(const ceed::CeedGeomFactorData &geo
   info.test_ops = ceed::EvalMode::Interp;
 
   // Set up the coefficient and assemble.
-  switch (geom_data->space_dim)
+  auto ctx = [&]()
   {
-    case 2:
-      {
-        auto ctx = ceed::PopulateCoefficientContext2(Q);
-        ceed::AssembleCeedOperator(info, ctx, geom_data, ceed, trial_restr, test_restr,
-                                   trial_basis, test_basis, op);
-      }
-      break;
-    case 3:
-      {
-        auto ctx = ceed::PopulateCoefficientContext3(Q);
-        ceed::AssembleCeedOperator(info, ctx, geom_data, ceed, trial_restr, test_restr,
-                                   trial_basis, test_basis, op);
-      }
-      break;
-  }
+    switch (geom_data->space_dim)
+    {
+      case 2:
+        return ceed::PopulateCoefficientContext<2>(Q);
+      case 3:
+        return ceed::PopulateCoefficientContext<3>(Q);
+    }
+    return std::vector<CeedIntScalar>();
+  }();
+  ceed::AssembleCeedOperator(info, (void *)ctx.data(), ctx.size() * sizeof(CeedIntScalar),
+                             geom_data, ceed, trial_restr, test_restr, trial_basis,
+                             test_basis, op);
 }
 
 void MixedVectorWeakDivergenceIntegrator::Assemble(
@@ -139,27 +135,20 @@ void MixedVectorWeakDivergenceIntegrator::Assemble(
   info.test_ops = ceed::EvalMode::Grad;
 
   // Set up the coefficient and assemble.
-  switch (geom_data->space_dim)
+  auto ctx = [&]()
   {
-    case 2:
-      {
-        auto ctx = ceed::PopulateCoefficientContext2(Q);
-        std::transform(&ctx.mat_coeff[0], &ctx.mat_coeff[0] + ctx.MaxNumMat() * ctx.Dim(),
-                       &ctx.mat_coeff[0], [](CeedScalar v) { return -v; });
-        ceed::AssembleCeedOperator(info, ctx, geom_data, ceed, trial_restr, test_restr,
-                                   trial_basis, test_basis, op);
-      }
-      break;
-    case 3:
-      {
-        auto ctx = ceed::PopulateCoefficientContext3(Q);
-        std::transform(&ctx.mat_coeff[0], &ctx.mat_coeff[0] + ctx.MaxNumMat() * ctx.Dim(),
-                       &ctx.mat_coeff[0], [](CeedScalar v) { return -v; });
-        ceed::AssembleCeedOperator(info, ctx, geom_data, ceed, trial_restr, test_restr,
-                                   trial_basis, test_basis, op);
-      }
-      break;
-  }
+    switch (geom_data->space_dim)
+    {
+      case 2:
+        return ceed::PopulateCoefficientContext<2>(Q, -1.0);
+      case 3:
+        return ceed::PopulateCoefficientContext<3>(Q, -1.0);
+    }
+    return std::vector<CeedIntScalar>();
+  }();
+  ceed::AssembleCeedOperator(info, (void *)ctx.data(), ctx.size() * sizeof(CeedIntScalar),
+                             geom_data, ceed, trial_restr, test_restr, trial_basis,
+                             test_basis, op);
 }
 
 }  // namespace palace

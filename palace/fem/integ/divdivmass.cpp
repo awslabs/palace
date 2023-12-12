@@ -65,25 +65,20 @@ void DivDivMassIntegrator::Assemble(const ceed::CeedGeomFactorData &geom_data, C
   info.test_ops = ceed::EvalMode::Div | ceed::EvalMode::Interp;
 
   // Set up the coefficient and assemble.
-  switch (geom_data->space_dim)
+  auto ctx = [&]()
   {
-    case 2:
-      {
-        MatCoeffPairContext21 ctx{ceed::PopulateCoefficientContext2(Q_mass),
-                                  ceed::PopulateCoefficientContext1(Q)};
-        ceed::AssembleCeedOperator(info, ctx, geom_data, ceed, trial_restr, test_restr,
-                                   trial_basis, test_basis, op);
-      }
-      break;
-    case 3:
-      {
-        MatCoeffPairContext31 ctx{ceed::PopulateCoefficientContext3(Q_mass),
-                                  ceed::PopulateCoefficientContext1(Q)};
-        ceed::AssembleCeedOperator(info, ctx, geom_data, ceed, trial_restr, test_restr,
-                                   trial_basis, test_basis, op);
-      }
-      break;
-  }
+    switch (geom_data->space_dim)
+    {
+      case 2:
+        return ceed::PopulateCoefficientContext<1, 2>(Q, Q_mass);
+      case 3:
+        return ceed::PopulateCoefficientContext<1, 3>(Q, Q_mass);
+    }
+    return std::vector<CeedIntScalar>();
+  }();
+  ceed::AssembleCeedOperator(info, (void *)ctx.data(), ctx.size() * sizeof(CeedIntScalar),
+                             geom_data, ceed, trial_restr, test_restr, trial_basis,
+                             test_basis, op);
 }
 
 }  // namespace palace

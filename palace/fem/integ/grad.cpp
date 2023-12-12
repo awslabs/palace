@@ -64,23 +64,20 @@ void GradientIntegrator::Assemble(const ceed::CeedGeomFactorData &geom_data, Cee
   info.test_ops = ceed::EvalMode::Interp;
 
   // Set up the coefficient and assemble.
-  switch (geom_data->space_dim)
+  auto ctx = [&]()
   {
-    case 2:
-      {
-        auto ctx = ceed::PopulateCoefficientContext2(Q);
-        ceed::AssembleCeedOperator(info, ctx, geom_data, ceed, trial_restr, test_restr,
-                                   trial_basis, test_basis, op);
-      }
-      break;
-    case 3:
-      {
-        auto ctx = ceed::PopulateCoefficientContext3(Q);
-        ceed::AssembleCeedOperator(info, ctx, geom_data, ceed, trial_restr, test_restr,
-                                   trial_basis, test_basis, op);
-      }
-      break;
-  }
+    switch (geom_data->space_dim)
+    {
+      case 2:
+        return ceed::PopulateCoefficientContext<2>(Q);
+      case 3:
+        return ceed::PopulateCoefficientContext<3>(Q);
+    }
+    return std::vector<CeedIntScalar>();
+  }();
+  ceed::AssembleCeedOperator(info, (void *)ctx.data(), ctx.size() * sizeof(CeedIntScalar),
+                             geom_data, ceed, trial_restr, test_restr, trial_basis,
+                             test_basis, op);
 }
 
 }  // namespace palace

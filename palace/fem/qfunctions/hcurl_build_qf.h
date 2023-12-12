@@ -4,7 +4,7 @@
 #ifndef PALACE_LIBCEED_HCURL_BUILD_QF_H
 #define PALACE_LIBCEED_HCURL_BUILD_QF_H
 
-#include "types_qf.h"
+#include "coeff_qf.h"
 #include "utils_qf.h"
 
 // Build functions replace active vector output with quadrature point data, stored as a
@@ -19,7 +19,7 @@ CEED_QFUNCTION(f_build_hcurl_22)(void *ctx, CeedInt Q, const CeedScalar *const *
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
     CeedScalar coeff[3], adjJt_loc[4], qd_loc[3];
-    CoeffUnpack((const MatCoeffContext2 *)ctx, (CeedInt)attr[i], coeff);
+    CoeffUnpack2((const CeedIntScalar *)ctx, (CeedInt)attr[i], coeff);
     MatUnpack22(adjJt + i, Q, adjJt_loc);
     MultAtBA22(adjJt_loc, coeff, qd_loc);
 
@@ -39,7 +39,7 @@ CEED_QFUNCTION(f_build_hcurl_33)(void *ctx, CeedInt Q, const CeedScalar *const *
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
     CeedScalar coeff[6], adjJt_loc[9], qd_loc[6];
-    CoeffUnpack((const MatCoeffContext3 *)ctx, (CeedInt)attr[i], coeff);
+    CoeffUnpack3((const CeedIntScalar *)ctx, (CeedInt)attr[i], coeff);
     MatUnpack33(adjJt + i, Q, adjJt_loc);
     MultAtBA33(adjJt_loc, coeff, qd_loc);
 
@@ -62,7 +62,7 @@ CEED_QFUNCTION(f_build_hcurl_21)(void *ctx, CeedInt Q, const CeedScalar *const *
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
     CeedScalar coeff[3], adjJt_loc[2], qd_loc[1];
-    CoeffUnpack((const MatCoeffContext2 *)ctx, (CeedInt)attr[i], coeff);
+    CoeffUnpack2((const CeedIntScalar *)ctx, (CeedInt)attr[i], coeff);
     MatUnpack21(adjJt + i, Q, adjJt_loc);
     MultAtBA21(adjJt_loc, coeff, qd_loc);
 
@@ -80,7 +80,7 @@ CEED_QFUNCTION(f_build_hcurl_32)(void *ctx, CeedInt Q, const CeedScalar *const *
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
     CeedScalar coeff[6], adjJt_loc[6], qd_loc[3];
-    CoeffUnpack((const MatCoeffContext3 *)ctx, (CeedInt)attr[i], coeff);
+    CoeffUnpack3((const CeedIntScalar *)ctx, (CeedInt)attr[i], coeff);
     MatUnpack32(adjJt + i, Q, adjJt_loc);
     MultAtBA32(adjJt_loc, coeff, qd_loc);
 

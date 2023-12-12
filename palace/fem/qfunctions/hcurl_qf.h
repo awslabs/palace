@@ -4,7 +4,7 @@
 #ifndef PALACE_LIBCEED_HCURL_QF_H
 #define PALACE_LIBCEED_HCURL_QF_H
 
-#include "types_qf.h"
+#include "coeff_qf.h"
 #include "utils_qf.h"
 
 // libCEED QFunctions for H(curl) operators (Piola transformation u = adj(J)^T / det(J) ̂u).
@@ -24,7 +24,7 @@ CEED_QFUNCTION(f_apply_hcurl_22)(void *ctx, CeedInt Q, const CeedScalar *const *
   {
     const CeedScalar u_loc[2] = {u[i + Q * 0], u[i + Q * 1]};
     CeedScalar coeff[3], adjJt_loc[4], v_loc[2];
-    CoeffUnpack((const MatCoeffContext2 *)ctx, (CeedInt)attr[i], coeff);
+    CoeffUnpack2((const CeedIntScalar *)ctx, (CeedInt)attr[i], coeff);
     MatUnpack22(adjJt + i, Q, adjJt_loc);
     MultAtBCx22(adjJt_loc, coeff, adjJt_loc, u_loc, v_loc);
 
@@ -44,7 +44,7 @@ CEED_QFUNCTION(f_apply_hcurl_33)(void *ctx, CeedInt Q, const CeedScalar *const *
   {
     const CeedScalar u_loc[3] = {u[i + Q * 0], u[i + Q * 1], u[i + Q * 2]};
     CeedScalar coeff[6], adjJt_loc[9], v_loc[3];
-    CoeffUnpack((const MatCoeffContext3 *)ctx, (CeedInt)attr[i], coeff);
+    CoeffUnpack3((const CeedIntScalar *)ctx, (CeedInt)attr[i], coeff);
     MatUnpack33(adjJt + i, Q, adjJt_loc);
     MultAtBCx33(adjJt_loc, coeff, adjJt_loc, u_loc, v_loc);
 
@@ -65,7 +65,7 @@ CEED_QFUNCTION(f_apply_hcurl_21)(void *ctx, CeedInt Q, const CeedScalar *const *
   {
     const CeedScalar u_loc[1] = {u[i + Q * 0]};
     CeedScalar coeff[3], adjJt_loc[2], v_loc[2];
-    CoeffUnpack((const MatCoeffContext2 *)ctx, (CeedInt)attr[i], coeff);
+    CoeffUnpack2((const CeedIntScalar *)ctx, (CeedInt)attr[i], coeff);
     MatUnpack21(adjJt + i, Q, adjJt_loc);
     MultAtBCx21(adjJt_loc, coeff, adjJt_loc, u_loc, v_loc);
 
@@ -84,7 +84,7 @@ CEED_QFUNCTION(f_apply_hcurl_32)(void *ctx, CeedInt Q, const CeedScalar *const *
   {
     const CeedScalar u_loc[2] = {u[i + Q * 0], u[i + Q * 1]};
     CeedScalar coeff[6], adjJt_loc[6], v_loc[3];
-    CoeffUnpack((const MatCoeffContext3 *)ctx, (CeedInt)attr[i], coeff);
+    CoeffUnpack3((const CeedIntScalar *)ctx, (CeedInt)attr[i], coeff);
     MatUnpack32(adjJt + i, Q, adjJt_loc);
     MultAtBCx32(adjJt_loc, coeff, adjJt_loc, u_loc, v_loc);
 

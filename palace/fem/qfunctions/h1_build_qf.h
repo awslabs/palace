@@ -4,7 +4,7 @@
 #ifndef PALACE_LIBCEED_H1_BUILD_QF_H
 #define PALACE_LIBCEED_H1_BUILD_QF_H
 
-#include "types_qf.h"
+#include "coeff_qf.h"
 
 // Build functions replace active vector output with quadrature point data, stored as a
 // symmetric matrix, and remove active vector input.
@@ -17,7 +17,7 @@ CEED_QFUNCTION(f_build_h1_1)(void *ctx, CeedInt Q, const CeedScalar *const *in,
 
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
-    const CeedScalar coeff = CoeffUnpack((const MatCoeffContext1 *)ctx, (CeedInt)attr[i]);
+    const CeedScalar coeff = CoeffUnpack1((const CeedIntScalar *)ctx, (CeedInt)attr[i]);
 
     qd[i] = coeff * wdetJ[i];
   }
@@ -33,7 +33,7 @@ CEED_QFUNCTION(f_build_h1_2)(void *ctx, CeedInt Q, const CeedScalar *const *in,
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
     CeedScalar coeff[3];
-    CoeffUnpack((const MatCoeffContext2 *)ctx, (CeedInt)attr[i], coeff);
+    CoeffUnpack2((const CeedIntScalar *)ctx, (CeedInt)attr[i], coeff);
 
     qd[i + Q * 0] = wdetJ[i] * coeff[0];
     qd[i + Q * 1] = wdetJ[i] * coeff[1];
@@ -51,7 +51,7 @@ CEED_QFUNCTION(f_build_h1_3)(void *ctx, CeedInt Q, const CeedScalar *const *in,
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
     CeedScalar coeff[6];
-    CoeffUnpack((const MatCoeffContext3 *)ctx, (CeedInt)attr[i], coeff);
+    CoeffUnpack3((const CeedIntScalar *)ctx, (CeedInt)attr[i], coeff);
 
     qd[i + Q * 0] = wdetJ[i] * coeff[0];
     qd[i + Q * 1] = wdetJ[i] * coeff[1];

@@ -76,23 +76,20 @@ void CurlCurlIntegrator::Assemble(const ceed::CeedGeomFactorData &geom_data, Cee
   info.test_ops = ceed::EvalMode::Curl;
 
   // Set up the coefficient and assemble.
-  switch (geom_data->dim)
+  auto ctx = [&]()
   {
-    case 2:
-      {
-        auto ctx = ceed::PopulateCoefficientContext1(Q);
-        ceed::AssembleCeedOperator(info, ctx, geom_data, ceed, trial_restr, test_restr,
-                                   trial_basis, test_basis, op);
-      }
-      break;
-    case 3:
-      {
-        auto ctx = ceed::PopulateCoefficientContext3(Q);
-        ceed::AssembleCeedOperator(info, ctx, geom_data, ceed, trial_restr, test_restr,
-                                   trial_basis, test_basis, op);
-      }
-      break;
-  }
+    switch (geom_data->dim)
+    {
+      case 2:
+        return ceed::PopulateCoefficientContext<1>(Q);
+      case 3:
+        return ceed::PopulateCoefficientContext<3>(Q);
+    }
+    return std::vector<CeedIntScalar>();
+  }();
+  ceed::AssembleCeedOperator(info, (void *)ctx.data(), ctx.size() * sizeof(CeedIntScalar),
+                             geom_data, ceed, trial_restr, test_restr, trial_basis,
+                             test_basis, op);
 }
 
 }  // namespace palace

@@ -4,7 +4,7 @@
 #ifndef PALACE_LIBCEED_HDIV_QF_H
 #define PALACE_LIBCEED_HDIV_QF_H
 
-#include "types_qf.h"
+#include "coeff_qf.h"
 #include "utils_geom_qf.h"
 #include "utils_qf.h"
 
@@ -26,7 +26,7 @@ CEED_QFUNCTION(f_apply_hdiv_22)(void *ctx, CeedInt Q, const CeedScalar *const *i
   {
     const CeedScalar u_loc[2] = {u[i + Q * 0], u[i + Q * 1]};
     CeedScalar coeff[3], adjJt_loc[4], J_loc[4], v_loc[2];
-    CoeffUnpack((const MatCoeffContext2 *)ctx, (CeedInt)attr[i], coeff);
+    CoeffUnpack2((const CeedIntScalar *)ctx, (CeedInt)attr[i], coeff);
     MatUnpack22(adjJt + i, Q, adjJt_loc);
     AdjJt22<false>(adjJt_loc, J_loc);
     MultAtBCx22(J_loc, coeff, J_loc, u_loc, v_loc);
@@ -47,7 +47,7 @@ CEED_QFUNCTION(f_apply_hdiv_33)(void *ctx, CeedInt Q, const CeedScalar *const *i
   {
     const CeedScalar u_loc[3] = {u[i + Q * 0], u[i + Q * 1], u[i + Q * 2]};
     CeedScalar coeff[6], adjJt_loc[9], J_loc[9], v_loc[3];
-    CoeffUnpack((const MatCoeffContext3 *)ctx, (CeedInt)attr[i], coeff);
+    CoeffUnpack3((const CeedIntScalar *)ctx, (CeedInt)attr[i], coeff);
     MatUnpack33(adjJt + i, Q, adjJt_loc);
     AdjJt33<false>(adjJt_loc, J_loc);
     MultAtBCx33(J_loc, coeff, J_loc, u_loc, v_loc);
@@ -69,7 +69,7 @@ CEED_QFUNCTION(f_apply_hdiv_21)(void *ctx, CeedInt Q, const CeedScalar *const *i
   {
     const CeedScalar u_loc[1] = {u[i + Q * 0]};
     CeedScalar coeff[3], adjJt_loc[2], J_loc[2], v_loc[2];
-    CoeffUnpack((const MatCoeffContext2 *)ctx, (CeedInt)attr[i], coeff);
+    CoeffUnpack2((const CeedIntScalar *)ctx, (CeedInt)attr[i], coeff);
     MatUnpack21(adjJt + i, Q, adjJt_loc);
     AdjJt21<false>(adjJt_loc, J_loc);
     MultAtBCx21(J_loc, coeff, J_loc, u_loc, v_loc);
@@ -89,7 +89,7 @@ CEED_QFUNCTION(f_apply_hdiv_32)(void *ctx, CeedInt Q, const CeedScalar *const *i
   {
     const CeedScalar u_loc[2] = {u[i + Q * 0], u[i + Q * 1]};
     CeedScalar coeff[6], adjJt_loc[6], J_loc[6], v_loc[3];
-    CoeffUnpack((const MatCoeffContext3 *)ctx, (CeedInt)attr[i], coeff);
+    CoeffUnpack3((const CeedIntScalar *)ctx, (CeedInt)attr[i], coeff);
     MatUnpack32(adjJt + i, Q, adjJt_loc);
     AdjJt32<false>(adjJt_loc, J_loc);
     MultAtBCx32(J_loc, coeff, J_loc, u_loc, v_loc);

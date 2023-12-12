@@ -64,25 +64,22 @@ void CurlCurlMassIntegrator::Assemble(const ceed::CeedGeomFactorData &geom_data,
   info.test_ops = ceed::EvalMode::Curl | ceed::EvalMode::Interp;
 
   // Set up the coefficient and assemble.
-  switch (geom_data->space_dim)
+  auto ctx = [&]()
   {
-    case 2:
-      {
-        MatCoeffPairContext21 ctx{ceed::PopulateCoefficientContext2(Q_mass),
-                                  ceed::PopulateCoefficientContext1(Q)};
-        ceed::AssembleCeedOperator(info, ctx, geom_data, ceed, trial_restr, test_restr,
-                                   trial_basis, test_basis, op);
-      }
-      break;
-    case 3:
-      {
-        MatCoeffPairContext33 ctx{ceed::PopulateCoefficientContext3(Q_mass),
-                                  ceed::PopulateCoefficientContext3(Q)};
-        ceed::AssembleCeedOperator(info, ctx, geom_data, ceed, trial_restr, test_restr,
-                                   trial_basis, test_basis, op);
-      }
-      break;
-  }
+    switch (10 * geom_data->space_dim + geom_data->dim)
+    {
+      case 22:
+        return ceed::PopulateCoefficientContext<1, 2>(Q, Q_mass);
+      case 33:
+        return ceed::PopulateCoefficientContext<3, 3>(Q, Q_mass);
+      case 32:
+        return ceed::PopulateCoefficientContext<1, 3>(Q, Q_mass);
+    }
+    return std::vector<CeedIntScalar>();
+  }();
+  ceed::AssembleCeedOperator(info, (void *)ctx.data(), ctx.size() * sizeof(CeedIntScalar),
+                             geom_data, ceed, trial_restr, test_restr, trial_basis,
+                             test_basis, op);
 }
 
 }  // namespace palace

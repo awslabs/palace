@@ -4,7 +4,7 @@
 #ifndef PALACE_LIBCEED_HCURL_H1D_QF_H
 #define PALACE_LIBCEED_HCURL_H1D_QF_H
 
-#include "types_qf.h"
+#include "coeff_qf.h"
 #include "utils_qf.h"
 
 // libCEED QFunctions for mixed H(curl)-(H1)ᵈ operators (Piola transformation u =
@@ -25,7 +25,7 @@ CEED_QFUNCTION(f_apply_hcurlh1d_22)(void *ctx, CeedInt Q, const CeedScalar *cons
   {
     const CeedScalar u_loc[2] = {u[i + Q * 0], u[i + Q * 1]};
     CeedScalar coeff[3], adjJt_loc[4], v_loc[2];
-    CoeffUnpack((const MatCoeffContext2 *)ctx, (CeedInt)attr[i], coeff);
+    CoeffUnpack2((const CeedIntScalar *)ctx, (CeedInt)attr[i], coeff);
     MatUnpack22(adjJt + i, Q, adjJt_loc);
     MultBAx22(adjJt_loc, coeff, u_loc, v_loc);
 
@@ -45,7 +45,7 @@ CEED_QFUNCTION(f_apply_hcurlh1d_33)(void *ctx, CeedInt Q, const CeedScalar *cons
   {
     const CeedScalar u_loc[3] = {u[i + Q * 0], u[i + Q * 1], u[i + Q * 2]};
     CeedScalar coeff[6], adjJt_loc[9], v_loc[3];
-    CoeffUnpack((const MatCoeffContext3 *)ctx, (CeedInt)attr[i], coeff);
+    CoeffUnpack3((const CeedIntScalar *)ctx, (CeedInt)attr[i], coeff);
     MatUnpack33(adjJt + i, Q, adjJt_loc);
     MultBAx33(adjJt_loc, coeff, u_loc, v_loc);
 
@@ -66,7 +66,7 @@ CEED_QFUNCTION(f_apply_hcurlh1d_21)(void *ctx, CeedInt Q, const CeedScalar *cons
   {
     const CeedScalar u_loc[1] = {u[i + Q * 0]};
     CeedScalar coeff[3], adjJt_loc[2], v_loc[1];
-    CoeffUnpack((const MatCoeffContext2 *)ctx, (CeedInt)attr[i], coeff);
+    CoeffUnpack2((const CeedIntScalar *)ctx, (CeedInt)attr[i], coeff);
     MatUnpack21(adjJt + i, Q, adjJt_loc);
     MultBAx21(adjJt_loc, coeff, u_loc, v_loc);
 
@@ -85,7 +85,7 @@ CEED_QFUNCTION(f_apply_hcurlh1d_32)(void *ctx, CeedInt Q, const CeedScalar *cons
   {
     const CeedScalar u_loc[2] = {u[i + Q * 0], u[i + Q * 1]};
     CeedScalar coeff[6], adjJt_loc[6], v_loc[2];
-    CoeffUnpack((const MatCoeffContext3 *)ctx, (CeedInt)attr[i], coeff);
+    CoeffUnpack3((const CeedIntScalar *)ctx, (CeedInt)attr[i], coeff);
     MatUnpack32(adjJt + i, Q, adjJt_loc);
     MultBAx32(adjJt_loc, coeff, u_loc, v_loc);
 

@@ -4,7 +4,7 @@
 #ifndef PALACE_LIBCEED_HCURL_MASS_QF_H
 #define PALACE_LIBCEED_HCURL_MASS_QF_H
 
-#include "types_qf.h"
+#include "coeff_qf.h"
 #include "utils_qf.h"
 
 // libCEED QFunctions for H(curl) + H1 mass operators (Piola transformation u =
@@ -20,14 +20,14 @@
 CEED_QFUNCTION(f_apply_hcurlmass_22)(void *ctx, CeedInt Q, const CeedScalar *const *in,
                                      CeedScalar *const *out)
 {
-  const MatCoeffPairContext21 *bc = (const MatCoeffPairContext21 *)ctx;
   const CeedScalar *wdetJ = in[0], *adjJt = in[1], *attr = in[2], *u = in[3],
                    *gradu = in[4];
   CeedScalar *v = out[0], *gradv = out[1];
 
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
-    const CeedScalar coeff = CoeffUnpack(&bc->second, (CeedInt)attr[i]);
+    const CeedScalar coeff =
+        CoeffUnpack1(CoeffPairSecond2((const CeedIntScalar *)ctx), (CeedInt)attr[i]);
 
     v[i] = coeff * wdetJ[i] * u[i];
   }
@@ -35,7 +35,7 @@ CEED_QFUNCTION(f_apply_hcurlmass_22)(void *ctx, CeedInt Q, const CeedScalar *con
   {
     const CeedScalar u_loc[2] = {gradu[i + Q * 0], gradu[i + Q * 1]};
     CeedScalar coeff[3], adjJt_loc[4], v_loc[2];
-    CoeffUnpack(&bc->first, (CeedInt)attr[i], coeff);
+    CoeffUnpack2((const CeedIntScalar *)ctx, (CeedInt)attr[i], coeff);
     MatUnpack22(adjJt + i, Q, adjJt_loc);
     MultAtBCx22(adjJt_loc, coeff, adjJt_loc, u_loc, v_loc);
 
@@ -48,14 +48,14 @@ CEED_QFUNCTION(f_apply_hcurlmass_22)(void *ctx, CeedInt Q, const CeedScalar *con
 CEED_QFUNCTION(f_apply_hcurlmass_33)(void *ctx, CeedInt Q, const CeedScalar *const *in,
                                      CeedScalar *const *out)
 {
-  const MatCoeffPairContext31 *bc = (const MatCoeffPairContext31 *)ctx;
   const CeedScalar *wdetJ = in[0], *adjJt = in[1], *attr = in[2], *u = in[3],
                    *gradu = in[4];
   CeedScalar *v = out[0], *gradv = out[1];
 
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
-    const CeedScalar coeff = CoeffUnpack(&bc->second, (CeedInt)attr[i]);
+    const CeedScalar coeff =
+        CoeffUnpack1(CoeffPairSecond3((const CeedIntScalar *)ctx), (CeedInt)attr[i]);
 
     v[i] = coeff * wdetJ[i] * u[i];
   }
@@ -63,7 +63,7 @@ CEED_QFUNCTION(f_apply_hcurlmass_33)(void *ctx, CeedInt Q, const CeedScalar *con
   {
     const CeedScalar u_loc[3] = {gradu[i + Q * 0], gradu[i + Q * 1], gradu[i + Q * 2]};
     CeedScalar coeff[6], adjJt_loc[9], v_loc[3];
-    CoeffUnpack(&bc->first, (CeedInt)attr[i], coeff);
+    CoeffUnpack3((const CeedIntScalar *)ctx, (CeedInt)attr[i], coeff);
     MatUnpack33(adjJt + i, Q, adjJt_loc);
     MultAtBCx33(adjJt_loc, coeff, adjJt_loc, u_loc, v_loc);
 
@@ -77,14 +77,14 @@ CEED_QFUNCTION(f_apply_hcurlmass_33)(void *ctx, CeedInt Q, const CeedScalar *con
 CEED_QFUNCTION(f_apply_hcurlmass_21)(void *ctx, CeedInt Q, const CeedScalar *const *in,
                                      CeedScalar *const *out)
 {
-  const MatCoeffPairContext21 *bc = (const MatCoeffPairContext21 *)ctx;
   const CeedScalar *wdetJ = in[0], *adjJt = in[1], *attr = in[2], *u = in[3],
                    *gradu = in[4];
   CeedScalar *v = out[0], *gradv = out[1];
 
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
-    const CeedScalar coeff = CoeffUnpack(&bc->second, (CeedInt)attr[i]);
+    const CeedScalar coeff =
+        CoeffUnpack1(CoeffPairSecond2((const CeedIntScalar *)ctx), (CeedInt)attr[i]);
 
     v[i] = coeff * wdetJ[i] * u[i];
   }
@@ -92,7 +92,7 @@ CEED_QFUNCTION(f_apply_hcurlmass_21)(void *ctx, CeedInt Q, const CeedScalar *con
   {
     const CeedScalar u_loc[1] = {gradu[i + Q * 0]};
     CeedScalar coeff[3], adjJt_loc[2], v_loc[2];
-    CoeffUnpack(&bc->first, (CeedInt)attr[i], coeff);
+    CoeffUnpack2((const CeedIntScalar *)ctx, (CeedInt)attr[i], coeff);
     MatUnpack21(adjJt + i, Q, adjJt_loc);
     MultAtBCx21(adjJt_loc, coeff, adjJt_loc, u_loc, v_loc);
 
@@ -104,14 +104,14 @@ CEED_QFUNCTION(f_apply_hcurlmass_21)(void *ctx, CeedInt Q, const CeedScalar *con
 CEED_QFUNCTION(f_apply_hcurlmass_32)(void *ctx, CeedInt Q, const CeedScalar *const *in,
                                      CeedScalar *const *out)
 {
-  const MatCoeffPairContext31 *bc = (const MatCoeffPairContext31 *)ctx;
   const CeedScalar *wdetJ = in[0], *adjJt = in[1], *attr = in[2], *u = in[3],
                    *gradu = in[4];
   CeedScalar *v = out[0], *gradv = out[1];
 
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
-    const CeedScalar coeff = CoeffUnpack(&bc->second, (CeedInt)attr[i]);
+    const CeedScalar coeff =
+        CoeffUnpack1(CoeffPairSecond3((const CeedIntScalar *)ctx), (CeedInt)attr[i]);
 
     v[i] = coeff * wdetJ[i] * u[i];
   }
@@ -119,7 +119,7 @@ CEED_QFUNCTION(f_apply_hcurlmass_32)(void *ctx, CeedInt Q, const CeedScalar *con
   {
     const CeedScalar u_loc[2] = {gradu[i + Q * 0], gradu[i + Q * 1]};
     CeedScalar coeff[6], adjJt_loc[6], v_loc[3];
-    CoeffUnpack(&bc->first, (CeedInt)attr[i], coeff);
+    CoeffUnpack3((const CeedIntScalar *)ctx, (CeedInt)attr[i], coeff);
     MatUnpack32(adjJt + i, Q, adjJt_loc);
     MultAtBCx32(adjJt_loc, coeff, adjJt_loc, u_loc, v_loc);
 
