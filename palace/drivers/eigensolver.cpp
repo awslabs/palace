@@ -268,7 +268,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) cons
   // Calculate and record the error indicators.
   Mpi::Print("Computing solution error estimates\n\n");
   CurlFluxErrorEstimator<ComplexVector> estimator(
-      spaceop.GetMaterialOp(), spaceop.GetNDSpaces(), iodata.solver.linear.estimator_tol,
+      spaceop.GetMaterialOp(), spaceop.GetNDSpace(), iodata.solver.linear.estimator_tol,
       iodata.solver.linear.estimator_max_it, 0);
   ErrorIndicator indicator;
   for (int i = 0; i < iodata.solver.eigenmode.n; i++)

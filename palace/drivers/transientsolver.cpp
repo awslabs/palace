@@ -78,7 +78,7 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) 
   Mpi::Print("\n");
 
   // Initialize structures for storing and reducing the results of error estimation.
-  CurlFluxErrorEstimator<Vector> estimator(spaceop.GetMaterialOp(), spaceop.GetNDSpaces(),
+  CurlFluxErrorEstimator<Vector> estimator(spaceop.GetMaterialOp(), spaceop.GetNDSpace(),
                                            iodata.solver.linear.estimator_tol,
                                            iodata.solver.linear.estimator_max_it, 0);
   ErrorIndicator indicator;
