@@ -1,8 +1,8 @@
 diff --git a/.gitignore b/.gitignore
-index 030672a06..8cc9a33f7 100644
+index 739c62d06..6a16c0d9d 100644
 --- a/.gitignore
 +++ b/.gitignore
-@@ -227,7 +227,7 @@ miniapps/meshing/mobius-strip.mesh
+@@ -234,7 +234,7 @@ miniapps/meshing/mobius-strip.mesh
  miniapps/meshing/klein-bottle.mesh
  miniapps/meshing/toroid-*.mesh
  miniapps/meshing/twist-*.mesh
@@ -319,7 +319,7 @@ index 000000000..9b17ae982
 +   return 0;
 +}
 diff --git a/fem/pfespace.cpp b/fem/pfespace.cpp
-index 76ac230a1..8761e1489 100644
+index ed6fb5387..74ef3f3b9 100644
 --- a/fem/pfespace.cpp
 +++ b/fem/pfespace.cpp
 @@ -716,13 +716,10 @@ void ParFiniteElementSpace::CheckNDSTriaDofs()
@@ -404,7 +404,7 @@ index 2ed9f4a1b..96373b2d1 100644
  
  ///  C = A * B  (as boolean matrices)
 diff --git a/mesh/mesh.cpp b/mesh/mesh.cpp
-index a8ec98649..5f82de812 100644
+index 506483992..673765dce 100644
 --- a/mesh/mesh.cpp
 +++ b/mesh/mesh.cpp
 @@ -19,6 +19,7 @@
@@ -415,15 +415,15 @@ index a8ec98649..5f82de812 100644
  #include "../fem/quadinterpolator.hpp"
  
  #include <iostream>
-@@ -31,6 +32,7 @@
- #include <functional>
+@@ -32,6 +33,7 @@
  #include <map>
  #include <set>
+ #include <array>
 +#include <unordered_set>
  
  // Include the METIS header, if using version 5. If using METIS 4, the needed
  // declarations are inlined below, i.e. no header is needed.
-@@ -1290,7 +1292,7 @@ Mesh::FaceInformation::operator Mesh::FaceInfo() const
+@@ -1291,7 +1293,7 @@ Mesh::FaceInformation::operator Mesh::FaceInfo() const
     return res;
  }
  
@@ -432,7 +432,7 @@ index a8ec98649..5f82de812 100644
  {
     os << "face topology=";
     switch (info.topology)
-@@ -2989,7 +2991,7 @@ void Mesh::FinalizeTopology(bool generate_bdr)
+@@ -3150,7 +3152,7 @@ void Mesh::FinalizeTopology(bool generate_bdr)
     {
        GetElementToFaceTable();
        GenerateFaces();
@@ -441,7 +441,7 @@ index a8ec98649..5f82de812 100644
        {
           GenerateBoundaryElements();
           GetElementToFaceTable(); // update be_to_face
-@@ -3009,7 +3011,7 @@ void Mesh::FinalizeTopology(bool generate_bdr)
+@@ -3170,7 +3172,7 @@ void Mesh::FinalizeTopology(bool generate_bdr)
        if (Dim == 2)
        {
           GenerateFaces(); // 'Faces' in 2D refers to the edges
@@ -450,7 +450,7 @@ index a8ec98649..5f82de812 100644
           {
              GenerateBoundaryElements();
           }
-@@ -3023,7 +3025,7 @@ void Mesh::FinalizeTopology(bool generate_bdr)
+@@ -3184,7 +3186,7 @@ void Mesh::FinalizeTopology(bool generate_bdr)
     if (Dim == 1)
     {
        GenerateFaces();
@@ -459,7 +459,7 @@ index a8ec98649..5f82de812 100644
        {
           // be_to_face will be set inside GenerateBoundaryElements
           GenerateBoundaryElements();
-@@ -5643,6 +5645,12 @@ const FiniteElementSpace *Mesh::GetNodalFESpace() const
+@@ -6095,6 +6097,12 @@ const FiniteElementSpace *Mesh::GetNodalFESpace() const
  
  void Mesh::SetCurvature(int order, bool discont, int space_dim, int ordering)
  {
@@ -472,7 +472,7 @@ index a8ec98649..5f82de812 100644
     space_dim = (space_dim == -1) ? spaceDim : space_dim;
     FiniteElementCollection* nfec;
     if (discont)
-@@ -10685,7 +10693,7 @@ void Mesh::Printer(std::ostream &os, std::string section_delimiter) const
+@@ -11137,7 +11145,7 @@ void Mesh::Printer(std::ostream &os, std::string section_delimiter) const
     }
  }
  
@@ -481,7 +481,7 @@ index a8ec98649..5f82de812 100644
  {
     int i;
     Array<int> vert;
-@@ -12556,6 +12564,878 @@ void Mesh::GetGeometricParametersFromJacobian(const DenseMatrix &J,
+@@ -13008,6 +13016,878 @@ void Mesh::GetGeometricParametersFromJacobian(const DenseMatrix &J,
  }
  
  
@@ -1361,18 +1361,18 @@ index a8ec98649..5f82de812 100644
                                     int flags, MemoryType d_mt)
  {
 diff --git a/mesh/mesh.hpp b/mesh/mesh.hpp
-index b9c5538c3..a6957720a 100644
+index 97d3e76bb..1be7e372e 100644
 --- a/mesh/mesh.hpp
 +++ b/mesh/mesh.hpp
-@@ -27,6 +27,7 @@
- #include "../general/adios2stream.hpp"
+@@ -28,6 +28,7 @@
  #endif
  #include <iostream>
+ #include <array>
 +#include <memory>
  
  namespace mfem
  {
-@@ -72,8 +73,10 @@ protected:
+@@ -73,8 +74,10 @@ protected:
         visualization purpose in GLVis. */
     mutable int nbInteriorFaces, nbBoundaryFaces;
  
@@ -1385,7 +1385,7 @@ index b9c5538c3..a6957720a 100644
  
     // Counter for Mesh transformations: refinement, derefinement, rebalancing.
     // Used for checking during Update operations on objects depending on the
-@@ -295,11 +298,11 @@ protected:
+@@ -296,11 +299,11 @@ protected:
     void Destroy();         // Delete all owned data.
     void ResetLazyData();
  
@@ -1401,7 +1401,7 @@ index b9c5538c3..a6957720a 100644
  
     // Readers for different mesh formats, used in the Load() method.
     // The implementations of these methods are in mesh_readers.cpp.
-@@ -456,7 +459,7 @@ protected:
+@@ -430,7 +433,7 @@ protected:
  
     void UpdateNURBS();
  
@@ -1410,7 +1410,7 @@ index b9c5538c3..a6957720a 100644
  
     /// Used in GetFaceElementTransformations (...)
     void GetLocalPtToSegTransformation(IsoparametricTransformation &, int);
-@@ -565,7 +568,7 @@ protected:
+@@ -539,7 +542,7 @@ protected:
     // If NURBS mesh, write NURBS format. If NCMesh, write mfem v1.1 format.
     // If section_delimiter is empty, write mfem v1.0 format. Otherwise, write
     // mfem v1.2 format with the given section_delimiter at the end.
@@ -1418,8 +1418,8 @@ index b9c5538c3..a6957720a 100644
 +   void Printer(std::ostream &os = mfem::out,
                  std::string section_delimiter = "") const;
  
-    /** Creates mesh for the parallelepiped [0,sx]x[0,sy]x[0,sz], divided into
-@@ -859,7 +862,7 @@ public:
+    /// @brief Creates a mesh for the parallelepiped [0,sx]x[0,sy]x[0,sz],
+@@ -949,7 +952,7 @@ public:
  
     int AddBdrPoint(int v, int attr = 1);
  
@@ -1428,7 +1428,7 @@ index b9c5538c3..a6957720a 100644
     /// Finalize the construction of a triangular Mesh.
     void FinalizeTriMesh(int generate_edges = 0, int refine = 0,
                          bool fix_orientation = true);
-@@ -2101,7 +2104,7 @@ public:
+@@ -2191,7 +2194,7 @@ public:
                                 std::ostream &os, int elem_attr = 0) const;
  
     void PrintElementsWithPartitioning (int *partitioning,
@@ -1437,7 +1437,7 @@ index b9c5538c3..a6957720a 100644
                                         int interior_faces = 0);
  
     /// Print set of disjoint surfaces:
-@@ -2109,13 +2112,13 @@ public:
+@@ -2199,13 +2202,13 @@ public:
      * If Aface_face(i,j) != 0, print face j as a boundary
      * element with attribute i+1.
      */
@@ -1453,7 +1453,7 @@ index b9c5538c3..a6957720a 100644
  
     /** @brief Compute and print mesh characteristics such as number of vertices,
         number of elements, number of boundary elements, minimal and maximal
-@@ -2135,7 +2138,7 @@ public:
+@@ -2225,7 +2228,7 @@ public:
  
  #ifdef MFEM_DEBUG
     /// Output an NCMesh-compatible debug dump.
@@ -1462,7 +1462,7 @@ index b9c5538c3..a6957720a 100644
  #endif
  
     /// @}
-@@ -2214,9 +2217,194 @@ public:
+@@ -2304,9 +2307,194 @@ public:
     /// @}
  };
  
@@ -1660,7 +1660,7 @@ index b9c5538c3..a6957720a 100644
  
  
  /** @brief Structure for storing mesh geometric factors: coordinates, Jacobians,
-@@ -2225,7 +2413,6 @@ std::ostream &operator<<(std::ostream &out, const Mesh &mesh);
+@@ -2315,7 +2503,6 @@ std::ostream &operator<<(std::ostream &out, const Mesh &mesh);
      Mesh. See Mesh::GetGeometricFactors(). */
  class GeometricFactors
  {
@@ -1668,7 +1668,7 @@ index b9c5538c3..a6957720a 100644
  private:
     void Compute(const GridFunction &nodes,
                  MemoryType d_mt = MemoryType::DEFAULT);
-@@ -2273,6 +2460,7 @@ public:
+@@ -2363,6 +2550,7 @@ public:
     Vector detJ;
  };
  
@@ -1676,7 +1676,7 @@ index b9c5538c3..a6957720a 100644
  /** @brief Structure for storing face geometric factors: coordinates, Jacobians,
      determinants of the Jacobians, and normal vectors. */
  /** Typically objects of this type are constructed and owned by objects of class
-@@ -2327,6 +2515,7 @@ public:
+@@ -2417,6 +2605,7 @@ public:
     Vector normal;
  };
  
@@ -1684,7 +1684,7 @@ index b9c5538c3..a6957720a 100644
  /// Class used to extrude the nodes of a mesh
  class NodeExtrudeCoefficient : public VectorCoefficient
  {
-@@ -2358,8 +2547,12 @@ inline void ShiftRight(int &a, int &b, int &c)
+@@ -2448,8 +2637,12 @@ inline void ShiftRight(int &a, int &b, int &c)
     a = c;  c = b;  b = t;
  }
  
@@ -1699,7 +1699,7 @@ index b9c5538c3..a6957720a 100644
  }
  
 diff --git a/mesh/pmesh.cpp b/mesh/pmesh.cpp
-index 26e2f4655..47a091c04 100644
+index 72bc3b98a..c43e2ea53 100644
 --- a/mesh/pmesh.cpp
 +++ b/mesh/pmesh.cpp
 @@ -250,6 +250,8 @@ ParMesh::ParMesh(MPI_Comm comm, Mesh &mesh, int *partitioning_,
@@ -1728,7 +1728,7 @@ index 26e2f4655..47a091c04 100644
     {
        {
 diff --git a/mesh/pmesh.hpp b/mesh/pmesh.hpp
-index 06f09dc0c..b6682defe 100644
+index c2ab84434..a256e6ad5 100644
 --- a/mesh/pmesh.hpp
 +++ b/mesh/pmesh.hpp
 @@ -108,6 +108,8 @@ protected:

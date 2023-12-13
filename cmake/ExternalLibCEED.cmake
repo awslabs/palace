@@ -122,7 +122,6 @@ message(STATUS "LIBCEED_OPTIONS: ${LIBCEED_OPTIONS_PRINT}")
 # Add OpenMP support to libCEED
 set(LIBCEED_PATCH_FILES
   "${CMAKE_SOURCE_DIR}/extern/patch/libCEED/patch_gpu_restriction_dev.diff"
-  "${CMAKE_SOURCE_DIR}/extern/patch/libCEED/patch_hcurl_hdiv_basis_cuda_hip.diff"
 )
 
 include(ExternalProject)
