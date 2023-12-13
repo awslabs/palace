@@ -240,9 +240,10 @@ inline void ApplyPlaneRotation(std::complex<T> &dx, std::complex<T> &dy, const T
 }
 
 template <typename OperType, typename VecType>
-inline void ApplyB(const Solver<OperType> *B, const VecType &x, VecType &y)
+inline void ApplyB(const Solver<OperType> *B, const VecType &x, VecType &y,
+                   bool use_timer = true)
 {
-  BlockTimer bt(Timer::PRECONDITIONER);
+  BlockTimer bt(Timer::PRECONDITIONER, use_timer);
   MFEM_ASSERT(B, "Missing preconditioner in ApplyB!");
   B->Mult(x, y);
 }
@@ -250,7 +251,7 @@ inline void ApplyB(const Solver<OperType> *B, const VecType &x, VecType &y)
 template <typename PrecSide, typename OperType, typename VecType>
 inline void InitialResidual(PrecSide side, const OperType *A, const Solver<OperType> *B,
                             const VecType &b, VecType &x, VecType &r, VecType &z,
-                            bool initial_guess)
+                            bool initial_guess, bool use_timer = true)
 {
   if (B && side == GmresSolver<OperType>::PrecSide::LEFT)
   {
@@ -258,11 +259,11 @@ inline void InitialResidual(PrecSide side, const OperType *A, const Solver<OperT
     {
       A->Mult(x, z);
       linalg::AXPBY(1.0, b, -1.0, z);
-      ApplyB(B, z, r);
+      ApplyB(B, z, r, use_timer);
     }
     else
     {
-      ApplyB(B, b, r);
+      ApplyB(B, b, r, use_timer);
       x = 0.0;
     }
   }
@@ -283,16 +284,16 @@ inline void InitialResidual(PrecSide side, const OperType *A, const Solver<OperT
 
 template <typename PrecSide, typename OperType, typename VecType>
 inline void ApplyBA(PrecSide side, const OperType *A, const Solver<OperType> *B,
-                    const VecType &x, VecType &y, VecType &z)
+                    const VecType &x, VecType &y, VecType &z, bool use_timer = true)
 {
   if (B && side == GmresSolver<OperType>::PrecSide::LEFT)
   {
     A->Mult(x, z);
-    ApplyB(B, z, y);
+    ApplyB(B, z, y, use_timer);
   }
   else if (B && side == GmresSolver<OperType>::PrecSide::RIGHT)
   {
-    ApplyB(B, x, z);
+    ApplyB(B, x, z, use_timer);
     A->Mult(z, y);
   }
   else
@@ -353,6 +354,8 @@ IterativeSolver<OperType>::IterativeSolver(MPI_Comm comm, int print)
   initial_res = 1.0;
   final_res = 0.0;
   final_it = 0;
+
+  use_timer = false;
 }
 
 template <typename OperType>
@@ -381,7 +384,7 @@ void CgSolver<OperType>::Mult(const VecType &b, VecType &x) const
   }
   if (B)
   {
-    ApplyB(B, r, z);
+    ApplyB(B, r, z, this->use_timer);
   }
   else
   {
@@ -392,7 +395,7 @@ void CgSolver<OperType>::Mult(const VecType &b, VecType &x) const
   res = std::sqrt(std::abs(beta));
   if (this->initial_guess && B)
   {
-    ApplyB(B, b, p);
+    ApplyB(B, b, p, this->use_timer);
     auto beta_rhs = linalg::Dot(comm, p, b);
     CheckDot(beta_rhs, "PCG preconditioner is not positive definite: (Bb, b) = ");
     initial_res = std::sqrt(std::abs(beta_rhs));
@@ -438,7 +441,7 @@ void CgSolver<OperType>::Mult(const VecType &b, VecType &x) const
     beta_prev = beta;
     if (B)
     {
-      ApplyB(B, r, z);
+      ApplyB(B, r, z, this->use_timer);
     }
     else
     {
@@ -532,7 +535,8 @@ void GmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
   for (; it < max_it; restart++)
   {
     // Initialize.
-    InitialResidual(pc_side, A, B, b, x, r, V[0], (this->initial_guess || restart > 0));
+    InitialResidual(pc_side, A, B, b, x, r, V[0], (this->initial_guess || restart > 0),
+                    this->use_timer);
     true_beta = linalg::Norml2(comm, r);
     CheckDot(true_beta, "GMRES residual norm is not valid: beta = ");
     if (it == 0)
@@ -542,7 +546,7 @@ void GmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
         RealType beta_rhs;
         if (B && pc_side == PrecSide::LEFT)
         {
-          ApplyB(B, b, V[0]);
+          ApplyB(B, b, V[0], this->use_timer);
           beta_rhs = linalg::Norml2(comm, V[0]);
         }
         else  // !B || pc_side == PrecSide::RIGHT
@@ -592,7 +596,7 @@ void GmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
       {
         Update(j);
       }
-      ApplyBA(pc_side, A, B, V[j], w, r);
+      ApplyBA(pc_side, A, B, V[j], w, r, this->use_timer);
 
       ScalarType *Hj = H.data() + j * (max_dim + 1);
       OrthogonalizeIteration(orthog_type, comm, V, w, Hj, j);
@@ -641,7 +645,7 @@ void GmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
       {
         r.Add(s[k], V[k]);
       }
-      ApplyB(B, r, V[0]);
+      ApplyB(B, r, V[0], this->use_timer);
       x += V[0];
     }
     if (converged)
@@ -718,7 +722,7 @@ void FgmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
   {
     // Initialize.
     InitialResidual(PrecSide::RIGHT, A, B, b, x, Z[0], V[0],
-                    (this->initial_guess || restart > 0));
+                    (this->initial_guess || restart > 0), this->use_timer);
     true_beta = linalg::Norml2(comm, Z[0]);
     CheckDot(true_beta, "FGMRES residual norm is not valid: beta = ");
     if (it == 0)
@@ -769,7 +773,7 @@ void FgmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
       {
         Update(j);
       }
-      ApplyBA(PrecSide::RIGHT, A, B, V[j], w, Z[j]);
+      ApplyBA(PrecSide::RIGHT, A, B, V[j], w, Z[j], this->use_timer);
 
       ScalarType *Hj = H.data() + j * (max_dim + 1);
       OrthogonalizeIteration(orthog_type, comm, V, w, Hj, j);

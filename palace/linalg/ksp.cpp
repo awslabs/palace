@@ -102,6 +102,9 @@ std::unique_ptr<IterativeSolver<OperType>> ConfigureKrylovSolver(MPI_Comm comm,
     }
   }
 
+  // Configure timing for the primary linear solver.
+  ksp->EnableTimer();
+
   return ksp;
 }
 
@@ -184,19 +187,24 @@ ConfigurePreconditionerSolver(MPI_Comm comm, const IoData &iodata,
     // (ownership of pc is transferred to the GeometricMultigridSolver). When a special
     // auxiliary space smoother for pre-/post-smoothing is not desired, the auxiliary
     // space is a nullptr here.
-    if (iodata.solver.linear.mg_smooth_aux)
+    auto gmg = [&]()
     {
-      MFEM_VERIFY(aux_fespaces, "Multigrid with auxiliary space smoothers requires both "
-                                "primary space and auxiliary spaces for construction!");
-      const auto G = aux_fespaces->GetDiscreteInterpolators();
-      return std::make_unique<GeometricMultigridSolver<OperType>>(
-          iodata, std::move(pc), fespaces.GetProlongationOperators(), &G);
-    }
-    else
-    {
-      return std::make_unique<GeometricMultigridSolver<OperType>>(
-          iodata, std::move(pc), fespaces.GetProlongationOperators());
-    }
+      if (iodata.solver.linear.mg_smooth_aux)
+      {
+        MFEM_VERIFY(aux_fespaces, "Multigrid with auxiliary space smoothers requires both "
+                                  "primary space and auxiliary spaces for construction!");
+        const auto G = aux_fespaces->GetDiscreteInterpolators();
+        return std::make_unique<GeometricMultigridSolver<OperType>>(
+            iodata, std::move(pc), fespaces.GetProlongationOperators(), &G);
+      }
+      else
+      {
+        return std::make_unique<GeometricMultigridSolver<OperType>>(
+            iodata, std::move(pc), fespaces.GetProlongationOperators());
+      }
+    }();
+    gmg->EnableTimer();  // Enable timing for primary geometric multigrid solver
+    return gmg;
   }
   else
   {
