@@ -115,8 +115,7 @@ std::map<int, mfem::Array<int>> ConstructSources(const IoData &iodata)
 
 LaplaceOperator::LaplaceOperator(const IoData &iodata,
                                  const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh)
-  : pa_order_threshold(iodata.solver.pa_order_threshold), skip_zeros(false),
-    print_hdr(true), dbc_marker(SetUpBoundaryProperties(iodata, *mesh.back())),
+  : print_hdr(true), dbc_marker(SetUpBoundaryProperties(iodata, *mesh.back())),
     h1_fecs(fem::ConstructFECollections<mfem::H1_FECollection>(
         iodata.solver.order, mesh.back()->Dimension(), iodata.solver.linear.mg_max_levels,
         iodata.solver.linear.mg_coarsen_type, false)),
@@ -127,6 +126,12 @@ LaplaceOperator::LaplaceOperator(const IoData &iodata,
     nd_fespace(h1_fespaces.GetFinestFESpace(), mesh.back().get(), nd_fec.get()),
     mat_op(iodata, *mesh.back()), source_attr_lists(ConstructSources(iodata))
 {
+  // Finalize setup.
+  BilinearForm::pa_order_threshold = iodata.solver.pa_order_threshold;
+  fem::DefaultIntegrationOrder::q_order_jac = iodata.solver.q_order_jac;
+  fem::DefaultIntegrationOrder::q_order_extra_pk = iodata.solver.q_order_extra;
+  fem::DefaultIntegrationOrder::q_order_extra_qk = iodata.solver.q_order_extra;
+
   // Print essential BC information.
   if (dbc_marker.Size() && dbc_marker.Max() > 0)
   {
@@ -135,16 +140,47 @@ LaplaceOperator::LaplaceOperator(const IoData &iodata,
   }
 }
 
-std::unique_ptr<Operator> LaplaceOperator::GetStiffnessMatrix()
+namespace
+{
+
+void PrintHeader(const FiniteElementSpace &h1_fespace, const FiniteElementSpace &nd_fespace,
+                 bool &print_hdr)
 {
   if (print_hdr)
   {
     Mpi::Print("\nAssembling system matrices, number of global unknowns:\n"
-               " H1: {:d}, ND: {:d}\n Operator assembly level: {}\n",
-               GetH1Space().GlobalTrueVSize(), GetNDSpace().GlobalTrueVSize(),
-               GetH1Space().GetMaxElementOrder() > pa_order_threshold ? "Partial" : "Full");
+               " H1 (p = {:d}): {:d}, ND (p = {:d}): {:d}\n Operator "
+               "assembly level: {}\n",
+               h1_fespace.GetMaxElementOrder(), h1_fespace.GlobalTrueVSize(),
+               nd_fespace.GetMaxElementOrder(), nd_fespace.GlobalTrueVSize(),
+               nd_fespace.GetMaxElementOrder() > BilinearForm::pa_order_threshold
+                   ? "Partial"
+                   : "Full");
+
+    // Every process is guaranteed to have at least one element, and assumes no variable
+    // order spaces are used.
+    mfem::ParMesh &mesh = *h1_fespace.GetParMesh();
+    const int q_order = fem::DefaultIntegrationOrder::Get(
+        *h1_fespace.GetFE(0), *h1_fespace.GetFE(0), *mesh.GetElementTransformation(0));
+    Mpi::Print(" Default integration order: {:d}\n Mesh geometries:\n", q_order);
+    for (auto geom : mesh::CheckElements(mesh).GetGeomTypes())
+    {
+      const auto *fe = h1_fespace.FEColl()->FiniteElementForGeometry(geom);
+      MFEM_VERIFY(fe, "MFEM does not support H1 spaces on geometry = "
+                          << mfem::Geometry::Name[geom] << "!");
+      Mpi::Print("  {}: P = {:d}, Q = {:d}\n", mfem::Geometry::Name[geom], fe->GetDof(),
+                 mfem::IntRules.Get(geom, q_order).GetNPoints());
+    }
+
     Mpi::Print("\nAssembling multigrid hierarchy:\n");
   }
+}
+
+}  // namespace
+
+std::unique_ptr<Operator> LaplaceOperator::GetStiffnessMatrix()
+{
+  PrintHeader(GetH1Space(), GetNDSpace(), print_hdr);
   auto K = std::make_unique<MultigridOperator>(GetH1Spaces().GetNumLevels());
   for (std::size_t l = 0; l < GetH1Spaces().GetNumLevels(); l++)
   {
@@ -155,12 +191,13 @@ std::unique_ptr<Operator> LaplaceOperator::GetStiffnessMatrix()
       Mpi::Print(" Level {:d} (p = {:d}): {:d} unknowns", l,
                  h1_fespace_l.GetMaxElementOrder(), h1_fespace_l.GlobalTrueVSize());
     }
+    constexpr bool skip_zeros = false;
     constexpr auto MatType = MaterialPropertyType::PERMITTIVITY_REAL;
     MaterialPropertyCoefficient<MatType> epsilon_func(mat_op);
     BilinearForm k(h1_fespace_l);
     k.AddDomainIntegrator<DiffusionIntegrator>(epsilon_func);
     auto K_l = std::make_unique<ParOperator>(
-        k.Assemble((l > 0) ? pa_order_threshold : 99, skip_zeros), h1_fespace_l);
+        (l > 0) ? k.Assemble(skip_zeros) : k.FullAssemble(skip_zeros), h1_fespace_l);
     if (print_hdr)
     {
       if (const auto *k_spm =

@@ -74,7 +74,7 @@ GetElementIndices(const mfem::ParFiniteElementSpace &trial_fespace,
 
 }  // namespace
 
-std::unique_ptr<ceed::Operator> BilinearForm::Assemble() const
+std::unique_ptr<ceed::Operator> BilinearForm::PartialAssemble() const
 {
   MFEM_VERIFY(trial_fespace.GetParMesh() == test_fespace.GetParMesh(),
               "Trial and test finite element spaces must correspond to the same mesh!");
@@ -145,8 +145,8 @@ std::unique_ptr<ceed::Operator> BilinearForm::Assemble() const
       for (const auto &value : element_indices)
       {
         const std::vector<int> &indices = value.second;
-        const int q_order = fem::GetDefaultIntegrationOrder(
-            trial_fespace, test_fespace, indices, use_bdr, q_extra_pk, q_extra_qk);
+        const int q_order = fem::DefaultIntegrationOrder::Get(trial_fespace, test_fespace,
+                                                              indices, use_bdr);
         const mfem::IntegrationRule &ir =
             mfem::IntRules.Get(mesh.GetElementGeometry(indices[0]), q_order);
 
@@ -182,8 +182,8 @@ std::unique_ptr<ceed::Operator> BilinearForm::Assemble() const
       for (const auto &value : element_indices)
       {
         const std::vector<int> &indices = value.second;
-        const int q_order = fem::GetDefaultIntegrationOrder(
-            trial_fespace, test_fespace, indices, use_bdr, q_extra_pk, q_extra_qk);
+        const int q_order = fem::DefaultIntegrationOrder::Get(trial_fespace, test_fespace,
+                                                              indices, use_bdr);
         const mfem::IntegrationRule &ir =
             mfem::IntRules.Get(mesh.GetBdrElementGeometry(indices[0]), q_order);
 
@@ -218,7 +218,7 @@ std::unique_ptr<mfem::SparseMatrix> BilinearForm::FullAssemble(const ceed::Opera
   return ceed::CeedOperatorFullAssemble(op, skip_zeros, false);
 }
 
-std::unique_ptr<ceed::Operator> DiscreteLinearOperator::Assemble() const
+std::unique_ptr<ceed::Operator> DiscreteLinearOperator::PartialAssemble() const
 {
   // Construct dof multiplicity vector for scaling to account for dofs shared between
   // elements (on host, then copy to device).
@@ -239,7 +239,7 @@ std::unique_ptr<ceed::Operator> DiscreteLinearOperator::Assemble() const
   test_multiplicity.UseDevice(true);
   test_multiplicity.Reciprocal();
 
-  auto op = a.Assemble();
+  auto op = a.PartialAssemble();
   op->SetDofMultiplicity(std::move(test_multiplicity));
   return op;
 }

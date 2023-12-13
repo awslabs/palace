@@ -24,9 +24,6 @@ class IoData;
 class CurlCurlOperator
 {
 private:
-  const int pa_order_threshold;  // Order above which to use partial assembly vs. full
-  const bool skip_zeros;         // Skip zeros during full assembly of matrices
-
   // Helper variable for log file printing.
   bool print_hdr;
 

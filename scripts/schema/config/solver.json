@@ -8,6 +8,8 @@
   {
     "Order": { "type": "integer", "minimum": 1 },
     "PartialAssemblyOrder": { "type": "integer", "minimum": 1 },
+    "QuadratureOrderJacobian": { "type": "boolean" },
+    "QuadratureOrderExtra": { "type": "integer" },
     "Device": { "type": "string", "enum": ["CPU", "GPU", "Debug"] },
     "Backend": { "type": "string" },
     "Eigenmode":

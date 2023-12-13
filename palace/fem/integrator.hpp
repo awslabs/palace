@@ -22,47 +22,20 @@ namespace fem
 {
 
 // Helper functions for creating an integration rule to exactly integrate polynomials of
-// order 2p + w + q_extra.
-inline int GetDefaultIntegrationOrder(const mfem::FiniteElement &trial_fe,
-                                      const mfem::FiniteElement &test_fe,
-                                      const mfem::ElementTransformation &T, int q_extra_pk,
-                                      int q_extra_qk)
+// order p_test + p_trial + order(|J|) + q_extra.
+struct DefaultIntegrationOrder
 {
-  return trial_fe.GetOrder() + test_fe.GetOrder() + T.OrderW() +
-         (trial_fe.Space() == mfem::FunctionSpace::Pk ? q_extra_pk : q_extra_qk);
-}
+  inline static bool q_order_jac = true;
+  inline static int q_order_extra_pk = 0;
+  inline static int q_order_extra_qk = 0;
 
-inline int GetDefaultIntegrationOrder(const mfem::FiniteElement &trial_fe,
-                                      const mfem::FiniteElement &test_fe,
-                                      const mfem::ElementTransformation &T, int q_extra = 0)
-{
-  return GetDefaultIntegrationOrder(trial_fe, test_fe, T, q_extra, q_extra);
-}
+  static int Get(const mfem::FiniteElement &trial_fe, const mfem::FiniteElement &test_fe,
+                 const mfem::ElementTransformation &T);
 
-inline int GetDefaultIntegrationOrder(const mfem::ParFiniteElementSpace &trial_fespace,
-                                      const mfem::ParFiniteElementSpace &test_fespace,
-                                      const std::vector<int> &indices, bool use_bdr,
-                                      int q_extra_pk = 0, int q_extra_qk = 0)
-{
-  // Every process is guaranteed to have at least one element, and assumes no variable order
-  // spaces are used.
-  mfem::ParMesh &mesh = *trial_fespace.GetParMesh();
-  mfem::IsoparametricTransformation T;
-  if (use_bdr)
-  {
-    const mfem::FiniteElement &trial_fe = *trial_fespace.GetBE(indices[0]);
-    const mfem::FiniteElement &test_fe = *test_fespace.GetBE(indices[0]);
-    mesh.GetBdrElementTransformation(indices[0], &T);
-    return GetDefaultIntegrationOrder(trial_fe, test_fe, T, q_extra_pk, q_extra_qk);
-  }
-  else
-  {
-    const mfem::FiniteElement &trial_fe = *trial_fespace.GetFE(indices[0]);
-    const mfem::FiniteElement &test_fe = *test_fespace.GetFE(indices[0]);
-    mesh.GetElementTransformation(indices[0], &T);
-    return GetDefaultIntegrationOrder(trial_fe, test_fe, T, q_extra_pk, q_extra_qk);
-  }
-}
+  static int Get(const mfem::ParFiniteElementSpace &trial_fespace,
+                 const mfem::ParFiniteElementSpace &test_fespace,
+                 const std::vector<int> &indices, bool use_bdr);
+};
 
 }  // namespace fem
 
@@ -511,36 +484,31 @@ using DivergenceInterpolator = DiscreteInterpolator;
 
 // Similar to MFEM's VectorFEBoundaryTangentLFIntegrator for ND spaces, but instead of
 // computing (n x f, v), this just computes (f, v). Also eliminates the a and b quadrature
-// parameters and uses fem::GetDefaultIntegrationOrder instead.
+// parameters and uses fem::DefaultIntegrationOrder instead.
 class VectorFEBoundaryLFIntegrator : public mfem::LinearFormIntegrator
 {
 private:
   mfem::VectorCoefficient &Q;
   mfem::DenseMatrix vshape;
   mfem::Vector f_loc, f_hat;
-  int q_extra;
 
 public:
-  VectorFEBoundaryLFIntegrator(mfem::VectorCoefficient &QG, int q_extra = 0)
-    : Q(QG), q_extra(q_extra)
-  {
-  }
+  VectorFEBoundaryLFIntegrator(mfem::VectorCoefficient &QG) : Q(QG) {}
 
   void AssembleRHSElementVect(const mfem::FiniteElement &fe, mfem::ElementTransformation &T,
                               mfem::Vector &elvect) override;
 };
 
 // Similar to MFEM's BoundaryLFIntegrator for H1 spaces, but eliminates the a and b
-// quadrature parameters and uses fem::GetDefaultIntegrationOrder instead.
+// quadrature parameters and uses fem::DefaultIntegrationOrder instead.
 class BoundaryLFIntegrator : public mfem::LinearFormIntegrator
 {
 private:
   mfem::Coefficient &Q;
   mfem::Vector shape;
-  int q_extra;
 
 public:
-  BoundaryLFIntegrator(mfem::Coefficient &QG, int q_extra = 0) : Q(QG), q_extra(q_extra) {}
+  BoundaryLFIntegrator(mfem::Coefficient &QG) : Q(QG) {}
 
   void AssembleRHSElementVect(const mfem::FiniteElement &fe, mfem::ElementTransformation &T,
                               mfem::Vector &elvect) override;

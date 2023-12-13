@@ -89,6 +89,11 @@ Thus, this object is only relevant for [`config["Problem"]["Type"]: "Magnetostat
 `"Linear"` :  Top-level object for configuring the linear solver employed by all simulation
 types.
 
+### Advanced solver options
+
+  - `"QuadratureOrderJacobian" [false]`
+  - `"ExtraQuadratureOrder" [0]`
+
 ## `solver["Eigenmode"]`
 
 ```json

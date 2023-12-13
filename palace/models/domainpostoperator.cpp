@@ -29,7 +29,7 @@ DomainPostOperator::DomainPostOperator(const IoData &iodata, const MaterialOpera
     MaterialPropertyCoefficient<MatTypeEps> epsilon_func(mat_op);
     BilinearForm m_nd(*nd_fespace);
     m_nd.AddDomainIntegrator<VectorFEMassIntegrator>(epsilon_func);
-    M_ND = m_nd.Assemble();
+    M_ND = m_nd.PartialAssemble();
     D.SetSize(M_ND->Height());
     D.UseDevice(true);
   }
@@ -41,7 +41,7 @@ DomainPostOperator::DomainPostOperator(const IoData &iodata, const MaterialOpera
     MaterialPropertyCoefficient<MatTypeMuInv> muinv_func(mat_op);
     BilinearForm m_rt(*rt_fespace);
     m_rt.AddDomainIntegrator<VectorFEMassIntegrator>(muinv_func);
-    M_RT = m_rt.Assemble();
+    M_RT = m_rt.PartialAssemble();
     H.SetSize(M_RT->Height());
     H.UseDevice(true);
   }
@@ -66,7 +66,7 @@ DomainPostOperator::DomainPostOperator(const IoData &iodata, const MaterialOpera
           std::make_unique<MaterialPropertyCoefficient<MatTypeEps>>(mat_op), attr_marker);
       BilinearForm m_nd_i(*nd_fespace);
       m_nd_i.AddDomainIntegrator<VectorFEMassIntegrator>(epsilon_func_i);
-      M_ND_i = m_nd_i.Assemble();
+      M_ND_i = m_nd_i.PartialAssemble();
     }
     if (rt_fespace)
     {
@@ -75,7 +75,7 @@ DomainPostOperator::DomainPostOperator(const IoData &iodata, const MaterialOpera
           std::make_unique<MaterialPropertyCoefficient<MatTypeMuInv>>(mat_op), attr_marker);
       BilinearForm m_rt_i(*rt_fespace);
       m_rt_i.AddDomainIntegrator<VectorFEMassIntegrator>(muinv_func_i);
-      M_RT_i = m_rt_i.Assemble();
+      M_RT_i = m_rt_i.PartialAssemble();
     }
     M_i.emplace(idx, std::make_pair(std::move(M_ND_i), std::move(M_RT_i)));
   }

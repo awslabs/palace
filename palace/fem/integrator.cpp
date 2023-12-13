@@ -8,6 +8,50 @@
 namespace palace
 {
 
+namespace fem
+{
+
+int DefaultIntegrationOrder::Get(const mfem::FiniteElement &trial_fe,
+                                 const mfem::FiniteElement &test_fe,
+                                 const mfem::ElementTransformation &T)
+{
+  return trial_fe.GetOrder() + test_fe.GetOrder() + (q_order_jac ? T.OrderW() : 0) +
+         (trial_fe.Space() == mfem::FunctionSpace::Pk ? q_order_extra_pk
+                                                      : q_order_extra_qk);
+}
+
+int DefaultIntegrationOrder::Get(const mfem::ParFiniteElementSpace &trial_fespace,
+                                 const mfem::ParFiniteElementSpace &test_fespace,
+                                 const std::vector<int> &indices, bool use_bdr)
+{
+  // Every process is guaranteed to have at least one element, and assumes no variable
+  // order spaces are used.
+  MFEM_ASSERT(
+      !indices.empty() && !trial_fespace.IsVariableOrder() &&
+          !test_fespace.IsVariableOrder() &&
+          ((use_bdr && trial_fespace.GetBE(indices[0]) && test_fespace.GetBE(indices[0])) ||
+           (!use_bdr && trial_fespace.GetFE(indices[0]) && test_fespace.GetFE(indices[0]))),
+      "Invalid empty mesh partition or variable order space!");
+  mfem::ParMesh &mesh = *trial_fespace.GetParMesh();
+  mfem::IsoparametricTransformation T;
+  if (use_bdr)
+  {
+    const mfem::FiniteElement &trial_fe = *trial_fespace.GetBE(indices[0]);
+    const mfem::FiniteElement &test_fe = *test_fespace.GetBE(indices[0]);
+    mesh.GetBdrElementTransformation(indices[0], &T);
+    return Get(trial_fe, test_fe, T);
+  }
+  else
+  {
+    const mfem::FiniteElement &trial_fe = *trial_fespace.GetFE(indices[0]);
+    const mfem::FiniteElement &test_fe = *test_fespace.GetFE(indices[0]);
+    mesh.GetElementTransformation(indices[0], &T);
+    return Get(trial_fe, test_fe, T);
+  }
+}
+
+}  // namespace fem
+
 void DiscreteInterpolator::Assemble(const mfem::ParFiniteElementSpace &trial_fespace,
                                     const mfem::ParFiniteElementSpace &test_fespace,
                                     const mfem::IntegrationRule &ir,
@@ -24,7 +68,7 @@ void VectorFEBoundaryLFIntegrator::AssembleRHSElementVect(const mfem::FiniteElem
 {
   const int dof = fe.GetDof();
   const int dim = fe.GetDim();
-  const int q_order = fem::GetDefaultIntegrationOrder(fe, fe, T, q_extra);
+  const int q_order = fem::DefaultIntegrationOrder::Get(fe, fe, T);
   const mfem::IntegrationRule &ir = mfem::IntRules.Get(fe.GetGeomType(), q_order);
   f_hat.SetSize(dim);
   vshape.SetSize(dof, dim);
@@ -49,7 +93,7 @@ void BoundaryLFIntegrator::AssembleRHSElementVect(const mfem::FiniteElement &fe,
                                                   mfem::Vector &elvect)
 {
   const int dof = fe.GetDof();
-  const int q_order = fem::GetDefaultIntegrationOrder(fe, fe, T, q_extra);
+  const int q_order = fem::DefaultIntegrationOrder::Get(fe, fe, T);
   const mfem::IntegrationRule &ir = mfem::IntRules.Get(fe.GetGeomType(), q_order);
   shape.SetSize(dof);
   elvect.SetSize(dof);

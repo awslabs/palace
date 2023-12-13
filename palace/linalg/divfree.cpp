@@ -22,7 +22,7 @@ DivFreeSolver::DivFreeSolver(const MaterialOperator &mat_op,
                              const FiniteElementSpace &nd_fespace,
                              const AuxiliaryFiniteElementSpaceHierarchy &h1_fespaces,
                              const std::vector<mfem::Array<int>> &h1_bdr_tdof_lists,
-                             double tol, int max_it, int print, int pa_order_threshold)
+                             double tol, int max_it, int print)
 {
   constexpr bool skip_zeros = false;
   constexpr auto MatType = MaterialPropertyType::PERMITTIVITY_REAL;
@@ -35,8 +35,7 @@ DivFreeSolver::DivFreeSolver(const MaterialOperator &mat_op,
       const auto &h1_fespace_l = h1_fespaces.GetFESpaceAtLevel(l);
       BilinearForm m(h1_fespace_l);
       m.AddDomainIntegrator<DiffusionIntegrator>(epsilon_func);
-      auto M_l = std::make_unique<ParOperator>(
-          m.Assemble((l > 0) ? pa_order_threshold : 99, skip_zeros), h1_fespace_l);
+      auto M_l = std::make_unique<ParOperator>(m.Assemble(skip_zeros), h1_fespace_l);
       M_l->SetEssentialTrueDofs(h1_bdr_tdof_lists[l], Operator::DiagonalPolicy::DIAG_ONE);
       M_mg->AddOperator(std::move(M_l));
     }
@@ -45,9 +44,8 @@ DivFreeSolver::DivFreeSolver(const MaterialOperator &mat_op,
   {
     BilinearForm weakdiv(nd_fespace, h1_fespaces.GetFinestFESpace());
     weakdiv.AddDomainIntegrator<MixedVectorWeakDivergenceIntegrator>(epsilon_func);
-    WeakDiv =
-        std::make_unique<ParOperator>(weakdiv.Assemble(pa_order_threshold, skip_zeros),
-                                      nd_fespace, h1_fespaces.GetFinestFESpace(), false);
+    WeakDiv = std::make_unique<ParOperator>(weakdiv.Assemble(skip_zeros), nd_fespace,
+                                            h1_fespaces.GetFinestFESpace(), false);
   }
   Grad = &h1_fespaces.GetFinestFESpace().GetDiscreteInterpolator();
   bdr_tdof_list_M = &h1_bdr_tdof_lists.back();

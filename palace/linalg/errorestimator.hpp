@@ -40,11 +40,10 @@ private:
 public:
   FluxProjector(const MaterialOperator &mat_op,
                 const FiniteElementSpaceHierarchy &nd_fespaces, double tol, int max_it,
-                int print, int pa_order_threshold);
+                int print);
   FluxProjector(const MaterialOperator &mat_op,
                 const FiniteElementSpaceHierarchy &h1_fespaces,
-                const FiniteElementSpace &h1d_fespace, double tol, int max_it, int print,
-                int pa_order_threshold);
+                const FiniteElementSpace &h1d_fespace, double tol, int max_it, int print);
 
   template <typename VecType>
   void Mult(const VecType &x, VecType &y) const;
@@ -75,7 +74,7 @@ class CurlFluxErrorEstimator
 public:
   CurlFluxErrorEstimator(const MaterialOperator &mat_op,
                          const FiniteElementSpaceHierarchy &nd_fespaces, double tol,
-                         int max_it, int print, int pa_order_threshold);
+                         int max_it, int print);
 
   // Compute elemental error indicators given a vector of true DOF.
   ErrorIndicator ComputeIndicators(const VecType &U) const;
@@ -111,7 +110,7 @@ class GradFluxErrorEstimator
 public:
   GradFluxErrorEstimator(const MaterialOperator &mat_op,
                          const FiniteElementSpaceHierarchy &h1_fespaces, double tol,
-                         int max_it, int print, int pa_order_threshold);
+                         int max_it, int print);
 
   // Compute elemental error indicators given a vector of true DOF.
   ErrorIndicator ComputeIndicators(const Vector &U) const;

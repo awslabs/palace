@@ -8,18 +8,7 @@
 #include <cmath>
 #include <memory>
 #include <vector>
-#include <mpi.h>
-
-namespace mfem
-{
-
-template <typename T>
-class Array;
-class Mesh;
-class ParMesh;
-class Vector;
-
-}  // namespace mfem
+#include <mfem.hpp>
 
 namespace palace
 {
@@ -28,6 +17,7 @@ class IoData;
 
 namespace mesh
 {
+
 //
 // Functions for mesh related functionality.
 //
@@ -48,6 +38,19 @@ void DimensionalizeMesh(mfem::Mesh &mesh, double L);
 
 // Nondimensionalize a mesh for use in the solver. Scales vertices and nodes by 1/L.
 void NondimensionalizeMesh(mfem::Mesh &mesh, double L);
+
+// Struct containing flags for the (global) mesh element types.
+struct ElementTypeInfo
+{
+  bool has_simplices;
+  bool has_hexahedra;
+  bool has_prisms;
+  bool has_pyramids;
+  std::vector<mfem::Geometry::Type> GetGeomTypes() const;
+};
+
+// Simplified helper for describing the element types in a (Par)Mesh.
+ElementTypeInfo CheckElements(mfem::Mesh &mesh);
 
 // Helper function to convert a set of attribute numbers to a marker array. The marker array
 // will be of size max_attr and it will contain only zeroes and ones. Ones indicate which
