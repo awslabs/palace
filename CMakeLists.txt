@@ -104,12 +104,17 @@ message(STATUS "================= Configuring BLAS/LAPACK dependencies =========
 include(ExternalBLASLAPACK)
 
 # Default arguments for all external CMake builds (needs to happen after BLAS/LAPACK
-# detection in case CMAKE_PREFIX_PATH is modified)
-# See https://spack.readthedocs.io/en/latest/build_systems/cmakepackage.html#cmake-arguments-provided-by-spack
+# detection in case CMAKE_PREFIX_PATH is modified). Compilers and flags are added on a
+# package by package basis.
+# See Spack docs: http://tinyurl.com/43t2recp
 set(PALACE_SUPERBUILD_DEFAULT_ARGS
   "-DCMAKE_INSTALL_PREFIX=${CMAKE_INSTALL_PREFIX}"
   "-DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}"
   "-DBUILD_SHARED_LIBS=${BUILD_SHARED_LIBS}"
+  "-DCMAKE_EXE_LINKER_FLAGS=${CMAKE_EXE_LINKER_FLAGS}"
+  "-DCMAKE_MODULE_LINKER_FLAGS=${CMAKE_MODULE_LINKER_FLAGS}"
+  "-DCMAKE_SHARED_LINKER_FLAGS=${CMAKE_SHARED_LINKER_FLAGS}"
+  "-DCMAKE_STATIC_LINKER_FLAGS=${CMAKE_STATIC_LINKER_FLAGS}"
 )
 if(NOT "${CMAKE_PREFIX_PATH}" STREQUAL "")
   string(REPLACE ";" "$<SEMICOLON>" PALACE_CMAKE_PREFIX_PATH "${CMAKE_PREFIX_PATH}")

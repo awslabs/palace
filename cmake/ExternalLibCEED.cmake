@@ -49,6 +49,7 @@ endif()
 # Build libCEED (always as a shared library)
 set(LIBCEED_OPTIONS
   "prefix=${CMAKE_INSTALL_PREFIX}"
+  "LDFLAGS=${CMAKE_EXE_LINKER_FLAGS}"
   "CC=${CMAKE_C_COMPILER}"
   "OPT=${LIBCEED_OPT_FLAGS}"
   "STATIC="
