@@ -122,7 +122,7 @@ auto GetBdrNeighborAttribute(int i, mfem::ParMesh &mesh,
   return (T2 && T2->Attribute < T1->Attribute) ? T2->Attribute : T1->Attribute;
 }
 
-auto BuildBdrAttributeGlobalToLocal(mfem::ParMesh &mesh,
+auto BuildBdrAttributeGlobalToLocal(const mfem::ParMesh &mesh,
                                     const std::unordered_map<int, int> &face_loc_to_shared)
 {
   // Set up sparse map from global boundary attributes to local ones on this process. Each
@@ -133,7 +133,8 @@ auto BuildBdrAttributeGlobalToLocal(mfem::ParMesh &mesh,
   for (int i = 0; i < mesh.GetNBE(); i++)
   {
     const int attr = mesh.GetBdrAttribute(i);
-    const int nbr_attr = GetBdrNeighborAttribute(i, mesh, face_loc_to_shared);
+    const int nbr_attr =
+        GetBdrNeighborAttribute(i, const_cast<mfem::ParMesh &>(mesh), face_loc_to_shared);
     auto &bdr_attr_map = loc_bdr_attr[attr];
     if (bdr_attr_map.find(nbr_attr) == bdr_attr_map.end())
     {
@@ -198,31 +199,18 @@ auto AssembleGeometryData(const mfem::GridFunction &mesh_nodes, Ceed ceed,
   CeedBasis mesh_basis = FiniteElementSpace::BuildCeedBasis(mesh_fespace, ceed, geom);
   ceed::AssembleCeedGeometryData(ceed, mesh_restr, mesh_basis, mesh_nodes, data);
 
-  // XX TODO CLEANUP
-
   // Compute element attribute quadrature data. All inputs to a QFunction require the same
   // number of quadrature points, so we create a basis to interpolate the single attribute
   // per element to all quadrature points.
   {
     const std::size_t ne = indices.size();
-    // CeedInt nqpts;
-    // PalaceCeedCall(ceed, CeedBasisGetNumQuadraturePoints(mesh_basis, &nqpts));
-    // data->attr.SetSize(ne * nqpts);
     data->attr.SetSize(ne);
     for (std::size_t i = 0; i < ne; i++)
     {
       // Convert to 0-based indexing for libCEED QFunctions.
       const auto attr = GetCeedAttribute(indices[i]);
-      // for (CeedInt q = 0; q < nqpts; q++)
-      // {
-      //   data->attr[i * nqpts + q] = attr - 0.5;
-      // }
       data->attr[i] = attr - 0.5;
     }
-
-    // CeedInt strides[3] = {1, 1, nqpts};
-    // PalaceCeedCall(ceed, CeedElemRestrictionCreateStrided(ceed, ne, nqpts, 1, ne * nqpts,
-    //                                                       strides, &data->attr_restr));
 
     CeedInt strides[3] = {1, 1, 1};
     PalaceCeedCall(ceed, CeedElemRestrictionCreateStrided(ceed, ne, 1, 1, ne, strides,
@@ -314,11 +302,6 @@ auto BuildCeedGeomFactorData(
     }
     for (auto &[geom, indices] : element_indices)
     {
-
-      // XX TODO DEBUG WIP
-      std::cout << "\nConstructing CeedGeomFactorData for Geometry "
-                << mfem::Geometry::Name[geom] << "\n";
-
       ceed::CeedGeomFactorData data =
           AssembleGeometryData(*mesh.GetNodes(), ceed, geom, indices, GetCeedAttribute);
       geom_data.emplace(geom, std::move(data));
@@ -347,11 +330,6 @@ auto BuildCeedGeomFactorData(
     };
     for (auto &[geom, indices] : element_indices)
     {
-
-      // XX TODO DEBUG WIP
-      std::cout << "\nConstructing CeedGeomFactorData for Geometry "
-                << mfem::Geometry::Name[geom] << "\n";
-
       ceed::CeedGeomFactorData data =
           AssembleGeometryData(*mesh.GetNodes(), ceed, geom, indices, GetCeedAttribute);
       geom_data.emplace(geom, std::move(data));

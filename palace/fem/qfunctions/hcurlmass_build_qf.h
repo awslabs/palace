@@ -14,7 +14,7 @@ CEED_QFUNCTION(f_build_hcurlmass_22)(void *ctx, CeedInt Q, const CeedScalar *con
                                      CeedScalar *const *out)
 {
   const CeedScalar *wdetJ = in[0], *adjJt = in[1], *attr = in[2];
-  CeedScalar *qd = out[1];
+  CeedScalar *qd = out[0];
 
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
@@ -42,7 +42,7 @@ CEED_QFUNCTION(f_build_hcurlmass_33)(void *ctx, CeedInt Q, const CeedScalar *con
                                      CeedScalar *const *out)
 {
   const CeedScalar *wdetJ = in[0], *adjJt = in[1], *attr = in[2];
-  CeedScalar *qd = out[1];
+  CeedScalar *qd = out[0];
 
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
@@ -73,7 +73,7 @@ CEED_QFUNCTION(f_build_hcurlmass_21)(void *ctx, CeedInt Q, const CeedScalar *con
                                      CeedScalar *const *out)
 {
   const CeedScalar *wdetJ = in[0], *adjJt = in[1], *attr = in[2];
-  CeedScalar *qd = out[1];
+  CeedScalar *qd = out[0];
 
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
@@ -99,7 +99,7 @@ CEED_QFUNCTION(f_build_hcurlmass_32)(void *ctx, CeedInt Q, const CeedScalar *con
                                      CeedScalar *const *out)
 {
   const CeedScalar *wdetJ = in[0], *adjJt = in[1], *attr = in[2];
-  CeedScalar *qd = out[1];
+  CeedScalar *qd = out[0];
 
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {

@@ -188,6 +188,16 @@ public:
     return loc_attr_list;
   }
 
+  auto GetAttributeGlobalToLocal(const int attr) const
+  {
+    return GetAttributeGlobalToLocal(std::vector<int>{attr});
+  }
+
+  auto GetBdrAttributeGlobalToLocal(const int attr) const
+  {
+    return GetBdrAttributeGlobalToLocal(std::vector<int>{attr});
+  }
+
   const ceed::CeedGeomObjectMap<ceed::CeedGeomFactorData> &
   GetCeedGeomFactorData(Ceed ceed) const;
 

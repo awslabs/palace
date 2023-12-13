@@ -12,10 +12,12 @@
 #include "fem/fespace.hpp"
 #include "fem/integrator.hpp"
 #include "fem/mesh.hpp"
+#include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
 
 extern int benchmark_ref_levels;
 extern int benchmark_order;
+extern bool benchmark_assemble_qdata;
 extern bool benchmark_no_fa;
 extern bool benchmark_no_mfem_pa;
 
@@ -25,11 +27,26 @@ namespace palace
 namespace
 {
 
-Mesh Initialize(MPI_Comm comm, const std::string &input, int ref_levels, int order)
+auto Initialize(MPI_Comm comm, const std::string &input, int ref_levels, int order)
 {
   // Load the mesh.
   mfem::Mesh smesh(input, 1, 1);
   smesh.EnsureNodes();
+
+  // Configure attributes for piecewise coefficients.
+  const int max_attr = (smesh.GetNE() + 1) / 2;
+  const int max_bdr_attr = (smesh.GetNBE() + 1) / 2;
+  for (int i = 0; i < smesh.GetNE(); i++)
+  {
+    smesh.SetAttribute(i, 1 + (i % max_attr));
+  }
+  for (int i = 0; i < smesh.GetNBE(); i++)
+  {
+    smesh.SetBdrAttribute(i, 1 + (i % max_bdr_attr));
+  }
+  smesh.SetAttributes();
+
+  // Construct the parallel mesh.
   REQUIRE(Mpi::Size(comm) <= smesh.GetNE());
   auto pmesh = std::make_unique<mfem::ParMesh>(comm, smesh);
   for (int l = 0; l < ref_levels; l++)
@@ -50,11 +67,10 @@ enum class CoeffType
 {
   Const,
   Scalar,
-  Vector,
   Matrix
 };
 
-std::string ToString(CoeffType type)
+auto ToString(CoeffType type)
 {
   switch (type)
   {
@@ -62,88 +78,135 @@ std::string ToString(CoeffType type)
       return "Constant";
     case CoeffType::Scalar:
       return "Scalar";
-    case CoeffType::Vector:
-      return "Vector";
     case CoeffType::Matrix:
       return "Matrix";
   }
   return "";
 }
 
-// Scalar coefficient
-double CoefficientFunction(const Vector &x)
+class PWCoefficient : public mfem::Coefficient, public mfem::MatrixCoefficient
 {
-  return 1.0 + x[0] * x[0];
-}
+private:
+  mfem::DenseTensor C;
 
-// Vector coefficient
-void VectorCoefficientFunction(const Vector &x, Vector &v)
-{
-  const int dim = x.Size();
-  const double w = CoefficientFunction(x);
-  v.SetSize(dim);
-  switch (dim)
+public:
+  PWCoefficient(const mfem::DenseTensor &C)
+    : mfem::Coefficient(), mfem::MatrixCoefficient(C.SizeI(), C.SizeJ()), C(C)
   {
-    case 1:
-      v(0) = w;
-      break;
-    case 2:
-      v(0) = w * sqrt(2.0 / 3.0);
-      v(1) = w * sqrt(1.0 / 3.0);
-      break;
-    case 3:
-      v(0) = w * sqrt(3.0 / 6.0);
-      v(1) = w * sqrt(2.0 / 6.0);
-      v(2) = w * sqrt(1.0 / 6.0);
-      break;
+  }
+
+  double Eval(mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip) override
+  {
+    return C(0, 0, T.Attribute - 1);
+  }
+
+  void Eval(mfem::DenseMatrix &K, mfem::ElementTransformation &T,
+            const mfem::IntegrationPoint &ip) override
+  {
+    K = C(T.Attribute - 1);
+  }
+};
+
+void BuildCoefficientHelper(const mfem::Mesh &mesh, bool bdr_integ, CoeffType coeff_type,
+                            mfem::Array<int> &attr_mat, mfem::DenseTensor &mat_coeff)
+{
+  // Assign material properties to domain or boundary attributes, based on the global
+  // attributes.
+  constexpr auto num_mat = 3;
+  const auto &attributes = bdr_integ ? mesh.bdr_attributes : mesh.attributes;
+  attr_mat.SetSize(attributes.Size() ? attributes.Max() : 0);
+  for (int i = 0; i < attributes.Size(); i++)
+  {
+    attr_mat[i] = i % num_mat;
+  }
+
+  // Generate material properties.
+  const auto dim = (coeff_type == CoeffType::Scalar) ? 1 : mesh.Dimension();
+  mat_coeff.SetSize(dim, dim, num_mat);
+  for (int k = 0; k < num_mat; k++)
+  {
+    mat_coeff(k) = 0.1;
+    for (int d = 0; d < dim; d++)
+    {
+      mat_coeff(d, d, k) = 10.0 * k + (d + 1.0);
+    }
   }
 }
 
-void ScalarVectorCoefficientFunction(const Vector &x, Vector &v)
+auto BuildCoefficient(const Mesh &mesh, bool bdr_integ, CoeffType coeff_type)
 {
-  const int dim = x.Size();
-  v.SetSize(dim);
-  v = CoefficientFunction(x);
-}
-
-// Matrix coefficient
-void MatrixCoefficientFunction(const Vector &x, mfem::DenseMatrix &m)
-{
-  const int dim = x.Size();
-  Vector v(dim);
-  VectorCoefficientFunction(x, v);
-  m.SetSize(dim);
-  m = 0.1;
-  for (int i = 0; i < dim; i++)
+  if (coeff_type == CoeffType::Const)
   {
-    m(i, i) = 1.0 + v(i);
+    return MaterialPropertyCoefficient();
   }
-}
+  mfem::Array<int> attr_mat;
+  mfem::DenseTensor mat_coeff;
+  BuildCoefficientHelper(mesh, bdr_integ, coeff_type, attr_mat, mat_coeff);
 
-void ScalarMatrixCoefficientFunction(const Vector &x, mfem::DenseMatrix &m)
-{
-  const int dim = x.Size();
-  const double w = CoefficientFunction(x);
-  m.SetSize(dim);
-  m = 0.0;
-  for (int i = 0; i < dim; i++)
+  // Convert attribute to material mapping from global to local attributes for libCEED
+  // interface.
+  mfem::Array<int> loc_attr_mat;
+  for (int i = 0; i < attr_mat.Size(); i++)
   {
-    m(i, i) = w;
+    for (auto attr : (bdr_integ ? mesh.GetBdrAttributeGlobalToLocal(i + 1)
+                                : mesh.GetAttributeGlobalToLocal(i + 1)))
+    {
+      if (attr > loc_attr_mat.Size())
+      {
+        loc_attr_mat.SetSize(attr, -1);
+      }
+      loc_attr_mat[attr - 1] = attr_mat[i];
+    }
   }
+  return MaterialPropertyCoefficient(loc_attr_mat, mat_coeff);
 }
 
-template <typename T1, typename T2, typename U, typename... V>
-void AddIntegrators(bool bdr_integ, BilinearForm &a_test, U &a_ref, V &&...args)
+auto BuildCoefficientRef(const Mesh &mesh, bool bdr_integ, CoeffType coeff_type)
+{
+  if (coeff_type == CoeffType::Const)
+  {
+    return PWCoefficient(mfem::DenseTensor());
+  }
+  mfem::Array<int> attr_mat;
+  mfem::DenseTensor mat_coeff;
+  BuildCoefficientHelper(mesh, bdr_integ, coeff_type, attr_mat, mat_coeff);
+
+  mfem::DenseTensor C(mat_coeff.SizeI(), mat_coeff.SizeJ(), attr_mat.Size());
+  for (int i = 0; i < attr_mat.Size(); i++)
+  {
+    C(i) = mat_coeff(attr_mat[i]);
+  }
+  return PWCoefficient(C);
+}
+
+template <typename T1, typename T2, typename U>
+void AddIntegrators(bool bdr_integ, BilinearForm &a_test, U &a_ref)
 {
   if (bdr_integ)
   {
-    a_test.AddBoundaryIntegrator<T1>(std::forward<V>(args)...);
-    a_ref.AddBoundaryIntegrator(new T2(std::forward<V>(args)...));
+    a_test.AddBoundaryIntegrator<T1>();
+    a_ref.AddBoundaryIntegrator(new T2());
   }
   else
   {
-    a_test.AddDomainIntegrator<T1>(std::forward<V>(args)...);
-    a_ref.AddDomainIntegrator(new T2(std::forward<V>(args)...));
+    a_test.AddDomainIntegrator<T1>();
+    a_ref.AddDomainIntegrator(new T2());
+  }
+}
+
+template <typename T1, typename T2, typename U, typename V>
+void AddIntegrators(bool bdr_integ, BilinearForm &a_test, U &a_ref,
+                    MaterialPropertyCoefficient &Q, V &Q_ref)
+{
+  if (bdr_integ)
+  {
+    a_test.AddBoundaryIntegrator<T1>(Q);
+    a_ref.AddBoundaryIntegrator(new T2(Q_ref));
+  }
+  else
+  {
+    a_test.AddDomainIntegrator<T1>(Q);
+    a_ref.AddDomainIntegrator(new T2(Q_ref));
   }
 }
 
@@ -280,10 +343,11 @@ void BenchmarkCeedIntegrator(FiniteElementSpace &fespace, T1 AssembleTest,
   std::size_t nnz = 0;
   if (!benchmark_no_fa)
   {
-    const auto op_test = AssembleTest(fespace, true);
-    const auto op_test_ref = AssembleTestRef(fespace, true);
-    const auto mat_test = BilinearForm::FullAssemble(*op_test, skip_zeros, false);
-    const auto mat_test_ref = BilinearForm::FullAssemble(*op_test_ref, skip_zeros, false);
+    constexpr bool bdr_integ = true;
+    const auto op_test = AssembleTest(fespace, bdr_integ);
+    const auto op_test_ref = AssembleTestRef(fespace, bdr_integ);
+    const auto mat_test = BilinearForm::FullAssemble(*op_test, skip_zeros);
+    const auto mat_test_ref = BilinearForm::FullAssemble(*op_test_ref, skip_zeros);
     nnz = mat_test->NumNonZeroElems();
     TestCeedOperatorFullAssemble(*mat_test, *mat_test_ref);
   }
@@ -345,7 +409,7 @@ void BenchmarkCeedIntegrator(FiniteElementSpace &fespace, T1 AssembleTest,
     BENCHMARK("Full Assemble (libCEED)")
     {
       const auto op_test = AssembleTest(fespace);
-      const auto mat_test = BilinearForm::FullAssemble(*op_test, skip_zeros, false);
+      const auto mat_test = BilinearForm::FullAssemble(*op_test, skip_zeros);
       return mat_test->NumNonZeroElems();
     };
   }
@@ -403,7 +467,7 @@ void BenchmarkCeedInterpolator(FiniteElementSpace &trial_fespace,
     const auto op_test = AssembleTest(trial_fespace, test_fespace);
     const auto op_ref = AssembleRef(trial_fespace, test_fespace,
                                     mfem::AssemblyLevel::LEGACY, skip_zeros_interp);
-    const auto mat_test = BilinearForm::FullAssemble(*op_test, skip_zeros_interp, true);
+    const auto mat_test = DiscreteLinearOperator::FullAssemble(*op_test, skip_zeros_interp);
     const auto *mat_ref = &op_ref->SpMat();
     nnz = mat_test->NumNonZeroElems();
     TestCeedOperatorFullAssemble(*mat_test, *mat_ref);
@@ -471,7 +535,8 @@ void BenchmarkCeedInterpolator(FiniteElementSpace &trial_fespace,
     BENCHMARK("Full Assemble (libCEED)")
     {
       const auto op_test = AssembleTest(trial_fespace, test_fespace);
-      const auto mat_test = BilinearForm::FullAssemble(*op_test, skip_zeros_interp, true);
+      const auto mat_test =
+          DiscreteLinearOperator::FullAssemble(*op_test, skip_zeros_interp);
       return mat_test->NumNonZeroElems();
     };
   }
@@ -514,22 +579,19 @@ void RunCeedIntegratorTests(MPI_Comm comm, const std::string &input, int ref_lev
   auto mesh = Initialize(comm, input, ref_levels, order);
   const int dim = mesh.Dimension();
 
-  // // Initialize coefficients.
-  // mfem::FunctionCoefficient Q(CoefficientFunction);
-  // mfem::VectorFunctionCoefficient VQ(dim, VectorCoefficientFunction);
-  // mfem::MatrixFunctionCoefficient MQ(dim, MatrixCoefficientFunction);
-
   // Run the tests.
-  auto coeff_type = GENERATE(CoeffType::Const);  // XX TODO WIP TESTING
-  // auto coeff_type =
-  //     GENERATE(CoeffType::Const, CoeffType::Scalar, CoeffType::Vector,
-  //     CoeffType::Matrix);
   auto bdr_integ = GENERATE(false, true);
-  std::string section =
-      "Mesh: " + input + "\n" + "Refinement levels: " + std::to_string(ref_levels) + "\n" +
-      "Order: " + std::to_string(order) + "\n" + "Coefficient: " + ToString(coeff_type) +
-      "\n" + "Integrator: " + (bdr_integ ? "Boundary" : "Domain") + "\n";
+  auto coeff_type = GENERATE(CoeffType::Const, CoeffType::Scalar, CoeffType::Matrix);
+  std::string section = "Mesh: " + input + "\n" +
+                        "Refinement levels: " + std::to_string(ref_levels) + "\n" +
+                        "Order: " + std::to_string(order) + "\n" +
+                        "Integrator: " + (bdr_integ ? "Boundary" : "Domain") + "\n" +
+                        "Coefficient: " + ToString(coeff_type) + "\n";
   INFO(section);
+
+  // Initialize coefficients.
+  auto Q = BuildCoefficient(mesh, bdr_integ, coeff_type);
+  auto Q_ref = BuildCoefficientRef(mesh, bdr_integ, coeff_type);
 
   // Tests on H1 spaces.
   SECTION("H1 Integrators")
@@ -545,12 +607,12 @@ void RunCeedIntegratorTests(MPI_Comm comm, const std::string &input, int ref_lev
         case CoeffType::Const:
           AddIntegrators<MassIntegrator, mfem::MassIntegrator>(bdr_integ, a_test, a_ref);
           break;
-          // case CoeffType::Scalar:
-          //   AddIntegrators<MassIntegrator, mfem::MassIntegrator>(bdr_integ, a_test,
-          //   a_ref, Q); break;
-          // case CoeffType::Vector:
-          // case CoeffType::Matrix:
-          //   break;  // Good to test empty operators
+        case CoeffType::Scalar:
+          AddIntegrators<MassIntegrator, mfem::MassIntegrator>(bdr_integ, a_test, a_ref, Q,
+                                                               Q_ref);
+          break;
+        case CoeffType::Matrix:
+          break;  // Good to test empty operators
       }
       TestCeedOperator(a_test, a_ref);
     }
@@ -564,18 +626,14 @@ void RunCeedIntegratorTests(MPI_Comm comm, const std::string &input, int ref_lev
           AddIntegrators<MassIntegrator, mfem::VectorMassIntegrator>(bdr_integ, a_test,
                                                                      a_ref);
           break;
-          // case CoeffType::Scalar:
-          //   AddIntegrators<MassIntegrator, mfem::VectorMassIntegrator>(bdr_integ, a_test,
-          //                                                              a_ref, Q);
-          //   break;
-          // case CoeffType::Vector:
-          //   AddIntegrators<MassIntegrator, mfem::VectorMassIntegrator>(bdr_integ, a_test,
-          //                                                              a_ref, VQ);
-          //   break;
-          // case CoeffType::Matrix:
-          //   AddIntegrators<MassIntegrator, mfem::VectorMassIntegrator>(bdr_integ, a_test,
-          //                                                              a_ref, MQ);
-          //   break;
+        case CoeffType::Scalar:
+          AddIntegrators<MassIntegrator, mfem::VectorMassIntegrator>(
+              bdr_integ, a_test, a_ref, Q, (mfem::Coefficient &)Q_ref);
+          break;
+        case CoeffType::Matrix:
+          AddIntegrators<MassIntegrator, mfem::VectorMassIntegrator>(
+              bdr_integ, a_test, a_ref, Q, (mfem::MatrixCoefficient &)Q_ref);
+          break;
       }
       TestCeedOperator(a_test, a_ref);
     }
@@ -584,7 +642,7 @@ void RunCeedIntegratorTests(MPI_Comm comm, const std::string &input, int ref_lev
       fem::DefaultIntegrationOrder::q_order_jac = false;
       fem::DefaultIntegrationOrder::q_order_extra_pk = -2;
       fem::DefaultIntegrationOrder::q_order_extra_qk = dim - bdr_integ - 1;
-      mesh.ClearCeedGeomFactorData();
+      mesh.DestroyCeedGeomFactorData();
       BilinearForm a_test(h1_fespace);
       mfem::BilinearForm a_ref(&h1_fespace.Get());
       switch (coeff_type)
@@ -593,21 +651,14 @@ void RunCeedIntegratorTests(MPI_Comm comm, const std::string &input, int ref_lev
           AddIntegrators<DiffusionIntegrator, mfem::DiffusionIntegrator>(bdr_integ, a_test,
                                                                          a_ref);
           break;
-          // case CoeffType::Scalar:
-          //   AddIntegrators<DiffusionIntegrator, mfem::DiffusionIntegrator>(bdr_integ,
-          //   a_test,
-          //                                                                  a_ref, Q);
-          //   break;
-          // case CoeffType::Vector:
-          //   AddIntegrators<DiffusionIntegrator, mfem::DiffusionIntegrator>(bdr_integ,
-          //   a_test,
-          //                                                                  a_ref, VQ);
-          //   break;
-          // case CoeffType::Matrix:
-          //   AddIntegrators<DiffusionIntegrator, mfem::DiffusionIntegrator>(bdr_integ,
-          //   a_test,
-          //                                                                  a_ref, MQ);
-          //   break;
+        case CoeffType::Scalar:
+          AddIntegrators<DiffusionIntegrator, mfem::DiffusionIntegrator>(
+              bdr_integ, a_test, a_ref, Q, (mfem::Coefficient &)Q_ref);
+          break;
+        case CoeffType::Matrix:
+          AddIntegrators<DiffusionIntegrator, mfem::DiffusionIntegrator>(
+              bdr_integ, a_test, a_ref, Q, (mfem::MatrixCoefficient &)Q_ref);
+          break;
       }
       TestCeedOperator(a_test, a_ref);
     }
@@ -628,18 +679,14 @@ void RunCeedIntegratorTests(MPI_Comm comm, const std::string &input, int ref_lev
           AddIntegrators<VectorFEMassIntegrator, mfem::VectorFEMassIntegrator>(
               bdr_integ, a_test, a_ref);
           break;
-          // case CoeffType::Scalar:
-          //   AddIntegrators<VectorFEMassIntegrator, mfem::VectorFEMassIntegrator>(
-          //       bdr_integ, a_test, a_ref, Q);
-          //   break;
-          // case CoeffType::Vector:
-          //   AddIntegrators<VectorFEMassIntegrator, mfem::VectorFEMassIntegrator>(
-          //       bdr_integ, a_test, a_ref, VQ);
-          //   break;
-          // case CoeffType::Matrix:
-          //   AddIntegrators<VectorFEMassIntegrator, mfem::VectorFEMassIntegrator>(
-          //       bdr_integ, a_test, a_ref, MQ);
-          //   break;
+        case CoeffType::Scalar:
+          AddIntegrators<VectorFEMassIntegrator, mfem::VectorFEMassIntegrator>(
+              bdr_integ, a_test, a_ref, Q, (mfem::Coefficient &)Q_ref);
+          break;
+        case CoeffType::Matrix:
+          AddIntegrators<VectorFEMassIntegrator, mfem::VectorFEMassIntegrator>(
+              bdr_integ, a_test, a_ref, Q, (mfem::MatrixCoefficient &)Q_ref);
+          break;
       }
       TestCeedOperator(a_test, a_ref);
     }
@@ -648,7 +695,7 @@ void RunCeedIntegratorTests(MPI_Comm comm, const std::string &input, int ref_lev
       fem::DefaultIntegrationOrder::q_order_jac = false;
       fem::DefaultIntegrationOrder::q_order_extra_pk = -2;
       fem::DefaultIntegrationOrder::q_order_extra_qk = 0;
-      mesh.ClearCeedGeomFactorData();
+      mesh.DestroyCeedGeomFactorData();
       BilinearForm a_test(nd_fespace);
       mfem::BilinearForm a_ref(&nd_fespace.Get());
       if (dim == 3 || (dim == 2 && !bdr_integ))  // No 1D ND curl shape
@@ -659,25 +706,17 @@ void RunCeedIntegratorTests(MPI_Comm comm, const std::string &input, int ref_lev
             AddIntegrators<CurlCurlIntegrator, mfem::CurlCurlIntegrator>(bdr_integ, a_test,
                                                                          a_ref);
             break;
-            // case CoeffType::Scalar:
-            //   AddIntegrators<CurlCurlIntegrator, mfem::CurlCurlIntegrator>(bdr_integ,
-            //   a_test,
-            //                                                                a_ref, Q);
-            //   break;
-            // case CoeffType::Vector:
-            //   if (dim == 3 && !bdr_integ)
-            //   {
-            //     AddIntegrators<CurlCurlIntegrator, mfem::CurlCurlIntegrator>(
-            //         bdr_integ, a_test, a_ref, VQ);
-            //   }
-            //   break;
-            // case CoeffType::Matrix:
-            //   if (dim == 3 && !bdr_integ)
-            //   {
-            //     AddIntegrators<CurlCurlIntegrator, mfem::CurlCurlIntegrator>(
-            //         bdr_integ, a_test, a_ref, MQ);
-            //   }
-            //   break;
+          case CoeffType::Scalar:
+            AddIntegrators<CurlCurlIntegrator, mfem::CurlCurlIntegrator>(
+                bdr_integ, a_test, a_ref, Q, (mfem::Coefficient &)Q_ref);
+            break;
+          case CoeffType::Matrix:
+            if (dim == 3 && !bdr_integ)
+            {
+              AddIntegrators<CurlCurlIntegrator, mfem::CurlCurlIntegrator>(
+                  bdr_integ, a_test, a_ref, Q, (mfem::MatrixCoefficient &)Q_ref);
+            }
+            break;
         }
       }
       TestCeedOperator(a_test, a_ref);
@@ -701,18 +740,14 @@ void RunCeedIntegratorTests(MPI_Comm comm, const std::string &input, int ref_lev
             AddIntegrators<VectorFEMassIntegrator, mfem::VectorFEMassIntegrator>(
                 bdr_integ, a_test, a_ref);
             break;
-            // case CoeffType::Scalar:
-            //   AddIntegrators<VectorFEMassIntegrator, mfem::VectorFEMassIntegrator>(
-            //       bdr_integ, a_test, a_ref, Q);
-            //   break;
-            // case CoeffType::Vector:
-            //   AddIntegrators<VectorFEMassIntegrator, mfem::VectorFEMassIntegrator>(
-            //       bdr_integ, a_test, a_ref, VQ);
-            //   break;
-            // case CoeffType::Matrix:
-            //   AddIntegrators<VectorFEMassIntegrator, mfem::VectorFEMassIntegrator>(
-            //       bdr_integ, a_test, a_ref, MQ);
-            //   break;
+          case CoeffType::Scalar:
+            AddIntegrators<VectorFEMassIntegrator, mfem::VectorFEMassIntegrator>(
+                bdr_integ, a_test, a_ref, Q, (mfem::Coefficient &)Q_ref);
+            break;
+          case CoeffType::Matrix:
+            AddIntegrators<VectorFEMassIntegrator, mfem::VectorFEMassIntegrator>(
+                bdr_integ, a_test, a_ref, Q, (mfem::MatrixCoefficient &)Q_ref);
+            break;
         }
       }
       TestCeedOperator(a_test, a_ref);
@@ -722,7 +757,7 @@ void RunCeedIntegratorTests(MPI_Comm comm, const std::string &input, int ref_lev
       fem::DefaultIntegrationOrder::q_order_jac = false;
       fem::DefaultIntegrationOrder::q_order_extra_pk = -2;
       fem::DefaultIntegrationOrder::q_order_extra_qk = -2;
-      mesh.ClearCeedGeomFactorData();
+      mesh.DestroyCeedGeomFactorData();
       BilinearForm a_test(rt_fespace);
       mfem::BilinearForm a_ref(&rt_fespace.Get());
       if (!bdr_integ)  // Boundary RT elements in 2D and 3D are actually L2
@@ -733,13 +768,12 @@ void RunCeedIntegratorTests(MPI_Comm comm, const std::string &input, int ref_lev
             AddIntegrators<DivDivIntegrator, mfem::DivDivIntegrator>(bdr_integ, a_test,
                                                                      a_ref);
             break;
-            // case CoeffType::Scalar:
-            //   AddIntegrators<DivDivIntegrator, mfem::DivDivIntegrator>(bdr_integ, a_test,
-            //                                                            a_ref, Q);
-            //   break;
-            // case CoeffType::Vector:
-            // case CoeffType::Matrix:
-            //   break;
+          case CoeffType::Scalar:
+            AddIntegrators<DivDivIntegrator, mfem::DivDivIntegrator>(bdr_integ, a_test,
+                                                                     a_ref, Q, Q_ref);
+            break;
+          case CoeffType::Matrix:
+            break;
         }
       }
       TestCeedOperator(a_test, a_ref);
@@ -764,24 +798,16 @@ void RunCeedIntegratorTests(MPI_Comm comm, const std::string &input, int ref_lev
             AddIntegrators<MixedVectorGradientIntegrator,
                            mfem::MixedVectorGradientIntegrator>(bdr_integ, a_test, a_ref);
             break;
-            // case CoeffType::Scalar:
-            //   AddIntegrators<MixedVectorGradientIntegrator,
-            //                  mfem::MixedVectorGradientIntegrator>(bdr_integ, a_test,
-            //                  a_ref,
-            //                                                       Q);
-            //   break;
-            // case CoeffType::Vector:
-            //   AddIntegrators<MixedVectorGradientIntegrator,
-            //                  mfem::MixedVectorGradientIntegrator>(bdr_integ, a_test,
-            //                  a_ref,
-            //                                                       VQ);
-            //   break;
-            // case CoeffType::Matrix:
-            //   AddIntegrators<MixedVectorGradientIntegrator,
-            //                  mfem::MixedVectorGradientIntegrator>(bdr_integ, a_test,
-            //                  a_ref,
-            //                                                       MQ);
-            //   break;
+          case CoeffType::Scalar:
+            AddIntegrators<MixedVectorGradientIntegrator,
+                           mfem::MixedVectorGradientIntegrator>(bdr_integ, a_test, a_ref, Q,
+                                                                (mfem::Coefficient &)Q_ref);
+            break;
+          case CoeffType::Matrix:
+            AddIntegrators<MixedVectorGradientIntegrator,
+                           mfem::MixedVectorGradientIntegrator>(
+                bdr_integ, a_test, a_ref, Q, (mfem::MatrixCoefficient &)Q_ref);
+            break;
         }
       }
       TestCeedOperator(a_test, a_ref);
@@ -799,24 +825,16 @@ void RunCeedIntegratorTests(MPI_Comm comm, const std::string &input, int ref_lev
                            mfem::MixedVectorWeakDivergenceIntegrator>(bdr_integ, a_test,
                                                                       a_ref);
             break;
-            // case CoeffType::Scalar:
-            //   AddIntegrators<MixedVectorWeakDivergenceIntegrator,
-            //                  mfem::MixedVectorWeakDivergenceIntegrator>(bdr_integ,
-            //                  a_test,
-            //                                                             a_ref, Q);
-            //   break;
-            // case CoeffType::Vector:
-            //   AddIntegrators<MixedVectorWeakDivergenceIntegrator,
-            //                  mfem::MixedVectorWeakDivergenceIntegrator>(bdr_integ,
-            //                  a_test,
-            //                                                             a_ref, VQ);
-            //   break;
-            // case CoeffType::Matrix:
-            //   AddIntegrators<MixedVectorWeakDivergenceIntegrator,
-            //                  mfem::MixedVectorWeakDivergenceIntegrator>(bdr_integ,
-            //                  a_test,
-            //                                                             a_ref, MQ);
-            //   break;
+          case CoeffType::Scalar:
+            AddIntegrators<MixedVectorWeakDivergenceIntegrator,
+                           mfem::MixedVectorWeakDivergenceIntegrator>(
+                bdr_integ, a_test, a_ref, Q, (mfem::Coefficient &)Q_ref);
+            break;
+          case CoeffType::Matrix:
+            AddIntegrators<MixedVectorWeakDivergenceIntegrator,
+                           mfem::MixedVectorWeakDivergenceIntegrator>(
+                bdr_integ, a_test, a_ref, Q, (mfem::MatrixCoefficient &)Q_ref);
+            break;
         }
       }
       TestCeedOperator(a_test, a_ref);
@@ -841,18 +859,14 @@ void RunCeedIntegratorTests(MPI_Comm comm, const std::string &input, int ref_lev
             AddIntegrators<VectorFEMassIntegrator, mfem::MixedVectorMassIntegrator>(
                 bdr_integ, a_test, a_ref);
             break;
-            // case CoeffType::Scalar:
-            //   AddIntegrators<VectorFEMassIntegrator, mfem::MixedVectorMassIntegrator>(
-            //       bdr_integ, a_test, a_ref, Q);
-            //   break;
-            // case CoeffType::Vector:
-            //   AddIntegrators<VectorFEMassIntegrator, mfem::MixedVectorMassIntegrator>(
-            //       bdr_integ, a_test, a_ref, VQ);
-            //   break;
-            // case CoeffType::Matrix:
-            //   AddIntegrators<VectorFEMassIntegrator, mfem::MixedVectorMassIntegrator>(
-            //       bdr_integ, a_test, a_ref, MQ);
-            //   break;
+          case CoeffType::Scalar:
+            AddIntegrators<VectorFEMassIntegrator, mfem::MixedVectorMassIntegrator>(
+                bdr_integ, a_test, a_ref, Q, (mfem::Coefficient &)Q_ref);
+            break;
+          case CoeffType::Matrix:
+            AddIntegrators<VectorFEMassIntegrator, mfem::MixedVectorMassIntegrator>(
+                bdr_integ, a_test, a_ref, Q, (mfem::MatrixCoefficient &)Q_ref);
+            break;
         }
       }
       TestCeedOperator(a_test, a_ref);
@@ -869,18 +883,14 @@ void RunCeedIntegratorTests(MPI_Comm comm, const std::string &input, int ref_lev
             AddIntegrators<VectorFEMassIntegrator, mfem::MixedVectorMassIntegrator>(
                 bdr_integ, a_test, a_ref);
             break;
-            // case CoeffType::Scalar:
-            //   AddIntegrators<VectorFEMassIntegrator, mfem::MixedVectorMassIntegrator>(
-            //       bdr_integ, a_test, a_ref, Q);
-            //   break;
-            // case CoeffType::Vector:
-            //   AddIntegrators<VectorFEMassIntegrator, mfem::MixedVectorMassIntegrator>(
-            //       bdr_integ, a_test, a_ref, VQ);
-            //   break;
-            // case CoeffType::Matrix:
-            //   AddIntegrators<VectorFEMassIntegrator, mfem::MixedVectorMassIntegrator>(
-            //       bdr_integ, a_test, a_ref, MQ);
-            //   break;
+          case CoeffType::Scalar:
+            AddIntegrators<VectorFEMassIntegrator, mfem::MixedVectorMassIntegrator>(
+                bdr_integ, a_test, a_ref, Q, (mfem::Coefficient &)Q_ref);
+            break;
+          case CoeffType::Matrix:
+            AddIntegrators<VectorFEMassIntegrator, mfem::MixedVectorMassIntegrator>(
+                bdr_integ, a_test, a_ref, Q, (mfem::MatrixCoefficient &)Q_ref);
+            break;
         }
       }
       TestCeedOperator(a_test, a_ref);
@@ -897,18 +907,14 @@ void RunCeedIntegratorTests(MPI_Comm comm, const std::string &input, int ref_lev
             AddIntegrators<MixedVectorCurlIntegrator, mfem::MixedVectorCurlIntegrator>(
                 bdr_integ, a_test, a_ref);
             break;
-            // case CoeffType::Scalar:
-            //   AddIntegrators<MixedVectorCurlIntegrator, mfem::MixedVectorCurlIntegrator>(
-            //       bdr_integ, a_test, a_ref, Q);
-            //   break;
-            // case CoeffType::Vector:
-            //   AddIntegrators<MixedVectorCurlIntegrator, mfem::MixedVectorCurlIntegrator>(
-            //       bdr_integ, a_test, a_ref, VQ);
-            //   break;
-            // case CoeffType::Matrix:
-            //   AddIntegrators<MixedVectorCurlIntegrator, mfem::MixedVectorCurlIntegrator>(
-            //       bdr_integ, a_test, a_ref, MQ);
-            //   break;
+          case CoeffType::Scalar:
+            AddIntegrators<MixedVectorCurlIntegrator, mfem::MixedVectorCurlIntegrator>(
+                bdr_integ, a_test, a_ref, Q, (mfem::Coefficient &)Q_ref);
+            break;
+          case CoeffType::Matrix:
+            AddIntegrators<MixedVectorCurlIntegrator, mfem::MixedVectorCurlIntegrator>(
+                bdr_integ, a_test, a_ref, Q, (mfem::MatrixCoefficient &)Q_ref);
+            break;
         }
       }
       TestCeedOperator(a_test, a_ref);
@@ -925,24 +931,16 @@ void RunCeedIntegratorTests(MPI_Comm comm, const std::string &input, int ref_lev
             AddIntegrators<MixedVectorWeakCurlIntegrator,
                            mfem::MixedVectorWeakCurlIntegrator>(bdr_integ, a_test, a_ref);
             break;
-            // case CoeffType::Scalar:
-            //   AddIntegrators<MixedVectorWeakCurlIntegrator,
-            //                  mfem::MixedVectorWeakCurlIntegrator>(bdr_integ, a_test,
-            //                  a_ref,
-            //                                                       Q);
-            //   break;
-            // case CoeffType::Vector:
-            //   AddIntegrators<MixedVectorWeakCurlIntegrator,
-            //                  mfem::MixedVectorWeakCurlIntegrator>(bdr_integ, a_test,
-            //                  a_ref,
-            //                                                       VQ);
-            //   break;
-            // case CoeffType::Matrix:
-            //   AddIntegrators<MixedVectorWeakCurlIntegrator,
-            //                  mfem::MixedVectorWeakCurlIntegrator>(bdr_integ, a_test,
-            //                  a_ref,
-            //                                                       MQ);
-            //   break;
+          case CoeffType::Scalar:
+            AddIntegrators<MixedVectorWeakCurlIntegrator,
+                           mfem::MixedVectorWeakCurlIntegrator>(bdr_integ, a_test, a_ref, Q,
+                                                                (mfem::Coefficient &)Q_ref);
+            break;
+          case CoeffType::Matrix:
+            AddIntegrators<MixedVectorWeakCurlIntegrator,
+                           mfem::MixedVectorWeakCurlIntegrator>(
+                bdr_integ, a_test, a_ref, Q, (mfem::MatrixCoefficient &)Q_ref);
+            break;
         }
       }
       TestCeedOperator(a_test, a_ref);
@@ -959,18 +957,14 @@ void RunCeedIntegratorTests(MPI_Comm comm, const std::string &input, int ref_lev
             AddIntegrators<MixedVectorCurlIntegrator, mfem::MixedVectorCurlIntegrator>(
                 bdr_integ, a_test, a_ref);
             break;
-            // case CoeffType::Scalar:
-            //   AddIntegrators<MixedVectorCurlIntegrator, mfem::MixedVectorCurlIntegrator>(
-            //       bdr_integ, a_test, a_ref, Q);
-            //   break;
-            // case CoeffType::Vector:
-            //   AddIntegrators<MixedVectorCurlIntegrator, mfem::MixedVectorCurlIntegrator>(
-            //       bdr_integ, a_test, a_ref, VQ);
-            //   break;
-            // case CoeffType::Matrix:
-            //   AddIntegrators<MixedVectorCurlIntegrator, mfem::MixedVectorCurlIntegrator>(
-            //       bdr_integ, a_test, a_ref, MQ);
-            //   break;
+          case CoeffType::Scalar:
+            AddIntegrators<MixedVectorCurlIntegrator, mfem::MixedVectorCurlIntegrator>(
+                bdr_integ, a_test, a_ref, Q, (mfem::Coefficient &)Q_ref);
+            break;
+          case CoeffType::Matrix:
+            AddIntegrators<MixedVectorCurlIntegrator, mfem::MixedVectorCurlIntegrator>(
+                bdr_integ, a_test, a_ref, Q, (mfem::MatrixCoefficient &)Q_ref);
+            break;
         }
       }
       TestCeedOperator(a_test, a_ref);
@@ -987,24 +981,16 @@ void RunCeedIntegratorTests(MPI_Comm comm, const std::string &input, int ref_lev
             AddIntegrators<MixedVectorWeakCurlIntegrator,
                            mfem::MixedVectorWeakCurlIntegrator>(bdr_integ, a_test, a_ref);
             break;
-            // case CoeffType::Scalar:
-            //   AddIntegrators<MixedVectorWeakCurlIntegrator,
-            //                  mfem::MixedVectorWeakCurlIntegrator>(bdr_integ, a_test,
-            //                  a_ref,
-            //                                                       Q);
-            //   break;
-            // case CoeffType::Vector:
-            //   AddIntegrators<MixedVectorWeakCurlIntegrator,
-            //                  mfem::MixedVectorWeakCurlIntegrator>(bdr_integ, a_test,
-            //                  a_ref,
-            //                                                       VQ);
-            //   break;
-            // case CoeffType::Matrix:
-            //   AddIntegrators<MixedVectorWeakCurlIntegrator,
-            //                  mfem::MixedVectorWeakCurlIntegrator>(bdr_integ, a_test,
-            //                  a_ref,
-            //                                                       MQ);
-            //   break;
+          case CoeffType::Scalar:
+            AddIntegrators<MixedVectorWeakCurlIntegrator,
+                           mfem::MixedVectorWeakCurlIntegrator>(bdr_integ, a_test, a_ref, Q,
+                                                                (mfem::Coefficient &)Q_ref);
+            break;
+          case CoeffType::Matrix:
+            AddIntegrators<MixedVectorWeakCurlIntegrator,
+                           mfem::MixedVectorWeakCurlIntegrator>(
+                bdr_integ, a_test, a_ref, Q, (mfem::MatrixCoefficient &)Q_ref);
+            break;
         }
       }
       TestCeedOperator(a_test, a_ref);
@@ -1018,14 +1004,10 @@ void RunCeedIntegratorTests(MPI_Comm comm, const std::string &input, int ref_lev
     FiniteElementSpace h1_fespace(mesh, &h1_fec), h1d_fespace(mesh, &h1_fec, dim);
     SECTION("Mixed H1 Gradient Integrator")
     {
-      // Test special coefficients because MFEM's GradientIntegrator only supports scalar
-      // coefficients.
-      mfem::VectorFunctionCoefficient sVQ(dim, ScalarVectorCoefficientFunction);
-      mfem::MatrixFunctionCoefficient sMQ(dim, ScalarMatrixCoefficientFunction);
       fem::DefaultIntegrationOrder::q_order_jac = true;
       fem::DefaultIntegrationOrder::q_order_extra_pk = -1;
       fem::DefaultIntegrationOrder::q_order_extra_qk = 0;
-      mesh.ClearCeedGeomFactorData();
+      mesh.DestroyCeedGeomFactorData();
       BilinearForm a_test(h1_fespace, h1d_fespace);
       mfem::MixedBilinearForm a_ref(&h1_fespace.Get(), &h1d_fespace.Get());
       if (!bdr_integ)  // MFEM's GradientIntegrator only supports square Jacobians
@@ -1036,35 +1018,12 @@ void RunCeedIntegratorTests(MPI_Comm comm, const std::string &input, int ref_lev
             AddIntegrators<GradientIntegrator, mfem::GradientIntegrator>(bdr_integ, a_test,
                                                                          a_ref);
             break;
-            // case CoeffType::Scalar:
-            //   AddIntegrators<GradientIntegrator, mfem::GradientIntegrator>(bdr_integ,
-            //   a_test,
-            //                                                                a_ref, Q);
-            //   break;
-            // case CoeffType::Vector:
-            //   if (bdr_integ)
-            //   {
-            //     a_test.AddBoundaryIntegrator<GradientIntegrator>(sVQ);
-            //     a_ref.AddBoundaryIntegrator(new mfem::GradientIntegrator(Q));
-            //   }
-            //   else
-            //   {
-            //     a_test.AddDomainIntegrator<GradientIntegrator>(sVQ);
-            //     a_ref.AddDomainIntegrator(new mfem::GradientIntegrator(Q));
-            //   }
-            //   break;
-            // case CoeffType::Matrix:
-            //   if (bdr_integ)
-            //   {
-            //     a_test.AddBoundaryIntegrator<GradientIntegrator>(sMQ);
-            //     a_ref.AddBoundaryIntegrator(new mfem::GradientIntegrator(Q));
-            //   }
-            //   else
-            //   {
-            //     a_test.AddDomainIntegrator<GradientIntegrator>(sMQ);
-            //     a_ref.AddDomainIntegrator(new mfem::GradientIntegrator(Q));
-            //   }
-            //   break;
+          case CoeffType::Scalar:
+            AddIntegrators<GradientIntegrator, mfem::GradientIntegrator>(bdr_integ, a_test,
+                                                                         a_ref, Q, Q_ref);
+            break;
+          case CoeffType::Matrix:
+            break;  // No support for non-scalar coefficients in MFEM's GradientIntegrator
         }
       }
       TestCeedOperator(a_test, a_ref);
@@ -1151,10 +1110,6 @@ void RunCeedBenchmarks(MPI_Comm comm, const std::string &input, int ref_levels, 
   auto mesh = Initialize(comm, input, ref_levels, order);
   const int dim = mesh.Dimension();
 
-  // // Initialize coefficients.
-  // mfem::FunctionCoefficient Q(CoefficientFunction);
-  // mfem::MatrixFunctionCoefficient MQ(dim, MatrixCoefficientFunction);
-
   // Run the benchmarks.
   std::string section = "Mesh: " + input + "\n" +
                         "Refinement levels: " + std::to_string(ref_levels) + "\n" +
@@ -1163,27 +1118,34 @@ void RunCeedBenchmarks(MPI_Comm comm, const std::string &input, int ref_levels, 
   auto pos = input.find_last_of('/');
   WARN("benchmark input mesh: " << input.substr(pos + 1) << "\n");
 
+  // Initialize coefficients.
+  auto Q = BuildCoefficient(mesh, false, CoeffType::Scalar);
+  auto MQ = BuildCoefficient(mesh, false, CoeffType::Matrix);
+  auto Q_ref = BuildCoefficientRef(mesh, false, CoeffType::Scalar);
+  auto MQ_ref = BuildCoefficientRef(mesh, false, CoeffType::Matrix);
+
   // Diffusion + mass benchmark.
   SECTION("Diffusion + Mass Integrator Benchmark")
   {
     auto AssembleTest = [&](const FiniteElementSpace &fespace, bool bdr_integ = false)
     {
       BilinearForm a_test(fespace);
-      a_test.AddDomainIntegrator<DiffusionMassIntegrator>();
-      // a_test.AddDomainIntegrator<DiffusionMassIntegrator>(MQ, Q);
+      a_test.AddDomainIntegrator<DiffusionMassIntegrator>(MQ, Q);
       if (bdr_integ)
       {
         a_test.AddBoundaryIntegrator<MassIntegrator>();
+      }
+      if (benchmark_assemble_qdata)
+      {
+        a_test.AssembleQuadratureData();
       }
       return a_test.PartialAssemble();
     };
     auto AssembleTestRef = [&](const FiniteElementSpace &fespace, bool bdr_integ = false)
     {
       BilinearForm a_test_ref(fespace);
-      a_test_ref.AddDomainIntegrator<DiffusionIntegrator>();
-      a_test_ref.AddDomainIntegrator<MassIntegrator>();
-      // a_test_ref.AddDomainIntegrator<DiffusionIntegrator>(MQ);
-      // a_test_ref.AddDomainIntegrator<MassIntegrator>(Q);
+      a_test_ref.AddDomainIntegrator<DiffusionIntegrator>(MQ);
+      a_test_ref.AddDomainIntegrator<MassIntegrator>(Q);
       if (bdr_integ)
       {
         a_test_ref.AddBoundaryIntegrator<MassIntegrator>();
@@ -1194,10 +1156,9 @@ void RunCeedBenchmarks(MPI_Comm comm, const std::string &input, int ref_levels, 
                            bool skip_zeros, bool bdr_integ = false)
     {
       auto a_ref = std::make_unique<mfem::BilinearForm>(&fespace.Get());
-      a_ref->AddDomainIntegrator(new mfem::DiffusionIntegrator());
-      a_ref->AddDomainIntegrator(new mfem::MassIntegrator());
-      // a_ref->AddDomainIntegrator(new mfem::DiffusionIntegrator(MQ));
-      // a_ref->AddDomainIntegrator(new mfem::MassIntegrator(Q));
+      a_ref->AddDomainIntegrator(
+          new mfem::DiffusionIntegrator((mfem::MatrixCoefficient &)MQ_ref));
+      a_ref->AddDomainIntegrator(new mfem::MassIntegrator(Q_ref));
       if (bdr_integ)
       {
         a_ref->AddBoundaryIntegrator(new mfem::MassIntegrator());
@@ -1220,21 +1181,22 @@ void RunCeedBenchmarks(MPI_Comm comm, const std::string &input, int ref_levels, 
     auto AssembleTest = [&](const FiniteElementSpace &fespace, bool bdr_integ = false)
     {
       BilinearForm a_test(fespace);
-      a_test.AddDomainIntegrator<CurlCurlMassIntegrator>();
-      // a_test.AddDomainIntegrator<CurlCurlMassIntegrator>(MQ, Q);
+      a_test.AddDomainIntegrator<CurlCurlMassIntegrator>(MQ, Q);
       if (bdr_integ)
       {
         a_test.AddBoundaryIntegrator<VectorFEMassIntegrator>();
+      }
+      if (benchmark_assemble_qdata)
+      {
+        a_test.AssembleQuadratureData();
       }
       return a_test.PartialAssemble();
     };
     auto AssembleTestRef = [&](const FiniteElementSpace &fespace, bool bdr_integ = false)
     {
       BilinearForm a_test_ref(fespace);
-      a_test_ref.AddDomainIntegrator<CurlCurlIntegrator>();
-      a_test_ref.AddDomainIntegrator<VectorFEMassIntegrator>();
-      // a_test_ref.AddDomainIntegrator<CurlCurlIntegrator>(MQ);
-      // a_test_ref.AddDomainIntegrator<VectorFEMassIntegrator>(Q);
+      a_test_ref.AddDomainIntegrator<CurlCurlIntegrator>(MQ);
+      a_test_ref.AddDomainIntegrator<VectorFEMassIntegrator>(Q);
       if (bdr_integ)
       {
         a_test_ref.AddBoundaryIntegrator<VectorFEMassIntegrator>();
@@ -1245,10 +1207,10 @@ void RunCeedBenchmarks(MPI_Comm comm, const std::string &input, int ref_levels, 
                            bool skip_zeros, bool bdr_integ = false)
     {
       auto a_ref = std::make_unique<mfem::BilinearForm>(&fespace.Get());
-      a_ref->AddDomainIntegrator(new mfem::CurlCurlIntegrator());
-      a_ref->AddDomainIntegrator(new mfem::VectorFEMassIntegrator());
-      // a_ref->AddDomainIntegrator(new mfem::CurlCurlIntegrator(MQ));
-      // a_ref->AddDomainIntegrator(new mfem::VectorFEMassIntegrator(Q));
+      a_ref->AddDomainIntegrator(
+          new mfem::CurlCurlIntegrator((mfem::MatrixCoefficient &)MQ_ref));
+      a_ref->AddDomainIntegrator(
+          new mfem::VectorFEMassIntegrator((mfem::Coefficient &)Q_ref));
       if (bdr_integ)
       {
         a_ref->AddBoundaryIntegrator(new mfem::VectorFEMassIntegrator());
@@ -1271,27 +1233,27 @@ void RunCeedBenchmarks(MPI_Comm comm, const std::string &input, int ref_levels, 
     auto AssembleTest = [&](const FiniteElementSpace &fespace, bool bdr_integ = false)
     {
       BilinearForm a_test(fespace);
-      a_test.AddDomainIntegrator<DivDivMassIntegrator>();
-      // a_test.AddDomainIntegrator<DivDivMassIntegrator>(Q, Q);
+      a_test.AddDomainIntegrator<DivDivMassIntegrator>(Q, MQ);
+      if (benchmark_assemble_qdata)
+      {
+        a_test.AssembleQuadratureData();
+      }
       return a_test.PartialAssemble();
     };
     auto AssembleTestRef = [&](const FiniteElementSpace &fespace, bool bdr_integ = false)
     {
       BilinearForm a_test_ref(fespace);
-      a_test_ref.AddDomainIntegrator<DivDivIntegrator>();
-      a_test_ref.AddDomainIntegrator<VectorFEMassIntegrator>();
-      // a_test_ref.AddDomainIntegrator<DivDivIntegrator>(Q);
-      // a_test_ref.AddDomainIntegrator<VectorFEMassIntegrator>(Q);
+      a_test_ref.AddDomainIntegrator<DivDivIntegrator>(Q);
+      a_test_ref.AddDomainIntegrator<VectorFEMassIntegrator>(MQ);
       return a_test_ref.PartialAssemble();
     };
     auto AssembleRef = [&](FiniteElementSpace &fespace, mfem::AssemblyLevel assembly_level,
                            bool skip_zeros, bool bdr_integ = false)
     {
       auto a_ref = std::make_unique<mfem::BilinearForm>(&fespace.Get());
-      a_ref->AddDomainIntegrator(new mfem::DivDivIntegrator());
-      a_ref->AddDomainIntegrator(new mfem::VectorFEMassIntegrator());
-      // a_ref->AddDomainIntegrator(new mfem::DivDivIntegrator(Q));
-      // a_ref->AddDomainIntegrator(new mfem::VectorFEMassIntegrator(Q));
+      a_ref->AddDomainIntegrator(new mfem::DivDivIntegrator(Q_ref));
+      a_ref->AddDomainIntegrator(
+          new mfem::VectorFEMassIntegrator((mfem::MatrixCoefficient &)MQ_ref));
       a_ref->SetAssemblyLevel(assembly_level);
       a_ref->Assemble(skip_zeros);
       a_ref->Finalize(skip_zeros);
