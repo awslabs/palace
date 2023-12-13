@@ -125,9 +125,9 @@ private:
 public:
   SumOperator(int s) : Operator(s) {}
   SumOperator(int h, int w) : Operator(h, w) {}
-  SumOperator(const Operator &op, double c = 1.0);
+  SumOperator(const Operator &op, double a = 1.0);
 
-  void AddOperator(const Operator &op, double c = 1.0);
+  void AddOperator(const Operator &op, double a = 1.0);
 
   void Mult(const Vector &x, Vector &y) const override;
 
@@ -157,6 +157,7 @@ class ProductOperatorHelper<ProductOperator, ComplexOperator> : public ComplexOp
 {
 public:
   ProductOperatorHelper(int h, int w) : ComplexOperator(h, w) {}
+
   void MultHermitianTranspose(const ComplexVector &x, ComplexVector &y) const override
   {
     const ComplexOperator &A = static_cast<const ProductOperator *>(this)->A;
@@ -221,6 +222,7 @@ class DiagonalOperatorHelper<DiagonalOperator, ComplexOperator> : public Complex
 {
 public:
   DiagonalOperatorHelper(int s) : ComplexOperator(s) {}
+
   void MultHermitianTranspose(const ComplexVector &x, ComplexVector &y) const override;
 };
 
@@ -283,7 +285,6 @@ public:
   }
 
   bool HasAuxiliaryOperators() const { return !aux_ops.empty(); }
-
   auto GetNumLevels() const { return ops.size(); }
   auto GetNumAuxiliaryLevels() const { return aux_ops.size(); }
 

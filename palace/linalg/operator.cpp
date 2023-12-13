@@ -461,16 +461,16 @@ void ComplexWrapperOperator::AddMultHermitianTranspose(const ComplexVector &x,
   }
 }
 
-SumOperator::SumOperator(const Operator &op, double c) : Operator(op.Height(), op.Width())
+SumOperator::SumOperator(const Operator &op, double a) : Operator(op.Height(), op.Width())
 {
-  AddOperator(op, c);
+  AddOperator(op, a);
 }
 
-void SumOperator::AddOperator(const Operator &op, double c)
+void SumOperator::AddOperator(const Operator &op, double a)
 {
   MFEM_VERIFY(op.Height() == height && op.Width() == width,
               "Invalid Operator dimensions for SumOperator!");
-  ops.emplace_back(&op, c);
+  ops.emplace_back(&op, a);
 }
 
 void SumOperator::Mult(const Vector &x, Vector &y) const

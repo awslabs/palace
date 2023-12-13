@@ -43,7 +43,7 @@ private:
   std::vector<const OperType *> A;
   std::vector<const mfem::Array<int> *> dbc_tdof_lists;
 
-  // Smoothers for each level. Coarse level solver is B[0].
+  // Smoothers for each level. Coarse-level solver is B[0].
   mutable std::vector<std::unique_ptr<Solver<OperType>>> B;
 
   // Temporary vectors for preconditioner application. The type of these is dictated by the
