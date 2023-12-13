@@ -436,7 +436,7 @@ std::unique_ptr<mfem::SparseMatrix> CeedOperatorFullAssemble(const Operator &op,
     I[i + 1] += I[i];
   }
   Jmap[0] = 0;
-  for (int k = 0; k < nnz; k++)
+  for (int k = 0; k < nnz_new; k++)
   {
     Jmap[k + 1] += Jmap[k];
   }
