@@ -108,6 +108,7 @@
         "InitialGuess": { "type": "boolean" },
         "MGMaxLevels": { "type": "integer", "minimum": 1 },
         "MGCoarsenType": { "type": "string" },
+        "MGUseMesh": { "type": "boolean" },
         "MGAuxiliarySmoother": { "type": "boolean" },
         "MGCycleIts": { "type": "integer", "exclusiveMinimum": 0 },
         "MGSmoothIts": { "type": "integer", "exclusiveMinimum": 0 },

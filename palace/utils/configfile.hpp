@@ -763,6 +763,10 @@ public:
   };
   MultigridCoarsenType mg_coarsen_type = MultigridCoarsenType::LOGARITHMIC;
 
+  // Controls whether or not to include in the geometric multigrid hierarchy the mesh levels
+  // from uniform refinement.
+  bool mg_use_mesh = true;
+
   // Number of iterations for preconditioners which support it. For multigrid, this is the
   // number of V-cycles per Krylov solver iteration.
   int mg_cycle_it = 1;
