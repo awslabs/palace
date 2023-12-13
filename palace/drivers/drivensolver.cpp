@@ -139,7 +139,7 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator &
 
   // Initialize structures for storing and reducing the results of error estimation.
   CurlFluxErrorEstimator<ComplexVector> estimator(
-      spaceop.GetMaterialOp(), spaceop.GetNDSpaces(), iodata.solver.linear.estimator_tol,
+      spaceop.GetMaterialOp(), spaceop.GetNDSpace(), iodata.solver.linear.estimator_tol,
       iodata.solver.linear.estimator_max_it, 0);
   ErrorIndicator indicator;
 
@@ -254,7 +254,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator 
 
   // Initialize structures for storing and reducing the results of error estimation.
   CurlFluxErrorEstimator<ComplexVector> estimator(
-      spaceop.GetMaterialOp(), spaceop.GetNDSpaces(), iodata.solver.linear.estimator_tol,
+      spaceop.GetMaterialOp(), spaceop.GetNDSpace(), iodata.solver.linear.estimator_tol,
       iodata.solver.linear.estimator_max_it, 0);
   ErrorIndicator indicator;
 

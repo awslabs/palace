@@ -98,7 +98,7 @@ ErrorIndicator ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop,
 
   // Calculate and record the error indicators.
   Mpi::Print("Computing solution error estimates\n\n");
-  GradFluxErrorEstimator estimator(laplaceop.GetMaterialOp(), laplaceop.GetH1Spaces(),
+  GradFluxErrorEstimator estimator(laplaceop.GetMaterialOp(), laplaceop.GetH1Space(),
                                    iodata.solver.linear.estimator_tol,
                                    iodata.solver.linear.estimator_max_it, 0);
   ErrorIndicator indicator;
