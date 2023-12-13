@@ -13,6 +13,7 @@ From: rockylinux:9
 
 %environment
     if [[ -d /usr/lib64/mpich ]]; then
+        export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:/usr/lib64/mpich/lib"
         export PATH="$PATH:/usr/lib64/mpich/bin"
     fi
     export PATH="$PATH:/opt/palace/bin"
@@ -58,6 +59,7 @@ From: rockylinux:9
         cd .. && rm -rf mpich-*
     else
         dnf -y install mpich-devel
+        export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:/usr/lib64/mpich/lib"
         export PATH="$PATH:/usr/lib64/mpich/bin"
     fi
 
