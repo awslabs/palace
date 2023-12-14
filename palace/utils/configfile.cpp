@@ -614,8 +614,10 @@ void DomainPostData::SetUp(json &domains)
   // Store all unique postprocessing domain attributes.
   for (const auto &[idx, data] : energy)
   {
-    attributes.insert(data.attributes.begin(), data.attributes.end());
+    attributes.insert(attributes.end(), data.attributes.begin(), data.attributes.end());
   }
+  std::sort(attributes.begin(), attributes.end());
+  attributes.erase(unique(attributes.begin(), attributes.end()), attributes.end());
 
   // Cleanup
   postpro->erase("Energy");
@@ -636,11 +638,14 @@ void DomainData::SetUp(json &config)
   // Store all unique domain attributes.
   for (const auto &data : materials)
   {
-    attributes.insert(data.attributes.begin(), data.attributes.end());
+    attributes.insert(attributes.end(), data.attributes.begin(), data.attributes.end());
   }
+  std::sort(attributes.begin(), attributes.end());
+  attributes.erase(unique(attributes.begin(), attributes.end()), attributes.end());
   for (const auto &attr : postpro.attributes)
   {
-    MFEM_VERIFY(attributes.find(attr) != attributes.end(),
+    MFEM_VERIFY(std::lower_bound(attributes.begin(), attributes.end(), attr) !=
+                    attributes.end(),
                 "Domain postprocessing can only be enabled on domains which have a "
                 "corresponding \"Materials\" entry!");
   }
@@ -1295,19 +1300,21 @@ void BoundaryPostData::SetUp(json &boundaries)
   // Store all unique postprocessing boundary attributes.
   for (const auto &[idx, data] : capacitance)
   {
-    attributes.insert(data.attributes.begin(), data.attributes.end());
+    attributes.insert(attributes.end(), data.attributes.begin(), data.attributes.end());
   }
   for (const auto &[idx, data] : inductance)
   {
-    attributes.insert(data.attributes.begin(), data.attributes.end());
+    attributes.insert(attributes.end(), data.attributes.begin(), data.attributes.end());
   }
   for (const auto &[idx, data] : dielectric)
   {
     for (const auto &elem : data.elements)
     {
-      attributes.insert(elem.attributes.begin(), elem.attributes.end());
+      attributes.insert(attributes.end(), elem.attributes.begin(), elem.attributes.end());
     }
   }
+  std::sort(attributes.begin(), attributes.end());
+  attributes.erase(unique(attributes.begin(), attributes.end()), attributes.end());
 
   // Cleanup
   postpro->erase("Capacitance");
@@ -1335,37 +1342,40 @@ void BoundaryData::SetUp(json &config)
   postpro.SetUp(*boundaries);
 
   // Store all unique boundary attributes.
-  attributes.insert(pec.attributes.begin(), pec.attributes.end());
-  attributes.insert(pmc.attributes.begin(), pmc.attributes.end());
-  attributes.insert(auxpec.attributes.begin(), auxpec.attributes.end());
-  attributes.insert(farfield.attributes.begin(), farfield.attributes.end());
+  attributes.insert(attributes.end(), pec.attributes.begin(), pec.attributes.end());
+  attributes.insert(attributes.end(), pmc.attributes.begin(), pmc.attributes.end());
+  attributes.insert(attributes.end(), auxpec.attributes.begin(), auxpec.attributes.end());
+  attributes.insert(attributes.end(), farfield.attributes.begin(),
+                    farfield.attributes.end());
   for (const auto &data : conductivity)
   {
-    attributes.insert(data.attributes.begin(), data.attributes.end());
+    attributes.insert(attributes.end(), data.attributes.begin(), data.attributes.end());
   }
   for (const auto &data : impedance)
   {
-    attributes.insert(data.attributes.begin(), data.attributes.end());
+    attributes.insert(attributes.end(), data.attributes.begin(), data.attributes.end());
   }
   for (const auto &[idx, data] : lumpedport)
   {
     for (const auto &elem : data.elements)
     {
-      attributes.insert(elem.attributes.begin(), elem.attributes.end());
+      attributes.insert(attributes.end(), elem.attributes.begin(), elem.attributes.end());
     }
   }
   for (const auto &[idx, data] : waveport)
   {
-    attributes.insert(data.attributes.begin(), data.attributes.end());
+    attributes.insert(attributes.end(), data.attributes.begin(), data.attributes.end());
   }
   for (const auto &[idx, data] : current)
   {
     for (const auto &elem : data.elements)
     {
-      attributes.insert(elem.attributes.begin(), elem.attributes.end());
+      attributes.insert(attributes.end(), elem.attributes.begin(), elem.attributes.end());
     }
   }
-  attributes.insert(postpro.attributes.begin(), postpro.attributes.end());
+  attributes.insert(attributes.end(), postpro.attributes.begin(), postpro.attributes.end());
+  std::sort(attributes.begin(), attributes.end());
+  attributes.erase(unique(attributes.begin(), attributes.end()), attributes.end());
 
   // Cleanup
   boundaries->erase("PEC");

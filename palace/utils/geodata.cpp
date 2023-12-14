@@ -53,14 +53,9 @@ std::unique_ptr<mfem::ParMesh> DistributeMesh(MPI_Comm, const std::unique_ptr<mf
                                               const std::unique_ptr<int[]> & = nullptr,
                                               const std::string & = "");
 
-// Get list of domain and boundary attribute markers used in configuration file for mesh
-// cleaning.
-void GetUsedAttributeMarkers(const IoData &, int, int, mfem::Array<int> &,
-                             mfem::Array<int> &);
-
 // Rebalance a conformal mesh across processor ranks, using the MeshPartitioner. Gathers the
 // mesh onto the root rank before scattering the partitioned mesh.
-void RebalanceConformalMesh(std::unique_ptr<mfem::ParMesh> &, double, const std::string &);
+void RebalanceConformalMesh(mfem::ParMesh &);
 
 }  // namespace
 
@@ -257,10 +252,10 @@ void RefineMesh(const IoData &iodata, std::vector<std::unique_ptr<mfem::ParMesh>
       mfem::DenseMatrix pointmat;
       if (use_nodes)
       {
-        mfem::ElementTransformation *T = mesh.back()->GetElementTransformation(i);
-        mfem::Geometry::Type geo = mesh.back()->GetElementGeometry(i);
-        mfem::RefinedGeometry *RefG = mfem::GlobGeometryRefiner.Refine(geo, ref);
-        T->Transform(RefG->RefPts, pointmat);
+        mfem::ElementTransformation &T = *mesh.back()->GetElementTransformation(i);
+        mfem::Geometry::Type geom = mesh.back()->GetElementGeometry(i);
+        mfem::RefinedGeometry *RefG = mfem::GlobGeometryRefiner.Refine(geom, ref);
+        T.Transform(RefG->RefPts, pointmat);
       }
       else
       {
@@ -456,64 +451,59 @@ std::vector<mfem::Geometry::Type> ElementTypeInfo::GetGeomTypes() const
   return geom_types;
 }
 
-ElementTypeInfo CheckElements(mfem::Mesh &mesh)
+ElementTypeInfo CheckElements(const mfem::Mesh &mesh)
 {
   // MeshGenerator is reduced over the communicator. This checks for geometries on any
   // processor.
-  auto meshgen = mesh.MeshGenerator();
+  auto meshgen = const_cast<mfem::Mesh &>(mesh).MeshGenerator();
   return {bool(meshgen & 1), bool(meshgen & 2), bool(meshgen & 4), bool(meshgen & 8)};
 }
 
-void AttrToMarker(int max_attr, const mfem::Array<int> &attrs, mfem::Array<int> &marker)
+namespace
 {
-  MFEM_VERIFY(attrs.Size() == 0 || attrs.Max() <= max_attr,
-              "Invalid attribute number present (" << attrs.Max() << ")!");
+
+auto AttrListSize(const mfem::Array<int> &attr_list)
+{
+  return attr_list.Size();
+}
+
+auto AttrListSize(const std::vector<int> &attr_list)
+{
+  return attr_list.size();
+}
+
+auto AttrListMax(const mfem::Array<int> &attr_list)
+{
+  return attr_list.Max();
+}
+
+auto AttrListMax(const std::vector<int> &attr_list)
+{
+  return *std::max_element(attr_list.begin(), attr_list.end());
+}
+
+}  // namespace
+
+template <typename T>
+void AttrToMarker(int max_attr, const T &attr_list, mfem::Array<int> &marker)
+{
+  MFEM_VERIFY(AttrListSize(attr_list) == 0 || AttrListMax(attr_list) <= max_attr,
+              "Invalid attribute number present (" << AttrListMax(attr_list) << ")!");
   marker.SetSize(max_attr);
-  if (attrs.Size() == 1 && attrs[0] == -1)
+  if (AttrListSize(attr_list) == 1 && attr_list[0] == -1)
   {
     marker = 1;
   }
   else
   {
     marker = 0;
-    for (auto attr : attrs)
+    for (auto attr : attr_list)
     {
       MFEM_VERIFY(attr > 0, "Attribute number less than one!");
       MFEM_VERIFY(marker[attr - 1] == 0, "Repeate attribute in attribute list!");
       marker[attr - 1] = 1;
     }
   }
-}
-
-void AttrToMarker(int max_attr, const std::vector<int> &attrs, mfem::Array<int> &marker)
-{
-  MFEM_VERIFY(attrs.empty() || *std::max_element(attrs.begin(), attrs.end()) <= max_attr,
-              "Invalid attribute number present ("
-                  << *std::max_element(attrs.begin(), attrs.end()) << ")!");
-  marker.SetSize(max_attr);
-  if (attrs.size() == 1 && attrs[0] == -1)
-  {
-    marker = 1;
-  }
-  else
-  {
-    marker = 0;
-    for (auto attr : attrs)
-    {
-      MFEM_VERIFY(attr > 0, "Attribute number less than one!");
-      MFEM_VERIFY(marker[attr - 1] == 0, "Repeate attribute in attribute list!");
-      marker[attr - 1] = 1;
-    }
-  }
-}
-
-void GetAxisAlignedBoundingBox(mfem::ParMesh &mesh, int attr, bool bdr, mfem::Vector &min,
-                               mfem::Vector &max)
-{
-  mfem::Array<int> marker(bdr ? mesh.bdr_attributes.Max() : mesh.attributes.Max());
-  marker = 0;
-  marker[attr - 1] = 1;
-  GetAxisAlignedBoundingBox(mesh, marker, bdr, min, max);
 }
 
 void GetAxisAlignedBoundingBox(mfem::ParMesh &mesh, const mfem::Array<int> &marker,
@@ -529,7 +519,7 @@ void GetAxisAlignedBoundingBox(mfem::ParMesh &mesh, const mfem::Array<int> &mark
   }
   if (!mesh.GetNodes())
   {
-    auto BBUpdate = [&mesh, &dim, &min, &max](mfem::Array<int> &verts) -> void
+    auto BBUpdate = [&mesh, &dim, &min, &max](const mfem::Array<int> &verts) -> void
     {
       for (int j = 0; j < verts.Size(); j++)
       {
@@ -577,12 +567,12 @@ void GetAxisAlignedBoundingBox(mfem::ParMesh &mesh, const mfem::Array<int> &mark
   else
   {
     const int ref = mesh.GetNodes()->FESpace()->GetMaxElementOrder();
-    auto BBUpdate = [&ref, &min, &max](mfem::ElementTransformation *T,
-                                       mfem::Geometry::Type &geo) -> void
+    auto BBUpdate = [&ref, &min, &max](mfem::ElementTransformation &T,
+                                       mfem::Geometry::Type &geom) -> void
     {
       mfem::DenseMatrix pointmat;
-      mfem::RefinedGeometry *RefG = mfem::GlobGeometryRefiner.Refine(geo, ref);
-      T->Transform(RefG->RefPts, pointmat);
+      mfem::RefinedGeometry *RefG = mfem::GlobGeometryRefiner.Refine(geom, ref);
+      T.Transform(RefG->RefPts, pointmat);
       for (int j = 0; j < pointmat.Width(); j++)
       {
         for (int d = 0; d < pointmat.Height(); d++)
@@ -606,9 +596,9 @@ void GetAxisAlignedBoundingBox(mfem::ParMesh &mesh, const mfem::Array<int> &mark
         {
           continue;
         }
-        mfem::ElementTransformation *T = mesh.GetBdrElementTransformation(i);
-        mfem::Geometry::Type geo = mesh.GetBdrElementGeometry(i);
-        BBUpdate(T, geo);
+        mfem::ElementTransformation &T = *mesh.GetBdrElementTransformation(i);
+        mfem::Geometry::Type geom = mesh.GetBdrElementGeometry(i);
+        BBUpdate(T, geom);
       }
     }
     else
@@ -619,16 +609,23 @@ void GetAxisAlignedBoundingBox(mfem::ParMesh &mesh, const mfem::Array<int> &mark
         {
           continue;
         }
-        mfem::ElementTransformation *T = mesh.GetElementTransformation(i);
-        mfem::Geometry::Type geo = mesh.GetElementGeometry(i);
-        BBUpdate(T, geo);
+        mfem::ElementTransformation &T = *mesh.GetElementTransformation(i);
+        mfem::Geometry::Type geom = mesh.GetElementGeometry(i);
+        BBUpdate(T, geom);
       }
     }
   }
-  auto *Min = min.HostReadWrite();
-  auto *Max = max.HostReadWrite();
-  Mpi::GlobalMin(dim, Min, mesh.GetComm());
-  Mpi::GlobalMax(dim, Max, mesh.GetComm());
+  Mpi::GlobalMin(dim, min.HostReadWrite(), mesh.GetComm());
+  Mpi::GlobalMax(dim, max.HostReadWrite(), mesh.GetComm());
+}
+
+void GetAxisAlignedBoundingBox(mfem::ParMesh &mesh, int attr, bool bdr, mfem::Vector &min,
+                               mfem::Vector &max)
+{
+  mfem::Array<int> marker(bdr ? mesh.bdr_attributes.Max() : mesh.attributes.Max());
+  marker = 0;
+  marker[attr - 1] = 1;
+  GetAxisAlignedBoundingBox(mesh, marker, bdr, min, max);
 }
 
 double BoundingBox::Area() const
@@ -727,8 +724,8 @@ int CollectPointCloudOnRoot(mfem::ParMesh &mesh, const mfem::Array<int> &marker,
         {
           continue;
         }
-        mfem::ElementTransformation *T = mesh.GetBdrElementTransformation(i);
-        T->Transform(
+        mfem::ElementTransformation &T = *mesh.GetBdrElementTransformation(i);
+        T.Transform(
             mfem::GlobGeometryRefiner.Refine(mesh.GetBdrElementGeometry(i), ref)->RefPts,
             pointmat);
         for (int j = 0; j < pointmat.Width(); j++)
@@ -745,8 +742,8 @@ int CollectPointCloudOnRoot(mfem::ParMesh &mesh, const mfem::Array<int> &marker,
         {
           continue;
         }
-        mfem::ElementTransformation *T = mesh.GetElementTransformation(i);
-        T->Transform(
+        mfem::ElementTransformation &T = *mesh.GetElementTransformation(i);
+        T.Transform(
             mfem::GlobGeometryRefiner.Refine(mesh.GetElementGeometry(i), ref)->RefPts,
             pointmat);
         for (int j = 0; j < pointmat.Width(); j++)
@@ -1091,52 +1088,72 @@ BoundingBall GetBoundingBall(mfem::ParMesh &mesh, int attr, bool bdr)
   return GetBoundingBall(mesh, marker, bdr);
 }
 
-void GetSurfaceNormal(mfem::ParMesh &mesh, int attr, mfem::Vector &normal)
-{
-  mfem::Array<int> marker(mesh.bdr_attributes.Max());
-  marker = 0;
-  marker[attr - 1] = 1;
-  GetSurfaceNormal(mesh, marker, normal);
-}
-
-void GetSurfaceNormal(mfem::ParMesh &mesh, const mfem::Array<int> &marker,
-                      mfem::Vector &normal)
+mfem::Vector GetSurfaceNormal(mfem::ParMesh &mesh, const mfem::Array<int> &marker,
+                              bool average)
 {
   int dim = mesh.SpaceDimension();
-  mfem::Vector nor(dim);
-  normal.SetSize(dim);
+  mfem::Vector loc_normal(dim), normal(dim);
   normal = 0.0;
   bool init = false;
-  for (int i = 0; i < mesh.GetNBE(); i++)
+  auto UpdateNormal = [&](mfem::ElementTransformation &T, mfem::Geometry::Type geom)
   {
-    if (!marker[mesh.GetBdrAttribute(i) - 1])
-    {
-      continue;
-    }
-    mfem::ElementTransformation *T = mesh.GetBdrElementTransformation(i);
-    const mfem::IntegrationPoint &ip =
-        mfem::Geometries.GetCenter(mesh.GetBdrElementGeometry(i));
-    T->SetIntPoint(&ip);
-    mfem::CalcOrtho(T->Jacobian(), nor);
+    const mfem::IntegrationPoint &ip = mfem::Geometries.GetCenter(geom);
+    T.SetIntPoint(&ip);
+    mfem::CalcOrtho(T.Jacobian(), loc_normal);
     if (!init)
     {
-      normal = nor;
+      normal = loc_normal;
       init = true;
     }
     else
     {
       // Check orientation and make sure consistent on this process. If a boundary has
       // conflicting normal definitions, use the first value.
-      if (nor * normal < 0.0)
+      if (loc_normal * normal < 0.0)
       {
-        normal -= nor;
+        normal -= loc_normal;
       }
       else
       {
-        normal += nor;
+        normal += loc_normal;
+      }
+    }
+  };
+  if (mesh.Dimension() == mesh.SpaceDimension())
+  {
+    // Loop over boundary elements.
+    for (int i = 0; i < mesh.GetNBE(); i++)
+    {
+      if (!marker[mesh.GetBdrAttribute(i) - 1])
+      {
+        continue;
+      }
+      mfem::ElementTransformation &T = *mesh.GetBdrElementTransformation(i);
+      UpdateNormal(T, mesh.GetBdrElementGeometry(i));
+      if (!average)
+      {
+        break;
       }
     }
   }
+  else
+  {
+    // Loop over domain elements.
+    for (int i = 0; i < mesh.GetNE(); i++)
+    {
+      if (!marker[mesh.GetAttribute(i) - 1])
+      {
+        continue;
+      }
+      mfem::ElementTransformation &T = *mesh.GetElementTransformation(i);
+      UpdateNormal(T, mesh.GetElementGeometry(i));
+      if (!average)
+      {
+        break;
+      }
+    }
+  }
+
   // If different processors have different normal orientations, take that from the lowest
   // rank processor.
   MPI_Comm comm = mesh.GetComm();
@@ -1151,72 +1168,109 @@ void GetSurfaceNormal(mfem::ParMesh &mesh, const mfem::Array<int> &marker,
   {
     // No boundary elements of attribute attr.
     normal = 0.0;
-    return;
+    return normal;
   }
   if (rank == Mpi::Rank(comm))
   {
     glob_normal = normal;
   }
+  Mpi::Broadcast(dim, glob_normal.HostReadWrite(), rank, comm);
+  if (average)
   {
-    auto *GlobNormal = glob_normal.HostReadWrite();
-    Mpi::Broadcast(dim, GlobNormal, rank, comm);
+    if (init && normal * glob_normal < 0.0)
+    {
+      normal.Neg();
+    }
+    Mpi::GlobalSum(dim, normal.HostReadWrite(), comm);
   }
-  if (init && normal * glob_normal < 0.0)
+  else
   {
-    normal.Neg();
-  }
-  {
-    auto *Normal = normal.HostReadWrite();
-    Mpi::GlobalSum(dim, Normal, comm);
+    normal = glob_normal;
   }
   normal /= normal.Norml2();
+
   // if (dim == 3)
   // {
   //   Mpi::Print(comm, " Surface normal {:d} = ({:+.3e}, {:+.3e}, {:+.3e})", attr,
-  //   normal(0),
-  //              normal(1), normal(2));
+  //              normal(0), normal(1), normal(2));
   // }
   // else
   // {
   //   Mpi::Print(comm, " Surface normal {:d} = ({:+.3e}, {:+.3e})", attr, normal(0),
   //              normal(1));
   // }
+
+  return normal;
 }
 
-double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh, double tol)
+mfem::Vector GetSurfaceNormal(mfem::ParMesh &mesh, int attr, bool average)
+{
+  const bool bdr = (mesh.Dimension() == mesh.SpaceDimension());
+  mfem::Array<int> marker(bdr ? mesh.bdr_attributes.Max() : mesh.attributes.Max());
+  marker = 0;
+  marker[attr - 1] = 1;
+  return GetSurfaceNormal(mesh, marker, average);
+}
+
+mfem::Vector GetSurfaceNormal(mfem::ParMesh &mesh, bool average)
+{
+  const bool bdr = (mesh.Dimension() == mesh.SpaceDimension());
+  const auto &attributes = bdr ? mesh.bdr_attributes : mesh.attributes;
+  return GetSurfaceNormal(mesh, AttrToMarker(attributes.Max(), attributes), average);
+}
+
+double RebalanceMesh(mfem::ParMesh &mesh, const IoData &iodata, double tol)
 {
   BlockTimer bt0(Timer::REBALANCE);
-  const bool save_adapt_mesh = iodata.model.refinement.save_adapt_mesh;
-  std::string serial_mesh_file;
-  if (save_adapt_mesh)
+  MPI_Comm comm = mesh.GetComm();
+  if (iodata.model.refinement.save_adapt_mesh)
   {
-    serial_mesh_file = iodata.problem.output;
-    if (serial_mesh_file.back() != '/')
+    // Create a separate serial mesh to write to disk.
+    std::string sfile = iodata.problem.output;
+    if (sfile.back() != '/')
     {
-      serial_mesh_file += '/';
+      sfile += '/';
     }
-    serial_mesh_file += "serial.mesh";
-  }
+    sfile += "serial.mesh";
 
-  MPI_Comm comm = mesh->GetComm();
-  if (Mpi::Size(comm) == 1)
-  {
-    if (save_adapt_mesh)
+    auto PrintSerial = [&](mfem::Mesh &smesh)
     {
       BlockTimer bt1(Timer::IO);
-      std::ofstream fo(serial_mesh_file);
-      fo.precision(MSH_FLT_PRECISION);
-      mesh::DimensionalizeMesh(*mesh, iodata.GetLengthScale());
-      mesh->mfem::Mesh::Print(fo);
-      mesh::NondimensionalizeMesh(*mesh, iodata.GetLengthScale());
+      if (Mpi::Root(comm))
+      {
+        std::ofstream fo(sfile);
+        // mfem::ofgzstream fo(sfile, true);  // Use zlib compression if available
+        // fo << std::fixed;
+        fo << std::scientific;
+        fo.precision(MSH_FLT_PRECISION);
+        mesh::DimensionalizeMesh(smesh, iodata.GetLengthScale());
+        smesh.Mesh::Print(fo);  // Do not need to nondimensionalize the temporary mesh
+      }
+    };
+
+    if (mesh.Nonconforming())
+    {
+      mfem::ParMesh smesh(mesh);
+      mfem::Array<int> serial_partition(mesh.GetNE());
+      serial_partition = 0;
+      smesh.Rebalance(serial_partition);
+      PrintSerial(smesh);
     }
-    return 1.0;
+    else
+    {
+      mfem::Mesh smesh(mesh.GetSerialMesh(0));
+      PrintSerial(smesh);
+    }
+    Mpi::Barrier(comm);
   }
 
   // If there is more than one processor, may perform rebalancing.
-  mesh->ExchangeFaceNbrData();
+  if (Mpi::Size(comm) == 1)
+  {
+    return 1.0;
+  }
   int min_elem, max_elem;
-  min_elem = max_elem = mesh->GetNE();
+  min_elem = max_elem = mesh.GetNE();
   Mpi::GlobalMin(1, &min_elem, comm);
   Mpi::GlobalMax(1, &max_elem, comm);
   const double ratio = double(max_elem) / min_elem;
@@ -1228,71 +1282,24 @@ double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh,
   }
   if (ratio > tol)
   {
-    if (mesh->Nonconforming() && save_adapt_mesh)
+    mesh.ExchangeFaceNbrData();
+    if (mesh.Nonconforming())
     {
-      // Do not need to duplicate the mesh, as rebalancing will undo this.
-      mfem::Array<int> serial_partition(mesh->GetNE());
-      serial_partition = 0;
-      mesh->Rebalance(serial_partition);
-      BlockTimer bt1(Timer::IO);
-      if (Mpi::Root(comm))
-      {
-        std::ofstream fo(serial_mesh_file);
-        fo.precision(MSH_FLT_PRECISION);
-        mesh::DimensionalizeMesh(*mesh, iodata.GetLengthScale());
-        mesh->Mesh::Print(fo);
-        mesh::NondimensionalizeMesh(*mesh, iodata.GetLengthScale());
-      }
-      Mpi::Barrier(comm);
-    }
-    if (mesh->Nonconforming())
-    {
-      mesh->Rebalance();
+      mesh.Rebalance();
     }
     else
     {
       // Without access to a refinement tree, partitioning must be done on the root
       // processor and then redistributed.
-      RebalanceConformalMesh(mesh, iodata.GetLengthScale(), serial_mesh_file);
+      RebalanceConformalMesh(mesh);
     }
+    mesh.ExchangeFaceNbrData();
   }
-  else if (save_adapt_mesh)
-  {
-    // Given no rebalancing will be done, need to handle the serial write more carefully.
-    // This requires creating a separate serial mesh.
-    if (mesh->Nonconforming())
-    {
-      mfem::ParMesh smesh(*mesh);
-      mfem::Array<int> serial_partition(mesh->GetNE());
-      serial_partition = 0;
-      smesh.Rebalance(serial_partition);
-      BlockTimer bt1(Timer::IO);
-      if (Mpi::Root(comm))
-      {
-        std::ofstream fo(serial_mesh_file);
-        fo.precision(MSH_FLT_PRECISION);
-        mesh::DimensionalizeMesh(smesh, iodata.GetLengthScale());
-        smesh.Mesh::Print(fo);  // Do not need to nondimensionalize the temporary mesh
-      }
-      Mpi::Barrier(comm);
-    }
-    else
-    {
-      auto smesh = std::make_unique<mfem::Mesh>(mesh->GetSerialMesh(0));
-      BlockTimer bt1(Timer::IO);
-      if (Mpi::Rank(comm) == 0)
-      {
-        std::ofstream fo(serial_mesh_file);
-        fo.precision(MSH_FLT_PRECISION);
-        mesh::DimensionalizeMesh(*smesh, iodata.GetLengthScale());
-        smesh->Print(fo);  // Do not need to nondimensionalize the temporary mesh
-      }
-      Mpi::Barrier(comm);
-    }
-  }
-  mesh->ExchangeFaceNbrData();
   return ratio;
 }
+
+template void AttrToMarker(int, const mfem::Array<int> &, mfem::Array<int> &);
+template void AttrToMarker(int, const std::vector<int> &, mfem::Array<int> &);
 
 }  // namespace mesh
 
@@ -1477,11 +1484,12 @@ std::map<int, std::array<int, 2>> CheckMesh(mfem::Mesh &orig_mesh,
               "Nonconforming or 2D meshes have not been tested yet!");
   MFEM_VERIFY(dynamic_cast<mfem::ParMesh *>(&orig_mesh) == nullptr,
               "This function does not work for ParMesh");
-  mfem::Array<int> mat_marker, bdr_marker;
-  GetUsedAttributeMarkers(
-      iodata, orig_mesh.attributes.Size() ? orig_mesh.attributes.Max() : 0,
-      orig_mesh.bdr_attributes.Size() ? orig_mesh.bdr_attributes.Max() : 0, mat_marker,
-      bdr_marker);
+  auto mat_marker =
+      mesh::AttrToMarker(orig_mesh.attributes.Size() ? orig_mesh.attributes.Max() : 0,
+                         iodata.domains.attributes);
+  auto bdr_marker = mesh::AttrToMarker(
+      orig_mesh.bdr_attributes.Size() ? orig_mesh.bdr_attributes.Max() : 0,
+      iodata.boundaries.attributes);
   bool warn = false;
   for (int be = 0; be < orig_mesh.GetNBE(); be++)
   {
@@ -1930,41 +1938,22 @@ std::unique_ptr<mfem::ParMesh> DistributeMesh(MPI_Comm comm,
   }
 }
 
-void GetUsedAttributeMarkers(const IoData &iodata, int n_mat, int n_bdr,
-                             mfem::Array<int> &mat_marker, mfem::Array<int> &bdr_marker)
-{
-  mfem::Array<int> mat_attr, bdr_attr;
-  mat_attr.Reserve(static_cast<int>(iodata.domains.attributes.size()));
-  for (auto attr : iodata.domains.attributes)
-  {
-    mat_attr.Append(attr);
-  }
-  bdr_attr.Reserve(static_cast<int>(iodata.boundaries.attributes.size()));
-  for (auto attr : iodata.boundaries.attributes)
-  {
-    bdr_attr.Append(attr);
-  }
-  mesh::AttrToMarker(n_mat, mat_attr, mat_marker);
-  mesh::AttrToMarker(n_bdr, bdr_attr, bdr_marker);
-}
-
-void RebalanceConformalMesh(std::unique_ptr<mfem::ParMesh> &pmesh, double length_scale,
-                            const std::string &serial_mesh_file)
+void RebalanceConformalMesh(mfem::ParMesh &pmesh)
 {
   // Write the parallel mesh to a stream as a serial mesh, then read back in and partition
   // using METIS.
-  MPI_Comm comm = pmesh->GetComm();
+  MPI_Comm comm = pmesh.GetComm();
   constexpr bool generate_edges = true, refine = true, fix_orientation = true,
                  generate_bdr = false;
   std::unique_ptr<mfem::Mesh> smesh;
-  std::unique_ptr<int[]> partitioning;
   if constexpr (false)
   {
     // Write the serial mesh to a stream and read that through the Mesh constructor.
-    std::stringstream fo;
+    std::ostringstream fo(std::stringstream::out);
+    // fo << std::fixed;
+    fo << std::scientific;
     fo.precision(MSH_FLT_PRECISION);
-    pmesh->PrintAsSerial(fo);
-    pmesh.reset();
+    pmesh.PrintAsSerial(fo);
     if (Mpi::Root(comm))
     {
       smesh = std::make_unique<mfem::Mesh>(fo, generate_edges, refine, fix_orientation);
@@ -1973,34 +1962,26 @@ void RebalanceConformalMesh(std::unique_ptr<mfem::ParMesh> &pmesh, double length
   else
   {
     // Directly ingest the generated Mesh and release the no longer needed memory.
-    smesh = std::make_unique<mfem::Mesh>(pmesh->GetSerialMesh(0));
-    pmesh.reset();
-    if (!Mpi::Root(comm))
+    smesh = std::make_unique<mfem::Mesh>(pmesh.GetSerialMesh(0));
+    if (Mpi::Root(comm))
+    {
+      smesh->FinalizeTopology(generate_bdr);
+      smesh->Finalize(refine, fix_orientation);
+    }
+    else
     {
       smesh.reset();
     }
   }
+
+  // (Re)-construct the parallel mesh.
+  std::unique_ptr<int[]> partitioning;
   if (Mpi::Root(comm))
   {
-    smesh->FinalizeTopology(generate_bdr);
-    smesh->Finalize(refine, fix_orientation);
     partitioning = GetMeshPartitioning(*smesh, Mpi::Size(comm));
   }
-
-  // Construct the parallel mesh.
-  pmesh = DistributeMesh(comm, smesh, partitioning);
-  if (!serial_mesh_file.empty())
-  {
-    BlockTimer bt(Timer::IO);
-    if (Mpi::Root(comm))
-    {
-      std::ofstream fo(serial_mesh_file);
-      fo.precision(MSH_FLT_PRECISION);
-      mesh::DimensionalizeMesh(*smesh, length_scale);
-      smesh->Print(fo);  // Do not need to nondimensionalize the temporary mesh
-    }
-    Mpi::Barrier(comm);
-  }
+  auto new_pmesh = DistributeMesh(comm, smesh, partitioning);
+  pmesh = std::move(*new_pmesh);
 }
 
 }  // namespace

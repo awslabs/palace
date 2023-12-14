@@ -6,7 +6,6 @@
 
 #include <array>
 #include <map>
-#include <set>
 #include <string>
 #include <vector>
 #include <nlohmann/json_fwd.hpp>
@@ -289,7 +288,7 @@ struct DomainPostData
 {
 public:
   // Set of all postprocessing domain attributes.
-  std::set<int> attributes = {};
+  std::vector<int> attributes = {};
 
   // Domain postprocessing objects.
   DomainEnergyPostData energy;
@@ -302,7 +301,7 @@ struct DomainData
 {
 public:
   // Set of all domain attributes.
-  std::set<int> attributes = {};
+  std::vector<int> attributes = {};
 
   // Domain objects.
   DomainMaterialData materials = {};
@@ -521,7 +520,7 @@ struct BoundaryPostData
 {
 public:
   // Set of all postprocessing boundary attributes.
-  std::set<int> attributes = {};
+  std::vector<int> attributes = {};
 
   // Boundary postprocessing objects.
   CapacitancePostData capacitance = {};
@@ -535,7 +534,7 @@ struct BoundaryData
 {
 public:
   // Set of all boundary attributes.
-  std::set<int> attributes = {};
+  std::vector<int> attributes = {};
 
   // Boundary objects.
   PecBoundaryData pec = {};
