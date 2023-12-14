@@ -360,6 +360,7 @@ public:
   }
 };
 
+// Helper for DielectricInterfaceCoefficient.
 enum class DielectricInterfaceType
 {
   DEFAULT,
@@ -495,6 +496,7 @@ inline double DielectricInterfaceCoefficient<DielectricInterfaceType::DEFAULT>::
   return 0.5 * ts * epsilon * (V * V);
 }
 
+// Helper for EnergyDensityCoefficient.
 enum class EnergyDensityType
 {
   ELECTRIC,

@@ -61,7 +61,7 @@ void InitCeedVector(const mfem::Vector &v, Ceed ceed, CeedVector *cv);
 CeedElemTopology GetCeedTopology(mfem::Geometry::Type geom);
 
 // Convert a libCEED geometry type to an MFEM one.
-mfem::Geometry::Type GetMFEMTopology(CeedElemTopology geom);
+mfem::Geometry::Type GetMfemTopology(CeedElemTopology geom);
 
 namespace internal
 {

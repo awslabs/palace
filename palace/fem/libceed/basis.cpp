@@ -105,7 +105,7 @@ void InitCeedInterpolatorBasis(const mfem::FiniteElement &trial_fe,
   PalaceCeedCall(ceed, CeedBasisDestroy(&test_basis));
 }
 
-void InitMFEMInterpolatorBasis(const mfem::FiniteElement &trial_fe,
+void InitMfemInterpolatorBasis(const mfem::FiniteElement &trial_fe,
                                const mfem::FiniteElement &test_fe, CeedInt trial_ncomp,
                                CeedInt test_ncomp, Ceed ceed, CeedBasis *basis)
 {
@@ -194,12 +194,12 @@ void InitInterpolatorBasis(const mfem::FiniteElement &trial_fe,
     }
     else
     {
-      InitMFEMInterpolatorBasis(trial_fe, test_fe, trial_ncomp, test_ncomp, ceed, basis);
+      InitMfemInterpolatorBasis(trial_fe, test_fe, trial_ncomp, test_ncomp, ceed, basis);
     }
   }
   else
   {
-    InitMFEMInterpolatorBasis(trial_fe, test_fe, trial_ncomp, test_ncomp, ceed, basis);
+    InitMfemInterpolatorBasis(trial_fe, test_fe, trial_ncomp, test_ncomp, ceed, basis);
   }
 }
 

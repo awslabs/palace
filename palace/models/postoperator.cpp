@@ -81,17 +81,9 @@ PostOperator::PostOperator(const IoData &iodata, SpaceOperator &spaceop,
   // Add wave port boundary mode postprocessing when available.
   for (const auto &[idx, data] : spaceop.GetWavePortOp())
   {
-    auto ret = port_E0s.insert(std::make_pair(idx, WavePortFieldData()));
-    ret.first->second.E0tr = std::make_unique<RestrictedVectorCoefficient>(
-        std::make_unique<BdrFieldVectorCoefficient>(data.E0t->real(), mat_op),
-        data.attr_list);
-    ret.first->second.E0ti = std::make_unique<RestrictedVectorCoefficient>(
-        std::make_unique<BdrFieldVectorCoefficient>(data.E0t->imag(), mat_op),
-        data.attr_list);
-    ret.first->second.E0nr = std::make_unique<RestrictedCoefficient>(
-        std::make_unique<BdrFieldCoefficient>(data.E0n->real(), mat_op), data.attr_list);
-    ret.first->second.E0ni = std::make_unique<RestrictedCoefficient>(
-        std::make_unique<BdrFieldCoefficient>(data.E0n->imag(), mat_op), data.attr_list);
+    auto ret = port_E0.insert(std::make_pair(idx, WavePortFieldData()));
+    ret.first->second.E0r = data.GetModeFieldCoefficientReal();
+    ret.first->second.E0i = data.GetModeFieldCoefficientImag();
   }
 
   // Initialize data collection objects.
@@ -269,16 +261,12 @@ void PostOperator::InitializeDataCollection(const IoData &iodata)
   }
 
   // Add wave port boundary mode postprocessing when available.
-  for (const auto &[idx, data] : port_E0s)
+  for (const auto &[idx, data] : port_E0)
   {
-    paraview_bdr.RegisterVCoeffField("Et^0_" + std::to_string(idx) + "_real",
-                                     data.E0tr.get());
-    paraview_bdr.RegisterVCoeffField("Et^0_" + std::to_string(idx) + "_imag",
-                                     data.E0ti.get());
-    paraview_bdr.RegisterCoeffField("En^0_" + std::to_string(idx) + "_real",
-                                    data.E0nr.get());
-    paraview_bdr.RegisterCoeffField("En^0_" + std::to_string(idx) + "_imag",
-                                    data.E0ni.get());
+    paraview_bdr.RegisterVCoeffField("E0_" + std::to_string(idx) + "_real",
+                                     data.E0r.get());
+    paraview_bdr.RegisterVCoeffField("E0_" + std::to_string(idx) + "_imag",
+                                     data.E0i.get());
   }
 }
 

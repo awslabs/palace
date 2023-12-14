@@ -47,25 +47,21 @@ public:
   std::complex<double> kn0;
   double omega0;
 
-  // List of all boundary attributes making up this port boundary.
-  mfem::Array<int> attr_list;
-
-  // Grid functions storing the last computed electric field mode on the port.
-  std::unique_ptr<mfem::ParComplexGridFunction> E0t, E0n, port_E0t, port_E0n;
-
 private:
   // SubMesh data structures to define finite element spaces and grid functions on the
   // SubMesh corresponding to this port boundary.
-  std::unique_ptr<Mesh> port_mesh;
+  mutable std::unique_ptr<Mesh> port_mesh;
   std::unique_ptr<mfem::FiniteElementCollection> port_nd_fec, port_h1_fec;
   std::unique_ptr<FiniteElementSpace> port_nd_fespace, port_h1_fespace;
-  std::unique_ptr<mfem::ParTransferMap> port_nd_transfer, port_h1_transfer, nd_transfer,
-      h1_transfer;
+  std::unique_ptr<mfem::ParTransferMap> port_nd_transfer, port_h1_transfer;
+  std::unordered_map<int, int> submesh_parent_elems;
+
+  // List of all boundary attributes making up this port boundary.
+  mfem::Array<int> attr_list;
 
   // Operator storage for repeated boundary mode eigenvalue problem solves.
   double mu_eps_max;
-  std::unique_ptr<mfem::HypreParMatrix> A2r, A2i, B3;
-  std::unique_ptr<ComplexOperator> A, B, P;
+  std::unique_ptr<mfem::HypreParMatrix> A1, A2r, A2i, B1r, B1i, B3;
   ComplexVector v0, e0, e0t, e0n;
 
   // Eigenvalue solver for boundary modes.
@@ -79,19 +75,27 @@ private:
   std::unique_ptr<mfem::ParGridFunction> port_S0t;
   std::unique_ptr<mfem::LinearForm> port_sr, port_si;
 
+  // Grid functions storing the last computed electric field mode on the port.
+  std::unique_ptr<mfem::ParComplexGridFunction> port_E0t, port_E0n;
+
 public:
   WavePortData(const config::WavePortData &data, const MaterialOperator &mat_op,
                mfem::ParFiniteElementSpace &nd_fespace,
                mfem::ParFiniteElementSpace &h1_fespace, const mfem::Array<int> &dbc_attr);
   ~WavePortData();
 
+  const auto &GetAttrList() const { return attr_list; }
+
   void Initialize(double omega);
 
   HYPRE_BigInt GlobalTrueNDSize() const { return port_nd_fespace->GlobalTrueVSize(); }
   HYPRE_BigInt GlobalTrueH1Size() const { return port_h1_fespace->GlobalTrueVSize(); }
 
-  std::unique_ptr<mfem::VectorCoefficient> GetModeCoefficientReal() const;
-  std::unique_ptr<mfem::VectorCoefficient> GetModeCoefficientImag() const;
+  std::unique_ptr<mfem::VectorCoefficient> GetModeExcitationCoefficientReal() const;
+  std::unique_ptr<mfem::VectorCoefficient> GetModeExcitationCoefficientImag() const;
+
+  std::unique_ptr<mfem::VectorCoefficient> GetModeFieldCoefficientReal() const;
+  std::unique_ptr<mfem::VectorCoefficient> GetModeFieldCoefficientImag() const;
 
   std::complex<double> GetCharacteristicImpedance() const
   {

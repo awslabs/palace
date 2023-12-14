@@ -123,7 +123,7 @@ CeedElemTopology GetCeedTopology(mfem::Geometry::Type geom)
   }
 }
 
-mfem::Geometry::Type GetMFEMTopology(CeedElemTopology geom)
+mfem::Geometry::Type GetMfemTopology(CeedElemTopology geom)
 {
   switch (geom)
   {

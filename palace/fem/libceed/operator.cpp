@@ -493,10 +493,10 @@ CeedOperatorCoarsen(const Operator &op_fine, const FiniteElementSpace &fespace_c
     PalaceCeedCall(ceed, CeedBasisGetTopology(basis_fine, &geom));
 
     const auto &geom_data =
-        fespace_coarse.GetMesh().GetCeedGeomFactorData(ceed).at(GetMFEMTopology(geom));
+        fespace_coarse.GetMesh().GetCeedGeomFactorData(ceed).at(GetMfemTopology(geom));
     CeedElemRestriction restr_coarse = fespace_coarse.GetCeedElemRestriction(
-        ceed, GetMFEMTopology(geom), geom_data->indices);
-    CeedBasis basis_coarse = fespace_coarse.GetCeedBasis(ceed, GetMFEMTopology(geom));
+        ceed, GetMfemTopology(geom), geom_data->indices);
+    CeedBasis basis_coarse = fespace_coarse.GetCeedBasis(ceed, GetMfemTopology(geom));
 
     PalaceCeedCall(ceed, CeedOperatorMultigridLevelCreate(op_fine, nullptr, restr_coarse,
                                                           basis_coarse, op_coarse, nullptr,
