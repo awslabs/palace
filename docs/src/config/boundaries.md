@@ -104,8 +104,8 @@ frequency domain driven simulation type.
 
 `"WavePortPEC"` :  Top-level object for configuring PEC boundary conditions for boundary
 mode analysis performed on the wave port boundaries. Thus, this object is only relevant
-when wave port boundaries are specified under [`config["Boundaries"]["WavePort"]`]
-(#boundaries[%5B%22WavePort%22%5D]).
+when wave port boundaries are specified under
+[`config["Boundaries"]["WavePort"]`](#boundaries%5B%5B%22WavePort%22%5D%5D).
 
 `"SurfaceCurrent"` :  Array of objects for configuring surface current boundary conditions.
 This boundary prescribes a unit source surface current excitation on the given boundary in
@@ -378,8 +378,9 @@ port boundary, specified in mesh length units.
 with
 
 `"Attributes" [None]` :  Integer array of mesh boundary attributes to consider along with
-those specified under [`config["Boundaries"]["PEC"]["Attributes"]`]
-(#boundaries%5B%22PEC%22%5D) as PEC when performing wave port boundary mode analysis.
+those specified under
+[`config["Boundaries"]["PEC"]["Attributes"]`](#boundaries%5B%22PEC%22%5D) as PEC when
+performing wave port boundary mode analysis.
 
 ## `boundaries["SurfaceCurrent"]`
 
@@ -438,9 +439,9 @@ element of a multielement current source can be described by its own unique dire
 which is specified here. The elements of a multielement source add in parallel to give the
 same total current as a single-element source.
 
-`"Elements"[]["CoordinateSystem"] ["Cartesian"]` :  This option is for multielement surface current
-boundaries and should not be combined with the `"CoordinateSystem"` field described above. Each
-element of a multielement current source can be described by its own unique
+`"Elements"[]["CoordinateSystem"] ["Cartesian"]` :  This option is for multielement surface
+current boundaries and should not be combined with the `"CoordinateSystem"` field described
+above. Each element of a multielement current source can be described by its own unique
 direction, and corresponding coordinate system.
 
 ## `boundaries["Ground"]`

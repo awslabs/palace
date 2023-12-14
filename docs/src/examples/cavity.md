@@ -7,9 +7,9 @@
 
 !!! note
     
-    The files for this example can be found in the [`examples/cavity/`]
-    (https://github.com/awslabs/palace/blob/main/examples/cavity) directory of the *Palace*
-    source code.
+    The files for this example can be found in the
+    [`examples/cavity/`](https://github.com/awslabs/palace/blob/main/examples/cavity)
+    directory of the *Palace* source code.
 
 This example demonstrates *Palace*'s eigenmode simulation type to solve for the lowest
 frequency modes of a cylindrical cavity resonator. In particular, we consider a cylindrical
@@ -54,9 +54,9 @@ Q_c = \frac{(ka)^3\eta ad}{4(p'_{nm})^2 R_s}
 where ``k=\omega\sqrt{\mu\varepsilon}``, ``\eta=\sqrt{\mu/\varepsilon}``, and
 ``\beta=l\pi/d``.
 
-The initial Gmsh mesh for this problem, from [`mesh/cavity.msh`]
-(https://github.com/awslabs/palace/blob/main/examples/cavity/mesh/cavity.msh), is shown
-below. We use quadratic triangular prism elements.
+The initial Gmsh mesh for this problem, from
+[`mesh/cavity.msh`](https://github.com/awslabs/palace/blob/main/examples/cavity/mesh/cavity.msh),
+is shown below. We use quadratic triangular prism elements.
 
 ```@raw html
 <br/><p align="center">
@@ -64,22 +64,21 @@ below. We use quadratic triangular prism elements.
 </p><br/>
 ```
 
-There are two configuration files for this problem, [`cavity_pec.json`]
-(https://github.com/awslabs/palace/blob/main/examples/cavity/cavity_pec.json) and
-[`cavity_impedance.json`]
-(https://github.com/awslabs/palace/blob/main/examples/cavity/cavity_impedance.json).
+There are two configuration files for this problem,
+[`cavity_pec.json`](https://github.com/awslabs/palace/blob/main/examples/cavity/cavity_pec.json)
+and
+[`cavity_impedance.json`](https://github.com/awslabs/palace/blob/main/examples/cavity/cavity_impedance.json).
 
 In both, the [`config["Problem"]["Type"]`](../config/problem.md#config%5B%22Problem%22%5D)
 field is set to `"Eigenmode"`, and we use the mesh shown above with a single level of
 uniform mesh refinement (`"UniformLevels": 1`). The material properties for Teflon are
-entered under [`config["Domains"]["Materials"]`]
-(../config/domains.md#domains%5B%22Materials%22%5D). The
-[`config["Domains"]["Postprocessing"]["Energy]"`]
-(../config/domains.md#domains["Postprocessing"]["Energy"]) object is used to extract the
-quality factor due to bulk dielectric loss; in this problem since there is only one domain
-this is trivial, but in problems with multiple material domains this feature can be used to
-isolate the energy-participation ratio (EPR) and associated quality factor due to different
-domains in the model.
+entered under
+[`config["Domains"]["Materials"]`](../config/domains.md#domains%5B%22Materials%22%5D). The
+[`config["Domains"]["Postprocessing"]["Energy]"`](../config/domains.md#domains%5B%22Postprocessing%22%5D%5B%22Energy%22%5D)
+object is used to extract the quality factor due to bulk dielectric loss; in this problem
+since there is only one domain this is trivial, but in problems with multiple material
+domains this feature can be used to isolate the energy-participation ratio (EPR) and
+associated quality factor due to different domains in the model.
 
 The only difference between the two configuration files is in the `"Boundaries"` object:
 `cavity_pec.json` prescribes a perfect electric conductor (`"PEC"`) boundary condition to
@@ -188,12 +187,11 @@ for the ``\text{TE}_{011}`` mode is shown below.
 ## Mesh convergence
 
 The effect of mesh size can be investigated for the cylindrical cavity resonator using
-[`convergence_study.jl`]
-(https://github.com/awslabs/palace/blob/main/examples/cavity/convergence_study.jl). For
-a polynomial order of solution and refinement level, a mesh is generated using Gmsh using
-polynomials of the same order to resolve the boundary geometry. The eigenvalue problem is
-then solved for ``f_{\text{TM},010}`` and ``f_{\text{TE},111}``, and the relative error,
-``\frac{f-f_{\text{true}}}{f_{\text{true}}}``, of each mode plotted against
+[`convergence_study.jl`](https://github.com/awslabs/palace/blob/main/examples/cavity/convergence_study.jl).
+For a polynomial order of solution and refinement level, a mesh is generated using Gmsh
+using polynomials of the same order to resolve the boundary geometry. The eigenvalue
+problem is then solved for ``f_{\text{TM},010}`` and ``f_{\text{TE},111}``, and the
+relative error, ``\frac{f-f_{\text{true}}}{f_{\text{true}}}``, of each mode plotted against
 ``\text{DOF}^{-\frac{1}{3}}``, a notional mesh size. Three different element types are
 considered: tetrahedra, prisms and hexahedra, and the results are plotted below. The
 ``x``-axis is a notional measure of the overall cost of the solve, accounting for

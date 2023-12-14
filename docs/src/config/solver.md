@@ -47,9 +47,9 @@ with
 element operators to [partial assembly](https://mfem.org/howto/assembly_levels/). Setting
 this parameter equal to 1 will fully activate operator partial assembly on all levels.
 
-`"Device" ["CPU"]` :  The runtime device configuration passed to [MFEM]
-(https://mfem.org/howto/assembly_levels/) in order to activate different options specified
-during configuration. The available options are:
+`"Device" ["CPU"]` :  The runtime device configuration passed to
+[MFEM](https://mfem.org/howto/assembly_levels/) in order to activate different options
+specified during configuration. The available options are:
 
   - `"CPU"`
   - `"GPU"`
@@ -61,30 +61,30 @@ MFEM is built with CUDA (`MFEM_USE_CUDA=ON`) or HIP (`MFEM_USE_HIP=ON`) support.
 added to the list of activated MFEM devices. The `"Debug"` option for MFEM's `debug` device
 is useful for debugging issues associated with GPU-based runs of *Palace*.
 
-`"Backend" [""]` :  Specifies the [libCEED backend]
-(https://libceed.org/en/latest/gettingstarted/#backends) to use for the simulation. If no
-backend is specified, a suitable default backend is selected based on the given
-`config["Solver"]["Device"]`.
+`"Backend" [""]` :  Specifies the
+[libCEED backend](https://libceed.org/en/latest/gettingstarted/#backends) to use for the
+simulation. If no backend is specified, a suitable default backend is selected based on the
+given `config["Solver"]["Device"]`.
 
 `"Eigenmode"` :  Top-level object for configuring the eigenvalue solver for the eigenmode
 simulation type. Thus, this object is only relevant for
 [`config["Problem"]["Type"]: "Eigenmode"`](problem.md#config%5B%22Problem%22%5D).
 
 `"Driven"` :  Top-level object for configuring the frequency domain driven simulation type.
-Thus, this object is only relevant for [`config["Problem"]["Type"]: "Driven"`]
-(problem.md#config%5B%22Problem%22%5D).
+Thus, this object is only relevant for
+[`config["Problem"]["Type"]: "Driven"`](problem.md#config%5B%22Problem%22%5D).
 
 `"Transient"` :  Top-level object for configuring the time domain driven simulation type.
-Thus, this object is only relevant for [`config["Problem"]["Type"]: "Transient"`]
-(problem.md#config%5B%22Problem%22%5D).
+Thus, this object is only relevant for
+[`config["Problem"]["Type"]: "Transient"`](problem.md#config%5B%22Problem%22%5D).
 
 `"Electrostatic"` :  Top-level object for configuring the electrostatic simulation type.
-Thus, this object is only relevant for [`config["Problem"]["Type"]: "Electrostatic"`]
-(problem.md#config%5B%22Problem%22%5D).
+Thus, this object is only relevant for
+[`config["Problem"]["Type"]: "Electrostatic"`](problem.md#config%5B%22Problem%22%5D).
 
 `"Magnetostatic"` :  Top-level object for configuring the magnetostatic simulation type.
-Thus, this object is only relevant for [`config["Problem"]["Type"]: "Magnetostatic"`]
-(problem.md#config%5B%22Problem%22%5D).
+Thus, this object is only relevant for
+[`config["Problem"]["Type"]: "Magnetostatic"`](problem.md#config%5B%22Problem%22%5D).
 
 `"Linear"` :  Top-level object for configuring the linear solver employed by all simulation
 types.
@@ -128,8 +128,8 @@ uses the solver default.
 
 `"Save" [0]` :  Number of computed field modes to save to disk for visualization with
 [ParaView](https://www.paraview.org/). Files are saved in the `paraview/` directory under
-the directory specified by [`config["Problem"]["Output"]`]
-(problem.md#config%5B%22Problem%22%5D).
+the directory specified by
+[`config["Problem"]["Output"]`](problem.md#config%5B%22Problem%22%5D).
 
 `"Type" ["Default"]` :  Specifies the eigenvalue solver to be used in computing the given
 number of eigenmodes of the problem. The available options are:
@@ -278,8 +278,8 @@ start from rest at ``t = 0.0``.
 
 `"SaveStep" [0]` :  Controls how often, in number of time steps, to save computed fields to
 disk for visualization with [ParaView](https://www.paraview.org/). Files are saved in the
-`paraview/` directory under the directory specified by [`config["Problem"]["Output"]`]
-(problem.md#config%5B%22Problem%22%5D).
+`paraview/` directory under the directory specified by
+[`config["Problem"]["Output"]`](problem.md#config%5B%22Problem%22%5D).
 
 `"SaveOnlyPorts" [false]` :  If set to `true`, postprocessing is only performed for port
 boundaries and skipped for quantities depending on, for example, field integrals over all
@@ -300,8 +300,8 @@ with
 `"Save" [0]` :  Number of computed electric field solutions to save to disk for
 visualization with [ParaView](https://www.paraview.org/), ordered by the entries in the
 computed capacitance matrix. Files are saved in the `paraview/` directory under the
-directory specified by [`config["Problem"]["Output"]`]
-(problem.md#config%5B%22Problem%22%5D).
+directory specified by
+[`config["Problem"]["Output"]`](problem.md#config%5B%22Problem%22%5D).
 
 ## `solver["Magnetostatic"]`
 
@@ -317,8 +317,7 @@ with
 `"Save" [0]` :  Number of computed magnetic field solutions to save to disk for
 visualization with [ParaView](https://www.paraview.org/), ordered by the entries in the
 computed inductance matrix. Files are saved in the `paraview/` directory under the
-directory specified by [`config["Problem"]["Output"]`]
-(problem.md#config%5B%22Problem%22%5D).
+directory specified by [`config["Problem"]["Output"]`](problem.md#config%5B%22Problem%22%5D).
 
 ## `solver["Linear"]`
 
@@ -346,9 +345,9 @@ directory specified by [`config["Problem"]["Output"]`]
 
 with
 
-`"Type" ["Default"]` :  Specifies the solver used for [preconditioning]
-(https://en.wikipedia.org/wiki/Preconditioner) the linear system of equations to be solved
-for each simulation type. The available options are:
+`"Type" ["Default"]` :  Specifies the solver used for
+[preconditioning](https://en.wikipedia.org/wiki/Preconditioner) the linear system of
+equations to be solved for each simulation type. The available options are:
 
   - `"SuperLU"` :  The [SuperLU_DIST](https://github.com/xiaoyeli/superlu_dist) sparse
     direct solver in real double precision is used to factorize the system matrix. For
@@ -363,14 +362,14 @@ for each simulation type. The available options are:
   - `"MUMPS"` :  The [MUMPS](http://mumps.enseeiht.fr/) sparse direct solver in real double
     precision is used to factorize the system matrix. For frequency domain problems this
     uses a real approximation to the true complex linear system matrix. This option is only
-    available when *Palace* has been [built with MUMPS support]
-    (../install.md#Configuration-options).
-  - `"AMS"` :  Hypre's [Auxiliary-space Maxwell Solver (AMS)]
-    (https://hypre.readthedocs.io/en/latest/solvers-ams.html), an algebraic multigrid
-    (AMG)-based preconditioner.
-  - `"BoomerAMG"` :  The [BoomerAMG]
-    (https://hypre.readthedocs.io/en/latest/solvers-boomeramg.html) algebraic multigrid
-    solver from Hypre.
+    available when *Palace* has been
+    [built with MUMPS support](../install.md#Configuration-options).
+  - `"AMS"` :  Hypre's
+    [Auxiliary-space Maxwell Solver (AMS)](https://hypre.readthedocs.io/en/latest/solvers-ams.html),
+    an algebraic multigrid (AMG)-based preconditioner.
+  - `"BoomerAMG"` :  The
+    [BoomerAMG](https://hypre.readthedocs.io/en/latest/solvers-boomeramg.html) AMG solver
+    from Hypre.
   - `"Jacobi"` :  Diagonal scaling with a simple Jacobi preconditioner (not recommended in
     general).
   - `"Default"` :  Use the default `"AMS"` solver for simulation types involving definite or
@@ -378,19 +377,19 @@ for each simulation type. The available options are:
     frequency domain problems, use a sparse direct solver if available, otherwise uses
     `"AMS"`. For electrostatic problems, uses `"BoomerAMG"`.
 
-`"KSPType" ["Default"]` :  Specifies the iterative [Krylov subspace]
-(https://en.wikipedia.org/wiki/Krylov_subspace) solver type for solving linear systems of
-equations arising for each simulation type. The available options are:
+`"KSPType" ["Default"]` :  Specifies the iterative
+[Krylov subspace](https://en.wikipedia.org/wiki/Krylov_subspace) solver type for solving
+linear systems of equations arising for each simulation type. The available options are:
 
   - `"CG"`
   - `"GMRES"`
   - `"FGMRES"`
   - `"Default"` :  Use the default `"GMRES"` Krylov subspace solver for frequency domain
-    problems, that is when [`config["Problem"]["Type"]`]
-    (problem.md#config%5B%22Problem%22%5D) is `"Eigenmode"` or `"Driven"`. For the other
-    simulation types, the linear system matrix is always real and symmetric positive
-    definite (SPD) and the preconditioned conjugate gradient method (`"CG"`) is used as the
-    Krylov solver.
+    problems, that is when
+    [`config["Problem"]["Type"]`](problem.md#config%5B%22Problem%22%5D) is `"Eigenmode"` or
+    `"Driven"`. For the other simulation types, the linear system matrix is always real and
+    symmetric positive definite (SPD) and the preconditioned conjugate gradient method
+    (`"CG"`) is used as the Krylov solver.
 
 `"Tol" [1.0e-6]` :  Relative residual convergence tolerance for the iterative linear solver.
 
@@ -399,10 +398,11 @@ equations arising for each simulation type. The available options are:
 `"MaxSize" [0]` :  Maximum Krylov space size for the GMRES and FGMRES solvers. A value less
 than 1 defaults to the value specified by `"MaxIts"`.
 
-`"MGMaxLevels" [100]` :  Chose whether to enable [geometric multigrid preconditioning]
-(https://en.wikipedia.org/wiki/Multigrid_method) which uses p- and h-multigrid coarsening as
-available to construct the multigrid hierarchy. The solver specified by `"Type"` is used on
-the coarsest level. Relaxation on the fine levels is performed with Chebyshev smoothing.
+`"MGMaxLevels" [100]` :  Chose whether to enable
+[geometric multigrid preconditioning](https://en.wikipedia.org/wiki/Multigrid_method) which
+uses p- and h-multigrid coarsening as available to construct the multigrid hierarchy. The
+solver specified by `"Type"` is used on the coarsest level. Relaxation on the fine levels
+is performed with Chebyshev smoothing.
 
 `"MGCoarsenType" ["Logarithmic"]` :  Coarsening to create p-multigrid levels.
 
@@ -418,8 +418,9 @@ preconditioners (when `"UseMultigrid"` is `true` or `"Type"` is `"AMS"` or `"Boo
 
 `"MGSmoothOrder" [0]` :  Order of polynomial smoothing for geometric multigrid
 preconditioning (when `"UseMultigrid"` is `true`). A value less than 1 defaults to twice
-the solution order given in [`config["Solver"]["Order"]`]
-(problem.md#config%5B%22Solver%22%5D) or 4, whichever is larger.
+the solution order given in
+[`config["Solver"]["Order"]`](problem.md#config%5B%22Solver%22%5D) or 4, whichever is
+larger.
 
 `"PCMatReal" [false]` :  When set to `true`, constructs the preconditioner for frequency
 domain problems using a real-valued approximation of the system matrix. This is always

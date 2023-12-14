@@ -5,18 +5,20 @@
 
 # Installation
 
-*Palace* can be built and installed using the [Spack HPC package manager]
-(https://spack.io/), following the instructions in the [Build using Spack]
-(#Build-using-Spack) section. Containerized builds are possible with Singularity/Apptainer,
-described in [Build using Singularity/Apptainer](#Build-using-Singularity/Apptainer).
-Alternatively, compiling from source using [CMake](https://cmake.org/download) is described
-in [Build from source](#Build-from-source).
+*Palace* can be built and installed using the
+[Spack HPC package manager](https://spack.io/), following the instructions in
+the [Build using Spack](#Build-using-Spack) section. Containerized builds are possible with
+Singularity/Apptainer, described in
+[Build using Singularity/Apptainer](#Build-using-Singularity/Apptainer). Alternatively,
+compiling from source using [CMake](https://cmake.org/download) is described in
+[Build from source](#Build-from-source).
 
 ## Build using Spack
 
 *Palace* is a registered package in the built-in Spack package repository. To install the
-solver, follow the [instructions for setting up Spack on your system]
-(https://spack.readthedocs.io/en/latest/getting_started.html) and run:
+solver, follow the
+[instructions for setting up Spack on your system](https://spack.readthedocs.io/en/latest/getting_started.html)
+and run:
 
 ```bash
 spack install palace
@@ -27,22 +29,23 @@ found using `spack info palace`.
 
 ## Build using Singularity/Apptainer
 
-*Palace* can be built in a [Singularity/Apptainer]
-(https://apptainer.org/docs/user/main/introduction.html) container for HPC environments
+*Palace* can be built in a
+[Singularity/Apptainer](https://apptainer.org/docs/user/main/introduction.html) container
+for HPC environments
 supporting the Singularity/Apptainer container system. To build the container using the
-provided definition file in the [singularity/]
-(https://github.com/awslabs/palace/blob/main/singularity) directory, first
-[set up Singularity/Apptainer on your system]
-(https://github.com/apptainer/apptainer/blob/main/INSTALL.md) and subsequently run:
+provided definition file in the
+[singularity/](https://github.com/awslabs/palace/blob/main/singularity) directory, first
+[set up Singularity/Apptainer on your system](https://github.com/apptainer/apptainer/blob/main/INSTALL.md)
+and subsequently run:
 
 ```bash
 singularity build palace.sif <SOURCE_DIR>/singularity/singularity.def
 ```
 
 where the repository source code has been cloned to `<SOURCE_DIR>`. For more information
-about Singularity/Apptainer, see the [Quick Start]
-(https://apptainer.org/docs/user/main/quick_start.html) guide in the Singularity/Apptainer
-documentation.
+about Singularity/Apptainer, see the
+[Quick Start](https://apptainer.org/docs/user/main/quick_start.html) guide in the
+Singularity/Apptainer documentation.
 
 ## Build from source
 
@@ -144,8 +147,8 @@ procedure:
 
   - For `x86_64` systems:
     
-      + If the `MKLROOT` environment variable is set, looks for an [Intel MKL]
-        (https://www.intel.com/content/www/us/en/developer/tools/oneapi/onemkl.html)
+      + If the `MKLROOT` environment variable is set, looks for an
+        [Intel MKL](https://www.intel.com/content/www/us/en/developer/tools/oneapi/onemkl.html)
         installation.
       + If the `AOCL_DIR` or `AOCLROOT` environment variables are set, looks for an
         [AMD Optimizing CPU Libraries (AOCL)](https://developer.amd.com/amd-aocl)
@@ -156,8 +159,7 @@ procedure:
   - For `aarch64`/`arm64` systems:
     
       + If the `ARMPL_DIR` environment variable is set, looks for an
-        [Arm Performance Libraries (PL)]
-        (https://www.arm.com/products/development-tools/server-and-hpc/allinea-studio/performance-libraries)
+        [Arm Performance Libraries (PL)](https://www.arm.com/products/development-tools/server-and-hpc/allinea-studio/performance-libraries)
         installation.
       + Otherwise, tries to locate an installation of [OpenBLAS](https://www.openblas.net/).
 
@@ -173,23 +175,22 @@ as the standard parallelization in approach in *Palace* is to use pure MPI paral
 *Palace* leverages the [MFEM finite element discretization library](http://mfem.org). It
 always configures and builds its own installation of MFEM internally in order to support
 the most up to date features and patches. Likewise, Palace will always build its own
-installation of [libCEED](https://github.com/CEED/libCEED), and [GSLIB]
-(https://github.com/Nek5000/gslib), when `PALACE_WITH_GSLIB=ON`.
+installation of [libCEED](https://github.com/CEED/libCEED), and
+[GSLIB](https://github.com/Nek5000/gslib), when `PALACE_WITH_GSLIB=ON`.
 
 As part of the [Build from source](#Build-from-source), the CMake build will automatically
 build and install a small number of third-party dependencies before building *Palace*. The
-source code for these dependencies is downloaded using using [Git submodules]
-(https://git-scm.com/book/en/v2/Git-Tools-Submodules). These libraries include:
+source code for these dependencies is downloaded during the build process:
 
-  - [METIS](http://glaros.dtc.umn.edu/gkhome/metis/metis/overview) and [ParMETIS]
-    (http://glaros.dtc.umn.edu/gkhome/metis/parmetis/overview)
+  - [METIS](http://glaros.dtc.umn.edu/gkhome/metis/metis/overview) and
+    [ParMETIS](http://glaros.dtc.umn.edu/gkhome/metis/parmetis/overview)
   - [Hypre](https://github.com/hypre-space/hypre)
   - [SuperLU_DIST](https://github.com/xiaoyeli/superlu_dist) (optional, when
     `PALACE_WITH_SUPERLU=ON`)
   - [STRUMPACK](https://portal.nersc.gov/project/sparse/strumpack) (optional, when
-    `PALACE_WITH_STRUMPACK=ON`), including [ButterflyPACK]
-    (https://github.com/liuyangzhuan/ButterflyPACK) and [zfp](https://github.com/LLNL/zfp)
-    support
+    `PALACE_WITH_STRUMPACK=ON`), including
+    [ButterflyPACK](https://github.com/liuyangzhuan/ButterflyPACK) and
+    [zfp](https://github.com/LLNL/zfp) support
   - [MUMPS](http://mumps.enseeiht.fr/) (optional, when `PALACE_WITH_MUMPS=ON`)
   - [SLEPc](https://slepc.upv.es/) (optional, when `PALACE_WITH_SLEPC=ON`), including
     [PETSc](https://petsc.org/release/)
