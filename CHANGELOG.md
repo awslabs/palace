@@ -13,6 +13,21 @@ The format of this changelog is based on
 
 ## In progress
 
+  - Added support for operator partial assembly for high-order finite element spaces based
+    on libCEED for mixed and non-tensor product element meshes. This option is disabled by
+    default, but can be activated using `config["Solver"]["PartialAssemblyOrder"]` set to
+    some number less than or equal to `"Order"`.
+  - Added flux-based error estimation, reported in `error-estimate.csv`. This computes the
+    difference between the numerical gradient (electrostatics) or curl (otherwise) of the
+    solution, and a smoother approximation obtained through a global mass matrix inversion.
+    The results are reported in `error-estimates.csv` within the `"Output"` folder.
+  - Added support for non axis aligned lumped ports and current sources. Key words `"X"`,
+    `"Y"`, `"Z"` and `"R"`, with optional prefix `"+"` or `"-"` still work, but now
+    directions can be specified as vectors with 3 components. Users will be warned, and
+    ultimately errored, if the specified directions do not agree with axis directions
+    discovered from the geometry.
+  - Added improved `Timer` and `BlockTimer` classes with more timing categories for
+    reporting simulation runtime.
   - Changed implementation of complex-valued linear algebra to use new `ComplexVector` and
     `ComplexOperator` types, which are based on the underlying `mfem::Vector` and
     `mfem::Operator` classes, instead of PETSc. PETSc is now fully optional and only
@@ -24,45 +39,14 @@ The format of this changelog is based on
   - Changed implementation of numeric wave ports to use MFEM's `SubMesh` functionality. As
     of [#3379](https://github.com/mfem/mfem/pull/3379) in MFEM, this has full ND and RT
     basis support. For now, support for nonconforming mesh boundaries is limited.
-  - Added support for operator partial assembly for high-order finite element spaces based
-    on libCEED for non-tensor product element meshes. This option is disabled by default,
-    but can be activated using `config["Solver"]["PartialAssemblyOrder"]` set to some number
-    less than or equal to `"Order"`.
-  - Added `config["Solver"]["Device"]` and `config["Solver"]["Backend"]` options for runtime
-    configuration of the MFEM device (CPU or GPU) and corresponding libCEED backend, with
-    suitable defaults for users.
-  - Added support for non axis aligned lumped ports and current sources. Key words `"X"`,
-    `"Y"`, `"Z"` and `"R"`, with optional prefix `"+"` or `"-"` still work, but now
-    directions can be specified as vectors with 3 components. Users will be warned, and
-    ultimately errored, if the specified directions do not agree with axis directions
-    discovered from the geometry.
-  - Added flux-based error estimation, reported in `error-estimate.csv`. This computes the
-    difference between the numerical gradient (electrostatics) or curl (otherwise) of the
-    solution, and a smoother approximation obtained through a global mass matrix inversion.
-    The results are reported in `error-estimates.csv` within the `"Output"` folder.
-  - Added Adaptive Mesh Refinement (AMR), specified in the `config["Model"]["Refinement"]`,
-    for all problem types aside from transient. To enable AMR, a user must specify
-    `"MaxIts"`, while all other options have reasonable defaults. Nonconformal(all mesh
-    types) and conformal (simplex meshes) refinement are supported.
-  - Added output of lumped port voltage and current for eigenmode simulations.
-  - Added dimensionalized output for energies, voltages, currents, and field values based on
-    a choice of the characteristic magnetic field strength used for nondimensionalization.
-  - Added output of electric and magnetic field energies and participation ratios in regions
-    of the domain, specified with `config["Domains"]["Postprocessing"]["Energy"]` and
-    written to `domain-E.csv`. This replaces
-    `config["Domains"]["Postprocessing"]["Dielectric"]` and `domain-Q.csv`.
-  - Fixed bugs for simulations using tetrahedral meshes associated with unexpected mesh
-    toplogy changes during parallel mesh construction.
-  - Added improved `Timer` and `BlockTimer` classes with more timing categories for
-    reporting simulation runtime.
-  - Added build dependencies on [libCEED](https://github.com/CEED/libCEED) and
-    [LIBXSMM](https://github.com/libxsmm/libxsmm) to support operator partial assembly (CPU-
-    based for now).
+  - Added build dependencies on [libCEED](https://github.com/CEED/libCEED), including
+    [LIBXSMM](https://github.com/libxsmm/libxsmm) and [MAGMA](https://icl.utk.edu/magma/)
+    to support CPU- and GPU-based operator partial assembly.
   - Added unit test framework for all integrators based on
     [Catch2](https://github.com/catchorg/Catch2), which also includes some automated
     benchmarking capabilities for operator assembly and application.
   - Added improved OpenMP support in `palace` wrapper script and CI tests.
-  - Added Apptainer/Singularity container build definition for Palace.
+  - Added Apptainer/Singularity container build definition for *Palace*.
   - Fixed bugs related to thread-safety for OpenMP builds and parallel tetrahedral meshes in
     the upstream MFEM library.
 
@@ -75,7 +59,7 @@ The format of this changelog is based on
     dependencies relying instead directly on CMake's ExternalProject, patch GSLIB dependency
     for shared library builds, add CI tests with ARPACK-NG instead of SLEPc, update all
     dependency versions including MFEM to incorporate bug fixes and improvements. This
-    affects the Spack package recipe, so a new recipe is distributed as part of Palace in
+    affects the Spack package recipe, so a new recipe is distributed as part of *Palace* in
     in `spack/` which will keep compatibility with `main` while changes are upstreamed to
     the built-in Spack repository.
   - Added a basic Makefile with some useful targets for development.

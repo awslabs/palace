@@ -12,7 +12,8 @@ SPDX-License-Identifier: Apache-2.0
 *Palace*, for **PA**rallel **LA**rge-scale **C**omputational **E**lectromagnetics, is an
 open-source, parallel finite element code for full-wave 3D electromagnetic simulations in
 the frequency or time domain, using the
-[MFEM finite element discretization library](http://mfem.org).
+[MFEM finite element discretization library](http://mfem.org) and
+[libCEED library](https://github.com/CEED/libCEED) for efficient exascale discretizations.
 
 ## Key features
 
@@ -28,13 +29,11 @@ the frequency or time domain, using the
     problem formulations.
   - Support for a wide range of mesh file formats for structured and unstructured meshes,
     with built-in uniform or region-based parallel mesh refinement.
-  - Solution-based Adaptive Mesh Refinement (AMR) for all simulation types aside from
-    transient. Nonconformal refinement is supported for all mesh types, and conformal
-    refinement for simplex meshes.
   - Arbitrary high-order finite element spaces and curvilinear mesh support thanks to the
     [MFEM library](https://mfem.org/features/).
-  - Scalable algorithms for the solution of linear systems of equations, including geometric
-    multigrid (GMG), parallel sparse direct solvers, and algebraic multigrid
+  - Scalable algorithms for the solution of linear systems of equations, including matrix-
+    free $p$-multigrid utilizing [high-order operator partial assembly]
+    (https://mfem.org/performance/), parallel sparse direct solvers, and algebraic multigrid
     (AMG) preconditioners, for fast performance on platforms ranging from laptops to HPC
     systems.
 
@@ -55,9 +54,9 @@ connection is required.
 
 System requirements:
 
-  - CMake version 3.18.1 or later
+  - CMake version 3.21 or later
   - C++17 compatible C++ compiler
-  - C and (optionally) Fortran compilers for dependency builds
+  - C and Fortran (optional) compilers for dependency builds
   - MPI distribution
   - BLAS, LAPACK libraries
 

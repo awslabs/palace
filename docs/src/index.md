@@ -8,7 +8,8 @@
 *Palace*, for **PA**rallel **LA**rge-scale **C**omputational **E**lectromagnetics, is an
 open-source, parallel finite element code for full-wave 3D electromagnetic simulations in
 the frequency or time domain, using the [MFEM finite element discretization library]
-(http://mfem.org).
+(http://mfem.org) and [libCEED library](https://github.com/CEED/libCEED) for efficient
+exascale discretizations.
 
 ## Key features
 
@@ -32,15 +33,13 @@ the frequency or time domain, using the [MFEM finite element discretization libr
     (guide/model.md#Supported-mesh-formats) for structured and unstructured meshes,
     with built-in uniform or region-based parallel [mesh refinement]
     (guide/model.md#Mesh-refinement).
-  - Solution-based [Adaptive Mesh Refinement (AMR)](guide/model.md#Mesh-refinement) for all
-    simulation types aside from transient. Nonconformal refinement is supported for all
-    mesh types, and conformal refinement for simplex meshes.
   - Arbitrary high-order finite element spaces and curvilinear mesh support thanks to
     the [MFEM library](https://mfem.org/features/).
   - Scalable algorithms for the [solution of linear systems of equations]
-    (config/solver.md#solver["Linear"]), including geometric multigrid (GMG), parallel
-    sparse direct solvers, and algebraic multigrid (AMG) preconditioners, for fast
-    performance on platforms ranging from laptops to HPC systems.
+    (config/solver.md#solver["Linear"]), including matrix-free $p$-multigrid utilizing
+    [high-order operator partial assembly](https://mfem.org/performance/), parallel sparse
+    direct solvers, and algebraic multigrid (AMG) preconditioners, for fast performance on
+    platforms ranging from laptops to HPC systems.
 
 ## Contents
 
@@ -54,9 +53,7 @@ the frequency or time domain, using the [MFEM finite element discretization libr
 
 ## Coming soon
 
-  - Improved adaptive mesh refinement (AMR) support for transient simulation type and
-    numeric wave ports on nonconformal meshes
-  - Efficient high-order operator assembly and GPU support
+  - GPU support
+  - Adaptive and nonconforming mesh refinement
   - Perfectly matched layer (PML) boundaries
-  - Periodic boundaries with phase delay constraints
   - Automatic mesh generation

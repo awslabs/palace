@@ -48,9 +48,9 @@ documentation.
 
 A build from source requires the following prerequisites installed on your system:
 
-  - [CMake](https://cmake.org/download) version 3.18.1 or later
-  - C++ compiler supporting C++17
-  - C and (optionally) Fortran compilers for dependency builds
+  - [CMake](https://cmake.org/download) version 3.21 or later
+  - C++17 compatible C++ compiler
+  - C and Fortran (optional) compilers for dependency builds
   - MPI distribution
   - BLAS, LAPACK libraries (described below in [Math libraries](#Math-libraries))
 
@@ -112,14 +112,15 @@ The *Palace* build respects standard CMake variables, including:
 Additional build options are (with default values in brackets):
 
   - `PALACE_WITH_64BIT_INT [OFF]` :  Build with 64-bit integer support
-  - `PALACE_WITH_OPENMP [OFF]` :  Use OpenMP
-  - `PALACE_WITH_GSLIB [ON]` :  Build with GSLIB library for high-order field interpolation
+  - `PALACE_WITH_OPENMP [OFF]` :  Use OpenMP for shared-memory parallelism
   - `PALACE_WITH_SUPERLU [ON]` :  Build with SuperLU_DIST sparse direct solver
   - `PALACE_WITH_STRUMPACK [OFF]` :  Build with STRUMPACK sparse direct solver
   - `PALACE_WITH_MUMPS [OFF]` :  Build with MUMPS sparse direct solver
   - `PALACE_WITH_SLEPC [ON]` :  Build with SLEPc eigenvalue solver
   - `PALACE_WITH_ARPACK [OFF]` :  Build with ARPACK eigenvalue solver
   - `PALACE_WITH_LIBXSMM [ON]` :  Build with LIBXSMM backend for libCEED
+  - `PALACE_WITH_MAGMA [ON]` :  Build with MAGMA backend for libCEED
+  - `PALACE_WITH_GSLIB [ON]` :  Build with GSLIB library for high-order field interpolation
 
 The build step is invoked by running (for example with 4 `make` threads)
 
@@ -195,6 +196,7 @@ source code for these dependencies is downloaded using using [Git submodules]
   - [ARPACK-NG](https://github.com/opencollab/arpack-ng) (optional, when
     `PALACE_WITH_ARPACK=ON`)
   - [LIBXSMM](https://github.com/libxsmm/libxsmm) (optional, when `PALACE_WITH_LIBXSMM=ON`)
+  - [MAGMA](https://icl.utk.edu/magma/) (optional, when `PALACE_WITH_MAGMA=ON`)
   - [nlohmann/json](https://github.com/nlohmann/json)
   - [fmt](https://fmt.dev/latest)
   - [Eigen](https://eigen.tuxfamily.org)
