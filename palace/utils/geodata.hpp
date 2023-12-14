@@ -67,10 +67,10 @@ mfem::Array<int> AttrToMarker(int max_attr, const T &attr_list)
 }
 
 // Helper function to construct the bounding box for all elements with the given attribute.
-void GetAxisAlignedBoundingBox(mfem::ParMesh &mesh, const mfem::Array<int> &marker,
+void GetAxisAlignedBoundingBox(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
                                bool bdr, mfem::Vector &min, mfem::Vector &max);
-void GetAxisAlignedBoundingBox(mfem::ParMesh &mesh, int attr, bool bdr, mfem::Vector &min,
-                               mfem::Vector &max);
+void GetAxisAlignedBoundingBox(const mfem::ParMesh &mesh, int attr, bool bdr,
+                               mfem::Vector &min, mfem::Vector &max);
 
 // Struct describing a bounding box in terms of the center and face normals. The normals
 // specify the direction from the center of the box.
@@ -123,26 +123,28 @@ struct BoundingBall
 };
 
 // Helper functions for computing bounding boxes from a mesh and markers.
-BoundingBox GetBoundingBox(mfem::ParMesh &mesh, const mfem::Array<int> &marker, bool bdr);
-BoundingBox GetBoundingBox(mfem::ParMesh &mesh, int attr, bool bdr);
+BoundingBox GetBoundingBox(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
+                           bool bdr);
+BoundingBox GetBoundingBox(const mfem::ParMesh &mesh, int attr, bool bdr);
 
 // Helper function for computing the direction aligned length of a marked group.
-double GetProjectedLength(mfem::ParMesh &mesh, const mfem::Array<int> &marker, bool bdr,
-                          const std::array<double, 3> &dir);
-double GetProjectedLength(mfem::ParMesh &mesh, int attr, bool bdr,
+double GetProjectedLength(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
+                          bool bdr, const std::array<double, 3> &dir);
+double GetProjectedLength(const mfem::ParMesh &mesh, int attr, bool bdr,
                           const std::array<double, 3> &dir);
 
 // Given a mesh and a marker, compute the diameter of a bounding circle/sphere, assuming
 // that the extrema points are in the marked group.
-BoundingBall GetBoundingBall(mfem::ParMesh &mesh, const mfem::Array<int> &marker, bool bdr);
-BoundingBall GetBoundingBall(mfem::ParMesh &mesh, int attr, bool bdr);
+BoundingBall GetBoundingBall(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
+                             bool bdr);
+BoundingBall GetBoundingBall(const mfem::ParMesh &mesh, int attr, bool bdr);
 
 // Helper function to compute the average surface normal for all elements with the given
 // attribute.
-mfem::Vector GetSurfaceNormal(mfem::ParMesh &mesh, const mfem::Array<int> &marker,
+mfem::Vector GetSurfaceNormal(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
                               bool average = true);
-mfem::Vector GetSurfaceNormal(mfem::ParMesh &mesh, int attr, bool average = true);
-mfem::Vector GetSurfaceNormal(mfem::ParMesh &mesh, bool average = true);
+mfem::Vector GetSurfaceNormal(const mfem::ParMesh &mesh, int attr, bool average = true);
+mfem::Vector GetSurfaceNormal(const mfem::ParMesh &mesh, bool average = true);
 
 // Helper function responsible for rebalancing the mesh, and optionally writing meshes from
 // the intermediate stages to disk. Returns the imbalance ratio before rebalancing.

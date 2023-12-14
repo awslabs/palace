@@ -12,7 +12,7 @@ namespace palace
 {
 
 SurfaceImpedanceOperator::SurfaceImpedanceOperator(const IoData &iodata,
-                                                   mfem::ParMesh &mesh)
+                                                   const mfem::ParMesh &mesh)
 {
   // Set up impedance boundary conditions.
   SetUpBoundaryProperties(iodata, mesh);
@@ -97,7 +97,8 @@ void SurfaceImpedanceOperator::SetUpBoundaryProperties(const IoData &iodata,
   mesh::AttrToMarker(bdr_attr_max, impedance_Cs_bcs, impedance_Cs_marker);
 }
 
-void SurfaceImpedanceOperator::PrintBoundaryInfo(const IoData &iodata, mfem::ParMesh &mesh)
+void SurfaceImpedanceOperator::PrintBoundaryInfo(const IoData &iodata,
+                                                 const mfem::ParMesh &mesh)
 {
   if (impedance_marker.Size() && impedance_marker.Max() == 0)
   {

@@ -360,7 +360,7 @@ void LumpedPortOperator::SetUpBoundaryProperties(const IoData &iodata,
   }
 }
 
-void LumpedPortOperator::PrintBoundaryInfo(const IoData &iodata, mfem::ParMesh &mesh)
+void LumpedPortOperator::PrintBoundaryInfo(const IoData &iodata, const mfem::ParMesh &mesh)
 {
   // Print out BC info for all port attributes.
   if (ports.empty())

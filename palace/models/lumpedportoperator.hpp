@@ -90,7 +90,7 @@ private:
   mfem::Array<int> port_marker, port_Rs_marker, port_Ls_marker, port_Cs_marker;
   void SetUpBoundaryProperties(const IoData &iodata,
                                mfem::ParFiniteElementSpace &h1_fespace);
-  void PrintBoundaryInfo(const IoData &iodata, mfem::ParMesh &mesh);
+  void PrintBoundaryInfo(const IoData &iodata, const mfem::ParMesh &mesh);
 
 public:
   LumpedPortOperator(const IoData &iodata, mfem::ParFiniteElementSpace &h1_fespace);

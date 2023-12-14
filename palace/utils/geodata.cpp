@@ -506,7 +506,7 @@ void AttrToMarker(int max_attr, const T &attr_list, mfem::Array<int> &marker)
   }
 }
 
-void GetAxisAlignedBoundingBox(mfem::ParMesh &mesh, const mfem::Array<int> &marker,
+void GetAxisAlignedBoundingBox(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
                                bool bdr, mfem::Vector &min, mfem::Vector &max)
 {
   int dim = mesh.SpaceDimension();
@@ -566,9 +566,8 @@ void GetAxisAlignedBoundingBox(mfem::ParMesh &mesh, const mfem::Array<int> &mark
   }
   else
   {
-    const int ref = mesh.GetNodes()->FESpace()->GetMaxElementOrder();
-    auto BBUpdate = [&ref, &min, &max](mfem::ElementTransformation &T,
-                                       mfem::Geometry::Type &geom) -> void
+    auto BBUpdate = [&min, &max](mfem::ElementTransformation &T, mfem::Geometry::Type &geom,
+                                 int ref) -> void
     {
       mfem::DenseMatrix pointmat;
       mfem::RefinedGeometry *RefG = mfem::GlobGeometryRefiner.Refine(geom, ref);
@@ -588,6 +587,8 @@ void GetAxisAlignedBoundingBox(mfem::ParMesh &mesh, const mfem::Array<int> &mark
         }
       }
     };
+    const int ref = mesh.GetNodes()->FESpace()->GetMaxElementOrder();
+    mfem::IsoparametricTransformation T;
     if (bdr)
     {
       for (int i = 0; i < mesh.GetNBE(); i++)
@@ -596,9 +597,9 @@ void GetAxisAlignedBoundingBox(mfem::ParMesh &mesh, const mfem::Array<int> &mark
         {
           continue;
         }
-        mfem::ElementTransformation &T = *mesh.GetBdrElementTransformation(i);
+        mesh.GetBdrElementTransformation(i, &T);
         mfem::Geometry::Type geom = mesh.GetBdrElementGeometry(i);
-        BBUpdate(T, geom);
+        BBUpdate(T, geom, ref);
       }
     }
     else
@@ -609,9 +610,9 @@ void GetAxisAlignedBoundingBox(mfem::ParMesh &mesh, const mfem::Array<int> &mark
         {
           continue;
         }
-        mfem::ElementTransformation &T = *mesh.GetElementTransformation(i);
+        mesh.GetElementTransformation(i, &T);
         mfem::Geometry::Type geom = mesh.GetElementGeometry(i);
-        BBUpdate(T, geom);
+        BBUpdate(T, geom, ref);
       }
     }
   }
@@ -619,8 +620,8 @@ void GetAxisAlignedBoundingBox(mfem::ParMesh &mesh, const mfem::Array<int> &mark
   Mpi::GlobalMax(dim, max.HostReadWrite(), mesh.GetComm());
 }
 
-void GetAxisAlignedBoundingBox(mfem::ParMesh &mesh, int attr, bool bdr, mfem::Vector &min,
-                               mfem::Vector &max)
+void GetAxisAlignedBoundingBox(const mfem::ParMesh &mesh, int attr, bool bdr,
+                               mfem::Vector &min, mfem::Vector &max)
 {
   mfem::Array<int> marker(bdr ? mesh.bdr_attributes.Max() : mesh.attributes.Max());
   marker = 0;
@@ -673,8 +674,8 @@ bool EigenLE(const Eigen::Vector3d &x, const Eigen::Vector3d &y)
 // bounding balls. Returns the dominant rank, for which the vertices argument will be
 // filled, while all other ranks will have an empty vector. Vertices are de-duplicated to a
 // certain floating point precision.
-int CollectPointCloudOnRoot(mfem::ParMesh &mesh, const mfem::Array<int> &marker, bool bdr,
-                            std::vector<Eigen::Vector3d> &vertices)
+int CollectPointCloudOnRoot(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
+                            bool bdr, std::vector<Eigen::Vector3d> &vertices)
 {
   std::set<int> vertex_indices;
   if (!mesh.GetNodes())
@@ -716,6 +717,7 @@ int CollectPointCloudOnRoot(mfem::ParMesh &mesh, const mfem::Array<int> &marker,
     // Nonlinear mesh, need to process point matrices.
     const int ref = mesh.GetNodes()->FESpace()->GetMaxElementOrder();
     mfem::DenseMatrix pointmat;  // 3 x N
+    mfem::IsoparametricTransformation T;
     if (bdr)
     {
       for (int i = 0; i < mesh.GetNBE(); i++)
@@ -724,7 +726,7 @@ int CollectPointCloudOnRoot(mfem::ParMesh &mesh, const mfem::Array<int> &marker,
         {
           continue;
         }
-        mfem::ElementTransformation &T = *mesh.GetBdrElementTransformation(i);
+        mesh.GetBdrElementTransformation(i, &T);
         T.Transform(
             mfem::GlobGeometryRefiner.Refine(mesh.GetBdrElementGeometry(i), ref)->RefPts,
             pointmat);
@@ -742,7 +744,7 @@ int CollectPointCloudOnRoot(mfem::ParMesh &mesh, const mfem::Array<int> &marker,
         {
           continue;
         }
-        mfem::ElementTransformation &T = *mesh.GetElementTransformation(i);
+        mesh.GetElementTransformation(i, &T);
         T.Transform(
             mfem::GlobGeometryRefiner.Refine(mesh.GetElementGeometry(i), ref)->RefPts,
             pointmat);
@@ -1041,15 +1043,15 @@ double LengthFromPointCloud(MPI_Comm comm, const std::vector<Eigen::Vector3d> &v
 
 }  // namespace
 
-double GetProjectedLength(mfem::ParMesh &mesh, const mfem::Array<int> &marker, bool bdr,
-                          const std::array<double, 3> &dir)
+double GetProjectedLength(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
+                          bool bdr, const std::array<double, 3> &dir)
 {
   std::vector<Eigen::Vector3d> vertices;
   int dominant_rank = CollectPointCloudOnRoot(mesh, marker, bdr, vertices);
   return LengthFromPointCloud(mesh.GetComm(), vertices, dominant_rank, dir);
 }
 
-double GetProjectedLength(mfem::ParMesh &mesh, int attr, bool bdr,
+double GetProjectedLength(const mfem::ParMesh &mesh, int attr, bool bdr,
                           const std::array<double, 3> &dir)
 {
   mfem::Array<int> marker(bdr ? mesh.bdr_attributes.Max() : mesh.attributes.Max());
@@ -1058,14 +1060,15 @@ double GetProjectedLength(mfem::ParMesh &mesh, int attr, bool bdr,
   return GetProjectedLength(mesh, marker, bdr, dir);
 }
 
-BoundingBox GetBoundingBox(mfem::ParMesh &mesh, const mfem::Array<int> &marker, bool bdr)
+BoundingBox GetBoundingBox(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
+                           bool bdr)
 {
   std::vector<Eigen::Vector3d> vertices;
   int dominant_rank = CollectPointCloudOnRoot(mesh, marker, bdr, vertices);
   return BoundingBoxFromPointCloud(mesh.GetComm(), vertices, dominant_rank);
 }
 
-BoundingBox GetBoundingBox(mfem::ParMesh &mesh, int attr, bool bdr)
+BoundingBox GetBoundingBox(const mfem::ParMesh &mesh, int attr, bool bdr)
 {
   mfem::Array<int> marker(bdr ? mesh.bdr_attributes.Max() : mesh.attributes.Max());
   marker = 0;
@@ -1073,14 +1076,15 @@ BoundingBox GetBoundingBox(mfem::ParMesh &mesh, int attr, bool bdr)
   return GetBoundingBox(mesh, marker, bdr);
 }
 
-BoundingBall GetBoundingBall(mfem::ParMesh &mesh, const mfem::Array<int> &marker, bool bdr)
+BoundingBall GetBoundingBall(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
+                             bool bdr)
 {
   std::vector<Eigen::Vector3d> vertices;
   int dominant_rank = CollectPointCloudOnRoot(mesh, marker, bdr, vertices);
   return BoundingBallFromPointCloud(mesh.GetComm(), vertices, dominant_rank);
 }
 
-BoundingBall GetBoundingBall(mfem::ParMesh &mesh, int attr, bool bdr)
+BoundingBall GetBoundingBall(const mfem::ParMesh &mesh, int attr, bool bdr)
 {
   mfem::Array<int> marker(bdr ? mesh.bdr_attributes.Max() : mesh.attributes.Max());
   marker = 0;
@@ -1088,10 +1092,11 @@ BoundingBall GetBoundingBall(mfem::ParMesh &mesh, int attr, bool bdr)
   return GetBoundingBall(mesh, marker, bdr);
 }
 
-mfem::Vector GetSurfaceNormal(mfem::ParMesh &mesh, const mfem::Array<int> &marker,
+mfem::Vector GetSurfaceNormal(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
                               bool average)
 {
   int dim = mesh.SpaceDimension();
+  mfem::IsoparametricTransformation T;
   mfem::Vector loc_normal(dim), normal(dim);
   normal = 0.0;
   bool init = false;
@@ -1128,7 +1133,7 @@ mfem::Vector GetSurfaceNormal(mfem::ParMesh &mesh, const mfem::Array<int> &marke
       {
         continue;
       }
-      mfem::ElementTransformation &T = *mesh.GetBdrElementTransformation(i);
+      mesh.GetBdrElementTransformation(i, &T);
       UpdateNormal(T, mesh.GetBdrElementGeometry(i));
       if (!average)
       {
@@ -1145,7 +1150,7 @@ mfem::Vector GetSurfaceNormal(mfem::ParMesh &mesh, const mfem::Array<int> &marke
       {
         continue;
       }
-      mfem::ElementTransformation &T = *mesh.GetElementTransformation(i);
+      mesh.GetElementTransformation(i, &T);
       UpdateNormal(T, mesh.GetElementGeometry(i));
       if (!average)
       {
@@ -1203,7 +1208,7 @@ mfem::Vector GetSurfaceNormal(mfem::ParMesh &mesh, const mfem::Array<int> &marke
   return normal;
 }
 
-mfem::Vector GetSurfaceNormal(mfem::ParMesh &mesh, int attr, bool average)
+mfem::Vector GetSurfaceNormal(const mfem::ParMesh &mesh, int attr, bool average)
 {
   const bool bdr = (mesh.Dimension() == mesh.SpaceDimension());
   mfem::Array<int> marker(bdr ? mesh.bdr_attributes.Max() : mesh.attributes.Max());
@@ -1212,7 +1217,7 @@ mfem::Vector GetSurfaceNormal(mfem::ParMesh &mesh, int attr, bool average)
   return GetSurfaceNormal(mesh, marker, average);
 }
 
-mfem::Vector GetSurfaceNormal(mfem::ParMesh &mesh, bool average)
+mfem::Vector GetSurfaceNormal(const mfem::ParMesh &mesh, bool average)
 {
   const bool bdr = (mesh.Dimension() == mesh.SpaceDimension());
   const auto &attributes = bdr ? mesh.bdr_attributes : mesh.attributes;

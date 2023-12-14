@@ -14,7 +14,7 @@ namespace palace
 using namespace std::complex_literals;
 
 SurfaceConductivityOperator::SurfaceConductivityOperator(const IoData &iodata,
-                                                         mfem::ParMesh &mesh)
+                                                         const mfem::ParMesh &mesh)
 {
   // Set up finite conductivity boundary conditions.
   SetUpBoundaryProperties(iodata, mesh);
@@ -96,7 +96,7 @@ void SurfaceConductivityOperator::SetUpBoundaryProperties(const IoData &iodata,
 }
 
 void SurfaceConductivityOperator::PrintBoundaryInfo(const IoData &iodata,
-                                                    mfem::ParMesh &mesh)
+                                                    const mfem::ParMesh &mesh)
 {
   if (conductivity_marker.Size() && conductivity_marker.Max() == 0)
   {

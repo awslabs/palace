@@ -107,7 +107,8 @@ void SurfaceCurrentOperator::SetUpBoundaryProperties(
   }
 }
 
-void SurfaceCurrentOperator::PrintBoundaryInfo(const IoData &iodata, mfem::ParMesh &mesh)
+void SurfaceCurrentOperator::PrintBoundaryInfo(const IoData &iodata,
+                                               const mfem::ParMesh &mesh)
 {
   if (sources.empty())
   {
