@@ -63,7 +63,7 @@ WeightedHCurlNormSolver::WeightedHCurlNormSolver(
 
   // The system matrix K + M is real and SPD. We use Hypre's AMS solver as the coarse-level
   // multigrid solve.
-  auto ams = std::make_unique<WrapperSolver<Operator>>(std::make_unique<HypreAmsSolver>(
+  auto ams = std::make_unique<MfemWrapperSolver<Operator>>(std::make_unique<HypreAmsSolver>(
       nd_fespaces.GetFESpaceAtLevel(0), h1_fespaces.GetFESpaceAtLevel(0), 1, 1, 1, false,
       false, 0));
   std::unique_ptr<Solver<Operator>> pc;
@@ -73,8 +73,8 @@ WeightedHCurlNormSolver::WeightedHCurlNormSolver(
     const int mg_smooth_order =
         std::max(nd_fespaces.GetFinestFESpace().GetMaxElementOrder(), 2);
     pc = std::make_unique<GeometricMultigridSolver<Operator>>(
-        std::move(ams), nd_fespaces.GetProlongationOperators(), &G, 1, 1, mg_smooth_order,
-        1.0, 0.0, true);
+        nd_fespaces.GetFinestFESpace().GetComm(), std::move(ams),
+        nd_fespaces.GetProlongationOperators(), &G, 1, 1, mg_smooth_order, 1.0, 0.0, true);
   }
   else
   {

@@ -50,18 +50,28 @@ public:
 };
 
 // This solver wraps a real-valued mfem::Solver for application to complex-valued problems
-// as a preconditioner inside of a Solver<OperType>
+// as a preconditioner inside of a Solver<OperType> or for assembling the matrix-free
+// preconditioner operator as an mfem::HypreParMatrix.
 template <typename OperType>
-class WrapperSolver : public Solver<OperType>
+class MfemWrapperSolver : public Solver<OperType>
 {
   using VecType = typename Solver<OperType>::VecType;
 
-protected:
+private:
+  // The actual mfem::Solver.
   std::unique_ptr<mfem::Solver> pc;
 
+  // Real-valued system matrix A = Ar + Ai in parallel assembled form.
+  std::unique_ptr<mfem::HypreParMatrix> A;
+
+  // Whether or not to save the parallel assembled matrix after calling
+  // mfem::Solver::SetOperator (some solvers copy their input).
+  bool save_assembled;
+
 public:
-  WrapperSolver(std::unique_ptr<mfem::Solver> &&pc)
-    : Solver<OperType>(pc->iterative_mode), pc(std::move(pc))
+  MfemWrapperSolver(std::unique_ptr<mfem::Solver> &&pc, bool save_assembled = true)
+    : Solver<OperType>(pc->iterative_mode), pc(std::move(pc)),
+      save_assembled(save_assembled)
   {
   }
 
@@ -70,6 +80,9 @@ public:
     Solver<OperType>::SetInitialGuess(guess);
     pc->iterative_mode = guess;
   }
+
+  // Configure whether or not to save the assembled operator.
+  void SetSaveAssembled(bool save) { save_assembled = save; }
 
   void SetOperator(const OperType &op) override;
 

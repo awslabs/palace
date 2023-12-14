@@ -260,41 +260,20 @@ auto AssembleOperator(const FiniteElementSpace &fespace,
                       const MaterialPropertyCoefficient *df,
                       const MaterialPropertyCoefficient *f,
                       const MaterialPropertyCoefficient *dfb,
-                      const MaterialPropertyCoefficient *fb, std::size_t l,
-                      bool skip_zeros = false, bool assemble_qdata = false)
-{
-  BilinearForm a(fespace);
-  AddIntegrators(a, df, f, dfb, fb, assemble_qdata);
-  return (l > 0) ? a.Assemble(skip_zeros) : a.FullAssemble(skip_zeros);
-}
-
-auto AssembleAuxOperator(const AuxiliaryFiniteElementSpace &fespace,
-                         const MaterialPropertyCoefficient *f,
-                         const MaterialPropertyCoefficient *fb, std::size_t l,
-                         bool skip_zeros = false, bool assemble_qdata = false)
-{
-  BilinearForm a(fespace);
-  AddAuxIntegrators(a, f, fb, assemble_qdata);
-  return (l > 0) ? a.Assemble(skip_zeros) : a.FullAssemble(skip_zeros);
-}
-
-auto AssembleOperator(const FiniteElementSpace &fespace,
-                      const MaterialPropertyCoefficient *df,
-                      const MaterialPropertyCoefficient *f,
-                      const MaterialPropertyCoefficient *dfb,
                       const MaterialPropertyCoefficient *fb, bool skip_zeros = false,
                       bool assemble_qdata = false)
 {
-  constexpr std::size_t l = 1;
-  return AssembleOperator(fespace, df, f, dfb, fb, l, skip_zeros, assemble_qdata);
+  BilinearForm a(fespace);
+  AddIntegrators(a, df, f, dfb, fb, assemble_qdata);
+  return a.Assemble(skip_zeros);
 }
 
 auto AssembleOperators(const FiniteElementSpaceHierarchy &fespaces,
                        const MaterialPropertyCoefficient *df,
                        const MaterialPropertyCoefficient *f,
                        const MaterialPropertyCoefficient *dfb,
-                       const MaterialPropertyCoefficient *fb, std::size_t l0 = 0,
-                       bool skip_zeros = false, bool assemble_qdata = false)
+                       const MaterialPropertyCoefficient *fb, bool skip_zeros = false,
+                       bool assemble_qdata = false, std::size_t l0 = 0)
 {
   BilinearForm a(fespaces.GetFinestFESpace());
   AddIntegrators(a, df, f, dfb, fb, assemble_qdata);
@@ -303,8 +282,8 @@ auto AssembleOperators(const FiniteElementSpaceHierarchy &fespaces,
 
 auto AssembleAuxOperators(const AuxiliaryFiniteElementSpaceHierarchy &fespaces,
                           const MaterialPropertyCoefficient *f,
-                          const MaterialPropertyCoefficient *fb, std::size_t l0 = 0,
-                          bool skip_zeros = false, bool assemble_qdata = false)
+                          const MaterialPropertyCoefficient *fb, bool skip_zeros = false,
+                          bool assemble_qdata = false, std::size_t l0 = 0)
 {
   BilinearForm a(fespaces.GetFinestFESpace());
   AddAuxIntegrators(a, f, fb, assemble_qdata);
@@ -375,14 +354,14 @@ template <typename OperType>
 std::unique_ptr<OperType> SpaceOperator::GetMassMatrix(Operator::DiagonalPolicy diag_policy)
 {
   PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
-  MaterialPropertyCoefficient fr, fi, fbr;
+  MaterialPropertyCoefficient fr, fi, fbr, fbi;
   AddRealMassCoefficients(1.0, fr);
   AddRealMassBdrCoefficients(1.0, fbr);
   if constexpr (std::is_same<OperType, ComplexOperator>::value)
   {
     AddImagMassCoefficients(1.0, fi);
   }
-  if (fr.empty() && fbr.empty() && fi.empty())
+  if (fr.empty() && fi.empty() && fbr.empty() && fbi.empty())
   {
     return {};
   }
@@ -393,9 +372,9 @@ std::unique_ptr<OperType> SpaceOperator::GetMassMatrix(Operator::DiagonalPolicy 
   {
     mr = AssembleOperator(GetNDSpace(), nullptr, &fr, nullptr, &fbr, skip_zeros);
   }
-  if (!fi.empty())
+  if (!fi.empty() || !fbi.empty())
   {
-    mi = AssembleOperator(GetNDSpace(), nullptr, &fi, nullptr, nullptr, skip_zeros);
+    mi = AssembleOperator(GetNDSpace(), nullptr, &fi, nullptr, &fbi, skip_zeros);
   }
   if constexpr (std::is_same<OperType, ComplexOperator>::value)
   {
@@ -491,22 +470,22 @@ auto BuildParSumOperator(int h, int w, std::complex<double> a0, std::complex<dou
   {
     if (a0.real() != 0.0)
     {
-      if (K->LocalOperator().HasReal())
+      if (K->LocalOperator().Real())
       {
         sumr->AddOperator(*K->LocalOperator().Real(), a0.real());
       }
-      if (K->LocalOperator().HasImag())
+      if (K->LocalOperator().Imag())
       {
         sumi->AddOperator(*K->LocalOperator().Imag(), a0.real());
       }
     }
     if (a0.imag() != 0.0)
     {
-      if (K->LocalOperator().HasImag())
+      if (K->LocalOperator().Imag())
       {
         sumr->AddOperator(*K->LocalOperator().Imag(), -a0.imag());
       }
-      if (K->LocalOperator().HasReal())
+      if (K->LocalOperator().Real())
       {
         sumi->AddOperator(*K->LocalOperator().Real(), a0.imag());
       }
@@ -516,22 +495,22 @@ auto BuildParSumOperator(int h, int w, std::complex<double> a0, std::complex<dou
   {
     if (a1.real() != 0.0)
     {
-      if (C->LocalOperator().HasReal())
+      if (C->LocalOperator().Real())
       {
         sumr->AddOperator(*C->LocalOperator().Real(), a1.real());
       }
-      if (C->LocalOperator().HasImag())
+      if (C->LocalOperator().Imag())
       {
         sumi->AddOperator(*C->LocalOperator().Imag(), a1.real());
       }
     }
     if (a1.imag() != 0.0)
     {
-      if (C->LocalOperator().HasImag())
+      if (C->LocalOperator().Imag())
       {
         sumr->AddOperator(*C->LocalOperator().Imag(), -a1.imag());
       }
-      if (C->LocalOperator().HasReal())
+      if (C->LocalOperator().Real())
       {
         sumi->AddOperator(*C->LocalOperator().Real(), a1.imag());
       }
@@ -541,22 +520,22 @@ auto BuildParSumOperator(int h, int w, std::complex<double> a0, std::complex<dou
   {
     if (a2.real() != 0.0)
     {
-      if (M->LocalOperator().HasReal())
+      if (M->LocalOperator().Real())
       {
         sumr->AddOperator(*M->LocalOperator().Real(), a2.real());
       }
-      if (M->LocalOperator().HasImag())
+      if (M->LocalOperator().Imag())
       {
         sumi->AddOperator(*M->LocalOperator().Imag(), a2.real());
       }
     }
     if (a2.imag() != 0.0)
     {
-      if (M->LocalOperator().HasImag())
+      if (M->LocalOperator().Imag())
       {
         sumr->AddOperator(*M->LocalOperator().Imag(), -a2.imag());
       }
-      if (M->LocalOperator().HasReal())
+      if (M->LocalOperator().Real())
       {
         sumi->AddOperator(*M->LocalOperator().Real(), a2.imag());
       }
@@ -564,11 +543,11 @@ auto BuildParSumOperator(int h, int w, std::complex<double> a0, std::complex<dou
   }
   if (A2)
   {
-    if (A2->LocalOperator().HasReal())
+    if (A2->LocalOperator().Real())
     {
       sumr->AddOperator(*A2->LocalOperator().Real(), 1.0);
     }
-    if (A2->LocalOperator().HasImag())
+    if (A2->LocalOperator().Imag())
     {
       sumi->AddOperator(*A2->LocalOperator().Imag(), 1.0);
     }
@@ -654,13 +633,13 @@ std::unique_ptr<Operator> SpaceOperator::GetInnerProductMatrix(double a0, double
   if (PtAP_K && a0 != 0.0)
   {
     MFEM_VERIFY(
-        PtAP_K->LocalOperator().HasReal(),
+        PtAP_K->LocalOperator().Real(),
         "Missing real part of stiffness matrix for inner product matrix construction!");
     sum->AddOperator(*PtAP_K->LocalOperator().Real(), a0);
   }
   if (PtAP_M && a2 != 0.0)
   {
-    MFEM_VERIFY(PtAP_M->LocalOperator().HasReal(),
+    MFEM_VERIFY(PtAP_M->LocalOperator().Real(),
                 "Missing real part of mass matrix for inner product matrix construction!");
     sum->AddOperator(*PtAP_M->LocalOperator().Real(), a2);
   }
@@ -690,48 +669,24 @@ template <typename OperType>
 std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(double a0, double a1,
                                                                  double a2, double a3)
 {
-  // XX TODO: Test complex PC matrix assembly for l == 0 if coarse solve supports it
   // XX TODO: Handle complex coeff a0/a1/a2/a3 (like GetSystemMatrix)
+
+  // When partially assembled, the coarse operators can reuse the fine operator quadrature
+  // data if the spaces correspond to the same mesh. When appropriate, we build the
+  // preconditioner on all levels based on the actual complex-valued system matrix. The
+  // coarse operator is always fully assembled.
   if (print_prec_hdr)
   {
     Mpi::Print("\nAssembling multigrid hierarchy:\n");
   }
   MFEM_VERIFY(GetH1Spaces().GetNumLevels() == GetNDSpaces().GetNumLevels(),
               "Multigrid hierarchy mismatch for auxiliary space preconditioning!");
-  const auto n_levels = GetNDSpaces().GetNumLevels();
 
-  // Build the coarse operator first (always real valued, and approximation when
-  // preconditioning frequency domain problems). Then build preconditioner on fine levels
-  // based on the actual complex-valued system matrix when appropriate. The coarse operator
-  // is always fully assembled.
+  const auto n_levels = GetNDSpaces().GetNumLevels();
   std::vector<std::unique_ptr<Operator>> br_vec(n_levels), bi_vec(n_levels),
       br_aux_vec(n_levels), bi_aux_vec(n_levels);
   constexpr bool skip_zeros = false, assemble_qdata = true;
-  {
-    MaterialPropertyCoefficient dfr, fr, dfbr, fbr;
-    AddStiffnessCoefficients(a0, dfr, fr);
-    AddStiffnessBdrCoefficients(a0, fbr);
-    AddDampingCoefficients(a1, fr);
-    AddDampingBdrCoefficients(a1, fbr);
-    AddAbsMassCoefficients(pc_mat_shifted ? std::abs(a2) : a2, fr);
-    AddRealMassBdrCoefficients(pc_mat_shifted ? std::abs(a2) : a2, fbr);
-    AddExtraSystemBdrCoefficients(a3, dfbr, dfbr, fbr, fbr);
-    if ((!std::is_same<OperType, ComplexOperator>::value || pc_mat_real) && n_levels > 1)
-    {
-      br_vec = AssembleOperators(GetNDSpaces(), &dfr, &fr, &dfbr, &fbr, skip_zeros,
-                                 assemble_qdata);
-      br_aux_vec =
-          AssembleAuxOperators(GetH1Spaces(), &fr, &fbr, skip_zeros, assemble_qdata);
-    }
-    else
-    {
-      br_vec[0] = AssembleOperator(GetNDSpaces().GetFESpaceAtLevel(0), &dfr, &fr, &dfbr,
-                                   &fbr, 0, skip_zeros, false);
-      br_aux_vec[0] = AssembleAuxOperator(GetH1Spaces().GetFESpaceAtLevel(0), &fr, &fbr, 0,
-                                          skip_zeros, false);
-    }
-  }
-  if (std::is_same<OperType, ComplexOperator>::value && !pc_mat_real && n_levels > 1)
+  if (std::is_same<OperType, ComplexOperator>::value && !pc_mat_real)
   {
     MaterialPropertyCoefficient dfr, dfi, fr, fi, dfbr, dfbi, fbr, fbi;
     AddStiffnessCoefficients(a0, dfr, fr);
@@ -742,42 +697,36 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(double a0, doub
     AddRealMassBdrCoefficients(pc_mat_shifted ? std::abs(a2) : a2, fbr);
     AddImagMassCoefficients(a2, fi);
     AddExtraSystemBdrCoefficients(a3, dfbr, dfbi, fbr, fbi);
+
     if (!dfr.empty() || !fr.empty() || !dfbr.empty() || !fbr.empty())
     {
-      auto br_vec_fine = AssembleOperators(GetNDSpaces(), &dfr, &fr, &dfbr, &fbr, 1,
-                                           skip_zeros, assemble_qdata);
-      auto br_aux_vec_fine =
-          AssembleAuxOperators(GetH1Spaces(), &fr, &fbr, 1, skip_zeros, assemble_qdata);
-      MFEM_VERIFY(br_vec_fine.size() == n_levels - 1 &&
-                      br_aux_vec_fine.size() == n_levels - 1,
-                  "Error in multigrid operator assembly, invalid number of levels!");
-      for (std::size_t l = 0; l < br_vec_fine.size(); l++)
-      {
-        br_vec[l + 1] = std::move(br_vec_fine[l]);
-      }
-      for (std::size_t l = 0; l < br_aux_vec_fine.size(); l++)
-      {
-        br_aux_vec[l + 1] = std::move(br_aux_vec_fine[l]);
-      }
+      br_vec = AssembleOperators(GetNDSpaces(), &dfr, &fr, &dfbr, &fbr, skip_zeros,
+                                 assemble_qdata);
+      br_aux_vec =
+          AssembleAuxOperators(GetH1Spaces(), &fr, &fbr, skip_zeros, assemble_qdata);
     }
     if (!dfi.empty() || !fi.empty() || !dfbi.empty() || !fbi.empty())
     {
-      auto bi_vec_fine = AssembleOperators(GetNDSpaces(), &dfi, &fi, &dfbi, &fbi, 1,
-                                           skip_zeros, assemble_qdata);
-      auto bi_aux_vec_fine =
-          AssembleAuxOperators(GetH1Spaces(), &fi, &fbi, 1, skip_zeros, assemble_qdata);
-      MFEM_VERIFY(bi_vec_fine.size() == n_levels - 1 &&
-                      bi_aux_vec_fine.size() == n_levels - 1,
-                  "Error in multigrid operator assembly, invalid number of levels!");
-      for (std::size_t l = 0; l < bi_vec_fine.size(); l++)
-      {
-        bi_vec[l + 1] = std::move(bi_vec_fine[l]);
-      }
-      for (std::size_t l = 0; l < bi_aux_vec_fine.size(); l++)
-      {
-        bi_aux_vec[l + 1] = std::move(bi_aux_vec_fine[l]);
-      }
+      bi_vec = AssembleOperators(GetNDSpaces(), &dfi, &fi, &dfbi, &fbi, skip_zeros,
+                                 assemble_qdata);
+      bi_aux_vec =
+          AssembleAuxOperators(GetH1Spaces(), &fi, &fbi, skip_zeros, assemble_qdata);
     }
+  }
+  else
+  {
+    MaterialPropertyCoefficient dfr, fr, dfbr, fbr;
+    AddStiffnessCoefficients(a0, dfr, fr);
+    AddStiffnessBdrCoefficients(a0, fbr);
+    AddDampingCoefficients(a1, fr);
+    AddDampingBdrCoefficients(a1, fbr);
+    AddAbsMassCoefficients(pc_mat_shifted ? std::abs(a2) : a2, fr);
+    AddRealMassBdrCoefficients(pc_mat_shifted ? std::abs(a2) : a2, fbr);
+    AddExtraSystemBdrCoefficients(a3, dfbr, dfbr, fbr, fbr);
+
+    br_vec = AssembleOperators(GetNDSpaces(), &dfr, &fr, &dfbr, &fbr, skip_zeros,
+                               assemble_qdata);
+    br_aux_vec = AssembleAuxOperators(GetH1Spaces(), &fr, &fbr, skip_zeros, assemble_qdata);
   }
 
   auto B = std::make_unique<BaseMultigridOperator<OperType>>(n_levels);

@@ -5,7 +5,6 @@
 
 #if defined(MFEM_USE_SUPERLU)
 
-#include "linalg/rap.hpp"
 #include "utils/communication.hpp"
 
 namespace palace
@@ -75,43 +74,40 @@ SuperLUSolver::SuperLUSolver(MPI_Comm comm, config::LinearSolverData::SymFactTyp
 
 void SuperLUSolver::SetOperator(const Operator &op)
 {
-  // For repeated factorizations, always reuse the sparsity pattern. This is very similar to
-  // the MFEM SuperLURowLocMatrix from a HypreParMatrix but avoids using the communicator
-  // from the Hypre matrix in the case that the solver is constructed on a different
-  // communicator.
+  // For repeated factorizations, always reuse the sparsity pattern.
   if (A)
   {
     solver.SetFact(mfem::superlu::SamePattern_SameRowPerm);
   }
-  const mfem::HypreParMatrix *hypA;
-  const auto *PtAP = dynamic_cast<const ParOperator *>(&op);
-  if (PtAP)
-  {
-    hypA = &PtAP->ParallelAssemble();
-  }
-  else
-  {
-    hypA = dynamic_cast<const mfem::HypreParMatrix *>(&op);
-    MFEM_VERIFY(hypA, "SuperLUSolver requires a HypreParMatrix operator!");
-  }
-  auto *parcsr = (hypre_ParCSRMatrix *)const_cast<mfem::HypreParMatrix &>(*hypA);
-  hypA->HostRead();
+
+  // This is very similar to the MFEM SuperLURowLocMatrix from a HypreParMatrix but avoids
+  // using the communicator from the Hypre matrix in the case that the solver is
+  // constructed on a different communicator.
+  const auto *hA = dynamic_cast<const mfem::HypreParMatrix *>(&op);
+  MFEM_VERIFY(hA && hA->GetGlobalNumRows() == hA->GetGlobalNumCols(),
+              "SuperLUSolver requires a square HypreParMatrix operator!");
+  auto *parcsr = (hypre_ParCSRMatrix *)const_cast<mfem::HypreParMatrix &>(*hA);
   hypre_CSRMatrix *csr = hypre_MergeDiagAndOffd(parcsr);
-  hypA->HypreRead();
+#if defined(HYPRE_USING_CUDA) || defined(HYPRE_USING_HIP) || defined(HYPRE_USING_SYCL)
+  if (hypre_GetActualMemLocation(hypre_CSRMatrixMemoryLocation(csr)) != hypre_MEMORY_HOST)
+  {
+    hypre_CSRMatrixMigrate(csr, HYPRE_MEMORY_HOST);
+  }
+#endif
 
   // Create the SuperLURowLocMatrix by taking the internal data from a hypre_CSRMatrix.
-  HYPRE_Int n_loc = csr->num_rows;
-  HYPRE_BigInt first_row = parcsr->first_row_index;
-  HYPRE_Int *I = csr->i;
-  HYPRE_BigInt *J = csr->big_j;
-  double *data = csr->data;
+  HYPRE_BigInt glob_n = hypre_ParCSRMatrixGlobalNumRows(parcsr);
+  HYPRE_BigInt first_row = hypre_ParCSRMatrixFirstRowIndex(parcsr);
+  HYPRE_Int n_loc = hypre_CSRMatrixNumRows(csr);
+  HYPRE_Int *I = hypre_CSRMatrixI(csr);
+  HYPRE_BigInt *J = hypre_CSRMatrixBigJ(csr);
+  double *data = hypre_CSRMatrixData(csr);
 
   // We need to save A because SuperLU does not copy the input matrix. Also clean up the
   // Hypre data structure once we are done with it.
 #if !defined(HYPRE_BIGINT)
-  A = std::make_unique<mfem::SuperLURowLocMatrix>(comm, n_loc, first_row,
-                                                  hypA->GetGlobalNumRows(),
-                                                  hypA->GetGlobalNumCols(), I, J, data);
+  A = std::make_unique<mfem::SuperLURowLocMatrix>(comm, n_loc, first_row, glob_n, glob_n, I,
+                                                  J, data);
 #else
   int n_loc_int = static_cast<int>(n_loc);
   MFEM_ASSERT(n_loc == (HYPRE_Int)n_loc_int,
@@ -122,9 +118,8 @@ void SuperLUSolver::SetOperator(const Operator &op)
     II[i] = static_cast<int>(I[i]);
     MFEM_ASSERT(I[i] == (HYPRE_Int)II[i], "Overflow error for local sparse matrix index!");
   }
-  A = std::make_unique<mfem::SuperLURowLocMatrix>(comm, n_loc_int, first_row,
-                                                  hypA->GetGlobalNumRows(),
-                                                  hypA->GetGlobalNumCols(), II, J, data);
+  A = std::make_unique<mfem::SuperLURowLocMatrix>(comm, n_loc_int, first_row, glob_n,
+                                                  glob_n, II.HostRead(), J, data);
 #endif
   solver.SetOperator(*A);
   height = solver.Height();

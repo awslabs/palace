@@ -263,10 +263,8 @@ void PostOperator::InitializeDataCollection(const IoData &iodata)
   // Add wave port boundary mode postprocessing when available.
   for (const auto &[idx, data] : port_E0)
   {
-    paraview_bdr.RegisterVCoeffField("E0_" + std::to_string(idx) + "_real",
-                                     data.E0r.get());
-    paraview_bdr.RegisterVCoeffField("E0_" + std::to_string(idx) + "_imag",
-                                     data.E0i.get());
+    paraview_bdr.RegisterVCoeffField("E0_" + std::to_string(idx) + "_real", data.E0r.get());
+    paraview_bdr.RegisterVCoeffField("E0_" + std::to_string(idx) + "_imag", data.E0i.get());
   }
 }
 

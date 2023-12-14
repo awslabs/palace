@@ -115,8 +115,14 @@ std::unique_ptr<IterativeSolver<OperType>> ConfigureKrylovSolver(MPI_Comm comm,
 template <typename OperType, typename T, typename... U>
 auto MakeWrapperSolver(U &&...args)
 {
-  return std::make_unique<WrapperSolver<OperType>>(
-      std::make_unique<T>(std::forward<U>(args)...));
+  // Sparse direct solver types copy the input matrix, so there is no need to save the
+  // parallel assembled operator.
+  constexpr bool save_assembled =
+      !(std::is_same<T, SuperLUSolver>::value || std::is_same<T, StrumpackSolver>::value ||
+        std::is_same<T, StrumpackMixedPrecisionSolver>::value ||
+        std::is_same<T, MumpsSolver>::value);
+  return std::make_unique<MfemWrapperSolver<OperType>>(
+      std::make_unique<T>(std::forward<U>(args)...), save_assembled);
 }
 
 template <typename OperType>
@@ -199,12 +205,12 @@ ConfigurePreconditionerSolver(MPI_Comm comm, const IoData &iodata,
                                   "primary space and auxiliary spaces for construction!");
         const auto G = aux_fespaces->GetDiscreteInterpolators();
         return std::make_unique<GeometricMultigridSolver<OperType>>(
-            iodata, std::move(pc), fespaces.GetProlongationOperators(), &G);
+            comm, iodata, std::move(pc), fespaces.GetProlongationOperators(), &G);
       }
       else
       {
         return std::make_unique<GeometricMultigridSolver<OperType>>(
-            iodata, std::move(pc), fespaces.GetProlongationOperators());
+            comm, iodata, std::move(pc), fespaces.GetProlongationOperators());
       }
     }();
     gmg->EnableTimer();  // Enable timing for primary geometric multigrid solver

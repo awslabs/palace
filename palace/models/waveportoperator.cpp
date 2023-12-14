@@ -468,7 +468,7 @@ public:
     // Get the attribute in the neighboring domain element of the parent mesh.
     int attr = [&T, this]()
     {
-      int i, o, iel1, iel2;
+      int i = -1, o, iel1, iel2;
       if (T.mesh == submesh.GetParent())
       {
         MFEM_ASSERT(
@@ -687,7 +687,7 @@ WavePortData::WavePortData(const config::WavePortData &data, const MaterialOpera
 #error "Wave port solver requires building with SuperLU_DIST, STRUMPACK, or MUMPS!"
 #endif
 
-    auto pc = std::make_unique<WrapperSolver<ComplexOperator>>(
+    auto pc = std::make_unique<MfemWrapperSolver<ComplexOperator>>(
         [&]() -> std::unique_ptr<mfem::Solver>
         {
           if (pc_type == config::LinearSolverData::Type::SUPERLU)
@@ -721,6 +721,7 @@ WavePortData::WavePortData(const config::WavePortData &data, const MaterialOpera
 #endif
           }
         }());
+    pc->SetSaveAssembled(false);
     ksp = std::make_unique<ComplexKspSolver>(std::move(gmres), std::move(pc));
 
     // Define the eigenvalue solver.

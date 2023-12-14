@@ -50,9 +50,9 @@ private:
   mutable VecType r, x_G, y_G;
 
 public:
-  DistRelaxationSmoother(const Operator &G, int smooth_it, int cheby_smooth_it,
-                         int cheby_order, double cheby_sf_max, double cheby_sf_min,
-                         bool cheby_4th_kind);
+  DistRelaxationSmoother(MPI_Comm comm, const Operator &G, int smooth_it,
+                         int cheby_smooth_it, int cheby_order, double cheby_sf_max,
+                         double cheby_sf_min, bool cheby_4th_kind);
 
   void SetOperator(const OperType &op) override
   {

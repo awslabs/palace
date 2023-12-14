@@ -23,8 +23,10 @@ class ParOperator : public Operator
 {
 private:
   // Storage and access for the local operator.
-  mutable std::unique_ptr<Operator> data_A;
-  mutable Operator *A;
+  // mutable std::unique_ptr<Operator> data_A;
+  // mutable const Operator *A;
+  std::unique_ptr<Operator> data_A;
+  const Operator *A;
 
   // Finite element spaces for parallel prolongation and restriction.
   const mfem::ParFiniteElementSpace &trial_fespace, &test_fespace;
@@ -48,31 +50,35 @@ private:
   void RestrictionMatrixAddMult(const Vector &ly, Vector &ty, const double a) const;
   void RestrictionMatrixMultTranspose(const Vector &ty, Vector &ly) const;
 
-  ParOperator(std::unique_ptr<Operator> &&dA, Operator *pA,
+  ParOperator(std::unique_ptr<Operator> &&dA, const Operator *pA,
               const mfem::ParFiniteElementSpace &trial_fespace,
-              const mfem::ParFiniteElementSpace &test_fespace, bool test_restrict);
+              const mfem::ParFiniteElementSpace &test_fespace, bool test_restrict,
+              bool alloc);
 
 public:
   // Construct the parallel operator, inheriting ownership of the local operator.
   ParOperator(std::unique_ptr<Operator> &&A,
               const mfem::ParFiniteElementSpace &trial_fespace,
-              const mfem::ParFiniteElementSpace &test_fespace, bool test_restrict);
-  ParOperator(std::unique_ptr<Operator> &&A, const mfem::ParFiniteElementSpace &fespace)
-    : ParOperator(std::move(A), fespace, fespace, false)
+              const mfem::ParFiniteElementSpace &test_fespace, bool test_restrict,
+              bool alloc = true);
+  ParOperator(std::unique_ptr<Operator> &&A, const mfem::ParFiniteElementSpace &fespace,
+              bool alloc = true)
+    : ParOperator(std::move(A), fespace, fespace, false, alloc)
   {
   }
 
   // Non-owning constructors.
-  ParOperator(Operator &A, const mfem::ParFiniteElementSpace &trial_fespace,
-              const mfem::ParFiniteElementSpace &test_fespace, bool test_restrict);
-  ParOperator(Operator &A, const mfem::ParFiniteElementSpace &fespace)
-    : ParOperator(A, fespace, fespace, false)
+  ParOperator(const Operator &A, const mfem::ParFiniteElementSpace &trial_fespace,
+              const mfem::ParFiniteElementSpace &test_fespace, bool test_restrict,
+              bool alloc = true);
+  ParOperator(const Operator &A, const mfem::ParFiniteElementSpace &fespace,
+              bool alloc = true)
+    : ParOperator(A, fespace, fespace, false, alloc)
   {
   }
 
   // Get access to the underlying local (L-vector) operator.
-  const Operator &LocalOperator() const;
-  Operator &LocalOperator();
+  const Operator &LocalOperator() const { return *A; }
 
   // Get the associated MPI communicator.
   MPI_Comm GetComm() const { return trial_fespace.GetComm(); }
@@ -84,8 +90,9 @@ public:
   // nullptr.
   const mfem::Array<int> *GetEssentialTrueDofs() const { return dbc_tdof_list; }
 
-  // Assemble the diagonal for the parallel operator.
-  void AssembleDiagonal(Vector &diag) const override;
+  // Eliminate essential true dofs from the RHS vector b, using the essential boundary
+  // condition values in x.
+  void EliminateRHS(const Vector &x, Vector &b) const;
 
   // Assemble the operator as a parallel sparse matrix. The memory associated with the
   // local operator is free'd.
@@ -98,9 +105,7 @@ public:
     return std::move(RAP);
   }
 
-  // Eliminate essential true dofs from the RHS vector b, using the essential boundary
-  // condition values in x.
-  void EliminateRHS(const Vector &x, Vector &b) const;
+  void AssembleDiagonal(Vector &diag) const override;
 
   void Mult(const Vector &x, Vector &y) const override;
 
@@ -117,7 +122,7 @@ class ComplexParOperator : public ComplexOperator
 private:
   // Storage and access for the local operator.
   std::unique_ptr<ComplexWrapperOperator> data_A;
-  ComplexWrapperOperator *A;
+  const ComplexWrapperOperator *A;
 
   // Finite element spaces for parallel prolongation and restriction.
   const mfem::ParFiniteElementSpace &trial_fespace, &test_fespace;
@@ -142,7 +147,7 @@ private:
   void RestrictionMatrixMultTranspose(const ComplexVector &ty, ComplexVector &ly) const;
 
   ComplexParOperator(std::unique_ptr<Operator> &&dAr, std::unique_ptr<Operator> &&dAi,
-                     Operator *pAr, Operator *pAi,
+                     const Operator *pAr, const Operator *pAi,
                      const mfem::ParFiniteElementSpace &trial_fespace,
                      const mfem::ParFiniteElementSpace &test_fespace, bool test_restrict);
 
@@ -159,17 +164,20 @@ public:
   }
 
   // Non-owning constructors.
-  ComplexParOperator(Operator *Ar, Operator *Ai,
+  ComplexParOperator(const Operator *Ar, const Operator *Ai,
                      const mfem::ParFiniteElementSpace &trial_fespace,
                      const mfem::ParFiniteElementSpace &test_fespace, bool test_restrict);
-  ComplexParOperator(Operator *Ar, Operator *Ai, const mfem::ParFiniteElementSpace &fespace)
+  ComplexParOperator(const Operator *Ar, const Operator *Ai,
+                     const mfem::ParFiniteElementSpace &fespace)
     : ComplexParOperator(Ar, Ai, fespace, fespace, false)
   {
   }
 
+  const Operator *Real() const override { return RAPr.get(); }
+  const Operator *Imag() const override { return RAPi.get(); }
+
   // Get access to the underlying local (L-vector) operator.
-  const ComplexOperator &LocalOperator() const;
-  ComplexOperator &LocalOperator();
+  const ComplexOperator &LocalOperator() const { return *A; }
 
   // Get the associated MPI communicator.
   MPI_Comm GetComm() const { return trial_fespace.GetComm(); }
@@ -182,17 +190,7 @@ public:
   // nullptr.
   const mfem::Array<int> *GetEssentialTrueDofs() const { return dbc_tdof_list; }
 
-  // Assemble the diagonal for the parallel operator.
-  void AssembleDiagonal(ComplexVector &diag) const;
-
-  bool IsReal() const override { return A->IsReal(); }
-  bool IsImag() const override { return A->IsImag(); }
-  bool HasReal() const override { return RAPr != nullptr; }
-  bool HasImag() const override { return RAPi != nullptr; }
-  const Operator *Real() const override { return RAPr.get(); }
-  Operator *Real() override { return RAPr.get(); }
-  const Operator *Imag() const override { return RAPi.get(); }
-  Operator *Imag() override { return RAPi.get(); }
+  void AssembleDiagonal(ComplexVector &diag) const override;
 
   void Mult(const ComplexVector &x, ComplexVector &y) const override;
 

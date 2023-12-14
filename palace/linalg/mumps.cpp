@@ -5,8 +5,6 @@
 
 #if defined(MFEM_USE_MUMPS)
 
-#include "linalg/rap.hpp"
-
 namespace palace
 {
 
@@ -43,19 +41,6 @@ MumpsSolver::MumpsSolver(MPI_Comm comm, mfem::MUMPSSolver::MatType sym,
   if (blr_tol > 0.0)
   {
     SetBLRTol(blr_tol);
-  }
-}
-
-void MumpsSolver::SetOperator(const Operator &op)
-{
-  const auto *PtAP = dynamic_cast<const ParOperator *>(&op);
-  if (PtAP)
-  {
-    mfem::MUMPSSolver::SetOperator(PtAP->ParallelAssemble());
-  }
-  else
-  {
-    mfem::MUMPSSolver::SetOperator(op);
   }
 }
 
