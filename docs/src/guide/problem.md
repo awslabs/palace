@@ -56,7 +56,8 @@ speedup over the default strategy.
 Port scattering parameters, or S-parameters, are postprocessed for the column of the
 scattering matrix corresponding to the driven port index automatically for this simulation
 type and stored in an ASCII file named `port-S.csv`, in the directory specified by
-[`config["Problem"]["Output"]`](../config/problem.md#config%5B%22Problem%22%5D). In the case
+[`config["Problem"]["Output"]`](../config/problem.md#config%5B%22Problem%22%5D). Both the ``\text{dB}`` magnitude (``20\log_{10}|S_{ij}|``) and the phase ``\angle S_{ij}`` (in
+degrees) are written to the file. In the case
 that more than a single lumped or wave port is excited or surface current excitations are
 used, scattering parameter output will be disabled for the simulation (though other
 quantities of interest are still postprocessed). Further postprocessing of quantities
