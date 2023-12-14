@@ -356,9 +356,7 @@ void BaseSolver::PostprocessDomains(const PostOperator &postop, const std::strin
   {
     const double E_elec_i = postop.GetEFieldEnergy(idx);
     const double E_mag_i = postop.GetHFieldEnergy(idx);
-    energy_data.push_back({idx,
-                           iodata.DimensionalizeValue(IoData::ValueType::ENERGY, E_elec_i),
-                           iodata.DimensionalizeValue(IoData::ValueType::ENERGY, E_mag_i)});
+    energy_data.push_back({idx, E_elec_i, E_mag_i});
   }
   if (root)
   {
@@ -378,9 +376,11 @@ void BaseSolver::PostprocessDomains(const PostOperator &postop, const std::strin
       for (const auto &data : energy_data)
       {
         // clang-format off
-        output.print("{:>{}s},{:>{}s}{}",
+        output.print("{:>{}s},{:>{}s},{:>{}s},{:>{}s}{}",
                      "E_elec[" + std::to_string(data.idx) + "] (J)", table.w,
+                     "p_elec[" + std::to_string(data.idx) + "]", table.w,
                      "E_mag[" + std::to_string(data.idx) + "] (J)", table.w,
+                     "p_mag[" + std::to_string(data.idx) + "]", table.w,
                      (data.idx == energy_data.back().idx) ? "" : ",");
         // clang-format on
       }
@@ -402,9 +402,13 @@ void BaseSolver::PostprocessDomains(const PostOperator &postop, const std::strin
     for (const auto &data : energy_data)
     {
       // clang-format off
-      output.print("{:+{}.{}e},{:+{}.{}e}{}",
-                   data.E_elec, table.w, table.p,
-                   data.E_mag, table.w, table.p,
+      output.print("{:+{}.{}e},{:+{}.{}e},{:+{}.{}e},{:+{}.{}e}{}",
+                   iodata.DimensionalizeValue(IoData::ValueType::ENERGY, data.E_elec),
+                   table.w, table.p,
+                   (std::abs(E_elec) > 0.0) ? data.E_elec / E_elec : 0.0, table.w, table.p,
+                   iodata.DimensionalizeValue(IoData::ValueType::ENERGY, data.E_mag),
+                   table.w, table.p,
+                   (std::abs(E_mag) > 0.0) ? data.E_mag / E_mag : 0.0, table.w, table.p,
                    (data.idx == energy_data.back().idx) ? "" : ",");
       // clang-format on
     }
