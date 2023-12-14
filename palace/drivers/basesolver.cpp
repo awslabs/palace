@@ -228,7 +228,7 @@ void BaseSolver::SolveEstimateMarkRefine(
     }
 
     // Solve + estimate.
-    Mpi::Print("\nProceeding with solve/estimate iteration {}...\n", 1 + it);
+    Mpi::Print("\nProceeding with solve/estimate iteration {}...\n", it + 1);
     std::tie(indicators, ntdof) = Solve(mesh);
     err = indicators.Norml2(comm);
   }

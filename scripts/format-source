@@ -85,7 +85,8 @@ if $FORMAT_CPP; then
         echo "Error: Could not locate '$CLANG_FORMAT' executable"
         exit 1
     fi
-    FORMAT_CPP_FILES=$(find $SOURCE_DIR/palace $SOURCE_DIR/test -type f \( -iname \*.hpp -o -iname \*.cpp -o -iname \*.h -o -iname \*.c \))
+    FORMAT_CPP_FILES=$(find $SOURCE_DIR/palace $SOURCE_DIR/test \
+                            -type f \( -iname \*.hpp -o -iname \*.cpp -o -iname \*.h -o -iname \*.c \))
     $CLANG_FORMAT $DRY_RUN --style=file --verbose -i $FORMAT_CPP_FILES
 fi
 
@@ -101,7 +102,7 @@ if $FORMAT_JL; then
     FORMAT_JL_FILES=$(find $SOURCE_DIR/docs $SOURCE_DIR/examples \
                            $SOURCE_DIR/scripts $SOURCE_DIR/singularity \
                            $SOURCE_DIR/spack $SOURCE_DIR/test \
-                          -type f \( -iname \*.md -o -iname \*.jl \) -exec echo -n '"{}", ' \;)
+                           -type f \( -iname \*.md -o -iname \*.jl \) -exec echo -n '"{}", ' \;)
     FORMAT_JL_FILES="$(find $SOURCE_DIR -maxdepth 1 \
                            -type f -iname \*.md -exec echo -n '"{}", ' \;)$FORMAT_JL_FILES"
     JULIA_CMD=$(

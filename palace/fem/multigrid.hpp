@@ -83,8 +83,8 @@ inline FiniteElementSpaceHierarchy ConstructFiniteElementSpaceHierarchy(
   MFEM_VERIFY(!mesh.empty() && !fecs.empty() &&
                   (!dbc_tdof_lists || dbc_tdof_lists->empty()),
               "Empty mesh or FE collection for FE space construction!");
-  int coarse_mesh_l =
-      std::max(0, static_cast<int>(mesh.size() + fecs.size()) - 1 - mg_max_levels);
+  int coarse_mesh_l = std::max(0, static_cast<int>(mesh.size() + fecs.size()) - 1 -
+                                      std::max(1, mg_max_levels));
   FiniteElementSpaceHierarchy fespaces(
       std::make_unique<FiniteElementSpace>(mesh[coarse_mesh_l].get(), fecs[0].get()));
   if (dbc_marker && dbc_tdof_lists)
