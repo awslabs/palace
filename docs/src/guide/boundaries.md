@@ -59,11 +59,13 @@ computational electromagnetics and will be a useful addition.
 
 ## Finite conductivity boundary
 
-A finite conductivity boundary condition can be specified using the [`"Conductivty"`]
+A finite conductivity boundary condition can be specified using the [`"Conductivity"`]
 (../config/boundaries.md#boundaries%5B%22Conductivity%22%5D) boundary keyword. This boundary
 condition models the effect of a boundary with non-infinite conductivity (an imperfect
 conductor) for conductors with thickness much larger than the skin depth. It is available
-only for frequency domain driven simulations.
+only for frequency domain driven simulations. For more information see the
+[Other boundary conditions](../reference.md#Other-boundary-conditions) section of the
+reference.
 
 ## Lumped and wave port excitation
 

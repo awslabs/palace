@@ -55,13 +55,13 @@ Material properties are handled by the [`config["Domains"]["Materials"]`]
 (../config/domains.md#domains["Materials"]) object. *Palace* supports linear, frequency
 independent constitutive laws for material modeling.
 
-Materials with scalar or general matrix-valued properties are supported. For most simulation
-types, each material in the model requires a specified relative permittivity and relative
-permeability (for electrostatic simulations, only the permittivity is required, while for
-magnetostatics, only the permeability is required). For dielectric domains, a loss tangent
-may be specified. Alternatively, for normal conducting domains, an electrical conductivity
-may be specified which is used to relate the current density and electric field via Ohm's
-law.
+Materials with scalar or symmetric matrix-valued material properties are supported. For most
+simulation types, each material in the model requires a specified relative permittivity and
+relative permeability (for electrostatic simulations, only the permittivity is required,
+while for magnetostatics, only the permeability is required). For dielectric domains, a
+loss tangent may be specified. Alternatively, for normal conducting domains, an electrical
+conductivity may be specified which is used to relate the current density and electric
+field via Ohm's law.
 
 Modeling of superconducting domains is performed using the current-field constitutive
 relations given by the London equations. The user can specify a London penetration depth to

@@ -72,7 +72,8 @@ These include:
 ## Boundary postprocessing
 
 Boundary postprocessing capabilities are enabled by including objects under
-`config["Boundaries"]["Postprocessing"]` in the configuration file. These include:
+`config["Boundaries"]["Postprocessing"]`](../config/boundaries.md) in the configuration
+file. These include:
 
   - [`config["Boundaries"]["Postprocessing"]["Capacitance"]`]
     (../config/boundaries.md#boundaries["Postprocessing"]["Capacitance"]) :  Postprocess the

@@ -30,7 +30,7 @@ computed as ``Q_{ml} = \omega_m/\kappa_{ml}``. The output file `port-Q.csv` will
 in the output directory containing these mode qualty factor contributions. For bulk and
 interface dielectric loss calculations, which are not unique to the eigenmode simulation
 type, see the sections [Domain postprocessing](postprocessing.md#Domain-postprocessing) and
-[Boundary postprocessing](postprocessing.md#Boundary-postprocessing).
+[Boundary postprocessing](postprocessing.md#Boundary-postprocessing) of this guide.
 
 ## Driven problems in the frequency domain
 
@@ -59,10 +59,41 @@ type and stored in an ASCII file named `port-S.csv`, in the directory specified 
 [`config["Problem"]["Output"]`](../config/problem.md#config%5B%22Problem%22%5D). Both the ``\text{dB}`` magnitude (``20\log_{10}|S_{ij}|``) and the phase ``\angle S_{ij}`` (in
 degrees) are written to the file. In the case
 that more than a single lumped or wave port is excited or surface current excitations are
-used, scattering parameter output will be disabled for the simulation (though other
-quantities of interest are still postprocessed). Further postprocessing of quantities
-related to ports in the model is described in the section on [Ports and surface currents]
-(postprocessing.md#Ports-and-surface-currents).
+used, scattering parameter output will be disabled for the simulation(though other
+quantities of interest are still postprocessed). When lumped ports are present, the peak
+complex lumped port voltages and currents computed for each excitation frequency are written
+to ASCII files named `port-V.csv` and `port-I.csv`, respectively, Additionally, the surface
+current excitations are written to `surface-I.csv`.
+
+It is often the case that a user wants to compute the entire scattering matrix rather than
+just a single column. In this case, each column can be computed in parallel by running
+*Palace* multiple times. For example, consider the following short Python code which
+modifies a base configuration file `config.json` to generate a complete 4x4 scattering
+matrix by running 4 *Palace* simulations, each with 2 MPI processes:
+
+```python
+import json
+import os
+import subprocess
+
+# Base configuration file
+config_path = "config.json"
+
+for i in range(4):
+    # Prepare configuration file for simulation
+    with open(config_path, "r") as f:
+        config_json = json.loads(f.read())
+    for port in config_json["Boundaries"]["LumpedPort"]:
+        port["Excitation"] = (1+i == port["Index"])
+
+    # Write new config file
+    config_path_i = os.path.splitext(config_path)[0] + f"-{1+i}.json"
+    with open(config_path_i, "w") as f:
+        f.write(json.dumps(config_json))
+
+    # Run Palace simulation (alternatively, use Popen and wait)
+    subprocess.run(["palace", "-np", 2, config_path_i])
+```
 
 ## Driven problems in the time domain
 
@@ -76,11 +107,13 @@ the model. The system is always started from rest with zero initial conditions a
 time-integrated for a user specified duration, given in nanoseconds. There are several
 available excitation types which define the time dependence of the pulse or excitation
 waveform. These are specified under the [`config["Solver"]["Transient"]`]
-(../config/solver.md#solver["Transient"]) object using the `"Excitation"` keyword.
+(../config/solver.md#solver%5B%22Transient%22%5D) object using the `"Excitation"` keyword.
 
-As with the frequency domain driven case, postprocessing of quantities related to ports is
-described in the section on [Ports and surface currents]
-(postprocessing.md#Ports-and-surface-currents).
+The time histories of the lumped port voltages and currents are postprocessed and
+automatically written to ASCII files named `port-V.csv` and `port-I.csv`, respectively, in
+the directory specified by [`config["Problem"]["Output"]`]
+(../config/problem.md#config%5B%22Problem%22%5D). Additionally, surface current excitation time
+histories are written to `surface-I.csv`.
 
 ## Electrostatic problems
 
