@@ -86,7 +86,8 @@ resulting resolution is worse by a factor of ``20``. Lastly, for all simulations
 level of uniform mesh refinement is applied to the initial mesh and a first-order finite
 element approximation for the solution is used.
 
-The results from the four different simulations are presented in the plots below.
+The results from the four different simulations are presented in the plots below. Note that
+here ``\text{dB}`` means ``20\log_{10}|S_{ij}|``:
 
 ```@raw html
 <br/><p align="center">
