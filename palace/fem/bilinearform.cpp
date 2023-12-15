@@ -103,6 +103,7 @@ std::unique_ptr<ceed::Operator> BilinearForm::PartialAssemble() const
       mfem::GridFunction *new_mesh_nodes = mesh.GetNodes();
       new_mesh_nodes->MakeOwner(mesh_fec);
       delete mesh_fespace;
+      mesh.ExchangeFaceNbrData();  // Deleted in SetNodalFESpace
     }
   }
 

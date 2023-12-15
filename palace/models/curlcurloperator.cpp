@@ -165,7 +165,7 @@ std::unique_ptr<Operator> CurlCurlOperator::GetStiffnessMatrix()
                  nd_fespace_l.GetMaxElementOrder(), nd_fespace_l.GlobalTrueVSize());
     }
     constexpr bool skip_zeros = false;
-    MaterialPropertyCoefficient muinv_func(mat_op.GetAttributeToMaterial(),
+    MaterialPropertyCoefficient muinv_func(mat_op, mat_op.GetAttributeToMaterial(),
                                            mat_op.GetInvPermeability());
     BilinearForm k(nd_fespace_l);
     k.AddDomainIntegrator<CurlCurlIntegrator>((mfem::MatrixCoefficient &)muinv_func);

@@ -60,7 +60,7 @@ FluxProjector::FluxProjector(const MaterialOperator &mat_op,
   BlockTimer bt(Timer::CONSTRUCTESTIMATOR);
   {
     // Flux operator is always partially assembled.
-    MaterialPropertyCoefficient muinv_func(mat_op.GetAttributeToMaterial(),
+    MaterialPropertyCoefficient muinv_func(mat_op, mat_op.GetAttributeToMaterial(),
                                            mat_op.GetInvPermeability());
     BilinearForm flux(nd_fespace);
     flux.AddDomainIntegrator<MixedVectorCurlIntegrator>(
@@ -83,7 +83,7 @@ FluxProjector::FluxProjector(const MaterialOperator &mat_op,
   BlockTimer bt(Timer::CONSTRUCTESTIMATOR);
   {
     // Flux operator is always partially assembled.
-    MaterialPropertyCoefficient epsilon_func(mat_op.GetAttributeToMaterial(),
+    MaterialPropertyCoefficient epsilon_func(mat_op, mat_op.GetAttributeToMaterial(),
                                              mat_op.GetPermittivityReal());
     BilinearForm flux(h1_fespace, h1d_fespace);
     flux.AddDomainIntegrator<GradientIntegrator>((mfem::MatrixCoefficient &)epsilon_func);

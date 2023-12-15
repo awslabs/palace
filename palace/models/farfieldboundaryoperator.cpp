@@ -70,7 +70,7 @@ void FarfieldBoundaryOperator::AddDampingBdrCoefficients(double coef,
   // First-order absorbing boundary condition.
   if (farfield_attr.Size())
   {
-    MaterialPropertyCoefficient invz0_func(mat_op.GetBdrAttributeToMaterial(),
+    MaterialPropertyCoefficient invz0_func(mat_op, mat_op.GetBdrAttributeToMaterial(),
                                            mat_op.GetInvImpedance());
     invz0_func.RestrictCoefficient(mat_op.GetBdrAttributeGlobalToLocal(farfield_attr));
     fb.AddCoefficient(invz0_func.GetAttributeToMaterial(),
@@ -94,7 +94,8 @@ void FarfieldBoundaryOperator::AddExtraSystemBdrCoefficients(
     {
       Mult(mat_op.GetInvPermeability()(k), mat_op.GetLightSpeed()(k), muinvc0(k));
     }
-    MaterialPropertyCoefficient muinvc0_func(mat_op.GetBdrAttributeToMaterial(), muinvc0);
+    MaterialPropertyCoefficient muinvc0_func(mat_op, mat_op.GetBdrAttributeToMaterial(),
+                                             muinvc0);
     muinvc0_func.RestrictCoefficient(mat_op.GetBdrAttributeGlobalToLocal(farfield_attr));
 
     // Instead getting the correct normal of farfield boundary elements, just pick the

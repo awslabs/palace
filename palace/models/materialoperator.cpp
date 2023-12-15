@@ -587,9 +587,57 @@ mfem::Array<int> MaterialOperator::GetBdrAttributeToMaterial() const
   return bdr_attr_mat;
 }
 
+int MaterialOperator::GetAttributeGlobalToLocal(mfem::ElementTransformation &T) const
+{
+  if (T.GetDimension() == T.GetSpaceDim())
+  {
+    // Domain element.
+    auto it = loc_attr.find(T.Attribute);
+    MFEM_ASSERT(it != loc_attr.end(), "Invalid domain attribute " << T.Attribute << "!");
+    return it->second;
+  }
+  else
+  {
+    // Boundary element (or boundary submesh domain).
+    auto bdr_attr_map = loc_bdr_attr.find(T.Attribute);
+    MFEM_ASSERT(bdr_attr_map != loc_bdr_attr.end(),
+                "Invalid domain attribute " << T.Attribute << "!");
+    const int nbr_attr = [&]()
+    {
+      // XX TODO INCORRECT FOR H-MULTIGRID: T.ElementNo SHOULD BE USED TO FIND THE MESH
+      //         NEIGHBOR ON THE COARSE MESH
+
+      mfem::FaceElementTransformations FET;  // XX TODO: Preallocate these for all elements
+      mfem::IsoparametricTransformation T1, T2;
+      if (const auto *submesh = dynamic_cast<const mfem::ParSubMesh *>(T.mesh))
+      {
+        MFEM_ASSERT(T.ElementType == mfem::ElementTransformation::ELEMENT,
+                    "Unexpected element type in GetAttributeGlobalToLocal!");
+        return GetBdrNeighborAttribute(submesh->GetParentElementIDMap()[T.ElementNo],
+                                       *submesh->GetParent(), face_loc_to_shared, FET, T1,
+                                       T2);
+      }
+      else
+      {
+        MFEM_ASSERT(T.ElementType == mfem::ElementTransformation::BDR_ELEMENT,
+                    "Unexpected element type in GetAttributeGlobalToLocal!");
+        return GetBdrNeighborAttribute(T.ElementNo,
+                                       *static_cast<const mfem::ParMesh *>(T.mesh),
+                                       face_loc_to_shared, FET, T1, T2);
+      }
+    }();
+    auto it = bdr_attr_map->second.find(nbr_attr);
+    MFEM_ASSERT(it != bdr_attr_map->second.end(),
+                "Invalid domain attribute " << nbr_attr << "!");
+    return it->second;
+  }
+}
+
 MaterialPropertyCoefficient::MaterialPropertyCoefficient(
-    const mfem::Array<int> &attr_mat_, const mfem::DenseTensor &mat_coeff_, double a)
-  : mfem::MatrixCoefficient(0, 0), attr_mat(attr_mat_), mat_coeff(mat_coeff_)
+    const MaterialOperator &mat_op, const mfem::Array<int> &attr_mat_,
+    const mfem::DenseTensor &mat_coeff_, double a)
+  : mfem::MatrixCoefficient(0, 0), mat_op(mat_op), attr_mat(attr_mat_),
+    mat_coeff(mat_coeff_)
 {
   for (int k = 0; k < mat_coeff.SizeK(); k++)
   {
@@ -860,6 +908,37 @@ void MaterialPropertyCoefficient::NormalProjectedCoefficient(const mfem::Vector 
   }
   height = mat_coeff.SizeI();
   width = mat_coeff.SizeJ();
+}
+
+double MaterialPropertyCoefficient::Eval(mfem::ElementTransformation &T,
+                                         const mfem::IntegrationPoint &ip)
+{
+  const int attr = mat_op.GetAttributeGlobalToLocal(T);
+  MFEM_ASSERT(attr <= attr_mat.Size(),
+              "Out of bounds attribute for MaterialPropertyCoefficient ("
+                  << attr << " > " << attr_mat.Size() << ")!");
+  MFEM_ASSERT(mat_coeff.SizeI() == 1 && mat_coeff.SizeJ() == 1,
+              "Invalid access of matrix-valued MaterialPropertyCoefficient using scalar "
+              "coefficient interface!");
+  return (attr_mat[attr - 1] < 0) ? 0.0 : mat_coeff(0, 0, attr_mat[attr - 1]);
+}
+
+void MaterialPropertyCoefficient::Eval(mfem::DenseMatrix &K, mfem::ElementTransformation &T,
+                                       const mfem::IntegrationPoint &ip)
+{
+  const int attr = mat_op.GetAttributeGlobalToLocal(T);
+  MFEM_ASSERT(attr <= attr_mat.Size(),
+              "Out of bounds attribute for MaterialPropertyCoefficient ("
+                  << attr << " > " << attr_mat.Size() << ")!");
+  if (attr_mat[attr - 1] < 0)
+  {
+    K.SetSize(mat_coeff.SizeI(), mat_coeff.SizeJ());
+    K = 0.0;
+  }
+  else
+  {
+    K = mat_coeff(attr_mat[attr - 1]);
+  }
 }
 
 template void MaterialPropertyCoefficient::AddMaterialProperty(const mfem::Array<int> &,
