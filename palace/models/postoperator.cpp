@@ -78,18 +78,16 @@ PostOperator::PostOperator(const IoData &iodata, SpaceOperator &spaceop,
         B->real(), mat_op);
   }
 
-  // Initialize data collection objects and register additional fields associated with wave
-  // ports (only constructed in SpaceOperator).
-  InitializeDataCollection(iodata);
+  // Add wave port boundary mode postprocessing when available.
   for (const auto &[idx, data] : spaceop.GetWavePortOp())
   {
-    paraview_bdr.RegisterVCoeffField(
-        "nxH^0_" + std::to_string(idx) + "_real",
-        const_cast<mfem::VectorCoefficient *>(&data.GetModeCoefficientReal()));
-    paraview_bdr.RegisterVCoeffField(
-        "nxH^0_" + std::to_string(idx) + "_imag",
-        const_cast<mfem::VectorCoefficient *>(&data.GetModeCoefficientImag()));
+    auto ret = port_E0.insert(std::make_pair(idx, WavePortFieldData()));
+    ret.first->second.E0r = data.GetModeFieldCoefficientReal();
+    ret.first->second.E0i = data.GetModeFieldCoefficientImag();
   }
+
+  // Initialize data collection objects.
+  InitializeDataCollection(iodata);
 }
 
 PostOperator::PostOperator(const IoData &iodata, LaplaceOperator &laplaceop,
@@ -260,6 +258,13 @@ void PostOperator::InitializeDataCollection(const IoData &iodata)
     paraview.RegisterCoeffField("Um", Um.get());
     paraview_bdr.RegisterCoeffField("Um", Um.get());
   }
+
+  // Add wave port boundary mode postprocessing when available.
+  for (const auto &[idx, data] : port_E0)
+  {
+    paraview_bdr.RegisterVCoeffField("E0_" + std::to_string(idx) + "_real", data.E0r.get());
+    paraview_bdr.RegisterVCoeffField("E0_" + std::to_string(idx) + "_imag", data.E0i.get());
+  }
 }
 
 void PostOperator::SetEGridFunction(const ComplexVector &e)
@@ -342,13 +347,13 @@ void PostOperator::UpdatePorts(const LumpedPortOperator &lumped_port_op, double 
           omega > 0.0,
           "Frequency domain lumped port postprocessing requires nonzero frequency!");
       vi.S = data.GetSParameter(*E);
-      vi.P = data.GetPower(*E, *B, mat_op);
+      vi.P = data.GetPower(*E, *B);
       vi.V = data.GetVoltage(*E);
       vi.Z = data.GetCharacteristicImpedance(omega);
     }
     else
     {
-      vi.P = data.GetPower(E->real(), B->real(), mat_op);
+      vi.P = data.GetPower(E->real(), B->real());
       vi.V = data.GetVoltage(E->real());
       vi.S = vi.Z = 0.0;
     }
@@ -369,7 +374,7 @@ void PostOperator::UpdatePorts(const WavePortOperator &wave_port_op, double omeg
                 "Frequency domain wave port postprocessing requires nonzero frequency!");
     auto &vi = wave_port_vi[idx];
     vi.S = data.GetSParameter(*E);
-    vi.P = data.GetPower(*E, *B, mat_op);
+    vi.P = data.GetPower(*E, *B);
     vi.V = vi.Z = 0.0;  // Not yet implemented (Z = V² / P, I = V / Z)
   }
   wave_port_init = true;
@@ -418,10 +423,10 @@ double PostOperator::GetLumpedInductorEnergy(const LumpedPortOperator &lumped_po
   double U = 0.0;
   for (const auto &[idx, data] : lumped_port_op)
   {
-    if (std::abs(data.GetL()) > 0.0)
+    if (std::abs(data.L) > 0.0)
     {
       std::complex<double> Ij = GetPortCurrent(lumped_port_op, idx);
-      U += 0.5 * std::abs(data.GetL()) * std::real(Ij * std::conj(Ij));
+      U += 0.5 * std::abs(data.L) * std::real(Ij * std::conj(Ij));
     }
   }
   return U;
@@ -435,10 +440,10 @@ PostOperator::GetLumpedCapacitorEnergy(const LumpedPortOperator &lumped_port_op)
   double U = 0.0;
   for (const auto &[idx, data] : lumped_port_op)
   {
-    if (std::abs(data.GetC()) > 0.0)
+    if (std::abs(data.C) > 0.0)
     {
       std::complex<double> Vj = GetPortVoltage(lumped_port_op, idx);
-      U += 0.5 * std::abs(data.GetC()) * std::real(Vj * std::conj(Vj));
+      U += 0.5 * std::abs(data.C) * std::real(Vj * std::conj(Vj));
     }
   }
   return U;
@@ -452,7 +457,7 @@ std::complex<double> PostOperator::GetSParameter(const LumpedPortOperator &lumpe
   const LumpedPortData &data = lumped_port_op.GetPort(idx);
   const LumpedPortData &src_data = lumped_port_op.GetPort(source_idx);
   const auto it = lumped_port_vi.find(idx);
-  MFEM_VERIFY(src_data.IsExcited(),
+  MFEM_VERIFY(src_data.excitation,
               "Lumped port index " << source_idx << " is not marked for excitation!");
   MFEM_VERIFY(it != lumped_port_vi.end(),
               "Could not find lumped port when calculating port S-parameters!");
@@ -462,9 +467,9 @@ std::complex<double> PostOperator::GetSParameter(const LumpedPortOperator &lumpe
     Sij.real(Sij.real() - 1.0);
   }
   // Generalized S-parameters if the ports are resistive (avoids divide-by-zero).
-  if (std::abs(data.GetR()) > 0.0)
+  if (std::abs(data.R) > 0.0)
   {
-    Sij *= std::sqrt(src_data.GetR() / data.GetR());
+    Sij *= std::sqrt(src_data.R / data.R);
   }
   return Sij;
 }
@@ -478,7 +483,7 @@ std::complex<double> PostOperator::GetSParameter(const WavePortOperator &wave_po
   const WavePortData &data = wave_port_op.GetPort(idx);
   const WavePortData &src_data = wave_port_op.GetPort(source_idx);
   const auto it = wave_port_vi.find(idx);
-  MFEM_VERIFY(src_data.IsExcited(),
+  MFEM_VERIFY(src_data.excitation,
               "Wave port index " << source_idx << " is not marked for excitation!");
   MFEM_VERIFY(it != wave_port_vi.end(),
               "Could not find wave port when calculating port S-parameters!");
@@ -489,8 +494,8 @@ std::complex<double> PostOperator::GetSParameter(const WavePortOperator &wave_po
   }
   // Port de-embedding: S_demb = S exp(-ikₙᵢ dᵢ) exp(-ikₙⱼ dⱼ) (distance offset is default
   // 0 unless specified).
-  Sij *= std::exp(1i * src_data.GetPropagationConstant() * src_data.GetOffsetDistance());
-  Sij *= std::exp(1i * data.GetPropagationConstant() * data.GetOffsetDistance());
+  Sij *= std::exp(1i * src_data.kn0 * src_data.d_offset);
+  Sij *= std::exp(1i * data.kn0 * data.d_offset);
   return Sij;
 }
 
@@ -561,7 +566,7 @@ double PostOperator::GetInductorParticipation(const LumpedPortOperator &lumped_p
   // thus zero current.
   const LumpedPortData &data = lumped_port_op.GetPort(idx);
   std::complex<double> Imj = GetPortCurrent(lumped_port_op, idx);
-  return std::copysign(0.5 * std::abs(data.GetL()) * std::real(Imj * std::conj(Imj)) / Em,
+  return std::copysign(0.5 * std::abs(data.L) * std::real(Imj * std::conj(Imj)) / Em,
                        Imj.real());  // mean(I²) = (I_r² + I_i²) / 2
 }
 
@@ -576,7 +581,7 @@ double PostOperator::GetExternalKappa(const LumpedPortOperator &lumped_port_op, 
   //                              Q_mj = ω_m / κ_mj.
   const LumpedPortData &data = lumped_port_op.GetPort(idx);
   std::complex<double> Imj = GetPortCurrent(lumped_port_op, idx);
-  return std::copysign(0.5 * std::abs(data.GetR()) * std::real(Imj * std::conj(Imj)) / Em,
+  return std::copysign(0.5 * std::abs(data.R) * std::real(Imj * std::conj(Imj)) / Em,
                        Imj.real());  // mean(I²) = (I_r² + I_i²) / 2
 }
 
@@ -669,18 +674,20 @@ void PostOperator::WriteFields(int step, double time, const ErrorIndicator *indi
   paraview_bdr.SetTime(time);
   if (first_save || indicator)
   {
+    // No need for these to be parallel objects, since the data is local to each process and
+    // there isn't a need to ever access the element neighbors.
     mfem::L2_FECollection pwconst_fec(0, mesh.Dimension());
-    mfem::ParFiniteElementSpace pwconst_fespace(&mesh, &pwconst_fec);
-    std::unique_ptr<mfem::ParGridFunction> rank, eta;
+    mfem::FiniteElementSpace pwconst_fespace(&mesh, &pwconst_fec);
+    std::unique_ptr<mfem::GridFunction> rank, eta;
     if (first_save)
     {
-      rank = std::make_unique<mfem::ParGridFunction>(&pwconst_fespace);
+      rank = std::make_unique<mfem::GridFunction>(&pwconst_fespace);
       *rank = mesh.GetMyRank() + 1;
       paraview.RegisterField("Rank", rank.get());
     }
     if (indicator)
     {
-      eta = std::make_unique<mfem::ParGridFunction>(&pwconst_fespace);
+      eta = std::make_unique<mfem::GridFunction>(&pwconst_fespace);
       MFEM_VERIFY(eta->Size() == indicator->Local().Size(),
                   "Size mismatch for provided ErrorIndicator for postprocessing!");
       *eta = indicator->Local();
