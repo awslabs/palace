@@ -4,13 +4,15 @@
 #ifndef PALACE_MODELS_SURFACE_IMPEDANCE_OPERATOR_HPP
 #define PALACE_MODELS_SURFACE_IMPEDANCE_OPERATOR_HPP
 
+#include <vector>
 #include <mfem.hpp>
 
 namespace palace
 {
 
 class IoData;
-class SumMatrixCoefficient;
+class MaterialOperator;
+class MaterialPropertyCoefficient;
 
 //
 // A class handling impedance boundaries.
@@ -18,29 +20,37 @@ class SumMatrixCoefficient;
 class SurfaceImpedanceOperator
 {
 private:
+  // Reference to material property data (not owned).
+  const MaterialOperator &mat_op;
+
   // Surface properties for impedance boundary attributes: surface resistance, capacitance,
   // and inductance.
-  mfem::Vector Z_Rsinv, Z_Lsinv, Z_Cs;
-  mfem::Array<int> impedance_marker, impedance_Rs_marker, impedance_Ls_marker,
-      impedance_Cs_marker;
+  struct ImpedanceData
+  {
+    double Rs, Ls, Cs;
+    mfem::Array<int> attr_list;
+  };
+  std::vector<ImpedanceData> boundaries;
+
   void SetUpBoundaryProperties(const IoData &iodata, const mfem::ParMesh &mesh);
   void PrintBoundaryInfo(const IoData &iodata, const mfem::ParMesh &mesh);
 
 public:
-  SurfaceImpedanceOperator(const IoData &iodata, const mfem::ParMesh &mesh);
+  SurfaceImpedanceOperator(const IoData &iodata, const MaterialOperator &mat_op,
+                           const mfem::ParMesh &mesh);
 
-  // Returns array marking surface impedance attributes.
-  const mfem::Array<int> &GetMarker() const { return impedance_marker; }
-  const mfem::Array<int> &GetRsMarker() const { return impedance_Rs_marker; }
-  const mfem::Array<int> &GetLsMarker() const { return impedance_Ls_marker; }
-  const mfem::Array<int> &GetCsMarker() const { return impedance_Cs_marker; }
+  // Returns array of surface impedance attributes.
+  mfem::Array<int> GetAttrList() const;
+  mfem::Array<int> GetRsAttrList() const;
+  mfem::Array<int> GetLsAttrList() const;
+  mfem::Array<int> GetCsAttrList() const;
 
   // Add contributions to system matrices from impedance boundaries with nonzero inductance,
-  // capacitance, and/or resistance. For boundaries with more than R/L/C, impedances add in
+  // resistance, and/or capacitance. For boundaries with more than R/L/C, impedances add in
   // parallel.
-  void AddStiffnessBdrCoefficients(double coef, SumMatrixCoefficient &fb);
-  void AddMassBdrCoefficients(double coef, SumMatrixCoefficient &fb);
-  void AddDampingBdrCoefficients(double coef, SumMatrixCoefficient &fb);
+  void AddStiffnessBdrCoefficients(double coef, MaterialPropertyCoefficient &fb);
+  void AddDampingBdrCoefficients(double coef, MaterialPropertyCoefficient &fb);
+  void AddMassBdrCoefficients(double coef, MaterialPropertyCoefficient &fb);
 };
 
 }  // namespace palace

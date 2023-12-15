@@ -10,6 +10,8 @@
 #include <mfem.hpp>
 #include "fem/coefficient.hpp"
 
+// XX TODO: Rename BoundaryPostOperator for config file consistency?
+
 namespace palace
 {
 
@@ -35,12 +37,12 @@ private:
   // information for surface loss, charge, or magnetic flux.
   struct SurfaceData
   {
-    mutable std::vector<mfem::Array<int>> attr_markers;
+    std::vector<mfem::Array<int>> attr_lists;
 
     virtual ~SurfaceData() = default;
 
     virtual std::unique_ptr<mfem::Coefficient>
-    GetCoefficient(int i, const mfem::ParGridFunction &U,
+    GetCoefficient(std::size_t i, const mfem::ParGridFunction &U,
                    const MaterialOperator &mat_op) const = 0;
   };
   struct InterfaceDielectricData : public SurfaceData
@@ -50,28 +52,28 @@ private:
     std::vector<mfem::Vector> sides;
 
     InterfaceDielectricData(const config::InterfaceDielectricData &data,
-                            mfem::ParMesh &mesh);
+                            const mfem::ParMesh &mesh);
 
     std::unique_ptr<mfem::Coefficient>
-    GetCoefficient(int i, const mfem::ParGridFunction &U,
+    GetCoefficient(std::size_t i, const mfem::ParGridFunction &U,
                    const MaterialOperator &mat_op) const override;
   };
   struct SurfaceChargeData : public SurfaceData
   {
-    SurfaceChargeData(const config::CapacitanceData &data, mfem::ParMesh &mesh);
+    SurfaceChargeData(const config::CapacitanceData &data, const mfem::ParMesh &mesh);
 
     std::unique_ptr<mfem::Coefficient>
-    GetCoefficient(int i, const mfem::ParGridFunction &U,
+    GetCoefficient(std::size_t i, const mfem::ParGridFunction &U,
                    const MaterialOperator &mat_op) const override;
   };
   struct SurfaceFluxData : public SurfaceData
   {
     mfem::Vector direction;
 
-    SurfaceFluxData(const config::InductanceData &data, mfem::ParMesh &mesh);
+    SurfaceFluxData(const config::InductanceData &data, const mfem::ParMesh &mesh);
 
     std::unique_ptr<mfem::Coefficient>
-    GetCoefficient(int i, const mfem::ParGridFunction &U,
+    GetCoefficient(std::size_t i, const mfem::ParGridFunction &U,
                    const MaterialOperator &mat_op) const override;
   };
   std::map<int, InterfaceDielectricData> eps_surfs;
@@ -82,7 +84,7 @@ private:
   const MaterialOperator &mat_op;
 
   // Unit function used for computing surface integrals.
-  mfem::GridFunction ones;
+  mutable mfem::GridFunction ones;
 
   double GetLocalSurfaceIntegral(const SurfaceData &data,
                                  const mfem::ParGridFunction &U) const;

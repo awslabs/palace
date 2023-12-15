@@ -28,7 +28,7 @@ struct SurfaceCurrentData;
 //
 class SurfaceCurrentData
 {
-private:
+public:
   // To accomodate multielement surface current sources, a current source may be made up
   // of elements with different attributes and directions which add to deliver the same
   // total source current.
@@ -37,11 +37,6 @@ private:
 public:
   SurfaceCurrentData(const config::SurfaceCurrentData &data,
                      mfem::ParFiniteElementSpace &h1_fespace);
-
-  const std::vector<std::unique_ptr<LumpedElementData>> &GetElements() const
-  {
-    return elems;
-  }
 
   double GetExcitationCurrent() const;
 };
@@ -55,7 +50,7 @@ private:
   // Mapping from source index to data structure containing source surface current
   // information.
   std::map<int, SurfaceCurrentData> sources;
-  mfem::Array<int> source_marker;
+
   void SetUpBoundaryProperties(const IoData &iodata,
                                mfem::ParFiniteElementSpace &h1_fespace);
   void PrintBoundaryInfo(const IoData &iodata, const mfem::ParMesh &mesh);
@@ -71,8 +66,8 @@ public:
   auto rend() const { return sources.rend(); }
   auto Size() const { return sources.size(); }
 
-  // Returns array marking surface current source attributes.
-  const mfem::Array<int> &GetMarker() const { return source_marker; }
+  // Returns array of surface current source attributes.
+  mfem::Array<int> GetAttrList() const;
 
   // Add contributions to the right-hand side source term vector for a surface current
   // excitation at the specified boundaries, -J_inc for the real version (versus the
