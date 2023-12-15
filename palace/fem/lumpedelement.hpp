@@ -18,20 +18,14 @@ namespace palace
 class LumpedElementData
 {
 protected:
-  // Spatial dimension.
-  const int dim;
-
-  // Marker for all boundary attributes making up this lumped element boundary.
-  mfem::Array<int> attr_marker;
-
-  double GetArea(mfem::ParFiniteElementSpace &fespace);
+  // List of all boundary attributes making up this lumped element boundary.
+  mfem::Array<int> attr_list;
 
 public:
-  LumpedElementData(int d, const mfem::Array<int> &marker) : dim(d), attr_marker(marker) {}
+  LumpedElementData(const mfem::Array<int> &attr_list) : attr_list(attr_list) {}
   virtual ~LumpedElementData() = default;
 
-  mfem::Array<int> &GetMarker() { return attr_marker; }
-  const mfem::Array<int> &GetMarker() const { return attr_marker; }
+  const auto &GetAttrList() const { return attr_list; }
 
   virtual double GetGeometryLength() const = 0;
   virtual double GetGeometryWidth() const = 0;
@@ -42,7 +36,7 @@ public:
 
 class UniformElementData : public LumpedElementData
 {
-protected:
+private:
   // Bounding box defining the rectangular lumped port.
   mesh::BoundingBox bounding_box;
 
@@ -53,7 +47,8 @@ protected:
   double l, w;
 
 public:
-  UniformElementData(const std::array<double, 3> &input_dir, const mfem::Array<int> &marker,
+  UniformElementData(const std::array<double, 3> &input_dir,
+                     const mfem::Array<int> &attr_list,
                      mfem::ParFiniteElementSpace &fespace);
 
   double GetGeometryLength() const override { return l; }
@@ -65,7 +60,7 @@ public:
 
 class CoaxialElementData : public LumpedElementData
 {
-protected:
+private:
   // Bounding ball defined by boundary element.
   mesh::BoundingBall bounding_ball;
 
@@ -76,7 +71,8 @@ protected:
   double ra;
 
 public:
-  CoaxialElementData(const std::array<double, 3> &direction, const mfem::Array<int> &marker,
+  CoaxialElementData(const std::array<double, 3> &direction,
+                     const mfem::Array<int> &attr_list,
                      mfem::ParFiniteElementSpace &fespace);
 
   double GetGeometryLength() const override { return std::log(bounding_ball.radius / ra); }

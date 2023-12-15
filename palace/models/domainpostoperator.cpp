@@ -3,8 +3,9 @@
 
 #include "domainpostoperator.hpp"
 
+#include <mfem.hpp>
 #include "fem/bilinearform.hpp"
-#include "fem/coefficient.hpp"
+#include "fem/fespace.hpp"
 #include "fem/integrator.hpp"
 #include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
@@ -14,21 +15,21 @@ namespace palace
 {
 
 DomainPostOperator::DomainPostOperator(const IoData &iodata, const MaterialOperator &mat_op,
-                                       const mfem::ParFiniteElementSpace *nd_fespace,
-                                       const mfem::ParFiniteElementSpace *rt_fespace)
+                                       const FiniteElementSpace *nd_fespace,
+                                       const FiniteElementSpace *rt_fespace)
 {
   // Mass operators are always partially assembled.
-  constexpr auto MatTypeEps = MaterialPropertyType::PERMITTIVITY_REAL;
-  constexpr auto MatTypeMuInv = MaterialPropertyType::INV_PERMEABILITY;
   if (nd_fespace)
   {
     // Construct ND mass matrix to compute the electric field energy integral as:
     //              E_elec = 1/2 Re{∫_Ω Dᴴ E dV} as (M_eps * e)ᴴ e.
     // Only the real part of the permeability contributes to the energy (imaginary part
     // cancels out in the inner product due to symmetry).
-    MaterialPropertyCoefficient<MatTypeEps> epsilon_func(mat_op);
+    MaterialPropertyCoefficient epsilon_func(mat_op.GetAttributeToMaterial(),
+                                             mat_op.GetPermittivityReal());
     BilinearForm m_nd(*nd_fespace);
-    m_nd.AddDomainIntegrator<VectorFEMassIntegrator>(epsilon_func);
+    m_nd.AddDomainIntegrator<VectorFEMassIntegrator>(
+        (mfem::MatrixCoefficient &)epsilon_func);
     M_ND = m_nd.PartialAssemble();
     D.SetSize(M_ND->Height());
     D.UseDevice(true);
@@ -38,9 +39,10 @@ DomainPostOperator::DomainPostOperator(const IoData &iodata, const MaterialOpera
   {
     // Construct RT mass matrix to compute the magnetic field energy integral as:
     //              E_mag = 1/2 Re{∫_Ω Bᴴ H dV} as (M_muinv * b)ᴴ b.
-    MaterialPropertyCoefficient<MatTypeMuInv> muinv_func(mat_op);
+    MaterialPropertyCoefficient muinv_func(mat_op.GetAttributeToMaterial(),
+                                           mat_op.GetInvPermeability());
     BilinearForm m_rt(*rt_fespace);
-    m_rt.AddDomainIntegrator<VectorFEMassIntegrator>(muinv_func);
+    m_rt.AddDomainIntegrator<VectorFEMassIntegrator>((mfem::MatrixCoefficient &)muinv_func);
     M_RT = m_rt.PartialAssemble();
     H.SetSize(M_RT->Height());
     H.UseDevice(true);
@@ -48,33 +50,27 @@ DomainPostOperator::DomainPostOperator(const IoData &iodata, const MaterialOpera
 
   // Use the provided domain postprocessing indices for postprocessing the electric and
   // magnetic field energy in specific regions of the domain.
-  const auto &mesh = nd_fespace ? *nd_fespace->GetParMesh() : *rt_fespace->GetParMesh();
-  int attr_max = mesh.attributes.Max();
   for (const auto &[idx, data] : iodata.domains.postpro.energy)
   {
-    mfem::Array<int> attr_marker(attr_max);
-    attr_marker = 0;
-    for (auto attr : data.attributes)
-    {
-      attr_marker[attr - 1] = 1;
-    }
     std::unique_ptr<Operator> M_ND_i, M_RT_i;
     if (nd_fespace)
     {
-      SumMatrixCoefficient epsilon_func_i(nd_fespace->GetParMesh()->SpaceDimension());
-      epsilon_func_i.AddCoefficient(
-          std::make_unique<MaterialPropertyCoefficient<MatTypeEps>>(mat_op), attr_marker);
+      MaterialPropertyCoefficient epsilon_func(mat_op.GetAttributeToMaterial(),
+                                               mat_op.GetPermittivityReal());
+      epsilon_func.RestrictCoefficient(mat_op.GetAttributeGlobalToLocal(data.attributes));
       BilinearForm m_nd_i(*nd_fespace);
-      m_nd_i.AddDomainIntegrator<VectorFEMassIntegrator>(epsilon_func_i);
+      m_nd_i.AddDomainIntegrator<VectorFEMassIntegrator>(
+          (mfem::MatrixCoefficient &)epsilon_func);
       M_ND_i = m_nd_i.PartialAssemble();
     }
     if (rt_fespace)
     {
-      SumMatrixCoefficient muinv_func_i(rt_fespace->GetParMesh()->SpaceDimension());
-      muinv_func_i.AddCoefficient(
-          std::make_unique<MaterialPropertyCoefficient<MatTypeMuInv>>(mat_op), attr_marker);
+      MaterialPropertyCoefficient muinv_func(mat_op.GetAttributeToMaterial(),
+                                             mat_op.GetInvPermeability());
+      muinv_func.RestrictCoefficient(mat_op.GetAttributeGlobalToLocal(data.attributes));
       BilinearForm m_rt_i(*rt_fespace);
-      m_rt_i.AddDomainIntegrator<VectorFEMassIntegrator>(muinv_func_i);
+      m_rt_i.AddDomainIntegrator<VectorFEMassIntegrator>(
+          (mfem::MatrixCoefficient &)muinv_func);
       M_RT_i = m_rt_i.PartialAssemble();
     }
     M_i.emplace(idx, std::make_pair(std::move(M_ND_i), std::move(M_RT_i)));

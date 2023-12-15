@@ -49,7 +49,7 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) 
     bool first = true;
     for (const auto &[idx, data] : spaceop.GetLumpedPortOp())
     {
-      if (data.IsExcited())
+      if (data.excitation)
       {
         if (first)
         {
@@ -367,7 +367,7 @@ void TransientSolver::PostprocessPorts(const PostOperator &postop,
         (std::abs(Vinc) > 0.0) ? data.GetExcitationPower() * J_coef * J_coef / Vinc : 0.0;
     const double Vi = postop.GetPortVoltage(lumped_port_op, idx).real();
     const double Ii = postop.GetPortCurrent(lumped_port_op, idx).real();
-    port_data.push_back({idx, data.IsExcited(),
+    port_data.push_back({idx, data.excitation,
                          iodata.DimensionalizeValue(IoData::ValueType::VOLTAGE, Vinc),
                          iodata.DimensionalizeValue(IoData::ValueType::CURRENT, Iinc),
                          iodata.DimensionalizeValue(IoData::ValueType::VOLTAGE, Vi),
