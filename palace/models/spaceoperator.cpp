@@ -216,7 +216,14 @@ BuildOperator(const FiniteElementSpace &fespace, const MaterialPropertyCoefficie
     }
     if (f && !f->empty())
     {
-      a.AddDomainIntegrator<VectorFEMassIntegrator>((mfem::MatrixCoefficient &)*f);
+      if (f->GetMaterialProperties().SizeI() == 1)
+      {
+        a.AddDomainIntegrator<VectorFEMassIntegrator>((mfem::Coefficient &)*f);
+      }
+      else
+      {
+        a.AddDomainIntegrator<VectorFEMassIntegrator>((mfem::MatrixCoefficient &)*f);
+      }
     }
   }
   if (dfb && !dfb->empty() && fb && !fb->empty())
@@ -232,7 +239,14 @@ BuildOperator(const FiniteElementSpace &fespace, const MaterialPropertyCoefficie
     }
     if (fb && !fb->empty())
     {
-      a.AddBoundaryIntegrator<VectorFEMassIntegrator>((mfem::MatrixCoefficient &)*fb);
+      if (fb->GetMaterialProperties().SizeI() == 1)
+      {
+        a.AddBoundaryIntegrator<VectorFEMassIntegrator>((mfem::Coefficient &)*fb);
+      }
+      else
+      {
+        a.AddBoundaryIntegrator<VectorFEMassIntegrator>((mfem::MatrixCoefficient &)*fb);
+      }
     }
   }
   return (l > 0) ? a.Assemble(skip_zeros) : a.FullAssemble(skip_zeros);
@@ -258,7 +272,14 @@ std::unique_ptr<Operator> BuildAuxOperator(const FiniteElementSpace &fespace,
   }
   if (fb && !fb->empty())
   {
-    a.AddBoundaryIntegrator<DiffusionIntegrator>((mfem::MatrixCoefficient &)*fb);
+    if (fb->GetMaterialProperties().SizeI() == 1)
+    {
+      a.AddBoundaryIntegrator<DiffusionIntegrator>((mfem::Coefficient &)*fb);
+    }
+    else
+    {
+      a.AddBoundaryIntegrator<DiffusionIntegrator>((mfem::MatrixCoefficient &)*fb);
+    }
   }
   return (l > 0) ? a.Assemble(skip_zeros) : a.FullAssemble(skip_zeros);
 }
@@ -270,7 +291,7 @@ std::unique_ptr<OperType>
 SpaceOperator::GetStiffnessMatrix(Operator::DiagonalPolicy diag_policy)
 {
   PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
-  MaterialPropertyCoefficient df, f, fb;
+  MaterialPropertyCoefficient df(mat_op), f(mat_op), fb(mat_op);
   AddStiffnessCoefficients(1.0, df, f);
   AddStiffnessBdrCoefficients(1.0, fb);
   if (df.empty() && f.empty() && fb.empty())
@@ -299,7 +320,7 @@ std::unique_ptr<OperType>
 SpaceOperator::GetDampingMatrix(Operator::DiagonalPolicy diag_policy)
 {
   PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
-  MaterialPropertyCoefficient f, fb;
+  MaterialPropertyCoefficient f(mat_op), fb(mat_op);
   AddDampingCoefficients(1.0, f);
   AddDampingBdrCoefficients(1.0, fb);
   if (f.empty() && fb.empty())
@@ -327,7 +348,7 @@ template <typename OperType>
 std::unique_ptr<OperType> SpaceOperator::GetMassMatrix(Operator::DiagonalPolicy diag_policy)
 {
   PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
-  MaterialPropertyCoefficient fr, fi, fbr, fbi;
+  MaterialPropertyCoefficient fr(mat_op), fi(mat_op), fbr(mat_op), fbi(mat_op);
   AddRealMassCoefficients(1.0, fr);
   AddRealMassBdrCoefficients(1.0, fbr);
   if constexpr (std::is_same<OperType, ComplexOperator>::value)
@@ -369,7 +390,7 @@ std::unique_ptr<OperType>
 SpaceOperator::GetExtraSystemMatrix(double omega, Operator::DiagonalPolicy diag_policy)
 {
   PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
-  MaterialPropertyCoefficient dfbr, dfbi, fbr, fbi;
+  MaterialPropertyCoefficient dfbr(mat_op), dfbi(mat_op), fbr(mat_op), fbi(mat_op);
   AddExtraSystemBdrCoefficients(omega, dfbr, dfbi, fbr, fbi);
   if (dfbr.empty() && fbr.empty() && dfbi.empty() && fbi.empty())
   {
@@ -663,7 +684,8 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(double a0, doub
         Mpi::Print(" Level {:d}{} (p = {:d}): {:d} unknowns", l, aux ? " (auxiliary)" : "",
                    fespace_l.GetMaxElementOrder(), fespace_l.GlobalTrueVSize());
       }
-      MaterialPropertyCoefficient dfr, fr, dfi, fi, dfbr, dfbi, fbr, fbi;
+      MaterialPropertyCoefficient dfr(mat_op), fr(mat_op), dfi(mat_op), fi(mat_op),
+          dfbr(mat_op), dfbi(mat_op), fbr(mat_op), fbi(mat_op);
       if (!std::is_same<OperType, ComplexOperator>::value || pc_mat_real || l == 0)
       {
         // Real-valued system matrix (approximation) for preconditioning.

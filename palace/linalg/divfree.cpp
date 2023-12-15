@@ -23,7 +23,7 @@ DivFreeSolver::DivFreeSolver(const MaterialOperator &mat_op, FiniteElementSpace 
                              double tol, int max_it, int print)
 {
   constexpr bool skip_zeros = false;
-  MaterialPropertyCoefficient epsilon_func(mat_op.GetAttributeToMaterial(),
+  MaterialPropertyCoefficient epsilon_func(mat_op, mat_op.GetAttributeToMaterial(),
                                            mat_op.GetPermittivityReal());
   {
     auto M_mg = std::make_unique<MultigridOperator>(h1_fespaces.GetNumLevels());

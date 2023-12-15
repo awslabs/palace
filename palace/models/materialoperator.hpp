@@ -150,6 +150,8 @@ public:
     return GetBdrAttributeGlobalToLocal(std::vector<int>{attr});
   }
 
+  int GetAttributeGlobalToLocal(mfem::ElementTransformation &T) const;
+
   const auto &GetMesh() const { return mesh; }
 };
 
@@ -160,6 +162,9 @@ public:
 class MaterialPropertyCoefficient : public mfem::Coefficient, public mfem::MatrixCoefficient
 {
 private:
+  // Reference to material property data (not owned).
+  const MaterialOperator &mat_op;
+
   // Map attribute to material index (coeff = mat_coeff[attr_mat[attr - 1]], for 1-based
   // attributes).
   mfem::Array<int> attr_mat;
@@ -168,8 +173,12 @@ private:
   mfem::DenseTensor mat_coeff;
 
 public:
-  MaterialPropertyCoefficient() : mfem::MatrixCoefficient(0, 0) {}
-  MaterialPropertyCoefficient(const mfem::Array<int> &attr_mat_,
+  MaterialPropertyCoefficient(const MaterialOperator &mat_op)
+    : mfem::MatrixCoefficient(0, 0), mat_op(mat_op)
+  {
+  }
+  MaterialPropertyCoefficient(const MaterialOperator &mat_op,
+                              const mfem::Array<int> &attr_mat_,
                               const mfem::DenseTensor &mat_coeff_, double a = 1.0);
 
   bool empty() const { return mat_coeff.TotalSize() == 0; }
@@ -195,25 +204,10 @@ public:
 
   void NormalProjectedCoefficient(const mfem::Vector &normal);
 
-  double Eval(mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip) override
-  {
-    MFEM_ASSERT(T.Attribute <= attr_mat.Size(),
-                "Out of bounds attribute for MaterialPropertyCoefficient ("
-                    << T.Attribute << " > " << attr_mat.Size() << ")!");
-    MFEM_ASSERT(mat_coeff.SizeI() == 1 && mat_coeff.SizeJ() == 1,
-                "Invalid access of matrix-valued MaterialPropertyCoefficient using scalar "
-                "coefficient interface!");
-    return mat_coeff(0, 0, attr_mat[T.Attribute - 1]);
-  }
+  double Eval(mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip) override;
 
   void Eval(mfem::DenseMatrix &K, mfem::ElementTransformation &T,
-            const mfem::IntegrationPoint &ip) override
-  {
-    MFEM_ASSERT(T.Attribute <= attr_mat.Size(),
-                "Out of bounds attribute for MaterialPropertyCoefficient ("
-                    << T.Attribute << " > " << attr_mat.Size() << ")!");
-    K = mat_coeff(attr_mat[T.Attribute - 1]);
-  }
+            const mfem::IntegrationPoint &ip) override;
 };
 
 }  // namespace palace
