@@ -9,6 +9,7 @@
 #include "linalg/ksp.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
+#include "utils/timer.hpp"
 
 namespace mfem
 {
@@ -55,6 +56,8 @@ public:
   // ∇ x y = 0.
   void Mult(Vector &y) const
   {
+    BlockTimer bt(Timer::DIVFREE);
+
     // Compute the divergence of y.
     WeakDiv->Mult(y, rhs);
 

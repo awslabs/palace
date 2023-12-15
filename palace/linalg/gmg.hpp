@@ -50,6 +50,9 @@ private:
   // MFEM Operator interface for multiple RHS.
   mutable std::vector<VecType> X, Y, R;
 
+  // Enable timer contribution for Timer::COARSESOLVE.
+  bool use_timer;
+
   // Internal function to perform a single V-cycle iteration.
   void VCycle(int l, bool initial_guess) const;
 
@@ -74,6 +77,8 @@ public:
   void SetOperator(const OperType &op) override;
 
   void Mult(const VecType &x, VecType &y) const override;
+
+  void EnableTimer() { use_timer = true; }
 };
 
 }  // namespace palace

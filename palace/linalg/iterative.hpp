@@ -53,6 +53,9 @@ protected:
   mutable double initial_res, final_res;
   mutable int final_it;
 
+  // Enable timer contribution for Timer::PRECONDITIONER.
+  bool use_timer;
+
 public:
   IterativeSolver(MPI_Comm comm, int print);
 
@@ -99,6 +102,9 @@ public:
 
   // Get the associated MPI communicator.
   MPI_Comm GetComm() const { return comm; }
+
+  // Activate preconditioner timing during solves.
+  void EnableTimer() { use_timer = true; }
 };
 
 // Preconditioned Conjugate Gradient (CG) method for SPD linear systems.

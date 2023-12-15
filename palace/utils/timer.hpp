@@ -32,6 +32,7 @@ public:
     SOLVE,
     PRECONDITIONER,      // Linear solver
     COARSESOLVE,         // Linear solver
+    DIVFREE,             // Divergence-free projection
     ESTIMATION,          // Estimation
     CONSTRUCTESTIMATOR,  // Construction of estimator
     SOLVEESTIMATOR,      // Evaluation of estimator
@@ -53,6 +54,7 @@ public:
       "Solve",
       "  Preconditioner",
       "  Coarse Solve",
+      "  Div.-Free Projection",
       "Estimation",
       "  Construction",
       "  Solve",
@@ -119,6 +121,7 @@ class BlockTimer
 private:
   inline static Timer timer;
   inline static std::stack<Index> stack;
+  bool count;
 
   // Reduce timing information across MPI ranks.
   static void Reduce(MPI_Comm comm, std::vector<double> &data_min,
@@ -144,19 +147,22 @@ private:
   }
 
 public:
-  BlockTimer(Index i)
+  BlockTimer(Index i, bool count = true) : count(count)
   {
     // Start timing when entering the block, interrupting whatever we were timing before.
     // Take note of what we are now timing.
-    stack.empty() ? timer.Lap() : timer.MarkTime(stack.top(), false);
-    stack.push(i);
+    if (count)
+    {
+      stack.empty() ? timer.Lap() : timer.MarkTime(stack.top(), false);
+      stack.push(i);
+    }
   }
 
   ~BlockTimer()
   {
-    // When a BlockTimer is no longer in scope, record the time.
-    // (check whether stack is empty in case Finalize was called already.)
-    if (!stack.empty())
+    // When a BlockTimer is no longer in scope, record the time (check whether stack is
+    // empty in case the timer has already been finalized).
+    if (count && !stack.empty())
     {
       timer.MarkTime(stack.top());
       stack.pop();
