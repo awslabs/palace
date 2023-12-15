@@ -6,7 +6,6 @@
 #include <limits>
 #include <mfem.hpp>
 #include "fem/bilinearform.hpp"
-#include "fem/coefficient.hpp"
 #include "fem/fespace.hpp"
 #include "fem/integrator.hpp"
 #include "linalg/amg.hpp"
@@ -18,15 +17,14 @@
 namespace palace
 {
 
-DivFreeSolver::DivFreeSolver(const MaterialOperator &mat_op,
-                             const FiniteElementSpace &nd_fespace,
-                             const AuxiliaryFiniteElementSpaceHierarchy &h1_fespaces,
+DivFreeSolver::DivFreeSolver(const MaterialOperator &mat_op, FiniteElementSpace &nd_fespace,
+                             AuxiliaryFiniteElementSpaceHierarchy &h1_fespaces,
                              const std::vector<mfem::Array<int>> &h1_bdr_tdof_lists,
                              double tol, int max_it, int print)
 {
   constexpr bool skip_zeros = false;
-  constexpr auto MatType = MaterialPropertyType::PERMITTIVITY_REAL;
-  MaterialPropertyCoefficient<MatType> epsilon_func(mat_op);
+  MaterialPropertyCoefficient epsilon_func(mat_op.GetAttributeToMaterial(),
+                                           mat_op.GetPermittivityReal());
   {
     auto M_mg = std::make_unique<MultigridOperator>(h1_fespaces.GetNumLevels());
     for (std::size_t l = 0; l < h1_fespaces.GetNumLevels(); l++)
@@ -34,7 +32,7 @@ DivFreeSolver::DivFreeSolver(const MaterialOperator &mat_op,
       // Force coarse level operator to be fully assembled always.
       const auto &h1_fespace_l = h1_fespaces.GetFESpaceAtLevel(l);
       BilinearForm m(h1_fespace_l);
-      m.AddDomainIntegrator<DiffusionIntegrator>(epsilon_func);
+      m.AddDomainIntegrator<DiffusionIntegrator>((mfem::MatrixCoefficient &)epsilon_func);
       auto M_l = std::make_unique<ParOperator>(m.Assemble(skip_zeros), h1_fespace_l);
       M_l->SetEssentialTrueDofs(h1_bdr_tdof_lists[l], Operator::DiagonalPolicy::DIAG_ONE);
       M_mg->AddOperator(std::move(M_l));
@@ -43,7 +41,8 @@ DivFreeSolver::DivFreeSolver(const MaterialOperator &mat_op,
   }
   {
     BilinearForm weakdiv(nd_fespace, h1_fespaces.GetFinestFESpace());
-    weakdiv.AddDomainIntegrator<MixedVectorWeakDivergenceIntegrator>(epsilon_func);
+    weakdiv.AddDomainIntegrator<MixedVectorWeakDivergenceIntegrator>(
+        (mfem::MatrixCoefficient &)epsilon_func);
     WeakDiv = std::make_unique<ParOperator>(weakdiv.Assemble(skip_zeros), nd_fespace,
                                             h1_fespaces.GetFinestFESpace(), false);
   }

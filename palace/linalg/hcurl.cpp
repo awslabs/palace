@@ -5,7 +5,6 @@
 
 #include <mfem.hpp>
 #include "fem/bilinearform.hpp"
-#include "fem/coefficient.hpp"
 #include "fem/fespace.hpp"
 #include "fem/integrator.hpp"
 #include "linalg/ams.hpp"
@@ -18,21 +17,21 @@ namespace palace
 {
 
 WeightedHCurlNormSolver::WeightedHCurlNormSolver(
-    const MaterialOperator &mat_op, const FiniteElementSpaceHierarchy &nd_fespaces,
-    const AuxiliaryFiniteElementSpaceHierarchy &h1_fespaces,
+    const MaterialOperator &mat_op, FiniteElementSpaceHierarchy &nd_fespaces,
+    AuxiliaryFiniteElementSpaceHierarchy &h1_fespaces,
     const std::vector<mfem::Array<int>> &nd_dbc_tdof_lists,
     const std::vector<mfem::Array<int>> &h1_dbc_tdof_lists, double tol, int max_it,
     int print)
 {
-  constexpr bool skip_zeros = false;
-  constexpr auto MatTypeMuInv = MaterialPropertyType::INV_PERMEABILITY;
-  constexpr auto MatTypeEps = MaterialPropertyType::PERMITTIVITY_REAL;
-  MaterialPropertyCoefficient<MatTypeMuInv> muinv_func(mat_op);
-  MaterialPropertyCoefficient<MatTypeEps> epsilon_func(mat_op);
+  MFEM_VERIFY(h1_fespaces.GetNumLevels() == nd_fespaces.GetNumLevels(),
+              "Multigrid hierarchy mismatch for auxiliary space preconditioning!");
+  const auto n_levels = nd_fespaces.GetNumLevels();
   {
-    MFEM_VERIFY(h1_fespaces.GetNumLevels() == nd_fespaces.GetNumLevels(),
-                "Multigrid hierarchy mismatch for auxiliary space preconditioning!");
-    const auto n_levels = nd_fespaces.GetNumLevels();
+    constexpr bool skip_zeros = false;
+    MaterialPropertyCoefficient muinv_func(mat_op.GetAttributeToMaterial(),
+                                           mat_op.GetInvPermeability());
+    MaterialPropertyCoefficient epsilon_func(mat_op.GetAttributeToMaterial(),
+                                             mat_op.GetPermittivityReal());
     auto A_mg = std::make_unique<MultigridOperator>(n_levels);
     for (bool aux : {false, true})
     {
@@ -45,11 +44,14 @@ WeightedHCurlNormSolver::WeightedHCurlNormSolver(
         BilinearForm a(fespace_l);
         if (aux)
         {
-          a.AddDomainIntegrator<DiffusionIntegrator>(epsilon_func);
+          a.AddDomainIntegrator<DiffusionIntegrator>(
+              (mfem::MatrixCoefficient &)epsilon_func);
         }
         else
         {
-          a.AddDomainIntegrator<CurlCurlMassIntegrator>(muinv_func, epsilon_func);
+          a.AddDomainIntegrator<CurlCurlMassIntegrator>(
+              (mfem::MatrixCoefficient &)muinv_func,
+              (mfem::MatrixCoefficient &)epsilon_func);
         }
         auto A_l = std::make_unique<ParOperator>(a.Assemble(skip_zeros), fespace_l);
         A_l->SetEssentialTrueDofs(dbc_tdof_lists_l, Operator::DiagonalPolicy::DIAG_ONE);
@@ -72,7 +74,7 @@ WeightedHCurlNormSolver::WeightedHCurlNormSolver(
       nd_fespaces.GetFESpaceAtLevel(0), h1_fespaces.GetFESpaceAtLevel(0), 1, 1, 1, false,
       false, 0));
   std::unique_ptr<Solver<Operator>> pc;
-  if (nd_fespaces.GetNumLevels() > 1)
+  if (n_levels > 1)
   {
     const auto G = h1_fespaces.GetDiscreteInterpolators();
     const int mg_smooth_order =

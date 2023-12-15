@@ -19,10 +19,48 @@ namespace palace
 
 using namespace std::complex_literals;
 
-namespace
+SpaceOperator::SpaceOperator(const IoData &iodata,
+                             const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh)
+  : pc_mat_real(iodata.solver.linear.pc_mat_real),
+    pc_mat_shifted(iodata.solver.linear.pc_mat_shifted), print_hdr(true),
+    print_prec_hdr(true), dbc_attr(SetUpBoundaryProperties(iodata, *mesh.back())),
+    nd_fecs(fem::ConstructFECollections<mfem::ND_FECollection>(
+        iodata.solver.order, mesh.back()->Dimension(), iodata.solver.linear.mg_max_levels,
+        iodata.solver.linear.mg_coarsen_type, false)),
+    h1_fecs(fem::ConstructFECollections<mfem::H1_FECollection>(
+        iodata.solver.order, mesh.back()->Dimension(), iodata.solver.linear.mg_max_levels,
+        iodata.solver.linear.mg_coarsen_type, false)),
+    rt_fec(std::make_unique<mfem::RT_FECollection>(iodata.solver.order - 1,
+                                                   mesh.back()->Dimension())),
+    nd_fespaces(fem::ConstructFiniteElementSpaceHierarchy<mfem::ND_FECollection>(
+        iodata.solver.linear.mg_max_levels, mesh, nd_fecs, &dbc_attr, &nd_dbc_tdof_lists)),
+    h1_fespaces(fem::ConstructAuxiliaryFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
+        nd_fespaces, h1_fecs, &dbc_attr, &h1_dbc_tdof_lists)),
+    rt_fespace(nd_fespaces.GetFinestFESpace(), mesh.back().get(), rt_fec.get()),
+    mat_op(iodata, *mesh.back()), farfield_op(iodata, mat_op, *mesh.back()),
+    surf_sigma_op(iodata, mat_op, *mesh.back()), surf_z_op(iodata, mat_op, *mesh.back()),
+    lumped_port_op(iodata, mat_op, GetH1Space()),
+    wave_port_op(iodata, mat_op, GetNDSpace(), GetH1Space()),
+    surf_j_op(iodata, GetH1Space())
 {
+  // Finalize setup.
+  BilinearForm::pa_order_threshold = iodata.solver.pa_order_threshold;
+  fem::DefaultIntegrationOrder::q_order_jac = iodata.solver.q_order_jac;
+  fem::DefaultIntegrationOrder::q_order_extra_pk = iodata.solver.q_order_extra;
+  fem::DefaultIntegrationOrder::q_order_extra_qk = iodata.solver.q_order_extra;
+  CheckBoundaryProperties();
 
-mfem::Array<int> SetUpBoundaryProperties(const IoData &iodata, const mfem::ParMesh &mesh)
+  // Print essential BC information.
+  if (dbc_attr.Size())
+  {
+    Mpi::Print("\nConfiguring Dirichlet PEC BC at attributes:\n");
+    std::sort(dbc_attr.begin(), dbc_attr.end());
+    utils::PrettyPrint(dbc_attr);
+  }
+}
+
+mfem::Array<int> SpaceOperator::SetUpBoundaryProperties(const IoData &iodata,
+                                                        const mfem::ParMesh &mesh)
 {
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   if (!iodata.boundaries.pec.empty())
@@ -56,7 +94,7 @@ mfem::Array<int> SetUpBoundaryProperties(const IoData &iodata, const mfem::ParMe
   }
 
   // Mark selected boundary attributes from the mesh as essential (Dirichlet).
-  mfem::Array<int> dbc_bcs, dbc_marker;
+  mfem::Array<int> dbc_bcs;
   dbc_bcs.Reserve(static_cast<int>(iodata.boundaries.pec.attributes.size()));
   for (auto attr : iodata.boundaries.pec.attributes)
   {
@@ -66,70 +104,38 @@ mfem::Array<int> SetUpBoundaryProperties(const IoData &iodata, const mfem::ParMe
     }
     dbc_bcs.Append(attr);
   }
-  mesh::AttrToMarker(bdr_attr_max, dbc_bcs, dbc_marker);
-  return dbc_marker;
-}
-
-}  // namespace
-
-SpaceOperator::SpaceOperator(const IoData &iodata,
-                             const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh)
-  : pc_mat_real(iodata.solver.linear.pc_mat_real),
-    pc_mat_shifted(iodata.solver.linear.pc_mat_shifted), print_hdr(true),
-    print_prec_hdr(true), dbc_marker(SetUpBoundaryProperties(iodata, *mesh.back())),
-    nd_fecs(fem::ConstructFECollections<mfem::ND_FECollection>(
-        iodata.solver.order, mesh.back()->Dimension(), iodata.solver.linear.mg_max_levels,
-        iodata.solver.linear.mg_coarsen_type, false)),
-    h1_fecs(fem::ConstructFECollections<mfem::H1_FECollection>(
-        iodata.solver.order, mesh.back()->Dimension(), iodata.solver.linear.mg_max_levels,
-        iodata.solver.linear.mg_coarsen_type, false)),
-    rt_fec(std::make_unique<mfem::RT_FECollection>(iodata.solver.order - 1,
-                                                   mesh.back()->Dimension())),
-    nd_fespaces(fem::ConstructFiniteElementSpaceHierarchy<mfem::ND_FECollection>(
-        iodata.solver.linear.mg_max_levels, mesh, nd_fecs, &dbc_marker,
-        &nd_dbc_tdof_lists)),
-    h1_fespaces(fem::ConstructAuxiliaryFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
-        nd_fespaces, h1_fecs, &dbc_marker, &h1_dbc_tdof_lists)),
-    rt_fespace(nd_fespaces.GetFinestFESpace(), mesh.back().get(), rt_fec.get()),
-    mat_op(iodata, *mesh.back()), farfield_op(iodata, mat_op, *mesh.back()),
-    surf_sigma_op(iodata, *mesh.back()), surf_z_op(iodata, *mesh.back()),
-    lumped_port_op(iodata, GetH1Space()),
-    wave_port_op(iodata, mat_op, GetNDSpace(), GetH1Space()),
-    surf_j_op(iodata, GetH1Space())
-{
-  // Finalize setup.
-  BilinearForm::pa_order_threshold = iodata.solver.pa_order_threshold;
-  fem::DefaultIntegrationOrder::q_order_jac = iodata.solver.q_order_jac;
-  fem::DefaultIntegrationOrder::q_order_extra_pk = iodata.solver.q_order_extra;
-  fem::DefaultIntegrationOrder::q_order_extra_qk = iodata.solver.q_order_extra;
-  CheckBoundaryProperties();
-
-  // Print essential BC information.
-  if (dbc_marker.Size() && dbc_marker.Max() > 0)
-  {
-    Mpi::Print("\nConfiguring Dirichlet PEC BC at attributes:\n");
-    utils::PrettyPrintMarker(dbc_marker);
-  }
+  return dbc_bcs;
 }
 
 void SpaceOperator::CheckBoundaryProperties()
 {
   // Mark selected boundary attributes from the mesh as having some Dirichlet, Neumann, or
   // mixed BC applied.
-  const auto &farfield_marker = farfield_op.GetMarker();
-  const auto &surf_sigma_marker = surf_sigma_op.GetMarker();
-  const auto &surf_z_Rs_marker = surf_z_op.GetRsMarker();
-  const auto &surf_z_Ls_marker = surf_z_op.GetLsMarker();
-  const auto &lumped_port_Rs_marker = lumped_port_op.GetRsMarker();
-  const auto &lumped_port_Ls_marker = lumped_port_op.GetLsMarker();
-  const auto &wave_port_marker = wave_port_op.GetMarker();
-  aux_bdr_marker.SetSize(dbc_marker.Size());
+  const mfem::ParMesh &mesh = GetMesh();
+  int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+  const auto dbc_marker = mesh::AttrToMarker(bdr_attr_max, dbc_attr);
+  const auto farfield_marker = mesh::AttrToMarker(bdr_attr_max, farfield_op.GetAttrList());
+  const auto surf_sigma_marker =
+      mesh::AttrToMarker(bdr_attr_max, surf_sigma_op.GetAttrList());
+  const auto surf_z_Rs_marker = mesh::AttrToMarker(bdr_attr_max, surf_z_op.GetRsAttrList());
+  const auto surf_z_Ls_marker = mesh::AttrToMarker(bdr_attr_max, surf_z_op.GetLsAttrList());
+  const auto lumped_port_Rs_marker =
+      mesh::AttrToMarker(bdr_attr_max, lumped_port_op.GetRsAttrList());
+  const auto lumped_port_Ls_marker =
+      mesh::AttrToMarker(bdr_attr_max, lumped_port_op.GetLsAttrList());
+  const auto wave_port_marker =
+      mesh::AttrToMarker(bdr_attr_max, wave_port_op.GetAttrList());
+  mfem::Array<int> aux_bdr_marker(dbc_marker.Size());
   for (int i = 0; i < dbc_marker.Size(); i++)
   {
     aux_bdr_marker[i] =
         (dbc_marker[i] || farfield_marker[i] || surf_sigma_marker[i] ||
          surf_z_Rs_marker[i] || surf_z_Ls_marker[i] || lumped_port_Rs_marker[i] ||
          lumped_port_Ls_marker[i] || wave_port_marker[i]);
+    if (aux_bdr_marker[i])
+    {
+      aux_bdr_attr.Append(i + 1);
+    }
   }
   // aux_bdr_marker = 1;  // Mark all boundaries (including material interfaces
   //                      // added during mesh preprocessing)
@@ -140,45 +146,27 @@ void SpaceOperator::CheckBoundaryProperties()
         aux_bdr_marker, aux_bdr_tdof_lists.emplace_back());
   }
 
-  // A final check that no boundary attribute is assigned multiple boundary conditions. The
-  // one exception is that a lumped port boundary attribute can be also be assigned some
-  // other condition, in which case the fact that it is a port is just used for
-  // postprocessing.
-  const auto &surf_z_marker = surf_z_op.GetMarker();
-  const auto &lumped_port_marker = lumped_port_op.GetMarker();
-  const auto &surf_j_marker = surf_j_op.GetMarker();
-  bool first = true;
+  // A final check that no boundary attribute is assigned multiple boundary conditions.
+  const auto surf_z_marker = mesh::AttrToMarker(bdr_attr_max, surf_z_op.GetAttrList());
+  const auto lumped_port_marker =
+      mesh::AttrToMarker(bdr_attr_max, lumped_port_op.GetAttrList());
+  const auto surf_j_marker = mesh::AttrToMarker(bdr_attr_max, surf_j_op.GetAttrList());
   for (int i = 0; i < dbc_marker.Size(); i++)
   {
-    if (lumped_port_marker[i])
-    {
-      if (dbc_marker[i])
-      {
-        if (first)
-        {
-          Mpi::Print("\n");
-          first = false;
-        }
-        Mpi::Warning("Lumped port boundary {:d} also marked as PEC!\nBoundary "
-                     "condition/excitation will be ignored!\n",
-                     i + 1);
-      }
-    }
-    else
-    {
-      MFEM_VERIFY(dbc_marker[i] + farfield_marker[i] + surf_sigma_marker[i] +
-                          surf_z_marker[i] + wave_port_marker[i] + surf_j_marker[i] <=
-                      1,
-                  "Boundary attributes should not be specified with multiple BC!");
-    }
+    MFEM_VERIFY(dbc_marker[i] + farfield_marker[i] + surf_sigma_marker[i] +
+                        surf_z_marker[i] + lumped_port_marker[i] + wave_port_marker[i] +
+                        surf_j_marker[i] <=
+                    1,
+                "Boundary attributes should not be specified with multiple BC!");
   }
 }
 
 namespace
 {
 
-void PrintHeader(const FiniteElementSpace &h1_fespace, const FiniteElementSpace &nd_fespace,
-                 const FiniteElementSpace &rt_fespace, bool &print_hdr)
+void PrintHeader(const mfem::ParFiniteElementSpace &h1_fespace,
+                 const mfem::ParFiniteElementSpace &nd_fespace,
+                 const mfem::ParFiniteElementSpace &rt_fespace, bool &print_hdr)
 {
   if (print_hdr)
   {
@@ -192,81 +180,85 @@ void PrintHeader(const FiniteElementSpace &h1_fespace, const FiniteElementSpace 
                    ? "Partial"
                    : "Full");
 
-    // Every process is guaranteed to have at least one element, and assumes no variable
-    // order spaces are used.
-    mfem::ParMesh &mesh = *nd_fespace.GetParMesh();
+    auto &mesh = *nd_fespace.GetParMesh();
     const int q_order = fem::DefaultIntegrationOrder::Get(
         *nd_fespace.GetFE(0), *nd_fespace.GetFE(0), *mesh.GetElementTransformation(0));
-    Mpi::Print(" Default integration order: {:d}\n Mesh geometries:\n", q_order);
+    Mpi::Print(" Mesh geometries:\n");
     for (auto geom : mesh::CheckElements(mesh).GetGeomTypes())
     {
       const auto *fe = nd_fespace.FEColl()->FiniteElementForGeometry(geom);
       MFEM_VERIFY(fe, "MFEM does not support ND spaces on geometry = "
                           << mfem::Geometry::Name[geom] << "!");
-      Mpi::Print("  {}: P = {:d}, Q = {:d}\n", mfem::Geometry::Name[geom], fe->GetDof(),
-                 mfem::IntRules.Get(geom, q_order).GetNPoints());
+      Mpi::Print("  {}: P = {:d}, Q = {:d} (quadrature order = {:d})\n",
+                 mfem::Geometry::Name[geom], fe->GetDof(),
+                 mfem::IntRules.Get(geom, q_order).GetNPoints(), q_order);
     }
   }
   print_hdr = false;
 }
 
-template <typename T1, typename T2, typename T3, typename T4>
-std::unique_ptr<Operator> BuildOperator(const FiniteElementSpace &fespace, T1 *df, T2 *f,
-                                        T3 *dfb, T4 *fb, std::size_t l, bool skip_zeros)
+std::unique_ptr<Operator>
+BuildOperator(const FiniteElementSpace &fespace, const MaterialPropertyCoefficient *df,
+              const MaterialPropertyCoefficient *f, const MaterialPropertyCoefficient *dfb,
+              const MaterialPropertyCoefficient *fb, std::size_t l, bool skip_zeros)
 {
   BilinearForm a(fespace);
   if (df && !df->empty() && f && !f->empty())
   {
-    a.AddDomainIntegrator<CurlCurlMassIntegrator>(*df, *f);
+    a.AddDomainIntegrator<CurlCurlMassIntegrator>((mfem::MatrixCoefficient &)*df,
+                                                  (mfem::MatrixCoefficient &)*f);
   }
   else
   {
     if (df && !df->empty())
     {
-      a.AddDomainIntegrator<CurlCurlIntegrator>(*df);
+      a.AddDomainIntegrator<CurlCurlIntegrator>((mfem::MatrixCoefficient &)*df);
     }
     if (f && !f->empty())
     {
-      a.AddDomainIntegrator<VectorFEMassIntegrator>(*f);
+      a.AddDomainIntegrator<VectorFEMassIntegrator>((mfem::MatrixCoefficient &)*f);
     }
   }
   if (dfb && !dfb->empty() && fb && !fb->empty())
   {
-    a.AddBoundaryIntegrator<CurlCurlMassIntegrator>(*dfb, *fb);
+    a.AddBoundaryIntegrator<CurlCurlMassIntegrator>((mfem::Coefficient &)*dfb,
+                                                    (mfem::MatrixCoefficient &)*fb);
   }
   else
   {
     if (dfb && !dfb->empty())
     {
-      a.AddBoundaryIntegrator<CurlCurlIntegrator>(*dfb);
+      a.AddBoundaryIntegrator<CurlCurlIntegrator>((mfem::Coefficient &)*dfb);
     }
     if (fb && !fb->empty())
     {
-      a.AddBoundaryIntegrator<VectorFEMassIntegrator>(*fb);
+      a.AddBoundaryIntegrator<VectorFEMassIntegrator>((mfem::MatrixCoefficient &)*fb);
     }
   }
   return (l > 0) ? a.Assemble(skip_zeros) : a.FullAssemble(skip_zeros);
 }
 
-template <typename T1, typename T2, typename T3, typename T4>
-std::unique_ptr<Operator> BuildOperator(const FiniteElementSpace &fespace, T1 *df, T2 *f,
-                                        T3 *dfb, T4 *fb, bool skip_zeros)
+std::unique_ptr<Operator>
+BuildOperator(const FiniteElementSpace &fespace, const MaterialPropertyCoefficient *df,
+              const MaterialPropertyCoefficient *f, const MaterialPropertyCoefficient *dfb,
+              const MaterialPropertyCoefficient *fb, bool skip_zeros)
 {
   return BuildOperator(fespace, df, f, dfb, fb, 1, skip_zeros);
 }
 
-template <typename T1, typename T2>
-std::unique_ptr<Operator> BuildAuxOperator(const FiniteElementSpace &fespace, T1 *f, T2 *fb,
+std::unique_ptr<Operator> BuildAuxOperator(const FiniteElementSpace &fespace,
+                                           const MaterialPropertyCoefficient *f,
+                                           const MaterialPropertyCoefficient *fb,
                                            std::size_t l, bool skip_zeros)
 {
   BilinearForm a(fespace);
   if (f && !f->empty())
   {
-    a.AddDomainIntegrator<DiffusionIntegrator>(*f);
+    a.AddDomainIntegrator<DiffusionIntegrator>((mfem::MatrixCoefficient &)*f);
   }
   if (fb && !fb->empty())
   {
-    a.AddBoundaryIntegrator<DiffusionIntegrator>(*fb);
+    a.AddBoundaryIntegrator<DiffusionIntegrator>((mfem::MatrixCoefficient &)*fb);
   }
   return (l > 0) ? a.Assemble(skip_zeros) : a.FullAssemble(skip_zeros);
 }
@@ -278,8 +270,7 @@ std::unique_ptr<OperType>
 SpaceOperator::GetStiffnessMatrix(Operator::DiagonalPolicy diag_policy)
 {
   PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
-  const int sdim = GetNDSpace().GetParMesh()->SpaceDimension();
-  SumMatrixCoefficient df(sdim), f(sdim), fb(sdim);
+  MaterialPropertyCoefficient df, f, fb;
   AddStiffnessCoefficients(1.0, df, f);
   AddStiffnessBdrCoefficients(1.0, fb);
   if (df.empty() && f.empty() && fb.empty())
@@ -288,7 +279,7 @@ SpaceOperator::GetStiffnessMatrix(Operator::DiagonalPolicy diag_policy)
   }
 
   constexpr bool skip_zeros = false;
-  auto k = BuildOperator(GetNDSpace(), &df, &f, (SumCoefficient *)nullptr, &fb, skip_zeros);
+  auto k = BuildOperator(GetNDSpace(), &df, &f, nullptr, &fb, skip_zeros);
   if constexpr (std::is_same<OperType, ComplexOperator>::value)
   {
     auto K = std::make_unique<ComplexParOperator>(std::move(k), nullptr, GetNDSpace());
@@ -308,8 +299,7 @@ std::unique_ptr<OperType>
 SpaceOperator::GetDampingMatrix(Operator::DiagonalPolicy diag_policy)
 {
   PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
-  const int sdim = GetNDSpace().GetParMesh()->SpaceDimension();
-  SumMatrixCoefficient f(sdim), fb(sdim);
+  MaterialPropertyCoefficient f, fb;
   AddDampingCoefficients(1.0, f);
   AddDampingBdrCoefficients(1.0, fb);
   if (f.empty() && fb.empty())
@@ -318,8 +308,7 @@ SpaceOperator::GetDampingMatrix(Operator::DiagonalPolicy diag_policy)
   }
 
   constexpr bool skip_zeros = false;
-  auto c = BuildOperator(GetNDSpace(), (SumCoefficient *)nullptr, &f,
-                         (SumCoefficient *)nullptr, &fb, skip_zeros);
+  auto c = BuildOperator(GetNDSpace(), nullptr, &f, nullptr, &fb, skip_zeros);
   if constexpr (std::is_same<OperType, ComplexOperator>::value)
   {
     auto C = std::make_unique<ComplexParOperator>(std::move(c), nullptr, GetNDSpace());
@@ -338,15 +327,14 @@ template <typename OperType>
 std::unique_ptr<OperType> SpaceOperator::GetMassMatrix(Operator::DiagonalPolicy diag_policy)
 {
   PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
-  const int sdim = GetNDSpace().GetParMesh()->SpaceDimension();
-  SumMatrixCoefficient fr(sdim), fi(sdim), fbr(sdim);
+  MaterialPropertyCoefficient fr, fi, fbr, fbi;
   AddRealMassCoefficients(1.0, fr);
   AddRealMassBdrCoefficients(1.0, fbr);
   if constexpr (std::is_same<OperType, ComplexOperator>::value)
   {
     AddImagMassCoefficients(1.0, fi);
   }
-  if (fr.empty() && fbr.empty() && fi.empty())
+  if (fr.empty() && fi.empty() && fbr.empty() && fbi.empty())
   {
     return {};
   }
@@ -355,13 +343,11 @@ std::unique_ptr<OperType> SpaceOperator::GetMassMatrix(Operator::DiagonalPolicy 
   std::unique_ptr<Operator> mr, mi;
   if (!fr.empty() || !fbr.empty())
   {
-    mr = BuildOperator(GetNDSpace(), (SumCoefficient *)nullptr, &fr,
-                       (SumCoefficient *)nullptr, &fbr, skip_zeros);
+    mr = BuildOperator(GetNDSpace(), nullptr, &fr, nullptr, &fbr, skip_zeros);
   }
-  if (!fi.empty())
+  if (!fi.empty() || !fbi.empty())
   {
-    mi = BuildOperator(GetNDSpace(), (SumCoefficient *)nullptr, &fi,
-                       (SumCoefficient *)nullptr, (SumCoefficient *)nullptr, skip_zeros);
+    mi = BuildOperator(GetNDSpace(), nullptr, &fi, nullptr, &fbi, skip_zeros);
   }
   if constexpr (std::is_same<OperType, ComplexOperator>::value)
   {
@@ -383,9 +369,7 @@ std::unique_ptr<OperType>
 SpaceOperator::GetExtraSystemMatrix(double omega, Operator::DiagonalPolicy diag_policy)
 {
   PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
-  const int sdim = GetNDSpace().GetParMesh()->SpaceDimension();
-  SumMatrixCoefficient fbr(sdim), fbi(sdim);
-  SumCoefficient dfbr, dfbi;
+  MaterialPropertyCoefficient dfbr, dfbi, fbr, fbi;
   AddExtraSystemBdrCoefficients(omega, dfbr, dfbi, fbr, fbi);
   if (dfbr.empty() && fbr.empty() && dfbi.empty() && fbi.empty())
   {
@@ -396,13 +380,11 @@ SpaceOperator::GetExtraSystemMatrix(double omega, Operator::DiagonalPolicy diag_
   std::unique_ptr<Operator> ar, ai;
   if (!dfbr.empty() || !fbr.empty())
   {
-    ar = BuildOperator(GetNDSpace(), (SumCoefficient *)nullptr, (SumCoefficient *)nullptr,
-                       &dfbr, &fbr, skip_zeros);
+    ar = BuildOperator(GetNDSpace(), nullptr, nullptr, &dfbr, &fbr, skip_zeros);
   }
   if (!dfbi.empty() || !fbi.empty())
   {
-    ai = BuildOperator(GetNDSpace(), (SumCoefficient *)nullptr, (SumCoefficient *)nullptr,
-                       &dfbi, &fbi, skip_zeros);
+    ai = BuildOperator(GetNDSpace(), nullptr, nullptr, &dfbi, &fbi, skip_zeros);
   }
   if constexpr (std::is_same<OperType, ComplexOperator>::value)
   {
@@ -681,9 +663,7 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(double a0, doub
         Mpi::Print(" Level {:d}{} (p = {:d}): {:d} unknowns", l, aux ? " (auxiliary)" : "",
                    fespace_l.GetMaxElementOrder(), fespace_l.GlobalTrueVSize());
       }
-      const int sdim = GetNDSpace().GetParMesh()->SpaceDimension();
-      SumMatrixCoefficient dfr(sdim), fr(sdim), fi(sdim), fbr(sdim), fbi(sdim);
-      SumCoefficient dfbr, dfbi;
+      MaterialPropertyCoefficient dfr, fr, dfi, fi, dfbr, dfbi, fbr, fbi;
       if (!std::is_same<OperType, ComplexOperator>::value || pc_mat_real || l == 0)
       {
         // Real-valued system matrix (approximation) for preconditioning.
@@ -715,11 +695,10 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(double a0, doub
         br = aux ? BuildAuxOperator(fespace_l, &fr, &fbr, l, skip_zeros)
                  : BuildOperator(fespace_l, &dfr, &fr, &dfbr, &fbr, l, skip_zeros);
       }
-      if (!fi.empty() || !dfbi.empty() || !fbi.empty())
+      if (!dfi.empty() || !fi.empty() || !dfbi.empty() || !fbi.empty())
       {
         bi = aux ? BuildAuxOperator(fespace_l, &fi, &fbi, l, skip_zeros)
-                 : BuildOperator(fespace_l, (SumCoefficient *)nullptr, &fi, &dfbi, &fbi, l,
-                                 skip_zeros);
+                 : BuildOperator(fespace_l, &dfi, &fi, &dfbi, &fbi, l, skip_zeros);
       }
       if (print_prec_hdr)
       {
@@ -750,40 +729,37 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(double a0, doub
   return B;
 }
 
-void SpaceOperator::AddStiffnessCoefficients(double coef, SumMatrixCoefficient &df,
-                                             SumMatrixCoefficient &f)
+void SpaceOperator::AddStiffnessCoefficients(double coef, MaterialPropertyCoefficient &df,
+                                             MaterialPropertyCoefficient &f)
 {
-  constexpr auto MatType = MaterialPropertyType::INV_PERMEABILITY;
-  df.AddCoefficient(std::make_unique<MaterialPropertyCoefficient<MatType>>(mat_op, coef));
+  // Contribution from material permeability.
+  df.AddCoefficient(mat_op.GetAttributeToMaterial(), mat_op.GetInvPermeability(), coef);
 
   // Contribution for London superconductors.
   if (mat_op.HasLondonDepth())
   {
-    constexpr auto MatTypeL = MaterialPropertyType::INV_LONDON_DEPTH;
-    f.AddCoefficient(std::make_unique<MaterialPropertyCoefficient<MatTypeL>>(mat_op, coef),
-                     mat_op.GetLondonDepthMarker());
+    df.AddCoefficient(mat_op.GetAttributeToMaterial(), mat_op.GetInvLondonDepth(), coef);
   }
 }
 
-void SpaceOperator::AddStiffnessBdrCoefficients(double coef, SumMatrixCoefficient &fb)
+void SpaceOperator::AddStiffnessBdrCoefficients(double coef,
+                                                MaterialPropertyCoefficient &fb)
 {
   // Robin BC contributions due to surface impedance and lumped ports (inductance).
   surf_z_op.AddStiffnessBdrCoefficients(coef, fb);
   lumped_port_op.AddStiffnessBdrCoefficients(coef, fb);
 }
 
-void SpaceOperator::AddDampingCoefficients(double coef, SumMatrixCoefficient &f)
+void SpaceOperator::AddDampingCoefficients(double coef, MaterialPropertyCoefficient &f)
 {
   // Contribution for domain conductivity.
   if (mat_op.HasConductivity())
   {
-    constexpr auto MatType = MaterialPropertyType::CONDUCTIVITY;
-    f.AddCoefficient(std::make_unique<MaterialPropertyCoefficient<MatType>>(mat_op, coef),
-                     mat_op.GetConductivityMarker());
+    f.AddCoefficient(mat_op.GetAttributeToMaterial(), mat_op.GetConductivity(), coef);
   }
 }
 
-void SpaceOperator::AddDampingBdrCoefficients(double coef, SumMatrixCoefficient &fb)
+void SpaceOperator::AddDampingBdrCoefficients(double coef, MaterialPropertyCoefficient &fb)
 {
   // Robin BC contributions due to surface impedance, lumped ports, and absorbing
   // boundaries (resistance).
@@ -792,40 +768,37 @@ void SpaceOperator::AddDampingBdrCoefficients(double coef, SumMatrixCoefficient 
   lumped_port_op.AddDampingBdrCoefficients(coef, fb);
 }
 
-void SpaceOperator::AddRealMassCoefficients(double coef, SumMatrixCoefficient &f)
+void SpaceOperator::AddRealMassCoefficients(double coef, MaterialPropertyCoefficient &f)
 {
-  constexpr auto MatType = MaterialPropertyType::PERMITTIVITY_REAL;
-  f.AddCoefficient(std::make_unique<MaterialPropertyCoefficient<MatType>>(mat_op, coef));
+  f.AddCoefficient(mat_op.GetAttributeToMaterial(), mat_op.GetPermittivityReal(), coef);
 }
 
-void SpaceOperator::AddRealMassBdrCoefficients(double coef, SumMatrixCoefficient &fb)
+void SpaceOperator::AddRealMassBdrCoefficients(double coef, MaterialPropertyCoefficient &fb)
 {
   // Robin BC contributions due to surface impedance and lumped ports (capacitance).
   surf_z_op.AddMassBdrCoefficients(coef, fb);
   lumped_port_op.AddMassBdrCoefficients(coef, fb);
 }
 
-void SpaceOperator::AddImagMassCoefficients(double coef, SumMatrixCoefficient &f)
+void SpaceOperator::AddImagMassCoefficients(double coef, MaterialPropertyCoefficient &f)
 {
   // Contribution for loss tangent: ε -> ε * (1 - i tan(δ)).
   if (mat_op.HasLossTangent())
   {
-    constexpr auto MatType = MaterialPropertyType::PERMITTIVITY_IMAG;
-    f.AddCoefficient(std::make_unique<MaterialPropertyCoefficient<MatType>>(mat_op, coef),
-                     mat_op.GetLossTangentMarker());
+    f.AddCoefficient(mat_op.GetAttributeToMaterial(), mat_op.GetPermittivityImag(), coef);
   }
 }
 
-void SpaceOperator::AddAbsMassCoefficients(double coef, SumMatrixCoefficient &f)
+void SpaceOperator::AddAbsMassCoefficients(double coef, MaterialPropertyCoefficient &f)
 {
-  constexpr auto MatType = MaterialPropertyType::PERMITTIVITY_ABS;
-  f.AddCoefficient(std::make_unique<MaterialPropertyCoefficient<MatType>>(mat_op, coef));
+  f.AddCoefficient(mat_op.GetAttributeToMaterial(), mat_op.GetPermittivityAbs(), coef);
 }
 
-void SpaceOperator::AddExtraSystemBdrCoefficients(double omega, SumCoefficient &dfbr,
-                                                  SumCoefficient &dfbi,
-                                                  SumMatrixCoefficient &fbr,
-                                                  SumMatrixCoefficient &fbi)
+void SpaceOperator::AddExtraSystemBdrCoefficients(double omega,
+                                                  MaterialPropertyCoefficient &dfbr,
+                                                  MaterialPropertyCoefficient &dfbi,
+                                                  MaterialPropertyCoefficient &fbr,
+                                                  MaterialPropertyCoefficient &fbi)
 {
   // Contribution for second-order farfield boundaries and finite conductivity boundaries.
   farfield_op.AddExtraSystemBdrCoefficients(omega, dfbr, dfbi);
@@ -884,7 +857,7 @@ bool SpaceOperator::AddExcitationVector1Internal(Vector &RHS1)
   // integration or frequency sweep later.
   MFEM_VERIFY(RHS1.Size() == GetNDSpace().GetTrueVSize(),
               "Invalid T-vector size for AddExcitationVector1Internal!");
-  SumVectorCoefficient fb(GetNDSpace().GetParMesh()->SpaceDimension());
+  SumVectorCoefficient fb(GetMesh().SpaceDimension());
   lumped_port_op.AddExcitationBdrCoefficients(fb);
   surf_j_op.AddExcitationBdrCoefficients(fb);
   if (fb.empty())
@@ -905,8 +878,7 @@ bool SpaceOperator::AddExcitationVector2Internal(double omega, ComplexVector &RH
   // specified frequency.
   MFEM_VERIFY(RHS2.Size() == GetNDSpace().GetTrueVSize(),
               "Invalid T-vector size for AddExcitationVector2Internal!");
-  SumVectorCoefficient fbr(GetNDSpace().GetParMesh()->SpaceDimension()),
-      fbi(GetNDSpace().GetParMesh()->SpaceDimension());
+  SumVectorCoefficient fbr(GetMesh().SpaceDimension()), fbi(GetMesh().SpaceDimension());
   wave_port_op.AddExcitationBdrCoefficients(omega, fbr, fbi);
   if (fbr.empty() && fbi.empty())
   {

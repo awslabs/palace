@@ -23,8 +23,6 @@ namespace palace
 {
 
 class IoData;
-class SumCoefficient;
-class SumMatrixCoefficient;
 
 //
 // A class handling spatial discretization of the governing equations.
@@ -38,10 +36,9 @@ private:
   // Helper variables for log file printing.
   bool print_hdr, print_prec_hdr;
 
-  // Perfect electrical conductor essential boundary condition markers.
-  mfem::Array<int> dbc_marker, aux_bdr_marker;
+  // Perfect electrical conductor essential boundary condition attributes.
+  mfem::Array<int> dbc_attr, aux_bdr_attr;
   std::vector<mfem::Array<int>> nd_dbc_tdof_lists, h1_dbc_tdof_lists, aux_bdr_tdof_lists;
-  void CheckBoundaryProperties();
 
   // Objects defining the finite element spaces for the electric field (Nedelec) and
   // magnetic flux density (Raviart-Thomas) on the given mesh. The H1 spaces are used for
@@ -64,20 +61,24 @@ private:
   WavePortOperator wave_port_op;
   SurfaceCurrentOperator surf_j_op;
 
+  mfem::Array<int> SetUpBoundaryProperties(const IoData &iodata, const mfem::ParMesh &mesh);
+  void CheckBoundaryProperties();
+
   // Helper functions for building the bilinear forms corresponding to the discretized
   // operators in Maxwell's equations.
-  void AddStiffnessCoefficients(double coef, SumMatrixCoefficient &df,
-                                SumMatrixCoefficient &f);
-  void AddStiffnessBdrCoefficients(double coef, SumMatrixCoefficient &fb);
-  void AddDampingCoefficients(double coef, SumMatrixCoefficient &f);
-  void AddDampingBdrCoefficients(double coef, SumMatrixCoefficient &fb);
-  void AddRealMassCoefficients(double coef, SumMatrixCoefficient &f);
-  void AddRealMassBdrCoefficients(double coef, SumMatrixCoefficient &fb);
-  void AddImagMassCoefficients(double coef, SumMatrixCoefficient &f);
-  void AddAbsMassCoefficients(double coef, SumMatrixCoefficient &f);
-  void AddExtraSystemBdrCoefficients(double omega, SumCoefficient &dfbr,
-                                     SumCoefficient &dfbi, SumMatrixCoefficient &fbr,
-                                     SumMatrixCoefficient &fbi);
+  void AddStiffnessCoefficients(double coef, MaterialPropertyCoefficient &df,
+                                MaterialPropertyCoefficient &f);
+  void AddStiffnessBdrCoefficients(double coef, MaterialPropertyCoefficient &fb);
+  void AddDampingCoefficients(double coef, MaterialPropertyCoefficient &f);
+  void AddDampingBdrCoefficients(double coef, MaterialPropertyCoefficient &fb);
+  void AddRealMassCoefficients(double coef, MaterialPropertyCoefficient &f);
+  void AddRealMassBdrCoefficients(double coef, MaterialPropertyCoefficient &fb);
+  void AddImagMassCoefficients(double coef, MaterialPropertyCoefficient &f);
+  void AddAbsMassCoefficients(double coef, MaterialPropertyCoefficient &f);
+  void AddExtraSystemBdrCoefficients(double omega, MaterialPropertyCoefficient &dfbr,
+                                     MaterialPropertyCoefficient &dfbi,
+                                     MaterialPropertyCoefficient &fbr,
+                                     MaterialPropertyCoefficient &fbi);
 
   // Helper functions for excitation vector assembly.
   bool AddExcitationVector1Internal(Vector &RHS);
@@ -128,8 +129,11 @@ public:
   auto &GetRTSpace() { return rt_fespace; }
   const auto &GetRTSpace() const { return rt_fespace; }
 
+  // Access the underlying mesh object.
+  const auto &GetMesh() const { return *GetNDSpace().GetParMesh(); }
+
   // Return the number of true (conforming) dofs on the finest ND space.
-  auto GlobalTrueVSize() { return GetNDSpace().GlobalTrueVSize(); }
+  auto GlobalTrueVSize() const { return GetNDSpace().GlobalTrueVSize(); }
 
   // Construct any part of the frequency-dependent complex linear system matrix:
   //                     A = K + iω C - ω² (Mr + i Mi) + A2(ω) .

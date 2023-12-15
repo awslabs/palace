@@ -4,7 +4,6 @@
 #include "laplaceoperator.hpp"
 
 #include "fem/bilinearform.hpp"
-#include "fem/coefficient.hpp"
 #include "fem/integrator.hpp"
 #include "fem/multigrid.hpp"
 #include "linalg/rap.hpp"
@@ -16,10 +15,36 @@
 namespace palace
 {
 
-namespace
+LaplaceOperator::LaplaceOperator(const IoData &iodata,
+                                 const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh)
+  : print_hdr(true), dbc_attr(SetUpBoundaryProperties(iodata, *mesh.back())),
+    h1_fecs(fem::ConstructFECollections<mfem::H1_FECollection>(
+        iodata.solver.order, mesh.back()->Dimension(), iodata.solver.linear.mg_max_levels,
+        iodata.solver.linear.mg_coarsen_type, false)),
+    nd_fec(std::make_unique<mfem::ND_FECollection>(iodata.solver.order,
+                                                   mesh.back()->Dimension())),
+    h1_fespaces(fem::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
+        iodata.solver.linear.mg_max_levels, mesh, h1_fecs, &dbc_attr, &dbc_tdof_lists)),
+    nd_fespace(h1_fespaces.GetFinestFESpace(), mesh.back().get(), nd_fec.get()),
+    mat_op(iodata, *mesh.back()), source_attr_lists(ConstructSources(iodata))
 {
+  // Finalize setup.
+  BilinearForm::pa_order_threshold = iodata.solver.pa_order_threshold;
+  fem::DefaultIntegrationOrder::q_order_jac = iodata.solver.q_order_jac;
+  fem::DefaultIntegrationOrder::q_order_extra_pk = iodata.solver.q_order_extra;
+  fem::DefaultIntegrationOrder::q_order_extra_qk = iodata.solver.q_order_extra;
 
-mfem::Array<int> SetUpBoundaryProperties(const IoData &iodata, const mfem::ParMesh &mesh)
+  // Print essential BC information.
+  if (dbc_attr.Size())
+  {
+    Mpi::Print("\nConfiguring Dirichlet BC at attributes:\n");
+    std::sort(dbc_attr.begin(), dbc_attr.end());
+    utils::PrettyPrint(dbc_attr);
+  }
+}
+
+mfem::Array<int> LaplaceOperator::SetUpBoundaryProperties(const IoData &iodata,
+                                                          const mfem::ParMesh &mesh)
 {
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   if (!iodata.boundaries.pec.empty() || !iodata.boundaries.lumpedport.empty())
@@ -68,7 +93,7 @@ mfem::Array<int> SetUpBoundaryProperties(const IoData &iodata, const mfem::ParMe
   }
 
   // Mark selected boundary attributes from the mesh as essential (Dirichlet).
-  mfem::Array<int> dbc_bcs, dbc_marker;
+  mfem::Array<int> dbc_bcs;
   for (auto attr : iodata.boundaries.pec.attributes)
   {
     if (attr <= 0 || attr > bdr_attr_max)
@@ -89,17 +114,16 @@ mfem::Array<int> SetUpBoundaryProperties(const IoData &iodata, const mfem::ParMe
   }
   MFEM_VERIFY(dbc_bcs.Size() > 0,
               "Electrostatic problem is ill-posed without any Dirichlet boundaries!");
-  mesh::AttrToMarker(bdr_attr_max, dbc_bcs, dbc_marker);
-  return dbc_marker;
+  return dbc_bcs;
 }
 
-std::map<int, mfem::Array<int>> ConstructSources(const IoData &iodata)
+std::map<int, mfem::Array<int>> LaplaceOperator::ConstructSources(const IoData &iodata)
 {
   // Construct mapping from terminal index to list of associated attributes.
-  std::map<int, mfem::Array<int>> source_attr_lists;
+  std::map<int, mfem::Array<int>> attr_lists;
   for (const auto &[idx, data] : iodata.boundaries.lumpedport)
   {
-    mfem::Array<int> &attr_list = source_attr_lists[idx];
+    mfem::Array<int> &attr_list = attr_lists[idx];
     for (const auto &elem : data.elements)
     {
       for (auto attr : elem.attributes)
@@ -108,43 +132,14 @@ std::map<int, mfem::Array<int>> ConstructSources(const IoData &iodata)
       }
     }
   }
-  return source_attr_lists;
-}
-
-}  // namespace
-
-LaplaceOperator::LaplaceOperator(const IoData &iodata,
-                                 const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh)
-  : print_hdr(true), dbc_marker(SetUpBoundaryProperties(iodata, *mesh.back())),
-    h1_fecs(fem::ConstructFECollections<mfem::H1_FECollection>(
-        iodata.solver.order, mesh.back()->Dimension(), iodata.solver.linear.mg_max_levels,
-        iodata.solver.linear.mg_coarsen_type, false)),
-    nd_fec(std::make_unique<mfem::ND_FECollection>(iodata.solver.order,
-                                                   mesh.back()->Dimension())),
-    h1_fespaces(fem::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
-        iodata.solver.linear.mg_max_levels, mesh, h1_fecs, &dbc_marker, &dbc_tdof_lists)),
-    nd_fespace(h1_fespaces.GetFinestFESpace(), mesh.back().get(), nd_fec.get()),
-    mat_op(iodata, *mesh.back()), source_attr_lists(ConstructSources(iodata))
-{
-  // Finalize setup.
-  BilinearForm::pa_order_threshold = iodata.solver.pa_order_threshold;
-  fem::DefaultIntegrationOrder::q_order_jac = iodata.solver.q_order_jac;
-  fem::DefaultIntegrationOrder::q_order_extra_pk = iodata.solver.q_order_extra;
-  fem::DefaultIntegrationOrder::q_order_extra_qk = iodata.solver.q_order_extra;
-
-  // Print essential BC information.
-  if (dbc_marker.Size() && dbc_marker.Max() > 0)
-  {
-    Mpi::Print("\nConfiguring Dirichlet BC at attributes:\n");
-    utils::PrettyPrintMarker(dbc_marker);
-  }
+  return attr_lists;
 }
 
 namespace
 {
 
-void PrintHeader(const FiniteElementSpace &h1_fespace, const FiniteElementSpace &nd_fespace,
-                 bool &print_hdr)
+void PrintHeader(const mfem::ParFiniteElementSpace &h1_fespace,
+                 const mfem::ParFiniteElementSpace &nd_fespace, bool &print_hdr)
 {
   if (print_hdr)
   {
@@ -157,19 +152,18 @@ void PrintHeader(const FiniteElementSpace &h1_fespace, const FiniteElementSpace 
                    ? "Partial"
                    : "Full");
 
-    // Every process is guaranteed to have at least one element, and assumes no variable
-    // order spaces are used.
-    mfem::ParMesh &mesh = *h1_fespace.GetParMesh();
+    auto &mesh = *h1_fespace.GetParMesh();
     const int q_order = fem::DefaultIntegrationOrder::Get(
         *h1_fespace.GetFE(0), *h1_fespace.GetFE(0), *mesh.GetElementTransformation(0));
-    Mpi::Print(" Default integration order: {:d}\n Mesh geometries:\n", q_order);
+    Mpi::Print(" Mesh geometries:\n");
     for (auto geom : mesh::CheckElements(mesh).GetGeomTypes())
     {
       const auto *fe = h1_fespace.FEColl()->FiniteElementForGeometry(geom);
       MFEM_VERIFY(fe, "MFEM does not support H1 spaces on geometry = "
                           << mfem::Geometry::Name[geom] << "!");
-      Mpi::Print("  {}: P = {:d}, Q = {:d}\n", mfem::Geometry::Name[geom], fe->GetDof(),
-                 mfem::IntRules.Get(geom, q_order).GetNPoints());
+      Mpi::Print("  {}: P = {:d}, Q = {:d} (quadrature order = {:d})\n",
+                 mfem::Geometry::Name[geom], fe->GetDof(),
+                 mfem::IntRules.Get(geom, q_order).GetNPoints(), q_order);
     }
 
     Mpi::Print("\nAssembling multigrid hierarchy:\n");
@@ -192,10 +186,10 @@ std::unique_ptr<Operator> LaplaceOperator::GetStiffnessMatrix()
                  h1_fespace_l.GetMaxElementOrder(), h1_fespace_l.GlobalTrueVSize());
     }
     constexpr bool skip_zeros = false;
-    constexpr auto MatType = MaterialPropertyType::PERMITTIVITY_REAL;
-    MaterialPropertyCoefficient<MatType> epsilon_func(mat_op);
+    MaterialPropertyCoefficient epsilon_func(mat_op.GetAttributeToMaterial(),
+                                             mat_op.GetPermittivityReal());
     BilinearForm k(h1_fespace_l);
-    k.AddDomainIntegrator<DiffusionIntegrator>(epsilon_func);
+    k.AddDomainIntegrator<DiffusionIntegrator>((mfem::MatrixCoefficient &)epsilon_func);
     auto K_l = std::make_unique<ParOperator>(
         (l > 0) ? k.Assemble(skip_zeros) : k.FullAssemble(skip_zeros), h1_fespace_l);
     if (print_hdr)
@@ -228,9 +222,9 @@ void LaplaceOperator::GetExcitationVector(int idx, const Operator &K, Vector &X,
   x = 0.0;
 
   // Get a marker of all boundary attributes with the given source surface index.
-  mfem::Array<int> source_marker;
-  const mfem::Array<int> &source_list = source_attr_lists[idx];
-  mesh::AttrToMarker(dbc_marker.Size(), source_list, source_marker);
+  const mfem::ParMesh &mesh = GetMesh();
+  int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+  mfem::Array<int> source_marker = mesh::AttrToMarker(bdr_attr_max, source_attr_lists[idx]);
   mfem::ConstantCoefficient one(1.0);
   x.ProjectBdrCoefficient(one, source_marker);  // Values are only correct on master
 
