@@ -5,7 +5,6 @@
 
 #include <limits>
 #include "fem/bilinearform.hpp"
-#include "fem/coefficient.hpp"
 #include "fem/integrator.hpp"
 #include "linalg/iterative.hpp"
 #include "linalg/jacobi.hpp"
@@ -61,10 +60,11 @@ FluxProjector::FluxProjector(const MaterialOperator &mat_op,
   BlockTimer bt(Timer::CONSTRUCTESTIMATOR);
   {
     // Flux operator is always partially assembled.
-    constexpr auto MatType = MaterialPropertyType::INV_PERMEABILITY;
-    MaterialPropertyCoefficient<MatType> muinv_func(mat_op);
+    MaterialPropertyCoefficient muinv_func(mat_op.GetAttributeToMaterial(),
+                                           mat_op.GetInvPermeability());
     BilinearForm flux(nd_fespace);
-    flux.AddDomainIntegrator<MixedVectorCurlIntegrator>(muinv_func);
+    flux.AddDomainIntegrator<MixedVectorCurlIntegrator>(
+        (mfem::MatrixCoefficient &)muinv_func);
     Flux = std::make_unique<ParOperator>(flux.PartialAssemble(), nd_fespace);
   }
   M = GetMassMatrix(nd_fespace);
@@ -83,10 +83,10 @@ FluxProjector::FluxProjector(const MaterialOperator &mat_op,
   BlockTimer bt(Timer::CONSTRUCTESTIMATOR);
   {
     // Flux operator is always partially assembled.
-    constexpr auto MatType = MaterialPropertyType::PERMITTIVITY_REAL;
-    MaterialPropertyCoefficient<MatType> epsilon_func(mat_op);
+    MaterialPropertyCoefficient epsilon_func(mat_op.GetAttributeToMaterial(),
+                                             mat_op.GetPermittivityReal());
     BilinearForm flux(h1_fespace, h1d_fespace);
-    flux.AddDomainIntegrator<GradientIntegrator>(epsilon_func);
+    flux.AddDomainIntegrator<GradientIntegrator>((mfem::MatrixCoefficient &)epsilon_func);
     Flux = std::make_unique<ParOperator>(flux.PartialAssemble(), h1_fespace, h1d_fespace,
                                          false);
   }
@@ -140,13 +140,12 @@ void FluxProjector::Mult(const VecType &x, VecType &y) const
 }
 
 template <typename VecType>
-CurlFluxErrorEstimator<VecType>::CurlFluxErrorEstimator(
-    const MaterialOperator &mat_op, const FiniteElementSpace &nd_fespace, double tol,
-    int max_it, int print)
+CurlFluxErrorEstimator<VecType>::CurlFluxErrorEstimator(const MaterialOperator &mat_op,
+                                                        FiniteElementSpace &nd_fespace,
+                                                        double tol, int max_it, int print)
   : mat_op(mat_op), nd_fespace(nd_fespace),
     projector(mat_op, nd_fespace, tol, max_it, print), F(nd_fespace.GetTrueVSize()),
-    F_gf(const_cast<FiniteElementSpace *>(&nd_fespace)),
-    U_gf(const_cast<FiniteElementSpace *>(&nd_fespace))
+    F_gf(&nd_fespace), U_gf(&nd_fespace)
 {
 }
 
@@ -259,15 +258,14 @@ ErrorIndicator CurlFluxErrorEstimator<VecType>::ComputeIndicators(const VecType 
 }
 
 GradFluxErrorEstimator::GradFluxErrorEstimator(const MaterialOperator &mat_op,
-                                               const FiniteElementSpace &h1_fespace,
-                                               double tol, int max_it, int print)
+                                               FiniteElementSpace &h1_fespace, double tol,
+                                               int max_it, int print)
   : mat_op(mat_op), h1_fespace(h1_fespace),
     h1d_fespace(std::make_unique<FiniteElementSpace>(
         h1_fespace.GetParMesh(), h1_fespace.FEColl(),
         h1_fespace.GetParMesh()->SpaceDimension(), mfem::Ordering::byNODES)),
     projector(mat_op, h1_fespace, *h1d_fespace, tol, max_it, print),
-    F(h1d_fespace->GetTrueVSize()), F_gf(h1d_fespace.get()),
-    U_gf(const_cast<FiniteElementSpace *>(&h1_fespace))
+    F(h1d_fespace->GetTrueVSize()), F_gf(h1d_fespace.get()), U_gf(&h1_fespace)
 {
 }
 
