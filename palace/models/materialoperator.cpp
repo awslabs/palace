@@ -9,7 +9,6 @@
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
-#include "utils/omp.hpp"
 
 namespace palace
 {

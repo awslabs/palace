@@ -4,7 +4,6 @@
 #ifndef PALACE_MODELS_MATERIAL_OPERATOR_HPP
 #define PALACE_MODELS_MATERIAL_OPERATOR_HPP
 
-#include <unordered_map>
 #include <mfem.hpp>
 #include "fem/mesh.hpp"
 
