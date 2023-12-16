@@ -7,9 +7,9 @@ namespace palace
 {
 
 void BdrGridFunctionCoefficient::GetBdrElementNeighborTransformations(
-    int i, const mfem::ParMesh &mesh, const std::unordered_map<int, int> &local_to_shared,
-    mfem::FaceElementTransformations &FET, mfem::IsoparametricTransformation &T1,
-    mfem::IsoparametricTransformation &T2, const mfem::IntegrationPoint *ip)
+    int i, const mfem::ParMesh &mesh, mfem::FaceElementTransformations &FET,
+    mfem::IsoparametricTransformation &T1, mfem::IsoparametricTransformation &T2,
+    const mfem::IntegrationPoint *ip)
 {
   // Return transformations for elements attached to the given boundary element. FET.Elem1
   // always exists but FET.Elem2 may not if the element is truly a single-sided boundary.
@@ -25,8 +25,7 @@ void BdrGridFunctionCoefficient::GetBdrElementNeighborTransformations(
   if (info2 >= 0 && iel2 < 0)
   {
     // Face is shared with another subdomain.
-    const int &ishared = local_to_shared.at(f);
-    mesh.GetSharedFaceTransformations(ishared, &FET, &T1, &T2);
+    mesh.GetSharedFaceTransformationsByLocalIndex(f, &FET, &T1, &T2);
   }
   else
   {
@@ -51,8 +50,7 @@ void BdrGridFunctionCoefficient::GetBdrElementNeighborTransformations(
   // too.
   MFEM_ASSERT(T.ElementType == mfem::ElementTransformation::BDR_ELEMENT,
               "Unexpected element type in BdrGridFunctionCoefficient!");
-  GetBdrElementNeighborTransformations(T.ElementNo, mesh, local_to_shared, FET, T1, T2,
-                                       &ip);
+  GetBdrElementNeighborTransformations(T.ElementNo, mesh, FET, T1, T2, &ip);
 
   // If desired, get vector pointing from center of boundary element into element 1 for
   // orientations.
