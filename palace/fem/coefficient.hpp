@@ -6,7 +6,6 @@
 
 #include <complex>
 #include <memory>
-#include <unordered_map>
 #include <utility>
 #include <vector>
 #include <mfem.hpp>
@@ -31,7 +30,6 @@ protected:
   // XX TODO: For thread-safety (multiple threads evaluating a coefficient simultaneously),
   //          the FET, FET.Elem1, and FET.Elem2 objects cannot be shared
   const mfem::ParMesh &mesh;
-  const std::unordered_map<int, int> &local_to_shared;
   mfem::FaceElementTransformations FET;
   mfem::IsoparametricTransformation T1, T2, TF;
 
@@ -40,20 +38,16 @@ protected:
                                             mfem::Vector *C1 = nullptr);
 
 public:
-  BdrGridFunctionCoefficient(const mfem::ParMesh &mesh,
-                             const std::unordered_map<int, int> &local_to_shared)
-    : mesh(mesh), local_to_shared(local_to_shared)
-  {
-  }
+  BdrGridFunctionCoefficient(const mfem::ParMesh &mesh) : mesh(mesh) {}
 
   // For a boundary element, return the element transformation objects for the neighboring
   // domain elements. FET.Elem2 may be nullptr if the boundary is a true one-sided boundary,
   // but if it is shared with another subdomain then it will be populated. Expects
   // ParMesh::ExchangeFaceNbrData has been called already.
   static void GetBdrElementNeighborTransformations(
-      int i, const mfem::ParMesh &mesh, const std::unordered_map<int, int> &local_to_shared,
-      mfem::FaceElementTransformations &FET, mfem::IsoparametricTransformation &T1,
-      mfem::IsoparametricTransformation &T2, const mfem::IntegrationPoint *ip = nullptr);
+      int i, const mfem::ParMesh &mesh, mfem::FaceElementTransformations &FET,
+      mfem::IsoparametricTransformation &T1, mfem::IsoparametricTransformation &T2,
+      const mfem::IntegrationPoint *ip = nullptr);
 
   // Return normal vector to the boundary element at an integration point (it is assumed
   // that the element transformation has already been configured at the integration point of
@@ -81,10 +75,9 @@ public:
   BdrCurrentVectorCoefficient(const mfem::ParGridFunction &gf,
                               const MaterialOperator &mat_op)
     : mfem::VectorCoefficient(mat_op.SpaceDimension()),
-      BdrGridFunctionCoefficient(*gf.ParFESpace()->GetParMesh(),
-                                 mat_op.GetLocalToSharedFaceMap()),
-      B(gf), mat_op(mat_op), C1(gf.VectorDim()), W(gf.VectorDim()), VU(gf.VectorDim()),
-      VL(gf.VectorDim()), nor(gf.VectorDim())
+      BdrGridFunctionCoefficient(*gf.ParFESpace()->GetParMesh()), B(gf), mat_op(mat_op),
+      C1(gf.VectorDim()), W(gf.VectorDim()), VU(gf.VectorDim()), VL(gf.VectorDim()),
+      nor(gf.VectorDim())
   {
   }
 
@@ -137,8 +130,7 @@ private:
 
 public:
   BdrChargeCoefficient(const mfem::ParGridFunction &gf, const MaterialOperator &mat_op)
-    : mfem::Coefficient(), BdrGridFunctionCoefficient(*gf.ParFESpace()->GetParMesh(),
-                                                      mat_op.GetLocalToSharedFaceMap()),
+    : mfem::Coefficient(), BdrGridFunctionCoefficient(*gf.ParFESpace()->GetParMesh()),
       E(gf), mat_op(mat_op), C1(gf.VectorDim()), W(gf.VectorDim()), VU(gf.VectorDim()),
       VL(gf.VectorDim()), nor(gf.VectorDim())
   {
@@ -179,8 +171,7 @@ private:
 public:
   BdrFluxCoefficient(const mfem::ParGridFunction &gf, const MaterialOperator &mat_op,
                      const mfem::Vector &d)
-    : mfem::Coefficient(), BdrGridFunctionCoefficient(*gf.ParFESpace()->GetParMesh(),
-                                                      mat_op.GetLocalToSharedFaceMap()),
+    : mfem::Coefficient(), BdrGridFunctionCoefficient(*gf.ParFESpace()->GetParMesh()),
       B(gf), dir(d), V(gf.VectorDim()), VL(gf.VectorDim()), nor(gf.VectorDim())
   {
   }
@@ -275,8 +266,7 @@ public:
   DielectricInterfaceCoefficient(const mfem::ParGridFunction &gf,
                                  const MaterialOperator &mat_op, double ti, double ei,
                                  const mfem::Vector &s)
-    : mfem::Coefficient(), BdrGridFunctionCoefficient(*gf.ParFESpace()->GetParMesh(),
-                                                      mat_op.GetLocalToSharedFaceMap()),
+    : mfem::Coefficient(), BdrGridFunctionCoefficient(*gf.ParFESpace()->GetParMesh()),
       E(gf), mat_op(mat_op), ts(ti), epsilon(ei), side(s), C1(gf.VectorDim()),
       V(gf.VectorDim()), nor(gf.VectorDim())
   {
@@ -365,8 +355,7 @@ private:
 
 public:
   EnergyDensityCoefficient(const GridFunctionType &gf, const MaterialOperator &mat_op)
-    : mfem::Coefficient(), BdrGridFunctionCoefficient(*gf.ParFESpace()->GetParMesh(),
-                                                      mat_op.GetLocalToSharedFaceMap()),
+    : mfem::Coefficient(), BdrGridFunctionCoefficient(*gf.ParFESpace()->GetParMesh()),
       U(gf), mat_op(mat_op), V(mat_op.SpaceDimension())
   {
   }
@@ -460,9 +449,7 @@ private:
 public:
   BdrFieldVectorCoefficient(const mfem::ParGridFunction &gf, const MaterialOperator &mat_op)
     : mfem::VectorCoefficient(mat_op.SpaceDimension()),
-      BdrGridFunctionCoefficient(*gf.ParFESpace()->GetParMesh(),
-                                 mat_op.GetLocalToSharedFaceMap()),
-      U(gf), mat_op(mat_op)
+      BdrGridFunctionCoefficient(*gf.ParFESpace()->GetParMesh()), U(gf), mat_op(mat_op)
   {
   }
 
@@ -494,8 +481,7 @@ private:
 
 public:
   BdrFieldCoefficient(const mfem::ParGridFunction &gf, const MaterialOperator &mat_op)
-    : mfem::Coefficient(), BdrGridFunctionCoefficient(*gf.ParFESpace()->GetParMesh(),
-                                                      mat_op.GetLocalToSharedFaceMap()),
+    : mfem::Coefficient(), BdrGridFunctionCoefficient(*gf.ParFESpace()->GetParMesh()),
       U(gf), mat_op(mat_op)
   {
   }

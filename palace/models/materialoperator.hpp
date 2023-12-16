@@ -35,15 +35,12 @@ private:
   // penetration depth.
   mfem::Array<int> losstan_attr, conductivity_attr, london_attr;
 
-  // Shared face mapping for boundary coefficients.
-  std::unordered_map<int, int> face_loc_to_shared;
-
   // Attribute mapping for (global, 1-based) domain and boundary attributes to those on this
   // process (still 1-based). For boundaries, the inner map is a mapping from neighboring
   // domain attribute to the resulting local boundary attribute (to discern boundary
   // elements with global boundary attribute which borders more than one domain). Interior
-  // boundaries use as neighbor the element which corresponds to the vacuum domain, or at
-  // least the one with the higher speed of light.
+  // boundaries use as neighbor the element with the smaller domain attribute in order to
+  // be consistent when the interior boundary element normals are not aligned.
   std::unordered_map<int, int> loc_attr;
   std::unordered_map<int, std::unordered_map<int, int>> loc_bdr_attr;
 
@@ -95,8 +92,6 @@ public:
 
   const auto &GetAttributeToMaterial() const { return attr_mat; }
   mfem::Array<int> GetBdrAttributeToMaterial() const;
-
-  const auto &GetLocalToSharedFaceMap() const { return face_loc_to_shared; }
 
   const auto &GetAttributeGlobalToLocal() const { return loc_attr; }
 

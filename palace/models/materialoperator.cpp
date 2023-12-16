@@ -278,20 +278,6 @@ mfem::DenseMatrix ToDenseMatrix(const config::SymmetricMatrixData<N> &data)
   return M;
 }
 
-auto BuildLocalToSharedFaceMap(const mfem::ParMesh &mesh)
-{
-  // Construct shared face mapping for boundary coefficients. The inverse mapping is
-  // constructed as part of mfem::ParMesh, but we need this mapping when looping over
-  // all mesh faces.
-  std::unordered_map<int, int> l2s;
-  l2s.reserve(mesh.GetNSharedFaces());
-  for (int i = 0; i < mesh.GetNSharedFaces(); i++)
-  {
-    l2s[mesh.GetSharedFace(i)] = i;
-  }
-  return l2s;
-}
-
 auto BuildAttributeGlobalToLocal(const mfem::ParMesh &mesh)
 {
   // Set up sparse map from global domain attributes to local ones on this process.
@@ -327,25 +313,18 @@ auto BuildAttributeGlobalToLocal(const mfem::ParMesh &mesh)
 }
 
 auto GetBdrNeighborAttribute(int i, const mfem::ParMesh &mesh,
-                             const std::unordered_map<int, int> &face_loc_to_shared,
                              mfem::FaceElementTransformations &FET,
                              mfem::IsoparametricTransformation &T1,
                              mfem::IsoparametricTransformation &T2)
 {
   // For internal boundaries, use the element which corresponds to the vacuum domain, or
   // at least the one with the higher speed of light.
-  BdrGridFunctionCoefficient::GetBdrElementNeighborTransformations(
-      i, mesh, face_loc_to_shared, FET, T1, T2);
-  // return (FET.Elem2 && GetLightSpeedMin(FET.Elem2->Attribute) >
-  // GetLightSpeedMax(FET.Elem1->Attribute))
-  //           ? FET.Elem2->Attribute
-  //           : FET.Elem1->Attribute;
+  BdrGridFunctionCoefficient::GetBdrElementNeighborTransformations(i, mesh, FET, T1, T2);
   return (FET.Elem2 && FET.Elem2->Attribute < FET.Elem1->Attribute) ? FET.Elem2->Attribute
                                                                     : FET.Elem1->Attribute;
 }
 
-auto BuildBdrAttributeGlobalToLocal(const mfem::ParMesh &mesh,
-                                    const std::unordered_map<int, int> &face_loc_to_shared)
+auto BuildBdrAttributeGlobalToLocal(const mfem::ParMesh &mesh)
 {
   // Set up sparse map from global boundary attributes to local ones on this process. Each
   // original global boundary attribute maps to a key-value pairing of global domain
@@ -357,7 +336,7 @@ auto BuildBdrAttributeGlobalToLocal(const mfem::ParMesh &mesh,
   for (int i = 0; i < mesh.GetNBE(); i++)
   {
     const int attr = mesh.GetBdrAttribute(i);
-    const int nbr_attr = GetBdrNeighborAttribute(i, mesh, face_loc_to_shared, FET, T1, T2);
+    const int nbr_attr = GetBdrNeighborAttribute(i, mesh, FET, T1, T2);
     auto &bdr_attr_map = loc_bdr_attr[attr];
     if (bdr_attr_map.find(nbr_attr) == bdr_attr_map.end())
     {
@@ -372,9 +351,8 @@ auto BuildBdrAttributeGlobalToLocal(const mfem::ParMesh &mesh,
 MaterialOperator::MaterialOperator(const IoData &iodata, mfem::ParMesh &mesh) : mesh(mesh)
 {
   mesh.ExchangeFaceNbrData();
-  face_loc_to_shared = BuildLocalToSharedFaceMap(mesh);
   loc_attr = BuildAttributeGlobalToLocal(mesh);
-  loc_bdr_attr = BuildBdrAttributeGlobalToLocal(mesh, face_loc_to_shared);
+  loc_bdr_attr = BuildBdrAttributeGlobalToLocal(mesh);
 
   SetUpMaterialProperties(iodata, mesh);
 }
@@ -604,9 +582,6 @@ int MaterialOperator::GetAttributeGlobalToLocal(mfem::ElementTransformation &T) 
                 "Invalid domain attribute " << T.Attribute << "!");
     const int nbr_attr = [&]()
     {
-      // XX TODO INCORRECT FOR H-MULTIGRID: T.ElementNo SHOULD BE USED TO FIND THE MESH
-      //         NEIGHBOR ON THE COARSE MESH
-
       mfem::FaceElementTransformations FET;  // XX TODO: Preallocate these for all elements
       mfem::IsoparametricTransformation T1, T2;
       if (const auto *submesh = dynamic_cast<const mfem::ParSubMesh *>(T.mesh))
@@ -614,16 +589,14 @@ int MaterialOperator::GetAttributeGlobalToLocal(mfem::ElementTransformation &T) 
         MFEM_ASSERT(T.ElementType == mfem::ElementTransformation::ELEMENT,
                     "Unexpected element type in GetAttributeGlobalToLocal!");
         return GetBdrNeighborAttribute(submesh->GetParentElementIDMap()[T.ElementNo],
-                                       *submesh->GetParent(), face_loc_to_shared, FET, T1,
-                                       T2);
+                                       *submesh->GetParent(), FET, T1, T2);
       }
       else
       {
         MFEM_ASSERT(T.ElementType == mfem::ElementTransformation::BDR_ELEMENT,
                     "Unexpected element type in GetAttributeGlobalToLocal!");
-        return GetBdrNeighborAttribute(T.ElementNo,
-                                       *static_cast<const mfem::ParMesh *>(T.mesh),
-                                       face_loc_to_shared, FET, T1, T2);
+        return GetBdrNeighborAttribute(
+            T.ElementNo, *static_cast<const mfem::ParMesh *>(T.mesh), FET, T1, T2);
       }
     }();
     auto it = bdr_attr_map->second.find(nbr_attr);
