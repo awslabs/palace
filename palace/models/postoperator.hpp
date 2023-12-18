@@ -45,8 +45,8 @@ private:
 
   // Objects for grid function postprocessing from the FE solution.
   const bool has_imaginary;
-  std::optional<mfem::ParComplexGridFunction> E, B;
-  std::optional<mfem::ParGridFunction> V, A;
+  mutable std::optional<mfem::ParComplexGridFunction> E, B;
+  mutable std::optional<mfem::ParGridFunction> V, A;
   std::unique_ptr<mfem::VectorCoefficient> Esr, Esi, Bsr, Bsi, As, Jsr, Jsi;
   std::unique_ptr<mfem::Coefficient> Vs, Ue, Um, Qsr, Qsi;
 
