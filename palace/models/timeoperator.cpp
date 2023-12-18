@@ -3,6 +3,7 @@
 
 #include "timeoperator.hpp"
 
+#include <limits>
 #include <vector>
 #include "linalg/iterative.hpp"
 #include "linalg/jacobi.hpp"
@@ -66,6 +67,7 @@ public:
       auto pcg = std::make_unique<CgSolver<Operator>>(comm, 0);
       pcg->SetInitialGuess(iodata.solver.linear.initial_guess);
       pcg->SetRelTol(iodata.solver.linear.tol);
+      pcg->SetAbsTol(std::numeric_limits<double>::epsilon());
       pcg->SetMaxIter(iodata.solver.linear.max_it);
       auto jac = std::make_unique<JacobiSmoother<Operator>>();
       kspM = std::make_unique<KspSolver>(std::move(pcg), std::move(jac));
