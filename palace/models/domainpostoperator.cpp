@@ -28,8 +28,7 @@ DomainPostOperator::DomainPostOperator(const IoData &iodata, const MaterialOpera
     MaterialPropertyCoefficient epsilon_func(mat_op, mat_op.GetAttributeToMaterial(),
                                              mat_op.GetPermittivityReal());
     BilinearForm m_nd(*nd_fespace);
-    m_nd.AddDomainIntegrator<VectorFEMassIntegrator>(
-        (mfem::MatrixCoefficient &)epsilon_func);
+    m_nd.AddDomainIntegrator<VectorFEMassIntegrator>(epsilon_func);
     M_ND = m_nd.PartialAssemble();
     D.SetSize(M_ND->Height());
     D.UseDevice(true);
@@ -42,7 +41,7 @@ DomainPostOperator::DomainPostOperator(const IoData &iodata, const MaterialOpera
     MaterialPropertyCoefficient muinv_func(mat_op, mat_op.GetAttributeToMaterial(),
                                            mat_op.GetInvPermeability());
     BilinearForm m_rt(*rt_fespace);
-    m_rt.AddDomainIntegrator<VectorFEMassIntegrator>((mfem::MatrixCoefficient &)muinv_func);
+    m_rt.AddDomainIntegrator<VectorFEMassIntegrator>(muinv_func);
     M_RT = m_rt.PartialAssemble();
     H.SetSize(M_RT->Height());
     H.UseDevice(true);
@@ -59,8 +58,7 @@ DomainPostOperator::DomainPostOperator(const IoData &iodata, const MaterialOpera
                                                mat_op.GetPermittivityReal());
       epsilon_func.RestrictCoefficient(mat_op.GetAttributeGlobalToLocal(data.attributes));
       BilinearForm m_nd_i(*nd_fespace);
-      m_nd_i.AddDomainIntegrator<VectorFEMassIntegrator>(
-          (mfem::MatrixCoefficient &)epsilon_func);
+      m_nd_i.AddDomainIntegrator<VectorFEMassIntegrator>(epsilon_func);
       M_ND_i = m_nd_i.PartialAssemble();
     }
     if (rt_fespace)
@@ -69,8 +67,7 @@ DomainPostOperator::DomainPostOperator(const IoData &iodata, const MaterialOpera
                                              mat_op.GetInvPermeability());
       muinv_func.RestrictCoefficient(mat_op.GetAttributeGlobalToLocal(data.attributes));
       BilinearForm m_rt_i(*rt_fespace);
-      m_rt_i.AddDomainIntegrator<VectorFEMassIntegrator>(
-          (mfem::MatrixCoefficient &)muinv_func);
+      m_rt_i.AddDomainIntegrator<VectorFEMassIntegrator>(muinv_func);
       M_RT_i = m_rt_i.PartialAssemble();
     }
     M_i.emplace(idx, std::make_pair(std::move(M_ND_i), std::move(M_RT_i)));

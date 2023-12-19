@@ -63,8 +63,7 @@ FluxProjector::FluxProjector(const MaterialOperator &mat_op,
     MaterialPropertyCoefficient muinv_func(mat_op, mat_op.GetAttributeToMaterial(),
                                            mat_op.GetInvPermeability());
     BilinearForm flux(nd_fespace);
-    flux.AddDomainIntegrator<MixedVectorCurlIntegrator>(
-        (mfem::MatrixCoefficient &)muinv_func);
+    flux.AddDomainIntegrator<MixedVectorCurlIntegrator>(muinv_func);
     Flux = std::make_unique<ParOperator>(flux.PartialAssemble(), nd_fespace);
   }
   M = GetMassMatrix(nd_fespace);
@@ -86,7 +85,7 @@ FluxProjector::FluxProjector(const MaterialOperator &mat_op,
     MaterialPropertyCoefficient epsilon_func(mat_op, mat_op.GetAttributeToMaterial(),
                                              mat_op.GetPermittivityReal());
     BilinearForm flux(h1_fespace, h1d_fespace);
-    flux.AddDomainIntegrator<GradientIntegrator>((mfem::MatrixCoefficient &)epsilon_func);
+    flux.AddDomainIntegrator<GradientIntegrator>(epsilon_func);
     Flux = std::make_unique<ParOperator>(flux.PartialAssemble(), h1_fespace, h1d_fespace,
                                          false);
   }
@@ -193,7 +192,7 @@ ErrorIndicator CurlFluxErrorEstimator<VecType>::ComputeIndicators(const VecType 
       nd_fespace.Get().GetElementDofs(e, dofs, dof_trans);
       Interp.SetSize(fe.GetDof(), V_ip.Size());
       Curl.SetSize(fe.GetDof(), V_ip.Size());
-      const int q_order = fem::DefaultIntegrationOrder::Get(fe, fe, T);
+      const int q_order = fem::DefaultIntegrationOrder::Get(T);
       const mfem::IntegrationRule &ir =
           mfem::IntRules.Get(mesh.GetElementGeometry(e), q_order);
 
@@ -303,7 +302,7 @@ ErrorIndicator GradFluxErrorEstimator::ComputeIndicators(const Vector &U) const
       h1d_fespace->Get().DofsToVDofs(vdofs);
       Interp.SetSize(fe.GetDof());
       Grad.SetSize(fe.GetDof(), V_ip.Size());
-      const int q_order = fem::DefaultIntegrationOrder::Get(fe, fe, T);
+      const int q_order = fem::DefaultIntegrationOrder::Get(T);
       const mfem::IntegrationRule &ir =
           mfem::IntRules.Get(mesh.GetElementGeometry(e), q_order);
 

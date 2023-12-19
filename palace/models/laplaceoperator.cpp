@@ -31,6 +31,7 @@ LaplaceOperator::LaplaceOperator(const IoData &iodata,
 {
   // Finalize setup.
   BilinearForm::pa_order_threshold = iodata.solver.pa_order_threshold;
+  fem::DefaultIntegrationOrder::p_trial = iodata.solver.order;
   fem::DefaultIntegrationOrder::q_order_jac = iodata.solver.q_order_jac;
   fem::DefaultIntegrationOrder::q_order_extra_pk = iodata.solver.q_order_extra;
   fem::DefaultIntegrationOrder::q_order_extra_qk = iodata.solver.q_order_extra;
@@ -153,15 +154,14 @@ void PrintHeader(const mfem::ParFiniteElementSpace &h1_fespace,
                    ? "Partial"
                    : "Full");
 
-    auto &mesh = *h1_fespace.GetParMesh();
-    const int q_order = fem::DefaultIntegrationOrder::Get(
-        *h1_fespace.GetFE(0), *h1_fespace.GetFE(0), *mesh.GetElementTransformation(0));
+    const auto &mesh = *h1_fespace.GetParMesh();
     Mpi::Print(" Mesh geometries:\n");
     for (auto geom : mesh::CheckElements(mesh).GetGeomTypes())
     {
       const auto *fe = h1_fespace.FEColl()->FiniteElementForGeometry(geom);
       MFEM_VERIFY(fe, "MFEM does not support H1 spaces on geometry = "
                           << mfem::Geometry::Name[geom] << "!");
+      const int q_order = fem::DefaultIntegrationOrder::Get(mesh, geom);
       Mpi::Print("  {}: P = {:d}, Q = {:d} (quadrature order = {:d})\n",
                  mfem::Geometry::Name[geom], fe->GetDof(),
                  mfem::IntRules.Get(geom, q_order).GetNPoints(), q_order);
@@ -190,7 +190,7 @@ std::unique_ptr<Operator> LaplaceOperator::GetStiffnessMatrix()
     MaterialPropertyCoefficient epsilon_func(mat_op, mat_op.GetAttributeToMaterial(),
                                              mat_op.GetPermittivityReal());
     BilinearForm k(h1_fespace_l);
-    k.AddDomainIntegrator<DiffusionIntegrator>((mfem::MatrixCoefficient &)epsilon_func);
+    k.AddDomainIntegrator<DiffusionIntegrator>(epsilon_func);
     auto K_l = std::make_unique<ParOperator>(
         (l > 0) ? k.Assemble(skip_zeros) : k.FullAssemble(skip_zeros), h1_fespace_l);
     if (print_hdr)

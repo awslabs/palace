@@ -44,14 +44,11 @@ WeightedHCurlNormSolver::WeightedHCurlNormSolver(
         BilinearForm a(fespace_l);
         if (aux)
         {
-          a.AddDomainIntegrator<DiffusionIntegrator>(
-              (mfem::MatrixCoefficient &)epsilon_func);
+          a.AddDomainIntegrator<DiffusionIntegrator>(epsilon_func);
         }
         else
         {
-          a.AddDomainIntegrator<CurlCurlMassIntegrator>(
-              (mfem::MatrixCoefficient &)muinv_func,
-              (mfem::MatrixCoefficient &)epsilon_func);
+          a.AddDomainIntegrator<CurlCurlMassIntegrator>(muinv_func, epsilon_func);
         }
         auto A_l = std::make_unique<ParOperator>(a.Assemble(skip_zeros), fespace_l);
         A_l->SetEssentialTrueDofs(dbc_tdof_lists_l, Operator::DiagonalPolicy::DIAG_ONE);

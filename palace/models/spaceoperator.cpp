@@ -46,6 +46,7 @@ SpaceOperator::SpaceOperator(const IoData &iodata,
 {
   // Finalize setup.
   BilinearForm::pa_order_threshold = iodata.solver.pa_order_threshold;
+  fem::DefaultIntegrationOrder::p_trial = iodata.solver.order;
   fem::DefaultIntegrationOrder::q_order_jac = iodata.solver.q_order_jac;
   fem::DefaultIntegrationOrder::q_order_extra_pk = iodata.solver.q_order_extra;
   fem::DefaultIntegrationOrder::q_order_extra_qk = iodata.solver.q_order_extra;
@@ -181,15 +182,14 @@ void PrintHeader(const mfem::ParFiniteElementSpace &h1_fespace,
                    ? "Partial"
                    : "Full");
 
-    auto &mesh = *nd_fespace.GetParMesh();
-    const int q_order = fem::DefaultIntegrationOrder::Get(
-        *nd_fespace.GetFE(0), *nd_fespace.GetFE(0), *mesh.GetElementTransformation(0));
+    const auto &mesh = *nd_fespace.GetParMesh();
     Mpi::Print(" Mesh geometries:\n");
     for (auto geom : mesh::CheckElements(mesh).GetGeomTypes())
     {
       const auto *fe = nd_fespace.FEColl()->FiniteElementForGeometry(geom);
       MFEM_VERIFY(fe, "MFEM does not support ND spaces on geometry = "
                           << mfem::Geometry::Name[geom] << "!");
+      const int q_order = fem::DefaultIntegrationOrder::Get(mesh, geom);
       Mpi::Print("  {}: P = {:d}, Q = {:d} (quadrature order = {:d})\n",
                  mfem::Geometry::Name[geom], fe->GetDof(),
                  mfem::IntRules.Get(geom, q_order).GetNPoints(), q_order);
@@ -206,48 +206,32 @@ BuildOperator(const FiniteElementSpace &fespace, const MaterialPropertyCoefficie
   BilinearForm a(fespace);
   if (df && !df->empty() && f && !f->empty())
   {
-    a.AddDomainIntegrator<CurlCurlMassIntegrator>((mfem::MatrixCoefficient &)*df,
-                                                  (mfem::MatrixCoefficient &)*f);
+    a.AddDomainIntegrator<CurlCurlMassIntegrator>(*df, *f);
   }
   else
   {
     if (df && !df->empty())
     {
-      a.AddDomainIntegrator<CurlCurlIntegrator>((mfem::MatrixCoefficient &)*df);
+      a.AddDomainIntegrator<CurlCurlIntegrator>(*df);
     }
     if (f && !f->empty())
     {
-      if (f->GetMaterialProperties().SizeI() == 1)
-      {
-        a.AddDomainIntegrator<VectorFEMassIntegrator>((mfem::Coefficient &)*f);
-      }
-      else
-      {
-        a.AddDomainIntegrator<VectorFEMassIntegrator>((mfem::MatrixCoefficient &)*f);
-      }
+      a.AddDomainIntegrator<VectorFEMassIntegrator>(*f);
     }
   }
   if (dfb && !dfb->empty() && fb && !fb->empty())
   {
-    a.AddBoundaryIntegrator<CurlCurlMassIntegrator>((mfem::Coefficient &)*dfb,
-                                                    (mfem::MatrixCoefficient &)*fb);
+    a.AddBoundaryIntegrator<CurlCurlMassIntegrator>(*dfb, *fb);
   }
   else
   {
     if (dfb && !dfb->empty())
     {
-      a.AddBoundaryIntegrator<CurlCurlIntegrator>((mfem::Coefficient &)*dfb);
+      a.AddBoundaryIntegrator<CurlCurlIntegrator>(*dfb);
     }
     if (fb && !fb->empty())
     {
-      if (fb->GetMaterialProperties().SizeI() == 1)
-      {
-        a.AddBoundaryIntegrator<VectorFEMassIntegrator>((mfem::Coefficient &)*fb);
-      }
-      else
-      {
-        a.AddBoundaryIntegrator<VectorFEMassIntegrator>((mfem::MatrixCoefficient &)*fb);
-      }
+      a.AddBoundaryIntegrator<VectorFEMassIntegrator>(*fb);
     }
   }
   return (l > 0) ? a.Assemble(skip_zeros) : a.FullAssemble(skip_zeros);
@@ -269,18 +253,11 @@ std::unique_ptr<Operator> BuildAuxOperator(const FiniteElementSpace &fespace,
   BilinearForm a(fespace);
   if (f && !f->empty())
   {
-    a.AddDomainIntegrator<DiffusionIntegrator>((mfem::MatrixCoefficient &)*f);
+    a.AddDomainIntegrator<DiffusionIntegrator>(*f);
   }
   if (fb && !fb->empty())
   {
-    if (fb->GetMaterialProperties().SizeI() == 1)
-    {
-      a.AddBoundaryIntegrator<DiffusionIntegrator>((mfem::Coefficient &)*fb);
-    }
-    else
-    {
-      a.AddBoundaryIntegrator<DiffusionIntegrator>((mfem::MatrixCoefficient &)*fb);
-    }
+    a.AddBoundaryIntegrator<DiffusionIntegrator>(*fb);
   }
   return (l > 0) ? a.Assemble(skip_zeros) : a.FullAssemble(skip_zeros);
 }

@@ -3,116 +3,79 @@
 
 #include "fem/integrator.hpp"
 
-#include <vector>
-#include <mfem.hpp>
 #include "fem/libceed/coefficient.hpp"
 #include "fem/libceed/integrator.hpp"
 
-#include "fem/qfunctions/diffusion_qf.h"
+#include "fem/qfunctions/hcurl_build_qf.h"
+#include "fem/qfunctions/hcurl_qf.h"
 
 namespace palace
 {
 
-struct DiffusionIntegratorInfo : public ceed::IntegratorInfo
+using namespace ceed;
+
+void DiffusionIntegrator::Assemble(Ceed ceed, CeedElemRestriction trial_restr,
+                                   CeedElemRestriction test_restr, CeedBasis trial_basis,
+                                   CeedBasis test_basis, CeedVector geom_data,
+                                   CeedElemRestriction geom_data_restr,
+                                   CeedOperator *op) const
 {
-  DiffusionContext ctx;
-};
+  IntegratorInfo info;
+  info.assemble_q_data = assemble_q_data;
 
-namespace
-{
-
-DiffusionIntegratorInfo
-InitializeIntegratorInfo(const mfem::ParFiniteElementSpace &fespace,
-                         const mfem::IntegrationRule &ir, const std::vector<int> &indices,
-                         bool use_bdr, mfem::Coefficient *Q, mfem::VectorCoefficient *VQ,
-                         mfem::MatrixCoefficient *MQ,
-                         std::vector<ceed::QuadratureCoefficient> &coeff)
-{
-  MFEM_VERIFY(fespace.GetVDim() == 1,
-              "libCEED interface for DiffusionIntegrator does not support vdim > 1!");
-
-  DiffusionIntegratorInfo info = {{0}};
-
-  mfem::ParMesh &mesh = *fespace.GetParMesh();
-  info.ctx.dim = mesh.Dimension() - use_bdr;
-  info.ctx.space_dim = mesh.SpaceDimension();
-
-  info.trial_op = ceed::EvalMode::Grad;
-  info.test_op = ceed::EvalMode::Grad;
-  info.qdata_size = (info.ctx.dim * (info.ctx.dim + 1)) / 2;
-
-  mfem::ConstantCoefficient *const_coeff = dynamic_cast<mfem::ConstantCoefficient *>(Q);
-  if (const_coeff || !(Q || VQ || MQ))
+  // Set up QFunctions.
+  CeedInt dim, space_dim, trial_num_comp, test_num_comp;
+  PalaceCeedCall(ceed, CeedBasisGetDimension(trial_basis, &dim));
+  PalaceCeedCall(ceed, CeedGeometryDataGetSpaceDimension(geom_data_restr, dim, &space_dim));
+  PalaceCeedCall(ceed, CeedBasisGetNumComponents(trial_basis, &trial_num_comp));
+  PalaceCeedCall(ceed, CeedBasisGetNumComponents(test_basis, &test_num_comp));
+  MFEM_VERIFY(
+      trial_num_comp == test_num_comp && trial_num_comp == 1,
+      "DiffusionIntegrator requires test and trial spaces with a single component!");
+  switch (10 * space_dim + dim)
   {
-    info.ctx.coeff = const_coeff ? const_coeff->constant : 1.0;
-
-    info.build_qf = f_build_diff_const_scalar;
-    info.build_qf_path = PalaceQFunctionRelativePath(f_build_diff_const_scalar_loc);
+    case 22:
+      info.apply_qf = assemble_q_data ? f_build_hcurl_22 : f_apply_hcurl_22;
+      info.apply_qf_path = PalaceQFunctionRelativePath(
+          assemble_q_data ? f_build_hcurl_22_loc : f_apply_hcurl_22_loc);
+      break;
+    case 33:
+      info.apply_qf = assemble_q_data ? f_build_hcurl_33 : f_apply_hcurl_33;
+      info.apply_qf_path = PalaceQFunctionRelativePath(
+          assemble_q_data ? f_build_hcurl_33_loc : f_apply_hcurl_33_loc);
+      break;
+    case 21:
+      info.apply_qf = assemble_q_data ? f_build_hcurl_21 : f_apply_hcurl_21;
+      info.apply_qf_path = PalaceQFunctionRelativePath(
+          assemble_q_data ? f_build_hcurl_21_loc : f_apply_hcurl_21_loc);
+      break;
+    case 32:
+      info.apply_qf = assemble_q_data ? f_build_hcurl_32 : f_apply_hcurl_32;
+      info.apply_qf_path = PalaceQFunctionRelativePath(
+          assemble_q_data ? f_build_hcurl_32_loc : f_apply_hcurl_32_loc);
+      break;
+    default:
+      MFEM_ABORT("Invalid value of (dim, space_dim) = (" << dim << ", " << space_dim
+                                                         << ") for DiffusionIntegrator!");
   }
-  else if (Q)
+  info.trial_ops = EvalMode::Grad;
+  info.test_ops = EvalMode::Grad;
+
+  // Set up the coefficient and assemble.
+  auto ctx = [&]()
   {
-    ceed::InitCoefficient(*Q, mesh, ir, indices, use_bdr, coeff.emplace_back());
-
-    info.build_qf = f_build_diff_quad_scalar;
-    info.build_qf_path = PalaceQFunctionRelativePath(f_build_diff_quad_scalar_loc);
-  }
-  else if (VQ)
-  {
-    MFEM_VERIFY(VQ->GetVDim() == info.ctx.space_dim,
-                "Invalid vector coefficient dimension for DiffusionIntegrator!");
-    ceed::InitCoefficient(*VQ, mesh, ir, indices, use_bdr, coeff.emplace_back());
-
-    info.build_qf = f_build_diff_quad_vector;
-    info.build_qf_path = PalaceQFunctionRelativePath(f_build_diff_quad_vector_loc);
-  }
-  else if (MQ)
-  {
-    MFEM_VERIFY(MQ->GetVDim() == info.ctx.space_dim,
-                "Invalid matrix coefficient dimension for DiffusionIntegrator!");
-    ceed::InitCoefficient(*MQ, mesh, ir, indices, use_bdr, coeff.emplace_back());
-
-    info.build_qf = f_build_diff_quad_matrix;
-    info.build_qf_path = PalaceQFunctionRelativePath(f_build_diff_quad_matrix_loc);
-  }
-
-  info.apply_qf = f_apply_diff;
-  info.apply_qf_path = PalaceQFunctionRelativePath(f_apply_diff_loc);
-
-  return info;
-}
-
-}  // namespace
-
-void DiffusionIntegrator::Assemble(const mfem::ParFiniteElementSpace &trial_fespace,
-                                   const mfem::ParFiniteElementSpace &test_fespace,
-                                   const mfem::IntegrationRule &ir,
-                                   const std::vector<int> &indices, Ceed ceed,
-                                   CeedOperator *op, CeedOperator *op_t)
-{
-  MFEM_VERIFY(&trial_fespace == &test_fespace,
-              "DiffusionIntegrator requires the same test and trial spaces!");
-  constexpr bool use_bdr = false;
-  std::vector<ceed::QuadratureCoefficient> coeff;
-  const auto info =
-      InitializeIntegratorInfo(trial_fespace, ir, indices, use_bdr, Q, VQ, MQ, coeff);
-  ceed::AssembleCeedOperator(info, trial_fespace, test_fespace, ir, indices, use_bdr, coeff,
-                             ceed, op, op_t);
-}
-
-void DiffusionIntegrator::AssembleBoundary(const mfem::ParFiniteElementSpace &trial_fespace,
-                                           const mfem::ParFiniteElementSpace &test_fespace,
-                                           const mfem::IntegrationRule &ir,
-                                           const std::vector<int> &indices, Ceed ceed,
-                                           CeedOperator *op, CeedOperator *op_t)
-{
-  MFEM_VERIFY(&trial_fespace == &test_fespace,
-              "DiffusionIntegrator requires the same test and trial spaces!");
-  constexpr bool use_bdr = true;
-  std::vector<ceed::QuadratureCoefficient> coeff;
-  const auto info =
-      InitializeIntegratorInfo(trial_fespace, ir, indices, use_bdr, Q, VQ, MQ, coeff);
-  ceed::AssembleCeedOperator(info, trial_fespace, test_fespace, ir, indices, use_bdr, coeff,
-                             ceed, op, op_t);
+    switch (space_dim)
+    {
+      case 2:
+        return PopulateCoefficientContext<2>(Q);
+      case 3:
+        return PopulateCoefficientContext<3>(Q);
+    }
+    return std::vector<CeedIntScalar>();
+  }();
+  AssembleCeedOperator(info, (void *)ctx.data(), ctx.size() * sizeof(CeedIntScalar), ceed,
+                       trial_restr, test_restr, trial_basis, test_basis, geom_data,
+                       geom_data_restr, op);
 }
 
 }  // namespace palace
