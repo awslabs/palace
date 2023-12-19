@@ -187,7 +187,7 @@ std::unique_ptr<Operator> LaplaceOperator::GetStiffnessMatrix()
                  h1_fespace_l.GetMaxElementOrder(), h1_fespace_l.GlobalTrueVSize());
     }
     constexpr bool skip_zeros = false;
-    MaterialPropertyCoefficient epsilon_func(mat_op, mat_op.GetAttributeToMaterial(),
+    MaterialPropertyCoefficient epsilon_func(mat_op.GetAttributeToMaterial(),
                                              mat_op.GetPermittivityReal());
     BilinearForm k(h1_fespace_l);
     k.AddDomainIntegrator<DiffusionIntegrator>(epsilon_func);

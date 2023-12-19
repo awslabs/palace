@@ -177,8 +177,6 @@ public:
     return GetBdrAttributeGlobalToLocal(std::vector<int>{attr});
   }
 
-  int GetAttributeGlobalToLocal(const mfem::ElementTransformation &T) const;
-
   const ceed::CeedGeomObjectMap<ceed::CeedGeomFactorData> &
   GetCeedGeomFactorData(Ceed ceed) const;
 

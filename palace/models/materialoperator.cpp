@@ -6,7 +6,6 @@
 #include <cmath>
 #include <functional>
 #include <limits>
-#include "fem/coefficient.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
@@ -496,17 +495,13 @@ mfem::Array<int> MaterialOperator::GetBdrAttributeToMaterial() const
 }
 
 MaterialPropertyCoefficient::MaterialPropertyCoefficient(
-    const MaterialOperator &mat_op, const mfem::Array<int> &attr_mat_,
-    const mfem::DenseTensor &mat_coeff_, double a)
-  : mfem::MatrixCoefficient(0, 0), mat_op(mat_op), attr_mat(attr_mat_),
-    mat_coeff(mat_coeff_)
+    const mfem::Array<int> &attr_mat_, const mfem::DenseTensor &mat_coeff_, double a)
+  : attr_mat(attr_mat_), mat_coeff(mat_coeff_)
 {
   for (int k = 0; k < mat_coeff.SizeK(); k++)
   {
     mat_coeff(k) *= a;
   }
-  height = mat_coeff.SizeI();
-  width = mat_coeff.SizeJ();
 }
 
 namespace
@@ -653,8 +648,6 @@ void MaterialPropertyCoefficient::AddCoefficient(const mfem::Array<int> &attr_ma
       AddMaterialProperty(attr_list, mat_coeff_(k), a);
     }
   }
-  height = mat_coeff.SizeI();
-  width = mat_coeff.SizeJ();
 }
 
 template <typename T>
@@ -714,8 +707,6 @@ void MaterialPropertyCoefficient::AddMaterialProperty(const mfem::Array<int> &at
     }
   }
   UpdateProperty(mat_coeff, mat_idx, coeff, a);
-  height = mat_coeff.SizeI();
-  width = mat_coeff.SizeJ();
 }
 
 void MaterialPropertyCoefficient::RestrictCoefficient(const mfem::Array<int> &attr_list)
@@ -756,8 +747,6 @@ void MaterialPropertyCoefficient::RestrictCoefficient(const mfem::Array<int> &at
     }
     mat_coeff(new_mat_idx) = mat_coeff_orig(orig_mat_idx);
   }
-  height = mat_coeff.SizeI();
-  width = mat_coeff.SizeJ();
 }
 
 void MaterialPropertyCoefficient::NormalProjectedCoefficient(const mfem::Vector &normal)
@@ -767,39 +756,6 @@ void MaterialPropertyCoefficient::NormalProjectedCoefficient(const mfem::Vector 
   for (int k = 0; k < mat_coeff.SizeK(); k++)
   {
     mat_coeff(k) = mat_coeff_backup(k).InnerProduct(normal, normal);
-  }
-  height = mat_coeff.SizeI();
-  width = mat_coeff.SizeJ();
-}
-
-double MaterialPropertyCoefficient::Eval(mfem::ElementTransformation &T,
-                                         const mfem::IntegrationPoint &ip)
-{
-  const int attr = mat_op.GetMesh().GetAttributeGlobalToLocal(T);
-  MFEM_ASSERT(attr <= attr_mat.Size(),
-              "Out of bounds attribute for MaterialPropertyCoefficient ("
-                  << attr << " > " << attr_mat.Size() << ")!");
-  MFEM_ASSERT(mat_coeff.SizeI() == 1 && mat_coeff.SizeJ() == 1,
-              "Invalid access of matrix-valued MaterialPropertyCoefficient using scalar "
-              "coefficient interface!");
-  return (attr_mat[attr - 1] < 0) ? 0.0 : mat_coeff(0, 0, attr_mat[attr - 1]);
-}
-
-void MaterialPropertyCoefficient::Eval(mfem::DenseMatrix &K, mfem::ElementTransformation &T,
-                                       const mfem::IntegrationPoint &ip)
-{
-  const int attr = mat_op.GetMesh().GetAttributeGlobalToLocal(T);
-  MFEM_ASSERT(attr <= attr_mat.Size(),
-              "Out of bounds attribute for MaterialPropertyCoefficient ("
-                  << attr << " > " << attr_mat.Size() << ")!");
-  if (attr_mat[attr - 1] < 0)
-  {
-    K.SetSize(mat_coeff.SizeI(), mat_coeff.SizeJ());
-    K = 0.0;
-  }
-  else
-  {
-    K = mat_coeff(attr_mat[attr - 1]);
   }
 }
 
