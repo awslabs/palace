@@ -32,7 +32,7 @@ DivFreeSolver::DivFreeSolver(const MaterialOperator &mat_op, FiniteElementSpace 
       // Force coarse level operator to be fully assembled always.
       const auto &h1_fespace_l = h1_fespaces.GetFESpaceAtLevel(l);
       BilinearForm m(h1_fespace_l);
-      m.AddDomainIntegrator<DiffusionIntegrator>((mfem::MatrixCoefficient &)epsilon_func);
+      m.AddDomainIntegrator<DiffusionIntegrator>(epsilon_func);
       auto M_l = std::make_unique<ParOperator>(m.Assemble(skip_zeros), h1_fespace_l);
       M_l->SetEssentialTrueDofs(h1_bdr_tdof_lists[l], Operator::DiagonalPolicy::DIAG_ONE);
       M_mg->AddOperator(std::move(M_l));
@@ -41,8 +41,7 @@ DivFreeSolver::DivFreeSolver(const MaterialOperator &mat_op, FiniteElementSpace 
   }
   {
     BilinearForm weakdiv(nd_fespace, h1_fespaces.GetFinestFESpace());
-    weakdiv.AddDomainIntegrator<MixedVectorWeakDivergenceIntegrator>(
-        (mfem::MatrixCoefficient &)epsilon_func);
+    weakdiv.AddDomainIntegrator<MixedVectorWeakDivergenceIntegrator>(epsilon_func);
     WeakDiv = std::make_unique<ParOperator>(weakdiv.Assemble(skip_zeros), nd_fespace,
                                             h1_fespaces.GetFinestFESpace(), false);
   }

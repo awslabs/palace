@@ -3,191 +3,80 @@
 
 #include "fem/integrator.hpp"
 
-#include <vector>
-#include <mfem.hpp>
 #include "fem/libceed/coefficient.hpp"
 #include "fem/libceed/integrator.hpp"
 
-#include "fem/qfunctions/curlcurlmass_qf.h"
+#include "fem/qfunctions/hdivmass_build_qf.h"
+#include "fem/qfunctions/hdivmass_qf.h"
 
 namespace palace
 {
 
-struct CurlCurlMassIntegratorInfo : public ceed::IntegratorInfo
+using namespace ceed;
+
+void CurlCurlMassIntegrator::Assemble(Ceed ceed, CeedElemRestriction trial_restr,
+                                      CeedElemRestriction test_restr, CeedBasis trial_basis,
+                                      CeedBasis test_basis, CeedVector geom_data,
+                                      CeedElemRestriction geom_data_restr,
+                                      CeedOperator *op) const
 {
-  CurlCurlMassContext ctx;
-};
+  IntegratorInfo info;
+  info.assemble_q_data = assemble_q_data;
 
-namespace
-{
-
-CurlCurlMassIntegratorInfo
-InitializeIntegratorInfo(const mfem::ParFiniteElementSpace &fespace,
-                         const mfem::IntegrationRule &ir, const std::vector<int> &indices,
-                         bool use_bdr, mfem::Coefficient *Qc, mfem::VectorCoefficient *VQc,
-                         mfem::MatrixCoefficient *MQc, mfem::Coefficient *Qm,
-                         mfem::VectorCoefficient *VQm, mfem::MatrixCoefficient *MQm,
-                         std::vector<ceed::QuadratureCoefficient> &coeff)
-{
-  MFEM_VERIFY(fespace.GetVDim() == 1,
-              "libCEED interface for CurlCurlMassIntegrator does not support vdim > 1!");
-
-  CurlCurlMassIntegratorInfo info = {{0}};
-
-  mfem::ParMesh &mesh = *fespace.GetParMesh();
-  info.ctx.dim = mesh.Dimension() - use_bdr;
-  info.ctx.space_dim = mesh.SpaceDimension();
-  info.ctx.curl_dim = (info.ctx.dim < 3) ? 1 : info.ctx.dim;
-
-  info.trial_op = ceed::EvalMode::InterpAndCurl;
-  info.test_op = ceed::EvalMode::InterpAndCurl;
-  info.qdata_size = (info.ctx.curl_dim * (info.ctx.curl_dim + 1)) / 2 +
-                    (info.ctx.dim * (info.ctx.dim + 1)) / 2;
-
-  MFEM_VERIFY((Qc || VQc || MQc) && (Qm || VQm || MQm),
-              "libCEED CurlCurlMassIntegrator requires both a "
-              "curl-curl and a mass integrator coefficient!");
-  if (Qc)
+  // Set up QFunctions.
+  CeedInt dim, space_dim, trial_num_comp, test_num_comp;
+  PalaceCeedCall(ceed, CeedBasisGetDimension(trial_basis, &dim));
+  PalaceCeedCall(ceed, CeedGeometryDataGetSpaceDimension(geom_data_restr, dim, &space_dim));
+  PalaceCeedCall(ceed, CeedBasisGetNumComponents(trial_basis, &trial_num_comp));
+  PalaceCeedCall(ceed, CeedBasisGetNumComponents(test_basis, &test_num_comp));
+  MFEM_VERIFY(
+      trial_num_comp == test_num_comp && trial_num_comp == 1,
+      "CurlCurlMassIntegrator requires test and trial spaces with a single component!");
+  switch (10 * space_dim + dim)
   {
-    ceed::InitCoefficient(*Qc, mesh, ir, indices, use_bdr, coeff.emplace_back());
-
-    if (Qm)
-    {
-      ceed::InitCoefficient(*Qm, mesh, ir, indices, use_bdr, coeff.emplace_back());
-
-      info.build_qf = f_build_curlcurl_mass_quad_scalar_scalar;
-      info.build_qf_path =
-          PalaceQFunctionRelativePath(f_build_curlcurl_mass_quad_scalar_scalar_loc);
-    }
-    else if (VQm)
-    {
-      MFEM_VERIFY(VQm->GetVDim() == info.ctx.space_dim,
-                  "Invalid vector coefficient dimension for CurlCurlMassIntegrator!");
-      ceed::InitCoefficient(*VQm, mesh, ir, indices, use_bdr, coeff.emplace_back());
-
-      info.build_qf = f_build_curlcurl_mass_quad_scalar_vector;
-      info.build_qf_path =
-          PalaceQFunctionRelativePath(f_build_curlcurl_mass_quad_scalar_vector_loc);
-    }
-    else if (MQm)
-    {
-      MFEM_VERIFY(MQm->GetVDim() == info.ctx.space_dim,
-                  "Invalid matrix coefficient dimension for CurlCurlMassIntegrator!");
-      ceed::InitCoefficient(*MQm, mesh, ir, indices, use_bdr, coeff.emplace_back());
-
-      info.build_qf = f_build_curlcurl_mass_quad_scalar_matrix;
-      info.build_qf_path =
-          PalaceQFunctionRelativePath(f_build_curlcurl_mass_quad_scalar_matrix_loc);
-    }
+    case 22:
+      info.apply_qf = assemble_q_data ? f_build_hdivmass_22 : f_apply_hdivmass_22;
+      info.apply_qf_path = PalaceQFunctionRelativePath(
+          assemble_q_data ? f_build_hdivmass_22_loc : f_apply_hdivmass_22_loc);
+      break;
+    case 33:
+      info.apply_qf = assemble_q_data ? f_build_hdivmass_33 : f_apply_hdivmass_33;
+      info.apply_qf_path = PalaceQFunctionRelativePath(
+          assemble_q_data ? f_build_hdivmass_33_loc : f_apply_hdivmass_33_loc);
+      break;
+    case 32:
+      info.apply_qf = assemble_q_data ? f_build_hdivmass_32 : f_apply_hdivmass_32;
+      info.apply_qf_path = PalaceQFunctionRelativePath(
+          assemble_q_data ? f_build_hdivmass_32_loc : f_apply_hdivmass_32_loc);
+      break;
+    default:
+      MFEM_ABORT("Invalid value of (dim, space_dim) = ("
+                 << dim << ", " << space_dim << ") for CurlCurlMassIntegrator!");
   }
-  else if (VQc)
+  info.trial_ops = EvalMode::Curl | EvalMode::Interp;
+  info.test_ops = EvalMode::Curl | EvalMode::Interp;
+  if (dim < 3)
   {
-    MFEM_VERIFY(VQc->GetVDim() == info.ctx.curl_dim,
-                "Invalid vector coefficient dimension for CurlCurlMassIntegrator!");
-    ceed::InitCoefficient(*VQc, mesh, ir, indices, use_bdr, coeff.emplace_back());
-
-    if (Qm)
-    {
-      ceed::InitCoefficient(*Qm, mesh, ir, indices, use_bdr, coeff.emplace_back());
-
-      info.build_qf = f_build_curlcurl_mass_quad_vector_scalar;
-      info.build_qf_path =
-          PalaceQFunctionRelativePath(f_build_curlcurl_mass_quad_vector_scalar_loc);
-    }
-    else if (VQm)
-    {
-      MFEM_VERIFY(VQm->GetVDim() == info.ctx.space_dim,
-                  "Invalid vector coefficient dimension for CurlCurlMassIntegrator!");
-      ceed::InitCoefficient(*VQm, mesh, ir, indices, use_bdr, coeff.emplace_back());
-
-      info.build_qf = f_build_curlcurl_mass_quad_vector_vector;
-      info.build_qf_path =
-          PalaceQFunctionRelativePath(f_build_curlcurl_mass_quad_vector_vector_loc);
-    }
-    else if (MQm)
-    {
-      MFEM_VERIFY(MQm->GetVDim() == info.ctx.space_dim,
-                  "Invalid matrix coefficient dimension for CurlCurlMassIntegrator!");
-      ceed::InitCoefficient(*MQm, mesh, ir, indices, use_bdr, coeff.emplace_back());
-
-      info.build_qf = f_build_curlcurl_mass_quad_vector_matrix;
-      info.build_qf_path =
-          PalaceQFunctionRelativePath(f_build_curlcurl_mass_quad_vector_matrix_loc);
-    }
-  }
-  else if (MQc)
-  {
-    MFEM_VERIFY(MQc->GetVDim() == info.ctx.curl_dim,
-                "Invalid matrix coefficient dimension for CurlCurlMassIntegrator!");
-    ceed::InitCoefficient(*MQc, mesh, ir, indices, use_bdr, coeff.emplace_back());
-
-    if (Qm)
-    {
-      ceed::InitCoefficient(*Qm, mesh, ir, indices, use_bdr, coeff.emplace_back());
-
-      info.build_qf = f_build_curlcurl_mass_quad_matrix_scalar;
-      info.build_qf_path =
-          PalaceQFunctionRelativePath(f_build_curlcurl_mass_quad_matrix_scalar_loc);
-    }
-    else if (VQm)
-    {
-      MFEM_VERIFY(VQm->GetVDim() == info.ctx.space_dim,
-                  "Invalid vector coefficient dimension for CurlCurlMassIntegrator!");
-      ceed::InitCoefficient(*VQm, mesh, ir, indices, use_bdr, coeff.emplace_back());
-
-      info.build_qf = f_build_curlcurl_mass_quad_matrix_vector;
-      info.build_qf_path =
-          PalaceQFunctionRelativePath(f_build_curlcurl_mass_quad_matrix_vector_loc);
-    }
-    else if (MQm)
-    {
-      MFEM_VERIFY(MQm->GetVDim() == info.ctx.space_dim,
-                  "Invalid matrix coefficient dimension for CurlCurlMassIntegrator!");
-      ceed::InitCoefficient(*MQm, mesh, ir, indices, use_bdr, coeff.emplace_back());
-
-      info.build_qf = f_build_curlcurl_mass_quad_matrix_matrix;
-      info.build_qf_path =
-          PalaceQFunctionRelativePath(f_build_curlcurl_mass_quad_matrix_matrix_loc);
-    }
+    info.trial_ops |= EvalMode::Weight;
   }
 
-  info.apply_qf = f_apply_curlcurl_mass;
-  info.apply_qf_path = PalaceQFunctionRelativePath(f_apply_curlcurl_mass_loc);
-
-  return info;
-}
-
-}  // namespace
-
-void CurlCurlMassIntegrator::Assemble(const mfem::ParFiniteElementSpace &trial_fespace,
-                                      const mfem::ParFiniteElementSpace &test_fespace,
-                                      const mfem::IntegrationRule &ir,
-                                      const std::vector<int> &indices, Ceed ceed,
-                                      CeedOperator *op, CeedOperator *op_t)
-{
-  MFEM_VERIFY(&trial_fespace == &test_fespace,
-              "CurlCurlMassIntegrator requires the same test and trial spaces!");
-  constexpr bool use_bdr = false;
-  std::vector<ceed::QuadratureCoefficient> coeff;
-  const auto info = InitializeIntegratorInfo(trial_fespace, ir, indices, use_bdr, Qc, VQc,
-                                             MQc, Qm, VQm, MQm, coeff);
-  ceed::AssembleCeedOperator(info, trial_fespace, test_fespace, ir, indices, use_bdr, coeff,
-                             ceed, op, op_t);
-}
-
-void CurlCurlMassIntegrator::AssembleBoundary(
-    const mfem::ParFiniteElementSpace &trial_fespace,
-    const mfem::ParFiniteElementSpace &test_fespace, const mfem::IntegrationRule &ir,
-    const std::vector<int> &indices, Ceed ceed, CeedOperator *op, CeedOperator *op_t)
-{
-  MFEM_VERIFY(&trial_fespace == &test_fespace,
-              "CurlCurlMassIntegrator requires the same test and trial spaces!");
-  constexpr bool use_bdr = true;
-  std::vector<ceed::QuadratureCoefficient> coeff;
-  const auto info = InitializeIntegratorInfo(trial_fespace, ir, indices, use_bdr, Qc, VQc,
-                                             MQc, Qm, VQm, MQm, coeff);
-  ceed::AssembleCeedOperator(info, trial_fespace, test_fespace, ir, indices, use_bdr, coeff,
-                             ceed, op, op_t);
+  // Set up the coefficient and assemble.
+  auto ctx = [&]()
+  {
+    switch (10 * space_dim + dim)
+    {
+      case 22:
+        return PopulateCoefficientContext<1, 2>(Q, Q_mass);
+      case 33:
+        return PopulateCoefficientContext<3, 3>(Q, Q_mass);
+      case 32:
+        return PopulateCoefficientContext<1, 3>(Q, Q_mass);
+    }
+    return std::vector<CeedIntScalar>();
+  }();
+  AssembleCeedOperator(info, (void *)ctx.data(), ctx.size() * sizeof(CeedIntScalar), ceed,
+                       trial_restr, test_restr, trial_basis, test_basis, geom_data,
+                       geom_data_restr, op);
 }
 
 }  // namespace palace

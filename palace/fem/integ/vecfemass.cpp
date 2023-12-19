@@ -3,220 +3,199 @@
 
 #include "fem/integrator.hpp"
 
-#include <vector>
-#include <mfem.hpp>
 #include "fem/libceed/coefficient.hpp"
 #include "fem/libceed/integrator.hpp"
 
+#include "fem/qfunctions/hcurl_build_qf.h"
 #include "fem/qfunctions/hcurl_qf.h"
+#include "fem/qfunctions/hcurlhdiv_build_qf.h"
 #include "fem/qfunctions/hcurlhdiv_qf.h"
+#include "fem/qfunctions/hdiv_build_qf.h"
 #include "fem/qfunctions/hdiv_qf.h"
 
 namespace palace
 {
 
-struct VectorFEMassIntegratorInfo : public ceed::IntegratorInfo
+using namespace ceed;
+
+void VectorFEMassIntegrator::Assemble(Ceed ceed, CeedElemRestriction trial_restr,
+                                      CeedElemRestriction test_restr, CeedBasis trial_basis,
+                                      CeedBasis test_basis, CeedVector geom_data,
+                                      CeedElemRestriction geom_data_restr,
+                                      CeedOperator *op) const
 {
-  VectorFEMassContext ctx;
-};
+  IntegratorInfo info;
+  info.assemble_q_data = assemble_q_data;
 
-namespace
-{
-
-VectorFEMassIntegratorInfo
-InitializeIntegratorInfo(const mfem::ParFiniteElementSpace &trial_fespace,
-                         const mfem::ParFiniteElementSpace &test_fespace,
-                         const mfem::IntegrationRule &ir, const std::vector<int> &indices,
-                         bool use_bdr, mfem::Coefficient *Q, mfem::VectorCoefficient *VQ,
-                         mfem::MatrixCoefficient *MQ,
-                         std::vector<ceed::QuadratureCoefficient> &coeff)
-{
-  MFEM_VERIFY(trial_fespace.GetVDim() == 1 && test_fespace.GetVDim() == 1,
-              "libCEED interface for VectorFEMassIntegrator does not support vdim > 1!");
-
-  VectorFEMassIntegratorInfo info = {{0}};
-
-  mfem::ParMesh &mesh = *trial_fespace.GetParMesh();
-  info.ctx.dim = mesh.Dimension() - use_bdr;
-  info.ctx.space_dim = mesh.SpaceDimension();
-
-  int trial_map_type = trial_fespace.FEColl()->GetMapType(info.ctx.dim);
-  int test_map_type = test_fespace.FEColl()->GetMapType(info.ctx.dim);
-  MFEM_VERIFY((trial_map_type == mfem::FiniteElement::H_CURL ||
-               trial_map_type == mfem::FiniteElement::H_DIV) &&
-                  (test_map_type == mfem::FiniteElement::H_CURL ||
-                   test_map_type == mfem::FiniteElement::H_DIV),
-              "VectorFEMassIntegrator requires H(div) or H(curl) FE spaces!");
-
-  info.trial_op = ceed::EvalMode::Interp;
-  info.test_op = ceed::EvalMode::Interp;
-  if (trial_map_type != test_map_type)
+  // Set up QFunctions.
+  CeedInt dim, space_dim, trial_num_comp, test_num_comp;
+  PalaceCeedCall(ceed, CeedBasisGetDimension(trial_basis, &dim));
+  PalaceCeedCall(ceed, CeedGeometryDataGetSpaceDimension(geom_data_restr, dim, &space_dim));
+  PalaceCeedCall(ceed, CeedBasisGetNumComponents(trial_basis, &trial_num_comp));
+  PalaceCeedCall(ceed, CeedBasisGetNumComponents(test_basis, &test_num_comp));
+  MFEM_VERIFY(
+      trial_num_comp == test_num_comp && trial_num_comp == 1,
+      "VectorFEMassIntegrator requires test and trial spaces with a single component!");
+  switch (10 * space_dim + dim)
   {
-    // Quadrature data is nonsymmetric in this case.
-    info.qdata_size = info.ctx.dim * info.ctx.dim;
-    info.ctx.sym = false;
+    case 22:
+      if (trial_map_type == mfem::FiniteElement::H_CURL &&
+          test_map_type == mfem::FiniteElement::H_CURL)
+      {
+        info.apply_qf = assemble_q_data ? f_build_hcurl_22 : f_apply_hcurl_22;
+        info.apply_qf_path = PalaceQFunctionRelativePath(
+            assemble_q_data ? f_build_hcurl_22_loc : f_apply_hcurl_22_loc);
+      }
+      else if (trial_map_type == mfem::FiniteElement::H_DIV &&
+               test_map_type == mfem::FiniteElement::H_DIV)
+      {
+        info.apply_qf = assemble_q_data ? f_build_hdiv_22 : f_apply_hdiv_22;
+        info.apply_qf_path = PalaceQFunctionRelativePath(
+            assemble_q_data ? f_build_hdiv_22_loc : f_apply_hdiv_22_loc);
+      }
+      else if (trial_map_type == mfem::FiniteElement::H_CURL &&
+               test_map_type == mfem::FiniteElement::H_DIV)
+      {
+        info.apply_qf = assemble_q_data ? f_build_hcurlhdiv_22 : f_apply_hcurlhdiv_22;
+        info.apply_qf_path = PalaceQFunctionRelativePath(
+            assemble_q_data ? f_build_hcurlhdiv_22_loc : f_apply_hcurlhdiv_22_loc);
+      }
+      else if (trial_map_type == mfem::FiniteElement::H_DIV &&
+               test_map_type == mfem::FiniteElement::H_CURL)
+      {
+        info.apply_qf = assemble_q_data ? f_build_hdivhcurl_22 : f_apply_hdivhcurl_22;
+        info.apply_qf_path = PalaceQFunctionRelativePath(
+            assemble_q_data ? f_build_hdivhcurl_22_loc : f_apply_hdivhcurl_22_loc);
+      }
+      else
+      {
+        MFEM_ABORT("Invalid trial/test element map type for VectorFEMassIntegrator!");
+      }
+      break;
+    case 33:
+      if (trial_map_type == mfem::FiniteElement::H_CURL &&
+          test_map_type == mfem::FiniteElement::H_CURL)
+      {
+        info.apply_qf = assemble_q_data ? f_build_hcurl_33 : f_apply_hcurl_33;
+        info.apply_qf_path = PalaceQFunctionRelativePath(
+            assemble_q_data ? f_build_hcurl_33_loc : f_apply_hcurl_33_loc);
+      }
+      else if (trial_map_type == mfem::FiniteElement::H_DIV &&
+               test_map_type == mfem::FiniteElement::H_DIV)
+      {
+        info.apply_qf = assemble_q_data ? f_build_hdiv_33 : f_apply_hdiv_33;
+        info.apply_qf_path = PalaceQFunctionRelativePath(
+            assemble_q_data ? f_build_hdiv_33_loc : f_apply_hdiv_33_loc);
+      }
+      else if (trial_map_type == mfem::FiniteElement::H_CURL &&
+               test_map_type == mfem::FiniteElement::H_DIV)
+      {
+        info.apply_qf = assemble_q_data ? f_build_hcurlhdiv_33 : f_apply_hcurlhdiv_33;
+        info.apply_qf_path = PalaceQFunctionRelativePath(
+            assemble_q_data ? f_build_hcurlhdiv_33_loc : f_apply_hcurlhdiv_33_loc);
+      }
+      else if (trial_map_type == mfem::FiniteElement::H_DIV &&
+               test_map_type == mfem::FiniteElement::H_CURL)
+      {
+        info.apply_qf = assemble_q_data ? f_build_hdivhcurl_33 : f_apply_hdivhcurl_33;
+        info.apply_qf_path = PalaceQFunctionRelativePath(
+            assemble_q_data ? f_build_hdivhcurl_33_loc : f_apply_hdivhcurl_33_loc);
+      }
+      else
+      {
+        MFEM_ABORT("Invalid trial/test element map type for VectorFEMassIntegrator!");
+      }
+      break;
+    case 21:
+      if (trial_map_type == mfem::FiniteElement::H_CURL &&
+          test_map_type == mfem::FiniteElement::H_CURL)
+      {
+        info.apply_qf = assemble_q_data ? f_build_hcurl_21 : f_apply_hcurl_21;
+        info.apply_qf_path = PalaceQFunctionRelativePath(
+            assemble_q_data ? f_build_hcurl_21_loc : f_apply_hcurl_21_loc);
+      }
+      else if (trial_map_type == mfem::FiniteElement::H_DIV &&
+               test_map_type == mfem::FiniteElement::H_DIV)
+      {
+        info.apply_qf = assemble_q_data ? f_build_hdiv_21 : f_apply_hdiv_21;
+        info.apply_qf_path = PalaceQFunctionRelativePath(
+            assemble_q_data ? f_build_hdiv_21_loc : f_apply_hdiv_21_loc);
+      }
+      else if (trial_map_type == mfem::FiniteElement::H_CURL &&
+               test_map_type == mfem::FiniteElement::H_DIV)
+      {
+        info.apply_qf = assemble_q_data ? f_build_hcurlhdiv_21 : f_apply_hcurlhdiv_21;
+        info.apply_qf_path = PalaceQFunctionRelativePath(
+            assemble_q_data ? f_build_hcurlhdiv_21_loc : f_apply_hcurlhdiv_21_loc);
+      }
+      else if (trial_map_type == mfem::FiniteElement::H_DIV &&
+               test_map_type == mfem::FiniteElement::H_CURL)
+      {
+        info.apply_qf = assemble_q_data ? f_build_hdivhcurl_21 : f_apply_hdivhcurl_21;
+        info.apply_qf_path = PalaceQFunctionRelativePath(
+            assemble_q_data ? f_build_hdivhcurl_21_loc : f_apply_hdivhcurl_21_loc);
+      }
+      else
+      {
+        MFEM_ABORT("Invalid trial/test element map type for VectorFEMassIntegrator!");
+      }
+      break;
+    case 32:
+      if (trial_map_type == mfem::FiniteElement::H_CURL &&
+          test_map_type == mfem::FiniteElement::H_CURL)
+      {
+        info.apply_qf = assemble_q_data ? f_build_hcurl_32 : f_apply_hcurl_32;
+        info.apply_qf_path = PalaceQFunctionRelativePath(
+            assemble_q_data ? f_build_hcurl_32_loc : f_apply_hcurl_32_loc);
+      }
+      else if (trial_map_type == mfem::FiniteElement::H_DIV &&
+               test_map_type == mfem::FiniteElement::H_DIV)
+      {
+        info.apply_qf = assemble_q_data ? f_build_hdiv_32 : f_apply_hdiv_32;
+        info.apply_qf_path = PalaceQFunctionRelativePath(
+            assemble_q_data ? f_build_hdiv_32_loc : f_apply_hdiv_32_loc);
+      }
+      else if (trial_map_type == mfem::FiniteElement::H_CURL &&
+               test_map_type == mfem::FiniteElement::H_DIV)
+      {
+        info.apply_qf = assemble_q_data ? f_build_hcurlhdiv_32 : f_apply_hcurlhdiv_32;
+        info.apply_qf_path = PalaceQFunctionRelativePath(
+            assemble_q_data ? f_build_hcurlhdiv_32_loc : f_apply_hcurlhdiv_32_loc);
+      }
+      else if (trial_map_type == mfem::FiniteElement::H_DIV &&
+               test_map_type == mfem::FiniteElement::H_CURL)
+      {
+        info.apply_qf = assemble_q_data ? f_build_hdivhcurl_32 : f_apply_hdivhcurl_32;
+        info.apply_qf_path = PalaceQFunctionRelativePath(
+            assemble_q_data ? f_build_hdivhcurl_32_loc : f_apply_hdivhcurl_32_loc);
+      }
+      else
+      {
+        MFEM_ABORT("Invalid trial/test element map type for VectorFEMassIntegrator!");
+      }
+      break;
+    default:
+      MFEM_ABORT("Invalid value of (dim, space_dim) = ("
+                 << dim << ", " << space_dim << ") for VectorFEMassIntegrator!");
   }
-  else
+  info.trial_ops = EvalMode::Interp;
+  info.test_ops = EvalMode::Interp;
+
+  // Set up the coefficient and assemble.
+  auto ctx = [&]()
   {
-    info.qdata_size = (info.ctx.dim * (info.ctx.dim + 1)) / 2;
-    info.ctx.sym = true;
-  }
-
-  mfem::ConstantCoefficient *const_coeff = dynamic_cast<mfem::ConstantCoefficient *>(Q);
-  if (const_coeff || !(Q || VQ || MQ))
-  {
-    info.ctx.coeff = const_coeff ? const_coeff->constant : 1.0;
-
-    if (trial_map_type == mfem::FiniteElement::H_CURL &&
-        test_map_type == mfem::FiniteElement::H_CURL)
+    switch (space_dim)
     {
-      info.build_qf = f_build_hcurl_const_scalar;
-      info.build_qf_path = PalaceQFunctionRelativePath(f_build_hcurl_const_scalar_loc);
+      case 2:
+        return PopulateCoefficientContext<2>(Q);
+      case 3:
+        return PopulateCoefficientContext<3>(Q);
     }
-    else if (trial_map_type == mfem::FiniteElement::H_DIV &&
-             test_map_type == mfem::FiniteElement::H_DIV)
-    {
-      info.build_qf = f_build_hdiv_const_scalar;
-      info.build_qf_path = PalaceQFunctionRelativePath(f_build_hdiv_const_scalar_loc);
-    }
-    else if (trial_map_type == mfem::FiniteElement::H_CURL &&
-             test_map_type == mfem::FiniteElement::H_DIV)
-    {
-      info.build_qf = f_build_hcurlhdiv_const_scalar;
-      info.build_qf_path = PalaceQFunctionRelativePath(f_build_hcurlhdiv_const_scalar_loc);
-    }
-    else  // trial_map_type == mfem::FiniteElement::H_DIV && test_map_type ==
-          // mfem::FiniteElement::H_CURL
-    {
-      info.build_qf = f_build_hdivhcurl_const_scalar;
-      info.build_qf_path = PalaceQFunctionRelativePath(f_build_hdivhcurl_const_scalar_loc);
-    }
-  }
-  else if (Q)
-  {
-    ceed::InitCoefficient(*Q, mesh, ir, indices, use_bdr, coeff.emplace_back());
-
-    if (trial_map_type == mfem::FiniteElement::H_CURL &&
-        test_map_type == mfem::FiniteElement::H_CURL)
-    {
-      info.build_qf = f_build_hcurl_quad_scalar;
-      info.build_qf_path = PalaceQFunctionRelativePath(f_build_hcurl_quad_scalar_loc);
-    }
-    else if (trial_map_type == mfem::FiniteElement::H_DIV &&
-             test_map_type == mfem::FiniteElement::H_DIV)
-    {
-      info.build_qf = f_build_hdiv_quad_scalar;
-      info.build_qf_path = PalaceQFunctionRelativePath(f_build_hdiv_quad_scalar_loc);
-    }
-    else if (trial_map_type == mfem::FiniteElement::H_CURL &&
-             test_map_type == mfem::FiniteElement::H_DIV)
-    {
-      info.build_qf = f_build_hcurlhdiv_quad_scalar;
-      info.build_qf_path = PalaceQFunctionRelativePath(f_build_hcurlhdiv_quad_scalar_loc);
-    }
-    else  // trial_map_type == mfem::FiniteElement::H_DIV && test_map_type ==
-          // mfem::FiniteElement::H_CURL
-    {
-      info.build_qf = f_build_hdivhcurl_quad_scalar;
-      info.build_qf_path = PalaceQFunctionRelativePath(f_build_hdivhcurl_quad_scalar_loc);
-    }
-  }
-  else if (VQ)
-  {
-    MFEM_VERIFY(VQ->GetVDim() == info.ctx.space_dim,
-                "Invalid vector coefficient dimension for VectorFEMassIntegrator!");
-    ceed::InitCoefficient(*VQ, mesh, ir, indices, use_bdr, coeff.emplace_back());
-
-    if (trial_map_type == mfem::FiniteElement::H_CURL &&
-        test_map_type == mfem::FiniteElement::H_CURL)
-    {
-      info.build_qf = f_build_hcurl_quad_vector;
-      info.build_qf_path = PalaceQFunctionRelativePath(f_build_hcurl_quad_vector_loc);
-    }
-    else if (trial_map_type == mfem::FiniteElement::H_DIV &&
-             test_map_type == mfem::FiniteElement::H_DIV)
-    {
-      info.build_qf = f_build_hdiv_quad_vector;
-      info.build_qf_path = PalaceQFunctionRelativePath(f_build_hdiv_quad_vector_loc);
-    }
-    else if (trial_map_type == mfem::FiniteElement::H_CURL &&
-             test_map_type == mfem::FiniteElement::H_DIV)
-    {
-      info.build_qf = f_build_hcurlhdiv_quad_vector;
-      info.build_qf_path = PalaceQFunctionRelativePath(f_build_hcurlhdiv_quad_vector_loc);
-    }
-    else  // trial_map_type == mfem::FiniteElement::H_DIV && test_map_type ==
-          // mfem::FiniteElement::H_CURL
-    {
-      info.build_qf = f_build_hdivhcurl_quad_vector;
-      info.build_qf_path = PalaceQFunctionRelativePath(f_build_hdivhcurl_quad_vector_loc);
-    }
-  }
-  else if (MQ)
-  {
-    MFEM_VERIFY(MQ->GetVDim() == info.ctx.space_dim,
-                "Invalid matrix coefficient dimension for VectorFEMassIntegrator!");
-    ceed::InitCoefficient(*MQ, mesh, ir, indices, use_bdr, coeff.emplace_back());
-
-    if (trial_map_type == mfem::FiniteElement::H_CURL &&
-        test_map_type == mfem::FiniteElement::H_CURL)
-    {
-      info.build_qf = f_build_hcurl_quad_matrix;
-      info.build_qf_path = PalaceQFunctionRelativePath(f_build_hcurl_quad_matrix_loc);
-    }
-    else if (trial_map_type == mfem::FiniteElement::H_DIV &&
-             test_map_type == mfem::FiniteElement::H_DIV)
-    {
-      info.build_qf = f_build_hdiv_quad_matrix;
-      info.build_qf_path = PalaceQFunctionRelativePath(f_build_hdiv_quad_matrix_loc);
-    }
-    else if (trial_map_type == mfem::FiniteElement::H_CURL &&
-             test_map_type == mfem::FiniteElement::H_DIV)
-    {
-      info.build_qf = f_build_hcurlhdiv_quad_matrix;
-      info.build_qf_path = PalaceQFunctionRelativePath(f_build_hcurlhdiv_quad_matrix_loc);
-    }
-    else  // trial_map_type == mfem::FiniteElement::H_DIV && test_map_type ==
-          // mfem::FiniteElement::H_CURL
-    {
-      info.build_qf = f_build_hdivhcurl_quad_matrix;
-      info.build_qf_path = PalaceQFunctionRelativePath(f_build_hdivhcurl_quad_matrix_loc);
-    }
-  }
-
-  info.apply_qf = f_apply_vecfemass;
-  info.apply_qf_path = PalaceQFunctionRelativePath(f_apply_vecfemass_loc);
-
-  return info;
-}
-
-}  // namespace
-
-void VectorFEMassIntegrator::Assemble(const mfem::ParFiniteElementSpace &trial_fespace,
-                                      const mfem::ParFiniteElementSpace &test_fespace,
-                                      const mfem::IntegrationRule &ir,
-                                      const std::vector<int> &indices, Ceed ceed,
-                                      CeedOperator *op, CeedOperator *op_t)
-{
-  constexpr bool use_bdr = false;
-  std::vector<ceed::QuadratureCoefficient> coeff;
-  const auto info = InitializeIntegratorInfo(trial_fespace, test_fespace, ir, indices,
-                                             use_bdr, Q, VQ, MQ, coeff);
-  ceed::AssembleCeedOperator(info, trial_fespace, test_fespace, ir, indices, use_bdr, coeff,
-                             ceed, op, op_t);
-}
-
-void VectorFEMassIntegrator::AssembleBoundary(
-    const mfem::ParFiniteElementSpace &trial_fespace,
-    const mfem::ParFiniteElementSpace &test_fespace, const mfem::IntegrationRule &ir,
-    const std::vector<int> &indices, Ceed ceed, CeedOperator *op, CeedOperator *op_t)
-{
-  constexpr bool use_bdr = true;
-  std::vector<ceed::QuadratureCoefficient> coeff;
-  const auto info = InitializeIntegratorInfo(trial_fespace, test_fespace, ir, indices,
-                                             use_bdr, Q, VQ, MQ, coeff);
-  ceed::AssembleCeedOperator(info, trial_fespace, test_fespace, ir, indices, use_bdr, coeff,
-                             ceed, op, op_t);
+    return std::vector<CeedIntScalar>();
+  }();
+  AssembleCeedOperator(info, (void *)ctx.data(), ctx.size() * sizeof(CeedIntScalar), ceed,
+                       trial_restr, test_restr, trial_basis, test_basis, geom_data,
+                       geom_data_restr, op);
 }
 
 }  // namespace palace
