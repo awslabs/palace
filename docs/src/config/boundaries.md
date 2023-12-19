@@ -105,7 +105,7 @@ frequency domain driven simulation type.
 `"WavePortPEC"` :  Top-level object for configuring PEC boundary conditions for boundary
 mode analysis performed on the wave port boundaries. Thus, this object is only relevant
 when wave port boundaries are specified under
-[`config["Boundaries"]["WavePort"]`](#boundaries%5B%5B%22WavePort%22%5D%5D).
+[`config["Boundaries"]["WavePort"]`](#boundaries%5B%22WavePort%22%5D).
 
 `"SurfaceCurrent"` :  Array of objects for configuring surface current boundary conditions.
 This boundary prescribes a unit source surface current excitation on the given boundary in

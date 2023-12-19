@@ -233,8 +233,8 @@ second-order absorbing boundary condition is
     - \beta\nabla\times[(\nabla\times\bm{E})_n\bm{n}] = 0
 ```
 
-where assuming an infinite radius of curvature, ``\beta=\mu_r^{-1}c_0/(2i\omega)`` and
-the contribution depending on ``(\nabla\cdot\bm{E}_t)`` have been neglected.
+where assuming an infinite radius of curvature ``\beta=\mu_r^{-1}c_0/(2i\omega)``, and the
+contribution depending on ``(\nabla\cdot\bm{E}_t)`` has been neglected.
 
 Additionally, while metals with finite conductivity can be modeled using an impedance
 boundary condition with constant impedance ``Z_s``, a more accurate model taking into
