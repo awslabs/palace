@@ -52,6 +52,7 @@ SpacesBeforeTrailingComments: 2
 StatementMacros: ['PalacePragmaOmp',
                   'PalacePragmaDiagnosticPush',
                   'PalacePragmaDiagnosticPop',
-                  'PalacePragmaDiagnosticDisableDeprecated']
+                  'PalacePragmaDiagnosticDisableDeprecated',
+                  'PalacePragmaDiagnosticDisableUnused']
 TypenameMacros: ['CEED_QFUNCTION']
 UseTab: Never
