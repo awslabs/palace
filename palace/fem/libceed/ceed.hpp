@@ -1,11 +1,11 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#ifndef PALACE_LIBCEED_UTILS_HPP
-#define PALACE_LIBCEED_UTILS_HPP
+#ifndef PALACE_LIBCEED_CEED_HPP
+#define PALACE_LIBCEED_CEED_HPP
 
-#include <functional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 #include <ceed.h>
 #include <mfem.hpp>
@@ -37,6 +37,13 @@
 namespace palace::ceed
 {
 
+// Useful alias templates for libCEED objects specific to a specific Ceed context and
+// element geometry type.
+template <typename T>
+using CeedGeomObjectMap = std::unordered_map<mfem::Geometry::Type, T>;
+template <typename T>
+using CeedObjectMap = std::unordered_map<Ceed, CeedGeomObjectMap<T>>;
+
 // Call libCEED's CeedInit for the given resource. The specific device to use is set prior
 // to this using mfem::Device.
 void Initialize(const char *resource, const char *jit_source_dir);
@@ -50,6 +57,12 @@ std::string Print();
 // Initialize a CeedVector from an mfem::Vector.
 void InitCeedVector(const mfem::Vector &v, Ceed ceed, CeedVector *cv);
 
+// Convert an MFEM geometry type to a libCEED one.
+CeedElemTopology GetCeedTopology(mfem::Geometry::Type geom);
+
+// Convert a libCEED geometry type to an MFEM one.
+mfem::Geometry::Type GetMfemTopology(CeedElemTopology geom);
+
 namespace internal
 {
 
@@ -60,4 +73,4 @@ const std::vector<Ceed> &GetCeedObjects();
 
 }  // namespace palace::ceed
 
-#endif  // PALACE_LIBCEED_UTILS_HPP
+#endif  // PALACE_LIBCEED_OPERATOR_HPP
