@@ -38,8 +38,12 @@ can be calculated as
 The flux density is related to the magnetic field, ``\bm{H}``, by the standard linear
 constitutive relationship ``\bm{H} = \mu_r^{-1}\bm{B}``.
 
+In general, the material property coefficients may be scalar- or matrix-valued. In the
+matrix-valued (anisotropic) case, the material property coefficients should still always be
+symmetric.
+
 For a general isotropic lossy dielectric, the relative permittivity ``\varepsilon_r`` is a
-complex scalar:
+complex-valued quantity:
 
 ```math
 \varepsilon_r = \varepsilon_r' (1-i\tan{\delta})
@@ -92,6 +96,24 @@ stable implicit time-integration schemes without the expense of a coupled block 
 solve for ``\bm{E}(\bm{x},t)`` and ``\bm{B}(\bm{x},t)``. It offers the additional benefit
 of sharing many similarities in the spatial discretization as the frequency domain
 formulation outlined above.
+
+## Eigenmode calculations
+
+For eigenmode problems, the source term is zero and a quadratic eigenvalue problem for the
+eigenvalues ``\omega`` is solved:
+
+```math
+(\bm{K}+i\omega\bm{C}-\omega^2\bm{M})\bm{x} = 0
+```
+
+where the matrix ``\bm{K}`` represents the discretized curl-curl operator, ``\bm{M}`` the
+mass term, and ``\bm{C}`` the port impedance boundary conditions. The damped frequency
+``\omega_d`` and quality factor ``Q`` are postprocessed from each of the resulting
+eigenvalues as
+
+```math
+\omega_d = \text{Re}\{\omega\} \,, \qquad Q = \frac{|\omega|}{2|\text{Im}\{\omega\}|} \,.
+```
 
 ## Lumped ports and wave ports
 
@@ -191,23 +213,48 @@ for each port:
 \tilde{S}_{ij} = S_{ij}e^{ik_{n,i}d_i}e^{ik_{n,j}d_j} \,.
 ```
 
-## Eigenmode calculations
+## Other boundary conditions
 
-For eigenmode problems, the source term is zero and a quadratic eigenvalue problem for the
-eigenvalues ``\omega`` is solved:
-
-```math
-(\bm{K}+i\omega\bm{C}-\omega^2\bm{M})\bm{x} = 0
-```
-
-where the matrix ``\bm{K}`` represents the discretized curl-curl operator, ``\bm{M}`` the
-mass term, and ``\bm{C}`` the port impedance boundary conditions. The damped frequency
-``\omega_d`` and quality factor ``Q`` is postprocessed from each of the resulting
-eigenvalues as
+The first-order absorbing boundary condition, also referred to as a scattering boundary
+condition, is a special case of the general impedance boundary condition described above:
 
 ```math
-\omega_d = \text{Re}\{\omega\} \,, \qquad Q = \frac{|\omega|}{2|\text{Im}\{\omega\}|} \,.
+\bm{n}\times(\mu_r^{-1}\nabla\times\bm{E})
+    + i\omega\sqrt{\mu_r^{-1}\varepsilon_r}\bm{n}\times(\bm{n}\times\bm{E}) = 0 \,.
 ```
+
+This is also known as the Sommerfeld radiation condition, and one can recognize the
+dependence on the impedance of free space ``Z_0^{-1}=\sqrt{\mu_r^{-1}\varepsilon_r}``. The
+second-order absorbing boundary condition is
+
+```math
+\bm{n}\times(\mu_r^{-1}\nabla\times\bm{E})
+    + i\omega\sqrt{\mu_r^{-1}\varepsilon_r}\bm{n}\times(\bm{n}\times\bm{E})
+    - \beta\nabla\times[(\nabla\times\bm{E})_n\bm{n}] = 0
+```
+
+where assuming an infinite radius of curvature ``\beta=\mu_r^{-1}c_0/(2i\omega)``, and the
+contribution depending on ``(\nabla\cdot\bm{E}_t)`` has been neglected.
+
+Additionally, while metals with finite conductivity can be modeled using an impedance
+boundary condition with constant impedance ``Z_s``, a more accurate model taking into
+account the frequency dependence of the skin depth is
+
+```math
+Z_s = \frac{1+i}{\delta\sigma}
+```
+
+where ``\delta=\sqrt{2/\mu_r\sigma\omega}`` is the skin depth and ``\sigma`` is the
+conductivity of the metal. Another model, which takes into account finite thickness effects,
+is given by
+
+```math
+Z_s = \frac{1}{\delta\sigma}\left(\frac{\sinh{\nu}+\sin{\nu}}{\cosh{\nu}+\cos{\nu}}
+    + i\frac{\sinh{\nu}-\sin{\nu}}{\cosh{\nu}+\cos{\nu}}\right)
+```
+
+where ``\nu=h/\delta`` and ``h`` is the layer thickness. This model correctly produces the
+DC limit when ``h\ll\delta``.
 
 ## Energy-participation ratios
 
@@ -357,7 +404,6 @@ potential formulation:
 ```math
 \begin{aligned}
 \nabla\times(\mu_r^{-1}\nabla\times\bm{A}_i) &= 0 \,,\; \bm{x}\in\Omega \\
-\bm{n}\times\bm{A}_i &= 0 \,,\; \bm{x}\in\Gamma_{PEC} \\
 \bm{n}\times(\mu_r^{-1}\nabla\times\bm{A}_i) =
     \bm{n}\times\bm{H}_i &= \bm{J}_s^{inc} \,,\; \bm{x}\in\Gamma_i \\
 \bm{n}\times(\mu_r^{-1}\nabla\times\bm{A}_i) &= 0 \,,\; \bm{x}\in\Gamma_j \,,\; j\neq i \,.

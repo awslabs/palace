@@ -83,7 +83,8 @@ per iteration, at the cost of the final mesh being less efficient.
 
 `"UniformLevels" [0]` :  Levels of uniform parallel mesh refinement to be performed on the
 input mesh. If not performing AMR, these may be used as levels within a geometric multigrid
-scheme.
+scheme. If performing AMR the most refined mesh is used as the initial mesh and the coarser
+meshes cannot be used in a geometric multigrid scheme.
 
 `"Boxes"` :  Array of box region refinement objects. All elements with a node inside the box
 region will be marked for refinement.

@@ -7,9 +7,9 @@
 
 !!! note
     
-    The files for this example can be found in the [`examples/spheres/`]
-    (https://github.com/awslabs/palace/blob/main/examples/spheres) directory of the *Palace*
-    source code.
+    The files for this example can be found in the
+    [`examples/spheres/`](https://github.com/awslabs/palace/blob/main/examples/spheres)
+    directory of the *Palace* source code.
 
 In this example, we consider two conducting spheres of radii ``a`` and ``b``, with centers
 separated by a distance ``c > a + b``. The surrounding medium is vacuum. An analytic
@@ -32,11 +32,12 @@ parameter ``u`` is given by
 ```
 
 Here we take the values ``a = 1\text{ cm}``, ``b = 2\text{ cm}``, and ``c = 5\text{ cm}``. A
-mesh is generated with Gmsh using the `mesh.jl` Julia script found in the [`mesh/`]
-(https://github.com/awslabs/palace/blob/main/examples/spheres/mesh) directory, which writes
-the mesh to [`mesh/spheres.msh`]
-(https://github.com/awslabs/palace/blob/main/examples/spheres/mesh/spheres.msh). The
-resulting high-order mesh uses cubically-curved tetrahedral elements, and is pictured below.
+mesh is generated with Gmsh using the `mesh.jl` Julia script found in the
+[`mesh/`](https://github.com/awslabs/palace/blob/main/examples/spheres/mesh) directory,
+which writes the mesh to
+[`mesh/spheres.msh`](https://github.com/awslabs/palace/blob/main/examples/spheres/mesh/spheres.msh).
+The resulting high-order mesh uses cubically-curved tetrahedral elements, and is pictured
+below.
 
 ```@raw html
 <br/><p align="center">
@@ -45,13 +46,13 @@ resulting high-order mesh uses cubically-curved tetrahedral elements, and is pic
 </p><br/>
 ```
 
-The configuration file for the *Palace* simulation is found in [`spheres.json`]
-(https://github.com/awslabs/palace/blob/main/examples/spheres/spheres.json). We set the
-simulation `"Type"` to `"Electrostatic"`, and add `"Terminal"` entries for the surface
-boundary of each sphere, corresponding to the entries of the capacitance matrix we wish to
-compute. The outer boundary of the computational domain, which is sufficiently far from the
-spheres, is prescribed a `"Ground"` boundary condition. We set the `"Order"` of the finite
-element approximation to ``3``.
+The configuration file for the *Palace* simulation is found in
+[`spheres.json`](https://github.com/awslabs/palace/blob/main/examples/spheres/spheres.json).
+We set the simulation `"Type"` to `"Electrostatic"`, and add `"Terminal"` entries for the
+surface boundary of each sphere, corresponding to the entries of the capacitance matrix we
+wish to compute. The outer boundary of the computational domain, which is sufficiently far
+from the spheres, is prescribed a `"Ground"` boundary condition. We set the `"Order"` of
+the finite element approximation to ``3``.
 
 The resulting extracted Maxwell capacitance matrix is saved to disk in the CSV file
 `postpro/terminal-C.csv`:
@@ -89,9 +90,8 @@ Additionally, while the typical approach used by *Palace* for lumped parameter e
 uses the computed field energies, the capacitance can also be calculated by directly
 integrating the charge on a boundary surface and dividing by the excitation voltage. The
 configuration file for this example contains this information under
-[`config["Boundaries"]["Postprocessing"]["Capacitance"]`]
-(../config/boundaries.md#boundaries["Postprocessing"]["Capacitance"]). The resulting
-capacitances are written to `postpro/surface-C.csv`:
+[`config["Boundaries"]["Postprocessing"]["Capacitance"]`](../config/boundaries.md#boundaries%5B%22Postprocessing%22%5D%5B%22Capacitance%22%5D).
+The resulting capacitances are written to `postpro/surface-C.csv`:
 
 ```
                i,                C[1] (F),                C[2] (F)

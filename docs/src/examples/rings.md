@@ -7,9 +7,9 @@
 
 !!! note
     
-    The files for this example can be found in the [`examples/rings/`]
-    (https://github.com/awslabs/palace/blob/main/examples/rings) directory of the *Palace*
-    source code.
+    The files for this example can be found in the
+    [`examples/rings/`](https://github.com/awslabs/palace/blob/main/examples/rings)
+    directory of the *Palace* source code.
 
 This example seeks to compute the inductance matrix for a system of two concentric
 current-carrying rings of radii ``r_a`` and ``r_b``, each with width ``w``. As with the
@@ -32,11 +32,11 @@ M_{bb} &= \mu_0 r_b \left(\log{\frac{16 r_b}{w}}-1.75\right) \,.
 ```
 
 We take in this case ``r_a = 10 \text{ μm}``, ``r_b = 100 \text{ μm}``, and
-``w = 1 \text{ μm}``. The `mesh.jl` script in the [`mesh/`]
-(https://github.com/awslabs/palace/blob/main/examples/rings/mesh) directory is used to
-generate an unstructured tetrahedral mesh with Gmsh, saved to [`mesh/rings.msh`]
-(https://github.com/awslabs/palace/blob/main/examples/rings/mesh/rings.msh), and a depiction
-is shown below.
+``w = 1 \text{ μm}``. The `mesh.jl` script in the
+[`mesh/`](https://github.com/awslabs/palace/blob/main/examples/rings/mesh) directory is used
+to generate an unstructured tetrahedral mesh with Gmsh, saved to
+[`mesh/rings.msh`](https://github.com/awslabs/palace/blob/main/examples/rings/mesh/rings.msh),
+and a depiction is shown below.
 
 ```@raw html
 <br/><p align="center">
@@ -44,13 +44,13 @@ is shown below.
 </p><br/>
 ```
 
-The configuration file for the *Palace* simulation is [`rings.json`]
-(https://github.com/awslabs/palace/blob/main/examples/rings/rings.json). The simulation
-`"Type"` is `"Magnetostatic"`, and we add `"SurfaceCurrent"` boundaries for applying a
-surface current to drive the inner or outer ring. The rest of the ring boundaries are
-labeled as `"PEC"` boundaries, which prescibes a zero magnetic flux, or magnetic
-insulation, boundary condition. The farfield is also prescribed the `"PEC"` boundary
-condition. We seek a second-order solution and use the geometric multigrid AMS
+The configuration file for the *Palace* simulation is
+[`rings.json`](https://github.com/awslabs/palace/blob/main/examples/rings/rings.json). The
+simulation `"Type"` is `"Magnetostatic"`, and we add `"SurfaceCurrent"` boundaries for
+applying a surface current to drive the inner or outer ring. The rest of the ring
+boundaries are labeled as `"PEC"` boundaries, which prescibes a zero magnetic flux, or
+magnetic insulation, boundary condition. The farfield is also prescribed the `"PEC"`
+boundary condition. We seek a second-order solution and use the geometric multigrid AMS
 solver.
 
 The computed inductance matrix is saved to disk as `postpro/terminal-M.csv`, and below we
@@ -84,9 +84,10 @@ analytic solutions.
 The typical approach used by *Palace* for lumped parameter extraction uses the computed
 field energies, but one can also compute the inductance by explicitly integrating the
 magnetic flux through a surface and dividing by the excitation current. This is configured
-under [`config["Boundaries"]["Postprocessing"]["Inductance"]`]
-(../config/boundaries.md#boundaries["Postprocessing"]["Inductance"]) in the configuration
-file. The resulting postprocessed values are written to `postpro/surface-M.csv`:
+under
+[`config["Boundaries"]["Postprocessing"]["Inductance"]`](../config/boundaries.md#boundaries%5B%22Postprocessing%22%5D%5B%22Inductance%22%5D)
+in the configuration file. The resulting postprocessed values are written to
+`postpro/surface-M.csv`:
 
 ```
                i,                M[1] (H),                M[2] (H)
