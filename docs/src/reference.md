@@ -108,7 +108,7 @@ eigenvalues ``\omega`` is solved:
 
 where the matrix ``\bm{K}`` represents the discretized curl-curl operator, ``\bm{M}`` the
 mass term, and ``\bm{C}`` the port impedance boundary conditions. The damped frequency
-``\omega_d`` and quality factor ``Q`` is postprocessed from each of the resulting
+``\omega_d`` and quality factor ``Q`` are postprocessed from each of the resulting
 eigenvalues as
 
 ```math
@@ -233,8 +233,8 @@ second-order absorbing boundary condition is
     - \beta\nabla\times[(\nabla\times\bm{E})_n\bm{n}] = 0
 ```
 
-where, when assuming an infinite radius of curvature, ``\beta=\mu_r^{-1}c_0/(2i\omega)`` and
-the contribution depending on ``(\nabla\cdot\bm{E}_t)`` has been neglected.
+where assuming an infinite radius of curvature, ``\beta=\mu_r^{-1}c_0/(2i\omega)`` and
+the contribution depending on ``(\nabla\cdot\bm{E}_t)`` have been neglected.
 
 Additionally, while metals with finite conductivity can be modeled using an impedance
 boundary condition with constant impedance ``Z_s``, a more accurate model taking into
@@ -254,7 +254,7 @@ Z_s = \frac{1}{\delta\sigma}\left(\frac{\sinh{\nu}+\sin{\nu}}{\cosh{\nu}+\cos{\n
 ```
 
 where ``\nu=h/\delta`` and ``h`` is the layer thickness. This model correctly produces the
-DC limit when ``h\ll\delta`.
+DC limit when ``h\ll\delta``.
 
 ## Energy-participation ratios
 
