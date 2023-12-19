@@ -404,9 +404,21 @@ void ScaleMesh(mfem::Mesh &mesh, double L)
     double *v = mesh.GetVertex(i);
     std::transform(v, v + mesh.SpaceDimension(), v, [L](double val) { return val * L; });
   }
+  if (auto *pmesh = dynamic_cast<mfem::ParMesh *>(&mesh))
+  {
+    for (int i = 0; i < pmesh->face_nbr_vertices.Size(); i++)
+    {
+      double *v = pmesh->face_nbr_vertices[i]();
+      std::transform(v, v + mesh.SpaceDimension(), v, [L](double val) { return val * L; });
+    }
+  }
   if (mesh.GetNodes())
   {
     *mesh.GetNodes() *= L;
+    if (auto *pnodes = dynamic_cast<mfem::ParGridFunction *>(mesh.GetNodes()))
+    {
+      pnodes->FaceNbrData() *= L;
+    }
   }
 }
 

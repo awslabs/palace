@@ -626,7 +626,42 @@ void PostOperator::WriteFields(int step, double time, const ErrorIndicator *indi
   bool first_save = (paraview.GetCycle() < 0);
   mfem::ParMesh &mesh =
       (E) ? *E->ParFESpace()->GetParMesh() : *B->ParFESpace()->GetParMesh();
+  auto ScaleGridFunctions = [&mesh, this](double L)
+  {
+    // For fields on H(curl) and H(div) spaces, we "undo" the effect of redimensionalizing
+    // the mesh which would carry into the fields during the mapping from reference to
+    // physical space through the element Jacobians. No transformation for V is needed (H1
+    // interpolation). Because the coefficients are always evaluating E, B in neighboring
+    // elements, the Jacobian scaling is the same for the domain and boundary data
+    // collections (instead of being different for B due to the dim - 1 evaluation). Wave
+    // port fields also do not require rescaling since their submesh object where they are
+    // evaluated remains nondimensionalized.
+    if (E)
+    {
+      // Piola transform: J^-T
+      E->real() *= L;
+      if (has_imaginary)
+      {
+        E->imag() *= L;
+      }
+    }
+    if (B)
+    {
+      // Piola transform: J / |J|
+      B->real() *= std::pow(L, mesh.Dimension() - 1);
+      if (has_imaginary)
+      {
+        B->imag() *= std::pow(L, mesh.Dimension() - 1);
+      }
+    }
+    if (A)
+    {
+      // Piola transform: J^-T
+      *A *= L;
+    }
+  };
   mesh::DimensionalizeMesh(mesh, mesh_Lc0);
+  ScaleGridFunctions(mesh_Lc0);
 
   paraview.SetCycle(step);
   paraview.SetTime(time);
@@ -669,6 +704,7 @@ void PostOperator::WriteFields(int step, double time, const ErrorIndicator *indi
 
   // Restore the mesh nondimensionalization.
   mesh::NondimensionalizeMesh(mesh, mesh_Lc0);
+  ScaleGridFunctions(1.0 / mesh_Lc0);
 }
 
 std::vector<std::complex<double>> PostOperator::ProbeEField() const
