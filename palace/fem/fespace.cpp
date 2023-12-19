@@ -5,34 +5,181 @@
 
 #include "fem/bilinearform.hpp"
 #include "fem/integrator.hpp"
+#include "fem/libceed/basis.hpp"
+#include "fem/libceed/restriction.hpp"
 #include "linalg/rap.hpp"
 #include "utils/omp.hpp"
 
 namespace palace
 {
 
-std::size_t FiniteElementSpace::GetGlobalId()
+const CeedBasis FiniteElementSpace::GetCeedBasis(Ceed ceed, mfem::Geometry::Type geom) const
 {
-  static std::size_t global_id = 0;
-  std::size_t id;
-  PalacePragmaOmp(critical(GetGlobalId))
+  // No two threads should ever be calling this simultaneously with the same Ceed context.
+  auto it = basis.find(ceed);
+  if (it == basis.end())
   {
-    id = global_id++;
-  }
-  return id;
-}
-
-std::size_t FiniteElementSpace::GetId() const
-{
-  PalacePragmaOmp(critical(GetId))
-  {
-    if (sequence != fespace.GetSequence())
+    PalacePragmaOmp(critical(InitBasis))
     {
-      id = GetGlobalId();
-      sequence = fespace.GetSequence();
+      it = basis.emplace(ceed, ceed::CeedGeomObjectMap<CeedBasis>()).first;
     }
   }
-  return id;
+  auto &basis_map = it->second;
+  auto basis_it = basis_map.find(geom);
+  if (basis_it != basis_map.end())
+  {
+    return basis_it->second;
+  }
+  auto val = BuildCeedBasis(*this, ceed, geom);
+  basis_map.emplace(geom, val);
+  return val;
+}
+
+const CeedElemRestriction
+FiniteElementSpace::GetCeedElemRestriction(Ceed ceed, mfem::Geometry::Type geom,
+                                           const std::vector<int> &indices) const
+{
+  // No two threads should ever be calling this simultaneously with the same Ceed context.
+  auto it = restr.find(ceed);
+  if (it == restr.end())
+  {
+    PalacePragmaOmp(critical(InitRestriction))
+    {
+      it = restr.emplace(ceed, ceed::CeedGeomObjectMap<CeedElemRestriction>()).first;
+    }
+  }
+  auto &restr_map = it->second;
+  auto restr_it = restr_map.find(geom);
+  if (restr_it != restr_map.end())
+  {
+    return restr_it->second;
+  }
+  auto val = BuildCeedElemRestriction(*this, ceed, geom, indices);
+  restr_map.emplace(geom, val);
+  return val;
+}
+
+const CeedElemRestriction
+FiniteElementSpace::GetInterpCeedElemRestriction(Ceed ceed, mfem::Geometry::Type geom,
+                                                 const std::vector<int> &indices) const
+{
+  const mfem::FiniteElement &fe = *GetFEColl().FiniteElementForGeometry(geom);
+  if (!HasUniqueInterpRestriction(fe))
+  {
+    return GetCeedElemRestriction(ceed, geom, indices);
+  }
+  // No two threads should ever be calling this simultaneously with the same Ceed context.
+  auto it = interp_restr.find(ceed);
+  if (it == interp_restr.end())
+  {
+    PalacePragmaOmp(critical(InitInterpRestriction))
+    {
+      it = interp_restr.emplace(ceed, ceed::CeedGeomObjectMap<CeedElemRestriction>()).first;
+    }
+  }
+  auto &restr_map = it->second;
+  auto restr_it = restr_map.find(geom);
+  if (restr_it != restr_map.end())
+  {
+    return restr_it->second;
+  }
+  auto val = BuildCeedElemRestriction(*this, ceed, geom, indices, true, false);
+  restr_map.emplace(geom, val);
+  return val;
+}
+
+const CeedElemRestriction
+FiniteElementSpace::GetInterpRangeCeedElemRestriction(Ceed ceed, mfem::Geometry::Type geom,
+                                                      const std::vector<int> &indices) const
+{
+  const mfem::FiniteElement &fe = *GetFEColl().FiniteElementForGeometry(geom);
+  if (!HasUniqueInterpRangeRestriction(fe))
+  {
+    return GetInterpCeedElemRestriction(ceed, geom, indices);
+  }
+  // No two threads should ever be calling this simultaneously with the same Ceed context.
+  auto it = interp_range_restr.find(ceed);
+  if (it == interp_range_restr.end())
+  {
+    PalacePragmaOmp(critical(InitInterpRangeRestriction))
+    {
+      it = interp_range_restr.emplace(ceed, ceed::CeedGeomObjectMap<CeedElemRestriction>())
+               .first;
+    }
+  }
+  auto &restr_map = it->second;
+  auto restr_it = restr_map.find(geom);
+  if (restr_it != restr_map.end())
+  {
+    return restr_it->second;
+  }
+  auto val = BuildCeedElemRestriction(*this, ceed, geom, indices, true, true);
+  restr_map.emplace(geom, val);
+  return val;
+}
+
+void FiniteElementSpace::DestroyCeedObjects()
+{
+  for (auto &[ceed, basis_map] : basis)
+  {
+    for (auto &[key, val] : basis_map)
+    {
+      PalaceCeedCall(ceed, CeedBasisDestroy(&val));
+    }
+  }
+  basis.clear();
+  for (auto &[ceed, restr_map] : restr)
+  {
+    for (auto &[key, val] : restr_map)
+    {
+      PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&val));
+    }
+  }
+  restr.clear();
+  for (auto &[ceed, restr_map] : interp_restr)
+  {
+    for (auto &[key, val] : restr_map)
+    {
+      PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&val));
+    }
+  }
+  interp_restr.clear();
+  for (auto &[ceed, restr_map] : interp_range_restr)
+  {
+    for (auto &[key, val] : restr_map)
+    {
+      PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&val));
+    }
+  }
+  interp_range_restr.clear();
+}
+
+CeedBasis FiniteElementSpace::BuildCeedBasis(const mfem::FiniteElementSpace &fespace,
+                                             Ceed ceed, mfem::Geometry::Type geom)
+{
+  // Find the appropriate integration rule for the element.
+  mfem::IsoparametricTransformation T;
+  T.SetFE(fespace.GetMesh()->GetNodalFESpace()->FEColl()->FiniteElementForGeometry(geom));
+  const int q_order = fem::DefaultIntegrationOrder::Get(T);
+  const mfem::IntegrationRule &ir = mfem::IntRules.Get(geom, q_order);
+
+  // Build the libCEED basis.
+  CeedBasis val;
+  const mfem::FiniteElement &fe = *fespace.FEColl()->FiniteElementForGeometry(geom);
+  const int vdim = fespace.GetVDim();
+  ceed::InitBasis(fe, ir, vdim, ceed, &val);
+  return val;
+}
+
+CeedElemRestriction FiniteElementSpace::BuildCeedElemRestriction(
+    const mfem::FiniteElementSpace &fespace, Ceed ceed, mfem::Geometry::Type geom,
+    const std::vector<int> &indices, bool is_interp, bool is_interp_range)
+{
+  // Construct the libCEED element restriction for this element type.
+  CeedElemRestriction val;
+  const bool use_bdr = (mfem::Geometry::Dimension[geom] != fespace.GetMesh()->Dimension());
+  ceed::InitRestriction(fespace, indices, use_bdr, is_interp, is_interp_range, ceed, &val);
+  return val;
 }
 
 const Operator &AuxiliaryFiniteElementSpace::BuildDiscreteInterpolator() const
