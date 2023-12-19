@@ -129,7 +129,7 @@ the user should specify a number of terminal boundaries
 as well as boundaries which are grounded
 ([`config["Boundaries"]["Ground"]`](../config/boundaries.md#boundaries%5B%22Ground%22%5D)).
 For each terminal, an electrostatic field is computed by assigning the terminal of interest
-a positive nonzero voltage and all other terminals and grounded boundaries a zero voltage.
+a positive unit voltage and all other terminals and grounded boundaries a zero voltage.
 The resulting fields are then used to compute the Maxwell capacitance matrix and its
 inverse, which are written to an ASCII file named `terminal-C.csv` and `terminal-Cinv.csv`,
 respectively, in the directory specified by
