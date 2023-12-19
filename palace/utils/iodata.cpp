@@ -381,7 +381,7 @@ void IoData::CheckConfiguration()
         problem.type == config::ProblemData::Type::MAGNETOSTATIC)
     {
       // Default true only driven simulations without adaptive frequency sweep, transient
-      // simulations, or electrostatic or magnetostatics.
+      // simulations, electrostatics, or magnetostatics.
       solver.linear.initial_guess = 1;
     }
     else
