@@ -11,27 +11,6 @@
 namespace palace
 {
 
-namespace ceed
-{
-
-namespace
-{
-
-CeedGeomFactorData CeedGeomFactorDataCreate(Ceed ceed)
-{
-  return std::make_unique<CeedGeomFactorData_private>(ceed);
-}
-
-}  // namespace
-
-CeedGeomFactorData_private::~CeedGeomFactorData_private()
-{
-  PalaceCeedCall(ceed, CeedVectorDestroy(&geom_data_vec));
-  PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&geom_data_restr));
-}
-
-}  // namespace ceed
-
 namespace
 {
 
@@ -166,19 +145,21 @@ auto AssembleGeometryData(const mfem::GridFunction &mesh_nodes, Ceed ceed,
   const mfem::FiniteElementSpace &mesh_fespace = *mesh_nodes.FESpace();
   const mfem::Mesh &mesh = *mesh_fespace.GetMesh();
 
-  auto data = ceed::CeedGeomFactorDataCreate(ceed);
-  data->dim = mfem::Geometry::Dimension[geom];
-  data->space_dim = mesh.SpaceDimension();
-  data->indices = std::move(indices);
-  const std::size_t num_elem = data->indices.size();
+  ceed::CeedGeomFactorData data;
+  data.dim = mfem::Geometry::Dimension[geom];
+  data.space_dim = mesh.SpaceDimension();
+  data.indices = std::move(indices);
+  const std::size_t num_elem = data.indices.size();
 
-  // Allocate data structures for geometry factor data (attribute + quadrature weight +
+  // Allocate storage for geometry factor data (stored as attribute + quadrature weight +
   // Jacobian).
   CeedElemRestriction mesh_restr =
-      FiniteElementSpace::BuildCeedElemRestriction(mesh_fespace, ceed, geom, data->indices);
+      FiniteElementSpace::BuildCeedElemRestriction(mesh_fespace, ceed, geom, data.indices);
   CeedBasis mesh_basis = FiniteElementSpace::BuildCeedBasis(mesh_fespace, ceed, geom);
-  CeedInt num_qpts, geom_data_size = 2 + data->space_dim * data->dim;
+  CeedInt num_qpts, geom_data_size = 2 + data.space_dim * data.dim;
   PalaceCeedCall(ceed, CeedBasisGetNumQuadraturePoints(mesh_basis, &num_qpts));
+  PalaceCeedCall(
+      ceed, CeedVectorCreate(ceed, num_elem * num_qpts * geom_data_size, &data.geom_data));
 
   // Data for quadrature point i, component j, element k is found at index i * strides[0] +
   // j * strides[1] + k * strides[2].
@@ -202,32 +183,36 @@ auto AssembleGeometryData(const mfem::GridFunction &mesh_nodes, Ceed ceed,
   PalaceCeedCall(ceed,
                  CeedElemRestrictionCreateStrided(ceed, num_elem, num_qpts, geom_data_size,
                                                   num_elem * num_qpts * geom_data_size,
-                                                  strides, &data->geom_data_restr));
-
-  // Compute element attribute quadrature data. All inputs to a QFunction require the same
-  // number of quadrature points, so we store the attribute at each quadrature point. This
-  // is the first component of the quadrature data.
-  data->geom_data.SetSize(num_elem * num_qpts * geom_data_size);
-  for (std::size_t k = 0; k < num_elem; k++)
-  {
-    const auto attr = GetCeedAttribute(data->indices[k]);
-    for (CeedInt i = 0; i < num_qpts; i++)
-    {
-      data->geom_data[i * strides[0] + k * strides[2]] = attr;
-    }
-  }
-  ceed::InitCeedVector(data->geom_data, ceed, &data->geom_data_vec);
+                                                  strides, &data.geom_data_restr));
 
   // Compute the required geometry factors at quadrature points.
   CeedVector mesh_nodes_vec;
   ceed::InitCeedVector(mesh_nodes, ceed, &mesh_nodes_vec);
 
   ceed::AssembleCeedGeometryData(ceed, mesh_restr, mesh_basis, mesh_nodes_vec,
-                                 data->geom_data_vec, data->geom_data_restr);
+                                 data.geom_data, data.geom_data_restr);
 
   PalaceCeedCall(ceed, CeedVectorDestroy(&mesh_nodes_vec));
   PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&mesh_restr));
   PalaceCeedCall(ceed, CeedBasisDestroy(&mesh_basis));
+
+  // Compute element attribute quadrature data. All inputs to a QFunction require the same
+  // number of quadrature points, so we store the attribute at each quadrature point. This
+  // is the first component of the quadrature data.
+  {
+    CeedScalar *geom_data_array;
+    PalaceCeedCall(
+        ceed, CeedVectorGetArrayWrite(data.geom_data, CEED_MEM_HOST, &geom_data_array));
+    for (std::size_t k = 0; k < num_elem; k++)
+    {
+      const auto attr = GetCeedAttribute(data.indices[k]);
+      for (CeedInt i = 0; i < num_qpts; i++)
+      {
+        geom_data_array[i * strides[0] + k * strides[2]] = attr;
+      }
+    }
+    CeedVectorRestoreArray(data.geom_data, &geom_data_array);
+  }
 
   return data;
 }
@@ -252,7 +237,7 @@ auto BuildCeedGeomFactorData(
   MFEM_VERIFY(i < nt, "Unable to find matching Ceed context in BuildCeedGeomFactorData!");
   mfem::FaceElementTransformations FET;
   mfem::IsoparametricTransformation T1, T2;
-  ceed::CeedGeomObjectMap<ceed::CeedGeomFactorData> geom_data;
+  ceed::CeedGeomObjectMap<ceed::CeedGeomFactorData> geom_data_map;
 
   // First domain elements.
   {
@@ -299,7 +284,7 @@ auto BuildCeedGeomFactorData(
     {
       ceed::CeedGeomFactorData data =
           AssembleGeometryData(*mesh.GetNodes(), ceed, geom, indices, GetCeedAttribute);
-      geom_data.emplace(geom, std::move(data));
+      geom_data_map.emplace(geom, std::move(data));
     }
   }
 
@@ -326,11 +311,11 @@ auto BuildCeedGeomFactorData(
     {
       ceed::CeedGeomFactorData data =
           AssembleGeometryData(*mesh.GetNodes(), ceed, geom, indices, GetCeedAttribute);
-      geom_data.emplace(geom, std::move(data));
+      geom_data_map.emplace(geom, std::move(data));
     }
   }
 
-  return geom_data;
+  return geom_data_map;
 }
 
 }  // namespace
@@ -365,6 +350,14 @@ Mesh::GetCeedGeomFactorData(Ceed ceed) const
 
 void Mesh::DestroyCeedGeomFactorData() const
 {
+  for (auto &[ceed, geom_data_map] : geom_data)
+  {
+    for (auto &[key, val] : geom_data_map)
+    {
+      PalaceCeedCall(ceed, CeedVectorDestroy(&val.geom_data));
+      PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&val.geom_data_restr));
+    }
+  }
   geom_data.clear();
 }
 

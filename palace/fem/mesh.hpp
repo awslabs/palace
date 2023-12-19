@@ -19,32 +19,22 @@ namespace ceed
 //
 // Data structure for geometry information stored at quadrature points.
 //
-struct CeedGeomFactorData_private
+struct CeedGeomFactorData
 {
   // Dimension of this element topology and space dimension of the underlying mesh.
   int dim, space_dim;
 
-  // Element indices from the mfem::Mesh used to construct Ceed objects with these geometry
-  // factors.
+  // Domain or boundary indices from the mesh used to construct Ceed objects with these
+  // geometry factors.
   std::vector<int> indices;
 
   // Mesh geometry factor data: {attr, w * |J|, adj(J)^T / |J|}. Jacobian matrix is
   // space_dim x dim, stored column-major by component.
-  mfem::Vector geom_data;
+  CeedVector geom_data;
 
-  // Objects for libCEED interface to the quadrature data.
-  CeedVector geom_data_vec;
+  // Element restriction for the geometry factor quadrature data.
   CeedElemRestriction geom_data_restr;
-  Ceed ceed;
-
-  CeedGeomFactorData_private(Ceed ceed)
-    : dim(0), space_dim(0), geom_data_vec(nullptr), geom_data_restr(nullptr), ceed(ceed)
-  {
-  }
-  ~CeedGeomFactorData_private();
 };
-
-using CeedGeomFactorData = std::unique_ptr<CeedGeomFactorData_private>;
 
 }  // namespace ceed
 
