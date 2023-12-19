@@ -9,19 +9,13 @@
 #include <vector>
 #include "drivers/basesolver.hpp"
 
-namespace mfem
-{
-
-class ParMesh;
-
-}  // namespace mfem
-
 namespace palace
 {
 
 class ErrorIndicator;
 class IoData;
 class LumpedPortOperator;
+class Mesh;
 class PostOperator;
 class Timer;
 
@@ -45,7 +39,7 @@ private:
                       int i, std::complex<double> omega, double Em) const;
 
   std::pair<ErrorIndicator, long long int>
-  Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const override;
+  Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const override;
 
 public:
   using BaseSolver::BaseSolver;

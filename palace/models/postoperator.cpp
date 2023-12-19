@@ -44,12 +44,12 @@ PostOperator::PostOperator(const IoData &iodata, SpaceOperator &spaceop,
     dom_post_op(iodata, spaceop.GetMaterialOp(), &spaceop.GetNDSpace(),
                 &spaceop.GetRTSpace()),
     has_imaginary(iodata.problem.type != config::ProblemData::Type::TRANSIENT),
-    E(&spaceop.GetNDSpace()), B(&spaceop.GetRTSpace()), V(std::nullopt), A(std::nullopt),
-    lumped_port_init(false), wave_port_init(false),
-    paraview(CreateParaviewPath(iodata, name), spaceop.GetNDSpace().GetParMesh()),
+    E(&spaceop.GetNDSpace().Get()), B(&spaceop.GetRTSpace().Get()), V(std::nullopt),
+    A(std::nullopt), lumped_port_init(false), wave_port_init(false),
+    paraview(CreateParaviewPath(iodata, name), &spaceop.GetNDSpace().GetParMesh()),
     paraview_bdr(CreateParaviewPath(iodata, name) + "_boundary",
-                 spaceop.GetNDSpace().GetParMesh()),
-    interp_op(iodata, *spaceop.GetNDSpace().GetParMesh())
+                 &spaceop.GetNDSpace().GetParMesh()),
+    interp_op(iodata, spaceop.GetNDSpace().GetParMesh())
 {
   Esr = std::make_unique<BdrFieldVectorCoefficient>(E->real(), mat_op);
   Bsr = std::make_unique<BdrFieldVectorCoefficient>(B->real(), mat_op);
@@ -95,13 +95,13 @@ PostOperator::PostOperator(const IoData &iodata, LaplaceOperator &laplaceop,
   : mat_op(laplaceop.GetMaterialOp()),
     surf_post_op(iodata, laplaceop.GetMaterialOp(), laplaceop.GetH1Space()),
     dom_post_op(iodata, laplaceop.GetMaterialOp(), &laplaceop.GetNDSpace(), nullptr),
-    has_imaginary(false), E(&laplaceop.GetNDSpace()), B(std::nullopt),
-    V(&laplaceop.GetH1Space()), A(std::nullopt), lumped_port_init(false),
+    has_imaginary(false), E(&laplaceop.GetNDSpace().Get()), B(std::nullopt),
+    V(&laplaceop.GetH1Space().Get()), A(std::nullopt), lumped_port_init(false),
     wave_port_init(false),
-    paraview(CreateParaviewPath(iodata, name), laplaceop.GetNDSpace().GetParMesh()),
+    paraview(CreateParaviewPath(iodata, name), &laplaceop.GetNDSpace().GetParMesh()),
     paraview_bdr(CreateParaviewPath(iodata, name) + "_boundary",
-                 laplaceop.GetNDSpace().GetParMesh()),
-    interp_op(iodata, *laplaceop.GetNDSpace().GetParMesh())
+                 &laplaceop.GetNDSpace().GetParMesh()),
+    interp_op(iodata, laplaceop.GetNDSpace().GetParMesh())
 {
   // Note: When using this constructor, you should not use any of the magnetic field related
   // postprocessing functions (magnetic field energy, inductor energy, surface currents,
@@ -122,12 +122,13 @@ PostOperator::PostOperator(const IoData &iodata, CurlCurlOperator &curlcurlop,
   : mat_op(curlcurlop.GetMaterialOp()),
     surf_post_op(iodata, curlcurlop.GetMaterialOp(), curlcurlop.GetH1Space()),
     dom_post_op(iodata, curlcurlop.GetMaterialOp(), nullptr, &curlcurlop.GetRTSpace()),
-    has_imaginary(false), E(std::nullopt), B(&curlcurlop.GetRTSpace()), V(std::nullopt),
-    A(&curlcurlop.GetNDSpace()), lumped_port_init(false), wave_port_init(false),
-    paraview(CreateParaviewPath(iodata, name), curlcurlop.GetNDSpace().GetParMesh()),
+    has_imaginary(false), E(std::nullopt), B(&curlcurlop.GetRTSpace().Get()),
+    V(std::nullopt), A(&curlcurlop.GetNDSpace().Get()), lumped_port_init(false),
+    wave_port_init(false),
+    paraview(CreateParaviewPath(iodata, name), &curlcurlop.GetNDSpace().GetParMesh()),
     paraview_bdr(CreateParaviewPath(iodata, name) + "_boundary",
-                 curlcurlop.GetNDSpace().GetParMesh()),
-    interp_op(iodata, *curlcurlop.GetNDSpace().GetParMesh())
+                 &curlcurlop.GetNDSpace().GetParMesh()),
+    interp_op(iodata, curlcurlop.GetNDSpace().GetParMesh())
 {
   // Note: When using this constructor, you should not use any of the electric field related
   // postprocessing functions (electric field energy, capacitor energy, surface charge,

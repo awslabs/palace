@@ -6,6 +6,7 @@
 #include "fem/bilinearform.hpp"
 #include "fem/coefficient.hpp"
 #include "fem/integrator.hpp"
+#include "fem/mesh.hpp"
 #include "fem/multigrid.hpp"
 #include "linalg/rap.hpp"
 #include "utils/communication.hpp"
@@ -17,7 +18,7 @@ namespace palace
 {
 
 CurlCurlOperator::CurlCurlOperator(const IoData &iodata,
-                                   const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh)
+                                   const std::vector<std::unique_ptr<Mesh>> &mesh)
   : print_hdr(true), dbc_attr(SetUpBoundaryProperties(iodata, *mesh.back())),
     nd_fecs(fem::ConstructFECollections<mfem::ND_FECollection>(
         iodata.solver.order, mesh.back()->Dimension(), iodata.solver.linear.mg_max_levels,
@@ -31,7 +32,7 @@ CurlCurlOperator::CurlCurlOperator(const IoData &iodata,
         iodata.solver.linear.mg_max_levels, mesh, nd_fecs, &dbc_attr, &dbc_tdof_lists)),
     h1_fespaces(fem::ConstructAuxiliaryFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
         nd_fespaces, h1_fecs)),
-    rt_fespace(nd_fespaces.GetFinestFESpace(), mesh.back().get(), rt_fec.get()),
+    rt_fespace(nd_fespaces.GetFinestFESpace(), *mesh.back(), rt_fec.get()),
     mat_op(iodata, *mesh.back()), surf_j_op(iodata, GetH1Space())
 {
   // Finalize setup.
@@ -205,11 +206,11 @@ void CurlCurlOperator::GetExcitationVector(int idx, Vector &RHS)
   {
     return;
   }
-  mfem::LinearForm rhs(&GetNDSpace());
+  mfem::LinearForm rhs(&GetNDSpace().Get());
   rhs.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fb));
   rhs.UseFastAssembly(false);
   rhs.Assemble();
-  GetNDSpace().GetProlongationMatrix()->AddMultTranspose(rhs, RHS, -1.0);
+  GetNDSpace().Get().GetProlongationMatrix()->AddMultTranspose(rhs, RHS, -1.0);
   linalg::SetSubVector(RHS, dbc_tdof_lists.back(), 0.0);
 }
 

@@ -40,8 +40,8 @@ protected:
   mutable int ksp_mult, ksp_mult_it;
 
 public:
-  BaseKspSolver(const IoData &iodata, const FiniteElementSpaceHierarchy &fespaces,
-                const AuxiliaryFiniteElementSpaceHierarchy *aux_fespaces = nullptr);
+  BaseKspSolver(const IoData &iodata, FiniteElementSpaceHierarchy &fespaces,
+                AuxiliaryFiniteElementSpaceHierarchy *aux_fespaces = nullptr);
   BaseKspSolver(std::unique_ptr<IterativeSolver<OperType>> &&ksp,
                 std::unique_ptr<Solver<OperType>> &&pc);
 

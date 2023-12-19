@@ -60,13 +60,17 @@ std::unique_ptr<IterativeSolver<OperType>> ConfigureKrylovSolver(MPI_Comm comm,
 
   // Configure preconditioning side (only for GMRES).
   if (iodata.solver.linear.pc_side_type != config::LinearSolverData::SideType::DEFAULT &&
-      type != config::LinearSolverData::KspType::GMRES)
+      (type != config::LinearSolverData::KspType::GMRES ||
+       type != config::LinearSolverData::KspType::FGMRES))
   {
-    Mpi::Warning(comm,
-                 "Preconditioner side will be ignored for non-GMRES iterative solvers!\n");
+    Mpi::Warning(
+        comm,
+        "Preconditioner side will be ignored for non-GMRES/FGMRES iterative solvers!\n");
   }
-  else
+  else if (type == config::LinearSolverData::KspType::GMRES ||
+           type == config::LinearSolverData::KspType::FGMRES)
   {
+    // Because FGMRES inherits from GMRES, this is OK.
     auto *gmres = static_cast<GmresSolver<OperType> *>(ksp.get());
     switch (iodata.solver.linear.pc_side_type)
     {
@@ -118,8 +122,8 @@ auto MakeWrapperSolver(U &&...args)
 template <typename OperType>
 std::unique_ptr<Solver<OperType>>
 ConfigurePreconditionerSolver(MPI_Comm comm, const IoData &iodata,
-                              const FiniteElementSpaceHierarchy &fespaces,
-                              const AuxiliaryFiniteElementSpaceHierarchy *aux_fespaces)
+                              FiniteElementSpaceHierarchy &fespaces,
+                              AuxiliaryFiniteElementSpaceHierarchy *aux_fespaces)
 {
   // Create the real-valued solver first.
   std::unique_ptr<Solver<OperType>> pc;
@@ -215,9 +219,9 @@ ConfigurePreconditionerSolver(MPI_Comm comm, const IoData &iodata,
 }  // namespace
 
 template <typename OperType>
-BaseKspSolver<OperType>::BaseKspSolver(
-    const IoData &iodata, const FiniteElementSpaceHierarchy &fespaces,
-    const AuxiliaryFiniteElementSpaceHierarchy *aux_fespaces)
+BaseKspSolver<OperType>::BaseKspSolver(const IoData &iodata,
+                                       FiniteElementSpaceHierarchy &fespaces,
+                                       AuxiliaryFiniteElementSpaceHierarchy *aux_fespaces)
   : BaseKspSolver(
         ConfigureKrylovSolver<OperType>(fespaces.GetFinestFESpace().GetComm(), iodata),
         ConfigurePreconditionerSolver<OperType>(fespaces.GetFinestFESpace().GetComm(),

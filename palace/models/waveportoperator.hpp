@@ -10,6 +10,7 @@
 #include <unordered_map>
 #include <mfem.hpp>
 #include "fem/fespace.hpp"
+#include "fem/mesh.hpp"
 #include "linalg/eps.hpp"
 #include "linalg/ksp.hpp"
 #include "linalg/operator.hpp"
@@ -49,7 +50,7 @@ public:
 private:
   // SubMesh data structures to define finite element spaces and grid functions on the
   // SubMesh corresponding to this port boundary.
-  std::unique_ptr<mfem::ParSubMesh> port_mesh;
+  std::unique_ptr<Mesh> port_mesh;
   std::unique_ptr<mfem::FiniteElementCollection> port_nd_fec, port_h1_fec;
   std::unique_ptr<FiniteElementSpace> port_nd_fespace, port_h1_fespace;
   std::unique_ptr<mfem::ParTransferMap> port_nd_transfer, port_h1_transfer;

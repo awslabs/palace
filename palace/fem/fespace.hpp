@@ -7,35 +7,73 @@
 #include <memory>
 #include <vector>
 #include <mfem.hpp>
+#include "fem/mesh.hpp"
 #include "linalg/operator.hpp"
 
 namespace palace
 {
 
 //
-// Wrapper for MFEM's ParFiniteElementSpace class, where the finite element space object
-// is constructed with a unique ID associated with it. This is useful for defining equality
-// operations between spaces (either different spaces on the same mesh, or the same space
-// type on different meshes).
+// Wrapper for MFEM's ParFiniteElementSpace class, with extensions for Palace.
 //
-class FiniteElementSpace : public mfem::ParFiniteElementSpace
+class FiniteElementSpace
 {
 private:
-  static std::size_t global_id;
+  // Underlying MFEM object.
+  mfem::ParFiniteElementSpace fespace;
+
+  // Reference to the underlying mesh object (not owned).
+  Mesh &mesh;
+
+  // Members used to define equality between two spaces.
+  mutable long int sequence;
   mutable std::size_t id;
-  mutable long int prev_sequence;
-  mutable bool init = false;
+  static std::size_t GetGlobalId();
 
 public:
-  using mfem::ParFiniteElementSpace::ParFiniteElementSpace;
-  FiniteElementSpace(const mfem::ParFiniteElementSpace &fespace)
-    : mfem::ParFiniteElementSpace(fespace)
+  template <typename... T>
+  FiniteElementSpace(Mesh &mesh, T &&...args)
+    : fespace(&mesh.Get(), std::forward<T>(args)...), mesh(mesh),
+      sequence(fespace.GetSequence()), id(GetGlobalId())
   {
   }
+  virtual ~FiniteElementSpace() = default;
+
+  const auto &Get() const { return fespace; }
+  auto &Get() { return fespace; }
+
+  operator const mfem::ParFiniteElementSpace &() const { return Get(); }
+  operator mfem::ParFiniteElementSpace &() { return Get(); }
+
+  const auto &GetFEColl() const { return *Get().FEColl(); }
+  auto &GetFEColl() { return *Get().FEColl(); }
+
+  const auto &GetMesh() const { return mesh; }
+  auto &GetMesh() { return mesh; }
+
+  const auto &GetParMesh() const { return mesh.Get(); }
+  auto &GetParMesh() { return mesh.Get(); }
+
+  auto GetVDim() const { return Get().GetVDim(); }
+  auto GetVSize() const { return Get().GetVSize(); }
+  auto GetTrueVSize() const { return Get().GetTrueVSize(); }
+  auto GlobalTrueVSize() const { return Get().GlobalTrueVSize(); }
+  auto Dimension() const { return mesh.Get().Dimension(); }
+  auto SpaceDimension() const { return mesh.Get().SpaceDimension(); }
+  auto GetMaxElementOrder() const { return Get().GetMaxElementOrder(); }
 
   // Get the ID associated with the instance of this class. If the underlying sequence has
   // changed (due to a mesh update, for example), regenerate the ID.
   std::size_t GetId() const;
+
+  // Operator overload for equality comparisons between two spaces.
+  bool operator==(const FiniteElementSpace &fespace) const
+  {
+    return GetId() == fespace.GetId();
+  }
+
+  // Get the associated MPI communicator.
+  MPI_Comm GetComm() const { return fespace.GetComm(); }
 };
 
 //
@@ -60,7 +98,7 @@ public:
 
   // Return the discrete gradient or discrete curl matrix interpolating from the auxiliary
   // to the primal space, constructing it on the fly as necessary.
-  const Operator &GetDiscreteInterpolator() const
+  const auto &GetDiscreteInterpolator() const
   {
     return G ? *G : BuildDiscreteInterpolator();
   }
@@ -83,8 +121,8 @@ protected:
   const Operator &BuildProlongationAtLevel(std::size_t l) const;
 
 public:
-  BaseFiniteElementSpaceHierarchy<FESpace>() = default;
-  BaseFiniteElementSpaceHierarchy<FESpace>(std::unique_ptr<FESpace> &&fespace)
+  BaseFiniteElementSpaceHierarchy() = default;
+  BaseFiniteElementSpaceHierarchy(std::unique_ptr<FESpace> &&fespace)
   {
     AddLevel(std::move(fespace));
   }
@@ -97,33 +135,33 @@ public:
     P.push_back(nullptr);
   }
 
-  FESpace &GetFESpaceAtLevel(std::size_t l)
+  auto &GetFESpaceAtLevel(std::size_t l)
   {
     MFEM_ASSERT(l >= 0 && l < GetNumLevels(),
                 "Out of bounds request for finite element space at level " << l << "!");
     return *fespaces[l];
   }
-  const FESpace &GetFESpaceAtLevel(std::size_t l) const
+  const auto &GetFESpaceAtLevel(std::size_t l) const
   {
     MFEM_ASSERT(l >= 0 && l < GetNumLevels(),
                 "Out of bounds request for finite element space at level " << l << "!");
     return *fespaces[l];
   }
 
-  FESpace &GetFinestFESpace()
+  auto &GetFinestFESpace()
   {
     MFEM_ASSERT(GetNumLevels() > 0,
                 "Out of bounds request for finite element space at level 0!");
     return *fespaces.back();
   }
-  const FESpace &GetFinestFESpace() const
+  const auto &GetFinestFESpace() const
   {
     MFEM_ASSERT(GetNumLevels() > 0,
                 "Out of bounds request for finite element space at level 0!");
     return *fespaces.back();
   }
 
-  const Operator &GetProlongationAtLevel(std::size_t l) const
+  const auto &GetProlongationAtLevel(std::size_t l) const
   {
     MFEM_ASSERT(l >= 0 && l < GetNumLevels() - 1,
                 "Out of bounds request for finite element space prolongation at level "
@@ -161,7 +199,7 @@ public:
   using BaseFiniteElementSpaceHierarchy<
       AuxiliaryFiniteElementSpace>::BaseFiniteElementSpaceHierarchy;
 
-  const Operator &GetDiscreteInterpolatorAtLevel(std::size_t l) const
+  const auto &GetDiscreteInterpolatorAtLevel(std::size_t l) const
   {
     return GetFESpaceAtLevel(l).GetDiscreteInterpolator();
   }

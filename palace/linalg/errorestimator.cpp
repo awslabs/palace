@@ -23,8 +23,8 @@ namespace
 auto GetMassMatrix(const FiniteElementSpace &fespace)
 {
   constexpr bool skip_zeros = false;
-  const int dim = fespace.GetParMesh()->Dimension();
-  const auto type = fespace.FEColl()->GetRangeType(dim);
+  const int dim = fespace.Dimension();
+  const auto type = fespace.GetFEColl().GetRangeType(dim);
   BilinearForm m(fespace);
   if (type == mfem::FiniteElement::SCALAR)
   {
@@ -145,7 +145,7 @@ CurlFluxErrorEstimator<VecType>::CurlFluxErrorEstimator(const MaterialOperator &
                                                         double tol, int max_it, int print)
   : mat_op(mat_op), nd_fespace(nd_fespace),
     projector(mat_op, nd_fespace, tol, max_it, print), F(nd_fespace.GetTrueVSize()),
-    F_gf(&nd_fespace), U_gf(&nd_fespace)
+    F_gf(&nd_fespace.Get()), U_gf(&nd_fespace.Get())
 {
 }
 
@@ -171,7 +171,7 @@ ErrorIndicator CurlFluxErrorEstimator<VecType>::ComputeIndicators(const VecType 
 
   // Loop over elements and accumulate the estimates from this component. The discontinuous
   // flux is μ⁻¹ ∇ × U.
-  auto &mesh = *nd_fespace.GetParMesh();
+  const auto &mesh = nd_fespace.GetParMesh();
   Vector estimates(mesh.GetNE());
   double norm2 = 0.0;
   PalacePragmaOmp(parallel reduction(+ : norm2))
@@ -188,9 +188,9 @@ ErrorIndicator CurlFluxErrorEstimator<VecType>::ComputeIndicators(const VecType 
     PalacePragmaOmp(for schedule(static))
     for (int e = 0; e < mesh.GetNE(); e++)
     {
-      const mfem::FiniteElement &fe = *nd_fespace.GetFE(e);
+      const mfem::FiniteElement &fe = *nd_fespace.Get().GetFE(e);
       mesh.GetElementTransformation(e, &T);
-      nd_fespace.GetElementDofs(e, dofs, dof_trans);
+      nd_fespace.Get().GetElementDofs(e, dofs, dof_trans);
       Interp.SetSize(fe.GetDof(), V_ip.Size());
       Curl.SetSize(fe.GetDof(), V_ip.Size());
       const int q_order = fem::DefaultIntegrationOrder::Get(fe, fe, T);
@@ -262,10 +262,10 @@ GradFluxErrorEstimator::GradFluxErrorEstimator(const MaterialOperator &mat_op,
                                                int max_it, int print)
   : mat_op(mat_op), h1_fespace(h1_fespace),
     h1d_fespace(std::make_unique<FiniteElementSpace>(
-        h1_fespace.GetParMesh(), h1_fespace.FEColl(),
-        h1_fespace.GetParMesh()->SpaceDimension(), mfem::Ordering::byNODES)),
+        h1_fespace.GetMesh(), &h1_fespace.GetFEColl(), h1_fespace.SpaceDimension(),
+        mfem::Ordering::byNODES)),
     projector(mat_op, h1_fespace, *h1d_fespace, tol, max_it, print),
-    F(h1d_fespace->GetTrueVSize()), F_gf(h1d_fespace.get()), U_gf(&h1_fespace)
+    F(h1d_fespace->GetTrueVSize()), F_gf(&h1d_fespace->Get()), U_gf(&h1_fespace.Get())
 {
 }
 
@@ -280,7 +280,7 @@ ErrorIndicator GradFluxErrorEstimator::ComputeIndicators(const Vector &U) const
 
   // Loop over elements and accumulate the estimates from this component. The discontinuous
   // flux is ε ∇U.
-  auto &mesh = *h1_fespace.GetParMesh();
+  const auto &mesh = h1_fespace.GetParMesh();
   Vector estimates(mesh.GetNE());
   double norm2 = 0.0;
   PalacePragmaOmp(parallel reduction(+ : norm2))
@@ -296,11 +296,11 @@ ErrorIndicator GradFluxErrorEstimator::ComputeIndicators(const Vector &U) const
     PalacePragmaOmp(for schedule(static))
     for (int e = 0; e < mesh.GetNE(); e++)
     {
-      const mfem::FiniteElement &fe = *h1d_fespace->GetFE(e);
+      const mfem::FiniteElement &fe = *h1d_fespace->Get().GetFE(e);
       mesh.GetElementTransformation(e, &T);
-      h1_fespace.GetElementDofs(e, dofs);
+      h1_fespace.Get().GetElementDofs(e, dofs);
       vdofs = dofs;
-      h1d_fespace->DofsToVDofs(vdofs);
+      h1d_fespace->Get().DofsToVDofs(vdofs);
       Interp.SetSize(fe.GetDof());
       Grad.SetSize(fe.GetDof(), V_ip.Size());
       const int q_order = fem::DefaultIntegrationOrder::Get(fe, fe, T);

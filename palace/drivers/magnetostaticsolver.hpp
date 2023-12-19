@@ -13,7 +13,6 @@ namespace mfem
 {
 
 class DenseMatrix;
-class ParMesh;
 
 }  // namespace mfem
 
@@ -23,6 +22,7 @@ namespace palace
 class CurlCurlOperator;
 class ErrorIndicator;
 class IoData;
+class Mesh;
 class PostOperator;
 class SurfaceCurrentOperator;
 class Timer;
@@ -41,7 +41,7 @@ private:
                             const mfem::DenseMatrix &Mm) const;
 
   std::pair<ErrorIndicator, long long int>
-  Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const override;
+  Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const override;
 
 public:
   using BaseSolver::BaseSolver;
