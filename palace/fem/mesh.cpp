@@ -347,47 +347,6 @@ void Mesh::Rebuild() const
   loc_bdr_attr = BuildBdrAttributeGlobalToLocal(parent_mesh);
 }
 
-int Mesh::GetAttributeGlobalToLocal(const mfem::ElementTransformation &T) const
-{
-  if (T.GetDimension() == T.GetSpaceDim())
-  {
-    // Domain element.
-    auto it = loc_attr.find(T.Attribute);
-    MFEM_ASSERT(it != loc_attr.end(), "Invalid domain attribute " << T.Attribute << "!");
-    return it->second;
-  }
-  else
-  {
-    // Boundary element (or boundary submesh domain).
-    auto bdr_attr_map = loc_bdr_attr.find(T.Attribute);
-    MFEM_ASSERT(bdr_attr_map != loc_bdr_attr.end(),
-                "Invalid domain attribute " << T.Attribute << "!");
-    const int nbr_attr = [&]()
-    {
-      mfem::FaceElementTransformations FET;  // XX TODO: Preallocate these for all elements
-      mfem::IsoparametricTransformation T1, T2;
-      if (const auto *submesh = dynamic_cast<const mfem::ParSubMesh *>(T.mesh))
-      {
-        MFEM_ASSERT(T.ElementType == mfem::ElementTransformation::ELEMENT,
-                    "Unexpected element type in GetAttributeGlobalToLocal!");
-        return GetBdrNeighborAttribute(submesh->GetParentElementIDMap()[T.ElementNo],
-                                       *submesh->GetParent(), FET, T1, T2);
-      }
-      else
-      {
-        MFEM_ASSERT(T.ElementType == mfem::ElementTransformation::BDR_ELEMENT,
-                    "Unexpected element type in GetAttributeGlobalToLocal!");
-        return GetBdrNeighborAttribute(
-            T.ElementNo, *static_cast<const mfem::ParMesh *>(T.mesh), FET, T1, T2);
-      }
-    }();
-    auto it = bdr_attr_map->second.find(nbr_attr);
-    MFEM_ASSERT(it != bdr_attr_map->second.end(),
-                "Invalid domain attribute " << nbr_attr << "!");
-    return it->second;
-  }
-}
-
 const ceed::CeedGeomObjectMap<ceed::CeedGeomFactorData> &
 Mesh::GetCeedGeomFactorData(Ceed ceed) const
 {

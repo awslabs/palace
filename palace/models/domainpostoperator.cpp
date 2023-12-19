@@ -25,7 +25,7 @@ DomainPostOperator::DomainPostOperator(const IoData &iodata, const MaterialOpera
     //              E_elec = 1/2 Re{∫_Ω Dᴴ E dV} as (M_eps * e)ᴴ e.
     // Only the real part of the permeability contributes to the energy (imaginary part
     // cancels out in the inner product due to symmetry).
-    MaterialPropertyCoefficient epsilon_func(mat_op, mat_op.GetAttributeToMaterial(),
+    MaterialPropertyCoefficient epsilon_func(mat_op.GetAttributeToMaterial(),
                                              mat_op.GetPermittivityReal());
     BilinearForm m_nd(*nd_fespace);
     m_nd.AddDomainIntegrator<VectorFEMassIntegrator>(epsilon_func);
@@ -38,7 +38,7 @@ DomainPostOperator::DomainPostOperator(const IoData &iodata, const MaterialOpera
   {
     // Construct RT mass matrix to compute the magnetic field energy integral as:
     //              E_mag = 1/2 Re{∫_Ω Bᴴ H dV} as (M_muinv * b)ᴴ b.
-    MaterialPropertyCoefficient muinv_func(mat_op, mat_op.GetAttributeToMaterial(),
+    MaterialPropertyCoefficient muinv_func(mat_op.GetAttributeToMaterial(),
                                            mat_op.GetInvPermeability());
     BilinearForm m_rt(*rt_fespace);
     m_rt.AddDomainIntegrator<VectorFEMassIntegrator>(muinv_func);
@@ -54,7 +54,7 @@ DomainPostOperator::DomainPostOperator(const IoData &iodata, const MaterialOpera
     std::unique_ptr<Operator> M_ND_i, M_RT_i;
     if (nd_fespace)
     {
-      MaterialPropertyCoefficient epsilon_func(mat_op, mat_op.GetAttributeToMaterial(),
+      MaterialPropertyCoefficient epsilon_func(mat_op.GetAttributeToMaterial(),
                                                mat_op.GetPermittivityReal());
       epsilon_func.RestrictCoefficient(mat_op.GetAttributeGlobalToLocal(data.attributes));
       BilinearForm m_nd_i(*nd_fespace);
@@ -63,7 +63,7 @@ DomainPostOperator::DomainPostOperator(const IoData &iodata, const MaterialOpera
     }
     if (rt_fespace)
     {
-      MaterialPropertyCoefficient muinv_func(mat_op, mat_op.GetAttributeToMaterial(),
+      MaterialPropertyCoefficient muinv_func(mat_op.GetAttributeToMaterial(),
                                              mat_op.GetInvPermeability());
       muinv_func.RestrictCoefficient(mat_op.GetAttributeGlobalToLocal(data.attributes));
       BilinearForm m_rt_i(*rt_fespace);

@@ -107,7 +107,7 @@ std::unique_ptr<ParOperator> GetBtt(const MaterialOperator &mat_op,
                                     const FiniteElementSpace &nd_fespace)
 {
   // Mass matrix: Bₜₜ = (μ⁻¹ u, v).
-  MaterialPropertyCoefficient muinv_func(mat_op, mat_op.GetBdrAttributeToMaterial(),
+  MaterialPropertyCoefficient muinv_func(mat_op.GetBdrAttributeToMaterial(),
                                          mat_op.GetInvPermeability());
   BilinearForm btt(nd_fespace);
   btt.AddDomainIntegrator<VectorFEMassIntegrator>(muinv_func);
@@ -119,7 +119,7 @@ std::unique_ptr<ParOperator> GetBtn(const MaterialOperator &mat_op,
                                     const FiniteElementSpace &h1_fespace)
 {
   // Mass matrix: Bₜₙ = (μ⁻¹ ∇ₜ u, v).
-  MaterialPropertyCoefficient muinv_func(mat_op, mat_op.GetBdrAttributeToMaterial(),
+  MaterialPropertyCoefficient muinv_func(mat_op.GetBdrAttributeToMaterial(),
                                          mat_op.GetInvPermeability());
   BilinearForm btn(h1_fespace, nd_fespace);
   btn.AddDomainIntegrator<MixedVectorGradientIntegrator>(muinv_func);
@@ -132,12 +132,12 @@ std::array<std::unique_ptr<ParOperator>, 3> GetBnn(const MaterialOperator &mat_o
                                                    const mfem::Vector &normal)
 {
   // Mass matrix: Bₙₙ = (μ⁻¹ ∇ₜ u, ∇ₜ v) - ω² (ε u, v) = Bₙₙ₁ - ω² Bₙₙ₂.
-  MaterialPropertyCoefficient muinv_func(mat_op, mat_op.GetBdrAttributeToMaterial(),
+  MaterialPropertyCoefficient muinv_func(mat_op.GetBdrAttributeToMaterial(),
                                          mat_op.GetInvPermeability());
   BilinearForm bnn1(h1_fespace);
   bnn1.AddDomainIntegrator<DiffusionIntegrator>(muinv_func);
 
-  MaterialPropertyCoefficient epsilon_func(mat_op, mat_op.GetBdrAttributeToMaterial(),
+  MaterialPropertyCoefficient epsilon_func(mat_op.GetBdrAttributeToMaterial(),
                                            mat_op.GetPermittivityReal());
   epsilon_func.NormalProjectedCoefficient(normal);
   BilinearForm bnn2r(h1_fespace);
@@ -150,8 +150,8 @@ std::array<std::unique_ptr<ParOperator>, 3> GetBnn(const MaterialOperator &mat_o
             std::make_unique<ParOperator>(bnn2r.FullAssemble(skip_zeros), h1_fespace),
             nullptr};
   }
-  MaterialPropertyCoefficient negepstandelta_func(
-      mat_op, mat_op.GetBdrAttributeToMaterial(), mat_op.GetPermittivityImag());
+  MaterialPropertyCoefficient negepstandelta_func(mat_op.GetBdrAttributeToMaterial(),
+                                                  mat_op.GetPermittivityImag());
   negepstandelta_func.NormalProjectedCoefficient(normal);
   BilinearForm bnn2i(h1_fespace);
   bnn2i.AddDomainIntegrator<MassIntegrator>(negepstandelta_func);
@@ -165,13 +165,13 @@ std::array<std::unique_ptr<ParOperator>, 3> GetAtt(const MaterialOperator &mat_o
                                                    const mfem::Vector &normal)
 {
   // Stiffness matrix: Aₜₜ = (μ⁻¹ ∇ₜ x u, ∇ₜ x v) - ω² (ε u, v) = Aₜₜ₁ - ω² Aₜₜ₂.
-  MaterialPropertyCoefficient muinv_func(mat_op, mat_op.GetBdrAttributeToMaterial(),
+  MaterialPropertyCoefficient muinv_func(mat_op.GetBdrAttributeToMaterial(),
                                          mat_op.GetInvPermeability());
   muinv_func.NormalProjectedCoefficient(normal);
   BilinearForm att1(nd_fespace);
   att1.AddDomainIntegrator<CurlCurlIntegrator>(muinv_func);
 
-  MaterialPropertyCoefficient epsilon_func(mat_op, mat_op.GetBdrAttributeToMaterial(),
+  MaterialPropertyCoefficient epsilon_func(mat_op.GetBdrAttributeToMaterial(),
                                            mat_op.GetPermittivityReal());
   BilinearForm att2r(nd_fespace);
   att2r.AddDomainIntegrator<VectorFEMassIntegrator>(epsilon_func);
@@ -183,8 +183,8 @@ std::array<std::unique_ptr<ParOperator>, 3> GetAtt(const MaterialOperator &mat_o
             std::make_unique<ParOperator>(att2r.FullAssemble(skip_zeros), nd_fespace),
             nullptr};
   }
-  MaterialPropertyCoefficient negepstandelta_func(
-      mat_op, mat_op.GetBdrAttributeToMaterial(), mat_op.GetPermittivityImag());
+  MaterialPropertyCoefficient negepstandelta_func(mat_op.GetBdrAttributeToMaterial(),
+                                                  mat_op.GetPermittivityImag());
   BilinearForm att2i(nd_fespace);
   att2i.AddDomainIntegrator<VectorFEMassIntegrator>(negepstandelta_func);
   return {std::make_unique<ParOperator>(att1.FullAssemble(skip_zeros), nd_fespace),
@@ -1204,7 +1204,7 @@ void WavePortOperator::AddExtraSystemBdrCoefficients(double omega,
   for (const auto &[idx, data] : ports)
   {
     const MaterialOperator &mat_op = data.mat_op;
-    MaterialPropertyCoefficient muinv_func(mat_op, mat_op.GetBdrAttributeToMaterial(),
+    MaterialPropertyCoefficient muinv_func(mat_op.GetBdrAttributeToMaterial(),
                                            mat_op.GetInvPermeability());
     muinv_func.RestrictCoefficient(mat_op.GetBdrAttributeGlobalToLocal(data.GetAttrList()));
     // fbr.AddCoefficient(muinv_func.GetAttributeToMaterial(),

@@ -269,7 +269,7 @@ std::unique_ptr<OperType>
 SpaceOperator::GetStiffnessMatrix(Operator::DiagonalPolicy diag_policy)
 {
   PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
-  MaterialPropertyCoefficient df(mat_op), f(mat_op), fb(mat_op);
+  MaterialPropertyCoefficient df, f, fb;
   AddStiffnessCoefficients(1.0, df, f);
   AddStiffnessBdrCoefficients(1.0, fb);
   if (df.empty() && f.empty() && fb.empty())
@@ -298,7 +298,7 @@ std::unique_ptr<OperType>
 SpaceOperator::GetDampingMatrix(Operator::DiagonalPolicy diag_policy)
 {
   PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
-  MaterialPropertyCoefficient f(mat_op), fb(mat_op);
+  MaterialPropertyCoefficient f, fb;
   AddDampingCoefficients(1.0, f);
   AddDampingBdrCoefficients(1.0, fb);
   if (f.empty() && fb.empty())
@@ -326,7 +326,7 @@ template <typename OperType>
 std::unique_ptr<OperType> SpaceOperator::GetMassMatrix(Operator::DiagonalPolicy diag_policy)
 {
   PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
-  MaterialPropertyCoefficient fr(mat_op), fi(mat_op), fbr(mat_op), fbi(mat_op);
+  MaterialPropertyCoefficient fr, fi, fbr, fbi;
   AddRealMassCoefficients(1.0, fr);
   AddRealMassBdrCoefficients(1.0, fbr);
   if constexpr (std::is_same<OperType, ComplexOperator>::value)
@@ -368,7 +368,7 @@ std::unique_ptr<OperType>
 SpaceOperator::GetExtraSystemMatrix(double omega, Operator::DiagonalPolicy diag_policy)
 {
   PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
-  MaterialPropertyCoefficient dfbr(mat_op), dfbi(mat_op), fbr(mat_op), fbi(mat_op);
+  MaterialPropertyCoefficient dfbr, dfbi, fbr, fbi;
   AddExtraSystemBdrCoefficients(omega, dfbr, dfbi, fbr, fbi);
   if (dfbr.empty() && fbr.empty() && dfbi.empty() && fbi.empty())
   {
@@ -662,8 +662,7 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(double a0, doub
         Mpi::Print(" Level {:d}{} (p = {:d}): {:d} unknowns", l, aux ? " (auxiliary)" : "",
                    fespace_l.GetMaxElementOrder(), fespace_l.GlobalTrueVSize());
       }
-      MaterialPropertyCoefficient dfr(mat_op), fr(mat_op), dfi(mat_op), fi(mat_op),
-          dfbr(mat_op), dfbi(mat_op), fbr(mat_op), fbi(mat_op);
+      MaterialPropertyCoefficient dfr, fr, dfi, fi, dfbr, dfbi, fbr, fbi;
       if (!std::is_same<OperType, ComplexOperator>::value || pc_mat_real || l == 0)
       {
         // Real-valued system matrix (approximation) for preconditioning.
