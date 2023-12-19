@@ -1,10 +1,11 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <iostream>
 #include <string>
 #include <mfem.hpp>
 #include <catch2/catch_session.hpp>
-#include "fem/libceed/utils.hpp"
+#include "fem/libceed/ceed.hpp"
 #include "utils/communication.hpp"
 
 using namespace palace;
@@ -12,6 +13,7 @@ using namespace palace;
 // Global test options configurable from command line.
 int benchmark_ref_levels = 0;
 int benchmark_order = 4;
+bool benchmark_assemble_q_data = false;
 bool benchmark_no_fa = false;
 bool benchmark_no_mfem_pa = false;
 
@@ -37,6 +39,8 @@ int main(int argc, char *argv[])
                  "Levels of uniform mesh refinement for benchmarks (default: 0)") |
              Opt(benchmark_order, "order")["--benchmark-order"](
                  "Element order for benchmarks (default: 4)") |
+             Opt(benchmark_assemble_q_data)["--benchmark-assemble-q-data"](
+                 "Assemble quadrature data for benchmark operators") |
              Opt(benchmark_no_fa)["--benchmark-skip-full-assembly"](
                  "Skip full assembly tests in benchmarks") |
              Opt(benchmark_no_mfem_pa)["--benchmark-skip-mfem-partial-assembly"](
@@ -55,6 +59,7 @@ int main(int argc, char *argv[])
   // Run the tests.
   mfem::Device device(device_str.c_str());
   ceed::Initialize(ceed_backend.c_str(), PALACE_LIBCEED_JIT_SOURCE_DIR);
+  std::cout << "libCEED backend: " << ceed::Print() << "\n";
   result = session.run();
   ceed::Finalize();
 
