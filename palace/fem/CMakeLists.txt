@@ -27,7 +27,9 @@ target_sources(${LIB_TARGET_NAME}
   ${CMAKE_CURRENT_SOURCE_DIR}/integ/mixedvecgrad.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/integ/vecfemass.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/libceed/basis.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/libceed/ceed.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/libceed/coefficient.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/libceed/integrator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/libceed/operator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/libceed/restriction.cpp
-  ${CMAKE_CURRENT_SOURCE_DIR}/libceed/utils.cpp
 )

@@ -1,10 +1,8 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#include "utils.hpp"
+#include "ceed.hpp"
 
-#include "fem/libceed/basis.hpp"
-#include "fem/libceed/restriction.hpp"
 #include "utils/omp.hpp"
 
 #if defined(MFEM_USE_OPENMP)
@@ -63,10 +61,6 @@ void Initialize(const char *resource, const char *jit_source_dir)
 
 void Finalize()
 {
-  // Destroy global basis and element restriction caches.
-  internal::ClearBasisCache();
-  internal::ClearRestrictionCache();
-
   // Destroy Ceed context(s).
   for (std::size_t i = 0; i < internal::ceeds.size(); i++)
   {
@@ -103,6 +97,54 @@ void InitCeedVector(const mfem::Vector &v, Ceed ceed, CeedVector *cv)
   }
   PalaceCeedCall(
       ceed, CeedVectorSetArray(*cv, mem, CEED_USE_POINTER, const_cast<CeedScalar *>(data)));
+}
+
+CeedElemTopology GetCeedTopology(mfem::Geometry::Type geom)
+{
+  switch (geom)
+  {
+    case mfem::Geometry::SEGMENT:
+      return CEED_TOPOLOGY_LINE;
+    case mfem::Geometry::TRIANGLE:
+      return CEED_TOPOLOGY_TRIANGLE;
+    case mfem::Geometry::SQUARE:
+      return CEED_TOPOLOGY_QUAD;
+    case mfem::Geometry::TETRAHEDRON:
+      return CEED_TOPOLOGY_TET;
+    case mfem::Geometry::CUBE:
+      return CEED_TOPOLOGY_HEX;
+    case mfem::Geometry::PRISM:
+      return CEED_TOPOLOGY_PRISM;
+    case mfem::Geometry::PYRAMID:
+      return CEED_TOPOLOGY_PYRAMID;
+    default:
+      MFEM_ABORT("This type of element is not supported!");
+      return CEED_TOPOLOGY_LINE;  // Silence compiler warning
+  }
+}
+
+mfem::Geometry::Type GetMfemTopology(CeedElemTopology geom)
+{
+  switch (geom)
+  {
+    case CEED_TOPOLOGY_LINE:
+      return mfem::Geometry::SEGMENT;
+    case CEED_TOPOLOGY_TRIANGLE:
+      return mfem::Geometry::TRIANGLE;
+    case CEED_TOPOLOGY_QUAD:
+      return mfem::Geometry::SQUARE;
+    case CEED_TOPOLOGY_TET:
+      return mfem::Geometry::TETRAHEDRON;
+    case CEED_TOPOLOGY_HEX:
+      return mfem::Geometry::CUBE;
+    case CEED_TOPOLOGY_PRISM:
+      return mfem::Geometry::PRISM;
+    case CEED_TOPOLOGY_PYRAMID:
+      return mfem::Geometry::PYRAMID;
+    default:
+      MFEM_ABORT("This type of element is not supported!");
+      return mfem::Geometry::SEGMENT;  // Silence compiler warning
+  }
 }
 
 }  // namespace palace::ceed

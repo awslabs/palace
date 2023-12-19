@@ -14,7 +14,7 @@
 #include "drivers/magnetostaticsolver.hpp"
 #include "drivers/transientsolver.hpp"
 #include "fem/errorindicator.hpp"
-#include "fem/libceed/utils.hpp"
+#include "fem/libceed/ceed.hpp"
 #include "fem/mesh.hpp"
 #include "linalg/slepc.hpp"
 #include "utils/communication.hpp"

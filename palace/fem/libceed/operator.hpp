@@ -7,16 +7,14 @@
 #include <memory>
 #include <vector>
 #include <mfem.hpp>
-
-// Forward declarations of libCEED objects.
-typedef struct CeedOperator_private *CeedOperator;
-typedef struct CeedVector_private *CeedVector;
+#include "fem/libceed/ceed.hpp"
+#include "linalg/operator.hpp"
+#include "linalg/vector.hpp"
 
 namespace palace
 {
 
-using Operator = mfem::Operator;
-using Vector = mfem::Vector;
+class FiniteElementSpace;
 
 namespace ceed
 {
@@ -69,6 +67,12 @@ public:
 // Assemble a ceed::Operator as an mfem::SparseMatrix.
 std::unique_ptr<mfem::SparseMatrix> CeedOperatorFullAssemble(const Operator &op,
                                                              bool skip_zeros, bool set);
+
+// Construct a coarse-level ceed::Operator, reusing the quadrature data and quadrature
+// function from the fine-level operator. Only available for square operators (same input
+// and output spaces).
+std::unique_ptr<Operator> CeedOperatorCoarsen(const Operator &op_fine,
+                                              const FiniteElementSpace &fespace_coarse);
 
 }  // namespace ceed
 

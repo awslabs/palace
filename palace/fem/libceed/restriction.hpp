@@ -4,32 +4,22 @@
 #ifndef PALACE_LIBCEED_RESTRICTION_HPP
 #define PALACE_LIBCEED_RESTRICTION_HPP
 
-#include <unordered_map>
 #include <vector>
-#include <ceed.h>
-#include <mfem.hpp>
+#include "fem/libceed/ceed.hpp"
+
+namespace mfem
+{
+
+class FiniteElementSpace;
+
+}  // namespace mfem
 
 namespace palace::ceed
 {
 
-void InitRestriction(const mfem::ParFiniteElementSpace &fespace,
+void InitRestriction(const mfem::FiniteElementSpace &fespace,
                      const std::vector<int> &indices, bool use_bdr, bool is_interp,
-                     bool is_range, Ceed ceed, CeedElemRestriction *restr);
-
-inline void InitRestriction(const mfem::ParFiniteElementSpace &fespace,
-                            const std::vector<int> &indices, bool use_bdr, Ceed ceed,
-                            CeedElemRestriction *restr)
-{
-  InitRestriction(fespace, indices, use_bdr, false, false, ceed, restr);
-}
-
-namespace internal
-{
-
-// Destroy the cached CeedElemRestriction objects.
-void ClearRestrictionCache();
-
-}  // namespace internal
+                     bool is_interp_range, Ceed ceed, CeedElemRestriction *restr);
 
 }  // namespace palace::ceed
 
