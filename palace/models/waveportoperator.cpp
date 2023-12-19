@@ -547,22 +547,20 @@ WavePortData::WavePortData(const config::WavePortData &data, const MaterialOpera
   MFEM_VERIFY(!data.attributes.empty(), "Wave port boundary found with no attributes!");
   const auto &mesh = *nd_fespace.GetParMesh();
   attr_list.Append(data.attributes.data(), data.attributes.size());
-  port_mesh = std::make_unique<mfem::ParSubMesh>(
-      mfem::ParSubMesh::CreateFromBoundary(mesh, attr_list));
+  port_mesh = std::make_unique<Mesh>(std::make_unique<mfem::ParSubMesh>(
+      mfem::ParSubMesh::CreateFromBoundary(mesh, attr_list)));
 
   port_nd_fec = std::make_unique<mfem::ND_FECollection>(nd_fespace.GetMaxElementOrder(),
                                                         port_mesh->Dimension());
   port_h1_fec = std::make_unique<mfem::H1_FECollection>(h1_fespace.GetMaxElementOrder(),
                                                         port_mesh->Dimension());
-  port_nd_fespace =
-      std::make_unique<FiniteElementSpace>(port_mesh.get(), port_nd_fec.get());
-  port_h1_fespace =
-      std::make_unique<FiniteElementSpace>(port_mesh.get(), port_h1_fec.get());
+  port_nd_fespace = std::make_unique<FiniteElementSpace>(*port_mesh, port_nd_fec.get());
+  port_h1_fespace = std::make_unique<FiniteElementSpace>(*port_mesh, port_h1_fec.get());
 
   mfem::ParGridFunction E0t(&nd_fespace);
   mfem::ParGridFunction E0n(&h1_fespace);
-  port_E0t = std::make_unique<mfem::ParComplexGridFunction>(port_nd_fespace.get());
-  port_E0n = std::make_unique<mfem::ParComplexGridFunction>(port_h1_fespace.get());
+  port_E0t = std::make_unique<mfem::ParComplexGridFunction>(&port_nd_fespace->Get());
+  port_E0n = std::make_unique<mfem::ParComplexGridFunction>(&port_h1_fespace->Get());
 
   port_nd_transfer = std::make_unique<mfem::ParTransferMap>(
       mfem::ParSubMesh::CreateTransferMap(E0t, port_E0t->real()));
@@ -572,7 +570,8 @@ WavePortData::WavePortData(const config::WavePortData &data, const MaterialOpera
   // Construct mapping from parent (boundary) element indices to submesh (domain)
   // elements.
   {
-    const mfem::Array<int> &parent_elems = port_mesh->GetParentElementIDMap();
+    const auto &port_submesh = static_cast<const mfem::ParSubMesh &>(port_mesh->Get());
+    const mfem::Array<int> &parent_elems = port_submesh.GetParentElementIDMap();
     for (int i = 0; i < parent_elems.Size(); i++)
     {
       submesh_parent_elems[parent_elems[i]] = i;
@@ -764,7 +763,7 @@ WavePortData::WavePortData(const config::WavePortData &data, const MaterialOpera
   // of the wave port boundary, in order to deal with symmetry effectively.
   {
     Vector bbmin, bbmax;
-    port_mesh->GetBoundingBox(bbmin, bbmax);
+    port_mesh->Get().GetBoundingBox(bbmin, bbmax);
     const int dim = port_mesh->SpaceDimension();
 
     double la = 0.0, lb = 0.0;
@@ -804,7 +803,7 @@ WavePortData::WavePortData(const config::WavePortData &data, const MaterialOpera
       }
     };
     mfem::VectorFunctionCoefficient tfunc(dim, TDirection);
-    port_S0t = std::make_unique<mfem::ParGridFunction>(port_nd_fespace.get());
+    port_S0t = std::make_unique<mfem::ParGridFunction>(&port_nd_fespace->Get());
     port_S0t->ProjectCoefficient(tfunc);
   }
 }
@@ -909,52 +908,59 @@ void WavePortData::Initialize(double omega)
   // Configure the linear forms for computing S-parameters (projection of the field onto the
   // port mode). Normalize the mode for a chosen polarization direction and unit power,
   // |E x H⋆| ⋅ n, integrated over the port surface (+n is the direction of propagation).
-  BdrSubmeshHVectorCoefficient<ValueType::REAL> port_nxH0r_func(
-      *port_E0t, *port_E0n, mat_op, *port_mesh, submesh_parent_elems, kn0, omega0);
-  BdrSubmeshHVectorCoefficient<ValueType::IMAG> port_nxH0i_func(
-      *port_E0t, *port_E0n, mat_op, *port_mesh, submesh_parent_elems, kn0, omega0);
-  port_sr = std::make_unique<mfem::LinearForm>(port_nd_fespace.get());
-  port_si = std::make_unique<mfem::LinearForm>(port_nd_fespace.get());
-  port_sr->AddDomainIntegrator(new VectorFEDomainLFIntegrator(port_nxH0r_func));
-  port_si->AddDomainIntegrator(new VectorFEDomainLFIntegrator(port_nxH0i_func));
-  port_sr->UseFastAssembly(false);
-  port_si->UseFastAssembly(false);
-  port_sr->Assemble();
-  port_si->Assemble();
-  NormalizeWithSign(*port_S0t, *port_E0t, *port_E0n, *port_sr, *port_si);
+  {
+    const auto &port_submesh = static_cast<const mfem::ParSubMesh &>(port_mesh->Get());
+    BdrSubmeshHVectorCoefficient<ValueType::REAL> port_nxH0r_func(
+        *port_E0t, *port_E0n, mat_op, port_submesh, submesh_parent_elems, kn0, omega0);
+    BdrSubmeshHVectorCoefficient<ValueType::IMAG> port_nxH0i_func(
+        *port_E0t, *port_E0n, mat_op, port_submesh, submesh_parent_elems, kn0, omega0);
+    port_sr = std::make_unique<mfem::LinearForm>(&port_nd_fespace->Get());
+    port_si = std::make_unique<mfem::LinearForm>(&port_nd_fespace->Get());
+    port_sr->AddDomainIntegrator(new VectorFEDomainLFIntegrator(port_nxH0r_func));
+    port_si->AddDomainIntegrator(new VectorFEDomainLFIntegrator(port_nxH0i_func));
+    port_sr->UseFastAssembly(false);
+    port_si->UseFastAssembly(false);
+    port_sr->Assemble();
+    port_si->Assemble();
+    NormalizeWithSign(*port_S0t, *port_E0t, *port_E0n, *port_sr, *port_si);
+  }
 }
 
 std::unique_ptr<mfem::VectorCoefficient>
 WavePortData::GetModeExcitationCoefficientReal() const
 {
+  const auto &port_submesh = static_cast<const mfem::ParSubMesh &>(port_mesh->Get());
   return std::make_unique<RestrictedVectorCoefficient>(
       std::make_unique<BdrSubmeshHVectorCoefficient<ValueType::REAL>>(
-          *port_E0t, *port_E0n, mat_op, *port_mesh, submesh_parent_elems, kn0, omega0),
+          *port_E0t, *port_E0n, mat_op, port_submesh, submesh_parent_elems, kn0, omega0),
       attr_list);
 }
 
 std::unique_ptr<mfem::VectorCoefficient>
 WavePortData::GetModeExcitationCoefficientImag() const
 {
+  const auto &port_submesh = static_cast<const mfem::ParSubMesh &>(port_mesh->Get());
   return std::make_unique<RestrictedVectorCoefficient>(
       std::make_unique<BdrSubmeshHVectorCoefficient<ValueType::IMAG>>(
-          *port_E0t, *port_E0n, mat_op, *port_mesh, submesh_parent_elems, kn0, omega0),
+          *port_E0t, *port_E0n, mat_op, port_submesh, submesh_parent_elems, kn0, omega0),
       attr_list);
 }
 
 std::unique_ptr<mfem::VectorCoefficient> WavePortData::GetModeFieldCoefficientReal() const
 {
+  const auto &port_submesh = static_cast<const mfem::ParSubMesh &>(port_mesh->Get());
   return std::make_unique<RestrictedVectorCoefficient>(
       std::make_unique<BdrSubmeshEVectorCoefficient<ValueType::REAL>>(
-          *port_E0t, *port_E0n, *port_mesh, submesh_parent_elems),
+          *port_E0t, *port_E0n, port_submesh, submesh_parent_elems),
       attr_list);
 }
 
 std::unique_ptr<mfem::VectorCoefficient> WavePortData::GetModeFieldCoefficientImag() const
 {
+  const auto &port_submesh = static_cast<const mfem::ParSubMesh &>(port_mesh->Get());
   return std::make_unique<RestrictedVectorCoefficient>(
       std::make_unique<BdrSubmeshEVectorCoefficient<ValueType::IMAG>>(
-          *port_E0t, *port_E0n, *port_mesh, submesh_parent_elems),
+          *port_E0t, *port_E0n, port_submesh, submesh_parent_elems),
       attr_list);
 }
 
@@ -969,7 +975,7 @@ std::complex<double> WavePortData::GetSParameter(mfem::ParComplexGridFunction &E
 {
   // Compute port S-parameter, or the projection of the field onto the port mode:
   // (E x H_inc⋆) ⋅ n = E ⋅ (-n x H_inc⋆), integrated over the port surface.
-  mfem::ParComplexGridFunction port_E(port_nd_fespace.get());
+  mfem::ParComplexGridFunction port_E(&port_nd_fespace->Get());
   port_nd_transfer->Transfer(E.real(), port_E.real());
   port_nd_transfer->Transfer(E.imag(), port_E.imag());
   std::complex<double> dot(-((*port_sr) * port_E.real()) - ((*port_si) * port_E.imag()),

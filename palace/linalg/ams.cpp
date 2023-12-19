@@ -11,16 +11,15 @@
 namespace palace
 {
 
-HypreAmsSolver::HypreAmsSolver(const FiniteElementSpace &nd_fespace,
-                               const AuxiliaryFiniteElementSpace &h1_fespace, int cycle_it,
+HypreAmsSolver::HypreAmsSolver(FiniteElementSpace &nd_fespace,
+                               AuxiliaryFiniteElementSpace &h1_fespace, int cycle_it,
                                int smooth_it, int agg_coarsen, bool vector_interp,
                                bool op_singular, int print)
   : mfem::HypreSolver(),
     // From the Hypre docs for AMS: cycles 1, 5, 8, 11, 13 are fastest, 7 yields fewest its
     // (MFEM default is 13). 14 is similar to 11/13 but is cheaper in that is uses additive
     // scalar Pi-space corrections.
-    cycle_type(vector_interp ? 1 : 14),
-    space_dim(nd_fespace.GetParMesh()->SpaceDimension()),
+    cycle_type(vector_interp ? 1 : 14), space_dim(nd_fespace.SpaceDimension()),
     // When used as the coarse solver of geometric multigrid, always do only a single
     // V-cycle.
     ams_it(cycle_it), ams_smooth_it(smooth_it),
@@ -47,8 +46,8 @@ HypreAmsSolver::~HypreAmsSolver()
   HYPRE_AMSDestroy(ams);
 }
 
-void HypreAmsSolver::ConstructAuxiliaryMatrices(
-    const FiniteElementSpace &nd_fespace, const AuxiliaryFiniteElementSpace &h1_fespace)
+void HypreAmsSolver::ConstructAuxiliaryMatrices(FiniteElementSpace &nd_fespace,
+                                                AuxiliaryFiniteElementSpace &h1_fespace)
 {
   // Set up the auxiliary space objects for the preconditioner. Mostly the same as MFEM's
   // HypreAMS:Init. Start with the discrete gradient matrix.
@@ -64,12 +63,11 @@ void HypreAmsSolver::ConstructAuxiliaryMatrices(
 
   // Vertex coordinates for the lowest order case, or Nedelec interpolation matrix or
   // matrices for order > 1.
-  mfem::ParMesh &mesh = *h1_fespace.GetParMesh();
+  mfem::ParMesh &mesh = h1_fespace.GetParMesh();
   if (h1_fespace.GetMaxElementOrder() == 1)
   {
-    mfem::ParGridFunction x_coord(const_cast<AuxiliaryFiniteElementSpace *>(&h1_fespace)),
-        y_coord(const_cast<AuxiliaryFiniteElementSpace *>(&h1_fespace)),
-        z_coord(const_cast<AuxiliaryFiniteElementSpace *>(&h1_fespace));
+    mfem::ParGridFunction x_coord(&h1_fespace.Get()), y_coord(&h1_fespace.Get()),
+        z_coord(&h1_fespace.Get());
     if (mesh.GetNodes())
     {
       mesh.GetNodes()->GetNodalValues(x_coord, 1);
@@ -117,10 +115,9 @@ void HypreAmsSolver::ConstructAuxiliaryMatrices(
   else
   {
     // Fall back to MFEM legacy assembly for identity interpolator.
-    mfem::ParFiniteElementSpace h1d_fespace(&mesh, h1_fespace.FEColl(), space_dim,
+    mfem::ParFiniteElementSpace h1d_fespace(&mesh, &h1_fespace.GetFEColl(), space_dim,
                                             mfem::Ordering::byVDIM);
-    mfem::DiscreteLinearOperator pi(&h1d_fespace,
-                                    const_cast<FiniteElementSpace *>(&nd_fespace));
+    mfem::DiscreteLinearOperator pi(&h1d_fespace, &nd_fespace.Get());
     pi.AddDomainInterpolator(new mfem::IdentityInterpolator);
     pi.SetAssemblyLevel(mfem::AssemblyLevel::LEGACY);
     pi.Assemble();

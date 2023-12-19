@@ -23,6 +23,7 @@ namespace palace
 {
 
 class IoData;
+class Mesh;
 
 //
 // A class handling spatial discretization of the governing equations.
@@ -85,8 +86,7 @@ private:
   bool AddExcitationVector2Internal(double omega, ComplexVector &RHS);
 
 public:
-  SpaceOperator(const IoData &iodata,
-                const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh);
+  SpaceOperator(const IoData &iodata, const std::vector<std::unique_ptr<Mesh>> &mesh);
 
   // Return list of all PEC boundary true dofs for all finite element space levels.
   const std::vector<mfem::Array<int>> &GetNDDbcTDofLists() const
@@ -130,7 +130,7 @@ public:
   const auto &GetRTSpace() const { return rt_fespace; }
 
   // Access the underlying mesh object.
-  const auto &GetMesh() const { return *GetNDSpace().GetParMesh(); }
+  const auto &GetMesh() const { return GetNDSpace().GetMesh(); }
 
   // Return the number of true (conforming) dofs on the finest ND space.
   auto GlobalTrueVSize() const { return GetNDSpace().GlobalTrueVSize(); }

@@ -5,6 +5,7 @@
 
 #include <mfem.hpp>
 #include "fem/errorindicator.hpp"
+#include "fem/mesh.hpp"
 #include "linalg/arpack.hpp"
 #include "linalg/divfree.hpp"
 #include "linalg/errorestimator.hpp"
@@ -25,7 +26,7 @@ namespace palace
 using namespace std::complex_literals;
 
 std::pair<ErrorIndicator, long long int>
-EigenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const
+EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 {
   // Construct and extract the system matrices defining the eigenvalue problem. The diagonal
   // values for the mass matrix PEC dof shift the Dirichlet eigenvalues out of the

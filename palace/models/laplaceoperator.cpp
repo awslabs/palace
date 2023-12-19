@@ -5,6 +5,7 @@
 
 #include "fem/bilinearform.hpp"
 #include "fem/integrator.hpp"
+#include "fem/mesh.hpp"
 #include "fem/multigrid.hpp"
 #include "linalg/rap.hpp"
 #include "utils/communication.hpp"
@@ -16,7 +17,7 @@ namespace palace
 {
 
 LaplaceOperator::LaplaceOperator(const IoData &iodata,
-                                 const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh)
+                                 const std::vector<std::unique_ptr<Mesh>> &mesh)
   : print_hdr(true), dbc_attr(SetUpBoundaryProperties(iodata, *mesh.back())),
     h1_fecs(fem::ConstructFECollections<mfem::H1_FECollection>(
         iodata.solver.order, mesh.back()->Dimension(), iodata.solver.linear.mg_max_levels,
@@ -25,7 +26,7 @@ LaplaceOperator::LaplaceOperator(const IoData &iodata,
                                                    mesh.back()->Dimension())),
     h1_fespaces(fem::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
         iodata.solver.linear.mg_max_levels, mesh, h1_fecs, &dbc_attr, &dbc_tdof_lists)),
-    nd_fespace(h1_fespaces.GetFinestFESpace(), mesh.back().get(), nd_fec.get()),
+    nd_fespace(h1_fespaces.GetFinestFESpace(), *mesh.back(), nd_fec.get()),
     mat_op(iodata, *mesh.back()), source_attr_lists(ConstructSources(iodata))
 {
   // Finalize setup.
@@ -218,7 +219,7 @@ void LaplaceOperator::GetExcitationVector(int idx, const Operator &K, Vector &X,
 {
   // Apply the Dirichlet BCs to the solution vector: V = 1 on terminal boundaries with the
   // given index, V = 0 on all ground and other terminal boundaries.
-  mfem::ParGridFunction x(&GetH1Space());
+  mfem::ParGridFunction x(&GetH1Space().Get());
   x = 0.0;
 
   // Get a marker of all boundary attributes with the given source surface index.

@@ -15,6 +15,7 @@
 #include "drivers/transientsolver.hpp"
 #include "fem/errorindicator.hpp"
 #include "fem/libceed/utils.hpp"
+#include "fem/mesh.hpp"
 #include "linalg/slepc.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
@@ -279,10 +280,17 @@ int main(int argc, char *argv[])
 
   // Read the mesh from file, refine, partition, and distribute it. Then nondimensionalize
   // it and the input parameters.
-  std::vector<std::unique_ptr<mfem::ParMesh>> mesh;
-  mesh.push_back(mesh::ReadMesh(world_comm, iodata, false, true, true, false));
-  iodata.NondimensionalizeInputs(*mesh[0]);
-  mesh::RefineMesh(iodata, mesh);
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  {
+    std::vector<std::unique_ptr<mfem::ParMesh>> mfem_mesh;
+    mfem_mesh.push_back(mesh::ReadMesh(world_comm, iodata, false, true, true, false));
+    iodata.NondimensionalizeInputs(*mfem_mesh[0]);
+    mesh::RefineMesh(iodata, mfem_mesh);
+    for (auto &m : mfem_mesh)
+    {
+      mesh.push_back(std::make_unique<Mesh>(std::move(m)));
+    }
+  }
 
   // Run the problem driver.
   solver->SolveEstimateMarkRefine(mesh);

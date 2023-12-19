@@ -7,6 +7,7 @@
 #include "fem/bilinearform.hpp"
 #include "fem/coefficient.hpp"
 #include "fem/integrator.hpp"
+#include "fem/mesh.hpp"
 #include "fem/multigrid.hpp"
 #include "linalg/rap.hpp"
 #include "utils/communication.hpp"
@@ -20,7 +21,7 @@ namespace palace
 using namespace std::complex_literals;
 
 SpaceOperator::SpaceOperator(const IoData &iodata,
-                             const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh)
+                             const std::vector<std::unique_ptr<Mesh>> &mesh)
   : pc_mat_real(iodata.solver.linear.pc_mat_real),
     pc_mat_shifted(iodata.solver.linear.pc_mat_shifted), print_hdr(true),
     print_prec_hdr(true), dbc_attr(SetUpBoundaryProperties(iodata, *mesh.back())),
@@ -36,7 +37,7 @@ SpaceOperator::SpaceOperator(const IoData &iodata,
         iodata.solver.linear.mg_max_levels, mesh, nd_fecs, &dbc_attr, &nd_dbc_tdof_lists)),
     h1_fespaces(fem::ConstructAuxiliaryFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
         nd_fespaces, h1_fecs, &dbc_attr, &h1_dbc_tdof_lists)),
-    rt_fespace(nd_fespaces.GetFinestFESpace(), mesh.back().get(), rt_fec.get()),
+    rt_fespace(nd_fespaces.GetFinestFESpace(), *mesh.back(), rt_fec.get()),
     mat_op(iodata, *mesh.back()), farfield_op(iodata, mat_op, *mesh.back()),
     surf_sigma_op(iodata, mat_op, *mesh.back()), surf_z_op(iodata, mat_op, *mesh.back()),
     lumped_port_op(iodata, mat_op, GetH1Space()),
@@ -142,7 +143,7 @@ void SpaceOperator::CheckBoundaryProperties()
   //                      // As tested, this does not eliminate all DC modes!
   for (std::size_t l = 0; l < GetH1Spaces().GetNumLevels(); l++)
   {
-    GetH1Spaces().GetFESpaceAtLevel(l).GetEssentialTrueDofs(
+    GetH1Spaces().GetFESpaceAtLevel(l).Get().GetEssentialTrueDofs(
         aux_bdr_marker, aux_bdr_tdof_lists.emplace_back());
   }
 
@@ -886,11 +887,11 @@ bool SpaceOperator::AddExcitationVector1Internal(Vector &RHS1)
   {
     return false;
   }
-  mfem::LinearForm rhs1(&GetNDSpace());
+  mfem::LinearForm rhs1(&GetNDSpace().Get());
   rhs1.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fb));
   rhs1.UseFastAssembly(false);
   rhs1.Assemble();
-  GetNDSpace().GetProlongationMatrix()->AddMultTranspose(rhs1, RHS1);
+  GetNDSpace().Get().GetProlongationMatrix()->AddMultTranspose(rhs1, RHS1);
   return true;
 }
 
@@ -906,15 +907,15 @@ bool SpaceOperator::AddExcitationVector2Internal(double omega, ComplexVector &RH
   {
     return false;
   }
-  mfem::LinearForm rhs2r(&GetNDSpace()), rhs2i(&GetNDSpace());
+  mfem::LinearForm rhs2r(&GetNDSpace().Get()), rhs2i(&GetNDSpace().Get());
   rhs2r.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fbr));
   rhs2i.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fbi));
   rhs2r.UseFastAssembly(false);
   rhs2i.UseFastAssembly(false);
   rhs2r.Assemble();
   rhs2i.Assemble();
-  GetNDSpace().GetProlongationMatrix()->AddMultTranspose(rhs2r, RHS2.Real());
-  GetNDSpace().GetProlongationMatrix()->AddMultTranspose(rhs2i, RHS2.Imag());
+  GetNDSpace().Get().GetProlongationMatrix()->AddMultTranspose(rhs2r, RHS2.Real());
+  GetNDSpace().Get().GetProlongationMatrix()->AddMultTranspose(rhs2i, RHS2.Imag());
   return true;
 }
 

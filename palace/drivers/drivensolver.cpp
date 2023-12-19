@@ -6,6 +6,7 @@
 #include <complex>
 #include <mfem.hpp>
 #include "fem/errorindicator.hpp"
+#include "fem/mesh.hpp"
 #include "linalg/errorestimator.hpp"
 #include "linalg/ksp.hpp"
 #include "linalg/operator.hpp"
@@ -27,7 +28,7 @@ namespace palace
 using namespace std::complex_literals;
 
 std::pair<ErrorIndicator, long long int>
-DrivenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const
+DrivenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 {
   // Set up the spatial discretization and frequency sweep.
   BlockTimer bt0(Timer::CONSTRUCT);

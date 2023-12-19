@@ -17,6 +17,7 @@ namespace palace
 {
 
 class IoData;
+class Mesh;
 
 //
 // A class handling discretization of curl-curl problems for magnetostatics.
@@ -51,8 +52,7 @@ private:
   void CheckBoundaryProperties();
 
 public:
-  CurlCurlOperator(const IoData &iodata,
-                   const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh);
+  CurlCurlOperator(const IoData &iodata, const std::vector<std::unique_ptr<Mesh>> &mesh);
 
   // Return material operator for postprocessing.
   const MaterialOperator &GetMaterialOp() const { return mat_op; }
@@ -73,7 +73,7 @@ public:
   const auto &GetRTSpace() const { return rt_fespace; }
 
   // Access the underlying mesh object.
-  const auto &GetMesh() const { return *GetNDSpace().GetParMesh(); }
+  const auto &GetMesh() const { return GetNDSpace().GetMesh(); }
 
   // Return the number of true (conforming) dofs on the finest ND space.
   auto GlobalTrueVSize() const { return GetNDSpace().GlobalTrueVSize(); }

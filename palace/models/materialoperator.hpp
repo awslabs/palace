@@ -4,9 +4,8 @@
 #ifndef PALACE_MODELS_MATERIAL_OPERATOR_HPP
 #define PALACE_MODELS_MATERIAL_OPERATOR_HPP
 
-#include <unordered_map>
-#include <vector>
 #include <mfem.hpp>
+#include "fem/mesh.hpp"
 
 namespace palace
 {
@@ -20,7 +19,7 @@ class MaterialOperator
 {
 private:
   // Reference to underlying mesh object (not owned).
-  const mfem::ParMesh &mesh;
+  const Mesh &mesh;
 
   // Mapping from the local attribute to material index.
   mfem::Array<int> attr_mat;
@@ -35,19 +34,11 @@ private:
   // penetration depth.
   mfem::Array<int> losstan_attr, conductivity_attr, london_attr;
 
-  // Attribute mapping for (global, 1-based) domain and boundary attributes to those on this
-  // process (still 1-based). For boundaries, the inner map is a mapping from neighboring
-  // domain attribute to the resulting local boundary attribute (to discern boundary
-  // elements with global boundary attribute which borders more than one domain). Interior
-  // boundaries use as neighbor the element with the smaller domain attribute in order to
-  // be consistent when the interior boundary element normals are not aligned.
-  std::unordered_map<int, int> loc_attr;
-  std::unordered_map<int, std::unordered_map<int, int>> loc_bdr_attr;
-
   void SetUpMaterialProperties(const IoData &iodata, const mfem::ParMesh &mesh);
 
   const auto AttrToMat(int attr) const
   {
+    const auto &loc_attr = mesh.GetAttributeGlobalToLocal();
     MFEM_ASSERT(loc_attr.find(attr) != loc_attr.end(),
                 "Missing local domain attribute for attribute " << attr << "!");
     return attr_mat[loc_attr.at(attr) - 1];
@@ -61,7 +52,7 @@ private:
   }
 
 public:
-  MaterialOperator(const IoData &iodata, mfem::ParMesh &mesh);
+  MaterialOperator(const IoData &iodata, const Mesh &mesh);
 
   int SpaceDimension() const { return mat_muinv.SizeI(); }
 
@@ -96,59 +87,16 @@ public:
   const auto &GetAttributeToMaterial() const { return attr_mat; }
   mfem::Array<int> GetBdrAttributeToMaterial() const;
 
-  const auto &GetAttributeGlobalToLocal() const { return loc_attr; }
-
-  const auto &GetBdrAttributeGlobalToLocal() const { return loc_bdr_attr; }
-
   template <typename T>
   auto GetAttributeGlobalToLocal(const T &attr_list) const
   {
-    // Skip any entries in the input global attribute list which are not on local to this
-    // process.
-    const auto &loc_attr = GetAttributeGlobalToLocal();
-    mfem::Array<int> loc_attr_list;
-    for (auto attr : attr_list)
-    {
-      if (loc_attr.find(attr) != loc_attr.end())
-      {
-        loc_attr_list.Append(loc_attr.at(attr));
-      }
-    }
-    return loc_attr_list;
+    return mesh.GetAttributeGlobalToLocal(attr_list);
   }
-
   template <typename T>
   auto GetBdrAttributeGlobalToLocal(const T &attr_list) const
   {
-    // Skip any entries in the input global boundary attribute list which are not on local
-    // to this process.
-    const auto &loc_bdr_attr = GetBdrAttributeGlobalToLocal();
-    mfem::Array<int> loc_attr_list;
-    for (auto attr : attr_list)
-    {
-      if (loc_bdr_attr.find(attr) != loc_bdr_attr.end())
-      {
-        const auto &bdr_attr_map = loc_bdr_attr.at(attr);
-        for (auto it = bdr_attr_map.begin(); it != bdr_attr_map.end(); ++it)
-        {
-          loc_attr_list.Append(it->second);
-        }
-      }
-    }
-    return loc_attr_list;
+    return mesh.GetBdrAttributeGlobalToLocal(attr_list);
   }
-
-  auto GetAttributeGlobalToLocal(const int attr) const
-  {
-    return GetAttributeGlobalToLocal(std::vector<int>{attr});
-  }
-
-  auto GetBdrAttributeGlobalToLocal(const int attr) const
-  {
-    return GetBdrAttributeGlobalToLocal(std::vector<int>{attr});
-  }
-
-  int GetAttributeGlobalToLocal(mfem::ElementTransformation &T) const;
 
   const auto &GetMesh() const { return mesh; }
 };

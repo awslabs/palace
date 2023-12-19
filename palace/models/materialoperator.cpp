@@ -278,82 +278,10 @@ mfem::DenseMatrix ToDenseMatrix(const config::SymmetricMatrixData<N> &data)
   return M;
 }
 
-auto BuildAttributeGlobalToLocal(const mfem::ParMesh &mesh)
-{
-  // Set up sparse map from global domain attributes to local ones on this process.
-  // Include ghost elements for all shared faces so we have their material properties
-  // stored locally.
-  std::unordered_map<int, int> loc_attr;
-  mfem::FaceElementTransformations FET;
-  mfem::IsoparametricTransformation T1, T2;
-  int count = 0;
-  for (int i = 0; i < mesh.GetNE(); i++)
-  {
-    const int attr = mesh.GetAttribute(i);
-    if (loc_attr.find(attr) == loc_attr.end())
-    {
-      loc_attr[attr] = ++count;
-    }
-  }
-  for (int i = 0; i < mesh.GetNSharedFaces(); i++)
-  {
-    mesh.GetSharedFaceTransformations(i, &FET, &T1, &T2);
-    int attr = FET.Elem1->Attribute;
-    if (loc_attr.find(attr) == loc_attr.end())
-    {
-      loc_attr[attr] = ++count;
-    }
-    attr = FET.Elem2->Attribute;
-    if (loc_attr.find(attr) == loc_attr.end())
-    {
-      loc_attr[attr] = ++count;
-    }
-  }
-  return loc_attr;
-}
-
-auto GetBdrNeighborAttribute(int i, const mfem::ParMesh &mesh,
-                             mfem::FaceElementTransformations &FET,
-                             mfem::IsoparametricTransformation &T1,
-                             mfem::IsoparametricTransformation &T2)
-{
-  // For internal boundaries, use the element which corresponds to the vacuum domain, or
-  // at least the one with the higher speed of light.
-  BdrGridFunctionCoefficient::GetBdrElementNeighborTransformations(i, mesh, FET, T1, T2);
-  return (FET.Elem2 && FET.Elem2->Attribute < FET.Elem1->Attribute) ? FET.Elem2->Attribute
-                                                                    : FET.Elem1->Attribute;
-}
-
-auto BuildBdrAttributeGlobalToLocal(const mfem::ParMesh &mesh)
-{
-  // Set up sparse map from global boundary attributes to local ones on this process. Each
-  // original global boundary attribute maps to a key-value pairing of global domain
-  // attributes which neighbor the given boundary and local boundary attributes.
-  std::unordered_map<int, std::unordered_map<int, int>> loc_bdr_attr;
-  mfem::FaceElementTransformations FET;
-  mfem::IsoparametricTransformation T1, T2;
-  int count = 0;
-  for (int i = 0; i < mesh.GetNBE(); i++)
-  {
-    const int attr = mesh.GetBdrAttribute(i);
-    const int nbr_attr = GetBdrNeighborAttribute(i, mesh, FET, T1, T2);
-    auto &bdr_attr_map = loc_bdr_attr[attr];
-    if (bdr_attr_map.find(nbr_attr) == bdr_attr_map.end())
-    {
-      bdr_attr_map[nbr_attr] = ++count;
-    }
-  }
-  return loc_bdr_attr;
-}
-
 }  // namespace
 
-MaterialOperator::MaterialOperator(const IoData &iodata, mfem::ParMesh &mesh) : mesh(mesh)
+MaterialOperator::MaterialOperator(const IoData &iodata, const Mesh &mesh) : mesh(mesh)
 {
-  mesh.ExchangeFaceNbrData();
-  loc_attr = BuildAttributeGlobalToLocal(mesh);
-  loc_bdr_attr = BuildBdrAttributeGlobalToLocal(mesh);
-
   SetUpMaterialProperties(iodata, mesh);
 }
 
@@ -388,6 +316,7 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata,
   // Set up material properties of the different domain regions, represented with element-
   // wise constant matrix-valued coefficients for the relative permeability, permittivity,
   // and other material properties.
+  const auto &loc_attr = this->mesh.GetAttributeGlobalToLocal();
   mfem::Array<int> mat_marker(iodata.domains.materials.size());
   mat_marker = 0;
   int nmats = 0;
@@ -546,6 +475,7 @@ mfem::Array<int> MaterialOperator::GetBdrAttributeToMaterial() const
 {
   // Construct map from all (contiguous) local boundary attributes to the material index in
   // the neighboring element.
+  const auto &loc_bdr_attr = mesh.GetBdrAttributeGlobalToLocal();
   int bdr_attr_max = 0;
   for (const auto &[attr, bdr_attr_map] : loc_bdr_attr)
   {
@@ -563,47 +493,6 @@ mfem::Array<int> MaterialOperator::GetBdrAttributeToMaterial() const
     }
   }
   return bdr_attr_mat;
-}
-
-int MaterialOperator::GetAttributeGlobalToLocal(mfem::ElementTransformation &T) const
-{
-  if (T.GetDimension() == T.GetSpaceDim())
-  {
-    // Domain element.
-    auto it = loc_attr.find(T.Attribute);
-    MFEM_ASSERT(it != loc_attr.end(), "Invalid domain attribute " << T.Attribute << "!");
-    return it->second;
-  }
-  else
-  {
-    // Boundary element (or boundary submesh domain).
-    auto bdr_attr_map = loc_bdr_attr.find(T.Attribute);
-    MFEM_ASSERT(bdr_attr_map != loc_bdr_attr.end(),
-                "Invalid domain attribute " << T.Attribute << "!");
-    const int nbr_attr = [&]()
-    {
-      mfem::FaceElementTransformations FET;  // XX TODO: Preallocate these for all elements
-      mfem::IsoparametricTransformation T1, T2;
-      if (const auto *submesh = dynamic_cast<const mfem::ParSubMesh *>(T.mesh))
-      {
-        MFEM_ASSERT(T.ElementType == mfem::ElementTransformation::ELEMENT,
-                    "Unexpected element type in GetAttributeGlobalToLocal!");
-        return GetBdrNeighborAttribute(submesh->GetParentElementIDMap()[T.ElementNo],
-                                       *submesh->GetParent(), FET, T1, T2);
-      }
-      else
-      {
-        MFEM_ASSERT(T.ElementType == mfem::ElementTransformation::BDR_ELEMENT,
-                    "Unexpected element type in GetAttributeGlobalToLocal!");
-        return GetBdrNeighborAttribute(
-            T.ElementNo, *static_cast<const mfem::ParMesh *>(T.mesh), FET, T1, T2);
-      }
-    }();
-    auto it = bdr_attr_map->second.find(nbr_attr);
-    MFEM_ASSERT(it != bdr_attr_map->second.end(),
-                "Invalid domain attribute " << nbr_attr << "!");
-    return it->second;
-  }
 }
 
 MaterialPropertyCoefficient::MaterialPropertyCoefficient(
@@ -886,7 +775,7 @@ void MaterialPropertyCoefficient::NormalProjectedCoefficient(const mfem::Vector 
 double MaterialPropertyCoefficient::Eval(mfem::ElementTransformation &T,
                                          const mfem::IntegrationPoint &ip)
 {
-  const int attr = mat_op.GetAttributeGlobalToLocal(T);
+  const int attr = mat_op.GetMesh().GetAttributeGlobalToLocal(T);
   MFEM_ASSERT(attr <= attr_mat.Size(),
               "Out of bounds attribute for MaterialPropertyCoefficient ("
                   << attr << " > " << attr_mat.Size() << ")!");
@@ -899,7 +788,7 @@ double MaterialPropertyCoefficient::Eval(mfem::ElementTransformation &T,
 void MaterialPropertyCoefficient::Eval(mfem::DenseMatrix &K, mfem::ElementTransformation &T,
                                        const mfem::IntegrationPoint &ip)
 {
-  const int attr = mat_op.GetAttributeGlobalToLocal(T);
+  const int attr = mat_op.GetMesh().GetAttributeGlobalToLocal(T);
   MFEM_ASSERT(attr <= attr_mat.Size(),
               "Out of bounds attribute for MaterialPropertyCoefficient ("
                   << attr << " > " << attr_mat.Size() << ")!");
