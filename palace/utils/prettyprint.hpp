@@ -56,70 +56,49 @@ inline std::size_t PrePrint(MPI_Comm comm, std::size_t w, std::size_t wv, std::s
 
 }  // namespace internal
 
-// Fixed column width wrapped printing with range notation for the contents of a marker
-// array.
-template <template <typename...> class Container, typename T, typename... U>
-inline void PrettyPrintMarker(const Container<T, U...> &data,
-                              const std::string &prefix = "",
-                              MPI_Comm comm = MPI_COMM_WORLD)
-{
-  static_assert(std::is_integral<T>::value,
-                "PrettyPrintMarker requires containers with an integral type marker!");
-  std::size_t i = 0, w = 0, lead = prefix.length();
-  Mpi::Print(comm, prefix);
-  while (i < internal::GetSize(data))
-  {
-    if (data[i])
-    {
-      auto j = i;
-      while ((j + 1 < internal::GetSize(data)) && data[j + 1])
-      {
-        j++;
-      }
-      if (i == j)
-      {
-        auto wi = 1 + static_cast<T>(std::log10(i + 1));
-        w = internal::PrePrint(comm, w, wi, lead) + wi;
-        Mpi::Print(comm, "{:d}", i + 1);
-        i++;
-      }
-      else
-      {
-        auto wi = 3 + static_cast<T>(std::log10(i + 1)) + static_cast<T>(std::log10(j + 1));
-        w = internal::PrePrint(comm, w, wi, lead) + wi;
-        Mpi::Print(comm, "{:d}-{:d}", i + 1, j + 1);
-        i = j + 1;
-      }
-    }
-    else
-    {
-      i++;
-    }
-  }
-  Mpi::Print(comm, "\n");
-}
-
-// Fixed column width wrapped printing for the contents of an array.
+// Fixed column width wrapped printing for the contents of an array, with with range
+// notation for integral types.
 template <template <typename...> class Container, typename T, typename... U>
 inline void PrettyPrint(const Container<T, U...> &data, T scale,
                         const std::string &prefix = "", MPI_Comm comm = MPI_COMM_WORLD)
 {
   std::size_t w = 0, lead = prefix.length();
   Mpi::Print(comm, prefix);
-  for (const auto &v : data)
+  auto i = data.begin();
+  while (i != data.end())
   {
     if constexpr (std::is_integral<T>::value)
     {
-      auto wv = 1 + static_cast<T>(std::log10(v * scale));
-      w = internal::PrePrint(comm, w, wv, lead) + wv;
-      Mpi::Print(comm, "{:d}", v * scale);
+      auto j = i;
+      if (scale == 1)
+      {
+        while ((j + 1 != data.end()) && *(j + 1) == (*j) + 1)
+        {
+          j++;
+        }
+      }
+      if (i == j)
+      {
+        auto wi = 1 + static_cast<T>(std::log10((*i) + 1));
+        w = internal::PrePrint(comm, w, wi, lead) + wi;
+        Mpi::Print(comm, "{:d}", (*i) * scale);
+      }
+      else
+      {
+        auto wi =
+            3 + static_cast<T>(std::log10((*i) + 1)) + static_cast<T>(std::log10((*j) + 1));
+        w = internal::PrePrint(comm, w, wi, lead) + wi;
+        Mpi::Print(comm, "{:d}-{:d}", (*i) * scale, (*j) * scale);
+      }
+      i = j + 1;
     }
     else
     {
       constexpr auto pv = 3;       // Value precision
       constexpr auto wv = pv + 6;  // Total printed width of a value
       w = internal::PrePrint(comm, w, wv, lead) + wv;
-      Mpi::Print(comm, "{:.{}e}", v * scale, pv);
+      Mpi::Print(comm, "{:.{}e}", (*i) * scale, pv);
+      i++;
     }
   }
   Mpi::Print(comm, "\n");
