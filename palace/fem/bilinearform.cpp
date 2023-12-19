@@ -58,7 +58,7 @@ BilinearForm::PartialAssemble(const FiniteElementSpace &trial_fespace,
     CeedOperator loc_op;
     PalaceCeedCall(ceed, CeedCompositeOperatorCreate(ceed, &loc_op));
 
-    for (const auto &[geom, geom_data] : mesh.GetCeedGeomFactorData(ceed))
+    for (const auto &[geom, data] : mesh.GetCeedGeomFactorData(ceed))
     {
       const auto trial_map_type =
           trial_fespace.GetFEColl().GetMapType(mfem::Geometry::Dimension[geom]);
@@ -69,9 +69,9 @@ BilinearForm::PartialAssemble(const FiniteElementSpace &trial_fespace,
       {
         // Assemble domain integrators on this element geometry type.
         CeedElemRestriction trial_restr =
-            trial_fespace.GetCeedElemRestriction(ceed, geom, geom_data->indices);
+            trial_fespace.GetCeedElemRestriction(ceed, geom, data.indices);
         CeedElemRestriction test_restr =
-            test_fespace.GetCeedElemRestriction(ceed, geom, geom_data->indices);
+            test_fespace.GetCeedElemRestriction(ceed, geom, data.indices);
         CeedBasis trial_basis = trial_fespace.GetCeedBasis(ceed, geom);
         CeedBasis test_basis = test_fespace.GetCeedBasis(ceed, geom);
 
@@ -80,7 +80,7 @@ BilinearForm::PartialAssemble(const FiniteElementSpace &trial_fespace,
           CeedOperator sub_op;
           integ->SetMapTypes(trial_map_type, test_map_type);
           integ->Assemble(ceed, trial_restr, test_restr, trial_basis, test_basis,
-                          geom_data->geom_data_vec, geom_data->geom_data_restr, &sub_op);
+                          data.geom_data, data.geom_data_restr, &sub_op);
           PalaceCeedCall(ceed, CeedCompositeOperatorAddSub(loc_op, sub_op));
           PalaceCeedCall(ceed, CeedOperatorDestroy(&sub_op));
         }
@@ -90,9 +90,9 @@ BilinearForm::PartialAssemble(const FiniteElementSpace &trial_fespace,
       {
         // Assemble boundary integrators on this element geometry type.
         CeedElemRestriction trial_restr =
-            trial_fespace.GetCeedElemRestriction(ceed, geom, geom_data->indices);
+            trial_fespace.GetCeedElemRestriction(ceed, geom, data.indices);
         CeedElemRestriction test_restr =
-            test_fespace.GetCeedElemRestriction(ceed, geom, geom_data->indices);
+            test_fespace.GetCeedElemRestriction(ceed, geom, data.indices);
         CeedBasis trial_basis = trial_fespace.GetCeedBasis(ceed, geom);
         CeedBasis test_basis = test_fespace.GetCeedBasis(ceed, geom);
 
@@ -101,7 +101,7 @@ BilinearForm::PartialAssemble(const FiniteElementSpace &trial_fespace,
           CeedOperator sub_op;
           integ->SetMapTypes(trial_map_type, test_map_type);
           integ->Assemble(ceed, trial_restr, test_restr, trial_basis, test_basis,
-                          geom_data->geom_data_vec, geom_data->geom_data_restr, &sub_op);
+                          data.geom_data, data.geom_data_restr, &sub_op);
           PalaceCeedCall(ceed, CeedCompositeOperatorAddSub(loc_op, sub_op));
           PalaceCeedCall(ceed, CeedOperatorDestroy(&sub_op));
         }
@@ -230,15 +230,15 @@ std::unique_ptr<ceed::Operator> DiscreteLinearOperator::PartialAssemble() const
     PalaceCeedCall(ceed, CeedCompositeOperatorCreate(ceed, &loc_op));
     PalaceCeedCall(ceed, CeedCompositeOperatorCreate(ceed, &loc_op_t));
 
-    for (const auto &[geom, geom_data] : mesh.GetCeedGeomFactorData(ceed))
+    for (const auto &[geom, data] : mesh.GetCeedGeomFactorData(ceed))
     {
       if (mfem::Geometry::Dimension[geom] == mesh.Dimension() && !domain_interps.empty())
       {
         // Assemble domain interpolators on this element geometry type.
         CeedElemRestriction trial_restr =
-            trial_fespace.GetInterpCeedElemRestriction(ceed, geom, geom_data->indices);
+            trial_fespace.GetInterpCeedElemRestriction(ceed, geom, data.indices);
         CeedElemRestriction test_restr =
-            test_fespace.GetInterpRangeCeedElemRestriction(ceed, geom, geom_data->indices);
+            test_fespace.GetInterpRangeCeedElemRestriction(ceed, geom, data.indices);
 
         // Construct the interpolator basis.
         CeedBasis interp_basis;

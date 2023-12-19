@@ -495,7 +495,7 @@ std::unique_ptr<Operator> CeedOperatorCoarsen(const Operator &op_fine,
     const auto &geom_data =
         fespace_coarse.GetMesh().GetCeedGeomFactorData(ceed).at(GetMfemTopology(geom));
     CeedElemRestriction restr_coarse = fespace_coarse.GetCeedElemRestriction(
-        ceed, GetMfemTopology(geom), geom_data->indices);
+        ceed, GetMfemTopology(geom), geom_data.indices);
     CeedBasis basis_coarse = fespace_coarse.GetCeedBasis(ceed, GetMfemTopology(geom));
 
     PalaceCeedCall(ceed, CeedOperatorMultigridLevelCreate(op_fine, nullptr, restr_coarse,
@@ -513,7 +513,7 @@ std::unique_ptr<Operator> CeedOperatorCoarsen(const Operator &op_fine,
   // with CeedReferenceCopy) and we need the original ones to access the FiniteElementSpace
   // and Mesh object caches.
   MFEM_VERIFY(internal::GetCeedObjects().size() == op_fine.Size(),
-              "Unexpected size mismatch in multithreaded libCEED contexts!");
+              "Unexpected size mismatch in multithreaded Ceed contexts!");
   const std::size_t nt = internal::GetCeedObjects().size();
   PalacePragmaOmp(parallel for schedule(static))
   for (std::size_t i = 0; i < nt; i++)
