@@ -8,9 +8,45 @@
 #include <unordered_map>
 #include <vector>
 #include <mfem.hpp>
+#include "fem/libceed/ceed.hpp"
 
 namespace palace
 {
+
+namespace ceed
+{
+
+//
+// Data structure for geometry information stored at quadrature points.
+//
+struct CeedGeomFactorData_private
+{
+  // Dimension of this element topology and space dimension of the underlying mesh.
+  int dim, space_dim;
+
+  // Element indices from the mfem::Mesh used to construct Ceed objects with these geometry
+  // factors.
+  std::vector<int> indices;
+
+  // Mesh geometry factor data: {attr, w * |J|, adj(J)^T / |J|}. Jacobian matrix is
+  // space_dim x dim, stored column-major by component.
+  mfem::Vector geom_data;
+
+  // Objects for libCEED interface to the quadrature data.
+  CeedVector geom_data_vec;
+  CeedElemRestriction geom_data_restr;
+  Ceed ceed;
+
+  CeedGeomFactorData_private(Ceed ceed)
+    : dim(0), space_dim(0), geom_data_vec(nullptr), geom_data_restr(nullptr), ceed(ceed)
+  {
+  }
+  ~CeedGeomFactorData_private();
+};
+
+using CeedGeomFactorData = std::unique_ptr<CeedGeomFactorData_private>;
+
+}  // namespace ceed
 
 //
 // Wrapper for MFEM's ParMesh class, with extensions for Palace.
@@ -33,6 +69,15 @@ private:
   // be consistent when the interior boundary element normals are not aligned.
   mutable std::unordered_map<int, int> loc_attr;
   mutable std::unordered_map<int, std::unordered_map<int, int>> loc_bdr_attr;
+
+  // Mesh data structures for assembling libCEED operators on a (mixed) mesh:
+  //   - Mesh element indices for threads and element geometry types.
+  //   - Attributes for domain and boundary elements. The attributes are not the same as the
+  //     MFEM mesh element attributes, they correspond to the local (still 1-based)
+  //     attributes above.
+  //   - Geometry factor quadrature point data (w |J| and adj(J)^T / |J|) for domain and
+  //     boundary elements.
+  mutable ceed::CeedObjectMap<ceed::CeedGeomFactorData> geom_data;
 
   void CheckSequenceRebuild() const
   {
@@ -133,6 +178,11 @@ public:
   }
 
   int GetAttributeGlobalToLocal(const mfem::ElementTransformation &T) const;
+
+  const ceed::CeedGeomObjectMap<ceed::CeedGeomFactorData> &
+  GetCeedGeomFactorData(Ceed ceed) const;
+
+  void DestroyCeedGeomFactorData() const;
 
   MPI_Comm GetComm() const { return mesh->GetComm(); }
 };

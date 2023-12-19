@@ -7,6 +7,7 @@
 #include <memory>
 #include <vector>
 #include <mfem.hpp>
+#include "fem/libceed/ceed.hpp"
 #include "fem/mesh.hpp"
 #include "linalg/operator.hpp"
 
@@ -25,19 +26,36 @@ private:
   // Reference to the underlying mesh object (not owned).
   Mesh &mesh;
 
-  // Members used to define equality between two spaces.
-  mutable long int sequence;
-  mutable std::size_t id;
-  static std::size_t GetGlobalId();
+  // Members for constructing libCEED operators.
+  mutable ceed::CeedObjectMap<CeedBasis> basis;
+  mutable ceed::CeedObjectMap<CeedElemRestriction> restr, interp_restr, interp_range_restr;
+
+  bool HasUniqueInterpRestriction(const mfem::FiniteElement &fe) const
+  {
+    // For interpolation operators and tensor-product elements, we need native (not
+    // lexicographic) ordering.
+    const mfem::TensorBasisElement *tfe =
+        dynamic_cast<const mfem::TensorBasisElement *>(&fe);
+    return (tfe && tfe->GetDofMap().Size() > 0 &&
+            fe.GetRangeType() != mfem::FiniteElement::VECTOR);
+  }
+
+  bool HasUniqueInterpRangeRestriction(const mfem::FiniteElement &fe) const
+  {
+    // The range restriction for interpolation operators needs to use a special
+    // DofTransformation (not equal to the transpose of the domain restriction).
+    const auto geom = fe.GetGeomType();
+    const auto *dof_trans = fespace.FEColl()->DofTransformationForGeometry(geom);
+    return (dof_trans && !dof_trans->IsIdentity());
+  }
 
 public:
   template <typename... T>
   FiniteElementSpace(Mesh &mesh, T &&...args)
-    : fespace(&mesh.Get(), std::forward<T>(args)...), mesh(mesh),
-      sequence(fespace.GetSequence()), id(GetGlobalId())
+    : fespace(&mesh.Get(), std::forward<T>(args)...), mesh(mesh)
   {
   }
-  virtual ~FiniteElementSpace() = default;
+  virtual ~FiniteElementSpace() { DestroyCeedObjects(); }
 
   const auto &Get() const { return fespace; }
   auto &Get() { return fespace; }
@@ -62,15 +80,37 @@ public:
   auto SpaceDimension() const { return mesh.Get().SpaceDimension(); }
   auto GetMaxElementOrder() const { return Get().GetMaxElementOrder(); }
 
-  // Get the ID associated with the instance of this class. If the underlying sequence has
-  // changed (due to a mesh update, for example), regenerate the ID.
-  std::size_t GetId() const;
+  // Return the basis object for elements of the given element geometry type.
+  const CeedBasis GetCeedBasis(Ceed ceed, mfem::Geometry::Type geom) const;
 
-  // Operator overload for equality comparisons between two spaces.
-  bool operator==(const FiniteElementSpace &fespace) const
-  {
-    return GetId() == fespace.GetId();
-  }
+  // Return the element restriction object for the given element set (all with the same
+  // geometry type).
+  const CeedElemRestriction GetCeedElemRestriction(Ceed ceed, mfem::Geometry::Type geom,
+                                                   const std::vector<int> &indices) const;
+
+  // If the space has a special element restriction for discrete interpolators, return that.
+  // Otherwise return the same restiction as given by GetCeedElemRestriction.
+  const CeedElemRestriction
+  GetInterpCeedElemRestriction(Ceed ceed, mfem::Geometry::Type geom,
+                               const std::vector<int> &indices) const;
+
+  // If the space has a special element restriction for the range space of discrete
+  // interpolators, return that. Otherwise return the same restiction as given by
+  // GetCeedElemRestriction.
+  const CeedElemRestriction
+  GetInterpRangeCeedElemRestriction(Ceed ceed, mfem::Geometry::Type geom,
+                                    const std::vector<int> &indices) const;
+
+  // Clear the cached basis and element restriction objects owned by the finite element
+  // space.
+  void DestroyCeedObjects();
+
+  static CeedBasis BuildCeedBasis(const mfem::FiniteElementSpace &fespace, Ceed ceed,
+                                  mfem::Geometry::Type geom);
+  static CeedElemRestriction
+  BuildCeedElemRestriction(const mfem::FiniteElementSpace &fespace, Ceed ceed,
+                           mfem::Geometry::Type geom, const std::vector<int> &indices,
+                           bool is_interp = false, bool is_interp_range = false);
 
   // Get the associated MPI communicator.
   MPI_Comm GetComm() const { return fespace.GetComm(); }
