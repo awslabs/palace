@@ -1,386 +1,186 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#ifndef PALACE_LIBCEED_HCURLHDIV_QF_H
-#define PALACE_LIBCEED_HCURLHDIV_QF_H
+#ifndef PALACE_LIBCEED_HCURL_HDIV_QF_H
+#define PALACE_LIBCEED_HCURL_HDIV_QF_H
 
+#include "coeff_qf.h"
+#include "utils_geom_qf.h"
 #include "utils_qf.h"
-#include "vecfemass_qf.h"
 
-// libCEED QFunction for building quadrature data for a mixed H(curl)-H(div) mass operator
-// with a scalar constant coefficient.
-CEED_QFUNCTION(f_build_hcurlhdiv_const_scalar)(void *ctx, CeedInt Q,
-                                               const CeedScalar *const *in,
-                                               CeedScalar *const *out)
+// libCEED QFunctions for mixed H(curl)-H(div) operators (Piola transformations u =
+// adj(J)^T / det(J) ̂u and u = J / det(J) ̂u).
+// Note: J / det(J) = adj(adj(J)^T / det(J))^T
+// in[0] is geometry quadrature data, shape [ncomp=2+space_dim*dim, Q]
+// in[1] is active vector, shape [qcomp=dim, ncomp=1, Q]
+// out[0] is active vector, shape [qcomp=dim, ncomp=1, Q]
+
+CEED_QFUNCTION(f_apply_hcurlhdiv_22)(void *ctx, CeedInt Q, const CeedScalar *const *in,
+                                     CeedScalar *const *out)
 {
-  // At every quadrature point, compute qw / det(J) adj(J) C J and store the
-  // result.
-  // in[0] is Jacobians with shape [dim, ncomp=space_dim, Q]
-  // in[1] is quadrature weights, size (Q)
-  VectorFEMassContext *bc = (VectorFEMassContext *)ctx;
-  const CeedScalar coeff = bc->coeff;
-  const CeedScalar *J = in[0], *qw = in[1];
-  CeedScalar *qd = out[0];
-  switch (10 * bc->space_dim + bc->dim)
+  const CeedScalar *attr = in[0], *wdetJ = in[0] + Q, *adjJt = in[0] + 2 * Q, *u = in[1];
+  CeedScalar *v = out[0];
+
+  CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
-    case 11:
-      CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
-      {
-        qd[i] = qw[i] * coeff;
-      }
-      break;
-    case 21:
-      CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
-      {
-        MultJtCAdjJt21(J + i, Q, &coeff, 1, 1, qw[i], Q, qd + i);
-      }
-      break;
-    case 22:
-      CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
-      {
-        MultJtCAdjJt22(J + i, Q, &coeff, 1, 1, qw[i], Q, qd + i);
-      }
-      break;
-    case 32:
-      CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
-      {
-        MultJtCAdjJt32(J + i, Q, &coeff, 1, 1, qw[i], Q, qd + i);
-      }
-      break;
-    case 33:
-      CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
-      {
-        MultJtCAdjJt33(J + i, Q, &coeff, 1, 1, qw[i], Q, qd + i);
-      }
-      break;
+    const CeedScalar u_loc[2] = {u[i + Q * 0], u[i + Q * 1]};
+    CeedScalar coeff[3], adjJt_loc[4], J_loc[4], v_loc[2];
+    CoeffUnpack2((const CeedIntScalar *)ctx, (CeedInt)attr[i], coeff);
+    MatUnpack22(adjJt + i, Q, adjJt_loc);
+    AdjJt22<false>(adjJt_loc, J_loc);
+    MultAtBCx22(J_loc, coeff, adjJt_loc, u_loc, v_loc);
+
+    v[i + Q * 0] = wdetJ[i] * v_loc[0];
+    v[i + Q * 1] = wdetJ[i] * v_loc[1];
   }
   return 0;
 }
 
-// libCEED QFunction for building quadrature data for a mixed H(curl)-H(div) mass operator
-// with a scalar coefficient evaluated at quadrature points.
-CEED_QFUNCTION(f_build_hcurlhdiv_quad_scalar)(void *ctx, CeedInt Q,
-                                              const CeedScalar *const *in,
-                                              CeedScalar *const *out)
+CEED_QFUNCTION(f_apply_hcurlhdiv_33)(void *ctx, CeedInt Q, const CeedScalar *const *in,
+                                     CeedScalar *const *out)
 {
-  // At every quadrature point, compute qw / det(J) adj(J) C J and store the
-  // result.
-  // in[0] is coefficients with shape [ncomp=1, Q]
-  // in[1] is Jacobians with shape [dim, ncomp=space_dim, Q]
-  // in[2] is quadrature weights, size (Q)
-  VectorFEMassContext *bc = (VectorFEMassContext *)ctx;
-  const CeedScalar *c = in[0], *J = in[1], *qw = in[2];
-  CeedScalar *qd = out[0];
-  switch (10 * bc->space_dim + bc->dim)
+  const CeedScalar *attr = in[0], *wdetJ = in[0] + Q, *adjJt = in[0] + 2 * Q, *u = in[1];
+  CeedScalar *v = out[0];
+
+  CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
-    case 11:
-      CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
-      {
-        qd[i] = qw[i] * c[i];
-      }
-      break;
-    case 21:
-      CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
-      {
-        MultJtCAdjJt21(J + i, Q, c + i, Q, 1, qw[i], Q, qd + i);
-      }
-      break;
-    case 22:
-      CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
-      {
-        MultJtCAdjJt22(J + i, Q, c + i, Q, 1, qw[i], Q, qd + i);
-      }
-      break;
-    case 32:
-      CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
-      {
-        MultJtCAdjJt32(J + i, Q, c + i, Q, 1, qw[i], Q, qd + i);
-      }
-      break;
-    case 33:
-      CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
-      {
-        MultJtCAdjJt33(J + i, Q, c + i, Q, 1, qw[i], Q, qd + i);
-      }
-      break;
+    const CeedScalar u_loc[3] = {u[i + Q * 0], u[i + Q * 1], u[i + Q * 2]};
+    CeedScalar coeff[6], adjJt_loc[9], J_loc[9], v_loc[3];
+    CoeffUnpack3((const CeedIntScalar *)ctx, (CeedInt)attr[i], coeff);
+    MatUnpack33(adjJt + i, Q, adjJt_loc);
+    AdjJt33<false>(adjJt_loc, J_loc);
+    MultAtBCx33(J_loc, coeff, adjJt_loc, u_loc, v_loc);
+
+    v[i + Q * 0] = wdetJ[i] * v_loc[0];
+    v[i + Q * 1] = wdetJ[i] * v_loc[1];
+    v[i + Q * 2] = wdetJ[i] * v_loc[2];
   }
   return 0;
 }
 
-// libCEED QFunction for building quadrature data for a mixed H(curl)-H(div) mass operator
-// with a vector coefficient evaluated at quadrature points.
-CEED_QFUNCTION(f_build_hcurlhdiv_quad_vector)(void *ctx, CeedInt Q,
-                                              const CeedScalar *const *in,
-                                              CeedScalar *const *out)
+CEED_QFUNCTION(f_apply_hcurlhdiv_21)(void *ctx, CeedInt Q, const CeedScalar *const *in,
+                                     CeedScalar *const *out)
 {
-  // At every quadrature point, compute qw / det(J) adj(J) C J and store the
-  // result.
-  // in[0] is coefficients with shape [ncomp=space_dim, Q]
-  // in[1] is Jacobians with shape [dim, ncomp=space_dim, Q]
-  // in[2] is quadrature weights, size (Q)
-  VectorFEMassContext *bc = (VectorFEMassContext *)ctx;
-  const CeedScalar *c = in[0], *J = in[1], *qw = in[2];
-  CeedScalar *qd = out[0];
-  switch (10 * bc->space_dim + bc->dim)
+  const CeedScalar *attr = in[0], *wdetJ = in[0] + Q, *adjJt = in[0] + 2 * Q, *u = in[1];
+  CeedScalar *v = out[0];
+
+  CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
-    case 21:
-      CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
-      {
-        MultJtCAdjJt21(J + i, Q, c + i, Q, 2, qw[i], Q, qd + i);
-      }
-      break;
-    case 22:
-      CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
-      {
-        MultJtCAdjJt22(J + i, Q, c + i, Q, 2, qw[i], Q, qd + i);
-      }
-      break;
-    case 32:
-      CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
-      {
-        MultJtCAdjJt32(J + i, Q, c + i, Q, 3, qw[i], Q, qd + i);
-      }
-      break;
-    case 33:
-      CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
-      {
-        MultJtCAdjJt33(J + i, Q, c + i, Q, 3, qw[i], Q, qd + i);
-      }
-      break;
+    const CeedScalar u_loc[1] = {u[i + Q * 0]};
+    CeedScalar coeff[3], adjJt_loc[2], J_loc[2], v_loc[2];
+    CoeffUnpack2((const CeedIntScalar *)ctx, (CeedInt)attr[i], coeff);
+    MatUnpack21(adjJt + i, Q, adjJt_loc);
+    AdjJt21<false>(adjJt_loc, J_loc);
+    MultAtBCx21(J_loc, coeff, adjJt_loc, u_loc, v_loc);
+
+    v[i + Q * 0] = wdetJ[i] * v_loc[0];
   }
   return 0;
 }
 
-// libCEED QFunction for building quadrature data for a mixed H(curl)-H(div) mass operator
-// with a matrix coefficient evaluated at quadrature points.
-CEED_QFUNCTION(f_build_hcurlhdiv_quad_matrix)(void *ctx, CeedInt Q,
-                                              const CeedScalar *const *in,
-                                              CeedScalar *const *out)
+CEED_QFUNCTION(f_apply_hcurlhdiv_32)(void *ctx, CeedInt Q, const CeedScalar *const *in,
+                                     CeedScalar *const *out)
 {
-  // At every quadrature point, compute qw / det(J) adj(J) C J and store the
-  // result.
-  // in[0] is coefficients with shape [ncomp=space_dim*(space_dim+1)/2, Q]
-  // in[1] is Jacobians with shape [dim, ncomp=space_dim, Q]
-  // in[2] is quadrature weights, size (Q)
-  VectorFEMassContext *bc = (VectorFEMassContext *)ctx;
-  const CeedScalar *c = in[0], *J = in[1], *qw = in[2];
-  CeedScalar *qd = out[0];
-  switch (10 * bc->space_dim + bc->dim)
+  const CeedScalar *attr = in[0], *wdetJ = in[0] + Q, *adjJt = in[0] + 2 * Q, *u = in[1];
+  CeedScalar *v = out[0];
+
+  CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
-    case 21:
-      CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
-      {
-        MultJtCAdjJt21(J + i, Q, c + i, Q, 3, qw[i], Q, qd + i);
-      }
-      break;
-    case 22:
-      CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
-      {
-        MultJtCAdjJt22(J + i, Q, c + i, Q, 3, qw[i], Q, qd + i);
-      }
-      break;
-    case 32:
-      CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
-      {
-        MultJtCAdjJt32(J + i, Q, c + i, Q, 6, qw[i], Q, qd + i);
-      }
-      break;
-    case 33:
-      CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
-      {
-        MultJtCAdjJt33(J + i, Q, c + i, Q, 6, qw[i], Q, qd + i);
-      }
-      break;
+    const CeedScalar u_loc[2] = {u[i + Q * 0], u[i + Q * 1]};
+    CeedScalar coeff[6], adjJt_loc[6], J_loc[6], v_loc[3];
+    CoeffUnpack3((const CeedIntScalar *)ctx, (CeedInt)attr[i], coeff);
+    MatUnpack32(adjJt + i, Q, adjJt_loc);
+    AdjJt32<false>(adjJt_loc, J_loc);
+    MultAtBCx32(J_loc, coeff, adjJt_loc, u_loc, v_loc);
+
+    v[i + Q * 0] = wdetJ[i] * v_loc[0];
+    v[i + Q * 1] = wdetJ[i] * v_loc[1];
   }
   return 0;
 }
 
-// libCEED QFunction for building quadrature data for a mixed H(div)-H(curl) mass operator
-// with a scalar constant coefficient.
-CEED_QFUNCTION(f_build_hdivhcurl_const_scalar)(void *ctx, CeedInt Q,
-                                               const CeedScalar *const *in,
-                                               CeedScalar *const *out)
+CEED_QFUNCTION(f_apply_hdivhcurl_22)(void *ctx, CeedInt Q, const CeedScalar *const *in,
+                                     CeedScalar *const *out)
 {
-  // At every quadrature point, compute qw / det(J) adj(J) C J and store the
-  // result.
-  // in[0] is Jacobians with shape [dim, ncomp=space_dim, Q]
-  // in[1] is quadrature weights, size (Q)
-  VectorFEMassContext *bc = (VectorFEMassContext *)ctx;
-  const CeedScalar coeff = bc->coeff;
-  const CeedScalar *J = in[0], *qw = in[1];
-  CeedScalar *qd = out[0];
-  switch (10 * bc->space_dim + bc->dim)
+  const CeedScalar *attr = in[0], *wdetJ = in[0] + Q, *adjJt = in[0] + 2 * Q, *u = in[1];
+  CeedScalar *v = out[0];
+
+  CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
-    case 11:
-      CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
-      {
-        qd[i] = qw[i] * coeff;
-      }
-      break;
-    case 21:
-      CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
-      {
-        MultJtCAdjJt21<true>(J + i, Q, &coeff, 1, 1, qw[i], Q, qd + i);
-      }
-      break;
-    case 22:
-      CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
-      {
-        MultJtCAdjJt22<true>(J + i, Q, &coeff, 1, 1, qw[i], Q, qd + i);
-      }
-      break;
-    case 32:
-      CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
-      {
-        MultJtCAdjJt32<true>(J + i, Q, &coeff, 1, 1, qw[i], Q, qd + i);
-      }
-      break;
-    case 33:
-      CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
-      {
-        MultJtCAdjJt33<true>(J + i, Q, &coeff, 1, 1, qw[i], Q, qd + i);
-      }
-      break;
+    const CeedScalar u_loc[2] = {u[i + Q * 0], u[i + Q * 1]};
+    CeedScalar coeff[3], adjJt_loc[4], J_loc[4], v_loc[2];
+    CoeffUnpack2((const CeedIntScalar *)ctx, (CeedInt)attr[i], coeff);
+    MatUnpack22(adjJt + i, Q, adjJt_loc);
+    AdjJt22<false>(adjJt_loc, J_loc);
+    MultAtBCx22(adjJt_loc, coeff, J_loc, u_loc, v_loc);
+
+    v[i + Q * 0] = wdetJ[i] * v_loc[0];
+    v[i + Q * 1] = wdetJ[i] * v_loc[1];
   }
   return 0;
 }
 
-// libCEED QFunction for building quadrature data for a mixed H(div)-H(curl) mass operator
-// with a scalar coefficient evaluated at quadrature points.
-CEED_QFUNCTION(f_build_hdivhcurl_quad_scalar)(void *ctx, CeedInt Q,
-                                              const CeedScalar *const *in,
-                                              CeedScalar *const *out)
+CEED_QFUNCTION(f_apply_hdivhcurl_33)(void *ctx, CeedInt Q, const CeedScalar *const *in,
+                                     CeedScalar *const *out)
 {
-  // At every quadrature point, compute qw / det(J) adj(J) C J and store the
-  // result.
-  // in[0] is coefficients with shape [ncomp=1, Q]
-  // in[1] is Jacobians with shape [dim, ncomp=space_dim, Q]
-  // in[2] is quadrature weights, size (Q)
-  VectorFEMassContext *bc = (VectorFEMassContext *)ctx;
-  const CeedScalar *c = in[0], *J = in[1], *qw = in[2];
-  CeedScalar *qd = out[0];
-  switch (10 * bc->space_dim + bc->dim)
+  const CeedScalar *attr = in[0], *wdetJ = in[0] + Q, *adjJt = in[0] + 2 * Q, *u = in[1];
+  CeedScalar *v = out[0];
+
+  CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
-    case 11:
-      CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
-      {
-        qd[i] = qw[i] * c[i];
-      }
-      break;
-    case 21:
-      CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
-      {
-        MultJtCAdjJt21<true>(J + i, Q, c + i, Q, 1, qw[i], Q, qd + i);
-      }
-      break;
-    case 22:
-      CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
-      {
-        MultJtCAdjJt22<true>(J + i, Q, c + i, Q, 1, qw[i], Q, qd + i);
-      }
-      break;
-    case 32:
-      CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
-      {
-        MultJtCAdjJt32<true>(J + i, Q, c + i, Q, 1, qw[i], Q, qd + i);
-      }
-      break;
-    case 33:
-      CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
-      {
-        MultJtCAdjJt33<true>(J + i, Q, c + i, Q, 1, qw[i], Q, qd + i);
-      }
-      break;
+    const CeedScalar u_loc[3] = {u[i + Q * 0], u[i + Q * 1], u[i + Q * 2]};
+    CeedScalar coeff[6], adjJt_loc[9], J_loc[9], v_loc[3];
+    CoeffUnpack3((const CeedIntScalar *)ctx, (CeedInt)attr[i], coeff);
+    MatUnpack33(adjJt + i, Q, adjJt_loc);
+    AdjJt33<false>(adjJt_loc, J_loc);
+    MultAtBCx33(adjJt_loc, coeff, J_loc, u_loc, v_loc);
+
+    v[i + Q * 0] = wdetJ[i] * v_loc[0];
+    v[i + Q * 1] = wdetJ[i] * v_loc[1];
+    v[i + Q * 2] = wdetJ[i] * v_loc[2];
   }
   return 0;
 }
 
-// libCEED QFunction for building quadrature data for a mixed H(div)-H(curl) mass operator
-// with a vector coefficient evaluated at quadrature points.
-CEED_QFUNCTION(f_build_hdivhcurl_quad_vector)(void *ctx, CeedInt Q,
-                                              const CeedScalar *const *in,
-                                              CeedScalar *const *out)
+CEED_QFUNCTION(f_apply_hdivhcurl_21)(void *ctx, CeedInt Q, const CeedScalar *const *in,
+                                     CeedScalar *const *out)
 {
-  // At every quadrature point, compute qw / det(J) adj(J) C J and store the
-  // result.
-  // in[0] is coefficients with shape [ncomp=space_dim, Q]
-  // in[1] is Jacobians with shape [dim, ncomp=space_dim, Q]
-  // in[2] is quadrature weights, size (Q)
-  VectorFEMassContext *bc = (VectorFEMassContext *)ctx;
-  const CeedScalar *c = in[0], *J = in[1], *qw = in[2];
-  CeedScalar *qd = out[0];
-  switch (10 * bc->space_dim + bc->dim)
+  const CeedScalar *attr = in[0], *wdetJ = in[0] + Q, *adjJt = in[0] + 2 * Q, *u = in[1];
+  CeedScalar *v = out[0];
+
+  CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
-    case 21:
-      CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
-      {
-        MultJtCAdjJt21<true>(J + i, Q, c + i, Q, 2, qw[i], Q, qd + i);
-      }
-      break;
-    case 22:
-      CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
-      {
-        MultJtCAdjJt22<true>(J + i, Q, c + i, Q, 2, qw[i], Q, qd + i);
-      }
-      break;
-    case 32:
-      CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
-      {
-        MultJtCAdjJt32<true>(J + i, Q, c + i, Q, 3, qw[i], Q, qd + i);
-      }
-      break;
-    case 33:
-      CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
-      {
-        MultJtCAdjJt33<true>(J + i, Q, c + i, Q, 3, qw[i], Q, qd + i);
-      }
-      break;
+    const CeedScalar u_loc[1] = {u[i + Q * 0]};
+    CeedScalar coeff[3], adjJt_loc[2], J_loc[2], v_loc[2];
+    CoeffUnpack2((const CeedIntScalar *)ctx, (CeedInt)attr[i], coeff);
+    MatUnpack21(adjJt + i, Q, adjJt_loc);
+    AdjJt21<false>(adjJt_loc, J_loc);
+    MultAtBCx21(adjJt_loc, coeff, J_loc, u_loc, v_loc);
+
+    v[i + Q * 0] = wdetJ[i] * v_loc[0];
   }
   return 0;
 }
 
-// libCEED QFunction for building quadrature data for a mixed H(div)-H(curl) mass operator
-// with a matrix coefficient evaluated at quadrature points.
-CEED_QFUNCTION(f_build_hdivhcurl_quad_matrix)(void *ctx, CeedInt Q,
-                                              const CeedScalar *const *in,
-                                              CeedScalar *const *out)
+CEED_QFUNCTION(f_apply_hdivhcurl_32)(void *ctx, CeedInt Q, const CeedScalar *const *in,
+                                     CeedScalar *const *out)
 {
-  // At every quadrature point, compute qw / det(J) adj(J) C J and store the
-  // result.
-  // in[0] is coefficients with shape [ncomp=space_dim*(space_dim+1)/2, Q]
-  // in[1] is Jacobians with shape [dim, ncomp=space_dim, Q]
-  // in[2] is quadrature weights, size (Q)
-  VectorFEMassContext *bc = (VectorFEMassContext *)ctx;
-  const CeedScalar *c = in[0], *J = in[1], *qw = in[2];
-  CeedScalar *qd = out[0];
-  switch (10 * bc->space_dim + bc->dim)
+  const CeedScalar *attr = in[0], *wdetJ = in[0] + Q, *adjJt = in[0] + 2 * Q, *u = in[1];
+  CeedScalar *v = out[0];
+
+  CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
-    case 21:
-      CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
-      {
-        MultJtCAdjJt21<true>(J + i, Q, c + i, Q, 3, qw[i], Q, qd + i);
-      }
-      break;
-    case 22:
-      CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
-      {
-        MultJtCAdjJt22<true>(J + i, Q, c + i, Q, 3, qw[i], Q, qd + i);
-      }
-      break;
-    case 32:
-      CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
-      {
-        MultJtCAdjJt32<true>(J + i, Q, c + i, Q, 6, qw[i], Q, qd + i);
-      }
-      break;
-    case 33:
-      CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
-      {
-        MultJtCAdjJt33<true>(J + i, Q, c + i, Q, 6, qw[i], Q, qd + i);
-      }
-      break;
+    const CeedScalar u_loc[2] = {u[i + Q * 0], u[i + Q * 1]};
+    CeedScalar coeff[6], adjJt_loc[6], J_loc[6], v_loc[3];
+    CoeffUnpack3((const CeedIntScalar *)ctx, (CeedInt)attr[i], coeff);
+    MatUnpack32(adjJt + i, Q, adjJt_loc);
+    AdjJt32<false>(adjJt_loc, J_loc);
+    MultAtBCx32(adjJt_loc, coeff, J_loc, u_loc, v_loc);
+
+    v[i + Q * 0] = wdetJ[i] * v_loc[0];
+    v[i + Q * 1] = wdetJ[i] * v_loc[1];
   }
   return 0;
 }
 
-#endif  // PALACE_LIBCEED_HCURLHDIV_QF_H
+#endif  // PALACE_LIBCEED_HCURL_HDIV_QF_H
