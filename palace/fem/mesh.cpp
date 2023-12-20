@@ -6,7 +6,6 @@
 #include "fem/coefficient.hpp"
 #include "fem/fespace.hpp"
 #include "fem/libceed/integrator.hpp"
-#include "utils/omp.hpp"
 
 namespace palace
 {
@@ -335,20 +334,17 @@ void Mesh::Rebuild() const
 const ceed::CeedGeomObjectMap<ceed::CeedGeomFactorData> &
 Mesh::GetCeedGeomFactorData(Ceed ceed) const
 {
-  // No two threads should ever be calling this simultaneously with the same Ceed context.
   auto it = geom_data.find(ceed);
-  if (it == geom_data.end())
+  MFEM_ASSERT(it != geom_data.end(), "Unknown Ceed context in GetCeedGeomFactorData!");
+  auto &geom_data_map = it->second;
+  if (geom_data_map.empty())
   {
-    auto val = BuildCeedGeomFactorData(*mesh, loc_attr, loc_bdr_attr, ceed);
-    PalacePragmaOmp(critical(InitCeedGeomFactorData))
-    {
-      it = geom_data.emplace(ceed, std::move(val)).first;
-    }
+    geom_data_map = BuildCeedGeomFactorData(*mesh, loc_attr, loc_bdr_attr, ceed);
   }
-  return it->second;
+  return geom_data_map;
 }
 
-void Mesh::DestroyCeedGeomFactorData() const
+void Mesh::ResetCeedObjects() const
 {
   for (auto &[ceed, geom_data_map] : geom_data)
   {
@@ -359,6 +355,11 @@ void Mesh::DestroyCeedGeomFactorData() const
     }
   }
   geom_data.clear();
+  for (std::size_t i = 0; i < ceed::internal::GetCeedObjects().size(); i++)
+  {
+    Ceed ceed = ceed::internal::GetCeedObjects()[i];
+    geom_data.emplace(ceed, ceed::CeedGeomObjectMap<ceed::CeedGeomFactorData>());
+  }
 }
 
 }  // namespace palace

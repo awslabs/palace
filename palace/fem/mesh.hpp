@@ -80,18 +80,19 @@ private:
   void Rebuild() const;
 
 public:
+  template <typename... T>
+  Mesh(T &&...args) : Mesh(std::make_unique<mfem::ParMesh>(std::forward<T>(args)...))
+  {
+  }
   template <typename T>
   Mesh(std::unique_ptr<T> &&mesh) : mesh(std::move(mesh))
   {
     this->mesh->EnsureNodes();
     Rebuild();
     sequence = this->mesh->GetSequence();
+    ResetCeedObjects();
   }
-
-  template <typename... T>
-  Mesh(T &&...args) : Mesh(std::make_unique<mfem::ParMesh>(std::forward<T>(args)...))
-  {
-  }
+  ~Mesh() { ResetCeedObjects(); }
 
   const auto &Get() const { return *mesh; }
   auto &Get() { return *mesh; }
@@ -170,7 +171,7 @@ public:
   const ceed::CeedGeomObjectMap<ceed::CeedGeomFactorData> &
   GetCeedGeomFactorData(Ceed ceed) const;
 
-  void DestroyCeedGeomFactorData() const;
+  void ResetCeedObjects() const;
 
   MPI_Comm GetComm() const { return mesh->GetComm(); }
 };

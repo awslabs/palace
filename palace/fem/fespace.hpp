@@ -54,8 +54,9 @@ public:
   FiniteElementSpace(Mesh &mesh, T &&...args)
     : fespace(&mesh.Get(), std::forward<T>(args)...), mesh(mesh)
   {
+    ResetCeedObjects();
   }
-  virtual ~FiniteElementSpace() { DestroyCeedObjects(); }
+  virtual ~FiniteElementSpace() { ResetCeedObjects(); }
 
   const auto &Get() const { return fespace; }
   auto &Get() { return fespace; }
@@ -103,7 +104,7 @@ public:
 
   // Clear the cached basis and element restriction objects owned by the finite element
   // space.
-  void DestroyCeedObjects();
+  void ResetCeedObjects();
 
   static CeedBasis BuildCeedBasis(const mfem::FiniteElementSpace &fespace, Ceed ceed,
                                   mfem::Geometry::Type geom);

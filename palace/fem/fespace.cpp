@@ -8,55 +8,37 @@
 #include "fem/libceed/basis.hpp"
 #include "fem/libceed/restriction.hpp"
 #include "linalg/rap.hpp"
-#include "utils/omp.hpp"
 
 namespace palace
 {
 
 const CeedBasis FiniteElementSpace::GetCeedBasis(Ceed ceed, mfem::Geometry::Type geom) const
 {
-  // No two threads should ever be calling this simultaneously with the same Ceed context.
   auto it = basis.find(ceed);
-  if (it == basis.end())
-  {
-    PalacePragmaOmp(critical(InitBasis))
-    {
-      it = basis.emplace(ceed, ceed::CeedGeomObjectMap<CeedBasis>()).first;
-    }
-  }
+  MFEM_ASSERT(it != basis.end(), "Unknown Ceed context in GetCeedBasis!");
   auto &basis_map = it->second;
   auto basis_it = basis_map.find(geom);
   if (basis_it != basis_map.end())
   {
     return basis_it->second;
   }
-  auto val = BuildCeedBasis(*this, ceed, geom);
-  basis_map.emplace(geom, val);
-  return val;
+  return basis_map.emplace(geom, BuildCeedBasis(*this, ceed, geom)).first->second;
 }
 
 const CeedElemRestriction
 FiniteElementSpace::GetCeedElemRestriction(Ceed ceed, mfem::Geometry::Type geom,
                                            const std::vector<int> &indices) const
 {
-  // No two threads should ever be calling this simultaneously with the same Ceed context.
   auto it = restr.find(ceed);
-  if (it == restr.end())
-  {
-    PalacePragmaOmp(critical(InitRestriction))
-    {
-      it = restr.emplace(ceed, ceed::CeedGeomObjectMap<CeedElemRestriction>()).first;
-    }
-  }
+  MFEM_ASSERT(it != restr.end(), "Unknown Ceed context in GetCeedElemRestriction!");
   auto &restr_map = it->second;
   auto restr_it = restr_map.find(geom);
   if (restr_it != restr_map.end())
   {
     return restr_it->second;
   }
-  auto val = BuildCeedElemRestriction(*this, ceed, geom, indices);
-  restr_map.emplace(geom, val);
-  return val;
+  return restr_map.emplace(geom, BuildCeedElemRestriction(*this, ceed, geom, indices))
+      .first->second;
 }
 
 const CeedElemRestriction
@@ -68,24 +50,18 @@ FiniteElementSpace::GetInterpCeedElemRestriction(Ceed ceed, mfem::Geometry::Type
   {
     return GetCeedElemRestriction(ceed, geom, indices);
   }
-  // No two threads should ever be calling this simultaneously with the same Ceed context.
   auto it = interp_restr.find(ceed);
-  if (it == interp_restr.end())
-  {
-    PalacePragmaOmp(critical(InitInterpRestriction))
-    {
-      it = interp_restr.emplace(ceed, ceed::CeedGeomObjectMap<CeedElemRestriction>()).first;
-    }
-  }
+  MFEM_ASSERT(it != interp_restr.end(),
+              "Unknown Ceed context in GetInterpCeedElemRestriction!");
   auto &restr_map = it->second;
   auto restr_it = restr_map.find(geom);
   if (restr_it != restr_map.end())
   {
     return restr_it->second;
   }
-  auto val = BuildCeedElemRestriction(*this, ceed, geom, indices, true, false);
-  restr_map.emplace(geom, val);
-  return val;
+  return restr_map
+      .emplace(geom, BuildCeedElemRestriction(*this, ceed, geom, indices, true, false))
+      .first->second;
 }
 
 const CeedElemRestriction
@@ -97,28 +73,21 @@ FiniteElementSpace::GetInterpRangeCeedElemRestriction(Ceed ceed, mfem::Geometry:
   {
     return GetInterpCeedElemRestriction(ceed, geom, indices);
   }
-  // No two threads should ever be calling this simultaneously with the same Ceed context.
   auto it = interp_range_restr.find(ceed);
-  if (it == interp_range_restr.end())
-  {
-    PalacePragmaOmp(critical(InitInterpRangeRestriction))
-    {
-      it = interp_range_restr.emplace(ceed, ceed::CeedGeomObjectMap<CeedElemRestriction>())
-               .first;
-    }
-  }
+  MFEM_ASSERT(it != interp_range_restr.end(),
+              "Unknown Ceed context in GetInterpRangeCeedElemRestriction!");
   auto &restr_map = it->second;
   auto restr_it = restr_map.find(geom);
   if (restr_it != restr_map.end())
   {
     return restr_it->second;
   }
-  auto val = BuildCeedElemRestriction(*this, ceed, geom, indices, true, true);
-  restr_map.emplace(geom, val);
-  return val;
+  return restr_map
+      .emplace(geom, BuildCeedElemRestriction(*this, ceed, geom, indices, true, true))
+      .first->second;
 }
 
-void FiniteElementSpace::DestroyCeedObjects()
+void FiniteElementSpace::ResetCeedObjects()
 {
   for (auto &[ceed, basis_map] : basis)
   {
@@ -127,7 +96,6 @@ void FiniteElementSpace::DestroyCeedObjects()
       PalaceCeedCall(ceed, CeedBasisDestroy(&val));
     }
   }
-  basis.clear();
   for (auto &[ceed, restr_map] : restr)
   {
     for (auto &[key, val] : restr_map)
@@ -135,7 +103,6 @@ void FiniteElementSpace::DestroyCeedObjects()
       PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&val));
     }
   }
-  restr.clear();
   for (auto &[ceed, restr_map] : interp_restr)
   {
     for (auto &[key, val] : restr_map)
@@ -143,7 +110,6 @@ void FiniteElementSpace::DestroyCeedObjects()
       PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&val));
     }
   }
-  interp_restr.clear();
   for (auto &[ceed, restr_map] : interp_range_restr)
   {
     for (auto &[key, val] : restr_map)
@@ -151,7 +117,18 @@ void FiniteElementSpace::DestroyCeedObjects()
       PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&val));
     }
   }
+  basis.clear();
+  restr.clear();
+  interp_restr.clear();
   interp_range_restr.clear();
+  for (std::size_t i = 0; i < ceed::internal::GetCeedObjects().size(); i++)
+  {
+    Ceed ceed = ceed::internal::GetCeedObjects()[i];
+    basis.emplace(ceed, ceed::CeedGeomObjectMap<CeedBasis>());
+    restr.emplace(ceed, ceed::CeedGeomObjectMap<CeedElemRestriction>());
+    interp_restr.emplace(ceed, ceed::CeedGeomObjectMap<CeedElemRestriction>());
+    interp_range_restr.emplace(ceed, ceed::CeedGeomObjectMap<CeedElemRestriction>());
+  }
 }
 
 CeedBasis FiniteElementSpace::BuildCeedBasis(const mfem::FiniteElementSpace &fespace,
