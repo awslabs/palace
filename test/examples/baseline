@@ -82,10 +82,10 @@ fi
 
 # Configure tests (use defaults set by runtests.jl otherwise)
 if [[ -n "$NUM_PROCS" ]]; then
-	export NUM_PROC_TEST=$NUM_PROCS
+    export NUM_PROC_TEST=$NUM_PROCS
 fi
 if [[ -n "$PALACE" ]]; then
-	export PALACE_TEST=$PALACE
+    export PALACE_TEST=$PALACE
 fi
 
 TEST_DIRS=(
