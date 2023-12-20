@@ -1,5 +1,5 @@
 diff --git a/CHANGELOG b/CHANGELOG
-index cd5f1333f..d2f362c06 100644
+index e76cda016..b01affc9b 100644
 --- a/CHANGELOG
 +++ b/CHANGELOG
 @@ -15,6 +15,8 @@ Discretization improvements
@@ -9,13 +9,13 @@ index cd5f1333f..d2f362c06 100644
 +- Introduced support for internal boundary elements in nonconformal adapted
 +  meshes.
  
- Miscellaneous
- -------------
+ - Added functionality for construction of cut-surface and cut-volume
+   IntegrationRules through a moment-fitting approach. The cut is specified by
 diff --git a/fem/bilinearform.cpp b/fem/bilinearform.cpp
-index 6eae233bc..caaafaac8 100644
+index 2fee83d19..e0e7a6b27 100644
 --- a/fem/bilinearform.cpp
 +++ b/fem/bilinearform.cpp
-@@ -1072,7 +1072,8 @@ void BilinearForm::EliminateEssentialBCFromDofs(
+@@ -1074,7 +1074,8 @@ void BilinearForm::EliminateEssentialBCFromDofs(
  void BilinearForm::EliminateEssentialBCFromDofs (const Array<int> &ess_dofs,
                                                   DiagonalPolicy dpolicy)
  {
@@ -25,7 +25,7 @@ index 6eae233bc..caaafaac8 100644
  
     for (int i = 0; i < ess_dofs.Size(); i++)
        if (ess_dofs[i] < 0)
-@@ -1084,7 +1085,8 @@ void BilinearForm::EliminateEssentialBCFromDofs (const Array<int> &ess_dofs,
+@@ -1086,7 +1087,8 @@ void BilinearForm::EliminateEssentialBCFromDofs (const Array<int> &ess_dofs,
  void BilinearForm::EliminateEssentialBCFromDofsDiag (const Array<int> &ess_dofs,
                                                       double value)
  {
@@ -266,7 +266,7 @@ index 245d00078..50d7c1105 100644
                                   const IntegrationRule *irs[] = NULL) const
     { return ComputeLpError(1.0, exsol, NULL, irs); }
 diff --git a/fem/pfespace.cpp b/fem/pfespace.cpp
-index 8761e1489..3fa9fe5c7 100644
+index 74ef3f3b9..272021d3d 100644
 --- a/fem/pfespace.cpp
 +++ b/fem/pfespace.cpp
 @@ -90,20 +90,19 @@ ParNURBSExtension *ParFiniteElementSpace::MakeLocalNURBSext(
@@ -492,7 +492,7 @@ index 8761e1489..3fa9fe5c7 100644
  
        // check for incoming messages, receive PMatrixRows
 diff --git a/fem/pfespace.hpp b/fem/pfespace.hpp
-index 72029be56..e74f66622 100644
+index a410c669e..2b93230d5 100644
 --- a/fem/pfespace.hpp
 +++ b/fem/pfespace.hpp
 @@ -124,8 +124,8 @@ private:
@@ -506,10 +506,10 @@ index 72029be56..e74f66622 100644
     void GetBareDofs(int entity, int index, Array<int> &dofs) const;
  
 diff --git a/fem/pgridfunc.cpp b/fem/pgridfunc.cpp
-index 38b57a3e1..773221029 100644
+index 98e59172b..e54609359 100644
 --- a/fem/pgridfunc.cpp
 +++ b/fem/pgridfunc.cpp
-@@ -736,7 +736,8 @@ void ParGridFunction::ProjectBdrCoefficientTangent(VectorCoefficient &vcoeff,
+@@ -752,7 +752,8 @@ void ParGridFunction::ProjectBdrCoefficientTangent(VectorCoefficient &vcoeff,
     {
        MFEM_ASSERT(pfes->GetLocalTDofNumber(i) == -1 ||
                    bool(values_counter[i]) == bool(ess_vdofs_marker[i]),
@@ -890,10 +890,10 @@ index bc422a260..041dc1c98 100644
  
  
 diff --git a/general/communication.hpp b/general/communication.hpp
-index 46d4f9f21..a8fb8a1f6 100644
+index afa504791..8638202be 100644
 --- a/general/communication.hpp
 +++ b/general/communication.hpp
-@@ -561,8 +561,8 @@ struct VarMessage
+@@ -570,8 +570,8 @@ struct VarMessage
     }
  
  protected:
@@ -1029,10 +1029,10 @@ index a8186c0c8..450cac0ce 100644
  
  extern MFEM_EXPORT class TriLinear3DFiniteElement HexahedronFE;
 diff --git a/mesh/mesh.cpp b/mesh/mesh.cpp
-index 5f82de812..bf2fce576 100644
+index 673765dce..a46277750 100644
 --- a/mesh/mesh.cpp
 +++ b/mesh/mesh.cpp
-@@ -1415,6 +1415,7 @@ Geometry::Type Mesh::GetFaceGeometry(int Face) const
+@@ -1416,6 +1416,7 @@ Geometry::Type Mesh::GetFaceGeometry(int Face) const
           }
           // ghost face
           const int nc_face_id = faces_info[Face].NCFace;
@@ -1040,7 +1040,7 @@ index 5f82de812..bf2fce576 100644
           MFEM_ASSERT(nc_face_id >= 0, "parent ghost faces are not supported");
           return faces[nc_faces_info[nc_face_id].MasterFace]->GetGeometryType();
     }
-@@ -1889,9 +1890,9 @@ int Mesh::AddBdrPoint(int v, int attr)
+@@ -2050,9 +2051,9 @@ int Mesh::AddBdrPoint(int v, int attr)
  
  void Mesh::GenerateBoundaryElements()
  {
@@ -1052,7 +1052,7 @@ index 5f82de812..bf2fce576 100644
     }
  
     if (Dim == 3)
-@@ -1902,9 +1903,9 @@ void Mesh::GenerateBoundaryElements()
+@@ -2063,9 +2064,9 @@ void Mesh::GenerateBoundaryElements()
  
     // count the 'NumOfBdrElements'
     NumOfBdrElements = 0;
@@ -1064,7 +1064,7 @@ index 5f82de812..bf2fce576 100644
     }
  
     // Add the boundary elements
-@@ -4403,7 +4404,7 @@ Mesh::Mesh(Mesh *orig_mesh, int ref_factor, int ref_type)
+@@ -4854,7 +4855,7 @@ Mesh::Mesh(Mesh *orig_mesh, int ref_factor, int ref_type)
     MakeRefined_(*orig_mesh, ref_factors, ref_type);
  }
  
@@ -1073,7 +1073,7 @@ index 5f82de812..bf2fce576 100644
                          int ref_type)
  {
     SetEmpty();
-@@ -6189,22 +6190,22 @@ int Mesh::CheckBdrElementOrientation(bool fix_it)
+@@ -6641,22 +6642,22 @@ int Mesh::CheckBdrElementOrientation(bool fix_it)
              {
                 // swap vertices 0 and 1 so that we don't change the marked edge:
                 // (0,1,2) -> (1,0,2)
@@ -1101,7 +1101,7 @@ index 5f82de812..bf2fce576 100644
                 }
                 break;
              }
-@@ -6997,26 +6998,27 @@ void Mesh::AddQuadFaceElement(int lf, int gf, int el,
+@@ -7449,26 +7450,27 @@ void Mesh::AddQuadFaceElement(int lf, int gf, int el,
  
  void Mesh::GenerateFaces()
  {
@@ -1136,7 +1136,7 @@ index 5f82de812..bf2fce576 100644
        if (Dim == 1)
        {
           AddPointFaceElement(0, v[0], i);
-@@ -7024,7 +7026,7 @@ void Mesh::GenerateFaces()
+@@ -7476,7 +7478,7 @@ void Mesh::GenerateFaces()
        }
        else if (Dim == 2)
        {
@@ -1145,7 +1145,7 @@ index 5f82de812..bf2fce576 100644
           const int ne = elements[i]->GetNEdges();
           for (int j = 0; j < ne; j++)
           {
-@@ -7034,7 +7036,7 @@ void Mesh::GenerateFaces()
+@@ -7486,7 +7488,7 @@ void Mesh::GenerateFaces()
        }
        else
        {
@@ -1154,7 +1154,7 @@ index 5f82de812..bf2fce576 100644
           switch (GetElementType(i))
           {
              case Element::TETRAHEDRON:
-@@ -7100,9 +7102,9 @@ void Mesh::GenerateNCFaceInfo()
+@@ -7552,9 +7554,9 @@ void Mesh::GenerateNCFaceInfo()
  {
     MFEM_VERIFY(ncmesh, "missing NCMesh.");
  
@@ -1166,7 +1166,7 @@ index 5f82de812..bf2fce576 100644
     }
  
     const NCMesh::NCList &list =
-@@ -7114,9 +7116,8 @@ void Mesh::GenerateNCFaceInfo()
+@@ -7566,9 +7568,8 @@ void Mesh::GenerateNCFaceInfo()
     int nfaces = GetNumFaces();
  
     // add records for master faces
@@ -1177,7 +1177,7 @@ index 5f82de812..bf2fce576 100644
        if (master.index >= nfaces) { continue; }
  
        FaceInfo &master_fi = faces_info[master.index];
-@@ -7128,10 +7129,8 @@ void Mesh::GenerateNCFaceInfo()
+@@ -7580,10 +7581,8 @@ void Mesh::GenerateNCFaceInfo()
     }
  
     // add records for slave faces
@@ -1189,7 +1189,7 @@ index 5f82de812..bf2fce576 100644
        if (slave.index < 0 || // degenerate slave face
            slave.index >= nfaces || // ghost slave
            slave.master >= nfaces) // has ghost master
-@@ -7222,7 +7221,7 @@ STable3D *Mesh::GetFacesTable()
+@@ -7674,7 +7673,7 @@ STable3D *Mesh::GetFacesTable()
  
  STable3D *Mesh::GetElementToFaceTable(int ret_ftbl)
  {
@@ -1198,7 +1198,7 @@ index 5f82de812..bf2fce576 100644
     STable3D *faces_tbl;
  
     if (el_to_face != NULL)
-@@ -7231,9 +7230,9 @@ STable3D *Mesh::GetElementToFaceTable(int ret_ftbl)
+@@ -7683,9 +7682,9 @@ STable3D *Mesh::GetElementToFaceTable(int ret_ftbl)
     }
     el_to_face = new Table(NumOfElements, 6);  // must be 6 for hexahedra
     faces_tbl = new STable3D(NumOfVertices);
@@ -1210,7 +1210,7 @@ index 5f82de812..bf2fce576 100644
        switch (GetElementType(i))
        {
           case Element::TETRAHEDRON:
-@@ -7297,9 +7296,10 @@ STable3D *Mesh::GetElementToFaceTable(int ret_ftbl)
+@@ -7749,9 +7748,10 @@ STable3D *Mesh::GetElementToFaceTable(int ret_ftbl)
     el_to_face->Finalize();
     NumOfFaces = faces_tbl->NumberOfElements();
     be_to_face.SetSize(NumOfBdrElements);
@@ -1224,10 +1224,10 @@ index 5f82de812..bf2fce576 100644
        {
           case Element::TRIANGLE:
 diff --git a/mesh/mesh.hpp b/mesh/mesh.hpp
-index a6957720a..81324399b 100644
+index 1be7e372e..58e77d388 100644
 --- a/mesh/mesh.hpp
 +++ b/mesh/mesh.hpp
-@@ -592,7 +592,7 @@ protected:
+@@ -597,7 +597,7 @@ protected:
     void Make1D(int n, double sx = 1.0);
  
     /// Internal function used in Mesh::MakeRefined
@@ -1236,7 +1236,7 @@ index a6957720a..81324399b 100644
                       int ref_type);
  
     /// Initialize vertices/elements/boundary/tables from a nonconforming mesh.
-@@ -1698,7 +1698,7 @@ public:
+@@ -1788,7 +1788,7 @@ public:
                            };
  
     /** @brief This structure is used as a human readable output format that
@@ -2028,7 +2028,7 @@ index 8ac50d342..b004cf43e 100644
  
     /// This holds in one place the constants about the geometries we support
 diff --git a/mesh/pmesh.cpp b/mesh/pmesh.cpp
-index 47a091c04..967b448fc 100644
+index c43e2ea53..5b5657546 100644
 --- a/mesh/pmesh.cpp
 +++ b/mesh/pmesh.cpp
 @@ -364,11 +364,8 @@ int ParMesh::BuildLocalVertices(const mfem::Mesh &mesh,

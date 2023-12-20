@@ -5,8 +5,8 @@
 # CMake superbuild for Palace and its dependencies
 #
 
-# CMake 3.18.1 was released in Jul. 2020
-cmake_minimum_required(VERSION 3.18.1)
+# CMake 3.21 was released in Jul. 2021 (required for HIP support)
+cmake_minimum_required(VERSION 3.21)
 
 # Prohibit in-source builds
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_BINARY_DIR)
@@ -18,8 +18,8 @@ project(palace-superbuild LANGUAGES CXX C VERSION 0.11.2)
 
 # Define build settings and defaults
 set(PALACE_WITH_64BIT_INT OFF CACHE BOOL "Use 64 bit integers")
-set(PALACE_WITH_64BIT_BLAS_INT OFF CACHE BOOL "Use ILP64 BLAS/LAPACK interface instead of LP64 (not recommended)")
-set(PALACE_WITH_OPENMP OFF CACHE BOOL "Use OpenMP")
+set(PALACE_WITH_64BIT_BLAS_INT OFF CACHE BOOL "Use ILP64 BLAS/LAPACK interface instead of LP64 (experimental, not recommended)")
+set(PALACE_WITH_OPENMP OFF CACHE BOOL "Use OpenMP for shared-memory parallelism")
 
 set(PALACE_BUILD_EXTERNAL_DEPS ON CACHE BOOL "Build external third-party dependency libraries")
 set(PALACE_WITH_SUPERLU ON CACHE BOOL "Build with SuperLU_DIST sparse direct solver")
@@ -28,6 +28,7 @@ set(PALACE_WITH_MUMPS OFF CACHE BOOL "Build with MUMPS sparse direct solver")
 set(PALACE_WITH_SLEPC ON CACHE BOOL "Build with SLEPc eigenvalue solver")
 set(PALACE_WITH_ARPACK OFF CACHE BOOL "Build with ARPACK eigenvalue solver")
 set(PALACE_WITH_LIBXSMM ON CACHE BOOL "Build with LIBXSMM backend for libCEED")
+set(PALACE_WITH_MAGMA ON CACHE BOOL "Build with MAGMA backend for libCEED")
 set(PALACE_WITH_GSLIB ON CACHE BOOL "Build with GSLIB library for high-order field interpolation")
 
 set(ANALYZE_SOURCES_CLANG_TIDY OFF CACHE BOOL "Run static analysis checks using clang-tidy")
@@ -86,6 +87,14 @@ if(CMAKE_C_COMPILER_ID STREQUAL "Intel" OR CMAKE_CXX_COMPILER_ID STREQUAL "Intel
 have been replaced by the newer Clang-based icx/icpx from Intel oneAPI")
 endif()
 
+# MAGMA is only for GPU builds
+if(PALACE_WITH_MAGMA AND NOT (PALACE_WITH_CUDA OR PALACE_WITH_HIP))
+  message(STATUS "Disabling MAGMA due to lack of CUDA or HIP support")
+  set(PALACE_WITH_MAGMA OFF CACHE BOOL
+    "Build with MAGMA backend when libCEED is enabled" FORCE
+  )
+endif()
+
 # MPI is required for most dependency builds
 message(STATUS "====================== Configuring MPI dependency ======================")
 find_package(MPI REQUIRED)
@@ -95,12 +104,17 @@ message(STATUS "================= Configuring BLAS/LAPACK dependencies =========
 include(ExternalBLASLAPACK)
 
 # Default arguments for all external CMake builds (needs to happen after BLAS/LAPACK
-# detection in case CMAKE_PREFIX_PATH is modified)
-# See https://spack.readthedocs.io/en/latest/build_systems/cmakepackage.html#cmake-arguments-provided-by-spack
+# detection in case CMAKE_PREFIX_PATH is modified). Compilers and flags are added on a
+# package by package basis.
+# See Spack docs: http://tinyurl.com/43t2recp
 set(PALACE_SUPERBUILD_DEFAULT_ARGS
   "-DCMAKE_INSTALL_PREFIX=${CMAKE_INSTALL_PREFIX}"
   "-DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}"
   "-DBUILD_SHARED_LIBS=${BUILD_SHARED_LIBS}"
+  "-DCMAKE_EXE_LINKER_FLAGS=${CMAKE_EXE_LINKER_FLAGS}"
+  "-DCMAKE_MODULE_LINKER_FLAGS=${CMAKE_MODULE_LINKER_FLAGS}"
+  "-DCMAKE_SHARED_LINKER_FLAGS=${CMAKE_SHARED_LINKER_FLAGS}"
+  "-DCMAKE_STATIC_LINKER_FLAGS=${CMAKE_STATIC_LINKER_FLAGS}"
 )
 if(NOT "${CMAKE_PREFIX_PATH}" STREQUAL "")
   string(REPLACE ";" "$<SEMICOLON>" PALACE_CMAKE_PREFIX_PATH "${CMAKE_PREFIX_PATH}")

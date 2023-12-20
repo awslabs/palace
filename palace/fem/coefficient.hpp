@@ -60,7 +60,7 @@ private:
       MFEM_ASSERT(
           T.ElementType == mfem::ElementTransformation::ELEMENT,
           "Invalid usage of MaterialPropertyCoefficient for given MeshElementType!");
-      const mfem::ParSubMesh &submesh = *static_cast<mfem::ParSubMesh *>(T.mesh);
+      const mfem::ParSubMesh &submesh = *static_cast<const mfem::ParSubMesh *>(T.mesh);
       const mfem::ParMesh &mesh = *submesh.GetParent();
       if constexpr (ElemType == MeshElementType::SUBMESH)
       {

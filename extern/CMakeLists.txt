@@ -21,6 +21,18 @@ if(PALACE_WITH_STRUMPACK OR PALACE_WITH_MUMPS)
   include(ExternalScaLAPACK)
 endif()
 
+# Add SLATE (for STRUMPACK with GPU support)
+if(PALACE_WITH_STRUMPACK AND (PALACE_WITH_CUDA OR PALACE_WITH_HIP))
+  message(STATUS "===================== Configuring SLATE dependency =====================")
+  include(ExternalSLATE)
+endif()
+
+# Add MAGMA (for STRUMPACK with GPU support and for libCEED)
+if(PALACE_WITH_MAGMA)
+  message(STATUS "===================== Configuring MAGMA dependency =====================")
+  include(ExternalMAGMA)
+endif()
+
 # Add STRUMPACK
 if(PALACE_WITH_STRUMPACK)
   message(STATUS "=================== Configuring STRUMPACK dependency ===================")

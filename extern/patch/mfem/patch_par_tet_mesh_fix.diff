@@ -13,10 +13,10 @@ index c37205eb1..f1b003cae 100644
     virtual int NeedRefinement(HashTable<Hashed2> &v_to_v) const { return 0; }
  
 diff --git a/mesh/mesh.cpp b/mesh/mesh.cpp
-index f76104da3..5e96c3f39 100644
+index 87e446c50..506483992 100644
 --- a/mesh/mesh.cpp
 +++ b/mesh/mesh.cpp
-@@ -489,6 +489,7 @@ void Mesh::GetBdrElementTransformation(int i, IsoparametricTransformation* ElTr)
+@@ -483,6 +483,7 @@ void Mesh::GetBdrElementTransformation(int i, IsoparametricTransformation* ElTr)
              Nodes->FESpace()->GetTraceElement(elem_id, face_geom);
           MFEM_VERIFY(dynamic_cast<const NodalFiniteElement*>(face_el),
                       "Mesh requires nodal Finite Element.");
@@ -24,7 +24,7 @@ index f76104da3..5e96c3f39 100644
           IntegrationRule eir(face_el->GetDof());
           FaceElemTr.Loc1.Transf.ElementNo = elem_id;
           FaceElemTr.Loc1.Transf.mesh = this;
-@@ -1941,7 +1942,7 @@ void Mesh::FinalizeTriMesh(int generate_edges, int refine, bool fix_orientation)
+@@ -2101,7 +2102,7 @@ void Mesh::FinalizeTriMesh(int generate_edges, int refine, bool fix_orientation)
  
     if (refine)
     {
@@ -33,7 +33,7 @@ index f76104da3..5e96c3f39 100644
     }
  
     if (generate_edges)
-@@ -2395,82 +2396,110 @@ void Mesh::ReorderElements(const Array<int> &ordering, bool reorder_vertices)
+@@ -2555,82 +2556,110 @@ void Mesh::ReorderElements(const Array<int> &ordering, bool reorder_vertices)
  }
  
  
@@ -180,7 +180,7 @@ index f76104da3..5e96c3f39 100644
        }
     }
  }
-@@ -2820,9 +2849,7 @@ void Mesh::FinalizeTetMesh(int generate_edges, int refine, bool fix_orientation)
+@@ -2980,9 +3009,7 @@ void Mesh::FinalizeTetMesh(int generate_edges, int refine, bool fix_orientation)
  
     if (refine)
     {
@@ -191,7 +191,7 @@ index f76104da3..5e96c3f39 100644
     }
  
     GetElementToFaceTable();
-@@ -3089,8 +3116,7 @@ void Mesh::Finalize(bool refine, bool fix_orientation)
+@@ -3249,8 +3276,7 @@ void Mesh::Finalize(bool refine, bool fix_orientation)
     // only perform it when Dim == spaceDim.
     if (Dim >= 2 && Dim == spaceDim)
     {
@@ -201,7 +201,7 @@ index f76104da3..5e96c3f39 100644
        {
           MFEM_VERIFY(faces_info[i].Elem2No < 0 ||
                       faces_info[i].Elem2Inf%2 != 0, "Invalid mesh topology."
-@@ -3527,8 +3553,6 @@ void Mesh::Make2D(int nx, int ny, Element::Type type,
+@@ -3950,8 +3976,6 @@ void Mesh::Make2D(int nx, int ny, Element::Type type,
           boundary[2*nx+j] = new Segment((j+1)*m, j*m, 4);
           boundary[2*nx+ny+j] = new Segment(j*m+nx, (j+1)*m+nx, 2);
        }
@@ -210,7 +210,7 @@ index f76104da3..5e96c3f39 100644
     }
     else
     {
-@@ -5699,37 +5723,21 @@ static const char *fixed_or_not[] = { "fixed", "NOT FIXED" };
+@@ -6148,37 +6172,21 @@ static const char *fixed_or_not[] = { "fixed", "NOT FIXED" };
  
  int Mesh::CheckElementOrientation(bool fix_it)
  {
@@ -253,7 +253,7 @@ index f76104da3..5e96c3f39 100644
                 switch (GetElementType(i))
                 {
                    case Element::TRIANGLE:
-@@ -5749,88 +5757,41 @@ int Mesh::CheckElementOrientation(bool fix_it)
+@@ -6198,88 +6206,41 @@ int Mesh::CheckElementOrientation(bool fix_it)
           }
        }
     }
@@ -365,7 +365,7 @@ index f76104da3..5e96c3f39 100644
           }
        }
     }
-@@ -6756,24 +6717,12 @@ void Mesh::GetBdrPointMatrix(int i,DenseMatrix &pointmat) const
+@@ -7205,24 +7166,12 @@ void Mesh::GetBdrPointMatrix(int i,DenseMatrix &pointmat) const
  
     pointmat.SetSize(spaceDim, nv);
     for (k = 0; k < spaceDim; k++)
@@ -392,10 +392,10 @@ index f76104da3..5e96c3f39 100644
  
  // static method
 diff --git a/mesh/mesh.hpp b/mesh/mesh.hpp
-index 8be58b232..b9c5538c3 100644
+index 40945eb04..97d3e76bb 100644
 --- a/mesh/mesh.hpp
 +++ b/mesh/mesh.hpp
-@@ -358,12 +358,9 @@ protected:
+@@ -332,12 +332,9 @@ protected:
     /** Also, initializes #mesh_geoms. */
     void SetMeshGen();
  
@@ -411,7 +411,7 @@ index 8be58b232..b9c5538c3 100644
  
     // Methods used to prepare and apply permutation of the mesh nodes assuming
 diff --git a/mesh/pmesh.cpp b/mesh/pmesh.cpp
-index 28b8a1bf8..26e2f4655 100644
+index f93433b2c..72bc3b98a 100644
 --- a/mesh/pmesh.cpp
 +++ b/mesh/pmesh.cpp
 @@ -20,6 +20,7 @@

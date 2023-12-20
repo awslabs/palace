@@ -5,8 +5,8 @@
 # CMake configuration for the main Palace application
 #
 
-# CMake 3.18.1 was released in Jul. 2020
-cmake_minimum_required(VERSION 3.18.1)
+# CMake 3.21 was released in Jul. 2021 (required for HIP support)
+cmake_minimum_required(VERSION 3.21)
 
 # Prohibit in-source builds
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_BINARY_DIR)
@@ -22,7 +22,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 project(palace LANGUAGES CXX VERSION 0.11.2)
 
 # Define build settings and defaults
-set(PALACE_WITH_OPENMP OFF CACHE BOOL "Use OpenMP")
+set(PALACE_WITH_OPENMP OFF CACHE BOOL "Use OpenMP for shared-memory parallelism")
 
 set(PALACE_WITH_SLEPC ON CACHE BOOL "Build with SLEPc eigenvalue solver")
 set(PALACE_WITH_ARPACK OFF CACHE BOOL "Build with ARPACK eigenvalue solver")
@@ -83,10 +83,11 @@ message(STATUS "Found fmt: ${fmt_VERSION} in ${fmt_DIR}")
 find_package(Eigen3 REQUIRED CONFIG)
 message(STATUS "Found Eigen: ${Eigen3_VERSION} in ${Eigen3_DIR}")
 
-# Find MFEM
+# Find MFEM (recent MFEM targets link to target Threads::Threads, for some reason)
 if(NOT "${MFEM_DIR}" STREQUAL "")
   set(MFEM_ROOT ${MFEM_DIR})
 endif()
+find_package(Threads REQUIRED)
 find_package(MFEM REQUIRED CONFIG)
 message(STATUS "Found MFEM: ${MFEM_VERSION} in ${MFEM_DIR}")
 if(NOT MFEM_USE_MPI)
@@ -185,7 +186,7 @@ set_target_properties(${LIB_TARGET_NAME}
 # Add JIT source file path definition for libCEED
 set_property(
   SOURCE ${CMAKE_SOURCE_DIR}/main.cpp
-  APPEND PROPERTY COMPILE_DEFINITIONS "PALACE_LIBCEED_JIT_SOURCE;PALACE_LIBCEED_JIT_SOURCE_DIR=\"${CMAKE_INSTALL_PREFIX}/include/palace\""
+  APPEND PROPERTY COMPILE_DEFINITIONS "PALACE_LIBCEED_JIT_SOURCE;PALACE_LIBCEED_JIT_SOURCE_DIR=\"${CMAKE_INSTALL_PREFIX}/include/palace/\""
 )
 
 # Add Git revision information (forces reconfigure when Git status changes)
@@ -250,26 +251,23 @@ target_link_libraries(${LIB_TARGET_NAME}
 )
 
 # Install target and helper scripts
-install(TARGETS
-  ${LIB_TARGET_NAME}
-)
-install(TARGETS
-  ${TARGET_NAME}
+install(
+  TARGETS ${TARGET_NAME} ${LIB_TARGET_NAME}
   RUNTIME DESTINATION bin
 )
-install(FILES
-  ${CMAKE_SOURCE_DIR}/../scripts/palace ${CMAKE_SOURCE_DIR}/../scripts/validate-config
+install(
+  FILES ${CMAKE_SOURCE_DIR}/../scripts/palace ${CMAKE_SOURCE_DIR}/../scripts/validate-config
   DESTINATION bin
   PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE
               WORLD_READ WORLD_EXECUTE
 )
-install(DIRECTORY
-  ${CMAKE_SOURCE_DIR}/../scripts/schema
+install(
+  DIRECTORY ${CMAKE_SOURCE_DIR}/../scripts/schema
   DESTINATION bin
   FILE_PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ
 )
-install(DIRECTORY
-  ${CMAKE_SOURCE_DIR}/fem/qfunctions
+install(
+  DIRECTORY ${CMAKE_SOURCE_DIR}/fem/qfunctions
   DESTINATION include/palace
   FILE_PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ
 )
