@@ -41,28 +41,29 @@ if(DEFINED ENV{ARMPL_DIR} OR DEFINED ENV{ARMPLROOT} OR DEFINED ENV{ARMPL_ROOT})
     endif()
   else()
     if(PALACE_WITH_OPENMP)
-      set(ARMPL_LIB_SUFFIX "_lp64_mp")
+      set(ARMPL_LIB_SUFFIX "_mp")
     else()
-      set(ARMPL_LIB_SUFFIX "_lp64")
+      set(ARMPL_LIB_SUFFIX "")
     endif()
   endif()
-  find_library(_BLAS_LAPACK_LIBRARIES
-    NAMES armpl${ARMPL_LIB_SUFFIX} armpl
-    PATHS ${ARMPL_DIR}
-    PATH_SUFFIXES lib lib64
-    NO_DEFAULT_PATH
-    REQUIRED
-  )
+  list(APPEND CMAKE_PREFIX_PATH ${ARMPL_DIR})
+  set(BLA_VENDOR "Arm${ARMPL_LIB_SUFFIX}")
+  find_package(BLAS REQUIRED)
+  find_package(LAPACK REQUIRED)
+  set(LAPACK_LIBRARIES "${LAPACK_LIBRARIES};-lm")
+
+  # Locate include directory
   find_path(_BLAS_LAPACK_INCLUDE_DIRS
-    NAMES cblas.h
+    NAMES armpl.h
     PATHS ${ARMPL_DIR}
-    PATH_SUFFIXES include${ARMPL_LIB_SUFFIX} include
+    PATH_SUFFIXES include
     NO_DEFAULT_PATH
     REQUIRED
   )
   message(STATUS "Using BLAS/LAPACK from Arm Performance Libraries (Arm PL)")
 elseif(DEFINED ENV{AOCL_DIR} OR DEFINED ENV{AOCLROOT} OR DEFINED ENV{AOCL_ROOT})
-  # AOCL for x86_64 builds when available
+  # AOCL for x86_64 builds when available (part of CMake's FindBLAS/FindLAPACK as of v3.27
+  # but unnecessarily adds -fopenmp flag)
   if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm")
     message(WARNING "AOCL math libraries are not intended for arm64 architecture builds")
   endif()
@@ -85,21 +86,22 @@ elseif(DEFINED ENV{AOCL_DIR} OR DEFINED ENV{AOCLROOT} OR DEFINED ENV{AOCL_ROOT})
   else()
     set(AOCL_LIB_SUFFIX "")
   endif()
-  find_library(BLIS_LIBRARY
+  find_library(BLAS_LIBRARIES
     NAMES blis${AOCL_LIB_SUFFIX} blis
     PATHS ${AOCL_DIR}
     PATH_SUFFIXES lib${AOCL_DIR_SUFFIX} lib lib64
     NO_DEFAULT_PATH
     REQUIRED
   )
-  find_library(FLAME_LIBRARY
+  find_library(LAPACK_LIBRARIES
     NAMES flame FLAME
     PATHS ${AOCL_DIR}
     PATH_SUFFIXES lib${AOCL_DIR_SUFFIX} lib lib64
     NO_DEFAULT_PATH
     REQUIRED
   )
-  set(_BLAS_LAPACK_LIBRARIES "${FLAME_LIBRARY}$<SEMICOLON>${BLIS_LIBRARY}")
+
+  # Locate include directory
   find_path(_BLAS_LAPACK_INCLUDE_DIRS
     NAMES cblas.h
     PATHS ${AOCL_DIR}
@@ -139,9 +141,8 @@ elseif(DEFINED ENV{MKL_DIR} OR DEFINED ENV{MKLROOT} OR DEFINED ENV{MKL_ROOT})
   set(BLA_VENDOR "Intel10${MKL_LIB_SUFFIX}")
   find_package(BLAS REQUIRED)
   find_package(LAPACK REQUIRED)
-  set(_BLAS_LAPACK_LIBRARIES ${LAPACK_LIBRARIES} ${BLAS_LIBRARIES})
-  list(REMOVE_DUPLICATES _BLAS_LAPACK_LIBRARIES)
-  string(REPLACE ";" "$<SEMICOLON>" _BLAS_LAPACK_LIBRARIES "${_BLAS_LAPACK_LIBRARIES}")
+
+  # Locate include directories
   find_path(_BLAS_LAPACK_INCLUDE_DIRS
     NAMES mkl_cblas.h
     PATHS ${MKL_DIR}
@@ -165,11 +166,10 @@ else()
   list(APPEND CMAKE_PREFIX_PATH ${OPENBLAS_DIR})
   find_package(BLAS REQUIRED)
   find_package(LAPACK REQUIRED)
-  set(_BLAS_LAPACK_LIBRARIES ${LAPACK_LIBRARIES} ${BLAS_LIBRARIES})
-  list(REMOVE_DUPLICATES _BLAS_LAPACK_LIBRARIES)
-  string(REPLACE ";" "$<SEMICOLON>" _BLAS_LAPACK_LIBRARIES "${_BLAS_LAPACK_LIBRARIES}")
+
+  # Locate include directory
   set(_BLAS_LAPACK_DIRS)
-  foreach(LIB IN LISTS _BLAS_LAPACK_LIBRARIES)
+  foreach(LIB IN LISTS LAPACK_LIBRARIES BLAS_LIBRARIES)
     get_filename_component(LIB_DIR ${LIB} DIRECTORY)
     list(APPEND _BLAS_LAPACK_DIRS ${LIB_DIR})
   endforeach()
@@ -184,6 +184,9 @@ else()
 endif()
 
 # Save variables to cache
+set(_BLAS_LAPACK_LIBRARIES ${LAPACK_LIBRARIES} ${BLAS_LIBRARIES})
+list(REMOVE_DUPLICATES _BLAS_LAPACK_LIBRARIES)
+string(REPLACE ";" "$<SEMICOLON>" _BLAS_LAPACK_LIBRARIES "${_BLAS_LAPACK_LIBRARIES}")
 set(BLAS_LAPACK_LIBRARIES ${_BLAS_LAPACK_LIBRARIES} CACHE STRING
   "List of library files for BLAS/LAPACK"
 )
