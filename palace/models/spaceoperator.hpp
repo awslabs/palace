@@ -169,10 +169,10 @@ public:
                                                   const ComplexOperator *K,
                                                   const ComplexOperator *M);
 
-  // Construct the real, optionally SPD matrix for frequency or time domain linear system
-  // preconditioning (Mr > 0, Mi < 0, |Mr + i Mi| is done on the material property
-  // coefficient, not the matrix entries themselves):
-  //             B = a0 K + a1 C -/+ a2 |Mr + i Mi| + A2r(a3) + A2i(a3) .
+  // Construct the matrix for frequency or time domain linear system preconditioning. If it
+  // is real-valued (Mr > 0, Mi < 0, |Mr + Mi| is done on the material property coefficient,
+  // not the matrix entries themselves):
+  //             B = a0 K + a1 C -/+ a2 |Mr + Mi| + A2r(a3) + A2i(a3) .
   template <typename OperType>
   std::unique_ptr<OperType> GetPreconditionerMatrix(double a0, double a1, double a2,
                                                     double a3);

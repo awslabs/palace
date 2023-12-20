@@ -32,25 +32,23 @@ WeightedHCurlNormSolver::WeightedHCurlNormSolver(
                                            mat_op.GetInvPermeability());
     MaterialPropertyCoefficient epsilon_func(mat_op.GetAttributeToMaterial(),
                                              mat_op.GetPermittivityReal());
+    BilinearForm a(nd_fespaces.GetFinestFESpace()), a_aux(h1_fespaces.GetFinestFESpace());
+    a.AddDomainIntegrator<CurlCurlMassIntegrator>(muinv_func, epsilon_func);
+    a_aux.AddDomainIntegrator<DiffusionIntegrator>(epsilon_func);
+    // a.AssembleQuadratureData();
+    // a_aux.AssembleQuadratureData();
+    auto a_vec = a.Assemble(nd_fespaces, skip_zeros);
+    auto a_aux_vec = a_aux.Assemble(h1_fespaces, skip_zeros);
     auto A_mg = std::make_unique<MultigridOperator>(n_levels);
     for (bool aux : {false, true})
     {
       for (std::size_t l = 0; l < n_levels; l++)
       {
-        // Force coarse level operator to be fully assembled always.
         const auto &fespace_l =
             aux ? h1_fespaces.GetFESpaceAtLevel(l) : nd_fespaces.GetFESpaceAtLevel(l);
         const auto &dbc_tdof_lists_l = aux ? h1_dbc_tdof_lists[l] : nd_dbc_tdof_lists[l];
-        BilinearForm a(fespace_l);
-        if (aux)
-        {
-          a.AddDomainIntegrator<DiffusionIntegrator>(epsilon_func);
-        }
-        else
-        {
-          a.AddDomainIntegrator<CurlCurlMassIntegrator>(muinv_func, epsilon_func);
-        }
-        auto A_l = std::make_unique<ParOperator>(a.Assemble(skip_zeros), fespace_l);
+        auto A_l = std::make_unique<ParOperator>(std::move(aux ? a_aux_vec[l] : a_vec[l]),
+                                                 fespace_l);
         A_l->SetEssentialTrueDofs(dbc_tdof_lists_l, Operator::DiagonalPolicy::DIAG_ONE);
         if (aux)
         {
