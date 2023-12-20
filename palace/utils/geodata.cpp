@@ -455,7 +455,7 @@ ElementTypeInfo CheckElements(const mfem::Mesh &mesh)
 {
   // MeshGenerator is reduced over the communicator. This checks for geometries on any
   // processor.
-  auto meshgen = const_cast<mfem::Mesh &>(mesh).MeshGenerator();
+  auto meshgen = mesh.MeshGenerator();
   return {bool(meshgen & 1), bool(meshgen & 2), bool(meshgen & 4), bool(meshgen & 8)};
 }
 
