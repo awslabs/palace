@@ -653,7 +653,7 @@ WavePortData::WavePortData(const config::WavePortData &data,
 #error "Wave port solver requires building with SuperLU_DIST, STRUMPACK, or MUMPS!"
 #endif
     }
-    auto pc = std::make_unique<WrapperSolver<ComplexOperator>>(
+    auto pc = std::make_unique<MfemWrapperSolver<ComplexOperator>>(
         [&]() -> std::unique_ptr<mfem::Solver>
         {
           if (pc_type == config::LinearSolverData::Type::SUPERLU)
@@ -688,6 +688,7 @@ WavePortData::WavePortData(const config::WavePortData &data,
           }
           return {};
         }());
+    pc->SetSaveAssembled(false);
     ksp = std::make_unique<ComplexKspSolver>(std::move(gmres), std::move(pc));
 
     // Define the eigenvalue solver.

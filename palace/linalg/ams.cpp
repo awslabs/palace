@@ -208,16 +208,7 @@ void HypreAmsSolver::SetOperator(const Operator &op)
     HYPRE_AMSDestroy(ams);
     InitializeSolver();
   }
-
-  const auto *PtAP = dynamic_cast<const ParOperator *>(&op);
-  if (PtAP)
-  {
-    A = &PtAP->ParallelAssemble();
-  }
-  else
-  {
-    A = dynamic_cast<mfem::HypreParMatrix *>(const_cast<Operator *>(&op));
-  }
+  A = const_cast<mfem::HypreParMatrix *>(dynamic_cast<const mfem::HypreParMatrix *>(&op));
   MFEM_VERIFY(A, "HypreAmsSolver requires a HypreParMatrix operator!");
   height = A->Height();
   width = A->Width();

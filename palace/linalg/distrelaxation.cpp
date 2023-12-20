@@ -12,7 +12,7 @@ namespace palace
 
 template <typename OperType>
 DistRelaxationSmoother<OperType>::DistRelaxationSmoother(
-    const Operator &G, int smooth_it, int cheby_smooth_it, int cheby_order,
+    MPI_Comm comm, const Operator &G, int smooth_it, int cheby_smooth_it, int cheby_order,
     double cheby_sf_max, double cheby_sf_min, bool cheby_4th_kind)
   : Solver<OperType>(), pc_it(smooth_it), G(&G), A(nullptr), A_G(nullptr),
     dbc_tdof_list_G(nullptr)
@@ -20,17 +20,17 @@ DistRelaxationSmoother<OperType>::DistRelaxationSmoother(
   // Initialize smoothers.
   if (cheby_4th_kind)
   {
-    B = std::make_unique<ChebyshevSmoother<OperType>>(cheby_smooth_it, cheby_order,
+    B = std::make_unique<ChebyshevSmoother<OperType>>(comm, cheby_smooth_it, cheby_order,
                                                       cheby_sf_max);
-    B_G = std::make_unique<ChebyshevSmoother<OperType>>(cheby_smooth_it, cheby_order,
+    B_G = std::make_unique<ChebyshevSmoother<OperType>>(comm, cheby_smooth_it, cheby_order,
                                                         cheby_sf_max);
   }
   else
   {
-    B = std::make_unique<ChebyshevSmoother1stKind<OperType>>(cheby_smooth_it, cheby_order,
-                                                             cheby_sf_max, cheby_sf_min);
-    B_G = std::make_unique<ChebyshevSmoother1stKind<OperType>>(cheby_smooth_it, cheby_order,
-                                                               cheby_sf_max, cheby_sf_min);
+    B = std::make_unique<ChebyshevSmoother1stKind<OperType>>(
+        comm, cheby_smooth_it, cheby_order, cheby_sf_max, cheby_sf_min);
+    B_G = std::make_unique<ChebyshevSmoother1stKind<OperType>>(
+        comm, cheby_smooth_it, cheby_order, cheby_sf_max, cheby_sf_min);
   }
   B_G->SetInitialGuess(false);
 }

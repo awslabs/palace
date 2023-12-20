@@ -10,37 +10,7 @@
 namespace palace
 {
 
-bool ComplexOperator::IsReal() const
-{
-  MFEM_ABORT("IsReal() is not implemented for base class ComplexOperator!");
-  return false;
-}
-
-bool ComplexOperator::IsImag() const
-{
-  MFEM_ABORT("IsImag() is not implemented for base class ComplexOperator!");
-  return false;
-}
-
-bool ComplexOperator::HasReal() const
-{
-  MFEM_ABORT("HasReal() is not implemented for base class ComplexOperator!");
-  return false;
-}
-
-bool ComplexOperator::HasImag() const
-{
-  MFEM_ABORT("HasImag() is not implemented for base class ComplexOperator!");
-  return false;
-}
-
 const Operator *ComplexOperator::Real() const
-{
-  MFEM_ABORT("Real() is not implemented for base class ComplexOperator!");
-  return nullptr;
-}
-
-Operator *ComplexOperator::Real()
 {
   MFEM_ABORT("Real() is not implemented for base class ComplexOperator!");
   return nullptr;
@@ -52,10 +22,9 @@ const Operator *ComplexOperator::Imag() const
   return nullptr;
 }
 
-Operator *ComplexOperator::Imag()
+void ComplexOperator::AssembleDiagonal(ComplexVector &diag) const
 {
-  MFEM_ABORT("Imag() is not implemented for base class ComplexOperator!");
-  return nullptr;
+  MFEM_ABORT("Base class ComplexOperator does not implement AssembleDiagonal!");
 }
 
 void ComplexOperator::MultTranspose(const ComplexVector &x, ComplexVector &y) const
@@ -88,7 +57,7 @@ void ComplexOperator::AddMultHermitianTranspose(const ComplexVector &x, ComplexV
 
 ComplexWrapperOperator::ComplexWrapperOperator(std::unique_ptr<Operator> &&dAr,
                                                std::unique_ptr<Operator> &&dAi,
-                                               Operator *pAr, Operator *pAi)
+                                               const Operator *pAr, const Operator *pAi)
   : ComplexOperator(), data_Ar(std::move(dAr)), data_Ai(std::move(dAi)),
     Ar((data_Ar != nullptr) ? data_Ar.get() : pAr),
     Ai((data_Ai != nullptr) ? data_Ai.get() : pAi)
@@ -106,9 +75,22 @@ ComplexWrapperOperator::ComplexWrapperOperator(std::unique_ptr<Operator> &&Ar,
 {
 }
 
-ComplexWrapperOperator::ComplexWrapperOperator(Operator *Ar, Operator *Ai)
+ComplexWrapperOperator::ComplexWrapperOperator(const Operator *Ar, const Operator *Ai)
   : ComplexWrapperOperator(nullptr, nullptr, Ar, Ai)
 {
+}
+
+void ComplexWrapperOperator::AssembleDiagonal(ComplexVector &diag) const
+{
+  diag = 0.0;
+  if (Ar)
+  {
+    Ar->AssembleDiagonal(diag.Real());
+  }
+  if (Ai)
+  {
+    Ai->AssembleDiagonal(diag.Imag());
+  }
 }
 
 void ComplexWrapperOperator::Mult(const ComplexVector &x, ComplexVector &y) const

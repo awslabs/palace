@@ -25,6 +25,9 @@ class ChebyshevSmoother : public Solver<OperType>
   using VecType = typename Solver<OperType>::VecType;
 
 private:
+  // MPI communicator associated with the solver operator and vectors.
+  MPI_Comm comm;
+
   // Number of smoother iterations and polynomial order.
   const int pc_it, order;
 
@@ -41,7 +44,7 @@ private:
   mutable VecType r, d;
 
 public:
-  ChebyshevSmoother(int smooth_it, int poly_order, double sf_max);
+  ChebyshevSmoother(MPI_Comm comm, int smooth_it, int poly_order, double sf_max);
 
   void SetOperator(const OperType &op) override;
 
@@ -65,6 +68,9 @@ class ChebyshevSmoother1stKind : public Solver<OperType>
   using VecType = typename Solver<OperType>::VecType;
 
 private:
+  // MPI communicator associated with the solver operator and vectors.
+  MPI_Comm comm;
+
   // Number of smoother iterations and polynomial order.
   const int pc_it, order;
 
@@ -82,7 +88,8 @@ private:
   mutable VecType r, d;
 
 public:
-  ChebyshevSmoother1stKind(int smooth_it, int poly_order, double sf_max, double sf_min);
+  ChebyshevSmoother1stKind(MPI_Comm comm, int smooth_it, int poly_order, double sf_max,
+                           double sf_min);
 
   void SetOperator(const OperType &op) override;
 

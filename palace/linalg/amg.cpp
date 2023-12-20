@@ -3,8 +3,6 @@
 
 #include "amg.hpp"
 
-#include "linalg/rap.hpp"
-
 namespace palace
 {
 
@@ -25,19 +23,6 @@ BoomerAmgSolver::BoomerAmgSolver(int cycle_it, int smooth_it, int print)
 
   // int coarse_relax_type = 8;  // l1-symm. GS (inexact coarse solve)
   // HYPRE_BoomerAMGSetCycleRelaxType(*this, coarse_relax_type, 3);
-}
-
-void BoomerAmgSolver::SetOperator(const Operator &op)
-{
-  const auto *PtAP = dynamic_cast<const ParOperator *>(&op);
-  if (PtAP)
-  {
-    mfem::HypreBoomerAMG::SetOperator(PtAP->ParallelAssemble());
-  }
-  else
-  {
-    mfem::HypreBoomerAMG::SetOperator(op);
-  }
 }
 
 }  // namespace palace

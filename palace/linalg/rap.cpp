@@ -8,7 +8,7 @@
 namespace palace
 {
 
-ParOperator::ParOperator(std::unique_ptr<Operator> &&dA, Operator *pA,
+ParOperator::ParOperator(std::unique_ptr<Operator> &&dA, const Operator *pA,
                          const mfem::ParFiniteElementSpace &trial_fespace,
                          const mfem::ParFiniteElementSpace &test_fespace,
                          bool test_restrict)
@@ -31,23 +31,12 @@ ParOperator::ParOperator(std::unique_ptr<Operator> &&A,
 {
 }
 
-ParOperator::ParOperator(Operator &A, const mfem::ParFiniteElementSpace &trial_fespace,
+ParOperator::ParOperator(const Operator &A,
+                         const mfem::ParFiniteElementSpace &trial_fespace,
                          const mfem::ParFiniteElementSpace &test_fespace,
                          bool test_restrict)
   : ParOperator(nullptr, &A, trial_fespace, test_fespace, test_restrict)
 {
-}
-
-const Operator &ParOperator::LocalOperator() const
-{
-  MFEM_VERIFY(A, "No local matrix available for ParOperator::LocalOperator!");
-  return *A;
-}
-
-Operator &ParOperator::LocalOperator()
-{
-  MFEM_VERIFY(A, "No local matrix available for ParOperator::LocalOperator!");
-  return *A;
 }
 
 void ParOperator::SetEssentialTrueDofs(const mfem::Array<int> &tdof_list,
@@ -60,6 +49,96 @@ void ParOperator::SetEssentialTrueDofs(const mfem::Array<int> &tdof_list,
                                "for rectangular ParOperator!");
   dbc_tdof_list = &tdof_list;
   diag_policy = policy;
+}
+
+void ParOperator::EliminateRHS(const Vector &x, Vector &b) const
+{
+  if (!dbc_tdof_list)
+  {
+    return;
+  }
+
+  MFEM_VERIFY(A, "No local matrix available for ParOperator::EliminateRHS!");
+  ty = 0.0;
+  linalg::SetSubVector(ty, *dbc_tdof_list, x);
+  trial_fespace.GetProlongationMatrix()->Mult(ty, lx);
+
+  // Apply the unconstrained operator.
+  A->Mult(lx, ly);
+
+  RestrictionMatrixAddMult(ly, b, -1.0);
+  if (diag_policy == DiagonalPolicy::DIAG_ONE)
+  {
+    linalg::SetSubVector(b, *dbc_tdof_list, x);
+  }
+  else if (diag_policy == DiagonalPolicy::DIAG_ZERO)
+  {
+    linalg::SetSubVector(b, *dbc_tdof_list, 0.0);
+  }
+}
+
+mfem::HypreParMatrix &ParOperator::ParallelAssemble(bool skip_zeros) const
+{
+  if (RAP)
+  {
+    return *RAP;
+  }
+
+  // Build the square or rectangular assembled HypreParMatrix.
+  const auto *sA = dynamic_cast<const mfem::SparseMatrix *>(A);
+  std::unique_ptr<mfem::SparseMatrix> data_sA;
+  if (!sA)
+  {
+    const auto *cA = dynamic_cast<const ceed::Operator *>(A);
+    MFEM_VERIFY(cA, "ParOperator::ParallelAssemble requires A as an mfem::SparseMatrix or "
+                    "ceed::Operator!");
+    data_sA = BilinearForm::FullAssemble(*cA, skip_zeros, use_R);
+    sA = data_sA.get();
+  }
+  if (&trial_fespace == &test_fespace)
+  {
+    mfem::HypreParMatrix *hA = new mfem::HypreParMatrix(
+        trial_fespace.GetComm(), trial_fespace.GlobalVSize(), trial_fespace.GetDofOffsets(),
+        const_cast<mfem::SparseMatrix *>(sA));
+    const mfem::HypreParMatrix *P = trial_fespace.Dof_TrueDof_Matrix();
+    RAP = std::make_unique<mfem::HypreParMatrix>(hypre_ParCSRMatrixRAP(*P, *hA, *P), true);
+    delete hA;
+  }
+  else
+  {
+    mfem::HypreParMatrix *hA = new mfem::HypreParMatrix(
+        trial_fespace.GetComm(), test_fespace.GlobalVSize(), trial_fespace.GlobalVSize(),
+        test_fespace.GetDofOffsets(), trial_fespace.GetDofOffsets(),
+        const_cast<mfem::SparseMatrix *>(sA));
+    const mfem::HypreParMatrix *P = trial_fespace.Dof_TrueDof_Matrix();
+    if (!use_R)
+    {
+      const mfem::HypreParMatrix *Rt = test_fespace.Dof_TrueDof_Matrix();
+      RAP =
+          std::make_unique<mfem::HypreParMatrix>(hypre_ParCSRMatrixRAP(*Rt, *hA, *P), true);
+    }
+    else
+    {
+      mfem::SparseMatrix *sRt = mfem::Transpose(*test_fespace.GetRestrictionMatrix());
+      mfem::HypreParMatrix *hRt = new mfem::HypreParMatrix(
+          test_fespace.GetComm(), test_fespace.GlobalVSize(),
+          test_fespace.GlobalTrueVSize(), test_fespace.GetDofOffsets(),
+          test_fespace.GetTrueDofOffsets(), sRt);
+      RAP = std::make_unique<mfem::HypreParMatrix>(hypre_ParCSRMatrixRAP(*hRt, *hA, *P),
+                                                   true);
+      delete sRt;
+      delete hRt;
+    }
+    delete hA;
+  }
+  hypre_ParCSRMatrixSetNumNonzeros(*RAP);
+
+  // Eliminate boundary conditions on the assembled (square) matrix.
+  if (dbc_tdof_list)
+  {
+    RAP->EliminateBC(*dbc_tdof_list, diag_policy);
+  }
+  return *RAP;
 }
 
 void ParOperator::AssembleDiagonal(Vector &diag) const
@@ -103,102 +182,6 @@ void ParOperator::AssembleDiagonal(Vector &diag) const
     {
       linalg::SetSubVector(diag, *dbc_tdof_list, 0.0);
     }
-  }
-}
-
-mfem::HypreParMatrix &ParOperator::ParallelAssemble(bool skip_zeros) const
-{
-  if (RAP)
-  {
-    return *RAP;
-  }
-
-  // Build the square or rectangular assembled HypreParMatrix.
-  auto *sA = dynamic_cast<mfem::SparseMatrix *>(A);
-  std::unique_ptr<mfem::SparseMatrix> data_sA;
-  if (!sA)
-  {
-    auto *cA = dynamic_cast<ceed::Operator *>(A);
-    MFEM_VERIFY(cA, "ParOperator::ParallelAssemble requires A as an mfem::SparseMatrix or "
-                    "ceed::Operator!");
-    data_sA = use_R ? DiscreteLinearOperator::FullAssemble(*cA, skip_zeros)
-                    : BilinearForm::FullAssemble(*cA, skip_zeros);
-    sA = data_sA.get();
-  }
-  if (&trial_fespace == &test_fespace)
-  {
-    mfem::HypreParMatrix *hA =
-        new mfem::HypreParMatrix(trial_fespace.GetComm(), trial_fespace.GlobalVSize(),
-                                 trial_fespace.GetDofOffsets(), sA);
-    const mfem::HypreParMatrix *P = trial_fespace.Dof_TrueDof_Matrix();
-    RAP = std::make_unique<mfem::HypreParMatrix>(hypre_ParCSRMatrixRAP(*P, *hA, *P), true);
-    delete hA;
-  }
-  else
-  {
-    mfem::HypreParMatrix *hA = new mfem::HypreParMatrix(
-        trial_fespace.GetComm(), test_fespace.GlobalVSize(), trial_fespace.GlobalVSize(),
-        test_fespace.GetDofOffsets(), trial_fespace.GetDofOffsets(), sA);
-    const mfem::HypreParMatrix *P = trial_fespace.Dof_TrueDof_Matrix();
-    if (!use_R)
-    {
-      const mfem::HypreParMatrix *Rt = test_fespace.Dof_TrueDof_Matrix();
-      RAP =
-          std::make_unique<mfem::HypreParMatrix>(hypre_ParCSRMatrixRAP(*Rt, *hA, *P), true);
-    }
-    else
-    {
-      mfem::SparseMatrix *sRt = mfem::Transpose(*test_fespace.GetRestrictionMatrix());
-      mfem::HypreParMatrix *hRt = new mfem::HypreParMatrix(
-          test_fespace.GetComm(), test_fespace.GlobalVSize(),
-          test_fespace.GlobalTrueVSize(), test_fespace.GetDofOffsets(),
-          test_fespace.GetTrueDofOffsets(), sRt);
-      RAP = std::make_unique<mfem::HypreParMatrix>(hypre_ParCSRMatrixRAP(*hRt, *hA, *P),
-                                                   true);
-      delete sRt;
-      delete hRt;
-    }
-    delete hA;
-  }
-  if (data_A)
-  {
-    // The local matrix is no longer needed now that we have the parallel-assembled one.
-    data_A.reset();
-    A = nullptr;
-  }
-  hypre_ParCSRMatrixSetNumNonzeros(*RAP);
-
-  // Eliminate boundary conditions on the assembled (square) matrix.
-  if (dbc_tdof_list)
-  {
-    RAP->EliminateBC(*dbc_tdof_list, diag_policy);
-  }
-  return *RAP;
-}
-
-void ParOperator::EliminateRHS(const Vector &x, Vector &b) const
-{
-  if (!dbc_tdof_list)
-  {
-    return;
-  }
-
-  MFEM_VERIFY(A, "No local matrix available for ParOperator::EliminateRHS!");
-  ty = 0.0;
-  linalg::SetSubVector(ty, *dbc_tdof_list, x);
-  trial_fespace.GetProlongationMatrix()->Mult(ty, lx);
-
-  // Apply the unconstrained operator.
-  A->Mult(lx, ly);
-
-  RestrictionMatrixAddMult(ly, b, -1.0);
-  if (diag_policy == DiagonalPolicy::DIAG_ONE)
-  {
-    linalg::SetSubVector(b, *dbc_tdof_list, x);
-  }
-  else if (diag_policy == DiagonalPolicy::DIAG_ZERO)
-  {
-    linalg::SetSubVector(b, *dbc_tdof_list, 0.0);
   }
 }
 
@@ -402,8 +385,8 @@ void ParOperator::RestrictionMatrixMultTranspose(const Vector &ty, Vector &ly) c
 }
 
 ComplexParOperator::ComplexParOperator(std::unique_ptr<Operator> &&dAr,
-                                       std::unique_ptr<Operator> &&dAi, Operator *pAr,
-                                       Operator *pAi,
+                                       std::unique_ptr<Operator> &&dAi, const Operator *pAr,
+                                       const Operator *pAi,
                                        const mfem::ParFiniteElementSpace &trial_fespace,
                                        const mfem::ParFiniteElementSpace &test_fespace,
                                        bool test_restrict)
@@ -414,16 +397,16 @@ ComplexParOperator::ComplexParOperator(std::unique_ptr<Operator> &&dAr,
     A(data_A.get()), trial_fespace(trial_fespace), test_fespace(test_fespace),
     use_R(test_restrict), dbc_tdof_list(nullptr),
     diag_policy(Operator::DiagonalPolicy::DIAG_ONE),
-    RAPr(A->HasReal()
+    RAPr(A->Real()
              ? std::make_unique<ParOperator>(*A->Real(), trial_fespace, test_fespace, use_R)
              : nullptr),
-    RAPi(A->HasImag()
+    RAPi(A->Imag()
              ? std::make_unique<ParOperator>(*A->Imag(), trial_fespace, test_fespace, use_R)
              : nullptr)
 {
-  // We use the non-owning constructors for real and imaginary part ParOperators. We know A
-  // is a ComplexWrapperOperator which has separate access to the real and imaginary
-  // components.
+  // We use the non-owning constructors for real and imaginary part ParOperators, since we
+  // construct A as a ComplexWrapperOperator which has separate access to the real and
+  // imaginary components.
   lx.SetSize(A->Width());
   ly.SetSize(A->Height());
   ty.SetSize(width);
@@ -439,24 +422,12 @@ ComplexParOperator::ComplexParOperator(std::unique_ptr<Operator> &&Ar,
 {
 }
 
-ComplexParOperator::ComplexParOperator(Operator *Ar, Operator *Ai,
+ComplexParOperator::ComplexParOperator(const Operator *Ar, const Operator *Ai,
                                        const mfem::ParFiniteElementSpace &trial_fespace,
                                        const mfem::ParFiniteElementSpace &test_fespace,
                                        bool test_restrict)
   : ComplexParOperator(nullptr, nullptr, Ar, Ai, trial_fespace, test_fespace, test_restrict)
 {
-}
-
-const ComplexOperator &ComplexParOperator::LocalOperator() const
-{
-  MFEM_ASSERT(A, "No local matrix available for ComplexParOperator::LocalOperator!");
-  return *A;
-}
-
-ComplexOperator &ComplexParOperator::LocalOperator()
-{
-  MFEM_ASSERT(A, "No local matrix available for ComplexParOperator::LocalOperator!");
-  return *A;
 }
 
 void ComplexParOperator::SetEssentialTrueDofs(const mfem::Array<int> &tdof_list,

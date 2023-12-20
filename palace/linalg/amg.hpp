@@ -5,7 +5,6 @@
 #define PALACE_LINALG_AMG_HPP
 
 #include <mfem.hpp>
-#include "linalg/operator.hpp"
 #include "utils/iodata.hpp"
 
 namespace palace
@@ -23,8 +22,6 @@ public:
                       iodata.solver.linear.mg_smooth_it, print)
   {
   }
-
-  void SetOperator(const Operator &op) override;
 };
 
 }  // namespace palace

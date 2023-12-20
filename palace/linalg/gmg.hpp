@@ -57,17 +57,17 @@ private:
   void VCycle(int l, bool initial_guess) const;
 
 public:
-  GeometricMultigridSolver(std::unique_ptr<Solver<OperType>> &&coarse_solver,
+  GeometricMultigridSolver(MPI_Comm comm, std::unique_ptr<Solver<OperType>> &&coarse_solver,
                            const std::vector<const Operator *> &P,
                            const std::vector<const Operator *> *G, int cycle_it,
                            int smooth_it, int cheby_order, double cheby_sf_max,
                            double cheby_sf_min, bool cheby_4th_kind);
-  GeometricMultigridSolver(const IoData &iodata,
+  GeometricMultigridSolver(MPI_Comm comm, const IoData &iodata,
                            std::unique_ptr<Solver<OperType>> &&coarse_solver,
                            const std::vector<const Operator *> &P,
                            const std::vector<const Operator *> *G = nullptr)
     : GeometricMultigridSolver(
-          std::move(coarse_solver), P, G, iodata.solver.linear.mg_cycle_it,
+          comm, std::move(coarse_solver), P, G, iodata.solver.linear.mg_cycle_it,
           iodata.solver.linear.mg_smooth_it, iodata.solver.linear.mg_smooth_order,
           iodata.solver.linear.mg_smooth_sf_max, iodata.solver.linear.mg_smooth_sf_min,
           iodata.solver.linear.mg_smooth_cheby_4th)

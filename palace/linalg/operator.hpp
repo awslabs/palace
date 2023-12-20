@@ -37,18 +37,16 @@ public:
   int Width() const { return width; }
 
   // Test whether or not the operator is purely real or imaginary.
-  virtual bool IsReal() const;
-  virtual bool IsImag() const;
+  virtual bool IsReal() const { return !Imag(); }
+  virtual bool IsImag() const { return !Real(); }
 
-  // Test whether or not we can access the real and imaginary operator parts.
-  virtual bool HasReal() const;
-  virtual bool HasImag() const;
-
-  // Get access to the real and imaginary operator parts.
+  // Get access to the real and imaginary operator parts separately (may be empty if
+  // operator is purely real or imaginary).
   virtual const Operator *Real() const;
-  virtual Operator *Real();
   virtual const Operator *Imag() const;
-  virtual Operator *Imag();
+
+  // Diagonal assembly.
+  virtual void AssembleDiagonal(ComplexVector &diag) const;
 
   // Operator application.
   virtual void Mult(const ComplexVector &x, ComplexVector &y) const = 0;
@@ -75,13 +73,13 @@ class ComplexWrapperOperator : public ComplexOperator
 private:
   // Storage and access for real and imaginary parts of the operator.
   std::unique_ptr<Operator> data_Ar, data_Ai;
-  Operator *Ar, *Ai;
+  const Operator *Ar, *Ai;
 
   // Temporary storage for operator application.
   mutable ComplexVector tx, ty;
 
   ComplexWrapperOperator(std::unique_ptr<Operator> &&dAr, std::unique_ptr<Operator> &&dAi,
-                         Operator *pAr, Operator *pAi);
+                         const Operator *pAr, const Operator *pAi);
 
 public:
   // Construct a complex operator which inherits ownership of the input real and imaginary
@@ -89,16 +87,12 @@ public:
   ComplexWrapperOperator(std::unique_ptr<Operator> &&Ar, std::unique_ptr<Operator> &&Ai);
 
   // Non-owning constructor.
-  ComplexWrapperOperator(Operator *Ar, Operator *Ai);
+  ComplexWrapperOperator(const Operator *Ar, const Operator *Ai);
 
-  bool IsReal() const override { return Ai == nullptr; }
-  bool IsImag() const override { return Ar == nullptr; }
-  bool HasReal() const override { return Ar != nullptr; }
-  bool HasImag() const override { return Ai != nullptr; }
   const Operator *Real() const override { return Ar; }
-  Operator *Real() override { return Ar; }
   const Operator *Imag() const override { return Ai; }
-  Operator *Imag() override { return Ai; }
+
+  void AssembleDiagonal(ComplexVector &diag) const override;
 
   void Mult(const ComplexVector &x, ComplexVector &y) const override;
 

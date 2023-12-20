@@ -33,20 +33,20 @@ inline void ProjectMatInternal(MPI_Comm comm, const std::vector<Vector> &V,
   {
     // Fill block of Vᴴ A V = [  | Vᴴ A vj ] . We can optimize the matrix-vector product
     // since the columns of V are real.
-    MFEM_VERIFY(A.HasReal() || A.HasImag(),
+    MFEM_VERIFY(A.Real() || A.Imag(),
                 "Invalid zero ComplexOperator for PROM matrix projection!");
-    if (A.HasReal())
+    if (A.Real())
     {
       A.Real()->Mult(V[j], r.Real());
     }
-    if (A.HasImag())
+    if (A.Imag())
     {
       A.Imag()->Mult(V[j], r.Imag());
     }
     for (int i = 0; i < n; i++)
     {
-      Ar(i, j).real(A.HasReal() ? V[i] * r.Real() : 0.0);  // Local inner product
-      Ar(i, j).imag(A.HasImag() ? V[i] * r.Imag() : 0.0);
+      Ar(i, j).real(A.Real() ? V[i] * r.Real() : 0.0);  // Local inner product
+      Ar(i, j).imag(A.Imag() ? V[i] * r.Imag() : 0.0);
     }
   }
   Mpi::GlobalSum((n - n0) * n, Ar.data() + n0 * n, comm);

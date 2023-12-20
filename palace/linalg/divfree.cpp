@@ -49,14 +49,16 @@ DivFreeSolver::DivFreeSolver(const MaterialOperator &mat_op, FiniteElementSpace 
   bdr_tdof_list_M = &h1_bdr_tdof_lists.back();
 
   // The system matrix for the projection is real and SPD.
-  auto amg =
-      std::make_unique<WrapperSolver<Operator>>(std::make_unique<BoomerAmgSolver>(1, 1, 0));
+  auto amg = std::make_unique<MfemWrapperSolver<Operator>>(
+      std::make_unique<BoomerAmgSolver>(1, 1, 0));
   std::unique_ptr<Solver<Operator>> pc;
   if (h1_fespaces.GetNumLevels() > 1)
   {
     const int mg_smooth_order =
         std::max(h1_fespaces.GetFinestFESpace().GetMaxElementOrder(), 2);
     pc = std::make_unique<GeometricMultigridSolver<Operator>>(
+        h1_fespaces.GetFinestFESpace().GetComm(),
+
         std::move(amg), h1_fespaces.GetProlongationOperators(), nullptr, 1, 1,
         mg_smooth_order, 1.0, 0.0, true);
   }

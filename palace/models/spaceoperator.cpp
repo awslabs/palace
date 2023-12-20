@@ -451,22 +451,22 @@ auto BuildParSumOperator(int h, int w, std::complex<double> a0, std::complex<dou
   {
     if (a0.real() != 0.0)
     {
-      if (K->LocalOperator().HasReal())
+      if (K->LocalOperator().Real())
       {
         sumr->AddOperator(*K->LocalOperator().Real(), a0.real());
       }
-      if (K->LocalOperator().HasImag())
+      if (K->LocalOperator().Imag())
       {
         sumi->AddOperator(*K->LocalOperator().Imag(), a0.real());
       }
     }
     if (a0.imag() != 0.0)
     {
-      if (K->LocalOperator().HasImag())
+      if (K->LocalOperator().Imag())
       {
         sumr->AddOperator(*K->LocalOperator().Imag(), -a0.imag());
       }
-      if (K->LocalOperator().HasReal())
+      if (K->LocalOperator().Real())
       {
         sumi->AddOperator(*K->LocalOperator().Real(), a0.imag());
       }
@@ -476,22 +476,22 @@ auto BuildParSumOperator(int h, int w, std::complex<double> a0, std::complex<dou
   {
     if (a1.real() != 0.0)
     {
-      if (C->LocalOperator().HasReal())
+      if (C->LocalOperator().Real())
       {
         sumr->AddOperator(*C->LocalOperator().Real(), a1.real());
       }
-      if (C->LocalOperator().HasImag())
+      if (C->LocalOperator().Imag())
       {
         sumi->AddOperator(*C->LocalOperator().Imag(), a1.real());
       }
     }
     if (a1.imag() != 0.0)
     {
-      if (C->LocalOperator().HasImag())
+      if (C->LocalOperator().Imag())
       {
         sumr->AddOperator(*C->LocalOperator().Imag(), -a1.imag());
       }
-      if (C->LocalOperator().HasReal())
+      if (C->LocalOperator().Real())
       {
         sumi->AddOperator(*C->LocalOperator().Real(), a1.imag());
       }
@@ -501,22 +501,22 @@ auto BuildParSumOperator(int h, int w, std::complex<double> a0, std::complex<dou
   {
     if (a2.real() != 0.0)
     {
-      if (M->LocalOperator().HasReal())
+      if (M->LocalOperator().Real())
       {
         sumr->AddOperator(*M->LocalOperator().Real(), a2.real());
       }
-      if (M->LocalOperator().HasImag())
+      if (M->LocalOperator().Imag())
       {
         sumi->AddOperator(*M->LocalOperator().Imag(), a2.real());
       }
     }
     if (a2.imag() != 0.0)
     {
-      if (M->LocalOperator().HasImag())
+      if (M->LocalOperator().Imag())
       {
         sumr->AddOperator(*M->LocalOperator().Imag(), -a2.imag());
       }
-      if (M->LocalOperator().HasReal())
+      if (M->LocalOperator().Real())
       {
         sumi->AddOperator(*M->LocalOperator().Real(), a2.imag());
       }
@@ -524,11 +524,11 @@ auto BuildParSumOperator(int h, int w, std::complex<double> a0, std::complex<dou
   }
   if (A2)
   {
-    if (A2->LocalOperator().HasReal())
+    if (A2->LocalOperator().Real())
     {
       sumr->AddOperator(*A2->LocalOperator().Real(), 1.0);
     }
-    if (A2->LocalOperator().HasImag())
+    if (A2->LocalOperator().Imag())
     {
       sumi->AddOperator(*A2->LocalOperator().Imag(), 1.0);
     }
@@ -614,13 +614,13 @@ std::unique_ptr<Operator> SpaceOperator::GetInnerProductMatrix(double a0, double
   if (PtAP_K && a0 != 0.0)
   {
     MFEM_VERIFY(
-        PtAP_K->LocalOperator().HasReal(),
+        PtAP_K->LocalOperator().Real(),
         "Missing real part of stiffness matrix for inner product matrix construction!");
     sum->AddOperator(*PtAP_K->LocalOperator().Real(), a0);
   }
   if (PtAP_M && a2 != 0.0)
   {
-    MFEM_VERIFY(PtAP_M->LocalOperator().HasReal(),
+    MFEM_VERIFY(PtAP_M->LocalOperator().Real(),
                 "Missing real part of mass matrix for inner product matrix construction!");
     sum->AddOperator(*PtAP_M->LocalOperator().Real(), a2);
   }
@@ -676,18 +676,7 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(double a0, doub
           fi(mat_op.MaxCeedAttribute()), dfbr(mat_op.MaxCeedBdrAttribute()),
           dfbi(mat_op.MaxCeedBdrAttribute()), fbr(mat_op.MaxCeedBdrAttribute()),
           fbi(mat_op.MaxCeedBdrAttribute());
-      if (!std::is_same<OperType, ComplexOperator>::value || pc_mat_real || l == 0)
-      {
-        // Real-valued system matrix (approximation) for preconditioning.
-        AddStiffnessCoefficients(a0, dfr, fr);
-        AddStiffnessBdrCoefficients(a0, fbr);
-        AddDampingCoefficients(a1, fr);
-        AddDampingBdrCoefficients(a1, fbr);
-        AddAbsMassCoefficients(pc_mat_shifted ? std::abs(a2) : a2, fr);
-        AddRealMassBdrCoefficients(pc_mat_shifted ? std::abs(a2) : a2, fbr);
-        AddExtraSystemBdrCoefficients(a3, dfbr, dfbr, fbr, fbr);
-      }
-      else
+      if (std::is_same<OperType, ComplexOperator>::value && !pc_mat_real)
       {
         // Build preconditioner based on the actual complex-valued system matrix.
         AddStiffnessCoefficients(a0, dfr, fr);
@@ -698,6 +687,17 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(double a0, doub
         AddRealMassBdrCoefficients(pc_mat_shifted ? std::abs(a2) : a2, fbr);
         AddImagMassCoefficients(a2, fi);
         AddExtraSystemBdrCoefficients(a3, dfbr, dfbi, fbr, fbi);
+      }
+      else
+      {
+        // Real-valued system matrix (approximation) for preconditioning.
+        AddStiffnessCoefficients(a0, dfr, fr);
+        AddStiffnessBdrCoefficients(a0, fbr);
+        AddDampingCoefficients(a1, fr);
+        AddDampingBdrCoefficients(a1, fbr);
+        AddAbsMassCoefficients(pc_mat_shifted ? std::abs(a2) : a2, fr);
+        AddRealMassBdrCoefficients(pc_mat_shifted ? std::abs(a2) : a2, fbr);
+        AddExtraSystemBdrCoefficients(a3, dfbr, dfbr, fbr, fbr);
       }
       int empty[2] = {(dfr.empty() && fr.empty() && dfbr.empty() && fbr.empty()),
                       (dfi.empty() && fi.empty() && dfbi.empty() && fbi.empty())};
