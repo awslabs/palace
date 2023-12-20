@@ -20,7 +20,7 @@ set(EXTERN_ARPACK_GIT_BRANCH
   "Git branch for external ARPACK-NG build"
 )
 set(EXTERN_ARPACK_GIT_TAG
-  "569a3859c1bf79b303d830ada7b745de0f18512c" CACHE STRING  # 10/15/2023
+  "0eaf38bd51efd3046f0a7e61a08ddcd7ed1f1fcc" CACHE STRING  # 11/22/2023
   "Git tag for external ARPACK-NG build"
 )
 
@@ -34,7 +34,7 @@ set(EXTERN_BUTTERFLYPACK_GIT_BRANCH
   "Git branch for external ButterflyPACK build"
 )
 set(EXTERN_BUTTERFLYPACK_GIT_TAG
-  "416774d13b2bfb62e0e0d9fde7c33a827dea2ed2" CACHE STRING  # 12/04/2023
+  "893a5875e2e3a8f4abd5c7374397c773eb0c9724" CACHE STRING  # 12/20/2023
   "Git tag for external ButterflyPACK build"
 )
 
@@ -118,7 +118,7 @@ set(EXTERN_MAGMA_GIT_BRANCH
   "Git branch for external MAGMA build"
 )
 set(EXTERN_MAGMA_GIT_TAG
-  "cfc2a83c57bb16d83f5ba3f229a02cb1ebfc4a6b" CACHE STRING  # 12/11/2023
+  "a1625ff4d9bc362906bd01f805dbbe12612953f6" CACHE STRING  # 12/20/2023
   "Git tag for external MAGMA build"
 )
 
