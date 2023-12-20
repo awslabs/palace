@@ -642,7 +642,7 @@ void RunCeedIntegratorTests(MPI_Comm comm, const std::string &input, int ref_lev
       fem::DefaultIntegrationOrder::q_order_jac = false;
       fem::DefaultIntegrationOrder::q_order_extra_pk = -2;
       fem::DefaultIntegrationOrder::q_order_extra_qk = dim - bdr_integ - 1;
-      mesh.DestroyCeedGeomFactorData();
+      mesh.ResetCeedObjects();
       BilinearForm a_test(h1_fespace);
       mfem::BilinearForm a_ref(&h1_fespace.Get());
       switch (coeff_type)
@@ -695,7 +695,7 @@ void RunCeedIntegratorTests(MPI_Comm comm, const std::string &input, int ref_lev
       fem::DefaultIntegrationOrder::q_order_jac = false;
       fem::DefaultIntegrationOrder::q_order_extra_pk = -2;
       fem::DefaultIntegrationOrder::q_order_extra_qk = 0;
-      mesh.DestroyCeedGeomFactorData();
+      mesh.ResetCeedObjects();
       BilinearForm a_test(nd_fespace);
       mfem::BilinearForm a_ref(&nd_fespace.Get());
       if (dim == 3 || (dim == 2 && !bdr_integ))  // No 1D ND curl shape
@@ -757,7 +757,7 @@ void RunCeedIntegratorTests(MPI_Comm comm, const std::string &input, int ref_lev
       fem::DefaultIntegrationOrder::q_order_jac = false;
       fem::DefaultIntegrationOrder::q_order_extra_pk = -2;
       fem::DefaultIntegrationOrder::q_order_extra_qk = -2;
-      mesh.DestroyCeedGeomFactorData();
+      mesh.ResetCeedObjects();
       BilinearForm a_test(rt_fespace);
       mfem::BilinearForm a_ref(&rt_fespace.Get());
       if (!bdr_integ)  // Boundary RT elements in 2D and 3D are actually L2
@@ -1007,7 +1007,7 @@ void RunCeedIntegratorTests(MPI_Comm comm, const std::string &input, int ref_lev
       fem::DefaultIntegrationOrder::q_order_jac = true;
       fem::DefaultIntegrationOrder::q_order_extra_pk = -1;
       fem::DefaultIntegrationOrder::q_order_extra_qk = 0;
-      mesh.DestroyCeedGeomFactorData();
+      mesh.ResetCeedObjects();
       BilinearForm a_test(h1_fespace, h1d_fespace);
       mfem::MixedBilinearForm a_ref(&h1_fespace.Get(), &h1d_fespace.Get());
       if (!bdr_integ)  // MFEM's GradientIntegrator only supports square Jacobians
