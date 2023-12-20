@@ -618,6 +618,7 @@ void DomainPostData::SetUp(json &domains)
   }
   std::sort(attributes.begin(), attributes.end());
   attributes.erase(unique(attributes.begin(), attributes.end()), attributes.end());
+  attributes.shrink_to_fit();
 
   // Cleanup
   postpro->erase("Energy");
@@ -642,6 +643,7 @@ void DomainData::SetUp(json &config)
   }
   std::sort(attributes.begin(), attributes.end());
   attributes.erase(unique(attributes.begin(), attributes.end()), attributes.end());
+  attributes.shrink_to_fit();
   for (const auto &attr : postpro.attributes)
   {
     MFEM_VERIFY(std::lower_bound(attributes.begin(), attributes.end(), attr) !=
@@ -1315,6 +1317,7 @@ void BoundaryPostData::SetUp(json &boundaries)
   }
   std::sort(attributes.begin(), attributes.end());
   attributes.erase(unique(attributes.begin(), attributes.end()), attributes.end());
+  attributes.shrink_to_fit();
 
   // Cleanup
   postpro->erase("Capacitance");
@@ -1376,6 +1379,7 @@ void BoundaryData::SetUp(json &config)
   attributes.insert(attributes.end(), postpro.attributes.begin(), postpro.attributes.end());
   std::sort(attributes.begin(), attributes.end());
   attributes.erase(unique(attributes.begin(), attributes.end()), attributes.end());
+  attributes.shrink_to_fit();
 
   // Cleanup
   boundaries->erase("PEC");
