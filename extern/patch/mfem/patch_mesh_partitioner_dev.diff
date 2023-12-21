@@ -1,5 +1,5 @@
 diff --git a/.gitignore b/.gitignore
-index 739c62d06..6a16c0d9d 100644
+index f7e7265d6..1e8f32ff6 100644
 --- a/.gitignore
 +++ b/.gitignore
 @@ -234,7 +234,7 @@ miniapps/meshing/mobius-strip.mesh
@@ -404,7 +404,7 @@ index 2ed9f4a1b..96373b2d1 100644
  
  ///  C = A * B  (as boolean matrices)
 diff --git a/mesh/mesh.cpp b/mesh/mesh.cpp
-index 506483992..673765dce 100644
+index 625b049c0..f492d92a1 100644
 --- a/mesh/mesh.cpp
 +++ b/mesh/mesh.cpp
 @@ -19,6 +19,7 @@
@@ -423,7 +423,7 @@ index 506483992..673765dce 100644
  
  // Include the METIS header, if using version 5. If using METIS 4, the needed
  // declarations are inlined below, i.e. no header is needed.
-@@ -1291,7 +1293,7 @@ Mesh::FaceInformation::operator Mesh::FaceInfo() const
+@@ -1290,7 +1292,7 @@ Mesh::FaceInformation::operator Mesh::FaceInfo() const
     return res;
  }
  
@@ -432,7 +432,7 @@ index 506483992..673765dce 100644
  {
     os << "face topology=";
     switch (info.topology)
-@@ -3150,7 +3152,7 @@ void Mesh::FinalizeTopology(bool generate_bdr)
+@@ -3123,7 +3125,7 @@ void Mesh::FinalizeTopology(bool generate_bdr)
     {
        GetElementToFaceTable();
        GenerateFaces();
@@ -441,7 +441,7 @@ index 506483992..673765dce 100644
        {
           GenerateBoundaryElements();
           GetElementToFaceTable(); // update be_to_face
-@@ -3170,7 +3172,7 @@ void Mesh::FinalizeTopology(bool generate_bdr)
+@@ -3143,7 +3145,7 @@ void Mesh::FinalizeTopology(bool generate_bdr)
        if (Dim == 2)
        {
           GenerateFaces(); // 'Faces' in 2D refers to the edges
@@ -450,7 +450,7 @@ index 506483992..673765dce 100644
           {
              GenerateBoundaryElements();
           }
-@@ -3184,7 +3186,7 @@ void Mesh::FinalizeTopology(bool generate_bdr)
+@@ -3157,7 +3159,7 @@ void Mesh::FinalizeTopology(bool generate_bdr)
     if (Dim == 1)
     {
        GenerateFaces();
@@ -459,7 +459,7 @@ index 506483992..673765dce 100644
        {
           // be_to_face will be set inside GenerateBoundaryElements
           GenerateBoundaryElements();
-@@ -6095,6 +6097,12 @@ const FiniteElementSpace *Mesh::GetNodalFESpace() const
+@@ -6071,6 +6073,12 @@ const FiniteElementSpace *Mesh::GetNodalFESpace() const
  
  void Mesh::SetCurvature(int order, bool discont, int space_dim, int ordering)
  {
@@ -472,16 +472,7 @@ index 506483992..673765dce 100644
     space_dim = (space_dim == -1) ? spaceDim : space_dim;
     FiniteElementCollection* nfec;
     if (discont)
-@@ -11137,7 +11145,7 @@ void Mesh::Printer(std::ostream &os, std::string section_delimiter) const
-    }
- }
- 
--void Mesh::PrintTopo(std::ostream &os,const Array<int> &e_to_k) const
-+void Mesh::PrintTopo(std::ostream &os, const Array<int> &e_to_k) const
- {
-    int i;
-    Array<int> vert;
-@@ -13008,6 +13016,878 @@ void Mesh::GetGeometricParametersFromJacobian(const DenseMatrix &J,
+@@ -13068,6 +13076,878 @@ void Mesh::GetGeometricParametersFromJacobian(const DenseMatrix &J,
  }
  
  
@@ -1361,7 +1352,7 @@ index 506483992..673765dce 100644
                                     int flags, MemoryType d_mt)
  {
 diff --git a/mesh/mesh.hpp b/mesh/mesh.hpp
-index 97d3e76bb..1be7e372e 100644
+index 317e4349a..3aebaad29 100644
 --- a/mesh/mesh.hpp
 +++ b/mesh/mesh.hpp
 @@ -28,6 +28,7 @@
@@ -1401,25 +1392,25 @@ index 97d3e76bb..1be7e372e 100644
  
     // Readers for different mesh formats, used in the Load() method.
     // The implementations of these methods are in mesh_readers.cpp.
-@@ -430,7 +433,7 @@ protected:
+@@ -433,7 +436,7 @@ protected:
  
     void UpdateNURBS();
  
--   void PrintTopo(std::ostream &out, const Array<int> &e_to_k) const;
-+   void PrintTopo(std::ostream &os, const Array<int> &e_to_k) const;
+-   void PrintTopo(std::ostream &out, const Array<int> &e_to_k,
++   void PrintTopo(std::ostream &os, const Array<int> &e_to_k,
+                   const std::string &comments = "") const;
  
     /// Used in GetFaceElementTransformations (...)
-    void GetLocalPtToSegTransformation(IsoparametricTransformation &, int);
-@@ -539,7 +542,7 @@ protected:
-    // If NURBS mesh, write NURBS format. If NCMesh, write mfem v1.1 format.
-    // If section_delimiter is empty, write mfem v1.0 format. Otherwise, write
-    // mfem v1.2 format with the given section_delimiter at the end.
+@@ -545,7 +548,7 @@ protected:
+        mfem v1.2 format with the given section_delimiter at the end.
+        If @a comments is non-empty, it will be printed after the first line of
+        the file, and each line should begin with '#'. */
 -   void Printer(std::ostream &out = mfem::out,
 +   void Printer(std::ostream &os = mfem::out,
-                 std::string section_delimiter = "") const;
+                 std::string section_delimiter = "",
+                 const std::string &comments = "") const;
  
-    /// @brief Creates a mesh for the parallelepiped [0,sx]x[0,sy]x[0,sz],
-@@ -949,7 +952,7 @@ public:
+@@ -956,7 +959,7 @@ public:
  
     int AddBdrPoint(int v, int attr = 1);
  
@@ -1428,7 +1419,7 @@ index 97d3e76bb..1be7e372e 100644
     /// Finalize the construction of a triangular Mesh.
     void FinalizeTriMesh(int generate_edges = 0, int refine = 0,
                          bool fix_orientation = true);
-@@ -2191,7 +2194,7 @@ public:
+@@ -2202,7 +2205,7 @@ public:
                                 std::ostream &os, int elem_attr = 0) const;
  
     void PrintElementsWithPartitioning (int *partitioning,
@@ -1437,7 +1428,7 @@ index 97d3e76bb..1be7e372e 100644
                                         int interior_faces = 0);
  
     /// Print set of disjoint surfaces:
-@@ -2199,13 +2202,13 @@ public:
+@@ -2210,13 +2213,13 @@ public:
      * If Aface_face(i,j) != 0, print face j as a boundary
      * element with attribute i+1.
      */
@@ -1453,7 +1444,7 @@ index 97d3e76bb..1be7e372e 100644
  
     /** @brief Compute and print mesh characteristics such as number of vertices,
         number of elements, number of boundary elements, minimal and maximal
-@@ -2225,7 +2228,7 @@ public:
+@@ -2236,7 +2239,7 @@ public:
  
  #ifdef MFEM_DEBUG
     /// Output an NCMesh-compatible debug dump.
@@ -1462,7 +1453,7 @@ index 97d3e76bb..1be7e372e 100644
  #endif
  
     /// @}
-@@ -2304,9 +2307,194 @@ public:
+@@ -2315,9 +2318,194 @@ public:
     /// @}
  };
  
@@ -1660,7 +1651,7 @@ index 97d3e76bb..1be7e372e 100644
  
  
  /** @brief Structure for storing mesh geometric factors: coordinates, Jacobians,
-@@ -2315,7 +2503,6 @@ std::ostream &operator<<(std::ostream &out, const Mesh &mesh);
+@@ -2326,7 +2514,6 @@ std::ostream &operator<<(std::ostream &out, const Mesh &mesh);
      Mesh. See Mesh::GetGeometricFactors(). */
  class GeometricFactors
  {
@@ -1668,7 +1659,7 @@ index 97d3e76bb..1be7e372e 100644
  private:
     void Compute(const GridFunction &nodes,
                  MemoryType d_mt = MemoryType::DEFAULT);
-@@ -2363,6 +2550,7 @@ public:
+@@ -2374,6 +2561,7 @@ public:
     Vector detJ;
  };
  
@@ -1676,7 +1667,7 @@ index 97d3e76bb..1be7e372e 100644
  /** @brief Structure for storing face geometric factors: coordinates, Jacobians,
      determinants of the Jacobians, and normal vectors. */
  /** Typically objects of this type are constructed and owned by objects of class
-@@ -2417,6 +2605,7 @@ public:
+@@ -2428,6 +2616,7 @@ public:
     Vector normal;
  };
  
@@ -1684,7 +1675,7 @@ index 97d3e76bb..1be7e372e 100644
  /// Class used to extrude the nodes of a mesh
  class NodeExtrudeCoefficient : public VectorCoefficient
  {
-@@ -2448,8 +2637,12 @@ inline void ShiftRight(int &a, int &b, int &c)
+@@ -2459,8 +2648,12 @@ inline void ShiftRight(int &a, int &b, int &c)
     a = c;  c = b;  b = t;
  }
  
@@ -1699,10 +1690,10 @@ index 97d3e76bb..1be7e372e 100644
  }
  
 diff --git a/mesh/pmesh.cpp b/mesh/pmesh.cpp
-index 72bc3b98a..c43e2ea53 100644
+index d4f6d1abd..8fa83365c 100644
 --- a/mesh/pmesh.cpp
 +++ b/mesh/pmesh.cpp
-@@ -250,6 +250,8 @@ ParMesh::ParMesh(MPI_Comm comm, Mesh &mesh, int *partitioning_,
+@@ -249,6 +249,8 @@ ParMesh::ParMesh(MPI_Comm comm, Mesh &mesh, int *partitioning_,
        BuildSharedVertMapping(nsvert, vert_element, vert_global_local);
        delete vert_element;
  
@@ -1711,7 +1702,7 @@ index 72bc3b98a..c43e2ea53 100644
        SetMeshGen();
        meshgen = mesh.meshgen; // copy the global 'meshgen'
     }
-@@ -1526,6 +1528,7 @@ ParMesh ParMesh::MakeSimplicial(ParMesh &orig_mesh)
+@@ -1523,6 +1525,7 @@ ParMesh ParMesh::MakeSimplicial(ParMesh &orig_mesh)
  void ParMesh::Finalize(bool refine, bool fix_orientation)
  {
     const int meshgen_save = meshgen; // Mesh::Finalize() may call SetMeshGen()
@@ -1719,7 +1710,7 @@ index 72bc3b98a..c43e2ea53 100644
  
     Mesh::Finalize(refine, fix_orientation);
  
-@@ -6213,6 +6216,7 @@ void ParMesh::ParPrint(ostream &os) const
+@@ -6249,6 +6252,7 @@ void ParMesh::ParPrint(ostream &os, const std::string &comments) const
     {
        os << "total_shared_faces " << sface_lface.Size() << '\n';
     }
@@ -1728,7 +1719,7 @@ index 72bc3b98a..c43e2ea53 100644
     {
        {
 diff --git a/mesh/pmesh.hpp b/mesh/pmesh.hpp
-index c2ab84434..a256e6ad5 100644
+index af5aa9a7c..d723204f6 100644
 --- a/mesh/pmesh.hpp
 +++ b/mesh/pmesh.hpp
 @@ -108,6 +108,8 @@ protected:
@@ -1741,10 +1732,10 @@ index c2ab84434..a256e6ad5 100644
     void FinalizeParTopo();
  
 diff --git a/mesh/tetrahedron.cpp b/mesh/tetrahedron.cpp
-index 0815fc0a7..c1b0ae6d8 100644
+index c7ebc064b..7c9c8de7a 100644
 --- a/mesh/tetrahedron.cpp
 +++ b/mesh/tetrahedron.cpp
-@@ -55,7 +55,7 @@ void Tetrahedron::Init(int ind1, int ind2, int ind3, int ind4, int attr,
+@@ -53,7 +53,7 @@ void Tetrahedron::Init(int ind1, int ind2, int ind3, int ind4, int attr,
  }
  
  void Tetrahedron::ParseRefinementFlag(int refinement_edges[2], int &type,
@@ -1753,7 +1744,7 @@ index 0815fc0a7..c1b0ae6d8 100644
  {
     int i, f = refinement_flag;
  
-@@ -136,9 +136,10 @@ void Tetrahedron::CreateRefinementFlag(int refinement_edges[2], int type,
+@@ -134,9 +134,10 @@ void Tetrahedron::CreateRefinementFlag(int refinement_edges[2], int type,
     refinement_flag |= refinement_edges[0];
  }
  
@@ -1767,7 +1758,7 @@ index 0815fc0a7..c1b0ae6d8 100644
     switch (face)
     {
 diff --git a/mesh/tetrahedron.hpp b/mesh/tetrahedron.hpp
-index ad018a037..ef8f36eb8 100644
+index c434ae903..b72e5db55 100644
 --- a/mesh/tetrahedron.hpp
 +++ b/mesh/tetrahedron.hpp
 @@ -58,12 +58,13 @@ public:

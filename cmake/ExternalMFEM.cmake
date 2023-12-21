@@ -359,10 +359,9 @@ message(STATUS "MFEM_OPTIONS: ${MFEM_OPTIONS_PRINT}")
 set(MFEM_PATCH_FILES
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_mfem_device_fixes.diff"
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_mesh_vis_dev.diff"
-  "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_par_tet_mesh_fix.diff"
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_mesh_partitioner_dev.diff"
+  "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_par_tet_mesh_fix.diff"
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_ncmesh_interior_boundary_dev.diff"
-  "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_gslib_leak_fix.diff"
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_mesh_const_fix.diff"
 )
 

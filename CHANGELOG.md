@@ -11,7 +11,7 @@ The format of this changelog is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
-## In progress
+## [0.12.0] - 2023-12-21
 
   - Added support for operator partial assembly for high-order finite element spaces based
     on libCEED for mixed and non-tensor product element meshes. This option is disabled by
