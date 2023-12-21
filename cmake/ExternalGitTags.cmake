@@ -34,7 +34,7 @@ set(EXTERN_BUTTERFLYPACK_GIT_BRANCH
   "Git branch for external ButterflyPACK build"
 )
 set(EXTERN_BUTTERFLYPACK_GIT_TAG
-  "893a5875e2e3a8f4abd5c7374397c773eb0c9724" CACHE STRING  # 12/20/2023
+  "37fc1a8d09e2a1eed9a6ec6cf9494ac14bc6c700" CACHE STRING  # 12/20/2023
   "Git tag for external ButterflyPACK build"
 )
 
@@ -146,7 +146,7 @@ set(EXTERN_MFEM_GIT_BRANCH
   "Git branch for external MFEM build"
 )
 set(EXTERN_MFEM_GIT_TAG
-  "8a4affef5af84d74c9691f76b49624bdd7199d60" CACHE STRING  # master @ 12/17/2023
+  "c1871afea4dba50b5c4944adc20cfcb17520bd77" CACHE STRING  # master @ 12/21/2023
   "Git tag for external MFEM build"
 )
 
@@ -160,7 +160,7 @@ set(EXTERN_MUMPS_GIT_BRANCH
   "Git branch for external MUMPS build"
 )
 set(EXTERN_MUMPS_GIT_TAG
-  "44fb7e74b5780a3ea1c26a76a55298a2c34279fe" CACHE STRING  # 12/08/2023
+  "88148442304bf9fb82d04d9e8bf3c3dccef3c919" CACHE STRING  # 12/20/2023
   "Git tag for external MUMPS build"
 )
 
@@ -188,7 +188,7 @@ set(EXTERN_PETSC_GIT_BRANCH
   "Git branch for external PETSc build"
 )
 set(EXTERN_PETSC_GIT_TAG
-  "9617a9bff32dac3e651f1a88b0773cde31a476b6" CACHE STRING  # 12/19/2023
+  "cec8e1ee48d2b6b0308890436f9bfafab17cd824" CACHE STRING  # 12/21/2023
   "Git tag for external PETSc build"
 )
 
@@ -216,7 +216,7 @@ set(EXTERN_SLATE_GIT_BRANCH
   "Git branch for external SLATE build"
 )
 set(EXTERN_SLATE_GIT_TAG
-  "f9ac8c71f7dcc918cf3fb4c3955e2dab924ee654" CACHE STRING  # 12/14/2022
+  "aaf28f7410a4832d04d9d6b115eea1e254adf1b0" CACHE STRING  # 12/20/2022
   "Git tag for external SLATE build"
 )
 

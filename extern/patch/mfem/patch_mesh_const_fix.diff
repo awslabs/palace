@@ -25,7 +25,7 @@ index 8d3955ab4..3d0ccb97f 100644
     ElementTransformation();
  
 diff --git a/mesh/mesh.cpp b/mesh/mesh.cpp
-index a46277750..627fc17e5 100644
+index a8ff93b24..848992dbe 100644
 --- a/mesh/mesh.cpp
 +++ b/mesh/mesh.cpp
 @@ -83,7 +83,7 @@ void Mesh::GetElementCenter(int i, Vector &center)
@@ -446,7 +446,7 @@ index a46277750..627fc17e5 100644
  Mesh::FaceInformation Mesh::GetFaceInformation(int f) const
  {
     FaceInformation face;
-@@ -10826,7 +10867,7 @@ int Mesh::FindCoarseElement(int i)
+@@ -10829,7 +10870,7 @@ int Mesh::FindCoarseElement(int i)
     return coarse;
  }
  
@@ -456,7 +456,7 @@ index a46277750..627fc17e5 100644
     MFEM_VERIFY(GetLastOperation() == Mesh::REFINE, "");
  
 diff --git a/mesh/mesh.hpp b/mesh/mesh.hpp
-index 58e77d388..1972460e2 100644
+index 3eee6c415..3c43cbb97 100644
 --- a/mesh/mesh.hpp
 +++ b/mesh/mesh.hpp
 @@ -239,7 +239,7 @@ protected:
@@ -468,8 +468,8 @@ index 58e77d388..1972460e2 100644
  
     // Nodes are only active for higher order meshes, and share locations with
     // the vertices, plus all the higher- order control points within the
-@@ -436,39 +436,34 @@ protected:
-    void PrintTopo(std::ostream &os, const Array<int> &e_to_k) const;
+@@ -437,39 +437,34 @@ protected:
+                   const std::string &comments = "") const;
  
     /// Used in GetFaceElementTransformations (...)
 -   void GetLocalPtToSegTransformation(IsoparametricTransformation &, int);
@@ -528,7 +528,7 @@ index 58e77d388..1972460e2 100644
  
     /// Returns the orientation of "base" relative to "test"
     /// In other words: GetTriOrientation(test, base) should equal
-@@ -481,7 +476,7 @@ protected:
+@@ -482,7 +477,7 @@ protected:
     static int ComposeTriOrientations(int ori_a_b, int ori_b_c);
  
     /// Returns the orientation of "test" relative to "base"
@@ -537,7 +537,7 @@ index 58e77d388..1972460e2 100644
  
     /// Returns the orientation of "base" relative to "test"
     /// In other words: GetQuadOrientation(test, base) should equal
-@@ -494,7 +489,7 @@ protected:
+@@ -495,7 +490,7 @@ protected:
     static int ComposeQuadOrientations(int ori_a_b, int ori_b_c);
  
     /// Returns the orientation of "test" relative to "base"
@@ -546,7 +546,7 @@ index 58e77d388..1972460e2 100644
  
     static void GetElementArrayEdgeTable(const Array<Element*> &elem_array,
                                          const DSTable &v_to_v,
-@@ -610,8 +605,6 @@ protected:
+@@ -614,8 +609,6 @@ protected:
     void GetElementData(const Array<Element*> &elem_array, int geom,
                         Array<int> &elem_vtx, Array<int> &attr) const;
  
@@ -555,7 +555,7 @@ index 58e77d388..1972460e2 100644
     // Internal helper used in MakeSimplicial (and ParMesh::MakeSimplicial).
     void MakeSimplicial_(const Mesh &orig_mesh, int *vglobal);
  
-@@ -1161,7 +1154,7 @@ public:
+@@ -1165,7 +1158,7 @@ public:
  
         In parallel, the result takes into account elements on all processors.
     */
@@ -564,7 +564,7 @@ index 58e77d388..1972460e2 100644
  
     /// Checks if the mesh has boundary elements
     virtual bool HasBoundaryElements() const { return (NumOfBdrElements > 0); }
-@@ -1253,7 +1246,7 @@ public:
+@@ -1257,7 +1250,7 @@ public:
  
     /// @brief Return pointer to the i'th element object
     ///
@@ -573,7 +573,7 @@ index 58e77d388..1972460e2 100644
     ///
     /// In parallel, @a i is the local element index which is in the
     /// same range mentioned above.
-@@ -1268,7 +1261,7 @@ public:
+@@ -1272,7 +1265,7 @@ public:
  
     /// @brief Return pointer to the i'th boundary element object
     ///
@@ -582,7 +582,7 @@ index 58e77d388..1972460e2 100644
     ///
     /// In parallel, @a i is the local boundary element index which is
     /// in the same range mentioned above.
-@@ -1281,6 +1274,9 @@ public:
+@@ -1285,6 +1278,9 @@ public:
     /// the Element object itself should not be deleted by the caller.
     Element *GetBdrElement(int i) { return boundary[i]; }
  
@@ -592,7 +592,7 @@ index 58e77d388..1972460e2 100644
     const Element *GetFace(int i) const { return faces[i]; }
  
     /// @}
-@@ -1374,6 +1370,8 @@ public:
+@@ -1378,6 +1374,8 @@ public:
  
     double GetElementSize(int i, const Vector &dir);
  
@@ -601,7 +601,7 @@ index 58e77d388..1972460e2 100644
     double GetElementVolume(int i);
  
     void GetElementCenter(int i, Vector &center);
-@@ -1393,12 +1391,12 @@ public:
+@@ -1397,12 +1395,12 @@ public:
        Geometry::Type geom_buf[Geometry::NumGeom];
     public:
        /// Construct a GeometryList of all element geometries in @a mesh.
@@ -616,7 +616,7 @@ index 58e77d388..1972460e2 100644
           : Array<Geometry::Type>(geom_buf, Geometry::NumGeom)
        { mesh.GetGeometries(dim, *this); }
     };
-@@ -1555,7 +1553,8 @@ public:
+@@ -1559,7 +1557,8 @@ public:
  
     /// Builds the transformation defining the i-th element in @a ElTr.
     /// @a ElTr must be allocated in advance and will be owned by the caller.
@@ -626,7 +626,7 @@ index 58e77d388..1972460e2 100644
  
     /// Returns a pointer to the transformation defining the i-th element.
     ///
-@@ -1568,7 +1567,7 @@ public:
+@@ -1572,7 +1571,7 @@ public:
     /// assuming position of the vertices/nodes are given by @a nodes.
     /// @a ElTr must be allocated in advance and will be owned by the caller.
     void GetElementTransformation(int i, const Vector &nodes,
@@ -635,7 +635,7 @@ index 58e77d388..1972460e2 100644
  
     /// Returns a pointer to the transformation defining the i-th boundary
     /// element.
-@@ -1579,11 +1578,18 @@ public:
+@@ -1583,11 +1582,18 @@ public:
  
     /// Builds the transformation defining the i-th boundary element in @a ElTr.
     /// @a ElTr must be allocated in advance and will be owned by the caller.
@@ -656,7 +656,7 @@ index 58e77d388..1972460e2 100644
  
     /** @brief A helper method that constructs a transformation from the
         reference space of a face to the reference space of an element. */
-@@ -1592,17 +1598,11 @@ public:
+@@ -1596,17 +1602,11 @@ public:
         loc_face_orientation. */
     void GetLocalFaceTransformation(int face_type, int elem_type,
                                     IsoparametricTransformation &Transf,
@@ -676,7 +676,7 @@ index 58e77d388..1972460e2 100644
  
     /// Returns a pointer to the transformation defining the given edge element.
     /// @note The returned object is owned by the class and is shared, i.e.,
-@@ -1644,21 +1644,44 @@ public:
+@@ -1648,21 +1648,44 @@ public:
     /// @note The returned object is owned by the class and is shared, i.e.,
     /// calling this function resets pointers obtained from previous calls.
     /// Also, this pointer should NOT be deleted by the caller.
@@ -732,7 +732,7 @@ index 58e77d388..1972460e2 100644
  
     /// @}
  
-@@ -2106,7 +2129,7 @@ public:
+@@ -2110,7 +2133,7 @@ public:
  
     /** Return fine element transformations following a mesh refinement.
         Space uses this to construct a global interpolation matrix. */
@@ -742,7 +742,7 @@ index 58e77d388..1972460e2 100644
     /// Return type of last modification of the mesh.
     Operation GetLastOperation() const { return last_operation; }
 diff --git a/mesh/ncmesh.cpp b/mesh/ncmesh.cpp
-index 5c57adc4a..3ef57cc55 100644
+index 2074d3048..19af5028b 100644
 --- a/mesh/ncmesh.cpp
 +++ b/mesh/ncmesh.cpp
 @@ -4112,7 +4112,7 @@ const NCMesh::PointMatrix& NCMesh::GetGeomIdentity(Geometry::Type geom)
@@ -807,7 +807,7 @@ index 5c57adc4a..3ef57cc55 100644
                             find_node(el, fa.p1),
                             find_node(el, fa.p2),
 diff --git a/mesh/ncmesh.hpp b/mesh/ncmesh.hpp
-index b004cf43e..5874ac644 100644
+index 1e04d16bb..64a56beee 100644
 --- a/mesh/ncmesh.hpp
 +++ b/mesh/ncmesh.hpp
 @@ -337,13 +337,13 @@ public:
@@ -826,7 +826,7 @@ index b004cf43e..5874ac644 100644
  
     /// Free all internal data created by the above three functions.
     void ClearTransforms();
-@@ -1034,15 +1034,15 @@ protected: // implementation
+@@ -1036,15 +1036,15 @@ protected: // implementation
     static const PointMatrix& GetGeomIdentity(Geometry::Type geom);
  
     void GetPointMatrix(Geometry::Type geom, const char* ref_path,
@@ -845,7 +845,7 @@ index b004cf43e..5874ac644 100644
  
     /// state of leaf_elements before Refine(), set by MarkCoarseLevel()
     Array<int> coarse_elements;
-@@ -1067,7 +1067,7 @@ protected: // implementation
+@@ -1069,7 +1069,7 @@ protected: // implementation
  
     int GetEdgeMaster(int node) const;
  
@@ -855,7 +855,7 @@ index b004cf43e..5874ac644 100644
     /**
      * @brief Return the number of splits of this edge that have occurred in the
 diff --git a/mesh/pmesh.cpp b/mesh/pmesh.cpp
-index 5b5657546..e9f791569 100644
+index 5225cfc14..b6424d4e8 100644
 --- a/mesh/pmesh.cpp
 +++ b/mesh/pmesh.cpp
 @@ -1947,65 +1947,6 @@ void ParMesh::GenerateOffsets(int N, HYPRE_BigInt loc_sizes[],
@@ -1250,7 +1250,7 @@ index 5b5657546..e9f791569 100644
  
  int ParMesh::GetNSharedFaces() const
 diff --git a/mesh/pmesh.hpp b/mesh/pmesh.hpp
-index a256e6ad5..45e343f7d 100644
+index d723204f6..b1235ccbf 100644
 --- a/mesh/pmesh.hpp
 +++ b/mesh/pmesh.hpp
 @@ -91,8 +91,6 @@ protected:

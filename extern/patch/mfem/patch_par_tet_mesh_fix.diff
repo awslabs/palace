@@ -13,10 +13,10 @@ index c37205eb1..f1b003cae 100644
     virtual int NeedRefinement(HashTable<Hashed2> &v_to_v) const { return 0; }
  
 diff --git a/mesh/mesh.cpp b/mesh/mesh.cpp
-index 87e446c50..506483992 100644
+index f492d92a1..a037c647c 100644
 --- a/mesh/mesh.cpp
 +++ b/mesh/mesh.cpp
-@@ -483,6 +483,7 @@ void Mesh::GetBdrElementTransformation(int i, IsoparametricTransformation* ElTr)
+@@ -485,6 +485,7 @@ void Mesh::GetBdrElementTransformation(int i, IsoparametricTransformation* ElTr)
              Nodes->FESpace()->GetTraceElement(elem_id, face_geom);
           MFEM_VERIFY(dynamic_cast<const NodalFiniteElement*>(face_el),
                       "Mesh requires nodal Finite Element.");
@@ -24,7 +24,7 @@ index 87e446c50..506483992 100644
           IntegrationRule eir(face_el->GetDof());
           FaceElemTr.Loc1.Transf.ElementNo = elem_id;
           FaceElemTr.Loc1.Transf.mesh = this;
-@@ -2101,7 +2102,7 @@ void Mesh::FinalizeTriMesh(int generate_edges, int refine, bool fix_orientation)
+@@ -2103,7 +2104,7 @@ void Mesh::FinalizeTriMesh(int generate_edges, int refine, bool fix_orientation)
  
     if (refine)
     {
@@ -33,7 +33,7 @@ index 87e446c50..506483992 100644
     }
  
     if (generate_edges)
-@@ -2555,82 +2556,110 @@ void Mesh::ReorderElements(const Array<int> &ordering, bool reorder_vertices)
+@@ -2557,82 +2558,110 @@ void Mesh::ReorderElements(const Array<int> &ordering, bool reorder_vertices)
  }
  
  
@@ -180,7 +180,7 @@ index 87e446c50..506483992 100644
        }
     }
  }
-@@ -2980,9 +3009,7 @@ void Mesh::FinalizeTetMesh(int generate_edges, int refine, bool fix_orientation)
+@@ -2982,9 +3011,7 @@ void Mesh::FinalizeTetMesh(int generate_edges, int refine, bool fix_orientation)
  
     if (refine)
     {
@@ -191,7 +191,7 @@ index 87e446c50..506483992 100644
     }
  
     GetElementToFaceTable();
-@@ -3249,8 +3276,7 @@ void Mesh::Finalize(bool refine, bool fix_orientation)
+@@ -3251,8 +3278,7 @@ void Mesh::Finalize(bool refine, bool fix_orientation)
     // only perform it when Dim == spaceDim.
     if (Dim >= 2 && Dim == spaceDim)
     {
@@ -201,7 +201,7 @@ index 87e446c50..506483992 100644
        {
           MFEM_VERIFY(faces_info[i].Elem2No < 0 ||
                       faces_info[i].Elem2Inf%2 != 0, "Invalid mesh topology."
-@@ -3950,8 +3976,6 @@ void Mesh::Make2D(int nx, int ny, Element::Type type,
+@@ -3952,8 +3978,6 @@ void Mesh::Make2D(int nx, int ny, Element::Type type,
           boundary[2*nx+j] = new Segment((j+1)*m, j*m, 4);
           boundary[2*nx+ny+j] = new Segment(j*m+nx, (j+1)*m+nx, 2);
        }
@@ -210,7 +210,7 @@ index 87e446c50..506483992 100644
     }
     else
     {
-@@ -6148,37 +6172,21 @@ static const char *fixed_or_not[] = { "fixed", "NOT FIXED" };
+@@ -6156,37 +6180,21 @@ static const char *fixed_or_not[] = { "fixed", "NOT FIXED" };
  
  int Mesh::CheckElementOrientation(bool fix_it)
  {
@@ -253,7 +253,7 @@ index 87e446c50..506483992 100644
                 switch (GetElementType(i))
                 {
                    case Element::TRIANGLE:
-@@ -6198,88 +6206,41 @@ int Mesh::CheckElementOrientation(bool fix_it)
+@@ -6206,88 +6214,41 @@ int Mesh::CheckElementOrientation(bool fix_it)
           }
        }
     }
@@ -365,7 +365,7 @@ index 87e446c50..506483992 100644
           }
        }
     }
-@@ -7205,24 +7166,12 @@ void Mesh::GetBdrPointMatrix(int i,DenseMatrix &pointmat) const
+@@ -7213,24 +7174,12 @@ void Mesh::GetBdrPointMatrix(int i,DenseMatrix &pointmat) const
  
     pointmat.SetSize(spaceDim, nv);
     for (k = 0; k < spaceDim; k++)
@@ -392,10 +392,10 @@ index 87e446c50..506483992 100644
  
  // static method
 diff --git a/mesh/mesh.hpp b/mesh/mesh.hpp
-index 40945eb04..97d3e76bb 100644
+index 3aebaad29..0c461fd42 100644
 --- a/mesh/mesh.hpp
 +++ b/mesh/mesh.hpp
-@@ -332,12 +332,9 @@ protected:
+@@ -335,12 +335,9 @@ protected:
     /** Also, initializes #mesh_geoms. */
     void SetMeshGen();
  
@@ -411,7 +411,7 @@ index 40945eb04..97d3e76bb 100644
  
     // Methods used to prepare and apply permutation of the mesh nodes assuming
 diff --git a/mesh/pmesh.cpp b/mesh/pmesh.cpp
-index f93433b2c..72bc3b98a 100644
+index 8fa83365c..96e6c43e1 100644
 --- a/mesh/pmesh.cpp
 +++ b/mesh/pmesh.cpp
 @@ -20,6 +20,7 @@
@@ -422,7 +422,7 @@ index f93433b2c..72bc3b98a 100644
  #include <iostream>
  #include <fstream>
  
-@@ -762,8 +763,10 @@ void ParMesh::BuildSharedFaceElems(int ntri_faces, int nquad_faces,
+@@ -764,8 +765,10 @@ void ParMesh::BuildSharedFaceElems(int ntri_faces, int nquad_faces,
              sface_lface[stria_counter] = lface;
              if (meshgen == 1) // Tet-only mesh
              {
@@ -435,7 +435,7 @@ index f93433b2c..72bc3b98a 100644
                 // mark the shared face for refinement by reorienting
                 // it according to the refinement flag in the tetrahedron
                 // to which this shared face belongs to.
-@@ -1739,97 +1742,59 @@ void ParMesh::GetSharedTriCommunicator(int ordering,
+@@ -1742,97 +1745,59 @@ void ParMesh::GetSharedTriCommunicator(int ordering,
  
  void ParMesh::MarkTetMeshForRefinement(const DSTable &v_to_v)
  {
@@ -568,7 +568,7 @@ index f93433b2c..72bc3b98a 100644
        }
     }
  
-@@ -1837,13 +1802,16 @@ void ParMesh::MarkTetMeshForRefinement(const DSTable &v_to_v)
+@@ -1840,13 +1805,16 @@ void ParMesh::MarkTetMeshForRefinement(const DSTable &v_to_v)
     {
        if (boundary[i]->GetType() == Element::TRIANGLE)
        {
@@ -588,7 +588,7 @@ index f93433b2c..72bc3b98a 100644
  }
  
 diff --git a/mesh/tetrahedron.cpp b/mesh/tetrahedron.cpp
-index c7ebc064b..0815fc0a7 100644
+index 7c9c8de7a..c1b0ae6d8 100644
 --- a/mesh/tetrahedron.cpp
 +++ b/mesh/tetrahedron.cpp
 @@ -13,6 +13,8 @@
@@ -600,7 +600,7 @@ index c7ebc064b..0815fc0a7 100644
  namespace mfem
  {
  
-@@ -184,19 +186,30 @@ void Tetrahedron::SetVertices(const int *ind)
+@@ -185,19 +187,30 @@ void Tetrahedron::SetVertices(const int *ind)
     }
  }
  
@@ -642,7 +642,7 @@ index c7ebc064b..0815fc0a7 100644
     {
        ind[i] = indices[i];
     }
-@@ -228,13 +241,14 @@ void Tetrahedron::MarkEdge(const DSTable &v_to_v, const int *length)
+@@ -229,13 +242,14 @@ void Tetrahedron::MarkEdge(const DSTable &v_to_v, const int *length)
     // Determine the two longest edges for the other two faces and
     // store them in ind[0] and ind[1]
     ind[0] = 2; ind[1] = 1;
@@ -663,7 +663,7 @@ index c7ebc064b..0815fc0a7 100644
  
     j = 0;
     switch (ind[0])
-@@ -345,4 +359,13 @@ Element *Tetrahedron::Duplicate(Mesh *m) const
+@@ -346,4 +360,13 @@ Element *Tetrahedron::Duplicate(Mesh *m) const
     return tet;
  }
  
@@ -678,10 +678,10 @@ index c7ebc064b..0815fc0a7 100644
 +
  }
 diff --git a/mesh/tetrahedron.hpp b/mesh/tetrahedron.hpp
-index c434ae903..ad018a037 100644
+index b72e5db55..ef8f36eb8 100644
 --- a/mesh/tetrahedron.hpp
 +++ b/mesh/tetrahedron.hpp
-@@ -76,7 +76,9 @@ public:
+@@ -77,7 +77,9 @@ public:
     /** Reorder the vertices so that the longest edge is from vertex 0
         to vertex 1. If called it should be once from the mesh constructor,
         because the order may be used later for setting the edges. **/
