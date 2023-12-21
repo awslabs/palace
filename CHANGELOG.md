@@ -11,6 +11,8 @@ The format of this changelog is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## In progress
+
 ## [0.12.0] - 2023-12-21
 
   - Added support for operator partial assembly for high-order finite element spaces based
@@ -21,11 +23,22 @@ The format of this changelog is based on
     difference between the numerical gradient (electrostatics) or curl (otherwise) of the
     solution, and a smoother approximation obtained through a global mass matrix inversion.
     The results are reported in `error-estimates.csv` within the `"Output"` folder.
-  - Added support for non axis aligned lumped ports and current sources. Key words `"X"`,
+  - Added Adaptive Mesh Refinement (AMR), specified in the `config["Model"]["Refinement"]`,
+    for all problem types aside from transient. To enable AMR, a user must specify
+    `"MaxIts"`, while all other options have reasonable defaults. Nonconformal (all mesh
+    types) and conformal (simplex meshes) refinement are supported.
+  - Added support for non-axis-aligned lumped ports and current sources. Key words `"X"`,
     `"Y"`, `"Z"` and `"R"`, with optional prefix `"+"` or `"-"` still work, but now
     directions can be specified as vectors with 3 components. Users will be warned, and
     ultimately errored, if the specified directions do not agree with axis directions
     discovered from the geometry.
+  - Added output of lumped port voltage and current for eigenmode simulations.
+  - Added dimensionalized output for energies, voltages, currents, and field values based on
+    a choice of the characteristic magnetic field strength used for nondimensionalization.
+  - Added output of electric and magnetic field energies and participation ratios in regions
+    of the domain, specified with `config["Domains"]["Postprocessing"]["Energy"]` and
+    written to `domain-E.csv`. This replaces
+    `config["Domains"]["Postprocessing"]["Dielectric"]` and `domain-Q.csv`.
   - Added improved `Timer` and `BlockTimer` classes with more timing categories for
     reporting simulation runtime.
   - Changed implementation of complex-valued linear algebra to use new `ComplexVector` and
