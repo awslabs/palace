@@ -4,6 +4,7 @@
 #include "basis.hpp"
 
 #include <mfem.hpp>
+#include "utils/diagnostic.hpp"
 
 namespace palace::ceed
 {
@@ -83,6 +84,9 @@ void InitNonTensorBasis(const mfem::FiniteElement &fe, const mfem::IntegrationRu
   }
 }
 
+PalacePragmaDiagnosticPush
+PalacePragmaDiagnosticDisableUnused
+
 void InitCeedInterpolatorBasis(const mfem::FiniteElement &trial_fe,
                                const mfem::FiniteElement &test_fe, CeedInt trial_num_comp,
                                CeedInt test_num_comp, Ceed ceed, CeedBasis *basis)
@@ -106,6 +110,8 @@ void InitCeedInterpolatorBasis(const mfem::FiniteElement &trial_fe,
   PalaceCeedCall(ceed, CeedBasisDestroy(&trial_basis));
   PalaceCeedCall(ceed, CeedBasisDestroy(&test_basis));
 }
+
+PalacePragmaDiagnosticPop
 
 void InitMfemInterpolatorBasis(const mfem::FiniteElement &trial_fe,
                                const mfem::FiniteElement &test_fe, CeedInt trial_num_comp,
