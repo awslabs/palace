@@ -27,13 +27,14 @@ namespace palace
 namespace
 {
 
-auto Initialize(MPI_Comm comm, const std::string &input, int ref_levels, int order)
+auto Initialize(MPI_Comm comm, const std::string &input, int ref_levels, bool amr)
 {
   // Load the mesh.
   mfem::Mesh smesh(input, 1, 1);
   smesh.EnsureNodes();
 
-  // Configure attributes for piecewise coefficients.
+  // Configure attributes for piecewise coefficients (input mesh is always conformal, so
+  // this is OK).
   const int max_attr = (smesh.GetNE() + 1) / 2;
   const int max_bdr_attr = (smesh.GetNBE() + 1) / 2;
   for (int i = 0; i < smesh.GetNE(); i++)
@@ -46,6 +47,12 @@ auto Initialize(MPI_Comm comm, const std::string &input, int ref_levels, int ord
   }
   smesh.SetAttributes();
 
+  // Construct nonconforming mesh for AMR.
+  if (amr)
+  {
+    smesh.EnsureNCMesh(true);
+  }
+
   // Construct the parallel mesh.
   REQUIRE(Mpi::Size(comm) <= smesh.GetNE());
   auto pmesh = std::make_unique<mfem::ParMesh>(comm, smesh);
@@ -54,11 +61,12 @@ auto Initialize(MPI_Comm comm, const std::string &input, int ref_levels, int ord
     pmesh->UniformRefinement();
   }
 
-  // Match MFEM's default integration orders.
-  fem::DefaultIntegrationOrder::p_trial = order;
-  fem::DefaultIntegrationOrder::q_order_jac = true;
-  fem::DefaultIntegrationOrder::q_order_extra_pk = 0;
-  fem::DefaultIntegrationOrder::q_order_extra_qk = 0;
+  // Perform nonconforming AMR (two levels of refinement with no hanging node restritions).
+  if (amr)
+  {
+    pmesh->RandomRefinement(0.5);
+    pmesh->RandomRefinement(0.5);
+  }
 
   return Mesh(std::move(pmesh));
 }
@@ -112,9 +120,9 @@ void BuildCoefficientHelper(const mfem::Mesh &mesh, bool bdr_integ, CoeffType co
 {
   // Assign material properties to domain or boundary attributes, based on the global
   // attributes.
-  constexpr auto num_mat = 3;
   const auto &attributes = bdr_integ ? mesh.bdr_attributes : mesh.attributes;
   attr_mat.SetSize(attributes.Size() ? attributes.Max() : 0);
+  const int num_mat = std::min(attributes.Size() ? attributes.Max() : 0, 4);
   for (int i = 0; i < attributes.Size(); i++)
   {
     attr_mat[i] = i % num_mat;
@@ -137,24 +145,22 @@ auto BuildCoefficient(const Mesh &mesh, bool bdr_integ, CoeffType coeff_type)
 {
   if (coeff_type == CoeffType::Const)
   {
-    return MaterialPropertyCoefficient();
+    return MaterialPropertyCoefficient(0);
   }
   mfem::Array<int> attr_mat;
   mfem::DenseTensor mat_coeff;
   BuildCoefficientHelper(mesh, bdr_integ, coeff_type, attr_mat, mat_coeff);
 
-  // Convert attribute to material mapping from global to local attributes for libCEED
-  // interface.
-  mfem::Array<int> loc_attr_mat;
+  // Convert attribute to material mapping from global MFEM attributes to local libCEED
+  // ones.
+  mfem::Array<int> loc_attr_mat(bdr_integ ? mesh.MaxCeedBdrAttribute()
+                                          : mesh.MaxCeedAttribute());
+  loc_attr_mat = -1;
   for (int i = 0; i < attr_mat.Size(); i++)
   {
-    for (auto attr : (bdr_integ ? mesh.GetBdrAttributeGlobalToLocal(i + 1)
-                                : mesh.GetAttributeGlobalToLocal(i + 1)))
+    for (auto attr :
+         (bdr_integ ? mesh.GetCeedBdrAttributes(i + 1) : mesh.GetCeedAttributes(i + 1)))
     {
-      if (attr > loc_attr_mat.Size())
-      {
-        loc_attr_mat.SetSize(attr, -1);
-      }
       loc_attr_mat[attr - 1] = attr_mat[i];
     }
   }
@@ -366,6 +372,7 @@ void BenchmarkCeedIntegrator(FiniteElementSpace &fespace, T1 AssembleTest,
       BENCHMARK("AddMult (MFEM Legacy)")
       {
         op_ref->AddMult(x, y_ref);
+        return y_ref.Size();
       };
     }
   }
@@ -386,6 +393,7 @@ void BenchmarkCeedIntegrator(FiniteElementSpace &fespace, T1 AssembleTest,
         // MFEM PA does not implement AddMult from BilinearForm.
         op_ref->Mult(x, y_test);
         y_ref += y_test;
+        return y_ref.Size();
       };
     }
   }
@@ -402,6 +410,7 @@ void BenchmarkCeedIntegrator(FiniteElementSpace &fespace, T1 AssembleTest,
     BENCHMARK("AddMult (libCEED)")
     {
       op_test->AddMult(x, y_test);
+      return y_test.Size();
     };
   }
   if (!benchmark_no_fa)
@@ -489,6 +498,7 @@ void BenchmarkCeedInterpolator(FiniteElementSpace &trial_fespace,
       BENCHMARK("AddMult (MFEM Legacy)")
       {
         op_ref->AddMult(x, y_ref);
+        return y_ref.Size();
       };
     }
   }
@@ -512,6 +522,7 @@ void BenchmarkCeedInterpolator(FiniteElementSpace &trial_fespace,
         // MFEM PA does not implement AddMult from BilinearForm.
         op_ref->Mult(x, y_test);
         y_ref += y_test;
+        return y_ref.Size();
       };
     }
   }
@@ -528,6 +539,7 @@ void BenchmarkCeedInterpolator(FiniteElementSpace &trial_fespace,
     BENCHMARK("AddMult (libCEED)")
     {
       op_test->AddMult(x, y_test);
+      return y_test.Size();
     };
   }
   if (!benchmark_no_fa)
@@ -573,20 +585,26 @@ void BenchmarkCeedInterpolator(FiniteElementSpace &trial_fespace,
 }
 
 void RunCeedIntegratorTests(MPI_Comm comm, const std::string &input, int ref_levels,
-                            int order)
+                            bool amr, int order)
 {
   // Load the mesh.
-  auto mesh = Initialize(comm, input, ref_levels, order);
+  auto mesh = Initialize(comm, input, ref_levels, amr);
   const int dim = mesh.Dimension();
+
+  // Match MFEM's default integration orders.
+  fem::DefaultIntegrationOrder::p_trial = order;
+  fem::DefaultIntegrationOrder::q_order_jac = true;
+  fem::DefaultIntegrationOrder::q_order_extra_pk = 0;
+  fem::DefaultIntegrationOrder::q_order_extra_qk = 0;
 
   // Run the tests.
   auto bdr_integ = GENERATE(false, true);
   auto coeff_type = GENERATE(CoeffType::Const, CoeffType::Scalar, CoeffType::Matrix);
-  std::string section = "Mesh: " + input + "\n" +
-                        "Refinement levels: " + std::to_string(ref_levels) + "\n" +
-                        "Order: " + std::to_string(order) + "\n" +
-                        "Integrator: " + (bdr_integ ? "Boundary" : "Domain") + "\n" +
-                        "Coefficient: " + ToString(coeff_type) + "\n";
+  std::string section =
+      "Mesh: " + input + "\n" + "Refinement levels: " + std::to_string(ref_levels) + "\n" +
+      "AMR: " + std::to_string(amr) + "\n" + "Order: " + std::to_string(order) + "\n" +
+      "Integrator: " + (bdr_integ ? "Boundary" : "Domain") + "\n" +
+      "Coefficient: " + ToString(coeff_type) + "\n";
   INFO(section);
 
   // Initialize coefficients.
@@ -1032,16 +1050,22 @@ void RunCeedIntegratorTests(MPI_Comm comm, const std::string &input, int ref_lev
 }
 
 void RunCeedInterpolatorTests(MPI_Comm comm, const std::string &input, int ref_levels,
-                              int order)
+                              bool amr, int order)
 {
   // Load the mesh.
-  auto mesh = Initialize(comm, input, ref_levels, order);
+  auto mesh = Initialize(comm, input, ref_levels, amr);
   const int dim = mesh.Dimension();
 
+  // Match MFEM's default integration orders.
+  fem::DefaultIntegrationOrder::p_trial = order;
+  fem::DefaultIntegrationOrder::q_order_jac = true;
+  fem::DefaultIntegrationOrder::q_order_extra_pk = 0;
+  fem::DefaultIntegrationOrder::q_order_extra_qk = 0;
+
   // Run the tests.
-  std::string section = "Mesh: " + input + "\n" +
-                        "Refinement levels: " + std::to_string(ref_levels) + "\n" +
-                        "Order: " + std::to_string(order) + "\n";
+  std::string section =
+      "Mesh: " + input + "\n" + "Refinement levels: " + std::to_string(ref_levels) + "\n" +
+      "AMR: " + std::to_string(amr) + "\n" + "Order: " + std::to_string(order) + "\n";
   INFO(section);
 
   // Linear interpolators for prolongation.
@@ -1104,19 +1128,29 @@ void RunCeedInterpolatorTests(MPI_Comm comm, const std::string &input, int ref_l
   }
 }
 
-void RunCeedBenchmarks(MPI_Comm comm, const std::string &input, int ref_levels, int order)
+void RunCeedBenchmarks(MPI_Comm comm, const std::string &input, int ref_levels, bool amr,
+                       int order)
 {
   // Load the mesh.
-  auto mesh = Initialize(comm, input, ref_levels, order);
+  auto mesh = Initialize(comm, input, ref_levels, amr);
   const int dim = mesh.Dimension();
 
+  // Match MFEM's default integration orders.
+  fem::DefaultIntegrationOrder::p_trial = order;
+  fem::DefaultIntegrationOrder::q_order_jac = false;
+  fem::DefaultIntegrationOrder::q_order_extra_pk = 0;
+  fem::DefaultIntegrationOrder::q_order_extra_qk = 0;
+
   // Run the benchmarks.
-  std::string section = "Mesh: " + input + "\n" +
-                        "Refinement levels: " + std::to_string(ref_levels) + "\n" +
-                        "Order: " + std::to_string(order) + "\n";
+  std::string section =
+      "Mesh: " + input + "\n" + "Refinement levels: " + std::to_string(ref_levels) + "\n" +
+      "AMR: " + std::to_string(amr) + "\n" + "Order: " + std::to_string(order) + "\n";
   INFO(section);
-  auto pos = input.find_last_of('/');
-  WARN("benchmark input mesh: " << input.substr(pos + 1) << "\n");
+  if (Mpi::Root(comm))
+  {
+    auto pos = input.find_last_of('/');
+    WARN("benchmark input mesh: " << input.substr(pos + 1) << "\n");
+  }
 
   // Initialize coefficients.
   auto Q = BuildCoefficient(mesh, false, CoeffType::Scalar);
@@ -1171,8 +1205,11 @@ void RunCeedBenchmarks(MPI_Comm comm, const std::string &input, int ref_levels, 
 
     mfem::H1_FECollection h1_fec(order, dim);
     FiniteElementSpace h1_fespace(mesh, &h1_fec);
-    BenchmarkCeedIntegrator(h1_fespace, AssembleTest, AssembleTestRef, AssembleRef,
-                            (dim * (dim + 1)) / 2 + 1);
+    if (Mpi::Root(comm))
+    {
+      BenchmarkCeedIntegrator(h1_fespace, AssembleTest, AssembleTestRef, AssembleRef,
+                              (dim * (dim + 1)) / 2 + 1);
+    }
   }
 
   // Curl-curl + mass benchmark.
@@ -1223,8 +1260,11 @@ void RunCeedBenchmarks(MPI_Comm comm, const std::string &input, int ref_levels, 
 
     mfem::ND_FECollection nd_fec(order, dim);
     FiniteElementSpace nd_fespace(mesh, &nd_fec);
-    BenchmarkCeedIntegrator(nd_fespace, AssembleTest, AssembleTestRef, AssembleRef,
-                            2 * (dim * (dim + 1)) / 2);
+    if (Mpi::Root(comm))
+    {
+      BenchmarkCeedIntegrator(nd_fespace, AssembleTest, AssembleTestRef, AssembleRef,
+                              2 * (dim * (dim + 1)) / 2);
+    }
   }
 
   // Div-div + mass benchmark.
@@ -1262,22 +1302,25 @@ void RunCeedBenchmarks(MPI_Comm comm, const std::string &input, int ref_levels, 
 
     mfem::RT_FECollection rt_fec(order - 1, dim);
     FiniteElementSpace rt_fespace(mesh, &rt_fec);
-    BenchmarkCeedIntegrator(rt_fespace, AssembleTest, AssembleTestRef, AssembleRef, 2);
+    if (Mpi::Root(comm))
+    {
+      BenchmarkCeedIntegrator(rt_fespace, AssembleTest, AssembleTestRef, AssembleRef, 2);
+    }
   }
 
   // Discrete gradient benchmark.
   SECTION("Discrete Gradient Benchmark")
   {
     auto AssembleTest =
-        [&](const FiniteElementSpace &trial_fespace, const FiniteElementSpace &test_fespace)
+        [](const FiniteElementSpace &trial_fespace, const FiniteElementSpace &test_fespace)
     {
       DiscreteLinearOperator a_test(trial_fespace, test_fespace);
       a_test.AddDomainInterpolator<GradientInterpolator>();
       return a_test.PartialAssemble();
     };
-    auto AssembleRef = [&](FiniteElementSpace &trial_fespace,
-                           FiniteElementSpace &test_fespace,
-                           mfem::AssemblyLevel assembly_level, bool skip_zeros)
+    auto AssembleRef = [](FiniteElementSpace &trial_fespace,
+                          FiniteElementSpace &test_fespace,
+                          mfem::AssemblyLevel assembly_level, bool skip_zeros)
     {
       auto a_ref = std::make_unique<mfem::DiscreteLinearOperator>(&trial_fespace.Get(),
                                                                   &test_fespace.Get());
@@ -1291,53 +1334,59 @@ void RunCeedBenchmarks(MPI_Comm comm, const std::string &input, int ref_levels, 
     mfem::H1_FECollection h1_fec(order, dim);
     mfem::ND_FECollection nd_fec(order, dim);
     FiniteElementSpace h1_fespace(mesh, &h1_fec), nd_fespace(mesh, &nd_fec);
-    BenchmarkCeedInterpolator(h1_fespace, nd_fespace, AssembleTest, AssembleRef);
+    if (Mpi::Root(comm))
+    {
+      BenchmarkCeedInterpolator(h1_fespace, nd_fespace, AssembleTest, AssembleRef);
+    }
   }
+
+  // Wait before returning.
+  Mpi::Barrier(comm);
 }
 
 }  // namespace
 
 TEST_CASE("2D libCEED Operators", "[libCEED]")
 {
-  auto mesh =
-      GENERATE("star-quad.mesh", "star-tri.mesh", "star-mixed-p2.mesh", "star-amr.mesh");
+  auto mesh = GENERATE("star-quad.mesh", "star-tri.mesh", "star-mixed-p2.mesh");
+  auto amr = GENERATE(false, true);
   auto order = GENERATE(1, 2);
   RunCeedIntegratorTests(MPI_COMM_WORLD, std::string(PALACE_TEST_MESH_DIR "/") + mesh, 0,
-                         order);
+                         amr, order);
 }
 
 TEST_CASE("3D libCEED Operators", "[libCEED]")
 {
-  auto mesh = GENERATE("fichera-hex.mesh", "fichera-tet.mesh", "fichera-mixed-p2.mesh",
-                       "fichera-amr.mesh");
+  auto mesh = GENERATE("fichera-hex.mesh", "fichera-tet.mesh", "fichera-mixed-p2.mesh");
+  auto amr = GENERATE(false, true);
   auto order = GENERATE(1, 2);
   RunCeedIntegratorTests(MPI_COMM_WORLD, std::string(PALACE_TEST_MESH_DIR "/") + mesh, 0,
-                         order);
+                         amr, order);
 }
 
 TEST_CASE("2D libCEED Interpolators", "[libCEED][Interpolator]")
 {
-  auto mesh =
-      GENERATE("star-quad.mesh", "star-tri.mesh", "star-mixed-p2.mesh", "star-amr.mesh");
+  auto mesh = GENERATE("star-quad.mesh", "star-tri.mesh", "star-mixed-p2.mesh");
+  auto amr = GENERATE(false, true);
   auto order = GENERATE(1, 2);
   RunCeedInterpolatorTests(MPI_COMM_WORLD, std::string(PALACE_TEST_MESH_DIR "/") + mesh, 0,
-                           order);
+                           amr, order);
 }
 
 TEST_CASE("3D libCEED Interpolators", "[libCEED][Interpolator]")
 {
-  auto mesh = GENERATE("fichera-hex.mesh", "fichera-tet.mesh", "fichera-mixed-p2.mesh",
-                       "fichera-amr.mesh");
+  auto mesh = GENERATE("fichera-hex.mesh", "fichera-tet.mesh", "fichera-mixed-p2.mesh");
+  auto amr = GENERATE(false, true);
   auto order = GENERATE(1, 2);
   RunCeedInterpolatorTests(MPI_COMM_WORLD, std::string(PALACE_TEST_MESH_DIR "/") + mesh, 0,
-                           order);
+                           amr, order);
 }
 
 TEST_CASE("3D libCEED Benchmarks", "[libCEED][Benchmark]")
 {
   auto mesh = GENERATE("fichera-hex.mesh", "fichera-tet.mesh");
   RunCeedBenchmarks(MPI_COMM_WORLD, std::string(PALACE_TEST_MESH_DIR "/") + mesh,
-                    benchmark_ref_levels, benchmark_order);
+                    benchmark_ref_levels, false, benchmark_order);
 }
 
 }  // namespace palace
