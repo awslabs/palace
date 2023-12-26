@@ -21,7 +21,7 @@ private:
   // Reference to underlying mesh object (not owned).
   const Mesh &mesh;
 
-  // Mapping from the local attribute to material index.
+  // Mapping from the local libCEED attribute to material index.
   mfem::Array<int> attr_mat;
 
   // Material properties: relative permeability, relative permittivity, and others (like
@@ -38,7 +38,7 @@ private:
 
   const auto AttrToMat(int attr) const
   {
-    const auto &loc_attr = mesh.GetAttributeGlobalToLocal();
+    const auto &loc_attr = mesh.GetCeedAttributes();
     MFEM_ASSERT(loc_attr.find(attr) != loc_attr.end(),
                 "Missing local domain attribute for attribute " << attr << "!");
     return attr_mat[loc_attr.at(attr) - 1];
@@ -88,22 +88,26 @@ public:
   mfem::Array<int> GetBdrAttributeToMaterial() const;
 
   template <typename T>
-  auto GetAttributeGlobalToLocal(const T &attr_list) const
+  auto GetCeedAttributes(const T &attr_list) const
   {
-    return mesh.GetAttributeGlobalToLocal(attr_list);
+    return mesh.GetCeedAttributes(attr_list);
   }
   template <typename T>
-  auto GetBdrAttributeGlobalToLocal(const T &attr_list) const
+  auto GetCeedBdrAttributes(const T &attr_list) const
   {
-    return mesh.GetBdrAttributeGlobalToLocal(attr_list);
+    return mesh.GetCeedBdrAttributes(attr_list);
   }
+
+  auto MaxCeedAttribute() const { return mesh.MaxCeedAttribute(); }
+  auto MaxCeedBdrAttribute() const { return mesh.MaxCeedBdrAttribute(); }
 
   const auto &GetMesh() const { return mesh; }
 };
 
 //
-// Material property represented as a piecewise constant coefficient over mesh elements. Can
-// be scalar-valued or matrix-valued.
+// Material property represented as a piecewise constant coefficient over domain or boundary
+// mesh elements. Can be scalar-valued or matrix-valued. This should probably always operate
+// at the level of libCEED attribute numbers (contiguous, 1-based) for consistency.
 //
 class MaterialPropertyCoefficient
 {
@@ -112,11 +116,11 @@ private:
   // attributes).
   mfem::Array<int> attr_mat;
 
-  // Material properry coefficients, ordered by material index.
+  // Material propetry coefficients, ordered by material index.
   mfem::DenseTensor mat_coeff;
 
 public:
-  MaterialPropertyCoefficient() {}
+  MaterialPropertyCoefficient(int attr_max);
   MaterialPropertyCoefficient(const mfem::Array<int> &attr_mat_,
                               const mfem::DenseTensor &mat_coeff_, double a = 1.0);
 

@@ -227,6 +227,7 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
                  "(new ratio = {:.3f})\n",
                  ratio_pre, refinement.maximum_imbalance, ratio_post);
     }
+    mesh.back()->Update();
 
     // Solve + estimate.
     Mpi::Print("\nProceeding with solve/estimate iteration {}...\n", it + 1);

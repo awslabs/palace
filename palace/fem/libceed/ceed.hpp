@@ -40,9 +40,9 @@ namespace palace::ceed
 // Useful alias templates for libCEED objects specific to a specific Ceed context and
 // element geometry type.
 template <typename T>
-using CeedGeomObjectMap = std::unordered_map<mfem::Geometry::Type, T>;
+using GeometryObjectMap = std::unordered_map<mfem::Geometry::Type, T>;
 template <typename T>
-using CeedObjectMap = std::unordered_map<Ceed, CeedGeomObjectMap<T>>;
+using CeedObjectMap = std::unordered_map<Ceed, GeometryObjectMap<T>>;
 
 // Call libCEED's CeedInit for the given resource. The specific device to use is set prior
 // to this using mfem::Device.

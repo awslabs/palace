@@ -46,38 +46,26 @@ class Mesh
 private:
   // Underlying MFEM object (can also point to a derived class of mfem::ParMesh, such as
   // mfem::ParSubMesh).
-  mutable std::unique_ptr<mfem::ParMesh> mesh;
+  std::unique_ptr<mfem::ParMesh> mesh;
 
-  // Sequence to track mfem::Mesh::sequence and determine if geometry factors need updating.
-  mutable long int sequence;
-
-  // Attribute mapping for (global, 1-based) domain and boundary attributes to those on this
-  // process (still 1-based). For boundaries, the inner map is a mapping from neighboring
-  // domain attribute to the resulting local boundary attribute (to discern boundary
-  // elements with global boundary attribute which borders more than one domain). Interior
-  // boundaries use as neighbor the element with the smaller domain attribute in order to
-  // be consistent when the interior boundary element normals are not aligned.
-  mutable std::unordered_map<int, int> loc_attr;
-  mutable std::unordered_map<int, std::unordered_map<int, int>> loc_bdr_attr;
+  // Attribute mapping for (global, MFEM, 1-based) domain and boundary attributes to those
+  // for libCEED (local to this process, contiguous, also 1-based). For boundaries, the
+  // inner map is a mapping from neighboring MFEM domain attribute to the resulting local
+  // boundary attribute (to discern boundary elements of a given attribute which border more
+  // than one domain). Interior boundaries use as neighbor the element with the smaller
+  // domain attribute in order to be consistent when the interior boundary element normals
+  // are not aligned.
+  std::unordered_map<int, int> loc_attr;
+  std::unordered_map<int, std::unordered_map<int, int>> loc_bdr_attr;
 
   // Mesh data structures for assembling libCEED operators on a (mixed) mesh:
   //   - Mesh element indices for threads and element geometry types.
   //   - Attributes for domain and boundary elements. The attributes are not the same as the
-  //     MFEM mesh element attributes, they correspond to the local (still 1-based)
+  //     MFEM mesh element attributes, they correspond to the local, contiguous (1-based)
   //     attributes above.
   //   - Geometry factor quadrature point data (w |J| and adj(J)^T / |J|) for domain and
   //     boundary elements.
   mutable ceed::CeedObjectMap<ceed::CeedGeomFactorData> geom_data;
-
-  void CheckSequenceRebuild() const
-  {
-    if (sequence != mesh->GetSequence())
-    {
-      Rebuild();
-      sequence = mesh->GetSequence();
-    }
-  }
-  void Rebuild() const;
 
 public:
   template <typename... T>
@@ -88,9 +76,7 @@ public:
   Mesh(std::unique_ptr<T> &&mesh) : mesh(std::move(mesh))
   {
     this->mesh->EnsureNodes();
-    Rebuild();
-    sequence = this->mesh->GetSequence();
-    ResetCeedObjects();
+    Update();
   }
   ~Mesh() { ResetCeedObjects(); }
 
@@ -108,24 +94,14 @@ public:
   auto GetNE() const { return Get().GetNE(); }
   auto GetNBE() const { return Get().GetNBE(); }
 
-  const auto &GetAttributeGlobalToLocal() const
-  {
-    CheckSequenceRebuild();
-    return loc_attr;
-  }
-
-  const auto &GetBdrAttributeGlobalToLocal() const
-  {
-    CheckSequenceRebuild();
-    return loc_bdr_attr;
-  }
+  const auto &GetCeedAttributes() const { return loc_attr; }
+  const auto &GetCeedBdrAttributes() const { return loc_bdr_attr; }
 
   template <typename T>
-  auto GetAttributeGlobalToLocal(const T &attr_list) const
+  auto GetCeedAttributes(const T &attr_list) const
   {
     // Skip any entries in the input global attribute list which are not on local to this
     // process.
-    const auto &loc_attr = GetAttributeGlobalToLocal();
     mfem::Array<int> loc_attr_list;
     for (auto attr : attr_list)
     {
@@ -138,11 +114,10 @@ public:
   }
 
   template <typename T>
-  auto GetBdrAttributeGlobalToLocal(const T &attr_list) const
+  auto GetCeedBdrAttributes(const T &attr_list) const
   {
     // Skip any entries in the input global boundary attribute list which are not on local
     // to this process.
-    const auto &loc_bdr_attr = GetBdrAttributeGlobalToLocal();
     mfem::Array<int> loc_attr_list;
     for (auto attr : attr_list)
     {
@@ -158,20 +133,33 @@ public:
     return loc_attr_list;
   }
 
-  auto GetAttributeGlobalToLocal(const int attr) const
+  auto GetCeedAttributes(const int attr) const
   {
-    return GetAttributeGlobalToLocal(std::vector<int>{attr});
+    return GetCeedAttributes(std::vector<int>{attr});
   }
 
-  auto GetBdrAttributeGlobalToLocal(const int attr) const
+  auto GetCeedBdrAttributes(const int attr) const
   {
-    return GetBdrAttributeGlobalToLocal(std::vector<int>{attr});
+    return GetCeedBdrAttributes(std::vector<int>{attr});
   }
 
-  const ceed::CeedGeomObjectMap<ceed::CeedGeomFactorData> &
+  auto MaxCeedAttribute() const { return GetCeedAttributes().size(); }
+  auto MaxCeedBdrAttribute() const
+  {
+    std::size_t bdr_attr_max = 0;
+    for (const auto &[attr, bdr_attr_map] : GetCeedBdrAttributes())
+    {
+      bdr_attr_max += bdr_attr_map.size();
+    }
+    return bdr_attr_max;
+  }
+
+  const ceed::GeometryObjectMap<ceed::CeedGeomFactorData> &
   GetCeedGeomFactorData(Ceed ceed) const;
 
-  void ResetCeedObjects() const;
+  void ResetCeedObjects();
+
+  void Update();
 
   MPI_Comm GetComm() const { return mesh->GetComm(); }
 };

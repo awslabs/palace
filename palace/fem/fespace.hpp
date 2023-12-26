@@ -106,6 +106,8 @@ public:
   // space.
   void ResetCeedObjects();
 
+  void Update() { ResetCeedObjects(); }
+
   static CeedBasis BuildCeedBasis(const mfem::FiniteElementSpace &fespace, Ceed ceed,
                                   mfem::Geometry::Type geom);
   static CeedElemRestriction

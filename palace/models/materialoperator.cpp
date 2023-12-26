@@ -315,7 +315,7 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata,
   // Set up material properties of the different domain regions, represented with element-
   // wise constant matrix-valued coefficients for the relative permeability, permittivity,
   // and other material properties.
-  const auto &loc_attr = this->mesh.GetAttributeGlobalToLocal();
+  const auto &loc_attr = this->mesh.GetCeedAttributes();
   mfem::Array<int> mat_marker(iodata.domains.materials.size());
   mat_marker = 0;
   int nmats = 0;
@@ -360,8 +360,9 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata,
       MFEM_VERIFY(IsValid(data.epsilon_r), "Material has no valid permittivity defined!");
       if (!IsIdentity(data.mu_r) || IsValid(data.sigma) || std::abs(data.lambda_L) > 0.0)
       {
-        Mpi::Warning("Electrostatic problem type does not account for material "
-                     "permeability, electrical conductivity, or London depth!\n");
+        Mpi::Warning(
+            "Electrostatic problem type does not account for material permeability\n"
+            "electrical conductivity, or London depth!\n");
       }
     }
     else if (iodata.problem.type == config::ProblemData::Type::MAGNETOSTATIC)
@@ -371,8 +372,8 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata,
           std::abs(data.lambda_L) > 0.0)
       {
         Mpi::Warning(
-            "Magnetostatic problem type does not account for material permittivity, loss "
-            "tangent, electrical conductivity, or London depth!\n");
+            "Magnetostatic problem type does not account for material permittivity,\n"
+            "loss tangent, electrical conductivity, or London depth!\n");
       }
     }
     else
@@ -472,26 +473,26 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata,
 
 mfem::Array<int> MaterialOperator::GetBdrAttributeToMaterial() const
 {
-  // Construct map from all (contiguous) local boundary attributes to the material index in
-  // the neighboring element.
-  const auto &loc_bdr_attr = mesh.GetBdrAttributeGlobalToLocal();
-  int bdr_attr_max = 0;
-  for (const auto &[attr, bdr_attr_map] : loc_bdr_attr)
-  {
-    bdr_attr_max += bdr_attr_map.size();
-  }
-  mfem::Array<int> bdr_attr_mat(bdr_attr_max);
+  // Construct map from all (contiguous) local libCEED boundary attributes to the material
+  // index in the neighboring element.
+  mfem::Array<int> bdr_attr_mat(mesh.MaxCeedBdrAttribute());
   bdr_attr_mat = -1;
-  for (const auto &[attr, bdr_attr_map] : loc_bdr_attr)
+  for (const auto &[attr, bdr_attr_map] : mesh.GetCeedBdrAttributes())
   {
     for (auto it = bdr_attr_map.begin(); it != bdr_attr_map.end(); ++it)
     {
-      MFEM_ASSERT(it->second > 0 && it->second <= bdr_attr_max,
-                  "Invalid local boundary attribute " << it->second << "!");
+      MFEM_ASSERT(it->second > 0 && it->second <= bdr_attr_mat.Size(),
+                  "Invalid libCEED boundary attribute " << it->second << "!");
       bdr_attr_mat[it->second - 1] = AttrToMat(it->first);
     }
   }
   return bdr_attr_mat;
+}
+
+MaterialPropertyCoefficient::MaterialPropertyCoefficient(int attr_max)
+{
+  attr_mat.SetSize(attr_max);
+  attr_mat = -1;
 }
 
 MaterialPropertyCoefficient::MaterialPropertyCoefficient(
@@ -613,6 +614,9 @@ void MaterialPropertyCoefficient::AddCoefficient(const mfem::Array<int> &attr_ma
 {
   if (empty())
   {
+    MFEM_VERIFY(attr_mat_.Size() == attr_mat.Size(),
+                "Invalid resize of attribute to material property map in "
+                "MaterialPropertyCoefficient::AddCoefficient!");
     attr_mat = attr_mat_;
     mat_coeff = mat_coeff_;
     for (int k = 0; k < mat_coeff.SizeK(); k++)
@@ -657,20 +661,23 @@ void MaterialPropertyCoefficient::AddMaterialProperty(const mfem::Array<int> &at
   // Preprocess the attribute list. If any of the given attributes already have material
   // properties assigned, then they all need to point to the same material and it is
   // updated in place. Otherwise a new material is added for these attributes.
-  int mat_idx = -1, attr_max = attr_mat.Size();
+  int mat_idx = -1;
   for (auto attr : attr_list)
   {
+    MFEM_VERIFY(attr <= attr_mat.Size(),
+                "Out of bounds access for attribute "
+                    << attr << " in MaterialPropertyCoefficient::AddMaterialProperty!");
     if (mat_idx < 0)
     {
-      mat_idx = (attr > attr_mat.Size()) ? -1 : attr_mat[attr - 1];
+      mat_idx = attr_mat[attr - 1];
     }
     else
     {
-      MFEM_VERIFY(attr <= attr_mat.Size() && mat_idx == attr_mat[attr - 1],
-                  "All attributes for AddMaterialProperty must correspond to the same "
+      MFEM_VERIFY(mat_idx == attr_mat[attr - 1],
+                  "All attributes for MaterialPropertyCoefficient::AddMaterialProperty "
+                  "must correspond to the same "
                   "existing material if it exists!");
     }
-    attr_max = std::max(attr, attr_max);
   }
 
   if (mat_idx < 0)
@@ -698,9 +705,7 @@ void MaterialPropertyCoefficient::AddMaterialProperty(const mfem::Array<int> &at
     }
     mat_coeff(mat_idx) = 0.0;  // Zero out so we can add
 
-    // Copy the previous attribute materials, initialize no material to all new ones, then
-    // populate.
-    attr_mat.SetSize(attr_max, -1);
+    // Assign all attributes to this new material.
     for (auto attr : attr_list)
     {
       attr_mat[attr - 1] = mat_idx;
