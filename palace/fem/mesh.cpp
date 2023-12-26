@@ -43,11 +43,11 @@ auto GetBdrNeighborAttribute(int i, const mfem::ParMesh &mesh,
                                                                     : FET.Elem1->Attribute;
 }
 
-auto BuildAttributeGlobalToLocal(const mfem::ParMesh &mesh)
+auto BuildCeedAttributes(const mfem::ParMesh &mesh)
 {
   // Set up sparse map from global domain attributes to local ones on this process.
   // Include ghost elements for all shared faces so we have their material properties
-  // stored locally.
+  // stored locally. New attributes for libCEED are contiguous and 1-based.
   std::unordered_map<int, int> loc_attr;
   mfem::FaceElementTransformations FET;
   mfem::IsoparametricTransformation T1, T2;
@@ -77,11 +77,12 @@ auto BuildAttributeGlobalToLocal(const mfem::ParMesh &mesh)
   return loc_attr;
 }
 
-auto BuildBdrAttributeGlobalToLocal(const mfem::ParMesh &mesh)
+auto BuildCeedBdrAttributes(const mfem::ParMesh &mesh)
 {
   // Set up sparse map from global boundary attributes to local ones on this process. Each
   // original global boundary attribute maps to a key-value pairing of global domain
-  // attributes which neighbor the given boundary and local boundary attributes.
+  // attributes which neighbor the given boundary and local boundary attributes. New
+  // attributes for libCEED are contiguous and 1-based.
   std::unordered_map<int, std::unordered_map<int, int>> loc_bdr_attr;
   mfem::FaceElementTransformations FET;
   mfem::IsoparametricTransformation T1, T2;
@@ -236,7 +237,7 @@ auto BuildCeedGeomFactorData(
   MFEM_VERIFY(i < nt, "Unable to find matching Ceed context in BuildCeedGeomFactorData!");
   mfem::FaceElementTransformations FET;
   mfem::IsoparametricTransformation T1, T2;
-  ceed::CeedGeomObjectMap<ceed::CeedGeomFactorData> geom_data_map;
+  ceed::GeometryObjectMap<ceed::CeedGeomFactorData> geom_data_map;
 
   // First domain elements.
   {
@@ -264,7 +265,7 @@ auto BuildCeedGeomFactorData(
           MFEM_ASSERT(loc_bdr_attr.find(attr) != loc_bdr_attr.end() &&
                           loc_bdr_attr.at(attr).find(nbr_attr) !=
                               loc_bdr_attr.at(attr).end(),
-                      "Missing local boundary attribute for attribute " << attr << "!");
+                      "Missing libCEED boundary attribute for attribute " << attr << "!");
           return loc_bdr_attr.at(attr).at(nbr_attr);
         };
       }
@@ -274,8 +275,8 @@ auto BuildCeedGeomFactorData(
         {
           const int attr = mesh.GetAttribute(i);
           MFEM_ASSERT(loc_attr.find(attr) != loc_attr.end(),
-                      "Missing local domain attribute for attribute " << attr << "!");
-          return attr;
+                      "Missing libCEED domain attribute for attribute " << attr << "!");
+          return loc_attr.at(attr);
         };
       }
     }();
@@ -303,7 +304,7 @@ auto BuildCeedGeomFactorData(
       const int nbr_attr = GetBdrNeighborAttribute(i, mesh, FET, T1, T2);
       MFEM_ASSERT(loc_bdr_attr.find(attr) != loc_bdr_attr.end() &&
                       loc_bdr_attr.at(attr).find(nbr_attr) != loc_bdr_attr.at(attr).end(),
-                  "Missing local boundary attribute for attribute " << attr << "!");
+                  "Missing libCEED boundary attribute for attribute " << attr << "!");
       return loc_bdr_attr.at(attr).at(nbr_attr);
     };
     for (auto &[geom, indices] : element_indices)
@@ -319,21 +320,11 @@ auto BuildCeedGeomFactorData(
 
 }  // namespace
 
-void Mesh::Rebuild() const
-{
-  // Attribute mappings, etc. are always constructed for the parent mesh (use boundary
-  // attribute maps for the domain attributes of a boundary submesh, for example).
-  auto &parent_mesh = GetParentMesh(*mesh);
-  parent_mesh.ExchangeFaceNbrData();
-  loc_attr.clear();
-  loc_bdr_attr.clear();
-  loc_attr = BuildAttributeGlobalToLocal(parent_mesh);
-  loc_bdr_attr = BuildBdrAttributeGlobalToLocal(parent_mesh);
-}
-
-const ceed::CeedGeomObjectMap<ceed::CeedGeomFactorData> &
+const ceed::GeometryObjectMap<ceed::CeedGeomFactorData> &
 Mesh::GetCeedGeomFactorData(Ceed ceed) const
 {
+  MFEM_VERIFY(!loc_attr.empty(),
+              "Mesh attribute mappings have not been built for GetCeedGeomFactorData!");
   auto it = geom_data.find(ceed);
   MFEM_ASSERT(it != geom_data.end(), "Unknown Ceed context in GetCeedGeomFactorData!");
   auto &geom_data_map = it->second;
@@ -344,7 +335,7 @@ Mesh::GetCeedGeomFactorData(Ceed ceed) const
   return geom_data_map;
 }
 
-void Mesh::ResetCeedObjects() const
+void Mesh::ResetCeedObjects()
 {
   for (auto &[ceed, geom_data_map] : geom_data)
   {
@@ -358,8 +349,21 @@ void Mesh::ResetCeedObjects() const
   for (std::size_t i = 0; i < ceed::internal::GetCeedObjects().size(); i++)
   {
     Ceed ceed = ceed::internal::GetCeedObjects()[i];
-    geom_data.emplace(ceed, ceed::CeedGeomObjectMap<ceed::CeedGeomFactorData>());
+    geom_data.emplace(ceed, ceed::GeometryObjectMap<ceed::CeedGeomFactorData>());
   }
+}
+
+void Mesh::Update()
+{
+  // Attribute mappings, etc. are always constructed for the parent mesh (use boundary
+  // attribute maps for the domain attributes of a boundary submesh, for example).
+  auto &parent_mesh = GetParentMesh(*mesh);
+  parent_mesh.ExchangeFaceNbrData();
+  loc_attr.clear();
+  loc_bdr_attr.clear();
+  loc_attr = BuildCeedAttributes(parent_mesh);
+  loc_bdr_attr = BuildCeedBdrAttributes(parent_mesh);
+  ResetCeedObjects();
 }
 
 }  // namespace palace

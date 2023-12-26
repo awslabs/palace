@@ -124,10 +124,10 @@ void FiniteElementSpace::ResetCeedObjects()
   for (std::size_t i = 0; i < ceed::internal::GetCeedObjects().size(); i++)
   {
     Ceed ceed = ceed::internal::GetCeedObjects()[i];
-    basis.emplace(ceed, ceed::CeedGeomObjectMap<CeedBasis>());
-    restr.emplace(ceed, ceed::CeedGeomObjectMap<CeedElemRestriction>());
-    interp_restr.emplace(ceed, ceed::CeedGeomObjectMap<CeedElemRestriction>());
-    interp_range_restr.emplace(ceed, ceed::CeedGeomObjectMap<CeedElemRestriction>());
+    basis.emplace(ceed, ceed::GeometryObjectMap<CeedBasis>());
+    restr.emplace(ceed, ceed::GeometryObjectMap<CeedElemRestriction>());
+    interp_restr.emplace(ceed, ceed::GeometryObjectMap<CeedElemRestriction>());
+    interp_range_restr.emplace(ceed, ceed::GeometryObjectMap<CeedElemRestriction>());
   }
 }
 
