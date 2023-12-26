@@ -1206,7 +1206,7 @@ void WavePortOperator::AddExtraSystemBdrCoefficients(double omega,
     const MaterialOperator &mat_op = data.mat_op;
     MaterialPropertyCoefficient muinv_func(mat_op.GetBdrAttributeToMaterial(),
                                            mat_op.GetInvPermeability());
-    muinv_func.RestrictCoefficient(mat_op.GetBdrAttributeGlobalToLocal(data.GetAttrList()));
+    muinv_func.RestrictCoefficient(mat_op.GetCeedBdrAttributes(data.GetAttrList()));
     // fbr.AddCoefficient(muinv_func.GetAttributeToMaterial(),
     //                    muinv_func.GetMaterialProperties(),
     //                    -data.kn0.imag());

@@ -56,7 +56,7 @@ DomainPostOperator::DomainPostOperator(const IoData &iodata, const MaterialOpera
     {
       MaterialPropertyCoefficient epsilon_func(mat_op.GetAttributeToMaterial(),
                                                mat_op.GetPermittivityReal());
-      epsilon_func.RestrictCoefficient(mat_op.GetAttributeGlobalToLocal(data.attributes));
+      epsilon_func.RestrictCoefficient(mat_op.GetCeedAttributes(data.attributes));
       BilinearForm m_nd_i(*nd_fespace);
       m_nd_i.AddDomainIntegrator<VectorFEMassIntegrator>(epsilon_func);
       M_ND_i = m_nd_i.PartialAssemble();
@@ -65,7 +65,7 @@ DomainPostOperator::DomainPostOperator(const IoData &iodata, const MaterialOpera
     {
       MaterialPropertyCoefficient muinv_func(mat_op.GetAttributeToMaterial(),
                                              mat_op.GetInvPermeability());
-      muinv_func.RestrictCoefficient(mat_op.GetAttributeGlobalToLocal(data.attributes));
+      muinv_func.RestrictCoefficient(mat_op.GetCeedAttributes(data.attributes));
       BilinearForm m_rt_i(*rt_fespace);
       m_rt_i.AddDomainIntegrator<VectorFEMassIntegrator>(muinv_func);
       M_RT_i = m_rt_i.PartialAssemble();

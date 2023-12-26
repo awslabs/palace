@@ -89,11 +89,11 @@ std::vector<CeedIntScalar> PopulateCoefficientContext(const MaterialPropertyCoef
     return ctx;
   }
 
+  // Material property coefficients might be empty if all attributes map to zero
+  // coefficient.
   const auto &attr_mat = Q->GetAttributeToMaterial();
   const auto &mat_coeff = Q->GetMaterialProperties();
   MFEM_VERIFY(attr_mat.Size() > 0, "Empty attributes for MaterialPropertyCoefficient!");
-  MFEM_VERIFY(mat_coeff.SizeK() > 0,
-              "Empty material properties for MaterialPropertyCoefficient!");
   MFEM_VERIFY(attr_mat.Max() < mat_coeff.SizeK(),
               "Invalid attribute material property for MaterialPropertyCoefficient ("
                   << attr_mat.Max() << " vs. " << mat_coeff.SizeK() << ")!");
@@ -136,6 +136,10 @@ std::vector<CeedIntScalar> PopulateCoefficientContext(const MaterialPropertyCoef
         }
       }
     }
+  }
+  for (int d = 0; d < CoeffDim<DIM>(); d++)
+  {
+    MatCoeff(ctx.data())[CoeffDim<DIM>() * zero_mat + d].second = 0.0;
   }
 
   return ctx;
