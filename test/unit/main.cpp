@@ -59,7 +59,7 @@ int main(int argc, char *argv[])
   // Run the tests.
   mfem::Device device(device_str.c_str());
   ceed::Initialize(ceed_backend.c_str(), PALACE_LIBCEED_JIT_SOURCE_DIR);
-  std::cout << "libCEED backend: " << ceed::Print() << "\n";
+  Mpi::Print("libCEED backend: {}\n", ceed::Print());
   result = session.run();
   ceed::Finalize();
 
