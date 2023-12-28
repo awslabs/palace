@@ -232,13 +232,13 @@ public:
 
   auto &GetFESpaceAtLevel(std::size_t l)
   {
-    MFEM_ASSERT(l >= 0 && l < GetNumLevels(),
+    MFEM_ASSERT(l < GetNumLevels(),
                 "Out of bounds request for finite element space at level " << l << "!");
     return *fespaces[l];
   }
   const auto &GetFESpaceAtLevel(std::size_t l) const
   {
-    MFEM_ASSERT(l >= 0 && l < GetNumLevels(),
+    MFEM_ASSERT(l < GetNumLevels(),
                 "Out of bounds request for finite element space at level " << l << "!");
     return *fespaces[l];
   }
@@ -258,7 +258,7 @@ public:
 
   const auto &GetProlongationAtLevel(std::size_t l) const
   {
-    MFEM_ASSERT(l >= 0 && l < GetNumLevels() - 1,
+    MFEM_ASSERT(l < GetNumLevels() - 1,
                 "Out of bounds request for finite element space prolongation at level "
                     << l << "!");
     return P[l] ? *P[l] : BuildProlongationAtLevel(l);

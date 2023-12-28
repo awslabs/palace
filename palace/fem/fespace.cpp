@@ -211,7 +211,7 @@ const Operator &
 BaseFiniteElementSpaceHierarchy<FESpace>::BuildProlongationAtLevel(std::size_t l) const
 {
   // P is always partially assembled.
-  MFEM_VERIFY(l >= 0 && l < GetNumLevels() - 1,
+  MFEM_VERIFY(l < GetNumLevels() - 1,
               "Can only construct a finite element space prolongation with more than one "
               "space in the hierarchy!");
   if (&fespaces[l]->GetMesh() != &fespaces[l + 1]->GetMesh())

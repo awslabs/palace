@@ -334,8 +334,7 @@ public:
 
   const OperType &GetOperatorAtLevel(std::size_t l) const
   {
-    MFEM_ASSERT(l >= 0 && l < GetNumLevels(),
-                "Out of bounds multigrid level operator requested!");
+    MFEM_ASSERT(l < GetNumLevels(), "Out of bounds multigrid level operator requested!");
     return *ops[l];
   }
   const OperType &GetAuxiliaryOperatorAtLevel(std::size_t l) const
