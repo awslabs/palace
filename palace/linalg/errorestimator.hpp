@@ -76,15 +76,9 @@ public:
   CurlFluxErrorEstimator(const MaterialOperator &mat_op, FiniteElementSpace &nd_fespace,
                          double tol, int max_it, int print);
 
-  // Compute elemental error indicators given a vector of true DOF.
-  ErrorIndicator ComputeIndicators(const VecType &U) const;
-
   // Compute elemental error indicators given a vector of true DOF and fold into an existing
   // indicator.
-  void AddErrorIndicator(const VecType &U, ErrorIndicator &indicator) const
-  {
-    indicator.AddIndicator(ComputeIndicators(U));
-  }
+  void AddErrorIndicator(const VecType &U, ErrorIndicator &indicator) const;
 };
 
 // Class used for computing gradient flux error estimate, i.e. || ε ∇Uₕ - F ||_K, where F
@@ -111,15 +105,9 @@ public:
   GradFluxErrorEstimator(const MaterialOperator &mat_op, FiniteElementSpace &h1_fespace,
                          double tol, int max_it, int print);
 
-  // Compute elemental error indicators given a vector of true DOF.
-  ErrorIndicator ComputeIndicators(const Vector &U) const;
-
   // Compute elemental error indicators given a vector of true DOF and fold into an existing
   // indicator.
-  void AddErrorIndicator(const Vector &U, ErrorIndicator &indicator) const
-  {
-    indicator.AddIndicator(ComputeIndicators(U));
-  }
+  void AddErrorIndicator(const Vector &U, ErrorIndicator &indicator) const;
 };
 
 }  // namespace palace
