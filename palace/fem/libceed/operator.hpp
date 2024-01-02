@@ -69,8 +69,8 @@ std::unique_ptr<mfem::SparseMatrix> CeedOperatorFullAssemble(const Operator &op,
                                                              bool skip_zeros, bool set);
 
 // Construct a coarse-level ceed::Operator, reusing the quadrature data and quadrature
-// function from the fine-level operator. Only available for square operators (same input
-// and output spaces).
+// function from the fine-level operator. Only available for square, symmetric operators
+// (same input and output spaces).
 std::unique_ptr<Operator> CeedOperatorCoarsen(const Operator &op_fine,
                                               const FiniteElementSpace &fespace_coarse);
 
