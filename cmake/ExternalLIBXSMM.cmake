@@ -12,7 +12,7 @@ set(LIBXSMM_OPTIONS
   "PREFIX=${CMAKE_INSTALL_PREFIX}"
   "CC=${CMAKE_C_COMPILER}"
   "CXX=${CMAKE_CXX_COMPILER}"
-  "FC=0"
+  "FC="
   "FORTRAN=0"
   "BLAS=0"  # For now, no BLAS linkage (like PyFR)
   "SYM=1"   # Always build with symbols
