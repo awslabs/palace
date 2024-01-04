@@ -9,7 +9,7 @@
 // Build functions replace active vector output with quadrature point data, stored as a
 // symmetric matrix, and remove active vector input.
 
-CEED_QFUNCTION(f_build_l2_1)(void *ctx, CeedInt Q, const CeedScalar *const *in,
+CEED_QFUNCTION(f_build_l2_1)(void *__restrict__ ctx, CeedInt Q, const CeedScalar *const *in,
                              CeedScalar *const *out)
 {
   const CeedScalar *attr = in[0], *wdetJ = in[0] + Q, *qw = in[1];
@@ -24,7 +24,7 @@ CEED_QFUNCTION(f_build_l2_1)(void *ctx, CeedInt Q, const CeedScalar *const *in,
   return 0;
 }
 
-CEED_QFUNCTION(f_build_l2_2)(void *ctx, CeedInt Q, const CeedScalar *const *in,
+CEED_QFUNCTION(f_build_l2_2)(void *__restrict__ ctx, CeedInt Q, const CeedScalar *const *in,
                              CeedScalar *const *out)
 {
   const CeedScalar *attr = in[0], *wdetJ = in[0] + Q, *qw = in[1];
@@ -43,7 +43,7 @@ CEED_QFUNCTION(f_build_l2_2)(void *ctx, CeedInt Q, const CeedScalar *const *in,
   return 0;
 }
 
-CEED_QFUNCTION(f_build_l2_3)(void *ctx, CeedInt Q, const CeedScalar *const *in,
+CEED_QFUNCTION(f_build_l2_3)(void *__restrict__ ctx, CeedInt Q, const CeedScalar *const *in,
                              CeedScalar *const *out)
 {
   const CeedScalar *attr = in[0], *wdetJ = in[0] + Q, *qw = in[1];

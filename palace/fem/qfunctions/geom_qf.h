@@ -14,7 +14,7 @@
 // out[0] is quadrature data, stored as {attribute, Jacobian determinant, (transpose)
 //        adjugate Jacobian} quadrature data, shape [ncomp=2+space_dim*dim, Q]
 
-CEED_QFUNCTION(f_build_geom_factor_22)(void *ctx, CeedInt Q, const CeedScalar *const *in,
+CEED_QFUNCTION(f_build_geom_factor_22)(void *, CeedInt Q, const CeedScalar *const *in,
                                        CeedScalar *const *out)
 {
   const CeedScalar *qw = in[0], *J = in[1];
@@ -35,7 +35,7 @@ CEED_QFUNCTION(f_build_geom_factor_22)(void *ctx, CeedInt Q, const CeedScalar *c
   return 0;
 }
 
-CEED_QFUNCTION(f_build_geom_factor_33)(void *ctx, CeedInt Q, const CeedScalar *const *in,
+CEED_QFUNCTION(f_build_geom_factor_33)(void *, CeedInt Q, const CeedScalar *const *in,
                                        CeedScalar *const *out)
 {
   const CeedScalar *qw = in[0], *J = in[1];
@@ -61,7 +61,7 @@ CEED_QFUNCTION(f_build_geom_factor_33)(void *ctx, CeedInt Q, const CeedScalar *c
   return 0;
 }
 
-CEED_QFUNCTION(f_build_geom_factor_21)(void *ctx, CeedInt Q, const CeedScalar *const *in,
+CEED_QFUNCTION(f_build_geom_factor_21)(void *, CeedInt Q, const CeedScalar *const *in,
                                        CeedScalar *const *out)
 {
   const CeedScalar *qw = in[0], *J = in[1];
@@ -80,7 +80,7 @@ CEED_QFUNCTION(f_build_geom_factor_21)(void *ctx, CeedInt Q, const CeedScalar *c
   return 0;
 }
 
-CEED_QFUNCTION(f_build_geom_factor_32)(void *ctx, CeedInt Q, const CeedScalar *const *in,
+CEED_QFUNCTION(f_build_geom_factor_32)(void *, CeedInt Q, const CeedScalar *const *in,
                                        CeedScalar *const *out)
 {
   const CeedScalar *qw = in[0], *J = in[1];

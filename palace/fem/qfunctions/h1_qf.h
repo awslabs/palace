@@ -11,7 +11,7 @@
 // in[1] is active vector, shape [ncomp=vdim, Q]
 // out[0] is active vector, shape [ncomp=vdim, Q]
 
-CEED_QFUNCTION(f_apply_h1_1)(void *ctx, CeedInt Q, const CeedScalar *const *in,
+CEED_QFUNCTION(f_apply_h1_1)(void *__restrict__ ctx, CeedInt Q, const CeedScalar *const *in,
                              CeedScalar *const *out)
 {
   const CeedScalar *attr = in[0], *wdetJ = in[0] + Q, *u = in[1];
@@ -26,7 +26,7 @@ CEED_QFUNCTION(f_apply_h1_1)(void *ctx, CeedInt Q, const CeedScalar *const *in,
   return 0;
 }
 
-CEED_QFUNCTION(f_apply_h1_2)(void *ctx, CeedInt Q, const CeedScalar *const *in,
+CEED_QFUNCTION(f_apply_h1_2)(void *__restrict__ ctx, CeedInt Q, const CeedScalar *const *in,
                              CeedScalar *const *out)
 {
   const CeedScalar *attr = in[0], *wdetJ = in[0] + Q, *u = in[1];
@@ -45,7 +45,7 @@ CEED_QFUNCTION(f_apply_h1_2)(void *ctx, CeedInt Q, const CeedScalar *const *in,
   return 0;
 }
 
-CEED_QFUNCTION(f_apply_h1_3)(void *ctx, CeedInt Q, const CeedScalar *const *in,
+CEED_QFUNCTION(f_apply_h1_3)(void *__restrict__ ctx, CeedInt Q, const CeedScalar *const *in,
                              CeedScalar *const *out)
 {
   const CeedScalar *attr = in[0], *wdetJ = in[0] + Q, *u = in[1];

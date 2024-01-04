@@ -12,8 +12,8 @@
 // in[1] is active vector, shape [qcomp=dim, ncomp=1, Q]
 // out[0] is active vector, shape [qcomp=dim, ncomp=1, Q]
 
-CEED_QFUNCTION(f_apply_hcurl_22)(void *ctx, CeedInt Q, const CeedScalar *const *in,
-                                 CeedScalar *const *out)
+CEED_QFUNCTION(f_apply_hcurl_22)(void *__restrict__ ctx, CeedInt Q,
+                                 const CeedScalar *const *in, CeedScalar *const *out)
 {
   const CeedScalar *attr = in[0], *wdetJ = in[0] + Q, *adjJt = in[0] + 2 * Q, *u = in[1];
   CeedScalar *v = out[0];
@@ -32,8 +32,8 @@ CEED_QFUNCTION(f_apply_hcurl_22)(void *ctx, CeedInt Q, const CeedScalar *const *
   return 0;
 }
 
-CEED_QFUNCTION(f_apply_hcurl_33)(void *ctx, CeedInt Q, const CeedScalar *const *in,
-                                 CeedScalar *const *out)
+CEED_QFUNCTION(f_apply_hcurl_33)(void *__restrict__ ctx, CeedInt Q,
+                                 const CeedScalar *const *in, CeedScalar *const *out)
 {
   const CeedScalar *attr = in[0], *wdetJ = in[0] + Q, *adjJt = in[0] + 2 * Q, *u = in[1];
   CeedScalar *v = out[0];
@@ -53,8 +53,8 @@ CEED_QFUNCTION(f_apply_hcurl_33)(void *ctx, CeedInt Q, const CeedScalar *const *
   return 0;
 }
 
-CEED_QFUNCTION(f_apply_hcurl_21)(void *ctx, CeedInt Q, const CeedScalar *const *in,
-                                 CeedScalar *const *out)
+CEED_QFUNCTION(f_apply_hcurl_21)(void *__restrict__ ctx, CeedInt Q,
+                                 const CeedScalar *const *in, CeedScalar *const *out)
 {
   const CeedScalar *attr = in[0], *wdetJ = in[0] + Q, *adjJt = in[0] + 2 * Q, *u = in[1];
   CeedScalar *v = out[0];
@@ -72,8 +72,8 @@ CEED_QFUNCTION(f_apply_hcurl_21)(void *ctx, CeedInt Q, const CeedScalar *const *
   return 0;
 }
 
-CEED_QFUNCTION(f_apply_hcurl_32)(void *ctx, CeedInt Q, const CeedScalar *const *in,
-                                 CeedScalar *const *out)
+CEED_QFUNCTION(f_apply_hcurl_32)(void *__restrict__ ctx, CeedInt Q,
+                                 const CeedScalar *const *in, CeedScalar *const *out)
 {
   const CeedScalar *attr = in[0], *wdetJ = in[0] + Q, *adjJt = in[0] + 2 * Q, *u = in[1];
   CeedScalar *v = out[0];
