@@ -274,8 +274,8 @@ std::unique_ptr<ceed::Operator> DiscreteLinearOperator::PartialAssemble() const
   // elements (on host, then copy to device).
   Vector test_multiplicity(test_fespace.GetVSize());
   test_multiplicity = 0.0;
-  mfem::Array<int> dofs;
   auto *h_mult = test_multiplicity.HostReadWrite();
+  mfem::Array<int> dofs;
   for (int i = 0; i < test_fespace.GetMesh().GetNE(); i++)
   {
     test_fespace.Get().GetElementVDofs(i, dofs);

@@ -239,6 +239,7 @@ PetscReal GetMaxSingularValue(MPI_Comm comm, const ComplexOperator &A, bool herm
   // This method assumes the provided operator has the required operations for SLEPc's EPS
   // or SVD solvers, namely MATOP_MULT and MATOP_MULT_HERMITIAN_TRANSPOSE (if the matrix
   // is not Hermitian).
+  MFEM_VERIFY(A.Height() == A.Width(), "Spectral norm requires a square matrix!");
   const PetscInt n = A.Height();
   ComplexVector x(n), y(n);
   x.UseDevice(true);

@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <random>
 #include <mfem/general/forall.hpp>
+#include "utils/omp.hpp"
 
 namespace palace
 {
@@ -50,8 +51,7 @@ void ComplexVector::Set(const std::complex<double> *py, int n, bool on_dev)
 {
   MFEM_VERIFY(n == Size(),
               "Mismatch in dimension for array of std::complex<double> in ComplexVector!");
-  const bool use_dev = UseDevice();
-  auto SetImpl = [use_dev, this](const double *Y, const int N)
+  auto SetImpl = [this](const double *Y, const int N, bool use_dev)
   {
     auto *XR = Real().Write(use_dev);
     auto *XI = Imag().Write(use_dev);
@@ -62,17 +62,28 @@ void ComplexVector::Set(const std::complex<double> *py, int n, bool on_dev)
                           XI[i] = Y[2 * i + 1];
                         });
   };
+  const bool use_dev = UseDevice();
   if (((!use_dev || !mfem::Device::Allows(mfem::Backend::DEVICE_MASK)) && !on_dev) ||
       (use_dev && mfem::Device::Allows(mfem::Backend::DEVICE_MASK) && on_dev))
   {
     // No copy (host pointer and not using device, or device pointer and using device).
-    SetImpl(reinterpret_cast<const double *>(py), n);
+    SetImpl(reinterpret_cast<const double *>(py), n, use_dev);
   }
   else
   {
-    // Need copy (host pointer but using device).
-    Vector y(reinterpret_cast<double *>(const_cast<std::complex<double> *>(py)), 2 * n);
-    SetImpl(y.Read(use_dev), n);
+    // Need copy from host to device (host pointer but using device).
+    Vector y(2 * n);
+    y.UseDevice(true);
+    {
+      auto *Y = y.HostWrite();
+      PalacePragmaOmp(parallel for)
+      for (int i = 0; i < n; i++)
+      {
+        Y[2 * i] = py[i].real();
+        Y[2 * i + 1] = py[i].imag();
+      }
+    }
+    SetImpl(y.Read(use_dev), n, use_dev);
   }
 }
 
@@ -80,8 +91,7 @@ void ComplexVector::Get(std::complex<double> *py, int n, bool on_dev) const
 {
   MFEM_VERIFY(n == Size(),
               "Mismatch in dimension for array of std::complex<double> in ComplexVector!");
-  const bool use_dev = UseDevice();
-  auto GetImpl = [use_dev, this](double *Y, const int N)
+  auto GetImpl = [this](double *Y, const int N, bool use_dev)
   {
     const auto *XR = Real().Read(use_dev);
     const auto *XI = Imag().Read(use_dev);
@@ -92,17 +102,24 @@ void ComplexVector::Get(std::complex<double> *py, int n, bool on_dev) const
                           Y[2 * i + 1] = XI[i];
                         });
   };
+  const bool use_dev = UseDevice();
   if (((!use_dev || !mfem::Device::Allows(mfem::Backend::DEVICE_MASK)) && !on_dev) ||
       (use_dev && mfem::Device::Allows(mfem::Backend::DEVICE_MASK) && on_dev))
   {
     // No copy (host pointer and not using device, or device pointer and using device).
-    GetImpl(reinterpret_cast<double *>(py), n);
+    GetImpl(reinterpret_cast<double *>(py), n, use_dev);
   }
   else
   {
-    // Need copy (host pointer but using device).
-    Vector y(reinterpret_cast<double *>(py), 2 * n);
-    GetImpl(y.Write(use_dev), n);
+    // Need copy from device to host (host pointer but using device).
+    const auto *XR = Real().HostRead();
+    const auto *XI = Imag().HostRead();
+    PalacePragmaOmp(parallel for)
+    for (int i = 0; i < n; i++)
+    {
+      py[i].real(XR[i]);
+      py[i].imag(XI[i]);
+    }
   }
 }
 

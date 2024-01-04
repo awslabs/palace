@@ -178,6 +178,8 @@ void ChebyshevSmoother<OperType>::SetOperator(const OperType &op)
   // Set up Chebyshev coefficients using the computed maximum eigenvalue estimate. See
   // mfem::OperatorChebyshevSmoother or Adams et al. (2003).
   lambda_max = sf_max * GetLambdaMax(comm, *A, dinv);
+  MFEM_VERIFY(lambda_max > 0.0,
+              "Encountered zero maximum eigenvalue in Chebyshev smoother!");
 
   this->height = op.Height();
   this->width = op.Width();
@@ -243,6 +245,8 @@ void ChebyshevSmoother1stKind<OperType>::SetOperator(const OperType &op)
     sf_min = 1.69 / (std::pow(order, 1.68) + 2.11 * order + 1.98);
   }
   const double lambda_max = sf_max * GetLambdaMax(comm, *A, dinv);
+  MFEM_VERIFY(lambda_max > 0.0,
+              "Encountered zero maximum eigenvalue in Chebyshev smoother!");
   const double lambda_min = sf_min * lambda_max;
   theta = 0.5 * (lambda_max + lambda_min);
   delta = 0.5 * (lambda_max - lambda_min);
