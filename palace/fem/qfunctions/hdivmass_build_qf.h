@@ -11,8 +11,8 @@
 // Build functions replace active vector output with quadrature point data, stored as a
 // symmetric matrix, and remove active vector input.
 
-CEED_QFUNCTION(f_build_hdivmass_22)(void *ctx, CeedInt Q, const CeedScalar *const *in,
-                                    CeedScalar *const *out)
+CEED_QFUNCTION(f_build_hdivmass_22)(void *__restrict__ ctx, CeedInt Q,
+                                    const CeedScalar *const *in, CeedScalar *const *out)
 {
   const CeedScalar *attr = in[0], *wdetJ = in[0] + Q, *adjJt = in[0] + 2 * Q, *qw = in[1];
   CeedScalar *__restrict__ qd1 = out[0], *__restrict__ qd2 = out[0] + 3 * Q;
@@ -39,8 +39,8 @@ CEED_QFUNCTION(f_build_hdivmass_22)(void *ctx, CeedInt Q, const CeedScalar *cons
   return 0;
 }
 
-CEED_QFUNCTION(f_build_hdivmass_33)(void *ctx, CeedInt Q, const CeedScalar *const *in,
-                                    CeedScalar *const *out)
+CEED_QFUNCTION(f_build_hdivmass_33)(void *__restrict__ ctx, CeedInt Q,
+                                    const CeedScalar *const *in, CeedScalar *const *out)
 {
   const CeedScalar *attr = in[0], *wdetJ = in[0] + Q, *adjJt = in[0] + 2 * Q;
   CeedScalar *__restrict__ qd1 = out[0], *__restrict__ qd2 = out[0] + 6 * Q;
@@ -78,8 +78,8 @@ CEED_QFUNCTION(f_build_hdivmass_33)(void *ctx, CeedInt Q, const CeedScalar *cons
   return 0;
 }
 
-CEED_QFUNCTION(f_build_hdivmass_32)(void *ctx, CeedInt Q, const CeedScalar *const *in,
-                                    CeedScalar *const *out)
+CEED_QFUNCTION(f_build_hdivmass_32)(void *__restrict__ ctx, CeedInt Q,
+                                    const CeedScalar *const *in, CeedScalar *const *out)
 {
   const CeedScalar *attr = in[0], *wdetJ = in[0] + Q, *adjJt = in[0] + 2 * Q, *qw = in[1];
   CeedScalar *__restrict__ qd1 = out[0], *__restrict__ qd2 = out[0] + 3 * Q;

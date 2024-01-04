@@ -11,8 +11,8 @@
 // Build functions replace active vector output with quadrature point data, stored as a
 // symmetric matrix, and remove active vector input.
 
-CEED_QFUNCTION(f_build_l2mass_22)(void *ctx, CeedInt Q, const CeedScalar *const *in,
-                                  CeedScalar *const *out)
+CEED_QFUNCTION(f_build_l2mass_22)(void *__restrict__ ctx, CeedInt Q,
+                                  const CeedScalar *const *in, CeedScalar *const *out)
 {
   const CeedScalar *attr = in[0], *wdetJ = in[0] + Q, *adjJt = in[0] + 2 * Q, *qw = in[1];
   CeedScalar *qd1 = out[0], *qd2 = out[0] + 3 * Q;
@@ -40,8 +40,8 @@ CEED_QFUNCTION(f_build_l2mass_22)(void *ctx, CeedInt Q, const CeedScalar *const 
   return 0;
 }
 
-CEED_QFUNCTION(f_build_l2mass_33)(void *ctx, CeedInt Q, const CeedScalar *const *in,
-                                  CeedScalar *const *out)
+CEED_QFUNCTION(f_build_l2mass_33)(void *__restrict__ ctx, CeedInt Q,
+                                  const CeedScalar *const *in, CeedScalar *const *out)
 {
   const CeedScalar *attr = in[0], *wdetJ = in[0] + Q, *adjJt = in[0] + 2 * Q, *qw = in[1];
   CeedScalar *qd1 = out[0], *qd2 = out[0] + 6 * Q;
@@ -72,8 +72,8 @@ CEED_QFUNCTION(f_build_l2mass_33)(void *ctx, CeedInt Q, const CeedScalar *const 
   return 0;
 }
 
-CEED_QFUNCTION(f_build_l2mass_21)(void *ctx, CeedInt Q, const CeedScalar *const *in,
-                                  CeedScalar *const *out)
+CEED_QFUNCTION(f_build_l2mass_21)(void *__restrict__ ctx, CeedInt Q,
+                                  const CeedScalar *const *in, CeedScalar *const *out)
 {
   const CeedScalar *attr = in[0], *wdetJ = in[0] + Q, *adjJt = in[0] + 2 * Q, *qw = in[1];
   CeedScalar *qd1 = out[0], *qd2 = out[0] + Q;
@@ -99,8 +99,8 @@ CEED_QFUNCTION(f_build_l2mass_21)(void *ctx, CeedInt Q, const CeedScalar *const 
   return 0;
 }
 
-CEED_QFUNCTION(f_build_l2mass_32)(void *ctx, CeedInt Q, const CeedScalar *const *in,
-                                  CeedScalar *const *out)
+CEED_QFUNCTION(f_build_l2mass_32)(void *__restrict__ ctx, CeedInt Q,
+                                  const CeedScalar *const *in, CeedScalar *const *out)
 {
   const CeedScalar *attr = in[0], *wdetJ = in[0] + Q, *adjJt = in[0] + 2 * Q, *qw = in[1];
   CeedScalar *qd1 = out[0], *qd2 = out[0] + 3 * Q;

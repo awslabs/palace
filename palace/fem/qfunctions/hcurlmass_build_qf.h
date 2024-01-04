@@ -10,8 +10,8 @@
 // Build functions replace active vector output with quadrature point data, stored as a
 // symmetric matrix, and remove active vector input.
 
-CEED_QFUNCTION(f_build_hcurlmass_22)(void *ctx, CeedInt Q, const CeedScalar *const *in,
-                                     CeedScalar *const *out)
+CEED_QFUNCTION(f_build_hcurlmass_22)(void *__restrict__ ctx, CeedInt Q,
+                                     const CeedScalar *const *in, CeedScalar *const *out)
 {
   const CeedScalar *attr = in[0], *wdetJ = in[0] + Q, *adjJt = in[0] + 2 * Q;
   CeedScalar *__restrict__ qd1 = out[0], *__restrict__ qd2 = out[0] + Q;
@@ -37,8 +37,8 @@ CEED_QFUNCTION(f_build_hcurlmass_22)(void *ctx, CeedInt Q, const CeedScalar *con
   return 0;
 }
 
-CEED_QFUNCTION(f_build_hcurlmass_33)(void *ctx, CeedInt Q, const CeedScalar *const *in,
-                                     CeedScalar *const *out)
+CEED_QFUNCTION(f_build_hcurlmass_33)(void *__restrict__ ctx, CeedInt Q,
+                                     const CeedScalar *const *in, CeedScalar *const *out)
 {
   const CeedScalar *attr = in[0], *wdetJ = in[0] + Q, *adjJt = in[0] + 2 * Q;
   CeedScalar *__restrict__ qd1 = out[0], *__restrict__ qd2 = out[0] + Q;
@@ -67,8 +67,8 @@ CEED_QFUNCTION(f_build_hcurlmass_33)(void *ctx, CeedInt Q, const CeedScalar *con
   return 0;
 }
 
-CEED_QFUNCTION(f_build_hcurlmass_21)(void *ctx, CeedInt Q, const CeedScalar *const *in,
-                                     CeedScalar *const *out)
+CEED_QFUNCTION(f_build_hcurlmass_21)(void *__restrict__ ctx, CeedInt Q,
+                                     const CeedScalar *const *in, CeedScalar *const *out)
 {
   const CeedScalar *attr = in[0], *wdetJ = in[0] + Q, *adjJt = in[0] + 2 * Q;
   CeedScalar *__restrict__ qd1 = out[0], *__restrict__ qd2 = out[0] + Q;
@@ -92,8 +92,8 @@ CEED_QFUNCTION(f_build_hcurlmass_21)(void *ctx, CeedInt Q, const CeedScalar *con
   return 0;
 }
 
-CEED_QFUNCTION(f_build_hcurlmass_32)(void *ctx, CeedInt Q, const CeedScalar *const *in,
-                                     CeedScalar *const *out)
+CEED_QFUNCTION(f_build_hcurlmass_32)(void *__restrict__ ctx, CeedInt Q,
+                                     const CeedScalar *const *in, CeedScalar *const *out)
 {
   const CeedScalar *attr = in[0], *wdetJ = in[0] + Q, *adjJt = in[0] + 2 * Q;
   CeedScalar *__restrict__ qd1 = out[0], *__restrict__ qd2 = out[0] + Q;

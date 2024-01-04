@@ -15,8 +15,8 @@
 // out[0] is active vector, shape [ncomp=1, Q]
 // out[1] is active vector gradient, shape [qcomp=dim, ncomp=1, Q]
 
-CEED_QFUNCTION(f_apply_hcurlmass_22)(void *ctx, CeedInt Q, const CeedScalar *const *in,
-                                     CeedScalar *const *out)
+CEED_QFUNCTION(f_apply_hcurlmass_22)(void *__restrict__ ctx, CeedInt Q,
+                                     const CeedScalar *const *in, CeedScalar *const *out)
 {
   const CeedScalar *attr = in[0], *wdetJ = in[0] + Q, *adjJt = in[0] + 2 * Q, *u = in[1],
                    *gradu = in[2];
@@ -43,8 +43,8 @@ CEED_QFUNCTION(f_apply_hcurlmass_22)(void *ctx, CeedInt Q, const CeedScalar *con
   return 0;
 }
 
-CEED_QFUNCTION(f_apply_hcurlmass_33)(void *ctx, CeedInt Q, const CeedScalar *const *in,
-                                     CeedScalar *const *out)
+CEED_QFUNCTION(f_apply_hcurlmass_33)(void *__restrict__ ctx, CeedInt Q,
+                                     const CeedScalar *const *in, CeedScalar *const *out)
 {
   const CeedScalar *attr = in[0], *wdetJ = in[0] + Q, *adjJt = in[0] + 2 * Q, *u = in[1],
                    *gradu = in[2];
@@ -72,8 +72,8 @@ CEED_QFUNCTION(f_apply_hcurlmass_33)(void *ctx, CeedInt Q, const CeedScalar *con
   return 0;
 }
 
-CEED_QFUNCTION(f_apply_hcurlmass_21)(void *ctx, CeedInt Q, const CeedScalar *const *in,
-                                     CeedScalar *const *out)
+CEED_QFUNCTION(f_apply_hcurlmass_21)(void *__restrict__ ctx, CeedInt Q,
+                                     const CeedScalar *const *in, CeedScalar *const *out)
 {
   const CeedScalar *attr = in[0], *wdetJ = in[0] + Q, *adjJt = in[0] + 2 * Q, *u = in[1],
                    *gradu = in[2];
@@ -99,8 +99,8 @@ CEED_QFUNCTION(f_apply_hcurlmass_21)(void *ctx, CeedInt Q, const CeedScalar *con
   return 0;
 }
 
-CEED_QFUNCTION(f_apply_hcurlmass_32)(void *ctx, CeedInt Q, const CeedScalar *const *in,
-                                     CeedScalar *const *out)
+CEED_QFUNCTION(f_apply_hcurlmass_32)(void *__restrict__ ctx, CeedInt Q,
+                                     const CeedScalar *const *in, CeedScalar *const *out)
 {
   const CeedScalar *attr = in[0], *wdetJ = in[0] + Q, *adjJt = in[0] + 2 * Q, *u = in[1],
                    *gradu = in[2];

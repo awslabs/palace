@@ -10,8 +10,8 @@
 // Build functions replace active vector output with quadrature point data, stored as a
 // symmetric matrix, and remove active vector input.
 
-CEED_QFUNCTION(f_build_hcurl_22)(void *ctx, CeedInt Q, const CeedScalar *const *in,
-                                 CeedScalar *const *out)
+CEED_QFUNCTION(f_build_hcurl_22)(void *__restrict__ ctx, CeedInt Q,
+                                 const CeedScalar *const *in, CeedScalar *const *out)
 {
   const CeedScalar *attr = in[0], *wdetJ = in[0] + Q, *adjJt = in[0] + 2 * Q;
   CeedScalar *qd = out[0];
@@ -30,8 +30,8 @@ CEED_QFUNCTION(f_build_hcurl_22)(void *ctx, CeedInt Q, const CeedScalar *const *
   return 0;
 }
 
-CEED_QFUNCTION(f_build_hcurl_33)(void *ctx, CeedInt Q, const CeedScalar *const *in,
-                                 CeedScalar *const *out)
+CEED_QFUNCTION(f_build_hcurl_33)(void *__restrict__ ctx, CeedInt Q,
+                                 const CeedScalar *const *in, CeedScalar *const *out)
 {
   const CeedScalar *attr = in[0], *wdetJ = in[0] + Q, *adjJt = in[0] + 2 * Q;
   CeedScalar *qd = out[0];
@@ -53,8 +53,8 @@ CEED_QFUNCTION(f_build_hcurl_33)(void *ctx, CeedInt Q, const CeedScalar *const *
   return 0;
 }
 
-CEED_QFUNCTION(f_build_hcurl_21)(void *ctx, CeedInt Q, const CeedScalar *const *in,
-                                 CeedScalar *const *out)
+CEED_QFUNCTION(f_build_hcurl_21)(void *__restrict__ ctx, CeedInt Q,
+                                 const CeedScalar *const *in, CeedScalar *const *out)
 {
   const CeedScalar *attr = in[0], *wdetJ = in[0] + Q, *adjJt = in[0] + 2 * Q;
   CeedScalar *qd = out[0];
@@ -71,8 +71,8 @@ CEED_QFUNCTION(f_build_hcurl_21)(void *ctx, CeedInt Q, const CeedScalar *const *
   return 0;
 }
 
-CEED_QFUNCTION(f_build_hcurl_32)(void *ctx, CeedInt Q, const CeedScalar *const *in,
-                                 CeedScalar *const *out)
+CEED_QFUNCTION(f_build_hcurl_32)(void *__restrict__ ctx, CeedInt Q,
+                                 const CeedScalar *const *in, CeedScalar *const *out)
 {
   const CeedScalar *attr = in[0], *wdetJ = in[0] + Q, *adjJt = in[0] + 2 * Q;
   CeedScalar *qd = out[0];

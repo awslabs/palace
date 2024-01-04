@@ -13,7 +13,7 @@
 // data is arranged to be applied with the first vdim*(vdim+1)/2 components for the first
 // input/output and the remainder for the second.
 
-CEED_QFUNCTION(f_apply_1)(void *ctx, CeedInt Q, const CeedScalar *const *in,
+CEED_QFUNCTION(f_apply_1)(void *, CeedInt Q, const CeedScalar *const *in,
                           CeedScalar *const *out)
 {
   const CeedScalar *__restrict__ qd = in[0], *__restrict__ u = in[1];
@@ -26,7 +26,7 @@ CEED_QFUNCTION(f_apply_1)(void *ctx, CeedInt Q, const CeedScalar *const *in,
   return 0;
 }
 
-CEED_QFUNCTION(f_apply_2)(void *ctx, CeedInt Q, const CeedScalar *const *in,
+CEED_QFUNCTION(f_apply_2)(void *, CeedInt Q, const CeedScalar *const *in,
                           CeedScalar *const *out)
 {
   const CeedScalar *__restrict__ qd = in[0], *__restrict__ u = in[1];
@@ -42,7 +42,7 @@ CEED_QFUNCTION(f_apply_2)(void *ctx, CeedInt Q, const CeedScalar *const *in,
   return 0;
 }
 
-CEED_QFUNCTION(f_apply_3)(void *ctx, CeedInt Q, const CeedScalar *const *in,
+CEED_QFUNCTION(f_apply_3)(void *, CeedInt Q, const CeedScalar *const *in,
                           CeedScalar *const *out)
 {
   const CeedScalar *__restrict__ qd = in[0], *__restrict__ u = in[1];
@@ -60,7 +60,7 @@ CEED_QFUNCTION(f_apply_3)(void *ctx, CeedInt Q, const CeedScalar *const *in,
   return 0;
 }
 
-CEED_QFUNCTION(f_apply_22)(void *ctx, CeedInt Q, const CeedScalar *const *in,
+CEED_QFUNCTION(f_apply_22)(void *, CeedInt Q, const CeedScalar *const *in,
                            CeedScalar *const *out)
 {
   const CeedScalar *__restrict__ qd1 = in[0], *__restrict__ qd2 = in[0] + 3 * Q,
@@ -82,7 +82,7 @@ CEED_QFUNCTION(f_apply_22)(void *ctx, CeedInt Q, const CeedScalar *const *in,
   return 0;
 }
 
-CEED_QFUNCTION(f_apply_33)(void *ctx, CeedInt Q, const CeedScalar *const *in,
+CEED_QFUNCTION(f_apply_33)(void *, CeedInt Q, const CeedScalar *const *in,
                            CeedScalar *const *out)
 {
   const CeedScalar *__restrict__ qd1 = in[0], *__restrict__ qd2 = in[0] + 6 * Q,
@@ -108,7 +108,7 @@ CEED_QFUNCTION(f_apply_33)(void *ctx, CeedInt Q, const CeedScalar *const *in,
   return 0;
 }
 
-CEED_QFUNCTION(f_apply_12)(void *ctx, CeedInt Q, const CeedScalar *const *in,
+CEED_QFUNCTION(f_apply_12)(void *, CeedInt Q, const CeedScalar *const *in,
                            CeedScalar *const *out)
 {
   const CeedScalar *__restrict__ qd1 = in[0], *__restrict__ qd2 = in[0] + Q,
@@ -127,7 +127,7 @@ CEED_QFUNCTION(f_apply_12)(void *ctx, CeedInt Q, const CeedScalar *const *in,
   return 0;
 }
 
-CEED_QFUNCTION(f_apply_13)(void *ctx, CeedInt Q, const CeedScalar *const *in,
+CEED_QFUNCTION(f_apply_13)(void *, CeedInt Q, const CeedScalar *const *in,
                            CeedScalar *const *out)
 {
   const CeedScalar *__restrict__ qd1 = in[0], *__restrict__ qd2 = in[0] + Q,
@@ -148,7 +148,7 @@ CEED_QFUNCTION(f_apply_13)(void *ctx, CeedInt Q, const CeedScalar *const *in,
   return 0;
 }
 
-CEED_QFUNCTION(f_apply_21)(void *ctx, CeedInt Q, const CeedScalar *const *in,
+CEED_QFUNCTION(f_apply_21)(void *, CeedInt Q, const CeedScalar *const *in,
                            CeedScalar *const *out)
 {
   const CeedScalar *__restrict__ qd1 = in[0], *__restrict__ qd2 = in[0] + 3 * Q,
@@ -167,7 +167,7 @@ CEED_QFUNCTION(f_apply_21)(void *ctx, CeedInt Q, const CeedScalar *const *in,
   return 0;
 }
 
-CEED_QFUNCTION(f_apply_31)(void *ctx, CeedInt Q, const CeedScalar *const *in,
+CEED_QFUNCTION(f_apply_31)(void *, CeedInt Q, const CeedScalar *const *in,
                            CeedScalar *const *out)
 {
   const CeedScalar *__restrict__ qd1 = in[0], *__restrict__ qd2 = in[0] + 6 * Q,

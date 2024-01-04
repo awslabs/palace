@@ -11,8 +11,8 @@
 // Build functions replace active vector output with quadrature point data and remove active
 // vector input.
 
-CEED_QFUNCTION(f_build_hcurlhdiv_22)(void *ctx, CeedInt Q, const CeedScalar *const *in,
-                                     CeedScalar *const *out)
+CEED_QFUNCTION(f_build_hcurlhdiv_22)(void *__restrict__ ctx, CeedInt Q,
+                                     const CeedScalar *const *in, CeedScalar *const *out)
 {
   const CeedScalar *attr = in[0], *wdetJ = in[0] + Q, *adjJt = in[0] + 2 * Q;
   CeedScalar *qd = out[0];
@@ -33,8 +33,8 @@ CEED_QFUNCTION(f_build_hcurlhdiv_22)(void *ctx, CeedInt Q, const CeedScalar *con
   return 0;
 }
 
-CEED_QFUNCTION(f_build_hcurlhdiv_33)(void *ctx, CeedInt Q, const CeedScalar *const *in,
-                                     CeedScalar *const *out)
+CEED_QFUNCTION(f_build_hcurlhdiv_33)(void *__restrict__ ctx, CeedInt Q,
+                                     const CeedScalar *const *in, CeedScalar *const *out)
 {
   const CeedScalar *attr = in[0], *wdetJ = in[0] + Q, *adjJt = in[0] + 2 * Q;
   CeedScalar *qd = out[0];
@@ -60,8 +60,8 @@ CEED_QFUNCTION(f_build_hcurlhdiv_33)(void *ctx, CeedInt Q, const CeedScalar *con
   return 0;
 }
 
-CEED_QFUNCTION(f_build_hcurlhdiv_21)(void *ctx, CeedInt Q, const CeedScalar *const *in,
-                                     CeedScalar *const *out)
+CEED_QFUNCTION(f_build_hcurlhdiv_21)(void *__restrict__ ctx, CeedInt Q,
+                                     const CeedScalar *const *in, CeedScalar *const *out)
 {
   const CeedScalar *attr = in[0], *wdetJ = in[0] + Q, *adjJt = in[0] + 2 * Q;
   CeedScalar *qd = out[0];
@@ -79,8 +79,8 @@ CEED_QFUNCTION(f_build_hcurlhdiv_21)(void *ctx, CeedInt Q, const CeedScalar *con
   return 0;
 }
 
-CEED_QFUNCTION(f_build_hcurlhdiv_32)(void *ctx, CeedInt Q, const CeedScalar *const *in,
-                                     CeedScalar *const *out)
+CEED_QFUNCTION(f_build_hcurlhdiv_32)(void *__restrict__ ctx, CeedInt Q,
+                                     const CeedScalar *const *in, CeedScalar *const *out)
 {
   const CeedScalar *attr = in[0], *wdetJ = in[0] + Q, *adjJt = in[0] + 2 * Q;
   CeedScalar *qd = out[0];
@@ -101,8 +101,8 @@ CEED_QFUNCTION(f_build_hcurlhdiv_32)(void *ctx, CeedInt Q, const CeedScalar *con
   return 0;
 }
 
-CEED_QFUNCTION(f_build_hdivhcurl_22)(void *ctx, CeedInt Q, const CeedScalar *const *in,
-                                     CeedScalar *const *out)
+CEED_QFUNCTION(f_build_hdivhcurl_22)(void *__restrict__ ctx, CeedInt Q,
+                                     const CeedScalar *const *in, CeedScalar *const *out)
 {
   const CeedScalar *attr = in[0], *wdetJ = in[0] + Q, *adjJt = in[0] + 2 * Q;
   CeedScalar *qd = out[0];
@@ -123,8 +123,8 @@ CEED_QFUNCTION(f_build_hdivhcurl_22)(void *ctx, CeedInt Q, const CeedScalar *con
   return 0;
 }
 
-CEED_QFUNCTION(f_build_hdivhcurl_33)(void *ctx, CeedInt Q, const CeedScalar *const *in,
-                                     CeedScalar *const *out)
+CEED_QFUNCTION(f_build_hdivhcurl_33)(void *__restrict__ ctx, CeedInt Q,
+                                     const CeedScalar *const *in, CeedScalar *const *out)
 {
   const CeedScalar *attr = in[0], *wdetJ = in[0] + Q, *adjJt = in[0] + 2 * Q;
   CeedScalar *qd = out[0];
@@ -150,8 +150,8 @@ CEED_QFUNCTION(f_build_hdivhcurl_33)(void *ctx, CeedInt Q, const CeedScalar *con
   return 0;
 }
 
-CEED_QFUNCTION(f_build_hdivhcurl_21)(void *ctx, CeedInt Q, const CeedScalar *const *in,
-                                     CeedScalar *const *out)
+CEED_QFUNCTION(f_build_hdivhcurl_21)(void *__restrict__ ctx, CeedInt Q,
+                                     const CeedScalar *const *in, CeedScalar *const *out)
 {
   const CeedScalar *attr = in[0], *wdetJ = in[0] + Q, *adjJt = in[0] + 2 * Q;
   CeedScalar *qd = out[0];
@@ -169,8 +169,8 @@ CEED_QFUNCTION(f_build_hdivhcurl_21)(void *ctx, CeedInt Q, const CeedScalar *con
   return 0;
 }
 
-CEED_QFUNCTION(f_build_hdivhcurl_32)(void *ctx, CeedInt Q, const CeedScalar *const *in,
-                                     CeedScalar *const *out)
+CEED_QFUNCTION(f_build_hdivhcurl_32)(void *__restrict__ ctx, CeedInt Q,
+                                     const CeedScalar *const *in, CeedScalar *const *out)
 {
   const CeedScalar *attr = in[0], *wdetJ = in[0] + Q, *adjJt = in[0] + 2 * Q;
   CeedScalar *qd = out[0];
