@@ -170,27 +170,31 @@ void SetRandomReal(MPI_Comm comm, VecType &x, int seed = 0);
 template <typename VecType>
 void SetRandomSign(MPI_Comm comm, VecType &x, int seed = 0);
 
-// Calculate the inner product yᴴ x or yᵀ x.
+// Calculate the local inner product yᴴ x or yᵀ x.
+double LocalDot(const Vector &x, const Vector &y);
+std::complex<double> LocalDot(const ComplexVector &x, const ComplexVector &y);
+
+// Calculate the parallel inner product yᴴ x or yᵀ x.
 template <typename VecType>
 inline auto Dot(MPI_Comm comm, const VecType &x, const VecType &y)
 {
-  auto dot = x * y;
+  auto dot = LocalDot(x, y);
   Mpi::GlobalSum(1, &dot, comm);
   return dot;
 }
 
 // Calculate the vector 2-norm.
 template <typename VecType>
-inline double Norml2(MPI_Comm comm, const VecType &x)
+inline auto Norml2(MPI_Comm comm, const VecType &x)
 {
   return std::sqrt(std::abs(Dot(comm, x, x)));
 }
 
 // Normalize the vector, possibly with respect to an SPD matrix B.
 template <typename VecType>
-inline double Normalize(MPI_Comm comm, VecType &x)
+inline auto Normalize(MPI_Comm comm, VecType &x)
 {
-  double norm = Norml2(comm, x);
+  auto norm = Norml2(comm, x);
   MFEM_ASSERT(norm > 0.0, "Zero vector norm in normalization!");
   x *= 1.0 / norm;
   return norm;

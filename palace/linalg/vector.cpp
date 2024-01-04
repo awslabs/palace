@@ -203,13 +203,14 @@ void ComplexVector::Reciprocal()
 std::complex<double> ComplexVector::Dot(const ComplexVector &y) const
 {
   return {(Real() * y.Real()) + (Imag() * y.Imag()),
-          (Imag() * y.Real()) - (Real() * y.Imag())};
+          (this == &y) ? 0.0 : ((Imag() * y.Real()) - (Real() * y.Imag()))};
 }
 
 std::complex<double> ComplexVector::TransposeDot(const ComplexVector &y) const
 {
   return {(Real() * y.Real()) - (Imag() * y.Imag()),
-          (Imag() * y.Real()) + (Real() * y.Imag())};
+          (this == &y) ? (2.0 * (Imag() * y.Real()))
+                       : ((Imag() * y.Real()) + (Real() * y.Imag()))};
 }
 
 void ComplexVector::AXPY(std::complex<double> alpha, const ComplexVector &x)
@@ -385,78 +386,6 @@ namespace linalg
 {
 
 template <>
-void SetRandom(MPI_Comm comm, Vector &x, int seed)
-{
-  if (seed == 0)
-  {
-    std::vector<std::uint32_t> seeds(1);
-    std::seed_seq seed_gen{Mpi::Rank(comm)};
-    seed_gen.generate(seeds.begin(), seeds.end());
-    seed = static_cast<int>(seeds[0]);
-  }
-  x.Randomize(seed);  // On host always
-}
-
-template <>
-void SetRandomReal(MPI_Comm comm, Vector &x, int seed)
-{
-  SetRandom(comm, x, seed);
-}
-
-template <>
-void SetRandomSign(MPI_Comm comm, Vector &x, int seed)
-{
-  SetRandom(comm, x, seed);
-  const bool use_dev = x.UseDevice();
-  const int N = x.Size();
-  auto *X = x.ReadWrite(use_dev);
-  mfem::forall_switch(use_dev, N,
-                      [=] MFEM_HOST_DEVICE(int i)
-                      { X[i] = (X[i] > 0.0) ? 1.0 : ((X[i] < 0.0) ? -1.0 : 0.0); });
-}
-
-template <>
-void SetRandom(MPI_Comm comm, ComplexVector &x, int seed)
-{
-  if (seed == 0)
-  {
-    std::vector<std::uint32_t> seeds(2);
-    std::seed_seq seed_gen{2 * Mpi::Rank(comm), 2 * Mpi::Rank(comm) + 1};
-    seed_gen.generate(seeds.begin(), seeds.end());
-    SetRandom(comm, x.Real(), static_cast<int>(seeds[0]));
-    SetRandom(comm, x.Imag(), static_cast<int>(seeds[1]));
-  }
-  else
-  {
-    SetRandom(comm, x.Real(), seed);
-    SetRandom(comm, x.Imag(), seed);
-  }
-}
-
-template <>
-void SetRandomReal(MPI_Comm comm, ComplexVector &x, int seed)
-{
-  SetRandom(comm, x.Real(), seed);
-  x.Imag() = 0.0;
-}
-
-template <>
-void SetRandomSign(MPI_Comm comm, ComplexVector &x, int seed)
-{
-  SetRandom(comm, x, seed);
-  const bool use_dev = x.UseDevice();
-  const int N = x.Size();
-  auto *XR = x.Real().ReadWrite(use_dev);
-  auto *XI = x.Imag().ReadWrite(use_dev);
-  mfem::forall_switch(use_dev, N,
-                      [=] MFEM_HOST_DEVICE(int i)
-                      { XR[i] = (XR[i] > 0.0) ? 1.0 : ((XR[i] < 0.0) ? -1.0 : 0.0); });
-  mfem::forall_switch(use_dev, N,
-                      [=] MFEM_HOST_DEVICE(int i)
-                      { XI[i] = (XI[i] > 0.0) ? 1.0 : ((XI[i] < 0.0) ? -1.0 : 0.0); });
-}
-
-template <>
 void SetSubVector(Vector &x, const mfem::Array<int> &rows, double s)
 {
   const bool use_dev = x.UseDevice();
@@ -559,6 +488,125 @@ void SetSubVector(ComplexVector &x, int start, int end, double s)
   auto *XI = x.Imag().ReadWrite(use_dev) + start;
   mfem::forall_switch(use_dev, N, [=] MFEM_HOST_DEVICE(int i) { XR[i] = sr; });
   mfem::forall_switch(use_dev, N, [=] MFEM_HOST_DEVICE(int i) { XI[i] = 0.0; });
+}
+
+template <>
+void SetRandom(MPI_Comm comm, Vector &x, int seed)
+{
+  if (seed == 0)
+  {
+    std::vector<std::uint32_t> seeds(1);
+    std::seed_seq seed_gen{Mpi::Rank(comm)};
+    seed_gen.generate(seeds.begin(), seeds.end());
+    seed = static_cast<int>(seeds[0]);
+  }
+  x.Randomize(seed);  // On host always
+}
+
+template <>
+void SetRandomReal(MPI_Comm comm, Vector &x, int seed)
+{
+  SetRandom(comm, x, seed);
+}
+
+template <>
+void SetRandomSign(MPI_Comm comm, Vector &x, int seed)
+{
+  SetRandom(comm, x, seed);
+  const bool use_dev = x.UseDevice();
+  const int N = x.Size();
+  auto *X = x.ReadWrite(use_dev);
+  mfem::forall_switch(use_dev, N,
+                      [=] MFEM_HOST_DEVICE(int i)
+                      { X[i] = (X[i] > 0.0) ? 1.0 : ((X[i] < 0.0) ? -1.0 : 0.0); });
+}
+
+template <>
+void SetRandom(MPI_Comm comm, ComplexVector &x, int seed)
+{
+  if (seed == 0)
+  {
+    std::vector<std::uint32_t> seeds(2);
+    std::seed_seq seed_gen{2 * Mpi::Rank(comm), 2 * Mpi::Rank(comm) + 1};
+    seed_gen.generate(seeds.begin(), seeds.end());
+    SetRandom(comm, x.Real(), static_cast<int>(seeds[0]));
+    SetRandom(comm, x.Imag(), static_cast<int>(seeds[1]));
+  }
+  else
+  {
+    SetRandom(comm, x.Real(), seed);
+    SetRandom(comm, x.Imag(), seed);
+  }
+}
+
+template <>
+void SetRandomReal(MPI_Comm comm, ComplexVector &x, int seed)
+{
+  SetRandom(comm, x.Real(), seed);
+  x.Imag() = 0.0;
+}
+
+template <>
+void SetRandomSign(MPI_Comm comm, ComplexVector &x, int seed)
+{
+  SetRandom(comm, x, seed);
+  const bool use_dev = x.UseDevice();
+  const int N = x.Size();
+  auto *XR = x.Real().ReadWrite(use_dev);
+  auto *XI = x.Imag().ReadWrite(use_dev);
+  mfem::forall_switch(use_dev, N,
+                      [=] MFEM_HOST_DEVICE(int i)
+                      { XR[i] = (XR[i] > 0.0) ? 1.0 : ((XR[i] < 0.0) ? -1.0 : 0.0); });
+  mfem::forall_switch(use_dev, N,
+                      [=] MFEM_HOST_DEVICE(int i)
+                      { XI[i] = (XI[i] > 0.0) ? 1.0 : ((XI[i] < 0.0) ? -1.0 : 0.0); });
+}
+
+namespace
+{
+
+struct HypreVectorWrapper
+{
+  hypre_Vector *v;
+  HypreVectorWrapper() : v(nullptr) {}
+  HypreVectorWrapper(const Vector &x) : v(nullptr) { Update(x); }
+  ~HypreVectorWrapper() { hypre_SeqVectorDestroy(v); }
+  void Update(const Vector &x)
+  {
+    HYPRE_Int N = x.Size();
+    if (!v)
+    {
+      v = hypre_SeqVectorCreate(N);
+      hypre_SeqVectorSetDataOwner(v, 0);
+      hypre_VectorData(v) = const_cast<double *>(
+          x.Read(hypre_VectorMemoryLocation(v) == HYPRE_MEMORY_DEVICE));
+      hypre_SeqVectorInitialize(v);
+    }
+    else
+    {
+      hypre_SeqVectorSetSize(v, N);
+      hypre_VectorData(v) = const_cast<double *>(
+          x.Read(hypre_VectorMemoryLocation(v) == HYPRE_MEMORY_DEVICE));
+    }
+  }
+  operator hypre_Vector *() { return v; }
+};
+
+}  // namespace
+
+double LocalDot(const Vector &x, const Vector &y)
+{
+  MFEM_ASSERT(x.Size() == y.Size(), "Size mismatch for vector inner product!");
+  static HypreVectorWrapper X, Y;
+  X.Update(x);
+  Y.Update(y);
+  return hypre_SeqVectorInnerProd(X, Y);
+}
+
+std::complex<double> LocalDot(const ComplexVector &x, const ComplexVector &y)
+{
+  return {LocalDot(x.Real(), y.Real()) + LocalDot(x.Imag(), y.Imag()),
+          (&x == &y) ? 0.0 : (LocalDot(x.Imag(), y.Real()) - LocalDot(x.Real(), y.Imag()))};
 }
 
 template <>
