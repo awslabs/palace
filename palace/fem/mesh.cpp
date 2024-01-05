@@ -255,7 +255,7 @@ auto BuildCeedGeomFactorData(
                     "Unexpected non-SubMesh object for BuildCeedGeomFactorData with Mesh "
                     "with (dim, space_dim) = ("
                         << mesh.Dimension() << ", " << mesh.SpaceDimension() << ")!");
-        return [&](int i)
+        return [&, submesh](int i)
         {
           // Mesh is actually a boundary submesh, so we use the boundary attribute mappings
           // from the parent mesh.
