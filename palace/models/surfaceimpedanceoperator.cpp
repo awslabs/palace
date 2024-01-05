@@ -12,7 +12,7 @@ namespace palace
 {
 
 SurfaceImpedanceOperator::SurfaceImpedanceOperator(const IoData &iodata,
-                                                   mfem::ParMesh &mesh)
+                                                   const mfem::ParMesh &mesh)
 {
   // Set up impedance boundary conditions.
   SetUpBoundaryProperties(iodata, mesh);
@@ -97,7 +97,8 @@ void SurfaceImpedanceOperator::SetUpBoundaryProperties(const IoData &iodata,
   mesh::AttrToMarker(bdr_attr_max, impedance_Cs_bcs, impedance_Cs_marker);
 }
 
-void SurfaceImpedanceOperator::PrintBoundaryInfo(const IoData &iodata, mfem::ParMesh &mesh)
+void SurfaceImpedanceOperator::PrintBoundaryInfo(const IoData &iodata,
+                                                 const mfem::ParMesh &mesh)
 {
   if (impedance_marker.Size() && impedance_marker.Max() == 0)
   {
@@ -109,8 +110,7 @@ void SurfaceImpedanceOperator::PrintBoundaryInfo(const IoData &iodata, mfem::Par
     if (impedance_marker[i])
     {
       const int attr = i + 1;
-      mfem::Vector nor;
-      mesh::GetSurfaceNormal(mesh, attr, nor);
+      mfem::Vector normal = mesh::GetSurfaceNormal(mesh, attr);
       bool comma = false;
       Mpi::Print(" {:d}:", attr);
       if (std::abs(Z_Rsinv(i)) > 0.0)
@@ -147,11 +147,11 @@ void SurfaceImpedanceOperator::PrintBoundaryInfo(const IoData &iodata, mfem::Par
       }
       if (mesh.SpaceDimension() == 3)
       {
-        Mpi::Print(" n = ({:+.1f}, {:+.1f}, {:+.1f})", nor(0), nor(1), nor(2));
+        Mpi::Print(" n = ({:+.1f}, {:+.1f}, {:+.1f})", normal(0), normal(1), normal(2));
       }
       else
       {
-        Mpi::Print(" n = ({:+.1f}, {:+.1f})", nor(0), nor(1));
+        Mpi::Print(" n = ({:+.1f}, {:+.1f})", normal(0), normal(1));
       }
       Mpi::Print("\n");
     }

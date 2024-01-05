@@ -14,7 +14,7 @@ namespace palace
 using namespace std::complex_literals;
 
 SurfaceConductivityOperator::SurfaceConductivityOperator(const IoData &iodata,
-                                                         mfem::ParMesh &mesh)
+                                                         const mfem::ParMesh &mesh)
 {
   // Set up finite conductivity boundary conditions.
   SetUpBoundaryProperties(iodata, mesh);
@@ -96,7 +96,7 @@ void SurfaceConductivityOperator::SetUpBoundaryProperties(const IoData &iodata,
 }
 
 void SurfaceConductivityOperator::PrintBoundaryInfo(const IoData &iodata,
-                                                    mfem::ParMesh &mesh)
+                                                    const mfem::ParMesh &mesh)
 {
   if (conductivity_marker.Size() && conductivity_marker.Max() == 0)
   {
@@ -108,8 +108,7 @@ void SurfaceConductivityOperator::PrintBoundaryInfo(const IoData &iodata,
     if (conductivity_marker[i])
     {
       const int attr = i + 1;
-      mfem::Vector nor;
-      mesh::GetSurfaceNormal(mesh, attr, nor);
+      mfem::Vector normal = mesh::GetSurfaceNormal(mesh, attr);
       Mpi::Print(" {:d}: σ = {:.3e} S/m", attr,
                  iodata.DimensionalizeValue(IoData::ValueType::CONDUCTIVITY, bdr_sigma(i)));
       if (bdr_h(i) > 0.0)
@@ -119,11 +118,11 @@ void SurfaceConductivityOperator::PrintBoundaryInfo(const IoData &iodata,
       }
       if (mesh.SpaceDimension() == 3)
       {
-        Mpi::Print(", n = ({:+.1f}, {:+.1f}, {:+.1f})", nor(0), nor(1), nor(2));
+        Mpi::Print(", n = ({:+.1f}, {:+.1f}, {:+.1f})", normal(0), normal(1), normal(2));
       }
       else
       {
-        Mpi::Print(", n = ({:+.1f}, {:+.1f})", nor(0), nor(1));
+        Mpi::Print(", n = ({:+.1f}, {:+.1f})", normal(0), normal(1));
       }
       Mpi::Print("\n");
     }

@@ -1003,7 +1003,7 @@ void WavePortOperator::SetUpBoundaryProperties(
   }
 }
 
-void WavePortOperator::PrintBoundaryInfo(const IoData &iodata, mfem::ParMesh &mesh)
+void WavePortOperator::PrintBoundaryInfo(const IoData &iodata, const mfem::ParMesh &mesh)
 {
   // Print out BC info for all port attributes.
   if (ports.empty())
@@ -1020,18 +1020,17 @@ void WavePortOperator::PrintBoundaryInfo(const IoData &iodata, mfem::ParMesh &me
         continue;
       }
       const int attr = i + 1;
-      mfem::Vector nor;
-      mesh::GetSurfaceNormal(mesh, attr, nor);
+      mfem::Vector normal = mesh::GetSurfaceNormal(mesh, attr);
       Mpi::Print(
           " {:d}: Index = {:d}, mode = {:d}, d = {:.3e} m", attr, idx, data.GetModeIndex(),
           iodata.DimensionalizeValue(IoData::ValueType::LENGTH, data.GetOffsetDistance()));
       if (mesh.SpaceDimension() == 3)
       {
-        Mpi::Print(", n = ({:+.1f}, {:+.1f}, {:+.1f})", nor(0), nor(1), nor(2));
+        Mpi::Print(", n = ({:+.1f}, {:+.1f}, {:+.1f})", normal(0), normal(1), normal(2));
       }
       else
       {
-        Mpi::Print(", n = ({:+.1f}, {:+.1f})", nor(0), nor(1));
+        Mpi::Print(", n = ({:+.1f}, {:+.1f})", normal(0), normal(1));
       }
       Mpi::Print("\n");
     }

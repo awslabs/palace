@@ -24,10 +24,10 @@ private:
   mfem::Array<int> impedance_marker, impedance_Rs_marker, impedance_Ls_marker,
       impedance_Cs_marker;
   void SetUpBoundaryProperties(const IoData &iodata, const mfem::ParMesh &mesh);
-  void PrintBoundaryInfo(const IoData &iodata, mfem::ParMesh &mesh);
+  void PrintBoundaryInfo(const IoData &iodata, const mfem::ParMesh &mesh);
 
 public:
-  SurfaceImpedanceOperator(const IoData &iodata, mfem::ParMesh &mesh);
+  SurfaceImpedanceOperator(const IoData &iodata, const mfem::ParMesh &mesh);
 
   // Returns array marking surface impedance attributes.
   const mfem::Array<int> &GetMarker() const { return impedance_marker; }

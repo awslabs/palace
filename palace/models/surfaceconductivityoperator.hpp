@@ -23,10 +23,10 @@ private:
   mfem::Vector bdr_sigma, bdr_mu, bdr_h;
   mfem::Array<int> conductivity_marker;
   void SetUpBoundaryProperties(const IoData &iodata, const mfem::ParMesh &mesh);
-  void PrintBoundaryInfo(const IoData &iodata, mfem::ParMesh &mesh);
+  void PrintBoundaryInfo(const IoData &iodata, const mfem::ParMesh &mesh);
 
 public:
-  SurfaceConductivityOperator(const IoData &iodata, mfem::ParMesh &mesh);
+  SurfaceConductivityOperator(const IoData &iodata, const mfem::ParMesh &mesh);
 
   // Returns array marking finite conductivity boundary attributes.
   const mfem::Array<int> &GetMarker() const { return conductivity_marker; }

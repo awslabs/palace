@@ -360,7 +360,7 @@ void LumpedPortOperator::SetUpBoundaryProperties(const IoData &iodata,
   }
 }
 
-void LumpedPortOperator::PrintBoundaryInfo(const IoData &iodata, mfem::ParMesh &mesh)
+void LumpedPortOperator::PrintBoundaryInfo(const IoData &iodata, const mfem::ParMesh &mesh)
 {
   // Print out BC info for all port attributes.
   if (ports.empty())
@@ -379,8 +379,7 @@ void LumpedPortOperator::PrintBoundaryInfo(const IoData &iodata, mfem::ParMesh &
           continue;
         }
         const int attr = i + 1;
-        mfem::Vector nor;
-        mesh::GetSurfaceNormal(mesh, attr, nor);
+        mfem::Vector normal = mesh::GetSurfaceNormal(mesh, attr);
         const double Rs = data.GetR() * data.GetToSquare(*elem);
         const double Ls = data.GetL() * data.GetToSquare(*elem);
         const double Cs = data.GetC() / data.GetToSquare(*elem);
@@ -418,11 +417,11 @@ void LumpedPortOperator::PrintBoundaryInfo(const IoData &iodata, mfem::ParMesh &
         }
         if (mesh.SpaceDimension() == 3)
         {
-          Mpi::Print(" n = ({:+.1f}, {:+.1f}, {:+.1f})", nor(0), nor(1), nor(2));
+          Mpi::Print(" n = ({:+.1f}, {:+.1f}, {:+.1f})", normal(0), normal(1), normal(2));
         }
         else
         {
-          Mpi::Print(" n = ({:+.1f}, {:+.1f})", nor(0), nor(1));
+          Mpi::Print(" n = ({:+.1f}, {:+.1f})", normal(0), normal(1));
         }
         Mpi::Print("\n");
       }

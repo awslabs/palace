@@ -142,7 +142,7 @@ private:
   void SetUpBoundaryProperties(const IoData &iodata, const MaterialOperator &mat_op,
                                const mfem::ParFiniteElementSpace &nd_fespace,
                                const mfem::ParFiniteElementSpace &h1_fespace);
-  void PrintBoundaryInfo(const IoData &iodata, mfem::ParMesh &mesh);
+  void PrintBoundaryInfo(const IoData &iodata, const mfem::ParMesh &mesh);
 
   // Compute boundary modes for all wave port boundaries at the specified frequency.
   void Initialize(double omega);

@@ -50,20 +50,27 @@ struct ElementTypeInfo
 };
 
 // Simplified helper for describing the element types in a (Par)Mesh.
-ElementTypeInfo CheckElements(mfem::Mesh &mesh);
+ElementTypeInfo CheckElements(const mfem::Mesh &mesh);
 
 // Helper function to convert a set of attribute numbers to a marker array. The marker array
 // will be of size max_attr and it will contain only zeroes and ones. Ones indicate which
-// attribute numbers are present in the attrs array. In the special case when attrs has a
+// attribute numbers are present in the list array. In the special case when list has a
 // single entry equal to -1 the marker array will contain all ones.
-void AttrToMarker(int max_attr, const mfem::Array<int> &attrs, mfem::Array<int> &marker);
-void AttrToMarker(int max_attr, const std::vector<int> &attrs, mfem::Array<int> &marker);
+template <typename T>
+void AttrToMarker(int max_attr, const T &attr_list, mfem::Array<int> &marker);
+template <typename T>
+mfem::Array<int> AttrToMarker(int max_attr, const T &attr_list)
+{
+  mfem::Array<int> marker;
+  AttrToMarker(max_attr, attr_list, marker);
+  return marker;
+}
 
 // Helper function to construct the bounding box for all elements with the given attribute.
-void GetAxisAlignedBoundingBox(mfem::ParMesh &mesh, int attr, bool bdr, mfem::Vector &min,
-                               mfem::Vector &max);
-void GetAxisAlignedBoundingBox(mfem::ParMesh &mesh, const mfem::Array<int> &marker,
+void GetAxisAlignedBoundingBox(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
                                bool bdr, mfem::Vector &min, mfem::Vector &max);
+void GetAxisAlignedBoundingBox(const mfem::ParMesh &mesh, int attr, bool bdr,
+                               mfem::Vector &min, mfem::Vector &max);
 
 // Struct describing a bounding box in terms of the center and face normals. The normals
 // specify the direction from the center of the box.
@@ -116,30 +123,32 @@ struct BoundingBall
 };
 
 // Helper functions for computing bounding boxes from a mesh and markers.
-BoundingBox GetBoundingBox(mfem::ParMesh &mesh, const mfem::Array<int> &marker, bool bdr);
-BoundingBox GetBoundingBox(mfem::ParMesh &mesh, int attr, bool bdr);
+BoundingBox GetBoundingBox(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
+                           bool bdr);
+BoundingBox GetBoundingBox(const mfem::ParMesh &mesh, int attr, bool bdr);
 
 // Helper function for computing the direction aligned length of a marked group.
-double GetProjectedLength(mfem::ParMesh &mesh, const mfem::Array<int> &marker, bool bdr,
-                          const std::array<double, 3> &dir);
-double GetProjectedLength(mfem::ParMesh &mesh, int attr, bool bdr,
+double GetProjectedLength(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
+                          bool bdr, const std::array<double, 3> &dir);
+double GetProjectedLength(const mfem::ParMesh &mesh, int attr, bool bdr,
                           const std::array<double, 3> &dir);
 
 // Given a mesh and a marker, compute the diameter of a bounding circle/sphere, assuming
 // that the extrema points are in the marked group.
-BoundingBall GetBoundingBall(mfem::ParMesh &mesh, const mfem::Array<int> &marker, bool bdr);
-BoundingBall GetBoundingBall(mfem::ParMesh &mesh, int attr, bool bdr);
+BoundingBall GetBoundingBall(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
+                             bool bdr);
+BoundingBall GetBoundingBall(const mfem::ParMesh &mesh, int attr, bool bdr);
 
 // Helper function to compute the average surface normal for all elements with the given
 // attribute.
-void GetSurfaceNormal(mfem::ParMesh &mesh, int attr, mfem::Vector &normal);
-void GetSurfaceNormal(mfem::ParMesh &mesh, const mfem::Array<int> &marker,
-                      mfem::Vector &normal);
+mfem::Vector GetSurfaceNormal(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
+                              bool average = true);
+mfem::Vector GetSurfaceNormal(const mfem::ParMesh &mesh, int attr, bool average = true);
+mfem::Vector GetSurfaceNormal(const mfem::ParMesh &mesh, bool average = true);
 
 // Helper function responsible for rebalancing the mesh, and optionally writing meshes from
 // the intermediate stages to disk. Returns the imbalance ratio before rebalancing.
-double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh,
-                     double tol);
+double RebalanceMesh(mfem::ParMesh &mesh, const IoData &iodata, double tol);
 
 }  // namespace mesh
 

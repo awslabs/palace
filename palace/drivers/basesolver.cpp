@@ -157,9 +157,9 @@ void BaseSolver::SolveEstimateMarkRefine(
     constexpr bool refine = true, fix_orientation = true;
     mesh.back()->Finalize(refine, fix_orientation);
   }
+  MPI_Comm comm = mesh.back()->GetComm();
 
   // Perform initial solve and estimation.
-  MPI_Comm comm = mesh.back()->GetComm();
   auto [indicators, ntdof] = Solve(mesh);
   double err = indicators.Norml2(comm);
 
@@ -170,7 +170,7 @@ void BaseSolver::SolveEstimateMarkRefine(
     // Run out of iterations.
     ret |= (it >= refinement.max_it);
     // Run out of DOFs if a limit was set.
-    ret |= (refinement.max_size >= 1 && ntdof > refinement.max_size);
+    ret |= (refinement.max_size > 0 && ntdof > refinement.max_size);
     return ret;
   };
 
@@ -206,19 +206,20 @@ void BaseSolver::SolveEstimateMarkRefine(
         refinement.update_fraction);
 
     // Refine.
-    const auto initial_elem_count = mesh.back()->GetGlobalNE();
-    mesh.back()->GeneralRefinement(marked_elements, -1, refinement.max_nc_levels);
-    const auto final_elem_count = mesh.back()->GetGlobalNE();
+    auto &fine_mesh = *mesh.back();
+    const auto initial_elem_count = fine_mesh.GetGlobalNE();
+    fine_mesh.GeneralRefinement(marked_elements, -1, refinement.max_nc_levels);
+    const auto final_elem_count = fine_mesh.GetGlobalNE();
     Mpi::Print(" Mesh refinement added {:d} elements (initial: {}, final: {})\n",
                final_elem_count - initial_elem_count, initial_elem_count, final_elem_count);
 
     // Optionally rebalance and write the adapted mesh to file.
     const auto ratio_pre =
-        mesh::RebalanceMesh(iodata, mesh.back(), refinement.maximum_imbalance);
+        mesh::RebalanceMesh(fine_mesh, iodata, refinement.maximum_imbalance);
     if (ratio_pre > refinement.maximum_imbalance)
     {
       int min_elem, max_elem;
-      min_elem = max_elem = mesh.back()->GetNE();
+      min_elem = max_elem = fine_mesh.GetNE();
       Mpi::GlobalMin(1, &min_elem, comm);
       Mpi::GlobalMax(1, &max_elem, comm);
       const auto ratio_post = double(max_elem) / min_elem;
