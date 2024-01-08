@@ -60,29 +60,29 @@ std::unique_ptr<IterativeSolver<OperType>> ConfigureKrylovSolver(MPI_Comm comm,
 
   // Configure preconditioning side (only for GMRES).
   if (iodata.solver.linear.pc_side_type != config::LinearSolverData::SideType::DEFAULT &&
-      (type != config::LinearSolverData::KspType::GMRES ||
-       type != config::LinearSolverData::KspType::FGMRES))
+      type != config::LinearSolverData::KspType::GMRES)
   {
-    Mpi::Warning(
-        comm,
-        "Preconditioner side will be ignored for non-GMRES/FGMRES iterative solvers!\n");
+    Mpi::Warning(comm,
+                 "Preconditioner side will be ignored for non-GMRES iterative solvers!\n");
   }
-  else if (type == config::LinearSolverData::KspType::GMRES ||
-           type == config::LinearSolverData::KspType::FGMRES)
+  else
   {
-    // Because FGMRES inherits from GMRES, this is OK.
-    auto *gmres = static_cast<GmresSolver<OperType> *>(ksp.get());
-    switch (iodata.solver.linear.pc_side_type)
+    if (type == config::LinearSolverData::KspType::GMRES ||
+        type == config::LinearSolverData::KspType::FGMRES)
     {
-      case config::LinearSolverData::SideType::LEFT:
-        gmres->SetPrecSide(GmresSolver<OperType>::PrecSide::LEFT);
-        break;
-      case config::LinearSolverData::SideType::RIGHT:
-        gmres->SetPrecSide(GmresSolver<OperType>::PrecSide::RIGHT);
-        break;
-      case config::LinearSolverData::SideType::DEFAULT:
-        // Do nothing
-        break;
+      auto *gmres = static_cast<GmresSolver<OperType> *>(ksp.get());
+      switch (iodata.solver.linear.pc_side_type)
+      {
+        case config::LinearSolverData::SideType::LEFT:
+          gmres->SetPrecSide(GmresSolver<OperType>::PrecSide::LEFT);
+          break;
+        case config::LinearSolverData::SideType::RIGHT:
+          gmres->SetPrecSide(GmresSolver<OperType>::PrecSide::RIGHT);
+          break;
+        case config::LinearSolverData::SideType::DEFAULT:
+          // Do nothing
+          break;
+      }
     }
   }
 
