@@ -432,6 +432,30 @@ void SetSubVector(ComplexVector &x, const mfem::Array<int> &rows, const ComplexV
 }
 
 template <>
+void SetSubVector(Vector &x, int start, int end, double s)
+{
+  MFEM_ASSERT(start >= 0 && end <= x.Size() && start <= end,
+              "Invalid range for SetSubVector!");
+  const int N = end - start;
+  const double sr = s;
+  auto *X = x.ReadWrite() + start;
+  mfem::forall(N, [=] MFEM_HOST_DEVICE(int i) { X[i] = sr; });
+}
+
+template <>
+void SetSubVector(ComplexVector &x, int start, int end, double s)
+{
+  MFEM_ASSERT(start >= 0 && end <= x.Size() && start <= end,
+              "Invalid range for SetSubVector!");
+  const int N = end - start;
+  const double sr = s;
+  auto *XR = x.Real().ReadWrite() + start;
+  auto *XI = x.Imag().ReadWrite() + start;
+  mfem::forall(N, [=] MFEM_HOST_DEVICE(int i) { XR[i] = sr; });
+  mfem::forall(N, [=] MFEM_HOST_DEVICE(int i) { XI[i] = 0.0; });
+}
+
+template <>
 double Norml2(MPI_Comm comm, const Vector &x, const Operator &B, Vector &Bx)
 {
   B.Mult(x, Bx);

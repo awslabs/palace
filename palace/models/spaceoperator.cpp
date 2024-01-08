@@ -273,11 +273,12 @@ SpaceOperator::GetStiffnessMatrix(Operator::DiagonalPolicy diag_policy)
       fb(mat_op.MaxCeedBdrAttribute());
   AddStiffnessCoefficients(1.0, df, f);
   AddStiffnessBdrCoefficients(1.0, fb);
-  if (df.empty() && f.empty() && fb.empty())
+  int empty = (df.empty() && f.empty() && fb.empty());
+  Mpi::GlobalMin(1, &empty, GetComm());
+  if (empty)
   {
     return {};
   }
-
   constexpr bool skip_zeros = false;
   auto k = BuildOperator(GetNDSpace(), &df, &f, nullptr, &fb, skip_zeros);
   if constexpr (std::is_same<OperType, ComplexOperator>::value)
@@ -303,11 +304,12 @@ SpaceOperator::GetDampingMatrix(Operator::DiagonalPolicy diag_policy)
       fb(mat_op.MaxCeedBdrAttribute());
   AddDampingCoefficients(1.0, f);
   AddDampingBdrCoefficients(1.0, fb);
-  if (f.empty() && fb.empty())
+  int empty = (f.empty() && fb.empty());
+  Mpi::GlobalMin(1, &empty, GetComm());
+  if (empty)
   {
     return {};
   }
-
   constexpr bool skip_zeros = false;
   auto c = BuildOperator(GetNDSpace(), nullptr, &f, nullptr, &fb, skip_zeros);
   if constexpr (std::is_same<OperType, ComplexOperator>::value)
@@ -336,18 +338,19 @@ std::unique_ptr<OperType> SpaceOperator::GetMassMatrix(Operator::DiagonalPolicy 
   {
     AddImagMassCoefficients(1.0, fi);
   }
-  if (fr.empty() && fi.empty() && fbr.empty() && fbi.empty())
+  int empty[2] = {(fr.empty() && fbr.empty()), (fi.empty() && fbi.empty())};
+  Mpi::GlobalMin(2, empty, GetComm());
+  if (empty[0] && empty[1])
   {
     return {};
   }
-
   constexpr bool skip_zeros = false;
   std::unique_ptr<Operator> mr, mi;
-  if (!fr.empty() || !fbr.empty())
+  if (!empty[0])
   {
     mr = BuildOperator(GetNDSpace(), nullptr, &fr, nullptr, &fbr, skip_zeros);
   }
-  if (!fi.empty() || !fbi.empty())
+  if (!empty[1])
   {
     mi = BuildOperator(GetNDSpace(), nullptr, &fi, nullptr, &fbi, skip_zeros);
   }
@@ -375,18 +378,19 @@ SpaceOperator::GetExtraSystemMatrix(double omega, Operator::DiagonalPolicy diag_
       dfbi(mat_op.MaxCeedBdrAttribute()), fbr(mat_op.MaxCeedBdrAttribute()),
       fbi(mat_op.MaxCeedBdrAttribute());
   AddExtraSystemBdrCoefficients(omega, dfbr, dfbi, fbr, fbi);
-  if (dfbr.empty() && fbr.empty() && dfbi.empty() && fbi.empty())
+  int empty[2] = {(dfbr.empty() && fbr.empty()), (dfbi.empty() && fbi.empty())};
+  Mpi::GlobalMin(2, empty, GetComm());
+  if (empty[0] && empty[1])
   {
     return {};
   }
-
   constexpr bool skip_zeros = false;
   std::unique_ptr<Operator> ar, ai;
-  if (!dfbr.empty() || !fbr.empty())
+  if (!empty[0])
   {
     ar = BuildOperator(GetNDSpace(), nullptr, nullptr, &dfbr, &fbr, skip_zeros);
   }
-  if (!dfbi.empty() || !fbi.empty())
+  if (!empty[1])
   {
     ai = BuildOperator(GetNDSpace(), nullptr, nullptr, &dfbi, &fbi, skip_zeros);
   }
@@ -695,15 +699,17 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(double a0, doub
         AddImagMassCoefficients(a2, fi);
         AddExtraSystemBdrCoefficients(a3, dfbr, dfbi, fbr, fbi);
       }
-
+      int empty[2] = {(dfr.empty() && fr.empty() && dfbr.empty() && fbr.empty()),
+                      (dfi.empty() && fi.empty() && dfbi.empty() && fbi.empty())};
+      Mpi::GlobalMin(2, empty, GetComm());
       constexpr bool skip_zeros = false;
       std::unique_ptr<Operator> br, bi;
-      if (!dfr.empty() || !fr.empty() || !dfbr.empty() || !fbr.empty())
+      if (!empty[0])
       {
         br = aux ? BuildAuxOperator(fespace_l, &fr, &fbr, l, skip_zeros)
                  : BuildOperator(fespace_l, &dfr, &fr, &dfbr, &fbr, l, skip_zeros);
       }
-      if (!dfi.empty() || !fi.empty() || !dfbi.empty() || !fbi.empty())
+      if (!empty[1])
       {
         bi = aux ? BuildAuxOperator(fespace_l, &fi, &fbi, l, skip_zeros)
                  : BuildOperator(fespace_l, &dfi, &fi, &dfbi, &fbi, l, skip_zeros);
@@ -868,7 +874,9 @@ bool SpaceOperator::AddExcitationVector1Internal(Vector &RHS1)
   SumVectorCoefficient fb(GetMesh().SpaceDimension());
   lumped_port_op.AddExcitationBdrCoefficients(fb);
   surf_j_op.AddExcitationBdrCoefficients(fb);
-  if (fb.empty())
+  int empty = (fb.empty());
+  Mpi::GlobalMin(1, &empty, GetComm());
+  if (empty)
   {
     return false;
   }
@@ -888,7 +896,9 @@ bool SpaceOperator::AddExcitationVector2Internal(double omega, ComplexVector &RH
               "Invalid T-vector size for AddExcitationVector2Internal!");
   SumVectorCoefficient fbr(GetMesh().SpaceDimension()), fbi(GetMesh().SpaceDimension());
   wave_port_op.AddExcitationBdrCoefficients(omega, fbr, fbi);
-  if (fbr.empty() && fbi.empty())
+  int empty = (fbr.empty() && fbi.empty());
+  Mpi::GlobalMin(1, &empty, GetComm());
+  if (empty)
   {
     return false;
   }

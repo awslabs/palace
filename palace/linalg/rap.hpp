@@ -9,6 +9,10 @@
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
 
+// XX TODO: Many ParOperator and ComplexParOperator objects could share the same local
+//          temporary vectors used in parallel matrix-vector products (lx, ly, ty) for
+//          improved memory usage.
+
 namespace palace
 {
 

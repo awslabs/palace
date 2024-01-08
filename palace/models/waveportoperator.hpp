@@ -28,6 +28,7 @@ namespace config
 {
 
 struct WavePortData;
+struct SolverData;
 
 }  // namespace config
 
@@ -46,6 +47,7 @@ public:
   bool excitation;
   std::complex<double> kn0;
   double omega0;
+  mfem::Vector port_normal;
 
 private:
   // SubMesh data structures to define finite element spaces and grid functions on the
@@ -61,8 +63,9 @@ private:
 
   // Operator storage for repeated boundary mode eigenvalue problem solves.
   double mu_eps_max;
-  std::unique_ptr<mfem::HypreParMatrix> A1, A2r, A2i, B1r, B1i, B3;
+  std::unique_ptr<mfem::HypreParMatrix> Btt, Btn, BtnT, Dtt;
   ComplexVector v0, e0, e0t, e0n;
+  mfem::Array<int> port_dbc_tdof_list;
 
   // Eigenvalue solver for boundary modes.
   MPI_Comm port_comm;
@@ -79,8 +82,8 @@ private:
   std::unique_ptr<mfem::ParComplexGridFunction> port_E0t, port_E0n;
 
 public:
-  WavePortData(const config::WavePortData &data, const MaterialOperator &mat_op,
-               mfem::ParFiniteElementSpace &nd_fespace,
+  WavePortData(const config::WavePortData &data, const config::SolverData &solver,
+               const MaterialOperator &mat_op, mfem::ParFiniteElementSpace &nd_fespace,
                mfem::ParFiniteElementSpace &h1_fespace, const mfem::Array<int> &dbc_attr);
   ~WavePortData();
 
