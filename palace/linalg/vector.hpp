@@ -134,11 +134,15 @@ inline std::pair<HYPRE_BigInt, HYPRE_BigInt> GlobalSize2(MPI_Comm comm, const Ve
 }
 
 // Sets all entries of the vector corresponding to the given indices to the given (real)
-// value.
+// value or corresponding entries the vector of values.
 template <typename VecType>
 void SetSubVector(VecType &x, const mfem::Array<int> &rows, double s);
 template <typename VecType>
 void SetSubVector(VecType &x, const mfem::Array<int> &rows, const VecType &y);
+
+// Sets all entries in the range [start, end) to  the given value.
+template <typename VecType>
+void SetSubVector(VecType &x, int start, int end, double s);
 
 // Sets all entries of the vector to random numbers sampled from the [-1, 1] or [-1 - 1i,
 // 1 + 1i] for complex-valued vectors.

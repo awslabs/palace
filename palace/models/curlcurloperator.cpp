@@ -202,7 +202,9 @@ void CurlCurlOperator::GetExcitationVector(int idx, Vector &RHS)
   surf_j_op.AddExcitationBdrCoefficients(idx, fb);
   RHS.SetSize(GetNDSpace().GetTrueVSize());
   RHS = 0.0;
-  if (fb.empty())
+  int empty = (fb.empty());
+  Mpi::GlobalMin(1, &empty, GetComm());
+  if (empty)
   {
     return;
   }
