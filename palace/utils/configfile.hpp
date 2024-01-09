@@ -882,7 +882,7 @@ public:
   int order = 1;
 
   // Order above which to use partial assembly instead of full assembly.
-  int pa_order_threshold = 100;
+  int pa_order_threshold = 1;
 
   // Include the order of det(J) in the order of accuracy for quadrature rule selection.
   bool q_order_jac = false;
