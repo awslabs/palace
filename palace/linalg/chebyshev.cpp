@@ -162,7 +162,6 @@ template <typename OperType>
 void ChebyshevSmoother<OperType>::SetOperator(const OperType &op)
 {
   A = &op;
-  r.SetSize(op.Height());
   d.SetSize(op.Height());
   dinv.SetSize(op.Height());
   op.AssembleDiagonal(dinv);
@@ -177,7 +176,7 @@ void ChebyshevSmoother<OperType>::SetOperator(const OperType &op)
 }
 
 template <typename OperType>
-void ChebyshevSmoother<OperType>::Mult(const VecType &x, VecType &y) const
+void ChebyshevSmoother<OperType>::Mult2(const VecType &x, VecType &y, VecType &r) const
 {
   // Apply smoother: y = y + p(A) (x - A y) .
   for (int it = 0; it < pc_it; it++)
@@ -222,7 +221,6 @@ template <typename OperType>
 void ChebyshevSmoother1stKind<OperType>::SetOperator(const OperType &op)
 {
   A = &op;
-  r.SetSize(op.Height());
   d.SetSize(op.Height());
   dinv.SetSize(op.Height());
   op.AssembleDiagonal(dinv);
@@ -244,7 +242,8 @@ void ChebyshevSmoother1stKind<OperType>::SetOperator(const OperType &op)
 }
 
 template <typename OperType>
-void ChebyshevSmoother1stKind<OperType>::Mult(const VecType &x, VecType &y) const
+void ChebyshevSmoother1stKind<OperType>::Mult2(const VecType &x, VecType &y,
+                                               VecType &r) const
 {
   // Apply smoother: y = y + p(A) (x - A y) .
   for (int it = 0; it < pc_it; it++)

@@ -115,9 +115,9 @@ void HypreAmsSolver::ConstructAuxiliaryMatrices(FiniteElementSpace &nd_fespace,
   else
   {
     // Fall back to MFEM legacy assembly for identity interpolator.
-    mfem::ParFiniteElementSpace h1d_fespace(&mesh, &h1_fespace.GetFEColl(), space_dim,
-                                            mfem::Ordering::byVDIM);
-    mfem::DiscreteLinearOperator pi(&h1d_fespace, &nd_fespace.Get());
+    FiniteElementSpace h1d_fespace(h1_fespace.GetMesh(), &h1_fespace.GetFEColl(), space_dim,
+                                   mfem::Ordering::byVDIM);
+    mfem::DiscreteLinearOperator pi(&h1d_fespace.Get(), &nd_fespace.Get());
     pi.AddDomainInterpolator(new mfem::IdentityInterpolator);
     pi.SetAssemblyLevel(mfem::AssemblyLevel::LEGACY);
     pi.Assemble();

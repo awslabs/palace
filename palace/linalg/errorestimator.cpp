@@ -97,44 +97,31 @@ FluxProjector::FluxProjector(const MaterialOperator &mat_op,
   rhs.SetSize(h1d_fespace.GetTrueVSize());
 }
 
-template <typename VecType>
-void FluxProjector::Mult(const VecType &x, VecType &y) const
+void FluxProjector::Mult(const Vector &x, Vector &y) const
 {
   BlockTimer bt(Timer::SOLVEESTIMATOR);
   MFEM_ASSERT(y.Size() == rhs.Size(), "Invalid vector dimensions for FluxProjector::Mult!");
   MFEM_ASSERT(
       y.Size() % x.Size() == 0,
       "Invalid vector dimension for FluxProjector::Mult, does not yield even blocking!");
-  auto MultImpl = [this](const Vector &x_, Vector &y_)
+  const int vdim = y.Size() / x.Size();
+  Flux->Mult(x, rhs);
+  if (vdim == 1)
   {
-    const int vdim = y_.Size() / x_.Size();
-    Flux->Mult(x_, rhs);
-    if (vdim == 1)
-    {
-      // Mpi::Print(" Computing smooth flux projection for error estimation\n");
-      ksp->Mult(rhs, y_);
-    }
-    else
-    {
-      for (int i = 0; i < vdim; i++)
-      {
-        // Mpi::Print(" Computing smooth flux projection of flux component {:d}/{:d} for "
-        //            "error estimation\n",
-        //            i + 1, vdim);
-        const Vector rhsb(rhs, i * x_.Size(), x_.Size());
-        Vector yb(y_, i * x_.Size(), x_.Size());
-        ksp->Mult(rhsb, yb);
-      }
-    }
-  };
-  if constexpr (std::is_same<VecType, ComplexVector>::value)
-  {
-    MultImpl(x.Real(), y.Real());
-    MultImpl(x.Imag(), y.Imag());
+    // Mpi::Print(" Computing smooth flux projection for error estimation\n");
+    ksp->Mult(rhs, y);
   }
   else
   {
-    MultImpl(x, y);
+    for (int i = 0; i < vdim; i++)
+    {
+      // Mpi::Print(" Computing smooth flux projection of flux component {:d}/{:d} for "
+      //            "error estimation\n",
+      //            i + 1, vdim);
+      const Vector rhsb(rhs, i * x.Size(), x.Size());
+      Vector yb(y, i * x.Size(), x.Size());
+      ksp->Mult(rhsb, yb);
+    }
   }
 }
 
@@ -154,16 +141,18 @@ ErrorIndicator CurlFluxErrorEstimator<VecType>::ComputeIndicators(const VecType 
   // Compute the projection of the discontinuous flux onto the smooth finite element space
   // and populate the corresponding grid functions.
   BlockTimer bt(Timer::ESTIMATION);
-  projector.Mult(U, F);
   if constexpr (std::is_same<VecType, ComplexVector>::value)
   {
-    F_gf.real().SetFromTrueDofs(F.Real());
-    F_gf.imag().SetFromTrueDofs(F.Imag());
+    projector.Mult(U.Real(), F);
+    F_gf.real().SetFromTrueDofs(F);
+    projector.Mult(U.Imag(), F);
+    F_gf.imag().SetFromTrueDofs(F);
     U_gf.real().SetFromTrueDofs(U.Real());
     U_gf.imag().SetFromTrueDofs(U.Imag());
   }
   else
   {
+    projector.Mult(U, F);
     F_gf.SetFromTrueDofs(F);
     U_gf.SetFromTrueDofs(U);
   }
@@ -345,9 +334,6 @@ ErrorIndicator GradFluxErrorEstimator::ComputeIndicators(const Vector &U) const
   }
   return ErrorIndicator(std::move(estimates));
 }
-
-template void FluxProjector::Mult(const Vector &, Vector &) const;
-template void FluxProjector::Mult(const ComplexVector &, ComplexVector &) const;
 
 template class CurlFluxErrorEstimator<Vector>;
 template class CurlFluxErrorEstimator<ComplexVector>;

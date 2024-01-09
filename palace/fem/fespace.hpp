@@ -10,6 +10,7 @@
 #include "fem/libceed/ceed.hpp"
 #include "fem/mesh.hpp"
 #include "linalg/operator.hpp"
+#include "linalg/vector.hpp"
 
 namespace palace
 {
@@ -29,6 +30,9 @@ private:
   // Members for constructing libCEED operators.
   mutable ceed::CeedObjectMap<CeedBasis> basis;
   mutable ceed::CeedObjectMap<CeedElemRestriction> restr, interp_restr, interp_range_restr;
+
+  // Temporary storage for operator applications.
+  mutable ComplexVector tx, lx, ly;
 
   bool HasUniqueInterpRestriction(const mfem::FiniteElement &fe) const
   {
@@ -75,11 +79,15 @@ public:
 
   auto GetVDim() const { return Get().GetVDim(); }
   auto GetVSize() const { return Get().GetVSize(); }
+  auto GlobalVSize() const { return Get().GlobalVSize(); }
   auto GetTrueVSize() const { return Get().GetTrueVSize(); }
   auto GlobalTrueVSize() const { return Get().GlobalTrueVSize(); }
   auto Dimension() const { return mesh.Get().Dimension(); }
   auto SpaceDimension() const { return mesh.Get().SpaceDimension(); }
   auto GetMaxElementOrder() const { return Get().GetMaxElementOrder(); }
+
+  const auto *GetProlongationMatrix() const { return Get().GetProlongationMatrix(); }
+  const auto *GetRestrictionMatrix() const { return Get().GetRestrictionMatrix(); }
 
   // Return the basis object for elements of the given element geometry type.
   const CeedBasis GetCeedBasis(Ceed ceed, mfem::Geometry::Type geom) const;
@@ -114,6 +122,48 @@ public:
   BuildCeedElemRestriction(const mfem::FiniteElementSpace &fespace, Ceed ceed,
                            mfem::Geometry::Type geom, const std::vector<int> &indices,
                            bool is_interp = false, bool is_interp_range = false);
+
+  template <typename VecType>
+  auto &GetTVector() const
+  {
+    tx.SetSize(GetTrueVSize());
+    if constexpr (std::is_same<VecType, ComplexVector>::value)
+    {
+      return tx;
+    }
+    else
+    {
+      return tx.Real();
+    }
+  }
+
+  template <typename VecType>
+  auto &GetLVector() const
+  {
+    lx.SetSize(GetVSize());
+    if constexpr (std::is_same<VecType, ComplexVector>::value)
+    {
+      return lx;
+    }
+    else
+    {
+      return lx.Real();
+    }
+  }
+
+  template <typename VecType>
+  auto &GetLVector2() const
+  {
+    ly.SetSize(GetVSize());
+    if constexpr (std::is_same<VecType, ComplexVector>::value)
+    {
+      return ly;
+    }
+    else
+    {
+      return ly.Real();
+    }
+  }
 
   // Get the associated MPI communicator.
   MPI_Comm GetComm() const { return fespace.GetComm(); }

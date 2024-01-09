@@ -115,6 +115,7 @@ class SumOperator : public Operator
 {
 private:
   std::vector<std::pair<const Operator *, double>> ops;
+  mutable Vector z;
 
 public:
   SumOperator(int s) : Operator(s) {}

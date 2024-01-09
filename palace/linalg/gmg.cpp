@@ -178,7 +178,7 @@ void GeometricMultigridSolver<OperType>::VCycle(int l, bool initial_guess) const
     B[l]->Mult(X[l], Y[l]);
     return;
   }
-  B[l]->Mult(X[l], Y[l]);
+  B[l]->Mult2(X[l], Y[l], R[l]);
 
   // Compute residual.
   A[l]->Mult(Y[l], R[l]);
@@ -198,7 +198,7 @@ void GeometricMultigridSolver<OperType>::VCycle(int l, bool initial_guess) const
 
   // Post-smooth, with nonzero initial guess.
   B[l]->SetInitialGuess(true);
-  B[l]->MultTranspose(X[l], Y[l]);
+  B[l]->MultTranspose2(X[l], Y[l], R[l]);
 }
 
 template class GeometricMultigridSolver<Operator>;

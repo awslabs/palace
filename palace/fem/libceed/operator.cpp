@@ -142,67 +142,43 @@ void Operator::Mult(const Vector &x, Vector &y) const
 
 void Operator::AddMult(const Vector &x, Vector &y, const double a) const
 {
-  if (a == 1.0 && dof_multiplicity.Size() == 0)
+  MFEM_VERIFY(a == 1.0, "ceed::Operator::AddMult only supports coefficient = 1.0!");
+  if (dof_multiplicity.Size() > 0)
   {
-    CeedAddMult(ops, u, v, x, y);
-  }
-  else
-  {
-    Vector &temp = (height == width) ? temp_v : temp_u;
     temp.SetSize(height);
-    temp.UseDevice(true);
     temp = 0.0;
     CeedAddMult(ops, u, v, x, temp);
     if (dof_multiplicity.Size() > 0)
     {
       temp *= dof_multiplicity;
     }
-    y.Add(a, temp);
+    y += temp;
+  }
+  else
+  {
+    CeedAddMult(ops, u, v, x, y);
   }
 }
 
 void Operator::MultTranspose(const Vector &x, Vector &y) const
 {
   y = 0.0;
-  if (dof_multiplicity.Size() > 0)
-  {
-    temp_v = x;
-    temp_v *= dof_multiplicity;
-    CeedAddMult(ops_t, v, u, temp_v, y);
-  }
-  else
-  {
-    CeedAddMult(ops_t, v, u, x, y);
-  }
+  AddMultTranspose(x, y);
 }
 
 void Operator::AddMultTranspose(const Vector &x, Vector &y, const double a) const
 {
-  auto AddMultTransposeImpl = [this](const Vector &x_, Vector &y_, const double a_)
-  {
-    if (a_ == 1.0)
-    {
-      CeedAddMult(ops_t, v, u, x_, y_);
-    }
-    else
-    {
-      Vector &temp = (height == width && dof_multiplicity.Size() == 0) ? temp_v : temp_u;
-      temp.SetSize(width);
-      temp.UseDevice(true);
-      temp = 0.0;
-      CeedAddMult(ops_t, v, u, x_, temp);
-      y_.Add(a_, temp);
-    }
-  };
+  MFEM_VERIFY(a == 1.0,
+              "ceed::Operator::AddMultTranspose only supports coefficient = 1.0!");
   if (dof_multiplicity.Size() > 0)
   {
-    temp_v = x;
-    temp_v *= dof_multiplicity;
-    AddMultTransposeImpl(temp_v, y, a);
+    temp = x;
+    temp *= dof_multiplicity;
+    CeedAddMult(ops_t, v, u, temp, y);
   }
   else
   {
-    AddMultTransposeImpl(x, y, a);
+    CeedAddMult(ops_t, v, u, x, y);
   }
 }
 

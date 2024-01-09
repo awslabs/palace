@@ -26,10 +26,10 @@ protected:
   std::vector<CeedOperator> ops, ops_t;
   std::vector<CeedVector> u, v;
   Vector dof_multiplicity;
-  mutable Vector temp_u, temp_v;
+  mutable Vector temp;
 
 public:
-  Operator(int h, int w) : palace::Operator(h, w) {}
+  Operator(int h, int w) : palace::Operator(h, w) { temp.UseDevice(true); }
   ~Operator() override;
 
   CeedOperator operator[](std::size_t i) const { return ops[i]; }

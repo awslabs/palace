@@ -43,8 +43,7 @@ public:
   FluxProjector(const MaterialOperator &mat_op, const FiniteElementSpace &h1_fespace,
                 const FiniteElementSpace &h1d_fespace, double tol, int max_it, int print);
 
-  template <typename VecType>
-  void Mult(const VecType &x, VecType &y) const;
+  void Mult(const Vector &x, Vector &y) const;
 };
 
 // Class used for computing curl flux error estimate, i.e. || μ⁻¹ ∇ × Uₕ - F ||_K where F
@@ -66,7 +65,7 @@ class CurlFluxErrorEstimator
   FluxProjector projector;
 
   // Temporary vectors for error estimation.
-  mutable VecType F;
+  mutable Vector F;
   mutable GridFunctionType F_gf, U_gf;
 
 public:

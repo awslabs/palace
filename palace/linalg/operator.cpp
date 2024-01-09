@@ -101,15 +101,16 @@ void ComplexWrapperOperator::Mult(const ComplexVector &x, ComplexVector &y) cons
   const Vector &xi = x.Imag();
   Vector &yr = y.Real();
   Vector &yi = y.Imag();
-  if (Ar)
+  if (Ai)
   {
-    if (!zero_real)
-    {
-      Ar->Mult(xr, yr);
-    }
     if (!zero_imag)
     {
-      Ar->Mult(xi, yi);
+      Ai->Mult(xi, yr);
+      yr *= -1.0;
+    }
+    if (!zero_real)
+    {
+      Ai->Mult(xr, yi);
     }
   }
   else
@@ -117,15 +118,15 @@ void ComplexWrapperOperator::Mult(const ComplexVector &x, ComplexVector &y) cons
     yr = 0.0;
     yi = 0.0;
   }
-  if (Ai)
+  if (Ar)
   {
-    if (!zero_imag)
-    {
-      Ai->AddMult(xi, yr, -1.0);
-    }
     if (!zero_real)
     {
-      Ai->AddMult(xr, yi, 1.0);
+      Ar->AddMult(xr, yr);
+    }
+    if (!zero_imag)
+    {
+      Ar->AddMult(xi, yi);
     }
   }
 }
@@ -138,15 +139,16 @@ void ComplexWrapperOperator::MultTranspose(const ComplexVector &x, ComplexVector
   const Vector &xi = x.Imag();
   Vector &yr = y.Real();
   Vector &yi = y.Imag();
-  if (Ar)
+  if (Ai)
   {
-    if (!zero_real)
-    {
-      Ar->MultTranspose(xr, yr);
-    }
     if (!zero_imag)
     {
-      Ar->MultTranspose(xi, yi);
+      Ai->MultTranspose(xi, yr);
+      yr *= -1.0;
+    }
+    if (!zero_real)
+    {
+      Ai->MultTranspose(xr, yi);
     }
   }
   else
@@ -154,15 +156,15 @@ void ComplexWrapperOperator::MultTranspose(const ComplexVector &x, ComplexVector
     yr = 0.0;
     yi = 0.0;
   }
-  if (Ai)
+  if (Ar)
   {
-    if (!zero_imag)
-    {
-      Ai->AddMultTranspose(xi, yr, -1.0);
-    }
     if (!zero_real)
     {
-      Ai->AddMultTranspose(xr, yi, 1.0);
+      Ar->AddMultTranspose(xr, yr);
+    }
+    if (!zero_imag)
+    {
+      Ar->AddMultTranspose(xi, yi);
     }
   }
 }
@@ -176,15 +178,16 @@ void ComplexWrapperOperator::MultHermitianTranspose(const ComplexVector &x,
   const Vector &xi = x.Imag();
   Vector &yr = y.Real();
   Vector &yi = y.Imag();
-  if (Ar)
+  if (Ai)
   {
-    if (!zero_real)
-    {
-      Ar->MultTranspose(xr, yr);
-    }
     if (!zero_imag)
     {
-      Ar->MultTranspose(xi, yi);
+      Ai->MultTranspose(xi, yr);
+    }
+    if (!zero_real)
+    {
+      Ai->MultTranspose(xr, yi);
+      yi *= -1.0;
     }
   }
   else
@@ -192,15 +195,15 @@ void ComplexWrapperOperator::MultHermitianTranspose(const ComplexVector &x,
     yr = 0.0;
     yi = 0.0;
   }
-  if (Ai)
+  if (Ar)
   {
-    if (!zero_imag)
-    {
-      Ai->AddMultTranspose(xi, yr, 1.0);
-    }
     if (!zero_real)
     {
-      Ai->AddMultTranspose(xr, yi, -1.0);
+      Ar->AddMultTranspose(xr, yr);
+    }
+    if (!zero_imag)
+    {
+      Ar->AddMultTranspose(xi, yi);
     }
   }
 }
@@ -214,23 +217,14 @@ void ComplexWrapperOperator::AddMult(const ComplexVector &x, ComplexVector &y,
   const Vector &xi = x.Imag();
   Vector &yr = y.Real();
   Vector &yi = y.Imag();
+  // MFEM_VERIFY(a.real() == 0.0 || a.imag() == 0.0,
+  //             "ComplexWrapperOperator::AddMult does not support a general complex-valued
+  //             " "coefficient!");
   if (a.real() != 0.0 && a.imag() != 0.0)
   {
     ty.SetSize(height);
     Mult(x, ty);
-    const int N = height;
-    const double ar = a.real();
-    const double ai = a.imag();
-    const auto *TYR = ty.Real().Read();
-    const auto *TYI = ty.Imag().Read();
-    auto *YR = yr.ReadWrite();
-    auto *YI = yi.ReadWrite();
-    mfem::forall(N,
-                 [=] MFEM_HOST_DEVICE(int i)
-                 {
-                   YR[i] += ar * TYR[i] - ai * TYI[i];
-                   YI[i] += ai * TYR[i] + ar * TYI[i];
-                 });
+    y.AXPY(a, ty);
   }
   else if (a.real() != 0.0)
   {
@@ -293,23 +287,14 @@ void ComplexWrapperOperator::AddMultTranspose(const ComplexVector &x, ComplexVec
   const Vector &xi = x.Imag();
   Vector &yr = y.Real();
   Vector &yi = y.Imag();
+  // MFEM_VERIFY(a.real() == 0.0 || a.imag() == 0.0,
+  //             "ComplexWrapperOperator::AddMultTranspose does not support a general "
+  //             "complex-valued coefficient!");
   if (a.real() != 0.0 && a.imag() != 0.0)
   {
     tx.SetSize(width);
     MultTranspose(x, tx);
-    const int N = width;
-    const double ar = a.real();
-    const double ai = a.imag();
-    const auto *TXR = tx.Real().Read();
-    const auto *TXI = tx.Imag().Read();
-    auto *YR = yr.ReadWrite();
-    auto *YI = yi.ReadWrite();
-    mfem::forall(N,
-                 [=] MFEM_HOST_DEVICE(int i)
-                 {
-                   YR[i] += ar * TXR[i] - ai * TXI[i];
-                   YI[i] += ai * TXR[i] + ar * TXI[i];
-                 });
+    y.AXPY(a, tx);
   }
   else if (a.real() != 0.0)
   {
@@ -373,23 +358,14 @@ void ComplexWrapperOperator::AddMultHermitianTranspose(const ComplexVector &x,
   const Vector &xi = x.Imag();
   Vector &yr = y.Real();
   Vector &yi = y.Imag();
+  // MFEM_VERIFY(a.real() == 0.0 || a.imag() == 0.0,
+  //             "ComplexWrapperOperator::AddMultHermitianTranspose does not support a "
+  //             "general complex-valued coefficient!");
   if (a.real() != 0.0 && a.imag() != 0.0)
   {
     tx.SetSize(width);
     MultHermitianTranspose(x, tx);
-    const int N = width;
-    const double ar = a.real();
-    const double ai = a.imag();
-    const auto *TXR = tx.Real().Read();
-    const auto *TXI = tx.Imag().Read();
-    auto *YR = yr.ReadWrite();
-    auto *YI = yi.ReadWrite();
-    mfem::forall(N,
-                 [=] MFEM_HOST_DEVICE(int i)
-                 {
-                   YR[i] += ar * TXR[i] - ai * TXI[i];
-                   YI[i] += ai * TXR[i] + ar * TXI[i];
-                 });
+    y.AXPY(a, tx);
   }
   else if (a.real() != 0.0)
   {
@@ -487,17 +463,21 @@ void SumOperator::MultTranspose(const Vector &x, Vector &y) const
 
 void SumOperator::AddMult(const Vector &x, Vector &y, const double a) const
 {
+  z.SetSize(y.Size());
   for (const auto &[op, c] : ops)
   {
-    op->AddMult(x, y, a * c);
+    op->Mult(x, z);
+    y.Add(a * c, z);
   }
 }
 
 void SumOperator::AddMultTranspose(const Vector &x, Vector &y, const double a) const
 {
+  z.SetSize(y.Size());
   for (const auto &[op, c] : ops)
   {
-    op->AddMultTranspose(x, y, a * c);
+    op->MultTranspose(x, z);
+    y.Add(a * c, z);
   }
 }
 

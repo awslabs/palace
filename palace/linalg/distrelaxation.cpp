@@ -48,9 +48,9 @@ void DistRelaxationSmoother<OperType>::SetOperators(const OperType &op,
               "Invalid operator sizes for DistRelaxationSmoother!");
   A = &op;
   A_G = &op_G;
-  r.SetSize(op.Height());
   x_G.SetSize(op_G.Height());
   y_G.SetSize(op_G.Height());
+  r_G.SetSize(op_G.Height());
 
   const auto *PtAP_G = dynamic_cast<const ParOperType *>(&op_G);
   MFEM_VERIFY(PtAP_G,
@@ -93,14 +93,14 @@ inline void RealMultTranspose(const Operator &op, const ComplexVector &x, Comple
 }  // namespace
 
 template <typename OperType>
-void DistRelaxationSmoother<OperType>::Mult(const VecType &x, VecType &y) const
+void DistRelaxationSmoother<OperType>::Mult2(const VecType &x, VecType &y, VecType &r) const
 {
   // Apply smoother.
   for (int it = 0; it < pc_it; it++)
   {
     // y = y + B (x - A y)
     B->SetInitialGuess(this->initial_guess || it > 0);
-    B->Mult(x, y);
+    B->Mult2(x, y, r);
 
     // y = y + G B_G Gᵀ (x - A y)
     A->Mult(y, r);
@@ -110,13 +110,14 @@ void DistRelaxationSmoother<OperType>::Mult(const VecType &x, VecType &y) const
     {
       linalg::SetSubVector(x_G, *dbc_tdof_list_G, 0.0);
     }
-    B_G->Mult(x_G, y_G);
+    B_G->Mult2(x_G, y_G, r_G);
     RealAddMult(*G, y_G, y);
   }
 }
 
 template <typename OperType>
-void DistRelaxationSmoother<OperType>::MultTranspose(const VecType &x, VecType &y) const
+void DistRelaxationSmoother<OperType>::MultTranspose2(const VecType &x, VecType &y,
+                                                      VecType &r) const
 {
   // Apply transpose.
   B->SetInitialGuess(true);
@@ -138,11 +139,11 @@ void DistRelaxationSmoother<OperType>::MultTranspose(const VecType &x, VecType &
     {
       linalg::SetSubVector(x_G, *dbc_tdof_list_G, 0.0);
     }
-    B_G->MultTranspose(x_G, y_G);
+    B_G->MultTranspose2(x_G, y_G, r_G);
     RealAddMult(*G, y_G, y);
 
     // y = y + Bᵀ (x - A y)
-    B->MultTranspose(x, y);
+    B->MultTranspose2(x, y, r);
   }
 }
 

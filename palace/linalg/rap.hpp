@@ -6,12 +6,9 @@
 
 #include <memory>
 #include <mfem.hpp>
+#include "fem/fespace.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
-
-// XX TODO: Many ParOperator and ComplexParOperator objects could share the same local
-//          temporary vectors used in parallel matrix-vector products (lx, ly, ty) for
-//          improved memory usage.
 
 namespace palace
 {
@@ -31,7 +28,7 @@ private:
   const Operator *A;
 
   // Finite element spaces for parallel prolongation and restriction.
-  const mfem::ParFiniteElementSpace &trial_fespace, &test_fespace;
+  const FiniteElementSpace &trial_fespace, &test_fespace;
   const bool use_R;
 
   // Lists of constrained essential boundary true dofs for elimination.
@@ -44,32 +41,29 @@ private:
   // deleted.
   mutable std::unique_ptr<mfem::HypreParMatrix> RAP;
 
-  // Temporary storage for operator application.
-  mutable Vector lx, ly, ty;
-
   // Helper methods for operator application.
   void RestrictionMatrixMult(const Vector &ly, Vector &ty) const;
-  void RestrictionMatrixAddMult(const Vector &ly, Vector &ty, const double a) const;
+  void RestrictionMatrixAddMult(const Vector &ly, Vector &ty) const;
   void RestrictionMatrixMultTranspose(const Vector &ty, Vector &ly) const;
+  Vector &GetTestLVector() const;
 
   ParOperator(std::unique_ptr<Operator> &&dA, const Operator *pA,
-              const mfem::ParFiniteElementSpace &trial_fespace,
-              const mfem::ParFiniteElementSpace &test_fespace, bool test_restrict);
+              const FiniteElementSpace &trial_fespace,
+              const FiniteElementSpace &test_fespace, bool test_restrict);
 
 public:
   // Construct the parallel operator, inheriting ownership of the local operator.
-  ParOperator(std::unique_ptr<Operator> &&A,
-              const mfem::ParFiniteElementSpace &trial_fespace,
-              const mfem::ParFiniteElementSpace &test_fespace, bool test_restrict);
-  ParOperator(std::unique_ptr<Operator> &&A, const mfem::ParFiniteElementSpace &fespace)
+  ParOperator(std::unique_ptr<Operator> &&A, const FiniteElementSpace &trial_fespace,
+              const FiniteElementSpace &test_fespace, bool test_restrict);
+  ParOperator(std::unique_ptr<Operator> &&A, const FiniteElementSpace &fespace)
     : ParOperator(std::move(A), fespace, fespace, false)
   {
   }
 
   // Non-owning constructors.
-  ParOperator(const Operator &A, const mfem::ParFiniteElementSpace &trial_fespace,
-              const mfem::ParFiniteElementSpace &test_fespace, bool test_restrict);
-  ParOperator(const Operator &A, const mfem::ParFiniteElementSpace &fespace)
+  ParOperator(const Operator &A, const FiniteElementSpace &trial_fespace,
+              const FiniteElementSpace &test_fespace, bool test_restrict);
+  ParOperator(const Operator &A, const FiniteElementSpace &fespace)
     : ParOperator(A, fespace, fespace, false)
   {
   }
@@ -122,11 +116,11 @@ private:
   const ComplexWrapperOperator *A;
 
   // Finite element spaces for parallel prolongation and restriction.
-  const mfem::ParFiniteElementSpace &trial_fespace, &test_fespace;
+  const FiniteElementSpace &trial_fespace, &test_fespace;
   const bool use_R;
 
   // Lists of constrained essential boundary true dofs for elimination.
-  mutable const mfem::Array<int> *dbc_tdof_list;
+  const mfem::Array<int> *dbc_tdof_list;
 
   // Diagonal policy for constrained true dofs.
   Operator::DiagonalPolicy diag_policy;
@@ -134,38 +128,35 @@ private:
   // Real and imaginary parts of the operator as non-owning ParOperator objects.
   std::unique_ptr<ParOperator> RAPr, RAPi;
 
-  // Temporary storage for operator application.
-  mutable ComplexVector lx, ly, ty;
-
   // Helper methods for operator application.
   void RestrictionMatrixMult(const ComplexVector &ly, ComplexVector &ty) const;
-  void RestrictionMatrixAddMult(const ComplexVector &ly, ComplexVector &ty,
-                                const double a) const;
+  void RestrictionMatrixAddMult(const ComplexVector &ly, ComplexVector &ty) const;
   void RestrictionMatrixMultTranspose(const ComplexVector &ty, ComplexVector &ly) const;
+  ComplexVector &GetTestLVector() const;
 
   ComplexParOperator(std::unique_ptr<Operator> &&dAr, std::unique_ptr<Operator> &&dAi,
                      const Operator *pAr, const Operator *pAi,
-                     const mfem::ParFiniteElementSpace &trial_fespace,
-                     const mfem::ParFiniteElementSpace &test_fespace, bool test_restrict);
+                     const FiniteElementSpace &trial_fespace,
+                     const FiniteElementSpace &test_fespace, bool test_restrict);
 
 public:
   // Construct the complex-valued parallel operator from the separate real and imaginary
   // parts, inheriting ownership of the local operator.
   ComplexParOperator(std::unique_ptr<Operator> &&Ar, std::unique_ptr<Operator> &&Ai,
-                     const mfem::ParFiniteElementSpace &trial_fespace,
-                     const mfem::ParFiniteElementSpace &test_fespace, bool test_restrict);
+                     const FiniteElementSpace &trial_fespace,
+                     const FiniteElementSpace &test_fespace, bool test_restrict);
   ComplexParOperator(std::unique_ptr<Operator> &&Ar, std::unique_ptr<Operator> &&Ai,
-                     const mfem::ParFiniteElementSpace &fespace)
+                     const FiniteElementSpace &fespace)
     : ComplexParOperator(std::move(Ar), std::move(Ai), fespace, fespace, false)
   {
   }
 
   // Non-owning constructors.
   ComplexParOperator(const Operator *Ar, const Operator *Ai,
-                     const mfem::ParFiniteElementSpace &trial_fespace,
-                     const mfem::ParFiniteElementSpace &test_fespace, bool test_restrict);
+                     const FiniteElementSpace &trial_fespace,
+                     const FiniteElementSpace &test_fespace, bool test_restrict);
   ComplexParOperator(const Operator *Ar, const Operator *Ai,
-                     const mfem::ParFiniteElementSpace &fespace)
+                     const FiniteElementSpace &fespace)
     : ComplexParOperator(Ar, Ai, fespace, fespace, false)
   {
   }
