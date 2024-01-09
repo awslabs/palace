@@ -13,6 +13,9 @@ The format of this changelog is based on
 
 ## In progress
 
+  - Changed default value of `config["Solver"]["PartialAssemblyOrder"]` in order to active
+    operator partial assembly by default for all operators in all simulation types.
+
 ## [0.12.0] - 2023-12-21
 
   - Added support for operator partial assembly for high-order finite element spaces based

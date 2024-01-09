@@ -43,9 +43,11 @@ with
 
 `"Order" [1]` :  Finite element order (degree). Arbitrary high-order spaces are supported.
 
-`"PartialAssemblyOrder" [100]` :  Order at which to switch from full assembly of finite
+`"PartialAssemblyOrder" [1]` :  Order at which to switch from full assembly of finite
 element operators to [partial assembly](https://mfem.org/howto/assembly_levels/). Setting
-this parameter equal to 1 will fully activate operator partial assembly on all levels.
+this parameter equal to 1 will fully activate operator partial assembly on all levels, while
+setting it to some large number (greater than the finite element order) will result in
+fully assembled operators as sparse matrices.
 
 `"Device" ["CPU"]` :  The runtime device configuration passed to
 [MFEM](https://mfem.org/howto/assembly_levels/) in order to activate different options
