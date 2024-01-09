@@ -86,6 +86,9 @@ public:
   const auto &GetConductivity() const { return mat_sigma; }
   const auto &GetInvLondonDepth() const { return mat_invLondon; }
 
+  const auto &GetLightSpeedMin() const { return mat_c0_min; }
+  const auto &GetLightSpeedMax() const { return mat_c0_max; }
+
   bool HasLossTangent() const { return (losstan_attr.Size() > 0); }
   bool HasConductivity() const { return (conductivity_attr.Size() > 0); }
   bool HasLondonDepth() const { return (london_attr.Size() > 0); }
