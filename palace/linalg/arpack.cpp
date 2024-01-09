@@ -466,8 +466,7 @@ ArpackEPSSolver::ArpackEPSSolver(MPI_Comm comm, int print)
 void ArpackEPSSolver::SetOperators(const ComplexOperator &K, const ComplexOperator &M,
                                    EigenvalueSolver::ScaleType type)
 {
-  MFEM_VERIFY(!opK || opK->Height() == K.Height(),
-              "Invalid modification of eigenvalue problem size!");
+  MFEM_VERIFY(!opK || K.Height() == n, "Invalid modification of eigenvalue problem size!");
   bool first = (opK == nullptr);
   opK = &K;
   opM = &M;
@@ -615,8 +614,7 @@ void ArpackPEPSolver::SetOperators(const ComplexOperator &K, const ComplexOperat
                                    const ComplexOperator &M,
                                    EigenvalueSolver::ScaleType type)
 {
-  MFEM_VERIFY(!opK || opK->Height() == K.Height(),
-              "Invalid modification of eigenvalue problem size!");
+  MFEM_VERIFY(!opK || K.Height() == n, "Invalid modification of eigenvalue problem size!");
   bool first = (opK == nullptr);
   opK = &K;
   opC = &C;
