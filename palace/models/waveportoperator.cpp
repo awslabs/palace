@@ -601,11 +601,7 @@ WavePortData::WavePortData(const config::WavePortData &data, const MaterialOpera
   // Reference: Lee, Sun, and Cendes, Full-wave analysis of dielectric waveguides using
   //            tangential vector finite elements, IEEE Trans. Microwave Theory Tech.
   //            (1991).
-  double c_min = mfem::infinity();
-  for (auto attr : mesh.attributes)
-  {
-    c_min = std::min(c_min, mat_op.GetLightSpeedMin(attr));
-  }
+  double c_min = mat_op.GetLightSpeedMin().Min();
   MFEM_VERIFY(c_min > 0.0 && c_min < mfem::infinity(),
               "Invalid material speed of light detected in WavePortOperator!");
   mu_eps_max = 1.0 / (c_min * c_min);
