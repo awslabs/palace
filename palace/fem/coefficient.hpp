@@ -32,6 +32,7 @@ protected:
   const mfem::ParMesh &mesh;
   mfem::FaceElementTransformations FET;
   mfem::IsoparametricTransformation T1, T2, TF;
+  mfem::Vector CF;
 
   void GetBdrElementNeighborTransformations(mfem::ElementTransformation &T,
                                             const mfem::IntegrationPoint &ip,
