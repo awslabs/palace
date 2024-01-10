@@ -2,96 +2,71 @@
 # SPDX-License-Identifier: Apache-2.0
 
 #
-# Build METIS and ParMETIS
+# Build METIS and ParMETIS (from PETSc forks)
 #
 
 # Force build order
-set(GKLIB_DEPENDENCIES)
-set(METIS_DEPENDENCIES gklib)
-set(PARMETIS_DEPENDENCIES gklib metis)
+set(METIS_DEPENDENCIES)
+set(PARMETIS_DEPENDENCIES metis)
 
-# Build GKlib
-set(GKLIB_OPTIONS ${PALACE_SUPERBUILD_DEFAULT_ARGS})
-list(APPEND GKLIB_OPTIONS
-  "-DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}"
-  "-DCMAKE_C_FLAGS=${CMAKE_C_FLAGS}"
-)
-if(CMAKE_BUILD_TYPE MATCHES "Debug|debug|DEBUG")
-  list(APPEND GKLIB_OPTIONS
-    "-DDEBUG=ON"
-    "-DASSERT=ON"
-    "-DASSERT2=ON"
-  )
-endif()
+# METIS does not add OpenMP flags
+set(METIS_C_FLAGS "${CMAKE_C_FLAGS}")
+set(METIS_MATH_LIB "m")
 if(PALACE_WITH_OPENMP)
-  list(APPEND GKLIB_OPTIONS
-    "-DOPENMP=ON"
-  )
+  find_package(OpenMP REQUIRED)
+  set(METIS_C_FLAGS "${OpenMP_C_FLAGS} ${HYPRE_CFLAGS}")
+  string(REPLACE ";" "$<SEMICOLON>" METIS_OPENMP_LIBRARIES "${OpenMP_C_LIBRARIES}")
+  set(METIS_MATH_LIB "${METIS_OPENMP_LIBRARIES}$<SEMICOLON>${METIS_MATH_LIB}")
 endif()
 
-string(REPLACE ";" "; " GKLIB_OPTIONS_PRINT "${GKLIB_OPTIONS}")
-message(STATUS "GKLIB_OPTIONS: ${GKLIB_OPTIONS_PRINT}")
-
-# Some build fixes
-set(GKLIB_PATCH_FILES
-  "${CMAKE_SOURCE_DIR}/extern/patch/GKlib/patch_build.diff"
-  "${CMAKE_SOURCE_DIR}/extern/patch/GKlib/patch_install.diff"
-)
-
-include(ExternalProject)
-ExternalProject_Add(gklib
-  DEPENDS           ${GKLIB_DEPENDENCIES}
-  GIT_REPOSITORY    ${EXTERN_GKLIB_URL}
-  GIT_TAG           ${EXTERN_GKLIB_GIT_TAG}
-  SOURCE_DIR        ${CMAKE_BINARY_DIR}/extern/GKlib
-  BINARY_DIR        ${CMAKE_BINARY_DIR}/extern/GKlib-build
-  INSTALL_DIR       ${CMAKE_INSTALL_PREFIX}
-  PREFIX            ${CMAKE_BINARY_DIR}/extern/GKlib-cmake
-  UPDATE_COMMAND    ""
-  PATCH_COMMAND     git apply "${GKLIB_PATCH_FILES}"
-  CONFIGURE_COMMAND ${CMAKE_COMMAND} <SOURCE_DIR> "${GKLIB_OPTIONS}"
-  TEST_COMMAND      ""
-)
-
-# Build METIS (build settings are passed from GKlib)
+# Build METIS
 set(METIS_OPTIONS ${PALACE_SUPERBUILD_DEFAULT_ARGS})
 list(APPEND METIS_OPTIONS
   "-DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}"
-  "-DCMAKE_C_FLAGS=${CMAKE_C_FLAGS}"
-  "-DGKlib_ROOT=${CMAKE_INSTALL_PREFIX}"
+  "-DCMAKE_C_FLAGS=${METIS_C_FLAGS}"
+  "-DGKLIB_PATH=${CMAKE_BINARY_DIR}/extern/metis/GKlib"
+  "-DGKRAND=1"
+  "-DMATH_LIB=${METIS_MATH_LIB}"
 )
+if(CMAKE_BUILD_TYPE MATCHES "Debug|debug|DEBUG")
+  list(APPEND METIS_OPTIONS "-DDEBUG=1")
+else()
+  list(APPEND METIS_OPTIONS "-DDEBUG=0")
+endif()
+if(BUILD_SHARED_LIBS)
+  list(APPEND METIS_OPTIONS "-DSHARED=1")
+else()
+  list(APPEND METIS_OPTIONS "-DSHARED=0")
+endif()
+if(CMAKE_C_COMPILER_ID STREQUAL "MSVC")
+  list(APPEND METIS_OPTIONS "-DMSVC=1")
+else()
+  list(APPEND METIS_OPTIONS "-DMSVC=0")
+endif()
+if(PALACE_WITH_64BIT_INT)
+  list(APPEND METIS_OPTIONS "-DMETIS_USE_LONGINDEX=1")
+else()
+  list(APPEND METIS_OPTIONS "-DMETIS_USE_LONGINDEX=0")
+endif()
+# list(APPEND METIS_OPTIONS "-DMETIS_USE_DOUBLEPRECISION=1")
 
 string(REPLACE ";" "; " METIS_OPTIONS_PRINT "${METIS_OPTIONS}")
 message(STATUS "METIS_OPTIONS: ${METIS_OPTIONS_PRINT}")
 
 # Some build fixes
 set(METIS_PATCH_FILES
-  "${CMAKE_SOURCE_DIR}/extern/patch/METIS/patch_build.diff"
-  "${CMAKE_SOURCE_DIR}/extern/patch/METIS/patch_install.diff"
+  "${CMAKE_SOURCE_DIR}/extern/patch/metis/patch_build.diff"
 )
 
-# Configure width of real and integer values
-list(APPEND METIS_PATCH_FILES
-  "${CMAKE_SOURCE_DIR}/extern/patch/METIS/patch_real32.diff"
-)
-if(PALACE_WITH_64BIT_INT)
-  list(APPEND METIS_PATCH_FILES
-    "${CMAKE_SOURCE_DIR}/extern/patch/METIS/patch_idx64.diff"
-  )
-else()
-  list(APPEND METIS_PATCH_FILES
-    "${CMAKE_SOURCE_DIR}/extern/patch/METIS/patch_idx32.diff"
-  )
-endif()
-
+include(ExternalProject)
 ExternalProject_Add(metis
   DEPENDS           ${METIS_DEPENDENCIES}
   GIT_REPOSITORY    ${EXTERN_METIS_URL}
   GIT_TAG           ${EXTERN_METIS_GIT_TAG}
-  SOURCE_DIR        ${CMAKE_BINARY_DIR}/extern/METIS
-  BINARY_DIR        ${CMAKE_BINARY_DIR}/extern/METIS-build
+  SOURCE_DIR        ${CMAKE_BINARY_DIR}/extern/metis
+  BINARY_DIR        ${CMAKE_BINARY_DIR}/extern/metis-build
   INSTALL_DIR       ${CMAKE_INSTALL_PREFIX}
-  PREFIX            ${CMAKE_BINARY_DIR}/extern/METIS-cmake
+  PREFIX            ${CMAKE_BINARY_DIR}/extern/metis-cmake
   UPDATE_COMMAND    ""
   PATCH_COMMAND     git apply "${METIS_PATCH_FILES}"
   CONFIGURE_COMMAND ${CMAKE_COMMAND} <SOURCE_DIR> ${METIS_OPTIONS}
@@ -100,30 +75,52 @@ ExternalProject_Add(metis
 
 # Build ParMETIS (as needed)
 if(PALACE_WITH_SUPERLU OR PALACE_WITH_STRUMPACK)
-  set(PARMETIS_OPTIONS ${METIS_OPTIONS})
+  set(PARMETIS_OPTIONS ${PALACE_SUPERBUILD_DEFAULT_ARGS})
   list(APPEND PARMETIS_OPTIONS
-    "-Dmetis_ROOT=${CMAKE_INSTALL_PREFIX}"
+    "-DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}"
+    "-DCMAKE_C_FLAGS=${CMAKE_C_FLAGS}"
+    "-DGKLIB_PATH=${CMAKE_BINARY_DIR}/extern/metis/GKlib"
+    "-DMETIS_PATH=${CMAKE_INSTALL_PREFIX}"
   )
+  if(BUILD_SHARED_LIBS)
+    list(APPEND PARMETIS_OPTIONS "-DSHARED=1")
+  else()
+    list(APPEND PARMETIS_OPTIONS "-DSHARED=0")
+  endif()
+  if(CMAKE_C_COMPILER_ID STREQUAL "MSVC")
+    list(APPEND PARMETIS_OPTIONS "-DMSVC=1")
+  else()
+    list(APPEND PARMETIS_OPTIONS "-DMSVC=0")
+  endif()
+
+  # User might specify the MPI compiler wrappers directly, otherwise we need to supply MPI
+  # as found from the CMake module
+  if(NOT MPI_FOUND)
+    message(FATAL_ERROR "MPI is not found when trying to build ParMETIS")
+  endif()
+  if(NOT CMAKE_C_COMPILER STREQUAL MPI_C_COMPILER)
+    list(APPEND PARMETIS_OPTIONS
+      "-DMPI_LIBRARIES=${MPI_C_LIBRARIES}"
+      "-DMPI_INCLUDE_PATH=${MPI_C_INCLUDE_DIRS}"
+    )
+  endif()
 
   string(REPLACE ";" "; " PARMETIS_OPTIONS_PRINT "${PARMETIS_OPTIONS}")
   message(STATUS "PARMETIS_OPTIONS: ${PARMETIS_OPTIONS_PRINT}")
 
-  # Apply some fixes for build and from Spack build
-  # (https://github.com/spack/spack/tree/develop/var/spack/repos/builtin/packages/parmetis)
+  # Some build fixes
   set(PARMETIS_PATCH_FILES
-    "${CMAKE_SOURCE_DIR}/extern/patch/ParMETIS/patch_build.diff"
-    "${CMAKE_SOURCE_DIR}/extern/patch/ParMETIS/patch_install.diff"
-    "${CMAKE_SOURCE_DIR}/extern/patch/ParMETIS/patch_spack.diff"
+    "${CMAKE_SOURCE_DIR}/extern/patch/parmetis/patch_build.diff"
   )
 
   ExternalProject_Add(parmetis
     DEPENDS           ${PARMETIS_DEPENDENCIES}
     GIT_REPOSITORY    ${EXTERN_PARMETIS_URL}
     GIT_TAG           ${EXTERN_PARMETIS_GIT_TAG}
-    SOURCE_DIR        ${CMAKE_BINARY_DIR}/extern/ParMETIS
-    BINARY_DIR        ${CMAKE_BINARY_DIR}/extern/ParMETIS-build
+    SOURCE_DIR        ${CMAKE_BINARY_DIR}/extern/parmetis
+    BINARY_DIR        ${CMAKE_BINARY_DIR}/extern/parmetis-build
     INSTALL_DIR       ${CMAKE_INSTALL_PREFIX}
-    PREFIX            ${CMAKE_BINARY_DIR}/extern/ParMETIS-cmake
+    PREFIX            ${CMAKE_BINARY_DIR}/extern/parmetis-cmake
     UPDATE_COMMAND    ""
     PATCH_COMMAND     git apply "${PARMETIS_PATCH_FILES}"
     CONFIGURE_COMMAND ${CMAKE_COMMAND} <SOURCE_DIR> "${PARMETIS_OPTIONS}"
@@ -132,19 +129,16 @@ if(PALACE_WITH_SUPERLU OR PALACE_WITH_STRUMPACK)
 endif()
 
 # Save variables to cache
-include(GNUInstallDirs)
 if(BUILD_SHARED_LIBS)
   set(_METIS_LIB_SUFFIX ${CMAKE_SHARED_LIBRARY_SUFFIX})
 else()
   set(_METIS_LIB_SUFFIX ${CMAKE_STATIC_LIBRARY_SUFFIX})
 endif()
-set(_METIS_LIBRARIES ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR}/libGKlib${_METIS_LIB_SUFFIX})
-set(_METIS_LIBRARIES ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR}/libmetis${_METIS_LIB_SUFFIX}$<SEMICOLON>${_METIS_LIBRARIES})
-set(METIS_LIBRARIES ${_METIS_LIBRARIES} CACHE STRING
+set(METIS_LIBRARIES ${CMAKE_INSTALL_PREFIX}/lib/libmetis${_METIS_LIB_SUFFIX} CACHE STRING
   "List of library files for METIS"
 )
 if(PALACE_WITH_SUPERLU OR PALACE_WITH_STRUMPACK)
-  set(PARMETIS_LIBRARIES ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR}/libparmetis${_METIS_LIB_SUFFIX} CACHE STRING
+  set(PARMETIS_LIBRARIES ${CMAKE_INSTALL_PREFIX}/lib/libparmetis${_METIS_LIB_SUFFIX} CACHE STRING
     "List of library files for ParMETIS"
   )
 endif()

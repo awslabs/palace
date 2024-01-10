@@ -1,0 +1,166 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index be1219b..56e567b 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -1,4 +1,4 @@
+-cmake_minimum_required(VERSION 2.8)
++cmake_minimum_required(VERSION 3.5)
+ project(METIS C)
+ 
+ set(GKLIB_PATH "GKlib" CACHE PATH "path to GKlib")
+diff --git a/GKlib/csr.c b/GKlib/csr.c
+index a19d793..c70f359 100644
+--- a/GKlib/csr.c
++++ b/GKlib/csr.c
+@@ -1332,20 +1332,19 @@ void gk_csr_Normalize(gk_csr_t *mat, int what, int norm)
+     {
+       #pragma omp for private(j,sum) schedule(static)
+       for (i=0; i<n; i++) {
+-        for (sum=0.0, j=ptr[i]; j<ptr[i+1]; j++){
+-  	if (norm == 2)
+-  	  sum += val[j]*val[j];
+-  	else if (norm == 1)
+-  	  sum += val[j]; /* assume val[j] > 0 */ 
++        for (sum=0.0, j=ptr[i]; j<ptr[i+1]; j++) {
++          if (norm == 2)
++            sum += val[j]*val[j];
++          else if (norm == 1)
++            sum += val[j]; /* assume val[j] > 0 */
+         }
+         if (sum > 0) {
+-  	if (norm == 2)
+-  	  sum=1.0/sqrt(sum); 
+-  	else if (norm == 1)
+-  	  sum=1.0/sum; 
++          if (norm == 2)
++            sum=1.0/sqrt(sum);
++          else if (norm == 1)
++            sum=1.0/sum;
+           for (j=ptr[i]; j<ptr[i+1]; j++)
+             val[j] *= sum;
+-  	
+         }
+       }
+     }
+@@ -1358,18 +1357,19 @@ void gk_csr_Normalize(gk_csr_t *mat, int what, int norm)
+ 
+     #pragma omp parallel if (ptr[n] > OMPMINOPS)
+     {
+-    #pragma omp for private(j,sum) schedule(static)
++      #pragma omp for private(j,sum) schedule(static)
+       for (i=0; i<n; i++) {
+-        for (sum=0.0, j=ptr[i]; j<ptr[i+1]; j++)
+-  	if (norm == 2)
+-  	  sum += val[j]*val[j];
+-  	else if (norm == 1)
+-  	  sum += val[j]; 
++        for (sum=0.0, j=ptr[i]; j<ptr[i+1]; j++) {
++          if (norm == 2)
++            sum += val[j]*val[j];
++          else if (norm == 1)
++            sum += val[j];
++	}
+         if (sum > 0) {
+-  	if (norm == 2)
+-  	  sum=1.0/sqrt(sum); 
+-  	else if (norm == 1)
+-  	  sum=1.0/sum; 
++          if (norm == 2)
++            sum=1.0/sqrt(sum);
++          else if (norm == 1)
++            sum=1.0/sum;
+           for (j=ptr[i]; j<ptr[i+1]; j++)
+             val[j] *= sum;
+         }
+diff --git a/GKlib/getopt.c b/GKlib/getopt.c
+index 437befc..225273b 100644
+--- a/GKlib/getopt.c
++++ b/GKlib/getopt.c
+@@ -342,9 +342,9 @@ static int gk_getopt_internal(int argc, char **argv, char *optstring,
+   if (gk_optind == 0 || !gk_getopt_initialized) {
+     if (gk_optind == 0)
+       gk_optind = 1;	/* Don't scan ARGV[0], the program name.  */
+-      optstring = gk_getopt_initialize (argc, argv, optstring);
+-      gk_getopt_initialized = 1;
+-    }
++    optstring = gk_getopt_initialize (argc, argv, optstring);
++    gk_getopt_initialized = 1;
++  }
+ 
+   /* Test whether ARGV[gk_optind] points to a non-option argument.
+      Either it does not have option syntax, or there is an environment flag
+@@ -700,7 +700,7 @@ static int gk_getopt_internal(int argc, char **argv, char *optstring,
+ 	else
+ 	  /* We already incremented `gk_optind' once; increment it again when taking next ARGV-elt as argument.  */
+ 	  gk_optarg = argv[gk_optind++];
+-	  nextchar = NULL;
++	nextchar = NULL;
+       }
+     }
+     return c;
+diff --git a/GKlib/pdb.c b/GKlib/pdb.c
+index b4d2226..0188466 100644
+--- a/GKlib/pdb.c
++++ b/GKlib/pdb.c
+@@ -131,7 +131,7 @@ that structure.
+ /************************************************************************/
+ pdbf *gk_readpdbfile(char *fname) { /* {{{ */
+ 	int i=0, res=0; 
+-	char linetype[6];
++	char linetype[7];
+ 	int  aserial;
+ 	char aname[5] = "    \0";
+ 	char altLoc   = ' ';
+diff --git a/libmetis/balance.c b/libmetis/balance.c
+index 3fb0e6e..6e88b53 100644
+--- a/libmetis/balance.c
++++ b/libmetis/balance.c
+@@ -20,7 +20,7 @@ void Balance2Way(ctrl_t *ctrl, graph_t *graph, real_t *ntpwgts)
+ 
+   if (graph->ncon == 1) {
+     /* return right away if the balance is OK */
+-    if (iabs(ntpwgts[0]*graph->tvwgt[0]-graph->pwgts[0]) < 3*graph->tvwgt[0]/graph->nvtxs)
++    if (rabs(ntpwgts[0]*graph->tvwgt[0]-graph->pwgts[0]) < 3*graph->tvwgt[0]/graph->nvtxs)
+       return;
+ 
+     if (graph->nbnd > 0)
+diff --git a/libmetis/parmetis.c b/libmetis/parmetis.c
+index 631d811..418b606 100644
+--- a/libmetis/parmetis.c
++++ b/libmetis/parmetis.c
+@@ -308,7 +308,7 @@ void FM_2WayNodeRefine1SidedP(ctrl_t *ctrl, graph_t *graph,
+     * Get into the FM loop
+     *******************************************************/
+     mptr[0] = nmind = nbad = 0;
+-    mindiff = abs(pwgts[0]-pwgts[1]);
++    mindiff = iabs(pwgts[0]-pwgts[1]);
+     for (nswaps=0; nswaps<nvtxs; nswaps++) {
+       if ((higain = rpqGetTop(queue)) == -1) 
+         break;
+@@ -333,7 +333,7 @@ void FM_2WayNodeRefine1SidedP(ctrl_t *ctrl, graph_t *graph,
+ 
+       pwgts[2] -= (vwgt[higain]-rinfo[higain].edegrees[from]);
+ 
+-      newdiff = abs(pwgts[to]+vwgt[higain] - (pwgts[from]-rinfo[higain].edegrees[from]));
++      newdiff = iabs(pwgts[to]+vwgt[higain] - (pwgts[from]-rinfo[higain].edegrees[from]));
+       if (pwgts[2] < mincut || (pwgts[2] == mincut && newdiff < mindiff)) {
+         mincut      = pwgts[2];
+         mincutorder = nswaps;
+@@ -537,7 +537,7 @@ void FM_2WayNodeRefine2SidedP(ctrl_t *ctrl, graph_t *graph,
+     * Get into the FM loop
+     *******************************************************/
+     mptr[0] = nmind = 0;
+-    mindiff = abs(pwgts[0]-pwgts[1]);
++    mindiff = iabs(pwgts[0]-pwgts[1]);
+     to = (pwgts[0] < pwgts[1] ? 0 : 1);
+     for (nswaps=0; nswaps<nvtxs; nswaps++) {
+       u[0] = rpqSeeTopVal(queues[0]);  
+@@ -580,7 +580,7 @@ void FM_2WayNodeRefine2SidedP(ctrl_t *ctrl, graph_t *graph,
+ 
+       pwgts[2] -= (vwgt[higain]-rinfo[higain].edegrees[other]);
+ 
+-      newdiff = abs(pwgts[to]+vwgt[higain] - (pwgts[other]-rinfo[higain].edegrees[other]));
++      newdiff = iabs(pwgts[to]+vwgt[higain] - (pwgts[other]-rinfo[higain].edegrees[other]));
+       if (pwgts[2] < mincut || (pwgts[2] == mincut && newdiff < mindiff)) {
+         mincut      = pwgts[2];
+         mincutorder = nswaps;
