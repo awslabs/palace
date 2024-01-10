@@ -56,17 +56,24 @@ SuperLUSolver::SuperLUSolver(MPI_Comm comm, config::LinearSolverData::SymFactTyp
   solver.SetPrintStatistics(print > 1);
   solver.SetEquilibriate(false);
   solver.SetReplaceTinyPivot(false);
-  if (reorder == config::LinearSolverData::SymFactType::METIS)
+  switch (reorder)
   {
-    solver.SetColumnPermutation(mfem::superlu::METIS_AT_PLUS_A);
-  }
-  else if (reorder == config::LinearSolverData::SymFactType::PARMETIS)
-  {
-    solver.SetColumnPermutation(mfem::superlu::PARMETIS);
-  }
-  else
-  {
-    // Use default
+    case config::LinearSolverData::SymFactType::METIS:
+      solver.SetColumnPermutation(mfem::superlu::METIS_AT_PLUS_A);
+      break;
+    case config::LinearSolverData::SymFactType::PARMETIS:
+      solver.SetColumnPermutation(mfem::superlu::PARMETIS);
+      break;
+    case config::LinearSolverData::SymFactType::AMD:
+    case config::LinearSolverData::SymFactType::RCM:
+      solver.SetColumnPermutation(mfem::superlu::MMD_AT_PLUS_A);
+      break;
+    case config::LinearSolverData::SymFactType::SCOTCH:
+    case config::LinearSolverData::SymFactType::PTSCOTCH:
+    case config::LinearSolverData::SymFactType::PORD:
+    case config::LinearSolverData::SymFactType::DEFAULT:
+      // Should have good default
+      break;
   }
   // solver.SetRowPermutation(mfem::superlu::NOROWPERM);
   solver.SetIterativeRefine(mfem::superlu::NOREFINE);
