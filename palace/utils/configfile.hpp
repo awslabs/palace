@@ -820,7 +820,10 @@ public:
     METIS,
     PARMETIS,
     SCOTCH,
-    PTSCOTCH
+    PTSCOTCH,
+    PORD,
+    AMD,
+    RCM
   };
   SymFactType sym_fact_type = SymFactType::DEFAULT;
 

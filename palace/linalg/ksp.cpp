@@ -234,22 +234,28 @@ BaseKspSolver<OperType>::BaseKspSolver(std::unique_ptr<IterativeSolver<OperType>
                                        std::unique_ptr<Solver<OperType>> &&pc)
   : ksp(std::move(ksp)), pc(std::move(pc)), ksp_mult(0), ksp_mult_it(0)
 {
-  this->ksp->SetPreconditioner(*this->pc);
+  if (this->pc)
+  {
+    this->ksp->SetPreconditioner(*this->pc);
+  }
 }
 
 template <typename OperType>
 void BaseKspSolver<OperType>::SetOperators(const OperType &op, const OperType &pc_op)
 {
   ksp->SetOperator(op);
-  const auto *mg_op = dynamic_cast<const BaseMultigridOperator<OperType> *>(&pc_op);
-  const auto *mg_pc = dynamic_cast<const GeometricMultigridSolver<OperType> *>(pc.get());
-  if (mg_op && !mg_pc)
+  if (pc)
   {
-    pc->SetOperator(mg_op->GetFinestOperator());
-  }
-  else
-  {
-    pc->SetOperator(pc_op);
+    const auto *mg_op = dynamic_cast<const BaseMultigridOperator<OperType> *>(&pc_op);
+    const auto *mg_pc = dynamic_cast<const GeometricMultigridSolver<OperType> *>(pc.get());
+    if (mg_op && !mg_pc)
+    {
+      pc->SetOperator(mg_op->GetFinestOperator());
+    }
+    else
+    {
+      pc->SetOperator(pc_op);
+    }
   }
 }
 

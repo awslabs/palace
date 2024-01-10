@@ -662,7 +662,7 @@ WavePortData::WavePortData(const config::WavePortData &data,
             auto slu = std::make_unique<SuperLUSolver>(
                 port_comm, config::LinearSolverData::SymFactType::DEFAULT, false,
                 ksp_print - 1);
-            // slu->GetSolver().SetColumnPermutation(mfem::superlu::NATURAL);
+            slu->GetSolver().SetColumnPermutation(mfem::superlu::MMD_AT_PLUS_A);
             return slu;
 #endif
           }
@@ -672,7 +672,7 @@ WavePortData::WavePortData(const config::WavePortData &data,
             auto strumpack = std::make_unique<StrumpackSolver>(
                 port_comm, config::LinearSolverData::SymFactType::DEFAULT,
                 config::LinearSolverData::CompressionType::NONE, 0.0, 0, 0, ksp_print - 1);
-            // strumpack->SetReorderingStrategy(strumpack::ReorderingStrategy::NATURAL);
+            strumpack->SetReorderingStrategy(strumpack::ReorderingStrategy::AMD);
             return strumpack;
 #endif
           }
@@ -682,7 +682,7 @@ WavePortData::WavePortData(const config::WavePortData &data,
             auto mumps = std::make_unique<MumpsSolver>(
                 port_comm, mfem::MUMPSSolver::SYMMETRIC_INDEFINITE,
                 config::LinearSolverData::SymFactType::DEFAULT, 0.0, ksp_print - 1);
-            // mumps->SetReorderingStrategy(mfem::MUMPSSolver::AMD);
+            mumps->SetReorderingStrategy(mfem::MUMPSSolver::AMD);
             return mumps;
 #endif
           }

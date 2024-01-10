@@ -1665,7 +1665,10 @@ PALACE_JSON_SERIALIZE_ENUM(LinearSolverData::SymFactType,
                             {LinearSolverData::SymFactType::METIS, "METIS"},
                             {LinearSolverData::SymFactType::PARMETIS, "ParMETIS"},
                             {LinearSolverData::SymFactType::SCOTCH, "Scotch"},
-                            {LinearSolverData::SymFactType::PTSCOTCH, "PTScotch"}})
+                            {LinearSolverData::SymFactType::PTSCOTCH, "PTScotch"},
+                            {LinearSolverData::SymFactType::PORD, "PORD"},
+                            {LinearSolverData::SymFactType::AMD, "AMD"},
+                            {LinearSolverData::SymFactType::RCM, "RCM"}})
 PALACE_JSON_SERIALIZE_ENUM(LinearSolverData::CompressionType,
                            {{LinearSolverData::CompressionType::NONE, "None"},
                             {LinearSolverData::CompressionType::BLR, "BLR"},

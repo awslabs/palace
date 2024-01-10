@@ -466,7 +466,7 @@ vectors in Krylov subspace methods or other parts of the code.
   - `"MGSmoothEigScaleMin" [0.0]`
   - `"MGSmoothChebyshev4th" [true]`
   - `"ColumnOrdering" ["Default"]` :  `"METIS"`, `"ParMETIS"`,`"Scotch"`, `"PTScotch"`,
-    `"Default"`
+    `"PORD"`, `"AMD"`, `"RCM"`, `"Default"`
   - `"STRUMPACKCompressionType" ["None"]` :  `"None"`, `"BLR"`, `"HSS"`, `"HODLR"`, `"ZFP"`,
     `"BLR-HODLR"`, `"ZFP-BLR-HODLR"`
   - `"STRUMPACKCompressionTol" [1.0e-3]`
