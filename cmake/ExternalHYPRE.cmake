@@ -86,6 +86,9 @@ endif()
 
 # User might specify the MPI compiler wrappers directly, otherwise we need to supply MPI
 # as found from the CMake module
+if(NOT MPI_FOUND)
+  message(FATAL_ERROR "MPI is not found when trying to build HYPRE")
+endif()
 if(NOT CMAKE_C_COMPILER STREQUAL MPI_C_COMPILER)
   set(HYPRE_MPI_LIBRARIES)
   set(HYPRE_MPI_LIBRARY_DIRS)

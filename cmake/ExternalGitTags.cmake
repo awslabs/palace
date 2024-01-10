@@ -38,20 +38,6 @@ set(EXTERN_BUTTERFLYPACK_GIT_TAG
   "Git tag for external ButterflyPACK build"
 )
 
-# GKlib (for METIS and ParMETIS)
-set(EXTERN_GKLIB_URL
-  "https://github.com/KarypisLab/GKlib.git" CACHE STRING
-  "URL for external GKlib build"
-)
-set(EXTERN_GKLIB_GIT_BRANCH
-  "master" CACHE STRING
-  "Git branch for external GKlib build"
-)
-set(EXTERN_GKLIB_GIT_TAG
-  "8bd6bad750b2b0d90800c632cf18e8ee93ad72d7" CACHE STRING  # 03/26/2023
-  "Git tag for external GKlib build"
-)
-
 # GSLIB
 set(EXTERN_GSLIB_URL
   "https://github.com/Nek5000/gslib.git" CACHE STRING
@@ -124,7 +110,7 @@ set(EXTERN_MAGMA_GIT_TAG
 
 # METIS
 set(EXTERN_METIS_URL
-  "https://github.com/KarypisLab/METIS.git" CACHE STRING
+  "https://bitbucket.org/petsc/pkg-metis.git" CACHE STRING
   "URL for external METIS build"
 )
 set(EXTERN_METIS_GIT_BRANCH
@@ -132,7 +118,7 @@ set(EXTERN_METIS_GIT_BRANCH
   "Git branch for external METIS build"
 )
 set(EXTERN_METIS_GIT_TAG
-  "e0f1b88b8efcb24ffa0ec55eabb78fbe61e58ae7" CACHE STRING  # 04/02/2023
+  "8b194fdf09661ac41b36fa16db0474d38f46f1ac" CACHE STRING  # 01/10/2023
   "Git tag for external METIS build"
 )
 
@@ -166,7 +152,7 @@ set(EXTERN_MUMPS_GIT_TAG
 
 # ParMETIS
 set(EXTERN_PARMETIS_URL
-  "https://github.com/KarypisLab/ParMETIS.git" CACHE STRING
+  "https://bitbucket.org/petsc/pkg-parmetis.git" CACHE STRING
   "URL for external ParMETIS build"
 )
 set(EXTERN_PARMETIS_GIT_BRANCH
@@ -174,7 +160,7 @@ set(EXTERN_PARMETIS_GIT_BRANCH
   "Git branch for external ParMETIS build"
 )
 set(EXTERN_PARMETIS_GIT_TAG
-  "8ee6a372ca703836f593e3c450ca903f04be14df" CACHE STRING  # 03/26/2023
+  "f5e3aab04fd5fe6e09fa02f885c1c29d349f9f8b" CACHE STRING  # 01/11/2023
   "Git tag for external ParMETIS build"
 )
 
