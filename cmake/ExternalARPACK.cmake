@@ -45,6 +45,7 @@ message(STATUS "ARPACK_OPTIONS: ${ARPACK_OPTIONS_PRINT}")
 set(ARPACK_PATCH_FILES
   "${CMAKE_SOURCE_DIR}/extern/patch/arpack-ng/patch_build.diff"
   "${CMAKE_SOURCE_DIR}/extern/patch/arpack-ng/patch_zdotc.diff"
+  "${CMAKE_SOURCE_DIR}/extern/patch/arpack-ng/patch_pzneupd.diff"
 )
 if(CMAKE_Fortran_COMPILER_ID STREQUAL "GNU")
   list(APPEND ARPACK_PATCH_FILES
