@@ -1,5 +1,5 @@
 diff --git a/mesh/pncmesh.cpp b/mesh/pncmesh.cpp
-index cd6625e9c..a8a88081f 100644
+index 60aca4583..34d59e567 100644
 --- a/mesh/pncmesh.cpp
 +++ b/mesh/pncmesh.cpp
 @@ -107,6 +107,8 @@ void ParNCMesh::Update()
