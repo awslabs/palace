@@ -12,12 +12,14 @@ Fetch most recent commit from dependency repositories
 Options:
   -h, --help                       Show this help message and exit
   -v, --verbose                    Verbose log output
+  -update, --update-tags           Update tags in ExternalGitTags.cmake after checking for updates
   -p, --package <PACKAGE_NAME>     Check for updates for a specified package (may be repeated)
 "
 }
 
 # Parse arguments
 VERBOSE="false"
+UPDATE_TAGS="false"
 PKG_LIST=""
 POSITIONAL=()
 while [[ $# -gt 0 ]]; do
@@ -29,6 +31,10 @@ while [[ $# -gt 0 ]]; do
         ;;
         -v|--verbose)
         VERBOSE="true"
+        shift
+        ;;
+        -update|--update-tags)
+        UPDATE_TAGS="true"
         shift
         ;;
         -p|--package)
@@ -97,6 +103,11 @@ for GIT_URL in $GIT_REMOTE_URLS; do
         echo "New tag:      $GIT_TAG_NEW" && printf "\n"
 
         echo "$GIT_LOG" && printf "\n"
+
+        if $UPDATE_TAGS; then
+            sed -i .b  "s|$GIT_TAG|$GIT_TAG_NEW|g" $SOURCE_DIR/cmake/ExternalGitTags.cmake
+            rm $SOURCE_DIR/cmake/ExternalGitTags.cmake.b
+        fi
     else
         echo "Already up to date" && printf "\n"
     fi

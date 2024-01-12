@@ -45,7 +45,7 @@ void CheckInfoAUPD(a_int info)
         msg += "NEV must be positive!";
         break;
       case -3:
-        msg += "NCV-NEV >= 2 and less than or equal to N!";
+        msg += "NCV <= NEV + 1 or NCV > N!";
         break;
       case -4:
         msg += "The maximum number of Arnoldi update iterations allowed must "
@@ -104,7 +104,7 @@ void CheckInfoEUPD(a_int info)
         msg += "NEV must be positive!";
         break;
       case -3:
-        msg += "NCV-NEV >= 2 and less than or equal to N!";
+        msg += "NCV <= NEV + 1 or NCV > N!";
         break;
       case -4:
         msg += "The maximum number of Arnoldi update iterations allowed must "
