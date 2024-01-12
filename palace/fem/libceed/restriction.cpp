@@ -22,8 +22,11 @@ void InitLexicoRestr(const mfem::FiniteElementSpace &fespace,
   const mfem::TensorBasisElement *tfe = dynamic_cast<const mfem::TensorBasisElement *>(&fe);
   const mfem::Array<int> &dof_map = tfe->GetDofMap();
   CeedInt comp_stride =
-      (fespace.GetOrdering() == mfem::Ordering::byVDIM) ? 1 : fespace.GetNDofs();
-  const int stride = (comp_stride == 1) ? fespace.GetVDim() : 1;
+      (fespace.GetVDim() == 1 || fespace.GetOrdering() == mfem::Ordering::byVDIM)
+          ? 1
+          : fespace.GetNDofs();
+  const int stride =
+      (fespace.GetOrdering() == mfem::Ordering::byVDIM) ? fespace.GetVDim() : 1;
   mfem::Array<int> tp_el_dof(num_elem * P), dofs;
   mfem::Array<bool> tp_el_orients(num_elem * P);
   bool use_el_orients = false;
@@ -81,9 +84,12 @@ void InitNativeRestr(const mfem::FiniteElementSpace &fespace,
   const mfem::FiniteElement &fe =
       use_bdr ? *fespace.GetBE(indices[0]) : *fespace.GetFE(indices[0]);
   const int P = fe.GetDof();
-  CeedInt comp_strid =
-      (fespace.GetOrdering() == mfem::Ordering::byVDIM) ? 1 : fespace.GetNDofs();
-  const int stride = (comp_strid == 1) ? fespace.GetVDim() : 1;
+  CeedInt comp_stride =
+      (fespace.GetVDim() == 1 || fespace.GetOrdering() == mfem::Ordering::byVDIM)
+          ? 1
+          : fespace.GetNDofs();
+  const int stride =
+      (fespace.GetOrdering() == mfem::Ordering::byVDIM) ? fespace.GetVDim() : 1;
   mfem::Array<int> tp_el_dof(num_elem * P), dofs;
   mfem::Array<bool> tp_el_orients;
   mfem::Array<int8_t> tp_el_curl_orients;
@@ -182,7 +188,7 @@ void InitNativeRestr(const mfem::FiniteElementSpace &fespace,
   if (has_dof_trans)
   {
     PalaceCeedCall(ceed, CeedElemRestrictionCreateCurlOriented(
-                             ceed, num_elem, P, fespace.GetVDim(), comp_strid,
+                             ceed, num_elem, P, fespace.GetVDim(), comp_stride,
                              fespace.GetVDim() * fespace.GetNDofs(), CEED_MEM_HOST,
                              CEED_COPY_VALUES, tp_el_dof.GetData(),
                              tp_el_curl_orients.GetData(), restr));
@@ -190,7 +196,7 @@ void InitNativeRestr(const mfem::FiniteElementSpace &fespace,
   else if (use_el_orients)
   {
     PalaceCeedCall(ceed, CeedElemRestrictionCreateOriented(
-                             ceed, num_elem, P, fespace.GetVDim(), comp_strid,
+                             ceed, num_elem, P, fespace.GetVDim(), comp_stride,
                              fespace.GetVDim() * fespace.GetNDofs(), CEED_MEM_HOST,
                              CEED_COPY_VALUES, tp_el_dof.GetData(), tp_el_orients.GetData(),
                              restr));
@@ -198,7 +204,7 @@ void InitNativeRestr(const mfem::FiniteElementSpace &fespace,
   else
   {
     PalaceCeedCall(ceed, CeedElemRestrictionCreate(
-                             ceed, num_elem, P, fespace.GetVDim(), comp_strid,
+                             ceed, num_elem, P, fespace.GetVDim(), comp_stride,
                              fespace.GetVDim() * fespace.GetNDofs(), CEED_MEM_HOST,
                              CEED_COPY_VALUES, tp_el_dof.GetData(), restr));
   }
