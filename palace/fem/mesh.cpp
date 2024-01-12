@@ -62,7 +62,7 @@ auto BuildCeedAttributes(const mfem::ParMesh &mesh)
   }
   for (int i = 0; i < mesh.GetNSharedFaces(); i++)
   {
-    mesh.GetSharedFaceTransformations(i, &FET, &T1, &T2);
+    mesh.GetSharedFaceTransformations(i, FET, T1, T2);
     int attr = FET.Elem1->Attribute;
     if (loc_attr.find(attr) == loc_attr.end())
     {

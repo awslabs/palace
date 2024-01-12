@@ -25,12 +25,12 @@ void BdrGridFunctionCoefficient::GetBdrElementNeighborTransformations(
   if (info2 >= 0 && iel2 < 0)
   {
     // Face is shared with another subdomain.
-    mesh.GetSharedFaceTransformationsByLocalIndex(f, &FET, &T1, &T2);
+    mesh.GetSharedFaceTransformationsByLocalIndex(f, FET, T1, T2);
   }
   else
   {
     // Face is either internal to the subdomain, or a true one-sided boundary.
-    mesh.GetFaceElementTransformations(f, &FET, &T1, &T2);
+    mesh.GetFaceElementTransformations(f, FET, T1, T2);
   }
 
   // Boundary elements and boundary faces may have different orientations so adjust the
