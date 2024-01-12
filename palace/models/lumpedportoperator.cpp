@@ -176,8 +176,10 @@ void LumpedPortData::InitializeLinearForms(mfem::ParFiniteElementSpace &nd_fespa
     for (const auto &elem : elems)
     {
       const double Rs = R * GetToSquare(*elem);
-      const double Hinc = 1.0 / std::sqrt(Rs * elem->GetGeometryWidth() *
-                                          elem->GetGeometryLength() * elems.size());
+      const double Hinc = (std::abs(Rs) > 0.0)
+                              ? 1.0 / std::sqrt(Rs * elem->GetGeometryWidth() *
+                                                elem->GetGeometryLength() * elems.size())
+                              : 0.0;
       fb.AddCoefficient(elem->GetModeCoefficient(Hinc));
     }
     s = std::make_unique<mfem::LinearForm>(&nd_fespace);
