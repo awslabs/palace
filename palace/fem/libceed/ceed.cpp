@@ -62,9 +62,9 @@ void Initialize(const char *resource, const char *jit_source_dir)
 void Finalize()
 {
   // Destroy Ceed context(s).
-  for (std::size_t i = 0; i < internal::ceeds.size(); i++)
+  for (auto &ceed : internal::ceeds)
   {
-    int ierr = CeedDestroy(&internal::ceeds[i]);
+    int ierr = CeedDestroy(&ceed);
     MFEM_VERIFY(!ierr, "Failed to finalize libCEED!");
   }
   internal::ceeds.clear();

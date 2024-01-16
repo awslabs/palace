@@ -20,17 +20,16 @@ inline constexpr auto DefaultNumAttr()
   return 64;
 }
 
-template <int DIM>
-inline constexpr auto CoeffDim()
+inline constexpr auto CoeffDim(int dim)
 {
-  return DIM * (DIM + 1) / 2;
+  return dim * (dim + 1) / 2;
 }
 
 template <int DIM>
 auto InitDefaultCoefficient()
 {
   // All entries are value-initialized to zero, including the material property coefficient.
-  std::vector<CeedIntScalar> ctx(2 + DefaultNumAttr() + CoeffDim<DIM>(), {0});
+  std::vector<CeedIntScalar> ctx(2 + DefaultNumAttr() + CoeffDim(DIM), {0});
   ctx[0].first = DefaultNumAttr();
   ctx[1 + DefaultNumAttr()].first = 1;
   return ctx;
@@ -104,7 +103,7 @@ std::vector<CeedIntScalar> PopulateCoefficientContext(const MaterialPropertyCoef
   // Map unassigned attributes to zero material property coefficient (the last material
   // property is reserved for zero).
   std::vector<CeedIntScalar> ctx(2 + attr_mat.Size() +
-                                 CoeffDim<DIM>() * (mat_coeff.SizeK() + 1));
+                                 CoeffDim(DIM) * (mat_coeff.SizeK() + 1));
   ctx[0].first = attr_mat.Size();
   const int zero_mat = mat_coeff.SizeK();
   for (int i = 0; i < attr_mat.Size(); i++)
@@ -131,15 +130,15 @@ std::vector<CeedIntScalar> PopulateCoefficientContext(const MaterialPropertyCoef
         for (int di = dj; di < dim; ++di)
         {
           const int idx = (dj * dim) - (((dj - 1) * dj) / 2) + di - dj;
-          MatCoeff(ctx.data())[CoeffDim<DIM>() * k + idx].second =
+          MatCoeff(ctx.data())[CoeffDim(DIM) * k + idx].second =
               a * mat_coeff(di, dj, k);  // Column-major
         }
       }
     }
   }
-  for (int d = 0; d < CoeffDim<DIM>(); d++)
+  for (int d = 0; d < CoeffDim(DIM); d++)
   {
-    MatCoeff(ctx.data())[CoeffDim<DIM>() * zero_mat + d].second = 0.0;
+    MatCoeff(ctx.data())[CoeffDim(DIM) * zero_mat + d].second = 0.0;
   }
 
   return ctx;

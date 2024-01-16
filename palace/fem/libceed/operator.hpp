@@ -37,7 +37,7 @@ public:
 
   void AddOper(CeedOperator op, CeedOperator op_t = nullptr);
 
-  void SetDofMultiplicity(Vector &&mult) { dof_multiplicity = mult; }
+  void SetDofMultiplicity(Vector &&mult) { dof_multiplicity = std::move(mult); }
 
   void AssembleDiagonal(Vector &diag) const override;
 

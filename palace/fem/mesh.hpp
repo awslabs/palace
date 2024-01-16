@@ -124,9 +124,9 @@ public:
       if (loc_bdr_attr.find(attr) != loc_bdr_attr.end())
       {
         const auto &bdr_attr_map = loc_bdr_attr.at(attr);
-        for (auto it = bdr_attr_map.begin(); it != bdr_attr_map.end(); ++it)
+        for (const auto &[k, v] : bdr_attr_map)
         {
-          loc_attr_list.Append(it->second);
+          loc_attr_list.Append(v);
         }
       }
     }
