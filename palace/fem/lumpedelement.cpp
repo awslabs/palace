@@ -102,8 +102,8 @@ UniformElementData::GetModeCoefficient(double coef) const
 {
   mfem::Vector source = direction;
   source *= coef;
-  return std::make_unique<RestrictedVectorCoefficient>(
-      std::make_unique<mfem::VectorConstantCoefficient>(source), attr_list);
+  return std::make_unique<RestrictedVectorCoefficient<mfem::VectorConstantCoefficient>>(
+      attr_list, source);
 }
 
 CoaxialElementData::CoaxialElementData(const std::array<double, 3> &direction,
@@ -141,8 +141,8 @@ CoaxialElementData::GetModeCoefficient(double coef) const
     double oor = 1.0 / f.Norml2();
     f *= coef * oor * oor;
   };
-  return std::make_unique<RestrictedVectorCoefficient>(
-      std::make_unique<mfem::VectorFunctionCoefficient>(x0.Size(), Source), attr_list);
+  return std::make_unique<RestrictedVectorCoefficient<mfem::VectorFunctionCoefficient>>(
+      attr_list, x0.Size(), Source);
 }
 
 }  // namespace palace

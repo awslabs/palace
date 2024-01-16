@@ -229,8 +229,8 @@ double LumpedPortData::GetPower(mfem::ParGridFunction &E, mfem::ParGridFunction 
   mfem::Array<int> attr_list;
   for (const auto &elem : elems)
   {
-    fb.AddCoefficient(std::make_unique<RestrictedVectorCoefficient>(
-        std::make_unique<BdrCurrentVectorCoefficient>(B, mat_op), elem->GetAttrList()));
+    fb.AddCoefficient<RestrictedVectorCoefficient<BdrCurrentVectorCoefficient>>(
+        1.0, elem->GetAttrList(), B, mat_op);
     attr_list.Append(elem->GetAttrList());
   }
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
@@ -258,12 +258,10 @@ std::complex<double> LumpedPortData::GetPower(mfem::ParComplexGridFunction &E,
   mfem::Array<int> attr_list;
   for (const auto &elem : elems)
   {
-    fbr.AddCoefficient(std::make_unique<RestrictedVectorCoefficient>(
-        std::make_unique<BdrCurrentVectorCoefficient>(B.real(), mat_op),
-        elem->GetAttrList()));
-    fbi.AddCoefficient(std::make_unique<RestrictedVectorCoefficient>(
-        std::make_unique<BdrCurrentVectorCoefficient>(B.imag(), mat_op),
-        elem->GetAttrList()));
+    fbr.AddCoefficient<RestrictedVectorCoefficient<BdrCurrentVectorCoefficient>>(
+        1.0, elem->GetAttrList(), B.real(), mat_op);
+    fbi.AddCoefficient<RestrictedVectorCoefficient<BdrCurrentVectorCoefficient>>(
+        1.0, elem->GetAttrList(), B.imag(), mat_op);
     attr_list.Append(elem->GetAttrList());
   }
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
