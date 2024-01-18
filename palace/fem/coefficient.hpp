@@ -549,35 +549,35 @@ public:
   }
 };
 
-class RestrictedCoefficient : public mfem::Coefficient
+template <typename Coefficient>
+class RestrictedCoefficient : public Coefficient
 {
 private:
-  std::unique_ptr<mfem::Coefficient> coeff;
   const mfem::Array<int> &attr;
 
 public:
-  RestrictedCoefficient(std::unique_ptr<mfem::Coefficient> &&coeff,
-                        const mfem::Array<int> &attr)
-    : mfem::Coefficient(), coeff(std::move(coeff)), attr(attr)
+  template <typename... T>
+  RestrictedCoefficient(const mfem::Array<int> &attr, T &&...args)
+    : Coefficient(std::forward<T>(args)...), attr(attr)
   {
   }
 
   double Eval(mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip) override
   {
-    return (attr.Find(T.Attribute) < 0) ? 0.0 : coeff->Eval(T, ip);
+    return (attr.Find(T.Attribute) < 0) ? 0.0 : Coefficient::Eval(T, ip);
   }
 };
 
-class RestrictedVectorCoefficient : public mfem::VectorCoefficient
+template <typename Coefficient>
+class RestrictedVectorCoefficient : public Coefficient
 {
 private:
-  std::unique_ptr<mfem::VectorCoefficient> coeff;
   const mfem::Array<int> &attr;
 
 public:
-  RestrictedVectorCoefficient(std::unique_ptr<mfem::VectorCoefficient> &&coeff,
-                              const mfem::Array<int> &attr)
-    : mfem::VectorCoefficient(coeff->GetVDim()), coeff(std::move(coeff)), attr(attr)
+  template <typename... T>
+  RestrictedVectorCoefficient(const mfem::Array<int> &attr, T &&...args)
+    : Coefficient(std::forward<T>(args)...), attr(attr)
   {
   }
 
@@ -586,27 +586,26 @@ public:
   {
     if (attr.Find(T.Attribute) < 0)
     {
-      V.SetSize(vdim);
+      V.SetSize(this->vdim);
       V = 0.0;
     }
     else
     {
-      coeff->Eval(V, T, ip);
+      Coefficient::Eval(V, T, ip);
     }
   }
 };
 
-class RestrictedMatrixCoefficient : public mfem::MatrixCoefficient
+template <typename Coefficient>
+class RestrictedMatrixCoefficient : public Coefficient
 {
 private:
-  std::unique_ptr<mfem::MatrixCoefficient> coeff;
   const mfem::Array<int> &attr;
 
 public:
-  RestrictedMatrixCoefficient(std::unique_ptr<mfem::MatrixCoefficient> &&coeff,
-                              const mfem::Array<int> &attr)
-    : mfem::MatrixCoefficient(coeff->GetHeight(), coeff->GetWidth()),
-      coeff(std::move(coeff)), attr(attr)
+  template <typename... T>
+  RestrictedMatrixCoefficient(const mfem::Array<int> &attr, T &&...args)
+    : Coefficient(std::forward<T>(args)...), attr(attr)
   {
   }
 
@@ -615,12 +614,12 @@ public:
   {
     if (attr.Find(T.Attribute) < 0)
     {
-      K.SetSize(height, width);
+      K.SetSize(this->height, this->width);
       K = 0.0;
     }
     else
     {
-      coeff->Eval(K, T, ip);
+      Coefficient::Eval(K, T, ip);
     }
   }
 };

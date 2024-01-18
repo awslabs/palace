@@ -897,38 +897,36 @@ std::unique_ptr<mfem::VectorCoefficient>
 WavePortData::GetModeExcitationCoefficientReal() const
 {
   const auto &port_submesh = static_cast<const mfem::ParSubMesh &>(port_mesh->Get());
-  return std::make_unique<RestrictedVectorCoefficient>(
-      std::make_unique<BdrSubmeshHVectorCoefficient<ValueType::REAL>>(
-          *port_E0t, *port_E0n, mat_op, port_submesh, submesh_parent_elems, kn0, omega0),
-      attr_list);
+  return std::make_unique<
+      RestrictedVectorCoefficient<BdrSubmeshHVectorCoefficient<ValueType::REAL>>>(
+      attr_list, *port_E0t, *port_E0n, mat_op, port_submesh, submesh_parent_elems, kn0,
+      omega0);
 }
 
 std::unique_ptr<mfem::VectorCoefficient>
 WavePortData::GetModeExcitationCoefficientImag() const
 {
   const auto &port_submesh = static_cast<const mfem::ParSubMesh &>(port_mesh->Get());
-  return std::make_unique<RestrictedVectorCoefficient>(
-      std::make_unique<BdrSubmeshHVectorCoefficient<ValueType::IMAG>>(
-          *port_E0t, *port_E0n, mat_op, port_submesh, submesh_parent_elems, kn0, omega0),
-      attr_list);
+  return std::make_unique<
+      RestrictedVectorCoefficient<BdrSubmeshHVectorCoefficient<ValueType::IMAG>>>(
+      attr_list, *port_E0t, *port_E0n, mat_op, port_submesh, submesh_parent_elems, kn0,
+      omega0);
 }
 
 std::unique_ptr<mfem::VectorCoefficient> WavePortData::GetModeFieldCoefficientReal() const
 {
   const auto &port_submesh = static_cast<const mfem::ParSubMesh &>(port_mesh->Get());
-  return std::make_unique<RestrictedVectorCoefficient>(
-      std::make_unique<BdrSubmeshEVectorCoefficient<ValueType::REAL>>(
-          *port_E0t, *port_E0n, port_submesh, submesh_parent_elems),
-      attr_list);
+  return std::make_unique<
+      RestrictedVectorCoefficient<BdrSubmeshEVectorCoefficient<ValueType::REAL>>>(
+      attr_list, *port_E0t, *port_E0n, port_submesh, submesh_parent_elems);
 }
 
 std::unique_ptr<mfem::VectorCoefficient> WavePortData::GetModeFieldCoefficientImag() const
 {
   const auto &port_submesh = static_cast<const mfem::ParSubMesh &>(port_mesh->Get());
-  return std::make_unique<RestrictedVectorCoefficient>(
-      std::make_unique<BdrSubmeshEVectorCoefficient<ValueType::IMAG>>(
-          *port_E0t, *port_E0n, port_submesh, submesh_parent_elems),
-      attr_list);
+  return std::make_unique<
+      RestrictedVectorCoefficient<BdrSubmeshEVectorCoefficient<ValueType::IMAG>>>(
+      attr_list, *port_E0t, *port_E0n, port_submesh, submesh_parent_elems);
 }
 
 double WavePortData::GetExcitationPower() const

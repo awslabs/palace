@@ -83,18 +83,21 @@ SurfacePostOperator::InterfaceDielectricData::GetCoefficient(
   switch (type)
   {
     case DielectricInterfaceType::MA:
-      return std::make_unique<DielectricInterfaceCoefficient<DielectricInterfaceType::MA>>(
-          U, mat_op, ts, epsilon, sides[i]);
+      return std::make_unique<RestrictedCoefficient<
+          DielectricInterfaceCoefficient<DielectricInterfaceType::MA>>>(
+          attr_lists[i], U, mat_op, ts, epsilon, sides[i]);
     case DielectricInterfaceType::MS:
-      return std::make_unique<DielectricInterfaceCoefficient<DielectricInterfaceType::MS>>(
-          U, mat_op, ts, epsilon, sides[i]);
+      return std::make_unique<RestrictedCoefficient<
+          DielectricInterfaceCoefficient<DielectricInterfaceType::MS>>>(
+          attr_lists[i], U, mat_op, ts, epsilon, sides[i]);
     case DielectricInterfaceType::SA:
-      return std::make_unique<DielectricInterfaceCoefficient<DielectricInterfaceType::SA>>(
-          U, mat_op, ts, epsilon, sides[i]);
+      return std::make_unique<RestrictedCoefficient<
+          DielectricInterfaceCoefficient<DielectricInterfaceType::SA>>>(
+          attr_lists[i], U, mat_op, ts, epsilon, sides[i]);
     case DielectricInterfaceType::DEFAULT:
-      return std::make_unique<
-          DielectricInterfaceCoefficient<DielectricInterfaceType::DEFAULT>>(
-          U, mat_op, ts, epsilon, sides[i]);
+      return std::make_unique<RestrictedCoefficient<
+          DielectricInterfaceCoefficient<DielectricInterfaceType::DEFAULT>>>(
+          attr_lists[i], U, mat_op, ts, epsilon, sides[i]);
   }
   return {};  // For compiler warning
 }
@@ -110,7 +113,8 @@ SurfacePostOperator::SurfaceChargeData::SurfaceChargeData(
 std::unique_ptr<mfem::Coefficient> SurfacePostOperator::SurfaceChargeData::GetCoefficient(
     std::size_t i, const mfem::ParGridFunction &U, const MaterialOperator &mat_op) const
 {
-  return std::make_unique<BdrChargeCoefficient>(U, mat_op);
+  return std::make_unique<RestrictedCoefficient<BdrChargeCoefficient>>(attr_lists[i], U,
+                                                                       mat_op);
 }
 
 SurfacePostOperator::SurfaceFluxData::SurfaceFluxData(const config::InductanceData &data,
@@ -130,7 +134,8 @@ SurfacePostOperator::SurfaceFluxData::SurfaceFluxData(const config::InductanceDa
 std::unique_ptr<mfem::Coefficient> SurfacePostOperator::SurfaceFluxData::GetCoefficient(
     std::size_t i, const mfem::ParGridFunction &U, const MaterialOperator &mat_op) const
 {
-  return std::make_unique<BdrFluxCoefficient>(U, mat_op, direction);
+  return std::make_unique<RestrictedCoefficient<BdrFluxCoefficient>>(attr_lists[i], U,
+                                                                     mat_op, direction);
 }
 
 SurfacePostOperator::SurfacePostOperator(const IoData &iodata,
@@ -250,8 +255,7 @@ double SurfacePostOperator::GetLocalSurfaceIntegral(const SurfaceData &data,
   mfem::Array<int> attr_list;
   for (std::size_t i = 0; i < data.attr_lists.size(); i++)
   {
-    fb.AddCoefficient(std::make_unique<RestrictedCoefficient>(
-        data.GetCoefficient(i, U, mat_op), data.attr_lists[i]));
+    fb.AddCoefficient(data.GetCoefficient(i, U, mat_op));
     attr_list.Append(data.attr_lists[i]);
   }
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
