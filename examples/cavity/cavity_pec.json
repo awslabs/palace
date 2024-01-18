@@ -9,10 +9,7 @@
   {
     "Mesh": "mesh/cavity.msh",
     "L0": 1.0e-2,  // cm
-    "Refinement":
-    {
-      "UniformLevels": 1
-    }
+    "Refinement": {}
   },
   "Domains":
   {
@@ -45,7 +42,7 @@
   },
   "Solver":
   {
-    "Order": 2,
+    "Order": 4,
     "Eigenmode":
     {
       "N": 15,
