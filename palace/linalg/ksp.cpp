@@ -67,18 +67,22 @@ std::unique_ptr<IterativeSolver<OperType>> ConfigureKrylovSolver(MPI_Comm comm,
   }
   else
   {
-    auto *gmres = static_cast<GmresSolver<OperType> *>(ksp.get());
-    switch (iodata.solver.linear.pc_side_type)
+    if (type == config::LinearSolverData::KspType::GMRES ||
+        type == config::LinearSolverData::KspType::FGMRES)
     {
-      case config::LinearSolverData::SideType::LEFT:
-        gmres->SetPrecSide(GmresSolver<OperType>::PrecSide::LEFT);
-        break;
-      case config::LinearSolverData::SideType::RIGHT:
-        gmres->SetPrecSide(GmresSolver<OperType>::PrecSide::RIGHT);
-        break;
-      case config::LinearSolverData::SideType::DEFAULT:
-        // Do nothing
-        break;
+      auto *gmres = static_cast<GmresSolver<OperType> *>(ksp.get());
+      switch (iodata.solver.linear.pc_side_type)
+      {
+        case config::LinearSolverData::SideType::LEFT:
+          gmres->SetPrecSide(GmresSolver<OperType>::PrecSide::LEFT);
+          break;
+        case config::LinearSolverData::SideType::RIGHT:
+          gmres->SetPrecSide(GmresSolver<OperType>::PrecSide::RIGHT);
+          break;
+        case config::LinearSolverData::SideType::DEFAULT:
+          // Do nothing
+          break;
+      }
     }
   }
 
@@ -118,8 +122,8 @@ auto MakeWrapperSolver(U &&...args)
 template <typename OperType>
 std::unique_ptr<Solver<OperType>>
 ConfigurePreconditionerSolver(MPI_Comm comm, const IoData &iodata,
-                              const FiniteElementSpaceHierarchy &fespaces,
-                              const AuxiliaryFiniteElementSpaceHierarchy *aux_fespaces)
+                              FiniteElementSpaceHierarchy &fespaces,
+                              AuxiliaryFiniteElementSpaceHierarchy *aux_fespaces)
 {
   // Create the real-valued solver first.
   std::unique_ptr<Solver<OperType>> pc;
@@ -215,9 +219,9 @@ ConfigurePreconditionerSolver(MPI_Comm comm, const IoData &iodata,
 }  // namespace
 
 template <typename OperType>
-BaseKspSolver<OperType>::BaseKspSolver(
-    const IoData &iodata, const FiniteElementSpaceHierarchy &fespaces,
-    const AuxiliaryFiniteElementSpaceHierarchy *aux_fespaces)
+BaseKspSolver<OperType>::BaseKspSolver(const IoData &iodata,
+                                       FiniteElementSpaceHierarchy &fespaces,
+                                       AuxiliaryFiniteElementSpaceHierarchy *aux_fespaces)
   : BaseKspSolver(
         ConfigureKrylovSolver<OperType>(fespaces.GetFinestFESpace().GetComm(), iodata),
         ConfigurePreconditionerSolver<OperType>(fespaces.GetFinestFESpace().GetComm(),
@@ -230,22 +234,28 @@ BaseKspSolver<OperType>::BaseKspSolver(std::unique_ptr<IterativeSolver<OperType>
                                        std::unique_ptr<Solver<OperType>> &&pc)
   : ksp(std::move(ksp)), pc(std::move(pc)), ksp_mult(0), ksp_mult_it(0)
 {
-  this->ksp->SetPreconditioner(*this->pc);
+  if (this->pc)
+  {
+    this->ksp->SetPreconditioner(*this->pc);
+  }
 }
 
 template <typename OperType>
 void BaseKspSolver<OperType>::SetOperators(const OperType &op, const OperType &pc_op)
 {
   ksp->SetOperator(op);
-  const auto *mg_op = dynamic_cast<const BaseMultigridOperator<OperType> *>(&pc_op);
-  const auto *mg_pc = dynamic_cast<const GeometricMultigridSolver<OperType> *>(pc.get());
-  if (mg_op && !mg_pc)
+  if (pc)
   {
-    pc->SetOperator(mg_op->GetFinestOperator());
-  }
-  else
-  {
-    pc->SetOperator(pc_op);
+    const auto *mg_op = dynamic_cast<const BaseMultigridOperator<OperType> *>(&pc_op);
+    const auto *mg_pc = dynamic_cast<const GeometricMultigridSolver<OperType> *>(pc.get());
+    if (mg_op && !mg_pc)
+    {
+      pc->SetOperator(mg_op->GetFinestOperator());
+    }
+    else
+    {
+      pc->SetOperator(pc_op);
+    }
   }
 }
 

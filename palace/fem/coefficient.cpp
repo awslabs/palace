@@ -6,57 +6,63 @@
 namespace palace
 {
 
-void BdrGridFunctionCoefficient::GetElementTransformations(mfem::ElementTransformation &T,
-                                                           const mfem::IntegrationPoint &ip,
-                                                           mfem::ElementTransformation *&T1,
-                                                           mfem::ElementTransformation *&T2,
-                                                           mfem::Vector *C1)
+void BdrGridFunctionCoefficient::GetBdrElementNeighborTransformations(
+    int i, const mfem::ParMesh &mesh, mfem::FaceElementTransformations &FET,
+    mfem::IsoparametricTransformation &T1, mfem::IsoparametricTransformation &T2,
+    const mfem::IntegrationPoint *ip)
 {
-  // Return transformations for elements attached to boundary element T. T1 always exists
-  // but T2 may not if the element is truly a single-sided boundary.
-  MFEM_ASSERT(T.ElementType == mfem::ElementTransformation::BDR_ELEMENT,
-              "Unexpected element type in BdrGridFunctionCoefficient!");
-  MFEM_ASSERT(&mesh == T.mesh, "Invalid mesh for BdrGridFunctionCoefficient!");
-  int i, o;
+  // Return transformations for elements attached to the given boundary element. FET.Elem1
+  // always exists but FET.Elem2 may not if the element is truly a single-sided boundary.
+  int f, o;
   int iel1, iel2, info1, info2;
-  mesh.GetBdrElementFace(T.ElementNo, &i, &o);
-  mesh.GetFaceElements(i, &iel1, &iel2);
-  mesh.GetFaceInfos(i, &info1, &info2);
+  mesh.GetBdrElementFace(i, &f, &o);
+  mesh.GetFaceElements(f, &iel1, &iel2);
+  mesh.GetFaceInfos(f, &info1, &info2);
 
   // Master faces can never be boundary elements, thus only need to check for the state of
   // info2 and el2, and do not need to access the ncface numbering. See mfem::Mesh::FaceInfo
   // for details.
-  mfem::FaceElementTransformations *FET;
   if (info2 >= 0 && iel2 < 0)
   {
     // Face is shared with another subdomain.
-    const int &ishared = local_to_shared.at(i);
-    FET = mesh.GetSharedFaceTransformations(ishared);
+    mesh.GetSharedFaceTransformationsByLocalIndex(f, FET, T1, T2);
   }
   else
   {
     // Face is either internal to the subdomain, or a true one-sided boundary.
-    FET = mesh.GetFaceElementTransformations(i);
+    mesh.GetFaceElementTransformations(f, FET, T1, T2);
   }
 
   // Boundary elements and boundary faces may have different orientations so adjust the
   // integration point if necessary. See mfem::GridFunction::GetValue and GetVectorValue.
-  mfem::IntegrationPoint fip =
-      mfem::Mesh::TransformBdrElementToFace(FET->GetGeometryType(), o, ip);
-  FET->SetAllIntPoints(&fip);
-  T1 = &FET->GetElement1Transformation();
-  T2 = (info2 >= 0) ? &FET->GetElement2Transformation() : nullptr;
+  if (ip)
+  {
+    mfem::IntegrationPoint fip =
+        mfem::Mesh::TransformBdrElementToFace(FET.GetGeometryType(), o, *ip);
+    FET.SetAllIntPoints(&fip);
+  }
+}
+
+void BdrGridFunctionCoefficient::GetBdrElementNeighborTransformations(
+    mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip, mfem::Vector *C1)
+{
+  // Get the element transformations neighboring the element, and set the integration point
+  // too.
+  MFEM_ASSERT(T.ElementType == mfem::ElementTransformation::BDR_ELEMENT,
+              "Unexpected element type in BdrGridFunctionCoefficient!");
+  GetBdrElementNeighborTransformations(T.ElementNo, mesh, FET, T1, T2, &ip);
 
   // If desired, get vector pointing from center of boundary element into element 1 for
   // orientations.
   if (C1)
   {
-    mfem::Vector CF(T.GetSpaceDim());
-    mfem::ElementTransformation &TF = *mesh.GetFaceTransformation(i);
-    TF.Transform(mfem::Geometries.GetCenter(mesh.GetFaceGeometry(i)), CF);
+    int f = mesh.GetBdrElementFaceIndex(T.ElementNo);
+    CF.SetSize(T.GetSpaceDim());
+    mesh.GetFaceTransformation(f, &TF);
+    TF.Transform(mfem::Geometries.GetCenter(mesh.GetFaceGeometry(f)), CF);
 
     C1->SetSize(T.GetSpaceDim());
-    T1->Transform(mfem::Geometries.GetCenter(T1->GetGeometryType()), *C1);
+    FET.Elem1->Transform(mfem::Geometries.GetCenter(FET.Elem1->GetGeometryType()), *C1);
     *C1 -= CF;  // Points into element 1 from the face
   }
 }

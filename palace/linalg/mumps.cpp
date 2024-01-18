@@ -18,26 +18,30 @@ MumpsSolver::MumpsSolver(MPI_Comm comm, mfem::MUMPSSolver::MatType sym,
   // Configure the solver (must be called before SetOperator).
   SetPrintLevel(print);
   SetMatrixSymType(sym);
-  if (reorder == config::LinearSolverData::SymFactType::METIS)
+  switch (reorder)
   {
-    SetReorderingStrategy(mfem::MUMPSSolver::METIS);
-  }
-  else if (reorder == config::LinearSolverData::SymFactType::PARMETIS)
-  {
-    SetReorderingStrategy(mfem::MUMPSSolver::PARMETIS);
-  }
-  else if (reorder == config::LinearSolverData::SymFactType::SCOTCH)
-  {
-    SetReorderingStrategy(mfem::MUMPSSolver::SCOTCH);
-  }
-  else if (reorder == config::LinearSolverData::SymFactType::PTSCOTCH)
-  {
-    SetReorderingStrategy(mfem::MUMPSSolver::PTSCOTCH);
-  }
-  else
-  {
-    // SetReorderingStrategy(mfem::MUMPSSolver::AUTOMATIC);  // Should have good default
-    SetReorderingStrategy(mfem::MUMPSSolver::PORD);
+    case config::LinearSolverData::SymFactType::METIS:
+      SetReorderingStrategy(mfem::MUMPSSolver::METIS);
+      break;
+    case config::LinearSolverData::SymFactType::PARMETIS:
+      SetReorderingStrategy(mfem::MUMPSSolver::PARMETIS);
+      break;
+    case config::LinearSolverData::SymFactType::SCOTCH:
+      SetReorderingStrategy(mfem::MUMPSSolver::SCOTCH);
+      break;
+    case config::LinearSolverData::SymFactType::PTSCOTCH:
+      SetReorderingStrategy(mfem::MUMPSSolver::PTSCOTCH);
+      break;
+    case config::LinearSolverData::SymFactType::PORD:
+      SetReorderingStrategy(mfem::MUMPSSolver::PORD);
+      break;
+    case config::LinearSolverData::SymFactType::AMD:
+    case config::LinearSolverData::SymFactType::RCM:
+      SetReorderingStrategy(mfem::MUMPSSolver::AMD);
+      break;
+    case config::LinearSolverData::SymFactType::DEFAULT:
+      SetReorderingStrategy(mfem::MUMPSSolver::AUTOMATIC);  // Should have good default
+      break;
   }
   SetReorderingReuse(true);  // Repeated calls use same sparsity pattern
   if (blr_tol > 0.0)

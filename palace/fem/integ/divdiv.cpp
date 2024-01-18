@@ -3,95 +3,61 @@
 
 #include "fem/integrator.hpp"
 
-#include <vector>
-#include <mfem.hpp>
 #include "fem/libceed/coefficient.hpp"
 #include "fem/libceed/integrator.hpp"
 
-#include "fem/qfunctions/divdiv_qf.h"
+#include "fem/qfunctions/l2_build_qf.h"
+#include "fem/qfunctions/l2_qf.h"
 
 namespace palace
 {
 
-struct DivDivIntegratorInfo : public ceed::IntegratorInfo
+using namespace ceed;
+
+void DivDivIntegrator::Assemble(Ceed ceed, CeedElemRestriction trial_restr,
+                                CeedElemRestriction test_restr, CeedBasis trial_basis,
+                                CeedBasis test_basis, CeedVector geom_data,
+                                CeedElemRestriction geom_data_restr, CeedOperator *op) const
 {
-  DivDivContext ctx;
-};
+  IntegratorInfo info;
+  info.assemble_q_data = assemble_q_data;
 
-namespace
-{
-
-DivDivIntegratorInfo
-InitializeIntegratorInfo(const mfem::ParFiniteElementSpace &fespace,
-                         const mfem::IntegrationRule &ir, const std::vector<int> &indices,
-                         bool use_bdr, mfem::Coefficient *Q,
-                         std::vector<ceed::QuadratureCoefficient> &coeff)
-{
-  MFEM_VERIFY(fespace.GetVDim() == 1,
-              "libCEED interface for DivDivIntegrator does not support vdim > 1!");
-
-  DivDivIntegratorInfo info = {{0}};
-
-  mfem::ParMesh &mesh = *fespace.GetParMesh();
-  info.ctx.dim = mesh.Dimension() - use_bdr;
-  info.ctx.space_dim = mesh.SpaceDimension();
-
-  info.trial_op = ceed::EvalMode::Div;
-  info.test_op = ceed::EvalMode::Div;
-  info.qdata_size = 1;
-
-  mfem::ConstantCoefficient *const_coeff = dynamic_cast<mfem::ConstantCoefficient *>(Q);
-  if (const_coeff || !Q)
+  // Set up QFunctions.
+  CeedInt trial_num_comp, test_num_comp;
+  PalaceCeedCall(ceed, CeedBasisGetNumComponents(trial_basis, &trial_num_comp));
+  PalaceCeedCall(ceed, CeedBasisGetNumComponents(test_basis, &test_num_comp));
+  MFEM_VERIFY(
+      trial_num_comp == test_num_comp,
+      "DivDivIntegrator requires test and trial spaces with same number of components!");
+  switch (trial_num_comp)
   {
-    info.ctx.coeff = const_coeff ? const_coeff->constant : 1.0;
-
-    info.build_qf = f_build_divdiv_const;
-    info.build_qf_path = PalaceQFunctionRelativePath(f_build_divdiv_const_loc);
+    case 1:
+      info.apply_qf = assemble_q_data ? f_build_l2_1 : f_apply_l2_1;
+      info.apply_qf_path = PalaceQFunctionRelativePath(assemble_q_data ? f_build_l2_1_loc
+                                                                       : f_apply_l2_1_loc);
+      break;
+    case 2:
+      info.apply_qf = assemble_q_data ? f_build_l2_2 : f_apply_l2_2;
+      info.apply_qf_path = PalaceQFunctionRelativePath(assemble_q_data ? f_build_l2_2_loc
+                                                                       : f_apply_l2_2_loc);
+      break;
+    case 3:
+      info.apply_qf = assemble_q_data ? f_build_l2_3 : f_apply_l2_3;
+      info.apply_qf_path = PalaceQFunctionRelativePath(assemble_q_data ? f_build_l2_3_loc
+                                                                       : f_apply_l2_3_loc);
+      break;
+    default:
+      MFEM_ABORT("Invalid value of num_comp = " << trial_num_comp
+                                                << " for DivDivIntegrator!");
   }
-  else if (Q)
-  {
-    ceed::InitCoefficient(*Q, mesh, ir, indices, use_bdr, coeff.emplace_back());
+  info.trial_ops = EvalMode::Div | EvalMode::Weight;
+  info.test_ops = EvalMode::Div;
 
-    info.build_qf = f_build_divdiv_quad;
-    info.build_qf_path = PalaceQFunctionRelativePath(f_build_divdiv_quad_loc);
-  }
-
-  info.apply_qf = f_apply_divdiv;
-  info.apply_qf_path = PalaceQFunctionRelativePath(f_apply_divdiv_loc);
-
-  return info;
-}
-
-}  // namespace
-
-void DivDivIntegrator::Assemble(const mfem::ParFiniteElementSpace &trial_fespace,
-                                const mfem::ParFiniteElementSpace &test_fespace,
-                                const mfem::IntegrationRule &ir,
-                                const std::vector<int> &indices, Ceed ceed,
-                                CeedOperator *op, CeedOperator *op_t)
-{
-  MFEM_VERIFY(&trial_fespace == &test_fespace,
-              "DivDivIntegrator requires the same test and trial spaces!");
-  constexpr bool use_bdr = false;
-  std::vector<ceed::QuadratureCoefficient> coeff;
-  const auto info = InitializeIntegratorInfo(trial_fespace, ir, indices, use_bdr, Q, coeff);
-  ceed::AssembleCeedOperator(info, trial_fespace, test_fespace, ir, indices, use_bdr, coeff,
-                             ceed, op, op_t);
-}
-
-void DivDivIntegrator::AssembleBoundary(const mfem::ParFiniteElementSpace &trial_fespace,
-                                        const mfem::ParFiniteElementSpace &test_fespace,
-                                        const mfem::IntegrationRule &ir,
-                                        const std::vector<int> &indices, Ceed ceed,
-                                        CeedOperator *op, CeedOperator *op_t)
-{
-  MFEM_VERIFY(&trial_fespace == &test_fespace,
-              "DivDivIntegrator requires the same test and trial spaces!");
-  constexpr bool use_bdr = true;
-  std::vector<ceed::QuadratureCoefficient> coeff;
-  const auto info = InitializeIntegratorInfo(trial_fespace, ir, indices, use_bdr, Q, coeff);
-  ceed::AssembleCeedOperator(info, trial_fespace, test_fespace, ir, indices, use_bdr, coeff,
-                             ceed, op, op_t);
+  // Set up the coefficient and assemble.
+  auto ctx = PopulateCoefficientContext(trial_num_comp, Q);
+  AssembleCeedOperator(info, (void *)ctx.data(), ctx.size() * sizeof(CeedIntScalar), ceed,
+                       trial_restr, test_restr, trial_basis, test_basis, geom_data,
+                       geom_data_restr, op);
 }
 
 }  // namespace palace

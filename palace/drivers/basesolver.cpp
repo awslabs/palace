@@ -11,6 +11,7 @@
 #include "drivers/transientsolver.hpp"
 #include "fem/errorindicator.hpp"
 #include "fem/fespace.hpp"
+#include "fem/mesh.hpp"
 #include "linalg/ksp.hpp"
 #include "models/domainpostoperator.hpp"
 #include "models/postoperator.hpp"
@@ -136,8 +137,7 @@ BaseSolver::BaseSolver(const IoData &iodata, bool root, int size, int num_thread
   }
 }
 
-void BaseSolver::SolveEstimateMarkRefine(
-    std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const
+void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mesh) const
 {
   const auto &refinement = iodata.model.refinement;
   const bool use_amr = [&]()
@@ -155,7 +155,7 @@ void BaseSolver::SolveEstimateMarkRefine(
                "the sequence of a priori refinements\n");
     mesh.erase(mesh.begin(), mesh.end() - 1);
     constexpr bool refine = true, fix_orientation = true;
-    mesh.back()->Finalize(refine, fix_orientation);
+    mesh.back()->Get().Finalize(refine, fix_orientation);
   }
   MPI_Comm comm = mesh.back()->GetComm();
 
@@ -206,7 +206,7 @@ void BaseSolver::SolveEstimateMarkRefine(
         refinement.update_fraction);
 
     // Refine.
-    auto &fine_mesh = *mesh.back();
+    mfem::ParMesh &fine_mesh = *mesh.back();
     const auto initial_elem_count = fine_mesh.GetGlobalNE();
     fine_mesh.GeneralRefinement(marked_elements, -1, refinement.max_nc_levels);
     const auto final_elem_count = fine_mesh.GetGlobalNE();
@@ -227,6 +227,7 @@ void BaseSolver::SolveEstimateMarkRefine(
                  "(new ratio = {:.3f})\n",
                  ratio_pre, refinement.maximum_imbalance, ratio_post);
     }
+    mesh.back()->Update();
 
     // Solve + estimate.
     Mpi::Print("\nProceeding with solve/estimate iteration {}...\n", it + 1);
@@ -249,7 +250,7 @@ void BaseSolver::SaveMetadata(const FiniteElementSpaceHierarchy &fespaces) const
     return;
   }
   const auto &fespace = fespaces.GetFinestFESpace();
-  HYPRE_BigInt ne = fespace.GetParMesh()->GetNE();
+  HYPRE_BigInt ne = fespace.GetParMesh().GetNE();
   Mpi::GlobalSum(1, &ne, fespace.GetComm());
   std::vector<HYPRE_BigInt> ndofs(fespaces.GetNumLevels());
   for (std::size_t l = 0; l < fespaces.GetNumLevels(); l++)

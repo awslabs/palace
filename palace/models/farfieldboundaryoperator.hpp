@@ -11,8 +11,7 @@ namespace palace
 
 class IoData;
 class MaterialOperator;
-class SumCoefficient;
-class SumMatrixCoefficient;
+class MaterialPropertyCoefficient;
 
 //
 // A class handling farfield, or absorbing, boundaries.
@@ -20,31 +19,32 @@ class SumMatrixCoefficient;
 class FarfieldBoundaryOperator
 {
 private:
-  // Reference to input data (not owned).
+  // Reference to material property data (not owned).
   const MaterialOperator &mat_op;
+
+  // List of all absorbing boundary condition attributes.
+  mfem::Array<int> farfield_attr;
 
   // First- or second-order absorbing boundary condition.
   int order;
 
-  // Marker for all absorbing boundary condition attributes.
-  mfem::Array<int> farfield_marker;
-  void SetUpBoundaryProperties(const IoData &iodata, const mfem::ParMesh &mesh);
+  mfem::Array<int> SetUpBoundaryProperties(const IoData &iodata, const mfem::ParMesh &mesh);
 
 public:
-  FarfieldBoundaryOperator(const IoData &iodata, const MaterialOperator &mat,
+  FarfieldBoundaryOperator(const IoData &iodata, const MaterialOperator &mat_op,
                            const mfem::ParMesh &mesh);
+
+  // Returns array of farfield BC attributes.
+  const auto &GetAttrList() const { return farfield_attr; }
 
   // Returns order of absorbing BC approximation.
   int GetOrder() const { return order; }
 
-  // Returns array marking farfield BC attributes.
-  const mfem::Array<int> &GetMarker() const { return farfield_marker; }
-
   // Add contributions to system matrices from first- or second-order absorbing boundary
   // condition.
-  void AddDampingBdrCoefficients(double coef, SumMatrixCoefficient &fb);
-  void AddExtraSystemBdrCoefficients(double omega, SumCoefficient &dfbr,
-                                     SumCoefficient &dfbi);
+  void AddDampingBdrCoefficients(double coef, MaterialPropertyCoefficient &fb);
+  void AddExtraSystemBdrCoefficients(double omega, MaterialPropertyCoefficient &dfbr,
+                                     MaterialPropertyCoefficient &dfbi);
 };
 
 }  // namespace palace

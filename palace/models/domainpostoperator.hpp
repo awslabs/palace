@@ -7,12 +7,21 @@
 #include <map>
 #include <memory>
 #include <utility>
-#include <mfem.hpp>
 #include "linalg/operator.hpp"
+#include "linalg/vector.hpp"
+
+namespace mfem
+{
+
+class ParComplexGridFunction;
+class ParGridFunction;
+
+}  // namespace mfem
 
 namespace palace
 {
 
+class FiniteElementSpace;
 class IoData;
 class MaterialOperator;
 
@@ -31,8 +40,8 @@ private:
 
 public:
   DomainPostOperator(const IoData &iodata, const MaterialOperator &mat_op,
-                     const mfem::ParFiniteElementSpace *nd_fespace,
-                     const mfem::ParFiniteElementSpace *rt_fespace);
+                     const FiniteElementSpace *nd_fespace,
+                     const FiniteElementSpace *rt_fespace);
 
   // Access data structures for postprocessing domains.
   const auto &GetDomains() const { return M_i; }

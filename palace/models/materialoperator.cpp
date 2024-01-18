@@ -279,59 +279,90 @@ mfem::DenseMatrix ToDenseMatrix(const config::SymmetricMatrixData<N> &data)
 
 }  // namespace
 
-MaterialOperator::MaterialOperator(const IoData &iodata, mfem::ParMesh &mesh)
+MaterialOperator::MaterialOperator(const IoData &iodata, const Mesh &mesh) : mesh(mesh)
 {
   SetUpMaterialProperties(iodata, mesh);
 }
 
-void MaterialOperator::SetUpMaterialProperties(const IoData &iodata, mfem::ParMesh &mesh)
+void MaterialOperator::SetUpMaterialProperties(const IoData &iodata,
+                                               const mfem::ParMesh &mesh)
 {
   // Check that material attributes have been specified correctly. The mesh attributes may
   // be non-contiguous and when no material attribute is specified the elements are deleted
   // from the mesh so as to not cause problems.
   MFEM_VERIFY(!iodata.domains.materials.empty(), "Materials must be non-empty!");
-  int attr_max = mesh.attributes.Max();
-  mfem::Array<int> attr_marker(attr_max);
-  attr_marker = 0;
-  for (auto attr : mesh.attributes)
   {
-    attr_marker[attr - 1] = 1;
-  }
-  for (const auto &data : iodata.domains.materials)
-  {
-    for (auto attr : data.attributes)
+    int attr_max = mesh.attributes.Size() ? mesh.attributes.Max() : 0;
+    mfem::Array<int> attr_marker(attr_max);
+    attr_marker = 0;
+    for (auto attr : mesh.attributes)
     {
-      MFEM_VERIFY(
-          attr > 0 && attr <= attr_max,
-          "Material attribute tags must be non-negative and correspond to attributes "
-          "in the mesh!");
-      MFEM_VERIFY(attr_marker[attr - 1], "Unknown material attribute " << attr << "!");
+      attr_marker[attr - 1] = 1;
+    }
+    for (const auto &data : iodata.domains.materials)
+    {
+      for (auto attr : data.attributes)
+      {
+        MFEM_VERIFY(
+            attr > 0 && attr <= attr_max,
+            "Material attribute tags must be non-negative and correspond to attributes "
+            "in the mesh!");
+        MFEM_VERIFY(attr_marker[attr - 1], "Unknown material attribute " << attr << "!");
+      }
     }
   }
 
-  // Set up material properties of the different domain regions, represented with piece-wise
-  // constant matrix-valued coefficients for the relative permeability and permittivity,
+  // Set up material properties of the different domain regions, represented with element-
+  // wise constant matrix-valued coefficients for the relative permeability, permittivity,
   // and other material properties.
-  const int sdim = mesh.SpaceDimension();
-  mat_muinv.resize(attr_max, mfem::DenseMatrix(sdim));
-  mat_epsilon.resize(attr_max, mfem::DenseMatrix(sdim));
-  mat_epsilon_imag.resize(attr_max, mfem::DenseMatrix(sdim));
-  mat_epsilon_abs.resize(attr_max, mfem::DenseMatrix(sdim));
-  mat_invz0.resize(attr_max, mfem::DenseMatrix(sdim));
-  mat_c0.resize(attr_max, mfem::DenseMatrix(sdim));
-  mat_sigma.resize(attr_max, mfem::DenseMatrix(sdim));
-  mat_invLondon.resize(attr_max, mfem::DenseMatrix(sdim));
-  mat_c0_min.resize(attr_max, 0.0);
-  mat_c0_max.resize(attr_max, 0.0);
-  for (const auto &data : iodata.domains.materials)
+  const auto &loc_attr = this->mesh.GetCeedAttributes();
+  mfem::Array<int> mat_marker(iodata.domains.materials.size());
+  mat_marker = 0;
+  int nmats = 0;
+  for (std::size_t i = 0; i < iodata.domains.materials.size(); i++)
   {
+    const auto &data = iodata.domains.materials[i];
+    for (auto attr : data.attributes)
+    {
+      if (loc_attr.find(attr) != loc_attr.end())
+      {
+        mat_marker[i] = 1;
+        nmats++;
+        break;
+      }
+    }
+  }
+  attr_mat.SetSize(loc_attr.size());
+  attr_mat = -1;
+
+  const int sdim = mesh.SpaceDimension();
+  mat_muinv.SetSize(sdim, sdim, nmats);
+  mat_epsilon.SetSize(sdim, sdim, nmats);
+  mat_epsilon_imag.SetSize(sdim, sdim, nmats);
+  mat_epsilon_abs.SetSize(sdim, sdim, nmats);
+  mat_invz0.SetSize(sdim, sdim, nmats);
+  mat_c0.SetSize(sdim, sdim, nmats);
+  mat_sigma.SetSize(sdim, sdim, nmats);
+  mat_invLondon.SetSize(sdim, sdim, nmats);
+  mat_c0_min.SetSize(nmats);
+  mat_c0_max.SetSize(nmats);
+
+  int count = 0;
+  for (std::size_t i = 0; i < iodata.domains.materials.size(); i++)
+  {
+    if (!mat_marker[i])
+    {
+      continue;
+    }
+    const auto &data = iodata.domains.materials[i];
     if (iodata.problem.type == config::ProblemData::Type::ELECTROSTATIC)
     {
       MFEM_VERIFY(IsValid(data.epsilon_r), "Material has no valid permittivity defined!");
       if (!IsIdentity(data.mu_r) || IsValid(data.sigma) || std::abs(data.lambda_L) > 0.0)
       {
-        Mpi::Warning("Electrostatic problem type does not account for material "
-                     "permeability, electrical conductivity, or London depth!\n");
+        Mpi::Warning(
+            "Electrostatic problem type does not account for material permeability\n"
+            "electrical conductivity, or London depth!\n");
       }
     }
     else if (iodata.problem.type == config::ProblemData::Type::MAGNETOSTATIC)
@@ -341,8 +372,8 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata, mfem::ParMe
           std::abs(data.lambda_L) > 0.0)
       {
         Mpi::Warning(
-            "Magnetostatic problem type does not account for material permittivity, loss "
-            "tangent, electrical conductivity, or London depth!\n");
+            "Magnetostatic problem type does not account for material permittivity,\n"
+            "loss tangent, electrical conductivity, or London depth!\n");
       }
     }
     else
@@ -362,83 +393,381 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata, mfem::ParMe
                     "electrical conductivity!");
       }
     }
+
+    // Map all attributes to this material property index.
     for (auto attr : data.attributes)
     {
-      MFEM_VERIFY(
-          mat_c0_min.at(attr - 1) == 0.0 && mat_c0_max.at(attr - 1) == 0.0,
-          "Detected multiple definitions of material properties for domain attribute "
-              << attr << "!");
-
-      // Compute the inverse of the input permeability matrix.
-      mfem::DenseMatrix mu_r = ToDenseMatrix(data.mu_r);
-      mfem::DenseMatrixInverse(mu_r, true).GetInverseMatrix(mat_muinv.at(attr - 1));
-
-      // Material permittivity: Im{ε} = - ε * tan(δ)
-      mfem::DenseMatrix T(sdim, sdim);
-      mat_epsilon.at(attr - 1) = ToDenseMatrix(data.epsilon_r);
-      Mult(mat_epsilon.at(attr - 1), ToDenseMatrix(data.tandelta), T);
-      T *= -1.0;
-      mat_epsilon_imag.at(attr - 1) = T;
-
-      // ε * √(I + tan(δ) * tan(δ)ᵀ)
-      MultAAt(ToDenseMatrix(data.tandelta), T);
-      for (int i = 0; i < T.Height(); i++)
+      auto it = loc_attr.find(attr);
+      if (it != loc_attr.end())
       {
-        T(i, i) += 1.0;
+        MFEM_VERIFY(
+            attr_mat[it->second - 1] < 0,
+            "Detected multiple definitions of material properties for domain attribute "
+                << attr << "!");
+        attr_mat[it->second - 1] = count;
       }
-      Mult(mat_epsilon.at(attr - 1), MatrixSqrt(T), mat_epsilon_abs.at(attr - 1));
-
-      // √μ⁻¹ ε
-      Mult(mat_muinv.at(attr - 1), mat_epsilon.at(attr - 1), mat_invz0.at(attr - 1));
-      mat_invz0.at(attr - 1) = MatrixSqrt(mat_invz0.at(attr - 1));
-
-      // (√μ ε)⁻¹
-      mfem::DenseMatrixInverse(mat_epsilon.at(attr - 1), true).GetInverseMatrix(T);
-      Mult(mat_muinv.at(attr - 1), T, mat_c0.at(attr - 1));
-      mat_c0.at(attr - 1) = MatrixSqrt(mat_c0.at(attr - 1));
-      mat_c0_min.at(attr - 1) = mat_c0.at(attr - 1).CalcSingularvalue(sdim - 1);
-      mat_c0_max.at(attr - 1) = mat_c0.at(attr - 1).CalcSingularvalue(0);
-
-      // Electrical conductivity, σ
-      mat_sigma.at(attr - 1) = ToDenseMatrix(data.sigma);
-
-      // λ⁻² * μ⁻¹
-      mat_invLondon.at(attr - 1) = mat_muinv.at(attr - 1);
-      mat_invLondon.at(attr - 1) *=
-          std::abs(data.lambda_L) > 0.0 ? std::pow(data.lambda_L, -2.0) : 0.0;
     }
-  }
 
-  // Construct shared face mapping for boundary coefficients. This is useful to have in one
-  // place alongside material properties so we construct and store it here.
-  for (int i = 0; i < mesh.GetNSharedFaces(); i++)
-  {
-    local_to_shared[mesh.GetSharedFace(i)] = i;
-  }
+    // Compute the inverse of the input permeability matrix.
+    mfem::DenseMatrix mu_r = ToDenseMatrix(data.mu_r);
+    mfem::DenseMatrixInverse(mu_r, true).GetInverseMatrix(mat_muinv(count));
 
-  // Mark selected material attributes from the mesh as having certain local properties.
-  mfem::Array<int> losstan_mats, conductivity_mats, london_mats;
-  losstan_mats.Reserve(attr_max);
-  conductivity_mats.Reserve(attr_max);
-  london_mats.Reserve(attr_max);
-  for (int i = 0; i < attr_max; i++)
-  {
-    if (mat_epsilon_imag.at(i).MaxMaxNorm() > 0.0)
+    // Material permittivity: Re{ε} = ε, Im{ε} = -ε * tan(δ)
+    mfem::DenseMatrix T(sdim, sdim);
+    mat_epsilon(count) = ToDenseMatrix(data.epsilon_r);
+    Mult(mat_epsilon(count), ToDenseMatrix(data.tandelta), T);
+    T *= -1.0;
+    mat_epsilon_imag(count) = T;
+    if (mat_epsilon_imag(count).MaxMaxNorm() > 0.0)
     {
-      losstan_mats.Append(i + 1);  // Markers are 1-based
+      for (auto attr : data.attributes)
+      {
+        losstan_attr.Append(attr);
+      }
     }
-    if (mat_sigma.at(i).MaxMaxNorm() > 0.0)
+
+    // ε * √(I + tan(δ) * tan(δ)ᵀ)
+    MultAAt(ToDenseMatrix(data.tandelta), T);
+    for (int d = 0; d < T.Height(); d++)
     {
-      conductivity_mats.Append(i + 1);
+      T(d, d) += 1.0;
     }
-    if (mat_invLondon.at(i).MaxMaxNorm() > 0.0)
+    Mult(mat_epsilon(count), MatrixSqrt(T), mat_epsilon_abs(count));
+
+    // √μ⁻¹ ε
+    Mult(mat_muinv(count), mat_epsilon(count), mat_invz0(count));
+    mat_invz0(count) = MatrixSqrt(mat_invz0(count));
+
+    // (√μ ε)⁻¹
+    mfem::DenseMatrixInverse(mat_epsilon(count), true).GetInverseMatrix(T);
+    Mult(mat_muinv(count), T, mat_c0(count));
+    mat_c0(count) = MatrixSqrt(mat_c0(count));
+    mat_c0_min[count] = mat_c0(count).CalcSingularvalue(sdim - 1);
+    mat_c0_max[count] = mat_c0(count).CalcSingularvalue(0);
+
+    // Electrical conductivity, σ
+    mat_sigma(count) = ToDenseMatrix(data.sigma);
+    if (mat_sigma(count).MaxMaxNorm() > 0.0)
     {
-      london_mats.Append(i + 1);
+      for (auto attr : data.attributes)
+      {
+        conductivity_attr.Append(attr);
+      }
     }
+
+    // λ⁻² * μ⁻¹
+    mat_invLondon(count) = mat_muinv(count);
+    mat_invLondon(count) *=
+        std::abs(data.lambda_L) > 0.0 ? std::pow(data.lambda_L, -2.0) : 0.0;
+    if (mat_invLondon(count).MaxMaxNorm() > 0.0)
+    {
+      for (auto attr : data.attributes)
+      {
+        london_attr.Append(attr);
+      }
+    }
+
+    count++;
   }
-  mesh::AttrToMarker(attr_max, losstan_mats, losstan_marker);
-  mesh::AttrToMarker(attr_max, conductivity_mats, conductivity_marker);
-  mesh::AttrToMarker(attr_max, london_mats, london_marker);
 }
+
+mfem::Array<int> MaterialOperator::GetBdrAttributeToMaterial() const
+{
+  // Construct map from all (contiguous) local libCEED boundary attributes to the material
+  // index in the neighboring element.
+  mfem::Array<int> bdr_attr_mat(mesh.MaxCeedBdrAttribute());
+  bdr_attr_mat = -1;
+  for (const auto &[attr, bdr_attr_map] : mesh.GetCeedBdrAttributes())
+  {
+    for (auto it = bdr_attr_map.begin(); it != bdr_attr_map.end(); ++it)
+    {
+      MFEM_ASSERT(it->second > 0 && it->second <= bdr_attr_mat.Size(),
+                  "Invalid libCEED boundary attribute " << it->second << "!");
+      bdr_attr_mat[it->second - 1] = AttrToMat(it->first);
+    }
+  }
+  return bdr_attr_mat;
+}
+
+MaterialPropertyCoefficient::MaterialPropertyCoefficient(int attr_max)
+{
+  attr_mat.SetSize(attr_max);
+  attr_mat = -1;
+}
+
+MaterialPropertyCoefficient::MaterialPropertyCoefficient(
+    const mfem::Array<int> &attr_mat_, const mfem::DenseTensor &mat_coeff_, double a)
+  : attr_mat(attr_mat_), mat_coeff(mat_coeff_)
+{
+  for (int k = 0; k < mat_coeff.SizeK(); k++)
+  {
+    mat_coeff(k) *= a;
+  }
+}
+
+namespace
+{
+
+void UpdateProperty(mfem::DenseTensor &mat_coeff, int k, double coeff, double a)
+{
+  // Constant diagonal coefficient.
+  if (mat_coeff.SizeI() == 0 && mat_coeff.SizeJ() == 0)
+  {
+    // Initialize the coefficient material properties.
+    MFEM_VERIFY(k == 0 && mat_coeff.SizeK() == 1,
+                "Unexpected initial size for MaterialPropertyCoefficient!");
+    mat_coeff.SetSize(1, 1, mat_coeff.SizeK());
+    mat_coeff(0, 0, k) = a * coeff;
+  }
+  else
+  {
+    MFEM_VERIFY(mat_coeff.SizeI() == mat_coeff.SizeJ(),
+                "Invalid dimensions for MaterialPropertyCoefficient update!");
+    for (int i = 0; i < mat_coeff.SizeI(); i++)
+    {
+      mat_coeff(i, i, k) += a * coeff;
+    }
+  }
+}
+
+void UpdateProperty(mfem::DenseTensor &mat_coeff, int k, const mfem::DenseMatrix &coeff,
+                    double a)
+{
+  if (mat_coeff.SizeI() == 0 && mat_coeff.SizeJ() == 0)
+  {
+    // Initialize the coefficient material properties.
+    MFEM_VERIFY(k == 0 && mat_coeff.SizeK() == 1,
+                "Unexpected initial size for MaterialPropertyCoefficient!");
+    mat_coeff.SetSize(coeff.Height(), coeff.Width(), mat_coeff.SizeK());
+    mat_coeff(k).Set(a, coeff);
+  }
+  else if (coeff.Height() == mat_coeff.SizeI() && coeff.Width() == mat_coeff.SizeJ())
+  {
+    // Add as full matrix.
+    mat_coeff(k).Add(a, coeff);
+  }
+  else if (coeff.Height() == 1 && coeff.Width() == 1)
+  {
+    // Add as diagonal.
+    UpdateProperty(mat_coeff, k, coeff(0, 0), a);
+  }
+  else if (mat_coeff.SizeI() == 1 && mat_coeff.SizeJ() == 1)
+  {
+    // Convert to matrix coefficient and previous data add as diagonal.
+    mfem::DenseTensor mat_coeff_scalar(mat_coeff);
+    mat_coeff.SetSize(coeff.Height(), coeff.Width(), mat_coeff_scalar.SizeK());
+    mat_coeff = 0.0;
+    for (int l = 0; l < mat_coeff.SizeK(); l++)
+    {
+      UpdateProperty(mat_coeff, l, mat_coeff_scalar(0, 0, l), 1.0);
+    }
+    mat_coeff(k).Add(a, coeff);
+  }
+  else
+  {
+    MFEM_ABORT("Invalid dimensions when updating material property at index " << k << "!");
+  }
+}
+
+bool Equals(const mfem::DenseMatrix &mat_coeff, double coeff, double a)
+{
+  MFEM_VERIFY(mat_coeff.Height() == mat_coeff.Width(),
+              "Invalid dimensions for MaterialPropertyCoefficient update!");
+  constexpr double tol = 1.0e-9;
+  for (int i = 0; i < mat_coeff.Height(); i++)
+  {
+    if (std::abs(mat_coeff(i, i) - a * coeff) >= tol * std::abs(mat_coeff(i, i)))
+    {
+      return false;
+    }
+    for (int j = 0; j < mat_coeff.Width(); j++)
+    {
+      if (j != i && std::abs(mat_coeff(i, j)) > 0.0)
+      {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+bool Equals(const mfem::DenseMatrix &mat_coeff, const mfem::DenseMatrix &coeff, double a)
+{
+  if (coeff.Height() == 1 && coeff.Width() == 1)
+  {
+    return Equals(mat_coeff, coeff(0, 0), a);
+  }
+  else
+  {
+    constexpr double tol = 1.0e-9;
+    mfem::DenseMatrix T(mat_coeff);
+    T.Add(-a, coeff);
+    return (T.MaxMaxNorm() < tol * mat_coeff.MaxMaxNorm());
+  }
+}
+
+}  // namespace
+
+void MaterialPropertyCoefficient::AddCoefficient(const mfem::Array<int> &attr_mat_,
+                                                 const mfem::DenseTensor &mat_coeff_,
+                                                 double a)
+{
+  if (empty())
+  {
+    MFEM_VERIFY(attr_mat_.Size() == attr_mat.Size(),
+                "Invalid resize of attribute to material property map in "
+                "MaterialPropertyCoefficient::AddCoefficient!");
+    attr_mat = attr_mat_;
+    mat_coeff = mat_coeff_;
+    for (int k = 0; k < mat_coeff.SizeK(); k++)
+    {
+      mat_coeff(k) *= a;
+    }
+  }
+  else if (attr_mat_ == attr_mat)
+  {
+    MFEM_VERIFY(mat_coeff_.SizeK() == mat_coeff.SizeK(),
+                "Invalid dimensions for MaterialPropertyCoefficient::AddCoefficient!");
+    for (int k = 0; k < mat_coeff.SizeK(); k++)
+    {
+      UpdateProperty(mat_coeff, k, mat_coeff_(k), a);
+    }
+  }
+  else
+  {
+    for (int k = 0; k < mat_coeff_.SizeK(); k++)
+    {
+      // Get list of all attributes which use this material property.
+      mfem::Array<int> attr_list;
+      attr_list.Reserve(attr_mat_.Size());
+      for (int i = 0; i < attr_mat_.Size(); i++)
+      {
+        if (attr_mat_[i] == k)
+        {
+          attr_list.Append(i + 1);
+        }
+      }
+
+      // Add or update the material property.
+      AddMaterialProperty(attr_list, mat_coeff_(k), a);
+    }
+  }
+}
+
+template <typename T>
+void MaterialPropertyCoefficient::AddMaterialProperty(const mfem::Array<int> &attr_list,
+                                                      const T &coeff, double a)
+{
+  // Preprocess the attribute list. If any of the given attributes already have material
+  // properties assigned, then they all need to point to the same material and it is
+  // updated in place. Otherwise a new material is added for these attributes.
+  int mat_idx = -1;
+  for (auto attr : attr_list)
+  {
+    MFEM_VERIFY(attr <= attr_mat.Size(),
+                "Out of bounds access for attribute "
+                    << attr << " in MaterialPropertyCoefficient::AddMaterialProperty!");
+    if (mat_idx < 0)
+    {
+      mat_idx = attr_mat[attr - 1];
+    }
+    else
+    {
+      MFEM_VERIFY(mat_idx == attr_mat[attr - 1],
+                  "All attributes for MaterialPropertyCoefficient::AddMaterialProperty "
+                  "must correspond to the same "
+                  "existing material if it exists!");
+    }
+  }
+
+  if (mat_idx < 0)
+  {
+    // Check if we can reuse an existing material.
+    for (int k = 0; k < mat_coeff.SizeK(); k++)
+    {
+      if (Equals(mat_coeff(k), coeff, a))
+      {
+        mat_idx = k;
+        break;
+      }
+    }
+    if (mat_idx < 0)
+    {
+      // Append a new material and assign the attributes to it.
+      const mfem::DenseTensor mat_coeff_backup(mat_coeff);
+      mat_coeff.SetSize(mat_coeff_backup.SizeI(), mat_coeff_backup.SizeJ(),
+                        mat_coeff_backup.SizeK() + 1);
+      for (int k = 0; k < mat_coeff_backup.SizeK(); k++)
+      {
+        mat_coeff(k) = mat_coeff_backup(k);
+      }
+      mat_idx = mat_coeff.SizeK() - 1;
+    }
+    mat_coeff(mat_idx) = 0.0;  // Zero out so we can add
+
+    // Assign all attributes to this new material.
+    for (auto attr : attr_list)
+    {
+      attr_mat[attr - 1] = mat_idx;
+    }
+  }
+  UpdateProperty(mat_coeff, mat_idx, coeff, a);
+}
+
+void MaterialPropertyCoefficient::RestrictCoefficient(const mfem::Array<int> &attr_list)
+{
+  // Create a new material property coefficient with materials corresponding to only the
+  // unique ones in the given attribute list.
+  const mfem::Array<int> attr_mat_orig(attr_mat);
+  const mfem::DenseTensor mat_coeff_orig(mat_coeff);
+  attr_mat = -1;
+  mat_coeff.SetSize(mat_coeff_orig.SizeI(), mat_coeff_orig.SizeJ(), 0);
+  for (auto attr : attr_list)
+  {
+    if (attr_mat[attr - 1] >= 0)
+    {
+      // Attribute has already been processed.
+      continue;
+    }
+
+    // Find all attributes in restricted list of attributes which map to this material index
+    // and process them together.
+    const int orig_mat_idx = attr_mat_orig[attr - 1];
+    const int new_mat_idx = mat_coeff.SizeK();
+    for (auto attr2 : attr_list)
+    {
+      if (attr_mat_orig[attr2 - 1] == orig_mat_idx)
+      {
+        attr_mat[attr2 - 1] = new_mat_idx;
+      }
+    }
+
+    // Append the new material property.
+    const mfem::DenseTensor mat_coeff_backup(mat_coeff);
+    mat_coeff.SetSize(mat_coeff_backup.SizeI(), mat_coeff_backup.SizeJ(),
+                      mat_coeff_backup.SizeK() + 1);
+    for (int k = 0; k < mat_coeff_backup.SizeK(); k++)
+    {
+      mat_coeff(k) = mat_coeff_backup(k);
+    }
+    mat_coeff(new_mat_idx) = mat_coeff_orig(orig_mat_idx);
+  }
+}
+
+void MaterialPropertyCoefficient::NormalProjectedCoefficient(const mfem::Vector &normal)
+{
+  mfem::DenseTensor mat_coeff_backup(mat_coeff);
+  mat_coeff.SetSize(1, 1, mat_coeff_backup.SizeK());
+  for (int k = 0; k < mat_coeff.SizeK(); k++)
+  {
+    mat_coeff(k) = mat_coeff_backup(k).InnerProduct(normal, normal);
+  }
+}
+
+template void MaterialPropertyCoefficient::AddMaterialProperty(const mfem::Array<int> &,
+                                                               const mfem::DenseMatrix &,
+                                                               double);
+template void MaterialPropertyCoefficient::AddMaterialProperty(const mfem::Array<int> &,
+                                                               const double &, double);
 
 }  // namespace palace

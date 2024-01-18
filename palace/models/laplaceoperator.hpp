@@ -17,6 +17,7 @@ namespace palace
 {
 
 class IoData;
+class Mesh;
 
 //
 // A class handling discretization of Laplace problems for electrostatics.
@@ -28,7 +29,7 @@ private:
   bool print_hdr;
 
   // Essential boundary condition markers.
-  mfem::Array<int> dbc_marker;
+  mfem::Array<int> dbc_attr;
   std::vector<mfem::Array<int>> dbc_tdof_lists;
 
   // Objects defining the finite element spaces for the electrostatic potential (H1) and
@@ -44,9 +45,11 @@ private:
   // Boundary attributes for each terminal index.
   std::map<int, mfem::Array<int>> source_attr_lists;
 
+  mfem::Array<int> SetUpBoundaryProperties(const IoData &iodata, const mfem::ParMesh &mesh);
+  std::map<int, mfem::Array<int>> ConstructSources(const IoData &iodata);
+
 public:
-  LaplaceOperator(const IoData &iodata,
-                  const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh);
+  LaplaceOperator(const IoData &iodata, const std::vector<std::unique_ptr<Mesh>> &mesh);
 
   // Return material operator for postprocessing.
   const MaterialOperator &GetMaterialOp() const { return mat_op; }
@@ -62,8 +65,11 @@ public:
   auto &GetNDSpace() { return nd_fespace; }
   const auto &GetNDSpace() const { return nd_fespace; }
 
+  // Access the underlying mesh object.
+  const auto &GetMesh() const { return GetH1Space().GetMesh(); }
+
   // Return the number of true (conforming) dofs on the finest H1 space.
-  auto GlobalTrueVSize() { return GetH1Space().GlobalTrueVSize(); }
+  auto GlobalTrueVSize() const { return GetH1Space().GlobalTrueVSize(); }
 
   // Construct and return system matrix representing discretized Laplace operator for
   // Gauss's law.

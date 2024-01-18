@@ -53,25 +53,31 @@ StrumpackSolverBase<StrumpackSolverType>::StrumpackSolverBase(
   this->SetKrylovSolver(strumpack::KrylovSolver::DIRECT);  // Always as a preconditioner or
                                                            // direct solver
   this->SetMatching(strumpack::MatchingJob::NONE);
-  if (reorder == config::LinearSolverData::SymFactType::METIS)
+  switch (reorder)
   {
-    this->SetReorderingStrategy(strumpack::ReorderingStrategy::METIS);
-  }
-  else if (reorder == config::LinearSolverData::SymFactType::PARMETIS)
-  {
-    this->SetReorderingStrategy(strumpack::ReorderingStrategy::PARMETIS);
-  }
-  else if (reorder == config::LinearSolverData::SymFactType::SCOTCH)
-  {
-    this->SetReorderingStrategy(strumpack::ReorderingStrategy::SCOTCH);
-  }
-  else if (reorder == config::LinearSolverData::SymFactType::PTSCOTCH)
-  {
-    this->SetReorderingStrategy(strumpack::ReorderingStrategy::PTSCOTCH);
-  }
-  else
-  {
-    // Use default
+    case config::LinearSolverData::SymFactType::METIS:
+      this->SetReorderingStrategy(strumpack::ReorderingStrategy::METIS);
+      // this->SetReorderingStrategy(strumpack::ReorderingStrategy::AND);
+      break;
+    case config::LinearSolverData::SymFactType::PARMETIS:
+      this->SetReorderingStrategy(strumpack::ReorderingStrategy::PARMETIS);
+      break;
+    case config::LinearSolverData::SymFactType::SCOTCH:
+      this->SetReorderingStrategy(strumpack::ReorderingStrategy::SCOTCH);
+      break;
+    case config::LinearSolverData::SymFactType::PTSCOTCH:
+      this->SetReorderingStrategy(strumpack::ReorderingStrategy::PTSCOTCH);
+      break;
+    case config::LinearSolverData::SymFactType::AMD:
+      this->SetReorderingStrategy(strumpack::ReorderingStrategy::AMD);
+      // this->SetReorderingStrategy(strumpack::ReorderingStrategy::MMD);
+      break;
+    case config::LinearSolverData::SymFactType::RCM:
+      this->SetReorderingStrategy(strumpack::ReorderingStrategy::RCM);
+    case config::LinearSolverData::SymFactType::PORD:
+    case config::LinearSolverData::SymFactType::DEFAULT:
+      // Should have good default
+      break;
   }
   this->SetReorderingReuse(true);  // Repeated calls use same sparsity pattern
 

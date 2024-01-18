@@ -17,6 +17,7 @@ namespace palace
 {
 
 class IoData;
+class Mesh;
 
 //
 // A class handling discretization of curl-curl problems for magnetostatics.
@@ -27,10 +28,9 @@ private:
   // Helper variable for log file printing.
   bool print_hdr;
 
-  // Essential boundary condition markers.
-  mfem::Array<int> dbc_marker;
+  // Essential boundary condition attributes.
+  mfem::Array<int> dbc_attr;
   std::vector<mfem::Array<int>> dbc_tdof_lists;
-  void CheckBoundaryProperties();
 
   // Objects defining the finite element spaces for the magnetic vector potential
   // (Nedelec) and magnetic flux density (Raviart-Thomas) on the given mesh. The H1 spaces
@@ -48,9 +48,11 @@ private:
   // Operator for source current excitation.
   SurfaceCurrentOperator surf_j_op;
 
+  mfem::Array<int> SetUpBoundaryProperties(const IoData &iodata, const mfem::ParMesh &mesh);
+  void CheckBoundaryProperties();
+
 public:
-  CurlCurlOperator(const IoData &iodata,
-                   const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh);
+  CurlCurlOperator(const IoData &iodata, const std::vector<std::unique_ptr<Mesh>> &mesh);
 
   // Return material operator for postprocessing.
   const MaterialOperator &GetMaterialOp() const { return mat_op; }
@@ -70,8 +72,11 @@ public:
   auto &GetRTSpace() { return rt_fespace; }
   const auto &GetRTSpace() const { return rt_fespace; }
 
+  // Access the underlying mesh object.
+  const auto &GetMesh() const { return GetNDSpace().GetMesh(); }
+
   // Return the number of true (conforming) dofs on the finest ND space.
-  auto GlobalTrueVSize() { return GetNDSpace().GlobalTrueVSize(); }
+  auto GlobalTrueVSize() const { return GetNDSpace().GlobalTrueVSize(); }
 
   // Construct and return system matrix representing discretized curl-curl operator for
   // Ampere's law.

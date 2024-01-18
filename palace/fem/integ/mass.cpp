@@ -3,127 +3,61 @@
 
 #include "fem/integrator.hpp"
 
-#include <vector>
-#include <mfem.hpp>
 #include "fem/libceed/coefficient.hpp"
 #include "fem/libceed/integrator.hpp"
 
-#include "fem/qfunctions/mass_qf.h"
+#include "fem/qfunctions/h1_build_qf.h"
+#include "fem/qfunctions/h1_qf.h"
 
 namespace palace
 {
 
-struct MassIntegratorInfo : public ceed::IntegratorInfo
+using namespace ceed;
+
+void MassIntegrator::Assemble(Ceed ceed, CeedElemRestriction trial_restr,
+                              CeedElemRestriction test_restr, CeedBasis trial_basis,
+                              CeedBasis test_basis, CeedVector geom_data,
+                              CeedElemRestriction geom_data_restr, CeedOperator *op) const
 {
-  MassContext ctx;
-};
+  IntegratorInfo info;
+  info.assemble_q_data = assemble_q_data;
 
-namespace
-{
-
-MassIntegratorInfo InitializeIntegratorInfo(const mfem::ParFiniteElementSpace &fespace,
-                                            const mfem::IntegrationRule &ir,
-                                            const std::vector<int> &indices, bool use_bdr,
-                                            mfem::Coefficient *Q,
-                                            mfem::VectorCoefficient *VQ,
-                                            mfem::MatrixCoefficient *MQ,
-                                            std::vector<ceed::QuadratureCoefficient> &coeff)
-{
-  MassIntegratorInfo info = {{0}};
-
-  mfem::ParMesh &mesh = *fespace.GetParMesh();
-  info.ctx.dim = mesh.Dimension() - use_bdr;
-  info.ctx.space_dim = mesh.SpaceDimension();
-  info.ctx.vdim = fespace.GetVDim();
-
-  info.trial_op = ceed::EvalMode::Interp;
-  info.test_op = ceed::EvalMode::Interp;
-
-  mfem::ConstantCoefficient *const_coeff = dynamic_cast<mfem::ConstantCoefficient *>(Q);
-  if (const_coeff || !(Q || VQ || MQ))
+  // Set up QFunctions.
+  CeedInt trial_num_comp, test_num_comp;
+  PalaceCeedCall(ceed, CeedBasisGetNumComponents(trial_basis, &trial_num_comp));
+  PalaceCeedCall(ceed, CeedBasisGetNumComponents(test_basis, &test_num_comp));
+  MFEM_VERIFY(
+      trial_num_comp == test_num_comp,
+      "MassIntegrator requires test and trial spaces with same number of components!");
+  switch (trial_num_comp)
   {
-    info.qdata_size = 1;
-    info.ctx.coeff = const_coeff ? const_coeff->constant : 1.0;
-
-    info.build_qf = f_build_mass_const_scalar;
-    info.build_qf_path = PalaceQFunctionRelativePath(f_build_mass_const_scalar_loc);
-
-    info.apply_qf = f_apply_mass_scalar;
-    info.apply_qf_path = PalaceQFunctionRelativePath(f_apply_mass_scalar_loc);
+    case 1:
+      info.apply_qf = assemble_q_data ? f_build_h1_1 : f_apply_h1_1;
+      info.apply_qf_path = PalaceQFunctionRelativePath(assemble_q_data ? f_build_h1_1_loc
+                                                                       : f_apply_h1_1_loc);
+      break;
+    case 2:
+      info.apply_qf = assemble_q_data ? f_build_h1_2 : f_apply_h1_2;
+      info.apply_qf_path = PalaceQFunctionRelativePath(assemble_q_data ? f_build_h1_2_loc
+                                                                       : f_apply_h1_2_loc);
+      break;
+    case 3:
+      info.apply_qf = assemble_q_data ? f_build_h1_3 : f_apply_h1_3;
+      info.apply_qf_path = PalaceQFunctionRelativePath(assemble_q_data ? f_build_h1_3_loc
+                                                                       : f_apply_h1_3_loc);
+      break;
+    default:
+      MFEM_ABORT("Invalid value of num_comp = " << trial_num_comp
+                                                << " for MassIntegrator!");
   }
-  else if (Q)
-  {
-    info.qdata_size = 1;
-    ceed::InitCoefficient(*Q, mesh, ir, indices, use_bdr, coeff.emplace_back());
+  info.trial_ops = EvalMode::Interp;
+  info.test_ops = EvalMode::Interp;
 
-    info.build_qf = f_build_mass_quad_scalar;
-    info.build_qf_path = PalaceQFunctionRelativePath(f_build_mass_quad_scalar_loc);
-
-    info.apply_qf = f_apply_mass_scalar;
-    info.apply_qf_path = PalaceQFunctionRelativePath(f_apply_mass_scalar_loc);
-  }
-  else if (VQ)
-  {
-    MFEM_VERIFY(VQ->GetVDim() == info.ctx.vdim,
-                "Invalid vector coefficient dimension for vector MassIntegrator!");
-    info.qdata_size = info.ctx.vdim;
-    ceed::InitCoefficient(*VQ, mesh, ir, indices, use_bdr, coeff.emplace_back());
-
-    info.build_qf = f_build_mass_quad_vector;
-    info.build_qf_path = PalaceQFunctionRelativePath(f_build_mass_quad_vector_loc);
-
-    info.apply_qf = f_apply_mass_vector;
-    info.apply_qf_path = PalaceQFunctionRelativePath(f_apply_mass_vector_loc);
-  }
-  else if (MQ)
-  {
-    MFEM_VERIFY(MQ->GetVDim() == info.ctx.vdim,
-                "Invalid matrix coefficient dimension for vector MassIntegrator!");
-    info.qdata_size = (info.ctx.vdim * (info.ctx.vdim + 1)) / 2;
-    ceed::InitCoefficient(*MQ, mesh, ir, indices, use_bdr, coeff.emplace_back());
-
-    info.build_qf = f_build_mass_quad_matrix;
-    info.build_qf_path = PalaceQFunctionRelativePath(f_build_mass_quad_matrix_loc);
-
-    info.apply_qf = f_apply_mass_matrix;
-    info.apply_qf_path = PalaceQFunctionRelativePath(f_apply_mass_matrix_loc);
-  }
-
-  return info;
-}
-
-}  // namespace
-
-void MassIntegrator::Assemble(const mfem::ParFiniteElementSpace &trial_fespace,
-                              const mfem::ParFiniteElementSpace &test_fespace,
-                              const mfem::IntegrationRule &ir,
-                              const std::vector<int> &indices, Ceed ceed, CeedOperator *op,
-                              CeedOperator *op_t)
-{
-  MFEM_VERIFY(&trial_fespace == &test_fespace,
-              "MassIntegrator requires the same test and trial spaces!");
-  constexpr bool use_bdr = false;
-  std::vector<ceed::QuadratureCoefficient> coeff;
-  const auto info =
-      InitializeIntegratorInfo(trial_fespace, ir, indices, use_bdr, Q, VQ, MQ, coeff);
-  ceed::AssembleCeedOperator(info, trial_fespace, test_fespace, ir, indices, use_bdr, coeff,
-                             ceed, op, op_t);
-}
-
-void MassIntegrator::AssembleBoundary(const mfem::ParFiniteElementSpace &trial_fespace,
-                                      const mfem::ParFiniteElementSpace &test_fespace,
-                                      const mfem::IntegrationRule &ir,
-                                      const std::vector<int> &indices, Ceed ceed,
-                                      CeedOperator *op, CeedOperator *op_t)
-{
-  MFEM_VERIFY(&trial_fespace == &test_fespace,
-              "MassIntegrator requires the same test and trial spaces!");
-  constexpr bool use_bdr = true;
-  std::vector<ceed::QuadratureCoefficient> coeff;
-  const auto info =
-      InitializeIntegratorInfo(trial_fespace, ir, indices, use_bdr, Q, VQ, MQ, coeff);
-  ceed::AssembleCeedOperator(info, trial_fespace, test_fespace, ir, indices, use_bdr, coeff,
-                             ceed, op, op_t);
+  // Set up the coefficient and assemble.
+  auto ctx = PopulateCoefficientContext(trial_num_comp, Q);
+  AssembleCeedOperator(info, (void *)ctx.data(), ctx.size() * sizeof(CeedIntScalar), ceed,
+                       trial_restr, test_restr, trial_basis, test_basis, geom_data,
+                       geom_data_restr, op);
 }
 
 }  // namespace palace

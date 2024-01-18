@@ -50,6 +50,13 @@ private:
   std::unique_ptr<mfem::VectorCoefficient> Esr, Esi, Bsr, Bsi, As, Jsr, Jsi;
   std::unique_ptr<mfem::Coefficient> Vs, Ue, Um, Qsr, Qsi;
 
+  // Wave port boundary mode field postprocessing.
+  struct WavePortFieldData
+  {
+    std::unique_ptr<mfem::VectorCoefficient> E0r, E0i;
+  };
+  std::map<int, WavePortFieldData> port_E0;
+
   // Lumped and wave port voltage and current (R, L, and C branches) caches updated when
   // the grid functions are set.
   struct PortPostData

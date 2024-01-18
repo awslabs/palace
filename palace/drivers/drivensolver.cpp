@@ -6,6 +6,7 @@
 #include <complex>
 #include <mfem.hpp>
 #include "fem/errorindicator.hpp"
+#include "fem/mesh.hpp"
 #include "linalg/errorestimator.hpp"
 #include "linalg/ksp.hpp"
 #include "linalg/operator.hpp"
@@ -27,7 +28,7 @@ namespace palace
 using namespace std::complex_literals;
 
 std::pair<ErrorIndicator, long long int>
-DrivenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) const
+DrivenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 {
   // Set up the spatial discretization and frequency sweep.
   BlockTimer bt0(Timer::CONSTRUCT);
@@ -54,7 +55,7 @@ DrivenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) con
     bool first = true;
     for (const auto &[idx, data] : spaceop.GetLumpedPortOp())
     {
-      if (data.IsExcited())
+      if (data.excitation)
       {
         if (first)
         {
@@ -69,7 +70,7 @@ DrivenSolver::Solve(const std::vector<std::unique_ptr<mfem::ParMesh>> &mesh) con
     first = true;
     for (const auto &[idx, data] : spaceop.GetWavePortOp())
     {
-      if (data.IsExcited())
+      if (data.excitation)
       {
         if (first)
         {
@@ -508,7 +509,7 @@ void DrivenSolver::PostprocessPorts(const PostOperator &postop,
     const double Iinc = (std::abs(Vinc) > 0.0) ? data.GetExcitationPower() / Vinc : 0.0;
     const std::complex<double> Vi = postop.GetPortVoltage(lumped_port_op, idx);
     const std::complex<double> Ii = postop.GetPortCurrent(lumped_port_op, idx);
-    port_data.push_back({idx, data.IsExcited(),
+    port_data.push_back({idx, data.excitation,
                          iodata.DimensionalizeValue(IoData::ValueType::VOLTAGE, Vinc),
                          iodata.DimensionalizeValue(IoData::ValueType::CURRENT, Iinc),
                          iodata.DimensionalizeValue(IoData::ValueType::VOLTAGE, Vi),
@@ -642,7 +643,7 @@ void DrivenSolver::PostprocessSParameters(const PostOperator &postop,
   int source_idx = -1;
   for (const auto &[idx, data] : lumped_port_op)
   {
-    if (data.IsExcited())
+    if (data.excitation)
     {
       if (src_lumped_port || src_wave_port)
       {
@@ -654,7 +655,7 @@ void DrivenSolver::PostprocessSParameters(const PostOperator &postop,
   }
   for (const auto &[idx, data] : wave_port_op)
   {
-    if (data.IsExcited())
+    if (data.excitation)
     {
       if (src_lumped_port || src_wave_port)
       {

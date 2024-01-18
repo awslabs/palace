@@ -3,7 +3,6 @@
 
 #include "farfieldboundaryoperator.hpp"
 
-#include "fem/coefficient.hpp"
 #include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
@@ -14,28 +13,27 @@ namespace palace
 {
 
 FarfieldBoundaryOperator::FarfieldBoundaryOperator(const IoData &iodata,
-                                                   const MaterialOperator &mat,
+                                                   const MaterialOperator &mat_op,
                                                    const mfem::ParMesh &mesh)
-  : mat_op(mat)
+  : mat_op(mat_op), farfield_attr(SetUpBoundaryProperties(iodata, mesh))
 {
-  // Set up impedance boundary conditions.
-  SetUpBoundaryProperties(iodata, mesh);
-
   // Print out BC info for all farfield attributes.
-  if (farfield_marker.Size() && farfield_marker.Max() > 0)
+  if (farfield_attr.Size())
   {
     Mpi::Print("\nConfiguring Robin absorbing BC (order {:d}) at attributes:\n", order);
-    utils::PrettyPrintMarker(farfield_marker);
+    std::sort(farfield_attr.begin(), farfield_attr.end());
+    utils::PrettyPrint(farfield_attr);
   }
 }
 
-void FarfieldBoundaryOperator::SetUpBoundaryProperties(const IoData &iodata,
-                                                       const mfem::ParMesh &mesh)
+mfem::Array<int>
+FarfieldBoundaryOperator::SetUpBoundaryProperties(const IoData &iodata,
+                                                  const mfem::ParMesh &mesh)
 {
   // Check that impedance boundary attributes have been specified correctly.
-  int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   if (!iodata.boundaries.farfield.empty())
   {
+    int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
     mfem::Array<int> bdr_attr_marker(bdr_attr_max);
     bdr_attr_marker = 0;
     for (auto attr : mesh.bdr_attributes)
@@ -56,30 +54,32 @@ void FarfieldBoundaryOperator::SetUpBoundaryProperties(const IoData &iodata,
   order = iodata.boundaries.farfield.order;
 
   // Mark selected boundary attributes from the mesh as farfield.
-  MFEM_VERIFY(iodata.boundaries.farfield.attributes.empty() || order < 2 ||
+  mfem::Array<int> farfield_bcs;
+  farfield_bcs.Append(iodata.boundaries.farfield.attributes.data(),
+                      iodata.boundaries.farfield.attributes.size());
+  MFEM_VERIFY(farfield_bcs.Size() == 0 || order < 2 ||
                   iodata.problem.type == config::ProblemData::Type::DRIVEN,
               "Second-order farfield boundaries are only available for frequency "
               "domain driven simulations!");
-  mesh::AttrToMarker(bdr_attr_max, iodata.boundaries.farfield.attributes, farfield_marker);
+  return farfield_bcs;
 }
 
 void FarfieldBoundaryOperator::AddDampingBdrCoefficients(double coef,
-                                                         SumMatrixCoefficient &fb)
+                                                         MaterialPropertyCoefficient &fb)
 {
   // First-order absorbing boundary condition.
-  if (farfield_marker.Size() && farfield_marker.Max() > 0)
+  if (farfield_attr.Size())
   {
-    constexpr auto MatType = MaterialPropertyType::INV_Z0;
-    constexpr auto ElemType = MeshElementType::BDR_ELEMENT;
-    fb.AddCoefficient(
-        std::make_unique<MaterialPropertyCoefficient<MatType, ElemType>>(mat_op, coef),
-        farfield_marker);
+    MaterialPropertyCoefficient invz0_func(mat_op.GetBdrAttributeToMaterial(),
+                                           mat_op.GetInvImpedance());
+    invz0_func.RestrictCoefficient(mat_op.GetCeedBdrAttributes(farfield_attr));
+    fb.AddCoefficient(invz0_func.GetAttributeToMaterial(),
+                      invz0_func.GetMaterialProperties(), coef);
   }
 }
 
-void FarfieldBoundaryOperator::AddExtraSystemBdrCoefficients(double omega,
-                                                             SumCoefficient &dfbr,
-                                                             SumCoefficient &dfbi)
+void FarfieldBoundaryOperator::AddExtraSystemBdrCoefficients(
+    double omega, MaterialPropertyCoefficient &dfbr, MaterialPropertyCoefficient &dfbi)
 {
   // Contribution for second-order absorbing BC. See Jin Section 9.3 for reference. The β
   // coefficient for the second-order ABC is 1/(2ik+2/r). Taking the radius of curvature as
@@ -87,15 +87,26 @@ void FarfieldBoundaryOperator::AddExtraSystemBdrCoefficients(double omega,
   // purely imaginary. Multiplying through by μ⁻¹ we get the material coefficient to ω as
   // 1 / (μ √με). Also, this implementation ignores the divergence term ∇⋅Eₜ, as COMSOL
   // does as well.
-  if (farfield_marker.Size() && farfield_marker.Max() > 0 && order > 1)
+  if (farfield_attr.Size() && order > 1)
   {
-    constexpr auto MatType = MaterialPropertyType::INV_PERMEABILITY_C0;
-    constexpr auto ElemType = MeshElementType::BDR_ELEMENT;
-    dfbi.AddCoefficient(
-        std::make_unique<NormalProjectedCoefficient>(
-            std::make_unique<MaterialPropertyCoefficient<MatType, ElemType>>(mat_op,
-                                                                             0.5 / omega)),
-        farfield_marker);
+    mfem::DenseTensor muinvc0(mat_op.GetLightSpeed());
+    for (int k = 0; k < muinvc0.SizeK(); k++)
+    {
+      Mult(mat_op.GetInvPermeability()(k), mat_op.GetLightSpeed()(k), muinvc0(k));
+    }
+    MaterialPropertyCoefficient muinvc0_func(mat_op.GetBdrAttributeToMaterial(), muinvc0);
+    muinvc0_func.RestrictCoefficient(mat_op.GetCeedBdrAttributes(farfield_attr));
+
+    // Instead getting the correct normal of farfield boundary elements, just pick the
+    // the first element normal. This is fine as long as the farfield material properties
+    // are not anisotropic.
+    mfem::Vector normal(mat_op.SpaceDimension());
+    normal = 0.0;
+    normal(0) = 1.0;
+    muinvc0_func.NormalProjectedCoefficient(normal);
+
+    dfbi.AddCoefficient(muinvc0_func.GetAttributeToMaterial(),
+                        muinvc0_func.GetMaterialProperties(), 0.5 / omega);
   }
 }
 
