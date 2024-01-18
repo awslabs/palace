@@ -150,7 +150,7 @@ public:
   bool nonconformal = true;
 
   // Maximum difference in nonconformal refinements between two adjacent elements. Zero
-  // implies there is no constraint on local non-conformity.
+  // implies there is no constraint on local nonconformity.
   int max_nc_levels = 1;
 
   // Dörfler update fraction. The set of marked elements is the minimum set that contains
