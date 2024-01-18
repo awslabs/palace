@@ -16,13 +16,11 @@ class MaterialPropertyCoefficient;
 namespace ceed
 {
 
-template <int DIM>
-std::vector<CeedIntScalar> PopulateCoefficientContext(const MaterialPropertyCoefficient *Q,
-                                                      double a = 1.0);
-
-template <int DIM, int DIM_MASS>
 std::vector<CeedIntScalar>
-PopulateCoefficientContext(const MaterialPropertyCoefficient *Q,
+PopulateCoefficientContext(int dim, const MaterialPropertyCoefficient *Q, double a = 1.0);
+
+std::vector<CeedIntScalar>
+PopulateCoefficientContext(int dim, int dim_mass, const MaterialPropertyCoefficient *Q,
                            const MaterialPropertyCoefficient *Q_mass, double a = 1.0,
                            double a_mass = 1.0);
 

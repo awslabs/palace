@@ -54,19 +54,7 @@ void MassIntegrator::Assemble(Ceed ceed, CeedElemRestriction trial_restr,
   info.test_ops = EvalMode::Interp;
 
   // Set up the coefficient and assemble.
-  auto ctx = [&]()
-  {
-    switch (trial_num_comp)
-    {
-      case 1:
-        return PopulateCoefficientContext<1>(Q);
-      case 2:
-        return PopulateCoefficientContext<2>(Q);
-      case 3:
-        return PopulateCoefficientContext<3>(Q);
-    }
-    return std::vector<CeedIntScalar>();
-  }();
+  auto ctx = PopulateCoefficientContext(trial_num_comp, Q);
   AssembleCeedOperator(info, (void *)ctx.data(), ctx.size() * sizeof(CeedIntScalar), ceed,
                        trial_restr, test_restr, trial_basis, test_basis, geom_data,
                        geom_data_restr, op);

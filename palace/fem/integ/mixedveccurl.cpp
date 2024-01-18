@@ -63,7 +63,7 @@ void MixedVectorCurlIntegrator::Assemble(Ceed ceed, CeedElemRestriction trial_re
   info.test_ops = EvalMode::Interp;
 
   // Set up the coefficient and assemble.
-  auto ctx = PopulateCoefficientContext<3>(Q);
+  auto ctx = PopulateCoefficientContext(space_dim, Q);
   AssembleCeedOperator(info, (void *)ctx.data(), ctx.size() * sizeof(CeedIntScalar), ceed,
                        trial_restr, test_restr, trial_basis, test_basis, geom_data,
                        geom_data_restr, op);
@@ -110,7 +110,7 @@ void MixedVectorWeakCurlIntegrator::Assemble(Ceed ceed, CeedElemRestriction tria
   info.test_ops = EvalMode::Curl;
 
   // Set up the coefficient and assemble.
-  auto ctx = PopulateCoefficientContext<3>(Q);
+  auto ctx = PopulateCoefficientContext(space_dim, Q);
   AssembleCeedOperator(info, (void *)ctx.data(), ctx.size() * sizeof(CeedIntScalar), ceed,
                        trial_restr, test_restr, trial_basis, test_basis, geom_data,
                        geom_data_restr, op);

@@ -25,7 +25,7 @@ private:
   mfem::Array<int> attr_mat;
 
   // Material properties: relative permeability, relative permittivity, and others (like
-  // electrical conductivity and London penetration depth for superconductors.
+  // electrical conductivity and London penetration depth for superconductors).
   mfem::DenseTensor mat_muinv, mat_epsilon, mat_epsilon_imag, mat_epsilon_abs, mat_invz0,
       mat_c0, mat_sigma, mat_invLondon;
   mfem::Array<double> mat_c0_min, mat_c0_max;

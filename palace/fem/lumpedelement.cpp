@@ -131,7 +131,7 @@ CoaxialElementData::CoaxialElementData(const std::array<double, 3> &direction,
 std::unique_ptr<mfem::VectorCoefficient>
 CoaxialElementData::GetModeCoefficient(double coef) const
 {
-  coef = (sign ? 1.0 : -1.0) * coef;
+  coef *= (sign ? 1.0 : -1.0);
   mfem::Vector x0(bounding_ball.center.size());
   std::copy(bounding_ball.center.begin(), bounding_ball.center.end(), x0.begin());
   auto Source = [coef, x0](const mfem::Vector &x, mfem::Vector &f) -> void

@@ -25,6 +25,7 @@ void AddQFunctionActiveInputsOutputs(const IntegratorInfo &info, Ceed ceed,
                                      CeedBasis trial_basis, CeedBasis test_basis,
                                      CeedQFunction qf)
 {
+  // Add input and outputs with evaluation modes for the active vector of a QFunction.
   CeedInt trial_num_comp, test_num_comp;
   PalaceCeedCall(ceed, CeedBasisGetNumComponents(trial_basis, &trial_num_comp));
   PalaceCeedCall(ceed, CeedBasisGetNumComponents(test_basis, &test_num_comp));
@@ -111,6 +112,7 @@ void AddOperatorActiveFields(const IntegratorInfo &info, Ceed ceed,
                              CeedElemRestriction test_restr, CeedBasis trial_basis,
                              CeedBasis test_basis, CeedOperator op)
 {
+  // Set active input and output vector fields of an operator.
   if (info.trial_ops & EvalMode::None)
   {
     PalaceCeedCall(ceed, CeedOperatorSetField(op, "u", trial_restr, CEED_BASIS_NONE,

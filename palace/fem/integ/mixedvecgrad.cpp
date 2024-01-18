@@ -63,17 +63,7 @@ void MixedVectorGradientIntegrator::Assemble(Ceed ceed, CeedElemRestriction tria
   info.test_ops = EvalMode::Interp;
 
   // Set up the coefficient and assemble.
-  auto ctx = [&]()
-  {
-    switch (space_dim)
-    {
-      case 2:
-        return PopulateCoefficientContext<2>(Q);
-      case 3:
-        return PopulateCoefficientContext<3>(Q);
-    }
-    return std::vector<CeedIntScalar>();
-  }();
+  auto ctx = PopulateCoefficientContext(space_dim, Q);
   AssembleCeedOperator(info, (void *)ctx.data(), ctx.size() * sizeof(CeedIntScalar), ceed,
                        trial_restr, test_restr, trial_basis, test_basis, geom_data,
                        geom_data_restr, op);
@@ -128,17 +118,7 @@ void MixedVectorWeakDivergenceIntegrator::Assemble(
   info.test_ops = EvalMode::Grad;
 
   // Set up the coefficient and assemble.
-  auto ctx = [&]()
-  {
-    switch (space_dim)
-    {
-      case 2:
-        return PopulateCoefficientContext<2>(Q, -1.0);
-      case 3:
-        return PopulateCoefficientContext<3>(Q, -1.0);
-    }
-    return std::vector<CeedIntScalar>();
-  }();
+  auto ctx = PopulateCoefficientContext(space_dim, Q, -1.0);
   AssembleCeedOperator(info, (void *)ctx.data(), ctx.size() * sizeof(CeedIntScalar), ceed,
                        trial_restr, test_restr, trial_basis, test_basis, geom_data,
                        geom_data_restr, op);

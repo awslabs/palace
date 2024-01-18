@@ -73,4 +73,4 @@ const std::vector<Ceed> &GetCeedObjects();
 
 }  // namespace palace::ceed
 
-#endif  // PALACE_LIBCEED_OPERATOR_HPP
+#endif  // PALACE_LIBCEED_CEED_HPP

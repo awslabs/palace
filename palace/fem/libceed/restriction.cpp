@@ -216,6 +216,7 @@ void InitRestriction(const mfem::FiniteElementSpace &fespace,
                      const std::vector<int> &indices, bool use_bdr, bool is_interp,
                      bool is_interp_range, Ceed ceed, CeedElemRestriction *restr)
 {
+  MFEM_ASSERT(!indices.empty(), "Empty element index set for libCEED element restriction!");
   if constexpr (false)
   {
     std::cout << "New element restriction (" << ceed << ", " << &fespace << ", "

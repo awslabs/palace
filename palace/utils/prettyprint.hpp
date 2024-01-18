@@ -56,8 +56,8 @@ inline std::size_t PrePrint(MPI_Comm comm, std::size_t w, std::size_t wv, std::s
 
 }  // namespace internal
 
-// Fixed column width wrapped printing for the contents of an array, with with range
-// notation for integral types.
+// Fixed column width wrapped printing for the contents of an array, with range notation for
+// integral types.
 template <template <typename...> class Container, typename T, typename... U>
 inline void PrettyPrint(const Container<T, U...> &data, T scale,
                         const std::string &prefix = "", MPI_Comm comm = MPI_COMM_WORLD)

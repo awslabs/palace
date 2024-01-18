@@ -104,8 +104,8 @@ void InitCeedInterpolatorBasis(const mfem::FiniteElement &trial_fe,
   }
   const mfem::IntegrationRule &ir = mfem::IntRules.Get(trial_fe.GetGeomType(), ir_order);
 
-  InitBasis(trial_fe, ir, trial_num_comp, ceed, &trial_basis),
-      InitBasis(test_fe, ir, test_num_comp, ceed, &test_basis);
+  InitBasis(trial_fe, ir, trial_num_comp, ceed, &trial_basis);
+  InitBasis(test_fe, ir, test_num_comp, ceed, &test_basis);
   PalaceCeedCall(ceed, CeedBasisCreateProjection(trial_basis, test_basis, basis));
   PalaceCeedCall(ceed, CeedBasisDestroy(&trial_basis));
   PalaceCeedCall(ceed, CeedBasisDestroy(&test_basis));

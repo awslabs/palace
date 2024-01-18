@@ -124,7 +124,7 @@ auto GetElementIndices(const mfem::ParMesh &mesh, bool use_bdr, int start, int s
   for (auto it = counts.begin(); it != counts.end(); ++it)
   {
     offsets[it->first] = 0;
-    element_indices[it->first] = std::vector<int>(it->second);
+    element_indices[it->first].resize(it->second);
   }
   for (int i = start; i < stop; i++)
   {
@@ -152,7 +152,7 @@ auto AssembleGeometryData(const mfem::GridFunction &mesh_nodes, Ceed ceed,
   const std::size_t num_elem = data.indices.size();
 
   // Allocate storage for geometry factor data (stored as attribute + quadrature weight +
-  // Jacobian).
+  // Jacobian, column-major).
   CeedElemRestriction mesh_restr =
       FiniteElementSpace::BuildCeedElemRestriction(mesh_fespace, ceed, geom, data.indices);
   CeedBasis mesh_basis = FiniteElementSpace::BuildCeedBasis(mesh_fespace, ceed, geom);
@@ -225,16 +225,12 @@ auto BuildCeedGeomFactorData(
   // element geometry type and corresponding geometry factor data. libCEED operators will be
   // constructed in parallel over threads, where each thread builds a composite operator
   // with sub-operators for each geometry.
-  std::size_t i;
   const std::size_t nt = ceed::internal::GetCeedObjects().size();
-  for (i = 0; i < nt; i++)
-  {
-    if (ceed == ceed::internal::GetCeedObjects()[i])
-    {
-      break;
-    }
-  }
-  MFEM_VERIFY(i < nt, "Unable to find matching Ceed context in BuildCeedGeomFactorData!");
+  auto it = std::find(ceed::internal::GetCeedObjects().begin(),
+                      ceed::internal::GetCeedObjects().end(), ceed);
+  MFEM_VERIFY(it != ceed::internal::GetCeedObjects().end(),
+              "Unable to find matching Ceed context in BuildCeedGeomFactorData!");
+  std::size_t i = std::distance(ceed::internal::GetCeedObjects().begin(), it);
   mfem::FaceElementTransformations FET;
   mfem::IsoparametricTransformation T1, T2;
   ceed::GeometryObjectMap<ceed::CeedGeomFactorData> geom_data_map;
@@ -282,9 +278,8 @@ auto BuildCeedGeomFactorData(
     }();
     for (auto &[geom, indices] : element_indices)
     {
-      ceed::CeedGeomFactorData data =
-          AssembleGeometryData(*mesh.GetNodes(), ceed, geom, indices, GetCeedAttribute);
-      geom_data_map.emplace(geom, std::move(data));
+      geom_data_map.emplace(geom, AssembleGeometryData(*mesh.GetNodes(), ceed, geom,
+                                                       indices, GetCeedAttribute));
     }
   }
 
@@ -309,9 +304,8 @@ auto BuildCeedGeomFactorData(
     };
     for (auto &[geom, indices] : element_indices)
     {
-      ceed::CeedGeomFactorData data =
-          AssembleGeometryData(*mesh.GetNodes(), ceed, geom, indices, GetCeedAttribute);
-      geom_data_map.emplace(geom, std::move(data));
+      geom_data_map.emplace(geom, AssembleGeometryData(*mesh.GetNodes(), ceed, geom,
+                                                       indices, GetCeedAttribute));
     }
   }
 

@@ -163,7 +163,7 @@ std::vector<std::unique_ptr<Operator>>
 BilinearForm::Assemble(const BaseFiniteElementSpaceHierarchy<T> &fespaces, bool skip_zeros,
                        std::size_t l0) const
 {
-  // Only available for square operators (same teset and trial spaces).
+  // Only available for square operators (same test and trial spaces).
   MFEM_VERIFY(&trial_fespace == &test_fespace &&
                   &fespaces.GetFinestFESpace() == &trial_fespace,
               "Assembly on a FiniteElementSpaceHierarchy should have the same BilinearForm "

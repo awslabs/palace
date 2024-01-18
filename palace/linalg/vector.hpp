@@ -134,7 +134,7 @@ inline std::pair<HYPRE_BigInt, HYPRE_BigInt> GlobalSize2(MPI_Comm comm, const Ve
 }
 
 // Sets all entries of the vector corresponding to the given indices to the given (real)
-// value or corresponding entries the vector of values.
+// value or vector of values.
 template <typename VecType>
 void SetSubVector(VecType &x, const mfem::Array<int> &rows, double s);
 template <typename VecType>

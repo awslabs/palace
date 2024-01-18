@@ -62,17 +62,7 @@ void DivDivMassIntegrator::Assemble(Ceed ceed, CeedElemRestriction trial_restr,
   info.test_ops = EvalMode::Div | EvalMode::Interp;
 
   // Set up the coefficient and assemble.
-  auto ctx = [&]()
-  {
-    switch (space_dim)
-    {
-      case 2:
-        return PopulateCoefficientContext<1, 2>(Q, Q_mass);
-      case 3:
-        return PopulateCoefficientContext<1, 3>(Q, Q_mass);
-    }
-    return std::vector<CeedIntScalar>();
-  }();
+  auto ctx = PopulateCoefficientContext(1, space_dim, Q, Q_mass);
   AssembleCeedOperator(info, (void *)ctx.data(), ctx.size() * sizeof(CeedIntScalar), ceed,
                        trial_restr, test_restr, trial_basis, test_basis, geom_data,
                        geom_data_restr, op);

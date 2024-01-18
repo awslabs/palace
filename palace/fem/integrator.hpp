@@ -66,8 +66,7 @@ public:
 class MassIntegrator : public BilinearFormIntegrator
 {
 public:
-  MassIntegrator() = default;
-  MassIntegrator(const MaterialPropertyCoefficient &Q) : BilinearFormIntegrator(Q) {}
+  using BilinearFormIntegrator::BilinearFormIntegrator;
 
   void Assemble(Ceed ceed, CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
                 CeedBasis trial_basis, CeedBasis test_basis, CeedVector geom_data,
@@ -82,10 +81,7 @@ protected:
   int test_map_type = mfem::FiniteElement::UNKNOWN_MAP_TYPE;
 
 public:
-  VectorFEMassIntegrator() = default;
-  VectorFEMassIntegrator(const MaterialPropertyCoefficient &Q) : BilinearFormIntegrator(Q)
-  {
-  }
+  using BilinearFormIntegrator::BilinearFormIntegrator;
 
   void Assemble(Ceed ceed, CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
                 CeedBasis trial_basis, CeedBasis test_basis, CeedVector geom_data,
@@ -102,8 +98,7 @@ public:
 class DiffusionIntegrator : public BilinearFormIntegrator
 {
 public:
-  DiffusionIntegrator() = default;
-  DiffusionIntegrator(const MaterialPropertyCoefficient &Q) : BilinearFormIntegrator(Q) {}
+  using BilinearFormIntegrator::BilinearFormIntegrator;
 
   void Assemble(Ceed ceed, CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
                 CeedBasis trial_basis, CeedBasis test_basis, CeedVector geom_data,
@@ -114,8 +109,7 @@ public:
 class CurlCurlIntegrator : public BilinearFormIntegrator
 {
 public:
-  CurlCurlIntegrator() = default;
-  CurlCurlIntegrator(const MaterialPropertyCoefficient &Q) : BilinearFormIntegrator(Q) {}
+  using BilinearFormIntegrator::BilinearFormIntegrator;
 
   void Assemble(Ceed ceed, CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
                 CeedBasis trial_basis, CeedBasis test_basis, CeedVector geom_data,
@@ -126,8 +120,7 @@ public:
 class DivDivIntegrator : public BilinearFormIntegrator
 {
 public:
-  DivDivIntegrator() = default;
-  DivDivIntegrator(const MaterialPropertyCoefficient &Q) : BilinearFormIntegrator(Q) {}
+  using BilinearFormIntegrator::BilinearFormIntegrator;
 
   void Assemble(Ceed ceed, CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
                 CeedBasis trial_basis, CeedBasis test_basis, CeedVector geom_data,
@@ -141,7 +134,7 @@ protected:
   const MaterialPropertyCoefficient *Q_mass;
 
 public:
-  DiffusionMassIntegrator() = default;
+  using BilinearFormIntegrator::BilinearFormIntegrator;
   DiffusionMassIntegrator(const MaterialPropertyCoefficient &Q,
                           const MaterialPropertyCoefficient &Q_mass)
     : BilinearFormIntegrator(Q), Q_mass(&Q_mass)
@@ -160,7 +153,7 @@ protected:
   const MaterialPropertyCoefficient *Q_mass;
 
 public:
-  CurlCurlMassIntegrator() = default;
+  using BilinearFormIntegrator::BilinearFormIntegrator;
   CurlCurlMassIntegrator(const MaterialPropertyCoefficient &Q,
                          const MaterialPropertyCoefficient &Q_mass)
     : BilinearFormIntegrator(Q), Q_mass(&Q_mass)
@@ -179,7 +172,7 @@ protected:
   const MaterialPropertyCoefficient *Q_mass;
 
 public:
-  DivDivMassIntegrator() = default;
+  using BilinearFormIntegrator::BilinearFormIntegrator;
   DivDivMassIntegrator(const MaterialPropertyCoefficient &Q,
                        const MaterialPropertyCoefficient &Q_mass)
     : BilinearFormIntegrator(Q), Q_mass(&Q_mass)
@@ -195,11 +188,7 @@ public:
 class MixedVectorGradientIntegrator : public BilinearFormIntegrator
 {
 public:
-  MixedVectorGradientIntegrator() = default;
-  MixedVectorGradientIntegrator(const MaterialPropertyCoefficient &Q)
-    : BilinearFormIntegrator(Q)
-  {
-  }
+  using BilinearFormIntegrator::BilinearFormIntegrator;
 
   void Assemble(Ceed ceed, CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
                 CeedBasis trial_basis, CeedBasis test_basis, CeedVector geom_data,
@@ -210,11 +199,7 @@ public:
 class MixedVectorWeakDivergenceIntegrator : public BilinearFormIntegrator
 {
 public:
-  MixedVectorWeakDivergenceIntegrator() = default;
-  MixedVectorWeakDivergenceIntegrator(const MaterialPropertyCoefficient &Q)
-    : BilinearFormIntegrator(Q)
-  {
-  }
+  using BilinearFormIntegrator::BilinearFormIntegrator;
 
   void Assemble(Ceed ceed, CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
                 CeedBasis trial_basis, CeedBasis test_basis, CeedVector geom_data,
@@ -229,11 +214,7 @@ protected:
   int test_map_type = mfem::FiniteElement::UNKNOWN_MAP_TYPE;
 
 public:
-  MixedVectorCurlIntegrator() = default;
-  MixedVectorCurlIntegrator(const MaterialPropertyCoefficient &Q)
-    : BilinearFormIntegrator(Q)
-  {
-  }
+  using BilinearFormIntegrator::BilinearFormIntegrator;
 
   void Assemble(Ceed ceed, CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
                 CeedBasis trial_basis, CeedBasis test_basis, CeedVector geom_data,
@@ -254,11 +235,7 @@ protected:
   int test_map_type = mfem::FiniteElement::UNKNOWN_MAP_TYPE;
 
 public:
-  MixedVectorWeakCurlIntegrator() = default;
-  MixedVectorWeakCurlIntegrator(const MaterialPropertyCoefficient &Q)
-    : BilinearFormIntegrator(Q)
-  {
-  }
+  using BilinearFormIntegrator::BilinearFormIntegrator;
 
   void Assemble(Ceed ceed, CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
                 CeedBasis trial_basis, CeedBasis test_basis, CeedVector geom_data,
@@ -275,8 +252,7 @@ public:
 class GradientIntegrator : public BilinearFormIntegrator
 {
 public:
-  GradientIntegrator() = default;
-  GradientIntegrator(const MaterialPropertyCoefficient &Q) : BilinearFormIntegrator(Q) {}
+  using BilinearFormIntegrator::BilinearFormIntegrator;
 
   void Assemble(Ceed ceed, CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
                 CeedBasis trial_basis, CeedBasis test_basis, CeedVector geom_data,

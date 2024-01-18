@@ -63,17 +63,7 @@ void DiffusionMassIntegrator::Assemble(Ceed ceed, CeedElemRestriction trial_rest
   info.test_ops = EvalMode::Grad | EvalMode::Interp;
 
   // Set up the coefficient and assemble.
-  auto ctx = [&]()
-  {
-    switch (space_dim)
-    {
-      case 2:
-        return PopulateCoefficientContext<2, 1>(Q, Q_mass);
-      case 3:
-        return PopulateCoefficientContext<3, 1>(Q, Q_mass);
-    }
-    return std::vector<CeedIntScalar>();
-  }();
+  auto ctx = PopulateCoefficientContext(space_dim, 1, Q, Q_mass);
   AssembleCeedOperator(info, (void *)ctx.data(), ctx.size() * sizeof(CeedIntScalar), ceed,
                        trial_restr, test_restr, trial_basis, test_basis, geom_data,
                        geom_data_restr, op);

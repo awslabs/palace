@@ -8,8 +8,7 @@
 #include "utils_geom_qf.h"
 #include "utils_qf.h"
 
-// Build functions replace active vector output with quadrature point data, stored as a
-// symmetric matrix, and remove active vector input.
+// Build functions assemble the quadrature point data, stored as a symmetric matrix.
 
 CEED_QFUNCTION(f_build_l2mass_22)(void *__restrict__ ctx, CeedInt Q,
                                   const CeedScalar *const *in, CeedScalar *const *out)

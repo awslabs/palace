@@ -61,19 +61,7 @@ void CurlCurlMassIntegrator::Assemble(Ceed ceed, CeedElemRestriction trial_restr
   }
 
   // Set up the coefficient and assemble.
-  auto ctx = [&]()
-  {
-    switch (10 * space_dim + dim)
-    {
-      case 22:
-        return PopulateCoefficientContext<1, 2>(Q, Q_mass);
-      case 33:
-        return PopulateCoefficientContext<3, 3>(Q, Q_mass);
-      case 32:
-        return PopulateCoefficientContext<1, 3>(Q, Q_mass);
-    }
-    return std::vector<CeedIntScalar>();
-  }();
+  auto ctx = PopulateCoefficientContext((dim < 3) ? 1 : dim, space_dim, Q, Q_mass);
   AssembleCeedOperator(info, (void *)ctx.data(), ctx.size() * sizeof(CeedIntScalar), ceed,
                        trial_restr, test_restr, trial_basis, test_basis, geom_data,
                        geom_data_restr, op);

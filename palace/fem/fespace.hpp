@@ -90,13 +90,13 @@ public:
                                                    const std::vector<int> &indices) const;
 
   // If the space has a special element restriction for discrete interpolators, return that.
-  // Otherwise return the same restiction as given by GetCeedElemRestriction.
+  // Otherwise return the same restriction as given by GetCeedElemRestriction.
   const CeedElemRestriction
   GetInterpCeedElemRestriction(Ceed ceed, mfem::Geometry::Type geom,
                                const std::vector<int> &indices) const;
 
   // If the space has a special element restriction for the range space of discrete
-  // interpolators, return that. Otherwise return the same restiction as given by
+  // interpolators, return that. Otherwise return the same restriction as given by
   // GetCeedElemRestriction.
   const CeedElemRestriction
   GetInterpRangeCeedElemRestriction(Ceed ceed, mfem::Geometry::Type geom,

@@ -97,10 +97,11 @@ public:
   const auto &GetCeedAttributes() const { return loc_attr; }
   const auto &GetCeedBdrAttributes() const { return loc_bdr_attr; }
 
+  // Convert a list of global attributes to the corresponding process-local libCEED ones.
   template <typename T>
   auto GetCeedAttributes(const T &attr_list) const
   {
-    // Skip any entries in the input global attribute list which are not on local to this
+    // Skip any entries in the input global attribute list which are not local to this
     // process.
     mfem::Array<int> loc_attr_list;
     for (auto attr : attr_list)
@@ -113,10 +114,12 @@ public:
     return loc_attr_list;
   }
 
+  // Convert a list of global boundary attributes to the corresponding process-local libCEED
+  // ones.
   template <typename T>
   auto GetCeedBdrAttributes(const T &attr_list) const
   {
-    // Skip any entries in the input global boundary attribute list which are not on local
+    // Skip any entries in the input global boundary attribute list which are not local
     // to this process.
     mfem::Array<int> loc_attr_list;
     for (auto attr : attr_list)
