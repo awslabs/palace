@@ -173,15 +173,15 @@ static void PrintPalaceInfo(MPI_Comm comm, int np, int nt, mfem::Device &device)
 
 int main(int argc, char *argv[])
 {
-  // Initialize the timer.
-  BlockTimer bt(Timer::INIT);
-
   // Initialize MPI.
   Mpi::Init(argc, argv);
   MPI_Comm world_comm = Mpi::World();
   bool world_root = Mpi::Root(world_comm);
   int world_size = Mpi::Size(world_comm);
   Mpi::Print(world_comm, "\n");
+
+  // Initialize the timer.
+  BlockTimer bt(Timer::INIT);
 
   // Parse command-line options.
   std::vector<std::string_view> argv_sv(argv, argv + argc);
