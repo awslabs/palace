@@ -378,6 +378,19 @@ void SlepcEigenvalueSolver::Customize()
   }
 }
 
+PetscReal SlepcEigenvalueSolver::GetEigenvectorNorm(const ComplexVector &x,
+                                                    ComplexVector &Bx) const
+{
+  if (opB)
+  {
+    return linalg::Norml2(GetComm(), x, *opB, Bx);
+  }
+  else
+  {
+    return linalg::Norml2(GetComm(), x);
+  }
+}
+
 PetscReal SlepcEigenvalueSolver::GetError(int i, EigenvalueSolver::ErrorType type) const
 {
   switch (type)
@@ -390,6 +403,20 @@ PetscReal SlepcEigenvalueSolver::GetError(int i, EigenvalueSolver::ErrorType typ
       return res.get()[i] / GetBackwardScaling(GetEigenvalue(i));
   }
   return 0.0;
+}
+
+void SlepcEigenvalueSolver::RescaleEigenvectors(int num_eig)
+{
+  res = std::make_unique<PetscReal[]>(num_eig);
+  xscale = std::make_unique<PetscReal[]>(num_eig);
+  for (int i = 0; i < num_eig; i++)
+  {
+    xscale.get()[i] = 0.0;
+    GetEigenvector(i, x1);
+    xscale.get()[i] = 1.0 / GetEigenvectorNorm(x1, y1);
+    res.get()[i] =
+        GetResidualNorm(GetEigenvalue(i), x1, y1) / linalg::Norml2(GetComm(), x1);
+  }
 }
 
 // EPS specific methods
@@ -594,11 +621,7 @@ int SlepcEPSSolverBase::Solve()
   }
 
   // Compute and store the eigenpair residuals.
-  res = std::make_unique<PetscReal[]>(num_conv);
-  for (int i = 0; i < num_conv; i++)
-  {
-    res.get()[i] = GetResidualNorm(i);
-  }
+  RescaleEigenvectors(num_conv);
   return (int)num_conv;
 }
 
@@ -624,6 +647,10 @@ void SlepcEPSSolverBase::GetEigenvector(int i, ComplexVector &x) const
   PalacePetscCall(VecGetArrayRead(v0, &pv0));
   x.Set(pv0, n);
   PalacePetscCall(VecRestoreArrayRead(v0, &pv0));
+  if (xscale.get()[i] > 0.0)
+  {
+    x *= xscale.get()[i];
+  }
 }
 
 BV SlepcEPSSolverBase::GetBV() const
@@ -694,8 +721,8 @@ void SlepcEPSSolver::SetOperators(const ComplexOperator &K, const ComplexOperato
   {
     PalacePetscCall(MatCreateVecs(A0, nullptr, &v0));
   }
-  x.SetSize(opK->Height());
-  y.SetSize(opK->Height());
+  x1.SetSize(opK->Height());
+  y1.SetSize(opK->Height());
 
   // Configure linear solver for generalized problem or spectral transformation. This also
   // allows use of the divergence-free projector as a linear solve side-effect.
@@ -718,14 +745,13 @@ void SlepcEPSSolver::SetBMat(const Operator &B)
   PalacePetscCall(BVSetMatrix(bv, B0, PETSC_FALSE));
 }
 
-PetscReal SlepcEPSSolver::GetResidualNorm(int i) const
+PetscReal SlepcEPSSolver::GetResidualNorm(PetscScalar l, const ComplexVector &x,
+                                          ComplexVector &r) const
 {
   // Compute the i-th eigenpair residual: || (K - λ M) x ||₂ for eigenvalue λ.
-  PetscScalar l = GetEigenvalue(i);
-  GetEigenvector(i, x);
-  opK->Mult(x, y);
-  opM->AddMult(x, y, -l);
-  return linalg::Norml2(GetComm(), y);
+  opK->Mult(x, r);
+  opM->AddMult(x, r, -l);
+  return linalg::Norml2(GetComm(), r);
 }
 
 PetscReal SlepcEPSSolver::GetBackwardScaling(PetscScalar l) const
@@ -862,27 +888,21 @@ void SlepcPEPLinearSolver::GetEigenvector(int i, ComplexVector &x) const
   PalacePetscCall(VecGetArrayRead(v0, &pv0));
   x.Set(pv0, n / 2);
   PalacePetscCall(VecRestoreArrayRead(v0, &pv0));
-
-  if (opB)
+  if (xscale.get()[i] > 0.0)
   {
-    linalg::Normalize(GetComm(), x, *opB, y1);
-  }
-  else
-  {
-    linalg::Normalize(GetComm(), x);
+    x *= xscale.get()[i];
   }
 }
 
-PetscReal SlepcPEPLinearSolver::GetResidualNorm(int i) const
+PetscReal SlepcPEPLinearSolver::GetResidualNorm(PetscScalar l, const ComplexVector &x,
+                                                ComplexVector &r) const
 {
   // Compute the i-th eigenpair residual: || P(λ) x ||₂ = || (K + λ C + λ² M) x ||₂ for
   // eigenvalue λ.
-  PetscScalar l = GetEigenvalue(i);
-  GetEigenvector(i, x1);
-  opK->Mult(x1, y1);
-  opC->AddMult(x1, y1, l);
-  opM->AddMult(x1, y1, l * l);
-  return linalg::Norml2(GetComm(), y1);
+  opK->Mult(x, r);
+  opC->AddMult(x, r, l);
+  opM->AddMult(x, r, l * l);
+  return linalg::Norml2(GetComm(), r);
 }
 
 PetscReal SlepcPEPLinearSolver::GetBackwardScaling(PetscScalar l) const
@@ -1102,11 +1122,7 @@ int SlepcPEPSolverBase::Solve()
   }
 
   // Compute and store the eigenpair residuals.
-  res = std::make_unique<PetscReal[]>(num_conv);
-  for (int i = 0; i < num_conv; i++)
-  {
-    res.get()[i] = GetResidualNorm(i);
-  }
+  RescaleEigenvectors(num_conv);
   return (int)num_conv;
 }
 
@@ -1132,6 +1148,10 @@ void SlepcPEPSolverBase::GetEigenvector(int i, ComplexVector &x) const
   PalacePetscCall(VecGetArrayRead(v0, &pv0));
   x.Set(pv0, n);
   PalacePetscCall(VecRestoreArrayRead(v0, &pv0));
+  if (xscale.get()[i] > 0.0)
+  {
+    x *= xscale.get()[i];
+  }
 }
 
 BV SlepcPEPSolverBase::GetBV() const
@@ -1211,8 +1231,8 @@ void SlepcPEPSolver::SetOperators(const ComplexOperator &K, const ComplexOperato
   {
     PalacePetscCall(MatCreateVecs(A0, nullptr, &v0));
   }
-  x.SetSize(opK->Height());
-  y.SetSize(opK->Height());
+  x1.SetSize(opK->Height());
+  y1.SetSize(opK->Height());
 
   // Configure linear solver.
   if (first)
@@ -1234,16 +1254,15 @@ void SlepcPEPSolver::SetBMat(const Operator &B)
   PalacePetscCall(BVSetMatrix(bv, B0, PETSC_FALSE));
 }
 
-PetscReal SlepcPEPSolver::GetResidualNorm(int i) const
+PetscReal SlepcPEPSolver::GetResidualNorm(PetscScalar l, const ComplexVector &x,
+                                          ComplexVector &r) const
 {
   // Compute the i-th eigenpair residual: || P(λ) x ||₂ = || (K + λ C + λ² M) x ||₂ for
   // eigenvalue λ.
-  PetscScalar l = GetEigenvalue(i);
-  GetEigenvector(i, x);
-  opK->Mult(x, y);
-  opC->AddMult(x, y, l);
-  opM->AddMult(x, y, l * l);
-  return linalg::Norml2(GetComm(), y);
+  opK->Mult(x, r);
+  opC->AddMult(x, r, l);
+  opM->AddMult(x, r, l * l);
+  return linalg::Norml2(GetComm(), r);
 }
 
 PetscReal SlepcPEPSolver::GetBackwardScaling(PetscScalar l) const
@@ -1280,15 +1299,15 @@ PetscErrorCode __mat_apply_EPS_A0(Mat A, Vec x, Vec y)
 
   const PetscScalar *px;
   PetscCall(VecGetArrayRead(x, &px));
-  ctx->x.Set(px, n);
+  ctx->x1.Set(px, n);
   PetscCall(VecRestoreArrayRead(x, &px));
 
-  ctx->opK->Mult(ctx->x, ctx->y);
-  ctx->y *= ctx->delta;
+  ctx->opK->Mult(ctx->x1, ctx->y1);
+  ctx->y1 *= ctx->delta;
 
   PetscScalar *py;
   PetscCall(VecGetArrayWrite(y, &py));
-  ctx->y.Get(py, n);
+  ctx->y1.Get(py, n);
   PetscCall(VecRestoreArrayWrite(y, &py));
 
   PetscFunctionReturn(0);
@@ -1306,15 +1325,15 @@ PetscErrorCode __mat_apply_EPS_A1(Mat A, Vec x, Vec y)
 
   const PetscScalar *px;
   PetscCall(VecGetArrayRead(x, &px));
-  ctx->x.Set(px, n);
+  ctx->x1.Set(px, n);
   PetscCall(VecRestoreArrayRead(x, &px));
 
-  ctx->opM->Mult(ctx->x, ctx->y);
-  ctx->y *= ctx->delta * ctx->gamma;
+  ctx->opM->Mult(ctx->x1, ctx->y1);
+  ctx->y1 *= ctx->delta * ctx->gamma;
 
   PetscScalar *py;
   PetscCall(VecGetArrayWrite(y, &py));
-  ctx->y.Get(py, n);
+  ctx->y1.Get(py, n);
   PetscCall(VecRestoreArrayWrite(y, &py));
 
   PetscFunctionReturn(0);
@@ -1332,16 +1351,16 @@ PetscErrorCode __mat_apply_EPS_B(Mat A, Vec x, Vec y)
 
   const PetscScalar *px;
   PetscCall(VecGetArrayRead(x, &px));
-  ctx->x.Set(px, n);
+  ctx->x1.Set(px, n);
   PetscCall(VecRestoreArrayRead(x, &px));
 
-  ctx->opB->Mult(ctx->x.Real(), ctx->y.Real());
-  ctx->opB->Mult(ctx->x.Imag(), ctx->y.Imag());
-  ctx->y *= ctx->delta * ctx->gamma;
+  ctx->opB->Mult(ctx->x1.Real(), ctx->y1.Real());
+  ctx->opB->Mult(ctx->x1.Imag(), ctx->y1.Imag());
+  ctx->y1 *= ctx->delta * ctx->gamma;
 
   PetscScalar *py;
   PetscCall(VecGetArrayWrite(y, &py));
-  ctx->y.Get(py, n);
+  ctx->y1.Get(py, n);
   PetscCall(VecRestoreArrayWrite(y, &py));
 
   PetscFunctionReturn(0);
@@ -1362,28 +1381,28 @@ PetscErrorCode __pc_apply_EPS(PC pc, Vec x, Vec y)
 
   const PetscScalar *px;
   PetscCall(VecGetArrayRead(x, &px));
-  ctx->x.Set(px, n);
+  ctx->x1.Set(px, n);
   PetscCall(VecRestoreArrayRead(x, &px));
 
-  ctx->opInv->Mult(ctx->x, ctx->y);
+  ctx->opInv->Mult(ctx->x1, ctx->y1);
   if (!ctx->sinvert)
   {
-    ctx->y *= 1.0 / (ctx->delta * ctx->gamma);
+    ctx->y1 *= 1.0 / (ctx->delta * ctx->gamma);
   }
   else
   {
-    ctx->y *= 1.0 / ctx->delta;
+    ctx->y1 *= 1.0 / ctx->delta;
   }
   if (ctx->opProj)
   {
-    // Mpi::Print(" Before projection: {:e}\n", linalg::Norml2(ctx->GetComm(), ctx->y));
-    ctx->opProj->Mult(ctx->y);
-    // Mpi::Print(" After projection: {:e}\n", linalg::Norml2(ctx->GetComm(), ctx->y));
+    // Mpi::Print(" Before projection: {:e}\n", linalg::Norml2(ctx->GetComm(), ctx->y1));
+    ctx->opProj->Mult(ctx->y1);
+    // Mpi::Print(" After projection: {:e}\n", linalg::Norml2(ctx->GetComm(), ctx->y1));
   }
 
   PetscScalar *py;
   PetscCall(VecGetArrayWrite(y, &py));
-  ctx->y.Get(py, n);
+  ctx->y1.Get(py, n);
   PetscCall(VecRestoreArrayWrite(y, &py));
 
   PetscFunctionReturn(0);
@@ -1570,14 +1589,14 @@ PetscErrorCode __mat_apply_PEP_A0(Mat A, Vec x, Vec y)
 
   const PetscScalar *px;
   PetscCall(VecGetArrayRead(x, &px));
-  ctx->x.Set(px, n);
+  ctx->x1.Set(px, n);
   PetscCall(VecRestoreArrayRead(x, &px));
 
-  ctx->opK->Mult(ctx->x, ctx->y);
+  ctx->opK->Mult(ctx->x1, ctx->y1);
 
   PetscScalar *py;
   PetscCall(VecGetArrayWrite(y, &py));
-  ctx->y.Get(py, n);
+  ctx->y1.Get(py, n);
   PetscCall(VecRestoreArrayWrite(y, &py));
 
   PetscFunctionReturn(0);
@@ -1596,14 +1615,14 @@ PetscErrorCode __mat_apply_PEP_A1(Mat A, Vec x, Vec y)
 
   const PetscScalar *px;
   PetscCall(VecGetArrayRead(x, &px));
-  ctx->x.Set(px, n);
+  ctx->x1.Set(px, n);
   PetscCall(VecRestoreArrayRead(x, &px));
 
-  ctx->opC->Mult(ctx->x, ctx->y);
+  ctx->opC->Mult(ctx->x1, ctx->y1);
 
   PetscScalar *py;
   PetscCall(VecGetArrayWrite(y, &py));
-  ctx->y.Get(py, n);
+  ctx->y1.Get(py, n);
   PetscCall(VecRestoreArrayWrite(y, &py));
 
   PetscFunctionReturn(0);
@@ -1622,14 +1641,14 @@ PetscErrorCode __mat_apply_PEP_A2(Mat A, Vec x, Vec y)
 
   const PetscScalar *px;
   PetscCall(VecGetArrayRead(x, &px));
-  ctx->x.Set(px, n);
+  ctx->x1.Set(px, n);
   PetscCall(VecRestoreArrayRead(x, &px));
 
-  ctx->opM->Mult(ctx->x, ctx->y);
+  ctx->opM->Mult(ctx->x1, ctx->y1);
 
   PetscScalar *py;
   PetscCall(VecGetArrayWrite(y, &py));
-  ctx->y.Get(py, n);
+  ctx->y1.Get(py, n);
   PetscCall(VecRestoreArrayWrite(y, &py));
 
   PetscFunctionReturn(0);
@@ -1647,16 +1666,16 @@ PetscErrorCode __mat_apply_PEP_B(Mat A, Vec x, Vec y)
 
   const PetscScalar *px;
   PetscCall(VecGetArrayRead(x, &px));
-  ctx->x.Set(px, n);
+  ctx->x1.Set(px, n);
   PetscCall(VecRestoreArrayRead(x, &px));
 
-  ctx->opB->Mult(ctx->x.Real(), ctx->y.Real());
-  ctx->opB->Mult(ctx->x.Imag(), ctx->y.Imag());
-  ctx->y *= ctx->delta * ctx->gamma;
+  ctx->opB->Mult(ctx->x1.Real(), ctx->y1.Real());
+  ctx->opB->Mult(ctx->x1.Imag(), ctx->y1.Imag());
+  ctx->y1 *= ctx->delta * ctx->gamma;
 
   PetscScalar *py;
   PetscCall(VecGetArrayWrite(y, &py));
-  ctx->y.Get(py, n);
+  ctx->y1.Get(py, n);
   PetscCall(VecRestoreArrayWrite(y, &py));
 
   PetscFunctionReturn(0);
@@ -1678,28 +1697,28 @@ PetscErrorCode __pc_apply_PEP(PC pc, Vec x, Vec y)
 
   const PetscScalar *px;
   PetscCall(VecGetArrayRead(x, &px));
-  ctx->x.Set(px, n);
+  ctx->x1.Set(px, n);
   PetscCall(VecRestoreArrayRead(x, &px));
 
-  ctx->opInv->Mult(ctx->x, ctx->y);
+  ctx->opInv->Mult(ctx->x1, ctx->y1);
   if (!ctx->sinvert)
   {
-    ctx->y *= 1.0 / (ctx->delta * ctx->gamma * ctx->gamma);
+    ctx->y1 *= 1.0 / (ctx->delta * ctx->gamma * ctx->gamma);
   }
   else
   {
-    ctx->y *= 1.0 / ctx->delta;
+    ctx->y1 *= 1.0 / ctx->delta;
   }
   if (ctx->opProj)
   {
-    // Mpi::Print(" Before projection: {:e}\n", linalg::Norml2(ctx->GetComm(), ctx->y));
-    ctx->opProj->Mult(ctx->y);
-    // Mpi::Print(" After projection: {:e}\n", linalg::Norml2(ctx->GetComm(), ctx->y));
+    // Mpi::Print(" Before projection: {:e}\n", linalg::Norml2(ctx->GetComm(), ctx->y1));
+    ctx->opProj->Mult(ctx->y1);
+    // Mpi::Print(" After projection: {:e}\n", linalg::Norml2(ctx->GetComm(), ctx->y1));
   }
 
   PetscScalar *py;
   PetscCall(VecGetArrayWrite(y, &py));
-  ctx->y.Get(py, n);
+  ctx->y1.Get(py, n);
   PetscCall(VecRestoreArrayWrite(y, &py));
 
   PetscFunctionReturn(0);

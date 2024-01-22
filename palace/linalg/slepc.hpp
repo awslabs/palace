@@ -75,6 +75,9 @@ public:
     JD
   };
 
+  // Workspace vector for operator applications.
+  mutable ComplexVector x1, y1;
+
 protected:
   // Control print level for debugging.
   int print;
@@ -86,8 +89,8 @@ protected:
   PetscScalar sigma;
   bool sinvert, region;
 
-  // Storage for computed residual norms.
-  std::unique_ptr<PetscReal[]> res;
+  // Storage for computed residual norms and eigenvector normalizations.
+  std::unique_ptr<PetscReal[]> res, xscale;
 
   // Reference to linear solver used for operator action for M⁻¹ (with no spectral
   // transformation) or (K - σ M)⁻¹ (generalized EVP with shift-and- invert) or P(σ)⁻¹
@@ -112,8 +115,12 @@ protected:
   // Customize object with command line options set.
   virtual void Customize();
 
+  // Helper routine for computing the eigenvector normalization.
+  PetscReal GetEigenvectorNorm(const ComplexVector &x, ComplexVector &Bx) const;
+
   // Helper routine for computing the eigenpair residual.
-  virtual PetscReal GetResidualNorm(int i) const = 0;
+  virtual PetscReal GetResidualNorm(PetscScalar l, const ComplexVector &x,
+                                    ComplexVector &r) const = 0;
 
   // Helper routine for computing the backward error.
   virtual PetscReal GetBackwardScaling(PetscScalar l) const = 0;
@@ -160,6 +167,11 @@ public:
 
   // Get the corresponding eigenpair error.
   PetscReal GetError(int i, ErrorType type) const override;
+
+  // Re-normalize the given number of eigenvectors, for example if the matrix B for weighted
+  // inner products has changed. This does not perform re-orthogonalization with respect to
+  // the new matrix, only normalization.
+  void RescaleEigenvectors(int num_eig) override;
 
   // Get the basis vectors object.
   virtual BV GetBV() const = 0;
@@ -248,15 +260,13 @@ public:
   // References to matrices defining the generalized eigenvalue problem (not owned).
   const ComplexOperator *opK, *opM;
 
-  // Workspace vector for operator applications.
-  mutable ComplexVector x, y;
-
 private:
   // Operator norms for scaling.
   mutable PetscReal normK, normM;
 
 protected:
-  PetscReal GetResidualNorm(int i) const override;
+  PetscReal GetResidualNorm(PetscScalar l, const ComplexVector &x,
+                            ComplexVector &r) const override;
 
   PetscReal GetBackwardScaling(PetscScalar l) const override;
 
@@ -287,14 +297,15 @@ public:
   const ComplexOperator *opK, *opC, *opM;
 
   // Workspace vectors for operator applications.
-  mutable ComplexVector x1, x2, y1, y2;
+  mutable ComplexVector x2, y2;
 
 private:
   // Operator norms for scaling.
   mutable PetscReal normK, normC, normM;
 
 protected:
-  PetscReal GetResidualNorm(int i) const override;
+  PetscReal GetResidualNorm(PetscScalar l, const ComplexVector &x,
+                            ComplexVector &r) const override;
 
   PetscReal GetBackwardScaling(PetscScalar l) const override;
 
@@ -383,15 +394,13 @@ public:
   // (not owned).
   const ComplexOperator *opK, *opC, *opM;
 
-  // Workspace vector for operator applications.
-  mutable ComplexVector x, y;
-
 private:
   // Operator norms for scaling.
   mutable PetscReal normK, normC, normM;
 
 protected:
-  PetscReal GetResidualNorm(int i) const override;
+  PetscReal GetResidualNorm(PetscScalar l, const ComplexVector &x,
+                            ComplexVector &r) const override;
 
   PetscReal GetBackwardScaling(PetscScalar l) const override;
 

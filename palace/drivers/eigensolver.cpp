@@ -148,13 +148,13 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   std::unique_ptr<Operator> KM;
   if (iodata.solver.eigenmode.mass_orthog)
   {
-    // Mpi::Print(" Basis uses M-inner product\n");
-    // KM = spaceop.GetInnerProductMatrix(0.0, 1.0, nullptr, M.get());
-    // eigen->SetBMat(*KM);
-
-    Mpi::Print(" Basis uses (K + M)-inner product\n");
-    KM = spaceop.GetInnerProductMatrix(1.0, 1.0, K.get(), M.get());
+    Mpi::Print(" Basis uses M-inner product\n");
+    KM = spaceop.GetInnerProductMatrix(0.0, 1.0, nullptr, M.get());
     eigen->SetBMat(*KM);
+
+    // Mpi::Print(" Basis uses (K + M)-inner product\n");
+    // KM = spaceop.GetInnerProductMatrix(1.0, 1.0, K.get(), M.get());
+    // eigen->SetBMat(*KM);
   }
 
   // Construct a divergence-free projector so the eigenvalue solve is performed in the space
@@ -266,20 +266,21 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   }
   SaveMetadata(*ksp);
 
-  // Calculate and record the error indicators.
-  Mpi::Print("Computing solution error estimates\n\n");
+  // Calculate and record the error indicators and postprocess the results.
+  BlockTimer bt2(Timer::POSTPRO);
+  Mpi::Print("Computing solution error estimates and postprocessing computed modes\n\n");
   CurlFluxErrorEstimator<ComplexVector> estimator(
       spaceop.GetMaterialOp(), spaceop.GetNDSpace(), iodata.solver.linear.estimator_tol,
       iodata.solver.linear.estimator_max_it, 0);
   ErrorIndicator indicator;
-  for (int i = 0; i < iodata.solver.eigenmode.n; i++)
+  if (!KM)
   {
-    eigen->GetEigenvector(i, E);
-    estimator.AddErrorIndicator(E, indicator);
+    // Normalize the finalized eigenvectors with respect to mass matrix (unit electric field
+    // energy) even if they are not computed to be orthogonal with respect to it.
+    KM = spaceop.GetInnerProductMatrix(0.0, 1.0, nullptr, M.get());
+    eigen->SetBMat(*KM);
+    eigen->RescaleEigenvectors(num_conv);
   }
-
-  // Postprocess the results.
-  BlockTimer bt2(Timer::POSTPRO);
   for (int i = 0; i < num_conv; i++)
   {
     // Get the eigenvalue and relative error.
@@ -300,6 +301,11 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     // Compute B = -1/(iω) ∇ x E on the true dofs, and set the internal GridFunctions in
     // PostOperator for all postprocessing operations.
     eigen->GetEigenvector(i, E);
+    if (i < iodata.solver.eigenmode.n)
+    {
+      // Only consider the desired number of modes for the error indicator.
+      estimator.AddErrorIndicator(E, indicator);
+    }
     Curl.Mult(E.Real(), B.Real());
     Curl.Mult(E.Imag(), B.Imag());
     B *= -1.0 / (1i * omega);
