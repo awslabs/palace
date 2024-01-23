@@ -929,8 +929,12 @@ void WavePortData::Initialize(double omega)
     port_si->AddDomainIntegrator(new VectorFEDomainLFIntegrator(port_nxH0i_func));
     port_sr->UseFastAssembly(false);
     port_si->UseFastAssembly(false);
+    port_sr->UseDevice(false);
+    port_si->UseDevice(false);
     port_sr->Assemble();
     port_si->Assemble();
+    port_sr->UseDevice(true);
+    port_si->UseDevice(true);
     Normalize(*port_S0t, *port_E0t, *port_E0n, *port_sr, *port_si);
   }
 }
@@ -1009,8 +1013,12 @@ std::complex<double> WavePortData::GetPower(mfem::ParComplexGridFunction &E,
   pi.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(nxHi_func), attr_marker);
   pr.UseFastAssembly(false);
   pi.UseFastAssembly(false);
+  pr.UseDevice(false);
+  pi.UseDevice(false);
   pr.Assemble();
   pi.Assemble();
+  pr.UseDevice(true);
+  pi.UseDevice(true);
   std::complex<double> dot(-(pr * E.real()) - (pi * E.imag()),
                            -(pr * E.imag()) + (pi * E.real()));
   Mpi::GlobalSum(1, &dot, nd_fespace.GetComm());

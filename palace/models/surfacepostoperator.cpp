@@ -5,6 +5,7 @@
 
 #include <complex>
 #include "fem/integrator.hpp"
+#include "linalg/vector.hpp"
 #include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
@@ -263,8 +264,10 @@ double SurfacePostOperator::GetLocalSurfaceIntegral(const SurfaceData &data,
   mfem::LinearForm s(ones.FESpace());
   s.AddBoundaryIntegrator(new BoundaryLFIntegrator(fb), attr_marker);
   s.UseFastAssembly(false);
+  s.UseDevice(false);
   s.Assemble();
-  return s * ones;
+  s.UseDevice(true);
+  return linalg::LocalDot(s, ones);
 }
 
 }  // namespace palace

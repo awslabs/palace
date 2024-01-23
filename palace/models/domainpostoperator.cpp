@@ -80,9 +80,9 @@ DomainPostOperator::GetElectricFieldEnergy(const mfem::ParComplexGridFunction &E
   if (M_ND)
   {
     M_ND->Mult(E.real(), D);
-    double res = mfem::InnerProduct(E.real(), D);
+    double res = linalg::LocalDot(E.real(), D);
     M_ND->Mult(E.imag(), D);
-    res += mfem::InnerProduct(E.imag(), D);
+    res += linalg::LocalDot(E.imag(), D);
     Mpi::GlobalSum(1, &res, E.ParFESpace()->GetComm());
     return 0.5 * res;
   }
@@ -96,7 +96,7 @@ double DomainPostOperator::GetElectricFieldEnergy(const mfem::ParGridFunction &E
   if (M_ND)
   {
     M_ND->Mult(E, D);
-    double res = mfem::InnerProduct(E, D);
+    double res = linalg::LocalDot(E, D);
     Mpi::GlobalSum(1, &res, E.ParFESpace()->GetComm());
     return 0.5 * res;
   }
@@ -111,9 +111,9 @@ DomainPostOperator::GetMagneticFieldEnergy(const mfem::ParComplexGridFunction &B
   if (M_RT)
   {
     M_RT->Mult(B.real(), H);
-    double res = mfem::InnerProduct(B.real(), H);
+    double res = linalg::LocalDot(B.real(), H);
     M_RT->Mult(B.imag(), H);
-    res += mfem::InnerProduct(B.imag(), H);
+    res += linalg::LocalDot(B.imag(), H);
     Mpi::GlobalSum(1, &res, B.ParFESpace()->GetComm());
     return 0.5 * res;
   }
@@ -127,7 +127,7 @@ double DomainPostOperator::GetMagneticFieldEnergy(const mfem::ParGridFunction &B
   if (M_RT)
   {
     M_RT->Mult(B, H);
-    double res = mfem::InnerProduct(B, H);
+    double res = linalg::LocalDot(B, H);
     Mpi::GlobalSum(1, &res, B.ParFESpace()->GetComm());
     return 0.5 * res;
   }
@@ -148,9 +148,9 @@ double DomainPostOperator::GetDomainElectricFieldEnergy(
     return 0.0;
   }
   it->second.first->Mult(E.real(), D);
-  double res = mfem::InnerProduct(E.real(), D);
+  double res = linalg::LocalDot(E.real(), D);
   it->second.first->Mult(E.imag(), D);
-  res += mfem::InnerProduct(E.imag(), D);
+  res += linalg::LocalDot(E.imag(), D);
   Mpi::GlobalSum(1, &res, E.ParFESpace()->GetComm());
   return 0.5 * res;
 }
@@ -167,7 +167,7 @@ DomainPostOperator::GetDomainElectricFieldEnergy(int idx,
     return 0.0;
   }
   it->second.first->Mult(E, D);
-  double res = mfem::InnerProduct(E, D);
+  double res = linalg::LocalDot(E, D);
   Mpi::GlobalSum(1, &res, E.ParFESpace()->GetComm());
   return 0.5 * res;
 }
@@ -184,9 +184,9 @@ double DomainPostOperator::GetDomainMagneticFieldEnergy(
     return 0.0;
   }
   it->second.second->Mult(B.real(), H);
-  double res = mfem::InnerProduct(B.real(), H);
+  double res = linalg::LocalDot(B.real(), H);
   it->second.second->Mult(B.imag(), H);
-  res += mfem::InnerProduct(B.imag(), H);
+  res += linalg::LocalDot(B.imag(), H);
   Mpi::GlobalSum(1, &res, B.ParFESpace()->GetComm());
   return 0.5 * res;
 }
@@ -203,7 +203,7 @@ DomainPostOperator::GetDomainMagneticFieldEnergy(int idx,
     return 0.0;
   }
   it->second.second->Mult(B, H);
-  double res = mfem::InnerProduct(B, H);
+  double res = linalg::LocalDot(B, H);
   Mpi::GlobalSum(1, &res, B.ParFESpace()->GetComm());
   return 0.5 * res;
 }

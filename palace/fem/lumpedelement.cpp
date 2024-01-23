@@ -5,6 +5,7 @@
 
 #include "fem/coefficient.hpp"
 #include "fem/integrator.hpp"
+#include "linalg/vector.hpp"
 #include "utils/communication.hpp"
 
 namespace palace
@@ -19,13 +20,13 @@ double GetArea(mfem::ParFiniteElementSpace &fespace, mfem::Array<int> &attr_mark
   mfem::LinearForm s(&fespace);
   s.AddBoundaryIntegrator(new BoundaryLFIntegrator(one_func), attr_marker);
   s.UseFastAssembly(false);
+  s.UseDevice(false);
   s.Assemble();
+  s.UseDevice(true);
 
   mfem::GridFunction ones(&fespace);
   ones = 1.0;
-  double dot = s * ones;
-  Mpi::GlobalSum(1, &dot, fespace.GetComm());
-  return dot;
+  return linalg::Dot<Vector>(fespace.GetComm(), s, ones);
 }
 
 }  // namespace

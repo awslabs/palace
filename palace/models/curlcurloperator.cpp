@@ -207,8 +207,10 @@ void CurlCurlOperator::GetExcitationVector(int idx, Vector &RHS)
   mfem::LinearForm rhs(&GetNDSpace().Get());
   rhs.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fb));
   rhs.UseFastAssembly(false);
+  rhs.UseDevice(false);
   rhs.Assemble();
-  GetNDSpace().Get().GetProlongationMatrix()->AddMultTranspose(rhs, RHS, -1.0);
+  rhs.UseDevice(true);
+  GetNDSpace().GetProlongationMatrix()->AddMultTranspose(rhs, RHS, -1.0);
   linalg::SetSubVector(RHS, dbc_tdof_lists.back(), 0.0);
 }
 
