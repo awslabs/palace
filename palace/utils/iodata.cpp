@@ -452,7 +452,7 @@ void IoData::NondimensionalizeInputs(mfem::ParMesh &mesh)
   else
   {
     mfem::Vector bbmin, bbmax;
-    mesh.GetBoundingBox(bbmin, bbmax);
+    mesh::GetAxisAlignedBoundingBox(mesh, bbmin, bbmax);
     bbmax -= bbmin;
     bbmax *= model.L0;  // [m]
     Lc = *std::max_element(bbmax.begin(), bbmax.end());

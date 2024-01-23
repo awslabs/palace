@@ -16,6 +16,7 @@
 #include "utils/filesystem.hpp"
 #include "utils/iodata.hpp"
 #include "utils/meshio.hpp"
+#include "utils/omp.hpp"
 #include "utils/timer.hpp"
 
 namespace palace
@@ -359,7 +360,7 @@ void RefineMesh(const IoData &iodata, std::vector<std::unique_ptr<mfem::ParMesh>
 
   // Print some mesh information.
   mfem::Vector bbmin, bbmax;
-  mesh[0]->GetBoundingBox(bbmin, bbmax);
+  GetAxisAlignedBoundingBox(*mesh[0], bbmin, bbmax);
   const double Lc = iodata.DimensionalizeValue(IoData::ValueType::LENGTH, 1.0);
   Mpi::Print(mesh[0]->GetComm(), "\nMesh curvature order: {}\nMesh bounding box:\n",
              mesh[0]->GetNodes()
@@ -394,6 +395,7 @@ namespace
 
 void ScaleMesh(mfem::Mesh &mesh, double L)
 {
+  PalacePragmaOmp(parallel for schedule(static))
   for (int i = 0; i < mesh.GetNV(); i++)
   {
     double *v = mesh.GetVertex(i);
@@ -401,6 +403,7 @@ void ScaleMesh(mfem::Mesh &mesh, double L)
   }
   if (auto *pmesh = dynamic_cast<mfem::ParMesh *>(&mesh))
   {
+    PalacePragmaOmp(parallel for schedule(static))
     for (int i = 0; i < pmesh->face_nbr_vertices.Size(); i++)
     {
       double *v = pmesh->face_nbr_vertices[i]();
@@ -519,7 +522,8 @@ void GetAxisAlignedBoundingBox(const mfem::ParMesh &mesh, const mfem::Array<int>
   }
   if (!mesh.GetNodes())
   {
-    auto BBUpdate = [&mesh, &dim, &min, &max](const mfem::Array<int> &verts) -> void
+    auto BBUpdate =
+        [&mesh, &dim](const mfem::Array<int> &verts, mfem::Vector &min, mfem::Vector &max)
     {
       for (int j = 0; j < verts.Size(); j++)
       {
@@ -537,40 +541,59 @@ void GetAxisAlignedBoundingBox(const mfem::ParMesh &mesh, const mfem::Array<int>
         }
       }
     };
-    if (bdr)
+    PalacePragmaOmp(parallel)
     {
-      for (int i = 0; i < mesh.GetNBE(); i++)
+      mfem::Vector loc_min(dim), loc_max(dim);
+      for (int d = 0; d < dim; d++)
       {
-        if (!marker[mesh.GetBdrAttribute(i) - 1])
-        {
-          continue;
-        }
-        mfem::Array<int> verts;
-        mesh.GetBdrElementVertices(i, verts);
-        BBUpdate(verts);
+        loc_min(d) = mfem::infinity();
+        loc_max(d) = -mfem::infinity();
       }
-    }
-    else
-    {
-      for (int i = 0; i < mesh.GetNE(); i++)
+      mfem::Array<int> verts;
+      if (bdr)
       {
-        if (!marker[mesh.GetAttribute(i) - 1])
+        PalacePragmaOmp(for schedule(static))
+        for (int i = 0; i < mesh.GetNBE(); i++)
         {
-          continue;
+          if (!marker[mesh.GetBdrAttribute(i) - 1])
+          {
+            continue;
+          }
+          mesh.GetBdrElementVertices(i, verts);
+          BBUpdate(verts, loc_min, loc_max);
         }
-        mfem::Array<int> verts;
-        mesh.GetElementVertices(i, verts);
-        BBUpdate(verts);
+      }
+      else
+      {
+        PalacePragmaOmp(for schedule(static))
+        for (int i = 0; i < mesh.GetNE(); i++)
+        {
+          if (!marker[mesh.GetAttribute(i) - 1])
+          {
+            continue;
+          }
+          mesh.GetElementVertices(i, verts);
+          BBUpdate(verts, loc_min, loc_max);
+        }
+      }
+      PalacePragmaOmp(critical(BBUpdate))
+      {
+        for (int d = 0; d < dim; d++)
+        {
+          min(d) = std::min(min(d), loc_min(d));
+          max(d) = std::max(max(d), loc_max(d));
+        }
       }
     }
   }
   else
   {
-    auto BBUpdate = [&min, &max](mfem::ElementTransformation &T, mfem::Geometry::Type &geom,
-                                 int ref) -> void
+    const int ref = mesh.GetNodes()->FESpace()->GetMaxElementOrder();
+    auto BBUpdate = [&ref](mfem::GeometryRefiner refiner, mfem::Geometry::Type &geom,
+                           mfem::ElementTransformation &T, mfem::DenseMatrix &pointmat,
+                           mfem::Vector &min, mfem::Vector &max)
     {
-      mfem::DenseMatrix pointmat;
-      mfem::RefinedGeometry *RefG = mfem::GlobGeometryRefiner.Refine(geom, ref);
+      mfem::RefinedGeometry *RefG = refiner.Refine(geom, ref);
       T.Transform(RefG->RefPts, pointmat);
       for (int j = 0; j < pointmat.Width(); j++)
       {
@@ -587,32 +610,52 @@ void GetAxisAlignedBoundingBox(const mfem::ParMesh &mesh, const mfem::Array<int>
         }
       }
     };
-    const int ref = mesh.GetNodes()->FESpace()->GetMaxElementOrder();
-    mfem::IsoparametricTransformation T;
-    if (bdr)
+    PalacePragmaOmp(parallel)
     {
-      for (int i = 0; i < mesh.GetNBE(); i++)
+      mfem::Vector loc_min(dim), loc_max(dim);
+      for (int d = 0; d < dim; d++)
       {
-        if (!marker[mesh.GetBdrAttribute(i) - 1])
-        {
-          continue;
-        }
-        mesh.GetBdrElementTransformation(i, &T);
-        mfem::Geometry::Type geom = mesh.GetBdrElementGeometry(i);
-        BBUpdate(T, geom, ref);
+        loc_min(d) = mfem::infinity();
+        loc_max(d) = -mfem::infinity();
       }
-    }
-    else
-    {
-      for (int i = 0; i < mesh.GetNE(); i++)
+      mfem::GeometryRefiner refiner;
+      mfem::IsoparametricTransformation T;
+      mfem::DenseMatrix pointmat;
+      if (bdr)
       {
-        if (!marker[mesh.GetAttribute(i) - 1])
+        PalacePragmaOmp(for schedule(static))
+        for (int i = 0; i < mesh.GetNBE(); i++)
         {
-          continue;
+          if (!marker[mesh.GetBdrAttribute(i) - 1])
+          {
+            continue;
+          }
+          mesh.GetBdrElementTransformation(i, &T);
+          mfem::Geometry::Type geom = mesh.GetBdrElementGeometry(i);
+          BBUpdate(refiner, geom, T, pointmat, loc_min, loc_max);
         }
-        mesh.GetElementTransformation(i, &T);
-        mfem::Geometry::Type geom = mesh.GetElementGeometry(i);
-        BBUpdate(T, geom, ref);
+      }
+      else
+      {
+        PalacePragmaOmp(for schedule(static))
+        for (int i = 0; i < mesh.GetNE(); i++)
+        {
+          if (!marker[mesh.GetAttribute(i) - 1])
+          {
+            continue;
+          }
+          mesh.GetElementTransformation(i, &T);
+          mfem::Geometry::Type geom = mesh.GetElementGeometry(i);
+          BBUpdate(refiner, geom, T, pointmat, loc_min, loc_max);
+        }
+      }
+      PalacePragmaOmp(critical(BBUpdate))
+      {
+        for (int d = 0; d < dim; d++)
+        {
+          min(d) = std::min(min(d), loc_min(d));
+          max(d) = std::max(max(d), loc_max(d));
+        }
       }
     }
   }
@@ -627,6 +670,14 @@ void GetAxisAlignedBoundingBox(const mfem::ParMesh &mesh, int attr, bool bdr,
   marker = 0;
   marker[attr - 1] = 1;
   GetAxisAlignedBoundingBox(mesh, marker, bdr, min, max);
+}
+
+void GetAxisAlignedBoundingBox(const mfem::ParMesh &mesh, mfem::Vector &min,
+                               mfem::Vector &max)
+{
+  mfem::Array<int> marker(mesh.attributes.Max());
+  marker = 1;
+  GetAxisAlignedBoundingBox(mesh, marker, false, min, max);
 }
 
 double BoundingBox::Area() const
