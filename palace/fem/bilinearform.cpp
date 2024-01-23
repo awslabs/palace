@@ -49,7 +49,7 @@ BilinearForm::PartialAssemble(const FiniteElementSpace &trial_fespace,
   // This should work fine if some threads create an empty operator (no elements or boundary
   // elements).
   const std::size_t nt = ceed::internal::GetCeedObjects().size();
-  PalacePragmaOmp(parallel for schedule(static))
+  PalacePragmaOmp(parallel for schedule(static) if(nt > 1))
   for (std::size_t i = 0; i < nt; i++)
   {
     Ceed ceed = ceed::internal::GetCeedObjects()[i];
@@ -222,7 +222,7 @@ std::unique_ptr<ceed::Operator> DiscreteLinearOperator::PartialAssemble() const
   // This should work fine if some threads create an empty operator (no elements or bounday
   // elements).
   const std::size_t nt = ceed::internal::GetCeedObjects().size();
-  PalacePragmaOmp(parallel for schedule(static))
+  PalacePragmaOmp(parallel for schedule(static) if(nt > 1))
   for (std::size_t i = 0; i < nt; i++)
   {
     Ceed ceed = ceed::internal::GetCeedObjects()[i];

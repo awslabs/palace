@@ -73,8 +73,9 @@ void Operator::AssembleDiagonal(Vector &diag) const
     mem = CEED_MEM_HOST;
   }
 
-  PalacePragmaOmp(parallel for schedule(static))
-  for (std::size_t i = 0; i < ops.size(); i++)
+  const std::size_t nt = ops.size();
+  PalacePragmaOmp(parallel for schedule(static) if(nt > 1))
+  for (std::size_t i = 0; i < nt; i++)
   {
     Ceed ceed_i;
     PalaceCeedCallBackend(CeedOperatorGetCeed(ops[i], &ceed_i));
@@ -110,8 +111,9 @@ inline void CeedAddMult(const std::vector<CeedOperator> &ops,
     mem = CEED_MEM_HOST;
   }
 
-  PalacePragmaOmp(parallel for schedule(static))
-  for (std::size_t i = 0; i < ops.size(); i++)
+  const std::size_t nt = ops.size();
+  PalacePragmaOmp(parallel for schedule(static) if(nt > 1))
+  for (std::size_t i = 0; i < nt; i++)
   {
     if (ops[i])  // No-op for an empty operator
     {
@@ -246,7 +248,8 @@ void CeedOperatorAssembleCOO(const Operator &op, bool skip_zeros, CeedSize *nnz,
                              CeedInt **rows, CeedInt **cols, CeedVector *vals,
                              CeedMemType *mem)
 {
-  if (!op.Size())
+  const std::size_t nt = op.Size();
+  if (nt == 0)
   {
     *nnz = 0;
     *rows = nullptr;
@@ -258,9 +261,9 @@ void CeedOperatorAssembleCOO(const Operator &op, bool skip_zeros, CeedSize *nnz,
 
   Ceed ceed;
   CeedScalar *vals_array;
-  std::vector<CeedSize> loc_nnz(op.Size()), loc_offsets(op.Size() + 1);
-  std::vector<CeedInt *> loc_rows(op.Size()), loc_cols(op.Size());
-  std::vector<CeedVector> loc_vals(op.Size());
+  std::vector<CeedSize> loc_nnz(nt), loc_offsets(nt + 1);
+  std::vector<CeedInt *> loc_rows(nt), loc_cols(nt);
+  std::vector<CeedVector> loc_vals(nt);
 
   PalaceCeedCallBackend(CeedOperatorGetCeed(op[0], &ceed));
   PalaceCeedCall(ceed, CeedGetPreferredMemType(ceed, mem));
@@ -269,8 +272,8 @@ void CeedOperatorAssembleCOO(const Operator &op, bool skip_zeros, CeedSize *nnz,
     *mem = CEED_MEM_HOST;
   }
 
-  PalacePragmaOmp(parallel for schedule(static))
-  for (std::size_t i = 0; i < op.Size(); i++)
+  PalacePragmaOmp(parallel for schedule(static) if(nt > 1))
+  for (std::size_t i = 0; i < nt; i++)
   {
     Ceed ceed_i;
     PalaceCeedCallBackend(CeedOperatorGetCeed(op[i], &ceed_i));
@@ -287,7 +290,7 @@ void CeedOperatorAssembleCOO(const Operator &op, bool skip_zeros, CeedSize *nnz,
   loc_offsets[0] = 0;
   std::inclusive_scan(loc_nnz.begin(), loc_nnz.end(), loc_offsets.begin() + 1);
   *nnz = loc_offsets.back();
-  if (op.Size() == 1)
+  if (nt == 1)
   {
     // Assemble values.
     *rows = loc_rows[0];
@@ -302,8 +305,8 @@ void CeedOperatorAssembleCOO(const Operator &op, bool skip_zeros, CeedSize *nnz,
     PalaceCeedCall(ceed, CeedVectorCreate(ceed, *nnz, vals));
     PalaceCeedCall(ceed, CeedVectorGetArrayWrite(*vals, *mem, &vals_array));
 
-    PalacePragmaOmp(parallel for schedule(static))
-    for (std::size_t i = 0; i < op.Size(); i++)
+    PalacePragmaOmp(parallel for schedule(static) if(nt > 1))
+    for (std::size_t i = 0; i < nt; i++)
     {
       const auto start = loc_offsets[i];
       const auto end = loc_offsets[i + 1];
@@ -466,7 +469,7 @@ std::unique_ptr<mfem::SparseMatrix> CeedOperatorFullAssemble(const Operator &op,
       d_vals.UseDevice(true);
       {
         auto *d_vals_array = d_vals.HostWrite();
-        PalacePragmaOmp(parallel for)
+        PalacePragmaOmp(parallel for schedule(static))
         for (int k = 0; k < nnz; k++)
         {
           d_vals_array[k] = vals_array[k];
@@ -519,7 +522,7 @@ std::unique_ptr<Operator> CeedOperatorCoarsen(const Operator &op_fine,
   MFEM_VERIFY(internal::GetCeedObjects().size() == op_fine.Size(),
               "Unexpected size mismatch in multithreaded Ceed contexts!");
   const std::size_t nt = op_fine.Size();
-  PalacePragmaOmp(parallel for schedule(static))
+  PalacePragmaOmp(parallel for schedule(static) if(nt > 1))
   for (std::size_t i = 0; i < nt; i++)
   {
     Ceed ceed;

@@ -48,6 +48,10 @@ private:
   {
     // The range restriction for interpolation operators needs to use a special
     // DofTransformation (not equal to the transpose of the domain restriction).
+    if (mesh.Dimension() < 3)
+    {
+      return false;
+    }
     const auto geom = fe.GetGeomType();
     const auto *dof_trans = fespace.FEColl()->DofTransformationForGeometry(geom);
     return (dof_trans && !dof_trans->IsIdentity());

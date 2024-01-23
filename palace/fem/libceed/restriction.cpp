@@ -4,6 +4,11 @@
 #include "restriction.hpp"
 
 #include <mfem.hpp>
+#include "utils/omp.hpp"
+
+#if defined(MFEM_USE_OPENMP)
+#include <omp.h>
+#endif
 
 namespace palace::ceed
 {
@@ -21,42 +26,55 @@ void InitLexicoRestr(const mfem::FiniteElementSpace &fespace,
   const int P = fe.GetDof();
   const mfem::TensorBasisElement *tfe = dynamic_cast<const mfem::TensorBasisElement *>(&fe);
   const mfem::Array<int> &dof_map = tfe->GetDofMap();
-  CeedInt comp_stride =
+  const CeedInt comp_stride =
       (fespace.GetVDim() == 1 || fespace.GetOrdering() == mfem::Ordering::byVDIM)
           ? 1
           : fespace.GetNDofs();
   const int stride =
       (fespace.GetOrdering() == mfem::Ordering::byVDIM) ? fespace.GetVDim() : 1;
-  mfem::Array<int> tp_el_dof(num_elem * P), dofs;
+  mfem::Array<int> tp_el_dof(num_elem * P);
   mfem::Array<bool> tp_el_orients(num_elem * P);
-  bool use_el_orients = false;
-  mfem::DofTransformation dof_trans;
+  int use_el_orients = 0;
 
-  for (std::size_t i = 0; i < num_elem; i++)
+#if defined(MFEM_USE_OPENMP)
+  const int in_parallel = omp_in_parallel();
+#else
+  const int in_parallel = 0;
+#endif
+  PalacePragmaOmp(parallel reduction(+ : use_el_orients) if (in_parallel == 0))
   {
-    // No need to handle DofTransformation for tensor-product elements.
-    const int e = indices[i];
-    if (use_bdr)
+    mfem::Array<int> dofs;
+    mfem::DofTransformation dof_trans;
+    bool use_el_orients_loc = false;
+
+    PalacePragmaOmp(for schedule(static))
+    for (std::size_t i = 0; i < num_elem; i++)
     {
-      fespace.GetBdrElementDofs(e, dofs, dof_trans);
+      // No need to handle DofTransformation for tensor-product elements.
+      const int e = indices[i];
+      if (use_bdr)
+      {
+        fespace.GetBdrElementDofs(e, dofs, dof_trans);
+      }
+      else
+      {
+        fespace.GetElementDofs(e, dofs, dof_trans);
+      }
+      MFEM_VERIFY(!dof_trans.GetDofTransformation(),
+                  "Unexpected DofTransformation for lexicographic element "
+                  "restriction.");
+      for (int j = 0; j < P; j++)
+      {
+        const int sdid = dof_map[j];  // signed
+        const int did = (sdid >= 0) ? sdid : -1 - sdid;
+        const int sgid = dofs[did];  // signed
+        const int gid = (sgid >= 0) ? sgid : -1 - sgid;
+        tp_el_dof[j + P * i] = stride * gid;
+        tp_el_orients[j + P * i] = (sgid >= 0 && sdid < 0) || (sgid < 0 && sdid >= 0);
+        use_el_orients_loc = use_el_orients_loc || tp_el_orients[j + P * i];
+      }
     }
-    else
-    {
-      fespace.GetElementDofs(e, dofs, dof_trans);
-    }
-    MFEM_VERIFY(!dof_trans.GetDofTransformation(),
-                "Unexpected DofTransformation for lexicographic element "
-                "restriction.");
-    for (int j = 0; j < P; j++)
-    {
-      const int sdid = dof_map[j];  // signed
-      const int did = (sdid >= 0) ? sdid : -1 - sdid;
-      const int sgid = dofs[did];  // signed
-      const int gid = (sgid >= 0) ? sgid : -1 - sgid;
-      tp_el_dof[j + P * i] = stride * gid;
-      tp_el_orients[j + P * i] = (sgid >= 0 && sdid < 0) || (sgid < 0 && sdid >= 0);
-      use_el_orients = use_el_orients || tp_el_orients[j + P * i];
-    }
+    use_el_orients += use_el_orients_loc;
   }
 
   if (use_el_orients)
@@ -84,27 +102,25 @@ void InitNativeRestr(const mfem::FiniteElementSpace &fespace,
   const mfem::FiniteElement &fe =
       use_bdr ? *fespace.GetBE(indices[0]) : *fespace.GetFE(indices[0]);
   const int P = fe.GetDof();
-  CeedInt comp_stride =
+  const CeedInt comp_stride =
       (fespace.GetVDim() == 1 || fespace.GetOrdering() == mfem::Ordering::byVDIM)
           ? 1
           : fespace.GetNDofs();
   const int stride =
       (fespace.GetOrdering() == mfem::Ordering::byVDIM) ? fespace.GetVDim() : 1;
-  mfem::Array<int> tp_el_dof(num_elem * P), dofs;
+  const bool has_dof_trans = [&]()
+  {
+    if (fespace.GetMesh()->Dimension() < 3)
+    {
+      return false;
+    }
+    const auto geom = fe.GetGeomType();
+    const auto *dof_trans = fespace.FEColl()->DofTransformationForGeometry(geom);
+    return (dof_trans && !dof_trans->IsIdentity());
+  }();
+  mfem::Array<int> tp_el_dof(num_elem * P);
   mfem::Array<bool> tp_el_orients;
   mfem::Array<int8_t> tp_el_curl_orients;
-  bool use_el_orients = false;
-  mfem::DofTransformation dof_trans;
-  mfem::Vector el_trans_j;
-  if (use_bdr)
-  {
-    fespace.GetBdrElementDofs(indices[0], dofs, dof_trans);
-  }
-  else
-  {
-    fespace.GetElementDofs(indices[0], dofs, dof_trans);
-  }
-  const bool has_dof_trans = dof_trans.GetDofTransformation() && !dof_trans.IsIdentity();
   if (!has_dof_trans)
   {
     tp_el_orients.SetSize(num_elem * P);
@@ -112,77 +128,110 @@ void InitNativeRestr(const mfem::FiniteElementSpace &fespace,
   else
   {
     tp_el_curl_orients.SetSize(num_elem * P * 3, 0);
-    el_trans_j.SetSize(P);
   }
+  int use_el_orients = 0;
 
-  for (std::size_t i = 0; i < num_elem; i++)
+#if defined(MFEM_USE_OPENMP)
+  const int in_parallel = omp_in_parallel();
+#else
+  const int in_parallel = 0;
+#endif
+  PalacePragmaOmp(parallel reduction(+ : use_el_orients) if (in_parallel == 0))
   {
-    const auto e = indices[i];
-    if (use_bdr)
+    mfem::Array<int> dofs;
+    mfem::DofTransformation dof_trans;
+    mfem::Vector el_trans_j;
+    if (has_dof_trans)
     {
-      fespace.GetBdrElementDofs(e, dofs, dof_trans);
+      el_trans_j.SetSize(P);
+      el_trans_j = 0.0;
     }
-    else
-    {
-      fespace.GetElementDofs(e, dofs, dof_trans);
-    }
-    if (!has_dof_trans)
-    {
-      for (int j = 0; j < P; j++)
-      {
-        const int sgid = dofs[j];  // signed
-        const int gid = (sgid >= 0) ? sgid : -1 - sgid;
-        tp_el_dof[j + P * i] = stride * gid;
-        tp_el_orients[j + P * i] = (sgid < 0);
-        use_el_orients = use_el_orients || tp_el_orients[j + P * i];
-      }
-    }
-    else
-    {
-      for (int j = 0; j < P; j++)
-      {
-        const int sgid = dofs[j];  // signed
-        const int gid = (sgid >= 0) ? sgid : -1 - sgid;
-        tp_el_dof[j + P * i] = stride * gid;
+    bool use_el_orients_loc = false;
 
-        // Fill column j of element tridiagonal matrix tp_el_curl_orients.
-        el_trans_j = 0.0;
-        el_trans_j(j) = 1.0;
-        if (is_interp_range)
+    PalacePragmaOmp(for schedule(static))
+    for (std::size_t i = 0; i < num_elem; i++)
+    {
+      const auto e = indices[i];
+      if (use_bdr)
+      {
+        fespace.GetBdrElementDofs(e, dofs, dof_trans);
+      }
+      else
+      {
+        fespace.GetElementDofs(e, dofs, dof_trans);
+      }
+      if (!has_dof_trans)
+      {
+        for (int j = 0; j < P; j++)
         {
-          dof_trans.InvTransformDual(el_trans_j);
+          const int sgid = dofs[j];  // signed
+          const int gid = (sgid >= 0) ? sgid : -1 - sgid;
+          tp_el_dof[j + P * i] = stride * gid;
+          tp_el_orients[j + P * i] = (sgid < 0);
+          use_el_orients_loc = use_el_orients_loc || tp_el_orients[j + P * i];
         }
-        else
+      }
+      else
+      {
+        for (int j = 0; j < P; j++)
         {
-          dof_trans.InvTransformPrimal(el_trans_j);
-        }
-        double sign_j = (sgid < 0) ? -1.0 : 1.0;
-        tp_el_curl_orients[3 * (j + 0 + P * i) + 1] =
-            static_cast<int8_t>(sign_j * el_trans_j(j + 0));
-        if (j > 0)
-        {
-          tp_el_curl_orients[3 * (j - 1 + P * i) + 2] =
-              static_cast<int8_t>(sign_j * el_trans_j(j - 1));
-        }
-        if (j < P - 1)
-        {
-          tp_el_curl_orients[3 * (j + 1 + P * i) + 0] =
-              static_cast<int8_t>(sign_j * el_trans_j(j + 1));
-        }
-#if defined(MFEM_DEBUG)
-        int nnz = 0;
-        for (int k = 0; k < P; k++)
-        {
-          if (k < j - 1 && k > j + 1 && el_trans_j(k) != 0.0)
+          const int sgid = dofs[j];  // signed
+          const int gid = (sgid >= 0) ? sgid : -1 - sgid;
+          tp_el_dof[j + P * i] = stride * gid;
+
+          // Fill column j of element tridiagonal matrix tp_el_curl_orients.
+          el_trans_j(j) = 1.0;
+          if (is_interp_range)
           {
-            nnz++;
+            dof_trans.InvTransformDual(el_trans_j);
+          }
+          else
+          {
+            dof_trans.InvTransformPrimal(el_trans_j);
+          }
+          double sign_j = (sgid < 0) ? -1.0 : 1.0;
+          tp_el_curl_orients[3 * (j + 0 + P * i) + 1] =
+              static_cast<int8_t>(sign_j * el_trans_j(j));
+          if (j > 0)
+          {
+            tp_el_curl_orients[3 * (j - 1 + P * i) + 2] =
+                static_cast<int8_t>(sign_j * el_trans_j(j - 1));
+          }
+          if (j < P - 1)
+          {
+            tp_el_curl_orients[3 * (j + 1 + P * i) + 0] =
+                static_cast<int8_t>(sign_j * el_trans_j(j + 1));
+          }
+
+#if defined(MFEM_DEBUG)
+          // Debug check that transformation is actually tridiagonal.
+          int nnz = 0;
+          for (int k = 0; k < P; k++)
+          {
+            if (k < j - 1 && k > j + 1 && el_trans_j(k) != 0.0)
+            {
+              nnz++;
+            }
+          }
+          MFEM_ASSERT(nnz == 0,
+                      "Element transformation matrix is not tridiagonal at column "
+                          << j << " (nnz = " << nnz << ")!");
+#endif
+
+          // Zero out column vector for next iteration.
+          el_trans_j(j) = 0.0;
+          if (j > 0)
+          {
+            el_trans_j(j - 1) = 0.0;
+          }
+          if (j < P - 1)
+          {
+            el_trans_j(j + 1) = 0.0;
           }
         }
-        MFEM_ASSERT(nnz == 0, "Element transformation matrix is not tridiagonal at column "
-                                  << j << " (nnz = " << nnz << ")!");
-#endif
       }
     }
+    use_el_orients += use_el_orients_loc;
   }
 
   if (has_dof_trans)
