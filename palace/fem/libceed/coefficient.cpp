@@ -7,7 +7,7 @@
 #include "fem/libceed/ceed.hpp"
 #include "models/materialoperator.hpp"
 
-#include "fem/qfunctions/coeff_qf.h"
+#include "fem/qfunctions/coeff/coeff_qf.h"
 
 namespace palace::ceed
 {
@@ -36,26 +36,15 @@ auto InitDefaultCoefficient(int dim)
 
 void MakeDiagonalCoefficient(int dim, CeedIntScalar *mat_coeff, CeedScalar a, CeedInt k)
 {
-  switch (dim)
+  const int coeff_dim = CoeffDim(dim);
+  for (int i = 0; i < coeff_dim; i++)
   {
-    case 1:
-      mat_coeff[k].second = a;
-      break;
-    case 2:
-      mat_coeff[3 * k + 0].second = a;
-      mat_coeff[3 * k + 1].second = 0.0;
-      mat_coeff[3 * k + 2].second = a;
-      break;
-    case 3:
-      mat_coeff[6 * k + 0].second = a;
-      mat_coeff[6 * k + 1].second = 0.0;
-      mat_coeff[6 * k + 2].second = 0.0;
-      mat_coeff[6 * k + 3].second = a;
-      mat_coeff[6 * k + 4].second = 0.0;
-      mat_coeff[6 * k + 5].second = a;
-      break;
-    default:
-      MFEM_ABORT("Unsupported dimension for diagonal coefficient!");
+    mat_coeff[coeff_dim * k + i].second = 0.0;
+  }
+  for (int di = 0; di < dim; ++di)
+  {
+    const int idx = (di * dim) - (((di - 1) * di) / 2);
+    mat_coeff[coeff_dim * k + idx].second = a;
   }
 }
 
@@ -97,8 +86,8 @@ PopulateCoefficientContext(int dim, const MaterialPropertyCoefficient *Q, double
 
   // Map unassigned attributes to zero material property coefficient (the last material
   // property is reserved for zero).
-  std::vector<CeedIntScalar> ctx(2 + attr_mat.Size() +
-                                 CoeffDim(dim) * (mat_coeff.SizeK() + 1));
+  const int coeff_dim = CoeffDim(dim);
+  std::vector<CeedIntScalar> ctx(2 + attr_mat.Size() + coeff_dim * (mat_coeff.SizeK() + 1));
   ctx[0].first = attr_mat.Size();
   const int zero_mat = mat_coeff.SizeK();
   for (int i = 0; i < attr_mat.Size(); i++)
@@ -123,16 +112,16 @@ PopulateCoefficientContext(int dim, const MaterialPropertyCoefficient *Q, double
       {
         for (int di = dj; di < dim; ++di)
         {
+          // Column-major ordering.
           const int idx = (dj * dim) - (((dj - 1) * dj) / 2) + di - dj;
-          MatCoeff(ctx.data())[CoeffDim(dim) * k + idx].second =
-              a * mat_coeff(di, dj, k);  // Column-major
+          MatCoeff(ctx.data())[coeff_dim * k + idx].second = a * mat_coeff(di, dj, k);
         }
       }
     }
   }
-  for (int d = 0; d < CoeffDim(dim); d++)
+  for (int d = 0; d < coeff_dim; d++)
   {
-    MatCoeff(ctx.data())[CoeffDim(dim) * zero_mat + d].second = 0.0;
+    MatCoeff(ctx.data())[coeff_dim * zero_mat + d].second = 0.0;
   }
 
   return ctx;
