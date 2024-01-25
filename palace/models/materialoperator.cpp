@@ -661,6 +661,12 @@ void MaterialPropertyCoefficient::AddMaterialProperty(const mfem::Array<int> &at
   // Preprocess the attribute list. If any of the given attributes already have material
   // properties assigned, then they all need to point to the same material and it is
   // updated in place. Otherwise a new material is added for these attributes.
+  if (attr_list.Size() == 0)
+  {
+    // No attributes, nothing to add.
+    return;
+  }
+
   int mat_idx = -1;
   for (auto attr : attr_list)
   {
