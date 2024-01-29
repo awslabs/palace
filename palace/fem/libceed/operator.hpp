@@ -26,10 +26,10 @@ protected:
   std::vector<CeedOperator> ops, ops_t;
   std::vector<CeedVector> u, v;
   Vector dof_multiplicity;
-  mutable Vector temp_u, temp_v;
+  mutable Vector temp;
 
 public:
-  Operator(int h, int w) : palace::Operator(h, w) {}
+  Operator(int h, int w) : palace::Operator(h, w) { temp.UseDevice(true); }
   ~Operator() override;
 
   CeedOperator operator[](std::size_t i) const { return ops[i]; }
@@ -69,8 +69,8 @@ std::unique_ptr<mfem::SparseMatrix> CeedOperatorFullAssemble(const Operator &op,
                                                              bool skip_zeros, bool set);
 
 // Construct a coarse-level ceed::Operator, reusing the quadrature data and quadrature
-// function from the fine-level operator. Only available for square operators (same input
-// and output spaces).
+// function from the fine-level operator. Only available for square, symmetric operators
+// (same input and output spaces).
 std::unique_ptr<Operator> CeedOperatorCoarsen(const Operator &op_fine,
                                               const FiniteElementSpace &fespace_coarse);
 

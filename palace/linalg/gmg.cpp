@@ -14,7 +14,7 @@ namespace palace
 
 template <typename OperType>
 GeometricMultigridSolver<OperType>::GeometricMultigridSolver(
-    std::unique_ptr<Solver<OperType>> &&coarse_solver,
+    MPI_Comm comm, std::unique_ptr<Solver<OperType>> &&coarse_solver,
     const std::vector<const Operator *> &P, const std::vector<const Operator *> *G,
     int cycle_it, int smooth_it, int cheby_order, double cheby_sf_max, double cheby_sf_min,
     bool cheby_4th_kind)
@@ -42,21 +42,21 @@ GeometricMultigridSolver<OperType>::GeometricMultigridSolver(
     {
       const int cheby_smooth_it = 1;
       B[l] = std::make_unique<DistRelaxationSmoother<OperType>>(
-          *(*G)[l], smooth_it, cheby_smooth_it, cheby_order, cheby_sf_max, cheby_sf_min,
-          cheby_4th_kind);
+          comm, *(*G)[l], smooth_it, cheby_smooth_it, cheby_order, cheby_sf_max,
+          cheby_sf_min, cheby_4th_kind);
     }
     else
     {
       const int cheby_smooth_it = smooth_it;
       if (cheby_4th_kind)
       {
-        B[l] = std::make_unique<ChebyshevSmoother<OperType>>(cheby_smooth_it, cheby_order,
-                                                             cheby_sf_max);
+        B[l] = std::make_unique<ChebyshevSmoother<OperType>>(comm, cheby_smooth_it,
+                                                             cheby_order, cheby_sf_max);
       }
       else
       {
         B[l] = std::make_unique<ChebyshevSmoother1stKind<OperType>>(
-            cheby_smooth_it, cheby_order, cheby_sf_max, cheby_sf_min);
+            comm, cheby_smooth_it, cheby_order, cheby_sf_max, cheby_sf_min);
       }
     }
   }
@@ -114,6 +114,7 @@ void GeometricMultigridSolver<OperType>::SetOperator(const OperType &op)
     Y[l].SetSize(A[l]->Height());
     R[l].SetSize(A[l]->Height());
   }
+
   this->height = op.Height();
   this->width = op.Width();
 }
@@ -177,7 +178,7 @@ void GeometricMultigridSolver<OperType>::VCycle(int l, bool initial_guess) const
     B[l]->Mult(X[l], Y[l]);
     return;
   }
-  B[l]->Mult(X[l], Y[l]);
+  B[l]->Mult2(X[l], Y[l], R[l]);
 
   // Compute residual.
   A[l]->Mult(Y[l], R[l]);
@@ -197,7 +198,7 @@ void GeometricMultigridSolver<OperType>::VCycle(int l, bool initial_guess) const
 
   // Post-smooth, with nonzero initial guess.
   B[l]->SetInitialGuess(true);
-  B[l]->MultTranspose(X[l], Y[l]);
+  B[l]->MultTranspose2(X[l], Y[l], R[l]);
 }
 
 template class GeometricMultigridSolver<Operator>;

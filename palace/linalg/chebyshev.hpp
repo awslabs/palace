@@ -25,6 +25,9 @@ class ChebyshevSmoother : public Solver<OperType>
   using VecType = typename Solver<OperType>::VecType;
 
 private:
+  // MPI communicator associated with the solver operator and vectors.
+  MPI_Comm comm;
+
   // Number of smoother iterations and polynomial order.
   const int pc_it, order;
 
@@ -37,19 +40,31 @@ private:
   // Maximum operator eigenvalue for Chebyshev polynomial smoothing.
   double lambda_max, sf_max;
 
-  // Temporary vectors for smoother application.
-  mutable VecType r, d;
+  // Temporary vector for smoother application.
+  mutable VecType d;
 
 public:
-  ChebyshevSmoother(int smooth_it, int poly_order, double sf_max);
+  ChebyshevSmoother(MPI_Comm comm, int smooth_it, int poly_order, double sf_max);
 
   void SetOperator(const OperType &op) override;
 
-  void Mult(const VecType &x, VecType &y) const override;
+  void Mult(const VecType &x, VecType &y) const override
+  {
+    MFEM_ABORT("ChebyshevSmoother implements Mult2 using an additional preallocated "
+               "temporary vector!");
+  }
 
   void MultTranspose(const VecType &x, VecType &y) const override
   {
-    Mult(x, y);  // Assumes operator symmetry
+    MFEM_ABORT("ChebyshevSmoother implements MultTranspose2 using an additional "
+               "preallocated temporary vector!");
+  }
+
+  void Mult2(const VecType &x, VecType &y, VecType &r) const override;
+
+  void MultTranspose2(const VecType &x, VecType &y, VecType &r) const override
+  {
+    Mult2(x, y, r);  // Assumes operator symmetry
   }
 };
 
@@ -65,6 +80,9 @@ class ChebyshevSmoother1stKind : public Solver<OperType>
   using VecType = typename Solver<OperType>::VecType;
 
 private:
+  // MPI communicator associated with the solver operator and vectors.
+  MPI_Comm comm;
+
   // Number of smoother iterations and polynomial order.
   const int pc_it, order;
 
@@ -78,19 +96,32 @@ private:
   // polynomial smoothing.
   double theta, delta, sf_max, sf_min;
 
-  // Temporary vectors for smoother application.
-  mutable VecType r, d;
+  // Temporary vector for smoother application.
+  mutable VecType d;
 
 public:
-  ChebyshevSmoother1stKind(int smooth_it, int poly_order, double sf_max, double sf_min);
+  ChebyshevSmoother1stKind(MPI_Comm comm, int smooth_it, int poly_order, double sf_max,
+                           double sf_min);
 
   void SetOperator(const OperType &op) override;
 
-  void Mult(const VecType &x, VecType &y) const override;
+  void Mult(const VecType &x, VecType &y) const override
+  {
+    MFEM_ABORT("ChebyshevSmoother1stKind implements Mult2 using an additional preallocated "
+               "temporary vector!");
+  }
 
   void MultTranspose(const VecType &x, VecType &y) const override
   {
-    Mult(x, y);  // Assumes operator symmetry
+    MFEM_ABORT("ChebyshevSmoother1stKind implements MultTranspose2 using an additional "
+               "preallocated temporary vector!");
+  }
+
+  void Mult2(const VecType &x, VecType &y, VecType &r) const override;
+
+  void MultTranspose2(const VecType &x, VecType &y, VecType &r) const override
+  {
+    Mult2(x, y, r);  // Assumes operator symmetry
   }
 };
 

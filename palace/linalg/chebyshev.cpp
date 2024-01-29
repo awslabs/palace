@@ -4,7 +4,6 @@
 #include "chebyshev.hpp"
 
 #include <mfem/general/forall.hpp>
-#include "linalg/rap.hpp"
 
 namespace palace
 {
@@ -151,9 +150,10 @@ inline void ApplyOrderK(const double sd, const double sr, const ComplexVector &d
 }  // namespace
 
 template <typename OperType>
-ChebyshevSmoother<OperType>::ChebyshevSmoother(int smooth_it, int poly_order, double sf_max)
-  : Solver<OperType>(), pc_it(smooth_it), order(poly_order), A(nullptr), lambda_max(0.0),
-    sf_max(sf_max)
+ChebyshevSmoother<OperType>::ChebyshevSmoother(MPI_Comm comm, int smooth_it, int poly_order,
+                                               double sf_max)
+  : Solver<OperType>(), comm(comm), pc_it(smooth_it), order(poly_order), A(nullptr),
+    lambda_max(0.0), sf_max(sf_max)
 {
   MFEM_VERIFY(order > 0, "Polynomial order for Chebyshev smoothing must be positive!");
 }
@@ -161,31 +161,22 @@ ChebyshevSmoother<OperType>::ChebyshevSmoother(int smooth_it, int poly_order, do
 template <typename OperType>
 void ChebyshevSmoother<OperType>::SetOperator(const OperType &op)
 {
-  using ParOperType =
-      typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
-                                ComplexParOperator, ParOperator>::type;
-
   A = &op;
-  r.SetSize(op.Height());
   d.SetSize(op.Height());
-
-  const auto *PtAP = dynamic_cast<const ParOperType *>(&op);
-  MFEM_VERIFY(PtAP,
-              "ChebyshevSmoother requires a ParOperator or ComplexParOperator operator!");
   dinv.SetSize(op.Height());
-  PtAP->AssembleDiagonal(dinv);
+  op.AssembleDiagonal(dinv);
   dinv.Reciprocal();
 
   // Set up Chebyshev coefficients using the computed maximum eigenvalue estimate. See
   // mfem::OperatorChebyshevSmoother or Adams et al. (2003).
-  lambda_max = sf_max * GetLambdaMax(PtAP->GetComm(), *A, dinv);
+  lambda_max = sf_max * GetLambdaMax(comm, *A, dinv);
 
   this->height = op.Height();
   this->width = op.Width();
 }
 
 template <typename OperType>
-void ChebyshevSmoother<OperType>::Mult(const VecType &x, VecType &y) const
+void ChebyshevSmoother<OperType>::Mult2(const VecType &x, VecType &y, VecType &r) const
 {
   // Apply smoother: y = y + p(A) (x - A y) .
   for (int it = 0; it < pc_it; it++)
@@ -217,10 +208,11 @@ void ChebyshevSmoother<OperType>::Mult(const VecType &x, VecType &y) const
 }
 
 template <typename OperType>
-ChebyshevSmoother1stKind<OperType>::ChebyshevSmoother1stKind(int smooth_it, int poly_order,
-                                                             double sf_max, double sf_min)
-  : Solver<OperType>(), pc_it(smooth_it), order(poly_order), A(nullptr), theta(0.0),
-    sf_max(sf_max), sf_min(sf_min)
+ChebyshevSmoother1stKind<OperType>::ChebyshevSmoother1stKind(MPI_Comm comm, int smooth_it,
+                                                             int poly_order, double sf_max,
+                                                             double sf_min)
+  : Solver<OperType>(), comm(comm), pc_it(smooth_it), order(poly_order), A(nullptr),
+    theta(0.0), sf_max(sf_max), sf_min(sf_min)
 {
   MFEM_VERIFY(order > 0, "Polynomial order for Chebyshev smoothing must be positive!");
 }
@@ -228,20 +220,10 @@ ChebyshevSmoother1stKind<OperType>::ChebyshevSmoother1stKind(int smooth_it, int 
 template <typename OperType>
 void ChebyshevSmoother1stKind<OperType>::SetOperator(const OperType &op)
 {
-  using ParOperType =
-      typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
-                                ComplexParOperator, ParOperator>::type;
-
   A = &op;
-  r.SetSize(op.Height());
   d.SetSize(op.Height());
-
-  const auto *PtAP = dynamic_cast<const ParOperType *>(&op);
-  MFEM_VERIFY(
-      PtAP,
-      "ChebyshevSmoother1stKind requires a ParOperator or ComplexParOperator operator!");
   dinv.SetSize(op.Height());
-  PtAP->AssembleDiagonal(dinv);
+  op.AssembleDiagonal(dinv);
   dinv.Reciprocal();
 
   // Set up Chebyshev coefficients using the computed maximum eigenvalue estimate. The
@@ -250,7 +232,7 @@ void ChebyshevSmoother1stKind<OperType>::SetOperator(const OperType &op)
   {
     sf_min = 1.69 / (std::pow(order, 1.68) + 2.11 * order + 1.98);
   }
-  const double lambda_max = sf_max * GetLambdaMax(PtAP->GetComm(), *A, dinv);
+  const double lambda_max = sf_max * GetLambdaMax(comm, *A, dinv);
   const double lambda_min = sf_min * lambda_max;
   theta = 0.5 * (lambda_max + lambda_min);
   delta = 0.5 * (lambda_max - lambda_min);
@@ -260,7 +242,8 @@ void ChebyshevSmoother1stKind<OperType>::SetOperator(const OperType &op)
 }
 
 template <typename OperType>
-void ChebyshevSmoother1stKind<OperType>::Mult(const VecType &x, VecType &y) const
+void ChebyshevSmoother1stKind<OperType>::Mult2(const VecType &x, VecType &y,
+                                               VecType &r) const
 {
   // Apply smoother: y = y + p(A) (x - A y) .
   for (int it = 0; it < pc_it; it++)

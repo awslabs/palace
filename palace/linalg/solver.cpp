@@ -3,36 +3,103 @@
 
 #include "solver.hpp"
 
+#include "linalg/rap.hpp"
+
 namespace palace
 {
 
 template <>
-void WrapperSolver<Operator>::SetOperator(const Operator &op)
+void MfemWrapperSolver<Operator>::SetOperator(const Operator &op)
 {
-  pc->SetOperator(op);
+  // Operator is always assembled as a HypreParMatrix.
+  if (const auto *hA = dynamic_cast<const mfem::HypreParMatrix *>(&op))
+  {
+    pc->SetOperator(*hA);
+  }
+  else
+  {
+    const auto *PtAP = dynamic_cast<const ParOperator *>(&op);
+    MFEM_VERIFY(PtAP,
+                "MfemWrapperSolver must be able to construct a HypreParMatrix operator!");
+    pc->SetOperator(!save_assembled ? *PtAP->StealParallelAssemble()
+                                    : PtAP->ParallelAssemble());
+  }
   this->height = op.Height();
   this->width = op.Width();
 }
 
 template <>
-void WrapperSolver<ComplexOperator>::SetOperator(const ComplexOperator &op)
+void MfemWrapperSolver<ComplexOperator>::SetOperator(const ComplexOperator &op)
 {
-  MFEM_VERIFY(op.IsReal() && op.HasReal(),
-              "WrapperSolver::SetOperator requires an operator which is purely real for "
-              "mfem::Solver!");
-  pc->SetOperator(*op.Real());
+  // Assemble the real and imaginary parts, then add.
+  // XX TODO: Test complex matrix assembly if coarse solve supports it
+  const mfem::HypreParMatrix *hAr = dynamic_cast<const mfem::HypreParMatrix *>(op.Real());
+  const mfem::HypreParMatrix *hAi = dynamic_cast<const mfem::HypreParMatrix *>(op.Imag());
+  const ParOperator *PtAPr = nullptr, *PtAPi = nullptr;
+  if (op.Real() && !hAr)
+  {
+    PtAPr = dynamic_cast<const ParOperator *>(op.Real());
+    MFEM_VERIFY(PtAPr,
+                "MfemWrapperSolver must be able to construct a HypreParMatrix operator!");
+    hAr = &PtAPr->ParallelAssemble();
+  }
+  if (op.Imag() && !hAi)
+  {
+    PtAPi = dynamic_cast<const ParOperator *>(op.Imag());
+    MFEM_VERIFY(PtAPi,
+                "MfemWrapperSolver must be able to construct a HypreParMatrix operator!");
+    hAi = &PtAPi->ParallelAssemble();
+  }
+  if (hAr && hAi)
+  {
+    A.reset(mfem::Add(1.0, *hAr, 1.0, *hAi));
+    if (PtAPr)
+    {
+      PtAPr->StealParallelAssemble();
+    }
+    if (PtAPi)
+    {
+      PtAPi->StealParallelAssemble();
+    }
+    pc->SetOperator(*A);
+    if (!save_assembled)
+    {
+      A.reset();
+    }
+  }
+  else if (hAr)
+  {
+    pc->SetOperator(*hAr);
+    if (PtAPr && !save_assembled)
+    {
+      PtAPr->StealParallelAssemble();
+    }
+  }
+  else if (hAi)
+  {
+    pc->SetOperator(*hAi);
+    if (PtAPi && !save_assembled)
+    {
+      PtAPi->StealParallelAssemble();
+    }
+  }
+  else
+  {
+    MFEM_ABORT("Empty ComplexOperator for MfemWrapperSolver!");
+  }
   this->height = op.Height();
   this->width = op.Width();
 }
 
 template <>
-void WrapperSolver<Operator>::Mult(const Vector &x, Vector &y) const
+void MfemWrapperSolver<Operator>::Mult(const Vector &x, Vector &y) const
 {
   pc->Mult(x, y);
 }
 
 template <>
-void WrapperSolver<ComplexOperator>::Mult(const ComplexVector &x, ComplexVector &y) const
+void MfemWrapperSolver<ComplexOperator>::Mult(const ComplexVector &x,
+                                              ComplexVector &y) const
 {
   mfem::Array<const Vector *> X(2);
   mfem::Array<Vector *> Y(2);

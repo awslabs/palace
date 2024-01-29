@@ -4,7 +4,6 @@
 #include "jacobi.hpp"
 
 #include <mfem/general/forall.hpp>
-#include "linalg/rap.hpp"
 
 namespace palace
 {
@@ -57,15 +56,8 @@ inline void Apply(const ComplexVector &dinv, const ComplexVector &x, ComplexVect
 template <typename OperType>
 void JacobiSmoother<OperType>::SetOperator(const OperType &op)
 {
-  using ParOperType =
-      typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
-                                ComplexParOperator, ParOperator>::type;
-
-  const auto *PtAP = dynamic_cast<const ParOperType *>(&op);
-  MFEM_VERIFY(PtAP,
-              "JacobiSmoother requires a ParOperator or ComplexParOperator operator!");
   dinv.SetSize(op.Height());
-  PtAP->AssembleDiagonal(dinv);
+  op.AssembleDiagonal(dinv);
   dinv.Reciprocal();
 
   this->height = op.Height();

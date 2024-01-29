@@ -32,25 +32,23 @@ WeightedHCurlNormSolver::WeightedHCurlNormSolver(
                                            mat_op.GetInvPermeability());
     MaterialPropertyCoefficient epsilon_func(mat_op.GetAttributeToMaterial(),
                                              mat_op.GetPermittivityReal());
+    BilinearForm a(nd_fespaces.GetFinestFESpace()), a_aux(h1_fespaces.GetFinestFESpace());
+    a.AddDomainIntegrator<CurlCurlMassIntegrator>(muinv_func, epsilon_func);
+    a_aux.AddDomainIntegrator<DiffusionIntegrator>(epsilon_func);
+    // a.AssembleQuadratureData();
+    // a_aux.AssembleQuadratureData();
+    auto a_vec = a.Assemble(nd_fespaces, skip_zeros);
+    auto a_aux_vec = a_aux.Assemble(h1_fespaces, skip_zeros);
     auto A_mg = std::make_unique<MultigridOperator>(n_levels);
     for (bool aux : {false, true})
     {
       for (std::size_t l = 0; l < n_levels; l++)
       {
-        // Force coarse level operator to be fully assembled always.
         const auto &fespace_l =
             aux ? h1_fespaces.GetFESpaceAtLevel(l) : nd_fespaces.GetFESpaceAtLevel(l);
         const auto &dbc_tdof_lists_l = aux ? h1_dbc_tdof_lists[l] : nd_dbc_tdof_lists[l];
-        BilinearForm a(fespace_l);
-        if (aux)
-        {
-          a.AddDomainIntegrator<DiffusionIntegrator>(epsilon_func);
-        }
-        else
-        {
-          a.AddDomainIntegrator<CurlCurlMassIntegrator>(muinv_func, epsilon_func);
-        }
-        auto A_l = std::make_unique<ParOperator>(a.Assemble(skip_zeros), fespace_l);
+        auto A_l = std::make_unique<ParOperator>(std::move(aux ? a_aux_vec[l] : a_vec[l]),
+                                                 fespace_l);
         A_l->SetEssentialTrueDofs(dbc_tdof_lists_l, Operator::DiagonalPolicy::DIAG_ONE);
         if (aux)
         {
@@ -67,7 +65,7 @@ WeightedHCurlNormSolver::WeightedHCurlNormSolver(
 
   // The system matrix K + M is real and SPD. We use Hypre's AMS solver as the coarse-level
   // multigrid solve.
-  auto ams = std::make_unique<WrapperSolver<Operator>>(std::make_unique<HypreAmsSolver>(
+  auto ams = std::make_unique<MfemWrapperSolver<Operator>>(std::make_unique<HypreAmsSolver>(
       nd_fespaces.GetFESpaceAtLevel(0), h1_fespaces.GetFESpaceAtLevel(0), 1, 1, 1, false,
       false, 0));
   std::unique_ptr<Solver<Operator>> pc;
@@ -77,8 +75,8 @@ WeightedHCurlNormSolver::WeightedHCurlNormSolver(
     const int mg_smooth_order =
         std::max(nd_fespaces.GetFinestFESpace().GetMaxElementOrder(), 2);
     pc = std::make_unique<GeometricMultigridSolver<Operator>>(
-        std::move(ams), nd_fespaces.GetProlongationOperators(), &G, 1, 1, mg_smooth_order,
-        1.0, 0.0, true);
+        nd_fespaces.GetFinestFESpace().GetComm(), std::move(ams),
+        nd_fespaces.GetProlongationOperators(), &G, 1, 1, mg_smooth_order, 1.0, 0.0, true);
   }
   else
   {
