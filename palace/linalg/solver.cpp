@@ -21,11 +21,8 @@ void MfemWrapperSolver<Operator>::SetOperator(const Operator &op)
     const auto *PtAP = dynamic_cast<const ParOperator *>(&op);
     MFEM_VERIFY(PtAP,
                 "MfemWrapperSolver must be able to construct a HypreParMatrix operator!");
-    pc->SetOperator(PtAP->ParallelAssemble());
-    if (!save_assembled)
-    {
-      PtAP->StealParallelAssemble();
-    }
+    pc->SetOperator(!save_assembled ? *PtAP->StealParallelAssemble()
+                                    : PtAP->ParallelAssemble());
   }
   this->height = op.Height();
   this->width = op.Width();
@@ -34,31 +31,24 @@ void MfemWrapperSolver<Operator>::SetOperator(const Operator &op)
 template <>
 void MfemWrapperSolver<ComplexOperator>::SetOperator(const ComplexOperator &op)
 {
-  // XX TODO: Test complex matrix assembly if coarse solve supports it
   // Assemble the real and imaginary parts, then add.
-  const mfem::HypreParMatrix *hAr = nullptr, *hAi = nullptr;
+  // XX TODO: Test complex matrix assembly if coarse solve supports it
+  const mfem::HypreParMatrix *hAr = dynamic_cast<const mfem::HypreParMatrix *>(op.Real());
+  const mfem::HypreParMatrix *hAi = dynamic_cast<const mfem::HypreParMatrix *>(op.Imag());
   const ParOperator *PtAPr = nullptr, *PtAPi = nullptr;
-  if (op.Real())
+  if (op.Real() && !hAr)
   {
-    hAr = dynamic_cast<const mfem::HypreParMatrix *>(op.Real());
-    if (!hAr)
-    {
-      PtAPr = dynamic_cast<const ParOperator *>(op.Real());
-      MFEM_VERIFY(PtAPr,
-                  "MfemWrapperSolver must be able to construct a HypreParMatrix operator!");
-      hAr = &PtAPr->ParallelAssemble();
-    }
+    PtAPr = dynamic_cast<const ParOperator *>(op.Real());
+    MFEM_VERIFY(PtAPr,
+                "MfemWrapperSolver must be able to construct a HypreParMatrix operator!");
+    hAr = &PtAPr->ParallelAssemble();
   }
-  if (op.Imag())
+  if (op.Imag() && !hAi)
   {
-    hAi = dynamic_cast<const mfem::HypreParMatrix *>(op.Imag());
-    if (!hAi)
-    {
-      PtAPi = dynamic_cast<const ParOperator *>(op.Imag());
-      MFEM_VERIFY(PtAPi,
-                  "MfemWrapperSolver must be able to construct a HypreParMatrix operator!");
-      hAi = &PtAPi->ParallelAssemble();
-    }
+    PtAPi = dynamic_cast<const ParOperator *>(op.Imag());
+    MFEM_VERIFY(PtAPi,
+                "MfemWrapperSolver must be able to construct a HypreParMatrix operator!");
+    hAi = &PtAPi->ParallelAssemble();
   }
   if (hAr && hAi)
   {

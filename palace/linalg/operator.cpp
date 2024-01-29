@@ -217,9 +217,6 @@ void ComplexWrapperOperator::AddMult(const ComplexVector &x, ComplexVector &y,
   const Vector &xi = x.Imag();
   Vector &yr = y.Real();
   Vector &yi = y.Imag();
-  // MFEM_VERIFY(a.real() == 0.0 || a.imag() == 0.0,
-  //             "ComplexWrapperOperator::AddMult does not support a general complex-valued
-  //             " "coefficient!");
   if (a.real() != 0.0 && a.imag() != 0.0)
   {
     ty.SetSize(height);
@@ -287,9 +284,6 @@ void ComplexWrapperOperator::AddMultTranspose(const ComplexVector &x, ComplexVec
   const Vector &xi = x.Imag();
   Vector &yr = y.Real();
   Vector &yi = y.Imag();
-  // MFEM_VERIFY(a.real() == 0.0 || a.imag() == 0.0,
-  //             "ComplexWrapperOperator::AddMultTranspose does not support a general "
-  //             "complex-valued coefficient!");
   if (a.real() != 0.0 && a.imag() != 0.0)
   {
     tx.SetSize(width);
@@ -358,9 +352,6 @@ void ComplexWrapperOperator::AddMultHermitianTranspose(const ComplexVector &x,
   const Vector &xi = x.Imag();
   Vector &yr = y.Real();
   Vector &yi = y.Imag();
-  // MFEM_VERIFY(a.real() == 0.0 || a.imag() == 0.0,
-  //             "ComplexWrapperOperator::AddMultHermitianTranspose does not support a "
-  //             "general complex-valued coefficient!");
   if (a.real() != 0.0 && a.imag() != 0.0)
   {
     tx.SetSize(width);
