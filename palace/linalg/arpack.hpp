@@ -84,9 +84,6 @@ protected:
   // which case identity is used.
   const Operator *opB;
 
-  // Workspace vector for operator applications.
-  mutable ComplexVector x1, y1, z1;
-
   // Perform the ARPACK RCI loop.
   int SolveInternal(int n, std::complex<double> *r, std::complex<double> *V,
                     std::complex<double> *eig, int *perm);
@@ -217,9 +214,6 @@ private:
 
   // Operator norms for scaling.
   mutable double normK, normC, normM;
-
-  // Workspace vectors for operator applications.
-  mutable ComplexVector x2, y2;
 
 protected:
   void ApplyOp(const std::complex<double> *px, std::complex<double> *py) const override;

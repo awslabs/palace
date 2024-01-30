@@ -74,9 +74,6 @@ public:
     JD
   };
 
-  // Workspace vector for operator applications.
-  mutable ComplexVector x1, y1;
-
 protected:
   // Control print level for debugging.
   int print;
@@ -172,6 +169,9 @@ public:
   // the new matrix, only normalization.
   void RescaleEigenvectors(int num_eig) override;
 
+  // Get the (local) size of the eigenvalue problem.
+  virtual PetscInt Size() const = 0;
+
   // Get the basis vectors object.
   virtual BV GetBV() const = 0;
 
@@ -229,6 +229,8 @@ public:
   std::complex<double> GetEigenvalue(int i) const override;
 
   void GetEigenvector(int i, ComplexVector &x) const override;
+
+  PetscInt Size() const override;
 
   BV GetBV() const override;
 
@@ -296,9 +298,6 @@ public:
   // (not owned).
   const ComplexOperator *opK, *opC, *opM;
 
-  // Workspace vectors for operator applications.
-  mutable ComplexVector x2, y2;
-
 private:
   // Operator norms for scaling.
   mutable PetscReal normK, normC, normM;
@@ -321,6 +320,8 @@ public:
   void SetInitialSpace(const ComplexVector &v) override;
 
   void GetEigenvector(int i, ComplexVector &x) const override;
+
+  PetscInt Size() const override;
 };
 
 // Base class for SLEPc's PEP problem type.
@@ -364,6 +365,8 @@ public:
   std::complex<double> GetEigenvalue(int i) const override;
 
   void GetEigenvector(int i, ComplexVector &x) const override;
+
+  PetscInt Size() const override;
 
   BV GetBV() const override;
 
