@@ -6,6 +6,7 @@
 #include <mfem.hpp>
 #include "linalg/chebyshev.hpp"
 #include "linalg/rap.hpp"
+#include "utils/workspace.hpp"
 
 namespace palace
 {
@@ -48,12 +49,6 @@ void DistRelaxationSmoother<OperType>::SetOperators(const OperType &op,
               "Invalid operator sizes for DistRelaxationSmoother!");
   A = &op;
   A_G = &op_G;
-  x_G.SetSize(op_G.Height());
-  y_G.SetSize(op_G.Height());
-  r_G.SetSize(op_G.Height());
-  x_G.UseDevice(true);
-  y_G.UseDevice(true);
-  r_G.UseDevice(true);
 
   const auto *PtAP_G = dynamic_cast<const ParOperType *>(&op_G);
   MFEM_VERIFY(PtAP_G,
@@ -96,57 +91,72 @@ inline void RealMultTranspose(const Operator &op, const ComplexVector &x, Comple
 }  // namespace
 
 template <typename OperType>
-void DistRelaxationSmoother<OperType>::Mult2(const VecType &x, VecType &y, VecType &r) const
+void DistRelaxationSmoother<OperType>::Mult(const VecType &x, VecType &y) const
 {
   // Apply smoother.
   for (int it = 0; it < pc_it; it++)
   {
     // y = y + B (x - A y)
     B->SetInitialGuess(this->initial_guess || it > 0);
-    B->Mult2(x, y, r);
+    B->Mult(x, y);
 
     // y = y + G B_G Gᵀ (x - A y)
-    A->Mult(y, r);
-    linalg::AXPBY(1.0, x, -1.0, r);
-    RealMultTranspose(*G, r, x_G);
-    if (dbc_tdof_list_G)
     {
-      linalg::SetSubVector(x_G, *dbc_tdof_list_G, 0.0);
+      auto x_G = workspace::NewVector<VecType>(B_G->Height());
+      {
+        auto r = workspace::NewVector<VecType>(this->height);
+        A->Mult(y, r);
+        linalg::AXPBY<VecType>(1.0, x, -1.0, r);
+        RealMultTranspose(*G, r, x_G);
+      }
+      if (dbc_tdof_list_G)
+      {
+        linalg::SetSubVector<VecType>(x_G, *dbc_tdof_list_G, 0.0);
+      }
+      {
+        auto y_G = workspace::NewVector<VecType>(B_G->Height());
+        B_G->Mult(x_G, y_G);
+        RealAddMult(*G, y_G, y);
+      }
     }
-    B_G->Mult2(x_G, y_G, r_G);
-    RealAddMult(*G, y_G, y);
   }
 }
 
 template <typename OperType>
-void DistRelaxationSmoother<OperType>::MultTranspose2(const VecType &x, VecType &y,
-                                                      VecType &r) const
+void DistRelaxationSmoother<OperType>::MultTranspose(const VecType &x, VecType &y) const
 {
   // Apply transpose.
   B->SetInitialGuess(true);
   for (int it = 0; it < pc_it; it++)
   {
     // y = y + G B_Gᵀ Gᵀ (x - A y)
-    if (this->initial_guess || it > 0)
     {
-      A->Mult(y, r);
-      linalg::AXPBY(1.0, x, -1.0, r);
-      RealMultTranspose(*G, r, x_G);
+      auto x_G = workspace::NewVector<VecType>(B_G->Height());
+      if (this->initial_guess || it > 0)
+      {
+        auto r = workspace::NewVector<VecType>(this->height);
+        A->Mult(y, r);
+        linalg::AXPBY<VecType>(1.0, x, -1.0, r);
+        RealMultTranspose(*G, r, x_G);
+      }
+      else
+      {
+        y = 0.0;
+        RealMultTranspose(*G, x, x_G);
+      }
+      if (dbc_tdof_list_G)
+      {
+        linalg::SetSubVector<VecType>(x_G, *dbc_tdof_list_G, 0.0);
+      }
+      {
+        auto y_G = workspace::NewVector<VecType>(B_G->Height());
+        B_G->MultTranspose(x_G, y_G);
+        RealAddMult(*G, y_G, y);
+      }
     }
-    else
-    {
-      y = 0.0;
-      RealMultTranspose(*G, x, x_G);
-    }
-    if (dbc_tdof_list_G)
-    {
-      linalg::SetSubVector(x_G, *dbc_tdof_list_G, 0.0);
-    }
-    B_G->MultTranspose2(x_G, y_G, r_G);
-    RealAddMult(*G, y_G, y);
 
     // y = y + Bᵀ (x - A y)
-    B->MultTranspose2(x, y, r);
+    B->MultTranspose(x, y);
   }
 }
 

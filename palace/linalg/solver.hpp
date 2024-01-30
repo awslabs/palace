@@ -47,21 +47,6 @@ public:
   {
     MFEM_ABORT("MultTranspose() is not implemented for base class Solver<OperType>!");
   }
-
-  // Apply the solver with a preallocated temporary storage vector.
-  virtual void Mult2(const VecType &x, VecType &y, VecType &r) const
-  {
-    MFEM_ABORT("Mult2() with temporary storage vector is not implemented for base class "
-               "Solver<OperType>!");
-  }
-
-  // Apply the solver for the transpose problem with a preallocated temporary storage
-  //  vector.
-  virtual void MultTranspose2(const VecType &x, VecType &y, VecType &r) const
-  {
-    MFEM_ABORT("MultTranspose2() with temporary storage vector is not implemented for base "
-               "class Solver<OperType>!");
-  }
 };
 
 // This solver wraps a real-valued mfem::Solver for application to complex-valued problems

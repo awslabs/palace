@@ -4,6 +4,7 @@
 #include "chebyshev.hpp"
 
 #include <mfem/general/forall.hpp>
+#include "utils/workspace.hpp"
 
 namespace palace
 {
@@ -65,22 +66,28 @@ inline void ApplyOp(const ComplexOperator &A, const ComplexVector &x, ComplexVec
 }
 
 template <bool Transpose = false>
-inline void ApplyOrder0(double sr, const Vector &dinv, const Vector &r, Vector &d)
+inline void ApplyOrder0(double sr, const Vector &dinv, const Vector &r, Vector &d,
+                        Vector &y)
 {
-  const bool use_dev = dinv.UseDevice() || r.UseDevice() || d.UseDevice();
+  const bool use_dev = dinv.UseDevice() || r.UseDevice() || d.UseDevice() || y.UseDevice();
   const int N = d.Size();
   const auto *DI = dinv.Read(use_dev);
   const auto *R = r.Read(use_dev);
   auto *D = d.Write(use_dev);
+  auto *Y = y.ReadWrite(use_dev);
   mfem::forall_switch(use_dev, N,
-                      [=] MFEM_HOST_DEVICE(int i) { D[i] = sr * DI[i] * R[i]; });
+                      [=] MFEM_HOST_DEVICE(int i)
+                      {
+                        D[i] = sr * DI[i] * R[i];
+                        Y[i] += D[i];
+                      });
 }
 
 template <bool Transpose = false>
 inline void ApplyOrder0(const double sr, const ComplexVector &dinv, const ComplexVector &r,
-                        ComplexVector &d)
+                        ComplexVector &d, ComplexVector &y)
 {
-  const bool use_dev = dinv.UseDevice() || r.UseDevice() || d.UseDevice();
+  const bool use_dev = dinv.UseDevice() || r.UseDevice() || d.UseDevice() || y.UseDevice();
   const int N = dinv.Size();
   const auto *DIR = dinv.Real().Read(use_dev);
   const auto *DII = dinv.Imag().Read(use_dev);
@@ -88,6 +95,8 @@ inline void ApplyOrder0(const double sr, const ComplexVector &dinv, const Comple
   const auto *RI = r.Imag().Read(use_dev);
   auto *DR = d.Real().Write(use_dev);
   auto *DI = d.Imag().Write(use_dev);
+  auto *YR = y.Real().ReadWrite(use_dev);
+  auto *YI = y.Imag().ReadWrite(use_dev);
   if constexpr (!Transpose)
   {
     mfem::forall_switch(use_dev, N,
@@ -95,6 +104,8 @@ inline void ApplyOrder0(const double sr, const ComplexVector &dinv, const Comple
                         {
                           DR[i] = sr * (DIR[i] * RR[i] - DII[i] * RI[i]);
                           DI[i] = sr * (DII[i] * RR[i] + DIR[i] * RI[i]);
+                          YR[i] += DR[i];
+                          YI[i] += DI[i];
                         });
   }
   else
@@ -104,28 +115,35 @@ inline void ApplyOrder0(const double sr, const ComplexVector &dinv, const Comple
                         {
                           DR[i] = sr * (DIR[i] * RR[i] + DII[i] * RI[i]);
                           DI[i] = sr * (-DII[i] * RR[i] + DIR[i] * RI[i]);
+                          YR[i] += DR[i];
+                          YI[i] += DI[i];
                         });
   }
 }
 
 template <bool Transpose = false>
 inline void ApplyOrderK(const double sd, const double sr, const Vector &dinv,
-                        const Vector &r, Vector &d)
+                        const Vector &r, Vector &d, Vector &y)
 {
-  const bool use_dev = dinv.UseDevice() || r.UseDevice() || d.UseDevice();
+  const bool use_dev = dinv.UseDevice() || r.UseDevice() || d.UseDevice() || y.UseDevice();
   const int N = dinv.Size();
   const auto *DI = dinv.Read(use_dev);
   const auto *R = r.Read(use_dev);
   auto *D = d.ReadWrite(use_dev);
-  mfem::forall_switch(
-      use_dev, N, [=] MFEM_HOST_DEVICE(int i) { D[i] = sd * D[i] + sr * DI[i] * R[i]; });
+  auto *Y = y.ReadWrite(use_dev);
+  mfem::forall_switch(use_dev, N,
+                      [=] MFEM_HOST_DEVICE(int i)
+                      {
+                        D[i] = sd * D[i] + sr * DI[i] * R[i];
+                        Y[i] += D[i];
+                      });
 }
 
 template <bool Transpose = false>
 inline void ApplyOrderK(const double sd, const double sr, const ComplexVector &dinv,
-                        const ComplexVector &r, ComplexVector &d)
+                        const ComplexVector &r, ComplexVector &d, ComplexVector &y)
 {
-  const bool use_dev = dinv.UseDevice() || r.UseDevice() || d.UseDevice();
+  const bool use_dev = dinv.UseDevice() || r.UseDevice() || d.UseDevice() || y.UseDevice();
   const int N = dinv.Size();
   const auto *DIR = dinv.Real().Read(use_dev);
   const auto *DII = dinv.Imag().Read(use_dev);
@@ -133,6 +151,8 @@ inline void ApplyOrderK(const double sd, const double sr, const ComplexVector &d
   const auto *RI = r.Imag().Read(use_dev);
   auto *DR = d.Real().ReadWrite(use_dev);
   auto *DI = d.Imag().ReadWrite(use_dev);
+  auto *YR = y.Real().ReadWrite(use_dev);
+  auto *YI = y.Imag().ReadWrite(use_dev);
   if constexpr (!Transpose)
   {
     mfem::forall_switch(use_dev, N,
@@ -140,6 +160,8 @@ inline void ApplyOrderK(const double sd, const double sr, const ComplexVector &d
                         {
                           DR[i] = sd * DR[i] + sr * (DIR[i] * RR[i] - DII[i] * RI[i]);
                           DI[i] = sd * DI[i] + sr * (DII[i] * RR[i] + DIR[i] * RI[i]);
+                          YR[i] += DR[i];
+                          YI[i] += DI[i];
                         });
   }
   else
@@ -149,6 +171,8 @@ inline void ApplyOrderK(const double sd, const double sr, const ComplexVector &d
                         {
                           DR[i] = sd * DR[i] + sr * (DIR[i] * RR[i] + DII[i] * RI[i]);
                           DI[i] = sd * DI[i] + sr * (-DII[i] * RR[i] + DIR[i] * RI[i]);
+                          YR[i] += DR[i];
+                          YI[i] += DI[i];
                         });
   }
 }
@@ -168,9 +192,7 @@ template <typename OperType>
 void ChebyshevSmoother<OperType>::SetOperator(const OperType &op)
 {
   A = &op;
-  d.SetSize(op.Height());
   dinv.SetSize(op.Height());
-  d.UseDevice(true);
   dinv.UseDevice(true);
   op.AssembleDiagonal(dinv);
   dinv.Reciprocal();
@@ -186,34 +208,34 @@ void ChebyshevSmoother<OperType>::SetOperator(const OperType &op)
 }
 
 template <typename OperType>
-void ChebyshevSmoother<OperType>::Mult2(const VecType &x, VecType &y, VecType &r) const
+void ChebyshevSmoother<OperType>::Mult(const VecType &x, VecType &y) const
 {
   // Apply smoother: y = y + p(A) (x - A y) .
   for (int it = 0; it < pc_it; it++)
   {
+    auto r = workspace::NewVector<VecType>(this->height);
     if (this->initial_guess || it > 0)
     {
       ApplyOp(*A, y, r);
-      linalg::AXPBY(1.0, x, -1.0, r);
+      linalg::AXPBY<VecType>(1.0, x, -1.0, r);
     }
     else
     {
-      r = x;
+      r.VecType::operator=(x);
       y = 0.0;
     }
 
     // 4th-kind Chebyshev smoother, from Phillips and Fischer or Lottes (with k -> k + 1
     // shift due to 1-based indexing).
-    ApplyOrder0(4.0 / (3.0 * lambda_max), dinv, r, d);
+    auto d = workspace::NewVector<VecType>(this->height);
+    ApplyOrder0(4.0 / (3.0 * lambda_max), dinv, r, d, y);
     for (int k = 1; k < order; k++)
     {
-      y += d;
       ApplyOp(*A, d, r, -1.0);
       const double sd = (2.0 * k - 1.0) / (2.0 * k + 3.0);
       const double sr = (8.0 * k + 4.0) / ((2.0 * k + 3.0) * lambda_max);
-      ApplyOrderK(sd, sr, dinv, r, d);
+      ApplyOrderK(sd, sr, dinv, r, d, y);
     }
-    y += d;
   }
 }
 
@@ -231,9 +253,7 @@ template <typename OperType>
 void ChebyshevSmoother1stKind<OperType>::SetOperator(const OperType &op)
 {
   A = &op;
-  d.SetSize(op.Height());
   dinv.SetSize(op.Height());
-  d.UseDevice(true);
   dinv.UseDevice(true);
   op.AssembleDiagonal(dinv);
   dinv.Reciprocal();
@@ -256,37 +276,36 @@ void ChebyshevSmoother1stKind<OperType>::SetOperator(const OperType &op)
 }
 
 template <typename OperType>
-void ChebyshevSmoother1stKind<OperType>::Mult2(const VecType &x, VecType &y,
-                                               VecType &r) const
+void ChebyshevSmoother1stKind<OperType>::Mult(const VecType &x, VecType &y) const
 {
   // Apply smoother: y = y + p(A) (x - A y) .
   for (int it = 0; it < pc_it; it++)
   {
+    auto r = workspace::NewVector<VecType>(this->height);
     if (this->initial_guess || it > 0)
     {
       ApplyOp(*A, y, r);
-      linalg::AXPBY(1.0, x, -1.0, r);
+      linalg::AXPBY<VecType>(1.0, x, -1.0, r);
     }
     else
     {
-      r = x;
+      r.VecType::operator=(x);
       y = 0.0;
     }
 
     // 1th-kind Chebyshev smoother, from Phillips and Fischer or Adams.
-    ApplyOrder0(1.0 / theta, dinv, r, d);
+    auto d = workspace::NewVector<VecType>(this->height);
+    ApplyOrder0(1.0 / theta, dinv, r, d, y);
     double rhop = delta / theta;
     for (int k = 1; k < order; k++)
     {
-      y += d;
       ApplyOp(*A, d, r, -1.0);
       const double rho = 1.0 / (2.0 * theta / delta - rhop);
       const double sd = rho * rhop;
       const double sr = 2.0 * rho / delta;
-      ApplyOrderK(sd, sr, dinv, r, d);
+      ApplyOrderK(sd, sr, dinv, r, d, y);
       rhop = rho;
     }
-    y += d;
   }
 }
 
