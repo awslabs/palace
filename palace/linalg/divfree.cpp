@@ -64,6 +64,10 @@ DivFreeSolver<VecType>::DivFreeSolver(
       const auto &h1_fespace_l = h1_fespaces.GetFESpaceAtLevel(l);
       auto M_l = BuildLevelParOperator<OperType>(std::move(m_vec[l]), h1_fespace_l);
       M_l->SetEssentialTrueDofs(h1_bdr_tdof_lists[l], Operator::DiagonalPolicy::DIAG_ONE);
+      if (l == h1_fespaces.GetNumLevels() - 1)
+      {
+        bdr_tdof_list_M = M_l->GetEssentialTrueDofs();
+      }
       M_mg->AddOperator(std::move(M_l));
     }
     M = std::move(M_mg);
@@ -76,7 +80,6 @@ DivFreeSolver<VecType>::DivFreeSolver(
                                             h1_fespaces.GetFinestFESpace(), false);
   }
   Grad = &h1_fespaces.GetFinestFESpace().GetDiscreteInterpolator();
-  bdr_tdof_list_M = &h1_bdr_tdof_lists.back();
 
   // The system matrix for the projection is real and SPD.
   auto amg = std::make_unique<MfemWrapperSolver<OperType>>(

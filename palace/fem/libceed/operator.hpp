@@ -6,7 +6,6 @@
 
 #include <memory>
 #include <vector>
-#include <mfem.hpp>
 #include "fem/libceed/ceed.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
@@ -15,6 +14,13 @@ namespace palace
 {
 
 class FiniteElementSpace;
+
+namespace hypre
+{
+
+class HypreCSRMatrix;
+
+}  // namespace hypre
 
 namespace ceed
 {
@@ -67,9 +73,9 @@ public:
   }
 };
 
-// Assemble a ceed::Operator as an mfem::SparseMatrix.
-std::unique_ptr<mfem::SparseMatrix> CeedOperatorFullAssemble(const Operator &op,
-                                                             bool skip_zeros, bool set);
+// Assemble a ceed::Operator as a CSR matrix.
+std::unique_ptr<hypre::HypreCSRMatrix> CeedOperatorFullAssemble(const Operator &op,
+                                                                bool skip_zeros, bool set);
 
 // Construct a coarse-level ceed::Operator, reusing the quadrature data and quadrature
 // function from the fine-level operator. Only available for square, symmetric operators

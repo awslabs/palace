@@ -5,8 +5,10 @@
 
 #include <numeric>
 #include <ceed/backend.h>
+#include <mfem.hpp>
 #include <mfem/general/forall.hpp>
 #include "fem/fespace.hpp"
+#include "linalg/hypre.hpp"
 #include "utils/omp.hpp"
 
 namespace palace::ceed
@@ -211,174 +213,71 @@ int CeedInternalFree(void *p)
 
 #define CeedInternalCalloc(n, p) CeedInternalCallocArray((n), sizeof(**(p)), p)
 
-void CeedOperatorAssembleCOORemoveZeros(Ceed ceed, CeedSize *nnz, CeedInt **rows,
-                                        CeedInt **cols, CeedVector *vals, CeedMemType *mem)
-{
-  // Filter out zero entries. For now, eliminating zeros happens all on the host.
-  // XX TODO: Use Thrust for this (thrust::copy_if and thrust::zip_iterator)
-  CeedInt *new_rows, *new_cols;
-  PalaceCeedCall(ceed, CeedInternalCalloc(*nnz, &new_rows));
-  PalaceCeedCall(ceed, CeedInternalCalloc(*nnz, &new_cols));
-
-  CeedVector new_vals;
-  PalaceCeedCall(ceed, CeedVectorCreate(ceed, *nnz, &new_vals));
-
-  CeedSize q = 0;
-  const CeedScalar *vals_array;
-  CeedScalar *new_vals_array;
-  PalaceCeedCall(ceed, CeedVectorGetArrayRead(*vals, CEED_MEM_HOST, &vals_array));
-  PalaceCeedCall(ceed, CeedVectorGetArrayWrite(new_vals, CEED_MEM_HOST, &new_vals_array));
-  for (CeedSize k = 0; k < *nnz; k++)
-  {
-    if (vals_array[k] != 0.0)
-    {
-      new_rows[q] = (*rows)[k];
-      new_cols[q] = (*cols)[k];
-      new_vals_array[q] = vals_array[k];
-      q++;
-    }
-  }
-  PalaceCeedCall(ceed, CeedVectorRestoreArrayRead(*vals, &vals_array));
-  PalaceCeedCall(ceed, CeedVectorRestoreArray(new_vals, &new_vals_array));
-
-  PalaceCeedCall(ceed, CeedInternalFree(rows));
-  PalaceCeedCall(ceed, CeedInternalFree(cols));
-  PalaceCeedCall(ceed, CeedVectorDestroy(vals));
-
-  *rows = new_rows;
-  *cols = new_cols;
-  *vals = new_vals;
-  *nnz = q;
-}
-
-void CeedOperatorAssembleCOO(const Operator &op, bool skip_zeros, CeedSize *nnz,
+void CeedOperatorAssembleCOO(Ceed ceed, CeedOperator op, bool skip_zeros, CeedSize *nnz,
                              CeedInt **rows, CeedInt **cols, CeedVector *vals,
                              CeedMemType *mem)
 {
-  const std::size_t nt = op.Size();
-  if (nt == 0)
-  {
-    *nnz = 0;
-    *rows = nullptr;
-    *cols = nullptr;
-    *vals = nullptr;
-    *mem = CEED_MEM_HOST;
-    return;
-  }
-
-  Ceed ceed;
-  CeedScalar *vals_array;
-  std::vector<CeedSize> loc_nnz(nt), loc_offsets(nt + 1);
-  std::vector<CeedInt *> loc_rows(nt), loc_cols(nt);
-  std::vector<CeedVector> loc_vals(nt);
-
-  PalaceCeedCallBackend(CeedOperatorGetCeed(op[0], &ceed));
   PalaceCeedCall(ceed, CeedGetPreferredMemType(ceed, mem));
-  if (!mfem::Device::Allows(mfem::Backend::DEVICE_MASK))
-  {
-    *mem = CEED_MEM_HOST;
-  }
 
-  PalacePragmaOmp(parallel if (nt > 1))
-  {
-    Ceed ceed;
-    const int id = utils::GetThreadNum();
-    MFEM_ASSERT(id < op.Size() && op[id],
-                "Out of bounds access for thread number " << id << "!");
-    PalaceCeedCallBackend(CeedOperatorGetCeed(op[id], &ceed));
+  // Assemble sparsity pattern (rows, cols are always host pointers).
+  PalaceCeedCall(ceed, CeedOperatorLinearAssembleSymbolic(op, nnz, rows, cols));
 
-    // Assemble sparsity pattern (rows, cols are always host pointers).
-    PalaceCeedCall(ceed, CeedOperatorLinearAssembleSymbolic(op[id], &loc_nnz[id],
-                                                            &loc_rows[id], &loc_cols[id]));
+  // Assemble values.
+  PalaceCeedCall(ceed, CeedVectorCreate(ceed, *nnz, vals));
+  PalaceCeedCall(ceed, CeedOperatorLinearAssemble(op, *vals));
 
-    // Assemble values.
-    PalaceCeedCall(ceed, CeedVectorCreate(ceed, loc_nnz[id], &loc_vals[id]));
-    PalaceCeedCall(ceed, CeedOperatorLinearAssemble(op[id], loc_vals[id]));
-  }
-
-  loc_offsets[0] = 0;
-  std::inclusive_scan(loc_nnz.begin(), loc_nnz.end(), loc_offsets.begin() + 1);
-  *nnz = loc_offsets.back();
-  if (nt == 1)
-  {
-    // Assemble values.
-    *rows = loc_rows[0];
-    *cols = loc_cols[0];
-    *vals = loc_vals[0];
-  }
-  else
-  {
-    // Global assembly.
-    PalaceCeedCall(ceed, CeedInternalCalloc(*nnz, rows));
-    PalaceCeedCall(ceed, CeedInternalCalloc(*nnz, cols));
-    PalaceCeedCall(ceed, CeedVectorCreate(ceed, *nnz, vals));
-    PalaceCeedCall(ceed, CeedVectorGetArrayWrite(*vals, *mem, &vals_array));
-
-    PalacePragmaOmp(parallel if (nt > 1))
-    {
-      const int id = utils::GetThreadNum();
-      MFEM_ASSERT(id < op.Size() && op[id],
-                  "Out of bounds access for thread number " << id << "!");
-      const auto start = loc_offsets[id];
-      const auto end = loc_offsets[id + 1];
-      for (auto k = start; k < end; k++)
-      {
-        (*rows)[k] = loc_rows[id][k - start];
-        (*cols)[k] = loc_cols[id][k - start];
-      }
-
-      // The CeedVector is on only on device when MFEM is also using the device. This is
-      // also correctly a non-OpenMP loop when executed on the CPU (OpenMP is handled in
-      // outer scope above).
-      Ceed ceed;
-      const CeedScalar *loc_vals_array;
-      PalaceCeedCallBackend(CeedVectorGetCeed(loc_vals[id], &ceed));
-      PalaceCeedCall(ceed, CeedVectorGetArrayRead(loc_vals[id], *mem, &loc_vals_array));
-      mfem::forall_switch(*mem == CEED_MEM_DEVICE, end - start,
-                          [=] MFEM_HOST_DEVICE(int k)
-                          { vals_array[k + start] = loc_vals_array[k]; });
-      PalaceCeedCall(ceed, CeedVectorRestoreArrayRead(loc_vals[id], &loc_vals_array));
-      PalaceCeedCall(ceed, CeedInternalFree(&loc_rows[id]));
-      PalaceCeedCall(ceed, CeedInternalFree(&loc_cols[id]));
-      PalaceCeedCall(ceed, CeedVectorDestroy(&loc_vals[id]));
-    }
-
-    PalaceCeedCall(ceed, CeedVectorRestoreArray(*vals, &vals_array));
-  }
-
+  // Filter out zero entries. For now, eliminating zeros happens all on the host.
   // std::cout << "  Operator full assembly (COO) has " << *nnz << " NNZ";
   if (skip_zeros && *nnz > 0)
   {
-    CeedOperatorAssembleCOORemoveZeros(ceed, nnz, rows, cols, vals, mem);
+    // XX TODO: Use Thrust for this (thrust::copy_if and thrust::zip_iterator)
+    CeedInt *new_rows, *new_cols;
+    PalaceCeedCall(ceed, CeedInternalCalloc(*nnz, &new_rows));
+    PalaceCeedCall(ceed, CeedInternalCalloc(*nnz, &new_cols));
+
+    CeedVector new_vals;
+    PalaceCeedCall(ceed, CeedVectorCreate(ceed, *nnz, &new_vals));
+
+    CeedSize q = 0;
+    const CeedScalar *vals_array;
+    CeedScalar *new_vals_array;
+    PalaceCeedCall(ceed, CeedVectorGetArrayRead(*vals, CEED_MEM_HOST, &vals_array));
+    PalaceCeedCall(ceed, CeedVectorGetArrayWrite(new_vals, CEED_MEM_HOST, &new_vals_array));
+    for (CeedSize k = 0; k < *nnz; k++)
+    {
+      if (vals_array[k] != 0.0)
+      {
+        new_rows[q] = (*rows)[k];
+        new_cols[q] = (*cols)[k];
+        new_vals_array[q] = vals_array[k];
+        q++;
+      }
+    }
+    PalaceCeedCall(ceed, CeedVectorRestoreArrayRead(*vals, &vals_array));
+    PalaceCeedCall(ceed, CeedVectorRestoreArray(new_vals, &new_vals_array));
+
+    PalaceCeedCall(ceed, CeedInternalFree(rows));
+    PalaceCeedCall(ceed, CeedInternalFree(cols));
+    PalaceCeedCall(ceed, CeedVectorDestroy(vals));
+
+    *nnz = q;
+    *rows = new_rows;
+    *cols = new_cols;
+    *vals = new_vals;
+
     // std::cout << " (new NNZ after removal: " << *nnz << ")";
   }
   // std::cout << "\n";
 }
 
-}  // namespace
-
-std::unique_ptr<mfem::SparseMatrix> CeedOperatorFullAssemble(const Operator &op,
-                                                             bool skip_zeros, bool set)
+std::unique_ptr<hypre::HypreCSRMatrix> OperatorCOOtoCSR(Ceed ceed, CeedInt m, CeedInt n,
+                                                        CeedSize nnz, CeedInt *rows,
+                                                        CeedInt *cols, CeedVector vals,
+                                                        CeedMemType mem, bool set)
 {
-  // First, get matrix on master thread in COO format, withs rows/cols always on host and
-  // vals potentially on the device. Process skipping zeros if desired.
-  CeedSize nnz;
-  CeedInt *rows, *cols;
-  CeedVector vals;
-  CeedMemType mem;
-  CeedOperatorAssembleCOO(op, skip_zeros, &nnz, &rows, &cols, &vals, &mem);
-
   // Preallocate CSR memory on host (like PETSc's MatSetValuesCOO).
-  auto mat = std::make_unique<mfem::SparseMatrix>();
-  mat->OverrideSize(op.Height(), op.Width());
-  mat->GetMemoryI().New(op.Height() + 1);
-  auto *I = mat->GetI();
-  mfem::Array<int> J(nnz), perm(nnz), Jmap(nnz + 1);
-
-  for (int i = 0; i < op.Height() + 1; i++)
-  {
-    I[i] = 0;
-  }
+  mfem::Array<int> I(m + 1), J(nnz), perm(nnz), Jmap(nnz + 1);
+  I = 0;
   for (int k = 0; k < nnz; k++)
   {
     perm[k] = k;
@@ -419,11 +318,13 @@ std::unique_ptr<mfem::SparseMatrix> CeedOperatorFullAssemble(const Operator &op,
       }
     }
   }
-  const int nnz_new = q + 1;
+  PalaceCeedCall(ceed, CeedInternalFree(&rows));
+  PalaceCeedCall(ceed, CeedInternalFree(&cols));
 
   // Finalize I, Jmap.
+  const int nnz_new = q + 1;
   I[0] = 0;
-  for (int i = 0; i < op.Height(); i++)
+  for (int i = 0; i < m; i++)
   {
     I[i + 1] += I[i];
   }
@@ -433,23 +334,25 @@ std::unique_ptr<mfem::SparseMatrix> CeedOperatorFullAssemble(const Operator &op,
     Jmap[k + 1] += Jmap[k];
   }
 
-  mat->GetMemoryJ().New(nnz_new, mat->GetMemoryJ().GetMemoryType());
-  mat->GetMemoryData().New(nnz_new, mat->GetMemoryJ().GetMemoryType());
+  // Construct and fill the final CSR matrix. On GPU, MFEM and Hypre share the same memory
+  // space. On CPU, the inner nested OpenMP loop (if enabled in MFEM) should be ignored.
+  auto mat = std::make_unique<hypre::HypreCSRMatrix>(m, n, nnz_new);
   {
-    // This always executes on the device.
+    const auto *d_I_old = I.Read();
+    auto *d_I = mat->GetI();
+    mfem::forall(m + 1, [=] MFEM_HOST_DEVICE(int i) { d_I[i] = d_I_old[i]; });
+  }
+  {
     const auto *d_J_old = J.Read();
-    auto *d_J = mfem::Write(mat->GetMemoryJ(), nnz_new);
+    auto *d_J = mat->GetJ();
     mfem::forall(nnz_new, [=] MFEM_HOST_DEVICE(int k) { d_J[k] = d_J_old[k]; });
   }
-
-  // Fill the values (also always on device).
-  if (vals)
   {
     auto FillValues = [&](const double *vals_array)
     {
       const auto *d_perm = perm.Read();
       const auto *d_Jmap = Jmap.Read();
-      auto *d_A = mfem::Write(mat->GetMemoryData(), nnz_new);
+      auto *d_A = mat->GetData();
       if (set)
       {
         mfem::forall(nnz_new, [=] MFEM_HOST_DEVICE(int k)
@@ -477,7 +380,6 @@ std::unique_ptr<mfem::SparseMatrix> CeedOperatorFullAssemble(const Operator &op,
     {
       // Copy values to device before filling.
       Vector d_vals(nnz);
-      d_vals.UseDevice(true);
       {
         auto *d_vals_array = d_vals.HostWrite();
         PalacePragmaOmp(parallel for schedule(static))
@@ -495,8 +397,72 @@ std::unique_ptr<mfem::SparseMatrix> CeedOperatorFullAssemble(const Operator &op,
     }
     PalaceCeedCall(ceed, CeedVectorRestoreArrayRead(vals, &vals_array));
     PalaceCeedCall(ceed, CeedVectorDestroy(&vals));
-    PalaceCeedCall(ceed, CeedInternalFree(&rows));
-    PalaceCeedCall(ceed, CeedInternalFree(&cols));
+  }
+
+  return mat;
+}
+
+}  // namespace
+
+std::unique_ptr<hypre::HypreCSRMatrix> CeedOperatorFullAssemble(const Operator &op,
+                                                                bool skip_zeros, bool set)
+{
+  if (op.Size() == 0)
+  {
+    return std::make_unique<hypre::HypreCSRMatrix>(op.Height(), op.Width(), 0);
+  }
+
+  // Assemble operators on each thread.
+  std::vector<std::unique_ptr<hypre::HypreCSRMatrix>> loc_mat(op.Size());
+  PalacePragmaOmp(parallel if (op.Size() > 1))
+  {
+    Ceed ceed;
+    const int id = utils::GetThreadNum();
+    MFEM_ASSERT(id < op.Size() && op[id],
+                "Out of bounds access for thread number " << id << "!");
+    PalaceCeedCallBackend(CeedOperatorGetCeed(op[id], &ceed));
+
+    // First, get matrix on master thread in COO format, withs rows/cols always on host and
+    // vals potentially on the device. Process skipping zeros if desired.
+    CeedSize nnz;
+    CeedInt *rows, *cols;
+    CeedVector vals;
+    CeedMemType mem;
+    CeedOperatorAssembleCOO(ceed, op[id], skip_zeros, &nnz, &rows, &cols, &vals, &mem);
+
+    // Convert COO to CSR (on each thread). The COO memory is free'd internally.
+    loc_mat[id] =
+        OperatorCOOtoCSR(ceed, op.Height(), op.Width(), nnz, rows, cols, vals, mem, set);
+  }
+
+  // Add CSR matrix objects from each thread (HYPRE's hypre_CSRMatrixAdd uses threads
+  // internally as available). We have to scale the duplicated nonzeros when set = true.
+  auto mat = std::move(loc_mat[0]);
+  std::unique_ptr<hypre::HypreCSRMatrix> b_mat;
+  if (set && op.Size() > 1)
+  {
+    b_mat = std::make_unique<hypre::HypreCSRMatrix>(hypre_CSRMatrixClone(*mat, 0));
+    hypre_CSRMatrixSetConstantValues(*b_mat, 1.0);
+    for (std::size_t i = 1; i < op.Size(); i++)
+    {
+      hypre_CSRMatrix *b_loc_mat = hypre_CSRMatrixClone(*loc_mat[i], 0);
+      hypre_CSRMatrixSetConstantValues(b_loc_mat, 1.0);
+      b_mat = std::make_unique<hypre::HypreCSRMatrix>(
+          hypre_CSRMatrixAdd(1.0, *b_mat, 1.0, b_loc_mat));
+      hypre_CSRMatrixDestroy(b_loc_mat);
+    }
+  }
+  for (std::size_t i = 1; i < op.Size(); i++)
+  {
+    mat = std::make_unique<hypre::HypreCSRMatrix>(
+        hypre_CSRMatrixAdd(1.0, *mat, 1.0, *loc_mat[i]));
+  }
+  if (set && op.Size() > 1)
+  {
+    const auto *d_b_data = b_mat->GetData();
+    auto *d_data = mat->GetData();
+    mfem::forall(mat->NNZ(),
+                 [=] MFEM_HOST_DEVICE(int i) { d_data[i] *= 1.0 / d_b_data[i]; });
   }
 
   return mat;

@@ -113,8 +113,8 @@ BilinearForm::PartialAssemble(const FiniteElementSpace &trial_fespace,
   return op;
 }
 
-std::unique_ptr<mfem::SparseMatrix> BilinearForm::FullAssemble(const ceed::Operator &op,
-                                                               bool skip_zeros, bool set)
+std::unique_ptr<hypre::HypreCSRMatrix> BilinearForm::FullAssemble(const ceed::Operator &op,
+                                                                  bool skip_zeros, bool set)
 {
   return ceed::CeedOperatorFullAssemble(op, skip_zeros, set);
 }

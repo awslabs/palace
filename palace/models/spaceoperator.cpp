@@ -9,6 +9,7 @@
 #include "fem/integrator.hpp"
 #include "fem/mesh.hpp"
 #include "fem/multigrid.hpp"
+#include "linalg/hypre.hpp"
 #include "linalg/rap.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
@@ -769,14 +770,14 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(double a0, doub
       {
         Mpi::Print(" Level {:d}{} (p = {:d}): {:d} unknowns", l, aux ? " (auxiliary)" : "",
                    fespace_l.GetMaxElementOrder(), fespace_l.GlobalTrueVSize());
-        const auto *b_spm = dynamic_cast<const mfem::SparseMatrix *>(br_l.get());
+        const auto *b_spm = dynamic_cast<const hypre::HypreCSRMatrix *>(br_l.get());
         if (!b_spm)
         {
-          b_spm = dynamic_cast<const mfem::SparseMatrix *>(bi_l.get());
+          b_spm = dynamic_cast<const hypre::HypreCSRMatrix *>(bi_l.get());
         }
         if (b_spm)
         {
-          HYPRE_BigInt nnz = b_spm->NumNonZeroElems();
+          HYPRE_BigInt nnz = b_spm->NNZ();
           Mpi::GlobalSum(1, &nnz, fespace_l.GetComm());
           Mpi::Print(", {:d} NNZ\n", nnz);
         }

@@ -32,7 +32,7 @@ private:
   const bool use_R;
 
   // Lists of constrained essential boundary true dofs for elimination.
-  const mfem::Array<int> *dbc_tdof_list;
+  mfem::Array<int> dbc_tdof_list;
 
   // Diagonal policy for constrained true dofs.
   DiagonalPolicy diag_policy;
@@ -78,7 +78,10 @@ public:
 
   // Get the essential boundary condition true dofs associated with the operator. May be
   // nullptr.
-  const mfem::Array<int> *GetEssentialTrueDofs() const { return dbc_tdof_list; }
+  const mfem::Array<int> *GetEssentialTrueDofs() const
+  {
+    return dbc_tdof_list.Size() ? &dbc_tdof_list : nullptr;
+  }
 
   // Eliminate essential true dofs from the RHS vector b, using the essential boundary
   // condition values in x.
@@ -119,7 +122,7 @@ private:
   const bool use_R;
 
   // Lists of constrained essential boundary true dofs for elimination.
-  const mfem::Array<int> *dbc_tdof_list;
+  mfem::Array<int> dbc_tdof_list;
 
   // Diagonal policy for constrained true dofs.
   Operator::DiagonalPolicy diag_policy;
@@ -174,7 +177,10 @@ public:
 
   // Get the essential boundary condition true dofs associated with the operator. May be
   // nullptr.
-  const mfem::Array<int> *GetEssentialTrueDofs() const { return dbc_tdof_list; }
+  const mfem::Array<int> *GetEssentialTrueDofs() const
+  {
+    return dbc_tdof_list.Size() ? &dbc_tdof_list : nullptr;
+  }
 
   void AssembleDiagonal(ComplexVector &diag) const override;
 
