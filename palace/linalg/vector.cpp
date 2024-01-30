@@ -8,6 +8,7 @@
 #include <mfem/general/forall.hpp>
 #include "linalg/hypre.hpp"
 #include "utils/omp.hpp"
+#include "utils/workspace.hpp"
 
 namespace palace
 {
@@ -101,8 +102,7 @@ void ComplexVector::Set(const std::complex<double> *py, int size, bool on_dev)
   else if (!on_dev)
   {
     // Need copy from host to device (host pointer but using device).
-    Vector y(2 * size);
-    y.UseDevice(true);
+    auto y = workspace::NewVector<Vector>(2 * size);
     {
       auto *Y = y.HostWrite();
       PalacePragmaOmp(parallel for schedule(static))
