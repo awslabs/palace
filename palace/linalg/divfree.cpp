@@ -14,6 +14,7 @@
 #include "linalg/rap.hpp"
 #include "models/materialoperator.hpp"
 #include "utils/timer.hpp"
+#include "utils/workspace.hpp"
 
 namespace palace
 {
@@ -109,11 +110,6 @@ DivFreeSolver<VecType>::DivFreeSolver(
 
   ksp = std::make_unique<BaseKspSolver<OperType>>(std::move(pcg), std::move(pc));
   ksp->SetOperators(*M, *M);
-
-  psi.SetSize(h1_fespaces.GetFinestFESpace().GetTrueVSize());
-  rhs.SetSize(h1_fespaces.GetFinestFESpace().GetTrueVSize());
-  psi.UseDevice(true);
-  rhs.UseDevice(true);
 }
 
 template <typename VecType>
@@ -122,6 +118,7 @@ void DivFreeSolver<VecType>::Mult(VecType &y) const
   BlockTimer bt(Timer::DIV_FREE);
 
   // Compute the divergence of y.
+  auto rhs = workspace::NewVector<VecType>(M->Height());
   if constexpr (std::is_same<VecType, ComplexVector>::value)
   {
     WeakDiv->Mult(y.Real(), rhs.Real());
@@ -135,8 +132,9 @@ void DivFreeSolver<VecType>::Mult(VecType &y) const
   // Apply essential BC and solve the linear system.
   if (bdr_tdof_list_M)
   {
-    linalg::SetSubVector(rhs, *bdr_tdof_list_M, 0.0);
+    linalg::SetSubVector<VecType>(rhs, *bdr_tdof_list_M, 0.0);
   }
+  auto psi = workspace::NewVector<VecType>(M->Height());
   ksp->Mult(rhs, psi);
 
   // Compute the irrotational portion of y and subtract.

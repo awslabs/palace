@@ -11,6 +11,7 @@
 #include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
+#include "utils/workspace.hpp"
 
 namespace palace
 {
@@ -35,8 +36,6 @@ DomainPostOperator::DomainPostOperator(const IoData &iodata, const MaterialOpera
     BilinearForm m(nd_fespace);
     m.AddDomainIntegrator<VectorFEMassIntegrator>(epsilon_func);
     M_elec = m.PartialAssemble();
-    D.SetSize(M_elec->Height());
-    D.UseDevice(true);
   }
   {
     // Construct RT mass matrix to compute the magnetic field energy integral as:
@@ -46,8 +45,6 @@ DomainPostOperator::DomainPostOperator(const IoData &iodata, const MaterialOpera
     BilinearForm m(rt_fespace);
     m.AddDomainIntegrator<VectorFEMassIntegrator>(muinv_func);
     M_mag = m.PartialAssemble();
-    H.SetSize(M_mag->Height());
-    H.UseDevice(true);
   }
 
   // Use the provided domain postprocessing indices for postprocessing the electric and
@@ -88,8 +85,6 @@ DomainPostOperator::DomainPostOperator(const IoData &iodata, const MaterialOpera
       BilinearForm m(fespace);
       m.AddDomainIntegrator<DiffusionIntegrator>(epsilon_func);
       M_elec = m.PartialAssemble();
-      D.SetSize(M_elec->Height());
-      D.UseDevice(true);
     }
 
     for (const auto &[idx, data] : iodata.domains.postpro.energy)
@@ -115,8 +110,6 @@ DomainPostOperator::DomainPostOperator(const IoData &iodata, const MaterialOpera
       BilinearForm m(fespace);
       m.AddDomainIntegrator<CurlCurlIntegrator>(muinv_func);
       M_mag = m.PartialAssemble();
-      H.SetSize(M_mag->Height());
-      H.UseDevice(true);
     }
 
     for (const auto &[idx, data] : iodata.domains.postpro.energy)
@@ -143,6 +136,7 @@ double DomainPostOperator::GetElectricFieldEnergy(const GridFunction &E) const
 {
   if (M_elec)
   {
+    auto D = workspace::NewVector<Vector>(M_elec->Height());
     M_elec->Mult(E.Real(), D);
     double dot = linalg::LocalDot(E.Real(), D);
     if (E.HasImag())
@@ -162,6 +156,7 @@ double DomainPostOperator::GetMagneticFieldEnergy(const GridFunction &B) const
 {
   if (M_mag)
   {
+    auto H = workspace::NewVector<Vector>(M_mag->Height());
     M_mag->Mult(B.Real(), H);
     double dot = linalg::LocalDot(B.Real(), H);
     if (B.HasImag())
@@ -188,6 +183,7 @@ double DomainPostOperator::GetDomainElectricFieldEnergy(int idx,
   {
     return 0.0;
   }
+  auto D = workspace::NewVector<Vector>(it->second.first->Height());
   it->second.first->Mult(E.Real(), D);
   double dot = linalg::LocalDot(E.Real(), D);
   if (E.HasImag())
@@ -210,6 +206,7 @@ double DomainPostOperator::GetDomainMagneticFieldEnergy(int idx,
   {
     return 0.0;
   }
+  auto H = workspace::NewVector<Vector>(it->second.second->Height());
   it->second.second->Mult(B.Real(), H);
   double dot = linalg::LocalDot(B.Real(), H);
   if (B.HasImag())
