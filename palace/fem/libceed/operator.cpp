@@ -10,6 +10,7 @@
 #include "fem/fespace.hpp"
 #include "linalg/hypre.hpp"
 #include "utils/omp.hpp"
+#include "utils/workspace.hpp"
 
 namespace palace::ceed
 {
@@ -37,7 +38,6 @@ Operator::Operator(int h, int w) : palace::Operator(h, w)
     u[id] = loc_u;
     v[id] = loc_v;
   }
-  temp.UseDevice(true);
 }
 
 Operator::~Operator()
@@ -174,15 +174,15 @@ void Operator::AddMult(const Vector &x, Vector &y, const double a) const
   MFEM_VERIFY(a == 1.0, "ceed::Operator::AddMult only supports coefficient = 1.0!");
   if (dof_multiplicity.Size() > 0)
   {
-    temp.SetSize(height);
-    temp = 0.0;
-    CeedAddMult(op, u, v, x, temp);
+    auto t = workspace::NewVector<Vector>(height);
+    t = 0.0;
+    CeedAddMult(op, u, v, x, t);
     {
       const auto *d_dof_multiplicity = dof_multiplicity.Read();
-      const auto *d_temp = temp.Read();
+      const auto *d_t = t.Read();
       auto *d_y = y.ReadWrite();
       mfem::forall(height, [=] MFEM_HOST_DEVICE(int i)
-                   { d_y[i] += d_dof_multiplicity[i] * d_temp[i]; });
+                   { d_y[i] += d_dof_multiplicity[i] * d_t[i]; });
     }
   }
   else
@@ -203,15 +203,15 @@ void Operator::AddMultTranspose(const Vector &x, Vector &y, const double a) cons
               "ceed::Operator::AddMultTranspose only supports coefficient = 1.0!");
   if (dof_multiplicity.Size() > 0)
   {
-    temp.SetSize(height);
+    auto t = workspace::NewVector<Vector>(height);
     {
       const auto *d_dof_multiplicity = dof_multiplicity.Read();
       const auto *d_x = x.Read();
-      auto *d_temp = temp.Write();
+      auto *d_t = t.Write();
       mfem::forall(height, [=] MFEM_HOST_DEVICE(int i)
-                   { d_temp[i] = d_dof_multiplicity[i] * d_x[i]; });
+                   { d_t[i] = d_dof_multiplicity[i] * d_x[i]; });
     }
-    CeedAddMult(op_t, v, u, temp, y);
+    CeedAddMult(op_t, v, u, t, y);
   }
   else
   {

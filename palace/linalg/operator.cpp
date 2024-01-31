@@ -65,8 +65,6 @@ ComplexWrapperOperator::ComplexWrapperOperator(std::unique_ptr<Operator> &&dAr,
   MFEM_VERIFY(Ar || Ai, "Cannot construct ComplexWrapperOperator from an empty matrix!");
   MFEM_VERIFY((!Ar || !Ai) || (Ar->Height() == Ai->Height() && Ar->Width() == Ai->Width()),
               "Mismatch in dimension of real and imaginary matrix parts!");
-  tx.UseDevice(true);
-  ty.UseDevice(true);
   height = Ar ? Ar->Height() : Ai->Height();
   width = Ar ? Ar->Width() : Ai->Width();
 }
@@ -221,7 +219,7 @@ void ComplexWrapperOperator::AddMult(const ComplexVector &x, ComplexVector &y,
   Vector &yi = y.Imag();
   if (a.real() != 0.0 && a.imag() != 0.0)
   {
-    ty.SetSize(height);
+    auto ty = workspace::NewVector<ComplexVector>(height);
     Mult(x, ty);
     y.AXPY(a, ty);
   }
@@ -288,9 +286,9 @@ void ComplexWrapperOperator::AddMultTranspose(const ComplexVector &x, ComplexVec
   Vector &yi = y.Imag();
   if (a.real() != 0.0 && a.imag() != 0.0)
   {
-    tx.SetSize(width);
-    MultTranspose(x, tx);
-    y.AXPY(a, tx);
+    auto ty = workspace::NewVector<ComplexVector>(width);
+    MultTranspose(x, ty);
+    y.AXPY(a, ty);
   }
   else if (a.real() != 0.0)
   {
@@ -356,9 +354,9 @@ void ComplexWrapperOperator::AddMultHermitianTranspose(const ComplexVector &x,
   Vector &yi = y.Imag();
   if (a.real() != 0.0 && a.imag() != 0.0)
   {
-    tx.SetSize(width);
-    MultHermitianTranspose(x, tx);
-    y.AXPY(a, tx);
+    auto ty = workspace::NewVector<ComplexVector>(width);
+    MultHermitianTranspose(x, ty);
+    y.AXPY(a, ty);
   }
   else if (a.real() != 0.0)
   {
@@ -415,7 +413,6 @@ void ComplexWrapperOperator::AddMultHermitianTranspose(const ComplexVector &x,
 SumOperator::SumOperator(const Operator &op, double a) : Operator(op.Height(), op.Width())
 {
   AddOperator(op, a);
-  z.UseDevice(true);
 }
 
 void SumOperator::AddOperator(const Operator &op, double a)
@@ -434,10 +431,12 @@ void SumOperator::Mult(const Vector &x, Vector &y) const
     {
       y *= ops.front().second;
     }
-    return;
   }
-  y = 0.0;
-  AddMult(x, y);
+  else
+  {
+    y = 0.0;
+    AddMult(x, y);
+  }
 }
 
 void SumOperator::MultTranspose(const Vector &x, Vector &y) const
@@ -449,15 +448,17 @@ void SumOperator::MultTranspose(const Vector &x, Vector &y) const
     {
       y *= ops.front().second;
     }
-    return;
   }
-  y = 0.0;
-  AddMultTranspose(x, y);
+  else
+  {
+    y = 0.0;
+    AddMultTranspose(x, y);
+  }
 }
 
 void SumOperator::AddMult(const Vector &x, Vector &y, const double a) const
 {
-  z.SetSize(y.Size());
+  auto z = workspace::NewVector<Vector>(height);
   for (const auto &[op, c] : ops)
   {
     op->Mult(x, z);
@@ -467,7 +468,7 @@ void SumOperator::AddMult(const Vector &x, Vector &y, const double a) const
 
 void SumOperator::AddMultTranspose(const Vector &x, Vector &y, const double a) const
 {
-  z.SetSize(y.Size());
+  auto z = workspace::NewVector<Vector>(height);
   for (const auto &[op, c] : ops)
   {
     op->MultTranspose(x, z);
