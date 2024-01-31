@@ -19,6 +19,7 @@
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
 #include "utils/timer.hpp"
+#include "utils/workspace.hpp"
 
 namespace palace
 {
@@ -177,7 +178,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // projected appropriately.
   if (iodata.solver.eigenmode.init_v0)
   {
-    ComplexVector v0;
+    auto v0 = workspace::NewVector<ComplexVector>(E.Size());
     if (iodata.solver.eigenmode.init_v0_const)
     {
       Mpi::Print(" Using constant starting vector\n");
@@ -196,8 +197,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
     // Debug
     // const auto &Grad = spaceop.GetGradMatrix();
-    // ComplexVector r0(Grad->Width());
-    // r0.UseDevice(true);
+    // auto r0 = workspace::NewVector<ComplexVector>(Grad.Width());
     // Grad.MultTranspose(v0.Real(), r0.Real());
     // Grad.MultTranspose(v0.Imag(), r0.Imag());
     // r0.Print();

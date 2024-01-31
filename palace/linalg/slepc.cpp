@@ -137,22 +137,20 @@ inline VecType PetscVecType()
   return VECSTANDARD;
 }
 
-struct MatShellContext
-{
-  const ComplexOperator &A;
-  ComplexVector &x, &y;
-};
-
 PetscErrorCode __mat_apply_shell(Mat A, Vec x, Vec y)
 {
   PetscFunctionBeginUser;
-  MatShellContext *ctx;
+  ComplexOperator *ctx;
   PetscCall(MatShellGetContext(A, (void **)&ctx));
   MFEM_VERIFY(ctx, "Invalid PETSc shell matrix context for SLEPc!");
 
-  PetscCall(FromPetscVec(x, ctx->x));
-  ctx->A.Mult(ctx->x, ctx->y);
-  PetscCall(ToPetscVec(ctx->y, y));
+  PetscInt m, n;
+  PalacePetscCall(MatGetLocalSize(A, &m, &n));
+  auto x1 = workspace::NewVector<ComplexVector>(n);
+  auto y1 = workspace::NewVector<ComplexVector>(m);
+  PetscCall(FromPetscVec(x, x1));
+  ctx->Mult(x1, y1);
+  PetscCall(ToPetscVec(y1, y));
 
   PetscFunctionReturn(PETSC_SUCCESS);
 }
@@ -160,13 +158,17 @@ PetscErrorCode __mat_apply_shell(Mat A, Vec x, Vec y)
 PetscErrorCode __mat_apply_transpose_shell(Mat A, Vec x, Vec y)
 {
   PetscFunctionBeginUser;
-  MatShellContext *ctx;
+  ComplexOperator *ctx;
   PetscCall(MatShellGetContext(A, (void **)&ctx));
   MFEM_VERIFY(ctx, "Invalid PETSc shell matrix context for SLEPc!");
 
-  PetscCall(FromPetscVec(x, ctx->x));
-  ctx->A.MultTranspose(ctx->x, ctx->y);
-  PetscCall(ToPetscVec(ctx->y, y));
+  PetscInt m, n;
+  PalacePetscCall(MatGetLocalSize(A, &m, &n));
+  auto x1 = workspace::NewVector<ComplexVector>(m);
+  auto y1 = workspace::NewVector<ComplexVector>(n);
+  PetscCall(FromPetscVec(x, x1));
+  ctx->MultTranspose(x1, y1);
+  PetscCall(ToPetscVec(y1, y));
 
   PetscFunctionReturn(PETSC_SUCCESS);
 }
@@ -174,13 +176,17 @@ PetscErrorCode __mat_apply_transpose_shell(Mat A, Vec x, Vec y)
 PetscErrorCode __mat_apply_hermitian_transpose_shell(Mat A, Vec x, Vec y)
 {
   PetscFunctionBeginUser;
-  MatShellContext *ctx;
+  ComplexOperator *ctx;
   PetscCall(MatShellGetContext(A, (void **)&ctx));
   MFEM_VERIFY(ctx, "Invalid PETSc shell matrix context for SLEPc!");
 
-  PetscCall(FromPetscVec(x, ctx->x));
-  ctx->A.MultHermitianTranspose(ctx->x, ctx->y);
-  PetscCall(ToPetscVec(ctx->y, y));
+  PetscInt m, n;
+  PalacePetscCall(MatGetLocalSize(A, &m, &n));
+  auto x1 = workspace::NewVector<ComplexVector>(m);
+  auto y1 = workspace::NewVector<ComplexVector>(n);
+  PetscCall(FromPetscVec(x, x1));
+  ctx->MultHermitianTranspose(x1, y1);
+  PetscCall(ToPetscVec(y1, y));
 
   PetscFunctionReturn(PETSC_SUCCESS);
 };
@@ -241,14 +247,9 @@ PetscReal GetMaxSingularValue(MPI_Comm comm, const ComplexOperator &A, bool herm
   // or SVD solvers, namely MATOP_MULT and MATOP_MULT_HERMITIAN_TRANSPOSE (if the matrix
   // is not Hermitian).
   MFEM_VERIFY(A.Height() == A.Width(), "Spectral norm requires a square matrix!");
-  const PetscInt n = A.Height();
-  ComplexVector x(n), y(n);
-  x.UseDevice(true);
-  y.UseDevice(true);
-  MatShellContext ctx = {A, x, y};
   Mat A0;
-  PalacePetscCall(
-      MatCreateShell(comm, n, n, PETSC_DECIDE, PETSC_DECIDE, (void *)&ctx, &A0));
+  const PetscInt n = A.Height();
+  PalacePetscCall(MatCreateShell(comm, n, n, PETSC_DECIDE, PETSC_DECIDE, (void *)&A, &A0));
   PalacePetscCall(MatShellSetOperation(A0, MATOP_MULT, (void (*)(void))__mat_apply_shell));
   PalacePetscCall(MatShellSetVecType(A0, PetscVecType()));
   if (herm)

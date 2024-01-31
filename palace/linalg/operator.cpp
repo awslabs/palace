@@ -636,10 +636,9 @@ double SpectralNorm(MPI_Comm comm, const ComplexOperator &A, bool herm, double t
   int it = 0;
   double res = 0.0;
   double l = 0.0, l0 = 0.0;
-  ComplexVector u(A.Height()), v(A.Height());
-  u.UseDevice(true);
-  v.UseDevice(true);
-  SetRandom(comm, u);
+  auto u = workspace::NewVector<ComplexVector>(A.Height());
+  auto v = workspace::NewVector<ComplexVector>(A.Height());
+  SetRandom<ComplexVector>(comm, u);
   Normalize(comm, u);
   while (it < max_it)
   {

@@ -91,10 +91,9 @@ DivFreeSolver<VecType>::DivFreeSolver(
     const int mg_smooth_order =
         std::max(h1_fespaces.GetFinestFESpace().GetMaxElementOrder(), 2);
     pc = std::make_unique<GeometricMultigridSolver<OperType>>(
-        h1_fespaces.GetFinestFESpace().GetComm(),
-
-        std::move(amg), h1_fespaces.GetProlongationOperators(), nullptr, 1, 1,
-        mg_smooth_order, 1.0, 0.0, true);
+        h1_fespaces.GetFinestFESpace().GetComm(), std::move(amg),
+        h1_fespaces.GetProlongationOperators(), nullptr, 1, 1, mg_smooth_order, 1.0, 0.0,
+        true);
   }
   else
   {
