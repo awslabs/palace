@@ -163,7 +163,7 @@ std::unique_ptr<Operator> CurlCurlOperator::GetStiffnessMatrix()
                                          mat_op.GetInvPermeability());
   BilinearForm k(GetNDSpace());
   k.AddDomainIntegrator<CurlCurlIntegrator>(muinv_func);
-  k.AssembleQuadratureData();
+  // k.AssembleQuadratureData();
   auto k_vec = k.Assemble(GetNDSpaces(), skip_zeros);
   auto K = std::make_unique<MultigridOperator>(GetNDSpaces().GetNumLevels());
   for (std::size_t l = 0; l < GetNDSpaces().GetNumLevels(); l++)

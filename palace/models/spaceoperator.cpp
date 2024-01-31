@@ -694,7 +694,7 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(double a0, doub
   const auto n_levels = GetNDSpaces().GetNumLevels();
   std::vector<std::unique_ptr<Operator>> br_vec(n_levels), bi_vec(n_levels),
       br_aux_vec(n_levels), bi_aux_vec(n_levels);
-  constexpr bool skip_zeros = false, assemble_q_data = true;
+  constexpr bool skip_zeros = false, assemble_q_data = false;
   if (std::is_same<OperType, ComplexOperator>::value && !pc_mat_real)
   {
     MaterialPropertyCoefficient dfr(mat_op.MaxCeedAttribute()),
