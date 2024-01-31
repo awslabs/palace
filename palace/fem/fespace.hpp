@@ -31,9 +31,6 @@ private:
   mutable ceed::CeedObjectMap<CeedBasis> basis;
   mutable ceed::CeedObjectMap<CeedElemRestriction> restr, interp_restr, interp_range_restr;
 
-  // Temporary storage for operator applications.
-  mutable ComplexVector tx, lx, ly;
-
   bool HasUniqueInterpRestriction(const mfem::FiniteElement &fe) const
   {
     // For interpolation operators and tensor-product elements, we need native (not
@@ -63,9 +60,6 @@ public:
     : fespace(&mesh.Get(), std::forward<T>(args)...), mesh(mesh)
   {
     ResetCeedObjects();
-    tx.UseDevice(true);
-    lx.UseDevice(true);
-    ly.UseDevice(true);
   }
   virtual ~FiniteElementSpace() { ResetCeedObjects(); }
 
@@ -128,48 +122,6 @@ public:
   BuildCeedElemRestriction(const mfem::FiniteElementSpace &fespace, Ceed ceed,
                            mfem::Geometry::Type geom, const std::vector<int> &indices,
                            bool is_interp = false, bool is_interp_range = false);
-
-  template <typename VecType>
-  auto &GetTVector() const
-  {
-    tx.SetSize(GetTrueVSize());
-    if constexpr (std::is_same<VecType, ComplexVector>::value)
-    {
-      return tx;
-    }
-    else
-    {
-      return tx.Real();
-    }
-  }
-
-  template <typename VecType>
-  auto &GetLVector() const
-  {
-    lx.SetSize(GetVSize());
-    if constexpr (std::is_same<VecType, ComplexVector>::value)
-    {
-      return lx;
-    }
-    else
-    {
-      return lx.Real();
-    }
-  }
-
-  template <typename VecType>
-  auto &GetLVector2() const
-  {
-    ly.SetSize(GetVSize());
-    if constexpr (std::is_same<VecType, ComplexVector>::value)
-    {
-      return ly;
-    }
-    else
-    {
-      return ly.Real();
-    }
-  }
 
   // Get the associated MPI communicator.
   MPI_Comm GetComm() const { return fespace.GetComm(); }
