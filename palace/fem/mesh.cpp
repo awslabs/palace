@@ -3,6 +3,8 @@
 
 #include "mesh.hpp"
 
+#include <ceed/backend.h>
+#include <mfem/general/forall.hpp>
 #include "fem/coefficient.hpp"
 #include "fem/fespace.hpp"
 #include "fem/libceed/integrator.hpp"
@@ -137,6 +139,33 @@ auto GetElementIndices(const mfem::ParMesh &mesh, bool use_bdr, int start, int s
   return element_indices;
 }
 
+void AssembleCeedAttributeData(const mfem::Array<int> &attr, int Q, Ceed ceed,
+                               CeedVector geom_data, CeedElemRestriction geom_data_restr)
+{
+  // The data for quadrature point i, component j, element k is found at index
+  // i * layout[0] + j * layout[1] + k * layout[2]. This is also correctly a non-OpenMP loop
+  // when executed on the CPU (OpenMP is handled in outer scope).
+  CeedMemType mem;
+  CeedInt layout[3];
+  CeedScalar *geom_data_array;
+  PalaceCeedCall(ceed, CeedGetPreferredMemType(ceed, &mem));
+  if (!mfem::Device::Allows(mfem::Backend::DEVICE_MASK))
+  {
+    mem = CEED_MEM_HOST;
+  }
+  PalaceCeedCall(ceed, CeedElemRestrictionGetELayout(geom_data_restr, &layout));
+  PalaceCeedCall(ceed, CeedVectorGetArray(geom_data, mem, &geom_data_array));
+  const auto *d_attr = attr.Read(mem == CEED_MEM_DEVICE);
+  mfem::forall_switch(mem == CEED_MEM_DEVICE, attr.Size() * Q,
+                      [=] MFEM_HOST_DEVICE(int l)
+                      {
+                        int k = l / Q;
+                        int i = l % Q;
+                        geom_data_array[i * layout[0] + k * layout[2]] = d_attr[k];
+                      });
+  CeedVectorRestoreArray(geom_data, &geom_data_array);
+}
+
 template <typename T>
 auto AssembleGeometryData(const mfem::GridFunction &mesh_nodes, Ceed ceed,
                           mfem::Geometry::Type geom, std::vector<int> &indices,
@@ -160,30 +189,10 @@ auto AssembleGeometryData(const mfem::GridFunction &mesh_nodes, Ceed ceed,
   PalaceCeedCall(ceed, CeedBasisGetNumQuadraturePoints(mesh_basis, &num_qpts));
   PalaceCeedCall(
       ceed, CeedVectorCreate(ceed, num_elem * num_qpts * geom_data_size, &data.geom_data));
-
-  // Data for quadrature point i, component j, element k is found at index i * strides[0] +
-  // j * strides[1] + k * strides[2].
-  CeedMemType mem;
-  CeedInt strides[3];
-  PalaceCeedCall(ceed, CeedGetPreferredMemType(ceed, &mem));
-  if (mfem::Device::Allows(mfem::Backend::DEVICE_MASK) && mem == CEED_MEM_DEVICE)
-  {
-    // GPU backends have CEED_STRIDES_BACKEND = {1, num_elem * num_qpts, num_qpts}.
-    strides[0] = 1;
-    strides[1] = num_elem * num_qpts;
-    strides[2] = num_qpts;
-  }
-  else
-  {
-    // CPU backends have CEED_STRIDES_BACKEND = {1, num_qpts, num_qpts * geom_data_size}.
-    strides[0] = 1;
-    strides[1] = num_qpts;
-    strides[2] = num_qpts * geom_data_size;
-  }
-  PalaceCeedCall(ceed,
-                 CeedElemRestrictionCreateStrided(ceed, num_elem, num_qpts, geom_data_size,
-                                                  num_elem * num_qpts * geom_data_size,
-                                                  strides, &data.geom_data_restr));
+  PalaceCeedCall(
+      ceed, CeedElemRestrictionCreateStrided(ceed, num_elem, num_qpts, geom_data_size,
+                                             num_elem * num_qpts * geom_data_size,
+                                             CEED_STRIDES_BACKEND, &data.geom_data_restr));
 
   // Compute the required geometry factors at quadrature points.
   CeedVector mesh_nodes_vec;
@@ -196,22 +205,16 @@ auto AssembleGeometryData(const mfem::GridFunction &mesh_nodes, Ceed ceed,
   PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&mesh_restr));
   PalaceCeedCall(ceed, CeedBasisDestroy(&mesh_basis));
 
-  // Compute element attribute quadrature data. All inputs to a QFunction require the same
+  // Set the element attribute quadrature data. All inputs to a QFunction require the same
   // number of quadrature points, so we store the attribute at each quadrature point. This
   // is the first component of the quadrature data.
   {
-    CeedScalar *geom_data_array;
-    PalaceCeedCall(ceed,
-                   CeedVectorGetArray(data.geom_data, CEED_MEM_HOST, &geom_data_array));
+    mfem::Array<int> attr(num_elem);
     for (std::size_t k = 0; k < num_elem; k++)
     {
-      const auto attr = GetCeedAttribute(data.indices[k]);
-      for (CeedInt i = 0; i < num_qpts; i++)
-      {
-        geom_data_array[i * strides[0] + k * strides[2]] = attr;
-      }
+      attr[k] = GetCeedAttribute(data.indices[k]);
     }
-    CeedVectorRestoreArray(data.geom_data, &geom_data_array);
+    AssembleCeedAttributeData(attr, num_qpts, ceed, data.geom_data, data.geom_data_restr);
   }
 
   return data;
