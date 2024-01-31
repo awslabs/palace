@@ -356,8 +356,8 @@ void BaseSolver::PostprocessDomains(const PostOperator &postop, const std::strin
   energy_data.reserve(postop.GetDomainPostOp().GetDomains().size());
   for (const auto &[idx, data] : postop.GetDomainPostOp().GetDomains())
   {
-    const double E_elec_i = postop.GetEFieldEnergy(idx);
-    const double E_mag_i = postop.GetHFieldEnergy(idx);
+    const double E_elec_i = (E_elec > 0.0) ? postop.GetEFieldEnergy(idx) : 0.0;
+    const double E_mag_i = (E_mag > 0.0) ? postop.GetHFieldEnergy(idx) : 0.0;
     energy_data.push_back({idx, E_elec_i, E_mag_i});
   }
   if (root)
