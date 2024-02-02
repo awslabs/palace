@@ -588,6 +588,7 @@ void GetAxisAlignedBoundingBox(const mfem::ParMesh &mesh, const mfem::Array<int>
   }
   else
   {
+    mesh.GetNodes()->HostRead();
     const int ref = mesh.GetNodes()->FESpace()->GetMaxElementOrder();
     auto BBUpdate = [&ref](mfem::GeometryRefiner refiner, mfem::Geometry::Type &geom,
                            mfem::ElementTransformation &T, mfem::DenseMatrix &pointmat,
