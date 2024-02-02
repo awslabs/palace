@@ -14,7 +14,7 @@ jobs:
   check-style:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       # Install more recent clang-format from LLVM (match Homebrew v16)
       - name: Install clang-format
@@ -43,7 +43,7 @@ jobs:
   check-config:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       - name: Check JSON Schema
         run: |
