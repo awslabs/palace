@@ -13,8 +13,11 @@ The format of this changelog is based on
 
 ## In progress
 
-  - Changed default value of `config["Solver"]["PartialAssemblyOrder"]` in order to active
+  - Changed default value of `config["Solver"]["PartialAssemblyOrder"]` in order to activate
     operator partial assembly by default for all operators in all simulation types.
+  - Changed the normalization of computed eigenmodes for consistency across different domain
+    decompositions. Eigenvectors are now normalized with respect to the mass matrix for unit
+    domain electric field energy.
 
 ## [0.12.0] - 2023-12-21
 
