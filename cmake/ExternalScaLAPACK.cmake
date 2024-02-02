@@ -36,11 +36,6 @@ endif()
 string(REPLACE ";" "; " SCALAPACK_OPTIONS_PRINT "${SCALAPACK_OPTIONS}")
 message(STATUS "SCALAPACK_OPTIONS: ${SCALAPACK_OPTIONS_PRINT}")
 
-# Fix build
-set(SCALAPACK_PATCH_FILES
-  "${CMAKE_SOURCE_DIR}/extern/patch/scalapack/patch_build.diff"
-)
-
 include(ExternalProject)
 ExternalProject_Add(scalapack
   DEPENDS           ${SCALAPACK_DEPENDENCIES}
@@ -61,6 +56,6 @@ if(BUILD_SHARED_LIBS)
 else()
   set(_SCALAPACK_LIB_SUFFIX ${CMAKE_STATIC_LIBRARY_SUFFIX})
 endif()
-set(SCALAPACK_LIBRARIES ${CMAKE_INSTALL_PREFIX}/lib/libscalapack${_SCALAPACK_LIB_SUFFIX}$<SEMICOLON>${_SCALAPACK_LIBRARIES}
+set(SCALAPACK_LIBRARIES ${CMAKE_INSTALL_PREFIX}/lib/libscalapack${_SCALAPACK_LIB_SUFFIX}
   CACHE STRING "List of library files for ScaLAPACK"
 )
