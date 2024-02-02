@@ -352,7 +352,7 @@ for interface ``j`` is given by
 ```math
 \frac{1}{Q^{MS}_j} =
     \frac{1}{\mathcal{E}^{elec}} \, \frac{1}{2} \,
-    \frac{t_j\tan{\delta}_j(\varepsilon_{r,j}^{S})^2}{\varepsilon_{r,j}^{MA}} \,
+    \frac{t_j\tan{\delta}_j(\varepsilon_{r,j}^{S})^2}{\varepsilon_{r,j}^{MS}} \,
     \text{Re}\left\{\int_{\Gamma_j}\bm{E}_n^*\cdot\bm{E}_n\,dS\right\}
 ```
 

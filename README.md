@@ -34,7 +34,7 @@ the frequency or time domain, using the
   - Scalable algorithms for the solution of linear systems of equations, including matrix-
     free $p$-multigrid utilizing
     [high-order operator partial assembly](https://mfem.org/performance/), parallel sparse
-    direct solvers, and algebraic multigrid(AMG) preconditioners, for fast performance on
+    direct solvers, and algebraic multigrid (AMG) preconditioners, for fast performance on
     platforms ranging from laptops to HPC systems.
 
 ## Getting started
