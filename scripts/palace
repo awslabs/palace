@@ -12,12 +12,12 @@ Wrapper for launching Palace using MPI
 Options:
   -h, --help                       Show this help message and exit
   -dry-run, --dry-run              Parse configuration file for errors and exit
-  -serial, --serial                Call Palace without MPI launcher
+  -serial, --serial                Call Palace without MPI launcher, default is false
   -np, --np NUM_PROCS              How many MPI processes to use, default is 1
   -nt, --nt NUM_THREADS            Number of OpenMP threads to use for OpenMP builds, default is 1 or the value of OMP_NUM_THREADS in the environment
   -launcher, --launcher LAUNCHER   MPI launcher, default is \`mpirun\`
   -launcher-args,
-    --launcher-args ARGS           Any extra arguments to pass to MPI launcher, for example \`--map-by\` or \`--bind-to\` with their respective options (quoted)
+    --launcher-args ARGS           Any extra arguments to pass to MPI launcher, for example \`--map-by\` or \`--bind-to\` with their respective options (quoted), default is \`--bind-to none\`
 "
 }
 
@@ -27,7 +27,7 @@ SERIAL="false"
 NUM_PROCS="1"
 NUM_THREADS=""
 LAUNCHER="mpirun"
-LAUNCHER_ARGS=""
+LAUNCHER_ARGS="--bind-to none"
 POSITIONAL=()
 while [[ $# -gt 0 ]]; do
     key="$1"
