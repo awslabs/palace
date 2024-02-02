@@ -37,4 +37,4 @@ CEED_QFUNCTION(f_apply_hdivmass_32)(void *__restrict__ ctx, CeedInt Q,
   return 0;
 }
 
-#endif  // PALACE_LIBCEED_CURLCURL_MASS_32_QF_H
+#endif  // PALACE_LIBCEED_HDIV_MASS_32_QF_H

@@ -31,4 +31,4 @@
 #include "33/hdivmass_33_qf.h"
 #include "33/hdivmass_build_33_qf.h"
 
-#endif  // PALACE_LIBCEED_CURLCURL_MASS_QF_H
+#endif  // PALACE_LIBCEED_HDIV_MASS_QF_H
