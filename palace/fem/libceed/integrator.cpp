@@ -346,7 +346,9 @@ int CeedGeometryDataGetSpaceDimension(CeedElemRestriction geom_data_restr, CeedI
 
 void AssembleCeedGeometryData(Ceed ceed, CeedElemRestriction mesh_restr,
                               CeedBasis mesh_basis, CeedVector mesh_nodes,
-                              CeedVector geom_data, CeedElemRestriction geom_data_restr)
+                              CeedElemRestriction attr_restr, CeedBasis attr_basis,
+                              CeedVector elem_attr, CeedVector geom_data,
+                              CeedElemRestriction geom_data_restr)
 {
   CeedInt dim, space_dim, num_elem, num_qpts;
   PalaceCeedCall(ceed, CeedBasisGetDimension(mesh_basis, &dim));
@@ -389,6 +391,7 @@ void AssembleCeedGeometryData(Ceed ceed, CeedElemRestriction mesh_restr,
   }
 
   // Inputs
+  PalaceCeedCall(ceed, CeedQFunctionAddInput(build_qf, "attr", 1, CEED_EVAL_INTERP));
   PalaceCeedCall(ceed, CeedQFunctionAddInput(build_qf, "q_w", 1, CEED_EVAL_WEIGHT));
   PalaceCeedCall(
       ceed, CeedQFunctionAddInput(build_qf, "grad_x", space_dim * dim, CEED_EVAL_GRAD));
@@ -409,6 +412,8 @@ void AssembleCeedGeometryData(Ceed ceed, CeedElemRestriction mesh_restr,
   PalaceCeedCall(ceed, CeedOperatorCreate(ceed, build_qf, nullptr, nullptr, &build_op));
   PalaceCeedCall(ceed, CeedQFunctionDestroy(&build_qf));
 
+  PalaceCeedCall(ceed,
+                 CeedOperatorSetField(build_op, "attr", attr_restr, attr_basis, elem_attr));
   PalaceCeedCall(ceed, CeedOperatorSetField(build_op, "q_w", CEED_ELEMRESTRICTION_NONE,
                                             mesh_basis, CEED_VECTOR_NONE));
   PalaceCeedCall(ceed, CeedOperatorSetField(build_op, "grad_x", mesh_restr, mesh_basis,
