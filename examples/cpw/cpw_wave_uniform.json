@@ -9,10 +9,7 @@
   {
     "Mesh": "mesh/cpw_wave.msh",
     "L0": 1.0e-6,  // μm
-    "Refinement":
-    {
-      "UniformLevels": 1
-    }
+    "Refinement": {}
   },
   "Domains":
   {
@@ -114,7 +111,7 @@
   },
   "Solver":
   {
-    "Order": 1,
+    "Order": 2,
     "Driven":
     {
       "MinFreq": 2.0,  // GHz

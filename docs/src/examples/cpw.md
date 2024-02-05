@@ -80,9 +80,8 @@ sweep algorithm is given a tolerance of ``1\times10^{-3}`` for choosing the samp
 points; the simulation with uniform ports uses ``9`` frequency samples and that with wave
 ports uses ``10``. Despite the much finer frequency resolution, the adaptive frequency
 sweep simulations take roughly the same amount of time as the uniform ones where the
-resulting resolution is worse by a factor of ``20``. Lastly, for all simulations, a single
-level of uniform mesh refinement is applied to the initial mesh and a first-order finite
-element approximation for the solution is used.
+resulting resolution is worse by a factor of ``20``. Lastly, for all simulations, a second-
+order finite element approximation for the solution is used.
 
 The results from the four different simulations are presented in the plots below. Note that
 here, ``\text{dB}`` means ``20\log_{10}(|S_{ij}|)``:
@@ -105,8 +104,8 @@ ports, namely the lumped port excitation exhibits much higher reflection that th
 ports. This can be attributed to the coarse meshes used for these examples. Indeed,
 refining the mesh or increasing the order of the solution approximation resolves this issue
 and leads to better agreement between the lumped port and wave port results. See below for
-the results with again a single level of mesh refinement but ``p = 2`` for the order of the
-solution space.
+the results with again ``p = 2`` for the order of the solution space but with a single level
+of mesh refinement as well.
 
 ```@raw html
 <br/><p align="center">

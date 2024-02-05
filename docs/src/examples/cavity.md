@@ -70,9 +70,8 @@ and
 [`cavity_impedance.json`](https://github.com/awslabs/palace/blob/main/examples/cavity/cavity_impedance.json).
 
 In both, the [`config["Problem"]["Type"]`](../config/problem.md#config%5B%22Problem%22%5D)
-field is set to `"Eigenmode"`, and we use the mesh shown above with a single level of
-uniform mesh refinement (`"UniformLevels": 1`). The material properties for Teflon are
-entered under
+field is set to `"Eigenmode"`, and we use the mesh shown above. The material properties for
+Teflon are entered under
 [`config["Domains"]["Materials"]`](../config/domains.md#domains%5B%22Materials%22%5D). The
 [`config["Domains"]["Postprocessing"]["Energy]"`](../config/domains.md#domains%5B%22Postprocessing%22%5D%5B%22Energy%22%5D)
 object is used to extract the quality factor due to bulk dielectric loss; in this problem
@@ -90,10 +89,10 @@ In both cases, we configure the eigenvalue solver to solve for the ``15`` lowest
 modes above ``2.0\text{ GHz}`` (the dominant mode frequencies for both the
 ``\text{TE}`` and ``\text{TM}`` cases fall around ``2.9\text{ GHz}`` frequency for this
 problem). A sparse direct solver is used for the solutions of the linear system resulting
-from the spatial discretization of the governing equations, using in this case a second-
+from the spatial discretization of the governing equations, using in this case a fourth-
 order finite element space.
 
-The frequencies for the lowest order ``\text{TE}`` and ``\text{TM}`` modes computed using
+The frequencies for the lowest-order ``\text{TE}`` and ``\text{TM}`` modes computed using
 the above formula for this problem are listed in the table below.
 
 | ``(n,m,l)`` | ``f_{\text{TE}}``       | ``f_{\text{TM}}``       |

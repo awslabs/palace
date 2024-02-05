@@ -225,6 +225,7 @@ void ArpackEigenvalueSolver::SetNumModes(int num_eig, int num_vec)
     eig.reset();
     perm.reset();
     res.reset();
+    xscale.reset();
   }
   if (ncv > 0 && num_vec != ncv)
   {
@@ -435,6 +436,23 @@ void ArpackEigenvalueSolver::GetEigenvector(int i, ComplexVector &x) const
   MFEM_VERIFY(x.Size() == n, "Invalid size mismatch for provided eigenvector!");
   const int &j = perm.get()[i];
   x.Set(V.get() + j * n, n);
+  if (xscale.get()[j] > 0.0)
+  {
+    x *= xscale.get()[j];
+  }
+}
+
+double ArpackEigenvalueSolver::GetEigenvectorNorm(const ComplexVector &x,
+                                                  ComplexVector &Bx) const
+{
+  if (opB)
+  {
+    return linalg::Norml2(comm, x, *opB, Bx);
+  }
+  else
+  {
+    return linalg::Norml2(comm, x);
+  }
 }
 
 double ArpackEigenvalueSolver::GetError(int i, EigenvalueSolver::ErrorType type) const
@@ -452,6 +470,18 @@ double ArpackEigenvalueSolver::GetError(int i, EigenvalueSolver::ErrorType type)
       return res.get()[j] / GetBackwardScaling(eig.get()[j]);
   }
   return 0.0;
+}
+
+void ArpackEigenvalueSolver::RescaleEigenvectors(int num_eig)
+{
+  res = std::make_unique<double[]>(num_eig);
+  xscale = std::make_unique<double[]>(num_eig);
+  for (int i = 0; i < num_eig; i++)
+  {
+    x1.Set(V.get() + i * n, n);
+    xscale.get()[i] = 1.0 / GetEigenvectorNorm(x1, y1);
+    res.get()[i] = GetResidualNorm(eig.get()[i], x1, y1) / linalg::Norml2(comm, x1);
+  }
 }
 
 // EPS specific methods
@@ -483,9 +513,9 @@ void ArpackEPSSolver::SetOperators(const ComplexOperator &K, const ComplexOperat
   }
 
   // Set up workspace.
-  x.SetSize(opK->Height());
-  y.SetSize(opK->Height());
-  z.SetSize(opK->Height());
+  x1.SetSize(opK->Height());
+  y1.SetSize(opK->Height());
+  z1.SetSize(opK->Height());
   n = opK->Height();
 }
 
@@ -493,7 +523,7 @@ int ArpackEPSSolver::Solve()
 {
   // Set some defaults (default maximum iterations from SLEPc).
   CheckParameters();
-  HYPRE_BigInt N = linalg::GlobalSize(comm, z);
+  HYPRE_BigInt N = linalg::GlobalSize(comm, z1);
   if (ncv > N)
   {
     ncv = mfem::internal::to_int(N);
@@ -525,21 +555,13 @@ int ArpackEPSSolver::Solve()
   {
     eig = std::make_unique<std::complex<double>[]>(nev + 1);
     perm = std::make_unique<int[]>(nev);
-    res = std::make_unique<double[]>(nev);
   }
 
   // Solve the generalized eigenvalue problem.
   int num_conv = SolveInternal(n, r.get(), V.get(), eig.get(), perm.get());
 
   // Compute the eigenpair residuals: || (K - λ M) x ||₂ for eigenvalue λ.
-  for (int i = 0; i < nev; i++)
-  {
-    const std::complex<double> l = eig.get()[i];
-    x.Set(V.get() + i * n, n);
-    opK->Mult(x, y);
-    opM->AddMult(x, y, -l);
-    res.get()[i] = linalg::Norml2(comm, y);
-  }
+  RescaleEigenvectors(nev);
 
   // Reset for next solve.
   info = 0;
@@ -553,37 +575,46 @@ void ArpackEPSSolver::ApplyOp(const std::complex<double> *px,
   //               y = M⁻¹ K x .
   // Case 2: Shift-and-invert spectral transformation (opInv = (K - σ M)⁻¹)
   //               y = (K - σ M)⁻¹ M x .
-  x.Set(px, n);
+  x1.Set(px, n);
   if (!sinvert)
   {
-    opK->Mult(x, z);
-    opInv->Mult(z, y);
-    y *= 1.0 / gamma;
+    opK->Mult(x1, z1);
+    opInv->Mult(z1, y1);
+    y1 *= 1.0 / gamma;
   }
   else
   {
-    opM->Mult(x, z);
-    opInv->Mult(z, y);
-    y *= gamma;
+    opM->Mult(x1, z1);
+    opInv->Mult(z1, y1);
+    y1 *= gamma;
   }
   if (opProj)
   {
-    // Mpi::Print(" Before projection: {:e}\n", linalg::Norml2(comm, y));
-    opProj->Mult(y);
-    // Mpi::Print(" After projection: {:e}\n", linalg::Norml2(comm, y));
+    // Mpi::Print(" Before projection: {:e}\n", linalg::Norml2(comm, y1));
+    opProj->Mult(y1);
+    // Mpi::Print(" After projection: {:e}\n", linalg::Norml2(comm, y1));
   }
-  y.Get(py, n);
+  y1.Get(py, n);
 }
 
 void ArpackEPSSolver::ApplyOpB(const std::complex<double> *px,
                                std::complex<double> *py) const
 {
   MFEM_VERIFY(opB, "No B operator for weighted inner product in ARPACK solve!");
-  x.Set(px, n);
-  opB->Mult(x.Real(), y.Real());
-  opB->Mult(x.Imag(), y.Imag());
-  y *= delta * gamma;
-  y.Get(py, n);
+  x1.Set(px, n);
+  opB->Mult(x1.Real(), y1.Real());
+  opB->Mult(x1.Imag(), y1.Imag());
+  y1 *= delta * gamma;
+  y1.Get(py, n);
+}
+
+double ArpackEPSSolver::GetResidualNorm(std::complex<double> l, const ComplexVector &x,
+                                        ComplexVector &r) const
+{
+  // Compute the i-th eigenpair residual: || (K - λ M) x ||₂ for eigenvalue λ.
+  opK->Mult(x, r);
+  opM->AddMult(x, r, -l);
+  return linalg::Norml2(comm, r);
 }
 
 double ArpackEPSSolver::GetBackwardScaling(std::complex<double> l) const
@@ -638,7 +669,7 @@ void ArpackPEPSolver::SetOperators(const ComplexOperator &K, const ComplexOperat
   x2.SetSize(opK->Height());
   y1.SetSize(opK->Height());
   y2.SetSize(opK->Height());
-  z.SetSize(opK->Height());
+  z1.SetSize(opK->Height());
   n = opK->Height();
 }
 
@@ -647,7 +678,7 @@ int ArpackPEPSolver::Solve()
   // Set some defaults (from SLEPc ARPACK interface). The problem size is the size of the
   // 2x2 block linearized problem.
   CheckParameters();
-  HYPRE_BigInt N = linalg::GlobalSize(comm, z);
+  HYPRE_BigInt N = linalg::GlobalSize(comm, z1);
   if (ncv > 2 * N)
   {
     ncv = mfem::internal::to_int(2 * N);
@@ -682,25 +713,20 @@ int ArpackPEPSolver::Solve()
   if (!eig)
   {
     eig = std::make_unique<std::complex<double>[]>(nev + 1);
-    perm = std::make_unique<int[]>(nev + 1);
-    res = std::make_unique<double[]>(nev + 1);
+    perm = std::make_unique<int[]>(nev);
   }
 
   // Solve the linearized eigenvalue problem.
   int num_conv = SolveInternal(2 * n, s.get(), W.get(), eig.get(), perm.get());
 
   // Extract the eigenvector from the linearized problem and compute the eigenpair
-  // residuals: || P(λ) x ||₂ = || (K + λ C + λ² M) x ||₂ for eigenvalue λ.
+  // residuals: || P(λ) x ||₂ = || (K + λ C + λ² M) x ||₂ for eigenvalue λ. For the
+  // linearized problem, select the most accurate x for y = [x₁; x₂]. Or, just take x = x₁.
   for (int i = 0; i < nev; i++)
   {
-    const std::complex<double> &l = eig.get()[i];
-    ExtractEigenvector(l, W.get() + i * 2 * n, V.get() + i * n);
-    x1.Set(V.get() + i * n, n);
-    opK->Mult(x1, y1);
-    opC->AddMult(x1, y1, l);
-    opM->AddMult(x1, y1, l * l);
-    res.get()[i] = linalg::Norml2(comm, y1);
+    std::copy(W.get() + i * 2 * n, W.get() + (i * 2 + 1) * n, V.get() + i * n);
   }
+  RescaleEigenvectors(nev);
 
   // Reset for next solve.
   info = 0;
@@ -729,9 +755,9 @@ void ArpackPEPSolver::ApplyOp(const std::complex<double> *px,
       // Mpi::Print(" Before projection: {:e}\n", linalg::Norml2(comm, y1));
     }
 
-    opK->Mult(x1, z);
-    opC->AddMult(x2, z, std::complex<double>(gamma, 0.0));
-    opInv->Mult(z, y2);
+    opK->Mult(x1, z1);
+    opC->AddMult(x2, z1, std::complex<double>(gamma, 0.0));
+    opInv->Mult(z1, y2);
     y2 *= -1.0 / (gamma * gamma);
     if (opProj)
     {
@@ -743,9 +769,9 @@ void ArpackPEPSolver::ApplyOp(const std::complex<double> *px,
   else
   {
     y2.AXPBYPCZ(sigma, x1, gamma, x2, 0.0);  // Just temporarily
-    opM->Mult(y2, z);
-    opC->AddMult(x1, z, std::complex<double>(1.0, 0.0));
-    opInv->Mult(z, y1);
+    opM->Mult(y2, z1);
+    opC->AddMult(x1, z1, std::complex<double>(1.0, 0.0));
+    opInv->Mult(z1, y1);
     y1 *= -gamma;
     if (opProj)
     {
@@ -782,6 +808,17 @@ void ArpackPEPSolver::ApplyOpB(const std::complex<double> *px,
   y2.Get(py + n, n);
 }
 
+double ArpackPEPSolver::GetResidualNorm(std::complex<double> l, const ComplexVector &x,
+                                        ComplexVector &r) const
+{
+  // Compute the i-th eigenpair residual: || P(λ) x ||₂ = || (K + λ C + λ² M) x ||₂ for
+  // eigenvalue λ.
+  opK->Mult(x, r);
+  opC->AddMult(x, r, l);
+  opM->AddMult(x, r, l * l);
+  return linalg::Norml2(comm, r);
+}
+
 double ArpackPEPSolver::GetBackwardScaling(std::complex<double> l) const
 {
   // Make sure not to use norms from scaling as this can be confusing if they are different.
@@ -800,24 +837,6 @@ double ArpackPEPSolver::GetBackwardScaling(std::complex<double> l) const
   }
   double t = std::abs(l);
   return normK + t * normC + t * t * normM;
-}
-
-void ArpackPEPSolver::ExtractEigenvector(std::complex<double> l,
-                                         const std::complex<double> *py,
-                                         std::complex<double> *px) const
-{
-  // Select the most accurate x for y = [x₁; x₂] from the linearized eigenvalue problem. Or,
-  // just take x = x₁.
-  x1.Set(py, n);
-  if (opB)
-  {
-    linalg::Normalize(comm, x1, *opB, y1);
-  }
-  else
-  {
-    linalg::Normalize(comm, x1);
-  }
-  x1.Get(px, n);
 }
 
 }  // namespace palace::arpack

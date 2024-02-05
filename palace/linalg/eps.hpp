@@ -100,11 +100,17 @@ public:
   // Get the corresponding eigenvalue.
   virtual std::complex<double> GetEigenvalue(int i) const = 0;
 
-  // Get the corresponding eigenvector.
+  // Get the corresponding eigenvector. Eigenvectors are normalized such that ||x||₂ = 1,
+  // unless the B-matrix is set for weighted inner products.
   virtual void GetEigenvector(int i, ComplexVector &x) const = 0;
 
   // Get the corresponding eigenpair error.
   virtual double GetError(int i, ErrorType type) const = 0;
+
+  // Re-normalize the given number of eigenvectors, for example if the matrix B for weighted
+  // inner products has changed. This does not perform re-orthogonalization with respect to
+  // the new matrix, only normalization.
+  virtual void RescaleEigenvectors(int num_eig) = 0;
 };
 
 }  // namespace palace
