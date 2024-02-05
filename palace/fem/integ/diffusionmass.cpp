@@ -6,7 +6,6 @@
 #include "fem/libceed/coefficient.hpp"
 #include "fem/libceed/integrator.hpp"
 
-#include "fem/qfunctions/hcurlmass_build_qf.h"
 #include "fem/qfunctions/hcurlmass_qf.h"
 
 namespace palace

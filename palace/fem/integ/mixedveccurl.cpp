@@ -10,9 +10,7 @@
 PalacePragmaDiagnosticPush
 PalacePragmaDiagnosticDisableUnused
 
-#include "fem/qfunctions/hcurlhdiv_build_qf.h"
 #include "fem/qfunctions/hcurlhdiv_qf.h"
-#include "fem/qfunctions/hdiv_build_qf.h"
 #include "fem/qfunctions/hdiv_qf.h"
 
 PalacePragmaDiagnosticPop

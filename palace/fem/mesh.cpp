@@ -201,8 +201,8 @@ auto AssembleGeometryData(const mfem::GridFunction &mesh_nodes, Ceed ceed,
   // is the first component of the quadrature data.
   {
     CeedScalar *geom_data_array;
-    PalaceCeedCall(
-        ceed, CeedVectorGetArrayWrite(data.geom_data, CEED_MEM_HOST, &geom_data_array));
+    PalaceCeedCall(ceed,
+                   CeedVectorGetArray(data.geom_data, CEED_MEM_HOST, &geom_data_array));
     for (std::size_t k = 0; k < num_elem; k++)
     {
       const auto attr = GetCeedAttribute(data.indices[k]);
