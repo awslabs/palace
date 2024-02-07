@@ -28,8 +28,11 @@ electric field, is written as
 where the nondimensionalization has been performed with respect to a characteristic length
 ``L_0``, time ``L_0/c_0``, magnetic field strength ``H_0``, and electric field strength
 ``Z_0 H_0``. Here, ``c_0`` and ``Z_0`` are the speed of light and impedance of free space,
-respectively. Given the electric field solution, the time-harmonic magnetic flux density
-can be calculated as
+respectively. This nondimensionalization will be used throughout this entire reference. For
+more details, see [[1]](#References) and [[2]](#References).
+
+Given the electric field solution, the time-harmonic magnetic flux density can be calculated
+as
 
 ```math
 \bm{B} = -\frac{1}{i\omega}\nabla\times\bm{E} \,.
@@ -213,6 +216,8 @@ for each port:
 \tilde{S}_{ij} = S_{ij}e^{ik_{n,i}d_i}e^{ik_{n,j}d_j} \,.
 ```
 
+For more information on the implementation of numeric wave ports, see [[3]](#References).
+
 ## Other boundary conditions
 
 The first-order absorbing boundary condition, also referred to as a scattering boundary
@@ -335,8 +340,8 @@ interface ``\varepsilon_{r,j}``. For an internal boundary, this integral is eval
 single side to resolve abiguity due to the discontinuity of ``\bm{E}`` across the boundary.
 
 The above formula for interface dielectric loss can be specialized for the case of a
-metal-air, metal-substrate, or substrate-air interface. In each case, the quality factor
-for interface ``j`` is given by
+metal-air, metal-substrate, or substrate-air interface [[4]](#References). In each case, the
+quality factor for interface ``j`` is given by
 
   - *Metal-air*:
 
@@ -434,5 +439,9 @@ surface current ``\bm{J}_s^{inc}`` over the surface of the port.
 
 [1] J.-M. Jin, _The Finite Element Method in Electromagnetics_, Wiley-IEEE Press, Hoboken,
 NJ, Third edition, 2014.\
-[2] P. Monk, _Finite Element Methods for Maxwell's Equations_,
-Oxford University Press, Oxford, 2003.
+[2] P. Monk, _Finite Element Methods for Maxwell's Equations_, Oxford University Press,
+Oxford, 2003. \
+[3] L. Vardapetyan and L. Demkowicz, Full-wave analysis of dielectric waveguides at a given
+frequency, _Mathematics of Computation_ 72 (2003) 105-129.\
+[4] J. Wenner, R. Barends, R. C. Bialczak, et al., Surface loss of superconducting coplanar
+waveguide resonators, _Applied Physics Letters_ 99 (2011).

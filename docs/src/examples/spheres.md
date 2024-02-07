@@ -14,7 +14,7 @@
 In this example, we consider two conducting spheres of radii ``a`` and ``b``, with centers
 separated by a distance ``c > a + b``. The surrounding medium is vacuum. An analytic
 solution for the capacitance matrix of this configuration exists and is given in
-[[1]] (#References). The Maxwell capacitance matrix entries are given by the infinite series
+[[1]](#References). The Maxwell capacitance matrix entries are given by the infinite series
 
 ```math
 \begin{aligned}
@@ -114,5 +114,5 @@ terminal solution.
 
 ## References
 
-[1] J. Lekner, Capacitance coefficients of two spheres, Journal of Electrostatics 69
+[1] J. Lekner, Capacitance coefficients of two spheres, _Journal of Electrostatics_ 69
 (2011) 11-14.

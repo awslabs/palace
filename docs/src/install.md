@@ -174,7 +174,7 @@ as the standard parallelization in approach in *Palace* is to use pure MPI paral
 
 *Palace* leverages the [MFEM finite element discretization library](http://mfem.org). It
 always configures and builds its own installation of MFEM internally in order to support
-the most up to date features and patches. Likewise, Palace will always build its own
+the most up to date features and patches. Likewise, *Palace* will always build its own
 installation of [libCEED](https://github.com/CEED/libCEED), and
 [GSLIB](https://github.com/Nek5000/gslib), when `PALACE_WITH_GSLIB=ON`.
 
@@ -206,6 +206,7 @@ For solving eigenvalue problems, at least one of SLEPc or ARPACK-NG must be spec
 Typically only one of the SuperLU_DIST, STRUMPACK, and MUMPS dependencies is required but
 all can be built so the user can decide at runtime which solver to use.
 
-For unit testing, Palace relies on the [Catch2 library](https://github.com/catchorg/Catch2),
-which is automatically downloaded and built when building the `unit-tests` target. See the
-[Developer Notes](developer.md#Testing) for more information.
+For unit testing, *Palace* relies on the
+[Catch2 library](https://github.com/catchorg/Catch2), which is automatically downloaded and
+built when building the `unit-tests` target. See the [Developer Notes](developer.md#Testing)
+for more information.
