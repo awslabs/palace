@@ -7,6 +7,7 @@
 #include "fem/fespace.hpp"
 #include "fem/integrator.hpp"
 #include "linalg/rap.hpp"
+#include "utils/omp.hpp"
 
 namespace palace
 {
@@ -50,9 +51,11 @@ void HypreAmsSolver::ConstructAuxiliaryMatrices(FiniteElementSpace &nd_fespace,
                                                 AuxiliaryFiniteElementSpace &h1_fespace)
 {
   // Set up the auxiliary space objects for the preconditioner. Mostly the same as MFEM's
-  // HypreAMS:Init. Start with the discrete gradient matrix.
+  // HypreAMS:Init. Start with the discrete gradient matrix. We don't skip zeros for the
+  // full assembly to accelerate things on GPU and since they shouldn't affect the sparsity
+  // pattern of the parallel G^T A G matrix (computed by Hypre).
+  const bool skip_zeros_interp = !mfem::Device::Allows(mfem::Backend::DEVICE_MASK);
   {
-    constexpr bool skip_zeros_interp = true;
     const auto *PtGP =
         dynamic_cast<const ParOperator *>(&h1_fespace.GetDiscreteInterpolator());
     MFEM_VERIFY(
@@ -62,41 +65,26 @@ void HypreAmsSolver::ConstructAuxiliaryMatrices(FiniteElementSpace &nd_fespace,
   }
 
   // Vertex coordinates for the lowest order case, or Nedelec interpolation matrix or
-  // matrices for order > 1.
+  // matrices for order > 1. Expects that Mesh::SetVerticesFromNodes has been called at some
+  // point to avoid calling GridFunction::GetNodalValues here.
   mfem::ParMesh &mesh = h1_fespace.GetParMesh();
   if (h1_fespace.GetMaxElementOrder() == 1)
   {
     mfem::ParGridFunction x_coord(&h1_fespace.Get()), y_coord(&h1_fespace.Get()),
         z_coord(&h1_fespace.Get());
-    if (mesh.GetNodes())
+    MFEM_VERIFY(x_coord.Size() == mesh.GetNV(),
+                "Unexpected size for vertex coordinates in AMS setup!");
+    PalacePragmaOmp(parallel for schedule(static))
+    for (int i = 0; i < mesh.GetNV(); i++)
     {
-      mesh.GetNodes()->GetNodalValues(x_coord, 1);
-      MFEM_VERIFY(x_coord.Size() == h1_fespace.GetVSize(),
-                  "Unexpected size for vertex coordinates in AMS setup!");
+      x_coord(i) = mesh.GetVertex(i)[0];
       if (space_dim > 1)
       {
-        mesh.GetNodes()->GetNodalValues(y_coord, 2);
+        y_coord(i) = mesh.GetVertex(i)[1];
       }
       if (space_dim > 2)
       {
-        mesh.GetNodes()->GetNodalValues(z_coord, 3);
-      }
-    }
-    else
-    {
-      MFEM_VERIFY(x_coord.Size() == mesh.GetNV(),
-                  "Unexpected size for vertex coordinates in AMS setup!");
-      for (int i = 0; i < mesh.GetNV(); i++)
-      {
-        x_coord(i) = mesh.GetVertex(i)[0];
-        if (space_dim > 1)
-        {
-          y_coord(i) = mesh.GetVertex(i)[1];
-        }
-        if (space_dim > 2)
-        {
-          z_coord(i) = mesh.GetVertex(i)[2];
-        }
+        z_coord(i) = mesh.GetVertex(i)[2];
       }
     }
     x.reset(x_coord.ParallelProject());
@@ -120,8 +108,8 @@ void HypreAmsSolver::ConstructAuxiliaryMatrices(FiniteElementSpace &nd_fespace,
     mfem::DiscreteLinearOperator pi(&h1d_fespace.Get(), &nd_fespace.Get());
     pi.AddDomainInterpolator(new mfem::IdentityInterpolator);
     pi.SetAssemblyLevel(mfem::AssemblyLevel::LEGACY);
-    pi.Assemble();
-    pi.Finalize();
+    pi.Assemble(skip_zeros_interp);
+    pi.Finalize(skip_zeros_interp);
     ParOperator RAP_Pi(std::unique_ptr<mfem::SparseMatrix>(pi.LoseMat()), h1d_fespace,
                        nd_fespace, true);
     Pi = RAP_Pi.StealParallelAssemble();

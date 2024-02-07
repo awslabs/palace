@@ -71,6 +71,8 @@ void GetAxisAlignedBoundingBox(const mfem::ParMesh &mesh, const mfem::Array<int>
                                bool bdr, mfem::Vector &min, mfem::Vector &max);
 void GetAxisAlignedBoundingBox(const mfem::ParMesh &mesh, int attr, bool bdr,
                                mfem::Vector &min, mfem::Vector &max);
+void GetAxisAlignedBoundingBox(const mfem::ParMesh &mesh, mfem::Vector &min,
+                               mfem::Vector &max);
 
 // Struct describing a bounding box in terms of the center and face normals. The normals
 // specify the direction from the center of the box.
