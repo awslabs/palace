@@ -192,7 +192,7 @@ void InitInterpolatorBasis(const mfem::FiniteElement &trial_fe,
   if constexpr (false)
   {
     std::cout << "New interpolator basis (" << ceed << ", " << &trial_fe << ", " << &test_fe
-              << ")\n";
+              << ", " << (trial_fe.GetMapType() == test_fe.GetMapType()) << ")\n";
   }
   if constexpr (false)
   {

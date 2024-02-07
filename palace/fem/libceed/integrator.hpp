@@ -53,7 +53,9 @@ int CeedGeometryDataGetSpaceDimension(CeedElemRestriction geom_data_restr, CeedI
 // libCEED operator.
 void AssembleCeedGeometryData(Ceed ceed, CeedElemRestriction mesh_restr,
                               CeedBasis mesh_basis, CeedVector mesh_nodes,
-                              CeedVector geom_data, CeedElemRestriction geom_data_restr);
+                              CeedElemRestriction attr_restr, CeedBasis attr_basis,
+                              CeedVector elem_attr, CeedVector geom_data,
+                              CeedElemRestriction geom_data_restr);
 
 // Construct libCEED operator using the given quadrature data, element restriction, and
 // basis objects.

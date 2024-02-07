@@ -502,6 +502,41 @@ void BaseDiagonalOperator<ComplexOperator>::Mult(const ComplexVector &x,
 }
 
 template <>
+void BaseDiagonalOperator<Operator>::AddMult(const Vector &x, Vector &y,
+                                             const double a) const
+{
+  const int N = this->height;
+  const auto *D = d.Read();
+  const auto *X = x.Read();
+  auto *Y = y.Write();
+  mfem::forall(N, [=] MFEM_HOST_DEVICE(int i) { Y[i] += a * D[i] * X[i]; });
+}
+
+template <>
+void BaseDiagonalOperator<ComplexOperator>::AddMult(const ComplexVector &x,
+                                                    ComplexVector &y,
+                                                    const std::complex<double> a) const
+{
+  const int N = this->height;
+  const double ar = a.real();
+  const double ai = a.imag();
+  const auto *DR = d.Real().Read();
+  const auto *DI = d.Imag().Read();
+  const auto *XR = x.Real().Read();
+  const auto *XI = x.Imag().Read();
+  auto *YR = y.Real().Write();
+  auto *YI = y.Imag().Write();
+  mfem::forall(N,
+               [=] MFEM_HOST_DEVICE(int i)
+               {
+                 const auto tr = DR[i] * XR[i] - DI[i] * XI[i];
+                 const auto ti = DI[i] * XR[i] + DR[i] * XI[i];
+                 YR[i] += ar * tr - ai * ti;
+                 YI[i] += ai * ti + ar * ti;
+               });
+}
+
+template <>
 void DiagonalOperatorHelper<BaseDiagonalOperator<ComplexOperator>,
                             ComplexOperator>::MultHermitianTranspose(const ComplexVector &x,
                                                                      ComplexVector &y) const
@@ -520,6 +555,32 @@ void DiagonalOperatorHelper<BaseDiagonalOperator<ComplexOperator>,
                {
                  YR[i] = DR[i] * XR[i] + DI[i] * XI[i];
                  YI[i] = -DI[i] * XR[i] + DR[i] * XI[i];
+               });
+}
+
+template <>
+void DiagonalOperatorHelper<BaseDiagonalOperator<ComplexOperator>, ComplexOperator>::
+    AddMultHermitianTranspose(const ComplexVector &x, ComplexVector &y,
+                              const std::complex<double> a) const
+{
+  const ComplexVector &d =
+      static_cast<const BaseDiagonalOperator<ComplexOperator> *>(this)->d;
+  const int N = this->height;
+  const double ar = a.real();
+  const double ai = a.imag();
+  const auto *DR = d.Real().Read();
+  const auto *DI = d.Imag().Read();
+  const auto *XR = x.Real().Read();
+  const auto *XI = x.Imag().Read();
+  auto *YR = y.Real().Write();
+  auto *YI = y.Imag().Write();
+  mfem::forall(N,
+               [=] MFEM_HOST_DEVICE(int i)
+               {
+                 const auto tr = DR[i] * XR[i] + DI[i] * XI[i];
+                 const auto ti = -DI[i] * XR[i] + DR[i] * XI[i];
+                 YR[i] += ar * tr - ai * ti;
+                 YI[i] += ai * ti + ar * ti;
                });
 }
 

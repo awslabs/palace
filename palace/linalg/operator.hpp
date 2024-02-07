@@ -161,6 +161,16 @@ public:
     A.MultHermitianTranspose(x, z);
     B.MultHermitianTranspose(z, y);
   }
+
+  void AddMultHermitianTranspose(const ComplexVector &x, ComplexVector &y,
+                                 const std::complex<double> a = 1.0) const override
+  {
+    const ComplexOperator &A = static_cast<const ProductOperator *>(this)->A;
+    const ComplexOperator &B = static_cast<const ProductOperator *>(this)->B;
+    ComplexVector &z = static_cast<const ProductOperator *>(this)->z;
+    A.MultHermitianTranspose(x, z);
+    B.AddMultHermitianTranspose(z, y, a);
+  }
 };
 
 template <typename OperType>
@@ -171,6 +181,9 @@ class BaseProductOperator
 
   using VecType = typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
                                             ComplexVector, Vector>::type;
+  using ScalarType =
+      typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
+                                std::complex<double>, double>::type;
 
 private:
   const OperType &A, &B;
@@ -193,6 +206,19 @@ public:
   {
     A.MultTranspose(x, z);
     B.MultTranspose(z, y);
+  }
+
+  void AddMult(const VecType &x, VecType &y, const ScalarType a = 1.0) const override
+  {
+    B.Mult(x, z);
+    A.AddMult(z, y, a);
+  }
+
+  void AddMultTranspose(const VecType &x, VecType &y,
+                        const ScalarType a = 1.0) const override
+  {
+    A.MultTranspose(x, z);
+    B.AddMultTranspose(z, y, a);
   }
 };
 
@@ -219,6 +245,9 @@ public:
   DiagonalOperatorHelper(int s) : ComplexOperator(s) {}
 
   void MultHermitianTranspose(const ComplexVector &x, ComplexVector &y) const override;
+
+  void AddMultHermitianTranspose(const ComplexVector &x, ComplexVector &y,
+                                 const std::complex<double> a = 1.0) const override;
 };
 
 template <typename OperType>
@@ -229,6 +258,9 @@ class BaseDiagonalOperator
 
   using VecType = typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
                                             ComplexVector, Vector>::type;
+  using ScalarType =
+      typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
+                                std::complex<double>, double>::type;
 
 private:
   const VecType &d;
@@ -242,6 +274,14 @@ public:
   void Mult(const VecType &x, VecType &y) const override;
 
   void MultTranspose(const VecType &x, VecType &y) const override { Mult(x, y); }
+
+  void AddMult(const VecType &x, VecType &y, const ScalarType a = 1.0) const override;
+
+  void AddMultTranspose(const VecType &x, VecType &y,
+                        const ScalarType a = 1.0) const override
+  {
+    AddMult(x, y, a);
+  }
 };
 
 using DiagonalOperator = BaseDiagonalOperator<Operator>;
@@ -256,6 +296,9 @@ class BaseMultigridOperator : public OperType
 {
   using VecType = typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
                                             ComplexVector, Vector>::type;
+  using ScalarType =
+      typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
+                                std::complex<double>, double>::type;
 
 private:
   std::vector<std::unique_ptr<OperType>> ops, aux_ops;
@@ -300,9 +343,21 @@ public:
   }
 
   void Mult(const VecType &x, VecType &y) const override { GetFinestOperator().Mult(x, y); }
+
   void MultTranspose(const VecType &x, VecType &y) const override
   {
     GetFinestOperator().MultTranspose(x, y);
+  }
+
+  void AddMult(const VecType &x, VecType &y, const ScalarType a = 1.0) const override
+  {
+    GetFinestOperator().AddMult(x, y, a);
+  }
+
+  void AddMultTranspose(const VecType &x, VecType &y,
+                        const ScalarType a = 1.0) const override
+  {
+    GetFinestOperator().AddMultTranspose(x, y, a);
   }
 };
 

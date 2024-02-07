@@ -300,7 +300,8 @@ public:
   std::vector<const Operator *> GetDiscreteInterpolators() const
   {
     std::vector<const Operator *> G_(GetNumLevels());
-    for (std::size_t l = 0; l < G_.size(); l++)
+    G_[0] = nullptr;  // No discrete interpolator for coarsest level
+    for (std::size_t l = 1; l < G_.size(); l++)
     {
       G_[l] = &GetDiscreteInterpolatorAtLevel(l);
     }

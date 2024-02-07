@@ -43,7 +43,6 @@ private:
 
   // Helper methods for operator application.
   void RestrictionMatrixMult(const Vector &ly, Vector &ty) const;
-  void RestrictionMatrixAddMult(const Vector &ly, Vector &ty) const;
   void RestrictionMatrixMultTranspose(const Vector &ty, Vector &ly) const;
   Vector &GetTestLVector() const;
 
@@ -130,7 +129,6 @@ private:
 
   // Helper methods for operator application.
   void RestrictionMatrixMult(const ComplexVector &ly, ComplexVector &ty) const;
-  void RestrictionMatrixAddMult(const ComplexVector &ly, ComplexVector &ty) const;
   void RestrictionMatrixMultTranspose(const ComplexVector &ty, ComplexVector &ly) const;
   ComplexVector &GetTestLVector() const;
 

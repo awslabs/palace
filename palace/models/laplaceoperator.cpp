@@ -184,7 +184,7 @@ std::unique_ptr<Operator> LaplaceOperator::GetStiffnessMatrix()
                                            mat_op.GetPermittivityReal());
   BilinearForm k(GetH1Space());
   k.AddDomainIntegrator<DiffusionIntegrator>(epsilon_func);
-  k.AssembleQuadratureData();
+  // k.AssembleQuadratureData();
   auto k_vec = k.Assemble(GetH1Spaces(), skip_zeros);
   auto K = std::make_unique<MultigridOperator>(GetH1Spaces().GetNumLevels());
   for (std::size_t l = 0; l < GetH1Spaces().GetNumLevels(); l++)
