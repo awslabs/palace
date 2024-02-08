@@ -174,7 +174,7 @@ void GeometricMultigridSolver<OperType>::VCycle(int l, bool initial_guess) const
   B[l]->SetInitialGuess(initial_guess);
   if (l == 0)
   {
-    BlockTimer bt(Timer::COARSESOLVE, use_timer);
+    BlockTimer bt(Timer::KSP_COARSE_SOLVE, use_timer);
     B[l]->Mult(X[l], Y[l]);
     return;
   }

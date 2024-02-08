@@ -14,6 +14,7 @@
 #include "linalg/superlu.hpp"
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
+#include "utils/timer.hpp"
 
 namespace palace
 {
@@ -241,12 +242,13 @@ BaseKspSolver<OperType>::BaseKspSolver(const IoData &iodata,
         ConfigurePreconditionerSolver<OperType>(fespaces.GetFinestFESpace().GetComm(),
                                                 iodata, fespaces, aux_fespaces))
 {
+  use_timer = true;
 }
 
 template <typename OperType>
 BaseKspSolver<OperType>::BaseKspSolver(std::unique_ptr<IterativeSolver<OperType>> &&ksp,
                                        std::unique_ptr<Solver<OperType>> &&pc)
-  : ksp(std::move(ksp)), pc(std::move(pc)), ksp_mult(0), ksp_mult_it(0)
+  : ksp(std::move(ksp)), pc(std::move(pc)), ksp_mult(0), ksp_mult_it(0), use_timer(false)
 {
   if (this->pc)
   {
@@ -257,6 +259,7 @@ BaseKspSolver<OperType>::BaseKspSolver(std::unique_ptr<IterativeSolver<OperType>
 template <typename OperType>
 void BaseKspSolver<OperType>::SetOperators(const OperType &op, const OperType &pc_op)
 {
+  BlockTimer bt(Timer::KSP_SETUP, use_timer);
   ksp->SetOperator(op);
   if (pc)
   {
@@ -276,6 +279,7 @@ void BaseKspSolver<OperType>::SetOperators(const OperType &op, const OperType &p
 template <typename OperType>
 void BaseKspSolver<OperType>::Mult(const VecType &x, VecType &y) const
 {
+  BlockTimer bt(Timer::KSP, use_timer);
   ksp->Mult(x, y);
   if (!ksp->GetConverged())
   {

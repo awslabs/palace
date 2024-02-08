@@ -58,8 +58,6 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     // terminal.
     Mpi::Print("\n");
     laplaceop.GetExcitationVector(idx, *K, V[step], RHS);
-
-    BlockTimer bt1(Timer::SOLVE);
     ksp.Mult(RHS, V[step]);
 
     BlockTimer bt2(Timer::POSTPRO);

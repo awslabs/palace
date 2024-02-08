@@ -39,6 +39,9 @@ protected:
   // of iterations.
   mutable int ksp_mult, ksp_mult_it;
 
+  // Enable timer contribution for Timer::KSP_PRECONDITIONER.
+  bool use_timer;
+
 public:
   BaseKspSolver(const IoData &iodata, FiniteElementSpaceHierarchy &fespaces,
                 AuxiliaryFiniteElementSpaceHierarchy *aux_fespaces = nullptr);

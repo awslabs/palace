@@ -95,7 +95,7 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                ts, Timer::Duration(Timer::Now() - t0).count());
 
     // Single time step t -> t + dt.
-    BlockTimer bt1(Timer::SOLVE);
+    BlockTimer bt1(Timer::TS);
     if (step == 0)
     {
       Mpi::Print("\n");
@@ -138,6 +138,7 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     // Increment time step.
     step++;
   }
+  BlockTimer bt1(Timer::POSTPRO);
   SaveMetadata(timeop.GetLinearSolver());
   return {indicator, spaceop.GlobalTrueVSize()};
 }
@@ -238,6 +239,10 @@ std::function<double(double)> TransientSolver::GetTimeExcitation(bool dot) const
 
 int TransientSolver::GetNumSteps(double start, double end, double delta) const
 {
+  if (end < start)
+  {
+    return 1;
+  }
   MFEM_VERIFY(delta > 0.0, "Zero time step is not allowed!");
   constexpr double delta_eps = 1.0e-9;  // 9 digits of precision comparing endpoint
   double dnfreq = std::abs(end - start) / std::abs(delta);

@@ -59,8 +59,6 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     A[step].SetSize(RHS.Size());
     A[step] = 0.0;
     curlcurlop.GetExcitationVector(idx, RHS);
-
-    BlockTimer bt1(Timer::SOLVE);
     ksp.Mult(RHS, A[step]);
 
     BlockTimer bt2(Timer::POSTPRO);

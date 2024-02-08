@@ -133,6 +133,7 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &spaceop) : spaceop
 void RomOperator::Initialize(double start, double delta, int num_steps, int max_dim)
 {
   // Initialize P = {ω_L, ω_L+δ, ..., ω_R}. Always insert in ascending order.
+  BlockTimer bt(Timer::CONSTRUCT_PROM);
   MFEM_VERIFY(PS.empty() && P_m_PS.empty(),
               "RomOperator::Initialize should only be called once!");
   MFEM_VERIFY(
@@ -159,7 +160,6 @@ void RomOperator::SolveHDM(double omega, ComplexVector &e)
 {
   // Compute HDM solution at the given frequency. The system matrix, A = K + iω C - ω² M +
   // A2(ω) is built by summing the underlying operator contributions.
-  BlockTimer bt0(Timer::CONSTRUCT);
   A2 = spaceop.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO);
   has_A2 = (A2 != nullptr);
   auto A = spaceop.GetSystemMatrix(std::complex<double>(1.0, 0.0), 1i * omega,
@@ -185,7 +185,6 @@ void RomOperator::SolveHDM(double omega, ComplexVector &e)
   }
 
   // Solve the linear system.
-  BlockTimer bt1(Timer::SOLVE);
   ksp->Mult(r, e);
 }
 
@@ -193,6 +192,7 @@ void RomOperator::AddHDMSample(double omega, ComplexVector &e)
 {
   // Use the given HDM solution at the given frequency to update the reduced-order basis
   // updating the PROM operators.
+  BlockTimer bt(Timer::CONSTRUCT_PROM);
   auto it = P_m_PS.lower_bound(omega);
   MFEM_VERIFY(it != P_m_PS.end(),
               "Sample frequency " << omega << " not found in parameter set!");
@@ -303,6 +303,7 @@ void RomOperator::SolvePROM(ComplexVector &e)
   // Compute PROM solution at the given frequency and expand into high-dimensional space.
   // The PROM is solved on every process so the matrix-vector product for vector expansion
   // does not require communication.
+  BlockTimer bt(Timer::SOLVE_PROM);
   RHSr = Ar.partialPivLu().solve(RHSr);
   // RHSr = Ar.ldlt().solve(RHSr);
   // RHSr = Ar.selfadjointView<Eigen::Lower>().ldlt().solve(RHSr);
@@ -320,6 +321,7 @@ double RomOperator::ComputeError(double omega)
   // Compute the error metric associated with the approximate PROM solution at the given
   // frequency. The HDM residual -r = [K + iω C - ω² M + A2(ω)] x - [iω RHS1 + RHS2(ω)] is
   // computed using the most recently computed A2(ω) and RHS2(ω).
+  BlockTimer bt(Timer::CONSTRUCT_PROM);
   AssemblePROM(omega);
   SolvePROM(w);
 
@@ -369,6 +371,7 @@ double RomOperator::ComputeMaxError(int num_cand, double &omega_star)
 {
   // Greedy iteration: Find argmax_{ω ∈ P_C} η(e; ω). We sample num_cand candidates from
   // P \ P_S.
+  BlockTimer bt(Timer::CONSTRUCT_PROM);
   num_cand = std::min(num_cand, static_cast<int>(P_m_PS.size()));
   std::vector<double> PC;
   if (Mpi::Root(spaceop.GetComm()))

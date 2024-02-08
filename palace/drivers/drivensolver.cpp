@@ -113,7 +113,6 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator &
   // Because the Dirichlet BC is always homogenous, no special elimination is required on
   // the RHS. Assemble the linear system for the initial frequency (so we can call
   // KspSolver::SetOperators). Compute everything at the first frequency step.
-  BlockTimer bt0(Timer::CONSTRUCT);
   auto K = spaceop.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE);
   auto C = spaceop.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
   auto M = spaceop.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
@@ -154,7 +153,7 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator &
     Mpi::Print("\nIt {:d}/{:d}: ω/2π = {:.3e} GHz (elapsed time = {:.2e} s)\n", step + 1,
                nstep, freq, Timer::Duration(Timer::Now() - t0).count());
 
-    // Assemble the linear system.
+    // Assemble and solve the linear system.
     if (step > step0)
     {
       // Update frequency-dependent excitation and operators.
@@ -167,15 +166,12 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator &
       ksp.SetOperators(*A, *P);
     }
     spaceop.GetExcitationVector(omega, RHS);
-
-    // Solve the linear system.
-    BlockTimer bt1(Timer::SOLVE);
     Mpi::Print("\n");
     ksp.Mult(RHS, E);
 
     // Compute B = -1/(iω) ∇ x E on the true dofs, and set the internal GridFunctions in
     // PostOperator for all postprocessing operations.
-    BlockTimer bt2(Timer::POSTPRO);
+    BlockTimer bt0(Timer::POSTPRO);
     double E_elec = 0.0, E_mag = 0.0;
     Curl.Mult(E.Real(), B.Real());
     Curl.Mult(E.Imag(), B.Imag());
@@ -209,6 +205,7 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator &
     step++;
     omega += delta_omega;
   }
+  BlockTimer bt0(Timer::POSTPRO);
   SaveMetadata(ksp);
   return indicator;
 }
@@ -218,7 +215,6 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator 
                                            double delta_omega) const
 {
   // Configure default parameters if not specified.
-  BlockTimer bt0(Timer::CONSTRUCT);
   double offline_tol = iodata.solver.driven.adaptive_tol;
   int nmax = iodata.solver.driven.adaptive_nmax;
   int ncand = iodata.solver.driven.adaptive_ncand;
@@ -275,7 +271,6 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator 
   // range of interest. Each call for an HDM solution adds the frequency sample to P_S and
   // removes it from P \ P_S. Timing for the HDM construction and solve is handled inside
   // of the RomOperator.
-  BlockTimer bt1(Timer::CONSTRUCTPROM);
   prom.SolveHDM(omega0, E);  // Print matrix stats at first HDM solve
   prom.AddHDMSample(omega0, E);
   estimator.AddErrorIndicator(E, indicator);
@@ -313,10 +308,8 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator 
   utils::PrettyPrint(prom.GetSampleFrequencies(), f0, " Sampled frequencies (GHz):");
   Mpi::Print(" Total offline phase elapsed time: {:.2e} s\n",
              Timer::Duration(Timer::Now() - t0).count());  // Timing on root
-  SaveMetadata(prom.GetLinearSolver());
 
   // Main fast frequency sweep loop (online phase).
-  BlockTimer bt2(Timer::CONSTRUCT);
   Mpi::Print("\nBeginning fast frequency sweep online phase\n");
   spaceop.GetWavePortOp().SetSuppressOutput(false);  // Disable output suppression
   int step = step0;
@@ -327,17 +320,14 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator 
     Mpi::Print("\nIt {:d}/{:d}: ω/2π = {:.3e} GHz (elapsed time = {:.2e} s)\n", step + 1,
                nstep, freq, Timer::Duration(Timer::Now() - t0).count());
 
-    // Assemble the linear system.
+    // Assemble and solve the linear system.
     prom.AssemblePROM(omega);
-
-    // Solve the linear system.
-    BlockTimer bt3(Timer::SOLVEPROM);
     Mpi::Print("\n");
     prom.SolvePROM(E);
 
     // Compute B = -1/(iω) ∇ x E on the true dofs, and set the internal GridFunctions in
     // PostOperator for all postprocessing operations.
-    BlockTimer bt4(Timer::POSTPRO);
+    BlockTimer bt0(Timer::POSTPRO);
     double E_elec = 0.0, E_mag = 0.0;
     Curl.Mult(E.Real(), B.Real());
     Curl.Mult(E.Imag(), B.Imag());
@@ -365,11 +355,17 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator 
     step++;
     omega += delta_omega;
   }
+  BlockTimer bt0(Timer::POSTPRO);
+  SaveMetadata(prom.GetLinearSolver());
   return indicator;
 }
 
 int DrivenSolver::GetNumSteps(double start, double end, double delta) const
 {
+  if (end < start)
+  {
+    return 1;
+  }
   MFEM_VERIFY(delta != 0.0, "Zero frequency step is not allowed!");
   constexpr double delta_eps = 1.0e-9;  // 9 digits of precision comparing endpoint
   double dnfreq = std::abs(end - start) / std::abs(delta);

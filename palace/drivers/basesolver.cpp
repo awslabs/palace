@@ -292,7 +292,7 @@ void BaseSolver::SaveMetadata(const Timer &timer) const
   if (root)
   {
     json meta = LoadMetadata(post_dir);
-    for (int i = Timer::INIT; i < Timer::NUMTIMINGS; i++)
+    for (int i = Timer::INIT; i < Timer::NUM_TIMINGS; i++)
     {
       auto key = Timer::descriptions[i];
       key.erase(std::remove_if(key.begin(), key.end(), isspace), key.end());
