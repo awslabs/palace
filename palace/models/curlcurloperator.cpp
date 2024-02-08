@@ -36,11 +36,6 @@ CurlCurlOperator::CurlCurlOperator(const IoData &iodata,
     mat_op(iodata, *mesh.back()), surf_j_op(iodata, GetH1Space())
 {
   // Finalize setup.
-  BilinearForm::pa_order_threshold = iodata.solver.pa_order_threshold;
-  fem::DefaultIntegrationOrder::p_trial = iodata.solver.order;
-  fem::DefaultIntegrationOrder::q_order_jac = iodata.solver.q_order_jac;
-  fem::DefaultIntegrationOrder::q_order_extra_pk = iodata.solver.q_order_extra;
-  fem::DefaultIntegrationOrder::q_order_extra_qk = iodata.solver.q_order_extra;
   CheckBoundaryProperties();
 
   // Print essential BC information.

@@ -14,6 +14,8 @@
 #include <string_view>
 #include <mfem.hpp>
 #include <nlohmann/json.hpp>
+#include "fem/bilinearform.hpp"
+#include "fem/integrator.hpp"
 #include "utils/communication.hpp"
 #include "utils/constants.hpp"
 #include "utils/geodata.hpp"
@@ -417,6 +419,13 @@ void IoData::CheckConfiguration()
   {
     solver.linear.mg_smooth_order = std::max(2 * solver.order, 4);
   }
+
+  // Configure settings for quadrature rules and partial assembly.
+  BilinearForm::pa_order_threshold = solver.pa_order_threshold;
+  fem::DefaultIntegrationOrder::p_trial = solver.order;
+  fem::DefaultIntegrationOrder::q_order_jac = solver.q_order_jac;
+  fem::DefaultIntegrationOrder::q_order_extra_pk = solver.q_order_extra;
+  fem::DefaultIntegrationOrder::q_order_extra_qk = solver.q_order_extra;
 }
 
 namespace
@@ -437,7 +446,7 @@ constexpr config::SymmetricMatrixData<N> &operator/=(config::SymmetricMatrixData
 
 void IoData::NondimensionalizeInputs(mfem::ParMesh &mesh)
 {
-  // Nondimensionalization of the equations is based on a given length Lc in[m], typically
+  // Nondimensionalization of the equations is based on a given length Lc in [m], typically
   // the largest domain dimension. Configuration file lengths and the mesh coordinates are
   // provided with units of model.L0 x [m].
   MFEM_VERIFY(!init, "NondimensionalizeInputs should only be called once!");
