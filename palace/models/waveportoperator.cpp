@@ -1137,7 +1137,7 @@ void WavePortOperator::Initialize(double omega)
   {
     return;
   }
-  BlockTimer bt(Timer::WAVEPORT);
+  BlockTimer bt(Timer::WAVE_PORT);
   if (!suppress_output)
   {
     Mpi::Print(

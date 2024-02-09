@@ -499,10 +499,7 @@ MaterialPropertyCoefficient::MaterialPropertyCoefficient(
     const mfem::Array<int> &attr_mat_, const mfem::DenseTensor &mat_coeff_, double a)
   : attr_mat(attr_mat_), mat_coeff(mat_coeff_)
 {
-  for (int k = 0; k < mat_coeff.SizeK(); k++)
-  {
-    mat_coeff(k) *= a;
-  }
+  *this *= a;
 }
 
 namespace
@@ -619,10 +616,7 @@ void MaterialPropertyCoefficient::AddCoefficient(const mfem::Array<int> &attr_ma
                 "MaterialPropertyCoefficient::AddCoefficient!");
     attr_mat = attr_mat_;
     mat_coeff = mat_coeff_;
-    for (int k = 0; k < mat_coeff.SizeK(); k++)
-    {
-      mat_coeff(k) *= a;
-    }
+    *this *= a;
   }
   else if (attr_mat_ == attr_mat)
   {
@@ -718,6 +712,15 @@ void MaterialPropertyCoefficient::AddMaterialProperty(const mfem::Array<int> &at
     }
   }
   UpdateProperty(mat_coeff, mat_idx, coeff, a);
+}
+
+MaterialPropertyCoefficient &MaterialPropertyCoefficient::operator*=(double a)
+{
+  for (int k = 0; k < mat_coeff.SizeK(); k++)
+  {
+    mat_coeff(k) *= a;
+  }
+  return *this;
 }
 
 void MaterialPropertyCoefficient::RestrictCoefficient(const mfem::Array<int> &attr_list)

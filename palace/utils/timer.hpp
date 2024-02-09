@@ -27,23 +27,26 @@ public:
   enum Index
   {
     INIT = 0,
-    CONSTRUCT,
-    WAVEPORT,  // Wave port solver
-    SOLVE,
-    PRECONDITIONER,      // Linear solver
-    COARSESOLVE,         // Linear solver
-    DIVFREE,             // Divergence-free projection
-    ESTIMATION,          // Estimation
-    CONSTRUCTESTIMATOR,  // Construction of estimator
-    SOLVEESTIMATOR,      // Evaluation of estimator
-    ADAPTATION,          // Adaptation
-    REBALANCE,           // Rebalancing
-    CONSTRUCTPROM,       // Adaptive frequency sweep
-    SOLVEPROM,           // Adaptive frequency sweep
-    POSTPRO,
-    IO,
+    CONSTRUCT,            // Space and operator construction
+    WAVE_PORT,            // Wave port solver
+    KSP,                  // Linear solver
+    KSP_SETUP,            // Linear solver setup
+    KSP_PRECONDITIONER,   // Linear solver preconditioner
+    KSP_COARSE_SOLVE,     // Linear solver coarse-level solve
+    TS,                   // Time integrator
+    EPS,                  // Eigenvalue problem solver
+    DIV_FREE,             // Divergence-free projection
+    CONSTRUCT_PROM,       // Adaptive frequency sweep offline
+    SOLVE_PROM,           // Adaptive frequency sweep online
+    ESTIMATION,           // Error estimation
+    CONSTRUCT_ESTIMATOR,  // Construction of estimator
+    SOLVE_ESTIMATOR,      // Evaluation of estimator
+    ADAPTATION,           // Adaptation
+    REBALANCE,            // Rebalancing
+    POSTPRO,              // Solution postprocessing
+    IO,                   // Disk I/O
     TOTAL,
-    NUMTIMINGS
+    NUM_TIMINGS
   };
 
   // clang-format off
@@ -51,17 +54,20 @@ public:
       "Initialization",
       "Operator Construction",
       "  Wave Ports",
-      "Solve",
+      "Linear Solve",
+      "  Setup",
       "  Preconditioner",
       "  Coarse Solve",
-      "  Div.-Free Projection",
+      "Time Stepping",
+      "Eigenvalue Solve",
+      "Div.-Free Projection",
+      "PROM Construction",
+      "PROM Solve",
       "Estimation",
       "  Construction",
       "  Solve",
       "Adaptation",
       "  Rebalancing",
-      "PROM Construction",
-      "PROM Solve",
       "Postprocessing",
       "Disk IO",
       "Total"};
@@ -75,7 +81,7 @@ private:
 
 public:
   Timer()
-    : start_time(Now()), last_lap_time(start_time), data(NUMTIMINGS), counts(NUMTIMINGS)
+    : start_time(Now()), last_lap_time(start_time), data(NUM_TIMINGS), counts(NUM_TIMINGS)
   {
   }
 
@@ -127,20 +133,20 @@ private:
   static void Reduce(MPI_Comm comm, std::vector<double> &data_min,
                      std::vector<double> &data_max, std::vector<double> &data_avg)
   {
-    data_min.resize(Timer::NUMTIMINGS);
-    data_max.resize(Timer::NUMTIMINGS);
-    data_avg.resize(Timer::NUMTIMINGS);
-    for (int i = Timer::INIT; i < Timer::NUMTIMINGS; i++)
+    data_min.resize(Timer::NUM_TIMINGS);
+    data_max.resize(Timer::NUM_TIMINGS);
+    data_avg.resize(Timer::NUM_TIMINGS);
+    for (int i = Timer::INIT; i < Timer::NUM_TIMINGS; i++)
     {
       data_min[i] = data_max[i] = data_avg[i] = timer.Data((Timer::Index)i);
     }
 
-    Mpi::GlobalMin(Timer::NUMTIMINGS, data_min.data(), comm);
-    Mpi::GlobalMax(Timer::NUMTIMINGS, data_max.data(), comm);
-    Mpi::GlobalSum(Timer::NUMTIMINGS, data_avg.data(), comm);
+    Mpi::GlobalMin(Timer::NUM_TIMINGS, data_min.data(), comm);
+    Mpi::GlobalMax(Timer::NUM_TIMINGS, data_max.data(), comm);
+    Mpi::GlobalSum(Timer::NUM_TIMINGS, data_avg.data(), comm);
 
     const int np = Mpi::Size(comm);
-    for (int i = Timer::INIT; i < Timer::NUMTIMINGS; i++)
+    for (int i = Timer::INIT; i < Timer::NUM_TIMINGS; i++)
     {
       data_avg[i] /= np;
     }
@@ -195,7 +201,7 @@ public:
                "Elapsed Time Report (s)", h, "Min.", w, "Max.", w, "Avg.", w);
     // clang-format on
     Mpi::Print(comm, "{}\n", std::string(h + 3 * w, '='));
-    for (int i = Timer::INIT; i < Timer::NUMTIMINGS; i++)
+    for (int i = Timer::INIT; i < Timer::NUM_TIMINGS; i++)
     {
       if (timer.Counts((Timer::Index)i) > 0)
       {

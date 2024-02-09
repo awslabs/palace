@@ -9,7 +9,6 @@
 #include "linalg/ksp.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
-#include "utils/timer.hpp"
 
 namespace mfem
 {
@@ -54,23 +53,7 @@ public:
   // Given a vector of Nedelec dofs for an arbitrary vector field, compute the Nedelec dofs
   // of the irrotational portion of this vector field. The resulting vector will satisfy
   // ∇ x y = 0.
-  void Mult(Vector &y) const
-  {
-    BlockTimer bt(Timer::DIVFREE);
-
-    // Compute the divergence of y.
-    WeakDiv->Mult(y, rhs);
-
-    // Apply essential BC and solve the linear system.
-    if (bdr_tdof_list_M)
-    {
-      linalg::SetSubVector(rhs, *bdr_tdof_list_M, 0.0);
-    }
-    ksp->Mult(rhs, psi);
-
-    // Compute the irrotational portion of y and subtract.
-    Grad->AddMult(psi, y, 1.0);
-  }
+  void Mult(Vector &y) const;
 
   void Mult(const Vector &x, Vector &y) const
   {

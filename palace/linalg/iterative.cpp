@@ -243,7 +243,7 @@ template <typename OperType, typename VecType>
 inline void ApplyB(const Solver<OperType> *B, const VecType &x, VecType &y,
                    bool use_timer = true)
 {
-  BlockTimer bt(Timer::PRECONDITIONER, use_timer);
+  BlockTimer bt(Timer::KSP_PRECONDITIONER, use_timer);
   MFEM_ASSERT(B, "Missing preconditioner in ApplyB!");
   B->Mult(x, y);
 }

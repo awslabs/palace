@@ -57,7 +57,7 @@ FluxProjector::FluxProjector(const MaterialOperator &mat_op,
                              const FiniteElementSpace &nd_fespace, double tol, int max_it,
                              int print)
 {
-  BlockTimer bt(Timer::CONSTRUCTESTIMATOR);
+  BlockTimer bt(Timer::CONSTRUCT_ESTIMATOR);
   {
     // Flux operator is always partially assembled.
     MaterialPropertyCoefficient muinv_func(mat_op.GetAttributeToMaterial(),
@@ -79,7 +79,7 @@ FluxProjector::FluxProjector(const MaterialOperator &mat_op,
                              const FiniteElementSpace &h1d_fespace, double tol, int max_it,
                              int print)
 {
-  BlockTimer bt(Timer::CONSTRUCTESTIMATOR);
+  BlockTimer bt(Timer::CONSTRUCT_ESTIMATOR);
   {
     // Flux operator is always partially assembled.
     MaterialPropertyCoefficient epsilon_func(mat_op.GetAttributeToMaterial(),
@@ -99,7 +99,7 @@ FluxProjector::FluxProjector(const MaterialOperator &mat_op,
 
 void FluxProjector::Mult(const Vector &x, Vector &y) const
 {
-  BlockTimer bt(Timer::SOLVEESTIMATOR);
+  BlockTimer bt(Timer::SOLVE_ESTIMATOR);
   MFEM_ASSERT(y.Size() == rhs.Size(), "Invalid vector dimensions for FluxProjector::Mult!");
   MFEM_ASSERT(
       y.Size() % x.Size() == 0,

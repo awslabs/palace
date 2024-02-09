@@ -13,6 +13,7 @@
 #include "linalg/iterative.hpp"
 #include "linalg/rap.hpp"
 #include "models/materialoperator.hpp"
+#include "utils/timer.hpp"
 
 namespace palace
 {
@@ -22,6 +23,7 @@ DivFreeSolver::DivFreeSolver(const MaterialOperator &mat_op, FiniteElementSpace 
                              const std::vector<mfem::Array<int>> &h1_bdr_tdof_lists,
                              double tol, int max_it, int print)
 {
+  BlockTimer bt(Timer::DIV_FREE);
   MaterialPropertyCoefficient epsilon_func(mat_op.GetAttributeToMaterial(),
                                            mat_op.GetPermittivityReal());
   {
@@ -81,6 +83,24 @@ DivFreeSolver::DivFreeSolver(const MaterialOperator &mat_op, FiniteElementSpace 
 
   psi.SetSize(h1_fespaces.GetFinestFESpace().GetTrueVSize());
   rhs.SetSize(h1_fespaces.GetFinestFESpace().GetTrueVSize());
+}
+
+void DivFreeSolver::Mult(Vector &y) const
+{
+  BlockTimer bt(Timer::DIV_FREE);
+
+  // Compute the divergence of y.
+  WeakDiv->Mult(y, rhs);
+
+  // Apply essential BC and solve the linear system.
+  if (bdr_tdof_list_M)
+  {
+    linalg::SetSubVector(rhs, *bdr_tdof_list_M, 0.0);
+  }
+  ksp->Mult(rhs, psi);
+
+  // Compute the irrotational portion of y and subtract.
+  Grad->AddMult(psi, y, 1.0);
 }
 
 }  // namespace palace

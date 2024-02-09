@@ -246,14 +246,13 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                                    C.get(), M.get());
   auto P = spaceop.GetPreconditionerMatrix<ComplexOperator>(1.0, target, -target * target,
                                                             target);
-
   auto ksp = std::make_unique<ComplexKspSolver>(iodata, spaceop.GetNDSpaces(),
                                                 &spaceop.GetH1Spaces());
   ksp->SetOperators(*A, *P);
   eigen->SetLinearSolver(*ksp);
 
   // Eigenvalue problem solve.
-  BlockTimer bt1(Timer::SOLVE);
+  BlockTimer bt1(Timer::EPS);
   Mpi::Print("\n");
   int num_conv = eigen->Solve();
   {
@@ -264,6 +263,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                    ? fmt::format(" (first = {:.3e}{:+.3e}i)", lambda.real(), lambda.imag())
                    : "");
   }
+  BlockTimer bt2(Timer::POSTPRO);
   SaveMetadata(*ksp);
 
   // Calculate and record the error indicators.
@@ -287,7 +287,6 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   }
 
   // Postprocess the results.
-  BlockTimer bt2(Timer::POSTPRO);
   for (int i = 0; i < num_conv; i++)
   {
     // Get the eigenvalue and relative error.

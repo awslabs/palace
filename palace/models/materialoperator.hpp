@@ -143,6 +143,8 @@ public:
     AddMaterialProperty(attr_list, coeff, a);
   }
 
+  MaterialPropertyCoefficient &operator*=(double a);
+
   void RestrictCoefficient(const mfem::Array<int> &attr_list);
 
   void NormalProjectedCoefficient(const mfem::Vector &normal);

@@ -50,7 +50,7 @@ private:
   // MFEM Operator interface for multiple RHS.
   mutable std::vector<VecType> X, Y, R;
 
-  // Enable timer contribution for Timer::COARSESOLVE.
+  // Enable timer contribution for Timer::KSP_COARSE_SOLVE.
   bool use_timer;
 
   // Internal function to perform a single V-cycle iteration.

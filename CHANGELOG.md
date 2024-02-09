@@ -18,6 +18,8 @@ The format of this changelog is based on
   - Changed the normalization of computed eigenmodes for consistency across different domain
     decompositions. Eigenvectors are now normalized with respect to the mass matrix for unit
     domain electric field energy.
+  - Added documentation for various timer categories and improved timing breakdown of
+    various sections of a simulation.
 
 ## [0.12.0] - 2023-12-21
 
