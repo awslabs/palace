@@ -223,6 +223,6 @@ may only become significant on sufficiently refined meshes.
 ## References
 
 [1] D. M. Pozar, _Microwave Engineering_, Wiley, Hoboken, NJ, 2012.\
-[2] A. Buffa, P. Houston, I. Perugia, _Discontinuous Galerkin computation of the Maxwell
-eigenvalues on simplicial meshes_, Journal of Computational and Applied Mathematics 204
+[2] A. Buffa, P. Houston, I. Perugia, Discontinuous Galerkin computation of the Maxwell
+eigenvalues on simplicial meshes, _Journal of Computational and Applied Mathematics_ 204
 (2007) 317-333.

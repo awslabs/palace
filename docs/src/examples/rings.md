@@ -112,5 +112,5 @@ the inner and outer rings. The files for this visualization are again saved to t
 ## References
 
 [1] M. R. Alizadeh Pahlavani and H. A. Mohammadpour, Inductance comparison of the solenoidal
-coil of modular toroidal coils using the analytical and finite element method, Progress in
-Electromagnetics Research 20 (2010) 337-352.
+coil of modular toroidal coils using the analytical and finite element method, _Progress in
+Electromagnetics Research_ 20 (2010) 337-352.
