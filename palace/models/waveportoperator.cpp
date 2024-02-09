@@ -4,7 +4,7 @@
 #include "waveportoperator.hpp"
 
 #include <array>
-#include <unordered_map>
+#include <tuple>
 #include "fem/bilinearform.hpp"
 #include "fem/coefficient.hpp"
 #include "fem/integrator.hpp"
@@ -93,11 +93,13 @@ void GetInitialSpace(const mfem::ParFiniteElementSpace &nd_fespace,
   // linalg::SetSubVector(v, nd_size, nd_size + h1_size, 0.0);
 }
 
+using ComplexHypreParMatrix = std::tuple<std::unique_ptr<mfem::HypreParMatrix>,
+                                         std::unique_ptr<mfem::HypreParMatrix>>;
 constexpr bool skip_zeros = false;
 
-std::array<std::unique_ptr<mfem::HypreParMatrix>, 2>
-GetAtt(const MaterialOperator &mat_op, const FiniteElementSpace &nd_fespace,
-       const mfem::Vector &normal, double omega, double sigma)
+ComplexHypreParMatrix GetAtt(const MaterialOperator &mat_op,
+                             const FiniteElementSpace &nd_fespace,
+                             const mfem::Vector &normal, double omega, double sigma)
 {
   // Stiffness matrix (shifted): Aₜₜ = (μ⁻¹ ∇ₜ x u, ∇ₜ x v) - ω² (ε u, v) - σ (μ⁻¹ u, v).
   MaterialPropertyCoefficient muinv_func(mat_op.GetBdrAttributeToMaterial(),
@@ -124,9 +126,9 @@ GetAtt(const MaterialOperator &mat_op, const FiniteElementSpace &nd_fespace,
           ParOperator(atti.FullAssemble(skip_zeros), nd_fespace).StealParallelAssemble()};
 }
 
-std::array<std::unique_ptr<mfem::HypreParMatrix>, 2>
-GetAtn(const MaterialOperator &mat_op, const FiniteElementSpace &nd_fespace,
-       const FiniteElementSpace &h1_fespace)
+ComplexHypreParMatrix GetAtn(const MaterialOperator &mat_op,
+                             const FiniteElementSpace &nd_fespace,
+                             const FiniteElementSpace &h1_fespace)
 {
   // Coupling matrix: Aₜₙ = (μ⁻¹ ∇ₜ u, v).
   MaterialPropertyCoefficient muinv_func(mat_op.GetBdrAttributeToMaterial(),
@@ -138,9 +140,9 @@ GetAtn(const MaterialOperator &mat_op, const FiniteElementSpace &nd_fespace,
           nullptr};
 }
 
-std::array<std::unique_ptr<mfem::HypreParMatrix>, 2>
-GetAnt(const MaterialOperator &mat_op, const FiniteElementSpace &h1_fespace,
-       const FiniteElementSpace &nd_fespace)
+ComplexHypreParMatrix GetAnt(const MaterialOperator &mat_op,
+                             const FiniteElementSpace &h1_fespace,
+                             const FiniteElementSpace &nd_fespace)
 {
   // Coupling matrix: Aₙₜ = -(ε u, ∇ₜ v).
   MaterialPropertyCoefficient epsilon_func(mat_op.GetBdrAttributeToMaterial(),
@@ -166,9 +168,9 @@ GetAnt(const MaterialOperator &mat_op, const FiniteElementSpace &h1_fespace,
               .StealParallelAssemble()};
 }
 
-std::array<std::unique_ptr<mfem::HypreParMatrix>, 2>
-GetAnn(const MaterialOperator &mat_op, const FiniteElementSpace &h1_fespace,
-       const mfem::Vector &normal)
+ComplexHypreParMatrix GetAnn(const MaterialOperator &mat_op,
+                             const FiniteElementSpace &h1_fespace,
+                             const mfem::Vector &normal)
 {
   // Mass matrix: Aₙₙ = (ε u, v).
   MaterialPropertyCoefficient epsilon_func(mat_op.GetBdrAttributeToMaterial(),
@@ -192,8 +194,8 @@ GetAnn(const MaterialOperator &mat_op, const FiniteElementSpace &h1_fespace,
           ParOperator(anni.FullAssemble(skip_zeros), h1_fespace).StealParallelAssemble()};
 }
 
-std::array<std::unique_ptr<mfem::HypreParMatrix>, 2>
-GetBtt(const MaterialOperator &mat_op, const FiniteElementSpace &nd_fespace)
+ComplexHypreParMatrix GetBtt(const MaterialOperator &mat_op,
+                             const FiniteElementSpace &nd_fespace)
 {
   // Mass matrix: Bₜₜ = (μ⁻¹ u, v).
   MaterialPropertyCoefficient muinv_func(mat_op.GetBdrAttributeToMaterial(),
@@ -204,7 +206,7 @@ GetBtt(const MaterialOperator &mat_op, const FiniteElementSpace &nd_fespace)
           nullptr};
 }
 
-std::array<std::unique_ptr<mfem::HypreParMatrix>, 2>
+ComplexHypreParMatrix
 GetSystemMatrixA(mfem::HypreParMatrix *Attr, mfem::HypreParMatrix *Atti,
                  mfem::HypreParMatrix *Atnr, mfem::HypreParMatrix *Atni,
                  mfem::HypreParMatrix *Antr, mfem::HypreParMatrix *Anti,
@@ -240,9 +242,10 @@ GetSystemMatrixA(mfem::HypreParMatrix *Attr, mfem::HypreParMatrix *Atti,
   return {std::move(Ar), std::move(Ai)};
 }
 
-std::array<std::unique_ptr<mfem::HypreParMatrix>, 2>
-GetSystemMatrixB(mfem::HypreParMatrix *Bttr, mfem::HypreParMatrix *Btti,
-                 mfem::HypreParMatrix *Dnn, const mfem::Array<int> &dbc_tdof_list)
+ComplexHypreParMatrix GetSystemMatrixB(mfem::HypreParMatrix *Bttr,
+                                       mfem::HypreParMatrix *Btti,
+                                       mfem::HypreParMatrix *Dnn,
+                                       const mfem::Array<int> &dbc_tdof_list)
 {
   // Construct the 2x2 block matrices for the eigenvalue problem A e = λ B e.
   mfem::Array2D<mfem::HypreParMatrix *> blocks(2, 2);
