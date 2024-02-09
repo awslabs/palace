@@ -29,6 +29,9 @@ the frequency or time domain, using the
     problem formulations.
   - Support for a wide range of mesh file formats for structured and unstructured meshes,
     with built-in uniform or region-based parallel mesh refinement.
+  - Solution-based Adaptive Mesh Refinement (AMR) for all simulation types aside from
+    transient. Nonconformal refinement is supported for all mesh types, and conformal
+    refinement for simplex meshes.
   - Arbitrary high-order finite element spaces and curvilinear mesh support thanks to the
     [MFEM library](https://mfem.org/features/).
   - Scalable algorithms for the solution of linear systems of equations, including matrix-
