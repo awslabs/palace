@@ -440,8 +440,8 @@ surface current ``\bm{J}_s^{inc}`` over the surface of the port.
 [1] J.-M. Jin, _The Finite Element Method in Electromagnetics_, Wiley-IEEE Press, Hoboken,
 NJ, Third edition, 2014.\
 [2] P. Monk, _Finite Element Methods for Maxwell's Equations_, Oxford University Press,
-Oxford, 2003. \
+Oxford, 2003.\
 [3] L. Vardapetyan and L. Demkowicz, Full-wave analysis of dielectric waveguides at a given
 frequency, _Mathematics of Computation_ 72 (2003) 105-129.\
 [4] J. Wenner, R. Barends, R. C. Bialczak, et al., Surface loss of superconducting coplanar
-waveguide resonators, _Applied Physics Letters_ 99 (2011).
+waveguide resonators, _Applied Physics Letters_ 99, 113513 (2011).
