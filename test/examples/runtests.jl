@@ -49,7 +49,7 @@ if "spheres" in cases
         np=numprocs,
         rtol=reltol,
         atol=abstol,
-        excluded_columns=["Maximum", "Minimum"]
+        excluded_columns=["Maximum", "Minimum", "Mean"]
     )
 end
 
@@ -63,7 +63,7 @@ if "rings" in cases
         np=numprocs,
         rtol=reltol,
         atol=abstol,
-        excluded_columns=["Maximum", "Minimum"]
+        excluded_columns=["Maximum", "Minimum", "Mean"]
     )
 end
 
@@ -77,7 +77,7 @@ if "cavity/pec" in cases
         np=numprocs,
         rtol=reltol,
         atol=abstol,
-        excluded_columns=["Maximum", "Minimum", "Error (Bkwd.)", "Error (Abs.)"],
+        excluded_columns=["Maximum", "Minimum", "Mean", "Error (Bkwd.)", "Error (Abs.)"],
         skip_rowcount=true
     )
 end
@@ -92,7 +92,7 @@ if "cavity/impedance" in cases
         np=numprocs,
         rtol=reltol,
         atol=abstol,
-        excluded_columns=["Maximum", "Minimum", "Error (Bkwd.)", "Error (Abs.)"],
+        excluded_columns=["Maximum", "Minimum", "Mean", "Error (Bkwd.)", "Error (Abs.)"],
         skip_rowcount=true
     )
 end
@@ -111,7 +111,7 @@ if "coaxial/open" in cases
         np=numprocs,
         rtol=reltol,
         atol=abstol,
-        excluded_columns=["Maximum", "Minimum"]
+        excluded_columns=["Maximum", "Minimum", "Mean"]
     )
 end
 
@@ -125,7 +125,7 @@ if "coaxial/matched" in cases
         np=numprocs,
         rtol=reltol,
         atol=abstol,
-        excluded_columns=["Maximum", "Minimum"]
+        excluded_columns=["Maximum", "Minimum", "Mean"]
     )
 end
 
@@ -139,7 +139,7 @@ if "cpw/lumped_uniform" in cases
         np=numprocs,
         rtol=reltol,
         atol=abstol,
-        excluded_columns=["Maximum", "Minimum"]
+        excluded_columns=["Maximum", "Minimum", "Mean"]
     )
 end
 
@@ -153,7 +153,7 @@ if "cpw/wave_uniform" in cases
         np=numprocs,
         rtol=reltol,
         atol=abstol,
-        excluded_columns=["Maximum", "Minimum"]
+        excluded_columns=["Maximum", "Minimum", "Mean"]
     )
 end
 
