@@ -121,6 +121,11 @@ endif()
 string(REPLACE ";" "; " LIBCEED_OPTIONS_PRINT "${LIBCEED_OPTIONS}")
 message(STATUS "LIBCEED_OPTIONS: ${LIBCEED_OPTIONS_PRINT}")
 
+# Patch for LIBXSMM pre-v2
+set(LIBCEED_PATCH_FILES
+  "${CMAKE_SOURCE_DIR}/extern/patch/libCEED/patch_xsmm.diff"
+)
+
 include(ExternalProject)
 ExternalProject_Add(libCEED
   DEPENDS           ${LIBCEED_DEPENDENCIES}
@@ -131,6 +136,7 @@ ExternalProject_Add(libCEED
   PREFIX            ${CMAKE_BINARY_DIR}/extern/libCEED-cmake
   BUILD_IN_SOURCE   TRUE
   UPDATE_COMMAND    ""
+  PATCH_COMMAND     git apply "${LIBCEED_PATCH_FILES}"
   CONFIGURE_COMMAND ""
   BUILD_COMMAND     ""
   INSTALL_COMMAND   ${CMAKE_MAKE_PROGRAM} ${LIBCEED_OPTIONS} install

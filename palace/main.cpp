@@ -71,10 +71,10 @@ static int ConfigureOmp()
 #endif
 }
 
-static int GetNumGpu()
+static int GetDeviceCount()
 {
 #if defined(MFEM_USE_CUDA) || defined(MFEM_USE_HIP)
-  return mfem::Device::GetNumGPU();
+  return mfem::Device::GetDeviceCount();
 #else
   return 0;
 #endif
@@ -262,7 +262,7 @@ int main(int argc, char *argv[])
   IoData iodata(argv[1], false);
 
   // Initialize the MFEM device and configure libCEED backend.
-  int omp_threads = ConfigureOmp(), ngpu = GetNumGpu();
+  int omp_threads = ConfigureOmp(), ngpu = GetDeviceCount();
   mfem::Device device(ConfigureDevice(iodata.solver.device), GetDeviceId(world_comm, ngpu));
   ConfigureCeedBackend(iodata.solver.ceed_backend);
 #if defined(HYPRE_WITH_GPU_AWARE_MPI)

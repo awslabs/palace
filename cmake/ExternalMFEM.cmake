@@ -98,6 +98,7 @@ endif()
 # Configure BLAS/LAPACK for dependencies
 if(NOT "${BLAS_LAPACK_LIBRARIES}" STREQUAL "")
   list(APPEND MFEM_OPTIONS
+    # "-DMFEM_USE_LAPACK=YES"
     "-DBLAS_LIBRARIES=${BLAS_LAPACK_LIBRARIES}"
     "-DLAPACK_LIBRARIES=${BLAS_LAPACK_LIBRARIES}"
   )
@@ -361,8 +362,9 @@ set(MFEM_PATCH_FILES
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_mesh_vis_dev.diff"
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_mesh_partitioner_dev.diff"
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_par_tet_mesh_fix.diff"
-  "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_pncmesh_update_fix.diff"
-  "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_getnodalvalues_device_fix.diff"
+  "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_mesh_prism_vtu_fix.diff"
+  "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_workspace_vectors.diff"
+  "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_hypre_runtime_compute_policy.diff"
 )
 
 include(ExternalProject)
