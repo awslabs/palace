@@ -5,35 +5,38 @@ using Gmsh: gmsh
 
 """
     generate_cylindrical_cavity_mesh(;
-        refinement=0,
-        order=1,
-        mesh_type=0,
-        radius=2.74,
-        aspect_ratio=1.0,
-        filename,
-        verbose=1,
+        filename::AbstractString,
+        refinement::Integer = 0,
+        order::Integer      = 1,
+        mesh_type::Integer  = 0,
+        radius::Real        = 2.74,
+        aspect_ratio::Real  = 1.0,
+        verbose::Integer    = 5,
+        gui::Bool           = false
     )
 
 Generate a mesh for the cylindrical cavity resonator example using Gmsh
 
 # Arguments
 
+  - filename - the filename to use for the generated mesh
   - refinement - measure of how many elements to include, 0 is least
   - order - the polynomial order of the approximation, minimum 1
   - mesh_type - 0 = tetrahedral mesh, 1 = prism mesh, 2 = hexahedral mesh
   - radius - the radius of the cavity resonator
   - aspect_ratio - the ratio of the DIAMETER of the cavity to the height
-  - filename - the filename to use for the generated mesh
   - verbose - flag to dictate the level of print to REPL, passed to Gmsh
+  - gui - whether to launch the Gmsh GUI on mesh generation
 """
 function generate_cylindrical_cavity_mesh(;
-    refinement::Integer=0,
-    order::Integer=1,
-    mesh_type::Integer=0,
-    radius::Real=2.74,
-    aspect_ratio::Real=1.0,
     filename::AbstractString,
-    verbose::Integer=1
+    refinement::Integer = 0,
+    order::Integer      = 1,
+    mesh_type::Integer  = 0,
+    radius::Real        = 2.74,
+    aspect_ratio::Real  = 1.0,
+    verbose::Integer    = 5,
+    gui::Bool           = false
 )
     @assert refinement >= 0
     @assert order > 0
@@ -158,7 +161,7 @@ function generate_cylindrical_cavity_mesh(;
     end
 
     # Optionally launch GUI
-    if "gui" in lowercase.(ARGS)
+    if gui
         gmsh.fltk.run()
     end
 

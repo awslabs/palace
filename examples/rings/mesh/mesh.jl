@@ -6,29 +6,41 @@ using LinearAlgebra
 
 """
     generate_ring_mesh(;
-        gui::Bool                  = false,
-        rc::AbstractVector{<:Real} = [0.0, 0.0, 0.0],
-        ra::AbstractVector{<:Real} = [0.0, 0.0, 1.0],
-        θ::Real                    = π / 2,
-        verbose::Bool              = false
+        filename::AbstractString,
+        wire_width                         = 1.0,
+        inner_radius                       = 10.0,
+        outer_radius                       = 100.0,
+        rot_center::AbstractVector{<:Real} = [0.0, 0.0, 0.0],
+        rot_axis::AbstractVector{<:Real}   = [0.0, 0.0, 1.0],
+        rot_θ::Real                        = π / 2,
+        verbose::Integer                   = 5,
+        gui::Bool                          = false
     )
 
 Generate a mesh for the rings example using Gmsh
 
 # Arguments
 
-  - gui - whether to launch the gmsh gui on mesh generation
-  - rc - center of rotation
-  - ra - axis of rotation
-  - θ - angle of rotation about ra, originating at rc
+  - filename - the filename to use for the generated mesh
+  - wire_width - width of the rings
+  - inner_radius - radius of the inner ring
+  - outer_radius - radius of the outer ring
+  - rot_center - center of rotation
+  - rot_axis - axis of rotation
+  - rot_θ - angle of rotation about rot_axis, originating at rot_center
   - verbose - flag to dictate the level of print to REPL, passed to Gmsh
+  - gui - whether to launch the Gmsh GUI on mesh generation
 """
 function generate_ring_mesh(;
-    gui::Bool                  = false,
-    rc::AbstractVector{<:Real} = [0.0, 0.0, 0.0],
-    ra::AbstractVector{<:Real} = [0.0, 0.0, 1.0],
-    θ::Real                    = π / 2,
-    verbose::Bool              = false
+    filename::AbstractString,
+    wire_width                         = 1.0,
+    inner_radius                       = 10.0,
+    outer_radius                       = 100.0,
+    rot_center::AbstractVector{<:Real} = [0.0, 0.0, 0.0],
+    rot_axis::AbstractVector{<:Real}   = [0.0, 0.0, 1.0],
+    rot_θ::Real                        = π / 2,
+    verbose::Integer                   = 5,
+    gui::Bool                          = false
 )
     kernel = gmsh.model.occ
 
@@ -43,9 +55,6 @@ function generate_ring_mesh(;
     gmsh.model.add("rings")
 
     # Geometry parameters (in um)
-    wire_width = 1.0
-    inner_radius = 10.0
-    outer_radius = 100.0
     farfield_radius = 10.0 * outer_radius
 
     # Mesh parameters
@@ -216,7 +225,7 @@ function generate_ring_mesh(;
     # Save mesh
     gmsh.option.setNumber("Mesh.MshFileVersion", 2.2)
     gmsh.option.setNumber("Mesh.Binary", 0)
-    gmsh.write(joinpath(@__DIR__, "rings.msh"))
+    gmsh.write(joinpath(@__DIR__, filename))
 
     # Print some information
     println("\nFinished generating mesh. Physical group tags:")

@@ -7,7 +7,7 @@
   },
   "Model":
   {
-    "Mesh": "mesh/cpw_lumped.msh",
+    "Mesh": "mesh/cpw_lumped_0.msh",
     "L0": 1.0e-6,  // μm
     "Refinement": {}
   },
@@ -16,13 +16,13 @@
     "Materials":
     [
       {
-        "Attributes": [2],  // Air
+        "Attributes": [1],  // Air
         "Permeability": 1.0,
         "Permittivity": 1.0,
         "LossTan": 0.0
       },
       {
-        "Attributes": [1],  // Sapphire
+        "Attributes": [2],  // Sapphire
         "Permeability": [0.99999975, 0.99999975, 0.99999979],
         "Permittivity": [9.3, 9.3, 11.5],
         "LossTan": [3.0e-5, 3.0e-5, 8.6e-5],
@@ -35,7 +35,7 @@
       [
         {
           "Index": 1,
-          "Attributes": [1]
+          "Attributes": [2]
         }
       ],
       "Probe":
@@ -59,11 +59,11 @@
   {
     "PEC":
     {
-      "Attributes": [3]  // Metal trace
+      "Attributes": [13]  // Metal trace
     },
     "Absorbing":
     {
-      "Attributes": [13],
+      "Attributes": [4],
       "Order": 1
     },
     "LumpedPort":
@@ -72,21 +72,6 @@
         "Index": 1,
         "R": 56.02,  // Ω, 2-element uniform
         "Excitation": true,
-        "Elements":
-        [
-          {
-            "Attributes": [4],
-            "Direction": "+Y"
-          },
-          {
-            "Attributes": [8],
-            "Direction": "-Y"
-          }
-        ]
-      },
-      {
-        "Index": 2,
-        "R": 56.02,
         "Elements":
         [
           {
@@ -100,7 +85,7 @@
         ]
       },
       {
-        "Index": 3,
+        "Index": 2,
         "R": 56.02,
         "Elements":
         [
@@ -115,7 +100,7 @@
         ]
       },
       {
-        "Index": 4,
+        "Index": 3,
         "R": 56.02,
         "Elements":
         [
@@ -128,6 +113,21 @@
             "Direction": "-Y"
           }
         ]
+      },
+      {
+        "Index": 4,
+        "R": 56.02,
+        "Elements":
+        [
+          {
+            "Attributes": [8],
+            "Direction": "+Y"
+          },
+          {
+            "Attributes": [12],
+            "Direction": "-Y"
+          }
+        ]
       }
     ],
     "Postprocessing":
@@ -136,10 +136,26 @@
       [
         {
           "Index": 1,
-          "Attributes": [12],
+          "Attributes": [14],
           "Side": "+Z",
-          "Thickness": 2e-3,  // μm
-          "PermittivitySA": 4.0,
+          "Thickness": 2.0e-3,  // μm
+          "PermittivitySA": 10.0,
+          "LossTan": 1.0
+        },
+        {
+          "Index": 2,
+          "Attributes": [13],
+          "Side": "-Z",
+          "Thickness": 2.0e-3,  // μm
+          "PermittivityMS": 10.0,
+          "LossTan": 1.0
+        },
+        {
+          "Index": 3,
+          "Attributes": [13],
+          "Side": "+Z",
+          "Thickness": 2.0e-3,  // μm
+          "PermittivityMA": 10.0,
           "LossTan": 1.0
         }
       ]
@@ -161,7 +177,7 @@
       "Type": "Default",
       "KSPType": "GMRES",
       "Tol": 1.0e-8,
-      "MaxIts": 100
+      "MaxIts": 200
     }
   }
 }
