@@ -55,8 +55,13 @@ where ``k=\omega\sqrt{\mu\varepsilon}``, ``\eta=\sqrt{\mu/\varepsilon}``, and
 ``\beta=l\pi/d``.
 
 The initial Gmsh mesh for this problem, from
-[`mesh/cavity.msh`](https://github.com/awslabs/palace/blob/main/examples/cavity/mesh/cavity.msh),
-is shown below. We use quadratic triangular prism elements.
+[`mesh/cavity_prism.msh`](https://github.com/awslabs/palace/blob/main/examples/cavity/mesh/cavity_prism.msh),
+is shown below. We use quadratic triangular prism elements. There are also two other
+included mesh files,
+[`mesh/cavity_tet.msh`](https://github.com/awslabs/palace/blob/main/examples/cavity/mesh/cavity_tet.msh)
+and
+[`mesh/cavity_hex.msh`](https://github.com/awslabs/palace/blob/main/examples/cavity/mesh/cavity_hex.msh),
+which use curved tetrahedral and hexahedral elements, respectively.
 
 ```@raw html
 <br/><p align="center">
@@ -89,8 +94,8 @@ In both cases, we configure the eigenvalue solver to solve for the ``15`` lowest
 modes above ``2.0\text{ GHz}`` (the dominant mode frequencies for both the
 ``\text{TE}`` and ``\text{TM}`` cases fall around ``2.9\text{ GHz}`` frequency for this
 problem). A sparse direct solver is used for the solutions of the linear system resulting
-from the spatial discretization of the governing equations, using in this case a fourth-
-order finite element space.
+from the spatial discretization of the governing equations, using in this case a
+fourth-order finite element space.
 
 The frequencies for the lowest-order ``\text{TE}`` and ``\text{TM}`` modes computed using
 the above formula for this problem are listed in the table below.
@@ -112,22 +117,22 @@ First, we examine the output of the `cavity_pec.json` simulation. The file
 associated quality factors:
 
 ```
-            m,             Re{f} (GHz),             Im{f} (GHz),                       Q
- 1.000000e+00,        +2.904507338e+00,        +5.809012262e-04,        +2.500001089e+03
- 2.000000e+00,        +2.922515466e+00,        +5.845032101e-04,        +2.499999550e+03
- 3.000000e+00,        +2.922528546e+00,        +5.845057488e-04,        +2.499999880e+03
- 4.000000e+00,        +3.468921611e+00,        +6.937841360e-04,        +2.500000721e+03
- 5.000000e+00,        +4.147607819e+00,        +8.295219962e-04,        +2.499998747e+03
- 6.000000e+00,        +4.147624590e+00,        +8.295263017e-04,        +2.499995880e+03
- 7.000000e+00,        +4.397698897e+00,        +8.795405799e-04,        +2.499997775e+03
- 8.000000e+00,        +4.397707609e+00,        +8.795424791e-04,        +2.499997329e+03
- 9.000000e+00,        +4.630241197e+00,        +9.260492789e-04,        +2.499997243e+03
- 1.000000e+01,        +4.631850092e+00,        +9.263712403e-04,        +2.499996752e+03
- 1.100000e+01,        +4.778292314e+00,        +9.556584905e-04,        +2.499999978e+03
- 1.200000e+01,        +5.002916952e+00,        +1.000583103e-03,        +2.500000769e+03
- 1.300000e+01,        +5.003637424e+00,        +1.000727996e-03,        +2.499998774e+03
- 1.400000e+01,        +5.005126280e+00,        +1.001026744e-03,        +2.499996334e+03
- 1.500000e+01,        +5.291624557e+00,        +1.058325143e-03,        +2.499999503e+03
+               m,             Re{f} (GHz),             Im{f} (GHz),                       Q
+ 1.000000000e+00,        +2.907188343e+00,        +5.814376364e-04,        +2.500000189e+03
+ 2.000000000e+00,        +2.924244826e+00,        +5.848489468e-04,        +2.500000129e+03
+ 3.000000000e+00,        +2.924244826e+00,        +5.848489421e-04,        +2.500000149e+03
+ 4.000000000e+00,        +3.471149740e+00,        +6.942299240e-04,        +2.500000137e+03
+ 5.000000000e+00,        +4.150836993e+00,        +8.301673534e-04,        +2.500000186e+03
+ 6.000000000e+00,        +4.150836993e+00,        +8.301673645e-04,        +2.500000153e+03
+ 7.000000000e+00,        +4.398026458e+00,        +8.796051788e-04,        +2.500000371e+03
+ 8.000000000e+00,        +4.398026459e+00,        +8.796053549e-04,        +2.499999871e+03
+ 9.000000000e+00,        +4.632147276e+00,        +9.264294365e-04,        +2.500000101e+03
+ 1.000000000e+01,        +4.632147278e+00,        +9.264294277e-04,        +2.500000125e+03
+ 1.100000000e+01,        +4.779153633e+00,        +9.558306713e-04,        +2.500000195e+03
+ 1.200000000e+01,        +5.005343455e+00,        +1.001068673e-03,        +2.500000096e+03
+ 1.300000000e+01,        +5.005389580e+00,        +1.001077846e-03,        +2.500000226e+03
+ 1.400000000e+01,        +5.005389580e+00,        +1.001077950e-03,        +2.499999965e+03
+ 1.500000000e+01,        +5.293474915e+00,        +1.058694964e-03,        +2.500000094e+03
 ```
 
 Indeed we can find a correspondence between the analytic modes predicted and the solutions
@@ -140,22 +145,22 @@ unchanged but the quality factors have fallen due to the addition of imperfectly
 walls to the model:
 
 ```
-            m,             Re{f} (GHz),             Im{f} (GHz),                       Q
- 1.000000e+00,        +2.904507340e+00,        +7.086038246e-04,        +2.049457910e+03
- 2.000000e+00,        +2.922515467e+00,        +7.051671704e-04,        +2.072214699e+03
- 3.000000e+00,        +2.922528546e+00,        +7.051734731e-04,        +2.072205452e+03
- 4.000000e+00,        +3.468921613e+00,        +8.640197955e-04,        +2.007431854e+03
- 5.000000e+00,        +4.147607821e+00,        +9.784798616e-04,        +2.119414052e+03
- 6.000000e+00,        +4.147624591e+00,        +9.784941280e-04,        +2.119391720e+03
- 7.000000e+00,        +4.397698899e+00,        +1.000289498e-03,        +2.198213128e+03
- 8.000000e+00,        +4.397707610e+00,        +1.000292504e-03,        +2.198210877e+03
- 9.000000e+00,        +4.630241200e+00,        +1.054149598e-03,        +2.196197451e+03
- 1.000000e+01,        +4.631850095e+00,        +1.054707045e-03,        +2.195799411e+03
- 1.100000e+01,        +4.778292317e+00,        +1.126015851e-03,        +2.121769621e+03
- 1.200000e+01,        +5.002916951e+00,        +1.085882618e-03,        +2.303617807e+03
- 1.300000e+01,        +5.003637428e+00,        +1.171361603e-03,        +2.135821061e+03
- 1.400000e+01,        +5.005126284e+00,        +1.171895768e-03,        +2.135482762e+03
- 1.500000e+01,        +5.291624560e+00,        +1.207338551e-03,        +2.191441950e+03
+               m,             Re{f} (GHz),             Im{f} (GHz),                       Q
+ 1.000000000e+00,        +2.907188345e+00,        +7.091319575e-04,        +2.049821899e+03
+ 2.000000000e+00,        +2.924244827e+00,        +7.055966146e-04,        +2.072178956e+03
+ 3.000000000e+00,        +2.924244827e+00,        +7.055966604e-04,        +2.072178821e+03
+ 4.000000000e+00,        +3.471149742e+00,        +8.644493471e-04,        +2.007723102e+03
+ 5.000000000e+00,        +4.150836995e+00,        +9.792364835e-04,        +2.119425277e+03
+ 6.000000000e+00,        +4.150836995e+00,        +9.792365057e-04,        +2.119425229e+03
+ 7.000000000e+00,        +4.398026451e+00,        +1.000319808e-03,        +2.198310244e+03
+ 8.000000000e+00,        +4.398026457e+00,        +1.000319601e-03,        +2.198310702e+03
+ 9.000000000e+00,        +4.632147282e+00,        +1.054123330e-03,        +2.197156287e+03
+ 1.000000000e+01,        +4.632147282e+00,        +1.054125067e-03,        +2.197152665e+03
+ 1.100000000e+01,        +4.779153630e+00,        +1.126050842e-03,        +2.122086138e+03
+ 1.200000000e+01,        +5.005343456e+00,        +1.086214462e-03,        +2.304030995e+03
+ 1.300000000e+01,        +5.005389584e+00,        +1.171298237e-03,        +2.136684563e+03
+ 1.400000000e+01,        +5.005389585e+00,        +1.171297627e-03,        +2.136685675e+03
+ 1.500000000e+01,        +5.293474916e+00,        +1.207733736e-03,        +2.191490929e+03
 ```
 
 However, the bulk dielectric loss postprocessing results, computed from the energies written
@@ -167,11 +172,11 @@ can read the mode quality factor ``Q = 2.30\times 10^3``. Subtracting out the co
 of dielectric losses, we have
 
 ```math
-Q_c = \left(\frac{1}{Q}-\frac{1}{Q_d}\right)^{-1} = 2.93\times 10^4
+Q_c = \left(\frac{1}{Q}-\frac{1}{Q_d}\right)^{-1} = 2.94\times 10^4
 ```
 
-which agrees very closely to the analytical result of ``Q_c = 2.94\times 10^4``
-given in Example 6.4 from [[1]](#References) for this geometry.
+which is the same as the analytical result given in Example 6.4 from [[1]](#References) for
+this geometry.
 
 Finally, a clipped view of the electric field (left) and magnetic flux density magnitudes
 for the ``\text{TE}_{011}`` mode is shown below.
@@ -198,19 +203,9 @@ polynomial order.
 
 ```@raw html
 <br/><p align="center">
-  <img src="../../assets/examples/cavity_error_tetrahedra.png" width="70%" />
-</p><br/>
-```
-
-```@raw html
-<br/><p align="center">
-  <img src="../../assets/examples/cavity_error_prism.png" width="70%" />
-</p><br/>
-```
-
-```@raw html
-<br/><p align="center">
-  <img src="../../assets/examples/cavity_error_hexahedra.png" width="70%" />
+  <img src="../../assets/examples/cavity-3a.png" width="70%" />
+  <img src="../../assets/examples/cavity-3b.png" width="70%" />
+  <img src="../../assets/examples/cavity-3c.png" width="70%" />
 </p><br/>
 ```
 
