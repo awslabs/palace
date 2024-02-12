@@ -20,6 +20,7 @@ The format of this changelog is based on
     domain electric field energy.
   - Added documentation for various timer categories and improved timing breakdown of
     various sections of a simulation.
+  - Fixed bug in implementation of numeric wave ports for driven simulations.
 
 ## [0.12.0] - 2023-12-21
 

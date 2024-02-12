@@ -493,8 +493,8 @@ std::complex<double> PostOperator::GetSParameter(const WavePortOperator &wave_po
   {
     Sij.real(Sij.real() - 1.0);
   }
-  // Port de-embedding: S_demb = S exp(-ikₙᵢ dᵢ) exp(-ikₙⱼ dⱼ) (distance offset is default
-  // 0 unless specified).
+  // Port de-embedding: S_demb = S exp(ikₙᵢ dᵢ) exp(ikₙⱼ dⱼ) (distance offset is default 0
+  // unless specified).
   Sij *= std::exp(1i * src_data.kn0 * src_data.d_offset);
   Sij *= std::exp(1i * data.kn0 * data.d_offset);
   return Sij;

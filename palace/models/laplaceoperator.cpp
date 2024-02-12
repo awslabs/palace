@@ -29,13 +29,6 @@ LaplaceOperator::LaplaceOperator(const IoData &iodata,
     nd_fespace(h1_fespaces.GetFinestFESpace(), *mesh.back(), nd_fec.get()),
     mat_op(iodata, *mesh.back()), source_attr_lists(ConstructSources(iodata))
 {
-  // Finalize setup.
-  BilinearForm::pa_order_threshold = iodata.solver.pa_order_threshold;
-  fem::DefaultIntegrationOrder::p_trial = iodata.solver.order;
-  fem::DefaultIntegrationOrder::q_order_jac = iodata.solver.q_order_jac;
-  fem::DefaultIntegrationOrder::q_order_extra_pk = iodata.solver.q_order_extra;
-  fem::DefaultIntegrationOrder::q_order_extra_qk = iodata.solver.q_order_extra;
-
   // Print essential BC information.
   if (dbc_attr.Size())
   {

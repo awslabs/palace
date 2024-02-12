@@ -50,6 +50,9 @@ public:
   mfem::Vector port_normal;
 
 private:
+  // List of all boundary attributes making up this port boundary.
+  mfem::Array<int> attr_list;
+
   // SubMesh data structures to define finite element spaces and grid functions on the
   // SubMesh corresponding to this port boundary.
   std::unique_ptr<Mesh> port_mesh;
@@ -57,15 +60,12 @@ private:
   std::unique_ptr<FiniteElementSpace> port_nd_fespace, port_h1_fespace;
   std::unique_ptr<mfem::ParTransferMap> port_nd_transfer, port_h1_transfer;
   std::unordered_map<int, int> submesh_parent_elems;
-
-  // List of all boundary attributes making up this port boundary.
-  mfem::Array<int> attr_list;
+  mfem::Array<int> port_dbc_tdof_list;
+  double mu_eps_min;
 
   // Operator storage for repeated boundary mode eigenvalue problem solves.
-  double mu_eps_max;
-  std::unique_ptr<mfem::HypreParMatrix> Btt, Btn, BtnT, Dtt;
-  ComplexVector v0, e0, e0t, e0n;
-  mfem::Array<int> port_dbc_tdof_list;
+  std::unique_ptr<mfem::HypreParMatrix> Atnr, Atni, Antr, Anti, Annr, Anni, Br, Bi;
+  ComplexVector v0, e0, e0n;
 
   // Eigenvalue solver for boundary modes.
   MPI_Comm port_comm;
