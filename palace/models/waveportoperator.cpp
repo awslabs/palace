@@ -130,9 +130,9 @@ ComplexHypreParMatrix GetAtn(const MaterialOperator &mat_op,
                              const FiniteElementSpace &nd_fespace,
                              const FiniteElementSpace &h1_fespace)
 {
-  // Coupling matrix: Aₜₙ = (μ⁻¹ ∇ₜ u, v).
+  // Coupling matrix: Aₜₙ = -(μ⁻¹ ∇ₜ u, v).
   MaterialPropertyCoefficient muinv_func(mat_op.GetBdrAttributeToMaterial(),
-                                         mat_op.GetInvPermeability(), 1.0);
+                                         mat_op.GetInvPermeability(), -1.0);
   BilinearForm atn(h1_fespace, nd_fespace);
   atn.AddDomainIntegrator<MixedVectorGradientIntegrator>(muinv_func);
   return {ParOperator(atn.FullAssemble(skip_zeros), h1_fespace, nd_fespace, false)
@@ -172,9 +172,9 @@ ComplexHypreParMatrix GetAnn(const MaterialOperator &mat_op,
                              const FiniteElementSpace &h1_fespace,
                              const mfem::Vector &normal)
 {
-  // Mass matrix: Aₙₙ = (ε u, v).
+  // Mass matrix: Aₙₙ = -(ε u, v).
   MaterialPropertyCoefficient epsilon_func(mat_op.GetBdrAttributeToMaterial(),
-                                           mat_op.GetPermittivityReal(), 1.0);
+                                           mat_op.GetPermittivityReal(), -1.0);
   epsilon_func.NormalProjectedCoefficient(normal);
   BilinearForm annr(h1_fespace);
   annr.AddDomainIntegrator<MassIntegrator>(epsilon_func);
@@ -186,7 +186,7 @@ ComplexHypreParMatrix GetAnn(const MaterialOperator &mat_op,
             nullptr};
   }
   MaterialPropertyCoefficient negepstandelta_func(mat_op.GetBdrAttributeToMaterial(),
-                                                  mat_op.GetPermittivityImag(), 1.0);
+                                                  mat_op.GetPermittivityImag(), -1.0);
   negepstandelta_func.NormalProjectedCoefficient(normal);
   BilinearForm anni(h1_fespace);
   anni.AddDomainIntegrator<MassIntegrator>(negepstandelta_func);
@@ -898,7 +898,6 @@ void WavePortData::Initialize(double omega)
     e0n.Real() = e0nr;
     e0n.Imag() = e0ni;
     e0n *= 1.0 / (1i * kn0);
-
     port_E0t->real().SetFromTrueDofs(e0tr);  // Parallel distribute
     port_E0t->imag().SetFromTrueDofs(e0ti);
     port_E0n->real().SetFromTrueDofs(e0n.Real());
