@@ -1350,7 +1350,7 @@ TEST_CASE("2D libCEED Operators", "[libCEED]")
 {
   auto mesh = GENERATE("star-quad.mesh", "star-tri.mesh", "star-mixed-p2.mesh");
   auto amr = GENERATE(false, true);
-  auto order = GENERATE(1, 2);
+  auto order = GENERATE(1, 2, 3);
   RunCeedIntegratorTests(MPI_COMM_WORLD, std::string(PALACE_TEST_MESH_DIR "/") + mesh, 0,
                          amr, order);
 }
@@ -1359,7 +1359,7 @@ TEST_CASE("3D libCEED Operators", "[libCEED]")
 {
   auto mesh = GENERATE("fichera-hex.mesh", "fichera-tet.mesh", "fichera-mixed-p2.mesh");
   auto amr = GENERATE(false, true);
-  auto order = GENERATE(1, 2);
+  auto order = GENERATE(1, 2, 3);
   RunCeedIntegratorTests(MPI_COMM_WORLD, std::string(PALACE_TEST_MESH_DIR "/") + mesh, 0,
                          amr, order);
 }
@@ -1368,7 +1368,7 @@ TEST_CASE("2D libCEED Interpolators", "[libCEED][Interpolator]")
 {
   auto mesh = GENERATE("star-quad.mesh", "star-tri.mesh", "star-mixed-p2.mesh");
   auto amr = GENERATE(false, true);
-  auto order = GENERATE(1, 2);
+  auto order = GENERATE(1, 2, 3);
   RunCeedInterpolatorTests(MPI_COMM_WORLD, std::string(PALACE_TEST_MESH_DIR "/") + mesh, 0,
                            amr, order);
 }
@@ -1377,7 +1377,7 @@ TEST_CASE("3D libCEED Interpolators", "[libCEED][Interpolator]")
 {
   auto mesh = GENERATE("fichera-hex.mesh", "fichera-tet.mesh", "fichera-mixed-p2.mesh");
   auto amr = GENERATE(false, true);
-  auto order = GENERATE(1, 2);
+  auto order = GENERATE(1, 2, 3);
   RunCeedInterpolatorTests(MPI_COMM_WORLD, std::string(PALACE_TEST_MESH_DIR "/") + mesh, 0,
                            amr, order);
 }
