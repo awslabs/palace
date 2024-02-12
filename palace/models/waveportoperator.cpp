@@ -586,8 +586,8 @@ WavePortData::WavePortData(const config::WavePortData &data,
   e0n.SetSize(port_h1_fespace->GetTrueVSize());
 
   // The operators for the generalized eigenvalue problem are:
-  //                [Aₜₜ   Aₜₙ]  [eₜ]  = -kₙ² [Bₜₜ  0] [eₜ]
-  //                [Aₜₙᵀ  Aₙₙ] [eₙ]         [0  0] [eₙ]
+  //                [Aₜₜ  Aₜₙ] [eₜ] = -kₙ² [Bₜₜ  0ₜₙ] [eₜ]
+  //                [Aₙₜ  Aₙₙ] [eₙ]        [0ₙₜ  0ₙₙ] [eₙ]
   // for the wave port of the given index. The transformed variables are related to the true
   // field by Eₜ = eₜ and Eₙ = eₙ / ikₙ. We will actually solve the shift-and-inverse
   // problem (A - σ B)⁻¹ B e = λ e, with λ = 1 / (-kₙ² - σ).
@@ -597,7 +597,7 @@ WavePortData::WavePortData(const config::WavePortData &data,
   //           transmission line, arXiv:2302.11994 (2023).
   mu_eps_min = 0.0;  // Use standard inverse transformation to avoid conditioning issues
                      // associated with shift
-  // double c_max = mat_op.GetLightSpeedMax().Max();
+  // const double c_max = mat_op.GetLightSpeedMax().Max();
   // MFEM_VERIFY( c_max > 0.0 && c_max < mfem::infinity(),
   //             "Invalid material speed of light detected in WavePortOperator!");
   // mu_eps_min = 1.0 / (c_max * c_max);
@@ -843,7 +843,7 @@ void WavePortData::Initialize(double omega)
   // port mode. B uses the non-owning constructor since the matrices Br, Bi are not
   // functions of frequency (constructed once for all).
   std::unique_ptr<ComplexOperator> A, B;
-  double sigma = -omega * omega * mu_eps_min;
+  const double sigma = -omega * omega * mu_eps_min;
   {
     auto [Attr, Atti] = GetAtt(mat_op, *port_nd_fespace, port_normal, omega, sigma);
     auto [Ar, Ai] =
