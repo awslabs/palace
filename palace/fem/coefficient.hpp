@@ -249,8 +249,11 @@ private:
         E.GetVectorValue(*FET.Elem2, FET.Elem2->GetIntPoint(), V);
         return FET.Elem2->Attribute;
       }
-      E.GetVectorValue(*FET.Elem1, FET.Elem1->GetIntPoint(), V);
-      return FET.Elem1->Attribute;
+      else
+      {
+        E.GetVectorValue(*FET.Elem1, FET.Elem1->GetIntPoint(), V);
+        return FET.Elem1->Attribute;
+      }
     }
     if (C1 * side < 0.0)
     {
@@ -258,9 +261,12 @@ private:
       E.GetVectorValue(*FET.Elem2, FET.Elem2->GetIntPoint(), V);
       return FET.Elem2->Attribute;
     }
-    // Get solution in el1.
-    E.GetVectorValue(*FET.Elem1, FET.Elem1->GetIntPoint(), V);
-    return FET.Elem1->Attribute;
+    else
+    {
+      // Get solution in el1.
+      E.GetVectorValue(*FET.Elem1, FET.Elem1->GetIntPoint(), V);
+      return FET.Elem1->Attribute;
+    }
   }
 
 public:
@@ -373,9 +379,9 @@ public:
       GetBdrElementNeighborTransformations(T, ip);
 
       // For interior faces, compute the value on the side where the speed of light is
-      // smaller (typically should choose the non-vacuum side).
-      if (FET.Elem2 && mat_op.GetLightSpeedMax(FET.Elem2->Attribute) <
-                           mat_op.GetLightSpeedMin(FET.Elem1->Attribute))
+      // larger (typically should choose the non-vacuum side).
+      if (FET.Elem2 && mat_op.GetLightSpeedMin(FET.Elem2->Attribute) >
+                           mat_op.GetLightSpeedMax(FET.Elem1->Attribute))
       {
         return GetLocalEnergyDensity(*FET.Elem2, FET.Elem2->GetIntPoint(),
                                      FET.Elem2->Attribute);
@@ -461,9 +467,9 @@ public:
     GetBdrElementNeighborTransformations(T, ip);
 
     // For interior faces, compute the value on the side where the speed of light is
-    // smaller (typically should choose the non-vacuum side).
-    if (FET.Elem2 && mat_op.GetLightSpeedMax(FET.Elem2->Attribute) <
-                         mat_op.GetLightSpeedMin(FET.Elem1->Attribute))
+    // larger (typically should choose the non-vacuum side).
+    if (FET.Elem2 && mat_op.GetLightSpeedMin(FET.Elem2->Attribute) >
+                         mat_op.GetLightSpeedMax(FET.Elem1->Attribute))
     {
       U.GetVectorValue(*FET.Elem2, FET.Elem2->GetIntPoint(), V);
     }
@@ -493,9 +499,9 @@ public:
     GetBdrElementNeighborTransformations(T, ip);
 
     // For interior faces, compute the value on the side where the speed of light is
-    // smaller (typically should choose the non-vacuum side).
-    if (FET.Elem2 && mat_op.GetLightSpeedMax(FET.Elem2->Attribute) <
-                         mat_op.GetLightSpeedMin(FET.Elem1->Attribute))
+    // larger (typically should choose the non-vacuum side).
+    if (FET.Elem2 && mat_op.GetLightSpeedMin(FET.Elem2->Attribute) >
+                         mat_op.GetLightSpeedMax(FET.Elem1->Attribute))
     {
       return U.GetValue(*FET.Elem2, FET.Elem2->GetIntPoint());
     }
