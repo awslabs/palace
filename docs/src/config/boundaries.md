@@ -250,6 +250,7 @@ accounts for nonzero metal thickness.
         "Direction": <string> or [<float array>],
         "CoordinateSystem": <string>,
         "Excitation": <bool>,
+        "Active": <bool>,
         "R": <float>,
         "L": <float>,
         "C": <float>,
@@ -294,6 +295,9 @@ instead.
 
 `"Excitation" [false]` :  Turns on or off port excitation for this lumped port boundary for
 driven or transient simulation types.
+
+`"Active" [true]` :  Turns on or off damping boundary condition for this lumped port
+boundary for driven or transient simulation types.
 
 `"R" [0.0]` :  Circuit resistance used for computing this lumped port boundary's impedance,
 ``\Omega``. This option should only be used along with the corresponding `"L"` and `"C"`
@@ -343,6 +347,7 @@ corresponding coordinate system.
         "Index": <int>,
         "Attributes": [<int array>],
         "Excitation": <bool>,
+        "Active": <bool>,
         "Mode": <int>,
         "Offset": <float>
     },
@@ -359,6 +364,9 @@ boundary.
 
 `"Excitation" [false]` :  Turns on or off port excitation for this wave port boundary for
 driven simulation types.
+
+`"Active" [true]` :  Turns on or off damping boundary condition for this wave port boundary
+for driven simulation types.
 
 `"Mode" [1]` :  Mode index (1-based) for the characteristic port mode of this wave port
 boundary. Ranked in order of decreasing wave number.
