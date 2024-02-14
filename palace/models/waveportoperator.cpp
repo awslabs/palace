@@ -3,7 +3,6 @@
 
 #include "waveportoperator.hpp"
 
-#include <array>
 #include <tuple>
 #include "fem/bilinearform.hpp"
 #include "fem/coefficient.hpp"
@@ -89,8 +88,8 @@ void GetInitialSpace(const mfem::ParFiniteElementSpace &nd_fespace,
   v.SetSize(nd_size + h1_size);
   v = std::complex<double>(1.0, 0.0);
   // linalg::SetRandomReal(nd_fespace.GetComm(), v);
+  linalg::SetSubVector(v, nd_size, nd_size + h1_size, 0.0);
   linalg::SetSubVector(v, dbc_tdof_list, 0.0);
-  // linalg::SetSubVector(v, nd_size, nd_size + h1_size, 0.0);
 }
 
 using ComplexHypreParMatrix = std::tuple<std::unique_ptr<mfem::HypreParMatrix>,
@@ -273,39 +272,43 @@ ComplexHypreParMatrix GetSystemMatrixB(mfem::HypreParMatrix *Bttr,
   return {std::move(Br), std::move(Bi)};
 }
 
-void NormalizeWithSign(const mfem::ParGridFunction &S0t, mfem::ParComplexGridFunction &E0t,
-                       mfem::ParComplexGridFunction &E0n, mfem::LinearForm &sr,
-                       mfem::LinearForm &si)
+void Normalize(const mfem::ParGridFunction &S0t, mfem::ParComplexGridFunction &E0t,
+               mfem::ParComplexGridFunction &E0n, mfem::LinearForm &sr,
+               mfem::LinearForm &si)
 {
   // Normalize grid functions to a chosen polarization direction and unit power, |E x H⋆| ⋅
   // n, integrated over the port surface (+n is the direction of propagation). The n x H
   // coefficients are updated implicitly as the only store references to the Et, En grid
-  // functions. We choose a (rather arbitrary) sign constraint to at least make results for
+  // functions. We choose a (rather arbitrary) phase constraint to at least make results for
   // the same port consistent between frequencies/meshes.
 
   // |E x H⋆| ⋅ n = |E ⋅ (-n x H⋆)|
-  double sign = sr * S0t;
-  std::complex<double> dot(-(sr * E0t.real()) - (si * E0t.imag()),
-                           -(sr * E0t.imag()) + (si * E0t.real()));
-  std::array<double, 3> data = {sign, dot.real(), dot.imag()};
-  Mpi::GlobalSum(3, data.data(), S0t.ParFESpace()->GetComm());
-  sign = (data[0] < 0.0) ? -1.0 : 1.0;
-  dot = {data[1], data[2]};
+  std::complex<double> dot[2] = {
+      {sr * S0t, si * S0t},
+      {-(sr * E0t.real()) - (si * E0t.imag()), -(sr * E0t.imag()) + (si * E0t.real())}};
+  Mpi::GlobalSum(2, dot, S0t.ParFESpace()->GetComm());
+  auto scale = std::abs(dot[0]) / (dot[0] * std::sqrt(std::abs(dot[1])));
 
-  double scale = sign / std::sqrt(std::abs(dot));
-  E0t.real() *= scale;  // Updates the n x H coefficients depending on Et, En too
-  E0t.imag() *= scale;
-  E0n.real() *= scale;
-  E0n.imag() *= scale;
-  sr *= scale;  // Update linear forms for postprocessing
-  si *= scale;
+  // This also updates the n x H coefficients depending on Et, En.
+  Vector tmp = E0t.real();
+  add(scale.real(), E0t.real(), -scale.imag(), E0t.imag(), E0t.real());
+  add(scale.imag(), tmp, scale.real(), E0t.imag(), E0t.imag());
 
-  // This parallel communication is not required since wave port boundaries are true
-  // one-sided boundaries.
-  // port_E0t->real().ExchangeFaceNbrData();  // Ready for parallel comm on shared faces
-  // port_E0t->imag().ExchangeFaceNbrData();  // for n x H coefficients evaluation
-  // port_E0n->real().ExchangeFaceNbrData();
-  // port_E0n->imag().ExchangeFaceNbrData();
+  tmp = E0n.real();
+  add(scale.real(), E0n.real(), -scale.imag(), E0n.imag(), E0n.real());
+  add(scale.imag(), tmp, scale.real(), E0n.imag(), E0n.imag());
+
+  // Update linear forms for postprocessing too.
+  tmp = sr;
+  add(scale.real(), sr, -scale.imag(), si, sr);
+  add(scale.imag(), tmp, scale.real(), si, si);
+
+  // This parallel communication is not required since wave port boundaries are true one-
+  // sided boundaries.
+  // E0t.real().ExchangeFaceNbrData();  // Ready for parallel comm on shared faces for n x H
+  // E0t.imag().ExchangeFaceNbrData();  // coefficients evaluation
+  // E0n.real().ExchangeFaceNbrData();
+  // E0n.imag().ExchangeFaceNbrData();
 }
 
 // Helper for BdrSubmeshEVectorCoefficient and BdrSubmeshHVectorCoefficient.
@@ -599,7 +602,7 @@ WavePortData::WavePortData(const config::WavePortData &data,
   mu_eps_min = 0.0;  // Use standard inverse transformation to avoid conditioning issues
                      // associated with shift
   // const double c_max = mat_op.GetLightSpeedMax().Max();
-  // MFEM_VERIFY( c_max > 0.0 && c_max < mfem::infinity(),
+  // MFEM_VERIFY(c_max > 0.0 && c_max < mfem::infinity(),
   //             "Invalid material speed of light detected in WavePortOperator!");
   // mu_eps_min = 1.0 / (c_max * c_max);
   std::tie(Atnr, Atni) = GetAtn(mat_op, *port_nd_fespace, *port_h1_fespace);
@@ -609,7 +612,7 @@ WavePortData::WavePortData(const config::WavePortData &data,
     // The HypreParMatrix constructor from a SparseMatrix on each process does not copy
     // the SparseMatrix data, but that's OK since this Dnn is copied in the block system
     // matrix construction.
-    mfem::Vector d(port_h1_fespace->GetTrueVSize());
+    Vector d(port_h1_fespace->GetTrueVSize());
     d.UseDevice(false);  // SparseMatrix constructor uses Vector on host
     d = 0.0;
     mfem::SparseMatrix diag(d);
@@ -642,7 +645,7 @@ WavePortData::WavePortData(const config::WavePortData &data,
     // Define the linear solver to be used for solving systems associated with the
     // generalized eigenvalue problem.
     constexpr int ksp_print = 0;
-    constexpr double ksp_tol = 1.0e-8;
+    constexpr double ksp_tol = 1.0e-9;
     constexpr double ksp_max_it = 30;
     auto gmres = std::make_unique<GmresSolver<ComplexOperator>>(port_comm, ksp_print);
     gmres->SetInitialGuess(false);
@@ -766,7 +769,7 @@ WavePortData::WavePortData(const config::WavePortData &data,
       eigen = std::move(slepc);
 #endif
     }
-    constexpr double tol = 1.0e-6;
+    constexpr double tol = 1.0e-8;
     eigen->SetNumModes(mode_idx, std::max(2 * mode_idx + 1, 5));
     eigen->SetTol(tol);
     eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::LARGEST_MAGNITUDE);
@@ -819,6 +822,9 @@ WavePortData::WavePortData(const config::WavePortData &data,
     mfem::VectorFunctionCoefficient tfunc(dim, TDirection);
     port_S0t = std::make_unique<mfem::ParGridFunction>(&port_nd_fespace->Get());
     port_S0t->ProjectCoefficient(tfunc);
+    double dot = (*port_S0t) * (*port_S0t);
+    Mpi::GlobalSum(1, &dot, port_nd_fespace->GetComm());
+    *port_S0t /= std::sqrt(dot);
   }
 }
 
@@ -922,7 +928,7 @@ void WavePortData::Initialize(double omega)
     port_si->UseFastAssembly(false);
     port_sr->Assemble();
     port_si->Assemble();
-    NormalizeWithSign(*port_S0t, *port_E0t, *port_E0n, *port_sr, *port_si);
+    Normalize(*port_S0t, *port_E0t, *port_E0n, *port_sr, *port_si);
   }
 }
 

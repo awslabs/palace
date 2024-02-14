@@ -1479,9 +1479,10 @@ void EigenSolverData::SetUp(json &solver)
   {
     return;
   }
-  MFEM_VERIFY(eigenmode->find("Target") != eigenmode->end(),
+  MFEM_VERIFY(eigenmode->find("Target") != eigenmode->end() ||
+                  solver.find("Driven") != solver.end(),
               "Missing \"Eigenmode\" solver \"Target\" in configuration file!");
-  target = eigenmode->at("Target");  // Required
+  target = eigenmode->value("Target", target);  // Required (only for eigenmode simulations)
   tol = eigenmode->value("Tol", tol);
   max_it = eigenmode->value("MaxIts", max_it);
   max_size = eigenmode->value("MaxSize", max_size);
