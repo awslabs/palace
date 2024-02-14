@@ -422,6 +422,9 @@ public:
   // Flag for source term in driven and transient simulations.
   bool excitation = false;
 
+  // Flag for boundary damping term in driven and transient simulations.
+  bool active = true;
+
   // For each lumped port index, each element contains a list of attributes making up a
   // single element of a potentially multielement lumped port.
   std::vector<internal::ElementData> elements = {};
@@ -436,14 +439,17 @@ public:
 struct WavePortData
 {
 public:
-  // Flag for source term in driven and transient simulations.
-  bool excitation = false;
-
   // Mode index for the numeric wave port.
   int mode_idx = 1;
 
   // Port offset for de-embedding [m].
   double d_offset = 0.0;
+
+  // Flag for source term in driven and transient simulations.
+  bool excitation = false;
+
+  // Flag for boundary damping term in driven and transient simulations.
+  bool active = true;
 
   // List of boundary attributes for this wave port.
   std::vector<int> attributes = {};

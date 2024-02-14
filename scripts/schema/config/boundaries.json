@@ -126,6 +126,7 @@
           "Ls": { "type": "number" },
           "Cs": { "type": "number" },
           "Excitation": { "type": "boolean" },
+          "Active": { "type": "boolean" },
           "Elements":
           {
             "type": "array",
@@ -171,7 +172,8 @@
           },
           "Mode": { "type": "integer", "exclusiveMinimum": 0 },
           "Offset": { "type": "number", "minimum": 0.0 },
-          "Excitation": { "type": "boolean" }
+          "Excitation": { "type": "boolean" },
+          "Active": { "type": "boolean" }
         }
       }
     },
