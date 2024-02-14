@@ -645,7 +645,7 @@ WavePortData::WavePortData(const config::WavePortData &data,
     // Define the linear solver to be used for solving systems associated with the
     // generalized eigenvalue problem.
     constexpr int ksp_print = 0;
-    constexpr double ksp_tol = 1.0e-9;
+    constexpr double ksp_tol = 1.0e-8;
     constexpr double ksp_max_it = 30;
     auto gmres = std::make_unique<GmresSolver<ComplexOperator>>(port_comm, ksp_print);
     gmres->SetInitialGuess(false);
@@ -769,7 +769,7 @@ WavePortData::WavePortData(const config::WavePortData &data,
       eigen = std::move(slepc);
 #endif
     }
-    constexpr double tol = 1.0e-8;
+    constexpr double tol = 1.0e-6;
     eigen->SetNumModes(mode_idx, std::max(2 * mode_idx + 1, 5));
     eigen->SetTol(tol);
     eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::LARGEST_MAGNITUDE);
@@ -822,9 +822,6 @@ WavePortData::WavePortData(const config::WavePortData &data,
     mfem::VectorFunctionCoefficient tfunc(dim, TDirection);
     port_S0t = std::make_unique<mfem::ParGridFunction>(&port_nd_fespace->Get());
     port_S0t->ProjectCoefficient(tfunc);
-    double dot = (*port_S0t) * (*port_S0t);
-    Mpi::GlobalSum(1, &dot, port_nd_fespace->GetComm());
-    *port_S0t /= std::sqrt(dot);
   }
 }
 
