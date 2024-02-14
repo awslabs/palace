@@ -104,7 +104,7 @@ frequency sweep results are very close to the true solutions sampled by the unif
 sweeps.
 
 Second, there is a discrepancy between the results using lumped ports and those with wave
-ports, namely the lumped port excitation exhibits much higher reflection that that for wave
+ports, namely the lumped port excitation exhibits much higher reflection than for wave
 ports. This is expected when using a lumped port to approximate the termination of a CPW,
 and refining the mesh or increasing the order of the solution approximation leads to less
 reflection. See below for the results with again ``p = 2`` for the order of the solution
