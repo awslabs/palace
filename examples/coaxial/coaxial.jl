@@ -19,24 +19,23 @@ Generate the data for the coaxial cable example
 function generate_coaxial_data(; num_processors::Integer=1)
     # Call the solver, discarding the terminal output
     coaxial_dir = @__DIR__
-    cd(coaxial_dir)
     for sim ∈ ["matched", "open", "short"]
-        call_command = `palace -np $num_processors coaxial_$sim.json`
+        call_command = Cmd(`palace -np $num_processors coaxial_$sim.json`, dir=coaxial_dir)
         run(call_command)
     end
 
     # Parse simulation data
-    file = joinpath("postpro", "matched", "port-V.csv")
+    file = joinpath(coaxial_dir, "postpro", "matched", "port-V.csv")
     data_matched = CSV.File(file, header=1) |> DataFrame |> Matrix
     t = data_matched[:, 1]
     data_matched = data_matched[:, 3]
     n_t = size(t, 1)
 
-    file = joinpath("postpro", "open", "port-V.csv")
+    file = joinpath(coaxial_dir, "postpro", "open", "port-V.csv")
     data_open = CSV.File(file, header=1) |> DataFrame |> Matrix
     data_open = data_open[:, 3]
 
-    file = joinpath("postpro", "short", "port-V.csv")
+    file = joinpath(coaxial_dir, "postpro", "short", "port-V.csv")
     data_short = CSV.File(file, header=1) |> DataFrame |> Matrix
     data_short = data_short[:, 3]
 
@@ -73,7 +72,7 @@ function generate_coaxial_data(; num_processors::Integer=1)
     lbl = "Matched"
     plot!(pp, t, data_matched, label=lbl)
 
-    savefig(pp, joinpath("postpro", "coaxial.png"))
+    savefig(pp, joinpath(coaxial_dir, "postpro", "coaxial.png"))
     display(pp)
 
     return

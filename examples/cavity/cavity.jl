@@ -55,11 +55,9 @@ function solve_cavity_resonator(
     @assert geo_order > 0
     @assert mesh_type ∈ [0, 1, 2]
 
+    # Generate a mesh
     cavity_dir = @__DIR__
     file_root = string("cavity_p", order, "_h", refinement)
-    cd(cavity_dir)
-
-    # Generate a mesh
     mesh_filename = string(file_root, ".msh")
     generate_cylindrical_cavity_mesh(
         filename=mesh_filename,
@@ -73,14 +71,14 @@ function solve_cavity_resonator(
 
     # Generate solver parameter file
     params["Solver"]["Order"] = order
-    params["Model"]["Mesh"] = joinpath("mesh", mesh_filename)
+    params["Model"]["Mesh"] = joinpath(cavity_dir, "mesh", mesh_filename)
     json_filename = string(file_root, ".json")
-    open(json_filename, "w") do f
+    open(joinpath(cavity_dir, json_filename), "w") do f
         return JSON.print(f, params)
     end
 
     # Call the solver, storing the terminal output
-    call_command = `palace -np $num_processors $json_filename`
+    call_command = Cmd(`palace -np $num_processors $json_filename`, dir=cavity_dir)
     log_file = read(call_command, String)
     # println(log_file)
 
@@ -91,13 +89,13 @@ function solve_cavity_resonator(
     dof = parse(Int, filter(isdigit, log_file[start_ind:end_ind]))
 
     # Extract the top two frequency modes
-    eig_df = CSV.read(joinpath("postpro", "convergence", "eig.csv"), DataFrame)
+    eig_df = CSV.read(joinpath(cavity_dir, "postpro", "convergence", "eig.csv"), DataFrame)
     eig = Matrix(eig_df[:, 2:end])[:, 1]
 
     # Clean up the parameter and mesh file
     if cleanup_files
-        rm(joinpath("mesh", mesh_filename))
-        rm(json_filename)
+        rm(joinpath(cavity_dir, "mesh", mesh_filename))
+        rm(joinpath(cavity_dir, json_filename))
     end
 
     return dof, eig
@@ -225,10 +223,10 @@ function generate_cavity_convergence_data(;
     params["Model"]["Refinement"]["UniformLevels"] = 0 # Don't perform any mesh refinement
     params["Solver"]["Eigenmode"]["Save"] = 0 # Don't write any fields to file
     params["Solver"]["Eigenmode"]["N"] = 4 # Look only for the top 4 modes
-    params["Solver"]["Eigenmode"]["Tol"] = 1e-12
+    params["Solver"]["Eigenmode"]["Tol"] = 1.0e-12
     params["Solver"]["Eigenmode"]["Target"] = 2.0
     params["Solver"]["Eigenmode"]["StartVectorConstant"] = true
-    params["Solver"]["Linear"]["Tol"] = 1e-14
+    params["Solver"]["Linear"]["Tol"] = 1.0e-14
 
     # Compute the exact solution for reference
     radius = 2.74

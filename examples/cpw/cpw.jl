@@ -19,10 +19,10 @@ Generate the data for the coplanar waveguide example
 function generate_cpw_data(; num_processors::Integer=1)
     # Call the solver, discarding the terminal output
     cpw_dir = @__DIR__
-    cd(cpw_dir)
     for sim ∈ ["lumped", "wave"]
         for mode ∈ ["adaptive", "uniform"]
-            call_command = `palace -np $num_processors cpw_$sim\_$mode.json`
+            call_command =
+                Cmd(`palace -np $num_processors cpw_$sim\_$mode.json`, dir=cpw_dir)
             run(call_command)
         end
     end
@@ -55,21 +55,21 @@ function generate_cpw_data(; num_processors::Integer=1)
     end
 
     # Parse simulation data
-    file = joinpath("postpro", "lumped_adaptive", "port-S.csv")
+    file = joinpath(cpw_dir, "postpro", "lumped_adaptive", "port-S.csv")
     data_lumped_adaptive = CSV.File(file, header=1) |> DataFrame |> Matrix
     f_adaptive = data_lumped_adaptive[:, 1]
     data_lumped_adaptive = data_lumped_adaptive[:, 2:end]
 
-    file = joinpath("postpro", "wave_adaptive", "port-S.csv")
+    file = joinpath(cpw_dir, "postpro", "wave_adaptive", "port-S.csv")
     data_wave_adaptive = CSV.File(file, header=1) |> DataFrame |> Matrix
     data_wave_adaptive = data_wave_adaptive[:, 2:end]
 
-    file = joinpath("postpro", "lumped_uniform", "port-S.csv")
+    file = joinpath(cpw_dir, "postpro", "lumped_uniform", "port-S.csv")
     data_lumped_uniform = CSV.File(file, header=1) |> DataFrame |> Matrix
     f_uniform = data_lumped_uniform[:, 1]
     data_lumped_uniform = data_lumped_uniform[:, 2:end]
 
-    file = joinpath("postpro", "wave_uniform", "port-S.csv")
+    file = joinpath(cpw_dir, "postpro", "wave_uniform", "port-S.csv")
     data_wave_uniform = CSV.File(file, header=1) |> DataFrame |> Matrix
     data_wave_uniform = data_wave_uniform[:, 2:end]
 
@@ -133,7 +133,7 @@ function generate_cpw_data(; num_processors::Integer=1)
     )
 
     plot!(p1a, ylims=(first(ylims(p1a)) - 20, 0))
-    savefig(p1a, joinpath("postpro", "figure1a.png"))
+    savefig(p1a, joinpath(cpw_dir, "postpro", "figure1a.png"))
     display(p1a)
 
     # Phase
@@ -157,7 +157,7 @@ function generate_cpw_data(; num_processors::Integer=1)
     )
 
     plot!(p1b, ylims=(first(ylims(p1b)) - 100, last(ylims(p1b)) + 0))
-    savefig(p1b, joinpath("postpro", "figure1b.png"))
+    savefig(p1b, joinpath(cpw_dir, "postpro", "figure1b.png"))
     display(p1b)
 
     ## Transmission
@@ -184,7 +184,7 @@ function generate_cpw_data(; num_processors::Integer=1)
     )
 
     plot!(p2a, ylims=(first(ylims(p2a)) - 20, 2))
-    savefig(p2a, joinpath("postpro", "figure2a.png"))
+    savefig(p2a, joinpath(cpw_dir, "postpro", "figure2a.png"))
     display(p2a)
 
     # Phase
@@ -208,7 +208,7 @@ function generate_cpw_data(; num_processors::Integer=1)
     )
 
     plot!(p2b, ylims=(first(ylims(p2b)) - 60, last(ylims(p2b)) + 0))
-    savefig(p2b, joinpath("postpro", "figure2b.png"))
+    savefig(p2b, joinpath(cpw_dir, "postpro", "figure2b.png"))
     display(p2b)
 
     ## NEXT
@@ -235,7 +235,7 @@ function generate_cpw_data(; num_processors::Integer=1)
     )
 
     plot!(p3a, ylims=(first(ylims(p3a)) - 30, 0))
-    savefig(p3a, joinpath("postpro", "figure3a.png"))
+    savefig(p3a, joinpath(cpw_dir, "postpro", "figure3a.png"))
     display(p3a)
 
     # Phase
@@ -259,7 +259,7 @@ function generate_cpw_data(; num_processors::Integer=1)
     )
 
     plot!(p3b, ylims=(first(ylims(p3b)) - 100, last(ylims(p3b)) + 0))
-    savefig(p3b, joinpath("postpro", "figure3b.png"))
+    savefig(p3b, joinpath(cpw_dir, "postpro", "figure3b.png"))
     display(p3b)
 
     ## FEXT
@@ -286,7 +286,7 @@ function generate_cpw_data(; num_processors::Integer=1)
     )
 
     plot!(p4a, ylims=(first(ylims(p4a)) - 40, 0))
-    savefig(p4a, joinpath("postpro", "figure4a.png"))
+    savefig(p4a, joinpath(cpw_dir, "postpro", "figure4a.png"))
     display(p4a)
 
     # Phase
@@ -310,7 +310,7 @@ function generate_cpw_data(; num_processors::Integer=1)
     )
 
     plot!(p4b, ylims=(first(ylims(p4b)) - 120, last(ylims(p4b)) + 0))
-    savefig(p4b, joinpath("postpro", "figure4b.png"))
+    savefig(p4b, joinpath(cpw_dir, "postpro", "figure4b.png"))
     display(p4b)
 
     return
