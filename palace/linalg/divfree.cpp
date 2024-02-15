@@ -18,10 +18,35 @@
 namespace palace
 {
 
-DivFreeSolver::DivFreeSolver(const MaterialOperator &mat_op, FiniteElementSpace &nd_fespace,
-                             AuxiliaryFiniteElementSpaceHierarchy &h1_fespaces,
-                             const std::vector<mfem::Array<int>> &h1_bdr_tdof_lists,
-                             double tol, int max_it, int print)
+namespace
+{
+
+template <typename OperType>
+auto BuildLevelParOperator(std::unique_ptr<Operator> &&a,
+                           const FiniteElementSpace &fespace);
+
+template <>
+auto BuildLevelParOperator<Operator>(std::unique_ptr<Operator> &&a,
+                                     const FiniteElementSpace &fespace)
+{
+  return std::make_unique<ParOperator>(std::move(a), fespace);
+}
+
+template <>
+auto BuildLevelParOperator<ComplexOperator>(std::unique_ptr<Operator> &&a,
+                                            const FiniteElementSpace &fespace)
+{
+  return std::make_unique<ComplexParOperator>(std::move(a), nullptr, fespace);
+}
+
+}  // namespace
+
+template <typename VecType>
+DivFreeSolver<VecType>::DivFreeSolver(
+    const MaterialOperator &mat_op, FiniteElementSpace &nd_fespace,
+    AuxiliaryFiniteElementSpaceHierarchy &h1_fespaces,
+    const std::vector<mfem::Array<int>> &h1_bdr_tdof_lists, double tol, int max_it,
+    int print)
 {
   BlockTimer bt(Timer::DIV_FREE);
   MaterialPropertyCoefficient epsilon_func(mat_op.GetAttributeToMaterial(),
@@ -32,11 +57,12 @@ DivFreeSolver::DivFreeSolver(const MaterialOperator &mat_op, FiniteElementSpace 
     m.AddDomainIntegrator<DiffusionIntegrator>(epsilon_func);
     // m.AssembleQuadratureData();
     auto m_vec = m.Assemble(h1_fespaces, skip_zeros);
-    auto M_mg = std::make_unique<MultigridOperator>(h1_fespaces.GetNumLevels());
+    auto M_mg =
+        std::make_unique<BaseMultigridOperator<OperType>>(h1_fespaces.GetNumLevels());
     for (std::size_t l = 0; l < h1_fespaces.GetNumLevels(); l++)
     {
       const auto &h1_fespace_l = h1_fespaces.GetFESpaceAtLevel(l);
-      auto M_l = std::make_unique<ParOperator>(std::move(m_vec[l]), h1_fespace_l);
+      auto M_l = BuildLevelParOperator<OperType>(std::move(m_vec[l]), h1_fespace_l);
       M_l->SetEssentialTrueDofs(h1_bdr_tdof_lists[l], Operator::DiagonalPolicy::DIAG_ONE);
       M_mg->AddOperator(std::move(M_l));
     }
@@ -53,14 +79,14 @@ DivFreeSolver::DivFreeSolver(const MaterialOperator &mat_op, FiniteElementSpace 
   bdr_tdof_list_M = &h1_bdr_tdof_lists.back();
 
   // The system matrix for the projection is real and SPD.
-  auto amg = std::make_unique<MfemWrapperSolver<Operator>>(
+  auto amg = std::make_unique<MfemWrapperSolver<OperType>>(
       std::make_unique<BoomerAmgSolver>(1, 1, 0));
-  std::unique_ptr<Solver<Operator>> pc;
+  std::unique_ptr<Solver<OperType>> pc;
   if (h1_fespaces.GetNumLevels() > 1)
   {
     const int mg_smooth_order =
         std::max(h1_fespaces.GetFinestFESpace().GetMaxElementOrder(), 2);
-    pc = std::make_unique<GeometricMultigridSolver<Operator>>(
+    pc = std::make_unique<GeometricMultigridSolver<OperType>>(
         h1_fespaces.GetFinestFESpace().GetComm(),
 
         std::move(amg), h1_fespaces.GetProlongationOperators(), nullptr, 1, 1,
@@ -72,25 +98,34 @@ DivFreeSolver::DivFreeSolver(const MaterialOperator &mat_op, FiniteElementSpace 
   }
 
   auto pcg =
-      std::make_unique<CgSolver<Operator>>(h1_fespaces.GetFinestFESpace().GetComm(), print);
+      std::make_unique<CgSolver<OperType>>(h1_fespaces.GetFinestFESpace().GetComm(), print);
   pcg->SetInitialGuess(false);
   pcg->SetRelTol(tol);
   pcg->SetAbsTol(std::numeric_limits<double>::epsilon());
   pcg->SetMaxIter(max_it);
 
-  ksp = std::make_unique<KspSolver>(std::move(pcg), std::move(pc));
+  ksp = std::make_unique<BaseKspSolver<OperType>>(std::move(pcg), std::move(pc));
   ksp->SetOperators(*M, *M);
 
   psi.SetSize(h1_fespaces.GetFinestFESpace().GetTrueVSize());
   rhs.SetSize(h1_fespaces.GetFinestFESpace().GetTrueVSize());
 }
 
-void DivFreeSolver::Mult(Vector &y) const
+template <typename VecType>
+void DivFreeSolver<VecType>::Mult(VecType &y) const
 {
   BlockTimer bt(Timer::DIV_FREE);
 
   // Compute the divergence of y.
-  WeakDiv->Mult(y, rhs);
+  if constexpr (std::is_same<VecType, ComplexVector>::value)
+  {
+    WeakDiv->Mult(y.Real(), rhs.Real());
+    WeakDiv->Mult(y.Imag(), rhs.Imag());
+  }
+  else
+  {
+    WeakDiv->Mult(y, rhs);
+  }
 
   // Apply essential BC and solve the linear system.
   if (bdr_tdof_list_M)
@@ -100,7 +135,18 @@ void DivFreeSolver::Mult(Vector &y) const
   ksp->Mult(rhs, psi);
 
   // Compute the irrotational portion of y and subtract.
-  Grad->AddMult(psi, y, 1.0);
+  if constexpr (std::is_same<VecType, ComplexVector>::value)
+  {
+    Grad->AddMult(psi.Real(), y.Real(), 1.0);
+    Grad->AddMult(psi.Imag(), y.Imag(), 1.0);
+  }
+  else
+  {
+    Grad->AddMult(psi, y, 1.0);
+  }
 }
+
+template class DivFreeSolver<Vector>;
+template class DivFreeSolver<ComplexVector>;
 
 }  // namespace palace

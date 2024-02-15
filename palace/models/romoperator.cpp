@@ -115,7 +115,7 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &spaceop) : spaceop
   if (iodata.solver.driven.adaptive_metric_aposteriori)
   {
     constexpr int curlcurl_verbose = 0;
-    kspKM = std::make_unique<WeightedHCurlNormSolver>(
+    kspKM = std::make_unique<WeightedHCurlNormSolver<ComplexVector>>(
         spaceop.GetMaterialOp(), spaceop.GetNDSpaces(), spaceop.GetH1Spaces(),
         spaceop.GetNDDbcTDofLists(), spaceop.GetH1DbcTDofLists(), iodata.solver.linear.tol,
         iodata.solver.linear.max_it, curlcurl_verbose);
@@ -361,7 +361,7 @@ double RomOperator::ComputeError(double omega)
     MFEM_ASSERT(dot.real() > 0.0 && std::abs(dot.imag()) < 1.0e-9 * dot.real(),
                 "Non-positive vector norm in normalization (dot = " << dot << ")!");
     num = std::sqrt(dot.real());
-    den = linalg::Norml2(spaceop.GetComm(), w, kspKM->GetOperator(), z);
+    den = linalg::Norml2(spaceop.GetComm(), w, *kspKM->GetOperator().Real(), z);
   }
   MFEM_VERIFY(den > 0.0, "Unexpected zero denominator in HDM residual!");
   return num / den;

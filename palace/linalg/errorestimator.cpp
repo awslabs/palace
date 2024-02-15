@@ -20,6 +20,21 @@ namespace palace
 namespace
 {
 
+template <typename OperType>
+auto WrapOperator(std::unique_ptr<Operator> &&op);
+
+template <>
+auto WrapOperator<Operator>(std::unique_ptr<Operator> &&op)
+{
+  return op;
+}
+
+template <>
+auto WrapOperator<ComplexOperator>(std::unique_ptr<Operator> &&op)
+{
+  return std::make_unique<ComplexWrapperOperator>(std::move(op), nullptr);
+}
+
 auto GetMassMatrix(const FiniteElementSpace &fespace)
 {
   constexpr bool skip_zeros = false;
@@ -39,23 +54,25 @@ auto GetMassMatrix(const FiniteElementSpace &fespace)
   return std::make_unique<ParOperator>(m.Assemble(skip_zeros), fespace);
 }
 
+template <typename OperType>
 auto ConfigureLinearSolver(MPI_Comm comm, double tol, int max_it, int print)
 {
   // The system matrix for the projection is real, SPD and diagonally dominant.
-  auto pc = std::make_unique<JacobiSmoother<Operator>>();
-  auto pcg = std::make_unique<CgSolver<Operator>>(comm, print);
+  auto pc = std::make_unique<JacobiSmoother<OperType>>();
+  auto pcg = std::make_unique<CgSolver<OperType>>(comm, print);
   pcg->SetInitialGuess(false);
   pcg->SetRelTol(tol);
   pcg->SetAbsTol(std::numeric_limits<double>::epsilon());
   pcg->SetMaxIter(max_it);
-  return std::make_unique<KspSolver>(std::move(pcg), std::move(pc));
+  return std::make_unique<BaseKspSolver<OperType>>(std::move(pcg), std::move(pc));
 }
 
 }  // namespace
 
-FluxProjector::FluxProjector(const MaterialOperator &mat_op,
-                             const FiniteElementSpace &nd_fespace, double tol, int max_it,
-                             int print)
+template <typename VecType>
+FluxProjector<VecType>::FluxProjector(const MaterialOperator &mat_op,
+                                      const FiniteElementSpace &nd_fespace, double tol,
+                                      int max_it, int print)
 {
   BlockTimer bt(Timer::CONSTRUCT_ESTIMATOR);
   {
@@ -64,20 +81,22 @@ FluxProjector::FluxProjector(const MaterialOperator &mat_op,
                                            mat_op.GetInvPermeability());
     BilinearForm flux(nd_fespace);
     flux.AddDomainIntegrator<MixedVectorCurlIntegrator>(muinv_func);
-    Flux = std::make_unique<ParOperator>(flux.PartialAssemble(), nd_fespace);
+    Flux = WrapOperator<OperType>(
+        std::make_unique<ParOperator>(flux.PartialAssemble(), nd_fespace));
   }
-  M = GetMassMatrix(nd_fespace);
+  M = WrapOperator<OperType>(GetMassMatrix(nd_fespace));
 
-  ksp = ConfigureLinearSolver(nd_fespace.GetComm(), tol, max_it, print);
+  ksp = ConfigureLinearSolver<OperType>(nd_fespace.GetComm(), tol, max_it, print);
   ksp->SetOperators(*M, *M);
 
   rhs.SetSize(nd_fespace.GetTrueVSize());
 }
 
-FluxProjector::FluxProjector(const MaterialOperator &mat_op,
-                             const FiniteElementSpace &h1_fespace,
-                             const FiniteElementSpace &h1d_fespace, double tol, int max_it,
-                             int print)
+template <typename VecType>
+FluxProjector<VecType>::FluxProjector(const MaterialOperator &mat_op,
+                                      const FiniteElementSpace &h1_fespace,
+                                      const FiniteElementSpace &h1d_fespace, double tol,
+                                      int max_it, int print)
 {
   BlockTimer bt(Timer::CONSTRUCT_ESTIMATOR);
   {
@@ -86,18 +105,19 @@ FluxProjector::FluxProjector(const MaterialOperator &mat_op,
                                              mat_op.GetPermittivityReal());
     BilinearForm flux(h1_fespace, h1d_fespace);
     flux.AddDomainIntegrator<GradientIntegrator>(epsilon_func);
-    Flux = std::make_unique<ParOperator>(flux.PartialAssemble(), h1_fespace, h1d_fespace,
-                                         false);
+    Flux = WrapOperator<OperType>(std::make_unique<ParOperator>(
+        flux.PartialAssemble(), h1_fespace, h1d_fespace, false));
   }
-  M = GetMassMatrix(h1_fespace);
+  M = WrapOperator<OperType>(GetMassMatrix(h1_fespace));
 
-  ksp = ConfigureLinearSolver(h1_fespace.GetComm(), tol, max_it, print);
+  ksp = ConfigureLinearSolver<OperType>(h1_fespace.GetComm(), tol, max_it, print);
   ksp->SetOperators(*M, *M);
 
   rhs.SetSize(h1d_fespace.GetTrueVSize());
 }
 
-void FluxProjector::Mult(const Vector &x, Vector &y) const
+template <typename VecType>
+void FluxProjector<VecType>::Mult(const VecType &x, VecType &y) const
 {
   BlockTimer bt(Timer::SOLVE_ESTIMATOR);
   MFEM_ASSERT(y.Size() == rhs.Size(), "Invalid vector dimensions for FluxProjector::Mult!");
@@ -113,14 +133,22 @@ void FluxProjector::Mult(const Vector &x, Vector &y) const
   }
   else
   {
-    for (int i = 0; i < vdim; i++)
+    if constexpr (std::is_same<VecType, Vector>::value)
     {
-      // Mpi::Print(" Computing smooth flux projection of flux component {:d}/{:d} for "
-      //            "error estimation\n",
-      //            i + 1, vdim);
-      const Vector rhsb(rhs, i * x.Size(), x.Size());
-      Vector yb(y, i * x.Size(), x.Size());
-      ksp->Mult(rhsb, yb);
+      for (int i = 0; i < vdim; i++)
+      {
+        // Mpi::Print(" Computing smooth flux projection of flux component {:d}/{:d} for "
+        //            "error estimation\n",
+        //            i + 1, vdim);
+        const Vector rhsb(rhs, i * x.Size(), x.Size());
+        Vector yb(y, i * x.Size(), x.Size());
+        ksp->Mult(rhsb, yb);
+      }
+    }
+    else
+    {
+      MFEM_ABORT("FluxProjector::Mult with vdim > 1 is not implemented for ComplexVector "
+                 "objects!");
     }
   }
 }
@@ -141,18 +169,16 @@ ErrorIndicator CurlFluxErrorEstimator<VecType>::ComputeIndicators(const VecType 
   // Compute the projection of the discontinuous flux onto the smooth finite element space
   // and populate the corresponding grid functions.
   BlockTimer bt(Timer::ESTIMATION);
+  projector.Mult(U, F);
   if constexpr (std::is_same<VecType, ComplexVector>::value)
   {
-    projector.Mult(U.Real(), F);
-    F_gf.real().SetFromTrueDofs(F);
-    projector.Mult(U.Imag(), F);
-    F_gf.imag().SetFromTrueDofs(F);
+    F_gf.real().SetFromTrueDofs(F.Real());
+    F_gf.imag().SetFromTrueDofs(F.Imag());
     U_gf.real().SetFromTrueDofs(U.Real());
     U_gf.imag().SetFromTrueDofs(U.Imag());
   }
   else
   {
-    projector.Mult(U, F);
     F_gf.SetFromTrueDofs(F);
     U_gf.SetFromTrueDofs(U);
   }
@@ -335,6 +361,8 @@ ErrorIndicator GradFluxErrorEstimator::ComputeIndicators(const Vector &U) const
   return ErrorIndicator(std::move(estimates));
 }
 
+template class FluxProjector<Vector>;
+template class FluxProjector<ComplexVector>;
 template class CurlFluxErrorEstimator<Vector>;
 template class CurlFluxErrorEstimator<ComplexVector>;
 

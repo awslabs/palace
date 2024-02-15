@@ -159,11 +159,11 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
   // Construct a divergence-free projector so the eigenvalue solve is performed in the space
   // orthogonal to the zero eigenvalues of the stiffness matrix.
-  std::unique_ptr<DivFreeSolver> divfree;
+  std::unique_ptr<DivFreeSolver<ComplexVector>> divfree;
   if (iodata.solver.linear.divfree_max_it > 0)
   {
     constexpr int divfree_verbose = 0;
-    divfree = std::make_unique<DivFreeSolver>(
+    divfree = std::make_unique<DivFreeSolver<ComplexVector>>(
         spaceop.GetMaterialOp(), spaceop.GetNDSpace(), spaceop.GetH1Spaces(),
         spaceop.GetAuxBdrTDofLists(), iodata.solver.linear.divfree_tol,
         iodata.solver.linear.divfree_max_it, divfree_verbose);

@@ -206,7 +206,8 @@ void ArpackEigenvalueSolver::SetLinearSolver(const ComplexKspSolver &ksp)
   opInv = &ksp;
 }
 
-void ArpackEigenvalueSolver::SetDivFreeProjector(const DivFreeSolver &divfree)
+void ArpackEigenvalueSolver::SetDivFreeProjector(
+    const DivFreeSolver<ComplexVector> &divfree)
 {
   opProj = &divfree;
 }
