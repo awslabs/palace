@@ -523,6 +523,7 @@ WavePortData::WavePortData(const config::WavePortData &data,
   mode_idx = data.mode_idx;
   d_offset = data.d_offset;
   excitation = data.excitation;
+  active = data.active;
   kn0 = 0.0;
   omega0 = 0.0;
 
@@ -1047,7 +1048,7 @@ void WavePortOperator::SetUpBoundaryProperties(const IoData &iodata,
                     "boundaries in the mesh!");
         MFEM_VERIFY(bdr_attr_marker[attr - 1],
                     "Unknown port boundary attribute " << attr << "!");
-        MFEM_VERIFY(!port_marker[attr - 1],
+        MFEM_VERIFY(!data.active || !port_marker[attr - 1],
                     "Boundary attribute is assigned to more than one wave port!");
         port_marker[attr - 1] = 1;
       }
@@ -1057,7 +1058,9 @@ void WavePortOperator::SetUpBoundaryProperties(const IoData &iodata,
   // List of all boundaries which will be marked as essential for the purposes of computing
   // wave port modes. This includes all PEC surfaces, but may also include others like when
   // a kinetic inductance or other BC is applied for the 3D simulation but should be
-  // considered as PEC for the 2D problem.
+  // considered as PEC for the 2D problem. In addition, we mark as Dirichlet boundaries all
+  // wave ports other than the wave port being currently considered, in case two wave ports
+  // are touching and share one or more edges.
   mfem::Array<int> dbc_bcs;
   dbc_bcs.Reserve(static_cast<int>(iodata.boundaries.pec.attributes.size() +
                                    iodata.boundaries.auxpec.attributes.size()));
@@ -1085,7 +1088,26 @@ void WavePortOperator::SetUpBoundaryProperties(const IoData &iodata,
   // Set up wave port data structures.
   for (const auto &[idx, data] : iodata.boundaries.waveport)
   {
-    ports.try_emplace(idx, data, iodata.solver, mat_op, nd_fespace, h1_fespace, dbc_bcs);
+    mfem::Array<int> port_dbc_bcs(dbc_bcs);
+    for (const auto &[other_idx, other_data] : iodata.boundaries.waveport)
+    {
+      if (other_idx == idx || !other_data.active)
+      {
+        continue;
+      }
+      for (auto attr : other_data.attributes)
+      {
+        if (std::binary_search(data.attributes.begin(), data.attributes.end(), attr))
+        {
+          continue;
+        }
+        port_dbc_bcs.Append(attr);
+      }
+    }
+    port_dbc_bcs.Sort();
+    port_dbc_bcs.Unique();
+    ports.try_emplace(idx, data, iodata.solver, mat_op, nd_fespace, h1_fespace,
+                      port_dbc_bcs);
   }
   MFEM_VERIFY(
       ports.empty() || iodata.problem.type == config::ProblemData::Type::DRIVEN,
@@ -1099,9 +1121,18 @@ void WavePortOperator::PrintBoundaryInfo(const IoData &iodata, const mfem::ParMe
   {
     return;
   }
-  Mpi::Print("\nConfiguring Robin impedance BC for wave ports at attributes:\n");
+  bool first = true;
   for (const auto &[idx, data] : ports)
   {
+    if (!data.active)
+    {
+      continue;
+    }
+    if (first)
+    {
+      Mpi::Print("\nConfiguring Robin impedance BC for wave ports at attributes:\n");
+      first = false;
+    }
     for (auto attr : data.GetAttrList())
     {
       const mfem::Vector &normal = data.port_normal;
@@ -1120,7 +1151,7 @@ void WavePortOperator::PrintBoundaryInfo(const IoData &iodata, const mfem::ParMe
   }
 
   // Print some information for excited wave ports.
-  bool first = true;
+  first = true;
   for (const auto &[idx, data] : ports)
   {
     if (!data.excitation)
@@ -1151,6 +1182,10 @@ mfem::Array<int> WavePortOperator::GetAttrList() const
   mfem::Array<int> attr_list;
   for (const auto &[idx, data] : ports)
   {
+    if (!data.active)
+    {
+      continue;
+    }
     attr_list.Append(data.GetAttrList());
   }
   return attr_list;
@@ -1203,6 +1238,10 @@ void WavePortOperator::AddExtraSystemBdrCoefficients(double omega,
   Initialize(omega);
   for (const auto &[idx, data] : ports)
   {
+    if (!data.active)
+    {
+      continue;
+    }
     const MaterialOperator &mat_op = data.mat_op;
     MaterialPropertyCoefficient muinv_func(mat_op.GetBdrAttributeToMaterial(),
                                            mat_op.GetInvPermeability());

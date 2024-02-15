@@ -31,6 +31,7 @@ LumpedPortData::LumpedPortData(const config::LumpedPortData &data,
               "Lumped port boundary has both R/L/C and Rs/Ls/Cs defined, "
               "should only use one!");
   excitation = data.excitation;
+  active = data.active;
   if (excitation)
   {
     if (has_circ)
@@ -337,7 +338,7 @@ void LumpedPortOperator::SetUpBoundaryProperties(const IoData &iodata,
                       "boundaries in the mesh!");
           MFEM_VERIFY(bdr_attr_marker[attr - 1],
                       "Unknown port boundary attribute " << attr << "!");
-          MFEM_VERIFY(!port_marker[attr - 1],
+          MFEM_VERIFY(!data.active || !port_marker[attr - 1],
                       "Boundary attribute is assigned to more than one lumped port!");
           port_marker[attr - 1] = 1;
         }
@@ -416,9 +417,18 @@ void LumpedPortOperator::PrintBoundaryInfo(const IoData &iodata, const mfem::Par
   }
 
   // Print out port info for all ports.
-  Mpi::Print("\nConfiguring lumped port circuit properties:\n");
+  bool first = true;
   for (const auto &[idx, data] : ports)
   {
+    if (!data.active)
+    {
+      continue;
+    }
+    if (first)
+    {
+      Mpi::Print("\nConfiguring lumped port circuit properties:\n");
+      first = false;
+    }
     bool comma = false;
     Mpi::Print(" Index = {:d}:", idx);
     if (std::abs(data.R) > 0.0)
@@ -450,7 +460,7 @@ void LumpedPortOperator::PrintBoundaryInfo(const IoData &iodata, const mfem::Par
   }
 
   // Print some information for excited lumped ports.
-  bool first = true;
+  first = true;
   for (const auto &[idx, data] : ports)
   {
     if (!data.excitation)
@@ -484,6 +494,10 @@ mfem::Array<int> LumpedPortOperator::GetAttrList() const
   mfem::Array<int> attr_list;
   for (const auto &[idx, data] : ports)
   {
+    if (!data.active)
+    {
+      continue;
+    }
     for (const auto &elem : data.elems)
     {
       attr_list.Append(elem->GetAttrList());
@@ -497,6 +511,10 @@ mfem::Array<int> LumpedPortOperator::GetRsAttrList() const
   mfem::Array<int> attr_list;
   for (const auto &[idx, data] : ports)
   {
+    if (!data.active)
+    {
+      continue;
+    }
     if (std::abs(data.R) > 0.0)
     {
       for (const auto &elem : data.elems)
@@ -513,6 +531,10 @@ mfem::Array<int> LumpedPortOperator::GetLsAttrList() const
   mfem::Array<int> attr_list;
   for (const auto &[idx, data] : ports)
   {
+    if (!data.active)
+    {
+      continue;
+    }
     if (std::abs(data.L) > 0.0)
     {
       for (const auto &elem : data.elems)
@@ -529,6 +551,10 @@ mfem::Array<int> LumpedPortOperator::GetCsAttrList() const
   mfem::Array<int> attr_list;
   for (const auto &[idx, data] : ports)
   {
+    if (!data.active)
+    {
+      continue;
+    }
     if (std::abs(data.C) > 0.0)
     {
       for (const auto &elem : data.elems)
@@ -546,6 +572,10 @@ void LumpedPortOperator::AddStiffnessBdrCoefficients(double coef,
   // Add lumped inductor boundaries to the bilinear form.
   for (const auto &[idx, data] : ports)
   {
+    if (!data.active)
+    {
+      continue;
+    }
     if (std::abs(data.L) > 0.0)
     {
       for (const auto &elem : data.elems)
@@ -564,6 +594,10 @@ void LumpedPortOperator::AddDampingBdrCoefficients(double coef,
   // Add lumped resistor boundaries to the bilinear form.
   for (const auto &[idx, data] : ports)
   {
+    if (!data.active)
+    {
+      continue;
+    }
     if (std::abs(data.R) > 0.0)
     {
       for (const auto &elem : data.elems)
@@ -582,6 +616,10 @@ void LumpedPortOperator::AddMassBdrCoefficients(double coef,
   // Add lumped capacitance boundaries to the bilinear form.
   for (const auto &[idx, data] : ports)
   {
+    if (!data.active)
+    {
+      continue;
+    }
     if (std::abs(data.C) > 0.0)
     {
       for (const auto &elem : data.elems)

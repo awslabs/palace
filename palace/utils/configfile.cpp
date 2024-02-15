@@ -77,6 +77,7 @@ void ParseElementData(json &elem, const std::string &name, bool required,
                       internal::ElementData &data)
 {
   data.attributes = elem.at("Attributes").get<std::vector<int>>();  // Required
+  std::sort(data.attributes.begin(), data.attributes.end());
   auto it = elem.find(name);
   if (it != elem.end() && it->is_array())
   {
@@ -497,6 +498,7 @@ void DomainMaterialData::SetUp(json &domains)
         "Missing \"Attributes\" list for \"Materials\" domain in configuration file!");
     MaterialData &data = vecdata.emplace_back();
     data.attributes = it->at("Attributes").get<std::vector<int>>();  // Required
+    std::sort(data.attributes.begin(), data.attributes.end());
     ParseSymmetricMatrixData(*it, "Permeability", data.mu_r);
     ParseSymmetricMatrixData(*it, "Permittivity", data.epsilon_r);
     ParseSymmetricMatrixData(*it, "LossTan", data.tandelta);
@@ -545,6 +547,7 @@ void DomainEnergyPostData::SetUp(json &postpro)
                             "in configuration file!");
     DomainEnergyData &data = ret.first->second;
     data.attributes = it->at("Attributes").get<std::vector<int>>();  // Required
+    std::sort(data.attributes.begin(), data.attributes.end());
 
     // Debug
     // std::cout << "Index: " << ret.first->first << '\n';
@@ -820,7 +823,8 @@ void ConductivityBoundaryData::SetUp(json &boundaries)
         "Missing \"Conductivity\" boundary \"Conductivity\" in configuration file!");
     ConductivityData &data = vecdata.emplace_back();
     data.attributes = it->at("Attributes").get<std::vector<int>>();  // Required
-    data.sigma = it->at("Conductivity");                             // Required
+    std::sort(data.attributes.begin(), data.attributes.end());
+    data.sigma = it->at("Conductivity");  // Required
     data.mu_r = it->value("Permeability", data.mu_r);
     data.h = it->value("Thickness", data.h);
     data.external = it->value("External", data.external);
@@ -860,6 +864,7 @@ void ImpedanceBoundaryData::SetUp(json &boundaries)
         "Missing \"Attributes\" list for \"Impedance\" boundary in configuration file!");
     ImpedanceData &data = vecdata.emplace_back();
     data.attributes = it->at("Attributes").get<std::vector<int>>();  // Required
+    std::sort(data.attributes.begin(), data.attributes.end());
     data.Rs = it->value("Rs", data.Rs);
     data.Ls = it->value("Ls", data.Ls);
     data.Cs = it->value("Cs", data.Cs);
@@ -920,6 +925,7 @@ void LumpedPortBoundaryData::SetUp(json &boundaries)
     data.Ls = it->value("Ls", data.Ls);
     data.Cs = it->value("Cs", data.Cs);
     data.excitation = it->value("Excitation", data.excitation);
+    data.active = it->value("Active", data.active);
     if (it->find("Attributes") != it->end())
     {
       MFEM_VERIFY(it->find("Elements") == it->end(),
@@ -962,6 +968,7 @@ void LumpedPortBoundaryData::SetUp(json &boundaries)
     // std::cout << "Ls: " << data.Ls << '\n';
     // std::cout << "Cs: " << data.Cs << '\n';
     // std::cout << "Excitation: " << data.excitation << '\n';
+    // std::cout << "Active: " << data.active << '\n';
     // for (const auto &elem : data.elements)
     // {
     //   std::cout << "Attributes: " << elem.attributes << '\n';
@@ -977,6 +984,7 @@ void LumpedPortBoundaryData::SetUp(json &boundaries)
     it->erase("Ls");
     it->erase("Cs");
     it->erase("Excitation");
+    it->erase("Active");
     it->erase("Attributes");
     it->erase("Direction");
     it->erase("CoordinateSystem");
@@ -1008,11 +1016,13 @@ void WavePortBoundaryData::SetUp(json &boundaries)
                             "boundaries in configuration file!");
     WavePortData &data = ret.first->second;
     data.attributes = it->at("Attributes").get<std::vector<int>>();  // Required
+    std::sort(data.attributes.begin(), data.attributes.end());
     data.mode_idx = it->value("Mode", data.mode_idx);
     MFEM_VERIFY(data.mode_idx > 0,
                 "\"WavePort\" boundary \"Mode\" must be positive (1-based)!");
     data.d_offset = it->value("Offset", data.d_offset);
     data.excitation = it->value("Excitation", data.excitation);
+    data.active = it->value("Active", data.active);
 
     // Debug
     // std::cout << "Index: " << ret.first->first << '\n';
@@ -1020,6 +1030,7 @@ void WavePortBoundaryData::SetUp(json &boundaries)
     // std::cout << "Mode: " << data.mode_idx << '\n';
     // std::cout << "Offset: " << data.d_offset << '\n';
     // std::cout << "Excitation: " << data.excitation << '\n';
+    // std::cout << "Active: " << data.active << '\n';
 
     // Cleanup
     it->erase("Index");
@@ -1027,6 +1038,7 @@ void WavePortBoundaryData::SetUp(json &boundaries)
     it->erase("Mode");
     it->erase("Offset");
     it->erase("Excitation");
+    it->erase("Active");
     MFEM_VERIFY(it->empty(),
                 "Found an unsupported configuration file keyword under \"WavePort\"!\n"
                     << it->dump(2));
@@ -1126,6 +1138,7 @@ void CapacitancePostData::SetUp(json &postpro)
                             "boundaries in configuration file!");
     CapacitanceData &data = ret.first->second;
     data.attributes = it->at("Attributes").get<std::vector<int>>();  // Required
+    std::sort(data.attributes.begin(), data.attributes.end());
 
     // Debug
     // std::cout << "Index: " << ret.first->first << '\n';
