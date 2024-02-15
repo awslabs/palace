@@ -6,13 +6,14 @@ using Gmsh: gmsh
 """
     generate_cylindrical_cavity_mesh(;
         filename::AbstractString,
-        refinement::Integer = 0,
-        order::Integer      = 1,
-        mesh_type::Integer  = 0,
-        radius::Real        = 2.74,
-        aspect_ratio::Real  = 1.0,
-        verbose::Integer    = 5,
-        gui::Bool           = false
+        refinement::Integer  = 0,
+        order::Integer       = 1,
+        mesh_type::Integer   = 0,
+        radius::Real         = 2.74,
+        aspect_ratio::Real   = 1.0,
+        symmetry_plane::Real = true,
+        verbose::Integer     = 5,
+        gui::Bool            = false
     )
 
 Generate a mesh for the cylindrical cavity resonator example using Gmsh
@@ -24,19 +25,21 @@ Generate a mesh for the cylindrical cavity resonator example using Gmsh
   - order - the polynomial order of the approximation, minimum 1
   - mesh_type - 0 = tetrahedral mesh, 1 = prism mesh, 2 = hexahedral mesh
   - radius - the radius of the cavity resonator
-  - aspect_ratio - the ratio of the DIAMETER of the cavity to the height
+  - aspect_ratio - the ratio of the diameter (not radius!) of the cavity to the height
+  - symmetry_plane - whether to cut the cylinder in half and use a symmetry plane in the model
   - verbose - flag to dictate the level of print to REPL, passed to Gmsh
   - gui - whether to launch the Gmsh GUI on mesh generation
 """
 function generate_cylindrical_cavity_mesh(;
     filename::AbstractString,
-    refinement::Integer = 0,
-    order::Integer      = 1,
-    mesh_type::Integer  = 0,
-    radius::Real        = 2.74,
-    aspect_ratio::Real  = 1.0,
-    verbose::Integer    = 5,
-    gui::Bool           = false
+    refinement::Integer  = 0,
+    order::Integer       = 1,
+    mesh_type::Integer   = 0,
+    radius::Real         = 2.74,
+    aspect_ratio::Real   = 1.0,
+    symmetry_plane::Real = true,
+    verbose::Integer     = 5,
+    gui::Bool            = false
 )
     @assert refinement >= 0
     @assert order > 0
@@ -58,7 +61,7 @@ function generate_cylindrical_cavity_mesh(;
 
     # Mesh parameters
     n_height = 2                       # Two elements in height
-    n_circum = mesh_type == 2 ? 4 : 6  # Four or six elements on circumference
+    n_circum = mesh_type == 2 ? 2 : 6  # Four or six elements on circumference
 
     # Geometry
     if (mesh_type == 2)
@@ -74,61 +77,64 @@ function generate_cylindrical_cavity_mesh(;
         base_circle, _ = kernel.cut((2, base_circle), (2, base_square), -1, true, false)
         @assert length(base_circle) == 1 && first(base_circle)[1] == 2
         base_circle = first(base_circle)[2]
-        cylinder_dimtags = kernel.extrude(
-            [(2, base_square), (2, base_circle)],
-            0.0,
-            0.0,
-            height,
-            [n_height],
-            [1.0],
-            true
-        )
-        cylinder = filter(x -> x[1] == 3, cylinder_dimtags)
-        @assert length(cylinder) == 2
-        cylinder = [x[2] for x in cylinder]
-
-        kernel.synchronize()
-
-        gmsh.model.mesh.setRecombine(2, base_square)
-        gmsh.model.mesh.setRecombine(2, base_circle)
-
-        # Add physical groups
-        cylinder_group = gmsh.model.addPhysicalGroup(3, cylinder, -1, "cylinder")
-        _, square_boundaries = gmsh.model.getAdjacencies(3, cylinder[1])
-        _, circle_boundaries = gmsh.model.getAdjacencies(3, cylinder[2])
-        boundaries = copy(circle_boundaries)
-        for boundary in square_boundaries
-            idx = first(indexin([boundary], boundaries))
-            if !isnothing(idx)
-                deleteat!(boundaries, idx)
-            else
-                push!(boundaries, boundary)
-            end
-        end
-        boundary_group = gmsh.model.addPhysicalGroup(2, boundaries, -1, "boundaries")
+        base = [base_circle, base_square]
     else
         base_circle = kernel.addDisk(0.0, 0.0, 0.0, radius, radius)
-        cylinder_dimtags = kernel.extrude(
-            [(2, base_circle)],
-            0.0,
-            0.0,
-            height,
-            [n_height],
-            [1.0],
-            mesh_type > 0
-        )
-        cylinder = filter(x -> x[1] == 3, cylinder_dimtags)
-        @assert length(cylinder) == 1 && first(cylinder)[1] == 3
-        cylinder = first(cylinder)[2]
-
-        kernel.synchronize()
-
-        # Add physical groups
-        cylinder_group = gmsh.model.addPhysicalGroup(3, [cylinder], -1, "cylinder")
-
-        _, boundaries = gmsh.model.getAdjacencies(3, cylinder)
-        boundary_group = gmsh.model.addPhysicalGroup(2, boundaries, -1, "boundaries")
+        base = [base_circle]
     end
+
+    if symmetry_plane
+        cut_tool =
+            kernel.addBox(-radius, 0.0, -0.1 * height, 2.0 * radius, radius, 0.1 * height)
+        base_dimtags, _ = kernel.intersect([(2, x) for x in base], [(3, cut_tool)])
+        base = last.(filter(x -> x[1] == 2, base_dimtags))
+    end
+
+    cylinder_dimtags = kernel.extrude(
+        [(2, x) for x in base],
+        0.0,
+        0.0,
+        height,
+        [n_height],
+        [1.0],
+        mesh_type > 0
+    )
+    cylinder = last.(filter(x -> x[1] == 3, cylinder_dimtags))
+
+    kernel.synchronize()
+
+    # Add physical groups
+    cylinder_group = gmsh.model.addPhysicalGroup(3, cylinder, -1, "cylinder")
+
+    symmetry =
+        last.(
+            gmsh.model.getEntitiesInBoundingBox(
+                -1.1 * radius,
+                -0.1 * radius,
+                -0.1 * height,
+                1.1 * radius,
+                0.1 * radius,
+                1.1 * height,
+                2
+            )
+        )
+    boundaries = []
+    for domain in cylinder
+        _, domain_boundaries = gmsh.model.getAdjacencies(3, domain)
+        for boundary in domain_boundaries
+            if boundary in symmetry
+                continue
+            end
+            idx = first(indexin([boundary], boundaries))
+            if isnothing(idx)
+                push!(boundaries, boundary)
+            else
+                deleteat!(boundaries, idx)
+            end
+        end
+    end
+    boundary_group = gmsh.model.addPhysicalGroup(2, boundaries, -1, "boundaries")
+    symmetry_group = gmsh.model.addPhysicalGroup(2, symmetry, -1, "symmetry")
 
     # Generate mesh
     gmsh.option.setNumber("Mesh.MinimumCurveNodes", 2)
@@ -138,14 +144,32 @@ function generate_cylindrical_cavity_mesh(;
     gmsh.option.setNumber("Mesh.MeshSizeFromCurvature", n_circum)
     gmsh.option.setNumber("Mesh.MeshSizeExtendFromBoundary", 1)
 
-    gmsh.option.setNumber("Mesh.Algorithm", mesh_type == 2 ? 8 : 6)
+    gmsh.option.setNumber("Mesh.Algorithm", 6)
     gmsh.option.setNumber("Mesh.Algorithm3D", 10)
 
-    gmsh.model.mesh.generate(3) # Dimension of the mesh
+    if (mesh_type == 2)
+        base_boundaries =
+            last.(
+                gmsh.model.getEntitiesInBoundingBox(
+                    -1.1 * radius,
+                    -1.1 * radius,
+                    -0.1 * height,
+                    1.1 * radius,
+                    1.1 * radius,
+                    0.1 * height,
+                    2
+                )
+            )
+        for boundary in base_boundaries
+            gmsh.model.mesh.setRecombine(2, boundary)
+        end
+    end
+
+    gmsh.model.mesh.generate(3)
     for i = 0:(refinement - 1)
         gmsh.model.mesh.refine()
     end
-    gmsh.model.mesh.setOrder(order) # Polynomial order of the mesh
+    gmsh.model.mesh.setOrder(order)
 
     # Save mesh
     gmsh.option.setNumber("Mesh.MshFileVersion", 2.2)
@@ -157,7 +181,9 @@ function generate_cylindrical_cavity_mesh(;
         println("\nFinished generating mesh. Physical group tags:")
         println("Cylinder: ", cylinder_group)
         println("Boundaries: ", boundary_group)
-        println()
+        if length(symmetry) > 0
+            println("Symmetry boundaries: ", symmetry_group)
+        end
     end
 
     # Optionally launch GUI

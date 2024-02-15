@@ -2,8 +2,9 @@ $MeshFormat
 2.2 0 8
 $EndMeshFormat
 $PhysicalNames
-2
+3
 2 2 "boundaries"
+2 3 "symmetry"
 3 1 "cylinder"
 $EndPhysicalNames
 $Nodes
