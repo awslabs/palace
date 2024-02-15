@@ -26,7 +26,7 @@ auto WrapOperator(std::unique_ptr<Operator> &&op);
 template <>
 auto WrapOperator<Operator>(std::unique_ptr<Operator> &&op)
 {
-  return op;
+  return std::move(op);
 }
 
 template <>
