@@ -34,8 +34,8 @@ the frequency or time domain, using the
     refinement for simplex meshes.
   - Arbitrary high-order finite element spaces and curvilinear mesh support thanks to the
     [MFEM library](https://mfem.org/features/).
-  - Scalable algorithms for the solution of linear systems of equations, including matrix-
-    free $p$-multigrid utilizing
+  - Scalable algorithms for the solution of linear systems of equations, including
+    matrix-free $p$-multigrid utilizing
     [high-order operator partial assembly](https://mfem.org/performance/), parallel sparse
     direct solvers, and algebraic multigrid (AMG) preconditioners, for fast performance on
     platforms ranging from laptops to HPC systems.

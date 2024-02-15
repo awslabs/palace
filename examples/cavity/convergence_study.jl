@@ -47,8 +47,9 @@ markers = [
 ]
 
 # Compute the convergence data
+num_processors = 32
 p_min = 1
-p_max = 3
+p_max = 5
 ref_min = 0
 ref_max = 3
 for mesh_type ∈ [0, 1, 2]
@@ -69,7 +70,7 @@ for mesh_type ∈ [0, 1, 2]
             ref_min=ref_min,
             ref_max=ref_max,
             mesh_type=mesh_type,
-            num_processors=6
+            num_processors=num_processors
         )
 
     # Plot the convergence
@@ -111,7 +112,8 @@ for mesh_type ∈ [0, 1, 2]
     println("k_f_TM_010 =", map(x -> round.(x, digits=2), k_f_TM_010))
     println("k_f_TE_111 =", map(x -> round.(x, digits=2), k_f_TE_111))
 
-    output_dir = joinpath(@__DIR__, "postpro", "convergence")
+    cavity_dir = @__DIR__
+    output_dir = joinpath(cavity_dir, "postpro", "convergence")
     lmesh_name = lowercase(mesh_name)
 
     savefig(pp, joinpath(output_dir, string("cavity_error_", lmesh_name, ".png")))

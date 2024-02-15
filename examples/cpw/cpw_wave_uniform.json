@@ -7,7 +7,7 @@
   },
   "Model":
   {
-    "Mesh": "mesh/cpw_wave.msh",
+    "Mesh": "mesh/cpw_wave_0.msh",
     "L0": 1.0e-6,  // μm
     "Refinement": {}
   },
@@ -16,13 +16,13 @@
     "Materials":
     [
       {
-        "Attributes": [2],  // Air
+        "Attributes": [1],  // Air
         "Permeability": 1.0,
         "Permittivity": 1.0,
         "LossTan": 0.0
       },
       {
-        "Attributes": [1],  // Sapphire
+        "Attributes": [2],  // Sapphire
         "Permeability": [0.99999975, 0.99999975, 0.99999979],
         "Permittivity": [9.3, 9.3, 11.5],
         "LossTan": [3.0e-5, 3.0e-5, 8.6e-5],
@@ -35,7 +35,7 @@
       [
         {
           "Index": 1,
-          "Attributes": [1]
+          "Attributes": [2]
         }
       ],
       "Probe":
@@ -59,7 +59,7 @@
   {
     "PEC":
     {
-      "Attributes": [3, 9]  // Metal trace + end boundaries
+      "Attributes": [8, 9, 11]  // Metal trace + end boundaries
     },
     "Absorbing":
     {
@@ -70,26 +70,26 @@
     [
       {
         "Index": 1,
-        "Attributes": [5],
+        "Attributes": [4],
         "Mode": 1,
         "Offset": 0.0,
         "Excitation": true
       },
       {
         "Index": 2,
-        "Attributes": [6],
+        "Attributes": [5],
         "Mode": 1,
         "Offset": 0.0
       },
       {
         "Index": 3,
-        "Attributes": [7],
+        "Attributes": [6],
         "Mode": 1,
         "Offset": 0.0
       },
       {
         "Index": 4,
-        "Attributes": [8],
+        "Attributes": [7],
         "Mode": 1,
         "Offset": 0.0
       }
@@ -100,10 +100,26 @@
       [
         {
           "Index": 1,
-          "Attributes": [3],
+          "Attributes": [12],
           "Side": "+Z",
-          "Thickness": 2e-3,  // μm
-          "PermittivitySA": 4.0,
+          "Thickness": 2.0e-3,  // μm
+          "PermittivitySA": 10.0,
+          "LossTan": 1.0
+        },
+        {
+          "Index": 2,
+          "Attributes": [11],
+          "Side": "-Z",
+          "Thickness": 2.0e-3,  // μm
+          "PermittivityMS": 10.0,
+          "LossTan": 1.0
+        },
+        {
+          "Index": 3,
+          "Attributes": [11],
+          "Side": "+Z",
+          "Thickness": 2.0e-3,  // μm
+          "PermittivityMA": 10.0,
           "LossTan": 1.0
         }
       ]
@@ -124,7 +140,7 @@
       "Type": "Default",
       "KSPType": "GMRES",
       "Tol": 1.0e-8,
-      "MaxIts": 100
+      "MaxIts": 200
     }
   }
 }

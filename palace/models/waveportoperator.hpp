@@ -73,13 +73,13 @@ private:
   std::unique_ptr<EigenvalueSolver> eigen;
   std::unique_ptr<ComplexKspSolver> ksp;
 
+  // Grid functions storing the last computed electric field mode on the port.
+  std::unique_ptr<mfem::ParComplexGridFunction> port_E0t, port_E0n;
+
   // Stored objects for computing functions of the port modes for use as an excitation or
   // in postprocessing.
   std::unique_ptr<mfem::ParGridFunction> port_S0t;
   std::unique_ptr<mfem::LinearForm> port_sr, port_si;
-
-  // Grid functions storing the last computed electric field mode on the port.
-  std::unique_ptr<mfem::ParComplexGridFunction> port_E0t, port_E0n;
 
 public:
   WavePortData(const config::WavePortData &data, const config::SolverData &solver,

@@ -7,9 +7,12 @@
   },
   "Model":
   {
-    "Mesh": "mesh/cavity.msh",
+    "Mesh": "mesh/cavity_prism.msh",
     "L0": 1.0e-2,  // cm
-    "Refinement": {}
+    "Refinement":
+    {
+      "UniformLevels": 1
+    }
   },
   "Domains":
   {

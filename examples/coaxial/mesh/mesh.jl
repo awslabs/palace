@@ -5,35 +5,38 @@ using Gmsh: gmsh
 
 """
     generate_coaxial_mesh(;
+        filename::AbstractString,
         refinement::Integer     = 0,
         order::Integer          = 1,
         inner_diameter_mm::Real = 1.6383,
         outer_diameter_mm::Real = 5.461,
         length_mm::Real         = 40.0,
-        filename::AbstractString,
-        verbose::Integer=1
+        verbose::Integer        = 5,
+        gui::Bool               = false
     )
 
 Generate a mesh for the coaxial cable example using Gmsh
 
 # Arguments
 
+  - filename - the filename to use for the generated mesh
   - refinement - measure of how many elements to include, 0 is least
   - order - the polynomial order of the approximation, minimum 1
   - inner_diameter_mm - the inner diameter of the cable, in millimeters
   - outer_diameter_mm - the outer diameter of the cable, in millimeters
   - length_mm - the length of the cable, in millimeters
-  - filename - the filename to use for the generated mesh
   - verbose - flag to dictate the level of print to REPL, passed to Gmsh
+  - gui - whether to launch the Gmsh GUI on mesh generation
 """
 function generate_coaxial_mesh(;
+    filename::AbstractString,
     refinement::Integer     = 0,
     order::Integer          = 1,
     inner_diameter_mm::Real = 1.6383,
     outer_diameter_mm::Real = 5.461,
     length_mm::Real         = 40.0,
-    filename::AbstractString,
-    verbose::Integer=1
+    verbose::Integer        = 5,
+    gui::Bool               = false
 )
     @assert outer_diameter_mm > inner_diameter_mm > 0
     @assert length_mm > 0
@@ -162,7 +165,7 @@ function generate_coaxial_mesh(;
     end
 
     # Optionally launch GUI
-    if "gui" in lowercase.(ARGS)
+    if gui
         gmsh.fltk.run()
     end
 

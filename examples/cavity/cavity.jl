@@ -16,11 +16,11 @@ include(joinpath(@__DIR__, "mesh", "mesh.jl"))
         params;
         order,
         refinement,
-        mesh_type=0,
-        radius=2.74,
-        aspect_ratio=1.0,
-        num_processors=1,
-        cleanup_files=true,
+        mesh_type::Integer      = 0,
+        radius::Real            = 2.74,
+        aspect_ratio::Real      = 1.0,
+        num_processors::Integer = 1,
+        cleanup_files::Bool     = true
     )
 
 Solve the cavity mode problem, with an automatically generated Gmsh mesh
@@ -44,49 +44,49 @@ function solve_cavity_resonator(
     order::Integer,
     geo_order::Integer,
     refinement::Integer,
-    mesh_type::Integer=0,
-    radius::Real=2.74,
-    aspect_ratio::Real=1.0,
-    num_processors::Integer=1,
-    cleanup_files::Bool=true
+    mesh_type::Integer      = 0,
+    radius::Real            = 2.74,
+    aspect_ratio::Real      = 1.0,
+    num_processors::Integer = 1,
+    cleanup_files::Bool     = true
 )
     @assert refinement >= 0
     @assert order > 0
     @assert geo_order > 0
     @assert mesh_type ∈ [0, 1, 2]
 
-    cavity_dir = @__DIR__
-    fileroot = string("cavity_p", order, "_h", refinement)
-
     # Generate a mesh
-    mesh_filename = joinpath(cavity_dir, "mesh", string(fileroot, ".msh"))
+    cavity_dir = @__DIR__
+    file_root = string("cavity_p", order, "_h", refinement)
+    mesh_filename = string(file_root, ".msh")
     generate_cylindrical_cavity_mesh(
+        filename=mesh_filename,
         refinement=refinement,
         order=geo_order,
         mesh_type=mesh_type,
         radius=radius,
         aspect_ratio=aspect_ratio,
-        filename=mesh_filename,
         verbose=0
     )
 
     # Generate solver parameter file
     params["Solver"]["Order"] = order
-    params["Model"]["Mesh"] = mesh_filename
-    json_filename = joinpath(cavity_dir, string(fileroot, ".json"))
-    open(json_filename, "w") do f
+    params["Model"]["Mesh"] = joinpath(cavity_dir, "mesh", mesh_filename)
+    json_filename = string(file_root, ".json")
+    open(joinpath(cavity_dir, json_filename), "w") do f
         return JSON.print(f, params)
     end
 
     # Call the solver, storing the terminal output
-    call_command = `palace -np $num_processors -wdir $cavity_dir $json_filename`
+    call_command = Cmd(`palace -np $num_processors $json_filename`, dir=cavity_dir)
     log_file = read(call_command, String)
     # println(log_file)
 
     # Search through for the DOF count
-    start_ind = findfirst("number of global unknowns: ", log_file)[end]
-    end_ind = findfirst("\n", log_file[start_ind:end])[1]
-    dof = parse(Int, filter(isdigit, log_file[start_ind:(start_ind + end_ind)]))
+    start_ind = findfirst("ND", log_file)[end]
+    start_ind += findfirst(":", log_file[start_ind:end])[end]
+    end_ind = start_ind + findfirst(",", log_file[start_ind:end])[1]
+    dof = parse(Int, filter(isdigit, log_file[start_ind:end_ind]))
 
     # Extract the top two frequency modes
     eig_df = CSV.read(joinpath(cavity_dir, "postpro", "convergence", "eig.csv"), DataFrame)
@@ -94,8 +94,8 @@ function solve_cavity_resonator(
 
     # Clean up the parameter and mesh file
     if cleanup_files
-        rm(mesh_filename)
-        rm(json_filename)
+        rm(joinpath(cavity_dir, "mesh", mesh_filename))
+        rm(joinpath(cavity_dir, json_filename))
     end
 
     return dof, eig
@@ -184,12 +184,12 @@ end
 
 """
     generate_cavity_convergence_data(
-        p_min::Integer=1,
-        p_max::Integer=3,
-        ref_min::Integer=0,
-        ref_max::Integer=3,
-        mesh_type::Integer=0,
-        num_processors::Integer=1
+        p_min::Integer          = 1,
+        p_max::Integer          = 3,
+        ref_min::Integer        = 0,
+        ref_max::Integer        = 3,
+        mesh_type::Integer      = 0,
+        num_processors::Integer = 1
     )
 
 Generate the data for the cavity convergence study
@@ -204,12 +204,12 @@ Generate the data for the cavity convergence study
   - num_processors - number of processors to use for the simulation
 """
 function generate_cavity_convergence_data(;
-    p_min::Integer=1,
-    p_max::Integer=3,
-    ref_min::Integer=0,
-    ref_max::Integer=3,
-    mesh_type::Integer=0,
-    num_processors::Integer=1
+    p_min::Integer          = 1,
+    p_max::Integer          = 3,
+    ref_min::Integer        = 0,
+    ref_max::Integer        = 3,
+    mesh_type::Integer      = 0,
+    num_processors::Integer = 1
 )
     # Load the default JSON script (the file contains comments and we need to sanitize them)
     cavity_dir = @__DIR__
@@ -223,10 +223,10 @@ function generate_cavity_convergence_data(;
     params["Model"]["Refinement"]["UniformLevels"] = 0 # Don't perform any mesh refinement
     params["Solver"]["Eigenmode"]["Save"] = 0 # Don't write any fields to file
     params["Solver"]["Eigenmode"]["N"] = 4 # Look only for the top 4 modes
-    params["Solver"]["Eigenmode"]["Tol"] = 1e-12
+    params["Solver"]["Eigenmode"]["Tol"] = 1.0e-12
     params["Solver"]["Eigenmode"]["Target"] = 2.0
     params["Solver"]["Eigenmode"]["StartVectorConstant"] = true
-    params["Solver"]["Linear"]["Tol"] = 1e-14
+    params["Solver"]["Linear"]["Tol"] = 1.0e-14
 
     # Compute the exact solution for reference
     radius = 2.74
@@ -259,9 +259,7 @@ function generate_cavity_convergence_data(;
         push!(dof, eltype(dof)())
         push!(f_TM_010, eltype(f_TM_010)())
         push!(f_TE_111, eltype(f_TE_111)())
-        ref_lower = (p == 1 && mesh_type == 2) ? max(1, ref_min) : ref_min
-        ref_upper = (p > 3) ? min(3, ref_max) : ref_max
-        for ref = ref_lower:ref_upper
+        for ref = ref_min:ref_max
             print("p = ", p, ", ref = ", ref, ": ")
             results = solve_cavity_resonator(
                 params,
@@ -271,7 +269,7 @@ function generate_cavity_convergence_data(;
                 mesh_type=mesh_type,
                 radius=radius,
                 aspect_ratio=aspect_ratio,
-                num_processors=ref < 2 ? 1 : num_processors
+                num_processors=min(num_processors, 4 * 2^(2 * ref))
             )
             println("Success! $(results[1]) dofs, finished at $(now())")
             push!(dof[end], results[1])
