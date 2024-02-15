@@ -28,14 +28,18 @@ class MaterialOperator;
 //
 // This solver implements a solver for the operator K + M in a Nedelec space.
 //
+template <typename VecType>
 class WeightedHCurlNormSolver
 {
+  using OperType = typename std::conditional<std::is_same<VecType, ComplexVector>::value,
+                                             ComplexOperator, Operator>::type;
+
 private:
   // H(curl) norm operator A = K + M and its projection Gᵀ A G.
-  std::unique_ptr<Operator> A;
+  std::unique_ptr<OperType> A;
 
   // Linear solver for the linear system A y = x;
-  std::unique_ptr<KspSolver> ksp;
+  std::unique_ptr<BaseKspSolver<OperType>> ksp;
 
 public:
   WeightedHCurlNormSolver(const MaterialOperator &mat_op,
@@ -45,15 +49,9 @@ public:
                           const std::vector<mfem::Array<int>> &h1_dbc_tdof_lists,
                           double tol, int max_it, int print);
 
-  const Operator &GetOperator() { return *A; }
+  const OperType &GetOperator() { return *A; }
 
-  void Mult(const Vector &x, Vector &y) const { ksp->Mult(x, y); }
-
-  void Mult(const ComplexVector &x, ComplexVector &y)
-  {
-    Mult(x.Real(), y.Real());
-    Mult(x.Imag(), y.Imag());
-  }
+  void Mult(const VecType &x, VecType &y) const { ksp->Mult(x, y); }
 };
 
 }  // namespace palace

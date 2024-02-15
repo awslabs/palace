@@ -653,16 +653,25 @@ std::unique_ptr<Operator> SpaceOperator::GetInnerProductMatrix(double a0, double
 namespace
 {
 
-auto BuildLevelParOperator(const MultigridOperator &B, std::unique_ptr<Operator> &&br,
-                           std::unique_ptr<Operator> &&bi,
-                           const FiniteElementSpace &fespace)
+template <typename OperType>
+auto BuildLevelParOperator(std::unique_ptr<Operator> &&br, std::unique_ptr<Operator> &&bi,
+                           const FiniteElementSpace &fespace);
+
+template <>
+auto BuildLevelParOperator<Operator>(std::unique_ptr<Operator> &&br,
+                                     std::unique_ptr<Operator> &&bi,
+                                     const FiniteElementSpace &fespace)
 {
+  MFEM_VERIFY(
+      !bi,
+      "Should not be constructing a real-valued ParOperator with non-zero imaginary part!");
   return std::make_unique<ParOperator>(std::move(br), fespace);
 }
 
-auto BuildLevelParOperator(const ComplexMultigridOperator &B,
-                           std::unique_ptr<Operator> &&br, std::unique_ptr<Operator> &&bi,
-                           const FiniteElementSpace &fespace)
+template <>
+auto BuildLevelParOperator<ComplexOperator>(std::unique_ptr<Operator> &&br,
+                                            std::unique_ptr<Operator> &&bi,
+                                            const FiniteElementSpace &fespace)
 {
   return std::make_unique<ComplexParOperator>(std::move(br), std::move(bi), fespace);
 }
@@ -776,7 +785,8 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(double a0, doub
           Mpi::Print("\n");
         }
       }
-      auto B_l = BuildLevelParOperator(*B, std::move(br_l), std::move(bi_l), fespace_l);
+      auto B_l =
+          BuildLevelParOperator<OperType>(std::move(br_l), std::move(bi_l), fespace_l);
       B_l->SetEssentialTrueDofs(dbc_tdof_lists_l, Operator::DiagonalPolicy::DIAG_ONE);
       if (aux)
       {

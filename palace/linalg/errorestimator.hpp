@@ -25,17 +25,21 @@ class MaterialOperator;
 // This solver computes a smooth reconstruction of a discontinuous flux. The difference
 // between this resulting smooth flux and the original non-smooth flux provides a
 // localizable error estimate.
+template <typename VecType>
 class FluxProjector
 {
+  using OperType = typename std::conditional<std::is_same<VecType, ComplexVector>::value,
+                                             ComplexOperator, Operator>::type;
+
 private:
   // Operator for the mass matrix inversion.
-  std::unique_ptr<Operator> Flux, M;
+  std::unique_ptr<OperType> Flux, M;
 
   // Linear solver and preconditioner for the projected linear system.
-  std::unique_ptr<KspSolver> ksp;
+  std::unique_ptr<BaseKspSolver<OperType>> ksp;
 
   // Workspace object for solver application.
-  mutable Vector rhs;
+  mutable VecType rhs;
 
 public:
   FluxProjector(const MaterialOperator &mat_op, const FiniteElementSpace &nd_fespace,
@@ -43,7 +47,7 @@ public:
   FluxProjector(const MaterialOperator &mat_op, const FiniteElementSpace &h1_fespace,
                 const FiniteElementSpace &h1d_fespace, double tol, int max_it, int print);
 
-  void Mult(const Vector &x, Vector &y) const;
+  void Mult(const VecType &x, VecType &y) const;
 };
 
 // Class used for computing curl flux error estimate, i.e. || μ⁻¹ ∇ × Uₕ - F ||_K where F
@@ -62,10 +66,10 @@ class CurlFluxErrorEstimator
   FiniteElementSpace &nd_fespace;
 
   // Global L2 projection solver.
-  FluxProjector projector;
+  FluxProjector<VecType> projector;
 
   // Temporary vectors for error estimation.
-  mutable Vector F;
+  mutable VecType F;
   mutable GridFunctionType F_gf, U_gf;
 
 public:
@@ -97,7 +101,7 @@ class GradFluxErrorEstimator
   std::unique_ptr<FiniteElementSpace> h1d_fespace;
 
   // Global L2 projection solver.
-  FluxProjector projector;
+  FluxProjector<Vector> projector;
 
   // Temporary vectors for error estimation.
   mutable Vector F;

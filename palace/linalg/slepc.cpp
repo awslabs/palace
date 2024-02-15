@@ -277,7 +277,7 @@ void SlepcEigenvalueSolver::SetLinearSolver(const ComplexKspSolver &ksp)
   opInv = &ksp;
 }
 
-void SlepcEigenvalueSolver::SetDivFreeProjector(const DivFreeSolver &divfree)
+void SlepcEigenvalueSolver::SetDivFreeProjector(const DivFreeSolver<ComplexVector> &divfree)
 {
   opProj = &divfree;
 }

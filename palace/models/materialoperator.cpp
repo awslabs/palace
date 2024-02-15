@@ -361,7 +361,7 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata,
       if (!IsIdentity(data.mu_r) || IsValid(data.sigma) || std::abs(data.lambda_L) > 0.0)
       {
         Mpi::Warning(
-            "Electrostatic problem type does not account for material permeability\n"
+            "Electrostatic problem type does not account for material permeability,\n"
             "electrical conductivity, or London depth!\n");
       }
     }

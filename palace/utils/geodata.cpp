@@ -91,7 +91,7 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(MPI_Comm comm, const IoData &iodata, boo
         }
       }
       MFEM_VERIFY(!(smesh->Nonconforming() && use_mesh_partitioner),
-                  "Cannot use mesh partitioner on a nonconforming mesh");
+                  "Cannot use mesh partitioner on a nonconforming mesh!");
     }
     Mpi::Barrier(comm);
   }
@@ -102,11 +102,11 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(MPI_Comm comm, const IoData &iodata, boo
     // Check the the AMR specification and the mesh elements are compatible.
     const auto element_types = CheckElements(*smesh);
     MFEM_VERIFY(!use_amr || !element_types.has_hexahedra || refinement.nonconformal,
-                "If there are tensor elements, AMR must be nonconformal");
+                "If there are tensor elements, AMR must be nonconformal!");
     MFEM_VERIFY(!use_amr || !element_types.has_pyramids || refinement.nonconformal,
-                "If there are pyramid elements, AMR must be nonconformal");
+                "If there are pyramid elements, AMR must be nonconformal!");
     MFEM_VERIFY(!use_amr || !element_types.has_prisms || refinement.nonconformal,
-                "If there are wedge elements, AMR must be nonconformal");
+                "If there are wedge elements, AMR must be nonconformal!");
 
     // Generate the mesh partitioning.
     partitioning = GetMeshPartitioning(*smesh, Mpi::Size(comm), iodata.model.partition);

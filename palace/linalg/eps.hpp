@@ -12,6 +12,7 @@
 namespace palace
 {
 
+template <typename VecType>
 class DivFreeSolver;
 
 //
@@ -65,7 +66,7 @@ public:
   virtual void SetLinearSolver(const ComplexKspSolver &ksp) = 0;
 
   // Set the projection operator for enforcing the divergence-free constraint.
-  virtual void SetDivFreeProjector(const DivFreeSolver &divfree) = 0;
+  virtual void SetDivFreeProjector(const DivFreeSolver<ComplexVector> &divfree) = 0;
 
   // Set optional B matrix used for weighted inner products. This must be set explicitly
   // even for generalized problems, otherwise the identity will be used.

@@ -17,8 +17,6 @@
 namespace palace
 {
 
-class DivFreeSolver;
-
 namespace arpack
 {
 
@@ -80,7 +78,7 @@ protected:
 
   // Reference to solver for projecting an intermediate vector onto a divergence-free space
   // (not owned).
-  const DivFreeSolver *opProj;
+  const DivFreeSolver<ComplexVector> *opProj;
 
   // Reference to matrix used for weighted inner products (not owned). May be nullptr, in
   // which case identity is used.
@@ -130,7 +128,7 @@ public:
   void SetLinearSolver(const ComplexKspSolver &ksp) override;
 
   // Set the projection operator for enforcing the divergence-free constraint.
-  void SetDivFreeProjector(const DivFreeSolver &divfree) override;
+  void SetDivFreeProjector(const DivFreeSolver<ComplexVector> &divfree) override;
 
   // Set optional B matrix used for weighted inner products. This must be set explicitly
   // even for generalized problems, otherwise the identity will be used.

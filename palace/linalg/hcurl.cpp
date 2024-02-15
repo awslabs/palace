@@ -16,7 +16,31 @@
 namespace palace
 {
 
-WeightedHCurlNormSolver::WeightedHCurlNormSolver(
+namespace
+{
+
+template <typename OperType>
+auto BuildLevelParOperator(std::unique_ptr<Operator> &&a,
+                           const FiniteElementSpace &fespace);
+
+template <>
+auto BuildLevelParOperator<Operator>(std::unique_ptr<Operator> &&a,
+                                     const FiniteElementSpace &fespace)
+{
+  return std::make_unique<ParOperator>(std::move(a), fespace);
+}
+
+template <>
+auto BuildLevelParOperator<ComplexOperator>(std::unique_ptr<Operator> &&a,
+                                            const FiniteElementSpace &fespace)
+{
+  return std::make_unique<ComplexParOperator>(std::move(a), nullptr, fespace);
+}
+
+}  // namespace
+
+template <typename VecType>
+WeightedHCurlNormSolver<VecType>::WeightedHCurlNormSolver(
     const MaterialOperator &mat_op, FiniteElementSpaceHierarchy &nd_fespaces,
     AuxiliaryFiniteElementSpaceHierarchy &h1_fespaces,
     const std::vector<mfem::Array<int>> &nd_dbc_tdof_lists,
@@ -39,7 +63,7 @@ WeightedHCurlNormSolver::WeightedHCurlNormSolver(
     // a_aux.AssembleQuadratureData();
     auto a_vec = a.Assemble(nd_fespaces, skip_zeros);
     auto a_aux_vec = a_aux.Assemble(h1_fespaces, skip_zeros);
-    auto A_mg = std::make_unique<MultigridOperator>(n_levels);
+    auto A_mg = std::make_unique<BaseMultigridOperator<OperType>>(n_levels);
     for (bool aux : {false, true})
     {
       for (std::size_t l = 0; l < n_levels; l++)
@@ -47,8 +71,8 @@ WeightedHCurlNormSolver::WeightedHCurlNormSolver(
         const auto &fespace_l =
             aux ? h1_fespaces.GetFESpaceAtLevel(l) : nd_fespaces.GetFESpaceAtLevel(l);
         const auto &dbc_tdof_lists_l = aux ? h1_dbc_tdof_lists[l] : nd_dbc_tdof_lists[l];
-        auto A_l = std::make_unique<ParOperator>(std::move(aux ? a_aux_vec[l] : a_vec[l]),
-                                                 fespace_l);
+        auto A_l = BuildLevelParOperator<OperType>(std::move(aux ? a_aux_vec[l] : a_vec[l]),
+                                                   fespace_l);
         A_l->SetEssentialTrueDofs(dbc_tdof_lists_l, Operator::DiagonalPolicy::DIAG_ONE);
         if (aux)
         {
@@ -65,16 +89,16 @@ WeightedHCurlNormSolver::WeightedHCurlNormSolver(
 
   // The system matrix K + M is real and SPD. We use Hypre's AMS solver as the coarse-level
   // multigrid solve.
-  auto ams = std::make_unique<MfemWrapperSolver<Operator>>(std::make_unique<HypreAmsSolver>(
+  auto ams = std::make_unique<MfemWrapperSolver<OperType>>(std::make_unique<HypreAmsSolver>(
       nd_fespaces.GetFESpaceAtLevel(0), h1_fespaces.GetFESpaceAtLevel(0), 1, 1, 1, false,
       false, 0));
-  std::unique_ptr<Solver<Operator>> pc;
+  std::unique_ptr<Solver<OperType>> pc;
   if (n_levels > 1)
   {
     const auto G = h1_fespaces.GetDiscreteInterpolators();
     const int mg_smooth_order =
         std::max(nd_fespaces.GetFinestFESpace().GetMaxElementOrder(), 2);
-    pc = std::make_unique<GeometricMultigridSolver<Operator>>(
+    pc = std::make_unique<GeometricMultigridSolver<OperType>>(
         nd_fespaces.GetFinestFESpace().GetComm(), std::move(ams),
         nd_fespaces.GetProlongationOperators(), &G, 1, 1, mg_smooth_order, 1.0, 0.0, true);
   }
@@ -84,13 +108,16 @@ WeightedHCurlNormSolver::WeightedHCurlNormSolver(
   }
 
   auto pcg =
-      std::make_unique<CgSolver<Operator>>(nd_fespaces.GetFinestFESpace().GetComm(), print);
+      std::make_unique<CgSolver<OperType>>(nd_fespaces.GetFinestFESpace().GetComm(), print);
   pcg->SetInitialGuess(false);
   pcg->SetRelTol(tol);
   pcg->SetMaxIter(max_it);
 
-  ksp = std::make_unique<KspSolver>(std::move(pcg), std::move(pc));
+  ksp = std::make_unique<BaseKspSolver<OperType>>(std::move(pcg), std::move(pc));
   ksp->SetOperators(*A, *A);
 }
+
+template class WeightedHCurlNormSolver<Vector>;
+template class WeightedHCurlNormSolver<ComplexVector>;
 
 }  // namespace palace
