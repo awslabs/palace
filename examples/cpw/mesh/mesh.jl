@@ -137,8 +137,8 @@ function generate_cpw_wave_mesh(;
         0.5 * trace_width_μm
     dyp1 = 0.5 * (cy2 - cy1)
     dyp2 = dyp1
-    dzp1 = 0.5 * (sep_dz + substrate_height_μm)
-    dzp2 = substrate_height_μm
+    dzp1 = 2.0 * (trace_width_μm + 2.0 * gap_width_μm)
+    dzp2 = dzp1
     let pa, pb, l
         pa = kernel.addPoint(0.0, cy1 - dyp2, -dzp1)
         pb = kernel.addPoint(0.0, cy1 + dyp1, -dzp1)
