@@ -79,7 +79,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   else if (type == config::EigenSolverData::Type::ARPACK)
   {
 #if defined(PALACE_WITH_ARPACK)
-    Mpi::Print("\nConfiguring ARPACK eigenvalue solver\n");
+    Mpi::Print("\nConfiguring ARPACK eigenvalue solver:\n");
     if (C)
     {
       eigen = std::make_unique<arpack::ArpackPEPSolver>(spaceop.GetComm(),
@@ -95,7 +95,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   else  // config::EigenSolverData::Type::SLEPC
   {
 #if defined(PALACE_WITH_SLEPC)
-    Mpi::Print("\nConfiguring SLEPc eigenvalue solver\n");
+    Mpi::Print("\nConfiguring SLEPc eigenvalue solver:\n");
     std::unique_ptr<slepc::SlepcEigenvalueSolver> slepc;
     if (C)
     {

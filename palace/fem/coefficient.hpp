@@ -379,7 +379,7 @@ public:
       GetBdrElementNeighborTransformations(T, ip);
 
       // For interior faces, compute the value on the side where the speed of light is
-      // larger (typically should choose the non-vacuum side).
+      // larger (typically should choose the vacuum side).
       if (FET.Elem2 && mat_op.GetLightSpeedMin(FET.Elem2->Attribute) >
                            mat_op.GetLightSpeedMax(FET.Elem1->Attribute))
       {
@@ -467,7 +467,7 @@ public:
     GetBdrElementNeighborTransformations(T, ip);
 
     // For interior faces, compute the value on the side where the speed of light is
-    // larger (typically should choose the non-vacuum side).
+    // larger (typically should choose the vacuum side).
     if (FET.Elem2 && mat_op.GetLightSpeedMin(FET.Elem2->Attribute) >
                          mat_op.GetLightSpeedMax(FET.Elem1->Attribute))
     {
@@ -499,7 +499,7 @@ public:
     GetBdrElementNeighborTransformations(T, ip);
 
     // For interior faces, compute the value on the side where the speed of light is
-    // larger (typically should choose the non-vacuum side).
+    // larger (typically should choose the vacuum side).
     if (FET.Elem2 && mat_op.GetLightSpeedMin(FET.Elem2->Attribute) >
                          mat_op.GetLightSpeedMax(FET.Elem1->Attribute))
     {
