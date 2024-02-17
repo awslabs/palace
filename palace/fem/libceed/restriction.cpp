@@ -6,10 +6,6 @@
 #include <mfem.hpp>
 #include "utils/omp.hpp"
 
-#if defined(MFEM_USE_OPENMP)
-#include <omp.h>
-#endif
-
 namespace palace::ceed
 {
 
@@ -36,12 +32,7 @@ void InitLexicoRestr(const mfem::FiniteElementSpace &fespace,
   mfem::Array<bool> tp_el_orients(num_elem * P);
   int use_el_orients = 0;
 
-#if defined(MFEM_USE_OPENMP)
-  const int in_parallel = omp_in_parallel();
-#else
-  const int in_parallel = 0;
-#endif
-  PalacePragmaOmp(parallel reduction(+ : use_el_orients) if (in_parallel == 0))
+  PalacePragmaOmp(parallel reduction(+ : use_el_orients))
   {
     mfem::Array<int> dofs;
     mfem::DofTransformation dof_trans;
@@ -131,12 +122,7 @@ void InitNativeRestr(const mfem::FiniteElementSpace &fespace,
   }
   int use_el_orients = 0;
 
-#if defined(MFEM_USE_OPENMP)
-  const int in_parallel = omp_in_parallel();
-#else
-  const int in_parallel = 0;
-#endif
-  PalacePragmaOmp(parallel reduction(+ : use_el_orients) if (in_parallel == 0))
+  PalacePragmaOmp(parallel reduction(+ : use_el_orients))
   {
     mfem::Array<int> dofs;
     mfem::DofTransformation dof_trans;
