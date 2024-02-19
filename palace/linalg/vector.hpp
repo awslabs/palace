@@ -200,6 +200,30 @@ inline auto Normalize(MPI_Comm comm, VecType &x)
   return norm;
 }
 
+// Calculate the local sum of all elements in the vector.
+double LocalSum(const Vector &x);
+std::complex<double> LocalSum(const ComplexVector &x);
+
+// Calculate the sum of all elements in the vector.
+template <typename VecType>
+inline auto Sum(MPI_Comm comm, const VecType &x)
+{
+  auto sum = LocalSum(x);
+  Mpi::GlobalSum(1, &sum, comm);
+  return sum;
+}
+
+// Calculate the mean of all elements in the vector.
+template <typename VecType>
+inline auto Mean(MPI_Comm comm, const VecType &x)
+{
+  using ScalarType = typename std::conditional<std::is_same<VecType, ComplexVector>::value,
+                                               std::complex<double>, double>::type;
+  ScalarType sum[2] = {LocalSum(x), ScalarType(x.Size())};
+  Mpi::GlobalSum(2, sum, comm);
+  return sum[0] / sum[1];
+}
+
 // Addition y += alpha * x.
 template <typename VecType, typename ScalarType>
 void AXPY(ScalarType alpha, const VecType &x, VecType &y);

@@ -609,6 +609,18 @@ std::complex<double> LocalDot(const ComplexVector &x, const ComplexVector &y)
           (&x == &y) ? 0.0 : (LocalDot(x.Imag(), y.Real()) - LocalDot(x.Real(), y.Imag()))};
 }
 
+double LocalSum(const Vector &x)
+{
+  static HypreVectorWrapper X;
+  X.Update(x);
+  return hypre_SeqVectorSumElts(X);
+}
+
+std::complex<double> LocalSum(const ComplexVector &x)
+{
+  return {LocalSum(x.Real()), LocalSum(x.Imag())};
+}
+
 template <>
 void AXPY(double alpha, const Vector &x, Vector &y)
 {

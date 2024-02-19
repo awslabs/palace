@@ -59,12 +59,7 @@ public:
   }
 
   // Return the mean local error indicator.
-  auto Mean(MPI_Comm comm) const
-  {
-    auto sum = local.Sum();
-    Mpi::GlobalSum(1, &sum, comm);
-    return sum / linalg::GlobalSize(comm, local);
-  }
+  auto Mean(MPI_Comm comm) const { return linalg::Mean(comm, local); }
 };
 
 }  // namespace palace

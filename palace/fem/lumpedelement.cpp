@@ -23,10 +23,7 @@ double GetArea(mfem::ParFiniteElementSpace &fespace, mfem::Array<int> &attr_mark
   s.UseDevice(false);
   s.Assemble();
   s.UseDevice(true);
-
-  mfem::GridFunction ones(&fespace);
-  ones = 1.0;
-  return linalg::Dot<Vector>(fespace.GetComm(), s, ones);
+  return linalg::Sum<Vector>(fespace.GetComm(), s);
 }
 
 }  // namespace

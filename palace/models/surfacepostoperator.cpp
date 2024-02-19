@@ -142,12 +142,8 @@ std::unique_ptr<mfem::Coefficient> SurfacePostOperator::SurfaceFluxData::GetCoef
 SurfacePostOperator::SurfacePostOperator(const IoData &iodata,
                                          const MaterialOperator &mat_op,
                                          mfem::ParFiniteElementSpace &h1_fespace)
-  : mat_op(mat_op), ones(&h1_fespace)
+  : mat_op(mat_op), h1_fespace(h1_fespace)
 {
-  // Define a constant 1 function on the scalar finite element space for computing surface
-  // integrals.
-  ones = 1.0;
-
   // Surface dielectric loss postprocessing.
   for (const auto &[idx, data] : iodata.boundaries.postpro.dielectric)
   {
@@ -261,13 +257,13 @@ double SurfacePostOperator::GetLocalSurfaceIntegral(const SurfaceData &data,
   }
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, attr_list);
-  mfem::LinearForm s(ones.FESpace());
+  mfem::LinearForm s(&h1_fespace);
   s.AddBoundaryIntegrator(new BoundaryLFIntegrator(fb), attr_marker);
   s.UseFastAssembly(false);
   s.UseDevice(false);
   s.Assemble();
   s.UseDevice(true);
-  return linalg::LocalDot(s, ones);
+  return linalg::LocalSum(s);
 }
 
 }  // namespace palace
