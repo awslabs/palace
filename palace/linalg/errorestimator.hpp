@@ -55,10 +55,6 @@ public:
 template <typename VecType>
 class CurlFluxErrorEstimator
 {
-  using GridFunctionType =
-      typename std::conditional<std::is_same<VecType, ComplexVector>::value,
-                                mfem::ParComplexGridFunction, mfem::ParGridFunction>::type;
-
   // Reference to material property data (not owned).
   const MaterialOperator &mat_op;
 
@@ -69,8 +65,7 @@ class CurlFluxErrorEstimator
   FluxProjector<VecType> projector;
 
   // Temporary vectors for error estimation.
-  mutable VecType F;
-  mutable GridFunctionType F_gf, U_gf;
+  mutable VecType F, F_gf, U_gf;
 
 public:
   CurlFluxErrorEstimator(const MaterialOperator &mat_op, FiniteElementSpace &nd_fespace,
@@ -98,8 +93,7 @@ class GradFluxErrorEstimator
   FluxProjector<Vector> projector;
 
   // Temporary vectors for error estimation.
-  mutable Vector F;
-  mutable mfem::ParGridFunction F_gf, U_gf;
+  mutable Vector F, F_gf, U_gf;
 
 public:
   GradFluxErrorEstimator(const MaterialOperator &mat_op, FiniteElementSpace &h1_fespace,
