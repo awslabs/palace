@@ -646,24 +646,30 @@ void PostOperator::WriteFields(int step, double time, const ErrorIndicator *indi
     {
       // Piola transform: J^-T
       E->real() *= L;
+      E->real().FaceNbrData() *= L;
       if (has_imaginary)
       {
         E->imag() *= L;
+        E->imag().FaceNbrData() *= L;
       }
     }
     if (B)
     {
       // Piola transform: J / |J|
-      B->real() *= std::pow(L, mesh.Dimension() - 1);
+      const auto Ld = std::pow(L, mesh.Dimension() - 1);
+      B->real() *= Ld;
+      B->real().FaceNbrData() *= Ld;
       if (has_imaginary)
       {
-        B->imag() *= std::pow(L, mesh.Dimension() - 1);
+        B->imag() *= Ld;
+        B->imag().FaceNbrData() *= Ld;
       }
     }
     if (A)
     {
       // Piola transform: J^-T
       *A *= L;
+      A->FaceNbrData() *= L;
     }
   };
   mesh::DimensionalizeMesh(mesh, mesh_Lc0);
