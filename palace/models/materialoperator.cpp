@@ -346,6 +346,7 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata,
   mat_invLondon.SetSize(sdim, sdim, nmats);
   mat_c0_min.SetSize(nmats);
   mat_c0_max.SetSize(nmats);
+  has_losstan_attr = has_conductivity_attr = has_london_attr = false;
 
   int count = 0;
   for (std::size_t i = 0; i < iodata.domains.materials.size(); i++)
