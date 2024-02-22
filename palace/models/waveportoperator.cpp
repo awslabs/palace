@@ -622,8 +622,8 @@ WavePortData::WavePortData(const config::WavePortData &data,
         port_h1_fespace->GetComm(), port_h1_fespace->Get().GlobalTrueVSize(),
         port_h1_fespace->Get().GetTrueDofOffsets(), &diag);
     auto [Bttr, Btti] = GetBtt(mat_op, *port_nd_fespace);
-    std::tie(Br, Bi) =
-        GetSystemMatrixB(Bttr.get(), Btti.get(), Dnn.get(), port_dbc_tdof_list);
+    auto [Br, Bi] = GetSystemMatrixB(Bttr.get(), Btti.get(), Dnn.get(), port_dbc_tdof_list);
+    B = std::make_unique<ComplexWrapperOperator>(std::move(Br), std::move(Bi));
   }
 
   // Configure a communicator for the processes which have elements for this port.
@@ -848,7 +848,7 @@ void WavePortData::Initialize(double omega)
   // Construct matrices and solve the generalized eigenvalue problem for the desired wave
   // port mode. B uses the non-owning constructor since the matrices Br, Bi are not
   // functions of frequency (constructed once for all).
-  std::unique_ptr<ComplexOperator> A, B;
+  std::unique_ptr<ComplexOperator> A;
   const double sigma = -omega * omega * mu_eps_min;
   {
     auto [Attr, Atti] = GetAtt(mat_op, *port_nd_fespace, port_normal, omega, sigma);
@@ -856,7 +856,6 @@ void WavePortData::Initialize(double omega)
         GetSystemMatrixA(Attr.get(), Atti.get(), Atnr.get(), Atni.get(), Antr.get(),
                          Anti.get(), Annr.get(), Anni.get(), port_dbc_tdof_list);
     A = std::make_unique<ComplexWrapperOperator>(std::move(Ar), std::move(Ai));
-    B = std::make_unique<ComplexWrapperOperator>(Br.get(), Bi.get());
   }
 
   // Configure and solve the (inverse) eigenvalue problem for the desired boundary mode.

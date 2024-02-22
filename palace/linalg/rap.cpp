@@ -106,25 +106,40 @@ mfem::HypreParMatrix &ParOperator::ParallelAssemble(bool skip_zeros) const
   if (!use_R)
   {
     const mfem::HypreParMatrix *Rt = test_fespace.Get().Dof_TrueDof_Matrix();
-    RAP = std::make_unique<mfem::HypreParMatrix>(hypre_ParCSRMatrixRAP(*Rt, hA, *P), true);
+    RAP = std::make_unique<mfem::HypreParMatrix>(hypre_ParCSRMatrixRAPKT(*Rt, hA, *P, 1),
+                                                 true);
   }
   else
   {
-    mfem::SparseMatrix *sRt = mfem::Transpose(*test_fespace.GetRestrictionMatrix());
-    mfem::HypreParMatrix *hRt = new mfem::HypreParMatrix(
-        test_fespace.GetComm(), test_fespace.GlobalVSize(), test_fespace.GlobalTrueVSize(),
-        test_fespace.Get().GetDofOffsets(), test_fespace.Get().GetTrueDofOffsets(), sRt);
-    RAP = std::make_unique<mfem::HypreParMatrix>(hypre_ParCSRMatrixRAP(*hRt, hA, *P), true);
-    delete sRt;
-    delete hRt;
+    mfem::HypreParMatrix *hR = new mfem::HypreParMatrix(
+        test_fespace.GetComm(), test_fespace.GlobalTrueVSize(), test_fespace.GlobalVSize(),
+        test_fespace.Get().GetTrueDofOffsets(), test_fespace.Get().GetDofOffsets(),
+        const_cast<mfem::SparseMatrix *>(test_fespace.GetRestrictionMatrix()));
+    hypre_ParCSRMatrix *AP = hypre_ParCSRMatMat(hA, *P);
+    RAP = std::make_unique<mfem::HypreParMatrix>(hypre_ParCSRMatMat(*hR, AP), true);
+    hypre_ParCSRMatrixDestroy(AP);
+    delete hR;
   }
 
   hypre_ParCSRMatrixDiag(hA) = hA_diag;
   hypre_ParCSRMatrixDestroy(hA);
   hypre_ParCSRMatrixSetNumNonzeros(*RAP);
+  if (&trial_fespace == &test_fespace)
+  {
+    // Make sure that the first entry in each row is the diagonal one, for a square matrix.
+    hypre_CSRMatrixReorder(hypre_ParCSRMatrixDiag((hypre_ParCSRMatrix *)*RAP));
+  }
 
   // Eliminate boundary conditions on the assembled (square) matrix.
-  RAP->EliminateBC(dbc_tdof_list, diag_policy);
+  if (&trial_fespace == &test_fespace)
+  {
+    RAP->EliminateBC(dbc_tdof_list, diag_policy);
+  }
+  else
+  {
+    MFEM_VERIFY(dbc_tdof_list.Size() == 0,
+                "Essential BC elimination is only available for square ParOperator!");
+  }
 
   return *RAP;
 }

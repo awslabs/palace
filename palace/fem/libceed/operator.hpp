@@ -44,7 +44,9 @@ public:
   CeedOperator operator[](std::size_t i) const { return op[i]; }
   auto Size() const { return op.size(); }
 
-  void AddOper(CeedOperator op_, CeedOperator op_t_ = nullptr);
+  void AddOper(CeedOperator sub_op, CeedOperator sub_op_t = nullptr);
+
+  void Finalize();
 
   void SetDofMultiplicity(Vector &&mult) { dof_multiplicity = std::move(mult); }
 

@@ -21,6 +21,22 @@ Operator::Operator(int h, int w) : palace::Operator(h, w)
   op_t.resize(nt, nullptr);
   u.resize(nt, nullptr);
   v.resize(nt, nullptr);
+  PalacePragmaOmp(parallel if (op.size() > 1))
+  {
+    const int id = utils::GetThreadNum();
+    MFEM_ASSERT(id < op.size(), "Out of bounds access for thread number " << id << "!");
+    Ceed ceed = ceed::internal::GetCeedObjects()[utils::GetThreadNum()];
+    CeedOperator loc_op, loc_op_t;
+    CeedVector loc_u, loc_v;
+    PalaceCeedCall(ceed, CeedCompositeOperatorCreate(ceed, &loc_op));
+    PalaceCeedCall(ceed, CeedCompositeOperatorCreate(ceed, &loc_op_t));
+    PalaceCeedCall(ceed, CeedVectorCreate(ceed, width, &loc_u));
+    PalaceCeedCall(ceed, CeedVectorCreate(ceed, height, &loc_v));
+    op[id] = loc_op;
+    op_t[id] = loc_op_t;
+    u[id] = loc_u;
+    v[id] = loc_v;
+  }
   temp.UseDevice(true);
 }
 
@@ -28,10 +44,9 @@ Operator::~Operator()
 {
   PalacePragmaOmp(parallel if (op.size() > 1))
   {
-    Ceed ceed;
     const int id = utils::GetThreadNum();
-    MFEM_ASSERT(id < op.size() && op[id],
-                "Out of bounds access for thread number " << id << "!");
+    MFEM_ASSERT(id < op.size(), "Out of bounds access for thread number " << id << "!");
+    Ceed ceed;
     PalaceCeedCallBackend(CeedOperatorGetCeed(op[id], &ceed));
     PalaceCeedCall(ceed, CeedOperatorDestroy(&op[id]));
     PalaceCeedCall(ceed, CeedOperatorDestroy(&op_t[id]));
@@ -40,32 +55,45 @@ Operator::~Operator()
   }
 }
 
-void Operator::AddOper(CeedOperator op_, CeedOperator op_t_)
+void Operator::AddOper(CeedOperator sub_op, CeedOperator sub_op_t)
 {
-  Ceed ceed;
-  CeedSize l_in, l_out;
-  CeedVector loc_u, loc_v;
-  PalaceCeedCallBackend(CeedOperatorGetCeed(op_, &ceed));
-  PalaceCeedCall(ceed, CeedOperatorGetActiveVectorLengths(op_, &l_in, &l_out));
-  MFEM_VERIFY((l_in == 0 && l_out == 0) || (mfem::internal::to_int(l_in) == width &&
-                                            mfem::internal::to_int(l_out) == height),
-              "Dimensions mismatch for CeedOperator!");
-  if (op_t_)
-  {
-    CeedSize l_in_t, l_out_t;
-    PalaceCeedCall(ceed, CeedOperatorGetActiveVectorLengths(op_t_, &l_in_t, &l_out_t));
-    MFEM_VERIFY((l_in_t == 0 && l_out_t == 0) || (l_in_t == l_out && l_out_t == l_in),
-                "Dimensions mismatch for transpose CeedOperator!");
-  }
-  PalaceCeedCall(ceed, CeedVectorCreate(ceed, l_in, &loc_u));
-  PalaceCeedCall(ceed, CeedVectorCreate(ceed, l_out, &loc_v));
-
+  // This should be called from within a OpenMP parallel region.
   const int id = utils::GetThreadNum();
   MFEM_ASSERT(id < op.size(), "Out of bounds access for thread number " << id << "!");
-  op[id] = op_;
-  op_t[id] = op_t_;
-  u[id] = loc_u;
-  v[id] = loc_v;
+  Ceed ceed;
+  PalaceCeedCallBackend(CeedOperatorGetCeed(sub_op, &ceed));
+  CeedSize l_in, l_out;
+  PalaceCeedCall(ceed, CeedOperatorGetActiveVectorLengths(sub_op, &l_in, &l_out));
+  MFEM_VERIFY(mfem::internal::to_int(l_in) == width &&
+                  mfem::internal::to_int(l_out) == height,
+              "Dimensions mismatch for CeedOperator!");
+  PalaceCeedCall(ceed, CeedCompositeOperatorAddSub(op[id], sub_op));
+  PalaceCeedCall(ceed, CeedOperatorDestroy(&sub_op));
+  if (sub_op_t)
+  {
+    Ceed ceed_t;
+    PalaceCeedCallBackend(CeedOperatorGetCeed(sub_op_t, &ceed_t));
+    MFEM_VERIFY(ceed_t == ceed, "Ceed context mismatch for transpose CeedOperator!");
+    CeedSize l_in_t, l_out_t;
+    PalaceCeedCall(ceed, CeedOperatorGetActiveVectorLengths(sub_op_t, &l_in_t, &l_out_t));
+    MFEM_VERIFY(l_in_t == l_out && l_out_t == l_in,
+                "Dimensions mismatch for transpose CeedOperator!");
+    PalaceCeedCall(ceed, CeedCompositeOperatorAddSub(op_t[id], sub_op_t));
+    PalaceCeedCall(ceed, CeedOperatorDestroy(&sub_op_t));
+  }
+}
+
+void Operator::Finalize()
+{
+  PalacePragmaOmp(parallel if (op.size() > 1))
+  {
+    const int id = utils::GetThreadNum();
+    MFEM_ASSERT(id < op.size(), "Out of bounds access for thread number " << id << "!");
+    Ceed ceed;
+    PalaceCeedCallBackend(CeedOperatorGetCeed(op[id], &ceed));
+    PalaceCeedCall(ceed, CeedOperatorCheckReady(op[id]));
+    PalaceCeedCall(ceed, CeedOperatorCheckReady(op_t[id]));
+  }
 }
 
 void Operator::AssembleDiagonal(Vector &diag) const
@@ -84,10 +112,9 @@ void Operator::AssembleDiagonal(Vector &diag) const
 
   PalacePragmaOmp(parallel if (op.size() > 1))
   {
-    Ceed ceed;
     const int id = utils::GetThreadNum();
-    MFEM_ASSERT(id < op.size() && op[id],
-                "Out of bounds access for thread number " << id << "!");
+    MFEM_ASSERT(id < op.size(), "Out of bounds access for thread number " << id << "!");
+    Ceed ceed;
     PalaceCeedCallBackend(CeedOperatorGetCeed(op[id], &ceed));
     PalaceCeedCall(ceed, CeedVectorSetArray(v[id], mem, CEED_USE_POINTER, diag_data));
     PalaceCeedCall(
@@ -116,10 +143,9 @@ inline void CeedAddMult(const std::vector<CeedOperator> &op,
 
   PalacePragmaOmp(parallel if (op.size() > 1))
   {
-    Ceed ceed;
     const int id = utils::GetThreadNum();
-    MFEM_ASSERT(id < op.size() && op[id],
-                "Out of bounds access for thread number " << id << "!");
+    MFEM_ASSERT(id < op.size(), "Out of bounds access for thread number " << id << "!");
+    Ceed ceed;
     PalaceCeedCallBackend(CeedOperatorGetCeed(op[id], &ceed));
     PalaceCeedCall(ceed, CeedVectorSetArray(u[id], mem, CEED_USE_POINTER,
                                             const_cast<CeedScalar *>(x_data)));
@@ -407,32 +433,36 @@ std::unique_ptr<hypre::HypreCSRMatrix> OperatorCOOtoCSR(Ceed ceed, CeedInt m, Ce
 std::unique_ptr<hypre::HypreCSRMatrix> CeedOperatorFullAssemble(const Operator &op,
                                                                 bool skip_zeros, bool set)
 {
-  if (op.Size() == 0)
-  {
-    return std::make_unique<hypre::HypreCSRMatrix>(op.Height(), op.Width(), 0);
-  }
-
   // Assemble operators on each thread.
   std::vector<std::unique_ptr<hypre::HypreCSRMatrix>> loc_mat(op.Size());
   PalacePragmaOmp(parallel if (op.Size() > 1))
   {
-    Ceed ceed;
     const int id = utils::GetThreadNum();
-    MFEM_ASSERT(id < op.Size() && op[id],
-                "Out of bounds access for thread number " << id << "!");
+    MFEM_ASSERT(id < op.Size(), "Out of bounds access for thread number " << id << "!");
+    Ceed ceed;
     PalaceCeedCallBackend(CeedOperatorGetCeed(op[id], &ceed));
 
-    // First, get matrix on master thread in COO format, withs rows/cols always on host and
-    // vals potentially on the device. Process skipping zeros if desired.
-    CeedSize nnz;
-    CeedInt *rows, *cols;
-    CeedVector vals;
-    CeedMemType mem;
-    CeedOperatorAssembleCOO(ceed, op[id], skip_zeros, &nnz, &rows, &cols, &vals, &mem);
+    // Check if the operator is empty, otherwise assemble.
+    CeedInt nsub_ops;
+    PalaceCeedCall(ceed, CeedCompositeOperatorGetNumSub(op[id], &nsub_ops));
+    if (nsub_ops == 0)
+    {
+      loc_mat[id] = std::make_unique<hypre::HypreCSRMatrix>(op.Height(), op.Width(), 0);
+    }
+    else
+    {
+      // First, get matrix on master thread in COO format, withs rows/cols always on host
+      // and vals potentially on the device. Process skipping zeros if desired.
+      CeedSize nnz;
+      CeedInt *rows, *cols;
+      CeedVector vals;
+      CeedMemType mem;
+      CeedOperatorAssembleCOO(ceed, op[id], skip_zeros, &nnz, &rows, &cols, &vals, &mem);
 
-    // Convert COO to CSR (on each thread). The COO memory is free'd internally.
-    loc_mat[id] =
-        OperatorCOOtoCSR(ceed, op.Height(), op.Width(), nnz, rows, cols, vals, mem, set);
+      // Convert COO to CSR (on each thread). The COO memory is free'd internally.
+      loc_mat[id] =
+          OperatorCOOtoCSR(ceed, op.Height(), op.Width(), nnz, rows, cols, vals, mem, set);
+    }
   }
 
   // Add CSR matrix objects from each thread (HYPRE's hypre_CSRMatrixAdd uses threads
@@ -443,19 +473,19 @@ std::unique_ptr<hypre::HypreCSRMatrix> CeedOperatorFullAssemble(const Operator &
   {
     b_mat = std::make_unique<hypre::HypreCSRMatrix>(hypre_CSRMatrixClone(*mat, 0));
     hypre_CSRMatrixSetConstantValues(*b_mat, 1.0);
-    for (std::size_t i = 1; i < op.Size(); i++)
+    for (std::size_t id = 1; id < op.Size(); id++)
     {
-      hypre_CSRMatrix *b_loc_mat = hypre_CSRMatrixClone(*loc_mat[i], 0);
+      hypre_CSRMatrix *b_loc_mat = hypre_CSRMatrixClone(*loc_mat[id], 0);
       hypre_CSRMatrixSetConstantValues(b_loc_mat, 1.0);
       b_mat = std::make_unique<hypre::HypreCSRMatrix>(
           hypre_CSRMatrixAdd(1.0, *b_mat, 1.0, b_loc_mat));
       hypre_CSRMatrixDestroy(b_loc_mat);
     }
   }
-  for (std::size_t i = 1; i < op.Size(); i++)
+  for (std::size_t id = 1; id < op.Size(); id++)
   {
     mat = std::make_unique<hypre::HypreCSRMatrix>(
-        hypre_CSRMatrixAdd(1.0, *mat, 1.0, *loc_mat[i]));
+        hypre_CSRMatrixAdd(1.0, *mat, 1.0, *loc_mat[id]));
   }
   if (set && op.Size() > 1)
   {
@@ -498,10 +528,10 @@ std::unique_ptr<Operator> CeedOperatorCoarsen(const Operator &op_fine,
   // types, integrators) of the original fine operator.
   PalacePragmaOmp(parallel if (op_fine.Size() > 1))
   {
-    Ceed ceed;
     const int id = utils::GetThreadNum();
-    MFEM_ASSERT(id < op_fine.Size() && op_fine[id],
+    MFEM_ASSERT(id < op_fine.Size(),
                 "Out of bounds access for thread number " << id << "!");
+    Ceed ceed;
     PalaceCeedCallBackend(CeedOperatorGetCeed(op_fine[id], &ceed));
     {
       Ceed ceed_parent;
@@ -511,37 +541,20 @@ std::unique_ptr<Operator> CeedOperatorCoarsen(const Operator &op_fine,
         ceed = ceed_parent;
       }
     }
-
-    // Initialize the composite operator on each thread.
-    CeedOperator loc_op;
-    PalaceCeedCall(ceed, CeedCompositeOperatorCreate(ceed, &loc_op));
-
-    bool composite;
-    PalaceCeedCall(ceed, CeedOperatorIsComposite(op_fine[id], &composite));
-    if (composite)
+    CeedInt nsub_ops_fine;
+    CeedOperator *sub_ops_fine;
+    PalaceCeedCall(ceed, CeedCompositeOperatorGetNumSub(op_fine[id], &nsub_ops_fine));
+    PalaceCeedCall(ceed, CeedCompositeOperatorGetSubList(op_fine[id], &sub_ops_fine));
+    for (CeedInt k = 0; k < nsub_ops_fine; k++)
     {
-      CeedInt nloc_ops_fine;
-      CeedOperator *loc_ops_fine;
-      PalaceCeedCall(ceed, CeedCompositeOperatorGetNumSub(op_fine[id], &nloc_ops_fine));
-      PalaceCeedCall(ceed, CeedCompositeOperatorGetSubList(op_fine[id], &loc_ops_fine));
-      for (CeedInt k = 0; k < nloc_ops_fine; k++)
-      {
-        CeedOperator sub_op;
-        SingleOperatorCoarsen(ceed, loc_ops_fine[k], &sub_op);
-        PalaceCeedCall(ceed, CeedCompositeOperatorAddSub(loc_op, sub_op));
-        PalaceCeedCall(ceed, CeedOperatorDestroy(&sub_op));
-      }
+      CeedOperator sub_op_coarse;
+      SingleOperatorCoarsen(ceed, sub_ops_fine[k], &sub_op_coarse);
+      op_coarse->AddOper(sub_op_coarse);  // Sub-operator owned by ceed::Operator
     }
-    else
-    {
-      CeedOperator sub_op;
-      SingleOperatorCoarsen(ceed, op_fine[id], &sub_op);
-      PalaceCeedCall(ceed, CeedCompositeOperatorAddSub(loc_op, sub_op));
-      PalaceCeedCall(ceed, CeedOperatorDestroy(&sub_op));
-    }
-    PalaceCeedCall(ceed, CeedOperatorCheckReady(loc_op));
-    op_coarse->AddOper(loc_op);  // Thread-safe
   }
+
+  // Finalize the operator (call CeedOperatorCheckReady).
+  op_coarse->Finalize();
 
   return op_coarse;
 }

@@ -64,7 +64,8 @@ private:
   double mu_eps_min;
 
   // Operator storage for repeated boundary mode eigenvalue problem solves.
-  std::unique_ptr<mfem::HypreParMatrix> Atnr, Atni, Antr, Anti, Annr, Anni, Br, Bi;
+  std::unique_ptr<mfem::HypreParMatrix> Atnr, Atni, Antr, Anti, Annr, Anni;
+  std::unique_ptr<ComplexOperator> B;
   ComplexVector v0, e0;
 
   // Eigenvalue solver for boundary modes.

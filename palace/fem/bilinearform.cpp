@@ -52,11 +52,6 @@ BilinearForm::PartialAssemble(const FiniteElementSpace &trial_fespace,
   PalacePragmaOmp(parallel if (nt > 1))
   {
     Ceed ceed = ceed::internal::GetCeedObjects()[utils::GetThreadNum()];
-
-    // Initialize the composite operator on each thread.
-    CeedOperator loc_op;
-    PalaceCeedCall(ceed, CeedCompositeOperatorCreate(ceed, &loc_op));
-
     for (const auto &[geom, data] : mesh.GetCeedGeomFactorData(ceed))
     {
       const auto trial_map_type =
@@ -80,8 +75,7 @@ BilinearForm::PartialAssemble(const FiniteElementSpace &trial_fespace,
           integ->SetMapTypes(trial_map_type, test_map_type);
           integ->Assemble(ceed, trial_restr, test_restr, trial_basis, test_basis,
                           data.geom_data, data.geom_data_restr, &sub_op);
-          PalaceCeedCall(ceed, CeedCompositeOperatorAddSub(loc_op, sub_op));
-          PalaceCeedCall(ceed, CeedOperatorDestroy(&sub_op));
+          op->AddOper(sub_op);  // Sub-operator owned by ceed::Operator
         }
       }
       else if (mfem::Geometry::Dimension[geom] == mesh.Dimension() - 1 &&
@@ -101,14 +95,14 @@ BilinearForm::PartialAssemble(const FiniteElementSpace &trial_fespace,
           integ->SetMapTypes(trial_map_type, test_map_type);
           integ->Assemble(ceed, trial_restr, test_restr, trial_basis, test_basis,
                           data.geom_data, data.geom_data_restr, &sub_op);
-          PalaceCeedCall(ceed, CeedCompositeOperatorAddSub(loc_op, sub_op));
-          PalaceCeedCall(ceed, CeedOperatorDestroy(&sub_op));
+          op->AddOper(sub_op);  // Sub-operator owned by ceed::Operator
         }
       }
     }
-    PalaceCeedCall(ceed, CeedOperatorCheckReady(loc_op));
-    op->AddOper(loc_op);
   }
+
+  // Finalize the operator (call CeedOperatorCheckReady).
+  op->Finalize();
 
   return op;
 }
@@ -224,12 +218,6 @@ std::unique_ptr<ceed::Operator> DiscreteLinearOperator::PartialAssemble() const
   PalacePragmaOmp(parallel if (nt > 1))
   {
     Ceed ceed = ceed::internal::GetCeedObjects()[utils::GetThreadNum()];
-
-    // Initialize the composite operators for each thread.
-    CeedOperator loc_op, loc_op_t;
-    PalaceCeedCall(ceed, CeedCompositeOperatorCreate(ceed, &loc_op));
-    PalaceCeedCall(ceed, CeedCompositeOperatorCreate(ceed, &loc_op_t));
-
     for (const auto &[geom, data] : mesh.GetCeedGeomFactorData(ceed))
     {
       if (mfem::Geometry::Dimension[geom] == mesh.Dimension() && !domain_interps.empty())
@@ -255,20 +243,17 @@ std::unique_ptr<ceed::Operator> DiscreteLinearOperator::PartialAssemble() const
         {
           CeedOperator sub_op, sub_op_t;
           interp->Assemble(ceed, trial_restr, test_restr, interp_basis, &sub_op, &sub_op_t);
-          PalaceCeedCall(ceed, CeedCompositeOperatorAddSub(loc_op, sub_op));
-          PalaceCeedCall(ceed, CeedCompositeOperatorAddSub(loc_op_t, sub_op_t));
-          PalaceCeedCall(ceed, CeedOperatorDestroy(&sub_op));
-          PalaceCeedCall(ceed, CeedOperatorDestroy(&sub_op_t));
+          op->AddOper(sub_op, sub_op_t);  // Sub-operator owned by ceed::Operator
         }
 
         // Basis is owned by the operator.
         PalaceCeedCall(ceed, CeedBasisDestroy(&interp_basis));
       }
     }
-    PalaceCeedCall(ceed, CeedOperatorCheckReady(loc_op));
-    PalaceCeedCall(ceed, CeedOperatorCheckReady(loc_op_t));
-    op->AddOper(loc_op, loc_op_t);
   }
+
+  // Finalize the operator (call CeedOperatorCheckReady).
+  op->Finalize();
 
   // Construct dof multiplicity vector for scaling to account for dofs shared between
   // elements (on host, then copy to device).
