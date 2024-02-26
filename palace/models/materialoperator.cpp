@@ -461,8 +461,8 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata,
 
     count++;
   }
-  int has_attr[3] = {has_losstan_attr, has_conductivity_attr, has_london_attr};
-  Mpi::GlobalMax(3, has_attr, mesh.GetComm());
+  bool has_attr[3] = {has_losstan_attr, has_conductivity_attr, has_london_attr};
+  Mpi::GlobalOr(3, has_attr, mesh.GetComm());
   has_losstan_attr = has_attr[0];
   has_conductivity_attr = has_attr[1];
   has_london_attr = has_attr[2];
