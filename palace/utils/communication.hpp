@@ -298,6 +298,18 @@ public:
     }
   }
 
+  // Global logical or (in-place, result is broadcast to all processes).
+  static void GlobalOr(int len, bool *buff, MPI_Comm comm)
+  {
+    GlobalOp(len, buff, MPI_LOR, comm);
+  }
+
+  // Global logical and (in-place, result is broadcast to all processes).
+  static void GlobalAnd(int len, bool *buff, MPI_Comm comm)
+  {
+    GlobalOp(len, buff, MPI_LAND, comm);
+  }
+
   // Global broadcast from root.
   template <typename T>
   static void Broadcast(int len, T *buff, int root, MPI_Comm comm)

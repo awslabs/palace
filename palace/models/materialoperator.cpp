@@ -346,6 +346,7 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata,
   mat_invLondon.SetSize(sdim, sdim, nmats);
   mat_c0_min.SetSize(nmats);
   mat_c0_max.SetSize(nmats);
+  has_losstan_attr = has_conductivity_attr = has_london_attr = false;
 
   int count = 0;
   for (std::size_t i = 0; i < iodata.domains.materials.size(); i++)
@@ -420,10 +421,7 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata,
     mat_epsilon_imag(count) = T;
     if (mat_epsilon_imag(count).MaxMaxNorm() > 0.0)
     {
-      for (auto attr : data.attributes)
-      {
-        losstan_attr.Append(attr);
-      }
+      has_losstan_attr = true;
     }
 
     // ε * √(I + tan(δ) * tan(δ)ᵀ)
@@ -449,10 +447,7 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata,
     mat_sigma(count) = ToDenseMatrix(data.sigma);
     if (mat_sigma(count).MaxMaxNorm() > 0.0)
     {
-      for (auto attr : data.attributes)
-      {
-        conductivity_attr.Append(attr);
-      }
+      has_conductivity_attr = true;
     }
 
     // λ⁻² * μ⁻¹
@@ -461,14 +456,16 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata,
         std::abs(data.lambda_L) > 0.0 ? std::pow(data.lambda_L, -2.0) : 0.0;
     if (mat_invLondon(count).MaxMaxNorm() > 0.0)
     {
-      for (auto attr : data.attributes)
-      {
-        london_attr.Append(attr);
-      }
+      has_london_attr = true;
     }
 
     count++;
   }
+  bool has_attr[3] = {has_losstan_attr, has_conductivity_attr, has_london_attr};
+  Mpi::GlobalOr(3, has_attr, mesh.GetComm());
+  has_losstan_attr = has_attr[0];
+  has_conductivity_attr = has_attr[1];
+  has_london_attr = has_attr[2];
 }
 
 mfem::Array<int> MaterialOperator::GetBdrAttributeToMaterial() const

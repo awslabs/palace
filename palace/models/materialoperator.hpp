@@ -30,9 +30,9 @@ private:
       mat_c0, mat_sigma, mat_invLondon;
   mfem::Array<double> mat_c0_min, mat_c0_max;
 
-  // Domain attributes with nonzero loss tangent, electrical conductivity, London
-  // penetration depth.
-  mfem::Array<int> losstan_attr, conductivity_attr, london_attr;
+  // Flag for global domain attributes with nonzero loss tangent, electrical conductivity,
+  // of London penetration depth.
+  bool has_losstan_attr, has_conductivity_attr, has_london_attr;
 
   void SetUpMaterialProperties(const IoData &iodata, const mfem::ParMesh &mesh);
 
@@ -80,9 +80,9 @@ public:
   const auto &GetLightSpeedMin() const { return mat_c0_min; }
   const auto &GetLightSpeedMax() const { return mat_c0_max; }
 
-  bool HasLossTangent() const { return (losstan_attr.Size() > 0); }
-  bool HasConductivity() const { return (conductivity_attr.Size() > 0); }
-  bool HasLondonDepth() const { return (london_attr.Size() > 0); }
+  bool HasLossTangent() const { return has_losstan_attr; }
+  bool HasConductivity() const { return has_conductivity_attr; }
+  bool HasLondonDepth() const { return has_london_attr; }
 
   const auto &GetAttributeToMaterial() const { return attr_mat; }
   mfem::Array<int> GetBdrAttributeToMaterial() const;
