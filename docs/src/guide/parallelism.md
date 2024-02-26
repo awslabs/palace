@@ -29,8 +29,8 @@ which selects the most appropriate backend for the given value of
 [`config["Solver"]["Device"]`](../config/solver.md#config%5B%22Solver%22%5D).
 
 In order to take full advantage of the performance benefits made available by GPU-
-acceleration, it is recommended to make use of [operator partial assembly]
-(https://mfem.org/performance/), activated when the value of
+acceleration, it is recommended to make use of
+[operator partial assembly](https://mfem.org/performance/), activated when the value of
 [`config["Solver"]["PartialAssemblyOrder"]`](../config/solver.md#config%5B%22Solver%22%5D)
 is less than [`config["Solver"]["Order"]`](../config/solver.md#config%5B%22Solver%22%5D).
 This feature avoids assembling a global sparse matrix and instead makes use of data
