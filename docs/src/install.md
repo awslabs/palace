@@ -56,8 +56,8 @@ A build from source requires the following prerequisites installed on your syste
   - C and Fortran (optional) compilers for dependency builds
   - MPI distribution
   - BLAS, LAPACK libraries (described below in [Math libraries](#Math-libraries))
-  - [CUDA Toolkit](https://www.amd.com/en/graphics/servers-solutions-rocm) or [ROCm]
-    (https://developer.nvidia.com/cuda-toolkit) installation (optional, for GPU support
+  - [CUDA Toolkit](https://developer.nvidia.com/cuda-toolkit) or
+    [ROCm](https://rocm.docs.amd.com/en/latest/) installation (optional, for GPU support
     only)
 
 In addition, builds from source require the following system packages which are typically
