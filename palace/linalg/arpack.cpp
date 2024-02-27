@@ -675,7 +675,7 @@ void ArpackPEPSolver::SetOperators(const ComplexOperator &K, const ComplexOperat
 int ArpackPEPSolver::Solve()
 {
   // Set some defaults (from SLEPc ARPACK interface). The problem size is the size of the
-  // 2$ block linearized problem.
+  // 2x2 block linearized problem.
   CheckParameters();
   HYPRE_BigInt N = n;
   Mpi::GlobalSum(1, &N, comm);
