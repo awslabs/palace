@@ -62,11 +62,9 @@ void ParOperator::EliminateRHS(const Vector &x, Vector &b) const
   auto ly = workspace::NewVector<Vector>(test_fespace.GetVSize());
   A->Mult(lx, ly);
 
-  {
-    auto ty = workspace::NewVector<Vector>(test_fespace.GetTrueVSize());
-    RestrictionMatrixMult(ly, ty);
-    b.Add(-1.0, ty);
-  }
+  auto ty = workspace::NewVector<Vector>(test_fespace.GetTrueVSize());
+  RestrictionMatrixMult(ly, ty);
+  b.Add(-1.0, ty);
   if (diag_policy == DiagonalPolicy::DIAG_ONE)
   {
     linalg::SetSubVector(b, dbc_tdof_list, x);
