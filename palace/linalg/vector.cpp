@@ -204,14 +204,20 @@ std::complex<double> ComplexVector::TransposeDot(const ComplexVector &y) const
 
 void ComplexVector::AXPY(std::complex<double> alpha, const ComplexVector &x)
 {
-  const bool use_dev = UseDevice() || x.UseDevice();
-  const int N = Size();
+  AXPY(alpha, x.Real(), x.Imag(), Real(), Imag());
+}
+
+void ComplexVector::AXPY(std::complex<double> alpha, const Vector &xr, const Vector &xi,
+                         Vector &yr, Vector &yi)
+{
+  const bool use_dev = yr.UseDevice() || xr.UseDevice();
+  const int N = yr.Size();
   const double ar = alpha.real();
   const double ai = alpha.imag();
-  const auto *XR = x.Real().Read(use_dev);
-  const auto *XI = x.Imag().Read(use_dev);
-  auto *YR = Real().ReadWrite(use_dev);
-  auto *YI = Imag().ReadWrite(use_dev);
+  const auto *XR = xr.Read(use_dev);
+  const auto *XI = xi.Read(use_dev);
+  auto *YR = yr.ReadWrite(use_dev);
+  auto *YI = yi.ReadWrite(use_dev);
   if (ai == 0.0)
   {
     mfem::forall_switch(use_dev, N, [=] MFEM_HOST_DEVICE(int i) { YR[i] += ar * XR[i]; });
@@ -222,8 +228,9 @@ void ComplexVector::AXPY(std::complex<double> alpha, const ComplexVector &x)
     mfem::forall_switch(use_dev, N,
                         [=] MFEM_HOST_DEVICE(int i)
                         {
+                          const auto t = ai * XR[i] + ar * XI[i];
                           YR[i] += ar * XR[i] - ai * XI[i];
-                          YI[i] += ai * XR[i] + ar * XI[i];
+                          YI[i] += t;
                         });
   }
 }
@@ -231,16 +238,22 @@ void ComplexVector::AXPY(std::complex<double> alpha, const ComplexVector &x)
 void ComplexVector::AXPBY(std::complex<double> alpha, const ComplexVector &x,
                           std::complex<double> beta)
 {
-  const bool use_dev = UseDevice() || x.UseDevice();
-  const int N = Size();
+  AXPBY(alpha, x.Real(), x.Imag(), beta, Real(), Imag());
+}
+
+void ComplexVector::AXPBY(std::complex<double> alpha, const Vector &xr, const Vector &xi,
+                          std::complex<double> beta, Vector &yr, Vector &yi)
+{
+  const bool use_dev = yr.UseDevice() || xr.UseDevice();
+  const int N = yr.Size();
   const double ar = alpha.real();
   const double ai = alpha.imag();
-  const auto *XR = x.Real().Read(use_dev);
-  const auto *XI = x.Imag().Read(use_dev);
+  const auto *XR = xr.Read(use_dev);
+  const auto *XI = xi.Read(use_dev);
   if (beta == 0.0)
   {
-    auto *YR = Real().Write(use_dev);
-    auto *YI = Imag().Write(use_dev);
+    auto *YR = yr.Write(use_dev);
+    auto *YI = yi.Write(use_dev);
     if (ai == 0.0)
     {
       mfem::forall_switch(use_dev, N, [=] MFEM_HOST_DEVICE(int i) { YR[i] = ar * XR[i]; });
@@ -251,8 +264,9 @@ void ComplexVector::AXPBY(std::complex<double> alpha, const ComplexVector &x,
       mfem::forall_switch(use_dev, N,
                           [=] MFEM_HOST_DEVICE(int i)
                           {
+                            const auto t = ai * XR[i] + ar * XI[i];
                             YR[i] = ar * XR[i] - ai * XI[i];
-                            YI[i] = ai * XR[i] + ar * XI[i];
+                            YI[i] = t;
                           });
     }
   }
@@ -260,8 +274,8 @@ void ComplexVector::AXPBY(std::complex<double> alpha, const ComplexVector &x,
   {
     const double br = beta.real();
     const double bi = beta.imag();
-    auto *YR = Real().ReadWrite(use_dev);
-    auto *YI = Imag().ReadWrite(use_dev);
+    auto *YR = yr.ReadWrite(use_dev);
+    auto *YI = yi.ReadWrite(use_dev);
     if (ai == 0.0 && bi == 0.0)
     {
       mfem::forall_switch(use_dev, N,
@@ -274,9 +288,10 @@ void ComplexVector::AXPBY(std::complex<double> alpha, const ComplexVector &x,
       mfem::forall_switch(use_dev, N,
                           [=] MFEM_HOST_DEVICE(int i)
                           {
-                            const auto t = bi * YR[i] + br * YI[i];
+                            const auto t =
+                                ai * XR[i] + ar * XI[i] + bi * YR[i] + br * YI[i];
                             YR[i] = ar * XR[i] - ai * XI[i] + br * YR[i] - bi * YI[i];
-                            YI[i] = ai * XR[i] + ar * XI[i] + t;
+                            YI[i] = t;
                           });
     }
   }
@@ -286,20 +301,27 @@ void ComplexVector::AXPBYPCZ(std::complex<double> alpha, const ComplexVector &x,
                              std::complex<double> beta, const ComplexVector &y,
                              std::complex<double> gamma)
 {
-  const bool use_dev = UseDevice() || x.UseDevice() || y.UseDevice();
-  const int N = Size();
+  AXPBYPCZ(alpha, x.Real(), x.Imag(), beta, y.Real(), y.Imag(), gamma, Real(), Imag());
+}
+
+void ComplexVector::AXPBYPCZ(std::complex<double> alpha, const Vector &xr, const Vector &xi,
+                             std::complex<double> beta, const Vector &yr, const Vector &yi,
+                             std::complex<double> gamma, Vector &zr, Vector &zi)
+{
+  const bool use_dev = zr.UseDevice() || xr.UseDevice() || yr.UseDevice();
+  const int N = zr.Size();
   const double ar = alpha.real();
   const double ai = alpha.imag();
   const double br = beta.real();
   const double bi = beta.imag();
-  const auto *XR = x.Real().Read(use_dev);
-  const auto *XI = x.Imag().Read(use_dev);
-  const auto *YR = y.Real().Read(use_dev);
-  const auto *YI = y.Imag().Read(use_dev);
+  const auto *XR = xr.Read(use_dev);
+  const auto *XI = xi.Read(use_dev);
+  const auto *YR = yr.Read(use_dev);
+  const auto *YI = yi.Read(use_dev);
   if (gamma == 0.0)
   {
-    auto *ZR = Real().Write(use_dev);
-    auto *ZI = Imag().Write(use_dev);
+    auto *ZR = zr.Write(use_dev);
+    auto *ZI = zi.Write(use_dev);
     if (ai == 0.0 && bi == 0.0)
     {
       mfem::forall_switch(use_dev, N,
@@ -312,8 +334,10 @@ void ComplexVector::AXPBYPCZ(std::complex<double> alpha, const ComplexVector &x,
       mfem::forall_switch(use_dev, N,
                           [=] MFEM_HOST_DEVICE(int i)
                           {
+                            const auto t =
+                                ai * XR[i] + ar * XI[i] + bi * YR[i] + br * YI[i];
                             ZR[i] = ar * XR[i] - ai * XI[i] + br * YR[i] - bi * YI[i];
-                            ZI[i] = ai * XR[i] + ar * XI[i] + bi * YR[i] + br * YI[i];
+                            ZI[i] = t;
                           });
     }
   }
@@ -321,8 +345,8 @@ void ComplexVector::AXPBYPCZ(std::complex<double> alpha, const ComplexVector &x,
   {
     const double gr = gamma.real();
     const double gi = gamma.imag();
-    auto *ZR = Real().ReadWrite(use_dev);
-    auto *ZI = Imag().ReadWrite(use_dev);
+    auto *ZR = zr.ReadWrite(use_dev);
+    auto *ZI = zi.ReadWrite(use_dev);
     if (ai == 0.0 && bi == 0.0 && gi == 0.0)
     {
       mfem::forall_switch(use_dev, N,
@@ -337,10 +361,11 @@ void ComplexVector::AXPBYPCZ(std::complex<double> alpha, const ComplexVector &x,
       mfem::forall_switch(use_dev, N,
                           [=] MFEM_HOST_DEVICE(int i)
                           {
-                            const auto t = gi * ZR[i] + gr * ZI[i];
+                            const auto t = ai * XR[i] + ar * XI[i] + bi * YR[i] +
+                                           br * YI[i] + gi * ZR[i] + gr * ZI[i];
                             ZR[i] = ar * XR[i] - ai * XI[i] + br * YR[i] - bi * YI[i] +
                                     gr * ZR[i] - gi * ZI[i];
-                            ZI[i] = ai * XR[i] + ar * XI[i] + bi * YR[i] + br * YI[i] + t;
+                            ZI[i] = t;
                           });
     }
   }

@@ -116,6 +116,16 @@ public:
   void AXPBYPCZ(std::complex<double> alpha, const ComplexVector &x,
                 std::complex<double> beta, const ComplexVector &y,
                 std::complex<double> gamma);
+
+  static void AXPY(std::complex<double> alpha, const Vector &xr, const Vector &xi,
+                   Vector &yr, Vector &yi);
+
+  static void AXPBY(std::complex<double> alpha, const Vector &xr, const Vector &xi,
+                    std::complex<double> beta, Vector &yr, Vector &yi);
+
+  static void AXPBYPCZ(std::complex<double> alpha, const Vector &xr, const Vector &xi,
+                       std::complex<double> beta, const Vector &yr, const Vector &yi,
+                       std::complex<double> gamma, Vector &zr, Vector &zi);
 };
 
 namespace linalg
