@@ -380,7 +380,7 @@ void CgSolver<OperType>::Mult(const VecType &b, VecType &x) const
   }
   else
   {
-    r.VecType::operator=(b);
+    r = b;
     x = 0.0;
   }
   if (B)
@@ -389,7 +389,7 @@ void CgSolver<OperType>::Mult(const VecType &b, VecType &x) const
   }
   else
   {
-    z.VecType::operator=(r);
+    z = r;
   }
   beta = linalg::Dot(comm, z, r);
   CheckDot(beta, "PCG preconditioner is not positive definite: (Br, r) = ");
@@ -424,7 +424,7 @@ void CgSolver<OperType>::Mult(const VecType &b, VecType &x) const
     }
     if (!it)
     {
-      p.VecType::operator=(z);
+      p = z;
     }
     else
     {
@@ -446,7 +446,7 @@ void CgSolver<OperType>::Mult(const VecType &b, VecType &x) const
     }
     else
     {
-      z.VecType::operator=(r);
+      z = r;
     }
     beta = linalg::Dot(comm, z, r);
     CheckDot(beta, "PCG preconditioner is not positive definite: (Br, r) = ");
@@ -644,7 +644,7 @@ void GmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
     }
     else  // B && pc_side == PrecSide::RIGHT
     {
-      r.VecType::operator=(0.0);
+      r = 0.0;
       for (int k = 0; k <= j; k++)
       {
         r.Add(s[k], V[k]);

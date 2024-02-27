@@ -221,7 +221,7 @@ void ChebyshevSmoother<OperType>::Mult(const VecType &x, VecType &y) const
     }
     else
     {
-      r.VecType::operator=(x);
+      r = x;
       y = 0.0;
     }
 
@@ -289,7 +289,7 @@ void ChebyshevSmoother1stKind<OperType>::Mult(const VecType &x, VecType &y) cons
     }
     else
     {
-      r.VecType::operator=(x);
+      r = x;
       y = 0.0;
     }
 

@@ -27,10 +27,10 @@ public:
   }
 
   // No copy constructor.
-  ComplexWorkspaceVector(ComplexWorkspaceVector &other) = delete;
+  ComplexWorkspaceVector(const ComplexWorkspaceVector &other) = delete;
 
   // Copy assignment: copy contents of vector, not metadata.
-  ComplexWorkspaceVector &operator=(ComplexWorkspaceVector &other)
+  ComplexWorkspaceVector &operator=(const ComplexWorkspaceVector &other)
   {
     ComplexVector::operator=(other);
     return *this;
