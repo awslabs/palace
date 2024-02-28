@@ -164,11 +164,14 @@ auto AssembleGeometryData(Ceed ceed, mfem::Geometry::Type geom, std::vector<int>
   PalaceCeedCall(ceed, CeedElemRestrictionCreateStrided(ceed, num_elem, 1, 1, num_elem,
                                                         CEED_STRIDES_BACKEND, &attr_restr));
   {
-    Vector Bt(num_qpts);
+    Vector Bt(num_qpts), Gt(num_qpts), qX(num_qpts), qW(num_qpts);
     Bt = 1.0;
-    PalaceCeedCall(ceed,
-                   CeedBasisCreateH1(ceed, ceed::GetCeedTopology(geom), 1, 1, num_qpts,
-                                     Bt.GetData(), nullptr, nullptr, nullptr, &attr_basis));
+    Gt = 0.0;
+    qX = 0.0;
+    qW = 0.0;
+    PalaceCeedCall(ceed, CeedBasisCreateH1(ceed, ceed::GetCeedTopology(geom), 1, 1,
+                                           num_qpts, Bt.GetData(), Gt.GetData(),
+                                           qX.GetData(), qW.GetData(), &attr_basis));
   }
   CeedVector elem_attr_vec;
   ceed::InitCeedVector(elem_attr, ceed, &elem_attr_vec);
