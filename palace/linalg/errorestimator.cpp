@@ -145,6 +145,7 @@ void FluxProjector<VecType>::Mult(const VecType &x, VecType &y) const
         const Vector rhsb(rhs, i * x.Size(), x.Size());
         Vector yb(y, i * x.Size(), x.Size());
         ksp->Mult(rhsb, yb);
+        y.SyncMemory(yb);
       }
     }
     else
