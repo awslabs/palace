@@ -29,7 +29,7 @@ static PetscErrorCode __pc_apply_PEP(PC, Vec, Vec);
 namespace
 {
 
-inline PetscErrorCode FromPetscVec(const Vec x, palace::ComplexVector &y, int block = 0,
+inline PetscErrorCode FromPetscVec(Vec x, palace::ComplexVector &y, int block = 0,
                                    int nblocks = 1)
 {
   PetscInt n;
@@ -44,14 +44,14 @@ inline PetscErrorCode FromPetscVec(const Vec x, palace::ComplexVector &y, int bl
   return PETSC_SUCCESS;
 }
 
-inline PetscErrorCode FromPetscVec(const Vec x, palace::ComplexVector &y1,
+inline PetscErrorCode FromPetscVec(Vec x, palace::ComplexVector &y1,
                                    palace::ComplexVector &y2)
 {
   PetscInt n;
   const PetscScalar *px;
   PetscMemType mtype;
   PetscCall(VecGetLocalSize(x, &n));
-  MFEM_ASSERT(y1.Size() + y2.Size() == n,
+  MFEM_ASSERT(y1.Size() == n / 2 && y2.Size() == n / 2,
               "Invalid size mismatch for PETSc vector conversion!");
   PetscCall(VecGetArrayReadAndMemType(x, &px, &mtype));
   y1.Set(px, n / 2, PetscMemTypeDevice(mtype));
@@ -82,7 +82,7 @@ inline PetscErrorCode ToPetscVec(const palace::ComplexVector &x1,
   PetscScalar *py;
   PetscMemType mtype;
   PetscCall(VecGetLocalSize(y, &n));
-  MFEM_ASSERT(x1.Size() + x2.Size() == n,
+  MFEM_ASSERT(x1.Size() == n / 2 && x2.Size() == n / 2,
               "Invalid size mismatch for PETSc vector conversion!");
   PetscCall(VecGetArrayWriteAndMemType(y, &py, &mtype));
   x1.Get(py, n / 2, PetscMemTypeDevice(mtype));

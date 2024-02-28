@@ -258,7 +258,7 @@ public:
 
   const auto &GetProlongationAtLevel(std::size_t l) const
   {
-    MFEM_ASSERT(l < GetNumLevels() - 1,
+    MFEM_ASSERT(l + 1 < GetNumLevels(),
                 "Out of bounds request for finite element space prolongation at level "
                     << l << "!");
     return P[l] ? *P[l] : BuildProlongationAtLevel(l);
@@ -266,6 +266,8 @@ public:
 
   std::vector<const Operator *> GetProlongationOperators() const
   {
+    MFEM_ASSERT(GetNumLevels() > 1,
+                "Out of bounds request for finite element space prolongation at level 0!");
     std::vector<const Operator *> P_(GetNumLevels() - 1);
     for (std::size_t l = 0; l < P_.size(); l++)
     {

@@ -69,7 +69,7 @@ void ComplexVector::Set(const std::complex<double> *py, int n, bool on_dev)
     // No copy (host pointer and not using device, or device pointer and using device).
     SetImpl(reinterpret_cast<const double *>(py), n, use_dev);
   }
-  else
+  else if (!on_dev)
   {
     // Need copy from host to device (host pointer but using device).
     Vector y(2 * n);
@@ -84,6 +84,11 @@ void ComplexVector::Set(const std::complex<double> *py, int n, bool on_dev)
       }
     }
     SetImpl(y.Read(use_dev), n, use_dev);
+  }
+  else
+  {
+    MFEM_ABORT("ComplexVector::Set using a device pointer is not implemented when MFEM is "
+               "not configured to use the device!");
   }
 }
 
@@ -109,7 +114,7 @@ void ComplexVector::Get(std::complex<double> *py, int n, bool on_dev) const
     // No copy (host pointer and not using device, or device pointer and using device).
     GetImpl(reinterpret_cast<double *>(py), n, use_dev);
   }
-  else
+  else if (!on_dev)
   {
     // Need copy from device to host (host pointer but using device).
     const auto *XR = Real().HostRead();
@@ -120,6 +125,11 @@ void ComplexVector::Get(std::complex<double> *py, int n, bool on_dev) const
       py[i].real(XR[i]);
       py[i].imag(XI[i]);
     }
+  }
+  else
+  {
+    MFEM_ABORT("ComplexVector::Get using a device pointer is not implemented when MFEM is "
+               "not configured to use the device!");
   }
 }
 
