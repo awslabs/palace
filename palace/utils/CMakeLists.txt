@@ -12,4 +12,5 @@ target_sources(${LIB_TARGET_NAME}
   ${CMAKE_CURRENT_SOURCE_DIR}/geodata.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/iodata.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/meshio.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/omp.cpp
 )

@@ -49,10 +49,9 @@ BilinearForm::PartialAssemble(const FiniteElementSpace &trial_fespace,
   // This should work fine if some threads create an empty operator (no elements or boundary
   // elements).
   const std::size_t nt = ceed::internal::GetCeedObjects().size();
-  PalacePragmaOmp(parallel for schedule(static) if(nt > 1))
-  for (std::size_t i = 0; i < nt; i++)
+  PalacePragmaOmp(parallel if (nt > 1))
   {
-    Ceed ceed = ceed::internal::GetCeedObjects()[i];
+    Ceed ceed = ceed::internal::GetCeedObjects()[utils::GetThreadNum()];
 
     // Initialize the composite operator on each thread.
     CeedOperator loc_op;
@@ -108,7 +107,7 @@ BilinearForm::PartialAssemble(const FiniteElementSpace &trial_fespace,
       }
     }
     PalaceCeedCall(ceed, CeedOperatorCheckReady(loc_op));
-    op->AddOper(loc_op);  // Thread-safe
+    op->AddOper(loc_op);
   }
 
   return op;
@@ -222,10 +221,9 @@ std::unique_ptr<ceed::Operator> DiscreteLinearOperator::PartialAssemble() const
   // This should work fine if some threads create an empty operator (no elements or bounday
   // elements).
   const std::size_t nt = ceed::internal::GetCeedObjects().size();
-  PalacePragmaOmp(parallel for schedule(static) if(nt > 1))
-  for (std::size_t i = 0; i < nt; i++)
+  PalacePragmaOmp(parallel if (nt > 1))
   {
-    Ceed ceed = ceed::internal::GetCeedObjects()[i];
+    Ceed ceed = ceed::internal::GetCeedObjects()[utils::GetThreadNum()];
 
     // Initialize the composite operators for each thread.
     CeedOperator loc_op, loc_op_t;
@@ -269,7 +267,7 @@ std::unique_ptr<ceed::Operator> DiscreteLinearOperator::PartialAssemble() const
     }
     PalaceCeedCall(ceed, CeedOperatorCheckReady(loc_op));
     PalaceCeedCall(ceed, CeedOperatorCheckReady(loc_op_t));
-    op->AddOper(loc_op, loc_op_t);  // Thread-safe
+    op->AddOper(loc_op, loc_op_t);
   }
 
   // Construct dof multiplicity vector for scaling to account for dofs shared between

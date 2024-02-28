@@ -19,23 +19,26 @@ class FiniteElementSpace;
 namespace ceed
 {
 
-// Wrapper class for libCEED's CeedOperator.
+//
+// Wrapper class for libCEED's CeedOperator, supporting composite operator construction and
+// application with multiple threads.
+//
 class Operator : public palace::Operator
 {
 protected:
-  std::vector<CeedOperator> ops, ops_t;
+  std::vector<CeedOperator> op, op_t;
   std::vector<CeedVector> u, v;
   Vector dof_multiplicity;
   mutable Vector temp;
 
 public:
-  Operator(int h, int w) : palace::Operator(h, w) { temp.UseDevice(true); }
+  Operator(int h, int w);
   ~Operator() override;
 
-  CeedOperator operator[](std::size_t i) const { return ops[i]; }
-  auto Size() const { return ops.size(); }
+  CeedOperator operator[](std::size_t i) const { return op[i]; }
+  auto Size() const { return op.size(); }
 
-  void AddOper(CeedOperator op, CeedOperator op_t = nullptr);
+  void AddOper(CeedOperator op_, CeedOperator op_t_ = nullptr);
 
   void SetDofMultiplicity(Vector &&mult) { dof_multiplicity = std::move(mult); }
 

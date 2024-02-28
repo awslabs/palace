@@ -22,11 +22,11 @@ using Vector = mfem::Vector;
 class ComplexVector
 {
 private:
-  Vector xr_, xi_;
+  Vector data, xr, xi;
 
 public:
   // Create a vector with the given size.
-  ComplexVector(int n = 0);
+  ComplexVector(int size = 0);
 
   // Copy constructor.
   ComplexVector(const ComplexVector &y);
@@ -35,34 +35,38 @@ public:
   ComplexVector(const Vector &yr, const Vector &yi);
 
   // Copy constructor from an array of complex values.
-  ComplexVector(const std::complex<double> *py, int n, bool on_dev);
+  ComplexVector(const std::complex<double> *py, int size, bool on_dev);
+
+  // Create a vector referencing the memory of another vector, at the given base offset and
+  // size.
+  ComplexVector(Vector &y, int offset, int size);
 
   // Flag for runtime execution on the mfem::Device. See the documentation for mfem::Vector.
-  void UseDevice(bool use_dev)
-  {
-    xr_.UseDevice(use_dev);
-    xi_.UseDevice(use_dev);
-  }
-  bool UseDevice() const { return xr_.UseDevice(); }
+  void UseDevice(bool use_dev);
+  bool UseDevice() const { return data.UseDevice(); }
 
   // Return the size of the vector.
-  int Size() const { return xr_.Size(); }
+  int Size() const { return data.Size() / 2; }
 
   // Set the size of the vector. See the notes for Vector::SetSize for behavior in the cases
-  // where n is less than or greater than Size() or Capacity().
-  void SetSize(int n);
+  // where the new size is less than or greater than Size() or Capacity().
+  void SetSize(int size);
+
+  // Set this vector to reference the memory of another vector, at the given base offset and
+  // size.
+  void MakeRef(Vector &y, int offset, int size);
 
   // Get access to the real and imaginary vector parts.
-  const Vector &Real() const { return xr_; }
-  Vector &Real() { return xr_; }
-  const Vector &Imag() const { return xi_; }
-  Vector &Imag() { return xi_; }
+  const Vector &Real() const { return xr; }
+  Vector &Real() { return xr; }
+  const Vector &Imag() const { return xi; }
+  Vector &Imag() { return xi; }
 
   // Set from a ComplexVector, without resizing.
-  ComplexVector &operator=(const ComplexVector &y) { return Set(y); }
-  ComplexVector &Set(const ComplexVector &y)
+  void Set(const ComplexVector &y);
+  ComplexVector &operator=(const ComplexVector &y)
   {
-    Set(y.Real(), y.Imag());
+    Set(y);
     return *this;
   }
 
@@ -70,10 +74,10 @@ public:
   void Set(const Vector &yr, const Vector &yi);
 
   // Set from an array of complex values, without resizing.
-  void Set(const std::complex<double> *py, int n, bool on_dev);
+  void Set(const std::complex<double> *py, int size, bool on_dev);
 
   // Copy the vector into an array of complex values.
-  void Get(std::complex<double> *py, int n, bool on_dev) const;
+  void Get(std::complex<double> *py, int size, bool on_dev) const;
 
   // Set all entries equal to s.
   ComplexVector &operator=(std::complex<double> s);

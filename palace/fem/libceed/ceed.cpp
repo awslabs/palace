@@ -6,10 +6,6 @@
 #include <string_view>
 #include "utils/omp.hpp"
 
-#if defined(MFEM_USE_OPENMP)
-#include <omp.h>
-#endif
-
 namespace palace::ceed
 {
 
@@ -31,13 +27,10 @@ void Initialize(const char *resource, const char *jit_source_dir)
   {
     PalacePragmaOmp(master)
     {
-#if defined(MFEM_USE_OPENMP)
       // Only parallelize libCEED operators over threads when not using the GPU.
-      const int nt =
-          !std::string_view(resource).compare(0, 4, "/cpu") ? omp_get_num_threads() : 1;
-#else
-      const int nt = 1;
-#endif
+      const int nt = !std::string_view(resource).compare(0, 4, "/cpu")
+                         ? utils::GetNumActiveThreads()
+                         : 1;
       internal::ceeds.resize(nt, nullptr);
     }
   }

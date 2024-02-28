@@ -12,121 +12,120 @@
 namespace palace::ceed
 {
 
+Operator::Operator(int h, int w) : palace::Operator(h, w)
+{
+  const std::size_t nt = internal::GetCeedObjects().size();
+  op.resize(nt, nullptr);
+  op_t.resize(nt, nullptr);
+  u.resize(nt, nullptr);
+  v.resize(nt, nullptr);
+  temp.UseDevice(true);
+}
+
 Operator::~Operator()
 {
-  for (std::size_t i = 0; i < ops.size(); i++)
+  PalacePragmaOmp(parallel if (op.size() > 1))
   {
     Ceed ceed;
-    PalaceCeedCallBackend(CeedOperatorGetCeed(ops[i], &ceed));
-    PalaceCeedCall(ceed, CeedOperatorDestroy(&ops[i]));
-    PalaceCeedCall(ceed, CeedOperatorDestroy(&ops_t[i]));
-    PalaceCeedCall(ceed, CeedVectorDestroy(&u[i]));
-    PalaceCeedCall(ceed, CeedVectorDestroy(&v[i]));
+    const int id = utils::GetThreadNum();
+    MFEM_ASSERT(id < op.size() && op[id],
+                "Out of bounds access for thread number " << id << "!");
+    PalaceCeedCallBackend(CeedOperatorGetCeed(op[id], &ceed));
+    PalaceCeedCall(ceed, CeedOperatorDestroy(&op[id]));
+    PalaceCeedCall(ceed, CeedOperatorDestroy(&op_t[id]));
+    PalaceCeedCall(ceed, CeedVectorDestroy(&u[id]));
+    PalaceCeedCall(ceed, CeedVectorDestroy(&v[id]));
   }
 }
 
-void Operator::AddOper(CeedOperator op, CeedOperator op_t)
+void Operator::AddOper(CeedOperator op_, CeedOperator op_t_)
 {
   Ceed ceed;
   CeedSize l_in, l_out;
   CeedVector loc_u, loc_v;
-  PalaceCeedCallBackend(CeedOperatorGetCeed(op, &ceed));
-  PalaceCeedCall(ceed, CeedOperatorGetActiveVectorLengths(op, &l_in, &l_out));
+  PalaceCeedCallBackend(CeedOperatorGetCeed(op_, &ceed));
+  PalaceCeedCall(ceed, CeedOperatorGetActiveVectorLengths(op_, &l_in, &l_out));
   MFEM_VERIFY((l_in == 0 && l_out == 0) || (mfem::internal::to_int(l_in) == width &&
                                             mfem::internal::to_int(l_out) == height),
               "Dimensions mismatch for CeedOperator!");
-  if (op_t)
+  if (op_t_)
   {
     CeedSize l_in_t, l_out_t;
-    PalaceCeedCall(ceed, CeedOperatorGetActiveVectorLengths(op_t, &l_in_t, &l_out_t));
+    PalaceCeedCall(ceed, CeedOperatorGetActiveVectorLengths(op_t_, &l_in_t, &l_out_t));
     MFEM_VERIFY((l_in_t == 0 && l_out_t == 0) || (l_in_t == l_out && l_out_t == l_in),
                 "Dimensions mismatch for transpose CeedOperator!");
   }
   PalaceCeedCall(ceed, CeedVectorCreate(ceed, l_in, &loc_u));
   PalaceCeedCall(ceed, CeedVectorCreate(ceed, l_out, &loc_v));
 
-  PalacePragmaOmp(critical(AddOper))
-  {
-    ops.push_back(op);
-    ops_t.push_back(op_t);
-    u.push_back(loc_u);
-    v.push_back(loc_v);
-  }
+  const int id = utils::GetThreadNum();
+  MFEM_ASSERT(id < op.size(), "Out of bounds access for thread number " << id << "!");
+  op[id] = op_;
+  op_t[id] = op_t_;
+  u[id] = loc_u;
+  v[id] = loc_v;
 }
 
 void Operator::AssembleDiagonal(Vector &diag) const
 {
   Ceed ceed;
   CeedMemType mem;
-  CeedScalar *data;
   MFEM_VERIFY(diag.Size() == height, "Invalid size for diagonal vector!");
   diag = 0.0;
-  PalaceCeedCallBackend(CeedOperatorGetCeed(ops[0], &ceed));
+  PalaceCeedCallBackend(CeedOperatorGetCeed(op[0], &ceed));
   PalaceCeedCall(ceed, CeedGetPreferredMemType(ceed, &mem));
-  if (mfem::Device::Allows(mfem::Backend::DEVICE_MASK) && mem == CEED_MEM_DEVICE)
+  if (!mfem::Device::Allows(mfem::Backend::DEVICE_MASK) && mem == CEED_MEM_DEVICE)
   {
-    data = diag.ReadWrite();
-  }
-  else
-  {
-    data = diag.HostReadWrite();
     mem = CEED_MEM_HOST;
   }
+  auto *diag_data = diag.ReadWrite(mem == CEED_MEM_DEVICE);
 
-  const std::size_t nt = ops.size();
-  PalacePragmaOmp(parallel for schedule(static) if(nt > 1))
-  for (std::size_t i = 0; i < nt; i++)
+  PalacePragmaOmp(parallel if (op.size() > 1))
   {
-    Ceed ceed_i;
-    PalaceCeedCallBackend(CeedOperatorGetCeed(ops[i], &ceed_i));
-    PalaceCeedCall(ceed_i, CeedVectorSetArray(v[i], mem, CEED_USE_POINTER, data));
-    PalaceCeedCall(ceed_i, CeedOperatorLinearAssembleAddDiagonal(ops[i], v[i],
-                                                                 CEED_REQUEST_IMMEDIATE));
-    PalaceCeedCall(ceed_i, CeedVectorTakeArray(v[i], mem, nullptr));
+    Ceed ceed;
+    const int id = utils::GetThreadNum();
+    MFEM_ASSERT(id < op.size() && op[id],
+                "Out of bounds access for thread number " << id << "!");
+    PalaceCeedCallBackend(CeedOperatorGetCeed(op[id], &ceed));
+    PalaceCeedCall(ceed, CeedVectorSetArray(v[id], mem, CEED_USE_POINTER, diag_data));
+    PalaceCeedCall(
+        ceed, CeedOperatorLinearAssembleAddDiagonal(op[id], v[id], CEED_REQUEST_IMMEDIATE));
+    PalaceCeedCall(ceed, CeedVectorTakeArray(v[id], mem, nullptr));
   }
 }
 
 namespace
 {
 
-inline void CeedAddMult(const std::vector<CeedOperator> &ops,
+inline void CeedAddMult(const std::vector<CeedOperator> &op,
                         const std::vector<CeedVector> &u, const std::vector<CeedVector> &v,
                         const Vector &x, Vector &y)
 {
   Ceed ceed;
   CeedMemType mem;
-  const CeedScalar *x_data;
-  CeedScalar *y_data;
-  PalaceCeedCallBackend(CeedOperatorGetCeed(ops[0], &ceed));
+  PalaceCeedCallBackend(CeedOperatorGetCeed(op[0], &ceed));
   PalaceCeedCall(ceed, CeedGetPreferredMemType(ceed, &mem));
-  if (mfem::Device::Allows(mfem::Backend::DEVICE_MASK) && mem == CEED_MEM_DEVICE)
+  if (!mfem::Device::Allows(mfem::Backend::DEVICE_MASK) && mem == CEED_MEM_DEVICE)
   {
-    x_data = x.Read();
-    y_data = y.ReadWrite();
-  }
-  else
-  {
-    x_data = x.HostRead();
-    y_data = y.HostReadWrite();
     mem = CEED_MEM_HOST;
   }
+  const auto *x_data = x.Read(mem == CEED_MEM_DEVICE);
+  auto *y_data = y.ReadWrite(mem == CEED_MEM_DEVICE);
 
-  const std::size_t nt = ops.size();
-  PalacePragmaOmp(parallel for schedule(static) if(nt > 1))
-  for (std::size_t i = 0; i < nt; i++)
+  PalacePragmaOmp(parallel if (op.size() > 1))
   {
-    if (ops[i])  // No-op for an empty operator
-    {
-      Ceed ceed_i;
-      PalaceCeedCallBackend(CeedOperatorGetCeed(ops[i], &ceed_i));
-      PalaceCeedCall(ceed_i, CeedVectorSetArray(u[i], mem, CEED_USE_POINTER,
-                                                const_cast<CeedScalar *>(x_data)));
-      PalaceCeedCall(ceed_i, CeedVectorSetArray(v[i], mem, CEED_USE_POINTER, y_data));
-      PalaceCeedCall(ceed_i,
-                     CeedOperatorApplyAdd(ops[i], u[i], v[i], CEED_REQUEST_IMMEDIATE));
-      PalaceCeedCall(ceed_i, CeedVectorTakeArray(u[i], mem, nullptr));
-      PalaceCeedCall(ceed_i, CeedVectorTakeArray(v[i], mem, nullptr));
-    }
+    Ceed ceed;
+    const int id = utils::GetThreadNum();
+    MFEM_ASSERT(id < op.size() && op[id],
+                "Out of bounds access for thread number " << id << "!");
+    PalaceCeedCallBackend(CeedOperatorGetCeed(op[id], &ceed));
+    PalaceCeedCall(ceed, CeedVectorSetArray(u[id], mem, CEED_USE_POINTER,
+                                            const_cast<CeedScalar *>(x_data)));
+    PalaceCeedCall(ceed, CeedVectorSetArray(v[id], mem, CEED_USE_POINTER, y_data));
+    PalaceCeedCall(ceed,
+                   CeedOperatorApplyAdd(op[id], u[id], v[id], CEED_REQUEST_IMMEDIATE));
+    PalaceCeedCall(ceed, CeedVectorTakeArray(u[id], mem, nullptr));
+    PalaceCeedCall(ceed, CeedVectorTakeArray(v[id], mem, nullptr));
   }
 }
 
@@ -135,7 +134,7 @@ inline void CeedAddMult(const std::vector<CeedOperator> &ops,
 void Operator::Mult(const Vector &x, Vector &y) const
 {
   y = 0.0;
-  CeedAddMult(ops, u, v, x, y);
+  CeedAddMult(op, u, v, x, y);
   if (dof_multiplicity.Size() > 0)
   {
     y *= dof_multiplicity;
@@ -149,16 +148,18 @@ void Operator::AddMult(const Vector &x, Vector &y, const double a) const
   {
     temp.SetSize(height);
     temp = 0.0;
-    CeedAddMult(ops, u, v, x, temp);
-    if (dof_multiplicity.Size() > 0)
+    CeedAddMult(op, u, v, x, temp);
     {
-      temp *= dof_multiplicity;
+      const auto *d_dof_multiplicity = dof_multiplicity.Read();
+      const auto *d_temp = temp.Read();
+      auto *d_y = y.ReadWrite();
+      mfem::forall(height, [=] MFEM_HOST_DEVICE(int i)
+                   { d_y[i] += d_dof_multiplicity[i] * d_temp[i]; });
     }
-    y += temp;
   }
   else
   {
-    CeedAddMult(ops, u, v, x, y);
+    CeedAddMult(op, u, v, x, y);
   }
 }
 
@@ -174,13 +175,19 @@ void Operator::AddMultTranspose(const Vector &x, Vector &y, const double a) cons
               "ceed::Operator::AddMultTranspose only supports coefficient = 1.0!");
   if (dof_multiplicity.Size() > 0)
   {
-    temp = x;
-    temp *= dof_multiplicity;
-    CeedAddMult(ops_t, v, u, temp, y);
+    temp.SetSize(height);
+    {
+      const auto *d_dof_multiplicity = dof_multiplicity.Read();
+      const auto *d_x = x.Read();
+      auto *d_temp = temp.Write();
+      mfem::forall(height, [=] MFEM_HOST_DEVICE(int i)
+                   { d_temp[i] = d_dof_multiplicity[i] * d_x[i]; });
+    }
+    CeedAddMult(op_t, v, u, temp, y);
   }
   else
   {
-    CeedAddMult(ops_t, v, u, x, y);
+    CeedAddMult(op_t, v, u, x, y);
   }
 }
 
@@ -272,19 +279,21 @@ void CeedOperatorAssembleCOO(const Operator &op, bool skip_zeros, CeedSize *nnz,
     *mem = CEED_MEM_HOST;
   }
 
-  PalacePragmaOmp(parallel for schedule(static) if(nt > 1))
-  for (std::size_t i = 0; i < nt; i++)
+  PalacePragmaOmp(parallel if (nt > 1))
   {
-    Ceed ceed_i;
-    PalaceCeedCallBackend(CeedOperatorGetCeed(op[i], &ceed_i));
+    Ceed ceed;
+    const int id = utils::GetThreadNum();
+    MFEM_ASSERT(id < op.Size() && op[id],
+                "Out of bounds access for thread number " << id << "!");
+    PalaceCeedCallBackend(CeedOperatorGetCeed(op[id], &ceed));
 
     // Assemble sparsity pattern (rows, cols are always host pointers).
-    PalaceCeedCall(ceed_i, CeedOperatorLinearAssembleSymbolic(op[i], &loc_nnz[i],
-                                                              &loc_rows[i], &loc_cols[i]));
+    PalaceCeedCall(ceed, CeedOperatorLinearAssembleSymbolic(op[id], &loc_nnz[id],
+                                                            &loc_rows[id], &loc_cols[id]));
 
     // Assemble values.
-    PalaceCeedCall(ceed_i, CeedVectorCreate(ceed_i, loc_nnz[i], &loc_vals[i]));
-    PalaceCeedCall(ceed_i, CeedOperatorLinearAssemble(op[i], loc_vals[i]));
+    PalaceCeedCall(ceed, CeedVectorCreate(ceed, loc_nnz[id], &loc_vals[id]));
+    PalaceCeedCall(ceed, CeedOperatorLinearAssemble(op[id], loc_vals[id]));
   }
 
   loc_offsets[0] = 0;
@@ -305,31 +314,33 @@ void CeedOperatorAssembleCOO(const Operator &op, bool skip_zeros, CeedSize *nnz,
     PalaceCeedCall(ceed, CeedVectorCreate(ceed, *nnz, vals));
     PalaceCeedCall(ceed, CeedVectorGetArrayWrite(*vals, *mem, &vals_array));
 
-    PalacePragmaOmp(parallel for schedule(static) if(nt > 1))
-    for (std::size_t i = 0; i < nt; i++)
+    PalacePragmaOmp(parallel if (nt > 1))
     {
-      const auto start = loc_offsets[i];
-      const auto end = loc_offsets[i + 1];
+      const int id = utils::GetThreadNum();
+      MFEM_ASSERT(id < op.Size() && op[id],
+                  "Out of bounds access for thread number " << id << "!");
+      const auto start = loc_offsets[id];
+      const auto end = loc_offsets[id + 1];
       for (auto k = start; k < end; k++)
       {
-        (*rows)[k] = loc_rows[i][k - start];
-        (*cols)[k] = loc_cols[i][k - start];
+        (*rows)[k] = loc_rows[id][k - start];
+        (*cols)[k] = loc_cols[id][k - start];
       }
 
       // The CeedVector is on only on device when MFEM is also using the device. This is
       // also correctly a non-OpenMP loop when executed on the CPU (OpenMP is handled in
       // outer scope above).
-      Ceed ceed_i;
+      Ceed ceed;
       const CeedScalar *loc_vals_array;
-      PalaceCeedCallBackend(CeedVectorGetCeed(loc_vals[i], &ceed_i));
-      PalaceCeedCall(ceed_i, CeedVectorGetArrayRead(loc_vals[i], *mem, &loc_vals_array));
+      PalaceCeedCallBackend(CeedVectorGetCeed(loc_vals[id], &ceed));
+      PalaceCeedCall(ceed, CeedVectorGetArrayRead(loc_vals[id], *mem, &loc_vals_array));
       mfem::forall_switch(*mem == CEED_MEM_DEVICE, end - start,
                           [=] MFEM_HOST_DEVICE(int k)
                           { vals_array[k + start] = loc_vals_array[k]; });
-      PalaceCeedCall(ceed_i, CeedVectorRestoreArrayRead(loc_vals[i], &loc_vals_array));
-      PalaceCeedCall(ceed_i, CeedInternalFree(&loc_rows[i]));
-      PalaceCeedCall(ceed_i, CeedInternalFree(&loc_cols[i]));
-      PalaceCeedCall(ceed_i, CeedVectorDestroy(&loc_vals[i]));
+      PalaceCeedCall(ceed, CeedVectorRestoreArrayRead(loc_vals[id], &loc_vals_array));
+      PalaceCeedCall(ceed, CeedInternalFree(&loc_rows[id]));
+      PalaceCeedCall(ceed, CeedInternalFree(&loc_cols[id]));
+      PalaceCeedCall(ceed, CeedVectorDestroy(&loc_vals[id]));
     }
 
     PalaceCeedCall(ceed, CeedVectorRestoreArray(*vals, &vals_array));
@@ -519,14 +530,13 @@ std::unique_ptr<Operator> CeedOperatorCoarsen(const Operator &op_fine,
 
   // Assemble the coarse operator by coarsening each sub-operator (over threads, geometry
   // types, integrators) of the original fine operator.
-  MFEM_VERIFY(internal::GetCeedObjects().size() == op_fine.Size(),
-              "Unexpected size mismatch in multithreaded Ceed contexts!");
-  const std::size_t nt = op_fine.Size();
-  PalacePragmaOmp(parallel for schedule(static) if(nt > 1))
-  for (std::size_t i = 0; i < nt; i++)
+  PalacePragmaOmp(parallel if (op_fine.Size() > 1))
   {
     Ceed ceed;
-    PalaceCeedCallBackend(CeedOperatorGetCeed(op_fine[i], &ceed));
+    const int id = utils::GetThreadNum();
+    MFEM_ASSERT(id < op_fine.Size() && op_fine[id],
+                "Out of bounds access for thread number " << id << "!");
+    PalaceCeedCallBackend(CeedOperatorGetCeed(op_fine[id], &ceed));
     {
       Ceed ceed_parent;
       PalaceCeedCall(ceed, CeedGetParent(ceed, &ceed_parent));
@@ -541,13 +551,13 @@ std::unique_ptr<Operator> CeedOperatorCoarsen(const Operator &op_fine,
     PalaceCeedCall(ceed, CeedCompositeOperatorCreate(ceed, &loc_op));
 
     bool composite;
-    PalaceCeedCall(ceed, CeedOperatorIsComposite(op_fine[i], &composite));
+    PalaceCeedCall(ceed, CeedOperatorIsComposite(op_fine[id], &composite));
     if (composite)
     {
       CeedInt nloc_ops_fine;
       CeedOperator *loc_ops_fine;
-      PalaceCeedCall(ceed, CeedCompositeOperatorGetNumSub(op_fine[i], &nloc_ops_fine));
-      PalaceCeedCall(ceed, CeedCompositeOperatorGetSubList(op_fine[i], &loc_ops_fine));
+      PalaceCeedCall(ceed, CeedCompositeOperatorGetNumSub(op_fine[id], &nloc_ops_fine));
+      PalaceCeedCall(ceed, CeedCompositeOperatorGetSubList(op_fine[id], &loc_ops_fine));
       for (CeedInt k = 0; k < nloc_ops_fine; k++)
       {
         CeedOperator sub_op;
@@ -559,7 +569,7 @@ std::unique_ptr<Operator> CeedOperatorCoarsen(const Operator &op_fine,
     else
     {
       CeedOperator sub_op;
-      SingleOperatorCoarsen(ceed, op_fine[i], &sub_op);
+      SingleOperatorCoarsen(ceed, op_fine[id], &sub_op);
       PalaceCeedCall(ceed, CeedCompositeOperatorAddSub(loc_op, sub_op));
       PalaceCeedCall(ceed, CeedOperatorDestroy(&sub_op));
     }

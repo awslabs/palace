@@ -95,12 +95,7 @@ void SuperLUSolver::SetOperator(const Operator &op)
               "SuperLUSolver requires a square HypreParMatrix operator!");
   auto *parcsr = (hypre_ParCSRMatrix *)const_cast<mfem::HypreParMatrix &>(*hA);
   hypre_CSRMatrix *csr = hypre_MergeDiagAndOffd(parcsr);
-#if defined(HYPRE_USING_CUDA) || defined(HYPRE_USING_HIP) || defined(HYPRE_USING_SYCL)
-  if (hypre_GetActualMemLocation(hypre_CSRMatrixMemoryLocation(csr)) != hypre_MEMORY_HOST)
-  {
-    hypre_CSRMatrixMigrate(csr, HYPRE_MEMORY_HOST);
-  }
-#endif
+  hypre_CSRMatrixMigrate(csr, HYPRE_MEMORY_HOST);
 
   // Create the SuperLURowLocMatrix by taking the internal data from a hypre_CSRMatrix.
   HYPRE_BigInt glob_n = hypre_ParCSRMatrixGlobalNumRows(parcsr);

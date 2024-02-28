@@ -6,12 +6,16 @@
 #include <cstdint>
 #include <random>
 #include <mfem/general/forall.hpp>
+#include "linalg/hypre.hpp"
 #include "utils/omp.hpp"
 
 namespace palace
 {
 
-ComplexVector::ComplexVector(int n) : xr_(n), xi_(n) {}
+ComplexVector::ComplexVector(int size)
+  : data(2 * size), xr(data, 0, size), xi(data, size, size)
+{
+}
 
 ComplexVector::ComplexVector(const ComplexVector &y) : ComplexVector(y.Size())
 {
@@ -21,35 +25,65 @@ ComplexVector::ComplexVector(const ComplexVector &y) : ComplexVector(y.Size())
 
 ComplexVector::ComplexVector(const Vector &yr, const Vector &yi) : ComplexVector(yr.Size())
 {
-  MFEM_VERIFY(yr.Size() == yi.Size(),
-              "Mismatch in dimension of real and imaginary matrix parts in ComplexVector!");
+  MFEM_ASSERT(yr.Size() == yi.Size(),
+              "Mismatch in dimension of real and imaginary parts in ComplexVector!");
   UseDevice(yr.UseDevice() || yi.UseDevice());
   Set(yr, yi);
 }
 
-ComplexVector::ComplexVector(const std::complex<double> *py, int n, bool on_dev)
-  : ComplexVector(n)
+ComplexVector::ComplexVector(const std::complex<double> *py, int size, bool on_dev)
+  : ComplexVector(size)
 {
-  Set(py, n, on_dev);
+  Set(py, size, on_dev);
 }
 
-void ComplexVector::SetSize(int n)
+ComplexVector::ComplexVector(Vector &y, int offset, int size)
 {
-  xr_.SetSize(n);
-  xi_.SetSize(n);
+  MakeRef(y, offset, size);
+}
+
+void ComplexVector::UseDevice(bool use_dev)
+{
+  data.UseDevice(use_dev);
+  xr.UseDevice(use_dev);
+  xi.UseDevice(use_dev);
+}
+
+void ComplexVector::SetSize(int size)
+{
+  data.SetSize(2 * size);
+  xr.MakeRef(data, 0, size);
+  xi.MakeRef(data, size, size);
+}
+
+void ComplexVector::MakeRef(Vector &y, int offset, int size)
+{
+  MFEM_ASSERT(y.Size() <= 2 * size,
+              "Insufficient storage for ComplexVector alias reference of the given size!");
+  data.MakeRef(y, offset, 2 * size);
+  xr.MakeRef(data, offset, size);
+  xi.MakeRef(data, offset + size, size);
+}
+
+void ComplexVector::Set(const ComplexVector &y)
+{
+  MFEM_ASSERT(y.Size() == Size(),
+              "Mismatch in dimension of provided parts in ComplexVector!");
+  Real() = y.Real();
+  Imag() = y.Imag();
 }
 
 void ComplexVector::Set(const Vector &yr, const Vector &yi)
 {
-  MFEM_VERIFY(yr.Size() == yi.Size() && yr.Size() == Size(),
-              "Mismatch in dimension of real and imaginary matrix parts in ComplexVector!");
+  MFEM_ASSERT(yr.Size() == yi.Size() && yr.Size() == Size(),
+              "Mismatch in dimension of real and imaginary parts in ComplexVector!");
   Real() = yr;
   Imag() = yi;
 }
 
-void ComplexVector::Set(const std::complex<double> *py, int n, bool on_dev)
+void ComplexVector::Set(const std::complex<double> *py, int size, bool on_dev)
 {
-  MFEM_VERIFY(n == Size(),
+  MFEM_ASSERT(size == Size(),
               "Mismatch in dimension for array of std::complex<double> in ComplexVector!");
   auto SetImpl = [this](const double *Y, const int N, bool use_dev)
   {
@@ -67,23 +101,23 @@ void ComplexVector::Set(const std::complex<double> *py, int n, bool on_dev)
       (use_dev && mfem::Device::Allows(mfem::Backend::DEVICE_MASK) && on_dev))
   {
     // No copy (host pointer and not using device, or device pointer and using device).
-    SetImpl(reinterpret_cast<const double *>(py), n, use_dev);
+    SetImpl(reinterpret_cast<const double *>(py), size, use_dev);
   }
   else if (!on_dev)
   {
     // Need copy from host to device (host pointer but using device).
-    Vector y(2 * n);
+    Vector y(2 * size);
     y.UseDevice(true);
     {
       auto *Y = y.HostWrite();
       PalacePragmaOmp(parallel for schedule(static))
-      for (int i = 0; i < n; i++)
+      for (int i = 0; i < size; i++)
       {
         Y[2 * i] = py[i].real();
         Y[2 * i + 1] = py[i].imag();
       }
     }
-    SetImpl(y.Read(use_dev), n, use_dev);
+    SetImpl(y.Read(use_dev), size, use_dev);
   }
   else
   {
@@ -92,9 +126,9 @@ void ComplexVector::Set(const std::complex<double> *py, int n, bool on_dev)
   }
 }
 
-void ComplexVector::Get(std::complex<double> *py, int n, bool on_dev) const
+void ComplexVector::Get(std::complex<double> *py, int size, bool on_dev) const
 {
-  MFEM_VERIFY(n == Size(),
+  MFEM_ASSERT(size == Size(),
               "Mismatch in dimension for array of std::complex<double> in ComplexVector!");
   auto GetImpl = [this](double *Y, const int N, bool use_dev)
   {
@@ -112,7 +146,7 @@ void ComplexVector::Get(std::complex<double> *py, int n, bool on_dev) const
       (use_dev && mfem::Device::Allows(mfem::Backend::DEVICE_MASK) && on_dev))
   {
     // No copy (host pointer and not using device, or device pointer and using device).
-    GetImpl(reinterpret_cast<double *>(py), n, use_dev);
+    GetImpl(reinterpret_cast<double *>(py), size, use_dev);
   }
   else if (!on_dev)
   {
@@ -120,7 +154,7 @@ void ComplexVector::Get(std::complex<double> *py, int n, bool on_dev) const
     const auto *XR = Real().HostRead();
     const auto *XI = Imag().HostRead();
     PalacePragmaOmp(parallel for schedule(static))
-    for (int i = 0; i < n; i++)
+    for (int i = 0; i < size; i++)
     {
       py[i].real(XR[i]);
       py[i].imag(XI[i]);
@@ -231,8 +265,12 @@ void ComplexVector::AXPY(std::complex<double> alpha, const Vector &xr, const Vec
   auto *YI = yi.ReadWrite(use_dev);
   if (ai == 0.0)
   {
-    mfem::forall_switch(use_dev, N, [=] MFEM_HOST_DEVICE(int i) { YR[i] += ar * XR[i]; });
-    mfem::forall_switch(use_dev, N, [=] MFEM_HOST_DEVICE(int i) { YI[i] += ar * XI[i]; });
+    mfem::forall_switch(use_dev, N,
+                        [=] MFEM_HOST_DEVICE(int i)
+                        {
+                          YR[i] += ar * XR[i];
+                          YI[i] += ar * XI[i];
+                        });
   }
   else
   {
@@ -267,8 +305,12 @@ void ComplexVector::AXPBY(std::complex<double> alpha, const Vector &xr, const Ve
     auto *YI = yi.Write(use_dev);
     if (ai == 0.0)
     {
-      mfem::forall_switch(use_dev, N, [=] MFEM_HOST_DEVICE(int i) { YR[i] = ar * XR[i]; });
-      mfem::forall_switch(use_dev, N, [=] MFEM_HOST_DEVICE(int i) { YI[i] = ar * XI[i]; });
+      mfem::forall_switch(use_dev, N,
+                          [=] MFEM_HOST_DEVICE(int i)
+                          {
+                            YR[i] = ar * XR[i];
+                            YI[i] = ar * XI[i];
+                          });
     }
     else
     {
@@ -290,9 +332,11 @@ void ComplexVector::AXPBY(std::complex<double> alpha, const Vector &xr, const Ve
     if (ai == 0.0 && bi == 0.0)
     {
       mfem::forall_switch(use_dev, N,
-                          [=] MFEM_HOST_DEVICE(int i) { YR[i] = ar * XR[i] + br * YR[i]; });
-      mfem::forall_switch(use_dev, N,
-                          [=] MFEM_HOST_DEVICE(int i) { YI[i] = ar * XI[i] + br * YI[i]; });
+                          [=] MFEM_HOST_DEVICE(int i)
+                          {
+                            YR[i] = ar * XR[i] + br * YR[i];
+                            YI[i] = ar * XI[i] + br * YI[i];
+                          });
     }
     else
     {
@@ -336,9 +380,11 @@ void ComplexVector::AXPBYPCZ(std::complex<double> alpha, const Vector &xr, const
     if (ai == 0.0 && bi == 0.0)
     {
       mfem::forall_switch(use_dev, N,
-                          [=] MFEM_HOST_DEVICE(int i) { ZR[i] = ar * XR[i] + br * YR[i]; });
-      mfem::forall_switch(use_dev, N,
-                          [=] MFEM_HOST_DEVICE(int i) { ZI[i] = ar * XI[i] + br * YI[i]; });
+                          [=] MFEM_HOST_DEVICE(int i)
+                          {
+                            ZR[i] = ar * XR[i] + br * YR[i];
+                            ZI[i] = ar * XI[i] + br * YI[i];
+                          });
     }
     else
     {
@@ -362,10 +408,10 @@ void ComplexVector::AXPBYPCZ(std::complex<double> alpha, const Vector &xr, const
     {
       mfem::forall_switch(use_dev, N,
                           [=] MFEM_HOST_DEVICE(int i)
-                          { ZR[i] = ar * XR[i] + br * YR[i] + gr * ZR[i]; });
-      mfem::forall_switch(use_dev, N,
-                          [=] MFEM_HOST_DEVICE(int i)
-                          { ZI[i] = ar * XI[i] + br * YI[i] + gr * ZI[i]; });
+                          {
+                            ZR[i] = ar * XR[i] + br * YR[i] + gr * ZR[i];
+                            ZI[i] = ar * XI[i] + br * YI[i] + gr * ZI[i];
+                          });
     }
     else
     {
@@ -415,11 +461,6 @@ void SetSubVector(ComplexVector &x, const mfem::Array<int> &rows, double s)
                       {
                         const int id = idx[i];
                         XR[id] = sr;
-                      });
-  mfem::forall_switch(use_dev, N,
-                      [=] MFEM_HOST_DEVICE(int i)
-                      {
-                        const int id = idx[i];
                         XI[id] = 0.0;
                       });
 }
@@ -455,11 +496,6 @@ void SetSubVector(ComplexVector &x, const mfem::Array<int> &rows, const ComplexV
                       {
                         const auto id = idx[i];
                         XR[id] = YR[id];
-                      });
-  mfem::forall_switch(use_dev, N,
-                      [=] MFEM_HOST_DEVICE(int i)
-                      {
-                        const auto id = idx[i];
                         XI[id] = YI[id];
                       });
 }
@@ -486,8 +522,12 @@ void SetSubVector(ComplexVector &x, int start, int end, double s)
   const double sr = s;
   auto *XR = x.Real().ReadWrite(use_dev) + start;
   auto *XI = x.Imag().ReadWrite(use_dev) + start;
-  mfem::forall_switch(use_dev, N, [=] MFEM_HOST_DEVICE(int i) { XR[i] = sr; });
-  mfem::forall_switch(use_dev, N, [=] MFEM_HOST_DEVICE(int i) { XI[i] = 0.0; });
+  mfem::forall_switch(use_dev, N,
+                      [=] MFEM_HOST_DEVICE(int i)
+                      {
+                        XR[i] = sr;
+                        XI[i] = 0.0;
+                      });
 }
 
 template <>
@@ -556,48 +596,16 @@ void SetRandomSign(MPI_Comm comm, ComplexVector &x, int seed)
   auto *XI = x.Imag().ReadWrite(use_dev);
   mfem::forall_switch(use_dev, N,
                       [=] MFEM_HOST_DEVICE(int i)
-                      { XR[i] = (XR[i] > 0.0) ? 1.0 : ((XR[i] < 0.0) ? -1.0 : 0.0); });
-  mfem::forall_switch(use_dev, N,
-                      [=] MFEM_HOST_DEVICE(int i)
-                      { XI[i] = (XI[i] > 0.0) ? 1.0 : ((XI[i] < 0.0) ? -1.0 : 0.0); });
+                      {
+                        XR[i] = (XR[i] > 0.0) ? 1.0 : ((XR[i] < 0.0) ? -1.0 : 0.0);
+                        XI[i] = (XI[i] > 0.0) ? 1.0 : ((XI[i] < 0.0) ? -1.0 : 0.0);
+                      });
 }
-
-namespace
-{
-
-struct HypreVectorWrapper
-{
-  hypre_Vector *v;
-  HypreVectorWrapper() : v(nullptr) {}
-  HypreVectorWrapper(const Vector &x) : v(nullptr) { Update(x); }
-  ~HypreVectorWrapper() { hypre_SeqVectorDestroy(v); }
-  void Update(const Vector &x)
-  {
-    HYPRE_Int N = x.Size();
-    if (!v)
-    {
-      v = hypre_SeqVectorCreate(N);
-      hypre_SeqVectorSetDataOwner(v, 0);
-      hypre_VectorData(v) = const_cast<double *>(
-          x.Read(hypre_VectorMemoryLocation(v) == HYPRE_MEMORY_DEVICE));
-      hypre_SeqVectorInitialize(v);
-    }
-    else
-    {
-      hypre_SeqVectorSetSize(v, N);
-      hypre_VectorData(v) = const_cast<double *>(
-          x.Read(hypre_VectorMemoryLocation(v) == HYPRE_MEMORY_DEVICE));
-    }
-  }
-  operator hypre_Vector *() { return v; }
-};
-
-}  // namespace
 
 double LocalDot(const Vector &x, const Vector &y)
 {
+  static hypre::HypreVector X, Y;
   MFEM_ASSERT(x.Size() == y.Size(), "Size mismatch for vector inner product!");
-  static HypreVectorWrapper X, Y;
   X.Update(x);
   Y.Update(y);
   return hypre_SeqVectorInnerProd(X, Y);
@@ -605,13 +613,20 @@ double LocalDot(const Vector &x, const Vector &y)
 
 std::complex<double> LocalDot(const ComplexVector &x, const ComplexVector &y)
 {
-  return {LocalDot(x.Real(), y.Real()) + LocalDot(x.Imag(), y.Imag()),
-          (&x == &y) ? 0.0 : (LocalDot(x.Imag(), y.Real()) - LocalDot(x.Real(), y.Imag()))};
+  if (&x == &y)
+  {
+    return {LocalDot(x.Real(), y.Real()) + LocalDot(x.Imag(), y.Imag()), 0.0};
+  }
+  else
+  {
+    return {LocalDot(x.Real(), y.Real()) + LocalDot(x.Imag(), y.Imag()),
+            LocalDot(x.Imag(), y.Real()) - LocalDot(x.Real(), y.Imag())};
+  }
 }
 
 double LocalSum(const Vector &x)
 {
-  static HypreVectorWrapper X;
+  static hypre::HypreVector X;
   X.Update(x);
   return hypre_SeqVectorSumElts(X);
 }
