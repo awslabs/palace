@@ -22,7 +22,7 @@ using Vector = mfem::Vector;
 class ComplexVector
 {
 private:
-  Vector data, xr, xi;
+  Vector xr, xi;
 
 public:
   // Create a vector with the given size.
@@ -43,10 +43,10 @@ public:
 
   // Flag for runtime execution on the mfem::Device. See the documentation for mfem::Vector.
   void UseDevice(bool use_dev);
-  bool UseDevice() const { return data.UseDevice(); }
+  bool UseDevice() const { return xr.UseDevice(); }
 
   // Return the size of the vector.
-  int Size() const { return data.Size() / 2; }
+  int Size() const { return xr.Size(); }
 
   // Set the size of the vector. See the notes for Vector::SetSize for behavior in the cases
   // where the new size is less than or greater than Size() or Capacity().

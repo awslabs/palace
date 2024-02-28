@@ -12,10 +12,7 @@
 namespace palace
 {
 
-ComplexVector::ComplexVector(int size)
-  : data(2 * size), xr(data, 0, size), xi(data, size, size)
-{
-}
+ComplexVector::ComplexVector(int size) : xr(size), xi(size) {}
 
 ComplexVector::ComplexVector(const ComplexVector &y) : ComplexVector(y.Size())
 {
@@ -44,25 +41,23 @@ ComplexVector::ComplexVector(Vector &y, int offset, int size)
 
 void ComplexVector::UseDevice(bool use_dev)
 {
-  data.UseDevice(use_dev);
   xr.UseDevice(use_dev);
   xi.UseDevice(use_dev);
 }
 
 void ComplexVector::SetSize(int size)
 {
-  data.SetSize(2 * size);
-  xr.MakeRef(data, 0, size);
-  xi.MakeRef(data, size, size);
+  xr.SetSize(size);
+  xi.SetSize(size);
 }
 
 void ComplexVector::MakeRef(Vector &y, int offset, int size)
 {
-  MFEM_ASSERT(y.Size() <= 2 * size,
+  MFEM_ASSERT(y.Size() >= offset + 2 * size,
               "Insufficient storage for ComplexVector alias reference of the given size!");
-  data.MakeRef(y, offset, 2 * size);
-  xr.MakeRef(data, offset, size);
-  xi.MakeRef(data, offset + size, size);
+  y.ReadWrite();  // Ensure memory is allocated on device before aliasing
+  xr.MakeRef(y, offset, size);
+  xi.MakeRef(y, offset + size, size);
 }
 
 void ComplexVector::Set(const ComplexVector &y)
