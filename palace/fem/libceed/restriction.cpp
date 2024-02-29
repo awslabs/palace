@@ -194,7 +194,7 @@ void InitNativeRestr(const mfem::FiniteElementSpace &fespace,
           int nnz = 0;
           for (int k = 0; k < P; k++)
           {
-            if (k < j - 1 && k > j + 1 && el_trans_j(k) != 0.0)
+            if ((k < j - 1 || k > j + 1) && el_trans_j(k) != 0.0)
             {
               nnz++;
             }
