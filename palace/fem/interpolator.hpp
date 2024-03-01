@@ -11,6 +11,7 @@
 namespace palace
 {
 
+class GridFunction;
 class IoData;
 
 //
@@ -24,15 +25,14 @@ private:
 #endif
   std::vector<int> op_idx;
 
+  std::vector<double> ProbeField(const mfem::ParGridFunction &U);
+
 public:
   InterpolationOperator(const IoData &iodata, mfem::ParMesh &mesh);
 
   const auto &GetProbes() const { return op_idx; }
 
-  std::vector<double> ProbeField(const mfem::ParGridFunction &U);
-
-  std::vector<std::complex<double>> ProbeField(const mfem::ParComplexGridFunction &U,
-                                               bool has_imaginary);
+  std::vector<std::complex<double>> ProbeField(const GridFunction &U);
 };
 
 }  // namespace palace

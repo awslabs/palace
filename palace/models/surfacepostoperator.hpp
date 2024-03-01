@@ -13,6 +13,7 @@
 namespace palace
 {
 
+class GridFunction;
 class IoData;
 class MaterialOperator;
 
@@ -100,13 +101,9 @@ public:
   // Get surface integrals computing dielectric interface energy, surface charge, or
   // surface magnetic flux.
   double GetInterfaceLossTangent(int idx) const;
-  double GetInterfaceElectricFieldEnergy(int idx,
-                                         const mfem::ParComplexGridFunction &E) const;
-  double GetInterfaceElectricFieldEnergy(int idx, const mfem::ParGridFunction &E) const;
-  double GetSurfaceElectricCharge(int idx, const mfem::ParComplexGridFunction &E) const;
-  double GetSurfaceElectricCharge(int idx, const mfem::ParGridFunction &E) const;
-  double GetSurfaceMagneticFlux(int idx, const mfem::ParComplexGridFunction &B) const;
-  double GetSurfaceMagneticFlux(int idx, const mfem::ParGridFunction &B) const;
+  double GetInterfaceElectricFieldEnergy(int idx, const GridFunction &E) const;
+  double GetSurfaceElectricCharge(int idx, const GridFunction &E) const;
+  double GetSurfaceMagneticFlux(int idx, const GridFunction &B) const;
 };
 
 }  // namespace palace

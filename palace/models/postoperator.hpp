@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 #include <mfem.hpp>
+#include "fem/gridfunction.hpp"
 #include "fem/interpolator.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
@@ -44,9 +45,7 @@ private:
   const DomainPostOperator dom_post_op;
 
   // Objects for grid function postprocessing from the FE solution.
-  const bool has_imaginary;
-  mutable std::optional<mfem::ParComplexGridFunction> E, B;
-  mutable std::optional<mfem::ParGridFunction> V, A;
+  mutable std::optional<GridFunction> E, B, V, A;
   std::unique_ptr<mfem::VectorCoefficient> Esr, Esi, Bsr, Bsi, As, Jsr, Jsi;
   std::unique_ptr<mfem::Coefficient> Vs, Ue, Um, Qsr, Qsi;
 
@@ -82,9 +81,9 @@ public:
   const auto &GetDomainPostOp() const { return dom_post_op; }
 
   // Return options for postprocessing configuration.
-  bool HasImaginary() const { return has_imaginary; }
   bool HasE() const { return E.has_value(); }
   bool HasB() const { return B.has_value(); }
+  bool HasImag() const { return HasE() ? E->HasImag() : B->HasImag(); }
 
   // Populate the grid function solutions for the E- and B-field using the solution vectors
   // on the true dofs. For the real-valued overload, the electric scalar potential can be
@@ -130,8 +129,8 @@ public:
                                      int source_idx) const;
 
   // Postprocess the circuit voltage and current across lumped port index using the electric
-  // field solution. When has_imaginary is false, the returned voltage has only a nonzero
-  // real part.
+  // field solution. When the internal grid functions are real-valued, the returned voltage
+  // has only a nonzero real part.
   std::complex<double> GetPortPower(const LumpedPortOperator &lumped_port_op,
                                     int idx) const;
   std::complex<double> GetPortPower(const WavePortOperator &wave_port_op, int idx) const;
@@ -174,8 +173,9 @@ public:
 
   // Probe the E- and B-fields for their vector-values at speceified locations in space.
   // Locations of probes are set up in constructor from configuration file data. If
-  // has_imaginary is false, the returned fields have only nonzero real parts. Output
-  // vectors are ordered by vector dimension, that is [v1x, v1y, v1z, v2x, v2y, v2z, ...].
+  // the internal grid functions are real-valued, the returned fields have only nonzero real
+  // parts. Output vectors are ordered by vector dimension, that is [v1x, v1y, v1z, v2x,
+  // v2y, v2z, ...].
   const auto &GetProbes() const { return interp_op.GetProbes(); }
   std::vector<std::complex<double>> ProbeEField() const;
   std::vector<std::complex<double>> ProbeBField() const;

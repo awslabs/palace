@@ -10,6 +10,7 @@
 #include <unordered_map>
 #include <mfem.hpp>
 #include "fem/fespace.hpp"
+#include "fem/gridfunction.hpp"
 #include "fem/mesh.hpp"
 #include "linalg/eps.hpp"
 #include "linalg/ksp.hpp"
@@ -65,7 +66,7 @@ private:
 
   // Operator storage for repeated boundary mode eigenvalue problem solves.
   std::unique_ptr<mfem::HypreParMatrix> Atnr, Atni, Antr, Anti, Annr, Anni;
-  std::unique_ptr<ComplexOperator> B;
+  std::unique_ptr<ComplexOperator> B0;
   ComplexVector v0, e0;
 
   // Eigenvalue solver for boundary modes.
@@ -74,12 +75,10 @@ private:
   std::unique_ptr<EigenvalueSolver> eigen;
   std::unique_ptr<ComplexKspSolver> ksp;
 
-  // Grid functions storing the last computed electric field mode on the port.
-  std::unique_ptr<mfem::ParComplexGridFunction> port_E0t, port_E0n;
-
-  // Stored objects for computing functions of the port modes for use as an excitation or
-  // in postprocessing.
-  std::unique_ptr<mfem::ParGridFunction> port_S0t;
+  // Grid functions storing the last computed electric field mode on the port, and stored
+  // objects for computing functions of the port modes for use as an excitation or in
+  // postprocessing.
+  std::unique_ptr<GridFunction> port_E0t, port_E0n, port_S0t, port_E;
   std::unique_ptr<mfem::LinearForm> port_sr, port_si;
 
 public:
@@ -114,10 +113,9 @@ public:
     return 0.0;
   }
 
-  std::complex<double> GetSParameter(mfem::ParComplexGridFunction &E) const;
-  std::complex<double> GetPower(mfem::ParComplexGridFunction &E,
-                                mfem::ParComplexGridFunction &B) const;
-  std::complex<double> GetVoltage(mfem::ParComplexGridFunction &E) const
+  std::complex<double> GetPower(GridFunction &E, GridFunction &B) const;
+  std::complex<double> GetSParameter(GridFunction &E) const;
+  std::complex<double> GetVoltage(GridFunction &E) const
   {
     MFEM_ABORT("GetVoltage is not yet implemented for wave port boundaries!");
     return 0.0;

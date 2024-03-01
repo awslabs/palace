@@ -6,6 +6,7 @@
 #include <mfem.hpp>
 #include "fem/bilinearform.hpp"
 #include "fem/fespace.hpp"
+#include "fem/gridfunction.hpp"
 #include "fem/integrator.hpp"
 #include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
@@ -74,70 +75,46 @@ DomainPostOperator::DomainPostOperator(const IoData &iodata, const MaterialOpera
   }
 }
 
-double
-DomainPostOperator::GetElectricFieldEnergy(const mfem::ParComplexGridFunction &E) const
+double DomainPostOperator::GetElectricFieldEnergy(const GridFunction &E) const
 {
   if (M_ND)
   {
-    M_ND->Mult(E.real(), D);
-    double res = linalg::LocalDot(E.real(), D);
-    M_ND->Mult(E.imag(), D);
-    res += linalg::LocalDot(E.imag(), D);
-    Mpi::GlobalSum(1, &res, E.ParFESpace()->GetComm());
-    return 0.5 * res;
+    M_ND->Mult(E.Real(), D);
+    double dot = linalg::LocalDot(E.Real(), D);
+    if (E.HasImag())
+    {
+      M_ND->Mult(E.Imag(), D);
+      dot += linalg::LocalDot(E.Imag(), D);
+    }
+    Mpi::GlobalSum(1, &dot, E.GetComm());
+    return 0.5 * dot;
   }
   MFEM_ABORT(
       "Domain postprocessing is not configured for electric field energy calculation!");
   return 0.0;
 }
 
-double DomainPostOperator::GetElectricFieldEnergy(const mfem::ParGridFunction &E) const
-{
-  if (M_ND)
-  {
-    M_ND->Mult(E, D);
-    double res = linalg::LocalDot(E, D);
-    Mpi::GlobalSum(1, &res, E.ParFESpace()->GetComm());
-    return 0.5 * res;
-  }
-  MFEM_ABORT(
-      "Domain postprocessing is not configured for electric field energy calculation!");
-  return 0.0;
-}
-
-double
-DomainPostOperator::GetMagneticFieldEnergy(const mfem::ParComplexGridFunction &B) const
+double DomainPostOperator::GetMagneticFieldEnergy(const GridFunction &B) const
 {
   if (M_RT)
   {
-    M_RT->Mult(B.real(), H);
-    double res = linalg::LocalDot(B.real(), H);
-    M_RT->Mult(B.imag(), H);
-    res += linalg::LocalDot(B.imag(), H);
-    Mpi::GlobalSum(1, &res, B.ParFESpace()->GetComm());
-    return 0.5 * res;
+    M_RT->Mult(B.Real(), H);
+    double dot = linalg::LocalDot(B.Real(), H);
+    if (B.HasImag())
+    {
+      M_RT->Mult(B.Imag(), H);
+      dot += linalg::LocalDot(B.Imag(), H);
+    }
+    Mpi::GlobalSum(1, &dot, B.GetComm());
+    return 0.5 * dot;
   }
   MFEM_ABORT(
       "Domain postprocessing is not configured for magnetic field energy calculation!");
   return 0.0;
 }
 
-double DomainPostOperator::GetMagneticFieldEnergy(const mfem::ParGridFunction &B) const
-{
-  if (M_RT)
-  {
-    M_RT->Mult(B, H);
-    double res = linalg::LocalDot(B, H);
-    Mpi::GlobalSum(1, &res, B.ParFESpace()->GetComm());
-    return 0.5 * res;
-  }
-  MFEM_ABORT(
-      "Domain postprocessing is not configured for magnetic field energy calculation!");
-  return 0.0;
-}
-
-double DomainPostOperator::GetDomainElectricFieldEnergy(
-    int idx, const mfem::ParComplexGridFunction &E) const
+double DomainPostOperator::GetDomainElectricFieldEnergy(int idx,
+                                                        const GridFunction &E) const
 {
   // Compute the electric field energy integral for only a portion of the domain.
   auto it = M_i.find(idx);
@@ -147,33 +124,19 @@ double DomainPostOperator::GetDomainElectricFieldEnergy(
   {
     return 0.0;
   }
-  it->second.first->Mult(E.real(), D);
-  double res = linalg::LocalDot(E.real(), D);
-  it->second.first->Mult(E.imag(), D);
-  res += linalg::LocalDot(E.imag(), D);
-  Mpi::GlobalSum(1, &res, E.ParFESpace()->GetComm());
-  return 0.5 * res;
-}
-
-double
-DomainPostOperator::GetDomainElectricFieldEnergy(int idx,
-                                                 const mfem::ParGridFunction &E) const
-{
-  auto it = M_i.find(idx);
-  MFEM_VERIFY(it != M_i.end() && it->second.first,
-              "Invalid domain index when postprocessing domain electric field energy!");
-  if (!it->second.first)
+  it->second.first->Mult(E.Real(), D);
+  double dot = linalg::LocalDot(E.Real(), D);
+  if (E.HasImag())
   {
-    return 0.0;
+    it->second.first->Mult(E.Imag(), D);
+    dot += linalg::LocalDot(E.Imag(), D);
   }
-  it->second.first->Mult(E, D);
-  double res = linalg::LocalDot(E, D);
-  Mpi::GlobalSum(1, &res, E.ParFESpace()->GetComm());
-  return 0.5 * res;
+  Mpi::GlobalSum(1, &dot, E.GetComm());
+  return 0.5 * dot;
 }
 
-double DomainPostOperator::GetDomainMagneticFieldEnergy(
-    int idx, const mfem::ParComplexGridFunction &B) const
+double DomainPostOperator::GetDomainMagneticFieldEnergy(int idx,
+                                                        const GridFunction &B) const
 {
   // Compute the magnetic field energy integral for only a portion of the domain.
   auto it = M_i.find(idx);
@@ -183,29 +146,15 @@ double DomainPostOperator::GetDomainMagneticFieldEnergy(
   {
     return 0.0;
   }
-  it->second.second->Mult(B.real(), H);
-  double res = linalg::LocalDot(B.real(), H);
-  it->second.second->Mult(B.imag(), H);
-  res += linalg::LocalDot(B.imag(), H);
-  Mpi::GlobalSum(1, &res, B.ParFESpace()->GetComm());
-  return 0.5 * res;
-}
-
-double
-DomainPostOperator::GetDomainMagneticFieldEnergy(int idx,
-                                                 const mfem::ParGridFunction &B) const
-{
-  auto it = M_i.find(idx);
-  MFEM_VERIFY(it != M_i.end() && it->second.second,
-              "Invalid domain index when postprocessing domain magnetic field energy!");
-  if (!it->second.second)
+  it->second.second->Mult(B.Real(), H);
+  double dot = linalg::LocalDot(B.Real(), H);
+  if (B.HasImag())
   {
-    return 0.0;
+    it->second.second->Mult(B.Imag(), H);
+    dot += linalg::LocalDot(B.Imag(), H);
   }
-  it->second.second->Mult(B, H);
-  double res = linalg::LocalDot(B, H);
-  Mpi::GlobalSum(1, &res, B.ParFESpace()->GetComm());
-  return 0.5 * res;
+  Mpi::GlobalSum(1, &dot, B.GetComm());
+  return 0.5 * dot;
 }
 
 }  // namespace palace

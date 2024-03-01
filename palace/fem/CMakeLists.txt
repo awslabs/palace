@@ -11,6 +11,7 @@ target_sources(${LIB_TARGET_NAME}
   ${CMAKE_CURRENT_SOURCE_DIR}/coefficient.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/errorindicator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/fespace.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/gridfunction.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/integrator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/interpolator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/lumpedelement.cpp

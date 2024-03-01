@@ -43,39 +43,37 @@ PostOperator::PostOperator(const IoData &iodata, SpaceOperator &spaceop,
     surf_post_op(iodata, spaceop.GetMaterialOp(), spaceop.GetH1Space()),
     dom_post_op(iodata, spaceop.GetMaterialOp(), &spaceop.GetNDSpace(),
                 &spaceop.GetRTSpace()),
-    has_imaginary(iodata.problem.type != config::ProblemData::Type::TRANSIENT),
-    E(&spaceop.GetNDSpace().Get()), B(&spaceop.GetRTSpace().Get()), V(std::nullopt),
-    A(std::nullopt), lumped_port_init(false), wave_port_init(false),
+    E(std::in_place, spaceop.GetNDSpace(),
+      iodata.problem.type != config::ProblemData::Type::TRANSIENT),
+    B(std::in_place, spaceop.GetRTSpace(),
+      iodata.problem.type != config::ProblemData::Type::TRANSIENT),
+    V(std::nullopt), A(std::nullopt), lumped_port_init(false), wave_port_init(false),
     paraview(CreateParaviewPath(iodata, name), &spaceop.GetNDSpace().GetParMesh()),
     paraview_bdr(CreateParaviewPath(iodata, name) + "_boundary",
                  &spaceop.GetNDSpace().GetParMesh()),
     interp_op(iodata, spaceop.GetNDSpace().GetParMesh())
 {
-  Esr = std::make_unique<BdrFieldVectorCoefficient>(E->real(), mat_op);
-  Bsr = std::make_unique<BdrFieldVectorCoefficient>(B->real(), mat_op);
-  Jsr = std::make_unique<BdrCurrentVectorCoefficient>(B->real(), mat_op);
-  Qsr = std::make_unique<BdrChargeCoefficient>(E->real(), mat_op);
-  if (has_imaginary)
+  Esr = std::make_unique<BdrFieldVectorCoefficient>(E->Real(), mat_op);
+  Bsr = std::make_unique<BdrFieldVectorCoefficient>(B->Real(), mat_op);
+  Jsr = std::make_unique<BdrCurrentVectorCoefficient>(B->Real(), mat_op);
+  Qsr = std::make_unique<BdrChargeCoefficient>(E->Real(), mat_op);
+  if (HasImag())
   {
-    Esi = std::make_unique<BdrFieldVectorCoefficient>(E->imag(), mat_op);
-    Bsi = std::make_unique<BdrFieldVectorCoefficient>(B->imag(), mat_op);
-    Jsi = std::make_unique<BdrCurrentVectorCoefficient>(B->imag(), mat_op);
-    Qsi = std::make_unique<BdrChargeCoefficient>(E->imag(), mat_op);
-    Ue = std::make_unique<EnergyDensityCoefficient<EnergyDensityType::ELECTRIC,
-                                                   mfem::ParComplexGridFunction>>(*E,
-                                                                                  mat_op);
-    Um = std::make_unique<EnergyDensityCoefficient<EnergyDensityType::MAGNETIC,
-                                                   mfem::ParComplexGridFunction>>(*B,
-                                                                                  mat_op);
+    Esi = std::make_unique<BdrFieldVectorCoefficient>(E->Imag(), mat_op);
+    Bsi = std::make_unique<BdrFieldVectorCoefficient>(B->Imag(), mat_op);
+    Jsi = std::make_unique<BdrCurrentVectorCoefficient>(B->Imag(), mat_op);
+    Qsi = std::make_unique<BdrChargeCoefficient>(E->Imag(), mat_op);
+    Ue =
+        std::make_unique<EnergyDensityCoefficient<EnergyDensityType::ELECTRIC>>(*E, mat_op);
+    Um =
+        std::make_unique<EnergyDensityCoefficient<EnergyDensityType::MAGNETIC>>(*B, mat_op);
   }
   else
   {
-    Ue = std::make_unique<
-        EnergyDensityCoefficient<EnergyDensityType::ELECTRIC, mfem::ParGridFunction>>(
-        E->real(), mat_op);
-    Um = std::make_unique<
-        EnergyDensityCoefficient<EnergyDensityType::MAGNETIC, mfem::ParGridFunction>>(
-        B->real(), mat_op);
+    Ue =
+        std::make_unique<EnergyDensityCoefficient<EnergyDensityType::ELECTRIC>>(*E, mat_op);
+    Um =
+        std::make_unique<EnergyDensityCoefficient<EnergyDensityType::MAGNETIC>>(*B, mat_op);
   }
 
   // Add wave port boundary mode postprocessing when available.
@@ -95,9 +93,8 @@ PostOperator::PostOperator(const IoData &iodata, LaplaceOperator &laplaceop,
   : mat_op(laplaceop.GetMaterialOp()),
     surf_post_op(iodata, laplaceop.GetMaterialOp(), laplaceop.GetH1Space()),
     dom_post_op(iodata, laplaceop.GetMaterialOp(), &laplaceop.GetNDSpace(), nullptr),
-    has_imaginary(false), E(&laplaceop.GetNDSpace().Get()), B(std::nullopt),
-    V(&laplaceop.GetH1Space().Get()), A(std::nullopt), lumped_port_init(false),
-    wave_port_init(false),
+    E(std::in_place, laplaceop.GetNDSpace()), B(std::nullopt), V(laplaceop.GetH1Space()),
+    A(std::nullopt), lumped_port_init(false), wave_port_init(false),
     paraview(CreateParaviewPath(iodata, name), &laplaceop.GetNDSpace().GetParMesh()),
     paraview_bdr(CreateParaviewPath(iodata, name) + "_boundary",
                  &laplaceop.GetNDSpace().GetParMesh()),
@@ -106,12 +103,10 @@ PostOperator::PostOperator(const IoData &iodata, LaplaceOperator &laplaceop,
   // Note: When using this constructor, you should not use any of the magnetic field related
   // postprocessing functions (magnetic field energy, inductor energy, surface currents,
   // etc.), since only V and E fields are supplied.
-  Esr = std::make_unique<BdrFieldVectorCoefficient>(E->real(), mat_op);
-  Vs = std::make_unique<BdrFieldCoefficient>(*V, mat_op);
-  Ue = std::make_unique<
-      EnergyDensityCoefficient<EnergyDensityType::ELECTRIC, mfem::ParGridFunction>>(
-      E->real(), mat_op);
-  Qsr = std::make_unique<BdrChargeCoefficient>(E->real(), mat_op);
+  Esr = std::make_unique<BdrFieldVectorCoefficient>(E->Real(), mat_op);
+  Vs = std::make_unique<BdrFieldCoefficient>(V->Real(), mat_op);
+  Ue = std::make_unique<EnergyDensityCoefficient<EnergyDensityType::ELECTRIC>>(*E, mat_op);
+  Qsr = std::make_unique<BdrChargeCoefficient>(E->Real(), mat_op);
 
   // Initialize data collection objects.
   InitializeDataCollection(iodata);
@@ -122,9 +117,8 @@ PostOperator::PostOperator(const IoData &iodata, CurlCurlOperator &curlcurlop,
   : mat_op(curlcurlop.GetMaterialOp()),
     surf_post_op(iodata, curlcurlop.GetMaterialOp(), curlcurlop.GetH1Space()),
     dom_post_op(iodata, curlcurlop.GetMaterialOp(), nullptr, &curlcurlop.GetRTSpace()),
-    has_imaginary(false), E(std::nullopt), B(&curlcurlop.GetRTSpace().Get()),
-    V(std::nullopt), A(&curlcurlop.GetNDSpace().Get()), lumped_port_init(false),
-    wave_port_init(false),
+    E(std::nullopt), B(std::in_place, curlcurlop.GetRTSpace()), V(std::nullopt),
+    A(curlcurlop.GetNDSpace()), lumped_port_init(false), wave_port_init(false),
     paraview(CreateParaviewPath(iodata, name), &curlcurlop.GetNDSpace().GetParMesh()),
     paraview_bdr(CreateParaviewPath(iodata, name) + "_boundary",
                  &curlcurlop.GetNDSpace().GetParMesh()),
@@ -133,12 +127,10 @@ PostOperator::PostOperator(const IoData &iodata, CurlCurlOperator &curlcurlop,
   // Note: When using this constructor, you should not use any of the electric field related
   // postprocessing functions (electric field energy, capacitor energy, surface charge,
   // etc.), since only the B field is supplied.
-  Bsr = std::make_unique<BdrFieldVectorCoefficient>(B->real(), mat_op);
-  As = std::make_unique<BdrFieldVectorCoefficient>(*A, mat_op);
-  Um = std::make_unique<
-      EnergyDensityCoefficient<EnergyDensityType::MAGNETIC, mfem::ParGridFunction>>(
-      B->real(), mat_op);
-  Jsr = std::make_unique<BdrCurrentVectorCoefficient>(B->real(), mat_op);
+  Bsr = std::make_unique<BdrFieldVectorCoefficient>(B->Real(), mat_op);
+  As = std::make_unique<BdrFieldVectorCoefficient>(A->Real(), mat_op);
+  Um = std::make_unique<EnergyDensityCoefficient<EnergyDensityType::MAGNETIC>>(*B, mat_op);
+  Jsr = std::make_unique<BdrCurrentVectorCoefficient>(B->Real(), mat_op);
 
   // Initialize data collection objects.
   InitializeDataCollection(iodata);
@@ -155,8 +147,8 @@ void PostOperator::InitializeDataCollection(const IoData &iodata)
   const int compress = 0;
 #endif
   const bool use_ho = true;
-  const int refine_ho =
-      (E) ? E->ParFESpace()->GetMaxElementOrder() : B->ParFESpace()->GetMaxElementOrder();
+  const int refine_ho = HasE() ? E->ParFESpace()->GetMaxElementOrder()
+                               : B->ParFESpace()->GetMaxElementOrder();
   mesh_Lc0 = iodata.GetLengthScale();
 
   // Output mesh coordinate units same as input.
@@ -180,42 +172,42 @@ void PostOperator::InitializeDataCollection(const IoData &iodata)
   // permeability.
   if (E)
   {
-    if (has_imaginary)
+    if (HasImag())
     {
-      paraview.RegisterField("E_real", &E->real());
-      paraview.RegisterField("E_imag", &E->imag());
+      paraview.RegisterField("E_real", &E->Real());
+      paraview.RegisterField("E_imag", &E->Imag());
       paraview_bdr.RegisterVCoeffField("E_real", Esr.get());
       paraview_bdr.RegisterVCoeffField("E_imag", Esi.get());
     }
     else
     {
-      paraview.RegisterField("E", &E->real());
+      paraview.RegisterField("E", &E->Real());
       paraview_bdr.RegisterVCoeffField("E", Esr.get());
     }
   }
   if (B)
   {
-    if (has_imaginary)
+    if (HasImag())
     {
-      paraview.RegisterField("B_real", &B->real());
-      paraview.RegisterField("B_imag", &B->imag());
+      paraview.RegisterField("B_real", &B->Real());
+      paraview.RegisterField("B_imag", &B->Imag());
       paraview_bdr.RegisterVCoeffField("B_real", Bsr.get());
       paraview_bdr.RegisterVCoeffField("B_imag", Bsi.get());
     }
     else
     {
-      paraview.RegisterField("B", &B->real());
+      paraview.RegisterField("B", &B->Real());
       paraview_bdr.RegisterVCoeffField("B", Bsr.get());
     }
   }
   if (V)
   {
-    paraview.RegisterField("V", &*V);
+    paraview.RegisterField("V", &V->Real());
     paraview_bdr.RegisterCoeffField("V", Vs.get());
   }
   if (A)
   {
-    paraview.RegisterField("A", &*A);
+    paraview.RegisterField("A", &A->Real());
     paraview_bdr.RegisterVCoeffField("A", As.get());
   }
 
@@ -224,7 +216,7 @@ void PostOperator::InitializeDataCollection(const IoData &iodata)
   // currents are single-valued at internal boundaries.
   if (Qsr)
   {
-    if (has_imaginary)
+    if (HasImag())
     {
       paraview_bdr.RegisterCoeffField("Qs_real", Qsr.get());
       paraview_bdr.RegisterCoeffField("Qs_imag", Qsi.get());
@@ -236,7 +228,7 @@ void PostOperator::InitializeDataCollection(const IoData &iodata)
   }
   if (Jsr)
   {
-    if (has_imaginary)
+    if (HasImag())
     {
       paraview_bdr.RegisterVCoeffField("Js_real", Jsr.get());
       paraview_bdr.RegisterVCoeffField("Js_imag", Jsi.get());
@@ -270,66 +262,64 @@ void PostOperator::InitializeDataCollection(const IoData &iodata)
 
 void PostOperator::SetEGridFunction(const ComplexVector &e)
 {
-  MFEM_VERIFY(
-      has_imaginary,
-      "SetEGridFunction for complex-valued output called when has_imaginary == false!");
+  MFEM_VERIFY(HasImag(),
+              "SetEGridFunction for complex-valued output called when HasImag() == false!");
   MFEM_VERIFY(E, "Incorrect usage of PostOperator::SetEGridFunction!");
-  E->real().SetFromTrueDofs(e.Real());  // Parallel distribute
-  E->imag().SetFromTrueDofs(e.Imag());
-  E->real().ExchangeFaceNbrData();  // Ready for parallel comm on shared faces
-  E->imag().ExchangeFaceNbrData();
+  E->Real().SetFromTrueDofs(e.Real());  // Parallel distribute
+  E->Imag().SetFromTrueDofs(e.Imag());
+  E->Real().ExchangeFaceNbrData();  // Ready for parallel comm on shared faces
+  E->Imag().ExchangeFaceNbrData();
   lumped_port_init = wave_port_init = false;
 }
 
 void PostOperator::SetBGridFunction(const ComplexVector &b)
 {
-  MFEM_VERIFY(
-      has_imaginary,
-      "SetBGridFunction for complex-valued output called when has_imaginary == false!");
+  MFEM_VERIFY(HasImag(),
+              "SetBGridFunction for complex-valued output called when HasImag() == false!");
   MFEM_VERIFY(B, "Incorrect usage of PostOperator::SetBGridFunction!");
-  B->real().SetFromTrueDofs(b.Real());  // Parallel distribute
-  B->imag().SetFromTrueDofs(b.Imag());
-  B->real().ExchangeFaceNbrData();  // Ready for parallel comm on shared faces
-  B->imag().ExchangeFaceNbrData();
+  B->Real().SetFromTrueDofs(b.Real());  // Parallel distribute
+  B->Imag().SetFromTrueDofs(b.Imag());
+  B->Real().ExchangeFaceNbrData();  // Ready for parallel comm on shared faces
+  B->Imag().ExchangeFaceNbrData();
   lumped_port_init = wave_port_init = false;
 }
 
 void PostOperator::SetEGridFunction(const Vector &e)
 {
-  MFEM_VERIFY(!has_imaginary,
-              "SetEGridFunction for real-valued output called when has_imaginary == true!");
+  MFEM_VERIFY(!HasImag(),
+              "SetEGridFunction for real-valued output called when HasImag() == true!");
   MFEM_VERIFY(E, "Incorrect usage of PostOperator::SetEGridFunction!");
-  E->real().SetFromTrueDofs(e);
-  E->real().ExchangeFaceNbrData();
+  E->Real().SetFromTrueDofs(e);
+  E->Real().ExchangeFaceNbrData();
   lumped_port_init = wave_port_init = false;
 }
 
 void PostOperator::SetBGridFunction(const Vector &b)
 {
-  MFEM_VERIFY(!has_imaginary,
-              "SetBGridFunction for real-valued output called when has_imaginary == true!");
+  MFEM_VERIFY(!HasImag(),
+              "SetBGridFunction for real-valued output called when HasImag() == true!");
   MFEM_VERIFY(B, "Incorrect usage of PostOperator::SetBGridFunction!");
-  B->real().SetFromTrueDofs(b);
-  B->real().ExchangeFaceNbrData();
+  B->Real().SetFromTrueDofs(b);
+  B->Real().ExchangeFaceNbrData();
   lumped_port_init = wave_port_init = false;
 }
 
 void PostOperator::SetVGridFunction(const Vector &v)
 {
-  MFEM_VERIFY(!has_imaginary,
-              "SetVGridFunction for real-valued output called when has_imaginary == true!");
+  MFEM_VERIFY(!HasImag(),
+              "SetVGridFunction for real-valued output called when HasImag() == true!");
   MFEM_VERIFY(V, "Incorrect usage of PostOperator::SetVGridFunction!");
-  V->SetFromTrueDofs(v);
-  V->ExchangeFaceNbrData();
+  V->Real().SetFromTrueDofs(v);
+  V->Real().ExchangeFaceNbrData();
 }
 
 void PostOperator::SetAGridFunction(const Vector &a)
 {
-  MFEM_VERIFY(!has_imaginary,
-              "SetAGridFunction for real-valued output called when has_imaginary == true!");
+  MFEM_VERIFY(!HasImag(),
+              "SetAGridFunction for real-valued output called when HasImag() == true!");
   MFEM_VERIFY(A, "Incorrect usage of PostOperator::SetAGridFunction!");
-  A->SetFromTrueDofs(a);
-  A->ExchangeFaceNbrData();
+  A->Real().SetFromTrueDofs(a);
+  A->Real().ExchangeFaceNbrData();
 }
 
 void PostOperator::UpdatePorts(const LumpedPortOperator &lumped_port_op, double omega)
@@ -342,20 +332,18 @@ void PostOperator::UpdatePorts(const LumpedPortOperator &lumped_port_op, double 
   for (const auto &[idx, data] : lumped_port_op)
   {
     auto &vi = lumped_port_vi[idx];
-    if (has_imaginary)
+    vi.P = data.GetPower(*E, *B);
+    vi.V = data.GetVoltage(*E);
+    if (HasImag())
     {
       MFEM_VERIFY(
           omega > 0.0,
           "Frequency domain lumped port postprocessing requires nonzero frequency!");
       vi.S = data.GetSParameter(*E);
-      vi.P = data.GetPower(*E, *B);
-      vi.V = data.GetVoltage(*E);
       vi.Z = data.GetCharacteristicImpedance(omega);
     }
     else
     {
-      vi.P = data.GetPower(E->real(), B->real());
-      vi.V = data.GetVoltage(E->real());
       vi.S = vi.Z = 0.0;
     }
   }
@@ -364,7 +352,7 @@ void PostOperator::UpdatePorts(const LumpedPortOperator &lumped_port_op, double 
 
 void PostOperator::UpdatePorts(const WavePortOperator &wave_port_op, double omega)
 {
-  MFEM_VERIFY(has_imaginary && E && B, "Incorrect usage of PostOperator::UpdatePorts!");
+  MFEM_VERIFY(HasImag() && E && B, "Incorrect usage of PostOperator::UpdatePorts!");
   if (wave_port_init)
   {
     return;
@@ -374,8 +362,8 @@ void PostOperator::UpdatePorts(const WavePortOperator &wave_port_op, double omeg
     MFEM_VERIFY(omega > 0.0,
                 "Frequency domain wave port postprocessing requires nonzero frequency!");
     auto &vi = wave_port_vi[idx];
-    vi.S = data.GetSParameter(*E);
     vi.P = data.GetPower(*E, *B);
+    vi.S = data.GetSParameter(*E);
     vi.V = vi.Z = 0.0;  // Not yet implemented (Z = V² / P, I = V / Z)
   }
   wave_port_init = true;
@@ -388,8 +376,7 @@ double PostOperator::GetEFieldEnergy() const
   // voltages/currents which are 2x the time-averaged values. This correctly yields an EPR
   // of 1 in cases where expected.
   MFEM_VERIFY(E, "PostOperator is not configured for electric field energy calculation!");
-  return has_imaginary ? dom_post_op.GetElectricFieldEnergy(*E)
-                       : dom_post_op.GetElectricFieldEnergy(E->real());
+  return dom_post_op.GetElectricFieldEnergy(*E);
 }
 
 double PostOperator::GetHFieldEnergy() const
@@ -399,22 +386,19 @@ double PostOperator::GetHFieldEnergy() const
   // voltages/currents which are 2x the time-averaged values. This correctly yields an EPR
   // of 1 in cases where expected.
   MFEM_VERIFY(B, "PostOperator is not configured for magnetic field energy calculation!");
-  return has_imaginary ? dom_post_op.GetMagneticFieldEnergy(*B)
-                       : dom_post_op.GetMagneticFieldEnergy(B->real());
+  return dom_post_op.GetMagneticFieldEnergy(*B);
 }
 
 double PostOperator::GetEFieldEnergy(int idx) const
 {
   MFEM_VERIFY(E, "PostOperator is not configured for electric field energy calculation!");
-  return has_imaginary ? dom_post_op.GetDomainElectricFieldEnergy(idx, *E)
-                       : dom_post_op.GetDomainElectricFieldEnergy(idx, E->real());
+  return dom_post_op.GetDomainElectricFieldEnergy(idx, *E);
 }
 
 double PostOperator::GetHFieldEnergy(int idx) const
 {
   MFEM_VERIFY(B, "PostOperator is not configured for magnetic field energy calculation!");
-  return has_imaginary ? dom_post_op.GetDomainMagneticFieldEnergy(idx, *B)
-                       : dom_post_op.GetDomainMagneticFieldEnergy(idx, B->real());
+  return dom_post_op.GetDomainMagneticFieldEnergy(idx, *B);
 }
 
 double PostOperator::GetLumpedInductorEnergy(const LumpedPortOperator &lumped_port_op) const
@@ -594,9 +578,7 @@ double PostOperator::GetInterfaceParticipation(int idx, double Em) const
   // with:
   //          p_mj = 1/2 t_j Re{∫_{Γ_j} (ε_j E_m)ᴴ E_m dS} /(E_elec + E_cap).
   MFEM_VERIFY(E, "Surface Q not defined, no electric field solution found!");
-  double Esurf = has_imaginary
-                     ? surf_post_op.GetInterfaceElectricFieldEnergy(idx, *E)
-                     : surf_post_op.GetInterfaceElectricFieldEnergy(idx, E->real());
+  double Esurf = surf_post_op.GetInterfaceElectricFieldEnergy(idx, *E);
   return Esurf / Em;
 }
 
@@ -607,8 +589,7 @@ double PostOperator::GetSurfaceCharge(int idx) const
   // for both sides of the surface. This then yields the capacitive coupling to the
   // excitation as C_jk = Q_j / V_k where V_k is the excitation voltage.
   MFEM_VERIFY(E, "Surface capacitance not defined, no electric field solution found!");
-  double Q = has_imaginary ? surf_post_op.GetSurfaceElectricCharge(idx, *E)
-                           : surf_post_op.GetSurfaceElectricCharge(idx, E->real());
+  double Q = surf_post_op.GetSurfaceElectricCharge(idx, *E);
   return Q;
 }
 
@@ -620,8 +601,7 @@ double PostOperator::GetSurfaceFlux(int idx) const
   // which are discontinuous at interior boundary elements.
   MFEM_VERIFY(B,
               "Surface inductance not defined, no magnetic flux density solution found!");
-  double Phi = has_imaginary ? surf_post_op.GetSurfaceMagneticFlux(idx, *B)
-                             : surf_post_op.GetSurfaceMagneticFlux(idx, B->real());
+  double Phi = surf_post_op.GetSurfaceMagneticFlux(idx, *B);
   return Phi;
 }
 
@@ -631,7 +611,7 @@ void PostOperator::WriteFields(int step, double time, const ErrorIndicator *indi
   // visualization. Write the mesh coordinates in the same units as originally input.
   bool first_save = (paraview.GetCycle() < 0);
   mfem::ParMesh &mesh =
-      (E) ? *E->ParFESpace()->GetParMesh() : *B->ParFESpace()->GetParMesh();
+      HasE() ? *E->ParFESpace()->GetParMesh() : *B->ParFESpace()->GetParMesh();
   auto ScaleGridFunctions = [&mesh, this](double L)
   {
     // For fields on H(curl) and H(div) spaces, we "undo" the effect of redimensionalizing
@@ -645,31 +625,31 @@ void PostOperator::WriteFields(int step, double time, const ErrorIndicator *indi
     if (E)
     {
       // Piola transform: J^-T
-      E->real() *= L;
-      E->real().FaceNbrData() *= L;
-      if (has_imaginary)
+      E->Real() *= L;
+      E->Real().FaceNbrData() *= L;
+      if (HasImag())
       {
-        E->imag() *= L;
-        E->imag().FaceNbrData() *= L;
+        E->Imag() *= L;
+        E->Imag().FaceNbrData() *= L;
       }
     }
     if (B)
     {
       // Piola transform: J / |J|
       const auto Ld = std::pow(L, mesh.Dimension() - 1);
-      B->real() *= Ld;
-      B->real().FaceNbrData() *= Ld;
-      if (has_imaginary)
+      B->Real() *= Ld;
+      B->Real().FaceNbrData() *= Ld;
+      if (HasImag())
       {
-        B->imag() *= Ld;
-        B->imag().FaceNbrData() *= Ld;
+        B->Imag() *= Ld;
+        B->Imag().FaceNbrData() *= Ld;
       }
     }
     if (A)
     {
       // Piola transform: J^-T
-      *A *= L;
-      A->FaceNbrData() *= L;
+      A->Real() *= L;
+      A->Real().FaceNbrData() *= L;
     }
   };
   mesh::DimensionalizeMesh(mesh, mesh_Lc0);
@@ -724,13 +704,13 @@ void PostOperator::WriteFields(int step, double time, const ErrorIndicator *indi
 std::vector<std::complex<double>> PostOperator::ProbeEField() const
 {
   MFEM_VERIFY(E, "PostOperator is not configured for electric field probes!");
-  return interp_op.ProbeField(*E, has_imaginary);
+  return interp_op.ProbeField(*E);
 }
 
 std::vector<std::complex<double>> PostOperator::ProbeBField() const
 {
   MFEM_VERIFY(B, "PostOperator is not configured for magnetic flux density probes!");
-  return interp_op.ProbeField(*B, has_imaginary);
+  return interp_op.ProbeField(*B);
 }
 
 }  // namespace palace

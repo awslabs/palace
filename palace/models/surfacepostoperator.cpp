@@ -4,6 +4,7 @@
 #include "surfacepostoperator.hpp"
 
 #include <complex>
+#include "fem/gridfunction.hpp"
 #include "fem/integrator.hpp"
 #include "linalg/vector.hpp"
 #include "models/materialoperator.hpp"
@@ -171,76 +172,47 @@ double SurfacePostOperator::GetInterfaceLossTangent(int idx) const
   return it->second.tandelta;
 }
 
-double SurfacePostOperator::GetInterfaceElectricFieldEnergy(
-    int idx, const mfem::ParComplexGridFunction &E) const
+double SurfacePostOperator::GetInterfaceElectricFieldEnergy(int idx,
+                                                            const GridFunction &E) const
 {
   auto it = eps_surfs.find(idx);
   MFEM_VERIFY(it != eps_surfs.end(),
               "Unknown dielectric loss postprocessing surface index requested!");
-  double dot = GetLocalSurfaceIntegral(it->second, E.real()) +
-               GetLocalSurfaceIntegral(it->second, E.imag());
-  Mpi::GlobalSum(1, &dot, E.ParFESpace()->GetComm());
+  double dot = GetLocalSurfaceIntegral(it->second, E.Real());
+  if (E.HasImag())
+  {
+    dot += GetLocalSurfaceIntegral(it->second, E.Imag());
+  }
+  Mpi::GlobalSum(1, &dot, E.GetComm());
   return dot;
 }
 
-double
-SurfacePostOperator::GetInterfaceElectricFieldEnergy(int idx,
-                                                     const mfem::ParGridFunction &E) const
-{
-  auto it = eps_surfs.find(idx);
-  MFEM_VERIFY(it != eps_surfs.end(),
-              "Unknown dielectric loss postprocessing surface index requested!");
-  double dot = GetLocalSurfaceIntegral(it->second, E);
-  Mpi::GlobalSum(1, &dot, E.ParFESpace()->GetComm());
-  return dot;
-}
-
-double
-SurfacePostOperator::GetSurfaceElectricCharge(int idx,
-                                              const mfem::ParComplexGridFunction &E) const
+double SurfacePostOperator::GetSurfaceElectricCharge(int idx, const GridFunction &E) const
 {
   auto it = charge_surfs.find(idx);
   MFEM_VERIFY(it != charge_surfs.end(),
               "Unknown capacitance postprocessing surface index requested!");
-  std::complex<double> dot(GetLocalSurfaceIntegral(it->second, E.real()),
-                           GetLocalSurfaceIntegral(it->second, E.imag()));
-  Mpi::GlobalSum(1, &dot, E.ParFESpace()->GetComm());
+  std::complex<double> dot(GetLocalSurfaceIntegral(it->second, E.Real()), 0.0);
+  if (E.HasImag())
+  {
+    dot.imag(GetLocalSurfaceIntegral(it->second, E.Imag()));
+  }
+  Mpi::GlobalSum(1, &dot, E.GetComm());
   return std::copysign(std::abs(dot), dot.real());
 }
 
-double SurfacePostOperator::GetSurfaceElectricCharge(int idx,
-                                                     const mfem::ParGridFunction &E) const
-{
-  auto it = charge_surfs.find(idx);
-  MFEM_VERIFY(it != charge_surfs.end(),
-              "Unknown capacitance postprocessing surface index requested!");
-  double dot = GetLocalSurfaceIntegral(it->second, E);
-  Mpi::GlobalSum(1, &dot, E.ParFESpace()->GetComm());
-  return dot;
-}
-
-double
-SurfacePostOperator::GetSurfaceMagneticFlux(int idx,
-                                            const mfem::ParComplexGridFunction &B) const
+double SurfacePostOperator::GetSurfaceMagneticFlux(int idx, const GridFunction &B) const
 {
   auto it = flux_surfs.find(idx);
   MFEM_VERIFY(it != flux_surfs.end(),
               "Unknown inductance postprocessing surface index requested!");
-  std::complex<double> dot(GetLocalSurfaceIntegral(it->second, B.real()),
-                           GetLocalSurfaceIntegral(it->second, B.imag()));
-  Mpi::GlobalSum(1, &dot, B.ParFESpace()->GetComm());
+  std::complex<double> dot(GetLocalSurfaceIntegral(it->second, B.Real()), 0.0);
+  if (B.HasImag())
+  {
+    dot.imag(GetLocalSurfaceIntegral(it->second, B.Imag()));
+  }
+  Mpi::GlobalSum(1, &dot, B.GetComm());
   return std::copysign(std::abs(dot), dot.real());
-}
-
-double SurfacePostOperator::GetSurfaceMagneticFlux(int idx,
-                                                   const mfem::ParGridFunction &B) const
-{
-  auto it = flux_surfs.find(idx);
-  MFEM_VERIFY(it != flux_surfs.end(),
-              "Unknown inductance postprocessing surface index requested!");
-  double dot = GetLocalSurfaceIntegral(it->second, B);
-  Mpi::GlobalSum(1, &dot, B.ParFESpace()->GetComm());
-  return dot;
 }
 
 double SurfacePostOperator::GetLocalSurfaceIntegral(const SurfaceData &data,

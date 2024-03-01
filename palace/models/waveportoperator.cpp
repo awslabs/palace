@@ -26,9 +26,6 @@ namespace palace
 
 using namespace std::complex_literals;
 
-// XX TODO: All these tiny solves should happen only on the CPU (if we can configure Hypre
-//          device at runtime).
-
 namespace
 {
 
@@ -284,9 +281,8 @@ ComplexHypreParMatrix GetSystemMatrixB(mfem::HypreParMatrix *Bttr,
   return {std::move(Br), std::move(Bi)};
 }
 
-void Normalize(const mfem::ParGridFunction &S0t, mfem::ParComplexGridFunction &E0t,
-               mfem::ParComplexGridFunction &E0n, mfem::LinearForm &sr,
-               mfem::LinearForm &si)
+void Normalize(const GridFunction &S0t, GridFunction &E0t, GridFunction &E0n,
+               mfem::LinearForm &sr, mfem::LinearForm &si)
 {
   // Normalize grid functions to a chosen polarization direction and unit power, |E x H⋆| ⋅
   // n, integrated over the port surface (+n is the direction of propagation). The n x H
@@ -297,20 +293,20 @@ void Normalize(const mfem::ParGridFunction &S0t, mfem::ParComplexGridFunction &E
   // |E x H⋆| ⋅ n = |E ⋅ (-n x H⋆)|. This also updates the n x H coefficients depending on
   // Et, En. Update linear forms for postprocessing too.
   std::complex<double> dot[2] = {
-      {sr * S0t, si * S0t},
-      {-(sr * E0t.real()) - (si * E0t.imag()), -(sr * E0t.imag()) + (si * E0t.real())}};
+      {sr * S0t.Real(), si * S0t.Real()},
+      {-(sr * E0t.Real()) - (si * E0t.Imag()), -(sr * E0t.Imag()) + (si * E0t.Real())}};
   Mpi::GlobalSum(2, dot, S0t.ParFESpace()->GetComm());
   auto scale = std::abs(dot[0]) / (dot[0] * std::sqrt(std::abs(dot[1])));
-  ComplexVector::AXPBY(scale, E0t.real(), E0t.imag(), 0.0, E0t.real(), E0t.imag());
-  ComplexVector::AXPBY(scale, E0n.real(), E0n.imag(), 0.0, E0n.real(), E0n.imag());
+  ComplexVector::AXPBY(scale, E0t.Real(), E0t.Imag(), 0.0, E0t.Real(), E0t.Imag());
+  ComplexVector::AXPBY(scale, E0n.Real(), E0n.Imag(), 0.0, E0n.Real(), E0n.Imag());
   ComplexVector::AXPBY(scale, sr, si, 0.0, sr, si);
 
   // This parallel communication is not required since wave port boundaries are true one-
   // sided boundaries.
-  // E0t.real().ExchangeFaceNbrData();  // Ready for parallel comm on shared faces for n x H
-  // E0t.imag().ExchangeFaceNbrData();  // coefficients evaluation
-  // E0n.real().ExchangeFaceNbrData();
-  // E0n.imag().ExchangeFaceNbrData();
+  // E0t.Real().ExchangeFaceNbrData();  // Ready for parallel comm on shared faces for n x H
+  // E0t.Imag().ExchangeFaceNbrData();  // coefficients evaluation
+  // E0n.Real().ExchangeFaceNbrData();
+  // E0n.Imag().ExchangeFaceNbrData();
 }
 
 // Helper for BdrSubmeshEVectorCoefficient and BdrSubmeshHVectorCoefficient.
@@ -325,17 +321,16 @@ template <ValueType Type>
 class BdrSubmeshEVectorCoefficient : public mfem::VectorCoefficient
 {
 private:
-  const mfem::ParComplexGridFunction &Et, &En;
+  const GridFunction &Et, &En;
   const mfem::ParSubMesh &submesh;
   const std::unordered_map<int, int> &submesh_parent_elems;
   mfem::IsoparametricTransformation T_loc;
 
 public:
-  BdrSubmeshEVectorCoefficient(const mfem::ParComplexGridFunction &Et,
-                               const mfem::ParComplexGridFunction &En,
+  BdrSubmeshEVectorCoefficient(const GridFunction &Et, const GridFunction &En,
                                const mfem::ParSubMesh &submesh,
                                const std::unordered_map<int, int> &submesh_parent_elems)
-    : mfem::VectorCoefficient(Et.real().VectorDim()), Et(Et), En(En), submesh(submesh),
+    : mfem::VectorCoefficient(Et.Real().VectorDim()), Et(Et), En(En), submesh(submesh),
       submesh_parent_elems(submesh_parent_elems)
   {
   }
@@ -383,14 +378,14 @@ public:
     BdrGridFunctionCoefficient::GetNormal(*T_submesh, nor);
     if constexpr (Type == ValueType::REAL)
     {
-      Et.real().GetVectorValue(*T_submesh, ip, V);
-      auto Vn = En.real().GetValue(*T_submesh, ip);
+      Et.Real().GetVectorValue(*T_submesh, ip, V);
+      auto Vn = En.Real().GetValue(*T_submesh, ip);
       V.Add(-Vn, nor);
     }
     else
     {
-      Et.imag().GetVectorValue(*T_submesh, ip, V);
-      auto Vn = En.imag().GetValue(*T_submesh, ip);
+      Et.Imag().GetVectorValue(*T_submesh, ip, V);
+      auto Vn = En.Imag().GetValue(*T_submesh, ip);
       V.Add(-Vn, nor);
     }
   }
@@ -403,7 +398,7 @@ template <ValueType Type>
 class BdrSubmeshHVectorCoefficient : public mfem::VectorCoefficient
 {
 private:
-  const mfem::ParComplexGridFunction &Et, &En;
+  const GridFunction &Et, &En;
   const MaterialOperator &mat_op;
   const mfem::ParSubMesh &submesh;
   const std::unordered_map<int, int> &submesh_parent_elems;
@@ -412,13 +407,12 @@ private:
   double omega;
 
 public:
-  BdrSubmeshHVectorCoefficient(const mfem::ParComplexGridFunction &Et,
-                               const mfem::ParComplexGridFunction &En,
+  BdrSubmeshHVectorCoefficient(const GridFunction &Et, const GridFunction &En,
                                const MaterialOperator &mat_op,
                                const mfem::ParSubMesh &submesh,
                                const std::unordered_map<int, int> &submesh_parent_elems,
                                std::complex<double> kn, double omega)
-    : mfem::VectorCoefficient(Et.real().VectorDim()), Et(Et), En(En), mat_op(mat_op),
+    : mfem::VectorCoefficient(Et.Real().VectorDim()), Et(Et), En(En), mat_op(mat_op),
       submesh(submesh), submesh_parent_elems(submesh_parent_elems), kn(kn), omega(omega)
   {
   }
@@ -492,20 +486,20 @@ public:
     mfem::Vector U;
     if constexpr (Type == ValueType::REAL)
     {
-      Et.real().GetVectorValue(*T_submesh, ip, U);
+      Et.Real().GetVectorValue(*T_submesh, ip, U);
       U *= -kn.real();
 
       mfem::Vector dU;
-      En.imag().GetGradient(*T_submesh, dU);
+      En.Imag().GetGradient(*T_submesh, dU);
       U -= dU;
     }
     else
     {
-      Et.imag().GetVectorValue(*T_submesh, ip, U);
+      Et.Imag().GetVectorValue(*T_submesh, ip, U);
       U *= -kn.real();
 
       mfem::Vector dU;
-      En.real().GetGradient(*T_submesh, dU);
+      En.Real().GetGradient(*T_submesh, dU);
       U += dU;
     }
 
@@ -547,15 +541,15 @@ WavePortData::WavePortData(const config::WavePortData &data,
   port_nd_fespace = std::make_unique<FiniteElementSpace>(*port_mesh, port_nd_fec.get());
   port_h1_fespace = std::make_unique<FiniteElementSpace>(*port_mesh, port_h1_fec.get());
 
-  mfem::ParGridFunction E0t(&nd_fespace);
-  mfem::ParGridFunction E0n(&h1_fespace);
-  port_E0t = std::make_unique<mfem::ParComplexGridFunction>(&port_nd_fespace->Get());
-  port_E0n = std::make_unique<mfem::ParComplexGridFunction>(&port_h1_fespace->Get());
+  GridFunction E0t(nd_fespace), E0n(h1_fespace);
+  port_E0t = std::make_unique<GridFunction>(*port_nd_fespace, true);
+  port_E0n = std::make_unique<GridFunction>(*port_h1_fespace, true);
+  port_E = std::make_unique<GridFunction>(*port_nd_fespace, true);
 
   port_nd_transfer = std::make_unique<mfem::ParTransferMap>(
-      mfem::ParSubMesh::CreateTransferMap(E0t, port_E0t->real()));
+      mfem::ParSubMesh::CreateTransferMap(E0t.Real(), port_E0t->Real()));
   port_h1_transfer = std::make_unique<mfem::ParTransferMap>(
-      mfem::ParSubMesh::CreateTransferMap(E0n, port_E0n->real()));
+      mfem::ParSubMesh::CreateTransferMap(E0n.Real(), port_E0n->Real()));
 
   // Construct mapping from parent (boundary) element indices to submesh (domain)
   // elements.
@@ -571,9 +565,9 @@ WavePortData::WavePortData(const config::WavePortData &data,
   // Extract Dirichlet BC true dofs for the port FE spaces.
   {
     mfem::Array<int> port_nd_dbc_tdof_list, port_h1_dbc_tdof_list;
-    GetEssentialTrueDofs(E0t, E0n, port_E0t->real(), port_E0n->real(), *port_nd_transfer,
-                         *port_h1_transfer, dbc_attr, port_nd_dbc_tdof_list,
-                         port_h1_dbc_tdof_list);
+    GetEssentialTrueDofs(E0t.Real(), E0n.Real(), port_E0t->Real(), port_E0n->Real(),
+                         *port_nd_transfer, *port_h1_transfer, dbc_attr,
+                         port_nd_dbc_tdof_list, port_h1_dbc_tdof_list);
     int nd_tdof_offset = port_nd_fespace->GetTrueVSize();
     port_dbc_tdof_list.Reserve(port_nd_dbc_tdof_list.Size() + port_h1_dbc_tdof_list.Size());
     for (auto tdof : port_nd_dbc_tdof_list)
@@ -623,7 +617,7 @@ WavePortData::WavePortData(const config::WavePortData &data,
         port_h1_fespace->Get().GetTrueDofOffsets(), &diag);
     auto [Bttr, Btti] = GetBtt(mat_op, *port_nd_fespace);
     auto [Br, Bi] = GetSystemMatrixB(Bttr.get(), Btti.get(), Dnn.get(), port_dbc_tdof_list);
-    B = std::make_unique<ComplexWrapperOperator>(std::move(Br), std::move(Bi));
+    B0 = std::make_unique<ComplexWrapperOperator>(std::move(Br), std::move(Bi));
   }
 
   // Configure a communicator for the processes which have elements for this port.
@@ -822,8 +816,8 @@ WavePortData::WavePortData(const config::WavePortData &data,
       }
     };
     mfem::VectorFunctionCoefficient tfunc(dim, TDirection);
-    port_S0t = std::make_unique<mfem::ParGridFunction>(&port_nd_fespace->Get());
-    port_S0t->ProjectCoefficient(tfunc);
+    port_S0t = std::make_unique<GridFunction>(*port_nd_fespace);
+    port_S0t->Real().ProjectCoefficient(tfunc);
   }
 }
 
@@ -866,7 +860,7 @@ void WavePortData::Initialize(double omega)
   {
     ComplexWrapperOperator P(A->Real(), nullptr);  // Non-owning constructor
     ksp->SetOperators(*A, P);
-    eigen->SetOperators(*B, *A, EigenvalueSolver::ScaleType::NONE);
+    eigen->SetOperators(*B0, *A, EigenvalueSolver::ScaleType::NONE);
     eigen->SetInitialSpace(v0);
     int num_conv = eigen->Solve();
     MFEM_VERIFY(num_conv >= mode_idx, "Wave port eigensolver did not converge!");
@@ -907,10 +901,10 @@ void WavePortData::Initialize(double omega)
     e0ti.UseDevice(true);
     e0ni.UseDevice(true);
     ComplexVector::AXPBY(1.0 / (1i * kn0), e0nr, e0ni, 0.0, e0nr, e0ni);
-    port_E0t->real().SetFromTrueDofs(e0tr);  // Parallel distribute
-    port_E0t->imag().SetFromTrueDofs(e0ti);
-    port_E0n->real().SetFromTrueDofs(e0nr);
-    port_E0n->imag().SetFromTrueDofs(e0ni);
+    port_E0t->Real().SetFromTrueDofs(e0tr);  // Parallel distribute
+    port_E0t->Imag().SetFromTrueDofs(e0ti);
+    port_E0n->Real().SetFromTrueDofs(e0nr);
+    port_E0n->Imag().SetFromTrueDofs(e0ni);
   }
 
   // Configure the linear forms for computing S-parameters (projection of the field onto the
@@ -981,30 +975,19 @@ double WavePortData::GetExcitationPower() const
   return excitation ? 1.0 : 0.0;
 }
 
-std::complex<double> WavePortData::GetSParameter(mfem::ParComplexGridFunction &E) const
-{
-  // Compute port S-parameter, or the projection of the field onto the port mode:
-  // (E x H_inc⋆) ⋅ n = E ⋅ (-n x H_inc⋆), integrated over the port surface.
-  mfem::ParComplexGridFunction port_E(&port_nd_fespace->Get());
-  port_nd_transfer->Transfer(E.real(), port_E.real());
-  port_nd_transfer->Transfer(E.imag(), port_E.imag());
-  std::complex<double> dot(-((*port_sr) * port_E.real()) - ((*port_si) * port_E.imag()),
-                           -((*port_sr) * port_E.imag()) + ((*port_si) * port_E.real()));
-  Mpi::GlobalSum(1, &dot, port_nd_fespace->GetComm());
-  return dot;
-}
-
-std::complex<double> WavePortData::GetPower(mfem::ParComplexGridFunction &E,
-                                            mfem::ParComplexGridFunction &B) const
+std::complex<double> WavePortData::GetPower(GridFunction &E, GridFunction &B) const
 {
   // Compute port power, (E x H) ⋅ n = E ⋅ (-n x H), integrated over the port surface
   // using the computed E and H = μ⁻¹ B fields. The linear form is reconstructed from
   // scratch each time due to changing H. The BdrCurrentVectorCoefficient computes -n x H,
   // where n is an outward normal.
+  MFEM_VERIFY(E.HasImag() && B.HasImag(),
+              "Wave ports expect complex-valued E and B fields in port power "
+              "calculation!");
   auto &nd_fespace = *E.ParFESpace();
   const auto &mesh = *nd_fespace.GetParMesh();
-  BdrCurrentVectorCoefficient nxHr_func(B.real(), mat_op);
-  BdrCurrentVectorCoefficient nxHi_func(B.imag(), mat_op);
+  BdrCurrentVectorCoefficient nxHr_func(B.Real(), mat_op);
+  BdrCurrentVectorCoefficient nxHi_func(B.Imag(), mat_op);
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, attr_list);
   mfem::LinearForm pr(&nd_fespace), pi(&nd_fespace);
@@ -1018,9 +1001,24 @@ std::complex<double> WavePortData::GetPower(mfem::ParComplexGridFunction &E,
   pi.Assemble();
   pr.UseDevice(true);
   pi.UseDevice(true);
-  std::complex<double> dot(-(pr * E.real()) - (pi * E.imag()),
-                           -(pr * E.imag()) + (pi * E.real()));
+  std::complex<double> dot(-(pr * E.Real()) - (pi * E.Imag()),
+                           -(pr * E.Imag()) + (pi * E.Real()));
   Mpi::GlobalSum(1, &dot, nd_fespace.GetComm());
+  return dot;
+}
+
+std::complex<double> WavePortData::GetSParameter(GridFunction &E) const
+{
+  // Compute port S-parameter, or the projection of the field onto the port mode:
+  // (E x H_inc⋆) ⋅ n = E ⋅ (-n x H_inc⋆), integrated over the port surface.
+  MFEM_VERIFY(E.HasImag(),
+              "Wave ports expect complex-valued E and B fields in port S-parameter "
+              "calculation!");
+  port_nd_transfer->Transfer(E.Real(), port_E->Real());
+  port_nd_transfer->Transfer(E.Imag(), port_E->Imag());
+  std::complex<double> dot(-((*port_sr) * port_E->Real()) - ((*port_si) * port_E->Imag()),
+                           -((*port_sr) * port_E->Imag()) + ((*port_si) * port_E->Real()));
+  Mpi::GlobalSum(1, &dot, port_nd_fespace->GetComm());
   return dot;
 }
 
