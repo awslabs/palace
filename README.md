@@ -39,6 +39,9 @@ the frequency or time domain, using the
     [high-order operator partial assembly](https://mfem.org/performance/), parallel sparse
     direct solvers, and algebraic multigrid (AMG) preconditioners, for fast performance on
     platforms ranging from laptops to HPC systems.
+  - Support for hardware acceleration using NVIDIA or AMD GPUs, including multi-GPU
+    parallelism, using pure CUDA and HIP code as well as [MAGMA](https://icl.utk.edu/magma/)
+    and other libraries.
 
 ## Getting started
 
@@ -62,6 +65,7 @@ System requirements:
   - C and Fortran (optional) compilers for dependency builds
   - MPI distribution
   - BLAS, LAPACK libraries
+  - CUDA Toolkit or ROCm installation (optional, for GPU support only)
 
 ## Documentation
 

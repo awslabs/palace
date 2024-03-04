@@ -56,6 +56,9 @@ A build from source requires the following prerequisites installed on your syste
   - C and Fortran (optional) compilers for dependency builds
   - MPI distribution
   - BLAS, LAPACK libraries (described below in [Math libraries](#Math-libraries))
+  - [CUDA Toolkit](https://developer.nvidia.com/cuda-toolkit) or
+    [ROCm](https://rocm.docs.amd.com/en/latest/) installation (optional, for GPU support
+    only)
 
 In addition, builds from source require the following system packages which are typically
 already installed and are available from most package managers (`apt`, `dnf`, `brew`, etc.):
@@ -101,6 +104,9 @@ The *Palace* build respects standard CMake variables, including:
     desired compilers.
   - `CMAKE_CXX_FLAGS`, `CMAKE_C_FLAGS`, and `CMAKE_Fortran_FLAGS` which define the
     corresponding compiler flags.
+  - `CMAKE_CUDA_COMPILER`, `CMAKE_CUDA_FLAGS`, `CMAKE_CUDA_ARCHITECTURES`, and the
+    corresponding `CMAKE_HIP_COMPILER`, `CMAKE_HIP_FLAGS`, and `CMAKE_HIP_ARCHITECTURES` for
+    GPU-accelerated builds with CUDA or HIP.
   - `CMAKE_INSTALL_PREFIX` which specifies the path for installation (if none is provided,
     defaults to `<BUILD_DIR>`).
   - `CMAKE_BUILD_TYPE` which defines the build type such as `Release`, `Debug`,
@@ -116,6 +122,9 @@ Additional build options are (with default values in brackets):
 
   - `PALACE_WITH_64BIT_INT [OFF]` :  Build with 64-bit integer support
   - `PALACE_WITH_OPENMP [OFF]` :  Use OpenMP for shared-memory parallelism
+  - `PALACE_WITH_CUDA [OFF]` :  Use CUDA for NVIDIA GPU support
+  - `PALACE_WITH_HIP [OFF]` :  Use HIP for AMD or NVIDIA GPU support
+  - `PALACE_WITH_GPU_AWARE_MPI [OFF]` :  Option to set if MPI distribution is GPU aware
   - `PALACE_WITH_SUPERLU [ON]` :  Build with SuperLU_DIST sparse direct solver
   - `PALACE_WITH_STRUMPACK [OFF]` :  Build with STRUMPACK sparse direct solver
   - `PALACE_WITH_MUMPS [OFF]` :  Build with MUMPS sparse direct solver

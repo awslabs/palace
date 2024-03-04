@@ -74,6 +74,7 @@
   "Solver":
   {
     "Order": 3,
+    "Device": "CPU",
     "Electrostatic":
     {
       "Save": 2

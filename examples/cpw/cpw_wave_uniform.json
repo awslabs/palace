@@ -128,6 +128,7 @@
   "Solver":
   {
     "Order": 2,
+    "Device": "CPU",
     "Driven":
     {
       "MinFreq": 2.0,  // GHz

@@ -49,6 +49,7 @@
   "Solver":
   {
     "Order": 4,
+    "Device": "CPU",
     "Eigenmode":
     {
       "N": 15,

@@ -78,6 +78,7 @@
   "Solver":
   {
     "Order": 2,
+    "Device": "CPU",
     "Magnetostatic":
     {
       "Save": 2
