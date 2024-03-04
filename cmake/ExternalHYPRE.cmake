@@ -141,7 +141,7 @@ if(PALACE_WITH_CUDA)
     "--with-cuda-home=${CUDA_DIR}"
     "--enable-curand"
     "--enable-cusparse"
-    "--enable-device-memory-pool"
+    # "--enable-device-memory-pool"
   )
   if(NOT "${CMAKE_CUDA_ARCHITECTURES}" STREQUAL "")
     list(GET CMAKE_CUDA_ARCHITECTURES 0 HYPRE_CUDA_ARCH)

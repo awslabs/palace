@@ -18,12 +18,14 @@ namespace palace::workspace
 class ComplexWorkspaceVector : public ComplexVector
 {
 private:
-  mfem::WorkspaceVector data;
+  mfem::WorkspaceVector data_xr, data_xi;
 
 public:
-  ComplexWorkspaceVector(int size) : data(mfem::Workspace::NewVector(2 * size))
+  ComplexWorkspaceVector(int size)
+    : data_xr(mfem::Workspace::NewVector(size)), data_xi(mfem::Workspace::NewVector(size))
   {
-    MakeRef(data, 0, size);
+    xr.MakeRef(data_xr, 0, size);
+    xi.MakeRef(data_xi, 0, size);
   }
 
   // No copy constructor.

@@ -21,7 +21,7 @@ using Vector = mfem::Vector;
 // A complex-valued vector represented as two real vectors, one for each component.
 class ComplexVector
 {
-private:
+protected:
   Vector xr, xi;
 
 public:
@@ -37,10 +37,6 @@ public:
   // Copy constructor from an array of complex values.
   ComplexVector(const std::complex<double> *py, int size, bool on_dev);
 
-  // Create a vector referencing the memory of another vector, at the given base offset and
-  // size.
-  ComplexVector(Vector &y, int offset, int size);
-
   // Flag for runtime execution on the mfem::Device. See the documentation for mfem::Vector.
   void UseDevice(bool use_dev);
   bool UseDevice() const { return xr.UseDevice(); }
@@ -51,10 +47,6 @@ public:
   // Set the size of the vector. See the notes for Vector::SetSize for behavior in the cases
   // where the new size is less than or greater than Size() or Capacity().
   void SetSize(int size);
-
-  // Set this vector to reference the memory of another vector, at the given base offset and
-  // size.
-  void MakeRef(Vector &y, int offset, int size);
 
   // Get access to the real and imaginary vector parts.
   const Vector &Real() const { return xr; }

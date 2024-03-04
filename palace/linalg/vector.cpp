@@ -35,11 +35,6 @@ ComplexVector::ComplexVector(const std::complex<double> *py, int size, bool on_d
   Set(py, size, on_dev);
 }
 
-ComplexVector::ComplexVector(Vector &y, int offset, int size)
-{
-  MakeRef(y, offset, size);
-}
-
 void ComplexVector::UseDevice(bool use_dev)
 {
   xr.UseDevice(use_dev);
@@ -48,17 +43,13 @@ void ComplexVector::UseDevice(bool use_dev)
 
 void ComplexVector::SetSize(int size)
 {
-  xr.SetSize(size);
-  xi.SetSize(size);
-}
-
-void ComplexVector::MakeRef(Vector &y, int offset, int size)
-{
-  MFEM_ASSERT(y.Size() >= offset + 2 * size,
-              "Insufficient storage for ComplexVector alias reference of the given size!");
-  y.ReadWrite();  // Ensure memory is allocated on device before aliasing
-  xr.MakeRef(y, offset, size);
-  xi.MakeRef(y, offset + size, size);
+  if (size != Size())
+  {
+    MFEM_VERIFY(Size() == 0 || (xr.OwnsData() && xi.OwnsData()),
+                "Alias vectors should not be resized!");
+    xr.SetSize(size);
+    xi.SetSize(size);
+  }
 }
 
 void ComplexVector::Set(const ComplexVector &y)

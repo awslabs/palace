@@ -364,6 +364,7 @@ set(MFEM_PATCH_FILES
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_par_tet_mesh_fix.diff"
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_mesh_prism_vtu_fix.diff"
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_workspace_vectors.diff"
+  "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_workspace_vectors_2.diff"
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_hypre_runtime_compute_policy.diff"
 )
 
