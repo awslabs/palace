@@ -4,6 +4,7 @@
 #include "lumpedportoperator.hpp"
 
 #include "fem/coefficient.hpp"
+#include "fem/gridfunction.hpp"
 #include "fem/integrator.hpp"
 #include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
@@ -215,101 +216,85 @@ void LumpedPortData::InitializeLinearForms(mfem::ParFiniteElementSpace &nd_fespa
   }
 }
 
-std::complex<double> LumpedPortData::GetSParameter(mfem::ParComplexGridFunction &E) const
-{
-  // Compute port S-parameter, or the projection of the field onto the port mode.
-  InitializeLinearForms(*E.ParFESpace());
-  std::complex<double> dot((*s) * E.real(), (*s) * E.imag());
-  Mpi::GlobalSum(1, &dot, E.ParFESpace()->GetComm());
-  return dot;
-}
-
-double LumpedPortData::GetPower(mfem::ParGridFunction &E, mfem::ParGridFunction &B) const
+std::complex<double> LumpedPortData::GetPower(GridFunction &E, GridFunction &B) const
 {
   // Compute port power, (E x H) ⋅ n = E ⋅ (-n x H), integrated over the port surface
   // using the computed E and H = μ⁻¹ B fields. The linear form is reconstructed from
   // scratch each time due to changing H. The BdrCurrentVectorCoefficient computes -n x H,
   // where n is an outward normal.
+  MFEM_VERIFY((E.HasImag() && B.HasImag()) || (!E.HasImag() && !B.HasImag()),
+              "Mismatch between real- and complex-valued E and B fields in port power "
+              "calculation!");
+  const bool has_imag = E.HasImag();
   auto &nd_fespace = *E.ParFESpace();
   const auto &mesh = *nd_fespace.GetParMesh();
-  SumVectorCoefficient fb(mesh.SpaceDimension());
-  mfem::Array<int> attr_list;
-  for (const auto &elem : elems)
-  {
-    fb.AddCoefficient(
-        std::make_unique<RestrictedVectorCoefficient<BdrCurrentVectorCoefficient>>(
-            elem->GetAttrList(), B, mat_op));
-    attr_list.Append(elem->GetAttrList());
-  }
-  int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
-  mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, attr_list);
-  mfem::LinearForm p(&nd_fespace);
-  p.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fb), attr_marker);
-  p.UseFastAssembly(false);
-  p.UseDevice(false);
-  p.Assemble();
-  p.UseDevice(true);
-  double dot = p * E;
-  Mpi::GlobalSum(1, &dot, E.ParFESpace()->GetComm());
-  return dot;
-}
-
-std::complex<double> LumpedPortData::GetPower(mfem::ParComplexGridFunction &E,
-                                              mfem::ParComplexGridFunction &B) const
-{
-  // Compute port power, (E x H⋆) ⋅ n = E ⋅ (-n x H⋆), integrated over the port surface
-  // using the computed E and H = μ⁻¹ B fields. The linear form is reconstructed from
-  // scratch each time due to changing H. The BdrCurrentVectorCoefficient computes -n x H,
-  // where n is an outward normal.
-  auto &nd_fespace = *E.ParFESpace();
-  const auto &mesh = *nd_fespace.GetParMesh();
-  SumVectorCoefficient fbr(mesh.SpaceDimension());
-  SumVectorCoefficient fbi(mesh.SpaceDimension());
+  SumVectorCoefficient fbr(mesh.SpaceDimension()), fbi(mesh.SpaceDimension());
   mfem::Array<int> attr_list;
   for (const auto &elem : elems)
   {
     fbr.AddCoefficient(
         std::make_unique<RestrictedVectorCoefficient<BdrCurrentVectorCoefficient>>(
-            elem->GetAttrList(), B.real(), mat_op));
-    fbi.AddCoefficient(
-        std::make_unique<RestrictedVectorCoefficient<BdrCurrentVectorCoefficient>>(
-            elem->GetAttrList(), B.imag(), mat_op));
+            elem->GetAttrList(), B.Real(), mat_op));
+    if (has_imag)
+    {
+      fbi.AddCoefficient(
+          std::make_unique<RestrictedVectorCoefficient<BdrCurrentVectorCoefficient>>(
+              elem->GetAttrList(), B.Imag(), mat_op));
+    }
     attr_list.Append(elem->GetAttrList());
   }
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, attr_list);
-  mfem::LinearForm pr(&nd_fespace), pi(&nd_fespace);
+  mfem::LinearForm pr(&nd_fespace);
   pr.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fbr), attr_marker);
-  pi.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fbi), attr_marker);
   pr.UseFastAssembly(false);
-  pi.UseFastAssembly(false);
   pr.UseDevice(false);
-  pi.UseDevice(false);
   pr.Assemble();
-  pi.Assemble();
   pr.UseDevice(true);
-  pi.UseDevice(true);
-  std::complex<double> dot((pr * E.real()) + (pi * E.imag()),
-                           (pr * E.imag()) - (pi * E.real()));
-  Mpi::GlobalSum(1, &dot, E.ParFESpace()->GetComm());
+  if (has_imag)
+  {
+    mfem::LinearForm pi(&nd_fespace);
+    pi.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fbi), attr_marker);
+    pi.UseFastAssembly(false);
+    pi.UseDevice(false);
+    pi.Assemble();
+    pi.UseDevice(true);
+    std::complex<double> dot((pr * E.Real()) + (pi * E.Imag()),
+                             (pr * E.Imag()) - (pi * E.Real()));
+    Mpi::GlobalSum(1, &dot, E.ParFESpace()->GetComm());
+    return dot;
+  }
+  else
+  {
+    double dot = pr * E.Real();
+    Mpi::GlobalSum(1, &dot, E.ParFESpace()->GetComm());
+    return dot;
+  }
+}
+
+std::complex<double> LumpedPortData::GetSParameter(GridFunction &E) const
+{
+  // Compute port S-parameter, or the projection of the field onto the port mode.
+  InitializeLinearForms(*E.ParFESpace());
+  std::complex<double> dot((*s) * E.Real(), 0.0);
+  if (E.HasImag())
+  {
+    dot.imag((*s) * E.Imag());
+  }
+  Mpi::GlobalSum(1, &dot, E.GetComm());
   return dot;
 }
 
-double LumpedPortData::GetVoltage(mfem::ParGridFunction &E) const
+std::complex<double> LumpedPortData::GetVoltage(GridFunction &E) const
 {
   // Compute the average voltage across the port.
   InitializeLinearForms(*E.ParFESpace());
-  double dot = (*v) * E;
-  Mpi::GlobalSum(1, &dot, E.ParFESpace()->GetComm());
-  return dot;
-}
-
-std::complex<double> LumpedPortData::GetVoltage(mfem::ParComplexGridFunction &E) const
-{
-  // Compute the average voltage across the port.
-  InitializeLinearForms(*E.ParFESpace());
-  std::complex<double> dot((*v) * E.real(), (*v) * E.imag());
-  Mpi::GlobalSum(1, &dot, E.ParFESpace()->GetComm());
+  std::complex<double> dot((*v) * E.Real(), 0.0);
+  if (E.HasImag())
+  {
+    dot.imag((*v) * E.Imag());
+  }
+  Mpi::GlobalSum(1, &dot, E.GetComm());
   return dot;
 }
 

@@ -10,17 +10,10 @@
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
 
-namespace mfem
-{
-
-class ParComplexGridFunction;
-class ParGridFunction;
-
-}  // namespace mfem
-
 namespace palace
 {
 
+class GridFunction;
 class FiniteElementSpace;
 class IoData;
 class MaterialOperator;
@@ -48,17 +41,13 @@ public:
 
   // Get volume integrals computing the electric or magnetic field energy in the entire
   // domain.
-  double GetElectricFieldEnergy(const mfem::ParComplexGridFunction &E) const;
-  double GetElectricFieldEnergy(const mfem::ParGridFunction &E) const;
-  double GetMagneticFieldEnergy(const mfem::ParComplexGridFunction &B) const;
-  double GetMagneticFieldEnergy(const mfem::ParGridFunction &B) const;
+  double GetElectricFieldEnergy(const GridFunction &E) const;
+  double GetMagneticFieldEnergy(const GridFunction &B) const;
 
   // Get volume integrals for the electric or magnetic field energy in a portion of the
   // domain.
-  double GetDomainElectricFieldEnergy(int idx, const mfem::ParComplexGridFunction &E) const;
-  double GetDomainElectricFieldEnergy(int idx, const mfem::ParGridFunction &E) const;
-  double GetDomainMagneticFieldEnergy(int idx, const mfem::ParComplexGridFunction &E) const;
-  double GetDomainMagneticFieldEnergy(int idx, const mfem::ParGridFunction &E) const;
+  double GetDomainElectricFieldEnergy(int idx, const GridFunction &E) const;
+  double GetDomainMagneticFieldEnergy(int idx, const GridFunction &E) const;
 };
 
 }  // namespace palace

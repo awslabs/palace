@@ -260,14 +260,20 @@ std::unique_ptr<ceed::Operator> DiscreteLinearOperator::PartialAssemble() const
   Vector test_multiplicity(test_fespace.GetVSize());
   test_multiplicity = 0.0;
   auto *h_mult = test_multiplicity.HostReadWrite();
-  mfem::Array<int> dofs;
-  for (int i = 0; i < test_fespace.GetMesh().GetNE(); i++)
+  PalacePragmaOmp(parallel)
   {
-    test_fespace.Get().GetElementVDofs(i, dofs);
-    for (int j = 0; j < dofs.Size(); j++)
+    mfem::Array<int> dofs;
+    mfem::DofTransformation dof_trans;
+    PalacePragmaOmp(for schedule(static))
+    for (int i = 0; i < test_fespace.GetMesh().GetNE(); i++)
     {
-      const int k = dofs[j];
-      h_mult[(k >= 0) ? k : -1 - k] += 1.0;
+      test_fespace.Get().GetElementVDofs(i, dofs, dof_trans);
+      for (int j = 0; j < dofs.Size(); j++)
+      {
+        const int k = dofs[j];
+        PalacePragmaOmp(atomic update)
+        h_mult[(k >= 0) ? k : -1 - k] += 1.0;
+      }
     }
   }
   test_multiplicity.UseDevice(true);

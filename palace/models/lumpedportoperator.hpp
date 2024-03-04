@@ -14,6 +14,7 @@
 namespace palace
 {
 
+class GridFunction;
 class IoData;
 class MaterialOperator;
 class MaterialPropertyCoefficient;
@@ -63,12 +64,9 @@ public:
   double GetExcitationPower() const;
   double GetExcitationVoltage() const;
 
-  std::complex<double> GetSParameter(mfem::ParComplexGridFunction &E) const;
-  std::complex<double> GetPower(mfem::ParComplexGridFunction &E,
-                                mfem::ParComplexGridFunction &B) const;
-  double GetPower(mfem::ParGridFunction &E, mfem::ParGridFunction &B) const;
-  std::complex<double> GetVoltage(mfem::ParComplexGridFunction &E) const;
-  double GetVoltage(mfem::ParGridFunction &E) const;
+  std::complex<double> GetPower(GridFunction &E, GridFunction &B) const;
+  std::complex<double> GetSParameter(GridFunction &E) const;
+  std::complex<double> GetVoltage(GridFunction &E) const;
 };
 
 //

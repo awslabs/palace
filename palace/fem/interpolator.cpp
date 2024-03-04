@@ -4,6 +4,7 @@
 #include "interpolator.hpp"
 
 #include <algorithm>
+#include "fem/gridfunction.hpp"
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
 
@@ -88,13 +89,12 @@ std::vector<double> InterpolationOperator::ProbeField(const mfem::ParGridFunctio
 #endif
 }
 
-std::vector<std::complex<double>>
-InterpolationOperator::ProbeField(const mfem::ParComplexGridFunction &U, bool has_imaginary)
+std::vector<std::complex<double>> InterpolationOperator::ProbeField(const GridFunction &U)
 {
-  std::vector<double> vr = ProbeField(U.real());
-  if (has_imaginary)
+  std::vector<double> vr = ProbeField(U.Real());
+  if (U.HasImag())
   {
-    std::vector<double> vi = ProbeField(U.imag());
+    std::vector<double> vi = ProbeField(U.Imag());
     std::vector<std::complex<double>> vals(vr.size());
     std::transform(vr.begin(), vr.end(), vi.begin(), vals.begin(),
                    [](double xr, double xi) { return std::complex<double>(xr, xi); });

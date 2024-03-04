@@ -568,7 +568,7 @@ void BaseSolver::PostprocessProbes(const PostOperator &postop, const std::string
   {
     return;
   }
-  const bool has_imaginary = postop.HasImaginary();
+  const bool has_imaginary = postop.HasImag();
   for (int f = 0; f < 2; f++)
   {
     // Probe data is ordered as [Fx1, Fy1, Fz1, Fx2, Fy2, Fz2, ...].
