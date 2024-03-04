@@ -29,6 +29,12 @@ GridFunction &GridFunction::operator=(std::complex<double> s)
   {
     Imag() = s.imag();
   }
+  else
+  {
+    MFEM_ASSERT(
+        s.imag() == 0.0,
+        "Cannot assign complex scalar to a non-complex-valued GridFunction object!");
+  }
   return *this;
 }
 
