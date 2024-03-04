@@ -888,8 +888,8 @@ void WavePortData::Initialize(double omega)
       MFEM_ASSERT(e0.Size() == 0,
                   "Unexpected non-empty port FE space in wave port boundary mode solve!");
     }
-    e0.Real().ReadWrite();  // Ensure memory is allocated on device before aliasing
-    e0.Imag().ReadWrite();
+    e0.Real().Read();  // Ensure memory is allocated on device before aliasing
+    e0.Imag().Read();
     Vector e0tr(e0.Real(), 0, port_nd_fespace->GetTrueVSize());
     Vector e0nr(e0.Real(), port_nd_fespace->GetTrueVSize(),
                 port_h1_fespace->GetTrueVSize());

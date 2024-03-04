@@ -37,10 +37,11 @@ std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &, bool);
 
 // Optionally reorder mesh elements based on MFEM's internal reordeing tools for improved
 // cache usage.
-void ReorderMesh(mfem::Mesh &);
+void ReorderMesh(mfem::Mesh &, bool = true);
 
 // Generate element-based mesh partitioning, using either a provided file or METIS.
-std::unique_ptr<int[]> GetMeshPartitioning(mfem::Mesh &, int, const std::string & = "");
+std::unique_ptr<int[]> GetMeshPartitioning(mfem::Mesh &, int, const std::string & = "",
+                                           bool = true);
 
 // Cleanup the provided serial mesh by removing unnecessary domain and elements, adding
 // boundary elements for material interfaces and exterior boundaries, and adding boundary
@@ -1223,7 +1224,7 @@ mfem::Vector GetSurfaceNormal(const mfem::ParMesh &mesh, const mfem::Array<int> 
   Mpi::GlobalMin(1, &rank, comm);
   if (rank == Mpi::Size(comm))
   {
-    // No boundary elements of attribute attr.
+    // No boundary elements are marked.
     normal = 0.0;
     return normal;
   }
@@ -1246,16 +1247,18 @@ mfem::Vector GetSurfaceNormal(const mfem::ParMesh &mesh, const mfem::Array<int> 
   }
   normal /= normal.Norml2();
 
-  // if (dim == 3)
-  // {
-  //   Mpi::Print(comm, " Surface normal {:d} = ({:+.3e}, {:+.3e}, {:+.3e})", attr,
-  //              normal(0), normal(1), normal(2));
-  // }
-  // else
-  // {
-  //   Mpi::Print(comm, " Surface normal {:d} = ({:+.3e}, {:+.3e})", attr, normal(0),
-  //              normal(1));
-  // }
+  if constexpr (false)
+  {
+    if (dim == 3)
+    {
+      Mpi::Print(comm, " Surface normal = ({:+.3e}, {:+.3e}, {:+.3e})", normal(0),
+                 normal(1), normal(2));
+    }
+    else
+    {
+      Mpi::Print(comm, " Surface normal = ({:+.3e}, {:+.3e})", normal(0), normal(1));
+    }
+  }
 
   return normal;
 }
@@ -1288,7 +1291,7 @@ double RebalanceMesh(mfem::ParMesh &mesh, const IoData &iodata, double tol)
     {
       sfile += '/';
     }
-    sfile += "serial.mesh";
+    sfile += std::filesystem::path(iodata.model.mesh).stem().string() + ".mesh";
 
     auto PrintSerial = [&](mfem::Mesh &smesh)
     {
@@ -1450,7 +1453,7 @@ std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &path, bool remove_curvat
   return mesh;
 }
 
-void ReorderMesh(mfem::Mesh &mesh)
+void ReorderMesh(mfem::Mesh &mesh, bool print)
 {
   mfem::Array<int> ordering;
 
@@ -1471,7 +1474,10 @@ void ReorderMesh(mfem::Mesh &mesh)
         best_cost = cost;
       }
     }
-    Mpi::Print("Final cost: {:e}\n", best_cost);
+    if (print)
+    {
+      Mpi::Print("Final cost: {:e}\n", best_cost);
+    }
   }
 
   // (Faster) Hilbert reordering.
@@ -1480,7 +1486,7 @@ void ReorderMesh(mfem::Mesh &mesh)
 }
 
 std::unique_ptr<int[]> GetMeshPartitioning(mfem::Mesh &mesh, int size,
-                                           const std::string &partition)
+                                           const std::string &partition, bool print)
 {
   MFEM_VERIFY(size <= mesh.GetNE(), "Mesh partitioning must have parts <= mesh elements ("
                                         << size << " vs. " << mesh.GetNE() << ")!");
@@ -1488,8 +1494,11 @@ std::unique_ptr<int[]> GetMeshPartitioning(mfem::Mesh &mesh, int size,
   {
     const int part_method = 1;
     std::unique_ptr<int[]> partitioning(mesh.GeneratePartitioning(size, part_method));
-    Mpi::Print("Finished partitioning mesh into {:d} subdomain{}\n", size,
-               (size > 1) ? "s" : "");
+    if (print)
+    {
+      Mpi::Print("Finished partitioning mesh into {:d} subdomain{}\n", size,
+                 (size > 1) ? "s" : "");
+    }
     return partitioning;
   }
   // User can optionally specify a mesh partitioning file as generated from the MFEM
@@ -1521,8 +1530,11 @@ std::unique_ptr<int[]> GetMeshPartitioning(mfem::Mesh &mesh, int size,
   {
     part_ifs >> partitioning[i++];
   }
-  Mpi::Print("Read mesh partitioning into {:d} subdomain{} from disk\n", size,
-             (size > 1) ? "s" : "");
+  if (print)
+  {
+    Mpi::Print("Read mesh partitioning into {:d} subdomain{} from disk\n", size,
+               (size > 1) ? "s" : "");
+  }
   return partitioning;
 }
 
@@ -1825,8 +1837,12 @@ std::map<int, std::array<int, 2>> CheckMesh(mfem::Mesh &orig_mesh,
           FlipVertices(el);
           el->SetAttribute(new_attr);
           new_mesh.AddBdrElement(el);
-          // Mpi::Print("Adding two BE with attr {:d} from elements {:d} and {:d}\n",
-          //            new_attr, a, b);
+          if constexpr (false)
+          {
+            Mpi::Print(
+                "Adding two boundary elements with attr {:d} from elements {:d} and {:d}\n",
+                new_attr, a, b);
+          }
         }
       }
     }
@@ -2035,7 +2051,7 @@ void RebalanceConformalMesh(mfem::ParMesh &pmesh)
   std::unique_ptr<int[]> partitioning;
   if (Mpi::Root(comm))
   {
-    partitioning = GetMeshPartitioning(*smesh, Mpi::Size(comm));
+    partitioning = GetMeshPartitioning(*smesh, Mpi::Size(comm), "", false);
   }
   auto new_pmesh = DistributeMesh(comm, smesh, partitioning);
   pmesh = std::move(*new_pmesh);
