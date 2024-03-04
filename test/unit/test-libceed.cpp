@@ -12,6 +12,7 @@
 #include "fem/fespace.hpp"
 #include "fem/integrator.hpp"
 #include "fem/mesh.hpp"
+#include "linalg/hypre.hpp"
 #include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
 
@@ -253,8 +254,7 @@ void TestCeedOperatorMult(const Operator &op_test, const Operator &op_ref,
   }
 }
 
-void TestCeedOperatorFullAssemble(const mfem::SparseMatrix &mat_test,
-                                  const mfem::SparseMatrix &mat_ref)
+void TestCeedOperatorFullAssemble(mfem::SparseMatrix &mat_test, mfem::SparseMatrix &mat_ref)
 {
   // Ensure host memory is up to date (mfem::Add is missing the device to host copy).
   mat_test.HostReadI();
@@ -270,20 +270,47 @@ void TestCeedOperatorFullAssemble(const mfem::SparseMatrix &mat_test,
   REQUIRE(mat_diff->MaxNorm() < 1.0e-12 * std::max(mat_ref.MaxNorm(), 1.0));
 }
 
+void TestCeedOperatorFullAssemble(hypre::HypreCSRMatrix &mat_test,
+                                  mfem::SparseMatrix &mat_ref)
+{
+  // Copy test matrix into MFEM's sparse matrix data type.
+  hypre_CSRMatrixMigrate(mat_test, HYPRE_MEMORY_HOST);
+  mfem::SparseMatrix mat_test_sp(mat_test.GetI(), mat_test.GetJ(), mat_test.GetData(),
+                                 mat_test.Height(), mat_test.Width(), false, false, false);
+
+  // Perform the test.
+  TestCeedOperatorFullAssemble(mat_test_sp, mat_ref);
+}
+
+void TestCeedOperatorFullAssemble(hypre::HypreCSRMatrix &mat_test,
+                                  hypre::HypreCSRMatrix &mat_ref)
+{
+  // Copy test and reference matrix into MFEM's sparse matrix data type.
+  hypre_CSRMatrixMigrate(mat_test, HYPRE_MEMORY_HOST);
+  hypre_CSRMatrixMigrate(mat_ref, HYPRE_MEMORY_HOST);
+  mfem::SparseMatrix mat_test_sp(mat_test.GetI(), mat_test.GetJ(), mat_test.GetData(),
+                                 mat_test.Height(), mat_test.Width(), false, false, false);
+  mfem::SparseMatrix mat_ref_sp(mat_ref.GetI(), mat_ref.GetJ(), mat_ref.GetData(),
+                                mat_ref.Height(), mat_ref.Width(), false, false, false);
+
+  // Perform the test.
+  TestCeedOperatorFullAssemble(mat_test_sp, mat_ref_sp);
+}
+
 template <typename T1, typename T2>
 void TestCeedOperator(T1 &a_test, T2 &a_ref, bool test_transpose, bool skip_zeros)
 {
   a_ref.Assemble(skip_zeros);
   a_ref.Finalize(skip_zeros);
-  const mfem::SparseMatrix *mat_ref = &a_ref.SpMat();
-  const Operator *op_ref = mat_ref;
+  auto *mat_ref = &a_ref.SpMat();
+  auto *op_ref = mat_ref;
 
   // Test operator application.
-  const auto op_test = a_test.PartialAssemble();
+  auto op_test = a_test.PartialAssemble();
   TestCeedOperatorMult(*op_test, *op_ref, test_transpose);
 
   // Test full assembly.
-  const auto mat_test = a_test.FullAssemble(*op_test, skip_zeros);
+  auto mat_test = a_test.FullAssemble(*op_test, skip_zeros);
   TestCeedOperatorFullAssemble(*mat_test, *mat_ref);
 
   // Test diagonal assembly if possible.
@@ -350,11 +377,11 @@ void BenchmarkCeedIntegrator(FiniteElementSpace &fespace, T1 AssembleTest,
   if (!benchmark_no_fa)
   {
     constexpr bool bdr_integ = true;
-    const auto op_test = AssembleTest(fespace, bdr_integ);
-    const auto op_test_ref = AssembleTestRef(fespace, bdr_integ);
-    const auto mat_test = BilinearForm::FullAssemble(*op_test, skip_zeros);
-    const auto mat_test_ref = BilinearForm::FullAssemble(*op_test_ref, skip_zeros);
-    nnz = mat_test->NumNonZeroElems();
+    auto op_test = AssembleTest(fespace, bdr_integ);
+    auto op_test_ref = AssembleTestRef(fespace, bdr_integ);
+    auto mat_test = BilinearForm::FullAssemble(*op_test, skip_zeros);
+    auto mat_test_ref = BilinearForm::FullAssemble(*op_test_ref, skip_zeros);
+    nnz = mat_test->NNZ();
     TestCeedOperatorFullAssemble(*mat_test, *mat_test_ref);
   }
 
@@ -363,11 +390,11 @@ void BenchmarkCeedIntegrator(FiniteElementSpace &fespace, T1 AssembleTest,
   {
     BENCHMARK("Assemble (MFEM Legacy)")
     {
-      const auto op_ref = AssembleRef(fespace, mfem::AssemblyLevel::LEGACY, skip_zeros);
+      auto op_ref = AssembleRef(fespace, mfem::AssemblyLevel::LEGACY, skip_zeros);
       return op_ref->Height();
     };
     {
-      const auto op_ref = AssembleRef(fespace, mfem::AssemblyLevel::LEGACY, skip_zeros);
+      auto op_ref = AssembleRef(fespace, mfem::AssemblyLevel::LEGACY, skip_zeros);
       y_ref = 0.0;
       BENCHMARK("AddMult (MFEM Legacy)")
       {
@@ -382,11 +409,11 @@ void BenchmarkCeedIntegrator(FiniteElementSpace &fespace, T1 AssembleTest,
   {
     BENCHMARK("Assemble (MFEM Partial)")
     {
-      const auto op_ref = AssembleRef(fespace, mfem::AssemblyLevel::PARTIAL, skip_zeros);
+      auto op_ref = AssembleRef(fespace, mfem::AssemblyLevel::PARTIAL, skip_zeros);
       return op_ref->Height();
     };
     {
-      const auto op_ref = AssembleRef(fespace, mfem::AssemblyLevel::PARTIAL, skip_zeros);
+      auto op_ref = AssembleRef(fespace, mfem::AssemblyLevel::PARTIAL, skip_zeros);
       y_ref = 0.0;
       BENCHMARK("AddMult (MFEM Partial)")
       {
@@ -401,11 +428,11 @@ void BenchmarkCeedIntegrator(FiniteElementSpace &fespace, T1 AssembleTest,
   // Benchmark libCEED assembly.
   BENCHMARK("Assemble (libCEED)")
   {
-    const auto op_test = AssembleTest(fespace);
+    auto op_test = AssembleTest(fespace);
     return op_test->Height();
   };
   {
-    const auto op_test = AssembleTest(fespace);
+    auto op_test = AssembleTest(fespace);
     y_test = 0.0;
     BENCHMARK("AddMult (libCEED)")
     {
@@ -417,9 +444,9 @@ void BenchmarkCeedIntegrator(FiniteElementSpace &fespace, T1 AssembleTest,
   {
     BENCHMARK("Full Assemble (libCEED)")
     {
-      const auto op_test = AssembleTest(fespace);
-      const auto mat_test = BilinearForm::FullAssemble(*op_test, skip_zeros);
-      return mat_test->NumNonZeroElems();
+      auto op_test = AssembleTest(fespace);
+      auto mat_test = BilinearForm::FullAssemble(*op_test, skip_zeros);
+      return mat_test->NNZ();
     };
   }
 
@@ -473,12 +500,12 @@ void BenchmarkCeedInterpolator(FiniteElementSpace &trial_fespace,
   std::size_t nnz = 0;
   if (!benchmark_no_fa)
   {
-    const auto op_test = AssembleTest(trial_fespace, test_fespace);
-    const auto op_ref = AssembleRef(trial_fespace, test_fespace,
-                                    mfem::AssemblyLevel::LEGACY, skip_zeros_interp);
-    const auto mat_test = DiscreteLinearOperator::FullAssemble(*op_test, skip_zeros_interp);
-    const auto *mat_ref = &op_ref->SpMat();
-    nnz = mat_test->NumNonZeroElems();
+    auto op_test = AssembleTest(trial_fespace, test_fespace);
+    auto op_ref = AssembleRef(trial_fespace, test_fespace, mfem::AssemblyLevel::LEGACY,
+                              skip_zeros_interp);
+    auto mat_test = DiscreteLinearOperator::FullAssemble(*op_test, skip_zeros_interp);
+    auto *mat_ref = &op_ref->SpMat();
+    nnz = mat_test->NNZ();
     TestCeedOperatorFullAssemble(*mat_test, *mat_ref);
   }
 
@@ -487,13 +514,13 @@ void BenchmarkCeedInterpolator(FiniteElementSpace &trial_fespace,
   {
     BENCHMARK("Assemble (MFEM Legacy)")
     {
-      const auto op_ref = AssembleRef(trial_fespace, test_fespace,
-                                      mfem::AssemblyLevel::LEGACY, skip_zeros_interp);
+      auto op_ref = AssembleRef(trial_fespace, test_fespace, mfem::AssemblyLevel::LEGACY,
+                                skip_zeros_interp);
       return op_ref->Height();
     };
     {
-      const auto op_ref = AssembleRef(trial_fespace, test_fespace,
-                                      mfem::AssemblyLevel::LEGACY, skip_zeros_interp);
+      auto op_ref = AssembleRef(trial_fespace, test_fespace, mfem::AssemblyLevel::LEGACY,
+                                skip_zeros_interp);
       y_ref = 0.0;
       BENCHMARK("AddMult (MFEM Legacy)")
       {
@@ -509,13 +536,13 @@ void BenchmarkCeedInterpolator(FiniteElementSpace &trial_fespace,
   {
     BENCHMARK("Assemble (MFEM Partial)")
     {
-      const auto op_ref = AssembleRef(trial_fespace, test_fespace,
-                                      mfem::AssemblyLevel::PARTIAL, skip_zeros_interp);
+      auto op_ref = AssembleRef(trial_fespace, test_fespace, mfem::AssemblyLevel::PARTIAL,
+                                skip_zeros_interp);
       return op_ref->Height();
     };
     {
-      const auto op_ref = AssembleRef(trial_fespace, test_fespace,
-                                      mfem::AssemblyLevel::PARTIAL, skip_zeros_interp);
+      auto op_ref = AssembleRef(trial_fespace, test_fespace, mfem::AssemblyLevel::PARTIAL,
+                                skip_zeros_interp);
       y_ref = 0.0;
       BENCHMARK("AddMult (MFEM Partial)")
       {
@@ -530,11 +557,11 @@ void BenchmarkCeedInterpolator(FiniteElementSpace &trial_fespace,
   // Benchmark libCEED assembly.
   BENCHMARK("Assemble (libCEED)")
   {
-    const auto op_test = AssembleTest(trial_fespace, test_fespace);
+    auto op_test = AssembleTest(trial_fespace, test_fespace);
     return op_test->Height();
   };
   {
-    const auto op_test = AssembleTest(trial_fespace, test_fespace);
+    auto op_test = AssembleTest(trial_fespace, test_fespace);
     y_test = 0.0;
     BENCHMARK("AddMult (libCEED)")
     {
@@ -546,10 +573,9 @@ void BenchmarkCeedInterpolator(FiniteElementSpace &trial_fespace,
   {
     BENCHMARK("Full Assemble (libCEED)")
     {
-      const auto op_test = AssembleTest(trial_fespace, test_fespace);
-      const auto mat_test =
-          DiscreteLinearOperator::FullAssemble(*op_test, skip_zeros_interp);
-      return mat_test->NumNonZeroElems();
+      auto op_test = AssembleTest(trial_fespace, test_fespace);
+      auto mat_test = DiscreteLinearOperator::FullAssemble(*op_test, skip_zeros_interp);
+      return mat_test->NNZ();
     };
   }
 

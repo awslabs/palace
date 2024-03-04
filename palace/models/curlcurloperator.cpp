@@ -8,6 +8,7 @@
 #include "fem/integrator.hpp"
 #include "fem/mesh.hpp"
 #include "fem/multigrid.hpp"
+#include "linalg/hypre.hpp"
 #include "linalg/rap.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
@@ -168,9 +169,9 @@ std::unique_ptr<Operator> CurlCurlOperator::GetStiffnessMatrix()
     {
       Mpi::Print(" Level {:d} (p = {:d}): {:d} unknowns", l,
                  nd_fespace_l.GetMaxElementOrder(), nd_fespace_l.GlobalTrueVSize());
-      if (const auto *k_spm = dynamic_cast<const mfem::SparseMatrix *>(k_vec[l].get()))
+      if (const auto *k_spm = dynamic_cast<const hypre::HypreCSRMatrix *>(k_vec[l].get()))
       {
-        HYPRE_BigInt nnz = k_spm->NumNonZeroElems();
+        HYPRE_BigInt nnz = k_spm->NNZ();
         Mpi::GlobalSum(1, &nnz, nd_fespace_l.GetComm());
         Mpi::Print(", {:d} NNZ\n", nnz);
       }
@@ -207,8 +208,10 @@ void CurlCurlOperator::GetExcitationVector(int idx, Vector &RHS)
   mfem::LinearForm rhs(&GetNDSpace().Get());
   rhs.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fb));
   rhs.UseFastAssembly(false);
+  rhs.UseDevice(false);
   rhs.Assemble();
-  GetNDSpace().Get().GetProlongationMatrix()->AddMultTranspose(rhs, RHS, -1.0);
+  rhs.UseDevice(true);
+  GetNDSpace().GetProlongationMatrix()->AddMultTranspose(rhs, RHS, -1.0);
   linalg::SetSubVector(RHS, dbc_tdof_lists.back(), 0.0);
 }
 

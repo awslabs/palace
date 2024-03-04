@@ -186,7 +186,9 @@ void LumpedPortData::InitializeLinearForms(mfem::ParFiniteElementSpace &nd_fespa
     s = std::make_unique<mfem::LinearForm>(&nd_fespace);
     s->AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fb), attr_marker);
     s->UseFastAssembly(false);
+    s->UseDevice(false);
     s->Assemble();
+    s->UseDevice(true);
   }
 
   // The voltage across a port is computed using the electric field solution.
@@ -207,7 +209,9 @@ void LumpedPortData::InitializeLinearForms(mfem::ParFiniteElementSpace &nd_fespa
     v = std::make_unique<mfem::LinearForm>(&nd_fespace);
     v->AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fb), attr_marker);
     v->UseFastAssembly(false);
+    v->UseDevice(false);
     v->Assemble();
+    v->UseDevice(true);
   }
 }
 
@@ -242,7 +246,9 @@ double LumpedPortData::GetPower(mfem::ParGridFunction &E, mfem::ParGridFunction 
   mfem::LinearForm p(&nd_fespace);
   p.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fb), attr_marker);
   p.UseFastAssembly(false);
+  p.UseDevice(false);
   p.Assemble();
+  p.UseDevice(true);
   double dot = p * E;
   Mpi::GlobalSum(1, &dot, E.ParFESpace()->GetComm());
   return dot;
@@ -277,8 +283,12 @@ std::complex<double> LumpedPortData::GetPower(mfem::ParComplexGridFunction &E,
   pi.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fbi), attr_marker);
   pr.UseFastAssembly(false);
   pi.UseFastAssembly(false);
+  pr.UseDevice(false);
+  pi.UseDevice(false);
   pr.Assemble();
   pi.Assemble();
+  pr.UseDevice(true);
+  pi.UseDevice(true);
   std::complex<double> dot((pr * E.real()) + (pi * E.imag()),
                            (pr * E.imag()) - (pi * E.real()));
   Mpi::GlobalSum(1, &dot, E.ParFESpace()->GetComm());

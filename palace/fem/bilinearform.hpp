@@ -9,6 +9,7 @@
 #include <mfem.hpp>
 #include "fem/integrator.hpp"
 #include "fem/libceed/operator.hpp"
+#include "linalg/hypre.hpp"
 
 namespace palace
 {
@@ -69,19 +70,19 @@ public:
     return PartialAssemble(GetTrialSpace(), GetTestSpace());
   }
 
-  std::unique_ptr<mfem::SparseMatrix> FullAssemble(bool skip_zeros) const
+  std::unique_ptr<hypre::HypreCSRMatrix> FullAssemble(bool skip_zeros) const
   {
     return FullAssemble(*PartialAssemble(), skip_zeros, false);
   }
 
-  static std::unique_ptr<mfem::SparseMatrix> FullAssemble(const ceed::Operator &op,
-                                                          bool skip_zeros)
+  static std::unique_ptr<hypre::HypreCSRMatrix> FullAssemble(const ceed::Operator &op,
+                                                             bool skip_zeros)
   {
     return FullAssemble(op, skip_zeros, false);
   }
 
-  static std::unique_ptr<mfem::SparseMatrix> FullAssemble(const ceed::Operator &op,
-                                                          bool skip_zeros, bool set);
+  static std::unique_ptr<hypre::HypreCSRMatrix> FullAssemble(const ceed::Operator &op,
+                                                             bool skip_zeros, bool set);
 
   std::unique_ptr<Operator> Assemble(bool skip_zeros) const;
 
@@ -120,13 +121,13 @@ public:
 
   std::unique_ptr<ceed::Operator> PartialAssemble() const;
 
-  std::unique_ptr<mfem::SparseMatrix> FullAssemble(bool skip_zeros) const
+  std::unique_ptr<hypre::HypreCSRMatrix> FullAssemble(bool skip_zeros) const
   {
     return BilinearForm::FullAssemble(*PartialAssemble(), skip_zeros, true);
   }
 
-  static std::unique_ptr<mfem::SparseMatrix> FullAssemble(const ceed::Operator &op,
-                                                          bool skip_zeros)
+  static std::unique_ptr<hypre::HypreCSRMatrix> FullAssemble(const ceed::Operator &op,
+                                                             bool skip_zeros)
   {
     return BilinearForm::FullAssemble(op, skip_zeros, true);
   }

@@ -81,8 +81,9 @@ private:
   // Reference to material property operator (not owned).
   const MaterialOperator &mat_op;
 
-  // Unit function used for computing surface integrals.
-  mutable mfem::GridFunction ones;
+  // Reference to scalar finite element space used for computing surface integrals (not
+  // owned).
+  mfem::ParFiniteElementSpace &h1_fespace;
 
   double GetLocalSurfaceIntegral(const SurfaceData &data,
                                  const mfem::ParGridFunction &U) const;

@@ -9,6 +9,7 @@
 #include "fem/integrator.hpp"
 #include "fem/mesh.hpp"
 #include "fem/multigrid.hpp"
+#include "linalg/hypre.hpp"
 #include "linalg/rap.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
@@ -769,14 +770,14 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(double a0, doub
       {
         Mpi::Print(" Level {:d}{} (p = {:d}): {:d} unknowns", l, aux ? " (auxiliary)" : "",
                    fespace_l.GetMaxElementOrder(), fespace_l.GlobalTrueVSize());
-        const auto *b_spm = dynamic_cast<const mfem::SparseMatrix *>(br_l.get());
+        const auto *b_spm = dynamic_cast<const hypre::HypreCSRMatrix *>(br_l.get());
         if (!b_spm)
         {
-          b_spm = dynamic_cast<const mfem::SparseMatrix *>(bi_l.get());
+          b_spm = dynamic_cast<const hypre::HypreCSRMatrix *>(bi_l.get());
         }
         if (b_spm)
         {
-          HYPRE_BigInt nnz = b_spm->NumNonZeroElems();
+          HYPRE_BigInt nnz = b_spm->NNZ();
           Mpi::GlobalSum(1, &nnz, fespace_l.GetComm());
           Mpi::Print(", {:d} NNZ\n", nnz);
         }
@@ -947,8 +948,10 @@ bool SpaceOperator::AddExcitationVector1Internal(Vector &RHS1)
   mfem::LinearForm rhs1(&GetNDSpace().Get());
   rhs1.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fb));
   rhs1.UseFastAssembly(false);
+  rhs1.UseDevice(false);
   rhs1.Assemble();
-  GetNDSpace().Get().GetProlongationMatrix()->AddMultTranspose(rhs1, RHS1);
+  rhs1.UseDevice(true);
+  GetNDSpace().GetProlongationMatrix()->AddMultTranspose(rhs1, RHS1);
   return true;
 }
 
@@ -966,15 +969,24 @@ bool SpaceOperator::AddExcitationVector2Internal(double omega, ComplexVector &RH
   {
     return false;
   }
-  mfem::LinearForm rhs2r(&GetNDSpace().Get()), rhs2i(&GetNDSpace().Get());
-  rhs2r.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fbr));
-  rhs2i.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fbi));
-  rhs2r.UseFastAssembly(false);
-  rhs2i.UseFastAssembly(false);
-  rhs2r.Assemble();
-  rhs2i.Assemble();
-  GetNDSpace().Get().GetProlongationMatrix()->AddMultTranspose(rhs2r, RHS2.Real());
-  GetNDSpace().Get().GetProlongationMatrix()->AddMultTranspose(rhs2i, RHS2.Imag());
+  {
+    mfem::LinearForm rhs2(&GetNDSpace().Get());
+    rhs2.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fbr));
+    rhs2.UseFastAssembly(false);
+    rhs2.UseDevice(false);
+    rhs2.Assemble();
+    rhs2.UseDevice(true);
+    GetNDSpace().GetProlongationMatrix()->AddMultTranspose(rhs2, RHS2.Real());
+  }
+  {
+    mfem::LinearForm rhs2(&GetNDSpace().Get());
+    rhs2.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fbi));
+    rhs2.UseFastAssembly(false);
+    rhs2.UseDevice(false);
+    rhs2.Assemble();
+    rhs2.UseDevice(true);
+    GetNDSpace().GetProlongationMatrix()->AddMultTranspose(rhs2, RHS2.Imag());
+  }
   return true;
 }
 

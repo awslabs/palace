@@ -15,15 +15,14 @@
 #include "fem/errorindicator.hpp"
 #include "fem/libceed/ceed.hpp"
 #include "fem/mesh.hpp"
+#include "linalg/hypre.hpp"
 #include "linalg/slepc.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
+#include "utils/omp.hpp"
 #include "utils/timer.hpp"
 
-#if defined(MFEM_USE_OPENMP)
-#include <omp.h>
-#endif
 #if defined(MFEM_USE_STRUMPACK)
 #include <StrumpackConfig.hpp>
 #endif
@@ -62,9 +61,8 @@ static int ConfigureOmp()
   else
   {
     nt = 1;
-    omp_set_num_threads(nt);
   }
-  omp_set_dynamic(0);
+  utils::SetNumThreads(nt);
   return nt;
 #else
   return 0;
@@ -270,7 +268,7 @@ int main(int argc, char *argv[])
 #endif
 
   // Initialize Hypre and, optionally, SLEPc/PETSc.
-  mfem::Hypre::Init();
+  hypre::Initialize();
 #if defined(PALACE_WITH_SLEPC)
   slepc::Initialize(argc, argv, nullptr, nullptr);
   if (PETSC_COMM_WORLD != world_comm)

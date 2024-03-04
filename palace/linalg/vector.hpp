@@ -22,11 +22,11 @@ using Vector = mfem::Vector;
 class ComplexVector
 {
 private:
-  Vector xr_, xi_;
+  Vector xr, xi;
 
 public:
   // Create a vector with the given size.
-  ComplexVector(int n = 0);
+  ComplexVector(int size = 0);
 
   // Copy constructor.
   ComplexVector(const ComplexVector &y);
@@ -35,34 +35,38 @@ public:
   ComplexVector(const Vector &yr, const Vector &yi);
 
   // Copy constructor from an array of complex values.
-  ComplexVector(const std::complex<double> *py, int n, bool on_dev);
+  ComplexVector(const std::complex<double> *py, int size, bool on_dev);
+
+  // Create a vector referencing the memory of another vector, at the given base offset and
+  // size.
+  ComplexVector(Vector &y, int offset, int size);
 
   // Flag for runtime execution on the mfem::Device. See the documentation for mfem::Vector.
-  void UseDevice(bool use_dev)
-  {
-    xr_.UseDevice(use_dev);
-    xi_.UseDevice(use_dev);
-  }
-  bool UseDevice() const { return xr_.UseDevice(); }
+  void UseDevice(bool use_dev);
+  bool UseDevice() const { return xr.UseDevice(); }
 
   // Return the size of the vector.
-  int Size() const { return xr_.Size(); }
+  int Size() const { return xr.Size(); }
 
   // Set the size of the vector. See the notes for Vector::SetSize for behavior in the cases
-  // where n is less than or greater than Size() or Capacity().
-  void SetSize(int n);
+  // where the new size is less than or greater than Size() or Capacity().
+  void SetSize(int size);
+
+  // Set this vector to reference the memory of another vector, at the given base offset and
+  // size.
+  void MakeRef(Vector &y, int offset, int size);
 
   // Get access to the real and imaginary vector parts.
-  const Vector &Real() const { return xr_; }
-  Vector &Real() { return xr_; }
-  const Vector &Imag() const { return xi_; }
-  Vector &Imag() { return xi_; }
+  const Vector &Real() const { return xr; }
+  Vector &Real() { return xr; }
+  const Vector &Imag() const { return xi; }
+  Vector &Imag() { return xi; }
 
   // Set from a ComplexVector, without resizing.
-  ComplexVector &operator=(const ComplexVector &y) { return Set(y); }
-  ComplexVector &Set(const ComplexVector &y)
+  void Set(const ComplexVector &y);
+  ComplexVector &operator=(const ComplexVector &y)
   {
-    Set(y.Real(), y.Imag());
+    Set(y);
     return *this;
   }
 
@@ -70,10 +74,10 @@ public:
   void Set(const Vector &yr, const Vector &yi);
 
   // Set from an array of complex values, without resizing.
-  void Set(const std::complex<double> *py, int n, bool on_dev);
+  void Set(const std::complex<double> *py, int size, bool on_dev);
 
   // Copy the vector into an array of complex values.
-  void Get(std::complex<double> *py, int n, bool on_dev) const;
+  void Get(std::complex<double> *py, int size, bool on_dev) const;
 
   // Set all entries equal to s.
   ComplexVector &operator=(std::complex<double> s);
@@ -170,30 +174,58 @@ void SetRandomReal(MPI_Comm comm, VecType &x, int seed = 0);
 template <typename VecType>
 void SetRandomSign(MPI_Comm comm, VecType &x, int seed = 0);
 
-// Calculate the inner product yᴴ x or yᵀ x.
+// Calculate the local inner product yᴴ x or yᵀ x.
+double LocalDot(const Vector &x, const Vector &y);
+std::complex<double> LocalDot(const ComplexVector &x, const ComplexVector &y);
+
+// Calculate the parallel inner product yᴴ x or yᵀ x.
 template <typename VecType>
 inline auto Dot(MPI_Comm comm, const VecType &x, const VecType &y)
 {
-  auto dot = x * y;
+  auto dot = LocalDot(x, y);
   Mpi::GlobalSum(1, &dot, comm);
   return dot;
 }
 
 // Calculate the vector 2-norm.
 template <typename VecType>
-inline double Norml2(MPI_Comm comm, const VecType &x)
+inline auto Norml2(MPI_Comm comm, const VecType &x)
 {
   return std::sqrt(std::abs(Dot(comm, x, x)));
 }
 
 // Normalize the vector, possibly with respect to an SPD matrix B.
 template <typename VecType>
-inline double Normalize(MPI_Comm comm, VecType &x)
+inline auto Normalize(MPI_Comm comm, VecType &x)
 {
-  double norm = Norml2(comm, x);
+  auto norm = Norml2(comm, x);
   MFEM_ASSERT(norm > 0.0, "Zero vector norm in normalization!");
   x *= 1.0 / norm;
   return norm;
+}
+
+// Calculate the local sum of all elements in the vector.
+double LocalSum(const Vector &x);
+std::complex<double> LocalSum(const ComplexVector &x);
+
+// Calculate the sum of all elements in the vector.
+template <typename VecType>
+inline auto Sum(MPI_Comm comm, const VecType &x)
+{
+  auto sum = LocalSum(x);
+  Mpi::GlobalSum(1, &sum, comm);
+  return sum;
+}
+
+// Calculate the mean of all elements in the vector.
+template <typename VecType>
+inline auto Mean(MPI_Comm comm, const VecType &x)
+{
+  using ScalarType = typename std::conditional<std::is_same<VecType, ComplexVector>::value,
+                                               std::complex<double>, double>::type;
+  ScalarType sum[2] = {LocalSum(x), ScalarType(x.Size())};
+  Mpi::GlobalSum(2, sum, comm);
+  return sum[0] / sum[1];
 }
 
 // Addition y += alpha * x.

@@ -161,16 +161,13 @@ void HypreAmsSolver::InitializeSolver()
   int relax_type = 2;      // 2 = l1-SSOR, 4 = trunc. l1-SSOR, 1 = l1-Jacobi, 16 = Chebyshev
   double weight = 1.0;
   double omega = 1.0;
+  if (mfem::Device::Allows(mfem::Backend::DEVICE_MASK))
   {
-    HYPRE_MemoryLocation loc;
-    HYPRE_GetMemoryLocation(&loc);
-    if (loc == HYPRE_MEMORY_DEVICE)  // Modify options for GPU-supported features
-    {
-      coarsen_type = 8;
-      amg_agg_levels = 0;
-      amg_relax_type = 18;
-      relax_type = 1;
-    }
+    // Modify options for GPU-supported features.
+    coarsen_type = 8;
+    amg_agg_levels = 0;
+    amg_relax_type = 18;
+    relax_type = 1;
   }
 
   HYPRE_AMSSetSmoothingOptions(ams, relax_type, ams_smooth_it, weight, omega);
