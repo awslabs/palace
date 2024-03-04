@@ -370,6 +370,9 @@ void CgSolver<OperType>::Mult(const VecType &b, VecType &x) const
   r.SetSize(A->Height());
   z.SetSize(A->Height());
   p.SetSize(A->Height());
+  r.UseDevice(true);
+  z.UseDevice(true);
+  p.UseDevice(true);
 
   // Initialize.
   if (this->initial_guess)
@@ -495,6 +498,7 @@ void GmresSolver<OperType>::Initialize() const
   for (int j = 0; j < std::min(init_size, max_dim + 1); j++)
   {
     V[j].SetSize(A->Height());
+    V[j].UseDevice(true);
   }
   H.resize((max_dim + 1) * max_dim);
   s.resize(max_dim + 1);
@@ -510,6 +514,7 @@ void GmresSolver<OperType>::Update(int j) const
   for (int k = j + 1; k < std::min(j + 1 + add_size, max_dim + 1); k++)
   {
     V[k].SetSize(A->Height());
+    V[k].UseDevice(true);
   }
 }
 
@@ -522,6 +527,7 @@ void GmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
   MFEM_ASSERT(A->Width() == x.Size() && A->Height() == b.Size(),
               "Size mismatch for GmresSolver::Mult!");
   r.SetSize(A->Height());
+  r.UseDevice(true);
   Initialize();
 
   // Begin iterations.
@@ -685,6 +691,7 @@ void FgmresSolver<OperType>::Initialize() const
   for (int j = 0; j < std::min(init_size, max_dim + 1); j++)
   {
     Z[j].SetSize(A->Height());
+    Z[j].UseDevice(true);
   }
 }
 
@@ -697,6 +704,7 @@ void FgmresSolver<OperType>::Update(int j) const
   for (int k = j + 1; k < std::min(j + 1 + add_size, max_dim + 1); k++)
   {
     Z[k].SetSize(A->Height());
+    Z[k].UseDevice(true);
   }
 }
 

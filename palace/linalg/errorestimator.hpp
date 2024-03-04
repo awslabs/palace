@@ -55,10 +55,6 @@ public:
 template <typename VecType>
 class CurlFluxErrorEstimator
 {
-  using GridFunctionType =
-      typename std::conditional<std::is_same<VecType, ComplexVector>::value,
-                                mfem::ParComplexGridFunction, mfem::ParGridFunction>::type;
-
   // Reference to material property data (not owned).
   const MaterialOperator &mat_op;
 
@@ -69,22 +65,15 @@ class CurlFluxErrorEstimator
   FluxProjector<VecType> projector;
 
   // Temporary vectors for error estimation.
-  mutable VecType F;
-  mutable GridFunctionType F_gf, U_gf;
+  mutable VecType F, F_gf, U_gf;
 
 public:
   CurlFluxErrorEstimator(const MaterialOperator &mat_op, FiniteElementSpace &nd_fespace,
                          double tol, int max_it, int print);
 
-  // Compute elemental error indicators given a vector of true DOF.
-  ErrorIndicator ComputeIndicators(const VecType &U) const;
-
   // Compute elemental error indicators given a vector of true DOF and fold into an existing
   // indicator.
-  void AddErrorIndicator(const VecType &U, ErrorIndicator &indicator) const
-  {
-    indicator.AddIndicator(ComputeIndicators(U));
-  }
+  void AddErrorIndicator(const VecType &U, ErrorIndicator &indicator) const;
 };
 
 // Class used for computing gradient flux error estimate, i.e. || ε ∇Uₕ - F ||_K, where F
@@ -104,22 +93,15 @@ class GradFluxErrorEstimator
   FluxProjector<Vector> projector;
 
   // Temporary vectors for error estimation.
-  mutable Vector F;
-  mutable mfem::ParGridFunction F_gf, U_gf;
+  mutable Vector F, F_gf, U_gf;
 
 public:
   GradFluxErrorEstimator(const MaterialOperator &mat_op, FiniteElementSpace &h1_fespace,
                          double tol, int max_it, int print);
 
-  // Compute elemental error indicators given a vector of true DOF.
-  ErrorIndicator ComputeIndicators(const Vector &U) const;
-
   // Compute elemental error indicators given a vector of true DOF and fold into an existing
   // indicator.
-  void AddErrorIndicator(const Vector &U, ErrorIndicator &indicator) const
-  {
-    indicator.AddIndicator(ComputeIndicators(U));
-  }
+  void AddErrorIndicator(const Vector &U, ErrorIndicator &indicator) const;
 };
 
 }  // namespace palace

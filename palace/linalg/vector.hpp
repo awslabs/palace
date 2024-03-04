@@ -11,7 +11,6 @@
 namespace palace
 {
 
-using Operator = mfem::Operator;
 using Vector = mfem::Vector;
 
 //
@@ -23,7 +22,7 @@ using Vector = mfem::Vector;
 class ComplexVector
 {
 private:
-  Vector x, xr, xi;
+  Vector xr_, xi_;
 
 public:
   // Create a vector with the given size.
@@ -36,20 +35,28 @@ public:
   ComplexVector(const Vector &yr, const Vector &yi);
 
   // Copy constructor from an array of complex values.
-  ComplexVector(const std::complex<double> *py, int n);
+  ComplexVector(const std::complex<double> *py, int n, bool on_dev);
+
+  // Flag for runtime execution on the mfem::Device. See the documentation for mfem::Vector.
+  void UseDevice(bool use_dev)
+  {
+    xr_.UseDevice(use_dev);
+    xi_.UseDevice(use_dev);
+  }
+  bool UseDevice() const { return xr_.UseDevice(); }
 
   // Return the size of the vector.
-  int Size() const { return x.Size() / 2; }
+  int Size() const { return xr_.Size(); }
 
   // Set the size of the vector. See the notes for Vector::SetSize for behavior in the cases
   // where n is less than or greater than Size() or Capacity().
   void SetSize(int n);
 
   // Get access to the real and imaginary vector parts.
-  const Vector &Real() const { return xr; }
-  Vector &Real() { return xr; }
-  const Vector &Imag() const { return xi; }
-  Vector &Imag() { return xi; }
+  const Vector &Real() const { return xr_; }
+  Vector &Real() { return xr_; }
+  const Vector &Imag() const { return xi_; }
+  Vector &Imag() { return xi_; }
 
   // Set from a ComplexVector, without resizing.
   ComplexVector &operator=(const ComplexVector &y) { return Set(y); }
@@ -63,10 +70,10 @@ public:
   void Set(const Vector &yr, const Vector &yi);
 
   // Set from an array of complex values, without resizing.
-  void Set(const std::complex<double> *py, int n);
+  void Set(const std::complex<double> *py, int n, bool on_dev);
 
   // Copy the vector into an array of complex values.
-  void Get(std::complex<double> *py, int n) const;
+  void Get(std::complex<double> *py, int n, bool on_dev) const;
 
   // Set all entries equal to s.
   ComplexVector &operator=(std::complex<double> s);
@@ -109,6 +116,16 @@ public:
   void AXPBYPCZ(std::complex<double> alpha, const ComplexVector &x,
                 std::complex<double> beta, const ComplexVector &y,
                 std::complex<double> gamma);
+
+  static void AXPY(std::complex<double> alpha, const Vector &xr, const Vector &xi,
+                   Vector &yr, Vector &yi);
+
+  static void AXPBY(std::complex<double> alpha, const Vector &xr, const Vector &xi,
+                    std::complex<double> beta, Vector &yr, Vector &yi);
+
+  static void AXPBYPCZ(std::complex<double> alpha, const Vector &xr, const Vector &xi,
+                       std::complex<double> beta, const Vector &yr, const Vector &yi,
+                       std::complex<double> gamma, Vector &zr, Vector &zi);
 };
 
 namespace linalg
@@ -168,22 +185,12 @@ inline double Norml2(MPI_Comm comm, const VecType &x)
 {
   return std::sqrt(std::abs(Dot(comm, x, x)));
 }
-template <typename VecType>
-double Norml2(MPI_Comm comm, const VecType &x, const Operator &B, VecType &Bx);
 
 // Normalize the vector, possibly with respect to an SPD matrix B.
 template <typename VecType>
 inline double Normalize(MPI_Comm comm, VecType &x)
 {
   double norm = Norml2(comm, x);
-  MFEM_ASSERT(norm > 0.0, "Zero vector norm in normalization!");
-  x *= 1.0 / norm;
-  return norm;
-}
-template <typename VecType>
-inline double Normalize(MPI_Comm comm, VecType &x, const Operator &B, VecType &Bx)
-{
-  double norm = Norml2(comm, x, B, Bx);
   MFEM_ASSERT(norm > 0.0, "Zero vector norm in normalization!");
   x *= 1.0 / norm;
   return norm;

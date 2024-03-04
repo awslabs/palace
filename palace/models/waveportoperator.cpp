@@ -26,6 +26,9 @@ namespace palace
 
 using namespace std::complex_literals;
 
+// XX TODO: All these tiny solves should happen only on the CPU (if we can configure Hypre
+//          device at runtime).
+
 namespace
 {
 
@@ -50,6 +53,8 @@ void GetEssentialTrueDofs(mfem::ParGridFunction &E0t, mfem::ParGridFunction &E0n
   h1_fespace.GetEssentialTrueDofs(dbc_marker, h1_dbc_tdof_list);
 
   Vector tE0t(nd_fespace.GetTrueVSize()), tE0n(h1_fespace.GetTrueVSize());
+  tE0t.UseDevice(true);
+  tE0n.UseDevice(true);
   tE0t = 0.0;
   tE0n = 0.0;
   linalg::SetSubVector(tE0t, nd_dbc_tdof_list, 1.0);
@@ -61,20 +66,26 @@ void GetEssentialTrueDofs(mfem::ParGridFunction &E0t, mfem::ParGridFunction &E0n
 
   Vector port_tE0t(port_nd_fespace.GetTrueVSize()),
       port_tE0n(port_h1_fespace.GetTrueVSize());
+  port_tE0t.UseDevice(true);
+  port_tE0n.UseDevice(true);
   port_E0t.ParallelProject(port_tE0t);
   port_E0n.ParallelProject(port_tE0n);
-  for (int i = 0; i < port_tE0t.Size(); i++)
   {
-    if (port_tE0t[i] != 0.0)
+    const auto *h_port_tE0t = port_tE0t.HostRead();
+    const auto *h_port_tE0n = port_tE0n.HostRead();
+    for (int i = 0; i < port_tE0t.Size(); i++)
     {
-      port_nd_dbc_tdof_list.Append(i);
+      if (h_port_tE0t[i] != 0.0)
+      {
+        port_nd_dbc_tdof_list.Append(i);
+      }
     }
-  }
-  for (int i = 0; i < port_tE0n.Size(); i++)
-  {
-    if (port_tE0n[i] != 0.0)
+    for (int i = 0; i < port_tE0n.Size(); i++)
     {
-      port_h1_dbc_tdof_list.Append(i);
+      if (h_port_tE0n[i] != 0.0)
+      {
+        port_h1_dbc_tdof_list.Append(i);
+      }
     }
   }
 }
@@ -86,6 +97,7 @@ void GetInitialSpace(const mfem::ParFiniteElementSpace &nd_fespace,
   // Initial space which satisfies Dirichlet BCs.
   const int nd_size = nd_fespace.GetTrueVSize(), h1_size = h1_fespace.GetTrueVSize();
   v.SetSize(nd_size + h1_size);
+  v.UseDevice(true);
   v = std::complex<double>(1.0, 0.0);
   // linalg::SetRandomReal(nd_fespace.GetComm(), v);
   linalg::SetSubVector(v, nd_size, nd_size + h1_size, 0.0);
@@ -282,26 +294,16 @@ void Normalize(const mfem::ParGridFunction &S0t, mfem::ParComplexGridFunction &E
   // functions. We choose a (rather arbitrary) phase constraint to at least make results for
   // the same port consistent between frequencies/meshes.
 
-  // |E x H⋆| ⋅ n = |E ⋅ (-n x H⋆)|
+  // |E x H⋆| ⋅ n = |E ⋅ (-n x H⋆)|. This also updates the n x H coefficients depending on
+  // Et, En. Update linear forms for postprocessing too.
   std::complex<double> dot[2] = {
       {sr * S0t, si * S0t},
       {-(sr * E0t.real()) - (si * E0t.imag()), -(sr * E0t.imag()) + (si * E0t.real())}};
   Mpi::GlobalSum(2, dot, S0t.ParFESpace()->GetComm());
   auto scale = std::abs(dot[0]) / (dot[0] * std::sqrt(std::abs(dot[1])));
-
-  // This also updates the n x H coefficients depending on Et, En.
-  Vector tmp = E0t.real();
-  add(scale.real(), E0t.real(), -scale.imag(), E0t.imag(), E0t.real());
-  add(scale.imag(), tmp, scale.real(), E0t.imag(), E0t.imag());
-
-  tmp = E0n.real();
-  add(scale.real(), E0n.real(), -scale.imag(), E0n.imag(), E0n.real());
-  add(scale.imag(), tmp, scale.real(), E0n.imag(), E0n.imag());
-
-  // Update linear forms for postprocessing too.
-  tmp = sr;
-  add(scale.real(), sr, -scale.imag(), si, sr);
-  add(scale.imag(), tmp, scale.real(), si, si);
+  ComplexVector::AXPBY(scale, E0t.real(), E0t.imag(), 0.0, E0t.real(), E0t.imag());
+  ComplexVector::AXPBY(scale, E0n.real(), E0n.imag(), 0.0, E0n.real(), E0n.imag());
+  ComplexVector::AXPBY(scale, sr, si, 0.0, sr, si);
 
   // This parallel communication is not required since wave port boundaries are true one-
   // sided boundaries.
@@ -584,10 +586,10 @@ WavePortData::WavePortData(const config::WavePortData &data,
     }
   }
 
-  // Create vector for initial space for eigenvalue solves.
+  // Create vector for initial space for eigenvalue solves and eigenmode solution.
   GetInitialSpace(*port_nd_fespace, *port_h1_fespace, port_dbc_tdof_list, v0);
   e0.SetSize(port_nd_fespace->GetTrueVSize() + port_h1_fespace->GetTrueVSize());
-  e0n.SetSize(port_h1_fespace->GetTrueVSize());
+  e0.UseDevice(true);
 
   // The operators for the generalized eigenvalue problem are:
   //                [Aₜₜ  Aₜₙ] [eₜ] = -kₙ² [Bₜₜ  0ₜₙ] [eₜ]
@@ -893,19 +895,23 @@ void WavePortData::Initialize(double omega)
       MFEM_ASSERT(e0.Size() == 0,
                   "Unexpected non-empty port FE space in wave port boundary mode solve!");
     }
+    e0.Real().ReadWrite();  // Ensure memory is allocated on device before aliasing
+    e0.Imag().ReadWrite();
     Vector e0tr(e0.Real(), 0, port_nd_fespace->GetTrueVSize());
     Vector e0nr(e0.Real(), port_nd_fespace->GetTrueVSize(),
                 port_h1_fespace->GetTrueVSize());
     Vector e0ti(e0.Imag(), 0, port_nd_fespace->GetTrueVSize());
     Vector e0ni(e0.Imag(), port_nd_fespace->GetTrueVSize(),
                 port_h1_fespace->GetTrueVSize());
-    e0n.Real() = e0nr;
-    e0n.Imag() = e0ni;
-    e0n *= 1.0 / (1i * kn0);
+    e0tr.UseDevice(true);
+    e0nr.UseDevice(true);
+    e0ti.UseDevice(true);
+    e0ni.UseDevice(true);
+    ComplexVector::AXPBY(1.0 / (1i * kn0), e0nr, e0ni, 0.0, e0nr, e0ni);
     port_E0t->real().SetFromTrueDofs(e0tr);  // Parallel distribute
     port_E0t->imag().SetFromTrueDofs(e0ti);
-    port_E0n->real().SetFromTrueDofs(e0n.Real());
-    port_E0n->imag().SetFromTrueDofs(e0n.Imag());
+    port_E0n->real().SetFromTrueDofs(e0nr);
+    port_E0n->imag().SetFromTrueDofs(e0ni);
   }
 
   // Configure the linear forms for computing S-parameters (projection of the field onto the

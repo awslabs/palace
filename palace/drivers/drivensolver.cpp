@@ -134,6 +134,9 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator &
   // Set up RHS vector for the incident field at port boundaries, and the vector for the
   // first frequency step.
   ComplexVector RHS(Curl.Width()), E(Curl.Width()), B(Curl.Height());
+  RHS.UseDevice(true);
+  E.UseDevice(true);
+  B.UseDevice(true);
   E = 0.0;
   B = 0.0;
 
@@ -246,6 +249,8 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator 
   // high-dimensional field solution.
   const auto &Curl = spaceop.GetCurlMatrix();
   ComplexVector E(Curl.Width()), B(Curl.Height());
+  E.UseDevice(true);
+  B.UseDevice(true);
   E = 0.0;
   B = 0.0;
 

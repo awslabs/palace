@@ -61,6 +61,7 @@ public:
     // dependence.
     spaceop.GetExcitationVector(NegJ);
     RHS.SetSize(NegJ.Size());
+    RHS.UseDevice(true);
 
     // Set up linear solvers.
     {
@@ -152,6 +153,10 @@ TimeOperator::TimeOperator(const IoData &iodata, SpaceOperator &spaceop,
   dE.SetSize(Curl->Width());
   En.SetSize(Curl->Width());
   B.SetSize(Curl->Height());
+  E.UseDevice(true);
+  dE.UseDevice(true);
+  En.UseDevice(true);
+  B.UseDevice(true);
 
   // Create ODE solver for 2nd-order IVP.
   mfem::TimeDependentOperator::Type type = mfem::TimeDependentOperator::EXPLICIT;

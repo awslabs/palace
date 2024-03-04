@@ -23,6 +23,8 @@ project(palace LANGUAGES CXX VERSION 0.12.0)
 
 # Define build settings and defaults
 set(PALACE_WITH_OPENMP OFF CACHE BOOL "Use OpenMP for shared-memory parallelism")
+set(PALACE_WITH_CUDA OFF CACHE BOOL "Use CUDA for NVIDIA GPU support")
+set(PALACE_WITH_HIP OFF CACHE BOOL "Use HIP for AMD or NVIDIA GPU support")
 
 set(PALACE_WITH_SLEPC ON CACHE BOOL "Build with SLEPc eigenvalue solver")
 set(PALACE_WITH_ARPACK OFF CACHE BOOL "Build with ARPACK eigenvalue solver")
@@ -50,6 +52,17 @@ set(ARPACK_DIR "" CACHE STRING
 # Enable Fortran if required
 if(PALACE_WITH_ARPACK)
   enable_language(Fortran)
+endif()
+
+# Enable CUDA/HIP if required
+if(PALACE_WITH_CUDA AND PALACE_WITH_HIP)
+  message(FATAL_ERROR "PALACE_WITH_CUDA is not compatible with PALACE_WITH_HIP")
+endif()
+if(PALACE_WITH_CUDA)
+  enable_language(CUDA)
+  set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --expt-extended-lambda")
+elseif(PALACE_WITH_HIP)
+  enable_language(HIP)
 endif()
 
 # Set a default build type if none was provided
@@ -182,6 +195,32 @@ set_target_properties(${TARGET_NAME}
 set_target_properties(${LIB_TARGET_NAME}
   PROPERTIES OUTPUT_NAME "${TARGET_NAME}"
 )
+
+# Handle device source code
+if(NOT "${TARGET_SOURCES_DEVICE}" STREQUAL "" AND (PALACE_WITH_CUDA OR PALACE_WITH_HIP))
+  if(PALACE_WITH_CUDA)
+    set(LANGUAGE_PROPERTY CUDA)
+  elseif(PALACE_WITH_HIP)
+    set(LANGUAGE_PROPERTY HIP)
+  endif()
+  set(COMPILE_OPTIONS_PROPERTY "-Wno-pedantic")
+  if(PALACE_WITH_OPENMP)
+    set(COMPILE_OPTIONS_PROPERTY "${COMPILE_OPTIONS_PROPERTY} ${OpenMP_CXX_FLAGS}")
+  endif()
+  set_property(
+    SOURCE ${TARGET_SOURCES_DEVICE}
+    PROPERTY LANGUAGE ${LANGUAGE_PROPERTY}
+  )
+  set_property(
+    SOURCE ${TARGET_SOURCES_DEVICE}
+    APPEND PROPERTY COMPILE_OPTIONS "${COMPILE_OPTIONS_PROPERTY}"
+  )
+endif()
+
+# Resolve linker error with CUDA and static linkage
+if(PALACE_WITH_CUDA)
+  set_target_properties(${TARGET_NAME} PROPERTIES CUDA_RESOLVE_DEVICE_SYMBOLS ON)
+endif()
 
 # Add JIT source file path definition for libCEED
 set_property(

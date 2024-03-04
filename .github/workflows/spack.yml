@@ -15,9 +15,18 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
+        include:  # Include GPU build tests
           - compiler: gcc
-            mpi: openmpi
+            mpi: mpich
+            gpu: none
+
+          # - compiler: gcc
+          #   mpi: mpich
+          #   gpu: cuda
+
+          # - compiler: gcc
+          #   mpi: mpich
+          #   gpu: rocm
 
     runs-on: palace_ubuntu-latest_16-core
     steps:
@@ -57,15 +66,26 @@ jobs:
           # Clean up Android SDK install (confuses Spack MKL link line?)
           sudo rm -rf $ANDROID_HOME
 
-          # Set up Spack to use external packages (MPI, etc.)
+          # Set up Spack to use external packages (MPI, etc.) and local Palace package
+          # recipe
           . /opt/spack/share/spack/setup-env.sh
           spack external find --all
+          spack repo add spack/local
+
+          # Configure GPU variant
+          if [[ "${{ matrix.gpu }}" == 'cuda' ]]; then
+            GPU_VARIANT="+cuda cuda_arch=70"
+          elif [[ "${{ matrix.gpu }}" == 'rocm' ]]; then
+            GPU_VARIANT="+rocm amdgpu_target=gfx900"
+          else
+            GPU_VARIANT=""
+          fi
 
           # Build and install
-          spack repo add spack/local
-          spack dev-build local.palace@develop%${{ matrix.compiler }} ^petsc~hdf5 ^intel-oneapi-mkl
+          spack dev-build local.palace@develop%${{ matrix.compiler }} $GPU_VARIANT ^petsc~hdf5 ^intel-oneapi-mkl
 
       - name: Run tests
+        if: matrix.gpu == 'none'  # Skip tests for GPU builds
         env:
           NUM_PROC_TEST_MAX: '8'
         run: |

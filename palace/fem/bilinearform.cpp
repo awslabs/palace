@@ -170,6 +170,8 @@ BilinearForm::Assemble(const BaseFiniteElementSpaceHierarchy<T> &fespaces, bool 
               "spaces and fine space of the hierarchy!");
 
   // First partially assemble all of the operators.
+  MFEM_VERIFY(l0 < fespaces.GetNumLevels(),
+              "No levels available for operator coarsening (l0 = " << l0 << ")!");
   std::vector<std::unique_ptr<ceed::Operator>> pa_ops;
   pa_ops.reserve(fespaces.GetNumLevels() - l0);
   for (std::size_t l = l0; l < fespaces.GetNumLevels(); l++)
@@ -190,7 +192,7 @@ BilinearForm::Assemble(const BaseFiniteElementSpaceHierarchy<T> &fespaces, bool 
   // Construct the final operators using full or partial assemble as needed. Force the
   // coarse-level operator to be fully assembled always.
   std::vector<std::unique_ptr<Operator>> ops;
-  ops.reserve(fespaces.GetNumLevels() - 1);
+  ops.reserve(fespaces.GetNumLevels() - l0);
   for (std::size_t l = l0; l < fespaces.GetNumLevels(); l++)
   {
     if (l == 0 || UseFullAssembly(fespaces.GetFESpaceAtLevel(l), pa_order_threshold))
@@ -274,8 +276,8 @@ std::unique_ptr<ceed::Operator> DiscreteLinearOperator::PartialAssemble() const
   // elements (on host, then copy to device).
   Vector test_multiplicity(test_fespace.GetVSize());
   test_multiplicity = 0.0;
-  mfem::Array<int> dofs;
   auto *h_mult = test_multiplicity.HostReadWrite();
+  mfem::Array<int> dofs;
   for (int i = 0; i < test_fespace.GetMesh().GetNE(); i++)
   {
     test_fespace.Get().GetElementVDofs(i, dofs);

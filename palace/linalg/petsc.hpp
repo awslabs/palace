@@ -22,6 +22,14 @@
 #if !defined(PETSC_USE_64BIT_INDICES) && (defined(HYPRE_BIGINT) || defined(HYPRE_MIXEDINT))
 #warning "Mismatch between big HYPRE (64bit) and PETSc (32bit) integer types!"
 #endif
+#if (defined(PETSC_HAVE_CUDA) && !defined(MFEM_USE_CUDA)) || \
+    (!defined(PETSC_HAVE_CUDA) && defined(MFEM_USE_CUDA))
+#error "Mismatch between MFEM and PETSc CUDA support!"
+#endif
+#if (defined(PETSC_HAVE_HIP) && !defined(MFEM_USE_HIP)) || \
+    (!defined(PETSC_HAVE_HIP) && defined(MFEM_USE_HIP))
+#error "Mismatch between MFEM and PETSc HIP support!"
+#endif
 
 // Forward declarations of PETSc objects.
 typedef struct _p_Vec *Vec;

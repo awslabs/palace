@@ -41,6 +41,7 @@ void ParOperator::SetEssentialTrueDofs(const mfem::Array<int> &tdof_list,
   MFEM_VERIFY(height == width, "Set essential true dofs for both test and trial spaces "
                                "for rectangular ParOperator!");
   dbc_tdof_list = &tdof_list;
+  dbc_tdof_list->Read(true);  // Copy to device
   diag_policy = policy;
 }
 
@@ -143,6 +144,7 @@ mfem::HypreParMatrix &ParOperator::ParallelAssemble(bool skip_zeros) const
 
 void ParOperator::AssembleDiagonal(Vector &diag) const
 {
+  diag.UseDevice(true);
   if (RAP)
   {
     RAP->AssembleDiagonal(diag);
@@ -440,6 +442,7 @@ void ComplexParOperator::SetEssentialTrueDofs(const mfem::Array<int> &tdof_list,
   MFEM_VERIFY(height == width, "Set essential true dofs for both test and trial spaces "
                                "for rectangular ComplexParOperator!");
   dbc_tdof_list = &tdof_list;
+  dbc_tdof_list->Read(true);  // Copy to device
   diag_policy = policy;
   if (RAPr)
   {
@@ -453,6 +456,7 @@ void ComplexParOperator::SetEssentialTrueDofs(const mfem::Array<int> &tdof_list,
 
 void ComplexParOperator::AssembleDiagonal(ComplexVector &diag) const
 {
+  diag.UseDevice(true);
   diag = 0.0;
   if (RAPr)
   {

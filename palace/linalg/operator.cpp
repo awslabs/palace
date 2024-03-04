@@ -65,6 +65,8 @@ ComplexWrapperOperator::ComplexWrapperOperator(std::unique_ptr<Operator> &&dAr,
   MFEM_VERIFY(Ar || Ai, "Cannot construct ComplexWrapperOperator from an empty matrix!");
   MFEM_VERIFY((!Ar || !Ai) || (Ar->Height() == Ai->Height() && Ar->Width() == Ai->Width()),
               "Mismatch in dimension of real and imaginary matrix parts!");
+  tx.UseDevice(true);
+  ty.UseDevice(true);
   height = Ar ? Ar->Height() : Ai->Height();
   width = Ar ? Ar->Width() : Ai->Width();
 }
@@ -413,6 +415,7 @@ void ComplexWrapperOperator::AddMultHermitianTranspose(const ComplexVector &x,
 SumOperator::SumOperator(const Operator &op, double a) : Operator(op.Height(), op.Width())
 {
   AddOperator(op, a);
+  z.UseDevice(true);
 }
 
 void SumOperator::AddOperator(const Operator &op, double a)
@@ -475,41 +478,44 @@ void SumOperator::AddMultTranspose(const Vector &x, Vector &y, const double a) c
 template <>
 void BaseDiagonalOperator<Operator>::Mult(const Vector &x, Vector &y) const
 {
+  const bool use_dev = x.UseDevice() || y.UseDevice();
   const int N = this->height;
-  const auto *D = d.Read();
-  const auto *X = x.Read();
-  auto *Y = y.Write();
-  mfem::forall(N, [=] MFEM_HOST_DEVICE(int i) { Y[i] = D[i] * X[i]; });
+  const auto *D = d.Read(use_dev);
+  const auto *X = x.Read(use_dev);
+  auto *Y = y.Write(use_dev);
+  mfem::forall_switch(use_dev, N, [=] MFEM_HOST_DEVICE(int i) { Y[i] = D[i] * X[i]; });
 }
 
 template <>
 void BaseDiagonalOperator<ComplexOperator>::Mult(const ComplexVector &x,
                                                  ComplexVector &y) const
 {
+  const bool use_dev = x.UseDevice() || y.UseDevice();
   const int N = this->height;
-  const auto *DR = d.Real().Read();
-  const auto *DI = d.Imag().Read();
-  const auto *XR = x.Real().Read();
-  const auto *XI = x.Imag().Read();
-  auto *YR = y.Real().Write();
-  auto *YI = y.Imag().Write();
-  mfem::forall(N,
-               [=] MFEM_HOST_DEVICE(int i)
-               {
-                 YR[i] = DR[i] * XR[i] - DI[i] * XI[i];
-                 YI[i] = DI[i] * XR[i] + DR[i] * XI[i];
-               });
+  const auto *DR = d.Real().Read(use_dev);
+  const auto *DI = d.Imag().Read(use_dev);
+  const auto *XR = x.Real().Read(use_dev);
+  const auto *XI = x.Imag().Read(use_dev);
+  auto *YR = y.Real().Write(use_dev);
+  auto *YI = y.Imag().Write(use_dev);
+  mfem::forall_switch(use_dev, N,
+                      [=] MFEM_HOST_DEVICE(int i)
+                      {
+                        YR[i] = DR[i] * XR[i] - DI[i] * XI[i];
+                        YI[i] = DI[i] * XR[i] + DR[i] * XI[i];
+                      });
 }
 
 template <>
 void BaseDiagonalOperator<Operator>::AddMult(const Vector &x, Vector &y,
                                              const double a) const
 {
+  const bool use_dev = x.UseDevice() || y.UseDevice();
   const int N = this->height;
-  const auto *D = d.Read();
-  const auto *X = x.Read();
-  auto *Y = y.Write();
-  mfem::forall(N, [=] MFEM_HOST_DEVICE(int i) { Y[i] += a * D[i] * X[i]; });
+  const auto *D = d.Read(use_dev);
+  const auto *X = x.Read(use_dev);
+  auto *Y = y.Write(use_dev);
+  mfem::forall_switch(use_dev, N, [=] MFEM_HOST_DEVICE(int i) { Y[i] += a * D[i] * X[i]; });
 }
 
 template <>
@@ -517,23 +523,24 @@ void BaseDiagonalOperator<ComplexOperator>::AddMult(const ComplexVector &x,
                                                     ComplexVector &y,
                                                     const std::complex<double> a) const
 {
+  const bool use_dev = x.UseDevice() || y.UseDevice();
   const int N = this->height;
   const double ar = a.real();
   const double ai = a.imag();
-  const auto *DR = d.Real().Read();
-  const auto *DI = d.Imag().Read();
-  const auto *XR = x.Real().Read();
-  const auto *XI = x.Imag().Read();
-  auto *YR = y.Real().Write();
-  auto *YI = y.Imag().Write();
-  mfem::forall(N,
-               [=] MFEM_HOST_DEVICE(int i)
-               {
-                 const auto tr = DR[i] * XR[i] - DI[i] * XI[i];
-                 const auto ti = DI[i] * XR[i] + DR[i] * XI[i];
-                 YR[i] += ar * tr - ai * ti;
-                 YI[i] += ai * ti + ar * ti;
-               });
+  const auto *DR = d.Real().Read(use_dev);
+  const auto *DI = d.Imag().Read(use_dev);
+  const auto *XR = x.Real().Read(use_dev);
+  const auto *XI = x.Imag().Read(use_dev);
+  auto *YR = y.Real().Write(use_dev);
+  auto *YI = y.Imag().Write(use_dev);
+  mfem::forall_switch(use_dev, N,
+                      [=] MFEM_HOST_DEVICE(int i)
+                      {
+                        const auto tr = DR[i] * XR[i] - DI[i] * XI[i];
+                        const auto ti = DI[i] * XR[i] + DR[i] * XI[i];
+                        YR[i] += ar * tr - ai * ti;
+                        YI[i] += ai * ti + ar * ti;
+                      });
 }
 
 template <>
@@ -543,19 +550,20 @@ void DiagonalOperatorHelper<BaseDiagonalOperator<ComplexOperator>,
 {
   const ComplexVector &d =
       static_cast<const BaseDiagonalOperator<ComplexOperator> *>(this)->d;
+  const bool use_dev = x.UseDevice() || y.UseDevice();
   const int N = this->height;
-  const auto *DR = d.Real().Read();
-  const auto *DI = d.Imag().Read();
-  const auto *XR = x.Real().Read();
-  const auto *XI = x.Imag().Read();
-  auto *YR = y.Real().Write();
-  auto *YI = y.Imag().Write();
-  mfem::forall(N,
-               [=] MFEM_HOST_DEVICE(int i)
-               {
-                 YR[i] = DR[i] * XR[i] + DI[i] * XI[i];
-                 YI[i] = -DI[i] * XR[i] + DR[i] * XI[i];
-               });
+  const auto *DR = d.Real().Read(use_dev);
+  const auto *DI = d.Imag().Read(use_dev);
+  const auto *XR = x.Real().Read(use_dev);
+  const auto *XI = x.Imag().Read(use_dev);
+  auto *YR = y.Real().Write(use_dev);
+  auto *YI = y.Imag().Write(use_dev);
+  mfem::forall_switch(use_dev, N,
+                      [=] MFEM_HOST_DEVICE(int i)
+                      {
+                        YR[i] = DR[i] * XR[i] + DI[i] * XI[i];
+                        YI[i] = -DI[i] * XR[i] + DR[i] * XI[i];
+                      });
 }
 
 template <>
@@ -565,27 +573,50 @@ void DiagonalOperatorHelper<BaseDiagonalOperator<ComplexOperator>, ComplexOperat
 {
   const ComplexVector &d =
       static_cast<const BaseDiagonalOperator<ComplexOperator> *>(this)->d;
+  const bool use_dev = x.UseDevice() || y.UseDevice();
   const int N = this->height;
   const double ar = a.real();
   const double ai = a.imag();
-  const auto *DR = d.Real().Read();
-  const auto *DI = d.Imag().Read();
-  const auto *XR = x.Real().Read();
-  const auto *XI = x.Imag().Read();
-  auto *YR = y.Real().Write();
-  auto *YI = y.Imag().Write();
-  mfem::forall(N,
-               [=] MFEM_HOST_DEVICE(int i)
-               {
-                 const auto tr = DR[i] * XR[i] + DI[i] * XI[i];
-                 const auto ti = -DI[i] * XR[i] + DR[i] * XI[i];
-                 YR[i] += ar * tr - ai * ti;
-                 YI[i] += ai * ti + ar * ti;
-               });
+  const auto *DR = d.Real().Read(use_dev);
+  const auto *DI = d.Imag().Read(use_dev);
+  const auto *XR = x.Real().Read(use_dev);
+  const auto *XI = x.Imag().Read(use_dev);
+  auto *YR = y.Real().Write(use_dev);
+  auto *YI = y.Imag().Write(use_dev);
+  mfem::forall_switch(use_dev, N,
+                      [=] MFEM_HOST_DEVICE(int i)
+                      {
+                        const auto tr = DR[i] * XR[i] + DI[i] * XI[i];
+                        const auto ti = -DI[i] * XR[i] + DR[i] * XI[i];
+                        YR[i] += ar * tr - ai * ti;
+                        YI[i] += ai * ti + ar * ti;
+                      });
 }
 
 namespace linalg
 {
+
+template <>
+double Norml2(MPI_Comm comm, const Vector &x, const Operator &B, Vector &Bx)
+{
+  B.Mult(x, Bx);
+  double dot = Dot(comm, Bx, x);
+  MFEM_ASSERT(dot > 0.0,
+              "Non-positive vector norm in normalization (dot = " << dot << ")!");
+  return std::sqrt(dot);
+}
+
+template <>
+double Norml2(MPI_Comm comm, const ComplexVector &x, const Operator &B, ComplexVector &Bx)
+{
+  // For SPD B, xᴴ B x is real.
+  B.Mult(x.Real(), Bx.Real());
+  B.Mult(x.Imag(), Bx.Imag());
+  std::complex<double> dot = Dot(comm, Bx, x);
+  MFEM_ASSERT(dot.real() > 0.0 && std::abs(dot.imag()) < 1.0e-9 * dot.real(),
+              "Non-positive vector norm in normalization (dot = " << dot << ")!");
+  return std::sqrt(dot.real());
+}
 
 double SpectralNorm(MPI_Comm comm, const Operator &A, bool sym, double tol, int max_it)
 {
@@ -603,8 +634,10 @@ double SpectralNorm(MPI_Comm comm, const ComplexOperator &A, bool herm, double t
   // Power iteration loop: ||A||₂² = λₙ(Aᴴ A).
   int it = 0;
   double res = 0.0;
-  double l, l0 = 0.0;
+  double l = 0.0, l0 = 0.0;
   ComplexVector u(A.Height()), v(A.Height());
+  u.UseDevice(true);
+  v.UseDevice(true);
   SetRandom(comm, u);
   Normalize(comm, u);
   while (it < max_it)

@@ -25,8 +25,8 @@ private:
   HYPRE_Solver ams;
 
   // Parameters used for preconditioner construction.
-  const int cycle_type, space_dim, ams_it, ams_smooth_it, amg_agg_levels;
-  const bool ams_singular;
+  const int cycle_type, space_dim, ams_it, ams_smooth_it;
+  const bool ams_pos, ams_singular;
 
   // Control print level for debugging.
   const int print;
@@ -50,18 +50,15 @@ public:
   // Constructor requires the ND space, but will construct the H1 and (H1)ᵈ spaces
   // internally as needed.
   HypreAmsSolver(FiniteElementSpace &nd_fespace, AuxiliaryFiniteElementSpace &h1_fespace,
-                 int cycle_it, int smooth_it, int agg_coarsen, bool vector_interp,
+                 int cycle_it, int smooth_it, bool vector_interp, bool op_pos,
                  bool op_singular, int print);
   HypreAmsSolver(const IoData &iodata, bool coarse_solver, FiniteElementSpace &nd_fespace,
                  AuxiliaryFiniteElementSpace &h1_fespace, int print)
     : HypreAmsSolver(
           nd_fespace, h1_fespace, coarse_solver ? 1 : iodata.solver.linear.mg_cycle_it,
-          iodata.solver.linear.mg_smooth_it,
+          iodata.solver.linear.mg_smooth_it, iodata.solver.linear.ams_vector,
           (iodata.problem.type == config::ProblemData::Type::TRANSIENT ||
-           iodata.problem.type == config::ProblemData::Type::MAGNETOSTATIC)
-              ? 1
-              : 0,
-          iodata.solver.linear.ams_vector,
+           iodata.problem.type == config::ProblemData::Type::MAGNETOSTATIC),
           (iodata.problem.type == config::ProblemData::Type::MAGNETOSTATIC), print)
   {
   }

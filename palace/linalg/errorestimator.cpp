@@ -90,6 +90,7 @@ FluxProjector<VecType>::FluxProjector(const MaterialOperator &mat_op,
   ksp->SetOperators(*M, *M);
 
   rhs.SetSize(nd_fespace.GetTrueVSize());
+  rhs.UseDevice(true);
 }
 
 template <typename VecType>
@@ -114,6 +115,7 @@ FluxProjector<VecType>::FluxProjector(const MaterialOperator &mat_op,
   ksp->SetOperators(*M, *M);
 
   rhs.SetSize(h1d_fespace.GetTrueVSize());
+  rhs.UseDevice(true);
 }
 
 template <typename VecType>
@@ -135,6 +137,7 @@ void FluxProjector<VecType>::Mult(const VecType &x, VecType &y) const
   {
     if constexpr (std::is_same<VecType, Vector>::value)
     {
+      y.Write();  // Ensure memory is allocated on device before aliasing
       for (int i = 0; i < vdim; i++)
       {
         // Mpi::Print(" Computing smooth flux projection of flux component {:d}/{:d} for "
@@ -143,6 +146,7 @@ void FluxProjector<VecType>::Mult(const VecType &x, VecType &y) const
         const Vector rhsb(rhs, i * x.Size(), x.Size());
         Vector yb(y, i * x.Size(), x.Size());
         ksp->Mult(rhsb, yb);
+        y.SyncMemory(yb);
       }
     }
     else
@@ -159,12 +163,14 @@ CurlFluxErrorEstimator<VecType>::CurlFluxErrorEstimator(const MaterialOperator &
                                                         double tol, int max_it, int print)
   : mat_op(mat_op), nd_fespace(nd_fespace),
     projector(mat_op, nd_fespace, tol, max_it, print), F(nd_fespace.GetTrueVSize()),
-    F_gf(&nd_fespace.Get()), U_gf(&nd_fespace.Get())
+    F_gf(nd_fespace.GetVSize()), U_gf(nd_fespace.GetVSize())
 {
+  F.UseDevice(true);
 }
 
 template <typename VecType>
-ErrorIndicator CurlFluxErrorEstimator<VecType>::ComputeIndicators(const VecType &U) const
+void CurlFluxErrorEstimator<VecType>::AddErrorIndicator(const VecType &U,
+                                                        ErrorIndicator &indicator) const
 {
   // Compute the projection of the discontinuous flux onto the smooth finite element space
   // and populate the corresponding grid functions.
@@ -172,21 +178,28 @@ ErrorIndicator CurlFluxErrorEstimator<VecType>::ComputeIndicators(const VecType 
   projector.Mult(U, F);
   if constexpr (std::is_same<VecType, ComplexVector>::value)
   {
-    F_gf.real().SetFromTrueDofs(F.Real());
-    F_gf.imag().SetFromTrueDofs(F.Imag());
-    U_gf.real().SetFromTrueDofs(U.Real());
-    U_gf.imag().SetFromTrueDofs(U.Imag());
+    nd_fespace.GetProlongationMatrix()->Mult(U.Real(), U_gf.Real());
+    nd_fespace.GetProlongationMatrix()->Mult(U.Imag(), U_gf.Imag());
+    nd_fespace.GetProlongationMatrix()->Mult(F.Real(), F_gf.Real());
+    nd_fespace.GetProlongationMatrix()->Mult(F.Imag(), F_gf.Imag());
+    U_gf.Real().HostRead();
+    U_gf.Imag().HostRead();
+    F_gf.Real().HostRead();
+    F_gf.Imag().HostRead();
   }
   else
   {
-    F_gf.SetFromTrueDofs(F);
-    U_gf.SetFromTrueDofs(U);
+    nd_fespace.GetProlongationMatrix()->Mult(U, U_gf);
+    nd_fespace.GetProlongationMatrix()->Mult(F, F_gf);
+    U_gf.HostRead();
+    F_gf.HostRead();
   }
 
   // Loop over elements and accumulate the estimates from this component. The discontinuous
   // flux is μ⁻¹ ∇ × U.
   const auto &mesh = nd_fespace.GetParMesh();
   Vector estimates(mesh.GetNE());
+  auto *h_estimates = estimates.HostWrite();
   double norm2 = 0.0;
   PalacePragmaOmp(parallel reduction(+ : norm2))
   {
@@ -220,8 +233,7 @@ ErrorIndicator CurlFluxErrorEstimator<VecType>::ComputeIndicators(const VecType 
         fe.CalcCurlShape(ip, Curl);
         const double w = ip.weight * T.Weight();
 
-        auto AccumulateError =
-            [&](const mfem::ParGridFunction &U_gf_, const mfem::ParGridFunction &F_gf_)
+        auto AccumulateError = [&](const Vector &U_gf_, const Vector &F_gf_)
         {
           // μ⁻¹ ∇ × U
           U_gf_.GetSubVector(dofs, loc_gf);
@@ -245,22 +257,23 @@ ErrorIndicator CurlFluxErrorEstimator<VecType>::ComputeIndicators(const VecType 
 
           V_smooth -= V_ip;
           elem_err += w * (V_smooth * V_smooth);
-          loc_norm2 += w * (V_ip * V_ip);
+          return w * (V_ip * V_ip);
         };
         if constexpr (std::is_same<VecType, ComplexVector>::value)
         {
-          AccumulateError(U_gf.real(), F_gf.real());
-          AccumulateError(U_gf.imag(), F_gf.imag());
+          loc_norm2 += AccumulateError(U_gf.Real(), F_gf.Real());
+          loc_norm2 += AccumulateError(U_gf.Imag(), F_gf.Imag());
         }
         else
         {
-          AccumulateError(U_gf, F_gf);
+          loc_norm2 += AccumulateError(U_gf, F_gf);
         }
       }
-      estimates[e] = std::sqrt(elem_err);
+      h_estimates[e] = std::sqrt(elem_err);
     }
     norm2 += loc_norm2;
   }
+  estimates.UseDevice(true);
 
   // Finalize the element-wise error estimates.
   Mpi::GlobalSum(1, &norm2, mesh.GetComm());
@@ -268,7 +281,7 @@ ErrorIndicator CurlFluxErrorEstimator<VecType>::ComputeIndicators(const VecType 
   {
     estimates *= 1.0 / std::sqrt(norm2);
   }
-  return ErrorIndicator(std::move(estimates));
+  indicator.AddIndicator(estimates);
 }
 
 GradFluxErrorEstimator::GradFluxErrorEstimator(const MaterialOperator &mat_op,
@@ -279,23 +292,29 @@ GradFluxErrorEstimator::GradFluxErrorEstimator(const MaterialOperator &mat_op,
         h1_fespace.GetMesh(), &h1_fespace.GetFEColl(), h1_fespace.SpaceDimension(),
         mfem::Ordering::byNODES)),
     projector(mat_op, h1_fespace, *h1d_fespace, tol, max_it, print),
-    F(h1d_fespace->GetTrueVSize()), F_gf(&h1d_fespace->Get()), U_gf(&h1_fespace.Get())
+    F(h1d_fespace->GetTrueVSize()), F_gf(h1d_fespace->GetVSize()),
+    U_gf(h1_fespace.GetVSize())
 {
+  F.UseDevice(true);
 }
 
-ErrorIndicator GradFluxErrorEstimator::ComputeIndicators(const Vector &U) const
+void GradFluxErrorEstimator::AddErrorIndicator(const Vector &U,
+                                               ErrorIndicator &indicator) const
 {
   // Compute the projection of the discontinuous flux onto the smooth finite element space
   // and populate the corresponding grid functions.
   BlockTimer bt(Timer::ESTIMATION);
   projector.Mult(U, F);
-  F_gf.SetFromTrueDofs(F);
-  U_gf.SetFromTrueDofs(U);
+  h1_fespace.GetProlongationMatrix()->Mult(U, U_gf);
+  h1d_fespace->GetProlongationMatrix()->Mult(F, F_gf);
+  U_gf.HostRead();
+  F_gf.HostRead();
 
   // Loop over elements and accumulate the estimates from this component. The discontinuous
   // flux is ε ∇U.
   const auto &mesh = h1_fespace.GetParMesh();
   Vector estimates(mesh.GetNE());
+  auto *h_estimates = estimates.HostWrite();
   double norm2 = 0.0;
   PalacePragmaOmp(parallel reduction(+ : norm2))
   {
@@ -347,10 +366,11 @@ ErrorIndicator GradFluxErrorEstimator::ComputeIndicators(const Vector &U) const
         elem_err += w * (V_smooth * V_smooth);
         loc_norm2 += w * (V_ip * V_ip);
       }
-      estimates[e] = std::sqrt(elem_err);
+      h_estimates[e] = std::sqrt(elem_err);
     }
     norm2 += loc_norm2;
   }
+  estimates.UseDevice(true);
 
   // Finalize the element-wise error estimates.
   Mpi::GlobalSum(1, &norm2, mesh.GetComm());
@@ -358,7 +378,7 @@ ErrorIndicator GradFluxErrorEstimator::ComputeIndicators(const Vector &U) const
   {
     estimates *= 1.0 / std::sqrt(norm2);
   }
-  return ErrorIndicator(std::move(estimates));
+  indicator.AddIndicator(estimates);
 }
 
 template class FluxProjector<Vector>;

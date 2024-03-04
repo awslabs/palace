@@ -14,11 +14,19 @@ BoomerAmgSolver::BoomerAmgSolver(int cycle_it, int smooth_it, int print)
   SetTol(0.0);
 
   // Set additional BoomerAMG options.
-  double theta = 0.5;  // AMG strength parameter = 0.25 is 2D optimal (0.5-0.8 for 3D)
   int agg_levels = 1;  // Number of aggressive coarsening levels
+  double theta = 0.5;  // AMG strength parameter = 0.25 is 2D optimal (0.5-0.8 for 3D)
+  {
+    HYPRE_MemoryLocation loc;
+    HYPRE_GetMemoryLocation(&loc);
+    if (loc == HYPRE_MEMORY_DEVICE)  // Modify options for GPU-supported features
+    {
+      agg_levels = 0;
+    }
+  }
 
-  SetStrengthThresh(theta);
   SetAggressiveCoarsening(agg_levels);
+  SetStrengthThresh(theta);
   HYPRE_BoomerAMGSetNumSweeps(*this, smooth_it);
 
   // int coarse_relax_type = 8;  // l1-symm. GS (inexact coarse solve)

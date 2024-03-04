@@ -14,40 +14,42 @@ namespace
 template <bool Transpose = false>
 inline void Apply(const Vector &dinv, const Vector &x, Vector &y)
 {
+  const bool use_dev = dinv.UseDevice() || x.UseDevice() || y.UseDevice();
   const int N = dinv.Size();
-  const auto *DI = dinv.Read();
-  const auto *X = x.Read();
-  auto *Y = y.Write();
-  mfem::forall(N, [=] MFEM_HOST_DEVICE(int i) { Y[i] = DI[i] * X[i]; });
+  const auto *DI = dinv.Read(use_dev);
+  const auto *X = x.Read(use_dev);
+  auto *Y = y.Write(use_dev);
+  mfem::forall_switch(use_dev, N, [=] MFEM_HOST_DEVICE(int i) { Y[i] = DI[i] * X[i]; });
 }
 
 template <bool Transpose = false>
 inline void Apply(const ComplexVector &dinv, const ComplexVector &x, ComplexVector &y)
 {
+  const bool use_dev = dinv.UseDevice() || x.UseDevice() || y.UseDevice();
   const int N = dinv.Size();
-  const auto *DIR = dinv.Real().Read();
-  const auto *DII = dinv.Imag().Read();
-  const auto *XR = x.Real().Read();
-  const auto *XI = x.Imag().Read();
-  auto *YR = y.Real().Write();
-  auto *YI = y.Imag().Write();
+  const auto *DIR = dinv.Real().Read(use_dev);
+  const auto *DII = dinv.Imag().Read(use_dev);
+  const auto *XR = x.Real().Read(use_dev);
+  const auto *XI = x.Imag().Read(use_dev);
+  auto *YR = y.Real().Write(use_dev);
+  auto *YI = y.Imag().Write(use_dev);
   if constexpr (!Transpose)
   {
-    mfem::forall(N,
-                 [=] MFEM_HOST_DEVICE(int i)
-                 {
-                   YR[i] = DIR[i] * XR[i] - DII[i] * XI[i];
-                   YI[i] = DII[i] * XR[i] + DIR[i] * XI[i];
-                 });
+    mfem::forall_switch(use_dev, N,
+                        [=] MFEM_HOST_DEVICE(int i)
+                        {
+                          YR[i] = DIR[i] * XR[i] - DII[i] * XI[i];
+                          YI[i] = DII[i] * XR[i] + DIR[i] * XI[i];
+                        });
   }
   else
   {
-    mfem::forall(N,
-                 [=] MFEM_HOST_DEVICE(int i)
-                 {
-                   YR[i] = DIR[i] * XR[i] + DII[i] * XI[i];
-                   YI[i] = -DII[i] * XR[i] + DIR[i] * XI[i];
-                 });
+    mfem::forall_switch(use_dev, N,
+                        [=] MFEM_HOST_DEVICE(int i)
+                        {
+                          YR[i] = DIR[i] * XR[i] + DII[i] * XI[i];
+                          YI[i] = -DII[i] * XR[i] + DIR[i] * XI[i];
+                        });
   }
 }
 
@@ -57,6 +59,7 @@ template <typename OperType>
 void JacobiSmoother<OperType>::SetOperator(const OperType &op)
 {
   dinv.SetSize(op.Height());
+  dinv.UseDevice(true);
   op.AssembleDiagonal(dinv);
   dinv.Reciprocal();
 

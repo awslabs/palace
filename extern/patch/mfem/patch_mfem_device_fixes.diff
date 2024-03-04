@@ -1,8 +1,8 @@
 diff --git a/general/device.cpp b/general/device.cpp
-index ccee71cd7..f664f70c3 100644
+index b239eea59..8b3e586ba 100644
 --- a/general/device.cpp
 +++ b/general/device.cpp
-@@ -9,14 +9,13 @@
+@@ -9,14 +9,12 @@
  // terms of the BSD-3 license. We welcome feedback and contributions, see file
  // CONTRIBUTING.md for details.
  
@@ -12,13 +12,13 @@ index ccee71cd7..f664f70c3 100644
  #ifdef MFEM_USE_CEED
  #include "../fem/ceed/interface/util.hpp"
  #endif
- 
+-
 -#include <unordered_map>
 -#include <string>
  #include <map>
  
  namespace mfem
-@@ -144,13 +143,11 @@ Device::Device()
+@@ -144,13 +142,11 @@ Device::Device()
     }
  }
  
@@ -32,7 +32,7 @@ index ccee71cd7..f664f70c3 100644
  #ifdef MFEM_USE_CEED
        // Destroy FES -> CeedBasis, CeedElemRestriction hash table contents
        for (auto entry : internal::ceed_basis_map)
-@@ -169,7 +166,6 @@ Device::~Device()
+@@ -169,7 +165,6 @@ Device::~Device()
        mm.Destroy();
     }
     Get().ngpu = -1;
@@ -40,18 +40,19 @@ index ccee71cd7..f664f70c3 100644
     Get().backends = Backend::CPU;
     Get().host_mem_type = MemoryType::HOST;
     Get().host_mem_class = MemoryClass::HOST;
-@@ -189,6 +185,7 @@ void Device::Configure(const std::string &device, const int device_id)
-    }
- 
-    std::map<std::string, Backend::Id> bmap;
-+   std::string device_option;
-    for (int i = 0; i < Backend::NUM_BACKENDS; i++)
+@@ -193,28 +188,22 @@ void Device::Configure(const std::string &device, const int device_id)
     {
        bmap[internal::backend_name[i]] = internal::backend_list[i];
-@@ -200,21 +197,14 @@ void Device::Configure(const std::string &device, const int device_id)
+    }
+-   std::string::size_type beg = 0, end, option;
++   std::string device_option;
++   std::string::size_type beg = 0, end;
+    while (1)
+    {
+       end = device.find(',', beg);
        end = (end != std::string::npos) ? end : device.size();
        const std::string bname = device.substr(beg, end - beg);
-       option = bname.find(':');
+-      option = bname.find(':');
 -      if (option==std::string::npos) // No option
 -      {
 -         const std::string backend = bname;
@@ -60,9 +61,10 @@ index ccee71cd7..f664f70c3 100644
 -         Get().MarkBackend(it->second);
 -      }
 -      else
++      const auto option = bname.find(':');
 +      const std::string backend = (option != std::string::npos) ?
 +                                  bname.substr(0, option) : bname;
-+      std::map<std::string, Backend::Id>::iterator it = bmap.find(backend);
++      const auto it = bmap.find(backend);
 +      MFEM_VERIFY(it != bmap.end(), "Invalid backend name: '" << backend << '\'');
 +      Get().MarkBackend(it->second);
 +      if (option != std::string::npos)
@@ -77,7 +79,7 @@ index ccee71cd7..f664f70c3 100644
        }
        if (end == device.size()) { break; }
        beg = end + 1;
-@@ -240,10 +230,10 @@ void Device::Configure(const std::string &device, const int device_id)
+@@ -240,10 +229,10 @@ void Device::Configure(const std::string &device, const int device_id)
  #endif
  
     // Perform setup.
@@ -86,137 +88,39 @@ index ccee71cd7..f664f70c3 100644
  
 -   // Enable the device
 -   Enable();
-+   // Enable the device.
++   // Configure the host/device MemoryType/MemoryClass.
 +   Get().UpdateMemoryTypeAndClass(device_option);
  
     // Copy all data members from the global 'singleton_device' into '*this'.
     if (this != &Get()) { std::memcpy(this, &Get(), sizeof(Device)); }
-@@ -252,30 +242,6 @@ void Device::Configure(const std::string &device, const int device_id)
-    destroy_mm = true;
- }
- 
--// static method
--void Device::SetMemoryTypes(MemoryType h_mt, MemoryType d_mt)
--{
--   // If the device and/or the MemoryTypes are configured through the
--   // environment (variables 'MFEM_DEVICE', 'MFEM_MEMORY'), ignore calls to this
--   // method.
--   if (mem_host_env || mem_device_env || device_env) { return; }
--
--   MFEM_VERIFY(!IsConfigured(), "the default MemoryTypes can only be set before"
--               " Device construction and configuration");
--   MFEM_VERIFY(IsHostMemory(h_mt),
--               "invalid host MemoryType, h_mt = " << (int)h_mt);
--   MFEM_VERIFY(IsDeviceMemory(d_mt) || d_mt == h_mt,
--               "invalid device MemoryType, d_mt = " << (int)d_mt
--               << " (h_mt = " << (int)h_mt << ')');
--
--   Get().host_mem_type = h_mt;
--   Get().device_mem_type = d_mt;
--   mem_types_set = true;
--
--   // h_mt and d_mt will be set as dual to each other during configuration by
--   // the call mm.Configure(...) in UpdateMemoryTypeAndClass()
--}
--
- void Device::Print(std::ostream &os)
- {
-    os << "Device configuration: ";
-@@ -307,96 +273,53 @@ void Device::Print(std::ostream &os)
+@@ -307,10 +296,9 @@ void Device::Print(std::ostream &os)
     os << std::endl;
  }
  
 -void Device::UpdateMemoryTypeAndClass()
-+// static method
-+void Device::SetMemoryTypes(MemoryType h_mt, MemoryType d_mt)
++void Device::UpdateMemoryTypeAndClass(const std::string &device_option)
  {
--   const bool debug = Device::Allows(Backend::DEBUG_DEVICE);
+    const bool debug = Device::Allows(Backend::DEBUG_DEVICE);
 -
--   const bool device = Device::Allows(Backend::DEVICE_MASK);
--
--#ifdef MFEM_USE_UMPIRE
--   // If MFEM has been compiled with Umpire support, use it as the default
--   if (!mem_host_env && !mem_types_set)
--   {
--      host_mem_type = MemoryType::HOST_UMPIRE;
--      if (!mem_device_env)
--      {
--         device_mem_type = MemoryType::HOST_UMPIRE;
--      }
--   }
--#endif
--
--   // Enable the device memory type
--   if (device)
--   {
--      if (!mem_device_env)
--      {
--         if (mem_host_env)
--         {
--            switch (host_mem_type)
--            {
--               case MemoryType::HOST_UMPIRE:
--                  device_mem_type = MemoryType::DEVICE_UMPIRE;
--                  break;
--               case MemoryType::HOST_DEBUG:
--                  device_mem_type = MemoryType::DEVICE_DEBUG;
--                  break;
--               default:
--                  device_mem_type = MemoryType::DEVICE;
--            }
--         }
--         else if (!mem_types_set)
--         {
--#ifndef MFEM_USE_UMPIRE
--            device_mem_type = MemoryType::DEVICE;
--#else
--            device_mem_type = MemoryType::DEVICE_UMPIRE;
--#endif
--         }
--      }
--      device_mem_class = MemoryClass::DEVICE;
--   }
--
--   // Enable the UVM shortcut when requested
+    const bool device = Device::Allows(Backend::DEVICE_MASK);
+ 
+ #ifdef MFEM_USE_UMPIRE
+@@ -357,7 +345,7 @@ void Device::UpdateMemoryTypeAndClass()
+    }
+ 
+    // Enable the UVM shortcut when requested
 -   if (device && device_option && !strcmp(device_option, "uvm"))
--   {
--      host_mem_type = MemoryType::MANAGED;
--      device_mem_type = MemoryType::MANAGED;
--   }
-+   // If the device and/or the MemoryTypes are configured through the
-+   // environment (variables 'MFEM_DEVICE', 'MFEM_MEMORY'), ignore calls to this
-+   // method.
-+   if (mem_host_env || mem_device_env || device_env) { return; }
- 
--   // Enable the DEBUG mode when requested
--   if (debug)
--   {
--      host_mem_type = MemoryType::HOST_DEBUG;
--      device_mem_type = MemoryType::DEVICE_DEBUG;
--   }
-+   MFEM_VERIFY(!IsConfigured(), "The default MemoryTypes can only be set before"
-+               " Device construction and configuration");
-+   MFEM_VERIFY(IsHostMemory(h_mt),
-+               "Invalid host MemoryType, h_mt = " << (int)h_mt);
-+   MFEM_VERIFY(IsDeviceMemory(d_mt) || d_mt == h_mt,
-+               "Invalid device MemoryType, d_mt = " << (int)d_mt
-+               << " (h_mt = " << (int)h_mt << ')');
- 
--   MFEM_VERIFY(!device || IsDeviceMemory(device_mem_type),
--               "invalid device memory configuration!");
-+   Get().host_mem_type = h_mt;
-+   Get().device_mem_type = d_mt;
-+   mem_types_set = true;
- 
--   // Update the memory manager with the new settings
--   mm.Configure(host_mem_type, device_mem_type);
-+   // h_mt and d_mt will be set as dual to each other during configuration by
-+   // the call mm.Configure(...) in UpdateMemoryTypeAndClass().
++   if (device && device_option.find(":uvm") != std::string::npos)
+    {
+       host_mem_type = MemoryType::MANAGED;
+       device_mem_type = MemoryType::MANAGED;
+@@ -377,26 +365,29 @@ void Device::UpdateMemoryTypeAndClass()
+    mm.Configure(host_mem_type, device_mem_type);
  }
  
 -void Device::Enable()
 +// static method
-+int Device::GetNumGPU()
++int Device::GetDeviceCount()
  {
 -   const bool accelerated = Get().backends & ~(Backend::CPU);
 -   if (accelerated) { Get().mode = Device::ACCELERATED;}
@@ -253,7 +157,7 @@ index ccee71cd7..f664f70c3 100644
  #else
     MFEM_CONTRACT_VAR(dev);
     MFEM_CONTRACT_VAR(ngpu);
-@@ -418,7 +341,7 @@ static void HipDeviceSetup(const int dev, int &ngpu)
+@@ -418,7 +409,7 @@ static void HipDeviceSetup(const int dev, int &ngpu)
  static void RajaDeviceSetup(const int dev, int &ngpu)
  {
  #ifdef MFEM_USE_CUDA
@@ -262,76 +166,25 @@ index ccee71cd7..f664f70c3 100644
  #elif defined(MFEM_USE_HIP)
     HipDeviceSetup(dev, ngpu);
  #else
-@@ -443,7 +366,7 @@ static void OccaDeviceSetup(const int dev)
-       std::string mode("mode: 'CUDA', device_id : ");
-       internal::occaDevice.setup(mode.append(1,'0'+dev));
- #else
--      MFEM_ABORT("the OCCA CUDA backend requires OCCA built with CUDA!");
-+      MFEM_ABORT("The OCCA CUDA backend requires OCCA built with CUDA!");
- #endif
-    }
-    else if (omp)
-@@ -451,7 +374,7 @@ static void OccaDeviceSetup(const int dev)
- #if OCCA_OPENMP_ENABLED
-       internal::occaDevice.setup("mode: 'OpenMP'");
- #else
--      MFEM_ABORT("the OCCA OpenMP backend requires OCCA built with OpenMP!");
-+      MFEM_ABORT("The OCCA OpenMP backend requires OCCA built with OpenMP!");
- #endif
-    }
-    else
-@@ -477,7 +400,7 @@ static void OccaDeviceSetup(const int dev)
-    occa::loadKernels("mfem");
- #else
-    MFEM_CONTRACT_VAR(dev);
--   MFEM_ABORT("the OCCA backends require MFEM built with MFEM_USE_OCCA=YES");
-+   MFEM_ABORT("The OCCA backends require MFEM built with MFEM_USE_OCCA=YES");
- #endif
- }
- 
-@@ -502,80 +425,136 @@ static void CeedDeviceSetup(const char* ceed_spec)
+@@ -502,7 +493,7 @@ static void CeedDeviceSetup(const char* ceed_spec)
  #endif
  }
  
 -void Device::Setup(const int device_id)
 +void Device::Setup(const std::string &device_option, const int device_id)
  {
--   MFEM_VERIFY(ngpu == -1, "the mfem::Device is already configured!");
-+   MFEM_VERIFY(ngpu == -1, "The mfem::Device is already configured!");
+    MFEM_VERIFY(ngpu == -1, "the mfem::Device is already configured!");
  
-    ngpu = 0;
-    dev = device_id;
- #ifndef MFEM_USE_CUDA
-    MFEM_VERIFY(!Allows(Backend::CUDA_MASK),
--               "the CUDA backends require MFEM built with MFEM_USE_CUDA=YES");
-+               "The CUDA backends require MFEM built with MFEM_USE_CUDA=YES");
- #endif
- #ifndef MFEM_USE_HIP
-    MFEM_VERIFY(!Allows(Backend::HIP_MASK),
--               "the HIP backends require MFEM built with MFEM_USE_HIP=YES");
-+               "The HIP backends require MFEM built with MFEM_USE_HIP=YES");
- #endif
- #ifndef MFEM_USE_RAJA
-    MFEM_VERIFY(!Allows(Backend::RAJA_MASK),
--               "the RAJA backends require MFEM built with MFEM_USE_RAJA=YES");
-+               "The RAJA backends require MFEM built with MFEM_USE_RAJA=YES");
- #endif
- #ifndef MFEM_USE_OPENMP
-    MFEM_VERIFY(!Allows(Backend::OMP|Backend::RAJA_OMP),
--               "the OpenMP and RAJA OpenMP backends require MFEM built with"
-+               "The OpenMP and RAJA OpenMP backends require MFEM built with"
-                " MFEM_USE_OPENMP=YES");
- #endif
+@@ -528,54 +519,41 @@ void Device::Setup(const int device_id)
  #ifndef MFEM_USE_CEED
     MFEM_VERIFY(!Allows(Backend::CEED_MASK),
--               "the CEED backends require MFEM built with MFEM_USE_CEED=YES");
+                "the CEED backends require MFEM built with MFEM_USE_CEED=YES");
 -#else
 -   int ceed_cpu  = Allows(Backend::CEED_CPU);
 -   int ceed_cuda = Allows(Backend::CEED_CUDA);
 -   int ceed_hip  = Allows(Backend::CEED_HIP);
 -   MFEM_VERIFY(ceed_cpu + ceed_cuda + ceed_hip <= 1,
 -               "Only one CEED backend can be enabled at a time!");
-+               "The CEED backends require MFEM built with MFEM_USE_CEED=YES");
  #endif
     if (Allows(Backend::CUDA)) { CudaDeviceSetup(dev, ngpu); }
     if (Allows(Backend::HIP)) { HipDeviceSetup(dev, ngpu); }
@@ -340,6 +193,29 @@ index ccee71cd7..f664f70c3 100644
 -   // The check for MFEM_USE_OCCA is in the function OccaDeviceSetup().
     if (Allows(Backend::OCCA_MASK)) { OccaDeviceSetup(dev); }
 -   if (Allows(Backend::CEED_CPU))
+-   {
+-      if (!device_option)
+-      {
+-         CeedDeviceSetup("/cpu/self");
+-      }
+-      else
+-      {
+-         CeedDeviceSetup(device_option);
+-      }
+-   }
+-   if (Allows(Backend::CEED_CUDA))
+-   {
+-      if (!device_option)
+-      {
+-         // NOTE: libCEED's /gpu/cuda/gen backend is non-deterministic!
+-         CeedDeviceSetup("/gpu/cuda/gen");
+-      }
+-      else
+-      {
+-         CeedDeviceSetup(device_option);
+-      }
+-   }
+-   if (Allows(Backend::CEED_HIP))
 +   if (Allows(Backend::CEED_MASK))
     {
 -      if (!device_option)
@@ -360,7 +236,7 @@ index ccee71cd7..f664f70c3 100644
 +      std::string::size_type beg = device_option.find(ceed_spec_search), end;
 +      if (beg == std::string::npos)
        {
--         CeedDeviceSetup("/cpu/self");
+-         CeedDeviceSetup("/gpu/hip");
 +         CeedDeviceSetup(ceed_spec_default);
        }
        else
@@ -371,98 +247,13 @@ index ccee71cd7..f664f70c3 100644
 +         CeedDeviceSetup(device_option.substr(beg + 1, end - beg - 1).c_str());
        }
     }
--   if (Allows(Backend::CEED_CUDA))
-+   if (Allows(Backend::DEBUG_DEVICE)) { ngpu = 1; }
-+}
-+
-+void Device::UpdateMemoryTypeAndClass(const std::string &device_option)
-+{
-+   const bool debug = Device::Allows(Backend::DEBUG_DEVICE);
-+   const bool device = Device::Allows(Backend::DEVICE_MASK);
-+
-+#ifdef MFEM_USE_UMPIRE
-+   // If MFEM has been compiled with Umpire support, use it as the default
-+   if (!mem_host_env && !mem_types_set)
-    {
--      if (!device_option)
--      {
--         // NOTE: libCEED's /gpu/cuda/gen backend is non-deterministic!
--         CeedDeviceSetup("/gpu/cuda/gen");
--      }
--      else
-+      host_mem_type = MemoryType::HOST_UMPIRE;
-+      if (!mem_device_env)
-       {
--         CeedDeviceSetup(device_option);
-+         device_mem_type = MemoryType::HOST_UMPIRE;
-       }
-    }
--   if (Allows(Backend::CEED_HIP))
-+#endif
-+
-+   // Enable the device memory type
-+   if (device)
-    {
--      if (!device_option)
--      {
--         CeedDeviceSetup("/gpu/hip");
--      }
--      else
-+      if (!mem_device_env)
-       {
--         CeedDeviceSetup(device_option);
-+         if (mem_host_env)
-+         {
-+            switch (host_mem_type)
-+            {
-+               case MemoryType::HOST_UMPIRE:
-+                  device_mem_type = MemoryType::DEVICE_UMPIRE;
-+                  break;
-+               case MemoryType::HOST_DEBUG:
-+                  device_mem_type = MemoryType::DEVICE_DEBUG;
-+                  break;
-+               default:
-+                  device_mem_type = MemoryType::DEVICE;
-+            }
-+         }
-+         else if (!mem_types_set)
-+         {
-+#ifndef MFEM_USE_UMPIRE
-+            device_mem_type = MemoryType::DEVICE;
-+#else
-+            device_mem_type = MemoryType::DEVICE_UMPIRE;
-+#endif
-+         }
-       }
-+      device_mem_class = MemoryClass::DEVICE;
-    }
--   if (Allows(Backend::DEBUG_DEVICE)) { ngpu = 1; }
-+
-+   // Enable the UVM shortcut when requested
-+   if (device && device_option.find(":uvm") != std::string::npos)
-+   {
-+      host_mem_type = MemoryType::MANAGED;
-+      device_mem_type = MemoryType::MANAGED;
-+   }
-+
-+   // Enable the DEBUG mode when requested
-+   if (debug)
-+   {
-+      host_mem_type = MemoryType::HOST_DEBUG;
-+      device_mem_type = MemoryType::DEVICE_DEBUG;
-+   }
-+
-+   MFEM_VERIFY(!device || IsDeviceMemory(device_mem_type),
-+               "Invalid device memory configuration!");
-+
-+   // Update the memory manager with the new settings
-+   mm.Configure(host_mem_type, device_mem_type);
+    if (Allows(Backend::DEBUG_DEVICE)) { ngpu = 1; }
  }
  
 -} // mfem
 +} // namespace mfem
 diff --git a/general/device.hpp b/general/device.hpp
-index baa27397f..a2d89e22e 100644
+index 5e236430b..07e6d0c19 100644
 --- a/general/device.hpp
 +++ b/general/device.hpp
 @@ -14,6 +14,7 @@
@@ -473,15 +264,7 @@ index baa27397f..a2d89e22e 100644
  
  namespace mfem
  {
-@@ -81,7 +82,6 @@ struct Backend
-    {
-       /// Number of backends: from (1 << 0) to (1 << (NUM_BACKENDS-1)).
-       NUM_BACKENDS = 15,
--
-       /// Biwise-OR of all CPU backends
-       CPU_MASK = CPU | RAJA_CPU | OCCA_CPU | CEED_CPU,
-       /// Biwise-OR of all CUDA backends
-@@ -94,7 +94,6 @@ struct Backend
+@@ -94,7 +95,6 @@ struct Backend
        CEED_MASK = CEED_CPU | CEED_CUDA | CEED_HIP,
        /// Biwise-OR of all device backends
        DEVICE_MASK = CUDA_MASK | HIP_MASK | DEBUG_DEVICE,
@@ -489,15 +272,14 @@ index baa27397f..a2d89e22e 100644
        /// Biwise-OR of all RAJA backends
        RAJA_MASK = RAJA_CPU | RAJA_OMP | RAJA_CUDA | RAJA_HIP,
        /// Biwise-OR of all OCCA backends
-@@ -122,50 +121,44 @@ class Device
+@@ -122,16 +122,16 @@ class Device
  {
  private:
     friend class MemoryManager;
 -   enum MODES {SEQUENTIAL, ACCELERATED};
--
--   static bool device_env, mem_host_env, mem_device_env, mem_types_set;
+ 
+    static bool device_env, mem_host_env, mem_device_env, mem_types_set;
     static MFEM_EXPORT Device device_singleton;
-+   static bool device_env, mem_host_env, mem_device_env, mem_types_set;
  
 -   MODES mode = Device::SEQUENTIAL;
     int dev = 0;   ///< Device ID of the configured device.
@@ -509,19 +291,8 @@ index baa27397f..a2d89e22e 100644
     /// Set to true during configuration, except in 'device_singleton'.
     bool destroy_mm = false;
     bool mpi_gpu_aware = false;
- 
--   MemoryType host_mem_type = MemoryType::HOST;    ///< Current Host MemoryType
--   MemoryClass host_mem_class = MemoryClass::HOST; ///< Current Host MemoryClass
-+   /// Current host MemoryType.
-+   MemoryType host_mem_type = MemoryType::HOST;
-+   /// Current host MemoryClass.
-+   MemoryClass host_mem_class = MemoryClass::HOST;
- 
--   /// Current Device MemoryType
-+   /// Current device MemoryType.
-    MemoryType device_mem_type = MemoryType::HOST;
--   /// Current Device MemoryClass
-+   /// Current device MemoryClass.
+@@ -144,28 +144,21 @@ private:
+    /// Current Device MemoryClass
     MemoryClass device_mem_class = MemoryClass::HOST;
  
 -   char *device_option = NULL;
@@ -531,27 +302,27 @@ index baa27397f..a2d89e22e 100644
 -
 -   /// Setup switcher based on configuration settings
 -   void Setup(const int device_id = 0);
+-
+-   void MarkBackend(Backend::Id b) { backends |= b; }
 +   // Delete copy constructor and copy assignment.
 +   Device(Device const &) = delete;
 +   void operator=(Device const &) = delete;
  
--   void MarkBackend(Backend::Id b) { backends |= b; }
-+   // Access the Device singleton.
-+   static Device &Get() { return device_singleton; }
- 
 -   void UpdateMemoryTypeAndClass();
-+   /// Setup switcher based on configuration settings.
-+   void Setup(const std::string &device_option, const int device_id);
++   // Access the Device singleton.
++   static Device& Get() { return device_singleton; }
  
 -   /// Enable the use of the configured device in the code that follows.
 -   /** After this call MFEM classes will use the backend kernels whenever
 -       possible, transferring data automatically to the device, if necessary.
-+   /// Configure host/device MemoryType/MemoryClass.
-+   void UpdateMemoryTypeAndClass(const std::string &device_option);
++   /// Setup switcher based on configuration settings.
++   void Setup(const std::string &device_option, const int device_id);
  
 -       If the only configured backend is the default host CPU one, the device
 -       will remain disabled.
--
++   /// Configure host/device MemoryType/MemoryClass.
++   void UpdateMemoryTypeAndClass(const std::string &device_option);
+ 
 -       If the device is actually enabled, this method will also update the
 -       current host/device MemoryType and MemoryClass. */
 -   static void Enable();
@@ -581,91 +352,42 @@ index baa27397f..a2d89e22e 100644
         * The available backends are described by the Backend class.
         * The string name of a backend is the lowercase version of the
           Backend::Id enumeration constant with '_' replaced by '-', e.g. the
-@@ -219,8 +212,12 @@ public:
+@@ -219,8 +212,10 @@ public:
           and evaluation of operators and enables the 'hip' backend to avoid
           transfers between host and device.
         * The 'debug' backend should not be combined with other device backends.
 -   */
 -   void Configure(const std::string &device, const int dev = 0);
++
 +       @note If the device is actually enabled, this method will also update the
 +       current host/device MemoryType and MemoryClass. */
 +   void Configure(const std::string &device, const int device_id = 0);
-+
-+   /// Print the configuration of the MFEM virtual device object.
-+   void Print(std::ostream &out = mfem::out);
  
     /// Set the default host and device MemoryTypes, @a h_mt and @a d_mt.
     /** The host and device MemoryTypes are also set to be dual to each other.
-@@ -233,60 +230,64 @@ public:
-        the subsequent Device configuration. */
-    static void SetMemoryTypes(MemoryType h_mt, MemoryType d_mt);
- 
--   /// Print the configuration of the MFEM virtual device object.
--   void Print(std::ostream &out = mfem::out);
--
-    /// Return true if Configure() has been called previously.
--   static inline bool IsConfigured() { return Get().ngpu >= 0; }
-+   static bool IsConfigured() { return Get().ngpu >= 0; }
- 
-    /// Return true if an actual device (e.g. GPU) has been configured.
--   static inline bool IsAvailable() { return Get().ngpu > 0; }
-+   static bool IsAvailable() { return Get().ngpu > 0; }
+@@ -243,14 +238,17 @@ public:
+    static inline bool IsAvailable() { return Get().ngpu > 0; }
  
     /// Return true if any backend other than Backend::CPU is enabled.
 -   static inline bool IsEnabled() { return Get().mode == ACCELERATED; }
-+   static bool IsEnabled() { return Get().backends & ~(Backend::CPU); }
++   static inline bool IsEnabled() { return Get().backends & ~(Backend::CPU); }
  
     /// The opposite of IsEnabled().
--   static inline bool IsDisabled() { return !IsEnabled(); }
-+   static bool IsDisabled() { return !IsEnabled(); }
-+
-+   /// Get the device ID of the configured device.
-+   static int GetId() { return Get().dev; }
+    static inline bool IsDisabled() { return !IsEnabled(); }
  
 -   /// Get the device id of the configured device.
--   static inline int GetId() { return Get().dev; }
-+   /// Get the number of available devices (may be called before configuration).
-+   static int GetNumGPU();
++   /// Get the device ID of the configured device.
+    static inline int GetId() { return Get().dev; }
  
++   /// Get the number of available devices (may be called before configuration).
++   static int GetDeviceCount();
++
     /** @brief Return true if any of the backends in the backend mask, @a b_mask,
         are allowed. */
     /** This method can be used with any of the Backend::Id constants, the
-        Backend::*_MASK, or combinations of those. */
--   static inline bool Allows(unsigned long b_mask)
-+   static bool Allows(unsigned long b_mask)
-    { return Get().backends & b_mask; }
- 
-    /** @brief Get the current Host MemoryType. This is the MemoryType used by
-        most MFEM classes when allocating memory used on the host.
-    */
--   static inline MemoryType GetHostMemoryType() { return Get().host_mem_type; }
-+   static MemoryType GetHostMemoryType() { return Get().host_mem_type; }
- 
-    /** @brief Get the current Host MemoryClass. This is the MemoryClass used
-        by most MFEM host Memory objects. */
--   static inline MemoryClass GetHostMemoryClass() { return Get().host_mem_class; }
-+   static MemoryClass GetHostMemoryClass() { return Get().host_mem_class; }
- 
-    /** @brief Get the current Device MemoryType. This is the MemoryType used by
-        most MFEM classes when allocating memory to be used with device kernels.
-    */
--   static inline MemoryType GetDeviceMemoryType() { return Get().device_mem_type; }
-+   static MemoryType GetDeviceMemoryType() { return Get().device_mem_type; }
- 
-    /// (DEPRECATED) Equivalent to GetDeviceMemoryType().
-    /** @deprecated Use GetDeviceMemoryType() instead. */
--   static inline MemoryType GetMemoryType() { return Get().device_mem_type; }
-+   static MemoryType GetMemoryType() { return Get().device_mem_type; }
- 
-    /** @brief Get the current Device MemoryClass. This is the MemoryClass used
-        by most MFEM device kernels to access Memory objects. */
--   static inline MemoryClass GetDeviceMemoryClass() { return Get().device_mem_class; }
-+   static MemoryClass GetDeviceMemoryClass() { return Get().device_mem_class; }
- 
-    /// (DEPRECATED) Equivalent to GetDeviceMemoryClass().
+@@ -284,9 +282,13 @@ public:
     /** @deprecated Use GetDeviceMemoryClass() instead. */
--   static inline MemoryClass GetMemoryClass() { return Get().device_mem_class; }
-+   static MemoryClass GetMemoryClass() { return Get().device_mem_class; }
+    static inline MemoryClass GetMemoryClass() { return Get().device_mem_class; }
  
 +   /** @brief Manually set the status of GPU-aware MPI flag for use in MPI
 +       communication routines which have optimized implementations for device
@@ -677,7 +399,7 @@ index baa27397f..a2d89e22e 100644
     static bool GetGPUAwareMPI() { return Get().mpi_gpu_aware; }
  };
  
-@@ -298,7 +299,7 @@ public:
+@@ -298,7 +300,7 @@ public:
      and ReadWrite(), while setting the device use flag in @a mem, if @a on_dev
      is true. */
  template <typename T>
@@ -686,7 +408,7 @@ index baa27397f..a2d89e22e 100644
  {
     if (!on_dev)
     {
-@@ -362,6 +363,6 @@ inline T *HostReadWrite(Memory<T> &mem, int size)
+@@ -362,6 +364,6 @@ inline T *HostReadWrite(Memory<T> &mem, int size)
     return mfem::ReadWrite(mem, size, false);
  }
  

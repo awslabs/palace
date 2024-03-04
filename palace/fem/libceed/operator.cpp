@@ -246,6 +246,16 @@ void CeedOperatorAssembleCOO(const Operator &op, bool skip_zeros, CeedSize *nnz,
                              CeedInt **rows, CeedInt **cols, CeedVector *vals,
                              CeedMemType *mem)
 {
+  if (!op.Size())
+  {
+    *nnz = 0;
+    *rows = nullptr;
+    *cols = nullptr;
+    *vals = nullptr;
+    *mem = CEED_MEM_HOST;
+    return;
+  }
+
   Ceed ceed;
   CeedScalar *vals_array;
   std::vector<CeedSize> loc_nnz(op.Size()), loc_offsets(op.Size() + 1);
@@ -254,7 +264,7 @@ void CeedOperatorAssembleCOO(const Operator &op, bool skip_zeros, CeedSize *nnz,
 
   PalaceCeedCallBackend(CeedOperatorGetCeed(op[0], &ceed));
   PalaceCeedCall(ceed, CeedGetPreferredMemType(ceed, mem));
-  if (!mfem::Device::Allows(mfem::Backend::DEVICE_MASK) || *mem != CEED_MEM_DEVICE)
+  if (!mfem::Device::Allows(mfem::Backend::DEVICE_MASK))
   {
     *mem = CEED_MEM_HOST;
   }
@@ -303,23 +313,16 @@ void CeedOperatorAssembleCOO(const Operator &op, bool skip_zeros, CeedSize *nnz,
         (*cols)[k] = loc_cols[i][k - start];
       }
 
-      // The CeedVector is on only on device when MFEM is also using the device.
+      // The CeedVector is on only on device when MFEM is also using the device. This is
+      // also correctly a non-OpenMP loop when executed on the CPU (OpenMP is handled in
+      // outer scope above).
       Ceed ceed_i;
       const CeedScalar *loc_vals_array;
       PalaceCeedCallBackend(CeedVectorGetCeed(loc_vals[i], &ceed_i));
       PalaceCeedCall(ceed_i, CeedVectorGetArrayRead(loc_vals[i], *mem, &loc_vals_array));
-      if (*mem != CEED_MEM_HOST)
-      {
-        mfem::forall(end - start, [=] MFEM_HOST_DEVICE(int k)
-                     { vals_array[k + start] = loc_vals_array[k]; });
-      }
-      else
-      {
-        for (auto k = start; k < end; k++)
-        {
-          vals_array[k] = loc_vals_array[k - start];
-        }
-      }
+      mfem::forall_switch(*mem == CEED_MEM_DEVICE, end - start,
+                          [=] MFEM_HOST_DEVICE(int k)
+                          { vals_array[k + start] = loc_vals_array[k]; });
       PalaceCeedCall(ceed_i, CeedVectorRestoreArrayRead(loc_vals[i], &loc_vals_array));
       PalaceCeedCall(ceed_i, CeedInternalFree(&loc_rows[i]));
       PalaceCeedCall(ceed_i, CeedInternalFree(&loc_cols[i]));
@@ -345,13 +348,11 @@ std::unique_ptr<mfem::SparseMatrix> CeedOperatorFullAssemble(const Operator &op,
 {
   // First, get matrix on master thread in COO format, withs rows/cols always on host and
   // vals potentially on the device. Process skipping zeros if desired.
-  Ceed ceed;
   CeedSize nnz;
   CeedInt *rows, *cols;
   CeedVector vals;
   CeedMemType mem;
   CeedOperatorAssembleCOO(op, skip_zeros, &nnz, &rows, &cols, &vals, &mem);
-  PalaceCeedCallBackend(CeedVectorGetCeed(vals, &ceed));
 
   // Preallocate CSR memory on host (like PETSc's MatSetValuesCOO).
   auto mat = std::make_unique<mfem::SparseMatrix>();
@@ -404,8 +405,6 @@ std::unique_ptr<mfem::SparseMatrix> CeedOperatorFullAssemble(const Operator &op,
       }
     }
   }
-  PalaceCeedCall(ceed, CeedInternalFree(&rows));
-  PalaceCeedCall(ceed, CeedInternalFree(&cols));
   const int nnz_new = q + 1;
 
   // Finalize I, Jmap.
@@ -423,39 +422,68 @@ std::unique_ptr<mfem::SparseMatrix> CeedOperatorFullAssemble(const Operator &op,
   mat->GetMemoryJ().New(nnz_new, mat->GetMemoryJ().GetMemoryType());
   mat->GetMemoryData().New(nnz_new, mat->GetMemoryJ().GetMemoryType());
   {
+    // This always executes on the device.
     const auto *d_J_old = J.Read();
     auto *d_J = mfem::Write(mat->GetMemoryJ(), nnz_new);
     mfem::forall(nnz_new, [=] MFEM_HOST_DEVICE(int k) { d_J[k] = d_J_old[k]; });
   }
 
-  // Fill the values (on device).
-  const CeedScalar *vals_array;
-  PalaceCeedCall(ceed, CeedVectorGetArrayRead(vals, mem, &vals_array));
+  // Fill the values (also always on device).
+  if (vals)
   {
-    const auto *d_perm = perm.Read();
-    const auto *d_Jmap = Jmap.Read();
-    auto *d_A = mfem::Write(mat->GetMemoryData(), nnz_new);
-    if (set)
+    auto FillValues = [&](const double *vals_array)
     {
-      mfem::forall(nnz_new,
-                   [=] MFEM_HOST_DEVICE(int k) { d_A[k] = vals_array[d_perm[d_Jmap[k]]]; });
+      const auto *d_perm = perm.Read();
+      const auto *d_Jmap = Jmap.Read();
+      auto *d_A = mfem::Write(mat->GetMemoryData(), nnz_new);
+      if (set)
+      {
+        mfem::forall(nnz_new, [=] MFEM_HOST_DEVICE(int k)
+                     { d_A[k] = vals_array[d_perm[d_Jmap[k]]]; });
+      }
+      else
+      {
+        mfem::forall(nnz_new,
+                     [=] MFEM_HOST_DEVICE(int k)
+                     {
+                       double sum = 0.0;
+                       for (int p = d_Jmap[k]; p < d_Jmap[k + 1]; p++)
+                       {
+                         sum += vals_array[d_perm[p]];
+                       }
+                       d_A[k] = sum;
+                     });
+      }
+    };
+    Ceed ceed;
+    const CeedScalar *vals_array;
+    PalaceCeedCallBackend(CeedVectorGetCeed(vals, &ceed));
+    PalaceCeedCall(ceed, CeedVectorGetArrayRead(vals, mem, &vals_array));
+    if (mfem::Device::Allows(mfem::Backend::DEVICE_MASK) && mem != CEED_MEM_DEVICE)
+    {
+      // Copy values to device before filling.
+      Vector d_vals(nnz);
+      d_vals.UseDevice(true);
+      {
+        auto *d_vals_array = d_vals.HostWrite();
+        PalacePragmaOmp(parallel for)
+        for (int k = 0; k < nnz; k++)
+        {
+          d_vals_array[k] = vals_array[k];
+        }
+      }
+      FillValues(d_vals.Read());
     }
     else
     {
-      mfem::forall(nnz_new,
-                   [=] MFEM_HOST_DEVICE(int k)
-                   {
-                     double sum = 0.0;
-                     for (int p = d_Jmap[k]; p < d_Jmap[k + 1]; p++)
-                     {
-                       sum += vals_array[d_perm[p]];
-                     }
-                     d_A[k] = sum;
-                   });
+      // No copy required.
+      FillValues(vals_array);
     }
+    PalaceCeedCall(ceed, CeedVectorRestoreArrayRead(vals, &vals_array));
+    PalaceCeedCall(ceed, CeedVectorDestroy(&vals));
+    PalaceCeedCall(ceed, CeedInternalFree(&rows));
+    PalaceCeedCall(ceed, CeedInternalFree(&cols));
   }
-  PalaceCeedCall(ceed, CeedVectorRestoreArrayRead(vals, &vals_array));
-  PalaceCeedCall(ceed, CeedVectorDestroy(&vals));
 
   return mat;
 }

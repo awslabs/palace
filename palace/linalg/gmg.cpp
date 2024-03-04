@@ -113,6 +113,9 @@ void GeometricMultigridSolver<OperType>::SetOperator(const OperType &op)
     X[l].SetSize(A[l]->Height());
     Y[l].SetSize(A[l]->Height());
     R[l].SetSize(A[l]->Height());
+    X[l].UseDevice(true);
+    Y[l].UseDevice(true);
+    R[l].UseDevice(true);
   }
 
   this->height = op.Height();

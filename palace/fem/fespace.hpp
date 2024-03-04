@@ -59,6 +59,9 @@ public:
     : fespace(&mesh.Get(), std::forward<T>(args)...), mesh(mesh)
   {
     ResetCeedObjects();
+    tx.UseDevice(true);
+    lx.UseDevice(true);
+    ly.UseDevice(true);
   }
   virtual ~FiniteElementSpace() { ResetCeedObjects(); }
 
@@ -90,23 +93,22 @@ public:
   const auto *GetRestrictionMatrix() const { return Get().GetRestrictionMatrix(); }
 
   // Return the basis object for elements of the given element geometry type.
-  const CeedBasis GetCeedBasis(Ceed ceed, mfem::Geometry::Type geom) const;
+  CeedBasis GetCeedBasis(Ceed ceed, mfem::Geometry::Type geom) const;
 
   // Return the element restriction object for the given element set (all with the same
   // geometry type).
-  const CeedElemRestriction GetCeedElemRestriction(Ceed ceed, mfem::Geometry::Type geom,
-                                                   const std::vector<int> &indices) const;
+  CeedElemRestriction GetCeedElemRestriction(Ceed ceed, mfem::Geometry::Type geom,
+                                             const std::vector<int> &indices) const;
 
   // If the space has a special element restriction for discrete interpolators, return that.
   // Otherwise return the same restriction as given by GetCeedElemRestriction.
-  const CeedElemRestriction
-  GetInterpCeedElemRestriction(Ceed ceed, mfem::Geometry::Type geom,
-                               const std::vector<int> &indices) const;
+  CeedElemRestriction GetInterpCeedElemRestriction(Ceed ceed, mfem::Geometry::Type geom,
+                                                   const std::vector<int> &indices) const;
 
   // If the space has a special element restriction for the range space of discrete
   // interpolators, return that. Otherwise return the same restriction as given by
   // GetCeedElemRestriction.
-  const CeedElemRestriction
+  CeedElemRestriction
   GetInterpRangeCeedElemRestriction(Ceed ceed, mfem::Geometry::Type geom,
                                     const std::vector<int> &indices) const;
 
@@ -230,13 +232,13 @@ public:
 
   auto &GetFESpaceAtLevel(std::size_t l)
   {
-    MFEM_ASSERT(l >= 0 && l < GetNumLevels(),
+    MFEM_ASSERT(l < GetNumLevels(),
                 "Out of bounds request for finite element space at level " << l << "!");
     return *fespaces[l];
   }
   const auto &GetFESpaceAtLevel(std::size_t l) const
   {
-    MFEM_ASSERT(l >= 0 && l < GetNumLevels(),
+    MFEM_ASSERT(l < GetNumLevels(),
                 "Out of bounds request for finite element space at level " << l << "!");
     return *fespaces[l];
   }
@@ -256,7 +258,7 @@ public:
 
   const auto &GetProlongationAtLevel(std::size_t l) const
   {
-    MFEM_ASSERT(l >= 0 && l < GetNumLevels() - 1,
+    MFEM_ASSERT(l + 1 < GetNumLevels(),
                 "Out of bounds request for finite element space prolongation at level "
                     << l << "!");
     return P[l] ? *P[l] : BuildProlongationAtLevel(l);
@@ -264,6 +266,8 @@ public:
 
   std::vector<const Operator *> GetProlongationOperators() const
   {
+    MFEM_ASSERT(GetNumLevels() > 1,
+                "Out of bounds request for finite element space prolongation at level 0!");
     std::vector<const Operator *> P_(GetNumLevels() - 1);
     for (std::size_t l = 0; l < P_.size(); l++)
     {

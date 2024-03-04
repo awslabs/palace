@@ -269,7 +269,7 @@ void ArpackEigenvalueSolver::SetInitialSpace(const ComplexVector &v)
     r = std::make_unique<std::complex<double>[]>(n);
   }
   MFEM_VERIFY(v.Size() == n, "Invalid size mismatch for provided initial space vector!");
-  v.Get(r.get(), n);
+  v.Get(r.get(), n, false);
   info = 1;
 }
 
@@ -436,7 +436,7 @@ void ArpackEigenvalueSolver::GetEigenvector(int i, ComplexVector &x) const
               "Out of range eigenpair requested (i = " << i << ", nev = " << nev << ")!");
   MFEM_VERIFY(x.Size() == n, "Invalid size mismatch for provided eigenvector!");
   const int &j = perm.get()[i];
-  x.Set(V.get() + j * n, n);
+  x.Set(V.get() + j * n, n, false);
   if (xscale.get()[j] > 0.0)
   {
     x *= xscale.get()[j];
@@ -479,7 +479,7 @@ void ArpackEigenvalueSolver::RescaleEigenvectors(int num_eig)
   xscale = std::make_unique<double[]>(num_eig);
   for (int i = 0; i < num_eig; i++)
   {
-    x1.Set(V.get() + i * n, n);
+    x1.Set(V.get() + i * n, n, false);
     xscale.get()[i] = 1.0 / GetEigenvectorNorm(x1, y1);
     res.get()[i] = GetResidualNorm(eig.get()[i], x1, y1) / linalg::Norml2(comm, x1);
   }
@@ -517,6 +517,9 @@ void ArpackEPSSolver::SetOperators(const ComplexOperator &K, const ComplexOperat
   x1.SetSize(opK->Height());
   y1.SetSize(opK->Height());
   z1.SetSize(opK->Height());
+  x1.UseDevice(true);
+  y1.UseDevice(true);
+  z1.UseDevice(true);
   n = opK->Height();
 }
 
@@ -576,7 +579,8 @@ void ArpackEPSSolver::ApplyOp(const std::complex<double> *px,
   //               y = M⁻¹ K x .
   // Case 2: Shift-and-invert spectral transformation (opInv = (K - σ M)⁻¹)
   //               y = (K - σ M)⁻¹ M x .
-  x1.Set(px, n);
+  // The input pointers are always to host memory (ARPACK runs on host).
+  x1.Set(px, n, false);
   if (!sinvert)
   {
     opK->Mult(x1, z1);
@@ -595,18 +599,18 @@ void ArpackEPSSolver::ApplyOp(const std::complex<double> *px,
     opProj->Mult(y1);
     // Mpi::Print(" After projection: {:e}\n", linalg::Norml2(comm, y1));
   }
-  y1.Get(py, n);
+  y1.Get(py, n, false);
 }
 
 void ArpackEPSSolver::ApplyOpB(const std::complex<double> *px,
                                std::complex<double> *py) const
 {
   MFEM_VERIFY(opB, "No B operator for weighted inner product in ARPACK solve!");
-  x1.Set(px, n);
+  x1.Set(px, n, false);
   opB->Mult(x1.Real(), y1.Real());
   opB->Mult(x1.Imag(), y1.Imag());
   y1 *= delta * gamma;
-  y1.Get(py, n);
+  y1.Get(py, n, false);
 }
 
 double ArpackEPSSolver::GetResidualNorm(std::complex<double> l, const ComplexVector &x,
@@ -671,6 +675,11 @@ void ArpackPEPSolver::SetOperators(const ComplexOperator &K, const ComplexOperat
   y1.SetSize(opK->Height());
   y2.SetSize(opK->Height());
   z1.SetSize(opK->Height());
+  x1.UseDevice(true);
+  x2.UseDevice(true);
+  y1.UseDevice(true);
+  y2.UseDevice(true);
+  z1.UseDevice(true);
   n = opK->Height();
 }
 
@@ -744,8 +753,9 @@ void ArpackPEPSolver::ApplyOp(const std::complex<double> *px,
   // With:
   //               L₀ = [ -K  0 ]    L₁ = [ C  M ]
   //                    [  0  M ] ,       [ M  0 ] .
-  x1.Set(px, n);
-  x2.Set(px + n, n);
+  // The input pointers are always to host memory (ARPACK runs on host).
+  x1.Set(px, n, false);
+  x2.Set(px + n, n, false);
   if (!sinvert)
   {
     y1 = x2;
@@ -789,24 +799,24 @@ void ArpackPEPSolver::ApplyOp(const std::complex<double> *px,
       // Mpi::Print(" Before projection: {:e}\n", linalg::Norml2(comm, y2));
     }
   }
-  y1.Get(py, n);
-  y2.Get(py + n, n);
+  y1.Get(py, n, false);
+  y2.Get(py + n, n, false);
 }
 
 void ArpackPEPSolver::ApplyOpB(const std::complex<double> *px,
                                std::complex<double> *py) const
 {
   MFEM_VERIFY(opB, "No B operator for weighted inner product in ARPACK solve!");
-  x1.Set(px, n);
-  x2.Set(px + n, n);
+  x1.Set(px, n, false);
+  x2.Set(px + n, n, false);
   opB->Mult(x1.Real(), y1.Real());
   opB->Mult(x1.Imag(), y1.Imag());
   opB->Mult(x2.Real(), y2.Real());
   opB->Mult(x2.Imag(), y2.Imag());
   y1 *= delta * gamma * gamma;
   y2 *= delta * gamma * gamma;
-  y1.Get(py, n);
-  y2.Get(py + n, n);
+  y1.Get(py, n, false);
+  y2.Get(py + n, n, false);
 }
 
 double ArpackPEPSolver::GetResidualNorm(std::complex<double> l, const ComplexVector &x,

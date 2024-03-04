@@ -42,6 +42,8 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // Configure objects for postprocessing.
   PostOperator postop(iodata, spaceop, "eigenmode");
   ComplexVector E(Curl.Width()), B(Curl.Height());
+  E.UseDevice(true);
+  B.UseDevice(true);
 
   // Define and configure the eigensolver to solve the eigenvalue problem:
   //         (K + λ C + λ² M) u = 0    or    K u = -λ² M u
@@ -162,6 +164,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   std::unique_ptr<DivFreeSolver<ComplexVector>> divfree;
   if (iodata.solver.linear.divfree_max_it > 0)
   {
+    Mpi::Print(" Configuring divergence-free projection\n");
     constexpr int divfree_verbose = 0;
     divfree = std::make_unique<DivFreeSolver<ComplexVector>>(
         spaceop.GetMaterialOp(), spaceop.GetNDSpace(), spaceop.GetH1Spaces(),
@@ -194,6 +197,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     // Debug
     // const auto &Grad = spaceop.GetGradMatrix();
     // ComplexVector r0(Grad->Width());
+    // r0.UseDevice(true);
     // Grad.MultTranspose(v0.Real(), r0.Real());
     // Grad.MultTranspose(v0.Imag(), r0.Imag());
     // r0.Print();

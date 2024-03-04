@@ -231,8 +231,8 @@ void TestCeedOperatorMult(const Operator &op_test, const Operator &op_ref,
 
     y_test -= y_ref;
 
-    // REQUIRE(y_ref.Norml2() > 0.0);
-    REQUIRE(y_test.Norml2() < 1.0e-12 * std::max(y_ref.Norml2(), 1.0));
+    // REQUIRE(y_ref * y_ref > 0.0);
+    REQUIRE(y_test * y_test < 1.0e-12 * std::max(y_ref * y_ref, 1.0));
   }
   if (test_transpose)
   {
@@ -248,8 +248,8 @@ void TestCeedOperatorMult(const Operator &op_test, const Operator &op_ref,
 
     y_t_test -= y_t_ref;
 
-    // REQUIRE(y_t_ref.Norml2() > 0.0);
-    REQUIRE(y_t_test.Norml2() < 1.0e-12 * std::max(y_t_ref.Norml2(), 1.0));
+    // REQUIRE(y_t_ref * y_t_ref > 0.0);
+    REQUIRE(y_t_test * y_t_test < 1.0e-12 * std::max(y_t_ref * y_t_ref, 1.0));
   }
 }
 
@@ -314,8 +314,8 @@ void TestCeedOperator(T1 &a_test, T2 &a_ref, bool test_transpose, bool skip_zero
       rtol = 1.0;
     }
 
-    // REQUIRE(d_ref.Norml2() > 0.0);
-    REQUIRE(d_test.Norml2() < rtol * std::max(d_ref.Norml2(), 1.0));
+    // REQUIRE(d_ref * d_ref > 0.0);
+    REQUIRE(d_test * d_test < rtol * std::max(d_ref * d_ref, 1.0));
   }
 }
 

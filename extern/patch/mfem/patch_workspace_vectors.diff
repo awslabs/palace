@@ -1,0 +1,1562 @@
+diff --git a/fem/bilinearform_ext.cpp b/fem/bilinearform_ext.cpp
+index 1c26575b8..17808cda2 100644
+--- a/fem/bilinearform_ext.cpp
++++ b/fem/bilinearform_ext.cpp
+@@ -13,6 +13,7 @@
+ // PABilinearFormExtension and MFBilinearFormExtension.
+ 
+ #include "../general/forall.hpp"
++#include "../general/workspace.hpp"
+ #include "bilinearform.hpp"
+ #include "pbilinearform.hpp"
+ #include "pgridfunc.hpp"
+@@ -68,6 +69,9 @@ void MFBilinearFormExtension::AssembleDiagonal(Vector &y) const
+    const int iSz = integrators.Size();
+    if (elem_restrict && !DeviceCanUseCeed())
+    {
++      auto localX = Workspace::NewVector(elem_restrict->Height());
++      auto localY = Workspace::NewVector(elem_restrict->Height());
++
+       localY = 0.0;
+       for (int i = 0; i < iSz; ++i)
+       {
+@@ -142,6 +146,9 @@ void MFBilinearFormExtension::Mult(const Vector &x, Vector &y) const
+    }
+    else
+    {
++      auto localX = Workspace::NewVector(elem_restrict->Height());
++      auto localY = Workspace::NewVector(elem_restrict->Height());
++
+       elem_restrict->Mult(x, localX);
+       localY = 0.0;
+       for (int i = 0; i < iSz; ++i)
+@@ -155,6 +162,9 @@ void MFBilinearFormExtension::Mult(const Vector &x, Vector &y) const
+    const int iFISz = intFaceIntegrators.Size();
+    if (int_face_restrict_lex && iFISz>0)
+    {
++      auto int_face_X = Workspace::NewVector(int_face_restrict_lex->Height());
++      auto int_face_Y = Workspace::NewVector(int_face_restrict_lex->Height());
++
+       int_face_restrict_lex->Mult(x, int_face_X);
+       if (int_face_X.Size()>0)
+       {
+@@ -171,6 +181,9 @@ void MFBilinearFormExtension::Mult(const Vector &x, Vector &y) const
+    const int bFISz = bdrFaceIntegrators.Size();
+    if (bdr_face_restrict_lex && bFISz>0)
+    {
++      auto bdr_face_X = Workspace::NewVector(bdr_face_restrict_lex->Height());
++      auto bdr_face_Y = Workspace::NewVector(bdr_face_restrict_lex->Height());
++
+       bdr_face_restrict_lex->Mult(x, bdr_face_X);
+       if (bdr_face_X.Size()>0)
+       {
+@@ -190,6 +203,9 @@ void MFBilinearFormExtension::MultTranspose(const Vector &x, Vector &y) const
+    const int iSz = integrators.Size();
+    if (elem_restrict)
+    {
++      auto localX = Workspace::NewVector(elem_restrict->Height());
++      auto localY = Workspace::NewVector(elem_restrict->Height());
++
+       elem_restrict->Mult(x, localX);
+       localY = 0.0;
+       for (int i = 0; i < iSz; ++i)
+@@ -212,6 +228,9 @@ void MFBilinearFormExtension::MultTranspose(const Vector &x, Vector &y) const
+    const int iFISz = intFaceIntegrators.Size();
+    if (int_face_restrict_lex && iFISz>0)
+    {
++      auto int_face_X = Workspace::NewVector(int_face_restrict_lex->Height());
++      auto int_face_Y = Workspace::NewVector(int_face_restrict_lex->Height());
++
+       int_face_restrict_lex->Mult(x, int_face_X);
+       if (int_face_X.Size()>0)
+       {
+@@ -228,6 +247,9 @@ void MFBilinearFormExtension::MultTranspose(const Vector &x, Vector &y) const
+    const int bFISz = bdrFaceIntegrators.Size();
+    if (bdr_face_restrict_lex && bFISz>0)
+    {
++      auto bdr_face_X = Workspace::NewVector(bdr_face_restrict_lex->Height());
++      auto bdr_face_Y = Workspace::NewVector(bdr_face_restrict_lex->Height());
++
+       bdr_face_restrict_lex->Mult(x, bdr_face_X);
+       if (bdr_face_X.Size()>0)
+       {
+@@ -259,10 +281,6 @@ void PABilinearFormExtension::SetupRestrictionOperators(const L2FaceValues m)
+    elem_restrict = trial_fes->GetElementRestriction(ordering);
+    if (elem_restrict)
+    {
+-      localX.SetSize(elem_restrict->Height(), Device::GetDeviceMemoryType());
+-      localY.SetSize(elem_restrict->Height(), Device::GetDeviceMemoryType());
+-      localY.UseDevice(true); // ensure 'localY = 0.0' is done on device
+-
+       // Gather the attributes on the host from all the elements
+       const Mesh &mesh = *trial_fes->GetMesh();
+       elem_attributes.SetSize(mesh.GetNE());
+@@ -279,9 +297,6 @@ void PABilinearFormExtension::SetupRestrictionOperators(const L2FaceValues m)
+       int_face_restrict_lex = trial_fes->GetFaceRestriction(
+                                  ElementDofOrdering::LEXICOGRAPHIC,
+                                  FaceType::Interior);
+-      int_face_X.SetSize(int_face_restrict_lex->Height(), Device::GetMemoryType());
+-      int_face_Y.SetSize(int_face_restrict_lex->Height(), Device::GetMemoryType());
+-      int_face_Y.UseDevice(true); // ensure 'int_face_Y = 0.0' is done on device
+    }
+ 
+    const bool has_bdr_integs = (a->GetBFBFI()->Size() > 0 ||
+@@ -292,9 +307,6 @@ void PABilinearFormExtension::SetupRestrictionOperators(const L2FaceValues m)
+                                  ElementDofOrdering::LEXICOGRAPHIC,
+                                  FaceType::Boundary,
+                                  m);
+-      bdr_face_X.SetSize(bdr_face_restrict_lex->Height(), Device::GetMemoryType());
+-      bdr_face_Y.SetSize(bdr_face_restrict_lex->Height(), Device::GetMemoryType());
+-      bdr_face_Y.UseDevice(true); // ensure 'faceBoundY = 0.0' is done on device
+ 
+       const Mesh &mesh = *trial_fes->GetMesh();
+       // See LinearFormExtension::Update for explanation of f_to_be logic.
+@@ -383,6 +395,7 @@ void PABilinearFormExtension::AssembleDiagonal(Vector &y) const
+    const int iSz = integrators.Size();
+    if (elem_restrict && !DeviceCanUseCeed())
+    {
++      auto localY = Workspace::NewVector(elem_restrict->Height());
+       if (iSz > 0)
+       {
+          localY = 0.0;
+@@ -420,6 +433,7 @@ void PABilinearFormExtension::AssembleDiagonal(Vector &y) const
+    const int n_bdr_integs = bdr_integs.Size();
+    if (bdr_face_restrict_lex && n_bdr_integs > 0)
+    {
++      auto bdr_face_Y = Workspace::NewVector(bdr_face_restrict_lex->Height());
+       bdr_face_Y = 0.0;
+       for (int i = 0; i < n_bdr_integs; ++i)
+       {
+@@ -504,6 +518,9 @@ void PABilinearFormExtension::Mult(const Vector &x, Vector &y) const
+    {
+       if (iSz)
+       {
++         auto localX = Workspace::NewVector(elem_restrict->Height());
++         auto localY = Workspace::NewVector(elem_restrict->Height());
++
+          Array<Array<int>*> &elem_markers = *a->GetDBFI_Marker();
+          elem_restrict->Mult(x, localX);
+          localY = 0.0;
+@@ -524,6 +541,9 @@ void PABilinearFormExtension::Mult(const Vector &x, Vector &y) const
+    const int iFISz = intFaceIntegrators.Size();
+    if (int_face_restrict_lex && iFISz>0)
+    {
++      auto int_face_X = Workspace::NewVector(int_face_restrict_lex->Height());
++      auto int_face_Y = Workspace::NewVector(int_face_restrict_lex->Height());
++
+       int_face_restrict_lex->Mult(x, int_face_X);
+       if (int_face_X.Size()>0)
+       {
+@@ -543,6 +563,9 @@ void PABilinearFormExtension::Mult(const Vector &x, Vector &y) const
+    const bool has_bdr_integs = (n_bdr_face_integs > 0 || n_bdr_integs > 0);
+    if (bdr_face_restrict_lex && has_bdr_integs)
+    {
++      auto bdr_face_X = Workspace::NewVector(bdr_face_restrict_lex->Height());
++      auto bdr_face_Y = Workspace::NewVector(bdr_face_restrict_lex->Height());
++
+       Array<Array<int>*> &bdr_markers = *a->GetBBFI_Marker();
+       Array<Array<int>*> &bdr_face_markers = *a->GetBFBFI_Marker();
+       bdr_face_restrict_lex->Mult(x, bdr_face_X);
+@@ -570,6 +593,9 @@ void PABilinearFormExtension::MultTranspose(const Vector &x, Vector &y) const
+    const int iSz = integrators.Size();
+    if (elem_restrict)
+    {
++      auto localX = Workspace::NewVector(elem_restrict->Height());
++      auto localY = Workspace::NewVector(elem_restrict->Height());
++
+       Array<Array<int>*> &elem_markers = *a->GetDBFI_Marker();
+       elem_restrict->Mult(x, localX);
+       localY = 0.0;
+@@ -594,6 +620,9 @@ void PABilinearFormExtension::MultTranspose(const Vector &x, Vector &y) const
+    const int iFISz = intFaceIntegrators.Size();
+    if (int_face_restrict_lex && iFISz>0)
+    {
++      auto int_face_X = Workspace::NewVector(int_face_restrict_lex->Height());
++      auto int_face_Y = Workspace::NewVector(int_face_restrict_lex->Height());
++
+       int_face_restrict_lex->Mult(x, int_face_X);
+       if (int_face_X.Size()>0)
+       {
+@@ -613,6 +642,9 @@ void PABilinearFormExtension::MultTranspose(const Vector &x, Vector &y) const
+    const bool has_bdr_integs = (n_bdr_face_integs > 0 || n_bdr_integs > 0);
+    if (bdr_face_restrict_lex && has_bdr_integs)
+    {
++      auto bdr_face_X = Workspace::NewVector(bdr_face_restrict_lex->Height());
++      auto bdr_face_Y = Workspace::NewVector(bdr_face_restrict_lex->Height());
++
+       Array<Array<int>*> &bdr_markers = *a->GetBBFI_Marker();
+       Array<Array<int>*> &bdr_face_markers = *a->GetBFBFI_Marker();
+ 
+@@ -670,7 +702,7 @@ void PABilinearFormExtension::AddMultWithMarkers(
+ {
+    if (markers)
+    {
+-      tmp_evec.SetSize(y.Size());
++      auto tmp_evec = Workspace::NewVector(y.Size());
+       tmp_evec = 0.0;
+       if (transpose) { integ.AddMultTransposePA(x, tmp_evec); }
+       else { integ.AddMultPA(x, tmp_evec); }
+@@ -769,6 +801,10 @@ void EABilinearFormExtension::Mult(const Vector &x, Vector &y) const
+ {
+    // Apply the Element Restriction
+    const bool useRestrict = !DeviceCanUseCeed() && elem_restrict;
++
++   auto localX = Workspace::NewVector(useRestrict?elem_restrict->Height():0);
++   auto localY = Workspace::NewVector(useRestrict?elem_restrict->Height():0);
++
+    if (!useRestrict)
+    {
+       y.UseDevice(true); // typically this is a large vector, so store on device
+@@ -808,6 +844,9 @@ void EABilinearFormExtension::Mult(const Vector &x, Vector &y) const
+    const int iFISz = intFaceIntegrators.Size();
+    if (int_face_restrict_lex && iFISz>0)
+    {
++      auto int_face_X = Workspace::NewVector(int_face_restrict_lex->Height());
++      auto int_face_Y = Workspace::NewVector(int_face_restrict_lex->Height());
++
+       // Apply the Interior Face Restriction
+       int_face_restrict_lex->Mult(x, int_face_X);
+       if (int_face_X.Size()>0)
+@@ -866,6 +905,9 @@ void EABilinearFormExtension::Mult(const Vector &x, Vector &y) const
+    const int bFISz = bdrFaceIntegrators.Size();
+    if (!factorize_face_terms && bdr_face_restrict_lex && bFISz>0)
+    {
++      auto bdr_face_X = Workspace::NewVector(bdr_face_restrict_lex->Height());
++      auto bdr_face_Y = Workspace::NewVector(bdr_face_restrict_lex->Height());
++
+       // Apply the Boundary Face Restriction
+       bdr_face_restrict_lex->Mult(x, bdr_face_X);
+       if (bdr_face_X.Size()>0)
+@@ -897,6 +939,10 @@ void EABilinearFormExtension::MultTranspose(const Vector &x, Vector &y) const
+ {
+    // Apply the Element Restriction
+    const bool useRestrict = !DeviceCanUseCeed() && elem_restrict;
++
++   auto localX = Workspace::NewVector(useRestrict?elem_restrict->Height():0);
++   auto localY = Workspace::NewVector(useRestrict?elem_restrict->Height():0);
++
+    if (!useRestrict)
+    {
+       y.UseDevice(true); // typically this is a large vector, so store on device
+@@ -936,6 +982,9 @@ void EABilinearFormExtension::MultTranspose(const Vector &x, Vector &y) const
+    const int iFISz = intFaceIntegrators.Size();
+    if (int_face_restrict_lex && iFISz>0)
+    {
++      auto int_face_X = Workspace::NewVector(int_face_restrict_lex->Height());
++      auto int_face_Y = Workspace::NewVector(int_face_restrict_lex->Height());
++
+       // Apply the Interior Face Restriction
+       int_face_restrict_lex->Mult(x, int_face_X);
+       if (int_face_X.Size()>0)
+@@ -994,6 +1043,9 @@ void EABilinearFormExtension::MultTranspose(const Vector &x, Vector &y) const
+    const int bFISz = bdrFaceIntegrators.Size();
+    if (!factorize_face_terms && bdr_face_restrict_lex && bFISz>0)
+    {
++      auto bdr_face_X = Workspace::NewVector(bdr_face_restrict_lex->Height());
++      auto bdr_face_Y = Workspace::NewVector(bdr_face_restrict_lex->Height());
++
+       // Apply the Boundary Face Restriction
+       bdr_face_restrict_lex->Mult(x, bdr_face_X);
+       if (bdr_face_X.Size()>0)
+@@ -1050,12 +1102,10 @@ void FABilinearFormExtension::Assemble()
+    {
+       pfes->ExchangeFaceNbrData();
+       width += pfes->GetFaceNbrVSize();
+-      dg_x.SetSize(width);
+       ParBilinearForm *pb = nullptr;
+       if ((pb = dynamic_cast<ParBilinearForm*>(a)) && (pb->keep_nbr_block))
+       {
+          height += pfes->GetFaceNbrVSize();
+-         dg_y.SetSize(height);
+          keep_nbr_block = true;
+       }
+    }
+@@ -1217,6 +1267,7 @@ void FABilinearFormExtension::DGMult(const Vector &x, Vector &y) const
+       x_gf.ExchangeFaceNbrData();
+       Vector &shared_x = x_gf.FaceNbrData();
+       const int local_size = a->FESpace()->GetVSize();
++      auto dg_x = Workspace::NewVector(width);
+       auto dg_x_ptr = dg_x.Write();
+       auto x_ptr = x.Read();
+       mfem::forall(local_size, [=] MFEM_HOST_DEVICE (int i)
+@@ -1232,6 +1283,7 @@ void FABilinearFormExtension::DGMult(const Vector &x, Vector &y) const
+       ParBilinearForm *pform = nullptr;
+       if ((pform = dynamic_cast<ParBilinearForm*>(a)) && (pform->keep_nbr_block))
+       {
++         auto dg_y = Workspace::NewVector(height);
+          mat->Mult(dg_x, dg_y);
+          // DG Restriction
+          auto dg_y_ptr = dg_y.Read();
+@@ -1278,6 +1330,7 @@ void FABilinearFormExtension::DGMultTranspose(const Vector &x, Vector &y) const
+       x_gf.ExchangeFaceNbrData();
+       Vector &shared_x = x_gf.FaceNbrData();
+       const int local_size = a->FESpace()->GetVSize();
++      auto dg_x = Workspace::NewVector(width);
+       auto dg_x_ptr = dg_x.Write();
+       auto x_ptr = x.Read();
+       mfem::forall(local_size, [=] MFEM_HOST_DEVICE (int i)
+@@ -1293,6 +1346,7 @@ void FABilinearFormExtension::DGMultTranspose(const Vector &x, Vector &y) const
+       ParBilinearForm *pb = nullptr;
+       if ((pb = dynamic_cast<ParBilinearForm*>(a)) && (pb->keep_nbr_block))
+       {
++         auto dg_y = Workspace::NewVector(height);
+          mat->MultTranspose(dg_x, dg_y);
+          // DG Restriction
+          auto dg_y_ptr = dg_y.Read();
+@@ -1392,17 +1446,6 @@ void PAMixedBilinearFormExtension::Update()
+                             ElementDofOrdering::LEXICOGRAPHIC);
+    elem_restrict_test  =  test_fes->GetElementRestriction(
+                              ElementDofOrdering::LEXICOGRAPHIC);
+-   if (elem_restrict_trial)
+-   {
+-      localTrial.UseDevice(true);
+-      localTrial.SetSize(elem_restrict_trial->Height(),
+-                         Device::GetMemoryType());
+-   }
+-   if (elem_restrict_test)
+-   {
+-      localTest.UseDevice(true); // ensure 'localY = 0.0' is done on device
+-      localTest.SetSize(elem_restrict_test->Height(), Device::GetMemoryType());
+-   }
+ }
+ 
+ void PAMixedBilinearFormExtension::FormRectangularSystemOperator(
+@@ -1481,6 +1524,11 @@ void PAMixedBilinearFormExtension::AddMult(const Vector &x, Vector &y,
+    Array<BilinearFormIntegrator*> &integrators = *a->GetDBFI();
+    const int iSz = integrators.Size();
+ 
++   auto localTrial = Workspace::NewVector(elem_restrict_trial
++                                          ?elem_restrict_trial->Height():0);
++   auto localTest = Workspace::NewVector(elem_restrict_test
++                                         ?elem_restrict_test->Height():0);
++
+    // * G operation
+    SetupMultInputs(elem_restrict_trial, x, localTrial,
+                    elem_restrict_test, y, localTest, c);
+@@ -1494,9 +1542,7 @@ void PAMixedBilinearFormExtension::AddMult(const Vector &x, Vector &y,
+    // * G^T operation
+    if (elem_restrict_test)
+    {
+-      tempY.SetSize(y.Size());
+-      elem_restrict_test->MultTranspose(localTest, tempY);
+-      y += tempY;
++      elem_restrict_test->AddMultTranspose(localTest, y);
+    }
+ }
+ 
+@@ -1513,6 +1559,11 @@ void PAMixedBilinearFormExtension::AddMultTranspose(const Vector &x, Vector &y,
+    Array<BilinearFormIntegrator*> &integrators = *a->GetDBFI();
+    const int iSz = integrators.Size();
+ 
++   auto localTrial = Workspace::NewVector(elem_restrict_trial
++                                          ?elem_restrict_trial->Height():0);
++   auto localTest = Workspace::NewVector(elem_restrict_test
++                                         ?elem_restrict_test->Height():0);
++
+    // * G operation
+    SetupMultInputs(elem_restrict_test, x, localTest,
+                    elem_restrict_trial, y, localTrial, c);
+@@ -1526,9 +1577,7 @@ void PAMixedBilinearFormExtension::AddMultTranspose(const Vector &x, Vector &y,
+    // * G^T operation
+    if (elem_restrict_trial)
+    {
+-      tempY.SetSize(y.Size());
+-      elem_restrict_trial->MultTranspose(localTrial, tempY);
+-      y += tempY;
++      elem_restrict_trial->AddMultTranspose(localTrial, y);
+    }
+ }
+ 
+@@ -1539,6 +1588,8 @@ void PAMixedBilinearFormExtension::AssembleDiagonal_ADAt(const Vector &D,
+ 
+    const int iSz = integrators.Size();
+ 
++   auto localTrial = Workspace::NewVector(elem_restrict_trial
++                                          ?elem_restrict_trial->Height():0);
+    if (elem_restrict_trial)
+    {
+       const ElementRestriction* H1elem_restrict_trial =
+@@ -1555,6 +1606,8 @@ void PAMixedBilinearFormExtension::AssembleDiagonal_ADAt(const Vector &D,
+ 
+    if (elem_restrict_test)
+    {
++      auto localTest = Workspace::NewVector(elem_restrict_test->Height());
++
+       localTest = 0.0;
+       for (int i = 0; i < iSz; ++i)
+       {
+@@ -1620,7 +1673,8 @@ void PADiscreteLinearOperatorExtension::Assemble()
+ 
+    test_multiplicity.UseDevice(true);
+    test_multiplicity.SetSize(elem_restrict_test->Width()); // l-vector
+-   Vector ones(elem_restrict_test->Height()); // e-vector
++
++   auto ones = Workspace::NewVector(elem_restrict_test->Height()); // e-vector
+    ones = 1.0;
+ 
+    const ElementRestriction* elem_restrict =
+@@ -1631,7 +1685,7 @@ void PADiscreteLinearOperatorExtension::Assemble()
+    }
+    else
+    {
+-      mfem_error("A real ElementRestriction is required in this setting!");
++      MFEM_ABORT("A real ElementRestriction is required in this setting!");
+    }
+ 
+    auto tm = test_multiplicity.ReadWrite();
+@@ -1647,6 +1701,11 @@ void PADiscreteLinearOperatorExtension::AddMult(
+    Array<BilinearFormIntegrator*> &integrators = *a->GetDBFI();
+    const int iSz = integrators.Size();
+ 
++   auto localTrial = Workspace::NewVector(elem_restrict_trial
++                                          ?elem_restrict_trial->Height():0);
++   auto localTest = Workspace::NewVector(elem_restrict_test
++                                         ?elem_restrict_test->Height():0);
++
+    // * G operation
+    SetupMultInputs(elem_restrict_trial, x, localTrial,
+                    elem_restrict_test, y, localTest, c);
+@@ -1664,13 +1723,13 @@ void PADiscreteLinearOperatorExtension::AddMult(
+       dynamic_cast<const ElementRestriction*>(elem_restrict_test);
+    if (elem_restrict)
+    {
+-      tempY.SetSize(y.Size());
++      auto tempY = Workspace::NewVector(y.Size());
+       elem_restrict->MultLeftInverse(localTest, tempY);
+       y += tempY;
+    }
+    else
+    {
+-      mfem_error("In this setting you need a real ElementRestriction!");
++      MFEM_ABORT("In this setting you need a real ElementRestriction!");
+    }
+ }
+ 
+@@ -1691,6 +1750,12 @@ void PADiscreteLinearOperatorExtension::AddMultTranspose(
+    {
+       xs[i] *= tm[i];
+    });
++
++   auto localTrial = Workspace::NewVector(elem_restrict_trial
++                                          ?elem_restrict_trial->Height():0);
++   auto localTest = Workspace::NewVector(elem_restrict_test
++                                         ?elem_restrict_test->Height():0);
++
+    SetupMultInputs(elem_restrict_test, xscaled, localTest,
+                    elem_restrict_trial, y, localTrial, c);
+ 
+@@ -1703,13 +1768,11 @@ void PADiscreteLinearOperatorExtension::AddMultTranspose(
+    // * G^T operation
+    if (elem_restrict_trial)
+    {
+-      tempY.SetSize(y.Size());
+-      elem_restrict_trial->MultTranspose(localTrial, tempY);
+-      y += tempY;
++      elem_restrict_trial->AddMultTranspose(localTrial, y);
+    }
+    else
+    {
+-      mfem_error("Trial ElementRestriction not defined");
++      MFEM_ABORT("Trial ElementRestriction not defined");
+    }
+ }
+ 
+diff --git a/fem/bilinearform_ext.hpp b/fem/bilinearform_ext.hpp
+index 69caf2d42..ee76fe9d5 100644
+--- a/fem/bilinearform_ext.hpp
++++ b/fem/bilinearform_ext.hpp
+@@ -70,10 +70,6 @@ protected:
+    const FiniteElementSpace *trial_fes, *test_fes; // Not owned
+    /// Attributes of all mesh elements.
+    Array<int> elem_attributes, bdr_attributes;
+-   mutable Vector tmp_evec; // Work array
+-   mutable Vector localX, localY;
+-   mutable Vector int_face_X, int_face_Y;
+-   mutable Vector bdr_face_X, bdr_face_Y;
+    const Operator *elem_restrict; // Not owned
+    const FaceRestriction *int_face_restrict_lex; // Not owned
+    const FaceRestriction *bdr_face_restrict_lex; // Not owned
+@@ -141,7 +137,6 @@ class FABilinearFormExtension : public EABilinearFormExtension
+ {
+ private:
+    SparseMatrix *mat;
+-   mutable Vector dg_x, dg_y;
+ 
+ public:
+    FABilinearFormExtension(BilinearForm *form);
+@@ -170,9 +165,6 @@ class MFBilinearFormExtension : public BilinearFormExtension
+ {
+ protected:
+    const FiniteElementSpace *trial_fes, *test_fes; // Not owned
+-   mutable Vector localX, localY;
+-   mutable Vector int_face_X, int_face_Y;
+-   mutable Vector bdr_face_X, bdr_face_Y;
+    const Operator *elem_restrict; // Not owned
+    const FaceRestriction *int_face_restrict_lex; // Not owned
+    const FaceRestriction *bdr_face_restrict_lex; // Not owned
+@@ -240,7 +232,6 @@ class PAMixedBilinearFormExtension : public MixedBilinearFormExtension
+ {
+ protected:
+    const FiniteElementSpace *trial_fes, *test_fes; // Not owned
+-   mutable Vector localTrial, localTest, tempY;
+    const Operator *elem_restrict_trial; // Not owned
+    const Operator *elem_restrict_test;  // Not owned
+ 
+diff --git a/fem/linearform_ext.cpp b/fem/linearform_ext.cpp
+index 355431eb7..f3d5adba2 100644
+--- a/fem/linearform_ext.cpp
++++ b/fem/linearform_ext.cpp
+@@ -11,6 +11,7 @@
+ 
+ #include "linearform.hpp"
+ #include "../general/forall.hpp"
++#include "../general/workspace.hpp"
+ 
+ namespace mfem
+ {
+@@ -61,6 +62,7 @@ void LinearFormExtension::Assemble()
+       }
+ 
+       // Assemble the linear form
++      auto b = Workspace::NewVector(elem_restrict_lex->Height());
+       b = 0.0;
+       domain_integs[k]->AssembleDevice(fes, markers, b);
+       if (k == 0) { elem_restrict_lex->MultTranspose(b, *lf); }
+@@ -104,6 +106,7 @@ void LinearFormExtension::Assemble()
+       }
+ 
+       // Assemble the linear form
++      auto bdr_b = Workspace::NewVector(bdr_restrict_lex->Height());
+       bdr_b = 0.0;
+       boundary_integs[k]->AssembleDevice(fes, bdr_markers, bdr_b);
+       bdr_restrict_lex->AddMultTranspose(bdr_b, *lf);
+@@ -130,8 +133,6 @@ void LinearFormExtension::Update()
+ 
+       elem_restrict_lex = fes.GetElementRestriction(ordering);
+       MFEM_VERIFY(elem_restrict_lex, "Element restriction not available");
+-      b.SetSize(elem_restrict_lex->Height(), Device::GetMemoryType());
+-      b.UseDevice(true);
+    }
+ 
+    if (lf->boundary_integs.Size() > 0)
+@@ -168,9 +169,6 @@ void LinearFormExtension::Update()
+          dynamic_cast<const FaceRestriction*>(
+             fes.GetFaceRestriction(ordering, FaceType::Boundary,
+                                    L2FaceValues::SingleValued));
+-      MFEM_VERIFY(bdr_restrict_lex, "Face restriction not available");
+-      bdr_b.SetSize(bdr_restrict_lex->Height(), Device::GetMemoryType());
+-      bdr_b.UseDevice(true);
+    }
+ }
+ 
+diff --git a/fem/linearform_ext.hpp b/fem/linearform_ext.hpp
+index 0103185e0..eb54d8745 100644
+--- a/fem/linearform_ext.hpp
++++ b/fem/linearform_ext.hpp
+@@ -39,9 +39,6 @@ class LinearFormExtension
+    /// Operator that converts L-vectors to boundary E-vectors.
+    const FaceRestriction *bdr_restrict_lex; // Not owned
+ 
+-   /// Internal E-vectors.
+-   mutable Vector b, bdr_b;
+-
+ public:
+ 
+    /// \brief Create a LinearForm extension of @a lf.
+diff --git a/fem/qinterp/det.cpp b/fem/qinterp/det.cpp
+index e0b034b82..dda386644 100644
+--- a/fem/qinterp/det.cpp
++++ b/fem/qinterp/det.cpp
+@@ -11,6 +11,7 @@
+ 
+ #include "../quadinterpolator.hpp"
+ #include "../../general/forall.hpp"
++#include "../../general/workspace.hpp"
+ #include "../../linalg/dtensor.hpp"
+ #include "../../fem/kernels.hpp"
+ #include "../../linalg/kernels.hpp"
+@@ -204,8 +205,7 @@ static void Det3D(const int NE,
+                   const double *x,
+                   double *y,
+                   const int d1d = 0,
+-                  const int q1d = 0,
+-                  Vector *d_buff = nullptr) // used only with SMEM = false
++                  const int q1d = 0)
+ {
+    constexpr int DIM = 3;
+    static constexpr int GRID = SMEM ? 0 : 128;
+@@ -219,6 +219,7 @@ static void Det3D(const int NE,
+    auto Y = Reshape(y, Q1D, Q1D, Q1D, NE);
+ 
+    double *GM = nullptr;
++   int buffer_size = 0;
+    if (!SMEM)
+    {
+       const DeviceDofQuadLimits &limits = DeviceDofQuadLimits::Get();
+@@ -226,9 +227,11 @@ static void Det3D(const int NE,
+       const int max_d1d = T_D1D ? T_D1D : limits.MAX_Q1D;
+       const int max_qd = std::max(max_q1d, max_d1d);
+       const int mem_size = max_qd * max_qd * max_qd * 9;
+-      d_buff->SetSize(2*mem_size*GRID);
+-      GM = d_buff->Write();
++      buffer_size = 2*mem_size*GRID;
+    }
++   // if SMEM is true, d_buff will be empty (zero size)
++   auto d_buff = Workspace::NewVector(buffer_size);
++   GM = d_buff.Write();
+ 
+    mfem::forall_3D_grid(NE, Q1D, Q1D, Q1D, GRID, [=] MFEM_HOST_DEVICE (int e)
+    {
+@@ -278,8 +281,7 @@ void TensorDeterminants(const int NE,
+                         const int vdim,
+                         const DofToQuad &maps,
+                         const Vector &e_vec,
+-                        Vector &q_det,
+-                        Vector &d_buff)
++                        Vector &q_det)
+ {
+    if (NE == 0) { return; }
+    const int dim = maps.FE->GetDim();
+@@ -347,8 +349,7 @@ void TensorDeterminants(const int NE,
+             if (D1D <= MD && Q1D <= MQ)
+             { return Det3D<0,0,true>(NE,B,G,X,Y,D1D,Q1D); }
+             // Last fall-back will use global memory
+-            return Det3D<0,0,false>(
+-                      NE,B,G,X,Y,D1D,Q1D,&d_buff);
++            return Det3D<0,0,false>(NE,B,G,X,Y,D1D,Q1D);
+          }
+       }
+    }
+diff --git a/fem/qinterp/dispatch.hpp b/fem/qinterp/dispatch.hpp
+index 7e7c0ebfa..9faf53b81 100644
+--- a/fem/qinterp/dispatch.hpp
++++ b/fem/qinterp/dispatch.hpp
+@@ -54,8 +54,7 @@ void TensorDeterminants(const int NE,
+                         const int vdim,
+                         const DofToQuad &maps,
+                         const Vector &e_vec,
+-                        Vector &q_det,
+-                        Vector &d_buff);
++                        Vector &q_det);
+ 
+ } // namespace quadrature_interpolator
+ 
+diff --git a/fem/quadinterpolator.cpp b/fem/quadinterpolator.cpp
+index 8314fdcfb..67e77dd9a 100644
+--- a/fem/quadinterpolator.cpp
++++ b/fem/quadinterpolator.cpp
+@@ -28,7 +28,6 @@ QuadratureInterpolator::QuadratureInterpolator(const FiniteElementSpace &fes,
+    q_layout(QVectorLayout::byNODES),
+    use_tensor_products(UsesTensorBasis(fes))
+ {
+-   d_buffer.UseDevice(true);
+    if (fespace->GetNE() == 0) { return; }
+    const FiniteElement *fe = fespace->GetFE(0);
+    MFEM_VERIFY(dynamic_cast<const ScalarFiniteElement*>(fe) != NULL,
+@@ -44,7 +43,6 @@ QuadratureInterpolator::QuadratureInterpolator(const FiniteElementSpace &fes,
+    q_layout(QVectorLayout::byNODES),
+    use_tensor_products(UsesTensorBasis(fes))
+ {
+-   d_buffer.UseDevice(true);
+    if (fespace->GetNE() == 0) { return; }
+    const FiniteElement *fe = fespace->GetFE(0);
+    MFEM_VERIFY(dynamic_cast<const ScalarFiniteElement*>(fe) != NULL,
+@@ -530,7 +528,7 @@ void QuadratureInterpolator::Mult(const Vector &e_vec,
+       }
+       if (eval_flags & DETERMINANTS)
+       {
+-         TensorDeterminants(ne, vdim, maps, e_vec, q_det, d_buffer);
++         TensorDeterminants(ne, vdim, maps, e_vec, q_det);
+       }
+    }
+    else // use_tensor_eval == false
+diff --git a/fem/quadinterpolator.hpp b/fem/quadinterpolator.hpp
+index 6672ee2f1..95fa8c9a3 100644
+--- a/fem/quadinterpolator.hpp
++++ b/fem/quadinterpolator.hpp
+@@ -37,7 +37,6 @@ protected:
+    mutable QVectorLayout q_layout;     ///< Output Q-vector layout
+ 
+    mutable bool use_tensor_products;   ///< Tensor product evaluation mode
+-   mutable Vector d_buffer;            ///< Auxiliary device buffer
+ 
+ public:
+    static const int MAX_NQ2D = 100;
+diff --git a/fem/transfer.cpp b/fem/transfer.cpp
+index a1eee41db..1db97d041 100644
+--- a/fem/transfer.cpp
++++ b/fem/transfer.cpp
+@@ -12,6 +12,7 @@
+ #include "transfer.hpp"
+ #include "bilinearform.hpp"
+ #include "../general/forall.hpp"
++#include "../general/workspace.hpp"
+ 
+ namespace mfem
+ {
+@@ -1399,15 +1400,10 @@ TensorProductPRefinementTransferOperator(
+    MFEM_VERIFY(elem_restrict_lex_h,
+                "High order ElementRestriction not available");
+ 
+-   localL.SetSize(elem_restrict_lex_l->Height(), Device::GetMemoryType());
+-   localH.SetSize(elem_restrict_lex_h->Height(), Device::GetMemoryType());
+-   localL.UseDevice(true);
+-   localH.UseDevice(true);
+-
+    MFEM_VERIFY(dynamic_cast<const ElementRestriction*>(elem_restrict_lex_h),
+                "High order element restriction is of unsupported type");
+ 
+-   mask.SetSize(localH.Size(), Device::GetMemoryType());
++   mask.SetSize(elem_restrict_lex_h->Height(), Device::GetMemoryType());
+    static_cast<const ElementRestriction*>(elem_restrict_lex_h)
+    ->BooleanMask(mask);
+    mask.UseDevice(true);
+@@ -1680,6 +1676,9 @@ void TensorProductPRefinementTransferOperator::Mult(const Vector& x,
+       return;
+    }
+ 
++   auto localH = Workspace::NewVector(elem_restrict_lex_h->Height());
++   auto localL = Workspace::NewVector(elem_restrict_lex_l->Height());
++
+    elem_restrict_lex_l->Mult(x, localL);
+    if (dim == 2)
+    {
+@@ -1706,6 +1705,9 @@ void TensorProductPRefinementTransferOperator::MultTranspose(const Vector& x,
+       return;
+    }
+ 
++   auto localH = Workspace::NewVector(elem_restrict_lex_h->Height());
++   auto localL = Workspace::NewVector(elem_restrict_lex_l->Height());
++
+    elem_restrict_lex_h->Mult(x, localH);
+    if (dim == 2)
+    {
+@@ -1731,7 +1733,7 @@ TrueTransferOperator::TrueTransferOperator(const FiniteElementSpace& lFESpace_,
+      lFESpace(lFESpace_),
+      hFESpace(hFESpace_)
+ {
+-   localTransferOperator = new TransferOperator(lFESpace_, hFESpace_);
++   localTransferOperator.reset(new TransferOperator(lFESpace_, hFESpace_));
+ 
+    P = lFESpace.GetProlongationMatrix();
+    R = hFESpace.IsVariableOrder() ? hFESpace.GetHpRestrictionMatrix() :
+@@ -1741,34 +1743,23 @@ TrueTransferOperator::TrueTransferOperator(const FiniteElementSpace& lFESpace_,
+    // P can be null and R not null
+    // If P is not null it is assumed that R is not null as well
+    if (P) { MFEM_VERIFY(R, "Both P and R have to be not NULL") }
+-
+-   if (P)
+-   {
+-      tmpL.SetSize(lFESpace_.GetVSize());
+-      tmpH.SetSize(hFESpace_.GetVSize());
+-   }
+-   // P can be null and R not null
+-   else if (R)
+-   {
+-      tmpH.SetSize(hFESpace_.GetVSize());
+-   }
+-}
+-
+-TrueTransferOperator::~TrueTransferOperator()
+-{
+-   delete localTransferOperator;
+ }
+ 
+ void TrueTransferOperator::Mult(const Vector& x, Vector& y) const
+ {
+    if (P)
+    {
++      auto tmpL = Workspace::NewVector(lFESpace.GetVSize());
++      auto tmpH = Workspace::NewVector(hFESpace.GetVSize());
++
+       P->Mult(x, tmpL);
+       localTransferOperator->Mult(tmpL, tmpH);
+       R->Mult(tmpH, y);
+    }
+    else if (R)
+    {
++      auto tmpH = Workspace::NewVector(hFESpace.GetVSize());
++
+       localTransferOperator->Mult(x, tmpH);
+       R->Mult(tmpH, y);
+    }
+@@ -1782,12 +1773,17 @@ void TrueTransferOperator::MultTranspose(const Vector& x, Vector& y) const
+ {
+    if (P)
+    {
++      auto tmpL = Workspace::NewVector(lFESpace.GetVSize());
++      auto tmpH = Workspace::NewVector(hFESpace.GetVSize());
++
+       R->MultTranspose(x, tmpH);
+       localTransferOperator->MultTranspose(tmpH, tmpL);
+       P->MultTranspose(tmpL, y);
+    }
+    else if (R)
+    {
++      auto tmpH = Workspace::NewVector(hFESpace.GetVSize());
++
+       R->MultTranspose(x, tmpH);
+       localTransferOperator->MultTranspose(tmpH, y);
+    }
+diff --git a/fem/transfer.hpp b/fem/transfer.hpp
+index 10e3a3de3..58cd6583e 100644
+--- a/fem/transfer.hpp
++++ b/fem/transfer.hpp
+@@ -470,8 +470,6 @@ private:
+    const Operator* elem_restrict_lex_l;
+    const Operator* elem_restrict_lex_h;
+    Vector mask;
+-   mutable Vector localL;
+-   mutable Vector localH;
+ 
+ public:
+    /// @brief Constructs a transfer operator from \p lFESpace to \p hFESpace
+@@ -505,9 +503,7 @@ private:
+    const FiniteElementSpace& hFESpace;
+    const Operator * P = nullptr;
+    const SparseMatrix * R = nullptr;
+-   TransferOperator* localTransferOperator;
+-   mutable Vector tmpL;
+-   mutable Vector tmpH;
++   std::unique_ptr<TransferOperator> localTransferOperator;
+ 
+ public:
+    /// @brief Constructs a transfer operator working on true degrees of freedom
+@@ -515,9 +511,6 @@ public:
+    TrueTransferOperator(const FiniteElementSpace& lFESpace_,
+                         const FiniteElementSpace& hFESpace_);
+ 
+-   /// Destructor
+-   ~TrueTransferOperator();
+-
+    /// @brief Interpolation or prolongation of a true dof vector \p x to a true
+    /// dof vector \p y.
+    /** The true dof vector \p x corresponding to the coarse space is restricted
+diff --git a/general/CMakeLists.txt b/general/CMakeLists.txt
+index 67c3653c4..6f610f959 100644
+--- a/general/CMakeLists.txt
++++ b/general/CMakeLists.txt
+@@ -31,6 +31,7 @@ list(APPEND SRCS
+   tinyxml2.cpp
+   version.cpp
+   hip.cpp
++  workspace.cpp
+   )
+ 
+ list(APPEND HDRS
+@@ -64,6 +65,7 @@ list(APPEND HDRS
+   text.hpp
+   version.hpp
+   hip.hpp
++  workspace.hpp
+   )
+ 
+ if (MFEM_USE_MPI)
+diff --git a/general/workspace.cpp b/general/workspace.cpp
+new file mode 100644
+index 000000000..ad8210a61
+--- /dev/null
++++ b/general/workspace.cpp
+@@ -0,0 +1,144 @@
++// Copyright (c) 2010-2024, Lawrence Livermore National Security, LLC. Produced
++// at the Lawrence Livermore National Laboratory. All Rights reserved. See files
++// LICENSE and NOTICE for details. LLNL-CODE-806117.
++//
++// This file is part of the MFEM library. For more information and source code
++// availability visit https://mfem.org.
++//
++// MFEM is free software; you can redistribute it and/or modify it under the
++// terms of the BSD-3 license. We welcome feedback and contributions, see file
++// CONTRIBUTING.md for details.
++
++#include "workspace.hpp"
++
++namespace mfem
++{
++
++WorkspaceVector::WorkspaceVector(
++   internal::WorkspaceChunk &chunk_, int offset_, int n)
++   : Vector(chunk_.GetData(), chunk_.GetOffset(), n),
++     chunk(chunk_),
++     offset(offset_),
++     original_size(n)
++{
++   UseDevice(true);
++}
++
++WorkspaceVector::WorkspaceVector(WorkspaceVector &&other)
++   : Vector(std::move(other)),
++     chunk(other.chunk),
++     offset(other.offset),
++     original_size(other.original_size)
++{
++   if (this != &other) { other.moved_from = true; }
++}
++
++WorkspaceVector::~WorkspaceVector()
++{
++   if (!moved_from) { chunk.FreeVector(*this); }
++}
++
++namespace internal
++{
++
++WorkspaceChunk::WorkspaceChunk(int capacity)
++   : data(capacity), original_capacity(capacity)
++{ }
++
++WorkspaceVector WorkspaceChunk::NewVector(int n)
++{
++   MFEM_ASSERT(HasCapacityFor(n), "Requested vector is too large.");
++   WorkspaceVector vector(*this, offset, n);
++   offset += n;
++   vector_count += 1;
++   return vector;
++}
++
++void WorkspaceChunk::FreeVector(const WorkspaceVector &v)
++{
++   MFEM_ASSERT(vector_count >= 0, "");
++   vector_count -= 1;
++   // If the chunk is completely empty, we can reclaim all of the memory and
++   // allow new allocations (before it is completely empty, we cannot reclaim
++   // memory because we don't track the specific regions that are freed).
++   if (vector_count == 0)
++   {
++      offset = 0;
++      // If we are not the front chunk, deallocate the backing memory. This
++      // chunk will be consolidated later anyway.
++      if (!front) { data.Destroy(); }
++   }
++   else
++   {
++      // If the vector being freed is the most recent vector allocated (i.e. if
++      // the vector is freed in stack/LIFO order), then we can reclaim its
++      // memory by moving the offset.
++      const int size = v.original_size;
++      if (v.offset == offset - size)
++      {
++         offset -= size;
++      }
++   }
++}
++
++} // namespace internal
++
++Workspace &Workspace::Instance()
++{
++   static Workspace ws;
++   return ws;
++}
++
++void Workspace::ConsolidateAndEnsureAvailable(int requested_size)
++{
++   int n_empty = 0;
++   int empty_capacity = 0;
++   // Merge all empty chunks at the beginning of the list
++   auto it = chunks.begin();
++   while (it != chunks.end() && it->IsEmpty())
++   {
++      empty_capacity += it->GetOriginalCapacity();
++      ++it;
++      ++n_empty;
++   }
++
++   // If we have multiple empty chunks at the beginning of the list, we need
++   // to merge them. Also, if the front chunk is empty, but not big enough,
++   // we need to replace it, so we remove it here.
++   if (n_empty > 1 || requested_size > empty_capacity)
++   {
++      // Note: if chunks is empty, then 'it' will be chunks.begin(), and the
++      // next line is a no-op.
++      chunks.erase_after(chunks.before_begin(), it);
++   }
++
++   const int capacity = chunks.empty() ? -1 :
++                        chunks.front().GetAvailableCapacity();
++
++   const int min_chunk_size = std::max(requested_size, empty_capacity);
++
++   if (min_chunk_size > capacity)
++   {
++      if (!chunks.empty()) { chunks.front().SetFront(false); }
++      chunks.emplace_front(min_chunk_size);
++   }
++}
++
++WorkspaceVector Workspace::NewVector(int n)
++{
++   Workspace &ws = Instance();
++   ws.ConsolidateAndEnsureAvailable(n);
++   return ws.chunks.front().NewVector(n);
++}
++
++void Workspace::Reserve(int n)
++{
++   Instance().ConsolidateAndEnsureAvailable(n);
++}
++
++void Workspace::Clear()
++{
++   Instance().chunks.clear();
++}
++
++} // namespace mfem
+diff --git a/general/workspace.hpp b/general/workspace.hpp
+new file mode 100644
+index 000000000..b5c0ebae8
+--- /dev/null
++++ b/general/workspace.hpp
+@@ -0,0 +1,176 @@
++// Copyright (c) 2010-2024, Lawrence Livermore National Security, LLC. Produced
++// at the Lawrence Livermore National Laboratory. All Rights reserved. See files
++// LICENSE and NOTICE for details. LLNL-CODE-806117.
++//
++// This file is part of the MFEM library. For more information and source code
++// availability visit https://mfem.org.
++//
++// MFEM is free software; you can redistribute it and/or modify it under the
++// terms of the BSD-3 license. We welcome feedback and contributions, see file
++// CONTRIBUTING.md for details.
++
++#ifndef MFEM_WORKSPACE_HPP
++#define MFEM_WORKSPACE_HPP
++
++#include "../linalg/vector.hpp"
++#include <forward_list>
++
++namespace mfem
++{
++
++// Forward declaration of internal::WorkspaceChunk
++namespace internal { class WorkspaceChunk; }
++
++/// @brief A vector used as a short-lived workspace for temporary calculations,
++/// created with Workspace::NewVector.
++///
++/// A WorkspaceVector is created using the Workspace bump allocator. The
++/// allocator can quickly and cheaply create new vectors, so that these vectors
++/// can be created and destroyed in loops without incurring the memory
++/// allocation and deallocation overhead.
++///
++/// WorkspaceVector%s should be used only for short-lived temporary storage; for
++/// example, they are not intended to be stored as member data in other classes.
++class WorkspaceVector : public Vector
++{
++   // using internal::WorkspaceChunk;
++   friend class internal::WorkspaceChunk;
++
++   /// The WorkspaceChunk containing the data for this vector.
++   internal::WorkspaceChunk &chunk;
++
++   /// Offset in the chunk.
++   const int offset;
++
++   /// Original size allocated.
++   const int original_size;
++
++   /// @brief Has this WorkspaceVector been moved from? If so, don't deallocate
++   /// from its WorkspaceChunk in the destructor.
++   bool moved_from = false;
++
++   /// Private constructor, create with Workspace::NewVector() instead.
++   WorkspaceVector(internal::WorkspaceChunk &chunk_, int offset_, int n);
++
++public:
++   /// @brief Move constructor. The moved-from WorkspaceVector has @a
++   /// size_in_chunk set to zero.
++   WorkspaceVector(WorkspaceVector &&other);
++
++   /// No copy constructor.
++   WorkspaceVector(WorkspaceVector &other) = delete;
++
++   /// Copy assignment: copy contents of vector, not metadata.
++   WorkspaceVector& operator=(WorkspaceVector &other)
++   {
++      Vector::operator=(other);
++      return *this;
++   }
++
++   /// Cannot move to an existing WorkspaceVector.
++   WorkspaceVector& operator=(WorkspaceVector &&other) = delete;
++
++   // All other operator=, inherit from Vector
++   using Vector::operator=;
++
++   /// Destructor. Notifies the WorkspaceChunk that this vector has been freed.
++   ~WorkspaceVector();
++};
++
++namespace internal
++{
++
++/// @brief A chunk of storage used to allocate WorkspaceVector%s.
++///
++/// This is an internal class used by Workspace.
++class WorkspaceChunk
++{
++   /// The data used as a base for the WorkspaceVector%s.
++   Vector data;
++
++   /// The offset of currently allocated WorkspaceVector%s in thus chunk.
++   int offset = 0;
++
++   /// How many vectors have been allocated in this chunk.
++   int vector_count = 0;
++
++   /// Is the vector in the front of the list?
++   bool front = true;
++
++   /// The original capacity allocated.
++   const int original_capacity;
++
++public:
++   /// Create a WorkspaceChunk with the given @a capacity.
++   WorkspaceChunk(int capacity);
++
++   /// @brief Return the available capacity (i.e. the largest vector that will
++   /// fit in this chunk).
++   int GetAvailableCapacity() const { return data.Size() - offset; }
++
++   /// @brief Returns the original capacity of the chunk.
++   ///
++   /// If the chunk is not in the front of the list and all of its vectors are
++   /// freed, it may deallocate its data, so the capacity becomes zero. The
++   /// "original capacity" remains unchained.
++   int GetOriginalCapacity() const { return original_capacity; }
++
++   /// Return the data offset.
++   int GetOffset() const { return offset; }
++
++   /// Sets whether the chunk is in the front of the list
++   void SetFront(bool front_) { front = front_; }
++
++   /// Returns true if this chunk can fit a new vector of size @a n.
++   bool HasCapacityFor(int n) const { return n <= GetAvailableCapacity(); }
++
++   /// Returns true if this chunk is empty.
++   bool IsEmpty() const { return vector_count == 0; }
++
++   /// Note that a vector from this chunk has been deallocated.
++   void FreeVector(const WorkspaceVector &v);
++
++   /// Returns the backing data Vector.
++   Vector &GetData() { return data; }
++
++   /// Returns a new WorkspaceVector of size @a n.
++   WorkspaceVector NewVector(int n);
++};
++
++}
++
++/// @brief Storage for temporary, short-lived workspace vectors.
++///
++/// This class implements a simple bump allocator to quickly allocate and
++/// deallocate workspace vectors without incurring the overhead of memory
++/// allocation and deallocation.
++class Workspace
++{
++   /// Chunks of storage to hold the vectors.
++   std::forward_list<internal::WorkspaceChunk> chunks;
++
++   /// Default constructor, private (singleton class).
++   Workspace() = default;
++
++   /// @brief Consolidate the chunks (merge consecutive empty chunks), and
++   /// ensure that the front chunk has sufficient available capacity for a
++   /// vector of @a requested_size.
++   void ConsolidateAndEnsureAvailable(int requested_size);
++
++   /// Return the singleton instance.
++   static Workspace &Instance();
++
++public:
++   /// Return a new WorkspaceVector of the requested size.
++   static WorkspaceVector NewVector(int n);
++
++   /// Ensure that capacity of at least @a n is available for allocations.
++   static void Reserve(int n);
++
++   /// Clear all storage. Invalidates any existing WorkspaceVector%s.
++   static void Clear();
++};
++
++} // namespace mfem
++
++#endif
+diff --git a/linalg/blockoperator.cpp b/linalg/blockoperator.cpp
+index f5e1d02c7..c6b48d8b9 100644
+--- a/linalg/blockoperator.cpp
++++ b/linalg/blockoperator.cpp
+@@ -11,6 +11,7 @@
+ 
+ 
+ #include "../general/array.hpp"
++#include "../general/workspace.hpp"
+ #include "operator.hpp"
+ #include "blockvector.hpp"
+ #include "blockoperator.hpp"
+@@ -78,7 +79,7 @@ void BlockOperator::Mult (const Vector & x, Vector & y) const
+ 
+    for (int iRow=0; iRow < nRowBlocks; ++iRow)
+    {
+-      tmp.SetSize(row_offsets[iRow+1] - row_offsets[iRow]);
++      auto tmp = Workspace::NewVector(row_offsets[iRow+1] - row_offsets[iRow]);
+       for (int jCol=0; jCol < nColBlocks; ++jCol)
+       {
+          if (op(iRow,jCol))
+@@ -109,7 +110,7 @@ void BlockOperator::MultTranspose (const Vector & x, Vector & y) const
+ 
+    for (int iRow=0; iRow < nColBlocks; ++iRow)
+    {
+-      tmp.SetSize(col_offsets[iRow+1] - col_offsets[iRow]);
++      auto tmp = Workspace::NewVector(col_offsets[iRow+1] - col_offsets[iRow]);
+       for (int jCol=0; jCol < nRowBlocks; ++jCol)
+       {
+          if (op(jCol,iRow))
+@@ -284,8 +285,8 @@ void BlockLowerTriangularPreconditioner::Mult (const Vector & x,
+    y = 0.0;
+    for (int iRow=0; iRow < nBlocks; ++iRow)
+    {
+-      tmp.SetSize(offsets[iRow+1] - offsets[iRow]);
+-      tmp2.SetSize(offsets[iRow+1] - offsets[iRow]);
++      auto tmp = Workspace::NewVector(offsets[iRow+1] - offsets[iRow]);
++      auto tmp2 = Workspace::NewVector(offsets[iRow+1] - offsets[iRow]);
+       tmp2 = 0.0;
+       tmp2 += xblock.GetBlock(iRow);
+       for (int jCol=0; jCol < iRow; ++jCol)
+@@ -320,8 +321,8 @@ void BlockLowerTriangularPreconditioner::MultTranspose (const Vector & x,
+    y = 0.0;
+    for (int iRow=nBlocks-1; iRow >=0; --iRow)
+    {
+-      tmp.SetSize(offsets[iRow+1] - offsets[iRow]);
+-      tmp2.SetSize(offsets[iRow+1] - offsets[iRow]);
++      auto tmp = Workspace::NewVector(offsets[iRow+1] - offsets[iRow]);
++      auto tmp2 = Workspace::NewVector(offsets[iRow+1] - offsets[iRow]);
+       tmp2 = 0.0;
+       tmp2 += xblock.GetBlock(iRow);
+       for (int jCol=iRow+1; jCol < nBlocks; ++jCol)
+diff --git a/linalg/blockoperator.hpp b/linalg/blockoperator.hpp
+index a6c05c477..8900a380b 100644
+--- a/linalg/blockoperator.hpp
++++ b/linalg/blockoperator.hpp
+@@ -127,7 +127,6 @@ private:
+    //! Temporary Vectors used to efficiently apply the Mult and MultTranspose methods.
+    mutable BlockVector xblock;
+    mutable BlockVector yblock;
+-   mutable Vector tmp;
+ };
+ 
+ //! @class BlockDiagonalPreconditioner
+@@ -281,8 +280,6 @@ private:
+    //! methods.
+    mutable BlockVector xblock;
+    mutable BlockVector yblock;
+-   mutable Vector tmp;
+-   mutable Vector tmp2;
+ };
+ 
+ }
+diff --git a/linalg/operator.cpp b/linalg/operator.cpp
+index 3fd4d64f9..9b7f8ed54 100644
+--- a/linalg/operator.cpp
++++ b/linalg/operator.cpp
+@@ -12,6 +12,7 @@
+ #include "vector.hpp"
+ #include "operator.hpp"
+ #include "../general/forall.hpp"
++#include "../general/workspace.hpp"
+ 
+ #include <iostream>
+ #include <iomanip>
+@@ -50,7 +51,7 @@ void Operator::InitTVectors(const Operator *Po, const Operator *Ri,
+ 
+ void Operator::AddMult(const Vector &x, Vector &y, const double a) const
+ {
+-   mfem::Vector z(y.Size());
++   auto z = Workspace::NewVector(y.Size());
+    Mult(x, z);
+    y.Add(a, z);
+ }
+@@ -58,7 +59,7 @@ void Operator::AddMult(const Vector &x, Vector &y, const double a) const
+ void Operator::AddMultTranspose(const Vector &x, Vector &y,
+                                 const double a) const
+ {
+-   mfem::Vector z(y.Size());
++   auto z = Workspace::NewVector(y.Size());
+    MultTranspose(x, z);
+    y.Add(a, z);
+ }
+@@ -516,13 +517,8 @@ ConstrainedOperator::ConstrainedOperator(Operator *A, const Array<int> &list,
+ {
+    // 'mem_class' should work with A->Mult() and mfem::forall():
+    mem_class = A->GetMemoryClass()*Device::GetDeviceMemoryClass();
+-   MemoryType mem_type = GetMemoryType(mem_class);
+    list.Read(); // TODO: just ensure 'list' is registered, no need to copy it
+    constraint_list.MakeRef(list);
+-   // typically z and w are large vectors, so use the device (GPU) to perform
+-   // operations on them
+-   z.SetSize(height, mem_type); z.UseDevice(true);
+-   w.SetSize(height, mem_type); w.UseDevice(true);
+ }
+ 
+ void ConstrainedOperator::AssembleDiagonal(Vector &diag) const
+@@ -558,6 +554,7 @@ void ConstrainedOperator::AssembleDiagonal(Vector &diag) const
+ 
+ void ConstrainedOperator::EliminateRHS(const Vector &x, Vector &b) const
+ {
++   auto w = Workspace::NewVector(height);
+    w = 0.0;
+    const int csz = constraint_list.Size();
+    auto idx = constraint_list.Read();
+@@ -570,9 +567,7 @@ void ConstrainedOperator::EliminateRHS(const Vector &x, Vector &b) const
+       d_w[id] = d_x[id];
+    });
+ 
+-   // A.AddMult(w, b, -1.0); // if available to all Operators
+-   A->Mult(w, z);
+-   b -= z;
++   A->AddMult(w, b, -1.0);
+ 
+    // Use read+write access - we are modifying sub-vector of b
+    auto d_b = b.ReadWrite();
+@@ -600,6 +595,7 @@ void ConstrainedOperator::ConstrainedMult(const Vector &x, Vector &y,
+       return;
+    }
+ 
++   auto z = Workspace::NewVector(height);
+    z = x;
+ 
+    auto idx = constraint_list.Read();
+@@ -657,13 +653,6 @@ void ConstrainedOperator::MultTranspose(const Vector &x, Vector &y) const
+    ConstrainedMult(x, y, transpose);
+ }
+ 
+-void ConstrainedOperator::AddMult(const Vector &x, Vector &y,
+-                                  const double a) const
+-{
+-   Mult(x, w);
+-   y.Add(a, w);
+-}
+-
+ RectangularConstrainedOperator::RectangularConstrainedOperator(
+    Operator *A,
+    const Array<int> &trial_list,
+@@ -673,19 +662,16 @@ RectangularConstrainedOperator::RectangularConstrainedOperator(
+ {
+    // 'mem_class' should work with A->Mult() and mfem::forall():
+    mem_class = A->GetMemoryClass()*Device::GetMemoryClass();
+-   MemoryType mem_type = GetMemoryType(mem_class);
+    trial_list.Read(); // TODO: just ensure 'list' is registered, no need to copy it
+    test_list.Read(); // TODO: just ensure 'list' is registered, no need to copy it
+    trial_constraints.MakeRef(trial_list);
+    test_constraints.MakeRef(test_list);
+-   // typically z and w are large vectors, so store them on the device
+-   z.SetSize(height, mem_type); z.UseDevice(true);
+-   w.SetSize(width, mem_type); w.UseDevice(true);
+ }
+ 
+ void RectangularConstrainedOperator::EliminateRHS(const Vector &x,
+                                                   Vector &b) const
+ {
++   auto w = Workspace::NewVector(width);
+    w = 0.0;
+    const int trial_csz = trial_constraints.Size();
+    auto trial_idx = trial_constraints.Read();
+@@ -719,6 +705,7 @@ void RectangularConstrainedOperator::Mult(const Vector &x, Vector &y) const
+    }
+    else
+    {
++      auto w = Workspace::NewVector(width);
+       w = x;
+ 
+       auto idx = trial_constraints.Read();
+@@ -754,6 +741,7 @@ void RectangularConstrainedOperator::MultTranspose(const Vector &x,
+    }
+    else
+    {
++      auto z = Workspace::NewVector(height);
+       z = x;
+ 
+       auto idx = test_constraints.Read();
+diff --git a/linalg/operator.hpp b/linalg/operator.hpp
+index fa856ffb8..b8b1761ae 100644
+--- a/linalg/operator.hpp
++++ b/linalg/operator.hpp
+@@ -897,7 +897,6 @@ protected:
+    Array<int> constraint_list;  ///< List of constrained indices/dofs.
+    Operator *A;                 ///< The unconstrained Operator.
+    bool own_A;                  ///< Ownership flag for A.
+-   mutable Vector z, w;         ///< Auxiliary vectors.
+    MemoryClass mem_class;
+    DiagonalPolicy diag_policy;  ///< Diagonal policy for constrained dofs
+ 
+@@ -946,8 +945,6 @@ public:
+        the vectors, and "_i" -- the rest of the entries. */
+    void Mult(const Vector &x, Vector &y) const override;
+ 
+-   void AddMult(const Vector &x, Vector &y, const double a = 1.0) const override;
+-
+    void MultTranspose(const Vector &x, Vector &y) const override;
+ 
+    /** @brief Implementation of Mult or MultTranspose.
+@@ -972,7 +969,6 @@ protected:
+    Array<int> trial_constraints, test_constraints;
+    Operator *A;
+    bool own_A;
+-   mutable Vector z, w;
+    MemoryClass mem_class;
+ 
+ public:
+diff --git a/linalg/solvers.cpp b/linalg/solvers.cpp
+index ba0af7e91..053607e88 100644
+--- a/linalg/solvers.cpp
++++ b/linalg/solvers.cpp
+@@ -13,6 +13,7 @@
+ #include "../general/annotation.hpp"
+ #include "../general/forall.hpp"
+ #include "../general/globals.hpp"
++#include "../general/workspace.hpp"
+ #include "../fem/bilinearform.hpp"
+ #include <iostream>
+ #include <iomanip>
+@@ -212,10 +213,9 @@ OperatorJacobiSmoother::OperatorJacobiSmoother(const BilinearForm &a,
+    dinv(height),
+    damping(dmpng),
+    ess_tdof_list(&ess_tdofs),
+-   residual(height),
+    allow_updates(false)
+ {
+-   Vector &diag(residual);
++   auto diag = Workspace::NewVector(height);
+    a.AssembleDiagonal(diag);
+    // 'a' cannot be used for iterative_mode == true because its size may be
+    // different.
+@@ -231,7 +231,6 @@ OperatorJacobiSmoother::OperatorJacobiSmoother(const Vector &d,
+    dinv(height),
+    damping(dmpng),
+    ess_tdof_list(&ess_tdofs),
+-   residual(height),
+    oper(NULL),
+    allow_updates(false)
+ {
+@@ -268,15 +267,13 @@ void OperatorJacobiSmoother::SetOperator(const Operator &op)
+       ess_tdof_list = nullptr;
+    }
+    dinv.SetSize(height);
+-   residual.SetSize(height);
+-   Vector &diag(residual);
++   auto diag = Workspace::NewVector(height);
+    op.AssembleDiagonal(diag);
+    Setup(diag);
+ }
+ 
+ void OperatorJacobiSmoother::Setup(const Vector &diag)
+ {
+-   residual.UseDevice(true);
+    const double delta = damping;
+    auto D = diag.Read();
+    auto DI = dinv.Write();
+@@ -307,6 +304,8 @@ void OperatorJacobiSmoother::Mult(const Vector &x, Vector &y) const
+    MFEM_ASSERT(x.Size() == Width(), "invalid input vector");
+    MFEM_ASSERT(y.Size() == Height(), "invalid output vector");
+ 
++   auto residual = Workspace::NewVector(height);
++
+    if (iterative_mode)
+    {
+       MFEM_VERIFY(oper, "iterative_mode == true requires the forward operator");
+@@ -341,7 +340,6 @@ OperatorChebyshevSmoother::OperatorChebyshevSmoother(const Operator &oper_,
+    diag(d),
+    coeffs(order),
+    ess_tdof_list(ess_tdofs),
+-   residual(N),
+    oper(&oper_) { Setup(); }
+ 
+ #ifdef MFEM_USE_MPI
+@@ -362,7 +360,6 @@ OperatorChebyshevSmoother::OperatorChebyshevSmoother(const Operator &oper_,
+      diag(d),
+      coeffs(order),
+      ess_tdof_list(ess_tdofs),
+-     residual(N),
+      oper(&oper_)
+ {
+    OperatorJacobiSmoother invDiagOperator(diag, ess_tdofs, 1.0);
+@@ -405,7 +402,6 @@ OperatorChebyshevSmoother::OperatorChebyshevSmoother(const Operator* oper_,
+ void OperatorChebyshevSmoother::Setup()
+ {
+    // Invert diagonal
+-   residual.UseDevice(true);
+    auto D = diag.Read();
+    auto X = dinv.Write();
+    mfem::forall(N, [=] MFEM_HOST_DEVICE (int i) { X[i] = 1.0 / D[i]; });
+@@ -494,8 +490,10 @@ void OperatorChebyshevSmoother::Mult(const Vector& x, Vector &y) const
+       MFEM_ABORT("Chebyshev smoother requires operator");
+    }
+ 
++   auto residual = Workspace::NewVector(x.Size());
++   auto helperVector = Workspace::NewVector(x.Size());
++
+    residual = x;
+-   helperVector.SetSize(x.Size());
+ 
+    y.UseDevice(true);
+    y = 0.0;
+@@ -2997,7 +2995,7 @@ void BlockILU::Mult(const Vector &b, Vector &x) const
+ {
+    MFEM_ASSERT(height > 0, "BlockILU(0) preconditioner is not constructed");
+    int nblockrows = Height()/block_size;
+-   y.SetSize(Height());
++   auto y = Workspace::NewVector(Height());
+ 
+    DenseMatrix B;
+    Vector yi, yj, xi, xj;
+@@ -3457,6 +3455,8 @@ void OrthoSolver::Mult(const Vector &b, Vector &x) const
+    MFEM_VERIFY(height == b.Size(), "incompatible input Vector size!");
+    MFEM_VERIFY(height == x.Size(), "incompatible output Vector size!");
+ 
++   auto b_ortho = Workspace::NewVector(height);
++
+    // Orthogonalize input
+    Orthogonalize(b, b_ortho);
+ 
+diff --git a/linalg/solvers.hpp b/linalg/solvers.hpp
+index 5b222fc50..ff243746c 100644
+--- a/linalg/solvers.hpp
++++ b/linalg/solvers.hpp
+@@ -368,7 +368,6 @@ private:
+    Vector dinv;
+    const double damping;
+    const Array<int> *ess_tdof_list; // not owned; may be NULL
+-   mutable Vector residual;
+    /// Uses absolute values of the diagonal entries.
+    bool use_abs_diag = false;
+ 
+@@ -465,8 +464,6 @@ private:
+    const Vector &diag;
+    Array<double> coeffs;
+    const Array<int>& ess_tdof_list;
+-   mutable Vector residual;
+-   mutable Vector helperVector;
+    const Operator* oper;
+ };
+ 
+@@ -1046,9 +1043,6 @@ private:
+ 
+    Reordering reordering;
+ 
+-   /// Temporary vector used in the Mult() function.
+-   mutable Vector y;
+-
+    /// Permutation and inverse permutation vectors for the block reordering.
+    Array<int> P, Pinv;
+ 
+@@ -1249,8 +1243,6 @@ public:
+ private:
+    Solver *solver = nullptr;
+ 
+-   mutable Vector b_ortho;
+-
+    void Orthogonalize(const Vector &v, Vector &v_ortho) const;
+ };
+ 

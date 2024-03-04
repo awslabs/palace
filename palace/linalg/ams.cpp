@@ -14,7 +14,7 @@ namespace palace
 
 HypreAmsSolver::HypreAmsSolver(FiniteElementSpace &nd_fespace,
                                AuxiliaryFiniteElementSpace &h1_fespace, int cycle_it,
-                               int smooth_it, int agg_coarsen, bool vector_interp,
+                               int smooth_it, bool vector_interp, bool op_pos,
                                bool op_singular, int print)
   : mfem::HypreSolver(),
     // From the Hypre docs for AMS: cycles 1, 5, 8, 11, 13 are fastest, 7 yields fewest its
@@ -24,9 +24,9 @@ HypreAmsSolver::HypreAmsSolver(FiniteElementSpace &nd_fespace,
     // When used as the coarse solver of geometric multigrid, always do only a single
     // V-cycle.
     ams_it(cycle_it), ams_smooth_it(smooth_it),
-    // Use no aggressive coarsening for frequency domain problems when the preconditioner
-    // matrix is not SPD.
-    amg_agg_levels(agg_coarsen),
+    // For positive (SPD) operators, we will use aggressive coarsening but not for frequency
+    // domain problems when the preconditioner matrix is not SPD.
+    ams_pos(op_pos),
     // If we know the operator is singular (no mass matrix, for magnetostatic problems),
     // internally the AMS solver will avoid G-space corrections.
     ams_singular(op_singular), print((print > 1) ? print - 1 : 0)
@@ -151,7 +151,8 @@ void HypreAmsSolver::InitializeSolver()
   }
 
   // Set additional AMS options.
-  int coarsen_type = 10;   // 10 = HMIS, 8 = PMIS, 6 = Falgout, 0 = CLJP
+  int coarsen_type = 10;                 // 10 = HMIS, 8 = PMIS, 6 = Falgout, 0 = CLJP
+  int amg_agg_levels = ams_pos ? 1 : 0;  // Number of aggressive coarsening levels
   double theta = 0.5;      // AMG strength parameter = 0.25 is 2D optimal (0.5-0.8 for 3D)
   int amg_relax_type = 8;  // 3 = GS, 6 = symm. GS, 8 = l1-symm. GS, 13 = l1-GS,
                            // 18 = l1-Jacobi, 16 = Chebyshev
@@ -160,6 +161,17 @@ void HypreAmsSolver::InitializeSolver()
   int relax_type = 2;      // 2 = l1-SSOR, 4 = trunc. l1-SSOR, 1 = l1-Jacobi, 16 = Chebyshev
   double weight = 1.0;
   double omega = 1.0;
+  {
+    HYPRE_MemoryLocation loc;
+    HYPRE_GetMemoryLocation(&loc);
+    if (loc == HYPRE_MEMORY_DEVICE)  // Modify options for GPU-supported features
+    {
+      coarsen_type = 8;
+      amg_agg_levels = 0;
+      amg_relax_type = 18;
+      relax_type = 1;
+    }
+  }
 
   HYPRE_AMSSetSmoothingOptions(ams, relax_type, ams_smooth_it, weight, omega);
   HYPRE_AMSSetAlphaAMGOptions(ams, coarsen_type, amg_agg_levels, amg_relax_type, theta,
