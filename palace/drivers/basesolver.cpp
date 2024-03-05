@@ -180,11 +180,11 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
   {
     BlockTimer bt(Timer::ADAPTATION);
     Mpi::Print("\nAdaptive mesh refinement (AMR) iteration {:d}:\n"
-               " Indicator norm = {:.3e}, size = {:d}\n"
-               " Maximum iterations = {:d}, tol. = {:.3e}{}\n",
+               " Indicator norm = {:.3e}, global unknowns = {:d}\n"
+               " Max. iterations = {:d}, tol. = {:.3e}{}\n",
                ++it, err, ntdof, refinement.max_it, refinement.tol,
                (refinement.max_size > 0
-                    ? ", maximum size = " + std::to_string(refinement.max_size)
+                    ? ", max. size = " + std::to_string(refinement.max_size)
                     : ""));
 
     // Optionally save off the previous solution.
@@ -210,7 +210,8 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
     const auto initial_elem_count = fine_mesh.GetGlobalNE();
     fine_mesh.GeneralRefinement(marked_elements, -1, refinement.max_nc_levels);
     const auto final_elem_count = fine_mesh.GetGlobalNE();
-    Mpi::Print(" Mesh refinement added {:d} elements (initial: {}, final: {})\n",
+    Mpi::Print(" {} mesh refinement added {:d} elements (initial = {:d}, final = {:d})\n",
+               fine_mesh.Nonconforming() ? "Nonconforming" : "Conforming",
                final_elem_count - initial_elem_count, initial_elem_count, final_elem_count);
 
     // Optionally rebalance and write the adapted mesh to file.
@@ -223,7 +224,7 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
       Mpi::GlobalMin(1, &min_elem, comm);
       Mpi::GlobalMax(1, &max_elem, comm);
       const auto ratio_post = double(max_elem) / min_elem;
-      Mpi::Print(" Rebalanced mesh: Ratio {:.3f} exceeded maximum allowed value {:.3f} "
+      Mpi::Print(" Rebalanced mesh: Ratio {:.3f} exceeded max. allowed value {:.3f} "
                  "(new ratio = {:.3f})\n",
                  ratio_pre, refinement.maximum_imbalance, ratio_post);
     }
@@ -235,11 +236,11 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
     err = indicators.Norml2(comm);
   }
   Mpi::Print("\nCompleted {:d} iteration{} of adaptive mesh refinement (AMR):\n"
-             " Indicator norm = {:.3e}, size = {:d}\n"
-             " Maximum iterations = {:d}, tol. = {:.3e}{}\n",
+             " Indicator norm = {:.3e}, global unknowns = {:d}\n"
+             " Max. iterations = {:d}, tol. = {:.3e}{}\n",
              it, (it == 1 ? "" : "s"), err, ntdof, refinement.max_it, refinement.tol,
              (refinement.max_size > 0
-                  ? ", maximum size = " + std::to_string(refinement.max_size)
+                  ? ", max. size = " + std::to_string(refinement.max_size)
                   : ""));
 }
 
