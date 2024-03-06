@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <numeric>
 #include <Eigen/Eigenvalues>
 #include <Eigen/SVD>
 #include <mfem.hpp>
@@ -167,6 +168,26 @@ inline void ZGGEV(MatType &A, MatType &B, VecType &D, MatType &VR)
                                     : mfem::infinity())
                : alpha[i] / beta[i];
     VR.col(i) /= VR.col(i).norm();
+  }
+}
+
+template <typename VecType>
+void ProlongatePROMSolution(std::size_t n, const std::vector<Vector> &V, const VecType &y,
+                            ComplexVector &u)
+{
+  u = 0.0;
+  for (std::size_t j = 0; j < n; j += 2)
+  {
+    if (j + 1 < n)
+    {
+      linalg::AXPBYPCZ(y(j).real(), V[j], y(j + 1).real(), V[j + 1], 1.0, u.Real());
+      linalg::AXPBYPCZ(y(j).imag(), V[j], y(j + 1).imag(), V[j + 1], 1.0, u.Imag());
+    }
+    else
+    {
+      linalg::AXPY(y(j).real(), V[j], u.Real());
+      linalg::AXPY(y(j).imag(), V[j], u.Imag());
+    }
   }
 }
 
@@ -378,20 +399,7 @@ void RomOperator::SolvePROM(double omega, ComplexVector &u)
     // LU solve
     RHSr = Ar.partialPivLu().solve(RHSr);
   }
-  u = 0.0;
-  for (std::size_t j = 0; j < dim_V; j += 2)
-  {
-    if (j + 1 < dim_V)
-    {
-      linalg::AXPBYPCZ(RHSr(j).real(), V[j], RHSr(j + 1).real(), V[j + 1], 1.0, u.Real());
-      linalg::AXPBYPCZ(RHSr(j).imag(), V[j], RHSr(j + 1).imag(), V[j + 1], 1.0, u.Imag());
-    }
-    else
-    {
-      linalg::AXPY(RHSr(j).real(), V[j], u.Real());
-      linalg::AXPY(RHSr(j).imag(), V[j], u.Imag());
-    }
-  }
+  ProlongatePROMSolution(dim_V, V, RHSr, u);
 }
 
 double RomOperator::FindMaxError(double delta) const
@@ -439,7 +447,7 @@ double RomOperator::FindMaxError(double delta) const
   }
 
   // XX TODO DEBUG: FALLBACK TO SAMPLING ON GRID WITH NO POLES
-  Mpi::Print("Falling back to sampling z* on grid [{:.3e}, {:.3e}]\n", start, end);
+  Mpi::Print("\nFalling back to sampling z* on grid [{:.3e}, {:.3e}]\n", start, end);
 
   // Fall back to sampling Q on discrete points if no roots exist in [start, end].
   double Q_star = mfem::infinity();
@@ -467,7 +475,7 @@ namespace
 
 template <typename F, typename VecType>
 void MSLP(int n, F EvalFunction, std::complex<double> &lambda, VecType &x,
-          double tol = 1.0e-6, int max_it = 100)
+          double tol = 1.0e-9, int max_it = 100)
 {
   MFEM_VERIFY(x.size() == n,
               "Must provide an initial guess for the eigenvector x in MSLP solver!");
@@ -484,9 +492,9 @@ void MSLP(int n, F EvalFunction, std::complex<double> &lambda, VecType &x,
     EvalFunction(lambda, T, dT, true, (it == 0));
     r = T * x;
 
-    // XX TODO DEBUG WIP
-    Mpi::Print("MSLP iteration {:d}, l = {:e}{:+e}i, ||r|| = {:e}, ||T|| = {:e}\n", it,
-               lambda.real(), lambda.imag(), r.norm(), T.norm());
+    // // XX TODO DEBUG WIP
+    // Mpi::Print("MSLP iteration {:d}, l = {:e}{:+e}i, ||r|| = {:e}, ||T|| = {:e}\n", it,
+    //            lambda.real(), lambda.imag(), r.norm(), T.norm());
 
     double res = r.norm() / (T.norm() * x.norm());
     if (res < tol)
@@ -506,14 +514,14 @@ void MSLP(int n, F EvalFunction, std::complex<double> &lambda, VecType &x,
     x = X.col(i);
     it++;
   }
-  if (it == max_it)
-  {
-    EvalFunction(lambda, T, dT, false, false);
-    r = T * x;
-    Mpi::Warning(
-        "MSLP solver did not converge, ||Tx|| / ||T|| ||x|| = {:.3e} (tol = {:.3e})!\n",
-        r.norm() / (T.norm() * x.norm()), tol);
-  }
+  // if (it == max_it)
+  // {
+  //   EvalFunction(lambda, T, dT, false, false);
+  //   r = T * x;
+  //   Mpi::Warning(
+  //       "MSLP solver did not converge, ||Tx|| / ||T|| ||x|| = {:.3e} (tol = {:.3e})!\n",
+  //       r.norm() / (T.norm() * x.norm()), tol);
+  // }
 }
 
 template <typename F, typename MatType, typename VecType>
@@ -680,32 +688,26 @@ void SolveNEP2(int n, int num_eig, std::complex<double> sigma, F EvalFunction, V
 
 }  // namespace
 
-std::vector<std::complex<double>> RomOperator::ComputeEigenvalueEstimates() const
+std::vector<std::complex<double>> RomOperator::ComputeEigenvalueEstimates()
 {
 
   // XX TODO ADD EIGENVECTORS TO COMPUTE HDM RESIDUAL ERROR?
 
   MFEM_VERIFY(dim_V > 0,
               "Eigenvalue estimates are only available for a PROM with nonzero dimension!");
+  Eigen::VectorXcd omega;
+  Eigen::MatrixXcd X;
   if (!has_A2)
   {
     if (Cr.rows() == 0)
     {
       // Linear generalized EVP: M⁻¹ K x = μ x. Linear EVP has eigenvalue μ = -λ² = ω².
       Eigen::MatrixXcd cKr(Kr), cMr(Mr);
-      Eigen::VectorXcd D;
-      Eigen::MatrixXcd X;
-      ZGGEV(cKr, cMr, D, X);
-
-      std::vector<std::complex<double>> omega;
-      omega.reserve(D.size());
-      for (auto d : D)
+      ZGGEV(cKr, cMr, omega, X);
+      for (std::size_t i = 0; i < dim_V; i++)
       {
-        omega.push_back(std::sqrt(d));
+        omega(i) = std::sqrt(omega(i));
       }
-      std::sort(omega.begin(), omega.end(),
-                [](auto l, auto r) { return std::abs(l) < std::abs(r); });
-      return omega;
     }
     else
     {
@@ -714,27 +716,25 @@ std::vector<std::complex<double>> RomOperator::ComputeEigenvalueEstimates() cons
       L0.topRightCorner(dim_V, dim_V) = Eigen::MatrixXcd::Identity(dim_V, dim_V);
       L0.bottomLeftCorner(dim_V, dim_V) = -Kr;
       L0.bottomRightCorner(dim_V, dim_V) = -Cr;
-
       Eigen::MatrixXcd L1 = Eigen::MatrixXcd::Zero(2 * dim_V, 2 * dim_V);
       L1.topLeftCorner(dim_V, dim_V) = Eigen::MatrixXcd::Identity(dim_V, dim_V);
       L1.bottomRightCorner(dim_V, dim_V) = Mr;
-
-      Eigen::VectorXcd D;
-      Eigen::MatrixXcd X;
-      ZGGEV(L0, L1, D, X);
-
-      std::vector<std::complex<double>> omega;
-      omega.reserve(D.size());
-      for (auto d : D)
+      ZGGEV(L0, L1, omega, X);
+      for (std::size_t i = 0; i < 2 * dim_V; i++)
       {
-        if (d.imag() >= -0.1 * std::abs(d.real()))
+        // if (omega(i).imag() >= -0.1 * std::abs(omega(i).real()))
         {
-          omega.push_back(d / 1i);
+          omega(i) /= 1i;
         }
+        // else
+        // {
+
+        //   // XX TODO: For dynamics, do we really want to do this?
+
+        //   // Ignore eigenpairs outside the desired range.
+        //   omega(i) = mfem::infinity();
+        // }
       }
-      std::sort(omega.begin(), omega.end(),
-                [](auto l, auto r) { return std::abs(l) < std::abs(r); });
-      return omega;
     }
   }
   else
@@ -808,42 +808,92 @@ std::vector<std::complex<double>> RomOperator::ComputeEigenvalueEstimates() cons
     // For the initial guess, we choose the second smallest entry of the sample points. We
     // could alternatively use the center of the sample range.
     double sigma = *std::min_element(z.begin(), z.end());
-    sigma = *std::min_element(z.begin(), z.end(),
-                              [sigma](auto l, auto r)
-                              {
-                                if (l == sigma)
-                                  return false;
-                                if (r == sigma)
-                                  return true;
-                                return l < r;
-                              });
-    const int num_eig = dim_V;  // XX TODO SPECIFY AT RUNTIME WITH TOLERANCES
-    Eigen::VectorXcd D;
-    Eigen::MatrixXcd X;
+    // sigma = *std::min_element(z.begin(), z.end(),
+    //                           [sigma](auto l, auto r)
+    //                           {
+    //                             if (l == sigma)
+    //                               return false;
+    //                             if (r == sigma)
+    //                               return true;
+    //                             return l < r;
+    //                           });
+    sigma = 0.5 * (sigma + *std::max_element(z.begin(), z.end()));
+    const std::size_t num_eig = dim_V;  // XX TODO SPECIFY AT RUNTIME WITH TOLERANCES
     if constexpr (false)
     {
       // Variant with explicit deflation of eigenbasis.
-      SolveNEP2(dim_V, num_eig, 1i * sigma, EvalFunction, D, X);
+      SolveNEP2(dim_V, num_eig, 1i * sigma, EvalFunction, omega, X);
     }
     else
     {
       // Variant with extended problem deflation from Effenberger.
-      SolveNEP(dim_V, num_eig, 1i * sigma, EvalFunction, D, X);
+      SolveNEP(dim_V, num_eig, 1i * sigma, EvalFunction, omega, X);
     }
-
-    std::vector<std::complex<double>> omega;
-    omega.reserve(D.size());
-    for (auto d : D)
+    for (std::size_t i = 0; i < num_eig; i++)
     {
-      if (d.imag() >= -0.1 * std::abs(d.real()))
+      // if (omega(i).imag() >= -0.1 * std::abs(omega(i).real()))
       {
-        omega.push_back(d / 1i);
+        omega(i) /= 1i;
       }
+      // else
+      // {
+
+      //   // XX TODO: For dynamics, do we really want to do this?
+
+      //   // Ignore eigenpairs outside the desired range.
+      //   omega(i) = mfem::infinity();
+      // }
     }
-    std::sort(omega.begin(), omega.end(),
-              [](auto l, auto r) { return std::abs(l) < std::abs(r); });
-    return omega;
   }
+
+  // XX TODO: Evaluate A2(ω) in the complex plane (upgrade models)
+
+  // Compute HDM eigenvectors and residual norms.
+  std::vector<std::size_t> perm(omega.size());
+  std::iota(perm.begin(), perm.end(), 0);
+  std::sort(perm.begin(), perm.end(),
+            [&omega](auto l, auto r) { return std::abs(omega(l)) < std::abs(omega(r)); });
+
+
+  //XX TODO DEBUG
+  Mpi::Print("\n\nEigenpair residuals:\n");
+
+
+  ComplexVector u(r.Size());
+  for (int i = 0; i < omega.size(); i++)
+  {
+    // Compute HDM eigenmode.
+    ProlongatePROMSolution(dim_V, V, X.col(i), u);
+    linalg::Normalize(spaceop.GetComm(), u);
+
+    // Evaluate the HDM eigenpair residual.
+    std::unique_ptr<ComplexOperator> A2;
+    if (has_A2)
+    {
+      A2 = spaceop.GetExtraSystemMatrix<ComplexOperator>(omega(i).real(),
+                                                         Operator::DIAG_ZERO);
+    }
+    auto A =
+        spaceop.GetSystemMatrix(std::complex<double>(1.0, 0.0), 1i * omega(i),
+                                -omega(i) * omega(i), K.get(), C.get(), M.get(), A2.get());
+    A->Mult(u, r);
+    double res = linalg::Norml2(spaceop.GetComm(), r);
+
+
+    //XX TODO DEBUG
+    Mpi::Print("omega = {:e}{:+e}, ||r|| = {:e}\n",
+               omega(i).real(), omega(i).imag(), res);
+
+
+    // XX TODO WIP.... (scaling, storage, etc.)
+
+
+
+  }
+
+  // XX TODO FILTERING...
+
+  return {omega.begin(), omega.end()};
 }
 
 }  // namespace palace

@@ -83,7 +83,7 @@ public:
   double FindMaxError(double delta) const;
 
   // Compute eigenvalue estimates for the current PROM system.
-  std::vector<std::complex<double>> ComputeEigenvalueEstimates() const;
+  std::vector<std::complex<double>> ComputeEigenvalueEstimates();
 };
 
 }  // namespace palace
