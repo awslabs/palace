@@ -200,7 +200,8 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &spaceop, int max_s
 
   // Set up RHS vector (linear in frequency part) for the incident field at port boundaries,
   // and the vector for the solution, which satisfies the Dirichlet (PEC) BC.
-  if (!spaceop.GetExcitationVector1(RHS1))
+  has_RHS1 = spaceop.GetExcitationVector1(RHS1);
+  if (!has_RHS1)
   {
     RHS1.SetSize(0);
   }
@@ -261,7 +262,7 @@ void RomOperator::SolveHDM(double omega, ComplexVector &u)
   {
     r = 0.0;
   }
-  if (RHS1.Size())
+  if (has_RHS1)
   {
     r.Add(1i * omega, RHS1);
   }
@@ -373,7 +374,7 @@ void RomOperator::SolvePROM(double omega, ComplexVector &u)
   {
     RHSr.setZero();
   }
-  if (RHS1.Size())
+  if (has_RHS1)
   {
     RHSr += (1i * omega) * RHS1r;
   }
@@ -408,44 +409,45 @@ double RomOperator::FindMaxError() const
   double start = *std::min_element(z.begin(), z.end());
   double end = *std::max_element(z.begin(), z.end());
   Eigen::Map<const Eigen::VectorXd> z_map(z.data(), S);
+  std::complex<double> z_star = 0.0;
 
-  Eigen::MatrixXcd A = Eigen::MatrixXcd::Zero(S + 1, S + 1);
-  A.col(0).tail(S) = Eigen::VectorXcd::Ones(S);
-  A.row(0).tail(S) = q;
-  A.diagonal().tail(S) = z_map.array();
+  // XX TODO: For now, we explicitly minimize Q on the real line since we don't allow
+  //          samples at complex-valued points (yet).
 
-  Eigen::MatrixXcd B = Eigen::MatrixXcd::Identity(S + 1, S + 1);
-  B(0, 0) = 0.0;
+  // Eigen::MatrixXcd A = Eigen::MatrixXcd::Zero(S + 1, S + 1);
+  // A.diagonal().head(S) = z_map.array();
+  // A.row(S).head(S) = q;
+  // A.col(S).head(S) = Eigen::VectorXcd::Ones(S);
 
-  Eigen::VectorXcd D;
-  Eigen::MatrixXcd X;
-  ZGGEV(A, B, D, X);
+  // Eigen::MatrixXcd B = Eigen::MatrixXcd::Identity(S + 1, S + 1);
+  // B(S, S) = 0.0;
 
-  // If there are multiple roots in [start, end], pick the one furthest from the existing
-  // set of samples.
-  double dist_star = 0.0, z_star = 0.0;
-  for (auto d : D)
-  {
-    if (std::real(d) >= start && std::real(d) <= end)
-    {
-      const double dist = (z_map.array() - std::real(d)).abs().maxCoeff();
-      if (dist > dist_star)
-      {
-        z_star = std::real(d);
-        dist_star = dist;
-      }
-    }
-  }
-  if (z_star > 0.0)
-  {
-    return z_star;
-  }
+  // Eigen::VectorXcd D;
+  // Eigen::MatrixXcd X;
+  // ZGGEV(A, B, D, X);
 
-  // XX TODO DEBUG: FALLBACK TO SAMPLING ON GRID WITH NO POLES
-  Mpi::Print("\nFalling back to sampling z* on grid [{:.3e}, {:.3e}]\n", start, end);
+  // // If there are multiple roots in [start, end], pick the one furthest from the existing
+  // // set of samples.
+  // double dist_star = 0.0;
+  // for (auto d : D)
+  // {
+  //   if (std::real(d) >= start && std::real(d) <= end)
+  //   {
+  //     const double dist = (z_map.array() - std::real(d)).abs().maxCoeff();
+  //     if (dist > dist_star)
+  //     {
+  //       z_star = d;
+  //       dist_star = dist;
+  //     }
+  //   }
+  // }
+  // if (std::abs(z_star) > 0.0)
+  // {
+  //   return std::real(z_star);
+  // }
 
   // Fall back to sampling Q on discrete points if no roots exist in [start, end].
-  const auto delta = (end - start) / 1000.0;
+  const auto delta = (end - start) / 1.0e6;
   double Q_star = mfem::infinity();
   while (start <= end)
   {
@@ -457,9 +459,9 @@ double RomOperator::FindMaxError() const
     }
     start += delta;
   }
-  MFEM_VERIFY(z_star > 0.0, "Could not locate a maximum error in the range ["
-                                << start << ", " << end << "]!");
-  return z_star;
+  MFEM_VERIFY(std::abs(z_star) > 0.0, "Could not locate a maximum error in the range ["
+                                          << start << ", " << end << "]!");
+  return std::real(z_star);
 }
 
 std::vector<std::complex<double>> RomOperator::ComputeEigenvalueEstimates() const

@@ -31,7 +31,7 @@ private:
   // HDM system matrices and excitation RHS.
   std::unique_ptr<ComplexOperator> K, M, C, A2;
   ComplexVector RHS1, RHS2, r;
-  bool has_A2, has_RHS2;
+  bool has_A2, has_RHS1, has_RHS2;
 
   // HDM linear system solver and preconditioner.
   std::unique_ptr<ComplexKspSolver> ksp;
