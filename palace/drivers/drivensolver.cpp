@@ -741,7 +741,7 @@ void DrivenSolver::PostprocessSParameters(const PostOperator &postop,
     for (const auto &data : port_data)
     {
       // clang-format off
-      output.print("{:+{}.{}e},{:+{}.{}e}{}",
+      output.print("{:>+{}.{}e},{:>+{}.{}e}{}",
                    20.0 * std::log10(std::abs(data.Sij)), table.w, table.p,
                    std::arg(data.Sij) * 180.0 / M_PI, table.w, table.p,
                    (data.idx == port_data.back().idx) ? "" : ",");
