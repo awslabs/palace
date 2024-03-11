@@ -14,6 +14,7 @@ class MaterialPropertyCoefficient;
 
 //
 // Classes which implement or extend bilinear and linear form integrators.
+// In doc strings u refers to the trial function, and v the test function.
 //
 
 namespace fem
