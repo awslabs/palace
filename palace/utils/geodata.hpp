@@ -150,7 +150,7 @@ mfem::Vector GetSurfaceNormal(const mfem::ParMesh &mesh, bool average = true);
 
 // Helper function responsible for rebalancing the mesh, and optionally writing meshes from
 // the intermediate stages to disk. Returns the imbalance ratio before rebalancing.
-double RebalanceMesh(mfem::ParMesh &mesh, const IoData &iodata, double tol);
+double RebalanceMesh(mfem::ParMesh &mesh, const IoData &iodata);
 
 }  // namespace mesh
 

@@ -345,6 +345,10 @@ void RefineMesh(const IoData &iodata, std::vector<std::unique_ptr<mfem::ParMesh>
     mesh.back()->GeneralRefinement(refs, -1);
     region_ref_level++;
   }
+  if (max_region_ref_levels > 0 && mesh.capacity() == 1)
+  {
+    RebalanceMesh(*mesh[0], iodata);
+  }
 
   // Prior to MFEM's PR #1046, the tetrahedral mesh required reorientation after all mesh
   // refinement in order to define higher-order Nedelec spaces on it. This is technically
@@ -1279,7 +1283,7 @@ mfem::Vector GetSurfaceNormal(const mfem::ParMesh &mesh, bool average)
   return GetSurfaceNormal(mesh, AttrToMarker(attributes.Max(), attributes), average);
 }
 
-double RebalanceMesh(mfem::ParMesh &mesh, const IoData &iodata, double tol)
+double RebalanceMesh(mfem::ParMesh &mesh, const IoData &iodata)
 {
   BlockTimer bt0(Timer::REBALANCE);
   MPI_Comm comm = mesh.GetComm();
@@ -1334,6 +1338,7 @@ double RebalanceMesh(mfem::ParMesh &mesh, const IoData &iodata, double tol)
   Mpi::GlobalMin(1, &min_elem, comm);
   Mpi::GlobalMax(1, &max_elem, comm);
   const double ratio = double(max_elem) / min_elem;
+  const double tol = iodata.model.refinement.maximum_imbalance;
   if constexpr (false)
   {
     Mpi::Print("Rebalancing: max/min elements per processor = {:d}/{:d} (ratio = {:.3e}, "

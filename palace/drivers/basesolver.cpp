@@ -215,8 +215,7 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
                final_elem_count - initial_elem_count, initial_elem_count, final_elem_count);
 
     // Optionally rebalance and write the adapted mesh to file.
-    const auto ratio_pre =
-        mesh::RebalanceMesh(fine_mesh, iodata, refinement.maximum_imbalance);
+    const auto ratio_pre = mesh::RebalanceMesh(fine_mesh, iodata);
     if (ratio_pre > refinement.maximum_imbalance)
     {
       int min_elem, max_elem;
