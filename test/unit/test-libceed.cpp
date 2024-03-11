@@ -885,6 +885,40 @@ void RunCeedIntegratorTests(MPI_Comm comm, const std::string &input, int ref_lev
     }
   }
 
+  // Tests on mixed H1-H(div) spaces.
+  SECTION("H1-H(div) Mixed Integrators")
+  {
+    mfem::H1_FECollection h1_fec(order, dim);
+    mfem::RT_FECollection rt_fec(order - 1, dim);
+    FiniteElementSpace h1_fespace(mesh, &h1_fec), rt_fespace(mesh, &rt_fec);
+    SECTION("Mixed Vector Gradient Integrator")
+    {
+      BilinearForm a_test(h1_fespace, rt_fespace);
+      mfem::MixedBilinearForm a_ref(&h1_fespace.Get(), &rt_fespace.Get());
+      if ((dim == 3 && !bdr_integ) || (dim == 2 && !bdr_integ))  // Only in 2D or 3D
+      {
+        switch (coeff_type)
+        {
+          case CoeffType::Const:
+            AddIntegrators<MixedVectorGradientIntegrator,
+                           mfem::MixedVectorGradientIntegrator>(bdr_integ, a_test, a_ref);
+            break;
+          case CoeffType::Scalar:
+            AddIntegrators<MixedVectorGradientIntegrator,
+                           mfem::MixedVectorGradientIntegrator>(bdr_integ, a_test, a_ref, Q,
+                                                                (mfem::Coefficient &)Q_ref);
+            break;
+          case CoeffType::Matrix:
+            AddIntegrators<MixedVectorGradientIntegrator,
+                           mfem::MixedVectorGradientIntegrator>(
+                bdr_integ, a_test, a_ref, Q, (mfem::MatrixCoefficient &)Q_ref);
+            break;
+        }
+        TestCeedOperator(a_test, a_ref);
+      }
+    }
+  }
+
   // Tests on mixed H(curl)-H(div) spaces.
   SECTION("H(curl)-H(div) Mixed Integrators")
   {

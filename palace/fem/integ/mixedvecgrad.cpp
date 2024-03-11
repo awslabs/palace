@@ -50,7 +50,7 @@ void MixedVectorGradientIntegrator::Assemble(Ceed ceed, CeedElemRestriction tria
       }
       else
       {
-        MFEM_ABORT("Invalid trial map type for MixedVectorGradientIntegrator!");
+        MFEM_ABORT("Invalid test map type for MixedVectorGradientIntegrator!");
       }
       break;
     case 33:
@@ -68,7 +68,7 @@ void MixedVectorGradientIntegrator::Assemble(Ceed ceed, CeedElemRestriction tria
       }
       else
       {
-        MFEM_ABORT("Invalid trial map type for MixedVectorGradientIntegrator!");
+        MFEM_ABORT("Invalid test map type for MixedVectorGradientIntegrator!");
       }
       break;
     case 21:
@@ -86,7 +86,7 @@ void MixedVectorGradientIntegrator::Assemble(Ceed ceed, CeedElemRestriction tria
       }
       else
       {
-        MFEM_ABORT("Invalid trial map type for MixedVectorGradientIntegrator!");
+        MFEM_ABORT("Invalid test map type for MixedVectorGradientIntegrator!");
       }
       break;
     case 32:
@@ -104,7 +104,7 @@ void MixedVectorGradientIntegrator::Assemble(Ceed ceed, CeedElemRestriction tria
       }
       else
       {
-        MFEM_ABORT("Invalid trial map type for MixedVectorGradientIntegrator!");
+        MFEM_ABORT("Invalid test map type for MixedVectorGradientIntegrator!");
       }
       break;
     default:
