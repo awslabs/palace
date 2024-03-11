@@ -89,7 +89,7 @@ public:
 
   // Compute the maximum error over a randomly sampled set of candidate points. Returns the
   // maximum error and its correcponding frequency, as well as the number of candidate
-  // points used (if fewer than those availble in the unsampled parameter domain).
+  // points used (if fewer than those available in the unsampled parameter domain).
   double ComputeMaxError(int num_cand, double &omega_star);
 };
 
