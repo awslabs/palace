@@ -51,7 +51,7 @@ public:
 };
 
 // Class used for computing curl flux error estimate, i.e. || μ⁻¹ ∇ × Uₕ - F ||_K where F
-// denotes a smooth reconstruction of μ⁻¹ ∇ × Uₕ.
+// denotes a smooth reconstruction of μ⁻¹ ∇ × Uₕ with continuous tangential component.
 template <typename VecType>
 class CurlFluxErrorEstimator
 {
@@ -77,7 +77,7 @@ public:
 };
 
 // Class used for computing gradient flux error estimate, i.e. || ε ∇Uₕ - F ||_K, where F
-// denotes a smooth reconstruction of ε ∇Uₕ.
+// denotes a smooth reconstruction of ε ∇Uₕ with continuous normal component.
 class GradFluxErrorEstimator
 {
   // Reference to material property data (not owned).
@@ -86,8 +86,9 @@ class GradFluxErrorEstimator
   // Finite element space used to represent U.
   FiniteElementSpace &h1_fespace;
 
-  // Vector H1 space used to represent the components of F, ordered by component.
-  std::unique_ptr<FiniteElementSpace> h1d_fespace;
+  // RT collection and space used to represent F.
+  std::unique_ptr<mfem::FiniteElementCollection> rt_fec;
+  std::unique_ptr<FiniteElementSpace> rt_fespace;
 
   // Global L2 projection solver.
   FluxProjector<Vector> projector;
@@ -96,7 +97,7 @@ class GradFluxErrorEstimator
   mutable Vector F, F_gf, U_gf;
 
 public:
-  GradFluxErrorEstimator(const MaterialOperator &mat_op, FiniteElementSpace &h1_fespace,
+  GradFluxErrorEstimator(const MaterialOperator &mat_op, FiniteElementSpace &rt_fespace,
                          double tol, int max_it, int print);
 
   // Compute elemental error indicators given a vector of true DOF and fold into an existing
