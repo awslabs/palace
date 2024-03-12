@@ -5,9 +5,15 @@
 
 #include "fem/libceed/coefficient.hpp"
 #include "fem/libceed/integrator.hpp"
+#include "utils/diagnostic.hpp"
+
+PalacePragmaDiagnosticPush
+PalacePragmaDiagnosticDisableUnused
 
 #include "fem/qfunctions/hcurl_qf.h"
 #include "fem/qfunctions/hcurlhdiv_qf.h"
+
+PalacePragmaDiagnosticPop
 
 namespace palace
 {
