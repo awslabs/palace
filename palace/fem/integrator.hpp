@@ -13,8 +13,8 @@ namespace palace
 class MaterialPropertyCoefficient;
 
 //
-// Classes which implement or extend bilinear and linear form integrators.
-// In doc strings u refers to the trial function, and v the test function.
+// Classes which implement or extend bilinear and linear form integrators. In doc strings u
+// refers to the trial function, and v the test function.
 //
 
 namespace fem
@@ -188,6 +188,7 @@ public:
 // Integrator for a(u, v) = (Q grad u, v) for u in H1 and v in H(curl) or H(div).
 class MixedVectorGradientIntegrator : public BilinearFormIntegrator
 {
+protected:
   int trial_map_type = mfem::FiniteElement::UNKNOWN_MAP_TYPE;
   int test_map_type = mfem::FiniteElement::UNKNOWN_MAP_TYPE;
 

@@ -895,7 +895,7 @@ void RunCeedIntegratorTests(MPI_Comm comm, const std::string &input, int ref_lev
     {
       BilinearForm a_test(h1_fespace, rt_fespace);
       mfem::MixedBilinearForm a_ref(&h1_fespace.Get(), &rt_fespace.Get());
-      if ((dim == 3 && !bdr_integ) || (dim == 2 && !bdr_integ))  // Only in 2D or 3D
+      if (!bdr_integ)
       {
         switch (coeff_type)
         {
