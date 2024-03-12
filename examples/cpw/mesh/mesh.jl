@@ -75,8 +75,8 @@ function generate_cpw_wave_mesh(;
     sep_dy = 0.5 * sep_dz
 
     # Mesh parameters
-    l_trace = 1.5 * trace_width_μm * 2^-refinement
-    l_farfield = 1.0 * substrate_height_μm * 2^-refinement
+    l_trace = 1.5 * trace_width_μm * (2.0^-refinement)
+    l_farfield = 1.0 * substrate_height_μm * (2.0^-refinement)
 
     # Chip pattern
     dy = 0.0
@@ -477,8 +477,8 @@ function generate_cpw_lumped_mesh(;
     sep_dy = 0.5 * sep_dz
 
     # Mesh parameters
-    l_trace = 1.5 * trace_width_μm * 2^-refinement
-    l_farfield = 1.0 * substrate_height_μm * 2^-refinement
+    l_trace = 1.5 * trace_width_μm * (2.0^-refinement)
+    l_farfield = 1.0 * substrate_height_μm * (2.0^-refinement)
 
     # Chip pattern
     dy = 0.0
