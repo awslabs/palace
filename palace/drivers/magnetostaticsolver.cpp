@@ -121,8 +121,8 @@ ErrorIndicator MagnetostaticSolver::Postprocess(CurlCurlOperator &curlcurlop,
     // Compute B = ∇ x A on the true dofs, and set the internal GridFunctions in
     // PostOperator for all postprocessing operations.
     Curl.Mult(A[i], B);
-    postop.SetBGridFunction(B);
     postop.SetAGridFunction(A[i]);
+    postop.SetBGridFunction(B);
     double Um = postop.GetHFieldEnergy();
     PostprocessDomains(postop, "i", i, idx, 0.0, Um, 0.0, 0.0);
     PostprocessSurfaces(postop, "i", i, idx, 0.0, Um, 0.0, Iinc(i));
@@ -157,8 +157,7 @@ ErrorIndicator MagnetostaticSolver::Postprocess(CurlCurlOperator &curlcurlop,
       else if (j > i)
       {
         linalg::AXPBYPCZ(1.0, A[i], 1.0, A[j], 0.0, Aij);
-        Curl.Mult(Aij, B);
-        postop.SetBGridFunction(B);
+        postop.SetAGridFunction(Aij);
         double Um = postop.GetHFieldEnergy();
         M(i, j) = Um / (Iinc(i) * Iinc(j)) -
                   0.5 * (M(i, i) * Iinc(i) / Iinc(j) + M(j, j) * Iinc(j) / Iinc(i));

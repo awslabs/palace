@@ -41,8 +41,8 @@ PostOperator::PostOperator(const IoData &iodata, SpaceOperator &spaceop,
                            const std::string &name)
   : mat_op(spaceop.GetMaterialOp()),
     surf_post_op(iodata, spaceop.GetMaterialOp(), spaceop.GetH1Space()),
-    dom_post_op(iodata, spaceop.GetMaterialOp(), &spaceop.GetNDSpace(),
-                &spaceop.GetRTSpace()),
+    dom_post_op(iodata, spaceop.GetMaterialOp(), spaceop.GetNDSpace(),
+                spaceop.GetRTSpace()),
     E(std::in_place, spaceop.GetNDSpace(),
       iodata.problem.type != config::ProblemData::Type::TRANSIENT),
     B(std::in_place, spaceop.GetRTSpace(),
@@ -92,7 +92,7 @@ PostOperator::PostOperator(const IoData &iodata, LaplaceOperator &laplaceop,
                            const std::string &name)
   : mat_op(laplaceop.GetMaterialOp()),
     surf_post_op(iodata, laplaceop.GetMaterialOp(), laplaceop.GetH1Space()),
-    dom_post_op(iodata, laplaceop.GetMaterialOp(), &laplaceop.GetNDSpace(), nullptr),
+    dom_post_op(iodata, laplaceop.GetMaterialOp(), laplaceop.GetH1Space()),
     E(std::in_place, laplaceop.GetNDSpace()), B(std::nullopt), V(laplaceop.GetH1Space()),
     A(std::nullopt), lumped_port_init(false), wave_port_init(false),
     paraview(CreateParaviewPath(iodata, name), &laplaceop.GetNDSpace().GetParMesh()),
@@ -116,7 +116,7 @@ PostOperator::PostOperator(const IoData &iodata, CurlCurlOperator &curlcurlop,
                            const std::string &name)
   : mat_op(curlcurlop.GetMaterialOp()),
     surf_post_op(iodata, curlcurlop.GetMaterialOp(), curlcurlop.GetH1Space()),
-    dom_post_op(iodata, curlcurlop.GetMaterialOp(), nullptr, &curlcurlop.GetRTSpace()),
+    dom_post_op(iodata, curlcurlop.GetMaterialOp(), curlcurlop.GetNDSpace()),
     E(std::nullopt), B(std::in_place, curlcurlop.GetRTSpace()), V(std::nullopt),
     A(curlcurlop.GetNDSpace()), lumped_port_init(false), wave_port_init(false),
     paraview(CreateParaviewPath(iodata, name), &curlcurlop.GetNDSpace().GetParMesh()),
@@ -371,34 +371,54 @@ void PostOperator::UpdatePorts(const WavePortOperator &wave_port_op, double omeg
 
 double PostOperator::GetEFieldEnergy() const
 {
-  // We use a leading factor of 1/2 instead of 1/4 even though the eigenmodes are peak
-  // phasors and not RMS normalized because the same peak phasors are used to compute the
-  // voltages/currents which are 2x the time-averaged values. This correctly yields an EPR
-  // of 1 in cases where expected.
-  MFEM_VERIFY(E, "PostOperator is not configured for electric field energy calculation!");
-  return dom_post_op.GetElectricFieldEnergy(*E);
+  if (V)
+  {
+    return dom_post_op.GetElectricFieldEnergy(*V);
+  }
+  else
+  {
+    MFEM_VERIFY(E, "PostOperator is not configured for electric field energy calculation!");
+    return dom_post_op.GetElectricFieldEnergy(*E);
+  }
 }
 
 double PostOperator::GetHFieldEnergy() const
 {
-  // We use a leading factor of 1/2 instead of 1/4 even though the eigenmodes are peak
-  // phasors and not RMS normalized because the same peak phasors are used to compute the
-  // voltages/currents which are 2x the time-averaged values. This correctly yields an EPR
-  // of 1 in cases where expected.
-  MFEM_VERIFY(B, "PostOperator is not configured for magnetic field energy calculation!");
-  return dom_post_op.GetMagneticFieldEnergy(*B);
+  if (A)
+  {
+    return dom_post_op.GetMagneticFieldEnergy(*A);
+  }
+  else
+  {
+    MFEM_VERIFY(B, "PostOperator is not configured for magnetic field energy calculation!");
+    return dom_post_op.GetMagneticFieldEnergy(*B);
+  }
 }
 
 double PostOperator::GetEFieldEnergy(int idx) const
 {
-  MFEM_VERIFY(E, "PostOperator is not configured for electric field energy calculation!");
-  return dom_post_op.GetDomainElectricFieldEnergy(idx, *E);
+  if (V)
+  {
+    return dom_post_op.GetDomainElectricFieldEnergy(idx, *V);
+  }
+  else
+  {
+    MFEM_VERIFY(E, "PostOperator is not configured for electric field energy calculation!");
+    return dom_post_op.GetDomainElectricFieldEnergy(idx, *E);
+  }
 }
 
 double PostOperator::GetHFieldEnergy(int idx) const
 {
-  MFEM_VERIFY(B, "PostOperator is not configured for magnetic field energy calculation!");
-  return dom_post_op.GetDomainMagneticFieldEnergy(idx, *B);
+  if (A)
+  {
+    return dom_post_op.GetDomainMagneticFieldEnergy(idx, *A);
+  }
+  else
+  {
+    MFEM_VERIFY(B, "PostOperator is not configured for magnetic field energy calculation!");
+    return dom_post_op.GetDomainMagneticFieldEnergy(idx, *B);
+  }
 }
 
 double PostOperator::GetLumpedInductorEnergy(const LumpedPortOperator &lumped_port_op) const
