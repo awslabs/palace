@@ -52,7 +52,7 @@ std::map<int, std::array<int, 2>> CheckMesh(mfem::Mesh &, const IoData &, bool, 
 // Given a serial mesh on the root processor and element partitioning, create a parallel
 // mesh over the given communicator.
 std::unique_ptr<mfem::ParMesh> DistributeMesh(MPI_Comm, const std::unique_ptr<mfem::Mesh> &,
-                                              int *, const std::string & = "");
+                                              const int *, const std::string & = "");
 
 // Rebalance a conformal mesh across processor ranks, using the MeshPartitioner. Gathers the
 // mesh onto the root rank before scattering the partitioned mesh.
@@ -1900,7 +1900,7 @@ std::map<int, std::array<int, 2>> CheckMesh(mfem::Mesh &orig_mesh, const IoData 
 
 std::unique_ptr<mfem::ParMesh> DistributeMesh(MPI_Comm comm,
                                               const std::unique_ptr<mfem::Mesh> &smesh,
-                                              int *partitioning,
+                                              const int *partitioning,
                                               const std::string &output_dir)
 {
   // Take a serial mesh and partitioning on the root process and construct the global
@@ -1924,7 +1924,8 @@ std::unique_ptr<mfem::ParMesh> DistributeMesh(MPI_Comm comm,
       {
         std::filesystem::create_directories(tmp);
       }
-      mfem::MeshPartitioner partitioner(*smesh, Mpi::Size(comm), partitioning);
+      mfem::MeshPartitioner partitioner(*smesh, Mpi::Size(comm),
+                                        const_cast<int *>(partitioning));
       for (int i = 0; i < Mpi::Size(comm); i++)
       {
         mfem::MeshPart part;
@@ -1969,7 +1970,8 @@ std::unique_ptr<mfem::ParMesh> DistributeMesh(MPI_Comm comm,
     std::unique_ptr<mfem::ParMesh> pmesh;
     if (Mpi::Root(comm))
     {
-      mfem::MeshPartitioner partitioner(*smesh, Mpi::Size(comm), partitioning);
+      mfem::MeshPartitioner partitioner(*smesh, Mpi::Size(comm),
+                                        const_cast<int *>(partitioning));
       std::vector<MPI_Request> send_requests(Mpi::Size(comm) - 1, MPI_REQUEST_NULL);
       std::vector<std::string> so;
       so.reserve(Mpi::Size(comm));
