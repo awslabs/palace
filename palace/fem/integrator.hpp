@@ -13,7 +13,8 @@ namespace palace
 class MaterialPropertyCoefficient;
 
 //
-// Classes which implement or extend bilinear and linear form integrators.
+// Classes which implement or extend bilinear and linear form integrators. In doc strings u
+// refers to the trial function, and v the test function.
 //
 
 namespace fem
@@ -184,15 +185,25 @@ public:
                 CeedElemRestriction geom_data_restr, CeedOperator *op) const override;
 };
 
-// Integrator for a(u, v) = (Q grad u, v) for u in H1 and v in H(curl).
+// Integrator for a(u, v) = (Q grad u, v) for u in H1 and v in H(curl) or H(div).
 class MixedVectorGradientIntegrator : public BilinearFormIntegrator
 {
+protected:
+  int trial_map_type = mfem::FiniteElement::UNKNOWN_MAP_TYPE;
+  int test_map_type = mfem::FiniteElement::UNKNOWN_MAP_TYPE;
+
 public:
   using BilinearFormIntegrator::BilinearFormIntegrator;
 
   void Assemble(Ceed ceed, CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
                 CeedBasis trial_basis, CeedBasis test_basis, CeedVector geom_data,
                 CeedElemRestriction geom_data_restr, CeedOperator *op) const override;
+
+  void SetMapTypes(int trial_type, int test_type) override
+  {
+    trial_map_type = trial_type;
+    test_map_type = test_type;
+  }
 };
 
 // Integrator for a(u, v) = -(Q u, grad v) for u in H(curl) and v in H1.
@@ -206,7 +217,7 @@ public:
                 CeedElemRestriction geom_data_restr, CeedOperator *op) const override;
 };
 
-// Integrator for a(u, v) = (Q curl u, v) for u in H(curl) and v in H(div).
+// Integrator for a(u, v) = (Q curl u, v) for u in H(curl) and v in H(div) or H(curl).
 class MixedVectorCurlIntegrator : public BilinearFormIntegrator
 {
 protected:
@@ -227,7 +238,7 @@ public:
   }
 };
 
-// Integrator for a(u, v) = (Q u, curl v) for u in H(div) and v in H(curl).
+// Integrator for a(u, v) = (Q u, curl v) for u in H(div) or H(curl) and v in H(curl).
 class MixedVectorWeakCurlIntegrator : public BilinearFormIntegrator
 {
 protected:

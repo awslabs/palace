@@ -35,7 +35,7 @@ void MixedVectorCurlIntegrator::Assemble(Ceed ceed, CeedElemRestriction trial_re
   PalaceCeedCall(ceed, CeedBasisGetDimension(trial_basis, &dim));
   PalaceCeedCall(ceed, CeedGeometryDataGetSpaceDimension(geom_data_restr, dim, &space_dim));
   MFEM_VERIFY(dim == 3 && space_dim == 3,
-              "MixedVectorCurlIntegrator is only availble in 3D!");
+              "MixedVectorCurlIntegrator is only available in 3D!");
   PalaceCeedCall(ceed, CeedBasisGetNumComponents(trial_basis, &trial_num_comp));
   PalaceCeedCall(ceed, CeedBasisGetNumComponents(test_basis, &test_num_comp));
   MFEM_VERIFY(
@@ -82,7 +82,7 @@ void MixedVectorWeakCurlIntegrator::Assemble(Ceed ceed, CeedElemRestriction tria
   PalaceCeedCall(ceed, CeedBasisGetDimension(trial_basis, &dim));
   PalaceCeedCall(ceed, CeedGeometryDataGetSpaceDimension(geom_data_restr, dim, &space_dim));
   MFEM_VERIFY(dim == 3 && space_dim == 3,
-              "MixedVectorWeakCurlIntegrator is only availble in 3D!");
+              "MixedVectorWeakCurlIntegrator is only available in 3D!");
   PalaceCeedCall(ceed, CeedBasisGetNumComponents(trial_basis, &trial_num_comp));
   PalaceCeedCall(ceed, CeedBasisGetNumComponents(test_basis, &test_num_comp));
   MFEM_VERIFY(trial_num_comp == test_num_comp && trial_num_comp == 1,
