@@ -5,6 +5,7 @@
 #define PALACE_LINALG_VECTOR_HPP
 
 #include <complex>
+#include <vector>
 #include <mfem.hpp>
 #include "utils/communication.hpp"
 
@@ -86,6 +87,10 @@ public:
     *this = std::complex<double>(s, 0.0);
     return *this;
   }
+
+  // Set the vector from an array of blocks and coefficients, without resizing.
+  void SetBlocks(const std::vector<const ComplexVector *> &y,
+                 const std::vector<std::complex<double>> &s);
 
   // Scale all entries by s.
   ComplexVector &operator*=(std::complex<double> s);

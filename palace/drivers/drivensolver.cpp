@@ -271,20 +271,20 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator 
   // Greedy procedure for basis construction (offline phase). Basis is initialized with
   // solutions at frequency sweep endpoints.
   int it = 2, it0 = it, memory = 0;
-  double max_error;
+  std::vector<double> max_errors = {0.0, 0.0};
   while (true)
   {
     // Compute the location of the maximum error in parameter domain (bounded by the
     // previous samples).
-    double omega_star = promop.FindMaxError();
+    double omega_star = promop.FindMaxError()[0];
 
     // Compute the actual solution error at the given parameter point.
     promop.SolveHDM(omega_star, E);
     promop.SolvePROM(omega_star, Eh);
     linalg::AXPY(-1.0, E, Eh);
-    max_error =
-        linalg::Norml2(spaceop.GetComm(), Eh) / linalg::Norml2(spaceop.GetComm(), E);
-    if (max_error < offline_tol)
+    max_errors.push_back(linalg::Norml2(spaceop.GetComm(), Eh) /
+                         linalg::Norml2(spaceop.GetComm(), E));
+    if (max_errors.back() < offline_tol)
     {
       if (++memory == convergence_memory)
       {
@@ -301,12 +301,13 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator 
     }
 
     // Sample HDM and add solution to basis.
-    Mpi::Print(
-        "\nGreedy iteration {:d} (n = {:d}): ω* = {:.3e} GHz ({:.3e}), error = "
-        "{:.3e}{}\n",
-        it - it0 + 1, promop.GetReducedDimension(), omega_star * f0, omega_star, max_error,
-        (memory == 0) ? ""
-                      : fmt::format(", memory = {:d}/{:d}", memory, convergence_memory));
+    Mpi::Print("\nGreedy iteration {:d} (n = {:d}): ω* = {:.3e} GHz ({:.3e}), error = "
+               "{:.3e}{}\n",
+               it - it0 + 1, promop.GetReducedDimension(), omega_star * f0, omega_star,
+               max_errors.back(),
+               (memory == 0)
+                   ? ""
+                   : fmt::format(", memory = {:d}/{:d}", memory, convergence_memory));
     promop.UpdatePROM(omega_star, E);
     estimator.AddErrorIndicator(E, indicator);
     it++;
@@ -314,9 +315,10 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator 
   Mpi::Print("\nAdaptive sampling{} {:d} frequency samples:\n"
              " n = {:d}, error = {:.3e}, tol = {:.3e}, memory = {:d}/{:d}\n",
              (it == max_size) ? " reached maximum" : " converged with", it,
-             promop.GetReducedDimension(), max_error, offline_tol, memory,
+             promop.GetReducedDimension(), max_errors.back(), offline_tol, memory,
              convergence_memory);
   utils::PrettyPrint(promop.GetSamplePoints(), f0, " Sampled frequencies (GHz):");
+  utils::PrettyPrint(max_errors, 1.0, " Sample errors:");
   Mpi::Print(" Total offline phase elapsed time: {:.2e} s\n",
              Timer::Duration(Timer::Now() - t0).count());  // Timing on root
 

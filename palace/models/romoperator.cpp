@@ -271,7 +271,7 @@ void RomOperator::SolveHDM(double omega, ComplexVector &u)
   ksp->Mult(r, u);
 }
 
-void RomOperator::UpdatePROM(double omega, ComplexVector &u)
+void RomOperator::UpdatePROM(double omega, const ComplexVector &u)
 {
   // Update V. The basis is always real (each complex solution adds two basis vectors if it
   // has a nonzero real and imaginary parts).
@@ -323,12 +323,18 @@ void RomOperator::UpdatePROM(double omega, ComplexVector &u)
   RHSr.resize(dim_V);
 
   // Compute the coefficients for the minimal rational interpolation of the state u used
-  // as an error indicator. The complex-valued snapshot matrix U = [{u_i}] is stored by its
-  // QR decomposition.
+  // as an error indicator. The complex-valued snapshot matrix U = [{u_i, (iω) u_i}] is
+  // stored by its QR decomposition.
   MFEM_VERIFY(dim_Q + 1 <= Q.size(),
               "Unable to increase basis storage size, increase maximum number of vectors!");
   R.conservativeResizeLike(Eigen::MatrixXd::Zero(dim_Q + 1, dim_Q + 1));
-  Q[dim_Q] = u;
+  {
+    std::vector<const ComplexVector *> blocks = {&u, &u};
+    std::vector<std::complex<double>> s = {1.0, 1i * omega};
+    Q[dim_Q].SetSize(2 * u.Size());
+    Q[dim_Q].UseDevice(true);
+    Q[dim_Q].SetBlocks(blocks, s);
+  }
   OrthogonalizeColumn(orthog_type, comm, Q, Q[dim_Q], R.col(dim_Q).data(), dim_Q);
   R(dim_Q, dim_Q) = linalg::Norml2(comm, Q[dim_Q]);
   Q[dim_Q] *= 1.0 / R(dim_Q, dim_Q);
@@ -397,7 +403,7 @@ void RomOperator::SolvePROM(double omega, ComplexVector &u)
   ProlongatePROMSolution(dim_V, V, RHSr, u);
 }
 
-double RomOperator::FindMaxError() const
+std::vector<double> RomOperator::FindMaxError(int N) const
 {
   // Return an estimate for argmax_z ||u(z) - V y(z)|| as argmin_z |Q(z)| with Q(z) =
   // sum_i q_z / (z - z_i) (denominator of the barycentric interpolation of u). The roots of
@@ -409,7 +415,7 @@ double RomOperator::FindMaxError() const
   double start = *std::min_element(z.begin(), z.end());
   double end = *std::max_element(z.begin(), z.end());
   Eigen::Map<const Eigen::VectorXd> z_map(z.data(), S);
-  std::complex<double> z_star = 0.0;
+  std::vector<std::complex<double>> z_star(N, 0.0);
 
   // XX TODO: For now, we explicitly minimize Q on the real line since we don't allow
   //          samples at complex-valued points (yet).
@@ -448,20 +454,32 @@ double RomOperator::FindMaxError() const
 
   // Fall back to sampling Q on discrete points if no roots exist in [start, end].
   const auto delta = (end - start) / 1.0e6;
-  double Q_star = mfem::infinity();
+  std::vector<double> Q_star(N, mfem::infinity());
   while (start <= end)
   {
     const double Q = std::abs((q.array() / (z_map.array() - start)).sum());
-    if (Q < Q_star)
+    for (int i = 0; i < N; i++)
     {
-      z_star = start;
-      Q_star = Q;
+      if (Q < Q_star[i])
+      {
+        for (int j = i + 1; j < N; j++)
+        {
+          z_star[j] = z_star[j - 1];
+          Q_star[j] = Q_star[j - 1];
+        }
+        z_star[i] = start;
+        Q_star[i] = Q;
+      }
     }
     start += delta;
   }
-  MFEM_VERIFY(std::abs(z_star) > 0.0, "Could not locate a maximum error in the range ["
-                                          << start << ", " << end << "]!");
-  return std::real(z_star);
+  MFEM_VERIFY(N == 0 || std::abs(z_star[0]) > 0.0,
+              "Could not locate a maximum error in the range [" << start << ", " << end
+                                                                << "]!");
+  std::vector<double> vals(z_star.size());
+  std::transform(z_star.begin(), z_star.end(), vals.begin(),
+                 [](std::complex<double> z) { return std::real(z); });
+  return vals;
 }
 
 std::vector<std::complex<double>> RomOperator::ComputeEigenvalueEstimates() const

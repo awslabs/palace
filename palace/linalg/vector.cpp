@@ -169,6 +169,37 @@ ComplexVector &ComplexVector::operator=(std::complex<double> s)
   return *this;
 }
 
+void ComplexVector::SetBlocks(const std::vector<const ComplexVector *> &y,
+                              const std::vector<std::complex<double>> &s)
+{
+  MFEM_ASSERT(s.empty() || y.size() == s.size(),
+              "Mismatch in dimension of vector blocks and scaling coefficients!");
+  auto *XR = Real().Write();
+  auto *XI = Imag().Write();
+  int offset = 0;
+  for (std::size_t b = 0; b < y.size(); b++)
+  {
+    MFEM_VERIFY(y[b] && ((b < y.size() - 1 && offset + y[b]->Size() < Size()) ||
+                         (b == y.size() - 1 && offset + y[b]->Size() == Size())),
+                "Mistmatch between sum of block dimensions and parent vector dimension!");
+    const double sr = s.empty() ? 1.0 : s[b].real();
+    const double si = s.empty() ? 0.0 : s[b].imag();
+    const bool use_dev = UseDevice() || y[b]->UseDevice();
+    const int N = y[b]->Size();
+    const auto *YR = y[b]->Real().Read();
+    const auto *YI = y[b]->Imag().Read();
+    mfem::forall_switch(use_dev, N,
+                        [=] MFEM_HOST_DEVICE(int i)
+                        {
+                          XR[i] = sr * YR[i] - si * YI[i];
+                          XI[i] = si * YR[i] + sr * YI[i];
+                        });
+    XR += N;
+    XI += N;
+    offset += N;
+  }
+}
+
 ComplexVector &ComplexVector::operator*=(std::complex<double> s)
 {
   const double sr = s.real();

@@ -70,15 +70,15 @@ public:
   void SolveHDM(double omega, ComplexVector &u);
 
   // Add the solution vector to the reduced-order basis and update the PROM.
-  void UpdatePROM(double omega, ComplexVector &u);
+  void UpdatePROM(double omega, const ComplexVector &u);
 
   // Assemble and solve the PROM at the specified frequency, expanding the solution back
   // into the high-dimensional space.
   void SolvePROM(double omega, ComplexVector &u);
 
-  // Compute the location of the maximum error in the given range of parameter points,
-  // specified as P = {ω_L, ω_L + δ, ..., ω_R}.
-  double FindMaxError() const;
+  // Compute the location of the maximum error in the range of the previously sampled
+  // parameter points.
+  std::vector<double> FindMaxError(int N = 1) const;
 
   // Compute eigenvalue estimates for the current PROM system.
   std::vector<std::complex<double>> ComputeEigenvalueEstimates() const;
