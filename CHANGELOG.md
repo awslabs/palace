@@ -20,13 +20,24 @@ The format of this changelog is based on
     domain electric field energy.
   - Added documentation for various timer categories and improved timing breakdown of
     various sections of a simulation.
-  - Fixed bug in implementation of numeric wave ports for driven simulations.
+  - Changed mesh files for the cavity and CPW examples, including prism, hexahedral, and
+    tetrahedral meshes for the cylindrical cavity and correcting the wave port dimensions
+    for the coplanar wave guide.
+  - Fixed a few bugs and issues in the implementation of numeric wave ports for driven
+    simulations.
   - Added GPU support for *Palace* via its dependencies, and added the
     `config["Solver"]["Device"]` and `config["Solver"]["Backend"]` options for runtime
     configuration of the MFEM device (`"CPU"` or `"GPU"`) and libCEED backend, with suitable
     defaults for users.
   - Added a new section to the documentation on
     [Parallelism and GPU support](https://awslabs.github.io/palace/dev/guide/parallelism/).
+  - Removed use of `mfem::SparseMatrix` and replaced with HYPRE's `hypre_CSRMatrix` when
+    needed for full assembly, wrapped as `palace::hypre::HypreCSRMatrix`.
+  - Added `"Active"`` configuration file parameter for lumped and wave port boundaries to
+    disable the associated boundary condition and only use the surface for postprocessing.
+  - Changed the smooth flux space for the electrostatic error estimator to fix performance
+    on problems with material interfaces.
+  - Fixed a bug related to mesh cleaning for unspecified domains and mesh partitioning.
 
 ## [0.12.0] - 2023-12-21
 
