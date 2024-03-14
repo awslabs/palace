@@ -90,13 +90,9 @@ ErrorIndicator ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop,
   int nstep = static_cast<int>(terminal_sources.size());
   mfem::DenseMatrix C(nstep), Cm(nstep);
   Vector E(Grad.Height()), Vij(Grad.Width());
-  if (iodata.solver.electrostatic.n_post > 0)
-  {
-    Mpi::Print("\n");
-  }
 
   // Calculate and record the error indicators.
-  Mpi::Print("Computing solution error estimates\n\n");
+  Mpi::Print("\nComputing solution error estimates\n");
   GradFluxErrorEstimator estimator(laplaceop.GetMaterialOp(), laplaceop.GetH1Space(),
                                    iodata.solver.linear.estimator_tol,
                                    iodata.solver.linear.estimator_max_it, 0);
@@ -122,7 +118,7 @@ ErrorIndicator ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop,
     if (i < iodata.solver.electrostatic.n_post)
     {
       PostprocessFields(postop, i, idx, (i == 0) ? &indicator : nullptr);
-      Mpi::Print("Wrote fields to disk for terminal {:d}\n", idx);
+      Mpi::Print("{}Wrote fields to disk for terminal {:d}\n", (i == 0) ? "\n" : "", idx);
     }
     if (i == 0)
     {
