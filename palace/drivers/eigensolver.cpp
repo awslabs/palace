@@ -261,7 +261,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   int num_conv = eigen->Solve();
   {
     std::complex<double> lambda = (num_conv > 0) ? eigen->GetEigenvalue(0) : 0.0;
-    Mpi::Print(" Found {:d} converged eigenvalue{}{}\n\n", num_conv,
+    Mpi::Print(" Found {:d} converged eigenvalue{}{}\n", num_conv,
                (num_conv > 1) ? "s" : "",
                (num_conv > 0)
                    ? fmt::format(" (first = {:.3e}{:+.3e}i)", lambda.real(), lambda.imag())
@@ -271,7 +271,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   SaveMetadata(*ksp);
 
   // Calculate and record the error indicators.
-  Mpi::Print("Computing solution error estimates\n\n");
+  Mpi::Print("\nComputing solution error estimates\n");
   CurlFluxErrorEstimator<ComplexVector> estimator(
       spaceop.GetMaterialOp(), spaceop.GetNDSpace(), iodata.solver.linear.estimator_tol,
       iodata.solver.linear.estimator_max_it, 0);
@@ -291,6 +291,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   }
 
   // Postprocess the results.
+  Mpi::Print("\n");
   for (int i = 0; i < num_conv; i++)
   {
     // Get the eigenvalue and relative error.

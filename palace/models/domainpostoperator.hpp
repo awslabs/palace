@@ -19,13 +19,16 @@ class IoData;
 class MaterialOperator;
 
 //
-// A class handling domain postprocessing.
+// Class to handle domain energy postprocessing. We use a leading factor of 1/2 instead of
+// 1/4 even though the eigenmodes are peak phasors and not RMS normalized because the same
+// peak phasors are used to compute the voltages/currents which are 2x the time-averaged
+// values. This correctly yields an EPR of 1 in cases where expected.
 //
 class DomainPostOperator
 {
 private:
   // Bilinear forms for computing field energy integrals over domains.
-  std::unique_ptr<Operator> M_ND, M_RT;
+  std::unique_ptr<Operator> M_elec, M_mag;
   std::map<int, std::pair<std::unique_ptr<Operator>, std::unique_ptr<Operator>>> M_i;
 
   // Temporary vectors for inner product calculations.
@@ -33,8 +36,10 @@ private:
 
 public:
   DomainPostOperator(const IoData &iodata, const MaterialOperator &mat_op,
-                     const FiniteElementSpace *nd_fespace,
-                     const FiniteElementSpace *rt_fespace);
+                     const FiniteElementSpace &nd_fespace,
+                     const FiniteElementSpace &rt_fespace);
+  DomainPostOperator(const IoData &iodata, const MaterialOperator &mat_op,
+                     const FiniteElementSpace &fespace);
 
   // Access data structures for postprocessing domains.
   const auto &GetDomains() const { return M_i; }

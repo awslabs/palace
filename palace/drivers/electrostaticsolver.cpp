@@ -90,13 +90,9 @@ ErrorIndicator ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop,
   int nstep = static_cast<int>(terminal_sources.size());
   mfem::DenseMatrix C(nstep), Cm(nstep);
   Vector E(Grad.Height()), Vij(Grad.Width());
-  if (iodata.solver.electrostatic.n_post > 0)
-  {
-    Mpi::Print("\n");
-  }
 
   // Calculate and record the error indicators.
-  Mpi::Print("Computing solution error estimates\n\n");
+  Mpi::Print("\nComputing solution error estimates\n");
   GradFluxErrorEstimator estimator(laplaceop.GetMaterialOp(), laplaceop.GetH1Space(),
                                    iodata.solver.linear.estimator_tol,
                                    iodata.solver.linear.estimator_max_it, 0);
@@ -113,8 +109,8 @@ ErrorIndicator ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop,
     // for all postprocessing operations.
     E = 0.0;
     Grad.AddMult(V[i], E, -1.0);
-    postop.SetEGridFunction(E);
     postop.SetVGridFunction(V[i]);
+    postop.SetEGridFunction(E);
     double Ue = postop.GetEFieldEnergy();
     PostprocessDomains(postop, "i", i, idx, Ue, 0.0, 0.0, 0.0);
     PostprocessSurfaces(postop, "i", i, idx, Ue, 0.0, 1.0, 0.0);
@@ -122,7 +118,7 @@ ErrorIndicator ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop,
     if (i < iodata.solver.electrostatic.n_post)
     {
       PostprocessFields(postop, i, idx, (i == 0) ? &indicator : nullptr);
-      Mpi::Print("Wrote fields to disk for terminal {:d}\n", idx);
+      Mpi::Print("{}Wrote fields to disk for terminal {:d}\n", (i == 0) ? "\n" : "", idx);
     }
     if (i == 0)
     {
@@ -149,9 +145,7 @@ ErrorIndicator ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop,
       else if (j > i)
       {
         linalg::AXPBYPCZ(1.0, V[i], 1.0, V[j], 0.0, Vij);
-        E = 0.0;
-        Grad.AddMult(Vij, E, -1.0);
-        postop.SetEGridFunction(E);
+        postop.SetVGridFunction(Vij);
         double Ue = postop.GetEFieldEnergy();
         C(i, j) = Ue - 0.5 * (C(i, i) + C(j, j));
         Cm(i, j) = -C(i, j);

@@ -149,16 +149,18 @@ void PrintHeader(const mfem::ParFiniteElementSpace &h1_fespace,
                    : "Full");
 
     const auto &mesh = *h1_fespace.GetParMesh();
+    const auto geom_types = mesh::CheckElements(mesh).GetGeomTypes();
     Mpi::Print(" Mesh geometries:\n");
-    for (auto geom : mesh::CheckElements(mesh).GetGeomTypes())
+    for (auto geom : geom_types)
     {
-      const auto *fe = h1_fespace.FEColl()->FiniteElementForGeometry(geom);
-      MFEM_VERIFY(fe, "MFEM does not support H1 spaces on geometry = "
+      const auto *fe = nd_fespace.FEColl()->FiniteElementForGeometry(geom);
+      MFEM_VERIFY(fe, "MFEM does not support ND spaces on geometry = "
                           << mfem::Geometry::Name[geom] << "!");
       const int q_order = fem::DefaultIntegrationOrder::Get(mesh, geom);
-      Mpi::Print("  {}: P = {:d}, Q = {:d} (quadrature order = {:d})\n",
+      Mpi::Print("  {}: P = {:d}, Q = {:d} (quadrature order = {:d}){}\n",
                  mfem::Geometry::Name[geom], fe->GetDof(),
-                 mfem::IntRules.Get(geom, q_order).GetNPoints(), q_order);
+                 mfem::IntRules.Get(geom, q_order).GetNPoints(), q_order,
+                 (geom == geom_types.back()) ? "" : ",");
     }
 
     Mpi::Print("\nAssembling multigrid hierarchy:\n");
