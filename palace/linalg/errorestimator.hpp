@@ -45,7 +45,7 @@ public:
   FluxProjector(const MaterialOperator &mat_op, const FiniteElementSpace &nd_fespace,
                 double tol, int max_it, int print);
   FluxProjector(const MaterialOperator &mat_op, const FiniteElementSpace &h1_fespace,
-                const FiniteElementSpace &h1d_fespace, double tol, int max_it, int print);
+                const FiniteElementSpace &rt_fespace, double tol, int max_it, int print);
 
   void Mult(const VecType &x, VecType &y) const;
 };
@@ -97,7 +97,7 @@ class GradFluxErrorEstimator
   mutable Vector F, F_gf, U_gf;
 
 public:
-  GradFluxErrorEstimator(const MaterialOperator &mat_op, FiniteElementSpace &rt_fespace,
+  GradFluxErrorEstimator(const MaterialOperator &mat_op, FiniteElementSpace &h1_fespace,
                          double tol, int max_it, int print);
 
   // Compute elemental error indicators given a vector of true DOF and fold into an existing

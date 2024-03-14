@@ -6,8 +6,8 @@
 #include <limits>
 #include "fem/bilinearform.hpp"
 #include "fem/integrator.hpp"
+#include "linalg/chebyshev.hpp"
 #include "linalg/iterative.hpp"
-#include "linalg/jacobi.hpp"
 #include "linalg/rap.hpp"
 #include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
@@ -44,10 +44,11 @@ auto GetMassMatrix(const FiniteElementSpace &fespace)
 }
 
 template <typename OperType>
-auto ConfigureLinearSolver(MPI_Comm comm, double tol, int max_it, int print)
+auto ConfigureLinearSolver(MPI_Comm comm, double tol, int max_it, int print,
+                           int mg_smooth_order)
 {
   // The system matrix for the projection is real, SPD and diagonally dominant.
-  auto pc = std::make_unique<JacobiSmoother<OperType>>();
+  auto pc = std::make_unique<ChebyshevSmoother<OperType>>(comm, 1, mg_smooth_order, 1.0);
   auto pcg = std::make_unique<CgSolver<OperType>>(comm, print);
   pcg->SetInitialGuess(false);
   pcg->SetRelTol(tol);
@@ -75,7 +76,9 @@ FluxProjector<VecType>::FluxProjector(const MaterialOperator &mat_op,
   }
   M = WrapOperator<OperType>(GetMassMatrix(nd_fespace));
 
-  ksp = ConfigureLinearSolver<OperType>(nd_fespace.GetComm(), tol, max_it, print);
+  const int mg_smooth_order = std::max(nd_fespace.GetMaxElementOrder(), 2);
+  ksp = ConfigureLinearSolver<OperType>(nd_fespace.GetComm(), tol, max_it, print,
+                                        mg_smooth_order);
   ksp->SetOperators(*M, *M);
 
   rhs.SetSize(nd_fespace.GetTrueVSize());
@@ -100,7 +103,9 @@ FluxProjector<VecType>::FluxProjector(const MaterialOperator &mat_op,
   }
   M = WrapOperator<OperType>(GetMassMatrix(rt_fespace));
 
-  ksp = ConfigureLinearSolver<OperType>(h1_fespace.GetComm(), tol, max_it, print);
+  const int mg_smooth_order = std::max(rt_fespace.GetMaxElementOrder(), 2);
+  ksp = ConfigureLinearSolver<OperType>(rt_fespace.GetComm(), tol, max_it, print,
+                                        mg_smooth_order);
   ksp->SetOperators(*M, *M);
 
   rhs.SetSize(rt_fespace.GetTrueVSize());
@@ -195,7 +200,7 @@ void CurlFluxErrorEstimator<VecType>::AddErrorIndicator(const VecType &U,
 
         auto AccumulateError = [&](const Vector &U_gf_, const Vector &F_gf_)
         {
-          // μ⁻¹ ∇ × U -- μ⁻¹ |J|⁻¹J ∇ × Uᵣ
+          // μ⁻¹ ∇ × U -- μ⁻¹ |J|⁻¹ J ∇ × Uᵣ
           U_gf_.GetSubVector(dofs, loc_gf);
           if (dof_trans.GetDofTransformation())
           {
@@ -308,13 +313,13 @@ void GradFluxErrorEstimator::AddErrorIndicator(const Vector &U,
         h1_fe.CalcDShape(ip, Grad);
         const double w = ip.weight * T.Weight();
 
-        // ε ∇U -- ε J⁻¹ ∇Uᵣ
+        // ε ∇U -- ε J⁻ᵀ ∇Uᵣ
         U_gf.GetSubVector(h1_dofs, loc_gf);
         Grad.MultTranspose(loc_gf, V_ip);
         T.InverseJacobian().MultTranspose(V_ip, V_smooth);
         mat_op.GetPermittivityReal(T.Attribute).Mult(V_smooth, V_ip);
 
-        // Smooth flux -- |J|⁻¹J Fᵣ
+        // Smooth flux -- |J|⁻¹ J Fᵣ
         F_gf.GetSubVector(rt_dofs, loc_gf);
         Interp.MultTranspose(loc_gf, V_tmp);
         T.Jacobian().Mult(V_tmp, V_smooth);
