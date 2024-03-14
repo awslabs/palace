@@ -38,6 +38,8 @@ The format of this changelog is based on
   - Changed the smooth flux space for the electrostatic error estimator to fix performance
     on problems with material interfaces.
   - Fixed a bug related to mesh cleaning for unspecified domains and mesh partitioning.
+  - Change computation of domain energy postprocessing for electrostatic and magnetostatic
+    simulation types in order to improve performance.
 
 ## [0.12.0] - 2023-12-21
 
