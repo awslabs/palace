@@ -179,6 +179,7 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
   while (!ExhaustedResources(it, ntdof) && err >= refinement.tol)
   {
     // Print timing summary.
+    Mpi::Print("\nCumulative timing statistics:\n");
     BlockTimer::Print(comm);
     SaveMetadata(BlockTimer::GlobalTimer());
 
