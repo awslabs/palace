@@ -24,7 +24,8 @@ Operator::Operator(int h, int w) : palace::Operator(h, w)
   PalacePragmaOmp(parallel if (op.size() > 1))
   {
     const int id = utils::GetThreadNum();
-    MFEM_ASSERT(id < op.size(), "Out of bounds access for thread number " << id << "!");
+    MFEM_ASSERT(static_cast<std::size_t>(id) < op.size(),
+                "Out of bounds access for thread number " << id << "!");
     Ceed ceed = ceed::internal::GetCeedObjects()[utils::GetThreadNum()];
     CeedOperator loc_op, loc_op_t;
     CeedVector loc_u, loc_v;
@@ -45,7 +46,8 @@ Operator::~Operator()
   PalacePragmaOmp(parallel if (op.size() > 1))
   {
     const int id = utils::GetThreadNum();
-    MFEM_ASSERT(id < op.size(), "Out of bounds access for thread number " << id << "!");
+    MFEM_ASSERT(static_cast<std::size_t>(id) < op.size(),
+                "Out of bounds access for thread number " << id << "!");
     Ceed ceed;
     PalaceCeedCallBackend(CeedOperatorGetCeed(op[id], &ceed));
     PalaceCeedCall(ceed, CeedOperatorDestroy(&op[id]));
@@ -59,7 +61,8 @@ void Operator::AddOper(CeedOperator sub_op, CeedOperator sub_op_t)
 {
   // This should be called from within a OpenMP parallel region.
   const int id = utils::GetThreadNum();
-  MFEM_ASSERT(id < op.size(), "Out of bounds access for thread number " << id << "!");
+  MFEM_ASSERT(static_cast<std::size_t>(id) < op.size(),
+              "Out of bounds access for thread number " << id << "!");
   Ceed ceed;
   PalaceCeedCallBackend(CeedOperatorGetCeed(sub_op, &ceed));
   CeedSize l_in, l_out;
@@ -88,7 +91,8 @@ void Operator::Finalize()
   PalacePragmaOmp(parallel if (op.size() > 1))
   {
     const int id = utils::GetThreadNum();
-    MFEM_ASSERT(id < op.size(), "Out of bounds access for thread number " << id << "!");
+    MFEM_ASSERT(static_cast<std::size_t>(id) < op.size(),
+                "Out of bounds access for thread number " << id << "!");
     Ceed ceed;
     PalaceCeedCallBackend(CeedOperatorGetCeed(op[id], &ceed));
     PalaceCeedCall(ceed, CeedOperatorCheckReady(op[id]));
@@ -113,7 +117,8 @@ void Operator::AssembleDiagonal(Vector &diag) const
   PalacePragmaOmp(parallel if (op.size() > 1))
   {
     const int id = utils::GetThreadNum();
-    MFEM_ASSERT(id < op.size(), "Out of bounds access for thread number " << id << "!");
+    MFEM_ASSERT(static_cast<std::size_t>(id) < op.size(),
+                "Out of bounds access for thread number " << id << "!");
     Ceed ceed;
     PalaceCeedCallBackend(CeedOperatorGetCeed(op[id], &ceed));
     PalaceCeedCall(ceed, CeedVectorSetArray(v[id], mem, CEED_USE_POINTER, diag_data));
@@ -144,7 +149,8 @@ inline void CeedAddMult(const std::vector<CeedOperator> &op,
   PalacePragmaOmp(parallel if (op.size() > 1))
   {
     const int id = utils::GetThreadNum();
-    MFEM_ASSERT(id < op.size(), "Out of bounds access for thread number " << id << "!");
+    MFEM_ASSERT(static_cast<std::size_t>(id) < op.size(),
+                "Out of bounds access for thread number " << id << "!");
     Ceed ceed;
     PalaceCeedCallBackend(CeedOperatorGetCeed(op[id], &ceed));
     PalaceCeedCall(ceed, CeedVectorSetArray(u[id], mem, CEED_USE_POINTER,
@@ -438,7 +444,8 @@ std::unique_ptr<hypre::HypreCSRMatrix> CeedOperatorFullAssemble(const Operator &
   PalacePragmaOmp(parallel if (op.Size() > 1))
   {
     const int id = utils::GetThreadNum();
-    MFEM_ASSERT(id < op.Size(), "Out of bounds access for thread number " << id << "!");
+    MFEM_ASSERT(static_cast<std::size_t>(id) < op.Size(),
+                "Out of bounds access for thread number " << id << "!");
     Ceed ceed;
     PalaceCeedCallBackend(CeedOperatorGetCeed(op[id], &ceed));
 
@@ -529,7 +536,7 @@ std::unique_ptr<Operator> CeedOperatorCoarsen(const Operator &op_fine,
   PalacePragmaOmp(parallel if (op_fine.Size() > 1))
   {
     const int id = utils::GetThreadNum();
-    MFEM_ASSERT(id < op_fine.Size(),
+    MFEM_ASSERT(static_cast<std::size_t>(id) < op_fine.Size(),
                 "Out of bounds access for thread number " << id << "!");
     Ceed ceed;
     PalaceCeedCallBackend(CeedOperatorGetCeed(op_fine[id], &ceed));
