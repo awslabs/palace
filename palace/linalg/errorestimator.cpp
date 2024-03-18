@@ -13,6 +13,7 @@
 #include "utils/communication.hpp"
 #include "utils/omp.hpp"
 #include "utils/timer.hpp"
+#include "utils/workspace.hpp"
 
 namespace palace
 {
@@ -74,12 +75,8 @@ FluxProjector<VecType>::FluxProjector(const MaterialOperator &mat_op,
         std::make_unique<ParOperator>(flux.PartialAssemble(), nd_fespace));
   }
   M = WrapOperator<OperType>(GetMassMatrix(nd_fespace));
-
   ksp = ConfigureLinearSolver<OperType>(nd_fespace.GetComm(), tol, max_it, print);
   ksp->SetOperators(*M, *M);
-
-  rhs.SetSize(nd_fespace.GetTrueVSize());
-  rhs.UseDevice(true);
 }
 
 template <typename VecType>
@@ -99,19 +96,15 @@ FluxProjector<VecType>::FluxProjector(const MaterialOperator &mat_op,
         flux.PartialAssemble(), h1_fespace, rt_fespace, false));
   }
   M = WrapOperator<OperType>(GetMassMatrix(rt_fespace));
-
-  ksp = ConfigureLinearSolver<OperType>(h1_fespace.GetComm(), tol, max_it, print);
+  ksp = ConfigureLinearSolver<OperType>(rt_fespace.GetComm(), tol, max_it, print);
   ksp->SetOperators(*M, *M);
-
-  rhs.SetSize(rt_fespace.GetTrueVSize());
-  rhs.UseDevice(true);
 }
 
 template <typename VecType>
 void FluxProjector<VecType>::Mult(const VecType &x, VecType &y) const
 {
   BlockTimer bt(Timer::SOLVE_ESTIMATOR);
-  MFEM_ASSERT(y.Size() == rhs.Size(), "Invalid vector dimensions for FluxProjector::Mult!");
+  auto rhs = workspace::NewVector<VecType>(y.Size());
   Flux->Mult(x, rhs);
   // Mpi::Print(" Computing smooth flux projection for error estimation\n");
   ksp->Mult(rhs, y);
@@ -122,10 +115,8 @@ CurlFluxErrorEstimator<VecType>::CurlFluxErrorEstimator(const MaterialOperator &
                                                         FiniteElementSpace &nd_fespace,
                                                         double tol, int max_it, int print)
   : mat_op(mat_op), nd_fespace(nd_fespace),
-    projector(mat_op, nd_fespace, tol, max_it, print), F(nd_fespace.GetTrueVSize()),
-    F_gf(nd_fespace.GetVSize()), U_gf(nd_fespace.GetVSize())
+    projector(mat_op, nd_fespace, tol, max_it, print)
 {
-  F.UseDevice(true);
 }
 
 template <typename VecType>
@@ -135,24 +126,29 @@ void CurlFluxErrorEstimator<VecType>::AddErrorIndicator(const VecType &U,
   // Compute the projection of the discontinuous flux onto the smooth finite element space
   // and populate the corresponding grid functions.
   BlockTimer bt(Timer::ESTIMATION);
-  projector.Mult(U, F);
-  if constexpr (std::is_same<VecType, ComplexVector>::value)
+  auto U_gf = workspace::NewVector<VecType>(nd_fespace.GetVSize());
+  auto F_gf = workspace::NewVector<VecType>(nd_fespace.GetVSize());
   {
-    nd_fespace.GetProlongationMatrix()->Mult(U.Real(), U_gf.Real());
-    nd_fespace.GetProlongationMatrix()->Mult(U.Imag(), U_gf.Imag());
-    nd_fespace.GetProlongationMatrix()->Mult(F.Real(), F_gf.Real());
-    nd_fespace.GetProlongationMatrix()->Mult(F.Imag(), F_gf.Imag());
-    U_gf.Real().HostRead();
-    U_gf.Imag().HostRead();
-    F_gf.Real().HostRead();
-    F_gf.Imag().HostRead();
-  }
-  else
-  {
-    nd_fespace.GetProlongationMatrix()->Mult(U, U_gf);
-    nd_fespace.GetProlongationMatrix()->Mult(F, F_gf);
-    U_gf.HostRead();
-    F_gf.HostRead();
+    auto F = workspace::NewVector<VecType>(nd_fespace.GetTrueVSize());
+    projector.Mult(U, F);
+    if constexpr (std::is_same<VecType, ComplexVector>::value)
+    {
+      nd_fespace.GetProlongationMatrix()->Mult(U.Real(), U_gf.Real());
+      nd_fespace.GetProlongationMatrix()->Mult(U.Imag(), U_gf.Imag());
+      nd_fespace.GetProlongationMatrix()->Mult(F.Real(), F_gf.Real());
+      nd_fespace.GetProlongationMatrix()->Mult(F.Imag(), F_gf.Imag());
+      U_gf.Real().HostRead();
+      U_gf.Imag().HostRead();
+      F_gf.Real().HostRead();
+      F_gf.Imag().HostRead();
+    }
+    else
+    {
+      nd_fespace.GetProlongationMatrix()->Mult(U, U_gf);
+      nd_fespace.GetProlongationMatrix()->Mult(F, F_gf);
+      U_gf.HostRead();
+      F_gf.HostRead();
+    }
   }
 
   // Loop over elements and accumulate the estimates from this component. The discontinuous
@@ -251,10 +247,8 @@ GradFluxErrorEstimator::GradFluxErrorEstimator(const MaterialOperator &mat_op,
     rt_fec(std::make_unique<mfem::RT_FECollection>(h1_fespace.GetFEColl().GetOrder() - 1,
                                                    h1_fespace.SpaceDimension())),
     rt_fespace(std::make_unique<FiniteElementSpace>(h1_fespace.GetMesh(), rt_fec.get())),
-    projector(mat_op, h1_fespace, *rt_fespace, tol, max_it, print),
-    F(rt_fespace->GetTrueVSize()), F_gf(rt_fespace->GetVSize()), U_gf(h1_fespace.GetVSize())
+    projector(mat_op, h1_fespace, *rt_fespace, tol, max_it, print)
 {
-  F.UseDevice(true);
 }
 
 void GradFluxErrorEstimator::AddErrorIndicator(const Vector &U,
@@ -263,11 +257,16 @@ void GradFluxErrorEstimator::AddErrorIndicator(const Vector &U,
   // Compute the projection of the discontinuous flux onto the smooth finite element space
   // and populate the corresponding grid functions.
   BlockTimer bt(Timer::ESTIMATION);
-  projector.Mult(U, F);
-  h1_fespace.GetProlongationMatrix()->Mult(U, U_gf);
-  rt_fespace->GetProlongationMatrix()->Mult(F, F_gf);
-  U_gf.HostRead();
-  F_gf.HostRead();
+  auto U_gf = workspace::NewVector<Vector>(h1_fespace.GetVSize());
+  auto F_gf = workspace::NewVector<Vector>(rt_fespace->GetVSize());
+  {
+    auto F = workspace::NewVector<Vector>(rt_fespace->GetTrueVSize());
+    projector.Mult(U, F);
+    h1_fespace.GetProlongationMatrix()->Mult(U, U_gf);
+    rt_fespace->GetProlongationMatrix()->Mult(F, F_gf);
+    U_gf.HostRead();
+    F_gf.HostRead();
+  }
 
   // Loop over elements and accumulate the estimates from this component. The discontinuous
   // flux is ε ∇U.

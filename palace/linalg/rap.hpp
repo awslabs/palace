@@ -44,7 +44,6 @@ private:
   // Helper methods for operator application.
   void RestrictionMatrixMult(const Vector &ly, Vector &ty) const;
   void RestrictionMatrixMultTranspose(const Vector &ty, Vector &ly) const;
-  Vector &GetTestLVector() const;
 
   ParOperator(std::unique_ptr<Operator> &&dA, const Operator *pA,
               const FiniteElementSpace &trial_fespace,
@@ -133,7 +132,6 @@ private:
   // Helper methods for operator application.
   void RestrictionMatrixMult(const ComplexVector &ly, ComplexVector &ty) const;
   void RestrictionMatrixMultTranspose(const ComplexVector &ty, ComplexVector &ly) const;
-  ComplexVector &GetTestLVector() const;
 
   ComplexParOperator(std::unique_ptr<Operator> &&dAr, std::unique_ptr<Operator> &&dAi,
                      const Operator *pAr, const Operator *pAi,

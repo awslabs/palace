@@ -35,7 +35,6 @@ protected:
   std::vector<CeedOperator> op, op_t;
   std::vector<CeedVector> u, v;
   Vector dof_multiplicity;
-  mutable Vector temp;
 
 public:
   Operator(int h, int w);

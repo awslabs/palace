@@ -46,15 +46,11 @@ private:
   // Smoothers for each level. Coarse-level solver is B[0].
   mutable std::vector<std::unique_ptr<Solver<OperType>>> B;
 
-  // Temporary vectors for preconditioner application. The type of these is dictated by the
-  // MFEM Operator interface for multiple RHS.
-  mutable std::vector<VecType> X, Y, R;
-
   // Enable timer contribution for Timer::KSP_COARSE_SOLVE.
   bool use_timer;
 
   // Internal function to perform a single V-cycle iteration.
-  void VCycle(int l, bool initial_guess) const;
+  void VCycle(const VecType &x, VecType &y, int l, bool initial_guess) const;
 
 public:
   GeometricMultigridSolver(MPI_Comm comm, std::unique_ptr<Solver<OperType>> &&coarse_solver,

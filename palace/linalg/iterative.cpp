@@ -10,6 +10,7 @@
 #include "linalg/orthog.hpp"
 #include "utils/communication.hpp"
 #include "utils/timer.hpp"
+#include "utils/workspace.hpp"
 
 namespace palace
 {
@@ -367,18 +368,15 @@ void CgSolver<OperType>::Mult(const VecType &b, VecType &x) const
   MFEM_VERIFY(A, "Operator must be set for CgSolver::Mult!");
   MFEM_ASSERT(A->Width() == x.Size() && A->Height() == b.Size(),
               "Size mismatch for CgSolver::Mult!");
-  r.SetSize(A->Height());
-  z.SetSize(A->Height());
-  p.SetSize(A->Height());
-  r.UseDevice(true);
-  z.UseDevice(true);
-  p.UseDevice(true);
+  auto r = workspace::NewVector<VecType>(A->Height());
+  auto z = workspace::NewVector<VecType>(A->Height());
+  auto p = workspace::NewVector<VecType>(A->Height());
 
   // Initialize.
   if (this->initial_guess)
   {
     A->Mult(x, r);
-    linalg::AXPBY(1.0, b, -1.0, r);
+    linalg::AXPBY<VecType>(1.0, b, -1.0, r);
   }
   else
   {
@@ -387,7 +385,7 @@ void CgSolver<OperType>::Mult(const VecType &b, VecType &x) const
   }
   if (B)
   {
-    ApplyB(B, r, z, this->use_timer);
+    ApplyB<OperType, VecType>(B, r, z, this->use_timer);
   }
   else
   {
@@ -398,8 +396,8 @@ void CgSolver<OperType>::Mult(const VecType &b, VecType &x) const
   res = std::sqrt(std::abs(beta));
   if (this->initial_guess && B)
   {
-    ApplyB(B, b, p, this->use_timer);
-    auto beta_rhs = linalg::Dot(comm, p, b);
+    ApplyB<OperType, VecType>(B, b, p, this->use_timer);
+    auto beta_rhs = linalg::Dot<VecType>(comm, p, b);
     CheckDot(beta_rhs, "PCG preconditioner is not positive definite: (Bb, b) = ");
     initial_res = std::sqrt(std::abs(beta_rhs));
   }
@@ -430,7 +428,7 @@ void CgSolver<OperType>::Mult(const VecType &b, VecType &x) const
     }
     else
     {
-      linalg::AXPBY(ScalarType(1.0), z, beta / beta_prev, p);
+      linalg::AXPBY<VecType>(ScalarType(1.0), z, beta / beta_prev, p);
     }
 
     A->Mult(p, z);
@@ -444,7 +442,7 @@ void CgSolver<OperType>::Mult(const VecType &b, VecType &x) const
     beta_prev = beta;
     if (B)
     {
-      ApplyB(B, r, z, this->use_timer);
+      ApplyB<OperType, VecType>(B, r, z, this->use_timer);
     }
     else
     {
@@ -500,10 +498,6 @@ void GmresSolver<OperType>::Initialize() const
     V[j].SetSize(A->Height());
     V[j].UseDevice(true);
   }
-  H.resize((max_dim + 1) * max_dim);
-  s.resize(max_dim + 1);
-  cs.resize(max_dim + 1);
-  sn.resize(max_dim + 1);
 }
 
 template <typename OperType>
@@ -526,9 +520,11 @@ void GmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
   MFEM_VERIFY(A, "Operator must be set for GmresSolver::Mult!");
   MFEM_ASSERT(A->Width() == x.Size() && A->Height() == b.Size(),
               "Size mismatch for GmresSolver::Mult!");
-  r.SetSize(A->Height());
-  r.UseDevice(true);
   Initialize();
+  std::vector<ScalarType> H((max_dim + 1) * max_dim);
+  std::vector<ScalarType> s(max_dim + 1), sn(max_dim + 1);
+  std::vector<RealType> cs(max_dim + 1);
+  auto r = workspace::NewVector<VecType>(A->Height());
 
   // Begin iterations.
   converged = false;
@@ -541,8 +537,9 @@ void GmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
   for (; it < max_it; restart++)
   {
     // Initialize.
-    InitialResidual(pc_side, A, B, b, x, r, V[0], (this->initial_guess || restart > 0),
-                    this->use_timer);
+    InitialResidual<GmresSolver<OperType>::PrecSide, OperType, VecType>(
+        pc_side, A, B, b, x, r, V[0], (this->initial_guess || restart > 0),
+        this->use_timer);
     true_beta = linalg::Norml2(comm, r);
     CheckDot(true_beta, "GMRES residual norm is not valid: beta = ");
     if (it == 0)
@@ -552,7 +549,7 @@ void GmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
         RealType beta_rhs;
         if (B && pc_side == PrecSide::LEFT)
         {
-          ApplyB(B, b, V[0], this->use_timer);
+          ApplyB<OperType, VecType>(B, b, V[0], this->use_timer);
           beta_rhs = linalg::Norml2(comm, V[0]);
         }
         else  // !B || pc_side == PrecSide::RIGHT
@@ -602,7 +599,8 @@ void GmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
       {
         Update(j);
       }
-      ApplyBA(pc_side, A, B, V[j], w, r, this->use_timer);
+      ApplyBA<GmresSolver<OperType>::PrecSide, OperType, VecType>(pc_side, A, B, V[j], w, r,
+                                                                  this->use_timer);
 
       ScalarType *Hj = H.data() + j * (max_dim + 1);
       OrthogonalizeIteration(orthog_type, comm, V, w, Hj, j);
@@ -651,7 +649,7 @@ void GmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
       {
         r.Add(s[k], V[k]);
       }
-      ApplyB(B, r, V[0], this->use_timer);
+      ApplyB<OperType, VecType>(B, r, V[0], this->use_timer);
       x += V[0];
     }
     if (converged)
@@ -717,6 +715,9 @@ void FgmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
   MFEM_ASSERT(A->Width() == x.Size() && A->Height() == b.Size(),
               "Size mismatch for FgmresSolver::Mult!");
   Initialize();
+  std::vector<ScalarType> H((max_dim + 1) * max_dim);
+  std::vector<ScalarType> s(max_dim + 1), sn(max_dim + 1);
+  std::vector<RealType> cs(max_dim + 1);
 
   // Begin iterations.
   converged = false;

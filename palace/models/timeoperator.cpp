@@ -11,6 +11,7 @@
 #include "models/spaceoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
+#include "utils/workspace.hpp"
 
 namespace palace
 {
@@ -36,7 +37,6 @@ public:
   double a0_, a1_;
   std::unique_ptr<KspSolver> kspM, kspA;
   std::unique_ptr<Operator> A, B;
-  mutable Vector RHS;
 
   // Bindings to SpaceOperator functions to get the system matrix and preconditioner, and
   // construct the linear solver.
@@ -60,8 +60,6 @@ public:
     // Set up RHS vector for the current source term: -g'(t) J, where g(t) handles the time
     // dependence.
     spaceop.GetExcitationVector(NegJ);
-    RHS.SetSize(NegJ.Size());
-    RHS.UseDevice(true);
 
     // Set up linear solvers.
     {
@@ -115,6 +113,7 @@ public:
       // Operators have already been set in constructor.
       ddu = 0.0;
     }
+    auto RHS = workspace::NewVector<Vector>(NegJ.Size());
     FormRHS(u, du, RHS);
     kspM->Mult(RHS, ddu);
   }
@@ -135,6 +134,7 @@ public:
       k = 0.0;
     }
     Mpi::Print("\n");
+    auto RHS = workspace::NewVector<Vector>(NegJ.Size());
     FormRHS(u, du, RHS);
     kspA->Mult(RHS, k);
   }

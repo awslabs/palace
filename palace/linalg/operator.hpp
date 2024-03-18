@@ -10,6 +10,7 @@
 #include <utility>
 #include <vector>
 #include "linalg/vector.hpp"
+#include "utils/workspace.hpp"
 
 namespace palace
 {
@@ -77,9 +78,6 @@ private:
   std::unique_ptr<Operator> data_Ar, data_Ai;
   const Operator *Ar, *Ai;
 
-  // Temporary storage for operator application.
-  mutable ComplexVector tx, ty;
-
   ComplexWrapperOperator(std::unique_ptr<Operator> &&dAr, std::unique_ptr<Operator> &&dAi,
                          const Operator *pAr, const Operator *pAi);
 
@@ -117,11 +115,9 @@ class SumOperator : public Operator
 {
 private:
   std::vector<std::pair<const Operator *, double>> ops;
-  mutable Vector z;
 
 public:
-  SumOperator(int s) : Operator(s) { z.UseDevice(true); }
-  SumOperator(int h, int w) : Operator(h, w) { z.UseDevice(true); }
+  SumOperator(int h, int w) : Operator(h, w) {}
   SumOperator(const Operator &op, double a = 1.0);
 
   void AddOperator(const Operator &op, double a = 1.0);
@@ -159,7 +155,7 @@ public:
   {
     const ComplexOperator &A = static_cast<const ProductOperator *>(this)->A;
     const ComplexOperator &B = static_cast<const ProductOperator *>(this)->B;
-    ComplexVector &z = static_cast<const ProductOperator *>(this)->z;
+    auto z = workspace::NewVector<ComplexVector>(A.Width());
     A.MultHermitianTranspose(x, z);
     B.MultHermitianTranspose(z, y);
   }
@@ -169,7 +165,7 @@ public:
   {
     const ComplexOperator &A = static_cast<const ProductOperator *>(this)->A;
     const ComplexOperator &B = static_cast<const ProductOperator *>(this)->B;
-    ComplexVector &z = static_cast<const ProductOperator *>(this)->z;
+    auto z = workspace::NewVector<ComplexVector>(A.Width());
     A.MultHermitianTranspose(x, z);
     B.AddMultHermitianTranspose(z, y, a);
   }
@@ -189,30 +185,31 @@ class BaseProductOperator
 
 private:
   const OperType &A, &B;
-  mutable VecType z;
 
 public:
   BaseProductOperator(const OperType &A, const OperType &B)
     : ProductOperatorHelper<BaseProductOperator<OperType>, OperType>(A.Height(), B.Width()),
-      A(A), B(B), z(B.Height())
+      A(A), B(B)
   {
-    z.UseDevice(true);
   }
 
   void Mult(const VecType &x, VecType &y) const override
   {
+    auto z = workspace::NewVector<VecType>(B.Height());
     B.Mult(x, z);
     A.Mult(z, y);
   }
 
   void MultTranspose(const VecType &x, VecType &y) const override
   {
+    auto z = workspace::NewVector<VecType>(A.Width());
     A.MultTranspose(x, z);
     B.MultTranspose(z, y);
   }
 
   void AddMult(const VecType &x, VecType &y, const ScalarType a = 1.0) const override
   {
+    auto z = workspace::NewVector<VecType>(A.Width());
     B.Mult(x, z);
     A.AddMult(z, y, a);
   }
@@ -220,6 +217,7 @@ public:
   void AddMultTranspose(const VecType &x, VecType &y,
                         const ScalarType a = 1.0) const override
   {
+    auto z = workspace::NewVector<VecType>(A.Width());
     A.MultTranspose(x, z);
     B.AddMultTranspose(z, y, a);
   }

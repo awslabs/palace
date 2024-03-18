@@ -38,9 +38,6 @@ private:
   // Linear solver and preconditioner for the projected linear system.
   std::unique_ptr<BaseKspSolver<OperType>> ksp;
 
-  // Workspace object for solver application.
-  mutable VecType rhs;
-
 public:
   FluxProjector(const MaterialOperator &mat_op, const FiniteElementSpace &nd_fespace,
                 double tol, int max_it, int print);
@@ -63,9 +60,6 @@ class CurlFluxErrorEstimator
 
   // Global L2 projection solver.
   FluxProjector<VecType> projector;
-
-  // Temporary vectors for error estimation.
-  mutable VecType F, F_gf, U_gf;
 
 public:
   CurlFluxErrorEstimator(const MaterialOperator &mat_op, FiniteElementSpace &nd_fespace,
@@ -92,9 +86,6 @@ class GradFluxErrorEstimator
 
   // Global L2 projection solver.
   FluxProjector<Vector> projector;
-
-  // Temporary vectors for error estimation.
-  mutable Vector F, F_gf, U_gf;
 
 public:
   GradFluxErrorEstimator(const MaterialOperator &mat_op, FiniteElementSpace &rt_fespace,

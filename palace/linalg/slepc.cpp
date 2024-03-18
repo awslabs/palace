@@ -11,6 +11,7 @@
 #include <mfem.hpp>
 #include "linalg/divfree.hpp"
 #include "utils/communication.hpp"
+#include "utils/workspace.hpp"
 
 static PetscErrorCode __mat_apply_EPS_A0(Mat, Vec, Vec);
 static PetscErrorCode __mat_apply_EPS_A1(Mat, Vec, Vec);
@@ -136,22 +137,20 @@ inline VecType PetscVecType()
   return VECSTANDARD;
 }
 
-struct MatShellContext
-{
-  const ComplexOperator &A;
-  ComplexVector &x, &y;
-};
-
 PetscErrorCode __mat_apply_shell(Mat A, Vec x, Vec y)
 {
   PetscFunctionBeginUser;
-  MatShellContext *ctx;
+  ComplexOperator *ctx;
   PetscCall(MatShellGetContext(A, (void **)&ctx));
   MFEM_VERIFY(ctx, "Invalid PETSc shell matrix context for SLEPc!");
 
-  PetscCall(FromPetscVec(x, ctx->x));
-  ctx->A.Mult(ctx->x, ctx->y);
-  PetscCall(ToPetscVec(ctx->y, y));
+  PetscInt m, n;
+  PalacePetscCall(MatGetLocalSize(A, &m, &n));
+  auto x1 = workspace::NewVector<ComplexVector>(n);
+  auto y1 = workspace::NewVector<ComplexVector>(m);
+  PetscCall(FromPetscVec(x, x1));
+  ctx->Mult(x1, y1);
+  PetscCall(ToPetscVec(y1, y));
 
   PetscFunctionReturn(PETSC_SUCCESS);
 }
@@ -159,13 +158,17 @@ PetscErrorCode __mat_apply_shell(Mat A, Vec x, Vec y)
 PetscErrorCode __mat_apply_transpose_shell(Mat A, Vec x, Vec y)
 {
   PetscFunctionBeginUser;
-  MatShellContext *ctx;
+  ComplexOperator *ctx;
   PetscCall(MatShellGetContext(A, (void **)&ctx));
   MFEM_VERIFY(ctx, "Invalid PETSc shell matrix context for SLEPc!");
 
-  PetscCall(FromPetscVec(x, ctx->x));
-  ctx->A.MultTranspose(ctx->x, ctx->y);
-  PetscCall(ToPetscVec(ctx->y, y));
+  PetscInt m, n;
+  PalacePetscCall(MatGetLocalSize(A, &m, &n));
+  auto x1 = workspace::NewVector<ComplexVector>(m);
+  auto y1 = workspace::NewVector<ComplexVector>(n);
+  PetscCall(FromPetscVec(x, x1));
+  ctx->MultTranspose(x1, y1);
+  PetscCall(ToPetscVec(y1, y));
 
   PetscFunctionReturn(PETSC_SUCCESS);
 }
@@ -173,13 +176,17 @@ PetscErrorCode __mat_apply_transpose_shell(Mat A, Vec x, Vec y)
 PetscErrorCode __mat_apply_hermitian_transpose_shell(Mat A, Vec x, Vec y)
 {
   PetscFunctionBeginUser;
-  MatShellContext *ctx;
+  ComplexOperator *ctx;
   PetscCall(MatShellGetContext(A, (void **)&ctx));
   MFEM_VERIFY(ctx, "Invalid PETSc shell matrix context for SLEPc!");
 
-  PetscCall(FromPetscVec(x, ctx->x));
-  ctx->A.MultHermitianTranspose(ctx->x, ctx->y);
-  PetscCall(ToPetscVec(ctx->y, y));
+  PetscInt m, n;
+  PalacePetscCall(MatGetLocalSize(A, &m, &n));
+  auto x1 = workspace::NewVector<ComplexVector>(m);
+  auto y1 = workspace::NewVector<ComplexVector>(n);
+  PetscCall(FromPetscVec(x, x1));
+  ctx->MultHermitianTranspose(x1, y1);
+  PetscCall(ToPetscVec(y1, y));
 
   PetscFunctionReturn(PETSC_SUCCESS);
 };
@@ -240,14 +247,9 @@ PetscReal GetMaxSingularValue(MPI_Comm comm, const ComplexOperator &A, bool herm
   // or SVD solvers, namely MATOP_MULT and MATOP_MULT_HERMITIAN_TRANSPOSE (if the matrix
   // is not Hermitian).
   MFEM_VERIFY(A.Height() == A.Width(), "Spectral norm requires a square matrix!");
-  const PetscInt n = A.Height();
-  ComplexVector x(n), y(n);
-  x.UseDevice(true);
-  y.UseDevice(true);
-  MatShellContext ctx = {A, x, y};
   Mat A0;
-  PalacePetscCall(
-      MatCreateShell(comm, n, n, PETSC_DECIDE, PETSC_DECIDE, (void *)&ctx, &A0));
+  const PetscInt n = A.Height();
+  PalacePetscCall(MatCreateShell(comm, n, n, PETSC_DECIDE, PETSC_DECIDE, (void *)&A, &A0));
   PalacePetscCall(MatShellSetOperation(A0, MATOP_MULT, (void (*)(void))__mat_apply_shell));
   PalacePetscCall(MatShellSetVecType(A0, PetscVecType()));
   if (herm)
@@ -486,15 +488,16 @@ PetscReal SlepcEigenvalueSolver::GetError(int i, EigenvalueSolver::ErrorType typ
 
 void SlepcEigenvalueSolver::RescaleEigenvectors(int num_eig)
 {
+  auto x = workspace::NewVector<ComplexVector>(Size());
+  auto r = workspace::NewVector<ComplexVector>(Size());
   res = std::make_unique<PetscReal[]>(num_eig);
   xscale = std::make_unique<PetscReal[]>(num_eig);
   for (int i = 0; i < num_eig; i++)
   {
     xscale.get()[i] = 0.0;
-    GetEigenvector(i, x1);
-    xscale.get()[i] = 1.0 / GetEigenvectorNorm(x1, y1);
-    res.get()[i] =
-        GetResidualNorm(GetEigenvalue(i), x1, y1) / linalg::Norml2(GetComm(), x1);
+    GetEigenvector(i, x);
+    xscale.get()[i] = 1.0 / GetEigenvectorNorm(x, r);
+    res.get()[i] = GetResidualNorm(GetEigenvalue(i), x, r) / linalg::Norml2(GetComm(), x);
   }
 }
 
@@ -715,6 +718,17 @@ void SlepcEPSSolverBase::GetEigenvector(int i, ComplexVector &x) const
   }
 }
 
+PetscInt SlepcEPSSolverBase::Size() const
+{
+  if (!A0)
+  {
+    return 0;
+  }
+  PetscInt n;
+  PalacePetscCall(MatGetLocalSize(A0, &n, nullptr));
+  return n;
+}
+
 BV SlepcEPSSolverBase::GetBV() const
 {
   BV bv;
@@ -785,10 +799,6 @@ void SlepcEPSSolver::SetOperators(const ComplexOperator &K, const ComplexOperato
   {
     PalacePetscCall(MatCreateVecs(A0, nullptr, &v0));
   }
-  x1.SetSize(opK->Height());
-  y1.SetSize(opK->Height());
-  x1.UseDevice(true);
-  y1.UseDevice(true);
 
   // Configure linear solver for generalized problem or spectral transformation. This also
   // allows use of the divergence-free projector as a linear solve side-effect.
@@ -890,14 +900,6 @@ void SlepcPEPLinearSolver::SetOperators(const ComplexOperator &K, const ComplexO
   {
     PalacePetscCall(MatCreateVecs(A0, nullptr, &v0));
   }
-  x1.SetSize(opK->Height());
-  x2.SetSize(opK->Height());
-  y1.SetSize(opK->Height());
-  y2.SetSize(opK->Height());
-  x1.UseDevice(true);
-  x2.UseDevice(true);
-  y1.UseDevice(true);
-  y2.UseDevice(true);
 
   // Configure linear solver.
   if (first)
@@ -948,6 +950,17 @@ void SlepcPEPLinearSolver::GetEigenvector(int i, ComplexVector &x) const
   {
     x *= xscale.get()[i];
   }
+}
+
+PetscInt SlepcPEPLinearSolver::Size() const
+{
+  if (!A0)
+  {
+    return 0;
+  }
+  PetscInt n;
+  PalacePetscCall(MatGetLocalSize(A0, &n, nullptr));
+  return n / 2;
 }
 
 PetscReal SlepcPEPLinearSolver::GetResidualNorm(PetscScalar l, const ComplexVector &x,
@@ -1193,6 +1206,17 @@ void SlepcPEPSolverBase::GetEigenvector(int i, ComplexVector &x) const
   }
 }
 
+PetscInt SlepcPEPSolverBase::Size() const
+{
+  if (!A0)
+  {
+    return 0;
+  }
+  PetscInt n;
+  PalacePetscCall(MatGetLocalSize(A0, &n, nullptr));
+  return n;
+}
+
 BV SlepcPEPSolverBase::GetBV() const
 {
   BV bv;
@@ -1273,8 +1297,6 @@ void SlepcPEPSolver::SetOperators(const ComplexOperator &K, const ComplexOperato
   {
     PalacePetscCall(MatCreateVecs(A0, nullptr, &v0));
   }
-  x1.SetSize(opK->Height());
-  y1.SetSize(opK->Height());
 
   // Configure linear solver.
   if (first)
@@ -1337,10 +1359,13 @@ PetscErrorCode __mat_apply_EPS_A0(Mat A, Vec x, Vec y)
   PetscCall(MatShellGetContext(A, (void **)&ctx));
   MFEM_VERIFY(ctx, "Invalid PETSc shell matrix context for SLEPc!");
 
-  PetscCall(FromPetscVec(x, ctx->x1));
-  ctx->opK->Mult(ctx->x1, ctx->y1);
-  ctx->y1 *= ctx->delta;
-  PetscCall(ToPetscVec(ctx->y1, y));
+  const auto n = ctx->Size();
+  auto x1 = palace::workspace::NewVector<palace::ComplexVector>(n);
+  auto y1 = palace::workspace::NewVector<palace::ComplexVector>(n);
+  PetscCall(FromPetscVec(x, x1));
+  ctx->opK->Mult(x1, y1);
+  y1 *= ctx->delta;
+  PetscCall(ToPetscVec(y1, y));
 
   PetscFunctionReturn(PETSC_SUCCESS);
 }
@@ -1352,10 +1377,13 @@ PetscErrorCode __mat_apply_EPS_A1(Mat A, Vec x, Vec y)
   PetscCall(MatShellGetContext(A, (void **)&ctx));
   MFEM_VERIFY(ctx, "Invalid PETSc shell matrix context for SLEPc!");
 
-  PetscCall(FromPetscVec(x, ctx->x1));
-  ctx->opM->Mult(ctx->x1, ctx->y1);
-  ctx->y1 *= ctx->delta * ctx->gamma;
-  PetscCall(ToPetscVec(ctx->y1, y));
+  const auto n = ctx->Size();
+  auto x1 = palace::workspace::NewVector<palace::ComplexVector>(n);
+  auto y1 = palace::workspace::NewVector<palace::ComplexVector>(n);
+  PetscCall(FromPetscVec(x, x1));
+  ctx->opM->Mult(x1, y1);
+  y1 *= ctx->delta * ctx->gamma;
+  PetscCall(ToPetscVec(y1, y));
 
   PetscFunctionReturn(PETSC_SUCCESS);
 }
@@ -1367,11 +1395,14 @@ PetscErrorCode __mat_apply_EPS_B(Mat A, Vec x, Vec y)
   PetscCall(MatShellGetContext(A, (void **)&ctx));
   MFEM_VERIFY(ctx, "Invalid PETSc shell matrix context for SLEPc!");
 
-  PetscCall(FromPetscVec(x, ctx->x1));
-  ctx->opB->Mult(ctx->x1.Real(), ctx->y1.Real());
-  ctx->opB->Mult(ctx->x1.Imag(), ctx->y1.Imag());
-  ctx->y1 *= ctx->delta * ctx->gamma;
-  PetscCall(ToPetscVec(ctx->y1, y));
+  const auto n = ctx->Size();
+  auto x1 = palace::workspace::NewVector<palace::ComplexVector>(n);
+  auto y1 = palace::workspace::NewVector<palace::ComplexVector>(n);
+  PetscCall(FromPetscVec(x, x1));
+  ctx->opB->Mult(x1.Real(), y1.Real());
+  ctx->opB->Mult(x1.Imag(), y1.Imag());
+  y1 *= ctx->delta * ctx->gamma;
+  PetscCall(ToPetscVec(y1, y));
 
   PetscFunctionReturn(PETSC_SUCCESS);
 }
@@ -1386,23 +1417,26 @@ PetscErrorCode __pc_apply_EPS(PC pc, Vec x, Vec y)
   PetscCall(PCShellGetContext(pc, (void **)&ctx));
   MFEM_VERIFY(ctx, "Invalid PETSc shell PC context for SLEPc!");
 
-  PetscCall(FromPetscVec(x, ctx->x1));
-  ctx->opInv->Mult(ctx->x1, ctx->y1);
+  const auto n = ctx->Size();
+  auto x1 = palace::workspace::NewVector<palace::ComplexVector>(n);
+  auto y1 = palace::workspace::NewVector<palace::ComplexVector>(n);
+  PetscCall(FromPetscVec(x, x1));
+  ctx->opInv->Mult(x1, y1);
   if (!ctx->sinvert)
   {
-    ctx->y1 *= 1.0 / (ctx->delta * ctx->gamma);
+    y1 *= 1.0 / (ctx->delta * ctx->gamma);
   }
   else
   {
-    ctx->y1 *= 1.0 / ctx->delta;
+    y1 *= 1.0 / ctx->delta;
   }
   if (ctx->opProj)
   {
-    // Mpi::Print(" Before projection: {:e}\n", linalg::Norml2(ctx->GetComm(), ctx->y1));
-    ctx->opProj->Mult(ctx->y1);
-    // Mpi::Print(" After projection: {:e}\n", linalg::Norml2(ctx->GetComm(), ctx->y1));
+    // Mpi::Print(" Before projection: {:e}\n", linalg::Norml2(ctx->GetComm(), y1));
+    ctx->opProj->Mult(y1);
+    // Mpi::Print(" After projection: {:e}\n", linalg::Norml2(ctx->GetComm(), y1));
   }
-  PetscCall(ToPetscVec(ctx->y1, y));
+  PetscCall(ToPetscVec(y1, y));
 
   PetscFunctionReturn(PETSC_SUCCESS);
 }
@@ -1416,13 +1450,18 @@ PetscErrorCode __mat_apply_PEPLinear_L0(Mat A, Vec x, Vec y)
   PetscCall(MatShellGetContext(A, (void **)&ctx));
   MFEM_VERIFY(ctx, "Invalid PETSc shell matrix context for SLEPc!");
 
-  PetscCall(FromPetscVec(x, ctx->x1, ctx->x2));
-  ctx->y1 = ctx->x2;
-  ctx->opC->Mult(ctx->x2, ctx->y2);
-  ctx->y2 *= ctx->gamma;
-  ctx->opK->AddMult(ctx->x1, ctx->y2, std::complex<double>(1.0, 0.0));
-  ctx->y2 *= -ctx->delta;
-  PetscCall(ToPetscVec(ctx->y1, ctx->y2, y));
+  const auto n = ctx->Size();
+  auto x1 = palace::workspace::NewVector<palace::ComplexVector>(n);
+  auto x2 = palace::workspace::NewVector<palace::ComplexVector>(n);
+  auto y1 = palace::workspace::NewVector<palace::ComplexVector>(n);
+  auto y2 = palace::workspace::NewVector<palace::ComplexVector>(n);
+  PetscCall(FromPetscVec(x, x1, x2));
+  y1 = x2;
+  ctx->opC->Mult(x2, y2);
+  y2 *= ctx->gamma;
+  ctx->opK->AddMult(x1, y2, std::complex<double>(1.0, 0.0));
+  y2 *= -ctx->delta;
+  PetscCall(ToPetscVec(y1, y2, y));
 
   PetscFunctionReturn(PETSC_SUCCESS);
 }
@@ -1436,11 +1475,16 @@ PetscErrorCode __mat_apply_PEPLinear_L1(Mat A, Vec x, Vec y)
   PetscCall(MatShellGetContext(A, (void **)&ctx));
   MFEM_VERIFY(ctx, "Invalid PETSc shell matrix context for SLEPc!");
 
-  PetscCall(FromPetscVec(x, ctx->x1, ctx->x2));
-  ctx->y1 = ctx->x1;
-  ctx->opM->Mult(ctx->x2, ctx->y2);
-  ctx->y2 *= ctx->delta * ctx->gamma * ctx->gamma;
-  PetscCall(ToPetscVec(ctx->y1, ctx->y2, y));
+  const auto n = ctx->Size();
+  auto x1 = palace::workspace::NewVector<palace::ComplexVector>(n);
+  auto x2 = palace::workspace::NewVector<palace::ComplexVector>(n);
+  auto y1 = palace::workspace::NewVector<palace::ComplexVector>(n);
+  auto y2 = palace::workspace::NewVector<palace::ComplexVector>(n);
+  PetscCall(FromPetscVec(x, x1, x2));
+  y1 = x1;
+  ctx->opM->Mult(x2, y2);
+  y2 *= ctx->delta * ctx->gamma * ctx->gamma;
+  PetscCall(ToPetscVec(y1, y2, y));
 
   PetscFunctionReturn(PETSC_SUCCESS);
 }
@@ -1452,14 +1496,19 @@ PetscErrorCode __mat_apply_PEPLinear_B(Mat A, Vec x, Vec y)
   PetscCall(MatShellGetContext(A, (void **)&ctx));
   MFEM_VERIFY(ctx, "Invalid PETSc shell matrix context for SLEPc!");
 
-  PetscCall(FromPetscVec(x, ctx->x1, ctx->x2));
-  ctx->opB->Mult(ctx->x1.Real(), ctx->y1.Real());
-  ctx->opB->Mult(ctx->x1.Imag(), ctx->y1.Imag());
-  ctx->opB->Mult(ctx->x2.Real(), ctx->y2.Real());
-  ctx->opB->Mult(ctx->x2.Imag(), ctx->y2.Imag());
-  ctx->y1 *= ctx->delta * ctx->gamma * ctx->gamma;
-  ctx->y2 *= ctx->delta * ctx->gamma * ctx->gamma;
-  PetscCall(ToPetscVec(ctx->y1, ctx->y2, y));
+  const auto n = ctx->Size();
+  auto x1 = palace::workspace::NewVector<palace::ComplexVector>(n);
+  auto x2 = palace::workspace::NewVector<palace::ComplexVector>(n);
+  auto y1 = palace::workspace::NewVector<palace::ComplexVector>(n);
+  auto y2 = palace::workspace::NewVector<palace::ComplexVector>(n);
+  PetscCall(FromPetscVec(x, x1, x2));
+  ctx->opB->Mult(x1.Real(), y1.Real());
+  ctx->opB->Mult(x1.Imag(), y1.Imag());
+  ctx->opB->Mult(x2.Real(), y2.Real());
+  ctx->opB->Mult(x2.Imag(), y2.Imag());
+  y1 *= ctx->delta * ctx->gamma * ctx->gamma;
+  y2 *= ctx->delta * ctx->gamma * ctx->gamma;
+  PetscCall(ToPetscVec(y1, y2, y));
 
   PetscFunctionReturn(PETSC_SUCCESS);
 }
@@ -1477,48 +1526,52 @@ PetscErrorCode __pc_apply_PEPLinear(PC pc, Vec x, Vec y)
   PetscCall(PCShellGetContext(pc, (void **)&ctx));
   MFEM_VERIFY(ctx, "Invalid PETSc shell PC context for SLEPc!");
 
-  PetscCall(FromPetscVec(x, ctx->x1, ctx->x2));
+  const auto n = ctx->Size();
+  auto x1 = palace::workspace::NewVector<palace::ComplexVector>(n);
+  auto x2 = palace::workspace::NewVector<palace::ComplexVector>(n);
+  auto y1 = palace::workspace::NewVector<palace::ComplexVector>(n);
+  auto y2 = palace::workspace::NewVector<palace::ComplexVector>(n);
+  PetscCall(FromPetscVec(x, x1, x2));
   if (!ctx->sinvert)
   {
-    ctx->y1 = ctx->x1;
+    y1 = x1;
     if (ctx->opProj)
     {
-      // Mpi::Print(" Before projection: {:e}\n", linalg::Norml2(ctx->GetComm(), ctx->y1));
-      ctx->opProj->Mult(ctx->y1);
-      // Mpi::Print(" Before projection: {:e}\n", linalg::Norml2(ctx->GetComm(), ctx->y1));
+      // Mpi::Print(" Before projection: {:e}\n", linalg::Norml2(ctx->GetComm(), y1));
+      ctx->opProj->Mult(y1);
+      // Mpi::Print(" Before projection: {:e}\n", linalg::Norml2(ctx->GetComm(), y1));
     }
 
-    ctx->opInv->Mult(ctx->x2, ctx->y2);
-    ctx->y2 *= 1.0 / (ctx->delta * ctx->gamma * ctx->gamma);
+    ctx->opInv->Mult(x2, y2);
+    y2 *= 1.0 / (ctx->delta * ctx->gamma * ctx->gamma);
     if (ctx->opProj)
     {
-      // Mpi::Print(" Before projection: {:e}\n", linalg::Norml2(ctx->GetComm(), ctx->y2));
-      ctx->opProj->Mult(ctx->y2);
-      // Mpi::Print(" Before projection: {:e}\n", linalg::Norml2(ctx->GetComm(), ctx->y2));
+      // Mpi::Print(" Before projection: {:e}\n", linalg::Norml2(ctx->GetComm(), y2));
+      ctx->opProj->Mult(y2);
+      // Mpi::Print(" Before projection: {:e}\n", linalg::Norml2(ctx->GetComm(), y2));
     }
   }
   else
   {
-    ctx->y1.AXPBY(-ctx->sigma / (ctx->delta * ctx->gamma), ctx->x2, 0.0);  // Temporarily
-    ctx->opK->AddMult(ctx->x1, ctx->y1, std::complex<double>(1.0, 0.0));
-    ctx->opInv->Mult(ctx->y1, ctx->y2);
+    y1.AXPBY(-ctx->sigma / (ctx->delta * ctx->gamma), x2, 0.0);  // Temporarily
+    ctx->opK->AddMult(x1, y1, std::complex<double>(1.0, 0.0));
+    ctx->opInv->Mult(y1, y2);
     if (ctx->opProj)
     {
-      // Mpi::Print(" Before projection: {:e}\n", linalg::Norml2(ctx->GetComm(), ctx->y2));
-      ctx->opProj->Mult(ctx->y2);
-      // Mpi::Print(" Before projection: {:e}\n", linalg::Norml2(ctx->GetComm(), ctx->y2));
+      // Mpi::Print(" Before projection: {:e}\n", linalg::Norml2(ctx->GetComm(), y2));
+      ctx->opProj->Mult(y2);
+      // Mpi::Print(" Before projection: {:e}\n", linalg::Norml2(ctx->GetComm(), y2));
     }
 
-    ctx->y1.AXPBYPCZ(ctx->gamma / ctx->sigma, ctx->y2, -ctx->gamma / ctx->sigma, ctx->x1,
-                     0.0);
+    y1.AXPBYPCZ(ctx->gamma / ctx->sigma, y2, -ctx->gamma / ctx->sigma, x1, 0.0);
     if (ctx->opProj)
     {
-      // Mpi::Print(" Before projection: {:e}\n", linalg::Norml2(ctx->GetComm(), ctx->y1));
-      ctx->opProj->Mult(ctx->y1);
-      // Mpi::Print(" Before projection: {:e}\n", linalg::Norml2(ctx->GetComm(), ctx->y1));
+      // Mpi::Print(" Before projection: {:e}\n", linalg::Norml2(ctx->GetComm(), y1));
+      ctx->opProj->Mult(y1);
+      // Mpi::Print(" Before projection: {:e}\n", linalg::Norml2(ctx->GetComm(), y1));
     }
   }
-  PetscCall(ToPetscVec(ctx->y1, ctx->y2, y));
+  PetscCall(ToPetscVec(y1, y2, y));
 
   PetscFunctionReturn(PETSC_SUCCESS);
 }
@@ -1530,9 +1583,12 @@ PetscErrorCode __mat_apply_PEP_A0(Mat A, Vec x, Vec y)
   PetscCall(MatShellGetContext(A, (void **)&ctx));
   MFEM_VERIFY(ctx, "Invalid PETSc shell matrix context for SLEPc!");
 
-  PetscCall(FromPetscVec(x, ctx->x1));
-  ctx->opK->Mult(ctx->x1, ctx->y1);
-  PetscCall(ToPetscVec(ctx->y1, y));
+  const auto n = ctx->Size();
+  auto x1 = palace::workspace::NewVector<palace::ComplexVector>(n);
+  auto y1 = palace::workspace::NewVector<palace::ComplexVector>(n);
+  PetscCall(FromPetscVec(x, x1));
+  ctx->opK->Mult(x1, y1);
+  PetscCall(ToPetscVec(y1, y));
 
   PetscFunctionReturn(PETSC_SUCCESS);
 }
@@ -1544,9 +1600,12 @@ PetscErrorCode __mat_apply_PEP_A1(Mat A, Vec x, Vec y)
   PetscCall(MatShellGetContext(A, (void **)&ctx));
   MFEM_VERIFY(ctx, "Invalid PETSc shell matrix context for SLEPc!");
 
-  PetscCall(FromPetscVec(x, ctx->x1));
-  ctx->opC->Mult(ctx->x1, ctx->y1);
-  PetscCall(ToPetscVec(ctx->y1, y));
+  const auto n = ctx->Size();
+  auto x1 = palace::workspace::NewVector<palace::ComplexVector>(n);
+  auto y1 = palace::workspace::NewVector<palace::ComplexVector>(n);
+  PetscCall(FromPetscVec(x, x1));
+  ctx->opC->Mult(x1, y1);
+  PetscCall(ToPetscVec(y1, y));
 
   PetscFunctionReturn(PETSC_SUCCESS);
 }
@@ -1558,9 +1617,12 @@ PetscErrorCode __mat_apply_PEP_A2(Mat A, Vec x, Vec y)
   PetscCall(MatShellGetContext(A, (void **)&ctx));
   MFEM_VERIFY(ctx, "Invalid PETSc shell matrix context for SLEPc!");
 
-  PetscCall(FromPetscVec(x, ctx->x1));
-  ctx->opM->Mult(ctx->x1, ctx->y1);
-  PetscCall(ToPetscVec(ctx->y1, y));
+  const auto n = ctx->Size();
+  auto x1 = palace::workspace::NewVector<palace::ComplexVector>(n);
+  auto y1 = palace::workspace::NewVector<palace::ComplexVector>(n);
+  PetscCall(FromPetscVec(x, x1));
+  ctx->opM->Mult(x1, y1);
+  PetscCall(ToPetscVec(y1, y));
 
   PetscFunctionReturn(PETSC_SUCCESS);
 }
@@ -1572,11 +1634,14 @@ PetscErrorCode __mat_apply_PEP_B(Mat A, Vec x, Vec y)
   PetscCall(MatShellGetContext(A, (void **)&ctx));
   MFEM_VERIFY(ctx, "Invalid PETSc shell matrix context for SLEPc!");
 
-  PetscCall(FromPetscVec(x, ctx->x1));
-  ctx->opB->Mult(ctx->x1.Real(), ctx->y1.Real());
-  ctx->opB->Mult(ctx->x1.Imag(), ctx->y1.Imag());
-  ctx->y1 *= ctx->delta * ctx->gamma;
-  PetscCall(ToPetscVec(ctx->y1, y));
+  const auto n = ctx->Size();
+  auto x1 = palace::workspace::NewVector<palace::ComplexVector>(n);
+  auto y1 = palace::workspace::NewVector<palace::ComplexVector>(n);
+  PetscCall(FromPetscVec(x, x1));
+  ctx->opB->Mult(x1.Real(), y1.Real());
+  ctx->opB->Mult(x1.Imag(), y1.Imag());
+  y1 *= ctx->delta * ctx->gamma;
+  PetscCall(ToPetscVec(y1, y));
 
   PetscFunctionReturn(PETSC_SUCCESS);
 }
@@ -1591,23 +1656,26 @@ PetscErrorCode __pc_apply_PEP(PC pc, Vec x, Vec y)
   PetscCall(PCShellGetContext(pc, (void **)&ctx));
   MFEM_VERIFY(ctx, "Invalid PETSc shell PC context for SLEPc!");
 
-  PetscCall(FromPetscVec(x, ctx->x1));
-  ctx->opInv->Mult(ctx->x1, ctx->y1);
+  const auto n = ctx->Size();
+  auto x1 = palace::workspace::NewVector<palace::ComplexVector>(n);
+  auto y1 = palace::workspace::NewVector<palace::ComplexVector>(n);
+  PetscCall(FromPetscVec(x, x1));
+  ctx->opInv->Mult(x1, y1);
   if (!ctx->sinvert)
   {
-    ctx->y1 *= 1.0 / (ctx->delta * ctx->gamma * ctx->gamma);
+    y1 *= 1.0 / (ctx->delta * ctx->gamma * ctx->gamma);
   }
   else
   {
-    ctx->y1 *= 1.0 / ctx->delta;
+    y1 *= 1.0 / ctx->delta;
   }
   if (ctx->opProj)
   {
-    // Mpi::Print(" Before projection: {:e}\n", linalg::Norml2(ctx->GetComm(), ctx->y1));
-    ctx->opProj->Mult(ctx->y1);
-    // Mpi::Print(" After projection: {:e}\n", linalg::Norml2(ctx->GetComm(), ctx->y1));
+    // Mpi::Print(" Before projection: {:e}\n", linalg::Norml2(ctx->GetComm(), y1));
+    ctx->opProj->Mult(y1);
+    // Mpi::Print(" After projection: {:e}\n", linalg::Norml2(ctx->GetComm(), y1));
   }
-  PetscCall(ToPetscVec(ctx->y1, y));
+  PetscCall(ToPetscVec(y1, y));
 
   PetscFunctionReturn(PETSC_SUCCESS);
 }

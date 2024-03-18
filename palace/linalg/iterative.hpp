@@ -133,9 +133,6 @@ protected:
   using IterativeSolver<OperType>::final_res;
   using IterativeSolver<OperType>::final_it;
 
-  // Temporary workspace for solve.
-  mutable VecType r, z, p;
-
 public:
   CgSolver(MPI_Comm comm, int print) : IterativeSolver<OperType>(comm, print) {}
 
@@ -183,9 +180,6 @@ protected:
   using IterativeSolver<OperType>::final_res;
   using IterativeSolver<OperType>::final_it;
 
-  // Maximum subspace dimension for restarted GMRES.
-  mutable int max_dim;
-
   // Orthogonalization method for orthonormalizing a newly computed vector against a basis
   // at each iteration.
   OrthogType orthog_type;
@@ -193,12 +187,11 @@ protected:
   // Use left or right preconditioning.
   PrecSide pc_side;
 
+  // Maximum subspace dimension for restarted GMRES.
+  mutable int max_dim;
+
   // Temporary workspace for solve.
   mutable std::vector<VecType> V;
-  mutable VecType r;
-  mutable std::vector<ScalarType> H;
-  mutable std::vector<ScalarType> s, sn;
-  mutable std::vector<RealType> cs;
 
   // Allocate storage for solve.
   virtual void Initialize() const;
@@ -206,19 +199,19 @@ protected:
 
 public:
   GmresSolver(MPI_Comm comm, int print)
-    : IterativeSolver<OperType>(comm, print), max_dim(-1), orthog_type(OrthogType::MGS),
-      pc_side(PrecSide::LEFT)
+    : IterativeSolver<OperType>(comm, print), orthog_type(OrthogType::MGS),
+      pc_side(PrecSide::LEFT), max_dim(-1)
   {
   }
-
-  // Set the dimension for restart.
-  void SetRestartDim(int dim) { max_dim = dim; }
 
   // Set the orthogonalization method.
   void SetOrthogonalization(OrthogType type) { orthog_type = type; }
 
   // Set the side for preconditioning.
   virtual void SetPrecSide(PrecSide side) { pc_side = side; }
+
+  // Set the dimension for restart.
+  void SetRestartDim(int dim) { max_dim = dim; }
 
   void Mult(const VecType &b, VecType &x) const override;
 };
@@ -254,14 +247,10 @@ protected:
   using GmresSolver<OperType>::final_res;
   using GmresSolver<OperType>::final_it;
 
-  using GmresSolver<OperType>::max_dim;
   using GmresSolver<OperType>::orthog_type;
   using GmresSolver<OperType>::pc_side;
+  using GmresSolver<OperType>::max_dim;
   using GmresSolver<OperType>::V;
-  using GmresSolver<OperType>::H;
-  using GmresSolver<OperType>::s;
-  using GmresSolver<OperType>::sn;
-  using GmresSolver<OperType>::cs;
 
   // Temporary workspace for solve.
   mutable std::vector<VecType> Z;

@@ -8,6 +8,7 @@
 #include "linalg/distrelaxation.hpp"
 #include "linalg/rap.hpp"
 #include "utils/timer.hpp"
+#include "utils/workspace.hpp"
 
 namespace palace
 {
@@ -19,8 +20,7 @@ GeometricMultigridSolver<OperType>::GeometricMultigridSolver(
     int cycle_it, int smooth_it, int cheby_order, double cheby_sf_max, double cheby_sf_min,
     bool cheby_4th_kind)
   : Solver<OperType>(), pc_it(cycle_it), P(P.begin(), P.end()), A(P.size() + 1),
-    dbc_tdof_lists(P.size()), B(P.size() + 1), X(P.size() + 1), Y(P.size() + 1),
-    R(P.size() + 1), use_timer(false)
+    dbc_tdof_lists(P.size()), B(P.size() + 1), use_timer(false)
 {
   // Configure levels of geometric coarsening. Multigrid vectors will be configured at first
   // call to Mult. The multigrid operator size is set based on the finest space dimension.
@@ -109,13 +109,6 @@ void GeometricMultigridSolver<OperType>::SetOperator(const OperType &op)
     {
       B[l]->SetOperator(mg_op->GetOperatorAtLevel(l));
     }
-
-    X[l].SetSize(A[l]->Height());
-    Y[l].SetSize(A[l]->Height());
-    R[l].SetSize(A[l]->Height());
-    X[l].UseDevice(true);
-    Y[l].UseDevice(true);
-    R[l].UseDevice(true);
   }
 
   this->height = op.Height();
@@ -133,26 +126,24 @@ void GeometricMultigridSolver<OperType>::Mult(const VecType &x, VecType &y) cons
               "Single-level geometric multigrid will not work with multiple iterations!");
 
   // Apply V-cycle. The initial guess for y is zero'd at the first pre-smooth iteration.
-  X.back() = x;
   for (int it = 0; it < pc_it; it++)
   {
-    VCycle(n_levels - 1, (it > 0));
+    VCycle(x, y, n_levels - 1, (it > 0));
   }
-  y = Y.back();
 }
 
 namespace
 {
 
-inline void RealMult(const Operator &op, const Vector &x, Vector &y)
+inline void RealAddMult(const Operator &op, const Vector &x, Vector &y)
 {
-  op.Mult(x, y);
+  op.AddMult(x, y, 1.0);
 }
 
-inline void RealMult(const Operator &op, const ComplexVector &x, ComplexVector &y)
+inline void RealAddMult(const Operator &op, const ComplexVector &x, ComplexVector &y)
 {
-  op.Mult(x.Real(), y.Real());
-  op.Mult(x.Imag(), y.Imag());
+  op.AddMult(x.Real(), y.Real(), 1.0);
+  op.AddMult(x.Imag(), y.Imag(), 1.0);
 }
 
 inline void RealMultTranspose(const Operator &op, const Vector &x, Vector &y)
@@ -169,39 +160,44 @@ inline void RealMultTranspose(const Operator &op, const ComplexVector &x, Comple
 }  // namespace
 
 template <typename OperType>
-void GeometricMultigridSolver<OperType>::VCycle(int l, bool initial_guess) const
+void GeometricMultigridSolver<OperType>::VCycle(const VecType &x, VecType &y, int l,
+                                                bool initial_guess) const
 {
-  // Pre-smooth, with zero initial guess (Y = 0 set inside). This is the coarse solve at
+  // Pre-smooth, with zero initial guess (y = 0 set inside). This is the coarse solve at
   // level 0. Important to note that the smoothers must respect the initial guess flag
-  // correctly (given X, Y, compute Y <- Y + B (X - A Y)) .
+  // correctly (given x, y, compute y <- y + B (x - A y)) .
   B[l]->SetInitialGuess(initial_guess);
   if (l == 0)
   {
     BlockTimer bt(Timer::KSP_COARSE_SOLVE, use_timer);
-    B[l]->Mult(X[l], Y[l]);
+    B[l]->Mult(x, y);
     return;
   }
-  B[l]->Mult2(X[l], Y[l], R[l]);
+  B[l]->Mult(x, y);
 
-  // Compute residual.
-  A[l]->Mult(Y[l], R[l]);
-  linalg::AXPBY(1.0, X[l], -1.0, R[l]);
-
-  // Coarse grid correction.
-  RealMultTranspose(*P[l - 1], R[l], X[l - 1]);
-  if (dbc_tdof_lists[l - 1])
   {
-    linalg::SetSubVector(X[l - 1], *dbc_tdof_lists[l - 1], 0.0);
-  }
-  VCycle(l - 1, false);
+    // Compute residual and restrict.
+    auto xr = workspace::NewVector<VecType>(A[l - 1]->Height());
+    {
+      auto r = workspace::NewVector<VecType>(A[l]->Height());
+      A[l]->Mult(y, r);
+      linalg::AXPBY<VecType>(1.0, x, -1.0, r);
+      RealMultTranspose(*P[l - 1], r, xr);
+    }
 
-  // Prolongate and add.
-  RealMult(*P[l - 1], Y[l - 1], R[l]);
-  Y[l] += R[l];
+    // Coarse grid correction.
+    if (dbc_tdof_lists[l - 1])
+    {
+      linalg::SetSubVector<VecType>(xr, *dbc_tdof_lists[l - 1], 0.0);
+    }
+    auto yr = workspace::NewVector<VecType>(A[l - 1]->Height());
+    VCycle(xr, yr, l - 1, false);
+    RealAddMult(*P[l - 1], yr, y);
+  }
 
   // Post-smooth, with nonzero initial guess.
   B[l]->SetInitialGuess(true);
-  B[l]->MultTranspose2(X[l], Y[l], R[l]);
+  B[l]->MultTranspose(x, y);
 }
 
 template class GeometricMultigridSolver<Operator>;
