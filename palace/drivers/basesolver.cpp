@@ -178,6 +178,11 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
   int it = 0;
   while (!ExhaustedResources(it, ntdof) && err >= refinement.tol)
   {
+    // Print timing summary.
+    Mpi::Print("\nCumulative timing statistics:\n");
+    BlockTimer::Print(comm);
+    SaveMetadata(BlockTimer::GlobalTimer());
+
     BlockTimer bt(Timer::ADAPTATION);
     Mpi::Print("\nAdaptive mesh refinement (AMR) iteration {:d}:\n"
                " Indicator norm = {:.3e}, global unknowns = {:d}\n"
