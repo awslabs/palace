@@ -117,7 +117,6 @@ FluxProjector<VecType>::FluxProjector(const MaterialOperator &mat_op,
                                       double tol, int max_it, int print, bool use_mg)
 {
   BlockTimer bt(Timer::CONSTRUCT_ESTIMATOR);
-  use_mg = use_mg && (nd_fespaces.GetNumLevels() > 1);
   const auto &nd_fespace = nd_fespaces.GetFinestFESpace();
   {
     // Flux operator is always partially assembled.
@@ -142,7 +141,6 @@ FluxProjector<VecType>::FluxProjector(const MaterialOperator &mat_op,
                                       double tol, int max_it, int print, bool use_mg)
 {
   BlockTimer bt(Timer::CONSTRUCT_ESTIMATOR);
-  use_mg = use_mg && (rt_fespaces.GetNumLevels() > 1);
   const auto &rt_fespace = rt_fespaces.GetFinestFESpace();
   {
     // Flux operator is always partially assembled.
