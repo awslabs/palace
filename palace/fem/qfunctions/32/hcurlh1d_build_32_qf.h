@@ -15,7 +15,7 @@ CEED_QFUNCTION(f_build_hcurlh1d_32)(void *__restrict__ ctx, CeedInt Q,
 
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
-    CeedScalar coeff[6], adjJt_loc[6], qd_loc[4];
+    CeedScalar coeff[6], adjJt_loc[6], qd_loc[6];
     CoeffUnpack3((const CeedIntScalar *)ctx, (CeedInt)attr[i], coeff);
     MatUnpack32(adjJt + i, Q, adjJt_loc);
     MultBA32(adjJt_loc, coeff, qd_loc);
@@ -24,6 +24,8 @@ CEED_QFUNCTION(f_build_hcurlh1d_32)(void *__restrict__ ctx, CeedInt Q,
     qd[i + Q * 1] = wdetJ[i] * qd_loc[1];
     qd[i + Q * 2] = wdetJ[i] * qd_loc[2];
     qd[i + Q * 3] = wdetJ[i] * qd_loc[3];
+    qd[i + Q * 4] = wdetJ[i] * qd_loc[4];
+    qd[i + Q * 5] = wdetJ[i] * qd_loc[5];
   }
   return 0;
 }

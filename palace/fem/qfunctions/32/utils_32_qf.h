@@ -50,28 +50,27 @@ CEED_QFUNCTION_HELPER void MatUnpack32(const CeedScalar *A, const CeedInt A_stri
 
 CEED_QFUNCTION_HELPER void MultAtBCx32(const CeedScalar A[6], const CeedScalar B[6],
                                        const CeedScalar C[6], const CeedScalar x[2],
-                                       CeedScalar y[3])
+                                       CeedScalar y[2])
 {
   // A: 0 3   B: 0 1 2   C: 0 3
   //    1 4      1 3 4      1 4
   //    2 5      2 4 5      2 5
-  CeedScalar z[3];
+  CeedScalar z[3], t;
 
   y[0] = C[0] * x[0] + C[3] * x[1];
   y[1] = C[1] * x[0] + C[4] * x[1];
-  y[2] = C[2] * x[0] + C[5] * x[1];
+  t = C[2] * x[0] + C[5] * x[1];
 
-  z[0] = B[0] * y[0] + B[1] * y[1] + B[2] * y[2];
-  z[1] = B[1] * y[0] + B[3] * y[1] + B[4] * y[2];
-  z[2] = B[2] * y[0] + B[4] * y[1] + B[5] * y[2];
+  z[0] = B[0] * y[0] + B[1] * y[1] + B[2] * t;
+  z[1] = B[1] * y[0] + B[3] * y[1] + B[4] * t;
+  z[2] = B[2] * y[0] + B[4] * y[1] + B[5] * t;
 
   y[0] = A[0] * z[0] + A[1] * z[1] + A[2] * z[2];
   y[1] = A[3] * z[0] + A[4] * z[1] + A[5] * z[2];
-  y[2] = 0.0;
 }
 
 CEED_QFUNCTION_HELPER void MultBAx32(const CeedScalar A[6], const CeedScalar B[6],
-                                     const CeedScalar x[2], CeedScalar y[2])
+                                     const CeedScalar x[2], CeedScalar y[3])
 {
   // A: 0 3   B: 0 1 2
   //    1 4      1 3 4
