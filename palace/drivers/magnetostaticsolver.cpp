@@ -98,8 +98,9 @@ ErrorIndicator MagnetostaticSolver::Postprocess(CurlCurlOperator &curlcurlop,
   // Calculate and record the error indicators.
   Mpi::Print("\nComputing solution error estimates\n");
   CurlFluxErrorEstimator<Vector> estimator(
-      curlcurlop.GetMaterialOp(), curlcurlop.GetNDSpace(),
-      iodata.solver.linear.estimator_tol, iodata.solver.linear.estimator_max_it, 0);
+      curlcurlop.GetMaterialOp(), curlcurlop.GetNDSpaces(),
+      iodata.solver.linear.estimator_tol, iodata.solver.linear.estimator_max_it, 0,
+      iodata.solver.linear.estimator_mg);
   ErrorIndicator indicator;
   for (int i = 0; i < nstep; i++)
   {

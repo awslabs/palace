@@ -1738,6 +1738,7 @@ void LinearSolverData::SetUp(json &solver)
   divfree_max_it = linear->value("DivFreeMaxIts", divfree_max_it);
   estimator_tol = linear->value("EstimatorTol", estimator_tol);
   estimator_max_it = linear->value("EstimatorMaxIts", estimator_max_it);
+  estimator_mg = linear->value("EstimatorMG", estimator_mg);
   gs_orthog_type = linear->value("GSOrthogonalization", gs_orthog_type);
 
   // Cleanup
@@ -1774,6 +1775,7 @@ void LinearSolverData::SetUp(json &solver)
   linear->erase("DivFreeMaxIts");
   linear->erase("EstimatorTol");
   linear->erase("EstimatorMaxIts");
+  linear->erase("EstimatorMG");
   linear->erase("GSOrthogonalization");
   MFEM_VERIFY(linear->empty(),
               "Found an unsupported configuration file keyword under \"Linear\"!\n"
@@ -1810,6 +1812,9 @@ void LinearSolverData::SetUp(json &solver)
   // std::cout << "AMSVector: " << ams_vector << '\n';
   // std::cout << "DivFreeTol: " << divfree_tol << '\n';
   // std::cout << "DivFreeMaxIts: " << divfree_max_it << '\n';
+  // std::cout << "EstimatorTol: " << estimator_tol << '\n';
+  // std::cout << "EstimatorMaxIts: " << estimator_max_its << '\n';
+  // std::cout << "EstimatorMG: " << estimator_mg << '\n';
   // std::cout << "GSOrthogonalization: " << gs_orthog_type << '\n';
 }
 

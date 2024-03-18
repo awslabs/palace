@@ -337,6 +337,9 @@ directory specified by [`config["Problem"]["Output"]`](problem.md#config%5B%22Pr
     "PCSide": <string>,
     "DivFreeTol": <float>,
     "DivFreeMaxIts": <float>,
+    "EstimatorTol": <float>,
+    "EstimatorMaxIts": <float>,
+    "EstimatorMG": <bool>,
     "GSOrthogonalization": <string>
 }
 ```
@@ -447,6 +450,9 @@ error estimate calculation.
 
 `"EstimatorMaxIts" [1000]` :  Maximum number of iterations for flux projection use in the
 error estimate calculation.
+
+`"EstimatorMG" [false]` :  Set to true in order to enable multigrid preconditioner with AMG
+coarse solve for the error estimate linear solver, instead of just Jacobi.
 
 `"GSOrthogonalization" ["MGS"]` :  Gram-Schmidt variant used to explicitly orthogonalize
 vectors in Krylov subspace methods or other parts of the code.
