@@ -72,7 +72,7 @@ inline void PrettyPrint(const Container<T, U...> &data, T scale,
       auto j = i;
       if (scale == 1)
       {
-        while ((j + 1 != data.end()) && *(j + 1) == (*j) + 1)
+        while ((std::next(j) != data.end()) && *std::next(j) == (*j) + 1)
         {
           j++;
         }
@@ -90,7 +90,7 @@ inline void PrettyPrint(const Container<T, U...> &data, T scale,
         w = internal::PrePrint(comm, w, wi, lead) + wi;
         Mpi::Print(comm, "{:d}-{:d}", (*i) * scale, (*j) * scale);
       }
-      i = j + 1;
+      i = std::next(j);
     }
     else
     {
