@@ -17,13 +17,7 @@
         "required": ["Attributes"],
         "properties":
         {
-          "Attributes":
-          {
-            "type": "array",
-            "additionalItems": false,
-            "items": { "type": "integer"},
-            "minItems": 1
-          },
+          "Attributes": { "$ref": "#/$defs/Attributes" },
           "Permeability":
           {
             "oneOf" :
@@ -112,12 +106,7 @@
             "properties":
             {
               "Index": { "type": "integer" },
-              "Attributes":
-              {
-                "type": "array",
-                "additionalItems": false,
-                "items": { "type": "integer"}
-              }
+              "Attributes": { "$ref": "#/$defs/Attributes" }
             }
           }
         },
@@ -140,6 +129,16 @@
           }
         }
       }
+    }
+  },
+  "$defs":
+  {
+    "Attributes":
+    {
+      "type": "array",
+      "additionalItems": false,
+      "items": { "type": "integer"},
+      "minItems": 1
     }
   }
 }

@@ -72,6 +72,10 @@ std::stringstream PreprocessFile(const char *filename)
   auto RangeExpand = [](std::string_view str) -> std::string
   {
     // Handle the given string which is only numeric with possible hyphens.
+    if (str.empty())
+    {
+      return "";
+    }
     int num;
     auto [ptr, ec] = std::from_chars(str.data(), str.data() + str.length(), num);
     MFEM_VERIFY(
