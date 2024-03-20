@@ -154,7 +154,7 @@ ErrorIndicator MagnetostaticSolver::Postprocess(CurlCurlOperator &curlcurlop,
       else if (j > i)
       {
         linalg::AXPBYPCZ(1.0, A[i], 1.0, A[j], 0.0, Aij);
-        postop.SetAGridFunction(Aij);
+        postop.SetAGridFunction(Aij, false);
         double Um = postop.GetHFieldEnergy();
         M(i, j) = Um / (Iinc(i) * Iinc(j)) -
                   0.5 * (M(i, i) * Iinc(i) / Iinc(j) + M(j, j) * Iinc(j) / Iinc(i));

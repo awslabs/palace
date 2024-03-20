@@ -146,7 +146,7 @@ ErrorIndicator ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop,
       else if (j > i)
       {
         linalg::AXPBYPCZ(1.0, V[i], 1.0, V[j], 0.0, Vij);
-        postop.SetVGridFunction(Vij);
+        postop.SetVGridFunction(Vij, false);
         double Ue = postop.GetEFieldEnergy();
         C(i, j) = Ue - 0.5 * (C(i, i) + C(j, j));
         Cm(i, j) = -C(i, j);

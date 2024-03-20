@@ -89,12 +89,12 @@ public:
   // on the true dofs. For the real-valued overload, the electric scalar potential can be
   // specified too for electrostatic simulations. The output mesh and fields are
   // nondimensionalized consistently (B ~ E (L₀ ω₀ E₀⁻¹)).
-  void SetEGridFunction(const ComplexVector &e);
-  void SetBGridFunction(const ComplexVector &b);
-  void SetEGridFunction(const Vector &e);
-  void SetBGridFunction(const Vector &b);
-  void SetVGridFunction(const Vector &v);
-  void SetAGridFunction(const Vector &a);
+  void SetEGridFunction(const ComplexVector &e, bool exchange_face_nbr_data = true);
+  void SetBGridFunction(const ComplexVector &b, bool exchange_face_nbr_data = true);
+  void SetEGridFunction(const Vector &e, bool exchange_face_nbr_data = true);
+  void SetBGridFunction(const Vector &b, bool exchange_face_nbr_data = true);
+  void SetVGridFunction(const Vector &v, bool exchange_face_nbr_data = true);
+  void SetAGridFunction(const Vector &a, bool exchange_face_nbr_data = true);
 
   // Update cached port voltages and currents for lumped and wave port operators.
   void UpdatePorts(const LumpedPortOperator &lumped_port_op,
