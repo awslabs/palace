@@ -307,10 +307,12 @@ std::unique_ptr<hypre::HypreCSRMatrix> OperatorCOOtoCSR(Ceed ceed, CeedInt m, Ce
                                                         CeedInt *cols, CeedVector vals,
                                                         CeedMemType mem, bool set)
 {
-  // Preallocate CSR memory on host (like PETSc's MatSetValuesCOO).
-  mfem::Array<int> I(m + 1), J(nnz), perm(nnz), Jmap(nnz + 1);
+  // Preallocate CSR memory on host (like PETSc's MatSetValuesCOO). Check for overflow for
+  // large nonzero counts.
+  const int nnz_int = mfem::internal::to_int(nnz);
+  mfem::Array<int> I(m + 1), J(nnz_int), perm(nnz_int), Jmap(nnz_int + 1);
   I = 0;
-  for (int k = 0; k < nnz; k++)
+  for (int k = 0; k < nnz_int; k++)
   {
     perm[k] = k;
   }
@@ -318,12 +320,12 @@ std::unique_ptr<hypre::HypreCSRMatrix> OperatorCOOtoCSR(Ceed ceed, CeedInt m, Ce
             [&](const int &i, const int &j) { return (rows[i] < rows[j]); });
 
   int q = -1;  // True nnz index
-  for (int k = 0; k < nnz;)
+  for (int k = 0; k < nnz_int;)
   {
     // Sort column entries in the row.
     const int row = rows[perm[k]];
     const int start = k;
-    while (k < nnz && rows[perm[k]] == row)
+    while (k < nnz_int && rows[perm[k]] == row)
     {
       k++;
     }
@@ -411,11 +413,11 @@ std::unique_ptr<hypre::HypreCSRMatrix> OperatorCOOtoCSR(Ceed ceed, CeedInt m, Ce
     if (mfem::Device::Allows(mfem::Backend::DEVICE_MASK) && mem != CEED_MEM_DEVICE)
     {
       // Copy values to device before filling.
-      Vector d_vals(nnz);
+      Vector d_vals(nnz_int);
       {
         auto *d_vals_array = d_vals.HostWrite();
         PalacePragmaOmp(parallel for schedule(static))
-        for (int k = 0; k < nnz; k++)
+        for (int k = 0; k < nnz_int; k++)
         {
           d_vals_array[k] = vals_array[k];
         }
