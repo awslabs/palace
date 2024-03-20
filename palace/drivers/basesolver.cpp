@@ -200,39 +200,48 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
     }
 
     // Mark.
-    const auto [threshold, marked_error] = utils::ComputeDorflerThreshold(
-        comm, indicators.Local(), refinement.update_fraction);
-    const auto marked_elements = MarkedElements(indicators.Local(), threshold);
-    const auto [glob_marked_elements, glob_elements] =
-        linalg::GlobalSize2(comm, marked_elements, indicators.Local());
-    Mpi::Print(
-        " Marked {:d}/{:d} elements for refinement ({:.2f}% of the error, θ = {:.2f})\n",
-        glob_marked_elements, glob_elements, 100 * marked_error,
-        refinement.update_fraction);
+    const auto marked_elements = [&comm, &refinement](const auto &indicators)
+    {
+      const auto [threshold, marked_error] = utils::ComputeDorflerThreshold(
+          comm, indicators.Local(), refinement.update_fraction);
+      const auto marked_elements = MarkedElements(indicators.Local(), threshold);
+      const auto [glob_marked_elements, glob_elements] =
+          linalg::GlobalSize2(comm, marked_elements, indicators.Local());
+      Mpi::Print(
+          " Marked {:d}/{:d} elements for refinement ({:.2f}% of the error, θ = {:.2f})\n",
+          glob_marked_elements, glob_elements, 100 * marked_error,
+          refinement.update_fraction);
+      return marked_elements;
+    }(indicators);
 
     // Refine.
-    mfem::ParMesh &fine_mesh = *mesh.back();
-    const auto initial_elem_count = fine_mesh.GetGlobalNE();
-    fine_mesh.GeneralRefinement(marked_elements, -1, refinement.max_nc_levels);
-    const auto final_elem_count = fine_mesh.GetGlobalNE();
-    Mpi::Print(" {} mesh refinement added {:d} elements (initial = {:d}, final = {:d})\n",
-               fine_mesh.Nonconforming() ? "Nonconforming" : "Conforming",
-               final_elem_count - initial_elem_count, initial_elem_count, final_elem_count);
+    {
+      mfem::ParMesh &fine_mesh = *mesh.back();
+      const auto initial_elem_count = fine_mesh.GetGlobalNE();
+      fine_mesh.GeneralRefinement(marked_elements, -1, refinement.max_nc_levels);
+      const auto final_elem_count = fine_mesh.GetGlobalNE();
+      Mpi::Print(" {} mesh refinement added {:d} elements (initial = {:d}, final = {:d})\n",
+                 fine_mesh.Nonconforming() ? "Nonconforming" : "Conforming",
+                 final_elem_count - initial_elem_count, initial_elem_count,
+                 final_elem_count);
+    }
 
     // Optionally rebalance and write the adapted mesh to file.
-    const auto ratio_pre = mesh::RebalanceMesh(fine_mesh, iodata);
-    if (ratio_pre > refinement.maximum_imbalance)
     {
-      int min_elem, max_elem;
-      min_elem = max_elem = fine_mesh.GetNE();
-      Mpi::GlobalMin(1, &min_elem, comm);
-      Mpi::GlobalMax(1, &max_elem, comm);
-      const auto ratio_post = double(max_elem) / min_elem;
-      Mpi::Print(" Rebalanced mesh: Ratio {:.3f} exceeded max. allowed value {:.3f} "
-                 "(new ratio = {:.3f})\n",
-                 ratio_pre, refinement.maximum_imbalance, ratio_post);
+      const auto ratio_pre = mesh::RebalanceMesh(*mesh.back(), iodata);
+      if (ratio_pre > refinement.maximum_imbalance)
+      {
+        int min_elem, max_elem;
+        min_elem = max_elem = mesh.back()->GetNE();
+        Mpi::GlobalMin(1, &min_elem, comm);
+        Mpi::GlobalMax(1, &max_elem, comm);
+        const auto ratio_post = double(max_elem) / min_elem;
+        Mpi::Print(" Rebalanced mesh: Ratio {:.3f} exceeded max. allowed value {:.3f} "
+                   "(new ratio = {:.3f})\n",
+                   ratio_pre, refinement.maximum_imbalance, ratio_post);
+      }
+      mesh.back()->Update();
     }
-    mesh.back()->Update();
 
     // Solve + estimate.
     Mpi::Print("\nProceeding with solve/estimate iteration {}...\n", it + 1);
