@@ -43,10 +43,12 @@ std::stringstream PreprocessFile(const char *filename)
   }
 
   // Strip C and C++ style comments (//, /* */) using regex. Correctly handles comments
-  // within strings and escaped comment markers (see tinyurl.com/2s3n8dkr).
+  // within strings and escaped comment markers (see tinyurl.com/2s3n8dkr). An alternative
+  // for the middle line is: R"(|(\/\*([^*]|[\r\n]|(\*+([^*\/]|[\r\n])))*\*+\/))", but this
+  // seems to sometimes lead to issues with std::regex_replace for long files.
   {
     std::regex rgx(R"((([\"'])(?:(?=(\\?))\3.)*?\2))"
-                   R"(|(\/\*([^*]|[\r\n]|(\*+([^*\/]|[\r\n])))*\*+\/))"
+                   R"(|(\/\*(.|[\r\n])*?\*\/))"
                    R"(|(\/\/.*))");
     file = std::regex_replace(file, rgx, "$1");
   }
