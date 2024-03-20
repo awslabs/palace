@@ -15,26 +15,13 @@ namespace palace::ceed
 namespace
 {
 
-inline constexpr auto DefaultNumAttr()
-{
-  return 64;
-}
-
 inline auto CoeffDim(int dim)
 {
   return dim * (dim + 1) / 2;
 }
 
-auto InitDefaultCoefficient(int dim)
-{
-  // All entries are value-initialized to zero, including the material property coefficient.
-  std::vector<CeedIntScalar> ctx(2 + DefaultNumAttr() + CoeffDim(dim), {0});
-  ctx[0].first = DefaultNumAttr();
-  ctx[1 + DefaultNumAttr()].first = 1;
-  return ctx;
-}
-
-void MakeDiagonalCoefficient(int dim, CeedIntScalar *mat_coeff, CeedScalar a, CeedInt k)
+inline void MakeDiagonalCoefficient(int dim, CeedIntScalar *mat_coeff, CeedScalar a,
+                                    CeedInt k)
 {
   const int coeff_dim = CoeffDim(dim);
   for (int i = 0; i < coeff_dim; i++)
@@ -66,8 +53,11 @@ PopulateCoefficientContext(int dim, const MaterialPropertyCoefficient *Q, double
 {
   if (!Q)
   {
-    // All attributes map to identity coefficient.
-    auto ctx = InitDefaultCoefficient(dim);
+    // No attributes are stored in the map from attributes to material property coefficient,
+    // indicating that all attributes map to the same identity coefficient.
+    std::vector<CeedIntScalar> ctx(2 + CoeffDim(dim), {0});
+    ctx[0].first = 0;
+    ctx[1].first = 1;
     MakeDiagonalCoefficient(dim, MatCoeff(ctx.data()), a, 0);
     return ctx;
   }
