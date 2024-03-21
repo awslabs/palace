@@ -51,7 +51,7 @@ public:
   {
     // Construct the system matrices defining the linear operator. PEC boundaries are
     // handled simply by setting diagonal entries of the mass matrix for the corresponding
-    // dofs. Because the Dirichlet BC is always homogenous, no special elimination is
+    // dofs. Because the Dirichlet BC is always homogeneous, no special elimination is
     // required on the RHS. Diagonal entries are set in M (so M is non-singular).
     K = spaceop.GetStiffnessMatrix<Operator>(Operator::DIAG_ZERO);
     C = spaceop.GetDampingMatrix<Operator>(Operator::DIAG_ZERO);

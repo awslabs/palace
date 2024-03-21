@@ -191,7 +191,7 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &spaceop, int max_s
 {
   // Construct the system matrices defining the linear operator. PEC boundaries are handled
   // simply by setting diagonal entries of the system matrix for the corresponding dofs.
-  // Because the Dirichlet BC is always homogenous, no special elimination is required on
+  // Because the Dirichlet BC is always homogeneous, no special elimination is required on
   // the RHS. The damping matrix may be nullptr.
   K = spaceop.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE);
   C = spaceop.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
