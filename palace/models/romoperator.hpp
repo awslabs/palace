@@ -76,7 +76,7 @@ public:
   // into the high-dimensional space.
   void SolvePROM(double omega, ComplexVector &u);
 
-  // Compute the location of the maximum error in the range of the previously sampled
+  // Compute the location(s) of the maximum error in the range of the previously sampled
   // parameter points.
   std::vector<double> FindMaxError(int N = 1) const;
 

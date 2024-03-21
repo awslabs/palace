@@ -432,50 +432,60 @@ std::vector<double> RomOperator::FindMaxError(int N) const
   // Eigen::MatrixXcd X;
   // ZGGEV(A, B, D, X);
 
-  // // If there are multiple roots in [start, end], pick the one furthest from the existing
-  // // set of samples.
-  // double dist_star = 0.0;
-  // for (auto d : D)
+  // // If there are multiple roots in [start, end], pick the ones furthest from the
+  // // existing set of samples.
   // {
-  //   if (std::real(d) >= start && std::real(d) <= end)
+  //   std::vector<double> dist_star(N, 0.0);
+  //   for (auto d : D)
   //   {
-  //     const double dist = (z_map.array() - std::real(d)).abs().maxCoeff();
-  //     if (dist > dist_star)
+  //     if (std::real(d) < start || std::real(d) > end)
   //     {
-  //       z_star = d;
-  //       dist_star = dist;
+  //       continue;
+  //     }
+  //     const double dist = (z_map.array() - std::real(d)).abs().maxCoeff();
+  //     for (int i = 0; i < N; i++)
+  //     {
+  //       if (dist > dist_star[i])
+  //       {
+  //         for (int j = i + 1; j < N; j++)
+  //         {
+  //           z_star[j] = z_star[j - 1];
+  //           dist_star[j] = dist_star[j - 1];
+  //         }
+  //         z_star[i] = start;
+  //         dist_star[i] = dist;
+  //       }
   //     }
   //   }
   // }
-  // if (std::abs(z_star) > 0.0)
-  // {
-  //   return std::real(z_star);
-  // }
 
   // Fall back to sampling Q on discrete points if no roots exist in [start, end].
-  const auto delta = (end - start) / 1.0e6;
-  std::vector<double> Q_star(N, mfem::infinity());
-  while (start <= end)
+  if (std::abs(z_star[0]) == 0.0)
   {
-    const double Q = std::abs((q.array() / (z_map.array() - start)).sum());
-    for (int i = 0; i < N; i++)
+    const auto delta = (end - start) / 1.0e6;
+    std::vector<double> Q_star(N, mfem::infinity());
+    while (start <= end)
     {
-      if (Q < Q_star[i])
+      const double Q = std::abs((q.array() / (z_map.array() - start)).sum());
+      for (int i = 0; i < N; i++)
       {
-        for (int j = i + 1; j < N; j++)
+        if (Q < Q_star[i])
         {
-          z_star[j] = z_star[j - 1];
-          Q_star[j] = Q_star[j - 1];
+          for (int j = i + 1; j < N; j++)
+          {
+            z_star[j] = z_star[j - 1];
+            Q_star[j] = Q_star[j - 1];
+          }
+          z_star[i] = start;
+          Q_star[i] = Q;
         }
-        z_star[i] = start;
-        Q_star[i] = Q;
       }
+      start += delta;
     }
-    start += delta;
+    MFEM_VERIFY(N == 0 || std::abs(z_star[0]) > 0.0,
+                "Could not locate a maximum error in the range [" << start << ", " << end
+                                                                  << "]!");
   }
-  MFEM_VERIFY(N == 0 || std::abs(z_star[0]) > 0.0,
-              "Could not locate a maximum error in the range [" << start << ", " << end
-                                                                << "]!");
   std::vector<double> vals(z_star.size());
   std::transform(z_star.begin(), z_star.end(), vals.begin(),
                  [](std::complex<double> z) { return std::real(z); });
