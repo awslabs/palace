@@ -248,12 +248,13 @@ inline void ApplyB(const Solver<OperType> *B, const VecType &x, VecType &y,
   B->Mult(x, y);
 }
 
-template <typename PrecSide, typename OperType, typename VecType>
-inline void InitialResidual(PrecSide side, const OperType *A, const Solver<OperType> *B,
-                            const VecType &b, VecType &x, VecType &r, VecType &z,
-                            bool initial_guess, bool use_timer = true)
+template <typename OperType, typename VecType>
+inline void InitialResidual(GmresSolverBase::PrecSide side, const OperType *A,
+                            const Solver<OperType> *B, const VecType &b, VecType &x,
+                            VecType &r, VecType &z, bool initial_guess,
+                            bool use_timer = true)
 {
-  if (B && side == GmresSolver<OperType>::PrecSide::LEFT)
+  if (B && side == GmresSolverBase::PrecSide::LEFT)
   {
     if (initial_guess)
     {
@@ -282,16 +283,17 @@ inline void InitialResidual(PrecSide side, const OperType *A, const Solver<OperT
   }
 }
 
-template <typename PrecSide, typename OperType, typename VecType>
-inline void ApplyBA(PrecSide side, const OperType *A, const Solver<OperType> *B,
-                    const VecType &x, VecType &y, VecType &z, bool use_timer = true)
+template <typename OperType, typename VecType>
+inline void ApplyBA(GmresSolverBase::PrecSide side, const OperType *A,
+                    const Solver<OperType> *B, const VecType &x, VecType &y, VecType &z,
+                    bool use_timer = true)
 {
-  if (B && side == GmresSolver<OperType>::PrecSide::LEFT)
+  if (B && side == GmresSolverBase::PrecSide::LEFT)
   {
     A->Mult(x, z);
     ApplyB(B, z, y, use_timer);
   }
-  else if (B && side == GmresSolver<OperType>::PrecSide::RIGHT)
+  else if (B && side == GmresSolverBase::PrecSide::RIGHT)
   {
     ApplyB(B, x, z, use_timer);
     A->Mult(z, y);
@@ -302,24 +304,21 @@ inline void ApplyBA(PrecSide side, const OperType *A, const Solver<OperType> *B,
   }
 }
 
-template <typename OrthogType, typename VecType, typename ScalarType>
-inline void OrthogonalizeIteration(OrthogType type, MPI_Comm comm,
+template <typename VecType, typename ScalarType>
+inline void OrthogonalizeIteration(GmresSolverBase::OrthogType type, MPI_Comm comm,
                                    const std::vector<VecType> &V, VecType &w,
                                    ScalarType *Hj, int j)
 {
-  using OperType = typename std::conditional<std::is_same<VecType, ComplexVector>::value,
-                                             ComplexOperator, Operator>::type;
-
   // Orthogonalize w against the leading j + 1 columns of V.
   switch (type)
   {
-    case GmresSolver<OperType>::OrthogType::MGS:
+    case GmresSolverBase::OrthogType::MGS:
       linalg::OrthogonalizeColumnMGS(comm, V, w, Hj, j + 1);
       break;
-    case GmresSolver<OperType>::OrthogType::CGS:
+    case GmresSolverBase::OrthogType::CGS:
       linalg::OrthogonalizeColumnCGS(comm, V, w, Hj, j + 1);
       break;
-    case GmresSolver<OperType>::OrthogType::CGS2:
+    case GmresSolverBase::OrthogType::CGS2:
       linalg::OrthogonalizeColumnCGS(comm, V, w, Hj, j + 1, true);
       break;
   }

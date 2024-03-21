@@ -110,7 +110,7 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator &
 {
   // Construct the system matrices defining the linear operator. PEC boundaries are handled
   // simply by setting diagonal entries of the system matrix for the corresponding dofs.
-  // Because the Dirichlet BC is always homogenous, no special elimination is required on
+  // Because the Dirichlet BC is always homogeneous, no special elimination is required on
   // the RHS. Assemble the linear system for the initial frequency (so we can call
   // KspSolver::SetOperators). Compute everything at the first frequency step.
   auto K = spaceop.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE);
@@ -219,39 +219,25 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator 
 {
   // Configure default parameters if not specified.
   double offline_tol = iodata.solver.driven.adaptive_tol;
-  int nmax = iodata.solver.driven.adaptive_nmax;
-  int ncand = iodata.solver.driven.adaptive_ncand;
-  MFEM_VERIFY(nmax <= 0 || nmax > 2,
+  int max_size = iodata.solver.driven.adaptive_max_size;
+  MFEM_VERIFY(max_size <= 0 || max_size > 2,
               "Adaptive frequency sweep must sample at least two frequency points!");
-  if (nmax <= 0)
+  if (max_size <= 0)
   {
-    nmax = 20;  // Default value
+    max_size = 20;  // Default value
   }
-  nmax = std::min(nmax, nstep - step0);  // Maximum number sample points dictated by sweep
-  if (ncand > 0)
-  {
-    if (ncand > nstep - step0)
-    {
-      Mpi::Warning("Requested candidate points {:d} > number of total frequency sweep "
-                   "samples {:d}!\n"
-                   "Resetting to the smaller value!\n",
-                   ncand, nstep - step0);
-      ncand = nstep - step0;
-    }
-  }
-  else
-  {
-    constexpr int inc = 5;
-    ncand = (nstep - step0 + inc - 1) / inc;  // Default value, always >= 1
-  }
+  max_size = std::min(max_size, nstep - step0);  // Maximum size dictated by sweep
+  int convergence_memory = iodata.solver.driven.adaptive_memory;
 
   // Allocate negative curl matrix for postprocessing the B-field and vectors for the
   // high-dimensional field solution.
   const auto &Curl = spaceop.GetCurlMatrix();
-  ComplexVector E(Curl.Width()), B(Curl.Height());
+  ComplexVector E(Curl.Width()), Eh(Curl.Width()), B(Curl.Height());
   E.UseDevice(true);
+  Eh.UseDevice(true);
   B.UseDevice(true);
   E = 0.0;
+  Eh = 0.0;
   B = 0.0;
 
   // Initialize structures for storing and reducing the results of error estimation.
@@ -268,51 +254,76 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator 
   Mpi::Print("\nBeginning PROM construction offline phase:\n"
              " {:d} points for frequency sweep over [{:.3e}, {:.3e}] GHz\n",
              nstep - step0, omega0 * f0, (omega0 + (nstep - step0 - 1) * delta_omega) * f0);
-  RomOperator prom(iodata, spaceop);
-  prom.Initialize(omega0, delta_omega, nstep - step0, nmax);
+  RomOperator promop(iodata, spaceop, max_size);
   spaceop.GetWavePortOp().SetSuppressOutput(true);  // Suppress wave port output for offline
 
   // Initialize the basis with samples from the top and bottom of the frequency
   // range of interest. Each call for an HDM solution adds the frequency sample to P_S and
   // removes it from P \ P_S. Timing for the HDM construction and solve is handled inside
   // of the RomOperator.
-  prom.SolveHDM(omega0, E);  // Print matrix stats at first HDM solve
-  prom.AddHDMSample(omega0, E);
+  promop.SolveHDM(omega0, E);
+  promop.UpdatePROM(omega0, E);
   estimator.AddErrorIndicator(E, indicator);
-  prom.SolveHDM(omega0 + (nstep - step0 - 1) * delta_omega, E);
-  prom.AddHDMSample(omega0 + (nstep - step0 - 1) * delta_omega, E);
+  promop.SolveHDM(omega0 + (nstep - step0 - 1) * delta_omega, E);
+  promop.UpdatePROM(omega0 + (nstep - step0 - 1) * delta_omega, E);
   estimator.AddErrorIndicator(E, indicator);
 
   // Greedy procedure for basis construction (offline phase). Basis is initialized with
   // solutions at frequency sweep endpoints.
-  int it = static_cast<int>(prom.GetSampleFrequencies().size()), it0 = it;
-  double max_error;
+  int it = 2, it0 = it, memory = 0;
+  std::vector<double> max_errors = {0.0, 0.0};
   while (true)
   {
-    // Compute maximum error in parameter domain with current PROM.
-    double omega_star;
-    max_error = prom.ComputeMaxError(ncand, omega_star);
-    if (max_error < offline_tol || it == nmax)
+    // Compute the location of the maximum error in parameter domain (bounded by the
+    // previous samples).
+    double omega_star = promop.FindMaxError()[0];
+
+    // Compute the actual solution error at the given parameter point.
+    promop.SolveHDM(omega_star, E);
+    promop.SolvePROM(omega_star, Eh);
+    linalg::AXPY(-1.0, E, Eh);
+    max_errors.push_back(linalg::Norml2(spaceop.GetComm(), Eh) /
+                         linalg::Norml2(spaceop.GetComm(), E));
+    if (max_errors.back() < offline_tol)
+    {
+      if (++memory == convergence_memory)
+      {
+        break;
+      }
+    }
+    else
+    {
+      memory = 0;
+    }
+    if (it == max_size)
     {
       break;
     }
 
     // Sample HDM and add solution to basis.
-    Mpi::Print(
-        "\nGreedy iteration {:d} (n = {:d}): ω* = {:.3e} GHz ({:.3e}), error = {:.3e}\n",
-        it - it0 + 1, prom.GetReducedDimension(), omega_star * f0, omega_star, max_error);
-    prom.SolveHDM(omega_star, E);
-    prom.AddHDMSample(omega_star, E);
+    Mpi::Print("\nGreedy iteration {:d} (n = {:d}): ω* = {:.3e} GHz ({:.3e}), error = "
+               "{:.3e}{}\n",
+               it - it0 + 1, promop.GetReducedDimension(), omega_star * f0, omega_star,
+               max_errors.back(),
+               (memory == 0)
+                   ? ""
+                   : fmt::format(", memory = {:d}/{:d}", memory, convergence_memory));
+    promop.UpdatePROM(omega_star, E);
     estimator.AddErrorIndicator(E, indicator);
     it++;
   }
   Mpi::Print("\nAdaptive sampling{} {:d} frequency samples:\n"
-             " n = {:d}, error = {:.3e}, tol. = {:.3e}\n",
-             (it == nmax) ? " reached maximum" : " converged with", it,
-             prom.GetReducedDimension(), max_error, offline_tol);
-  utils::PrettyPrint(prom.GetSampleFrequencies(), f0, " Sampled frequencies (GHz):");
+             " n = {:d}, error = {:.3e}, tol = {:.3e}, memory = {:d}/{:d}\n",
+             (it == max_size) ? " reached maximum" : " converged with", it,
+             promop.GetReducedDimension(), max_errors.back(), offline_tol, memory,
+             convergence_memory);
+  utils::PrettyPrint(promop.GetSamplePoints(), f0, " Sampled frequencies (GHz):");
+  utils::PrettyPrint(max_errors, 1.0, " Sample errors:");
   Mpi::Print(" Total offline phase elapsed time: {:.2e} s\n",
              Timer::Duration(Timer::Now() - t0).count());  // Timing on root
+
+  // XX TODO: Add output of eigenvalue estimates from the PROM system (and nonlinear EVP in
+  //          the general case with wave ports, etc.?)
 
   // Main fast frequency sweep loop (online phase).
   Mpi::Print("\nBeginning fast frequency sweep online phase\n");
@@ -325,10 +336,9 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator 
     Mpi::Print("\nIt {:d}/{:d}: ω/2π = {:.3e} GHz (elapsed time = {:.2e} s)\n", step + 1,
                nstep, freq, Timer::Duration(Timer::Now() - t0).count());
 
-    // Assemble and solve the linear system.
-    prom.AssemblePROM(omega);
+    // Assemble and solve the PROM linear system.
+    promop.SolvePROM(omega, E);
     Mpi::Print("\n");
-    prom.SolvePROM(E);
 
     // Compute B = -1/(iω) ∇ x E on the true dofs, and set the internal GridFunctions in
     // PostOperator for all postprocessing operations.
@@ -361,7 +371,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator 
     omega += delta_omega;
   }
   BlockTimer bt0(Timer::POSTPRO);
-  SaveMetadata(prom.GetLinearSolver());
+  SaveMetadata(promop.GetLinearSolver());
   return indicator;
 }
 
@@ -733,7 +743,7 @@ void DrivenSolver::PostprocessSParameters(const PostOperator &postop,
     for (const auto &data : port_data)
     {
       // clang-format off
-      output.print("{:+{}.{}e},{:+{}.{}e}{}",
+      output.print("{:>+{}.{}e},{:>+{}.{}e}{}",
                    20.0 * std::log10(std::abs(data.Sij)), table.w, table.p,
                    std::arg(data.Sij) * 180.0 / M_PI, table.w, table.p,
                    (data.idx == port_data.back().idx) ? "" : ",");

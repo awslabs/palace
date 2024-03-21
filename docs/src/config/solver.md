@@ -171,10 +171,10 @@ solver. This option is relevant only for `"Type": "FEAST"`.
     "FreqStep": <float>,
     "SaveStep": <int>,
     "SaveOnlyPorts": <bool>,
+    "Restart": <int>,
     "AdaptiveTol": <float>,
     "AdaptiveMaxSamples": <int>,
-    "AdaptiveMaxCandidates": <int>,
-    "Restart": <int>
+    "AdaptiveConvergenceMemory": <int>
 }
 ```
 
@@ -196,28 +196,24 @@ boundaries and skipped for quantities depending on, for example, field integrals
 or part of the interior of the computational domain. This can be useful in speeding up
 simulations if only port boundary quantities are required.
 
+`"Restart" [1]` :  Iteration (1-based) from which to restart for a partial frequency sweep
+simulation. That is, the initial frequency will be computed as
+`"MinFreq" + ("Restart" - 1) * "FreqStep"`.
+
 `"AdaptiveTol" [0.0]` :  Relative error convergence tolerance for adaptive frequency sweep.
 If zero, adaptive frequency sweep is disabled and the full-order model is solved at each
 frequency step in the specified interval. If positive, this tolerance is used to ensure the
 reliability of the reduced-order model relative to the full-order one in the frequency band
 of interest.
 
-`"AdaptiveMaxSamples" [10]` :  Maximum number of frequency samples used to construct the
+`"AdaptiveMaxSamples" [20]` :  Maximum number of frequency samples used to construct the
 reduced-order model for adaptive fast frequency sweep, if the specified tolerance
 (`"AdaptiveTol"`) is not met first.
 
-`"AdaptiveMaxCandidates" [NumFreq/5]` :  Maximum number of frequency samples to consider as
-candidates for computing the reduced-order model error when adaptively sampling new points
-in order to construct the reduced-order for adaptive fast frequency sweep. The default is
-less than the requested number of frequency points in the sweep.
-
-`"Restart" [1]` :  Iteration (1-based) from which to restart for a partial frequency sweep
-simulation. That is, the initial frequency will be computed as
-`"MinFreq" + ("Restart" - 1) * "FreqStep"`.
-
-### Advanced driven solver options
-
-  - `"AdaptiveAPosterioriError" [false]`
+`"AdaptiveConvergenceMemory" [2]` :  Memory used for assessing convergence of the adaptive
+sampling algorithm for constructing the reduced-order model for adaptive fast frequency
+sweep. For example, a memory of "2" requires two consecutive samples which satisfy the
+error tolerance.
 
 ## `solver["Transient"]`
 

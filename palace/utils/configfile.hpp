@@ -581,22 +581,17 @@ public:
   // Only perform postprocessing on port boundaries, skipping domain interior.
   bool only_port_post = false;
 
+  // Restart iteration for a partial sweep.
+  int rst = 1;
+
   // Error tolerance for enabling adaptive frequency sweep.
   double adaptive_tol = 0.0;
 
   // Maximum number of frequency samples for adaptive frequency sweep.
-  int adaptive_nmax = 0;
+  int adaptive_max_size = 0;
 
-  // Number of candidate points for error metric calculation in adaptive
-  // frequency sweep.
-  int adaptive_ncand = 0;
-
-  // Use error metric based on an a posteriori residual error estimate. Otherwise just use
-  // the 2-norm of the HDM residual.
-  bool adaptive_metric_aposteriori = false;
-
-  // Restart iteration for a partial sweep.
-  int rst = 1;
+  // Memory required for adaptive sampling convergence.
+  int adaptive_memory = 2;
 
   void SetUp(json &solver);
 };

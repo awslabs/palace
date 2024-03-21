@@ -20,7 +20,7 @@ keyword which prescribes zero voltage at the boundary.
 ## Perfect magnetic conductor (PMC) boundary
 
 The perfect magnetic conductor (PMC) boundary condition (zero tangential magnetic field) is
-a homogenous Neumann boundary condition for the frequency or time domain finite element
+a homogeneous Neumann boundary condition for the frequency or time domain finite element
 formulation, as well as the magnetostatic formulation. It is the natural boundary condition
 and thus it has the same effect as not specifying any additional boundary condition on
 external boundary surfaces. It can also be explicitly specified using the `"PMC"` boundary
@@ -95,7 +95,7 @@ reference.
     boundary. This allows for more accurate scattering parameter calculations when modeling
     waveguides or transmission lines with arbitrary cross sections.
     
-    The homogenous Dirichlet boundary conditions for the wave port boundary mode analysis
+    The homogeneous Dirichlet boundary conditions for the wave port boundary mode analysis
     are taken from the `"PEC"` boundaries of the full 3D model, as well as any optional
     additional boundary attributes given under `"WavePortPEC"`. Any boundary of the wave
     port not labeled with with a PEC condition has the natural boundary condition for zero

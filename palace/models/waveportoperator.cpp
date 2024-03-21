@@ -648,7 +648,7 @@ WavePortData::WavePortData(const config::WavePortData &data,
     gmres->SetRelTol(ksp_tol);
     gmres->SetMaxIter(ksp_max_it);
     gmres->SetRestartDim(ksp_max_it);
-    // gmres->SetPrecSide(GmresSolver<ComplexOperator>::PrecSide::RIGHT);
+    // gmres->SetPrecSide(GmresSolverBase::PrecSide::RIGHT);
 
     config::LinearSolverData::Type pc_type = solver.linear.type;
     if (pc_type == config::LinearSolverData::Type::SUPERLU)

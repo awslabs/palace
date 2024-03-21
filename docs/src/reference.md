@@ -68,7 +68,7 @@ the time-harmonic Maxwell's equations becomes ``+(\mu_r \lambda_L^2)^{-1}\bm{E}`
 
 The domain boundary ``\Gamma=\Gamma_{PEC}\cup\Gamma_{PMC}\cup\Gamma_{Z}``, is separated into
 perfect electric conductor (PEC), perfect magnetic conductor (PMC), and impedance
-boundaries, respectively. The PEC boundary condition is a homogenous Dirichlet condition,
+boundaries, respectively. The PEC boundary condition is a homogeneous Dirichlet condition,
 while the PMC boundary condition is the natural boundary condition for the problem and is
 satisfied at all exterior boundaries by the finite element formulation. Impedance
 boundaries are modeled using a Robin boundary condition with ``\gamma = i\omega/Z_s``, in
