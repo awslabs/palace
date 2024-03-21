@@ -164,7 +164,7 @@ auto AssembleGeometryData(Ceed ceed, mfem::Geometry::Type geom, std::vector<int>
   PalaceCeedCall(ceed, CeedElemRestrictionCreateStrided(ceed, num_elem, 1, 1, num_elem,
                                                         CEED_STRIDES_BACKEND, &attr_restr));
   {
-    Vector Bt(num_qpts), Gt(num_qpts), qX(num_qpts), qW(num_qpts);
+    mfem::Vector Bt(num_qpts), Gt(num_qpts), qX(num_qpts), qW(num_qpts);
     Bt = 1.0;
     Gt = 0.0;
     qX = 0.0;
@@ -179,11 +179,12 @@ auto AssembleGeometryData(Ceed ceed, mfem::Geometry::Type geom, std::vector<int>
   // Allocate storage for geometry factor data (stored as attribute + quadrature weight +
   // Jacobian, column-major).
   CeedInt geom_data_size = 2 + data.space_dim * data.dim;
-  PalaceCeedCall(
-      ceed, CeedVectorCreate(ceed, num_elem * num_qpts * geom_data_size, &data.geom_data));
+  PalaceCeedCall(ceed,
+                 CeedVectorCreate(ceed, (CeedSize)num_elem * num_qpts * geom_data_size,
+                                  &data.geom_data));
   PalaceCeedCall(
       ceed, CeedElemRestrictionCreateStrided(ceed, num_elem, num_qpts, geom_data_size,
-                                             num_elem * num_qpts * geom_data_size,
+                                             (CeedSize)num_elem * num_qpts * geom_data_size,
                                              CEED_STRIDES_BACKEND, &data.geom_data_restr));
 
   // Compute the required geometry factors at quadrature points.
