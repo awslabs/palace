@@ -88,11 +88,8 @@ auto ConfigureLinearSolver(const FiniteElementSpaceHierarchy &fespaces, double t
   else
   {
     auto amg = std::make_unique<BoomerAmgSolver>(1, 1, 0);
-    amg->SetStrengthThresh(0.8);  // More coarsening to save memory
-    const int mg_smooth_order =
-        std::max(fespaces.GetFinestFESpace().GetMaxElementOrder(), 2) +
-        (dynamic_cast<const mfem::RT_FECollection *>(
-             &fespaces.GetFinestFESpace().GetFEColl()) != nullptr);
+    amg->SetStrengthThresh(0.8);    // More coarsening to save memory
+    const int mg_smooth_order = 1;  // Basically damped Jacobi smoother
     pc = std::make_unique<GeometricMultigridSolver<OperType>>(
         fespaces.GetFinestFESpace().GetComm(),
         std::make_unique<MfemWrapperSolver<OperType>>(std::move(amg)),
