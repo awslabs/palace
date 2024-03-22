@@ -19,7 +19,7 @@ void DivDivMassIntegrator::Assemble(Ceed ceed, CeedElemRestriction trial_restr,
                                     CeedElemRestriction geom_data_restr,
                                     CeedOperator *op) const
 {
-  IntegratorInfo info;
+  CeedQFunctionInfo info;
   info.assemble_q_data = assemble_q_data;
 
   // Set up QFunctions.
@@ -60,8 +60,8 @@ void DivDivMassIntegrator::Assemble(Ceed ceed, CeedElemRestriction trial_restr,
   info.trial_ops = EvalMode::Div | EvalMode::Interp | EvalMode::Weight;
   info.test_ops = EvalMode::Div | EvalMode::Interp;
 
-  // Set up the coefficient and assemble.
-  auto ctx = PopulateCoefficientContext(1, space_dim, Q, Q_mass);
+  // Set up the coefficient and assemble. Mass goes first.
+  auto ctx = PopulateCoefficientContext(space_dim, Q_mass, 1, Q);
   AssembleCeedOperator(info, (void *)ctx.data(), ctx.size() * sizeof(CeedIntScalar), ceed,
                        trial_restr, test_restr, trial_basis, test_basis, geom_data,
                        geom_data_restr, op);
