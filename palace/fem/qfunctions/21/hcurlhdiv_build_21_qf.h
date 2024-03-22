@@ -18,7 +18,7 @@ CEED_QFUNCTION(f_build_hcurlhdiv_21)(void *__restrict__ ctx, CeedInt Q,
     CeedScalar coeff[3], adjJt_loc[2], J_loc[2], qd_loc[1];
     CoeffUnpack2((const CeedIntScalar *)ctx, (CeedInt)attr[i], coeff);
     MatUnpack21(adjJt + i, Q, adjJt_loc);
-    AdjJt21<false>(adjJt_loc, J_loc);
+    AdjJt21(adjJt_loc, J_loc);
     MultAtBC21(J_loc, coeff, adjJt_loc, qd_loc);
 
     qd[i + Q * 0] = wdetJ[i] * qd_loc[0];
@@ -37,7 +37,7 @@ CEED_QFUNCTION(f_build_hdivhcurl_21)(void *__restrict__ ctx, CeedInt Q,
     CeedScalar coeff[3], adjJt_loc[2], J_loc[2], qd_loc[1];
     CoeffUnpack2((const CeedIntScalar *)ctx, (CeedInt)attr[i], coeff);
     MatUnpack21(adjJt + i, Q, adjJt_loc);
-    AdjJt21<false>(adjJt_loc, J_loc);
+    AdjJt21(adjJt_loc, J_loc);
     MultAtBC21(adjJt_loc, coeff, J_loc, qd_loc);
 
     qd[i + Q * 0] = wdetJ[i] * qd_loc[0];

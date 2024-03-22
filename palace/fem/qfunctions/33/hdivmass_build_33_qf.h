@@ -15,10 +15,11 @@ CEED_QFUNCTION(f_build_hdivmass_33)(void *__restrict__ ctx, CeedInt Q,
 
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
+    CeedScalar adjJt_loc[9];
+    MatUnpack33(adjJt + i, Q, adjJt_loc);
     {
-      CeedScalar coeff[6], adjJt_loc[9], qd_loc[6];
+      CeedScalar coeff[6], qd_loc[6];
       CoeffUnpack3((const CeedIntScalar *)ctx, (CeedInt)attr[i], coeff);
-      MatUnpack33(adjJt + i, Q, adjJt_loc);
       MultAtBA33(adjJt_loc, coeff, qd_loc);
 
       qd1[i + Q * 0] = wdetJ[i] * qd_loc[0];
@@ -29,10 +30,9 @@ CEED_QFUNCTION(f_build_hdivmass_33)(void *__restrict__ ctx, CeedInt Q,
       qd1[i + Q * 5] = wdetJ[i] * qd_loc[5];
     }
     {
-      CeedScalar coeff[6], adjJt_loc[9], J_loc[9], qd_loc[6];
+      CeedScalar coeff[6], J_loc[9], qd_loc[6];
       CoeffUnpack3(CoeffPairSecond<3>((const CeedIntScalar *)ctx), (CeedInt)attr[i], coeff);
-      MatUnpack33(adjJt + i, Q, adjJt_loc);
-      AdjJt33<false>(adjJt_loc, J_loc);
+      AdjJt33(adjJt_loc, J_loc);
       MultAtBA33(J_loc, coeff, qd_loc);
 
       qd2[i + Q * 0] = wdetJ[i] * qd_loc[0];

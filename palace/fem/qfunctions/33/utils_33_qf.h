@@ -15,7 +15,7 @@ CEED_QFUNCTION_HELPER CeedScalar DetJ33(const CeedScalar J[9])
          J[2] * (J[3] * J[7] - J[4] * J[6]);
 }
 
-template <bool ComputeDet>
+template <bool ComputeDet = false>
 CEED_QFUNCTION_HELPER CeedScalar AdjJt33(const CeedScalar J[9], CeedScalar adjJt[9])
 {
   // Compute adj(J)^T / det(J) and store the result.
@@ -46,6 +46,17 @@ CEED_QFUNCTION_HELPER void MatUnpack33(const CeedScalar *A, const CeedInt A_stri
   A_loc[6] = A[A_stride * 6];
   A_loc[7] = A[A_stride * 7];
   A_loc[8] = A[A_stride * 8];
+}
+
+CEED_QFUNCTION_HELPER void MultBx33(const CeedScalar B[6], const CeedScalar x[3],
+                                    CeedScalar y[3])
+{
+  // B: 0 1 2
+  //    1 3 4
+  //    2 4 5
+  y[0] = B[0] * x[0] + B[1] * x[1] + B[2] * x[2];
+  y[1] = B[1] * x[0] + B[3] * x[1] + B[4] * x[2];
+  y[2] = B[2] * x[0] + B[4] * x[1] + B[5] * x[2];
 }
 
 CEED_QFUNCTION_HELPER void MultAtBCx33(const CeedScalar A[9], const CeedScalar B[6],

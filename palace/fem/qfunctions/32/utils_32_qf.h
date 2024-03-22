@@ -17,7 +17,7 @@ CEED_QFUNCTION_HELPER CeedScalar DetJ32(const CeedScalar J[6])
   return sqrt(E * G - F * F);
 }
 
-template <bool ComputeDet>
+template <bool ComputeDet = false>
 CEED_QFUNCTION_HELPER CeedScalar AdjJt32(const CeedScalar J[6], CeedScalar adjJt[6])
 {
   // Compute adj(J)^T / det(J) and store the result.

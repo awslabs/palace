@@ -19,7 +19,7 @@ CEED_QFUNCTION(f_apply_hdiv_32)(void *__restrict__ ctx, CeedInt Q,
     CeedScalar coeff[6], adjJt_loc[6], J_loc[6], v_loc[2];
     CoeffUnpack3((const CeedIntScalar *)ctx, (CeedInt)attr[i], coeff);
     MatUnpack32(adjJt + i, Q, adjJt_loc);
-    AdjJt32<false>(adjJt_loc, J_loc);
+    AdjJt32(adjJt_loc, J_loc);
     MultAtBCx32(J_loc, coeff, J_loc, u_loc, v_loc);
 
     v[i + Q * 0] = wdetJ[i] * v_loc[0];
