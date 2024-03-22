@@ -20,7 +20,7 @@ CEED_QFUNCTION(f_build_l2mass_21)(void *__restrict__ ctx, CeedInt Q,
       CeedScalar coeff[3], adjJt_loc[2], J_loc[2], qd_loc[1];
       CoeffUnpack2((const CeedIntScalar *)ctx, (CeedInt)attr[i], coeff);
       MatUnpack21(adjJt + i, Q, adjJt_loc);
-      AdjJt21<false>(adjJt_loc, J_loc);
+      AdjJt21(adjJt_loc, J_loc);
       MultAtBA21(J_loc, coeff, qd_loc);
 
       qd1[i + Q * 0] = wdetJ[i] * qd_loc[0];
