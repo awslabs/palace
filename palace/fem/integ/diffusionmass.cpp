@@ -20,7 +20,7 @@ void DiffusionMassIntegrator::Assemble(Ceed ceed, CeedElemRestriction trial_rest
                                        CeedElemRestriction geom_data_restr,
                                        CeedOperator *op) const
 {
-  IntegratorInfo info;
+  CeedQFunctionInfo info;
   info.assemble_q_data = assemble_q_data;
 
   // Set up QFunctions.
@@ -61,8 +61,8 @@ void DiffusionMassIntegrator::Assemble(Ceed ceed, CeedElemRestriction trial_rest
   info.trial_ops = EvalMode::Grad | EvalMode::Interp;
   info.test_ops = EvalMode::Grad | EvalMode::Interp;
 
-  // Set up the coefficient and assemble.
-  auto ctx = PopulateCoefficientContext(space_dim, 1, Q, Q_mass);
+  // Set up the coefficient and assemble. Mass goes first.
+  auto ctx = PopulateCoefficientContext(1, Q_mass, space_dim, Q);
   AssembleCeedOperator(info, (void *)ctx.data(), ctx.size() * sizeof(CeedIntScalar), ceed,
                        trial_restr, test_restr, trial_basis, test_basis, geom_data,
                        geom_data_restr, op);

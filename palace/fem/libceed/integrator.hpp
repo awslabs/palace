@@ -23,7 +23,7 @@ enum EvalMode : unsigned int
 };
 
 // Data structure for CeedOperator construction for various integrators.
-struct IntegratorInfo
+struct CeedQFunctionInfo
 {
   // QFunctions for operator construction and application.
   CeedQFunctionUser apply_qf;
@@ -38,7 +38,7 @@ struct IntegratorInfo
   // operator application in true matrix-free fashion.
   bool assemble_q_data;
 
-  IntegratorInfo()
+  CeedQFunctionInfo()
     : apply_qf(nullptr), apply_qf_path(""), trial_ops(0), test_ops(0),
       assemble_q_data(false)
   {
@@ -59,7 +59,7 @@ void AssembleCeedGeometryData(Ceed ceed, CeedElemRestriction mesh_restr,
 
 // Construct libCEED operator using the given quadrature data, element restriction, and
 // basis objects.
-void AssembleCeedOperator(const IntegratorInfo &info, void *ctx, std::size_t ctx_size,
+void AssembleCeedOperator(const CeedQFunctionInfo &info, void *ctx, std::size_t ctx_size,
                           Ceed ceed, CeedElemRestriction trial_restr,
                           CeedElemRestriction test_restr, CeedBasis trial_basis,
                           CeedBasis test_basis, CeedVector geom_data,
@@ -71,6 +71,15 @@ void AssembleCeedOperator(const IntegratorInfo &info, void *ctx, std::size_t ctx
 void AssembleCeedInterpolator(Ceed ceed, CeedElemRestriction trial_restr,
                               CeedElemRestriction test_restr, CeedBasis interp_basis,
                               CeedOperator *op, CeedOperator *op_t);
+
+// Construct a libCEED operator which integrates the squared difference between two
+// functions over every element.
+void AssembleCeedElementErrorIntegrator(
+    const CeedQFunctionInfo &info, void *ctx, std::size_t ctx_size, Ceed ceed,
+    CeedVector input1, CeedVector input2, CeedElemRestriction input1_restr,
+    CeedElemRestriction input2_restr, CeedBasis input1_basis, CeedBasis input2_basis,
+    CeedElemRestriction mesh_elem_restr, CeedVector geom_data,
+    CeedElemRestriction geom_data_restr, CeedOperator *op);
 
 }  // namespace palace::ceed
 
