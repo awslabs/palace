@@ -54,8 +54,9 @@ void Finalize();
 // Get the configured libCEED backend.
 std::string Print();
 
-// Initialize a CeedVector from an mfem::Vector.
-void InitCeedVector(const mfem::Vector &v, Ceed ceed, CeedVector *cv);
+// Initialize a CeedVector from an mfem::Vector. When init is false, expects the CeedVector
+// has already been initialized and just sets the data pointer.
+void InitCeedVector(const mfem::Vector &v, Ceed ceed, CeedVector *cv, bool init = true);
 
 // Convert an MFEM geometry type to a libCEED one.
 CeedElemTopology GetCeedTopology(mfem::Geometry::Type geom);
