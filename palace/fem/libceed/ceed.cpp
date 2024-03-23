@@ -79,18 +79,13 @@ std::string Print()
 void InitCeedVector(const mfem::Vector &v, Ceed ceed, CeedVector *cv)
 {
   CeedMemType mem;
-  const CeedScalar *data;
   PalaceCeedCall(ceed, CeedVectorCreate(ceed, v.Size(), cv));
   PalaceCeedCall(ceed, CeedGetPreferredMemType(ceed, &mem));
-  if (mfem::Device::Allows(mfem::Backend::DEVICE_MASK) && mem == CEED_MEM_DEVICE)
+  if (!mfem::Device::Allows(mfem::Backend::DEVICE_MASK) && mem == CEED_MEM_DEVICE)
   {
-    data = v.Read();
-  }
-  else
-  {
-    data = v.HostRead();
     mem = CEED_MEM_HOST;
   }
+  const auto *data = v.Read(mem == CEED_MEM_DEVICE);
   PalaceCeedCall(
       ceed, CeedVectorSetArray(*cv, mem, CEED_USE_POINTER, const_cast<CeedScalar *>(data)));
 }
