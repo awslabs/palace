@@ -735,6 +735,15 @@ void AXPBYPCZ(double alpha, const ComplexVector &x, double beta, const ComplexVe
   z.AXPBYPCZ(alpha, x, beta, y, gamma);
 }
 
+void Sqrt(Vector &x, double s)
+{
+  const bool use_dev = x.UseDevice();
+  const int N = x.Size();
+  auto *X = x.ReadWrite(use_dev);
+  mfem::forall_switch(use_dev, N,
+                      [=] MFEM_HOST_DEVICE(int i) { X[i] = std::sqrt(X[i] * s); });
+}
+
 }  // namespace linalg
 
 }  // namespace palace

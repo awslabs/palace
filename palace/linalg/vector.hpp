@@ -246,6 +246,10 @@ template <typename VecType, typename ScalarType>
 void AXPBYPCZ(ScalarType alpha, const VecType &x, ScalarType beta, const VecType &y,
               ScalarType gamma, VecType &z);
 
+// Compute element-wise square root, optionally with scaling (multiplied before the square
+// root).
+void Sqrt(Vector &x, double s = 1.0);
+
 }  // namespace linalg
 
 }  // namespace palace
