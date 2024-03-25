@@ -83,7 +83,9 @@ auto ConfigureLinearSolver(const FiniteElementSpaceHierarchy &fespaces, double t
   std::unique_ptr<Solver<OperType>> pc;
   if (!use_mg)
   {
-    pc = std::make_unique<JacobiSmoother<OperType>>();
+    // Use eigenvalue estimate to compute optimal Jacobi damping parameter.
+    pc = std::make_unique<JacobiSmoother<OperType>>(fespaces.GetFinestFESpace().GetComm(),
+                                                    0.0);
   }
   else
   {
@@ -91,7 +93,7 @@ auto ConfigureLinearSolver(const FiniteElementSpaceHierarchy &fespaces, double t
     amg->SetStrengthThresh(0.8);  // More coarsening to save memory
     if (fespaces.GetNumLevels() > 1)
     {
-      const int mg_smooth_order = 1;  // Basically damped Jacobi smoother
+      const int mg_smooth_order = 2;  // Smooth order independent of FE space order
       pc = std::make_unique<GeometricMultigridSolver<OperType>>(
           fespaces.GetFinestFESpace().GetComm(),
           std::make_unique<MfemWrapperSolver<OperType>>(std::move(amg)),

@@ -21,11 +21,20 @@ class JacobiSmoother : public Solver<OperType>
   using VecType = typename Solver<OperType>::VecType;
 
 private:
+  // MPI communicator associated with the solver operator and vectors.
+  MPI_Comm comm;
+
   // Inverse diagonal scaling of the operator (real-valued for now).
   VecType dinv;
 
+  // Damping factor and scaling factor for maximum eigenvalue.
+  double omega, sf_max;
+
 public:
-  JacobiSmoother() : Solver<OperType>() {}
+  JacobiSmoother(MPI_Comm comm, double omega = 1.0, double sf_max = 1.0)
+    : Solver<OperType>(), comm(comm), omega(omega), sf_max(sf_max)
+  {
+  }
 
   void SetOperator(const OperType &op) override;
 
