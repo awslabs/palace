@@ -111,8 +111,8 @@ void HypreAmsSolver::ConstructAuxiliaryMatrices(FiniteElementSpace &nd_fespace,
     pi.SetAssemblyLevel(mfem::AssemblyLevel::LEGACY);
     pi.Assemble(skip_zeros_interp);
     pi.Finalize(skip_zeros_interp);
-    ParOperator RAP_Pi(std::make_unique<hypre::HypreCSRMatrix>(*pi.LoseMat()), h1d_fespace,
-                       nd_fespace, true);
+    ParOperator RAP_Pi(std::make_unique<hypre::HypreCSRMatrix>(std::move(*pi.LoseMat())),
+                       h1d_fespace, nd_fespace, true);
     Pi = RAP_Pi.StealParallelAssemble();
     if (cycle_type >= 10)
     {

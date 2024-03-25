@@ -47,29 +47,20 @@ HypreCSRMatrix::HypreCSRMatrix(hypre_CSRMatrix *mat) : mat(mat)
   width = hypre_CSRMatrixNumCols(mat);
 }
 
-HypreCSRMatrix::HypreCSRMatrix(mfem::SparseMatrix &m)
+HypreCSRMatrix::HypreCSRMatrix(mfem::SparseMatrix &&m)
   : palace::Operator(m.Height(), m.Width())
 {
-  // Initialize the internal hypre matrix.
   mat = hypre_CSRMatrixCreate(height, width, m.NumNonZeroElems());
+  hypre_CSRMatrixI(mat) = m.ReadWriteI();
+  hypre_CSRMatrixJ(mat) = m.ReadWriteJ();
+  hypre_CSRMatrixData(mat) = m.ReadWriteData();
 
-  // Copy the I, J and Data vectors.
-  hypre_CSRMatrixI(mat) = m.GetI();
-  hypre_CSRMatrixJ(mat) = m.GetJ();
-  hypre_CSRMatrixData(mat) = m.GetData();
-
-  // Match the memory class of the sparse matrix.
-  hypre_CSRMatrixMemoryLocation(mat) = (m.GetMemoryClass() == mfem::MemoryClass::DEVICE)
-                                           ? HYPRE_MEMORY_DEVICE
-                                           : HYPRE_MEMORY_HOST;
-}
-
-HypreCSRMatrix::HypreCSRMatrix(mfem::SparseMatrix &&m) : HypreCSRMatrix(m)
-{
   // Given m is an rvalue, additionally take ownership of the pointers.
   m.SetGraphOwner(false);
   m.SetDataOwner(false);
   hypre_CSRMatrixOwnsData(mat) = true;
+
+  hypre_CSRMatrixInitialize(mat);
 }
 
 HypreCSRMatrix::~HypreCSRMatrix()
