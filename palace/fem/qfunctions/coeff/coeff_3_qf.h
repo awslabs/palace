@@ -9,7 +9,7 @@
 CEED_QFUNCTION_HELPER void CoeffUnpack3(const CeedIntScalar *ctx, const CeedInt attr,
                                         CeedScalar coeff[6])
 {
-  const CeedInt k = AttrMat(ctx)[attr - 1].first;
+  const CeedInt k = (NumAttr(ctx) > 0) ? AttrMat(ctx)[attr - 1].first : 0;
   const CeedIntScalar *mat_coeff = MatCoeff(ctx);
   coeff[0] = mat_coeff[6 * k + 0].second;
   coeff[1] = mat_coeff[6 * k + 1].second;

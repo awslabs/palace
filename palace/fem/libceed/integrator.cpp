@@ -218,11 +218,12 @@ std::vector<CeedInt> QuadratureDataSetup(const IntegratorInfo &info, Ceed ceed,
     q_data_size += size * (size + 1) / 2;
   }
 
-  PalaceCeedCall(ceed, CeedVectorCreate(ceed, num_elem * num_qpts * q_data_size, q_data));
-  PalaceCeedCall(ceed,
-                 CeedElemRestrictionCreateStrided(ceed, num_elem, num_qpts, q_data_size,
-                                                  num_elem * num_qpts * q_data_size,
-                                                  CEED_STRIDES_BACKEND, q_data_restr));
+  PalaceCeedCall(
+      ceed, CeedVectorCreate(ceed, (CeedSize)num_elem * num_qpts * q_data_size, q_data));
+  PalaceCeedCall(
+      ceed, CeedElemRestrictionCreateStrided(ceed, num_elem, num_qpts, q_data_size,
+                                             (CeedSize)num_elem * num_qpts * q_data_size,
+                                             CEED_STRIDES_BACKEND, q_data_restr));
 
   return active_input_sizes;
 }

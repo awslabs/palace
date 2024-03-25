@@ -164,14 +164,15 @@ auto AssembleGeometryData(Ceed ceed, mfem::Geometry::Type geom, std::vector<int>
   PalaceCeedCall(ceed, CeedElemRestrictionCreateStrided(ceed, num_elem, 1, 1, num_elem,
                                                         CEED_STRIDES_BACKEND, &attr_restr));
   {
-    Vector Bt(num_qpts), Gt(num_qpts), qX(num_qpts), qW(num_qpts);
+    // Note: ceed::GetCeedTopology(CEED_TOPOLOGY_LINE) == 1.
+    mfem::Vector Bt(num_qpts), Gt(num_qpts), qX(num_qpts), qW(num_qpts);
     Bt = 1.0;
     Gt = 0.0;
     qX = 0.0;
     qW = 0.0;
-    PalaceCeedCall(ceed, CeedBasisCreateH1(ceed, ceed::GetCeedTopology(geom), 1, 1,
-                                           num_qpts, Bt.GetData(), Gt.GetData(),
-                                           qX.GetData(), qW.GetData(), &attr_basis));
+    PalaceCeedCall(ceed, CeedBasisCreateH1(ceed, CEED_TOPOLOGY_LINE, 1, 1, num_qpts,
+                                           Bt.GetData(), Gt.GetData(), qX.GetData(),
+                                           qW.GetData(), &attr_basis));
   }
   CeedVector elem_attr_vec;
   ceed::InitCeedVector(elem_attr, ceed, &elem_attr_vec);
@@ -179,11 +180,12 @@ auto AssembleGeometryData(Ceed ceed, mfem::Geometry::Type geom, std::vector<int>
   // Allocate storage for geometry factor data (stored as attribute + quadrature weight +
   // Jacobian, column-major).
   CeedInt geom_data_size = 2 + data.space_dim * data.dim;
-  PalaceCeedCall(
-      ceed, CeedVectorCreate(ceed, num_elem * num_qpts * geom_data_size, &data.geom_data));
+  PalaceCeedCall(ceed,
+                 CeedVectorCreate(ceed, (CeedSize)num_elem * num_qpts * geom_data_size,
+                                  &data.geom_data));
   PalaceCeedCall(
       ceed, CeedElemRestrictionCreateStrided(ceed, num_elem, num_qpts, geom_data_size,
-                                             num_elem * num_qpts * geom_data_size,
+                                             (CeedSize)num_elem * num_qpts * geom_data_size,
                                              CEED_STRIDES_BACKEND, &data.geom_data_restr));
 
   // Compute the required geometry factors at quadrature points.

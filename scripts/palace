@@ -17,7 +17,7 @@ Options:
   -nt, --nt NUM_THREADS            Number of OpenMP threads to use for OpenMP builds, default is 1 or the value of OMP_NUM_THREADS in the environment
   -launcher, --launcher LAUNCHER   MPI launcher, default is \`mpirun\`
   -launcher-args,
-    --launcher-args ARGS           Any extra arguments to pass to MPI launcher, for example \`--map-by\` or \`--bind-to\` with their respective options (quoted), default is \`--bind-to none\`
+    --launcher-args ARGS           Any extra arguments to pass to MPI launcher, for example \`--map-by\` or \`--bind-to\` with their respective options (quoted)
 "
 }
 
@@ -27,7 +27,7 @@ SERIAL="false"
 NUM_PROCS="1"
 NUM_THREADS=""
 LAUNCHER="mpirun"
-LAUNCHER_ARGS="--bind-to none"
+LAUNCHER_ARGS=""
 POSITIONAL=()
 while [[ $# -gt 0 ]]; do
     key="$1"

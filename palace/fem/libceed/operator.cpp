@@ -24,7 +24,8 @@ Operator::Operator(int h, int w) : palace::Operator(h, w)
   PalacePragmaOmp(parallel if (op.size() > 1))
   {
     const int id = utils::GetThreadNum();
-    MFEM_ASSERT(id < op.size(), "Out of bounds access for thread number " << id << "!");
+    MFEM_ASSERT(static_cast<std::size_t>(id) < op.size(),
+                "Out of bounds access for thread number " << id << "!");
     Ceed ceed = ceed::internal::GetCeedObjects()[utils::GetThreadNum()];
     CeedOperator loc_op, loc_op_t;
     CeedVector loc_u, loc_v;
@@ -45,7 +46,8 @@ Operator::~Operator()
   PalacePragmaOmp(parallel if (op.size() > 1))
   {
     const int id = utils::GetThreadNum();
-    MFEM_ASSERT(id < op.size(), "Out of bounds access for thread number " << id << "!");
+    MFEM_ASSERT(static_cast<std::size_t>(id) < op.size(),
+                "Out of bounds access for thread number " << id << "!");
     Ceed ceed;
     PalaceCeedCallBackend(CeedOperatorGetCeed(op[id], &ceed));
     PalaceCeedCall(ceed, CeedOperatorDestroy(&op[id]));
@@ -59,7 +61,8 @@ void Operator::AddOper(CeedOperator sub_op, CeedOperator sub_op_t)
 {
   // This should be called from within a OpenMP parallel region.
   const int id = utils::GetThreadNum();
-  MFEM_ASSERT(id < op.size(), "Out of bounds access for thread number " << id << "!");
+  MFEM_ASSERT(static_cast<std::size_t>(id) < op.size(),
+              "Out of bounds access for thread number " << id << "!");
   Ceed ceed;
   PalaceCeedCallBackend(CeedOperatorGetCeed(sub_op, &ceed));
   CeedSize l_in, l_out;
@@ -88,7 +91,8 @@ void Operator::Finalize()
   PalacePragmaOmp(parallel if (op.size() > 1))
   {
     const int id = utils::GetThreadNum();
-    MFEM_ASSERT(id < op.size(), "Out of bounds access for thread number " << id << "!");
+    MFEM_ASSERT(static_cast<std::size_t>(id) < op.size(),
+                "Out of bounds access for thread number " << id << "!");
     Ceed ceed;
     PalaceCeedCallBackend(CeedOperatorGetCeed(op[id], &ceed));
     PalaceCeedCall(ceed, CeedOperatorCheckReady(op[id]));
@@ -113,7 +117,8 @@ void Operator::AssembleDiagonal(Vector &diag) const
   PalacePragmaOmp(parallel if (op.size() > 1))
   {
     const int id = utils::GetThreadNum();
-    MFEM_ASSERT(id < op.size(), "Out of bounds access for thread number " << id << "!");
+    MFEM_ASSERT(static_cast<std::size_t>(id) < op.size(),
+                "Out of bounds access for thread number " << id << "!");
     Ceed ceed;
     PalaceCeedCallBackend(CeedOperatorGetCeed(op[id], &ceed));
     PalaceCeedCall(ceed, CeedVectorSetArray(v[id], mem, CEED_USE_POINTER, diag_data));
@@ -144,7 +149,8 @@ inline void CeedAddMult(const std::vector<CeedOperator> &op,
   PalacePragmaOmp(parallel if (op.size() > 1))
   {
     const int id = utils::GetThreadNum();
-    MFEM_ASSERT(id < op.size(), "Out of bounds access for thread number " << id << "!");
+    MFEM_ASSERT(static_cast<std::size_t>(id) < op.size(),
+                "Out of bounds access for thread number " << id << "!");
     Ceed ceed;
     PalaceCeedCallBackend(CeedOperatorGetCeed(op[id], &ceed));
     PalaceCeedCall(ceed, CeedVectorSetArray(u[id], mem, CEED_USE_POINTER,
@@ -301,10 +307,12 @@ std::unique_ptr<hypre::HypreCSRMatrix> OperatorCOOtoCSR(Ceed ceed, CeedInt m, Ce
                                                         CeedInt *cols, CeedVector vals,
                                                         CeedMemType mem, bool set)
 {
-  // Preallocate CSR memory on host (like PETSc's MatSetValuesCOO).
-  mfem::Array<int> I(m + 1), J(nnz), perm(nnz), Jmap(nnz + 1);
+  // Preallocate CSR memory on host (like PETSc's MatSetValuesCOO). Check for overflow for
+  // large nonzero counts.
+  const int nnz_int = mfem::internal::to_int(nnz);
+  mfem::Array<int> I(m + 1), J(nnz_int), perm(nnz_int), Jmap(nnz_int + 1);
   I = 0;
-  for (int k = 0; k < nnz; k++)
+  for (int k = 0; k < nnz_int; k++)
   {
     perm[k] = k;
   }
@@ -312,12 +320,12 @@ std::unique_ptr<hypre::HypreCSRMatrix> OperatorCOOtoCSR(Ceed ceed, CeedInt m, Ce
             [&](const int &i, const int &j) { return (rows[i] < rows[j]); });
 
   int q = -1;  // True nnz index
-  for (int k = 0; k < nnz;)
+  for (int k = 0; k < nnz_int;)
   {
     // Sort column entries in the row.
     const int row = rows[perm[k]];
     const int start = k;
-    while (k < nnz && rows[perm[k]] == row)
+    while (k < nnz_int && rows[perm[k]] == row)
     {
       k++;
     }
@@ -405,11 +413,11 @@ std::unique_ptr<hypre::HypreCSRMatrix> OperatorCOOtoCSR(Ceed ceed, CeedInt m, Ce
     if (mfem::Device::Allows(mfem::Backend::DEVICE_MASK) && mem != CEED_MEM_DEVICE)
     {
       // Copy values to device before filling.
-      Vector d_vals(nnz);
+      Vector d_vals(nnz_int);
       {
         auto *d_vals_array = d_vals.HostWrite();
         PalacePragmaOmp(parallel for schedule(static))
-        for (int k = 0; k < nnz; k++)
+        for (int k = 0; k < nnz_int; k++)
         {
           d_vals_array[k] = vals_array[k];
         }
@@ -438,7 +446,8 @@ std::unique_ptr<hypre::HypreCSRMatrix> CeedOperatorFullAssemble(const Operator &
   PalacePragmaOmp(parallel if (op.Size() > 1))
   {
     const int id = utils::GetThreadNum();
-    MFEM_ASSERT(id < op.Size(), "Out of bounds access for thread number " << id << "!");
+    MFEM_ASSERT(static_cast<std::size_t>(id) < op.Size(),
+                "Out of bounds access for thread number " << id << "!");
     Ceed ceed;
     PalaceCeedCallBackend(CeedOperatorGetCeed(op[id], &ceed));
 
@@ -529,7 +538,7 @@ std::unique_ptr<Operator> CeedOperatorCoarsen(const Operator &op_fine,
   PalacePragmaOmp(parallel if (op_fine.Size() > 1))
   {
     const int id = utils::GetThreadNum();
-    MFEM_ASSERT(id < op_fine.Size(),
+    MFEM_ASSERT(static_cast<std::size_t>(id) < op_fine.Size(),
                 "Out of bounds access for thread number " << id << "!");
     Ceed ceed;
     PalaceCeedCallBackend(CeedOperatorGetCeed(op_fine[id], &ceed));

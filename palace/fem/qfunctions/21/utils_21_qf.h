@@ -34,24 +34,23 @@ CEED_QFUNCTION_HELPER void MatUnpack21(const CeedScalar *A, const CeedInt A_stri
 
 CEED_QFUNCTION_HELPER void MultAtBCx21(const CeedScalar A[2], const CeedScalar B[3],
                                        const CeedScalar C[2], const CeedScalar x[1],
-                                       CeedScalar y[2])
+                                       CeedScalar y[1])
 {
   // A: 0   B: 0 1   C: 0
   //    1      1 2      1
-  CeedScalar z[2];
+  CeedScalar z[2], t;
 
   y[0] = C[0] * x[0];
-  y[1] = C[1] * x[0];
+  t = C[1] * x[0];
 
-  z[0] = B[0] * y[0] + B[1] * y[1];
-  z[1] = B[1] * y[0] + B[2] * y[1];
+  z[0] = B[0] * y[0] + B[1] * t;
+  z[1] = B[1] * y[0] + B[2] * t;
 
   y[0] = A[0] * z[0] + A[1] * z[1];
-  y[1] = 0.0;
 }
 
 CEED_QFUNCTION_HELPER void MultBAx21(const CeedScalar A[2], const CeedScalar B[3],
-                                     const CeedScalar x[1], CeedScalar y[1])
+                                     const CeedScalar x[1], CeedScalar y[2])
 {
   // A: 0   B: 0 1
   //    1      1 2
