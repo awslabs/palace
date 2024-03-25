@@ -589,6 +589,7 @@ void AssembleCeedElementErrorIntegrator(
   PalaceCeedCall(ceed, CeedBasisGetNumQuadraturePoints(input1_basis, &num_qpts));
   CeedBasis mesh_elem_basis;
   {
+    // Note: ceed::GetCeedTopology(CEED_TOPOLOGY_LINE) == 1.
     mfem::Vector Bt(num_qpts), Gt(num_qpts), qX(num_qpts), qW(num_qpts);
     Bt = 1.0;
     Gt = 0.0;
