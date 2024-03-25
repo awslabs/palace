@@ -47,7 +47,7 @@ HypreCSRMatrix::HypreCSRMatrix(hypre_CSRMatrix *mat) : mat(mat)
   width = hypre_CSRMatrixNumCols(mat);
 }
 
-HypreCSRMatrix::HypreCSRMatrix(mfem::SparseMatrix &&m)
+HypreCSRMatrix::HypreCSRMatrix(mfem::SparseMatrix &m)
   : palace::Operator(m.Height(), m.Width())
 {
   mat = hypre_CSRMatrixCreate(height, width, m.NumNonZeroElems());
@@ -55,16 +55,16 @@ HypreCSRMatrix::HypreCSRMatrix(mfem::SparseMatrix &&m)
   hypre_CSRMatrixJ(mat) = m.ReadWriteJ();
   hypre_CSRMatrixData(mat) = m.ReadWriteData();
 
-  // Given m is an rvalue, additionally take ownership of the pointers.
-  m.SetGraphOwner(false);
-  m.SetDataOwner(false);
-  hypre_CSRMatrixOwnsData(mat) = true;
-
   hypre_CSRMatrixInitialize(mat);
 }
 
 HypreCSRMatrix::~HypreCSRMatrix()
 {
+  if (hypre_CSRMatrixOwnsData(mat) == false)
+  {
+    hypre_CSRMatrixI(mat) = nullptr;
+    hypre_CSRMatrixRownnz(mat) = nullptr;
+  }
   hypre_CSRMatrixDestroy(mat);
 }
 

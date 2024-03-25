@@ -53,8 +53,7 @@ private:
 public:
   HypreCSRMatrix(int h, int w, int nnz);
   HypreCSRMatrix(hypre_CSRMatrix *mat);
-  // Owning constructor - m gives up control of I, J and Data pointers.
-  HypreCSRMatrix(mfem::SparseMatrix &&m);
+  HypreCSRMatrix(mfem::SparseMatrix &m);
   ~HypreCSRMatrix();
 
   auto NNZ() const { return hypre_CSRMatrixNumNonzeros(mat); }
