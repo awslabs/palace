@@ -8,6 +8,7 @@
 #include <mfem.hpp>
 #include "fem/errorindicator.hpp"
 #include "fem/fespace.hpp"
+#include "fem/libceed/operator.hpp"
 #include "linalg/ksp.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
@@ -57,14 +58,14 @@ public:
 template <typename VecType>
 class CurlFluxErrorEstimator
 {
-  // Reference to material property data (not owned).
-  const MaterialOperator &mat_op;
-
   // Finite element space used to represent U and F.
-  FiniteElementSpace &nd_fespace;
+  const FiniteElementSpace &nd_fespace;
 
   // Global L2 projection solver.
   FluxProjector<VecType> projector;
+
+  // Operator which performs the integration of the flux error on each element.
+  ceed::Operator integ_op;
 
   // Temporary vectors for error estimation.
   mutable VecType U_gf, F, F_gf;
@@ -83,14 +84,14 @@ public:
 // denotes a smooth reconstruction of ε ∇Uₕ with continuous normal component.
 class GradFluxErrorEstimator
 {
-  // Reference to material property data (not owned).
-  const MaterialOperator &mat_op;
-
   // Finite element spaces used to represent U and F.
-  FiniteElementSpace &h1_fespace, &rt_fespace;
+  const FiniteElementSpace &h1_fespace, &rt_fespace;
 
   // Global L2 projection solver.
   FluxProjector<Vector> projector;
+
+  // Operator which performs the integration of the flux error on each element.
+  ceed::Operator integ_op;
 
   // Temporary vectors for error estimation.
   mutable Vector U_gf, F, F_gf;
