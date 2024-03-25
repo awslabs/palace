@@ -189,44 +189,18 @@ template <typename VecType>
 CurlFluxErrorEstimator<VecType>::CurlFluxErrorEstimator(
     const MaterialOperator &mat_op, FiniteElementSpaceHierarchy &nd_fespaces, double tol,
     int max_it, int print, bool use_mg)
-  : mat_op(mat_op), nd_fespace(nd_fespaces.GetFinestFESpace()),
-    projector(mat_op, nd_fespaces, tol, max_it, print, use_mg), U_gf(nd_fespace.GetVSize()),
-    F(nd_fespace.GetTrueVSize()), F_gf(nd_fespace.GetVSize())
+  : nd_fespace(nd_fespaces.GetFinestFESpace()),
+    projector(mat_op, nd_fespaces, tol, max_it, print, use_mg),
+    integ_op(2 * nd_fespace.GetMesh().GetNE(), nd_fespace.GetVSize()),
+    U_gf(nd_fespace.GetVSize()), F(nd_fespace.GetTrueVSize()), F_gf(nd_fespace.GetVSize())
 {
   U_gf.UseDevice(true);
   F.UseDevice(true);
   F_gf.UseDevice(true);
-}
 
-template <typename VecType>
-void CurlFluxErrorEstimator<VecType>::AddErrorIndicator(const VecType &U,
-                                                        ErrorIndicator &indicator) const
-{
-  // Compute the projection of the discontinuous flux onto the smooth finite element space
-  // and populate the corresponding grid functions.
-  BlockTimer bt(Timer::ESTIMATION);
-  projector.Mult(U, F);
-  if constexpr (std::is_same<VecType, ComplexVector>::value)
-  {
-    nd_fespace.GetProlongationMatrix()->Mult(U.Real(), U_gf.Real());
-    nd_fespace.GetProlongationMatrix()->Mult(U.Imag(), U_gf.Imag());
-    nd_fespace.GetProlongationMatrix()->Mult(F.Real(), F_gf.Real());
-    nd_fespace.GetProlongationMatrix()->Mult(F.Imag(), F_gf.Imag());
-  }
-  else
-  {
-    nd_fespace.GetProlongationMatrix()->Mult(U, U_gf);
-    nd_fespace.GetProlongationMatrix()->Mult(F, F_gf);
-  }
-
-  // Use libCEED operators to perform the error estimate integration over each element. The
-  // discontinuous flux is μ⁻¹ ∇ × U. Output is stored as error integral for all elements
-  // first, then scaling integral.
+  // Construct the libCEED operator used for integrating the element-wise error. The
+  // discontinuous flux is μ⁻¹ ∇ × U.
   const auto &mesh = nd_fespace.GetMesh();
-  constexpr CeedInt elem_num_comp = 2;
-  Vector estimates(elem_num_comp * mesh.GetNE());
-  estimates.UseDevice(true);
-  estimates = 0.0;
   const std::size_t nt = ceed::internal::GetCeedObjects().size();
   PalacePragmaOmp(parallel if (nt > 1))
   {
@@ -239,10 +213,8 @@ void CurlFluxErrorEstimator<VecType>::AddErrorIndicator(const VecType &U,
         continue;
       }
 
-      // Create libCEED vector wrappers for use with libCEED operators. Each thread writes
-      // to non-overlapping entries of the estimates vector.
-      CeedVector estimates_vec, U_gf_vec, F_gf_vec;
-      ceed::InitCeedVector(estimates, ceed, &estimates_vec);
+      // Create libCEED vector wrappers for use with libCEED operators.
+      CeedVector U_gf_vec, F_gf_vec;
       if constexpr (std::is_same<VecType, ComplexVector>::value)
       {
         ceed::InitCeedVector(U_gf.Real(), ceed, &U_gf_vec);
@@ -255,12 +227,13 @@ void CurlFluxErrorEstimator<VecType>::AddErrorIndicator(const VecType &U,
       }
 
       // Construct mesh element restriction for elements of this element geometry type.
+      constexpr CeedInt elem_num_comp = 2;
       CeedElemRestriction mesh_elem_restr;
       PalaceCeedCall(ceed,
                      CeedElemRestrictionCreate(
                          ceed, static_cast<CeedInt>(data.indices.size()), 1, elem_num_comp,
                          mesh.GetNE(), elem_num_comp * mesh.GetNE(), CEED_MEM_HOST,
-                         CEED_COPY_VALUES, data.indices.data(), &mesh_elem_restr));
+                         CEED_USE_POINTER, data.indices.data(), &mesh_elem_restr));
 
       // Element restriction and basis objects for inputs.
       CeedElemRestriction nd_restr =
@@ -291,31 +264,105 @@ void CurlFluxErrorEstimator<VecType>::AddErrorIndicator(const VecType &U,
       info.trial_ops = ceed::EvalMode::Curl;
       info.test_ops = ceed::EvalMode::Interp;
 
-      CeedOperator op;
+      CeedOperator sub_op;
       ceed::AssembleCeedElementErrorIntegrator(
           info, (void *)ctx.data(), ctx.size() * sizeof(CeedIntScalar), ceed, U_gf_vec,
           F_gf_vec, nd_restr, nd_restr, nd_basis, nd_basis, mesh_elem_restr, data.geom_data,
-          data.geom_data_restr, &op);
+          data.geom_data_restr, &sub_op);
+      integ_op.AddOper(sub_op);  // Sub-operator owned by ceed::Operator
 
-      // Do the integration (both input vectors are passive). For complex case, add sum of
-      // squares of real and imaginary parts to the estimates before square root.
-      PalaceCeedCall(ceed, CeedOperatorApplyAdd(op, CEED_VECTOR_NONE, estimates_vec,
-                                                CEED_REQUEST_IMMEDIATE));
-      if constexpr (std::is_same<VecType, ComplexVector>::value)
-      {
-        ceed::InitCeedVector(U_gf.Imag(), ceed, &U_gf_vec, false);
-        ceed::InitCeedVector(F_gf.Imag(), ceed, &F_gf_vec, false);
-        PalaceCeedCall(ceed, CeedOperatorApplyAdd(op, CEED_VECTOR_NONE, estimates_vec,
-                                                  CEED_REQUEST_IMMEDIATE));
-      }
-
-      // Cleanup.
-      PalaceCeedCall(ceed, CeedOperatorDestroy(&op));
+      // Element restriction and passive input vectors are owned by the operator.
       PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&mesh_elem_restr));
-      PalaceCeedCall(ceed, CeedVectorDestroy(&estimates_vec));
       PalaceCeedCall(ceed, CeedVectorDestroy(&U_gf_vec));
       PalaceCeedCall(ceed, CeedVectorDestroy(&F_gf_vec));
     }
+  }
+
+  // Finalize the operator (call CeedOperatorCheckReady).
+  integ_op.Finalize();
+}
+
+template <typename VecType>
+void CurlFluxErrorEstimator<VecType>::AddErrorIndicator(const VecType &U,
+                                                        ErrorIndicator &indicator) const
+{
+  // Compute the projection of the discontinuous flux onto the smooth finite element space
+  // and populate the corresponding grid functions.
+  BlockTimer bt(Timer::ESTIMATION);
+  projector.Mult(U, F);
+  if constexpr (std::is_same<VecType, ComplexVector>::value)
+  {
+    nd_fespace.GetProlongationMatrix()->Mult(U.Real(), U_gf.Real());
+    nd_fespace.GetProlongationMatrix()->Mult(U.Imag(), U_gf.Imag());
+    nd_fespace.GetProlongationMatrix()->Mult(F.Real(), F_gf.Real());
+    nd_fespace.GetProlongationMatrix()->Mult(F.Imag(), F_gf.Imag());
+  }
+  else
+  {
+    nd_fespace.GetProlongationMatrix()->Mult(U, U_gf);
+    nd_fespace.GetProlongationMatrix()->Mult(F, F_gf);
+  }
+
+  // Perform the integration over each element. Output is stored as error integral for all
+  // elements first, then scaling integral.
+  const auto &mesh = nd_fespace.GetMesh();
+  Vector estimates(2 * mesh.GetNE());
+  estimates.UseDevice(true);
+  estimates = 0.0;
+  const std::size_t nt = ceed::internal::GetCeedObjects().size();
+  PalacePragmaOmp(parallel if (nt > 1))
+  {
+    Ceed ceed = ceed::internal::GetCeedObjects()[utils::GetThreadNum()];
+
+    // We need to update the state of the underlying libCEED vectors to indicate that the
+    // data has changed. Each thread has it's own vector, referencing the same underlying
+    // data.
+    CeedVector U_gf_vec, F_gf_vec;
+    {
+      CeedInt nsub_ops;
+      CeedOperator *sub_ops;
+      PalaceCeedCall(
+          ceed, CeedCompositeOperatorGetNumSub(integ_op[utils::GetThreadNum()], &nsub_ops));
+      PalaceCeedCall(
+          ceed, CeedCompositeOperatorGetSubList(integ_op[utils::GetThreadNum()], &sub_ops));
+      MFEM_ASSERT(nsub_ops > 0, "Unexpected empty libCEED composite operator!");
+      CeedOperatorField field;
+      PalaceCeedCall(ceed, CeedOperatorGetFieldByName(sub_ops[0], "curl_u_1", &field));
+      PalaceCeedCall(ceed, CeedOperatorFieldGetVector(field, &U_gf_vec));
+      PalaceCeedCall(ceed, CeedOperatorGetFieldByName(sub_ops[0], "u_2", &field));
+      PalaceCeedCall(ceed, CeedOperatorFieldGetVector(field, &F_gf_vec));
+      if constexpr (std::is_same<VecType, ComplexVector>::value)
+      {
+        ceed::InitCeedVector(U_gf.Real(), ceed, &U_gf_vec, false);
+        ceed::InitCeedVector(F_gf.Real(), ceed, &F_gf_vec, false);
+      }
+      else
+      {
+        ceed::InitCeedVector(U_gf, ceed, &U_gf_vec, false);
+        ceed::InitCeedVector(F_gf, ceed, &F_gf_vec, false);
+      }
+    }
+
+    // Each thread writes to non-overlapping entries of the estimates vector.
+    CeedVector estimates_vec;
+    ceed::InitCeedVector(estimates, ceed, &estimates_vec);
+
+    // Do the integration (both input vectors are passive). For the complex case, add sum of
+    // squares of real and imaginary parts to the estimates before square root.
+    PalaceCeedCall(ceed,
+                   CeedOperatorApplyAdd(integ_op[utils::GetThreadNum()], CEED_VECTOR_NONE,
+                                        estimates_vec, CEED_REQUEST_IMMEDIATE));
+    if constexpr (std::is_same<VecType, ComplexVector>::value)
+    {
+      ceed::InitCeedVector(U_gf.Imag(), ceed, &U_gf_vec, false);
+      ceed::InitCeedVector(F_gf.Imag(), ceed, &F_gf_vec, false);
+      PalaceCeedCall(ceed,
+                     CeedOperatorApplyAdd(integ_op[utils::GetThreadNum()], CEED_VECTOR_NONE,
+                                          estimates_vec, CEED_REQUEST_IMMEDIATE));
+    }
+
+    // Cleanup.
+    PalaceCeedCall(ceed, CeedVectorDestroy(&estimates_vec));
   }
 
   // Finalize the element-wise error estimates.
@@ -331,33 +378,18 @@ GradFluxErrorEstimator::GradFluxErrorEstimator(const MaterialOperator &mat_op,
                                                FiniteElementSpaceHierarchy &rt_fespaces,
                                                double tol, int max_it, int print,
                                                bool use_mg)
-  : mat_op(mat_op), h1_fespace(h1_fespace), rt_fespace(rt_fespaces.GetFinestFESpace()),
+  : h1_fespace(h1_fespace), rt_fespace(rt_fespaces.GetFinestFESpace()),
     projector(mat_op, h1_fespace, rt_fespaces, tol, max_it, print, use_mg),
+    integ_op(2 * h1_fespace.GetMesh().GetNE(), h1_fespace.GetVSize()),
     U_gf(h1_fespace.GetVSize()), F(rt_fespace.GetTrueVSize()), F_gf(rt_fespace.GetVSize())
 {
   U_gf.UseDevice(true);
   F.UseDevice(true);
   F_gf.UseDevice(true);
-}
 
-void GradFluxErrorEstimator::AddErrorIndicator(const Vector &U,
-                                               ErrorIndicator &indicator) const
-{
-  // Compute the projection of the discontinuous flux onto the smooth finite element space
-  // and populate the corresponding grid functions.
-  BlockTimer bt(Timer::ESTIMATION);
-  projector.Mult(U, F);
-  h1_fespace.GetProlongationMatrix()->Mult(U, U_gf);
-  rt_fespace.GetProlongationMatrix()->Mult(F, F_gf);
-
-  // Use libCEED operators to perform the error estimate integration over each element. The
-  // discontinuous flux is ε ∇U. Output is stored as error integral for all elements first,
-  // then scaling integral.
+  // Construct the libCEED operator used for integrating the element-wise error. The
+  // discontinuous flux is ε ∇U.
   const auto &mesh = h1_fespace.GetMesh();
-  constexpr CeedInt elem_num_comp = 2;
-  Vector estimates(elem_num_comp * mesh.GetNE());
-  estimates.UseDevice(true);
-  estimates = 0.0;
   const std::size_t nt = ceed::internal::GetCeedObjects().size();
   PalacePragmaOmp(parallel if (nt > 1))
   {
@@ -370,20 +402,19 @@ void GradFluxErrorEstimator::AddErrorIndicator(const Vector &U,
         continue;
       }
 
-      // Create libCEED vector wrappers for use with libCEED operators. Each thread writes
-      // to non-overlapping entries of the estimates vector.
-      CeedVector estimates_vec, U_gf_vec, F_gf_vec;
-      ceed::InitCeedVector(estimates, ceed, &estimates_vec);
+      // Create libCEED vector wrappers for use with libCEED operators.
+      CeedVector U_gf_vec, F_gf_vec;
       ceed::InitCeedVector(U_gf, ceed, &U_gf_vec);
       ceed::InitCeedVector(F_gf, ceed, &F_gf_vec);
 
       // Construct mesh element restriction for elements of this element geometry type.
+      constexpr CeedInt elem_num_comp = 2;
       CeedElemRestriction mesh_elem_restr;
       PalaceCeedCall(ceed,
                      CeedElemRestrictionCreate(
                          ceed, static_cast<CeedInt>(data.indices.size()), 1, elem_num_comp,
                          mesh.GetNE(), elem_num_comp * mesh.GetNE(), CEED_MEM_HOST,
-                         CEED_COPY_VALUES, data.indices.data(), &mesh_elem_restr));
+                         CEED_USE_POINTER, data.indices.data(), &mesh_elem_restr));
 
       // Element restriction and basis objects for inputs.
       CeedElemRestriction h1_restr =
@@ -420,23 +451,78 @@ void GradFluxErrorEstimator::AddErrorIndicator(const Vector &U,
       info.trial_ops = ceed::EvalMode::Grad;
       info.test_ops = ceed::EvalMode::Interp;
 
-      CeedOperator op;
+      CeedOperator sub_op;
       ceed::AssembleCeedElementErrorIntegrator(
           info, (void *)ctx.data(), ctx.size() * sizeof(CeedIntScalar), ceed, U_gf_vec,
           F_gf_vec, h1_restr, rt_restr, h1_basis, rt_basis, mesh_elem_restr, data.geom_data,
-          data.geom_data_restr, &op);
+          data.geom_data_restr, &sub_op);
+      integ_op.AddOper(sub_op);  // Sub-operator owned by ceed::Operator
 
-      // Do the integration (both input vectors are passive).
-      PalaceCeedCall(ceed, CeedOperatorApplyAdd(op, CEED_VECTOR_NONE, estimates_vec,
-                                                CEED_REQUEST_IMMEDIATE));
-
-      // Cleanup.
-      PalaceCeedCall(ceed, CeedOperatorDestroy(&op));
+      // Element restriction and passive input vectors are owned by the operator.
       PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&mesh_elem_restr));
-      PalaceCeedCall(ceed, CeedVectorDestroy(&estimates_vec));
       PalaceCeedCall(ceed, CeedVectorDestroy(&U_gf_vec));
       PalaceCeedCall(ceed, CeedVectorDestroy(&F_gf_vec));
     }
+  }
+
+  // Finalize the operator (call CeedOperatorCheckReady).
+  integ_op.Finalize();
+}
+
+void GradFluxErrorEstimator::AddErrorIndicator(const Vector &U,
+                                               ErrorIndicator &indicator) const
+{
+  // Compute the projection of the discontinuous flux onto the smooth finite element space
+  // and populate the corresponding grid functions.
+  BlockTimer bt(Timer::ESTIMATION);
+  projector.Mult(U, F);
+  h1_fespace.GetProlongationMatrix()->Mult(U, U_gf);
+  rt_fespace.GetProlongationMatrix()->Mult(F, F_gf);
+
+  // Use libCEED operators to perform the error estimate integration over each element. The
+  // discontinuous flux is ε ∇U. Output is stored as error integral for all elements first,
+  // then scaling integral.
+  const auto &mesh = h1_fespace.GetMesh();
+  Vector estimates(2 * mesh.GetNE());
+  estimates.UseDevice(true);
+  estimates = 0.0;
+  const std::size_t nt = ceed::internal::GetCeedObjects().size();
+  PalacePragmaOmp(parallel if (nt > 1))
+  {
+    Ceed ceed = ceed::internal::GetCeedObjects()[utils::GetThreadNum()];
+
+    // We need to update the state of the underlying libCEED vectors to indicate that the
+    // data has changed. Each thread has it's own vector, referencing the same underlying
+    // data.
+    {
+      CeedInt nsub_ops;
+      CeedOperator *sub_ops;
+      PalaceCeedCall(
+          ceed, CeedCompositeOperatorGetNumSub(integ_op[utils::GetThreadNum()], &nsub_ops));
+      PalaceCeedCall(
+          ceed, CeedCompositeOperatorGetSubList(integ_op[utils::GetThreadNum()], &sub_ops));
+      MFEM_ASSERT(nsub_ops > 0, "Unexpected empty libCEED composite operator!");
+      CeedOperatorField field;
+      CeedVector U_gf_vec, F_gf_vec;
+      PalaceCeedCall(ceed, CeedOperatorGetFieldByName(sub_ops[0], "grad_u_1", &field));
+      PalaceCeedCall(ceed, CeedOperatorFieldGetVector(field, &U_gf_vec));
+      PalaceCeedCall(ceed, CeedOperatorGetFieldByName(sub_ops[0], "u_2", &field));
+      PalaceCeedCall(ceed, CeedOperatorFieldGetVector(field, &F_gf_vec));
+      ceed::InitCeedVector(U_gf, ceed, &U_gf_vec, false);
+      ceed::InitCeedVector(F_gf, ceed, &F_gf_vec, false);
+    }
+
+    // Each thread writes to non-overlapping entries of the estimates vector.
+    CeedVector estimates_vec;
+    ceed::InitCeedVector(estimates, ceed, &estimates_vec);
+
+    // Do the integration (both input vectors are passive).
+    PalaceCeedCall(ceed,
+                   CeedOperatorApplyAdd(integ_op[utils::GetThreadNum()], CEED_VECTOR_NONE,
+                                        estimates_vec, CEED_REQUEST_IMMEDIATE));
+
+    // Cleanup.
+    PalaceCeedCall(ceed, CeedVectorDestroy(&estimates_vec));
   }
 
   // Finalize the element-wise error estimates.
