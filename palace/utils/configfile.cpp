@@ -1550,15 +1550,18 @@ void ElectrostaticSolverData::SetUp(json &solver)
     return;
   }
   n_post = electrostatic->value("Save", n_post);
+  fast_cap = electrostatic->value("FastCapacitancePostpro", fast_cap);
 
   // Cleanup
   electrostatic->erase("Save");
+  electrostatic->erase("FastCapacitancePostpro");
   MFEM_VERIFY(electrostatic->empty(),
               "Found an unsupported configuration file keyword under \"Electrostatic\"!\n"
                   << electrostatic->dump(2));
 
   // Debug
   // std::cout << "Save: " << n_post << '\n';
+  // std::cout << "FastCapacitancePostpro: " << fast_cap << '\n';
 }
 
 void MagnetostaticSolverData::SetUp(json &solver)
