@@ -231,7 +231,10 @@ void IoData::CheckConfiguration()
   // problem type.
   if (problem.type == config::ProblemData::Type::DRIVEN)
   {
-    // No unsupported domain or boundary objects for frequency domain driven simulations.
+    if (!boundaries.terminal.empty())
+    {
+      Mpi::Warning("Driven problem type does not support terminal boundary conditions!\n");
+    }
   }
   else if (problem.type == config::ProblemData::Type::EIGENMODE)
   {
@@ -244,6 +247,11 @@ void IoData::CheckConfiguration()
     {
       Mpi::Warning(
           "Eigenmode problem type does not support wave port boundary conditions!\n");
+    }
+    if (!boundaries.terminal.empty())
+    {
+      Mpi::Warning(
+          "Eigenmode problem type does not support terminal boundary conditions!\n");
     }
   }
   else if (problem.type == config::ProblemData::Type::ELECTROSTATIC)
@@ -262,6 +270,11 @@ void IoData::CheckConfiguration()
     {
       Mpi::Warning("Electrostatic problem type does not support surface impedance boundary "
                    "conditions!\n");
+    }
+    if (!boundaries.lumpedport.empty())
+    {
+      Mpi::Warning(
+          "Electrostatic problem type does not support lumped port boundary conditions!\n");
     }
     if (!boundaries.auxpec.empty() || !boundaries.waveport.empty())
     {
@@ -306,6 +319,11 @@ void IoData::CheckConfiguration()
       Mpi::Warning(
           "Magnetostatic problem type does not support wave port boundary conditions!\n");
     }
+    if (!boundaries.terminal.empty())
+    {
+      Mpi::Warning(
+          "Magnetostatic problem type does not support terminal boundary conditions!\n");
+    }
     if (!boundaries.postpro.capacitance.empty())
     {
       Mpi::Warning("Magnetostatic problem type does not support boundary capacitance "
@@ -328,6 +346,26 @@ void IoData::CheckConfiguration()
     {
       Mpi::Warning(
           "Transient problem type does not support wave port boundary conditions!\n");
+    }
+    if (!boundaries.terminal.empty())
+    {
+      Mpi::Warning(
+          "Transient problem type does not support terminal boundary conditions!\n");
+    }
+  }
+
+  // For electrostatic problems, automatically use the specified terminal boundaries to
+  // postprocess surface charge for surface-C.csv as well.
+  if (problem.type == config::ProblemData::Type::ELECTROSTATIC)
+  {
+    if (boundaries.postpro.capacitance.empty())
+    {
+      for (const auto &[idx, data] : boundaries.terminal)
+      {
+        config::CapacitanceData cap_data;
+        cap_data.attributes = data.attributes;
+        boundaries.postpro.capacitance[idx] = cap_data;
+      }
     }
   }
 
