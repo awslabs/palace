@@ -50,7 +50,7 @@ mfem::Array<int> LaplaceOperator::SetUpBoundaryProperties(const IoData &iodata,
                                                           const mfem::ParMesh &mesh)
 {
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
-  if (!iodata.boundaries.pec.empty() || !iodata.boundaries.lumpedport.empty())
+  if (!iodata.boundaries.pec.empty() || !iodata.boundaries.terminal.empty())
   {
     // Check that boundary attributes have been specified correctly.
     mfem::Array<int> bdr_attr_marker(bdr_attr_max);
@@ -78,19 +78,16 @@ mfem::Array<int> LaplaceOperator::SetUpBoundaryProperties(const IoData &iodata,
             "Unknown ground boundary attribute {:d}!\nSolver will just ignore it!\n", attr);
       }
     }
-    for (const auto &[idx, data] : iodata.boundaries.lumpedport)
+    for (const auto &[idx, data] : iodata.boundaries.terminal)
     {
-      for (const auto &elem : data.elements)
+      for (auto attr : data.attributes)
       {
-        for (auto attr : elem.attributes)
-        {
-          MFEM_VERIFY(
-              attr > 0 && attr <= bdr_attr_max,
-              "Terminal boundary attribute tags must be non-negative and correspond to "
-              "attributes in the mesh!");
-          MFEM_VERIFY(bdr_attr_marker[attr - 1] > 0,
-                      "Unknown terminal boundary attribute " << attr << "!");
-        }
+        MFEM_VERIFY(
+            attr > 0 && attr <= bdr_attr_max,
+            "Terminal boundary attribute tags must be non-negative and correspond to "
+            "attributes in the mesh!");
+        MFEM_VERIFY(bdr_attr_marker[attr - 1] > 0,
+                    "Unknown terminal boundary attribute " << attr << "!");
       }
     }
   }
@@ -105,14 +102,11 @@ mfem::Array<int> LaplaceOperator::SetUpBoundaryProperties(const IoData &iodata,
     }
     dbc_bcs.Append(attr);
   }
-  for (const auto &[idx, data] : iodata.boundaries.lumpedport)
+  for (const auto &[idx, data] : iodata.boundaries.terminal)
   {
-    for (const auto &elem : data.elements)
+    for (auto attr : data.attributes)
     {
-      for (auto attr : elem.attributes)
-      {
-        dbc_bcs.Append(attr);
-      }
+      dbc_bcs.Append(attr);
     }
   }
   MFEM_VERIFY(dbc_bcs.Size() > 0,
@@ -124,15 +118,12 @@ std::map<int, mfem::Array<int>> LaplaceOperator::ConstructSources(const IoData &
 {
   // Construct mapping from terminal index to list of associated attributes.
   std::map<int, mfem::Array<int>> attr_lists;
-  for (const auto &[idx, data] : iodata.boundaries.lumpedport)
+  for (const auto &[idx, data] : iodata.boundaries.terminal)
   {
     mfem::Array<int> &attr_list = attr_lists[idx];
-    for (const auto &elem : data.elements)
+    for (auto attr : data.attributes)
     {
-      for (auto attr : elem.attributes)
-      {
-        attr_list.Append(attr);
-      }
+      attr_list.Append(attr);
     }
   }
   return attr_lists;

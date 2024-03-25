@@ -889,34 +889,19 @@ void ImpedanceBoundaryData::SetUp(json &boundaries)
 void LumpedPortBoundaryData::SetUp(json &boundaries)
 {
   auto port = boundaries.find("LumpedPort");
-  auto terminal = boundaries.find("Terminal");
-  if (port == boundaries.end() && terminal == boundaries.end())
+  if (port == boundaries.end())
   {
     return;
   }
-  if (port == boundaries.end())
-  {
-    port = terminal;
-  }
-  else if (terminal == boundaries.end())  // Do nothing
-  {
-  }
-  else
-  {
-    MFEM_ABORT("Configuration file should not specify both \"LumpedPort\" and \"Terminal\" "
-               "boundaries!");
-  }
-  MFEM_VERIFY(
-      port->is_array(),
-      "\"LumpedPort\" and \"Terminal\" should specify an array in the configuration file!");
+  MFEM_VERIFY(port->is_array(),
+              "\"LumpedPort\" should specify an array in the configuration file!");
   for (auto it = port->begin(); it != port->end(); ++it)
   {
-    MFEM_VERIFY(
-        it->find("Index") != it->end(),
-        "Missing \"LumpedPort\" or \"Terminal\" boundary \"Index\" in configuration file!");
+    MFEM_VERIFY(it->find("Index") != it->end(),
+                "Missing \"LumpedPort\" boundary \"Index\" in configuration file!");
     auto ret = mapdata.insert(std::make_pair(it->at("Index"), LumpedPortData()));
-    MFEM_VERIFY(ret.second, "Repeated \"Index\" found when processing \"LumpedPort\" or "
-                            "\"Terminal\" boundaries in configuration file!");
+    MFEM_VERIFY(ret.second, "Repeated \"Index\" found when processing \"LumpedPort\" "
+                            "boundaries in configuration file!");
     LumpedPortData &data = ret.first->second;
     data.R = it->value("R", data.R);
     data.L = it->value("L", data.L);
@@ -930,32 +915,31 @@ void LumpedPortBoundaryData::SetUp(json &boundaries)
     {
       MFEM_VERIFY(it->find("Elements") == it->end(),
                   "Cannot specify both top-level \"Attributes\" list and \"Elements\" for "
-                  "\"LumpedPort\" or \"Terminal\" boundary in configuration file!");
+                  "\"LumpedPort\" boundary in configuration file!");
       auto &elem = data.elements.emplace_back();
-      ParseElementData(*it, "Direction", terminal == boundaries.end(), elem);
+      ParseElementData(*it, "Direction", true, elem);
     }
     else
     {
       auto elements = it->find("Elements");
       MFEM_VERIFY(elements != it->end(),
                   "Missing top-level \"Attributes\" list or \"Elements\" for "
-                  "\"LumpedPort\" or \"Terminal\" boundary in configuration file!");
+                  "\"LumpedPort\" boundary in configuration file!");
       for (auto elem_it = elements->begin(); elem_it != elements->end(); ++elem_it)
       {
         MFEM_VERIFY(elem_it->find("Attributes") != elem_it->end(),
-                    "Missing \"Attributes\" list for \"LumpedPort\" or \"Terminal\" "
-                    "boundary element in configuration file!");
+                    "Missing \"Attributes\" list for \"LumpedPort\" boundary element in "
+                    "configuration file!");
         auto &elem = data.elements.emplace_back();
-        ParseElementData(*elem_it, "Direction", terminal == boundaries.end(), elem);
+        ParseElementData(*elem_it, "Direction", true, elem);
 
         // Cleanup
         elem_it->erase("Attributes");
         elem_it->erase("Direction");
         elem_it->erase("CoordinateSystem");
-        MFEM_VERIFY(elem_it->empty(),
-                    "Found an unsupported configuration file keyword under \"LumpedPort\" "
-                    "or \"Terminal\" boundary element!\n"
-                        << elem_it->dump(2));
+        MFEM_VERIFY(elem_it->empty(), "Found an unsupported configuration file keyword "
+                                      "under \"LumpedPort\" boundary element!\n"
+                                          << elem_it->dump(2));
       }
     }
 
@@ -989,9 +973,9 @@ void LumpedPortBoundaryData::SetUp(json &boundaries)
     it->erase("Direction");
     it->erase("CoordinateSystem");
     it->erase("Elements");
-    MFEM_VERIFY(it->empty(), "Found an unsupported configuration file keyword under "
-                             "\"LumpedPort\" or \"Terminal\"!\n"
-                                 << it->dump(2));
+    MFEM_VERIFY(it->empty(),
+                "Found an unsupported configuration file keyword under \"LumpedPort\"!\n"
+                    << it->dump(2));
   }
 }
 
@@ -1114,6 +1098,42 @@ void SurfaceCurrentBoundaryData::SetUp(json &boundaries)
         it->empty(),
         "Found an unsupported configuration file keyword under \"SurfaceCurrent\"!\n"
             << it->dump(2));
+  }
+}
+
+void TerminalBoundaryData::SetUp(json &boundaries)
+{
+  auto terminal = boundaries.find("Terminal");
+  if (terminal == boundaries.end())
+  {
+    return;
+  }
+  MFEM_VERIFY(terminal->is_array(),
+              "\"Terminal\" should specify an array in the configuration file!");
+  for (auto it = terminal->begin(); it != terminal->end(); ++it)
+  {
+    MFEM_VERIFY(it->find("Index") != it->end(),
+                "Missing \"Terminal\" boundary \"Index\" in configuration file!");
+    MFEM_VERIFY(
+        it->find("Attributes") != it->end(),
+        "Missing \"Attributes\" list for \"Terminal\" boundary in configuration file!");
+    auto ret = mapdata.insert(std::make_pair(it->at("Index"), TerminalData()));
+    MFEM_VERIFY(ret.second, "Repeated \"Index\" found when processing \"Terminal\" "
+                            "boundaries in configuration file!");
+    TerminalData &data = ret.first->second;
+    data.attributes = it->at("Attributes").get<std::vector<int>>();  // Required
+    std::sort(data.attributes.begin(), data.attributes.end());
+
+    // Debug
+    // std::cout << "Index: " << ret.first->first << '\n';
+    // std::cout << "Attributes: " << data.attributes << '\n';
+
+    // Cleanup
+    it->erase("Index");
+    it->erase("Attributes");
+    MFEM_VERIFY(it->empty(),
+                "Found an unsupported configuration file keyword under \"Terminal\"!\n"
+                    << it->dump(2));
   }
 }
 
@@ -1355,6 +1375,7 @@ void BoundaryData::SetUp(json &config)
   lumpedport.SetUp(*boundaries);
   waveport.SetUp(*boundaries);
   current.SetUp(*boundaries);
+  terminal.SetUp(*boundaries);
   postpro.SetUp(*boundaries);
 
   // Store all unique boundary attributes.
@@ -1388,6 +1409,10 @@ void BoundaryData::SetUp(json &config)
     {
       attributes.insert(attributes.end(), elem.attributes.begin(), elem.attributes.end());
     }
+  }
+  for (const auto &[idx, data] : terminal)
+  {
+    attributes.insert(attributes.end(), data.attributes.begin(), data.attributes.end());
   }
   attributes.insert(attributes.end(), postpro.attributes.begin(), postpro.attributes.end());
   std::sort(attributes.begin(), attributes.end());
