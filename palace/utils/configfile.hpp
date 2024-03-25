@@ -661,6 +661,10 @@ public:
   // Number of fields to write to disk.
   int n_post = 0;
 
+  // Enable fast capacitance matrix computation by skipping the global domain energy
+  // integration approach.
+  bool fast_cap = false;
+
   void SetUp(json &solver);
 };
 

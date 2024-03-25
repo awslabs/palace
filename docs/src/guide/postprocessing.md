@@ -77,7 +77,8 @@ file. These include:
     Postprocess the integral of the surface charge on a surface defined by a list of
     boundary attributes, and divide by the excitation voltage to get the capacitive
     coupling. The resulting capcitances are written to `surface-C.csv` in the specified
-    output directory.
+    output directory. Note that for electrostatics simulations, these quantities are
+    automatically postprocessed for each specified terminal boundary.
   - [`config["Boundaries"]["Postprocessing"]["Inductance"]`](../config/boundaries.md#boundaries%5B%22Postprocessing%22%5D%5B%22Inductance%22%5D) :
     Postprocess the magnetic flux through a surface defined by a list of boundary
     attributes, and divide by the excitation current to the inductive coupling. The

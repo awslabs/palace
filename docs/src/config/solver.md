@@ -289,7 +289,8 @@ simulations if only port boundary quantities are required.
 ```json
 "Electrostatic":
 {
-    "Save": <int>
+    "Save": <int>,
+    "FastCapacitancePostpro": <bool>
 }
 ```
 
@@ -300,6 +301,8 @@ visualization with [ParaView](https://www.paraview.org/), ordered by the entries
 computed capacitance matrix. Files are saved in the `paraview/` directory under the
 directory specified by
 [`config["Problem"]["Output"]`](problem.md#config%5B%22Problem%22%5D).
+
+`"FastCapacitancePostpro" [false]` :  XX
 
 ## `solver["Magnetostatic"]`
 

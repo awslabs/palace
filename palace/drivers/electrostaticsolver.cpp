@@ -99,9 +99,10 @@ void ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop, PostOperator &
   // and C_ij = Q_i/V_j. The energy formulation avoids having to locally integrate E = -∇V.
   const auto &Grad = laplaceop.GetGradMatrix();
   const std::map<int, mfem::Array<int>> &terminal_sources = laplaceop.GetSources();
-  int nstep = static_cast<int>(terminal_sources.size());
-  mfem::DenseMatrix C(nstep), Cm(nstep);
   Vector E(Grad.Height()), Vij(Grad.Width());
+  bool fast_cap = iodata.solver.electrostatic.fast_cap;
+  int nstep = fast_cap ? 0 : static_cast<int>(terminal_sources.size());
+  mfem::DenseMatrix C(nstep), Cm(nstep);
   int i = 0;
   for (const auto &[idx, data] : terminal_sources)
   {
@@ -124,38 +125,43 @@ void ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop, PostOperator &
     {
       PostprocessErrorIndicator(postop, indicator);
     }
-
-    // Diagonal: C_ii = 2 U_e(V_i) / V_i².
-    C(i, i) = Cm(i, i) = 2.0 * Ue;
+    if (!fast_cap)
+    {
+      // Diagonal: C_ii = 2 U_e(V_i) / V_i².
+      C(i, i) = Cm(i, i) = 2.0 * Ue;
+    }
     i++;
   }
 
-  // Off-diagonals: C_ij = U_e(V_i + V_j) / (V_i V_j) - 1/2 (V_i/V_j C_ii + V_j/V_i C_jj).
-  for (i = 0; i < C.Height(); i++)
+  if (!fast_cap)
   {
-    for (int j = 0; j < C.Width(); j++)
+    // Off-diagonals: C_ij = U_e(V_i + V_j) / (V_i V_j) - 1/2 (V_i/V_j C_ii + V_j/V_i C_jj).
+    for (i = 0; i < C.Height(); i++)
     {
-      if (j < i)
+      for (int j = 0; j < C.Width(); j++)
       {
-        // Copy lower triangle from already computed upper triangle.
-        C(i, j) = C(j, i);
-        Cm(i, j) = Cm(j, i);
-        Cm(i, i) -= Cm(i, j);
-      }
-      else if (j > i)
-      {
-        linalg::AXPBYPCZ(1.0, V[i], 1.0, V[j], 0.0, Vij);
-        postop.SetVGridFunction(Vij, false);
-        double Ue = postop.GetEFieldEnergy();
-        C(i, j) = Ue - 0.5 * (C(i, i) + C(j, j));
-        Cm(i, j) = -C(i, j);
-        Cm(i, i) -= Cm(i, j);
+        if (j < i)
+        {
+          // Copy lower triangle from already computed upper triangle.
+          C(i, j) = C(j, i);
+          Cm(i, j) = Cm(j, i);
+          Cm(i, i) -= Cm(i, j);
+        }
+        else if (j > i)
+        {
+          linalg::AXPBYPCZ(1.0, V[i], 1.0, V[j], 0.0, Vij);
+          postop.SetVGridFunction(Vij, false);
+          double Ue = postop.GetEFieldEnergy();
+          C(i, j) = Ue - 0.5 * (C(i, i) + C(j, j));
+          Cm(i, j) = -C(i, j);
+          Cm(i, i) -= Cm(i, j);
+        }
       }
     }
+    mfem::DenseMatrix Cinv(C);
+    Cinv.Invert();  // In-place, uses LAPACK (when available) and should be cheap
+    PostprocessTerminals(terminal_sources, C, Cinv, Cm);
   }
-  mfem::DenseMatrix Cinv(C);
-  Cinv.Invert();  // In-place, uses LAPACK (when available) and should be cheap
-  PostprocessTerminals(terminal_sources, C, Cinv, Cm);
 }
 
 void ElectrostaticSolver::PostprocessTerminals(
