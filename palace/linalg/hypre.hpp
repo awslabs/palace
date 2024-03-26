@@ -50,6 +50,8 @@ class HypreCSRMatrix : public palace::Operator
 private:
   hypre_CSRMatrix *mat;
 
+  bool hypre_managed_memory;
+
 public:
   HypreCSRMatrix(int h, int w, int nnz);
   HypreCSRMatrix(hypre_CSRMatrix *mat);

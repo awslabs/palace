@@ -35,32 +35,34 @@ void HypreVector::Update(const Vector &x)
   }
 }
 
-HypreCSRMatrix::HypreCSRMatrix(int h, int w, int nnz) : palace::Operator(h, w)
+HypreCSRMatrix::HypreCSRMatrix(int h, int w, int nnz)
+  : palace::Operator(h, w), hypre_managed_memory(true)
 {
   mat = hypre_CSRMatrixCreate(h, w, nnz);
   hypre_CSRMatrixInitialize(mat);
 }
 
-HypreCSRMatrix::HypreCSRMatrix(hypre_CSRMatrix *mat) : mat(mat)
+HypreCSRMatrix::HypreCSRMatrix(hypre_CSRMatrix *mat) : mat(mat), hypre_managed_memory(true)
 {
   height = hypre_CSRMatrixNumRows(mat);
   width = hypre_CSRMatrixNumCols(mat);
 }
 
 HypreCSRMatrix::HypreCSRMatrix(mfem::SparseMatrix &m)
-  : palace::Operator(m.Height(), m.Width())
+  : palace::Operator(m.Height(), m.Width()), hypre_managed_memory(false)
 {
   mat = hypre_CSRMatrixCreate(height, width, m.NumNonZeroElems());
   hypre_CSRMatrixI(mat) = m.ReadWriteI();
   hypre_CSRMatrixJ(mat) = m.ReadWriteJ();
   hypre_CSRMatrixData(mat) = m.ReadWriteData();
+  hypre_CSRMatrixOwnsData(mat) = 0;
 
   hypre_CSRMatrixInitialize(mat);
 }
 
 HypreCSRMatrix::~HypreCSRMatrix()
 {
-  if (hypre_CSRMatrixOwnsData(mat) == false)
+  if (!hypre_managed_memory)
   {
     hypre_CSRMatrixI(mat) = nullptr;
     hypre_CSRMatrixRownnz(mat) = nullptr;
