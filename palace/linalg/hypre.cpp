@@ -35,20 +35,50 @@ void HypreVector::Update(const Vector &x)
   }
 }
 
-HypreCSRMatrix::HypreCSRMatrix(int h, int w, int nnz) : palace::Operator(h, w)
+HypreCSRMatrix::HypreCSRMatrix(int h, int w, int nnz)
+  : palace::Operator(h, w), hypre_own_I(true)
 {
   mat = hypre_CSRMatrixCreate(h, w, nnz);
   hypre_CSRMatrixInitialize(mat);
 }
 
-HypreCSRMatrix::HypreCSRMatrix(hypre_CSRMatrix *mat) : mat(mat)
+HypreCSRMatrix::HypreCSRMatrix(hypre_CSRMatrix *mat) : mat(mat), hypre_own_I(true)
 {
   height = hypre_CSRMatrixNumRows(mat);
   width = hypre_CSRMatrixNumCols(mat);
 }
 
+HypreCSRMatrix::HypreCSRMatrix(const mfem::SparseMatrix &m)
+  : palace::Operator(m.Height(), m.Width()), hypre_own_I(false)
+{
+  const int nnz = m.NumNonZeroElems();
+  mat = hypre_CSRMatrixCreate(height, width, nnz);
+  hypre_CSRMatrixSetDataOwner(mat, 0);
+  hypre_CSRMatrixData(mat) = const_cast<double *>(m.ReadData());
+#if !defined(HYPRE_BIGINT)
+  hypre_CSRMatrixI(mat) = const_cast<int *>(m.ReadI());
+  hypre_CSRMatrixJ(mat) = const_cast<int *>(m.ReadJ());
+#else
+  data_I.SetSize(height);
+  data_J.SetSize(nnz);
+  {
+    const auto *I = m.ReadI();
+    const auto *J = m.ReadJ();
+    auto *DI = data_I.Write();
+    auto *DJ = data_J.Write();
+    mfem::forall(height, [=] MFEM_HOST_DEVICE(int i) { DI[i] = I[i]; });
+    mfem::forall(nnz, [=] MFEM_HOST_DEVICE(int i) { DJ[i] = J[i]; });
+  }
+#endif
+  hypre_CSRMatrixInitialize(mat);
+}
+
 HypreCSRMatrix::~HypreCSRMatrix()
 {
+  if (!hypre_own_I)
+  {
+    hypre_CSRMatrixI(mat) = nullptr;
+  }
   hypre_CSRMatrixDestroy(mat);
 }
 

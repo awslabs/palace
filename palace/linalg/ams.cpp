@@ -6,6 +6,7 @@
 #include "fem/bilinearform.hpp"
 #include "fem/fespace.hpp"
 #include "fem/integrator.hpp"
+#include "linalg/hypre.hpp"
 #include "linalg/rap.hpp"
 #include "utils/omp.hpp"
 
@@ -110,7 +111,7 @@ void HypreAmsSolver::ConstructAuxiliaryMatrices(FiniteElementSpace &nd_fespace,
     pi.SetAssemblyLevel(mfem::AssemblyLevel::LEGACY);
     pi.Assemble(skip_zeros_interp);
     pi.Finalize(skip_zeros_interp);
-    ParOperator RAP_Pi(std::unique_ptr<mfem::SparseMatrix>(pi.LoseMat()), h1d_fespace,
+    ParOperator RAP_Pi(std::make_unique<hypre::HypreCSRMatrix>(pi.SpMat()), h1d_fespace,
                        nd_fespace, true);
     Pi = RAP_Pi.StealParallelAssemble();
     if (cycle_type >= 10)
