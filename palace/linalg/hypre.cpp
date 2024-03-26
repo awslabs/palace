@@ -36,36 +36,48 @@ void HypreVector::Update(const Vector &x)
 }
 
 HypreCSRMatrix::HypreCSRMatrix(int h, int w, int nnz)
-  : palace::Operator(h, w), hypre_managed_memory(true)
+  : palace::Operator(h, w), hypre_own_I(true)
 {
   mat = hypre_CSRMatrixCreate(h, w, nnz);
   hypre_CSRMatrixInitialize(mat);
 }
 
-HypreCSRMatrix::HypreCSRMatrix(hypre_CSRMatrix *mat) : mat(mat), hypre_managed_memory(true)
+HypreCSRMatrix::HypreCSRMatrix(hypre_CSRMatrix *mat) : mat(mat), hypre_own_I(true)
 {
   height = hypre_CSRMatrixNumRows(mat);
   width = hypre_CSRMatrixNumCols(mat);
 }
 
-HypreCSRMatrix::HypreCSRMatrix(mfem::SparseMatrix &m)
-  : palace::Operator(m.Height(), m.Width()), hypre_managed_memory(false)
+HypreCSRMatrix::HypreCSRMatrix(const mfem::SparseMatrix &m)
+  : palace::Operator(m.Height(), m.Width()), hypre_own_I(false)
 {
-  mat = hypre_CSRMatrixCreate(height, width, m.NumNonZeroElems());
-  hypre_CSRMatrixI(mat) = m.ReadWriteI();
-  hypre_CSRMatrixJ(mat) = m.ReadWriteJ();
-  hypre_CSRMatrixData(mat) = m.ReadWriteData();
-  hypre_CSRMatrixOwnsData(mat) = 0;
-
+  const int nnz = m.NumNonZeroElems();
+  mat = hypre_CSRMatrixCreate(height, width, nnz);
+  hypre_CSRMatrixSetDataOwner(mat, 0);
+  hypre_CSRMatrixData(mat) = const_cast<double *>(m.ReadData());
+#if !defined(HYPRE_BIGINT)
+  hypre_CSRMatrixI(mat) = const_cast<int *>(m.ReadI());
+  hypre_CSRMatrixJ(mat) = const_cast<int *>(m.ReadJ());
+#else
+  data_I.SetSize(height);
+  data_J.SetSize(nnz);
+  {
+    const auto *I = m.ReadI();
+    const auto *J = m.ReadJ();
+    auto *DI = data_I.Write();
+    auto *DJ = data_J.Write();
+    mfem::forall(height, [=] MFEM_HOST_DEVICE(int i) { DI[i] = I[i]; });
+    mfem::forall(nnz, [=] MFEM_HOST_DEVICE(int i) { DJ[i] = J[i]; });
+  }
+#endif
   hypre_CSRMatrixInitialize(mat);
 }
 
 HypreCSRMatrix::~HypreCSRMatrix()
 {
-  if (!hypre_managed_memory)
+  if (!hypre_own_I)
   {
     hypre_CSRMatrixI(mat) = nullptr;
-    hypre_CSRMatrixRownnz(mat) = nullptr;
   }
   hypre_CSRMatrixDestroy(mat);
 }

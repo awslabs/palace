@@ -49,13 +49,13 @@ class HypreCSRMatrix : public palace::Operator
 {
 private:
   hypre_CSRMatrix *mat;
-
-  bool hypre_managed_memory;
+  mfem::Array<HYPRE_Int> data_I, data_J;
+  bool hypre_own_I;
 
 public:
   HypreCSRMatrix(int h, int w, int nnz);
   HypreCSRMatrix(hypre_CSRMatrix *mat);
-  HypreCSRMatrix(mfem::SparseMatrix &m);
+  HypreCSRMatrix(const mfem::SparseMatrix &m);
   ~HypreCSRMatrix();
 
   auto NNZ() const { return hypre_CSRMatrixNumNonzeros(mat); }
