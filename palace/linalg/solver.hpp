@@ -90,14 +90,17 @@ public:
   {
   }
 
+  // Access the underlying solver.
+  const mfem::Solver &GetSolver() { return *pc; }
+
+  // Configure whether or not to save the assembled operator.
+  void SetSaveAssembled(bool save) { save_assembled = save; }
+
   void SetInitialGuess(bool guess) override
   {
     Solver<OperType>::SetInitialGuess(guess);
     pc->iterative_mode = guess;
   }
-
-  // Configure whether or not to save the assembled operator.
-  void SetSaveAssembled(bool save) { save_assembled = save; }
 
   void SetOperator(const OperType &op) override;
 

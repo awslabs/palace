@@ -192,7 +192,7 @@ ConfigurePreconditionerSolver(MPI_Comm comm, const IoData &iodata,
 #endif
       break;
     case config::LinearSolverData::Type::JACOBI:
-      pc = std::make_unique<JacobiSmoother<OperType>>();
+      pc = std::make_unique<JacobiSmoother<OperType>>(comm);
       break;
     case config::LinearSolverData::Type::DEFAULT:
       MFEM_ABORT("Unexpected solver type for preconditioner configuration!");

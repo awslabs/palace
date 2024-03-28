@@ -11,6 +11,22 @@ namespace palace
 namespace
 {
 
+double GetLambdaMax(MPI_Comm comm, const Operator &A, const Vector &dinv)
+{
+  // Assumes A SPD (diag(A) > 0) to use Hermitian eigenvalue solver.
+  DiagonalOperator Dinv(dinv);
+  ProductOperator DinvA(Dinv, A);
+  return linalg::SpectralNorm(comm, DinvA, true);
+}
+
+double GetLambdaMax(MPI_Comm comm, const ComplexOperator &A, const ComplexVector &dinv)
+{
+  // Assumes A SPD (diag(A) > 0) to use Hermitian eigenvalue solver.
+  ComplexDiagonalOperator Dinv(dinv);
+  ComplexProductOperator DinvA(Dinv, A);
+  return linalg::SpectralNorm(comm, DinvA, A.IsReal());
+}
+
 template <bool Transpose = false>
 inline void Apply(const Vector &dinv, const Vector &x, Vector &y)
 {
@@ -62,6 +78,19 @@ void JacobiSmoother<OperType>::SetOperator(const OperType &op)
   dinv.UseDevice(true);
   op.AssembleDiagonal(dinv);
   dinv.Reciprocal();
+
+  // Damping factor. If the given damping is zero, estimate the spectral radius-minimizing
+  // damping factor.
+  if (omega == 0.0)
+  {
+    auto lambda_max = GetLambdaMax(comm, op, dinv);
+    auto lambda_min = (sf_max - 1.0) * lambda_max;
+    omega = 2.0 / (lambda_min + lambda_max);
+  }
+  if (omega != 1.0)
+  {
+    dinv *= omega;
+  }
 
   this->height = op.Height();
   this->width = op.Width();

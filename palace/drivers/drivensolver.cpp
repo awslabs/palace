@@ -142,8 +142,8 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator &
 
   // Initialize structures for storing and reducing the results of error estimation.
   CurlFluxErrorEstimator<ComplexVector> estimator(
-      spaceop.GetMaterialOp(), spaceop.GetNDSpace(), iodata.solver.linear.estimator_tol,
-      iodata.solver.linear.estimator_max_it, 0);
+      spaceop.GetMaterialOp(), spaceop.GetNDSpaces(), iodata.solver.linear.estimator_tol,
+      iodata.solver.linear.estimator_max_it, 0, iodata.solver.linear.estimator_mg);
   ErrorIndicator indicator;
 
   // Main frequency sweep loop.
@@ -242,8 +242,8 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator 
 
   // Initialize structures for storing and reducing the results of error estimation.
   CurlFluxErrorEstimator<ComplexVector> estimator(
-      spaceop.GetMaterialOp(), spaceop.GetNDSpace(), iodata.solver.linear.estimator_tol,
-      iodata.solver.linear.estimator_max_it, 0);
+      spaceop.GetMaterialOp(), spaceop.GetNDSpaces(), iodata.solver.linear.estimator_tol,
+      iodata.solver.linear.estimator_max_it, 0, iodata.solver.linear.estimator_mg);
   ErrorIndicator indicator;
 
   // Configure the PROM operator which performs the parameter space sampling and basis

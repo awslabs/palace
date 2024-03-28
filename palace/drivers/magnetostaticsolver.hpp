@@ -33,8 +33,8 @@ class Timer;
 class MagnetostaticSolver : public BaseSolver
 {
 private:
-  ErrorIndicator Postprocess(CurlCurlOperator &curlcurlop, PostOperator &postop,
-                             const std::vector<Vector> &A) const;
+  void Postprocess(CurlCurlOperator &curlcurlop, PostOperator &postop,
+                   const std::vector<Vector> &A, const ErrorIndicator &indicator) const;
 
   void PostprocessTerminals(const SurfaceCurrentOperator &surf_j_op,
                             const mfem::DenseMatrix &M, const mfem::DenseMatrix &Minv,

@@ -33,11 +33,14 @@ private:
   std::vector<mfem::Array<int>> dbc_tdof_lists;
 
   // Objects defining the finite element spaces for the electrostatic potential (H1) and
-  // electric field (Nedelec) on the given mesh.
+  // electric field (Nedelec) on the given mesh. The RT spaces are used for error
+  // estimation.
   std::vector<std::unique_ptr<mfem::H1_FECollection>> h1_fecs;
   std::unique_ptr<mfem::ND_FECollection> nd_fec;
+  std::vector<std::unique_ptr<mfem::RT_FECollection>> rt_fecs;
   FiniteElementSpaceHierarchy h1_fespaces;
   AuxiliaryFiniteElementSpace nd_fespace;
+  FiniteElementSpaceHierarchy rt_fespaces;
 
   // Operator for domain material properties.
   MaterialOperator mat_op;
@@ -64,6 +67,10 @@ public:
   const auto &GetH1Space() const { return h1_fespaces.GetFinestFESpace(); }
   auto &GetNDSpace() { return nd_fespace; }
   const auto &GetNDSpace() const { return nd_fespace; }
+  auto &GetRTSpaces() { return rt_fespaces; }
+  const auto &GetRTSpaces() const { return rt_fespaces; }
+  auto &GetRTSpace() { return rt_fespaces.GetFinestFESpace(); }
+  const auto &GetRTSpace() const { return rt_fespaces.GetFinestFESpace(); }
 
   // Access the underlying mesh object.
   const auto &GetMesh() const { return GetH1Space().GetMesh(); }

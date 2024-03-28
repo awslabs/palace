@@ -42,10 +42,12 @@ private:
   mutable VecType rhs;
 
 public:
-  FluxProjector(const MaterialOperator &mat_op, const FiniteElementSpace &nd_fespace,
-                double tol, int max_it, int print);
+  FluxProjector(const MaterialOperator &mat_op,
+                const FiniteElementSpaceHierarchy &nd_fespaces, double tol, int max_it,
+                int print, bool use_mg);
   FluxProjector(const MaterialOperator &mat_op, const FiniteElementSpace &h1_fespace,
-                const FiniteElementSpace &h1d_fespace, double tol, int max_it, int print);
+                const FiniteElementSpaceHierarchy &rt_fespaces, double tol, int max_it,
+                int print, bool use_mg);
 
   void Mult(const VecType &x, VecType &y) const;
 };
@@ -65,11 +67,12 @@ class CurlFluxErrorEstimator
   FluxProjector<VecType> projector;
 
   // Temporary vectors for error estimation.
-  mutable VecType F, F_gf, U_gf;
+  mutable VecType U_gf, F, F_gf;
 
 public:
-  CurlFluxErrorEstimator(const MaterialOperator &mat_op, FiniteElementSpace &nd_fespace,
-                         double tol, int max_it, int print);
+  CurlFluxErrorEstimator(const MaterialOperator &mat_op,
+                         FiniteElementSpaceHierarchy &nd_fespaces, double tol, int max_it,
+                         int print, bool use_mg);
 
   // Compute elemental error indicators given a vector of true DOF and fold into an existing
   // indicator.
@@ -83,22 +86,19 @@ class GradFluxErrorEstimator
   // Reference to material property data (not owned).
   const MaterialOperator &mat_op;
 
-  // Finite element space used to represent U.
-  FiniteElementSpace &h1_fespace;
-
-  // RT collection and space used to represent F.
-  std::unique_ptr<mfem::FiniteElementCollection> rt_fec;
-  std::unique_ptr<FiniteElementSpace> rt_fespace;
+  // Finite element spaces used to represent U and F.
+  FiniteElementSpace &h1_fespace, &rt_fespace;
 
   // Global L2 projection solver.
   FluxProjector<Vector> projector;
 
   // Temporary vectors for error estimation.
-  mutable Vector F, F_gf, U_gf;
+  mutable Vector U_gf, F, F_gf;
 
 public:
-  GradFluxErrorEstimator(const MaterialOperator &mat_op, FiniteElementSpace &rt_fespace,
-                         double tol, int max_it, int print);
+  GradFluxErrorEstimator(const MaterialOperator &mat_op, FiniteElementSpace &h1_fespace,
+                         FiniteElementSpaceHierarchy &rt_fespaces, double tol, int max_it,
+                         int print, bool use_mg);
 
   // Compute elemental error indicators given a vector of true DOF and fold into an existing
   // indicator.

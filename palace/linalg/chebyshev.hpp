@@ -41,7 +41,7 @@ private:
   double lambda_max, sf_max;
 
   // Temporary vector for smoother application.
-  mutable VecType d;
+  mutable VecType d, r;
 
 public:
   ChebyshevSmoother(MPI_Comm comm, int smooth_it, int poly_order, double sf_max);
@@ -50,14 +50,22 @@ public:
 
   void Mult(const VecType &x, VecType &y) const override
   {
-    MFEM_ABORT("ChebyshevSmoother implements Mult2 using an additional preallocated "
-               "temporary vector!");
+    if (r.Size() != y.Size())
+    {
+      r.SetSize(y.Size());
+      r.UseDevice(true);
+    }
+    Mult2(x, y, r);
   }
 
   void MultTranspose(const VecType &x, VecType &y) const override
   {
-    MFEM_ABORT("ChebyshevSmoother implements MultTranspose2 using an additional "
-               "preallocated temporary vector!");
+    if (r.Size() != y.Size())
+    {
+      r.SetSize(y.Size());
+      r.UseDevice(true);
+    }
+    MultTranspose2(x, y, r);
   }
 
   void Mult2(const VecType &x, VecType &y, VecType &r) const override;
@@ -97,7 +105,7 @@ private:
   double theta, delta, sf_max, sf_min;
 
   // Temporary vector for smoother application.
-  mutable VecType d;
+  mutable VecType d, r;
 
 public:
   ChebyshevSmoother1stKind(MPI_Comm comm, int smooth_it, int poly_order, double sf_max,
@@ -107,14 +115,22 @@ public:
 
   void Mult(const VecType &x, VecType &y) const override
   {
-    MFEM_ABORT("ChebyshevSmoother1stKind implements Mult2 using an additional preallocated "
-               "temporary vector!");
+    if (r.Size() != y.Size())
+    {
+      r.SetSize(y.Size());
+      r.UseDevice(true);
+    }
+    Mult2(x, y, r);
   }
 
   void MultTranspose(const VecType &x, VecType &y) const override
   {
-    MFEM_ABORT("ChebyshevSmoother1stKind implements MultTranspose2 using an additional "
-               "preallocated temporary vector!");
+    if (r.Size() != y.Size())
+    {
+      r.SetSize(y.Size());
+      r.UseDevice(true);
+    }
+    MultTranspose2(x, y, r);
   }
 
   void Mult2(const VecType &x, VecType &y, VecType &r) const override;

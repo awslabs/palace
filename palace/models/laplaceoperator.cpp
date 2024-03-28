@@ -25,9 +25,16 @@ LaplaceOperator::LaplaceOperator(const IoData &iodata,
         iodata.solver.linear.mg_coarsen_type, false)),
     nd_fec(std::make_unique<mfem::ND_FECollection>(iodata.solver.order,
                                                    mesh.back()->Dimension())),
+    rt_fecs(fem::ConstructFECollections<mfem::RT_FECollection>(
+        iodata.solver.order - 1, mesh.back()->Dimension(),
+        iodata.solver.linear.estimator_mg ? iodata.solver.linear.mg_max_levels : 1,
+        iodata.solver.linear.mg_coarsen_type, false)),
     h1_fespaces(fem::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
         iodata.solver.linear.mg_max_levels, mesh, h1_fecs, &dbc_attr, &dbc_tdof_lists)),
     nd_fespace(h1_fespaces.GetFinestFESpace(), *mesh.back(), nd_fec.get()),
+    rt_fespaces(fem::ConstructFiniteElementSpaceHierarchy<mfem::RT_FECollection>(
+        iodata.solver.linear.estimator_mg ? iodata.solver.linear.mg_max_levels : 1, mesh,
+        rt_fecs)),
     mat_op(iodata, *mesh.back()), source_attr_lists(ConstructSources(iodata))
 {
   // Print essential BC information.
@@ -135,16 +142,18 @@ namespace
 {
 
 void PrintHeader(const mfem::ParFiniteElementSpace &h1_fespace,
-                 const mfem::ParFiniteElementSpace &nd_fespace, bool &print_hdr)
+                 const mfem::ParFiniteElementSpace &nd_fespace,
+                 const mfem::ParFiniteElementSpace &rt_fespace, bool &print_hdr)
 {
   if (print_hdr)
   {
     Mpi::Print("\nAssembling system matrices, number of global unknowns:\n"
-               " H1 (p = {:d}): {:d}, ND (p = {:d}): {:d}\n Operator "
+               " H1 (p = {:d}): {:d}, ND (p = {:d}): {:d}, RT (p = {:d}): {:d}\n Operator "
                "assembly level: {}\n",
                h1_fespace.GetMaxElementOrder(), h1_fespace.GlobalTrueVSize(),
                nd_fespace.GetMaxElementOrder(), nd_fespace.GlobalTrueVSize(),
-               nd_fespace.GetMaxElementOrder() > BilinearForm::pa_order_threshold
+               rt_fespace.GetMaxElementOrder(), rt_fespace.GlobalTrueVSize(),
+               (h1_fespace.GetMaxElementOrder() > BilinearForm::pa_order_threshold)
                    ? "Partial"
                    : "Full");
 
@@ -173,7 +182,7 @@ std::unique_ptr<Operator> LaplaceOperator::GetStiffnessMatrix()
 {
   // When partially assembled, the coarse operators can reuse the fine operator quadrature
   // data if the spaces correspond to the same mesh.
-  PrintHeader(GetH1Space(), GetNDSpace(), print_hdr);
+  PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
 
   constexpr bool skip_zeros = false;
   MaterialPropertyCoefficient epsilon_func(mat_op.GetAttributeToMaterial(),
