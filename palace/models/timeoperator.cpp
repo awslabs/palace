@@ -206,7 +206,7 @@ double TimeOperator::GetMaxTimeStep() const
 
   // Solver for M⁻¹.
   constexpr double lin_tol = 1.0e-9;
-  constexpr int max_lin_it = 500;
+  constexpr int max_lin_it = 10000;
   CgSolver<Operator> pcg(comm, 0);
   pcg.SetRelTol(lin_tol);
   pcg.SetMaxIter(max_lin_it);
