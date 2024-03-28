@@ -20,7 +20,7 @@ CEED_QFUNCTION(f_build_l2mass_22)(void *__restrict__ ctx, CeedInt Q,
       CeedScalar coeff[3], adjJt_loc[4], J_loc[4], qd_loc[3];
       CoeffUnpack2((const CeedIntScalar *)ctx, (CeedInt)attr[i], coeff);
       MatUnpack22(adjJt + i, Q, adjJt_loc);
-      AdjJt22<false>(adjJt_loc, J_loc);
+      AdjJt22(adjJt_loc, J_loc);
       MultAtBA22(J_loc, coeff, qd_loc);
 
       qd1[i + Q * 0] = wdetJ[i] * qd_loc[0];
