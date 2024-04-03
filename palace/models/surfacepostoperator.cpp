@@ -162,8 +162,6 @@ SurfacePostOperator::SurfacePostOperator(const IoData &iodata,
   {
     flux_surfs.try_emplace(idx, data, *h1_fespace.GetParMesh());
   }
-
-  // XX TODO CHECK ATTRIBUTES HERE? (JUST IGNORE ILL-SPECIFIED?)
 }
 
 double SurfacePostOperator::GetInterfaceLossTangent(int idx) const
@@ -231,9 +229,6 @@ double SurfacePostOperator::GetLocalSurfaceIntegral(const SurfaceData &data,
   }
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, attr_list);
-
-  // XX TODO THIS WILL FAIL IF ATTR_LIST CONTAINS NON-MARKER ATTRIBUTES...
-
   mfem::LinearForm s(&h1_fespace);
   s.AddBoundaryIntegrator(new BoundaryLFIntegrator(fb), attr_marker);
   s.UseFastAssembly(false);
