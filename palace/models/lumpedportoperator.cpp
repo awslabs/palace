@@ -107,21 +107,26 @@ LumpedPortData::LumpedPortData(const config::LumpedPortData &data,
   }
 }
 
-std::complex<double> LumpedPortData::GetCharacteristicImpedance(double omega) const
+std::complex<double>
+LumpedPortData::GetCharacteristicImpedance(double omega,
+                                           LumpedPortData::Branch branch) const
 {
-  MFEM_VERIFY((L == 0.0 && C == 0.0) || omega > 0.0,
+  MFEM_VERIFY((L == 0.0 && C == 0.0) || branch == Branch::R || omega > 0.0,
               "Lumped port with nonzero reactance requires frequency in order to define "
               "characteristic impedance!");
   std::complex<double> Y = 0.0;
-  if (std::abs(R) > 0.0)
+  if (std::abs(R) > 0.0 && (branch == Branch::TOTAL || branch == Branch::R))
   {
     Y += 1.0 / R;
   }
-  if (std::abs(L) > 0.0)
+  if (std::abs(L) > 0.0 && (branch == Branch::TOTAL || branch == Branch::L))
   {
     Y += 1.0 / (1i * omega * L);
   }
-  Y += 1i * omega * C;
+  if (std::abs(C) > 0.0 && (branch == Branch::TOTAL || branch == Branch::C))
+  {
+    Y += 1i * omega * C;
+  }
   MFEM_VERIFY(std::abs(Y) > 0.0,
               "Characteristic impedance requested for lumped port with zero admittance!")
   return 1.0 / Y;

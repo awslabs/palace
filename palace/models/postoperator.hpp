@@ -16,6 +16,7 @@
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
 #include "models/domainpostoperator.hpp"
+#include "models/lumpedportoperator.hpp"
 #include "models/surfacepostoperator.hpp"
 
 namespace palace
@@ -25,7 +26,6 @@ class CurlCurlOperator;
 class ErrorIndicator;
 class IoData;
 class LaplaceOperator;
-class LumpedPortOperator;
 class MaterialOperator;
 class SpaceOperator;
 class SurfaceCurrentOperator;
@@ -60,7 +60,7 @@ private:
   // the grid functions are set.
   struct PortPostData
   {
-    std::complex<double> S, P, V, Z;
+    std::complex<double> P, V, I[3], S;
   };
   std::map<int, PortPostData> lumped_port_vi, wave_port_vi;
   bool lumped_port_init, wave_port_init;
@@ -96,16 +96,6 @@ public:
   void SetVGridFunction(const Vector &v, bool exchange_face_nbr_data = true);
   void SetAGridFunction(const Vector &a, bool exchange_face_nbr_data = true);
 
-  // Update cached port voltages and currents for lumped and wave port operators.
-  void UpdatePorts(const LumpedPortOperator &lumped_port_op,
-                   const WavePortOperator &wave_port_op, double omega = 0.0)
-  {
-    UpdatePorts(lumped_port_op, omega);
-    UpdatePorts(wave_port_op, omega);
-  }
-  void UpdatePorts(const LumpedPortOperator &lumped_port_op, double omega = 0.0);
-  void UpdatePorts(const WavePortOperator &wave_port_op, double omega = 0.0);
-
   // Postprocess the total electric and magnetic field energies in the electric and magnetic
   // fields.
   double GetEFieldEnergy() const;
@@ -115,6 +105,16 @@ public:
   // index.
   double GetEFieldEnergy(int idx) const;
   double GetHFieldEnergy(int idx) const;
+
+  // Update cached port voltages and currents for lumped and wave port operators.
+  void UpdatePorts(const LumpedPortOperator &lumped_port_op,
+                   const WavePortOperator &wave_port_op, double omega = 0.0)
+  {
+    UpdatePorts(lumped_port_op, omega);
+    UpdatePorts(wave_port_op, omega);
+  }
+  void UpdatePorts(const LumpedPortOperator &lumped_port_op, double omega = 0.0);
+  void UpdatePorts(const WavePortOperator &wave_port_op, double omega = 0.0);
 
   // Postprocess the energy in lumped capacitor or inductor port boundaries with index in
   // the provided set.
@@ -136,18 +136,11 @@ public:
   std::complex<double> GetPortPower(const WavePortOperator &wave_port_op, int idx) const;
   std::complex<double> GetPortVoltage(const LumpedPortOperator &lumped_port_op,
                                       int idx) const;
-  std::complex<double> GetPortVoltage(const WavePortOperator &wave_port_op, int idx) const
-  {
-    MFEM_ABORT("GetPortVoltage is not yet implemented for wave port boundaries!");
-    return 0.0;
-  }
-  std::complex<double> GetPortCurrent(const LumpedPortOperator &lumped_port_op,
-                                      int idx) const;
-  std::complex<double> GetPortCurrent(const WavePortOperator &wave_port_op, int idx) const
-  {
-    MFEM_ABORT("GetPortCurrent is not yet implemented for wave port boundaries!");
-    return 0.0;
-  }
+  std::complex<double> GetPortVoltage(const WavePortOperator &wave_port_op, int idx) const;
+  std::complex<double>
+  GetPortCurrent(const LumpedPortOperator &lumped_port_op, int idx,
+                 LumpedPortData::Branch branch = LumpedPortData::Branch::TOTAL) const;
+  std::complex<double> GetPortCurrent(const WavePortOperator &wave_port_op, int idx) const;
 
   // Postprocess the EPR for the electric field solution and lumped port index.
   double GetInductorParticipation(const LumpedPortOperator &lumped_port_op, int idx,

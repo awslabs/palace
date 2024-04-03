@@ -59,7 +59,15 @@ public:
     return elem.GetGeometryWidth() / elem.GetGeometryLength() * elems.size();
   }
 
-  std::complex<double> GetCharacteristicImpedance(double omega = 0.0) const;
+  enum class Branch
+  {
+    TOTAL,
+    R,
+    L,
+    C
+  };
+  std::complex<double> GetCharacteristicImpedance(double omega = 0.0,
+                                                  Branch branch = Branch::TOTAL) const;
 
   double GetExcitationPower() const;
   double GetExcitationVoltage() const;
