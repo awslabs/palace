@@ -44,6 +44,13 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   Vector RHS(K->Height());
   std::vector<Vector> V(nstep);
 
+  // Initialize structures for storing and reducing the results of error estimation.
+  GradFluxErrorEstimator estimator(
+      laplaceop.GetMaterialOp(), laplaceop.GetH1Space(), laplaceop.GetRTSpaces(),
+      iodata.solver.linear.estimator_tol, iodata.solver.linear.estimator_max_it, 0,
+      iodata.solver.linear.estimator_mg);
+  ErrorIndicator indicator;
+
   // Main loop over terminal boundaries.
   Mpi::Print("\nComputing electrostatic fields for {:d} terminal boundar{}\n", nstep,
              (nstep > 1) ? "ies" : "y");
@@ -65,6 +72,10 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                linalg::Norml2(laplaceop.GetComm(), V[step]),
                linalg::Norml2(laplaceop.GetComm(), RHS));
 
+    // Calculate and record the error indicators.
+    Mpi::Print(" Updating solution error estimates\n");
+    estimator.AddErrorIndicator(V[step], indicator);
+
     // Next terminal.
     step++;
   }
@@ -72,12 +83,13 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // Postprocess the capacitance matrix from the computed field solutions.
   BlockTimer bt1(Timer::POSTPRO);
   SaveMetadata(ksp);
-  return {Postprocess(laplaceop, postop, V), laplaceop.GlobalTrueVSize()};
+  Postprocess(laplaceop, postop, V, indicator);
+  return {indicator, laplaceop.GlobalTrueVSize()};
 }
 
-ErrorIndicator ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop,
-                                                PostOperator &postop,
-                                                const std::vector<Vector> &V) const
+void ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop, PostOperator &postop,
+                                      const std::vector<Vector> &V,
+                                      const ErrorIndicator &indicator) const
 {
   // Postprocess the Maxwell capacitance matrix. See p. 97 of the COMSOL AC/DC Module manual
   // for the associated formulas based on the electric field energy based on a unit voltage
@@ -90,18 +102,6 @@ ErrorIndicator ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop,
   int nstep = static_cast<int>(terminal_sources.size());
   mfem::DenseMatrix C(nstep), Cm(nstep);
   Vector E(Grad.Height()), Vij(Grad.Width());
-
-  // Calculate and record the error indicators.
-  Mpi::Print("\nComputing solution error estimates\n");
-  GradFluxErrorEstimator estimator(laplaceop.GetMaterialOp(), laplaceop.GetH1Space(),
-                                   iodata.solver.linear.estimator_tol,
-                                   iodata.solver.linear.estimator_max_it, 0);
-  ErrorIndicator indicator;
-  for (int i = 0; i < nstep; i++)
-  {
-    estimator.AddErrorIndicator(V[i], indicator);
-  }
-
   int i = 0;
   for (const auto &[idx, data] : terminal_sources)
   {
@@ -145,7 +145,7 @@ ErrorIndicator ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop,
       else if (j > i)
       {
         linalg::AXPBYPCZ(1.0, V[i], 1.0, V[j], 0.0, Vij);
-        postop.SetVGridFunction(Vij);
+        postop.SetVGridFunction(Vij, false);
         double Ue = postop.GetEFieldEnergy();
         C(i, j) = Ue - 0.5 * (C(i, i) + C(j, j));
         Cm(i, j) = -C(i, j);
@@ -156,7 +156,6 @@ ErrorIndicator ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop,
   mfem::DenseMatrix Cinv(C);
   Cinv.Invert();  // In-place, uses LAPACK (when available) and should be cheap
   PostprocessTerminals(terminal_sources, C, Cinv, Cm);
-  return indicator;
 }
 
 void ElectrostaticSolver::PostprocessTerminals(

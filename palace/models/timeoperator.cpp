@@ -70,7 +70,7 @@ public:
       pcg->SetRelTol(iodata.solver.linear.tol);
       pcg->SetAbsTol(std::numeric_limits<double>::epsilon());
       pcg->SetMaxIter(iodata.solver.linear.max_it);
-      auto jac = std::make_unique<JacobiSmoother<Operator>>();
+      auto jac = std::make_unique<JacobiSmoother<Operator>>(comm);
       kspM = std::make_unique<KspSolver>(std::move(pcg), std::move(jac));
       kspM->SetOperators(*M, *M);
     }
@@ -206,18 +206,19 @@ double TimeOperator::GetMaxTimeStep() const
 
   // Solver for M⁻¹.
   constexpr double lin_tol = 1.0e-9;
-  constexpr int max_lin_it = 500;
+  constexpr int max_lin_it = 10000;
   CgSolver<Operator> pcg(comm, 0);
   pcg.SetRelTol(lin_tol);
   pcg.SetMaxIter(max_lin_it);
   pcg.SetOperator(M);
-  JacobiSmoother<Operator> jac;
+  JacobiSmoother<Operator> jac(comm);
   jac.SetOperator(M);
   pcg.SetPreconditioner(jac);
 
-  // Power iteration to estimate largest eigenvalue of undamped system matrix M⁻¹ K.
+  // Power iteration to estimate largest eigenvalue of undamped system matrix M⁻¹ K (can use
+  // Hermitian eigenvalue solver as M, K are SPD).
   ProductOperator op(pcg, K);
-  double lam = linalg::SpectralNorm(comm, op, false);
+  double lam = linalg::SpectralNorm(comm, op, true);
   MFEM_VERIFY(lam > 0.0, "Error during power iteration, λ = " << lam << "!");
   return 2.0 / std::sqrt(lam);
 }

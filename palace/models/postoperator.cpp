@@ -260,66 +260,84 @@ void PostOperator::InitializeDataCollection(const IoData &iodata)
   }
 }
 
-void PostOperator::SetEGridFunction(const ComplexVector &e)
+void PostOperator::SetEGridFunction(const ComplexVector &e, bool exchange_face_nbr_data)
 {
   MFEM_VERIFY(HasImag(),
               "SetEGridFunction for complex-valued output called when HasImag() == false!");
   MFEM_VERIFY(E, "Incorrect usage of PostOperator::SetEGridFunction!");
   E->Real().SetFromTrueDofs(e.Real());  // Parallel distribute
   E->Imag().SetFromTrueDofs(e.Imag());
-  E->Real().ExchangeFaceNbrData();  // Ready for parallel comm on shared faces
-  E->Imag().ExchangeFaceNbrData();
+  if (exchange_face_nbr_data)
+  {
+    E->Real().ExchangeFaceNbrData();  // Ready for parallel comm on shared faces
+    E->Imag().ExchangeFaceNbrData();
+  }
   lumped_port_init = wave_port_init = false;
 }
 
-void PostOperator::SetBGridFunction(const ComplexVector &b)
+void PostOperator::SetBGridFunction(const ComplexVector &b, bool exchange_face_nbr_data)
 {
   MFEM_VERIFY(HasImag(),
               "SetBGridFunction for complex-valued output called when HasImag() == false!");
   MFEM_VERIFY(B, "Incorrect usage of PostOperator::SetBGridFunction!");
   B->Real().SetFromTrueDofs(b.Real());  // Parallel distribute
   B->Imag().SetFromTrueDofs(b.Imag());
-  B->Real().ExchangeFaceNbrData();  // Ready for parallel comm on shared faces
-  B->Imag().ExchangeFaceNbrData();
+  if (exchange_face_nbr_data)
+  {
+    B->Real().ExchangeFaceNbrData();  // Ready for parallel comm on shared faces
+    B->Imag().ExchangeFaceNbrData();
+  }
   lumped_port_init = wave_port_init = false;
 }
 
-void PostOperator::SetEGridFunction(const Vector &e)
+void PostOperator::SetEGridFunction(const Vector &e, bool exchange_face_nbr_data)
 {
   MFEM_VERIFY(!HasImag(),
               "SetEGridFunction for real-valued output called when HasImag() == true!");
   MFEM_VERIFY(E, "Incorrect usage of PostOperator::SetEGridFunction!");
   E->Real().SetFromTrueDofs(e);
-  E->Real().ExchangeFaceNbrData();
+  if (exchange_face_nbr_data)
+  {
+    E->Real().ExchangeFaceNbrData();
+  }
   lumped_port_init = wave_port_init = false;
 }
 
-void PostOperator::SetBGridFunction(const Vector &b)
+void PostOperator::SetBGridFunction(const Vector &b, bool exchange_face_nbr_data)
 {
   MFEM_VERIFY(!HasImag(),
               "SetBGridFunction for real-valued output called when HasImag() == true!");
   MFEM_VERIFY(B, "Incorrect usage of PostOperator::SetBGridFunction!");
   B->Real().SetFromTrueDofs(b);
-  B->Real().ExchangeFaceNbrData();
+  if (exchange_face_nbr_data)
+  {
+    B->Real().ExchangeFaceNbrData();
+  }
   lumped_port_init = wave_port_init = false;
 }
 
-void PostOperator::SetVGridFunction(const Vector &v)
+void PostOperator::SetVGridFunction(const Vector &v, bool exchange_face_nbr_data)
 {
   MFEM_VERIFY(!HasImag(),
               "SetVGridFunction for real-valued output called when HasImag() == true!");
   MFEM_VERIFY(V, "Incorrect usage of PostOperator::SetVGridFunction!");
   V->Real().SetFromTrueDofs(v);
-  V->Real().ExchangeFaceNbrData();
+  if (exchange_face_nbr_data)
+  {
+    V->Real().ExchangeFaceNbrData();
+  }
 }
 
-void PostOperator::SetAGridFunction(const Vector &a)
+void PostOperator::SetAGridFunction(const Vector &a, bool exchange_face_nbr_data)
 {
   MFEM_VERIFY(!HasImag(),
               "SetAGridFunction for real-valued output called when HasImag() == true!");
   MFEM_VERIFY(A, "Incorrect usage of PostOperator::SetAGridFunction!");
   A->Real().SetFromTrueDofs(a);
-  A->Real().ExchangeFaceNbrData();
+  if (exchange_face_nbr_data)
+  {
+    A->Real().ExchangeFaceNbrData();
+  }
 }
 
 void PostOperator::UpdatePorts(const LumpedPortOperator &lumped_port_op, double omega)

@@ -47,7 +47,7 @@ private:
   std::unique_ptr<Solver<OperType>> B_G;
 
   // Temporary vectors for smoother application.
-  mutable VecType x_G, y_G, r_G;
+  mutable VecType x_G, y_G, r_G, r;
 
 public:
   DistRelaxationSmoother(MPI_Comm comm, const Operator &G, int smooth_it,
@@ -64,14 +64,22 @@ public:
 
   void Mult(const VecType &x, VecType &y) const override
   {
-    MFEM_ABORT("DistRelaxationSmoother implements Mult2 using an additional preallocated "
-               "temporary vector!");
+    if (r.Size() != y.Size())
+    {
+      r.SetSize(y.Size());
+      r.UseDevice(true);
+    }
+    Mult2(x, y, r);
   }
 
   void MultTranspose(const VecType &x, VecType &y) const override
   {
-    MFEM_ABORT("DistRelaxationSmoother implements MultTranspose2 using an additional "
-               "preallocated temporary vector!");
+    if (r.Size() != y.Size())
+    {
+      r.SetSize(y.Size());
+      r.UseDevice(true);
+    }
+    MultTranspose2(x, y, r);
   }
 
   void Mult2(const VecType &x, VecType &y, VecType &r) const override;

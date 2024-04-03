@@ -6,6 +6,8 @@
 #include <limits>
 #include "fem/bilinearform.hpp"
 #include "fem/integrator.hpp"
+#include "linalg/amg.hpp"
+#include "linalg/gmg.hpp"
 #include "linalg/iterative.hpp"
 #include "linalg/jacobi.hpp"
 #include "linalg/rap.hpp"
@@ -21,34 +23,91 @@ namespace
 {
 
 template <typename OperType>
-auto WrapOperator(std::unique_ptr<Operator> &&op);
+auto BuildLevelParOperator(std::unique_ptr<Operator> &&a,
+                           const FiniteElementSpace &trial_fespace,
+                           const FiniteElementSpace &test_fespace);
 
 template <>
-auto WrapOperator<Operator>(std::unique_ptr<Operator> &&op)
+auto BuildLevelParOperator<Operator>(std::unique_ptr<Operator> &&a,
+                                     const FiniteElementSpace &trial_fespace,
+                                     const FiniteElementSpace &test_fespace)
 {
-  return std::move(op);
+  return std::make_unique<ParOperator>(std::move(a), trial_fespace, test_fespace, false);
 }
 
 template <>
-auto WrapOperator<ComplexOperator>(std::unique_ptr<Operator> &&op)
+auto BuildLevelParOperator<ComplexOperator>(std::unique_ptr<Operator> &&a,
+                                            const FiniteElementSpace &trial_fespace,
+                                            const FiniteElementSpace &test_fespace)
 {
-  return std::make_unique<ComplexWrapperOperator>(std::move(op), nullptr);
-}
-
-auto GetMassMatrix(const FiniteElementSpace &fespace)
-{
-  constexpr bool skip_zeros = false;
-  BilinearForm m(fespace);
-  m.AddDomainIntegrator<VectorFEMassIntegrator>();
-  return std::make_unique<ParOperator>(m.Assemble(skip_zeros), fespace);
+  return std::make_unique<ComplexParOperator>(std::move(a), nullptr, trial_fespace,
+                                              test_fespace, false);
 }
 
 template <typename OperType>
-auto ConfigureLinearSolver(MPI_Comm comm, double tol, int max_it, int print)
+auto BuildLevelParOperator(std::unique_ptr<Operator> &&a, const FiniteElementSpace &fespace)
+{
+  return BuildLevelParOperator<OperType>(std::move(a), fespace, fespace);
+}
+
+template <typename OperType>
+std::unique_ptr<OperType> GetMassMatrix(const FiniteElementSpaceHierarchy &fespaces,
+                                        bool use_mg)
+{
+  constexpr bool skip_zeros = false;
+  BilinearForm m(fespaces.GetFinestFESpace());
+  m.AddDomainIntegrator<VectorFEMassIntegrator>();
+  if (!use_mg)
+  {
+    return BuildLevelParOperator<OperType>(m.Assemble(skip_zeros),
+                                           fespaces.GetFinestFESpace());
+  }
+  else
+  {
+    auto m_vec = m.Assemble(fespaces, skip_zeros);
+    auto M_mg = std::make_unique<BaseMultigridOperator<OperType>>(fespaces.GetNumLevels());
+    for (std::size_t l = 0; l < fespaces.GetNumLevels(); l++)
+    {
+      const auto &fespace_l = fespaces.GetFESpaceAtLevel(l);
+      M_mg->AddOperator(BuildLevelParOperator<OperType>(std::move(m_vec[l]), fespace_l));
+    }
+    return M_mg;
+  }
+}
+
+template <typename OperType>
+auto ConfigureLinearSolver(const FiniteElementSpaceHierarchy &fespaces, double tol,
+                           int max_it, int print, bool use_mg)
 {
   // The system matrix for the projection is real, SPD and diagonally dominant.
-  auto pc = std::make_unique<JacobiSmoother<OperType>>();
-  auto pcg = std::make_unique<CgSolver<OperType>>(comm, print);
+  std::unique_ptr<Solver<OperType>> pc;
+  if (!use_mg)
+  {
+    // Use eigenvalue estimate to compute optimal Jacobi damping parameter.
+    pc = std::make_unique<JacobiSmoother<OperType>>(fespaces.GetFinestFESpace().GetComm(),
+                                                    0.0);
+  }
+  else
+  {
+    auto amg = std::make_unique<BoomerAmgSolver>(1, 1, 0);
+    amg->SetStrengthThresh(0.8);  // More coarsening to save memory
+    if (fespaces.GetNumLevels() > 1)
+    {
+      const int mg_smooth_order = 2;  // Smooth order independent of FE space order
+      pc = std::make_unique<GeometricMultigridSolver<OperType>>(
+          fespaces.GetFinestFESpace().GetComm(),
+          std::make_unique<MfemWrapperSolver<OperType>>(std::move(amg)),
+          fespaces.GetProlongationOperators(), nullptr, 1, 1, mg_smooth_order, 1.0, 0.0,
+          true);
+    }
+    else
+    {
+      pc = std::make_unique<MfemWrapperSolver<OperType>>(std::move(amg));
+    }
+  }
+
+  auto pcg =
+      std::make_unique<CgSolver<OperType>>(fespaces.GetFinestFESpace().GetComm(), print);
   pcg->SetInitialGuess(false);
   pcg->SetRelTol(tol);
   pcg->SetAbsTol(std::numeric_limits<double>::epsilon());
@@ -60,22 +119,21 @@ auto ConfigureLinearSolver(MPI_Comm comm, double tol, int max_it, int print)
 
 template <typename VecType>
 FluxProjector<VecType>::FluxProjector(const MaterialOperator &mat_op,
-                                      const FiniteElementSpace &nd_fespace, double tol,
-                                      int max_it, int print)
+                                      const FiniteElementSpaceHierarchy &nd_fespaces,
+                                      double tol, int max_it, int print, bool use_mg)
 {
   BlockTimer bt(Timer::CONSTRUCT_ESTIMATOR);
+  const auto &nd_fespace = nd_fespaces.GetFinestFESpace();
   {
     // Flux operator is always partially assembled.
     MaterialPropertyCoefficient muinv_func(mat_op.GetAttributeToMaterial(),
                                            mat_op.GetInvPermeability());
     BilinearForm flux(nd_fespace);
     flux.AddDomainIntegrator<MixedVectorCurlIntegrator>(muinv_func);
-    Flux = WrapOperator<OperType>(
-        std::make_unique<ParOperator>(flux.PartialAssemble(), nd_fespace));
+    Flux = BuildLevelParOperator<OperType>(flux.PartialAssemble(), nd_fespace);
   }
-  M = WrapOperator<OperType>(GetMassMatrix(nd_fespace));
-
-  ksp = ConfigureLinearSolver<OperType>(nd_fespace.GetComm(), tol, max_it, print);
+  M = GetMassMatrix<OperType>(nd_fespaces, use_mg);
+  ksp = ConfigureLinearSolver<OperType>(nd_fespaces, tol, max_it, print, use_mg);
   ksp->SetOperators(*M, *M);
 
   rhs.SetSize(nd_fespace.GetTrueVSize());
@@ -85,22 +143,21 @@ FluxProjector<VecType>::FluxProjector(const MaterialOperator &mat_op,
 template <typename VecType>
 FluxProjector<VecType>::FluxProjector(const MaterialOperator &mat_op,
                                       const FiniteElementSpace &h1_fespace,
-                                      const FiniteElementSpace &rt_fespace, double tol,
-                                      int max_it, int print)
+                                      const FiniteElementSpaceHierarchy &rt_fespaces,
+                                      double tol, int max_it, int print, bool use_mg)
 {
   BlockTimer bt(Timer::CONSTRUCT_ESTIMATOR);
+  const auto &rt_fespace = rt_fespaces.GetFinestFESpace();
   {
     // Flux operator is always partially assembled.
     MaterialPropertyCoefficient epsilon_func(mat_op.GetAttributeToMaterial(),
                                              mat_op.GetPermittivityReal());
     BilinearForm flux(h1_fespace, rt_fespace);
     flux.AddDomainIntegrator<MixedVectorGradientIntegrator>(epsilon_func);
-    Flux = WrapOperator<OperType>(std::make_unique<ParOperator>(
-        flux.PartialAssemble(), h1_fespace, rt_fespace, false));
+    Flux = BuildLevelParOperator<OperType>(flux.PartialAssemble(), h1_fespace, rt_fespace);
   }
-  M = WrapOperator<OperType>(GetMassMatrix(rt_fespace));
-
-  ksp = ConfigureLinearSolver<OperType>(h1_fespace.GetComm(), tol, max_it, print);
+  M = GetMassMatrix<OperType>(rt_fespaces, use_mg);
+  ksp = ConfigureLinearSolver<OperType>(rt_fespaces, tol, max_it, print, use_mg);
   ksp->SetOperators(*M, *M);
 
   rhs.SetSize(rt_fespace.GetTrueVSize());
@@ -118,14 +175,16 @@ void FluxProjector<VecType>::Mult(const VecType &x, VecType &y) const
 }
 
 template <typename VecType>
-CurlFluxErrorEstimator<VecType>::CurlFluxErrorEstimator(const MaterialOperator &mat_op,
-                                                        FiniteElementSpace &nd_fespace,
-                                                        double tol, int max_it, int print)
-  : mat_op(mat_op), nd_fespace(nd_fespace),
-    projector(mat_op, nd_fespace, tol, max_it, print), F(nd_fespace.GetTrueVSize()),
-    F_gf(nd_fespace.GetVSize()), U_gf(nd_fespace.GetVSize())
+CurlFluxErrorEstimator<VecType>::CurlFluxErrorEstimator(
+    const MaterialOperator &mat_op, FiniteElementSpaceHierarchy &nd_fespaces, double tol,
+    int max_it, int print, bool use_mg)
+  : mat_op(mat_op), nd_fespace(nd_fespaces.GetFinestFESpace()),
+    projector(mat_op, nd_fespaces, tol, max_it, print, use_mg), U_gf(nd_fespace.GetVSize()),
+    F(nd_fespace.GetTrueVSize()), F_gf(nd_fespace.GetVSize())
 {
+  U_gf.UseDevice(true);
   F.UseDevice(true);
+  F_gf.UseDevice(true);
 }
 
 template <typename VecType>
@@ -195,7 +254,7 @@ void CurlFluxErrorEstimator<VecType>::AddErrorIndicator(const VecType &U,
 
         auto AccumulateError = [&](const Vector &U_gf_, const Vector &F_gf_)
         {
-          // μ⁻¹ ∇ × U -- μ⁻¹ |J|⁻¹J ∇ × Uᵣ
+          // μ⁻¹ ∇ × U -- μ⁻¹ |J|⁻¹ J ∇ × Uᵣ
           U_gf_.GetSubVector(dofs, loc_gf);
           if (dof_trans.GetDofTransformation())
           {
@@ -245,16 +304,17 @@ void CurlFluxErrorEstimator<VecType>::AddErrorIndicator(const VecType &U,
 }
 
 GradFluxErrorEstimator::GradFluxErrorEstimator(const MaterialOperator &mat_op,
-                                               FiniteElementSpace &h1_fespace, double tol,
-                                               int max_it, int print)
-  : mat_op(mat_op), h1_fespace(h1_fespace),
-    rt_fec(std::make_unique<mfem::RT_FECollection>(h1_fespace.GetFEColl().GetOrder() - 1,
-                                                   h1_fespace.SpaceDimension())),
-    rt_fespace(std::make_unique<FiniteElementSpace>(h1_fespace.GetMesh(), rt_fec.get())),
-    projector(mat_op, h1_fespace, *rt_fespace, tol, max_it, print),
-    F(rt_fespace->GetTrueVSize()), F_gf(rt_fespace->GetVSize()), U_gf(h1_fespace.GetVSize())
+                                               FiniteElementSpace &h1_fespace,
+                                               FiniteElementSpaceHierarchy &rt_fespaces,
+                                               double tol, int max_it, int print,
+                                               bool use_mg)
+  : mat_op(mat_op), h1_fespace(h1_fespace), rt_fespace(rt_fespaces.GetFinestFESpace()),
+    projector(mat_op, h1_fespace, rt_fespaces, tol, max_it, print, use_mg),
+    U_gf(h1_fespace.GetVSize()), F(rt_fespace.GetTrueVSize()), F_gf(rt_fespace.GetVSize())
 {
+  U_gf.UseDevice(true);
   F.UseDevice(true);
+  F_gf.UseDevice(true);
 }
 
 void GradFluxErrorEstimator::AddErrorIndicator(const Vector &U,
@@ -265,7 +325,7 @@ void GradFluxErrorEstimator::AddErrorIndicator(const Vector &U,
   BlockTimer bt(Timer::ESTIMATION);
   projector.Mult(U, F);
   h1_fespace.GetProlongationMatrix()->Mult(U, U_gf);
-  rt_fespace->GetProlongationMatrix()->Mult(F, F_gf);
+  rt_fespace.GetProlongationMatrix()->Mult(F, F_gf);
   U_gf.HostRead();
   F_gf.HostRead();
 
@@ -289,10 +349,10 @@ void GradFluxErrorEstimator::AddErrorIndicator(const Vector &U,
     for (int e = 0; e < mesh.GetNE(); e++)
     {
       const mfem::FiniteElement &h1_fe = *h1_fespace.Get().GetFE(e);
-      const mfem::FiniteElement &rt_fe = *rt_fespace->Get().GetFE(e);
+      const mfem::FiniteElement &rt_fe = *rt_fespace.Get().GetFE(e);
       mesh.GetElementTransformation(e, &T);
       h1_fespace.Get().GetElementDofs(e, h1_dofs);
-      rt_fespace->Get().GetElementDofs(e, rt_dofs);
+      rt_fespace.Get().GetElementDofs(e, rt_dofs);
       Interp.SetSize(rt_fe.GetDof(), V_ip.Size());
       Grad.SetSize(h1_fe.GetDof(), V_ip.Size());
       const int q_order = fem::DefaultIntegrationOrder::Get(T);
@@ -308,13 +368,13 @@ void GradFluxErrorEstimator::AddErrorIndicator(const Vector &U,
         h1_fe.CalcDShape(ip, Grad);
         const double w = ip.weight * T.Weight();
 
-        // ε ∇U -- ε J⁻¹ ∇Uᵣ
+        // ε ∇U -- ε J⁻ᵀ ∇Uᵣ
         U_gf.GetSubVector(h1_dofs, loc_gf);
         Grad.MultTranspose(loc_gf, V_ip);
         T.InverseJacobian().MultTranspose(V_ip, V_smooth);
         mat_op.GetPermittivityReal(T.Attribute).Mult(V_smooth, V_ip);
 
-        // Smooth flux -- |J|⁻¹J Fᵣ
+        // Smooth flux -- |J|⁻¹ J Fᵣ
         F_gf.GetSubVector(rt_dofs, loc_gf);
         Interp.MultTranspose(loc_gf, V_tmp);
         T.Jacobian().Mult(V_tmp, V_smooth);

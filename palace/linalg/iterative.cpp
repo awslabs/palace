@@ -395,10 +395,18 @@ void CgSolver<OperType>::Mult(const VecType &b, VecType &x) const
   beta = linalg::Dot(comm, z, r);
   CheckDot(beta, "PCG preconditioner is not positive definite: (Br, r) = ");
   res = std::sqrt(std::abs(beta));
-  if (this->initial_guess && B)
+  if (this->initial_guess)
   {
-    ApplyB(B, b, p, this->use_timer);
-    auto beta_rhs = linalg::Dot(comm, p, b);
+    ScalarType beta_rhs;
+    if (B)
+    {
+      ApplyB(B, b, p, this->use_timer);
+      beta_rhs = linalg::Dot(comm, p, b);
+    }
+    else
+    {
+      beta_rhs = linalg::Norml2(comm, b);
+    }
     CheckDot(beta_rhs, "PCG preconditioner is not positive definite: (Bb, b) = ");
     initial_res = std::sqrt(std::abs(beta_rhs));
   }

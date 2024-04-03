@@ -861,7 +861,11 @@ public:
   double estimator_tol = 1.0e-6;
 
   // Maximum number of iterations for solving linear systems in the error estimator.
-  int estimator_max_it = 1000;
+  int estimator_max_it = 10000;
+
+  // Use geometric multigrid + AMG for error estimator linear solver preconditioner (instead
+  // of just Jacobi).
+  bool estimator_mg = false;
 
   // Enable different variants of Gram-Schmidt orthogonalization for GMRES/FGMRES iterative
   // solvers and SLEPc eigenvalue solver.

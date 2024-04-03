@@ -35,8 +35,8 @@ class Timer;
 class ElectrostaticSolver : public BaseSolver
 {
 private:
-  ErrorIndicator Postprocess(LaplaceOperator &laplaceop, PostOperator &postop,
-                             const std::vector<Vector> &V) const;
+  void Postprocess(LaplaceOperator &laplaceop, PostOperator &postop,
+                   const std::vector<Vector> &V, const ErrorIndicator &indicator) const;
 
   void PostprocessTerminals(const std::map<int, mfem::Array<int>> &terminal_sources,
                             const mfem::DenseMatrix &C, const mfem::DenseMatrix &Cinv,
