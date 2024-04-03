@@ -427,7 +427,7 @@ void PostOperator::UpdatePorts(const LumpedPortOperator &lumped_port_op, double 
     else
     {
       // Compute current from P = V I⋆ (no scattering parameter output).
-      vi.I[0] = std::conj(vi.P / vi.V);
+      vi.I[0] = (std::abs(vi.V) > 0.0) ? std::conj(vi.P / vi.V) : 0.0;
       vi.I[1] = vi.I[2] = vi.S = 0.0;
     }
   }
