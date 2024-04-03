@@ -448,7 +448,7 @@ the eigenmode simulation type.
 `"EstimatorTol" [1e-6]` :  Relative tolerance for flux projection used in the
 error estimate calculation.
 
-`"EstimatorMaxIts" [1000]` :  Maximum number of iterations for flux projection use in the
+`"EstimatorMaxIts" [10000]` :  Maximum number of iterations for flux projection use in the
 error estimate calculation.
 
 `"EstimatorMG" [false]` :  Set to true in order to enable multigrid preconditioner with AMG
