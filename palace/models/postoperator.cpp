@@ -7,7 +7,6 @@
 #include "fem/errorindicator.hpp"
 #include "models/curlcurloperator.hpp"
 #include "models/laplaceoperator.hpp"
-#include "models/lumpedportoperator.hpp"
 #include "models/materialoperator.hpp"
 #include "models/spaceoperator.hpp"
 #include "models/surfacecurrentoperator.hpp"
@@ -340,53 +339,6 @@ void PostOperator::SetAGridFunction(const Vector &a, bool exchange_face_nbr_data
   }
 }
 
-void PostOperator::UpdatePorts(const LumpedPortOperator &lumped_port_op, double omega)
-{
-  MFEM_VERIFY(E && B, "Incorrect usage of PostOperator::UpdatePorts!");
-  if (lumped_port_init)
-  {
-    return;
-  }
-  for (const auto &[idx, data] : lumped_port_op)
-  {
-    auto &vi = lumped_port_vi[idx];
-    vi.P = data.GetPower(*E, *B);
-    vi.V = data.GetVoltage(*E);
-    if (HasImag())
-    {
-      MFEM_VERIFY(
-          omega > 0.0,
-          "Frequency domain lumped port postprocessing requires nonzero frequency!");
-      vi.S = data.GetSParameter(*E);
-      vi.Z = data.GetCharacteristicImpedance(omega);
-    }
-    else
-    {
-      vi.S = vi.Z = 0.0;
-    }
-  }
-  lumped_port_init = true;
-}
-
-void PostOperator::UpdatePorts(const WavePortOperator &wave_port_op, double omega)
-{
-  MFEM_VERIFY(HasImag() && E && B, "Incorrect usage of PostOperator::UpdatePorts!");
-  if (wave_port_init)
-  {
-    return;
-  }
-  for (const auto &[idx, data] : wave_port_op)
-  {
-    MFEM_VERIFY(omega > 0.0,
-                "Frequency domain wave port postprocessing requires nonzero frequency!");
-    auto &vi = wave_port_vi[idx];
-    vi.P = data.GetPower(*E, *B);
-    vi.S = data.GetSParameter(*E);
-    vi.V = vi.Z = 0.0;  // Not yet implemented (Z = V² / P, I = V / Z)
-  }
-  wave_port_init = true;
-}
-
 double PostOperator::GetEFieldEnergy() const
 {
   if (V)
@@ -439,16 +391,80 @@ double PostOperator::GetHFieldEnergy(int idx) const
   }
 }
 
+void PostOperator::UpdatePorts(const LumpedPortOperator &lumped_port_op, double omega)
+{
+  MFEM_VERIFY(E && B, "Incorrect usage of PostOperator::UpdatePorts!");
+  if (lumped_port_init)
+  {
+    return;
+  }
+  for (const auto &[idx, data] : lumped_port_op)
+  {
+    auto &vi = lumped_port_vi[idx];
+    vi.P = data.GetPower(*E, *B);
+    vi.V = data.GetVoltage(*E);
+    if (HasImag())
+    {
+      // Compute current from the port impedance, separate contributions for R, L, C
+      // branches.
+      MFEM_VERIFY(
+          omega > 0.0,
+          "Frequency domain lumped port postprocessing requires nonzero frequency!");
+      vi.I[0] =
+          (std::abs(data.R) > 0.0)
+              ? vi.V / data.GetCharacteristicImpedance(omega, LumpedPortData::Branch::R)
+              : 0.0;
+      vi.I[1] =
+          (std::abs(data.L) > 0.0)
+              ? vi.V / data.GetCharacteristicImpedance(omega, LumpedPortData::Branch::L)
+              : 0.0;
+      vi.I[2] =
+          (std::abs(data.C) > 0.0)
+              ? vi.V / data.GetCharacteristicImpedance(omega, LumpedPortData::Branch::C)
+              : 0.0;
+      vi.S = data.GetSParameter(*E);
+    }
+    else
+    {
+      // Compute current from P = V I⋆ (no scattering parameter output).
+      vi.I[0] = (std::abs(vi.V) > 0.0) ? std::conj(vi.P / vi.V) : 0.0;
+      vi.I[1] = vi.I[2] = vi.S = 0.0;
+    }
+  }
+  lumped_port_init = true;
+}
+
+void PostOperator::UpdatePorts(const WavePortOperator &wave_port_op, double omega)
+{
+  MFEM_VERIFY(HasImag() && E && B, "Incorrect usage of PostOperator::UpdatePorts!");
+  if (wave_port_init)
+  {
+    return;
+  }
+  for (const auto &[idx, data] : wave_port_op)
+  {
+    MFEM_VERIFY(omega > 0.0,
+                "Frequency domain wave port postprocessing requires nonzero frequency!");
+    auto &vi = wave_port_vi[idx];
+    vi.P = data.GetPower(*E, *B);
+    vi.S = data.GetSParameter(*E);
+    vi.V = vi.I[0] = vi.I[1] = vi.I[2] = 0.0;  // Not yet implemented
+                                               // (Z = V² / P, I = V / Z)
+  }
+  wave_port_init = true;
+}
+
 double PostOperator::GetLumpedInductorEnergy(const LumpedPortOperator &lumped_port_op) const
 {
-  // Add contribution due to all capacitive lumped boundaries in the model:
+  // Add contribution due to all inductive lumped boundaries in the model:
   //                      E_ind = ∑_j 1/2 L_j I_mj².
   double U = 0.0;
   for (const auto &[idx, data] : lumped_port_op)
   {
     if (std::abs(data.L) > 0.0)
     {
-      std::complex<double> Ij = GetPortCurrent(lumped_port_op, idx);
+      std::complex<double> Ij =
+          GetPortCurrent(lumped_port_op, idx, LumpedPortData::Branch::L);
       U += 0.5 * std::abs(data.L) * std::real(Ij * std::conj(Ij));
     }
   }
@@ -555,24 +571,37 @@ std::complex<double> PostOperator::GetPortVoltage(const LumpedPortOperator &lump
   return it->second.V;
 }
 
-std::complex<double> PostOperator::GetPortCurrent(const LumpedPortOperator &lumped_port_op,
+std::complex<double> PostOperator::GetPortVoltage(const WavePortOperator &wave_port_op,
                                                   int idx) const
+{
+  MFEM_ABORT("GetPortVoltage is not yet implemented for wave port boundaries!");
+  return 0.0;
+}
+
+std::complex<double> PostOperator::GetPortCurrent(const LumpedPortOperator &lumped_port_op,
+                                                  int idx,
+                                                  LumpedPortData::Branch branch) const
 {
   MFEM_VERIFY(lumped_port_init,
               "Lumped port quantities not defined until ports are initialized!");
   const auto it = lumped_port_vi.find(idx);
   MFEM_VERIFY(it != lumped_port_vi.end(),
               "Could not find lumped port when calculating lumped port current!");
-  if (std::abs(it->second.Z) > 0.0)
-  {
-    // Compute from V = I Z when impedance is available.
-    return it->second.V / it->second.Z;
-  }
-  else if (std::abs(it->second.V) > 0.0)
-  {
-    // Compute from P = V I⋆.
-    return std::conj(it->second.P / it->second.V);
-  }
+  return ((branch == LumpedPortData::Branch::TOTAL || branch == LumpedPortData::Branch::R)
+              ? it->second.I[0]
+              : 0.0) +
+         ((branch == LumpedPortData::Branch::TOTAL || branch == LumpedPortData::Branch::L)
+              ? it->second.I[1]
+              : 0.0) +
+         ((branch == LumpedPortData::Branch::TOTAL || branch == LumpedPortData::Branch::C)
+              ? it->second.I[2]
+              : 0.0);
+}
+
+std::complex<double> PostOperator::GetPortCurrent(const WavePortOperator &wave_port_op,
+                                                  int idx) const
+{
+  MFEM_ABORT("GetPortCurrent is not yet implemented for wave port boundaries!");
   return 0.0;
 }
 
@@ -588,7 +617,7 @@ double PostOperator::GetInductorParticipation(const LumpedPortOperator &lumped_p
   // An element with no assigned inductance will be treated as having zero admittance and
   // thus zero current.
   const LumpedPortData &data = lumped_port_op.GetPort(idx);
-  std::complex<double> Imj = GetPortCurrent(lumped_port_op, idx);
+  std::complex<double> Imj = GetPortCurrent(lumped_port_op, idx, LumpedPortData::Branch::L);
   return std::copysign(0.5 * std::abs(data.L) * std::real(Imj * std::conj(Imj)) / Em,
                        Imj.real());  // mean(I²) = (I_r² + I_i²) / 2
 }
@@ -603,7 +632,7 @@ double PostOperator::GetExternalKappa(const LumpedPortOperator &lumped_port_op, 
   // from which the mode coupling quality factor is computed as:
   //                              Q_mj = ω_m / κ_mj.
   const LumpedPortData &data = lumped_port_op.GetPort(idx);
-  std::complex<double> Imj = GetPortCurrent(lumped_port_op, idx);
+  std::complex<double> Imj = GetPortCurrent(lumped_port_op, idx, LumpedPortData::Branch::R);
   return std::copysign(0.5 * std::abs(data.R) * std::real(Imj * std::conj(Imj)) / Em,
                        Imj.real());  // mean(I²) = (I_r² + I_i²) / 2
 }

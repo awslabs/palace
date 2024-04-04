@@ -40,6 +40,9 @@ The format of this changelog is based on
   - Fixed a bug related to mesh cleaning for unspecified domains and mesh partitioning.
   - Change computation of domain energy postprocessing for electrostatic and magnetostatic
     simulation types in order to improve performance.
+  - Fixed a bug when computing the energy associated with lumped elements with more than
+    one nonzero R, L, or C. This also affects the inductive EPR for lumped inductors with
+    and associated parallel capacitance.
 
 ## [0.12.0] - 2023-12-21
 
