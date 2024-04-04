@@ -21,6 +21,7 @@ namespace palace::ceed
 
 namespace
 {
+
 void AddQFunctionActiveInputs(unsigned int ops, Ceed ceed, CeedBasis basis,
                               CeedQFunction qf, std::string name = "u")
 {
@@ -146,6 +147,7 @@ void AddOperatorActiveInputFields(unsigned int ops, Ceed ceed, CeedElemRestricti
 {
   AddOperatorActiveFields(ops, ceed, restr, basis, op, name, v);
 }
+
 void AddOperatorActiveOutputFields(unsigned int ops, Ceed ceed, CeedElemRestriction restr,
                                    CeedBasis basis, CeedOperator op, std::string name = "v",
                                    CeedVector v = CEED_VECTOR_ACTIVE)
@@ -457,8 +459,8 @@ void AssembleCeedOperator(const CeedQFunctionInfo &info, void *ctx, std::size_t 
               "CeedOperator should not have quadrature weight output!");
   if (!info.assemble_q_data)
   {
-    AddQFunctionActiveInputsOutputs(info.trial_ops, true, ceed, trial_basis, apply_qf);
-    AddQFunctionActiveInputsOutputs(info.test_ops, false, ceed, test_basis, apply_qf);
+    AddQFunctionActiveInputs(info.trial_ops, ceed, trial_basis, apply_qf);
+    AddQFunctionActiveOutputs(info.test_ops, ceed, test_basis, apply_qf);
   }
   else
   {
@@ -591,9 +593,8 @@ void AssembleCeedElementErrorIntegrator(
   {
     PalaceCeedCall(ceed, CeedQFunctionAddInput(apply_qf, "q_w", 1, CEED_EVAL_WEIGHT));
   }
-  AddQFunctionActiveInputsOutputs(info.trial_ops, true, ceed, input1_basis, apply_qf,
-                                  "u_1");
-  AddQFunctionActiveInputsOutputs(info.test_ops, true, ceed, input2_basis, apply_qf, "u_2");
+  AddQFunctionActiveInputs(info.trial_ops, ceed, input1_basis, apply_qf, "u_1");
+  AddQFunctionActiveInputs(info.test_ops, ceed, input2_basis, apply_qf, "u_2");
   PalaceCeedCall(ceed,
                  CeedQFunctionAddOutput(apply_qf, "v", elem_num_comp, CEED_EVAL_INTERP));
 
