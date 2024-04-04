@@ -162,6 +162,64 @@ SurfacePostOperator::SurfacePostOperator(const IoData &iodata,
   {
     flux_surfs.try_emplace(idx, data, *h1_fespace.GetParMesh());
   }
+
+  // Check that boundary attributes have been specified correctly.
+  if (!eps_surfs.empty() || !charge_surfs.empty() || !flux_surfs.empty())
+  {
+    const auto &mesh = *h1_fespace.GetParMesh();
+    int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+    mfem::Array<int> bdr_attr_marker(bdr_attr_max);
+    bdr_attr_marker = 0;
+    for (auto attr : mesh.bdr_attributes)
+    {
+      bdr_attr_marker[attr - 1] = 1;
+    }
+    bool first = true;
+    auto CheckAttributes = [&](SurfaceData &data)
+    {
+      for (std::size_t i = 0; i < data.attr_lists.size(); i++)
+      {
+        auto attr_lists_backup(data.attr_lists[i]);
+        data.attr_lists[i].DeleteAll();
+        data.attr_lists[i].Reserve(attr_lists_backup.Size());
+        for (auto attr : attr_lists_backup)
+        {
+          // MFEM_VERIFY(attr > 0 && attr <= bdr_attr_max,
+          //             "Boundary postprocessing attribute tags must be non-negative and "
+          //             "correspond to attributes in the mesh!");
+          // MFEM_VERIFY(bdr_attr_marker[attr - 1],
+          //             "Unknown boundary postprocessing attribute " << attr << "!");
+          if (attr <= 0 || attr > bdr_attr_marker.Size() || !bdr_attr_marker[attr - 1])
+          {
+            if (first)
+            {
+              Mpi::Print("\n");
+              first = false;
+            }
+            Mpi::Warning("Unknown boundary postprocessing attribute {:d}!\nSolver will "
+                         "just ignore it!\n",
+                         attr);
+          }
+          else
+          {
+            data.attr_lists[i].Append(attr);
+          }
+        }
+      }
+    };
+    for (auto &[idx, data] : eps_surfs)
+    {
+      CheckAttributes(data);
+    }
+    for (auto &[idx, data] : charge_surfs)
+    {
+      CheckAttributes(data);
+    }
+    for (auto &[idx, data] : flux_surfs)
+    {
+      CheckAttributes(data);
+    }
+  }
 }
 
 double SurfacePostOperator::GetInterfaceLossTangent(int idx) const

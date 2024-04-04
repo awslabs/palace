@@ -60,10 +60,10 @@ SpaceOperator::SpaceOperator(const IoData &iodata,
 mfem::Array<int> SpaceOperator::SetUpBoundaryProperties(const IoData &iodata,
                                                         const mfem::ParMesh &mesh)
 {
+  // Check that boundary attributes have been specified correctly.
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   if (!iodata.boundaries.pec.empty())
   {
-    // Check that boundary attributes have been specified correctly.
     mfem::Array<int> bdr_attr_marker(bdr_attr_max);
     bdr_attr_marker = 0;
     for (auto attr : mesh.bdr_attributes)

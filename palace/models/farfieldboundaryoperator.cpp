@@ -31,22 +31,34 @@ FarfieldBoundaryOperator::SetUpBoundaryProperties(const IoData &iodata,
                                                   const mfem::ParMesh &mesh)
 {
   // Check that impedance boundary attributes have been specified correctly.
+  int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   if (!iodata.boundaries.farfield.empty())
   {
-    int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
     mfem::Array<int> bdr_attr_marker(bdr_attr_max);
     bdr_attr_marker = 0;
     for (auto attr : mesh.bdr_attributes)
     {
       bdr_attr_marker[attr - 1] = 1;
     }
+    bool first = true;
     for (auto attr : iodata.boundaries.farfield.attributes)
     {
-      MFEM_VERIFY(attr > 0 && attr <= bdr_attr_max,
-                  "Absorbing boundary attribute tags must be non-negative and correspond "
-                  "to attributes in the mesh!");
-      MFEM_VERIFY(bdr_attr_marker[attr - 1],
-                  "Unknown absorbing boundary attribute " << attr << "!");
+      // MFEM_VERIFY(attr > 0 && attr <= bdr_attr_max,
+      //             "Absorbing boundary attribute tags must be non-negative and correspond
+      //             " "to attributes in the mesh!");
+      // MFEM_VERIFY(bdr_attr_marker[attr - 1],
+      //             "Unknown absorbing boundary attribute " << attr << "!");
+      if (attr <= 0 || attr > bdr_attr_marker.Size() || !bdr_attr_marker[attr - 1])
+      {
+        if (first)
+        {
+          Mpi::Print("\n");
+          first = false;
+        }
+        Mpi::Warning(
+            "Unknown absorbing boundary attribute {:d}!\nSolver will just ignore it!\n",
+            attr);
+      }
     }
   }
 
@@ -55,8 +67,15 @@ FarfieldBoundaryOperator::SetUpBoundaryProperties(const IoData &iodata,
 
   // Mark selected boundary attributes from the mesh as farfield.
   mfem::Array<int> farfield_bcs;
-  farfield_bcs.Append(iodata.boundaries.farfield.attributes.data(),
-                      iodata.boundaries.farfield.attributes.size());
+  farfield_bcs.Reserve(static_cast<int>(iodata.boundaries.farfield.attributes.size()));
+  for (auto attr : iodata.boundaries.farfield.attributes)
+  {
+    if (attr <= 0 || attr > bdr_attr_max)
+    {
+      continue;  // Can just ignore if wrong
+    }
+    farfield_bcs.Append(attr);
+  }
   MFEM_VERIFY(farfield_bcs.Size() == 0 || order < 2 ||
                   iodata.problem.type == config::ProblemData::Type::DRIVEN,
               "Second-order farfield boundaries are only available for frequency "
