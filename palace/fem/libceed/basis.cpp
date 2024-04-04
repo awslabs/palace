@@ -120,11 +120,10 @@ void InitMfemInterpolatorBasis(const mfem::FiniteElement &trial_fe,
   MFEM_VERIFY(trial_num_comp == test_num_comp && trial_num_comp == 1,
               "libCEED discrete linear operator requires same vdim = 1 for trial and test "
               "FE spaces!");
-  const int dim = trial_fe.GetDim();
   const int trial_P = trial_fe.GetDof();
   const int test_P = test_fe.GetDof();
-  mfem::DenseMatrix qX(dim, test_P), Gt(trial_P, test_P * dim), Bt;
-  mfem::Vector qW(test_P);
+  mfem::DenseMatrix Bt, Gt(trial_P, test_P);
+  mfem::Vector qX(test_P), qW(test_P);
   mfem::IsoparametricTransformation dummy;
   dummy.SetIdentityTransformation(trial_fe.GetGeomType());
   if (trial_fe.GetMapType() == test_fe.GetMapType())
@@ -159,9 +158,10 @@ void InitMfemInterpolatorBasis(const mfem::FiniteElement &trial_fe,
   qX = 0.0;
   qW = 0.0;
 
-  PalaceCeedCall(ceed, CeedBasisCreateH1(ceed, GetCeedTopology(trial_fe.GetGeomType()),
-                                         trial_num_comp, trial_P, test_P, Bt.GetData(),
-                                         Gt.GetData(), qX.GetData(), qW.GetData(), basis));
+  // Note: ceed::GetCeedTopology(CEED_TOPOLOGY_LINE) == 1.
+  PalaceCeedCall(ceed, CeedBasisCreateH1(ceed, CEED_TOPOLOGY_LINE, trial_num_comp, trial_P,
+                                         test_P, Bt.GetData(), Gt.GetData(), qX.GetData(),
+                                         qW.GetData(), basis));
 }
 
 }  // namespace

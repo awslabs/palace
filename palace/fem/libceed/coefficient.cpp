@@ -118,13 +118,12 @@ PopulateCoefficientContext(int dim, const MaterialPropertyCoefficient *Q, double
 }
 
 std::vector<CeedIntScalar>
-PopulateCoefficientContext(int dim, int dim_mass, const MaterialPropertyCoefficient *Q,
-                           const MaterialPropertyCoefficient *Q_mass, double a,
-                           double a_mass)
+PopulateCoefficientContext(int dim_mass, const MaterialPropertyCoefficient *Q_mass, int dim,
+                           const MaterialPropertyCoefficient *Q, double a_mass, double a)
 {
   // Mass coefficient comes first, then the other one for the QFunction.
-  auto ctx = PopulateCoefficientContext(dim, Q, a);
   auto ctx_mass = PopulateCoefficientContext(dim_mass, Q_mass, a_mass);
+  auto ctx = PopulateCoefficientContext(dim, Q, a);
   ctx_mass.insert(ctx_mass.end(), ctx.begin(), ctx.end());
   return ctx_mass;
 }

@@ -19,7 +19,7 @@ void GradientIntegrator::Assemble(Ceed ceed, CeedElemRestriction trial_restr,
                                   CeedElemRestriction geom_data_restr,
                                   CeedOperator *op) const
 {
-  IntegratorInfo info;
+  CeedQFunctionInfo info;
   info.assemble_q_data = assemble_q_data;
 
   // Set up QFunctions.

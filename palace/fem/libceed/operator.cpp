@@ -67,8 +67,8 @@ void Operator::AddOper(CeedOperator sub_op, CeedOperator sub_op_t)
   PalaceCeedCallBackend(CeedOperatorGetCeed(sub_op, &ceed));
   CeedSize l_in, l_out;
   PalaceCeedCall(ceed, CeedOperatorGetActiveVectorLengths(sub_op, &l_in, &l_out));
-  MFEM_VERIFY(mfem::internal::to_int(l_in) == width &&
-                  mfem::internal::to_int(l_out) == height,
+  MFEM_VERIFY((l_in < 0 || mfem::internal::to_int(l_in) == width) &&
+                  (l_out < 0 || mfem::internal::to_int(l_out) == height),
               "Dimensions mismatch for CeedOperator!");
   PalaceCeedCall(ceed, CeedCompositeOperatorAddSub(op[id], sub_op));
   PalaceCeedCall(ceed, CeedOperatorDestroy(&sub_op));

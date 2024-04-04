@@ -6,6 +6,9 @@
 #include <limits>
 #include "fem/bilinearform.hpp"
 #include "fem/integrator.hpp"
+#include "fem/libceed/ceed.hpp"
+#include "fem/libceed/coefficient.hpp"
+#include "fem/libceed/integrator.hpp"
 #include "linalg/amg.hpp"
 #include "linalg/gmg.hpp"
 #include "linalg/iterative.hpp"
@@ -13,8 +16,16 @@
 #include "linalg/rap.hpp"
 #include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
+#include "utils/diagnostic.hpp"
 #include "utils/omp.hpp"
 #include "utils/timer.hpp"
+
+PalacePragmaDiagnosticPush
+PalacePragmaDiagnosticDisableUnused
+
+#include "fem/qfunctions/hcurlhdiv_error_qf.h"
+
+PalacePragmaDiagnosticPop
 
 namespace palace
 {
@@ -178,13 +189,97 @@ template <typename VecType>
 CurlFluxErrorEstimator<VecType>::CurlFluxErrorEstimator(
     const MaterialOperator &mat_op, FiniteElementSpaceHierarchy &nd_fespaces, double tol,
     int max_it, int print, bool use_mg)
-  : mat_op(mat_op), nd_fespace(nd_fespaces.GetFinestFESpace()),
-    projector(mat_op, nd_fespaces, tol, max_it, print, use_mg), U_gf(nd_fespace.GetVSize()),
-    F(nd_fespace.GetTrueVSize()), F_gf(nd_fespace.GetVSize())
+  : nd_fespace(nd_fespaces.GetFinestFESpace()),
+    projector(mat_op, nd_fespaces, tol, max_it, print, use_mg),
+    integ_op(2 * nd_fespace.GetMesh().GetNE(), nd_fespace.GetVSize()),
+    U_gf(nd_fespace.GetVSize()), F(nd_fespace.GetTrueVSize()), F_gf(nd_fespace.GetVSize())
 {
   U_gf.UseDevice(true);
   F.UseDevice(true);
   F_gf.UseDevice(true);
+
+  // Construct the libCEED operator used for integrating the element-wise error. The
+  // discontinuous flux is μ⁻¹ ∇ × U.
+  const auto &mesh = nd_fespace.GetMesh();
+  const std::size_t nt = ceed::internal::GetCeedObjects().size();
+  PalacePragmaOmp(parallel if (nt > 1))
+  {
+    Ceed ceed = ceed::internal::GetCeedObjects()[utils::GetThreadNum()];
+    for (const auto &[geom, data] : mesh.GetCeedGeomFactorData(ceed))
+    {
+      // Only integrate over domain elements (not on the boundary).
+      if (mfem::Geometry::Dimension[geom] < mesh.Dimension())
+      {
+        continue;
+      }
+
+      // Create libCEED vector wrappers for use with libCEED operators.
+      CeedVector U_gf_vec, F_gf_vec;
+      if constexpr (std::is_same<VecType, ComplexVector>::value)
+      {
+        ceed::InitCeedVector(U_gf.Real(), ceed, &U_gf_vec);
+        ceed::InitCeedVector(F_gf.Real(), ceed, &F_gf_vec);
+      }
+      else
+      {
+        ceed::InitCeedVector(U_gf, ceed, &U_gf_vec);
+        ceed::InitCeedVector(F_gf, ceed, &F_gf_vec);
+      }
+
+      // Construct mesh element restriction for elements of this element geometry type.
+      constexpr CeedInt elem_num_comp = 2;
+      CeedElemRestriction mesh_elem_restr;
+      PalaceCeedCall(ceed,
+                     CeedElemRestrictionCreate(
+                         ceed, static_cast<CeedInt>(data.indices.size()), 1, elem_num_comp,
+                         mesh.GetNE(), elem_num_comp * mesh.GetNE(), CEED_MEM_HOST,
+                         CEED_USE_POINTER, data.indices.data(), &mesh_elem_restr));
+
+      // Element restriction and basis objects for inputs.
+      CeedElemRestriction nd_restr =
+          nd_fespace.GetCeedElemRestriction(ceed, geom, data.indices);
+      CeedBasis nd_basis = nd_fespace.GetCeedBasis(ceed, geom);
+
+      // Construct coefficient for discontinuous flux.
+      MaterialPropertyCoefficient muinv_func(mat_op.GetAttributeToMaterial(),
+                                             mat_op.GetInvPermeability());
+      auto ctx = ceed::PopulateCoefficientContext(mesh.SpaceDimension(), &muinv_func,
+                                                  mesh.SpaceDimension(), nullptr);
+
+      // Assemble the libCEED operator. Inputs: Discontinuous flux, then smooth flux.
+      // Currently only supports 3D, since curl in 2D requires special treatment.
+      ceed::CeedQFunctionInfo info;
+      info.assemble_q_data = false;
+      switch (10 * mesh.SpaceDimension() + mesh.Dimension())
+      {
+        case 33:
+          info.apply_qf = f_apply_hdivhcurl_error_33;
+          info.apply_qf_path = PalaceQFunctionRelativePath(f_apply_hdivhcurl_error_33_loc);
+          break;
+        default:
+          MFEM_ABORT("Invalid value of (dim, space_dim) = ("
+                     << mesh.Dimension() << ", " << mesh.SpaceDimension()
+                     << ") for CurlFluxErrorEstimator!");
+      }
+      info.trial_ops = ceed::EvalMode::Curl;
+      info.test_ops = ceed::EvalMode::Interp;
+
+      CeedOperator sub_op;
+      ceed::AssembleCeedElementErrorIntegrator(
+          info, (void *)ctx.data(), ctx.size() * sizeof(CeedIntScalar), ceed, U_gf_vec,
+          F_gf_vec, nd_restr, nd_restr, nd_basis, nd_basis, mesh_elem_restr, data.geom_data,
+          data.geom_data_restr, &sub_op);
+      integ_op.AddOper(sub_op);  // Sub-operator owned by ceed::Operator
+
+      // Element restriction and passive input vectors are owned by the operator.
+      PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&mesh_elem_restr));
+      PalaceCeedCall(ceed, CeedVectorDestroy(&U_gf_vec));
+      PalaceCeedCall(ceed, CeedVectorDestroy(&F_gf_vec));
+    }
+  }
+
+  // Finalize the operator (call CeedOperatorCheckReady).
+  integ_op.Finalize();
 }
 
 template <typename VecType>
@@ -201,106 +296,81 @@ void CurlFluxErrorEstimator<VecType>::AddErrorIndicator(const VecType &U,
     nd_fespace.GetProlongationMatrix()->Mult(U.Imag(), U_gf.Imag());
     nd_fespace.GetProlongationMatrix()->Mult(F.Real(), F_gf.Real());
     nd_fespace.GetProlongationMatrix()->Mult(F.Imag(), F_gf.Imag());
-    U_gf.Real().HostRead();
-    U_gf.Imag().HostRead();
-    F_gf.Real().HostRead();
-    F_gf.Imag().HostRead();
   }
   else
   {
     nd_fespace.GetProlongationMatrix()->Mult(U, U_gf);
     nd_fespace.GetProlongationMatrix()->Mult(F, F_gf);
-    U_gf.HostRead();
-    F_gf.HostRead();
   }
 
-  // Loop over elements and accumulate the estimates from this component. The discontinuous
-  // flux is μ⁻¹ ∇ × U.
-  const auto &mesh = nd_fespace.GetParMesh();
-  Vector estimates(mesh.GetNE());
-  auto *h_estimates = estimates.HostWrite();
-  double norm2 = 0.0;
-  PalacePragmaOmp(parallel reduction(+ : norm2))
-  {
-    // Assuming dim == space_dim == curl_dim
-    mfem::IsoparametricTransformation T;
-    mfem::Array<int> dofs;
-    mfem::DofTransformation dof_trans;
-    mfem::Vector V_ip(mesh.SpaceDimension()), V_smooth(mesh.SpaceDimension()),
-        V_tmp(mesh.SpaceDimension()), loc_gf;
-    mfem::DenseMatrix Interp, Curl;
-
-    double loc_norm2 = 0.0;
-    PalacePragmaOmp(for schedule(static))
-    for (int e = 0; e < mesh.GetNE(); e++)
-    {
-      const mfem::FiniteElement &fe = *nd_fespace.Get().GetFE(e);
-      mesh.GetElementTransformation(e, &T);
-      nd_fespace.Get().GetElementDofs(e, dofs, dof_trans);
-      Interp.SetSize(fe.GetDof(), V_ip.Size());
-      Curl.SetSize(fe.GetDof(), V_ip.Size());
-      const int q_order = fem::DefaultIntegrationOrder::Get(T);
-      const mfem::IntegrationRule &ir =
-          mfem::IntRules.Get(mesh.GetElementGeometry(e), q_order);
-
-      double elem_err = 0.0;
-      for (int i = 0; i < ir.GetNPoints(); i++)
-      {
-        const mfem::IntegrationPoint &ip = ir.IntPoint(i);
-        T.SetIntPoint(&ip);
-        fe.CalcVShape(ip, Interp);
-        fe.CalcCurlShape(ip, Curl);
-        const double w = ip.weight * T.Weight();
-
-        auto AccumulateError = [&](const Vector &U_gf_, const Vector &F_gf_)
-        {
-          // μ⁻¹ ∇ × U -- μ⁻¹ |J|⁻¹ J ∇ × Uᵣ
-          U_gf_.GetSubVector(dofs, loc_gf);
-          if (dof_trans.GetDofTransformation())
-          {
-            dof_trans.InvTransformPrimal(loc_gf);
-          }
-          Curl.MultTranspose(loc_gf, V_ip);
-          T.Jacobian().Mult(V_ip, V_smooth);
-          mat_op.GetInvPermeability(T.Attribute).Mult(V_smooth, V_ip);
-          V_ip *= 1.0 / T.Weight();
-
-          // Smooth flux -- J⁻ᵀ Fᵣ
-          F_gf_.GetSubVector(dofs, loc_gf);
-          if (dof_trans.GetDofTransformation())
-          {
-            dof_trans.InvTransformPrimal(loc_gf);
-          }
-          Interp.MultTranspose(loc_gf, V_tmp);
-          T.InverseJacobian().MultTranspose(V_tmp, V_smooth);
-
-          V_smooth -= V_ip;
-          elem_err += w * (V_smooth * V_smooth);
-          return w * (V_ip * V_ip);
-        };
-        if constexpr (std::is_same<VecType, ComplexVector>::value)
-        {
-          loc_norm2 += AccumulateError(U_gf.Real(), F_gf.Real());
-          loc_norm2 += AccumulateError(U_gf.Imag(), F_gf.Imag());
-        }
-        else
-        {
-          loc_norm2 += AccumulateError(U_gf, F_gf);
-        }
-      }
-      h_estimates[e] = std::sqrt(elem_err);
-    }
-    norm2 += loc_norm2;
-  }
+  // Perform the integration over each element. Output is stored as error integral for all
+  // elements first, then scaling integral.
+  const auto &mesh = nd_fespace.GetMesh();
+  Vector estimates(2 * mesh.GetNE());
   estimates.UseDevice(true);
+  estimates = 0.0;
+  const std::size_t nt = ceed::internal::GetCeedObjects().size();
+  PalacePragmaOmp(parallel if (nt > 1))
+  {
+    Ceed ceed = ceed::internal::GetCeedObjects()[utils::GetThreadNum()];
+
+    // We need to update the state of the underlying libCEED vectors to indicate that the
+    // data has changed. Each thread has it's own vector, referencing the same underlying
+    // data.
+    CeedVector U_gf_vec, F_gf_vec;
+    {
+      CeedInt nsub_ops;
+      CeedOperator *sub_ops;
+      PalaceCeedCall(
+          ceed, CeedCompositeOperatorGetNumSub(integ_op[utils::GetThreadNum()], &nsub_ops));
+      PalaceCeedCall(
+          ceed, CeedCompositeOperatorGetSubList(integ_op[utils::GetThreadNum()], &sub_ops));
+      MFEM_ASSERT(nsub_ops > 0, "Unexpected empty libCEED composite operator!");
+      CeedOperatorField field;
+      PalaceCeedCall(ceed, CeedOperatorGetFieldByName(sub_ops[0], "curl_u_1", &field));
+      PalaceCeedCall(ceed, CeedOperatorFieldGetVector(field, &U_gf_vec));
+      PalaceCeedCall(ceed, CeedOperatorGetFieldByName(sub_ops[0], "u_2", &field));
+      PalaceCeedCall(ceed, CeedOperatorFieldGetVector(field, &F_gf_vec));
+      if constexpr (std::is_same<VecType, ComplexVector>::value)
+      {
+        ceed::InitCeedVector(U_gf.Real(), ceed, &U_gf_vec, false);
+        ceed::InitCeedVector(F_gf.Real(), ceed, &F_gf_vec, false);
+      }
+      else
+      {
+        ceed::InitCeedVector(U_gf, ceed, &U_gf_vec, false);
+        ceed::InitCeedVector(F_gf, ceed, &F_gf_vec, false);
+      }
+    }
+
+    // Each thread writes to non-overlapping entries of the estimates vector.
+    CeedVector estimates_vec;
+    ceed::InitCeedVector(estimates, ceed, &estimates_vec);
+
+    // Do the integration (both input vectors are passive). For the complex case, add sum of
+    // squares of real and imaginary parts to the estimates before square root.
+    PalaceCeedCall(ceed,
+                   CeedOperatorApplyAdd(integ_op[utils::GetThreadNum()], CEED_VECTOR_NONE,
+                                        estimates_vec, CEED_REQUEST_IMMEDIATE));
+    if constexpr (std::is_same<VecType, ComplexVector>::value)
+    {
+      ceed::InitCeedVector(U_gf.Imag(), ceed, &U_gf_vec, false);
+      ceed::InitCeedVector(F_gf.Imag(), ceed, &F_gf_vec, false);
+      PalaceCeedCall(ceed,
+                     CeedOperatorApplyAdd(integ_op[utils::GetThreadNum()], CEED_VECTOR_NONE,
+                                          estimates_vec, CEED_REQUEST_IMMEDIATE));
+    }
+
+    // Cleanup.
+    PalaceCeedCall(ceed, CeedVectorDestroy(&estimates_vec));
+  }
 
   // Finalize the element-wise error estimates.
-  Mpi::GlobalSum(1, &norm2, mesh.GetComm());
-  if (norm2 > 0.0)
-  {
-    estimates *= 1.0 / std::sqrt(norm2);
-  }
-  indicator.AddIndicator(estimates);
+  Vector estimates0(estimates, 0, mesh.GetNE()),
+      estimates1(estimates, mesh.GetNE(), mesh.GetNE());
+  auto norm2 = linalg::Sum<Vector>(mesh.GetComm(), estimates1);
+  linalg::Sqrt(estimates0, (norm2 > 0.0) ? 1.0 / norm2 : 1.0);
+  indicator.AddIndicator(estimates0);
 }
 
 GradFluxErrorEstimator::GradFluxErrorEstimator(const MaterialOperator &mat_op,
@@ -308,13 +378,95 @@ GradFluxErrorEstimator::GradFluxErrorEstimator(const MaterialOperator &mat_op,
                                                FiniteElementSpaceHierarchy &rt_fespaces,
                                                double tol, int max_it, int print,
                                                bool use_mg)
-  : mat_op(mat_op), h1_fespace(h1_fespace), rt_fespace(rt_fespaces.GetFinestFESpace()),
+  : h1_fespace(h1_fespace), rt_fespace(rt_fespaces.GetFinestFESpace()),
     projector(mat_op, h1_fespace, rt_fespaces, tol, max_it, print, use_mg),
+    integ_op(2 * h1_fespace.GetMesh().GetNE(), h1_fespace.GetVSize()),
     U_gf(h1_fespace.GetVSize()), F(rt_fespace.GetTrueVSize()), F_gf(rt_fespace.GetVSize())
 {
   U_gf.UseDevice(true);
   F.UseDevice(true);
   F_gf.UseDevice(true);
+
+  // Construct the libCEED operator used for integrating the element-wise error. The
+  // discontinuous flux is ε ∇U.
+  const auto &mesh = h1_fespace.GetMesh();
+  const std::size_t nt = ceed::internal::GetCeedObjects().size();
+  PalacePragmaOmp(parallel if (nt > 1))
+  {
+    Ceed ceed = ceed::internal::GetCeedObjects()[utils::GetThreadNum()];
+    for (const auto &[geom, data] : mesh.GetCeedGeomFactorData(ceed))
+    {
+      // Only integrate over domain elements (not on the boundary).
+      if (mfem::Geometry::Dimension[geom] < mesh.Dimension())
+      {
+        continue;
+      }
+
+      // Create libCEED vector wrappers for use with libCEED operators.
+      CeedVector U_gf_vec, F_gf_vec;
+      ceed::InitCeedVector(U_gf, ceed, &U_gf_vec);
+      ceed::InitCeedVector(F_gf, ceed, &F_gf_vec);
+
+      // Construct mesh element restriction for elements of this element geometry type.
+      constexpr CeedInt elem_num_comp = 2;
+      CeedElemRestriction mesh_elem_restr;
+      PalaceCeedCall(ceed,
+                     CeedElemRestrictionCreate(
+                         ceed, static_cast<CeedInt>(data.indices.size()), 1, elem_num_comp,
+                         mesh.GetNE(), elem_num_comp * mesh.GetNE(), CEED_MEM_HOST,
+                         CEED_USE_POINTER, data.indices.data(), &mesh_elem_restr));
+
+      // Element restriction and basis objects for inputs.
+      CeedElemRestriction h1_restr =
+          h1_fespace.GetCeedElemRestriction(ceed, geom, data.indices);
+      CeedElemRestriction rt_restr =
+          rt_fespace.GetCeedElemRestriction(ceed, geom, data.indices);
+      CeedBasis h1_basis = h1_fespace.GetCeedBasis(ceed, geom);
+      CeedBasis rt_basis = rt_fespace.GetCeedBasis(ceed, geom);
+
+      // Construct coefficient for discontinuous flux.
+      MaterialPropertyCoefficient epsilon_func(mat_op.GetAttributeToMaterial(),
+                                               mat_op.GetPermittivityReal());
+      auto ctx = ceed::PopulateCoefficientContext(mesh.SpaceDimension(), &epsilon_func,
+                                                  mesh.SpaceDimension(), nullptr);
+
+      // Assemble the libCEED operator. Inputs: Discontinuous flux, then smooth flux.
+      ceed::CeedQFunctionInfo info;
+      info.assemble_q_data = false;
+      switch (10 * mesh.SpaceDimension() + mesh.Dimension())
+      {
+        case 22:
+          info.apply_qf = f_apply_hcurlhdiv_error_22;
+          info.apply_qf_path = PalaceQFunctionRelativePath(f_apply_hcurlhdiv_error_22_loc);
+          break;
+        case 33:
+          info.apply_qf = f_apply_hcurlhdiv_error_33;
+          info.apply_qf_path = PalaceQFunctionRelativePath(f_apply_hcurlhdiv_error_33_loc);
+          break;
+        default:
+          MFEM_ABORT("Invalid value of (dim, space_dim) = ("
+                     << mesh.Dimension() << ", " << mesh.SpaceDimension()
+                     << ") for GradFluxErrorEstimator!");
+      }
+      info.trial_ops = ceed::EvalMode::Grad;
+      info.test_ops = ceed::EvalMode::Interp;
+
+      CeedOperator sub_op;
+      ceed::AssembleCeedElementErrorIntegrator(
+          info, (void *)ctx.data(), ctx.size() * sizeof(CeedIntScalar), ceed, U_gf_vec,
+          F_gf_vec, h1_restr, rt_restr, h1_basis, rt_basis, mesh_elem_restr, data.geom_data,
+          data.geom_data_restr, &sub_op);
+      integ_op.AddOper(sub_op);  // Sub-operator owned by ceed::Operator
+
+      // Element restriction and passive input vectors are owned by the operator.
+      PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&mesh_elem_restr));
+      PalaceCeedCall(ceed, CeedVectorDestroy(&U_gf_vec));
+      PalaceCeedCall(ceed, CeedVectorDestroy(&F_gf_vec));
+    }
+  }
+
+  // Finalize the operator (call CeedOperatorCheckReady).
+  integ_op.Finalize();
 }
 
 void GradFluxErrorEstimator::AddErrorIndicator(const Vector &U,
@@ -326,77 +478,59 @@ void GradFluxErrorEstimator::AddErrorIndicator(const Vector &U,
   projector.Mult(U, F);
   h1_fespace.GetProlongationMatrix()->Mult(U, U_gf);
   rt_fespace.GetProlongationMatrix()->Mult(F, F_gf);
-  U_gf.HostRead();
-  F_gf.HostRead();
 
-  // Loop over elements and accumulate the estimates from this component. The discontinuous
-  // flux is ε ∇U.
-  const auto &mesh = h1_fespace.GetParMesh();
-  Vector estimates(mesh.GetNE());
-  auto *h_estimates = estimates.HostWrite();
-  double norm2 = 0.0;
-  PalacePragmaOmp(parallel reduction(+ : norm2))
-  {
-    // Assuming dim == space_dim
-    mfem::IsoparametricTransformation T;
-    mfem::Array<int> h1_dofs, rt_dofs;
-    mfem::Vector V_ip(mesh.SpaceDimension()), V_smooth(mesh.SpaceDimension()), loc_gf,
-        V_tmp(mesh.SpaceDimension());
-    mfem::DenseMatrix Interp, Grad;
-
-    double loc_norm2 = 0.0;
-    PalacePragmaOmp(for schedule(static))
-    for (int e = 0; e < mesh.GetNE(); e++)
-    {
-      const mfem::FiniteElement &h1_fe = *h1_fespace.Get().GetFE(e);
-      const mfem::FiniteElement &rt_fe = *rt_fespace.Get().GetFE(e);
-      mesh.GetElementTransformation(e, &T);
-      h1_fespace.Get().GetElementDofs(e, h1_dofs);
-      rt_fespace.Get().GetElementDofs(e, rt_dofs);
-      Interp.SetSize(rt_fe.GetDof(), V_ip.Size());
-      Grad.SetSize(h1_fe.GetDof(), V_ip.Size());
-      const int q_order = fem::DefaultIntegrationOrder::Get(T);
-      const mfem::IntegrationRule &ir =
-          mfem::IntRules.Get(mesh.GetElementGeometry(e), q_order);
-
-      double elem_err = 0.0;
-      for (int i = 0; i < ir.GetNPoints(); i++)
-      {
-        const mfem::IntegrationPoint &ip = ir.IntPoint(i);
-        T.SetIntPoint(&ip);
-        rt_fe.CalcVShape(ip, Interp);
-        h1_fe.CalcDShape(ip, Grad);
-        const double w = ip.weight * T.Weight();
-
-        // ε ∇U -- ε J⁻ᵀ ∇Uᵣ
-        U_gf.GetSubVector(h1_dofs, loc_gf);
-        Grad.MultTranspose(loc_gf, V_ip);
-        T.InverseJacobian().MultTranspose(V_ip, V_smooth);
-        mat_op.GetPermittivityReal(T.Attribute).Mult(V_smooth, V_ip);
-
-        // Smooth flux -- |J|⁻¹ J Fᵣ
-        F_gf.GetSubVector(rt_dofs, loc_gf);
-        Interp.MultTranspose(loc_gf, V_tmp);
-        T.Jacobian().Mult(V_tmp, V_smooth);
-        V_smooth /= T.Weight();
-
-        V_smooth -= V_ip;
-        elem_err += w * (V_smooth * V_smooth);
-        loc_norm2 += w * (V_ip * V_ip);
-      }
-      h_estimates[e] = std::sqrt(elem_err);
-    }
-    norm2 += loc_norm2;
-  }
+  // Use libCEED operators to perform the error estimate integration over each element. The
+  // discontinuous flux is ε ∇U. Output is stored as error integral for all elements first,
+  // then scaling integral.
+  const auto &mesh = h1_fespace.GetMesh();
+  Vector estimates(2 * mesh.GetNE());
   estimates.UseDevice(true);
+  estimates = 0.0;
+  const std::size_t nt = ceed::internal::GetCeedObjects().size();
+  PalacePragmaOmp(parallel if (nt > 1))
+  {
+    Ceed ceed = ceed::internal::GetCeedObjects()[utils::GetThreadNum()];
+
+    // We need to update the state of the underlying libCEED vectors to indicate that the
+    // data has changed. Each thread has it's own vector, referencing the same underlying
+    // data.
+    {
+      CeedInt nsub_ops;
+      CeedOperator *sub_ops;
+      PalaceCeedCall(
+          ceed, CeedCompositeOperatorGetNumSub(integ_op[utils::GetThreadNum()], &nsub_ops));
+      PalaceCeedCall(
+          ceed, CeedCompositeOperatorGetSubList(integ_op[utils::GetThreadNum()], &sub_ops));
+      MFEM_ASSERT(nsub_ops > 0, "Unexpected empty libCEED composite operator!");
+      CeedOperatorField field;
+      CeedVector U_gf_vec, F_gf_vec;
+      PalaceCeedCall(ceed, CeedOperatorGetFieldByName(sub_ops[0], "grad_u_1", &field));
+      PalaceCeedCall(ceed, CeedOperatorFieldGetVector(field, &U_gf_vec));
+      PalaceCeedCall(ceed, CeedOperatorGetFieldByName(sub_ops[0], "u_2", &field));
+      PalaceCeedCall(ceed, CeedOperatorFieldGetVector(field, &F_gf_vec));
+      ceed::InitCeedVector(U_gf, ceed, &U_gf_vec, false);
+      ceed::InitCeedVector(F_gf, ceed, &F_gf_vec, false);
+    }
+
+    // Each thread writes to non-overlapping entries of the estimates vector.
+    CeedVector estimates_vec;
+    ceed::InitCeedVector(estimates, ceed, &estimates_vec);
+
+    // Do the integration (both input vectors are passive).
+    PalaceCeedCall(ceed,
+                   CeedOperatorApplyAdd(integ_op[utils::GetThreadNum()], CEED_VECTOR_NONE,
+                                        estimates_vec, CEED_REQUEST_IMMEDIATE));
+
+    // Cleanup.
+    PalaceCeedCall(ceed, CeedVectorDestroy(&estimates_vec));
+  }
 
   // Finalize the element-wise error estimates.
-  Mpi::GlobalSum(1, &norm2, mesh.GetComm());
-  if (norm2 > 0.0)
-  {
-    estimates *= 1.0 / std::sqrt(norm2);
-  }
-  indicator.AddIndicator(estimates);
+  Vector estimates0(estimates, 0, mesh.GetNE()),
+      estimates1(estimates, mesh.GetNE(), mesh.GetNE());
+  auto norm2 = linalg::Sum<Vector>(mesh.GetComm(), estimates1);
+  linalg::Sqrt(estimates0, (norm2 > 0.0) ? 1.0 / norm2 : 1.0);
+  indicator.AddIndicator(estimates0);
 }
 
 template class FluxProjector<Vector>;
