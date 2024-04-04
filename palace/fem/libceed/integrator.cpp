@@ -21,169 +21,136 @@ namespace palace::ceed
 
 namespace
 {
-
-void AddQFunctionActiveInputsOutputs(unsigned int ops, bool input, Ceed ceed,
-                                     CeedBasis basis, CeedQFunction qf,
-                                     std::string name = "")
+void AddQFunctionActiveInputs(unsigned int ops, Ceed ceed, CeedBasis basis,
+                              CeedQFunction qf, std::string name = "u")
 {
   // Add inputs or outputs with evaluation modes for the active vector of a QFunction.
   CeedInt num_comp;
   PalaceCeedCall(ceed, CeedBasisGetNumComponents(basis, &num_comp));
-  if (name.empty())
-  {
-    name = input ? "u" : "v";
-  }
   if (ops & EvalMode::None)
   {
-    if (input)
-    {
-      PalaceCeedCall(ceed,
-                     CeedQFunctionAddInput(qf, name.c_str(), num_comp, CEED_EVAL_NONE));
-    }
-    else
-    {
-      PalaceCeedCall(ceed,
-                     CeedQFunctionAddOutput(qf, name.c_str(), num_comp, CEED_EVAL_NONE));
-    }
+    PalaceCeedCall(ceed, CeedQFunctionAddInput(qf, name.c_str(), num_comp, CEED_EVAL_NONE));
   }
   if (ops & EvalMode::Interp)
   {
     CeedInt q_comp;
     PalaceCeedCall(ceed,
                    CeedBasisGetNumQuadratureComponents(basis, CEED_EVAL_INTERP, &q_comp));
-    if (input)
-    {
-      PalaceCeedCall(ceed, CeedQFunctionAddInput(qf, name.c_str(), num_comp * q_comp,
-                                                 CEED_EVAL_INTERP));
-    }
-    else
-    {
-      PalaceCeedCall(ceed, CeedQFunctionAddOutput(qf, name.c_str(), num_comp * q_comp,
-                                                  CEED_EVAL_INTERP));
-    }
+    PalaceCeedCall(
+        ceed, CeedQFunctionAddInput(qf, name.c_str(), num_comp * q_comp, CEED_EVAL_INTERP));
   }
   if (ops & EvalMode::Grad)
   {
     CeedInt q_comp;
     PalaceCeedCall(ceed,
                    CeedBasisGetNumQuadratureComponents(basis, CEED_EVAL_GRAD, &q_comp));
-    if (input)
-    {
-      PalaceCeedCall(ceed, CeedQFunctionAddInput(qf, (std::string("grad_") + name).c_str(),
-                                                 num_comp * q_comp, CEED_EVAL_GRAD));
-    }
-    else
-    {
-      PalaceCeedCall(ceed, CeedQFunctionAddOutput(qf, (std::string("grad_") + name).c_str(),
-                                                  num_comp * q_comp, CEED_EVAL_GRAD));
-    }
+    PalaceCeedCall(ceed, CeedQFunctionAddInput(qf, (std::string("grad_") + name).c_str(),
+                                               num_comp * q_comp, CEED_EVAL_GRAD));
   }
   if (ops & EvalMode::Div)
   {
     CeedInt q_comp;
     PalaceCeedCall(ceed,
                    CeedBasisGetNumQuadratureComponents(basis, CEED_EVAL_DIV, &q_comp));
-    if (input)
-    {
-      PalaceCeedCall(ceed, CeedQFunctionAddInput(qf, (std::string("div_") + name).c_str(),
-                                                 num_comp * q_comp, CEED_EVAL_DIV));
-    }
-    else
-    {
-      PalaceCeedCall(ceed, CeedQFunctionAddOutput(qf, (std::string("div_") + name).c_str(),
-                                                  num_comp * q_comp, CEED_EVAL_DIV));
-    }
+    PalaceCeedCall(ceed, CeedQFunctionAddInput(qf, (std::string("div_") + name).c_str(),
+                                               num_comp * q_comp, CEED_EVAL_DIV));
   }
   if (ops & EvalMode::Curl)
   {
     CeedInt q_comp;
     PalaceCeedCall(ceed,
                    CeedBasisGetNumQuadratureComponents(basis, CEED_EVAL_CURL, &q_comp));
-    if (input)
-    {
-      PalaceCeedCall(ceed, CeedQFunctionAddInput(qf, (std::string("curl_") + name).c_str(),
-                                                 num_comp * q_comp, CEED_EVAL_CURL));
-    }
-    else
-    {
-      PalaceCeedCall(ceed, CeedQFunctionAddOutput(qf, (std::string("curl_") + name).c_str(),
-                                                  num_comp * q_comp, CEED_EVAL_CURL));
-    }
+    PalaceCeedCall(ceed, CeedQFunctionAddInput(qf, (std::string("curl_") + name).c_str(),
+                                               num_comp * q_comp, CEED_EVAL_CURL));
   }
 }
 
-void AddOperatorActiveFields(unsigned int ops, bool input, Ceed ceed,
-                             CeedElemRestriction restr, CeedBasis basis, CeedOperator op,
-                             std::string name = "", CeedVector v = CEED_VECTOR_ACTIVE)
+void AddQFunctionActiveOutputs(unsigned int ops, Ceed ceed, CeedBasis basis,
+                               CeedQFunction qf, std::string name = "v")
 {
-  // Set active input or output vector fields of an operator.
-  if (name.empty())
-  {
-    name = input ? "u" : "v";
-  }
+  // Add inputs or outputs with evaluation modes for the active vector of a QFunction.
+  CeedInt num_comp;
+  PalaceCeedCall(ceed, CeedBasisGetNumComponents(basis, &num_comp));
   if (ops & EvalMode::None)
   {
-    if (input)
-    {
-      PalaceCeedCall(ceed,
-                     CeedOperatorSetField(op, name.c_str(), restr, CEED_BASIS_NONE, v));
-    }
-    else
-    {
-      PalaceCeedCall(ceed,
-                     CeedOperatorSetField(op, name.c_str(), restr, CEED_BASIS_NONE, v));
-    }
+    PalaceCeedCall(ceed,
+                   CeedQFunctionAddOutput(qf, name.c_str(), num_comp, CEED_EVAL_NONE));
   }
   if (ops & EvalMode::Interp)
   {
-    if (input)
-    {
-      PalaceCeedCall(ceed, CeedOperatorSetField(op, name.c_str(), restr, basis, v));
-    }
-    else
-    {
-      PalaceCeedCall(ceed, CeedOperatorSetField(op, name.c_str(), restr, basis, v));
-    }
+    CeedInt q_comp;
+    PalaceCeedCall(ceed,
+                   CeedBasisGetNumQuadratureComponents(basis, CEED_EVAL_INTERP, &q_comp));
+    PalaceCeedCall(ceed, CeedQFunctionAddOutput(qf, name.c_str(), num_comp * q_comp,
+                                                CEED_EVAL_INTERP));
   }
   if (ops & EvalMode::Grad)
   {
-    if (input)
-    {
-      PalaceCeedCall(ceed, CeedOperatorSetField(op, (std::string("grad_") + name).c_str(),
-                                                restr, basis, v));
-    }
-    else
-    {
-      PalaceCeedCall(ceed, CeedOperatorSetField(op, (std::string("grad_") + name).c_str(),
-                                                restr, basis, v));
-    }
+    CeedInt q_comp;
+    PalaceCeedCall(ceed,
+                   CeedBasisGetNumQuadratureComponents(basis, CEED_EVAL_GRAD, &q_comp));
+    PalaceCeedCall(ceed, CeedQFunctionAddOutput(qf, (std::string("grad_") + name).c_str(),
+                                                num_comp * q_comp, CEED_EVAL_GRAD));
   }
   if (ops & EvalMode::Div)
   {
-    if (input)
-    {
-      PalaceCeedCall(ceed, CeedOperatorSetField(op, (std::string("div_") + name).c_str(),
-                                                restr, basis, v));
-    }
-    else
-    {
-      PalaceCeedCall(ceed, CeedOperatorSetField(op, (std::string("div_") + name).c_str(),
-                                                restr, basis, v));
-    }
+    CeedInt q_comp;
+    PalaceCeedCall(ceed,
+                   CeedBasisGetNumQuadratureComponents(basis, CEED_EVAL_DIV, &q_comp));
+    PalaceCeedCall(ceed, CeedQFunctionAddOutput(qf, (std::string("div_") + name).c_str(),
+                                                num_comp * q_comp, CEED_EVAL_DIV));
   }
   if (ops & EvalMode::Curl)
   {
-    if (input)
-    {
-      PalaceCeedCall(ceed, CeedOperatorSetField(op, (std::string("curl_") + name).c_str(),
-                                                restr, basis, v));
-    }
-    else
-    {
-      PalaceCeedCall(ceed, CeedOperatorSetField(op, (std::string("curl_") + name).c_str(),
-                                                restr, basis, v));
-    }
+    CeedInt q_comp;
+    PalaceCeedCall(ceed,
+                   CeedBasisGetNumQuadratureComponents(basis, CEED_EVAL_CURL, &q_comp));
+    PalaceCeedCall(ceed, CeedQFunctionAddOutput(qf, (std::string("curl_") + name).c_str(),
+                                                num_comp * q_comp, CEED_EVAL_CURL));
   }
+}
+
+void AddOperatorActiveFields(unsigned int ops, Ceed ceed, CeedElemRestriction restr,
+                             CeedBasis basis, CeedOperator op, const std::string &name,
+                             CeedVector v)
+{
+  // Set active input or output vector fields of an operator.
+  if (ops & EvalMode::None)
+  {
+    PalaceCeedCall(ceed, CeedOperatorSetField(op, name.c_str(), restr, CEED_BASIS_NONE, v));
+  }
+  if (ops & EvalMode::Interp)
+  {
+    PalaceCeedCall(ceed, CeedOperatorSetField(op, name.c_str(), restr, basis, v));
+  }
+  if (ops & EvalMode::Grad)
+  {
+    PalaceCeedCall(ceed, CeedOperatorSetField(op, (std::string("grad_") + name).c_str(),
+                                              restr, basis, v));
+  }
+  if (ops & EvalMode::Div)
+  {
+    PalaceCeedCall(ceed, CeedOperatorSetField(op, (std::string("div_") + name).c_str(),
+                                              restr, basis, v));
+  }
+  if (ops & EvalMode::Curl)
+  {
+    PalaceCeedCall(ceed, CeedOperatorSetField(op, (std::string("curl_") + name).c_str(),
+                                              restr, basis, v));
+  }
+}
+
+void AddOperatorActiveInputFields(unsigned int ops, Ceed ceed, CeedElemRestriction restr,
+                                  CeedBasis basis, CeedOperator op, std::string name = "u",
+                                  CeedVector v = CEED_VECTOR_ACTIVE)
+{
+  AddOperatorActiveFields(ops, ceed, restr, basis, op, name, v);
+}
+void AddOperatorActiveOutputFields(unsigned int ops, Ceed ceed, CeedElemRestriction restr,
+                                   CeedBasis basis, CeedOperator op, std::string name = "v",
+                                   CeedVector v = CEED_VECTOR_ACTIVE)
+{
+  AddOperatorActiveFields(ops, ceed, restr, basis, op, name, v);
 }
 
 std::vector<CeedInt> QuadratureDataSetup(unsigned int ops, Ceed ceed,
@@ -329,8 +296,8 @@ void QuadratureDataAssembly(const std::vector<CeedInt> &qf_active_sizes,
     PalaceCeedCall(ceed,
                    CeedQFunctionAddInput(apply_qf, "q_data", q_data_size, CEED_EVAL_NONE));
   }
-  AddQFunctionActiveInputsOutputs(info.trial_ops, true, ceed, trial_basis, apply_qf);
-  AddQFunctionActiveInputsOutputs(info.test_ops, false, ceed, test_basis, apply_qf);
+  AddQFunctionActiveInputs(info.trial_ops, ceed, trial_basis, apply_qf);
+  AddQFunctionActiveOutputs(info.test_ops, ceed, test_basis, apply_qf);
 
   // Create the actual operator.
   PalaceCeedCall(ceed, CeedOperatorCreate(ceed, apply_qf, nullptr, nullptr, op));
@@ -338,8 +305,8 @@ void QuadratureDataAssembly(const std::vector<CeedInt> &qf_active_sizes,
 
   PalaceCeedCall(
       ceed, CeedOperatorSetField(*op, "q_data", q_data_restr, CEED_BASIS_NONE, q_data));
-  AddOperatorActiveFields(info.trial_ops, true, ceed, trial_restr, trial_basis, *op);
-  AddOperatorActiveFields(info.test_ops, false, ceed, test_restr, test_basis, *op);
+  AddOperatorActiveInputFields(info.trial_ops, ceed, trial_restr, trial_basis, *op);
+  AddOperatorActiveOutputFields(info.test_ops, ceed, test_restr, test_basis, *op);
 
   PalaceCeedCall(ceed, CeedOperatorCheckReady(*op));
 }
@@ -514,8 +481,8 @@ void AssembleCeedOperator(const CeedQFunctionInfo &info, void *ctx, std::size_t 
   }
   if (!info.assemble_q_data)
   {
-    AddOperatorActiveFields(info.trial_ops, true, ceed, trial_restr, trial_basis, *op);
-    AddOperatorActiveFields(info.test_ops, false, ceed, test_restr, test_basis, *op);
+    AddOperatorActiveInputFields(info.trial_ops, ceed, trial_restr, trial_basis, *op);
+    AddOperatorActiveOutputFields(info.test_ops, ceed, test_restr, test_basis, *op);
   }
   else
   {
@@ -641,10 +608,10 @@ void AssembleCeedElementErrorIntegrator(
     PalaceCeedCall(ceed, CeedOperatorSetField(*op, "q_w", CEED_ELEMRESTRICTION_NONE,
                                               input1_basis, CEED_VECTOR_NONE));
   }
-  AddOperatorActiveFields(info.trial_ops, true, ceed, input1_restr, input1_basis, *op,
-                          "u_1", input1);
-  AddOperatorActiveFields(info.test_ops, true, ceed, input2_restr, input2_basis, *op, "u_2",
-                          input2);
+  AddOperatorActiveInputFields(info.trial_ops, ceed, input1_restr, input1_basis, *op, "u_1",
+                               input1);
+  AddOperatorActiveInputFields(info.test_ops, ceed, input2_restr, input2_basis, *op, "u_2",
+                               input2);
   PalaceCeedCall(ceed, CeedOperatorSetField(*op, "v", mesh_elem_restr, mesh_elem_basis,
                                             CEED_VECTOR_ACTIVE));
 
