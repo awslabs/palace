@@ -99,18 +99,18 @@ public:
   // Return the time elapsed since timer creation.
   Duration TimeFromStart() const { return Now() - start_time; }
 
-  // Save a timing step by adding a duration, without lapping; optionally, count it.
-  Duration SaveTime(Index idx, Duration time, bool count_it = true)
-  {
-    data[idx] += time;
-    counts[idx] += count_it;
-    return data[idx];
-  }
-
   // Lap and record a timing step.
   Duration MarkTime(Index idx, bool count_it = true)
   {
-    return SaveTime(idx, Lap(), count_it);
+    return MarkTime(idx, Lap(), count_it);
+  }
+
+  // Record a timing step by adding a duration, without lapping; optionally, count it.
+  Duration MarkTime(Index idx, Duration time, bool count_it = true)
+  {
+    data[idx] = time + ((idx != Timer::TOTAL) ? data[idx] : 0.0);
+    counts[idx] += count_it;
+    return data[idx];
   }
 
   // Provide map-like read-only access to the timing data.
@@ -186,7 +186,7 @@ public:
       timer.MarkTime(stack.top());
       stack.pop();
     }
-    timer.SaveTime(Timer::TOTAL, timer.TimeFromStart());
+    timer.MarkTime(Timer::TOTAL, timer.TimeFromStart());
 
     // Reduce timing data.
     std::vector<double> data_min, data_max, data_avg;
