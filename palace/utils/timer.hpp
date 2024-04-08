@@ -108,7 +108,14 @@ public:
   // Record a timing step by adding a duration, without lapping; optionally, count it.
   Duration MarkTime(Index idx, Duration time, bool count_it = true)
   {
-    data[idx] = time + ((idx != Timer::TOTAL) ? data[idx] : 0.0);
+    if (idx == Timer::TOTAL)
+    {
+      data[idx] = time;
+    }
+    else
+    {
+      data[idx] += time;
+    }
     counts[idx] += count_it;
     return data[idx];
   }
