@@ -146,28 +146,26 @@ else
     fi
 
     # Run parallel simulation
+    NODE_FILE=mpi_nodes
     if [[ -n "$PBS_NODEFILE" ]]; then
         # PBS/Torque job
-        NODE_LIST=$PBS_NODEFILE
-        SUBMIT_DIR=$PBS_O_WORKDIR
+        cat $PBS_NODEFILE | sort | uniq > $NODE_FILE
+        WORK_DIR=$PBS_O_WORKDIR
     elif [[ -n "$SLURM_JOB_NODELIST" ]]; then
         # Slurm job
-        NODE_LIST=$SLURM_JOB_NODELIST
-        SUBMIT_DIR=$SLURM_SUBMIT_DIR
+        scontrol show hostnames $SLURM_JOB_NODELIST > $NODE_FILE
+        WORK_DIR=$SLURM_SUBMIT_DIR
     else
-        NODE_LIST=""
-        WORKDIR=""
+        WORK_DIR=""
     fi
-    if [[ -z "$NODE_LIST" ]]; then
+    if [[ -z "$WORK_DIR" ]]; then
         # Local execution
         echo ">> $MPIRUN $PALACE $CONFIG"
         $MPIRUN $PALACE $CONFIG
         EXIT_CODE=$?
     else
-        NODE_FILE=mpi_nodes
-        cat $NODE_LIST | sort | uniq > $NODE_FILE
         echo The master node of this job is `hostname`
-        echo The working directory is `echo $SUBMIT_DIR`
+        echo The working directory is `echo $WORK_DIR`
         echo This job runs on the following nodes: && cat $NODE_FILE
         MPIRUN="$MPIRUN --hostfile $NODE_FILE"
 
