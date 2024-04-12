@@ -15,8 +15,7 @@ namespace palace
 {
 
 class FiniteElementSpace;
-template <typename T>
-class BaseFiniteElementSpaceHierarchy;
+class FiniteElementSpaceHierarchy;
 
 //
 // This class implements bilinear and mixed bilinear forms based on integrators assembled
@@ -86,9 +85,8 @@ public:
 
   std::unique_ptr<Operator> Assemble(bool skip_zeros) const;
 
-  template <typename T>
   std::vector<std::unique_ptr<Operator>>
-  Assemble(const BaseFiniteElementSpaceHierarchy<T> &fespaces, bool skip_zeros,
+  Assemble(const FiniteElementSpaceHierarchy &fespaces, bool skip_zeros,
            std::size_t l0 = 0) const;
 };
 

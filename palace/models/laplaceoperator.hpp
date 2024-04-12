@@ -39,7 +39,7 @@ private:
   std::unique_ptr<mfem::ND_FECollection> nd_fec;
   std::vector<std::unique_ptr<mfem::RT_FECollection>> rt_fecs;
   FiniteElementSpaceHierarchy h1_fespaces;
-  AuxiliaryFiniteElementSpace nd_fespace;
+  FiniteElementSpace nd_fespace;
   FiniteElementSpaceHierarchy rt_fespaces;
 
   // Operator for domain material properties.
@@ -83,7 +83,10 @@ public:
   std::unique_ptr<Operator> GetStiffnessMatrix();
 
   // Construct and return the discrete gradient matrix.
-  const Operator &GetGradMatrix() const { return GetNDSpace().GetDiscreteInterpolator(); }
+  const Operator &GetGradMatrix() const
+  {
+    return GetNDSpace().GetDiscreteInterpolator(GetH1Space());
+  }
 
   // Assemble the solution boundary conditions and right-hand side vector for a nonzero
   // prescribed voltage on the specified surface index.

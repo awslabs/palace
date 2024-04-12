@@ -13,7 +13,6 @@
 namespace palace
 {
 
-class AuxiliaryFiniteElementSpaceHierarchy;
 class FiniteElementSpaceHierarchy;
 class IoData;
 
@@ -44,7 +43,7 @@ protected:
 
 public:
   BaseKspSolver(const IoData &iodata, FiniteElementSpaceHierarchy &fespaces,
-                AuxiliaryFiniteElementSpaceHierarchy *aux_fespaces = nullptr);
+                FiniteElementSpaceHierarchy *aux_fespaces = nullptr);
   BaseKspSolver(std::unique_ptr<IterativeSolver<OperType>> &&ksp,
                 std::unique_ptr<Solver<OperType>> &&pc);
 

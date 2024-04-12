@@ -31,10 +31,10 @@ CurlCurlOperator::CurlCurlOperator(const IoData &iodata,
                                                    mesh.back()->Dimension())),
     nd_fespaces(fem::ConstructFiniteElementSpaceHierarchy<mfem::ND_FECollection>(
         iodata.solver.linear.mg_max_levels, mesh, nd_fecs, &dbc_attr, &dbc_tdof_lists)),
-    h1_fespaces(fem::ConstructAuxiliaryFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
-        nd_fespaces, h1_fecs)),
-    rt_fespace(nd_fespaces.GetFinestFESpace(), *mesh.back(), rt_fec.get()),
-    mat_op(iodata, *mesh.back()), surf_j_op(iodata, GetH1Space())
+    h1_fespaces(fem::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
+        iodata.solver.linear.mg_max_levels, mesh, h1_fecs)),
+    rt_fespace(*mesh.back(), rt_fec.get()), mat_op(iodata, *mesh.back()),
+    surf_j_op(iodata, GetH1Space())
 {
   // Finalize setup.
   CheckBoundaryProperties();

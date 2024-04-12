@@ -44,7 +44,7 @@ auto BuildLevelParOperator<ComplexOperator>(std::unique_ptr<Operator> &&a,
 template <typename VecType>
 DivFreeSolver<VecType>::DivFreeSolver(
     const MaterialOperator &mat_op, FiniteElementSpace &nd_fespace,
-    AuxiliaryFiniteElementSpaceHierarchy &h1_fespaces,
+    FiniteElementSpaceHierarchy &h1_fespaces,
     const std::vector<mfem::Array<int>> &h1_bdr_tdof_lists, double tol, int max_it,
     int print)
 {
@@ -79,7 +79,7 @@ DivFreeSolver<VecType>::DivFreeSolver(
     WeakDiv = std::make_unique<ParOperator>(weakdiv.PartialAssemble(), nd_fespace,
                                             h1_fespaces.GetFinestFESpace(), false);
   }
-  Grad = &h1_fespaces.GetFinestFESpace().GetDiscreteInterpolator();
+  Grad = &nd_fespace.GetDiscreteInterpolator(h1_fespaces.GetFinestFESpace());
 
   // The system matrix for the projection is real and SPD.
   auto amg = std::make_unique<MfemWrapperSolver<OperType>>(

@@ -32,13 +32,17 @@ SpaceOperator::SpaceOperator(const IoData &iodata,
     h1_fecs(fem::ConstructFECollections<mfem::H1_FECollection>(
         iodata.solver.order, mesh.back()->Dimension(), iodata.solver.linear.mg_max_levels,
         iodata.solver.linear.mg_coarsen_type, false)),
-    rt_fec(std::make_unique<mfem::RT_FECollection>(iodata.solver.order - 1,
-                                                   mesh.back()->Dimension())),
+    rt_fecs(fem::ConstructFECollections<mfem::RT_FECollection>(
+        iodata.solver.order - 1, mesh.back()->Dimension(),
+        iodata.solver.linear.estimator_mg ? iodata.solver.linear.mg_max_levels : 1,
+        iodata.solver.linear.mg_coarsen_type, false)),
     nd_fespaces(fem::ConstructFiniteElementSpaceHierarchy<mfem::ND_FECollection>(
         iodata.solver.linear.mg_max_levels, mesh, nd_fecs, &dbc_attr, &nd_dbc_tdof_lists)),
-    h1_fespaces(fem::ConstructAuxiliaryFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
-        nd_fespaces, h1_fecs, &dbc_attr, &h1_dbc_tdof_lists)),
-    rt_fespace(nd_fespaces.GetFinestFESpace(), *mesh.back(), rt_fec.get()),
+    h1_fespaces(fem::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
+        iodata.solver.linear.mg_max_levels, mesh, h1_fecs, &dbc_attr, &h1_dbc_tdof_lists)),
+    rt_fespaces(fem::ConstructFiniteElementSpaceHierarchy<mfem::RT_FECollection>(
+        iodata.solver.linear.estimator_mg ? iodata.solver.linear.mg_max_levels : 1, mesh,
+        rt_fecs)),
     mat_op(iodata, *mesh.back()), farfield_op(iodata, mat_op, *mesh.back()),
     surf_sigma_op(iodata, mat_op, *mesh.back()), surf_z_op(iodata, mat_op, *mesh.back()),
     lumped_port_op(iodata, mat_op, GetH1Space()),
@@ -278,7 +282,7 @@ auto AssembleOperators(const FiniteElementSpaceHierarchy &fespaces,
   return a.Assemble(fespaces, skip_zeros, l0);
 }
 
-auto AssembleAuxOperators(const AuxiliaryFiniteElementSpaceHierarchy &fespaces,
+auto AssembleAuxOperators(const FiniteElementSpaceHierarchy &fespaces,
                           const MaterialPropertyCoefficient *f,
                           const MaterialPropertyCoefficient *fb, bool skip_zeros = false,
                           bool assemble_q_data = false, std::size_t l0 = 0)

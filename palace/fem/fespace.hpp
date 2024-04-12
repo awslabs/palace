@@ -34,6 +34,10 @@ private:
   // Temporary storage for operator applications.
   mutable ComplexVector tx, lx, ly;
 
+  // Members for discrete interpolators from an auxiliary space to a primal space.
+  mutable const FiniteElementSpace *aux_fespace;
+  mutable std::unique_ptr<Operator> G;
+
   bool HasUniqueInterpRestriction(const mfem::FiniteElement &fe) const
   {
     // For interpolation operators and tensor-product elements, we need native (not
@@ -57,10 +61,12 @@ private:
     return (dof_trans && !dof_trans->IsIdentity());
   }
 
+  const Operator &BuildDiscreteInterpolator() const;
+
 public:
   template <typename... T>
   FiniteElementSpace(Mesh &mesh, T &&...args)
-    : fespace(&mesh.Get(), std::forward<T>(args)...), mesh(mesh)
+    : fespace(&mesh.Get(), std::forward<T>(args)...), mesh(mesh), aux_fespace(nullptr)
   {
     ResetCeedObjects();
     tx.UseDevice(true);
@@ -95,6 +101,18 @@ public:
 
   const auto *GetProlongationMatrix() const { return Get().GetProlongationMatrix(); }
   const auto *GetRestrictionMatrix() const { return Get().GetRestrictionMatrix(); }
+
+  // Return the discrete gradient, curl, or divergence matrix interpolating from the
+  // auxiliary to the primal space, constructing it on the fly as necessary.
+  const auto &GetDiscreteInterpolator(const FiniteElementSpace &aux_fespace_) const
+  {
+    if (&aux_fespace_ != aux_fespace)
+    {
+      G.reset();
+      aux_fespace = &aux_fespace_;
+    }
+    return G ? *G : BuildDiscreteInterpolator();
+  }
 
   // Return the basis object for elements of the given element geometry type.
   CeedBasis GetCeedBasis(Ceed ceed, mfem::Geometry::Type geom) const;
@@ -176,59 +194,27 @@ public:
 };
 
 //
-// An AuxiliaryFiniteElement space is a FiniteElementSpace which allows for lazy
-// construction of the interpolation operator (discrete gradient or curl) from the primal
-// space to this one.
-//
-class AuxiliaryFiniteElementSpace : public FiniteElementSpace
-{
-private:
-  const FiniteElementSpace &primal_fespace;
-  mutable std::unique_ptr<Operator> G;
-
-  const Operator &BuildDiscreteInterpolator() const;
-
-public:
-  template <typename... T>
-  AuxiliaryFiniteElementSpace(const FiniteElementSpace &primal_fespace, T &&...args)
-    : FiniteElementSpace(std::forward<T>(args)...), primal_fespace(primal_fespace)
-  {
-  }
-
-  // Return the discrete gradient or discrete curl matrix interpolating from the auxiliary
-  // to the primal space, constructing it on the fly as necessary.
-  const auto &GetDiscreteInterpolator() const
-  {
-    return G ? *G : BuildDiscreteInterpolator();
-  }
-};
-
-//
 // A collection of FiniteElementSpace objects constructed on the same mesh with the ability
 // to construct the prolongation operators between them as needed.
 //
-template <typename FESpace>
-class BaseFiniteElementSpaceHierarchy
+class FiniteElementSpaceHierarchy
 {
-  static_assert(std::is_base_of<FiniteElementSpace, FESpace>::value,
-                "A space hierarchy can only be constructed of FiniteElementSpace objects!");
-
 protected:
-  std::vector<std::unique_ptr<FESpace>> fespaces;
+  std::vector<std::unique_ptr<FiniteElementSpace>> fespaces;
   mutable std::vector<std::unique_ptr<Operator>> P;
 
   const Operator &BuildProlongationAtLevel(std::size_t l) const;
 
 public:
-  BaseFiniteElementSpaceHierarchy() = default;
-  BaseFiniteElementSpaceHierarchy(std::unique_ptr<FESpace> &&fespace)
+  FiniteElementSpaceHierarchy() = default;
+  FiniteElementSpaceHierarchy(std::unique_ptr<FiniteElementSpace> &&fespace)
   {
     AddLevel(std::move(fespace));
   }
 
   auto GetNumLevels() const { return fespaces.size(); }
 
-  void AddLevel(std::unique_ptr<FESpace> &&fespace)
+  void AddLevel(std::unique_ptr<FiniteElementSpace> &&fespace)
   {
     fespaces.push_back(std::move(fespace));
     P.push_back(nullptr);
@@ -279,39 +265,21 @@ public:
     }
     return P_;
   }
-};
 
-class FiniteElementSpaceHierarchy
-  : public BaseFiniteElementSpaceHierarchy<FiniteElementSpace>
-{
-public:
-  using BaseFiniteElementSpaceHierarchy<
-      FiniteElementSpace>::BaseFiniteElementSpaceHierarchy;
-};
-
-//
-// A special type of FiniteElementSpaceHierarchy where all members are auxiliary finite
-// element spaces.
-//
-class AuxiliaryFiniteElementSpaceHierarchy
-  : public BaseFiniteElementSpaceHierarchy<AuxiliaryFiniteElementSpace>
-{
-public:
-  using BaseFiniteElementSpaceHierarchy<
-      AuxiliaryFiniteElementSpace>::BaseFiniteElementSpaceHierarchy;
-
-  const auto &GetDiscreteInterpolatorAtLevel(std::size_t l) const
+  const auto &GetDiscreteInterpolatorAtLevel(std::size_t l,
+                                             const FiniteElementSpace &aux_fespace) const
   {
-    return GetFESpaceAtLevel(l).GetDiscreteInterpolator();
+    return GetFESpaceAtLevel(l).GetDiscreteInterpolator(aux_fespace);
   }
 
-  std::vector<const Operator *> GetDiscreteInterpolators() const
+  std::vector<const Operator *>
+  GetDiscreteInterpolators(const FiniteElementSpaceHierarchy &aux_fespaces) const
   {
     std::vector<const Operator *> G_(GetNumLevels());
     G_[0] = nullptr;  // No discrete interpolator for coarsest level
     for (std::size_t l = 1; l < G_.size(); l++)
     {
-      G_[l] = &GetDiscreteInterpolatorAtLevel(l);
+      G_[l] = &GetDiscreteInterpolatorAtLevel(l, aux_fespaces.GetFESpaceAtLevel(l));
     }
     return G_;
   }

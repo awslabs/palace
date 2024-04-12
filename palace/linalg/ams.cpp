@@ -14,9 +14,8 @@ namespace palace
 {
 
 HypreAmsSolver::HypreAmsSolver(FiniteElementSpace &nd_fespace,
-                               AuxiliaryFiniteElementSpace &h1_fespace, int cycle_it,
-                               int smooth_it, bool vector_interp, bool op_pos,
-                               bool op_singular, int print)
+                               FiniteElementSpace &h1_fespace, int cycle_it, int smooth_it,
+                               bool vector_interp, bool op_pos, bool op_singular, int print)
   : mfem::HypreSolver(),
     // From the Hypre docs for AMS: cycles 1, 5, 8, 11, 13 are fastest, 7 yields fewest its
     // (MFEM default is 13). 14 is similar to 11/13 but is cheaper in that is uses additive
@@ -49,7 +48,7 @@ HypreAmsSolver::~HypreAmsSolver()
 }
 
 void HypreAmsSolver::ConstructAuxiliaryMatrices(FiniteElementSpace &nd_fespace,
-                                                AuxiliaryFiniteElementSpace &h1_fespace)
+                                                FiniteElementSpace &h1_fespace)
 {
   // Set up the auxiliary space objects for the preconditioner. Mostly the same as MFEM's
   // HypreAMS:Init. Start with the discrete gradient matrix. We don't skip zeros for the
@@ -58,7 +57,7 @@ void HypreAmsSolver::ConstructAuxiliaryMatrices(FiniteElementSpace &nd_fespace,
   const bool skip_zeros_interp = !mfem::Device::Allows(mfem::Backend::DEVICE_MASK);
   {
     const auto *PtGP =
-        dynamic_cast<const ParOperator *>(&h1_fespace.GetDiscreteInterpolator());
+        dynamic_cast<const ParOperator *>(&nd_fespace.GetDiscreteInterpolator(h1_fespace));
     MFEM_VERIFY(
         PtGP,
         "HypreAmsSolver requires the discrete gradient matrix as a ParOperator operator!");

@@ -159,21 +159,26 @@ CeedElemRestriction FiniteElementSpace::BuildCeedElemRestriction(
   return val;
 }
 
-const Operator &AuxiliaryFiniteElementSpace::BuildDiscreteInterpolator() const
+const Operator &FiniteElementSpace::BuildDiscreteInterpolator() const
 {
   // Allow finite element spaces to be swapped in their order (intended as deriv(aux) ->
   // primal). G is always partially assembled.
   const int dim = Dimension();
   const bool swap =
-      (GetFEColl().GetMapType(dim) == primal_fespace.GetFEColl().GetDerivMapType(dim));
-  const FiniteElementSpace &trial_fespace = swap ? primal_fespace : *this;
-  const FiniteElementSpace &test_fespace = swap ? *this : primal_fespace;
+      (aux_fespace->GetFEColl().GetMapType(dim) == GetFEColl().GetDerivMapType(dim));
+  MFEM_VERIFY(!swap, "Incorrect order for primal/auxiliary (test/trial) spaces in discrete "
+                     "interpolator construction!");
+  MFEM_VERIFY(
+      GetFEColl().GetMapType(dim) == aux_fespace->GetFEColl().GetDerivMapType(dim),
+      "Unsupported trial/test FE spaces for FiniteElementSpace discrete interpolator!");
+  const FiniteElementSpace &trial_fespace = !swap ? *aux_fespace : *this;
+  const FiniteElementSpace &test_fespace = !swap ? *this : *aux_fespace;
   const auto aux_map_type = trial_fespace.GetFEColl().GetMapType(dim);
   const auto primal_map_type = test_fespace.GetFEColl().GetMapType(dim);
   if (aux_map_type == mfem::FiniteElement::VALUE &&
       primal_map_type == mfem::FiniteElement::H_CURL)
   {
-    // Discrete gradient interpolator
+    // Discrete gradient interpolator.
     DiscreteLinearOperator interp(trial_fespace, test_fespace);
     interp.AddDomainInterpolator<GradientInterpolator>();
     G = std::make_unique<ParOperator>(interp.PartialAssemble(), trial_fespace, test_fespace,
@@ -182,7 +187,7 @@ const Operator &AuxiliaryFiniteElementSpace::BuildDiscreteInterpolator() const
   else if (aux_map_type == mfem::FiniteElement::H_CURL &&
            primal_map_type == mfem::FiniteElement::H_DIV)
   {
-    // Discrete curl interpolator
+    // Discrete curl interpolator.
     DiscreteLinearOperator interp(trial_fespace, test_fespace);
     interp.AddDomainInterpolator<CurlInterpolator>();
     G = std::make_unique<ParOperator>(interp.PartialAssemble(), trial_fespace, test_fespace,
@@ -191,7 +196,7 @@ const Operator &AuxiliaryFiniteElementSpace::BuildDiscreteInterpolator() const
   else if (aux_map_type == mfem::FiniteElement::H_DIV &&
            primal_map_type == mfem::FiniteElement::INTEGRAL)
   {
-    // Discrete divergence interpolator
+    // Discrete divergence interpolator.
     DiscreteLinearOperator interp(trial_fespace, test_fespace);
     interp.AddDomainInterpolator<DivergenceInterpolator>();
     G = std::make_unique<ParOperator>(interp.PartialAssemble(), trial_fespace, test_fespace,
@@ -199,16 +204,14 @@ const Operator &AuxiliaryFiniteElementSpace::BuildDiscreteInterpolator() const
   }
   else
   {
-    MFEM_ABORT("Unsupported trial/test FE spaces for AuxiliaryFiniteElementSpace discrete "
-               "interpolator!");
+    MFEM_ABORT(
+        "Unsupported trial/test FE spaces for FiniteElementSpace discrete interpolator!");
   }
 
   return *G;
 }
 
-template <typename FESpace>
-const Operator &
-BaseFiniteElementSpaceHierarchy<FESpace>::BuildProlongationAtLevel(std::size_t l) const
+const Operator &FiniteElementSpaceHierarchy::BuildProlongationAtLevel(std::size_t l) const
 {
   // P is always partially assembled.
   MFEM_VERIFY(l + 1 < GetNumLevels(),
@@ -230,8 +233,5 @@ BaseFiniteElementSpaceHierarchy<FESpace>::BuildProlongationAtLevel(std::size_t l
 
   return *P[l];
 }
-
-template class BaseFiniteElementSpaceHierarchy<FiniteElementSpace>;
-template class BaseFiniteElementSpaceHierarchy<AuxiliaryFiniteElementSpace>;
 
 }  // namespace palace
