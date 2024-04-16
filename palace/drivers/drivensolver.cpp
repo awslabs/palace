@@ -141,9 +141,10 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator &
   B = 0.0;
 
   // Initialize structures for storing and reducing the results of error estimation.
-  CurlFluxErrorEstimator<ComplexVector> estimator(
-      spaceop.GetMaterialOp(), spaceop.GetNDSpaces(), iodata.solver.linear.estimator_tol,
-      iodata.solver.linear.estimator_max_it, 0, iodata.solver.linear.estimator_mg);
+  TimeDependentFluxErrorEstimator<ComplexVector> estimator(
+      spaceop.GetMaterialOp(), spaceop.GetNDSpaces(), spaceop.GetRTSpaces(),
+      iodata.solver.linear.estimator_tol, iodata.solver.linear.estimator_max_it, 0,
+      iodata.solver.linear.estimator_mg);
   ErrorIndicator indicator;
 
   // Main frequency sweep loop.
@@ -194,7 +195,7 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator &
 
     // Calculate and record the error indicators.
     Mpi::Print(" Updating solution error estimates\n");
-    estimator.AddErrorIndicator(E, indicator);
+    estimator.AddErrorIndicator(E, B, E_elec + E_mag, indicator);
 
     // Postprocess S-parameters and optionally write solution to disk.
     Postprocess(postop, spaceop.GetLumpedPortOp(), spaceop.GetWavePortOp(),
@@ -238,9 +239,10 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator 
   B = 0.0;
 
   // Initialize structures for storing and reducing the results of error estimation.
-  CurlFluxErrorEstimator<ComplexVector> estimator(
-      spaceop.GetMaterialOp(), spaceop.GetNDSpaces(), iodata.solver.linear.estimator_tol,
-      iodata.solver.linear.estimator_max_it, 0, iodata.solver.linear.estimator_mg);
+  TimeDependentFluxErrorEstimator<ComplexVector> estimator(
+      spaceop.GetMaterialOp(), spaceop.GetNDSpaces(), spaceop.GetRTSpaces(),
+      iodata.solver.linear.estimator_tol, iodata.solver.linear.estimator_max_it, 0,
+      iodata.solver.linear.estimator_mg);
   ErrorIndicator indicator;
 
   // Configure the PROM operator which performs the parameter space sampling and basis
@@ -262,7 +264,18 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator 
   {
     // Add the HDM solution to the PROM reduced basis.
     promop.UpdatePROM(omega, E);
-    estimator.AddErrorIndicator(E, indicator);
+
+    // Compute B = -1/(iω) ∇ x E on the true dofs, and set the internal GridFunctions in
+    // PostOperator for energy postprocessing and error estimation.
+    BlockTimer bt0(Timer::POSTPRO);
+    Curl.Mult(E.Real(), B.Real());
+    Curl.Mult(E.Imag(), B.Imag());
+    B *= -1.0 / (1i * omega);
+    postop.SetEGridFunction(E, false);
+    postop.SetBGridFunction(B, false);
+    double E_elec = postop.GetEFieldEnergy();
+    double E_mag = postop.GetHFieldEnergy();
+    estimator.AddErrorIndicator(E, B, E_elec + E_mag, indicator);
   };
   promop.SolveHDM(omega0, E);
   UpdatePROM(omega0);

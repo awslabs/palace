@@ -47,8 +47,8 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   std::vector<double> I_inc(nstep);
 
   // Initialize structures for storing and reducing the results of error estimation.
-  CurlFluxErrorEstimator<Vector> estimator(
-      curlcurlop.GetMaterialOp(), curlcurlop.GetNDSpaces(),
+  CurlFluxErrorEstimator estimator(
+      curlcurlop.GetMaterialOp(), curlcurlop.GetRTSpace(), curlcurlop.GetNDSpaces(),
       iodata.solver.linear.estimator_tol, iodata.solver.linear.estimator_max_it, 0,
       iodata.solver.linear.estimator_mg);
   ErrorIndicator indicator;
@@ -89,7 +89,7 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
     // Calculate and record the error indicators.
     Mpi::Print(" Updating solution error estimates\n");
-    estimator.AddErrorIndicator(A[step], indicator);
+    estimator.AddErrorIndicator(B, E_mag, indicator);
 
     // Postprocess field solutions and optionally write solution to disk.
     Postprocess(postop, step, idx, I_inc[step], E_mag,

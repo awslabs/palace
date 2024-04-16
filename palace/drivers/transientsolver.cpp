@@ -79,9 +79,10 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   Mpi::Print("\n");
 
   // Initialize structures for storing and reducing the results of error estimation.
-  CurlFluxErrorEstimator<Vector> estimator(
-      spaceop.GetMaterialOp(), spaceop.GetNDSpaces(), iodata.solver.linear.estimator_tol,
-      iodata.solver.linear.estimator_max_it, 0, iodata.solver.linear.estimator_mg);
+  TimeDependentFluxErrorEstimator<Vector> estimator(
+      spaceop.GetMaterialOp(), spaceop.GetNDSpaces(), spaceop.GetRTSpaces(),
+      iodata.solver.linear.estimator_tol, iodata.solver.linear.estimator_max_it, 0,
+      iodata.solver.linear.estimator_mg);
   ErrorIndicator indicator;
 
   // Main time integration loop.
@@ -126,7 +127,7 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
     // Calculate and record the error indicators.
     Mpi::Print(" Updating solution error estimates\n");
-    estimator.AddErrorIndicator(E, indicator);
+    estimator.AddErrorIndicator(E, B, E_elec + E_mag, indicator);
 
     // Postprocess port voltages/currents and optionally write solution to disk.
     Postprocess(postop, spaceop.GetLumpedPortOp(), spaceop.GetSurfaceCurrentOp(), step, t,

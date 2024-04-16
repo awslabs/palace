@@ -167,11 +167,11 @@ namespace
 {
 
 template <typename VecType>
-void AddErrorIndicator(const VecType &F, VecType &F_gf, VecType &G, VecType &G_gf,
-                       double Et, const FiniteElementSpace &fespace,
-                       const FiniteElementSpace &smooth_fespace,
-                       const FluxProjector<VecType> &projector,
-                       const ceed::CeedOperator &integ_op, ErrorIndicator &indicator)
+Vector ComputeErrorEstimates(const VecType &F, VecType &F_gf, VecType &G, VecType &G_gf,
+                             const FiniteElementSpace &fespace,
+                             const FiniteElementSpace &smooth_fespace,
+                             const FluxProjector<VecType> &projector,
+                             const ceed::Operator &integ_op)
 {
   // Compute the projection of the discontinuous flux onto the smooth finite element space
   // (recovery) and populate the corresponding grid functions.
@@ -251,18 +251,135 @@ void AddErrorIndicator(const VecType &F, VecType &F_gf, VecType &G, VecType &G_g
     PalaceCeedCall(ceed, CeedVectorDestroy(&estimates_vec));
   }
 
-  // Finalize the element-wise error estimates.
-  linalg::Sqrt(estimates, (Et > 0.0) ? 1.0 / Et : 1.0);
-  indicator.AddIndicator(estimates);
+  return estimates;
 }
 
 }  // namespace
 
-CurlFluxErrorEstimator::CurlFluxErrorEstimator(const MaterialOperator &mat_op,
-                                               FiniteElementSpace &rt_fespace,
-                                               FiniteElementSpaceHierarchy &nd_fespaces,
-                                               double tol, int max_it, int print,
-                                               bool use_mg)
+template <typename VecType>
+GradFluxErrorEstimator<VecType>::GradFluxErrorEstimator(
+    const MaterialOperator &mat_op, FiniteElementSpace &nd_fespace,
+    FiniteElementSpaceHierarchy &rt_fespaces, double tol, int max_it, int print,
+    bool use_mg)
+  : nd_fespace(nd_fespace), rt_fespace(rt_fespaces.GetFinestFESpace()),
+    projector(MaterialPropertyCoefficient(mat_op.GetAttributeToMaterial(),
+                                          mat_op.GetPermittivityReal()),
+              rt_fespaces, nd_fespace, tol, max_it, print, use_mg),
+    integ_op(nd_fespace.GetMesh().GetNE(), nd_fespace.GetVSize()),
+    E_gf(nd_fespace.GetVSize()), D(rt_fespace.GetTrueVSize()), D_gf(rt_fespace.GetVSize())
+{
+  E_gf.UseDevice(true);
+  D.UseDevice(true);
+  D_gf.UseDevice(true);
+
+  // Construct the libCEED operator used for integrating the element-wise error. The
+  // discontinuous flux is ε E = ε ∇V.
+  const auto &mesh = nd_fespace.GetMesh();
+  const std::size_t nt = ceed::internal::GetCeedObjects().size();
+  PalacePragmaOmp(parallel if (nt > 1))
+  {
+    Ceed ceed = ceed::internal::GetCeedObjects()[utils::GetThreadNum()];
+    for (const auto &[geom, data] : mesh.GetCeedGeomFactorData(ceed))
+    {
+      // Only integrate over domain elements (not on the boundary).
+      if (mfem::Geometry::Dimension[geom] < mesh.Dimension())
+      {
+        continue;
+      }
+
+      // Create libCEED vector wrappers for use with libCEED operators.
+      CeedVector E_gf_vec, D_gf_vec;
+      if constexpr (std::is_same<VecType, ComplexVector>::value)
+      {
+        ceed::InitCeedVector(E_gf.Real(), ceed, &E_gf_vec);
+        ceed::InitCeedVector(D_gf.Real(), ceed, &D_gf_vec);
+      }
+      else
+      {
+        ceed::InitCeedVector(E_gf, ceed, &E_gf_vec);
+        ceed::InitCeedVector(D_gf, ceed, &D_gf_vec);
+      }
+
+      // Construct mesh element restriction for elements of this element geometry type.
+      CeedElemRestriction mesh_elem_restr;
+      PalaceCeedCall(ceed, CeedElemRestrictionCreate(
+                               ceed, static_cast<CeedInt>(data.indices.size()), 1, 1,
+                               mesh.GetNE(), mesh.GetNE(), CEED_MEM_HOST, CEED_USE_POINTER,
+                               data.indices.data(), &mesh_elem_restr));
+
+      // Element restriction and basis objects for inputs.
+      CeedElemRestriction nd_restr =
+          nd_fespace.GetCeedElemRestriction(ceed, geom, data.indices);
+      CeedElemRestriction rt_restr =
+          rt_fespace.GetCeedElemRestriction(ceed, geom, data.indices);
+      CeedBasis nd_basis = nd_fespace.GetCeedBasis(ceed, geom);
+      CeedBasis rt_basis = rt_fespace.GetCeedBasis(ceed, geom);
+
+      // Construct coefficient for discontinuous flux, then smooth flux.
+      auto mat_sqrtepsilon = linalg::MatrixSqrt(mat_op.GetPermittivityReal());
+      auto mat_invsqrtepsilon = linalg::MatrixPow(mat_op.GetPermittivityReal(), -0.5);
+      MaterialPropertyCoefficient sqrtepsilon_func(mat_op.GetAttributeToMaterial(),
+                                                   mat_sqrtepsilon);
+      MaterialPropertyCoefficient invsqrtepsilon_func(mat_op.GetAttributeToMaterial(),
+                                                      mat_invsqrtepsilon);
+      auto ctx =
+          ceed::PopulateCoefficientContext(mesh.SpaceDimension(), &sqrtepsilon_func,
+                                           mesh.SpaceDimension(), &invsqrtepsilon_func);
+
+      // Assemble the libCEED operator. Inputs: E (for discontinuous flux), then smooth
+      // flux.
+      ceed::CeedQFunctionInfo info;
+      info.assemble_q_data = false;
+      switch (10 * mesh.SpaceDimension() + mesh.Dimension())
+      {
+        case 22:
+          info.apply_qf = f_apply_hcurlhdiv_error_22;
+          info.apply_qf_path = PalaceQFunctionRelativePath(f_apply_hcurlhdiv_error_22_loc);
+          break;
+        case 33:
+          info.apply_qf = f_apply_hcurlhdiv_error_33;
+          info.apply_qf_path = PalaceQFunctionRelativePath(f_apply_hcurlhdiv_error_33_loc);
+          break;
+        default:
+          MFEM_ABORT("Invalid value of (dim, space_dim) = ("
+                     << mesh.Dimension() << ", " << mesh.SpaceDimension()
+                     << ") for GradFluxErrorEstimator!");
+      }
+      info.trial_ops = info.test_ops = ceed::EvalMode::Interp;
+
+      CeedOperator sub_op;
+      ceed::AssembleCeedElementErrorIntegrator(
+          info, (void *)ctx.data(), ctx.size() * sizeof(CeedIntScalar), ceed, E_gf_vec,
+          D_gf_vec, nd_restr, rt_restr, nd_basis, rt_basis, mesh_elem_restr, data.geom_data,
+          data.geom_data_restr, &sub_op);
+      integ_op.AddOper(sub_op);  // Sub-operator owned by ceed::Operator
+
+      // Element restriction and passive input vectors are owned by the operator.
+      PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&mesh_elem_restr));
+      PalaceCeedCall(ceed, CeedVectorDestroy(&E_gf_vec));
+      PalaceCeedCall(ceed, CeedVectorDestroy(&D_gf_vec));
+    }
+  }
+
+  // Finalize the operator (call CeedOperatorCheckReady).
+  integ_op.Finalize();
+}
+
+template <typename VecType>
+void GradFluxErrorEstimator<VecType>::AddErrorIndicator(const VecType &E, double Et,
+                                                        ErrorIndicator &indicator) const
+{
+  auto estimates =
+      ComputeErrorEstimates(E, E_gf, D, D_gf, nd_fespace, rt_fespace, projector, integ_op);
+  linalg::Sqrt(estimates, (Et > 0.0) ? 1.0 / Et : 1.0);
+  indicator.AddIndicator(estimates);
+}
+
+template <typename VecType>
+CurlFluxErrorEstimator<VecType>::CurlFluxErrorEstimator(
+    const MaterialOperator &mat_op, FiniteElementSpace &rt_fespace,
+    FiniteElementSpaceHierarchy &nd_fespaces, double tol, int max_it, int print,
+    bool use_mg)
   : rt_fespace(rt_fespace), nd_fespace(nd_fespaces.GetFinestFESpace()),
     projector(MaterialPropertyCoefficient(mat_op.GetAttributeToMaterial(),
                                           mat_op.GetInvPermeability()),
@@ -291,8 +408,16 @@ CurlFluxErrorEstimator::CurlFluxErrorEstimator(const MaterialOperator &mat_op,
 
       // Create libCEED vector wrappers for use with libCEED operators.
       CeedVector B_gf_vec, H_gf_vec;
-      ceed::InitCeedVector(B_gf, ceed, &B_gf_vec);
-      ceed::InitCeedVector(H_gf, ceed, &H_gf_vec);
+      if constexpr (std::is_same<VecType, ComplexVector>::value)
+      {
+        ceed::InitCeedVector(B_gf.Real(), ceed, &B_gf_vec);
+        ceed::InitCeedVector(H_gf.Real(), ceed, &H_gf_vec);
+      }
+      else
+      {
+        ceed::InitCeedVector(B_gf, ceed, &B_gf_vec);
+        ceed::InitCeedVector(H_gf, ceed, &H_gf_vec);
+      }
 
       // Construct mesh element restriction for elements of this element geometry type.
       CeedElemRestriction mesh_elem_restr;
@@ -310,16 +435,16 @@ CurlFluxErrorEstimator::CurlFluxErrorEstimator(const MaterialOperator &mat_op,
       CeedBasis nd_basis = nd_fespace.GetCeedBasis(ceed, geom);
 
       // Construct coefficient for discontinuous flux, then smooth flux.
-      mfem::DenseTensor mat_invsqrtmu = linalg::MatrixSqrt(mat_op.GetInvPermeability());
-      mfem::DenseTensor mat_sqrtmu = linalg::MatrixPow(mat_op.GetInvPermeability(), -0.5);
+      auto mat_invsqrtmu = linalg::MatrixSqrt(mat_op.GetInvPermeability());
+      auto mat_sqrtmu = linalg::MatrixPow(mat_op.GetInvPermeability(), -0.5);
       MaterialPropertyCoefficient invsqrtmu_func(mat_op.GetAttributeToMaterial(),
                                                  mat_invsqrtmu);
       MaterialPropertyCoefficient sqrtmu_func(mat_op.GetAttributeToMaterial(), mat_sqrtmu);
       auto ctx = ceed::PopulateCoefficientContext(mesh.SpaceDimension(), &invsqrtmu_func,
                                                   mesh.SpaceDimension(), &sqrtmu_func);
 
-      // Assemble the libCEED operator. Inputs: Discontinuous flux, then smooth flux.
-      // Currently only supports 3D, since curl in 2D requires special treatment.
+      // Assemble the libCEED operator. Inputs: B (for discontinuous flux), then smooth
+      // flux. Currently only supports 3D, since curl in 2D requires special treatment.
       ceed::CeedQFunctionInfo info;
       info.assemble_q_data = false;
       switch (10 * mesh.SpaceDimension() + mesh.Dimension())
@@ -333,8 +458,7 @@ CurlFluxErrorEstimator::CurlFluxErrorEstimator(const MaterialOperator &mat_op,
                      << mesh.Dimension() << ", " << mesh.SpaceDimension()
                      << ") for CurlFluxErrorEstimator!");
       }
-      info.trial_ops = ceed::EvalMode::Interp;
-      info.test_ops = ceed::EvalMode::Interp;
+      info.trial_ops = info.test_ops = ceed::EvalMode::Interp;
 
       CeedOperator sub_op;
       ceed::AssembleCeedElementErrorIntegrator(
@@ -354,126 +478,52 @@ CurlFluxErrorEstimator::CurlFluxErrorEstimator(const MaterialOperator &mat_op,
   integ_op.Finalize();
 }
 
-void CurlFluxErrorEstimator::AddErrorIndicator(const Vector &B, double Et,
-                                               ErrorIndicator &indicator) const
+template <typename VecType>
+void CurlFluxErrorEstimator<VecType>::AddErrorIndicator(const VecType &B, double Et,
+                                                        ErrorIndicator &indicator) const
 {
-  AddErrorIndicator(B, B_gf, H, H_gf, Et, rt_fespace, nd_fespace, projector, integ_op,
-                    indicator);
+  auto estimates =
+      ComputeErrorEstimates(B, B_gf, H, H_gf, rt_fespace, nd_fespace, projector, integ_op);
+  linalg::Sqrt(estimates, (Et > 0.0) ? 1.0 / Et : 1.0);
+  indicator.AddIndicator(estimates);
 }
 
-GradFluxErrorEstimator::GradFluxErrorEstimator(const MaterialOperator &mat_op,
-                                               FiniteElementSpace &nd_fespace,
-                                               FiniteElementSpaceHierarchy &rt_fespaces,
-                                               double tol, int max_it, int print,
-                                               bool use_mg)
-  : nd_fespace(nd_fespace), rt_fespace(rt_fespaces.GetFinestFESpace()),
-    projector(MaterialPropertyCoefficient(mat_op.GetAttributeToMaterial(),
-                                          mat_op.GetPermittivityReal()),
-              rt_fespaces, nd_fespace, tol, max_it, print, use_mg),
-    integ_op(nd_fespace.GetMesh().GetNE(), nd_fespace.GetVSize()),
-    E_gf(nd_fespace.GetVSize()), D(rt_fespace.GetTrueVSize()), D_gf(rt_fespace.GetVSize())
+template <typename VecType>
+TimeDependentFluxErrorEstimator<VecType>::TimeDependentFluxErrorEstimator(
+    const MaterialOperator &mat_op, FiniteElementSpaceHierarchy &nd_fespaces,
+    FiniteElementSpaceHierarchy &rt_fespaces, double tol, int max_it, int print,
+    bool use_mg)
+  : grad_estimator(mat_op, nd_fespaces.GetFinestFESpace(), rt_fespaces, tol, max_it, print,
+                   use_mg),
+    curl_estimator(mat_op, rt_fespaces.GetFinestFESpace(), nd_fespaces, tol, max_it, print,
+                   use_mg)
 {
-  E_gf.UseDevice(true);
-  D.UseDevice(true);
-  D_gf.UseDevice(true);
-
-  // Construct the libCEED operator used for integrating the element-wise error. The
-  // discontinuous flux is ε E = ε ∇V.
-  const auto &mesh = nd_fespace.GetMesh();
-  const std::size_t nt = ceed::internal::GetCeedObjects().size();
-  PalacePragmaOmp(parallel if (nt > 1))
-  {
-    Ceed ceed = ceed::internal::GetCeedObjects()[utils::GetThreadNum()];
-    for (const auto &[geom, data] : mesh.GetCeedGeomFactorData(ceed))
-    {
-      // Only integrate over domain elements (not on the boundary).
-      if (mfem::Geometry::Dimension[geom] < mesh.Dimension())
-      {
-        continue;
-      }
-
-      // Create libCEED vector wrappers for use with libCEED operators.
-      CeedVector E_gf_vec, E_gf_vec;
-      ceed::InitCeedVector(E_gf, ceed, &E_gf_vec);
-      ceed::InitCeedVector(D_gf, ceed, &D_gf_vec);
-
-      // Construct mesh element restriction for elements of this element geometry type.
-      CeedElemRestriction mesh_elem_restr;
-      PalaceCeedCall(ceed, CeedElemRestrictionCreate(
-                               ceed, static_cast<CeedInt>(data.indices.size()), 1, 1,
-                               mesh.GetNE(), mesh.GetNE(), CEED_MEM_HOST, CEED_USE_POINTER,
-                               data.indices.data(), &mesh_elem_restr));
-
-      // Element restriction and basis objects for inputs.
-      CeedElemRestriction nd_restr =
-          nd_fespace.GetCeedElemRestriction(ceed, geom, data.indices);
-      CeedElemRestriction rt_restr =
-          rt_fespace.GetCeedElemRestriction(ceed, geom, data.indices);
-      CeedBasis nd_basis = nd_fespace.GetCeedBasis(ceed, geom);
-      CeedBasis rt_basis = rt_fespace.GetCeedBasis(ceed, geom);
-
-      // Construct coefficient for discontinuous flux, then smooth flux.
-      mfem::DenseTensor mat_sqrtepsilon = linalg::MatrixSqrt(mat_op.GetPermittivityReal());
-      mfem::DenseTensor mat_invsqrtepsilon =
-          linalg::MatrixPow(mat_op.GetPermittivityReal(), -0.5);
-      MaterialPropertyCoefficient sqrtepsilon_func(mat_op.GetAttributeToMaterial(),
-                                                   mat_sqrtepsilon);
-      MaterialPropertyCoefficient invsqrtepsilon_func(mat_op.GetAttributeToMaterial(),
-                                                      mat_invsqrtepsilon);
-      auto ctx =
-          ceed::PopulateCoefficientContext(mesh.SpaceDimension(), &sqrtepsilon_func,
-                                           mesh.SpaceDimension(), &invsqrtepsilon_func);
-
-      // Assemble the libCEED operator. Inputs: E (for discontinuous flux), then smooth
-      // flux.
-      ceed::CeedQFunctionInfo info;
-      info.assemble_q_data = false;
-      switch (10 * mesh.SpaceDimension() + mesh.Dimension())
-      {
-        case 22:
-          info.apply_qf = f_apply_hcurlhdiv_error_22;
-          info.apply_qf_path = PalaceQFunctionRelativePath(f_apply_hcurlhdiv_error_22_loc);
-          break;
-        case 33:
-          info.apply_qf = f_apply_hcurlhdiv_error_33;
-          info.apply_qf_path = PalaceQFunctionRelativePath(f_apply_hcurlhdiv_error_33_loc);
-          break;
-        default:
-          MFEM_ABORT("Invalid value of (dim, space_dim) = ("
-                     << mesh.Dimension() << ", " << mesh.SpaceDimension()
-                     << ") for GradFluxErrorEstimator!");
-      }
-      info.trial_ops = ceed::EvalMode::Interp;
-      info.test_ops = ceed::EvalMode::Interp;
-
-      CeedOperator sub_op;
-      ceed::AssembleCeedElementErrorIntegrator(
-          info, (void *)ctx.data(), ctx.size() * sizeof(CeedIntScalar), ceed, E_gf_vec,
-          D_gf_vec, nd_restr, rt_restr, nd_basis, rt_basis, mesh_elem_restr, data.geom_data,
-          data.geom_data_restr, &sub_op);
-      integ_op.AddOper(sub_op);  // Sub-operator owned by ceed::Operator
-
-      // Element restriction and passive input vectors are owned by the operator.
-      PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&mesh_elem_restr));
-      PalaceCeedCall(ceed, CeedVectorDestroy(&E_gf_vec));
-      PalaceCeedCall(ceed, CeedVectorDestroy(&D_gf_vec));
-    }
-  }
-
-  // Finalize the operator (call CeedOperatorCheckReady).
-  integ_op.Finalize();
 }
 
-void GradFluxErrorEstimator::AddErrorIndicator(const Vector &E, double Et,
-                                               ErrorIndicator &indicator) const
+template <typename VecType>
+void TimeDependentFluxErrorEstimator<VecType>::AddErrorIndicator(
+    const VecType &E, const VecType &B, double Et, ErrorIndicator &indicator) const
 {
-  AddErrorIndicator(E, E_gf, D, D_gf, Et, nd_fespace, rt_fespace, projector, integ_op,
-                    indicator);
+  auto grad_estimates =
+      ComputeErrorEstimates(E, grad_estimator.E_gf, grad_estimator.D, grad_estimator.D_gf,
+                            grad_estimator.nd_fespace, grad_estimator.rt_fespace,
+                            grad_estimator.projector, grad_estimator.integ_op);
+  auto curl_estimates =
+      ComputeErrorEstimates(B, curl_estimator.B_gf, curl_estimator.H, curl_estimator.H_gf,
+                            curl_estimator.rt_fespace, curl_estimator.nd_fespace,
+                            curl_estimator.projector, curl_estimator.integ_op);
+  grad_estimates += curl_estimates;  // Sum of squares
+  linalg::Sqrt(grad_estimates, (Et > 0.0) ? 1.0 / Et : 1.0);
+  indicator.AddIndicator(grad_estimates);
 }
 
 template class FluxProjector<Vector>;
 template class FluxProjector<ComplexVector>;
+template class GradFluxErrorEstimator<Vector>;
+template class GradFluxErrorEstimator<ComplexVector>;
 template class CurlFluxErrorEstimator<Vector>;
 template class CurlFluxErrorEstimator<ComplexVector>;
+template class TimeDependentFluxErrorEstimator<Vector>;
+template class TimeDependentFluxErrorEstimator<ComplexVector>;
 
 }  // namespace palace
