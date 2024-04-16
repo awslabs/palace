@@ -170,7 +170,6 @@ solver. This option is relevant only for `"Type": "FEAST"`.
     "MaxFreq": <float>,
     "FreqStep": <float>,
     "SaveStep": <int>,
-    "SaveOnlyPorts": <bool>,
     "Restart": <int>,
     "AdaptiveTol": <float>,
     "AdaptiveMaxSamples": <int>,
@@ -190,11 +189,6 @@ with
 fields to disk for visualization with [ParaView](https://www.paraview.org/). Files are
 saved in the `paraview/` directory under the directory specified by
 [`config["Problem"]["Output"]`](problem.md#config%5B%22Problem%22%5D).
-
-`"SaveOnlyPorts" [false]` :  If set to `true`, postprocessing is only performed for port
-boundaries and skipped for quantities depending on, for example, field integrals over all
-or part of the interior of the computational domain. This can be useful in speeding up
-simulations if only port boundary quantities are required.
 
 `"Restart" [1]` :  Iteration (1-based) from which to restart for a partial frequency sweep
 simulation. That is, the initial frequency will be computed as
@@ -226,8 +220,7 @@ error tolerance.
     "ExcitationWidth": <float>,
     "MaxTime": <float>,
     "TimeStep": <float>,
-    "SaveStep": <int>,
-    "SaveOnlyPorts": <bool>
+    "SaveStep": <int>
 }
 ```
 
@@ -278,11 +271,6 @@ start from rest at ``t = 0.0``.
 disk for visualization with [ParaView](https://www.paraview.org/). Files are saved in the
 `paraview/` directory under the directory specified by
 [`config["Problem"]["Output"]`](problem.md#config%5B%22Problem%22%5D).
-
-`"SaveOnlyPorts" [false]` :  If set to `true`, postprocessing is only performed for port
-boundaries and skipped for quantities depending on, for example, field integrals over all
-or part of the interior of the computational domain. This can be useful in speeding up
-simulations if only port boundary quantities are required.
 
 ## `solver["Electrostatic"]`
 
