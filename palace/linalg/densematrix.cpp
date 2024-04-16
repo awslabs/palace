@@ -29,7 +29,8 @@ mfem::DenseMatrix MatrixFunction(const mfem::DenseMatrix &M,
     for (int j = i + 1; j < N; j++)
     {
       MFEM_VERIFY(std::abs(M(i, j) - M(j, i)) < tol,
-                  "MatrixFunction only available for symmetric matrices!");
+                  "MatrixFunction only available for symmetric matrices ("
+                      << M(i, j) << " != " << M(j, i) << ")!");
     }
   }
   mfem::DenseMatrix Mout(N, N);
@@ -203,6 +204,7 @@ mfem::DenseTensor MatrixSqrt(const mfem::DenseTensor &T)
   {
     S(k) = MatrixSqrt(T(k));
   }
+  return S;
 }
 
 mfem::DenseMatrix MatrixPow(const mfem::DenseMatrix &M, double p)
@@ -217,6 +219,7 @@ mfem::DenseTensor MatrixPow(const mfem::DenseTensor &T, double p)
   {
     S(k) = MatrixPow(T(k), p);
   }
+  return S;
 }
 
 mfem::DenseTensor Mult(const mfem::DenseTensor &A, const mfem::DenseTensor &B)
@@ -228,6 +231,7 @@ mfem::DenseTensor Mult(const mfem::DenseTensor &A, const mfem::DenseTensor &B)
   {
     Mult(A(k), B(k), C(k));
   }
+  return C;
 }
 
 }  // namespace linalg
