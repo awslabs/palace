@@ -109,19 +109,17 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
     // Postprocess for the time step.
     BlockTimer bt2(Timer::POSTPRO);
-    double E_elec = 0.0, E_mag = 0.0;
     const Vector &E = timeop.GetE();
     const Vector &B = timeop.GetB();
     postop.SetEGridFunction(E);
     postop.SetBGridFunction(B);
     postop.UpdatePorts(spaceop.GetLumpedPortOp());
+    double E_elec = postop.GetEFieldEnergy();
+    double E_mag = postop.GetHFieldEnergy();
     Mpi::Print(" Sol. ||E|| = {:.6e}, ||B|| = {:.6e}\n",
                linalg::Norml2(spaceop.GetComm(), E), linalg::Norml2(spaceop.GetComm(), B));
-    if (!iodata.solver.transient.only_port_post)
     {
       const double J = iodata.DimensionalizeValue(IoData::ValueType::ENERGY, 1.0);
-      E_elec = postop.GetEFieldEnergy();
-      E_mag = postop.GetHFieldEnergy();
       Mpi::Print(" Field energy E ({:.3e} J) + H ({:.3e} J) = {:.3e} J\n", E_elec * J,
                  E_mag * J, (E_elec + E_mag) * J);
     }
@@ -132,8 +130,7 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
     // Postprocess port voltages/currents and optionally write solution to disk.
     Postprocess(postop, spaceop.GetLumpedPortOp(), spaceop.GetSurfaceCurrentOp(), step, t,
-                J_coef(t), E_elec, E_mag, !iodata.solver.transient.only_port_post,
-                (step == nstep - 1) ? &indicator : nullptr);
+                J_coef(t), E_elec, E_mag, (step == nstep - 1) ? &indicator : nullptr);
 
     // Increment time step.
     step++;
@@ -256,32 +253,28 @@ void TransientSolver::Postprocess(const PostOperator &postop,
                                   const LumpedPortOperator &lumped_port_op,
                                   const SurfaceCurrentOperator &surf_j_op, int step,
                                   double t, double J_coef, double E_elec, double E_mag,
-                                  bool full, const ErrorIndicator *indicator) const
+                                  const ErrorIndicator *indicator) const
 {
   // The internal GridFunctions for PostOperator have already been set from the E and B
   // solutions in the main time integration loop.
   const double ts = iodata.DimensionalizeValue(IoData::ValueType::TIME, t);
+  double E_cap = postop.GetLumpedCapacitorEnergy(lumped_port_op);
+  double E_ind = postop.GetLumpedInductorEnergy(lumped_port_op);
   PostprocessCurrents(postop, surf_j_op, step, t, J_coef);
   PostprocessPorts(postop, lumped_port_op, step, t, J_coef);
-  if (full)
-  {
-    double E_cap = postop.GetLumpedCapacitorEnergy(lumped_port_op);
-    double E_ind = postop.GetLumpedInductorEnergy(lumped_port_op);
-    PostprocessDomains(postop, "t (ns)", step, ts, E_elec, E_mag, E_cap, E_ind);
-    PostprocessSurfaces(postop, "t (ns)", step, ts, E_elec + E_cap, E_mag + E_ind, 1.0,
-                        1.0);
-    PostprocessProbes(postop, "t (ns)", step, ts);
-  }
+  PostprocessDomains(postop, "t (ns)", step, ts, E_elec, E_mag, E_cap, E_ind);
+  PostprocessSurfaces(postop, "t (ns)", step, ts, E_elec + E_cap, E_mag + E_ind, 1.0, 1.0);
+  PostprocessProbes(postop, "t (ns)", step, ts);
   if (iodata.solver.transient.delta_post > 0 &&
       step % iodata.solver.transient.delta_post == 0)
   {
     Mpi::Print("\n");
-    PostprocessFields(postop, step / iodata.solver.transient.delta_post, ts, indicator);
+    PostprocessFields(postop, step / iodata.solver.transient.delta_post, ts);
     Mpi::Print(" Wrote fields to disk at step {:d}\n", step);
   }
   if (indicator)
   {
-    PostprocessErrorIndicator(postop, *indicator);
+    PostprocessErrorIndicator(postop, *indicator, iodata.solver.transient.delta_post > 0);
   }
 }
 
