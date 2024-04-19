@@ -63,31 +63,6 @@ auto BuildLevelParOperator(std::unique_ptr<Operator> &&a, const FiniteElementSpa
 }
 
 template <typename OperType>
-std::unique_ptr<OperType> GetMassMatrix(const FiniteElementSpaceHierarchy &fespaces,
-                                        bool use_mg)
-{
-  constexpr bool skip_zeros = false;
-  BilinearForm m(fespaces.GetFinestFESpace());
-  m.AddDomainIntegrator<VectorFEMassIntegrator>();
-  if (!use_mg)
-  {
-    return BuildLevelParOperator<OperType>(m.Assemble(skip_zeros),
-                                           fespaces.GetFinestFESpace());
-  }
-  else
-  {
-    auto m_vec = m.Assemble(fespaces, skip_zeros);
-    auto M_mg = std::make_unique<BaseMultigridOperator<OperType>>(fespaces.GetNumLevels());
-    for (std::size_t l = 0; l < fespaces.GetNumLevels(); l++)
-    {
-      const auto &fespace_l = fespaces.GetFESpaceAtLevel(l);
-      M_mg->AddOperator(BuildLevelParOperator<OperType>(std::move(m_vec[l]), fespace_l));
-    }
-    return M_mg;
-  }
-}
-
-template <typename OperType>
 auto ConfigureLinearSolver(const FiniteElementSpaceHierarchy &fespaces, double tol,
                            int max_it, int print, bool use_mg)
 {
@@ -117,7 +92,6 @@ auto ConfigureLinearSolver(const FiniteElementSpaceHierarchy &fespaces, double t
       pc = std::make_unique<MfemWrapperSolver<OperType>>(std::move(amg));
     }
   }
-
   auto pcg =
       std::make_unique<CgSolver<OperType>>(fespaces.GetFinestFESpace().GetComm(), print);
   pcg->SetInitialGuess(false);
@@ -138,16 +112,35 @@ FluxProjector<VecType>::FluxProjector(const MaterialPropertyCoefficient &coeff,
   BlockTimer bt(Timer::CONSTRUCT_ESTIMATOR);
   const auto &smooth_fespace = smooth_fespaces.GetFinestFESpace();
   {
+    constexpr bool skip_zeros = false;
+    BilinearForm m(smooth_fespace);
+    m.AddDomainIntegrator<VectorFEMassIntegrator>();
+    if (!use_mg)
+    {
+      M = BuildLevelParOperator<OperType>(m.Assemble(skip_zeros), smooth_fespace);
+    }
+    else
+    {
+      auto m_vec = m.Assemble(smooth_fespaces, skip_zeros);
+      auto M_mg =
+          std::make_unique<BaseMultigridOperator<OperType>>(smooth_fespaces.GetNumLevels());
+      for (std::size_t l = 0; l < smooth_fespaces.GetNumLevels(); l++)
+      {
+        const auto &fespace_l = smooth_fespaces.GetFESpaceAtLevel(l);
+        M_mg->AddOperator(BuildLevelParOperator<OperType>(std::move(m_vec[l]), fespace_l));
+      }
+      M = std::move(M_mg);
+    }
+  }
+  {
     // Flux operator is always partially assembled.
     BilinearForm flux(rhs_fespace, smooth_fespace);
     flux.AddDomainIntegrator<VectorFEMassIntegrator>(coeff);
     Flux = BuildLevelParOperator<OperType>(flux.PartialAssemble(), rhs_fespace,
                                            smooth_fespace);
   }
-  M = GetMassMatrix<OperType>(smooth_fespaces, use_mg);
   ksp = ConfigureLinearSolver<OperType>(smooth_fespaces, tol, max_it, print, use_mg);
   ksp->SetOperators(*M, *M);
-
   rhs.SetSize(smooth_fespace.GetTrueVSize());
   rhs.UseDevice(true);
 }
@@ -158,8 +151,8 @@ void FluxProjector<VecType>::Mult(const VecType &x, VecType &y) const
   BlockTimer bt(Timer::SOLVE_ESTIMATOR);
   MFEM_ASSERT(x.Size() == Flux->Width() && y.Size() == rhs.Size(),
               "Invalid vector dimensions for FluxProjector::Mult!");
-  Flux->Mult(x, rhs);
   // Mpi::Print(" Computing smooth flux recovery (projection) for error estimation\n");
+  Flux->Mult(x, rhs);
   ksp->Mult(rhs, y);
 }
 
@@ -371,7 +364,7 @@ void GradFluxErrorEstimator<VecType>::AddErrorIndicator(const VecType &E, double
 {
   auto estimates =
       ComputeErrorEstimates(E, E_gf, D, D_gf, nd_fespace, rt_fespace, projector, integ_op);
-  linalg::Sqrt(estimates, (Et > 0.0) ? 1.0 / Et : 1.0);
+  linalg::Sqrt(estimates, (Et > 0.0) ? 0.5 / Et : 1.0);  // Correct factor of 1/2 in energy
   indicator.AddIndicator(estimates);
 }
 
@@ -484,7 +477,7 @@ void CurlFluxErrorEstimator<VecType>::AddErrorIndicator(const VecType &B, double
 {
   auto estimates =
       ComputeErrorEstimates(B, B_gf, H, H_gf, rt_fespace, nd_fespace, projector, integ_op);
-  linalg::Sqrt(estimates, (Et > 0.0) ? 1.0 / Et : 1.0);
+  linalg::Sqrt(estimates, (Et > 0.0) ? 0.5 / Et : 1.0);  // Correct factor of 1/2 in energy
   indicator.AddIndicator(estimates);
 }
 
@@ -513,7 +506,8 @@ void TimeDependentFluxErrorEstimator<VecType>::AddErrorIndicator(
                             curl_estimator.rt_fespace, curl_estimator.nd_fespace,
                             curl_estimator.projector, curl_estimator.integ_op);
   grad_estimates += curl_estimates;  // Sum of squares
-  linalg::Sqrt(grad_estimates, (Et > 0.0) ? 1.0 / Et : 1.0);
+  linalg::Sqrt(grad_estimates,
+               (Et > 0.0) ? 0.5 / Et : 1.0);  // Correct factor of 1/2 in energy
   indicator.AddIndicator(grad_estimates);
 }
 
