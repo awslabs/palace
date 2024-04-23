@@ -747,8 +747,16 @@ void PostOperator::WriteFieldsFinal(const ErrorIndicator *indicator) const
       HasE() ? *E->ParFESpace()->GetParMesh() : *B->ParFESpace()->GetParMesh();
   mesh::DimensionalizeMesh(mesh, mesh_Lc0);
   paraview.SetCycle(paraview.GetCycle() + 1);
-  paraview.SetTime(std::pow(10.0, 2.0 + static_cast<int>(std::log10(paraview.GetTime()))) -
-                   1.0);
+  if (paraview.GetTime() < 1.0)
+  {
+    paraview.SetTime(99.0);
+  }
+  else
+  {
+    // 1 -> 99, 10 -> 999, etc.
+    paraview.SetTime(
+        std::pow(10.0, 2.0 + static_cast<int>(std::log10(paraview.GetTime()))) - 1.0);
+  }
   mfem::DataCollection::FieldMapType field_map(paraview.GetFieldMap());  // Copy
   for (const auto &[name, gf] : field_map)
   {
