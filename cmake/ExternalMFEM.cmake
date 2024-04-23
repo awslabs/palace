@@ -365,6 +365,7 @@ set(MFEM_PATCH_FILES
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_mesh_prism_vtu_fix.diff"
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_workspace_vectors.diff"
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_hypre_runtime_compute_policy.diff"
+  "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_nc_internal_project.diff"
 )
 
 include(ExternalProject)
