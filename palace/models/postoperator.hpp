@@ -96,6 +96,32 @@ public:
   void SetVGridFunction(const Vector &v, bool exchange_face_nbr_data = true);
   void SetAGridFunction(const Vector &a, bool exchange_face_nbr_data = true);
 
+  // Access grid functions for field solutions.
+  auto &GetE()
+  {
+    MFEM_ASSERT(E.has_value(),
+                "Missing GridFunction object when accessing from PostOperator!");
+    return *E;
+  }
+  auto &GetB()
+  {
+    MFEM_ASSERT(B.has_value(),
+                "Missing GridFunction object when accessing from PostOperator!");
+    return *B;
+  }
+  auto &GetV()
+  {
+    MFEM_ASSERT(V.has_value(),
+                "Missing GridFunction object when accessing from PostOperator!");
+    return *V;
+  }
+  auto &GetA()
+  {
+    MFEM_ASSERT(A.has_value(),
+                "Missing GridFunction object when accessing from PostOperator!");
+    return *A;
+  }
+
   // Postprocess the total electric and magnetic field energies in the electric and magnetic
   // fields.
   double GetEFieldEnergy() const;

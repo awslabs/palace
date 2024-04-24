@@ -367,8 +367,8 @@ void BaseSolver::PostprocessDomains(const PostOperator &postop, const std::strin
 
   // Write the field and lumped element energies.
   std::vector<EnergyData> energy_data;
-  energy_data.reserve(postop.GetDomainPostOp().GetDomains().size());
-  for (const auto &[idx, data] : postop.GetDomainPostOp().GetDomains())
+  energy_data.reserve(postop.GetDomainPostOp().M_i.size());
+  for (const auto &[idx, data] : postop.GetDomainPostOp().M_i)
   {
     const double E_elec_i = (E_elec > 0.0) ? postop.GetEFieldEnergy(idx) : 0.0;
     const double E_mag_i = (E_mag > 0.0) ? postop.GetHFieldEnergy(idx) : 0.0;
@@ -449,8 +449,8 @@ void BaseSolver::PostprocessSurfaces(const PostOperator &postop, const std::stri
 
   // Write the Q-factors due to interface dielectric loss.
   std::vector<EpsData> eps_data;
-  eps_data.reserve(postop.GetSurfacePostOp().GetEps().size());
-  for (const auto &[idx, data] : postop.GetSurfacePostOp().GetEps())
+  eps_data.reserve(postop.GetSurfacePostOp().eps_surfs.size());
+  for (const auto &[idx, data] : postop.GetSurfacePostOp().eps_surfs)
   {
     const double pl = postop.GetInterfaceParticipation(idx, E_elec);
     const double tandelta = postop.GetSurfacePostOp().GetInterfaceLossTangent(idx);
@@ -491,8 +491,8 @@ void BaseSolver::PostprocessSurfaces(const PostOperator &postop, const std::stri
 
   // Write the surface capacitance (integrated charge).
   std::vector<CapData> cap_data;
-  cap_data.reserve(postop.GetSurfacePostOp().GetCap().size());
-  for (const auto &[idx, data] : postop.GetSurfacePostOp().GetCap())
+  cap_data.reserve(postop.GetSurfacePostOp().charge_surfs.size());
+  for (const auto &[idx, data] : postop.GetSurfacePostOp().charge_surfs)
   {
     const double Cij = (std::abs(Vinc) > 0.0) ? postop.GetSurfaceCharge(idx) / Vinc : 0.0;
     cap_data.push_back(
@@ -529,8 +529,8 @@ void BaseSolver::PostprocessSurfaces(const PostOperator &postop, const std::stri
 
   // Write the surface inductance (integrated flux).
   std::vector<IndData> ind_data;
-  ind_data.reserve(postop.GetSurfacePostOp().GetInd().size());
-  for (const auto &[idx, data] : postop.GetSurfacePostOp().GetInd())
+  ind_data.reserve(postop.GetSurfacePostOp().flux_surfs.size());
+  for (const auto &[idx, data] : postop.GetSurfacePostOp().flux_surfs)
   {
     const double Mij = (std::abs(Iinc) > 0.0) ? postop.GetSurfaceFlux(idx) / Iinc : 0.0;
     ind_data.push_back(
