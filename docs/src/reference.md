@@ -10,7 +10,7 @@
 The solver computes a finite element approximation to the three-dimensional, time-harmonic
 Maxwell's equations in second-order form. The nondimensionalized, source-free, boundary
 value problem for ``\bm{E}(\bm{x})\in\mathbb{C}^3``, ``\bm{x}\in\Omega``,
-``\partial\Omega=\Gamma``, where
+``\partial\Omega = \Gamma``, where
 ``\bm{\mathscr{E}}(\bm{x},t) = \text{Re}\{\bm{E}(\bm{x})e^{i\omega t}\}`` denotes the
 electric field, is written as
 
@@ -53,21 +53,21 @@ complex-valued quantity:
 ```
 
 where ``\varepsilon_r'`` is the real relative permittivity and ``\tan{\delta}`` is the loss
-tangent. Alternatively, conductor loss is modeled by Ohm's law ``\bm{J}=\sigma\bm{E}`` with
-electrical conductivity ``\sigma>0.0``. For a superconducting domain, the constitive
+tangent. Alternatively, conductor loss is modeled by Ohm's law ``\bm{J} = \sigma\bm{E}``
+with electrical conductivity ``\sigma > 0.0``. For a superconducting domain, the constitive
 current-field relationship given by Ohm's law is replaced by that given by the London
 equations:
 
 ```math
-\frac{\partial \bm{J}}{\partial t}=\frac{1}{\mu_r\lambda_L^2}\bm{E}
+\frac{\partial \bm{J}}{\partial t} = \frac{1}{\mu_r\lambda_L^2}\bm{E}
 ```
 
 where ``\lambda_L = \sqrt{m/\mu n_s e^2}/L_0`` is the nondimensionalized London penetration
 depth. In this case, the term ``+i\omega\sigma \bm{E}`` arising for a normal conductor in
 the time-harmonic Maxwell's equations becomes ``+(\mu_r \lambda_L^2)^{-1}\bm{E}``.
 
-The domain boundary ``\Gamma=\Gamma_{PEC}\cup\Gamma_{PMC}\cup\Gamma_{Z}``, is separated into
-perfect electric conductor (PEC), perfect magnetic conductor (PMC), and impedance
+The domain boundary ``\Gamma = \Gamma_{PEC}\cup\Gamma_{PMC}\cup\Gamma_{Z}``, is separated
+into perfect electric conductor (PEC), perfect magnetic conductor (PMC), and impedance
 boundaries, respectively. The PEC boundary condition is a homogeneous Dirichlet condition,
 while the PMC boundary condition is the natural boundary condition for the problem and is
 satisfied at all exterior boundaries by the finite element formulation. Impedance
@@ -201,12 +201,12 @@ In the time domain, the time histories of the port voltages can be Fourier-trans
 get their frequency domain representation for scattering parameter calculation.
 
 Numeric wave ports assume a field with known normal-direction dependence
-``\bm{E}(\bm{x})=\bm{e}(\bm{x}_t)e^{ik_n x_n}`` where ``k_n`` is the propagation constant.
+``\bm{E}(\bm{x}) = \bm{e}(\bm{x}_t)e^{ik_n x_n}`` where ``k_n`` is the propagation constant.
 For each operating frequency ``\omega``, a two-dimensional eigenvalue problem is solved on
 the port yielding the mode shapes ``\bm{e}_m`` and associated propagation constants
 ``k_{n,m}``. These are used in the full 3D model where the Robin port boundary condition has
-coefficient ``\gamma=i\text{Re}\{k_{n,m}\}/\mu_r`` and the computed mode is used to compute
-the incident field in the source term ``\bm{U}^{inc}`` at excited ports. Scattering
+coefficient ``\gamma = i\text{Re}\{k_{n,m}\}/\mu_r`` and the computed mode is used to
+compute the incident field in the source term ``\bm{U}^{inc}`` at excited ports. Scattering
 parameter postprocessing takes the same form as the lumped port counterpart using the
 computed modal solutions. Since the propagation constants are known for each wave port,
 scattering parameter de-embedding can be performed by specifying an offset distance ``d``
@@ -229,7 +229,7 @@ condition, is a special case of the general impedance boundary condition describ
 ```
 
 This is also known as the Sommerfeld radiation condition, and one can recognize the
-dependence on the impedance of free space ``Z_0^{-1}=\sqrt{\mu_r^{-1}\varepsilon_r}``. The
+dependence on the impedance of free space ``Z_0^{-1} = \sqrt{\mu_r^{-1}\varepsilon_r}``. The
 second-order absorbing boundary condition is
 
 ```math
@@ -238,7 +238,7 @@ second-order absorbing boundary condition is
     - \beta\nabla\times[(\nabla\times\bm{E})_n\bm{n}] = 0
 ```
 
-where assuming an infinite radius of curvature ``\beta=\mu_r^{-1}c_0/(2i\omega)``, and the
+where assuming an infinite radius of curvature ``\beta = \mu_r^{-1}c_0/(2i\omega)``, and the
 contribution depending on ``(\nabla\cdot\bm{E}_t)`` has been neglected.
 
 Additionally, while metals with finite conductivity can be modeled using an impedance
@@ -249,7 +249,7 @@ account the frequency dependence of the skin depth is
 Z_s = \frac{1+i}{\delta\sigma}
 ```
 
-where ``\delta=\sqrt{2/\mu_r\sigma\omega}`` is the skin depth and ``\sigma`` is the
+where ``\delta = \sqrt{2/\mu_r\sigma\omega}`` is the skin depth and ``\sigma`` is the
 conductivity of the metal. Another model, which takes into account finite thickness effects,
 is given by
 
@@ -258,7 +258,7 @@ Z_s = \frac{1}{\delta\sigma}\left(\frac{\sinh{\nu}+\sin{\nu}}{\cosh{\nu}+\cos{\n
     + i\frac{\sinh{\nu}-\sin{\nu}}{\cosh{\nu}+\cos{\nu}}\right)
 ```
 
-where ``\nu=h/\delta`` and ``h`` is the layer thickness. This model correctly produces the
+where ``\nu = h/\delta`` and ``h`` is the layer thickness. This model correctly produces the
 DC limit when ``h\ll\delta``.
 
 ## Energy-participation ratios
@@ -294,8 +294,8 @@ Finally, the total electric energy in mode ``m`` is
     + \sum_j \frac{1}{2} \, C_jV_{mj}^2
 ```
 
-where ``\bm{D}_m=\varepsilon_r\bm{E}_m`` is the electric flux density for mode ``m`` and the
-second term on the right-hand side accounts for any lumped capacitive boundaries with
+where ``\bm{D}_m = \varepsilon_r\bm{E}_m`` is the electric flux density for mode ``m`` and
+the second term on the right-hand side accounts for any lumped capacitive boundaries with
 nonzero circuit capacitance ``C_j``.
 
 The EPR can also be used to estimate mode quality factors due to input-output(I-O) line
@@ -373,7 +373,7 @@ quality factor for interface ``j`` is given by
 ```
 
 where ``\bm{E}_n`` denotes the normal field to the interface and
-``\bm{E}_t=\bm{E}-\bm{E}_n`` denotes the tangential field.
+``\bm{E}_t = \bm{E}-\bm{E}_n`` denotes the tangential field.
 
 ## Lumped parameter extraction
 
@@ -444,7 +444,7 @@ implemented, which measures the error in the recovered magnetic field and electr
 density. On element ``K``, we have
 
 ```math
-\eta^2_K=\eta_{m,2}^2+\eta_{e,K}^2 =
+\eta^2_K = \eta_{m,2}^2+\eta_{e,K}^2 =
     \|\mu_r^{1/2}\bm{R}_{ND}(\mu^{-1}\bm{B})
     - (\mu_r^{-1/2}\bm{B})\|_{L^2(\Omega_K)}^2
     + \|\varepsilon_r^{-1/2}\bm{R}_{RT}(\varepsilon_r\bm{E})
