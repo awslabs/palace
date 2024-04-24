@@ -424,7 +424,7 @@ specified surfaces of the model. The magnetic field energy associated with any s
 \mathcal{E}(\bm{A}_i) = \frac{1}{2}\int_\Omega\mu_r^{-1}\bm{B}_i\cdot\bm{B}_i\,dV
 ```
 
-where ``\bm{B}_i=\nabla\times\bm{A}_i`` is the magnetic flux density. Then, the entries of
+where ``\bm{B}_i = \nabla\times\bm{A}_i`` is the magnetic flux density. Then, the entries of
 the inductance matrix, ``\bm{M}``, are given by
 
 ```math
@@ -435,6 +435,26 @@ the inductance matrix, ``\bm{M}``, are given by
 where ``I_i`` is the excitation current for port ``i``, computed by integrating the source
 surface current ``\bm{J}_s^{inc}`` over the surface of the port.
 
+## Error estimation and adaptive mesh refinement (AMR)
+
+Error estimation is used to provide element-wise error estimates for AMR, as well as a
+global error indicator used to terminate AMR iterations or provide an estimate for solution
+accuracy. A Zienkiewicz–Zhu (ZZ) error estimator based on [[5]](#References) is
+implemented, which measures the error in the recovered magnetic field and electric flux
+density. On element ``K``, we have
+
+```math
+\eta^2_K=\eta_{m,2}^2+\eta_{e,K}^2 =
+    \|\mu_r^{1/2}\bm{R}_{ND}(\mu^{-1}\bm{B})
+    - (\mu_r^{-1/2}\bm{B})\|_{L^2(\Omega_K)}^2
+    + \|\varepsilon_r^{-1/2}\bm{R}_{RT}(\varepsilon_r\bm{E})
+    - (\varepsilon_r^{1/2}\bm{E})\|_{L^2(\Omega_K)}^2
+```
+
+where ``\bm{R}_{ND}`` and ``\bm{R}_{RT}`` are the smooth-space recovery operators which
+orthogonally project their argument onto ``H(\text{curl})`` and ``H(\text{div})``,
+discretized by Nédélec and Raviart-Thomas elements, respectively.
+
 ## References
 
 [1] J.-M. Jin, _The Finite Element Method in Electromagnetics_, Wiley-IEEE Press, Hoboken,
@@ -444,4 +464,6 @@ Oxford, 2003.\
 [3] L. Vardapetyan and L. Demkowicz, Full-wave analysis of dielectric waveguides at a given
 frequency, _Mathematics of Computation_ 72 (2003) 105-129.\
 [4] J. Wenner, R. Barends, R. C. Bialczak, et al., Surface loss of superconducting coplanar
-waveguide resonators, _Applied Physics Letters_ 99, 113513 (2011).
+waveguide resonators, _Applied Physics Letters_ 99, 113513 (2011).\
+[5] S. Nicaise, On Zienkiewicz-Zhu error estimators for Maxwell’s equations, _Comptes Rendus
+Mathematique_ 340 (2005) 697-702.
