@@ -142,7 +142,7 @@ void MagnetostaticSolver::PostprocessTerminals(PostOperator &postop,
   for (int i = 0; i < M.Height(); i++)
   {
     // Diagonal: Mᵢᵢ = 2 Uₘ(Aᵢ) / Iᵢ² = (Aᵢᵀ K Aᵢ) / Iᵢ²
-    auto &A_gf = postop.GetA().Real();
+    auto &A_gf = postop.GetAGridFunction().Real();
     auto &H_gf = postop.GetDomainPostOp().H;
     A_gf.SetFromTrueDofs(A[i]);
     postop.GetDomainPostOp().M_mag->Mult(A_gf, H_gf);

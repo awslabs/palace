@@ -135,7 +135,7 @@ void ElectrostaticSolver::PostprocessTerminals(
   for (int i = 0; i < C.Height(); i++)
   {
     // Diagonal: Cᵢᵢ = 2 Uₑ(Vᵢ) / Vᵢ² = (Vᵢᵀ K Vᵢ) / Vᵢ²
-    auto &V_gf = postop.GetV().Real();
+    auto &V_gf = postop.GetVGridFunction().Real();
     auto &D_gf = postop.GetDomainPostOp().D;
     V_gf.SetFromTrueDofs(V[i]);
     postop.GetDomainPostOp().M_elec->Mult(V_gf, D_gf);

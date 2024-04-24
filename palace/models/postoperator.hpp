@@ -97,25 +97,25 @@ public:
   void SetAGridFunction(const Vector &a, bool exchange_face_nbr_data = true);
 
   // Access grid functions for field solutions.
-  auto &GetE()
+  auto &GetEGridFunction()
   {
     MFEM_ASSERT(E.has_value(),
                 "Missing GridFunction object when accessing from PostOperator!");
     return *E;
   }
-  auto &GetB()
+  auto &GetBGridFunction()
   {
     MFEM_ASSERT(B.has_value(),
                 "Missing GridFunction object when accessing from PostOperator!");
     return *B;
   }
-  auto &GetV()
+  auto &GetVGridFunction()
   {
     MFEM_ASSERT(V.has_value(),
                 "Missing GridFunction object when accessing from PostOperator!");
     return *V;
   }
-  auto &GetA()
+  auto &GetAGridFunction()
   {
     MFEM_ASSERT(A.has_value(),
                 "Missing GridFunction object when accessing from PostOperator!");
