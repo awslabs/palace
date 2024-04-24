@@ -21,8 +21,8 @@ namespace config
 {
 
 struct InterfaceDielectricData;
-struct CapacitanceData;
-struct InductanceData;
+struct SurfaceElectricChargeData;
+struct SurfaceMagneticFluxData;
 
 }  // namespace config
 
@@ -44,6 +44,26 @@ private:
     GetCoefficient(std::size_t i, const mfem::ParGridFunction &U,
                    const MaterialOperator &mat_op) const = 0;
   };
+  struct SurfaceElectricChargeData : public SurfaceData
+  {
+    SurfaceElectricChargeData(const config::SurfaceElectricChargeData &data,
+                              const mfem::ParMesh &mesh);
+
+    std::unique_ptr<mfem::Coefficient>
+    GetCoefficient(std::size_t i, const mfem::ParGridFunction &U,
+                   const MaterialOperator &mat_op) const override;
+  };
+  struct SurfaceMagneticFluxData : public SurfaceData
+  {
+    mfem::Vector direction;
+
+    SurfaceMagneticFluxData(const config::SurfaceMagneticFluxData &data,
+                            const mfem::ParMesh &mesh);
+
+    std::unique_ptr<mfem::Coefficient>
+    GetCoefficient(std::size_t i, const mfem::ParGridFunction &U,
+                   const MaterialOperator &mat_op) const override;
+  };
   struct InterfaceDielectricData : public SurfaceData
   {
     DielectricInterfaceType type;
@@ -52,24 +72,6 @@ private:
 
     InterfaceDielectricData(const config::InterfaceDielectricData &data,
                             const mfem::ParMesh &mesh);
-
-    std::unique_ptr<mfem::Coefficient>
-    GetCoefficient(std::size_t i, const mfem::ParGridFunction &U,
-                   const MaterialOperator &mat_op) const override;
-  };
-  struct SurfaceChargeData : public SurfaceData
-  {
-    SurfaceChargeData(const config::CapacitanceData &data, const mfem::ParMesh &mesh);
-
-    std::unique_ptr<mfem::Coefficient>
-    GetCoefficient(std::size_t i, const mfem::ParGridFunction &U,
-                   const MaterialOperator &mat_op) const override;
-  };
-  struct SurfaceFluxData : public SurfaceData
-  {
-    mfem::Vector direction;
-
-    SurfaceFluxData(const config::InductanceData &data, const mfem::ParMesh &mesh);
 
     std::unique_ptr<mfem::Coefficient>
     GetCoefficient(std::size_t i, const mfem::ParGridFunction &U,
@@ -88,19 +90,20 @@ private:
 
 public:
   // Data structures for postprocessing the surface with the given type.
+  std::map<int, SurfaceElectricChargeData> charge_surfs;
+  std::map<int, SurfaceMagneticFluxData> flux_surfs;
   std::map<int, InterfaceDielectricData> eps_surfs;
-  std::map<int, SurfaceChargeData> charge_surfs;
-  std::map<int, SurfaceFluxData> flux_surfs;
 
   SurfacePostOperator(const IoData &iodata, const MaterialOperator &mat_op,
                       mfem::ParFiniteElementSpace &h1_fespace);
 
-  // Get surface integrals computing dielectric interface energy, surface charge, or
-  // surface magnetic flux.
-  double GetInterfaceLossTangent(int idx) const;
-  double GetInterfaceElectricFieldEnergy(int idx, const GridFunction &E) const;
+  // Get surface integrals computing surface electric charge or magnetic flux.
   double GetSurfaceElectricCharge(int idx, const GridFunction &E) const;
   double GetSurfaceMagneticFlux(int idx, const GridFunction &B) const;
+
+  // Get surface integrals computing interface dielectric energy.
+  double GetInterfaceLossTangent(int idx) const;
+  double GetInterfaceElectricFieldEnergy(int idx, const GridFunction &E) const;
 };
 
 }  // namespace palace

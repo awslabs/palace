@@ -447,48 +447,6 @@ void BaseSolver::PostprocessSurfaces(const PostOperator &postop, const std::stri
     return;
   }
 
-  // Write the Q-factors due to interface dielectric loss.
-  std::vector<EpsData> eps_data;
-  eps_data.reserve(postop.GetSurfacePostOp().eps_surfs.size());
-  for (const auto &[idx, data] : postop.GetSurfacePostOp().eps_surfs)
-  {
-    const double pl = postop.GetInterfaceParticipation(idx, E_elec);
-    const double tandelta = postop.GetSurfacePostOp().GetInterfaceLossTangent(idx);
-    const double Ql =
-        (pl == 0.0 || tandelta == 0.0) ? mfem::infinity() : 1.0 / (tandelta * pl);
-    eps_data.push_back({idx, pl, Ql});
-  }
-  if (root && !eps_data.empty())
-  {
-    std::string path = post_dir + "surface-Q.csv";
-    auto output = OutputFile(path, (step > 0));
-    if (step == 0)
-    {
-      output.print("{:>{}s},", name, table.w1);
-      for (const auto &data : eps_data)
-      {
-        // clang-format off
-        output.print("{:>{}s},{:>{}s}{}",
-                     "p_surf[" + std::to_string(data.idx) + "]", table.w,
-                     "Q_surf[" + std::to_string(data.idx) + "]", table.w,
-                     (data.idx == eps_data.back().idx) ? "" : ",");
-        // clang-format on
-      }
-      output.print("\n");
-    }
-    output.print("{:{}.{}e},", time, table.w1, table.p1);
-    for (const auto &data : eps_data)
-    {
-      // clang-format off
-      output.print("{:+{}.{}e},{:+{}.{}e}{}",
-                   data.pl, table.w, table.p,
-                   data.Ql, table.w, table.p,
-                   (data.idx == eps_data.back().idx) ? "" : ",");
-      // clang-format on
-    }
-    output.print("\n");
-  }
-
   // Write the surface capacitance (integrated charge).
   std::vector<CapData> cap_data;
   cap_data.reserve(postop.GetSurfacePostOp().charge_surfs.size());
@@ -560,6 +518,48 @@ void BaseSolver::PostprocessSurfaces(const PostOperator &postop, const std::stri
       output.print("{:+{}.{}e}{}",
                    data.Mij, table.w, table.p,
                    (data.idx == ind_data.back().idx) ? "" : ",");
+      // clang-format on
+    }
+    output.print("\n");
+  }
+
+  // Write the Q-factors due to interface dielectric loss.
+  std::vector<EpsData> eps_data;
+  eps_data.reserve(postop.GetSurfacePostOp().eps_surfs.size());
+  for (const auto &[idx, data] : postop.GetSurfacePostOp().eps_surfs)
+  {
+    const double pl = postop.GetInterfaceParticipation(idx, E_elec);
+    const double tandelta = postop.GetSurfacePostOp().GetInterfaceLossTangent(idx);
+    const double Ql =
+        (pl == 0.0 || tandelta == 0.0) ? mfem::infinity() : 1.0 / (tandelta * pl);
+    eps_data.push_back({idx, pl, Ql});
+  }
+  if (root && !eps_data.empty())
+  {
+    std::string path = post_dir + "surface-Q.csv";
+    auto output = OutputFile(path, (step > 0));
+    if (step == 0)
+    {
+      output.print("{:>{}s},", name, table.w1);
+      for (const auto &data : eps_data)
+      {
+        // clang-format off
+        output.print("{:>{}s},{:>{}s}{}",
+                     "p_surf[" + std::to_string(data.idx) + "]", table.w,
+                     "Q_surf[" + std::to_string(data.idx) + "]", table.w,
+                     (data.idx == eps_data.back().idx) ? "" : ",");
+        // clang-format on
+      }
+      output.print("\n");
+    }
+    output.print("{:{}.{}e},", time, table.w1, table.p1);
+    for (const auto &data : eps_data)
+    {
+      // clang-format off
+      output.print("{:+{}.{}e},{:+{}.{}e}{}",
+                   data.pl, table.w, table.p,
+                   data.Ql, table.w, table.p,
+                   (data.idx == eps_data.back().idx) ? "" : ",");
       // clang-format on
     }
     output.print("\n");

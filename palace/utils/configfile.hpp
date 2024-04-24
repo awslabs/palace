@@ -475,25 +475,25 @@ public:
   void SetUp(json &boundaries);
 };
 
-struct CapacitanceData
+struct SurfaceElectricChargeData
 {
 public:
-  // List of boundary attributes for this capacitance postprocessing index.
+  // List of boundary attributes for this electric charge postprocessing index.
   std::vector<int> attributes = {};
 };
 
-struct CapacitancePostData : public internal::DataMap<CapacitanceData>
+struct SurfaceElectricChargePostData : public internal::DataMap<SurfaceElectricChargeData>
 {
 public:
   void SetUp(json &postpro);
 };
 
-struct InductanceData : public internal::ElementData
+struct SurfaceMagneticFluxData : public internal::ElementData
 {
   using internal::ElementData::ElementData;
 };
 
-struct InductancePostData : public internal::DataMap<InductanceData>
+struct SurfaceMagneticFluxPostData : public internal::DataMap<SurfaceMagneticFluxData>
 {
 public:
   void SetUp(json &postpro);
@@ -535,8 +535,8 @@ public:
   std::vector<int> attributes = {};
 
   // Boundary postprocessing objects.
-  CapacitancePostData capacitance = {};
-  InductancePostData inductance = {};
+  SurfaceElectricChargePostData charge = {};
+  SurfaceMagneticFluxPostData flux = {};
   InterfaceDielectricPostData dielectric = {};
 
   void SetUp(json &boundaries);

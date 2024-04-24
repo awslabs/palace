@@ -545,7 +545,7 @@ void DomainEnergyPostData::SetUp(json &postpro)
     auto ret = mapdata.insert(std::make_pair(it->at("Index"), DomainEnergyData()));
     MFEM_VERIFY(ret.second, "Repeated \"Index\" found when processing \"Energy\" domains "
                             "in configuration file!");
-    DomainEnergyData &data = ret.first->second;
+    auto &data = ret.first->second;
     data.attributes = it->at("Attributes").get<std::vector<int>>();  // Required
     std::sort(data.attributes.begin(), data.attributes.end());
 
@@ -582,7 +582,7 @@ void ProbePostData::SetUp(json &postpro)
     MFEM_VERIFY(
         ret.second,
         "Repeated \"Index\" found when processing \"Probe\" points in configuration file!");
-    ProbeData &data = ret.first->second;
+    auto &data = ret.first->second;
     data.x = it->at("X");  // Required
     data.y = it->at("Y");  // Required
     data.z = it->at("Z");  // Required
@@ -917,7 +917,7 @@ void LumpedPortBoundaryData::SetUp(json &boundaries)
     auto ret = mapdata.insert(std::make_pair(it->at("Index"), LumpedPortData()));
     MFEM_VERIFY(ret.second, "Repeated \"Index\" found when processing \"LumpedPort\" or "
                             "\"Terminal\" boundaries in configuration file!");
-    LumpedPortData &data = ret.first->second;
+    auto &data = ret.first->second;
     data.R = it->value("R", data.R);
     data.L = it->value("L", data.L);
     data.C = it->value("C", data.C);
@@ -1014,7 +1014,7 @@ void WavePortBoundaryData::SetUp(json &boundaries)
     auto ret = mapdata.insert(std::make_pair(it->at("Index"), WavePortData()));
     MFEM_VERIFY(ret.second, "Repeated \"Index\" found when processing \"WavePort\" "
                             "boundaries in configuration file!");
-    WavePortData &data = ret.first->second;
+    auto &data = ret.first->second;
     data.attributes = it->at("Attributes").get<std::vector<int>>();  // Required
     std::sort(data.attributes.begin(), data.attributes.end());
     data.mode_idx = it->value("Mode", data.mode_idx);
@@ -1061,7 +1061,7 @@ void SurfaceCurrentBoundaryData::SetUp(json &boundaries)
     auto ret = mapdata.insert(std::make_pair(it->at("Index"), SurfaceCurrentData()));
     MFEM_VERIFY(ret.second, "Repeated \"Index\" found when processing \"SurfaceCurrent\" "
                             "boundaries in configuration file!");
-    SurfaceCurrentData &data = ret.first->second;
+    auto &data = ret.first->second;
     if (it->find("Attributes") != it->end())
     {
       MFEM_VERIFY(it->find("Elements") == it->end(),
@@ -1117,7 +1117,7 @@ void SurfaceCurrentBoundaryData::SetUp(json &boundaries)
   }
 }
 
-void CapacitancePostData::SetUp(json &postpro)
+void SurfaceElectricChargePostData::SetUp(json &postpro)
 {
   auto capacitance = postpro.find("Capacitance");
   if (capacitance == postpro.end())
@@ -1133,10 +1133,10 @@ void CapacitancePostData::SetUp(json &postpro)
     MFEM_VERIFY(
         it->find("Attributes") != it->end(),
         "Missing \"Attributes\" list for \"Capacitance\" boundary in configuration file!");
-    auto ret = mapdata.insert(std::make_pair(it->at("Index"), CapacitanceData()));
+    auto ret = mapdata.insert(std::make_pair(it->at("Index"), SurfaceElectricChargeData()));
     MFEM_VERIFY(ret.second, "Repeated \"Index\" found when processing \"Capacitance\" "
                             "boundaries in configuration file!");
-    CapacitanceData &data = ret.first->second;
+    auto &data = ret.first->second;
     data.attributes = it->at("Attributes").get<std::vector<int>>();  // Required
     std::sort(data.attributes.begin(), data.attributes.end());
 
@@ -1153,7 +1153,7 @@ void CapacitancePostData::SetUp(json &postpro)
   }
 }
 
-void InductancePostData::SetUp(json &postpro)
+void SurfaceMagneticFluxPostData::SetUp(json &postpro)
 {
   auto inductance = postpro.find("Inductance");
   if (inductance == postpro.end())
@@ -1169,10 +1169,10 @@ void InductancePostData::SetUp(json &postpro)
     MFEM_VERIFY(it->find("Attributes") != it->end() && it->find("Direction") != it->end(),
                 "Missing \"Attributes\" list or \"Direction\" for \"Inductance\" boundary "
                 "in configuration file!");
-    auto ret = mapdata.insert(std::make_pair(it->at("Index"), InductanceData()));
+    auto ret = mapdata.insert(std::make_pair(it->at("Index"), SurfaceMagneticFluxData()));
     MFEM_VERIFY(ret.second, "Repeated \"Index\" found when processing \"Inductance\" "
                             "boundaries in configuration file!");
-    InductanceData &data = ret.first->second;
+    auto &data = ret.first->second;
     ParseElementData(*it, "Direction", true, data);
     MFEM_VERIFY(data.coordinate_system ==
                     internal::ElementData::CoordinateSystem::CARTESIAN,
@@ -1223,7 +1223,7 @@ void InterfaceDielectricPostData::SetUp(json &postpro)
     auto ret = mapdata.insert(std::make_pair(it->at("Index"), InterfaceDielectricData()));
     MFEM_VERIFY(ret.second, "Repeated \"Index\" found when processing \"Dielectric\" "
                             "boundaries in configuration file!");
-    InterfaceDielectricData &data = ret.first->second;
+    auto &data = ret.first->second;
     data.ts = it->at("Thickness");  // Required for surfaces
     data.tandelta = it->value("LossTan", data.tandelta);
     data.epsilon_r = it->value("Permittivity", data.epsilon_r);
@@ -1308,16 +1308,16 @@ void BoundaryPostData::SetUp(json &boundaries)
   {
     return;
   }
-  capacitance.SetUp(*postpro);
-  inductance.SetUp(*postpro);
+  charge.SetUp(*postpro);
+  flux.SetUp(*postpro);
   dielectric.SetUp(*postpro);
 
   // Store all unique postprocessing boundary attributes.
-  for (const auto &[idx, data] : capacitance)
+  for (const auto &[idx, data] : charge)
   {
     attributes.insert(attributes.end(), data.attributes.begin(), data.attributes.end());
   }
-  for (const auto &[idx, data] : inductance)
+  for (const auto &[idx, data] : flux)
   {
     attributes.insert(attributes.end(), data.attributes.begin(), data.attributes.end());
   }

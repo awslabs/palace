@@ -15,6 +15,44 @@
 namespace palace
 {
 
+SurfacePostOperator::SurfaceElectricChargeData::SurfaceElectricChargeData(
+    const config::SurfaceElectricChargeData &data, const mfem::ParMesh &mesh)
+{
+  // Store boundary attributes for this element of the postprocessing boundary.
+  auto &attr_list = attr_lists.emplace_back();
+  attr_list.Append(data.attributes.data(), data.attributes.size());
+}
+
+std::unique_ptr<mfem::Coefficient>
+SurfacePostOperator::SurfaceElectricChargeData::GetCoefficient(
+    std::size_t i, const mfem::ParGridFunction &U, const MaterialOperator &mat_op) const
+{
+  return std::make_unique<RestrictedCoefficient<BdrChargeCoefficient>>(attr_lists[i], U,
+                                                                       mat_op);
+}
+
+SurfacePostOperator::SurfaceMagneticFluxData::SurfaceMagneticFluxData(
+    const config::SurfaceMagneticFluxData &data, const mfem::ParMesh &mesh)
+{
+  // Store information about the global direction for orientation. Note the true boundary
+  // normal is used in calculating the flux, this is just used to determine the sign.
+  direction.SetSize(mesh.SpaceDimension());
+  std::copy(data.direction.begin(), data.direction.end(), direction.begin());
+  direction /= direction.Norml2();
+
+  // Store boundary attributes for this element of the postprocessing boundary.
+  auto &attr_list = attr_lists.emplace_back();
+  attr_list.Append(data.attributes.data(), data.attributes.size());
+}
+
+std::unique_ptr<mfem::Coefficient>
+SurfacePostOperator::SurfaceMagneticFluxData::GetCoefficient(
+    std::size_t i, const mfem::ParGridFunction &U, const MaterialOperator &mat_op) const
+{
+  return std::make_unique<RestrictedCoefficient<BdrFluxCoefficient>>(attr_lists[i], U,
+                                                                     mat_op, direction);
+}
+
 SurfacePostOperator::InterfaceDielectricData::InterfaceDielectricData(
     const config::InterfaceDielectricData &data, const mfem::ParMesh &mesh)
   : ts(data.ts), tandelta(data.tandelta)
@@ -104,67 +142,31 @@ SurfacePostOperator::InterfaceDielectricData::GetCoefficient(
   return {};  // For compiler warning
 }
 
-SurfacePostOperator::SurfaceChargeData::SurfaceChargeData(
-    const config::CapacitanceData &data, const mfem::ParMesh &mesh)
-{
-  // Store boundary attributes for this element of the postprocessing boundary.
-  auto &attr_list = attr_lists.emplace_back();
-  attr_list.Append(data.attributes.data(), data.attributes.size());
-}
-
-std::unique_ptr<mfem::Coefficient> SurfacePostOperator::SurfaceChargeData::GetCoefficient(
-    std::size_t i, const mfem::ParGridFunction &U, const MaterialOperator &mat_op) const
-{
-  return std::make_unique<RestrictedCoefficient<BdrChargeCoefficient>>(attr_lists[i], U,
-                                                                       mat_op);
-}
-
-SurfacePostOperator::SurfaceFluxData::SurfaceFluxData(const config::InductanceData &data,
-                                                      const mfem::ParMesh &mesh)
-{
-  // Store information about the global direction for orientation. Note the true boundary
-  // normal is used in calculating the flux, this is just used to determine the sign.
-  direction.SetSize(mesh.SpaceDimension());
-  std::copy(data.direction.begin(), data.direction.end(), direction.begin());
-  direction /= direction.Norml2();
-
-  // Store boundary attributes for this element of the postprocessing boundary.
-  auto &attr_list = attr_lists.emplace_back();
-  attr_list.Append(data.attributes.data(), data.attributes.size());
-}
-
-std::unique_ptr<mfem::Coefficient> SurfacePostOperator::SurfaceFluxData::GetCoefficient(
-    std::size_t i, const mfem::ParGridFunction &U, const MaterialOperator &mat_op) const
-{
-  return std::make_unique<RestrictedCoefficient<BdrFluxCoefficient>>(attr_lists[i], U,
-                                                                     mat_op, direction);
-}
-
 SurfacePostOperator::SurfacePostOperator(const IoData &iodata,
                                          const MaterialOperator &mat_op,
                                          mfem::ParFiniteElementSpace &h1_fespace)
   : mat_op(mat_op), h1_fespace(h1_fespace)
 {
+  // Surface electric charge postprocessing.
+  for (const auto &[idx, data] : iodata.boundaries.postpro.charge)
+  {
+    charge_surfs.try_emplace(idx, data, *h1_fespace.GetParMesh());
+  }
+
+  // Surface magnetic flux postprocessing.
+  for (const auto &[idx, data] : iodata.boundaries.postpro.flux)
+  {
+    flux_surfs.try_emplace(idx, data, *h1_fespace.GetParMesh());
+  }
+
   // Surface dielectric loss postprocessing.
   for (const auto &[idx, data] : iodata.boundaries.postpro.dielectric)
   {
     eps_surfs.try_emplace(idx, data, *h1_fespace.GetParMesh());
   }
 
-  // Surface capacitance postprocessing.
-  for (const auto &[idx, data] : iodata.boundaries.postpro.capacitance)
-  {
-    charge_surfs.try_emplace(idx, data, *h1_fespace.GetParMesh());
-  }
-
-  // Surface inductance postprocessing.
-  for (const auto &[idx, data] : iodata.boundaries.postpro.inductance)
-  {
-    flux_surfs.try_emplace(idx, data, *h1_fespace.GetParMesh());
-  }
-
   // Check that boundary attributes have been specified correctly.
-  if (!eps_surfs.empty() || !charge_surfs.empty() || !flux_surfs.empty())
+  if (!charge_surfs.empty() || !flux_surfs.empty() || !eps_surfs.empty())
   {
     const auto &mesh = *h1_fespace.GetParMesh();
     int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
@@ -207,10 +209,6 @@ SurfacePostOperator::SurfacePostOperator(const IoData &iodata,
         }
       }
     };
-    for (auto &[idx, data] : eps_surfs)
-    {
-      CheckAttributes(data);
-    }
     for (auto &[idx, data] : charge_surfs)
     {
       CheckAttributes(data);
@@ -219,7 +217,39 @@ SurfacePostOperator::SurfacePostOperator(const IoData &iodata,
     {
       CheckAttributes(data);
     }
+    for (auto &[idx, data] : eps_surfs)
+    {
+      CheckAttributes(data);
+    }
   }
+}
+
+double SurfacePostOperator::GetSurfaceElectricCharge(int idx, const GridFunction &E) const
+{
+  auto it = charge_surfs.find(idx);
+  MFEM_VERIFY(it != charge_surfs.end(),
+              "Unknown surface electric charge postprocessing index requested!");
+  std::complex<double> dot(GetLocalSurfaceIntegral(it->second, E.Real()), 0.0);
+  if (E.HasImag())
+  {
+    dot.imag(GetLocalSurfaceIntegral(it->second, E.Imag()));
+  }
+  Mpi::GlobalSum(1, &dot, E.GetComm());
+  return std::copysign(std::abs(dot), dot.real());
+}
+
+double SurfacePostOperator::GetSurfaceMagneticFlux(int idx, const GridFunction &B) const
+{
+  auto it = flux_surfs.find(idx);
+  MFEM_VERIFY(it != flux_surfs.end(),
+              "Unknown surface magnetic flux postprocessing index requested!");
+  std::complex<double> dot(GetLocalSurfaceIntegral(it->second, B.Real()), 0.0);
+  if (B.HasImag())
+  {
+    dot.imag(GetLocalSurfaceIntegral(it->second, B.Imag()));
+  }
+  Mpi::GlobalSum(1, &dot, B.GetComm());
+  return std::copysign(std::abs(dot), dot.real());
 }
 
 double SurfacePostOperator::GetInterfaceLossTangent(int idx) const
@@ -243,34 +273,6 @@ double SurfacePostOperator::GetInterfaceElectricFieldEnergy(int idx,
   }
   Mpi::GlobalSum(1, &dot, E.GetComm());
   return dot;
-}
-
-double SurfacePostOperator::GetSurfaceElectricCharge(int idx, const GridFunction &E) const
-{
-  auto it = charge_surfs.find(idx);
-  MFEM_VERIFY(it != charge_surfs.end(),
-              "Unknown capacitance postprocessing surface index requested!");
-  std::complex<double> dot(GetLocalSurfaceIntegral(it->second, E.Real()), 0.0);
-  if (E.HasImag())
-  {
-    dot.imag(GetLocalSurfaceIntegral(it->second, E.Imag()));
-  }
-  Mpi::GlobalSum(1, &dot, E.GetComm());
-  return std::copysign(std::abs(dot), dot.real());
-}
-
-double SurfacePostOperator::GetSurfaceMagneticFlux(int idx, const GridFunction &B) const
-{
-  auto it = flux_surfs.find(idx);
-  MFEM_VERIFY(it != flux_surfs.end(),
-              "Unknown inductance postprocessing surface index requested!");
-  std::complex<double> dot(GetLocalSurfaceIntegral(it->second, B.Real()), 0.0);
-  if (B.HasImag())
-  {
-    dot.imag(GetLocalSurfaceIntegral(it->second, B.Imag()));
-  }
-  Mpi::GlobalSum(1, &dot, B.GetComm());
-  return std::copysign(std::abs(dot), dot.real());
 }
 
 double SurfacePostOperator::GetLocalSurfaceIntegral(const SurfaceData &data,

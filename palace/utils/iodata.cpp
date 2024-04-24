@@ -273,9 +273,9 @@ void IoData::CheckConfiguration()
       Mpi::Warning(
           "Electrostatic problem type does not support surface current excitation!\n");
     }
-    if (!boundaries.postpro.inductance.empty())
+    if (!boundaries.postpro.flux.empty())
     {
-      Mpi::Warning("Electrostatic problem type does not support boundary inductance "
+      Mpi::Warning("Electrostatic problem type does not support boundary magnetic flux "
                    "postprocessing!\n");
     }
   }
@@ -306,9 +306,9 @@ void IoData::CheckConfiguration()
       Mpi::Warning(
           "Magnetostatic problem type does not support wave port boundary conditions!\n");
     }
-    if (!boundaries.postpro.capacitance.empty())
+    if (!boundaries.postpro.charge.empty())
     {
-      Mpi::Warning("Magnetostatic problem type does not support boundary capacitance "
+      Mpi::Warning("Magnetostatic problem type does not support boundary electric charge "
                    "postprocessing!\n");
     }
     if (!boundaries.postpro.dielectric.empty())
