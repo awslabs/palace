@@ -119,8 +119,8 @@ inline void ApplyOrderK(const double sd, const double sr, const Vector &dinv,
   const auto *DI = dinv.Read(use_dev);
   const auto *R = r.Read(use_dev);
   auto *D = d.ReadWrite(use_dev);
-  mfem::forall_switch(
-      use_dev, N, [=] MFEM_HOST_DEVICE(int i) { D[i] = sd * D[i] + sr * DI[i] * R[i]; });
+  mfem::forall_switch(use_dev, N, [=] MFEM_HOST_DEVICE(int i)
+                      { D[i] = sd * D[i] + sr * DI[i] * R[i]; });
 }
 
 template <bool Transpose = false>

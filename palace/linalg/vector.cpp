@@ -582,8 +582,7 @@ void SetRandomSign(MPI_Comm comm, Vector &x, int seed)
   const bool use_dev = x.UseDevice();
   const int N = x.Size();
   auto *X = x.ReadWrite(use_dev);
-  mfem::forall_switch(use_dev, N,
-                      [=] MFEM_HOST_DEVICE(int i)
+  mfem::forall_switch(use_dev, N, [=] MFEM_HOST_DEVICE(int i)
                       { X[i] = (X[i] > 0.0) ? 1.0 : ((X[i] < 0.0) ? -1.0 : 0.0); });
 }
 
