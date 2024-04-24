@@ -947,10 +947,9 @@ BoundingBox BoundingBoxFromPointCloud(MPI_Comm comm,
     };
 
     // Collect the furthest point from the plane.
-    auto max_distance = OutOfPlaneDistance(
-        *std::max_element(vertices.begin(), vertices.end(),
-                          [OutOfPlaneDistance](const auto &x, const auto &y)
-                          { return OutOfPlaneDistance(x) < OutOfPlaneDistance(y); }));
+    auto max_distance = OutOfPlaneDistance(*std::max_element(
+        vertices.begin(), vertices.end(), [OutOfPlaneDistance](const auto &x, const auto &y)
+        { return OutOfPlaneDistance(x) < OutOfPlaneDistance(y); }));
 
     constexpr double rel_tol = 1e-6;
     box.planar = max_distance < (rel_tol * (v_111 - v_000).norm());
@@ -982,8 +981,7 @@ BoundingBox BoundingBoxFromPointCloud(MPI_Comm comm,
     Vector3dMap(box.normals[2].data()) = 0.5 * (v_111 - v_011);
 
     // Make sure the longest dimension comes first.
-    std::sort(box.normals.begin(), box.normals.end(),
-              [](const auto &x, const auto &y)
+    std::sort(box.normals.begin(), box.normals.end(), [](const auto &x, const auto &y)
               { return CVector3dMap(x.data()).norm() > CVector3dMap(y.data()).norm(); });
   }
 

@@ -186,9 +186,9 @@ std::array<double, 2> ComputeDorflerCoarseningThreshold(const mfem::ParMesh &mes
   for (int i = 0; i < derefinement_table.Size(); i++)
   {
     derefinement_table.GetRow(i, row);
-    coarse_error[i] = std::sqrt(std::accumulate(
-        row.begin(), row.end(), 0.0,
-        [&elem_error](double s, int i) { return s += std::pow(elem_error[i], 2.0); }));
+    coarse_error[i] = std::sqrt(
+        std::accumulate(row.begin(), row.end(), 0.0, [&elem_error](double s, int i)
+                        { return s += std::pow(elem_error[i], 2.0); }));
   }
 
   // Given the coarse errors, we use the Dörfler marking strategy to identify the
