@@ -45,7 +45,7 @@ void ReorderMesh(mfem::Mesh &, bool = true);
 std::unique_ptr<int[]> GetMeshPartitioning(const mfem::Mesh &, int,
                                            const std::string & = "", bool = true);
 
-// Cleanup the provided serial mesh by removing unnecessary domain and elements, adding
+// Clean the provided serial mesh by removing unnecessary domain and elements, adding
 // boundary elements for material interfaces and exterior boundaries, and adding boundary
 // elements for subdomain interfaces.
 std::map<int, std::array<int, 2>> CheckMesh(std::unique_ptr<mfem::Mesh> &, const IoData &,
@@ -497,9 +497,11 @@ auto AttrListMax(const std::vector<int> &attr_list)
 }  // namespace
 
 template <typename T>
-void AttrToMarker(int max_attr, const T &attr_list, mfem::Array<int> &marker)
+void AttrToMarker(int max_attr, const T &attr_list, mfem::Array<int> &marker,
+                  bool skip_invalid)
 {
-  MFEM_VERIFY(AttrListSize(attr_list) == 0 || AttrListMax(attr_list) <= max_attr,
+  MFEM_VERIFY(skip_invalid || AttrListSize(attr_list) == 0 ||
+                  AttrListMax(attr_list) <= max_attr,
               "Invalid attribute number present (" << AttrListMax(attr_list) << ")!");
   marker.SetSize(max_attr);
   if (AttrListSize(attr_list) == 1 && attr_list[0] == -1)
@@ -511,6 +513,10 @@ void AttrToMarker(int max_attr, const T &attr_list, mfem::Array<int> &marker)
     marker = 0;
     for (auto attr : attr_list)
     {
+      if ((attr <= 0 || attr > max_attr) && skip_invalid)
+      {
+        continue;
+      }
       MFEM_VERIFY(attr > 0, "Attribute number less than one!");
       MFEM_VERIFY(marker[attr - 1] == 0, "Repeate attribute in attribute list!");
       marker[attr - 1] = 1;
@@ -1314,6 +1320,7 @@ double RebalanceMesh(std::unique_ptr<mfem::ParMesh> &mesh, const IoData &iodata)
         mesh::DimensionalizeMesh(smesh, iodata.GetLengthScale());
         smesh.Mesh::Print(fo);  // Do not need to nondimensionalize the temporary mesh
       }
+      Mpi::Barrier(comm);
     };
 
     if (mesh->Nonconforming())
@@ -1329,7 +1336,6 @@ double RebalanceMesh(std::unique_ptr<mfem::ParMesh> &mesh, const IoData &iodata)
       mfem::Mesh smesh = mesh->GetSerialMesh(0);
       PrintSerial(smesh);
     }
-    Mpi::Barrier(comm);
   }
 
   // If there is more than one processor, may perform rebalancing.
@@ -1367,8 +1373,8 @@ double RebalanceMesh(std::unique_ptr<mfem::ParMesh> &mesh, const IoData &iodata)
   return ratio;
 }
 
-template void AttrToMarker(int, const mfem::Array<int> &, mfem::Array<int> &);
-template void AttrToMarker(int, const std::vector<int> &, mfem::Array<int> &);
+template void AttrToMarker(int, const mfem::Array<int> &, mfem::Array<int> &, bool);
+template void AttrToMarker(int, const std::vector<int> &, mfem::Array<int> &, bool);
 
 }  // namespace mesh
 
@@ -1566,10 +1572,10 @@ std::map<int, std::array<int, 2>> CheckMesh(std::unique_ptr<mfem::Mesh> &orig_me
               "This function does not work for ParMesh");
   auto mat_marker =
       mesh::AttrToMarker(orig_mesh->attributes.Size() ? orig_mesh->attributes.Max() : 0,
-                         iodata.domains.attributes);
+                         iodata.domains.attributes, true);
   auto bdr_marker = mesh::AttrToMarker(
       orig_mesh->bdr_attributes.Size() ? orig_mesh->bdr_attributes.Max() : 0,
-      iodata.boundaries.attributes);
+      iodata.boundaries.attributes, true);
   {
     std::set<int> bdr_list;
     for (int be = 0; be < orig_mesh->GetNBE(); be++)
@@ -1976,7 +1982,7 @@ std::unique_ptr<mfem::ParMesh> DistributeMesh(MPI_Comm comm,
     }
     auto pmesh =
         std::make_unique<mfem::ParMesh>(comm, fi, generate_edges, refine, fix_orientation);
-    Mpi::Barrier(comm);
+    Mpi::Barrier(comm);  // Wait for all processes to read the mesh from file
     if (Mpi::Root(comm))
     {
       std::filesystem::remove_all(tmp);  // Remove the temporary directory

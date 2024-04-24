@@ -57,12 +57,13 @@ ElementTypeInfo CheckElements(const mfem::Mesh &mesh);
 // attribute numbers are present in the list array. In the special case when list has a
 // single entry equal to -1 the marker array will contain all ones.
 template <typename T>
-void AttrToMarker(int max_attr, const T &attr_list, mfem::Array<int> &marker);
+void AttrToMarker(int max_attr, const T &attr_list, mfem::Array<int> &marker,
+                  bool skip_invalid = false);
 template <typename T>
-mfem::Array<int> AttrToMarker(int max_attr, const T &attr_list)
+mfem::Array<int> AttrToMarker(int max_attr, const T &attr_list, bool skip_invalid = false)
 {
   mfem::Array<int> marker;
-  AttrToMarker(max_attr, attr_list, marker);
+  AttrToMarker(max_attr, attr_list, marker, skip_invalid);
   return marker;
 }
 
