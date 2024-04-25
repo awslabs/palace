@@ -29,6 +29,10 @@ mfem::DenseMatrix MatrixPow(const mfem::DenseMatrix &M, double p);
 
 mfem::DenseTensor MatrixPow(const mfem::DenseTensor &T, double p);
 
+double SingularValueMax(const mfem::DenseMatrix &M);
+
+double SingularValueMin(const mfem::DenseMatrix &M);
+
 mfem::DenseTensor Mult(const mfem::DenseTensor &A, const mfem::DenseTensor &B);
 
 }  // namespace palace::linalg

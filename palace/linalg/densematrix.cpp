@@ -6,6 +6,7 @@
 #include <functional>
 #include <limits>
 #include <mfem.hpp>
+#include <mfem/linalg/kernels.hpp>
 
 namespace palace
 {
@@ -220,6 +221,46 @@ mfem::DenseTensor MatrixPow(const mfem::DenseTensor &T, double p)
     S(k) = MatrixPow(T(k), p);
   }
   return S;
+}
+
+double SingularValueMax(const mfem::DenseMatrix &M)
+{
+  MFEM_ASSERT(
+      M.Height() == M.Width() && M.Height() > 0 && M.Height() <= 3,
+      "Matrix singular values only available for square matrices of dimension <= 3!");
+  const int N = M.Height();
+  if (N == 1)
+  {
+    return M(0, 0);
+  }
+  else if (N == 2)
+  {
+    return mfem::kernels::CalcSingularvalue<2>(M.Data(), 0);
+  }
+  else
+  {
+    return mfem::kernels::CalcSingularvalue<3>(M.Data(), 0);
+  }
+}
+
+double SingularValueMin(const mfem::DenseMatrix &M)
+{
+  MFEM_ASSERT(
+      M.Height() == M.Width() && M.Height() > 0 && M.Height() <= 3,
+      "Matrix singular values only available for square matrices of dimension <= 3!");
+  const int N = M.Height();
+  if (N == 1)
+  {
+    return M(0, 0);
+  }
+  else if (N == 2)
+  {
+    return mfem::kernels::CalcSingularvalue<2>(M.Data(), 1);
+  }
+  else
+  {
+    return mfem::kernels::CalcSingularvalue<3>(M.Data(), 2);
+  }
 }
 
 mfem::DenseTensor Mult(const mfem::DenseTensor &A, const mfem::DenseTensor &B)

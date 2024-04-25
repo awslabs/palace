@@ -262,8 +262,8 @@ void MaterialOperator::SetUpMaterialProperties(const IoData &iodata,
     // √((μ ε)⁻¹)
     Mult(mat_mu, mat_epsilon(count), T);
     mat_c0(count) = linalg::MatrixPow(T, -0.5);
-    mat_c0_min[count] = mat_c0(count).CalcSingularvalue(sdim - 1);
-    mat_c0_max[count] = mat_c0(count).CalcSingularvalue(0);
+    mat_c0_min[count] = linalg::SingularValueMin(mat_c0(count));
+    mat_c0_max[count] = linalg::SingularValueMax(mat_c0(count));
 
     // Electrical conductivity, σ
     mat_sigma(count) = ToDenseMatrix(data.sigma);
