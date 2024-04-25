@@ -56,8 +56,9 @@ void BdrGridFunctionCoefficient::GetBdrElementNeighborTransformations(
   // orientations.
   if (C1)
   {
+    double CF_data[3];
+    mfem::Vector CF(CF_data, T.GetSpaceDim());
     int f = mesh.GetBdrElementFaceIndex(T.ElementNo);
-    CF.SetSize(T.GetSpaceDim());
     mesh.GetFaceTransformation(f, &TF);
     TF.Transform(mfem::Geometries.GetCenter(mesh.GetFaceGeometry(f)), CF);
 
