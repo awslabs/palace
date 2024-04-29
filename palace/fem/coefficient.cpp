@@ -6,13 +6,15 @@
 namespace palace
 {
 
-void BdrGridFunctionCoefficient::GetBdrElementNeighborTransformations(
+bool BdrGridFunctionCoefficient::GetBdrElementNeighborTransformations(
     int i, const mfem::ParMesh &mesh, mfem::FaceElementTransformations &FET,
     mfem::IsoparametricTransformation &T1, mfem::IsoparametricTransformation &T2,
     const mfem::IntegrationPoint *ip)
 {
   // Return transformations for elements attached to the given boundary element. FET.Elem1
   // always exists but FET.Elem2 may not if the element is truly a single-sided boundary.
+  MFEM_ASSERT(T.ElementType == mfem::ElementTransformation::BDR_ELEMENT,
+              "Unexpected element type in BdrGridFunctionCoefficient!");
   int f, o;
   int iel1, iel2, info1, info2;
   mesh.GetBdrElementFace(i, &f, &o);
@@ -41,31 +43,9 @@ void BdrGridFunctionCoefficient::GetBdrElementNeighborTransformations(
         mfem::Mesh::TransformBdrElementToFace(FET.GetGeometryType(), o, *ip);
     FET.SetAllIntPoints(&fip);
   }
-}
 
-void BdrGridFunctionCoefficient::GetBdrElementNeighborTransformations(
-    mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip, mfem::Vector *C1)
-{
-  // Get the element transformations neighboring the element, and set the integration point
-  // too.
-  MFEM_ASSERT(T.ElementType == mfem::ElementTransformation::BDR_ELEMENT,
-              "Unexpected element type in BdrGridFunctionCoefficient!");
-  GetBdrElementNeighborTransformations(T.ElementNo, mesh, FET, T1, T2, &ip);
-
-  // If desired, get vector pointing from center of boundary element into element 1 for
-  // orientations.
-  if (C1)
-  {
-    double CF_data[3];
-    mfem::Vector CF(CF_data, T.GetSpaceDim());
-    int f = mesh.GetBdrElementFaceIndex(T.ElementNo);
-    mesh.GetFaceTransformation(f, &TF);
-    TF.Transform(mfem::Geometries.GetCenter(mesh.GetFaceGeometry(f)), CF);
-
-    C1->SetSize(T.GetSpaceDim());
-    FET.Elem1->Transform(mfem::Geometries.GetCenter(FET.Elem1->GetGeometryType()), *C1);
-    *C1 -= CF;  // Points into element 1 from the face
-  }
+  // Return whether or not the boundary element and face share the same orientations.
+  return (o % 2 == 0);
 }
 
 }  // namespace palace
