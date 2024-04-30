@@ -279,9 +279,7 @@ struct ProbeData
 {
 public:
   // Physical space coordinates for the probe location [m].
-  double x = 0.0;
-  double y = 0.0;
-  double z = 0.0;
+  std::array<double, 3> center{{0.0, 0.0, 0.0}};
 };
 
 struct ProbePostData : public internal::DataMap<ProbeData>

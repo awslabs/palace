@@ -36,11 +36,11 @@ InterpolationOperator::InterpolationOperator(const IoData &iodata, mfem::ParMesh
   for (const auto &[idx, data] : iodata.domains.postpro.probe)
   {
     // Use default ordering byNODES.
-    xyz(i) = data.x;
-    xyz(npts + i) = data.y;
+    xyz(i) = data.center[0];
+    xyz(npts + i) = data.center[1];
     if (mesh.SpaceDimension() == 3)
     {
-      xyz(2 * npts + i) = data.z;
+      xyz(2 * npts + i) = data.center[2];
     }
     op_idx[i++] = idx;
   }
@@ -54,9 +54,10 @@ InterpolationOperator::InterpolationOperator(const IoData &iodata, mfem::ParMesh
     {
       Mpi::Warning("Probe {:d} at ({:.3e}, {:.3e}, {:.3e}) m could not be found!\n"
                    "Using default value 0.0!\n",
-                   idx, iodata.DimensionalizeValue(IoData::ValueType::LENGTH, data.x),
-                   iodata.DimensionalizeValue(IoData::ValueType::LENGTH, data.y),
-                   iodata.DimensionalizeValue(IoData::ValueType::LENGTH, data.z));
+                   idx,
+                   iodata.DimensionalizeValue(IoData::ValueType::LENGTH, data.center[0]),
+                   iodata.DimensionalizeValue(IoData::ValueType::LENGTH, data.center[1]),
+                   iodata.DimensionalizeValue(IoData::ValueType::LENGTH, data.center[2]));
     }
   }
 #else
