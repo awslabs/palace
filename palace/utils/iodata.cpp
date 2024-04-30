@@ -273,11 +273,6 @@ void IoData::CheckConfiguration()
       Mpi::Warning(
           "Electrostatic problem type does not support surface current excitation!\n");
     }
-    if (!boundaries.postpro.flux.empty())
-    {
-      Mpi::Warning("Electrostatic problem type does not support boundary magnetic flux "
-                   "postprocessing!\n");
-    }
   }
   else if (problem.type == config::ProblemData::Type::MAGNETOSTATIC)
   {
@@ -305,11 +300,6 @@ void IoData::CheckConfiguration()
     {
       Mpi::Warning(
           "Magnetostatic problem type does not support wave port boundary conditions!\n");
-    }
-    if (!boundaries.postpro.charge.empty())
-    {
-      Mpi::Warning("Magnetostatic problem type does not support boundary electric charge "
-                   "postprocessing!\n");
     }
     if (!boundaries.postpro.dielectric.empty())
     {
@@ -533,10 +523,16 @@ void IoData::NondimensionalizeInputs(mfem::ParMesh &mesh)
     data.d_offset /= Lc / model.L0;
   }
 
+  // Center coordinates for surface flux.
+  for (auto &[idx, data] : boundaries.postpro.flux)
+  {
+    std::transform(data.center.begin(), data.center.end(), data.center.begin(), Divides);
+  }
+
   // Dielectric interface thickness.
   for (auto &[idx, data] : boundaries.postpro.dielectric)
   {
-    data.ts /= Lc / model.L0;
+    data.t /= Lc / model.L0;
   }
 
   // For eigenmode simulations:

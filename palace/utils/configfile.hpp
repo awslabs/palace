@@ -118,7 +118,7 @@ struct BoxRefinementData
   int ref_levels = 0;
 
   // Region bounding box limits [m].
-  std::vector<double> bbmin = {}, bbmax = {};
+  std::array<double, 3> bbmin{{0.0, 0.0, 0.0}}, bbmax{{0.0, 0.0, 0.0}};
 };
 
 struct SphereRefinementData
@@ -130,7 +130,7 @@ struct SphereRefinementData
   double r = 0.0;
 
   // Sphere center [m].
-  std::vector<double> center = {};
+  std::array<double, 3> center{{0.0, 0.0, 0.0}};
 };
 
 struct RefinementData
@@ -475,25 +475,34 @@ public:
   void SetUp(json &boundaries);
 };
 
-struct SurfaceElectricChargeData
+struct SurfaceFluxData
 {
 public:
-  // List of boundary attributes for this electric charge postprocessing index.
+  // Surface flux type.
+  enum class Type
+  {
+    ELECTRIC,
+    MAGNETIC,
+    POWER
+  };
+  Type type = Type::ELECTRIC;
+
+  // Flag for whether or not to consider the boundary as an infinitely thin two-sided
+  // boundary for postprocessing.
+  bool two_sided = false;
+
+  // Coordinates of a point away from which to compute the outward flux (for orienting the
+  // surface normal) [m].
+  std::array<double, 3> center{{0.0, 0.0, 0.0}};
+
+  // Flag which indicates whether or not the center point was specified.
+  bool no_center = true;
+
+  // List of boundary attributes for this surface flux postprocessing index.
   std::vector<int> attributes = {};
 };
 
-struct SurfaceElectricChargePostData : public internal::DataMap<SurfaceElectricChargeData>
-{
-public:
-  void SetUp(json &postpro);
-};
-
-struct SurfaceMagneticFluxData : public internal::ElementData
-{
-  using internal::ElementData::ElementData;
-};
-
-struct SurfaceMagneticFluxPostData : public internal::DataMap<SurfaceMagneticFluxData>
+struct SurfaceFluxPostData : public internal::DataMap<SurfaceFluxData>
 {
 public:
   void SetUp(json &postpro);
@@ -502,24 +511,35 @@ public:
 struct InterfaceDielectricData
 {
 public:
-  // Dielectric interface thickness [m].
-  double ts = 0.0;
+  // Type of interface dielectric for computing electric field energy participation ratios.
+  enum class Type
+  {
+    DEFAULT,
+    MA,
+    MS,
+    SA
+  };
+  Type type = Type::DEFAULT;
 
-  // Loss tangent.
-  double tandelta = 0.0;
+  // Dielectric interface thickness [m].
+  double t = 0.0;
 
   // Relative permittivity.
   double epsilon_r = 0.0;
 
-  // Optional relative permittivity for metal-substrate, metal-air, and substrate-air
-  // layers.
-  double epsilon_r_ma = 0.0;
-  double epsilon_r_ms = 0.0;
-  double epsilon_r_sa = 0.0;
+  // Loss tangent.
+  double tandelta = 0.0;
 
-  // For each dielectric postprocessing index, each element contains a list of attributes
-  // sharing the same side value.
-  std::vector<internal::ElementData> elements = {};
+  // Side of internal boundaries on which to evaluate discontinuous field quantities.
+  enum class Side
+  {
+    SMALLER_REF_INDEX,
+    LARGER_REF_INDEX
+  };
+  InterfaceDielectricData::Side side = InterfaceDielectricData::Side::SMALLER_REF_INDEX;
+
+  // List of boundary attributes for this interface dielectric postprocessing index.
+  std::vector<int> attributes = {};
 };
 
 struct InterfaceDielectricPostData : public internal::DataMap<InterfaceDielectricData>
@@ -531,12 +551,15 @@ public:
 struct BoundaryPostData
 {
 public:
+  // Side of internal boundaries on which to evaluate discontinuous field quantities.
+  using Side = InterfaceDielectricData::Side;
+  Side side = Side::SMALLER_REF_INDEX;
+
   // Set of all postprocessing boundary attributes.
   std::vector<int> attributes = {};
 
   // Boundary postprocessing objects.
-  SurfaceElectricChargePostData charge = {};
-  SurfaceMagneticFluxPostData flux = {};
+  SurfaceFluxPostData flux = {};
   InterfaceDielectricPostData dielectric = {};
 
   void SetUp(json &boundaries);
