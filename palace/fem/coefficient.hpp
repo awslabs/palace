@@ -98,15 +98,15 @@ public:
                 "BdrGridFunctionCoefficient cross product expects a mesh in 3D space!");
     if (add)
     {
-      C[0] += A[1] * B[2] - A[2] * B[1];
-      C[1] += A[2] * B[0] - A[0] * B[2];
-      C[2] += A[0] * B[1] - A[1] * B[0];
+      C(0) += A(1) * B(2) - A(2) * B(1);
+      C(1) += A(2) * B(0) - A(0) * B(2);
+      C(2) += A(0) * B(1) - A(1) * B(0);
     }
     else
     {
-      C[0] = A[1] * B[2] - A[2] * B[1];
-      C[1] = A[2] * B[0] - A[0] * B[2];
-      C[2] = A[0] * B[1] - A[1] * B[0];
+      C(0) = A(1) * B(2) - A(2) * B(1);
+      C(1) = A(2) * B(0) - A(0) * B(2);
+      C(2) = A(0) * B(1) - A(1) * B(0);
     }
   }
 };
@@ -276,9 +276,10 @@ inline void BdrSurfaceFluxCoefficient<SurfaceFluxType::POWER>::GetLocalFlux(
   // Flux E x H = E x μ⁻¹ B.
   double W1_data[3], W2_data[3];
   mfem::Vector W1(W1_data, T.GetSpaceDim()), W2(W2_data, T.GetSpaceDim());
+  B->GetVectorValue(T, T.GetIntPoint(), W1);
+  mat_op.GetInvPermeability(T.Attribute).Mult(W1, W2);
   E->GetVectorValue(T, T.GetIntPoint(), W1);
-  B->GetVectorValue(T, T.GetIntPoint(), V);
-  mat_op.GetInvPermeability(T.Attribute).Mult(V, W2);
+  V.SetSize(W1.Size());
   Cross3(W1, W2, V);
 }
 

@@ -675,7 +675,7 @@ namespace
 {
 
 template <typename T>
-void ScaleGridFunctions(double L, int dim, bool imag, T &E, T &B, T &A, T &V)
+void ScaleGridFunctions(double L, int dim, bool imag, T &E, T &B, T &V, T &A)
 {
   // For fields on H(curl) and H(div) spaces, we "undo" the effect of redimensionalizing
   // the mesh which would carry into the fields during the mapping from reference to
@@ -725,7 +725,7 @@ void PostOperator::WriteFields(int step, double time) const
   mfem::ParMesh &mesh =
       HasE() ? *E->ParFESpace()->GetParMesh() : *B->ParFESpace()->GetParMesh();
   mesh::DimensionalizeMesh(mesh, mesh_Lc0);
-  ScaleGridFunctions(mesh_Lc0, mesh.Dimension(), HasImag(), E, B, A, V);
+  ScaleGridFunctions(mesh_Lc0, mesh.Dimension(), HasImag(), E, B, V, A);
   paraview.SetCycle(step);
   paraview.SetTime(time);
   paraview_bdr.SetCycle(step);
@@ -733,7 +733,7 @@ void PostOperator::WriteFields(int step, double time) const
   paraview.Save();
   paraview_bdr.Save();
   mesh::NondimensionalizeMesh(mesh, mesh_Lc0);
-  ScaleGridFunctions(1.0 / mesh_Lc0, mesh.Dimension(), HasImag(), E, B, A, V);
+  ScaleGridFunctions(1.0 / mesh_Lc0, mesh.Dimension(), HasImag(), E, B, V, A);
 }
 
 void PostOperator::WriteFieldsFinal(const ErrorIndicator *indicator) const
