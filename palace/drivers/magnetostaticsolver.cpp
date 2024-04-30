@@ -113,7 +113,7 @@ void MagnetostaticSolver::Postprocess(const PostOperator &postop, int step, int 
   // The internal GridFunctions for PostOperator have already been set from the A solution
   // in the main loop.
   PostprocessDomains(postop, "i", step, idx, 0.0, E_mag, 0.0, 0.0);
-  PostprocessSurfaces(postop, "i", step, idx, 0.0, E_mag, 0.0, I_inc);
+  PostprocessSurfaces(postop, "i", step, idx, 0.0, E_mag);
   PostprocessProbes(postop, "i", step, idx);
   if (step < iodata.solver.magnetostatic.n_post)
   {
@@ -215,6 +215,28 @@ void MagnetostaticSolver::PostprocessTerminals(PostOperator &postop,
   PrintMatrix("terminal-M.csv", "M", "(H)", M, H);
   PrintMatrix("terminal-Minv.csv", "M⁻¹", "(1/H)", Minv, 1.0 / H);
   PrintMatrix("terminal-Mm.csv", "M_m", "(H)", Mm, H);
+
+  // Also write out a file with source current excitations.
+  {
+    std::string path = post_dir + "terminal-I.csv";
+    auto output = OutputFile(path, false);
+    // clang-format off
+    output.print("{:>{}s},{:>{}s}\n",
+                 "i", table.w1,
+                 "I_inc[i] (A)", table.w);
+    // clang-format on
+    int i = 0;
+    for (const auto &[idx, data] : surf_j_op)
+    {
+      // clang-format off
+      output.print("{:{}.{}e},{:+{}.{}e}\n",
+                   static_cast<double>(idx), table.w1, table.p1,
+                   iodata.DimensionalizeValue(IoData::ValueType::CURRENT, I_inc[i]),
+                   table.w, table.p);
+      // clang-format on
+      i++;
+    }
+  }
 }
 
 }  // namespace palace

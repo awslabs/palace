@@ -59,8 +59,7 @@ protected:
 
   // Common surface postprocessing for all simulation types.
   void PostprocessSurfaces(const PostOperator &postop, const std::string &name, int step,
-                           double time, double E_elec, double E_mag, double Vinc,
-                           double Iinc) const;
+                           double time, double E_elec, double E_mag) const;
 
   // Common probe postprocessing for all simulation types.
   void PostprocessProbes(const PostOperator &postop, const std::string &name, int step,

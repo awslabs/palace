@@ -37,7 +37,7 @@ private:
 
 public:
   TimeOperator(const IoData &iodata, SpaceOperator &spaceop,
-               std::function<double(double)> &djcoef);
+               std::function<double(double)> &dJ_coef);
 
   // Access solution vectors for E- and B-fields.
   const Vector &GetE() const { return E; }

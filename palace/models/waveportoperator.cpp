@@ -374,19 +374,20 @@ public:
 
     // Compute Eₜ + n ⋅ Eₙ . The normal returned by GetNormal points out of the
     // computational domain, so we reverse it (direction of propagation is into the domain).
-    mfem::Vector U, nor;
-    BdrGridFunctionCoefficient::GetNormal(*T_submesh, nor);
+    double normal_data[3];
+    mfem::Vector normal(normal_data, vdim);
+    BdrGridFunctionCoefficient::GetNormal(*T_submesh, normal);
     if constexpr (Type == ValueType::REAL)
     {
       Et.Real().GetVectorValue(*T_submesh, ip, V);
       auto Vn = En.Real().GetValue(*T_submesh, ip);
-      V.Add(-Vn, nor);
+      V.Add(-Vn, normal);
     }
     else
     {
       Et.Imag().GetVectorValue(*T_submesh, ip, V);
       auto Vn = En.Imag().GetValue(*T_submesh, ip);
-      V.Add(-Vn, nor);
+      V.Add(-Vn, normal);
     }
   }
 };
@@ -483,13 +484,15 @@ public:
     }();
 
     // Compute Re/Im{-1/i (ikₙ Eₜ + ∇ₜ Eₙ)} (t-gradient evaluated in boundary element).
-    mfem::Vector U;
+    double U_data[3];
+    mfem::Vector U(U_data, vdim);
     if constexpr (Type == ValueType::REAL)
     {
       Et.Real().GetVectorValue(*T_submesh, ip, U);
       U *= -kn.real();
 
-      mfem::Vector dU;
+      double dU_data[3];
+      mfem::Vector dU(dU_data, vdim);
       En.Imag().GetGradient(*T_submesh, dU);
       U -= dU;
     }
@@ -498,7 +501,8 @@ public:
       Et.Imag().GetVectorValue(*T_submesh, ip, U);
       U *= -kn.real();
 
-      mfem::Vector dU;
+      double dU_data[3];
+      mfem::Vector dU(dU_data, vdim);
       En.Real().GetGradient(*T_submesh, dU);
       U += dU;
     }
@@ -776,7 +780,7 @@ WavePortData::WavePortData(const config::WavePortData &data,
   // of the wave port boundary, in order to deal with symmetry effectively.
   {
     Vector bbmin, bbmax;
-    port_mesh->Get().GetBoundingBox(bbmin, bbmax);
+    mesh::GetAxisAlignedBoundingBox(*port_mesh, bbmin, bbmax);
     const int dim = port_mesh->SpaceDimension();
 
     double la = 0.0, lb = 0.0;
@@ -977,17 +981,17 @@ double WavePortData::GetExcitationPower() const
 
 std::complex<double> WavePortData::GetPower(GridFunction &E, GridFunction &B) const
 {
-  // Compute port power, (E x H) ⋅ n = E ⋅ (-n x H), integrated over the port surface
-  // using the computed E and H = μ⁻¹ B fields. The linear form is reconstructed from
-  // scratch each time due to changing H. The BdrCurrentVectorCoefficient computes -n x H,
+  // Compute port power, (E x H) ⋅ n = E ⋅ (-n x H), integrated over the port surface using
+  // the computed E and H = μ⁻¹ B fields. The linear form is reconstructed from scratch
+  // each time due to changing H. The BdrSurfaceCurrentVectorCoefficient computes -n x H,
   // where n is an outward normal.
   MFEM_VERIFY(E.HasImag() && B.HasImag(),
               "Wave ports expect complex-valued E and B fields in port power "
               "calculation!");
   auto &nd_fespace = *E.ParFESpace();
   const auto &mesh = *nd_fespace.GetParMesh();
-  BdrCurrentVectorCoefficient nxHr_func(B.Real(), mat_op);
-  BdrCurrentVectorCoefficient nxHi_func(B.Imag(), mat_op);
+  BdrSurfaceCurrentVectorCoefficient nxHr_func(B.Real(), mat_op);
+  BdrSurfaceCurrentVectorCoefficient nxHi_func(B.Imag(), mat_op);
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, attr_list);
   mfem::LinearForm pr(&nd_fespace), pi(&nd_fespace);

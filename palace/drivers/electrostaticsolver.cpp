@@ -108,7 +108,7 @@ void ElectrostaticSolver::Postprocess(const PostOperator &postop, int step, int 
   // The internal GridFunctions for PostOperator have already been set from the V solution
   // in the main loop.
   PostprocessDomains(postop, "i", step, idx, E_elec, 0.0, 0.0, 0.0);
-  PostprocessSurfaces(postop, "i", step, idx, E_elec, 0.0, 1.0, 0.0);
+  PostprocessSurfaces(postop, "i", step, idx, E_elec, 0.0);
   PostprocessProbes(postop, "i", step, idx);
   if (step < iodata.solver.electrostatic.n_post)
   {
@@ -208,6 +208,26 @@ void ElectrostaticSolver::PostprocessTerminals(
   PrintMatrix("terminal-C.csv", "C", "(F)", C, F);
   PrintMatrix("terminal-Cinv.csv", "C⁻¹", "(1/F)", Cinv, 1.0 / F);
   PrintMatrix("terminal-Cm.csv", "C_m", "(F)", Cm, F);
+
+  // Also write out a file with terminal voltage excitations.
+  {
+    std::string path = post_dir + "terminal-V.csv";
+    auto output = OutputFile(path, false);
+    // clang-format off
+    output.print("{:>{}s},{:>{}s}\n",
+                 "i", table.w1,
+                 "V_inc[i] (V)", table.w);
+    // clang-format on
+    for (const auto &[idx, data] : terminal_sources)
+    {
+      // clang-format off
+      output.print("{:{}.{}e},{:+{}.{}e}\n",
+                   static_cast<double>(idx), table.w1, table.p1,
+                   iodata.DimensionalizeValue(IoData::ValueType::VOLTAGE, 1.0),
+                   table.w, table.p);
+      // clang-format on
+    }
+  }
 }
 
 }  // namespace palace

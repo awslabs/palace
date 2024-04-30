@@ -144,15 +144,15 @@ double LumpedPortData::GetExcitationVoltage() const
   // Incident voltage should be the same across all elements of an excited lumped port.
   if (excitation)
   {
-    double Vinc = 0.0;
+    double V_inc = 0.0;
     for (const auto &elem : elems)
     {
       const double Rs = R * GetToSquare(*elem);
-      const double Einc = std::sqrt(
+      const double E_inc = std::sqrt(
           Rs / (elem->GetGeometryWidth() * elem->GetGeometryLength() * elems.size()));
-      Vinc += Einc * elem->GetGeometryLength() / elems.size();
+      V_inc += E_inc * elem->GetGeometryLength() / elems.size();
     }
-    return Vinc;
+    return V_inc;
   }
   else
   {
@@ -223,9 +223,9 @@ void LumpedPortData::InitializeLinearForms(mfem::ParFiniteElementSpace &nd_fespa
 
 std::complex<double> LumpedPortData::GetPower(GridFunction &E, GridFunction &B) const
 {
-  // Compute port power, (E x H) ⋅ n = E ⋅ (-n x H), integrated over the port surface
-  // using the computed E and H = μ⁻¹ B fields. The linear form is reconstructed from
-  // scratch each time due to changing H. The BdrCurrentVectorCoefficient computes -n x H,
+  // Compute port power, (E x H) ⋅ n = E ⋅ (-n x H), integrated over the port surface using
+  // the computed E and H = μ⁻¹ B fields. The linear form is reconstructed from scratch
+  // each time due to changing H. The BdrSurfaceCurrentVectorCoefficient computes -n x H,
   // where n is an outward normal.
   MFEM_VERIFY((E.HasImag() && B.HasImag()) || (!E.HasImag() && !B.HasImag()),
               "Mismatch between real- and complex-valued E and B fields in port power "
@@ -238,12 +238,12 @@ std::complex<double> LumpedPortData::GetPower(GridFunction &E, GridFunction &B) 
   for (const auto &elem : elems)
   {
     fbr.AddCoefficient(
-        std::make_unique<RestrictedVectorCoefficient<BdrCurrentVectorCoefficient>>(
+        std::make_unique<RestrictedVectorCoefficient<BdrSurfaceCurrentVectorCoefficient>>(
             elem->GetAttrList(), B.Real(), mat_op));
     if (has_imag)
     {
       fbi.AddCoefficient(
-          std::make_unique<RestrictedVectorCoefficient<BdrCurrentVectorCoefficient>>(
+          std::make_unique<RestrictedVectorCoefficient<BdrSurfaceCurrentVectorCoefficient>>(
               elem->GetAttrList(), B.Imag(), mat_op));
     }
     attr_list.Append(elem->GetAttrList());

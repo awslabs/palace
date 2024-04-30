@@ -30,7 +30,7 @@ public:
 
   // Time dependence of current pulse for excitation: -J'(t) = -g'(t) J. This function
   // returns g'(t).
-  std::function<double(double)> &dJcoef;
+  std::function<double(double)> &dJ_coef;
 
   // Internal objects for solution of linear systems during time stepping.
   double a0_, a1_;
@@ -44,10 +44,10 @@ public:
 
 public:
   TimeDependentCurlCurlOperator(const IoData &iodata, SpaceOperator &spaceop,
-                                std::function<double(double)> &djcoef, double t0,
+                                std::function<double(double)> &dJ_coef, double t0,
                                 mfem::TimeDependentOperator::Type type)
     : mfem::SecondOrderTimeDependentOperator(spaceop.GetNDSpace().GetTrueVSize(), t0, type),
-      comm(spaceop.GetComm()), dJcoef(djcoef)
+      comm(spaceop.GetComm()), dJ_coef(dJ_coef)
   {
     // Construct the system matrices defining the linear operator. PEC boundaries are
     // handled simply by setting diagonal entries of the mass matrix for the corresponding
@@ -104,7 +104,7 @@ public:
     {
       C->AddMult(du, rhs, 1.0);
     }
-    linalg::AXPBYPCZ(-1.0, rhs, dJcoef(t), NegJ, 0.0, rhs);
+    linalg::AXPBYPCZ(-1.0, rhs, dJ_coef(t), NegJ, 0.0, rhs);
   }
 
   void Mult(const Vector &u, const Vector &du, Vector &ddu) const override
@@ -143,7 +143,7 @@ public:
 }  // namespace
 
 TimeOperator::TimeOperator(const IoData &iodata, SpaceOperator &spaceop,
-                           std::function<double(double)> &djcoef)
+                           std::function<double(double)> &dJ_coef)
 {
   // Construct discrete curl matrix for B-field time integration.
   Curl = &spaceop.GetCurlMatrix();
@@ -186,7 +186,7 @@ TimeOperator::TimeOperator(const IoData &iodata, SpaceOperator &spaceop,
   }
 
   // Set up time-dependent operator for 2nd-order curl-curl equation for E.
-  op = std::make_unique<TimeDependentCurlCurlOperator>(iodata, spaceop, djcoef, 0.0, type);
+  op = std::make_unique<TimeDependentCurlCurlOperator>(iodata, spaceop, dJ_coef, 0.0, type);
 }
 
 const KspSolver &TimeOperator::GetLinearSolver() const
