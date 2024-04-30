@@ -42,37 +42,36 @@ PostOperator::PostOperator(const IoData &iodata, SpaceOperator &spaceop,
     surf_post_op(iodata, spaceop.GetMaterialOp(), spaceop.GetH1Space()),
     dom_post_op(iodata, spaceop.GetMaterialOp(), spaceop.GetNDSpace(),
                 spaceop.GetRTSpace()),
-    E(std::in_place, spaceop.GetNDSpace(),
-      iodata.problem.type != config::ProblemData::Type::TRANSIENT),
-    B(std::in_place, spaceop.GetRTSpace(),
-      iodata.problem.type != config::ProblemData::Type::TRANSIENT),
-    V(std::nullopt), A(std::nullopt), lumped_port_init(false), wave_port_init(false),
+    E(std::make_unique<GridFunction>(
+        spaceop.GetNDSpace(), iodata.problem.type != config::ProblemData::Type::TRANSIENT)),
+    B(std::make_unique<GridFunction>(
+        spaceop.GetRTSpace(), iodata.problem.type != config::ProblemData::Type::TRANSIENT)),
+    lumped_port_init(false), wave_port_init(false),
     paraview(CreateParaviewPath(iodata, name), &spaceop.GetNDSpace().GetParMesh()),
     paraview_bdr(CreateParaviewPath(iodata, name) + "_boundary",
                  &spaceop.GetNDSpace().GetParMesh()),
     interp_op(iodata, spaceop.GetNDSpace().GetParMesh())
 {
-  Esr = std::make_unique<BdrFieldVectorCoefficient>(E->Real(), mat_op);
-  Bsr = std::make_unique<BdrFieldVectorCoefficient>(B->Real(), mat_op);
-  Jsr = std::make_unique<BdrCurrentVectorCoefficient>(B->Real(), mat_op);
-  Qsr = std::make_unique<BdrChargeCoefficient>(E->Real(), mat_op);
+  bool side_n_min = (iodata.boundaries.postpro.side ==
+                     config::InterfaceDielectricData::Side::SMALLER_REF_INDEX);
+  Ue = std::make_unique<EnergyDensityCoefficient<EnergyDensityType::ELECTRIC>>(*E, mat_op,
+                                                                               side_n_min);
+  Um = std::make_unique<EnergyDensityCoefficient<EnergyDensityType::MAGNETIC>>(*B, mat_op,
+                                                                               side_n_min);
+  S = std::make_unique<PoyntingVectorCoefficient>(*E, *B, mat_op, side_n_min);
+
+  Esr = std::make_unique<BdrFieldVectorCoefficient>(E->Real(), mat_op, side_n_min);
+  Bsr = std::make_unique<BdrFieldVectorCoefficient>(B->Real(), mat_op, side_n_min);
+  Jsr = std::make_unique<BdrSurfaceCurrentVectorCoefficient>(B->Real(), mat_op);
+  Qsr = std::make_unique<BdrSurfaceFluxCoefficient<SurfaceFluxType::ELECTRIC>>(
+      &E->Real(), nullptr, mat_op, true, mfem::Vector());
   if (HasImag())
   {
-    Esi = std::make_unique<BdrFieldVectorCoefficient>(E->Imag(), mat_op);
-    Bsi = std::make_unique<BdrFieldVectorCoefficient>(B->Imag(), mat_op);
-    Jsi = std::make_unique<BdrCurrentVectorCoefficient>(B->Imag(), mat_op);
-    Qsi = std::make_unique<BdrChargeCoefficient>(E->Imag(), mat_op);
-    Ue =
-        std::make_unique<EnergyDensityCoefficient<EnergyDensityType::ELECTRIC>>(*E, mat_op);
-    Um =
-        std::make_unique<EnergyDensityCoefficient<EnergyDensityType::MAGNETIC>>(*B, mat_op);
-  }
-  else
-  {
-    Ue =
-        std::make_unique<EnergyDensityCoefficient<EnergyDensityType::ELECTRIC>>(*E, mat_op);
-    Um =
-        std::make_unique<EnergyDensityCoefficient<EnergyDensityType::MAGNETIC>>(*B, mat_op);
+    Esi = std::make_unique<BdrFieldVectorCoefficient>(E->Imag(), mat_op, side_n_min);
+    Bsi = std::make_unique<BdrFieldVectorCoefficient>(B->Imag(), mat_op, side_n_min);
+    Jsi = std::make_unique<BdrSurfaceCurrentVectorCoefficient>(B->Imag(), mat_op);
+    Qsi = std::make_unique<BdrSurfaceFluxCoefficient<SurfaceFluxType::ELECTRIC>>(
+        &E->Imag(), nullptr, mat_op, true, mfem::Vector());
   }
 
   // Add wave port boundary mode postprocessing when available.
@@ -92,8 +91,9 @@ PostOperator::PostOperator(const IoData &iodata, LaplaceOperator &laplaceop,
   : mat_op(laplaceop.GetMaterialOp()),
     surf_post_op(iodata, laplaceop.GetMaterialOp(), laplaceop.GetH1Space()),
     dom_post_op(iodata, laplaceop.GetMaterialOp(), laplaceop.GetH1Space()),
-    E(std::in_place, laplaceop.GetNDSpace()), B(std::nullopt), V(laplaceop.GetH1Space()),
-    A(std::nullopt), lumped_port_init(false), wave_port_init(false),
+    E(std::make_unique<GridFunction>(laplaceop.GetNDSpace())),
+    V(std::make_unique<GridFunction>(laplaceop.GetH1Space())), lumped_port_init(false),
+    wave_port_init(false),
     paraview(CreateParaviewPath(iodata, name), &laplaceop.GetNDSpace().GetParMesh()),
     paraview_bdr(CreateParaviewPath(iodata, name) + "_boundary",
                  &laplaceop.GetNDSpace().GetParMesh()),
@@ -102,10 +102,15 @@ PostOperator::PostOperator(const IoData &iodata, LaplaceOperator &laplaceop,
   // Note: When using this constructor, you should not use any of the magnetic field related
   // postprocessing functions (magnetic field energy, inductor energy, surface currents,
   // etc.), since only V and E fields are supplied.
-  Esr = std::make_unique<BdrFieldVectorCoefficient>(E->Real(), mat_op);
-  Vs = std::make_unique<BdrFieldCoefficient>(V->Real(), mat_op);
-  Ue = std::make_unique<EnergyDensityCoefficient<EnergyDensityType::ELECTRIC>>(*E, mat_op);
-  Qsr = std::make_unique<BdrChargeCoefficient>(E->Real(), mat_op);
+  bool side_n_min = (iodata.boundaries.postpro.side ==
+                     config::InterfaceDielectricData::Side::SMALLER_REF_INDEX);
+  Ue = std::make_unique<EnergyDensityCoefficient<EnergyDensityType::ELECTRIC>>(*E, mat_op,
+                                                                               side_n_min);
+
+  Esr = std::make_unique<BdrFieldVectorCoefficient>(E->Real(), mat_op, side_n_min);
+  Vs = std::make_unique<BdrFieldCoefficient>(V->Real(), mat_op, side_n_min);
+  Qsr = std::make_unique<BdrSurfaceFluxCoefficient<SurfaceFluxType::ELECTRIC>>(
+      &E->Real(), nullptr, mat_op, true, mfem::Vector());
 
   // Initialize data collection objects.
   InitializeDataCollection(iodata);
@@ -116,8 +121,9 @@ PostOperator::PostOperator(const IoData &iodata, CurlCurlOperator &curlcurlop,
   : mat_op(curlcurlop.GetMaterialOp()),
     surf_post_op(iodata, curlcurlop.GetMaterialOp(), curlcurlop.GetH1Space()),
     dom_post_op(iodata, curlcurlop.GetMaterialOp(), curlcurlop.GetNDSpace()),
-    E(std::nullopt), B(std::in_place, curlcurlop.GetRTSpace()), V(std::nullopt),
-    A(curlcurlop.GetNDSpace()), lumped_port_init(false), wave_port_init(false),
+    B(std::make_unique<GridFunction>(curlcurlop.GetRTSpace())),
+    A(std::make_unique<GridFunction>(curlcurlop.GetNDSpace())), lumped_port_init(false),
+    wave_port_init(false),
     paraview(CreateParaviewPath(iodata, name), &curlcurlop.GetNDSpace().GetParMesh()),
     paraview_bdr(CreateParaviewPath(iodata, name) + "_boundary",
                  &curlcurlop.GetNDSpace().GetParMesh()),
@@ -126,10 +132,14 @@ PostOperator::PostOperator(const IoData &iodata, CurlCurlOperator &curlcurlop,
   // Note: When using this constructor, you should not use any of the electric field related
   // postprocessing functions (electric field energy, capacitor energy, surface charge,
   // etc.), since only the B field is supplied.
-  Bsr = std::make_unique<BdrFieldVectorCoefficient>(B->Real(), mat_op);
-  As = std::make_unique<BdrFieldVectorCoefficient>(A->Real(), mat_op);
-  Um = std::make_unique<EnergyDensityCoefficient<EnergyDensityType::MAGNETIC>>(*B, mat_op);
-  Jsr = std::make_unique<BdrCurrentVectorCoefficient>(B->Real(), mat_op);
+  bool side_n_min = (iodata.boundaries.postpro.side ==
+                     config::InterfaceDielectricData::Side::SMALLER_REF_INDEX);
+  Um = std::make_unique<EnergyDensityCoefficient<EnergyDensityType::MAGNETIC>>(*B, mat_op,
+                                                                               side_n_min);
+
+  Bsr = std::make_unique<BdrFieldVectorCoefficient>(B->Real(), mat_op, side_n_min);
+  As = std::make_unique<BdrFieldVectorCoefficient>(A->Real(), mat_op, side_n_min);
+  Jsr = std::make_unique<BdrSurfaceCurrentVectorCoefficient>(B->Real(), mat_op);
 
   // Initialize data collection objects.
   InitializeDataCollection(iodata);
@@ -210,6 +220,24 @@ void PostOperator::InitializeDataCollection(const IoData &iodata)
     paraview_bdr.RegisterVCoeffField("A", As.get());
   }
 
+  // Extract energy density field for electric field energy 1/2 Dᴴ E or magnetic field
+  // energy 1/2 Hᴴ B. Also Poynting vector S = E x H⋆.
+  if (Ue)
+  {
+    paraview.RegisterCoeffField("Ue", Ue.get());
+    paraview_bdr.RegisterCoeffField("Ue", Ue.get());
+  }
+  if (Um)
+  {
+    paraview.RegisterCoeffField("Um", Um.get());
+    paraview_bdr.RegisterCoeffField("Um", Um.get());
+  }
+  if (S)
+  {
+    paraview.RegisterVCoeffField("S", S.get());
+    paraview_bdr.RegisterVCoeffField("S", S.get());
+  }
+
   // Extract surface charge from normally discontinuous ND E-field. Also extract surface
   // currents from tangentially discontinuous RT B-field The surface charge and surface
   // currents are single-valued at internal boundaries.
@@ -236,19 +264,6 @@ void PostOperator::InitializeDataCollection(const IoData &iodata)
     {
       paraview_bdr.RegisterVCoeffField("Js", Jsr.get());
     }
-  }
-
-  // Extract energy density field for electric field energy 1/2 Dᴴ E or magnetic field
-  // energy 1/2 Bᴴ H.
-  if (Ue)
-  {
-    paraview.RegisterCoeffField("Ue", Ue.get());
-    paraview_bdr.RegisterCoeffField("Ue", Ue.get());
-  }
-  if (Um)
-  {
-    paraview.RegisterCoeffField("Um", Um.get());
-    paraview_bdr.RegisterCoeffField("Um", Um.get());
   }
 
   // Add wave port boundary mode postprocessing when available.
@@ -389,6 +404,25 @@ double PostOperator::GetHFieldEnergy(int idx) const
     MFEM_VERIFY(B, "PostOperator is not configured for magnetic field energy calculation!");
     return dom_post_op.GetDomainMagneticFieldEnergy(idx, *B);
   }
+}
+
+std::complex<double> PostOperator::GetSurfaceFlux(int idx) const
+{
+  // Compute the flux through a surface as Φ_j = ∫ F ⋅ n_j dS, with F = B, F = ε D, or F =
+  // E x H. The special coefficient is used to avoid issues evaluating MFEM GridFunctions
+  // which are discontinuous at interior boundary elements.
+  return surf_post_op.GetSurfaceFlux(idx, E.get(), B.get());
+}
+
+double PostOperator::GetInterfaceParticipation(int idx, double Em) const
+{
+  // Compute the surface dielectric participation ratio and associated quality factor for
+  // the material interface given by index idx. We have:
+  //                            1/Q_mj = p_mj tan(δ)_j
+  // with:
+  //          p_mj = 1/2 t_j Re{∫_{Γ_j} (ε_j E_m)ᴴ E_m dS} /(E_elec + E_cap).
+  MFEM_VERIFY(E, "Surface Q not defined, no electric field solution found!");
+  return surf_post_op.GetInterfaceElectricFieldEnergy(idx, *E) / Em;
 }
 
 void PostOperator::UpdatePorts(const LumpedPortOperator &lumped_port_op, double omega)
@@ -635,41 +669,6 @@ double PostOperator::GetExternalKappa(const LumpedPortOperator &lumped_port_op, 
   std::complex<double> Imj = GetPortCurrent(lumped_port_op, idx, LumpedPortData::Branch::R);
   return std::copysign(0.5 * std::abs(data.R) * std::real(Imj * std::conj(Imj)) / Em,
                        Imj.real());  // mean(I²) = (I_r² + I_i²) / 2
-}
-
-double PostOperator::GetInterfaceParticipation(int idx, double Em) const
-{
-  // Compute the surface dielectric participation ratio and associated quality factor for
-  // the material interface given by index idx. We have:
-  //                            1/Q_mj = p_mj tan(δ)_j
-  // with:
-  //          p_mj = 1/2 t_j Re{∫_{Γ_j} (ε_j E_m)ᴴ E_m dS} /(E_elec + E_cap).
-  MFEM_VERIFY(E, "Surface Q not defined, no electric field solution found!");
-  double Esurf = surf_post_op.GetInterfaceElectricFieldEnergy(idx, *E);
-  return Esurf / Em;
-}
-
-double PostOperator::GetSurfaceCharge(int idx) const
-{
-  // Compute the induced charge on a surface as Q_j = ∫ D ⋅ n_j dS, which correctly handles
-  // two-sided internal surfaces using a special GridFunction coefficient which accounts
-  // for both sides of the surface. This then yields the capacitive coupling to the
-  // excitation as C_jk = Q_j / V_k where V_k is the excitation voltage.
-  MFEM_VERIFY(E, "Surface capacitance not defined, no electric field solution found!");
-  double Q = surf_post_op.GetSurfaceElectricCharge(idx, *E);
-  return Q;
-}
-
-double PostOperator::GetSurfaceFlux(int idx) const
-{
-  // Compute the magnetic flux through a surface as Φ_j = ∫ B ⋅ n_j dS. This then yields the
-  // inductive coupling to the excitation as M_jk = Φ_j / I_k where I_k is the excitation
-  // current. The special coefficient is used to avoid issues evaluating MFEM GridFunctions
-  // which are discontinuous at interior boundary elements.
-  MFEM_VERIFY(B,
-              "Surface inductance not defined, no magnetic flux density solution found!");
-  double Phi = surf_post_op.GetSurfaceMagneticFlux(idx, *B);
-  return Phi;
 }
 
 namespace

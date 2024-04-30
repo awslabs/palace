@@ -7,7 +7,6 @@
 #include <complex>
 #include <map>
 #include <memory>
-#include <optional>
 #include <string>
 #include <vector>
 #include <mfem.hpp>
@@ -45,9 +44,9 @@ private:
   const DomainPostOperator dom_post_op;
 
   // Objects for grid function postprocessing from the FE solution.
-  mutable std::optional<GridFunction> E, B, V, A;
-  std::unique_ptr<mfem::VectorCoefficient> Esr, Esi, Bsr, Bsi, As, Jsr, Jsi;
-  std::unique_ptr<mfem::Coefficient> Vs, Ue, Um, Qsr, Qsi;
+  mutable std::unique_ptr<GridFunction> E, B, V, A;
+  std::unique_ptr<mfem::VectorCoefficient> S, Esr, Esi, Bsr, Bsi, As, Jsr, Jsi;
+  std::unique_ptr<mfem::Coefficient> Ue, Um, Vs, Qsr, Qsi;
 
   // Wave port boundary mode field postprocessing.
   struct WavePortFieldData
@@ -81,8 +80,8 @@ public:
   const auto &GetDomainPostOp() const { return dom_post_op; }
 
   // Return options for postprocessing configuration.
-  bool HasE() const { return E.has_value(); }
-  bool HasB() const { return B.has_value(); }
+  bool HasE() const { return E != nullptr; }
+  bool HasB() const { return B != nullptr; }
   bool HasImag() const { return HasE() ? E->HasImag() : B->HasImag(); }
 
   // Populate the grid function solutions for the E- and B-field using the solution vectors
@@ -99,26 +98,22 @@ public:
   // Access grid functions for field solutions.
   auto &GetEGridFunction()
   {
-    MFEM_ASSERT(E.has_value(),
-                "Missing GridFunction object when accessing from PostOperator!");
+    MFEM_ASSERT(E, "Missing GridFunction object when accessing from PostOperator!");
     return *E;
   }
   auto &GetBGridFunction()
   {
-    MFEM_ASSERT(B.has_value(),
-                "Missing GridFunction object when accessing from PostOperator!");
+    MFEM_ASSERT(B, "Missing GridFunction object when accessing from PostOperator!");
     return *B;
   }
   auto &GetVGridFunction()
   {
-    MFEM_ASSERT(V.has_value(),
-                "Missing GridFunction object when accessing from PostOperator!");
+    MFEM_ASSERT(V, "Missing GridFunction object when accessing from PostOperator!");
     return *V;
   }
   auto &GetAGridFunction()
   {
-    MFEM_ASSERT(A.has_value(),
-                "Missing GridFunction object when accessing from PostOperator!");
+    MFEM_ASSERT(A, "Missing GridFunction object when accessing from PostOperator!");
     return *A;
   }
 
@@ -131,6 +126,14 @@ public:
   // index.
   double GetEFieldEnergy(int idx) const;
   double GetHFieldEnergy(int idx) const;
+
+  // Postprocess the electric or magnetic field flux for a surface index using the computed
+  // electcric field and/or magnetic flux density field solutions.
+  std::complex<double> GetSurfaceFlux(int idx) const;
+
+  // Postprocess the partitipation ratio for interface lossy dielectric losses in the
+  // electric field mode.
+  double GetInterfaceParticipation(int idx, double Em) const;
 
   // Update cached port voltages and currents for lumped and wave port operators.
   void UpdatePorts(const LumpedPortOperator &lumped_port_op,
@@ -175,15 +178,6 @@ public:
   // Postprocess the coupling rate for radiative loss to the given I-O port index.
   double GetExternalKappa(const LumpedPortOperator &lumped_port_op, int idx,
                           double Em) const;
-
-  // Postprocess the partitipation ratio for interface lossy dielectric losses in the
-  // electric field mode.
-  double GetInterfaceParticipation(int idx, double Em) const;
-
-  // Postprocess the charge or flux for a surface index using the electric field solution
-  // or the magnetic flux density field solution.
-  double GetSurfaceCharge(int idx) const;
-  double GetSurfaceFlux(int idx) const;
 
   // Write to disk the E- and B-fields extracted from the solution vectors. Note that fields
   // are not redimensionalized, to do so one needs to compute: B <= B * (μ₀ H₀), E <= E *
