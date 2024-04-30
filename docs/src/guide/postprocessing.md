@@ -82,7 +82,9 @@ file. These include:
     directory.
   - [`config["Boundaries"]["Postprocessing"]["Dielectric"]`](../config/boundaries.md#boundaries%5B%22Postprocessing%22%5D%5B%22Dielectric%22%5D) :
     Postprocesses interface dielectric loss at surfaces of the model by specifying the
-    interface thickness, permittivity, and loss tangent. See
+    interface thickness, permittivity, and loss tangent. See the
+    [Bulk and interface dielectric loss](../reference.md#Bulk-and-interface-dielectric-loss)
+    section of the reference, or
     [https://arxiv.org/pdf/1509.01854.pdf](https://arxiv.org/pdf/1509.01854.pdf) or
     [https://aip.scitation.org/doi/10.1063/1.3637047](https://aip.scitation.org/doi/10.1063/1.3637047)
     for more information. The participation ratios and associated quality factors are
@@ -98,10 +100,34 @@ surface currents, and charge density. These files are found in the `paraview/` d
 located in the output directory specified under
 [`config["Problem"]["Output"]`](../config/problem.md#config%5B%22Problem%22%5D).
 
+All fields are written out as nondimensionalized quantities. The specific quantities
+available varies by [simulation type](problem.md#Problem-Types), but the variable names for
+various possible postprocessed scalar and vector are:
+
+  - Electric field: `E`, `E_real`, and `E_imag`
+  - Magnetic flux density: `B`, `B_real`, and `B_imag`
+  - Electric potential: `V`
+  - Magnetic vector potential : `A`, `A_real`, and `A_imag`
+  - Electric energy density : `Ue`
+  - Magnetic energy density : `Um`
+  - Poynting vector: `S`
+
+Also, at the final step of the simulation the following element-wise quantities are written
+for visualization:
+
+  - Mesh partitioning (1-based): `Rank`
+  - Error indicator: `Indicator`
+
 In addition to the full 3D fields, a ParaView data collection for the boundary mesh and
 fields is also written to disk. The boundary mesh includes all surfaces with prescribed
 boundary conditions as well as any material interfaces in the computational domain. It is
 located in the same `paraview/` directory, with suffix `_boundary`.
+
+The boundary data collection includes the 3D field values sampled on the boundary mesh as
+well as:
+
+  - Surface charge density: `Qs`, `Q_real`, `Qs_imag`
+  - Surface current density: `Js`, `Js_real`, `Js_imag`
 
 ## Adaptive mesh refinement
 
