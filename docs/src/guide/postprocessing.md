@@ -73,15 +73,12 @@ Boundary postprocessing capabilities are enabled by including objects under
 [`config["Boundaries"]["Postprocessing"]`](../config/boundaries.md) in the configuration
 file. These include:
 
-  - [`config["Boundaries"]["Postprocessing"]["Capacitance"]`](../config/boundaries.md#boundaries%5B%22Postprocessing%22%5D%5B%22Capacitance%22%5D) :
-    Postprocess the integral of the surface charge on a surface defined by a list of
-    boundary attributes, and divide by the excitation voltage to get the capacitive
-    coupling. The resulting capcitances are written to `surface-C.csv` in the specified
-    output directory.
-  - [`config["Boundaries"]["Postprocessing"]["Inductance"]`](../config/boundaries.md#boundaries%5B%22Postprocessing%22%5D%5B%22Inductance%22%5D) :
-    Postprocess the magnetic flux through a surface defined by a list of boundary
-    attributes, and divide by the excitation current to the inductive coupling. The
-    resulting inductances are written to `surface-M.csv` in the specified output
+  - [`config["Boundaries"]["Postprocessing"]["SurfaceFlux"]`](../config/boundaries.md#boundaries%5B%22Postprocessing%22%5D%5B%22SurfaceFlux%22%5D) :
+    Postprocess the integrated flux through a surface defined by a list of boundary
+    attributes. Electric, magnetic, and power flux are all supported. Surface capacitance
+    can be computed by dividing the computed electric flux by the excitation voltage, while
+    inductance can be computed by dividing the computed magnetic flux by the excitation
+    current. The resulting fluxes are written to `surface-F.csv` in the specified output
     directory.
   - [`config["Boundaries"]["Postprocessing"]["Dielectric"]`](../config/boundaries.md#boundaries%5B%22Postprocessing%22%5D%5B%22Dielectric%22%5D) :
     Postprocesses interface dielectric loss at surfaces of the model by specifying the
@@ -101,9 +98,10 @@ surface currents, and charge density. These files are found in the `paraview/` d
 located in the output directory specified under
 [`config["Problem"]["Output"]`](../config/problem.md#config%5B%22Problem%22%5D).
 
-In addition to the full 3D fields, a ParaView data collection for the boundary mesh is also
-written to disk. The boundary mesh includes all surfaces with prescribed boundary
-conditions as well as any material interfaces in the computational domain.
+In addition to the full 3D fields, a ParaView data collection for the boundary mesh and
+fields is also written to disk. The boundary mesh includes all surfaces with prescribed
+boundary conditions as well as any material interfaces in the computational domain. It is
+located in the same `paraview/` directory, with suffix `_boundary`.
 
 ## Adaptive mesh refinement
 

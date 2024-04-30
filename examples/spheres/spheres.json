@@ -25,9 +25,7 @@
       [
         {
           "Index": 1,  // On surface of smaller sphere
-          "X": -1.5,
-          "Y": 0.0,
-          "Z": 0.0
+          "Center": [-1.5, 0.0, 0.0]
         }
       ],
       "Energy":
@@ -58,15 +56,17 @@
     ],
     "Postprocessing":  // Capacitance from charge instead of energy
     {
-      "Capacitance":
+      "SurfaceFlux":
       [
         {
           "Index": 1,
-          "Attributes": [3]  // Sphere A
+          "Attributes": [3],  // Sphere A
+	  "Type": "Electric"
         },
         {
           "Index": 2,
-          "Attributes": [4]  // Sphere B
+          "Attributes": [4],  // Sphere B
+	  "Type": "Electric"
         }
       ]
     }
