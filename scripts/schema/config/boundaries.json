@@ -225,7 +225,7 @@
       "required": [],
       "properties":
       {
-        "Capacitance":
+        "SurfaceFlux":
         {
           "type": "array",
           "additionalItems": false,
@@ -233,29 +233,21 @@
           {
             "type": "object",
             "additionalProperties": false,
-            "required": ["Index", "Attributes"],
-            "properties":
-            {
-              "Index": { "type": "integer" },
-              "Attributes": { "$ref": "#/$defs/Attributes" }
-            }
-          }
-        },
-        "Inductance":
-        {
-          "type": "array",
-          "additionalItems": false,
-          "items":
-          {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["Index", "Attributes", "Direction"],
+            "required": ["Index", "Attributes", "Type"],
             "properties":
             {
               "Index": { "type": "integer" },
               "Attributes": { "$ref": "#/$defs/Attributes" },
-              "Direction": { "$ref": "#/$defs/Direction" },
-              "CoordinateSystem": { "type": "string", "enum": ["Cartesian", "Cylindrical"] }
+              "Type": { "type": "string", "enum": ["Electric", "Magnetic", "Power"] },
+              "TwoSided": { "type": "boolean" },
+              "Center":
+              {
+                "type": "array",
+                "additionalItems": false,
+                "items": { "type": "number" },
+                "minItems": 3,
+                "maxItems": 3
+              }
             }
           }
         },
@@ -267,36 +259,16 @@
           {
             "type": "object",
             "additionalProperties": false,
-            "required": ["Index"],
+            "required": ["Index", "Attributes", "Thickness", "Permittivity"],
             "properties":
             {
               "Index": { "type": "integer" },
               "Attributes": { "$ref": "#/$defs/Attributes" },
-              "Side": { "$ref": "#/$defs/Direction" },
-              "CoordinateSystem": { "type": "string", "enum": ["Cartesian", "Cylindrical"] },
-              "Permittivity": { "type": "number" },
-              "PermittivityMA": { "type": "number" },
-              "PermittivityMS": { "type": "number" },
-              "PermittivitySA": { "type": "number" },
-              "LossTan": { "type": "number" },
+              "Type": { "type": "string", "enum": ["Default", "MA", "MS", "SA"] },
               "Thickness": { "type": "number" },
-              "Elements":
-              {
-                "type": "array",
-                "additionalItems": false,
-                "items":
-                {
-                  "type": "object",
-                  "additionalProperties": false,
-                  "required": ["Attributes"],
-                  "properties":
-                  {
-                    "Attributes": { "$ref": "#/$defs/Attributes" },
-                    "Side": { "$ref": "#/$defs/Direction" },
-                    "CoordinateSystem": { "type": "string", "enum": ["Cartesian", "Cylindrical"] }
-                  }
-                }
-              }
+              "Permittivity": { "type": "number" },
+              "LossTan": { "type": "number" },
+              "Side": { "type": "string", "enum": ["SmallerRefractiveIndex", "LargerRefractiveIndex"] },
             }
           }
         }
@@ -323,8 +295,10 @@
         },
         {
           "type": "array",
+          "additionalItems": false,
           "items": { "type": "number" },
-          "minItems": 3, "maxItems": 3
+          "minItems": 3,
+          "maxItems": 3
         }
       ]
     }

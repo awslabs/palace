@@ -37,33 +37,25 @@
           {
             "type": "object",
             "additionalProperties": false,
-            "required": ["Levels", "XLimits", "YLimits", "ZLimits"],
+            "required": ["Levels", "BoundingBoxMin", "BoundingBoxMax"],
             "properties":
             {
               "Levels": { "type": "integer", "minimum": 0 },
-              "XLimits":
+              "BoundingBoxMin":
               {
                 "type": "array",
-                "minItems": 2,
-                "maxItems": 2,
                 "additionalItems": false,
-                "items": { "type": "number" }
+                "items": { "type": "number" },
+                "minItems": 3,
+                "maxItems": 3
               },
-              "YLimits":
+              "BoundingBoxMax":
               {
                 "type": "array",
-                "minItems": 2,
-                "maxItems": 2,
                 "additionalItems": false,
-                "items": { "type": "number" }
-              },
-              "ZLimits":
-              {
-                "type": "array",
-                "minItems": 2,
-                "maxItems": 2,
-                "additionalItems": false,
-                "items": { "type": "number" }
+                "items": { "type": "number" },
+                "minItems": 3,
+                "maxItems": 3
               }
             }
           }
@@ -84,10 +76,10 @@
               "Center":
               {
                 "type": "array",
-                "minItems": 3,
-                "maxItems": 3,
                 "additionalItems": false,
-                "items": { "type": "number" }
+                "items": { "type": "number" },
+                "minItems": 3,
+                "maxItems": 3
               }
             }
           }
