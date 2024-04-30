@@ -76,12 +76,12 @@ jobs:
             if [[ "${{ matrix.compiler }}" == 'clang' ]]; then
               export CC=clang
               export CXX=clang++
-              export FC=gfortran-11
+              export FC=gfortran-13
               export LDFLAGS='-fuse-ld=lld'
             elif [[ "${{ matrix.compiler }}" == 'gcc' ]]; then
-              export CC=gcc-11
-              export CXX=g++-11
-              export FC=gfortran-11
+              export CC=gcc-13
+              export CXX=g++-13
+              export FC=gfortran-13
             fi
             export NUM_PROC_BUILD=$(nproc 2> /dev/null || sysctl -n hw.ncpu)
             if [[ "$NUM_PROC_BUILD" -gt "$NUM_PROC_BUILD_MAX" ]]; then
