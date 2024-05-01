@@ -37,11 +37,12 @@ jobs:
         with:
           arch: aarch64
           distro: ubuntu_latest
+          githubToken: ${{ github.token }}
           env: |
             CMAKE_BUILD_TYPE: Debug  # Speed up builds for run-on-arch
             NUM_PROC_BUILD_MAX: '32'
             NUM_PROC_TEST_MAX: '8'
-          run: |
+          install: |
             # Install dependencies
             apt-get update -q
             apt-get install -y build-essential clang cmake curl gfortran git lld \
@@ -68,11 +69,9 @@ jobs:
               wget https://developer.arm.com/-/media/Files/downloads/hpc/arm-performance-libraries/22-0-2/Ubuntu20.04/arm-performance-libraries_22.0.2_Ubuntu-20.04_gcc-11.2.tar
               tar -xf arm-performance-libraries* && rm -rf arm-performance-libraries*.tar
               ./arm-performance-libraries*/arm-performance-libraries*.sh -a -i /opt/arm
-              export ARMPL_DIR=/opt/arm/armpl_22.0.2_gcc-11.2
-              export LD_LIBRARY_PATH="${LD_LIBRARY_PATH:+LD_LIBRARY_PATH:}$ARMPL_DIR/lib"
             fi
-
-            # Configure environment for build
+          run: |
+            # Configure environment
             if [[ "${{ matrix.compiler }}" == 'clang' ]]; then
               export CC=clang
               export CXX=clang++
@@ -82,6 +81,10 @@ jobs:
               export CC=gcc-13
               export CXX=g++-13
               export FC=gfortran-13
+            fi
+            if [[ "${{ matrix.math-libs }}" == 'armpl' ]]; then
+              export ARMPL_DIR=/opt/arm/armpl_22.0.2_gcc-11.2
+              export LD_LIBRARY_PATH="${LD_LIBRARY_PATH:+LD_LIBRARY_PATH:}$ARMPL_DIR/lib"
             fi
             export NUM_PROC_BUILD=$(nproc 2> /dev/null || sysctl -n hw.ncpu)
             if [[ "$NUM_PROC_BUILD" -gt "$NUM_PROC_BUILD_MAX" ]]; then
