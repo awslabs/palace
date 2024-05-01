@@ -77,9 +77,10 @@ public:
       const mfem::IntegrationPoint *ip = nullptr);
 
   // Return normal vector to the boundary element at an integration point. For a face
-  // element, the normal points out of element 1 into element 2 (if it exists). This can be
-  // flipped with the optional parameter. It is assumed that the element transformation has
-  // already been configured at the integration point of interest.
+  // element, the normal points out of the element (from element 1 into element 2, if it
+  // exists). This convention can be flipped with the optional parameter. It is assumed
+  // that the element transformation has already been configured at the integration point
+  // of interest.
   static void GetNormal(mfem::ElementTransformation &T, mfem::Vector &normal,
                         bool invert = false)
   {
@@ -155,7 +156,7 @@ public:
     // Orient with normal pointing into element 1.
     double normal_data[3];
     mfem::Vector normal(normal_data, vdim);
-    GetNormal(T, normal, !ori);
+    GetNormal(T, normal, ori);
     V.SetSize(vdim);
     Cross3(normal, VU, V);
   }
@@ -232,7 +233,7 @@ public:
     // point into element 1.
     double normal_data[3];
     mfem::Vector normal(normal_data, vdim);
-    GetNormal(T, normal, !ori);
+    GetNormal(T, normal, ori);
     double flux = VU * normal;
     if (two_sided)
     {
@@ -316,7 +317,7 @@ private:
     bool ori = GetBdrElementNeighborTransformations(T.ElementNo, ip);
     if (normal)
     {
-      GetNormal(T, *normal, !ori);
+      GetNormal(T, *normal, ori);
     }
   }
 
