@@ -268,7 +268,7 @@
               "Thickness": { "type": "number" },
               "Permittivity": { "type": "number" },
               "LossTan": { "type": "number" },
-              "Side": { "type": "string", "enum": ["SmallerRefractiveIndex", "LargerRefractiveIndex"] },
+              "Side": { "type": "string", "enum": ["SmallerRefractiveIndex", "LargerRefractiveIndex"] }
             }
           }
         }
