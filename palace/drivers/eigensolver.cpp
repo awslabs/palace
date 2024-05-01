@@ -542,7 +542,7 @@ void EigenSolver::PostprocessPorts(const PostOperator &postop,
 
 void EigenSolver::PostprocessEPR(const PostOperator &postop,
                                  const LumpedPortOperator &lumped_port_op, int i,
-                                 std::complex<double> omega, double Em) const
+                                 std::complex<double> omega, double E_m) const
 {
   // If ports have been specified in the model, compute the corresponding energy-
   // participation ratios (EPR) and write out to disk.
@@ -558,7 +558,7 @@ void EigenSolver::PostprocessEPR(const PostOperator &postop,
   {
     if (std::abs(data.L) > 0.0)
     {
-      const double pj = postop.GetInductorParticipation(lumped_port_op, idx, Em);
+      const double pj = postop.GetInductorParticipation(lumped_port_op, idx, E_m);
       epr_L_data.push_back({idx, pj});
     }
   }
@@ -598,7 +598,7 @@ void EigenSolver::PostprocessEPR(const PostOperator &postop,
   {
     if (std::abs(data.R) > 0.0)
     {
-      const double Kl = postop.GetExternalKappa(lumped_port_op, idx, Em);
+      const double Kl = postop.GetExternalKappa(lumped_port_op, idx, E_m);
       const double Ql = (Kl == 0.0) ? mfem::infinity() : omega.real() / std::abs(Kl);
       epr_IO_data.push_back(
           {idx, Ql, iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, Kl)});

@@ -54,23 +54,23 @@ PostOperator::PostOperator(const IoData &iodata, SpaceOperator &spaceop,
 {
   bool side_n_min = (iodata.boundaries.postpro.side ==
                      config::InterfaceDielectricData::Side::SMALLER_REF_INDEX);
-  Ue = std::make_unique<EnergyDensityCoefficient<EnergyDensityType::ELECTRIC>>(*E, mat_op,
-                                                                               side_n_min);
-  Um = std::make_unique<EnergyDensityCoefficient<EnergyDensityType::MAGNETIC>>(*B, mat_op,
-                                                                               side_n_min);
+  U_e = std::make_unique<EnergyDensityCoefficient<EnergyDensityType::ELECTRIC>>(*E, mat_op,
+                                                                                side_n_min);
+  U_m = std::make_unique<EnergyDensityCoefficient<EnergyDensityType::MAGNETIC>>(*B, mat_op,
+                                                                                side_n_min);
   S = std::make_unique<PoyntingVectorCoefficient>(*E, *B, mat_op, side_n_min);
 
-  Esr = std::make_unique<BdrFieldVectorCoefficient>(E->Real(), mat_op, side_n_min);
-  Bsr = std::make_unique<BdrFieldVectorCoefficient>(B->Real(), mat_op, side_n_min);
-  Jsr = std::make_unique<BdrSurfaceCurrentVectorCoefficient>(B->Real(), mat_op);
-  Qsr = std::make_unique<BdrSurfaceFluxCoefficient<SurfaceFluxType::ELECTRIC>>(
+  E_sr = std::make_unique<BdrFieldVectorCoefficient>(E->Real(), mat_op, side_n_min);
+  B_sr = std::make_unique<BdrFieldVectorCoefficient>(B->Real(), mat_op, side_n_min);
+  J_sr = std::make_unique<BdrSurfaceCurrentVectorCoefficient>(B->Real(), mat_op);
+  Q_sr = std::make_unique<BdrSurfaceFluxCoefficient<SurfaceFluxType::ELECTRIC>>(
       &E->Real(), nullptr, mat_op, true, mfem::Vector());
   if (HasImag())
   {
-    Esi = std::make_unique<BdrFieldVectorCoefficient>(E->Imag(), mat_op, side_n_min);
-    Bsi = std::make_unique<BdrFieldVectorCoefficient>(B->Imag(), mat_op, side_n_min);
-    Jsi = std::make_unique<BdrSurfaceCurrentVectorCoefficient>(B->Imag(), mat_op);
-    Qsi = std::make_unique<BdrSurfaceFluxCoefficient<SurfaceFluxType::ELECTRIC>>(
+    E_si = std::make_unique<BdrFieldVectorCoefficient>(E->Imag(), mat_op, side_n_min);
+    B_si = std::make_unique<BdrFieldVectorCoefficient>(B->Imag(), mat_op, side_n_min);
+    J_si = std::make_unique<BdrSurfaceCurrentVectorCoefficient>(B->Imag(), mat_op);
+    Q_si = std::make_unique<BdrSurfaceFluxCoefficient<SurfaceFluxType::ELECTRIC>>(
         &E->Imag(), nullptr, mat_op, true, mfem::Vector());
   }
 
@@ -104,12 +104,12 @@ PostOperator::PostOperator(const IoData &iodata, LaplaceOperator &laplaceop,
   // etc.), since only V and E fields are supplied.
   bool side_n_min = (iodata.boundaries.postpro.side ==
                      config::InterfaceDielectricData::Side::SMALLER_REF_INDEX);
-  Ue = std::make_unique<EnergyDensityCoefficient<EnergyDensityType::ELECTRIC>>(*E, mat_op,
-                                                                               side_n_min);
+  U_e = std::make_unique<EnergyDensityCoefficient<EnergyDensityType::ELECTRIC>>(*E, mat_op,
+                                                                                side_n_min);
 
-  Esr = std::make_unique<BdrFieldVectorCoefficient>(E->Real(), mat_op, side_n_min);
-  Vs = std::make_unique<BdrFieldCoefficient>(V->Real(), mat_op, side_n_min);
-  Qsr = std::make_unique<BdrSurfaceFluxCoefficient<SurfaceFluxType::ELECTRIC>>(
+  E_sr = std::make_unique<BdrFieldVectorCoefficient>(E->Real(), mat_op, side_n_min);
+  V_s = std::make_unique<BdrFieldCoefficient>(V->Real(), mat_op, side_n_min);
+  Q_sr = std::make_unique<BdrSurfaceFluxCoefficient<SurfaceFluxType::ELECTRIC>>(
       &E->Real(), nullptr, mat_op, true, mfem::Vector());
 
   // Initialize data collection objects.
@@ -134,12 +134,12 @@ PostOperator::PostOperator(const IoData &iodata, CurlCurlOperator &curlcurlop,
   // etc.), since only the B field is supplied.
   bool side_n_min = (iodata.boundaries.postpro.side ==
                      config::InterfaceDielectricData::Side::SMALLER_REF_INDEX);
-  Um = std::make_unique<EnergyDensityCoefficient<EnergyDensityType::MAGNETIC>>(*B, mat_op,
-                                                                               side_n_min);
+  U_m = std::make_unique<EnergyDensityCoefficient<EnergyDensityType::MAGNETIC>>(*B, mat_op,
+                                                                                side_n_min);
 
-  Bsr = std::make_unique<BdrFieldVectorCoefficient>(B->Real(), mat_op, side_n_min);
-  As = std::make_unique<BdrFieldVectorCoefficient>(A->Real(), mat_op, side_n_min);
-  Jsr = std::make_unique<BdrSurfaceCurrentVectorCoefficient>(B->Real(), mat_op);
+  B_sr = std::make_unique<BdrFieldVectorCoefficient>(B->Real(), mat_op, side_n_min);
+  A_s = std::make_unique<BdrFieldVectorCoefficient>(A->Real(), mat_op, side_n_min);
+  J_sr = std::make_unique<BdrSurfaceCurrentVectorCoefficient>(B->Real(), mat_op);
 
   // Initialize data collection objects.
   InitializeDataCollection(iodata);
@@ -185,13 +185,13 @@ void PostOperator::InitializeDataCollection(const IoData &iodata)
     {
       paraview.RegisterField("E_real", &E->Real());
       paraview.RegisterField("E_imag", &E->Imag());
-      paraview_bdr.RegisterVCoeffField("E_real", Esr.get());
-      paraview_bdr.RegisterVCoeffField("E_imag", Esi.get());
+      paraview_bdr.RegisterVCoeffField("E_real", E_sr.get());
+      paraview_bdr.RegisterVCoeffField("E_imag", E_si.get());
     }
     else
     {
       paraview.RegisterField("E", &E->Real());
-      paraview_bdr.RegisterVCoeffField("E", Esr.get());
+      paraview_bdr.RegisterVCoeffField("E", E_sr.get());
     }
   }
   if (B)
@@ -200,37 +200,37 @@ void PostOperator::InitializeDataCollection(const IoData &iodata)
     {
       paraview.RegisterField("B_real", &B->Real());
       paraview.RegisterField("B_imag", &B->Imag());
-      paraview_bdr.RegisterVCoeffField("B_real", Bsr.get());
-      paraview_bdr.RegisterVCoeffField("B_imag", Bsi.get());
+      paraview_bdr.RegisterVCoeffField("B_real", B_sr.get());
+      paraview_bdr.RegisterVCoeffField("B_imag", B_si.get());
     }
     else
     {
       paraview.RegisterField("B", &B->Real());
-      paraview_bdr.RegisterVCoeffField("B", Bsr.get());
+      paraview_bdr.RegisterVCoeffField("B", B_sr.get());
     }
   }
   if (V)
   {
     paraview.RegisterField("V", &V->Real());
-    paraview_bdr.RegisterCoeffField("V", Vs.get());
+    paraview_bdr.RegisterCoeffField("V", V_s.get());
   }
   if (A)
   {
     paraview.RegisterField("A", &A->Real());
-    paraview_bdr.RegisterVCoeffField("A", As.get());
+    paraview_bdr.RegisterVCoeffField("A", A_s.get());
   }
 
   // Extract energy density field for electric field energy 1/2 Dᴴ E or magnetic field
   // energy 1/2 Hᴴ B. Also Poynting vector S = E x H⋆.
-  if (Ue)
+  if (U_e)
   {
-    paraview.RegisterCoeffField("Ue", Ue.get());
-    paraview_bdr.RegisterCoeffField("Ue", Ue.get());
+    paraview.RegisterCoeffField("U_e", U_e.get());
+    paraview_bdr.RegisterCoeffField("U_e", U_e.get());
   }
-  if (Um)
+  if (U_m)
   {
-    paraview.RegisterCoeffField("Um", Um.get());
-    paraview_bdr.RegisterCoeffField("Um", Um.get());
+    paraview.RegisterCoeffField("U_m", U_m.get());
+    paraview_bdr.RegisterCoeffField("U_m", U_m.get());
   }
   if (S)
   {
@@ -241,28 +241,28 @@ void PostOperator::InitializeDataCollection(const IoData &iodata)
   // Extract surface charge from normally discontinuous ND E-field. Also extract surface
   // currents from tangentially discontinuous RT B-field The surface charge and surface
   // currents are single-valued at internal boundaries.
-  if (Qsr)
+  if (Q_sr)
   {
     if (HasImag())
     {
-      paraview_bdr.RegisterCoeffField("Qs_real", Qsr.get());
-      paraview_bdr.RegisterCoeffField("Qs_imag", Qsi.get());
+      paraview_bdr.RegisterCoeffField("Q_s_real", Q_sr.get());
+      paraview_bdr.RegisterCoeffField("Q_s_imag", Q_si.get());
     }
     else
     {
-      paraview_bdr.RegisterCoeffField("Qs", Qsr.get());
+      paraview_bdr.RegisterCoeffField("Q_s", Q_sr.get());
     }
   }
-  if (Jsr)
+  if (J_sr)
   {
     if (HasImag())
     {
-      paraview_bdr.RegisterVCoeffField("Js_real", Jsr.get());
-      paraview_bdr.RegisterVCoeffField("Js_imag", Jsi.get());
+      paraview_bdr.RegisterVCoeffField("J_s_real", J_sr.get());
+      paraview_bdr.RegisterVCoeffField("J_s_imag", J_si.get());
     }
     else
     {
-      paraview_bdr.RegisterVCoeffField("Js", Jsr.get());
+      paraview_bdr.RegisterVCoeffField("J_s", J_sr.get());
     }
   }
 
@@ -414,7 +414,7 @@ std::complex<double> PostOperator::GetSurfaceFlux(int idx) const
   return surf_post_op.GetSurfaceFlux(idx, E.get(), B.get());
 }
 
-double PostOperator::GetInterfaceParticipation(int idx, double Em) const
+double PostOperator::GetInterfaceParticipation(int idx, double E_m) const
 {
   // Compute the surface dielectric participation ratio and associated quality factor for
   // the material interface given by index idx. We have:
@@ -422,7 +422,7 @@ double PostOperator::GetInterfaceParticipation(int idx, double Em) const
   // with:
   //          p_mj = 1/2 t_j Re{∫_{Γ_j} (ε_j E_m)ᴴ E_m dS} /(E_elec + E_cap).
   MFEM_VERIFY(E, "Surface Q not defined, no electric field solution found!");
-  return surf_post_op.GetInterfaceElectricFieldEnergy(idx, *E) / Em;
+  return surf_post_op.GetInterfaceElectricFieldEnergy(idx, *E) / E_m;
 }
 
 void PostOperator::UpdatePorts(const LumpedPortOperator &lumped_port_op, double omega)
@@ -497,9 +497,9 @@ double PostOperator::GetLumpedInductorEnergy(const LumpedPortOperator &lumped_po
   {
     if (std::abs(data.L) > 0.0)
     {
-      std::complex<double> Ij =
+      std::complex<double> I_j =
           GetPortCurrent(lumped_port_op, idx, LumpedPortData::Branch::L);
-      U += 0.5 * std::abs(data.L) * std::real(Ij * std::conj(Ij));
+      U += 0.5 * std::abs(data.L) * std::real(I_j * std::conj(I_j));
     }
   }
   return U;
@@ -515,8 +515,8 @@ PostOperator::GetLumpedCapacitorEnergy(const LumpedPortOperator &lumped_port_op)
   {
     if (std::abs(data.C) > 0.0)
     {
-      std::complex<double> Vj = GetPortVoltage(lumped_port_op, idx);
-      U += 0.5 * std::abs(data.C) * std::real(Vj * std::conj(Vj));
+      std::complex<double> V_j = GetPortVoltage(lumped_port_op, idx);
+      U += 0.5 * std::abs(data.C) * std::real(V_j * std::conj(V_j));
     }
   }
   return U;
@@ -534,17 +534,17 @@ std::complex<double> PostOperator::GetSParameter(const LumpedPortOperator &lumpe
               "Lumped port index " << source_idx << " is not marked for excitation!");
   MFEM_VERIFY(it != lumped_port_vi.end(),
               "Could not find lumped port when calculating port S-parameters!");
-  std::complex<double> Sij = it->second.S;
+  std::complex<double> S_ij = it->second.S;
   if (idx == source_idx)
   {
-    Sij.real(Sij.real() - 1.0);
+    S_ij.real(S_ij.real() - 1.0);
   }
   // Generalized S-parameters if the ports are resistive (avoids divide-by-zero).
   if (std::abs(data.R) > 0.0)
   {
-    Sij *= std::sqrt(src_data.R / data.R);
+    S_ij *= std::sqrt(src_data.R / data.R);
   }
-  return Sij;
+  return S_ij;
 }
 
 std::complex<double> PostOperator::GetSParameter(const WavePortOperator &wave_port_op,
@@ -560,16 +560,16 @@ std::complex<double> PostOperator::GetSParameter(const WavePortOperator &wave_po
               "Wave port index " << source_idx << " is not marked for excitation!");
   MFEM_VERIFY(it != wave_port_vi.end(),
               "Could not find wave port when calculating port S-parameters!");
-  std::complex<double> Sij = it->second.S;
+  std::complex<double> S_ij = it->second.S;
   if (idx == source_idx)
   {
-    Sij.real(Sij.real() - 1.0);
+    S_ij.real(S_ij.real() - 1.0);
   }
   // Port de-embedding: S_demb = S exp(ikₙᵢ dᵢ) exp(ikₙⱼ dⱼ) (distance offset is default 0
   // unless specified).
-  Sij *= std::exp(1i * src_data.kn0 * src_data.d_offset);
-  Sij *= std::exp(1i * data.kn0 * data.d_offset);
-  return Sij;
+  S_ij *= std::exp(1i * src_data.kn0 * src_data.d_offset);
+  S_ij *= std::exp(1i * data.kn0 * data.d_offset);
+  return S_ij;
 }
 
 std::complex<double> PostOperator::GetPortPower(const LumpedPortOperator &lumped_port_op,
@@ -640,24 +640,25 @@ std::complex<double> PostOperator::GetPortCurrent(const WavePortOperator &wave_p
 }
 
 double PostOperator::GetInductorParticipation(const LumpedPortOperator &lumped_port_op,
-                                              int idx, double Em) const
+                                              int idx, double E_m) const
 {
   // Compute energy-participation ratio of junction given by index idx for the field mode.
   // We first get the port line voltage, and use lumped port circuit impedance to get peak
-  // current through the inductor: I_mj = V_mj / Z_mj,  Z_mj = i ω_m L_j. Em is the total
+  // current through the inductor: I_mj = V_mj / Z_mj,  Z_mj = i ω_m L_j. E_m is the total
   // energy in mode m: E_m = E_elec + E_cap = E_mag + E_ind. The signed EPR for a lumped
   // inductive element is computed as:
   //                            p_mj = 1/2 L_j I_mj² / E_m.
   // An element with no assigned inductance will be treated as having zero admittance and
   // thus zero current.
   const LumpedPortData &data = lumped_port_op.GetPort(idx);
-  std::complex<double> Imj = GetPortCurrent(lumped_port_op, idx, LumpedPortData::Branch::L);
-  return std::copysign(0.5 * std::abs(data.L) * std::real(Imj * std::conj(Imj)) / Em,
-                       Imj.real());  // mean(I²) = (I_r² + I_i²) / 2
+  std::complex<double> I_mj =
+      GetPortCurrent(lumped_port_op, idx, LumpedPortData::Branch::L);
+  return std::copysign(0.5 * std::abs(data.L) * std::real(I_mj * std::conj(I_mj)) / E_m,
+                       I_mj.real());  // mean(I²) = (I_r² + I_i²) / 2
 }
 
 double PostOperator::GetExternalKappa(const LumpedPortOperator &lumped_port_op, int idx,
-                                      double Em) const
+                                      double E_m) const
 {
   // Compute participation ratio of external ports (given as any port boundary with nonzero
   // resistance). Currently no reactance of the ports is supported. The κ of the port
@@ -666,9 +667,10 @@ double PostOperator::GetExternalKappa(const LumpedPortOperator &lumped_port_op, 
   // from which the mode coupling quality factor is computed as:
   //                              Q_mj = ω_m / κ_mj.
   const LumpedPortData &data = lumped_port_op.GetPort(idx);
-  std::complex<double> Imj = GetPortCurrent(lumped_port_op, idx, LumpedPortData::Branch::R);
-  return std::copysign(0.5 * std::abs(data.R) * std::real(Imj * std::conj(Imj)) / Em,
-                       Imj.real());  // mean(I²) = (I_r² + I_i²) / 2
+  std::complex<double> I_mj =
+      GetPortCurrent(lumped_port_op, idx, LumpedPortData::Branch::R);
+  return std::copysign(0.5 * std::abs(data.R) * std::real(I_mj * std::conj(I_mj)) / E_m,
+                       I_mj.real());  // mean(I²) = (I_r² + I_i²) / 2
 }
 
 namespace
