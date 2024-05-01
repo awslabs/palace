@@ -19,7 +19,7 @@ jobs:
           - compiler: gcc
             mpi: mpich
             math-libs: openblas
-            build-shared: static
+            build-shared: shared
             with-64bit-int: int32
             with-openmp: serial
             with-solver: superlu
