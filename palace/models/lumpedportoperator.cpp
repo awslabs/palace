@@ -224,9 +224,10 @@ void LumpedPortData::InitializeLinearForms(mfem::ParFiniteElementSpace &nd_fespa
 std::complex<double> LumpedPortData::GetPower(GridFunction &E, GridFunction &B) const
 {
   // Compute port power, (E x H) ⋅ n = E ⋅ (-n x H), integrated over the port surface using
-  // the computed E and H = μ⁻¹ B fields. The linear form is reconstructed from scratch
-  // each time due to changing H. The BdrSurfaceCurrentVectorCoefficient computes -n x H,
-  // where n is an outward normal.
+  // the computed E and H = μ⁻¹ B fields, where +n is the direction of propagation (into the
+  // domain). The BdrSurfaceCurrentVectorCoefficient computes -n x H for an outward normal,
+  // so we multiply by -1. The linear form is reconstructed from scratch each time due to
+  // changing H.
   MFEM_VERIFY((E.HasImag() && B.HasImag()) || (!E.HasImag() && !B.HasImag()),
               "Mismatch between real- and complex-valued E and B fields in port power "
               "calculation!");
@@ -250,12 +251,16 @@ std::complex<double> LumpedPortData::GetPower(GridFunction &E, GridFunction &B) 
   }
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, attr_list);
-  mfem::LinearForm pr(&nd_fespace);
-  pr.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fbr), attr_marker);
-  pr.UseFastAssembly(false);
-  pr.UseDevice(false);
-  pr.Assemble();
-  pr.UseDevice(true);
+  std::complex<double> dot;
+  {
+    mfem::LinearForm pr(&nd_fespace);
+    pr.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fbr), attr_marker);
+    pr.UseFastAssembly(false);
+    pr.UseDevice(false);
+    pr.Assemble();
+    pr.UseDevice(true);
+    dot = -(pr * E.Real()) + (has_imag ? -1i * (pr * E.Imag()) : 0.0);
+  }
   if (has_imag)
   {
     mfem::LinearForm pi(&nd_fespace);
@@ -264,16 +269,15 @@ std::complex<double> LumpedPortData::GetPower(GridFunction &E, GridFunction &B) 
     pi.UseDevice(false);
     pi.Assemble();
     pi.UseDevice(true);
-    std::complex<double> dot((pr * E.Real()) + (pi * E.Imag()),
-                             (pr * E.Imag()) - (pi * E.Real()));
+    dot += -(pi * E.Imag()) + 1i * (pi * E.Real());
     Mpi::GlobalSum(1, &dot, E.ParFESpace()->GetComm());
     return dot;
   }
   else
   {
-    double dot = pr * E.Real();
-    Mpi::GlobalSum(1, &dot, E.ParFESpace()->GetComm());
-    return dot;
+    double rdot = dot.real();
+    Mpi::GlobalSum(1, &rdot, E.ParFESpace()->GetComm());
+    return rdot;
   }
 }
 
