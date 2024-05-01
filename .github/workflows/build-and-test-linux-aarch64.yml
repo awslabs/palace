@@ -16,7 +16,7 @@ jobs:
       fail-fast: false
       matrix:
         include:  # Only a single simple build test for now
-          - compiler: clang
+          - compiler: gcc
             mpi: mpich
             math-libs: openblas
             build-shared: static
