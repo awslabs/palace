@@ -107,13 +107,13 @@
         },
         {
           "Index": 3,
-          "Attributes": [4, 5, 8],
+          "Attributes": [4, 6, 8],
           "Type": "Power",
           "Center": [-2000, 0, 0]
         },
         {
           "Index": 4,
-          "Attributes": [6, 7, 9],
+          "Attributes": [5, 7, 9],
           "Type": "Power",
           "Center": [2000, 0, 0]
         }
