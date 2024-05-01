@@ -26,7 +26,7 @@ class RomOperator
 {
 private:
   // Reference to HDM discretization (not owned).
-  SpaceOperator &spaceop;
+  SpaceOperator &space_op;
 
   // HDM system matrices and excitation RHS.
   std::unique_ptr<ComplexOperator> K, M, C, A2;
@@ -55,7 +55,7 @@ private:
   std::vector<double> z;
 
 public:
-  RomOperator(const IoData &iodata, SpaceOperator &spaceop, int max_size);
+  RomOperator(const IoData &iodata, SpaceOperator &space_op, int max_size);
 
   // Return the HDM linear solver.
   const ComplexKspSolver &GetLinearSolver() const { return *ksp; }

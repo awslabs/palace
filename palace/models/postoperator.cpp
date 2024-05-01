@@ -36,21 +36,23 @@ auto CreateParaviewPath(const IoData &iodata, const std::string &name)
 
 }  // namespace
 
-PostOperator::PostOperator(const IoData &iodata, SpaceOperator &spaceop,
+PostOperator::PostOperator(const IoData &iodata, SpaceOperator &space_op,
                            const std::string &name)
-  : mat_op(spaceop.GetMaterialOp()),
-    surf_post_op(iodata, spaceop.GetMaterialOp(), spaceop.GetH1Space()),
-    dom_post_op(iodata, spaceop.GetMaterialOp(), spaceop.GetNDSpace(),
-                spaceop.GetRTSpace()),
-    E(std::make_unique<GridFunction>(
-        spaceop.GetNDSpace(), iodata.problem.type != config::ProblemData::Type::TRANSIENT)),
-    B(std::make_unique<GridFunction>(
-        spaceop.GetRTSpace(), iodata.problem.type != config::ProblemData::Type::TRANSIENT)),
+  : mat_op(space_op.GetMaterialOp()),
+    surf_post_op(iodata, space_op.GetMaterialOp(), space_op.GetH1Space()),
+    dom_post_op(iodata, space_op.GetMaterialOp(), space_op.GetNDSpace(),
+                space_op.GetRTSpace()),
+    E(std::make_unique<GridFunction>(space_op.GetNDSpace(),
+                                     iodata.problem.type !=
+                                         config::ProblemData::Type::TRANSIENT)),
+    B(std::make_unique<GridFunction>(space_op.GetRTSpace(),
+                                     iodata.problem.type !=
+                                         config::ProblemData::Type::TRANSIENT)),
     lumped_port_init(false), wave_port_init(false),
-    paraview(CreateParaviewPath(iodata, name), &spaceop.GetNDSpace().GetParMesh()),
+    paraview(CreateParaviewPath(iodata, name), &space_op.GetNDSpace().GetParMesh()),
     paraview_bdr(CreateParaviewPath(iodata, name) + "_boundary",
-                 &spaceop.GetNDSpace().GetParMesh()),
-    interp_op(iodata, spaceop.GetNDSpace().GetParMesh())
+                 &space_op.GetNDSpace().GetParMesh()),
+    interp_op(iodata, space_op.GetNDSpace().GetParMesh())
 {
   bool side_n_min = (iodata.boundaries.postpro.side ==
                      config::InterfaceDielectricData::Side::SMALLER_REF_INDEX);
@@ -75,7 +77,7 @@ PostOperator::PostOperator(const IoData &iodata, SpaceOperator &spaceop,
   }
 
   // Add wave port boundary mode postprocessing when available.
-  for (const auto &[idx, data] : spaceop.GetWavePortOp())
+  for (const auto &[idx, data] : space_op.GetWavePortOp())
   {
     auto ret = port_E0.insert(std::make_pair(idx, WavePortFieldData()));
     ret.first->second.E0r = data.GetModeFieldCoefficientReal();
@@ -86,18 +88,18 @@ PostOperator::PostOperator(const IoData &iodata, SpaceOperator &spaceop,
   InitializeDataCollection(iodata);
 }
 
-PostOperator::PostOperator(const IoData &iodata, LaplaceOperator &laplaceop,
+PostOperator::PostOperator(const IoData &iodata, LaplaceOperator &laplace_op,
                            const std::string &name)
-  : mat_op(laplaceop.GetMaterialOp()),
-    surf_post_op(iodata, laplaceop.GetMaterialOp(), laplaceop.GetH1Space()),
-    dom_post_op(iodata, laplaceop.GetMaterialOp(), laplaceop.GetH1Space()),
-    E(std::make_unique<GridFunction>(laplaceop.GetNDSpace())),
-    V(std::make_unique<GridFunction>(laplaceop.GetH1Space())), lumped_port_init(false),
+  : mat_op(laplace_op.GetMaterialOp()),
+    surf_post_op(iodata, laplace_op.GetMaterialOp(), laplace_op.GetH1Space()),
+    dom_post_op(iodata, laplace_op.GetMaterialOp(), laplace_op.GetH1Space()),
+    E(std::make_unique<GridFunction>(laplace_op.GetNDSpace())),
+    V(std::make_unique<GridFunction>(laplace_op.GetH1Space())), lumped_port_init(false),
     wave_port_init(false),
-    paraview(CreateParaviewPath(iodata, name), &laplaceop.GetNDSpace().GetParMesh()),
+    paraview(CreateParaviewPath(iodata, name), &laplace_op.GetNDSpace().GetParMesh()),
     paraview_bdr(CreateParaviewPath(iodata, name) + "_boundary",
-                 &laplaceop.GetNDSpace().GetParMesh()),
-    interp_op(iodata, laplaceop.GetNDSpace().GetParMesh())
+                 &laplace_op.GetNDSpace().GetParMesh()),
+    interp_op(iodata, laplace_op.GetNDSpace().GetParMesh())
 {
   // Note: When using this constructor, you should not use any of the magnetic field related
   // postprocessing functions (magnetic field energy, inductor energy, surface currents,
@@ -116,18 +118,18 @@ PostOperator::PostOperator(const IoData &iodata, LaplaceOperator &laplaceop,
   InitializeDataCollection(iodata);
 }
 
-PostOperator::PostOperator(const IoData &iodata, CurlCurlOperator &curlcurlop,
+PostOperator::PostOperator(const IoData &iodata, CurlCurlOperator &curlcurl_op,
                            const std::string &name)
-  : mat_op(curlcurlop.GetMaterialOp()),
-    surf_post_op(iodata, curlcurlop.GetMaterialOp(), curlcurlop.GetH1Space()),
-    dom_post_op(iodata, curlcurlop.GetMaterialOp(), curlcurlop.GetNDSpace()),
-    B(std::make_unique<GridFunction>(curlcurlop.GetRTSpace())),
-    A(std::make_unique<GridFunction>(curlcurlop.GetNDSpace())), lumped_port_init(false),
+  : mat_op(curlcurl_op.GetMaterialOp()),
+    surf_post_op(iodata, curlcurl_op.GetMaterialOp(), curlcurl_op.GetH1Space()),
+    dom_post_op(iodata, curlcurl_op.GetMaterialOp(), curlcurl_op.GetNDSpace()),
+    B(std::make_unique<GridFunction>(curlcurl_op.GetRTSpace())),
+    A(std::make_unique<GridFunction>(curlcurl_op.GetNDSpace())), lumped_port_init(false),
     wave_port_init(false),
-    paraview(CreateParaviewPath(iodata, name), &curlcurlop.GetNDSpace().GetParMesh()),
+    paraview(CreateParaviewPath(iodata, name), &curlcurl_op.GetNDSpace().GetParMesh()),
     paraview_bdr(CreateParaviewPath(iodata, name) + "_boundary",
-                 &curlcurlop.GetNDSpace().GetParMesh()),
-    interp_op(iodata, curlcurlop.GetNDSpace().GetParMesh())
+                 &curlcurl_op.GetNDSpace().GetParMesh()),
+    interp_op(iodata, curlcurl_op.GetNDSpace().GetParMesh())
 {
   // Note: When using this constructor, you should not use any of the electric field related
   // postprocessing functions (electric field energy, capacitor energy, surface charge,

@@ -349,7 +349,7 @@ struct ProbeData
 
 }  // namespace
 
-void BaseSolver::PostprocessDomains(const PostOperator &postop, const std::string &name,
+void BaseSolver::PostprocessDomains(const PostOperator &post_op, const std::string &name,
                                     int step, double time, double E_elec, double E_mag,
                                     double E_cap, double E_ind) const
 {
@@ -362,11 +362,11 @@ void BaseSolver::PostprocessDomains(const PostOperator &postop, const std::strin
 
   // Write the field and lumped element energies.
   std::vector<EnergyData> energy_data;
-  energy_data.reserve(postop.GetDomainPostOp().M_i.size());
-  for (const auto &[idx, data] : postop.GetDomainPostOp().M_i)
+  energy_data.reserve(post_op.GetDomainPostOp().M_i.size());
+  for (const auto &[idx, data] : post_op.GetDomainPostOp().M_i)
   {
-    const double E_elec_i = (E_elec > 0.0) ? postop.GetEFieldEnergy(idx) : 0.0;
-    const double E_mag_i = (E_mag > 0.0) ? postop.GetHFieldEnergy(idx) : 0.0;
+    const double E_elec_i = (E_elec > 0.0) ? post_op.GetEFieldEnergy(idx) : 0.0;
+    const double E_mag_i = (E_mag > 0.0) ? post_op.GetHFieldEnergy(idx) : 0.0;
     energy_data.push_back({idx, E_elec_i, E_mag_i});
   }
   if (root)
@@ -427,7 +427,7 @@ void BaseSolver::PostprocessDomains(const PostOperator &postop, const std::strin
   }
 }
 
-void BaseSolver::PostprocessSurfaces(const PostOperator &postop, const std::string &name,
+void BaseSolver::PostprocessSurfaces(const PostOperator &post_op, const std::string &name,
                                      int step, double time, double E_elec,
                                      double E_mag) const
 {
@@ -440,12 +440,12 @@ void BaseSolver::PostprocessSurfaces(const PostOperator &postop, const std::stri
   }
 
   // Write the integrated surface flux.
-  const bool has_imaginary = postop.HasImag();
+  const bool has_imaginary = post_op.HasImag();
   std::vector<FluxData> flux_data;
-  flux_data.reserve(postop.GetSurfacePostOp().flux_surfs.size());
-  for (const auto &[idx, data] : postop.GetSurfacePostOp().flux_surfs)
+  flux_data.reserve(post_op.GetSurfacePostOp().flux_surfs.size());
+  for (const auto &[idx, data] : post_op.GetSurfacePostOp().flux_surfs)
   {
-    const std::complex<double> Phi = postop.GetSurfaceFlux(idx);
+    const std::complex<double> Phi = post_op.GetSurfaceFlux(idx);
     double scale = 1.0;
     switch (data.type)
     {
@@ -534,11 +534,11 @@ void BaseSolver::PostprocessSurfaces(const PostOperator &postop, const std::stri
 
   // Write the Q-factors due to interface dielectric loss.
   std::vector<EpsData> eps_data;
-  eps_data.reserve(postop.GetSurfacePostOp().eps_surfs.size());
-  for (const auto &[idx, data] : postop.GetSurfacePostOp().eps_surfs)
+  eps_data.reserve(post_op.GetSurfacePostOp().eps_surfs.size());
+  for (const auto &[idx, data] : post_op.GetSurfacePostOp().eps_surfs)
   {
-    const double p = postop.GetInterfaceParticipation(idx, E_elec);
-    const double tandelta = postop.GetSurfacePostOp().GetInterfaceLossTangent(idx);
+    const double p = post_op.GetInterfaceParticipation(idx, E_elec);
+    const double tandelta = post_op.GetSurfacePostOp().GetInterfaceLossTangent(idx);
     const double Q =
         (p == 0.0 || tandelta == 0.0) ? mfem::infinity() : 1.0 / (tandelta * p);
     eps_data.push_back({idx, p, Q});
@@ -575,7 +575,7 @@ void BaseSolver::PostprocessSurfaces(const PostOperator &postop, const std::stri
   }
 }
 
-void BaseSolver::PostprocessProbes(const PostOperator &postop, const std::string &name,
+void BaseSolver::PostprocessProbes(const PostOperator &post_op, const std::string &name,
                                    int step, double time) const
 {
 #if defined(MFEM_USE_GSLIB)
@@ -587,31 +587,31 @@ void BaseSolver::PostprocessProbes(const PostOperator &postop, const std::string
   }
 
   // Write the computed field values at probe locations.
-  if (postop.GetProbes().size() == 0)
+  if (post_op.GetProbes().size() == 0)
   {
     return;
   }
-  const bool has_imaginary = postop.HasImag();
+  const bool has_imaginary = post_op.HasImag();
   for (int f = 0; f < 2; f++)
   {
     // Probe data is ordered as [Fx1, Fy1, Fz1, Fx2, Fy2, Fz2, ...].
-    if (f == 0 && !postop.HasE())
+    if (f == 0 && !post_op.HasE())
     {
       continue;
     }
-    if (f == 1 && !postop.HasB())
+    if (f == 1 && !post_op.HasB())
     {
       continue;
     }
     const std::string F = (f == 0) ? "E" : "B";
     const std::string unit = (f == 0) ? "(V/m)" : "(Wb/m²)";
     const auto type = (f == 0) ? IoData::ValueType::FIELD_E : IoData::ValueType::FIELD_B;
-    const auto vF = (f == 0) ? postop.ProbeEField() : postop.ProbeBField();
-    const int dim = vF.size() / postop.GetProbes().size();
+    const auto vF = (f == 0) ? post_op.ProbeEField() : post_op.ProbeBField();
+    const int dim = vF.size() / post_op.GetProbes().size();
     std::vector<ProbeData> probe_data;
-    probe_data.reserve(postop.GetProbes().size());
+    probe_data.reserve(post_op.GetProbes().size());
     int i = 0;
-    for (const auto &idx : postop.GetProbes())
+    for (const auto &idx : post_op.GetProbes())
     {
       probe_data.push_back(
           {idx, iodata.DimensionalizeValue(type, vF[i * dim]),
@@ -745,22 +745,22 @@ void BaseSolver::PostprocessProbes(const PostOperator &postop, const std::string
 #endif
 }
 
-void BaseSolver::PostprocessFields(const PostOperator &postop, int step, double time) const
+void BaseSolver::PostprocessFields(const PostOperator &post_op, int step, double time) const
 {
   // Save the computed fields in parallel in format for viewing with ParaView.
   BlockTimer bt(Timer::IO);
   if (post_dir.length() == 0)
   {
-    Mpi::Warning(postop.GetComm(),
+    Mpi::Warning(post_op.GetComm(),
                  "No file specified under [\"Problem\"][\"Output\"]!\nSkipping saving of "
                  "fields to disk!\n");
     return;
   }
-  postop.WriteFields(step, time);
-  Mpi::Barrier(postop.GetComm());
+  post_op.WriteFields(step, time);
+  Mpi::Barrier(post_op.GetComm());
 }
 
-void BaseSolver::PostprocessErrorIndicator(const PostOperator &postop,
+void BaseSolver::PostprocessErrorIndicator(const PostOperator &post_op,
                                            const ErrorIndicator &indicator,
                                            bool fields) const
 {
@@ -769,7 +769,7 @@ void BaseSolver::PostprocessErrorIndicator(const PostOperator &postop,
   {
     return;
   }
-  MPI_Comm comm = postop.GetComm();
+  MPI_Comm comm = post_op.GetComm();
   std::array<double, 4> data = {indicator.Norml2(comm), indicator.Min(comm),
                                 indicator.Max(comm), indicator.Mean(comm)};
   if (root)
@@ -792,8 +792,8 @@ void BaseSolver::PostprocessErrorIndicator(const PostOperator &postop,
   if (fields)
   {
     BlockTimer bt(Timer::IO);
-    postop.WriteFieldsFinal(&indicator);
-    Mpi::Barrier(postop.GetComm());
+    post_op.WriteFieldsFinal(&indicator);
+    Mpi::Barrier(post_op.GetComm());
   }
 }
 

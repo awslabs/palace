@@ -23,7 +23,7 @@ class PostOperator;
 class EigenSolver : public BaseSolver
 {
 private:
-  void Postprocess(const PostOperator &postop, const LumpedPortOperator &lumped_port_op,
+  void Postprocess(const PostOperator &post_op, const LumpedPortOperator &lumped_port_op,
                    int i, std::complex<double> omega, double error_bkwd, double error_abs,
                    int num_conv, double E_elec, double E_mag,
                    const ErrorIndicator *indicator) const;
@@ -31,10 +31,10 @@ private:
   void PostprocessEigen(int i, std::complex<double> omega, double error_bkwd,
                         double error_abs, int num_conv) const;
 
-  void PostprocessPorts(const PostOperator &postop,
+  void PostprocessPorts(const PostOperator &post_op,
                         const LumpedPortOperator &lumped_port_op, int i) const;
 
-  void PostprocessEPR(const PostOperator &postop, const LumpedPortOperator &lumped_port_op,
+  void PostprocessEPR(const PostOperator &post_op, const LumpedPortOperator &lumped_port_op,
                       int i, std::complex<double> omega, double E_m) const;
 
   std::pair<ErrorIndicator, long long int>

@@ -28,16 +28,16 @@ private:
 
   int GetNumSteps(double start, double end, double delta) const;
 
-  void Postprocess(const PostOperator &postop, const LumpedPortOperator &lumped_port_op,
+  void Postprocess(const PostOperator &post_op, const LumpedPortOperator &lumped_port_op,
                    const SurfaceCurrentOperator &surf_j_op, int step, double t,
                    double J_coef, double E_elec, double E_mag,
                    const ErrorIndicator *indicator) const;
 
-  void PostprocessCurrents(const PostOperator &postop,
+  void PostprocessCurrents(const PostOperator &post_op,
                            const SurfaceCurrentOperator &surf_j_op, int step, double t,
                            double J_coef) const;
 
-  void PostprocessPorts(const PostOperator &postop,
+  void PostprocessPorts(const PostOperator &post_op,
                         const LumpedPortOperator &lumped_port_op, int step, double t,
                         double J_coef) const;
 

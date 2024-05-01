@@ -27,26 +27,26 @@ class DrivenSolver : public BaseSolver
 private:
   int GetNumSteps(double start, double end, double delta) const;
 
-  ErrorIndicator SweepUniform(SpaceOperator &spaceop, PostOperator &postop, int nstep,
+  ErrorIndicator SweepUniform(SpaceOperator &space_op, PostOperator &post_op, int n_step,
                               int step0, double omega0, double delta_omega) const;
 
-  ErrorIndicator SweepAdaptive(SpaceOperator &spaceop, PostOperator &postop, int nstep,
+  ErrorIndicator SweepAdaptive(SpaceOperator &space_op, PostOperator &post_op, int n_step,
                                int step0, double omega0, double delta_omega) const;
 
-  void Postprocess(const PostOperator &postop, const LumpedPortOperator &lumped_port_op,
+  void Postprocess(const PostOperator &post_op, const LumpedPortOperator &lumped_port_op,
                    const WavePortOperator &wave_port_op,
                    const SurfaceCurrentOperator &surf_j_op, int step, double omega,
                    double E_elec, double E_mag, const ErrorIndicator *indicator) const;
 
-  void PostprocessCurrents(const PostOperator &postop,
+  void PostprocessCurrents(const PostOperator &post_op,
                            const SurfaceCurrentOperator &surf_j_op, int step,
                            double omega) const;
 
-  void PostprocessPorts(const PostOperator &postop,
+  void PostprocessPorts(const PostOperator &post_op,
                         const LumpedPortOperator &lumped_port_op, int step,
                         double omega) const;
 
-  void PostprocessSParameters(const PostOperator &postop,
+  void PostprocessSParameters(const PostOperator &post_op,
                               const LumpedPortOperator &lumped_port_op,
                               const WavePortOperator &wave_port_op, int step,
                               double omega) const;

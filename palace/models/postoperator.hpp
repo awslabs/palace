@@ -71,9 +71,10 @@ private:
   void InitializeDataCollection(const IoData &iodata);
 
 public:
-  PostOperator(const IoData &iodata, SpaceOperator &spaceop, const std::string &name);
-  PostOperator(const IoData &iodata, LaplaceOperator &laplaceop, const std::string &name);
-  PostOperator(const IoData &iodata, CurlCurlOperator &curlcurlop, const std::string &name);
+  PostOperator(const IoData &iodata, SpaceOperator &space_op, const std::string &name);
+  PostOperator(const IoData &iodata, LaplaceOperator &laplace_op, const std::string &name);
+  PostOperator(const IoData &iodata, CurlCurlOperator &curlcurl_op,
+               const std::string &name);
 
   // Access to surface and domain postprocessing objects.
   const auto &GetSurfacePostOp() const { return surf_post_op; }
