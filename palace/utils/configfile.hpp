@@ -173,17 +173,17 @@ public:
 
 private:
   // Refinement data for mesh regions.
-  std::vector<BoxRefinementData> boxlist = {};
-  std::vector<SphereRefinementData> spherelist = {};
+  std::vector<BoxRefinementData> box_list = {};
+  std::vector<SphereRefinementData> sphere_list = {};
 
 public:
-  auto &GetBox(int i) { return boxlist[i]; }
-  const auto &GetBoxes() const { return boxlist; }
-  auto &GetBoxes() { return boxlist; }
+  auto &GetBox(int i) { return box_list[i]; }
+  const auto &GetBoxes() const { return box_list; }
+  auto &GetBoxes() { return box_list; }
 
-  auto &GetSphere(int i) { return spherelist[i]; }
-  const auto &GetSpheres() const { return spherelist; }
-  auto &GetSpheres() { return spherelist; }
+  auto &GetSphere(int i) { return sphere_list[i]; }
+  const auto &GetSpheres() const { return sphere_list; }
+  auto &GetSpheres() { return sphere_list; }
 
   void SetUp(json &model);
 };
