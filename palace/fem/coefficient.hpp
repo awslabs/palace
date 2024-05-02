@@ -135,6 +135,8 @@ public:
             const mfem::IntegrationPoint &ip) override
   {
     // Get neighboring elements.
+    MFEM_ASSERT(T.ElementType == mfem::ElementTransformation::BDR_ELEMENT,
+                "Unexpected element type in BdrSurfaceCurrentVectorCoefficient!");
     bool ori = GetBdrElementNeighborTransformations(T.ElementNo, ip);
 
     // For interior faces, compute Jₛ = n x H = n x μ⁻¹ (B1 - B2), where B1 (B2) is B in
@@ -202,6 +204,8 @@ public:
   double Eval(mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip) override
   {
     // Get neighboring elements.
+    MFEM_ASSERT(T.ElementType == mfem::ElementTransformation::BDR_ELEMENT,
+                "Unexpected element type in BdrSurfaceFluxCoefficient!");
     bool ori = GetBdrElementNeighborTransformations(T.ElementNo, ip);
 
     // For interior faces, compute either F ⋅ n as the average or by adding the
@@ -314,6 +318,8 @@ private:
                   mfem::Vector *normal)
   {
     // Get neighboring elements and the normal vector, oriented to point into element 1.
+    MFEM_ASSERT(T.ElementType == mfem::ElementTransformation::BDR_ELEMENT,
+                "Unexpected element type in InterfaceDielectricCoefficient!");
     bool ori = GetBdrElementNeighborTransformations(T.ElementNo, ip);
     if (normal)
     {
@@ -659,6 +665,8 @@ public:
             const mfem::IntegrationPoint &ip) override
   {
     // Get neighboring elements.
+    MFEM_ASSERT(T.ElementType == mfem::ElementTransformation::BDR_ELEMENT,
+                "Unexpected element type in BdrFieldVectorCoefficient!");
     GetBdrElementNeighborTransformations(T.ElementNo, ip);
 
     // For interior faces, compute the value on the desired side.
@@ -710,6 +718,8 @@ public:
   double Eval(mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip) override
   {
     // Get neighboring elements.
+    MFEM_ASSERT(T.ElementType == mfem::ElementTransformation::BDR_ELEMENT,
+                "Unexpected element type in BdrFieldCoefficient!");
     GetBdrElementNeighborTransformations(T.ElementNo, ip);
 
     // For interior faces, compute the value on the desired side.

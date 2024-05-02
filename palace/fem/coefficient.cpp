@@ -13,8 +13,6 @@ bool BdrGridFunctionCoefficient::GetBdrElementNeighborTransformations(
 {
   // Return transformations for elements attached to the given boundary element. FET.Elem1
   // always exists but FET.Elem2 may not if the element is truly a single-sided boundary.
-  MFEM_ASSERT(T.ElementType == mfem::ElementTransformation::BDR_ELEMENT,
-              "Unexpected element type in BdrGridFunctionCoefficient!");
   int f, o;
   int iel1, iel2, info1, info2;
   mesh.GetBdrElementFace(i, &f, &o);
