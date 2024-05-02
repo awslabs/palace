@@ -446,7 +446,7 @@ void BaseSolver::PostprocessSurfaces(const PostOperator &postop, const std::stri
   for (const auto &[idx, data] : postop.GetSurfacePostOp().flux_surfs)
   {
     const std::complex<double> Phi = postop.GetSurfaceFlux(idx);
-    double scale;
+    double scale = 1.0;
     switch (data.type)
     {
       case (SurfaceFluxType::ELECTRIC):
