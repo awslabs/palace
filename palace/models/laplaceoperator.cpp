@@ -51,9 +51,10 @@ mfem::Array<int> LaplaceOperator::SetUpBoundaryProperties(const IoData &iodata,
 {
   // Check that boundary attributes have been specified correctly.
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+  mfem::Array<int> bdr_attr_marker;
   if (!iodata.boundaries.pec.empty() || !iodata.boundaries.lumpedport.empty())
   {
-    mfem::Array<int> bdr_attr_marker(bdr_attr_max);
+    bdr_attr_marker.SetSize(bdr_attr_max);
     bdr_attr_marker = 0;
     for (auto attr : mesh.bdr_attributes)
     {
@@ -67,7 +68,7 @@ mfem::Array<int> LaplaceOperator::SetUpBoundaryProperties(const IoData &iodata,
       //             " attributes in the mesh!");
       // MFEM_VERIFY(bdr_attr_marker[attr - 1],
       //             "Unknown ground boundary attribute " << attr << "!");
-      if (attr <= 0 || attr > bdr_attr_marker.Size() || !bdr_attr_marker[attr - 1])
+      if (attr <= 0 || attr > bdr_attr_max || !bdr_attr_marker[attr - 1])
       {
         bdr_warn_list.insert(attr);
       }
@@ -102,7 +103,7 @@ mfem::Array<int> LaplaceOperator::SetUpBoundaryProperties(const IoData &iodata,
                   static_cast<int>(iodata.boundaries.lumpedport.size()));
   for (auto attr : iodata.boundaries.pec.attributes)
   {
-    if (attr <= 0 || attr > bdr_attr_max)
+    if (attr <= 0 || attr > bdr_attr_max || !bdr_attr_marker[attr - 1])
     {
       continue;  // Can just ignore if wrong
     }
