@@ -1634,7 +1634,7 @@ std::map<int, std::array<int, 2>> CheckMesh(std::unique_ptr<mfem::Mesh> &orig_me
       orig_mesh->bdr_attributes.Size() ? orig_mesh->bdr_attributes.Max() : 0,
       iodata.boundaries.attributes, true);
   {
-    std::set<int> bdr_list;
+    std::set<int> bdr_warn_list;
     for (int be = 0; be < orig_mesh->GetNBE(); be++)
     {
       int attr = orig_mesh->GetBdrAttribute(be);
@@ -1651,25 +1651,24 @@ std::map<int, std::array<int, 2>> CheckMesh(std::unique_ptr<mfem::Mesh> &orig_me
         {
           // No warning for internal boundary elements, and also no warning for boundary
           // elements which will get deleted.
-          bdr_list.insert(attr);
+          bdr_warn_list.insert(attr);
         }
       }
     }
-    if (!bdr_list.empty())
+    if (!bdr_warn_list.empty())
     {
       Mpi::Warning("One or more external boundary attributes has no associated boundary "
                    "condition!\n\"PMC\"/\"ZeroCharge\" condition is assumed!");
-      utils::PrettyPrint(bdr_list, "Boundary list:");
+      utils::PrettyPrint(bdr_warn_list, "Boundary attribute list:");
       Mpi::Print("\n");
     }
   }
 
   // Mapping from new interface boundary attribute tags to vector of neighboring domain
   // attributes (when adding new boundary elements).
-  std::map<int, std::array<int, 2>> new_attr_map;
   if (!clean_elem && !add_bdr && !add_subdomain)
   {
-    return new_attr_map;
+    return {};
   }
 
   // Count deleted or added domain and boundary elements.
@@ -1830,11 +1829,12 @@ std::map<int, std::array<int, 2>> CheckMesh(std::unique_ptr<mfem::Mesh> &orig_me
       new_ne_step2 == orig_mesh->GetNE() && new_nbdr == new_nbdr_step1 &&
       new_nbdr_step1 == new_nbdr_step2 && new_nbdr_step2 == orig_mesh->GetNBE())
   {
-    return new_attr_map;
+    return {};
   }
   auto new_mesh =
       std::make_unique<mfem::Mesh>(orig_mesh->Dimension(), orig_mesh->GetNV(), new_ne,
                                    new_nbdr, orig_mesh->SpaceDimension());
+  std::map<int, std::array<int, 2>> new_attr_map;
 
   // Copy vertices and non-deleted domain and boundary elements.
   for (int v = 0; v < orig_mesh->GetNV(); v++)
@@ -1869,8 +1869,8 @@ std::map<int, std::array<int, 2>> CheckMesh(std::unique_ptr<mfem::Mesh> &orig_me
       el->SetVertices(v.HostRead());
     };
 
-    // 1-based, some boundary attributes may be empty since they were removed from the
-    // original mesh, but to keep indices the same as config file we don't compact the
+    // Some (1-based) boundary attributes may be empty since they were removed from the
+    // original mesh, but to keep attributes the same as config file we don't compress the
     // list.
     int max_bdr_attr =
         orig_mesh->bdr_attributes.Size() ? orig_mesh->bdr_attributes.Max() : 0;
@@ -1878,11 +1878,10 @@ std::map<int, std::array<int, 2>> CheckMesh(std::unique_ptr<mfem::Mesh> &orig_me
     {
       if (add_bdr_faces[f] > 0)
       {
-        // Assign new unique attribute based on attached elements (we want the material
-        // properties on the face to average those on the elements). This is used later on
-        // when integrating the transmission condition on the subdomain interface. Save the
-        // inverse so that the attributes of e1 and e2 can be easily referenced using the
-        // new attribute. Since attributes are in 1-based indexing, a, b > 0.
+        // Assign new unique attribute based on attached elements. Save so that the
+        // attributes of e1 and e2 can be easily referenced using the new attribute. Since
+        // attributes are in 1-based indexing, a, b > 0. See also
+        // https://en.wikipedia.org/wiki/Pairing_function.
         int e1, e2, a = 0, b = 0;
         orig_mesh->GetFaceElements(f, &e1, &e2);
         bool no_e1 = (e1 < 0 || elem_delete[e1]);
@@ -1904,8 +1903,8 @@ std::map<int, std::array<int, 2>> CheckMesh(std::unique_ptr<mfem::Mesh> &orig_me
           b = 0;
         }
         MFEM_VERIFY(a + b > 0, "Invalid new boundary element attribute!");
-        int new_attr = max_bdr_attr +
-                       (b > 0 ? (a * (a - 1)) / 2 + b : a);  // At least max_bdr_attr + 1
+        int new_attr =
+            max_bdr_attr + (((a + b) * (a + b + 1)) / 2) + a;  // At least max_bdr_attr + 1
         if (new_attr_map.find(new_attr) == new_attr_map.end())
         {
           new_attr_map.emplace(new_attr, std::array<int, 2>{a, b});

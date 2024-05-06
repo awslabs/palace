@@ -4,6 +4,7 @@
 #include "surfacepostoperator.hpp"
 
 #include <complex>
+#include <set>
 #include "fem/gridfunction.hpp"
 #include "fem/integrator.hpp"
 #include "linalg/vector.hpp"
@@ -11,13 +12,57 @@
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
+#include "utils/prettyprint.hpp"
 
 namespace palace
 {
 
-SurfacePostOperator::SurfaceFluxData::SurfaceFluxData(const config::SurfaceFluxData &data,
-                                                      const mfem::ParMesh &mesh)
+namespace
 {
+
+template <typename T>
+mfem::Array<int> SetUpBoundaryProperties(const T &data,
+                                         const mfem::Array<int> &bdr_attr_marker)
+{
+  mfem::Array<int> attr_list;
+  attr_list.Reserve(static_cast<int>(data.attributes.size()));
+  std::set<int> bdr_warn_list;
+  for (auto attr : data.attributes)
+  {
+    // MFEM_VERIFY(attr > 0 && attr <= bdr_attr_max,
+    //             "Boundary postprocessing attribute tags must be non-negative and "
+    //             "correspond to attributes in the mesh!");
+    // MFEM_VERIFY(bdr_attr_marker[attr - 1],
+    //             "Unknown boundary postprocessing attribute " << attr << "!");
+    if (attr <= 0 || attr > bdr_attr_marker.Size() || !bdr_attr_marker[attr - 1])
+    {
+      bdr_warn_list.insert(attr);
+    }
+    else
+    {
+      attr_list.Append(attr);
+    }
+  }
+  if (!bdr_warn_list.empty())
+  {
+    Mpi::Print("\n");
+    Mpi::Warning(
+        "Unknown boundary postprocessing attributes!\nSolver will just ignore them!");
+    utils::PrettyPrint(bdr_warn_list, "Boundary attribute list:");
+    Mpi::Print("\n");
+  }
+  return attr_list;
+}
+
+}  // namespace
+
+SurfacePostOperator::SurfaceFluxData::SurfaceFluxData(
+    const config::SurfaceFluxData &data, const mfem::ParMesh &mesh,
+    const mfem::Array<int> &bdr_attr_marker)
+{
+  // Store boundary attributes for this postprocessing boundary.
+  attr_list = SetUpBoundaryProperties(data, bdr_attr_marker);
+
   // Store the type of flux.
   switch (data.type)
   {
@@ -43,9 +88,8 @@ SurfacePostOperator::SurfaceFluxData::SurfaceFluxData(const config::SurfaceFluxD
       // Compute the center as the bounding box centroid for all boundary elements making up
       // this postprocessing boundary.
       mfem::Vector bbmin, bbmax;
-      int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
       mesh::GetAxisAlignedBoundingBox(
-          mesh, mesh::AttrToMarker(bdr_attr_max, data.attributes), true, bbmin, bbmax);
+          mesh, mesh::AttrToMarker(bdr_attr_marker.Size(), attr_list), true, bbmin, bbmax);
       for (int d = 0; d < mesh.SpaceDimension(); d++)
       {
         center(d) = 0.5 * (bbmin(d) + bbmax(d));
@@ -56,9 +100,6 @@ SurfacePostOperator::SurfaceFluxData::SurfaceFluxData(const config::SurfaceFluxD
       std::copy(data.center.begin(), data.center.end(), center.begin());
     }
   }
-
-  // Store boundary attributes for this postprocessing boundary.
-  attr_list.Append(data.attributes.data(), data.attributes.size());
 }
 
 std::unique_ptr<mfem::Coefficient>
@@ -85,8 +126,12 @@ SurfacePostOperator::SurfaceFluxData::GetCoefficient(const mfem::ParGridFunction
 }
 
 SurfacePostOperator::InterfaceDielectricData::InterfaceDielectricData(
-    const config::InterfaceDielectricData &data, const mfem::ParMesh &mesh)
+    const config::InterfaceDielectricData &data, const mfem::ParMesh &mesh,
+    const mfem::Array<int> &bdr_attr_marker)
 {
+  // Store boundary attributes for this postprocessing boundary.
+  attr_list = SetUpBoundaryProperties(data, bdr_attr_marker);
+
   // Calculate surface dielectric loss according to the formulas from J. Wenner et al.,
   // Surface loss simulations of superconducting coplanar waveguide resonators, Appl. Phys.
   // Lett. (2011). If only a general layer permittivity is specified and not any special
@@ -115,9 +160,6 @@ SurfacePostOperator::InterfaceDielectricData::InterfaceDielectricData(
   // Side of internal boundaries on which to compute the electric field values, given as the
   // material with lower or higher index of refraction (higher or lower speed of light).
   side_n_min = (data.side == config::InterfaceDielectricData::Side::SMALLER_REF_INDEX);
-
-  // Store boundary attributes for this postprocessing boundary.
-  attr_list.Append(data.attributes.data(), data.attributes.size());
 }
 
 std::unique_ptr<mfem::Coefficient>
@@ -151,80 +193,43 @@ SurfacePostOperator::SurfacePostOperator(const IoData &iodata,
                                          mfem::ParFiniteElementSpace &h1_fespace)
   : mat_op(mat_op), h1_fespace(h1_fespace)
 {
-  // Surface flux postprocessing.
-  for (const auto &[idx, data] : iodata.boundaries.postpro.flux)
-  {
-    flux_surfs.try_emplace(idx, data, *h1_fespace.GetParMesh());
-  }
-
-  // Interface dielectric postprocessing.
-  for (const auto &[idx, data] : iodata.boundaries.postpro.dielectric)
-  {
-    eps_surfs.try_emplace(idx, data, *h1_fespace.GetParMesh());
-  }
-
   // Check that boundary attributes have been specified correctly.
-  if (!flux_surfs.empty() || !eps_surfs.empty())
+  const auto &mesh = *h1_fespace.GetParMesh();
+  int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+  mfem::Array<int> bdr_attr_marker;
+  if (!iodata.boundaries.postpro.flux.empty() ||
+      !iodata.boundaries.postpro.dielectric.empty())
   {
-    const auto &mesh = *h1_fespace.GetParMesh();
-    int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
-    mfem::Array<int> bdr_attr_marker(bdr_attr_max);
+    bdr_attr_marker.SetSize(bdr_attr_max);
     bdr_attr_marker = 0;
     for (auto attr : mesh.bdr_attributes)
     {
       bdr_attr_marker[attr - 1] = 1;
     }
-    bool first = true;
-    auto CheckAttributes = [&](SurfaceData &data)
-    {
-      auto attr_list_backup(data.attr_list);
-      data.attr_list.DeleteAll();
-      data.attr_list.Reserve(attr_list_backup.Size());
-      for (auto attr : attr_list_backup)
-      {
-        // MFEM_VERIFY(attr > 0 && attr <= bdr_attr_max,
-        //             "Boundary postprocessing attribute tags must be non-negative and "
-        //             "correspond to attributes in the mesh!");
-        // MFEM_VERIFY(bdr_attr_marker[attr - 1],
-        //             "Unknown boundary postprocessing attribute " << attr << "!");
-        if (attr <= 0 || attr > bdr_attr_marker.Size() || !bdr_attr_marker[attr - 1])
-        {
-          if (first)
-          {
-            Mpi::Print("\n");
-            first = false;
-          }
-          Mpi::Warning("Unknown boundary postprocessing attribute {:d}!\nSolver will "
-                       "just ignore it!\n",
-                       attr);
-        }
-        else
-        {
-          data.attr_list.Append(attr);
-        }
-      }
-    };
-    for (auto &[idx, data] : flux_surfs)
-    {
-      MFEM_VERIFY(!(iodata.problem.type == config::ProblemData::Type::ELECTROSTATIC &&
-                    (data.type == SurfaceFluxType::MAGNETIC ||
-                     data.type == SurfaceFluxType::POWER)),
-                  "Electric field or power surface flux postprocessing are not available "
-                  "for electrostatic problems!");
-      MFEM_VERIFY(!(iodata.problem.type == config::ProblemData::Type::MAGNETOSTATIC &&
-                    (data.type == SurfaceFluxType::ELECTRIC ||
-                     data.type == SurfaceFluxType::POWER)),
-                  "Magnetic field or power surface flux postprocessing are not available "
-                  "for electrostatic problems!");
-      CheckAttributes(data);
-    }
-    for (auto &[idx, data] : eps_surfs)
-    {
-      MFEM_VERIFY(iodata.problem.type != config::ProblemData::Type::MAGNETOSTATIC,
-                  "Interface dielectric loss postprocessing is not available for "
-                  "magnetostatic problems!");
-      CheckAttributes(data);
-    }
+  }
+
+  // Surface flux postprocessing.
+  for (const auto &[idx, data] : iodata.boundaries.postpro.flux)
+  {
+    MFEM_VERIFY(iodata.problem.type != config::ProblemData::Type::ELECTROSTATIC ||
+                    data.type == config::SurfaceFluxData::Type::ELECTRIC,
+                "Magnetic field or power surface flux postprocessing are not available "
+                "for electrostatic problems!");
+    MFEM_VERIFY(iodata.problem.type != config::ProblemData::Type::MAGNETOSTATIC ||
+                    data.type == config::SurfaceFluxData::Type::MAGNETIC,
+                "Electric field or power surface flux postprocessing are not available "
+                "for electrostatic problems!");
+    flux_surfs.try_emplace(idx, data, *h1_fespace.GetParMesh(), bdr_attr_marker);
+  }
+
+  // Interface dielectric postprocessing.
+  MFEM_VERIFY(iodata.boundaries.postpro.dielectric.empty() ||
+                  iodata.problem.type != config::ProblemData::Type::MAGNETOSTATIC,
+              "Interface dielectric loss postprocessing is not available for "
+              "magnetostatic problems!");
+  for (const auto &[idx, data] : iodata.boundaries.postpro.dielectric)
+  {
+    eps_surfs.try_emplace(idx, data, *h1_fespace.GetParMesh(), bdr_attr_marker);
   }
 }
 

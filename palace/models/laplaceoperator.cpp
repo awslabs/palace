@@ -3,6 +3,7 @@
 
 #include "laplaceoperator.hpp"
 
+#include <set>
 #include "fem/bilinearform.hpp"
 #include "fem/integrator.hpp"
 #include "fem/mesh.hpp"
@@ -41,7 +42,6 @@ LaplaceOperator::LaplaceOperator(const IoData &iodata,
   if (dbc_attr.Size())
   {
     Mpi::Print("\nConfiguring Dirichlet BC at attributes:\n");
-    std::sort(dbc_attr.begin(), dbc_attr.end());
     utils::PrettyPrint(dbc_attr);
   }
 }
@@ -59,24 +59,25 @@ mfem::Array<int> LaplaceOperator::SetUpBoundaryProperties(const IoData &iodata,
     {
       bdr_attr_marker[attr - 1] = 1;
     }
-    bool first = true;
+    std::set<int> bdr_warn_list;
     for (auto attr : iodata.boundaries.pec.attributes)
     {
       // MFEM_VERIFY(attr > 0 && attr <= bdr_attr_max,
       //             "Ground boundary attribute tags must be non-negative and correspond to
       //             " attributes in the mesh!");
-      // MFEM_VERIFY(bdr_attr_marker[attr-1],
+      // MFEM_VERIFY(bdr_attr_marker[attr - 1],
       //             "Unknown ground boundary attribute " << attr << "!");
       if (attr <= 0 || attr > bdr_attr_marker.Size() || !bdr_attr_marker[attr - 1])
       {
-        if (first)
-        {
-          Mpi::Print("\n");
-          first = false;
-        }
-        Mpi::Warning(
-            "Unknown ground boundary attribute {:d}!\nSolver will just ignore it!\n", attr);
+        bdr_warn_list.insert(attr);
       }
+    }
+    if (!bdr_warn_list.empty())
+    {
+      Mpi::Print("\n");
+      Mpi::Warning("Unknown ground boundary attributes!\nSolver will just ignore them!");
+      utils::PrettyPrint(bdr_warn_list, "Boundary attribute list:");
+      Mpi::Print("\n");
     }
     for (const auto &[idx, data] : iodata.boundaries.lumpedport)
     {
@@ -97,6 +98,8 @@ mfem::Array<int> LaplaceOperator::SetUpBoundaryProperties(const IoData &iodata,
 
   // Mark selected boundary attributes from the mesh as essential (Dirichlet).
   mfem::Array<int> dbc_bcs;
+  dbc_bcs.Reserve(static_cast<int>(iodata.boundaries.pec.attributes.size()) +
+                  static_cast<int>(iodata.boundaries.lumpedport.size()));
   for (auto attr : iodata.boundaries.pec.attributes)
   {
     if (attr <= 0 || attr > bdr_attr_max)
@@ -127,6 +130,8 @@ std::map<int, mfem::Array<int>> LaplaceOperator::ConstructSources(const IoData &
   for (const auto &[idx, data] : iodata.boundaries.lumpedport)
   {
     mfem::Array<int> &attr_list = attr_lists[idx];
+    attr_list.Reserve(
+        static_cast<int>(data.elements.size()));  // Average one attribute per element
     for (const auto &elem : data.elements)
     {
       for (auto attr : elem.attributes)
