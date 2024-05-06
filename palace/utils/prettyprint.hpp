@@ -20,7 +20,7 @@ namespace palace::utils
 namespace internal
 {
 
-constexpr std::size_t max_width = 60;
+constexpr std::size_t max_width = 80;
 
 template <typename T>
 inline std::size_t GetSize(const T &v)
