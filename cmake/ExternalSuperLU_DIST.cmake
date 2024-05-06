@@ -20,12 +20,22 @@ list(APPEND SUPERLU_OPTIONS
   "-Denable_double=ON"
   "-Denable_single=ON"
   "-Denable_complex16=ON"
-  "-Denable_openmp=${PALACE_WITH_OPENMP}"
   "-DTPL_ENABLE_PARMETISLIB=ON"
   "-DTPL_PARMETIS_LIBRARIES=${PARMETIS_LIBRARIES}$<SEMICOLON>${METIS_LIBRARIES}"
   "-DTPL_PARMETIS_INCLUDE_DIRS=${CMAKE_INSTALL_PREFIX}/include"
   "-DTPL_ENABLE_COMBBLASLIB=OFF"
 )
+
+# Always disable OpenMP (seems slower in all cases, just link to threaded BLAS/LAPACK)
+# if(PALACE_WITH_OPENMP)
+#   list(APPEND SUPERLU_OPTIONS
+#     "-Denable_openmp=ON"
+#   )
+# else()
+  list(APPEND SUPERLU_OPTIONS
+    "-Denable_openmp=OFF"
+  )
+# endif()
 
 # SuperLU_DIST has a BUILD_STATIC_LIBS option which defaults to ON
 if(BUILD_SHARED_LIBS)

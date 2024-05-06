@@ -1,29 +1,20 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index e81d19d..1cdd28e 100644
+index 88bcfb0..7d87397 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -48,10 +48,7 @@ find_package(Threads)
+@@ -43,10 +43,7 @@ find_package(Threads)
  
  if(parallel)
    find_package(MPI COMPONENTS C Fortran REQUIRED)
--  if(NOT DEFINED ENV{MKLROOT})
+-  if(NOT DEFINED ENV{MKLROOT} OR NOT scalapack)
 -    # oneMKL MKLConfig.cmake must be invoked only once
 -    include(cmake/lapack.cmake)
 -  endif()
 +  include(cmake/lapack.cmake)
-   include(cmake/scalapack.cmake)
+   set(NUMERIC_LIBS LAPACK::LAPACK)
  
-   set(NUMERIC_LIBS SCALAPACK::SCALAPACK LAPACK::LAPACK)
-@@ -87,7 +84,7 @@ if(scotch)
- endif()
- 
- if(parmetis)
--  find_package(METIS REQUIRED COMPONENTS parallel)
-+  find_package(METIS REQUIRED COMPONENTS ParMETIS)
-   list(APPEND ORDERING_DEFS parmetis metis)
-   list(APPEND ORDERING_LIBS METIS::METIS)
- elseif(metis)
-@@ -98,15 +95,6 @@ endif()
+   if(scalapack)
+@@ -94,15 +91,6 @@ endif()
  
  list(APPEND ORDERING_LIBS pord)
  
@@ -546,83 +537,6 @@ index 136c16d..0000000
 -endif(LAPACK_FOUND)
 -
 -mark_as_advanced(LAPACK_LIBRARY LAPACK_INCLUDE_DIR)
-diff --git a/cmake/FindMETIS.cmake b/cmake/FindMETIS.cmake
-index 0d866df..9a39a15 100644
---- a/cmake/FindMETIS.cmake
-+++ b/cmake/FindMETIS.cmake
-@@ -26,24 +26,24 @@ METIS_INCLUDE_DIRS
- #]=======================================================================]
- 
- 
--if(parallel IN_LIST METIS_FIND_COMPONENTS)
-+if(ParMETIS IN_LIST METIS_FIND_COMPONENTS)
-   find_library(PARMETIS_LIBRARY
--    NAMES parmetis
--    PATH_SUFFIXES METIS libmetis
--    DOC "ParMETIS library"
--    )
-+  NAMES parmetis
-+  PATH_SUFFIXES METIS libmetis
-+  DOC "ParMETIS library"
-+  )
-   if(PARMETIS_LIBRARY)
--    set(METIS_parallel_FOUND true)
-+    set(METIS_ParMETIS_FOUND true)
-   endif()
- endif()
- 
- find_library(METIS_LIBRARY
--  NAMES metis
--  PATH_SUFFIXES METIS libmetis
--  DOC "METIS library"
--  )
-+NAMES metis
-+PATH_SUFFIXES METIS libmetis
-+DOC "METIS library"
-+)
- 
--if(parallel IN_LIST METIS_FIND_COMPONENTS)
-+if(ParMETIS IN_LIST METIS_FIND_COMPONENTS)
-   set(metis_inc parmetis.h)
- else()
-   set(metis_inc metis.h)
-@@ -55,25 +55,25 @@ PATH_SUFFIXES METIS openmpi-x86_64 mpich-x86_64
- DOC "METIS include directory"
- )
- 
-+set(METIS_LIBRARIES ${PARMETIS_LIBRARY} ${METIS_LIBRARY})
-+ 
- include(FindPackageHandleStandardArgs)
- find_package_handle_standard_args(METIS
--REQUIRED_VARS METIS_LIBRARY METIS_INCLUDE_DIR
-+REQUIRED_VARS METIS_LIBRARIES METIS_INCLUDE_DIR
- HANDLE_COMPONENTS
- )
- 
- if(METIS_FOUND)
-+  set(METIS_INCLUDE_DIRS ${METIS_INCLUDE_DIR})
- 
--set(METIS_LIBRARIES ${PARMETIS_LIBRARY} ${METIS_LIBRARY})
--set(METIS_INCLUDE_DIRS ${METIS_INCLUDE_DIR})
--
--message(VERBOSE "METIS libraries: ${METIS_LIBRARIES}
--METIS include directories: ${METIS_INCLUDE_DIRS}")
-+  message(VERBOSE "METIS libraries: ${METIS_LIBRARIES}
-+  METIS include directories: ${METIS_INCLUDE_DIRS}")
- 
--if(NOT TARGET METIS::METIS)
--  add_library(METIS::METIS INTERFACE IMPORTED)
--  set_property(TARGET METIS::METIS PROPERTY INTERFACE_LINK_LIBRARIES "${METIS_LIBRARIES}")
--  set_property(TARGET METIS::METIS PROPERTY INTERFACE_INCLUDE_DIRECTORIES "${METIS_INCLUDE_DIR}")
--endif()
-+  if(NOT TARGET METIS::METIS)
-+    add_library(METIS::METIS INTERFACE IMPORTED)
-+    set_property(TARGET METIS::METIS PROPERTY INTERFACE_LINK_LIBRARIES "${METIS_LIBRARIES}")
-+    set_property(TARGET METIS::METIS PROPERTY INTERFACE_INCLUDE_DIRECTORIES "${METIS_INCLUDE_DIR}")
-+  endif()
- endif(METIS_FOUND)
- 
- mark_as_advanced(METIS_INCLUDE_DIR METIS_LIBRARY PARMETIS_LIBRARY)
 diff --git a/cmake/FindSCALAPACK.cmake b/cmake/FindSCALAPACK.cmake
 index 56d7d9c..7a68153 100644
 --- a/cmake/FindSCALAPACK.cmake
@@ -735,73 +649,12 @@ index 56d7d9c..7a68153 100644
  endif()
 -
 -mark_as_advanced(SCALAPACK_LIBRARY SCALAPACK_INCLUDE_DIR)
-diff --git a/cmake/FindScotch.cmake b/cmake/FindScotch.cmake
-index 39e378d..1066d99 100644
---- a/cmake/FindScotch.cmake
-+++ b/cmake/FindScotch.cmake
-@@ -18,7 +18,7 @@
- #  COMPONENTS:
- #
- #  * ESMUMPS: detect Scotch esmumps interface
--#  * parallel: detect parallel (MPI) Scotch
-+#  * PTScotch: detect parallel (MPI) Scotch
- #
- # This module finds headers and scotch library.
- # Results are reported in variables:
-@@ -61,7 +61,7 @@ if(ESMUMPS IN_LIST Scotch_FIND_COMPONENTS)
-   list(INSERT scotch_names 0 esmumps)
- endif()
- 
--if(parallel IN_LIST Scotch_FIND_COMPONENTS)
-+if(PTScotch IN_LIST Scotch_FIND_COMPONENTS)
-   list(INSERT scotch_names 0 ptscotch ptscotcherr)
-   if(ESMUMPS IN_LIST Scotch_FIND_COMPONENTS)
-     list(INSERT scotch_names 0 ptesmumps)
-@@ -79,10 +79,10 @@ foreach(l IN LISTS scotch_names)
-   mark_as_advanced(Scotch_${l}_LIBRARY)
- endforeach()
- 
--if(parallel IN_LIST Scotch_FIND_COMPONENTS)
-+if(PTScotch IN_LIST Scotch_FIND_COMPONENTS)
-   if(Scotch_ptesmumps_LIBRARY AND Scotch_ptscotch_LIBRARY)
-     set(Scotch_ESMUMPS_FOUND true)
--    set(Scotch_parallel_FOUND true)
-+    set(Scotch_PTScotch_FOUND true)
-   endif()
- elseif(Scotch_esmumps_LIBRARY)
-   set(Scotch_ESMUMPS_FOUND true)
-@@ -95,16 +95,16 @@ HANDLE_COMPONENTS
- )
- 
- if(Scotch_FOUND)
--set(Scotch_INCLUDE_DIRS ${Scotch_INCLUDE_DIR})
-+  set(Scotch_INCLUDE_DIRS ${Scotch_INCLUDE_DIR})
- 
--message(VERBOSE "Scotch libraries: ${Scotch_LIBRARIES}
--Scotch include directories: ${Scotch_INCLUDE_DIRS}")
-+  message(VERBOSE "Scotch libraries: ${Scotch_LIBRARIES}
-+  Scotch include directories: ${Scotch_INCLUDE_DIRS}")
- 
--if(NOT TARGET Scotch::Scotch)
--  add_library(Scotch::Scotch INTERFACE IMPORTED)
--  set_property(TARGET Scotch::Scotch PROPERTY INTERFACE_LINK_LIBRARIES "${Scotch_LIBRARIES}")
--  set_property(TARGET Scotch::Scotch PROPERTY INTERFACE_INCLUDE_DIRECTORIES "${Scotch_INCLUDE_DIR}")
--endif()
-+  if(NOT TARGET Scotch::Scotch)
-+    add_library(Scotch::Scotch INTERFACE IMPORTED)
-+    set_property(TARGET Scotch::Scotch PROPERTY INTERFACE_LINK_LIBRARIES "${Scotch_LIBRARIES}")
-+    set_property(TARGET Scotch::Scotch PROPERTY INTERFACE_INCLUDE_DIRECTORIES "${Scotch_INCLUDE_DIR}")
-+  endif()
- endif(Scotch_FOUND)
- 
- mark_as_advanced(Scotch_INCLUDE_DIR)
 diff --git a/cmake/lapack.cmake b/cmake/lapack.cmake
-index 9d5b09a..40a0ad3 100644
+index 374e8ed..14ebbe6 100644
 --- a/cmake/lapack.cmake
 +++ b/cmake/lapack.cmake
-@@ -2,15 +2,7 @@
- 
- include(CheckSourceCompiles)
+@@ -1,11 +1,3 @@
+ # Handle options for finding LAPACK
  
 -if(NOT DEFINED LAPACK_VENDOR AND DEFINED ENV{MKLROOT})
 -  set(LAPACK_VENDOR MKL)
@@ -813,11 +666,8 @@ index 9d5b09a..40a0ad3 100644
 -
 -find_package(LAPACK REQUIRED COMPONENTS ${LAPACK_VENDOR})
 +find_package(LAPACK REQUIRED)
- 
- # GEMMT is recommeded in MUMPS User Manual if available
- if(gemmt)
 diff --git a/cmake/scalapack.cmake b/cmake/scalapack.cmake
-index b4fbd3b..5c66e4e 100644
+index 6bdfd05..7238c21 100644
 --- a/cmake/scalapack.cmake
 +++ b/cmake/scalapack.cmake
 @@ -3,21 +3,7 @@ include(GNUInstallDirs)

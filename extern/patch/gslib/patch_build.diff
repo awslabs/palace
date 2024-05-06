@@ -1,5 +1,5 @@
 diff --git a/Makefile b/Makefile
-index 63364d8..7cc5683 100644
+index 3c3b435..d2e50ef 100644
 --- a/Makefile
 +++ b/Makefile
 @@ -2,127 +2,163 @@ MPI ?= 1
@@ -64,9 +64,9 @@ index 63364d8..7cc5683 100644
  
  $(shell >config.h)
  ifneq (0,$(MPI))
--  SN=MPI
+-  SN=GSLIB_USE_MPI
 -  G:=$(G) -D$(SN)
-+  SN = GS_MPI
++  SN = GSLIB_USE_MPI
 +  G := $(G) -D$(SN)
 +  $(shell printf "#ifndef ${SN}\n#define ${SN}\n#endif\n" >>config.h)
    ifeq ($(origin CC),default)
@@ -81,7 +81,7 @@ index 63364d8..7cc5683 100644
  ifneq (0,$(ADDUS))
 -  SN=UNDERSCORE
 -  G:=$(G) -D$(SN)
-+  SN = GS_UNDERSCORE
++  SN = GSLIB_UNDERSCORE
 +  G := $(G) -D$(SN)
    $(shell printf "#ifndef ${SN}\n#define ${SN}\n#endif\n" >>config.h)
  endif
@@ -92,45 +92,45 @@ index 63364d8..7cc5683 100644
 -
 -SN=PREFIX
 -G:=$(G) -D$(SN)=$(CPREFIX)
-+SN = GS_PREFIX
++SN = GSLIB_PREFIX
 +G := $(G) -D$(SN)=$(CPREFIX)
  $(shell printf "#ifndef ${SN}\n#define ${SN} ${CPREFIX}\n#endif\n" >>config.h)
  
 -SN=FPREFIX
 -G:=$(G) -D$(SN)=$(FPREFIX)
-+SN = GS_FPREFIX
++SN = GSLIB_FPREFIX
 +G := $(G) -D$(SN)=$(FPREFIX)
  $(shell printf "#ifndef ${SN}\n#define ${SN} ${FPREFIX}\n#endif\n" >>config.h)
  
-+SN = GS_GLOBAL_LONG_LONG
++SN = GSLIB_USE_GLOBAL_LONG_LONG
 +G := $(G) -D$(SN)
 +$(shell printf "#ifndef ${SN}\n#define ${SN}\n#endif\n" >>config.h)
 +
  ifneq (0,$(USREXIT))
 -  G+=-DUSE_USR_EXIT
-+  G += -DGS_USE_USR_EXIT
++  G += -DGSLIB_USE_USR_EXIT
  endif
  
  ifneq (0,$(NBC))
 -  G+=-DUSE_NBC
-+  G += -DGS_USE_NBC
++  G += -DGSLIB_USE_NBC
  endif
  
  ifeq (0,$(BLAS))
 -  SN=USE_NAIVE_BLAS
 -  G:=$(G) -D$(SN)
-+  SN = GS_USE_NAIVE_BLAS
++  SN = GSLIB_USE_NAIVE_BLAS
 +  G := $(G) -D$(SN)
    $(shell printf "#ifndef ${SN}\n#define ${SN}\n#endif\n" >>config.h)
  endif
  
  ifeq (1,$(BLAS))
 -  G+=-DUSE_CBLAS
-+  SN = GS_USE_CBLAS
++  SN = GSLIB_USE_CBLAS
 +  G := $(G) -D$(SN)
 +  $(shell printf "#ifndef ${SN}\n#define ${SN}\n#endif\n" >>config.h)
 +  ifeq (1,$(MKL))
-+    SN = GS_USE_MKL
++    SN = GSLIB_USE_MKL
 +    G := $(G) -D$(SN)
 +    $(shell printf "#ifndef ${SN}\n#define ${SN}\n#endif\n" >>config.h)
 +  endif
@@ -255,18 +255,9 @@ index a5a44e3..62c3ced 100644
  
  #endif
 diff --git a/src/comm.c b/src/comm.c
-index 5e05739..225788c 100644
+index c5353fe..19507c0 100644
 --- a/src/comm.c
 +++ b/src/comm.c
-@@ -108,7 +108,7 @@ void comm_allreduce(const struct comm *com, gs_dom dom, gs_op op,
-                           void *v, uint vn, void *buf)
- {
-   if(vn==0) return;
--#ifdef MPI
-+#ifdef GS_MPI
-   {
-     MPI_Datatype mpitype;
-     MPI_Op mpiop;
 @@ -117,8 +117,8 @@ void comm_allreduce(const struct comm *com, gs_dom dom, gs_op op,
                      case gs_float:     mpitype=MPI_FLOAT;     break; \
                      case gs_int:       mpitype=MPI_INT;       break; \
@@ -278,24 +269,6 @@ index 5e05739..225788c 100644
        } \
      } while(0)
      DOMAIN_SWITCH();
-@@ -134,7 +134,7 @@ void comm_allreduce(const struct comm *com, gs_dom dom, gs_op op,
-     return;
-   }
- #endif
--#ifdef MPI
-+#ifdef GS_MPI
- comm_allreduce_byhand:
-   allreduce_imp(com,dom,op, v,vn, buf);
- #endif
-@@ -144,7 +144,7 @@ void comm_iallreduce(comm_req *req, const struct comm *com, gs_dom dom, gs_op op
-                           void *v, uint vn, void *buf)
- {
-   if(vn==0) return;
--#ifdef MPI
-+#ifdef GS_MPI
-   {
-     MPI_Datatype mpitype;
-     MPI_Op mpiop;
 @@ -153,8 +153,8 @@ void comm_iallreduce(comm_req *req, const struct comm *com, gs_dom dom, gs_op op
                      case gs_float:     mpitype=MPI_FLOAT;     break; \
                      case gs_int:       mpitype=MPI_INT;       break; \
@@ -312,19 +285,10 @@ index 5e05739..225788c 100644
                   default:        goto comm_allreduce_byhand;
      }
 -#ifdef USE_NBC
-+#ifdef GS_USE_NBC
++#ifdef GSLIB_USE_NBC
      MPI_Iallreduce(v,buf,vn,mpitype,mpiop,com->c,req);
  #else
      fail(1,"comm_iallreduce",__LINE__,"Invalid call to MPI_Iallreduce!\n");
-@@ -174,7 +174,7 @@ void comm_iallreduce(comm_req *req, const struct comm *com, gs_dom dom, gs_op op
-     return;
-   }
- #endif
--#ifdef MPI
-+#ifdef GS_MPI
- comm_allreduce_byhand:
-   allreduce_imp(com,dom,op, v,vn, buf);
- #endif
 @@ -197,7 +197,7 @@ double comm_dot(const struct comm *comm, double *v, double *w, uint n)
    do { T v = *in++; GS_DO_##OP(accum,v); } while(--n)
  
@@ -335,7 +299,7 @@ index 5e05739..225788c 100644
  {                                                           \
    T accum = gs_identity_##T[op], buf;                       \
 diff --git a/src/comm.h b/src/comm.h
-index bb5b290..ac4c920 100644
+index b047cd5..72a54fe 100644
 --- a/src/comm.h
 +++ b/src/comm.h
 @@ -1,5 +1,5 @@
@@ -355,16 +319,7 @@ index bb5b290..ac4c920 100644
  #warning "comm.h" requires "fail.h" and "types.h"
  #endif
  
-@@ -63,7 +63,7 @@
-          
- */
- 
--#ifdef MPI
-+#ifdef GS_MPI
- #include <mpi.h>
- typedef MPI_Comm comm_ext;
- typedef MPI_Request comm_req;
-@@ -73,15 +73,15 @@ typedef int comm_req;
+@@ -72,15 +72,15 @@ typedef int comm_req;
  typedef int MPI_Fint;
  #endif
  
@@ -386,7 +341,7 @@ index bb5b290..ac4c920 100644
  extern uint comm_gbl_id, comm_gbl_np;
  #endif
  
-@@ -122,17 +122,17 @@ void comm_scan(void *scan, const struct comm *com, gs_dom dom, gs_op op,
+@@ -121,17 +121,17 @@ void comm_scan(void *scan, const struct comm *com, gs_dom dom, gs_op op,
                 const void *v, uint vn, void *buffer);
  
  #define DEFINE_REDUCE(T) \
@@ -408,137 +363,13 @@ index bb5b290..ac4c920 100644
  
  #endif
  
-@@ -142,7 +142,7 @@ GS_FOR_EACH_DOMAIN(DEFINE_REDUCE)
- 
- static void comm_init(struct comm *c, comm_ext ce)
- {
--#ifdef MPI
-+#ifdef GS_MPI
-   int i;
-   MPI_Comm_dup(ce, &c->c);
-   MPI_Comm_rank(c->c,&i), comm_gbl_id=c->id=i;
-@@ -155,7 +155,7 @@ static void comm_init(struct comm *c, comm_ext ce)
- static void comm_init_check_(struct comm *c, MPI_Fint ce, uint np,
-                              const char *file, unsigned line)
- {
--#ifdef MPI
-+#ifdef GS_MPI
-   comm_init(c,MPI_Comm_f2c(ce));
-   if(c->np != np)
-     fail(1,file,line,"comm_init_check: passed P=%u, "
-@@ -175,7 +175,7 @@ static void comm_dup_(struct comm *d, const struct comm *s,
-                       const char *file, unsigned line)
- {
-   d->id = s->id, d->np = s->np;
--#ifdef MPI
-+#ifdef GS_MPI
-   MPI_Comm_dup(s->c,&d->c);
- #else
-   if(s->np!=1) fail(1,file,line,"%s not compiled with -DMPI\n",file);
-@@ -185,7 +185,7 @@ static void comm_dup_(struct comm *d, const struct comm *s,
- 
- static void comm_split_(const struct comm *s, int bin, int key, struct comm *d,
-                         const char *file, unsigned line) {
--#if defined(MPI)
-+#if defined(GS_MPI)
-   MPI_Comm nc;
-   MPI_Comm_split(s->c, bin, key, &nc);
-   comm_init(d, nc);
-@@ -198,14 +198,14 @@ static void comm_split_(const struct comm *s, int bin, int key, struct comm *d,
- 
- static void comm_free(struct comm *c)
- {
--#ifdef MPI
-+#ifdef GS_MPI
-   MPI_Comm_free(&c->c);
- #endif
- }
- 
- static double comm_time(void)
- {
--#ifdef MPI
-+#ifdef GS_MPI
-   return MPI_Wtime();
- #else
-   return 0;
-@@ -214,7 +214,7 @@ static double comm_time(void)
- 
- static void comm_barrier(const struct comm *c)
- {
--#ifdef MPI
-+#ifdef GS_MPI
-   MPI_Barrier(c->c);
- #endif
- }
-@@ -222,7 +222,7 @@ static void comm_barrier(const struct comm *c)
- static void comm_recv(const struct comm *c, void *p, size_t n,
-                       uint src, int tag)
- {
--#ifdef MPI
-+#ifdef GS_MPI
- # ifndef MPI_STATUS_IGNORE
-   MPI_Status stat;
-   MPI_Recv(p,n,MPI_UNSIGNED_CHAR,src,tag,c->c,&stat);
-@@ -235,7 +235,7 @@ static void comm_recv(const struct comm *c, void *p, size_t n,
- static void comm_send(const struct comm *c, void *p, size_t n,
-                       uint dst, int tag)
- {
--#ifdef MPI
-+#ifdef GS_MPI
-   MPI_Send(p,n,MPI_UNSIGNED_CHAR,dst,tag,c->c);
- #endif
- }
-@@ -243,7 +243,7 @@ static void comm_send(const struct comm *c, void *p, size_t n,
- static void comm_irecv(comm_req *req, const struct comm *c,
-                        void *p, size_t n, uint src, int tag)
- {
--#ifdef MPI
-+#ifdef GS_MPI
-   MPI_Irecv(p,n,MPI_UNSIGNED_CHAR,src,tag,c->c,req);
- #endif
- }
-@@ -251,14 +251,14 @@ static void comm_irecv(comm_req *req, const struct comm *c,
- static void comm_isend(comm_req *req, const struct comm *c,
-                        void *p, size_t n, uint dst, int tag)
- {
--#ifdef MPI
-+#ifdef GS_MPI
-   MPI_Isend(p,n,MPI_UNSIGNED_CHAR,dst,tag,c->c,req);
- #endif
- }
- 
- static void comm_wait(comm_req *req, int n)
- {
--#ifdef MPI
-+#ifdef GS_MPI
- # ifndef MPI_STATUSES_IGNORE
-   MPI_Status status[8];
-   while(n>=8) MPI_Waitall(8,req,status), req+=8, n-=8;
-@@ -271,7 +271,7 @@ static void comm_wait(comm_req *req, int n)
- 
- static void comm_bcast(const struct comm *c, void *p, size_t n, uint root)
- {
--#ifdef MPI
-+#ifdef GS_MPI
-   MPI_Bcast(p,n,MPI_UNSIGNED_CHAR,root,c->c);
- #endif
- }
-@@ -279,7 +279,7 @@ static void comm_bcast(const struct comm *c, void *p, size_t n, uint root)
- static void comm_gather(const struct comm *c, void *out, size_t out_n,
- 		void *in, size_t in_n, uint root)
- {
--#ifdef MPI
-+#ifdef GS_MPI
-   MPI_Gather(out,out_n,MPI_UNSIGNED_CHAR,in,in_n,MPI_UNSIGNED_CHAR,root,c->c);
- #else
-   assert(out_n == in_n);
 diff --git a/src/crystal.c b/src/crystal.c
-index a0e8135..c444ad8 100644
+index 6381394..d7eab1f 100644
 --- a/src/crystal.c
 +++ b/src/crystal.c
-@@ -43,9 +43,9 @@
- #include "comm.h"
+@@ -45,9 +45,9 @@
  #include "mem.h"
+ #include <stdio.h>
  
 -#define crystal_init   PREFIXED_NAME(crystal_init  )
 -#define crystal_free   PREFIXED_NAME(crystal_free  )
@@ -574,7 +405,7 @@ index b6d4582..67d3c4e 100644
  struct crystal {
    struct comm comm;
 diff --git a/src/fail.c b/src/fail.c
-index 9ac04bd..c12cd83 100644
+index 9ac04bd..6d007a5 100644
 --- a/src/fail.c
 +++ b/src/fail.c
 @@ -7,8 +7,8 @@
@@ -583,7 +414,7 @@ index 9ac04bd..c12cd83 100644
  
 -#ifdef USE_USR_EXIT
 -#define userExitHandler FORTRAN_NAME(userexithandler,USEREXITHANDLER)
-+#ifdef GS_USE_USR_EXIT
++#ifdef GSLIB_USE_USR_EXIT
 +#define userExitHandler GS_FORTRAN_NAME(userexithandler,USEREXITHANDLER)
  #define USEREXIT 1
  extern void userExitHandler(int status);
@@ -649,18 +480,20 @@ index 3fe4c9a..44f96f5 100644
  static struct crystal **handle_array = 0;
  static int handle_max = 0;
 diff --git a/src/findpts.c b/src/findpts.c
-index 86ac948..c3a3e9b 100644
+index 86ac948..c708fda 100644
 --- a/src/findpts.c
 +++ b/src/findpts.c
-@@ -117,7 +117,7 @@ static uint count_bits(unsigned char *p, uint n)
+@@ -117,8 +117,8 @@ static uint count_bits(unsigned char *p, uint n)
                     approx number of cells per proc for the distributed
                       global geometric hash table
                     NOTE: gbl_hash_size*np needs to fit in a "global" integer
 -                         (controlled by -DGLOBAL_LONG or -DGLOBAL_LONG_LONG;
-+                         (controlled by -DGS_GLOBAL_LONG or -DGS_GLOBAL_LONG_LONG;
-                           see "types.h")
+-                          see "types.h")
++                         (controlled by -DGSLIB_USE_GLOBAL_LONG or
++                          -DGSLIB_USE_GLOBAL_LONG_LONG; see "types.h")
                     actual number of cells per proc will be greater by
                       ~ 3 gbl_hash_size^(2/3) / np^(1/3)
+   
 @@ -227,17 +227,17 @@ static uint count_bits(unsigned char *p, uint n)
  
    --------------------------------------------------------------------------*/
@@ -1139,7 +972,7 @@ index e5310b1..0ca79fd 100644
     Point to Possible Elements Hashing
  
 diff --git a/src/gs.c b/src/gs.c
-index b1a9aa7..3cf4471 100644
+index 68581b3..e3a7b70 100644
 --- a/src/gs.c
 +++ b/src/gs.c
 @@ -19,19 +19,19 @@
@@ -1175,15 +1008,6 @@ index b1a9aa7..3cf4471 100644
  
  GS_DEFINE_DOM_SIZES()
  
-@@ -1011,7 +1011,7 @@ static void allreduce_exec_wait(
-   /* Why do I need this? Ugly */
-   if (comm->np > 1)
-     comm_wait(ard->req, 1);
--#ifdef MPI
-+#ifdef GS_MPI
-   memcpy(buf,ardbuf,gvn*gs_dom_size[dom]);
- #endif
-   /* buffer -> user array */
 @@ -1497,29 +1497,29 @@ void pw_data_size(struct gs_data *gsh, int *n)
  #undef igs_many
  #undef gs_wait
@@ -1478,7 +1302,7 @@ index 7ecc8a3..52f30ee 100644
  #endif
  
 diff --git a/src/mem.h b/src/mem.h
-index b68e309..01ba6cb 100644
+index 09ea661..8156c77 100644
 --- a/src/mem.h
 +++ b/src/mem.h
 @@ -1,5 +1,5 @@
@@ -1510,7 +1334,7 @@ index b68e309..01ba6cb 100644
       extern uint comm_gbl_id, comm_gbl_np;
  #  endif
 diff --git a/src/name.h b/src/name.h
-index b4bcd91..ac54032 100644
+index b4bcd91..6d64c85 100644
 --- a/src/name.h
 +++ b/src/name.h
 @@ -1,43 +1,43 @@
@@ -1524,15 +1348,15 @@ index b4bcd91..ac54032 100644
 -     default      gs_setup, etc.
 -     -DUPCASE     GS_SETUP, etc.
 -     -DUNDERSCORE gs_setup_, etc.
-+     default         gs_setup, etc.
-+     -DGS_UPCASE     GS_SETUP, etc.
-+     -DGS_UNDERSCORE gs_setup_, etc.
++     default            gs_setup, etc.
++     -DGSLIB_UPCASE     GS_SETUP, etc.
++     -DGSLIB_UNDERSCORE gs_setup_, etc.
     * a prefix for all external (non-FORTRAN) function names
 -     for example, -DPREFIX=jl_   transforms fail -> jl_fail
-+     for example, -DGS_PREFIX=jl_   transforms fail -> jl_fail
++     for example, -DGSLIB_PREFIX=jl_   transforms fail -> jl_fail
     * a prefix for all external FORTRAN function names     
 -     for example, -DFPREFIX=jlf_ transforms gs_setup_ -> jlf_gs_setup_
-+     for example, -DGS_FPREFIX=jlf_ transforms gs_setup_ -> jlf_gs_setup_
++     for example, -DGSLIB_FPREFIX=jlf_ transforms gs_setup_ -> jlf_gs_setup_
  */
  
  /* the following macro functions like a##b,
@@ -1544,8 +1368,8 @@ index b4bcd91..ac54032 100644
  
 -#ifdef PREFIX
 -#  define PREFIXED_NAME(x) TOKEN_PASTE(PREFIX,x)
-+#ifdef GS_PREFIX
-+#  define GS_PREFIXED_NAME(x) GS_TOKEN_PASTE(GS_PREFIX,x)
++#ifdef GSLIB_PREFIX
++#  define GS_PREFIXED_NAME(x) GS_TOKEN_PASTE(GSLIB_PREFIX,x)
  #else
 -#  define PREFIXED_NAME(x) x
 +#  define GS_PREFIXED_NAME(x) x
@@ -1553,8 +1377,8 @@ index b4bcd91..ac54032 100644
  
 -#ifdef FPREFIX
 -#  define FPREFIXED_NAME(x) TOKEN_PASTE(FPREFIX,x)
-+#ifdef GS_FPREFIX
-+#  define GS_FPREFIXED_NAME(x) GS_TOKEN_PASTE(GS_FPREFIX,x)
++#ifdef GSLIB_FPREFIX
++#  define GS_FPREFIXED_NAME(x) GS_TOKEN_PASTE(GSLIB_FPREFIX,x)
  #else
 -#  define FPREFIXED_NAME(x) x
 +#  define GS_FPREFIXED_NAME(x) x
@@ -1566,10 +1390,10 @@ index b4bcd91..ac54032 100644
 -#elif defined(UNDERSCORE)
 -#  define FORTRAN_NAME(low,up) FPREFIXED_NAME(TOKEN_PASTE(low,_))
 -#  define FORTRAN_UNPREFIXED(low,up) TOKEN_PASTE(low,_)
-+#if defined(GS_UPCASE)
++#if defined(GSLIB_UPCASE)
 +#  define GS_FORTRAN_NAME(low,up) GS_FPREFIXED_NAME(up)
 +#  define GS_FORTRAN_UNPREFIXED(low,up) up
-+#elif defined(GS_UNDERSCORE)
++#elif defined(GSLIB_UNDERSCORE)
 +#  define GS_FORTRAN_NAME(low,up) GS_FPREFIXED_NAME(GS_TOKEN_PASTE(low,_))
 +#  define GS_FORTRAN_UNPREFIXED(low,up) GS_TOKEN_PASTE(low,_)
  #else
@@ -1774,7 +1598,7 @@ index c195e21..cc441ae 100644
  uint sarray_transfer_many(
    struct array *const *const A, const unsigned *const size, const unsigned An,
 diff --git a/src/sort.c b/src/sort.c
-index 2bb061b..b642a3f 100644
+index 2bb061b..5bccad8 100644
 --- a/src/sort.c
 +++ b/src/sort.c
 @@ -14,7 +14,7 @@
@@ -1782,7 +1606,7 @@ index 2bb061b..b642a3f 100644
  #undef T
  
 -#if defined(USE_LONG) || defined(GLOBAL_LONG)
-+#if defined(GS_USE_LONG) || defined(GS_GLOBAL_LONG)
++#if defined(GSLIB_USE_LONG) || defined(GSLIB_USE_GLOBAL_LONG)
  #  define T unsigned long
  #  define SORT_SUFFIX _ul
  #  include "sort_imp.h"
@@ -1791,12 +1615,12 @@ index 2bb061b..b642a3f 100644
  #endif
  
 -#if defined(USE_LONG_LONG) || defined(GLOBAL_LONG_LONG)
-+#if defined(GS_USE_LONG_LONG) || defined(GS_GLOBAL_LONG_LONG)
++#if defined(GSLIB_USE_LONG_LONG) || defined(GSLIB_USE_GLOBAL_LONG_LONG)
  #  define T unsigned long long
  #  define SORT_SUFFIX _ull
  #  include "sort_imp.h"
 diff --git a/src/sort.h b/src/sort.h
-index 0b0ee53..4cb2fd2 100644
+index 0b0ee53..d0a1cc7 100644
 --- a/src/sort.h
 +++ b/src/sort.h
 @@ -1,7 +1,7 @@
@@ -1851,7 +1675,7 @@ index 0b0ee53..4cb2fd2 100644
  uint *sortp_float(buffer *restrict buf, int start_perm,
                 const float *restrict A, uint n, unsigned stride);
 -#if defined(USE_LONG_LONG) || defined(GLOBAL_LONG_LONG)
-+#if defined(GS_USE_LONG_LONG) || defined(GS_GLOBAL_LONG_LONG)
++#if defined(GSLIB_USE_LONG_LONG) || defined(GSLIB_USE_GLOBAL_LONG_LONG)
  void sortv_ull(unsigned long long *out,
                 const unsigned long long *A, uint n, unsigned stride,
                 buffer *restrict buf);
@@ -1909,7 +1733,7 @@ index 3ec8e0c..a6a0426 100644
  typedef struct { T v; uint i; } sort_data;
  
 diff --git a/src/tensor.c b/src/tensor.c
-index a724714..a9cf442 100644
+index a724714..2cdf570 100644
 --- a/src/tensor.c
 +++ b/src/tensor.c
 @@ -2,10 +2,10 @@
@@ -1917,7 +1741,7 @@ index a724714..a9cf442 100644
  #include "types.h"
  
 -#if !defined(USE_CBLAS)
-+#if !defined(GS_USE_CBLAS)
++#if !defined(GSLIB_USE_CBLAS)
  
 -#define tensor_dot  PREFIXED_NAME(tensor_dot )
 -#define tensor_mtxm PREFIXED_NAME(tensor_mtxm)
@@ -1934,7 +1758,7 @@ index a724714..a9cf442 100644
 -#    define tensor_mxv  PREFIXED_NAME(tensor_mxv )
 -#    define tensor_mtxv PREFIXED_NAME(tensor_mtxv)
 -#    define tensor_mxm  PREFIXED_NAME(tensor_mxm )
-+#  if defined(GS_USE_NAIVE_BLAS)
++#  if defined(GSLIB_USE_NAIVE_BLAS)
 +#    define tensor_mxv  GS_PREFIXED_NAME(tensor_mxv )
 +#    define tensor_mtxv GS_PREFIXED_NAME(tensor_mtxv)
 +#    define tensor_mxm  GS_PREFIXED_NAME(tensor_mxm )
@@ -1942,7 +1766,7 @@ index a724714..a9cf442 100644
  /* y = A x */
  void tensor_mxv(
 diff --git a/src/tensor.h b/src/tensor.h
-index bb65be1..c692398 100644
+index bb65be1..5a9e52b 100644
 --- a/src/tensor.h
 +++ b/src/tensor.h
 @@ -1,12 +1,16 @@
@@ -1957,8 +1781,8 @@ index bb65be1..c692398 100644
  #endif
  
 -#if defined(USE_CBLAS)
-+#if defined(GS_USE_CBLAS)
-+#if defined(GS_USE_MKL)
++#if defined(GSLIB_USE_CBLAS)
++#if defined(GSLIB_USE_MKL)
 +#  include <mkl_cblas.h>
 +#else
  #  include <cblas.h>
@@ -1983,7 +1807,7 @@ index bb65be1..c692398 100644
 -#    define tensor_mxv  PREFIXED_NAME(tensor_mxv )
 -#    define tensor_mtxv PREFIXED_NAME(tensor_mtxv)
 -#    define tensor_mxm  PREFIXED_NAME(tensor_mxm )
-+#  if defined(GS_USE_NAIVE_BLAS)
++#  if defined(GSLIB_USE_NAIVE_BLAS)
 +#    define tensor_mxv  GS_PREFIXED_NAME(tensor_mxv )
 +#    define tensor_mtxv GS_PREFIXED_NAME(tensor_mtxv)
 +#    define tensor_mxm  GS_PREFIXED_NAME(tensor_mxm )
@@ -2000,59 +1824,60 @@ index bb65be1..c692398 100644
  void mxm(const double *A, const uint *na,
           const double *B, const uint *nb,
 diff --git a/src/types.h b/src/types.h
-index 14a94bf..d76cef3 100644
+index 14a94bf..c4c6cd6 100644
 --- a/src/types.h
 +++ b/src/types.h
-@@ -1,5 +1,5 @@
+@@ -1,5 +1,6 @@
 -#ifndef TYPES_H
 -#define TYPES_H
 +#ifndef GS_TYPES_H
 +#define GS_TYPES_H
++
  #include <limits.h>
  
  /* 
-@@ -10,20 +10,20 @@
+@@ -10,20 +11,20 @@
    most frequently, e.g., for indexing into local arrays,
    and for processor ids. It can be one of
    
 -    macro             sint/uint type
-+    macro                sint/uint type
++    macro                       sint/uint type
      
 -    (default)         int
 -    USE_LONG          long
 -    USE_LONG_LONG     long long
-+    (default)            int
-+    GS_USE_LONG          long
-+    GS_USE_LONG_LONG     long long
++    (default)                   int
++    GSLIB_USE_LONG              long
++    GSLIB_USE_LONG_LONG         long long
      
    The slong/ulong type is used in relatively few places
    for global identifiers and indices. It can be one of
  
 -    macro             slong/ulong type
-+    macro                slong/ulong type
++    macro                       slong/ulong type
      
 -    (default)         int
 -    GLOBAL_LONG       long
 -    GLOBAL_LONG_LONG  long long
-+    (default)            int
-+    GS_GLOBAL_LONG       long
-+    GS_GLOBAL_LONG_LONG  long long
++    (default)                   int
++    GSLIB_USE_GLOBAL_LONG       long
++    GSLIB_USE_GLOBAL_LONG_LONG  long long
  
    Since the long long type is not ISO C90, it is never
    used unless explicitly asked for.
-@@ -34,9 +34,9 @@
+@@ -34,9 +35,9 @@
  
  */
  
 -#if defined(USE_LONG_LONG) || defined(GLOBAL_LONG_LONG)
-+#if defined(GS_USE_LONG_LONG) || defined(GS_GLOBAL_LONG_LONG)
++#if defined(GSLIB_USE_LONG_LONG) || defined(GSLIB_USE_GLOBAL_LONG_LONG)
  typedef long long long_long;
 -#  define WHEN_LONG_LONG(x) x
 +#  define GS_WHEN_LONG_LONG(x) x
  #  if !defined(LLONG_MAX)
  #    if defined(LONG_LONG_MAX)
  #      define LLONG_MAX LONG_LONG_MAX
-@@ -52,34 +52,34 @@ typedef long long long_long;
+@@ -52,34 +53,34 @@ typedef long long long_long;
  #    endif
  #  endif
  #else
@@ -2066,11 +1891,11 @@ index 14a94bf..d76cef3 100644
 -#  define TYPE_LOCAL(i,l,ll) l
 -#elif defined(USE_LONG_LONG)
 -#  define TYPE_LOCAL(i,l,ll) ll
-+#if !defined(GS_USE_LONG) && !defined(GS_USE_LONG_LONG)
++#if !defined(GSLIB_USE_LONG) && !defined(GSLIB_USE_LONG_LONG)
 +#  define GS_TYPE_LOCAL(i,l,ll) i
-+#elif defined(GS_USE_LONG)
++#elif defined(GSLIB_USE_LONG)
 +#  define GS_TYPE_LOCAL(i,l,ll) l
-+#elif defined(GS_USE_LONG_LONG)
++#elif defined(GSLIB_USE_LONG_LONG)
 +#  define GS_TYPE_LOCAL(i,l,ll) ll
  #endif
  
@@ -2078,9 +1903,9 @@ index 14a94bf..d76cef3 100644
 -#  define TYPE_GLOBAL(i,l,ll) i
 -#elif defined(GLOBAL_LONG)
 -#  define TYPE_GLOBAL(i,l,ll) l
-+#if !defined(GS_GLOBAL_LONG) && !defined(GS_GLOBAL_LONG_LONG)
++#if !defined(GSLIB_USE_GLOBAL_LONG) && !defined(GSLIB_USE_GLOBAL_LONG_LONG)
 +#  define GS_TYPE_GLOBAL(i,l,ll) i
-+#elif defined(GS_GLOBAL_LONG)
++#elif defined(GSLIB_USE_GLOBAL_LONG)
 +#  define GS_TYPE_GLOBAL(i,l,ll) l
  #else
 -#  define TYPE_GLOBAL(i,l,ll) ll
@@ -2105,3 +1930,14 @@ index 14a94bf..d76cef3 100644
  
  #endif
  
+diff --git a/tests/rand_elt_test.h b/tests/rand_elt_test.h
+index c4d07a0..fba1d5d 100644
+--- a/tests/rand_elt_test.h
++++ b/tests/rand_elt_test.h
+@@ -1,5 +1,6 @@
+ #ifndef RAND_ELT_TEST_H
+ #define RAND_ELT_TEST_H
++
+ #include <math.h>
+ 
+ static double det_2(const double A[4]) { return A[0]*A[3]-A[1]*A[2]; }
