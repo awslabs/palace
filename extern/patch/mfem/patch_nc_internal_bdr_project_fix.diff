@@ -1,5 +1,5 @@
 diff --git a/fem/gridfunc.cpp b/fem/gridfunc.cpp
-index 1c81680af..b9f413199 100644
+index 6b2281c88..8223e185e 100644
 --- a/fem/gridfunc.cpp
 +++ b/fem/gridfunc.cpp
 @@ -2061,41 +2061,37 @@ void GridFunction::AccumulateAndCountBdrValues(
@@ -7,7 +7,7 @@ index 1c81680af..b9f413199 100644
     Array<int> &values_counter)
  {
 -   int i, j, fdof, d, ind, vdim;
--   double val;
+-   real_t val;
 -   const FiniteElement *fe;
 -   ElementTransformation *transf;
     Array<int> vdofs;
@@ -48,7 +48,7 @@ index 1c81680af..b9f413199 100644
  
 -            val = vcoeff ? vc(d) : coeff[d]->Eval(*transf, ip);
 -            if ( (ind = vdofs[fdof*d+j]) < 0 )
-+            auto val = vcoeff ? vc(d) : coeff[d]->Eval(*transf, ip);
++            real_t val = vcoeff ? vc(d) : coeff[d]->Eval(*transf, ip);
 +            int ind = vdofs[fdof*d+j];
 +            if ( ind < 0 )
              {
@@ -187,10 +187,10 @@ index 1c81680af..b9f413199 100644
  }
  
 diff --git a/tests/unit/mesh/test_ncmesh.cpp b/tests/unit/mesh/test_ncmesh.cpp
-index c4ac18ebf..db43f02ec 100644
+index 1f6dd65fa..0d171d56a 100644
 --- a/tests/unit/mesh/test_ncmesh.cpp
 +++ b/tests/unit/mesh/test_ncmesh.cpp
-@@ -1689,6 +1689,64 @@ TEST_CASE("Parallel RP=I", "[Parallel], [NCMesh]")
+@@ -1690,6 +1690,64 @@ TEST_CASE("Parallel RP=I", "[Parallel], [NCMesh]")
     }
  }
  
@@ -222,7 +222,7 @@ index c4ac18ebf..db43f02ec 100644
 +      int iess = 0;
 +      for (int i = 0; i < tvec.Size(); i++)
 +      {
-+         if (i == ess_tdofs_list[iess])
++         if (iess < ess_tdofs_list.Size() && i == ess_tdofs_list[iess])
 +         {
 +            iess++;
 +            continue;

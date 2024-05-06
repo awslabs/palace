@@ -1,0 +1,149 @@
+diff --git a/mesh/nurbs.cpp b/mesh/nurbs.cpp
+index 32223524c..b156fecaf 100644
+--- a/mesh/nurbs.cpp
++++ b/mesh/nurbs.cpp
+@@ -4730,7 +4730,7 @@ ParNURBSExtension::ParNURBSExtension(const ParNURBSExtension &orig)
+ }
+ 
+ ParNURBSExtension::ParNURBSExtension(MPI_Comm comm, NURBSExtension *parent,
+-                                     int *part, const Array<bool> &active_bel)
++                                     const int *part, const Array<bool> &active_bel)
+    : gtopo(comm)
+ {
+    if (parent->NumOfActiveElems < parent->NumOfElements)
+diff --git a/mesh/nurbs.hpp b/mesh/nurbs.hpp
+index 54aa364a1..65ef12d51 100644
+--- a/mesh/nurbs.hpp
++++ b/mesh/nurbs.hpp
+@@ -624,7 +624,8 @@ public:
+ 
+    ParNURBSExtension(const ParNURBSExtension &orig);
+ 
+-   ParNURBSExtension(MPI_Comm comm, NURBSExtension *parent, int *partitioning,
++   ParNURBSExtension(MPI_Comm comm, NURBSExtension *parent,
++                     const int *partitioning,
+                      const Array<bool> &active_bel);
+ 
+    // Create a parallel version of 'parent' with partitioning as in
+diff --git a/mesh/pmesh.cpp b/mesh/pmesh.cpp
+index 46ceb35e2..a46d9e315 100644
+--- a/mesh/pmesh.cpp
++++ b/mesh/pmesh.cpp
+@@ -103,13 +103,13 @@ ParMesh& ParMesh::operator=(ParMesh &&mesh)
+    return *this;
+ }
+ 
+-ParMesh::ParMesh(MPI_Comm comm, Mesh &mesh, int *partitioning_,
++ParMesh::ParMesh(MPI_Comm comm, Mesh &mesh, const int *partitioning_,
+                  int part_method)
+    : glob_elem_offset(-1)
+    , glob_offset_sequence(-1)
+    , gtopo(comm)
+ {
+-   int *partitioning = NULL;
++   const int *partitioning = partitioning_ ? partitioning_ : nullptr;
+    Array<bool> activeBdrElem;
+ 
+    MyComm = comm;
+@@ -118,18 +118,16 @@ ParMesh::ParMesh(MPI_Comm comm, Mesh &mesh, int *partitioning_,
+ 
+    if (mesh.Nonconforming())
+    {
+-      if (partitioning_)
+-      {
+-         partitioning = partitioning_;
+-      }
+       ncmesh = pncmesh = new ParNCMesh(comm, *mesh.ncmesh, partitioning);
++
+       if (!partitioning)
+       {
+-         partitioning = new int[mesh.GetNE()];
++         int *part = new int[mesh.GetNE()];
+          for (int i = 0; i < mesh.GetNE(); i++)
+          {
+-            partitioning[i] = pncmesh->InitialPartition(i);
++            part[i] = pncmesh->InitialPartition(i);
+          }
++         partitioning = part;
+       }
+ 
+       pncmesh->Prune();
+@@ -158,11 +156,7 @@ ParMesh::ParMesh(MPI_Comm comm, Mesh &mesh, int *partitioning_,
+ 
+       ncmesh = pncmesh = NULL;
+ 
+-      if (partitioning_)
+-      {
+-         partitioning = partitioning_;
+-      }
+-      else
++      if (!partitioning)
+       {
+          partitioning = mesh.GeneratePartitioning(NRanks, part_method);
+       }
+@@ -730,7 +724,7 @@ void ParMesh::BuildVertexGroup(int ngroups, const Table &vert_element)
+ }
+ 
+ void ParMesh::BuildSharedFaceElems(int ntri_faces, int nquad_faces,
+-                                   const Mesh& mesh, int *partitioning,
++                                   const Mesh& mesh, const int *partitioning,
+                                    const STable3D *faces_tbl,
+                                    const Array<int> &face_group,
+                                    const Array<int> &vert_global_local)
+diff --git a/mesh/pmesh.hpp b/mesh/pmesh.hpp
+index e33db8e43..44ce3be15 100644
+--- a/mesh/pmesh.hpp
++++ b/mesh/pmesh.hpp
+@@ -241,7 +241,7 @@ protected:
+    void BuildVertexGroup(int ngroups, const Table& vert_element);
+ 
+    void BuildSharedFaceElems(int ntri_faces, int nquad_faces,
+-                             const Mesh &mesh, int *partitioning,
++                             const Mesh &mesh, const int *partitioning,
+                              const STable3D *faces_tbl,
+                              const Array<int> &face_group,
+                              const Array<int> &vert_global_local);
+@@ -343,7 +343,7 @@ public:
+        meshes and quick space-filling curve equipartitioning for nonconforming
+        meshes (elements of nonconforming meshes should ideally be ordered as a
+        sequence of face-neighbors). */
+-   ParMesh(MPI_Comm comm, Mesh &mesh, int *partitioning_ = NULL,
++   ParMesh(MPI_Comm comm, Mesh &mesh, const int *partitioning_ = NULL,
+            int part_method = 1);
+ 
+    /** Copy constructor. Performs a deep copy of (almost) all data, so that the
+@@ -438,8 +438,6 @@ public:
+ 
+    ParNCMesh* pncmesh;
+ 
+-   int *partitioning_cache = nullptr;
+-
+    int GetNGroups() const { return gtopo.NGroups(); }
+ 
+    ///@{ @name These methods require group > 0
+diff --git a/mesh/pncmesh.cpp b/mesh/pncmesh.cpp
+index 218faebfc..e90849e16 100644
+--- a/mesh/pncmesh.cpp
++++ b/mesh/pncmesh.cpp
+@@ -28,7 +28,7 @@ namespace mfem
+ 
+ using namespace bin_io;
+ 
+-ParNCMesh::ParNCMesh(MPI_Comm comm, const NCMesh &ncmesh, int *part)
++ParNCMesh::ParNCMesh(MPI_Comm comm, const NCMesh &ncmesh, const int *part)
+    : NCMesh(ncmesh)
+ {
+    MyComm = comm;
+diff --git a/mesh/pncmesh.hpp b/mesh/pncmesh.hpp
+index 2f4e1eb74..497d73f93 100644
+--- a/mesh/pncmesh.hpp
++++ b/mesh/pncmesh.hpp
+@@ -67,7 +67,7 @@ public:
+    /// Construct by partitioning a serial NCMesh.
+    /** SFC partitioning is used by default. A user-specified partition can be
+        passed in 'part', where part[i] is the desired MPI rank for element i. */
+-   ParNCMesh(MPI_Comm comm, const NCMesh& ncmesh, int* part = NULL);
++   ParNCMesh(MPI_Comm comm, const NCMesh& ncmesh, const int* part = NULL);
+ 
+    /** Load from a stream, parallel version. See the serial NCMesh::NCMesh
+        counterpart for a description of the parameters. */
