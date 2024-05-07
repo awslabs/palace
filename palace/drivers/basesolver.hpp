@@ -67,12 +67,11 @@ protected:
                          double time) const;
 
   // Common field visualization postprocessing for all simulation types.
-  void PostprocessFields(const PostOperator &postop, int step, double time,
-                         const ErrorIndicator *indicator = nullptr) const;
+  void PostprocessFields(const PostOperator &postop, int step, double time) const;
 
   // Common error indicator postprocessing for all simulation types.
   void PostprocessErrorIndicator(const PostOperator &postop,
-                                 const ErrorIndicator &indicator) const;
+                                 const ErrorIndicator &indicator, bool fields) const;
 
   // Performs a solve using the mesh sequence, then reports error indicators and the number
   // of global true dofs.

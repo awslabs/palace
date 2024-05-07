@@ -206,8 +206,11 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // Configure the shift-and-invert strategy is employed to solve for the eigenvalues
   // closest to the specified target, σ.
   const double target = iodata.solver.eigenmode.target;
-  const double f_target = iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, target);
-  Mpi::Print(" Shift-and-invert σ = {:.3e} GHz ({:.3e})\n", f_target, target);
+  {
+    const double f_target =
+        iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, target);
+    Mpi::Print(" Shift-and-invert σ = {:.3e} GHz ({:.3e})\n", f_target, target);
+  }
   if (C)
   {
     // Search for eigenvalues closest to λ = iσ.
@@ -270,8 +273,8 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   BlockTimer bt2(Timer::POSTPRO);
   SaveMetadata(*ksp);
 
-  // Calculate and record the error indicators.
-  Mpi::Print("\nComputing solution error estimates\n");
+  // Calculate and record the error indicators, and postprocess the results.
+  Mpi::Print("\nComputing solution error estimates and performing postprocessing\n");
   CurlFluxErrorEstimator<ComplexVector> estimator(
       spaceop.GetMaterialOp(), spaceop.GetNDSpaces(), iodata.solver.linear.estimator_tol,
       iodata.solver.linear.estimator_max_it, 0, iodata.solver.linear.estimator_mg);
@@ -284,13 +287,6 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     eigen->SetBMat(*KM);
     eigen->RescaleEigenvectors(num_conv);
   }
-  for (int i = 0; i < iodata.solver.eigenmode.n; i++)
-  {
-    eigen->GetEigenvector(i, E);
-    estimator.AddErrorIndicator(E, indicator);
-  }
-
-  // Postprocess the results.
   Mpi::Print("\n");
   for (int i = 0; i < num_conv; i++)
   {
@@ -318,10 +314,19 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     postop.SetEGridFunction(E);
     postop.SetBGridFunction(B);
     postop.UpdatePorts(spaceop.GetLumpedPortOp(), omega.real());
+    double E_elec = postop.GetEFieldEnergy();
+    double E_mag = postop.GetHFieldEnergy();
+
+    // Calculate and record the error indicators.
+    if (i < iodata.solver.eigenmode.n)
+    {
+      estimator.AddErrorIndicator(E, indicator);
+    }
 
     // Postprocess the mode.
     Postprocess(postop, spaceop.GetLumpedPortOp(), i, omega, error_bkwd, error_abs,
-                num_conv, (i == 0) ? &indicator : nullptr);
+                num_conv, E_elec, E_mag,
+                (i == iodata.solver.eigenmode.n - 1) ? &indicator : nullptr);
   }
   return {indicator, spaceop.GlobalTrueVSize()};
 }
@@ -329,16 +334,11 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 void EigenSolver::Postprocess(const PostOperator &postop,
                               const LumpedPortOperator &lumped_port_op, int i,
                               std::complex<double> omega, double error_bkwd,
-                              double error_abs, int num_conv,
+                              double error_abs, int num_conv, double E_elec, double E_mag,
                               const ErrorIndicator *indicator) const
 {
   // The internal GridFunctions for PostOperator have already been set from the E and B
-  // solutions in the main loop over converged eigenvalues. Note: The energies output are
-  // nondimensional (they can be dimensionalized using the scaling μ₀ * H₀² * L₀³, which
-  // are the free space permeability, characteristic magnetic field strength, and
-  // characteristic length scale, respectively).
-  double E_elec = postop.GetEFieldEnergy();
-  double E_mag = postop.GetHFieldEnergy();
+  // solutions in the main loop over converged eigenvalues.
   double E_cap = postop.GetLumpedCapacitorEnergy(lumped_port_op);
   double E_ind = postop.GetLumpedInductorEnergy(lumped_port_op);
   PostprocessEigen(i, omega, error_bkwd, error_abs, num_conv);
@@ -349,12 +349,12 @@ void EigenSolver::Postprocess(const PostOperator &postop,
   PostprocessProbes(postop, "m", i, i + 1);
   if (i < iodata.solver.eigenmode.n_post)
   {
-    PostprocessFields(postop, i, i + 1, indicator);
+    PostprocessFields(postop, i, i + 1);
     Mpi::Print(" Wrote mode {:d} to disk\n", i + 1);
   }
   if (indicator)
   {
-    PostprocessErrorIndicator(postop, *indicator);
+    PostprocessErrorIndicator(postop, *indicator, iodata.solver.eigenmode.n_post > 0);
   }
 }
 

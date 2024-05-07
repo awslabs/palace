@@ -12,13 +12,11 @@ namespace palace
 {
 
 class ErrorIndicator;
-class IoData;
 class LumpedPortOperator;
 class Mesh;
 class PostOperator;
 class SpaceOperator;
 class SurfaceCurrentOperator;
-class Timer;
 class WavePortOperator;
 
 //
@@ -38,8 +36,7 @@ private:
   void Postprocess(const PostOperator &postop, const LumpedPortOperator &lumped_port_op,
                    const WavePortOperator &wave_port_op,
                    const SurfaceCurrentOperator &surf_j_op, int step, double omega,
-                   double E_elec, double E_mag, bool full,
-                   const ErrorIndicator *indicator) const;
+                   double E_elec, double E_mag, const ErrorIndicator *indicator) const;
 
   void PostprocessCurrents(const PostOperator &postop,
                            const SurfaceCurrentOperator &surf_j_op, int step,

@@ -672,100 +672,144 @@ double PostOperator::GetSurfaceFlux(int idx) const
   return Phi;
 }
 
-void PostOperator::WriteFields(int step, double time, const ErrorIndicator *indicator) const
+namespace
+{
+
+template <typename T>
+void ScaleGridFunctions(double L, int dim, bool imag, T &E, T &B, T &A, T &V)
+{
+  // For fields on H(curl) and H(div) spaces, we "undo" the effect of redimensionalizing
+  // the mesh which would carry into the fields during the mapping from reference to
+  // physical space through the element Jacobians. No transformation for V is needed (H1
+  // interpolation). Because the coefficients are always evaluating E, B in neighboring
+  // elements, the Jacobian scaling is the same for the domain and boundary data
+  // collections (instead of being different for B due to the dim - 1 evaluation). Wave
+  // port fields also do not require rescaling since their submesh object where they are
+  // evaluated remains nondimensionalized.
+  if (E)
+  {
+    // Piola transform: J^-T
+    E->Real() *= L;
+    E->Real().FaceNbrData() *= L;
+    if (imag)
+    {
+      E->Imag() *= L;
+      E->Imag().FaceNbrData() *= L;
+    }
+  }
+  if (B)
+  {
+    // Piola transform: J / |J|
+    const auto Ld = std::pow(L, dim - 1);
+    B->Real() *= Ld;
+    B->Real().FaceNbrData() *= Ld;
+    if (imag)
+    {
+      B->Imag() *= Ld;
+      B->Imag().FaceNbrData() *= Ld;
+    }
+  }
+  if (A)
+  {
+    // Piola transform: J^-T
+    A->Real() *= L;
+    A->Real().FaceNbrData() *= L;
+  }
+}
+
+}  // namespace
+
+void PostOperator::WriteFields(int step, double time) const
 {
   // Given the electric field and magnetic flux density, write the fields to disk for
   // visualization. Write the mesh coordinates in the same units as originally input.
-  bool first_save = (paraview.GetCycle() < 0);
   mfem::ParMesh &mesh =
       HasE() ? *E->ParFESpace()->GetParMesh() : *B->ParFESpace()->GetParMesh();
-  auto ScaleGridFunctions = [&mesh, this](double L)
-  {
-    // For fields on H(curl) and H(div) spaces, we "undo" the effect of redimensionalizing
-    // the mesh which would carry into the fields during the mapping from reference to
-    // physical space through the element Jacobians. No transformation for V is needed (H1
-    // interpolation). Because the coefficients are always evaluating E, B in neighboring
-    // elements, the Jacobian scaling is the same for the domain and boundary data
-    // collections (instead of being different for B due to the dim - 1 evaluation). Wave
-    // port fields also do not require rescaling since their submesh object where they are
-    // evaluated remains nondimensionalized.
-    if (E)
-    {
-      // Piola transform: J^-T
-      E->Real() *= L;
-      E->Real().FaceNbrData() *= L;
-      if (HasImag())
-      {
-        E->Imag() *= L;
-        E->Imag().FaceNbrData() *= L;
-      }
-    }
-    if (B)
-    {
-      // Piola transform: J / |J|
-      const auto Ld = std::pow(L, mesh.Dimension() - 1);
-      B->Real() *= Ld;
-      B->Real().FaceNbrData() *= Ld;
-      if (HasImag())
-      {
-        B->Imag() *= Ld;
-        B->Imag().FaceNbrData() *= Ld;
-      }
-    }
-    if (A)
-    {
-      // Piola transform: J^-T
-      A->Real() *= L;
-      A->Real().FaceNbrData() *= L;
-    }
-  };
   mesh::DimensionalizeMesh(mesh, mesh_Lc0);
-  ScaleGridFunctions(mesh_Lc0);
-
+  ScaleGridFunctions(mesh_Lc0, mesh.Dimension(), HasImag(), E, B, A, V);
   paraview.SetCycle(step);
   paraview.SetTime(time);
   paraview_bdr.SetCycle(step);
   paraview_bdr.SetTime(time);
-  if (first_save || indicator)
+  paraview.Save();
+  paraview_bdr.Save();
+  mesh::NondimensionalizeMesh(mesh, mesh_Lc0);
+  ScaleGridFunctions(1.0 / mesh_Lc0, mesh.Dimension(), HasImag(), E, B, A, V);
+}
+
+void PostOperator::WriteFieldsFinal(const ErrorIndicator *indicator) const
+{
+  // Write the mesh partitioning and (optionally) error indicators at the final step. No
+  // need for these to be parallel objects, since the data is local to each process and
+  // there isn't a need to ever access the element neighbors. We set the time to some
+  // non-used value to make the step identifiable within the data collection.
+  mfem::ParMesh &mesh =
+      HasE() ? *E->ParFESpace()->GetParMesh() : *B->ParFESpace()->GetParMesh();
+  mesh::DimensionalizeMesh(mesh, mesh_Lc0);
+  paraview.SetCycle(paraview.GetCycle() + 1);
+  if (paraview.GetTime() < 1.0)
   {
-    // No need for these to be parallel objects, since the data is local to each process and
-    // there isn't a need to ever access the element neighbors.
-    mfem::L2_FECollection pwconst_fec(0, mesh.Dimension());
-    mfem::FiniteElementSpace pwconst_fespace(&mesh, &pwconst_fec);
-    std::unique_ptr<mfem::GridFunction> rank, eta;
-    if (first_save)
-    {
-      rank = std::make_unique<mfem::GridFunction>(&pwconst_fespace);
-      *rank = mesh.GetMyRank() + 1;
-      paraview.RegisterField("Rank", rank.get());
-    }
-    if (indicator)
-    {
-      eta = std::make_unique<mfem::GridFunction>(&pwconst_fespace);
-      MFEM_VERIFY(eta->Size() == indicator->Local().Size(),
-                  "Size mismatch for provided ErrorIndicator for postprocessing!");
-      *eta = indicator->Local();
-      paraview.RegisterField("Indicator", eta.get());
-    }
-    paraview.Save();
-    if (rank)
-    {
-      paraview.DeregisterField("Rank");
-    }
-    if (eta)
-    {
-      paraview.DeregisterField("Indicator");
-    }
+    paraview.SetTime(99.0);
   }
   else
   {
-    paraview.Save();
+    // 1 -> 99, 10 -> 999, etc.
+    paraview.SetTime(
+        std::pow(10.0, 2.0 + static_cast<int>(std::log10(paraview.GetTime()))) - 1.0);
   }
-  paraview_bdr.Save();
-
-  // Restore the mesh nondimensionalization.
+  mfem::DataCollection::FieldMapType field_map(paraview.GetFieldMap());  // Copy
+  for (const auto &[name, gf] : field_map)
+  {
+    paraview.DeregisterField(name);
+  }
+  mfem::DataCollection::CoeffFieldMapType coeff_field_map(paraview.GetCoeffFieldMap());
+  for (const auto &[name, gf] : coeff_field_map)
+  {
+    paraview.DeregisterCoeffField(name);
+  }
+  mfem::DataCollection::VCoeffFieldMapType vcoeff_field_map(paraview.GetVCoeffFieldMap());
+  for (const auto &[name, gf] : vcoeff_field_map)
+  {
+    paraview.DeregisterVCoeffField(name);
+  }
+  mfem::L2_FECollection pwconst_fec(0, mesh.Dimension());
+  mfem::FiniteElementSpace pwconst_fespace(&mesh, &pwconst_fec);
+  std::unique_ptr<mfem::GridFunction> rank, eta;
+  {
+    rank = std::make_unique<mfem::GridFunction>(&pwconst_fespace);
+    *rank = mesh.GetMyRank() + 1;
+    paraview.RegisterField("Rank", rank.get());
+  }
+  if (indicator)
+  {
+    eta = std::make_unique<mfem::GridFunction>(&pwconst_fespace);
+    MFEM_VERIFY(eta->Size() == indicator->Local().Size(),
+                "Size mismatch for provided ErrorIndicator for postprocessing!");
+    *eta = indicator->Local();
+    paraview.RegisterField("Indicator", eta.get());
+  }
+  paraview.Save();
+  if (rank)
+  {
+    paraview.DeregisterField("Rank");
+  }
+  if (eta)
+  {
+    paraview.DeregisterField("Indicator");
+  }
+  for (const auto &[name, gf] : field_map)
+  {
+    paraview.RegisterField(name, gf);
+  }
+  for (const auto &[name, gf] : coeff_field_map)
+  {
+    paraview.RegisterCoeffField(name, gf);
+  }
+  for (const auto &[name, gf] : vcoeff_field_map)
+  {
+    paraview.RegisterVCoeffField(name, gf);
+  }
   mesh::NondimensionalizeMesh(mesh, mesh_Lc0);
-  ScaleGridFunctions(1.0 / mesh_Lc0);
 }
 
 std::vector<std::complex<double>> PostOperator::ProbeEField() const

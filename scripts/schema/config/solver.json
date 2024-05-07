@@ -48,7 +48,6 @@
         "MaxFreq": { "type": "number" },
         "FreqStep": { "type": "number" },
         "SaveStep": { "type": "integer" },
-        "SaveOnlyPorts": { "type": "boolean" },
         "Restart": { "type": "integer", "exclusiveMinimum": 0 },
         "AdaptiveTol": { "type": "number", "minimum": 0.0 },
         "AdaptiveMaxSamples": { "type": "number", "exclusiveMinimum": 0 },
@@ -68,8 +67,7 @@
         "ExcitationWidth": { "type": "number" },
         "MaxTime": { "type": "number" },
         "TimeStep": { "type": "number" },
-        "SaveStep": { "type": "integer" },
-        "SaveOnlyPorts": { "type": "boolean" }
+        "SaveStep": { "type": "integer" }
       }
     },
     "Electrostatic":

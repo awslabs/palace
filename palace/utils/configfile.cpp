@@ -1429,7 +1429,6 @@ void DrivenSolverData::SetUp(json &solver)
   max_f = driven->at("MaxFreq");     // Required
   delta_f = driven->at("FreqStep");  // Required
   delta_post = driven->value("SaveStep", delta_post);
-  only_port_post = driven->value("SaveOnlyPorts", only_port_post);
   rst = driven->value("Restart", rst);
   adaptive_tol = driven->value("AdaptiveTol", adaptive_tol);
   adaptive_max_size = driven->value("AdaptiveMaxSamples", adaptive_max_size);
@@ -1440,7 +1439,6 @@ void DrivenSolverData::SetUp(json &solver)
   driven->erase("MaxFreq");
   driven->erase("FreqStep");
   driven->erase("SaveStep");
-  driven->erase("SaveOnlyPorts");
   driven->erase("Restart");
   driven->erase("AdaptiveTol");
   driven->erase("AdaptiveMaxSamples");
@@ -1454,7 +1452,6 @@ void DrivenSolverData::SetUp(json &solver)
   // std::cout << "MaxFreq: " << max_f << '\n';
   // std::cout << "FreqStep: " << delta_f << '\n';
   // std::cout << "SaveStep: " << delta_post << '\n';
-  // std::cout << "SaveOnlyPorts: " << only_port_post << '\n';
   // std::cout << "Restart: " << rst << '\n';
   // std::cout << "AdaptiveTol: " << adaptive_tol << '\n';
   // std::cout << "AdaptiveMaxSamples: " << adaptive_max_size << '\n';
@@ -1616,7 +1613,6 @@ void TransientSolverData::SetUp(json &solver)
   max_t = transient->at("MaxTime");     // Required
   delta_t = transient->at("TimeStep");  // Required
   delta_post = transient->value("SaveStep", delta_post);
-  only_port_post = transient->value("SaveOnlyPorts", only_port_post);
 
   // Cleanup
   transient->erase("Type");
@@ -1626,7 +1622,6 @@ void TransientSolverData::SetUp(json &solver)
   transient->erase("MaxTime");
   transient->erase("TimeStep");
   transient->erase("SaveStep");
-  transient->erase("SaveOnlyPorts");
   MFEM_VERIFY(transient->empty(),
               "Found an unsupported configuration file keyword under \"Transient\"!\n"
                   << transient->dump(2));
@@ -1639,7 +1634,6 @@ void TransientSolverData::SetUp(json &solver)
   // std::cout << "MaxTime: " << max_t << '\n';
   // std::cout << "TimeStep: " << delta_t << '\n';
   // std::cout << "SaveStep: " << delta_post << '\n';
-  // std::cout << "SaveOnlyPorts: " << only_port_post << '\n';
 }
 
 // Helpers for converting string keys to enum for LinearSolverData::Type,

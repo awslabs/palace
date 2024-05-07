@@ -28,6 +28,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   BlockTimer bt0(Timer::CONSTRUCT);
   LaplaceOperator laplaceop(iodata, mesh);
   auto K = laplaceop.GetStiffnessMatrix();
+  const auto &Grad = laplaceop.GetGradMatrix();
   SaveMetadata(laplaceop.GetH1Spaces());
 
   // Set up the linear solver.
@@ -41,8 +42,9 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   MFEM_VERIFY(nstep > 0, "No terminal boundaries specified for electrostatic simulation!");
 
   // Right-hand side term and solution vector storage.
-  Vector RHS(K->Height());
+  Vector RHS(Grad.Width()), E(Grad.Height());
   std::vector<Vector> V(nstep);
+  std::vector<double> E_elec(nstep);
 
   // Initialize structures for storing and reducing the results of error estimation.
   GradFluxErrorEstimator estimator(
@@ -67,14 +69,29 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     laplaceop.GetExcitationVector(idx, *K, V[step], RHS);
     ksp.Mult(RHS, V[step]);
 
+    // Compute E = -∇V on the true dofs, and set the internal GridFunctions in PostOperator
+    // for all postprocessing operations.
     BlockTimer bt2(Timer::POSTPRO);
+    E = 0.0;
+    Grad.AddMult(V[step], E, -1.0);
+    postop.SetVGridFunction(V[step]);
+    postop.SetEGridFunction(E);
+    E_elec[step] = postop.GetEFieldEnergy();
     Mpi::Print(" Sol. ||V|| = {:.6e} (||RHS|| = {:.6e})\n",
                linalg::Norml2(laplaceop.GetComm(), V[step]),
                linalg::Norml2(laplaceop.GetComm(), RHS));
+    {
+      const double J = iodata.DimensionalizeValue(IoData::ValueType::ENERGY, 1.0);
+      Mpi::Print(" Field energy E = {:.3e} J\n", E_elec[step] * J);
+    }
 
     // Calculate and record the error indicators.
     Mpi::Print(" Updating solution error estimates\n");
     estimator.AddErrorIndicator(V[step], indicator);
+
+    // Postprocess field solutions and optionally write solution to disk.
+    Postprocess(postop, step, idx, E_elec[step],
+                (step == nstep - 1) ? &indicator : nullptr);
 
     // Next terminal.
     step++;
@@ -83,13 +100,32 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // Postprocess the capacitance matrix from the computed field solutions.
   BlockTimer bt1(Timer::POSTPRO);
   SaveMetadata(ksp);
-  Postprocess(laplaceop, postop, V, indicator);
+  PostprocessTerminals(postop, laplaceop.GetSources(), V, E_elec);
   return {indicator, laplaceop.GlobalTrueVSize()};
 }
 
-void ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop, PostOperator &postop,
-                                      const std::vector<Vector> &V,
-                                      const ErrorIndicator &indicator) const
+void ElectrostaticSolver::Postprocess(const PostOperator &postop, int step, int idx,
+                                      double E_elec, const ErrorIndicator *indicator) const
+{
+  // The internal GridFunctions for PostOperator have already been set from the V solution
+  // in the main loop.
+  PostprocessDomains(postop, "i", step, idx, E_elec, 0.0, 0.0, 0.0);
+  PostprocessSurfaces(postop, "i", step, idx, E_elec, 0.0, 1.0, 0.0);
+  PostprocessProbes(postop, "i", step, idx);
+  if (step < iodata.solver.electrostatic.n_post)
+  {
+    PostprocessFields(postop, step, idx);
+    Mpi::Print(" Wrote fields to disk for terminal {:d}\n", idx);
+  }
+  if (indicator)
+  {
+    PostprocessErrorIndicator(postop, *indicator, iodata.solver.electrostatic.n_post > 0);
+  }
+}
+
+void ElectrostaticSolver::PostprocessTerminals(
+    PostOperator &postop, const std::map<int, mfem::Array<int>> &terminal_sources,
+    const std::vector<Vector> &V, const std::vector<double> &E_elec) const
 {
   // Postprocess the Maxwell capacitance matrix. See p. 97 of the COMSOL AC/DC Module manual
   // for the associated formulas based on the electric field energy based on a unit voltage
@@ -97,41 +133,17 @@ void ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop, PostOperator &
   // charges from the prescribed voltage to get C directly as:
   //         Q_i = ∫ ρ dV = ∫ ∇ ⋅ (ε E) dV = ∫ (ε E) ⋅ n dS
   // and C_ij = Q_i/V_j. The energy formulation avoids having to locally integrate E = -∇V.
-  const auto &Grad = laplaceop.GetGradMatrix();
-  const std::map<int, mfem::Array<int>> &terminal_sources = laplaceop.GetSources();
-  int nstep = static_cast<int>(terminal_sources.size());
-  mfem::DenseMatrix C(nstep), Cm(nstep);
-  Vector E(Grad.Height()), Vij(Grad.Width());
-  int i = 0;
-  for (const auto &[idx, data] : terminal_sources)
+  mfem::DenseMatrix C(V.size()), Cm(V.size());
+  for (int i = 0; i < C.Height(); i++)
   {
-    // Compute E = -∇V on the true dofs, and set the internal GridFunctions in PostOperator
-    // for all postprocessing operations.
-    E = 0.0;
-    Grad.AddMult(V[i], E, -1.0);
-    postop.SetVGridFunction(V[i]);
-    postop.SetEGridFunction(E);
-    double Ue = postop.GetEFieldEnergy();
-    PostprocessDomains(postop, "i", i, idx, Ue, 0.0, 0.0, 0.0);
-    PostprocessSurfaces(postop, "i", i, idx, Ue, 0.0, 1.0, 0.0);
-    PostprocessProbes(postop, "i", i, idx);
-    if (i < iodata.solver.electrostatic.n_post)
-    {
-      PostprocessFields(postop, i, idx, (i == 0) ? &indicator : nullptr);
-      Mpi::Print("{}Wrote fields to disk for terminal {:d}\n", (i == 0) ? "\n" : "", idx);
-    }
-    if (i == 0)
-    {
-      PostprocessErrorIndicator(postop, indicator);
-    }
-
     // Diagonal: C_ii = 2 U_e(V_i) / V_i².
-    C(i, i) = Cm(i, i) = 2.0 * Ue;
-    i++;
+    C(i, i) = Cm(i, i) = 2.0 * E_elec[i];
   }
 
   // Off-diagonals: C_ij = U_e(V_i + V_j) / (V_i V_j) - 1/2 (V_i/V_j C_ii + V_j/V_i C_jj).
-  for (i = 0; i < C.Height(); i++)
+  Vector Vij(V[0].Size());
+  Vij.UseDevice(true);
+  for (int i = 0; i < C.Height(); i++)
   {
     for (int j = 0; j < C.Width(); j++)
     {
@@ -155,13 +167,7 @@ void ElectrostaticSolver::Postprocess(LaplaceOperator &laplaceop, PostOperator &
   }
   mfem::DenseMatrix Cinv(C);
   Cinv.Invert();  // In-place, uses LAPACK (when available) and should be cheap
-  PostprocessTerminals(terminal_sources, C, Cinv, Cm);
-}
 
-void ElectrostaticSolver::PostprocessTerminals(
-    const std::map<int, mfem::Array<int>> &terminal_sources, const mfem::DenseMatrix &C,
-    const mfem::DenseMatrix &Cinv, const mfem::DenseMatrix &Cm) const
-{
   // Only root writes to disk (every process has full matrices).
   if (!root || post_dir.length() == 0)
   {

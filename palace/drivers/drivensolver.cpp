@@ -175,21 +175,19 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator &
     // Compute B = -1/(iω) ∇ x E on the true dofs, and set the internal GridFunctions in
     // PostOperator for all postprocessing operations.
     BlockTimer bt0(Timer::POSTPRO);
-    double E_elec = 0.0, E_mag = 0.0;
     Curl.Mult(E.Real(), B.Real());
     Curl.Mult(E.Imag(), B.Imag());
     B *= -1.0 / (1i * omega);
     postop.SetEGridFunction(E);
     postop.SetBGridFunction(B);
     postop.UpdatePorts(spaceop.GetLumpedPortOp(), spaceop.GetWavePortOp(), omega);
+    double E_elec = postop.GetEFieldEnergy();
+    double E_mag = postop.GetHFieldEnergy();
     Mpi::Print(" Sol. ||E|| = {:.6e} (||RHS|| = {:.6e})\n",
                linalg::Norml2(spaceop.GetComm(), E),
                linalg::Norml2(spaceop.GetComm(), RHS));
-    if (!iodata.solver.driven.only_port_post)
     {
       const double J = iodata.DimensionalizeValue(IoData::ValueType::ENERGY, 1.0);
-      E_elec = postop.GetEFieldEnergy();
-      E_mag = postop.GetHFieldEnergy();
       Mpi::Print(" Field energy E ({:.3e} J) + H ({:.3e} J) = {:.3e} J\n", E_elec * J,
                  E_mag * J, (E_elec + E_mag) * J);
     }
@@ -201,7 +199,6 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator &
     // Postprocess S-parameters and optionally write solution to disk.
     Postprocess(postop, spaceop.GetLumpedPortOp(), spaceop.GetWavePortOp(),
                 spaceop.GetSurfaceCurrentOp(), step, omega, E_elec, E_mag,
-                !iodata.solver.driven.only_port_post,
                 (step == nstep - 1) ? &indicator : nullptr);
 
     // Increment frequency.
@@ -261,12 +258,16 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator 
   // range of interest. Each call for an HDM solution adds the frequency sample to P_S and
   // removes it from P \ P_S. Timing for the HDM construction and solve is handled inside
   // of the RomOperator.
+  auto UpdatePROM = [&](double omega)
+  {
+    // Add the HDM solution to the PROM reduced basis.
+    promop.UpdatePROM(omega, E);
+    estimator.AddErrorIndicator(E, indicator);
+  };
   promop.SolveHDM(omega0, E);
-  promop.UpdatePROM(omega0, E);
-  estimator.AddErrorIndicator(E, indicator);
+  UpdatePROM(omega0);
   promop.SolveHDM(omega0 + (nstep - step0 - 1) * delta_omega, E);
-  promop.UpdatePROM(omega0 + (nstep - step0 - 1) * delta_omega, E);
-  estimator.AddErrorIndicator(E, indicator);
+  UpdatePROM(omega0 + (nstep - step0 - 1) * delta_omega);
 
   // Greedy procedure for basis construction (offline phase). Basis is initialized with
   // solutions at frequency sweep endpoints.
@@ -308,8 +309,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator 
                (memory == 0)
                    ? ""
                    : fmt::format(", memory = {:d}/{:d}", memory, convergence_memory));
-    promop.UpdatePROM(omega_star, E);
-    estimator.AddErrorIndicator(E, indicator);
+    UpdatePROM(omega_star);
     it++;
   }
   Mpi::Print("\nAdaptive sampling{} {:d} frequency samples:\n"
@@ -343,19 +343,17 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator 
     // Compute B = -1/(iω) ∇ x E on the true dofs, and set the internal GridFunctions in
     // PostOperator for all postprocessing operations.
     BlockTimer bt0(Timer::POSTPRO);
-    double E_elec = 0.0, E_mag = 0.0;
     Curl.Mult(E.Real(), B.Real());
     Curl.Mult(E.Imag(), B.Imag());
     B *= -1.0 / (1i * omega);
     postop.SetEGridFunction(E);
     postop.SetBGridFunction(B);
     postop.UpdatePorts(spaceop.GetLumpedPortOp(), spaceop.GetWavePortOp(), omega);
+    double E_elec = postop.GetEFieldEnergy();
+    double E_mag = postop.GetHFieldEnergy();
     Mpi::Print(" Sol. ||E|| = {:.6e}\n", linalg::Norml2(spaceop.GetComm(), E));
-    if (!iodata.solver.driven.only_port_post)
     {
       const double J = iodata.DimensionalizeValue(IoData::ValueType::ENERGY, 1.0);
-      E_elec = postop.GetEFieldEnergy();
-      E_mag = postop.GetHFieldEnergy();
       Mpi::Print(" Field energy E ({:.3e} J) + H ({:.3e} J) = {:.3e} J\n", E_elec * J,
                  E_mag * J, (E_elec + E_mag) * J);
     }
@@ -363,7 +361,6 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator 
     // Postprocess S-parameters and optionally write solution to disk.
     Postprocess(postop, spaceop.GetLumpedPortOp(), spaceop.GetWavePortOp(),
                 spaceop.GetSurfaceCurrentOp(), step, omega, E_elec, E_mag,
-                !iodata.solver.driven.only_port_post,
                 (step == nstep - 1) ? &indicator : nullptr);
 
     // Increment frequency.
@@ -394,36 +391,33 @@ void DrivenSolver::Postprocess(const PostOperator &postop,
                                const LumpedPortOperator &lumped_port_op,
                                const WavePortOperator &wave_port_op,
                                const SurfaceCurrentOperator &surf_j_op, int step,
-                               double omega, double E_elec, double E_mag, bool full,
+                               double omega, double E_elec, double E_mag,
                                const ErrorIndicator *indicator) const
 {
   // The internal GridFunctions for PostOperator have already been set from the E and B
   // solutions in the main frequency sweep loop.
-  double freq = iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, omega);
+  const double freq = iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, omega);
+  double E_cap = postop.GetLumpedCapacitorEnergy(lumped_port_op);
+  double E_ind = postop.GetLumpedInductorEnergy(lumped_port_op);
   PostprocessCurrents(postop, surf_j_op, step, omega);
   PostprocessPorts(postop, lumped_port_op, step, omega);
   if (surf_j_op.Size() == 0)
   {
     PostprocessSParameters(postop, lumped_port_op, wave_port_op, step, omega);
   }
-  if (full)
-  {
-    double E_cap = postop.GetLumpedCapacitorEnergy(lumped_port_op);
-    double E_ind = postop.GetLumpedInductorEnergy(lumped_port_op);
-    PostprocessDomains(postop, "f (GHz)", step, freq, E_elec, E_mag, E_cap, E_ind);
-    PostprocessSurfaces(postop, "f (GHz)", step, freq, E_elec + E_cap, E_mag + E_ind, 1.0,
-                        1.0);
-    PostprocessProbes(postop, "f (GHz)", step, freq);
-  }
+  PostprocessDomains(postop, "f (GHz)", step, freq, E_elec, E_mag, E_cap, E_ind);
+  PostprocessSurfaces(postop, "f (GHz)", step, freq, E_elec + E_cap, E_mag + E_ind, 1.0,
+                      1.0);
+  PostprocessProbes(postop, "f (GHz)", step, freq);
   if (iodata.solver.driven.delta_post > 0 && step % iodata.solver.driven.delta_post == 0)
   {
     Mpi::Print("\n");
-    PostprocessFields(postop, step / iodata.solver.driven.delta_post, freq, indicator);
+    PostprocessFields(postop, step / iodata.solver.driven.delta_post, freq);
     Mpi::Print(" Wrote fields to disk at step {:d}\n", step + 1);
   }
   if (indicator)
   {
-    PostprocessErrorIndicator(postop, *indicator);
+    PostprocessErrorIndicator(postop, *indicator, iodata.solver.driven.delta_post > 0);
   }
 }
 

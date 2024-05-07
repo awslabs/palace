@@ -15,7 +15,6 @@ namespace mfem
 
 template <typename T>
 class Array;
-class DenseMatrix;
 
 }  // namespace mfem
 
@@ -23,11 +22,8 @@ namespace palace
 {
 
 class ErrorIndicator;
-class IoData;
-class LaplaceOperator;
 class Mesh;
 class PostOperator;
-class Timer;
 
 //
 // Driver class for electrostatic simulations.
@@ -35,12 +31,13 @@ class Timer;
 class ElectrostaticSolver : public BaseSolver
 {
 private:
-  void Postprocess(LaplaceOperator &laplaceop, PostOperator &postop,
-                   const std::vector<Vector> &V, const ErrorIndicator &indicator) const;
+  void Postprocess(const PostOperator &postop, int step, int idx, double E_elec,
+                   const ErrorIndicator *indicator) const;
 
-  void PostprocessTerminals(const std::map<int, mfem::Array<int>> &terminal_sources,
-                            const mfem::DenseMatrix &C, const mfem::DenseMatrix &Cinv,
-                            const mfem::DenseMatrix &Cm) const;
+  void PostprocessTerminals(PostOperator &postop,
+                            const std::map<int, mfem::Array<int>> &terminal_sources,
+                            const std::vector<Vector> &V,
+                            const std::vector<double> &E_elec) const;
 
   std::pair<ErrorIndicator, long long int>
   Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const override;

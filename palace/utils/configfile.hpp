@@ -578,9 +578,6 @@ public:
   // Step increment for saving fields to disk.
   int delta_post = 0;
 
-  // Only perform postprocessing on port boundaries, skipping domain interior.
-  bool only_port_post = false;
-
   // Restart iteration for a partial sweep.
   int rst = 1;
 
@@ -710,9 +707,6 @@ public:
 
   // Step increment for saving fields to disk.
   int delta_post = 0;
-
-  // Only perform postprocessing on port boundaries, skipping domain interior.
-  bool only_port_post = false;
 
   void SetUp(json &solver);
 };

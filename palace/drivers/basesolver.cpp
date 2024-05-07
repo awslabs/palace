@@ -736,8 +736,7 @@ void BaseSolver::PostprocessProbes(const PostOperator &postop, const std::string
 #endif
 }
 
-void BaseSolver::PostprocessFields(const PostOperator &postop, int step, double time,
-                                   const ErrorIndicator *indicator) const
+void BaseSolver::PostprocessFields(const PostOperator &postop, int step, double time) const
 {
   // Save the computed fields in parallel in format for viewing with ParaView.
   BlockTimer bt(Timer::IO);
@@ -748,12 +747,13 @@ void BaseSolver::PostprocessFields(const PostOperator &postop, int step, double 
                  "fields to disk!\n");
     return;
   }
-  postop.WriteFields(step, time, indicator);
+  postop.WriteFields(step, time);
   Mpi::Barrier(postop.GetComm());
 }
 
 void BaseSolver::PostprocessErrorIndicator(const PostOperator &postop,
-                                           const ErrorIndicator &indicator) const
+                                           const ErrorIndicator &indicator,
+                                           bool fields) const
 {
   // Write the indicator statistics.
   if (post_dir.length() == 0)
@@ -779,6 +779,12 @@ void BaseSolver::PostprocessErrorIndicator(const PostOperator &postop,
                  data[2], table.w, table.p,
                  data[3], table.w, table.p);
     // clang-format on
+  }
+  if (fields)
+  {
+    BlockTimer bt(Timer::IO);
+    postop.WriteFieldsFinal(&indicator);
+    Mpi::Barrier(postop.GetComm());
   }
 }
 

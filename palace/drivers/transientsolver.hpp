@@ -13,12 +13,10 @@ namespace palace
 {
 
 class ErrorIndicator;
-class IoData;
 class LumpedPortOperator;
 class Mesh;
 class PostOperator;
 class SurfaceCurrentOperator;
-class Timer;
 
 //
 // Driver class for time-dependent driven terminal simulations.
@@ -32,7 +30,7 @@ private:
 
   void Postprocess(const PostOperator &postop, const LumpedPortOperator &lumped_port_op,
                    const SurfaceCurrentOperator &surf_j_op, int step, double t,
-                   double J_coef, double E_elec, double E_mag, bool full,
+                   double J_coef, double E_elec, double E_mag,
                    const ErrorIndicator *indicator) const;
 
   void PostprocessCurrents(const PostOperator &postop,
