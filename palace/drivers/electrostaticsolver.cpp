@@ -75,7 +75,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     Grad.AddMult(V[step], E, -1.0);
     postop.SetVGridFunction(V[step]);
     postop.SetEGridFunction(E);
-    double E_elec = postop.GetEFieldEnergy();
+    const double E_elec = postop.GetEFieldEnergy();
     Mpi::Print(" Sol. ||V|| = {:.6e} (||RHS|| = {:.6e})\n",
                linalg::Norml2(laplaceop.GetComm(), V[step]),
                linalg::Norml2(laplaceop.GetComm(), RHS));

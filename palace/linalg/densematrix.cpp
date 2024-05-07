@@ -267,7 +267,7 @@ mfem::DenseTensor Mult(const mfem::DenseTensor &A, const mfem::DenseTensor &B)
 {
   MFEM_VERIFY(A.SizeK() == B.SizeK(),
               "Size mismatch for product of two DenseTensor objects!");
-  mfem::DenseTensor C(A);
+  mfem::DenseTensor C(A.SizeI(), B.SizeJ(), A.SizeK());
   for (int k = 0; k < C.SizeK(); k++)
   {
     Mult(A(k), B(k), C(k));

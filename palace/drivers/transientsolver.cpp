@@ -115,8 +115,8 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     postop.SetEGridFunction(E);
     postop.SetBGridFunction(B);
     postop.UpdatePorts(spaceop.GetLumpedPortOp());
-    double E_elec = postop.GetEFieldEnergy();
-    double E_mag = postop.GetHFieldEnergy();
+    const double E_elec = postop.GetEFieldEnergy();
+    const double E_mag = postop.GetHFieldEnergy();
     Mpi::Print(" Sol. ||E|| = {:.6e}, ||B|| = {:.6e}\n",
                linalg::Norml2(spaceop.GetComm(), E), linalg::Norml2(spaceop.GetComm(), B));
     {
@@ -259,8 +259,8 @@ void TransientSolver::Postprocess(const PostOperator &postop,
   // The internal GridFunctions for PostOperator have already been set from the E and B
   // solutions in the main time integration loop.
   const double ts = iodata.DimensionalizeValue(IoData::ValueType::TIME, t);
-  double E_cap = postop.GetLumpedCapacitorEnergy(lumped_port_op);
-  double E_ind = postop.GetLumpedInductorEnergy(lumped_port_op);
+  const double E_cap = postop.GetLumpedCapacitorEnergy(lumped_port_op);
+  const double E_ind = postop.GetLumpedInductorEnergy(lumped_port_op);
   PostprocessCurrents(postop, surf_j_op, step, t, J_coef);
   PostprocessPorts(postop, lumped_port_op, step, t, J_coef);
   PostprocessDomains(postop, "t (ns)", step, ts, E_elec, E_mag, E_cap, E_ind);

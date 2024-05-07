@@ -55,7 +55,7 @@ public:
   void Mult(const VecType &x, VecType &y) const;
 };
 
-// Class used for computing gradient flux error estimate, i.e. || ε Eₕ - D ||_K, where D
+// Class used for computing gradient flux error estimate, η_K = || ε Eₕ - D ||_K, where D
 // denotes a smooth reconstruction of ε Eₕ = ε ∇Vₕ with continuous normal component.
 template <typename VecType = Vector>
 class GradFluxErrorEstimator
@@ -86,7 +86,7 @@ public:
   void AddErrorIndicator(const VecType &E, double Et, ErrorIndicator &indicator) const;
 };
 
-// Class used for computing curl flux error estimate, i.e. || μ⁻¹ Bₕ - H ||_K where H
+// Class used for computing curl flux error estimate, η_K = || μ⁻¹ Bₕ - H ||_K where H
 // denotes a smooth reconstruction of μ⁻¹ Bₕ = μ⁻¹ ∇ × Eₕ with continuous tangential
 // component.
 template <typename VecType = Vector>
@@ -118,8 +118,10 @@ public:
   void AddErrorIndicator(const VecType &B, double Et, ErrorIndicator &indicator) const;
 };
 
-// Class used for computing gradient flux error estimate, i.e. || ε Eₕ - D ||_K, where D
-// denotes a smooth reconstruction of ε Eₕ = ε ∇Vₕ with continuous normal component.
+// Class used for computing sum of the gradient flux and curl flux error estimates,
+// η²_K = || ε Eₕ - D ||²_K + || μ⁻¹ Bₕ - H ||²_K, where D and H denote a smooth
+// reconstructions of ε Eₕ = ε ∇Vₕ with continuous normal component and μ⁻¹ Bₕ = μ⁻¹ ∇ × Eₕ
+// with continuous tangential component.
 template <typename VecType>
 class TimeDependentFluxErrorEstimator
 {

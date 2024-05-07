@@ -77,7 +77,7 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     Curl.Mult(A[step], B);
     postop.SetAGridFunction(A[step]);
     postop.SetBGridFunction(B);
-    double E_mag = postop.GetHFieldEnergy();
+    const double E_mag = postop.GetHFieldEnergy();
     Mpi::Print(" Sol. ||A|| = {:.6e} (||RHS|| = {:.6e})\n",
                linalg::Norml2(curlcurlop.GetComm(), A[step]),
                linalg::Norml2(curlcurlop.GetComm(), RHS));

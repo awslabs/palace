@@ -182,8 +182,8 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &spaceop, PostOperator &
     postop.SetEGridFunction(E);
     postop.SetBGridFunction(B);
     postop.UpdatePorts(spaceop.GetLumpedPortOp(), spaceop.GetWavePortOp(), omega);
-    double E_elec = postop.GetEFieldEnergy();
-    double E_mag = postop.GetHFieldEnergy();
+    const double E_elec = postop.GetEFieldEnergy();
+    const double E_mag = postop.GetHFieldEnergy();
     Mpi::Print(" Sol. ||E|| = {:.6e} (||RHS|| = {:.6e})\n",
                linalg::Norml2(spaceop.GetComm(), E),
                linalg::Norml2(spaceop.GetComm(), RHS));
@@ -273,8 +273,8 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator 
     B *= -1.0 / (1i * omega);
     postop.SetEGridFunction(E, false);
     postop.SetBGridFunction(B, false);
-    double E_elec = postop.GetEFieldEnergy();
-    double E_mag = postop.GetHFieldEnergy();
+    const double E_elec = postop.GetEFieldEnergy();
+    const double E_mag = postop.GetHFieldEnergy();
     estimator.AddErrorIndicator(E, B, E_elec + E_mag, indicator);
   };
   promop.SolveHDM(omega0, E);
@@ -362,8 +362,8 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &spaceop, PostOperator 
     postop.SetEGridFunction(E);
     postop.SetBGridFunction(B);
     postop.UpdatePorts(spaceop.GetLumpedPortOp(), spaceop.GetWavePortOp(), omega);
-    double E_elec = postop.GetEFieldEnergy();
-    double E_mag = postop.GetHFieldEnergy();
+    const double E_elec = postop.GetEFieldEnergy();
+    const double E_mag = postop.GetHFieldEnergy();
     Mpi::Print(" Sol. ||E|| = {:.6e}\n", linalg::Norml2(spaceop.GetComm(), E));
     {
       const double J = iodata.DimensionalizeValue(IoData::ValueType::ENERGY, 1.0);
@@ -410,8 +410,8 @@ void DrivenSolver::Postprocess(const PostOperator &postop,
   // The internal GridFunctions for PostOperator have already been set from the E and B
   // solutions in the main frequency sweep loop.
   const double freq = iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, omega);
-  double E_cap = postop.GetLumpedCapacitorEnergy(lumped_port_op);
-  double E_ind = postop.GetLumpedInductorEnergy(lumped_port_op);
+  const double E_cap = postop.GetLumpedCapacitorEnergy(lumped_port_op);
+  const double E_ind = postop.GetLumpedInductorEnergy(lumped_port_op);
   PostprocessCurrents(postop, surf_j_op, step, omega);
   PostprocessPorts(postop, lumped_port_op, step, omega);
   if (surf_j_op.Size() == 0)
