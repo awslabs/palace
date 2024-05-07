@@ -65,15 +65,15 @@ private:
 
   // Helper functions for building the bilinear forms corresponding to the discretized
   // operators in Maxwell's equations.
-  void AddStiffnessCoefficients(double coef, MaterialPropertyCoefficient &df,
+  void AddStiffnessCoefficients(double coeff, MaterialPropertyCoefficient &df,
                                 MaterialPropertyCoefficient &f);
-  void AddStiffnessBdrCoefficients(double coef, MaterialPropertyCoefficient &fb);
-  void AddDampingCoefficients(double coef, MaterialPropertyCoefficient &f);
-  void AddDampingBdrCoefficients(double coef, MaterialPropertyCoefficient &fb);
-  void AddRealMassCoefficients(double coef, MaterialPropertyCoefficient &f);
-  void AddRealMassBdrCoefficients(double coef, MaterialPropertyCoefficient &fb);
-  void AddImagMassCoefficients(double coef, MaterialPropertyCoefficient &f);
-  void AddAbsMassCoefficients(double coef, MaterialPropertyCoefficient &f);
+  void AddStiffnessBdrCoefficients(double coeff, MaterialPropertyCoefficient &fb);
+  void AddDampingCoefficients(double coeff, MaterialPropertyCoefficient &f);
+  void AddDampingBdrCoefficients(double coeff, MaterialPropertyCoefficient &fb);
+  void AddRealMassCoefficients(double coeff, MaterialPropertyCoefficient &f);
+  void AddRealMassBdrCoefficients(double coeff, MaterialPropertyCoefficient &fb);
+  void AddImagMassCoefficients(double coeff, MaterialPropertyCoefficient &f);
+  void AddAbsMassCoefficients(double coeff, MaterialPropertyCoefficient &f);
   void AddExtraSystemBdrCoefficients(double omega, MaterialPropertyCoefficient &dfbr,
                                      MaterialPropertyCoefficient &dfbi,
                                      MaterialPropertyCoefficient &fbr,

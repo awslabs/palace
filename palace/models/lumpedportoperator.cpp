@@ -570,7 +570,7 @@ mfem::Array<int> LumpedPortOperator::GetCsAttrList() const
   return attr_list;
 }
 
-void LumpedPortOperator::AddStiffnessBdrCoefficients(double coef,
+void LumpedPortOperator::AddStiffnessBdrCoefficients(double coeff,
                                                      MaterialPropertyCoefficient &fb)
 {
   // Add lumped inductor boundaries to the bilinear form.
@@ -586,13 +586,13 @@ void LumpedPortOperator::AddStiffnessBdrCoefficients(double coef,
       {
         const double Ls = data.L * data.GetToSquare(*elem);
         fb.AddMaterialProperty(data.mat_op.GetCeedBdrAttributes(elem->GetAttrList()),
-                               coef / Ls);
+                               coeff / Ls);
       }
     }
   }
 }
 
-void LumpedPortOperator::AddDampingBdrCoefficients(double coef,
+void LumpedPortOperator::AddDampingBdrCoefficients(double coeff,
                                                    MaterialPropertyCoefficient &fb)
 {
   // Add lumped resistor boundaries to the bilinear form.
@@ -608,13 +608,13 @@ void LumpedPortOperator::AddDampingBdrCoefficients(double coef,
       {
         const double Rs = data.R * data.GetToSquare(*elem);
         fb.AddMaterialProperty(data.mat_op.GetCeedBdrAttributes(elem->GetAttrList()),
-                               coef / Rs);
+                               coeff / Rs);
       }
     }
   }
 }
 
-void LumpedPortOperator::AddMassBdrCoefficients(double coef,
+void LumpedPortOperator::AddMassBdrCoefficients(double coeff,
                                                 MaterialPropertyCoefficient &fb)
 {
   // Add lumped capacitance boundaries to the bilinear form.
@@ -630,7 +630,7 @@ void LumpedPortOperator::AddMassBdrCoefficients(double coef,
       {
         const double Cs = data.C / data.GetToSquare(*elem);
         fb.AddMaterialProperty(data.mat_op.GetCeedBdrAttributes(elem->GetAttrList()),
-                               coef * Cs);
+                               coeff * Cs);
       }
     }
   }

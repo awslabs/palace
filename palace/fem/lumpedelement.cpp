@@ -99,10 +99,10 @@ UniformElementData::UniformElementData(const std::array<double, 3> &input_dir,
 }
 
 std::unique_ptr<mfem::VectorCoefficient>
-UniformElementData::GetModeCoefficient(double coef) const
+UniformElementData::GetModeCoefficient(double coeff) const
 {
   mfem::Vector source = direction;
-  source *= coef;
+  source *= coeff;
   return std::make_unique<RestrictedVectorCoefficient<mfem::VectorConstantCoefficient>>(
       attr_list, source);
 }
@@ -134,16 +134,16 @@ CoaxialElementData::CoaxialElementData(const std::array<double, 3> &input_dir,
 }
 
 std::unique_ptr<mfem::VectorCoefficient>
-CoaxialElementData::GetModeCoefficient(double coef) const
+CoaxialElementData::GetModeCoefficient(double coeff) const
 {
-  coef *= direction;
+  coeff *= direction;
   mfem::Vector x0(origin);
-  auto Source = [coef, x0](const mfem::Vector &x, mfem::Vector &f) -> void
+  auto Source = [coeff, x0](const mfem::Vector &x, mfem::Vector &f) -> void
   {
     f = x;
     f -= x0;
     double oor = 1.0 / f.Norml2();
-    f *= coef * oor * oor;
+    f *= coeff * oor * oor;
   };
   return std::make_unique<RestrictedVectorCoefficient<mfem::VectorFunctionCoefficient>>(
       attr_list, x0.Size(), Source);

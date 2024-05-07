@@ -112,9 +112,9 @@ public:
 
   // Add contributions to system matrices from lumped elements with nonzero inductance,
   // resistance, and/or capacitance.
-  void AddStiffnessBdrCoefficients(double coef, MaterialPropertyCoefficient &fb);
-  void AddDampingBdrCoefficients(double coef, MaterialPropertyCoefficient &fb);
-  void AddMassBdrCoefficients(double coef, MaterialPropertyCoefficient &fb);
+  void AddStiffnessBdrCoefficients(double coeff, MaterialPropertyCoefficient &fb);
+  void AddDampingBdrCoefficients(double coeff, MaterialPropertyCoefficient &fb);
+  void AddMassBdrCoefficients(double coeff, MaterialPropertyCoefficient &fb);
 
   // Add contributions to the right-hand side source term vector for an incident field at
   // excited port boundaries, -U_inc/(iω) for the real version (versus the full -U_inc for
