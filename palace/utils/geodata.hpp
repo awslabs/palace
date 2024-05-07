@@ -92,18 +92,23 @@ struct BoundingBox
   // Compute the area of the bounding box spanned by the first two normals.
   double Area() const;
 
-  // Compute the volume of a 3D bounding box. Returns zero if planar.
+  // Compute the volume of the 3D bounding box. Returns zero if planar.
   double Volume() const;
 
-  // Compute the lengths of each axis.
+  // Compute the lengths along each axis.
   std::array<double, 3> Lengths() const;
 
-  // Compute the deviation in degrees of a vector from each of the normal directions.
+  // Compute the deviation in degrees of a vector from each of the axis directions.
   std::array<double, 3> Deviation(const std::array<double, 3> &direction) const;
 };
 
 // Helper functions for computing bounding boxes from a mesh and markers. These do not need
-// to be axis-aligned.
+// to be axis-aligned. Note: This function only returns an oriented bounding box for points
+// which exactly form a rectangle or rectangular prism. For other shapes, the result is less
+// predictable. For shapes where the convex hull is a circle or sphere, the convex hull
+// is the circumscribed sphere of the resulting box, or equivalently the box is inscribed by
+// the convex hull. It is thus clearly not a bounding box but can be useful to compute
+// nonetheless.
 BoundingBox GetBoundingBox(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
                            bool bdr);
 BoundingBox GetBoundingBox(const mfem::ParMesh &mesh, int attr, bool bdr);

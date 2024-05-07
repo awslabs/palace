@@ -38,14 +38,14 @@ UniformElementData::UniformElementData(const std::array<double, 3> &input_dir,
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, attr_list);
   auto bounding_box = mesh::GetBoundingBox(mesh, attr_marker, true);
-  MFEM_VERIFY(bounding_box.planar,
-              "Boundary elements must be coplanar to define a rectangular lumped element!");
 
   // Check that the bounding box discovered matches the area. This validates that the
-  // boundary elements form a right angled quadrilateral port.
+  // boundary elements form a right angled quadrilateral port. Rectangular elements are
+  // allowed to be non-planar, for example a union of 2D quadrilaterals in 3D space (which
+  // can be "unfolded" to be a planar rectangle).
   constexpr double rel_tol = 1.0e-6;
   double A = GetArea(fespace, attr_marker);
-  MFEM_VERIFY(std::abs(A - bounding_box.Area()) < rel_tol * A,
+  MFEM_VERIFY(!bounding_box.planar || (std::abs(A - bounding_box.Area()) < rel_tol * A),
               "Discovered bounding box area "
                   << bounding_box.Area() << " and integrated area " << A
                   << " do not match, planar port geometry is not a quadrilateral!");
@@ -125,16 +125,16 @@ CoaxialElementData::CoaxialElementData(const std::array<double, 3> &input_dir,
   std::copy(bounding_box.center.begin(), bounding_box.center.end(), origin.begin());
 
   // Get inner radius of annulus assuming full 2π circumference. Coarse tolerance to allow
-  // for approximately-meshed circles.
-  constexpr double rel_tol = 1.0e-3;
+  // for approximately-meshed circles. The returned bounding box is not a bounding box, it
+  // is inscribed in the outer circle.
+  constexpr double rel_tol = 1.0e-2;
   double A = GetArea(fespace, attr_marker);
-
   auto lengths = bounding_box.Lengths();
   MFEM_VERIFY((1.0 - rel_tol) * lengths[1] < lengths[0] &&
                   lengths[0] < (1.0 + rel_tol) * lengths[1],
               "Bounding box for coaxial lumped port elements is not approximately square ("
                   << "sides = " << lengths[0] << ", " << lengths[1] << ")!");
-  r_outer = 0.25 * (lengths[0] + lengths[1]);
+  r_outer = 0.25 * std::sqrt(2.0) * (lengths[0] + lengths[1]);
   MFEM_VERIFY(std::pow(r_outer, 2) - A / M_PI > 0.0,
               "Coaxial element boundary is not defined correctly (radius "
                   << r_outer << ", area " << A << ")!");

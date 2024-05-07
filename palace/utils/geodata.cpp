@@ -781,7 +781,7 @@ int CollectPointCloudOnRoot(const mfem::ParMesh &mesh, const mfem::Array<int> &m
   }
   else
   {
-    // Nonlinear mesh, need to process point matrices.
+    // Curved mesh, need to process point matrices.
     const int ref = mesh.GetNodes()->FESpace()->GetMaxElementOrder();
     mfem::DenseMatrix pointmat;  // 3 x N
     mfem::IsoparametricTransformation T;
