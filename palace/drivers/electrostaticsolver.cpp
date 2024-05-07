@@ -107,7 +107,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 void ElectrostaticSolver::Postprocess(const PostOperator &postop, int step, int idx,
                                       double E_elec, const ErrorIndicator *indicator) const
 {
-  // The internal GridFunctions for PostOperator have already been set from the A solution
+  // The internal GridFunctions for PostOperator have already been set from the V solution
   // in the main loop.
   PostprocessDomains(postop, "i", step, idx, E_elec, 0.0, 0.0, 0.0);
   PostprocessSurfaces(postop, "i", step, idx, E_elec, 0.0, 1.0, 0.0);
