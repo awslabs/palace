@@ -134,7 +134,7 @@ void ElectrostaticSolver::PostprocessTerminals(
   mfem::DenseMatrix C(V.size()), Cm(V.size());
   for (int i = 0; i < C.Height(); i++)
   {
-    // Diagonal: Cᵢᵢ = 2 Uₑ(Vᵢ) / Vᵢ² = (Vᵢᵀ K Vᵢ) / Vᵢ²
+    // Diagonal: Cᵢᵢ = 2 Uₑ(Vᵢ) / Vᵢ² = (Vᵢᵀ K Vᵢ) / Vᵢ² (with ∀i, Vᵢ = 1)
     auto &V_gf = postop.GetVGridFunction().Real();
     auto &D_gf = postop.GetDomainPostOp().D;
     V_gf.SetFromTrueDofs(V[i]);
