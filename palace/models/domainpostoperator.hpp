@@ -26,23 +26,19 @@ class MaterialOperator;
 //
 class DomainPostOperator
 {
-private:
+public:
+  // Temporary vectors for inner product calculations.
+  mutable Vector D, H;
+
   // Bilinear forms for computing field energy integrals over domains.
   std::unique_ptr<Operator> M_elec, M_mag;
   std::map<int, std::pair<std::unique_ptr<Operator>, std::unique_ptr<Operator>>> M_i;
 
-  // Temporary vectors for inner product calculations.
-  mutable Vector D, H;
-
-public:
   DomainPostOperator(const IoData &iodata, const MaterialOperator &mat_op,
                      const FiniteElementSpace &nd_fespace,
                      const FiniteElementSpace &rt_fespace);
   DomainPostOperator(const IoData &iodata, const MaterialOperator &mat_op,
                      const FiniteElementSpace &fespace);
-
-  // Access data structures for postprocessing domains.
-  const auto &GetDomains() const { return M_i; }
 
   // Get volume integrals computing the electric or magnetic field energy in the entire
   // domain.

@@ -44,7 +44,6 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // Right-hand side term and solution vector storage.
   Vector RHS(Grad.Width()), E(Grad.Height());
   std::vector<Vector> V(nstep);
-  std::vector<double> E_elec(nstep);
 
   // Initialize structures for storing and reducing the results of error estimation.
   GradFluxErrorEstimator estimator(
@@ -76,13 +75,13 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     Grad.AddMult(V[step], E, -1.0);
     postop.SetVGridFunction(V[step]);
     postop.SetEGridFunction(E);
-    E_elec[step] = postop.GetEFieldEnergy();
+    double E_elec = postop.GetEFieldEnergy();
     Mpi::Print(" Sol. ||V|| = {:.6e} (||RHS|| = {:.6e})\n",
                linalg::Norml2(laplaceop.GetComm(), V[step]),
                linalg::Norml2(laplaceop.GetComm(), RHS));
     {
       const double J = iodata.DimensionalizeValue(IoData::ValueType::ENERGY, 1.0);
-      Mpi::Print(" Field energy E = {:.3e} J\n", E_elec[step] * J);
+      Mpi::Print(" Field energy E = {:.3e} J\n", E_elec * J);
     }
 
     // Calculate and record the error indicators.
@@ -90,8 +89,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     estimator.AddErrorIndicator(V[step], indicator);
 
     // Postprocess field solutions and optionally write solution to disk.
-    Postprocess(postop, step, idx, E_elec[step],
-                (step == nstep - 1) ? &indicator : nullptr);
+    Postprocess(postop, step, idx, E_elec, (step == nstep - 1) ? &indicator : nullptr);
 
     // Next terminal.
     step++;
@@ -100,7 +98,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // Postprocess the capacitance matrix from the computed field solutions.
   BlockTimer bt1(Timer::POSTPRO);
   SaveMetadata(ksp);
-  PostprocessTerminals(postop, laplaceop.GetSources(), V, E_elec);
+  PostprocessTerminals(postop, laplaceop.GetSources(), V);
   return {indicator, laplaceop.GlobalTrueVSize()};
 }
 
@@ -125,7 +123,7 @@ void ElectrostaticSolver::Postprocess(const PostOperator &postop, int step, int 
 
 void ElectrostaticSolver::PostprocessTerminals(
     PostOperator &postop, const std::map<int, mfem::Array<int>> &terminal_sources,
-    const std::vector<Vector> &V, const std::vector<double> &E_elec) const
+    const std::vector<Vector> &V) const
 {
   // Postprocess the Maxwell capacitance matrix. See p. 97 of the COMSOL AC/DC Module manual
   // for the associated formulas based on the electric field energy based on a unit voltage
@@ -136,33 +134,29 @@ void ElectrostaticSolver::PostprocessTerminals(
   mfem::DenseMatrix C(V.size()), Cm(V.size());
   for (int i = 0; i < C.Height(); i++)
   {
-    // Diagonal: C_ii = 2 U_e(V_i) / V_i².
-    C(i, i) = Cm(i, i) = 2.0 * E_elec[i];
-  }
+    // Diagonal: Cᵢᵢ = 2 Uₑ(Vᵢ) / Vᵢ² = (Vᵢᵀ K Vᵢ) / Vᵢ² (with ∀i, Vᵢ = 1)
+    auto &V_gf = postop.GetVGridFunction().Real();
+    auto &D_gf = postop.GetDomainPostOp().D;
+    V_gf.SetFromTrueDofs(V[i]);
+    postop.GetDomainPostOp().M_elec->Mult(V_gf, D_gf);
+    C(i, i) = Cm(i, i) = linalg::Dot<Vector>(postop.GetComm(), V_gf, D_gf);
 
-  // Off-diagonals: C_ij = U_e(V_i + V_j) / (V_i V_j) - 1/2 (V_i/V_j C_ii + V_j/V_i C_jj).
-  Vector Vij(V[0].Size());
-  Vij.UseDevice(true);
-  for (int i = 0; i < C.Height(); i++)
-  {
-    for (int j = 0; j < C.Width(); j++)
+    // Off-diagonals: Cᵢⱼ = Uₑ(Vᵢ + Vⱼ) / (Vᵢ Vⱼ) - 1/2 (Vᵢ/Vⱼ Cᵢᵢ + Vⱼ/Vᵢ Cⱼⱼ)
+    //                    = (Vⱼᵀ K Vᵢ) / (Vᵢ Vⱼ)
+    for (int j = i + 1; j < C.Width(); j++)
     {
-      if (j < i)
-      {
-        // Copy lower triangle from already computed upper triangle.
-        C(i, j) = C(j, i);
-        Cm(i, j) = Cm(j, i);
-        Cm(i, i) -= Cm(i, j);
-      }
-      else if (j > i)
-      {
-        linalg::AXPBYPCZ(1.0, V[i], 1.0, V[j], 0.0, Vij);
-        postop.SetVGridFunction(Vij, false);
-        double Ue = postop.GetEFieldEnergy();
-        C(i, j) = Ue - 0.5 * (C(i, i) + C(j, j));
-        Cm(i, j) = -C(i, j);
-        Cm(i, i) -= Cm(i, j);
-      }
+      V_gf.SetFromTrueDofs(V[j]);
+      C(i, j) = linalg::Dot<Vector>(postop.GetComm(), V_gf, D_gf);
+      Cm(i, j) = -C(i, j);
+      Cm(i, i) -= Cm(i, j);
+    }
+
+    // Copy lower triangle from already computed upper triangle.
+    for (int j = 0; j < i; j++)
+    {
+      C(i, j) = C(j, i);
+      Cm(i, j) = Cm(j, i);
+      Cm(i, i) -= Cm(i, j);
     }
   }
   mfem::DenseMatrix Cinv(C);

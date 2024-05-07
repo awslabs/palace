@@ -27,8 +27,8 @@ private:
                    double E_mag, const ErrorIndicator *indicator) const;
 
   void PostprocessTerminals(PostOperator &postop, const SurfaceCurrentOperator &surf_j_op,
-                            const std::vector<Vector> &A, const std::vector<double> &I_inc,
-                            const std::vector<double> &E_mag) const;
+                            const std::vector<Vector> &A,
+                            const std::vector<double> &I_inc) const;
 
   std::pair<ErrorIndicator, long long int>
   Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const override;

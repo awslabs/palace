@@ -36,8 +36,7 @@ private:
 
   void PostprocessTerminals(PostOperator &postop,
                             const std::map<int, mfem::Array<int>> &terminal_sources,
-                            const std::vector<Vector> &V,
-                            const std::vector<double> &E_elec) const;
+                            const std::vector<Vector> &V) const;
 
   std::pair<ErrorIndicator, long long int>
   Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const override;

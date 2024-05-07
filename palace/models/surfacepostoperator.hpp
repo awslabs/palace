@@ -75,9 +75,6 @@ private:
     GetCoefficient(std::size_t i, const mfem::ParGridFunction &U,
                    const MaterialOperator &mat_op) const override;
   };
-  std::map<int, InterfaceDielectricData> eps_surfs;
-  std::map<int, SurfaceChargeData> charge_surfs;
-  std::map<int, SurfaceFluxData> flux_surfs;
 
   // Reference to material property operator (not owned).
   const MaterialOperator &mat_op;
@@ -90,13 +87,13 @@ private:
                                  const mfem::ParGridFunction &U) const;
 
 public:
+  // Data structures for postprocessing the surface with the given type.
+  std::map<int, InterfaceDielectricData> eps_surfs;
+  std::map<int, SurfaceChargeData> charge_surfs;
+  std::map<int, SurfaceFluxData> flux_surfs;
+
   SurfacePostOperator(const IoData &iodata, const MaterialOperator &mat_op,
                       mfem::ParFiniteElementSpace &h1_fespace);
-
-  // Access data structures for postprocessing the surface with the given type.
-  const auto &GetEps() const { return eps_surfs; }
-  const auto &GetCap() const { return charge_surfs; }
-  const auto &GetInd() const { return flux_surfs; }
 
   // Get surface integrals computing dielectric interface energy, surface charge, or
   // surface magnetic flux.

@@ -44,7 +44,7 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // Source term and solution vector storage.
   Vector RHS(Curl.Width()), B(Curl.Height());
   std::vector<Vector> A(nstep);
-  std::vector<double> I_inc(nstep), E_mag(nstep);
+  std::vector<double> I_inc(nstep);
 
   // Initialize structures for storing and reducing the results of error estimation.
   CurlFluxErrorEstimator<Vector> estimator(
@@ -77,13 +77,13 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     Curl.Mult(A[step], B);
     postop.SetAGridFunction(A[step]);
     postop.SetBGridFunction(B);
-    E_mag[step] = postop.GetHFieldEnergy();
+    double E_mag = postop.GetHFieldEnergy();
     Mpi::Print(" Sol. ||A|| = {:.6e} (||RHS|| = {:.6e})\n",
                linalg::Norml2(curlcurlop.GetComm(), A[step]),
                linalg::Norml2(curlcurlop.GetComm(), RHS));
     {
       const double J = iodata.DimensionalizeValue(IoData::ValueType::ENERGY, 1.0);
-      Mpi::Print(" Field energy H = {:.3e} J\n", E_mag[step] * J);
+      Mpi::Print(" Field energy H = {:.3e} J\n", E_mag * J);
     }
     I_inc[step] = data.GetExcitationCurrent();
 
@@ -92,7 +92,7 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     estimator.AddErrorIndicator(A[step], indicator);
 
     // Postprocess field solutions and optionally write solution to disk.
-    Postprocess(postop, step, idx, I_inc[step], E_mag[step],
+    Postprocess(postop, step, idx, I_inc[step], E_mag,
                 (step == nstep - 1) ? &indicator : nullptr);
 
     // Next source.
@@ -102,7 +102,7 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // Postprocess the inductance matrix from the computed field solutions.
   BlockTimer bt1(Timer::POSTPRO);
   SaveMetadata(ksp);
-  PostprocessTerminals(postop, curlcurlop.GetSurfaceCurrentOp(), A, I_inc, E_mag);
+  PostprocessTerminals(postop, curlcurlop.GetSurfaceCurrentOp(), A, I_inc);
   return {indicator, curlcurlop.GlobalTrueVSize()};
 }
 
@@ -129,8 +129,7 @@ void MagnetostaticSolver::Postprocess(const PostOperator &postop, int step, int 
 void MagnetostaticSolver::PostprocessTerminals(PostOperator &postop,
                                                const SurfaceCurrentOperator &surf_j_op,
                                                const std::vector<Vector> &A,
-                                               const std::vector<double> &I_inc,
-                                               const std::vector<double> &E_mag) const
+                                               const std::vector<double> &I_inc) const
 {
   // Postprocess the Maxwell inductance matrix. See p. 97 of the COMSOL AC/DC Module manual
   // for the associated formulas based on the magnetic field energy based on a current
@@ -142,34 +141,30 @@ void MagnetostaticSolver::PostprocessTerminals(PostOperator &postop,
   mfem::DenseMatrix M(A.size()), Mm(A.size());
   for (int i = 0; i < M.Height(); i++)
   {
-    // Diagonal: M_ii = 2 U_m(A_i) / I_i².
-    M(i, i) = Mm(i, i) = 2.0 * E_mag[i] / (I_inc[i] * I_inc[i]);
-  }
+    // Diagonal: Mᵢᵢ = 2 Uₘ(Aᵢ) / Iᵢ² = (Aᵢᵀ K Aᵢ) / Iᵢ²
+    auto &A_gf = postop.GetAGridFunction().Real();
+    auto &H_gf = postop.GetDomainPostOp().H;
+    A_gf.SetFromTrueDofs(A[i]);
+    postop.GetDomainPostOp().M_mag->Mult(A_gf, H_gf);
+    M(i, i) = Mm(i, i) =
+        linalg::Dot<Vector>(postop.GetComm(), A_gf, H_gf) / (I_inc[i] * I_inc[i]);
 
-  // Off-diagonals: M_ij = U_m(A_i + A_j) / (I_i I_j) - 1/2 (I_i/I_j M_ii + I_j/I_i M_jj).
-  Vector Aij(A[0].Size());
-  Aij.UseDevice(true);
-  for (int i = 0; i < M.Height(); i++)
-  {
-    for (int j = 0; j < M.Width(); j++)
+    // Off-diagonals: Mᵢⱼ = Uₘ(Aᵢ + Aⱼ) / (Iᵢ Iⱼ) - 1/2 (Iᵢ/Iⱼ Mᵢᵢ + Iⱼ/Iᵢ Mⱼⱼ)
+    //                    = (Aⱼᵀ K Aᵢ) / (Iᵢ Iⱼ)
+    for (int j = i + 1; j < M.Width(); j++)
     {
-      if (j < i)
-      {
-        // Copy lower triangle from already computed upper triangle.
-        M(i, j) = M(j, i);
-        Mm(i, j) = Mm(j, i);
-        Mm(i, i) -= Mm(i, j);
-      }
-      else if (j > i)
-      {
-        linalg::AXPBYPCZ(1.0, A[i], 1.0, A[j], 0.0, Aij);
-        postop.SetAGridFunction(Aij, false);
-        double Um = postop.GetHFieldEnergy();
-        M(i, j) = Um / (I_inc[i] * I_inc[j]) -
-                  0.5 * (M(i, i) * I_inc[i] / I_inc[j] + M(j, j) * I_inc[j] / I_inc[i]);
-        Mm(i, j) = -M(i, j);
-        Mm(i, i) -= Mm(i, j);
-      }
+      A_gf.SetFromTrueDofs(A[j]);
+      M(i, j) = linalg::Dot<Vector>(postop.GetComm(), A_gf, H_gf) / (I_inc[i] * I_inc[j]);
+      Mm(i, j) = -M(i, j);
+      Mm(i, i) -= Mm(i, j);
+    }
+
+    // Copy lower triangle from already computed upper triangle.
+    for (int j = 0; j < i; j++)
+    {
+      M(i, j) = M(j, i);
+      Mm(i, j) = Mm(j, i);
+      Mm(i, i) -= Mm(i, j);
     }
   }
   mfem::DenseMatrix Minv(M);
