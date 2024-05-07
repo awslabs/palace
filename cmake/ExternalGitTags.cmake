@@ -20,7 +20,7 @@ set(EXTERN_ARPACK_GIT_BRANCH
   "Git branch for external ARPACK-NG build"
 )
 set(EXTERN_ARPACK_GIT_TAG
-  "4caa8f4c703c6408b05b878f376e5df762d9a0e9" CACHE STRING
+  "217e25ac7c48b5d05d31120475c8e1eeaf543bbd" CACHE STRING
   "Git tag for external ARPACK-NG build"
 )
 
@@ -34,7 +34,7 @@ set(EXTERN_BUTTERFLYPACK_GIT_BRANCH
   "Git branch for external ButterflyPACK build"
 )
 set(EXTERN_BUTTERFLYPACK_GIT_TAG
-  "f9220aac74e082e2f21ca539011aaa106373a756" CACHE STRING
+  "6bb36d00ad8deab43d74aa4fce0715e9400d994a" CACHE STRING
   "Git tag for external ButterflyPACK build"
 )
 
@@ -62,7 +62,7 @@ set(EXTERN_HYPRE_GIT_BRANCH
   "Git branch for external HYPRE build"
 )
 set(EXTERN_HYPRE_GIT_TAG
-  "94a9b16ac38a3f1d17024a0e93dce5f46f8673d9" CACHE STRING
+  "0dcae3ec7c069785ea25d25aa0bc0c7aa8b0be8d" CACHE STRING
   "Git tag for external HYPRE build"
 )
 
@@ -76,7 +76,7 @@ set(EXTERN_LIBCEED_GIT_BRANCH
   "Git branch for external libCEED build"
 )
 set(EXTERN_LIBCEED_GIT_TAG
-  "433eda4da4555c4a6e27c94cc36bce0197288780" CACHE STRING
+  "1809c5f74680557a641e900d791842bafdfb4e8b" CACHE STRING
   "Git tag for external libCEED build"
 )
 
@@ -90,7 +90,7 @@ set(EXTERN_LIBXSMM_GIT_BRANCH
   "Git branch for external LIBXSMM build"
 )
 set(EXTERN_LIBXSMM_GIT_TAG
-  "939f11042fc9ae4bbe975cedb2330d4f9f4bb26e" CACHE STRING
+  "feacc5e2112af47a0f4669e4ba20f0d01c08f944" CACHE STRING
   "Git tag for external LIBXSMM build"
 )
 
@@ -132,7 +132,7 @@ set(EXTERN_MFEM_GIT_BRANCH
   "Git branch for external MFEM build"
 )
 set(EXTERN_MFEM_GIT_TAG
-  "fda322fc14278ad4d14a96313ba6c28dd69116eb" CACHE STRING  # master @ 05/04/2024
+  "7c296d00d8a770e9f569e4db9d7e6d415902a886" CACHE STRING  # master @ 05/09/2024
   "Git tag for external MFEM build"
 )
 
@@ -146,7 +146,7 @@ set(EXTERN_MUMPS_GIT_BRANCH
   "Git branch for external MUMPS build"
 )
 set(EXTERN_MUMPS_GIT_TAG
-  "14248d446734300f0ee49b4ac57ddb47458f042e" CACHE STRING
+  "cbdf7fc5d5bd5471a55459e92fc8b5fd1f16f651" CACHE STRING
   "Git tag for external MUMPS build"
 )
 
@@ -174,7 +174,7 @@ set(EXTERN_PETSC_GIT_BRANCH
   "Git branch for external PETSc build"
 )
 set(EXTERN_PETSC_GIT_TAG
-  "1e4ec87989358444674fb58242c9912b360136d6" CACHE STRING
+  "3d77ad52841f320b3f6ad02ce14f35e73e722480" CACHE STRING
   "Git tag for external PETSc build"
 )
 
@@ -216,7 +216,7 @@ set(EXTERN_STRUMPACK_GIT_BRANCH
   "Git branch for external STRUMPACK build"
 )
 set(EXTERN_STRUMPACK_GIT_TAG
-  "0550c9c5bb5eca5f104c6436afc8bcef9efb0b43" CACHE STRING
+  "c318456692bf25ff2781c48fc89297a7c7ff6c3d" CACHE STRING
   "Git tag for external STRUMPACK build"
 )
 
@@ -230,7 +230,7 @@ set(EXTERN_SUPERLU_GIT_BRANCH
   "Git branch for external SuperLU_DIST build"
 )
 set(EXTERN_SUPERLU_GIT_TAG
-  "0b8f66ecab40186cd1d124b1bb432eb8a9c3f72b" CACHE STRING
+  "c6896d85b22384880db409ba042a03966530678e" CACHE STRING
   "Git tag for external SuperLU_DIST build"
 )
 
