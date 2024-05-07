@@ -1002,83 +1002,6 @@ BoundingBox BoundingBoxFromPointCloud(MPI_Comm comm,
   return box;
 }
 
-// Calculates a bounding ball from a point cloud, result is broadcast across all processes.
-BoundingBall BoundingBallFromPointCloud(MPI_Comm comm,
-                                        const std::vector<Eigen::Vector3d> &vertices,
-                                        int dominant_rank)
-{
-  BoundingBall ball;
-  if (dominant_rank == Mpi::Rank(comm))
-  {
-    // Pick the ball center as the centroid of all of the points in the cloud. Then, pick
-    // the radial direction by finding the point furthest away from the center.
-    const auto origin = [&]()
-    {
-      Eigen::Vector3d v = Eigen::Vector3d::Zero();
-      for (const auto &p : vertices)
-      {
-        v += p;
-      }
-      v /= vertices.size();
-      return v;
-    }();
-    auto DistFromOrigin = [&origin](const Eigen::Vector3d &x, const Eigen::Vector3d &y)
-    { return (x - origin).norm() < (y - origin).norm(); };
-    const auto &t_0 = *std::max_element(vertices.begin(), vertices.end(), DistFromOrigin);
-    const Eigen::Vector3d n_1 = (t_0 - origin).normalized();
-
-    // Initialize the bounding ball data.
-    Vector3dMap(ball.center.data()) = origin;
-    ball.radius = (t_0 - origin).norm();
-
-    // Project onto this candidate diameter, and pick a vertex furthest away. Check that
-    // this resulting distance is less than or equal to the radius.
-    const auto &t_1 = *std::max_element(vertices.begin(), vertices.end(),
-                                        [&](const auto &x, const auto &y)
-                                        {
-                                          return PerpendicularDistance({n_1}, origin, x) <
-                                                 PerpendicularDistance({n_1}, origin, y);
-                                        });
-    MFEM_VERIFY(&t_1 != &t_0, "Vertices are degenerate!");
-    constexpr double rel_tol = 1.0e-6;
-    MFEM_VERIFY(PerpendicularDistance({n_1}, origin, t_1) < (1.0 + rel_tol) * ball.radius,
-                "Furthest point perpendicular must be on the exterior of the ball: "
-                    << PerpendicularDistance({n_1}, origin, t_1) << " vs. " << ball.radius
-                    << "!");
-
-    // Use the resulting point to compute another in-plane vector. This vector may not be
-    // perfectly orthogonal to n_1, so we explicitly orthonormalize it even though it does
-    // not have to be.
-    const Eigen::Vector3d n_2 =
-        ((t_1 - origin) - (t_1 - origin).dot(n_1) * n_1).normalized();
-
-    // Compute the point furthest out of the plane discovered. If below tolerance, this
-    // means the ball is 2D. For the planar case, compute a perpendicular to the circle
-    // using the cross product.
-    auto max_distance = PerpendicularDistance(
-        {n_1, n_2}, origin,
-        *std::max_element(vertices.begin(), vertices.end(),
-                          [&](const auto &x, const auto &y)
-                          {
-                            return PerpendicularDistance({n_1, n_2}, origin, x) <
-                                   PerpendicularDistance({n_1, n_2}, origin, y);
-                          }));
-    ball.planar = (max_distance < rel_tol * ball.radius);
-    if (ball.planar)
-    {
-      Vector3dMap(ball.planar_normal.data()) = n_1.cross(n_2).normalized();
-    }
-  }
-
-  // Broadcast result to all processors.
-  Mpi::Broadcast(3, ball.center.data(), dominant_rank, comm);
-  Mpi::Broadcast(3, ball.planar_normal.data(), dominant_rank, comm);
-  Mpi::Broadcast(1, &ball.radius, dominant_rank, comm);
-  Mpi::Broadcast(1, &ball.planar, dominant_rank, comm);
-
-  return ball;
-}
-
 double LengthFromPointCloud(MPI_Comm comm, const std::vector<Eigen::Vector3d> &vertices,
                             int dominant_rank, const std::array<double, 3> &dir)
 {
@@ -1100,23 +1023,6 @@ double LengthFromPointCloud(MPI_Comm comm, const std::vector<Eigen::Vector3d> &v
 
 }  // namespace
 
-double GetProjectedLength(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
-                          bool bdr, const std::array<double, 3> &dir)
-{
-  std::vector<Eigen::Vector3d> vertices;
-  int dominant_rank = CollectPointCloudOnRoot(mesh, marker, bdr, vertices);
-  return LengthFromPointCloud(mesh.GetComm(), vertices, dominant_rank, dir);
-}
-
-double GetProjectedLength(const mfem::ParMesh &mesh, int attr, bool bdr,
-                          const std::array<double, 3> &dir)
-{
-  mfem::Array<int> marker(bdr ? mesh.bdr_attributes.Max() : mesh.attributes.Max());
-  marker = 0;
-  marker[attr - 1] = 1;
-  return GetProjectedLength(mesh, marker, bdr, dir);
-}
-
 BoundingBox GetBoundingBox(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
                            bool bdr)
 {
@@ -1133,20 +1039,21 @@ BoundingBox GetBoundingBox(const mfem::ParMesh &mesh, int attr, bool bdr)
   return GetBoundingBox(mesh, marker, bdr);
 }
 
-BoundingBall GetBoundingBall(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
-                             bool bdr)
+double GetProjectedLength(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
+                          bool bdr, const std::array<double, 3> &dir)
 {
   std::vector<Eigen::Vector3d> vertices;
   int dominant_rank = CollectPointCloudOnRoot(mesh, marker, bdr, vertices);
-  return BoundingBallFromPointCloud(mesh.GetComm(), vertices, dominant_rank);
+  return LengthFromPointCloud(mesh.GetComm(), vertices, dominant_rank, dir);
 }
 
-BoundingBall GetBoundingBall(const mfem::ParMesh &mesh, int attr, bool bdr)
+double GetProjectedLength(const mfem::ParMesh &mesh, int attr, bool bdr,
+                          const std::array<double, 3> &dir)
 {
   mfem::Array<int> marker(bdr ? mesh.bdr_attributes.Max() : mesh.attributes.Max());
   marker = 0;
   marker[attr - 1] = 1;
-  return GetBoundingBall(mesh, marker, bdr);
+  return GetProjectedLength(mesh, marker, bdr, dir);
 }
 
 mfem::Vector GetSurfaceNormal(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,

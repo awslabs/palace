@@ -7,6 +7,7 @@
 #include "fem/integrator.hpp"
 #include "linalg/vector.hpp"
 #include "utils/communication.hpp"
+#include "utils/geodata.hpp"
 
 namespace palace
 {
@@ -36,16 +37,18 @@ UniformElementData::UniformElementData(const std::array<double, 3> &input_dir,
   const mfem::ParMesh &mesh = *fespace.GetParMesh();
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, attr_list);
-  bounding_box = mesh::GetBoundingBox(mesh, attr_marker, true);
+  auto bounding_box = mesh::GetBoundingBox(mesh, attr_marker, true);
+  MFEM_VERIFY(bounding_box.planar,
+              "Boundary elements must be coplanar to define a rectangular lumped element!");
 
   // Check that the bounding box discovered matches the area. This validates that the
   // boundary elements form a right angled quadrilateral port.
   constexpr double rel_tol = 1.0e-6;
   double A = GetArea(fespace, attr_marker);
-  MFEM_VERIFY((!bounding_box.planar || (std::abs(A - bounding_box.Area()) / A < rel_tol)),
+  MFEM_VERIFY(std::abs(A - bounding_box.Area()) < rel_tol * A,
               "Discovered bounding box area "
                   << bounding_box.Area() << " and integrated area " << A
-                  << " do not match: Planar port geometry is not a quadrilateral!");
+                  << " do not match, planar port geometry is not a quadrilateral!");
 
   // Check the user specified direction aligns with an axis direction.
   constexpr double angle_warning_deg = 0.1;
@@ -79,9 +82,9 @@ UniformElementData::UniformElementData(const std::array<double, 3> &input_dir,
   }
   MFEM_VERIFY(std::any_of(deviation_deg.begin(), deviation_deg.end(),
                           [](double x) { return x < angle_error_deg; }),
-              "Specified direction does not align sufficiently with bounding box axes: "
-                  << deviation_deg[0] << ' ' << deviation_deg[1] << ' ' << deviation_deg[2]
-                  << " tolerance " << angle_error_deg << '!');
+              "Specified direction does not align sufficiently with bounding box axes ("
+                  << deviation_deg[0] << ", " << deviation_deg[1] << ", "
+                  << deviation_deg[2] << " vs. tolerance " << angle_error_deg << ")!");
   direction.SetSize(input_dir.size());
   std::copy(input_dir.begin(), input_dir.end(), direction.begin());
   direction /= direction.Norml2();
@@ -104,7 +107,7 @@ UniformElementData::GetModeCoefficient(double coef) const
       attr_list, source);
 }
 
-CoaxialElementData::CoaxialElementData(const std::array<double, 3> &direction,
+CoaxialElementData::CoaxialElementData(const std::array<double, 3> &input_dir,
                                        const mfem::Array<int> &attr_list,
                                        mfem::ParFiniteElementSpace &fespace)
   : LumpedElementData(attr_list)
@@ -112,26 +115,37 @@ CoaxialElementData::CoaxialElementData(const std::array<double, 3> &direction,
   const mfem::ParMesh &mesh = *fespace.GetParMesh();
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, attr_list);
-  bounding_ball = mesh::GetBoundingBall(mesh, attr_marker, true);
-  MFEM_VERIFY(bounding_ball.planar,
+  auto bounding_box = mesh::GetBoundingBox(mesh, attr_marker, true);
+  MFEM_VERIFY(bounding_box.planar,
               "Boundary elements must be coplanar to define a coaxial lumped element!");
-  sign = (direction[0] > 0);
 
-  // Get inner radius of annulus assuming full 2π circumference.
+  // Direction of the excitation as +/-r̂.
+  direction = (input_dir[0] > 0);
+  origin.SetSize(bounding_box.center.size());
+  std::copy(bounding_box.center.begin(), bounding_box.center.end(), origin.begin());
+
+  // Get inner radius of annulus assuming full 2π circumference. Coarse tolerance to allow
+  // for approximately-meshed circles.
+  constexpr double rel_tol = 1.0e-3;
   double A = GetArea(fespace, attr_marker);
-  MFEM_VERIFY(bounding_ball.radius > 0.0 &&
-                  std::pow(bounding_ball.radius, 2) - A / M_PI > 0.0,
-              "Coaxial element boundary is not defined correctly: Radius "
-                  << bounding_ball.radius << ", area " << A << "!");
-  ra = std::sqrt(std::pow(bounding_ball.radius, 2) - A / M_PI);
+
+  auto lengths = bounding_box.Lengths();
+  MFEM_VERIFY((1.0 - rel_tol) * lengths[1] < lengths[0] &&
+                  lengths[0] < (1.0 + rel_tol) * lengths[1],
+              "Bounding box for coaxial lumped port elements is not approximately square ("
+                  << "sides = " << lengths[0] << ", " << lengths[1] << ")!");
+  r_outer = 0.25 * (lengths[0] + lengths[1]);
+  MFEM_VERIFY(std::pow(r_outer, 2) - A / M_PI > 0.0,
+              "Coaxial element boundary is not defined correctly (radius "
+                  << r_outer << ", area " << A << ")!");
+  r_inner = std::sqrt(std::pow(r_outer, 2) - A / M_PI);
 }
 
 std::unique_ptr<mfem::VectorCoefficient>
 CoaxialElementData::GetModeCoefficient(double coef) const
 {
-  coef *= (sign ? 1.0 : -1.0);
-  mfem::Vector x0(bounding_ball.center.size());
-  std::copy(bounding_ball.center.begin(), bounding_ball.center.end(), x0.begin());
+  coef *= direction;
+  mfem::Vector x0(origin);
   auto Source = [coef, x0](const mfem::Vector &x, mfem::Vector &f) -> void
   {
     f = x;

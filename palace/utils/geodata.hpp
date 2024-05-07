@@ -67,7 +67,8 @@ mfem::Array<int> AttrToMarker(int max_attr, const T &attr_list, bool skip_invali
   return marker;
 }
 
-// Helper function to construct the bounding box for all elements with the given attribute.
+// Helper function to construct the axis-aligned bounding box for all elements with the
+// given attribute.
 void GetAxisAlignedBoundingBox(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
                                bool bdr, mfem::Vector &min, mfem::Vector &max);
 void GetAxisAlignedBoundingBox(const mfem::ParMesh &mesh, int attr, bool bdr,
@@ -101,31 +102,8 @@ struct BoundingBox
   std::array<double, 3> Deviation(const std::array<double, 3> &direction) const;
 };
 
-// Struct describing a bounding ball in terms of a center and radius. If a ball is two
-// dimensional, additionally provides a normal to the plane.
-struct BoundingBall
-{
-  // The centroid of the ball.
-  std::array<double, 3> center;
-
-  // The radius of the ball from the center.
-  double radius;
-
-  // If the ball is two dimensional, the normal defining the planar surface. Zero magnitude
-  // if a sphere.
-  std::array<double, 3> planar_normal;
-
-  // Whether or not this bounding ball is two dimensional.
-  bool planar;
-
-  // Compute the area of the bounding box spanned by the first two normals.
-  double Area() const { return M_PI * std::pow(radius, 2.0); }
-
-  // Compute the volume of a 3D bounding box. Returns zero if planar.
-  double Volume() const { return planar ? 0.0 : (4 * M_PI / 3) * std::pow(radius, 3.0); }
-};
-
-// Helper functions for computing bounding boxes from a mesh and markers.
+// Helper functions for computing bounding boxes from a mesh and markers. These do not need
+// to be axis-aligned.
 BoundingBox GetBoundingBox(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
                            bool bdr);
 BoundingBox GetBoundingBox(const mfem::ParMesh &mesh, int attr, bool bdr);
@@ -135,12 +113,6 @@ double GetProjectedLength(const mfem::ParMesh &mesh, const mfem::Array<int> &mar
                           bool bdr, const std::array<double, 3> &dir);
 double GetProjectedLength(const mfem::ParMesh &mesh, int attr, bool bdr,
                           const std::array<double, 3> &dir);
-
-// Given a mesh and a marker, compute the diameter of a bounding circle/sphere, assuming
-// that the extrema points are in the marked group.
-BoundingBall GetBoundingBall(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
-                             bool bdr);
-BoundingBall GetBoundingBall(const mfem::ParMesh &mesh, int attr, bool bdr);
 
 // Helper function to compute the average surface normal for all elements with the given
 // attribute.
