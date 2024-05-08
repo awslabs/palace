@@ -6,7 +6,6 @@
 #include <algorithm>
 #include <array>
 #include <limits>
-#include <list>
 #include <map>
 #include <numeric>
 #include <random>
