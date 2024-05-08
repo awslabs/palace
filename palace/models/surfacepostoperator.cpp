@@ -21,13 +21,13 @@ SurfacePostOperator::SurfaceFluxData::SurfaceFluxData(const config::SurfaceFluxD
   // Store the type of flux.
   switch (data.type)
   {
-    case (config::SurfaceFluxData::Type::ELECTRIC):
+    case config::SurfaceFluxData::Type::ELECTRIC:
       type = SurfaceFluxType::ELECTRIC;
       break;
-    case (config::SurfaceFluxData::Type::MAGNETIC):
+    case config::SurfaceFluxData::Type::MAGNETIC:
       type = SurfaceFluxType::MAGNETIC;
       break;
-    case (config::SurfaceFluxData::Type::POWER):
+    case config::SurfaceFluxData::Type::POWER:
       type = SurfaceFluxType::POWER;
       break;
   }
@@ -68,15 +68,15 @@ SurfacePostOperator::SurfaceFluxData::GetCoefficient(const mfem::ParGridFunction
 {
   switch (type)
   {
-    case (SurfaceFluxType::ELECTRIC):
+    case SurfaceFluxType::ELECTRIC:
       return std::make_unique<
           RestrictedCoefficient<BdrSurfaceFluxCoefficient<SurfaceFluxType::ELECTRIC>>>(
           attr_list, E, nullptr, mat_op, two_sided, center);
-    case (SurfaceFluxType::MAGNETIC):
+    case SurfaceFluxType::MAGNETIC:
       return std::make_unique<
           RestrictedCoefficient<BdrSurfaceFluxCoefficient<SurfaceFluxType::MAGNETIC>>>(
           attr_list, nullptr, B, mat_op, two_sided, center);
-    case (SurfaceFluxType::POWER):
+    case SurfaceFluxType::POWER:
       return std::make_unique<
           RestrictedCoefficient<BdrSurfaceFluxCoefficient<SurfaceFluxType::POWER>>>(
           attr_list, E, B, mat_op, two_sided, center);
@@ -95,16 +95,16 @@ SurfacePostOperator::InterfaceDielectricData::InterfaceDielectricData(
   //                       p * E_elec = 1/2 t Re{∫ (ε E)ᴴ E_m dS} .
   switch (data.type)
   {
-    case (config::InterfaceDielectricData::Type::DEFAULT):
+    case config::InterfaceDielectricData::Type::DEFAULT:
       type = InterfaceDielectricType::DEFAULT;
       break;
-    case (config::InterfaceDielectricData::Type::MA):
+    case config::InterfaceDielectricData::Type::MA:
       type = InterfaceDielectricType::MA;
       break;
-    case (config::InterfaceDielectricData::Type::MS):
+    case config::InterfaceDielectricData::Type::MS:
       type = InterfaceDielectricType::MS;
       break;
-    case (config::InterfaceDielectricData::Type::SA):
+    case config::InterfaceDielectricData::Type::SA:
       type = InterfaceDielectricType::SA;
       break;
   }

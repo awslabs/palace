@@ -449,15 +449,15 @@ void BaseSolver::PostprocessSurfaces(const PostOperator &postop, const std::stri
     double scale = 1.0;
     switch (data.type)
     {
-      case (SurfaceFluxType::ELECTRIC):
+      case SurfaceFluxType::ELECTRIC:
         scale = iodata.DimensionalizeValue(IoData::ValueType::CAPACITANCE, 1.0);
         scale *= iodata.DimensionalizeValue(IoData::ValueType::VOLTAGE, 1.0);
         break;
-      case (SurfaceFluxType::MAGNETIC):
+      case SurfaceFluxType::MAGNETIC:
         scale = iodata.DimensionalizeValue(IoData::ValueType::INDUCTANCE, 1.0);
         scale *= iodata.DimensionalizeValue(IoData::ValueType::CURRENT, 1.0);
         break;
-      case (SurfaceFluxType::POWER):
+      case SurfaceFluxType::POWER:
         scale = iodata.DimensionalizeValue(IoData::ValueType::POWER, 1.0);
         break;
     }
@@ -475,15 +475,15 @@ void BaseSolver::PostprocessSurfaces(const PostOperator &postop, const std::stri
         std::string name, unit;
         switch (data.type)
         {
-          case (SurfaceFluxType::ELECTRIC):
+          case SurfaceFluxType::ELECTRIC:
             name = "Φ_elec";
             unit = "(C)";
             break;
-          case (SurfaceFluxType::MAGNETIC):
+          case SurfaceFluxType::MAGNETIC:
             name = "Φ_mag";
             unit = "(Wb)";
             break;
-          case (SurfaceFluxType::POWER):
+          case SurfaceFluxType::POWER:
             name = "Φ_pow";
             unit = "(W)";
             break;

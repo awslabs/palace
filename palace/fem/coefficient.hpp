@@ -259,7 +259,7 @@ template <>
 inline void BdrSurfaceFluxCoefficient<SurfaceFluxType::ELECTRIC>::GetLocalFlux(
     mfem::ElementTransformation &T, mfem::Vector &V) const
 {
-  // Flux D ⋅ n.
+  // Flux D.
   double W_data[3];
   mfem::Vector W(W_data, T.GetSpaceDim());
   E->GetVectorValue(T, T.GetIntPoint(), W);
@@ -459,7 +459,7 @@ inline double InterfaceDielectricCoefficient<InterfaceDielectricType::SA>::Eval(
     Vt2 += V * V;
   }
 
-  // Substrate-air interface: 0.5 * t * (ε_SA * |E_t|² + 1 / ε_MS * |E_n|²) .
+  // Substrate-air interface: 0.5 * t * (ε_SA * |E_t|² + 1 / ε_SA * |E_n|²) .
   return 0.5 * t_i * (epsilon_i * Vt2 + Vn2 / epsilon_i);
 }
 
@@ -618,23 +618,17 @@ public:
         if (V * V < W * W)
         {
           V = W;
-          return;
-        }
-        else
-        {
-          return;
         }
       }
       else if (UseElem2(FET, mat_op, side_n_min))
       {
         GetLocalPower(*FET.Elem2, V);
-        return;
       }
       else
       {
         GetLocalPower(*FET.Elem1, V);
-        return;
       }
+      return;
     }
     MFEM_ABORT("Unsupported element type in PoyntingVectorCoefficient!");
   }
@@ -679,11 +673,6 @@ public:
       if (V * V < W * W)
       {
         V = W;
-        return;
-      }
-      else
-      {
-        return;
       }
     }
     else if (UseElem2(FET, mat_op, side_n_min))
