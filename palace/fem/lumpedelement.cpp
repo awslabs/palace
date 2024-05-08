@@ -116,8 +116,8 @@ CoaxialElementData::CoaxialElementData(const std::array<double, 3> &input_dir,
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, attr_list);
   auto bounding_ball = mesh::GetBoundingBall(mesh, attr_marker, true);
-  MFEM_VERIFY(bounding_ball.planar,
-              "Boundary elements must be coplanar to define a coaxial lumped element!");
+  // MFEM_VERIFY(bounding_ball.planar,
+  //             "Boundary elements must be coplanar to define a coaxial lumped element!");
 
   // Direction of the excitation as +/-r̂.
   direction = (input_dir[0] > 0);
@@ -131,6 +131,22 @@ CoaxialElementData::CoaxialElementData(const std::array<double, 3> &input_dir,
               "Coaxial element boundary is not defined correctly (radius "
                   << r_outer << ", area " << A << ")!");
   r_inner = std::sqrt(std::pow(r_outer, 2) - A / M_PI);
+
+
+
+
+  // XX TODO WIP...
+  const auto &center = bounding_ball.center;
+  const auto &lengths = bounding_ball.Lengths();
+  std::cout << "\norigin: " << center[0] << ", " << center[1] << ", " << center[2]
+            << "\n\n";
+  std::cout << "\nlengths: " << lengths[0] << ", " << lengths[1] << ", " << lengths[2]
+            << "\n\n";
+  std::cout << "\nr_outer: " << r_outer << "\n\n";
+  std::cout << "\nr_inner: " << r_inner << "\n\n";
+
+
+
 }
 
 std::unique_ptr<mfem::VectorCoefficient>
