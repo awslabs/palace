@@ -1125,19 +1125,10 @@ BoundingBox BoundingBallFromPointCloud(MPI_Comm comm,
   BoundingBox ball;
   if (dominant_rank == Mpi::Rank(comm))
   {
-    // Randomly permute the point set.
     MFEM_VERIFY(vertices.size() >= 3,
                 "A bounding ball requires a minimum of three vertices for this algorithm!");
-    std::vector<std::size_t> indices(vertices.size() + 4);
-    for (std::size_t i = 0; i < vertices.size(); i++)
-    {
-      indices[i] = i;
-    }
-    {
-      std::random_device rd;
-      std::mt19937 g(rd());
-      std::shuffle(indices.begin(), indices.end() - 4, g);
-    }
+    std::vector<std::size_t> indices(vertices.size());
+    std::iota(indices.begin(), indices.end(), 0);
 
     // Acceleration from https://informatica.vu.lt/journal/INFORMATICA/article/1251. Allow
     // for duplicate points and just add the 4 points to the end of the indicies list to be
@@ -1151,18 +1142,34 @@ BoundingBox BoundingBallFromPointCloud(MPI_Comm comm,
       p_1 = std::max_element(vertices.begin(), vertices.end(),
                              [p_2](const Eigen::Vector3d &x, const Eigen::Vector3d &y)
                              { return (x - *p_2).norm() < (y - *p_2).norm(); });
-      auto p_12 = 0.5 * (*p_1 + *p_2);
-      auto p_3 =
-          std::max_element(vertices.begin(), vertices.end(),
-                           [&p_12](const Eigen::Vector3d &x, const Eigen::Vector3d &y)
-                           { return (x - p_12).norm() < (y - p_12).norm(); });
+
+      // Find the p_3 as the vertex furthest from the initial axis.
+      const Eigen::Vector3d n_1 = (*p_2 - *p_1).normalized();
+      auto p_3 = std::max_element(vertices.begin(), vertices.end(),
+                                  [&](const auto &x, const auto &y) {
+                                    return PerpendicularDistance({n_1}, *p_1, x) <
+                                           PerpendicularDistance({n_1}, *p_1, y);
+                                  });
       auto p_4 = std::max_element(vertices.begin(), vertices.end(),
                                   [p_3](const Eigen::Vector3d &x, const Eigen::Vector3d &y)
                                   { return (x - *p_3).norm() < (y - *p_3).norm(); });
-      indices[indices.size() - 1] = p_1 - vertices.begin();
-      indices[indices.size() - 2] = p_2 - vertices.begin();
-      indices[indices.size() - 3] = p_3 - vertices.begin();
-      indices[indices.size() - 4] = p_4 - vertices.begin();
+      MFEM_VERIFY(p_3 != p_1 && p_3 != p_2 && p_4 != p_1 && p_4 != p_2,
+                  "Vertices are degenerate!");
+
+      // Start search with these points, which should be roughly extremal. With the search
+      // for p_3 done in an orthogonal direction, p_1, p_2, p_3, and p_4 should all be
+      // unique.
+      std::swap(indices[indices.size() - 1], indices[p_1 - vertices.begin()]);
+      std::swap(indices[indices.size() - 2], indices[p_2 - vertices.begin()]);
+      std::swap(indices[indices.size() - 3], indices[p_3 - vertices.begin()]);
+      std::swap(indices[indices.size() - 4], indices[p_4 - vertices.begin()]);
+    }
+
+    // Randomly permute the point set.
+    {
+      std::random_device rd;
+      std::mt19937 g(rd());
+      std::shuffle(indices.begin(), indices.end() - 4, g);
     }
 
     // Compute the bounding ball.
