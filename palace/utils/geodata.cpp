@@ -1034,7 +1034,7 @@ BoundingBall SphereFromPoints(const std::vector<std::size_t> &indices,
   const Eigen::Vector3d AB = vertices[indices[1]] - vertices[indices[0]];
   const Eigen::Vector3d AC = vertices[indices[2]] - vertices[indices[0]];
   const Eigen::Vector3d ABAC = AB.cross(AC);
-  Eigen::Vector3d AD;
+  Eigen::Vector3d AD = Eigen::Vector3d::Zero();
   if (!ball.planar)
   {
     AD = vertices[indices[3]] - vertices[indices[0]];
