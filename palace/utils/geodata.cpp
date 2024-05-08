@@ -1152,22 +1152,6 @@ BoundingBox BoundingBallFromPointCloud(MPI_Comm comm,
       p_1 = std::max_element(vertices.begin(), vertices.end(),
                              [p_2](const Eigen::Vector3d &x, const Eigen::Vector3d &y)
                              { return (x - *p_2).norm() < (y - *p_2).norm(); });
-
-
-      // //XX TODO
-      // auto p_test = std::max_element(vertices.begin(), vertices.end(),
-      //                              [p_1](const Eigen::Vector3d &x, const Eigen::Vector3d &y)
-      //                              { return (x - *p_1).norm() < (y - *p_1).norm(); });
-      // MFEM_ASSERT(p_test == p_2, "p_1 and p_2 must be mutually opposing points!");
-
-
-      // MFEM_ASSERT(std::max_element(vertices.begin(), vertices.end(),
-      //                              [p_1](const Eigen::Vector3d &x, const Eigen::Vector3d &y)
-      //                              { return (x - *p_1).norm() < (y - *p_1).norm(); }) ==
-      //                 p_2,
-      //             "p_1 and p_2 must be mutually opposing points!");
-
-
       auto p_12 = 0.5 * (*p_1 + *p_2);
       auto p_3 =
           std::max_element(vertices.begin(), vertices.end(),
@@ -1231,19 +1215,6 @@ BoundingBox GetBoundingBall(const mfem::ParMesh &mesh, const mfem::Array<int> &m
 {
   std::vector<Eigen::Vector3d> vertices;
   int dominant_rank = CollectPointCloudOnRoot(mesh, marker, bdr, vertices);
-
-
-
-  //XX TODO WIP FOR TEST...
-  bool neg = false;
-  for (auto &v : vertices)
-  {
-    v[0] += 0.1 * (neg ? -1.0 : 1.0);
-    neg = !neg;
-  }
-
-
-
   return BoundingBallFromPointCloud(mesh.GetComm(), vertices, dominant_rank);
 }
 
