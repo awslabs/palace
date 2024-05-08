@@ -1143,7 +1143,7 @@ BoundingBox BoundingBallFromPointCloud(MPI_Comm comm,
                              [p_2](const Eigen::Vector3d &x, const Eigen::Vector3d &y)
                              { return (x - *p_2).norm() < (y - *p_2).norm(); });
 
-      // Find the p_3 as the vertex furthest from the initial axis.
+      // Find the next point as the vertex furthest from the initial axis.
       const Eigen::Vector3d n_1 = (*p_2 - *p_1).normalized();
       auto p_3 = std::max_element(vertices.begin(), vertices.end(),
                                   [&](const auto &x, const auto &y) {
