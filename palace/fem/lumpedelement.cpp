@@ -115,26 +115,18 @@ CoaxialElementData::CoaxialElementData(const std::array<double, 3> &input_dir,
   const mfem::ParMesh &mesh = *fespace.GetParMesh();
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, attr_list);
-  auto bounding_box = mesh::GetBoundingBox(mesh, attr_marker, true);
-  MFEM_VERIFY(bounding_box.planar,
+  auto bounding_ball = mesh::GetBoundingBall(mesh, attr_marker, true);
+  MFEM_VERIFY(bounding_ball.planar,
               "Boundary elements must be coplanar to define a coaxial lumped element!");
 
   // Direction of the excitation as +/-r̂.
   direction = (input_dir[0] > 0);
-  origin.SetSize(bounding_box.center.size());
-  std::copy(bounding_box.center.begin(), bounding_box.center.end(), origin.begin());
+  origin.SetSize(bounding_ball.center.size());
+  std::copy(bounding_ball.center.begin(), bounding_ball.center.end(), origin.begin());
 
-  // Get inner radius of annulus assuming full 2π circumference. Coarse tolerance to allow
-  // for approximately-meshed circles. The returned bounding box is not a bounding box, it
-  // is inscribed in the outer circle.
-  constexpr double rel_tol = 1.0e-2;
+  // Get inner radius of annulus assuming full 2π circumference.
+  r_outer = 0.5 * bounding_ball.Lengths()[0];
   double A = GetArea(fespace, attr_marker);
-  auto lengths = bounding_box.Lengths();
-  MFEM_VERIFY((1.0 - rel_tol) * lengths[1] < lengths[0] &&
-                  lengths[0] < (1.0 + rel_tol) * lengths[1],
-              "Bounding box for coaxial lumped port elements is not approximately square ("
-                  << "sides = " << lengths[0] << ", " << lengths[1] << ")!");
-  r_outer = 0.25 * std::sqrt(2.0) * (lengths[0] + lengths[1]);
   MFEM_VERIFY(std::pow(r_outer, 2) - A / M_PI > 0.0,
               "Coaxial element boundary is not defined correctly (radius "
                   << r_outer << ", area " << A << ")!");

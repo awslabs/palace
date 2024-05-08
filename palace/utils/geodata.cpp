@@ -6,8 +6,10 @@
 #include <algorithm>
 #include <array>
 #include <limits>
+#include <list>
 #include <map>
 #include <numeric>
+#include <random>
 #include <set>
 #include <sstream>
 #include <string>
@@ -679,23 +681,6 @@ void GetAxisAlignedBoundingBox(const mfem::ParMesh &mesh, const mfem::Array<int>
   Mpi::GlobalMax(dim, max.HostReadWrite(), mesh.GetComm());
 }
 
-void GetAxisAlignedBoundingBox(const mfem::ParMesh &mesh, int attr, bool bdr,
-                               mfem::Vector &min, mfem::Vector &max)
-{
-  mfem::Array<int> marker(bdr ? mesh.bdr_attributes.Max() : mesh.attributes.Max());
-  marker = 0;
-  marker[attr - 1] = 1;
-  GetAxisAlignedBoundingBox(mesh, marker, bdr, min, max);
-}
-
-void GetAxisAlignedBoundingBox(const mfem::ParMesh &mesh, mfem::Vector &min,
-                               mfem::Vector &max)
-{
-  mfem::Array<int> marker(mesh.attributes.Max());
-  marker = 1;
-  GetAxisAlignedBoundingBox(mesh, marker, false, min, max);
-}
-
 double BoundingBox::Area() const
 {
   return 4.0 *
@@ -735,7 +720,7 @@ namespace
 bool EigenLE(const Eigen::Vector3d &x, const Eigen::Vector3d &y)
 {
   return std::lexicographical_compare(x.begin(), x.end(), y.begin(), y.end());
-};
+}
 
 // Helper for collecting a point cloud from a mesh, used in calculating bounding boxes and
 // bounding balls. Returns the dominant rank, for which the vertices argument will be
@@ -895,7 +880,7 @@ auto PerpendicularDistance(const std::initializer_list<Eigen::Vector3d> &normals
     v0 -= n.dot(v0) * n;
   }
   return v0.norm();
-};
+}
 
 // Calculates a bounding box from a point cloud, result is broadcast across all processes.
 BoundingBox BoundingBoxFromPointCloud(MPI_Comm comm,
@@ -977,7 +962,7 @@ BoundingBox BoundingBoxFromPointCloud(MPI_Comm comm,
                           : *std::min_element(vertices_out_of_plane.begin(),
                                               vertices_out_of_plane.end(), DistFromP_000);
     const bool t_0_gt_t_1 =
-        (t_0 - origin).norm() > (t_1 - origin).norm();  // If planar t_1 == t_0
+        (t_0 - origin).norm() > (t_1 - origin).norm();  // If planar, t_1 == t_0
     const auto &v_001 = t_0_gt_t_1 ? t_1 : t_0;
     const auto &v_011 = box.planar ? v_111 : (t_0_gt_t_1 ? t_0 : t_1);
 
@@ -1002,6 +987,149 @@ BoundingBox BoundingBoxFromPointCloud(MPI_Comm comm,
   return box;
 }
 
+// Use 4 points to define a sphere in 3D. If the points are coplanar, 3 of them are used to
+// define a circle which is interpreted as the equator of the sphere. We assume the points
+// are unique and not collinear.
+void SphereFromPoints(const std::vector<std::size_t> &indices,
+                      const std::vector<Eigen::Vector3d> &vertices, Eigen::Vector3d &origin,
+                      double &radius, bool &coplanar)
+{
+  // Given 0, 1, or 2 points, just return a radius of 0.
+  MFEM_VERIFY(
+      indices.size() < 4,
+      "Determining a sphere in 3D requires 4 points (and a circle requires 3 points)!");
+  if (indices.size() < 3)
+  {
+    origin = Eigen::Vector3d::Zero();
+    radius = 0.0;
+    coplanar = true;
+    return;
+  }
+
+  // Check for coplanarity.
+  constexpr double rel_tol = 1.0e-6;
+  const Eigen::Vector3d AB = vertices[indices[1]] - vertices[indices[0]];
+  const Eigen::Vector3d AC = vertices[indices[2]] - vertices[indices[0]];
+  const Eigen::Vector3d ABAC = AB.cross(AC);
+  Eigen::Vector3d AD;
+  coplanar = (indices.size() < 4);
+  if (!coplanar)
+  {
+    AD = vertices[indices[3]] - vertices[indices[0]];
+    coplanar = (std::abs(AD.dot(ABAC)) < rel_tol * AD.norm() * ABAC.norm());
+  }
+
+  // Construct a circle passing through 3 points.
+  // See: https://en.wikipedia.org/wiki/Circumcircle#Higher_dimensions.
+  if (coplanar)
+  {
+    origin = (0.5 / ABAC.squaredNorm()) *
+             ((AB.squaredNorm() * AC) - (AC.squaredNorm() * AB)).cross(ABAC);
+    radius = origin.norm();
+    origin += vertices[indices[0]];
+#if defined(MFEM_DEBUG)
+    const auto r1 = (vertices[indices[1]] - origin).norm();
+    const auto r2 = (vertices[indices[2]] - origin).norm();
+    MFEM_VERIFY((1.0 - rel_tol) * radius < r1 && r1 < (1.0 + rel_tol) * radius &&
+                    (1.0 - rel_tol) * radius < r2 && r2 < (1.0 + rel_tol) * radius,
+                "Invalid circle calculated from 3 points!");
+#endif
+    return;
+  }
+
+  // Construct a sphere passing through 4 points.
+  // See: https://steve.hollasch.net/cgindex/geometry/sphere4pts.html.
+  Eigen::Matrix3d C;
+  Eigen::Vector3d d;
+  const auto s = vertices[indices[0]].squaredNorm();
+  C.row(0) = AB.transpose();
+  C.row(1) = AC.transpose();
+  C.row(2) = AD.transpose();
+  d(0) = 0.5 * (vertices[indices[1]].squaredNorm() - s);
+  d(0) = 0.5 * (vertices[indices[2]].squaredNorm() - s);
+  d(0) = 0.5 * (vertices[indices[3]].squaredNorm() - s);
+  origin = C.inverse() * d;  // 3x3 matrix inverse might be faster than general LU
+  radius = (vertices[indices[0]] - origin).norm();
+#if defined(MFEM_DEBUG)
+  const auto r1 = (vertices[indices[1]] - origin).norm();
+  const auto r2 = (vertices[indices[2]] - origin).norm();
+  const auto r3 = (vertices[indices[3]] - origin).norm();
+  MFEM_VERIFY((1.0 - rel_tol) * radius < r1 && r1 < (1.0 + rel_tol) * radius &&
+                  (1.0 - rel_tol) * radius < r2 && r2 < (1.0 + rel_tol) * radius &&
+                  (1.0 - rel_tol) * radius < r3 && r3 < (1.0 + rel_tol) * radius,
+              "Invalid sphere calculated from 3 points!");
+#endif
+}
+
+void Welzl(std::vector<std::size_t> P, std::vector<std::size_t> R,
+           const std::vector<Eigen::Vector3d> &vertices, Eigen::Vector3d &origin,
+           double &radius, bool &planar)
+{
+  // Base case.
+  if (R.size() == 4 || P.empty())
+  {
+    return SphereFromPoints(R, vertices, origin, radius, planar);
+  }
+
+  // Choose a p ∈ P randomly, and recurse for (P \ {p}, R). The set P has already been
+  // randomized on input.
+  const std::size_t p = P.back();
+  P.pop_back();
+  Welzl(P, R, vertices, origin, radius, planar);
+
+  // If p is outside the sphere, recurse for (P \ {p}, R U {p}).
+  constexpr double rel_tol = 1.0e-6;
+  if ((vertices[p] - origin).norm() >= (1.0 + rel_tol) * radius)
+  {
+    R.push_back(p);
+    Welzl(P, R, vertices, origin, radius, planar);
+  }
+}
+
+// Calculates a bounding ball from a point cloud using Welzl's algorithm, result is
+// broadcast across all processes. We don't operate on the convex hull, since the number of
+// points should be small enough that operating on the full set should be OK. If only three
+// points are provided, the bounding circle is computed (likewise for if the points are
+// coplanar).
+BoundingBox BoundingBallFromPointCloud(MPI_Comm comm,
+                                       const std::vector<Eigen::Vector3d> &vertices,
+                                       int dominant_rank)
+{
+  BoundingBox ball;
+  if (dominant_rank == Mpi::Rank(comm))
+  {
+    // Randomly permute the point set.
+    MFEM_VERIFY(vertices.size() >= 3,
+                "A bounding ball requires a minimum of three vertices for this algorithm!");
+    std::vector<std::size_t> indices(vertices.size());
+    for (std::size_t i = 0; i < vertices.size(); i++)
+    {
+      indices[i] = i;
+    }
+    {
+      std::random_device rd;
+      std::mt19937 g(rd());
+      std::shuffle(indices.begin(), indices.end(), g);
+    }
+
+    // Compute the bounding ball.
+    Eigen::Vector3d origin;
+    double radius;
+    Welzl(indices, {}, vertices, origin, radius, ball.planar);
+    Vector3dMap(ball.center.data()) = origin;
+    Vector3dMap(ball.normals[0].data()) = Eigen::Vector3d(radius, 0.0, 0.0);
+    Vector3dMap(ball.normals[1].data()) = Eigen::Vector3d(0.0, radius, 0.0);
+    Vector3dMap(ball.normals[2].data()) = Eigen::Vector3d(0.0, 0.0, radius);
+  }
+
+  // Broadcast result to all processors.
+  Mpi::Broadcast(3, ball.center.data(), dominant_rank, comm);
+  Mpi::Broadcast(3 * 3, ball.normals.data()->data(), dominant_rank, comm);
+  Mpi::Broadcast(1, &ball.planar, dominant_rank, comm);
+
+  return ball;
+}
+
 double LengthFromPointCloud(MPI_Comm comm, const std::vector<Eigen::Vector3d> &vertices,
                             int dominant_rank, const std::array<double, 3> &dir)
 {
@@ -1009,12 +1137,10 @@ double LengthFromPointCloud(MPI_Comm comm, const std::vector<Eigen::Vector3d> &v
   if (dominant_rank == Mpi::Rank(comm))
   {
     CVector3dMap direction(dir.data());
-
     auto Dot = [&](const auto &x, const auto &y)
     { return direction.dot(x) < direction.dot(y); };
     auto p_min = std::min_element(vertices.begin(), vertices.end(), Dot);
     auto p_max = std::max_element(vertices.begin(), vertices.end(), Dot);
-
     length = (*p_max - *p_min).dot(direction.normalized());
   }
   Mpi::Broadcast(1, &length, dominant_rank, comm);
@@ -1031,12 +1157,12 @@ BoundingBox GetBoundingBox(const mfem::ParMesh &mesh, const mfem::Array<int> &ma
   return BoundingBoxFromPointCloud(mesh.GetComm(), vertices, dominant_rank);
 }
 
-BoundingBox GetBoundingBox(const mfem::ParMesh &mesh, int attr, bool bdr)
+BoundingBox GetBoundingBall(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
+                            bool bdr)
 {
-  mfem::Array<int> marker(bdr ? mesh.bdr_attributes.Max() : mesh.attributes.Max());
-  marker = 0;
-  marker[attr - 1] = 1;
-  return GetBoundingBox(mesh, marker, bdr);
+  std::vector<Eigen::Vector3d> vertices;
+  int dominant_rank = CollectPointCloudOnRoot(mesh, marker, bdr, vertices);
+  return BoundingBallFromPointCloud(mesh.GetComm(), vertices, dominant_rank);
 }
 
 double GetProjectedLength(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
@@ -1045,15 +1171,6 @@ double GetProjectedLength(const mfem::ParMesh &mesh, const mfem::Array<int> &mar
   std::vector<Eigen::Vector3d> vertices;
   int dominant_rank = CollectPointCloudOnRoot(mesh, marker, bdr, vertices);
   return LengthFromPointCloud(mesh.GetComm(), vertices, dominant_rank, dir);
-}
-
-double GetProjectedLength(const mfem::ParMesh &mesh, int attr, bool bdr,
-                          const std::array<double, 3> &dir)
-{
-  mfem::Array<int> marker(bdr ? mesh.bdr_attributes.Max() : mesh.attributes.Max());
-  marker = 0;
-  marker[attr - 1] = 1;
-  return GetProjectedLength(mesh, marker, bdr, dir);
 }
 
 mfem::Vector GetSurfaceNormal(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
@@ -1172,22 +1289,6 @@ mfem::Vector GetSurfaceNormal(const mfem::ParMesh &mesh, const mfem::Array<int> 
   }
 
   return normal;
-}
-
-mfem::Vector GetSurfaceNormal(const mfem::ParMesh &mesh, int attr, bool average)
-{
-  const bool bdr = (mesh.Dimension() == mesh.SpaceDimension());
-  mfem::Array<int> marker(bdr ? mesh.bdr_attributes.Max() : mesh.attributes.Max());
-  marker = 0;
-  marker[attr - 1] = 1;
-  return GetSurfaceNormal(mesh, marker, average);
-}
-
-mfem::Vector GetSurfaceNormal(const mfem::ParMesh &mesh, bool average)
-{
-  const bool bdr = (mesh.Dimension() == mesh.SpaceDimension());
-  const auto &attributes = bdr ? mesh.bdr_attributes : mesh.attributes;
-  return GetSurfaceNormal(mesh, AttrToMarker(attributes.Max(), attributes), average);
 }
 
 double RebalanceMesh(std::unique_ptr<mfem::ParMesh> &mesh, const IoData &iodata)
