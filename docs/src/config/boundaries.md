@@ -130,7 +130,8 @@ The available options are:
 
   - `"SmallerRefractiveIndex"` :  Take the value from the side where the material index of
     refraction is smaller (speed of light is larger). Typically this selects the vacuum
-    side.
+    side. For anisotropic materials, the index of refraction associated with the principal
+    direction with the smallest value is used.
   - `"LargerRefractiveIndex"` :  Take the value from the side where the material index of
     refraction is larger (speed of light is smaller). Typically this selects the non-vacuum
     side.
@@ -609,7 +610,8 @@ general double-valued). The available options are:
 
   - `"SmallerRefractiveIndex"` :  Take the value from the side where the material index of
     refraction is smaller (speed of light is larger). Typically this selects the vacuum
-    side.
+    side. For anisotropic materials, the index of refraction associated with the principal
+    direction with the smallest value is used.
   - `"LargerRefractiveIndex"` :  Take the value from the side where the material index of
     refraction is larger (speed of light is smaller). Typically this selects the non-vacuum
     side.

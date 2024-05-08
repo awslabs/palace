@@ -49,7 +49,7 @@ protected:
   {
     // For interior faces with no way to distinguish on which side to evaluate quantities,
     // evaluate on both (using the average or sum, depending on the application).
-    return (FET.Elem2 && mat_op.GetLightSpeedMin(FET.Elem2->Attribute) ==
+    return (FET.Elem2 && mat_op.GetLightSpeedMax(FET.Elem2->Attribute) ==
                              mat_op.GetLightSpeedMax(FET.Elem1->Attribute));
   }
 
@@ -60,7 +60,7 @@ protected:
     // (refractive index is smaller, typically should choose the vacuum side). For cases
     // where the speeds are the same, use element 1.
     return (FET.Elem2 && side_n_min &&
-            mat_op.GetLightSpeedMin(FET.Elem2->Attribute) >
+            mat_op.GetLightSpeedMax(FET.Elem2->Attribute) >
                 mat_op.GetLightSpeedMax(FET.Elem1->Attribute));
   }
 
