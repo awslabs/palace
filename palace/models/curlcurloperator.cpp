@@ -3,6 +3,7 @@
 
 #include "curlcurloperator.hpp"
 
+#include <set>
 #include "fem/bilinearform.hpp"
 #include "fem/coefficient.hpp"
 #include "fem/integrator.hpp"
@@ -43,7 +44,6 @@ CurlCurlOperator::CurlCurlOperator(const IoData &iodata,
   if (dbc_attr.Size())
   {
     Mpi::Print("\nConfiguring Dirichlet BC at attributes:\n");
-    std::sort(dbc_attr.begin(), dbc_attr.end());
     utils::PrettyPrint(dbc_attr);
   }
 }
@@ -53,32 +53,34 @@ mfem::Array<int> CurlCurlOperator::SetUpBoundaryProperties(const IoData &iodata,
 {
   // Check that boundary attributes have been specified correctly.
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+  mfem::Array<int> bdr_attr_marker;
   if (!iodata.boundaries.pec.empty())
   {
-    mfem::Array<int> bdr_attr_marker(bdr_attr_max);
+    bdr_attr_marker.SetSize(bdr_attr_max);
     bdr_attr_marker = 0;
     for (auto attr : mesh.bdr_attributes)
     {
       bdr_attr_marker[attr - 1] = 1;
     }
-    bool first = true;
+    std::set<int> bdr_warn_list;
     for (auto attr : iodata.boundaries.pec.attributes)
     {
       // MFEM_VERIFY(attr > 0 && attr <= bdr_attr_max,
       //             "PEC boundary attribute tags must be non-negative and correspond to "
       //             "attributes in the mesh!");
-      // MFEM_VERIFY(bdr_attr_marker[attr-1],
+      // MFEM_VERIFY(bdr_attr_marker[attr - 1],
       //             "Unknown PEC boundary attribute " << attr << "!");
-      if (attr <= 0 || attr > bdr_attr_marker.Size() || !bdr_attr_marker[attr - 1])
+      if (attr <= 0 || attr > bdr_attr_max || !bdr_attr_marker[attr - 1])
       {
-        if (first)
-        {
-          Mpi::Print("\n");
-          first = false;
-        }
-        Mpi::Warning("Unknown PEC boundary attribute {:d}!\nSolver will just ignore it!\n",
-                     attr);
+        bdr_warn_list.insert(attr);
       }
+    }
+    if (!bdr_warn_list.empty())
+    {
+      Mpi::Print("\n");
+      Mpi::Warning("Unknown PEC boundary attributes!\nSolver will just ignore them!");
+      utils::PrettyPrint(bdr_warn_list, "Boundary attribute list:");
+      Mpi::Print("\n");
     }
   }
 
@@ -87,7 +89,7 @@ mfem::Array<int> CurlCurlOperator::SetUpBoundaryProperties(const IoData &iodata,
   dbc_bcs.Reserve(static_cast<int>(iodata.boundaries.pec.attributes.size()));
   for (auto attr : iodata.boundaries.pec.attributes)
   {
-    if (attr <= 0 || attr > bdr_attr_max)
+    if (attr <= 0 || attr > bdr_attr_max || !bdr_attr_marker[attr - 1])
     {
       continue;  // Can just ignore if wrong
     }

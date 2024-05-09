@@ -3,6 +3,7 @@
 
 #include "farfieldboundaryoperator.hpp"
 
+#include <set>
 #include "linalg/densematrix.hpp"
 #include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
@@ -33,15 +34,16 @@ FarfieldBoundaryOperator::SetUpBoundaryProperties(const IoData &iodata,
 {
   // Check that impedance boundary attributes have been specified correctly.
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+  mfem::Array<int> bdr_attr_marker;
   if (!iodata.boundaries.farfield.empty())
   {
-    mfem::Array<int> bdr_attr_marker(bdr_attr_max);
+    bdr_attr_marker.SetSize(bdr_attr_max);
     bdr_attr_marker = 0;
     for (auto attr : mesh.bdr_attributes)
     {
       bdr_attr_marker[attr - 1] = 1;
     }
-    bool first = true;
+    std::set<int> bdr_warn_list;
     for (auto attr : iodata.boundaries.farfield.attributes)
     {
       // MFEM_VERIFY(attr > 0 && attr <= bdr_attr_max,
@@ -49,16 +51,17 @@ FarfieldBoundaryOperator::SetUpBoundaryProperties(const IoData &iodata,
       //             " "to attributes in the mesh!");
       // MFEM_VERIFY(bdr_attr_marker[attr - 1],
       //             "Unknown absorbing boundary attribute " << attr << "!");
-      if (attr <= 0 || attr > bdr_attr_marker.Size() || !bdr_attr_marker[attr - 1])
+      if (attr <= 0 || attr > bdr_attr_max || !bdr_attr_marker[attr - 1])
       {
-        if (first)
-        {
-          Mpi::Print("\n");
-          first = false;
-        }
+        bdr_warn_list.insert(attr);
+      }
+      if (!bdr_warn_list.empty())
+      {
+        Mpi::Print("\n");
         Mpi::Warning(
-            "Unknown absorbing boundary attribute {:d}!\nSolver will just ignore it!\n",
-            attr);
+            "Unknown absorbing boundary attributes!\nSolver will just ignore them!");
+        utils::PrettyPrint(bdr_warn_list, "Boundary attribute list:");
+        Mpi::Print("\n");
       }
     }
   }
@@ -71,7 +74,7 @@ FarfieldBoundaryOperator::SetUpBoundaryProperties(const IoData &iodata,
   farfield_bcs.Reserve(static_cast<int>(iodata.boundaries.farfield.attributes.size()));
   for (auto attr : iodata.boundaries.farfield.attributes)
   {
-    if (attr <= 0 || attr > bdr_attr_max)
+    if (attr <= 0 || attr > bdr_attr_max || !bdr_attr_marker[attr - 1])
     {
       continue;  // Can just ignore if wrong
     }
@@ -102,11 +105,11 @@ void FarfieldBoundaryOperator::AddExtraSystemBdrCoefficients(
     double omega, MaterialPropertyCoefficient &dfbr, MaterialPropertyCoefficient &dfbi)
 {
   // Contribution for second-order absorbing BC. See Jin Section 9.3 for reference. The β
-  // coefficient for the second-order ABC is 1/(2ik+2/r). Taking the radius of curvature as
-  // infinity (plane wave scattering), the r-dependence vanishes and the contribution is
-  // purely imaginary. Multiplying through by μ⁻¹ we get the material coefficient to ω as
-  // 1 / (μ √(με)). Also, this implementation ignores the divergence term ∇⋅Eₜ, as COMSOL
-  // does as well.
+  // coefficient for the second-order ABC is 1/(2ik+2/r). Taking the radius of curvature
+  // as infinity (plane wave scattering), the r-dependence vanishes and the contribution
+  // is purely imaginary. Multiplying through by μ⁻¹ we get the material coefficient to ω
+  // as 1 / (μ √(με)). Also, this implementation ignores the divergence term ∇⋅Eₜ, as
+  // COMSOL does as well.
   if (farfield_attr.Size() && order > 1)
   {
     mfem::DenseTensor muinvc0 =

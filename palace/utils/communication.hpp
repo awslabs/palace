@@ -5,6 +5,7 @@
 #define PALACE_UTILS_COMMUNICATION_HPP
 
 #include <complex>
+#include <fmt/color.h>
 #include <fmt/format.h>
 #include <fmt/printf.h>
 #include <fmt/ranges.h>
@@ -357,7 +358,7 @@ public:
   template <typename... T>
   static void Warning(MPI_Comm comm, fmt::format_string<T...> fmt, T &&...args)
   {
-    Print(comm, "\nWarning!\n");
+    Print(comm, "\n{}\n", fmt::styled("--> Warning!", fmt::fg(fmt::color::yellow)));
     Print(comm, fmt, std::forward<T>(args)...);
     Print(comm, "\n");
   }

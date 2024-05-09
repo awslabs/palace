@@ -3,10 +3,12 @@
 
 #include "surfaceconductivityoperator.hpp"
 
+#include <set>
 #include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
+#include "utils/prettyprint.hpp"
 
 namespace palace
 {
@@ -27,31 +29,46 @@ void SurfaceConductivityOperator::SetUpBoundaryProperties(const IoData &iodata,
                                                           const mfem::ParMesh &mesh)
 {
   // Check that conductivity boundary attributes have been specified correctly.
+  int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+  mfem::Array<int> bdr_attr_marker;
   if (!iodata.boundaries.conductivity.empty())
   {
-    int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
-    mfem::Array<int> bdr_attr_marker(bdr_attr_max), conductivity_marker(bdr_attr_max);
+    mfem::Array<int> conductivity_marker(bdr_attr_max);
+    bdr_attr_marker.SetSize(bdr_attr_max);
     bdr_attr_marker = 0;
     conductivity_marker = 0;
     for (auto attr : mesh.bdr_attributes)
     {
       bdr_attr_marker[attr - 1] = 1;
     }
+    std::set<int> bdr_warn_list;
     for (const auto &data : iodata.boundaries.conductivity)
     {
       for (auto attr : data.attributes)
       {
-        MFEM_VERIFY(attr > 0 && attr <= bdr_attr_max,
-                    "Conductivity boundary attribute tags must be non-negative and "
-                    "correspond to attributes in the mesh!");
-        MFEM_VERIFY(bdr_attr_marker[attr - 1],
-                    "Unknown conductivity boundary attribute " << attr << "!");
         MFEM_VERIFY(!conductivity_marker[attr - 1],
                     "Multiple definitions of conductivity boundary properties for boundary "
                     "attribute "
                         << attr << "!");
         conductivity_marker[attr - 1] = 1;
+        // MFEM_VERIFY(attr > 0 && attr <= bdr_attr_max,
+        //             "Conductivity boundary attribute tags must be non-negative and "
+        //             "correspond to attributes in the mesh!");
+        // MFEM_VERIFY(bdr_attr_marker[attr - 1],
+        //             "Unknown conductivity boundary attribute " << attr << "!");
+        if (attr <= 0 || attr > bdr_attr_max || !bdr_attr_marker[attr - 1])
+        {
+          bdr_warn_list.insert(attr);
+        }
       }
+    }
+    if (!bdr_warn_list.empty())
+    {
+      Mpi::Print("\n");
+      Mpi::Warning(
+          "Unknown conductivity boundary attributes!\nSolver will just ignore them!");
+      utils::PrettyPrint(bdr_warn_list, "Boundary attribute list:");
+      Mpi::Print("\n");
     }
   }
 
@@ -74,7 +91,15 @@ void SurfaceConductivityOperator::SetUpBoundaryProperties(const IoData &iodata,
       // side.
       bdr.h *= 2.0;
     }
-    bdr.attr_list.Append(data.attributes.data(), data.attributes.size());
+    bdr.attr_list.Reserve(static_cast<int>(data.attributes.size()));
+    for (auto attr : data.attributes)
+    {
+      if (attr <= 0 || attr > bdr_attr_max || !bdr_attr_marker[attr - 1])
+      {
+        continue;  // Can just ignore if wrong
+      }
+      bdr.attr_list.Append(attr);
+    }
   }
   MFEM_VERIFY(boundaries.empty() ||
                   iodata.problem.type == config::ProblemData::Type::DRIVEN,

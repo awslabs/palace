@@ -45,7 +45,8 @@ private:
     bool two_sided;
     mfem::Vector center;
 
-    SurfaceFluxData(const config::SurfaceFluxData &data, const mfem::ParMesh &mesh);
+    SurfaceFluxData(const config::SurfaceFluxData &data, const mfem::ParMesh &mesh,
+                    const mfem::Array<int> &bdr_attr_marker);
 
     std::unique_ptr<mfem::Coefficient> GetCoefficient(const mfem::ParGridFunction *E,
                                                       const mfem::ParGridFunction *B,
@@ -58,7 +59,8 @@ private:
     bool side_n_min;
 
     InterfaceDielectricData(const config::InterfaceDielectricData &data,
-                            const mfem::ParMesh &mesh);
+                            const mfem::ParMesh &mesh,
+                            const mfem::Array<int> &bdr_attr_marker);
 
     std::unique_ptr<mfem::Coefficient> GetCoefficient(const GridFunction &E,
                                                       const MaterialOperator &mat_op) const;
