@@ -59,21 +59,37 @@ ElementTypeInfo CheckElements(const mfem::Mesh &mesh);
 template <typename T>
 void AttrToMarker(int max_attr, const T &attr_list, mfem::Array<int> &marker,
                   bool skip_invalid = false);
+
 template <typename T>
-mfem::Array<int> AttrToMarker(int max_attr, const T &attr_list, bool skip_invalid = false)
+inline mfem::Array<int> AttrToMarker(int max_attr, const T &attr_list,
+                                     bool skip_invalid = false)
 {
   mfem::Array<int> marker;
   AttrToMarker(max_attr, attr_list, marker, skip_invalid);
   return marker;
 }
 
-// Helper function to construct the bounding box for all elements with the given attribute.
+// Helper function to construct the axis-aligned bounding box for all elements with the
+// given attribute.
 void GetAxisAlignedBoundingBox(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
                                bool bdr, mfem::Vector &min, mfem::Vector &max);
-void GetAxisAlignedBoundingBox(const mfem::ParMesh &mesh, int attr, bool bdr,
-                               mfem::Vector &min, mfem::Vector &max);
-void GetAxisAlignedBoundingBox(const mfem::ParMesh &mesh, mfem::Vector &min,
-                               mfem::Vector &max);
+
+inline void GetAxisAlignedBoundingBox(const mfem::ParMesh &mesh, int attr, bool bdr,
+                                      mfem::Vector &min, mfem::Vector &max)
+{
+  mfem::Array<int> marker(bdr ? mesh.bdr_attributes.Max() : mesh.attributes.Max());
+  marker = 0;
+  marker[attr - 1] = 1;
+  GetAxisAlignedBoundingBox(mesh, marker, bdr, min, max);
+}
+
+inline void GetAxisAlignedBoundingBox(const mfem::ParMesh &mesh, mfem::Vector &min,
+                                      mfem::Vector &max)
+{
+  mfem::Array<int> marker(mesh.attributes.Max());
+  marker = 1;
+  GetAxisAlignedBoundingBox(mesh, marker, false, min, max);
+}
 
 // Struct describing a bounding box in terms of the center and face normals. The normals
 // specify the direction from the center of the box.
@@ -91,63 +107,81 @@ struct BoundingBox
   // Compute the area of the bounding box spanned by the first two normals.
   double Area() const;
 
-  // Compute the volume of a 3D bounding box. Returns zero if planar.
+  // Compute the volume of the 3D bounding box. Returns zero if planar.
   double Volume() const;
 
-  // Compute the lengths of each axis.
+  // Compute the lengths along each axis.
   std::array<double, 3> Lengths() const;
 
-  // Compute the deviation in degrees of a vector from each of the normal directions.
+  // Compute the deviation in degrees of a vector from each of the axis directions.
   std::array<double, 3> Deviation(const std::array<double, 3> &direction) const;
 };
 
-// Struct describing a bounding ball in terms of a center and radius. If a ball is two
-// dimensional, additionally provides a normal to the plane.
-struct BoundingBall
-{
-  // The centroid of the ball.
-  std::array<double, 3> center;
-
-  // The radius of the ball from the center.
-  double radius;
-
-  // If the ball is two dimensional, the normal defining the planar surface. Zero magnitude
-  // if a sphere.
-  std::array<double, 3> planar_normal;
-
-  // Whether or not this bounding ball is two dimensional.
-  bool planar;
-
-  // Compute the area of the bounding box spanned by the first two normals.
-  double Area() const { return M_PI * std::pow(radius, 2.0); }
-
-  // Compute the volume of a 3D bounding box. Returns zero if planar.
-  double Volume() const { return planar ? 0.0 : (4 * M_PI / 3) * std::pow(radius, 3.0); }
-};
-
-// Helper functions for computing bounding boxes from a mesh and markers.
+// Helper functions for computing bounding boxes from a mesh and markers. These do not need
+// to be axis-aligned. Note: This function only returns a minimum oriented bounding box for
+// points whose convex hull exactly forms a rectangle or rectangular prism, implementing a
+// vastly simplified version of QuickHull for this case. For other shapes, the result is
+// less predictable, and may not even form a bounding box of the sampled point cloud.
 BoundingBox GetBoundingBox(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
                            bool bdr);
-BoundingBox GetBoundingBox(const mfem::ParMesh &mesh, int attr, bool bdr);
+
+inline BoundingBox GetBoundingBox(const mfem::ParMesh &mesh, int attr, bool bdr)
+{
+  mfem::Array<int> marker(bdr ? mesh.bdr_attributes.Max() : mesh.attributes.Max());
+  marker = 0;
+  marker[attr - 1] = 1;
+  return GetBoundingBox(mesh, marker, bdr);
+}
+
+// Given a mesh and a marker, compute the bounding circle/sphere of the marked elements. In
+// this case the normals of the bounding box object are arbitrary, and the Area and Volume
+// members should not be used, but the Lengths function returns the ball diameter. This
+// function implements Welzl's algorithm.
+BoundingBox GetBoundingBall(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
+                            bool bdr);
+
+inline BoundingBox GetBoundingBall(const mfem::ParMesh &mesh, int attr, bool bdr)
+{
+  mfem::Array<int> marker(bdr ? mesh.bdr_attributes.Max() : mesh.attributes.Max());
+  marker = 0;
+  marker[attr - 1] = 1;
+  return GetBoundingBall(mesh, marker, bdr);
+}
 
 // Helper function for computing the direction aligned length of a marked group.
 double GetProjectedLength(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
                           bool bdr, const std::array<double, 3> &dir);
-double GetProjectedLength(const mfem::ParMesh &mesh, int attr, bool bdr,
-                          const std::array<double, 3> &dir);
 
-// Given a mesh and a marker, compute the diameter of a bounding circle/sphere, assuming
-// that the extrema points are in the marked group.
-BoundingBall GetBoundingBall(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
-                             bool bdr);
-BoundingBall GetBoundingBall(const mfem::ParMesh &mesh, int attr, bool bdr);
+inline double GetProjectedLength(const mfem::ParMesh &mesh, int attr, bool bdr,
+                                 const std::array<double, 3> &dir)
+{
+  mfem::Array<int> marker(bdr ? mesh.bdr_attributes.Max() : mesh.attributes.Max());
+  marker = 0;
+  marker[attr - 1] = 1;
+  return GetProjectedLength(mesh, marker, bdr, dir);
+}
 
 // Helper function to compute the average surface normal for all elements with the given
 // attribute.
 mfem::Vector GetSurfaceNormal(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
                               bool average = true);
-mfem::Vector GetSurfaceNormal(const mfem::ParMesh &mesh, int attr, bool average = true);
-mfem::Vector GetSurfaceNormal(const mfem::ParMesh &mesh, bool average = true);
+
+inline mfem::Vector GetSurfaceNormal(const mfem::ParMesh &mesh, int attr,
+                                     bool average = true)
+{
+  const bool bdr = (mesh.Dimension() == mesh.SpaceDimension());
+  mfem::Array<int> marker(bdr ? mesh.bdr_attributes.Max() : mesh.attributes.Max());
+  marker = 0;
+  marker[attr - 1] = 1;
+  return GetSurfaceNormal(mesh, marker, average);
+}
+
+inline mfem::Vector GetSurfaceNormal(const mfem::ParMesh &mesh, bool average = true)
+{
+  const bool bdr = (mesh.Dimension() == mesh.SpaceDimension());
+  const auto &attributes = bdr ? mesh.bdr_attributes : mesh.attributes;
+  return GetSurfaceNormal(mesh, AttrToMarker(attributes.Max(), attributes), average);
+}
 
 // Helper function responsible for rebalancing the mesh, and optionally writing meshes from
 // the intermediate stages to disk. Returns the imbalance ratio before rebalancing.

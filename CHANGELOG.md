@@ -43,6 +43,8 @@ The format of this changelog is based on
   - Fixed a bug when computing the energy associated with lumped elements with more than
     one nonzero R, L, or C. This also affects the inductive EPR for lumped inductors with
     and associated parallel capacitance.
+  - Fixed a bug for coaxial lumped ports which led to incorrect extraction of the geometric
+    parameters, especially when coarsely-meshed or non-axis-aligned.
 
 ## [0.12.0] - 2023-12-21
 

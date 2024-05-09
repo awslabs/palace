@@ -6,7 +6,6 @@
 
 #include <memory>
 #include <mfem.hpp>
-#include "utils/geodata.hpp"
 
 namespace palace
 {
@@ -37,9 +36,6 @@ public:
 class UniformElementData : public LumpedElementData
 {
 private:
-  // Bounding box defining the rectangular lumped port.
-  mesh::BoundingBox bounding_box;
-
   // Cartesian vector specifying signed direction of incident field.
   mfem::Vector direction;
 
@@ -61,21 +57,21 @@ public:
 class CoaxialElementData : public LumpedElementData
 {
 private:
-  // Bounding ball defined by boundary element.
-  mesh::BoundingBall bounding_ball;
+  // Sign of incident field, +1 for +r̂, -1 for -r̂.
+  double direction;
 
-  // Sign of incident field, +r̂ if true.
-  bool sign;
+  // Origin of the coaxial annulus.
+  mfem::Vector origin;
 
-  // Inner radius of coaxial annulus.
-  double ra;
+  // Outer and inner radii of coaxial annulus.
+  double r_outer, r_inner;
 
 public:
-  CoaxialElementData(const std::array<double, 3> &direction,
+  CoaxialElementData(const std::array<double, 3> &input_dir,
                      const mfem::Array<int> &attr_list,
                      mfem::ParFiniteElementSpace &fespace);
 
-  double GetGeometryLength() const override { return std::log(bounding_ball.radius / ra); }
+  double GetGeometryLength() const override { return std::log(r_outer / r_inner); }
   double GetGeometryWidth() const override { return 2.0 * M_PI; }
 
   std::unique_ptr<mfem::VectorCoefficient>
