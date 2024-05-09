@@ -37,6 +37,9 @@ The format of this changelog is based on
     disable the associated boundary condition and only use the surface for postprocessing.
   - Changed the smooth flux space for the electrostatic error estimator to fix performance
     on problems with material interfaces.
+  - Fixed error estimation bug affecting time-dependent simulation types (driven, transient,
+    eigenmode) where the recovery of the electric flux density also needs to be taken into
+    account in addition to the magnetic field.
   - Fixed a bug related to mesh cleaning for unspecified domains and mesh partitioning.
   - Change computation of domain energy postprocessing for electrostatic and magnetostatic
     simulation types in order to improve performance.

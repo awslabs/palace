@@ -21,7 +21,7 @@ class Array;
 namespace palace
 {
 
-class AuxiliaryFiniteElementSpaceHierarchy;
+class FiniteElementSpaceHierarchy;
 class FiniteElementSpace;
 class MaterialOperator;
 
@@ -51,7 +51,7 @@ private:
 
 public:
   DivFreeSolver(const MaterialOperator &mat_op, FiniteElementSpace &nd_fespace,
-                AuxiliaryFiniteElementSpaceHierarchy &h1_fespaces,
+                FiniteElementSpaceHierarchy &h1_fespaces,
                 const std::vector<mfem::Array<int>> &h1_bdr_tdof_lists, double tol,
                 int max_it, int print);
 

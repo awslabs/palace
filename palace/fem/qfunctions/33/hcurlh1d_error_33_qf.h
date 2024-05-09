@@ -34,10 +34,8 @@ CEED_QFUNCTION(f_apply_hcurlh1d_error_33)(void *__restrict__ ctx, CeedInt Q,
     v2_loc[0] -= v1_loc[0];
     v2_loc[1] -= v1_loc[1];
     v2_loc[2] -= v1_loc[2];
-    v[i + Q * 0] =
+    v[i] =
         wdetJ[i] * (v2_loc[0] * v2_loc[0] + v2_loc[1] * v2_loc[1] + v2_loc[2] * v2_loc[2]);
-    v[i + Q * 1] =
-        wdetJ[i] * (v1_loc[0] * v1_loc[0] + v1_loc[1] * v1_loc[1] + v1_loc[2] * v1_loc[2]);
   }
   return 0;
 }
@@ -69,10 +67,8 @@ CEED_QFUNCTION(f_apply_h1dhcurl_error_33)(void *__restrict__ ctx, CeedInt Q,
     v2_loc[0] -= v1_loc[0];
     v2_loc[1] -= v1_loc[1];
     v2_loc[2] -= v1_loc[2];
-    v[i + Q * 0] =
+    v[i] =
         wdetJ[i] * (v2_loc[0] * v2_loc[0] + v2_loc[1] * v2_loc[1] + v2_loc[2] * v2_loc[2]);
-    v[i + Q * 1] =
-        wdetJ[i] * (v1_loc[0] * v1_loc[0] + v1_loc[1] * v1_loc[1] + v1_loc[2] * v1_loc[2]);
   }
   return 0;
 }

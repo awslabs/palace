@@ -3,6 +3,7 @@
 
 #include "farfieldboundaryoperator.hpp"
 
+#include "linalg/densematrix.hpp"
 #include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
@@ -104,15 +105,12 @@ void FarfieldBoundaryOperator::AddExtraSystemBdrCoefficients(
   // coefficient for the second-order ABC is 1/(2ik+2/r). Taking the radius of curvature as
   // infinity (plane wave scattering), the r-dependence vanishes and the contribution is
   // purely imaginary. Multiplying through by μ⁻¹ we get the material coefficient to ω as
-  // 1 / (μ √με). Also, this implementation ignores the divergence term ∇⋅Eₜ, as COMSOL
+  // 1 / (μ √(με)). Also, this implementation ignores the divergence term ∇⋅Eₜ, as COMSOL
   // does as well.
   if (farfield_attr.Size() && order > 1)
   {
-    mfem::DenseTensor muinvc0(mat_op.GetLightSpeed());
-    for (int k = 0; k < muinvc0.SizeK(); k++)
-    {
-      Mult(mat_op.GetInvPermeability()(k), mat_op.GetLightSpeed()(k), muinvc0(k));
-    }
+    mfem::DenseTensor muinvc0 =
+        linalg::Mult(mat_op.GetInvPermeability(), mat_op.GetLightSpeed());
     MaterialPropertyCoefficient muinvc0_func(mat_op.GetBdrAttributeToMaterial(), muinvc0);
     muinvc0_func.RestrictCoefficient(mat_op.GetCeedBdrAttributes(farfield_attr));
 

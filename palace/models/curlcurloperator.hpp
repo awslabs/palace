@@ -38,9 +38,8 @@ private:
   std::vector<std::unique_ptr<mfem::ND_FECollection>> nd_fecs;
   std::vector<std::unique_ptr<mfem::H1_FECollection>> h1_fecs;
   std::unique_ptr<mfem::RT_FECollection> rt_fec;
-  FiniteElementSpaceHierarchy nd_fespaces;
-  AuxiliaryFiniteElementSpaceHierarchy h1_fespaces;
-  AuxiliaryFiniteElementSpace rt_fespace;
+  FiniteElementSpaceHierarchy nd_fespaces, h1_fespaces;
+  FiniteElementSpace rt_fespace;
 
   // Operator for domain material properties.
   MaterialOperator mat_op;
@@ -83,7 +82,10 @@ public:
   std::unique_ptr<Operator> GetStiffnessMatrix();
 
   // Construct and return the discrete curl matrix.
-  const Operator &GetCurlMatrix() const { return GetRTSpace().GetDiscreteInterpolator(); }
+  const Operator &GetCurlMatrix() const
+  {
+    return GetRTSpace().GetDiscreteInterpolator(GetNDSpace());
+  }
 
   // Assemble the right-hand side source term vector for a current source applied on
   // specified excited boundaries.

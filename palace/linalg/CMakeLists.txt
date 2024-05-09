@@ -11,6 +11,7 @@ target_sources(${LIB_TARGET_NAME}
   ${CMAKE_CURRENT_SOURCE_DIR}/ams.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/arpack.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/chebyshev.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/densematrix.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/distrelaxation.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/divfree.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/errorestimator.cpp
@@ -34,6 +35,7 @@ target_sources(${LIB_TARGET_NAME}
 set(TARGET_SOURCES_DEVICE
   ${TARGET_SOURCES_DEVICE}
   ${CMAKE_CURRENT_SOURCE_DIR}/chebyshev.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/densematrix.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/jacobi.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/operator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/vector.cpp

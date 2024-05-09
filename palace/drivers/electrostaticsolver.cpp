@@ -47,7 +47,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
   // Initialize structures for storing and reducing the results of error estimation.
   GradFluxErrorEstimator estimator(
-      laplaceop.GetMaterialOp(), laplaceop.GetH1Space(), laplaceop.GetRTSpaces(),
+      laplaceop.GetMaterialOp(), laplaceop.GetNDSpace(), laplaceop.GetRTSpaces(),
       iodata.solver.linear.estimator_tol, iodata.solver.linear.estimator_max_it, 0,
       iodata.solver.linear.estimator_mg);
   ErrorIndicator indicator;
@@ -75,7 +75,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     Grad.AddMult(V[step], E, -1.0);
     postop.SetVGridFunction(V[step]);
     postop.SetEGridFunction(E);
-    double E_elec = postop.GetEFieldEnergy();
+    const double E_elec = postop.GetEFieldEnergy();
     Mpi::Print(" Sol. ||V|| = {:.6e} (||RHS|| = {:.6e})\n",
                linalg::Norml2(laplaceop.GetComm(), V[step]),
                linalg::Norml2(laplaceop.GetComm(), RHS));
@@ -86,7 +86,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
     // Calculate and record the error indicators.
     Mpi::Print(" Updating solution error estimates\n");
-    estimator.AddErrorIndicator(V[step], indicator);
+    estimator.AddErrorIndicator(E, E_elec, indicator);
 
     // Postprocess field solutions and optionally write solution to disk.
     Postprocess(postop, step, idx, E_elec, (step == nstep - 1) ? &indicator : nullptr);

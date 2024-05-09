@@ -10,7 +10,7 @@
 // in[0] is geometry quadrature data, shape [ncomp=2+space_dim*dim, Q]
 // in[1] is active vector 1, shape [qcomp=dim, ncomp=1, Q]
 // in[2] is active vector 2, shape [qcomp=dim, ncomp=1, Q]
-// out[0] is active vector, shape [ncomp=2, Q]
+// out[0] is active vector, shape [ncomp=1, Q]
 
 // Only for the square Jacobian case where dim = space_dim.
 

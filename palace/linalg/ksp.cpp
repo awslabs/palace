@@ -138,7 +138,7 @@ template <typename OperType>
 std::unique_ptr<Solver<OperType>>
 ConfigurePreconditionerSolver(MPI_Comm comm, const IoData &iodata,
                               FiniteElementSpaceHierarchy &fespaces,
-                              AuxiliaryFiniteElementSpaceHierarchy *aux_fespaces)
+                              FiniteElementSpaceHierarchy *aux_fespaces)
 {
   // Create the real-valued solver first.
   std::unique_ptr<Solver<OperType>> pc;
@@ -212,7 +212,7 @@ ConfigurePreconditionerSolver(MPI_Comm comm, const IoData &iodata,
       {
         MFEM_VERIFY(aux_fespaces, "Multigrid with auxiliary space smoothers requires both "
                                   "primary space and auxiliary spaces for construction!");
-        const auto G = aux_fespaces->GetDiscreteInterpolators();
+        const auto G = fespaces.GetDiscreteInterpolators(*aux_fespaces);
         return std::make_unique<GeometricMultigridSolver<OperType>>(
             comm, iodata, std::move(pc), fespaces.GetProlongationOperators(), &G);
       }
@@ -236,7 +236,7 @@ ConfigurePreconditionerSolver(MPI_Comm comm, const IoData &iodata,
 template <typename OperType>
 BaseKspSolver<OperType>::BaseKspSolver(const IoData &iodata,
                                        FiniteElementSpaceHierarchy &fespaces,
-                                       AuxiliaryFiniteElementSpaceHierarchy *aux_fespaces)
+                                       FiniteElementSpaceHierarchy *aux_fespaces)
   : BaseKspSolver(
         ConfigureKrylovSolver<OperType>(fespaces.GetFinestFESpace().GetComm(), iodata),
         ConfigurePreconditionerSolver<OperType>(fespaces.GetFinestFESpace().GetComm(),

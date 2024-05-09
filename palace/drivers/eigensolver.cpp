@@ -275,9 +275,10 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
   // Calculate and record the error indicators, and postprocess the results.
   Mpi::Print("\nComputing solution error estimates and performing postprocessing\n");
-  CurlFluxErrorEstimator<ComplexVector> estimator(
-      spaceop.GetMaterialOp(), spaceop.GetNDSpaces(), iodata.solver.linear.estimator_tol,
-      iodata.solver.linear.estimator_max_it, 0, iodata.solver.linear.estimator_mg);
+  TimeDependentFluxErrorEstimator<ComplexVector> estimator(
+      spaceop.GetMaterialOp(), spaceop.GetNDSpaces(), spaceop.GetRTSpaces(),
+      iodata.solver.linear.estimator_tol, iodata.solver.linear.estimator_max_it, 0,
+      iodata.solver.linear.estimator_mg);
   ErrorIndicator indicator;
   if (!KM)
   {
@@ -314,13 +315,13 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     postop.SetEGridFunction(E);
     postop.SetBGridFunction(B);
     postop.UpdatePorts(spaceop.GetLumpedPortOp(), omega.real());
-    double E_elec = postop.GetEFieldEnergy();
-    double E_mag = postop.GetHFieldEnergy();
+    const double E_elec = postop.GetEFieldEnergy();
+    const double E_mag = postop.GetHFieldEnergy();
 
     // Calculate and record the error indicators.
     if (i < iodata.solver.eigenmode.n)
     {
-      estimator.AddErrorIndicator(E, indicator);
+      estimator.AddErrorIndicator(E, B, E_elec + E_mag, indicator);
     }
 
     // Postprocess the mode.
@@ -339,8 +340,8 @@ void EigenSolver::Postprocess(const PostOperator &postop,
 {
   // The internal GridFunctions for PostOperator have already been set from the E and B
   // solutions in the main loop over converged eigenvalues.
-  double E_cap = postop.GetLumpedCapacitorEnergy(lumped_port_op);
-  double E_ind = postop.GetLumpedInductorEnergy(lumped_port_op);
+  const double E_cap = postop.GetLumpedCapacitorEnergy(lumped_port_op);
+  const double E_ind = postop.GetLumpedInductorEnergy(lumped_port_op);
   PostprocessEigen(i, omega, error_bkwd, error_abs, num_conv);
   PostprocessPorts(postop, lumped_port_op, i);
   PostprocessEPR(postop, lumped_port_op, i, omega, E_elec + E_cap);

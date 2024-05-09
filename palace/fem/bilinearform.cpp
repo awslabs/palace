@@ -151,9 +151,8 @@ std::unique_ptr<Operator> BilinearForm::Assemble(bool skip_zeros) const
   }
 }
 
-template <typename T>
 std::vector<std::unique_ptr<Operator>>
-BilinearForm::Assemble(const BaseFiniteElementSpaceHierarchy<T> &fespaces, bool skip_zeros,
+BilinearForm::Assemble(const FiniteElementSpaceHierarchy &fespaces, bool skip_zeros,
                        std::size_t l0) const
 {
   // Only available for square operators (same test and trial spaces).
@@ -282,12 +281,5 @@ std::unique_ptr<ceed::Operator> DiscreteLinearOperator::PartialAssemble() const
 
   return op;
 }
-
-template std::vector<std::unique_ptr<Operator>>
-BilinearForm::Assemble(const BaseFiniteElementSpaceHierarchy<FiniteElementSpace> &, bool,
-                       std::size_t) const;
-template std::vector<std::unique_ptr<Operator>>
-BilinearForm::Assemble(const BaseFiniteElementSpaceHierarchy<AuxiliaryFiniteElementSpace> &,
-                       bool, std::size_t) const;
 
 }  // namespace palace

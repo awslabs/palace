@@ -551,9 +551,7 @@ void AssembleCeedElementErrorIntegrator(
   MFEM_VERIFY(!info.assemble_q_data,
               "Quadrature interpolator does not support quadrature data assembly!");
 
-  // Create basis for summing contributions from all quadrature points on the element. Two
-  // components, one for the numerator and one for the denominator (scaling).
-  constexpr CeedInt elem_num_comp = 2;
+  // Create basis for summing contributions from all quadrature points on the element.
   CeedInt num_qpts;
   PalaceCeedCall(ceed, CeedBasisGetNumQuadraturePoints(input1_basis, &num_qpts));
   CeedBasis mesh_elem_basis;
@@ -564,9 +562,9 @@ void AssembleCeedElementErrorIntegrator(
     Gt = 0.0;
     qX = 0.0;
     qW = 0.0;
-    PalaceCeedCall(ceed, CeedBasisCreateH1(ceed, CEED_TOPOLOGY_LINE, elem_num_comp, 1,
-                                           num_qpts, Bt.GetData(), Gt.GetData(),
-                                           qX.GetData(), qW.GetData(), &mesh_elem_basis));
+    PalaceCeedCall(ceed, CeedBasisCreateH1(ceed, CEED_TOPOLOGY_LINE, 1, 1, num_qpts,
+                                           Bt.GetData(), Gt.GetData(), qX.GetData(),
+                                           qW.GetData(), &mesh_elem_basis));
   }
 
   // Create the QFunction that defines the action of the operator.
@@ -595,8 +593,7 @@ void AssembleCeedElementErrorIntegrator(
   }
   AddQFunctionActiveInputs(info.trial_ops, ceed, input1_basis, apply_qf, "u_1");
   AddQFunctionActiveInputs(info.test_ops, ceed, input2_basis, apply_qf, "u_2");
-  PalaceCeedCall(ceed,
-                 CeedQFunctionAddOutput(apply_qf, "v", elem_num_comp, CEED_EVAL_INTERP));
+  PalaceCeedCall(ceed, CeedQFunctionAddOutput(apply_qf, "v", 1, CEED_EVAL_INTERP));
 
   // Create the operator.
   PalaceCeedCall(ceed, CeedOperatorCreate(ceed, apply_qf, nullptr, nullptr, op));

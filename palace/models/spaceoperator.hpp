@@ -46,10 +46,8 @@ private:
   // various purposes throughout the code including postprocessing.
   std::vector<std::unique_ptr<mfem::ND_FECollection>> nd_fecs;
   std::vector<std::unique_ptr<mfem::H1_FECollection>> h1_fecs;
-  std::unique_ptr<mfem::RT_FECollection> rt_fec;
-  FiniteElementSpaceHierarchy nd_fespaces;
-  AuxiliaryFiniteElementSpaceHierarchy h1_fespaces;
-  AuxiliaryFiniteElementSpace rt_fespace;
+  std::vector<std::unique_ptr<mfem::RT_FECollection>> rt_fecs;
+  FiniteElementSpaceHierarchy nd_fespaces, h1_fespaces, rt_fespaces;
 
   // Operator for domain material properties.
   MaterialOperator mat_op;
@@ -126,8 +124,10 @@ public:
   const auto &GetH1Spaces() const { return h1_fespaces; }
   auto &GetH1Space() { return h1_fespaces.GetFinestFESpace(); }
   const auto &GetH1Space() const { return h1_fespaces.GetFinestFESpace(); }
-  auto &GetRTSpace() { return rt_fespace; }
-  const auto &GetRTSpace() const { return rt_fespace; }
+  auto &GetRTSpaces() { return rt_fespaces; }
+  const auto &GetRTSpaces() const { return rt_fespaces; }
+  auto &GetRTSpace() { return rt_fespaces.GetFinestFESpace(); }
+  const auto &GetRTSpace() const { return rt_fespaces.GetFinestFESpace(); }
 
   // Access the underlying mesh object.
   const auto &GetMesh() const { return GetNDSpace().GetMesh(); }
@@ -180,9 +180,12 @@ public:
   // Construct and return the discrete curl or gradient matrices.
   const Operator &GetGradMatrix() const
   {
-    return GetH1Spaces().GetFinestFESpace().GetDiscreteInterpolator();
+    return GetNDSpace().GetDiscreteInterpolator(GetH1Space());
   }
-  const Operator &GetCurlMatrix() const { return GetRTSpace().GetDiscreteInterpolator(); }
+  const Operator &GetCurlMatrix() const
+  {
+    return GetRTSpace().GetDiscreteInterpolator(GetNDSpace());
+  }
 
   // Assemble the right-hand side source term vector for an incident field or current source
   // applied on specified excited boundaries. The return value indicates whether or not the
