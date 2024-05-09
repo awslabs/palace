@@ -45,8 +45,8 @@ private:
 
   // Objects for grid function postprocessing from the FE solution.
   mutable std::unique_ptr<GridFunction> E, B, V, A;
-  std::unique_ptr<mfem::VectorCoefficient> S, Esr, Esi, Bsr, Bsi, As, Jsr, Jsi;
-  std::unique_ptr<mfem::Coefficient> Ue, Um, Vs, Qsr, Qsi;
+  std::unique_ptr<mfem::VectorCoefficient> S, E_sr, E_si, B_sr, B_si, A_s, J_sr, J_si;
+  std::unique_ptr<mfem::Coefficient> U_e, U_m, V_s, Q_sr, Q_si;
 
   // Wave port boundary mode field postprocessing.
   struct WavePortFieldData
@@ -71,9 +71,10 @@ private:
   void InitializeDataCollection(const IoData &iodata);
 
 public:
-  PostOperator(const IoData &iodata, SpaceOperator &spaceop, const std::string &name);
-  PostOperator(const IoData &iodata, LaplaceOperator &laplaceop, const std::string &name);
-  PostOperator(const IoData &iodata, CurlCurlOperator &curlcurlop, const std::string &name);
+  PostOperator(const IoData &iodata, SpaceOperator &space_op, const std::string &name);
+  PostOperator(const IoData &iodata, LaplaceOperator &laplace_op, const std::string &name);
+  PostOperator(const IoData &iodata, CurlCurlOperator &curlcurl_op,
+               const std::string &name);
 
   // Access to surface and domain postprocessing objects.
   const auto &GetSurfacePostOp() const { return surf_post_op; }
@@ -133,7 +134,7 @@ public:
 
   // Postprocess the partitipation ratio for interface lossy dielectric losses in the
   // electric field mode.
-  double GetInterfaceParticipation(int idx, double Em) const;
+  double GetInterfaceParticipation(int idx, double E_m) const;
 
   // Update cached port voltages and currents for lumped and wave port operators.
   void UpdatePorts(const LumpedPortOperator &lumped_port_op,
@@ -173,11 +174,11 @@ public:
 
   // Postprocess the EPR for the electric field solution and lumped port index.
   double GetInductorParticipation(const LumpedPortOperator &lumped_port_op, int idx,
-                                  double Em) const;
+                                  double E_m) const;
 
   // Postprocess the coupling rate for radiative loss to the given I-O port index.
   double GetExternalKappa(const LumpedPortOperator &lumped_port_op, int idx,
-                          double Em) const;
+                          double E_m) const;
 
   // Write to disk the E- and B-fields extracted from the solution vectors. Note that fields
   // are not redimensionalized, to do so one needs to compute: B <= B * (μ₀ H₀), E <= E *

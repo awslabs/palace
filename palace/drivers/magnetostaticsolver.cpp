@@ -26,41 +26,41 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // handled eliminating the rows and columns of the system matrix for the corresponding
   // dofs.
   BlockTimer bt0(Timer::CONSTRUCT);
-  CurlCurlOperator curlcurlop(iodata, mesh);
-  auto K = curlcurlop.GetStiffnessMatrix();
-  const auto &Curl = curlcurlop.GetCurlMatrix();
-  SaveMetadata(curlcurlop.GetNDSpaces());
+  CurlCurlOperator curlcurl_op(iodata, mesh);
+  auto K = curlcurl_op.GetStiffnessMatrix();
+  const auto &Curl = curlcurl_op.GetCurlMatrix();
+  SaveMetadata(curlcurl_op.GetNDSpaces());
 
   // Set up the linear solver.
-  KspSolver ksp(iodata, curlcurlop.GetNDSpaces(), &curlcurlop.GetH1Spaces());
+  KspSolver ksp(iodata, curlcurl_op.GetNDSpaces(), &curlcurl_op.GetH1Spaces());
   ksp.SetOperators(*K, *K);
 
   // Terminal indices are the set of boundaries over which to compute the inductance matrix.
-  PostOperator postop(iodata, curlcurlop, "magnetostatic");
-  int nstep = static_cast<int>(curlcurlop.GetSurfaceCurrentOp().Size());
-  MFEM_VERIFY(nstep > 0,
+  PostOperator post_op(iodata, curlcurl_op, "magnetostatic");
+  int n_step = static_cast<int>(curlcurl_op.GetSurfaceCurrentOp().Size());
+  MFEM_VERIFY(n_step > 0,
               "No surface current boundaries specified for magnetostatic simulation!");
 
   // Source term and solution vector storage.
   Vector RHS(Curl.Width()), B(Curl.Height());
-  std::vector<Vector> A(nstep);
-  std::vector<double> I_inc(nstep);
+  std::vector<Vector> A(n_step);
+  std::vector<double> I_inc(n_step);
 
   // Initialize structures for storing and reducing the results of error estimation.
   CurlFluxErrorEstimator estimator(
-      curlcurlop.GetMaterialOp(), curlcurlop.GetRTSpace(), curlcurlop.GetNDSpaces(),
+      curlcurl_op.GetMaterialOp(), curlcurl_op.GetRTSpace(), curlcurl_op.GetNDSpaces(),
       iodata.solver.linear.estimator_tol, iodata.solver.linear.estimator_max_it, 0,
       iodata.solver.linear.estimator_mg);
   ErrorIndicator indicator;
 
   // Main loop over current source boundaries.
-  Mpi::Print("\nComputing magnetostatic fields for {:d} source boundar{}\n", nstep,
-             (nstep > 1) ? "ies" : "y");
+  Mpi::Print("\nComputing magnetostatic fields for {:d} source boundar{}\n", n_step,
+             (n_step > 1) ? "ies" : "y");
   int step = 0;
   auto t0 = Timer::Now();
-  for (const auto &[idx, data] : curlcurlop.GetSurfaceCurrentOp())
+  for (const auto &[idx, data] : curlcurl_op.GetSurfaceCurrentOp())
   {
-    Mpi::Print("\nIt {:d}/{:d}: Index = {:d} (elapsed time = {:.2e} s)\n", step + 1, nstep,
+    Mpi::Print("\nIt {:d}/{:d}: Index = {:d} (elapsed time = {:.2e} s)\n", step + 1, n_step,
                idx, Timer::Duration(Timer::Now() - t0).count());
 
     // Form and solve the linear system for a prescribed current on the specified source.
@@ -68,19 +68,19 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     A[step].SetSize(RHS.Size());
     A[step].UseDevice(true);
     A[step] = 0.0;
-    curlcurlop.GetExcitationVector(idx, RHS);
+    curlcurl_op.GetExcitationVector(idx, RHS);
     ksp.Mult(RHS, A[step]);
 
     // Compute B = ∇ x A on the true dofs, and set the internal GridFunctions in
     // PostOperator for all postprocessing operations.
     BlockTimer bt2(Timer::POSTPRO);
     Curl.Mult(A[step], B);
-    postop.SetAGridFunction(A[step]);
-    postop.SetBGridFunction(B);
-    const double E_mag = postop.GetHFieldEnergy();
+    post_op.SetAGridFunction(A[step]);
+    post_op.SetBGridFunction(B);
+    const double E_mag = post_op.GetHFieldEnergy();
     Mpi::Print(" Sol. ||A|| = {:.6e} (||RHS|| = {:.6e})\n",
-               linalg::Norml2(curlcurlop.GetComm(), A[step]),
-               linalg::Norml2(curlcurlop.GetComm(), RHS));
+               linalg::Norml2(curlcurl_op.GetComm(), A[step]),
+               linalg::Norml2(curlcurl_op.GetComm(), RHS));
     {
       const double J = iodata.DimensionalizeValue(IoData::ValueType::ENERGY, 1.0);
       Mpi::Print(" Field energy H = {:.3e} J\n", E_mag * J);
@@ -92,8 +92,8 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     estimator.AddErrorIndicator(B, E_mag, indicator);
 
     // Postprocess field solutions and optionally write solution to disk.
-    Postprocess(postop, step, idx, I_inc[step], E_mag,
-                (step == nstep - 1) ? &indicator : nullptr);
+    Postprocess(post_op, step, idx, I_inc[step], E_mag,
+                (step == n_step - 1) ? &indicator : nullptr);
 
     // Next source.
     step++;
@@ -102,31 +102,31 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // Postprocess the inductance matrix from the computed field solutions.
   BlockTimer bt1(Timer::POSTPRO);
   SaveMetadata(ksp);
-  PostprocessTerminals(postop, curlcurlop.GetSurfaceCurrentOp(), A, I_inc);
-  return {indicator, curlcurlop.GlobalTrueVSize()};
+  PostprocessTerminals(post_op, curlcurl_op.GetSurfaceCurrentOp(), A, I_inc);
+  return {indicator, curlcurl_op.GlobalTrueVSize()};
 }
 
-void MagnetostaticSolver::Postprocess(const PostOperator &postop, int step, int idx,
+void MagnetostaticSolver::Postprocess(const PostOperator &post_op, int step, int idx,
                                       double I_inc, double E_mag,
                                       const ErrorIndicator *indicator) const
 {
   // The internal GridFunctions for PostOperator have already been set from the A solution
   // in the main loop.
-  PostprocessDomains(postop, "i", step, idx, 0.0, E_mag, 0.0, 0.0);
-  PostprocessSurfaces(postop, "i", step, idx, 0.0, E_mag);
-  PostprocessProbes(postop, "i", step, idx);
+  PostprocessDomains(post_op, "i", step, idx, 0.0, E_mag, 0.0, 0.0);
+  PostprocessSurfaces(post_op, "i", step, idx, 0.0, E_mag);
+  PostprocessProbes(post_op, "i", step, idx);
   if (step < iodata.solver.magnetostatic.n_post)
   {
-    PostprocessFields(postop, step, idx);
+    PostprocessFields(post_op, step, idx);
     Mpi::Print(" Wrote fields to disk for source {:d}\n", idx);
   }
   if (indicator)
   {
-    PostprocessErrorIndicator(postop, *indicator, iodata.solver.magnetostatic.n_post > 0);
+    PostprocessErrorIndicator(post_op, *indicator, iodata.solver.magnetostatic.n_post > 0);
   }
 }
 
-void MagnetostaticSolver::PostprocessTerminals(PostOperator &postop,
+void MagnetostaticSolver::PostprocessTerminals(PostOperator &post_op,
                                                const SurfaceCurrentOperator &surf_j_op,
                                                const std::vector<Vector> &A,
                                                const std::vector<double> &I_inc) const
@@ -142,19 +142,19 @@ void MagnetostaticSolver::PostprocessTerminals(PostOperator &postop,
   for (int i = 0; i < M.Height(); i++)
   {
     // Diagonal: Mᵢᵢ = 2 Uₘ(Aᵢ) / Iᵢ² = (Aᵢᵀ K Aᵢ) / Iᵢ²
-    auto &A_gf = postop.GetAGridFunction().Real();
-    auto &H_gf = postop.GetDomainPostOp().H;
+    auto &A_gf = post_op.GetAGridFunction().Real();
+    auto &H_gf = post_op.GetDomainPostOp().H;
     A_gf.SetFromTrueDofs(A[i]);
-    postop.GetDomainPostOp().M_mag->Mult(A_gf, H_gf);
+    post_op.GetDomainPostOp().M_mag->Mult(A_gf, H_gf);
     M(i, i) = Mm(i, i) =
-        linalg::Dot<Vector>(postop.GetComm(), A_gf, H_gf) / (I_inc[i] * I_inc[i]);
+        linalg::Dot<Vector>(post_op.GetComm(), A_gf, H_gf) / (I_inc[i] * I_inc[i]);
 
     // Off-diagonals: Mᵢⱼ = Uₘ(Aᵢ + Aⱼ) / (Iᵢ Iⱼ) - 1/2 (Iᵢ/Iⱼ Mᵢᵢ + Iⱼ/Iᵢ Mⱼⱼ)
     //                    = (Aⱼᵀ K Aᵢ) / (Iᵢ Iⱼ)
     for (int j = i + 1; j < M.Width(); j++)
     {
       A_gf.SetFromTrueDofs(A[j]);
-      M(i, j) = linalg::Dot<Vector>(postop.GetComm(), A_gf, H_gf) / (I_inc[i] * I_inc[j]);
+      M(i, j) = linalg::Dot<Vector>(post_op.GetComm(), A_gf, H_gf) / (I_inc[i] * I_inc[j]);
       Mm(i, j) = -M(i, j);
       Mm(i, i) -= Mm(i, j);
     }

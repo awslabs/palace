@@ -53,23 +53,23 @@ protected:
   }
 
   // Common domain postprocessing for all simulation types.
-  void PostprocessDomains(const PostOperator &postop, const std::string &name, int step,
+  void PostprocessDomains(const PostOperator &post_op, const std::string &name, int step,
                           double time, double E_elec, double E_mag, double E_cap,
                           double E_ind) const;
 
   // Common surface postprocessing for all simulation types.
-  void PostprocessSurfaces(const PostOperator &postop, const std::string &name, int step,
+  void PostprocessSurfaces(const PostOperator &post_op, const std::string &name, int step,
                            double time, double E_elec, double E_mag) const;
 
   // Common probe postprocessing for all simulation types.
-  void PostprocessProbes(const PostOperator &postop, const std::string &name, int step,
+  void PostprocessProbes(const PostOperator &post_op, const std::string &name, int step,
                          double time) const;
 
   // Common field visualization postprocessing for all simulation types.
-  void PostprocessFields(const PostOperator &postop, int step, double time) const;
+  void PostprocessFields(const PostOperator &post_op, int step, double time) const;
 
   // Common error indicator postprocessing for all simulation types.
-  void PostprocessErrorIndicator(const PostOperator &postop,
+  void PostprocessErrorIndicator(const PostOperator &post_op,
                                  const ErrorIndicator &indicator, bool fields) const;
 
   // Performs a solve using the mesh sequence, then reports error indicators and the number

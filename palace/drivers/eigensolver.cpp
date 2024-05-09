@@ -32,15 +32,15 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // values for the mass matrix PEC dof shift the Dirichlet eigenvalues out of the
   // computational range. The damping matrix may be nullptr.
   BlockTimer bt0(Timer::CONSTRUCT);
-  SpaceOperator spaceop(iodata, mesh);
-  auto K = spaceop.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE);
-  auto C = spaceop.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
-  auto M = spaceop.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
-  const auto &Curl = spaceop.GetCurlMatrix();
-  SaveMetadata(spaceop.GetNDSpaces());
+  SpaceOperator space_op(iodata, mesh);
+  auto K = space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE);
+  auto C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+  auto M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+  const auto &Curl = space_op.GetCurlMatrix();
+  SaveMetadata(space_op.GetNDSpaces());
 
   // Configure objects for postprocessing.
-  PostOperator postop(iodata, spaceop, "eigenmode");
+  PostOperator post_op(iodata, space_op, "eigenmode");
   ComplexVector E(Curl.Width()), B(Curl.Height());
   E.UseDevice(true);
   B.UseDevice(true);
@@ -84,12 +84,12 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     Mpi::Print("\nConfiguring ARPACK eigenvalue solver:\n");
     if (C)
     {
-      eigen = std::make_unique<arpack::ArpackPEPSolver>(spaceop.GetComm(),
+      eigen = std::make_unique<arpack::ArpackPEPSolver>(space_op.GetComm(),
                                                         iodata.problem.verbose);
     }
     else
     {
-      eigen = std::make_unique<arpack::ArpackEPSSolver>(spaceop.GetComm(),
+      eigen = std::make_unique<arpack::ArpackEPSSolver>(space_op.GetComm(),
                                                         iodata.problem.verbose);
     }
 #endif
@@ -103,20 +103,20 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     {
       if (!iodata.solver.eigenmode.pep_linear)
       {
-        slepc = std::make_unique<slepc::SlepcPEPSolver>(spaceop.GetComm(),
+        slepc = std::make_unique<slepc::SlepcPEPSolver>(space_op.GetComm(),
                                                         iodata.problem.verbose);
         slepc->SetType(slepc::SlepcEigenvalueSolver::Type::TOAR);
       }
       else
       {
-        slepc = std::make_unique<slepc::SlepcPEPLinearSolver>(spaceop.GetComm(),
+        slepc = std::make_unique<slepc::SlepcPEPLinearSolver>(space_op.GetComm(),
                                                               iodata.problem.verbose);
         slepc->SetType(slepc::SlepcEigenvalueSolver::Type::KRYLOVSCHUR);
       }
     }
     else
     {
-      slepc = std::make_unique<slepc::SlepcEPSSolver>(spaceop.GetComm(),
+      slepc = std::make_unique<slepc::SlepcEPSSolver>(space_op.GetComm(),
                                                       iodata.problem.verbose);
       slepc->SetType(slepc::SlepcEigenvalueSolver::Type::KRYLOVSCHUR);
     }
@@ -151,11 +151,11 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   if (iodata.solver.eigenmode.mass_orthog)
   {
     Mpi::Print(" Basis uses M-inner product\n");
-    KM = spaceop.GetInnerProductMatrix(0.0, 1.0, nullptr, M.get());
+    KM = space_op.GetInnerProductMatrix(0.0, 1.0, nullptr, M.get());
     eigen->SetBMat(*KM);
 
     // Mpi::Print(" Basis uses (K + M)-inner product\n");
-    // KM = spaceop.GetInnerProductMatrix(1.0, 1.0, K.get(), M.get());
+    // KM = space_op.GetInnerProductMatrix(1.0, 1.0, K.get(), M.get());
     // eigen->SetBMat(*KM);
   }
 
@@ -167,8 +167,8 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     Mpi::Print(" Configuring divergence-free projection\n");
     constexpr int divfree_verbose = 0;
     divfree = std::make_unique<DivFreeSolver<ComplexVector>>(
-        spaceop.GetMaterialOp(), spaceop.GetNDSpace(), spaceop.GetH1Spaces(),
-        spaceop.GetAuxBdrTDofLists(), iodata.solver.linear.divfree_tol,
+        space_op.GetMaterialOp(), space_op.GetNDSpace(), space_op.GetH1Spaces(),
+        space_op.GetAuxBdrTDofLists(), iodata.solver.linear.divfree_tol,
         iodata.solver.linear.divfree_max_it, divfree_verbose);
     eigen->SetDivFreeProjector(*divfree);
   }
@@ -181,12 +181,12 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     if (iodata.solver.eigenmode.init_v0_const)
     {
       Mpi::Print(" Using constant starting vector\n");
-      spaceop.GetConstantInitialVector(v0);
+      space_op.GetConstantInitialVector(v0);
     }
     else
     {
       Mpi::Print(" Using random starting vector\n");
-      spaceop.GetRandomInitialVector(v0);
+      space_op.GetRandomInitialVector(v0);
     }
     if (divfree)
     {
@@ -195,7 +195,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     eigen->SetInitialSpace(v0);  // Copies the vector
 
     // Debug
-    // const auto &Grad = spaceop.GetGradMatrix();
+    // const auto &Grad = space_op.GetGradMatrix();
     // ComplexVector r0(Grad->Width());
     // r0.UseDevice(true);
     // Grad.MultTranspose(v0.Real(), r0.Real());
@@ -248,13 +248,13 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // (K - σ² M) or P(iσ) = (K + iσ C - σ² M) during the eigenvalue solve. The
   // preconditioner for complex linear systems is constructed from a real approximation
   // to the complex system matrix.
-  auto A = spaceop.GetSystemMatrix(std::complex<double>(1.0, 0.0), 1i * target,
-                                   std::complex<double>(-target * target, 0.0), K.get(),
-                                   C.get(), M.get());
-  auto P = spaceop.GetPreconditionerMatrix<ComplexOperator>(1.0, target, -target * target,
-                                                            target);
-  auto ksp = std::make_unique<ComplexKspSolver>(iodata, spaceop.GetNDSpaces(),
-                                                &spaceop.GetH1Spaces());
+  auto A = space_op.GetSystemMatrix(std::complex<double>(1.0, 0.0), 1i * target,
+                                    std::complex<double>(-target * target, 0.0), K.get(),
+                                    C.get(), M.get());
+  auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(1.0, target, -target * target,
+                                                             target);
+  auto ksp = std::make_unique<ComplexKspSolver>(iodata, space_op.GetNDSpaces(),
+                                                &space_op.GetH1Spaces());
   ksp->SetOperators(*A, *P);
   eigen->SetLinearSolver(*ksp);
 
@@ -276,7 +276,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // Calculate and record the error indicators, and postprocess the results.
   Mpi::Print("\nComputing solution error estimates and performing postprocessing\n");
   TimeDependentFluxErrorEstimator<ComplexVector> estimator(
-      spaceop.GetMaterialOp(), spaceop.GetNDSpaces(), spaceop.GetRTSpaces(),
+      space_op.GetMaterialOp(), space_op.GetNDSpaces(), space_op.GetRTSpaces(),
       iodata.solver.linear.estimator_tol, iodata.solver.linear.estimator_max_it, 0,
       iodata.solver.linear.estimator_mg);
   ErrorIndicator indicator;
@@ -284,7 +284,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   {
     // Normalize the finalized eigenvectors with respect to mass matrix (unit electric field
     // energy) even if they are not computed to be orthogonal with respect to it.
-    KM = spaceop.GetInnerProductMatrix(0.0, 1.0, nullptr, M.get());
+    KM = space_op.GetInnerProductMatrix(0.0, 1.0, nullptr, M.get());
     eigen->SetBMat(*KM);
     eigen->RescaleEigenvectors(num_conv);
   }
@@ -312,11 +312,11 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     Curl.Mult(E.Real(), B.Real());
     Curl.Mult(E.Imag(), B.Imag());
     B *= -1.0 / (1i * omega);
-    postop.SetEGridFunction(E);
-    postop.SetBGridFunction(B);
-    postop.UpdatePorts(spaceop.GetLumpedPortOp(), omega.real());
-    const double E_elec = postop.GetEFieldEnergy();
-    const double E_mag = postop.GetHFieldEnergy();
+    post_op.SetEGridFunction(E);
+    post_op.SetBGridFunction(B);
+    post_op.UpdatePorts(space_op.GetLumpedPortOp(), omega.real());
+    const double E_elec = post_op.GetEFieldEnergy();
+    const double E_mag = post_op.GetHFieldEnergy();
 
     // Calculate and record the error indicators.
     if (i < iodata.solver.eigenmode.n)
@@ -325,14 +325,14 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     }
 
     // Postprocess the mode.
-    Postprocess(postop, spaceop.GetLumpedPortOp(), i, omega, error_bkwd, error_abs,
+    Postprocess(post_op, space_op.GetLumpedPortOp(), i, omega, error_bkwd, error_abs,
                 num_conv, E_elec, E_mag,
                 (i == iodata.solver.eigenmode.n - 1) ? &indicator : nullptr);
   }
-  return {indicator, spaceop.GlobalTrueVSize()};
+  return {indicator, space_op.GlobalTrueVSize()};
 }
 
-void EigenSolver::Postprocess(const PostOperator &postop,
+void EigenSolver::Postprocess(const PostOperator &post_op,
                               const LumpedPortOperator &lumped_port_op, int i,
                               std::complex<double> omega, double error_bkwd,
                               double error_abs, int num_conv, double E_elec, double E_mag,
@@ -340,22 +340,22 @@ void EigenSolver::Postprocess(const PostOperator &postop,
 {
   // The internal GridFunctions for PostOperator have already been set from the E and B
   // solutions in the main loop over converged eigenvalues.
-  const double E_cap = postop.GetLumpedCapacitorEnergy(lumped_port_op);
-  const double E_ind = postop.GetLumpedInductorEnergy(lumped_port_op);
+  const double E_cap = post_op.GetLumpedCapacitorEnergy(lumped_port_op);
+  const double E_ind = post_op.GetLumpedInductorEnergy(lumped_port_op);
   PostprocessEigen(i, omega, error_bkwd, error_abs, num_conv);
-  PostprocessPorts(postop, lumped_port_op, i);
-  PostprocessEPR(postop, lumped_port_op, i, omega, E_elec + E_cap);
-  PostprocessDomains(postop, "m", i, i + 1, E_elec, E_mag, E_cap, E_ind);
-  PostprocessSurfaces(postop, "m", i, i + 1, E_elec + E_cap, E_mag + E_ind);
-  PostprocessProbes(postop, "m", i, i + 1);
+  PostprocessPorts(post_op, lumped_port_op, i);
+  PostprocessEPR(post_op, lumped_port_op, i, omega, E_elec + E_cap);
+  PostprocessDomains(post_op, "m", i, i + 1, E_elec, E_mag, E_cap, E_ind);
+  PostprocessSurfaces(post_op, "m", i, i + 1, E_elec + E_cap, E_mag + E_ind);
+  PostprocessProbes(post_op, "m", i, i + 1);
   if (i < iodata.solver.eigenmode.n_post)
   {
-    PostprocessFields(postop, i, i + 1);
+    PostprocessFields(post_op, i, i + 1);
     Mpi::Print(" Wrote mode {:d} to disk\n", i + 1);
   }
   if (indicator)
   {
-    PostprocessErrorIndicator(postop, *indicator, iodata.solver.eigenmode.n_post > 0);
+    PostprocessErrorIndicator(post_op, *indicator, iodata.solver.eigenmode.n_post > 0);
   }
 }
 
@@ -450,7 +450,7 @@ void EigenSolver::PostprocessEigen(int i, std::complex<double> omega, double err
   }
 }
 
-void EigenSolver::PostprocessPorts(const PostOperator &postop,
+void EigenSolver::PostprocessPorts(const PostOperator &post_op,
                                    const LumpedPortOperator &lumped_port_op, int i) const
 {
   // Postprocess the frequency domain lumped port voltages and currents (complex magnitude
@@ -463,8 +463,8 @@ void EigenSolver::PostprocessPorts(const PostOperator &postop,
   port_data.reserve(lumped_port_op.Size());
   for (const auto &[idx, data] : lumped_port_op)
   {
-    const std::complex<double> V_i = postop.GetPortVoltage(lumped_port_op, idx);
-    const std::complex<double> I_i = postop.GetPortCurrent(lumped_port_op, idx);
+    const std::complex<double> V_i = post_op.GetPortVoltage(lumped_port_op, idx);
+    const std::complex<double> I_i = post_op.GetPortCurrent(lumped_port_op, idx);
     port_data.push_back({idx, iodata.DimensionalizeValue(IoData::ValueType::VOLTAGE, V_i),
                          iodata.DimensionalizeValue(IoData::ValueType::CURRENT, I_i)});
   }
@@ -540,9 +540,9 @@ void EigenSolver::PostprocessPorts(const PostOperator &postop,
   }
 }
 
-void EigenSolver::PostprocessEPR(const PostOperator &postop,
+void EigenSolver::PostprocessEPR(const PostOperator &post_op,
                                  const LumpedPortOperator &lumped_port_op, int i,
-                                 std::complex<double> omega, double Em) const
+                                 std::complex<double> omega, double E_m) const
 {
   // If ports have been specified in the model, compute the corresponding energy-
   // participation ratios (EPR) and write out to disk.
@@ -558,7 +558,7 @@ void EigenSolver::PostprocessEPR(const PostOperator &postop,
   {
     if (std::abs(data.L) > 0.0)
     {
-      const double pj = postop.GetInductorParticipation(lumped_port_op, idx, Em);
+      const double pj = post_op.GetInductorParticipation(lumped_port_op, idx, E_m);
       epr_L_data.push_back({idx, pj});
     }
   }
@@ -598,7 +598,7 @@ void EigenSolver::PostprocessEPR(const PostOperator &postop,
   {
     if (std::abs(data.R) > 0.0)
     {
-      const double Kl = postop.GetExternalKappa(lumped_port_op, idx, Em);
+      const double Kl = post_op.GetExternalKappa(lumped_port_op, idx, E_m);
       const double Ql = (Kl == 0.0) ? mfem::infinity() : omega.real() / std::abs(Kl);
       epr_IO_data.push_back(
           {idx, Ql, iodata.DimensionalizeValue(IoData::ValueType::FREQUENCY, Kl)});

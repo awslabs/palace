@@ -357,7 +357,7 @@ void RefinementData::SetUp(json &model)
       MFEM_VERIFY(bbmin->is_array() && bbmin->is_array(),
                   "config[\"Refinement\"][\"Boxes\"][\"BoundingBoxMin/Max\"] should "
                   "specify an array in the configuration file!");
-      BoxRefinementData &data = boxlist.emplace_back();
+      BoxRefinementData &data = box_list.emplace_back();
       data.ref_levels = it->at("Levels");                // Required
       data.bbmin = bbmin->get<std::array<double, 3>>();  // Required
       data.bbmax = bbmax->get<std::array<double, 3>>();  // Required
@@ -396,7 +396,7 @@ void RefinementData::SetUp(json &model)
       MFEM_VERIFY(ctr->is_array(),
                   "config[\"Refinement\"][\"Spheres\"][\"Center\"] should specify "
                   "an array in the configuration file!");
-      SphereRefinementData &data = spherelist.emplace_back();
+      SphereRefinementData &data = sphere_list.emplace_back();
       data.ref_levels = it->at("Levels");               // Required
       data.r = it->at("Radius");                        // Required
       data.center = ctr->get<std::array<double, 3>>();  // Required

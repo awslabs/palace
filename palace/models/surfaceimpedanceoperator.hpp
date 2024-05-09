@@ -48,9 +48,9 @@ public:
   // Add contributions to system matrices from impedance boundaries with nonzero inductance,
   // resistance, and/or capacitance. For boundaries with more than R/L/C, impedances add in
   // parallel.
-  void AddStiffnessBdrCoefficients(double coef, MaterialPropertyCoefficient &fb);
-  void AddDampingBdrCoefficients(double coef, MaterialPropertyCoefficient &fb);
-  void AddMassBdrCoefficients(double coef, MaterialPropertyCoefficient &fb);
+  void AddStiffnessBdrCoefficients(double coeff, MaterialPropertyCoefficient &fb);
+  void AddDampingBdrCoefficients(double coeff, MaterialPropertyCoefficient &fb);
+  void AddMassBdrCoefficients(double coeff, MaterialPropertyCoefficient &fb);
 };
 
 }  // namespace palace

@@ -43,23 +43,24 @@ public:
   std::function<void(double a0, double a1)> ConfigureLinearSolver;
 
 public:
-  TimeDependentCurlCurlOperator(const IoData &iodata, SpaceOperator &spaceop,
+  TimeDependentCurlCurlOperator(const IoData &iodata, SpaceOperator &space_op,
                                 std::function<double(double)> &dJ_coef, double t0,
                                 mfem::TimeDependentOperator::Type type)
-    : mfem::SecondOrderTimeDependentOperator(spaceop.GetNDSpace().GetTrueVSize(), t0, type),
-      comm(spaceop.GetComm()), dJ_coef(dJ_coef)
+    : mfem::SecondOrderTimeDependentOperator(space_op.GetNDSpace().GetTrueVSize(), t0,
+                                             type),
+      comm(space_op.GetComm()), dJ_coef(dJ_coef)
   {
     // Construct the system matrices defining the linear operator. PEC boundaries are
     // handled simply by setting diagonal entries of the mass matrix for the corresponding
     // dofs. Because the Dirichlet BC is always homogeneous, no special elimination is
     // required on the RHS. Diagonal entries are set in M (so M is non-singular).
-    K = spaceop.GetStiffnessMatrix<Operator>(Operator::DIAG_ZERO);
-    C = spaceop.GetDampingMatrix<Operator>(Operator::DIAG_ZERO);
-    M = spaceop.GetMassMatrix<Operator>(Operator::DIAG_ONE);
+    K = space_op.GetStiffnessMatrix<Operator>(Operator::DIAG_ZERO);
+    C = space_op.GetDampingMatrix<Operator>(Operator::DIAG_ZERO);
+    M = space_op.GetMassMatrix<Operator>(Operator::DIAG_ONE);
 
     // Set up RHS vector for the current source term: -g'(t) J, where g(t) handles the time
     // dependence.
-    spaceop.GetExcitationVector(NegJ);
+    space_op.GetExcitationVector(NegJ);
     RHS.SetSize(NegJ.Size());
     RHS.UseDevice(true);
 
@@ -78,18 +79,18 @@ public:
       // For explicit schemes, recommended to just use cheaper preconditioners. Otherwise,
       // use AMS or a direct solver. The system matrix is formed as a sequence of matrix
       // vector products, and is only assembled for preconditioning.
-      ConfigureLinearSolver = [this, &iodata, &spaceop](double a0, double a1)
+      ConfigureLinearSolver = [this, &iodata, &space_op](double a0, double a1)
       {
         // Configure the system matrix and also the matrix (matrices) from which the
         // preconditioner will be constructed.
-        A = spaceop.GetSystemMatrix(a0, a1, 1.0, K.get(), C.get(), M.get());
-        B = spaceop.GetPreconditionerMatrix<Operator>(a0, a1, 1.0, 0.0);
+        A = space_op.GetSystemMatrix(a0, a1, 1.0, K.get(), C.get(), M.get());
+        B = space_op.GetPreconditionerMatrix<Operator>(a0, a1, 1.0, 0.0);
 
         // Configure the solver.
         if (!kspA)
         {
-          kspA = std::make_unique<KspSolver>(iodata, spaceop.GetNDSpaces(),
-                                             &spaceop.GetH1Spaces());
+          kspA = std::make_unique<KspSolver>(iodata, space_op.GetNDSpaces(),
+                                             &space_op.GetH1Spaces());
         }
         kspA->SetOperators(*A, *B);
       };
@@ -142,11 +143,11 @@ public:
 
 }  // namespace
 
-TimeOperator::TimeOperator(const IoData &iodata, SpaceOperator &spaceop,
+TimeOperator::TimeOperator(const IoData &iodata, SpaceOperator &space_op,
                            std::function<double(double)> &dJ_coef)
 {
   // Construct discrete curl matrix for B-field time integration.
-  Curl = &spaceop.GetCurlMatrix();
+  Curl = &space_op.GetCurlMatrix();
 
   // Allocate space for solution vectors.
   E.SetSize(Curl->Width());
@@ -186,7 +187,8 @@ TimeOperator::TimeOperator(const IoData &iodata, SpaceOperator &spaceop,
   }
 
   // Set up time-dependent operator for 2nd-order curl-curl equation for E.
-  op = std::make_unique<TimeDependentCurlCurlOperator>(iodata, spaceop, dJ_coef, 0.0, type);
+  op =
+      std::make_unique<TimeDependentCurlCurlOperator>(iodata, space_op, dJ_coef, 0.0, type);
 }
 
 const KspSolver &TimeOperator::GetLinearSolver() const

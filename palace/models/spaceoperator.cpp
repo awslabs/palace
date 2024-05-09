@@ -810,69 +810,70 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(double a0, doub
   return B;
 }
 
-void SpaceOperator::AddStiffnessCoefficients(double coef, MaterialPropertyCoefficient &df,
+void SpaceOperator::AddStiffnessCoefficients(double coeff, MaterialPropertyCoefficient &df,
                                              MaterialPropertyCoefficient &f)
 {
   // Contribution from material permeability.
-  df.AddCoefficient(mat_op.GetAttributeToMaterial(), mat_op.GetInvPermeability(), coef);
+  df.AddCoefficient(mat_op.GetAttributeToMaterial(), mat_op.GetInvPermeability(), coeff);
 
   // Contribution for London superconductors.
   if (mat_op.HasLondonDepth())
   {
-    df.AddCoefficient(mat_op.GetAttributeToMaterial(), mat_op.GetInvLondonDepth(), coef);
+    df.AddCoefficient(mat_op.GetAttributeToMaterial(), mat_op.GetInvLondonDepth(), coeff);
   }
 }
 
-void SpaceOperator::AddStiffnessBdrCoefficients(double coef,
+void SpaceOperator::AddStiffnessBdrCoefficients(double coeff,
                                                 MaterialPropertyCoefficient &fb)
 {
   // Robin BC contributions due to surface impedance and lumped ports (inductance).
-  surf_z_op.AddStiffnessBdrCoefficients(coef, fb);
-  lumped_port_op.AddStiffnessBdrCoefficients(coef, fb);
+  surf_z_op.AddStiffnessBdrCoefficients(coeff, fb);
+  lumped_port_op.AddStiffnessBdrCoefficients(coeff, fb);
 }
 
-void SpaceOperator::AddDampingCoefficients(double coef, MaterialPropertyCoefficient &f)
+void SpaceOperator::AddDampingCoefficients(double coeff, MaterialPropertyCoefficient &f)
 {
   // Contribution for domain conductivity.
   if (mat_op.HasConductivity())
   {
-    f.AddCoefficient(mat_op.GetAttributeToMaterial(), mat_op.GetConductivity(), coef);
+    f.AddCoefficient(mat_op.GetAttributeToMaterial(), mat_op.GetConductivity(), coeff);
   }
 }
 
-void SpaceOperator::AddDampingBdrCoefficients(double coef, MaterialPropertyCoefficient &fb)
+void SpaceOperator::AddDampingBdrCoefficients(double coeff, MaterialPropertyCoefficient &fb)
 {
   // Robin BC contributions due to surface impedance, lumped ports, and absorbing
   // boundaries (resistance).
-  farfield_op.AddDampingBdrCoefficients(coef, fb);
-  surf_z_op.AddDampingBdrCoefficients(coef, fb);
-  lumped_port_op.AddDampingBdrCoefficients(coef, fb);
+  farfield_op.AddDampingBdrCoefficients(coeff, fb);
+  surf_z_op.AddDampingBdrCoefficients(coeff, fb);
+  lumped_port_op.AddDampingBdrCoefficients(coeff, fb);
 }
 
-void SpaceOperator::AddRealMassCoefficients(double coef, MaterialPropertyCoefficient &f)
+void SpaceOperator::AddRealMassCoefficients(double coeff, MaterialPropertyCoefficient &f)
 {
-  f.AddCoefficient(mat_op.GetAttributeToMaterial(), mat_op.GetPermittivityReal(), coef);
+  f.AddCoefficient(mat_op.GetAttributeToMaterial(), mat_op.GetPermittivityReal(), coeff);
 }
 
-void SpaceOperator::AddRealMassBdrCoefficients(double coef, MaterialPropertyCoefficient &fb)
+void SpaceOperator::AddRealMassBdrCoefficients(double coeff,
+                                               MaterialPropertyCoefficient &fb)
 {
   // Robin BC contributions due to surface impedance and lumped ports (capacitance).
-  surf_z_op.AddMassBdrCoefficients(coef, fb);
-  lumped_port_op.AddMassBdrCoefficients(coef, fb);
+  surf_z_op.AddMassBdrCoefficients(coeff, fb);
+  lumped_port_op.AddMassBdrCoefficients(coeff, fb);
 }
 
-void SpaceOperator::AddImagMassCoefficients(double coef, MaterialPropertyCoefficient &f)
+void SpaceOperator::AddImagMassCoefficients(double coeff, MaterialPropertyCoefficient &f)
 {
   // Contribution for loss tangent: ε -> ε * (1 - i tan(δ)).
   if (mat_op.HasLossTangent())
   {
-    f.AddCoefficient(mat_op.GetAttributeToMaterial(), mat_op.GetPermittivityImag(), coef);
+    f.AddCoefficient(mat_op.GetAttributeToMaterial(), mat_op.GetPermittivityImag(), coeff);
   }
 }
 
-void SpaceOperator::AddAbsMassCoefficients(double coef, MaterialPropertyCoefficient &f)
+void SpaceOperator::AddAbsMassCoefficients(double coeff, MaterialPropertyCoefficient &f)
 {
-  f.AddCoefficient(mat_op.GetAttributeToMaterial(), mat_op.GetPermittivityAbs(), coef);
+  f.AddCoefficient(mat_op.GetAttributeToMaterial(), mat_op.GetPermittivityAbs(), coeff);
 }
 
 void SpaceOperator::AddExtraSystemBdrCoefficients(double omega,

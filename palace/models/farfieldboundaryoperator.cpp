@@ -84,7 +84,7 @@ FarfieldBoundaryOperator::SetUpBoundaryProperties(const IoData &iodata,
   return farfield_bcs;
 }
 
-void FarfieldBoundaryOperator::AddDampingBdrCoefficients(double coef,
+void FarfieldBoundaryOperator::AddDampingBdrCoefficients(double coeff,
                                                          MaterialPropertyCoefficient &fb)
 {
   // First-order absorbing boundary condition.
@@ -94,7 +94,7 @@ void FarfieldBoundaryOperator::AddDampingBdrCoefficients(double coef,
                                            mat_op.GetInvImpedance());
     invz0_func.RestrictCoefficient(mat_op.GetCeedBdrAttributes(farfield_attr));
     fb.AddCoefficient(invz0_func.GetAttributeToMaterial(),
-                      invz0_func.GetMaterialProperties(), coef);
+                      invz0_func.GetMaterialProperties(), coeff);
   }
 }
 

@@ -31,10 +31,10 @@ class PostOperator;
 class ElectrostaticSolver : public BaseSolver
 {
 private:
-  void Postprocess(const PostOperator &postop, int step, int idx, double E_elec,
+  void Postprocess(const PostOperator &post_op, int step, int idx, double E_elec,
                    const ErrorIndicator *indicator) const;
 
-  void PostprocessTerminals(PostOperator &postop,
+  void PostprocessTerminals(PostOperator &post_op,
                             const std::map<int, mfem::Array<int>> &terminal_sources,
                             const std::vector<Vector> &V) const;
 

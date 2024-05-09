@@ -36,7 +36,7 @@ private:
   const Operator *Curl;
 
 public:
-  TimeOperator(const IoData &iodata, SpaceOperator &spaceop,
+  TimeOperator(const IoData &iodata, SpaceOperator &space_op,
                std::function<double(double)> &dJ_coef);
 
   // Access solution vectors for E- and B-fields.

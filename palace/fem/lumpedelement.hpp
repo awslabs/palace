@@ -30,7 +30,7 @@ public:
   virtual double GetGeometryWidth() const = 0;
 
   virtual std::unique_ptr<mfem::VectorCoefficient>
-  GetModeCoefficient(double coef = 1.0) const = 0;
+  GetModeCoefficient(double coeff = 1.0) const = 0;
 };
 
 class UniformElementData : public LumpedElementData
@@ -51,7 +51,7 @@ public:
   double GetGeometryWidth() const override { return w; }
 
   std::unique_ptr<mfem::VectorCoefficient>
-  GetModeCoefficient(double coef = 1.0) const override;
+  GetModeCoefficient(double coeff = 1.0) const override;
 };
 
 class CoaxialElementData : public LumpedElementData
@@ -75,7 +75,7 @@ public:
   double GetGeometryWidth() const override { return 2.0 * M_PI; }
 
   std::unique_ptr<mfem::VectorCoefficient>
-  GetModeCoefficient(double coef = 1.0) const override;
+  GetModeCoefficient(double coeff = 1.0) const override;
 };
 
 }  // namespace palace

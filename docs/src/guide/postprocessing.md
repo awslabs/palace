@@ -108,8 +108,8 @@ various possible postprocessed scalar and vector are:
   - Magnetic flux density: `B`, `B_real`, and `B_imag`
   - Electric potential: `V`
   - Magnetic vector potential : `A`, `A_real`, and `A_imag`
-  - Electric energy density : `Ue`
-  - Magnetic energy density : `Um`
+  - Electric energy density : `U_e`
+  - Magnetic energy density : `U_m`
   - Poynting vector: `S`
 
 Also, at the final step of the simulation the following element-wise quantities are written
@@ -126,8 +126,8 @@ located in the same `paraview/` directory, with suffix `_boundary`.
 The boundary data collection includes the 3D field values sampled on the boundary mesh as
 well as:
 
-  - Surface charge density: `Qs`, `Q_real`, `Qs_imag`
-  - Surface current density: `Js`, `Js_real`, `Js_imag`
+  - Surface charge density: `Q_s`, `Q_s_real`, `Q_s_imag`
+  - Surface current density: `J_s`, `J_s_real`, `J_s_imag`
 
 ## Adaptive mesh refinement
 
