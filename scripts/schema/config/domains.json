@@ -118,13 +118,18 @@
           {
             "type": "object",
             "additionalProperties": false,
-            "required": ["Index", "X", "Y", "Z"],
+            "required": ["Index", "Center"],
             "properties":
             {
               "Index": { "type": "integer" },
-              "X": { "type": "number" },
-              "Y": { "type": "number" },
-              "Z": { "type": "number" }
+              "Center":
+              {
+                "type": "array",
+                "additionalItems": false,
+                "items": { "type": "number" },
+                "minItems": 3,
+                "maxItems": 3
+              }
             }
           }
         }

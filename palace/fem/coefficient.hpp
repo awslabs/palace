@@ -12,6 +12,9 @@
 #include "fem/gridfunction.hpp"
 #include "models/materialoperator.hpp"
 
+// XX TODO: Add bulk element Eval() overrides to speed up postprocessing (also needed in
+//          mfem::DataCollection classes.
+
 namespace palace
 {
 
@@ -32,12 +35,34 @@ protected:
   //          the FET, FET.Elem1, and FET.Elem2 objects cannot be shared
   const mfem::ParMesh &mesh;
   mfem::FaceElementTransformations FET;
-  mfem::IsoparametricTransformation T1, T2, TF;
-  mfem::Vector CF;
+  mfem::IsoparametricTransformation T1, T2;
 
-  void GetBdrElementNeighborTransformations(mfem::ElementTransformation &T,
-                                            const mfem::IntegrationPoint &ip,
-                                            mfem::Vector *C1 = nullptr);
+  bool GetBdrElementNeighborTransformations(int i, const mfem::IntegrationPoint &ip)
+  {
+    // Get the element transformations neighboring the element, and optionally set the
+    // integration point too.
+    return GetBdrElementNeighborTransformations(i, mesh, FET, T1, T2, &ip);
+  }
+
+  static bool UseElem12(const mfem::FaceElementTransformations &FET,
+                        const MaterialOperator &mat_op)
+  {
+    // For interior faces with no way to distinguish on which side to evaluate quantities,
+    // evaluate on both (using the average or sum, depending on the application).
+    return (FET.Elem2 && mat_op.GetLightSpeedMax(FET.Elem2->Attribute) ==
+                             mat_op.GetLightSpeedMax(FET.Elem1->Attribute));
+  }
+
+  static bool UseElem2(const mfem::FaceElementTransformations &FET,
+                       const MaterialOperator &mat_op, bool side_n_min)
+  {
+    // For interior faces, compute the value on the side where the speed of light is larger
+    // (refractive index is smaller, typically should choose the vacuum side). For cases
+    // where the speeds are the same, use element 1.
+    return (FET.Elem2 && side_n_min &&
+            mat_op.GetLightSpeedMax(FET.Elem2->Attribute) >
+                mat_op.GetLightSpeedMax(FET.Elem1->Attribute));
+  }
 
 public:
   BdrGridFunctionCoefficient(const mfem::ParMesh &mesh) : mesh(mesh) {}
@@ -46,40 +71,62 @@ public:
   // domain elements. FET.Elem2 may be nullptr if the boundary is a true one-sided boundary,
   // but if it is shared with another subdomain then it will be populated. Expects
   // ParMesh::ExchangeFaceNbrData has been called already.
-  static void GetBdrElementNeighborTransformations(
+  static bool GetBdrElementNeighborTransformations(
       int i, const mfem::ParMesh &mesh, mfem::FaceElementTransformations &FET,
       mfem::IsoparametricTransformation &T1, mfem::IsoparametricTransformation &T2,
       const mfem::IntegrationPoint *ip = nullptr);
 
-  // Return normal vector to the boundary element at an integration point (it is assumed
-  // that the element transformation has already been configured at the integration point of
-  // interest).
-  static void GetNormal(mfem::ElementTransformation &T, mfem::Vector &normal)
+  // Return normal vector to the boundary element at an integration point. For a face
+  // element, the normal points out of the element (from element 1 into element 2, if it
+  // exists). This convention can be flipped with the optional parameter. It is assumed
+  // that the element transformation has already been configured at the integration point
+  // of interest.
+  static void GetNormal(mfem::ElementTransformation &T, mfem::Vector &normal,
+                        bool invert = false)
   {
-    normal.SetSize(T.GetSpaceDim());
+    MFEM_ASSERT(normal.Size() == T.GetSpaceDim(),
+                "Size mismatch for normal vector (space dimension = " << T.GetSpaceDim()
+                                                                      << ")!");
     mfem::CalcOrtho(T.Jacobian(), normal);
-    normal /= normal.Norml2();
+    normal /= invert ? -normal.Norml2() : normal.Norml2();
+  }
+
+  // 3D cross product.
+  static void Cross3(const mfem::Vector &A, const mfem::Vector &B, mfem::Vector &C,
+                     bool add = false)
+  {
+    MFEM_ASSERT(A.Size() == B.Size() && A.Size() == C.Size() && A.Size() == 3,
+                "BdrGridFunctionCoefficient cross product expects a mesh in 3D space!");
+    if (add)
+    {
+      C(0) += A(1) * B(2) - A(2) * B(1);
+      C(1) += A(2) * B(0) - A(0) * B(2);
+      C(2) += A(0) * B(1) - A(1) * B(0);
+    }
+    else
+    {
+      C(0) = A(1) * B(2) - A(2) * B(1);
+      C(1) = A(2) * B(0) - A(0) * B(2);
+      C(2) = A(0) * B(1) - A(1) * B(0);
+    }
   }
 };
 
-// Computes surface current J_s = n x H on boundaries from B as a vector grid function
-// where n is an inward normal (computes -n x H for outward normal n). For a two-sided
-// internal boundary, the contributions from both sides add.
-class BdrCurrentVectorCoefficient : public mfem::VectorCoefficient,
-                                    public BdrGridFunctionCoefficient
+// Computes surface current Jₛ = n x H = n x μ⁻¹ B on boundaries from B as a vector grid
+// function where n is an inward normal (computes -n x H for outward normal n). For a
+// two-sided internal boundary, the contributions from both sides add.
+class BdrSurfaceCurrentVectorCoefficient : public mfem::VectorCoefficient,
+                                           public BdrGridFunctionCoefficient
 {
 private:
   const mfem::ParGridFunction &B;
   const MaterialOperator &mat_op;
-  mfem::Vector C1, W, VU, VL, nor;
 
 public:
-  BdrCurrentVectorCoefficient(const mfem::ParGridFunction &gf,
-                              const MaterialOperator &mat_op)
+  BdrSurfaceCurrentVectorCoefficient(const mfem::ParGridFunction &B,
+                                     const MaterialOperator &mat_op)
     : mfem::VectorCoefficient(mat_op.SpaceDimension()),
-      BdrGridFunctionCoefficient(*gf.ParFESpace()->GetParMesh()), B(gf), mat_op(mat_op),
-      C1(gf.VectorDim()), W(gf.VectorDim()), VU(gf.VectorDim()), VL(gf.VectorDim()),
-      nor(gf.VectorDim())
+      BdrGridFunctionCoefficient(*B.ParFESpace()->GetParMesh()), B(B), mat_op(mat_op)
   {
   }
 
@@ -88,121 +135,161 @@ public:
             const mfem::IntegrationPoint &ip) override
   {
     // Get neighboring elements.
-    MFEM_ASSERT(vdim == 3, "BdrJVectorCoefficient expects a mesh in 3D space!");
-    GetBdrElementNeighborTransformations(T, ip, &C1);
+    MFEM_ASSERT(T.ElementType == mfem::ElementTransformation::BDR_ELEMENT,
+                "Unexpected element type in BdrSurfaceCurrentVectorCoefficient!");
+    bool ori = GetBdrElementNeighborTransformations(T.ElementNo, ip);
 
-    // For interior faces, compute J_s = -n x H = -n x μ⁻¹(B1 - B2), where B1 (B2) is B in
-    // el1 (el2) and n points out from el1.
+    // For interior faces, compute Jₛ = n x H = n x μ⁻¹ (B1 - B2), where B1 (B2) is B in
+    // element 1 (element 2) and n points into element 1.
+    double W_data[3], VU_data[3];
+    mfem::Vector W(W_data, vdim), VU(VU_data, vdim);
     B.GetVectorValue(*FET.Elem1, FET.Elem1->GetIntPoint(), W);
     mat_op.GetInvPermeability(FET.Elem1->Attribute).Mult(W, VU);
     if (FET.Elem2)
     {
-      // Double-sided, not a true boundary.
+      // Double-sided, not a true boundary. Add result with opposite normal.
+      double VL_data[3];
+      mfem::Vector VL(VL_data, vdim);
       B.GetVectorValue(*FET.Elem2, FET.Elem2->GetIntPoint(), W);
       mat_op.GetInvPermeability(FET.Elem2->Attribute).Mult(W, VL);
       VU -= VL;
     }
 
-    // Orient with normal pointing into el1.
-    GetNormal(T, nor);
+    // Orient with normal pointing into element 1.
+    double normal_data[3];
+    mfem::Vector normal(normal_data, vdim);
+    GetNormal(T, normal, ori);
     V.SetSize(vdim);
-    if (C1 * nor < 0.0)
+    Cross3(normal, VU, V);
+  }
+};
+
+// Helper for BdrSurfaceFluxCoefficient.
+enum class SurfaceFluxType
+{
+  ELECTRIC,
+  MAGNETIC,
+  POWER
+};
+
+// Computes the flux Φₛ = F ⋅ n with F = B or ε D on interior boundary elements using B or
+// E given as a vector grid function. For a two-sided internal boundary, the contributions
+// from both sides can either add or be averaged.
+template <SurfaceFluxType Type>
+class BdrSurfaceFluxCoefficient : public mfem::Coefficient,
+                                  public BdrGridFunctionCoefficient
+{
+private:
+  const mfem::ParGridFunction *E, *B;
+  const MaterialOperator &mat_op;
+  bool two_sided;
+  const mfem::Vector &x0;
+
+  void GetLocalFlux(mfem::ElementTransformation &T, mfem::Vector &V) const;
+
+public:
+  BdrSurfaceFluxCoefficient(const mfem::ParGridFunction *E, const mfem::ParGridFunction *B,
+                            const MaterialOperator &mat_op, bool two_sided,
+                            const mfem::Vector &x0)
+    : mfem::Coefficient(), BdrGridFunctionCoefficient(E ? *E->ParFESpace()->GetParMesh()
+                                                        : *B->ParFESpace()->GetParMesh()),
+      E(E), B(B), mat_op(mat_op), two_sided(two_sided), x0(x0)
+  {
+    MFEM_VERIFY(
+        (E || (Type != SurfaceFluxType::ELECTRIC && Type != SurfaceFluxType::POWER)) &&
+            (B || (Type != SurfaceFluxType::MAGNETIC && Type != SurfaceFluxType::POWER)),
+        "Missing E or B field grid function for surface flux coefficient!");
+  }
+
+  double Eval(mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip) override
+  {
+    // Get neighboring elements.
+    MFEM_ASSERT(T.ElementType == mfem::ElementTransformation::BDR_ELEMENT,
+                "Unexpected element type in BdrSurfaceFluxCoefficient!");
+    bool ori = GetBdrElementNeighborTransformations(T.ElementNo, ip);
+
+    // For interior faces, compute either F ⋅ n as the average or by adding the
+    // contributions from opposite sides with opposite normals.
+    const int vdim = T.GetSpaceDim();
+    double VU_data[3];
+    mfem::Vector VU(VU_data, vdim);
+    GetLocalFlux(*FET.Elem1, VU);
+    if (FET.Elem2)
     {
-      V[0] = -nor[1] * VU[2] + nor[2] * VU[1];
-      V[1] = -nor[2] * VU[0] + nor[0] * VU[2];
-      V[2] = -nor[0] * VU[1] + nor[1] * VU[0];
+      // Double-sided, not a true boundary.
+      double VL_data[3];
+      mfem::Vector VL(VL_data, vdim);
+      GetLocalFlux(*FET.Elem2, VL);
+      if (two_sided)
+      {
+        // Add result with opposite normal.
+        VU -= VL;
+      }
+      else
+      {
+        // Take the average of the values on both sides.
+        VU += VL;
+        VU *= 0.5;
+      }
+    }
+
+    // Dot with normal direction and assign appropriate sign. The normal is oriented to
+    // point into element 1.
+    double normal_data[3];
+    mfem::Vector normal(normal_data, vdim);
+    GetNormal(T, normal, ori);
+    double flux = VU * normal;
+    if (two_sided)
+    {
+      return flux;
     }
     else
     {
-      V[0] = nor[1] * VU[2] - nor[2] * VU[1];
-      V[1] = nor[2] * VU[0] - nor[0] * VU[2];
-      V[2] = nor[0] * VU[1] - nor[1] * VU[0];
+      // Orient outward from the surface with the given center.
+      double x_data[3];
+      mfem::Vector x(x_data, vdim);
+      T.Transform(ip, x);
+      x -= x0;
+      return (x * normal < 0.0) ? -flux : flux;
     }
   }
 };
 
-// Computes a single-valued surface charge ρ_s = D ⋅ n on boundaries from E given as a
-// vector grid function. For a two-sided internal boundary, the contributions from both
-// sides add.
-class BdrChargeCoefficient : public mfem::Coefficient, public BdrGridFunctionCoefficient
+template <>
+inline void BdrSurfaceFluxCoefficient<SurfaceFluxType::ELECTRIC>::GetLocalFlux(
+    mfem::ElementTransformation &T, mfem::Vector &V) const
 {
-private:
-  const mfem::ParGridFunction &E;
-  const MaterialOperator &mat_op;
-  mfem::Vector C1, W, VU, VL, nor;
+  // Flux D.
+  double W_data[3];
+  mfem::Vector W(W_data, T.GetSpaceDim());
+  E->GetVectorValue(T, T.GetIntPoint(), W);
+  mat_op.GetPermittivityReal(T.Attribute).Mult(W, V);
+}
 
-public:
-  BdrChargeCoefficient(const mfem::ParGridFunction &gf, const MaterialOperator &mat_op)
-    : mfem::Coefficient(), BdrGridFunctionCoefficient(*gf.ParFESpace()->GetParMesh()),
-      E(gf), mat_op(mat_op), C1(gf.VectorDim()), W(gf.VectorDim()), VU(gf.VectorDim()),
-      VL(gf.VectorDim()), nor(gf.VectorDim())
-  {
-  }
-
-  double Eval(mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip) override
-  {
-    // Get neighboring elements.
-    GetBdrElementNeighborTransformations(T, ip, &C1);
-
-    // For interior faces, compute D ⋅ n = ε (E1 - E2) ⋅ n, where E1 (E2) is E in el1 (el2)
-    // to get a single-valued function.
-    E.GetVectorValue(*FET.Elem1, FET.Elem1->GetIntPoint(), W);
-    mat_op.GetPermittivityReal(FET.Elem1->Attribute).Mult(W, VU);
-    if (FET.Elem2)
-    {
-      E.GetVectorValue(*FET.Elem2, FET.Elem2->GetIntPoint(), W);
-      mat_op.GetPermittivityReal(FET.Elem2->Attribute).Mult(W, VL);
-      VU -= VL;
-    }
-
-    // Orient with normal pointing into el1.
-    GetNormal(T, nor);
-    return (C1 * nor < 0.0) ? -(VU * nor) : VU * nor;
-  }
-};
-
-// Computes the flux Φ_s = B ⋅ n on interior boundary elements using the user specified
-// normal direction. Manually implements InnerProductCoefficient and
-// VectorGridFunctionCoefficient to allow for evaluating the flux on internal boundaries.
-class BdrFluxCoefficient : public mfem::Coefficient, public BdrGridFunctionCoefficient
+template <>
+inline void BdrSurfaceFluxCoefficient<SurfaceFluxType::MAGNETIC>::GetLocalFlux(
+    mfem::ElementTransformation &T, mfem::Vector &V) const
 {
-private:
-  const mfem::ParGridFunction &B;
-  const mfem::Vector dir;
-  mfem::Vector V, VL, nor;
+  // Flux B.
+  B->GetVectorValue(T, T.GetIntPoint(), V);
+}
 
-public:
-  BdrFluxCoefficient(const mfem::ParGridFunction &gf, const MaterialOperator &mat_op,
-                     const mfem::Vector &d)
-    : mfem::Coefficient(), BdrGridFunctionCoefficient(*gf.ParFESpace()->GetParMesh()),
-      B(gf), dir(d), V(gf.VectorDim()), VL(gf.VectorDim()), nor(gf.VectorDim())
-  {
-  }
+template <>
+inline void BdrSurfaceFluxCoefficient<SurfaceFluxType::POWER>::GetLocalFlux(
+    mfem::ElementTransformation &T, mfem::Vector &V) const
+{
+  // Flux E x H = E x μ⁻¹ B.
+  double W1_data[3], W2_data[3];
+  mfem::Vector W1(W1_data, T.GetSpaceDim()), W2(W2_data, T.GetSpaceDim());
+  B->GetVectorValue(T, T.GetIntPoint(), W1);
+  mat_op.GetInvPermeability(T.Attribute).Mult(W1, W2);
+  E->GetVectorValue(T, T.GetIntPoint(), W1);
+  V.SetSize(W1.Size());
+  Cross3(W1, W2, V);
+}
 
-  double Eval(mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip) override
-  {
-    // Get neighboring elements.
-    GetBdrElementNeighborTransformations(T, ip);
-
-    // For interior faces, compute the average value. Since this is only used for
-    // continuous (normal or tangential) values, we don't care that we average out the
-    // discontinuous (tangential or normal) parts.
-    B.GetVectorValue(*FET.Elem1, FET.Elem1->GetIntPoint(), V);
-    if (FET.Elem2)
-    {
-      B.GetVectorValue(*FET.Elem2, FET.Elem2->GetIntPoint(), VL);
-      V += VL;
-      V *= 0.5;
-    }
-
-    // Orient sign with the global direction.
-    GetNormal(T, nor);
-    return (dir * nor < 0.0) ? -(V * nor) : V * nor;
-  }
-};
-
-// Helper for DielectricInterfaceCoefficient.
-enum class DielectricInterfaceType
+// Helper for InterfaceDielectricCoefficient.
+enum class InterfaceDielectricType
 {
   DEFAULT,
   MA,
@@ -217,128 +304,163 @@ enum class DielectricInterfaceType
 // and subtrate-air interfaces following:
 //   J. Wenner et al., Surface loss simulations of superconducting coplanar waveguide
 //     resonators, Appl. Phys. Lett. (2011).
-template <DielectricInterfaceType Type>
-class DielectricInterfaceCoefficient : public mfem::Coefficient,
+template <InterfaceDielectricType Type>
+class InterfaceDielectricCoefficient : public mfem::Coefficient,
                                        public BdrGridFunctionCoefficient
 {
 private:
-  const mfem::ParGridFunction &E;
+  const GridFunction &E;
   const MaterialOperator &mat_op;
-  const double ts, epsilon;
-  const mfem::Vector side;
-  mfem::Vector C1, V, nor;
+  const double t_i, epsilon_i;
+  bool side_n_min;
 
-  int Initialize(mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip,
-                 mfem::Vector &V)
+  void Initialize(mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip,
+                  mfem::Vector *normal)
   {
-    // Get neighboring elements.
-    GetBdrElementNeighborTransformations(T, ip, &C1);
-
-    // Get the single-sided solution.
-    if (!FET.Elem2)
+    // Get neighboring elements and the normal vector, oriented to point into element 1.
+    MFEM_ASSERT(T.ElementType == mfem::ElementTransformation::BDR_ELEMENT,
+                "Unexpected element type in InterfaceDielectricCoefficient!");
+    bool ori = GetBdrElementNeighborTransformations(T.ElementNo, ip);
+    if (normal)
     {
-      // Ignore side, solution is single-valued.
-      E.GetVectorValue(*FET.Elem1, FET.Elem1->GetIntPoint(), V);
-      return FET.Elem1->Attribute;
+      GetNormal(T, *normal, ori);
     }
-    if (!side.Size())
+  }
+
+  int GetLocalVectorValue(const mfem::ParGridFunction &U, mfem::Vector &V) const
+  {
+    if (UseElem12(FET, mat_op))
     {
-      // With no side specified, try to take the solution from the element which corresponds
-      // to the vacuum domain, or at least the one with the higher speed of light.
-      if (mat_op.GetLightSpeedMin(FET.Elem2->Attribute) >
-          mat_op.GetLightSpeedMax(FET.Elem1->Attribute))
+      // Doesn't make much sense to have a result from both sides here, so just take the
+      // side with the larger solution (in most cases, one might be zero).
+      double W_data[3];
+      U.GetVectorValue(*FET.Elem1, FET.Elem1->GetIntPoint(), V);
+      mfem::Vector W(W_data, V.Size());
+      U.GetVectorValue(*FET.Elem2, FET.Elem2->GetIntPoint(), W);
+      if (V * V < W * W)
       {
-        E.GetVectorValue(*FET.Elem2, FET.Elem2->GetIntPoint(), V);
+        V = W;
         return FET.Elem2->Attribute;
       }
       else
       {
-        E.GetVectorValue(*FET.Elem1, FET.Elem1->GetIntPoint(), V);
         return FET.Elem1->Attribute;
       }
     }
-    if (C1 * side < 0.0)
+    else if (UseElem2(FET, mat_op, side_n_min))
     {
-      // Get solution in el2.
-      E.GetVectorValue(*FET.Elem2, FET.Elem2->GetIntPoint(), V);
+      U.GetVectorValue(*FET.Elem2, FET.Elem2->GetIntPoint(), V);
       return FET.Elem2->Attribute;
     }
     else
     {
-      // Get solution in el1.
-      E.GetVectorValue(*FET.Elem1, FET.Elem1->GetIntPoint(), V);
+      U.GetVectorValue(*FET.Elem1, FET.Elem1->GetIntPoint(), V);
       return FET.Elem1->Attribute;
     }
   }
 
 public:
-  DielectricInterfaceCoefficient(const mfem::ParGridFunction &gf,
-                                 const MaterialOperator &mat_op, double ti, double ei,
-                                 const mfem::Vector &s)
-    : mfem::Coefficient(), BdrGridFunctionCoefficient(*gf.ParFESpace()->GetParMesh()),
-      E(gf), mat_op(mat_op), ts(ti), epsilon(ei), side(s), C1(gf.VectorDim()),
-      V(gf.VectorDim()), nor(gf.VectorDim())
+  InterfaceDielectricCoefficient(const GridFunction &E, const MaterialOperator &mat_op,
+                                 double t_i, double epsilon_i, bool side_n_min)
+    : mfem::Coefficient(), BdrGridFunctionCoefficient(*E.ParFESpace()->GetParMesh()), E(E),
+      mat_op(mat_op), t_i(t_i), epsilon_i(epsilon_i), side_n_min(side_n_min)
   {
   }
 
-  double Eval(mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip) override
-  {
-    MFEM_ABORT("DielectricInterfaceCoefficient::Eval() is not implemented for this "
-               "interface type!");
-    return 0.0;
-  }
+  double Eval(mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip) override;
 };
 
 template <>
-inline double DielectricInterfaceCoefficient<DielectricInterfaceType::MA>::Eval(
+inline double InterfaceDielectricCoefficient<InterfaceDielectricType::DEFAULT>::Eval(
     mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip)
 {
   // Get single-sided solution and neighboring element attribute.
-  Initialize(T, ip, V);
-  GetNormal(T, nor);
-
-  // Metal-air interface: 0.5 * t / ε_MA * |E_n|² .
-  double Vn = V * nor;
-  return 0.5 * ts / epsilon * (Vn * Vn);
-}
-
-template <>
-inline double DielectricInterfaceCoefficient<DielectricInterfaceType::MS>::Eval(
-    mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip)
-{
-  // Get single-sided solution and neighboring element attribute.
-  int attr = Initialize(T, ip, V);
-  GetNormal(T, nor);
-
-  // Metal-substrate interface: 0.5 * t * (ε_S)² / ε_MS * |E_n|² .
-  const double Vn = V * nor;
-  const double epsilon_S = mat_op.GetPermittivityReal(attr).InnerProduct(nor, nor);
-  return 0.5 * ts * std::pow(epsilon_S, 2) / epsilon * (Vn * Vn);
-}
-
-template <>
-inline double DielectricInterfaceCoefficient<DielectricInterfaceType::SA>::Eval(
-    mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip)
-{
-  // Get single-sided solution and neighboring element attribute.
-  Initialize(T, ip, V);
-  GetNormal(T, nor);
-
-  // Substrate-air interface: 0.5 * t * (ε_SA * |E_t|² + 1 / ε_MS * |E_n|²) .
-  double Vn = V * nor;
-  V.Add(-Vn, nor);
-  return 0.5 * ts * (epsilon * (V * V) + (Vn * Vn) / epsilon);
-}
-
-template <>
-inline double DielectricInterfaceCoefficient<DielectricInterfaceType::DEFAULT>::Eval(
-    mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip)
-{
-  // Get single-sided solution and neighboring element attribute.
-  Initialize(T, ip, V);
+  double V_data[3];
+  mfem::Vector V(V_data, T.GetSpaceDim());
+  Initialize(T, ip, nullptr);
+  GetLocalVectorValue(E.Real(), V);
+  double V2 = V * V;
+  if (E.HasImag())
+  {
+    GetLocalVectorValue(E.Imag(), V);
+    V2 += V * V;
+  }
 
   // No specific interface, use full field evaluation: 0.5 * t * ε * |E|² .
-  return 0.5 * ts * epsilon * (V * V);
+  return 0.5 * t_i * epsilon_i * V2;
+}
+
+template <>
+inline double InterfaceDielectricCoefficient<InterfaceDielectricType::MA>::Eval(
+    mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip)
+{
+  // Get single-sided solution and neighboring element attribute.
+  double V_data[3], normal_data[3];
+  mfem::Vector V(V_data, T.GetSpaceDim()), normal(normal_data, T.GetSpaceDim());
+  Initialize(T, ip, &normal);
+  GetLocalVectorValue(E.Real(), V);
+  double Vn = V * normal;
+  double Vn2 = Vn * Vn;
+  if (E.HasImag())
+  {
+    GetLocalVectorValue(E.Imag(), V);
+    Vn = V * normal;
+    Vn2 += Vn * Vn;
+  }
+
+  // Metal-air interface: 0.5 * t / ε_MA * |E_n|² .
+  return 0.5 * t_i / epsilon_i * Vn2;
+}
+
+template <>
+inline double InterfaceDielectricCoefficient<InterfaceDielectricType::MS>::Eval(
+    mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip)
+{
+  // Get single-sided solution and neighboring element attribute.
+  double V_data[3], W_data[3], normal_data[3];
+  mfem::Vector V(V_data, T.GetSpaceDim()), W(W_data, T.GetSpaceDim()),
+      normal(normal_data, T.GetSpaceDim());
+  Initialize(T, ip, &normal);
+  int attr = GetLocalVectorValue(E.Real(), V);
+  mat_op.GetPermittivityReal(attr).Mult(V, W);
+  double Vn = W * normal;
+  double Vn2 = Vn * Vn;
+  if (E.HasImag())
+  {
+    GetLocalVectorValue(E.Imag(), V);
+    mat_op.GetPermittivityReal(attr).Mult(V, W);
+    Vn = W * normal;
+    Vn2 += Vn * Vn;
+  }
+
+  // Metal-substrate interface: 0.5 * t / ε_MS * |(ε_S E)_n|² .
+  return 0.5 * t_i / epsilon_i * Vn2;
+}
+
+template <>
+inline double InterfaceDielectricCoefficient<InterfaceDielectricType::SA>::Eval(
+    mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip)
+{
+  // Get single-sided solution and neighboring element attribute.
+  double V_data[3], normal_data[3];
+  mfem::Vector V(V_data, T.GetSpaceDim()), normal(normal_data, T.GetSpaceDim());
+  Initialize(T, ip, &normal);
+  GetLocalVectorValue(E.Real(), V);
+  double Vn = V * normal;
+  V.Add(-Vn, normal);
+  double Vn2 = Vn * Vn;
+  double Vt2 = V * V;
+  if (E.HasImag())
+  {
+    GetLocalVectorValue(E.Imag(), V);
+    Vn = V * normal;
+    V.Add(-Vn, normal);
+    Vn2 += Vn * Vn;
+    Vt2 += V * V;
+  }
+
+  // Substrate-air interface: 0.5 * t * (ε_SA * |E_t|² + 1 / ε_SA * |E_n|²) .
+  return 0.5 * t_i * (epsilon_i * Vt2 + Vn2 / epsilon_i);
 }
 
 // Helper for EnergyDensityCoefficient.
@@ -348,24 +470,24 @@ enum class EnergyDensityType
   MAGNETIC
 };
 
-// Returns the local energy density evaluated as 1/2 Dᴴ E or 1/2 Bᴴ H for real-valued
+// Returns the local energy density evaluated as 1/2 Dᴴ E or 1/2 Hᴴ B for real-valued
 // material coefficients. For internal boundary elements, the solution is taken on the side
-// of the element with the larger-valued material property (permittivity or permeability).
+// of the element with the larger-valued speed of light.
 template <EnergyDensityType Type>
 class EnergyDensityCoefficient : public mfem::Coefficient, public BdrGridFunctionCoefficient
 {
 private:
   const GridFunction &U;
   const MaterialOperator &mat_op;
-  mfem::Vector V;
+  bool side_n_min;
 
-  double GetLocalEnergyDensity(mfem::ElementTransformation &T,
-                               const mfem::IntegrationPoint &ip, int attr);
+  double GetLocalEnergyDensity(mfem::ElementTransformation &T) const;
 
 public:
-  EnergyDensityCoefficient(const GridFunction &gf, const MaterialOperator &mat_op)
-    : mfem::Coefficient(), BdrGridFunctionCoefficient(*gf.ParFESpace()->GetParMesh()),
-      U(gf), mat_op(mat_op), V(mat_op.SpaceDimension())
+  EnergyDensityCoefficient(const GridFunction &U, const MaterialOperator &mat_op,
+                           bool side_n_min)
+    : mfem::Coefficient(), BdrGridFunctionCoefficient(*U.ParFESpace()->GetParMesh()), U(U),
+      mat_op(mat_op), side_n_min(side_n_min)
   {
   }
 
@@ -373,25 +495,26 @@ public:
   {
     if (T.ElementType == mfem::ElementTransformation::ELEMENT)
     {
-      return GetLocalEnergyDensity(T, ip, T.Attribute);
+      return GetLocalEnergyDensity(T);
     }
-    if (T.ElementType == mfem::ElementTransformation::BDR_ELEMENT)
+    else if (T.ElementType == mfem::ElementTransformation::BDR_ELEMENT)
     {
       // Get neighboring elements.
-      GetBdrElementNeighborTransformations(T, ip);
+      GetBdrElementNeighborTransformations(T.ElementNo, ip);
 
-      // For interior faces, compute the value on the side where the speed of light is
-      // larger (typically should choose the vacuum side).
-      if (FET.Elem2 && mat_op.GetLightSpeedMin(FET.Elem2->Attribute) >
-                           mat_op.GetLightSpeedMax(FET.Elem1->Attribute))
+      // For interior faces, compute the value on the desired side.
+      if (UseElem12(FET, mat_op))
       {
-        return GetLocalEnergyDensity(*FET.Elem2, FET.Elem2->GetIntPoint(),
-                                     FET.Elem2->Attribute);
+        return std::max(GetLocalEnergyDensity(*FET.Elem1),
+                        GetLocalEnergyDensity(*FET.Elem2));
+      }
+      else if (UseElem2(FET, mat_op, side_n_min))
+      {
+        return GetLocalEnergyDensity(*FET.Elem2);
       }
       else
       {
-        return GetLocalEnergyDensity(*FET.Elem1, FET.Elem1->GetIntPoint(),
-                                     FET.Elem1->Attribute);
+        return GetLocalEnergyDensity(*FET.Elem1);
       }
     }
     MFEM_ABORT("Unsupported element type in EnergyDensityCoefficient!");
@@ -401,48 +524,133 @@ public:
 
 template <>
 inline double EnergyDensityCoefficient<EnergyDensityType::ELECTRIC>::GetLocalEnergyDensity(
-    mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip, int attr)
+    mfem::ElementTransformation &T) const
 {
   // Only the real part of the permittivity contributes to the energy (imaginary part
   // cancels out in the inner product due to symmetry).
-  U.Real().GetVectorValue(T, ip, V);
-  double dot = mat_op.GetPermittivityReal(attr).InnerProduct(V, V);
+  double V_data[3];
+  mfem::Vector V(V_data, T.GetSpaceDim());
+  U.Real().GetVectorValue(T, T.GetIntPoint(), V);
+  double dot = mat_op.GetPermittivityReal(T.Attribute).InnerProduct(V, V);
   if (U.HasImag())
   {
-    U.Imag().GetVectorValue(T, ip, V);
-    dot += mat_op.GetPermittivityReal(attr).InnerProduct(V, V);
+    U.Imag().GetVectorValue(T, T.GetIntPoint(), V);
+    dot += mat_op.GetPermittivityReal(T.Attribute).InnerProduct(V, V);
   }
   return 0.5 * dot;
 }
 
 template <>
 inline double EnergyDensityCoefficient<EnergyDensityType::MAGNETIC>::GetLocalEnergyDensity(
-    mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip, int attr)
+    mfem::ElementTransformation &T) const
 {
-  U.Real().GetVectorValue(T, ip, V);
-  double dot = mat_op.GetInvPermeability(attr).InnerProduct(V, V);
+  double V_data[3];
+  mfem::Vector V(V_data, T.GetSpaceDim());
+  U.Real().GetVectorValue(T, T.GetIntPoint(), V);
+  double dot = mat_op.GetInvPermeability(T.Attribute).InnerProduct(V, V);
   if (U.HasImag())
   {
-    U.Imag().GetVectorValue(T, ip, V);
-    dot += mat_op.GetInvPermeability(attr).InnerProduct(V, V);
+    U.Imag().GetVectorValue(T, T.GetIntPoint(), V);
+    dot += mat_op.GetInvPermeability(T.Attribute).InnerProduct(V, V);
   }
   return 0.5 * dot;
 }
 
-// Returns the local field evaluated on a boundary element. For internal boundary elements,
-// the solution is taken on the side of the element with the larger-valued material
-// property (permittivity or permeability).
+// Compute time-averaged Poynting vector Re{E x H⋆}, without the typical factor of 1/2. For
+// internal boundary elements, the solution is taken on the side of the element with the
+// larger-valued speed of light.
+class PoyntingVectorCoefficient : public mfem::VectorCoefficient,
+                                  public BdrGridFunctionCoefficient
+{
+private:
+  const GridFunction &E, &B;
+  const MaterialOperator &mat_op;
+  bool side_n_min;
+
+  void GetLocalPower(mfem::ElementTransformation &T, mfem::Vector &V) const
+  {
+    double W1_data[3], W2_data[3];
+    mfem::Vector W1(W1_data, T.GetSpaceDim()), W2(W2_data, T.GetSpaceDim());
+    B.Real().GetVectorValue(T, T.GetIntPoint(), W1);
+    mat_op.GetInvPermeability(T.Attribute).Mult(W1, W2);
+    E.Real().GetVectorValue(T, T.GetIntPoint(), W1);
+    V.SetSize(vdim);
+    Cross3(W1, W2, V);
+    if (E.HasImag())
+    {
+      B.Imag().GetVectorValue(T, T.GetIntPoint(), W1);
+      mat_op.GetInvPermeability(T.Attribute).Mult(W1, W2);
+      E.Imag().GetVectorValue(T, T.GetIntPoint(), W1);
+      Cross3(W1, W2, V, true);
+    }
+  }
+
+public:
+  PoyntingVectorCoefficient(const GridFunction &E, const GridFunction &B,
+                            const MaterialOperator &mat_op, bool side_n_min)
+    : mfem::VectorCoefficient(mat_op.SpaceDimension()),
+      BdrGridFunctionCoefficient(*E.ParFESpace()->GetParMesh()), E(E), B(B), mat_op(mat_op),
+      side_n_min(side_n_min)
+  {
+  }
+
+  using mfem::VectorCoefficient::Eval;
+  void Eval(mfem::Vector &V, mfem::ElementTransformation &T,
+            const mfem::IntegrationPoint &ip) override
+  {
+    if (T.ElementType == mfem::ElementTransformation::ELEMENT)
+    {
+      GetLocalPower(T, V);
+      return;
+    }
+    else if (T.ElementType == mfem::ElementTransformation::BDR_ELEMENT)
+    {
+      // Get neighboring elements.
+      GetBdrElementNeighborTransformations(T.ElementNo, ip);
+
+      // For interior faces, compute the value on the desired side.
+      if (UseElem12(FET, mat_op))
+      {
+        GetLocalPower(*FET.Elem1, V);
+        double W_data[3];
+        mfem::Vector W(W_data, V.Size());
+        GetLocalPower(*FET.Elem2, W);
+        if (V * V < W * W)
+        {
+          V = W;
+        }
+      }
+      else if (UseElem2(FET, mat_op, side_n_min))
+      {
+        GetLocalPower(*FET.Elem2, V);
+      }
+      else
+      {
+        GetLocalPower(*FET.Elem1, V);
+      }
+      return;
+    }
+    MFEM_ABORT("Unsupported element type in PoyntingVectorCoefficient!");
+  }
+};
+
+// Returns the local vector field evaluated on a boundary element. For internal boundary
+// elements, the solution is taken on the side of the element with the larger-valued speed
+// of light.
 class BdrFieldVectorCoefficient : public mfem::VectorCoefficient,
                                   public BdrGridFunctionCoefficient
 {
 private:
   const mfem::ParGridFunction &U;
   const MaterialOperator &mat_op;
+  bool side_n_min;
 
 public:
-  BdrFieldVectorCoefficient(const mfem::ParGridFunction &gf, const MaterialOperator &mat_op)
+  BdrFieldVectorCoefficient(const mfem::ParGridFunction &U, const MaterialOperator &mat_op,
+                            bool side_n_min)
     : mfem::VectorCoefficient(mat_op.SpaceDimension()),
-      BdrGridFunctionCoefficient(*gf.ParFESpace()->GetParMesh()), U(gf), mat_op(mat_op)
+      BdrGridFunctionCoefficient(*U.ParFESpace()->GetParMesh()), U(U), mat_op(mat_op),
+      side_n_min(side_n_min)
   {
   }
 
@@ -451,12 +659,23 @@ public:
             const mfem::IntegrationPoint &ip) override
   {
     // Get neighboring elements.
-    GetBdrElementNeighborTransformations(T, ip);
+    MFEM_ASSERT(T.ElementType == mfem::ElementTransformation::BDR_ELEMENT,
+                "Unexpected element type in BdrFieldVectorCoefficient!");
+    GetBdrElementNeighborTransformations(T.ElementNo, ip);
 
-    // For interior faces, compute the value on the side where the speed of light is
-    // larger (typically should choose the vacuum side).
-    if (FET.Elem2 && mat_op.GetLightSpeedMin(FET.Elem2->Attribute) >
-                         mat_op.GetLightSpeedMax(FET.Elem1->Attribute))
+    // For interior faces, compute the value on the desired side.
+    if (UseElem12(FET, mat_op))
+    {
+      U.GetVectorValue(*FET.Elem1, FET.Elem1->GetIntPoint(), V);
+      double W_data[3];
+      mfem::Vector W(W_data, V.Size());
+      U.GetVectorValue(*FET.Elem2, FET.Elem2->GetIntPoint(), W);
+      if (V * V < W * W)
+      {
+        V = W;
+      }
+    }
+    else if (UseElem2(FET, mat_op, side_n_min))
     {
       U.GetVectorValue(*FET.Elem2, FET.Elem2->GetIntPoint(), V);
     }
@@ -467,28 +686,38 @@ public:
   }
 };
 
+// Returns the local scalar field evaluated on a boundary element. For internal boundary
+// elements, the solution is taken on the side of the element with the larger-valued speed
+// of light.
 class BdrFieldCoefficient : public mfem::Coefficient, public BdrGridFunctionCoefficient
 {
 private:
   const mfem::ParGridFunction &U;
   const MaterialOperator &mat_op;
+  bool side_n_min;
 
 public:
-  BdrFieldCoefficient(const mfem::ParGridFunction &gf, const MaterialOperator &mat_op)
-    : mfem::Coefficient(), BdrGridFunctionCoefficient(*gf.ParFESpace()->GetParMesh()),
-      U(gf), mat_op(mat_op)
+  BdrFieldCoefficient(const mfem::ParGridFunction &U, const MaterialOperator &mat_op,
+                      bool side_n_min)
+    : mfem::Coefficient(), BdrGridFunctionCoefficient(*U.ParFESpace()->GetParMesh()), U(U),
+      mat_op(mat_op), side_n_min(side_n_min)
   {
   }
 
   double Eval(mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip) override
   {
     // Get neighboring elements.
-    GetBdrElementNeighborTransformations(T, ip);
+    MFEM_ASSERT(T.ElementType == mfem::ElementTransformation::BDR_ELEMENT,
+                "Unexpected element type in BdrFieldCoefficient!");
+    GetBdrElementNeighborTransformations(T.ElementNo, ip);
 
-    // For interior faces, compute the value on the side where the speed of light is
-    // larger (typically should choose the vacuum side).
-    if (FET.Elem2 && mat_op.GetLightSpeedMin(FET.Elem2->Attribute) >
-                         mat_op.GetLightSpeedMax(FET.Elem1->Attribute))
+    // For interior faces, compute the value on the desired side.
+    if (UseElem12(FET, mat_op))
+    {
+      return std::max(U.GetValue(*FET.Elem1, FET.Elem1->GetIntPoint()),
+                      U.GetValue(*FET.Elem2, FET.Elem2->GetIntPoint()));
+    }
+    else if (UseElem2(FET, mat_op, side_n_min))
     {
       return U.GetValue(*FET.Elem2, FET.Elem2->GetIntPoint());
     }
@@ -670,7 +899,8 @@ public:
   void Eval(mfem::Vector &V, mfem::ElementTransformation &T,
             const mfem::IntegrationPoint &ip) override
   {
-    mfem::Vector U(vdim);
+    double U_data[3];
+    mfem::Vector U(U_data, vdim);
     V.SetSize(vdim);
     V = 0.0;
     for (auto &[coeff, a] : c)
@@ -709,7 +939,8 @@ public:
   void Eval(mfem::DenseMatrix &K, mfem::ElementTransformation &T,
             const mfem::IntegrationPoint &ip) override
   {
-    mfem::DenseMatrix M(height, width);
+    double M_data[9];
+    mfem::DenseMatrix M(M_data, height, width);
     K.SetSize(height, width);
     K = 0.0;
     for (auto &[coeff, a] : c)

@@ -42,15 +42,11 @@
       [
         {
           "Index": 1,
-          "X": 2000,
-          "Y": 833,
-          "Z": 30
+          "Center": [2000, 833, 30]
         },
         {
           "Index": 2,
-          "X": 2000,
-          "Y": 833,
-          "Z": -30
+          "Center": [2000, 833, -30]
         }
       ]
     }
@@ -132,31 +128,47 @@
     ],
     "Postprocessing":
     {
+      "SurfaceFlux":
+      [
+        {
+          "Index": 1,
+          "Attributes": [13],
+          "Type": "Electric",
+          "TwoSided": true
+        },
+        {
+          "Index": 2,
+          "Attributes": [4],
+          "Type": "Power"
+        }
+      ],
       "Dielectric":
       [
         {
           "Index": 1,
           "Attributes": [14],
-          "Side": "+Z",
+          "Type": "SA",
           "Thickness": 2.0e-3,  // μm
-          "PermittivitySA": 10.0,
+          "Permittivity": 10.0,
           "LossTan": 1.0
         },
         {
           "Index": 2,
           "Attributes": [13],
-          "Side": "-Z",
+          "Type": "MS",
           "Thickness": 2.0e-3,  // μm
-          "PermittivityMS": 10.0,
-          "LossTan": 1.0
+          "Permittivity": 10.0,
+          "LossTan": 1.0,
+          "Side": "LargerRefractiveIndex"
         },
         {
           "Index": 3,
           "Attributes": [13],
-          "Side": "+Z",
+          "Type": "MA",
           "Thickness": 2.0e-3,  // μm
-          "PermittivityMA": 10.0,
-          "LossTan": 1.0
+          "Permittivity": 10.0,
+          "LossTan": 1.0,
+          "Side": "SmallerRefractiveIndex"
         }
       ]
     }

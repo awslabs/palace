@@ -273,11 +273,6 @@ void IoData::CheckConfiguration()
       Mpi::Warning(
           "Electrostatic problem type does not support surface current excitation!\n");
     }
-    if (!boundaries.postpro.inductance.empty())
-    {
-      Mpi::Warning("Electrostatic problem type does not support boundary inductance "
-                   "postprocessing!\n");
-    }
   }
   else if (problem.type == config::ProblemData::Type::MAGNETOSTATIC)
   {
@@ -305,11 +300,6 @@ void IoData::CheckConfiguration()
     {
       Mpi::Warning(
           "Magnetostatic problem type does not support wave port boundary conditions!\n");
-    }
-    if (!boundaries.postpro.capacitance.empty())
-    {
-      Mpi::Warning("Magnetostatic problem type does not support boundary capacitance "
-                   "postprocessing!\n");
     }
     if (!boundaries.postpro.dielectric.empty())
     {
@@ -475,17 +465,17 @@ void IoData::NondimensionalizeInputs(mfem::ParMesh &mesh)
   tc = 1.0e9 * Lc / electromagnetics::c0_;  // [ns]
 
   // Mesh refinement parameters.
-  auto Divides = [this](double val) { return val / (Lc / model.L0); };
+  auto DivideLength = [this](double val) { return val / (Lc / model.L0); };
   for (auto &box : model.refinement.GetBoxes())
   {
-    std::transform(box.bbmin.begin(), box.bbmin.end(), box.bbmin.begin(), Divides);
-    std::transform(box.bbmax.begin(), box.bbmax.end(), box.bbmax.begin(), Divides);
+    std::transform(box.bbmin.begin(), box.bbmin.end(), box.bbmin.begin(), DivideLength);
+    std::transform(box.bbmax.begin(), box.bbmax.end(), box.bbmax.begin(), DivideLength);
   }
   for (auto &sphere : model.refinement.GetSpheres())
   {
     sphere.r /= Lc / model.L0;
     std::transform(sphere.center.begin(), sphere.center.end(), sphere.center.begin(),
-                   Divides);
+                   DivideLength);
   }
 
   // Materials: conductivity and London penetration depth.
@@ -498,9 +488,8 @@ void IoData::NondimensionalizeInputs(mfem::ParMesh &mesh)
   // Probe location coordinates.
   for (auto &[idx, data] : domains.postpro.probe)
   {
-    data.x /= Lc / model.L0;
-    data.y /= Lc / model.L0;
-    data.z /= Lc / model.L0;
+    std::transform(data.center.begin(), data.center.end(), data.center.begin(),
+                   DivideLength);
   }
 
   // Finite conductivity boundaries.
@@ -533,10 +522,17 @@ void IoData::NondimensionalizeInputs(mfem::ParMesh &mesh)
     data.d_offset /= Lc / model.L0;
   }
 
+  // Center coordinates for surface flux.
+  for (auto &[idx, data] : boundaries.postpro.flux)
+  {
+    std::transform(data.center.begin(), data.center.end(), data.center.begin(),
+                   DivideLength);
+  }
+
   // Dielectric interface thickness.
   for (auto &[idx, data] : boundaries.postpro.dielectric)
   {
-    data.ts /= Lc / model.L0;
+    data.t /= Lc / model.L0;
   }
 
   // For eigenmode simulations:

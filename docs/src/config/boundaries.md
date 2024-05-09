@@ -58,11 +58,8 @@
     ],
     "Postprocessing":
     {
-        "Capacitance":
-        [
-            ...
-        ],
-        "Inductance":
+        "Side": <string>,
+        "SurfaceFlux":
         [
             ...
         ],
@@ -126,11 +123,20 @@ each terminal boundary.
 
 `"Postprocessing"` :  Top-level object for configuring boundary postprocessing.
 
-`"Capacitance"` :  Array of objects for postprocessing surface capacitance by the ratio of
-the integral of the induced surface charge on the boundary and the excitation voltage.
+`"Side" ["SmallerRefractiveIndex"]` :  Defines the postprocessing side for internal
+boundary surfaces where the fields are in general double-valued. This is only relevant for
+output for [boundary visualization with ParaView](../guide/postprocessing.md#Visualization).
+The available options are:
 
-`"Inductance"` :  Array of objects for postprocessing surface inductance by the ratio of the
-integral of the magnetic flux through the boundary and the excitation current.
+  - `"SmallerRefractiveIndex"` :  Take the value from the side where the material index of
+    refraction is smaller (speed of light is larger). Typically this selects the vacuum
+    side. For anisotropic materials, the index of refraction associated with the principal
+    direction with the smallest value is used.
+  - `"LargerRefractiveIndex"` :  Take the value from the side where the material index of
+    refraction is larger (speed of light is smaller). Typically this selects the non-vacuum
+    side.
+
+`"SurfaceFlux"` :  Array of objects for postprocessing surface flux.
 
 `"Dielectric"` :  Array of objects for postprocessing surface interface dielectric loss.
 
@@ -260,8 +266,8 @@ accounts for nonzero metal thickness.
         "Elements":
         [
             {
-                "Attributes": <string> or [<float array>],
-                "Direction": <string>,
+                "Attributes": <string>,
+                "Direction": <string> or [<float array>],
                 "CoordinateSystem": <string>
             },
             ...
@@ -283,7 +289,7 @@ element, use the `"Elements"` array described below.
 mode on this lumped port boundary. Axis aligned lumped ports can be specified using
 keywords: `"+X"`, `"-X"`, `"+Y"`, `"-Y"`, `"+Z"`, `"-Z"`, while coaxial lumped ports can be
 specified using `"+R"`, `"-R"`. The direction can alternatively be specified as a
-normalized array of three values, for example `[0, 1, 0]`. If a vector direction is
+normalized array of three values, for example `[0.0, 1.0, 0.0]`. If a vector direction is
 specified, the `"CoordinateSystem"` value specifies the coordinate system it is expressed
 in. If this port is to be a multielement lumped port with more than a single lumped
 element, use the `"Elements"` array described below.
@@ -501,16 +507,19 @@ to index the computed capacitance matrix.
 `"Attributes" [None]` :  Integer array of mesh boundary attributes for this terminal
 boundary.
 
-## `boundaries["Postprocessing"]["Capacitance"]`
+## `boundaries["Postprocessing"]["SurfaceFlux"]`
 
 ```json
 "Postprocessing":
 {
-    "Capacitance":
+    "SurfaceFlux":
     [
         {
             "Index": <int>
             "Attributes": [<int array>],
+            "Type": <string>,
+            "TwoSided": <bool>,
+            "Center": [<float array>]
         },
         ...
     ]
@@ -519,43 +528,31 @@ boundary.
 
 with
 
-`"Index" [None]` :  Index of this capacitance postprocessing boundary, used in
+`"Index" [None]` :  Index of this surface flux postprocessing boundary, used in
 postprocessing output files.
 
-`"Attributes" [None]` :  Integer array of mesh boundary attributes for this capacitance
+`"Attributes" [None]` :  Integer array of mesh boundary attributes for this surface flux
 postprocessing boundary.
 
-## `boundaries["Postprocessing"]["Inductance"]`
+`"Type" [None]` :  Specifies the type of surface flux to calculate for this postprocessing
+boundary. The available options are:
 
-```json
-"Postprocessing":
-{
-    "Inductance":
-    [
-        {
-            "Index": <int>,
-            "Attributes": [<int array>],
-            "Direction": <string>
-        },
-        ...
-    ]
-}
-```
+  - `"Electric"` :  Integrate the electric flux density over the boundary surface.
+  - `"Magnetic"` :  Integrate the magnetic flux density over the boundary surface.
+  - `"Power"` :  Integrate the energy flux density, given by the Poynting vector, over the
+    boundary surface.
 
-with
+`"TwoSided" [false]` :  Specifies how to account for internal boundary surfaces with a
+possible discontinuous field on either side. When set to `false`, the flux on either side of
+an internal boundary surface is averaged. When `true`, it is summed with an opposite normal
+direction.
 
-`"Index" [None]` :  Index of this inductance postprocessing boundary, used in postprocessing
-output files.
-
-`"Attributes" [None]` :  Integer array of mesh boundary attributes for this inductance
-postprocessing boundary.
-
-`"Direction" [None]` :  Defines the global direction with which to orient the surface
-normals with computing the magnetic flux for this inductance postprocessing boundary. The
-available options are: `"+X"`, `"-X"`, `"+Y"`, `"-Y"`, `"+Z"`, `"-Z"`. The direction can
-alternatively be specified as a normalized array of three values, for example `[0, 1, 0]`.
-The true surface normal is used in the calculation, `"Direction"` is only used to ensure
-the correct choice of orientation of the normal.
+`"Center" [None]` :  Floating point array of length equal to the model spatial dimension
+specfiying the coordinates of a central point used to compute the outward flux. The true
+surface normal is used in the calculation, and this point is only used to ensure the correct
+orientation of the normal. Specified in mesh length units, and only relevant when
+`"TwoSided"` is `false`. If not specified, the point will be computed as the centroid of the
+axis-aligned bounding box for all elements making up the postprocessing boundary.
 
 ## `boundaries["Postprocessing"]["Dielectric"]`
 
@@ -567,21 +564,11 @@ the correct choice of orientation of the normal.
         {
             "Index": <int>,
             "Attributes": [<int array>],
-            "Side": <string> or [<float array>],
+            "Type": <string>,
             "Thickness": <float>,
             "Permittivity": <float>,
-            "PermittivityMA": <float>,
-            "PermittivityMS": <float>,
-            "PermittivitySA": <float>,
             "LossTan": <float>,
-            "Elements":
-            [
-                {
-                    "Attributes": [<int array>],
-                    "Side": <string> or [<float array>]
-                },
-                ...
-            ]
+            "Side": <string>
         },
         ...
     ]
@@ -590,51 +577,41 @@ the correct choice of orientation of the normal.
 
 with
 
-`"Index" [None]` :  Index of this lossy dielectric interface, used in postprocessing output
-files.
+`"Index" [None]` :  Index of this dielectric interface, used in postprocessing output files.
 
-`"Attributes" [None]` :  Integer array of mesh boundary attributes for this lossy dielectric
+`"Attributes" [None]` :  Integer array of mesh boundary attributes for this dielectric
 interface. If the interface consists of multiple elements with different `"Side"` values,
 use the `"Elements"` array described below.
 
-`"Side" [None]` :  Defines the postprocessing side when this dielectric interface is an
-internal boundary surface (and thus the electric field on the boundary is in general
-double-valued). The available options are: `"+X"`, `"-X"`, `"+Y"`, `"-Y"`, `"+Z"`, `"-Z"`.
-The direction can alternatively be specified as a normalized array of three values, for
-example `[0, 1, 0]`. If the boundary is not axis-aligned, the field value is taken from the
-side which is oriented along the specified direction. If no `"Side"` is specified, the
-field solution is taken from the neighboring element with the smaller electrical
-permittivity, which is an attempt to get the field in the domain corresponding to vacuum.
-If the interface consists of multiple elements with different `"Side"` values, use the
-`"Elements"` array described below.
+`"Type" [None]` :  Specifies the type of dielectric interface for this postprocessing
+boundary. See also [this page](../reference.md#Bulk-and-interface-dielectric-loss).
+Available options are:
+
+  - `"Default"` :  Use the full electric field evaulated at the boundary to compute the
+    energy participation ratio (EPR) of this dielectric interface and estimate loss.
+  - `"MA"` :  Use the boundary conditions assuming a metal-air interface to compute the EPR
+    of this dielectric interface.
+  - `"MS"` :  Use the boundary conditions assuming a metal-substrate interface to compute
+    the EPR of this dielectric interface.
+  - `"SA"` :  Use the boundary conditions assuming a substrate-air interface to compute the
+    EPR of this dielectric interface.
 
 `"Thickness" [None]` :  Thickness of this dielectric interface, specified in mesh length
 units.
 
-`"Permittivity" [None]` :  Relative permittivity for this dielectric interface. Leads to the
-general quality factor calculation without assuming the interface is a specific metal-air
-(MA), metal-substrate (MS), or substrate-air (SA) interface. None of `"PermittivityMA"`,
-`"PermittivityMS"`, or `"PermittivitySA"` should be specified when this value is given.
-
-`"PermittivityMA" [None]` :  Relative permittivity for this dielectric interface assuming it
-is a metal-air (MA) interface. None of `"PermittivityMS"`, `"PermittivitySA"`, or the
-general `"Permittivity"` should be specified when this value is given.
-
-`"PermittivityMS" [None]` :  Relative permittivity for this dielectric interface assuming it
-is a metal-substrate (MS) interface. None of `"PermittivityMA"`, `"PermittivitySA"`, or the
-general `"Permittivity"` should be specified when this value is given.
-
-`"PermittivitySA" [None]` :  Relative permittivity for this dielectric interface assuming it
-is a substrate-air (SA) interface. None of `"PermittivityMA"`, `"PermittivityMS"`, or the
-general `"Permittivity"` should be specified when this value is given.
+`"Permittivity" [None]` :  Relative permittivity for this dielectric interface. This should
+be the interface layer permittivity for the specific `"Type"` of interface specified.
 
 `"LossTan" [0.0]` :  Loss tangent for this lossy dielectric interface.
 
-`"Elements"[]."Attributes" [None]` :  This option should not be combined with the
-`"Attributes"` field described above. In the case where a single dielectric interface is
-made up of contributions with their own unique integer arrays of mesh boundary attributes,
-they can be specified here.
+`"Side" ["SmallerRefractiveIndex"]` :  Defines the postprocessing side when this dielectric
+interface is an internal boundary surface (and thus the electric field on the boundary is in
+general double-valued). The available options are:
 
-`"Elements"[]."Side" [None]` :  This option should not be combined with the `"Side"` field
-described above. In the case where a single dielectric interface is made up of contributions
-with their own entry for side, they can be specified here.
+  - `"SmallerRefractiveIndex"` :  Take the value from the side where the material index of
+    refraction is smaller (speed of light is larger). Typically this selects the vacuum
+    side. For anisotropic materials, the index of refraction associated with the principal
+    direction with the smallest value is used.
+  - `"LargerRefractiveIndex"` :  Take the value from the side where the material index of
+    refraction is larger (speed of light is smaller). Typically this selects the non-vacuum
+    side.

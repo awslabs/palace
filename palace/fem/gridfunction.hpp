@@ -50,6 +50,9 @@ public:
   mfem::ParFiniteElementSpace *ParFESpace() { return gfr.ParFESpace(); }
   const mfem::ParFiniteElementSpace *ParFESpace() const { return gfr.ParFESpace(); }
 
+  // Dimension of the vector field represented by the grid function.
+  int VectorDim() const { return gfr.VectorDim(); }
+
   // Set all entries equal to s.
   GridFunction &operator=(std::complex<double> s);
   GridFunction &operator=(double s)

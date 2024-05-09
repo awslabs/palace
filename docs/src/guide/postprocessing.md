@@ -73,19 +73,18 @@ Boundary postprocessing capabilities are enabled by including objects under
 [`config["Boundaries"]["Postprocessing"]`](../config/boundaries.md) in the configuration
 file. These include:
 
-  - [`config["Boundaries"]["Postprocessing"]["Capacitance"]`](../config/boundaries.md#boundaries%5B%22Postprocessing%22%5D%5B%22Capacitance%22%5D) :
-    Postprocess the integral of the surface charge on a surface defined by a list of
-    boundary attributes, and divide by the excitation voltage to get the capacitive
-    coupling. The resulting capcitances are written to `surface-C.csv` in the specified
-    output directory.
-  - [`config["Boundaries"]["Postprocessing"]["Inductance"]`](../config/boundaries.md#boundaries%5B%22Postprocessing%22%5D%5B%22Inductance%22%5D) :
-    Postprocess the magnetic flux through a surface defined by a list of boundary
-    attributes, and divide by the excitation current to the inductive coupling. The
-    resulting inductances are written to `surface-M.csv` in the specified output
+  - [`config["Boundaries"]["Postprocessing"]["SurfaceFlux"]`](../config/boundaries.md#boundaries%5B%22Postprocessing%22%5D%5B%22SurfaceFlux%22%5D) :
+    Postprocess the integrated flux through a surface defined by a list of boundary
+    attributes. Electric, magnetic, and power flux are all supported. Surface capacitance
+    can be computed by dividing the computed electric flux by the excitation voltage, while
+    inductance can be computed by dividing the computed magnetic flux by the excitation
+    current. The resulting fluxes are written to `surface-F.csv` in the specified output
     directory.
   - [`config["Boundaries"]["Postprocessing"]["Dielectric"]`](../config/boundaries.md#boundaries%5B%22Postprocessing%22%5D%5B%22Dielectric%22%5D) :
     Postprocesses interface dielectric loss at surfaces of the model by specifying the
-    interface thickness, permittivity, and loss tangent. See
+    interface thickness, permittivity, and loss tangent. See the
+    [Bulk and interface dielectric loss](../reference.md#Bulk-and-interface-dielectric-loss)
+    section of the reference, or
     [https://arxiv.org/pdf/1509.01854.pdf](https://arxiv.org/pdf/1509.01854.pdf) or
     [https://aip.scitation.org/doi/10.1063/1.3637047](https://aip.scitation.org/doi/10.1063/1.3637047)
     for more information. The participation ratios and associated quality factors are
@@ -101,9 +100,34 @@ surface currents, and charge density. These files are found in the `paraview/` d
 located in the output directory specified under
 [`config["Problem"]["Output"]`](../config/problem.md#config%5B%22Problem%22%5D).
 
-In addition to the full 3D fields, a ParaView data collection for the boundary mesh is also
-written to disk. The boundary mesh includes all surfaces with prescribed boundary
-conditions as well as any material interfaces in the computational domain.
+All fields are written out as nondimensionalized quantities. The specific quantities
+available varies by [simulation type](problem.md#Problem-Types), but the variable names for
+various possible postprocessed scalar and vector are:
+
+  - Electric field: `E`, `E_real`, and `E_imag`
+  - Magnetic flux density: `B`, `B_real`, and `B_imag`
+  - Electric potential: `V`
+  - Magnetic vector potential : `A`, `A_real`, and `A_imag`
+  - Electric energy density : `Ue`
+  - Magnetic energy density : `Um`
+  - Poynting vector: `S`
+
+Also, at the final step of the simulation the following element-wise quantities are written
+for visualization:
+
+  - Mesh partitioning (1-based): `Rank`
+  - Error indicator: `Indicator`
+
+In addition to the full 3D fields, a ParaView data collection for the boundary mesh and
+fields is also written to disk. The boundary mesh includes all surfaces with prescribed
+boundary conditions as well as any material interfaces in the computational domain. It is
+located in the same `paraview/` directory, with suffix `_boundary`.
+
+The boundary data collection includes the 3D field values sampled on the boundary mesh as
+well as:
+
+  - Surface charge density: `Qs`, `Q_real`, `Qs_imag`
+  - Surface current density: `Js`, `Js_real`, `Js_imag`
 
 ## Adaptive mesh refinement
 

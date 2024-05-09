@@ -45,9 +45,8 @@ scale based on the bounding box of the computational domain.
     [
         {
             "Levels": <int>,
-            "XLimits": [<float array>],
-            "YLimits": [<float array>],
-            "ZLimits": [<float array>]
+            "BoundingBoxMin": [<float array>],
+            "BoundingBoxMax": [<float array>]
         },
         ...
     ],
@@ -56,7 +55,7 @@ scale based on the bounding box of the computational domain.
         {
             "Levels": <int>,
             "Center": [<float array>],
-            "Radius": float
+            "Radius": <float>
         },
         ...
     ]
@@ -94,17 +93,13 @@ the sphere region will be marked for refinement.
 
 `"Levels" [0]` : Levels of parallel mesh refinement inside the specified refinement region.
 
-`"XLimits" [None]` : Floating point array of length 2 specifying the limits in the
-``x``-direction of the axis-aligned bounding box for this box refinement region. Specified
-in mesh length units.
+`"BoundingBoxMin" [None]` : Floating point array of length equal to the model spatial
+dimension specfiying the minimum coordinates of the axis-aligned bounding box for this
+refinement region. Specified in mesh length units.
 
-`"YLimits" [None]` : Floating point array of length 2 specifying the limits in the
-``y``-direction of the axis-aligned bounding box for this box refinement region. Specified
-in mesh length units.
-
-`"ZLimits" [None]` : Floating point array of length 2 specifying the limits in the
-``z``-direction of the axis-aligned bounding box for this box refinement region. Specified
-in mesh length units.
+`"BoundingBoxMax" [None]` : Floating point array of length equal to the model spatial
+dimension specfiying the maximum coordinates of the axis-aligned bounding box for this
+refinement region. Specified in mesh length units.
 
 `"Center" [None]` : Floating point array of length equal to the model spatial dimension
 specfiying the center coordinates of the sphere for this sphere refinement region.

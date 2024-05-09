@@ -346,7 +346,7 @@ void EigenSolver::Postprocess(const PostOperator &postop,
   PostprocessPorts(postop, lumped_port_op, i);
   PostprocessEPR(postop, lumped_port_op, i, omega, E_elec + E_cap);
   PostprocessDomains(postop, "m", i, i + 1, E_elec, E_mag, E_cap, E_ind);
-  PostprocessSurfaces(postop, "m", i, i + 1, E_elec + E_cap, E_mag + E_ind, 1.0, 1.0);
+  PostprocessSurfaces(postop, "m", i, i + 1, E_elec + E_cap, E_mag + E_ind);
   PostprocessProbes(postop, "m", i, i + 1);
   if (i < iodata.solver.eigenmode.n_post)
   {
@@ -364,8 +364,8 @@ namespace
 
 struct PortVIData
 {
-  const int idx;                      // Lumped port index
-  const std::complex<double> Vi, Ii;  // Port voltage, current
+  const int idx;                        // Lumped port index
+  const std::complex<double> V_i, I_i;  // Port voltage, current
 };
 
 struct EprLData
@@ -463,10 +463,10 @@ void EigenSolver::PostprocessPorts(const PostOperator &postop,
   port_data.reserve(lumped_port_op.Size());
   for (const auto &[idx, data] : lumped_port_op)
   {
-    const std::complex<double> Vi = postop.GetPortVoltage(lumped_port_op, idx);
-    const std::complex<double> Ii = postop.GetPortCurrent(lumped_port_op, idx);
-    port_data.push_back({idx, iodata.DimensionalizeValue(IoData::ValueType::VOLTAGE, Vi),
-                         iodata.DimensionalizeValue(IoData::ValueType::CURRENT, Ii)});
+    const std::complex<double> V_i = postop.GetPortVoltage(lumped_port_op, idx);
+    const std::complex<double> I_i = postop.GetPortCurrent(lumped_port_op, idx);
+    port_data.push_back({idx, iodata.DimensionalizeValue(IoData::ValueType::VOLTAGE, V_i),
+                         iodata.DimensionalizeValue(IoData::ValueType::CURRENT, I_i)});
   }
   if (root && !port_data.empty())
   {
@@ -496,8 +496,8 @@ void EigenSolver::PostprocessPorts(const PostOperator &postop,
       {
         // clang-format off
         output.print("{:+{}.{}e},{:+{}.{}e}{}",
-                     data.Vi.real(), table.w, table.p,
-                     data.Vi.imag(), table.w, table.p,
+                     data.V_i.real(), table.w, table.p,
+                     data.V_i.imag(), table.w, table.p,
                      (data.idx == port_data.back().idx) ? "" : ",");
         // clang-format on
       }
@@ -530,8 +530,8 @@ void EigenSolver::PostprocessPorts(const PostOperator &postop,
       {
         // clang-format off
         output.print("{:+{}.{}e},{:+{}.{}e}{}",
-                     data.Ii.real(), table.w, table.p,
-                     data.Ii.imag(), table.w, table.p,
+                     data.I_i.real(), table.w, table.p,
+                     data.I_i.imag(), table.w, table.p,
                      (data.idx == port_data.back().idx) ? "" : ",");
         // clang-format on
       }

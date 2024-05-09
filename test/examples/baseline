@@ -134,6 +134,7 @@ for TEST_DIR in $TEST_DIRS; do
     POSTPRO=$(echo $TEST_DIR | awk -F/ '{print $2}')
     EXAMPLE_DIR=$SCRIPT_DIR/../../examples/$TEST/postpro/$POSTPRO
     REF_DIR=$SCRIPT_DIR/ref/$TEST/$POSTPRO
-    rm -f $REF_DIR/*.csv
+    rm -rf $REF_DIR
+    mkdir -p $REF_DIR
     cp $EXAMPLE_DIR/*.csv $REF_DIR
 done

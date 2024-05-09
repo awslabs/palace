@@ -128,9 +128,9 @@ uses the solver default.
 
 `"N" [1]` :  Number of eigenvalues to compute.
 
-`"Save" [0]` :  Number of computed field modes to save to disk for visualization with
-[ParaView](https://www.paraview.org/). Files are saved in the `paraview/` directory under
-the directory specified by
+`"Save" [0]` :  Number of computed field modes to save to disk for
+[visualization with ParaView](../guide/postprocessing.md#Visualization). Files are saved in
+the `paraview/` directory under the directory specified by
 [`config["Problem"]["Output"]`](problem.md#config%5B%22Problem%22%5D).
 
 `"Type" ["Default"]` :  Specifies the eigenvalue solver to be used in computing the given
@@ -186,8 +186,8 @@ with
 `"FreqStep" [None]` :  Frequency step size for frequency sweep, GHz.
 
 `"SaveStep" [0]` :  Controls how often, in number of frequency steps, to save computed
-fields to disk for visualization with [ParaView](https://www.paraview.org/). Files are
-saved in the `paraview/` directory under the directory specified by
+fields to disk for [visualization with ParaView](../guide/postprocessing.md#Visualization).
+Files are saved in the `paraview/` directory under the directory specified by
 [`config["Problem"]["Output"]`](problem.md#config%5B%22Problem%22%5D).
 
 `"Restart" [1]` :  Iteration (1-based) from which to restart for a partial frequency sweep
@@ -268,8 +268,8 @@ start from rest at ``t = 0.0``.
 `"TimeStep" [None]` :  Uniform time step size for time integration, ns.
 
 `"SaveStep" [0]` :  Controls how often, in number of time steps, to save computed fields to
-disk for visualization with [ParaView](https://www.paraview.org/). Files are saved in the
-`paraview/` directory under the directory specified by
+disk for [visualization with ParaView](../guide/postprocessing.md#Visualization). Files are
+saved in the `paraview/` directory under the directory specified by
 [`config["Problem"]["Output"]`](problem.md#config%5B%22Problem%22%5D).
 
 ## `solver["Electrostatic"]`
@@ -284,9 +284,9 @@ disk for visualization with [ParaView](https://www.paraview.org/). Files are sav
 with
 
 `"Save" [0]` :  Number of computed electric field solutions to save to disk for
-visualization with [ParaView](https://www.paraview.org/), ordered by the entries in the
-computed capacitance matrix. Files are saved in the `paraview/` directory under the
-directory specified by
+[visualization with ParaView](../guide/postprocessing.md#Visualization), ordered by the
+entries in the computed capacitance matrix. Files are saved in the `paraview/` directory
+under the directory specified by
 [`config["Problem"]["Output"]`](problem.md#config%5B%22Problem%22%5D).
 
 ## `solver["Magnetostatic"]`
@@ -301,9 +301,10 @@ directory specified by
 with
 
 `"Save" [0]` :  Number of computed magnetic field solutions to save to disk for
-visualization with [ParaView](https://www.paraview.org/), ordered by the entries in the
-computed inductance matrix. Files are saved in the `paraview/` directory under the
-directory specified by [`config["Problem"]["Output"]`](problem.md#config%5B%22Problem%22%5D).
+[visualization with ParaView](../guide/postprocessing.md#Visualization)), ordered by the
+entries in the computed inductance matrix. Files are saved in the `paraview/` directory
+under the directory specified by
+[`config["Problem"]["Output"]`](problem.md#config%5B%22Problem%22%5D).
 
 ## `solver["Linear"]`
 

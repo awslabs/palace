@@ -40,7 +40,7 @@ DomainPostOperator::DomainPostOperator(const IoData &iodata, const MaterialOpera
   }
   {
     // Construct RT mass matrix to compute the magnetic field energy integral as:
-    //              E_mag = 1/2 Re{∫_Ω Bᴴ H dV} as (M_muinv * b)ᴴ b.
+    //              E_mag = 1/2 Re{∫_Ω Hᴴ B dV} as (M_muinv * b)ᴴ b.
     MaterialPropertyCoefficient muinv_func(mat_op.GetAttributeToMaterial(),
                                            mat_op.GetInvPermeability());
     BilinearForm m(rt_fespace);

@@ -25,9 +25,7 @@
       [
         {
           "Index": 1,  // Center of rings
-          "X": 0.0,
-          "Y": 0.0,
-          "Z": 0.0
+          "Center": [0.0, 0.0, 0.0]
         }
       ],
       "Energy":
@@ -60,17 +58,19 @@
     ],
     "Postprocessing":  // Inductance from flux instead of energy
     {
-      "Inductance":
+      "SurfaceFlux":
       [
         {
           "Index": 1,
-          "Attributes": [6],  // Inner hole
-          "Direction": [0, 0, 1]
+          "Attributes": [6],    // Inner hole
+          "Type": "Magnetic",
+	  "Center": [0, 0, -1]  // Positive in +Z
         },
         {
           "Index": 2,
           "Attributes": [6, 7],  // Outer (total) hole
-          "Direction": [0, 0, 1]
+	  "Type": "Magnetic",
+          "Center": [0, 0, -1]   // Positive in +Z
         }
       ]
     }

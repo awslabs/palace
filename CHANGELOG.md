@@ -48,6 +48,14 @@ The format of this changelog is based on
     and associated parallel capacitance.
   - Fixed a bug for coaxial lumped ports which led to incorrect extraction of the geometric
     parameters, especially when coarsely-meshed or non-axis-aligned.
+  - Added boundary postprocessing functionality for surface flux including electric,
+    magnetic, and power given by the Poynting vector. This results in some breaking changes
+    to the configuration file interface, see
+    `config["Boundaries"]["Postprocessing"]["SurfaceFlux"]` and
+    `config["Boundaries"]["Postprocessing"]["Dielectric"]`. In addition, related
+    configuration file keyword changes to for consistency were made to
+    `config["Domains"]["Postprocessing"]["Probe"]` and
+    `config["Model"]["Refinement"]["Boxes"]`.
 
 ## [0.12.0] - 2023-12-21
 

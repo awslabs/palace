@@ -322,28 +322,23 @@ namespace
 
 struct EnergyData
 {
-  const int idx;        // Domain or interface index
+  const int idx;        // Domain index
   const double E_elec;  // Electric field energy
   const double E_mag;   // Magnetic field energy
 };
 
+struct FluxData
+{
+  const int idx;                   // Surface index
+  const std::complex<double> Phi;  // Integrated flux
+  const SurfaceFluxType type;      // Flux type
+};
+
 struct EpsData
 {
-  const int idx;    // Domain or interface index
-  const double pl;  // Participation ratio
-  const double Ql;  // Quality factor
-};
-
-struct CapData
-{
-  const int idx;     // Surface index
-  const double Cij;  // Capacitance (integrated charge)
-};
-
-struct IndData
-{
-  const int idx;     // Surface index
-  const double Mij;  // Inductance (integrated flux)
+  const int idx;   // Interface index
+  const double p;  // Participation ratio
+  const double Q;  // Quality factor
 };
 
 struct ProbeData
@@ -433,18 +428,108 @@ void BaseSolver::PostprocessDomains(const PostOperator &postop, const std::strin
 }
 
 void BaseSolver::PostprocessSurfaces(const PostOperator &postop, const std::string &name,
-                                     int step, double time, double E_elec, double E_mag,
-                                     double Vinc, double Iinc) const
+                                     int step, double time, double E_elec,
+                                     double E_mag) const
 {
   // If surfaces have been specified for postprocessing, compute the corresponding values
-  // and write out to disk. This output uses the complex magnitude of the computed charge
-  // and flux for frequency domain simulations. For capacitance/inductance, use the
-  // excitation voltage or current across all sources and excited ports. The passed in
-  // E_elec is the sum of the E-field and lumped capacitor energies, and E_mag is the same
-  // for the B-field and lumped inductors.
+  // and write out to disk. The passed in E_elec is the sum of the E-field and lumped
+  // capacitor energies, and E_mag is the same for the B-field and lumped inductors.
   if (post_dir.length() == 0)
   {
     return;
+  }
+
+  // Write the integrated surface flux.
+  const bool has_imaginary = postop.HasImag();
+  std::vector<FluxData> flux_data;
+  flux_data.reserve(postop.GetSurfacePostOp().flux_surfs.size());
+  for (const auto &[idx, data] : postop.GetSurfacePostOp().flux_surfs)
+  {
+    const std::complex<double> Phi = postop.GetSurfaceFlux(idx);
+    double scale = 1.0;
+    switch (data.type)
+    {
+      case SurfaceFluxType::ELECTRIC:
+        scale = iodata.DimensionalizeValue(IoData::ValueType::CAPACITANCE, 1.0);
+        scale *= iodata.DimensionalizeValue(IoData::ValueType::VOLTAGE, 1.0);
+        break;
+      case SurfaceFluxType::MAGNETIC:
+        scale = iodata.DimensionalizeValue(IoData::ValueType::INDUCTANCE, 1.0);
+        scale *= iodata.DimensionalizeValue(IoData::ValueType::CURRENT, 1.0);
+        break;
+      case SurfaceFluxType::POWER:
+        scale = iodata.DimensionalizeValue(IoData::ValueType::POWER, 1.0);
+        break;
+    }
+    flux_data.push_back({idx, Phi * scale, data.type});
+  }
+  if (root && !flux_data.empty())
+  {
+    std::string path = post_dir + "surface-F.csv";
+    auto output = OutputFile(path, (step > 0));
+    if (step == 0)
+    {
+      output.print("{:>{}s},", name, table.w1);
+      for (const auto &data : flux_data)
+      {
+        std::string name, unit;
+        switch (data.type)
+        {
+          case SurfaceFluxType::ELECTRIC:
+            name = "Φ_elec";
+            unit = "(C)";
+            break;
+          case SurfaceFluxType::MAGNETIC:
+            name = "Φ_mag";
+            unit = "(Wb)";
+            break;
+          case SurfaceFluxType::POWER:
+            name = "Φ_pow";
+            unit = "(W)";
+            break;
+        }
+        if (has_imaginary && data.type != SurfaceFluxType::POWER)
+        {
+          // clang-format off
+          output.print("{:>{}s},{:>{}s}{}",
+                       "Re{" + name + "[" + std::to_string(data.idx) + "]} " + unit, table.w,
+                       "Im{" + name + "[" + std::to_string(data.idx) + "]} " + unit, table.w,
+                       (data.idx == flux_data.back().idx) ? "" : ",");
+          // clang-format on
+        }
+        else
+        {
+          // clang-format off
+          output.print("{:>{}s}{}",
+                       name + "[" + std::to_string(data.idx) + "] " + unit, table.w,
+                       (data.idx == flux_data.back().idx) ? "" : ",");
+          // clang-format on
+        }
+      }
+      output.print("\n");
+    }
+    output.print("{:{}.{}e},", time, table.w1, table.p1);
+    for (const auto &data : flux_data)
+    {
+      if (has_imaginary && data.type != SurfaceFluxType::POWER)
+      {
+        // clang-format off
+        output.print("{:+{}.{}e},{:+{}.{}e}{}",
+                     data.Phi.real(), table.w, table.p,
+                     data.Phi.imag(), table.w, table.p,
+                     (data.idx == flux_data.back().idx) ? "" : ",");
+        // clang-format on
+      }
+      else
+      {
+        // clang-format off
+        output.print("{:+{}.{}e}{}",
+                     data.Phi.real(), table.w, table.p,
+                     (data.idx == flux_data.back().idx) ? "" : ",");
+        // clang-format on
+      }
+    }
+    output.print("\n");
   }
 
   // Write the Q-factors due to interface dielectric loss.
@@ -452,11 +537,11 @@ void BaseSolver::PostprocessSurfaces(const PostOperator &postop, const std::stri
   eps_data.reserve(postop.GetSurfacePostOp().eps_surfs.size());
   for (const auto &[idx, data] : postop.GetSurfacePostOp().eps_surfs)
   {
-    const double pl = postop.GetInterfaceParticipation(idx, E_elec);
+    const double p = postop.GetInterfaceParticipation(idx, E_elec);
     const double tandelta = postop.GetSurfacePostOp().GetInterfaceLossTangent(idx);
-    const double Ql =
-        (pl == 0.0 || tandelta == 0.0) ? mfem::infinity() : 1.0 / (tandelta * pl);
-    eps_data.push_back({idx, pl, Ql});
+    const double Q =
+        (p == 0.0 || tandelta == 0.0) ? mfem::infinity() : 1.0 / (tandelta * p);
+    eps_data.push_back({idx, p, Q});
   }
   if (root && !eps_data.empty())
   {
@@ -481,85 +566,9 @@ void BaseSolver::PostprocessSurfaces(const PostOperator &postop, const std::stri
     {
       // clang-format off
       output.print("{:+{}.{}e},{:+{}.{}e}{}",
-                   data.pl, table.w, table.p,
-                   data.Ql, table.w, table.p,
+                   data.p, table.w, table.p,
+                   data.Q, table.w, table.p,
                    (data.idx == eps_data.back().idx) ? "" : ",");
-      // clang-format on
-    }
-    output.print("\n");
-  }
-
-  // Write the surface capacitance (integrated charge).
-  std::vector<CapData> cap_data;
-  cap_data.reserve(postop.GetSurfacePostOp().charge_surfs.size());
-  for (const auto &[idx, data] : postop.GetSurfacePostOp().charge_surfs)
-  {
-    const double Cij = (std::abs(Vinc) > 0.0) ? postop.GetSurfaceCharge(idx) / Vinc : 0.0;
-    cap_data.push_back(
-        {idx, iodata.DimensionalizeValue(IoData::ValueType::CAPACITANCE, Cij)});
-  }
-  if (root && !cap_data.empty())
-  {
-    std::string path = post_dir + "surface-C.csv";
-    auto output = OutputFile(path, (step > 0));
-    if (step == 0)
-    {
-      output.print("{:>{}s},", name, table.w1);
-      for (const auto &data : cap_data)
-      {
-        // clang-format off
-        output.print("{:>{}s}{}",
-                     "C[" + std::to_string(data.idx) + "] (F)", table.w,
-                     (data.idx == cap_data.back().idx) ? "" : ",");
-        // clang-format on
-      }
-      output.print("\n");
-    }
-    output.print("{:{}.{}e},", time, table.w1, table.p1);
-    for (const auto &data : cap_data)
-    {
-      // clang-format off
-      output.print("{:+{}.{}e}{}",
-                   data.Cij, table.w, table.p,
-                   (data.idx == cap_data.back().idx) ? "" : ",");
-      // clang-format on
-    }
-    output.print("\n");
-  }
-
-  // Write the surface inductance (integrated flux).
-  std::vector<IndData> ind_data;
-  ind_data.reserve(postop.GetSurfacePostOp().flux_surfs.size());
-  for (const auto &[idx, data] : postop.GetSurfacePostOp().flux_surfs)
-  {
-    const double Mij = (std::abs(Iinc) > 0.0) ? postop.GetSurfaceFlux(idx) / Iinc : 0.0;
-    ind_data.push_back(
-        {idx, iodata.DimensionalizeValue(IoData::ValueType::INDUCTANCE, Mij)});
-  }
-  if (root && !ind_data.empty())
-  {
-    std::string path = post_dir + "surface-M.csv";
-    auto output = OutputFile(path, (step > 0));
-    if (step == 0)
-    {
-      output.print("{:>{}s},", name, table.w1);
-      for (const auto &data : ind_data)
-      {
-        // clang-format off
-        output.print("{:>{}s}{}",
-                     "M[" + std::to_string(data.idx) + "] (H)", table.w,
-                     (data.idx == ind_data.back().idx) ? "" : ",");
-        // clang-format on
-      }
-      output.print("\n");
-    }
-    output.print("{:{}.{}e},", time, table.w1, table.p1);
-    for (const auto &data : ind_data)
-    {
-      // clang-format off
-      output.print("{:+{}.{}e}{}",
-                   data.Mij, table.w, table.p,
-                   (data.idx == ind_data.back().idx) ? "" : ",");
       // clang-format on
     }
     output.print("\n");

@@ -374,19 +374,20 @@ public:
 
     // Compute Eₜ + n ⋅ Eₙ . The normal returned by GetNormal points out of the
     // computational domain, so we reverse it (direction of propagation is into the domain).
-    mfem::Vector U, nor;
-    BdrGridFunctionCoefficient::GetNormal(*T_submesh, nor);
+    double normal_data[3];
+    mfem::Vector normal(normal_data, vdim);
+    BdrGridFunctionCoefficient::GetNormal(*T_submesh, normal);
     if constexpr (Type == ValueType::REAL)
     {
       Et.Real().GetVectorValue(*T_submesh, ip, V);
       auto Vn = En.Real().GetValue(*T_submesh, ip);
-      V.Add(-Vn, nor);
+      V.Add(-Vn, normal);
     }
     else
     {
       Et.Imag().GetVectorValue(*T_submesh, ip, V);
       auto Vn = En.Imag().GetValue(*T_submesh, ip);
-      V.Add(-Vn, nor);
+      V.Add(-Vn, normal);
     }
   }
 };
@@ -483,13 +484,15 @@ public:
     }();
 
     // Compute Re/Im{-1/i (ikₙ Eₜ + ∇ₜ Eₙ)} (t-gradient evaluated in boundary element).
-    mfem::Vector U;
+    double U_data[3];
+    mfem::Vector U(U_data, vdim);
     if constexpr (Type == ValueType::REAL)
     {
       Et.Real().GetVectorValue(*T_submesh, ip, U);
       U *= -kn.real();
 
-      mfem::Vector dU;
+      double dU_data[3];
+      mfem::Vector dU(dU_data, vdim);
       En.Imag().GetGradient(*T_submesh, dU);
       U -= dU;
     }
@@ -498,7 +501,8 @@ public:
       Et.Imag().GetVectorValue(*T_submesh, ip, U);
       U *= -kn.real();
 
-      mfem::Vector dU;
+      double dU_data[3];
+      mfem::Vector dU(dU_data, vdim);
       En.Real().GetGradient(*T_submesh, dU);
       U += dU;
     }
@@ -776,7 +780,7 @@ WavePortData::WavePortData(const config::WavePortData &data,
   // of the wave port boundary, in order to deal with symmetry effectively.
   {
     Vector bbmin, bbmax;
-    port_mesh->Get().GetBoundingBox(bbmin, bbmax);
+    mesh::GetAxisAlignedBoundingBox(*port_mesh, bbmin, bbmax);
     const int dim = port_mesh->SpaceDimension();
 
     double la = 0.0, lb = 0.0;
@@ -916,18 +920,22 @@ void WavePortData::Initialize(double omega)
         *port_E0t, *port_E0n, mat_op, port_submesh, submesh_parent_elems, kn0, omega0);
     BdrSubmeshHVectorCoefficient<ValueType::IMAG> port_nxH0i_func(
         *port_E0t, *port_E0n, mat_op, port_submesh, submesh_parent_elems, kn0, omega0);
-    port_sr = std::make_unique<mfem::LinearForm>(&port_nd_fespace->Get());
-    port_si = std::make_unique<mfem::LinearForm>(&port_nd_fespace->Get());
-    port_sr->AddDomainIntegrator(new VectorFEDomainLFIntegrator(port_nxH0r_func));
-    port_si->AddDomainIntegrator(new VectorFEDomainLFIntegrator(port_nxH0i_func));
-    port_sr->UseFastAssembly(false);
-    port_si->UseFastAssembly(false);
-    port_sr->UseDevice(false);
-    port_si->UseDevice(false);
-    port_sr->Assemble();
-    port_si->Assemble();
-    port_sr->UseDevice(true);
-    port_si->UseDevice(true);
+    {
+      port_sr = std::make_unique<mfem::LinearForm>(&port_nd_fespace->Get());
+      port_sr->AddDomainIntegrator(new VectorFEDomainLFIntegrator(port_nxH0r_func));
+      port_sr->UseFastAssembly(false);
+      port_sr->UseDevice(false);
+      port_sr->Assemble();
+      port_sr->UseDevice(true);
+    }
+    {
+      port_si = std::make_unique<mfem::LinearForm>(&port_nd_fespace->Get());
+      port_si->AddDomainIntegrator(new VectorFEDomainLFIntegrator(port_nxH0i_func));
+      port_si->UseFastAssembly(false);
+      port_si->UseDevice(false);
+      port_si->Assemble();
+      port_si->UseDevice(true);
+    }
     Normalize(*port_S0t, *port_E0t, *port_E0n, *port_sr, *port_si);
   }
 }
@@ -977,32 +985,39 @@ double WavePortData::GetExcitationPower() const
 
 std::complex<double> WavePortData::GetPower(GridFunction &E, GridFunction &B) const
 {
-  // Compute port power, (E x H) ⋅ n = E ⋅ (-n x H), integrated over the port surface
-  // using the computed E and H = μ⁻¹ B fields. The linear form is reconstructed from
-  // scratch each time due to changing H. The BdrCurrentVectorCoefficient computes -n x H,
-  // where n is an outward normal.
+  // Compute port power, (E x H) ⋅ n = E ⋅ (-n x H), integrated over the port surface using
+  // the computed E and H = μ⁻¹ B fields, where +n is the direction of propagation (into the
+  // domain). The BdrSurfaceCurrentVectorCoefficient computes -n x H for an outward normal,
+  // so we multiply by -1. The linear form is reconstructed from scratch each time due to
+  // changing H.
   MFEM_VERIFY(E.HasImag() && B.HasImag(),
               "Wave ports expect complex-valued E and B fields in port power "
               "calculation!");
   auto &nd_fespace = *E.ParFESpace();
   const auto &mesh = *nd_fespace.GetParMesh();
-  BdrCurrentVectorCoefficient nxHr_func(B.Real(), mat_op);
-  BdrCurrentVectorCoefficient nxHi_func(B.Imag(), mat_op);
+  BdrSurfaceCurrentVectorCoefficient nxHr_func(B.Real(), mat_op);
+  BdrSurfaceCurrentVectorCoefficient nxHi_func(B.Imag(), mat_op);
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, attr_list);
-  mfem::LinearForm pr(&nd_fespace), pi(&nd_fespace);
-  pr.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(nxHr_func), attr_marker);
-  pi.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(nxHi_func), attr_marker);
-  pr.UseFastAssembly(false);
-  pi.UseFastAssembly(false);
-  pr.UseDevice(false);
-  pi.UseDevice(false);
-  pr.Assemble();
-  pi.Assemble();
-  pr.UseDevice(true);
-  pi.UseDevice(true);
-  std::complex<double> dot(-(pr * E.Real()) - (pi * E.Imag()),
-                           -(pr * E.Imag()) + (pi * E.Real()));
+  std::complex<double> dot;
+  {
+    mfem::LinearForm pr(&nd_fespace);
+    pr.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(nxHr_func), attr_marker);
+    pr.UseFastAssembly(false);
+    pr.UseDevice(false);
+    pr.Assemble();
+    pr.UseDevice(true);
+    dot = -(pr * E.Real()) - 1i * (pr * E.Imag());
+  }
+  {
+    mfem::LinearForm pi(&nd_fespace);
+    pi.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(nxHi_func), attr_marker);
+    pi.UseFastAssembly(false);
+    pi.UseDevice(false);
+    pi.Assemble();
+    pi.UseDevice(true);
+    dot += -(pi * E.Imag()) + 1i * (pi * E.Real());
+  }
   Mpi::GlobalSum(1, &dot, nd_fespace.GetComm());
   return dot;
 }
@@ -1271,9 +1286,8 @@ void WavePortOperator::AddExtraSystemBdrCoefficients(double omega,
 void WavePortOperator::AddExcitationBdrCoefficients(double omega, SumVectorCoefficient &fbr,
                                                     SumVectorCoefficient &fbi)
 {
-  // Re{-U_inc} = Re{+2 (-iω) n x H_inc}, which is a function of E_inc as computed by the
-  // modal solution (stored as a grid function and coefficient during initialization).
-  // Likewise for the imaginary part.
+  // Re/Im{-U_inc} = Re/Im{+2 (-iω) n x H_inc}, which is a function of E_inc as computed by
+  // the modal solution (stored as a grid function and coefficient during initialization).
   Initialize(omega);
   for (const auto &[idx, data] : ports)
   {
