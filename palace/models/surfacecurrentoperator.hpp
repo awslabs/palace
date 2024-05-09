@@ -35,8 +35,7 @@ public:
   std::vector<std::unique_ptr<LumpedElementData>> elems;
 
 public:
-  SurfaceCurrentData(const config::SurfaceCurrentData &data,
-                     mfem::ParFiniteElementSpace &h1_fespace);
+  SurfaceCurrentData(const config::SurfaceCurrentData &data, const mfem::ParMesh &mesh);
 
   double GetExcitationCurrent() const;
 };
@@ -51,12 +50,11 @@ private:
   // information.
   std::map<int, SurfaceCurrentData> sources;
 
-  void SetUpBoundaryProperties(const IoData &iodata,
-                               mfem::ParFiniteElementSpace &h1_fespace);
+  void SetUpBoundaryProperties(const IoData &iodata, const mfem::ParMesh &mesh);
   void PrintBoundaryInfo(const IoData &iodata, const mfem::ParMesh &mesh);
 
 public:
-  SurfaceCurrentOperator(const IoData &iodata, mfem::ParFiniteElementSpace &h1_fespace);
+  SurfaceCurrentOperator(const IoData &iodata, const mfem::ParMesh &mesh);
 
   // Access data structures for the surface current source with the given index.
   const SurfaceCurrentData &GetSource(int idx) const;

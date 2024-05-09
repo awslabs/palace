@@ -52,7 +52,7 @@ private:
 
 public:
   LumpedPortData(const config::LumpedPortData &data, const MaterialOperator &mat_op,
-                 mfem::ParFiniteElementSpace &h1_fespace);
+                 const mfem::ParMesh &mesh);
 
   double GetToSquare(const LumpedElementData &elem) const
   {
@@ -89,12 +89,12 @@ private:
   std::map<int, LumpedPortData> ports;
 
   void SetUpBoundaryProperties(const IoData &iodata, const MaterialOperator &mat_op,
-                               mfem::ParFiniteElementSpace &h1_fespace);
+                               const mfem::ParMesh &mesh);
   void PrintBoundaryInfo(const IoData &iodata, const mfem::ParMesh &mesh);
 
 public:
   LumpedPortOperator(const IoData &iodata, const MaterialOperator &mat_op,
-                     mfem::ParFiniteElementSpace &h1_fespace);
+                     const mfem::ParMesh &mesh);
 
   // Access data structures for the lumped port with the given index.
   const LumpedPortData &GetPort(int idx) const;

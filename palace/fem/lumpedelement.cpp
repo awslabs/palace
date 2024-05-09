@@ -12,29 +12,11 @@
 namespace palace
 {
 
-namespace
-{
-
-double GetArea(mfem::ParFiniteElementSpace &fespace, mfem::Array<int> &attr_marker)
-{
-  mfem::ConstantCoefficient one_func(1.0);
-  mfem::LinearForm s(&fespace);
-  s.AddBoundaryIntegrator(new BoundaryLFIntegrator(one_func), attr_marker);
-  s.UseFastAssembly(false);
-  s.UseDevice(false);
-  s.Assemble();
-  s.UseDevice(true);
-  return linalg::Sum<Vector>(fespace.GetComm(), s);
-}
-
-}  // namespace
-
 UniformElementData::UniformElementData(const std::array<double, 3> &input_dir,
                                        const mfem::Array<int> &attr_list,
-                                       mfem::ParFiniteElementSpace &fespace)
+                                       const mfem::ParMesh &mesh)
   : LumpedElementData(attr_list)
 {
-  const mfem::ParMesh &mesh = *fespace.GetParMesh();
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, attr_list);
   auto bounding_box = mesh::GetBoundingBox(mesh, attr_marker, true);
@@ -107,10 +89,9 @@ UniformElementData::GetModeCoefficient(double coeff) const
 
 CoaxialElementData::CoaxialElementData(const std::array<double, 3> &input_dir,
                                        const mfem::Array<int> &attr_list,
-                                       mfem::ParFiniteElementSpace &fespace)
+                                       const mfem::ParMesh &mesh)
   : LumpedElementData(attr_list)
 {
-  const mfem::ParMesh &mesh = *fespace.GetParMesh();
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, attr_list);
   auto bounding_ball = mesh::GetBoundingBall(mesh, attr_marker, true);
