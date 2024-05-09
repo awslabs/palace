@@ -682,23 +682,30 @@ void GetAxisAlignedBoundingBox(const mfem::ParMesh &mesh, const mfem::Array<int>
 
 double BoundingBox::Area() const
 {
-  return 4.0 *
-         CVector3dMap(normals[0].data()).cross(CVector3dMap(normals[1].data())).norm();
+  return 4.0 * CVector3dMap(axes[0].data()).cross(CVector3dMap(axes[1].data())).norm();
 }
 
 double BoundingBox::Volume() const
 {
-  return planar ? 0.0 : 2.0 * CVector3dMap(normals[2].data()).norm() * Area();
+  return planar ? 0.0 : 2.0 * CVector3dMap(axes[2].data()).norm() * Area();
+}
+
+std::array<std::array<double, 3>, 3> BoundingBox::Normals() const
+{
+  std::array<std::array<double, 3>, 3> normals = {axes[0], axes[1], axes[2]};
+  Vector3dMap(normals[0].data()).normalize(), Vector3dMap(normals[1].data()).normalize(),
+      Vector3dMap(normals[2].data()).normalize();
+  return normals;
 }
 
 std::array<double, 3> BoundingBox::Lengths() const
 {
-  return {2.0 * CVector3dMap(normals[0].data()).norm(),
-          2.0 * CVector3dMap(normals[1].data()).norm(),
-          2.0 * CVector3dMap(normals[2].data()).norm()};
+  return {2.0 * CVector3dMap(axes[0].data()).norm(),
+          2.0 * CVector3dMap(axes[1].data()).norm(),
+          2.0 * CVector3dMap(axes[2].data()).norm()};
 }
 
-std::array<double, 3> BoundingBox::Deviation(const std::array<double, 3> &direction) const
+std::array<double, 3> BoundingBox::Deviations(const std::array<double, 3> &direction) const
 {
   const auto eig_dir = CVector3dMap(direction.data());
   std::array<double, 3> deviation_deg;
@@ -706,7 +713,7 @@ std::array<double, 3> BoundingBox::Deviation(const std::array<double, 3> &direct
   {
     deviation_deg[i] =
         std::acos(std::min(1.0, std::abs(eig_dir.normalized().dot(
-                                    CVector3dMap(normals[i].data()).normalized())))) *
+                                    CVector3dMap(axes[i].data()).normalized())))) *
         (180.0 / M_PI);
   }
   return deviation_deg;
@@ -731,77 +738,99 @@ int CollectPointCloudOnRoot(const mfem::ParMesh &mesh, const mfem::Array<int> &m
   if (!mesh.GetNodes())
   {
     // Linear mesh, work with element vertices directly.
-    std::set<int> vertex_indices;
-    mfem::Array<int> v;
-    if (bdr)
+    PalacePragmaOmp(parallel)
     {
-      for (int i = 0; i < mesh.GetNBE(); i++)
+      std::set<int> vertex_indices;
+      mfem::Array<int> v;
+      if (bdr)
       {
-        if (!marker[mesh.GetBdrAttribute(i) - 1])
+        PalacePragmaOmp(for schedule(static))
+        for (int i = 0; i < mesh.GetNBE(); i++)
         {
-          continue;
+          if (!marker[mesh.GetBdrAttribute(i) - 1])
+          {
+            continue;
+          }
+          mesh.GetBdrElementVertices(i, v);
+          vertex_indices.insert(v.begin(), v.end());
         }
-        mesh.GetBdrElementVertices(i, v);
-        vertex_indices.insert(v.begin(), v.end());
       }
-    }
-    else
-    {
-      for (int i = 0; i < mesh.GetNE(); i++)
+      else
       {
-        if (!marker[mesh.GetAttribute(i) - 1])
+        PalacePragmaOmp(for schedule(static))
+        for (int i = 0; i < mesh.GetNE(); i++)
         {
-          continue;
+          if (!marker[mesh.GetAttribute(i) - 1])
+          {
+            continue;
+          }
+          mesh.GetElementVertices(i, v);
+          vertex_indices.insert(v.begin(), v.end());
         }
-        mesh.GetElementVertices(i, v);
-        vertex_indices.insert(v.begin(), v.end());
       }
-    }
-    for (auto i : vertex_indices)
-    {
-      const auto &vx = mesh.GetVertex(i);
-      vertices.push_back({vx[0], vx[1], vx[2]});
+      PalacePragmaOmp(critical(PointCloud))
+      {
+        for (auto i : vertex_indices)
+        {
+          const auto &vx = mesh.GetVertex(i);
+          vertices.push_back({vx[0], vx[1], vx[2]});
+        }
+      }
     }
   }
   else
   {
     // Curved mesh, need to process point matrices.
     const int ref = mesh.GetNodes()->FESpace()->GetMaxElementOrder();
-    mfem::DenseMatrix pointmat;  // 3 x N
-    mfem::IsoparametricTransformation T;
-    if (bdr)
+    PalacePragmaOmp(parallel)
     {
-      for (int i = 0; i < mesh.GetNBE(); i++)
+      mfem::GeometryRefiner refiner;
+      mfem::IsoparametricTransformation T;
+      mfem::DenseMatrix pointmat;  // 3 x N
+      std::vector<Eigen::Vector3d> loc_vertices;
+      if (bdr)
       {
-        if (!marker[mesh.GetBdrAttribute(i) - 1])
+        PalacePragmaOmp(for schedule(static))
+        for (int i = 0; i < mesh.GetNBE(); i++)
         {
-          continue;
-        }
-        mesh.GetBdrElementTransformation(i, &T);
-        T.Transform(
-            mfem::GlobGeometryRefiner.Refine(mesh.GetBdrElementGeometry(i), ref)->RefPts,
-            pointmat);
-        for (int j = 0; j < pointmat.Width(); j++)
-        {
-          vertices.push_back({pointmat(0, j), pointmat(1, j), pointmat(2, j)});
+          if (!marker[mesh.GetBdrAttribute(i) - 1])
+          {
+            continue;
+          }
+          mesh.GetBdrElementTransformation(i, &T);
+          mfem::Geometry::Type geom = mesh.GetBdrElementGeometry(i);
+          mfem::RefinedGeometry *RefG = refiner.Refine(geom, ref);
+          T.Transform(RefG->RefPts, pointmat);
+          for (int j = 0; j < pointmat.Width(); j++)
+          {
+            loc_vertices.push_back({pointmat(0, j), pointmat(1, j), pointmat(2, j)});
+          }
         }
       }
-    }
-    else
-    {
-      for (int i = 0; i < mesh.GetNE(); i++)
+      else
       {
-        if (!marker[mesh.GetAttribute(i) - 1])
+        PalacePragmaOmp(for schedule(static))
+        for (int i = 0; i < mesh.GetNE(); i++)
         {
-          continue;
+          if (!marker[mesh.GetAttribute(i) - 1])
+          {
+            continue;
+          }
+          mesh.GetElementTransformation(i, &T);
+          mfem::Geometry::Type geom = mesh.GetElementGeometry(i);
+          mfem::RefinedGeometry *RefG = refiner.Refine(geom, ref);
+          T.Transform(RefG->RefPts, pointmat);
+          for (int j = 0; j < pointmat.Width(); j++)
+          {
+            loc_vertices.push_back({pointmat(0, j), pointmat(1, j), pointmat(2, j)});
+          }
         }
-        mesh.GetElementTransformation(i, &T);
-        T.Transform(
-            mfem::GlobGeometryRefiner.Refine(mesh.GetElementGeometry(i), ref)->RefPts,
-            pointmat);
-        for (int j = 0; j < pointmat.Width(); j++)
+      }
+      PalacePragmaOmp(critical(PointCloud))
+      {
+        for (const auto &v : loc_vertices)
         {
-          vertices.push_back({pointmat(0, j), pointmat(1, j), pointmat(2, j)});
+          vertices.push_back(v);
         }
       }
     }
@@ -975,18 +1004,18 @@ BoundingBox BoundingBoxFromPointCloud(MPI_Comm comm,
     Vector3dMap(box.center.data()) = 0.5 * (v_000 + v_111);
 
     // The length in each direction is given by traversing the edges of the cuboid in turn.
-    Vector3dMap(box.normals[0].data()) = 0.5 * (v_001 - v_000);
-    Vector3dMap(box.normals[1].data()) = 0.5 * (v_011 - v_001);
-    Vector3dMap(box.normals[2].data()) = 0.5 * (v_111 - v_011);
+    Vector3dMap(box.axes[0].data()) = 0.5 * (v_001 - v_000);
+    Vector3dMap(box.axes[1].data()) = 0.5 * (v_011 - v_001);
+    Vector3dMap(box.axes[2].data()) = 0.5 * (v_111 - v_011);
 
     // Make sure the longest dimension comes first.
-    std::sort(box.normals.begin(), box.normals.end(), [](const auto &x, const auto &y)
+    std::sort(box.axes.begin(), box.axes.end(), [](const auto &x, const auto &y)
               { return CVector3dMap(x.data()).norm() > CVector3dMap(y.data()).norm(); });
   }
 
   // Broadcast result to all processors.
   Mpi::Broadcast(3, box.center.data(), dominant_rank, comm);
-  Mpi::Broadcast(3 * 3, box.normals.data()->data(), dominant_rank, comm);
+  Mpi::Broadcast(3 * 3, box.axes.data()->data(), dominant_rank, comm);
   Mpi::Broadcast(1, &box.planar, dominant_rank, comm);
 
   return box;
@@ -1175,35 +1204,18 @@ BoundingBox BoundingBallFromPointCloud(MPI_Comm comm,
     // Compute the bounding ball.
     BoundingBall min_ball = Welzl(indices, {}, vertices);
     Vector3dMap(ball.center.data()) = min_ball.origin;
-    Vector3dMap(ball.normals[0].data()) = Eigen::Vector3d(min_ball.radius, 0.0, 0.0);
-    Vector3dMap(ball.normals[1].data()) = Eigen::Vector3d(0.0, min_ball.radius, 0.0);
-    Vector3dMap(ball.normals[2].data()) = Eigen::Vector3d(0.0, 0.0, min_ball.radius);
+    Vector3dMap(ball.axes[0].data()) = Eigen::Vector3d(min_ball.radius, 0.0, 0.0);
+    Vector3dMap(ball.axes[1].data()) = Eigen::Vector3d(0.0, min_ball.radius, 0.0);
+    Vector3dMap(ball.axes[2].data()) = Eigen::Vector3d(0.0, 0.0, min_ball.radius);
     ball.planar = min_ball.planar;
   }
 
   // Broadcast result to all processors.
   Mpi::Broadcast(3, ball.center.data(), dominant_rank, comm);
-  Mpi::Broadcast(3 * 3, ball.normals.data()->data(), dominant_rank, comm);
+  Mpi::Broadcast(3 * 3, ball.axes.data()->data(), dominant_rank, comm);
   Mpi::Broadcast(1, &ball.planar, dominant_rank, comm);
 
   return ball;
-}
-
-double LengthFromPointCloud(MPI_Comm comm, const std::vector<Eigen::Vector3d> &vertices,
-                            int dominant_rank, const std::array<double, 3> &dir)
-{
-  double length;
-  if (dominant_rank == Mpi::Rank(comm))
-  {
-    CVector3dMap direction(dir.data());
-    auto Dot = [&](const auto &x, const auto &y)
-    { return direction.dot(x) < direction.dot(y); };
-    auto p_min = std::min_element(vertices.begin(), vertices.end(), Dot);
-    auto p_max = std::max_element(vertices.begin(), vertices.end(), Dot);
-    length = (*p_max - *p_min).dot(direction.normalized());
-  }
-  Mpi::Broadcast(1, &length, dominant_rank, comm);
-  return length;
 }
 
 }  // namespace
@@ -1229,7 +1241,40 @@ double GetProjectedLength(const mfem::ParMesh &mesh, const mfem::Array<int> &mar
 {
   std::vector<Eigen::Vector3d> vertices;
   int dominant_rank = CollectPointCloudOnRoot(mesh, marker, bdr, vertices);
-  return LengthFromPointCloud(mesh.GetComm(), vertices, dominant_rank, dir);
+  double length;
+  if (dominant_rank == Mpi::Rank(mesh.GetComm()))
+  {
+    CVector3dMap direction(dir.data());
+    auto Dot = [&](const auto &x, const auto &y)
+    { return direction.dot(x) < direction.dot(y); };
+    auto p_min = std::min_element(vertices.begin(), vertices.end(), Dot);
+    auto p_max = std::max_element(vertices.begin(), vertices.end(), Dot);
+    length = (*p_max - *p_min).dot(direction.normalized());
+  }
+  Mpi::Broadcast(1, &length, dominant_rank, mesh.GetComm());
+  return length;
+}
+
+double GetDistanceFromPoint(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
+                            bool bdr, const std::array<double, 3> &origin, bool max)
+{
+  std::vector<Eigen::Vector3d> vertices;
+  int dominant_rank = CollectPointCloudOnRoot(mesh, marker, bdr, vertices);
+  double dist;
+  if (dominant_rank == Mpi::Rank(mesh.GetComm()))
+  {
+    CVector3dMap x0(origin.data());
+    auto p =
+        max ? std::max_element(vertices.begin(), vertices.end(),
+                               [&x0](const Eigen::Vector3d &x, const Eigen::Vector3d &y)
+                               { return (x - x0).norm() < (y - x0).norm(); })
+            : std::min_element(vertices.begin(), vertices.end(),
+                               [&x0](const Eigen::Vector3d &x, const Eigen::Vector3d &y)
+                               { return (x - x0).norm() < (y - x0).norm(); });
+    dist = (*p - x0).norm();
+  }
+  Mpi::Broadcast(1, &dist, dominant_rank, mesh.GetComm());
+  return dist;
 }
 
 mfem::Vector GetSurfaceNormal(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
