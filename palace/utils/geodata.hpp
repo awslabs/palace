@@ -167,7 +167,7 @@ inline double GetProjectedLength(const mfem::ParMesh &mesh, int attr, bool bdr,
 
 // Helper function for computing the closest distance of a marked group to a given point,
 // by brute force searching over the entire point set. Optionally compute the furthest
-// distance insteada of the closest.
+// distance instead of the closest.
 double GetDistanceFromPoint(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
                             bool bdr, const std::array<double, 3> &origin,
                             bool max = false);
