@@ -693,8 +693,9 @@ double BoundingBox::Volume() const
 std::array<std::array<double, 3>, 3> BoundingBox::Normals() const
 {
   std::array<std::array<double, 3>, 3> normals = {axes[0], axes[1], axes[2]};
-  Vector3dMap(normals[0].data()).normalize(), Vector3dMap(normals[1].data()).normalize(),
-      Vector3dMap(normals[2].data()).normalize();
+  Vector3dMap(normals[0].data()).normalize();
+  Vector3dMap(normals[1].data()).normalize();
+  Vector3dMap(normals[2].data()).normalize();
   return normals;
 }
 
