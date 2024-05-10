@@ -35,7 +35,7 @@ CurlCurlOperator::CurlCurlOperator(const IoData &iodata,
     h1_fespaces(fem::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
         iodata.solver.linear.mg_max_levels, mesh, h1_fecs)),
     rt_fespace(*mesh.back(), rt_fec.get()), mat_op(iodata, *mesh.back()),
-    surf_j_op(iodata, GetH1Space())
+    surf_j_op(iodata, *mesh.back())
 {
   // Finalize setup.
   CheckBoundaryProperties();

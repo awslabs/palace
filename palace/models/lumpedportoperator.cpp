@@ -17,8 +17,7 @@ namespace palace
 using namespace std::complex_literals;
 
 LumpedPortData::LumpedPortData(const config::LumpedPortData &data,
-                               const MaterialOperator &mat_op,
-                               mfem::ParFiniteElementSpace &h1_fespace)
+                               const MaterialOperator &mat_op, const mfem::ParMesh &mesh)
   : mat_op(mat_op)
 {
   // Check inputs. Only one of the circuit or per square properties should be specified
@@ -58,11 +57,11 @@ LumpedPortData::LumpedPortData(const config::LumpedPortData &data,
     {
       case config::internal::ElementData::CoordinateSystem::CYLINDRICAL:
         elems.push_back(
-            std::make_unique<CoaxialElementData>(elem.direction, attr_list, h1_fespace));
+            std::make_unique<CoaxialElementData>(elem.direction, attr_list, mesh));
         break;
       case config::internal::ElementData::CoordinateSystem::CARTESIAN:
         elems.push_back(
-            std::make_unique<UniformElementData>(elem.direction, attr_list, h1_fespace));
+            std::make_unique<UniformElementData>(elem.direction, attr_list, mesh));
         break;
     }
   }
@@ -308,21 +307,20 @@ std::complex<double> LumpedPortData::GetVoltage(GridFunction &E) const
 }
 
 LumpedPortOperator::LumpedPortOperator(const IoData &iodata, const MaterialOperator &mat_op,
-                                       mfem::ParFiniteElementSpace &h1_fespace)
+                                       const mfem::ParMesh &mesh)
 {
   // Set up lumped port boundary conditions.
-  SetUpBoundaryProperties(iodata, mat_op, h1_fespace);
-  PrintBoundaryInfo(iodata, *h1_fespace.GetParMesh());
+  SetUpBoundaryProperties(iodata, mat_op, mesh);
+  PrintBoundaryInfo(iodata, mesh);
 }
 
 void LumpedPortOperator::SetUpBoundaryProperties(const IoData &iodata,
                                                  const MaterialOperator &mat_op,
-                                                 mfem::ParFiniteElementSpace &h1_fespace)
+                                                 const mfem::ParMesh &mesh)
 {
   // Check that lumped port boundary attributes have been specified correctly.
   if (!iodata.boundaries.lumpedport.empty())
   {
-    const auto &mesh = *h1_fespace.GetParMesh();
     int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
     mfem::Array<int> bdr_attr_marker(bdr_attr_max), port_marker(bdr_attr_max);
     bdr_attr_marker = 0;
@@ -353,7 +351,7 @@ void LumpedPortOperator::SetUpBoundaryProperties(const IoData &iodata,
   // Set up lumped port data structures.
   for (const auto &[idx, data] : iodata.boundaries.lumpedport)
   {
-    ports.try_emplace(idx, data, mat_op, h1_fespace);
+    ports.try_emplace(idx, data, mat_op, mesh);
   }
 }
 

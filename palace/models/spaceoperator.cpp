@@ -46,9 +46,9 @@ SpaceOperator::SpaceOperator(const IoData &iodata,
         rt_fecs)),
     mat_op(iodata, *mesh.back()), farfield_op(iodata, mat_op, *mesh.back()),
     surf_sigma_op(iodata, mat_op, *mesh.back()), surf_z_op(iodata, mat_op, *mesh.back()),
-    lumped_port_op(iodata, mat_op, GetH1Space()),
+    lumped_port_op(iodata, mat_op, *mesh.back()),
     wave_port_op(iodata, mat_op, GetNDSpace(), GetH1Space()),
-    surf_j_op(iodata, GetH1Space())
+    surf_j_op(iodata, *mesh.back())
 {
   // Finalize setup.
   CheckBoundaryProperties();

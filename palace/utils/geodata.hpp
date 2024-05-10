@@ -99,7 +99,7 @@ struct BoundingBox
   std::array<double, 3> center;
 
   // Vectors from center to the midpoint of each face.
-  std::array<std::array<double, 3>, 3> normals;
+  std::array<std::array<double, 3>, 3> axes;
 
   // Whether or not this bounding box is two dimensional.
   bool planar;
@@ -110,11 +110,15 @@ struct BoundingBox
   // Compute the volume of the 3D bounding box. Returns zero if planar.
   double Volume() const;
 
+  // Compute the normalized axes of the bounding box.
+  std::array<std::array<double, 3>, 3> Normals() const;
+
   // Compute the lengths along each axis.
   std::array<double, 3> Lengths() const;
 
-  // Compute the deviation in degrees of a vector from each of the axis directions.
-  std::array<double, 3> Deviation(const std::array<double, 3> &direction) const;
+  // Compute the deviations in degrees of a vector from each of the axis directions. Angles
+  // are returned in the interval [0, 180].
+  std::array<double, 3> Deviations(const std::array<double, 3> &direction) const;
 };
 
 // Helper functions for computing bounding boxes from a mesh and markers. These do not need
@@ -159,6 +163,22 @@ inline double GetProjectedLength(const mfem::ParMesh &mesh, int attr, bool bdr,
   marker = 0;
   marker[attr - 1] = 1;
   return GetProjectedLength(mesh, marker, bdr, dir);
+}
+
+// Helper function for computing the closest distance of a marked group to a given point,
+// by brute force searching over the entire point set. Optionally compute the furthest
+// distance instead of the closest.
+double GetDistanceFromPoint(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
+                            bool bdr, const std::array<double, 3> &origin,
+                            bool max = false);
+
+inline double GetDistanceFromPoint(const mfem::ParMesh &mesh, int attr, bool bdr,
+                                   const std::array<double, 3> &dir, bool max = false)
+{
+  mfem::Array<int> marker(bdr ? mesh.bdr_attributes.Max() : mesh.attributes.Max());
+  marker = 0;
+  marker[attr - 1] = 1;
+  return GetDistanceFromPoint(mesh, marker, bdr, dir);
 }
 
 // Helper function to compute the average surface normal for all elements with the given

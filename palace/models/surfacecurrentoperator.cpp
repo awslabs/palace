@@ -12,7 +12,7 @@ namespace palace
 {
 
 SurfaceCurrentData::SurfaceCurrentData(const config::SurfaceCurrentData &data,
-                                       mfem::ParFiniteElementSpace &h1_fespace)
+                                       const mfem::ParMesh &mesh)
 {
   // Construct the source elements allowing for a possible multielement surface current
   // sources.
@@ -24,11 +24,11 @@ SurfaceCurrentData::SurfaceCurrentData(const config::SurfaceCurrentData &data,
     {
       case config::internal::ElementData::CoordinateSystem::CYLINDRICAL:
         elems.push_back(
-            std::make_unique<CoaxialElementData>(elem.direction, attr_list, h1_fespace));
+            std::make_unique<CoaxialElementData>(elem.direction, attr_list, mesh));
         break;
       case config::internal::ElementData::CoordinateSystem::CARTESIAN:
         elems.push_back(
-            std::make_unique<UniformElementData>(elem.direction, attr_list, h1_fespace));
+            std::make_unique<UniformElementData>(elem.direction, attr_list, mesh));
         break;
     }
   }
@@ -41,20 +41,19 @@ double SurfaceCurrentData::GetExcitationCurrent() const
 }
 
 SurfaceCurrentOperator::SurfaceCurrentOperator(const IoData &iodata,
-                                               mfem::ParFiniteElementSpace &h1_fespace)
+                                               const mfem::ParMesh &mesh)
 {
   // Set up surface current source boundaries.
-  SetUpBoundaryProperties(iodata, h1_fespace);
-  PrintBoundaryInfo(iodata, *h1_fespace.GetParMesh());
+  SetUpBoundaryProperties(iodata, mesh);
+  PrintBoundaryInfo(iodata, mesh);
 }
 
-void SurfaceCurrentOperator::SetUpBoundaryProperties(
-    const IoData &iodata, mfem::ParFiniteElementSpace &h1_fespace)
+void SurfaceCurrentOperator::SetUpBoundaryProperties(const IoData &iodata,
+                                                     const mfem::ParMesh &mesh)
 {
   // Check that surface current boundary attributes have been specified correctly.
   if (!iodata.boundaries.current.empty())
   {
-    const auto &mesh = *h1_fespace.GetParMesh();
     int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
     mfem::Array<int> bdr_attr_marker(bdr_attr_max), source_marker(bdr_attr_max);
     bdr_attr_marker = 0;
@@ -86,7 +85,7 @@ void SurfaceCurrentOperator::SetUpBoundaryProperties(
   // Set up surface current data structures.
   for (const auto &[idx, data] : iodata.boundaries.current)
   {
-    sources.try_emplace(idx, data, h1_fespace);
+    sources.try_emplace(idx, data, mesh);
   }
 }
 
