@@ -20,6 +20,8 @@ UniformElementData::UniformElementData(const std::array<double, 3> &input_dir,
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, attr_list);
   auto bounding_box = mesh::GetBoundingBox(mesh, attr_marker, true);
+  MFEM_VERIFY(bounding_box.planar,
+              "Boundary elements must be coplanar to define a uniform lumped element!");
 
   // Check the user specified direction aligns with an axis direction.
   constexpr double angle_warning_deg = 0.1;
@@ -56,26 +58,15 @@ UniformElementData::UniformElementData(const std::array<double, 3> &input_dir,
                   rel_tol * l,
               "Bounding box discovered length should match projected length!");
 
-  // Compute the width of the rectangular lumped element.
+  // Compute the width from the largest dimension excluding the length direction
+  // component.
   lengths[l_component] = 0.0;
-  if (bounding_box.planar)
-  {
-    // Compute the width from the largest dimension excluding the length direction
-    // component.
-    auto w_component =
-        std::distance(lengths.begin(), std::max_element(lengths.begin(), lengths.end()));
-    MFEM_VERIFY(
-        w_component != l_component,
-        "Bounding box length and width of should correspond to different components!");
-    w = lengths[w_component];
-  }
-  else
-  {
-    // For a non-planar element (shell of a rectangular prism, which can be "unfolded" to a
-    // planar rectangle), compute the width as the perimeter of the bounding box orthogonal
-    // to the length direction.
-    w = 2.0 * std::accumulate(lengths.begin(), lengths.end(), 0.0);
-  }
+  auto w_component =
+      std::distance(lengths.begin(), std::max_element(lengths.begin(), lengths.end()));
+  MFEM_VERIFY(
+      w_component != l_component,
+      "Bounding box length and width of should correspond to different components!");
+  w = lengths[w_component];
 }
 
 std::unique_ptr<mfem::VectorCoefficient>
