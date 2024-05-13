@@ -56,6 +56,9 @@ The format of this changelog is based on
     configuration file keyword changes to for consistency were made to
     `config["Domains"]["Postprocessing"]["Probe"]` and
     `config["Model"]["Refinement"]["Boxes"]`.
+  - Fix a bug in MFEM for nonconformal AMR meshes with internal boundaries affecting
+    non-homogeneous Dirichlet boundary conditions for electrostatic simulations (see
+    [#236](https://github.com/awslabs/palace/pull/236)).
 
 ## [0.12.0] - 2023-12-21
 
