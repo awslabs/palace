@@ -105,7 +105,6 @@ message(STATUS "SUPERLU_OPTIONS: ${SUPERLU_OPTIONS_PRINT}")
 
 # Fix column permutations
 set(SUPERLU_PATCH_FILES
-  "${CMAKE_SOURCE_DIR}/extern/patch/superlu_dist/patch_metis.diff"
   "${CMAKE_SOURCE_DIR}/extern/patch/superlu_dist/patch_parmetis.diff"
 )
 

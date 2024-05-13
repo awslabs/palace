@@ -1,290 +1,8 @@
-diff --git a/EXAMPLE/pddrive2.c b/EXAMPLE/pddrive2.c
-index 16af921e..a9d59ecf 100755
---- a/EXAMPLE/pddrive2.c
-+++ b/EXAMPLE/pddrive2.c
-@@ -60,7 +60,7 @@ int main(int argc, char *argv[])
-     double   *b, *b1, *xtrue, *xtrue1;
-     int_t    *colind, *colind1, *rowptr, *rowptr1;
-     int_t    i, j, m, n, nnz_loc, m_loc;
--    int      nprow, npcol;
-+    int      nprow, npcol, colperm, rowperm, symbfact;
-     int      iam, info, ldb, ldx, nrhs;
-     char     **cpp, c, *postfix;
-     int ii, omp_mpi_level;
-@@ -78,6 +78,9 @@ int main(int argc, char *argv[])
-     nprow = 1;  /* Default process rows.      */
-     npcol = 1;  /* Default process columns.   */
-     nrhs = 1;   /* Number of right-hand side. */
-+    colperm = -1;
-+    rowperm = -1;
-+    symbfact = -1;
- 
-     /* ------------------------------------------------------------
-        INITIALIZE MPI ENVIRONMENT. 
-@@ -100,6 +103,12 @@ int main(int argc, char *argv[])
- 		        break;
- 	      case 'c': npcol = atoi(*cpp);
- 		        break;
-+	      case 'p': rowperm = atoi(*cpp);
-+		        break;
-+	      case 'q': colperm = atoi(*cpp);
-+		        break;
-+	      case 's': symbfact = atoi(*cpp);
-+		        break;
- 	    }
- 	} else { /* Last arg is considered a filename */
- 	    if ( !(fp = fopen(*cpp, "r")) ) {
-@@ -174,6 +183,10 @@ int main(int argc, char *argv[])
-      */
-     set_default_options_dist(&options);
- 
-+    if (rowperm != -1) options.RowPerm = rowperm;
-+    if (colperm != -1) options.ColPerm = colperm;
-+    if (symbfact != -1) options.ParSymbFact = symbfact;
-+
-     if (!iam) {
- 	print_options_dist(&options);
- 	fflush(stdout);
-diff --git a/EXAMPLE/pddrive3.c b/EXAMPLE/pddrive3.c
-index e961fcaf..6e15ad44 100755
---- a/EXAMPLE/pddrive3.c
-+++ b/EXAMPLE/pddrive3.c
-@@ -65,7 +65,7 @@ int main(int argc, char *argv[])
-     double   *b, *b1, *xtrue, *nzval, *nzval1;
-     int_t    *colind, *colind1, *rowptr, *rowptr1;
-     int_t    i, j, m, n, nnz_loc, m_loc, fst_row;
--    int      nprow, npcol;
-+    int      nprow, npcol, colperm, rowperm, symbfact;
-     int      iam, info, ldb, ldx, nrhs;
-     char     **cpp, c, *postfix;
-     int ii, omp_mpi_level;
-@@ -75,6 +75,9 @@ int main(int argc, char *argv[])
-     nprow = 1;  /* Default process rows.      */
-     npcol = 1;  /* Default process columns.   */
-     nrhs = 1;   /* Number of right-hand side. */
-+    colperm = -1;
-+    rowperm = -1;
-+    symbfact = -1;
- 
-     /* ------------------------------------------------------------
-        INITIALIZE MPI ENVIRONMENT. 
-@@ -97,6 +100,12 @@ int main(int argc, char *argv[])
- 		        break;
- 	      case 'c': npcol = atoi(*cpp);
- 		        break;
-+	      case 'p': rowperm = atoi(*cpp);
-+		        break;
-+	      case 'q': colperm = atoi(*cpp);
-+		        break;
-+	      case 's': symbfact = atoi(*cpp);
-+		        break;
- 	    }
- 	} else { /* Last arg is considered a filename */
- 	    if ( !(fp = fopen(*cpp, "r")) ) {
-@@ -189,6 +198,10 @@ int main(int argc, char *argv[])
-      */
-     set_default_options_dist(&options);
- 
-+    if (rowperm != -1) options.RowPerm = rowperm;
-+    if (colperm != -1) options.ColPerm = colperm;
-+    if (symbfact != -1) options.ParSymbFact = symbfact;
-+
-     if (!iam) {
- 	print_options_dist(&options);
- 	fflush(stdout);
-diff --git a/EXAMPLE/psdrive2.c b/EXAMPLE/psdrive2.c
-index 7f3a732a..68cb8a0f 100755
---- a/EXAMPLE/psdrive2.c
-+++ b/EXAMPLE/psdrive2.c
-@@ -60,7 +60,7 @@ int main(int argc, char *argv[])
-     float   *b, *b1, *xtrue, *xtrue1;
-     int_t    *colind, *colind1, *rowptr, *rowptr1;
-     int_t    i, j, m, n, nnz_loc, m_loc;
--    int      nprow, npcol;
-+    int      nprow, npcol, colperm, rowperm, symbfact;
-     int      iam, info, ldb, ldx, nrhs;
-     char     **cpp, c, *postfix;
-     int ii, omp_mpi_level;
-@@ -78,6 +78,9 @@ int main(int argc, char *argv[])
-     nprow = 1;  /* Default process rows.      */
-     npcol = 1;  /* Default process columns.   */
-     nrhs = 1;   /* Number of right-hand side. */
-+    colperm = -1;
-+    rowperm = -1;
-+    symbfact = -1;
- 
-     /* ------------------------------------------------------------
-        INITIALIZE MPI ENVIRONMENT. 
-@@ -100,6 +103,12 @@ int main(int argc, char *argv[])
- 		        break;
- 	      case 'c': npcol = atoi(*cpp);
- 		        break;
-+	      case 'p': rowperm = atoi(*cpp);
-+		        break;
-+	      case 'q': colperm = atoi(*cpp);
-+		        break;
-+	      case 's': symbfact = atoi(*cpp);
-+		        break;
- 	    }
- 	} else { /* Last arg is considered a filename */
- 	    if ( !(fp = fopen(*cpp, "r")) ) {
-@@ -175,6 +184,10 @@ int main(int argc, char *argv[])
-     set_default_options_dist(&options);
-     options.IterRefine = SLU_SINGLE;
- 
-+    if (rowperm != -1) options.RowPerm = rowperm;
-+    if (colperm != -1) options.ColPerm = colperm;
-+    if (symbfact != -1) options.ParSymbFact = symbfact;
-+
-     if (!iam) {
- 	print_options_dist(&options);
- 	fflush(stdout);
-diff --git a/EXAMPLE/psdrive3.c b/EXAMPLE/psdrive3.c
-index 6cb1da97..8f8ce2c4 100755
---- a/EXAMPLE/psdrive3.c
-+++ b/EXAMPLE/psdrive3.c
-@@ -65,7 +65,7 @@ int main(int argc, char *argv[])
-     float   *b, *b1, *xtrue, *nzval, *nzval1;
-     int_t    *colind, *colind1, *rowptr, *rowptr1;
-     int_t    i, j, m, n, nnz_loc, m_loc, fst_row;
--    int      nprow, npcol;
-+    int      nprow, npcol, colperm, rowperm, symbfact;
-     int      iam, info, ldb, ldx, nrhs;
-     char     **cpp, c, *postfix;
-     int ii, omp_mpi_level;
-@@ -75,6 +75,9 @@ int main(int argc, char *argv[])
-     nprow = 1;  /* Default process rows.      */
-     npcol = 1;  /* Default process columns.   */
-     nrhs = 1;   /* Number of right-hand side. */
-+    colperm = -1;
-+    rowperm = -1;
-+    symbfact = -1;
- 
-     /* ------------------------------------------------------------
-        INITIALIZE MPI ENVIRONMENT. 
-@@ -97,6 +100,12 @@ int main(int argc, char *argv[])
- 		        break;
- 	      case 'c': npcol = atoi(*cpp);
- 		        break;
-+	      case 'p': rowperm = atoi(*cpp);
-+		        break;
-+	      case 'q': colperm = atoi(*cpp);
-+		        break;
-+	      case 's': symbfact = atoi(*cpp);
-+		        break;
- 	    }
- 	} else { /* Last arg is considered a filename */
- 	    if ( !(fp = fopen(*cpp, "r")) ) {
-@@ -190,6 +199,10 @@ int main(int argc, char *argv[])
-     set_default_options_dist(&options);
-     options.IterRefine = SLU_SINGLE;
- 
-+    if (rowperm != -1) options.RowPerm = rowperm;
-+    if (colperm != -1) options.ColPerm = colperm;
-+    if (symbfact != -1) options.ParSymbFact = symbfact;
-+
-     if (!iam) {
- 	print_options_dist(&options);
- 	fflush(stdout);
-diff --git a/EXAMPLE/pzdrive2.c b/EXAMPLE/pzdrive2.c
-index 8e0ec3eb..8d4294c0 100755
---- a/EXAMPLE/pzdrive2.c
-+++ b/EXAMPLE/pzdrive2.c
-@@ -59,7 +59,7 @@ int main(int argc, char *argv[])
-     doublecomplex   *b, *b1, *xtrue, *xtrue1;
-     int_t    *colind, *colind1, *rowptr, *rowptr1;
-     int_t    i, j, m, n, nnz_loc, m_loc;
--    int      nprow, npcol;
-+    int      nprow, npcol, colperm, rowperm, symbfact;
-     int      iam, info, ldb, ldx, nrhs;
-     char     **cpp, c, *postfix;
-     int ii, omp_mpi_level;
-@@ -77,6 +77,9 @@ int main(int argc, char *argv[])
-     nprow = 1;  /* Default process rows.      */
-     npcol = 1;  /* Default process columns.   */
-     nrhs = 1;   /* Number of right-hand side. */
-+    colperm = -1;
-+    rowperm = -1;
-+    symbfact = -1;
- 
-     /* ------------------------------------------------------------
-        INITIALIZE MPI ENVIRONMENT. 
-@@ -99,6 +102,12 @@ int main(int argc, char *argv[])
- 		        break;
- 	      case 'c': npcol = atoi(*cpp);
- 		        break;
-+	      case 'p': rowperm = atoi(*cpp);
-+		        break;
-+	      case 'q': colperm = atoi(*cpp);
-+		        break;
-+	      case 's': symbfact = atoi(*cpp);
-+		        break;
- 	    }
- 	} else { /* Last arg is considered a filename */
- 	    if ( !(fp = fopen(*cpp, "r")) ) {
-@@ -173,6 +182,10 @@ int main(int argc, char *argv[])
-      */
-     set_default_options_dist(&options);
- 
-+    if (rowperm != -1) options.RowPerm = rowperm;
-+    if (colperm != -1) options.ColPerm = colperm;
-+    if (symbfact != -1) options.ParSymbFact = symbfact;
-+
-     if (!iam) {
- 	print_options_dist(&options);
- 	fflush(stdout);
-diff --git a/EXAMPLE/pzdrive3.c b/EXAMPLE/pzdrive3.c
-index 3a55b044..9277f4f8 100755
---- a/EXAMPLE/pzdrive3.c
-+++ b/EXAMPLE/pzdrive3.c
-@@ -64,7 +64,7 @@ int main(int argc, char *argv[])
-     doublecomplex   *b, *b1, *xtrue, *nzval, *nzval1;
-     int_t    *colind, *colind1, *rowptr, *rowptr1;
-     int_t    i, j, m, n, nnz_loc, m_loc, fst_row;
--    int      nprow, npcol;
-+    int      nprow, npcol, colperm, rowperm, symbfact;
-     int      iam, info, ldb, ldx, nrhs;
-     char     **cpp, c, *postfix;
-     int ii, omp_mpi_level;
-@@ -74,6 +74,9 @@ int main(int argc, char *argv[])
-     nprow = 1;  /* Default process rows.      */
-     npcol = 1;  /* Default process columns.   */
-     nrhs = 1;   /* Number of right-hand side. */
-+    colperm = -1;
-+    rowperm = -1;
-+    symbfact = -1;
- 
-     /* ------------------------------------------------------------
-        INITIALIZE MPI ENVIRONMENT. 
-@@ -96,6 +99,12 @@ int main(int argc, char *argv[])
- 		        break;
- 	      case 'c': npcol = atoi(*cpp);
- 		        break;
-+	      case 'p': rowperm = atoi(*cpp);
-+		        break;
-+	      case 'q': colperm = atoi(*cpp);
-+		        break;
-+	      case 's': symbfact = atoi(*cpp);
-+		        break;
- 	    }
- 	} else { /* Last arg is considered a filename */
- 	    if ( !(fp = fopen(*cpp, "r")) ) {
-@@ -188,6 +197,10 @@ int main(int argc, char *argv[])
-      */
-     set_default_options_dist(&options);
- 
-+    if (rowperm != -1) options.RowPerm = rowperm;
-+    if (colperm != -1) options.ColPerm = colperm;
-+    if (symbfact != -1) options.ParSymbFact = symbfact;
-+
-     if (!iam) {
- 	print_options_dist(&options);
- 	fflush(stdout);
-diff --git a/SRC/pdgssvx.c b/SRC/pdgssvx.c
-index d465710c..f51b4d5e 100644
---- a/SRC/pdgssvx.c
-+++ b/SRC/pdgssvx.c
-@@ -1132,8 +1132,7 @@ pdgssvx(superlu_dist_options_t *options, SuperMatrix *A,
+diff --git a/SRC/complex16/pzgssvx.c b/SRC/complex16/pzgssvx.c
+index e2b145b1..6c4c5e99 100755
+--- a/SRC/complex16/pzgssvx.c
++++ b/SRC/complex16/pzgssvx.c
+@@ -1127,8 +1127,7 @@ pzgssvx(superlu_dist_options_t *options, SuperMatrix *A,
  	if (symb_comm != MPI_COMM_NULL) MPI_Comm_free (&symb_comm);
  
  	/* Distribute entries of A into L & U data structures. */
@@ -294,11 +12,11 @@ index d465710c..f51b4d5e 100644
  	    /* CASE OF SERIAL SYMBOLIC */
    	    /* Apply column permutation to the original distributed A */
  	    for (j = 0; j < nnz_loc; ++j) colind[j] = perm_c[colind[j]];
-diff --git a/SRC/psgssvx.c b/SRC/psgssvx.c
-index 6393b945..22a865cc 100644
---- a/SRC/psgssvx.c
-+++ b/SRC/psgssvx.c
-@@ -1133,8 +1133,7 @@ psgssvx(superlu_dist_options_t *options, SuperMatrix *A,
+diff --git a/SRC/double/pdgssvx.c b/SRC/double/pdgssvx.c
+index d06f6078..7b505340 100755
+--- a/SRC/double/pdgssvx.c
++++ b/SRC/double/pdgssvx.c
+@@ -1126,8 +1126,7 @@ pdgssvx(superlu_dist_options_t *options, SuperMatrix *A,
  	if (symb_comm != MPI_COMM_NULL) MPI_Comm_free (&symb_comm);
  
  	/* Distribute entries of A into L & U data structures. */
@@ -308,11 +26,66 @@ index 6393b945..22a865cc 100644
  	    /* CASE OF SERIAL SYMBOLIC */
    	    /* Apply column permutation to the original distributed A */
  	    for (j = 0; j < nnz_loc; ++j) colind[j] = perm_c[colind[j]];
-diff --git a/SRC/pzgssvx.c b/SRC/pzgssvx.c
-index 952f3164..072433b9 100644
---- a/SRC/pzgssvx.c
-+++ b/SRC/pzgssvx.c
-@@ -1134,8 +1134,7 @@ pzgssvx(superlu_dist_options_t *options, SuperMatrix *A,
+diff --git a/SRC/include/superlu_dist_config.h b/SRC/include/superlu_dist_config.h
+index e4b31ab6..ed45f683 100644
+--- a/SRC/include/superlu_dist_config.h
++++ b/SRC/include/superlu_dist_config.h
+@@ -1,10 +1,10 @@
+ /* superlu_dist_config.h.in */
+ 
+ /* Enable CUDA */
+-#define HAVE_CUDA TRUE
++/* #undef HAVE_CUDA */
+ 
+ /* Enable NVSHMEM */
+-#define HAVE_NVSHMEM TRUE
++/* #undef HAVE_NVSHMEM */
+ 
+ /* Enable HIP */
+ /* #undef HAVE_HIP */
+@@ -25,7 +25,7 @@
+ /* #undef HAVE_MAGMA */
+ 
+ /* enable 64bit index mode */
+-#define XSDK_INDEX_SIZE 64
++/* #undef XSDK_INDEX_SIZE */
+ 
+ #if defined(XSDK_INDEX_SIZE) && (XSDK_INDEX_SIZE == 64)
+ #define _LONGINT 1
+diff --git a/SRC/include/superlu_enum_consts.h b/SRC/include/superlu_enum_consts.h
+index 311e068e..824c93ad 100755
+--- a/SRC/include/superlu_enum_consts.h
++++ b/SRC/include/superlu_enum_consts.h
+@@ -34,8 +34,8 @@ typedef enum {NATURAL, MMD_ATA, MMD_AT_PLUS_A, COLAMD,
+ typedef enum {NOTRANS, TRANS, CONJ}                             trans_t;
+ typedef enum {NOEQUIL, ROW, COL, BOTH}                          DiagScale_t;
+ typedef enum {NOREFINE, SLU_SINGLE=1, SLU_DOUBLE, SLU_EXTRA}    IterRefine_t;
+-typedef enum {LUSUP, UCOL, LSUB, USUB, LLVL, ULVL, NO_MEMTYPE}  MemType;
+-//typedef enum {USUB, LSUB, UCOL, LUSUP, LLVL, ULVL, NO_MEMTYPE}  MemType;
++// typedef enum {LUSUP, UCOL, LSUB, USUB, LLVL, ULVL, NO_MEMTYPE}  MemType;
++typedef enum {USUB, LSUB, UCOL, LUSUP, LLVL, ULVL, NO_MEMTYPE}  MemType;
+ typedef enum {HEAD, TAIL}                                       stack_end_t;
+ typedef enum {SYSTEM, USER}                                     LU_space_t;
+ typedef enum {ONE_NORM, TWO_NORM, INF_NORM}			norm_t;
+diff --git a/SRC/single/psgssvx.c b/SRC/single/psgssvx.c
+index aa2b5025..79d48927 100755
+--- a/SRC/single/psgssvx.c
++++ b/SRC/single/psgssvx.c
+@@ -1126,8 +1126,7 @@ psgssvx(superlu_dist_options_t *options, SuperMatrix *A,
+ 	if (symb_comm != MPI_COMM_NULL) MPI_Comm_free (&symb_comm);
+ 
+ 	/* Distribute entries of A into L & U data structures. */
+-	//if (parSymbFact == NO || ???? Fact == SamePattern_SameRowPerm) {
+-	if ( parSymbFact == NO ) {
++	if ( parSymbFact == NO || Fact == SamePattern_SameRowPerm ) {
+ 	    /* CASE OF SERIAL SYMBOLIC */
+   	    /* Apply column permutation to the original distributed A */
+ 	    for (j = 0; j < nnz_loc; ++j) colind[j] = perm_c[colind[j]];
+diff --git a/SRC/single/psgssvx_d2.c b/SRC/single/psgssvx_d2.c
+index 8a6b10c2..a8334501 100755
+--- a/SRC/single/psgssvx_d2.c
++++ b/SRC/single/psgssvx_d2.c
+@@ -1181,8 +1181,7 @@ psgssvx_d2(superlu_dist_options_t *options, SuperMatrix *A,
  	if (symb_comm != MPI_COMM_NULL) MPI_Comm_free (&symb_comm);
  
  	/* Distribute entries of A into L & U data structures. */
