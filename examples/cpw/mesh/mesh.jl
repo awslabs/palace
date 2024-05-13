@@ -7,6 +7,7 @@ using Gmsh: gmsh
     function generate_cpw_wave_mesh(;
         filename::AbstractString,
         refinement::Integer       = 0,
+        order::Integer            = 1,
         trace_width_μm::Real      = 30.0,
         gap_width_μm::Real        = 18.0,
         separation_width_μm::Real = 200.0,
@@ -15,6 +16,7 @@ using Gmsh: gmsh
         metal_height_μm::Real     = 0.0,
         remove_metal_vol::Bool    = true,
         length_μm::Real           = 4000.0,
+        coax_ports::Bool          = false,
         verbose::Integer          = 5,
         gui::Bool                 = false
     )
@@ -25,6 +27,7 @@ Generate a mesh for the coplanar waveguide with wave ports using Gmsh
 
   - filename - the filename to use for the generated mesh
   - refinement - measure of how many elements to include, 0 is least
+  - order - the polynomial order of the approximation, minimum 1
   - trace_width_μm - width of the coplanar waveguide trace, in μm
   - gap_width_μm - width of the coplanar waveguide gap, in μm
   - separation_width_μm - separation distance between the two waveguides, in μm
@@ -33,12 +36,14 @@ Generate a mesh for the coplanar waveguide with wave ports using Gmsh
   - metal_height_μm - metal thickness, in μm
   - remove_metal_vol - for positive metal thickness, whether to remove the metal domain
   - length_μm - length of the waveguides, in μm
+  - coax_ports - flag to use coaxial lumped ports instead of wave ports
   - verbose - flag to dictate the level of print to REPL, passed to Gmsh
   - gui - whether to launch the Gmsh GUI on mesh generation
 """
 function generate_cpw_wave_mesh(;
     filename::AbstractString,
     refinement::Integer       = 0,
+    order::Integer            = 1,
     trace_width_μm::Real      = 30.0,
     gap_width_μm::Real        = 18.0,
     separation_width_μm::Real = 200.0,
@@ -47,10 +52,12 @@ function generate_cpw_wave_mesh(;
     metal_height_μm::Real     = 0.0,
     remove_metal_vol::Bool    = true,
     length_μm::Real           = 4000.0,
+    coax_ports::Bool          = false,
     verbose::Integer          = 5,
     gui::Bool                 = false
 )
     @assert refinement >= 0
+    @assert order > 1
     @assert trace_width_μm > 0
     @assert gap_width_μm > 0
     @assert separation_width_μm > 0
@@ -135,37 +142,66 @@ function generate_cpw_wave_mesh(;
         separation_width_μm +
         gap_width_μm +
         0.5 * trace_width_μm
-    dyp1 = 0.5 * (cy2 - cy1)
-    dyp2 = dyp1
-    dzp1 = 0.5 * (sep_dz + substrate_height_μm)
-    dzp2 = substrate_height_μm
-    let pa, pb, l
-        pa = kernel.addPoint(0.0, cy1 - dyp2, -dzp1)
-        pb = kernel.addPoint(0.0, cy1 + dyp1, -dzp1)
-        l = kernel.addLine(pa, pb)
-        global p1 =
-            first(filter(x -> x[1] == 2, kernel.extrude([1, l], 0.0, 0.0, dzp1 + dzp2)))[2]
-    end
-    let pa, pb, l
-        pa = kernel.addPoint(0.0, cy2 - dyp1, -dzp1)
-        pb = kernel.addPoint(0.0, cy2 + dyp2, -dzp1)
-        l = kernel.addLine(pa, pb)
-        global p3 =
-            first(filter(x -> x[1] == 2, kernel.extrude([1, l], 0.0, 0.0, dzp1 + dzp2)))[2]
-    end
-    let pa, pb, l
-        pa = kernel.addPoint(length_μm, cy1 - dyp2, -dzp1)
-        pb = kernel.addPoint(length_μm, cy1 + dyp1, -dzp1)
-        l = kernel.addLine(pa, pb)
-        global p2 =
-            first(filter(x -> x[1] == 2, kernel.extrude([1, l], 0.0, 0.0, dzp1 + dzp2)))[2]
-    end
-    let pa, pb, l
-        pa = kernel.addPoint(length_μm, cy2 - dyp1, -dzp1)
-        pb = kernel.addPoint(length_μm, cy2 + dyp2, -dzp1)
-        l = kernel.addLine(pa, pb)
-        global p4 =
-            first(filter(x -> x[1] == 2, kernel.extrude([1, l], 0.0, 0.0, dzp1 + dzp2)))[2]
+    if coax_ports
+        ra = 0.5 * trace_width_μm
+        rb = 0.5 * trace_width_μm + gap_width_μm
+        let da, db
+            da = kernel.addDisk(0.0, cy1, 0.0, ra, ra, -1, [1, 0, 0], [])
+            db = kernel.addDisk(0.0, cy1, 0.0, rb, rb, -1, [1, 0, 0], [])
+            global p1 = last(first(first(kernel.cut((2, db), (2, da)))))
+        end
+        let da, db
+            da = kernel.addDisk(0.0, cy2, 0.0, ra, ra, -1, [1, 0, 0], [])
+            db = kernel.addDisk(0.0, cy2, 0.0, rb, rb, -1, [1, 0, 0], [])
+            global p3 = last(first(first(kernel.cut((2, db), (2, da)))))
+        end
+        let da, db
+            da = kernel.addDisk(length_μm, cy1, 0.0, ra, ra, -1, [1, 0, 0], [])
+            db = kernel.addDisk(length_μm, cy1, 0.0, rb, rb, -1, [1, 0, 0], [])
+            global p2 = last(first(first(kernel.cut((2, db), (2, da)))))
+        end
+        let da, db
+            da = kernel.addDisk(length_μm, cy2, 0.0, ra, ra, -1, [1, 0, 0], [])
+            db = kernel.addDisk(length_μm, cy2, 0.0, rb, rb, -1, [1, 0, 0], [])
+            global p4 = last(first(first(kernel.cut((2, db), (2, da)))))
+        end
+    else
+        dyp1 = 0.5 * (cy2 - cy1)
+        dyp2 = dyp1
+        dzp1 = 0.5 * (sep_dz + substrate_height_μm)
+        dzp2 = substrate_height_μm
+        let pa, pb, l
+            pa = kernel.addPoint(0.0, cy1 - dyp2, -dzp1)
+            pb = kernel.addPoint(0.0, cy1 + dyp1, -dzp1)
+            l = kernel.addLine(pa, pb)
+            global p1 = first(
+                filter(x -> x[1] == 2, kernel.extrude([1, l], 0.0, 0.0, dzp1 + dzp2))
+            )[2]
+        end
+        let pa, pb, l
+            pa = kernel.addPoint(0.0, cy2 - dyp1, -dzp1)
+            pb = kernel.addPoint(0.0, cy2 + dyp2, -dzp1)
+            l = kernel.addLine(pa, pb)
+            global p3 = first(
+                filter(x -> x[1] == 2, kernel.extrude([1, l], 0.0, 0.0, dzp1 + dzp2))
+            )[2]
+        end
+        let pa, pb, l
+            pa = kernel.addPoint(length_μm, cy1 - dyp2, -dzp1)
+            pb = kernel.addPoint(length_μm, cy1 + dyp1, -dzp1)
+            l = kernel.addLine(pa, pb)
+            global p2 = first(
+                filter(x -> x[1] == 2, kernel.extrude([1, l], 0.0, 0.0, dzp1 + dzp2))
+            )[2]
+        end
+        let pa, pb, l
+            pa = kernel.addPoint(length_μm, cy2 - dyp1, -dzp1)
+            pb = kernel.addPoint(length_μm, cy2 + dyp2, -dzp1)
+            l = kernel.addLine(pa, pb)
+            global p4 = first(
+                filter(x -> x[1] == 2, kernel.extrude([1, l], 0.0, 0.0, dzp1 + dzp2))
+            )[2]
+        end
     end
     let pa, pb, l
         pa = kernel.addPoint(0.0, -sep_dy, -sep_dz)
@@ -365,7 +401,7 @@ function generate_cpw_wave_mesh(;
     end
 
     gmsh.model.mesh.generate(3)
-    gmsh.model.mesh.setOrder(1)
+    gmsh.model.mesh.setOrder(order)
 
     # Save mesh
     gmsh.option.setNumber("Mesh.MshFileVersion", 2.2)
@@ -409,6 +445,7 @@ end
     function generate_cpw_lumped_mesh(;
         filename::AbstractString,
         refinement::Integer       = 0,
+        order::Integer            = 1,
         trace_width_μm::Real      = 30.0,
         gap_width_μm::Real        = 18.0,
         separation_width_μm::Real = 200.0,
@@ -427,6 +464,7 @@ Generate a mesh for the coplanar waveguide with lumped ports using Gmsh
 
   - filename - the filename to use for the generated mesh
   - refinement - measure of how many elements to include, 0 is least
+  - order - the polynomial order of the approximation, minimum 1
   - trace_width_μm - width of the coplanar waveguide trace, in μm
   - gap_width_μm - width of the coplanar waveguide gap, in μm
   - separation_width_μm - separation distance between the two waveguides, in μm
@@ -441,6 +479,7 @@ Generate a mesh for the coplanar waveguide with lumped ports using Gmsh
 function generate_cpw_lumped_mesh(;
     filename::AbstractString,
     refinement::Integer       = 0,
+    order::Integer            = 1,
     trace_width_μm::Real      = 30.0,
     gap_width_μm::Real        = 18.0,
     separation_width_μm::Real = 200.0,
@@ -453,6 +492,7 @@ function generate_cpw_lumped_mesh(;
     gui::Bool                 = false
 )
     @assert refinement >= 0
+    @assert order > 1
     @assert trace_width_μm > 0
     @assert gap_width_μm > 0
     @assert separation_width_μm > 0
@@ -732,7 +772,7 @@ function generate_cpw_lumped_mesh(;
     end
 
     gmsh.model.mesh.generate(3)
-    gmsh.model.mesh.setOrder(1)
+    gmsh.model.mesh.setOrder(order)
 
     # Save mesh
     gmsh.option.setNumber("Mesh.MshFileVersion", 2.2)
