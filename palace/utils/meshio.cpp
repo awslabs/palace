@@ -330,7 +330,8 @@ void WriteGmsh(std::ostream &buffer, const std::vector<double> &node_coords,
                const bool use_lo_type)
 {
   // Write the Gmsh file header (version 2.2).
-  buffer << "$MeshFormat\n2.2 " <<
+  buffer << "$MeshFormat\n2.2 "
+         <<
 #if defined(GMSH_BIN)
       "1 " <<
 #else
