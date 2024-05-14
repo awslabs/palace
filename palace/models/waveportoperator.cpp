@@ -215,14 +215,14 @@ ComplexHypreParMatrix GetBtt(const MaterialOperator &mat_op,
 }
 
 ComplexHypreParMatrix
-GetSystemMatrixA(mfem::HypreParMatrix *Attr, mfem::HypreParMatrix *Atti,
-                 mfem::HypreParMatrix *Atnr, mfem::HypreParMatrix *Atni,
-                 mfem::HypreParMatrix *Antr, mfem::HypreParMatrix *Anti,
-                 mfem::HypreParMatrix *Annr, mfem::HypreParMatrix *Anni,
+GetSystemMatrixA(const mfem::HypreParMatrix *Attr, const mfem::HypreParMatrix *Atti,
+                 const mfem::HypreParMatrix *Atnr, const mfem::HypreParMatrix *Atni,
+                 const mfem::HypreParMatrix *Antr, const mfem::HypreParMatrix *Anti,
+                 const mfem::HypreParMatrix *Annr, const mfem::HypreParMatrix *Anni,
                  const mfem::Array<int> &dbc_tdof_list)
 {
   // Construct the 2x2 block matrices for the eigenvalue problem A e = λ B e.
-  mfem::Array2D<mfem::HypreParMatrix *> blocks(2, 2);
+  mfem::Array2D<const mfem::HypreParMatrix *> blocks(2, 2);
   blocks(0, 0) = Attr;
   blocks(0, 1) = Atnr;
   blocks(1, 0) = Antr;
@@ -250,13 +250,13 @@ GetSystemMatrixA(mfem::HypreParMatrix *Attr, mfem::HypreParMatrix *Atti,
   return {std::move(Ar), std::move(Ai)};
 }
 
-ComplexHypreParMatrix GetSystemMatrixB(mfem::HypreParMatrix *Bttr,
-                                       mfem::HypreParMatrix *Btti,
-                                       mfem::HypreParMatrix *Dnn,
+ComplexHypreParMatrix GetSystemMatrixB(const mfem::HypreParMatrix *Bttr,
+                                       const mfem::HypreParMatrix *Btti,
+                                       const mfem::HypreParMatrix *Dnn,
                                        const mfem::Array<int> &dbc_tdof_list)
 {
   // Construct the 2x2 block matrices for the eigenvalue problem A e = λ B e.
-  mfem::Array2D<mfem::HypreParMatrix *> blocks(2, 2);
+  mfem::Array2D<const mfem::HypreParMatrix *> blocks(2, 2);
   blocks(0, 0) = Bttr;
   blocks(0, 1) = nullptr;
   blocks(1, 0) = nullptr;
