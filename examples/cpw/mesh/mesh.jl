@@ -57,7 +57,7 @@ function generate_cpw_wave_mesh(;
     gui::Bool                 = false
 )
     @assert refinement >= 0
-    @assert order > 1
+    @assert order > 0
     @assert trace_width_μm > 0
     @assert gap_width_μm > 0
     @assert separation_width_μm > 0
@@ -492,7 +492,7 @@ function generate_cpw_lumped_mesh(;
     gui::Bool                 = false
 )
     @assert refinement >= 0
-    @assert order > 1
+    @assert order > 0
     @assert trace_width_μm > 0
     @assert gap_width_μm > 0
     @assert separation_width_μm > 0
