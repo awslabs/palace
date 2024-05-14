@@ -93,7 +93,7 @@ function(git_describe _var)
     ERROR_QUIET OUTPUT_STRIP_TRAILING_WHITESPACE
   )
   if(NOT res EQUAL 0)
-    set(${_var} "${out}-${res}-NOTFOUND" PARENT_SCOPE)
+    set(${_var} "${res}-NOTFOUND" PARENT_SCOPE)
   else()
     set(${_var} "${out}" PARENT_SCOPE)
   endif()
