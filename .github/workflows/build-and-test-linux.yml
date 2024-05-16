@@ -160,12 +160,12 @@ jobs:
           elif [[ "${{ matrix.compiler }}" == 'clang' ]]; then
             export CC=clang
             export CXX=clang++
-            export FC=gfortran-13
+            export FC=gfortran-12
             export LDFLAGS='-fuse-ld=lld'
           elif [[ "${{ matrix.compiler }}" == 'gcc' ]]; then
-            export CC=gcc-13
-            export CXX=g++-13
-            export FC=gfortran-13
+            export CC=gcc-12
+            export CXX=g++-12
+            export FC=gfortran-12
           fi
           if [[ "${{ matrix.math-libs }}" == 'aocl' ]]; then
             export AOCLROOT=/opt/AMD/aocl/aocl-linux-gcc-4.1.0/gcc
