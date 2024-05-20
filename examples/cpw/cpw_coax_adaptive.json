@@ -1,0 +1,173 @@
+{
+  "Problem":
+  {
+    "Type": "Driven",
+    "Verbose": 2,
+    "Output": "postpro/coax_adaptive"
+  },
+  "Model":
+  {
+    "Mesh": "mesh/cpw_coax_0.msh",
+    "L0": 1.0e-6,  // μm
+    "Refinement": {}
+  },
+  "Domains":
+  {
+    "Materials":
+    [
+      {
+        "Attributes": [1],  // Air
+        "Permeability": 1.0,
+        "Permittivity": 1.0,
+        "LossTan": 0.0
+      },
+      {
+        "Attributes": [2],  // Sapphire
+        "Permeability": [0.99999975, 0.99999975, 0.99999979],
+        "Permittivity": [9.3, 9.3, 11.5],
+        "LossTan": [3.0e-5, 3.0e-5, 8.6e-5],
+        "MaterialAxes": [[0.8, 0.6, 0.0], [-0.6, 0.8, 0.0], [0.0, 0.0, 1.0]]
+      }
+    ],
+    "Postprocessing":
+    {
+      "Energy":
+      [
+        {
+          "Index": 1,
+          "Attributes": [2]
+        }
+      ],
+      "Probe":
+      [
+        {
+          "Index": 1,
+          "Center": [2000, 833, 30]
+        },
+        {
+          "Index": 2,
+          "Center": [2000, 833, -30]
+        }
+      ]
+    }
+  },
+  "Boundaries":
+  {
+    "PEC":
+    {
+      "Attributes": [8, 9, 11]  // Metal trace + end boundaries
+    },
+    "Absorbing":
+    {
+      "Attributes": [10],
+      "Order": 1
+    },
+    "LumpedPort":
+    [
+      {
+        "Index": 1,
+        "Attributes": [4],
+        "Direction": "+R",
+        "R": 56.02,  // Ω
+        "Excitation": true
+      },
+      {
+        "Index": 2,
+        "Attributes": [5],
+        "Direction": "+R",
+        "R": 56.02  // Ω
+      },
+      {
+        "Index": 3,
+        "Attributes": [6],
+        "Direction": "+R",
+        "R": 56.02  // Ω
+      },
+      {
+        "Index": 4,
+        "Attributes": [7],
+        "Direction": "+R",
+        "R": 56.02  // Ω
+      }
+    ],
+    "Postprocessing":
+    {
+      "SurfaceFlux":
+      [
+        {
+          "Index": 1,
+          "Attributes": [11],
+          "Type": "Electric",
+          "TwoSided": true
+        },
+        {
+          "Index": 2,
+          "Attributes": [10],
+          "Type": "Power"
+        },
+        {
+          "Index": 3,
+          "Attributes": [4, 6, 8],
+          "Type": "Power",
+          "Center": [-2000, 0, 0]
+        },
+        {
+          "Index": 4,
+          "Attributes": [5, 7, 9],
+          "Type": "Power",
+          "Center": [2000, 0, 0]
+        }
+      ],
+      "Dielectric":
+      [
+        {
+          "Index": 1,
+          "Attributes": [12],
+          "Type": "SA",
+          "Thickness": 2.0e-3,  // μm
+          "Permittivity": 10.0,
+          "LossTan": 1.0
+        },
+        {
+          "Index": 2,
+          "Attributes": [11],
+          "Type": "MS",
+          "Thickness": 2.0e-3,  // μm
+          "Permittivity": 10.0,
+          "LossTan": 1.0,
+          "Side": "LargerRefractiveIndex"
+        },
+        {
+          "Index": 3,
+          "Attributes": [11],
+          "Type": "MA",
+          "Thickness": 2.0e-3,  // μm
+          "Permittivity": 10.0,
+          "LossTan": 1.0,
+          "Side": "SmallerRefractiveIndex"
+        }
+      ]
+    }
+  },
+  "Solver":
+  {
+    "Order": 2,
+    "Device": "CPU",
+    "Driven":
+    {
+      "MinFreq": 2.0,  // GHz
+      "MaxFreq": 30.0,  // GHz
+      "FreqStep": 0.1,  // GHz
+      "SaveStep": 40,
+      "AdaptiveTol": 1.0e-3
+    },
+    "Linear":
+    {
+      "Type": "Default",
+      "KSPType": "GMRES",
+      "Tol": 1.0e-8,
+      "MaxIts": 200
+    }
+  }
+}
+

@@ -41,7 +41,7 @@ function generate_coaxial_mesh(;
     @assert outer_diameter_mm > inner_diameter_mm > 0
     @assert length_mm > 0
     @assert refinement >= 0
-    @assert order > 1
+    @assert order > 0
 
     kernel = gmsh.model.occ
 

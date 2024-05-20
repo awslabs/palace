@@ -127,7 +127,7 @@ void PrintHeader(const mfem::ParFiniteElementSpace &h1_fespace,
                h1_fespace.GetMaxElementOrder(), h1_fespace.GlobalTrueVSize(),
                nd_fespace.GetMaxElementOrder(), nd_fespace.GlobalTrueVSize(),
                rt_fespace.GetMaxElementOrder(), rt_fespace.GlobalTrueVSize(),
-               (nd_fespace.GetMaxElementOrder() > BilinearForm::pa_order_threshold)
+               (nd_fespace.GetMaxElementOrder() >= BilinearForm::pa_order_threshold)
                    ? "Partial"
                    : "Full");
 

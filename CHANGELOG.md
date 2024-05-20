@@ -11,7 +11,7 @@ The format of this changelog is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
-## In progress
+## [0.13.0] - 2024-05-20
 
   - Changed default value of `config["Solver"]["PartialAssemblyOrder"]` in order to activate
     operator partial assembly by default for all operators in all simulation types.
@@ -33,7 +33,7 @@ The format of this changelog is based on
     [Parallelism and GPU support](https://awslabs.github.io/palace/dev/guide/parallelism/).
   - Removed use of `mfem::SparseMatrix` and replaced with HYPRE's `hypre_CSRMatrix` when
     needed for full assembly, wrapped as `palace::hypre::HypreCSRMatrix`.
-  - Added `"Active"`` configuration file parameter for lumped and wave port boundaries to
+  - Added `"Active"` configuration file parameter for lumped and wave port boundaries to
     disable the associated boundary condition and only use the surface for postprocessing.
   - Changed the smooth flux space for the electrostatic error estimator to fix performance
     on problems with material interfaces.
