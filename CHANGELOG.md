@@ -11,7 +11,7 @@ The format of this changelog is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
-## [0.13.0] - 2024-05-XX
+## [0.13.0] - 2024-05-20
 
   - Changed default value of `config["Solver"]["PartialAssemblyOrder"]` in order to activate
     operator partial assembly by default for all operators in all simulation types.
