@@ -24,8 +24,9 @@ namespace mesh
 
 // Read and partition a serial mesh from file, returning a pointer to the new parallel mesh
 // object, which should be destroyed by the user.
-std::unique_ptr<mfem::ParMesh> ReadMesh(MPI_Comm comm, const IoData &iodata, bool reorder,
-                                        bool clean_elem, bool add_bdr, bool add_subdomain);
+std::unique_ptr<mfem::ParMesh> ReadMesh(MPI_Comm comm, const IoData &iodata,
+                                        bool reorder_elem, bool clean_elem,
+                                        bool add_bdr_elem);
 
 // Refine the provided mesh according to the data in the input file. If levels of refinement
 // are requested, the refined meshes are stored in order of increased refinement. Ownership
