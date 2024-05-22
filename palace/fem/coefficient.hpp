@@ -410,7 +410,7 @@ inline double InterfaceDielectricCoefficient<InterfaceDielectricType::MA>::Eval(
   }
 
   // Metal-air interface: 0.5 * t / ε_MA * |E_n|² .
-  return 0.5 * t_i / epsilon_i * Vn2;
+  return 0.5 * (t_i / epsilon_i) * Vn2;
 }
 
 template <>
@@ -435,7 +435,7 @@ inline double InterfaceDielectricCoefficient<InterfaceDielectricType::MS>::Eval(
   }
 
   // Metal-substrate interface: 0.5 * t / ε_MS * |(ε_S E)_n|² .
-  return 0.5 * t_i / epsilon_i * Vn2;
+  return 0.5 * (t_i / epsilon_i) * Vn2;
 }
 
 template <>
@@ -461,7 +461,7 @@ inline double InterfaceDielectricCoefficient<InterfaceDielectricType::SA>::Eval(
   }
 
   // Substrate-air interface: 0.5 * t * (ε_SA * |E_t|² + 1 / ε_SA * |E_n|²) .
-  return 0.5 * t_i * (epsilon_i * Vt2 + Vn2 / epsilon_i);
+  return 0.5 * t_i * ((epsilon_i * Vt2) + (Vn2 / epsilon_i));
 }
 
 // Helper for EnergyDensityCoefficient.
