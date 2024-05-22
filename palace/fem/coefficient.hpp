@@ -11,6 +11,7 @@
 #include <mfem.hpp>
 #include "fem/gridfunction.hpp"
 #include "models/materialoperator.hpp"
+#include "utils/geodata.hpp"
 
 // XX TODO: Add bulk element Eval() overrides to speed up postprocessing (also needed in
 //          mfem::DataCollection classes.
@@ -776,18 +777,21 @@ template <typename Coefficient>
 class RestrictedCoefficient : public Coefficient
 {
 private:
-  const mfem::Array<int> &attr;
+  mfem::Array<int> attr_marker;
 
 public:
   template <typename... T>
-  RestrictedCoefficient(const mfem::Array<int> &attr, T &&...args)
-    : Coefficient(std::forward<T>(args)...), attr(attr)
+  RestrictedCoefficient(const mfem::Array<int> &attr_list, T &&...args)
+    : Coefficient(std::forward<T>(args)...),
+      attr_marker(mesh::AttrToMarker(attr_list.Size() ? attr_list.Max() : 0, attr_list))
   {
   }
 
   double Eval(mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip) override
   {
-    return (attr.Find(T.Attribute) < 0) ? 0.0 : Coefficient::Eval(T, ip);
+    return (T.Attribute > attr_marker.Size() || !attr_marker[T.Attribute - 1])
+               ? 0.0
+               : Coefficient::Eval(T, ip);
   }
 };
 
@@ -795,19 +799,20 @@ template <typename Coefficient>
 class RestrictedVectorCoefficient : public Coefficient
 {
 private:
-  const mfem::Array<int> &attr;
+  mfem::Array<int> attr_marker;
 
 public:
   template <typename... T>
-  RestrictedVectorCoefficient(const mfem::Array<int> &attr, T &&...args)
-    : Coefficient(std::forward<T>(args)...), attr(attr)
+  RestrictedVectorCoefficient(const mfem::Array<int> &attr_list, T &&...args)
+    : Coefficient(std::forward<T>(args)...),
+      attr_marker(mesh::AttrToMarker(attr_list.Size() ? attr_list.Max() : 0, attr_list))
   {
   }
 
   void Eval(mfem::Vector &V, mfem::ElementTransformation &T,
             const mfem::IntegrationPoint &ip) override
   {
-    if (attr.Find(T.Attribute) < 0)
+    if (T.Attribute > attr_marker.Size() || !attr_marker[T.Attribute - 1])
     {
       V.SetSize(this->vdim);
       V = 0.0;
@@ -823,19 +828,20 @@ template <typename Coefficient>
 class RestrictedMatrixCoefficient : public Coefficient
 {
 private:
-  const mfem::Array<int> &attr;
+  mfem::Array<int> attr_marker;
 
 public:
   template <typename... T>
-  RestrictedMatrixCoefficient(const mfem::Array<int> &attr, T &&...args)
-    : Coefficient(std::forward<T>(args)...), attr(attr)
+  RestrictedMatrixCoefficient(const mfem::Array<int> &attr_list, T &&...args)
+    : Coefficient(std::forward<T>(args)...),
+      attr_marker(mesh::AttrToMarker(attr_list.Size() ? attr_list.Max() : 0, attr_list))
   {
   }
 
   void Eval(mfem::DenseMatrix &K, mfem::ElementTransformation &T,
             const mfem::IntegrationPoint &ip) override
   {
-    if (attr.Find(T.Attribute) < 0)
+    if (T.Attribute > attr_marker.Size() || !attr_marker[T.Attribute - 1])
     {
       K.SetSize(this->height, this->width);
       K = 0.0;
