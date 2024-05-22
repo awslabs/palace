@@ -61,6 +61,10 @@ std::unique_ptr<mfem::ParMesh> DistributeMesh(MPI_Comm, std::unique_ptr<mfem::Me
 // mesh onto the root rank before scattering the partitioned mesh.
 void RebalanceConformalMesh(std::unique_ptr<mfem::ParMesh> &);
 
+// Given a mesh made up of tetrahedra, convert the mesh into hexes by placing a midpoint in
+// each face and connecting to the midpoint of each edge and the centroid.
+std::unique_ptr<mfem::Mesh> Tet2Hex(const mfem::Mesh &);
+
 }  // namespace
 
 namespace mesh
@@ -83,6 +87,7 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(MPI_Comm comm, const IoData &iodata, boo
     if (Mpi::Root(comm) || !use_mesh_partitioner)
     {
       smesh = LoadMesh(iodata.model.mesh, iodata.model.remove_curvature);
+
       MFEM_VERIFY(!(smesh->Nonconforming() && use_mesh_partitioner),
                   "Cannot use mesh partitioner on a nonconforming mesh!");
     }
@@ -1551,6 +1556,7 @@ std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &path, bool remove_curvat
     }
     mesh = std::make_unique<mfem::Mesh>(fi, generate_edges, refine, fix_orientation);
   }
+
   if (remove_curvature)
   {
     if (mesh->GetNodes())
@@ -1563,6 +1569,7 @@ std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &path, bool remove_curvat
         delete nodes;
       }
     }
+    // mesh = Tet2Hex(*mesh);
   }
   else
   {
@@ -2190,6 +2197,158 @@ void RebalanceConformalMesh(std::unique_ptr<mfem::ParMesh> &pmesh)
   }
   pmesh = DistributeMesh(comm, smesh, partitioning.get());
 }
+
+
+std::unique_ptr<mfem::Mesh> Tet2Hex(const mfem::Mesh &tet_mesh)
+{
+  // Verify validity
+  MFEM_VERIFY(tet_mesh.Dimension() == 3, "");
+  {
+    mfem::Array<mfem::Geometry::Type> geoms;
+    tet_mesh.GetGeometries(3, geoms);
+    MFEM_VERIFY(geoms.Size() == 1, "");
+    MFEM_VERIFY(geoms[0] == mfem::Geometry::TETRAHEDRON, "");
+  }
+
+  const int nv_tet = tet_mesh.GetNV();
+  const int nedge_tet = tet_mesh.GetNEdges();
+  const int nface_tet = tet_mesh.GetNFaces();
+  const int ntet = tet_mesh.GetNE();
+  const int nbe_tet = tet_mesh.GetNBE();
+
+  // Add new vertices in every edge, face, and volume
+  const int nv = nv_tet + nedge_tet + nface_tet + ntet;
+  const int nhex = 4*ntet; // Each tet subdivided into 4 hexes
+  const int nbe = 3*nbe_tet; // Each triangular face subdivided into 3 quads
+
+  auto hex_mesh = std::make_unique<mfem::Mesh>(3, nv, nhex, nbe);
+
+  auto add_midpoint = [&](const auto &vs)
+  {
+    double v[3] = {0.0, 0.0, 0.0};
+    const int nvs = vs.Size();
+    for (const int iv : vs)
+    {
+      for (int d = 0; d < 3; ++ d)
+      {
+        v[d] += tet_mesh.GetVertex(iv)[d] / double(nvs);
+      }
+    }
+    hex_mesh->AddVertex(v);
+  };
+
+  // Add original vertices
+  for (int iv = 0; iv < nv_tet; ++iv)
+  {
+    hex_mesh->AddVertex(tet_mesh.GetVertex(iv));
+  }
+
+  // Add midpoints of edges
+  for (int iedge = 0; iedge < nedge_tet; ++iedge)
+  {
+    mfem::Array<int> edge_v;
+    tet_mesh.GetEdgeVertices(iedge, edge_v);
+    add_midpoint(edge_v);
+  }
+
+  // Add midpoint of faces
+  for (int iface = 0; iface < nface_tet; ++iface)
+  {
+    mfem::Array<int> face_v;
+    tet_mesh.GetFaceVertices(iface, face_v);
+    add_midpoint(face_v);
+  }
+
+  // Add midpoint of elements
+  for (int itet = 0; itet < ntet; ++itet)
+  {
+    mfem::Array<int> tet_v;
+    tet_mesh.GetElementVertices(itet, tet_v);
+    add_midpoint(tet_v);
+  }
+
+  // Connectivity of tet vertices to the edges
+  const int tet_vertex_edge_map[4*3] =
+  {
+    0, 1, 2,
+    3, 0, 4,
+    1, 3, 5,
+    5, 4, 2
+  };
+
+  const int tet_vertex_face_map[4*3] =
+  {
+    3, 2, 1,
+    3, 0, 2,
+    3, 1, 0,
+    0, 1, 2
+  };
+
+  // Add four hexahedra for each tetrahedron
+  for (int itet = 0; itet < ntet; ++itet)
+  {
+    mfem::Array<int> tet_v, tet_edges, tet_faces, orientations;
+    tet_mesh.GetElementVertices(itet, tet_v);
+    tet_mesh.GetElementEdges(itet, tet_edges, orientations);
+    tet_mesh.GetElementFaces(itet, tet_faces, orientations);
+
+    const int attribute = tet_mesh.GetAttribute(itet);
+
+    // One hex for each vertex of the tet
+    for (int iv = 0; iv < 4; ++iv)
+    {
+      int hex_v[8];
+      hex_v[0] = tet_v[iv];
+      hex_v[1] = nv_tet + tet_edges[tet_vertex_edge_map[3*iv + 0]];
+      hex_v[2] = nv_tet + nedge_tet + tet_faces[tet_vertex_face_map[3*iv + 0]];
+      hex_v[3] = nv_tet + tet_edges[tet_vertex_edge_map[3*iv + 1]];
+
+      hex_v[4] = nv_tet + tet_edges[tet_vertex_edge_map[3*iv + 2]];
+      hex_v[5] = nv_tet + nedge_tet + tet_faces[tet_vertex_face_map[3*iv + 1]];
+      hex_v[6] = nv_tet + nedge_tet + nface_tet + itet;
+      hex_v[7] = nv_tet + nedge_tet + tet_faces[tet_vertex_face_map[3*iv + 2]];
+
+      hex_mesh->AddHex(hex_v, attribute);
+    }
+   }
+
+   const int tri_vertex_edge_map[3*2] =
+   {
+      0, 2,
+      1, 0,
+      2, 1
+   };
+
+   // Add the boundary elements
+   for (int ibe = 0; ibe < nbe_tet; ++ibe)
+   {
+    mfem::Array<int> tri_v, tri_edges, orientations;
+    tet_mesh.GetBdrElementVertices(ibe, tri_v);
+    tet_mesh.GetBdrElementEdges(ibe, tri_edges, orientations);
+    int tri_face, o;
+    tet_mesh.GetBdrElementFace(ibe, &tri_face, &o);
+
+    const int attribute = tet_mesh.GetBdrAttribute(ibe);
+
+    // One quad for each vertex of the tri
+    for (int iv = 0; iv < 3; ++iv)
+    {
+      int quad_v[4];
+      quad_v[0] = tri_v[iv];
+      quad_v[1] = nv_tet + tri_edges[tri_vertex_edge_map[2*iv + 0]];
+      quad_v[2] = nv_tet + nedge_tet + tri_face;
+      quad_v[3] = nv_tet + tri_edges[tri_vertex_edge_map[2*iv + 1]];
+      hex_mesh->AddBdrQuad(quad_v, attribute);
+    }
+   }
+
+   hex_mesh->FinalizeTopology();
+   hex_mesh->Finalize(false, true);
+
+   return hex_mesh;
+}
+
+
 
 }  // namespace
 
