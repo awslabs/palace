@@ -11,6 +11,11 @@ The format of this changelog is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## In progress
+
+  - Fixed a small regression bug for boundary postprocessing when specifying
+    `"Side": "LargerRefractiveIndex"`, introduced as part of v0.13.0.
+
 ## [0.13.0] - 2024-05-20
 
   - Changed default value of `config["Solver"]["PartialAssemblyOrder"]` in order to activate
