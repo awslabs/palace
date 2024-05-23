@@ -60,9 +60,11 @@ protected:
     // For interior faces, compute the value on the side where the speed of light is larger
     // (refractive index is smaller, typically should choose the vacuum side). For cases
     // where the speeds are the same, use element 1.
-    return (FET.Elem2 && side_n_min &&
-            mat_op.GetLightSpeedMax(FET.Elem2->Attribute) >
-                mat_op.GetLightSpeedMax(FET.Elem1->Attribute));
+    return (FET.Elem2 &&
+            ((side_n_min && mat_op.GetLightSpeedMax(FET.Elem2->Attribute) >
+                                mat_op.GetLightSpeedMax(FET.Elem1->Attribute)) ||
+             (!side_n_min && mat_op.GetLightSpeedMax(FET.Elem2->Attribute) <
+                                 mat_op.GetLightSpeedMax(FET.Elem1->Attribute))));
   }
 
 public:
