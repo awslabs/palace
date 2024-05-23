@@ -87,10 +87,7 @@ reference.
     Note that a single lumped port (given by a single integer `"Index"`) can be made up of
     multiple boundary attributes in the mesh in order to model, for example, a multielement
     lumped port. To use this functionality, use the `"Elements"` object under
-    [`"LumpedPort"`](../config/boundaries.md#boundaries%5B%22LumpedPort%22%5D). Also, each
-    element of a lumped port boundary must be _planar_. Combining multiple planar boundaries
-    into a single port `"Index"` via the multielement lumped port achieves the same effect
-    as if the single element lumped port was made up of boundaries which were not coplanar.
+    [`"LumpedPort"`](../config/boundaries.md#boundaries%5B%22LumpedPort%22%5D).
 
   - [`config["Boundaries"]["WavePort"]`](../config/boundaries.md#boundaries%5B%22WavePort%22%5D) :
     Numeric wave ports are available for frequency domain driven simulations. In this case,

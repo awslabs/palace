@@ -182,7 +182,7 @@ inline double GetDistanceFromPoint(const mfem::ParMesh &mesh, int attr, bool bdr
 }
 
 // Helper function to compute the average surface normal for all elements with the given
-// attribute.
+// attributes.
 mfem::Vector GetSurfaceNormal(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
                               bool average = true);
 
@@ -201,6 +201,28 @@ inline mfem::Vector GetSurfaceNormal(const mfem::ParMesh &mesh, bool average = t
   const bool bdr = (mesh.Dimension() == mesh.SpaceDimension());
   const auto &attributes = bdr ? mesh.bdr_attributes : mesh.attributes;
   return GetSurfaceNormal(mesh, AttrToMarker(attributes.Max(), attributes), average);
+}
+
+// Helper functions to compute the volume or area for all domain or boundary elements with
+// the given attributes.
+double GetSurfaceArea(const mfem::ParMesh &mesh, const mfem::Array<int> &marker);
+
+inline double GetSurfaceArea(const mfem::ParMesh &mesh, int attr)
+{
+  mfem::Array<int> marker(mesh.bdr_attributes.Max());
+  marker = 0;
+  marker[attr - 1] = 1;
+  return GetSurfaceArea(mesh, marker);
+}
+
+double GetVolume(const mfem::ParMesh &mesh, const mfem::Array<int> &marker);
+
+inline double GetVolume(const mfem::ParMesh &mesh, int attr)
+{
+  mfem::Array<int> marker(mesh.attributes.Max());
+  marker = 0;
+  marker[attr - 1] = 1;
+  return GetVolume(mesh, marker);
 }
 
 // Helper function responsible for rebalancing the mesh, and optionally writing meshes from

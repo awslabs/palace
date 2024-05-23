@@ -260,8 +260,8 @@ void RefineMesh(const IoData &iodata, std::vector<std::unique_ptr<mfem::ParMesh>
       if (use_nodes)
       {
         mfem::ElementTransformation &T = *mesh.back()->GetElementTransformation(i);
-        mfem::Geometry::Type geom = mesh.back()->GetElementGeometry(i);
-        mfem::RefinedGeometry *RefG = mfem::GlobGeometryRefiner.Refine(geom, ref);
+        mfem::RefinedGeometry *RefG =
+            mfem::GlobGeometryRefiner.Refine(T.GetGeometryType(), ref);
         T.Transform(RefG->RefPts, pointmat);
       }
       else
@@ -606,11 +606,11 @@ void GetAxisAlignedBoundingBox(const mfem::ParMesh &mesh, const mfem::Array<int>
   {
     mesh.GetNodes()->HostRead();
     const int ref = mesh.GetNodes()->FESpace()->GetMaxElementOrder();
-    auto BBUpdate = [&ref](mfem::GeometryRefiner refiner, mfem::Geometry::Type &geom,
-                           mfem::ElementTransformation &T, mfem::DenseMatrix &pointmat,
-                           mfem::Vector &min, mfem::Vector &max)
+    auto BBUpdate = [&ref](mfem::GeometryRefiner &refiner, mfem::ElementTransformation &T,
+                           mfem::DenseMatrix &pointmat, mfem::Vector &min,
+                           mfem::Vector &max)
     {
-      mfem::RefinedGeometry *RefG = refiner.Refine(geom, ref);
+      mfem::RefinedGeometry *RefG = refiner.Refine(T.GetGeometryType(), ref);
       T.Transform(RefG->RefPts, pointmat);
       for (int j = 0; j < pointmat.Width(); j++)
       {
@@ -648,8 +648,7 @@ void GetAxisAlignedBoundingBox(const mfem::ParMesh &mesh, const mfem::Array<int>
             continue;
           }
           mesh.GetBdrElementTransformation(i, &T);
-          mfem::Geometry::Type geom = mesh.GetBdrElementGeometry(i);
-          BBUpdate(refiner, geom, T, pointmat, loc_min, loc_max);
+          BBUpdate(refiner, T, pointmat, loc_min, loc_max);
         }
       }
       else
@@ -662,8 +661,7 @@ void GetAxisAlignedBoundingBox(const mfem::ParMesh &mesh, const mfem::Array<int>
             continue;
           }
           mesh.GetElementTransformation(i, &T);
-          mfem::Geometry::Type geom = mesh.GetElementGeometry(i);
-          BBUpdate(refiner, geom, T, pointmat, loc_min, loc_max);
+          BBUpdate(refiner, T, pointmat, loc_min, loc_max);
         }
       }
       PalacePragmaOmp(critical(BBUpdate))
@@ -783,6 +781,17 @@ int CollectPointCloudOnRoot(const mfem::ParMesh &mesh, const mfem::Array<int> &m
   {
     // Curved mesh, need to process point matrices.
     const int ref = mesh.GetNodes()->FESpace()->GetMaxElementOrder();
+    auto AddPoints = [&](mfem::GeometryRefiner &refiner, mfem::ElementTransformation &T,
+                         mfem::DenseMatrix &pointmat,
+                         std::vector<Eigen::Vector3d> &loc_vertices)
+    {
+      mfem::RefinedGeometry *RefG = refiner.Refine(T.GetGeometryType(), ref);
+      T.Transform(RefG->RefPts, pointmat);
+      for (int j = 0; j < pointmat.Width(); j++)
+      {
+        loc_vertices.push_back({pointmat(0, j), pointmat(1, j), pointmat(2, j)});
+      }
+    };
     PalacePragmaOmp(parallel)
     {
       mfem::GeometryRefiner refiner;
@@ -799,13 +808,7 @@ int CollectPointCloudOnRoot(const mfem::ParMesh &mesh, const mfem::Array<int> &m
             continue;
           }
           mesh.GetBdrElementTransformation(i, &T);
-          mfem::Geometry::Type geom = mesh.GetBdrElementGeometry(i);
-          mfem::RefinedGeometry *RefG = refiner.Refine(geom, ref);
-          T.Transform(RefG->RefPts, pointmat);
-          for (int j = 0; j < pointmat.Width(); j++)
-          {
-            loc_vertices.push_back({pointmat(0, j), pointmat(1, j), pointmat(2, j)});
-          }
+          AddPoints(refiner, T, pointmat, loc_vertices);
         }
       }
       else
@@ -818,13 +821,7 @@ int CollectPointCloudOnRoot(const mfem::ParMesh &mesh, const mfem::Array<int> &m
             continue;
           }
           mesh.GetElementTransformation(i, &T);
-          mfem::Geometry::Type geom = mesh.GetElementGeometry(i);
-          mfem::RefinedGeometry *RefG = refiner.Refine(geom, ref);
-          T.Transform(RefG->RefPts, pointmat);
-          for (int j = 0; j < pointmat.Width(); j++)
-          {
-            loc_vertices.push_back({pointmat(0, j), pointmat(1, j), pointmat(2, j)});
-          }
+          AddPoints(refiner, T, pointmat, loc_vertices);
         }
       }
       PalacePragmaOmp(critical(PointCloud))
@@ -1286,9 +1283,9 @@ mfem::Vector GetSurfaceNormal(const mfem::ParMesh &mesh, const mfem::Array<int> 
   mfem::Vector loc_normal(dim), normal(dim);
   normal = 0.0;
   bool init = false;
-  auto UpdateNormal = [&](mfem::ElementTransformation &T, mfem::Geometry::Type geom)
+  auto UpdateNormal = [&](mfem::ElementTransformation &T)
   {
-    const mfem::IntegrationPoint &ip = mfem::Geometries.GetCenter(geom);
+    const mfem::IntegrationPoint &ip = mfem::Geometries.GetCenter(T.GetGeometryType());
     T.SetIntPoint(&ip);
     mfem::CalcOrtho(T.Jacobian(), loc_normal);
     if (!init)
@@ -1320,7 +1317,7 @@ mfem::Vector GetSurfaceNormal(const mfem::ParMesh &mesh, const mfem::Array<int> 
         continue;
       }
       mesh.GetBdrElementTransformation(i, &T);
-      UpdateNormal(T, mesh.GetBdrElementGeometry(i));
+      UpdateNormal(T);
       if (!average)
       {
         break;
@@ -1337,7 +1334,7 @@ mfem::Vector GetSurfaceNormal(const mfem::ParMesh &mesh, const mfem::Array<int> 
         continue;
       }
       mesh.GetElementTransformation(i, &T);
-      UpdateNormal(T, mesh.GetElementGeometry(i));
+      UpdateNormal(T);
       if (!average)
       {
         break;
@@ -1394,6 +1391,60 @@ mfem::Vector GetSurfaceNormal(const mfem::ParMesh &mesh, const mfem::Array<int> 
   }
 
   return normal;
+}
+
+double GetSurfaceArea(const mfem::ParMesh &mesh, const mfem::Array<int> &marker)
+{
+  double area = 0.0;
+  PalacePragmaOmp(parallel reduction(+ : area))
+  {
+    mfem::IsoparametricTransformation T;
+    PalacePragmaOmp(for schedule(static))
+    for (int i = 0; i < mesh.GetNBE(); i++)
+    {
+      if (!marker[mesh.GetBdrAttribute(i) - 1])
+      {
+        continue;
+      }
+      mesh.GetBdrElementTransformation(i, &T);
+      const mfem::IntegrationRule &ir = mfem::IntRules.Get(T.GetGeometryType(), T.OrderJ());
+      for (int j = 0; j < ir.GetNPoints(); j++)
+      {
+        const mfem::IntegrationPoint &ip = ir.IntPoint(j);
+        T.SetIntPoint(&ip);
+        area += ip.weight * T.Weight();
+      }
+    }
+  }
+  Mpi::GlobalSum(1, &area, mesh.GetComm());
+  return area;
+}
+
+double GetVolume(const mfem::ParMesh &mesh, const mfem::Array<int> &marker)
+{
+  double volume = 0.0;
+  PalacePragmaOmp(parallel reduction(+ : volume))
+  {
+    mfem::IsoparametricTransformation T;
+    PalacePragmaOmp(for schedule(static))
+    for (int i = 0; i < mesh.GetNE(); i++)
+    {
+      if (!marker[mesh.GetAttribute(i) - 1])
+      {
+        continue;
+      }
+      mesh.GetElementTransformation(i, &T);
+      const mfem::IntegrationRule &ir = mfem::IntRules.Get(T.GetGeometryType(), T.OrderJ());
+      for (int j = 0; j < ir.GetNPoints(); j++)
+      {
+        const mfem::IntegrationPoint &ip = ir.IntPoint(j);
+        T.SetIntPoint(&ip);
+        volume += ip.weight * T.Weight();
+      }
+    }
+  }
+  Mpi::GlobalSum(1, &volume, mesh.GetComm());
+  return volume;
 }
 
 double RebalanceMesh(std::unique_ptr<mfem::ParMesh> &mesh, const IoData &iodata)
