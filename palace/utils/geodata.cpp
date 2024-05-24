@@ -167,7 +167,7 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(MPI_Comm comm, const IoData &iodata)
       attr_list.erase(std::unique(attr_list.begin(), attr_list.end()), attr_list.end());
       bdr_attr_list.erase(std::unique(bdr_attr_list.begin(), bdr_attr_list.end()),
                           bdr_attr_list.end());
-      if (crack_bdr_elem)
+      if (iodata.model.crack_bdr_elements)
       {
         // Split all internal boundary elements for boundary attributes where BC are
         // applied (not just postprocessing).
@@ -2379,9 +2379,11 @@ void CheckMesh(std::unique_ptr<mfem::Mesh> &orig_mesh,
     new_nbe += crack_bdr_elem.size();
     if (crack_bdr_elem.size() > 0)
     {
-      Mpi::Print("Duplicated {:d} boundary elements (and {:d} vertices) for interior "
-                 "boundaries in the mesh\n",
-                 crack_bdr_elem.size(), new_nv_dups);
+      Mpi::Print("Added {:d} duplicate vertices for interior boundaries in the mesh\n",
+                 new_nv_dups);
+      Mpi::Print(
+          "Added {:d} duplicate boundary elements for interior boundaries in the mesh\n",
+          crack_bdr_elem.size());
     }
   }
   int new_ne_step_2 = new_ne;

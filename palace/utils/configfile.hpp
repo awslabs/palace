@@ -219,6 +219,10 @@ public:
   // which do not have any material properties specified.
   bool clean_unused_elements = true;
 
+  // Split, or "crack", boundary elements lying on internal boundaries to decouple the
+  // elements on either side.
+  bool crack_bdr_elements = true;
+
   // Add new boundary elements for faces are on the computational domain boundary or which
   // have attached elements on either side with different domain attributes.
   bool add_bdr_elements = true;
