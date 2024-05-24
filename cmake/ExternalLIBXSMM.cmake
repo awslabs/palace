@@ -92,8 +92,8 @@ ExternalProject_Add(libxsmm
     ${CMAKE_COMMAND} -E copy ${LIBXSMM_INSTALL_HEADERS} ${CMAKE_INSTALL_PREFIX}/include &&
     ${CMAKE_COMMAND} -E echo "LIBXSMM installing pkg-config and module files..." &&
     ${CMAKE_COMMAND} -E make_directory ${CMAKE_INSTALL_PREFIX}/lib/pkgconfig &&
-    (${CMAKE_COMMAND} -E copy ${LIBXSMM_INSTALL_PKGCONFIG} ${CMAKE_INSTALL_PREFIX}/lib/pkgconfig
-      || ${CMAKE_COMMAND} -E true) &&  # No error if files don't exist
+    ${CMAKE_COMMAND} -E copy ${LIBXSMM_INSTALL_PKGCONFIG} ${CMAKE_INSTALL_PREFIX}/lib/pkgconfig ||
+    ${CMAKE_COMMAND} -E true &&  # No error if files don't exist
     ${CMAKE_COMMAND} -E rm -f ${LIBXSMM_INSTALL_PKGCONFIG} &&
     ${CMAKE_COMMAND} -E rm -f ${CMAKE_INSTALL_PREFIX}/lib/.make
   TEST_COMMAND      ""
