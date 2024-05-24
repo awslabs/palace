@@ -460,55 +460,53 @@ void IoData::NondimensionalizeInputs(mfem::ParMesh &mesh)
   MFEM_VERIFY(!init, "NondimensionalizeInputs should only be called once!");
   init = true;
 
-  // Calculate the reference length and time.
-  if (model.Lc > 0.0)
-  {
-    // User specified Lc in mesh length units.
-    Lc = model.Lc * model.L0;  // [m]
-  }
-  else
+  // Calculate the reference length and time. A user specified model.Lc is in mesh length
+  // units.
+  if (model.Lc <= 0.0)
   {
     mfem::Vector bbmin, bbmax;
     mesh::GetAxisAlignedBoundingBox(mesh, bbmin, bbmax);
     bbmax -= bbmin;
-    bbmax *= model.L0;  // [m]
-    Lc = *std::max_element(bbmax.begin(), bbmax.end());
+    model.Lc = *std::max_element(bbmax.begin(), bbmax.end());
   }
+  Lc = model.Lc * model.L0;                 // [m]
   tc = 1.0e9 * Lc / electromagnetics::c0_;  // [ns]
 
   // Mesh refinement parameters.
-  auto DivideLength = [this](double val) { return val / (Lc / model.L0); };
+  auto DivideLengthScale = [Lc0 = GetMeshLengthScale()](double val) { return val / Lc0; };
   for (auto &box : model.refinement.GetBoxes())
   {
-    std::transform(box.bbmin.begin(), box.bbmin.end(), box.bbmin.begin(), DivideLength);
-    std::transform(box.bbmax.begin(), box.bbmax.end(), box.bbmax.begin(), DivideLength);
+    std::transform(box.bbmin.begin(), box.bbmin.end(), box.bbmin.begin(),
+                   DivideLengthScale);
+    std::transform(box.bbmax.begin(), box.bbmax.end(), box.bbmax.begin(),
+                   DivideLengthScale);
   }
   for (auto &sphere : model.refinement.GetSpheres())
   {
-    sphere.r /= Lc / model.L0;
+    sphere.r /= GetMeshLengthScale();
     std::transform(sphere.center.begin(), sphere.center.end(), sphere.center.begin(),
-                   DivideLength);
+                   DivideLengthScale);
   }
 
   // Materials: conductivity and London penetration depth.
   for (auto &data : domains.materials)
   {
     data.sigma /= 1.0 / (electromagnetics::Z0_ * Lc);
-    data.lambda_L /= Lc / model.L0;
+    data.lambda_L /= GetMeshLengthScale();
   }
 
   // Probe location coordinates.
   for (auto &[idx, data] : domains.postpro.probe)
   {
     std::transform(data.center.begin(), data.center.end(), data.center.begin(),
-                   DivideLength);
+                   DivideLengthScale);
   }
 
   // Finite conductivity boundaries.
   for (auto &data : boundaries.conductivity)
   {
     data.sigma /= 1.0 / (electromagnetics::Z0_ * Lc);
-    data.h /= Lc / model.L0;
+    data.h /= GetMeshLengthScale();
   }
 
   // Impedance boundaries and lumped ports.
@@ -531,20 +529,20 @@ void IoData::NondimensionalizeInputs(mfem::ParMesh &mesh)
   // Wave port offset distance.
   for (auto &[idx, data] : boundaries.waveport)
   {
-    data.d_offset /= Lc / model.L0;
+    data.d_offset /= GetMeshLengthScale();
   }
 
   // Center coordinates for surface flux.
   for (auto &[idx, data] : boundaries.postpro.flux)
   {
     std::transform(data.center.begin(), data.center.end(), data.center.begin(),
-                   DivideLength);
+                   DivideLengthScale);
   }
 
   // Dielectric interface thickness.
   for (auto &[idx, data] : boundaries.postpro.dielectric)
   {
-    data.t /= Lc / model.L0;
+    data.t /= GetMeshLengthScale();
   }
 
   // For eigenmode simulations:
@@ -562,7 +560,7 @@ void IoData::NondimensionalizeInputs(mfem::ParMesh &mesh)
   solver.transient.delta_t /= tc;
 
   // Scale mesh vertices for correct nondimensionalization.
-  mesh::NondimensionalizeMesh(mesh, GetLengthScale());
+  mesh::NondimensionalizeMesh(mesh, GetMeshLengthScale());
 
   // Print some information.
   Mpi::Print(mesh.GetComm(),

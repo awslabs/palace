@@ -22,11 +22,14 @@ with
 
 `"Mesh" [None]` :  Input mesh file path, an absolute path is recommended.
 
-`"L0" [1.0e-6]` :  Mesh vertex coordinate length unit, m.
+`"L0" [1.0e-6]` :  Unit, relative to m, for mesh vertex coordinates. For example, a value
+of `1.0e-6` implies the mesh coordinates are in μm.
 
 `"Lc" [0.0]` :  Characteristic length scale used for nondimensionalization, specified in
-mesh length units. A value less than or equal to zero uses an internally calculated length
-scale based on the bounding box of the computational domain.
+mesh length units. This keyword should typically not be specified by the user. A value less
+than or equal to zero uses an internally calculated length scale based on the bounding box
+of the computational domain. A value of 1.0 will disable nondimensionalization of lengths
+in the model and all computations will take place in the same units as the mesh.
 
 `"Refinement"` : Top-level object for configuring mesh refinement.
 
@@ -110,9 +113,12 @@ mesh length units.
 
 ### Advanced model options
 
-  - `"Partition" [""]`
-  - `"ReorientTetMesh" [false]`
   - `"RemoveCurvature" [false]`
+  - `"ReorderElements" [false]`
+  - `"CleanUnusedElements" [true]`
+  - `"AddInterfaceBoundaryElements" [true]`
+  - `"ReorientTetMesh" [false]`
+  - `"Partitioning" [""]`
   - `"MaxNCLevels" [1]`
   - `"MaximumImbalance" [1.1]`
   - `"SaveAdaptIterations" [true]`

@@ -462,18 +462,24 @@ void ModelData::SetUp(json &config)
   mesh = model->at("Mesh");  // Required
   L0 = model->value("L0", L0);
   Lc = model->value("Lc", Lc);
-  partition = model->value("Partition", partition);
-  reorient_tet = model->value("ReorientTetMesh", reorient_tet);
   remove_curvature = model->value("RemoveCurvature", remove_curvature);
+  reorder_elements = model->value("ReorderElements", reorder_elements);
+  clean_unused_elements = model->value("CleanUnusedElements", clean_unused_elements);
+  add_bdr_elements = model->value("AddInterfaceBoundaryElements", add_bdr_elements);
+  reorient_tet_mesh = model->value("ReorientTetMesh", reorient_tet_mesh);
+  partitioning = model->value("Partitioning", partitioning);
   refinement.SetUp(*model);
 
   // Cleanup
   model->erase("Mesh");
   model->erase("L0");
   model->erase("Lc");
-  model->erase("Partition");
-  model->erase("ReorientTetMesh");
   model->erase("RemoveCurvature");
+  model->erase("ReorderElements");
+  model->erase("CleanUnusedElements");
+  model->erase("AddInterfaceBoundaryElements");
+  model->erase("ReorientTetMesh");
+  model->erase("Partitioning");
   model->erase("Refinement");
   MFEM_VERIFY(model->empty(),
               "Found an unsupported configuration file keyword under \"Model\"!\n"
@@ -485,9 +491,12 @@ void ModelData::SetUp(json &config)
     std::cout << "Mesh: " << mesh << '\n';
     std::cout << "L0: " << L0 << '\n';
     std::cout << "Lc: " << Lc << '\n';
-    std::cout << "Partition: " << partition << '\n';
-    std::cout << "ReorientTetMesh: " << reorient_tet << '\n';
     std::cout << "RemoveCurvature: " << remove_curvature << '\n';
+    std::cout << "ReorderElements: " << reorder_elements << '\n';
+    std::cout << "CleanUnusedElements: " << clean_unused_elements << '\n';
+    std::cout << "AddInterfaceBoundaryElements: " << add_bdr_elements << '\n';
+    std::cout << "ReorientTetMesh: " << reorient_tet_mesh << '\n';
+    std::cout << "Partitioning: " << partitioning << '\n';
   }
 }
 

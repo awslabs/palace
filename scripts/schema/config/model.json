@@ -9,9 +9,12 @@
     "Mesh": { "type": "string" },
     "L0": { "type": "number", "exclusiveMinimum": 0.0 },
     "Lc": { "type": "number", "exclusiveMinimum": 0.0 },
-    "Partition": { "type": "string" },
-    "ReorientTetMesh": { "type": "boolean" },
     "RemoveCurvature": { "type": "boolean" },
+    "ReorderElements": { "type": "boolean" },
+    "CleanUnusedElements": { "type": "boolean" },
+    "AddInterfaceBoundaryElements": { "type": "boolean" },
+    "ReorientTetMesh": { "type": "boolean" },
+    "Partitioning": { "type": "string" },
     "Refinement":
     {
       "type": "object",
