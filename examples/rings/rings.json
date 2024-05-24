@@ -8,7 +8,7 @@
   "Model":
   {
     "Mesh": "mesh/rings.msh",
-    "L0": 1.0e-6  // um
+    "L0": 1.0e-6  // μm
   },
   "Domains":
   {
