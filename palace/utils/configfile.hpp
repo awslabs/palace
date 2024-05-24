@@ -312,7 +312,7 @@ public:
 struct DomainPostData
 {
 public:
-  // Set of all postprocessing domain attributes.
+  // List of all postprocessing domain attributes.
   std::vector<int> attributes = {};
 
   // Domain postprocessing objects.
@@ -325,7 +325,7 @@ public:
 struct DomainData
 {
 public:
-  // Set of all domain attributes.
+  // List of all domain attributes (excluding postprocessing).
   std::vector<int> attributes = {};
 
   // Domain objects.
@@ -583,7 +583,7 @@ public:
   using Side = InterfaceDielectricData::Side;
   Side side = Side::SMALLER_REF_INDEX;
 
-  // Set of all postprocessing boundary attributes.
+  // List of all postprocessing boundary attributes.
   std::vector<int> attributes = {};
 
   // Boundary postprocessing objects.
@@ -596,7 +596,7 @@ public:
 struct BoundaryData
 {
 public:
-  // Set of all boundary attributes.
+  // List of all boundary attributes (excluding postprocessing).
   std::vector<int> attributes = {};
 
   // Boundary objects.
