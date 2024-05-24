@@ -9,11 +9,9 @@
 set(LIBXSMM_DEPENDENCIES)
 
 set(LIBXSMM_OPTIONS
-  "PREFIX=${CMAKE_INSTALL_PREFIX}"
+  # "PREFIX=${CMAKE_INSTALL_PREFIX}"  # Don't use install step, see comment below
   "OUTDIR=${CMAKE_INSTALL_PREFIX}/lib"
   "DIRSTATE=."
-  "PPKGDIR=lib/pkgconfig"
-  "PMODDIR=lib/pkgconfig"
   "CC=${CMAKE_C_COMPILER}"
   "CXX=${CMAKE_CXX_COMPILER}"
   "FC="
@@ -46,6 +44,36 @@ endif()
 string(REPLACE ";" "; " LIBXSMM_OPTIONS_PRINT "${LIBXSMM_OPTIONS}")
 message(STATUS "LIBXSMM_OPTIONS: ${LIBXSMM_OPTIONS_PRINT}")
 
+# Don't use LIBXSMM install step, since it just copies shared libraries and doesn't modify
+# the dependency locations directly (doesn't use RPATH). Just build directly into the
+# installation directory instead. See https://github.com/libxsmm/libxsmm/issues/883.
+set(LIBXSMM_INSTALL_HEADERS
+  libxsmm.h
+  libxsmm_config.h
+  libxsmm_version.h
+  libxsmm_cpuid.h
+  libxsmm_fsspmdm.h
+  libxsmm_generator.h
+  libxsmm_intrinsics_x86.h
+  libxsmm_macros.h
+  libxsmm_math.h
+  libxsmm_malloc.h
+  libxsmm_memory.h
+  libxsmm_sync.h
+  libxsmm_typedefs.h
+)
+list(TRANSFORM LIBXSMM_INSTALL_HEADERS PREPEND <SOURCE_DIR>/include/)
+set(LIBXSMM_INSTALL_PKGCONFIG
+  libxsmm.pc
+  libxsmmext.pc
+  libxsmmnoblas.pc
+  libxsmm-shared.pc
+  libxsmmext-shared.pc
+  libxsmmnoblas-shared.pc
+  libxsmm.env
+)
+list(TRANSFORM LIBXSMM_INSTALL_PKGCONFIG PREPEND ${CMAKE_INSTALL_PREFIX}/lib/)
+
 include(ExternalProject)
 ExternalProject_Add(libxsmm
   DEPENDS           ${LIBXSMM_DEPENDENCIES}
@@ -57,16 +85,16 @@ ExternalProject_Add(libxsmm
   BUILD_IN_SOURCE   TRUE
   UPDATE_COMMAND    ""
   CONFIGURE_COMMAND ""
-  BUILD_COMMAND     ""
+  BUILD_COMMAND     ${CMAKE_MAKE_PROGRAM} ${LIBXSMM_OPTIONS}
   INSTALL_COMMAND
-    ${CMAKE_MAKE_PROGRAM} ${LIBXSMM_OPTIONS} install-minimal &&
-    ${CMAKE_COMMAND} -E remove -f "${CMAKE_INSTALL_PREFIX}/lib/.make" &&
-    ${CMAKE_COMMAND} -E remove -f "${CMAKE_INSTALL_PREFIX}/lib/libxsmm.pc" &&
-    ${CMAKE_COMMAND} -E remove -f "${CMAKE_INSTALL_PREFIX}/lib/libxsmmext.pc" &&
-    ${CMAKE_COMMAND} -E remove -f "${CMAKE_INSTALL_PREFIX}/lib/libxsmmnoblas.pc" &&
-    ${CMAKE_COMMAND} -E remove -f "${CMAKE_INSTALL_PREFIX}/lib/libxsmm-shared.pc" &&
-    ${CMAKE_COMMAND} -E remove -f "${CMAKE_INSTALL_PREFIX}/lib/libxsmmext-shared.pc" &&
-    ${CMAKE_COMMAND} -E remove -f "${CMAKE_INSTALL_PREFIX}/lib/libxsmmnoblas-shared.pc" &&
-    ${CMAKE_COMMAND} -E remove -f "${CMAKE_INSTALL_PREFIX}/lib/libxsmm.env"
+    ${CMAKE_COMMAND} -E echo "LIBXSMM installing interface..." &&
+    ${CMAKE_COMMAND} -E make_directory ${CMAKE_INSTALL_PREFIX}/include &&
+    ${CMAKE_COMMAND} -E copy ${LIBXSMM_INSTALL_HEADERS} ${CMAKE_INSTALL_PREFIX}/include &&
+    ${CMAKE_COMMAND} -E echo "LIBXSMM installing pkg-config and module files..." &&
+    ${CMAKE_COMMAND} -E make_directory ${CMAKE_INSTALL_PREFIX}/lib/pkgconfig &&
+    (${CMAKE_COMMAND} -E copy ${LIBXSMM_INSTALL_PKGCONFIG} ${CMAKE_INSTALL_PREFIX}/lib/pkgconfig
+      || ${CMAKE_COMMAND} -E true) &&  # No error if files don't exist
+    ${CMAKE_COMMAND} -E rm -f ${LIBXSMM_INSTALL_PKGCONFIG} &&
+    ${CMAKE_COMMAND} -E rm -f ${CMAKE_INSTALL_PREFIX}/lib/.make
   TEST_COMMAND      ""
 )
