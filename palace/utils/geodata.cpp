@@ -57,7 +57,7 @@ void ReorderMeshElements(mfem::Mesh &, bool = true);
 // boundary elements for material interfaces and exterior boundaries, and "cracking" desired
 // internal boundary elements to disconnect the elements on either side.
 void CheckMesh(std::unique_ptr<mfem::Mesh> &, const std::vector<int> &,
-               const std::vector<int> &, bool, bool, const std::vector<int> &);
+               const std::vector<int> &, bool, const std::vector<int> &, bool);
 
 // Generate element-based mesh partitioning, using either a provided file or METIS.
 std::unique_ptr<int[]> GetMeshPartitioning(const mfem::Mesh &, int,
@@ -167,8 +167,8 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(MPI_Comm comm, const IoData &iodata)
         crack_bdr_attr_list = iodata.boundaries.attributes;
       }
       CheckMesh(smesh, iodata.domains.attributes, iodata.boundaries.attributes,
-                iodata.model.clean_unused_elements, iodata.model.add_bdr_elements,
-                crack_bdr_attr_list);
+                iodata.model.clean_unused_elements, crack_bdr_attr_list,
+                iodata.model.add_bdr_elements);
     }
 
     // Generate the mesh partitioning.
@@ -2107,8 +2107,8 @@ void ReorderMeshElements(mfem::Mesh &mesh, bool print)
 
 void CheckMesh(std::unique_ptr<mfem::Mesh> &orig_mesh,
                const std::vector<int> &mat_attr_list, const std::vector<int> &bdr_attr_list,
-               bool clean_elem, bool add_bdr_elem,
-               const std::vector<int> &crack_bdr_attr_list)
+               bool clean_elem, const std::vector<int> &crack_bdr_attr_list,
+               bool add_bdr_elem)
 {
   // - Check that all external boundaries of the mesh have a corresponding boundary
   //   condition.
@@ -2161,18 +2161,18 @@ void CheckMesh(std::unique_ptr<mfem::Mesh> &orig_mesh,
 
   // Mapping from new interface boundary attribute tags to vector of neighboring domain
   // attributes (when adding new boundary elements).
-  if (!clean_elem && !add_bdr_elem && crack_bdr_attr_list.empty())
+  if (!clean_elem && crack_bdr_attr_list.empty() && !add_bdr_elem)
   {
     return;
   }
 
   // Count deleted or added domain and boundary elements.
+  int new_nv = orig_mesh->GetNV();
   int new_ne = orig_mesh->GetNE();
   int new_nbe = orig_mesh->GetNBE();
-  int new_nv = orig_mesh->GetNV();
   std::vector<int> elem_delete_map(orig_mesh->GetNE(), -1),
       bdr_elem_delete_map(orig_mesh->GetNBE(), -1);
-  std::unordered_map<int, int> face_to_be, new_face_be;
+  std::unordered_map<int, int> face_to_be;
   face_to_be.reserve(orig_mesh->GetNBE());
   for (int be = 0; be < orig_mesh->GetNBE(); be++)
   {
@@ -2228,54 +2228,6 @@ void CheckMesh(std::unique_ptr<mfem::Mesh> &orig_mesh,
   }
   int new_ne_step_1 = new_ne;
   int new_nbe_step_1 = new_nbe;
-
-  // Add new boundary elements at material interfaces or on the exterior boundary of the
-  // simulation domain, if there is not already a boundary element present.
-  if (add_bdr_elem)
-  {
-    MFEM_VERIFY(!orig_mesh->Nonconforming(), "Adding material interface boundary elements "
-                                             "is not supported for nonconforming meshes!");
-    int new_nbe_ext = 0, new_nbe_int = 0;
-    for (int f = 0; f < orig_mesh->GetNumFaces(); f++)
-    {
-      // No need to check if the face corresponds to a deleted boundary element, since we
-      // skip all boundary elements.
-      if (face_to_be.find(f) != face_to_be.end())
-      {
-        continue;
-      }
-      int e1, e2;
-      orig_mesh->GetFaceElements(f, &e1, &e2);
-      bool no_e1 = (e1 < 0 || elem_delete_map[e1] < 0);
-      bool no_e2 = (e2 < 0 || elem_delete_map[e2] < 0);
-      if ((no_e1 || no_e2) && !(no_e1 && no_e2))
-      {
-        // Mpi::Print("Adding exterior boundary element!\n");
-        new_face_be[f] = 1;
-        new_nbe_ext++;
-      }
-      else if (orig_mesh->GetAttribute(e1) != orig_mesh->GetAttribute(e2))
-      {
-        // Add new boundary element at material interface between two domains.
-        // Mpi::Print("Adding material interface boundary element!\n");
-        new_face_be[f] = 1;
-        new_nbe_int++;
-      }
-    }
-    new_nbe += (new_nbe_ext + new_nbe_int);
-    if (new_nbe_ext > 0)
-    {
-      Mpi::Print("Added {:d} boundary elements for exterior boundaries to the mesh\n",
-                 new_nbe_ext);
-    }
-    if (new_nbe_int > 0)
-    {
-      Mpi::Print("Added {:d} boundary elements for material interfaces to the mesh\n",
-                 new_nbe_int);
-    }
-  }
-  int new_ne_step_2 = new_ne;
-  int new_nbe_step_2 = new_nbe;
 
   // Duplicate internal boundary elements from the given boundary attribute list, cracking
   // the mesh such that domain elements on either side are no longer coupled. Correctly
@@ -2453,13 +2405,61 @@ void CheckMesh(std::unique_ptr<mfem::Mesh> &orig_mesh,
                 << " vertices for duplication\n\n";
     }
 
-    new_nbe += crack_bdr_elem.size();
     new_nv += new_nv_dups;
+    new_nbe += crack_bdr_elem.size();
     if (crack_bdr_elem.size() > 0)
     {
       Mpi::Print("Duplicated {:d} boundary elements (and {:d} vertices) for interior "
                  "boundaries in the mesh\n",
                  crack_bdr_elem.size(), new_nv_dups);
+    }
+  }
+  int new_ne_step_2 = new_ne;
+  int new_nbe_step_2 = new_nbe;
+
+  // Add new boundary elements at material interfaces or on the exterior boundary of the
+  // simulation domain, if there is not already a boundary element present.
+  std::unordered_map<int, int> new_face_bdr_elem;
+  if (add_bdr_elem)
+  {
+    MFEM_VERIFY(!orig_mesh->Nonconforming(), "Adding material interface boundary elements "
+                                             "is not supported for nonconforming meshes!");
+    int new_nbe_ext = 0, new_nbe_int = 0;
+    for (int f = 0; f < orig_mesh->GetNumFaces(); f++)
+    {
+      // No need to check if the face corresponds to a deleted boundary element, since we
+      // skip all boundary elements.
+      if (face_to_be.find(f) != face_to_be.end())
+      {
+        continue;
+      }
+      int e1, e2;
+      orig_mesh->GetFaceElements(f, &e1, &e2);
+      bool no_e1 = (e1 < 0 || elem_delete_map[e1] < 0);
+      bool no_e2 = (e2 < 0 || elem_delete_map[e2] < 0);
+      if ((no_e1 || no_e2) && !(no_e1 && no_e2))
+      {
+        // Mpi::Print("Adding exterior boundary element!\n");
+        new_face_bdr_elem[f] = 1;
+        new_nbe_ext++;
+      }
+      else if (orig_mesh->GetAttribute(e1) != orig_mesh->GetAttribute(e2))
+      {
+        // Mpi::Print("Adding material interface boundary element!\n");
+        new_face_bdr_elem[f] = 1;
+        new_nbe_int++;
+      }
+    }
+    new_nbe += (new_nbe_ext + new_nbe_int);
+    if (new_nbe_ext > 0)
+    {
+      Mpi::Print("Added {:d} boundary elements for exterior boundaries to the mesh\n",
+                 new_nbe_ext);
+    }
+    if (new_nbe_int > 0)
+    {
+      Mpi::Print("Added {:d} boundary elements for material interfaces to the mesh\n",
+                 new_nbe_int);
     }
   }
 
@@ -2493,68 +2493,6 @@ void CheckMesh(std::unique_ptr<mfem::Mesh> &orig_mesh,
     {
       mfem::Element *el = orig_mesh->GetBdrElement(be)->Duplicate(new_mesh.get());
       new_mesh->AddBdrElement(el);
-    }
-  }
-
-  // Add new boundary elements.
-  if (add_bdr_elem)
-  {
-    // Some (1-based) boundary attributes may be empty since they were removed from the
-    // original mesh, but to keep attributes the same as config file we don't compress the
-    // list.
-    int max_bdr_attr =
-        orig_mesh->bdr_attributes.Size() ? orig_mesh->bdr_attributes.Max() : 0;
-    for (int f = 0; f < orig_mesh->GetNumFaces(); f++)
-    {
-      if (new_face_be[f] > 0)
-      {
-        // Assign new unique attribute based on attached elements. Save so that the
-        // attributes of e1 and e2 can be easily referenced using the new attribute. Since
-        // attributes are in 1-based indexing, a, b > 0. See also
-        // https://en.wikipedia.org/wiki/Pairing_function.
-        int e1, e2, a = 0, b = 0;
-        orig_mesh->GetFaceElements(f, &e1, &e2);
-        bool no_e1 = (e1 < 0 || elem_delete_map[e1] < 0);
-        bool no_e2 = (e2 < 0 || elem_delete_map[e2] < 0);
-        if (!no_e1 && !no_e2)
-        {
-          a = std::max(orig_mesh->GetAttribute(e1), orig_mesh->GetAttribute(e2));
-          b = (a == orig_mesh->GetAttribute(e1)) ? orig_mesh->GetAttribute(e2)
-                                                 : orig_mesh->GetAttribute(e1);
-        }
-        else if (!no_e1)
-        {
-          a = orig_mesh->GetAttribute(e1);
-          b = 0;
-        }
-        else if (!no_e2)
-        {
-          a = orig_mesh->GetAttribute(e2);
-          b = 0;
-        }
-        MFEM_VERIFY(a + b > 0, "Invalid new boundary element attribute!");
-        int new_attr =
-            max_bdr_attr + (((a + b) * (a + b + 1)) / 2) + a;  // At least max_bdr_attr + 1
-
-        // Add the boundary elements with the new boundary attribute.
-        mfem::Element *el = orig_mesh->GetFace(f)->Duplicate(new_mesh.get());
-        el->SetAttribute(new_attr);
-        new_mesh->AddBdrElement(el);
-        if (new_face_be[f] > 1)
-        {
-          // Flip order of vertices to reverse normal direction of second added element.
-          el = orig_mesh->GetFace(f)->Duplicate(new_mesh.get());
-          el->SetAttribute(new_attr);
-          std::reverse(el->GetVertices(), el->GetVertices() + el->GetNVertices());
-          new_mesh->AddBdrElement(el);
-          if constexpr (false)
-          {
-            Mpi::Print("Adding two boundary elements with attribute {:d} from elements "
-                       "{:d} and {:d}\n",
-                       new_attr, a, b);
-          }
-        }
-      }
     }
   }
 
@@ -2702,7 +2640,7 @@ void CheckMesh(std::unique_ptr<mfem::Mesh> &orig_mesh,
             break;
           }
         }
-        MFEM_VERIFY(i < elem_to_face.RowSize(e), "Unable to locate crack face in element!");
+        MFEM_VERIFY(i < elem_to_face.RowSize(e), "Unable to locate face in element!");
 
         // Add the interface boundary element.
         mfem::Element *bdr_el = orig_mesh->GetFace(f)->Duplicate(new_mesh.get());
@@ -2732,6 +2670,96 @@ void CheckMesh(std::unique_ptr<mfem::Mesh> &orig_mesh,
     {
       std::cout << "\nTotal mesh boundary elements = " << new_mesh->GetNBE()
                 << " (original = " << orig_mesh->GetNBE() << ")\n\n";
+    }
+  }
+
+  // Add new boundary elements.
+  if (add_bdr_elem)
+  {
+    // Some (1-based) boundary attributes may be empty since they were removed from the
+    // original mesh, but to keep attributes the same as config file we don't compress the
+    // list.
+    const mfem::Table &elem_to_face = orig_mesh->ElementToFaceTable();
+    int max_bdr_attr =
+        orig_mesh->bdr_attributes.Size() ? orig_mesh->bdr_attributes.Max() : 0;
+    for (int f = 0; f < orig_mesh->GetNumFaces(); f++)
+    {
+      if (new_face_bdr_elem[f] > 0)
+      {
+        // Assign new unique attribute based on attached elements. Save so that the
+        // attributes of e1 and e2 can be easily referenced using the new attribute. Since
+        // attributes are in 1-based indexing, a, b > 0. See also
+        // https://en.wikipedia.org/wiki/Pairing_function.
+        int e1, e2, a = 0, b = 0;
+        orig_mesh->GetFaceElements(f, &e1, &e2);
+        bool no_e1 = (e1 < 0 || elem_delete_map[e1] < 0);
+        bool no_e2 = (e2 < 0 || elem_delete_map[e2] < 0);
+        if (!no_e1 && !no_e2)
+        {
+          a = std::max(orig_mesh->GetAttribute(e1), orig_mesh->GetAttribute(e2));
+          b = (a == orig_mesh->GetAttribute(e1)) ? orig_mesh->GetAttribute(e2)
+                                                 : orig_mesh->GetAttribute(e1);
+        }
+        else if (!no_e1)
+        {
+          a = orig_mesh->GetAttribute(e1);
+          b = 0;
+        }
+        else if (!no_e2)
+        {
+          a = orig_mesh->GetAttribute(e2);
+          b = 0;
+        }
+        MFEM_VERIFY(a + b > 0, "Invalid new boundary element attribute!");
+        int new_attr =
+            max_bdr_attr + (((a + b) * (a + b + 1)) / 2) + a;  // At least max_bdr_attr + 1
+
+        // Add the boundary elements with the new boundary attribute. The element vertices
+        // may have been renumbered in the new mesh, so the new face is not necessarily
+        // just a duplicate of the old one. First we find the index of the face in the old
+        // element, which should match the new element.
+        int e = no_e1 ? e2 : e1;
+        const int *faces = elem_to_face.GetRow(e);
+        int i;
+        for (i = 0; i < elem_to_face.RowSize(e); i++)
+        {
+          if (faces[i] == f)
+          {
+            break;
+          }
+        }
+        MFEM_VERIFY(i < elem_to_face.RowSize(e), "Unable to locate face in element!");
+
+        // Now add the boundary element(s).
+        mfem::Element *bdr_el = orig_mesh->GetFace(f)->Duplicate(new_mesh.get());
+        bdr_el->SetAttribute(new_attr);
+        const mfem::Element *el = new_mesh->GetElement(elem_delete_map[e]);
+        for (int j = 0; j < bdr_el->GetNVertices(); j++)
+        {
+          bdr_el->GetVertices()[j] = el->GetVertices()[el->GetFaceVertices(i)[j]];
+        }
+        new_mesh->AddBdrElement(bdr_el);
+        if (new_face_bdr_elem[f] > 1)
+        {
+          // Flip order of vertices to reverse normal direction of second added element.
+          mfem::Element *bdr_el2 = bdr_el->Duplicate(new_mesh.get());
+          std::reverse(bdr_el2->GetVertices(),
+                       bdr_el2->GetVertices() + bdr_el2->GetNVertices());
+          new_mesh->AddBdrElement(bdr_el2);
+          if constexpr (false)
+          {
+            Mpi::Print("Adding two boundary elements with attribute {:d} from elements "
+                       "{:d} and {:d}\n",
+                       new_attr, a, b);
+          }
+        }
+        else if constexpr (false)
+        {
+          Mpi::Print("Adding boundary element with attribute {:d} from elements "
+                     "{:d} and {:d}\n",
+                     new_attr, a, b);
+        }
+      }
     }
   }
 
