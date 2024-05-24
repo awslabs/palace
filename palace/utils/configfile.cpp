@@ -647,7 +647,7 @@ void DomainPostData::SetUp(json &domains)
     attributes.insert(attributes.end(), data.attributes.begin(), data.attributes.end());
   }
   std::sort(attributes.begin(), attributes.end());
-  attributes.erase(unique(attributes.begin(), attributes.end()), attributes.end());
+  attributes.erase(std::unique(attributes.begin(), attributes.end()), attributes.end());
   attributes.shrink_to_fit();
 
   // Cleanup
@@ -672,7 +672,7 @@ void DomainData::SetUp(json &config)
     attributes.insert(attributes.end(), data.attributes.begin(), data.attributes.end());
   }
   std::sort(attributes.begin(), attributes.end());
-  attributes.erase(unique(attributes.begin(), attributes.end()), attributes.end());
+  attributes.erase(std::unique(attributes.begin(), attributes.end()), attributes.end());
   attributes.shrink_to_fit();
   for (const auto &attr : postpro.attributes)
   {
@@ -1314,7 +1314,7 @@ void BoundaryPostData::SetUp(json &boundaries)
     attributes.insert(attributes.end(), data.attributes.begin(), data.attributes.end());
   }
   std::sort(attributes.begin(), attributes.end());
-  attributes.erase(unique(attributes.begin(), attributes.end()), attributes.end());
+  attributes.erase(std::unique(attributes.begin(), attributes.end()), attributes.end());
   attributes.shrink_to_fit();
 
   // Cleanup
@@ -1381,9 +1381,8 @@ void BoundaryData::SetUp(json &config)
       attributes.insert(attributes.end(), elem.attributes.begin(), elem.attributes.end());
     }
   }
-  attributes.insert(attributes.end(), postpro.attributes.begin(), postpro.attributes.end());
   std::sort(attributes.begin(), attributes.end());
-  attributes.erase(unique(attributes.begin(), attributes.end()), attributes.end());
+  attributes.erase(std::unique(attributes.begin(), attributes.end()), attributes.end());
   attributes.shrink_to_fit();
 
   // Cleanup
