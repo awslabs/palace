@@ -286,3 +286,89 @@ function generate_cavity_convergence_data(;
 
     return dof, f_TM_010_rel_error, f_TE_111_rel_error
 end
+
+
+
+"""
+    generate_cavity_amr_data(
+        radius::Real              = 2.74,
+        aspect_ratio::Real        = 1 / sqrt(2),
+        p::Integer                = 2,
+        mesh_type::Integer        = 1,
+        num_processors::Integer   = 1,
+        dirname::String           = "amr",
+        amr_max_its::Integer      = 0,
+        amr_tol::Real             = 1e-2,
+        amr_max_size::Real        = 2E6,
+        amr_nonconformal::Bool    = true,
+        amr_update_fraction::Real = 0.7
+    )
+
+Reuse Julia functions to generate the data for the cavity study with adaptive mesh refinement (AMR).
+
+# Arguments
+
+  - radius - the radius of the cavity resonator
+  - aspect_ratio - the ratio of the DIAMETER of the cavity to the height
+  - p - polynomial order
+  - mesh_type - 0 = tetrahedral mesh, 1 = prism mesh, 2 = hexahedral mesh
+  - num_processors - number of processors to use for the simulation
+  - dirname - name of the directory to save the results
+  - amr_max_its - maximum number of iterations of AMR. Default=0 means no AMR and ignores the arguments below.
+  - amr_tol - relative error convergence tolerance for AMR
+  - amr_max_size -maximum allowable number of degrees of freedom for AMR
+  - amr_nonconformal - choose whether the adaptation should use nonconformal refinement
+  - amr_update_fraction - Dörfler marking fraction used to specify which elements to refine
+"""
+function generate_cavity_amr_data(;
+    radius::Real              = 2.74,
+    aspect_ratio::Real        = 1 / sqrt(2),
+    p::Integer                = 2,
+    mesh_type::Integer        = 1,
+    num_processors::Integer   = 1,
+    dirname::String           = "amr",
+    amr_max_its::Integer      = 0,
+    amr_tol::Real             = 1e-2,
+    amr_max_size::Real        = 2E6,
+    amr_nonconformal::Bool    = true,
+    amr_update_fraction::Real = 0.7
+)
+    # Load the default JSON script (the file contains comments and we need to sanitize them)
+    cavity_dir = @__DIR__
+    params = open(joinpath(cavity_dir, "cavity_pec.json"), "r") do f
+        return JSON.parse(join(getindex.(split.(eachline(f), "//"), 1), "\n"))
+    end
+
+    # Update the dictionary
+    params["Problem"]["Verbose"] = 2
+    params["Problem"]["Output"] = dirname
+    params["Solver"]["Eigenmode"]["Save"] = 0 # Don't write any fields to file
+    params["Solver"]["Eigenmode"]["N"] = 4 # Look only for the top 4 modes
+    params["Solver"]["Eigenmode"]["Tol"] = 1.0e-12
+    params["Solver"]["Eigenmode"]["Target"] = 2.0
+    params["Solver"]["Eigenmode"]["StartVectorConstant"] = true
+    params["Solver"]["Linear"]["Tol"] = 1.0e-14
+
+    # AMR-specific fields
+    params["Model"]["Refinement"]["UniformLevels"] = 0 # Don't perform uniform mesh refinement
+    params["Model"]["Refinement"]["Tol"] = amr_tol
+    params["Model"]["Refinement"]["MaxIts"] = amr_max_its
+    params["Model"]["Refinement"]["MaxSize"] = amr_max_size
+    params["Model"]["Refinement"]["Nonconformal"] = amr_nonconformal
+    params["Model"]["Refinement"]["UpdateFraction"] = amr_update_fraction
+    
+    # Generate the data
+    solve_cavity_resonator(
+        params,
+        order=p,
+        geo_order=p,
+        refinement=0,
+        mesh_type=mesh_type,
+        radius=radius,
+        aspect_ratio=aspect_ratio,
+        num_processors=num_processors
+    )
+
+    # Data is in multiple directories, do not return anything
+    return nothing
+end
