@@ -4,11 +4,17 @@
     This script performs an eigenmode cavity simulation using adaptive mesh refinement, and explores the results.
 =#
 
+using DelimitedFiles
+using Measures
+using Plots
+using PyPlot: matplotlib
+
 # Paths
 include(joinpath(@__DIR__, "cavity.jl"))
 cavity_dir = @__DIR__
 output_dir_conformal = joinpath(cavity_dir, "postpro", "amr", "conformal")
 output_dir_nonconformal = joinpath(cavity_dir, "postpro", "amr", "nonconformal")
+amr_error_plot_file = joinpath(cavity_dir, "postpro", "amr", "cavity_amr_error.png")
 
 # Parameters
 num_processors = 8
@@ -123,9 +129,52 @@ for (dof, f_TM_010, f_TE_111, err_norm, output_dir) in [
             end
         end
     end
-
-    println("Degrees of Freedom: ", dof)
-    println("f_TM_010: ", f_TM_010)
-    println("f_TE_111: ", f_TE_111)
-    println("err_norm: ", err_norm)
 end
+
+#=
+    Generic plot settings
+=#
+pyplot()
+rcParams = PyPlot.PyDict(matplotlib["rcParams"])
+plotsz = (800, 400)
+fntsz = 12
+fnt = font(fntsz)
+rcParams["mathtext.fontset"] = "stix"
+default(
+    size=plotsz,
+    palette=:Set1_9,
+    dpi=300,
+    tickfont=fnt,
+    guidefont=fnt,
+    legendfontsize=fntsz - 2,
+    margin=10mm
+)
+
+#=
+    AME error plot
+=#
+
+xlbl = "Iteration number"
+ylbl = "AMR Error Norm"
+pp = plot(xlabel=xlbl, ylabel=ylbl, legend=:topright)
+
+# Plot error norms vs iteration number
+plot!(
+    pp,
+    1:length(err_norm_conformal),
+    err_norm_conformal,
+    label=string("p=", p, ", conformal"),
+    markers=:circle,
+    color=:green
+)
+plot!(
+    pp,
+    1:length(err_norm_nonconformal),
+    err_norm_nonconformal,
+    label=string("p=", p, ", nonconformal"),
+    markers=:square,
+    color=:purple
+)
+
+hline!(pp, [amr_tol], label="AMR Tolerance", linestyle=:dash, color=:black, alpha=0.5)
+savefig(pp, amr_error_plot_file)
