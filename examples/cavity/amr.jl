@@ -15,6 +15,7 @@ cavity_dir = @__DIR__
 output_dir_conformal = joinpath(cavity_dir, "postpro", "amr", "conformal")
 output_dir_nonconformal = joinpath(cavity_dir, "postpro", "amr", "nonconformal")
 amr_error_plot_file = joinpath(cavity_dir, "postpro", "amr", "cavity_amr_error.png")
+amr_dof_plot_file = joinpath(cavity_dir, "postpro", "amr", "cavity_amr_dof.png")
 
 # Parameters
 num_processors = 8
@@ -178,3 +179,74 @@ plot!(
 
 hline!(pp, [amr_tol], label="AMR Tolerance", linestyle=:dash, color=:black, alpha=0.5)
 savefig(pp, amr_error_plot_file)
+
+#=
+    Accuracy vs DOFs plot
+=#
+
+# Prepare data for plotting
+f_TM_010_relative_error_conformal =
+    map(x -> abs.(x .- f_TM_010_true) ./ f_TM_010_true, f_TM_010_conformal)
+f_TE_111_relative_error_conformal =
+    map(x -> abs.(x .- f_TE_111_true) ./ f_TE_111_true, f_TE_111_conformal)
+f_TM_010_relative_error_nonconformal =
+    map(x -> abs.(x .- f_TM_010_true) ./ f_TM_010_true, f_TM_010_nonconformal)
+f_TE_111_relative_error_nonconformal =
+    map(x -> abs.(x .- f_TE_111_true) ./ f_TE_111_true, f_TE_111_nonconformal)
+
+# Relative error vs DOFs, with iterations labeled
+xlbl = "\$DOF^{-1/3}\$"
+ylbl = "Relative error"
+pp = plot(xlabel=xlbl, ylabel=ylbl, legend=:bottomright)
+plot!(
+    pp,
+    dof_conformal .^ (-1 / 3),
+    f_TM_010_relative_error_conformal,
+    label=string("\$f^{TM}_{010}\$, p=", p, ", conformal"),
+    markers=:circle,
+    color=:blue
+)
+plot!(
+    pp,
+    dof_conformal .^ (-1 / 3),
+    f_TE_111_relative_error_conformal,
+    label=string("\$f^{TE}_{111}\$, p=", p, ", conformal"),
+    markers=:circle,
+    color=:red
+)
+plot!(
+    pp,
+    dof_nonconformal .^ (-1 / 3),
+    f_TM_010_relative_error_nonconformal,
+    label=string("\$f^{TM}_{010}\$, p=", p, ", nonconformal"),
+    markers=:square,
+    color=:blue
+)
+plot!(
+    pp,
+    dof_nonconformal .^ (-1 / 3),
+    f_TE_111_relative_error_nonconformal,
+    label=string("\$f^{TE}_{111}\$, p=", p, ", nonconformal"),
+    markers=:square,
+    color=:red
+)
+
+minx = minimum([minimum(dof_nonconformal .^ (-1 / 3)), minimum(dof_conformal .^ (-1 / 3))])
+maxx = maximum([maximum(dof_nonconformal .^ (-1 / 3)), maximum(dof_conformal .^ (-1 / 3))])
+miny = minimum([
+    minimum(f_TE_111_relative_error_nonconformal),
+    minimum(f_TE_111_relative_error_conformal)
+])
+maxy = maximum([
+    maximum(f_TM_010_relative_error_nonconformal),
+    maximum(f_TM_010_relative_error_conformal)
+])
+
+plot!(
+    pp,
+    xlim=(0.8 * minx, 1.2 * maxx),
+    ylim=(0.8 * miny, 1.5 * maxy),
+    xaxis=:log,
+    yaxis=:log
+)
+savefig(pp, amr_dof_plot_file)
