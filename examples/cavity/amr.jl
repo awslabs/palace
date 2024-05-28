@@ -29,22 +29,22 @@ radius = 2.74
 aspect_ratio = 1 / sqrt(2)
 
 # Run simulations
-# for (amr_nonconformal, output_dir) in
-#     [(true, output_dir_nonconformal), (false, output_dir_conformal)]
-#     generate_cavity_amr_data(
-#         radius=radius,
-#         aspect_ratio=aspect_ratio,
-#         p=p, # use second order (can modify)
-#         mesh_type=0, # use tets (cannot use wedge elements for conformal)
-#         num_processors=num_processors,
-#         amr_max_its=amr_max_its,
-#         amr_tol=amr_tol,
-#         amr_max_size=amr_max_size,
-#         amr_nonconformal=amr_nonconformal,
-#         amr_update_fraction=amr_update_fraction,
-#         dirname=output_dir
-#     )
-# end
+for (amr_nonconformal, output_dir) in
+    [(true, output_dir_nonconformal), (false, output_dir_conformal)]
+    generate_cavity_amr_data(
+        radius=radius,
+        aspect_ratio=aspect_ratio,
+        p=p, # use second order (can modify)
+        mesh_type=0, # use tets (cannot use wedge elements for conformal)
+        num_processors=num_processors,
+        amr_max_its=amr_max_its,
+        amr_tol=amr_tol,
+        amr_max_size=amr_max_size,
+        amr_nonconformal=amr_nonconformal,
+        amr_update_fraction=amr_update_fraction,
+        dirname=output_dir
+    )
+end
 
 # Compute the exact solution for reference
 ~, f_TM_010_true = frequency_transverse(
@@ -220,7 +220,7 @@ plot!(
     f_TM_010_relative_error_nonconformal,
     label=string("\$f^{TM}_{010}\$, p=", p, ", nonconformal"),
     markers=:square,
-    color=:blue
+    color=:teal
 )
 plot!(
     pp,
@@ -228,7 +228,7 @@ plot!(
     f_TE_111_relative_error_nonconformal,
     label=string("\$f^{TE}_{111}\$, p=", p, ", nonconformal"),
     markers=:square,
-    color=:red
+    color=:orange
 )
 
 minx = minimum([minimum(dof_nonconformal .^ (-1 / 3)), minimum(dof_conformal .^ (-1 / 3))])
@@ -245,28 +245,28 @@ maxy = maximum([
 # Annotate iterations
 for (i, (x, y)) in
     enumerate(zip(dof_conformal .^ (-1 / 3), f_TM_010_relative_error_conformal))
-    annotate!(x, 0.8 * y, text(string(i), 8, :blue, :center))
+    annotate!(1.02 * x, 0.8 * y, text(string(i), 8, :blue, :center))
 end
 
 for (i, (x, y)) in
     enumerate(zip(dof_conformal .^ (-1 / 3), f_TE_111_relative_error_conformal))
-    annotate!(x, 0.8 * y, text(string(i), 8, :red, :center))
+    annotate!(1.02 * x, 0.8 * y, text(string(i), 8, :red, :center))
 end
 
 for (i, (x, y)) in
     enumerate(zip(dof_nonconformal .^ (-1 / 3), f_TM_010_relative_error_nonconformal))
-    annotate!(x, 1.2 * y, text(string(i), 8, :blue, :center))
+    annotate!(1.02 * x, 1.2 * y, text(string(i), 8, :teal, :center))
 end
 
 for (i, (x, y)) in
     enumerate(zip(dof_nonconformal .^ (-1 / 3), f_TE_111_relative_error_nonconformal))
-    annotate!(x, 1.2 * y, text(string(i), 8, :red, :center))
+    annotate!(1.02 * x, 1.2 * y, text(string(i), 8, :orange, :center))
 end
 
 plot!(
     pp,
     xlim=(0.8 * minx, 1.2 * maxx),
-    ylim=(0.8 * miny, 1.5 * maxy),
+    ylim=(0.5 * miny, 1.5 * maxy),
     xaxis=:log,
     yaxis=:log
 )
