@@ -287,8 +287,6 @@ function generate_cavity_convergence_data(;
     return dof, f_TM_010_rel_error, f_TE_111_rel_error
 end
 
-
-
 """
     generate_cavity_amr_data(
         radius::Real              = 2.74,
@@ -356,7 +354,7 @@ function generate_cavity_amr_data(;
     params["Model"]["Refinement"]["MaxSize"] = amr_max_size
     params["Model"]["Refinement"]["Nonconformal"] = amr_nonconformal
     params["Model"]["Refinement"]["UpdateFraction"] = amr_update_fraction
-    
+
     # Generate the data
     solve_cavity_resonator(
         params,
