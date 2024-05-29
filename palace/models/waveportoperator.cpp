@@ -283,24 +283,33 @@ ComplexHypreParMatrix GetSystemMatrixB(const mfem::HypreParMatrix *Bttr,
 }
 
 void Normalize(const GridFunction &S0t, GridFunction &E0t, GridFunction &E0n,
-               mfem::LinearForm &sr, mfem::LinearForm &si)
+               mfem::VectorCoefficient &port_nxH0r_func,
+               mfem::VectorCoefficient &port_nxH0i_func)
 {
   // Normalize grid functions to a chosen polarization direction and unit power, |E x H⋆| ⋅
   // n, integrated over the port surface (+n is the direction of propagation). The n x H
   // coefficients are updated implicitly as the only store references to the Et, En grid
   // functions. We choose a (rather arbitrary) phase constraint to at least make results for
   // the same port consistent between frequencies/meshes.
-
-  // |E x H⋆| ⋅ n = |E ⋅ (-n x H⋆)|. This also updates the n x H coefficients depending on
-  // Et, En. Update linear forms for postprocessing too.
+  const auto &mesh = *S0t.ParFESpace()->GetParMesh();
+  mfem::Array<int> attr_marker(mesh.attributes.Max());
+  attr_marker = 1;
+  mfem::VectorGridFunctionCoefficient S0t_func(&S0t.Real()), E0tr_func(&E0t.Real()),
+      E0ti_func(&E0t.Imag());
+  mfem::InnerProductCoefficient sr(S0t_func, port_nxH0r_func),
+      si(S0t_func, port_nxH0i_func), prr(E0tr_func, port_nxH0r_func),
+      pir(E0ti_func, port_nxH0r_func), pri(E0tr_func, port_nxH0i_func),
+      pii(E0ti_func, port_nxH0i_func);
+  mfem::SumCoefficient pr(prr, pii), pi(pir, pri, 1.0, -1.0);
   std::complex<double> dot[2] = {
-      {sr * S0t.Real(), si * S0t.Real()},
-      {-(sr * E0t.Real()) - (si * E0t.Imag()), -(sr * E0t.Imag()) + (si * E0t.Real())}};
-  Mpi::GlobalSum(2, dot, S0t.ParFESpace()->GetComm());
+      fem::IntegrateFunctionLocal(mesh, attr_marker, false, sr) +
+          1i * fem::IntegrateFunctionLocal(mesh, attr_marker, false, si),
+      -fem::IntegrateFunctionLocal(mesh, attr_marker, false, pr) -
+          1i * fem::IntegrateFunctionLocal(mesh, attr_marker, false, pi)};
+  Mpi::GlobalSum(2, dot, mesh.GetComm());
   auto scale = std::abs(dot[0]) / (dot[0] * std::sqrt(std::abs(dot[1])));
   ComplexVector::AXPBY(scale, E0t.Real(), E0t.Imag(), 0.0, E0t.Real(), E0t.Imag());
   ComplexVector::AXPBY(scale, E0n.Real(), E0n.Imag(), 0.0, E0n.Real(), E0n.Imag());
-  ComplexVector::AXPBY(scale, sr, si, 0.0, sr, si);
 
   // This parallel communication is not required since wave port boundaries are true one-
   // sided boundaries.
@@ -913,32 +922,15 @@ void WavePortData::Initialize(double omega)
     port_E0n->Imag().SetFromTrueDofs(e0ni);
   }
 
-  // Configure the linear forms for computing S-parameters (projection of the field onto the
-  // port mode). Normalize the mode for a chosen polarization direction and unit power,
-  // |E x H⋆| ⋅ n, integrated over the port surface (+n is the direction of propagation).
+  // Normalize the mode for a chosen polarization direction and unit power, |E x H⋆| ⋅ n,
+  // integrated over the port surface (+n is the direction of propagation).
   {
     const auto &port_submesh = static_cast<const mfem::ParSubMesh &>(port_mesh->Get());
     BdrSubmeshHVectorCoefficient<ValueType::REAL> port_nxH0r_func(
         *port_E0t, *port_E0n, mat_op, port_submesh, submesh_parent_elems, kn0, omega0);
     BdrSubmeshHVectorCoefficient<ValueType::IMAG> port_nxH0i_func(
         *port_E0t, *port_E0n, mat_op, port_submesh, submesh_parent_elems, kn0, omega0);
-    {
-      port_sr = std::make_unique<mfem::LinearForm>(&port_nd_fespace->Get());
-      port_sr->AddDomainIntegrator(new VectorFEDomainLFIntegrator(port_nxH0r_func));
-      port_sr->UseFastAssembly(false);
-      port_sr->UseDevice(false);
-      port_sr->Assemble();
-      port_sr->UseDevice(true);
-    }
-    {
-      port_si = std::make_unique<mfem::LinearForm>(&port_nd_fespace->Get());
-      port_si->AddDomainIntegrator(new VectorFEDomainLFIntegrator(port_nxH0i_func));
-      port_si->UseFastAssembly(false);
-      port_si->UseDevice(false);
-      port_si->Assemble();
-      port_si->UseDevice(true);
-    }
-    Normalize(*port_S0t, *port_E0t, *port_E0n, *port_sr, *port_si);
+    Normalize(*port_S0t, *port_E0t, *port_E0n, port_nxH0r_func, port_nxH0i_func);
   }
 }
 
@@ -989,40 +981,25 @@ double WavePortData::GetExcitationPower() const
 
 std::complex<double> WavePortData::GetPower(GridFunction &E, GridFunction &B) const
 {
-  // Compute port power, (E x H) ⋅ n = E ⋅ (-n x H), integrated over the port surface using
-  // the computed E and H = μ⁻¹ B fields, where +n is the direction of propagation (into the
-  // domain). The BdrSurfaceCurrentVectorCoefficient computes -n x H for an outward normal,
-  // so we multiply by -1. The linear form is reconstructed from scratch each time due to
-  // changing H.
+  // Compute port power, (E x H⋆) ⋅ n = E ⋅ (-n x H⋆), integrated over the port surface
+  // using the computed E and H = μ⁻¹ B fields, where +n is the direction of propagation
+  // (into the domain). The BdrSurfaceCurrentVectorCoefficient computes -n x H for an
+  // outward normal, so we multiply by -1. This happens on the parent mesh since we don't
+  // store a transfer operator for the B-field.
   MFEM_VERIFY(E.HasImag() && B.HasImag(),
               "Wave ports expect complex-valued E and B fields in port power "
               "calculation!");
-  auto &nd_fespace = *E.ParFESpace();
-  const auto &mesh = *nd_fespace.GetParMesh();
-  BdrSurfaceCurrentVectorCoefficient nxHr_func(B.Real(), mat_op);
-  BdrSurfaceCurrentVectorCoefficient nxHi_func(B.Imag(), mat_op);
+  const auto &mesh = *E.ParFESpace()->GetParMesh();
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, attr_list);
-  std::complex<double> dot;
-  {
-    mfem::LinearForm pr(&nd_fespace);
-    pr.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(nxHr_func), attr_marker);
-    pr.UseFastAssembly(false);
-    pr.UseDevice(false);
-    pr.Assemble();
-    pr.UseDevice(true);
-    dot = -(pr * E.Real()) - 1i * (pr * E.Imag());
-  }
-  {
-    mfem::LinearForm pi(&nd_fespace);
-    pi.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(nxHi_func), attr_marker);
-    pi.UseFastAssembly(false);
-    pi.UseDevice(false);
-    pi.Assemble();
-    pi.UseDevice(true);
-    dot += -(pi * E.Imag()) + 1i * (pi * E.Real());
-  }
-  Mpi::GlobalSum(1, &dot, nd_fespace.GetComm());
+  BdrSurfaceCurrentVectorCoefficient nxHr_func(B.Real(), mat_op),
+      nxHi_func(B.Imag(), mat_op);
+  BdrInnerProductCoefficient prr(E.Real(), nxHr_func), pir(E.Imag(), nxHr_func),
+      pri(E.Real(), nxHi_func), pii(E.Imag(), nxHi_func);
+  mfem::SumCoefficient pr(prr, pii), pi(pir, pri, 1.0, -1.0);
+  std::complex<double> dot = {-fem::IntegrateFunctionLocal(mesh, attr_marker, true, pr),
+                              -fem::IntegrateFunctionLocal(mesh, attr_marker, true, pi)};
+  Mpi::GlobalSum(1, &dot, mesh.GetComm());
   return dot;
 }
 
@@ -1035,9 +1012,22 @@ std::complex<double> WavePortData::GetSParameter(GridFunction &E) const
               "calculation!");
   port_nd_transfer->Transfer(E.Real(), port_E->Real());
   port_nd_transfer->Transfer(E.Imag(), port_E->Imag());
-  std::complex<double> dot(-((*port_sr) * port_E->Real()) - ((*port_si) * port_E->Imag()),
-                           -((*port_sr) * port_E->Imag()) + ((*port_si) * port_E->Real()));
-  Mpi::GlobalSum(1, &dot, port_nd_fespace->GetComm());
+  const auto &port_submesh = static_cast<const mfem::ParSubMesh &>(port_mesh->Get());
+  mfem::Array<int> attr_marker(port_submesh.attributes.Max());
+  attr_marker = 1;
+  BdrSubmeshHVectorCoefficient<ValueType::REAL> port_nxH0r_func(
+      *port_E0t, *port_E0n, mat_op, port_submesh, submesh_parent_elems, kn0, omega0);
+  BdrSubmeshHVectorCoefficient<ValueType::IMAG> port_nxH0i_func(
+      *port_E0t, *port_E0n, mat_op, port_submesh, submesh_parent_elems, kn0, omega0);
+  mfem::VectorGridFunctionCoefficient Er_func(&port_E->Real()), Ei_func(&port_E->Imag());
+  mfem::InnerProductCoefficient srr(Er_func, port_nxH0r_func),
+      sir(Ei_func, port_nxH0r_func), sri(Er_func, port_nxH0i_func),
+      sii(Ei_func, port_nxH0i_func);
+  mfem::SumCoefficient sr(srr, sii), si(sir, sri, 1.0, -1.0);
+  std::complex<double> dot = {
+      -fem::IntegrateFunctionLocal(port_submesh, attr_marker, false, sr),
+      -fem::IntegrateFunctionLocal(port_submesh, attr_marker, false, si)};
+  Mpi::GlobalSum(1, &dot, port_submesh.GetComm());
   return dot;
 }
 
