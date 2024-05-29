@@ -104,7 +104,7 @@ reference.
     
     Unlike lumped ports, wave port boundaries cannot be defined internal to the
     computational domain and instead must exist only on the outer boundary of the domain
-    (they are to be  "one-sided" in the sense that mesh elements only exist on one side of
+    (they are to be "one-sided" in the sense that mesh elements only exist on one side of
     the boundary).
     
     Wave ports are not currently compatible with nonconformal mesh refinement.

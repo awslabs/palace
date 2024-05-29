@@ -566,14 +566,6 @@ public:
   // Loss tangent.
   double tandelta = 0.0;
 
-  // Side of internal boundaries on which to evaluate discontinuous field quantities.
-  enum class Side
-  {
-    SMALLER_REF_INDEX,
-    LARGER_REF_INDEX
-  };
-  InterfaceDielectricData::Side side = InterfaceDielectricData::Side::SMALLER_REF_INDEX;
-
   // List of boundary attributes for this interface dielectric postprocessing index.
   std::vector<int> attributes = {};
 };
@@ -587,10 +579,6 @@ public:
 struct BoundaryPostData
 {
 public:
-  // Side of internal boundaries on which to evaluate discontinuous field quantities.
-  using Side = InterfaceDielectricData::Side;
-  Side side = Side::SMALLER_REF_INDEX;
-
   // List of all postprocessing boundary attributes.
   std::vector<int> attributes = {};
 
