@@ -190,11 +190,10 @@ SurfacePostOperator::InterfaceDielectricData::GetCoefficient(
 
 SurfacePostOperator::SurfacePostOperator(const IoData &iodata,
                                          const MaterialOperator &mat_op,
-                                         mfem::ParFiniteElementSpace &h1_fespace)
-  : mat_op(mat_op), h1_fespace(h1_fespace)
+                                         const mfem::ParMesh &mesh)
+  : mat_op(mat_op)
 {
   // Check that boundary attributes have been specified correctly.
-  const auto &mesh = *h1_fespace.GetParMesh();
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   mfem::Array<int> bdr_attr_marker;
   if (!iodata.boundaries.postpro.flux.empty() ||
@@ -219,7 +218,7 @@ SurfacePostOperator::SurfacePostOperator(const IoData &iodata,
                     data.type == config::SurfaceFluxData::Type::MAGNETIC,
                 "Electric field or power surface flux postprocessing are not available "
                 "for electrostatic problems!");
-    flux_surfs.try_emplace(idx, data, *h1_fespace.GetParMesh(), bdr_attr_marker);
+    flux_surfs.try_emplace(idx, data, mesh, bdr_attr_marker);
   }
 
   // Interface dielectric postprocessing.
@@ -229,7 +228,7 @@ SurfacePostOperator::SurfacePostOperator(const IoData &iodata,
               "magnetostatic problems!");
   for (const auto &[idx, data] : iodata.boundaries.postpro.dielectric)
   {
-    eps_surfs.try_emplace(idx, data, *h1_fespace.GetParMesh(), bdr_attr_marker);
+    eps_surfs.try_emplace(idx, data, mesh, bdr_attr_marker);
   }
 }
 
@@ -243,14 +242,17 @@ std::complex<double> SurfacePostOperator::GetSurfaceFlux(int idx, const GridFunc
   MFEM_VERIFY(it != flux_surfs.end(),
               "Unknown surface flux postprocessing index requested!");
   const bool has_imag = (E) ? E->HasImag() : B->HasImag();
+  const auto &mesh = (E) ? *E->ParFESpace()->GetParMesh() : *B->ParFESpace()->GetParMesh();
+  int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+  mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, it->second.attr_list);
   auto f =
       it->second.GetCoefficient(E ? &E->Real() : nullptr, B ? &B->Real() : nullptr, mat_op);
-  std::complex<double> dot(GetLocalSurfaceIntegral(*f, it->second.attr_list), 0.0);
+  std::complex<double> dot(fem::IntegrateFunctionLocal(mesh, attr_marker, true, *f), 0.0);
   if (has_imag)
   {
     f = it->second.GetCoefficient(E ? &E->Imag() : nullptr, B ? &B->Imag() : nullptr,
                                   mat_op);
-    double doti = GetLocalSurfaceIntegral(*f, it->second.attr_list);
+    double doti = fem::IntegrateFunctionLocal(mesh, attr_marker, true, *f);
     if (it->second.type == SurfaceFluxType::POWER)
     {
       dot += doti;
@@ -260,7 +262,7 @@ std::complex<double> SurfacePostOperator::GetSurfaceFlux(int idx, const GridFunc
       dot.imag(doti);
     }
   }
-  Mpi::GlobalSum(1, &dot, (E) ? E->GetComm() : B->GetComm());
+  Mpi::GlobalSum(1, &dot, mesh.GetComm());
   return dot;
 }
 
@@ -278,26 +280,13 @@ double SurfacePostOperator::GetInterfaceElectricFieldEnergy(int idx,
   auto it = eps_surfs.find(idx);
   MFEM_VERIFY(it != eps_surfs.end(),
               "Unknown interface dielectric postprocessing index requested!");
-  auto f = it->second.GetCoefficient(E, mat_op);
-  double dot = GetLocalSurfaceIntegral(*f, it->second.attr_list);
-  Mpi::GlobalSum(1, &dot, E.GetComm());
-  return dot;
-}
-
-double SurfacePostOperator::GetLocalSurfaceIntegral(mfem::Coefficient &f,
-                                                    const mfem::Array<int> &attr_list) const
-{
-  // Integrate the coefficient over the boundary attributes making up this surface index.
-  const auto &mesh = *h1_fespace.GetParMesh();
+  const auto &mesh = *E.ParFESpace()->GetParMesh();
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
-  mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, attr_list);
-  mfem::LinearForm s(&h1_fespace);
-  s.AddBoundaryIntegrator(new BoundaryLFIntegrator(f), attr_marker);
-  s.UseFastAssembly(false);
-  s.UseDevice(false);
-  s.Assemble();
-  s.UseDevice(true);
-  return linalg::LocalSum(s);
+  mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, it->second.attr_list);
+  auto f = it->second.GetCoefficient(E, mat_op);
+  double dot = fem::IntegrateFunctionLocal(mesh, attr_marker, true, *f);
+  Mpi::GlobalSum(1, &dot, mesh.GetComm());
+  return dot;
 }
 
 }  // namespace palace
