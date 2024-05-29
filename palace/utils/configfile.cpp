@@ -1231,17 +1231,12 @@ void SurfaceFluxPostData::SetUp(json &postpro)
   }
 }
 
-// Helper for converting string keys to enum for InterfaceDielectricData::Type and
-// InterfaceDielectricData::Side.
+// Helper for converting string keys to enum for InterfaceDielectricData::Type.
 PALACE_JSON_SERIALIZE_ENUM(InterfaceDielectricData::Type,
                            {{InterfaceDielectricData::Type::DEFAULT, "Default"},
                             {InterfaceDielectricData::Type::MA, "MA"},
                             {InterfaceDielectricData::Type::MS, "MS"},
                             {InterfaceDielectricData::Type::SA, "SA"}})
-PALACE_JSON_SERIALIZE_ENUM(
-    InterfaceDielectricData::Side,
-    {{InterfaceDielectricData::Side::SMALLER_REF_INDEX, "SmallerRefractiveIndex"},
-     {InterfaceDielectricData::Side::LARGER_REF_INDEX, "LargerRefractiveIndex"}})
 
 void InterfaceDielectricPostData::SetUp(json &postpro)
 {
@@ -1270,7 +1265,6 @@ void InterfaceDielectricPostData::SetUp(json &postpro)
     data.t = it->at("Thickness");             // Required
     data.epsilon_r = it->at("Permittivity");  // Required
     data.tandelta = it->value("LossTan", data.tandelta);
-    data.side = it->value("Side", data.side);
 
     // Cleanup
     it->erase("Index");
@@ -1279,7 +1273,6 @@ void InterfaceDielectricPostData::SetUp(json &postpro)
     it->erase("Thickness");
     it->erase("Permittivity");
     it->erase("LossTan");
-    it->erase("Side");
     MFEM_VERIFY(it->empty(),
                 "Found an unsupported configuration file keyword under \"Dielectric\"!\n"
                     << it->dump(2));
@@ -1293,11 +1286,9 @@ void InterfaceDielectricPostData::SetUp(json &postpro)
       std::cout << "Thickness: " << data.t << '\n';
       std::cout << "Permittivity: " << data.epsilon_r << '\n';
       std::cout << "LossTan: " << data.tandelta << '\n';
-      std::cout << "Side: " << data.side << '\n';
     }
   }
 }
-
 void BoundaryPostData::SetUp(json &boundaries)
 {
   auto postpro = boundaries.find("Postprocessing");
@@ -1305,8 +1296,6 @@ void BoundaryPostData::SetUp(json &boundaries)
   {
     return;
   }
-  side = postpro->value("Side", side);
-
   flux.SetUp(*postpro);
   dielectric.SetUp(*postpro);
 
@@ -1324,19 +1313,11 @@ void BoundaryPostData::SetUp(json &boundaries)
   attributes.shrink_to_fit();
 
   // Cleanup
-  postpro->erase("Side");
-
   postpro->erase("SurfaceFlux");
   postpro->erase("Dielectric");
   MFEM_VERIFY(postpro->empty(),
               "Found an unsupported configuration file keyword under \"Postprocessing\"!\n"
                   << postpro->dump(2));
-
-  // Debug
-  if constexpr (JSON_DEBUG)
-  {
-    std::cout << "Side: " << side << '\n';
-  }
 }
 
 void BoundaryData::SetUp(json &config)
