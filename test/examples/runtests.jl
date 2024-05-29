@@ -21,18 +21,18 @@ if "TEST_CASES" in keys(ENV)
     cases = String.(split(ENV["TEST_CASES"], ' '))
 else
     cases = [
-        # "spheres",
-        # "rings",
-        # "cavity/pec",
-        # "cavity/impedance",
-        # "coaxial/open",
-        # "coaxial/matched",
-        # "cpw/lumped_uniform",
-        # "cpw/wave_uniform",
-        # "cpw/lumped_adaptive",
-        # "cpw/wave_adaptive",
+        "spheres",
+        "rings",
+        "cavity/pec",
+        "cavity/impedance",
+        "coaxial/open",
+        "coaxial/matched",
+        "cpw/lumped_uniform",
+        "cpw/wave_uniform",
+        "cpw/lumped_adaptive",
+        "cpw/wave_adaptive",
         "cavity/amr_conformal"
-        # "cavity/amr_nonconformal"
+        "cavity/amr_nonconformal"
     ]
 end
 
