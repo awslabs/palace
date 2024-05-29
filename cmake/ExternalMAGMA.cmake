@@ -71,6 +71,9 @@ if(PALACE_WITH_HIP)
   endif()
 endif()
 set(MAKE_GENERATE_INC "${MAKE_GENERATE_INC}FORT = true\\n")
+file(WRITE ${CMAKE_BINARY_DIR}/extern/magma-cmake/make.inc.cmake
+  "file(WRITE make.inc \"${MAKE_GENERATE_INC}\")\n"
+)
 
 string(REPLACE ";" "; " MAGMA_OPTIONS_PRINT "${MAGMA_OPTIONS}")
 message(STATUS "MAGMA_OPTIONS: ${MAGMA_OPTIONS_PRINT}")
@@ -86,7 +89,7 @@ ExternalProject_Add(magma
   PREFIX            ${CMAKE_BINARY_DIR}/extern/magma-cmake
   UPDATE_COMMAND    ""
   PATCH_COMMAND
-    echo -e "${MAKE_GENERATE_INC}" > make.inc &&
+    ${CMAKE_COMMAND} -P ../magma-cmake/make.inc.cmake &&
     ${CMAKE_MAKE_PROGRAM} generate
   CONFIGURE_COMMAND ${CMAKE_COMMAND} <SOURCE_DIR> "${MAGMA_OPTIONS}"
   TEST_COMMAND      ""
