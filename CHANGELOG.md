@@ -15,6 +15,7 @@ The format of this changelog is based on
 
   - Fixed a small regression bug for boundary postprocessing when specifying
     `"Side": "LargerRefractiveIndex"`, introduced as part of v0.13.0.
+  - Added usage of adaptive mesh refinement (AMR) in documentation and tests.
 
 ## [0.13.0] - 2024-05-20
 
