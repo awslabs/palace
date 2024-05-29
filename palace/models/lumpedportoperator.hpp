@@ -44,12 +44,6 @@ public:
   double R, L, C;
   bool excitation, active;
 
-private:
-  // Linear forms for postprocessing integrated quantities on the port.
-  mutable std::unique_ptr<mfem::LinearForm> s, v;
-
-  void InitializeLinearForms(mfem::ParFiniteElementSpace &nd_fespace) const;
-
 public:
   LumpedPortData(const config::LumpedPortData &data, const MaterialOperator &mat_op,
                  const mfem::ParMesh &mesh);

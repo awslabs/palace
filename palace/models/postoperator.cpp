@@ -39,7 +39,7 @@ auto CreateParaviewPath(const IoData &iodata, const std::string &name)
 PostOperator::PostOperator(const IoData &iodata, SpaceOperator &space_op,
                            const std::string &name)
   : mat_op(space_op.GetMaterialOp()),
-    surf_post_op(iodata, space_op.GetMaterialOp(), space_op.GetH1Space()),
+    surf_post_op(iodata, space_op.GetMaterialOp(), space_op.GetMesh()),
     dom_post_op(iodata, space_op.GetMaterialOp(), space_op.GetNDSpace(),
                 space_op.GetRTSpace()),
     E(std::make_unique<GridFunction>(space_op.GetNDSpace(),
@@ -91,15 +91,15 @@ PostOperator::PostOperator(const IoData &iodata, SpaceOperator &space_op,
 PostOperator::PostOperator(const IoData &iodata, LaplaceOperator &laplace_op,
                            const std::string &name)
   : mat_op(laplace_op.GetMaterialOp()),
-    surf_post_op(iodata, laplace_op.GetMaterialOp(), laplace_op.GetH1Space()),
+    surf_post_op(iodata, laplace_op.GetMaterialOp(), laplace_op.GetMesh()),
     dom_post_op(iodata, laplace_op.GetMaterialOp(), laplace_op.GetH1Space()),
     E(std::make_unique<GridFunction>(laplace_op.GetNDSpace())),
     V(std::make_unique<GridFunction>(laplace_op.GetH1Space())), lumped_port_init(false),
     wave_port_init(false),
-    paraview(CreateParaviewPath(iodata, name), &laplace_op.GetNDSpace().GetParMesh()),
+    paraview(CreateParaviewPath(iodata, name), &laplace_op.GetH1Space().GetParMesh()),
     paraview_bdr(CreateParaviewPath(iodata, name) + "_boundary",
-                 &laplace_op.GetNDSpace().GetParMesh()),
-    interp_op(iodata, laplace_op.GetNDSpace().GetParMesh())
+                 &laplace_op.GetH1Space().GetParMesh()),
+    interp_op(iodata, laplace_op.GetH1Space().GetParMesh())
 {
   // Note: When using this constructor, you should not use any of the magnetic field related
   // postprocessing functions (magnetic field energy, inductor energy, surface currents,
@@ -121,7 +121,7 @@ PostOperator::PostOperator(const IoData &iodata, LaplaceOperator &laplace_op,
 PostOperator::PostOperator(const IoData &iodata, CurlCurlOperator &curlcurl_op,
                            const std::string &name)
   : mat_op(curlcurl_op.GetMaterialOp()),
-    surf_post_op(iodata, curlcurl_op.GetMaterialOp(), curlcurl_op.GetH1Space()),
+    surf_post_op(iodata, curlcurl_op.GetMaterialOp(), curlcurl_op.GetMesh()),
     dom_post_op(iodata, curlcurl_op.GetMaterialOp(), curlcurl_op.GetNDSpace()),
     B(std::make_unique<GridFunction>(curlcurl_op.GetRTSpace())),
     A(std::make_unique<GridFunction>(curlcurl_op.GetNDSpace())), lumped_port_init(false),
@@ -223,7 +223,7 @@ void PostOperator::InitializeDataCollection(const IoData &iodata)
   }
 
   // Extract energy density field for electric field energy 1/2 Dᴴ E or magnetic field
-  // energy 1/2 Hᴴ B. Also Poynting vector S = E x H⋆.
+  // energy 1/2 Hᴴ B. Also Poynting vector S = Re{E x H⋆}.
   if (U_e)
   {
     paraview.RegisterCoeffField("U_e", U_e.get());

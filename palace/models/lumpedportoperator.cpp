@@ -159,80 +159,16 @@ double LumpedPortData::GetExcitationVoltage() const
   }
 }
 
-void LumpedPortData::InitializeLinearForms(mfem::ParFiniteElementSpace &nd_fespace) const
-{
-  const auto &mesh = *nd_fespace.GetParMesh();
-  mfem::Array<int> attr_marker;
-  if (!s || !v)
-  {
-    mfem::Array<int> attr_list;
-    for (const auto &elem : elems)
-    {
-      attr_list.Append(elem->GetAttrList());
-    }
-    int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
-    mesh::AttrToMarker(bdr_attr_max, attr_list, attr_marker);
-  }
-
-  // The port S-parameter, or the projection of the field onto the port mode, is computed
-  // as: (E x H_inc) ⋅ n = E ⋅ (E_inc / Z_s), integrated over the port surface.
-  if (!s)
-  {
-    SumVectorCoefficient fb(mesh.SpaceDimension());
-    for (const auto &elem : elems)
-    {
-      const double Rs = R * GetToSquare(*elem);
-      const double Hinc = (std::abs(Rs) > 0.0)
-                              ? 1.0 / std::sqrt(Rs * elem->GetGeometryWidth() *
-                                                elem->GetGeometryLength() * elems.size())
-                              : 0.0;
-      fb.AddCoefficient(elem->GetModeCoefficient(Hinc));
-    }
-    s = std::make_unique<mfem::LinearForm>(&nd_fespace);
-    s->AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fb), attr_marker);
-    s->UseFastAssembly(false);
-    s->UseDevice(false);
-    s->Assemble();
-    s->UseDevice(true);
-  }
-
-  // The voltage across a port is computed using the electric field solution.
-  // We have:
-  //             V = ∫ E ⋅ l̂ dl = 1/w ∫ E ⋅ l̂ dS  (for rectangular ports)
-  // or,
-  //             V = 1/(2π) ∫ E ⋅ r̂ / r dS        (for coaxial ports).
-  // We compute the surface integral via an inner product between the linear form with the
-  // averaging function as a vector coefficient and the solution expansion coefficients.
-  if (!v)
-  {
-    SumVectorCoefficient fb(mesh.SpaceDimension());
-    for (const auto &elem : elems)
-    {
-      fb.AddCoefficient(
-          elem->GetModeCoefficient(1.0 / (elem->GetGeometryWidth() * elems.size())));
-    }
-    v = std::make_unique<mfem::LinearForm>(&nd_fespace);
-    v->AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fb), attr_marker);
-    v->UseFastAssembly(false);
-    v->UseDevice(false);
-    v->Assemble();
-    v->UseDevice(true);
-  }
-}
-
 std::complex<double> LumpedPortData::GetPower(GridFunction &E, GridFunction &B) const
 {
-  // Compute port power, (E x H) ⋅ n = E ⋅ (-n x H), integrated over the port surface using
-  // the computed E and H = μ⁻¹ B fields, where +n is the direction of propagation (into the
-  // domain). The BdrSurfaceCurrentVectorCoefficient computes -n x H for an outward normal,
-  // so we multiply by -1. The linear form is reconstructed from scratch each time due to
-  // changing H.
+  // Compute port power, (E x H⋆) ⋅ n = E ⋅ (-n x H⋆), integrated over the port surface
+  // using the computed E and H = μ⁻¹ B fields, where +n is the direction of propagation
+  // (into the domain). The BdrSurfaceCurrentVectorCoefficient computes -n x H for an
+  // outward normal, so we multiply by -1.
   MFEM_VERIFY((E.HasImag() && B.HasImag()) || (!E.HasImag() && !B.HasImag()),
               "Mismatch between real- and complex-valued E and B fields in port power "
               "calculation!");
-  const bool has_imag = E.HasImag();
-  auto &nd_fespace = *E.ParFESpace();
-  const auto &mesh = *nd_fespace.GetParMesh();
+  const auto &mesh = *E.ParFESpace()->GetParMesh();
   SumVectorCoefficient fbr(mesh.SpaceDimension()), fbi(mesh.SpaceDimension());
   mfem::Array<int> attr_list;
   for (const auto &elem : elems)
@@ -240,7 +176,7 @@ std::complex<double> LumpedPortData::GetPower(GridFunction &E, GridFunction &B) 
     fbr.AddCoefficient(
         std::make_unique<RestrictedVectorCoefficient<BdrSurfaceCurrentVectorCoefficient>>(
             elem->GetAttrList(), B.Real(), mat_op));
-    if (has_imag)
+    if (E.HasImag())
     {
       fbi.AddCoefficient(
           std::make_unique<RestrictedVectorCoefficient<BdrSurfaceCurrentVectorCoefficient>>(
@@ -250,44 +186,50 @@ std::complex<double> LumpedPortData::GetPower(GridFunction &E, GridFunction &B) 
   }
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, attr_list);
-  std::complex<double> dot;
+  if (E.HasImag())
   {
-    mfem::LinearForm pr(&nd_fespace);
-    pr.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fbr), attr_marker);
-    pr.UseFastAssembly(false);
-    pr.UseDevice(false);
-    pr.Assemble();
-    pr.UseDevice(true);
-    dot = -(pr * E.Real()) + (has_imag ? -1i * (pr * E.Imag()) : 0.0);
-  }
-  if (has_imag)
-  {
-    mfem::LinearForm pi(&nd_fespace);
-    pi.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fbi), attr_marker);
-    pi.UseFastAssembly(false);
-    pi.UseDevice(false);
-    pi.Assemble();
-    pi.UseDevice(true);
-    dot += -(pi * E.Imag()) + 1i * (pi * E.Real());
-    Mpi::GlobalSum(1, &dot, E.ParFESpace()->GetComm());
+    BdrInnerProductCoefficient prr(E.Real(), fbr), pir(E.Imag(), fbr), pri(E.Real(), fbi),
+        pii(E.Imag(), fbi);
+    mfem::SumCoefficient pr(prr, pii), pi(pir, pri, 1.0, -1.0);
+    std::complex<double> dot = {-fem::IntegrateFunctionLocal(mesh, attr_marker, true, pr),
+                                -fem::IntegrateFunctionLocal(mesh, attr_marker, true, pi)};
+    Mpi::GlobalSum(1, &dot, mesh.GetComm());
     return dot;
   }
   else
   {
-    double rdot = dot.real();
-    Mpi::GlobalSum(1, &rdot, E.ParFESpace()->GetComm());
-    return rdot;
+    BdrInnerProductCoefficient pr(E.Real(), fbr);
+    double dot = -fem::IntegrateFunctionLocal(mesh, attr_marker, true, pr);
+    Mpi::GlobalSum(1, &dot, mesh.GetComm());
+    return dot;
   }
 }
 
 std::complex<double> LumpedPortData::GetSParameter(GridFunction &E) const
 {
-  // Compute port S-parameter, or the projection of the field onto the port mode.
-  InitializeLinearForms(*E.ParFESpace());
-  std::complex<double> dot((*s) * E.Real(), 0.0);
+  // The port S-parameter, or the projection of the field onto the port mode, is computed
+  // as: (E x H_inc⋆) ⋅ n = E ⋅ (E_inc / Z_s), integrated over the port surface.
+  const auto &mesh = *E.ParFESpace()->GetParMesh();
+  SumVectorCoefficient fb(mesh.SpaceDimension());
+  mfem::Array<int> attr_list;
+  for (const auto &elem : elems)
+  {
+    const double Rs = R * GetToSquare(*elem);
+    const double Hinc = (std::abs(Rs) > 0.0)
+                            ? 1.0 / std::sqrt(Rs * elem->GetGeometryWidth() *
+                                              elem->GetGeometryLength() * elems.size())
+                            : 0.0;
+    fb.AddCoefficient(elem->GetModeCoefficient(Hinc));
+    attr_list.Append(elem->GetAttrList());
+  }
+  int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+  mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, attr_list);
+  BdrInnerProductCoefficient sr(E.Real(), fb);
+  std::complex<double> dot(fem::IntegrateFunctionLocal(mesh, attr_marker, true, sr), 0.0);
   if (E.HasImag())
   {
-    dot.imag((*s) * E.Imag());
+    BdrInnerProductCoefficient si(E.Imag(), fb);
+    dot.imag(fem::IntegrateFunctionLocal(mesh, attr_marker, true, si));
   }
   Mpi::GlobalSum(1, &dot, E.GetComm());
   return dot;
@@ -295,12 +237,30 @@ std::complex<double> LumpedPortData::GetSParameter(GridFunction &E) const
 
 std::complex<double> LumpedPortData::GetVoltage(GridFunction &E) const
 {
-  // Compute the average voltage across the port.
-  InitializeLinearForms(*E.ParFESpace());
-  std::complex<double> dot((*v) * E.Real(), 0.0);
+  // The voltage across a port is computed using the electric field solution.
+  // We have:
+  //             V = ∫ E ⋅ l̂ dl = 1/w ∫ E ⋅ l̂ dS  (for rectangular ports)
+  // or,
+  //             V = 1/(2π) ∫ E ⋅ r̂ / r dS        (for coaxial ports).
+  // We compute the surface integral via an inner product between the linear form with the
+  // averaging function as a vector coefficient and the solution expansion coefficients.
+  const auto &mesh = *E.ParFESpace()->GetParMesh();
+  SumVectorCoefficient fb(mesh.SpaceDimension());
+  mfem::Array<int> attr_list;
+  for (const auto &elem : elems)
+  {
+    fb.AddCoefficient(
+        elem->GetModeCoefficient(1.0 / (elem->GetGeometryWidth() * elems.size())));
+    attr_list.Append(elem->GetAttrList());
+  }
+  int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+  mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, attr_list);
+  BdrInnerProductCoefficient vr(E.Real(), fb);
+  std::complex<double> dot(fem::IntegrateFunctionLocal(mesh, attr_marker, true, vr), 0.0);
   if (E.HasImag())
   {
-    dot.imag((*v) * E.Imag());
+    BdrInnerProductCoefficient vi(E.Imag(), fb);
+    dot.imag(fem::IntegrateFunctionLocal(mesh, attr_marker, true, vi));
   }
   Mpi::GlobalSum(1, &dot, E.GetComm());
   return dot;
