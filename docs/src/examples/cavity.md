@@ -215,6 +215,17 @@ maximum convergence rate is ``2p`` [[2]](#References). The figures demonstrate t
 increasing the polynomial order of the solution will give reduced error, however the effect
 may only become significant on sufficiently refined meshes.
 
+## Adaptive mesh refinement (AMR)
+
+Palace also supports adaptive mesh refinement (AMR). The [`amr.jl`](https://github.com/awslabs/palace/blob/main/examples/cavity/amr.jl) file runs the above simulation, toggling on adaptive mesh refinement. Two cases are considered: conformal refinement, and nonconformal refinement. Each AMR iteration is saved in its own output directory, and the remeshing continues until a termination condition is satisfied (error tolerance, maximum number of iterations, or maximum number of DOFs). The first plot below shows the "AMR error norm" decreasing as a function of the AMR remeshing iterations for this problem until the specified tolerance (1E-2) is achieved. The second plot show the associated increase in result convergence (y-axis, defined as in the last section) with iterations (integer annotations), due to the increase in degrees of freedom (x-axis). 
+
+```@raw html
+<br/><p align="center">
+  <img src="../../assets/examples/cavity-4a.png" width="70%" />
+  <img src="../../assets/examples/cavity-4b.png" width="70%" />
+</p><br/>
+```
+
 ## References
 
 [1] D. M. Pozar, _Microwave Engineering_, Wiley, Hoboken, NJ, 2012.\
