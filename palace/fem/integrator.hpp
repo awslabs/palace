@@ -4,6 +4,7 @@
 #ifndef PALACE_FEM_INTEGRATOR_HPP
 #define PALACE_FEM_INTEGRATOR_HPP
 
+#include <functional>
 #include <mfem.hpp>
 #include "fem/libceed/ceed.hpp"
 
@@ -32,6 +33,19 @@ struct DefaultIntegrationOrder
   static int Get(const mfem::ElementTransformation &T);
   static int Get(const mfem::Mesh &mesh, mfem::Geometry::Type geom);
 };
+
+double IntegrateFunction(
+    const mfem::ParMesh &mesh, const mfem::Array<int> &marker, bool bdr,
+    mfem::Coefficient &Q,
+    std::function<int(const mfem::ElementTransformation &)> GetQuadratureOrder =
+        [](const mfem::ElementTransformation &T)
+    { return DefaultIntegrationOrder::Get(T); });
+double IntegrateFunctionLocal(
+    const mfem::ParMesh &mesh, const mfem::Array<int> &marker, bool bdr,
+    mfem::Coefficient &Q,
+    std::function<int(const mfem::ElementTransformation &)> GetQuadratureOrder =
+        [](const mfem::ElementTransformation &T)
+    { return DefaultIntegrationOrder::Get(T); });
 
 }  // namespace fem
 
@@ -302,7 +316,7 @@ private:
   mfem::Vector f_loc, f_hat;
 
 public:
-  VectorFEBoundaryLFIntegrator(mfem::VectorCoefficient &QG) : Q(QG) {}
+  VectorFEBoundaryLFIntegrator(mfem::VectorCoefficient &Q) : Q(Q) {}
 
   void AssembleRHSElementVect(const mfem::FiniteElement &fe, mfem::ElementTransformation &T,
                               mfem::Vector &elvect) override;
@@ -317,7 +331,7 @@ private:
   mfem::Vector shape;
 
 public:
-  BoundaryLFIntegrator(mfem::Coefficient &QG) : Q(QG) {}
+  BoundaryLFIntegrator(mfem::Coefficient &Q) : Q(Q) {}
 
   void AssembleRHSElementVect(const mfem::FiniteElement &fe, mfem::ElementTransformation &T,
                               mfem::Vector &elvect) override;

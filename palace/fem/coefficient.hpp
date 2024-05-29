@@ -731,6 +731,41 @@ public:
   }
 };
 
+// Returns the inner product of a vector grid function and a vector coefficient. Intended
+// to be evaluated on boundary elements, where MFEM's GridFunctionCoefficient would not work
+// even if the fields have the right partial continuity.
+class BdrInnerProductCoefficient : public mfem::Coefficient,
+                                   public BdrGridFunctionCoefficient
+{
+private:
+  const mfem::ParGridFunction &U;
+  mfem::VectorCoefficient &coeff;
+
+public:
+  BdrInnerProductCoefficient(const mfem::ParGridFunction &U, mfem::VectorCoefficient &coeff)
+    : mfem::Coefficient(), BdrGridFunctionCoefficient(*U.ParFESpace()->GetParMesh()), U(U),
+      coeff(coeff)
+  {
+    MFEM_VERIFY(U.VectorDim() == coeff.GetVDim(),
+                "Vector dimension mismatch for BdrInnerProductCoefficient!");
+  }
+
+  double Eval(mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip) override
+  {
+    // Get neighboring elements.
+    MFEM_ASSERT(T.ElementType == mfem::ElementTransformation::BDR_ELEMENT,
+                "Unexpected element type in BdrInnerProductCoefficient!");
+    GetBdrElementNeighborTransformations(T.ElementNo, ip);
+
+    // Always evaluate in element 1, assuming the inner product is continuous.
+    double V_data[3], Q_data[3];
+    mfem::Vector V(V_data, T.GetSpaceDim()), Q(Q_data, T.GetSpaceDim());
+    U.GetVectorValue(*FET.Elem1, FET.Elem1->GetIntPoint(), V);
+    coeff.Eval(Q, T, ip);
+    return V * Q;
+  }
+};
+
 //
 // More helpful coefficient types. Wrapper coefficients allow additions of scalar and vector
 // or matrix coefficients. Restricted coefficients only compute the coefficient if for the

@@ -4,6 +4,8 @@
 #include "integrator.hpp"
 
 #include "fem/libceed/integrator.hpp"
+#include "utils/communication.hpp"
+#include "utils/omp.hpp"
 
 namespace palace
 {
@@ -20,11 +22,15 @@ int DefaultIntegrationOrder::Get(const mfem::IsoparametricTransformation &T)
 
 int DefaultIntegrationOrder::Get(const mfem::ElementTransformation &T)
 {
+#if defined(MFEM_DEBUG)
   const auto *T_iso = dynamic_cast<const mfem::IsoparametricTransformation *>(&T);
   MFEM_VERIFY(
       T_iso,
       "Unexpected non-isoparametric element transformation to calculate quadrature order!");
   return Get(*T_iso);
+#else
+  return Get(static_cast<const mfem::IsoparametricTransformation &>(T));
+#endif
 }
 
 int DefaultIntegrationOrder::Get(const mfem::Mesh &mesh, mfem::Geometry::Type geom)
@@ -33,6 +39,68 @@ int DefaultIntegrationOrder::Get(const mfem::Mesh &mesh, mfem::Geometry::Type ge
   mfem::IsoparametricTransformation T;
   T.SetFE(mesh.GetNodalFESpace()->FEColl()->FiniteElementForGeometry(geom));
   return Get(T);
+}
+
+double IntegrateFunction(
+    const mfem::ParMesh &mesh, const mfem::Array<int> &marker, bool bdr,
+    mfem::Coefficient &Q,
+    std::function<int(const mfem::ElementTransformation &)> GetQuadratureOrder)
+{
+  double sum = IntegrateFunctionLocal(mesh, marker, bdr, Q, GetQuadratureOrder);
+  Mpi::GlobalSum(1, &sum, mesh.GetComm());
+  return sum;
+}
+
+double IntegrateFunctionLocal(
+    const mfem::ParMesh &mesh, const mfem::Array<int> &marker, bool bdr,
+    mfem::Coefficient &Q,
+    std::function<int(const mfem::ElementTransformation &)> GetQuadratureOrder)
+{
+  auto ElementIntegral = [&Q, &GetQuadratureOrder](mfem::ElementTransformation &T)
+  {
+    double sum = 0.0;
+    const mfem::IntegrationRule &ir =
+        mfem::IntRules.Get(T.GetGeometryType(), GetQuadratureOrder(T));
+    for (int j = 0; j < ir.GetNPoints(); j++)
+    {
+      const mfem::IntegrationPoint &ip = ir.IntPoint(j);
+      T.SetIntPoint(&ip);
+      sum += Q.Eval(T, ip) * ip.weight * T.Weight();
+    }
+    return sum;
+  };
+  double sum = 0.0;
+  PalacePragmaOmp(parallel reduction(+ : sum))
+  {
+    mfem::IsoparametricTransformation T;
+    if (bdr)
+    {
+      PalacePragmaOmp(for schedule(static))
+      for (int i = 0; i < mesh.GetNBE(); i++)
+      {
+        if (!marker[mesh.GetBdrAttribute(i) - 1])
+        {
+          continue;
+        }
+        mesh.GetBdrElementTransformation(i, &T);
+        sum += ElementIntegral(T);
+      }
+    }
+    else
+    {
+      PalacePragmaOmp(for schedule(static))
+      for (int i = 0; i < mesh.GetNE(); i++)
+      {
+        if (!marker[mesh.GetAttribute(i) - 1])
+        {
+          continue;
+        }
+        mesh.GetElementTransformation(i, &T);
+        sum += ElementIntegral(T);
+      }
+    }
+  }
+  return sum;
 }
 
 }  // namespace fem
