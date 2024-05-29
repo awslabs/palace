@@ -44,7 +44,7 @@ public:
 
   // Bindings to SpaceOperator functions to get the system matrix and preconditioner, and
   // construct the linear solver.
-  std::function<void(double dt)> ConfigureLinearSolver;
+  std::function<void(double)> ConfigureLinearSolver;
 
 public:
   TimeDependentFirstOrderOperator(const IoData &iodata, SpaceOperator &space_op,
