@@ -10,6 +10,7 @@
     "L0": { "type": "number", "exclusiveMinimum": 0.0 },
     "Lc": { "type": "number", "exclusiveMinimum": 0.0 },
     "RemoveCurvature": { "type": "boolean" },
+    "MakeSimplex": { "type": "boolean" },
     "ReorderElements": { "type": "boolean" },
     "CleanUnusedElements": { "type": "boolean" },
     "AddInterfaceBoundaryElements": { "type": "boolean" },

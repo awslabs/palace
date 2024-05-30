@@ -463,6 +463,7 @@ void ModelData::SetUp(json &config)
   L0 = model->value("L0", L0);
   Lc = model->value("Lc", Lc);
   remove_curvature = model->value("RemoveCurvature", remove_curvature);
+  make_simplex = model->value("MakeSimplex", make_simplex);
   reorder_elements = model->value("ReorderElements", reorder_elements);
   clean_unused_elements = model->value("CleanUnusedElements", clean_unused_elements);
   add_bdr_elements = model->value("AddInterfaceBoundaryElements", add_bdr_elements);
@@ -475,6 +476,7 @@ void ModelData::SetUp(json &config)
   model->erase("L0");
   model->erase("Lc");
   model->erase("RemoveCurvature");
+  model->erase("MakeSimplex");
   model->erase("ReorderElements");
   model->erase("CleanUnusedElements");
   model->erase("AddInterfaceBoundaryElements");
@@ -492,6 +494,7 @@ void ModelData::SetUp(json &config)
     std::cout << "L0: " << L0 << '\n';
     std::cout << "Lc: " << Lc << '\n';
     std::cout << "RemoveCurvature: " << remove_curvature << '\n';
+    std::cout << "MakeSimplex: " << make_simplex << '\n';
     std::cout << "ReorderElements: " << reorder_elements << '\n';
     std::cout << "CleanUnusedElements: " << clean_unused_elements << '\n';
     std::cout << "AddInterfaceBoundaryElements: " << add_bdr_elements << '\n';

@@ -202,6 +202,9 @@ public:
   // Remove high-order curvature information from the mesh.
   bool remove_curvature = false;
 
+  // Convert mesh to simplex elements.
+  bool make_simplex = false;
+
   // Reorder elements based on spatial location after loading the serial mesh, which can
   // potentially increase memory coherency.
   bool reorder_elements = false;

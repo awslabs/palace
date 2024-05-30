@@ -114,6 +114,7 @@ mesh length units.
 ### Advanced model options
 
   - `"RemoveCurvature" [false]`
+  - `"MakeSimplex" [false]`
   - `"ReorderElements" [false]`
   - `"CleanUnusedElements" [true]`
   - `"AddInterfaceBoundaryElements" [true]`

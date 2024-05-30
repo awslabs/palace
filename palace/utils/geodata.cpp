@@ -14,6 +14,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <Eigen/Dense>
+#include "fem/interpolator.hpp"
 #include "utils/communication.hpp"
 #include "utils/diagnostic.hpp"
 #include "utils/filesystem.hpp"
@@ -43,14 +44,19 @@ std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &, bool);
 // cache usage.
 void ReorderMesh(mfem::Mesh &, bool = true);
 
-// Generate element-based mesh partitioning, using either a provided file or METIS.
-std::unique_ptr<int[]> GetMeshPartitioning(const mfem::Mesh &, int,
-                                           const std::string & = "", bool = true);
+// Create a new mesh by splitting all elements of the mesh into simplices. Optionally
+// preserves curvature of the original mesh by interpolating the high-order nodes with
+// GSLIB.
+void MakeSimplicial(mfem::Mesh &, bool = true);
 
 // Clean the provided serial mesh by removing unnecessary domain and elements, and adding
 // boundary elements for material interfaces and exterior boundaries.
 std::map<int, std::array<int, 2>> CheckMesh(std::unique_ptr<mfem::Mesh> &, const IoData &,
                                             bool, bool);
+
+// Generate element-based mesh partitioning, using either a provided file or METIS.
+std::unique_ptr<int[]> GetMeshPartitioning(const mfem::Mesh &, int,
+                                           const std::string & = "", bool = true);
 
 // Given a serial mesh on the root processor and element partitioning, create a parallel
 // mesh over the given communicator. The serial mesh is destroyed when no longer needed.
@@ -93,12 +99,22 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(MPI_Comm comm, const IoData &iodata)
   {
     // Check the the AMR specification and the mesh elements are compatible.
     const auto element_types = CheckElements(*smesh);
-    MFEM_VERIFY(!use_amr || !element_types.has_hexahedra || refinement.nonconformal,
+    MFEM_VERIFY(!use_amr || iodata.model.make_simplex || !element_types.has_hexahedra ||
+                    refinement.nonconformal,
                 "If there are tensor elements, AMR must be nonconformal!");
-    MFEM_VERIFY(!use_amr || !element_types.has_pyramids || refinement.nonconformal,
+    MFEM_VERIFY(!use_amr || iodata.model.make_simplex || !element_types.has_pyramids ||
+                    refinement.nonconformal,
                 "If there are pyramid elements, AMR must be nonconformal!");
-    MFEM_VERIFY(!use_amr || !element_types.has_prisms || refinement.nonconformal,
+    MFEM_VERIFY(!use_amr || iodata.model.make_simplex || !element_types.has_prisms ||
+                    refinement.nonconformal,
                 "If there are wedge elements, AMR must be nonconformal!");
+
+    // Optionally convert mesh elements to simplices, for example in order to enable
+    // conformal mesh refinement.
+    if (iodata.model.make_simplex)
+    {
+      MakeSimplicial(*smesh);
+    }
 
     // Optionally reorder elements (and vertices) based on spatial location after loading
     // the serial mesh.
@@ -1563,7 +1579,6 @@ double RebalanceMesh(std::unique_ptr<mfem::ParMesh> &mesh, const IoData &iodata)
   }
   if (ratio > tol)
   {
-    mesh->ExchangeFaceNbrData();
     if (mesh->Nonconforming())
     {
       mesh->Rebalance();
@@ -1574,7 +1589,6 @@ double RebalanceMesh(std::unique_ptr<mfem::ParMesh> &mesh, const IoData &iodata)
       // processor and then redistributed.
       RebalanceConformalMesh(mesh);
     }
-    mesh->ExchangeFaceNbrData();
   }
   return ratio;
 }
@@ -1706,58 +1720,46 @@ void ReorderMesh(mfem::Mesh &mesh, bool print)
   mesh.ReorderElements(ordering);
 }
 
-std::unique_ptr<int[]> GetMeshPartitioning(const mfem::Mesh &mesh, int size,
-                                           const std::string &part_file, bool print)
+void MakeSimplicial(mfem::Mesh &orig_mesh, bool preserve_curvature)
 {
-  MFEM_VERIFY(size <= mesh.GetNE(), "Mesh partitioning must have parts <= mesh elements ("
-                                        << size << " vs. " << mesh.GetNE() << ")!");
-  if (part_file.length() == 0)
+  // Back up the original high-order nodes.
+  mfem::GridFunction *nodes = nullptr;
+  int own_nodes = 1;
+  if (preserve_curvature && orig_mesh.GetNodes())
   {
-    const int part_method = 1;
-    std::unique_ptr<int[]> partitioning(
-        const_cast<mfem::Mesh &>(mesh).GeneratePartitioning(size, part_method));
-    if (print)
-    {
-      Mpi::Print("Finished partitioning mesh into {:d} subdomain{}\n", size,
-                 (size > 1) ? "s" : "");
-    }
-    return partitioning;
+    orig_mesh.SwapNodes(nodes, own_nodes);
   }
-  // User can optionally specify a mesh partitioning file as generated from the MFEM
-  // mesh-explorer miniapp, for example. It has the format:
-  //
-  //   number_of_elements <NE>
-  //   number_of_processors <NPART>
-  //   <part[0]>
-  //     ...
-  //   <part[NE-1]>
-  //
-  int ne, np;
-  std::ifstream part_ifs(part_file);
-  part_ifs.ignore(std::numeric_limits<std::streamsize>::max(), ' ');
-  part_ifs >> ne;
-  if (ne != mesh.GetNE())
+
+  // MFEM's function removes curvature information from the new mesh. So, if needed, we
+  // interpolate it onto the new mesh with GSLIB.
+  mfem::Mesh new_mesh = mfem::Mesh::MakeSimplicial(orig_mesh);
+  if (preserve_curvature && nodes)
   {
-    MFEM_ABORT("Invalid partitioning file (number of elements)!");
+    // Prepare to interpolate the grid function for high-order nodes from the old mesh
+    // on the new one.
+    orig_mesh.EnsureNodes();
+    new_mesh.EnsureNodes();
+    const mfem::FiniteElementSpace *fespace = nodes->FESpace();
+    mfem::Ordering::Type ordering = fespace->GetOrdering();
+    int order = fespace->GetMaxElementOrder();
+    int sdim = orig_mesh.SpaceDimension();
+    bool discont =
+        (dynamic_cast<const mfem::L2_FECollection *>(fespace->FEColl()) != nullptr);
+    mfem::FiniteElementSpace new_fespace(&new_mesh, fespace->FEColl(), sdim, ordering);
+    mfem::GridFunction new_nodes(&new_fespace);
+    fem::InterpolateFunction(*nodes, new_nodes);
+
+    // Finally, copy the nodal grid function to the new mesh.
+    new_mesh.SetCurvature(order, discont, sdim, ordering);
+    MFEM_VERIFY(new_mesh.GetNodes()->Size() == new_nodes.Size(),
+                "Unexpected size mismatch for nodes!");
+    new_mesh.SetNodes(new_nodes);
   }
-  part_ifs.ignore(std::numeric_limits<std::streamsize>::max(), ' ');
-  part_ifs >> np;
-  if (np != size)
+  if (own_nodes)
   {
-    MFEM_ABORT("Invalid partitioning file (number of processors)!");
+    delete nodes;
   }
-  auto partitioning = std::make_unique<int[]>(mesh.GetNE());
-  int i = 0;
-  while (i < mesh.GetNE())
-  {
-    part_ifs >> partitioning[i++];
-  }
-  if (print)
-  {
-    Mpi::Print("Read mesh partitioning into {:d} subdomain{} from disk\n", size,
-               (size > 1) ? "s" : "");
-  }
-  return partitioning;
+  orig_mesh = std::move(new_mesh);
 }
 
 std::map<int, std::array<int, 2>> CheckMesh(std::unique_ptr<mfem::Mesh> &orig_mesh,
@@ -2043,12 +2045,11 @@ std::map<int, std::array<int, 2>> CheckMesh(std::unique_ptr<mfem::Mesh> &orig_me
   {
     const mfem::GridFunction *nodes = orig_mesh->GetNodes();
     const mfem::FiniteElementSpace *fespace = nodes->FESpace();
-
     mfem::Ordering::Type ordering = fespace->GetOrdering();
     int order = fespace->GetMaxElementOrder();
     int sdim = orig_mesh->SpaceDimension();
     bool discont =
-        dynamic_cast<const mfem::L2_FECollection *>(fespace->FEColl()) != nullptr;
+        (dynamic_cast<const mfem::L2_FECollection *>(fespace->FEColl()) != nullptr);
     new_mesh->SetCurvature(order, discont, sdim, ordering);
     mfem::GridFunction *new_nodes = new_mesh->GetNodes();
     const mfem::FiniteElementSpace *new_fespace = new_nodes->FESpace();
@@ -2074,6 +2075,60 @@ std::map<int, std::array<int, 2>> CheckMesh(std::unique_ptr<mfem::Mesh> &orig_me
   new_mesh->Finalize(refine, fix_orientation);
   orig_mesh = std::move(new_mesh);
   return new_attr_map;
+}
+
+std::unique_ptr<int[]> GetMeshPartitioning(const mfem::Mesh &mesh, int size,
+                                           const std::string &part_file, bool print)
+{
+  MFEM_VERIFY(size <= mesh.GetNE(), "Mesh partitioning must have parts <= mesh elements ("
+                                        << size << " vs. " << mesh.GetNE() << ")!");
+  if (part_file.length() == 0)
+  {
+    const int part_method = 1;
+    std::unique_ptr<int[]> partitioning(
+        const_cast<mfem::Mesh &>(mesh).GeneratePartitioning(size, part_method));
+    if (print)
+    {
+      Mpi::Print("Finished partitioning mesh into {:d} subdomain{}\n", size,
+                 (size > 1) ? "s" : "");
+    }
+    return partitioning;
+  }
+  // User can optionally specify a mesh partitioning file as generated from the MFEM
+  // mesh-explorer miniapp, for example. It has the format:
+  //
+  //   number_of_elements <NE>
+  //   number_of_processors <NPART>
+  //   <part[0]>
+  //     ...
+  //   <part[NE-1]>
+  //
+  int ne, np;
+  std::ifstream part_ifs(part_file);
+  part_ifs.ignore(std::numeric_limits<std::streamsize>::max(), ' ');
+  part_ifs >> ne;
+  if (ne != mesh.GetNE())
+  {
+    MFEM_ABORT("Invalid partitioning file (number of elements)!");
+  }
+  part_ifs.ignore(std::numeric_limits<std::streamsize>::max(), ' ');
+  part_ifs >> np;
+  if (np != size)
+  {
+    MFEM_ABORT("Invalid partitioning file (number of processors)!");
+  }
+  auto partitioning = std::make_unique<int[]>(mesh.GetNE());
+  int i = 0;
+  while (i < mesh.GetNE())
+  {
+    part_ifs >> partitioning[i++];
+  }
+  if (print)
+  {
+    Mpi::Print("Read mesh partitioning into {:d} subdomain{} from disk\n", size,
+               (size > 1) ? "s" : "");
+  }
+  return partitioning;
 }
 
 std::unique_ptr<mfem::ParMesh> DistributeMesh(MPI_Comm comm,
