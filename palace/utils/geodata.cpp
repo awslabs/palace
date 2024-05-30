@@ -102,12 +102,12 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(MPI_Comm comm, const IoData &iodata)
     MFEM_VERIFY(!use_amr || iodata.model.make_simplex || !element_types.has_hexahedra ||
                     refinement.nonconformal,
                 "If there are tensor elements, AMR must be nonconformal!");
-    MFEM_VERIFY(!use_amr || iodata.model.make_simplex || !element_types.has_pyramids ||
-                    refinement.nonconformal,
-                "If there are pyramid elements, AMR must be nonconformal!");
     MFEM_VERIFY(!use_amr || iodata.model.make_simplex || !element_types.has_prisms ||
                     refinement.nonconformal,
                 "If there are wedge elements, AMR must be nonconformal!");
+    MFEM_VERIFY(!use_amr || iodata.model.make_simplex || !element_types.has_pyramids ||
+                    refinement.nonconformal,
+                "If there are pyramid elements, AMR must be nonconformal!");
 
     // Optionally convert mesh elements to simplices, for example in order to enable
     // conformal mesh refinement.
@@ -1722,19 +1722,26 @@ void ReorderMesh(mfem::Mesh &mesh, bool print)
 
 void MakeSimplicial(mfem::Mesh &orig_mesh, bool preserve_curvature)
 {
-  // Back up the original high-order nodes.
-  mfem::GridFunction *nodes = nullptr;
-  int own_nodes = 1;
-  if (preserve_curvature && orig_mesh.GetNodes())
+  // Convert all element types to simplices.
+  const auto element_types = mesh::CheckElements(orig_mesh);
+  if (element_types.has_simplices && !element_types.has_hexahedra &&
+      !element_types.has_prisms && !element_types.has_pyramids)
   {
-    orig_mesh.SwapNodes(nodes, own_nodes);
+    return;
   }
+  MFEM_VERIFY(!element_types.has_pyramids,
+              "mfem::Mesh::MakeSimplicial does not support pyramid elements yet!");
+  mfem::Mesh new_mesh = mfem::Mesh::MakeSimplicial(orig_mesh);
 
   // MFEM's function removes curvature information from the new mesh. So, if needed, we
   // interpolate it onto the new mesh with GSLIB.
-  mfem::Mesh new_mesh = mfem::Mesh::MakeSimplicial(orig_mesh);
-  if (preserve_curvature && nodes)
+  if (preserve_curvature && orig_mesh.GetNodes())
   {
+    // Back up the original high-order nodes.
+    mfem::GridFunction *nodes = nullptr;
+    int own_nodes = 1;
+    orig_mesh.SwapNodes(nodes, own_nodes);
+
     // Prepare to interpolate the grid function for high-order nodes from the old mesh
     // on the new one.
     orig_mesh.EnsureNodes();
@@ -1748,16 +1755,16 @@ void MakeSimplicial(mfem::Mesh &orig_mesh, bool preserve_curvature)
     mfem::FiniteElementSpace new_fespace(&new_mesh, fespace->FEColl(), sdim, ordering);
     mfem::GridFunction new_nodes(&new_fespace);
     fem::InterpolateFunction(*nodes, new_nodes);
+    if (own_nodes)
+    {
+      delete nodes;
+    }
 
     // Finally, copy the nodal grid function to the new mesh.
     new_mesh.SetCurvature(order, discont, sdim, ordering);
     MFEM_VERIFY(new_mesh.GetNodes()->Size() == new_nodes.Size(),
                 "Unexpected size mismatch for nodes!");
     new_mesh.SetNodes(new_nodes);
-  }
-  if (own_nodes)
-  {
-    delete nodes;
   }
   orig_mesh = std::move(new_mesh);
 }
