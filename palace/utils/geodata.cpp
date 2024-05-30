@@ -40,14 +40,14 @@ constexpr auto MSH_FLT_PRECISION = std::numeric_limits<double>::max_digits10;
 // Load the serial mesh from disk.
 std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &, bool);
 
+// Create a new mesh by splitting all elements of the mesh into simplices or hexes
+// (using tet-to-hex). Optionally preserves curvature of the original mesh by interpolating
+// the high-order nodes with GSLIB.
+void SplitMeshElements(mfem::Mesh &, bool, bool, bool = true);
+
 // Optionally reorder mesh elements based on MFEM's internal reordeing tools for improved
 // cache usage.
-void ReorderMesh(mfem::Mesh &, bool = true);
-
-// Create a new mesh by splitting all elements of the mesh into simplices. Optionally
-// preserves curvature of the original mesh by interpolating the high-order nodes with
-// GSLIB.
-void MakeSimplicial(mfem::Mesh &, bool = true);
+void ReorderMeshElements(mfem::Mesh &, bool = true);
 
 // Clean the provided serial mesh by removing unnecessary domain and elements, and adding
 // boundary elements for material interfaces and exterior boundaries.
@@ -110,17 +110,17 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(MPI_Comm comm, const IoData &iodata)
                 "If there are pyramid elements, AMR must be nonconformal!");
 
     // Optionally convert mesh elements to simplices, for example in order to enable
-    // conformal mesh refinement.
-    if (iodata.model.make_simplex)
+    // conformal mesh refinement, or hexes.
+    if (iodata.model.make_simplex || iodata.model.make_hex)
     {
-      MakeSimplicial(*smesh);
+      SplitMeshElements(*smesh, iodata.model.make_simplex, iodata.model.make_hex);
     }
 
     // Optionally reorder elements (and vertices) based on spatial location after loading
     // the serial mesh.
     if (iodata.model.reorder_elements)
     {
-      ReorderMesh(*smesh);
+      ReorderMeshElements(*smesh);
     }
 
     // Clean up unused domain elements from the mesh, add new boundary elements for material
@@ -1688,53 +1688,174 @@ std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &mesh_file, bool remove_c
   return mesh;
 }
 
-void ReorderMesh(mfem::Mesh &mesh, bool print)
+mfem::Mesh MeshTetToHex(const mfem::Mesh &orig_mesh)
 {
-  mfem::Array<int> ordering;
-
-  if constexpr (false)
+  // Courtesy of https://gist.github.com/pazner/e9376f77055c0918d7c43e034e9e5888, only
+  // supports tetrahedral elements for now. Eventually should be expanded to support prism
+  // and pyramid elements but this mixed mesh support requires a bit more work.
+  MFEM_VERIFY(orig_mesh.Dimension() == 3, "Tet-to-hex conversion only supports 3D meshes!");
   {
-    // Gecko reordering.
-    mfem::Array<int> tentative;
-    int outer = 3, inner = 3, window = 4, period = 2;
-    double best_cost = mfem::infinity();
-    for (int i = 0; i < outer; i++)
+    mfem::Array<mfem::Geometry::Type> geoms;
+    orig_mesh.GetGeometries(3, geoms);
+    MFEM_VERIFY(geoms.Size() == 1 && geoms[0] == mfem::Geometry::TETRAHEDRON,
+                "Tet-to-hex conversion only works for pure tetrahedral meshes!");
+  }
+
+  // Add new vertices in every edge, face, and volume. Each tet is subdivided into 4 hexes,
+  // and each triangular face subdivided into 3 quads.
+  const int nv_tet = orig_mesh.GetNV();
+  const int nedge_tet = orig_mesh.GetNEdges();
+  const int nface_tet = orig_mesh.GetNFaces();
+  const int ne_tet = orig_mesh.GetNE();
+  const int nbe_tet = orig_mesh.GetNBE();
+  const int nv = nv_tet + nedge_tet + nface_tet + ne_tet;
+  const int ne = 4 * ne_tet;
+  const int nbe = 3 * nbe_tet;
+  mfem::Mesh hex_mesh(orig_mesh.Dimension(), nv, ne, nbe, orig_mesh.SpaceDimension());
+
+  // Add original vertices.
+  for (int v = 0; v < nv_tet; v++)
+  {
+    hex_mesh.AddVertex(orig_mesh.GetVertex(v));
+  }
+
+  // Add midpoints of edges, faces, and elements.
+  auto AddCentroid = [&orig_mesh, &hex_mesh](const int *verts, int nv)
+  {
+    double coord[3] = {0.0, 0.0, 0.0};
+    for (int i = 0; i < nv; i++)
     {
-      int seed = i + 1;
-      double cost =
-          mesh.GetGeckoElementOrdering(tentative, inner, window, period, seed, true);
-      if (cost < best_cost)
+      for (int d = 0; d < orig_mesh.SpaceDimension(); d++)
       {
-        ordering = tentative;
-        best_cost = cost;
+        coord[d] += orig_mesh.GetVertex(verts[i])[d] / nv;
       }
     }
-    if (print)
+    hex_mesh.AddVertex(coord);
+  };
+  {
+    mfem::Array<int> verts;
+    for (int e = 0; e < nedge_tet; ++e)
     {
-      Mpi::Print("Final cost: {:e}\n", best_cost);
+      orig_mesh.GetEdgeVertices(e, verts);
+      AddCentroid(verts.GetData(), verts.Size());
+    }
+  }
+  for (int f = 0; f < nface_tet; ++f)
+  {
+    AddCentroid(orig_mesh.GetFace(f)->GetVertices(), orig_mesh.GetFace(f)->GetNVertices());
+  }
+  for (int e = 0; e < ne_tet; ++e)
+  {
+    AddCentroid(orig_mesh.GetElement(e)->GetVertices(),
+                orig_mesh.GetElement(e)->GetNVertices());
+  }
+
+  // Connectivity of tetrahedron vertices to the edges.
+  constexpr int tet_vertex_edge_map[4 * 3] = {0, 1, 2, 3, 0, 4, 1, 3, 5, 5, 4, 2};
+  constexpr int tet_vertex_face_map[4 * 3] = {3, 2, 1, 3, 0, 2, 3, 1, 0, 0, 1, 2};
+  constexpr int tri_vertex_edge_map[3 * 2] = {0, 2, 1, 0, 2, 1};
+
+  // Add four hexahedra for each tetrahedron.
+  {
+    mfem::Array<int> edges, faces, orients;
+    for (int e = 0; e < ne_tet; ++e)
+    {
+      const int *verts = orig_mesh.GetElement(e)->GetVertices();
+      orig_mesh.GetElementEdges(e, edges, orients);
+      orig_mesh.GetElementFaces(e, faces, orients);
+
+      // One hex for each vertex of the tet.
+      for (int i = 0; i < 4; ++i)
+      {
+        int hex_v[8];
+        hex_v[0] = verts[i];
+        hex_v[1] = nv_tet + edges[tet_vertex_edge_map[3 * i + 0]];
+        hex_v[2] = nv_tet + nedge_tet + faces[tet_vertex_face_map[3 * i + 0]];
+        hex_v[3] = nv_tet + edges[tet_vertex_edge_map[3 * i + 1]];
+        hex_v[4] = nv_tet + edges[tet_vertex_edge_map[3 * i + 2]];
+        hex_v[5] = nv_tet + nedge_tet + faces[tet_vertex_face_map[3 * i + 1]];
+        hex_v[6] = nv_tet + nedge_tet + nface_tet + e;
+        hex_v[7] = nv_tet + nedge_tet + faces[tet_vertex_face_map[3 * i + 2]];
+        hex_mesh.AddHex(hex_v, orig_mesh.GetAttribute(e));
+      }
     }
   }
 
-  // (Faster) Hilbert reordering.
-  mesh.GetHilbertElementOrdering(ordering);
-  mesh.ReorderElements(ordering);
+  // Add the boundary elements.
+  {
+    mfem::Array<int> edges, orients;
+    for (int be = 0; be < nbe_tet; ++be)
+    {
+      int f, o;
+      const int *verts = orig_mesh.GetBdrElement(be)->GetVertices();
+      orig_mesh.GetBdrElementEdges(be, edges, orients);
+      orig_mesh.GetBdrElementFace(be, &f, &o);
+
+      // One quad for each vertex of the tri.
+      for (int i = 0; i < 3; ++i)
+      {
+        int quad_v[4];
+        quad_v[0] = verts[i];
+        quad_v[1] = nv_tet + edges[tri_vertex_edge_map[2 * i + 0]];
+        quad_v[2] = nv_tet + nedge_tet + f;
+        quad_v[3] = nv_tet + edges[tri_vertex_edge_map[2 * i + 1]];
+        hex_mesh.AddBdrQuad(quad_v, orig_mesh.GetBdrAttribute(be));
+      }
+    }
+  }
+
+  // Finalize the hex mesh. No need to generate boundary elements or mark for refinement,
+  // but we fix orientations for the new elements as needed.
+  constexpr bool generate_bdr = false, refine = false, fix_orientation = true;
+  hex_mesh.FinalizeTopology(generate_bdr);
+  hex_mesh.Finalize(refine, fix_orientation);
+  return hex_mesh;
 }
 
-void MakeSimplicial(mfem::Mesh &orig_mesh, bool preserve_curvature)
+void SplitMeshElements(mfem::Mesh &orig_mesh, bool make_simplex, bool make_hex,
+                       bool preserve_curvature)
 {
-  // Convert all element types to simplices.
-  const auto element_types = mesh::CheckElements(orig_mesh);
-  if (element_types.has_simplices && !element_types.has_hexahedra &&
-      !element_types.has_prisms && !element_types.has_pyramids)
+  if (!make_simplex && !make_hex)
   {
     return;
   }
-  MFEM_VERIFY(!element_types.has_pyramids,
-              "mfem::Mesh::MakeSimplicial does not support pyramid elements yet!");
-  mfem::Mesh new_mesh = mfem::Mesh::MakeSimplicial(orig_mesh);
+  MFEM_VERIFY(!orig_mesh.Nonconforming(),
+              "Mesh element splitting is not supported for nonconforming meshes!");
+  mfem::Mesh *mesh = &orig_mesh;
+  mfem::Mesh new_mesh;
 
-  // MFEM's function removes curvature information from the new mesh. So, if needed, we
-  // interpolate it onto the new mesh with GSLIB.
+  // Convert all element types to simplices.
+  if (make_simplex)
+  {
+    const auto element_types = mesh::CheckElements(*mesh);
+    if (element_types.has_hexahedra || element_types.has_prisms ||
+        element_types.has_pyramids)
+    {
+      MFEM_VERIFY(
+          !element_types.has_pyramids,
+          "Splitting mesh elements to simplices does not support pyramid elements yet!");
+      new_mesh = mfem::Mesh::MakeSimplicial(*mesh);
+      mesh = &new_mesh;
+    }
+  }
+
+  // Convert all element types to hexahedra (currently only tet-to-hex).
+  if (make_hex)
+  {
+    const auto element_types = mesh::CheckElements(*mesh);
+    if (element_types.has_simplices || element_types.has_prisms ||
+        element_types.has_pyramids)
+    {
+      MFEM_VERIFY(!element_types.has_prisms && !element_types.has_pyramids,
+                  "Splitting mesh elements to hexahedra only supports simplex elements "
+                  "(tetrahedra) for now!");
+      new_mesh = MeshTetToHex(*mesh);
+      mesh = &new_mesh;
+    }
+  }
+
+  // The previous splitting functions remove curvature information from the new mesh. So, if
+  // needed, we interpolate it onto the new mesh with GSLIB.
   if (preserve_curvature && orig_mesh.GetNodes())
   {
     // Back up the original high-order nodes.
@@ -1767,6 +1888,38 @@ void MakeSimplicial(mfem::Mesh &orig_mesh, bool preserve_curvature)
     new_mesh.SetNodes(new_nodes);
   }
   orig_mesh = std::move(new_mesh);
+}
+
+void ReorderMeshElements(mfem::Mesh &mesh, bool print)
+{
+  mfem::Array<int> ordering;
+
+  if constexpr (false)
+  {
+    // Gecko reordering.
+    mfem::Array<int> tentative;
+    int outer = 3, inner = 3, window = 4, period = 2;
+    double best_cost = mfem::infinity();
+    for (int i = 0; i < outer; i++)
+    {
+      int seed = i + 1;
+      double cost =
+          mesh.GetGeckoElementOrdering(tentative, inner, window, period, seed, true);
+      if (cost < best_cost)
+      {
+        ordering = tentative;
+        best_cost = cost;
+      }
+    }
+    if (print)
+    {
+      Mpi::Print("Final cost: {:e}\n", best_cost);
+    }
+  }
+
+  // (Faster) Hilbert reordering.
+  mesh.GetHilbertElementOrdering(ordering);
+  mesh.ReorderElements(ordering);
 }
 
 std::map<int, std::array<int, 2>> CheckMesh(std::unique_ptr<mfem::Mesh> &orig_mesh,

@@ -205,6 +205,9 @@ public:
   // Convert mesh to simplex elements.
   bool make_simplex = false;
 
+  // Convert mesh to hexahedral elements (using tet-to-hex algorithm).
+  bool make_hex = false;
+
   // Reorder elements based on spatial location after loading the serial mesh, which can
   // potentially increase memory coherency.
   bool reorder_elements = false;

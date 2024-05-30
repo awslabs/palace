@@ -11,6 +11,7 @@
     "Lc": { "type": "number", "exclusiveMinimum": 0.0 },
     "RemoveCurvature": { "type": "boolean" },
     "MakeSimplex": { "type": "boolean" },
+    "MakeHex": { "type": "boolean" },
     "ReorderElements": { "type": "boolean" },
     "CleanUnusedElements": { "type": "boolean" },
     "AddInterfaceBoundaryElements": { "type": "boolean" },

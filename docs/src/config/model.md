@@ -115,6 +115,7 @@ mesh length units.
 
   - `"RemoveCurvature" [false]`
   - `"MakeSimplex" [false]`
+  - `"MakeHex" [false]`
   - `"ReorderElements" [false]`
   - `"CleanUnusedElements" [true]`
   - `"AddInterfaceBoundaryElements" [true]`
