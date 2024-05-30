@@ -114,7 +114,10 @@ namespace fem
 void InterpolateFunction(const mfem::GridFunction &U, mfem::GridFunction &V)
 {
 #if defined(MFEM_USE_GSLIB)
-  // Generate list of points where the grid function will be evaluated.
+  // Generate list of points where the grid function will be evaluated. If the grid function
+  // to interpolate is an H1 space of the same order as the mesh nodes, we can use the
+  // mesh node points directly. Otherwise, for a different basis order or type, we generate
+  // the interpolation points in the physical space manually.
   auto &dest_mesh = *V.FESpace()->GetMesh();
   MFEM_VERIFY(dest_mesh.GetNodes(), "Destination mesh has no nodal FE space!");
   const int dim = dest_mesh.SpaceDimension();
@@ -122,17 +125,12 @@ void InterpolateFunction(const mfem::GridFunction &U, mfem::GridFunction &V)
   mfem::Ordering::Type ordering;
   const auto *dest_fec_h1 =
       dynamic_cast<const mfem::H1_FECollection *>(V.FESpace()->FEColl());
-  const auto *dest_fec_l2 =
-      dynamic_cast<const mfem::L2_FECollection *>(V.FESpace()->FEColl());
   const auto *dest_nodes_h1 = dynamic_cast<const mfem::H1_FECollection *>(
-      dest_mesh.GetNodes()->FESpace()->FEColl());
-  const auto *dest_nodes_l2 = dynamic_cast<const mfem::L2_FECollection *>(
       dest_mesh.GetNodes()->FESpace()->FEColl());
   int dest_fespace_order = V.FESpace()->GetMaxElementOrder();
   int dest_nodes_order = dest_mesh.GetNodes()->FESpace()->GetMaxElementOrder();
   dest_mesh.GetNodes()->HostRead();
-  if (((dest_fec_h1 && dest_nodes_h1) || (dest_fec_l2 && dest_nodes_l2)) &&
-      dest_fespace_order == dest_nodes_order)
+  if (dest_fec_h1 && dest_nodes_h1 && dest_fespace_order == dest_nodes_order)
   {
     xyz.MakeRef(*dest_mesh.GetNodes(), 0, dest_mesh.GetNodes()->Size());
     ordering = dest_mesh.GetNodes()->FESpace()->GetOrdering();
@@ -184,18 +182,13 @@ void InterpolateFunction(const mfem::GridFunction &U, mfem::GridFunction &V)
   op.SetDefaultInterpolationValue(0.0);
   op.SetL2AvgType(mfem::FindPointsGSLIB::NONE);
   op.Interpolate(xyz, U, vals, ordering);
+  const auto *dest_fec_l2 =
+      dynamic_cast<const mfem::L2_FECollection *>(V.FESpace()->FEColl());
   if (dest_fec_h1 || dest_fec_l2)
   {
-    if ((dest_fec_h1 && dest_fespace_order == dest_nodes_order) || dest_fec_l2)
+    if (dest_fec_h1 && dest_fespace_order != dest_nodes_order)
     {
-      // H1 and L2 (copy interpolated values to vdofs).
-      MFEM_ASSERT(V.Size() == vals.Size(),
-                  "Unexpected size mismatch for interpolated values and grid function!");
-      V = vals;
-    }
-    else
-    {
-      // H1 with order != mesh order needs to handle duplicated points.
+      // H1 with order != mesh order needs to handle duplicated interpolation points.
       mfem::Vector elem_vals;
       mfem::Array<int> vdofs;
       int offset = 0;
@@ -204,12 +197,11 @@ void InterpolateFunction(const mfem::GridFunction &U, mfem::GridFunction &V)
         const mfem::FiniteElement &fe = *V.FESpace()->GetFE(i);
         const int elem_npts = fe.GetNodes().GetNPoints();
         elem_vals.SetSize(elem_npts * vdim);
-
         for (int j = 0; j < elem_npts; j++)
         {
           for (int d = 0; d < vdim; d++)
           {
-            // Arrange values byNODES to align with GetElementVDofs.
+            // Arrange element values byNODES to align with GetElementVDofs.
             int idx = (U.FESpace()->GetOrdering() == mfem::Ordering::byNODES)
                           ? d * npts + offset + j
                           : (offset + j) * dim + d;
@@ -224,6 +216,13 @@ void InterpolateFunction(const mfem::GridFunction &U, mfem::GridFunction &V)
         }
         V.SetSubVector(vdofs, elem_vals);
       }
+    }
+    else
+    {
+      // Otherwise, H1 and L2 copy interpolated values to vdofs.
+      MFEM_ASSERT(V.Size() == vals.Size(),
+                  "Unexpected size mismatch for interpolated values and grid function!");
+      V = vals;
     }
   }
   else
@@ -242,7 +241,7 @@ void InterpolateFunction(const mfem::GridFunction &U, mfem::GridFunction &V)
       {
         for (int d = 0; d < vdim; d++)
         {
-          // Arrange values byVDIM.
+          // Arrange element values byVDIM for ProjectFromNodes.
           int idx = (U.FESpace()->GetOrdering() == mfem::Ordering::byNODES)
                         ? d * npts + offset + j
                         : (offset + j) * dim + d;
