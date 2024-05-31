@@ -1,12 +1,12 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 88bcfb0..7d87397 100644
+index 637122a..9306afa 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
 @@ -43,10 +43,7 @@ find_package(Threads)
  
- if(parallel)
+ if(MUMPS_parallel)
    find_package(MPI COMPONENTS C Fortran REQUIRED)
--  if(NOT DEFINED ENV{MKLROOT} OR NOT scalapack)
+-  if(NOT DEFINED ENV{MKLROOT} AND NOT LAPACK_VENDOR MATCHES "^MKL" OR NOT scalapack)
 -    # oneMKL MKLConfig.cmake must be invoked only once
 -    include(cmake/lapack.cmake)
 -  endif()
@@ -29,13 +29,13 @@ index 88bcfb0..7d87397 100644
 -
  message(STATUS "MUMPS ORDERING_DEFS: ${ORDERING_DEFS}")
  message(STATUS "MUMPS ORDERING_LIBS: ${ORDERING_LIBS}")
- 
+ message(STATUS "MUMPS LAPACK_VENDOR: ${LAPACK_VENDOR}")
 diff --git a/cmake/FindLAPACK.cmake b/cmake/FindLAPACK.cmake
 deleted file mode 100644
-index 136c16d..0000000
+index 8647696..0000000
 --- a/cmake/FindLAPACK.cmake
 +++ /dev/null
-@@ -1,501 +0,0 @@
+@@ -1,502 +0,0 @@
 -# Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
 -# file Copyright.txt or https://cmake.org/licensing for details.
 -
@@ -402,8 +402,9 @@ index 136c16d..0000000
 -  OR Netlib IN_LIST LAPACK_FIND_COMPONENTS
 -  OR Atlas IN_LIST LAPACK_FIND_COMPONENTS
 -  OR MKL IN_LIST LAPACK_FIND_COMPONENTS
+-  OR MKL64 IN_LIST LAPACK_FIND_COMPONENTS
 -  OR AOCL IN_LIST LAPACK_FIND_COMPONENTS))
--  if(DEFINED ENV{MKLROOT})
+-  if(DEFINED ENV{MKLROOT} AND IS_DIRECTORY "$ENV{MKLROOT}")
 -    list(APPEND LAPACK_FIND_COMPONENTS MKL)
 -  else()
 -    list(APPEND LAPACK_FIND_COMPONENTS Netlib)
@@ -538,7 +539,7 @@ index 136c16d..0000000
 -
 -mark_as_advanced(LAPACK_LIBRARY LAPACK_INCLUDE_DIR)
 diff --git a/cmake/FindSCALAPACK.cmake b/cmake/FindSCALAPACK.cmake
-index 56d7d9c..7a68153 100644
+index f8c4cdc..718a510 100644
 --- a/cmake/FindSCALAPACK.cmake
 +++ b/cmake/FindSCALAPACK.cmake
 @@ -52,8 +52,6 @@ References
@@ -564,7 +565,7 @@ index 56d7d9c..7a68153 100644
  list(APPEND CMAKE_REQUIRED_LIBRARIES ${LAPACK_LIBRARIES} ${MPI_Fortran_LIBRARIES} ${CMAKE_THREAD_LIBS_INIT})
  
  if(STATIC IN_LIST SCALAPACK_FIND_COMPONENTS AND
-@@ -188,40 +183,13 @@ endfunction(scalapack_lib)
+@@ -188,40 +183,9 @@ endfunction(scalapack_lib)
  
  # === main
  
@@ -572,18 +573,18 @@ index 56d7d9c..7a68153 100644
 -if(DEFINED ENV{CRAYPE_VERSION})
 -  set(scalapack_cray true)
 -endif()
- 
+-
 -if(NOT scalapack_cray)
--  if(NOT MKL IN_LIST SCALAPACK_FIND_COMPONENTS AND DEFINED ENV{MKLROOT})
+-  if(NOT MKL IN_LIST SCALAPACK_FIND_COMPONENTS AND DEFINED ENV{MKLROOT} AND IS_DIRECTORY "$ENV{MKLROOT}")
 -    list(APPEND SCALAPACK_FIND_COMPONENTS MKL)
 -  endif()
 -endif()
- 
+-
 -if(STATIC IN_LIST SCALAPACK_FIND_COMPONENTS)
 -  set(_orig_suff ${CMAKE_FIND_LIBRARY_SUFFIXES})
 -  set(CMAKE_FIND_LIBRARY_SUFFIXES ${CMAKE_STATIC_LIBRARY_SUFFIX})
 -endif()
- 
+-
 -if(MKL IN_LIST SCALAPACK_FIND_COMPONENTS OR MKL64 IN_LIST SCALAPACK_FIND_COMPONENTS)
 -  scalapack_mkl()
 -elseif(scalapack_cray)
@@ -598,7 +599,7 @@ index 56d7d9c..7a68153 100644
 -  endif()
 -  set(CMAKE_FIND_LIBRARY_SUFFIXES ${_orig_suff})
 -endif()
- 
+-
  # --- Check that Scalapack links
  
 -if(scalapack_cray OR SCALAPACK_LIBRARY)
@@ -606,7 +607,7 @@ index 56d7d9c..7a68153 100644
    scalapack_check()
  endif()
  
-@@ -229,32 +197,19 @@ endif()
+@@ -229,32 +193,19 @@ endif()
  
  include(FindPackageHandleStandardArgs)
  
@@ -643,20 +644,20 @@ index 56d7d9c..7a68153 100644
  
      # For MKL, we don't use FindLapack, so define LAPACK::LAPACK as alias
      if(MKL_FOUND AND NOT TARGET LAPACK::LAPACK)
-@@ -262,5 +217,3 @@ Scalapack include directories: ${SCALAPACK_INCLUDE_DIRS}")
+@@ -262,5 +213,3 @@ Scalapack include directories: ${SCALAPACK_INCLUDE_DIRS}")
      endif()
    endif()
  endif()
 -
 -mark_as_advanced(SCALAPACK_LIBRARY SCALAPACK_INCLUDE_DIR)
 diff --git a/cmake/lapack.cmake b/cmake/lapack.cmake
-index 374e8ed..14ebbe6 100644
+index 3f0997e..14ebbe6 100644
 --- a/cmake/lapack.cmake
 +++ b/cmake/lapack.cmake
 @@ -1,11 +1,3 @@
  # Handle options for finding LAPACK
  
--if(NOT DEFINED LAPACK_VENDOR AND DEFINED ENV{MKLROOT})
+-if(NOT DEFINED LAPACK_VENDOR AND DEFINED ENV{MKLROOT} AND IS_DIRECTORY "$ENV{MKLROOT}")
 -  set(LAPACK_VENDOR MKL)
 -endif()
 -
@@ -667,18 +668,24 @@ index 374e8ed..14ebbe6 100644
 -find_package(LAPACK REQUIRED COMPONENTS ${LAPACK_VENDOR})
 +find_package(LAPACK REQUIRED)
 diff --git a/cmake/scalapack.cmake b/cmake/scalapack.cmake
-index 6bdfd05..7238c21 100644
+index f4d1a70..7238c21 100644
 --- a/cmake/scalapack.cmake
 +++ b/cmake/scalapack.cmake
-@@ -3,21 +3,7 @@ include(GNUInstallDirs)
+@@ -3,27 +3,7 @@ include(GNUInstallDirs)
  
  if(find)
  
--if(NOT DEFINED SCALAPACK_VENDOR AND DEFINED ENV{MKLROOT})
--  set(SCALAPACK_VENDOR MKL)
+-if(NOT DEFINED SCALAPACK_VENDOR)
+-  if(LAPACK_VENDOR MATCHES "^MKL")
+-    set(SCALAPACK_VENDOR MKL)
+-  elseif(NOT DEFINED LAPACK_VENDOR AND
+-    (DEFINED ENV{MKLROOT} AND IS_DIRECTORY "$ENV{MKLROOT}"))
+-    set(SCALAPACK_VENDOR MKL)
+-    set(LAPACK_VENDOR MKL)
+-  endif()
 -endif()
 -
--if(MKL IN_LIST SCALAPACK_VENDOR)
+-if(MKL IN_LIST SCALAPACK_VENDOR AND NOT MKL64 IN_LIST SCALAPACK_VENDOR)
 -  if(intsize64)
 -    list(APPEND SCALAPACK_VENDOR MKL64)
 -  endif()
