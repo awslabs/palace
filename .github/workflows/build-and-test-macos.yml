@@ -15,7 +15,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:  # Pairwise testing
+        include:  # Pairwise testing (from allpairspy)
           - compiler: clang
             mpi: openmpi
             math-libs: openblas
@@ -77,11 +77,11 @@ jobs:
           if [[ "${{ matrix.compiler }}" == 'clang' ]]; then
             export CC=$(brew --prefix llvm@15)/bin/clang
             export CXX=$(brew --prefix llvm@15)/bin/clang++
-            export FC=gfortran-13
+            export FC=gfortran-12
           elif [[ "${{ matrix.compiler }}" == 'gcc' ]]; then
-            export CC=gcc-13
-            export CXX=g++-13
-            export FC=gfortran-13
+            export CC=gcc-12
+            export CXX=g++-12
+            export FC=gfortran-12
           fi
           if [[ "${{ matrix.math-libs }}" == 'openblas' ]]; then
             export OPENBLAS_DIR=/usr/local/opt/openblas
