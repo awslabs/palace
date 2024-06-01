@@ -54,13 +54,14 @@ void SplitMeshElements(std::unique_ptr<mfem::Mesh> &, bool, bool, bool = true);
 // cache usage.
 void ReorderMeshElements(mfem::Mesh &, bool = true);
 
+// Check that mesh boundary conditions are given for external boundaries.
+std::unordered_map<int, int> CheckMesh(const mfem::Mesh &, const std::vector<int> &);
+
 // Adding boundary elements for material interfaces and exterior boundaries, and "crack"
 // desired internal boundary elements to disconnect the elements on either side.
-int AddInterfaceBdrElements(std::unique_ptr<mfem::Mesh> &orig_mesh,
-                            const std::vector<int> &crack_bdr_attr_list, bool add_bdr_elem);
-
-// Check that mesh boundary conditions are given for external boundaries.
-void CheckMesh(const mfem::Mesh &, const std::vector<int> &, int);
+int AddInterfaceBdrElements(std::unique_ptr<mfem::Mesh> &,
+                            const std::vector<int> &, bool,
+                            const std::unordered_map<int, int> &);
 
 // Generate element-based mesh partitioning, using either a provided file or METIS.
 std::unique_ptr<int[]> GetMeshPartitioning(const mfem::Mesh &, int,
@@ -168,10 +169,13 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(MPI_Comm comm, const IoData &iodata)
       }
     }
 
+    // Check the final mesh, throwing warnings if there are exterior boundaries with no
+    // associated boundary condition.
+    const auto face_to_be = CheckMesh(*smesh, iodata.boundaries.attributes);
+
     // Add new boundary elements for material interfaces if not present (with new unique
     // boundary attributes). Also duplicate internal boundary elements associated with
     // cracks if desired.
-    int orig_bdr_attr_max = smesh->bdr_attributes.Size() ? smesh->bdr_attributes.Max() : 0;
     if (iodata.model.crack_bdr_elements || iodata.model.add_bdr_elements)
     {
       std::vector<int> crack_bdr_attr_list;
@@ -186,15 +190,13 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(MPI_Comm comm, const IoData &iodata)
       {
         // May require multiple calls due to early exit/retry approach.
         success = AddInterfaceBdrElements(smesh, crack_bdr_attr_list,
-                                          iodata.model.add_bdr_elements);
+                                          iodata.model.add_bdr_elements, face_to_be);
       }
     }
 
-    // Check the final mesh, throwing warnings if there are exterior boundaries with no
-    // associated boundary condition.
-    CheckMesh(*smesh, iodata.boundaries.attributes, orig_bdr_attr_max);
-
     // XX TODO FINALIZE THE MESH HERE ONCE AND FOR ALL IF MODIFIED?
+    constexpr bool refine = false, fix_orientation = false;
+    smesh->Finalize(refine, fix_orientation);
 
     // Generate the mesh partitioning.
     partitioning = GetMeshPartitioning(*smesh, Mpi::Size(comm), iodata.model.partitioning);
@@ -1874,16 +1876,16 @@ void CleanMesh(std::unique_ptr<mfem::Mesh> &orig_mesh,
   // high-order nodes information, topological changes in Mesh::Finalize are OK. No need to
   // mark for refinement or fix orientations, since everything is copied from the previous
   // mesh.
-  constexpr bool generate_bdr = false, refine = false, fix_orientation = false;
+  constexpr bool generate_bdr = false;
+  // constexpr bool generate_bdr = false, refine = false, fix_orientation = false;  // XX
+  // TODO FINALIZE
   new_mesh->FinalizeTopology(generate_bdr);
-  new_mesh->RemoveUnusedVertices();
+  new_mesh->RemoveUnusedVertices();  // Remove vertices from the deleted elements
   if (orig_mesh->GetNodes())
   {
     TransferHighOrderNodes(*orig_mesh, *new_mesh, &elem_delete_map);
   }
-
-  new_mesh->Finalize(refine, fix_orientation);  // XX TODO UNSURE IF NEEDED...
-
+  // new_mesh->Finalize(refine, fix_orientation);  // XX TODO FINALIZE
   orig_mesh = std::move(new_mesh);
 }
 
@@ -2005,12 +2007,11 @@ mfem::Mesh MeshTetToHex(const mfem::Mesh &orig_mesh)
 
   // Finalize the hex mesh. No need to generate boundary elements or mark for refinement,
   // but we fix orientations for the new elements as needed.
-  constexpr bool generate_bdr = false, refine = false, fix_orientation = true;
+  constexpr bool generate_bdr = false;
+  // constexpr bool generate_bdr = false, refine = false, fix_orientation = true;  // XX
+  // TODO FINALIZE
   hex_mesh.FinalizeTopology(generate_bdr);
-
-  hex_mesh.Finalize(refine, fix_orientation);  // XX TODO MOVE FINALIZATION TO LATER??
-                                               // MakeSimplicial does not do this
-
+  // hex_mesh.Finalize(refine, fix_orientation);  // XX TODO FINALIZE
   return hex_mesh;
 }
 
@@ -2051,6 +2052,7 @@ void SplitMeshElements(std::unique_ptr<mfem::Mesh> &orig_mesh, bool make_simplex
       MFEM_VERIFY(
           !element_types.has_pyramids,
           "Splitting mesh elements to simplices does not support pyramid elements yet!");
+
       if (preserve_curvature && mesh->GetNodes() && !orig_mesh_attr.Size())
       {
         BackUpAttributes(*mesh);
@@ -2060,10 +2062,6 @@ void SplitMeshElements(std::unique_ptr<mfem::Mesh> &orig_mesh, bool make_simplex
       Mpi::Print("Added {:d} elements to the mesh during conversion to simplices\n",
                  new_mesh.GetNE() - ne);
       mesh = &new_mesh;
-
-      // //XX OTDO PRINT A MESSAEG HERE
-      // Mpi::Print("Removed {:d} unattached boundary elements from the mesh\n",
-      //            orig_mesh->GetNBE() - new_nbe);
     }
   }
 
@@ -2088,10 +2086,6 @@ void SplitMeshElements(std::unique_ptr<mfem::Mesh> &orig_mesh, bool make_simplex
       Mpi::Print("Added {:d} elements to the mesh during conversion to hexahedra\n",
                  new_mesh.GetNE() - ne);
       mesh = &new_mesh;
-
-      // //XX OTDO PRINT A MESSAEG HERE
-      // Mpi::Print("Removed {:d} unattached boundary elements from the mesh\n",
-      //            orig_mesh->GetNBE() - new_nbe);
     }
   }
 
@@ -2233,10 +2227,6 @@ void SplitMeshElements(std::unique_ptr<mfem::Mesh> &orig_mesh, bool make_simplex
                 "Unexpected size mismatch for nodes!");
     new_mesh.SetNodes(new_nodes);
   }
-
-  // constexpr bool refine = false, fix_orientation = false;
-  // new_mesh.Finalize(refine, fix_orientation);   //XX TODO UNSURE IF NEEDED...
-
   orig_mesh = std::make_unique<mfem::Mesh>(std::move(new_mesh));  // Call move constructor
 }
 
@@ -2273,8 +2263,68 @@ void ReorderMeshElements(mfem::Mesh &mesh, bool print)
   }
 }
 
+std::unordered_map<int, int> CheckMesh(const mfem::Mesh &mesh,
+                                       const std::vector<int> &bdr_attr_list)
+{
+  // Check for:
+  //   (1) Boundary elements with no prescribed boundary condition, and
+  //   (2) Boundary faces which have no boundary element.
+  std::unordered_map<int, int> face_to_be;
+  face_to_be.reserve(mesh.GetNBE());
+  for (int be = 0; be < mesh.GetNBE(); be++)
+  {
+    int f, o;
+    mesh.GetBdrElementFace(be, &f, &o);
+    MFEM_VERIFY(face_to_be.find(f) == face_to_be.end(),
+                "Mesh should not define boundary elements multiple times!");
+    face_to_be[f] = be;
+  }
+  auto bdr_marker = mesh::AttrToMarker(
+      mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0, bdr_attr_list, true);
+  std::unordered_set<int> bdr_warn_list;
+  bool bdr_face_warn = false;
+  for (int f = 0; f < mesh.GetNumFaces(); f++)
+  {
+    int e1, e2;
+    mesh.GetFaceElements(f, &e1, &e2);
+    if (e1 >= 0 && e2 >= 0)
+    {
+      continue;  // Only consider true exterior faces
+    }
+    auto it = face_to_be.find(f);
+    if (it != face_to_be.end())
+    {
+      int attr = mesh.GetBdrAttribute(it->second);
+      if (!bdr_marker[attr - 1])
+      {
+        // Boundary element with no prescribed boundary condition.
+        bdr_warn_list.insert(attr);
+      }
+    }
+    else
+    {
+      // Boundary face with no attached boundary element.
+      bdr_face_warn = true;
+    }
+  }
+  if (!bdr_warn_list.empty())
+  {
+    Mpi::Warning("One or more external boundary attributes has no associated boundary "
+                 "condition!\n\"PMC\"/\"ZeroCharge\" condition is assumed!");
+    utils::PrettyPrint(bdr_warn_list, "Boundary attribute list:");
+    Mpi::Print("\n");
+  }
+  if (bdr_face_warn)
+  {
+    Mpi::Warning(
+        "Mesh faces with no associated boundary element exist on the domain boundary!");
+  }
+  return face_to_be;
+}
+
 int AddInterfaceBdrElements(std::unique_ptr<mfem::Mesh> &orig_mesh,
-                            const std::vector<int> &crack_bdr_attr_list, bool add_bdr_elem)
+                            const std::vector<int> &crack_bdr_attr_list, bool add_bdr_elem,
+                            const std::unordered_map<int, int> &face_to_be)
 {
   // Return if nothing to do. Otherwise, count vertices and boundary elements to add.
   if (crack_bdr_attr_list.empty() && !add_bdr_elem)
@@ -2283,17 +2333,6 @@ int AddInterfaceBdrElements(std::unique_ptr<mfem::Mesh> &orig_mesh,
   }
   int new_nv = orig_mesh->GetNV();
   int new_nbe = orig_mesh->GetNBE();
-
-  std::unordered_map<int, int> face_to_be;  // XX TODO CONSTRUCT ONCE FOR ALL?
-  face_to_be.reserve(orig_mesh->GetNBE());
-  for (int be = 0; be < orig_mesh->GetNBE(); be++)
-  {
-    int f, o;
-    orig_mesh->GetBdrElementFace(be, &f, &o);
-    MFEM_VERIFY(face_to_be.find(f) == face_to_be.end(),
-                "Mesh should not define boundary elements multiple times!");
-    face_to_be[f] = be;
-  }
 
   // Duplicate internal boundary elements from the given boundary attribute list, cracking
   // the mesh such that domain elements on either side are no longer coupled. Correctly
@@ -2469,9 +2508,9 @@ int AddInterfaceBdrElements(std::unique_ptr<mfem::Mesh> &orig_mesh,
           refinements.Append(mfem::Refinement(e));
         }
         orig_mesh->GeneralRefinement(refinements, 0);
-
-        // XX TODO PRINT A MESSAGE HERE!!
-
+        Mpi::Print("Added {:d} elements from local mesh refinement for under-resolved "
+                   "interior boundaries\n",
+                   orig_mesh->GetNE() - ne);
         return 0;  // Mesh was refined (conformally), start over
       }
     }
@@ -2778,84 +2817,17 @@ int AddInterfaceBdrElements(std::unique_ptr<mfem::Mesh> &orig_mesh,
   }
 
   // Finalize new mesh, and copy mesh curvature information if needed.
-  constexpr bool generate_bdr = false, refine = false, fix_orientation = false;
+  constexpr bool generate_bdr = false;
+  // constexpr bool generate_bdr = false, refine = false, fix_orientation = false;  // XX
+  // TODO FINALIZE
   new_mesh->FinalizeTopology(generate_bdr);
-  new_mesh->RemoveUnusedVertices();
   if (orig_mesh->GetNodes())
   {
     TransferHighOrderNodes(*orig_mesh, *new_mesh);
   }
-
-  new_mesh->Finalize(refine, fix_orientation);  // XX TODO UNSURE IF NEEDED...
-
+  // new_mesh->Finalize(refine, fix_orientation);  // XX TODO FINALIZE
   orig_mesh = std::move(new_mesh);
   return 1;  // Success
-}
-
-void CheckMesh(const mfem::Mesh &mesh, const std::vector<int> &bdr_attr_list,
-               int orig_bdr_attr_max)
-{
-  // Check for:
-  //   (1) Boundary elements with no prescribed boundary condition, and
-  //   (2) Boundary faces which have no boundary element.
-
-
-
-
-  std::unordered_map<int, int> face_to_be;  // XX TODO CONSTRUCT ONCE FOR ALL?
-  face_to_be.reserve(mesh.GetNBE());
-  for (int be = 0; be < mesh.GetNBE(); be++)
-  {
-    int f, o;
-    mesh.GetBdrElementFace(be, &f, &o);
-    MFEM_VERIFY(face_to_be.find(f) == face_to_be.end(),
-                "Mesh should not define boundary elements multiple times!");
-    face_to_be[f] = be;
-  }
-
-
-
-
-  auto bdr_marker = mesh::AttrToMarker(
-      mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0, bdr_attr_list, true);
-  std::unordered_set<int> bdr_warn_list;
-  bool bdr_face_warn = false;
-  for (int f = 0; f < mesh.GetNumFaces(); f++)
-  {
-    int e1, e2;
-    mesh.GetFaceElements(f, &e1, &e2);
-    if (e1 >= 0 && e2 >= 0)
-    {
-      continue;  // Only consider true exterior faces
-    }
-    auto it = face_to_be.find(f);
-    if (it != face_to_be.end())
-    {
-      int attr = mesh.GetBdrAttribute(it->second);
-      if (attr <= orig_bdr_attr_max && !bdr_marker[attr - 1])
-      {
-        // Boundary element with no prescribed boundary condition.
-        bdr_warn_list.insert(attr);
-      }
-    }
-    else
-    {
-      // Boundary face with no attached boundary element.
-      bdr_face_warn = true;
-    }
-  }
-  if (!bdr_warn_list.empty())
-  {
-    Mpi::Warning("One or more external boundary attributes has no associated boundary "
-                 "condition!\n\"PMC\"/\"ZeroCharge\" condition is assumed!");
-    utils::PrettyPrint(bdr_warn_list, "Boundary attribute list:");
-    Mpi::Print("\n");
-  }
-  if (bdr_face_warn)
-  {
-    Mpi::Warning(
-        "Mesh faces with no associated boundary element exist on the domain boundary!");
-  }
 }
 
 std::unique_ptr<int[]> GetMeshPartitioning(const mfem::Mesh &mesh, int size,
