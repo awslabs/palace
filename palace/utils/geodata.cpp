@@ -630,7 +630,7 @@ bool CheckRefinementFlags(const mfem::Mesh &mesh)
   }
   if (const auto *pmesh = dynamic_cast<const mfem::ParMesh *>(&mesh))
   {
-    Mpi::GlobalOr(1, marked, pmesh->GetComm());
+    Mpi::GlobalOr(1, &marked, pmesh->GetComm());
     return marked;
   }
   else
@@ -639,48 +639,24 @@ bool CheckRefinementFlags(const mfem::Mesh &mesh)
   }
 }
 
-namespace
+void AttrToMarker(int max_attr, const int *attr_list, int attr_list_size,
+                  mfem::Array<int> &marker, bool skip_invalid)
 {
-
-auto AttrListSize(const mfem::Array<int> &attr_list)
-{
-  return attr_list.Size();
-}
-
-auto AttrListSize(const std::vector<int> &attr_list)
-{
-  return attr_list.size();
-}
-
-auto AttrListMax(const mfem::Array<int> &attr_list)
-{
-  return attr_list.Max();
-}
-
-auto AttrListMax(const std::vector<int> &attr_list)
-{
-  return *std::max_element(attr_list.begin(), attr_list.end());
-}
-
-}  // namespace
-
-template <typename T>
-void AttrToMarker(int max_attr, const T &attr_list, mfem::Array<int> &marker,
-                  bool skip_invalid)
-{
-  MFEM_VERIFY(skip_invalid || AttrListSize(attr_list) == 0 ||
-                  AttrListMax(attr_list) <= max_attr,
-              "Invalid attribute number present (" << AttrListMax(attr_list) << ")!");
+  MFEM_VERIFY(skip_invalid || attr_list_size == 0 ||
+                  *std::max_element(attr_list, attr_list + attr_list_size) <= max_attr,
+              "Invalid attribute number present ("
+                  << *std::max_element(attr_list, attr_list + attr_list_size) << ")!");
   marker.SetSize(max_attr);
-  if (AttrListSize(attr_list) == 1 && attr_list[0] == -1)
+  if (attr_list_size == 1 && attr_list[0] == -1)
   {
     marker = 1;
   }
   else
   {
     marker = 0;
-    for (auto attr : attr_list)
+    for (int i = 0; i < attr_list_size; i++)
     {
+      int attr = attr_list[i];
       if ((attr <= 0 || attr > max_attr) && skip_invalid)
       {
         continue;
@@ -1749,9 +1725,6 @@ double RebalanceMesh(std::unique_ptr<mfem::ParMesh> &mesh, const IoData &iodata)
   return ratio;
 }
 
-template void AttrToMarker(int, const mfem::Array<int> &, mfem::Array<int> &, bool);
-template void AttrToMarker(int, const std::vector<int> &, mfem::Array<int> &, bool);
-
 }  // namespace mesh
 
 namespace
@@ -2387,7 +2360,7 @@ int AddInterfaceBdrElements(std::unique_ptr<mfem::Mesh> &orig_mesh,
   {
     return 1;  // Success
   }
-  if (face_to_be.size() != orig_mesh->GetNFaces())
+  if (face_to_be.size() != orig_mesh->GetNBE())
   {
     face_to_be = GetFaceToBdrElementMap(*orig_mesh);
   }
