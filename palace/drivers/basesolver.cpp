@@ -154,8 +154,6 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
     Mpi::Print("\nFlattening mesh sequence:\n AMR will start from the final mesh in "
                "the sequence of a priori refinements\n");
     mesh.erase(mesh.begin(), mesh.end() - 1);
-    constexpr bool refine = true, fix_orientation = true;
-    mesh.back()->Get().Finalize(refine, fix_orientation);
   }
   MPI_Comm comm = mesh.back()->GetComm();
 

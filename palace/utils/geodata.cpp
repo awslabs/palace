@@ -26,10 +26,8 @@
 #include "utils/prettyprint.hpp"
 #include "utils/timer.hpp"
 
-
 // XX TODO WIP DEBUG
 #define CRACK_VERTEX_PERTURBATION 1
-
 
 namespace palace
 {
@@ -64,9 +62,8 @@ std::unordered_map<int, int> CheckMesh(const mfem::Mesh &, const std::vector<int
 
 // Adding boundary elements for material interfaces and exterior boundaries, and "crack"
 // desired internal boundary elements to disconnect the elements on either side.
-int AddInterfaceBdrElements(std::unique_ptr<mfem::Mesh> &,
-                            const std::vector<int> &, bool,
-                            const std::unordered_map<int, int> &);
+int AddInterfaceBdrElements(std::unique_ptr<mfem::Mesh> &, std::unordered_map<int, int> &,
+                            const std::vector<int> &, bool);
 
 // Generate element-based mesh partitioning, using either a provided file or METIS.
 std::unique_ptr<int[]> GetMeshPartitioning(const mfem::Mesh &, int,
@@ -92,10 +89,28 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(MPI_Comm comm, const IoData &iodata)
   // necessary serial preprocessing. When finished, distribute the mesh to all processes.
   // Count disk I/O time separately for the mesh read from file.
 
-  // If not adapting, or performing conformal adaptation, can use the mesh partitioner.
+  // If not doing any local adaptation, or performing conformal adaptation, we can use the
+  // mesh partitioner.
   std::unique_ptr<mfem::Mesh> smesh;
   const auto &refinement = iodata.model.refinement;
-  const bool use_amr = refinement.max_it > 0;
+  const bool use_amr = (refinement.max_it > 0) || [&refinement]()
+  {
+    for (const auto &box : refinement.GetBoxes())
+    {
+      if (box.ref_levels > 0)
+      {
+        return true;
+      }
+    }
+    for (const auto &sphere : refinement.GetSpheres())
+    {
+      if (sphere.ref_levels > 0)
+      {
+        return true;
+      }
+    }
+    return false;
+  }();
   const bool use_mesh_partitioner = !use_amr || !refinement.nonconformal;
   MPI_Comm node_comm;
   if (!use_mesh_partitioner)
@@ -176,7 +191,7 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(MPI_Comm comm, const IoData &iodata)
 
     // Check the final mesh, throwing warnings if there are exterior boundaries with no
     // associated boundary condition.
-    const auto face_to_be = CheckMesh(*smesh, iodata.boundaries.attributes);
+    auto face_to_be = CheckMesh(*smesh, iodata.boundaries.attributes);
 
     // Add new boundary elements for material interfaces if not present (with new unique
     // boundary attributes). Also duplicate internal boundary elements associated with
@@ -194,13 +209,15 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(MPI_Comm comm, const IoData &iodata)
       while (!success)
       {
         // May require multiple calls due to early exit/retry approach.
-        success = AddInterfaceBdrElements(smesh, crack_bdr_attr_list,
-                                          iodata.model.add_bdr_elements, face_to_be);
+        success = AddInterfaceBdrElements(smesh, face_to_be, crack_bdr_attr_list,
+                                          iodata.model.add_bdr_elements);
       }
     }
 
-    // XX TODO FINALIZE THE MESH HERE ONCE AND FOR ALL IF MODIFIED?
-    constexpr bool refine = false, fix_orientation = false;
+    // Finally, finalize the serial mesh. Mark tetrahedral meshes for refinement. There
+    // should be no need to fix orientation as this was done during initial mesh loading
+    // from disk.
+    constexpr bool refine = true, fix_orientation = false;
     smesh->Finalize(refine, fix_orientation);
 
     // Generate the mesh partitioning.
@@ -348,19 +365,24 @@ void RefineMesh(const IoData &iodata, std::vector<std::unique_ptr<mfem::ParMesh>
     mesh.back()->UniformRefinement();
   }
 
+  // Simplex meshes need to be re-finalized in order to use local refinement (see
+  // the docstring for mfem::Mesh::UniformRefinement).
+  const auto element_types = mesh::CheckElements(*mesh.back());
+  if (uniform_ref_levels > 0 && element_types.has_simplices)
+  {
+    constexpr bool refine = true, fix_orientation = false;
+    mesh.back()->Finalize(refine, fix_orientation);
+  }
+
   // Proceed with region-based refinement, level-by-level for all regions. Currently support
   // box and sphere region shapes. Any overlap between regions is ignored (take the union,
   // don't double-refine).
-  if (max_region_ref_levels > 0 &&
-      (mesh[0]->MeshGenerator() & 2 || mesh[0]->MeshGenerator() & 4 ||
-       mesh[0]->MeshGenerator() & 8))
-  {
-    // XX TODO: Region-based refinement won't work if the ParMesh has been constructed from
-    //          a conforming mesh, but nonconforming refinement is needed. Unclear if the
-    //          current mesh distribution scheme will work even for a conforming serial mesh
-    //          which is a NCMesh after Mesh::EnsureNCMesh is called.
-    MFEM_ABORT("Region-based refinement is currently only supported for simplex meshes!");
-  }
+  MFEM_VERIFY(
+      max_region_ref_levels == 0 ||
+          !(element_types.has_hexahedra || element_types.has_prisms ||
+            element_types.has_pyramids) ||
+          mesh.back()->Nonconforming(),
+      "Region-based refinement for non-simplex meshes requires a nonconformal mesh!");
   const bool use_nodes = (mesh.back()->GetNodes() != nullptr);
   const int ref = use_nodes ? mesh.back()->GetNodes()->FESpace()->GetMaxElementOrder() : 1;
   const int dim = mesh.back()->SpaceDimension();
@@ -587,6 +609,34 @@ ElementTypeInfo CheckElements(const mfem::Mesh &mesh)
   // processor.
   auto meshgen = mesh.MeshGenerator();
   return {bool(meshgen & 1), bool(meshgen & 2), bool(meshgen & 4), bool(meshgen & 8)};
+}
+
+bool CheckRefinementFlags(const mfem::Mesh &mesh)
+{
+  bool marked = true;
+  for (int e = 0; e < mesh.GetNE(); e++)
+  {
+    const mfem::Element *el = mesh.GetElement(e);
+    const int geom = el->GetGeometryType();
+    if (geom == mfem::Geometry::TETRAHEDRON)
+    {
+      const mfem::Tetrahedron *tet = static_cast<const mfem::Tetrahedron *>(el);
+      if (tet->GetRefinementFlag() == 0)
+      {
+        marked = false;
+        break;
+      }
+    }
+  }
+  if (const auto *pmesh = dynamic_cast<const mfem::ParMesh *>(&mesh))
+  {
+    Mpi::GlobalOr(1, marked, pmesh->GetComm());
+    return marked;
+  }
+  else
+  {
+    return marked;
+  }
 }
 
 namespace
@@ -1714,7 +1764,7 @@ std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &mesh_file, bool remove_c
   // supports a native mesh format (.mesh), VTK/VTU, Gmsh, as well as some others. We use
   // built-in converters for the types we know, otherwise rely on MFEM to do the conversion
   // or error out if not supported.
-  constexpr bool generate_edges = true, refine = true, fix_orientation = true;
+  constexpr bool generate_edges = false, refine = false, fix_orientation = true;
   std::unique_ptr<mfem::Mesh> mesh;
   std::filesystem::path mesh_path(mesh_file);
   if (mesh_path.extension() == ".mphtxt" || mesh_path.extension() == ".mphbin" ||
@@ -1876,21 +1926,17 @@ void CleanMesh(std::unique_ptr<mfem::Mesh> &orig_mesh,
     }
   }
 
-  // Finalize new mesh and replace the old one. If a curved mesh, set up the new mesh by
-  // projecting nodes onto the new mesh for the non-trimmed vdofs. After we have copied the
-  // high-order nodes information, topological changes in Mesh::Finalize are OK. No need to
+  // Finalize the new mesh topology and replace the old mesh. If a curved mesh, set up the
+  // new mesh by projecting nodes onto the new mesh for the non-trimmed vdofs. No need to
   // mark for refinement or fix orientations, since everything is copied from the previous
   // mesh.
   constexpr bool generate_bdr = false;
-  // constexpr bool generate_bdr = false, refine = false, fix_orientation = false;  // XX
-  // TODO FINALIZE
   new_mesh->FinalizeTopology(generate_bdr);
   new_mesh->RemoveUnusedVertices();  // Remove vertices from the deleted elements
   if (orig_mesh->GetNodes())
   {
     TransferHighOrderNodes(*orig_mesh, *new_mesh, &elem_delete_map);
   }
-  // new_mesh->Finalize(refine, fix_orientation);  // XX TODO FINALIZE
   orig_mesh = std::move(new_mesh);
 }
 
@@ -1901,6 +1947,8 @@ mfem::Mesh MeshTetToHex(const mfem::Mesh &orig_mesh)
   // and pyramid elements but this mixed mesh support requires a bit more work.
   MFEM_VERIFY(orig_mesh.Dimension() == 3, "Tet-to-hex conversion only supports 3D meshes!");
   {
+    // This checks the local mesh on each process, but the assertion failing on any single
+    // process will terminate the program.
     mfem::Array<mfem::Geometry::Type> geoms;
     orig_mesh.GetGeometries(3, geoms);
     MFEM_VERIFY(geoms.Size() == 1 && geoms[0] == mfem::Geometry::TETRAHEDRON,
@@ -2010,13 +2058,9 @@ mfem::Mesh MeshTetToHex(const mfem::Mesh &orig_mesh)
     }
   }
 
-  // Finalize the hex mesh. No need to generate boundary elements or mark for refinement,
-  // but we fix orientations for the new elements as needed.
+  // Finalize the hex mesh topology. The mesh will be marked for refinement later on.
   constexpr bool generate_bdr = false;
-  // constexpr bool generate_bdr = false, refine = false, fix_orientation = true;  // XX
-  // TODO FINALIZE
   hex_mesh.FinalizeTopology(generate_bdr);
-  // hex_mesh.Finalize(refine, fix_orientation);  // XX TODO FINALIZE
   return hex_mesh;
 }
 
@@ -2268,12 +2312,8 @@ void ReorderMeshElements(mfem::Mesh &mesh, bool print)
   }
 }
 
-std::unordered_map<int, int> CheckMesh(const mfem::Mesh &mesh,
-                                       const std::vector<int> &bdr_attr_list)
+std::unordered_map<int, int> GetFaceToBdrElementMap(const mfem::Mesh &mesh)
 {
-  // Check for:
-  //   (1) Boundary elements with no prescribed boundary condition, and
-  //   (2) Boundary faces which have no boundary element.
   std::unordered_map<int, int> face_to_be;
   face_to_be.reserve(mesh.GetNBE());
   for (int be = 0; be < mesh.GetNBE(); be++)
@@ -2284,10 +2324,20 @@ std::unordered_map<int, int> CheckMesh(const mfem::Mesh &mesh,
                 "Mesh should not define boundary elements multiple times!");
     face_to_be[f] = be;
   }
+  return face_to_be;
+}
+
+std::unordered_map<int, int> CheckMesh(const mfem::Mesh &mesh,
+                                       const std::vector<int> &bdr_attr_list)
+{
+  // Check for:
+  //   (1) Boundary elements with no prescribed boundary condition, and
+  //   (2) Boundary faces which have no boundary element.
   auto bdr_marker = mesh::AttrToMarker(
       mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0, bdr_attr_list, true);
+  std::unordered_map<int, int> face_to_be = GetFaceToBdrElementMap(mesh);
   std::unordered_set<int> bdr_warn_list;
-  bool bdr_face_warn = false;
+  int bdr_face_warn = 0;
   for (int f = 0; f < mesh.GetNumFaces(); f++)
   {
     int e1, e2;
@@ -2309,32 +2359,37 @@ std::unordered_map<int, int> CheckMesh(const mfem::Mesh &mesh,
     else
     {
       // Boundary face with no attached boundary element.
-      bdr_face_warn = true;
+      bdr_face_warn++;
     }
   }
   if (!bdr_warn_list.empty())
   {
     Mpi::Warning("One or more external boundary attributes has no associated boundary "
-                 "condition!\n\"PMC\"/\"ZeroCharge\" condition is assumed!");
+                 "condition!\n\"PMC\"/\"ZeroCharge\" condition is assumed!\n");
     utils::PrettyPrint(bdr_warn_list, "Boundary attribute list:");
     Mpi::Print("\n");
   }
   if (bdr_face_warn)
   {
-    Mpi::Warning(
-        "Mesh faces with no associated boundary element exist on the domain boundary!");
+    Mpi::Warning("{:d} mesh faces with no associated boundary element exist on the domain "
+                 "boundary!\n",
+                 bdr_face_warn);
   }
   return face_to_be;
 }
 
 int AddInterfaceBdrElements(std::unique_ptr<mfem::Mesh> &orig_mesh,
-                            const std::vector<int> &crack_bdr_attr_list, bool add_bdr_elem,
-                            const std::unordered_map<int, int> &face_to_be)
+                            std::unordered_map<int, int> &face_to_be,
+                            const std::vector<int> &crack_bdr_attr_list, bool add_bdr_elem)
 {
   // Return if nothing to do. Otherwise, count vertices and boundary elements to add.
   if (crack_bdr_attr_list.empty() && !add_bdr_elem)
   {
     return 1;  // Success
+  }
+  if (face_to_be.size() != orig_mesh->GetNFaces())
+  {
+    face_to_be = GetFaceToBdrElementMap(*orig_mesh);
   }
   int new_nv = orig_mesh->GetNV();
   int new_nbe = orig_mesh->GetNBE();
@@ -2477,6 +2532,8 @@ int AddInterfaceBdrElements(std::unique_ptr<mfem::Mesh> &orig_mesh,
         for (int i = 0; i < bdr_el->GetNVertices(); i++)
         {
           const auto v = verts[i];
+          MFEM_ASSERT(crack_vert_duplicates.find(v) != crack_vert_duplicates.end(),
+                      "Unable to locate crack vertex for an interior boundary element!");
           if (!crack_vert_duplicates[v].empty())
           {
             mark_bdr_elem = false;
@@ -2488,6 +2545,8 @@ int AddInterfaceBdrElements(std::unique_ptr<mfem::Mesh> &orig_mesh,
           int f, o, e1, e2;
           orig_mesh->GetBdrElementFace(be, &f, &o);
           orig_mesh->GetFaceElements(f, &e1, &e2);
+          MFEM_ASSERT(e1 >= 0 && e2 >= 0,
+                      "Invalid internal boundary element connectivity!");
           elem_to_refine.insert(e1);
           elem_to_refine.insert(e2);
         }
@@ -2511,6 +2570,13 @@ int AddInterfaceBdrElements(std::unique_ptr<mfem::Mesh> &orig_mesh,
         for (auto e : elem_to_refine)
         {
           refinements.Append(mfem::Refinement(e));
+        }
+        if (mesh::CheckElements(*orig_mesh).has_simplices &&
+            !mesh::CheckRefinementFlags(*orig_mesh))
+        {
+          // Mark tetrahedral mesh for refinement before doing local refinement.
+          constexpr bool refine = true, fix_orientation = false;
+          orig_mesh->Finalize(refine, fix_orientation);
         }
         orig_mesh->GeneralRefinement(refinements, 0);
         Mpi::Print("Added {:d} elements from local mesh refinement for under-resolved "
@@ -2821,7 +2887,6 @@ int AddInterfaceBdrElements(std::unique_ptr<mfem::Mesh> &orig_mesh,
     }
   }
 
-
   // XX TODO WIP DEBUG
   if (CRACK_VERTEX_PERTURBATION)
   {
@@ -2853,17 +2918,13 @@ int AddInterfaceBdrElements(std::unique_ptr<mfem::Mesh> &orig_mesh,
     orig_mesh->SetCurvature(-1);
   }
 
-
-  // Finalize new mesh, and copy mesh curvature information if needed.
+  // Finalize the new mesh topology, and copy mesh curvature information if needed.
   constexpr bool generate_bdr = false;
-  // constexpr bool generate_bdr = false, refine = false, fix_orientation = false;  // XX
-  // TODO FINALIZE
   new_mesh->FinalizeTopology(generate_bdr);
   if (orig_mesh->GetNodes())
   {
     TransferHighOrderNodes(*orig_mesh, *new_mesh);
   }
-  // new_mesh->Finalize(refine, fix_orientation);  // XX TODO FINALIZE
   orig_mesh = std::move(new_mesh);
   return 1;  // Success
 }
@@ -2989,8 +3050,8 @@ void RebalanceConformalMesh(std::unique_ptr<mfem::ParMesh> &pmesh)
   // Write the parallel mesh to a stream as a serial mesh, then read back in and partition
   // using METIS.
   MPI_Comm comm = pmesh->GetComm();
-  constexpr bool generate_edges = true, refine = true, fix_orientation = true,
-                 generate_bdr = false;
+  constexpr bool generate_edges = false, generate_bdr = false, refine = true,
+                 fix_orientation = true;
   std::unique_ptr<mfem::Mesh> smesh;
   if constexpr (false)
   {
