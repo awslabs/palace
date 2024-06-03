@@ -51,6 +51,9 @@ struct ElementTypeInfo
 // Simplified helper for describing the element types in a (Par)Mesh.
 ElementTypeInfo CheckElements(const mfem::Mesh &mesh);
 
+// Check if a tetrahedral (Par)Mesh is ready for local refinement.
+bool CheckRefinementFlags(const mfem::Mesh &mesh);
+
 // Helper function to convert a set of attribute numbers to a marker array. The marker array
 // will be of size max_attr and it will contain only zeroes and ones. Ones indicate which
 // attribute numbers are present in the list array. In the special case when list has a
