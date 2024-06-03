@@ -492,7 +492,7 @@ zero-charge boundary condition.
 "Terminal":
 [
     {
-        "Index": <int>
+        "Index": <int>,
         "Attributes": [<int array>],
     },
     ...
@@ -515,7 +515,7 @@ boundary.
     "SurfaceFlux":
     [
         {
-            "Index": <int>
+            "Index": <int>,
             "Attributes": [<int array>],
             "Type": <string>,
             "TwoSided": <bool>,
