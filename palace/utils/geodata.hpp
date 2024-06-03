@@ -58,9 +58,16 @@ bool CheckRefinementFlags(const mfem::Mesh &mesh);
 // will be of size max_attr and it will contain only zeroes and ones. Ones indicate which
 // attribute numbers are present in the list array. In the special case when list has a
 // single entry equal to -1 the marker array will contain all ones.
+void AttrToMarker(int max_attr, const int *attr_list, int attr_list_size,
+                  mfem::Array<int> &marker, bool skip_invalid = false);
+
 template <typename T>
-void AttrToMarker(int max_attr, const T &attr_list, mfem::Array<int> &marker,
-                  bool skip_invalid = false);
+inline void AttrToMarker(int max_attr, const T &attr_list, mfem::Array<int> &marker,
+                         bool skip_invalid = false)
+{
+  const auto size = std::distance(attr_list.begin(), attr_list.end());
+  AttrToMarker(max_attr, (size > 0) ? &attr_list[0] : nullptr, size, marker, skip_invalid);
+}
 
 template <typename T>
 inline mfem::Array<int> AttrToMarker(int max_attr, const T &attr_list,
