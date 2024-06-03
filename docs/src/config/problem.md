@@ -8,7 +8,7 @@
 ```json
 "Problem":
 {
-    "Type": <string>
+    "Type": <string>,
     "Verbose": <int>,
     "Output": <string>
 }
