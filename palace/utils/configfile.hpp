@@ -171,6 +171,9 @@ public:
   // Parallel uniform mesh refinement levels.
   int uniform_ref_levels = 0;
 
+  // Serial uniform mesh refinement levels.
+  int ser_uniform_ref_levels = 0;
+
 private:
   // Refinement data for mesh regions.
   std::vector<BoxRefinementData> box_list = {};

@@ -125,3 +125,4 @@ mesh length units.
   - `"MaximumImbalance" [1.1]`
   - `"SaveAdaptIterations" [true]`
   - `"SaveAdaptMesh" [false]`
+  - `"SerialUniformLevels" [0]`

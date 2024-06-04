@@ -34,6 +34,7 @@
         "SaveAdaptIterations": {"type": "boolean"},
         "SaveAdaptMesh": {"type": "boolean"},
         "UniformLevels": { "type": "integer", "minimum": 0 },
+        "SerialUniformLevels": { "type": "integer", "minimum": 0 },
         "Boxes":
         {
           "type": "array",

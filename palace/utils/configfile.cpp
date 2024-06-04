@@ -337,7 +337,8 @@ void RefinementData::SetUp(json &model)
 
   // Options for a priori refinement.
   uniform_ref_levels = refinement->value("UniformLevels", uniform_ref_levels);
-  MFEM_VERIFY(uniform_ref_levels >= 0,
+  ser_uniform_ref_levels = refinement->value("SerialUniformLevels", ser_uniform_ref_levels);
+  MFEM_VERIFY(uniform_ref_levels >= 0 && ser_uniform_ref_levels >= 0,
               "Number of uniform mesh refinement levels must be non-negative!");
   auto boxes = refinement->find("Boxes");
   if (boxes != refinement->end())
@@ -430,6 +431,7 @@ void RefinementData::SetUp(json &model)
   refinement->erase("SaveAdaptIterations");
   refinement->erase("SaveAdaptMesh");
   refinement->erase("UniformLevels");
+  refinement->erase("SerialUniformLevels");
   refinement->erase("Boxes");
   refinement->erase("Spheres");
   MFEM_VERIFY(refinement->empty(),
@@ -449,6 +451,7 @@ void RefinementData::SetUp(json &model)
     std::cout << "SaveAdaptIterations: " << save_adapt_iterations << '\n';
     std::cout << "SaveAdaptMesh: " << save_adapt_mesh << '\n';
     std::cout << "UniformLevels: " << uniform_ref_levels << '\n';
+    std::cout << "SerialUniformLevels: " << ser_uniform_ref_levels << '\n';
   }
 }
 
