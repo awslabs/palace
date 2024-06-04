@@ -15,6 +15,7 @@
     "ReorderElements": { "type": "boolean" },
     "CleanUnusedElements": { "type": "boolean" },
     "CrackInternalBoundaryElements": { "type": "boolean" },
+    "RefineCrackElements": { "type": "boolean" },
     "AddInterfaceBoundaryElements": { "type": "boolean" },
     "ReorientTetMesh": { "type": "boolean" },
     "Partitioning": { "type": "string" },

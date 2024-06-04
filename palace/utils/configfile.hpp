@@ -223,6 +223,10 @@ public:
   // elements on either side.
   bool crack_bdr_elements = true;
 
+  // When required, refine elements neighboring a split or crack in order to enable the
+  // decoupling.
+  bool refine_crack_elements = true;
+
   // Add new boundary elements for faces are on the computational domain boundary or which
   // have attached elements on either side with different domain attributes.
   bool add_bdr_elements = true;

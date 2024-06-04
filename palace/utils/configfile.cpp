@@ -471,6 +471,7 @@ void ModelData::SetUp(json &config)
   reorder_elements = model->value("ReorderElements", reorder_elements);
   clean_unused_elements = model->value("CleanUnusedElements", clean_unused_elements);
   crack_bdr_elements = model->value("CrackInternalBoundaryElements", crack_bdr_elements);
+  refine_crack_elements = model->value("RefineCrackElements", refine_crack_elements);
   add_bdr_elements = model->value("AddInterfaceBoundaryElements", add_bdr_elements);
   reorient_tet_mesh = model->value("ReorientTetMesh", reorient_tet_mesh);
   partitioning = model->value("Partitioning", partitioning);
@@ -486,6 +487,7 @@ void ModelData::SetUp(json &config)
   model->erase("ReorderElements");
   model->erase("CleanUnusedElements");
   model->erase("CrackInternalBoundaryElements");
+  model->erase("RefineCrackElements");
   model->erase("AddInterfaceBoundaryElements");
   model->erase("ReorientTetMesh");
   model->erase("Partitioning");
@@ -506,6 +508,7 @@ void ModelData::SetUp(json &config)
     std::cout << "ReorderElements: " << reorder_elements << '\n';
     std::cout << "CleanUnusedElements: " << clean_unused_elements << '\n';
     std::cout << "CrackInternalBoundaryElements: " << crack_bdr_elements << '\n';
+    std::cout << "RefineCrackElements: " << refine_crack_elements << '\n';
     std::cout << "AddInterfaceBoundaryElements: " << add_bdr_elements << '\n';
     std::cout << "ReorientTetMesh: " << reorient_tet_mesh << '\n';
     std::cout << "Partitioning: " << partitioning << '\n';
