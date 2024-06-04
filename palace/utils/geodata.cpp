@@ -27,7 +27,7 @@
 #include "utils/timer.hpp"
 
 // XX TODO WIP DEBUG
-#define CRACK_VERTEX_PERTURBATION 1
+#define CRACK_VERTEX_PERTURBATION 0
 
 namespace palace
 {
@@ -63,7 +63,7 @@ std::unordered_map<int, int> CheckMesh(const mfem::Mesh &, const std::vector<int
 // Adding boundary elements for material interfaces and exterior boundaries, and "crack"
 // desired internal boundary elements to disconnect the elements on either side.
 int AddInterfaceBdrElements(std::unique_ptr<mfem::Mesh> &, std::unordered_map<int, int> &,
-                            const std::vector<int> &, bool);
+                            const std::vector<int> &, bool, bool);
 
 // Generate element-based mesh partitioning, using either a provided file or METIS.
 std::unique_ptr<int[]> GetMeshPartitioning(const mfem::Mesh &, int,
@@ -209,7 +209,7 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(MPI_Comm comm, const IoData &iodata)
       while (!success)
       {
         // May require multiple calls due to early exit/retry approach.
-        success = AddInterfaceBdrElements(smesh, face_to_be, crack_bdr_attr_list,
+        success = AddInterfaceBdrElements(smesh, face_to_be, crack_bdr_attr_list, true,
                                           iodata.model.add_bdr_elements);
       }
     }
@@ -2351,9 +2351,71 @@ std::unordered_map<int, int> CheckMesh(const mfem::Mesh &mesh,
   return face_to_be;
 }
 
+template <typename T>
+class InterfaceRefinementMesh : public mfem::Mesh
+{
+private:
+  // Container with keys being the vertex indicies (match row/column indices of v_to_v)
+  // of vertices lying on the interface to be refined.
+  const T &interface_vertices;
+
+  void MarkTetMeshForRefinement(const mfem::DSTable &v_to_v) override
+  {
+    // The standard tetrahedral refinement in MFEM is to mark the longest edge of each tet
+    // for the first refinement. We hack this marking here in order to prioritize refinement
+    // of edges which are part of internal boundary faces being marked for refinement. This
+    // should hopefully limit the amount of extra refinement required to ensure conformity
+    // after the marked elements are refined.
+    mfem::Array<mfem::real_t> lengths;
+    GetEdgeLengths2(v_to_v, lengths);
+    for (int i = 0; i < v_to_v.NumberOfRows(); i++)
+    {
+      bool has_i = (interface_vertices.find(i) != interface_vertices.end());
+      for (mfem::DSTable::RowIterator it(v_to_v, i); !it; ++it)
+      {
+        int j = it.Column();
+        if (!has_i || interface_vertices.find(j) == interface_vertices.end())
+        {
+          // Zero the edge lengths which do not connect vertices on the interface.
+          lengths[it.Index()] = 0.0;
+        }
+      }
+    }
+
+    // Finish marking (see mfem::Mesh::MarkTetMeshForRefinement).
+    mfem::Array<int> indices(NumOfEdges);
+    std::iota(indices.begin(), indices.end(), 0);
+    for (int i = 0; i < NumOfElements; i++)
+    {
+      if (elements[i]->GetType() == mfem::Element::TETRAHEDRON)
+      {
+        MFEM_ASSERT(dynamic_cast<mfem::Tetrahedron *>(elements[i]),
+                    "Unexpected non-Tetrahedron element type!");
+        static_cast<mfem::Tetrahedron *>(elements[i])->MarkEdge(v_to_v, lengths, indices);
+      }
+    }
+    for (int i = 0; i < NumOfBdrElements; i++)
+    {
+      if (boundary[i]->GetType() == mfem::Element::TRIANGLE)
+      {
+        MFEM_ASSERT(dynamic_cast<mfem::Triangle *>(boundary[i]),
+                    "Unexpected non-Triangle element type!");
+        static_cast<mfem::Triangle *>(boundary[i])->MarkEdge(v_to_v, lengths, indices);
+      }
+    }
+  }
+
+public:
+  InterfaceRefinementMesh(mfem::Mesh &&mesh, const T &interface_vertices)
+    : mfem::Mesh(std::move(mesh)), interface_vertices(interface_vertices)
+  {
+  }
+};
+
 int AddInterfaceBdrElements(std::unique_ptr<mfem::Mesh> &orig_mesh,
                             std::unordered_map<int, int> &face_to_be,
-                            const std::vector<int> &crack_bdr_attr_list, bool add_bdr_elem)
+                            const std::vector<int> &crack_bdr_attr_list,
+                            bool refine_crack_elem, bool add_bdr_elem)
 {
   // Return if nothing to do. Otherwise, count vertices and boundary elements to add.
   if (crack_bdr_attr_list.empty() && !add_bdr_elem)
@@ -2495,6 +2557,7 @@ int AddInterfaceBdrElements(std::unique_ptr<mfem::Mesh> &orig_mesh,
     // After processing all boundary elements, check if there are any elements which have
     // all seam vertices (non-duplicated vertices attached to crack boundary elements).
     // In order to correctly crack the internal boundary, these elements need to be refined.
+    if (refine_crack_elem)
     {
       std::set<int> elem_to_refine;
       for (auto be : crack_bdr_elem)
@@ -2542,14 +2605,23 @@ int AddInterfaceBdrElements(std::unique_ptr<mfem::Mesh> &orig_mesh,
         refinements.Reserve(elem_to_refine.size());
         for (auto e : elem_to_refine)
         {
-          refinements.Append(mfem::Refinement(e));
+          // Tetrahedral bisection (vs. default octasection) will result in fewer added
+          // elements at the cost of a potential minor mesh quality degredation.
+          refinements.Append(mfem::Refinement(e, mfem::Refinement::X));
         }
         if (mesh::CheckElements(*orig_mesh).has_simplices &&
             !mesh::CheckRefinementFlags(*orig_mesh))
         {
-          // Mark tetrahedral mesh for refinement before doing local refinement.
+          // Mark tetrahedral mesh for refinement before doing local refinement. This is a
+          // bit of a strange pattern to override the standard conforming refinement of the
+          // mfem::Mesh class. We want to implement our own edge marking of the tetrahedra,
+          // so we move the mesh to a constructed derived class object, mark it, and then
+          // move assign it to the original base class object before refining. All of these
+          // moves should be cheap without any extra memory allocation.
           constexpr bool refine = true, fix_orientation = false;
-          orig_mesh->Finalize(refine, fix_orientation);
+          InterfaceRefinementMesh ref_mesh(std::move(*orig_mesh), crack_vert_duplicates);
+          ref_mesh.Finalize(refine, fix_orientation);
+          *orig_mesh = std::move(ref_mesh);
         }
         orig_mesh->GeneralRefinement(refinements, 0);
         Mpi::Print("Added {:d} elements from local mesh refinement for under-resolved "
