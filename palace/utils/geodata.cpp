@@ -209,7 +209,8 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(MPI_Comm comm, const IoData &iodata)
       while (!success)
       {
         // May require multiple calls due to early exit/retry approach.
-        success = AddInterfaceBdrElements(smesh, face_to_be, crack_bdr_attr_list, true,
+        success = AddInterfaceBdrElements(smesh, face_to_be, crack_bdr_attr_list,
+                                          iodata.model.refine_crack_elements,
                                           iodata.model.add_bdr_elements);
       }
     }

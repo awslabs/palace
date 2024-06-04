@@ -119,6 +119,7 @@ mesh length units.
   - `"ReorderElements" [false]`
   - `"CleanUnusedElements" [true]`
   - `"CrackInternalBoundaryElements" [true]`
+  - `"RefineCrackElements" [true]`
   - `"AddInterfaceBoundaryElements" [true]`
   - `"ReorientTetMesh" [false]`
   - `"Partitioning" [""]`
