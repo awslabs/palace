@@ -2423,7 +2423,7 @@ int AddInterfaceBdrElements(std::unique_ptr<mfem::Mesh> &orig_mesh,
   {
     return 1;  // Success
   }
-  if (face_to_be.size() != orig_mesh->GetNBE())
+  if (face_to_be.size() != static_cast<std::size_t>(orig_mesh->GetNBE()))
   {
     face_to_be = GetFaceToBdrElementMap(*orig_mesh);
   }
