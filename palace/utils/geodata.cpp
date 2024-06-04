@@ -630,7 +630,7 @@ bool CheckRefinementFlags(const mfem::Mesh &mesh)
   }
   if (const auto *pmesh = dynamic_cast<const mfem::ParMesh *>(&mesh))
   {
-    Mpi::GlobalOr(1, &marked, pmesh->GetComm());
+    Mpi::GlobalAnd(1, &marked, pmesh->GetComm());
     return marked;
   }
   else
@@ -3096,7 +3096,7 @@ void RebalanceConformalMesh(std::unique_ptr<mfem::ParMesh> &pmesh)
   // using METIS.
   MPI_Comm comm = pmesh->GetComm();
   constexpr bool generate_edges = false, generate_bdr = false, refine = true,
-                 fix_orientation = true;
+                 fix_orientation = false;
   std::unique_ptr<mfem::Mesh> smesh;
   if constexpr (false)
   {
