@@ -79,7 +79,7 @@ PostOperator::PostOperator(const IoData &iodata, SpaceOperator &space_op,
   // Add wave port boundary mode postprocessing when available.
   for (const auto &[idx, data] : space_op.GetWavePortOp())
   {
-    auto ret = port_E0.insert(std::make_pair(idx, WavePortFieldData()));
+    auto ret = port_E0.emplace(idx, WavePortFieldData());
     ret.first->second.E0r = data.GetModeFieldCoefficientReal();
     ret.first->second.E0i = data.GetModeFieldCoefficientImag();
   }
