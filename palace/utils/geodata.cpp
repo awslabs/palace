@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <array>
 #include <limits>
+#include <map>
 #include <numeric>
 #include <queue>
 #include <random>
@@ -1895,8 +1896,8 @@ void CleanMesh(std::unique_ptr<mfem::Mesh> &orig_mesh,
   {
     if (bdr_elem_delete_map[be] >= 0)
     {
-      mfem::Element *el = orig_mesh->GetBdrElement(be)->Duplicate(new_mesh.get());
-      new_mesh->AddBdrElement(el);
+      mfem::Element *bdr_el = orig_mesh->GetBdrElement(be)->Duplicate(new_mesh.get());
+      new_mesh->AddBdrElement(bdr_el);
     }
   }
 
@@ -2369,6 +2370,7 @@ private:
     // after the marked elements are refined.
     mfem::Array<mfem::real_t> lengths;
     GetEdgeLengths2(v_to_v, lengths);
+    const auto min_length = 0.1 * lengths.Min();
     for (int i = 0; i < v_to_v.NumberOfRows(); i++)
     {
       bool has_i = (interface_vertices.find(i) != interface_vertices.end());
@@ -2377,8 +2379,9 @@ private:
         int j = it.Column();
         if (!has_i || interface_vertices.find(j) == interface_vertices.end())
         {
-          // Zero the edge lengths which do not connect vertices on the interface.
-          lengths[it.Index()] = 0.0;
+          // "Zero" the edge lengths which do not connect vertices on the interface. Avoid
+          // zero-length edges just in case.
+          lengths[it.Index()] = min_length;
         }
       }
     }
@@ -2437,7 +2440,7 @@ int AddInterfaceBdrElements(std::unique_ptr<mfem::Mesh> &orig_mesh,
   std::unordered_set<int> crack_bdr_elem;
   std::unordered_map<int, std::vector<std::pair<int, std::unordered_set<int>>>>
       crack_vert_duplicates;
-  std::unique_ptr<mfem::Table> vert_to_elem, vert_to_bdr_elem;
+  std::unique_ptr<mfem::Table> vert_to_elem;
   if (!crack_bdr_attr_list.empty())
   {
     auto crack_bdr_marker = mesh::AttrToMarker(
@@ -2460,8 +2463,7 @@ int AddInterfaceBdrElements(std::unique_ptr<mfem::Mesh> &orig_mesh,
                 "Duplicating internal boundary elements for interior boundaries is not "
                 "supported for nonconforming meshes!");
 
-    vert_to_elem.reset(orig_mesh->GetVertexToElementTable());         // Owned by caller
-    vert_to_bdr_elem.reset(orig_mesh->GetVertexToBdrElementTable());  // Owned by caller
+    vert_to_elem.reset(orig_mesh->GetVertexToElementTable());  // Owned by caller
     const mfem::Table &elem_to_face = orig_mesh->ElementToFaceTable();
     int new_nv_dups = 0;
     for (auto be : crack_bdr_elem)
@@ -2517,11 +2519,14 @@ int AddInterfaceBdrElements(std::unique_ptr<mfem::Mesh> &orig_mesh,
                   e == e1 || e == e2,
                   "Unexpected face-element connectivity in internal boundary cracking!");
               int nbr = (e == e1) ? e2 : e1;
-              auto it = unvisited.find(nbr);
-              if (nbr >= 0 && it != unvisited.end())
+              if (nbr >= 0)
               {
-                que.push(nbr);
-                unvisited.erase(it);
+                auto it = unvisited.find(nbr);
+                if (it != unvisited.end())
+                {
+                  que.push(nbr);
+                  unvisited.erase(it);
+                }
               }
             }
           }
@@ -2536,7 +2541,7 @@ int AddInterfaceBdrElements(std::unique_ptr<mfem::Mesh> &orig_mesh,
           {
             visited_size += component.size();
           }
-          MFEM_VERIFY(visited_size == vert_to_elem->RowSize(v),
+          MFEM_VERIFY(visited_size == static_cast<std::size_t>(vert_to_elem->RowSize(v)),
                       "Failed to visit all elements in neighborhood of vertex when "
                       "counting connected components!");
         }
@@ -2555,51 +2560,78 @@ int AddInterfaceBdrElements(std::unique_ptr<mfem::Mesh> &orig_mesh,
       }
     }
 
-    // After processing all boundary elements, check if there are any elements which have
-    // all seam vertices (non-duplicated vertices attached to crack boundary elements).
-    // In order to correctly crack the internal boundary, these elements need to be refined.
+    // After processing all boundary elements, check if there are any elements which need
+    // refinement in order to successfully decouple both sides. This happens if we have an
+    // edge interior to the crack which connects to seam vertices (non-duplicated vertices
+    // attached to crack boundary elements). A previous implementation of refinement
+    // considered for refinement just all boundary elements with all attached vertices
+    // lying on the seam, but this doesn't catch all required cases.
     if (refine_crack_elem)
     {
+      std::map<std::pair<int, int>, std::vector<int>> coarse_crack_edge_to_be;
       std::set<int> elem_to_refine;
       for (auto be : crack_bdr_elem)
       {
-        bool mark_bdr_elem = true;
         const mfem::Element *bdr_el = orig_mesh->GetBdrElement(be);
         const int *verts = bdr_el->GetVertices();
-        for (int i = 0; i < bdr_el->GetNVertices(); i++)
+        for (int i = 0; i < bdr_el->GetNEdges(); i++)
         {
-          const auto v = verts[i];
-          MFEM_ASSERT(crack_vert_duplicates.find(v) != crack_vert_duplicates.end(),
-                      "Unable to locate crack vertex for an interior boundary element!");
-          if (!crack_vert_duplicates[v].empty())
+          auto v0 = verts[bdr_el->GetEdgeVertices(i)[0]],
+               v1 = verts[bdr_el->GetEdgeVertices(i)[1]];
+          MFEM_ASSERT(crack_vert_duplicates.find(v0) != crack_vert_duplicates.end() &&
+                          crack_vert_duplicates.find(v1) != crack_vert_duplicates.end(),
+                      "Unable to locate crack vertices for an interior boundary element!");
+          if (crack_vert_duplicates[v0].empty() && crack_vert_duplicates[v1].empty())
           {
-            mark_bdr_elem = false;
-            break;
+            // This is a seam edge, so add the attached boundary element to a list. The
+            // check for the edge being interior to the crack is indicated by visiting more
+            // than once.
+            if (v1 < v0)
+            {
+              std::swap(v0, v1);
+            }
+            const auto key = std::make_pair(v0, v1);
+            auto it = coarse_crack_edge_to_be.find(key);
+            auto &bdr_elem_to_refine =
+                (it == coarse_crack_edge_to_be.end())
+                    ? coarse_crack_edge_to_be.try_emplace(key).first->second
+                    : it->second;
+            bdr_elem_to_refine.push_back(be);
           }
         }
-        if (mark_bdr_elem)
+      }
+      for (const auto &[edge, bdr_elem_to_refine] : coarse_crack_edge_to_be)
+      {
+        if (bdr_elem_to_refine.size() > 1)
         {
-          int f, o, e1, e2;
-          orig_mesh->GetBdrElementFace(be, &f, &o);
-          orig_mesh->GetFaceElements(f, &e1, &e2);
-          MFEM_ASSERT(e1 >= 0 && e2 >= 0,
-                      "Invalid internal boundary element connectivity!");
-          elem_to_refine.insert(e1);
-          elem_to_refine.insert(e2);
+          for (auto be : bdr_elem_to_refine)
+          {
+            int f, o, e1, e2;
+            orig_mesh->GetBdrElementFace(be, &f, &o);
+            orig_mesh->GetFaceElements(f, &e1, &e2);
+            MFEM_ASSERT(e1 >= 0 && e2 >= 0,
+                        "Invalid internal boundary element connectivity!");
+            elem_to_refine.insert(e1);
+            elem_to_refine.insert(e2);
+          }
         }
       }
+      static int new_ne_ref = 0;
       if (!elem_to_refine.empty())
       {
         // Locally refine the mesh using conformal refinement. If necessary, convert the
         // mesh to simplices first to enable conforming refinement (this will do nothing
         // if the mesh is already a simplex mesh).
-        // Note: Eventually we can implement manual conforming face refinement of pairs
-        // of all elements types (insert a vertex at the boundary element center and connect
-        // it to all other element vertices). For now, this is a bit confusing to implement.
+        // Note: Eventually we can implement manual conforming face refinement of pairs of
+        // elements sharing a face for all element types (insert a vertex at the boundary
+        // element center and connect it to all other element vertices). For now, this adds
+        // complexity and making use of conformal simplex refinement seems good enough for
+        // most use cases.
         int ne = orig_mesh->GetNE();
         SplitMeshElements(orig_mesh, true, false);
         if (ne != orig_mesh->GetNE())
         {
+          face_to_be.clear();
           return 0;  // Mesh was converted to simplices, start over
         }
         mfem::Array<mfem::Refinement> refinements;
@@ -2625,10 +2657,15 @@ int AddInterfaceBdrElements(std::unique_ptr<mfem::Mesh> &orig_mesh,
           *orig_mesh = std::move(ref_mesh);
         }
         orig_mesh->GeneralRefinement(refinements, 0);
-        Mpi::Print("Added {:d} elements from local mesh refinement for under-resolved "
-                   "interior boundaries\n",
-                   orig_mesh->GetNE() - ne);
+        new_ne_ref += orig_mesh->GetNE() - ne;
+        face_to_be.clear();
         return 0;  // Mesh was refined (conformally), start over
+      }
+      else if (new_ne_ref > 0)
+      {
+        Mpi::Print("Added {:d} elements from local mesh refinement of under-resolved "
+                   "interior boundaries\n",
+                   new_ne_ref);
       }
     }
 
@@ -2737,117 +2774,100 @@ int AddInterfaceBdrElements(std::unique_ptr<mfem::Mesh> &orig_mesh,
       }
     }
 
-    // Renumber domain and boundary elements.
+    // Renumber the domain elements.
+    for (const auto &[orig_v, vert_components] : crack_vert_duplicates)
     {
-      for (const auto &[orig_v, vert_components] : crack_vert_duplicates)
+      if (vert_components.empty())
       {
-        if (vert_components.empty())
+        continue;  // Can skip vertices which were not duplicated
+      }
+      const int *elems = vert_to_elem->GetRow(orig_v);
+      for (int i = 0; i < vert_to_elem->RowSize(orig_v); i++)
+      {
+        // Find vertex in the element.
+        const auto e = elems[i];
+        mfem::Element *el = new_mesh->GetElement(e);
+        int *verts = el->GetVertices(), j;
+        for (j = 0; j < el->GetNVertices(); j++)
         {
-          continue;  // Can skip vertices which were not duplicated
-        }
-        {
-          const int *elems = vert_to_elem->GetRow(orig_v);
-          for (int i = 0; i < vert_to_elem->RowSize(orig_v); i++)
+          if (verts[j] == orig_v)
           {
-            // Find vertex in the element.
-            const auto e = elems[i];
-            mfem::Element *el = new_mesh->GetElement(e);
-            int *verts = el->GetVertices(), j;
-            for (j = 0; j < el->GetNVertices(); j++)
-            {
-              if (verts[j] == orig_v)
-              {
-                break;
-              }
-            }
-            MFEM_VERIFY(j < el->GetNVertices(), "Unable to locate vertex in element!");
-
-            // Find the correct duplicate for this vertex. It's OK if the element is not in
-            // any of the connected components, this indicates that it keeps the original
-            // vertex and its connectivity is unmodified.
-            for (const auto &[dup_v, component] : vert_components)
-            {
-              if (component.find(e) != component.end())
-              {
-                verts[j] = dup_v;
-                break;
-              }
-            }
+            break;
           }
         }
-        {
-          const int *bdr_elems = vert_to_bdr_elem->GetRow(orig_v);
-          for (int i = 0; i < vert_to_bdr_elem->RowSize(orig_v); i++)
-          {
-            // Find vertex in the boundary element. These are the original boundary elements
-            // in the mesh. For the crack boundary elements, we renumber the nodes
-            // according to the neighboring element 1, and attach the duplicate to element
-            // 2.
-            const auto be = bdr_elems[i];
-            mfem::Element *bdr_el = new_mesh->GetBdrElement(be);
-            int *verts = bdr_el->GetVertices(), j;
-            for (j = 0; j < bdr_el->GetNVertices(); j++)
-            {
-              if (verts[j] == orig_v)
-              {
-                break;
-              }
-            }
-            MFEM_VERIFY(j < bdr_el->GetNVertices(),
-                        "Unable to locate vertex in boundary element!");
+        MFEM_VERIFY(j < el->GetNVertices(), "Unable to locate vertex in element!");
 
-            // Find the correct duplicate for this vertex. Use the neighboring elements,
-            // which must be part of the same connected component if not on the crack.
-            // Again, it is OK if the element is not in any of the connected components,
-            // this indicates that it keeps the original vertex and its connectivity is
-            // unmodified.
-            int f, o, e1, e2;
-            orig_mesh->GetBdrElementFace(be, &f, &o);
-            orig_mesh->GetFaceElements(f, &e1, &e2);
-            MFEM_VERIFY(e1 >= 0, "Boundary element with no attached elements!");
-            for (const auto &[dup_v, component] : vert_components)
-            {
-              if (component.find(e1) != component.end())
-              {
-                verts[j] = dup_v;
-                break;
-              }
-            }
+        // Find the correct duplicate for this vertex. It's OK if the element is not in
+        // any of the connected components, this indicates that it keeps the original
+        // vertex and its connectivity is unmodified.
+        for (const auto &[dup_v, component] : vert_components)
+        {
+          if (component.find(e) != component.end())
+          {
+            verts[j] = dup_v;
+            break;
           }
         }
       }
     }
 
-    // Finally, we insert the new duplicate boundary elements for the crack interface.
+    // Finally, we insert the new duplicate boundary elements for the crack interface and
+    // also renumber the original boundary elements. To renumber the original boundary
+    // elements in the mesh, we use the updated vertex connectivity from the torn elements
+    // in the new mesh (done above).
     const mfem::Table &elem_to_face = orig_mesh->ElementToFaceTable();
-    for (auto be : crack_bdr_elem)
+    for (int be = 0; be < orig_mesh->GetNBE(); be++)
     {
-      // Find index of the crack face in the old element, which should be the same as in
-      // the new (torn) element.
+      // Whether on the crack or not, we renumber the boundary element vertices as needed
+      // based on the neighboring element. For non-crack boundary elements, both
+      // neighboring elements must be part of the same connected component. First we find
+      // the index of the face in the old element, which should match the new element.
       int f, o, e1, e2;
       orig_mesh->GetBdrElementFace(be, &f, &o);
       orig_mesh->GetFaceElements(f, &e1, &e2);
-      const int *faces = elem_to_face.GetRow(e2);
+      MFEM_VERIFY(e1 >= 0, "Boundary element with no attached elements!");
+      const int *faces = elem_to_face.GetRow(e1);
       int i;
-      for (i = 0; i < elem_to_face.RowSize(e2); i++)
+      for (i = 0; i < elem_to_face.RowSize(e1); i++)
       {
         if (faces[i] == f)
         {
           break;
         }
       }
-      MFEM_VERIFY(i < elem_to_face.RowSize(e2), "Unable to locate face in element!");
+      MFEM_VERIFY(i < elem_to_face.RowSize(e1), "Unable to locate face in element!");
 
-      // Add the interface boundary element attached to element 2 (the other part of the
-      // pair has been attached to element 1 in the previous step).
-      mfem::Element *bdr_el = orig_mesh->GetFace(f)->Duplicate(new_mesh.get());
-      bdr_el->SetAttribute(orig_mesh->GetBdrAttribute(be));
-      const mfem::Element *el = new_mesh->GetElement(e2);
+      // Update the boundary element vertices.
+      mfem::Element *bdr_el = new_mesh->GetBdrElement(be);
+      const mfem::Element *el = new_mesh->GetElement(e1);
       for (int j = 0; j < bdr_el->GetNVertices(); j++)
       {
         bdr_el->GetVertices()[j] = el->GetVertices()[el->GetFaceVertices(i)[j]];
       }
-      new_mesh->AddBdrElement(bdr_el);
+
+      // Add the duplicate boundary element for boundary elements on the crack.
+      if (crack_bdr_elem.find(be) != crack_bdr_elem.end())
+      {
+        faces = elem_to_face.GetRow(e2);
+        for (i = 0; i < elem_to_face.RowSize(e2); i++)
+        {
+          if (faces[i] == f)
+          {
+            break;
+          }
+        }
+        MFEM_VERIFY(i < elem_to_face.RowSize(e2), "Unable to locate face in element!");
+
+        // Add the interface boundary element attached to element 2 (the other part of the
+        // pair has been attached to element 1 in the previous step).
+        bdr_el = bdr_el->Duplicate(new_mesh.get());
+        el = new_mesh->GetElement(e2);
+        for (int j = 0; j < bdr_el->GetNVertices(); j++)
+        {
+          bdr_el->GetVertices()[j] = el->GetVertices()[el->GetFaceVertices(i)[j]];
+        }
+        new_mesh->AddBdrElement(bdr_el);
+      }
     }
   }
 
@@ -2911,11 +2931,11 @@ int AddInterfaceBdrElements(std::unique_ptr<mfem::Mesh> &orig_mesh,
         new_mesh->AddBdrElement(bdr_el);
         if (new_face_bdr_elem[f] > 1)
         {
-          // Flip order of vertices to reverse normal direction of second added element.
-          mfem::Element *bdr_el2 = bdr_el->Duplicate(new_mesh.get());
-          std::reverse(bdr_el2->GetVertices(),
-                       bdr_el2->GetVertices() + bdr_el2->GetNVertices());
-          new_mesh->AddBdrElement(bdr_el2);
+          // Flip order of vertices to reverse normal direction of the second added element.
+          bdr_el = bdr_el->Duplicate(new_mesh.get());
+          std::reverse(bdr_el->GetVertices(),
+                       bdr_el->GetVertices() + bdr_el->GetNVertices());
+          new_mesh->AddBdrElement(bdr_el);
           if constexpr (false)
           {
             Mpi::Print("Adding two boundary elements with attribute {:d} from elements "
