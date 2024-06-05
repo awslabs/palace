@@ -27,9 +27,6 @@
 #include "utils/prettyprint.hpp"
 #include "utils/timer.hpp"
 
-// XX TODO WIP DEBUG
-#define CRACK_VERTEX_PERTURBATION 0
-
 namespace palace
 {
 
@@ -2951,37 +2948,6 @@ int AddInterfaceBdrElements(std::unique_ptr<mfem::Mesh> &orig_mesh,
         }
       }
     }
-  }
-
-  // XX TODO WIP DEBUG
-  if (CRACK_VERTEX_PERTURBATION)
-  {
-    // Perturb newly inserted vertices toward the centroid of their connected components
-    for (const auto &[orig_v, vert_components] : crack_vert_duplicates)
-    {
-      for (const auto &[dup_v, component] : vert_components)
-      {
-        mfem::Vector centroid(orig_mesh->SpaceDimension());
-        for (const auto e : component)
-        {
-          double pt_data[3];
-          mfem::Vector pt(pt_data, orig_mesh->SpaceDimension());
-          mfem::ElementTransformation &T = *orig_mesh->GetElementTransformation(e);
-          T.Transform(mfem::Geometries.GetCenter(T.GetGeometryType()), pt);
-          centroid += pt;
-        }
-        centroid /= component.size();
-        for (int d = 0; d < centroid.Size(); d++)
-        {
-          const double delta = (centroid(d) - new_mesh->GetVertex(dup_v)[d]) * 0.25;
-          new_mesh->GetVertex(dup_v)[d] += delta;
-          new_mesh->GetVertex(orig_v)[d] -= delta;
-        }
-      }
-    }
-
-    // Don't set high-order node information in this case (use vertices)
-    orig_mesh->SetCurvature(-1);
   }
 
   // Finalize the new mesh topology, and copy mesh curvature information if needed.
