@@ -957,13 +957,14 @@ BoundingBox BoundingBoxFromPointCloud(MPI_Comm comm,
 
     // Use the discovered vertex to define a second direction and thus a plane. n_1 and n_2
     // now define a planar coordinate system intersecting the main diagonal, and two
-    // opposite edges of the cuboid. Now look for a component that maximizes distance from
-    // the planar system: complete the axes with a cross, then use a dot product to pick
-    // the greatest deviation.
+    // opposite edges of the cuboid.
     const Eigen::Vector3d n_2 =
-        ((t_0 - origin) - (t_0 - origin).dot(n_1) * n_1).normalized();
+        ((t_0 - origin) - ((t_0 - origin).dot(n_1) * n_1)).normalized();
 
-    // Collect the furthest point from the plane.
+    // Collect the furthest point from the plane to determine if the box is planar. Look for
+    // a component that maximizes distance from the planar system: complete the axes with a
+    // cross, then use a dot product to pick the greatest deviation.
+    constexpr double rel_tol = 1.0e-6;
     auto max_distance = PerpendicularDistance(
         {n_1, n_2}, origin,
         *std::max_element(vertices.begin(), vertices.end(),
@@ -972,39 +973,90 @@ BoundingBox BoundingBoxFromPointCloud(MPI_Comm comm,
                             return PerpendicularDistance({n_1, n_2}, origin, x) <
                                    PerpendicularDistance({n_1, n_2}, origin, y);
                           }));
-    constexpr double rel_tol = 1e-6;
-    box.planar = (max_distance < (rel_tol * (v_111 - v_000).norm()));
+    box.planar = (max_distance < rel_tol * (v_111 - v_000).norm());
 
-    // Given numerical tolerance, collect other points with an almost matching distance.
-    const double cooincident_tol = rel_tol * max_distance;
-    std::vector<Eigen::Vector3d> vertices_out_of_plane;
-    std::copy_if(vertices.begin(), vertices.end(),
-                 std::back_inserter(vertices_out_of_plane),
-                 [&](const auto &v)
-                 {
-                   return std::abs(PerpendicularDistance({n_1, n_2}, origin, v) -
-                                   max_distance) < cooincident_tol;
-                 });
+    // For the non-planar case, collect points furthest from the plane and choose the one
+    // closest to the origin as the next vertex which might be (001) or (011).
+    const auto &t_1 = [&]()
+    {
+      if (box.planar)
+      {
+        return t_0;
+      }
+      std::vector<Eigen::Vector3d> vertices_out_of_plane;
+      std::copy_if(vertices.begin(), vertices.end(),
+                   std::back_inserter(vertices_out_of_plane),
+                   [&](const auto &v)
+                   {
+                     return std::abs(PerpendicularDistance({n_1, n_2}, origin, v) -
+                                     max_distance) < rel_tol * max_distance;
+                   });
+      return *std::min_element(vertices_out_of_plane.begin(), vertices_out_of_plane.end(),
+                               [&](const Eigen::Vector3d &x, const Eigen::Vector3d &y)
+                               { return (x - origin).norm() < (y - origin).norm(); });
+    }();
 
     // Given candidates t_0 and t_1, the closer to origin defines v_001.
-    const auto &t_1 =
-        box.planar
-            ? t_0
-            : *std::min_element(vertices_out_of_plane.begin(), vertices_out_of_plane.end(),
-                                [&](const Eigen::Vector3d &x, const Eigen::Vector3d &y)
-                                { return (x - origin).norm() < (y - origin).norm(); });
-    const bool t_0_gt_t_1 =
-        (t_0 - origin).norm() > (t_1 - origin).norm();  // If planar, t_1 == t_0
+    const bool t_0_gt_t_1 = (t_0 - origin).norm() > (t_1 - origin).norm();
     const auto &v_001 = t_0_gt_t_1 ? t_1 : t_0;
     const auto &v_011 = box.planar ? v_111 : (t_0_gt_t_1 ? t_0 : t_1);
 
     // Compute the center as halfway along the main diagonal.
     Vector3dMap(box.center.data()) = 0.5 * (v_000 + v_111);
 
-    // The length in each direction is given by traversing the edges of the cuboid in turn.
-    Vector3dMap(box.axes[0].data()) = 0.5 * (v_001 - v_000);
-    Vector3dMap(box.axes[1].data()) = 0.5 * (v_011 - v_001);
-    Vector3dMap(box.axes[2].data()) = 0.5 * (v_111 - v_011);
+    // Compute the box axes. using the 4 extremal points, we find the first two axes as the
+    // edges which are closest to perpendicular. For a perfect rectangular prism point
+    // cloud, we could instead compute the axes and length in each direction using the
+    // found edges of the cuboid, but this does not work for non-rectangular cross-sections
+    // or pyramid shapes
+    {
+      std::array<const Eigen::Vector3d *, 4> verts = {&v_000, &v_001, &v_011, &v_111};
+      Eigen::Vector3d e_0 = Eigen::Vector3d::Zero(), e_1 = Eigen::Vector3d::Zero();
+      double dot_min = mfem::infinity();
+      for (int i = 0; i < 4; i++)
+      {
+        for (int j = 0; j < 4; j++)
+        {
+          if (j == i)
+          {
+            continue;
+          }
+          for (int k = j + 1; k < 4; k++)
+          {
+            if (k == i)
+            {
+              continue;
+            }
+            const auto e_ij = (*verts[j] - *verts[i]).normalized();
+            const auto e_ik = (*verts[k] - *verts[i]).normalized();
+            const auto dot = std::abs(e_ij.dot(e_ik));
+            if (dot < dot_min)
+            {
+              dot_min = dot;
+              e_0 = e_ij;
+              e_1 = e_ik;
+            }
+          }
+        }
+      }
+      Vector3dMap(box.axes[0].data()) = e_0;
+      Vector3dMap(box.axes[1].data()) = e_1;
+      Vector3dMap(box.axes[2].data()) =
+          box.planar ? Eigen::Vector3d::Zero() : e_0.cross(e_1);
+    }
+
+    // Scale axes by length of the box in each direction.
+    std::array<double, 3> l = {0.0};
+    for (const auto &v : {v_000, v_001, v_011, v_111})
+    {
+      const auto v_0 = v - Vector3dMap(box.center.data());
+      l[0] = std::max(l[0], std::abs(v_0.dot(Vector3dMap(box.axes[0].data()))));
+      l[1] = std::max(l[1], std::abs(v_0.dot(Vector3dMap(box.axes[1].data()))));
+      l[2] = std::max(l[2], std::abs(v_0.dot(Vector3dMap(box.axes[2].data()))));
+    }
+    Vector3dMap(box.axes[0].data()) *= l[0];
+    Vector3dMap(box.axes[1].data()) *= l[1];
+    Vector3dMap(box.axes[2].data()) *= l[2];
 
     // Make sure the longest dimension comes first.
     std::sort(box.axes.begin(), box.axes.end(), [](const auto &x, const auto &y)

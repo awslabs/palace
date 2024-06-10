@@ -37,11 +37,14 @@ UniformElementData::UniformElementData(const std::array<double, 3> &input_dir,
                  input_dir, angle_warning_deg, normals[0], deviations_deg[0], normals[1],
                  deviations_deg[1], normals[2], deviations_deg[2]);
   }
-  MFEM_VERIFY(std::any_of(deviations_deg.begin(), deviations_deg.end(),
-                          [](double x) { return x < angle_error_deg; }),
-              "Specified direction does not align sufficiently with bounding box axes ("
-                  << deviations_deg[0] << ", " << deviations_deg[1] << ", "
-                  << deviations_deg[2] << " vs. tolerance " << angle_error_deg << ")!");
+  if (std::none_of(deviations_deg.begin(), deviations_deg.end(),
+                   [](double x) { return x < angle_error_deg; }))
+  {
+    Mpi::Barrier(mesh.GetComm());
+    MFEM_ABORT("Specified direction does not align sufficiently with bounding box axes ("
+               << deviations_deg[0] << ", " << deviations_deg[1] << ", "
+               << deviations_deg[2] << " vs. tolerance " << angle_error_deg << ")!");
+  }
   direction.SetSize(input_dir.size());
   std::copy(input_dir.begin(), input_dir.end(), direction.begin());
   direction /= direction.Norml2();
