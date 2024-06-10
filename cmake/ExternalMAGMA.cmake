@@ -78,6 +78,7 @@ file(WRITE ${CMAKE_BINARY_DIR}/extern/magma-cmake/make.inc.cmake
 string(REPLACE ";" "; " MAGMA_OPTIONS_PRINT "${MAGMA_OPTIONS}")
 message(STATUS "MAGMA_OPTIONS: ${MAGMA_OPTIONS_PRINT}")
 
+# Note: MAGMA requires Python < 3.12 for patch step as of June 2024
 include(ExternalProject)
 ExternalProject_Add(magma
   DEPENDS           ${MAGMA_DEPENDENCIES}
