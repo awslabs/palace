@@ -61,7 +61,7 @@ std::unordered_map<int, int> CheckMesh(const mfem::Mesh &, const std::vector<int
 // Adding boundary elements for material interfaces and exterior boundaries, and "crack"
 // desired internal boundary elements to disconnect the elements on either side.
 int AddInterfaceBdrElements(std::unique_ptr<mfem::Mesh> &, std::unordered_map<int, int> &,
-                            const std::vector<int> &, bool, bool);
+                            const std::vector<int> &, bool, double, bool);
 
 // Generate element-based mesh partitioning, using either a provided file or METIS.
 std::unique_ptr<int[]> GetMeshPartitioning(const mfem::Mesh &, int,
@@ -207,9 +207,9 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(MPI_Comm comm, const IoData &iodata)
       while (!success)
       {
         // May require multiple calls due to early exit/retry approach.
-        success = AddInterfaceBdrElements(smesh, face_to_be, crack_bdr_attr_list,
-                                          iodata.model.refine_crack_elements,
-                                          iodata.model.add_bdr_elements);
+        success = AddInterfaceBdrElements(
+            smesh, face_to_be, crack_bdr_attr_list, iodata.model.refine_crack_elements,
+            iodata.model.crack_displ_factor, iodata.model.add_bdr_elements);
       }
     }
 
@@ -2416,7 +2416,8 @@ public:
 int AddInterfaceBdrElements(std::unique_ptr<mfem::Mesh> &orig_mesh,
                             std::unordered_map<int, int> &face_to_be,
                             const std::vector<int> &crack_bdr_attr_list,
-                            bool refine_crack_elem, bool add_bdr_elem)
+                            bool refine_crack_elem, double crack_displ_factor,
+                            bool add_bdr_elem)
 {
   // Return if nothing to do. Otherwise, count vertices and boundary elements to add.
   if (crack_bdr_attr_list.empty() && !add_bdr_elem)
@@ -2964,7 +2965,7 @@ int AddInterfaceBdrElements(std::unique_ptr<mfem::Mesh> &orig_mesh,
   // perturbation to separate the duplicated boundary elements on either side and prevent
   // them from lying exactly on top of each other. This is mostly just for visualization
   // and can be increased in magnitude for debugging.
-  if (!crack_bdr_attr_list.empty() && !crack_bdr_elem.empty())
+  if (!crack_bdr_attr_list.empty() && !crack_bdr_elem.empty() && crack_displ_factor > 0.0)
   {
     // mfem::Mesh::MoveNodes expects byNODES ordering when using vertices.
     mfem::GridFunction *nodes = new_mesh->GetNodes();
@@ -3076,7 +3077,7 @@ int AddInterfaceBdrElements(std::unique_ptr<mfem::Mesh> &orig_mesh,
     // the displacements at seam vertices (and associated high-order nodes on seam edges) to
     // to zero, because the normals from both sides will average out to zero.
     displacements *=
-        (1.0e-3 * h_min / (nodes ? nodes->FESpace()->GetMaxElementOrder() : 1));
+        (crack_displ_factor * h_min / (nodes ? nodes->FESpace()->GetMaxElementOrder() : 1));
     new_mesh->MoveNodes(displacements);
   }
 
