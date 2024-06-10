@@ -2759,7 +2759,7 @@ int AddInterfaceBdrElements(std::unique_ptr<mfem::Mesh> &orig_mesh,
 
   // Add duplicated vertices from interior boundary cracking, renumber the vertices of
   // domain and boundary elements to tear the mesh, and add new crack boundary elements.
-  if (!crack_bdr_attr_list.empty())
+  if (!crack_bdr_attr_list.empty() && !crack_bdr_elem.empty())
   {
     // Add duplicate vertices. We assign the vertex number of the duplicated vertex in order
     // to update the element connectivities in the next step.
@@ -2869,7 +2869,7 @@ int AddInterfaceBdrElements(std::unique_ptr<mfem::Mesh> &orig_mesh,
   }
 
   // Add new boundary elements.
-  if (add_bdr_elem)
+  if (add_bdr_elem && !new_face_bdr_elem.empty())
   {
     // Some (1-based) boundary attributes may be empty since they were removed from the
     // original mesh, but to keep attributes the same as config file we don't compress the
@@ -2950,13 +2950,136 @@ int AddInterfaceBdrElements(std::unique_ptr<mfem::Mesh> &orig_mesh,
     }
   }
 
-  // Finalize the new mesh topology, and copy mesh curvature information if needed.
+  // Finalize the new mesh topology, and copy mesh curvature information if needed. This
+  // copies the nodes over correctly accounting for the element topology changes (the number
+  // of elements in the mesh has not changed, just their connectivity has).
   constexpr bool generate_bdr = false;
   new_mesh->FinalizeTopology(generate_bdr);
   if (orig_mesh->GetNodes())
   {
     TransferHighOrderNodes(*orig_mesh, *new_mesh);
   }
+
+  // If we have added cracks for interior boundary elements, apply a very very small
+  // perturbation to separate the duplicated boundary elements on either side and prevent
+  // them from lying exactly on top of each other. This is mostly just for visualization
+  // and can be increased in magnitude for debugging.
+  if (!crack_bdr_attr_list.empty() && !crack_bdr_elem.empty())
+  {
+    // mfem::Mesh::MoveNodes expects byNODES ordering when using vertices.
+    mfem::GridFunction *nodes = new_mesh->GetNodes();
+    mfem::Ordering::Type ordering =
+        nodes ? nodes->FESpace()->GetOrdering() : mfem::Ordering::byNODES;
+    int sdim = new_mesh->SpaceDimension();
+    int nv = nodes ? nodes->Size() / sdim : new_mesh->GetNV();
+    auto Index = [&](int v, int d)
+    { return (ordering == mfem::Ordering::byVDIM) ? sdim * v + d : d * nv + v; };
+    mfem::Vector normal(sdim);
+    mfem::IsoparametricTransformation T;
+    mfem::Array<int> dofs;
+
+    // Compute the displacement as the average normal of the attached boundary elements.
+    mfem::Vector displacements(nv * sdim);
+    displacements = 0.0;
+    double h_min = mfem::infinity();
+    const mfem::Table &elem_to_face = orig_mesh->ElementToFaceTable();
+    const mfem::Table &new_elem_to_face = new_mesh->ElementToFaceTable();
+    for (auto be : crack_bdr_elem)
+    {
+      // Get the neighboring elements (same indices in the old and new mesh).
+      int f, o, e1, e2;
+      orig_mesh->GetBdrElementFace(be, &f, &o);
+      orig_mesh->GetFaceElements(f, &e1, &e2);
+
+      // Perturb both new boundary elements in opposite directions.
+      for (auto e : {e1, e2})
+      {
+        // Find the index of the face in the old element, which matches the new element, so
+        // we can get the list of all vertices or nodes to perturb.
+        const int *faces = elem_to_face.GetRow(e);
+        int i;
+        for (i = 0; i < elem_to_face.RowSize(e); i++)
+        {
+          if (faces[i] == f)
+          {
+            break;
+          }
+        }
+        MFEM_VERIFY(i < elem_to_face.RowSize(e), "Unable to locate face in element!");
+
+        // Compute the element normal, oriented to point outward from element 1 initially.
+        int new_f = new_elem_to_face.GetRow(e)[i];
+        if (e == e1)
+        {
+          new_mesh->GetFaceTransformation(new_f, &T);
+          const mfem::IntegrationPoint &ip =
+              mfem::Geometries.GetCenter(T.GetGeometryType());
+          T.SetIntPoint(&ip);
+          mfem::CalcOrtho(T.Jacobian(), normal);
+          double s = normal.Norml2();
+          h_min = std::min(h_min, std::sqrt(s));
+          normal /= -s;  // We could also area-weight the average normal
+        }
+        else  // e == e2
+        {
+          normal *= -1.0;
+        }
+
+        // For all "nodes" associated with this crack face, update the direction of their
+        // displacements.
+        auto NodeUpdate = [&](int v)
+        {
+          for (int d = 0; d < sdim; d++)
+          {
+            const int idx = Index(v, d);
+            displacements(idx) += normal(d);
+          }
+        };
+        if (nodes)
+        {
+          nodes->FESpace()->GetFaceDofs(new_f, dofs);
+          for (int j = 0; j < dofs.Size(); j++)
+          {
+            NodeUpdate(dofs[j]);
+          }
+        }
+        else
+        {
+          const mfem::Element *el = new_mesh->GetElement(e);
+          for (int j = 0; j < el->GetNFaceVertices(i); j++)
+          {
+            NodeUpdate(el->GetVertices()[el->GetFaceVertices(i)[j]]);
+          }
+        }
+      }
+    }
+    for (int v = 0; v < nv; v++)
+    {
+      double s = 0.0;
+      for (int d = 0; d < sdim; d++)
+      {
+        const int idx = Index(v, d);
+        s += displacements(idx) * displacements(idx);
+      }
+      if (s > 0.0)
+      {
+        s = std::sqrt(s);
+        for (int d = 0; d < sdim; d++)
+        {
+          const int idx = Index(v, d);
+          displacements(idx) /= s;
+        }
+      }
+    }
+
+    // Scale and apply the displacements. We don't need to do anything special to constrain
+    // the displacements at seam vertices (and associated high-order nodes on seam edges) to
+    // to zero, because the normals from both sides will average out to zero.
+    displacements *=
+        (1.0e-3 * h_min / (nodes ? nodes->FESpace()->GetMaxElementOrder() : 1));
+    new_mesh->MoveNodes(displacements);
+  }
+
   orig_mesh = std::move(new_mesh);
   return 1;  // Success
 }

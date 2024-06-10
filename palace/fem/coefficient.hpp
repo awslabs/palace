@@ -364,7 +364,7 @@ inline double InterfaceDielectricCoefficient<InterfaceDielectricType::DEFAULT>::
     U.GetVectorValue(*FET.Elem1, FET.Elem1->GetIntPoint(), V);
     if (FET.Elem2)
     {
-      // Double-sided, not a true boundary. Just average the solution from both sides.
+      // Double-sided, not a true boundary. Just average the field solution from both sides.
       double W_data[3];
       mfem::Vector W(W_data, V.Size());
       U.GetVectorValue(*FET.Elem2, FET.Elem2->GetIntPoint(), W);
