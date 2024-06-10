@@ -415,6 +415,18 @@ void IoData::CheckConfiguration()
   {
     solver.linear.mg_smooth_order = std::max(2 * solver.order, 4);
   }
+  if (solver.linear.ams_singular_op < 0)
+  {
+    solver.linear.ams_singular_op =
+        (problem.type == config::ProblemData::Type::MAGNETOSTATIC);
+  }
+  if (solver.linear.amg_agg_coarsen < 0)
+  {
+    solver.linear.amg_agg_coarsen =
+        (problem.type == config::ProblemData::Type::ELECTROSTATIC ||
+         problem.type == config::ProblemData::Type::MAGNETOSTATIC ||
+         problem.type == config::ProblemData::Type::TRANSIENT);
+  }
 
   // Configure settings for quadrature rules and partial assembly.
   BilinearForm::pa_order_threshold = solver.pa_order_threshold;

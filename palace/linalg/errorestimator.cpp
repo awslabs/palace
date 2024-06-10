@@ -76,7 +76,7 @@ auto ConfigureLinearSolver(const FiniteElementSpaceHierarchy &fespaces, double t
   }
   else
   {
-    auto amg = std::make_unique<BoomerAmgSolver>(1, 1, 0);
+    auto amg = std::make_unique<BoomerAmgSolver>(1, 1, true, 0);
     amg->SetStrengthThresh(0.8);  // More coarsening to save memory
     if (fespaces.GetNumLevels() > 1)
     {

@@ -137,7 +137,7 @@ struct RefinementData
 {
 public:
   // Non-dimensional tolerance used to specify convergence of adaptive mesh refinement.
-  double tol = 1e-2;
+  double tol = 1.0e-2;
 
   // Maximum number of iterations to perform during adaptive mesh refinement.
   int max_it = 0;
@@ -864,7 +864,15 @@ public:
   bool superlu_3d = false;
 
   // Option to use vector or scalar Pi-space corrections for the AMS preconditioner.
-  bool ams_vector = false;
+  bool ams_vector_interp = false;
+
+  // Option to tell the AMS solver that the operator is singular, like for magnetostatic
+  // problems.
+  int ams_singular_op = -1;
+
+  // Option to use aggressive coarsening for Hypre AMG solves (with BoomerAMG or AMS).
+  // Typically use this when the operator is positive definite.
+  int amg_agg_coarsen = -1;
 
   // Relative tolerance for solving linear systems in divergence-free projector.
   double divfree_tol = 1.0e-12;
