@@ -434,7 +434,7 @@ eigenmode simulation type.
 `"DivFreeMaxIts" [1000]` :  Maximum number of iterations for divergence-free cleaning use in
 the eigenmode simulation type.
 
-`"EstimatorTol" [1e-6]` :  Relative tolerance for flux projection used in the
+`"EstimatorTol" [1.0e-6]` :  Relative tolerance for flux projection used in the
 error estimate calculation.
 
 `"EstimatorMaxIts" [10000]` :  Maximum number of iterations for flux projection use in the
@@ -465,5 +465,7 @@ vectors in Krylov subspace methods or other parts of the code.
   - `"STRUMPACKCompressionTol" [1.0e-3]`
   - `"STRUMPACKLossyPrecision" [16]`
   - `"STRUMPACKButterflyLevels" [1]`
-  - `"SuperLU3D" [false]`
-  - `"AMSVector" [false]`
+  - `"SuperLU3DCommunicator" [false]`
+  - `"AMSVectorInterpolation" [false]`
+  - `"AMSSingularOperator" [false]`
+  - `"AMGAggressiveCoarsening" [false]`

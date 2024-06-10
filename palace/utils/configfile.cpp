@@ -1705,8 +1705,10 @@ void LinearSolverData::SetUp(json &solver)
   strumpack_lossy_precision =
       linear->value("STRUMPACKLossyPrecision", strumpack_lossy_precision);
   strumpack_butterfly_l = linear->value("STRUMPACKButterflyLevels", strumpack_butterfly_l);
-  superlu_3d = linear->value("SuperLU3D", superlu_3d);
-  ams_vector = linear->value("AMSVector", ams_vector);
+  superlu_3d = linear->value("SuperLU3DCommunicator", superlu_3d);
+  ams_vector_interp = linear->value("AMSVectorInterpolation", ams_vector_interp);
+  ams_singular_op = linear->value("AMSSingularOperator", ams_singular_op);
+  amg_agg_coarsen = linear->value("AMGAggressiveCoarsening", amg_agg_coarsen);
 
   // Other linear solver options.
   divfree_tol = linear->value("DivFreeTol", divfree_tol);
@@ -1743,8 +1745,10 @@ void LinearSolverData::SetUp(json &solver)
   linear->erase("STRUMPACKCompressionTol");
   linear->erase("STRUMPACKLossyPrecision");
   linear->erase("STRUMPACKButterflyLevels");
-  linear->erase("SuperLU3D");
-  linear->erase("AMSVector");
+  linear->erase("SuperLU3DCommunicator");
+  linear->erase("AMSVectorInterpolation");
+  linear->erase("AMSSingularOperator");
+  linear->erase("AMGAggressiveCoarsening");
 
   linear->erase("DivFreeTol");
   linear->erase("DivFreeMaxIts");
@@ -1785,8 +1789,11 @@ void LinearSolverData::SetUp(json &solver)
     std::cout << "STRUMPACKCompressionTol: " << strumpack_lr_tol << '\n';
     std::cout << "STRUMPACKLossyPrecision: " << strumpack_lossy_precision << '\n';
     std::cout << "STRUMPACKButterflyLevels: " << strumpack_butterfly_l << '\n';
-    std::cout << "SuperLU3D: " << superlu_3d << '\n';
-    std::cout << "AMSVector: " << ams_vector << '\n';
+    std::cout << "SuperLU3DCommunicator: " << superlu_3d << '\n';
+    std::cout << "AMSVectorInterpolation: " << ams_vector_interp << '\n';
+    std::cout << "AMSSingularOperator: " << ams_singular_op << '\n';
+    std::cout << "AMGAggressiveCoarsening: " << amg_agg_coarsen << '\n';
+
     std::cout << "DivFreeTol: " << divfree_tol << '\n';
     std::cout << "DivFreeMaxIts: " << divfree_max_it << '\n';
     std::cout << "EstimatorTol: " << estimator_tol << '\n';

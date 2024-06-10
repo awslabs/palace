@@ -64,7 +64,7 @@ scale based on the bounding box of the computational domain.
 
 with
 
-`"Tol" [1e-2]` : Relative error convergence tolerance for adaptive mesh refinement (AMR).
+`"Tol" [1.0e-2]` : Relative error convergence tolerance for adaptive mesh refinement (AMR).
 
 `"MaxIts" [0]` : Maximum number of iterations of AMR to perform.
 

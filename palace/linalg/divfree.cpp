@@ -83,7 +83,7 @@ DivFreeSolver<VecType>::DivFreeSolver(
 
   // The system matrix for the projection is real and SPD.
   auto amg = std::make_unique<MfemWrapperSolver<OperType>>(
-      std::make_unique<BoomerAmgSolver>(1, 1, 0));
+      std::make_unique<BoomerAmgSolver>(1, 1, true, 0));
   std::unique_ptr<Solver<OperType>> pc;
   if (h1_fespaces.GetNumLevels() > 1)
   {
