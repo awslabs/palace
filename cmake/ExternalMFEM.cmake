@@ -360,8 +360,6 @@ set(MFEM_PATCH_FILES
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_mesh_part_const.diff"
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_par_tet_mesh_fix_dev.diff"
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_gmsh_parser_performance.diff"
-  "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_nc_internal_bdr_project_fix.diff"
-  "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_cuda_atomicadd_fix.diff"
 )
 
 include(ExternalProject)
