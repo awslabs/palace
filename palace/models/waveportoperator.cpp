@@ -1092,7 +1092,8 @@ void WavePortOperator::SetUpBoundaryProperties(const IoData &iodata,
   // are touching and share one or more edges.
   mfem::Array<int> dbc_bcs;
   dbc_bcs.Reserve(static_cast<int>(iodata.boundaries.pec.attributes.size() +
-                                   iodata.boundaries.auxpec.attributes.size()));
+                                   iodata.boundaries.auxpec.attributes.size() +
+                                   iodata.boundaries.conductivity.size()));
   for (auto attr : iodata.boundaries.pec.attributes)
   {
     if (attr <= 0 || attr > bdr_attr_max)
@@ -1108,6 +1109,17 @@ void WavePortOperator::SetUpBoundaryProperties(const IoData &iodata,
       continue;  // Can just ignore if wrong
     }
     dbc_bcs.Append(attr);
+  }
+  for (const auto &data : iodata.boundaries.conductivity)
+  {
+    for (auto attr : data.attributes)
+    {
+      if (attr <= 0 || attr > bdr_attr_max)
+      {
+        continue;  // Can just ignore if wrong
+      }
+      dbc_bcs.Append(attr);
+    }
   }
   // If user accidentally specifies a surface as both "PEC" and "WavePortPEC", this is fine
   // so allow for duplicates in the attribute list.
