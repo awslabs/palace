@@ -2615,6 +2615,7 @@ int AddInterfaceBdrElements(std::unique_ptr<mfem::Mesh> &orig_mesh,
         }
       }
       static int new_ne_ref = 0;
+      static int new_ref_its = 0;
       if (!elem_to_refine.empty())
       {
         // Locally refine the mesh using conformal refinement. If necessary, convert the
@@ -2640,15 +2641,16 @@ int AddInterfaceBdrElements(std::unique_ptr<mfem::Mesh> &orig_mesh,
           // elements at the cost of a potential minor mesh quality degredation.
           refinements.Append(mfem::Refinement(e, mfem::Refinement::X));
         }
-        if (mesh::CheckElements(*orig_mesh).has_simplices &&
-            !mesh::CheckRefinementFlags(*orig_mesh))
+        if (mesh::CheckElements(*orig_mesh).has_simplices)
         {
           // Mark tetrahedral mesh for refinement before doing local refinement. This is a
           // bit of a strange pattern to override the standard conforming refinement of the
           // mfem::Mesh class. We want to implement our own edge marking of the tetrahedra,
           // so we move the mesh to a constructed derived class object, mark it, and then
           // move assign it to the original base class object before refining. All of these
-          // moves should be cheap without any extra memory allocation.
+          // moves should be cheap without any extra memory allocation. Also, we mark the
+          // mesh every time to ensure multiple rounds of refinement target the interior
+          // boundary (we don't care about preserving the refinement hierarchy).
           constexpr bool refine = true, fix_orientation = false;
           InterfaceRefinementMesh ref_mesh(std::move(*orig_mesh), crack_vert_duplicates);
           ref_mesh.Finalize(refine, fix_orientation);
@@ -2656,14 +2658,16 @@ int AddInterfaceBdrElements(std::unique_ptr<mfem::Mesh> &orig_mesh,
         }
         orig_mesh->GeneralRefinement(refinements, 0);
         new_ne_ref += orig_mesh->GetNE() - ne;
+        new_ref_its++;
         face_to_be.clear();
         return 0;  // Mesh was refined (conformally), start over
       }
       else if (new_ne_ref > 0)
       {
-        Mpi::Print("Added {:d} elements from local mesh refinement of under-resolved "
-                   "interior boundaries\n",
-                   new_ne_ref);
+        Mpi::Print(
+            "Added {:d} elements in {:d} iterations of local bisection for under-resolved "
+            "interior boundaries\n",
+            new_ne_ref, new_ref_its);
       }
     }
 
