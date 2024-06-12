@@ -367,9 +367,13 @@ void RefineMesh(const IoData &iodata, std::vector<std::unique_ptr<mfem::ParMesh>
   // Simplex meshes need to be re-finalized in order to use local refinement (see
   // the docstring for mfem::Mesh::UniformRefinement).
   const auto element_types = mesh::CheckElements(*mesh.back());
-  if (uniform_ref_levels > 0 && element_types.has_simplices)
+  if (element_types.has_simplices && uniform_ref_levels > 0 &&
+      (max_region_ref_levels > 0 || iodata.model.refinement.max_it > 0))
   {
     constexpr bool refine = true, fix_orientation = false;
+    Mpi::Print("\nFlattening mesh sequence:\n Local mesh refinement will start from the "
+               "final uniformly-refined mesh\n");
+    mesh.erase(mesh.begin(), mesh.end() - 1);
     mesh.back()->Finalize(refine, fix_orientation);
   }
 

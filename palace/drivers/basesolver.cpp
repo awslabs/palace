@@ -147,7 +147,7 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
       Mpi::Warning("AMR is not currently supported for transient simulations!\n");
       return false;
     }
-    return refinement.max_it > 0;
+    return (refinement.max_it > 0);
   }();
   if (use_amr && mesh.size() > 1)
   {
