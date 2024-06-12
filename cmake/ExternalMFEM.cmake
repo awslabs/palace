@@ -164,22 +164,18 @@ if(PALACE_BUILD_EXTERNAL_DEPS)
     )
   endif()
 
-  # HYPRE is built with cusparse, curand (or HIP counterparts).
+  # HYPRE is built with cusparse, curand (or HIP counterparts), and these are added to
+  # HYPRE_LIBRARIES by the MFEM CMake build. However, this ignores the include directories
+  # (for #include <cusparse.h>, for example), which we can add this way via CMake defining
+  # CUDAToolkit_INCLUDE_DIRS (and the HIP counterpart).
   if(PALACE_WITH_CUDA)
-    find_package(CUDAToolkit REQUIRED)
-    get_target_property(HYPRE_CURAND_LIBRARY CUDA::curand LOCATION)
-    get_target_property(HYPRE_CUSPARSE_LIBRARY CUDA::cusparse LOCATION)
     list(APPEND MFEM_OPTIONS
-      "-DHYPRE_REQUIRED_LIBRARIES=${HYPRE_CURAND_LIBRARY}$<SEMICOLON>${HYPRE_CUSPARSE_LIBRARY}"
+      "-DHYPRE_REQUIRED_PACKAGES=CUDAToolkit"
     )
   endif()
   if(PALACE_WITH_HIP)
-    find_package(rocrand REQUIRED)
-    find_package(rocsparse REQUIRED)
-    get_target_property(HYPRE_ROCRAND_LIBRARY roc::rocrand LOCATION)
-    get_target_property(HYPRE_ROCSPARSE_LIBRARY roc::rocsparse LOCATION)
     list(APPEND MFEM_OPTIONS
-      "-DHYPRE_REQUIRED_LIBRARIES=${HYPRE_ROCRAND_LIBRARY}$<SEMICOLON>${HYPRE_ROCSPARSE_LIBRARY}"
+      "-DHYPRE_REQUIRED_PACKAGES=rocsparse"
     )
   endif()
 
@@ -241,11 +237,11 @@ Intel C++ compiler for MUMPS and STRUMPACK dependencies")
       list(APPEND SUPERLU_REQUIRED_PACKAGES "OpenMP")
     endif()
     if(PALACE_WITH_CUDA)
-      list(APPEND SUPERLU_REQUIRED_PACKAGES "CUDA")
+      list(APPEND SUPERLU_REQUIRED_PACKAGES "CUDAToolkit")
       list(APPEND SUPERLU_REQUIRED_LIBRARIES ${SUPERLU_STRUMPACK_CUDA_LIBRARIES})
     endif()
     if(PALACE_WITH_HIP)
-      list(APPEND SUPERLU_REQUIRED_PACKAGES "HIP")
+      list(APPEND SUPERLU_REQUIRED_PACKAGES "hipblas$<SEMICOLON>rocblas")
       list(APPEND SUPERLU_REQUIRED_LIBRARIES ${SUPERLU_STRUMPACK_ROCM_LIBRARIES})
     endif()
     string(REPLACE ";" "$<SEMICOLON>" SUPERLU_REQUIRED_PACKAGES "${SUPERLU_REQUIRED_PACKAGES}")
@@ -272,11 +268,11 @@ Intel C++ compiler for MUMPS and STRUMPACK dependencies")
       list(APPEND STRUMPACK_REQUIRED_PACKAGES "OpenMP")
     endif()
     if(PALACE_WITH_CUDA)
-      list(APPEND STRUMPACK_REQUIRED_PACKAGES "CUDA")
+      list(APPEND STRUMPACK_REQUIRED_PACKAGES "CUDAToolkit")
       list(APPEND STRUMPACK_REQUIRED_LIBRARIES ${SUPERLU_STRUMPACK_CUDA_LIBRARIES})
     endif()
     if(PALACE_WITH_HIP)
-      list(APPEND STRUMPACK_REQUIRED_PACKAGES "HIP")
+      list(APPEND STRUMPACK_REQUIRED_PACKAGES "hipblas$<SEMICOLON>rocblas")
       list(APPEND STRUMPACK_REQUIRED_LIBRARIES ${SUPERLU_STRUMPACK_ROCM_LIBRARIES})
     endif()
     string(REPLACE ";" "$<SEMICOLON>" STRUMPACK_REQUIRED_PACKAGES "${STRUMPACK_REQUIRED_PACKAGES}")
@@ -364,7 +360,6 @@ set(MFEM_PATCH_FILES
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_mesh_part_const.diff"
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_par_tet_mesh_fix_dev.diff"
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_gmsh_parser_performance.diff"
-  "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_nc_internal_bdr_project_fix.diff"
 )
 
 include(ExternalProject)

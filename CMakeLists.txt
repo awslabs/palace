@@ -50,6 +50,8 @@ if(PALACE_WITH_CUDA AND PALACE_WITH_HIP)
   message(FATAL_ERROR "PALACE_WITH_CUDA is not compatible with PALACE_WITH_HIP")
 endif()
 if(PALACE_WITH_CUDA)
+  # Note: The new behavior of CMake policy CMP0104 will initialize CMAKE_CUDA_ARCHITECTURES
+  # to an (old) compatible value even when not set by the user.
   enable_language(CUDA)
   get_filename_component(NVCC_DIR ${CMAKE_CUDA_COMPILER} DIRECTORY)
   get_filename_component(BIN_NVCC_DIR ${NVCC_DIR} DIRECTORY)

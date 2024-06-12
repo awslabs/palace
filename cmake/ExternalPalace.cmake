@@ -80,9 +80,6 @@ string(REPLACE ";" "; " PALACE_OPTIONS_PRINT "${PALACE_OPTIONS}")
 message(STATUS "PALACE_OPTIONS: ${PALACE_OPTIONS_PRINT}")
 
 include(ExternalProject)
-if(POLICY CMP0114)
-  cmake_policy(SET CMP0114 NEW)
-endif()
 ExternalProject_Add(palace
   DEPENDS           ${PALACE_DEPENDENCIES}
   SOURCE_DIR        ${CMAKE_SOURCE_DIR}/palace
