@@ -120,7 +120,7 @@ assembly routines. The unit tests source code is located in the
 [`test/unit/`](https://github.com/awslabs/palace/blob/main/test/unit/) directory, and can be
 built from within the *Palace* build directory using `make unit-tests`, or from the
 superbuild as `make palace-tests`. The unit tests can be accelerated using MPI and/or
-OpenMP parallelism(when configured with `PALACE_WITH_OPENMP=ON`), but in all cases they are
+OpenMP parallelism (when configured with `PALACE_WITH_OPENMP=ON`), but in all cases they are
 only testing the local operator assembly on each process. The 2D and 3D sample meshes in
 [`test/unit/mesh/`](https://github.com/awslabs/palace/blob/main/test/unit/mesh/) come from
 the [MFEM repository](https://github.com/mfem/mfem/tree/master/data).

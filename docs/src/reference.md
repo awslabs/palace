@@ -298,7 +298,7 @@ where ``\bm{D}_m = \varepsilon_r\bm{E}_m`` is the electric flux density for mode
 the second term on the right-hand side accounts for any lumped capacitive boundaries with
 nonzero circuit capacitance ``C_j``.
 
-The EPR can also be used to estimate mode quality factors due to input-output(I-O) line
+The EPR can also be used to estimate mode quality factors due to input-output (I-O) line
 coupling. The mode coupling quality factor due to the ``j``-th I-O port is given by
 
 ```math
