@@ -1004,39 +1004,56 @@ BoundingBox BoundingBoxFromPointCloud(MPI_Comm comm,
     // Compute the center as halfway along the main diagonal.
     Vector3dMap(box.center.data()) = 0.5 * (v_000 + v_111);
 
-    // Compute the box axes. using the 4 extremal points, we find the first two axes as the
+    // Compute the box axes. Using the 4 extremal points, we find the first two axes as the
     // edges which are closest to perpendicular. For a perfect rectangular prism point
     // cloud, we could instead compute the axes and length in each direction using the
-    // found edges of the cuboid, but this does not work for non-rectangular cross-sections
-    // or pyramid shapes
+    // found edges of the cuboid, but this does not work for non-rectangular prism
+    // cross-sections or pyramid shapes.
     {
       std::array<const Eigen::Vector3d *, 4> verts = {&v_000, &v_001, &v_011, &v_111};
       Eigen::Vector3d e_0 = Eigen::Vector3d::Zero(), e_1 = Eigen::Vector3d::Zero();
       double dot_min = mfem::infinity();
-      for (int i = 0; i < 4; i++)
+      bool found_orthog = false;
+      for (int i_0 = 0; i_0 < 4; i_0++)
       {
-        for (int j = 0; j < 4; j++)
+        for (int j_0 = i_0 + 1; j_0 < 4; j_0++)
         {
-          if (j == i)
+          for (int i_1 = 0; i_1 < 4; i_1++)
           {
-            continue;
+            for (int j_1 = i_1 + 1; j_1 < 4; j_1++)
+            {
+              if (i_1 == i_0 && j_1 == j_0)
+              {
+                continue;
+              }
+              const auto e_ij_0 = (*verts[j_0] - *verts[i_0]).normalized();
+              const auto e_ij_1 = (*verts[j_1] - *verts[i_1]).normalized();
+              const auto dot = std::abs(e_ij_0.dot(e_ij_1));
+              if (dot < dot_min)
+              {
+                dot_min = dot;
+                e_0 = e_ij_0;
+                e_1 = e_ij_1;
+                if (dot_min < rel_tol)
+                {
+                  found_orthog = true;
+                  break;
+                }
+              }
+            }
+            if (found_orthog)
+            {
+              break;
+            }
           }
-          for (int k = j + 1; k < 4; k++)
+          if (found_orthog)
           {
-            if (k == i)
-            {
-              continue;
-            }
-            const auto e_ij = (*verts[j] - *verts[i]).normalized();
-            const auto e_ik = (*verts[k] - *verts[i]).normalized();
-            const auto dot = std::abs(e_ij.dot(e_ik));
-            if (dot < dot_min)
-            {
-              dot_min = dot;
-              e_0 = e_ij;
-              e_1 = e_ik;
-            }
+            break;
           }
+        }
+        if (found_orthog)
+        {
+          break;
         }
       }
       Vector3dMap(box.axes[0].data()) = e_0;
