@@ -1,0 +1,59 @@
+{
+  "Problem": {
+    "Verbose": 5,
+    "Output": "postpro/amr/nonconformal",
+    "Type": "Eigenmode"
+  },
+  "Boundaries": {
+    "PEC": {
+      "Attributes": [2]
+    }
+  },
+  "Model": {
+    "Refinement": {
+      "UniformLevels": 0,
+      "Tol": 0.01,
+      "MaxSize": 2.0e6,
+      "Nonconformal": true,
+      "MaxIts": 10,
+      "UpdateFraction": 0.7
+    },
+    "Mesh": "mesh/cavity_amr.msh",
+    "L0": 0.01
+  },
+  "Domains": {
+    "Postprocessing": {
+      "Energy": [
+        {
+          "Attributes": [1],
+          "Index": 1
+        }
+      ]
+    },
+    "Materials": [
+      {
+        "LossTan": 0.0004,
+        "Permittivity": 2.08,
+        "Attributes": [1],
+        "Permeability": 1.0
+      }
+    ]
+  },
+  "Solver": {
+    "Eigenmode": {
+      "N": 4,
+      "Save": 4,
+      "Tol": 1.0e-12,
+      "StartVectorConstant": true,
+      "Target": 2.0
+    },
+    "Order": 2,
+    "Device": "CPU",
+    "Linear": {
+      "Type": "Default",
+      "Tol": 1.0e-14,
+      "KSPType": "GMRES",
+      "MaxIts": 100
+    }
+  }
+}

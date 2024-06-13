@@ -63,8 +63,10 @@ function testcase(
         @test isdir(postprodir)
         (~, dirs, files) = first(walkdir(postprodir))
         (~, ~, filesref) = first(walkdir(refpostprodir))
+        # Ignore "iterationXX" dirs created when using AMR
+        noniter_dirs = filter(d -> !occursin(r"iteration", d), dirs)
+        @test length(noniter_dirs) == 1 && first(noniter_dirs) == "paraview"
         metafiles = filter(x -> last(splitext(x)) != ".csv", files)
-        @test length(dirs) == 1 && first(dirs) == "paraview"
         @test length(metafiles) == 1 && first(metafiles) == "palace.json"
         @test length(filter(x -> last(splitext(x)) == ".csv", files)) == length(filesref)
 
