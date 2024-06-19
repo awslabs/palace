@@ -43,7 +43,7 @@ std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &, bool);
 // Create a new mesh by splitting all elements of the mesh into simplices or hexes
 // (using tet-to-hex). Optionally preserves curvature of the original mesh by interpolating
 // the high-order nodes with GSLIB.
-void SplitMeshElements(mfem::Mesh &, bool, bool, bool = true);
+void SplitMeshElements(std::unique_ptr<mfem::Mesh> &, bool, bool, bool = true);
 
 // Optionally reorder mesh elements based on MFEM's internal reordeing tools for improved
 // cache usage.
@@ -122,7 +122,7 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(MPI_Comm comm, const IoData &iodata)
     // conformal mesh refinement, or hexes.
     if (iodata.model.make_simplex || iodata.model.make_hex)
     {
-      SplitMeshElements(*smesh, iodata.model.make_simplex, iodata.model.make_hex);
+      SplitMeshElements(smesh, iodata.model.make_simplex, iodata.model.make_hex);
     }
 
     // Optionally reorder elements (and vertices) based on spatial location after loading
@@ -1848,17 +1848,30 @@ mfem::Mesh MeshTetToHex(const mfem::Mesh &orig_mesh)
   return hex_mesh;
 }
 
-void SplitMeshElements(mfem::Mesh &orig_mesh, bool make_simplex, bool make_hex,
-                       bool preserve_curvature)
+void SplitMeshElements(std::unique_ptr<mfem::Mesh> &orig_mesh, bool make_simplex,
+                       bool make_hex, bool preserve_curvature)
 {
   if (!make_simplex && !make_hex)
   {
     return;
   }
-  MFEM_VERIFY(!orig_mesh.Nonconforming(),
-              "Mesh element splitting is not supported for nonconforming meshes!");
-  mfem::Mesh *mesh = &orig_mesh;
+  mfem::Mesh *mesh = orig_mesh.get();
   mfem::Mesh new_mesh;
+
+  // In order to track the mapping from parent mesh element to split mesh elements for
+  // high-order node interpolation, we use a unique attribute per parent mesh element. No
+  // need to call mfem::Mesh::SetAttributes at the end, since we won't use the attribute
+  // list data structure.
+  mfem::Array<int> orig_mesh_attr;
+  auto BackUpAttributes = [&orig_mesh_attr](mfem::Mesh &mesh)
+  {
+    orig_mesh_attr.SetSize(mesh.GetNE());
+    for (int e = 0; e < mesh.GetNE(); e++)
+    {
+      orig_mesh_attr[e] = mesh.GetAttribute(e);
+      mesh.SetAttribute(e, 1 + e);
+    }
+  };
 
   // Convert all element types to simplices.
   if (make_simplex)
@@ -1867,10 +1880,19 @@ void SplitMeshElements(mfem::Mesh &orig_mesh, bool make_simplex, bool make_hex,
     if (element_types.has_hexahedra || element_types.has_prisms ||
         element_types.has_pyramids)
     {
+      MFEM_VERIFY(!mesh->Nonconforming(),
+                  "Mesh element splitting is not supported for nonconforming meshes!");
       MFEM_VERIFY(
           !element_types.has_pyramids,
           "Splitting mesh elements to simplices does not support pyramid elements yet!");
+      if (preserve_curvature && mesh->GetNodes() && !orig_mesh_attr.Size())
+      {
+        BackUpAttributes(*mesh);
+      }
+      int ne = mesh->GetNE();
       new_mesh = mfem::Mesh::MakeSimplicial(*mesh);
+      Mpi::Print("Added {:d} elements to the mesh during conversion to simplices\n",
+                 new_mesh.GetNE() - ne);
       mesh = &new_mesh;
     }
   }
@@ -1882,40 +1904,153 @@ void SplitMeshElements(mfem::Mesh &orig_mesh, bool make_simplex, bool make_hex,
     if (element_types.has_simplices || element_types.has_prisms ||
         element_types.has_pyramids)
     {
+      MFEM_VERIFY(!mesh->Nonconforming(),
+                  "Mesh element splitting is not supported for nonconforming meshes!");
       MFEM_VERIFY(!element_types.has_prisms && !element_types.has_pyramids,
                   "Splitting mesh elements to hexahedra only supports simplex elements "
                   "(tetrahedra) for now!");
+      if (preserve_curvature && mesh->GetNodes() && !orig_mesh_attr.Size())
+      {
+        BackUpAttributes(*mesh);
+      }
+      int ne = mesh->GetNE();
       new_mesh = MeshTetToHex(*mesh);
+      Mpi::Print("Added {:d} elements to the mesh during conversion to hexahedra\n",
+                 new_mesh.GetNE() - ne);
       mesh = &new_mesh;
     }
   }
 
-  // The previous splitting functions remove curvature information from the new mesh. So, if
-  // needed, we interpolate it onto the new mesh with GSLIB.
-  if (preserve_curvature && orig_mesh.GetNodes())
+  // Return if no modifications were made.
+  if (mesh == orig_mesh.get())
   {
-    // Back up the original high-order nodes.
-    mfem::GridFunction *nodes = nullptr;
-    int own_nodes = 1;
-    orig_mesh.SwapNodes(nodes, own_nodes);
+    return;
+  }
 
-    // Prepare to interpolate the grid function for high-order nodes from the old mesh
-    // on the new one.
-    orig_mesh.EnsureNodes();
+  // The previous splitting functions remove curvature information from the new mesh. So, if
+  // needed, we interpolate it onto the new mesh with GSLIB. The topology of the mesh must
+  // be finalized for this to work (assumes FinalizeTopology has been called on the new
+  // mesh).
+  if (preserve_curvature && orig_mesh->GetNodes())
+  {
+    // Prepare to interpolate the grid function for high-order nodes from the old mesh to
+    // the new one. This first sets up the new mesh as a linear mesh and constructs a
+    // separate high-order grid function for storing the interpolated nodes.
     new_mesh.EnsureNodes();
+    const mfem::GridFunction *nodes = orig_mesh->GetNodes();
     const mfem::FiniteElementSpace *fespace = nodes->FESpace();
     mfem::Ordering::Type ordering = fespace->GetOrdering();
     int order = fespace->GetMaxElementOrder();
-    int sdim = orig_mesh.SpaceDimension();
+    int sdim = orig_mesh->SpaceDimension();
     bool discont =
         (dynamic_cast<const mfem::L2_FECollection *>(fespace->FEColl()) != nullptr);
     mfem::FiniteElementSpace new_fespace(&new_mesh, fespace->FEColl(), sdim, ordering);
     mfem::GridFunction new_nodes(&new_fespace);
-    fem::InterpolateFunction(*nodes, new_nodes);
-    if (own_nodes)
+
+    mfem::Array<int> vdofs;
+    mfem::Vector vals, elem_vals, xyz;
+    mfem::DenseMatrix pointmat;
+    int start = 0;
+    for (int e = 0; e < orig_mesh->GetNE(); e++)
     {
-      delete nodes;
+      // Get the high-order nodes restricted to this parent element, always returned
+      // byNODES.
+      fespace->GetElementVDofs(e, vdofs);
+      nodes->GetSubVector(vdofs, vals);
+
+      // Find all child elements of this parent in the split mesh and restore their correct
+      // original attribute.
+      int attr = new_mesh.GetAttribute(start);
+      int end = start;
+      while (end < new_mesh.GetNE() && new_mesh.GetAttribute(end) == attr)
+      {
+        new_mesh.SetAttribute(end++, orig_mesh_attr[e]);
+      }
+
+      // Special case: Parent element is unsplit, no interpolation is needed.
+      if (end == start + 1)
+      {
+        new_fespace.GetElementVDofs(start, vdofs);
+        new_nodes.SetSubVector(vdofs, vals);
+        start = end;
+        continue;
+      }
+
+      // Create a list of points at which to interpolate the high order node information.
+      int npts = 0, offset = 0;
+      for (int i = start; i < end; i++)
+      {
+        npts += new_fespace.GetFE(i)->GetNodes().GetNPoints();
+      }
+      xyz.SetSize(npts * sdim);
+      for (int i = start; i < end; i++)
+      {
+        const mfem::FiniteElement &fe = *new_fespace.GetFE(i);
+        mfem::ElementTransformation &T = *new_mesh.GetElementTransformation(i);
+        T.Transform(fe.GetNodes(), pointmat);
+        for (int j = 0; j < pointmat.Width(); j++)
+        {
+          for (int d = 0; d < sdim; d++)
+          {
+            // Use default ordering byNODES.
+            xyz(d * npts + offset + j) = pointmat(d, j);
+          }
+        }
+        offset += pointmat.Width();
+      }
+
+      // Create a single element linear mesh for interpolation.
+      const mfem::Element *el = orig_mesh->GetElement(e);
+      mfem::Mesh parent_mesh(orig_mesh->Dimension(), el->GetNVertices(), 1, 0,
+                             orig_mesh->SpaceDimension());
+      parent_mesh.AddElement(el->Duplicate(&parent_mesh));
+      for (int i = 0; i < el->GetNVertices(); i++)
+      {
+        int v = parent_mesh.AddVertex(orig_mesh->GetVertex(el->GetVertices()[i]));
+        parent_mesh.GetElement(0)->GetVertices()[i] = v;
+      }
+      constexpr bool generate_bdr = false;
+      parent_mesh.FinalizeTopology(generate_bdr);
+
+      // Create a grid function on the single element parent mesh with the high-order nodal
+      // grid function to interpolate.
+      parent_mesh.EnsureNodes();
+      mfem::FiniteElementSpace parent_fespace(&parent_mesh, fespace->FEColl(), sdim,
+                                              mfem::Ordering::byNODES);
+      mfem::GridFunction parent_nodes(&parent_fespace);
+      MFEM_ASSERT(parent_nodes.Size() == vals.Size(),
+                  "Unexpected size mismatch for high-order node interpolation!");
+      parent_nodes = vals;
+
+      // Interpolate the high-order nodes grid function and copy into the new mesh nodes
+      // grid function.
+      vals.SetSize(npts * sdim);
+      fem::InterpolateFunction(xyz, parent_nodes, vals, mfem::Ordering::byNODES);
+      offset = 0;
+      for (int i = start; i < end; i++)
+      {
+        const int elem_npts = new_fespace.GetFE(i)->GetNodes().GetNPoints();
+        elem_vals.SetSize(elem_npts * sdim);
+        for (int d = 0; d < sdim; d++)
+        {
+          for (int j = 0; j < elem_npts; j++)
+          {
+            // Arrange element values byNODES to align with GetElementVDofs.
+            elem_vals(d * elem_npts + j) = vals(d * npts + offset + j);
+          }
+        }
+        new_fespace.GetElementVDofs(i, vdofs);
+        MFEM_ASSERT(vdofs.Size() == elem_vals.Size(),
+                    "Unexpected size mismatch for high-order node interpolation!");
+        new_nodes.SetSubVector(vdofs, elem_vals);
+        offset += elem_npts;
+      }
+
+      // Prepare for next parent element.
+      start = end;
     }
+    MFEM_VERIFY(start == new_mesh.GetNE(),
+                "Premature abort for high-order curvature in mesh splitting!");
 
     // Finally, copy the nodal grid function to the new mesh.
     new_mesh.SetCurvature(order, discont, sdim, ordering);
@@ -1923,7 +2058,7 @@ void SplitMeshElements(mfem::Mesh &orig_mesh, bool make_simplex, bool make_hex,
                 "Unexpected size mismatch for nodes!");
     new_mesh.SetNodes(new_nodes);
   }
-  orig_mesh = std::move(new_mesh);
+  orig_mesh = std::make_unique<mfem::Mesh>(std::move(new_mesh));  // Call move constructor
 }
 
 void ReorderMeshElements(mfem::Mesh &mesh, bool print)
@@ -2252,7 +2387,7 @@ std::map<int, std::array<int, 2>> CheckMesh(std::unique_ptr<mfem::Mesh> &orig_me
 
     // The element loop works because we know the mapping from old_mesh to new_mesh element
     // indices from the insertion order.
-    mfem::Array<int> vdofs, new_vdofs;
+    mfem::Array<int> vdofs;
     mfem::Vector loc_vec;
     int te = 0;
     for (int e = 0; e < orig_mesh->GetNE(); e++)
@@ -2262,8 +2397,8 @@ std::map<int, std::array<int, 2>> CheckMesh(std::unique_ptr<mfem::Mesh> &orig_me
         // No need for DofTransformation here since spaces are H1 or L2.
         fespace->GetElementVDofs(e, vdofs);
         nodes->GetSubVector(vdofs, loc_vec);
-        new_fespace->GetElementVDofs(te, new_vdofs);
-        new_nodes->SetSubVector(new_vdofs, loc_vec);
+        new_fespace->GetElementVDofs(te, vdofs);
+        new_nodes->SetSubVector(vdofs, loc_vec);
         te++;
       }
     }
