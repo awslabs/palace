@@ -66,7 +66,7 @@ private:
 
   // Operator storage for repeated boundary mode eigenvalue problem solves.
   std::unique_ptr<mfem::HypreParMatrix> Atnr, Atni, Antr, Anti, Annr, Anni;
-  std::unique_ptr<ComplexOperator> B0;
+  std::unique_ptr<ComplexOperator> opB;
   ComplexVector v0, e0;
 
   // Eigenvalue solver for boundary modes.

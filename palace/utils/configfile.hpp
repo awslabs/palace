@@ -443,6 +443,15 @@ public:
   // Port offset for de-embedding [m].
   double d_offset = 0.0;
 
+  // Eigenvalue solver type for boundary mode calculation.
+  enum class EigenSolverType
+  {
+    DEFAULT,
+    SLEPC,
+    ARPACK
+  };
+  EigenSolverType eigen_type = EigenSolverType::DEFAULT;
+
   // Flag for source term in driven and transient simulations.
   bool excitation = false;
 
@@ -647,28 +656,12 @@ public:
   bool mass_orthog = false;
 
   // Eigenvalue solver type.
-  enum class Type
-  {
-    DEFAULT,
-    SLEPC,
-    ARPACK,
-    FEAST
-  };
+  using Type = WavePortData::EigenSolverType;
   Type type = Type::DEFAULT;
 
   // For SLEPc eigenvalue solver, use linearized formulation for quadratic eigenvalue
   // problems.
   bool pep_linear = true;
-
-  // Number of integration points used for the FEAST eigenvalue solver contour.
-  int feast_contour_np = 4;
-
-  // Parameters for the FEAST eigenvalue solver contour.
-  double feast_contour_ub = 0.0;
-  double feast_contour_ar = 1.0;
-
-  // Use more than just the standard single moment for FEAST subspace construction.
-  int feast_moments = 1;
 
   void SetUp(json &solver);
 };

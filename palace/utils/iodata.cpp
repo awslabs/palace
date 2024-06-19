@@ -549,7 +549,6 @@ void IoData::NondimensionalizeInputs(mfem::ParMesh &mesh)
 
   // For eigenmode simulations:
   solver.eigenmode.target *= 2.0 * M_PI * tc;
-  solver.eigenmode.feast_contour_ub *= 2.0 * M_PI * tc;
 
   // For driven simulations:
   solver.driven.min_f *= 2.0 * M_PI * tc;

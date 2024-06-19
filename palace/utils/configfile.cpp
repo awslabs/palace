@@ -1008,6 +1008,12 @@ void LumpedPortBoundaryData::SetUp(json &boundaries)
   }
 }
 
+// Helper for converting string keys to enum for WavePortData::EigenSolverType.
+PALACE_JSON_SERIALIZE_ENUM(WavePortData::EigenSolverType,
+                           {{WavePortData::EigenSolverType::DEFAULT, "Default"},
+                            {WavePortData::EigenSolverType::SLEPC, "SLEPc"},
+                            {WavePortData::EigenSolverType::ARPACK, "ARPACK"}})
+
 void WavePortBoundaryData::SetUp(json &boundaries)
 {
   auto port = boundaries.find("WavePort");
@@ -1034,6 +1040,7 @@ void WavePortBoundaryData::SetUp(json &boundaries)
     MFEM_VERIFY(data.mode_idx > 0,
                 "\"WavePort\" boundary \"Mode\" must be positive (1-based)!");
     data.d_offset = it->value("Offset", data.d_offset);
+    data.eigen_type = it->value("SolverType", data.eigen_type);
     data.excitation = it->value("Excitation", data.excitation);
     data.active = it->value("Active", data.active);
 
@@ -1042,6 +1049,7 @@ void WavePortBoundaryData::SetUp(json &boundaries)
     it->erase("Attributes");
     it->erase("Mode");
     it->erase("Offset");
+    it->erase("SolverType");
     it->erase("Excitation");
     it->erase("Active");
     MFEM_VERIFY(it->empty(),
@@ -1055,6 +1063,7 @@ void WavePortBoundaryData::SetUp(json &boundaries)
       std::cout << "Attributes: " << data.attributes << '\n';
       std::cout << "Mode: " << data.mode_idx << '\n';
       std::cout << "Offset: " << data.d_offset << '\n';
+      std::cout << "SolverType: " << data.eigen_type << '\n';
       std::cout << "Excitation: " << data.excitation << '\n';
       std::cout << "Active: " << data.active << '\n';
     }
@@ -1426,13 +1435,6 @@ void DrivenSolverData::SetUp(json &solver)
   }
 }
 
-// Helper for converting string keys to enum for EigenSolverData::Type.
-PALACE_JSON_SERIALIZE_ENUM(EigenSolverData::Type,
-                           {{EigenSolverData::Type::DEFAULT, "Default"},
-                            {EigenSolverData::Type::SLEPC, "SLEPc"},
-                            {EigenSolverData::Type::ARPACK, "ARPACK"},
-                            {EigenSolverData::Type::FEAST, "FEAST"}})
-
 void EigenSolverData::SetUp(json &solver)
 {
   auto eigenmode = solver.find("Eigenmode");
@@ -1451,17 +1453,6 @@ void EigenSolverData::SetUp(json &solver)
   n_post = eigenmode->value("Save", n_post);
   type = eigenmode->value("Type", type);
   pep_linear = eigenmode->value("PEPLinear", pep_linear);
-  feast_contour_np = eigenmode->value("ContourNPoints", feast_contour_np);
-  if (type == EigenSolverData::Type::FEAST && feast_contour_np > 1)
-  {
-    MFEM_VERIFY(eigenmode->find("ContourTargetUpper") != eigenmode->end() &&
-                    eigenmode->find("ContourAspectRatio") != eigenmode->end(),
-                "Missing \"Eigenmode\" solver \"ContourTargetUpper\" or "
-                "\"ContourAspectRatio\" for FEAST solver in the configuration file!");
-  }
-  feast_contour_ub = eigenmode->value("ContourTargetUpper", feast_contour_ub);
-  feast_contour_ar = eigenmode->value("ContourAspectRatio", feast_contour_ar);
-  feast_moments = eigenmode->value("ContourMoments", feast_moments);
   scale = eigenmode->value("Scaling", scale);
   init_v0 = eigenmode->value("StartVector", init_v0);
   init_v0_const = eigenmode->value("StartVectorConstant", init_v0_const);
@@ -1476,10 +1467,6 @@ void EigenSolverData::SetUp(json &solver)
   eigenmode->erase("Save");
   eigenmode->erase("Type");
   eigenmode->erase("PEPLinear");
-  eigenmode->erase("ContourNPoints");
-  eigenmode->erase("ContourTargetUpper");
-  eigenmode->erase("ContourAspectRatio");
-  eigenmode->erase("ContourMoments");
   eigenmode->erase("Scaling");
   eigenmode->erase("StartVector");
   eigenmode->erase("StartVectorConstant");
@@ -1499,10 +1486,6 @@ void EigenSolverData::SetUp(json &solver)
     std::cout << "Save: " << n_post << '\n';
     std::cout << "Type: " << type << '\n';
     std::cout << "PEPLinear: " << pep_linear << '\n';
-    std::cout << "ContourNPoints: " << feast_contour_np << '\n';
-    std::cout << "ContourTargetUpper: " << feast_contour_ub << '\n';
-    std::cout << "ContourAspectRatio: " << feast_contour_ar << '\n';
-    std::cout << "ContourMoments: " << feast_moments << '\n';
     std::cout << "Scaling: " << scale << '\n';
     std::cout << "StartVector: " << init_v0 << '\n';
     std::cout << "StartVectorConstant: " << init_v0_const << '\n';

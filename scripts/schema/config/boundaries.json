@@ -132,6 +132,7 @@
           "Attributes": { "$ref": "#/$defs/Attributes" },
           "Mode": { "type": "integer", "exclusiveMinimum": 0 },
           "Offset": { "type": "number", "minimum": 0.0 },
+          "SolverType": { "type": "string" },
           "Excitation": { "type": "boolean" },
           "Active": { "type": "boolean" }
         }
