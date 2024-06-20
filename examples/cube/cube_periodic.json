@@ -7,7 +7,7 @@
   },
   "Model":
   {
-    "Mesh": "mesh/cube_periodic.mesh",
+    "Mesh": "mesh/cube_periodic.msh",
     "L0": 1.0e-2,  // cm
     "Refinement":
     {
@@ -38,6 +38,15 @@
   },
   "Boundaries":
   {
+    "Periodic":
+    {
+      "OriginalAttributes": [1, 2],
+      "DuplicateAttributes": [6, 4]
+    },
+    "PEC":
+    {
+      "Attributes": [3, 5]
+    }
   },
   "Solver":
   {
