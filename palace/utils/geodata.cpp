@@ -83,7 +83,7 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(MPI_Comm comm, const IoData &iodata)
   const auto &refinement = iodata.model.refinement;
   const bool use_amr = refinement.max_it > 0;
   const bool use_mesh_partitioner = !use_amr || !refinement.nonconformal;
-  MPI_Comm node_comm = nullptr;
+  MPI_Comm node_comm;
   if (!use_mesh_partitioner)
   {
     MPI_Comm_split_type(comm, MPI_COMM_TYPE_SHARED, Mpi::Rank(comm), MPI_INFO_NULL,
@@ -93,7 +93,8 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(MPI_Comm comm, const IoData &iodata)
   // Only one process per node reads the serial mesh.
   {
     BlockTimer bt(Timer::IO);
-    if ((use_mesh_partitioner && Mpi::Root(comm)) || Mpi::Root(node_comm))
+    if ((use_mesh_partitioner && Mpi::Root(comm)) ||
+        (!use_mesh_partitioner && Mpi::Root(node_comm)))
     {
       smesh = LoadMesh(iodata.model.mesh, iodata.model.remove_curvature);
       MFEM_VERIFY(!(smesh->Nonconforming() && use_mesh_partitioner),
