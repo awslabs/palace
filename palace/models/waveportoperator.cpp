@@ -599,12 +599,13 @@ WavePortData::WavePortData(const config::WavePortData &data,
   //            given frequency, Math. Comput. (2003).
   // See also: Halla and Monk, On the analysis of waveguide modes in an electromagnetic
   //           transmission line, arXiv:2302.11994 (2023).
-  mu_eps_min = 0.0;  // Use standard inverse transformation to avoid conditioning issues
-                     // associated with shift
-  // const double c_max = mat_op.GetLightSpeedMax().Max();
-  // MFEM_VERIFY(c_max > 0.0 && c_max < mfem::infinity(),
-  //             "Invalid material speed of light detected in WavePortOperator!");
-  // mu_eps_min = 1.0 / (c_max * c_max);
+  const double c_max = mat_op.GetLightSpeedMax().Max();
+  MFEM_VERIFY(c_max > 0.0 && c_max < mfem::infinity(),
+              "Invalid material speed of light detected in WavePortOperator!");
+  mu_eps_min = 1.0 / (c_max * c_max) * 0.5;  // Add a safety factor for minimum propagation
+                                             // constant possible
+  // mu_eps_min = 0.0;  // Use standard inverse transformation to avoid conditioning issues
+  //                    // associated with shift
   std::tie(Atnr, Atni) = GetAtn(mat_op, *port_nd_fespace, *port_h1_fespace);
   std::tie(Antr, Anti) = GetAnt(mat_op, *port_h1_fespace, *port_nd_fespace);
   std::tie(Annr, Anni) = GetAnn(mat_op, *port_h1_fespace, port_normal);
@@ -621,7 +622,7 @@ WavePortData::WavePortData(const config::WavePortData &data,
         port_h1_fespace->Get().GetTrueDofOffsets(), &diag);
     auto [Bttr, Btti] = GetBtt(mat_op, *port_nd_fespace);
     auto [Br, Bi] = GetSystemMatrixB(Bttr.get(), Btti.get(), Dnn.get(), port_dbc_tdof_list);
-    B0 = std::make_unique<ComplexWrapperOperator>(std::move(Br), std::move(Bi));
+    opB = std::make_unique<ComplexWrapperOperator>(std::move(Br), std::move(Bi));
   }
 
   // Configure a communicator for the processes which have elements for this port.
@@ -729,15 +730,15 @@ WavePortData::WavePortData(const config::WavePortData &data,
 
     // Define the eigenvalue solver.
     constexpr int print = 0;
-    config::EigenSolverData::Type type = solver.eigenmode.type;
-    if (type == config::EigenSolverData::Type::SLEPC)
+    config::WavePortData::EigenSolverType type = data.eigen_type;
+    if (type == config::WavePortData::EigenSolverType::SLEPC)
     {
 #if !defined(PALACE_WITH_SLEPC)
       MFEM_ABORT("Solver was not built with SLEPc support, please choose a "
                  "different solver!");
 #endif
     }
-    else if (type == config::EigenSolverData::Type::ARPACK)
+    else if (type == config::WavePortData::EigenSolverType::ARPACK)
     {
 #if !defined(PALACE_WITH_ARPACK)
       MFEM_ABORT("Solver was not built with ARPACK support, please choose a "
@@ -747,20 +748,20 @@ WavePortData::WavePortData(const config::WavePortData &data,
     else  // Default choice
     {
 #if defined(PALACE_WITH_SLEPC)
-      type = config::EigenSolverData::Type::SLEPC;
+      type = config::WavePortData::EigenSolverType::SLEPC;
 #elif defined(PALACE_WITH_ARPACK)
-      type = config::EigenSolverData::Type::ARPACK;
+      type = config::WavePortData::EigenSolverType::ARPACK;
 #else
 #error "Wave port solver requires building with ARPACK or SLEPc!"
 #endif
     }
-    if (type == config::EigenSolverData::Type::ARPACK)
+    if (type == config::WavePortData::EigenSolverType::ARPACK)
     {
 #if defined(PALACE_WITH_ARPACK)
       eigen = std::make_unique<arpack::ArpackEPSSolver>(port_comm, print);
 #endif
     }
-    else  // config::EigenSolverData::Type::SLEPC
+    else  // config::WavePortData::EigenSolverType::SLEPC
     {
 #if defined(PALACE_WITH_SLEPC)
       auto slepc = std::make_unique<slepc::SlepcEPSSolver>(port_comm, print);
@@ -772,8 +773,12 @@ WavePortData::WavePortData(const config::WavePortData &data,
     constexpr double tol = 1.0e-6;
     eigen->SetNumModes(mode_idx, std::max(2 * mode_idx + 1, 5));
     eigen->SetTol(tol);
-    eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::LARGEST_MAGNITUDE);
     eigen->SetLinearSolver(*ksp);
+
+    // We want to ignore evanescent modes (kₙ with large imaginary component). The
+    // eigenvalue 1 / (-kₙ² - σ) of the shifted problem will be a large-magnitude negative
+    // real number for an eigenvalue kₙ² with real part close to but not below the cutoff σ.
+    eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::SMALLEST_REAL);
   }
 
   // Configure port mode sign convention: 1ᵀ Re{-n x H} >= 0 on the "upper-right quadrant"
@@ -844,16 +849,16 @@ void WavePortData::Initialize(double omega)
   }
 
   // Construct matrices and solve the generalized eigenvalue problem for the desired wave
-  // port mode. B uses the non-owning constructor since the matrices Br, Bi are not
-  // functions of frequency (constructed once for all).
-  std::unique_ptr<ComplexOperator> A;
+  // port mode. The B matrix is operating frequency-independent and has already been
+  // constructed.
+  std::unique_ptr<ComplexOperator> opA;
   const double sigma = -omega * omega * mu_eps_min;
   {
     auto [Attr, Atti] = GetAtt(mat_op, *port_nd_fespace, port_normal, omega, sigma);
     auto [Ar, Ai] =
         GetSystemMatrixA(Attr.get(), Atti.get(), Atnr.get(), Atni.get(), Antr.get(),
                          Anti.get(), Annr.get(), Anni.get(), port_dbc_tdof_list);
-    A = std::make_unique<ComplexWrapperOperator>(std::move(Ar), std::move(Ai));
+    opA = std::make_unique<ComplexWrapperOperator>(std::move(Ar), std::move(Ai));
   }
 
   // Configure and solve the (inverse) eigenvalue problem for the desired boundary mode.
@@ -862,9 +867,9 @@ void WavePortData::Initialize(double omega)
   std::complex<double> lambda;
   if (port_comm != MPI_COMM_NULL)
   {
-    ComplexWrapperOperator P(A->Real(), nullptr);  // Non-owning constructor
-    ksp->SetOperators(*A, P);
-    eigen->SetOperators(*B0, *A, EigenvalueSolver::ScaleType::NONE);
+    ComplexWrapperOperator opP(opA->Real(), nullptr);  // Non-owning constructor
+    ksp->SetOperators(*opA, opP);
+    eigen->SetOperators(*opB, *opA, EigenvalueSolver::ScaleType::NONE);
     eigen->SetInitialSpace(v0);
     int num_conv = eigen->Solve();
     MFEM_VERIFY(num_conv >= mode_idx, "Wave port eigensolver did not converge!");
@@ -1092,7 +1097,8 @@ void WavePortOperator::SetUpBoundaryProperties(const IoData &iodata,
   // are touching and share one or more edges.
   mfem::Array<int> dbc_bcs;
   dbc_bcs.Reserve(static_cast<int>(iodata.boundaries.pec.attributes.size() +
-                                   iodata.boundaries.auxpec.attributes.size()));
+                                   iodata.boundaries.auxpec.attributes.size() +
+                                   iodata.boundaries.conductivity.size()));
   for (auto attr : iodata.boundaries.pec.attributes)
   {
     if (attr <= 0 || attr > bdr_attr_max)
@@ -1108,6 +1114,17 @@ void WavePortOperator::SetUpBoundaryProperties(const IoData &iodata,
       continue;  // Can just ignore if wrong
     }
     dbc_bcs.Append(attr);
+  }
+  for (const auto &data : iodata.boundaries.conductivity)
+  {
+    for (auto attr : data.attributes)
+    {
+      if (attr <= 0 || attr > bdr_attr_max)
+      {
+        continue;  // Can just ignore if wrong
+      }
+      dbc_bcs.Append(attr);
+    }
   }
   // If user accidentally specifies a surface as both "PEC" and "WavePortPEC", this is fine
   // so allow for duplicates in the attribute list.

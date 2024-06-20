@@ -138,20 +138,8 @@ number of eigenmodes of the problem. The available options are:
 
   - `"SLEPc"`
   - `"ARPACK"`
-  - `"FEAST"`
   - `"Default"` :  Use the default eigensolver. Currently, this is the Krylov-Schur
     eigenvalue solver from `"SLEPc"`.
-
-`"ContourTargetUpper" [None]` :  Specifies the upper frequency target of the contour used
-for the FEAST eigenvalue solver, GHz. This option is relevant only for `"Type": "FEAST"`.
-
-`"ContourAspectRatio" [None]` :  Specifies the aspect ratio of the contour used for the
-FEAST eigenvalue solver. This should be greater than zero, where the aspect ratio is the
-ratio of the contour width to the frequency range(`"ContourTargetUpper"` - `"Target"`).
-This option is relevant only for `"Type": "FEAST"`.
-
-`"ContourNPoints" [4]` :  Number of contour integration points used for the FEAST eigenvalue
-solver. This option is relevant only for `"Type": "FEAST"`.
 
 ### Advanced eigenmode solver options
 

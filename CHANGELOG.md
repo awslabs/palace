@@ -15,6 +15,11 @@ The format of this changelog is based on
 
   - Fixed a small regression bug for boundary postprocessing when specifying
     `"Side": "LargerRefractiveIndex"`, introduced as part of v0.13.0.
+  - Added an improvement to numeric wave ports to avoid targetting evanescent modes at
+    higher operating frequencies. Also finite conductivity boundaries
+    (`config["Boundaries"]["Conductivity"]`) are automatically marked as PEC for the wave
+    port mode solve (previously these were marked as PMC unless specified under
+    `"WavePortPEC"`).
 
 ## [0.13.0] - 2024-05-20
 
@@ -61,7 +66,7 @@ The format of this changelog is based on
     configuration file keyword changes to for consistency were made to
     `config["Domains"]["Postprocessing"]["Probe"]` and
     `config["Model"]["Refinement"]["Boxes"]`.
-  - Fix a bug in MFEM for nonconformal AMR meshes with internal boundaries affecting
+  - Fixed a bug in MFEM for nonconformal AMR meshes with internal boundaries affecting
     non-homogeneous Dirichlet boundary conditions for electrostatic simulations (see
     [#236](https://github.com/awslabs/palace/pull/236)).
 

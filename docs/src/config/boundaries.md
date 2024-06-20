@@ -355,7 +355,8 @@ corresponding coordinate system.
         "Excitation": <bool>,
         "Active": <bool>,
         "Mode": <int>,
-        "Offset": <float>
+        "Offset": <float>,
+        "SolverType": <string>
     },
     ...
 ]
@@ -379,6 +380,10 @@ boundary. Ranked in order of decreasing wave number.
 
 `"Offset" [0.0]` :  Offset distance used for scattering parameter de-embedding for this wave
 port boundary, specified in mesh length units.
+
+`"SolverType" ["Default"]` :  Specifies the eigenvalue solver to be used in computing
+the boundary mode for this wave port. See
+[`config["Solver"]["Eigenmode"]["Type"]`](solver.md#solver%5B%22Eigenmode%22%5D).
 
 ## `boundaries["WavePortPEC"]`
 

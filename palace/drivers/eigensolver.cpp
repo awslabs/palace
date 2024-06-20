@@ -60,10 +60,6 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   {
     Mpi::Warning("SLEPc eigensolver not available, using ARPACK!\n");
   }
-  else if (iodata.solver.eigenmode.type == config::EigenSolverData::Type::FEAST)
-  {
-    Mpi::Warning("FEAST eigensolver requires SLEPc, using ARPACK!\n");
-  }
   type = config::EigenSolverData::Type::ARPACK;
 #elif defined(PALACE_WITH_SLEPC)
   if (iodata.solver.eigenmode.type == config::EigenSolverData::Type::ARPACK)
@@ -74,11 +70,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 #else
 #error "Eigenmode solver requires building with ARPACK or SLEPc!"
 #endif
-  if (type == config::EigenSolverData::Type::FEAST)
-  {
-    MFEM_ABORT("FEAST eigenvalue solver is currently not supported!");
-  }
-  else if (type == config::EigenSolverData::Type::ARPACK)
+  if (type == config::EigenSolverData::Type::ARPACK)
   {
 #if defined(PALACE_WITH_ARPACK)
     Mpi::Print("\nConfiguring ARPACK eigenvalue solver:\n");
