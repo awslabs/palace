@@ -7,7 +7,7 @@
   },
   "Model":
   {
-    "Mesh": "mesh/cube.mesh",
+    "Mesh": "mesh/cube.msh",
     "L0": 1.0e-2,  // cm
     "Refinement":
     {
