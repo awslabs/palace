@@ -750,10 +750,10 @@ index 42c335c..62561ff 100644
  #define DIAGNOSTICS_1
  #define DIAGNOSTICS_2
 diff --git a/src/findpts_imp.h b/src/findpts_imp.h
-index b9759af..44b5c7d 100644
+index b9759af..8c08479 100644
 --- a/src/findpts_imp.h
 +++ b/src/findpts_imp.h
-@@ -1,45 +1,45 @@
+@@ -1,45 +1,44 @@
  #include <stdio.h>
  #include <float.h>
 -#define obbox           TOKEN_PASTE(obbox_,D)
@@ -834,11 +834,22 @@ index b9759af..44b5c7d 100644
 +#define findpts_free          GS_TOKEN_PASTE(GS_PREFIXED_NAME(findpts_free_ ),D)
 +#define findpts               GS_TOKEN_PASTE(GS_PREFIXED_NAME(findpts_      ),D)
 +#define findpts_eval          GS_TOKEN_PASTE(GS_PREFIXED_NAME(findpts_eval_ ),D)
-+#define findpts_local_eval    GS_TOKEN_PASTE(GS_PREFIXED_NAME(findpts_local_eval_ ),D)
 +#define setup_fev_aux         GS_TOKEN_PASTE(setup_fev_aux_,D)
  
  struct hash_data {
    ulong hash_n;
+@@ -279,7 +278,10 @@ void findptsms(        uint   *const        code_base, const unsigned       code
+                  const uint   *const session_id_match, const uint                   npt,
+                        struct findpts_data *const fd)
+ {
+-  if (fd->fevsetup==1) array_free(&fd->savpt); fd->fevsetup=0;
++  if (fd->fevsetup==1) {
++    array_free(&fd->savpt);
++    fd->fevsetup=0;
++  }
+   const uint np = fd->cr.comm.np, id=fd->cr.comm.id;
+   struct array hash_pt, src_pt, out_pt;
+   double *distv = tmalloc(double,npt);
 diff --git a/src/findpts_local.h b/src/findpts_local.h
 index 2a9d9da..30be675 100644
 --- a/src/findpts_local.h
@@ -899,7 +910,7 @@ index 2a9d9da..30be675 100644
    uint hash_n;
    struct dbl_range bnd[3];
 diff --git a/src/findpts_local_imp.h b/src/findpts_local_imp.h
-index e5310b1..0ca79fd 100644
+index e5310b1..401089d 100644
 --- a/src/findpts_local_imp.h
 +++ b/src/findpts_local_imp.h
 @@ -1,36 +1,36 @@
@@ -971,6 +982,15 @@ index e5310b1..0ca79fd 100644
  /*--------------------------------------------------------------------------
     Point to Possible Elements Hashing
  
+@@ -466,7 +466,7 @@ void findpts_local_eval(
+   const uint npt,
+   const double *const in, struct findpts_local_data *const fd)
+ {
+-  findpts_local_eval(
++  findptsms_local_eval(
+   out_base,out_stride,
+    el_base,el_stride,
+     r_base,r_stride,
 diff --git a/src/gs.c b/src/gs.c
 index 68581b3..e3a7b70 100644
 --- a/src/gs.c
