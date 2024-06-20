@@ -6,11 +6,9 @@
 #include <algorithm>
 #include <array>
 #include <limits>
-#include <map>
 #include <numeric>
 #include <queue>
 #include <random>
-#include <set>
 #include <sstream>
 #include <string>
 #include <unordered_map>
@@ -1805,7 +1803,7 @@ void TransferHighOrderNodes(const mfem::Mesh &orig_mesh, mfem::Mesh &new_mesh,
   // Transfer dofs from the old mesh to the new ones. Either consider all elements (works
   // for orientation or numbering changes), or use the prescribed old to new element index
   // map.
-  mfem::Array<int> vdofs, new_vdofs;
+  mfem::Array<int> vdofs;
   mfem::Vector loc_vec;
   for (int e = 0; e < orig_mesh.GetNE(); e++)
   {
@@ -1814,8 +1812,8 @@ void TransferHighOrderNodes(const mfem::Mesh &orig_mesh, mfem::Mesh &new_mesh,
       // No need for DofTransformation here since spaces are H1 or L2.
       fespace->GetElementVDofs(e, vdofs);
       nodes->GetSubVector(vdofs, loc_vec);
-      new_fespace->GetElementVDofs(!elem_delete_map ? e : (*elem_delete_map)[e], new_vdofs);
-      new_nodes->SetSubVector(new_vdofs, loc_vec);
+      new_fespace->GetElementVDofs(!elem_delete_map ? e : (*elem_delete_map)[e], vdofs);
+      new_nodes->SetSubVector(vdofs, loc_vec);
     }
   }
 }
@@ -2077,7 +2075,6 @@ void SplitMeshElements(std::unique_ptr<mfem::Mesh> &orig_mesh, bool make_simplex
       MFEM_VERIFY(
           !element_types.has_pyramids,
           "Splitting mesh elements to simplices does not support pyramid elements yet!");
-
       if (preserve_curvature && mesh->GetNodes() && !orig_mesh_attr.Size())
       {
         BackUpAttributes(*mesh);
@@ -2355,12 +2352,12 @@ std::unordered_map<int, int> CheckMesh(const mfem::Mesh &mesh,
 }
 
 template <typename T>
-class InterfaceRefinementMesh : public mfem::Mesh
+class EdgeRefinementMesh : public mfem::Mesh
 {
 private:
-  // Container with keys being the vertex indicies (match row/column indices of v_to_v)
-  // of vertices lying on the interface to be refined.
-  const T &interface_vertices;
+  // Container with keys being pairs of vertex indicies (match row/column indices of v_to_v)
+  // of edges which we desire to be refined.
+  const T &refinement_edges;
 
   void MarkTetMeshForRefinement(const mfem::DSTable &v_to_v) override
   {
@@ -2371,14 +2368,13 @@ private:
     // after the marked elements are refined.
     mfem::Array<mfem::real_t> lengths;
     GetEdgeLengths2(v_to_v, lengths);
-    const auto min_length = 0.1 * lengths.Min();
+    const auto min_length = 0.01 * lengths.Min();
     for (int i = 0; i < v_to_v.NumberOfRows(); i++)
     {
-      bool has_i = (interface_vertices.find(i) != interface_vertices.end());
       for (mfem::DSTable::RowIterator it(v_to_v, i); !it; ++it)
       {
         int j = it.Column();
-        if (!has_i || interface_vertices.find(j) == interface_vertices.end())
+        if (refinement_edges.find({i, j}) == refinement_edges.end())
         {
           // "Zero" the edge lengths which do not connect vertices on the interface. Avoid
           // zero-length edges just in case.
@@ -2411,9 +2407,32 @@ private:
   }
 
 public:
-  InterfaceRefinementMesh(mfem::Mesh &&mesh, const T &interface_vertices)
-    : mfem::Mesh(std::move(mesh)), interface_vertices(interface_vertices)
+  EdgeRefinementMesh(mfem::Mesh &&mesh, const T &refinement_edges)
+    : mfem::Mesh(std::move(mesh)), refinement_edges(refinement_edges)
   {
+  }
+};
+
+template <typename T>
+struct UnorderedPair
+{
+  T first, second;
+  UnorderedPair(T first, T second) : first(first), second(second) {}
+  bool operator==(const UnorderedPair &v) const
+  {
+    return ((v.first == first && v.second == second) ||
+            (v.first == second && v.second == first));
+  }
+};
+
+template <typename T>
+struct UnorderedPairHasher
+{
+  std::size_t operator()(const UnorderedPair<T> &v) const
+  {
+    // Simple hash function for a pair, see https://tinyurl.com/2k4phapb.
+    return std::hash<T>()(std::min(v.first, v.second)) ^
+           std::hash<T>()(std::max(v.first, v.second)) << 1;
   }
 };
 
@@ -2554,7 +2573,7 @@ int AddInterfaceBdrElements(std::unique_ptr<mfem::Mesh> &orig_mesh,
         // renumbering so is not saved. We still keep entries for non-duplicated crack
         // vertices in the set to track them as processed, however.
         auto &vert_components = crack_vert_duplicates.try_emplace(v).first->second;
-        for (auto it = components.begin() + 1; it != components.end(); it++)
+        for (auto it = components.begin() + 1; it != components.end(); ++it)
         {
           vert_components.emplace_back(-1, std::move(*it));
           new_nv_dups++;
@@ -2570,8 +2589,8 @@ int AddInterfaceBdrElements(std::unique_ptr<mfem::Mesh> &orig_mesh,
     // lying on the seam, but this doesn't catch all required cases.
     if (refine_crack_elem)
     {
-      std::map<std::pair<int, int>, std::vector<int>> coarse_crack_edge_to_be;
-      std::set<int> elem_to_refine;
+      std::unordered_map<UnorderedPair<int>, std::vector<int>, UnorderedPairHasher<int>>
+          coarse_crack_edge_to_be;
       for (auto be : crack_bdr_elem)
       {
         const mfem::Element *bdr_el = orig_mesh->GetBdrElement(be);
@@ -2588,39 +2607,31 @@ int AddInterfaceBdrElements(std::unique_ptr<mfem::Mesh> &orig_mesh,
             // This is a seam edge, so add the attached boundary element to a list. The
             // check for the edge being interior to the crack is indicated by visiting more
             // than once.
-            if (v1 < v0)
-            {
-              std::swap(v0, v1);
-            }
-            const auto key = std::make_pair(v0, v1);
-            auto it = coarse_crack_edge_to_be.find(key);
-            auto &bdr_elem_to_refine =
+            auto it = coarse_crack_edge_to_be.find({v0, v1});
+            auto &adjacent_be =
                 (it == coarse_crack_edge_to_be.end())
-                    ? coarse_crack_edge_to_be.try_emplace(key).first->second
+                    ? coarse_crack_edge_to_be.try_emplace({v0, v1}).first->second
                     : it->second;
-            bdr_elem_to_refine.push_back(be);
+            adjacent_be.push_back(be);
           }
         }
       }
-      for (const auto &[edge, bdr_elem_to_refine] : coarse_crack_edge_to_be)
+      for (auto it = coarse_crack_edge_to_be.begin(); it != coarse_crack_edge_to_be.end();)
       {
-        if (bdr_elem_to_refine.size() > 1)
+        // Remove all seam edges which are on the "outside" of the crack (visited only
+        // once).
+        if (it->second.size() == 1)
         {
-          for (auto be : bdr_elem_to_refine)
-          {
-            int f, o, e1, e2;
-            orig_mesh->GetBdrElementFace(be, &f, &o);
-            orig_mesh->GetFaceElements(f, &e1, &e2);
-            MFEM_ASSERT(e1 >= 0 && e2 >= 0,
-                        "Invalid internal boundary element connectivity!");
-            elem_to_refine.insert(e1);
-            elem_to_refine.insert(e2);
-          }
+          it = coarse_crack_edge_to_be.erase(it);
+        }
+        else
+        {
+          ++it;
         }
       }
       static int new_ne_ref = 0;
       static int new_ref_its = 0;
-      if (!elem_to_refine.empty())
+      if (!coarse_crack_edge_to_be.empty())
       {
         // Locally refine the mesh using conformal refinement. If necessary, convert the
         // mesh to simplices first to enable conforming refinement (this will do nothing
@@ -2637,13 +2648,29 @@ int AddInterfaceBdrElements(std::unique_ptr<mfem::Mesh> &orig_mesh,
           face_to_be.clear();
           return 0;  // Mesh was converted to simplices, start over
         }
+        std::unordered_map<int, int> elem_to_refine;
+        for (const auto &[edge, adjacent_be] : coarse_crack_edge_to_be)
+        {
+          for (auto be : adjacent_be)
+          {
+            int f, o, e1, e2;
+            orig_mesh->GetBdrElementFace(be, &f, &o);
+            orig_mesh->GetFaceElements(f, &e1, &e2);
+            MFEM_ASSERT(e1 >= 0 && e2 >= 0,
+                        "Invalid internal boundary element connectivity!");
+            elem_to_refine[e1]++;  // Value-initialized to 0 at first access
+            elem_to_refine[e2]++;
+          }
+        }
         mfem::Array<mfem::Refinement> refinements;
         refinements.Reserve(elem_to_refine.size());
-        for (auto e : elem_to_refine)
+        for (const auto &[e, count] : elem_to_refine)
         {
           // Tetrahedral bisection (vs. default octasection) will result in fewer added
           // elements at the cost of a potential minor mesh quality degredation.
           refinements.Append(mfem::Refinement(e, mfem::Refinement::X));
+          // refinements.Append(mfem::Refinement(e, (count > 1) ? mfem::Refinement::XY
+          //                                                    : mfem::Refinement::X));
         }
         if (mesh::CheckElements(*orig_mesh).has_simplices)
         {
@@ -2656,7 +2683,7 @@ int AddInterfaceBdrElements(std::unique_ptr<mfem::Mesh> &orig_mesh,
           // mesh every time to ensure multiple rounds of refinement target the interior
           // boundary (we don't care about preserving the refinement hierarchy).
           constexpr bool refine = true, fix_orientation = false;
-          InterfaceRefinementMesh ref_mesh(std::move(*orig_mesh), crack_vert_duplicates);
+          EdgeRefinementMesh ref_mesh(std::move(*orig_mesh), coarse_crack_edge_to_be);
           ref_mesh.Finalize(refine, fix_orientation);
           *orig_mesh = std::move(ref_mesh);
         }
@@ -2908,8 +2935,9 @@ int AddInterfaceBdrElements(std::unique_ptr<mfem::Mesh> &orig_mesh,
           b = 0;
         }
         MFEM_VERIFY(a + b > 0, "Invalid new boundary element attribute!");
-        int new_attr =
-            bdr_attr_max + (((a + b) * (a + b + 1)) / 2) + a;  // At least bdr_attr_max + 1
+        long long int l_new_attr =
+            bdr_attr_max + (((a + b) * (long long int)(a + b + 1)) / 2) + a;
+        int new_attr = mfem::internal::to_int(l_new_attr);  // At least bdr_attr_max + 1
 
         // Add the boundary elements with the new boundary attribute. The element vertices
         // may have been renumbered in the new mesh, so the new face is not necessarily
@@ -2935,6 +2963,12 @@ int AddInterfaceBdrElements(std::unique_ptr<mfem::Mesh> &orig_mesh,
           bdr_el->GetVertices()[j] = el->GetVertices()[el->GetFaceVertices(i)[j]];
         }
         new_mesh->AddBdrElement(bdr_el);
+        if constexpr (false)
+        {
+          Mpi::Print(
+              "Adding boundary element with attribute {:d} from elements {:d} and {:d}\n",
+              new_attr, a, b);
+        }
         if (new_face_bdr_elem[f] > 1)
         {
           // Flip order of vertices to reverse normal direction of the second added element.
@@ -2944,16 +2978,10 @@ int AddInterfaceBdrElements(std::unique_ptr<mfem::Mesh> &orig_mesh,
           new_mesh->AddBdrElement(bdr_el);
           if constexpr (false)
           {
-            Mpi::Print("Adding two boundary elements with attribute {:d} from elements "
+            Mpi::Print("Adding second boundary element with attribute {:d} from elements "
                        "{:d} and {:d}\n",
                        new_attr, a, b);
           }
-        }
-        else if constexpr (false)
-        {
-          Mpi::Print("Adding boundary element with attribute {:d} from elements "
-                     "{:d} and {:d}\n",
-                     new_attr, a, b);
         }
       }
     }
