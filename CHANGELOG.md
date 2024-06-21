@@ -22,6 +22,9 @@ The format of this changelog is based on
     `"WavePortPEC"`).
   - Fixed a bug in divergence-free projection for problems without essential or mixed
     boundary conditions.
+  - Added `"MakeSimplex"` and `"MakeHexahedral"` mesh options to convert an input mesh to
+    all tetrahedra or all hexahedra. Also adds `"SerialUniformLevels"` option to
+    `config["Model"]["Refinement"]` for testing or debugging.
 
 ## [0.13.0] - 2024-05-20
 
