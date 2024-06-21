@@ -7,12 +7,8 @@
   },
   "Model":
   {
-    "Mesh": "mesh/cube_periodic.msh",
-    "L0": 1.0e-2,  // cm
-    "Refinement":
-    {
-      "UniformLevels": 1
-    }
+    "Mesh": "mesh/cube_periodic_xyz.msh",
+    "L0": 1.0e-2  // cm
   },
   "Domains":
   {
@@ -38,19 +34,10 @@
   },
   "Boundaries":
   {
-    "Periodic":
-    {
-      "OriginalAttributes": [3, 5],
-      "DuplicateAttributes": [4, 6]
-    },
-    "PEC":
-    {
-      "Attributes": [1, 2]
-    }
   },
   "Solver":
   {
-    "Order": 4,
+    "Order": 1,
     "Device": "CPU",
     "Eigenmode":
     {
@@ -64,8 +51,8 @@
       "Type": "Default",
       "KSPType": "GMRES",
       "Tol": 1.0e-8,
-      "MaxIts": 100
+      "MaxIts": 100,
+      "DivFreeMaxIts": 0 // we should be able to drop this
     }
   }
 }
-

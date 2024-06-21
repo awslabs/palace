@@ -7,7 +7,7 @@
   },
   "Model":
   {
-    "Mesh": "mesh/cube.msh",
+    "Mesh": "mesh/cube_periodic_xy.msh",
     "L0": 1.0e-2  // cm
   },
   "Domains":
@@ -34,9 +34,15 @@
   },
   "Boundaries":
   {
-    "PEC":
+  //  "Periodic":
+  //  {
+  //    "OriginalAttributes": [3, 2],
+  //    "DuplicateAttributes": [4, 6]
+  //  },
+    "Absorbing":
     {
-      "Attributes": [1, 2, 3, 4, 5, 6]
+      "Attributes": [1, 5],
+      "Order": 1
     }
   },
   "Solver":
@@ -59,4 +65,3 @@
     }
   }
 }
-
