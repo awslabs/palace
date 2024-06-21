@@ -467,7 +467,7 @@ void ModelData::SetUp(json &config)
   Lc = model->value("Lc", Lc);
   remove_curvature = model->value("RemoveCurvature", remove_curvature);
   make_simplex = model->value("MakeSimplex", make_simplex);
-  make_hex = model->value("MakeHex", make_hex);
+  make_hex = model->value("MakeHexahedral", make_hex);
   reorder_elements = model->value("ReorderElements", reorder_elements);
   clean_unused_elements = model->value("CleanUnusedElements", clean_unused_elements);
   add_bdr_elements = model->value("AddInterfaceBoundaryElements", add_bdr_elements);
@@ -481,7 +481,7 @@ void ModelData::SetUp(json &config)
   model->erase("Lc");
   model->erase("RemoveCurvature");
   model->erase("MakeSimplex");
-  model->erase("MakeHex");
+  model->erase("MakeHexahedral");
   model->erase("ReorderElements");
   model->erase("CleanUnusedElements");
   model->erase("AddInterfaceBoundaryElements");
@@ -500,7 +500,7 @@ void ModelData::SetUp(json &config)
     std::cout << "Lc: " << Lc << '\n';
     std::cout << "RemoveCurvature: " << remove_curvature << '\n';
     std::cout << "MakeSimplex: " << make_simplex << '\n';
-    std::cout << "MakeHex: " << make_hex << '\n';
+    std::cout << "MakeHexahedral: " << make_hex << '\n';
     std::cout << "ReorderElements: " << reorder_elements << '\n';
     std::cout << "CleanUnusedElements: " << clean_unused_elements << '\n';
     std::cout << "AddInterfaceBoundaryElements: " << add_bdr_elements << '\n';
