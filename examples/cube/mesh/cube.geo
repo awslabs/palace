@@ -1,42 +1,41 @@
-SetFactory("OpenCASCADE");
-gridsize = 100/3;
+// Hexahedral cube mesh
 
-// Face
-// -- Points
-Point(1) = {0,0,0,gridsize};
-Point(2) = {0,0,100,gridsize};
-Point(3) = {0,100,100,gridsize};
-Point(4) = {0,100,0,gridsize};
+Point(1) = {0, 0, 0, 1.0};
+Point(2) = {1, 0, 0, 1.0};
+Point(3) = {1, 1, 0, 1.0};
+Point(4) = {0, 1, 0, 1.0};
 
-// -- Line
-Line(5) = {1,2};
-Line(6) = {2,3};
-Line(7) = {3,4};
-Line(8) = {4,1};
-Line Loop(9) = {5,6,7,8};
+Characteristic Length {:} = 0.25;
 
-// -- Surface
-Plane Surface(10) = {9};
-Recombine Surface{10};
+Line(1) = {1, 2};
+Line(2) = {2, 3};
+Line(3) = {3, 4};
+Line(4) = {4, 1};
 
-// Extrude to 3D
-bodyExtrusion[] =
-Extrude { 100,0,0 }
-{
-    Surface{10};
-    Layers{100/gridsize};
-    Recombine;
-};
+Curve Loop(1) = {1, 2, 3, 4};
+Plane Surface(1) = {1};
+Transfinite Surface {1};
 
-// Boundaries
-Physical Surface("back") = {10};
-Physical Surface("right") = {bodyExtrusion[2]};
-Physical Surface("top") = {bodyExtrusion[3]};
-Physical Surface("left") = {bodyExtrusion[4]};
-Physical Surface("bottom") = {bodyExtrusion[5]};
-Physical Surface("front") = {bodyExtrusion[0]};
+Recombine Surface {1};
+out[] = Extrude {0, 0, 1} { Surface{1}; Layers{4}; Recombine; };
 
-// Volume
-Physical Volume("mesh") = {bodyExtrusion[1]};
+Physical Volume(1) = {out[1]};
+Physical Surface(1) = {1};      // back
+Physical Surface(2) = {out[5]}; // front
+Physical Surface(3) = {out[4]}; // left
+Physical Surface(4) = {out[2]}; // right
+Physical Surface(5) = {out[0]}; // bottom
+Physical Surface(6) = {out[3]}; // top
+
 Mesh 3;
-Coherence Mesh;
+Mesh.MshFileVersion = 2.2;
+
+/*
+Physical Surface:
+back => 1
+bottom => 13 => out[0]
+right => 17 => out[2]
+top => 21 => out[3]
+left => 25 => out[4]
+front => 26 => out[5]
+*/
