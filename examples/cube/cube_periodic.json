@@ -40,12 +40,12 @@
   {
     "Periodic":
     {
-      "OriginalAttributes": [1, 2],
-      "DuplicateAttributes": [6, 4]
+      "OriginalAttributes": [3, 5],
+      "DuplicateAttributes": [4, 6]
     },
     "PEC":
     {
-      "Attributes": [3, 5]
+      "Attributes": [1, 2]
     }
   },
   "Solver":
