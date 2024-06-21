@@ -43,6 +43,11 @@ private:
   const Operator *Grad;
   const mfem::Array<int> *bdr_tdof_list_M;
 
+  // Optional storage for homogeneous Dirichlet boundary condition on a single true dof,
+  // used when the input array of H1 boundary dofs is empty to prevent the Poisson operator
+  // from being singular.
+  std::vector<mfem::Array<int>> aux_tdof_lists;
+
   // Linear solver for the projected linear system (Gᵀ M G) y = x.
   std::unique_ptr<BaseKspSolver<OperType>> ksp;
 
