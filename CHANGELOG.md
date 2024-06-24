@@ -20,6 +20,8 @@ The format of this changelog is based on
     (`config["Boundaries"]["Conductivity"]`) are automatically marked as PEC for the wave
     port mode solve (previously these were marked as PMC unless specified under
     `"WavePortPEC"`).
+  - Fixed a bug in divergence-free projection for problems without essential or mixed
+    boundary conditions.
 
 ## [0.13.0] - 2024-05-20
 

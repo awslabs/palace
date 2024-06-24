@@ -50,7 +50,7 @@ DivFreeSolver<VecType>::DivFreeSolver(
 {
   BlockTimer bt(Timer::DIV_FREE);
 
-  // If no boundaries on the mesh have been marked, add a single degree of freedo
+  // If no boundaries on the mesh have been marked, add a single degree of freedom
   // constraint so the system for the projection is not singular. This amounts to enforcing
   // a scalar potential of 0 at a point in space if it is otherwise completely
   // unconstrained.
