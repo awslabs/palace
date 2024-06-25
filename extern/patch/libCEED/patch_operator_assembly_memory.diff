@@ -1,0 +1,225 @@
+diff --git a/include/ceed/backend.h b/include/ceed/backend.h
+index d78d37ba..d6c01735 100644
+--- a/include/ceed/backend.h
++++ b/include/ceed/backend.h
+@@ -393,6 +393,8 @@ CEED_EXTERN int  CeedQFunctionContextReference(CeedQFunctionContext ctx);
+ 
+ CEED_EXTERN int CeedOperatorGetBasisPointer(CeedBasis basis, CeedEvalMode eval_mode, const CeedScalar *identity, const CeedScalar **basis_ptr);
+ CEED_EXTERN int CeedOperatorCreateActivePointBlockRestriction(CeedElemRestriction rstr, CeedElemRestriction *pointblock_rstr);
++
++CEED_EXTERN int CeedOperatorGetQFunctionAssemblyData(CeedOperator op, CeedQFunctionAssemblyData *data);
+ CEED_EXTERN int CeedQFunctionAssemblyDataCreate(Ceed ceed, CeedQFunctionAssemblyData *data);
+ CEED_EXTERN int CeedQFunctionAssemblyDataReference(CeedQFunctionAssemblyData data);
+ CEED_EXTERN int CeedQFunctionAssemblyDataSetReuse(CeedQFunctionAssemblyData data, bool reuse_assembly_data);
+@@ -404,6 +406,7 @@ CEED_EXTERN int CeedQFunctionAssemblyDataSetObjects(CeedQFunctionAssemblyData da
+ CEED_EXTERN int CeedQFunctionAssemblyDataGetObjects(CeedQFunctionAssemblyData data, CeedVector *vec, CeedElemRestriction *rstr);
+ CEED_EXTERN int CeedQFunctionAssemblyDataDestroy(CeedQFunctionAssemblyData *data);
+ 
++CEED_EXTERN int CeedOperatorGetOperatorAssemblyData(CeedOperator op, CeedOperatorAssemblyData *data);
+ CEED_EXTERN int CeedOperatorAssemblyDataCreate(Ceed ceed, CeedOperator op, CeedOperatorAssemblyData *data);
+ CEED_EXTERN int CeedOperatorAssemblyDataGetEvalModes(CeedOperatorAssemblyData data, CeedInt *num_active_bases_in, CeedInt **num_eval_modes_in,
+                                                      const CeedEvalMode ***eval_modes_in, CeedSize ***eval_mode_offsets_in,
+@@ -418,7 +421,6 @@ CEED_EXTERN int CeedOperatorAssemblyDataGetElemRestrictions(CeedOperatorAssembly
+                                                             CeedElemRestriction **active_elem_rstrs_out);
+ CEED_EXTERN int CeedOperatorAssemblyDataDestroy(CeedOperatorAssemblyData *data);
+ 
+-CEED_EXTERN int CeedOperatorGetOperatorAssemblyData(CeedOperator op, CeedOperatorAssemblyData *data);
+ CEED_EXTERN int CeedOperatorGetActiveBasis(CeedOperator op, CeedBasis *active_basis);
+ CEED_EXTERN int CeedOperatorGetActiveBases(CeedOperator op, CeedBasis *active_input_basis, CeedBasis *active_output_basis);
+ CEED_EXTERN int CeedOperatorGetActiveElemRestriction(CeedOperator op, CeedElemRestriction *active_rstr);
+diff --git a/include/ceed/ceed.h b/include/ceed/ceed.h
+index 4fff8784..f55aa9c6 100644
+--- a/include/ceed/ceed.h
++++ b/include/ceed/ceed.h
+@@ -459,6 +459,7 @@ CEED_EXTERN int  CeedOperatorGetContextBooleanRead(CeedOperator op, CeedContextF
+ CEED_EXTERN int  CeedOperatorRestoreContextBooleanRead(CeedOperator op, CeedContextFieldLabel field_label, const bool **values);
+ CEED_EXTERN int  CeedOperatorApply(CeedOperator op, CeedVector in, CeedVector out, CeedRequest *request);
+ CEED_EXTERN int  CeedOperatorApplyAdd(CeedOperator op, CeedVector in, CeedVector out, CeedRequest *request);
++CEED_EXTERN int  CeedOperatorAssemblyDataStrip(CeedOperator op);
+ CEED_EXTERN int  CeedOperatorDestroy(CeedOperator *op);
+ 
+ CEED_EXTERN int CeedOperatorGetFieldByName(CeedOperator op, const char *field_name, CeedOperatorField *op_field);
+diff --git a/interface/ceed-operator.c b/interface/ceed-operator.c
+index 9a127708..495c41fc 100644
+--- a/interface/ceed-operator.c
++++ b/interface/ceed-operator.c
+@@ -742,7 +742,6 @@ int CeedOperatorCreate(Ceed ceed, CeedQFunction qf, CeedQFunction dqf, CeedQFunc
+   CeedCall(CeedQFunctionReferenceCopy(qf, &(*op)->qf));
+   if (dqf && dqf != CEED_QFUNCTION_NONE) CeedCall(CeedQFunctionReferenceCopy(dqf, &(*op)->dqf));
+   if (dqfT && dqfT != CEED_QFUNCTION_NONE) CeedCall(CeedQFunctionReferenceCopy(dqfT, &(*op)->dqfT));
+-  CeedCall(CeedQFunctionAssemblyDataCreate(ceed, &(*op)->qf_assembled));
+   CeedCall(CeedCalloc(CEED_FIELD_MAX, &(*op)->input_fields));
+   CeedCall(CeedCalloc(CEED_FIELD_MAX, &(*op)->output_fields));
+   CeedCall(ceed->OperatorCreate(*op));
+@@ -786,7 +785,6 @@ int CeedOperatorCreateAtPoints(Ceed ceed, CeedQFunction qf, CeedQFunction dqf, C
+   CeedCall(CeedQFunctionReferenceCopy(qf, &(*op)->qf));
+   if (dqf && dqf != CEED_QFUNCTION_NONE) CeedCall(CeedQFunctionReferenceCopy(dqf, &(*op)->dqf));
+   if (dqfT && dqfT != CEED_QFUNCTION_NONE) CeedCall(CeedQFunctionReferenceCopy(dqfT, &(*op)->dqfT));
+-  CeedCall(CeedQFunctionAssemblyDataCreate(ceed, &(*op)->qf_assembled));
+   CeedCall(CeedCalloc(CEED_FIELD_MAX, &(*op)->input_fields));
+   CeedCall(CeedCalloc(CEED_FIELD_MAX, &(*op)->output_fields));
+   CeedCall(ceed->OperatorCreateAtPoints(*op));
+@@ -1411,7 +1409,10 @@ int CeedOperatorSetQFunctionAssemblyReuse(CeedOperator op, bool reuse_assembly_d
+       CeedCall(CeedOperatorSetQFunctionAssemblyReuse(op->sub_operators[i], reuse_assembly_data));
+     }
+   } else {
+-    CeedCall(CeedQFunctionAssemblyDataSetReuse(op->qf_assembled, reuse_assembly_data));
++    CeedQFunctionAssemblyData data;
++
++    CeedCall(CeedOperatorGetQFunctionAssemblyData(op, &data));
++    CeedCall(CeedQFunctionAssemblyDataSetReuse(data, reuse_assembly_data));
+   }
+   return CEED_ERROR_SUCCESS;
+ }
+@@ -1440,7 +1441,10 @@ int CeedOperatorSetQFunctionAssemblyDataUpdateNeeded(CeedOperator op, bool needs
+       CeedCall(CeedOperatorSetQFunctionAssemblyDataUpdateNeeded(sub_operators[i], needs_data_update));
+     }
+   } else {
+-    CeedCall(CeedQFunctionAssemblyDataSetUpdateNeeded(op->qf_assembled, needs_data_update));
++    CeedQFunctionAssemblyData data;
++
++    CeedCall(CeedOperatorGetQFunctionAssemblyData(op, &data));
++    CeedCall(CeedQFunctionAssemblyDataSetUpdateNeeded(data, needs_data_update));
+   }
+   return CEED_ERROR_SUCCESS;
+ }
+@@ -2106,6 +2110,35 @@ int CeedOperatorApplyAdd(CeedOperator op, CeedVector in, CeedVector out, CeedReq
+   return CEED_ERROR_SUCCESS;
+ }
+ 
++/**
++  @brief Destroy temporary assembly data associated with a `CeedOperator`
++
++  @param[in,out] op `CeedOperator` whose assembly data to destroy
++
++  @return An error code: 0 - success, otherwise - failure
++
++  @ref User
++**/
++int CeedOperatorAssemblyDataStrip(CeedOperator op) {
++  bool is_composite;
++
++  CeedCall(CeedQFunctionAssemblyDataDestroy(&op->qf_assembled));
++  CeedCall(CeedOperatorAssemblyDataDestroy(&op->op_assembled));
++  CeedCall(CeedOperatorIsComposite(op, &is_composite));
++  if (is_composite) {
++    CeedInt       num_suboperators;
++    CeedOperator *sub_operators;
++
++    CeedCall(CeedCompositeOperatorGetNumSub(op, &num_suboperators));
++    CeedCall(CeedCompositeOperatorGetSubList(op, &sub_operators));
++    for (CeedInt i = 0; i < num_suboperators; i++) {
++      CeedCall(CeedQFunctionAssemblyDataDestroy(&sub_operators[i]->qf_assembled));
++      CeedCall(CeedOperatorAssemblyDataDestroy(&sub_operators[i]->op_assembled));
++    }
++  }
++  return CEED_ERROR_SUCCESS;
++}
++
+ /**
+   @brief Destroy a `CeedOperator`
+ 
+diff --git a/interface/ceed-preconditioning.c b/interface/ceed-preconditioning.c
+index 88255ced..8eb59409 100644
+--- a/interface/ceed-preconditioning.c
++++ b/interface/ceed-preconditioning.c
+@@ -160,7 +160,12 @@ static int CeedOperatorCreateFallback(CeedOperator op) {
+       CeedCall(CeedOperatorFieldGetData(output_fields[i], &field_name, &rstr, &basis, &vec));
+       CeedCall(CeedOperatorSetField(op_fallback, field_name, rstr, basis, vec));
+     }
+-    CeedCall(CeedQFunctionAssemblyDataReferenceCopy(op->qf_assembled, &op_fallback->qf_assembled));
++    {
++      CeedQFunctionAssemblyData data;
++
++      CeedCall(CeedOperatorGetQFunctionAssemblyData(op, &data));
++      CeedCall(CeedQFunctionAssemblyDataReferenceCopy(data, &op_fallback->qf_assembled));
++    }
+     // Cleanup
+     CeedCall(CeedQFunctionDestroy(&qf_fallback));
+     CeedCall(CeedQFunctionDestroy(&dqf_fallback));
+@@ -882,7 +887,12 @@ static int CeedSingleOperatorMultigridLevel(CeedOperator op_fine, CeedVector p_m
+     CeedCall(CeedOperatorSetField(*op_coarse, field_name, rstr, basis, vec));
+   }
+   // -- Clone QFunctionAssemblyData
+-  CeedCall(CeedQFunctionAssemblyDataReferenceCopy(op_fine->qf_assembled, &(*op_coarse)->qf_assembled));
++  {
++    CeedQFunctionAssemblyData fine_data;
++
++    CeedCall(CeedOperatorGetQFunctionAssemblyData(op_fine, &fine_data));
++    CeedCall(CeedQFunctionAssemblyDataReferenceCopy(fine_data, &(*op_coarse)->qf_assembled));
++  }
+ 
+   // Multiplicity vector
+   if (op_restrict || op_prolong) {
+@@ -1125,6 +1135,27 @@ int CeedOperatorCreateActivePointBlockRestriction(CeedElemRestriction rstr, Ceed
+   return CEED_ERROR_SUCCESS;
+ }
+ 
++/**
++  @brief Get `CeedQFunctionAssemblyData`
++
++  @param[in]  op   `CeedOperator` to assemble
++  @param[out] data `CeedQFunctionAssemblyData`
++
++  @return An error code: 0 - success, otherwise - failure
++
++  @ref Backend
++**/
++int CeedOperatorGetQFunctionAssemblyData(CeedOperator op, CeedQFunctionAssemblyData *data) {
++  if (!op->qf_assembled) {
++    CeedQFunctionAssemblyData data;
++
++    CeedCall(CeedQFunctionAssemblyDataCreate(op->ceed, &data));
++    op->qf_assembled = data;
++  }
++  *data = op->qf_assembled;
++  return CEED_ERROR_SUCCESS;
++}
++
+ /**
+   @brief Create object holding `CeedQFunction` assembly data for `CeedOperator`
+ 
+@@ -1304,7 +1335,7 @@ int CeedQFunctionAssemblyDataDestroy(CeedQFunctionAssemblyData *data) {
+   @brief Get `CeedOperatorAssemblyData`
+ 
+   @param[in]  op   `CeedOperator` to assemble
+-  @param[out] data `CeedQFunctionAssemblyData`
++  @param[out] data `CeedOperatorAssemblyData`
+ 
+   @return An error code: 0 - success, otherwise - failure
+ 
+@@ -1868,22 +1899,24 @@ int CeedOperatorLinearAssembleQFunctionBuildOrUpdate(CeedOperator op, CeedVector
+   // Assemble QFunction
+   if (LinearAssembleQFunctionUpdate) {
+     // Backend or fallback parent version
+-    bool                qf_assembled_is_setup;
+-    CeedVector          assembled_vec  = NULL;
+-    CeedElemRestriction assembled_rstr = NULL;
+-
+-    CeedCall(CeedQFunctionAssemblyDataIsSetup(op->qf_assembled, &qf_assembled_is_setup));
+-    if (qf_assembled_is_setup) {
++    CeedQFunctionAssemblyData data;
++    bool                      data_is_setup;
++    CeedVector                assembled_vec  = NULL;
++    CeedElemRestriction       assembled_rstr = NULL;
++
++    CeedCall(CeedOperatorGetQFunctionAssemblyData(op, &data));
++    CeedCall(CeedQFunctionAssemblyDataIsSetup(data, &data_is_setup));
++    if (data_is_setup) {
+       bool update_needed;
+ 
+-      CeedCall(CeedQFunctionAssemblyDataGetObjects(op->qf_assembled, &assembled_vec, &assembled_rstr));
+-      CeedCall(CeedQFunctionAssemblyDataIsUpdateNeeded(op->qf_assembled, &update_needed));
++      CeedCall(CeedQFunctionAssemblyDataGetObjects(data, &assembled_vec, &assembled_rstr));
++      CeedCall(CeedQFunctionAssemblyDataIsUpdateNeeded(data, &update_needed));
+       if (update_needed) CeedCall(LinearAssembleQFunctionUpdate(op_assemble, assembled_vec, assembled_rstr, request));
+     } else {
+       CeedCall(CeedOperatorLinearAssembleQFunction(op_assemble, &assembled_vec, &assembled_rstr, request));
+-      CeedCall(CeedQFunctionAssemblyDataSetObjects(op->qf_assembled, assembled_vec, assembled_rstr));
++      CeedCall(CeedQFunctionAssemblyDataSetObjects(data, assembled_vec, assembled_rstr));
+     }
+-    CeedCall(CeedQFunctionAssemblyDataSetUpdateNeeded(op->qf_assembled, false));
++    CeedCall(CeedQFunctionAssemblyDataSetUpdateNeeded(data, false));
+ 
+     // Copy reference from internally held copy
+     CeedCall(CeedVectorReferenceCopy(assembled_vec, assembled));
