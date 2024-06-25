@@ -258,10 +258,37 @@ void InitRestriction(const mfem::FiniteElementSpace &fespace,
               << indices[0] << ", " << use_bdr << ", " << is_interp << ", "
               << is_interp_range << ")\n";
   }
-  const mfem::FiniteElement &fe =
-      use_bdr ? *fespace.GetBE(indices[0]) : *fespace.GetFE(indices[0]);
-  const mfem::TensorBasisElement *tfe = dynamic_cast<const mfem::TensorBasisElement *>(&fe);
-  const bool vector = fe.GetRangeType() == mfem::FiniteElement::VECTOR;
+
+  const mfem::FiniteElement *fe;
+  if (!use_bdr)
+  {
+    fe = fespace.GetFE(indices[0]);
+  }
+  else
+  {
+    if (fespace.GetBE(indices[0])->GetRangeType() != -1) // Not working
+    {
+      fe = fespace.GetFE(indices[0]);
+    }
+    else
+    {
+      int elem_id, face_info;
+      int FaceNo = fespace.GetMesh()->GetBdrElementFaceIndex(indices[0]);
+      fespace.GetMesh()->GetBdrElementAdjacentElement(FaceNo, elem_id, face_info);
+      mfem::Geometry::Type face_geom = fespace.GetMesh()->GetBdrElementGeometry(FaceNo);
+      face_info = fespace.GetMesh()->EncodeFaceInfo(fespace.GetMesh()->DecodeFaceInfoLocalIndex(face_info),
+                                                    mfem::Geometry::GetInverseOrientation(
+                                                    face_geom, fespace.GetMesh()->DecodeFaceInfoOrientation(face_info)));
+      //mfem::IntegrationPointTransformation Loc1;
+      //fespace.GetMesh()->GetLocalFaceTransformation(fespace.GetMesh()->GetBdrElementType(FaceNo),
+      //                                              fespace.GetMesh()->GetElementType(elem_id),
+      //                                              Loc1.Transf, face_info);
+      fe = fespace.GetTraceElement(elem_id, face_geom);
+
+    }
+  }
+  const mfem::TensorBasisElement *tfe = dynamic_cast<const mfem::TensorBasisElement *>(fe);
+  const bool vector = fe->GetRangeType() == mfem::FiniteElement::VECTOR;
   const bool lexico = (tfe && tfe->GetDofMap().Size() > 0 && !vector && !is_interp);
   if (lexico)
   {
