@@ -345,7 +345,7 @@ GradFluxErrorEstimator<VecType>::GradFluxErrorEstimator(
           info, (void *)ctx.data(), ctx.size() * sizeof(CeedIntScalar), ceed, E_gf_vec,
           D_gf_vec, nd_restr, rt_restr, nd_basis, rt_basis, mesh_elem_restr, data.geom_data,
           data.geom_data_restr, &sub_op);
-      integ_op.AddOper(sub_op);  // Sub-operator owned by ceed::Operator
+      integ_op.AddSubOperator(sub_op);  // Sub-operator owned by ceed::Operator
 
       // Element restriction and passive input vectors are owned by the operator.
       PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&mesh_elem_restr));
@@ -458,7 +458,7 @@ CurlFluxErrorEstimator<VecType>::CurlFluxErrorEstimator(
           info, (void *)ctx.data(), ctx.size() * sizeof(CeedIntScalar), ceed, B_gf_vec,
           H_gf_vec, rt_restr, nd_restr, rt_basis, nd_basis, mesh_elem_restr, data.geom_data,
           data.geom_data_restr, &sub_op);
-      integ_op.AddOper(sub_op);  // Sub-operator owned by ceed::Operator
+      integ_op.AddSubOperator(sub_op);  // Sub-operator owned by ceed::Operator
 
       // Element restriction and passive input vectors are owned by the operator.
       PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&mesh_elem_restr));
