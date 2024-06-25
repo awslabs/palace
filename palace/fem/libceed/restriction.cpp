@@ -90,9 +90,25 @@ void InitNativeRestr(const mfem::FiniteElementSpace &fespace,
                      Ceed ceed, CeedElemRestriction *restr)
 {
   const std::size_t num_elem = indices.size();
-  const mfem::FiniteElement &fe =
-      use_bdr ? *fespace.GetBE(indices[0]) : *fespace.GetFE(indices[0]);
-  const int P = fe.GetDof();
+  const mfem::FiniteElement *fe;
+  bool face_flg = false;
+  if (!use_bdr)
+  {
+    fe = fespace.GetFE(indices[0]);
+  }
+  else
+  {
+    fe = fespace.GetBE(indices[0]);
+    if (!fe)
+    {
+      int elem_id, face_info;
+      fespace.GetMesh()->GetBdrElementAdjacentElement(indices[0], elem_id, face_info);
+      mfem::Geometry::Type face_geom = fespace.GetMesh()->GetBdrElementGeometry(indices[0]);
+      fe = fespace.GetTraceElement(elem_id, face_geom);
+      face_flg = true;
+    }
+  }
+  const int P = fe->GetDof();
   const CeedInt comp_stride =
       (fespace.GetVDim() == 1 || fespace.GetOrdering() == mfem::Ordering::byVDIM)
           ? 1
@@ -105,7 +121,7 @@ void InitNativeRestr(const mfem::FiniteElementSpace &fespace,
     {
       return false;
     }
-    const auto geom = fe.GetGeomType();
+    const auto geom = fe->GetGeomType();
     const auto *dof_trans = fespace.FEColl()->DofTransformationForGeometry(geom);
     return (dof_trans && !dof_trans->IsIdentity());
   }();
@@ -140,7 +156,98 @@ void InitNativeRestr(const mfem::FiniteElementSpace &fespace,
       const auto e = indices[i];
       if (use_bdr)
       {
-        fespace.GetBdrElementDofs(e, dofs, dof_trans);
+        if (!face_flg)
+        {
+          fespace.GetBdrElementDofs(e, dofs, dof_trans);
+        }
+        else
+        {
+          // Get coordinates of face dofs
+          int elem_id, face_info;
+          fespace.GetMesh()->GetBdrElementAdjacentElement(e, elem_id, face_info);
+          mfem::Geometry::Type face_geom = fespace.GetMesh()->GetBdrElementGeometry(e);
+          face_info = fespace.GetMesh()->EncodeFaceInfo(
+                         fespace.GetMesh()->DecodeFaceInfoLocalIndex(face_info),
+                         mfem::Geometry::GetInverseOrientation(
+                            face_geom, fespace.GetMesh()->DecodeFaceInfoOrientation(face_info))
+                      );
+          mfem::IntegrationPointTransformation Loc1;
+          fespace.GetMesh()->GetLocalFaceTransformation(fespace.GetMesh()->GetBdrElementType(e),
+                                     fespace.GetMesh()->GetElementType(elem_id),
+                                     Loc1.Transf, face_info);
+          const mfem::FiniteElement *face_el = fespace.GetTraceElement(elem_id, face_geom);
+          MFEM_VERIFY(dynamic_cast<const mfem::NodalFiniteElement*>(face_el),
+                      "Mesh requires nodal Finite Element.");
+          mfem::IntegrationRule face_ir(face_el->GetDof());
+          Loc1.Transf.ElementNo = elem_id;
+          Loc1.Transf.mesh = fespace.GetMesh();
+          Loc1.Transf.ElementType = mfem::ElementTransformation::ELEMENT;
+          Loc1.Transform(face_el->GetNodes(), face_ir);
+          mfem::IsoparametricTransformation face_tr;
+          face_tr.ElementNo = e;
+          face_tr.ElementType = mfem::ElementTransformation::BDR_ELEMENT;
+          face_tr.mesh = fespace.GetMesh();
+          face_tr.Attribute = fespace.GetMesh()->GetBdrAttribute(e);
+          mfem::DenseMatrix &face_pm = face_tr.GetPointMat(); // dim x dof
+          face_tr.Reset();
+          fespace.GetMesh()->GetNodes()->GetVectorValues(Loc1.Transf, face_ir, face_pm);
+
+          // Get coordinates of element dofs
+          mfem::DenseMatrix elem_pm;
+          const mfem::FiniteElement *fe_elem = fespace.GetFE(elem_id);
+          const mfem::IntegrationRule &fe_elem_nodes = fe_elem->GetNodes();
+          mfem::ElementTransformation *T = fespace.GetMesh()->GetElementTransformation(elem_id);
+          T->Transform(fe_elem_nodes, elem_pm);
+
+          // Find the dofs
+          mfem::real_t tol = 1E-5;
+          mfem::Array<int> elem_dofs;
+          fespace.GetElementDofs(elem_id, elem_dofs, dof_trans); // TODO: Check if passing dof_trans is OK
+          dofs.SetSize(P);
+          for (int l=0; l< P; l++)
+          {
+            double norm_f = 0.0;
+            for (int m = 0; m < face_pm.Height(); m++)
+            {
+              norm_f += face_pm(m, l) * face_pm(m, l);
+            }
+            norm_f = std::sqrt(norm_f);
+            for (int m=0; m< elem_pm.Width(); m++)
+            {
+              double norm_e = 0.0;
+              for (int n = 0; n < elem_pm.Height(); n++)
+              {
+                norm_e += elem_pm(n, m) * elem_pm(n, m);
+              }
+              norm_e = std::sqrt(norm_e);
+              if (norm_e == 0)
+              {
+                if (norm_f == 0)
+                {
+                  dofs[l] = elem_dofs[m];
+                }
+                else
+                {
+                  continue;
+                }
+              }
+              else
+              {
+                double relative_tol = tol * std::max(norm_f, norm_e);
+                bool same_coord = false;
+                double diff = 0.0;
+                for (int o = 0; o < elem_pm.Height(); o++)
+                {
+                  diff += std::fabs(elem_pm(o, m) - face_pm(o, l));
+                }
+                if (diff <= relative_tol)
+                {
+                  dofs[l] = elem_dofs[m];
+                }
+              }
+            }
+          }
+        }
       }
       else
       {
@@ -216,6 +323,7 @@ void InitNativeRestr(const mfem::FiniteElementSpace &fespace,
           }
         }
       }
+
     }
     use_el_orients += use_el_orients_loc;
   }
@@ -258,10 +366,25 @@ void InitRestriction(const mfem::FiniteElementSpace &fespace,
               << indices[0] << ", " << use_bdr << ", " << is_interp << ", "
               << is_interp_range << ")\n";
   }
-  const mfem::FiniteElement &fe =
-      use_bdr ? *fespace.GetBE(indices[0]) : *fespace.GetFE(indices[0]);
-  const mfem::TensorBasisElement *tfe = dynamic_cast<const mfem::TensorBasisElement *>(&fe);
-  const bool vector = fe.GetRangeType() == mfem::FiniteElement::VECTOR;
+  const mfem::FiniteElement *fe;
+  if (!use_bdr)
+  {
+    fe = fespace.GetFE(indices[0]);
+  }
+  else
+  {
+    fe = fespace.GetBE(indices[0]);
+    if (!fe)
+    {
+      int elem_id, face_info;
+      int FaceNo = fespace.GetMesh()->GetBdrElementFaceIndex(indices[0]);
+      fespace.GetMesh()->GetBdrElementAdjacentElement(FaceNo, elem_id, face_info);
+      mfem::Geometry::Type face_geom = fespace.GetMesh()->GetBdrElementGeometry(FaceNo);
+      fe = fespace.GetTraceElement(elem_id, face_geom);
+    }
+  }
+  const mfem::TensorBasisElement *tfe = dynamic_cast<const mfem::TensorBasisElement *>(fe);
+  const bool vector = fe->GetRangeType() == mfem::FiniteElement::VECTOR;
   const bool lexico = (tfe && tfe->GetDofMap().Size() > 0 && !vector && !is_interp);
   if (lexico)
   {
