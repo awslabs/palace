@@ -51,8 +51,7 @@
       "Type": "Default",
       "KSPType": "GMRES",
       "Tol": 1.0e-8,
-      "MaxIts": 100,
-      "DivFreeMaxIts": 0 // we should be able to drop this
+      "MaxIts": 100
     }
   }
 }
