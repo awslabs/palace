@@ -250,6 +250,13 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   ksp->SetOperators(*A, *P);
   eigen->SetLinearSolver(*ksp);
 
+  // Initialize structures for storing and reducing the results of error estimation.
+  TimeDependentFluxErrorEstimator<ComplexVector> estimator(
+      space_op.GetMaterialOp(), space_op.GetNDSpaces(), space_op.GetRTSpaces(),
+      iodata.solver.linear.estimator_tol, iodata.solver.linear.estimator_max_it, 0,
+      iodata.solver.linear.estimator_mg);
+  ErrorIndicator indicator;
+
   // Eigenvalue problem solve.
   BlockTimer bt1(Timer::EPS);
   Mpi::Print("\n");
@@ -267,11 +274,6 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
   // Calculate and record the error indicators, and postprocess the results.
   Mpi::Print("\nComputing solution error estimates and performing postprocessing\n");
-  TimeDependentFluxErrorEstimator<ComplexVector> estimator(
-      space_op.GetMaterialOp(), space_op.GetNDSpaces(), space_op.GetRTSpaces(),
-      iodata.solver.linear.estimator_tol, iodata.solver.linear.estimator_max_it, 0,
-      iodata.solver.linear.estimator_mg);
-  ErrorIndicator indicator;
   if (!KM)
   {
     // Normalize the finalized eigenvectors with respect to mass matrix (unit electric field
