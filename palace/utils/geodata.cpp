@@ -772,7 +772,7 @@ int CollectPointCloudOnRoot(const mfem::ParMesh &mesh, const mfem::Array<int> &m
         for (auto i : vertex_indices)
         {
           const auto &vx = mesh.GetVertex(i);
-          vertices.push_back({vx[0], vx[1], vx[2]});
+          vertices.emplace_back(vx[0], vx[1], vx[2]);
         }
       }
     }
@@ -789,7 +789,7 @@ int CollectPointCloudOnRoot(const mfem::ParMesh &mesh, const mfem::Array<int> &m
       T.Transform(RefG->RefPts, pointmat);
       for (int j = 0; j < pointmat.Width(); j++)
       {
-        loc_vertices.push_back({pointmat(0, j), pointmat(1, j), pointmat(2, j)});
+        loc_vertices.emplace_back(pointmat(0, j), pointmat(1, j), pointmat(2, j));
       }
     };
     PalacePragmaOmp(parallel)
@@ -1010,52 +1010,42 @@ BoundingBox BoundingBoxFromPointCloud(MPI_Comm comm,
     // found edges of the cuboid, but this does not work for non-rectangular prism
     // cross-sections or pyramid shapes.
     {
-      std::array<const Eigen::Vector3d *, 4> verts = {&v_000, &v_001, &v_011, &v_111};
-      Eigen::Vector3d e_0 = Eigen::Vector3d::Zero(), e_1 = Eigen::Vector3d::Zero();
-      double dot_min = mfem::infinity();
-      bool found_orthog = false;
-      for (int i_0 = 0; i_0 < 4; i_0++)
+      const auto [e_0, e_1] = [&v_000, &v_001, &v_011, &v_111]()
       {
-        for (int j_0 = i_0 + 1; j_0 < 4; j_0++)
+        std::array<const Eigen::Vector3d *, 4> verts = {&v_000, &v_001, &v_011, &v_111};
+        Eigen::Vector3d e_0 = Eigen::Vector3d::Zero(), e_1 = Eigen::Vector3d::Zero();
+        double dot_min = mfem::infinity();
+        for (int i_0 = 0; i_0 < 4; i_0++)
         {
-          for (int i_1 = 0; i_1 < 4; i_1++)
+          for (int j_0 = i_0 + 1; j_0 < 4; j_0++)
           {
-            for (int j_1 = i_1 + 1; j_1 < 4; j_1++)
+            for (int i_1 = 0; i_1 < 4; i_1++)
             {
-              if (i_1 == i_0 && j_1 == j_0)
+              for (int j_1 = i_1 + 1; j_1 < 4; j_1++)
               {
-                continue;
-              }
-              const auto e_ij_0 = (*verts[j_0] - *verts[i_0]).normalized();
-              const auto e_ij_1 = (*verts[j_1] - *verts[i_1]).normalized();
-              const auto dot = std::abs(e_ij_0.dot(e_ij_1));
-              if (dot < dot_min)
-              {
-                dot_min = dot;
-                e_0 = e_ij_0;
-                e_1 = e_ij_1;
-                if (dot_min < rel_tol)
+                if (i_1 == i_0 && j_1 == j_0)
                 {
-                  found_orthog = true;
-                  break;
+                  continue;
+                }
+                const auto e_ij_0 = (*verts[j_0] - *verts[i_0]).normalized();
+                const auto e_ij_1 = (*verts[j_1] - *verts[i_1]).normalized();
+                const auto dot = std::abs(e_ij_0.dot(e_ij_1));
+                if (dot < dot_min)
+                {
+                  dot_min = dot;
+                  e_0 = e_ij_0;
+                  e_1 = e_ij_1;
+                  if (dot_min < rel_tol)
+                  {
+                    return std::make_pair(e_0, e_1);
+                  }
                 }
               }
             }
-            if (found_orthog)
-            {
-              break;
-            }
-          }
-          if (found_orthog)
-          {
-            break;
           }
         }
-        if (found_orthog)
-        {
-          break;
-        }
-      }
+        return std::make_pair(e_0, e_1);
+      }();
       Vector3dMap(box.axes[0].data()) = e_0;
       Vector3dMap(box.axes[1].data()) = e_1;
       Vector3dMap(box.axes[2].data()) =
