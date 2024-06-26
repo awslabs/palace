@@ -260,8 +260,8 @@ void RefineMesh(const IoData &iodata, std::vector<std::unique_ptr<mfem::ParMesh>
       if (use_nodes)
       {
         mfem::ElementTransformation &T = *mesh.back()->GetElementTransformation(i);
-        mfem::Geometry::Type geom = mesh.back()->GetElementGeometry(i);
-        mfem::RefinedGeometry *RefG = mfem::GlobGeometryRefiner.Refine(geom, ref);
+        mfem::RefinedGeometry *RefG =
+            mfem::GlobGeometryRefiner.Refine(T.GetGeometryType(), ref);
         T.Transform(RefG->RefPts, pointmat);
       }
       else
@@ -606,11 +606,11 @@ void GetAxisAlignedBoundingBox(const mfem::ParMesh &mesh, const mfem::Array<int>
   {
     mesh.GetNodes()->HostRead();
     const int ref = mesh.GetNodes()->FESpace()->GetMaxElementOrder();
-    auto BBUpdate = [&ref](mfem::GeometryRefiner refiner, mfem::Geometry::Type &geom,
-                           mfem::ElementTransformation &T, mfem::DenseMatrix &pointmat,
-                           mfem::Vector &min, mfem::Vector &max)
+    auto BBUpdate = [&ref](mfem::GeometryRefiner &refiner, mfem::ElementTransformation &T,
+                           mfem::DenseMatrix &pointmat, mfem::Vector &min,
+                           mfem::Vector &max)
     {
-      mfem::RefinedGeometry *RefG = refiner.Refine(geom, ref);
+      mfem::RefinedGeometry *RefG = refiner.Refine(T.GetGeometryType(), ref);
       T.Transform(RefG->RefPts, pointmat);
       for (int j = 0; j < pointmat.Width(); j++)
       {
@@ -648,8 +648,7 @@ void GetAxisAlignedBoundingBox(const mfem::ParMesh &mesh, const mfem::Array<int>
             continue;
           }
           mesh.GetBdrElementTransformation(i, &T);
-          mfem::Geometry::Type geom = mesh.GetBdrElementGeometry(i);
-          BBUpdate(refiner, geom, T, pointmat, loc_min, loc_max);
+          BBUpdate(refiner, T, pointmat, loc_min, loc_max);
         }
       }
       else
@@ -662,8 +661,7 @@ void GetAxisAlignedBoundingBox(const mfem::ParMesh &mesh, const mfem::Array<int>
             continue;
           }
           mesh.GetElementTransformation(i, &T);
-          mfem::Geometry::Type geom = mesh.GetElementGeometry(i);
-          BBUpdate(refiner, geom, T, pointmat, loc_min, loc_max);
+          BBUpdate(refiner, T, pointmat, loc_min, loc_max);
         }
       }
       PalacePragmaOmp(critical(BBUpdate))
@@ -774,7 +772,7 @@ int CollectPointCloudOnRoot(const mfem::ParMesh &mesh, const mfem::Array<int> &m
         for (auto i : vertex_indices)
         {
           const auto &vx = mesh.GetVertex(i);
-          vertices.push_back({vx[0], vx[1], vx[2]});
+          vertices.emplace_back(vx[0], vx[1], vx[2]);
         }
       }
     }
@@ -783,6 +781,17 @@ int CollectPointCloudOnRoot(const mfem::ParMesh &mesh, const mfem::Array<int> &m
   {
     // Curved mesh, need to process point matrices.
     const int ref = mesh.GetNodes()->FESpace()->GetMaxElementOrder();
+    auto AddPoints = [&](mfem::GeometryRefiner &refiner, mfem::ElementTransformation &T,
+                         mfem::DenseMatrix &pointmat,
+                         std::vector<Eigen::Vector3d> &loc_vertices)
+    {
+      mfem::RefinedGeometry *RefG = refiner.Refine(T.GetGeometryType(), ref);
+      T.Transform(RefG->RefPts, pointmat);
+      for (int j = 0; j < pointmat.Width(); j++)
+      {
+        loc_vertices.emplace_back(pointmat(0, j), pointmat(1, j), pointmat(2, j));
+      }
+    };
     PalacePragmaOmp(parallel)
     {
       mfem::GeometryRefiner refiner;
@@ -799,13 +808,7 @@ int CollectPointCloudOnRoot(const mfem::ParMesh &mesh, const mfem::Array<int> &m
             continue;
           }
           mesh.GetBdrElementTransformation(i, &T);
-          mfem::Geometry::Type geom = mesh.GetBdrElementGeometry(i);
-          mfem::RefinedGeometry *RefG = refiner.Refine(geom, ref);
-          T.Transform(RefG->RefPts, pointmat);
-          for (int j = 0; j < pointmat.Width(); j++)
-          {
-            loc_vertices.push_back({pointmat(0, j), pointmat(1, j), pointmat(2, j)});
-          }
+          AddPoints(refiner, T, pointmat, loc_vertices);
         }
       }
       else
@@ -818,13 +821,7 @@ int CollectPointCloudOnRoot(const mfem::ParMesh &mesh, const mfem::Array<int> &m
             continue;
           }
           mesh.GetElementTransformation(i, &T);
-          mfem::Geometry::Type geom = mesh.GetElementGeometry(i);
-          mfem::RefinedGeometry *RefG = refiner.Refine(geom, ref);
-          T.Transform(RefG->RefPts, pointmat);
-          for (int j = 0; j < pointmat.Width(); j++)
-          {
-            loc_vertices.push_back({pointmat(0, j), pointmat(1, j), pointmat(2, j)});
-          }
+          AddPoints(refiner, T, pointmat, loc_vertices);
         }
       }
       PalacePragmaOmp(critical(PointCloud))
@@ -960,13 +957,14 @@ BoundingBox BoundingBoxFromPointCloud(MPI_Comm comm,
 
     // Use the discovered vertex to define a second direction and thus a plane. n_1 and n_2
     // now define a planar coordinate system intersecting the main diagonal, and two
-    // opposite edges of the cuboid. Now look for a component that maximizes distance from
-    // the planar system: complete the axes with a cross, then use a dot product to pick
-    // the greatest deviation.
+    // opposite edges of the cuboid.
     const Eigen::Vector3d n_2 =
-        ((t_0 - origin) - (t_0 - origin).dot(n_1) * n_1).normalized();
+        ((t_0 - origin) - ((t_0 - origin).dot(n_1) * n_1)).normalized();
 
-    // Collect the furthest point from the plane.
+    // Collect the furthest point from the plane to determine if the box is planar. Look for
+    // a component that maximizes distance from the planar system: complete the axes with a
+    // cross, then use a dot product to pick the greatest deviation.
+    constexpr double rel_tol = 1.0e-6;
     auto max_distance = PerpendicularDistance(
         {n_1, n_2}, origin,
         *std::max_element(vertices.begin(), vertices.end(),
@@ -975,39 +973,97 @@ BoundingBox BoundingBoxFromPointCloud(MPI_Comm comm,
                             return PerpendicularDistance({n_1, n_2}, origin, x) <
                                    PerpendicularDistance({n_1, n_2}, origin, y);
                           }));
-    constexpr double rel_tol = 1e-6;
-    box.planar = (max_distance < (rel_tol * (v_111 - v_000).norm()));
+    box.planar = (max_distance < rel_tol * (v_111 - v_000).norm());
 
-    // Given numerical tolerance, collect other points with an almost matching distance.
-    const double cooincident_tol = rel_tol * max_distance;
-    std::vector<Eigen::Vector3d> vertices_out_of_plane;
-    std::copy_if(vertices.begin(), vertices.end(),
-                 std::back_inserter(vertices_out_of_plane),
-                 [&](const auto &v)
-                 {
-                   return std::abs(PerpendicularDistance({n_1, n_2}, origin, v) -
-                                   max_distance) < cooincident_tol;
-                 });
+    // For the non-planar case, collect points furthest from the plane and choose the one
+    // closest to the origin as the next vertex which might be (001) or (011).
+    const auto &t_1 = [&]()
+    {
+      if (box.planar)
+      {
+        return t_0;
+      }
+      std::vector<Eigen::Vector3d> vertices_out_of_plane;
+      std::copy_if(vertices.begin(), vertices.end(),
+                   std::back_inserter(vertices_out_of_plane),
+                   [&](const auto &v)
+                   {
+                     return std::abs(PerpendicularDistance({n_1, n_2}, origin, v) -
+                                     max_distance) < rel_tol * max_distance;
+                   });
+      return *std::min_element(vertices_out_of_plane.begin(), vertices_out_of_plane.end(),
+                               [&](const Eigen::Vector3d &x, const Eigen::Vector3d &y)
+                               { return (x - origin).norm() < (y - origin).norm(); });
+    }();
 
     // Given candidates t_0 and t_1, the closer to origin defines v_001.
-    const auto &t_1 =
-        box.planar
-            ? t_0
-            : *std::min_element(vertices_out_of_plane.begin(), vertices_out_of_plane.end(),
-                                [&](const Eigen::Vector3d &x, const Eigen::Vector3d &y)
-                                { return (x - origin).norm() < (y - origin).norm(); });
-    const bool t_0_gt_t_1 =
-        (t_0 - origin).norm() > (t_1 - origin).norm();  // If planar, t_1 == t_0
+    const bool t_0_gt_t_1 = (t_0 - origin).norm() > (t_1 - origin).norm();
     const auto &v_001 = t_0_gt_t_1 ? t_1 : t_0;
     const auto &v_011 = box.planar ? v_111 : (t_0_gt_t_1 ? t_0 : t_1);
 
     // Compute the center as halfway along the main diagonal.
     Vector3dMap(box.center.data()) = 0.5 * (v_000 + v_111);
 
-    // The length in each direction is given by traversing the edges of the cuboid in turn.
-    Vector3dMap(box.axes[0].data()) = 0.5 * (v_001 - v_000);
-    Vector3dMap(box.axes[1].data()) = 0.5 * (v_011 - v_001);
-    Vector3dMap(box.axes[2].data()) = 0.5 * (v_111 - v_011);
+    // Compute the box axes. Using the 4 extremal points, we find the first two axes as the
+    // edges which are closest to perpendicular. For a perfect rectangular prism point
+    // cloud, we could instead compute the axes and length in each direction using the
+    // found edges of the cuboid, but this does not work for non-rectangular prism
+    // cross-sections or pyramid shapes.
+    {
+      const auto [e_0, e_1] = [&v_000, &v_001, &v_011, &v_111]()
+      {
+        std::array<const Eigen::Vector3d *, 4> verts = {&v_000, &v_001, &v_011, &v_111};
+        Eigen::Vector3d e_0 = Eigen::Vector3d::Zero(), e_1 = Eigen::Vector3d::Zero();
+        double dot_min = mfem::infinity();
+        for (int i_0 = 0; i_0 < 4; i_0++)
+        {
+          for (int j_0 = i_0 + 1; j_0 < 4; j_0++)
+          {
+            for (int i_1 = 0; i_1 < 4; i_1++)
+            {
+              for (int j_1 = i_1 + 1; j_1 < 4; j_1++)
+              {
+                if (i_1 == i_0 && j_1 == j_0)
+                {
+                  continue;
+                }
+                const auto e_ij_0 = (*verts[j_0] - *verts[i_0]).normalized();
+                const auto e_ij_1 = (*verts[j_1] - *verts[i_1]).normalized();
+                const auto dot = std::abs(e_ij_0.dot(e_ij_1));
+                if (dot < dot_min)
+                {
+                  dot_min = dot;
+                  e_0 = e_ij_0;
+                  e_1 = e_ij_1;
+                  if (dot_min < rel_tol)
+                  {
+                    return std::make_pair(e_0, e_1);
+                  }
+                }
+              }
+            }
+          }
+        }
+        return std::make_pair(e_0, e_1);
+      }();
+      Vector3dMap(box.axes[0].data()) = e_0;
+      Vector3dMap(box.axes[1].data()) = e_1;
+      Vector3dMap(box.axes[2].data()) =
+          box.planar ? Eigen::Vector3d::Zero() : e_0.cross(e_1);
+    }
+
+    // Scale axes by length of the box in each direction.
+    std::array<double, 3> l = {0.0};
+    for (const auto &v : {v_000, v_001, v_011, v_111})
+    {
+      const auto v_0 = v - Vector3dMap(box.center.data());
+      l[0] = std::max(l[0], std::abs(v_0.dot(Vector3dMap(box.axes[0].data()))));
+      l[1] = std::max(l[1], std::abs(v_0.dot(Vector3dMap(box.axes[1].data()))));
+      l[2] = std::max(l[2], std::abs(v_0.dot(Vector3dMap(box.axes[2].data()))));
+    }
+    Vector3dMap(box.axes[0].data()) *= l[0];
+    Vector3dMap(box.axes[1].data()) *= l[1];
+    Vector3dMap(box.axes[2].data()) *= l[2];
 
     // Make sure the longest dimension comes first.
     std::sort(box.axes.begin(), box.axes.end(), [](const auto &x, const auto &y)
@@ -1286,9 +1342,9 @@ mfem::Vector GetSurfaceNormal(const mfem::ParMesh &mesh, const mfem::Array<int> 
   mfem::Vector loc_normal(dim), normal(dim);
   normal = 0.0;
   bool init = false;
-  auto UpdateNormal = [&](mfem::ElementTransformation &T, mfem::Geometry::Type geom)
+  auto UpdateNormal = [&](mfem::ElementTransformation &T)
   {
-    const mfem::IntegrationPoint &ip = mfem::Geometries.GetCenter(geom);
+    const mfem::IntegrationPoint &ip = mfem::Geometries.GetCenter(T.GetGeometryType());
     T.SetIntPoint(&ip);
     mfem::CalcOrtho(T.Jacobian(), loc_normal);
     if (!init)
@@ -1320,7 +1376,7 @@ mfem::Vector GetSurfaceNormal(const mfem::ParMesh &mesh, const mfem::Array<int> 
         continue;
       }
       mesh.GetBdrElementTransformation(i, &T);
-      UpdateNormal(T, mesh.GetBdrElementGeometry(i));
+      UpdateNormal(T);
       if (!average)
       {
         break;
@@ -1337,7 +1393,7 @@ mfem::Vector GetSurfaceNormal(const mfem::ParMesh &mesh, const mfem::Array<int> 
         continue;
       }
       mesh.GetElementTransformation(i, &T);
-      UpdateNormal(T, mesh.GetElementGeometry(i));
+      UpdateNormal(T);
       if (!average)
       {
         break;
@@ -1394,6 +1450,60 @@ mfem::Vector GetSurfaceNormal(const mfem::ParMesh &mesh, const mfem::Array<int> 
   }
 
   return normal;
+}
+
+double GetSurfaceArea(const mfem::ParMesh &mesh, const mfem::Array<int> &marker)
+{
+  double area = 0.0;
+  PalacePragmaOmp(parallel reduction(+ : area))
+  {
+    mfem::IsoparametricTransformation T;
+    PalacePragmaOmp(for schedule(static))
+    for (int i = 0; i < mesh.GetNBE(); i++)
+    {
+      if (!marker[mesh.GetBdrAttribute(i) - 1])
+      {
+        continue;
+      }
+      mesh.GetBdrElementTransformation(i, &T);
+      const mfem::IntegrationRule &ir = mfem::IntRules.Get(T.GetGeometryType(), T.OrderJ());
+      for (int j = 0; j < ir.GetNPoints(); j++)
+      {
+        const mfem::IntegrationPoint &ip = ir.IntPoint(j);
+        T.SetIntPoint(&ip);
+        area += ip.weight * T.Weight();
+      }
+    }
+  }
+  Mpi::GlobalSum(1, &area, mesh.GetComm());
+  return area;
+}
+
+double GetVolume(const mfem::ParMesh &mesh, const mfem::Array<int> &marker)
+{
+  double volume = 0.0;
+  PalacePragmaOmp(parallel reduction(+ : volume))
+  {
+    mfem::IsoparametricTransformation T;
+    PalacePragmaOmp(for schedule(static))
+    for (int i = 0; i < mesh.GetNE(); i++)
+    {
+      if (!marker[mesh.GetAttribute(i) - 1])
+      {
+        continue;
+      }
+      mesh.GetElementTransformation(i, &T);
+      const mfem::IntegrationRule &ir = mfem::IntRules.Get(T.GetGeometryType(), T.OrderJ());
+      for (int j = 0; j < ir.GetNPoints(); j++)
+      {
+        const mfem::IntegrationPoint &ip = ir.IntPoint(j);
+        T.SetIntPoint(&ip);
+        volume += ip.weight * T.Weight();
+      }
+    }
+  }
+  Mpi::GlobalSum(1, &volume, mesh.GetComm());
+  return volume;
 }
 
 double RebalanceMesh(std::unique_ptr<mfem::ParMesh> &mesh, const IoData &iodata)

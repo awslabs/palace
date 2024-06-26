@@ -20,8 +20,6 @@ UniformElementData::UniformElementData(const std::array<double, 3> &input_dir,
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, attr_list);
   auto bounding_box = mesh::GetBoundingBox(mesh, attr_marker, true);
-  MFEM_VERIFY(bounding_box.planar,
-              "Boundary elements must be coplanar to define a uniform lumped element!");
 
   // Check the user specified direction aligns with an axis direction.
   constexpr double angle_warning_deg = 0.1;
@@ -39,11 +37,14 @@ UniformElementData::UniformElementData(const std::array<double, 3> &input_dir,
                  input_dir, angle_warning_deg, normals[0], deviations_deg[0], normals[1],
                  deviations_deg[1], normals[2], deviations_deg[2]);
   }
-  MFEM_VERIFY(std::any_of(deviations_deg.begin(), deviations_deg.end(),
-                          [](double x) { return x < angle_error_deg; }),
-              "Specified direction does not align sufficiently with bounding box axes ("
-                  << deviations_deg[0] << ", " << deviations_deg[1] << ", "
-                  << deviations_deg[2] << " vs. tolerance " << angle_error_deg << ")!");
+  if (std::none_of(deviations_deg.begin(), deviations_deg.end(),
+                   [](double x) { return x < angle_error_deg; }))
+  {
+    Mpi::Barrier(mesh.GetComm());
+    MFEM_ABORT("Specified direction does not align sufficiently with bounding box axes ("
+               << deviations_deg[0] << ", " << deviations_deg[1] << ", "
+               << deviations_deg[2] << " vs. tolerance " << angle_error_deg << ")!");
+  }
   direction.SetSize(input_dir.size());
   std::copy(input_dir.begin(), input_dir.end(), direction.begin());
   direction /= direction.Norml2();
@@ -58,15 +59,13 @@ UniformElementData::UniformElementData(const std::array<double, 3> &input_dir,
                   rel_tol * l,
               "Bounding box discovered length should match projected length!");
 
-  // Compute the width from the largest dimension excluding the length direction
-  // component.
-  lengths[l_component] = 0.0;
-  auto w_component =
-      std::distance(lengths.begin(), std::max_element(lengths.begin(), lengths.end()));
-  MFEM_VERIFY(
-      w_component != l_component,
-      "Bounding box length and width of should correspond to different components!");
-  w = lengths[w_component];
+  // Compute the width as area / length. This allows the lumped element to be non-planar,
+  // and generalizes nicely to the case for an infinitely thin rectangular lumped element
+  // with elements on both sides (for which the width computed from the bounding box would
+  // be incorrect by a factor of 2).
+  double area = mesh::GetSurfaceArea(mesh, attr_marker);
+  MFEM_VERIFY(area > 0.0, "Uniform lumped element has zero area!");
+  w = area / l;
 }
 
 std::unique_ptr<mfem::VectorCoefficient>
