@@ -194,13 +194,12 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(MPI_Comm comm, const IoData &iodata)
       so.resize(slen);
     }
     Mpi::Broadcast(slen, so.data(), 0, node_comm);
-    if (!smesh)
     {
       std::istringstream fi(so);
       // std::istringstream fi(zlib::DecompressString(so));
       smesh = std::make_unique<mfem::Mesh>(fi, generate_edges, refine, fix_orientation);
+      so.clear();
     }
-    so.clear();
     if (refinement.nonconformal && use_amr)
     {
       smesh->EnsureNCMesh(true);
@@ -1960,7 +1959,8 @@ void SplitMeshElements(std::unique_ptr<mfem::Mesh> &orig_mesh, bool make_simplex
       nodes->GetSubVector(vdofs, vals);
 
       // Find all child elements of this parent in the split mesh and restore their correct
-      // original attribute.
+      // original attribute. This works because child elements are added in contiguous
+      // batches in the same order as the parents.
       int attr = new_mesh.GetAttribute(start);
       int end = start;
       while (end < new_mesh.GetNE() && new_mesh.GetAttribute(end) == attr)
@@ -1989,9 +1989,9 @@ void SplitMeshElements(std::unique_ptr<mfem::Mesh> &orig_mesh, bool make_simplex
         const mfem::FiniteElement &fe = *new_fespace.GetFE(i);
         mfem::ElementTransformation &T = *new_mesh.GetElementTransformation(i);
         T.Transform(fe.GetNodes(), pointmat);
-        for (int j = 0; j < pointmat.Width(); j++)
+        for (int d = 0; d < sdim; d++)
         {
-          for (int d = 0; d < sdim; d++)
+          for (int j = 0; j < pointmat.Width(); j++)
           {
             // Use default ordering byNODES.
             xyz(d * npts + offset + j) = pointmat(d, j);
