@@ -64,10 +64,10 @@ DivFreeSolver<VecType>::DivFreeSolver(
     Mpi::GlobalSum(1, &coarse_bdr_tdofs, comm);
     if (coarse_bdr_tdofs == 0)
     {
-      MPI_Comm split_comm = MPI_COMM_NULL;
-      int color = (h1_fespaces.GetFESpaceAtLevel(0).GetTrueVSize() > 0) ? 0 : MPI_UNDEFINED;
-      MPI_Comm_split(comm, color, Mpi::Rank(comm), &split_comm);
-      if (split_comm != MPI_COMM_NULL && Mpi::Root(split_comm))
+      int root = (h1_fespaces.GetFESpaceAtLevel(0).GetTrueVSize() == 0) ? Mpi::Size(comm) : Mpi::Rank(comm);
+      Mpi::GlobalMin(1, &root, comm);
+      MFEM_VERIFY(root < Mpi::Size(comm), "No root process found for single true dof constraint!");
+      if (root == Mpi::Rank(comm))
       {
         aux_tdof_lists.reserve(h1_fespaces.GetNumLevels());
         for (std::size_t l = 0; l < h1_fespaces.GetNumLevels(); l++)
@@ -76,10 +76,6 @@ DivFreeSolver<VecType>::DivFreeSolver(
           tdof_list[0] = 0;
         }
         ptr_h1_bdr_tdof_lists = &aux_tdof_lists;
-      }
-      if (split_comm != MPI_COMM_NULL)
-      {
-        MPI_Comm_free(&split_comm);
       }
     }
   }
