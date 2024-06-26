@@ -64,9 +64,11 @@ DivFreeSolver<VecType>::DivFreeSolver(
     Mpi::GlobalSum(1, &coarse_bdr_tdofs, comm);
     if (coarse_bdr_tdofs == 0)
     {
-      int root = (h1_fespaces.GetFESpaceAtLevel(0).GetTrueVSize() == 0) ? Mpi::Size(comm) : Mpi::Rank(comm);
+      int root = (h1_fespaces.GetFESpaceAtLevel(0).GetTrueVSize() == 0) ? Mpi::Size(comm)
+                                                                        : Mpi::Rank(comm);
       Mpi::GlobalMin(1, &root, comm);
-      MFEM_VERIFY(root < Mpi::Size(comm), "No root process found for single true dof constraint!");
+      MFEM_VERIFY(root < Mpi::Size(comm),
+                  "No root process found for single true dof constraint!");
       if (root == Mpi::Rank(comm))
       {
         aux_tdof_lists.reserve(h1_fespaces.GetNumLevels());
