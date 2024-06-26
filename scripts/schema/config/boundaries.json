@@ -219,6 +219,22 @@
         }
       }
     },
+    "Periodic":
+    {
+      "type": "array",
+      "additionalItems": false,
+      "items":
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["OriginalAttributes", "DuplicateAttributes"],
+        "properties":
+        {
+          "OriginalAttributes": { "$ref": "#/$defs/OriginalAttributes" },
+          "DuplicateAttributes": { "$ref": "#/$defs/DuplicateAttributes" }
+        }
+      }
+    },
     "Postprocessing":
     {
       "type": "object",
@@ -279,6 +295,20 @@
   "$defs":
   {
     "Attributes":
+    {
+      "type": "array",
+      "additionalItems": false,
+      "items": { "type": "integer"},
+      "minItems": 1
+    },
+    "OriginalAttributes":
+    {
+      "type": "array",
+      "additionalItems": false,
+      "items": { "type": "integer"},
+      "minItems": 1
+    },
+    "DuplicateAttributes":
     {
       "type": "array",
       "additionalItems": false,

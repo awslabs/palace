@@ -49,6 +49,42 @@ DivFreeSolver<VecType>::DivFreeSolver(
     int print)
 {
   BlockTimer bt(Timer::DIV_FREE);
+
+  // If no boundaries on the mesh have been marked, add a single degree of freedo
+  // constraint so the system for the projection is not singular. This amounts to enforcing
+  // a scalar potential of 0 at a point in space if it is otherwise completely
+  // unconstrained.
+  const auto *ptr_h1_bdr_tdof_lists = &h1_bdr_tdof_lists;
+  {
+    MFEM_VERIFY(
+        !h1_bdr_tdof_lists.empty(),
+        "Unexpected empty list of boundary true dofs for finite element space hierarchy!");
+    HYPRE_BigInt coarse_bdr_tdofs = h1_bdr_tdof_lists[0].Size();
+    MPI_Comm comm = h1_fespaces.GetFESpaceAtLevel(0).GetComm();
+    Mpi::GlobalSum(1, &coarse_bdr_tdofs, comm);
+    if (coarse_bdr_tdofs == 0)
+    {
+      MPI_Comm split_comm = MPI_COMM_NULL;
+      int color = (h1_fespaces.GetFESpaceAtLevel(0).GetTrueVSize() > 0) ? 0 : MPI_UNDEFINED;
+      MPI_Comm_split(comm, color, Mpi::Rank(comm), &split_comm);
+      if (split_comm != MPI_COMM_NULL && Mpi::Root(split_comm))
+      {
+        aux_tdof_lists.reserve(h1_fespaces.GetNumLevels());
+        for (std::size_t l = 0; l < h1_fespaces.GetNumLevels(); l++)
+        {
+          auto &tdof_list = aux_tdof_lists.emplace_back(1);
+          tdof_list[0] = 0;
+        }
+        ptr_h1_bdr_tdof_lists = &aux_tdof_lists;
+      }
+      if (split_comm != MPI_COMM_NULL)
+      {
+        MPI_Comm_free(&split_comm);
+      }
+    }
+  }
+
+  // Create the mass and weak divergence operators for divergence-free projection.
   MaterialPropertyCoefficient epsilon_func(mat_op.GetAttributeToMaterial(),
                                            mat_op.GetPermittivityReal());
   {
@@ -63,7 +99,8 @@ DivFreeSolver<VecType>::DivFreeSolver(
     {
       const auto &h1_fespace_l = h1_fespaces.GetFESpaceAtLevel(l);
       auto M_l = BuildLevelParOperator<OperType>(std::move(m_vec[l]), h1_fespace_l);
-      M_l->SetEssentialTrueDofs(h1_bdr_tdof_lists[l], Operator::DiagonalPolicy::DIAG_ONE);
+      M_l->SetEssentialTrueDofs((*ptr_h1_bdr_tdof_lists)[l],
+                                Operator::DiagonalPolicy::DIAG_ONE);
       if (l == h1_fespaces.GetNumLevels() - 1)
       {
         bdr_tdof_list_M = M_l->GetEssentialTrueDofs();

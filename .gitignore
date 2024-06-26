@@ -8,3 +8,4 @@ test/examples/ref/**/*.json
 .DS_Store
 .gitlab-ci-local
 Manifest.toml
+.vscode/
