@@ -51,13 +51,23 @@ struct ElementTypeInfo
 // Simplified helper for describing the element types in a (Par)Mesh.
 ElementTypeInfo CheckElements(const mfem::Mesh &mesh);
 
+// Check if a tetrahedral (Par)Mesh is ready for local refinement.
+bool CheckRefinementFlags(const mfem::Mesh &mesh);
+
 // Helper function to convert a set of attribute numbers to a marker array. The marker array
 // will be of size max_attr and it will contain only zeroes and ones. Ones indicate which
 // attribute numbers are present in the list array. In the special case when list has a
 // single entry equal to -1 the marker array will contain all ones.
+void AttrToMarker(int max_attr, const int *attr_list, int attr_list_size,
+                  mfem::Array<int> &marker, bool skip_invalid = false);
+
 template <typename T>
-void AttrToMarker(int max_attr, const T &attr_list, mfem::Array<int> &marker,
-                  bool skip_invalid = false);
+inline void AttrToMarker(int max_attr, const T &attr_list, mfem::Array<int> &marker,
+                         bool skip_invalid = false)
+{
+  const auto size = std::distance(attr_list.begin(), attr_list.end());
+  AttrToMarker(max_attr, (size > 0) ? &attr_list[0] : nullptr, size, marker, skip_invalid);
+}
 
 template <typename T>
 inline mfem::Array<int> AttrToMarker(int max_attr, const T &attr_list,

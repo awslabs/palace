@@ -134,8 +134,7 @@
           "Type": "MS",
           "Thickness": 2.0e-3,  // μm
           "Permittivity": 10.0,
-          "LossTan": 1.0,
-          "Side": "LargerRefractiveIndex"
+          "LossTan": 1.0
         },
         {
           "Index": 3,
@@ -143,8 +142,7 @@
           "Type": "MA",
           "Thickness": 2.0e-3,  // μm
           "Permittivity": 10.0,
-          "LossTan": 1.0,
-          "Side": "SmallerRefractiveIndex"
+          "LossTan": 1.0
         }
       ]
     }
