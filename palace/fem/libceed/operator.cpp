@@ -542,6 +542,7 @@ std::unique_ptr<Operator> CeedOperatorCoarsen(const Operator &op_fine,
     PalaceCeedCall(ceed, CeedOperatorMultigridLevelCreate(op_fine, nullptr, restr_coarse,
                                                           basis_coarse, op_coarse, nullptr,
                                                           nullptr));
+    PalaceCeedCall(ceed, CeedOperatorAssemblyDataStrip(*op_coarse));
   };
 
   // Initialize the coarse operator.
