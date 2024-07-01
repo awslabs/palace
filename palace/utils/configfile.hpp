@@ -171,6 +171,9 @@ public:
   // Parallel uniform mesh refinement levels.
   int uniform_ref_levels = 0;
 
+  // Serial uniform mesh refinement levels.
+  int ser_uniform_ref_levels = 0;
+
 private:
   // Refinement data for mesh regions.
   std::vector<BoxRefinementData> box_list = {};
@@ -199,14 +202,32 @@ public:
   double L0 = 1.0e-6;
   double Lc = -1.0;
 
-  // Partitioning file (if specified, does not compute a new partitioning).
-  std::string partition = "";
-
-  // Call MFEM's ReorientTetMesh as a check of mesh orientation after partitioning.
-  bool reorient_tet = false;
-
   // Remove high-order curvature information from the mesh.
   bool remove_curvature = false;
+
+  // Convert mesh to simplex elements.
+  bool make_simplex = false;
+
+  // Convert mesh to hexahedral elements (using tet-to-hex algorithm).
+  bool make_hex = false;
+
+  // Reorder elements based on spatial location after loading the serial mesh, which can
+  // potentially increase memory coherency.
+  bool reorder_elements = false;
+
+  // Remove elements (along with any associated unattached boundary elements) from the mesh
+  // which do not have any material properties specified.
+  bool clean_unused_elements = true;
+
+  // Add new boundary elements for faces are on the computational domain boundary or which
+  // have attached elements on either side with different domain attributes.
+  bool add_bdr_elements = true;
+
+  // Call MFEM's ReorientTetMesh as a check of mesh orientation after partitioning.
+  bool reorient_tet_mesh = false;
+
+  // Partitioning file (if specified, does not compute a new partitioning).
+  std::string partitioning = "";
 
   // Object controlling mesh refinement.
   RefinementData refinement = {};

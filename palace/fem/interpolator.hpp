@@ -35,6 +35,21 @@ public:
   std::vector<std::complex<double>> ProbeField(const GridFunction &U);
 };
 
+namespace fem
+{
+
+// Interpolate a function on a serial or parallel mesh to a different mesh, using GSLIB.
+// Similar to MFEM's field-interp miniapp.
+void InterpolateFunction(const mfem::GridFunction &U, mfem::GridFunction &V);
+
+// Interpolate a function at a specific list of points, specified using the provided
+// ordering. The output vector values are always arranged byVDIM.
+void InterpolateFunction(const mfem::Vector &xyz, const mfem::GridFunction &U,
+                         mfem::Vector &V,
+                         mfem::Ordering::Type ordering = mfem::Ordering::byNODES);
+
+}  // namespace fem
+
 }  // namespace palace
 
 #endif  // PALACE_FEM_INTERPOLATOR_HPP

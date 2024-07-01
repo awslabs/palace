@@ -46,7 +46,7 @@ public:
   void NondimensionalizeInputs(mfem::ParMesh &mesh);
 
   // Return the mesh scaling factor in units model.L0 x [m] for mesh IO.
-  double GetLengthScale() const { return Lc / model.L0; }
+  double GetMeshLengthScale() const { return Lc / model.L0; }
 
   // Redimensionalize values for output. Outputs which depend on the fields assume a
   // characteristic reference magnetic field strength Hc such that Pc = 1 W, where Pc is the

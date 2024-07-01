@@ -54,7 +54,7 @@ function generate_ring_mesh(;
     end
     gmsh.model.add("rings")
 
-    # Geometry parameters (in um)
+    # Geometry parameters (in μm)
     farfield_radius = 10.0 * outer_radius
 
     # Mesh parameters

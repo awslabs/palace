@@ -9,9 +9,14 @@
     "Mesh": { "type": "string" },
     "L0": { "type": "number", "exclusiveMinimum": 0.0 },
     "Lc": { "type": "number", "exclusiveMinimum": 0.0 },
-    "Partition": { "type": "string" },
-    "ReorientTetMesh": { "type": "boolean" },
     "RemoveCurvature": { "type": "boolean" },
+    "MakeSimplex": { "type": "boolean" },
+    "MakeHexahedral": { "type": "boolean" },
+    "ReorderElements": { "type": "boolean" },
+    "CleanUnusedElements": { "type": "boolean" },
+    "AddInterfaceBoundaryElements": { "type": "boolean" },
+    "ReorientTetMesh": { "type": "boolean" },
+    "Partitioning": { "type": "string" },
     "Refinement":
     {
       "type": "object",
@@ -29,6 +34,7 @@
         "SaveAdaptIterations": {"type": "boolean"},
         "SaveAdaptMesh": {"type": "boolean"},
         "UniformLevels": { "type": "integer", "minimum": 0 },
+        "SerialUniformLevels": { "type": "integer", "minimum": 0 },
         "Boxes":
         {
           "type": "array",

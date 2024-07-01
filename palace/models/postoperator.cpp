@@ -160,7 +160,7 @@ void PostOperator::InitializeDataCollection(const IoData &iodata)
   const bool use_ho = true;
   const int refine_ho = HasE() ? E->ParFESpace()->GetMaxElementOrder()
                                : B->ParFESpace()->GetMaxElementOrder();
-  mesh_Lc0 = iodata.GetLengthScale();
+  mesh_Lc0 = iodata.GetMeshLengthScale();
 
   // Output mesh coordinate units same as input.
   paraview.SetCycle(-1);
