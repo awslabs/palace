@@ -82,7 +82,10 @@ jobs:
           fi
 
           # Build and install
-          spack dev-build local.palace@develop%${{ matrix.compiler }} $GPU_VARIANT ^petsc~hdf5 ^intel-oneapi-mkl
+          PALACE_SPEC="local.palace@develop%${{ matrix.compiler }}$GPU_VARIANT ^${{ matrix.mpi }}"
+          PALACE_SPEC="$PALACE_SPEC ^petsc~hdf5 ^intel-oneapi-mkl"
+          spack spec $PALACE_SPEC
+          spack dev-build $PALACE_SPEC
 
       - name: Run tests
         if: matrix.gpu == 'none'  # Skip tests for GPU builds
