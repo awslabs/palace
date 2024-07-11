@@ -14,11 +14,11 @@
 namespace palace
 {
 
-using Operator = mfem::Operator;
-
 //
 // Functionality extending mfem::Operator from MFEM.
 //
+
+using Operator = mfem::Operator;
 
 // Abstract base class for complex-valued operators.
 class ComplexOperator
