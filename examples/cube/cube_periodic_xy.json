@@ -34,10 +34,9 @@
   },
   "Boundaries":
   {
-    "Absorbing":
+    "PEC":
     {
-      "Attributes": [1, 5],
-      "Order": 1
+      "Attributes": [1, 5]
     }
   },
   "Solver":
