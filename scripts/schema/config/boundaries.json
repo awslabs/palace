@@ -227,11 +227,11 @@
       {
         "type": "object",
         "additionalProperties": false,
-        "required": ["OriginalAttributes", "DuplicateAttributes"],
+        "required": ["DonorAttributes", "ReceiverAttributes"],
         "properties":
         {
-          "OriginalAttributes": { "$ref": "#/$defs/OriginalAttributes" },
-          "DuplicateAttributes": { "$ref": "#/$defs/DuplicateAttributes" }
+          "DonorAttributes": { "$ref": "#/$defs/DonorAttributes" },
+          "ReceiverAttributes": { "$ref": "#/$defs/ReceiverAttributes" }
         }
       }
     },
@@ -301,14 +301,14 @@
       "items": { "type": "integer"},
       "minItems": 1
     },
-    "OriginalAttributes":
+    "DonorAttributes":
     {
       "type": "array",
       "additionalItems": false,
       "items": { "type": "integer"},
       "minItems": 1
     },
-    "DuplicateAttributes":
+    "ReceiverAttributes":
     {
       "type": "array",
       "additionalItems": false,

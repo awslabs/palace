@@ -36,8 +36,8 @@
   {
     "Periodic":
     {
-      "OriginalAttributes": [3, 2],
-      "DuplicateAttributes": [4, 6]
+      "DonorAttributes": [3, 2],
+      "ReceiverAttributes": [4, 6]
     },
     "Absorbing":
     {
